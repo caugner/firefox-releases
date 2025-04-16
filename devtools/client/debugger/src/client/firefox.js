@@ -5,30 +5,34 @@
 // @flow
 
 import { setupCommands, clientCommands } from "./firefox/commands";
-import { setupEvents, clientEvents } from "./firefox/events";
+import {
+  setupCreate,
+  createPause,
+  prepareSourcePayload,
+} from "./firefox/create";
 import { features, prefs } from "../utils/prefs";
-import { prepareSourcePayload } from "./firefox/create";
+
+import { recordEvent } from "../utils/telemetry";
+import sourceQueue from "../utils/source-queue";
 
 let actions;
 let targetList;
 let resourceWatcher;
 
 export async function onConnect(
-  connection: any,
+  devToolsClient: any,
+  _targetList: any,
+  _resourceWatcher: any,
   _actions: Object,
   store: any
 ): Promise<void> {
-  const {
-    devToolsClient,
-    targetList: _targetList,
-    resourceWatcher: _resourceWatcher,
-  } = connection;
   actions = _actions;
   targetList = _targetList;
   resourceWatcher = _resourceWatcher;
 
   setupCommands({ devToolsClient, targetList });
-  setupEvents({ actions, devToolsClient, store, resourceWatcher });
+  setupCreate({ store });
+  sourceQueue.initialize(actions);
   const { targetFront } = targetList;
   if (targetFront.isBrowsingContext || targetFront.isParentProcess) {
     targetList.listenForWorkers = true;
@@ -45,8 +49,16 @@ export async function onConnect(
     onTargetDestroyed
   );
 
+  // Use independant listeners for SOURCE and THREAD_STATE in order to ease
+  // doing batching and notify about a set of SOURCE's in one redux action.
   await resourceWatcher.watchResources([resourceWatcher.TYPES.SOURCE], {
     onAvailable: onSourceAvailable,
+  });
+  await resourceWatcher.watchResources([resourceWatcher.TYPES.THREAD_STATE], {
+    onAvailable: onBreakpointAvailable,
+  });
+  await resourceWatcher.watchResources([resourceWatcher.TYPES.ERROR_MESSAGE], {
+    onAvailable: actions.addExceptionFromResources,
   });
 }
 
@@ -59,6 +71,13 @@ export function onDisconnect() {
   resourceWatcher.unwatchResources([resourceWatcher.TYPES.SOURCE], {
     onAvailable: onSourceAvailable,
   });
+  resourceWatcher.unwatchResources([resourceWatcher.TYPES.THREAD_STATE], {
+    onAvailable: onBreakpointAvailable,
+  });
+  resourceWatcher.unwatchResources([resourceWatcher.TYPES.ERROR_MESSAGE], {
+    onAvailable: actions.addExceptionFromResources,
+  });
+  sourceQueue.clear();
 }
 
 async function onTargetAvailable({
@@ -115,15 +134,12 @@ async function onTargetAvailable({
   // they are active once attached.
   actions.addEventListenerBreakpoints([]).catch(e => console.error(e));
 
-  const { traits } = targetFront;
   await actions.connect(
     targetFront.url,
     threadFront.actor,
-    traits,
     targetFront.isWebExtension
   );
 
-  await clientCommands.checkIfAlreadyPaused();
   await actions.addTarget(targetFront);
 }
 
@@ -146,4 +162,17 @@ async function onSourceAvailable(sources) {
   await actions.newGeneratedSources(frontendSources);
 }
 
-export { clientCommands, clientEvents };
+async function onBreakpointAvailable(breakpoints) {
+  for (const resource of breakpoints) {
+    const threadFront = await resource.targetFront.getFront("thread");
+    if (resource.state == "paused") {
+      const pause = await createPause(threadFront.actor, resource);
+      actions.paused(pause);
+      recordEvent("pause", { reason: resource.why.type });
+    } else if (resource.state == "resumed") {
+      actions.resumed(threadFront.actorID);
+    }
+  }
+}
+
+export { clientCommands };

@@ -11,9 +11,10 @@
 #ifdef ACCESSIBILITY
 #  include "mozilla/a11y/DocAccessibleParent.h"
 #  include "mozilla/a11y/Platform.h"
-#  include "mozilla/a11y/ProxyAccessibleBase.h"
+#  include "mozilla/a11y/RemoteAccessibleBase.h"
 #  include "nsAccessibilityService.h"
 #endif
+#include "mozilla/Components.h"
 #include "mozilla/dom/BrowserHost.h"
 #include "mozilla/dom/BrowsingContextGroup.h"
 #include "mozilla/dom/CancelContentJSOptionsBinding.h"
@@ -54,6 +55,7 @@
 #include "mozilla/PresShell.h"
 #include "mozilla/ProcessHangMonitor.h"
 #include "mozilla/StaticPrefs_dom.h"
+#include "mozilla/TextEventDispatcher.h"
 #include "mozilla/TextEvents.h"
 #include "mozilla/TouchEvents.h"
 #include "mozilla/UniquePtr.h"
@@ -124,7 +126,7 @@
 #include "IHistory.h"
 #include "mozilla/dom/WindowGlobalParent.h"
 #include "mozilla/dom/CanonicalBrowsingContext.h"
-#include "GeckoProfiler.h"
+#include "mozilla/ProfilerLabels.h"
 #include "MMPrinter.h"
 #include "SessionStoreFunctions.h"
 #include "mozilla/dom/CrashReport.h"
@@ -170,8 +172,6 @@ BrowserParent* BrowserParent::sFocus = nullptr;
 BrowserParent* BrowserParent::sTopLevelWebFocus = nullptr;
 /* static */
 BrowserParent* BrowserParent::sLastMouseRemoteTarget = nullptr;
-/* static */
-BrowserParent* BrowserParent::sPointerLockedRemoteTarget = nullptr;
 
 // The flags passed by the webProgress notifications are 16 bits shifted
 // from the ones registered by webProgressListeners.
@@ -252,11 +252,6 @@ BrowserParent* BrowserParent::GetFocused() { return sFocus; }
 /* static */
 BrowserParent* BrowserParent::GetLastMouseRemoteTarget() {
   return sLastMouseRemoteTarget;
-}
-
-/* static */
-BrowserParent* BrowserParent::GetPointerLockedRemoteTarget() {
-  return sPointerLockedRemoteTarget;
 }
 
 /*static*/
@@ -608,7 +603,7 @@ void BrowserParent::RemoveWindowListeners() {
 void BrowserParent::DestroyInternal() {
   UnsetTopLevelWebFocus(this);
   UnsetLastMouseRemoteTarget(this);
-  UnsetPointerLockedRemoteTarget(this);
+  PointerLockManager::ReleaseLockedRemoteTarget(this);
   PointerEventHandler::ReleasePointerCaptureRemoteTarget(this);
   PresShell::ReleaseCapturingRemoteTarget(this);
 
@@ -692,7 +687,7 @@ void BrowserParent::ActorDestroy(ActorDestroyReason why) {
   // case of a crash.
   BrowserParent::UnsetTopLevelWebFocus(this);
   BrowserParent::UnsetLastMouseRemoteTarget(this);
-  BrowserParent::UnsetPointerLockedRemoteTarget(this);
+  PointerLockManager::ReleaseLockedRemoteTarget(this);
   PointerEventHandler::ReleasePointerCaptureRemoteTarget(this);
   PresShell::ReleaseCapturingRemoteTarget(this);
 
@@ -1286,7 +1281,7 @@ mozilla::ipc::IPCResult BrowserParent::RecvPDocAccessibleConstructor(
     RefPtr<IAccessible> proxy(aDocCOMProxy.Get());
     doc->SetCOMInterface(proxy);
     doc->MaybeInitWindowEmulation();
-    if (a11y::Accessible* outerDoc = doc->OuterDocOfRemoteBrowser()) {
+    if (a11y::LocalAccessible* outerDoc = doc->OuterDocOfRemoteBrowser()) {
       doc->SendParentCOMProxy(outerDoc);
     }
 #  endif
@@ -1697,7 +1692,12 @@ mozilla::ipc::IPCResult BrowserParent::RecvRequestNativeKeyBindings(
     return IPC_OK();
   }
 
-  if (localEvent.InitEditCommandsFor(keyBindingsType)) {
+  Maybe<WritingMode> writingMode;
+  if (RefPtr<widget::TextEventDispatcher> dispatcher =
+          widget->GetTextEventDispatcher()) {
+    writingMode = dispatcher->MaybeWritingModeAtSelection();
+  }
+  if (localEvent.InitEditCommandsFor(keyBindingsType, writingMode)) {
     *aCommands = localEvent.EditCommandsConstRef(keyBindingsType).Clone();
   }
 
@@ -1830,6 +1830,17 @@ mozilla::ipc::IPCResult BrowserParent::RecvSynthesizeNativeTouchPoint(
   return IPC_OK();
 }
 
+mozilla::ipc::IPCResult BrowserParent::RecvSynthesizeNativeTouchPadPinch(
+    const TouchpadPinchPhase& aEventPhase, const float& aScale,
+    const LayoutDeviceIntPoint& aPoint, const int32_t& aModifierFlags) {
+  nsCOMPtr<nsIWidget> widget = GetWidget();
+  if (widget) {
+    widget->SynthesizeNativeTouchPadPinch(aEventPhase, aScale, aPoint,
+                                          aModifierFlags);
+  }
+  return IPC_OK();
+}
+
 mozilla::ipc::IPCResult BrowserParent::RecvSynthesizeNativeTouchTap(
     const LayoutDeviceIntPoint& aPoint, const bool& aLongTap,
     const uint64_t& aObserverId) {
@@ -1857,10 +1868,20 @@ void BrowserParent::SendRealKeyEvent(WidgetKeyboardEvent& aEvent) {
   }
   aEvent.mRefPoint = TransformParentToChild(aEvent.mRefPoint);
 
+  // NOTE: If you call `InitAllEditCommands()` for the other messages too,
+  //       you also need to update
+  //       TextEventDispatcher::DispatchKeyboardEventInternal().
   if (aEvent.mMessage == eKeyPress) {
     // XXX Should we do this only when input context indicates an editor having
     //     focus and the key event won't cause inputting text?
-    aEvent.InitAllEditCommands();
+    Maybe<WritingMode> writingMode;
+    if (aEvent.mWidget) {
+      if (RefPtr<widget::TextEventDispatcher> dispatcher =
+              aEvent.mWidget->GetTextEventDispatcher()) {
+        writingMode = dispatcher->MaybeWritingModeAtSelection();
+      }
+    }
+    aEvent.InitAllEditCommands(writingMode);
   } else {
     aEvent.PreventNativeKeyBindings();
   }
@@ -2274,42 +2295,6 @@ mozilla::ipc::IPCResult BrowserParent::RecvOnEventNeedingAckHandled(
   // destroyed since it may send notifications to IME.
   RefPtr<BrowserParent> kungFuDeathGrip(this);
   mContentCache.OnEventNeedingAckHandled(widget, aMessage);
-  return IPC_OK();
-}
-
-void BrowserParent::HandledWindowedPluginKeyEvent(
-    const NativeEventData& aKeyEventData, bool aIsConsumed) {
-  DebugOnly<bool> ok =
-      SendHandledWindowedPluginKeyEvent(aKeyEventData, aIsConsumed);
-  NS_WARNING_ASSERTION(ok, "SendHandledWindowedPluginKeyEvent failed");
-}
-
-mozilla::ipc::IPCResult BrowserParent::RecvOnWindowedPluginKeyEvent(
-    const NativeEventData& aKeyEventData) {
-  nsCOMPtr<nsIWidget> widget = GetWidget();
-  if (NS_WARN_IF(!widget)) {
-    // Notifies the plugin process of the key event being not consumed by us.
-    HandledWindowedPluginKeyEvent(aKeyEventData, false);
-    return IPC_OK();
-  }
-  nsresult rv = widget->OnWindowedPluginKeyEvent(aKeyEventData, this);
-  if (NS_WARN_IF(NS_FAILED(rv))) {
-    // Notifies the plugin process of the key event being not consumed by us.
-    HandledWindowedPluginKeyEvent(aKeyEventData, false);
-    return IPC_OK();
-  }
-
-  // If the key event is posted to another process, we need to wait a call
-  // of HandledWindowedPluginKeyEvent().  So, nothing to do here in this case.
-  if (rv == NS_SUCCESS_EVENT_HANDLED_ASYNCHRONOUSLY) {
-    return IPC_OK();
-  }
-
-  // Otherwise, the key event is handled synchronously.  Let's notify the
-  // plugin process of the key event's result.
-  bool consumed = (rv == NS_SUCCESS_EVENT_CONSUMED);
-  HandledWindowedPluginKeyEvent(aKeyEventData, consumed);
-
   return IPC_OK();
 }
 
@@ -3102,14 +3087,6 @@ void BrowserParent::UnsetTopLevelWebFocusAll() {
 void BrowserParent::UnsetLastMouseRemoteTarget(BrowserParent* aBrowserParent) {
   if (sLastMouseRemoteTarget == aBrowserParent) {
     sLastMouseRemoteTarget = nullptr;
-  }
-}
-
-/* static */
-void BrowserParent::UnsetPointerLockedRemoteTarget(
-    BrowserParent* aBrowserParent) {
-  if (sPointerLockedRemoteTarget == aBrowserParent) {
-    sPointerLockedRemoteTarget = nullptr;
   }
 }
 
@@ -3935,7 +3912,7 @@ mozilla::ipc::IPCResult BrowserParent::RecvVisitURI(nsIURI* aURI,
   if (NS_WARN_IF(!widget)) {
     return IPC_OK();
   }
-  nsCOMPtr<IHistory> history = services::GetHistory();
+  nsCOMPtr<IHistory> history = components::History::Service();
   if (history) {
     Unused << history->VisitURI(widget, aURI, aLastVisitedURI, aFlags);
   }
@@ -3945,7 +3922,7 @@ mozilla::ipc::IPCResult BrowserParent::RecvVisitURI(nsIURI* aURI,
 mozilla::ipc::IPCResult BrowserParent::RecvQueryVisitedState(
     const nsTArray<RefPtr<nsIURI>>&& aURIs) {
 #ifdef MOZ_ANDROID_HISTORY
-  nsCOMPtr<IHistory> history = services::GetHistory();
+  nsCOMPtr<IHistory> history = components::History::Service();
   if (NS_WARN_IF(!history)) {
     return IPC_OK();
   }
@@ -4082,19 +4059,10 @@ mozilla::ipc::IPCResult BrowserParent::RecvIsWindowSupportingWebVR(
   return IPC_OK();
 }
 
-bool BrowserParent::SetPointerLock() {
-  if (sPointerLockedRemoteTarget) {
-    return sPointerLockedRemoteTarget == this;
-  }
-
-  sPointerLockedRemoteTarget = this;
-  return true;
-}
-
 mozilla::ipc::IPCResult BrowserParent::RecvRequestPointerLock(
     RequestPointerLockResolver&& aResolve) {
   nsCString error;
-  if (!SetPointerLock()) {
+  if (!PointerLockManager::SetLockedRemoteTarget(this)) {
     error = "PointerLockDeniedInUse";
   } else {
     PointerEventHandler::ReleaseAllPointerCaptureRemoteTarget();
@@ -4104,8 +4072,9 @@ mozilla::ipc::IPCResult BrowserParent::RecvRequestPointerLock(
 }
 
 mozilla::ipc::IPCResult BrowserParent::RecvReleasePointerLock() {
-  MOZ_ASSERT_IF(sPointerLockedRemoteTarget, sPointerLockedRemoteTarget == this);
-  UnsetPointerLockedRemoteTarget(this);
+  MOZ_ASSERT_IF(PointerLockManager::GetLockedRemoteTarget(),
+                PointerLockManager::GetLockedRemoteTarget() == this);
+  PointerLockManager::ReleaseLockedRemoteTarget(this);
   return IPC_OK();
 }
 

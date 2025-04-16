@@ -7,6 +7,7 @@
 #include "PointerEventHandler.h"
 #include "nsIFrame.h"
 #include "PointerEvent.h"
+#include "PointerLockManager.h"
 #include "mozilla/PresShell.h"
 #include "mozilla/StaticPrefs_dom.h"
 #include "mozilla/dom/BrowserChild.h"
@@ -63,14 +64,13 @@ void PointerEventHandler::ReleaseStatics() {
 
 /* static */
 bool PointerEventHandler::IsPointerEventImplicitCaptureForTouchEnabled() {
-  return StaticPrefs::dom_w3c_pointer_events_enabled() &&
-         StaticPrefs::dom_w3c_pointer_events_implicit_capture();
+  return StaticPrefs::dom_w3c_pointer_events_implicit_capture();
 }
 
 /* static */
 void PointerEventHandler::UpdateActivePointerState(WidgetMouseEvent* aEvent,
                                                    nsIContent* aTargetContent) {
-  if (!StaticPrefs::dom_w3c_pointer_events_enabled() || !aEvent) {
+  if (!aEvent) {
     return;
   }
   switch (aEvent->mMessage) {
@@ -78,7 +78,7 @@ void PointerEventHandler::UpdateActivePointerState(WidgetMouseEvent* aEvent,
       // In this case we have to know information about available mouse pointers
       sActivePointersIds->Put(
           aEvent->pointerId,
-          new PointerInfo(false, aEvent->mInputSource, true, nullptr));
+          MakeUnique<PointerInfo>(false, aEvent->mInputSource, true, nullptr));
 
       MaybeCacheSpoofedPointerID(aEvent->mInputSource, aEvent->pointerId);
       break;
@@ -90,7 +90,7 @@ void PointerEventHandler::UpdateActivePointerState(WidgetMouseEvent* aEvent,
         // nullptr, not sure if this also happens on real usage.
         sActivePointersIds->Put(
             pointerEvent->pointerId,
-            new PointerInfo(
+            MakeUnique<PointerInfo>(
                 true, pointerEvent->mInputSource, pointerEvent->mIsPrimary,
                 aTargetContent ? aTargetContent->OwnerDoc() : nullptr));
         MaybeCacheSpoofedPointerID(pointerEvent->mInputSource,
@@ -109,8 +109,8 @@ void PointerEventHandler::UpdateActivePointerState(WidgetMouseEvent* aEvent,
             MouseEvent_Binding::MOZ_SOURCE_TOUCH) {
           sActivePointersIds->Put(
               pointerEvent->pointerId,
-              new PointerInfo(false, pointerEvent->mInputSource,
-                              pointerEvent->mIsPrimary, nullptr));
+              MakeUnique<PointerInfo>(false, pointerEvent->mInputSource,
+                                      pointerEvent->mIsPrimary, nullptr));
         } else {
           sActivePointersIds->Remove(pointerEvent->pointerId);
         }
@@ -149,12 +149,13 @@ void PointerEventHandler::RequestPointerCaptureById(uint32_t aPointerId,
 void PointerEventHandler::SetPointerCaptureById(uint32_t aPointerId,
                                                 Element* aElement) {
   MOZ_ASSERT(aElement);
-  PointerCaptureInfo* pointerCaptureInfo = GetPointerCaptureInfo(aPointerId);
-  if (pointerCaptureInfo) {
-    pointerCaptureInfo->mPendingElement = aElement;
-  } else {
-    sPointerCaptureList->Put(aPointerId, new PointerCaptureInfo(aElement));
-  }
+  sPointerCaptureList->WithEntryHandle(aPointerId, [&](auto&& entry) {
+    if (entry) {
+      entry.Data()->mPendingElement = aElement;
+    } else {
+      entry.Insert(MakeUnique<PointerCaptureInfo>(aElement));
+    }
+  });
 }
 
 /* static */
@@ -196,7 +197,7 @@ bool PointerEventHandler::SetPointerCaptureRemoteTarget(
   MOZ_ASSERT(sPointerCaptureRemoteTargetTable);
   MOZ_ASSERT(aBrowserParent);
 
-  if (BrowserParent::GetPointerLockedRemoteTarget()) {
+  if (PointerLockManager::GetLockedRemoteTarget()) {
     return false;
   }
 
@@ -323,7 +324,6 @@ void PointerEventHandler::CheckPointerCaptureState(WidgetPointerEvent* aEvent) {
   if (!aEvent) {
     return;
   }
-  MOZ_ASSERT(StaticPrefs::dom_w3c_pointer_events_enabled());
   MOZ_ASSERT(aEvent->mClass == ePointerEventClass);
 
   PointerCaptureInfo* captureInfo = GetPointerCaptureInfo(aEvent->pointerId);
@@ -381,8 +381,7 @@ void PointerEventHandler::CheckPointerCaptureState(WidgetPointerEvent* aEvent) {
 void PointerEventHandler::ImplicitlyCapturePointer(nsIFrame* aFrame,
                                                    WidgetEvent* aEvent) {
   MOZ_ASSERT(aEvent->mMessage == ePointerDown);
-  if (!aFrame || !StaticPrefs::dom_w3c_pointer_events_enabled() ||
-      !IsPointerEventImplicitCaptureForTouchEnabled()) {
+  if (!aFrame || !IsPointerEventImplicitCaptureForTouchEnabled()) {
     return;
   }
   WidgetPointerEvent* pointerEvent = aEvent->AsPointerEvent();
@@ -426,8 +425,7 @@ Element* PointerEventHandler::GetPointerCapturingElement(uint32_t aPointerId) {
 /* static */
 Element* PointerEventHandler::GetPointerCapturingElement(
     WidgetGUIEvent* aEvent) {
-  if (!StaticPrefs::dom_w3c_pointer_events_enabled() ||
-      (aEvent->mClass != ePointerEventClass &&
+  if ((aEvent->mClass != ePointerEventClass &&
        aEvent->mClass != eMouseEventClass) ||
       aEvent->mMessage == ePointerDown || aEvent->mMessage == eMouseDown) {
     // Pointer capture should only be applied to all pointer events and mouse
@@ -466,10 +464,10 @@ void PointerEventHandler::PreHandlePointerEventsPreventDefault(
       !pointerInfo) {
     // The PointerInfo for active pointer should be added for normal cases. But
     // in some cases, we may receive mouse events before adding PointerInfo in
-    // sActivePointersIds. (e.g. receive mousemove before eMouseEnterIntoWidget
-    // or change preference 'dom.w3c_pointer_events.enabled' from off to on).
-    // In these cases, we could ignore them because they are not the events
-    // between a DefaultPrevented pointerdown and the corresponding pointerup.
+    // sActivePointersIds. (e.g. receive mousemove before
+    // eMouseEnterIntoWidget). In these cases, we could ignore them because they
+    // are not the events between a DefaultPrevented pointerdown and the
+    // corresponding pointerup.
     return;
   }
   if (!pointerInfo->mPreventMouseEventByContent) {
@@ -564,7 +562,6 @@ void PointerEventHandler::DispatchPointerFromMouseOrTouch(
     PresShell* aShell, nsIFrame* aFrame, nsIContent* aContent,
     WidgetGUIEvent* aEvent, bool aDontRetargetEvents, nsEventStatus* aStatus,
     nsIContent** aTargetContent) {
-  MOZ_ASSERT(StaticPrefs::dom_w3c_pointer_events_enabled());
   MOZ_ASSERT(aFrame || aContent);
   MOZ_ASSERT(aEvent);
 
@@ -712,6 +709,17 @@ void PointerEventHandler::NotifyDestroyPresContext(
       iter.Remove();
     }
   }
+}
+
+bool PointerEventHandler::IsDragAndDropEnabled(WidgetMouseEvent& aEvent) {
+#ifdef XP_WIN
+  if (StaticPrefs::dom_w3c_pointer_events_dispatch_by_pointer_messages()) {
+    // WM_POINTER does not support drag and drop, see bug 1692277
+    return (aEvent.mInputSource != dom::MouseEvent_Binding::MOZ_SOURCE_PEN &&
+            aEvent.mReason != WidgetMouseEvent::eSynthesized);  // bug 1692151
+  }
+#endif
+  return true;
 }
 
 /* static */

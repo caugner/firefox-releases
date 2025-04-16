@@ -281,7 +281,6 @@ var DownloadsPanel = {
       this.panel.removeAttribute("keyfocus");
       this.panel.removeEventListener("mousemove", this);
     }
-    return aValue;
   },
 
   /**
@@ -564,15 +563,24 @@ var DownloadsPanel = {
     }
 
     DownloadsCommon.log("Opening downloads panel popup.");
-    PanelMultiView.openPopup(
-      this.panel,
-      anchor,
-      "bottomcenter topright",
-      0,
-      0,
-      false,
-      null
-    ).catch(Cu.reportError);
+
+    // Delay displaying the panel because this function will sometimes be
+    // called while another window is closing (like the window for selecting
+    // whether to save or open the file), and that would cause the panel to
+    // close immediately.
+    setTimeout(
+      () =>
+        PanelMultiView.openPopup(
+          this.panel,
+          anchor,
+          "bottomcenter topright",
+          0,
+          0,
+          false,
+          null
+        ).catch(Cu.reportError),
+      0
+    );
   },
 };
 
@@ -1306,7 +1314,7 @@ var DownloadsSummary = {
    */
   set active(aActive) {
     if (aActive == this._active || !this._summaryNode) {
-      return this._active;
+      return;
     }
     if (aActive) {
       DownloadsCommon.getSummary(
@@ -1317,7 +1325,7 @@ var DownloadsSummary = {
       DownloadsFooter.showingSummary = false;
     }
 
-    return (this._active = aActive);
+    this._active = aActive;
   },
 
   /**
@@ -1342,7 +1350,7 @@ var DownloadsSummary = {
       this._summaryNode.removeAttribute("inprogress");
     }
     // If progress isn't being shown, then we simply do not show the summary.
-    return (DownloadsFooter.showingSummary = aShowingProgress);
+    DownloadsFooter.showingSummary = aShowingProgress;
   },
 
   /**
@@ -1356,7 +1364,6 @@ var DownloadsSummary = {
     if (this._progressNode) {
       this._progressNode.setAttribute("value", aValue);
     }
-    return aValue;
   },
 
   /**
@@ -1371,7 +1378,6 @@ var DownloadsSummary = {
       this._descriptionNode.setAttribute("value", aValue);
       this._descriptionNode.setAttribute("tooltiptext", aValue);
     }
-    return aValue;
   },
 
   /**
@@ -1387,7 +1393,6 @@ var DownloadsSummary = {
       this._detailsNode.setAttribute("value", aValue);
       this._detailsNode.setAttribute("tooltiptext", aValue);
     }
-    return aValue;
   },
 
   /**
@@ -1512,7 +1517,6 @@ var DownloadsFooter = {
       }
       this._showingSummary = aValue;
     }
-    return aValue;
   },
 
   /**

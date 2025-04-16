@@ -83,8 +83,8 @@ include "mozilla/ipc/ByteBufUtils.h";
 include "mozilla/ipc/URIUtils.h";
 include "mozilla/PermissionDelegateIPCUtils.h";
 
-using refcounted class nsIDOMGeoPosition from "nsGeoPositionIPCSerialiser.h";
-using refcounted class nsIAlertNotification from "mozilla/AlertNotificationIPCSerializer.h";
+[RefCounted] using class nsIDOMGeoPosition from "nsGeoPositionIPCSerialiser.h";
+[RefCounted] using class nsIAlertNotification from "mozilla/AlertNotificationIPCSerializer.h";
 
 using struct ChromePackage from "mozilla/chrome/RegistryMessageUtils.h";
 using struct SubstitutionMapping from "mozilla/chrome/RegistryMessageUtils.h";
@@ -112,9 +112,9 @@ using mozilla::Telemetry::ScalarAction from "mozilla/TelemetryComms.h";
 using mozilla::Telemetry::KeyedScalarAction from "mozilla/TelemetryComms.h";
 using mozilla::Telemetry::DynamicScalarDefinition from "mozilla/TelemetryComms.h";
 using mozilla::Telemetry::ChildEventData from "mozilla/TelemetryComms.h";
-using moveonly mozilla::UntrustedModulesData from "mozilla/UntrustedModulesData.h";
-using moveonly mozilla::ModulePaths from "mozilla/UntrustedModulesData.h";
-using moveonly mozilla::ModulesMapResult from "mozilla/UntrustedModulesData.h";
+[MoveOnly] using mozilla::UntrustedModulesData from "mozilla/UntrustedModulesData.h";
+[MoveOnly] using mozilla::ModulePaths from "mozilla/UntrustedModulesData.h";
+[MoveOnly] using mozilla::ModulesMapResult from "mozilla/UntrustedModulesData.h";
 using mozilla::Telemetry::DiscardedData from "mozilla/TelemetryComms.h";
 using mozilla::CrossProcessMutexHandle from "mozilla/ipc/CrossProcessMutex.h";
 using mozilla::dom::MaybeDiscardedBrowsingContext from "mozilla/dom/BrowsingContext.h";
@@ -134,7 +134,7 @@ using mozilla::dom::MediaMetadataBase from "mozilla/dom/MediaMetadata.h";
 using mozilla::dom::MediaSessionAction from "mozilla/dom/MediaSessionBinding.h";
 using mozilla::dom::MediaSessionPlaybackState from "mozilla/dom/MediaSessionBinding.h";
 using mozilla::dom::PositionState from "mozilla/dom/MediaSession.h";
-using refcounted class nsDocShellLoadState from "nsDocShellLoadState.h";
+[RefCounted] using class nsDocShellLoadState from "nsDocShellLoadState.h";
 using mozilla::dom::ServiceWorkerShutdownState::Progress from "mozilla/dom/ServiceWorkerShutdownState.h";
 using mozilla::ContentBlockingNotifier::StorageAccessPermissionGrantedReason from "mozilla/ContentBlockingNotifier.h";
 using mozilla::ContentBlockingNotifier::BlockingDecision from "mozilla/ContentBlockingNotifier.h";
@@ -142,14 +142,14 @@ using mozilla::ContentBlocking::StorageAccessPromptChoices from "mozilla/Content
 using JSActorMessageKind from "mozilla/dom/JSActor.h";
 using JSActorMessageMeta from "mozilla/dom/PWindowGlobal.h";
 using mozilla::PermissionDelegateHandler::DelegatedPermissionList from "mozilla/PermissionDelegateHandler.h";
-using refcounted class nsILayoutHistoryState from "nsILayoutHistoryState.h";
+[RefCounted] using class nsILayoutHistoryState from "nsILayoutHistoryState.h";
 using class mozilla::dom::SessionHistoryInfo from "mozilla/dom/SessionHistoryEntry.h";
 using struct nsPoint from "nsPoint.h";
 using struct mozilla::dom::LoadingSessionHistoryInfo from "mozilla/dom/SessionHistoryEntry.h";
 using mozilla::PDMFactory::MediaCodecsSupported from "PDMFactory.h";
 using mozilla::RemoteDecodeIn from "mozilla/RemoteDecoderManagerChild.h";
 using mozilla::dom::PerformanceTimingData from "mozilla/dom/PerformanceTiming.h";
-using refcounted mozilla::dom::FeaturePolicy from "mozilla/dom/FeaturePolicy.h";
+[RefCounted] using mozilla::dom::FeaturePolicy from "mozilla/dom/FeaturePolicy.h";
 
 union ChromeRegistryItem
 {
@@ -516,8 +516,6 @@ child:
       Endpoint<PRemoteDecoderManagerChild> video,
       uint32_t[] namespaces);
 
-    async AudioDefaultDeviceChange();
-
     async NetworkLinkTypeChange(uint32_t type);
 
     // Re-create the rendering stack for a device reset.
@@ -807,8 +805,6 @@ child:
     async ShareCodeCoverageMutex(CrossProcessMutexHandle handle);
     async FlushCodeCoverageCounters() returns (bool unused);
 
-    async GetMemoryUniqueSetSize() returns (int64_t uss);
-
     /*
      * IPC message to enable the input event queue on the main thread of the
      * content process.
@@ -866,7 +862,7 @@ child:
      * IPC message to suspend consuming the pending events in the input event
      * queue.
      */
-    prio(input) async SuspendInputEventQueue();
+    [Priority=input] async SuspendInputEventQueue();
 
     /*
      * IPC message to propagate dynamic scalar definitions, added after the
@@ -1013,7 +1009,7 @@ parent:
     async AccumulateMixedContentHSTS(nsIURI aURI, bool aActive,
                                      OriginAttributes aOriginAttributes);
 
-    nested(inside_cpow) async PHal();
+    [Nested=inside_cpow] async PHal();
 
     async PHeapSnapshotTempFileHelper();
 
@@ -1153,9 +1149,9 @@ parent:
 
     // 'Play', 'Beep' and 'PlayEventSound' are the only nsISound methods used in
     // the content process.
-    async PlaySound(nsIURI aURL) compress;
-    async Beep() compress;
-    async PlayEventSound(uint32_t aEventId) compress;
+    [Compress] async PlaySound(nsIURI aURL);
+    [Compress] async Beep();
+    [Compress] async PlayEventSound(uint32_t aEventId);
 
     sync GetIconForExtension(nsCString aFileExt, uint32_t aIconSize)
         returns (uint8_t[] bits);
@@ -1725,6 +1721,7 @@ parent:
                              nsIPrincipal aTriggeringPrincipal,
                              nsIPrincipal aLoadingPrincipal,
                              OriginAttributes aOriginAttributes,
+                             uint64_t aInnerWindowId,
                              nsID? aAgentClusterId)
       returns (BlobURLDataRequestResult aResult);
 
@@ -1739,7 +1736,7 @@ parent:
         MaybeDiscardedBrowsingContext aContext);
 
     async RemoveFromSessionHistory(
-        MaybeDiscardedBrowsingContext aContext);
+        MaybeDiscardedBrowsingContext aContext, nsID changeID);
 
 both:
     async ScriptError(nsString message, nsString sourceName, nsString sourceLine,
@@ -1752,6 +1749,7 @@ both:
      * another process. Child frame will send data to its ContentParent which
      * will then identify the ContentParent for the innerWindowId and pass
      * the data to the correct process.
+     * aData must be non-null.
      */
     async ReportFrameTimingData(uint64_t innerWindowId, nsString entryName,
                                 nsString initiatorType,
@@ -1802,7 +1800,8 @@ both:
                       bool aTrustedCaller);
     async WindowFocus(MaybeDiscardedBrowsingContext aContext,
                       CallerType aCallerType, uint64_t aActionId);
-    async WindowBlur(MaybeDiscardedBrowsingContext aContext);
+    async WindowBlur(MaybeDiscardedBrowsingContext aContext,
+                     CallerType aCallerType);
     async RaiseWindow(MaybeDiscardedBrowsingContext aContext, CallerType aCallerType, uint64_t aActionId);
     async ClearFocus(MaybeDiscardedBrowsingContext aContext);
     async SetFocusedBrowsingContext(MaybeDiscardedBrowsingContext aContext);

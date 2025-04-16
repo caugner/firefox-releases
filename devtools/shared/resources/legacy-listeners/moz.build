@@ -4,6 +4,7 @@
 
 DevToolsModules(
     "cache-storage.js",
+    "cloned-content-process-messages.js",
     "console-messages.js",
     "cookie.js",
     "css-changes.js",
@@ -16,9 +17,11 @@ DevToolsModules(
     "network-events.js",
     "platform-messages.js",
     "root-node.js",
+    "server-sent-events.js",
     "session-storage.js",
     "source.js",
     "storage-utils.js",
     "stylesheet.js",
+    "thread-states.js",
     "websocket.js",
 )

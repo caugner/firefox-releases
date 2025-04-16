@@ -40,7 +40,6 @@
 #include "nsIObjectLoadingContent.h"
 #include "nsLayoutUtils.h"
 #include "FrameLayerBuilder.h"
-#include "nsPluginFrame.h"
 #include "nsContentUtils.h"
 #include "nsServiceManagerUtils.h"
 #include "nsQueryObject.h"
@@ -52,6 +51,7 @@
 #include "mozilla/layers/WebRenderUserData.h"
 #include "mozilla/layers/WebRenderScrollData.h"
 #include "mozilla/layers/RenderRootStateManager.h"
+#include "mozilla/ProfilerLabels.h"
 
 using namespace mozilla;
 using namespace mozilla::dom;
@@ -672,11 +672,12 @@ AspectRatio nsSubDocumentFrame::GetIntrinsicRatio() const {
 LogicalSize nsSubDocumentFrame::ComputeAutoSize(
     gfxContext* aRenderingContext, WritingMode aWM, const LogicalSize& aCBSize,
     nscoord aAvailableISize, const LogicalSize& aMargin,
-    const LogicalSize& aBorderPadding, ComputeSizeFlags aFlags) {
+    const LogicalSize& aBorderPadding, const StyleSizeOverrides& aSizeOverrides,
+    ComputeSizeFlags aFlags) {
   if (!IsInline()) {
     return nsIFrame::ComputeAutoSize(aRenderingContext, aWM, aCBSize,
                                      aAvailableISize, aMargin, aBorderPadding,
-                                     aFlags);
+                                     aSizeOverrides, aFlags);
   }
 
   const WritingMode wm = GetWritingMode();
@@ -688,10 +689,11 @@ LogicalSize nsSubDocumentFrame::ComputeAutoSize(
 nsIFrame::SizeComputationResult nsSubDocumentFrame::ComputeSize(
     gfxContext* aRenderingContext, WritingMode aWM, const LogicalSize& aCBSize,
     nscoord aAvailableISize, const LogicalSize& aMargin,
-    const LogicalSize& aBorderPadding, ComputeSizeFlags aFlags) {
+    const LogicalSize& aBorderPadding, const StyleSizeOverrides& aSizeOverrides,
+    ComputeSizeFlags aFlags) {
   return {ComputeSizeWithIntrinsicDimensions(
               aRenderingContext, aWM, GetIntrinsicSize(), GetAspectRatio(),
-              aCBSize, aMargin, aBorderPadding, aFlags),
+              aCBSize, aMargin, aBorderPadding, aSizeOverrides, aFlags),
           AspectRatioUsage::None};
 }
 
@@ -972,7 +974,6 @@ static CallState BeginSwapDocShellsForDocument(Document& aDocument) {
       ::DestroyDisplayItemDataForFrames(rootFrame);
     }
   }
-  aDocument.EnumerateActivityObservers(nsPluginFrame::BeginSwapDocShells);
   aDocument.EnumerateSubDocuments(BeginSwapDocShellsForDocument);
   return CallState::Continue;
 }
@@ -1056,7 +1057,6 @@ static CallState EndSwapDocShellsForDocument(Document& aDocument) {
     }
   }
 
-  aDocument.EnumerateActivityObservers(nsPluginFrame::EndSwapDocShells);
   aDocument.EnumerateSubDocuments(EndSwapDocShellsForDocument);
   return CallState::Continue;
 }

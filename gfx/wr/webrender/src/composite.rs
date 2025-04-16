@@ -4,6 +4,7 @@
 
 use api::{ColorF, YuvColorSpace, YuvFormat, ImageRendering, ExternalImageId, ImageBufferKind};
 use api::units::*;
+use api::ColorDepth;
 use crate::batch::{resolve_image};
 use euclid::Transform3D;
 use crate::gpu_cache::GpuCache;
@@ -14,7 +15,7 @@ use crate::prim_store::DeferredResolve;
 use crate::resource_cache::{ImageRequest, ResourceCache};
 use crate::util::Preallocator;
 use crate::tile_cache::PictureCacheDebugInfo;
-use std::{ops, u64};
+use std::{ops, u64, os::raw::c_void};
 
 /*
  Types and definitions related to compositing picture cache tiles
@@ -280,8 +281,8 @@ pub enum CompositorKind {
     Native {
         /// Maximum dirty rects per compositor surface.
         max_update_rects: usize,
-        /// The virtual surface size used by underlying platform.
-        virtual_surface_size: i32,
+        /// The capabilities of the underlying platform.
+        capabilities: CompositorCapabilities,
     },
 }
 
@@ -299,7 +300,7 @@ impl CompositorKind {
     pub fn get_virtual_surface_size(&self) -> i32 {
         match self {
             CompositorKind::Draw { .. } => 0,
-            CompositorKind::Native { virtual_surface_size, .. } => *virtual_surface_size,
+            CompositorKind::Native { capabilities, .. } => capabilities.virtual_surface_size,
         }
     }
 
@@ -309,6 +310,16 @@ impl CompositorKind {
         match self {
             CompositorKind::Draw { .. } => false,
             CompositorKind::Native { .. } => true,
+        }
+    }
+
+    pub fn should_redraw_on_invalidation(&self) -> bool {
+        match self {
+            CompositorKind::Draw { max_partial_present_rects, .. } => {
+                // When partial present is enabled, we need to force redraw.
+                *max_partial_present_rects > 0
+            }
+            CompositorKind::Native { capabilities, .. } => capabilities.redraw_on_invalidation,
         }
     }
 }
@@ -905,8 +916,27 @@ pub struct NativeSurfaceInfo {
 }
 
 #[repr(C)]
+#[derive(Debug, Copy, Clone, PartialEq)]
+#[cfg_attr(feature = "capture", derive(Serialize))]
+#[cfg_attr(feature = "replay", derive(Deserialize))]
 pub struct CompositorCapabilities {
+    /// The virtual surface size used by the underlying platform.
     pub virtual_surface_size: i32,
+    /// Whether the compositor requires redrawing on invalidation.
+    pub redraw_on_invalidation: bool,
+}
+
+impl Default for CompositorCapabilities {
+    fn default() -> Self {
+        // The default set of compositor capabilities for a given platform.
+        // These should only be modified if a compositor diverges specifically
+        // from the default behavior so that compositors don't have to track
+        // which changes to this structure unless necessary.
+        CompositorCapabilities {
+            virtual_surface_size: 0,
+            redraw_on_invalidation: false,
+        }
+    }
 }
 
 /// The transform type to apply to Compositor surfaces.
@@ -1055,6 +1085,56 @@ pub trait Compositor {
     /// specify what features a compositor supports, depending on the
     /// underlying platform
     fn get_capabilities(&self) -> CompositorCapabilities;
+}
+
+/// Information about the underlying data buffer of a mapped tile.
+#[repr(C)]
+#[derive(Copy, Clone)]
+pub struct MappedTileInfo {
+    pub data: *mut c_void,
+    pub stride: i32,
+}
+
+/// Descriptor for a locked surface that will be directly composited by SWGL.
+#[repr(C)]
+pub struct SWGLCompositeSurfaceInfo {
+    /// The number of YUV planes in the surface. 0 indicates non-YUV BGRA.
+    /// 1 is interleaved YUV. 2 is NV12. 3 is planar YUV.
+    pub yuv_planes: u32,
+    /// Textures for planes of the surface, or 0 if not applicable.
+    pub textures: [u32; 3],
+    /// Color space of surface if using a YUV format.
+    pub color_space: YuvColorSpace,
+    /// Color depth of surface if using a YUV format.
+    pub color_depth: ColorDepth,
+    /// The actual source surface size before transformation.
+    pub size: DeviceIntSize,
+}
+
+/// A Compositor variant that supports mapping tiles into CPU memory.
+pub trait MappableCompositor: Compositor {
+    /// Map a tile's underlying buffer so it can be used as the backing for
+    /// a SWGL framebuffer. This is intended to be a replacement for 'bind'
+    /// in any compositors that intend to directly interoperate with SWGL
+    /// while supporting some form of native layers.
+    fn map_tile(
+        &mut self,
+        id: NativeTileId,
+        dirty_rect: DeviceIntRect,
+        valid_rect: DeviceIntRect,
+    ) -> Option<MappedTileInfo>;
+
+    /// Unmap a tile that was was previously mapped via map_tile to signal
+    /// that SWGL is done rendering to the buffer.
+    fn unmap_tile(&mut self);
+
+    fn lock_composite_surface(
+        &mut self,
+        ctx: *mut c_void,
+        external_image_id: ExternalImageId,
+        composite_info: *mut SWGLCompositeSurfaceInfo,
+    ) -> bool;
+    fn unlock_composite_surface(&mut self, ctx: *mut c_void, external_image_id: ExternalImageId);
 }
 
 /// Defines an interface to a non-native (application-level) Compositor which handles

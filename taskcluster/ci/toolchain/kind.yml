@@ -28,6 +28,7 @@ jobs-from:
     - cctools-port.yml
     - clang-tidy.yml
     - clang.yml
+    - compiler-rt.yml
     - dump-syms.yml
     - fix-stacks.yml
     - gcc.yml
@@ -35,6 +36,7 @@ jobs-from:
     - gn.yml
     - grcov.yml
     - llvm-symbolizer.yml
+    - macos-sdk.yml
     - mingw.yml
     - minidump_stackwalk.yml
     - misc.yml
@@ -44,4 +46,5 @@ jobs-from:
     - rust.yml
     - rust-size.yml
     - sccache.yml
+    - sysroot.yml
     - dist-toolchains.yml

@@ -52,7 +52,7 @@ add_task(async function test_valid_extensions_do_nothing() {
     "Should have installed the engine"
   );
 
-  await Services.search.checkWebExtensionEngines();
+  await Services.search.runBackgroundChecks();
 
   let scalars = TelemetryTestUtils.getProcessScalars("parent", true, true);
 
@@ -66,7 +66,7 @@ add_task(async function test_different_name() {
 
   engine.wrappedJSObject._name = "Example Test";
 
-  await Services.search.checkWebExtensionEngines();
+  await Services.search.runBackgroundChecks();
 
   TelemetryTestUtils.assertKeyedScalar(
     TelemetryTestUtils.getProcessScalars("parent", true, true),
@@ -89,7 +89,7 @@ add_task(async function test_different_url() {
     search_url_get_params: "?q={searchTerms}",
   });
 
-  await Services.search.checkWebExtensionEngines();
+  await Services.search.runBackgroundChecks();
 
   TelemetryTestUtils.assertKeyedScalar(
     TelemetryTestUtils.getProcessScalars("parent", true, true),
@@ -116,7 +116,7 @@ add_task(async function test_extension_no_longer_specifies_engine() {
 
   await extension.upgrade(extensionInfo);
 
-  await Services.search.checkWebExtensionEngines();
+  await Services.search.runBackgroundChecks();
 
   TelemetryTestUtils.assertKeyedScalar(
     TelemetryTestUtils.getProcessScalars("parent", true, true),
@@ -134,7 +134,7 @@ add_task(async function test_disabled_extension() {
   // stubbed removeEngine.
   await extension.addon.disable();
 
-  await Services.search.checkWebExtensionEngines();
+  await Services.search.runBackgroundChecks();
 
   TelemetryTestUtils.assertKeyedScalar(
     TelemetryTestUtils.getProcessScalars("parent", true, true),
@@ -156,7 +156,7 @@ add_task(async function test_missing_extension() {
   // stubbed removeEngine.
   await extension.unload();
 
-  await Services.search.checkWebExtensionEngines();
+  await Services.search.runBackgroundChecks();
 
   TelemetryTestUtils.assertKeyedScalar(
     TelemetryTestUtils.getProcessScalars("parent", true, true),
@@ -173,7 +173,7 @@ add_task(async function test_user_engine() {
 
   await Services.search.addUserEngine("test", "https://example.com/", "fake");
 
-  await Services.search.checkWebExtensionEngines();
+  await Services.search.runBackgroundChecks();
   let scalars = TelemetryTestUtils.getProcessScalars("parent", true, true);
 
   Assert.deepEqual(
@@ -196,7 +196,7 @@ add_task(async function test_policy_engine() {
     },
   });
 
-  await Services.search.checkWebExtensionEngines();
+  await Services.search.runBackgroundChecks();
   let scalars = TelemetryTestUtils.getProcessScalars("parent", true, true);
 
   Assert.deepEqual(

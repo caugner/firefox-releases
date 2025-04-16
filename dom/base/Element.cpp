@@ -45,6 +45,7 @@
 #include "mozilla/LookAndFeel.h"
 #include "mozilla/MouseEvents.h"
 #include "mozilla/NotNull.h"
+#include "mozilla/PointerLockManager.h"
 #include "mozilla/PresShell.h"
 #include "mozilla/PresShellForwards.h"
 #include "mozilla/ReflowOutput.h"
@@ -1232,8 +1233,8 @@ already_AddRefed<ShadowRoot> Element::AttachShadowWithoutNameChecks(
    */
   SetShadowRoot(shadowRoot);
 
-  // Dispatch a "shadowrootattached" event for devtools.
-  {
+  // Dispatch a "shadowrootattached" event for devtools if needed.
+  if (MOZ_UNLIKELY(nim->GetDocument()->ShadowRootAttachedEventEnabled())) {
     AsyncEventDispatcher* dispatcher = new AsyncEventDispatcher(
         this, u"shadowrootattached"_ns, CanBubble::eYes,
         ChromeOnlyDispatch::eYes, Composed::eYes);
@@ -1830,7 +1831,7 @@ void Element::UnbindFromTree(bool aNullParent) {
   Document* document = GetComposedDoc();
 
   if (HasPointerLock()) {
-    Document::UnlockPointer();
+    PointerLockManager::Unlock();
   }
   if (mState.HasState(NS_EVENT_STATE_FULLSCREEN)) {
     // The element being removed is an ancestor of the fullscreen element,
@@ -3339,7 +3340,7 @@ already_AddRefed<Promise> Element::RequestFullscreen(CallerType aCallerType,
 }
 
 void Element::RequestPointerLock(CallerType aCallerType) {
-  OwnerDoc()->RequestPointerLock(this, aCallerType);
+  PointerLockManager::RequestLock(this, aCallerType);
 }
 
 already_AddRefed<Flex> Element::GetAsFlexContainer() {
@@ -3953,13 +3954,13 @@ void Element::RegisterIntersectionObserver(DOMIntersectionObserver* aObserver) {
     return;
   }
 
-  observers->LookupForAdd(aObserver).OrInsert([]() {
+  observers->WithEntryHandle(aObserver, [](auto&& entry) {
     // Value can be:
     //   -2:   Makes sure next calculated threshold always differs, leading to a
     //         notification task being scheduled.
     //   -1:   Non-intersecting.
     //   >= 0: Intersecting, valid index of aObserver->mThresholds.
-    return eUninitialized;
+    entry.OrInsert(eUninitialized);
   });
 }
 

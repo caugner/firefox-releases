@@ -75,6 +75,9 @@ class NotNull;
     NS_WARNING(str.get());                                                   \
   } while (0)
 
+#define QM_LOG_TEST() MOZ_LOG_TEST(GetQuotaManagerLogger(), LogLevel::Info)
+#define QM_LOG(_args) MOZ_LOG(GetQuotaManagerLogger(), LogLevel::Info, _args)
+
 #define UNKNOWN_FILE_WARNING(_leafName)                                       \
   NS_WARNING(                                                                 \
       nsPrintfCString("Something (%s) in the directory that doesn't belong!", \
@@ -610,7 +613,7 @@ class NotNull;
 // through unwrap/unwrapErr/propagateErr, so that this does not prevent NRVO or
 // tail call optimizations when possible.
 #define QM_TRY_RETURN_PROPAGATE_ERR(ns, tryResult, expr) \
-  auto tryResult = (expr);                               \
+  auto tryResult = ::mozilla::ToResult(expr);            \
   if (MOZ_UNLIKELY(tryResult.isErr())) {                 \
     ns::QM_HANDLE_ERROR(expr, tryResult.inspectErr());   \
   }                                                      \
@@ -619,7 +622,7 @@ class NotNull;
 // Handles the four arguments case when a custom return value needs to be
 // returned
 #define QM_TRY_RETURN_CUSTOM_RET_VAL(ns, tryResult, expr, customRetVal) \
-  auto tryResult = (expr);                                              \
+  auto tryResult = ::mozilla::ToResult(expr);                           \
   if (MOZ_UNLIKELY(tryResult.isErr())) {                                \
     auto tryTempError MOZ_MAYBE_UNUSED = tryResult.unwrapErr();         \
     ns::QM_HANDLE_ERROR(expr, tryResult.inspectErr());                  \
@@ -631,7 +634,7 @@ class NotNull;
 // before a custom return value is returned
 #define QM_TRY_RETURN_CUSTOM_RET_VAL_WITH_CLEANUP(ns, tryResult, expr,   \
                                                   customRetVal, cleanup) \
-  auto tryResult = (expr);                                               \
+  auto tryResult = ::mozilla::ToResult(expr);                            \
   if (MOZ_UNLIKELY(tryResult.isErr())) {                                 \
     auto tryTempError = tryResult.unwrapErr();                           \
     ns::QM_HANDLE_ERROR(expr, tryTempError);                             \
@@ -1218,6 +1221,45 @@ auto ReduceEachFileAtomicCancelable(nsIFile& aDirectory,
                                                  GetNextFile));
       },
       std::move(aInit), aBody);
+}
+
+constexpr bool IsDatabaseCorruptionError(const nsresult aRv) {
+  return aRv == NS_ERROR_FILE_CORRUPTED || aRv == NS_ERROR_STORAGE_IOERR;
+}
+
+template <auto SuccessValue, typename V = decltype(SuccessValue)>
+auto FilterDatabaseCorruptionError(const nsresult aValue)
+    -> Result<V, nsresult> {
+  if (IsDatabaseCorruptionError(aValue)) {
+    return V{SuccessValue};
+  }
+  return Err(aValue);
+}
+
+template <typename Func>
+auto CallWithDelayedRetriesIfAccessDenied(Func&& aFunc, uint32_t aMaxRetries,
+                                          uint32_t aDelayMs)
+    -> Result<typename std::result_of_t<Func()>::ok_type, nsresult> {
+  uint32_t retries = 0;
+
+  while (true) {
+    auto result = std::forward<Func>(aFunc)();
+
+    if (result.isOk()) {
+      return result;
+    }
+
+    if (result.inspectErr() != NS_ERROR_FILE_IS_LOCKED &&
+        result.inspectErr() != NS_ERROR_FILE_ACCESS_DENIED) {
+      return result;
+    }
+
+    if (retries++ >= aMaxRetries) {
+      return result;
+    }
+
+    PR_Sleep(PR_MillisecondsToInterval(aDelayMs));
+  }
 }
 
 }  // namespace quota

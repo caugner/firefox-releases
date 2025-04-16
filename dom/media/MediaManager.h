@@ -174,6 +174,11 @@ class MediaManager final : public nsIMediaManagerService, public nsIObserver {
   media::Parent<media::NonE10s>* GetNonE10sParent();
   MediaEngine* GetBackend();
 
+  // If the window has not been destroyed, then return the
+  // GetUserMediaWindowListener for this window.
+  // If the window has been destroyed, then return null.
+  RefPtr<GetUserMediaWindowListener> GetOrMakeWindowListener(
+      nsPIDOMWindowInner* aWindow);
   WindowTable* GetActiveWindows() {
     MOZ_ASSERT(NS_IsMainThread());
     return &mActiveWindows;
@@ -302,7 +307,7 @@ class MediaManager final : public nsIMediaManagerService, public nsIObserver {
       const RefPtr<MediaDeviceSetRefCnt>& aOutDevices);
 
   RefPtr<MgrPromise> EnumerateDevicesImpl(
-      uint64_t aWindowId, dom::MediaSourceEnum aVideoInputType,
+      nsPIDOMWindowInner* aWindow, dom::MediaSourceEnum aVideoInputType,
       dom::MediaSourceEnum aAudioInputType, MediaSinkEnum aAudioOutputType,
       DeviceEnumerationType aVideoInputEnumType,
       DeviceEnumerationType aAudioInputEnumType, bool aForceNoPermRequest,

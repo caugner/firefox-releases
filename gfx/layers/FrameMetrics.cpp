@@ -28,7 +28,7 @@ std::ostream& operator<<(std::ostream& aStream, const FrameMetrics& aMetrics) {
   }
   aStream << "] [dp=" << aMetrics.GetDisplayPort()
           << "] [cdp=" << aMetrics.GetCriticalDisplayPort()
-          << "] [rcs=" << aMetrics.GetRootCompositionSize()
+          << "] [rcs=" << aMetrics.GetBoundingCompositionSize()
           << "] [v=" << aMetrics.GetLayoutViewport()
           << nsPrintfCString("] [z=(ld=%.3f r=%.3f",
                              aMetrics.GetDevPixelsPerCSSPixel().scale,
@@ -123,7 +123,7 @@ void FrameMetrics::KeepLayoutViewportEnclosingVisualViewport(
   aLayoutViewport = aLayoutViewport.MoveInsideAndClamp(aScrollableRect);
 }
 
-void FrameMetrics::ApplyScrollUpdateFrom(const ScrollPositionUpdate& aUpdate) {
+bool FrameMetrics::ApplyScrollUpdateFrom(const ScrollPositionUpdate& aUpdate) {
   // In applying a main-thread scroll update, try to preserve the relative
   // offset between the visual and layout viewports.
   CSSPoint relativeOffset = GetVisualScrollOffset() - GetLayoutScrollOffset();
@@ -131,8 +131,10 @@ void FrameMetrics::ApplyScrollUpdateFrom(const ScrollPositionUpdate& aUpdate) {
   // We need to set the two offsets together, otherwise a subsequent
   // RecalculateLayoutViewportOffset() could see divergent layout and
   // visual offsets.
-  SetLayoutScrollOffset(aUpdate.GetDestination());
-  ClampAndSetVisualScrollOffset(aUpdate.GetDestination() + relativeOffset);
+  bool offsetChanged = SetLayoutScrollOffset(aUpdate.GetDestination());
+  offsetChanged |=
+      ClampAndSetVisualScrollOffset(aUpdate.GetDestination() + relativeOffset);
+  return offsetChanged;
 }
 
 CSSPoint FrameMetrics::ApplyRelativeScrollUpdateFrom(

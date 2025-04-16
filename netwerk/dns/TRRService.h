@@ -11,7 +11,9 @@
 #include "nsIObserver.h"
 #include "nsITimer.h"
 #include "nsWeakReference.h"
+#include "ODoHService.h"
 #include "TRRServiceBase.h"
+#include "nsICaptivePortalService.h"
 
 class nsDNSService;
 class nsIPrefBranch;
@@ -37,8 +39,8 @@ class TRRService : public TRRServiceBase,
   TRRService();
   nsresult Init();
   nsresult Start();
-  bool Enabled(nsIRequest::TRRMode aMode = nsIRequest::TRR_FIRST_MODE);
-  bool IsConfirmed() { return mConfirmationState == CONFIRM_OK; }
+  bool Enabled(nsIRequest::TRRMode aRequestMode = nsIRequest::TRR_DEFAULT_MODE);
+  bool IsConfirmed() { return mConfirmation.mState == CONFIRM_OK; }
 
   bool DisableIPv6() { return mDisableIPv6; }
   nsresult GetURI(nsACString& result);
@@ -47,7 +49,8 @@ class TRRService : public TRRServiceBase,
 
   LookupStatus CompleteLookup(nsHostRecord*, nsresult, mozilla::net::AddrInfo*,
                               bool pb, const nsACString& aOriginSuffix,
-                              nsHostRecord::TRRSkippedReason aReason) override;
+                              nsHostRecord::TRRSkippedReason aReason,
+                              TRR* aTrrRequest) override;
   LookupStatus CompleteLookupByType(nsHostRecord*, nsresult,
                                     mozilla::net::TypeRecordResultType&,
                                     uint32_t, bool pb) override;
@@ -59,8 +62,7 @@ class TRRService : public TRRServiceBase,
   bool IsExcludedFromTRR(const nsACString& aHost);
 
   bool MaybeBootstrap(const nsACString& possible, nsACString& result);
-  enum TrrOkay { OKAY_NORMAL = 0, OKAY_TIMEOUT = 1, OKAY_BAD = 2 };
-  void TRRIsOkay(enum TrrOkay aReason);
+  void TRRIsOkay(nsresult aChannelStatus);
   bool ParentalControlEnabled() const { return mParentalControlEnabled; }
 
   nsresult DispatchTRRRequest(TRR* aTrrRequest);
@@ -75,6 +77,7 @@ class TRRService : public TRRServiceBase,
 
   friend class TRRServiceChild;
   friend class TRRServiceParent;
+  friend class ODoHService;
   static void AddObserver(nsIObserver* aObserver,
                           nsIObserverService* aObserverService = nullptr);
   static bool CheckCaptivePortalIsPassed();
@@ -83,8 +86,8 @@ class TRRService : public TRRServiceBase,
 
   nsresult ReadPrefs(const char* name);
   void GetPrefBranch(nsIPrefBranch** result);
-  void MaybeConfirm();
-  void MaybeConfirm_locked();
+  void MaybeConfirm(const char* aReason);
+  void MaybeConfirm_locked(const char* aReason);
   friend class ::nsDNSService;
   void SetDetectedTrrURI(const nsACString& aURI);
 
@@ -96,6 +99,7 @@ class TRRService : public TRRServiceBase,
 
   nsresult DispatchTRRRequestInternal(TRR* aTrrRequest, bool aWithLock);
   already_AddRefed<nsIThread> TRRThread_locked();
+  already_AddRefed<nsIThread> MainThreadOrTRRThread(bool aWithLock = true);
 
   // This method will process the URI and try to set mPrivateURI to that value.
   // Will return true if performed the change (if the value was different)
@@ -136,12 +140,61 @@ class TRRService : public TRRServiceBase,
     CONFIRM_OK = 2,
     CONFIRM_FAILED = 3
   };
-  Atomic<ConfirmationState, Relaxed> mConfirmationState;
-  RefPtr<TRR> mConfirmer;
-  nsCOMPtr<nsITimer> mRetryConfirmTimer;
-  uint32_t mRetryConfirmInterval;  // milliseconds until retry
-  Atomic<uint32_t, Relaxed> mTRRFailures;
+
+  class ConfirmationContext {
+   public:
+    static const size_t RESULTS_SIZE = 32;
+
+    Atomic<ConfirmationState, Relaxed> mState;
+    RefPtr<TRR> mTask;
+    nsCOMPtr<nsITimer> mTimer;
+    uint32_t mRetryInterval = 125;  // milliseconds until retry
+    // The number of TRR requests that failed in a row.
+    Atomic<uint32_t, Relaxed> mTRRFailures;
+
+    // This buffer holds consecutive TRR failures reported by calling
+    // TRRIsOkay(). It is only meant for reporting event telemetry.
+    char mFailureReasons[RESULTS_SIZE] = {0};
+
+    // The number of confirmation retries.
+    uint32_t mAttemptCount = 0;
+
+    // The results of past confirmation attempts.
+    // This is circular buffer ending at mAttemptCount.
+    char mResults[RESULTS_SIZE] = {0};
+
+    // Time when first confirmation started. Needed so we can
+    // record the time from start to confirmed.
+    TimeStamp mFirstRequestTime;
+    // The network ID at the start of the last confirmation attempt
+    nsCString mNetworkId;
+    // Captive portal status at the time of recording.
+    int32_t mCaptivePortalStatus = nsICaptivePortalService::UNKNOWN;
+
+    // The reason the confirmation context changed.
+    nsCString mContextChangeReason;
+
+    // What triggered the confirmation
+    nsCString mTrigger;
+
+    // String representation of consecutive failed lookups that triggered
+    // confirmation.
+    nsCString mFailedLookups;
+
+    // Called when a confirmation completes successfully or when the
+    // confirmation context changes.
+    void RecordEvent(const char* aReason);
+
+    // Called when a confirmation request is completed. The status is recorded
+    // in the results.
+    void RequestCompleted(nsresult aLookupStatus, nsresult aChannelStatus);
+  };
+
+  ConfirmationContext mConfirmation;
+
   bool mParentalControlEnabled;
+  RefPtr<ODoHService> mODoHService;
+  nsCOMPtr<nsINetworkLinkService> mLinkService;
 };
 
 extern TRRService* gTRRService;

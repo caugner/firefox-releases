@@ -278,24 +278,6 @@ browser.engagement:
     record_in_processes:
       - 'main'
 
-  restored_pinned_tabs_count:
-    bug_numbers:
-      - 1373728
-      - 1451475
-    description: >
-      The count of the number of pinned tabs that were restored.
-    expires: '67'
-    kind: uint
-    notification_emails:
-      - chutten@mozilla.com
-      - jrediger@mozilla.com
-    release_channel_collection: opt-out
-    products:
-      - 'firefox'
-      - 'fennec'
-    record_in_processes:
-      - 'main'
-
   active_ticks:
     bug_numbers:
       - 1376942
@@ -1253,11 +1235,12 @@ security:
       - 1265472
       - 1558870
       - 1630155
+      - 1689269
     description: >
       Counts of how often Web Authentication was used in this session, keyed
       by authenticator protocol, method and result. Currently: U2FRegisterFinish,
       U2FRegisterAbort, U2FSignFinish, U2FSignAbort.
-    expires: "88"
+    expires: "100"
     kind: uint
     keyed: true
     notification_emails:
@@ -1897,6 +1880,45 @@ os.environment:
     operating_systems:
       - "windows"
 
+  launch_method:
+    bug_numbers:
+      - 1685213
+    description: >
+      Records how Firefox was started on Windows.
+      Currently will be one of "Desktop", "StartMenu" (including pins),
+      "Taskbar", "OtherShortcut", or "Other"
+    expires: "94"
+    kind: string
+    notification_emails:
+      - application-update-telemetry-alerts@mozilla.com
+      - agashlin@mozilla.com
+      - shong@mozilla.com
+    release_channel_collection: opt-out
+    products:
+      - firefox
+    record_in_processes:
+      - main
+    operating_systems:
+      - windows
+
+  is_taskbar_pinned:
+    bug_numbers:
+      - 1685213
+    description: Whether this app was pinned to taskbar on startup
+    expires: "94"
+    kind: boolean
+    notification_emails:
+      - application-update-telemetry-alerts@mozilla.com
+      - agashlin@mozilla.com
+      - shong@mozilla.com
+    release_channel_collection: opt-out
+    products:
+      - firefox
+    record_in_processes:
+      - main
+    operating_systems:
+      - windows
+
 pictureinpicture:
   opened_method:
     bug_numbers:
@@ -2242,37 +2264,36 @@ media:
     record_in_processes:
       - 'main'
 
-avif:
-  dav1d_decode_error:
+  decode_error_per_mime_type:
     bug_numbers:
-      - 1670827
+      - 1688775
     description: >
-      Image-decode Error from dav1d decoder
+      Count the number of times the media with a specific mime type (Eg. audio/vorbis, that would be used as the key) encounters a decode error during playback.
+    expires: never
     kind: uint
-    expires: "never"
+    keyed: true
     notification_emails:
-      - cchang@mozilla.com
-      - jbauman@mozilla.com
+      - alwu@mozilla.com
+      - bvandyk@mozilla.com
+    release_channel_collection: opt-out
     products:
       - 'firefox'
-      - 'geckoview_streaming'
     record_in_processes:
-      - 'main'
       - 'content'
 
-  aom_decode_error:
+  wmf_process_usage:
     bug_numbers:
-      - 1670827
+      - 1690372
     description: >
-      Image-decode Error from aom decoder
-    kind: uint
-    expires: "never"
+      Record whether the WMF decoder module is used in content or chrome process.
+    expires: "93"
+    kind: boolean
     notification_emails:
-      - cchang@mozilla.com
-      - jbauman@mozilla.com
+      - alwu@mozilla.com
+      - bvandyk@mozilla.com
+    release_channel_collection: opt-out
     products:
       - 'firefox'
-      - 'geckoview_streaming'
     record_in_processes:
       - 'main'
       - 'content'
@@ -2345,6 +2366,50 @@ dom.contentprocess:
     products:
       - 'firefox'
       - 'fennec'
+    record_in_processes:
+      - 'main'
+  crash_tab_ui_presented:
+    bug_numbers:
+      - 1676943
+    description: >
+      The number of times the tab crashed page has been shown.
+    expires: "98"
+    kind: uint
+    notification_emails:
+      - nlayzell@mozilla.com
+    release_channel_collection: opt-out
+    products:
+      - 'firefox'
+    record_in_processes:
+      - 'main'
+  crash_subframe_ui_presented:
+    bug_numbers:
+      - 1676943
+    description: >  
+      The number of times the subframe crash UI is shown to the user. This
+      only triggers when a tab containing the subframe is switched to.
+    expires: "98"
+    kind: uint
+    notification_emails:
+      - nlayzell@mozilla.com
+    release_channel_collection: opt-out
+    products:
+      - 'firefox'
+    record_in_processes:
+      - 'main'
+  # Note that the unsubmitted notification is currently only enabled on Nightly builds
+  unsubmitted_ui_presented:
+    bug_numbers:
+      - 1676943
+    description: >
+      The number of times the notification has been shown that indicates
+      that there are unsubmitted crash reports.
+    expires: "98"
+    kind: uint
+    notification_emails:
+      - nlayzell@mozilla.com
+    products:
+      - 'firefox'
     record_in_processes:
       - 'main'
 
@@ -3198,40 +3263,6 @@ telemetry:
     record_in_processes:
       - 'all'
 
-  profile_directory_scans:
-    bug_numbers:
-      - 1458574
-    description: >
-      The number of times a profile directory scan was initiated in ProfileAge.jsm
-    expires: "65"
-    kind: uint
-    notification_emails:
-      - jrediger@mozilla.com
-      - telemetry-client-dev@mozilla.com
-    release_channel_collection: opt-out
-    products:
-      - 'firefox'
-      - 'fennec'
-    record_in_processes:
-      - 'all'
-
-  profile_directory_scan_date:
-    bug_numbers:
-      - 1466518
-    description: >
-      The date of the profile scan to determine the profile creation date from the oldest file, in days since UNIX epoch.
-    expires: "65"
-    kind: uint
-    notification_emails:
-      - jrediger@mozilla.com
-      - telemetry-client-dev@mozilla.com
-    release_channel_collection: opt-out
-    products:
-      - 'firefox'
-      - 'fennec'
-    record_in_processes:
-      - 'main'
-
   data_upload_optin:
     bug_numbers:
       - 1445921
@@ -3329,6 +3360,52 @@ telemetry:
     kind: boolean
     notification_emails:
       - sync-team@mozilla.com
+    products:
+      - 'firefox'
+    release_channel_collection: opt-out
+    record_in_processes:
+      - main
+
+  state_file_save_errors:
+    bug_numbers:
+      - 1689438
+    description: >
+      How many times we errored out trying to save state.json
+    expires: "90"
+    kind: uint
+    notification_emails:
+      - chutten@mozilla.com
+    products:
+      - 'firefox'
+    release_channel_collection: opt-out
+    record_in_processes:
+      - main
+
+  generated_new_client_id:
+    bug_numbers:
+      - 1689438
+    description: >
+      Whether we generated a new client id this subsession.
+    expires: "90"
+    kind: boolean
+    notification_emails:
+      - chutten@mozilla.com
+    products:
+      - 'firefox'
+    release_channel_collection: opt-out
+    record_in_processes:
+      - main
+
+  loaded_client_id_doesnt_match_pref:
+    bug_numbers:
+      - 1689438
+    description: >
+      How often we loaded a client_id from disk that doesn't match
+      what's cached in the pref.
+    expires: "90"
+    kind: uint
+    notification_emails:
+      - chutten@mozilla.com
     products:
       - 'firefox'
     release_channel_collection: opt-out
@@ -3533,6 +3610,7 @@ gfx.hdr:
   windows_display_colorspace_bitfield:
     bug_numbers:
       - 1514840
+      - 1690597
     description: >
       A bitfield representation of the available DXGI color spaces of the connected displays on Windows.
       See (https://docs.microsoft.com/en-us/windows/desktop/api/dxgicommon/ne-dxgicommon-dxgi_color_space_type)
@@ -3540,13 +3618,12 @@ gfx.hdr:
       index 'N' is available on at least one connected monitor.
     keyed: false
     kind: uint
-    expires: "70"
+    expires: never
     notification_emails:
       - gfx-telemetry-alerts@mozilla.com
-      - rhunt@mozilla.com
+      - jmuizelaaar@mozilla.com
     products:
       - 'firefox'
-      - 'fennec'
     record_in_processes:
       - 'main'
 
@@ -4882,7 +4959,7 @@ browser.search.withads:
     kind: uint
     notification_emails:
       - fx-search@mozilla.com
-      - teon@mozilla.com
+      - rev-data@mozilla.com
     release_channel_collection: opt-out
     products:
       - 'firefox'
@@ -4899,7 +4976,7 @@ browser.search.withads:
     kind: uint
     notification_emails:
       - fx-search@mozilla.com
-      - teon@mozilla.com
+      - rev-data@mozilla.com
     release_channel_collection: opt-out
     products:
       - 'firefox'
@@ -4916,7 +4993,7 @@ browser.search.withads:
     kind: uint
     notification_emails:
       - fx-search@mozilla.com
-      - teon@mozilla.com
+      - rev-data@mozilla.com
     release_channel_collection: opt-out
     products:
       - 'firefox'
@@ -4933,7 +5010,7 @@ browser.search.withads:
     kind: uint
     notification_emails:
       - fx-search@mozilla.com
-      - teon@mozilla.com
+      - rev-data@mozilla.com
     release_channel_collection: opt-out
     products:
       - 'firefox'
@@ -4950,7 +5027,7 @@ browser.search.withads:
     kind: uint
     notification_emails:
       - fx-search@mozilla.com
-      - teon@mozilla.com
+      - rev-data@mozilla.com
     release_channel_collection: opt-out
     products:
       - 'firefox'
@@ -4967,7 +5044,7 @@ browser.search.withads:
     kind: uint
     notification_emails:
       - fx-search@mozilla.com
-      - teon@mozilla.com
+      - rev-data@mozilla.com
     release_channel_collection: opt-out
     products:
       - 'firefox'
@@ -4984,7 +5061,7 @@ browser.search.withads:
     kind: uint
     notification_emails:
       - fx-search@mozilla.com
-      - teon@mozilla.com
+      - rev-data@mozilla.com
     release_channel_collection: opt-out
     products:
       - 'firefox'
@@ -5001,7 +5078,7 @@ browser.search.withads:
     kind: uint
     notification_emails:
       - fx-search@mozilla.com
-      - teon@mozilla.com
+      - rev-data@mozilla.com
     release_channel_collection: opt-out
     products:
       - 'firefox'
@@ -5019,7 +5096,7 @@ browser.search.adclicks:
     kind: uint
     notification_emails:
       - fx-search@mozilla.com
-      - teon@mozilla.com
+      - rev-data@mozilla.com
     release_channel_collection: opt-out
     products:
       - 'firefox'
@@ -5277,7 +5354,7 @@ startup:
           A first run of the application created a new profile to use.
         default:
           The default profile was selected as normal.
-    expires: "88"
+    expires: "99"
     keyed: false
     kind: string
     notification_emails:
@@ -5286,6 +5363,7 @@ startup:
       - gkaberere@mozilla.com
       - jhollek@mozilla.com
       - echo@mozilla.com
+      - wlachance@mozilla.com
     release_channel_collection: opt-out
     products:
       - 'firefox'
@@ -5332,6 +5410,86 @@ startup:
     record_in_processes:
       - 'main'
 
+  skeleton_ui_disabled_reason:
+    bug_numbers:
+      - 1686301
+    description: >
+      The reason why the skeleton UI was not shown to the user. This should be
+      one of the following values:
+        None:
+          There was no reason for not showing the skeleton UI. This should not
+          be recorded.
+        Ineligible:
+          The user was ineligible for the skeleton UI due to information which
+          should already be trivially available via telemetry (i.e., the user
+          is running an OS version that doesn't support the skeleton UI.)
+        Disabled:
+          The registry specified "Enabled" as 0 for the skeleton UI.
+        EnabledKeyDoesNotExist:
+          The "Enabled" key in the registry does not exist.
+        OOM:
+          We encountered an allocation failure while trying to show the
+          skeleton UI.
+        Cmdline:
+          The skeleton UI was disabled due to the presence of an unsupported
+          command line argument.
+        EnvVars:
+          The skeleton UI was disabled due to an explicitly unsupported
+          environment variable.
+        FailedToOpenRegistryKey:
+          We were unable to open the skeleton UI Windows registry key.
+        RegistryError:
+          We encountered an error trying to read/write a skeleton UI registry
+          value.
+        FailedLoadingDynamicProcs:
+          We were unable to dynamically load one of the functions we require in
+          order to show the skeleton UI.
+        FailedGettingLock:
+          We were unable to acquire the skeleton UI lock - this should mean
+          that an existing instance of the application is already running.
+        FilesystemFailure:
+          Encountered some error getting the path to a file or reading from a
+          particular file while trying to show the skeleton UI.
+        NoStartWithLastProfile:
+          The user has set up their profiles so Firefox always shows the
+          profile manager during startup.
+        FailedRegisteringWindowClass:
+          We failed to register the window class needed to show the skeleton UI
+          window.
+        CorruptData:
+          Clearly invalid data was found when trying to load the necessary
+          information to show the skeleton UI in the right place.
+        BadWindowDimensions:
+          Window dimensions outside of the supported size for the skeleton UI.
+        FailedGettingMonitorInfo:
+          Couldn't get the monitor information when trying to display the
+          skeleton UI.
+        CreateWindowFailed:
+          The call to CreateWindow failed.
+        FailedGettingDC:
+          We failed to get the HDC to draw into.
+        FailedBlitting:
+          We failed blitting the actual skeleton UI to the HDC.
+        FailedFillingBottomRect:
+          We failed filling the solid color of the main browser below the
+          browser chrome.
+        CrashedOnce:
+          At some point the skeleton UI crashed, so we've disabled it for the
+          user.
+        Unknown:
+          An unknown error occurred - this generally should not happen.
+    expires: "92"
+    keyed: false
+    kind: string
+    notification_emails:
+      - dothayer@mozilla.com
+      - emalysz@mozilla.com
+    release_channel_collection: opt-out
+    products:
+      - 'firefox'
+    record_in_processes:
+      - main
+
 script.preloader:
   mainthread_recompile:
     bug_numbers:
@@ -5339,7 +5497,7 @@ script.preloader:
     description:
       How many times we ended up recompiling a script from the script preloader
       on the main thread.
-    expires: "88"
+    expires: "100"
     keyed: false
     kind: uint
     notification_emails:
@@ -5349,84 +5507,6 @@ script.preloader:
     products:
       - 'firefox'
       - 'fennec'
-    record_in_processes:
-      - 'main'
-      - 'content'
-
-wasm:
-  compile_time_baseline_us:
-    bug_numbers:
-      - 1656638
-    description:
-      How many microseconds we spent in the baseline WebAssembly compiler.
-    expires: "88"
-    keyed: false
-    kind: uint
-    notification_emails:
-      - cfallin@mozilla.com
-      - bbouvier@mozilla.com
-      - jseward@mozilla.com
-    release_channel_collection: opt-in
-    products:
-      - 'firefox'
-    record_in_processes:
-      - 'main'
-      - 'content'
-
-  compile_time_cranelift_us:
-    bug_numbers:
-      - 1656638
-    description:
-      How many microseconds we spent in the Cranelift WebAssembly compiler.
-    expires: "88"
-    keyed: false
-    kind: uint
-    notification_emails:
-      - cfallin@mozilla.com
-      - bbouvier@mozilla.com
-      - jseward@mozilla.com
-    release_channel_collection: opt-in
-    products:
-      - 'firefox'
-    record_in_processes:
-      - 'main'
-
-  compile_time_ion_us:
-    bug_numbers:
-      - 1656638
-    description:
-      How many microseconds we spent in the IonMonkey WebAssembly compiler.
-    expires: "88"
-    keyed: false
-    kind: uint
-    notification_emails:
-      - cfallin@mozilla.com
-      - bbouvier@mozilla.com
-      - jseward@mozilla.com
-    release_channel_collection: opt-in
-    products:
-      - 'firefox'
-    record_in_processes:
-      - 'main'
-      - 'content'
-
-js:
-  run_time_us:
-    bug_numbers:
-      - 1656638
-    description:
-      How many microseconds we spent in running user code in SpiderMonkey,
-      including JavaScript code and WebAssembly code.
-    expires: "88"
-    keyed: false
-    kind: uint
-    notification_emails:
-      - cfallin@mozilla.com
-      - bbouvier@mozilla.com
-      - jseward@mozilla.com
-    release_channel_collection: opt-in
-    products:
-      - 'firefox'
     record_in_processes:
       - 'main'
       - 'content'
@@ -5629,17 +5709,37 @@ networking:
       - 'main'
       - 'content'
 
+  https_rr_prefs_usage:
+    bug_numbers:
+      - 1686421
+    description: >
+      A bitfield representation for the usage of HTTPS RR prefs.
+      bit 0: network.dns.upgrade_with_https_rr is enabled or not.
+      bit 1: network.dns.use_https_rr_as_altsvc is enabled or not.
+      bit 2: network.dns.echconfig.enabled is enabled or not.
+    expires: never
+    kind: uint
+    keyed: false
+    notification_emails:
+      - necko@mozilla.com
+      - kershaw@mozilla.com
+    products:
+      - 'firefox'
+    record_in_processes:
+      - 'main'
+
 blocklist:
   lastModified_rs_addons:
     bug_numbers:
       - 1572711
       - 1607744
       - 1649960
+      - 1689274
     description: >
       Keep track of the last time the "addons" remotesetting blocklist has been successfully
       updated (as a datetime string in UTC format), set to "Missing Date" when the timestamp
       couldn't be retrieved.
-    expires: "88"
+    expires: "95"
     kind: string
     release_channel_collection: opt-out
     notification_emails:
@@ -5658,11 +5758,12 @@ blocklist:
     bug_numbers:
       - 1633466
       - 1649960
+      - 1689274
     description: >
       Keep track of the last time the "addons-bloomfilters" remotesetting blocklist has been successfully
       updated (as a datetime string in UTC format), set to "Missing Date" when the timestamp
       couldn't be retrieved.
-    expires: "88"
+    expires: "95"
     kind: string
     release_channel_collection: opt-out
     notification_emails:
@@ -5680,11 +5781,12 @@ blocklist:
       - 1572711
       - 1607744
       - 1649960
+      - 1689274
     description: >
       Keep track of the last time the "plugins" remotesetting blocklist has been successfully
       updated (as a datetime string in UTC format), set to "Missing Date" when the timestamp
       couldn't be retrieved.
-    expires: "88"
+    expires: "95"
     kind: string
     release_channel_collection: opt-out
     notification_emails:
@@ -5702,10 +5804,11 @@ blocklist:
     bug_numbers:
       - 1633466
       - 1649960
+      - 1689274
     description: >
       Keep track of whether the addons blocklist engine uses bloom filters (blocklist v3).
       If false, the blocklist v2 is used instead.
-    expires: "88"
+    expires: "95"
     kind: boolean
     release_channel_collection: opt-out
     notification_emails:
@@ -5722,12 +5825,13 @@ blocklist:
     bug_numbers:
       - 1633466
       - 1649960
+      - 1689274
     description: >
       Keep track of whether the bloomfilter-based blocklist engine uses stashes from the
       addons-bloomfilters collection, together with an infrequently updated base bloomfilter.
       If false, the latest (full) bloom filter is downloaded on every update of the addon blocklist.
       This metric is only meaningful if mlbf_enabled is true.
-    expires: "88"
+    expires: "95"
     kind: boolean
     release_channel_collection: opt-out
     notification_emails:
@@ -5744,12 +5848,13 @@ blocklist:
     bug_numbers:
       - 1633466
       - 1649960
+      - 1689274
     description: >
       Keep track of the generation time of the addon blocklist's bloom filter. This marks the
       point in time until which signed add-ons are recognized by the selected bloom filter from the
       addons-bloomfilters collection.
       The value is a datetime string in UTC format, or  "Missing Date" when unavailable.
-    expires: "88"
+    expires: "95"
     kind: string
     release_channel_collection: opt-out
     notification_emails:
@@ -5766,11 +5871,12 @@ blocklist:
     bug_numbers:
       - 1633466
       - 1649960
+      - 1689274
     description: >
       Keep track of the timestamp of the oldest stash of the addons blocklist.
       Only meaningful when mlbf_enabled and mlbf_stashes are true.
       The value is a datetime string in UTC format, or "Missing Date" when unavailable.
-    expires: "88"
+    expires: "95"
     kind: string
     release_channel_collection: opt-out
     notification_emails:
@@ -5787,11 +5893,12 @@ blocklist:
     bug_numbers:
       - 1633466
       - 1649960
+      - 1689274
     description: >
       Keep track of the timestamp of the most recent stash of the addons blocklist.
       Only meaningful when mlbf_enabled and mlbf_stashes are true.
       The value is a datetime string in UTC format, or "Missing Date" when unavailable.
-    expires: "88"
+    expires: "95"
     kind: string
     release_channel_collection: opt-out
     notification_emails:
@@ -5924,6 +6031,42 @@ urlbar:
       - fx-search@mozilla.com
       - tbrooks@mozilla.com
     release_channel_collection: opt-out
+    products:
+      - 'firefox'
+    record_in_processes:
+      - main
+
+urlbar.tabtosearch:
+  impressions:
+    bug_numbers:
+      - 1686330
+    description: >
+      A keyed uint recording how many times non-onboarding tab-to-search results
+      are shown in the Urlbar for a particular search engine.
+    expires: never
+    kind: uint
+    keyed: true
+    notification_emails:
+      - fx-search@mozilla.com
+      - tbrooks@mozilla.com
+    release_channel_collection: opt-in
+    products:
+      - 'firefox'
+    record_in_processes:
+      - main
+  impressions_onboarding:
+    bug_numbers:
+      - 1686330
+    description: >
+      A keyed uint recording how many times onboarding tab-to-search results
+      are shown in the Urlbar for a particular search engine.
+    expires: never
+    kind: uint
+    keyed: true
+    notification_emails:
+      - fx-search@mozilla.com
+      - tbrooks@mozilla.com
+    release_channel_collection: opt-in
     products:
       - 'firefox'
     record_in_processes:
@@ -6682,6 +6825,97 @@ migration:
       - main
     operating_systems:
       - windows
+
+
+contextual.services.topsites:
+  impression:
+    bug_numbers:
+      - 1688698
+    description: >
+      A keyed uint recording how many times the user has viewed the sponsored TopSites
+      on the newtab page. The key is a combination of the source and the placement of
+      the TopSites tile (1-based). such as 'urlbar_1', 'newtab_2'.
+    expires: never
+    kind: uint
+    keyed: true
+    notification_emails:
+      - najiang@mozilla.com
+    release_channel_collection: opt-out
+    products:
+      - 'firefox'
+    record_in_processes:
+      - main
+  click:
+    bug_numbers:
+      - 1688698
+    description: >
+      A keyed uint recording how many times the user has clicked on the sponsored TopSites
+      on the newtab page. The key is a combination of the source and the placement of
+      the TopSites tile (1-based). such as 'urlbar_1', 'newtab_2'.
+    expires: never
+    kind: uint
+    keyed: true
+    notification_emails:
+      - najiang@mozilla.com
+    release_channel_collection: opt-out
+    products:
+      - 'firefox'
+    record_in_processes:
+      - main
+
+
+contextual.services.quicksuggest:
+  impression:
+    bug_numbers:
+      - 1693927
+    description: >
+      A keyed uint recording how many times the user has viewed Firefox Suggest
+      (a.k.a. Quick Suggest) results in the urlbar. The key is the 1-based index
+      of each result.
+    expires: never
+    kind: uint
+    keyed: true
+    notification_emails:
+      - najiang@mozilla.com
+    release_channel_collection: opt-out
+    products:
+      - 'firefox'
+    record_in_processes:
+      - main
+  click:
+    bug_numbers:
+      - 1693927
+    description: >
+      A keyed uint recording how many times the user has clicked on Firefox
+      Suggests (a.k.a. Quick Suggest) results in the urlbar (not including the
+      help button). The key is the 1-based index of each result.
+    expires: never
+    kind: uint
+    keyed: true
+    notification_emails:
+      - najiang@mozilla.com
+    release_channel_collection: opt-out
+    products:
+      - 'firefox'
+    record_in_processes:
+      - main
+  help:
+    bug_numbers:
+      - 1693927
+    description: >
+      A keyed uint recording how many times the user has clicked on the help
+      button in Firefox Suggests (a.k.a. Quick Suggest) results in the urlbar.
+      The key is the 1-based index of each result.
+    expires: never
+    kind: uint
+    keyed: true
+    notification_emails:
+      - najiang@mozilla.com
+    release_channel_collection: opt-out
+    products:
+      - 'firefox'
+    record_in_processes:
+      - main
 
 
 # The following section is for probes testing the Telemetry system. They will not be

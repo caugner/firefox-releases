@@ -815,9 +815,16 @@ void gfxPlatformFontList::UpdateFontList(bool aFullRebuild) {
     InitFontList();
     RebuildLocalFonts();
   } else {
-    InitializeCodepointsWithNoFonts();
-    mStartedLoadingCmapsFrom = 0xffffffffu;
-    gfxPlatform::ForceGlobalReflow();
+    // The font list isn't being fully rebuilt, we're just being notified that
+    // character maps have been updated and so font fallback needs to be re-
+    // done. We only care about this if we have previously encountered a
+    // fallback that required cmaps that were not yet available, and so we
+    // asked for the async cmap loader to run.
+    if (mStartedLoadingCmapsFrom != 0xffffffffu) {
+      InitializeCodepointsWithNoFonts();
+      mStartedLoadingCmapsFrom = 0xffffffffu;
+      gfxPlatform::ForceGlobalReflow();
+    }
   }
 }
 
@@ -1062,6 +1069,9 @@ gfxFont* gfxPlatformFontList::GlobalFontFallback(
             if (hasColorGlyph == PrefersColor(aPresentation)) {
               return font;
             }
+            // If we don't use this font, we need to touch its refcount
+            // to trigger gfxFontCache expiration tracking.
+            RefPtr<gfxFont> autoRefDeref(font);
           }
         }
         rejectedFallbackVisibility = aMatchedFamily.mShared->Visibility();
@@ -1076,6 +1086,7 @@ gfxFont* gfxPlatformFontList::GlobalFontFallback(
             if (hasColorGlyph == PrefersColor(aPresentation)) {
               return font;
             }
+            RefPtr<gfxFont> autoRefDeref(font);
           }
         }
         rejectedFallbackVisibility = aMatchedFamily.mUnshared->Visibility();
@@ -1577,8 +1588,10 @@ gfxFontEntry* gfxPlatformFontList::FindFontForFamily(
 
 gfxFontEntry* gfxPlatformFontList::GetOrCreateFontEntry(
     fontlist::Face* aFace, const fontlist::Family* aFamily) {
-  return mFontEntries.LookupForAdd(aFace).OrInsert(
-      [=]() { return CreateFontEntry(aFace, aFamily); });
+  return mFontEntries.WithEntryHandle(aFace, [&](auto&& entry) {
+    return entry.OrInsertWith([=] { return CreateFontEntry(aFace, aFamily); })
+        .get();
+  });
 }
 
 void gfxPlatformFontList::AddOtherFamilyName(
@@ -1777,7 +1790,8 @@ void gfxPlatformFontList::GetFontFamiliesFromGenericFamilies(
 
 gfxPlatformFontList::PrefFontList* gfxPlatformFontList::GetPrefFontsLangGroup(
     StyleGenericFontFamily aGenericType, eFontPrefLang aPrefLang) {
-  if (aGenericType == StyleGenericFontFamily::MozEmoji) {
+  if (aGenericType == StyleGenericFontFamily::MozEmoji ||
+      aPrefLang == eFontPrefLang_Emoji) {
     // Emoji font has no lang
     PrefFontList* prefFonts = mEmojiPrefFont.get();
     if (MOZ_UNLIKELY(!prefFonts)) {

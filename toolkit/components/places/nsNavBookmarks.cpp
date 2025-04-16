@@ -15,13 +15,12 @@
 #include "nsPrintfCString.h"
 #include "nsQueryObject.h"
 #include "mozilla/Preferences.h"
+#include "mozilla/ProfilerLabels.h"
 #include "mozilla/storage.h"
 #include "mozilla/dom/PlacesBookmarkAddition.h"
 #include "mozilla/dom/PlacesBookmarkRemoved.h"
 #include "mozilla/dom/PlacesObservers.h"
 #include "mozilla/dom/PlacesVisit.h"
-
-#include "GeckoProfiler.h"
 
 using namespace mozilla;
 
@@ -832,6 +831,7 @@ nsresult nsNavBookmarks::RemoveFolderChildren(int64_t aFolderId,
   rv = transaction.Commit();
   NS_ENSURE_SUCCESS(rv, rv);
 
+  Sequence<OwningNonNull<PlacesEvent>> notifications;
   // Call observers in reverse order to serve children before their parent.
   for (int32_t i = folderChildrenArray.Length() - 1; i >= 0; --i) {
     BookmarkData& child = folderChildrenArray[i];
@@ -852,7 +852,6 @@ nsresult nsNavBookmarks::RemoveFolderChildren(int64_t aFolderId,
     }
 
     if (mCanNotify) {
-      Sequence<OwningNonNull<PlacesEvent>> events;
       RefPtr<PlacesBookmarkRemoved> bookmark = new PlacesBookmarkRemoved();
       bookmark->mItemType = TYPE_BOOKMARK;
       bookmark->mId = child.id;
@@ -864,10 +863,8 @@ nsresult nsNavBookmarks::RemoveFolderChildren(int64_t aFolderId,
       bookmark->mSource = aSource;
       bookmark->mIsTagging = (child.grandParentId == tagsRootId);
       bookmark->mIsDescendantRemoval = (child.grandParentId != tagsRootId);
-      bool success = !!events.AppendElement(bookmark.forget(), fallible);
+      bool success = !!notifications.AppendElement(bookmark.forget(), fallible);
       MOZ_RELEASE_ASSERT(success);
-
-      PlacesObservers::NotifyListeners(events);
     }
     if (child.type == TYPE_BOOKMARK && child.grandParentId == tagsRootId &&
         uri) {
@@ -887,6 +884,10 @@ nsresult nsNavBookmarks::RemoveFolderChildren(int64_t aFolderId,
                           bookmarks[i].parentGuid, ""_ns, aSource));
       }
     }
+  }
+
+  if (notifications.Length() > 0) {
+    PlacesObservers::NotifyListeners(notifications);
   }
 
   return NS_OK;

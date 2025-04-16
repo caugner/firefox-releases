@@ -3,7 +3,6 @@ import os
 import platform
 import sys
 from distutils.spawn import find_executable
-from six.moves import input
 
 wpt_root = os.path.abspath(os.path.join(os.path.dirname(__file__), os.pardir, os.pardir))
 sys.path.insert(0, os.path.abspath(os.path.join(wpt_root, "tools")))
@@ -248,7 +247,7 @@ Consider installing certutil via your OS package manager or directly.""")
                                                     channel=kwargs["browser_channel"])
             kwargs["prefs_root"] = prefs_root
 
-        if kwargs["headless"] is None:
+        if kwargs["headless"] is None and not kwargs["debug_test"]:
             kwargs["headless"] = True
             logger.info("Running in headless mode, pass --no-headless to disable")
 
@@ -427,10 +426,12 @@ class ChromeiOS(BrowserSetup):
 class AndroidWeblayer(BrowserSetup):
     name = "android_weblayer"
     browser_cls = browser.AndroidWeblayer
+    experimental_channels = ("dev", "canary")
 
     def setup_kwargs(self, kwargs):
         if kwargs.get("device_serial"):
             self.browser.device_serial = kwargs["device_serial"]
+        browser_channel = kwargs["browser_channel"]
         if kwargs["webdriver_binary"] is None:
             webdriver_binary = None
             if not kwargs["install_webdriver"]:
@@ -443,7 +444,7 @@ class AndroidWeblayer(BrowserSetup):
                     logger.info("Downloading chromedriver")
                     webdriver_binary = self.browser.install_webdriver(
                         dest=self.venv.bin_path,
-                        channel=kwargs["browser_channel"])
+                        channel=browser_channel)
             else:
                 logger.info("Using webdriver binary %s" % webdriver_binary)
 
@@ -451,6 +452,9 @@ class AndroidWeblayer(BrowserSetup):
                 kwargs["webdriver_binary"] = webdriver_binary
             else:
                 raise WptrunError("Unable to locate or install chromedriver binary")
+        if browser_channel in self.experimental_channels:
+            logger.info("Automatically turning on experimental features for WebLayer Dev/Canary")
+            kwargs["binary_args"].append("--enable-experimental-web-platform-features")
 
 
 class AndroidWebview(BrowserSetup):
@@ -752,9 +756,8 @@ def setup_logging(kwargs, default_config=None, formatter_defaults=None):
 
 def setup_wptrunner(venv, **kwargs):
     from wptrunner import wptcommandline
-    from six import iteritems
 
-    kwargs = utils.Kwargs(iteritems(kwargs))
+    kwargs = utils.Kwargs(kwargs.items())
 
     kwargs["product"] = kwargs["product"].replace("-", "_")
 

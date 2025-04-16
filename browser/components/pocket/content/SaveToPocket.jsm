@@ -11,8 +11,8 @@ const { XPCOMUtils } = ChromeUtils.import(
 const { Services } = ChromeUtils.import("resource://gre/modules/Services.jsm");
 ChromeUtils.defineModuleGetter(
   this,
-  "BrowserUtils",
-  "resource://gre/modules/BrowserUtils.jsm"
+  "BrowserUIUtils",
+  "resource:///modules/BrowserUIUtils.jsm"
 );
 ChromeUtils.defineModuleGetter(
   this,
@@ -76,7 +76,7 @@ var PocketPageAction = {
               return;
             }
 
-            BrowserUtils.setToolbarButtonHeightProperty(urlbarNode);
+            BrowserUIUtils.setToolbarButtonHeightProperty(urlbarNode);
 
             PocketPageAction.urlbarNode = urlbarNode;
             PocketPageAction.urlbarNode.setAttribute("open", "true");
@@ -87,10 +87,6 @@ var PocketPageAction = {
               browser.innerWindowID;
           },
           onIframeHidden(iframe, panel) {
-            if (iframe.getAttribute("itemAdded") == "true") {
-              iframe.ownerGlobal.LibraryUI.triggerLibraryAnimation("pocket");
-            }
-
             if (!PocketPageAction.urlbarNode) {
               return;
             }
@@ -179,7 +175,7 @@ var PocketPageAction = {
     for (let win of browserWindows()) {
       let doc = win.document;
       let pocketButton = doc.getElementById("pocket-button");
-      pocketButton.setAttribute("hidden", "true");
+      pocketButton.hidden = true;
     }
 
     this.pageAction.remove();

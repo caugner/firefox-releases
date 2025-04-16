@@ -29,6 +29,7 @@ namespace dom {
 template class syncedcontext::Transaction<WindowContext>;
 
 static LazyLogModule gWindowContextLog("WindowContext");
+static LazyLogModule gWindowContextSyncLog("WindowContextSync");
 
 extern mozilla::LazyLogModule gUserInteractionPRLog;
 
@@ -40,6 +41,9 @@ static StaticAutoPtr<WindowContextByIdMap> gWindowContexts;
 
 /* static */
 LogModule* WindowContext::GetLog() { return gWindowContextLog; }
+
+/* static */
+LogModule* WindowContext::GetSyncLog() { return gWindowContextSyncLog; }
 
 /* static */
 already_AddRefed<WindowContext> WindowContext::GetById(
@@ -258,6 +262,11 @@ bool WindowContext::CanSet(
 bool WindowContext::CanSet(FieldIndex<IDX_IsLocalIP>, const bool& aValue,
                            ContentParent* aSource) {
   return CheckOnlyOwningProcessCanSet(aSource);
+}
+
+bool WindowContext::CanSet(FieldIndex<IDX_HadLazyLoadImage>, const bool& aValue,
+                           ContentParent* aSource) {
+  return IsTop();
 }
 
 void WindowContext::DidSet(FieldIndex<IDX_SHEntryHasUserInteraction>,

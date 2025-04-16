@@ -231,11 +231,7 @@
             var column = tree.columns[colindex];
             if (column) {
               var element = column.element;
-              if (element.getAttribute("hidden") == "true") {
-                element.setAttribute("hidden", "false");
-              } else {
-                element.setAttribute("hidden", "true");
-              }
+              element.hidden = !element.hidden;
             }
           }
         }
@@ -385,7 +381,6 @@
     set ordinal(val) {
       this.style.MozBoxOrdinalGroup = val;
       this.setAttribute("ordinal", val);
-      return val;
     }
 
     get ordinal() {
@@ -1040,7 +1035,6 @@
       } else {
         this.removeAttribute("editable");
       }
-      return val;
     }
 
     get editable() {
@@ -1051,7 +1045,6 @@
      */
     set selType(val) {
       this.setAttribute("seltype", val);
-      return val;
     }
 
     get selType() {
@@ -1060,9 +1053,8 @@
 
     set currentIndex(val) {
       if (this.view) {
-        return (this.view.selection.currentIndex = val);
+        this.view.selection.currentIndex = val;
       }
-      return val;
     }
 
     get currentIndex() {
@@ -1078,7 +1070,6 @@
       } else {
         this.removeAttribute("keepcurrentinview");
       }
-      return val;
     }
 
     get keepCurrentInView() {
@@ -1091,7 +1082,6 @@
       } else {
         this.removeAttribute("enableColumnDrag");
       }
-      return val;
     }
 
     get enableColumnDrag() {
@@ -1112,7 +1102,6 @@
       } else {
         this.removeAttribute("disableKeyNavigation");
       }
-      return val;
     }
 
     get disableKeyNavigation() {

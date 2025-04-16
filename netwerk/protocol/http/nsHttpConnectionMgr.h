@@ -6,7 +6,7 @@
 #ifndef nsHttpConnectionMgr_h__
 #define nsHttpConnectionMgr_h__
 
-#include "HalfOpenSocket.h"
+#include "DnsAndConnectSocket.h"
 #include "HttpConnectionBase.h"
 #include "HttpConnectionMgrShell.h"
 #include "nsHttpConnection.h"
@@ -21,7 +21,6 @@
 #include "ARefBase.h"
 #include "nsWeakReference.h"
 #include "ConnectionEntry.h"
-#include "TCPFastOpen.h"
 
 #include "nsINamed.h"
 #include "nsIObserver.h"
@@ -131,8 +130,8 @@ class nsHttpConnectionMgr final : public HttpConnectionMgrShell,
   HttpConnectionBase* GetH2orH3ActiveConn(ConnectionEntry* ent, bool aNoHttp2,
                                           bool aNoHttp3);
 
-  void IncreaseNumHalfOpenConns();
-  void DecreaseNumHalfOpenConns();
+  void IncreaseNumDnsAndConnectSockets();
+  void DecreaseNumDnsAndConnectSockets();
 
   // Wen a new idle connection has been added, this function is called to
   // increment mNumIdleConns and update PruneDeadConnections timer.
@@ -184,7 +183,7 @@ class nsHttpConnectionMgr final : public HttpConnectionMgrShell,
   void DecrementActiveConnCount(HttpConnectionBase*);
 
  private:
-  friend class HalfOpenSocket;
+  friend class DnsAndConnectSocket;
   friend class PendingTransactionInfo;
 
   //-------------------------------------------------------------------------
@@ -325,9 +324,9 @@ class nsHttpConnectionMgr final : public HttpConnectionMgrShell,
   // Total number of spdy or http3 connections which are a subset of the active
   // conns
   uint16_t mNumSpdyHttp3ActiveConns;
-  // Total number of connections in mHalfOpens ConnectionEntry objects
+  // Total number of connections in DnsAndConnectSockets ConnectionEntry objects
   // that are accessed from mCT connection table
-  uint32_t mNumHalfOpenConns;
+  uint32_t mNumDnsAndConnectSockets;
 
   // Holds time in seconds for next wake-up to prune dead connections.
   uint64_t mTimeOfNextWakeUp;

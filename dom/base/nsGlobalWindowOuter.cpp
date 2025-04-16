@@ -1302,10 +1302,10 @@ static JSObject* NewOuterWindowProxy(JSContext* cx,
   js::WrapperOptions options;
   options.setClass(&OuterWindowProxyClass);
   JSObject* obj =
-      js::Wrapper::NewSingleton(cx, global,
-                                isChrome ? &nsChromeOuterWindowProxy::singleton
-                                         : &nsOuterWindowProxy::singleton,
-                                options);
+      js::Wrapper::New(cx, global,
+                       isChrome ? &nsChromeOuterWindowProxy::singleton
+                                : &nsOuterWindowProxy::singleton,
+                       options);
   MOZ_ASSERT_IF(obj, js::IsWindowProxy(obj));
   return obj;
 }
@@ -2296,11 +2296,7 @@ nsresult nsGlobalWindowOuter::SetNewDocument(Document* aDocument,
                                JS::PrivateValue(nullptr));
       js::SetProxyReservedSlot(obj, HOLDER_WEAKMAP_SLOT, JS::UndefinedValue());
 
-#ifdef NIGHTLY_BUILD
       outerObject = xpc::TransplantObjectNukingXrayWaiver(cx, obj, outerObject);
-#else
-      outerObject = xpc::TransplantObject(cx, obj, outerObject);
-#endif
 
       if (!outerObject) {
         mBrowsingContext->ClearWindowProxy();
@@ -3106,27 +3102,6 @@ void nsPIDOMWindowOuter::RefreshMediaElementsSuspend(SuspendTypes aSuspend) {
   if (service) {
     service->RefreshAgentsSuspend(this, aSuspend);
   }
-}
-
-void nsPIDOMWindowOuter::SetServiceWorkersTestingEnabled(bool aEnabled) {
-  // Devtools should only be setting this on the top level window.  Its
-  // ok if devtools clears the flag on clean up of nested windows, though.
-  // It will have no affect.
-#ifdef DEBUG
-  nsCOMPtr<nsPIDOMWindowOuter> topWindow = GetInProcessScriptableTop();
-  MOZ_ASSERT_IF(aEnabled, this == topWindow);
-#endif
-  mServiceWorkersTestingEnabled = aEnabled;
-}
-
-bool nsPIDOMWindowOuter::GetServiceWorkersTestingEnabled() {
-  // Automatically get this setting from the top level window so that nested
-  // iframes get the correct devtools setting.
-  nsCOMPtr<nsPIDOMWindowOuter> topWindow = GetInProcessScriptableTop();
-  if (!topWindow) {
-    return false;
-  }
-  return topWindow->mServiceWorkersTestingEnabled;
 }
 
 mozilla::dom::BrowsingContextGroup*
@@ -4804,12 +4779,19 @@ void nsGlobalWindowOuter::MakeScriptDialogTitle(
   // right thing for javascript: and data: documents.
 
   nsAutoCString prepath;
-  nsresult rv = aSubjectPrincipal->GetExposablePrePath(prepath);
-  if (NS_SUCCEEDED(rv) && !prepath.IsEmpty()) {
-    NS_ConvertUTF8toUTF16 ucsPrePath(prepath);
-    nsContentUtils::FormatLocalizedString(
-        aOutTitle, nsContentUtils::eCOMMON_DIALOG_PROPERTIES,
-        "ScriptDlgHeading", ucsPrePath);
+
+  if (aSubjectPrincipal->GetIsNullPrincipal()) {
+    nsContentUtils::GetLocalizedString(
+        nsContentUtils::eCOMMON_DIALOG_PROPERTIES,
+        "ScriptDlgNullPrincipalHeading", aOutTitle);
+  } else {
+    nsresult rv = aSubjectPrincipal->GetExposablePrePath(prepath);
+    if (NS_SUCCEEDED(rv) && !prepath.IsEmpty()) {
+      NS_ConvertUTF8toUTF16 ucsPrePath(prepath);
+      nsContentUtils::FormatLocalizedString(
+          aOutTitle, nsContentUtils::eCOMMON_DIALOG_PROPERTIES,
+          "ScriptDlgHeading", ucsPrePath);
+    }
   }
 
   if (aOutTitle.IsEmpty()) {
@@ -5054,6 +5036,7 @@ void nsGlobalWindowOuter::PromptOuter(const nsAString& aMessage,
 }
 
 void nsGlobalWindowOuter::FocusOuter(CallerType aCallerType,
+                                     bool aFromOtherProcess,
                                      uint64_t aActionId) {
   nsFocusManager* fm = nsFocusManager::GetFocusManager();
   if (!fm) {
@@ -5061,6 +5044,16 @@ void nsGlobalWindowOuter::FocusOuter(CallerType aCallerType,
   }
 
   auto [canFocus, isActive] = GetBrowsingContext()->CanFocusCheck(aCallerType);
+  if (aFromOtherProcess) {
+    // We trust that the check passed in a process that's, in principle,
+    // untrusted, because we don't have the required caller context available
+    // here. Also, the worst that the other process can do in this case is to
+    // raise a window it's not supposed to be allowed to raise.
+    // https://bugzilla.mozilla.org/show_bug.cgi?id=1677899
+    MOZ_ASSERT(XRE_IsContentProcess(),
+               "Parent should not trust other processes.");
+    canFocus = true;
+  }
 
   nsCOMPtr<nsIBaseWindow> treeOwnerAsWin = GetTreeOwnerWindow();
   if (treeOwnerAsWin && (canFocus || isActive)) {
@@ -5080,9 +5073,6 @@ void nsGlobalWindowOuter::FocusOuter(CallerType aCallerType,
     return;
   }
 
-  // Don't look for a presshell if we're a root chrome window that's got
-  // about:blank loaded.  We don't want to focus our widget in that case.
-  // XXXbz should we really be checking for IsInitialDocument() instead?
   RefPtr<BrowsingContext> parent;
   BrowsingContext* bc = GetBrowsingContext();
   if (bc) {
@@ -5104,12 +5094,8 @@ void nsGlobalWindowOuter::FocusOuter(CallerType aCallerType,
       }
       return;
     }
-    nsCOMPtr<Document> parentdoc = parent->GetDocument();
-    if (!parentdoc) {
-      return;
-    }
 
-    if (Element* frame = parentdoc->FindContentForSubDocument(mDoc)) {
+    if (Element* frame = mDoc->GetEmbedderElement()) {
       nsContentUtils::RequestFrameFocus(*frame, canFocus, aCallerType);
     }
     return;
@@ -5127,10 +5113,8 @@ nsresult nsGlobalWindowOuter::Focus(CallerType aCallerType) {
   FORWARD_TO_INNER(Focus, (aCallerType), NS_ERROR_UNEXPECTED);
 }
 
-void nsGlobalWindowOuter::BlurOuter() {
-  // If dom.disable_window_flip == true, then content should not be allowed
-  // to call this function (this would allow popunders, bug 369306)
-  if (!CanSetProperty("dom.disable_window_flip")) {
+void nsGlobalWindowOuter::BlurOuter(CallerType aCallerType) {
+  if (!GetBrowsingContext()->CanBlurCheck(aCallerType)) {
     return;
   }
 
@@ -6704,9 +6688,10 @@ void nsGlobalWindowOuter::SetChromeEventHandler(
 
 void nsGlobalWindowOuter::SetFocusedElement(Element* aElement,
                                             uint32_t aFocusMethod,
-                                            bool aNeedsFocus) {
-  FORWARD_TO_INNER_VOID(SetFocusedElement,
-                        (aElement, aFocusMethod, aNeedsFocus));
+                                            bool aNeedsFocus,
+                                            bool aWillShowOutline) {
+  FORWARD_TO_INNER_VOID(SetFocusedElement, (aElement, aFocusMethod, aNeedsFocus,
+                                            aWillShowOutline));
 }
 
 uint32_t nsGlobalWindowOuter::GetFocusMethod() {
@@ -6941,17 +6926,22 @@ nsresult nsGlobalWindowOuter::OpenInternal(
   nsAutoCString options;
   features.Stringify(options);
 
-  // If current's top-level browsing context's active document's
-  // cross-origin-opener-policy is "same-origin" or "same-origin + COEP" then
-  // if currentDoc's origin is not same origin with currentDoc's top-level
-  // origin, then set noopener to true and name to "_blank".
+  // If noopener is force-enabled for the current document, then set noopener to
+  // true, and clear the name to "_blank".
   nsAutoString windowName(aName);
-  auto topPolicy = mBrowsingContext->Top()->GetOpenerPolicy();
-  if ((topPolicy == nsILoadInfo::OPENER_POLICY_SAME_ORIGIN ||
-       topPolicy ==
-           nsILoadInfo::
-               OPENER_POLICY_SAME_ORIGIN_EMBEDDER_POLICY_REQUIRE_CORP) &&
-      !mBrowsingContext->SameOriginWithTop()) {
+  if (nsDocShell::Cast(GetDocShell())->NoopenerForceEnabled()) {
+    // FIXME: Eventually bypass force-enabling noopener if `aPrintKind !=
+    // PrintKind::None`, so that we can print pages with noopener force-enabled.
+    // This will require relaxing assertions elsewhere.
+    if (aPrintKind != PrintKind::None) {
+      NS_WARNING(
+          "printing frames with noopener force-enabled isn't supported yet");
+      return NS_ERROR_FAILURE;
+    }
+
+    MOZ_DIAGNOSTIC_ASSERT(aNavigate,
+                          "cannot OpenNoNavigate if noopener is force-enabled");
+
     forceNoOpener = true;
     windowName = u"_blank"_ns;
   }
@@ -7627,7 +7617,6 @@ nsPIDOMWindowOuter::nsPIDOMWindowOuter(uint64_t aWindowID)
       mIsRootOuterWindow(false),
       mInnerWindow(nullptr),
       mWindowID(aWindowID),
-      mMarkedCCGeneration(0),
-      mServiceWorkersTestingEnabled(false) {}
+      mMarkedCCGeneration(0) {}
 
 nsPIDOMWindowOuter::~nsPIDOMWindowOuter() = default;

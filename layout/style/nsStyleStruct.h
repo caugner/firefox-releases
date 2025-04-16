@@ -342,7 +342,7 @@ struct MOZ_NEEDS_MEMMOVABLE_MEMBERS nsStyleBackground {
 
   // Return the background color as nscolor.
   nscolor BackgroundColor(const nsIFrame* aFrame) const;
-  nscolor BackgroundColor(mozilla::ComputedStyle* aStyle) const;
+  nscolor BackgroundColor(const mozilla::ComputedStyle* aStyle) const;
 
   // True if this background is completely transparent.
   bool IsTransparent(const nsIFrame* aFrame) const;
@@ -672,11 +672,6 @@ struct MOZ_NEEDS_MEMMOVABLE_MEMBERS nsStyleList {
   nsChangeHint CalcDifference(const nsStyleList& aNewData,
                               const nsStyleDisplay& aOldDisplay) const;
 
-  imgRequestProxy* GetListStyleImage() const {
-    return mListStyleImage.IsUrl() ? mListStyleImage.AsUrl().GetImage()
-                                   : nullptr;
-  }
-
   nsRect GetImageRegion() const {
     if (!mImageRegion.IsRect()) {
       return nsRect();
@@ -690,7 +685,7 @@ struct MOZ_NEEDS_MEMMOVABLE_MEMBERS nsStyleList {
 
   mozilla::CounterStylePtr mCounterStyle;
   mozilla::StyleQuotes mQuotes;
-  mozilla::StyleImageUrlOrNone mListStyleImage;
+  mozilla::StyleImage mListStyleImage;
 
   // the rect to use within an image.
   mozilla::StyleClipRectOrAuto mImageRegion;
@@ -1678,7 +1673,7 @@ struct MOZ_NEEDS_MEMMOVABLE_MEMBERS nsStyleTableBorder {
   nscoord mBorderSpacingCol;
   nscoord mBorderSpacingRow;
   mozilla::StyleBorderCollapse mBorderCollapse;
-  uint8_t mCaptionSide;
+  mozilla::StyleCaptionSide mCaptionSide;
   mozilla::StyleEmptyCells mEmptyCells;
 };
 

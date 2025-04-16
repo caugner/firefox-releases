@@ -152,6 +152,12 @@ nsresult JSExecutionContext::InternalCompile(
   MOZ_ASSERT(!mScript);
 
   if (mScopeChain.length() != 0) {
+    // Serialized bytecode should not be mixed with non-syntactic mode.
+    // Currently, mScopeChain is only used by nsNPAPIPlugin which does not
+    // support bytecode caching. This will all be removed in Bug 1689348.
+    MOZ_ASSERT(!mEncodeBytecode);
+    MOZ_ASSERT(mExpectScopeChain);
+
     aCompileOptions.setNonSyntacticScope(true);
   }
 
@@ -212,9 +218,9 @@ nsresult JSExecutionContext::Decode(JS::CompileOptions& aCompileOptions,
   // These errors are external parameters which should be handled before the
   // decoding phase, and which are the only reasons why you might want to
   // fallback on decoding failures.
-  MOZ_ASSERT(tr != JS::TranscodeResult_Failure_BadBuildId &&
-             tr != JS::TranscodeResult_Failure_WrongCompileOption);
-  if (tr != JS::TranscodeResult_Ok) {
+  MOZ_ASSERT(tr != JS::TranscodeResult::Failure_BadBuildId &&
+             tr != JS::TranscodeResult::Failure_WrongCompileOption);
+  if (tr != JS::TranscodeResult::Ok) {
     mSkip = true;
     mRv = NS_ERROR_DOM_JS_DECODING_ERROR;
     return mRv;
@@ -270,7 +276,8 @@ nsresult JSExecutionContext::ExecScript() {
 
   MOZ_ASSERT(mScript);
 
-  if (!JS_ExecuteScript(mCx, mScopeChain, mScript)) {
+  if (!(mScopeChain.empty() ? JS_ExecuteScript(mCx, mScript)
+                            : JS_ExecuteScript(mCx, mScopeChain, mScript))) {
     mSkip = true;
     mRv = EvaluationExceptionToNSResult(mCx);
     return mRv;
@@ -303,7 +310,9 @@ nsresult JSExecutionContext::ExecScript(
   MOZ_ASSERT(mScript);
   MOZ_ASSERT(mWantsReturnValue);
 
-  if (!JS_ExecuteScript(mCx, mScopeChain, mScript, aRetValue)) {
+  if (!(mScopeChain.empty()
+            ? JS_ExecuteScript(mCx, mScript, aRetValue)
+            : JS_ExecuteScript(mCx, mScopeChain, mScript, aRetValue))) {
     mSkip = true;
     mRv = EvaluationExceptionToNSResult(mCx);
     return mRv;

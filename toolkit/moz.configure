@@ -1951,7 +1951,6 @@ with only_when(compile_environment | artifact_builds):
     libav_fft.need_yasm,
     ffvpx.use_yasm,
 )
-@imports(_from="__builtin__", _import="sorted")
 def valid_yasm_version(yasm_version, for_vpx, for_jpeg, for_libav, for_ffvpx=False):
     # Note: the default for for_ffvpx above only matters for unit tests.
     requires = {
@@ -2045,6 +2044,7 @@ def wasm_sandboxing_libraries():
     return (
         "graphite",
         "ogg",
+        "hunspell",
     )
 
 
@@ -2488,9 +2488,26 @@ set_define("MOZ_USE_NATIVE_POPUP_WINDOWS", True, when="MOZ_USE_NATIVE_POPUP_WIND
 @depends(target)
 def oxidized_breakpad(target):
     if target.kernel == "Linux" and target.os != "Android":
-        return False  # Disabled pending further testing
+        return target.cpu in ("x86", "x86_64")
     return False
 
 
 set_config("MOZ_OXIDIZED_BREAKPAD", True, when=oxidized_breakpad)
 set_define("MOZ_OXIDIZED_BREAKPAD", True, when=oxidized_breakpad)
+
+
+# Enable or disable running in background task mode: headless for
+# periodic, short-lived, maintenance tasks.
+# ==============================================================================
+
+
+option(
+    "--enable-backgroundtasks",
+    default=milestone.is_nightly,
+    help="{Enable|Disable} running in background task mode",
+)
+
+
+set_config(
+    "MOZ_BACKGROUNDTASKS", depends_if("--enable-backgroundtasks")(lambda _: True)
+)

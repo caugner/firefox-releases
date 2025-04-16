@@ -59,10 +59,13 @@ add_task(async function test_main() {
       file: "helper_fission_tap_in_nested_iframe_on_zoomed.html",
       prefs: [["apz.max_tap_time", 10000]],
     },
+    { file: "helper_fission_scroll_handoff.html" },
+    { file: "helper_fission_large_subframe.html" },
     // add additional tests here
   ];
   if (isWebRender) {
     subtests = subtests.concat([
+      { file: "helper_fission_inactivescroller_positionedcontent.html" },
       // add WebRender-specific tests here
     ]);
   } else {

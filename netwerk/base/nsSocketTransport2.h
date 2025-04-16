@@ -21,7 +21,6 @@
 #include "nsIDNSListener.h"
 #include "nsIDNSRecord.h"
 #include "nsIClassInfo.h"
-#include "TCPFastOpen.h"
 #include "mozilla/net/DNS.h"
 #include "nsASocketHandler.h"
 #include "mozilla/Telemetry.h"
@@ -128,7 +127,7 @@ class nsSocketTransport final : public nsASocketHandler,
   // given type(s) to the given host or proxy.
   nsresult Init(const nsTArray<nsCString>& socketTypes, const nsACString& host,
                 uint16_t port, const nsACString& hostRoute, uint16_t portRoute,
-                nsIProxyInfo* proxyInfo);
+                nsIProxyInfo* proxyInfo, nsIDNSRecord* dnsRecord);
 
   // this method instructs the socket transport to use an already connected
   // socket with the given address.
@@ -201,7 +200,6 @@ class nsSocketTransport final : public nsASocketHandler,
   class MOZ_STACK_CLASS PRFileDescAutoLock {
    public:
     explicit PRFileDescAutoLock(nsSocketTransport* aSocketTransport,
-                                bool aAlsoDuringFastOpen,
                                 nsresult* aConditionWhileLocked = nullptr)
         : mSocketTransport(aSocketTransport), mFd(nullptr) {
       MOZ_ASSERT(aSocketTransport);
@@ -212,11 +210,7 @@ class nsSocketTransport final : public nsASocketHandler,
           return;
         }
       }
-      if (!aAlsoDuringFastOpen) {
-        mFd = mSocketTransport->GetFD_Locked();
-      } else {
-        mFd = mSocketTransport->GetFD_LockedAlsoDuringFastOpen();
-      }
+      mFd = mSocketTransport->GetFD_Locked();
     }
     ~PRFileDescAutoLock() {
       MutexAutoLock lock(mSocketTransport->mLock);
@@ -369,11 +363,8 @@ class nsSocketTransport final : public nsASocketHandler,
 
   Mutex mLock;  // protects members in this section.
   LockedPRFileDesc mFD;
-  nsrefcnt mFDref;             // mFD is closed when mFDref goes to zero.
-  bool mFDconnected;           // mFD is available to consumer when TRUE.
-  bool mFDFastOpenInProgress;  // Fast Open is in progress, so
-                               // socket available for some
-                               // operations.
+  nsrefcnt mFDref;    // mFD is closed when mFDref goes to zero.
+  bool mFDconnected;  // mFD is available to consumer when TRUE.
 
   // A delete protector reference to gSocketTransportService held for lifetime
   // of 'this'. Sometimes used interchangably with gSocketTransportService due
@@ -404,9 +395,7 @@ class nsSocketTransport final : public nsASocketHandler,
   // mFD access methods: called with mLock held.
   //
   PRFileDesc* GetFD_Locked();
-  PRFileDesc* GetFD_LockedAlsoDuringFastOpen();
   void ReleaseFD_Locked(PRFileDesc* fd);
-  bool FastOpenInProgress();
 
   //
   // stream state changes (called outside mLock):
@@ -460,12 +449,6 @@ class nsSocketTransport final : public nsASocketHandler,
   int32_t mKeepaliveRetryIntervalS;
   int32_t mKeepaliveProbeCount;
 
-  // A Fast Open callback.
-  TCPFastOpen* mFastOpenCallback;
-  bool mFastOpenLayerHasBufferedData;
-  uint8_t mFastOpenStatus;
-  nsresult mFirstRetryError;
-
   bool mDoNotRetryToConnect;
 
   // If the connection is used for QUIC this is set to true. That will mean
@@ -478,6 +461,9 @@ class nsSocketTransport final : public nsASocketHandler,
   // Whether the port remapping has already been applied.  We definitely want to
   // prevent duplicate calls in case of chaining remapping.
   bool mPortRemappingApplied = false;
+
+  bool mExternalDNSResolution = false;
+  bool mRetryDnsIfPossible = false;
 };
 
 }  // namespace net

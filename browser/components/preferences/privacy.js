@@ -460,18 +460,6 @@ var gPrivacyPane = {
    * Init HTTPS-Only mode and corresponding prefs
    */
   initHttpsOnly() {
-    let exposeHttpsOnly = Services.prefs.getBoolPref(
-      "browser.preferences.exposeHTTPSOnly"
-    );
-    let httpsOnlyBox = document.getElementById("httpsOnlyBox");
-
-    if (!exposeHttpsOnly) {
-      httpsOnlyBox.setAttribute("hidehttpsonly", "true");
-      return;
-    }
-
-    httpsOnlyBox.removeAttribute("hidehttpsonly");
-
     let link = document.getElementById("httpsOnlyLearnMore");
     let httpsOnlyURL =
       Services.urlFormatter.formatURLPref("app.support.baseURL") +
@@ -1490,7 +1478,7 @@ var gPrivacyPane = {
         this._updateSanitizeSettingsButton();
       }
     } else {
-      clearDataSettings.setAttribute("hidden", "true");
+      clearDataSettings.hidden = true;
     }
   },
 
@@ -2435,7 +2423,7 @@ var gPrivacyPane = {
     if (url) {
       el.setAttribute("href", url);
     } else {
-      el.setAttribute("hidden", "true");
+      el.hidden = true;
     }
   },
 

@@ -255,8 +255,12 @@ class nsContextMenu {
       this.selectionInfo = this.contentData.selectionInfo;
       this.actor = this.contentData.actor;
     } else {
+      const { SelectionUtils } = ChromeUtils.import(
+        "resource://gre/modules/SelectionUtils.jsm"
+      );
+
       this.browser = this.ownerDoc.defaultView.docShell.chromeEventHandler;
-      this.selectionInfo = BrowserUtils.getSelectionDetails(window);
+      this.selectionInfo = SelectionUtils.getSelectionDetails(window);
       this.actor = this.browser.browsingContext.currentWindowGlobal.getActor(
         "ContextMenu"
       );
@@ -319,6 +323,7 @@ class nsContextMenu {
     this.initOpenItems();
     this.initNavigationItems();
     this.initViewItems();
+    this.initImageItems();
     this.initMiscItems();
     this.initSpellingItems();
     this.initSaveItems();
@@ -328,6 +333,7 @@ class nsContextMenu {
     this.initClickToPlayItems();
     this.initPasswordManagerItems();
     this.initSyncItems();
+    this.initViewSourceItems();
   }
 
   initPageMenuSeparator() {
@@ -427,6 +433,31 @@ class nsContextMenu {
 
     this.showItem("context-reload", stopReloadItem == "reload");
     this.showItem("context-stop", stopReloadItem == "stop");
+
+    function initBackForwardMenuItemTooltip(menuItemId, l10nId, shortcutId) {
+      let shortcut = document.getElementById(shortcutId);
+      if (shortcut) {
+        shortcut = ShortcutUtils.prettifyShortcut(shortcut);
+      } else {
+        // Sidebar doesn't have navigation buttons or shortcuts, but we still
+        // want to format the menu item tooltip to remove "$shortcut" string.
+        shortcut = "";
+      }
+      let menuItem = document.getElementById(menuItemId);
+      document.l10n.setAttributes(menuItem, l10nId, { shortcut });
+    }
+
+    initBackForwardMenuItemTooltip(
+      "context-back",
+      "main-context-menu-back-2",
+      "goBackKb"
+    );
+
+    initBackForwardMenuItemTooltip(
+      "context-forward",
+      "main-context-menu-forward-2",
+      "goForwardKb"
+    );
   }
 
   initLeaveDOMFullScreenItems() {
@@ -468,15 +499,12 @@ class nsContextMenu {
       );
     }
 
-    // Save image depends on having loaded its content, video and audio don't.
-    this.showItem("context-saveimage", this.onLoadedImage || this.onCanvas);
+    // Save video and audio don't rely on whether it has loaded or not.
     this.showItem("context-savevideo", this.onVideo);
     this.showItem("context-saveaudio", this.onAudio);
     this.showItem("context-video-saveimage", this.onVideo);
     this.setItemAttr("context-savevideo", "disabled", !this.mediaURL);
     this.setItemAttr("context-saveaudio", "disabled", !this.mediaURL);
-    // Send media URL (but not for canvas, since it's a big data: URL)
-    this.showItem("context-sendimage", this.onImage);
     this.showItem("context-sendvideo", this.onVideo);
     this.showItem("context-sendaudio", this.onAudio);
     let mediaIsBlob = this.mediaURL.startsWith("blob:");
@@ -490,6 +518,71 @@ class nsContextMenu {
       "disabled",
       !this.mediaURL || mediaIsBlob
     );
+  }
+
+  initImageItems() {
+    // Reload image depends on an image that's not fully loaded
+    this.showItem(
+      "context-reloadimage",
+      this.onImage && !this.onCompletedImage
+    );
+
+    // View image depends on having an image that's not standalone
+    // (or is in a frame), or a canvas.
+    this.showItem(
+      "context-viewimage",
+      (this.onImage && (!this.inSyntheticDoc || this.inFrame)) || this.onCanvas
+    );
+
+    // Save image depends on having loaded its content.
+    this.showItem("context-saveimage", this.onLoadedImage || this.onCanvas);
+
+    // Copy image contents depends on whether we're on an image.
+    // Note: the element doesn't exist on all platforms, but showItem() takes
+    // care of that by itself.
+    this.showItem("context-copyimage-contents", this.onImage);
+
+    // Copy image location depends on whether we're on an image.
+    this.showItem("context-copyimage", this.onImage);
+
+    // Send media URL (but not for canvas, since it's a big data: URL)
+    this.showItem("context-sendimage", this.onImage);
+
+    this.showItem(
+      "context-viewimagedesc",
+      this.onImage && this.imageDescURL !== ""
+    );
+
+    // Set as Desktop background depends on whether an image was clicked on,
+    // and only works if we have a shell service.
+    var haveSetDesktopBackground = false;
+
+    if (
+      AppConstants.HAVE_SHELL_SERVICE &&
+      Services.policies.isAllowed("setDesktopBackground")
+    ) {
+      // Only enable Set as Desktop Background if we can get the shell service.
+      var shell = getShellService();
+      if (shell) {
+        haveSetDesktopBackground = shell.canSetDesktopBackground;
+      }
+    }
+
+    this.showItem(
+      "context-setDesktopBackground",
+      haveSetDesktopBackground && this.onLoadedImage
+    );
+
+    this.showItem(
+      "context-sep-setbackground",
+      haveSetDesktopBackground && this.onLoadedImage
+    );
+
+    if (haveSetDesktopBackground && this.onLoadedImage) {
+      document.getElementById(
+        "context-setDesktopBackground"
+      ).disabled = this.contentData.disableSetDesktopBackground;
+    }
   }
 
   initViewItems() {
@@ -548,45 +641,6 @@ class nsContextMenu {
 
     this.showItem("context-sep-viewsource", shouldShow);
 
-    // Set as Desktop background depends on whether an image was clicked on,
-    // and only works if we have a shell service.
-    var haveSetDesktopBackground = false;
-
-    if (
-      AppConstants.HAVE_SHELL_SERVICE &&
-      Services.policies.isAllowed("setDesktopBackground")
-    ) {
-      // Only enable Set as Desktop Background if we can get the shell service.
-      var shell = getShellService();
-      if (shell) {
-        haveSetDesktopBackground = shell.canSetDesktopBackground;
-      }
-    }
-
-    this.showItem(
-      "context-setDesktopBackground",
-      haveSetDesktopBackground && this.onLoadedImage
-    );
-
-    if (haveSetDesktopBackground && this.onLoadedImage) {
-      document.getElementById(
-        "context-setDesktopBackground"
-      ).disabled = this.contentData.disableSetDesktopBackground;
-    }
-
-    // Reload image depends on an image that's not fully loaded
-    this.showItem(
-      "context-reloadimage",
-      this.onImage && !this.onCompletedImage
-    );
-
-    // View image depends on having an image that's not standalone
-    // (or is in a frame), or a canvas.
-    this.showItem(
-      "context-viewimage",
-      (this.onImage && (!this.inSyntheticDoc || this.inFrame)) || this.onCanvas
-    );
-
     // View video depends on not having a standalone video.
     this.showItem(
       "context-viewvideo",
@@ -611,19 +665,6 @@ class nsContextMenu {
         !this.inPDFViewer
     );
     document.getElementById("context-viewbgimage").disabled = !this.hasBGImage;
-
-    this.showItem("context-viewimageinfo", this.onImage);
-    // The image info popup is broken for WebExtension popups, since the browser
-    // is destroyed when the popup is closed.
-    this.setItemAttr(
-      "context-viewimageinfo",
-      "disabled",
-      this.webExtBrowserType === "popup"
-    );
-    this.showItem(
-      "context-viewimagedesc",
-      this.onImage && this.imageDescURL !== ""
-    );
   }
 
   initMiscItems() {
@@ -679,13 +720,9 @@ class nsContextMenu {
 
     // Hide menu entries for images, show otherwise
     if (this.inFrame) {
-      if (
-        BrowserUtils.mimeTypeIsTextBased(this.target.ownerDocument.contentType)
-      ) {
-        this.viewFrameSourceElement.removeAttribute("hidden");
-      } else {
-        this.viewFrameSourceElement.setAttribute("hidden", "true");
-      }
+      this.viewFrameSourceElement.hidden = !BrowserUtils.mimeTypeIsTextBased(
+        this.target.ownerDocument.contentType
+      );
     }
 
     // BiDi UI
@@ -799,21 +836,10 @@ class nsContextMenu {
       this.onLink && (this.onImage || this.onVideo || this.onAudio)
     );
 
-    // Copy image contents depends on whether we're on an image.
-    // Note: the element doesn't exist on all platforms, but showItem() takes
-    // care of that by itself.
-    this.showItem("context-copyimage-contents", this.onImage);
-
-    // Copy image location depends on whether we're on an image.
-    this.showItem("context-copyimage", this.onImage);
     this.showItem("context-copyvideourl", this.onVideo);
     this.showItem("context-copyaudiourl", this.onAudio);
     this.setItemAttr("context-copyvideourl", "disabled", !this.mediaURL);
     this.setItemAttr("context-copyaudiourl", "disabled", !this.mediaURL);
-    this.showItem(
-      "context-sep-copyimage",
-      this.onImage || this.onVideo || this.onAudio
-    );
   }
 
   initMediaPlayerItems() {
@@ -1032,6 +1058,40 @@ class nsContextMenu {
     gSync.updateContentContextMenu(this);
   }
 
+  initViewSourceItems() {
+    const getString = name => {
+      const { bundle } = gViewSourceUtils.getPageActor(this.browser);
+      return bundle.GetStringFromName(name);
+    };
+    const showViewSourceItem = (id, check, accesskey) => {
+      const fullId = `context-viewsource-${id}`;
+      this.showItem(fullId, onViewSource);
+      if (!onViewSource) {
+        return;
+      }
+      check().then(checked => this.setItemAttr(fullId, "checked", checked));
+      this.setItemAttr(fullId, "label", getString(`context_${id}_label`));
+      if (accesskey) {
+        this.setItemAttr(
+          fullId,
+          "accesskey",
+          getString(`context_${id}_accesskey`)
+        );
+      }
+    };
+
+    const onViewSource = this.browser.currentURI.schemeIs("view-source");
+
+    showViewSourceItem("goToLine", async () => false, true);
+    showViewSourceItem("wrapLongLines", () =>
+      gViewSourceUtils.getPageActor(this.browser).queryIsWrapping()
+    );
+    showViewSourceItem("highlightSyntax", () =>
+      gViewSourceUtils.getPageActor(this.browser).queryIsSyntaxHighlighting()
+    );
+    this.showItem("context-sep-viewsource-commands", onViewSource);
+  }
+
   openPasswordManager() {
     LoginHelper.openPasswordManager(window, {
       entryPoint: "contextmenu",
@@ -1230,16 +1290,6 @@ class nsContextMenu {
       this.contentData.docLocation,
       null,
       null,
-      null,
-      this.browser
-    );
-  }
-
-  viewImageInfo() {
-    BrowserPageInfo(
-      this.contentData.docLocation,
-      "mediaTab",
-      this.imageInfo,
       null,
       this.browser
     );

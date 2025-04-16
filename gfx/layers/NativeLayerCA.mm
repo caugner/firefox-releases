@@ -283,6 +283,14 @@ NativeLayerRootCA::Representation::~Representation() {
 
 void NativeLayerRootCA::Representation::Commit(WhichRepresentation aRepresentation,
                                                const nsTArray<RefPtr<NativeLayerCA>>& aSublayers) {
+  if (!mMutated &&
+      std::none_of(aSublayers.begin(), aSublayers.end(), [=](const RefPtr<NativeLayerCA>& layer) {
+        return layer->HasUpdate(aRepresentation);
+      })) {
+    // No updates, skip creating the CATransaction altogether.
+    return;
+  }
+
   AutoCATransaction transaction;
 
   // Call ApplyChanges on our sublayers first, and then update the root layer's
@@ -805,6 +813,11 @@ void NativeLayerCA::ApplyChanges(WhichRepresentation aRepresentation) {
                     mSurfaceIsFlipped, mSamplingFilter, surface);
 }
 
+bool NativeLayerCA::HasUpdate(WhichRepresentation aRepresentation) {
+  MutexAutoLock lock(mMutex);
+  return GetRepresentation(aRepresentation).HasUpdate();
+}
+
 CALayer* NativeLayerCA::UnderlyingCALayer(WhichRepresentation aRepresentation) {
   MutexAutoLock lock(mMutex);
   return GetRepresentation(aRepresentation).UnderlyingCALayer();
@@ -821,12 +834,14 @@ void NativeLayerCA::Representation::ApplyChanges(
     mWrappingCALayer.bounds = NSZeroRect;
     mWrappingCALayer.anchorPoint = NSZeroPoint;
     mWrappingCALayer.contentsGravity = kCAGravityTopLeft;
+    mWrappingCALayer.edgeAntialiasingMask = 0;
     mContentCALayer = [[CALayer layer] retain];
     mContentCALayer.position = NSZeroPoint;
     mContentCALayer.anchorPoint = NSZeroPoint;
     mContentCALayer.contentsGravity = kCAGravityTopLeft;
     mContentCALayer.contentsScale = 1;
     mContentCALayer.bounds = CGRectMake(0, 0, aSize.width, aSize.height);
+    mContentCALayer.edgeAntialiasingMask = 0;
     mContentCALayer.opaque = aIsOpaque;
     if ([mContentCALayer respondsToSelector:@selector(setContentsOpaque:)]) {
       // The opaque property seems to not be enough when using IOSurface contents.
@@ -957,6 +972,16 @@ void NativeLayerCA::Representation::ApplyChanges(
   mMutatedClipRect = false;
   mMutatedFrontSurface = false;
   mMutatedSamplingFilter = false;
+}
+
+bool NativeLayerCA::Representation::HasUpdate() {
+  if (!mWrappingCALayer) {
+    return true;
+  }
+
+  return mMutatedPosition || mMutatedTransform || mMutatedDisplayRect || mMutatedClipRect ||
+         mMutatedBackingScale || mMutatedSize || mMutatedSurfaceIsFlipped || mMutatedFrontSurface ||
+         mMutatedSamplingFilter;
 }
 
 // Called when mMutex is already being held by the current thread.

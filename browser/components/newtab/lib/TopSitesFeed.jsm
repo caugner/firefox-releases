@@ -99,9 +99,7 @@ const SEARCH_FILTERS = [
 ];
 
 const REMOTE_SETTING_DEFAULTS_PREF = "browser.topsites.useRemoteSetting";
-const REMOTE_SETTING_MIGRATION_ID_PREF =
-  "browser.topsites.migratedToRemoteSetting.id";
-const DEFAULT_SITES_POLICY_PREF =
+const DEFAULT_SITES_OVERRIDE_PREF =
   "browser.newtabpage.activity-stream.default.sites";
 const DEFAULT_SITES_EXPERIMENTS_PREF_BRANCH = "browser.topsites.experiment.";
 
@@ -139,18 +137,18 @@ this.TopSitesFeed = class TopSitesFeed {
     this._readDefaults({ isStartup: true });
     this._storage = this.store.dbStorage.getDbTable("sectionPrefs");
     Services.obs.addObserver(this, "browser-search-engine-modified");
-    Services.obs.addObserver(this, "browser-region");
+    Services.obs.addObserver(this, "browser-region-updated");
     Services.prefs.addObserver(REMOTE_SETTING_DEFAULTS_PREF, this);
-    Services.prefs.addObserver(DEFAULT_SITES_POLICY_PREF, this);
+    Services.prefs.addObserver(DEFAULT_SITES_OVERRIDE_PREF, this);
     Services.prefs.addObserver(DEFAULT_SITES_EXPERIMENTS_PREF_BRANCH, this);
   }
 
   uninit() {
     PageThumbs.removeExpirationFilter(this);
     Services.obs.removeObserver(this, "browser-search-engine-modified");
-    Services.obs.removeObserver(this, "browser-region");
+    Services.obs.removeObserver(this, "browser-region-updated");
     Services.prefs.removeObserver(REMOTE_SETTING_DEFAULTS_PREF, this);
-    Services.prefs.removeObserver(DEFAULT_SITES_POLICY_PREF, this);
+    Services.prefs.removeObserver(DEFAULT_SITES_OVERRIDE_PREF, this);
     Services.prefs.removeObserver(DEFAULT_SITES_EXPERIMENTS_PREF_BRANCH, this);
   }
 
@@ -168,13 +166,13 @@ this.TopSitesFeed = class TopSitesFeed {
           this.refresh({ broadcast: true });
         }
         break;
-      case "browser-region":
+      case "browser-region-updated":
         this._readDefaults();
         break;
       case "nsPref:changed":
         if (
           data === REMOTE_SETTING_DEFAULTS_PREF ||
-          data === DEFAULT_SITES_POLICY_PREF ||
+          data === DEFAULT_SITES_OVERRIDE_PREF ||
           data.startsWith(DEFAULT_SITES_EXPERIMENTS_PREF_BRANCH)
         ) {
           this._readDefaults();
@@ -191,46 +189,30 @@ this.TopSitesFeed = class TopSitesFeed {
    * _readDefaults - sets DEFAULT_TOP_SITES
    */
   async _readDefaults({ isStartup = false } = {}) {
-    this._useRemoteSetting = Services.prefs.getBoolPref(
-      REMOTE_SETTING_DEFAULTS_PREF
-    );
+    this._useRemoteSetting = false;
 
-    if (!this._useRemoteSetting) {
+    if (!Services.prefs.getBoolPref(REMOTE_SETTING_DEFAULTS_PREF)) {
       this.refreshDefaults(
         this.store.getState().Prefs.values[DEFAULT_SITES_PREF],
         { isStartup }
       );
-      Services.prefs.clearUserPref(REMOTE_SETTING_MIGRATION_ID_PREF);
       return;
     }
 
-    // Unpin old search shortcuts.
-    const remoteSettingMigrationID = 1;
+    // Try using default top sites from enterprise policies or tests. The pref
+    // is locked when set via enterprise policy. Tests have no default sites
+    // unless they set them via this pref.
     if (
-      Services.prefs.getIntPref(REMOTE_SETTING_MIGRATION_ID_PREF, 0) <
-      remoteSettingMigrationID
+      Services.prefs.prefIsLocked(DEFAULT_SITES_OVERRIDE_PREF) ||
+      Cu.isInAutomation
     ) {
-      this.unpinAllSearchShortcuts();
-      Services.prefs.setIntPref(
-        REMOTE_SETTING_MIGRATION_ID_PREF,
-        remoteSettingMigrationID
-      );
-    }
-
-    // Try using default top sites from enterprise policies. The pref is locked
-    // when set that way.
-    if (Services.prefs.prefIsLocked(DEFAULT_SITES_POLICY_PREF)) {
-      let sites;
-      try {
-        sites = Services.prefs.getStringPref(DEFAULT_SITES_POLICY_PREF);
-      } catch (e) {}
-      if (sites) {
-        this.refreshDefaults(sites, { isStartup });
-        return;
-      }
+      let sites = Services.prefs.getStringPref(DEFAULT_SITES_OVERRIDE_PREF, "");
+      this.refreshDefaults(sites, { isStartup });
+      return;
     }
 
     // Read defaults from remote settings.
+    this._useRemoteSetting = true;
     let remoteSettingData = await this._getRemoteConfig();
 
     // Clear out the array of any previous defaults.
@@ -252,7 +234,19 @@ this.TopSitesFeed = class TopSitesFeed {
       if (siteData.search_shortcut) {
         link = await this.topSiteToSearchTopSite(link);
       } else if (siteData.sponsored_position) {
-        link.sponsored_position = siteData.sponsored_position;
+        const {
+          sponsored_position,
+          sponsored_tile_id,
+          sponsored_impression_url,
+          sponsored_click_url,
+        } = siteData;
+        link = {
+          sponsored_position,
+          sponsored_tile_id,
+          sponsored_impression_url,
+          sponsored_click_url,
+          ...link,
+        };
       }
       DEFAULT_TOP_SITES.push(link);
     }
@@ -446,7 +440,7 @@ this.TopSitesFeed = class TopSitesFeed {
         // haven't previously inserted it, there's space to pin it, and the
         // search engine is available in Firefox
         if (
-          !pinnedSites.find(s => s && s.hostname === shortcut.shortURL) &&
+          !pinnedSites.find(s => s && shortURL(s) === shortcut.shortURL) &&
           !prevInsertedShortcuts.includes(shortcut.shortURL) &&
           nextAvailable > -1 &&
           (await checkHasSearchEngine(shortcut.keyword))
@@ -480,8 +474,7 @@ this.TopSitesFeed = class TopSitesFeed {
   async getLinksWithDefaults(isStartup = false) {
     const prefValues = this.store.getState().Prefs.values;
     const numItems = prefValues[ROWS_PREF] * TOP_SITES_MAX_SITES_PER_ROW;
-    const searchShortcutsExperiment =
-      !this._useRemoteSetting && prefValues[SEARCH_SHORTCUTS_EXPERIMENT];
+    const searchShortcutsExperiment = prefValues[SEARCH_SHORTCUTS_EXPERIMENT];
     // We must wait for search services to initialize in order to access default
     // search engine properties without triggering a synchronous initialization
     await Services.search.init();
@@ -559,6 +552,10 @@ this.TopSitesFeed = class TopSitesFeed {
           continue;
         }
         sponsored[link.sponsored_position - 1] = link;
+
+        // Unpin search shortcut if present for the sponsored link to be shown
+        // instead.
+        this._unpinSearchShortcut(link.hostname);
       } else {
         notBlockedDefaultSites.push(
           searchShortcutsExperiment
@@ -965,6 +962,30 @@ this.TopSitesFeed = class TopSitesFeed {
       }
     }
     this.pinnedCache.expire();
+  }
+
+  _unpinSearchShortcut(vendor) {
+    for (let pinnedLink of NewTabUtils.pinnedLinks.links) {
+      if (
+        pinnedLink &&
+        pinnedLink.searchTopSite &&
+        shortURL(pinnedLink) === vendor
+      ) {
+        NewTabUtils.pinnedLinks.unpin(pinnedLink);
+        this.pinnedCache.expire();
+
+        const prevInsertedShortcuts = this.store
+          .getState()
+          .Prefs.values[SEARCH_SHORTCUTS_HAVE_PINNED_PREF].split(",");
+        this.store.dispatch(
+          ac.SetPref(
+            SEARCH_SHORTCUTS_HAVE_PINNED_PREF,
+            prevInsertedShortcuts.filter(s => s !== vendor).join(",")
+          )
+        );
+        break;
+      }
+    }
   }
 
   /**

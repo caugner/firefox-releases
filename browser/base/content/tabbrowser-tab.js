@@ -33,13 +33,16 @@
           <vbox class="tab-label-container proton"
                 onoverflow="this.setAttribute('textoverflow', 'true');"
                 onunderflow="this.removeAttribute('textoverflow');"
+                align="start"
                 flex="1">
-            <label class="tab-text tab-label" role="presentation"/>
             <hbox class="tab-icon-sound">
               <image class="tab-icon-sound-image" role="presentation"/>
-              <label class="tab-icon-sound-playing-label" data-l10n-id="browser-tab-audio-playing" role="presentation"/>
-              <label class="tab-icon-sound-muted-label" data-l10n-id="browser-tab-audio-muted" role="presentation"/>
+              <label class="tab-icon-sound-label tab-icon-sound-playing-label" data-l10n-id="browser-tab-audio-playing2" role="presentation"/>
+              <label class="tab-icon-sound-label tab-icon-sound-muted-label" data-l10n-id="browser-tab-audio-muted2" role="presentation"/>
+              <label class="tab-icon-sound-label tab-icon-sound-blocked-label" data-l10n-id="browser-tab-audio-blocked" role="presentation"/>
+              <label class="tab-icon-sound-label tab-icon-sound-pip-label" data-l10n-id="browser-tab-audio-pip" role="presentation"/>
             </hbox>
+            <label class="tab-text tab-label" role="presentation"/>
           </vbox>
           <image class="tab-close-button close-icon" role="presentation"/>
         </hbox>
@@ -140,7 +143,7 @@
 
     set _visuallySelected(val) {
       if (val == (this.getAttribute("visuallyselected") == "true")) {
-        return val;
+        return;
       }
 
       if (val) {
@@ -149,8 +152,6 @@
         this.removeAttribute("visuallyselected");
       }
       gBrowser._tabAttrModified(this, ["visuallyselected"]);
-
-      return val;
     }
 
     set _selected(val) {
@@ -173,8 +174,6 @@
       ) {
         this._visuallySelected = val;
       }
-
-      return val;
     }
 
     get pinned() {
@@ -182,7 +181,8 @@
     }
 
     get hidden() {
-      return this.getAttribute("hidden") == "true";
+      // This getter makes `hidden` read-only
+      return super.hidden;
     }
 
     get muted() {
@@ -231,7 +231,7 @@
         return false;
       }
 
-      if (!BrowserUtils.checkEmptyPageOrigin(browser)) {
+      if (!BrowserUIUtils.checkEmptyPageOrigin(browser)) {
         return false;
       }
 

@@ -481,10 +481,22 @@ class nsPIDOMWindowInner : public mozIDOMWindow {
    * DO NOT CALL EITHER OF THESE METHODS DIRECTLY. USE THE FOCUS MANAGER
    * INSTEAD.
    */
-  inline mozilla::dom::Element* GetFocusedElement() const;
+  mozilla::dom::Element* GetFocusedElement() const {
+    return mFocusedElement.get();
+  }
+
   virtual void SetFocusedElement(mozilla::dom::Element* aElement,
                                  uint32_t aFocusMethod = 0,
-                                 bool aNeedsFocus = false) = 0;
+                                 bool aNeedsFocus = false,
+                                 bool aWillShowOutline = false) = 0;
+  /**
+   * Get whether the focused element did show outlines when it was focused.
+   *
+   * Only for the focus manager. Returns false if there was no focused element.
+   */
+  bool FocusedElementShowedOutline() const {
+    return mFocusedElementShowedOutlines;
+  }
 
   /**
    * Retrieves the method that was used to focus the current node.
@@ -669,6 +681,8 @@ class nsPIDOMWindowInner : public mozIDOMWindow {
   // notification.
   bool mHasNotifiedGlobalCreated;
 
+  bool mFocusedElementShowedOutlines = false;
+
   uint32_t mMarkedCCGeneration;
 
   // mTopInnerWindow is used for tab-wise check by timeout throttling. It could
@@ -772,9 +786,6 @@ class nsPIDOMWindowOuter : public mozIDOMWindowProxy {
   void MaybeActiveMediaComponents();
 
   void RefreshMediaElementsVolume();
-
-  void SetServiceWorkersTestingEnabled(bool aEnabled);
-  bool GetServiceWorkersTestingEnabled();
 
   float GetDevicePixelRatio(mozilla::dom::CallerType aCallerType);
 
@@ -941,9 +952,17 @@ class nsPIDOMWindowOuter : public mozIDOMWindowProxy {
    * INSTEAD.
    */
   inline mozilla::dom::Element* GetFocusedElement() const;
+
   virtual void SetFocusedElement(mozilla::dom::Element* aElement,
                                  uint32_t aFocusMethod = 0,
-                                 bool aNeedsFocus = false) = 0;
+                                 bool aNeedsFocus = false,
+                                 bool aWillShowOutline = false) = 0;
+  /**
+   * Get whether the focused element did show outlines when it was focused.
+   *
+   * Only for the focus manager. Returns false if there was no focused element.
+   */
+  bool FocusedElementShowedOutline() const;
 
   /**
    * Retrieves the method that was used to focus the current node.
@@ -1135,10 +1154,6 @@ class nsPIDOMWindowOuter : public mozIDOMWindowProxy {
   uint64_t mWindowID;
 
   uint32_t mMarkedCCGeneration;
-
-  // Let the service workers plumbing know that some feature are enabled while
-  // testing.
-  bool mServiceWorkersTestingEnabled;
 };
 
 NS_DEFINE_STATIC_IID_ACCESSOR(nsPIDOMWindowOuter, NS_PIDOMWINDOWOUTER_IID)

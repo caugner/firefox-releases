@@ -38,10 +38,10 @@
 #include "mozilla/ViewportUtils.h"
 
 #include "nsCOMPtr.h"
+#include "nsFieldSetFrame.h"
 #include "nsFlexContainerFrame.h"
 #include "nsFrameList.h"
 #include "nsPlaceholderFrame.h"
-#include "nsPluginFrame.h"
 #include "nsIBaseWindow.h"
 #include "nsIContent.h"
 #include "nsIContentInlines.h"
@@ -630,6 +630,13 @@ bool nsIFrame::IsPrimaryFrameOfRootOrBodyElement() const {
          content == document->GetBodyElement();
 }
 
+bool nsIFrame::IsRenderedLegend() const {
+  if (auto* parent = GetParent(); parent && parent->IsFieldSetFrame()) {
+    return static_cast<nsFieldSetFrame*>(parent)->GetLegend() == this;
+  }
+  return false;
+}
+
 void nsIFrame::Init(nsIContent* aContent, nsContainerFrame* aParent,
                     nsIFrame* aPrevInFlow) {
   MOZ_ASSERT(nsQueryFrame::FrameIID(mClass) == GetFrameId());
@@ -978,7 +985,7 @@ static void AddAndRemoveImageAssociations(
   }
 
   CompareLayers(aNewLayers, aOldLayers, [&](imgRequestProxy* aReq) {
-    aImageLoader.AssociateRequestToFrame(aReq, aFrame, 0);
+    aImageLoader.AssociateRequestToFrame(aReq, aFrame);
   });
 }
 
@@ -1344,7 +1351,7 @@ void nsIFrame::DidSetComputedStyle(ComputedStyle* aOldComputedStyle) {
       loader->DisassociateRequestFromFrame(oldBorderImage, this);
     }
     if (newBorderImage) {
-      loader->AssociateRequestToFrame(newBorderImage, this, 0);
+      loader->AssociateRequestToFrame(newBorderImage, this);
     }
   }
 
@@ -1366,8 +1373,10 @@ void nsIFrame::DidSetComputedStyle(ComputedStyle* aOldComputedStyle) {
       loader->DisassociateRequestFromFrame(oldShapeImage, this);
     }
     if (newShapeImage) {
-      loader->AssociateRequestToFrame(newShapeImage, this,
-                                      ImageLoader::REQUEST_REQUIRES_REFLOW);
+      loader->AssociateRequestToFrame(
+          newShapeImage, this,
+          ImageLoader::Flags::
+              RequiresReflowOnFirstFrameCompleteAndLoadEventBlocking);
     }
   }
 
@@ -2575,19 +2584,26 @@ bool nsIFrame::DisplayBackgroundUnconditional(nsDisplayListBuilder* aBuilder,
     return false;
   }
 
+  AppendedBackgroundType result = AppendedBackgroundType::None;
+
   // Here we don't try to detect background propagation. Frames that might
   // receive a propagated background should just set aForceBackground to
   // true.
   if (hitTesting || aForceBackground ||
       !StyleBackground()->IsTransparent(this) ||
       StyleDisplay()->HasAppearance()) {
-    return nsDisplayBackgroundImage::AppendBackgroundItemsToTop(
+    result = nsDisplayBackgroundImage::AppendBackgroundItemsToTop(
         aBuilder, this,
         GetRectRelativeToSelf() + aBuilder->ToReferenceFrame(this),
         aLists.BorderBackground());
   }
 
-  return false;
+  if (result == AppendedBackgroundType::None) {
+    aBuilder->BuildCompositorHitTestInfoIfNeeded(this,
+                                                 aLists.BorderBackground());
+  }
+
+  return result == AppendedBackgroundType::ThemedBackground;
 }
 
 void nsIFrame::DisplayBorderBackgroundOutline(nsDisplayListBuilder* aBuilder,
@@ -2866,6 +2882,19 @@ static void CheckForApzAwareEventHandlers(nsDisplayListBuilder* aBuilder,
   }
 }
 
+static void UpdateCurrentHitTestInfo(nsDisplayListBuilder* aBuilder,
+                                     nsIFrame* aFrame) {
+  if (!aBuilder->BuildCompositorHitTestInfo()) {
+    // Compositor hit test info is not used.
+    return;
+  }
+
+  CheckForApzAwareEventHandlers(aBuilder, aFrame);
+
+  const CompositorHitTestInfo info = aFrame->GetCompositorHitTestInfo(aBuilder);
+  aBuilder->SetCompositorHitTestInfo(info);
+}
+
 /**
  * True if aDescendant participates the context aAncestor participating.
  */
@@ -3074,28 +3103,6 @@ struct ContainerTracker {
   bool mCreatedContainer = false;
 };
 
-/**
- * Adds hit test information |aHitTestInfo| on the container item |aContainer|,
- * or if the container item is null, creates a separate hit test item that is
- * added to the bottom of the display list |aList|.
- */
-static void AddHitTestInfo(nsDisplayListBuilder* aBuilder, nsDisplayList* aList,
-                           nsDisplayItem* aContainer, nsIFrame* aFrame,
-                           mozilla::UniquePtr<HitTestInfo>&& aHitTestInfo) {
-  nsDisplayHitTestInfoBase* hitTestItem;
-
-  if (aContainer) {
-    MOZ_ASSERT(aContainer->IsHitTestItem());
-    hitTestItem = static_cast<nsDisplayHitTestInfoBase*>(aContainer);
-    hitTestItem->SetHitTestInfo(std::move(aHitTestInfo));
-  } else {
-    // No container item was created for this frame. Create a separate
-    // nsDisplayCompositorHitTestInfo item instead.
-    aList->AppendNewToBottom<nsDisplayCompositorHitTestInfo>(
-        aBuilder, aFrame, std::move(aHitTestInfo));
-  }
-}
-
 void nsIFrame::BuildDisplayListForStackingContext(
     nsDisplayListBuilder* aBuilder, nsDisplayList* aList,
     bool* aCreatedContainerItem) {
@@ -3111,19 +3118,17 @@ void nsIFrame::BuildDisplayListForStackingContext(
   EffectSet* effectSetForOpacity = EffectSet::GetEffectSetForFrame(
       this, nsCSSPropertyIDSet::OpacityProperties());
   // We can stop right away if this is a zero-opacity stacking context and
-  // we're painting, and we're not animating opacity. Don't do this
-  // if we're going to compute plugin geometry, since opacity-0 plugins
-  // need to have display items built for them.
+  // we're painting, and we're not animating opacity.
   bool needHitTestInfo =
       aBuilder->BuildCompositorHitTestInfo() &&
       StyleUI()->GetEffectivePointerEvents(this) != StylePointerEvents::None;
-  bool opacityItemForEventsAndPluginsOnly = false;
+  bool opacityItemForEventsOnly = false;
   if (effects->mOpacity == 0.0 && aBuilder->IsForPainting() &&
       !(disp->mWillChange.bits & StyleWillChangeBits::OPACITY) &&
       !nsLayoutUtils::HasAnimationOfPropertySet(
           this, nsCSSPropertyIDSet::OpacityProperties(), effectSetForOpacity)) {
-    if (needHitTestInfo || aBuilder->WillComputePluginGeometry()) {
-      opacityItemForEventsAndPluginsOnly = true;
+    if (needHitTestInfo) {
+      opacityItemForEventsOnly = true;
     } else {
       return;
     }
@@ -3302,6 +3307,8 @@ void nsIFrame::BuildDisplayListForStackingContext(
   nsDisplayListBuilder::AutoBuildingDisplayList buildingDisplayList(
       aBuilder, this, visibleRect, dirtyRect, isTransformed);
 
+  UpdateCurrentHitTestInfo(aBuilder, this);
+
   // Depending on the effects that are applied to this frame, we can create
   // multiple container display items and wrap them around our contents.
   // This enum lists all the potential container display items, in the order
@@ -3391,8 +3398,6 @@ void nsIFrame::BuildDisplayListForStackingContext(
     ApplyClipProp(transformedCssClip);
   }
 
-  mozilla::UniquePtr<HitTestInfo> hitTestInfo;
-
   nsDisplayListCollection set(aBuilder);
   Maybe<nsRect> clipForMask;
   bool insertBackdropRoot;
@@ -3402,10 +3407,8 @@ void nsIFrame::BuildDisplayListForStackingContext(
                                                                   inTransform);
     nsDisplayListBuilder::AutoEnterFilter filterASRSetter(aBuilder,
                                                           usingFilter);
-    nsDisplayListBuilder::AutoInEventsAndPluginsOnly inEventsAndPluginsSetter(
-        aBuilder, opacityItemForEventsAndPluginsOnly);
-
-    CheckForApzAwareEventHandlers(aBuilder, this);
+    nsDisplayListBuilder::AutoInEventsOnly inEventsSetter(
+        aBuilder, opacityItemForEventsOnly);
 
     // If we have a mask, compute a clip to bound the masked content.
     // This is necessary in case the content moves with an ancestor
@@ -3435,24 +3438,6 @@ void nsIFrame::BuildDisplayListForStackingContext(
     }
 
     aBuilder->AdjustWindowDraggingRegion(this);
-
-    if (gfxVars::UseWebRender()) {
-      aBuilder->BuildCompositorHitTestInfoIfNeeded(this, set.BorderBackground(),
-                                                   true);
-    } else {
-      CompositorHitTestInfo info = aBuilder->BuildCompositorHitTestInfo()
-                                       ? GetCompositorHitTestInfo(aBuilder)
-                                       : CompositorHitTestInvisibleToHit;
-
-      if (info != CompositorHitTestInvisibleToHit) {
-        // Frame has hit test flags set, initialize the hit test info structure.
-        hitTestInfo = mozilla::MakeUnique<HitTestInfo>(aBuilder, this, info);
-
-        // Let child frames know the current hit test area and hit test flags.
-        aBuilder->SetCompositorHitTestInfo(hitTestInfo->mArea,
-                                           hitTestInfo->mFlags);
-      }
-    }
 
     MarkAbsoluteFramesForDisplayList(aBuilder);
     aBuilder->Check();
@@ -3630,8 +3615,8 @@ void nsIFrame::BuildDisplayListForStackingContext(
         nsDisplayOpacity::NeedsActiveLayer(aBuilder, this);
 
     resultList.AppendNewToTop<nsDisplayOpacity>(
-        aBuilder, this, &resultList, containerItemASR,
-        opacityItemForEventsAndPluginsOnly, needsActiveOpacityLayer);
+        aBuilder, this, &resultList, containerItemASR, opacityItemForEventsOnly,
+        needsActiveOpacityLayer);
     ct.TrackContainer(resultList.GetTop());
   }
 
@@ -3827,13 +3812,6 @@ void nsIFrame::BuildDisplayListForStackingContext(
     *aCreatedContainerItem = ct.mCreatedContainer;
   }
 
-  if (hitTestInfo) {
-    // WebRender support is not yet implemented.
-    MOZ_ASSERT(!gfxVars::UseWebRender());
-    AddHitTestInfo(aBuilder, &resultList, ct.mContainer, this,
-                   std::move(hitTestInfo));
-  }
-
   aList->AppendToTop(&resultList);
 }
 
@@ -3988,11 +3966,7 @@ void nsIFrame::BuildDisplayListForSimpleChild(nsDisplayListBuilder* aBuilder,
   nsDisplayListBuilder::AutoBuildingDisplayList buildingForChild(
       aBuilder, aChild, visible, dirty, false);
 
-  CheckForApzAwareEventHandlers(aBuilder, aChild);
-
-  aBuilder->BuildCompositorHitTestInfoIfNeeded(
-      aChild, aLists.BorderBackground(),
-      buildingForChild.IsAnimatedGeometryRoot());
+  UpdateCurrentHitTestInfo(aBuilder, aChild);
 
   aChild->MarkAbsoluteFramesForDisplayList(aBuilder);
   aBuilder->AdjustWindowDraggingRegion(aChild);
@@ -4206,9 +4180,11 @@ void nsIFrame::BuildDisplayListForChild(nsDisplayListBuilder* aBuilder,
 
   nsDisplayListBuilder::AutoBuildingDisplayList buildingForChild(
       aBuilder, child, visible, dirty);
+
+  UpdateCurrentHitTestInfo(aBuilder, child);
+
   DisplayListClipState::AutoClipMultiple clipState(aBuilder);
   nsDisplayListBuilder::AutoCurrentActiveScrolledRootSetter asrSetter(aBuilder);
-  CheckForApzAwareEventHandlers(aBuilder, child);
 
   if (savedOutOfFlowData) {
     aBuilder->SetBuildingInvisibleItems(false);
@@ -4279,8 +4255,6 @@ void nsIFrame::BuildDisplayListForChild(nsDisplayListBuilder* aBuilder,
 
     child->MarkAbsoluteFramesForDisplayList(aBuilder);
 
-    const bool differentAGR = buildingForChild.IsAnimatedGeometryRoot();
-
     if (!awayFromCommonPath &&
         // Some SVG frames might change opacity without invalidating the frame,
         // so exclude them from the fast-path.
@@ -4293,10 +4267,6 @@ void nsIFrame::BuildDisplayListForChild(nsDisplayListBuilder* aBuilder,
       // THIS IS THE COMMON CASE.
       // Not a pseudo or real stacking context. Do the simple thing and
       // return early.
-
-      aBuilder->BuildCompositorHitTestInfoIfNeeded(
-          child, aLists.BorderBackground(), differentAGR);
-
       aBuilder->AdjustWindowDraggingRegion(child);
       aBuilder->Check();
       child->BuildDisplayList(aBuilder, aLists);
@@ -4314,16 +4284,6 @@ void nsIFrame::BuildDisplayListForChild(nsDisplayListBuilder* aBuilder,
     // z-index:non-auto
     nsDisplayListCollection pseudoStack(aBuilder);
 
-    // If this frame has z-index != 0, then the display item might get sorted
-    // into a different place in the list, and we can't rely on the previous
-    // hit test info to still be behind us. Force a new hit test info for this
-    // item, and for the item after it, so that we always have the right hit
-    // test info.
-    const bool mayBeSorted = ZIndex().valueOr(0) != 0;
-
-    aBuilder->BuildCompositorHitTestInfoIfNeeded(
-        child, pseudoStack.BorderBackground(), differentAGR || mayBeSorted);
-
     aBuilder->AdjustWindowDraggingRegion(child);
     nsDisplayListBuilder::AutoContainerASRTracker contASRTracker(aBuilder);
     aBuilder->Check();
@@ -4332,16 +4292,6 @@ void nsIFrame::BuildDisplayListForChild(nsDisplayListBuilder* aBuilder,
     if (aBuilder->DisplayCaret(child, pseudoStack.Outlines())) {
       builtContainerItem = false;
     }
-
-    // If we forced a new hit-test info because this frame is going to be
-    // sorted, then clear the 'previous' data on the builder so that the next
-    // item also gets a new hit test info. That way we're guaranteeing hit-test
-    // info before and after each item that might get moved to a different spot.
-    if (mayBeSorted) {
-      aBuilder->SetCompositorHitTestInfo(
-          nsRect(), CompositorHitTestFlags::eVisibleToHitTest);
-    }
-
     wrapListASR = contASRTracker.GetContainerASR();
 
     list.AppendToTop(pseudoStack.BorderBackground());
@@ -5256,20 +5206,32 @@ static bool SelfIsSelectable(nsIFrame* aFrame, uint32_t aFlags) {
 }
 
 static bool SelectionDescendToKids(nsIFrame* aFrame) {
-  StyleUserSelect style = aFrame->StyleUIReset()->mUserSelect;
-  nsIFrame* parent = aFrame->GetParent();
   // If we are only near (not directly over) then don't traverse
-  // frames with independent selection (e.g. text and list controls)
-  // unless we're already inside such a frame (see bug 268497).  Note that this
-  // prevents any of the users of this method from entering form controls.
+  // frames with independent selection (e.g. text and list controls, see bug
+  // 268497).  Note that this prevents any of the users of this method from
+  // entering form controls.
   // XXX We might want some way to allow using the up-arrow to go into a form
   // control, but the focus didn't work right anyway; it'd probably be enough
   // if the left and right arrows could enter textboxes (which I don't believe
   // they can at the moment)
-  return !aFrame->IsGeneratedContentFrame() && style != StyleUserSelect::All &&
-         style != StyleUserSelect::None &&
-         (parent->HasAnyStateBits(NS_FRAME_INDEPENDENT_SELECTION) ||
-          !aFrame->HasAnyStateBits(NS_FRAME_INDEPENDENT_SELECTION));
+  if (aFrame->IsTextInputFrame() || aFrame->IsListControlFrame()) {
+    MOZ_ASSERT(aFrame->HasAnyStateBits(NS_FRAME_INDEPENDENT_SELECTION));
+    return false;
+  }
+
+  // Failure in this assertion means a new type of frame forms the root of an
+  // NS_FRAME_INDEPENDENT_SELECTION subtree. In such case, the condition above
+  // should be changed to handle it.
+  MOZ_ASSERT_IF(
+      aFrame->HasAnyStateBits(NS_FRAME_INDEPENDENT_SELECTION),
+      aFrame->GetParent()->HasAnyStateBits(NS_FRAME_INDEPENDENT_SELECTION));
+
+  if (aFrame->IsGeneratedContentFrame()) {
+    return false;
+  }
+
+  auto style = aFrame->StyleUIReset()->mUserSelect;
+  return style != StyleUserSelect::All && style != StyleUserSelect::None;
 }
 
 static FrameTarget GetSelectionClosestFrameForChild(nsIFrame* aChild,
@@ -5625,7 +5587,7 @@ bool nsIFrame::AssociateImage(const StyleImage& aImage) {
   mozilla::css::ImageLoader* loader =
       PresContext()->Document()->StyleImageLoader();
 
-  loader->AssociateRequestToFrame(req, this, 0);
+  loader->AssociateRequestToFrame(req, this);
   return true;
 }
 
@@ -5985,10 +5947,11 @@ AspectRatio nsIFrame::GetAspectRatio() const {
   // Per spec, 'aspect-ratio' property applies to all elements except inline
   // boxes and internal ruby or table boxes.
   // https://drafts.csswg.org/css-sizing-4/#aspect-ratio
-  //
-  // Bug 1667501: If any caller is used for the elements supporting and not
-  // supporting 'aspect-ratio', we may need to add explicit exclusion to early
-  // return here.
+  // For those frame types that don't support aspect-ratio, they must not have
+  // the natural ratio, so this early return is fine.
+  if (!IsFrameOfType(eSupportsAspectRatio)) {
+    return AspectRatio();
+  }
 
   const StyleAspectRatio& aspectRatio = StylePosition()->mAspectRatio;
   // If aspect-ratio is zero or infinite, it's a degenerate ratio and behaves
@@ -6077,13 +6040,14 @@ static MinMaxSize ComputeTransferredMinMaxInlineSize(
 nsIFrame::SizeComputationResult nsIFrame::ComputeSize(
     gfxContext* aRenderingContext, WritingMode aWM, const LogicalSize& aCBSize,
     nscoord aAvailableISize, const LogicalSize& aMargin,
-    const LogicalSize& aBorderPadding, ComputeSizeFlags aFlags) {
+    const LogicalSize& aBorderPadding, const StyleSizeOverrides& aSizeOverrides,
+    ComputeSizeFlags aFlags) {
   MOZ_ASSERT(!GetIntrinsicRatio(),
              "Please override this method and call "
              "nsContainerFrame::ComputeSizeWithIntrinsicDimensions instead.");
   LogicalSize result =
       ComputeAutoSize(aRenderingContext, aWM, aCBSize, aAvailableISize, aMargin,
-                      aBorderPadding, aFlags);
+                      aBorderPadding, aSizeOverrides, aFlags);
   const nsStylePosition* stylePos = StylePosition();
   const nsStyleDisplay* disp = StyleDisplay();
   auto aspectRatioUsage = AspectRatioUsage::None;
@@ -6095,8 +6059,12 @@ nsIFrame::SizeComputationResult nsIFrame::ComputeSize(
                                        aBorderPadding.ISize(aWM) -
                                        boxSizingAdjust.ISize(aWM);
 
-  const auto* inlineStyleCoord = &stylePos->ISize(aWM);
-  const auto* blockStyleCoord = &stylePos->BSize(aWM);
+  const auto& styleISize = aSizeOverrides.mStyleISize
+                               ? *aSizeOverrides.mStyleISize
+                               : stylePos->ISize(aWM);
+  const auto& styleBSize = aSizeOverrides.mStyleBSize
+                               ? *aSizeOverrides.mStyleBSize
+                               : stylePos->BSize(aWM);
 
   auto parentFrame = GetParent();
   auto alignCB = parentFrame;
@@ -6123,85 +6091,27 @@ nsIFrame::SizeComputationResult nsIFrame::ComputeSize(
   // flex container's main axis.
   LogicalAxis flexMainAxis =
       eLogicalAxisInline;  // (init to make valgrind happy)
-
-  // The holder of the imposed main size pointer. This is used for adjusting the
-  // main size of the flex item after we resolve its flexible length.
-  Maybe<StyleSize> imposedMainSizeStyleCoord;
-
   if (isFlexItem) {
-    // Flex items use their "flex-basis" property in place of their main-size
-    // property for sizing purposes, *unless* they have "flex-basis:auto", in
-    // which case they use their main-size property after all.
     flexMainAxis = nsFlexContainerFrame::IsItemInlineAxisMainAxis(this)
                        ? eLogicalAxisInline
                        : eLogicalAxisBlock;
-
-    // NOTE: The logic here should match the similar chunk for updating
-    // mainAxisCoord in nsContainerFrame::ComputeSizeWithIntrinsicDimensions()
-    // (aside from using a different dummy value in the IsUsedFlexBasisContent()
-    // case).
-    const auto* flexBasis = &stylePos->mFlexBasis;
-    auto& mainAxisCoord =
-        (flexMainAxis == eLogicalAxisInline ? inlineStyleCoord
-                                            : blockStyleCoord);
-
-    // If FlexItemMainSizeOverride frame-property is set, then that means the
-    // flex container is imposing a main-size on this flex item for it to use
-    // as its size in the container's main axis.
-    bool didImposeMainSize;
-    nscoord imposedMainSize =
-        GetProperty(nsIFrame::FlexItemMainSizeOverride(), &didImposeMainSize);
-    if (didImposeMainSize) {
-      imposedMainSizeStyleCoord = Some(StyleSize::LengthPercentage(
-          LengthPercentage::FromAppUnits(imposedMainSize)));
-      if (flexMainAxis == eLogicalAxisInline) {
-        inlineStyleCoord = imposedMainSizeStyleCoord.ptr();
-      } else {
-        blockStyleCoord = imposedMainSizeStyleCoord.ptr();
-      }
-    } else {
-      // NOTE: If we're a table-wrapper frame, we skip this clause and just
-      // stick with 'main-size:auto' behavior (which -- unlike 'content' i.e.
-      // 'max-content' -- will give us the ability to honor percent sizes on our
-      // table-box child when resolving the flex base size). The flexbox spec
-      // doesn't call for this special case, but webcompat &
-      // regression-avoidance seems to require it, for the time being... Tables
-      // sure are special.
-      if (nsFlexContainerFrame::IsUsedFlexBasisContent(*flexBasis,
-                                                       *mainAxisCoord) &&
-          MOZ_LIKELY(!IsTableWrapperFrame())) {
-        static const StyleSize maxContStyleCoord(
-            StyleSize::ExtremumLength(StyleExtremumLength::MaxContent));
-        mainAxisCoord = &maxContStyleCoord;
-        // (Note: if our main axis is the block axis, then this 'max-content'
-        // value will be treated like 'auto', via the IsAutoBSize() call below.)
-      } else if (flexBasis->IsSize() && !flexBasis->IsAuto()) {
-        // For all other non-'auto' flex-basis values, we just swap in the
-        // flex-basis itself for the main-size property.
-        mainAxisCoord = &flexBasis->AsSize();
-      } else {
-        // else: flex-basis is 'auto', or 'content' in a table wrapper frame
-        // which we ignore. So we proceed w/o touching mainAxisCoord.
-      }
-    }
   }
 
   const auto aspectRatio = GetAspectRatio();
   const bool isOrthogonal = aWM.IsOrthogonalTo(alignCB->GetWritingMode());
-  const bool isAutoISize = inlineStyleCoord->IsAuto() ||
-                           aFlags.contains(ComputeSizeFlag::UseAutoISize);
+  const bool isAutoISize = styleISize.IsAuto();
   // Compute inline-axis size
   if (!isAutoISize) {
-    auto iSizeResult = ComputeISizeValue(
-        aRenderingContext, aWM, aCBSize, boxSizingAdjust,
-        boxSizingToMarginEdgeISize, *inlineStyleCoord, aFlags);
+    auto iSizeResult =
+        ComputeISizeValue(aRenderingContext, aWM, aCBSize, boxSizingAdjust,
+                          boxSizingToMarginEdgeISize, styleISize, aFlags);
     result.ISize(aWM) = iSizeResult.mISize;
     aspectRatioUsage = iSizeResult.mAspectRatioUsage;
-  } else if (aspectRatio && !nsLayoutUtils::IsAutoBSize(*blockStyleCoord,
-                                                        aCBSize.BSize(aWM))) {
+  } else if (aspectRatio &&
+             !nsLayoutUtils::IsAutoBSize(styleBSize, aCBSize.BSize(aWM))) {
     auto bSize = nsLayoutUtils::ComputeBSizeValue(
         aCBSize.BSize(aWM), boxSizingAdjust.BSize(aWM),
-        blockStyleCoord->AsLengthPercentage());
+        styleBSize.AsLengthPercentage());
     result.ISize(aWM) = aspectRatio.ComputeRatioDependentSize(
         LogicalAxis::eLogicalAxisInline, aWM, bSize, boxSizingAdjust);
     aspectRatioUsage = AspectRatioUsage::ToComputeISize;
@@ -6239,7 +6149,7 @@ nsIFrame::SizeComputationResult nsIFrame::ComputeSize(
   // aspect ratio is called the ratio-dependent axis, and the resulting size
   // is definite if its input sizes are also definite.
   const bool isDefiniteISize =
-      inlineStyleCoord->IsLengthPercentage() ||
+      styleISize.IsLengthPercentage() ||
       aspectRatioUsage == AspectRatioUsage::ToComputeISize;
   const bool isFlexItemInlineAxisMainAxis =
       isFlexItem && flexMainAxis == eLogicalAxisInline;
@@ -6291,7 +6201,7 @@ nsIFrame::SizeComputationResult nsIFrame::ComputeSize(
     // This implements "Implied Minimum Size of Grid Items".
     // https://drafts.csswg.org/css-grid/#min-size-auto
     minISize = std::min(maxISize, GetMinISize(aRenderingContext));
-    if (inlineStyleCoord->IsLengthPercentage()) {
+    if (styleISize.IsLengthPercentage()) {
       minISize = std::min(minISize, result.ISize(aWM));
     } else if (aFlags.contains(ComputeSizeFlag::IClampMarginBoxMinSize)) {
       // "if the grid item spans only grid tracks that have a fixed max track
@@ -6329,17 +6239,17 @@ nsIFrame::SizeComputationResult nsIFrame::ComputeSize(
   // flag -- then, we'll just stick with the bsize that we already calculated
   // in the initial ComputeAutoSize() call.)
   if (!aFlags.contains(ComputeSizeFlag::UseAutoBSize)) {
-    if (!nsLayoutUtils::IsAutoBSize(*blockStyleCoord, aCBSize.BSize(aWM))) {
+    if (!nsLayoutUtils::IsAutoBSize(styleBSize, aCBSize.BSize(aWM))) {
       result.BSize(aWM) = nsLayoutUtils::ComputeBSizeValue(
           aCBSize.BSize(aWM), boxSizingAdjust.BSize(aWM),
-          blockStyleCoord->AsLengthPercentage());
+          styleBSize.AsLengthPercentage());
     } else if (aspectRatio && result.ISize(aWM) != NS_UNCONSTRAINEDSIZE) {
       result.BSize(aWM) = aspectRatio.ComputeRatioDependentSize(
           LogicalAxis::eLogicalAxisBlock, aWM, result.ISize(aWM),
           boxSizingAdjust);
       MOZ_ASSERT(aspectRatioUsage == AspectRatioUsage::None);
       aspectRatioUsage = AspectRatioUsage::ToComputeBSize;
-    } else if (MOZ_UNLIKELY(isGridItem) && blockStyleCoord->IsAuto() &&
+    } else if (MOZ_UNLIKELY(isGridItem) && styleBSize.IsAuto() &&
                !IsTrueOverflowContainer() &&
                !alignCB->IsMasonry(isOrthogonal ? eLogicalAxisInline
                                                 : eLogicalAxisBlock)) {
@@ -6432,13 +6342,16 @@ LogicalSize nsIFrame::ComputeAutoSize(
     gfxContext* aRenderingContext, WritingMode aWM,
     const mozilla::LogicalSize& aCBSize, nscoord aAvailableISize,
     const mozilla::LogicalSize& aMargin,
-    const mozilla::LogicalSize& aBorderPadding, ComputeSizeFlags aFlags) {
+    const mozilla::LogicalSize& aBorderPadding,
+    const StyleSizeOverrides& aSizeOverrides, ComputeSizeFlags aFlags) {
   // Use basic shrink-wrapping as a default implementation.
   LogicalSize result(aWM, 0xdeadbeef, NS_UNCONSTRAINEDSIZE);
 
   // don't bother setting it if the result won't be used
-  if (StylePosition()->ISize(aWM).IsAuto() ||
-      aFlags.contains(ComputeSizeFlag::UseAutoISize)) {
+  const auto& styleISize = aSizeOverrides.mStyleISize
+                               ? *aSizeOverrides.mStyleISize
+                               : StylePosition()->ISize(aWM);
+  if (styleISize.IsAuto()) {
     nscoord availBased =
         aAvailableISize - aMargin.ISize(aWM) - aBorderPadding.ISize(aWM);
     result.ISize(aWM) = ShrinkWidthToFit(aRenderingContext, availBased, aFlags);
@@ -6472,9 +6385,10 @@ nscoord nsIFrame::ShrinkWidthToFit(gfxContext* aRenderingContext,
 Maybe<nscoord> nsIFrame::ComputeInlineSizeFromAspectRatio(
     WritingMode aWM, const LogicalSize& aCBSize,
     const LogicalSize& aContentEdgeToBoxSizing, ComputeSizeFlags aFlags) const {
-  // FIXME: Bug 1670151: Use GetAspectRatio() to cover replaced elements.
+  // FIXME: Bug 1670151: Use GetAspectRatio() to cover replaced elements (and
+  // then we can drop the check of eSupportsAspectRatio).
   const AspectRatio aspectRatio = StylePosition()->mAspectRatio.ToLayoutRatio();
-  if (aFlags.contains(ComputeSizeFlag::SkipAspectRatio) || !aspectRatio) {
+  if (!IsFrameOfType(eSupportsAspectRatio) || !aspectRatio) {
     return Nothing();
   }
 
@@ -6741,7 +6655,6 @@ void nsIFrame::SetView(nsView* aView) {
     LayoutFrameType frameType = Type();
     NS_ASSERTION(frameType == LayoutFrameType::SubDocument ||
                      frameType == LayoutFrameType::ListControl ||
-                     frameType == LayoutFrameType::Object ||
                      frameType == LayoutFrameType::Viewport ||
                      frameType == LayoutFrameType::MenuPopup,
                  "Only specific frame types can have an nsView");
@@ -7413,17 +7326,12 @@ Layer* nsIFrame::InvalidateLayer(DisplayItemType aDisplayItemKey,
       return nullptr;
     }
 
-    // Plugins can transition from not rendering anything to rendering,
-    // and still only call this. So always invalidate, with specifying
-    // the display item type just in case.
-    //
     // In the bug 930056, dialer app startup but not shown on the
     // screen because sometimes we don't have any retainned data
     // for remote type displayitem and thus Repaint event is not
-    // triggered. So, always invalidate here as well.
+    // triggered. So, always invalidate in this case.
     DisplayItemType displayItemKey = aDisplayItemKey;
-    if (aDisplayItemKey == DisplayItemType::TYPE_PLUGIN ||
-        aDisplayItemKey == DisplayItemType::TYPE_REMOTE) {
+    if (aDisplayItemKey == DisplayItemType::TYPE_REMOTE) {
       displayItemKey = DisplayItemType::TYPE_ZERO;
     }
 
@@ -8637,7 +8545,8 @@ nsresult nsIFrame::PeekOffsetForCharacter(nsPeekOffsetStruct* aPos,
   // we're placed before the linefeed character on the previous line.
   if (current.mOffset < 0 && current.mJumpedLine &&
       aPos->mDirection == eDirPrevious &&
-      current.mFrame->HasSignificantTerminalNewline()) {
+      current.mFrame->HasSignificantTerminalNewline() &&
+      !current.mIgnoredBrFrame) {
     --aPos->mContentOffset;
   }
   return NS_OK;
@@ -9164,21 +9073,20 @@ nsIFrame::SelectablePeekReport nsIFrame::GetFrameFromDirection(
       return !aForceEditableRegion || aFrame->GetContent()->IsEditable();
     };
 
-    // Skip brFrames, but only we can select something before hitting the end of
-    // the line or a non-selectable region.
+    // Skip br frames, but only if we can select something before hitting the
+    // end of the line or a non-selectable region.
     if (atLineEdge && aDirection == eDirPrevious &&
         traversedFrame->IsBrFrame()) {
-      bool canSkipBr = false;
       for (nsIFrame* current = traversedFrame->GetPrevSibling(); current;
            current = current->GetPrevSibling()) {
         if (!current->IsBlockOutside() && IsSelectable(current)) {
           if (!current->IsBrFrame()) {
-            canSkipBr = true;
+            result.mIgnoredBrFrame = true;
           }
           break;
         }
       }
-      if (canSkipBr) {
+      if (result.mIgnoredBrFrame) {
         continue;
       }
     }
@@ -10689,7 +10597,7 @@ void nsIFrame::BoxReflow(nsBoxLayoutState& aState, nsPresContext* aPresContext,
             ComputeSize(
                 aRenderingContext, wm, logicalSize, logicalSize.ISize(wm),
                 reflowInput.ComputedLogicalMargin(wm).Size(wm),
-                reflowInput.ComputedLogicalBorderPadding(wm).Size(wm), {})
+                reflowInput.ComputedLogicalBorderPadding(wm).Size(wm), {}, {})
                 .mLogicalSize.Height(wm));
       }
     }
@@ -11269,13 +11177,6 @@ CompositorHitTestInfo nsIFrame::GetCompositorHitTestInfo(
     result += CompositorHitTestFlags::eInactiveScrollframe;
   } else if (aBuilder->GetAncestorHasApzAwareEventHandler()) {
     result += CompositorHitTestFlags::eApzAwareListeners;
-  } else if (IsObjectFrame()) {
-    // If the frame is a plugin frame and wants to handle wheel events as
-    // default action, we should add the frame to dispatch-to-content region.
-    nsPluginFrame* pluginFrame = do_QueryFrame(this);
-    if (pluginFrame && pluginFrame->WantsToHandleWheelEventAsDefaultAction()) {
-      result += CompositorHitTestFlags::eApzAwareListeners;
-    }
   } else if (IsRangeFrame()) {
     // Range frames handle touch events directly without having a touch listener
     // so we need to let APZ know that this area cares about events.
@@ -11290,7 +11191,7 @@ CompositorHitTestInfo nsIFrame::GetCompositorHitTestInfo(
     // that code, but woven into the top-down recursive display list building
     // process.
     CompositorHitTestInfo inheritedTouchAction =
-        aBuilder->GetHitTestInfo() & CompositorHitTestTouchActionMask;
+        aBuilder->GetCompositorHitTestInfo() & CompositorHitTestTouchActionMask;
 
     nsIFrame* touchActionFrame = this;
     if (nsIScrollableFrame* scrollFrame =
@@ -12029,7 +11930,6 @@ void DR_State::InitFrameTypeTable() {
   AddFrameTypeInfo(LayoutFrameType::Letter, "letter", "letter");
   AddFrameTypeInfo(LayoutFrameType::Line, "line", "line");
   AddFrameTypeInfo(LayoutFrameType::ListControl, "select", "select");
-  AddFrameTypeInfo(LayoutFrameType::Object, "obj", "object");
   AddFrameTypeInfo(LayoutFrameType::Page, "page", "page");
   AddFrameTypeInfo(LayoutFrameType::Placeholder, "place", "placeholder");
   AddFrameTypeInfo(LayoutFrameType::Canvas, "canvas", "canvas");

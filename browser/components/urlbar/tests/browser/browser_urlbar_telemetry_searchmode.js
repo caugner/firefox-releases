@@ -93,9 +93,9 @@ add_task(async function setup() {
 
   // Create an engine to generate search suggestions and add it as default
   // for this test.
-  const url =
-    getRootDirectory(gTestPath) + "urlbarTelemetrySearchSuggestions.xml";
-  let suggestionEngine = await Services.search.addOpenSearchEngine(url, "");
+  let suggestionEngine = await SearchTestUtils.promiseNewSearchEngine(
+    getRootDirectory(gTestPath) + "urlbarTelemetrySearchSuggestions.xml"
+  );
   suggestionEngine.alias = ENGINE_ALIAS;
   engineDomain = suggestionEngine.getResultDomain();
   engineName = suggestionEngine.name;
@@ -115,6 +115,9 @@ add_task(async function setup() {
   // test when it selects results in the urlbar.
   await PlacesUtils.history.clear();
 
+  Services.telemetry.clearScalars();
+  Services.telemetry.clearEvents();
+
   // Clear historical search suggestions to avoid interference from previous
   // tests.
   await SpecialPowers.pushPrefEnv({
@@ -128,7 +131,6 @@ add_task(async function setup() {
   registerCleanupFunction(async function() {
     Services.telemetry.canRecordExtended = oldCanRecord;
     await Services.search.setDefault(originalEngine);
-    await Services.search.removeEngine(suggestionEngine);
     await PlacesUtils.history.clear();
     Services.telemetry.setEventRecordingEnabled("navigation", false);
     UrlbarTestUtils.uninit();
@@ -525,6 +527,7 @@ add_task(async function test_tabtosearch_onboard() {
   await UrlbarTestUtils.promiseAutocompleteResultPopup({
     window,
     value: engineDomain.slice(0, 4),
+    fireInputEvent: true,
   });
   let tabToSearchResult = (
     await UrlbarTestUtils.waitForAutocompleteResultAt(window, 1)

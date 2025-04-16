@@ -13,7 +13,9 @@ const { XPCOMUtils } = ChromeUtils.import(
 XPCOMUtils.defineLazyModuleGetters(this, {
   AppConstants: "resource://gre/modules/AppConstants.jsm",
   BrowserSearchTelemetry: "resource:///modules/BrowserSearchTelemetry.jsm",
-  BrowserUtils: "resource://gre/modules/BrowserUtils.jsm",
+  BrowserUIUtils: "resource:///modules/BrowserUIUtils.jsm",
+  CONTEXTUAL_SERVICES_PING_TYPES:
+    "resource:///modules/PartnerLinkAttribution.jsm",
   ExtensionSearchHandler: "resource://gre/modules/ExtensionSearchHandler.jsm",
   ObjectUtils: "resource://gre/modules/ObjectUtils.jsm",
   PrivateBrowsingUtils: "resource://gre/modules/PrivateBrowsingUtils.jsm",
@@ -43,6 +45,9 @@ XPCOMUtils.defineLazyServiceGetter(
 
 const DEFAULT_FORM_HISTORY_NAME = "searchbar-history";
 const SEARCH_BUTTON_ID = "urlbar-search-button";
+
+// The scalar category of TopSites click for Contextual Services
+const SCALAR_CATEGORY_TOPSITES = "contextual.services.topsites.click";
 
 let getBoundsWithoutFlushing = element =>
   element.ownerGlobal.windowUtils.getBoundsWithoutFlushing(element);
@@ -171,7 +176,7 @@ class UrlbarInput {
           return this.inputField[property];
         },
         set(val) {
-          return (this.inputField[property] = val);
+          this.inputField[property] = val;
         },
       });
     }
@@ -330,7 +335,7 @@ class UrlbarInput {
       // only if there's no opener (bug 370555).
       if (
         this.window.isInitialPage(uri) &&
-        BrowserUtils.checkEmptyPageOrigin(
+        BrowserUIUtils.checkEmptyPageOrigin(
           this.window.gBrowser.selectedBrowser,
           uri
         )
@@ -349,7 +354,7 @@ class UrlbarInput {
         !this.window.isBlankPageURL(uri.spec) || uri.schemeIs("moz-extension");
     } else if (
       this.window.isInitialPage(value) &&
-      BrowserUtils.checkEmptyPageOrigin(this.window.gBrowser.selectedBrowser)
+      BrowserUIUtils.checkEmptyPageOrigin(this.window.gBrowser.selectedBrowser)
     ) {
       value = "";
       valid = true;
@@ -694,12 +699,27 @@ class UrlbarInput {
       return;
     }
 
+    let urlOverride;
+    if (element?.classList.contains("urlbarView-help")) {
+      urlOverride = result.payload.helpUrl;
+    }
+
     let originalUntrimmedValue = this.untrimmedValue;
-    let isCanonized = this.setValueFromResult(result, event);
+    let isCanonized = this.setValueFromResult({ result, event, urlOverride });
     let where = this._whereToOpen(event);
     let openParams = {
       allowInheritPrincipal: false,
     };
+
+    if (
+      urlOverride &&
+      result.type != UrlbarUtils.RESULT_TYPE.TIP &&
+      where == "current"
+    ) {
+      // Open non-tip help links in a new tab unless the user held a modifier.
+      // TODO (bug 1696232): Do this for tip help links, too.
+      where = "tab";
+    }
 
     let selIndex = result.rowIndex;
     if (!result.payload.providesSearchMode) {
@@ -719,7 +739,9 @@ class UrlbarInput {
       return;
     }
 
-    let { url, postData } = UrlbarUtils.getUrlFromResult(result);
+    let { url, postData } = urlOverride
+      ? { url: urlOverride, postData: null }
+      : UrlbarUtils.getUrlFromResult(result);
     openParams.postData = postData;
 
     switch (result.type) {
@@ -850,7 +872,7 @@ class UrlbarInput {
       }
       case UrlbarUtils.RESULT_TYPE.TIP: {
         let scalarName;
-        if (element.classList.contains("urlbarView-tip-help")) {
+        if (element.classList.contains("urlbarView-help")) {
           url = result.payload.helpUrl;
           if (!url) {
             Cu.reportError("helpUrl not specified");
@@ -960,6 +982,25 @@ class UrlbarInput {
           "browser.partnerlink.campaign.topsites"
         ),
       });
+      if (!this.isPrivate && result.providerName === "UrlbarProviderTopSites") {
+        // The position is 1-based for telemetry
+        const position = selIndex + 1;
+        Services.telemetry.keyedScalarAdd(
+          SCALAR_CATEGORY_TOPSITES,
+          `urlbar_${position}`,
+          1
+        );
+        PartnerLinkAttribution.sendContextualServicesPing(
+          {
+            position,
+            source: "urlbar",
+            tile_id: result.payload.sponsoredTileId || -1,
+            reporting_url: result.payload.sponsoredClickUrl,
+            advertiser: result.payload.title.toLocaleLowerCase(),
+          },
+          CONTEXTUAL_SERVICES_PING_TYPES.TOPSITES_SELECTION
+        );
+      }
     }
 
     this._loadURL(
@@ -986,10 +1027,13 @@ class UrlbarInput {
    *   The result that was selected or picked, null if no result was selected.
    * @param {Event} [event]
    *   The event that picked the result.
+   * @param {string} [urlOverride]
+   *   Normally the URL is taken from `result.payload.url`, but if `urlOverride`
+   *   is specified, it's used instead.
    * @returns {boolean}
    *   Whether the value has been canonized
    */
-  setValueFromResult(result = null, event = null) {
+  setValueFromResult({ result = null, event = null, urlOverride = null } = {}) {
     // Usually this is set by a previous input event, but in certain cases, like
     // when opening Top Sites on a loaded page, it wouldn't happen. To avoid
     // confusing the user, we always enforce it when a result changes our value.
@@ -1074,21 +1118,25 @@ class UrlbarInput {
     // it would end up executing a search instead of visiting it.
     let allowTrim = true;
     if (
-      result.type == UrlbarUtils.RESULT_TYPE.URL &&
-      UrlbarPrefs.get("trimURLs") &&
-      result.payload.url.startsWith(BrowserUtils.trimURLProtocol)
+      (urlOverride || result.type == UrlbarUtils.RESULT_TYPE.URL) &&
+      UrlbarPrefs.get("trimURLs")
     ) {
-      let fixupInfo = this._getURIFixupInfo(
-        BrowserUtils.trimURL(result.payload.url)
-      );
-      if (fixupInfo?.keywordAsSent) {
-        allowTrim = false;
+      let url = urlOverride || result.payload.url;
+      if (url.startsWith(BrowserUIUtils.trimURLProtocol)) {
+        let fixupInfo = this._getURIFixupInfo(BrowserUIUtils.trimURL(url));
+        if (fixupInfo?.keywordAsSent) {
+          allowTrim = false;
+        }
       }
     }
 
     if (!result.autofill) {
-      setValueAndRestoreActionType(this._getValueFromResult(result), allowTrim);
+      setValueAndRestoreActionType(
+        this._getValueFromResult(result, urlOverride),
+        allowTrim
+      );
     }
+
     this.setResultForCurrentValue(result);
     return false;
   }
@@ -1140,7 +1188,7 @@ class UrlbarInput {
       return;
     }
 
-    this.setValueFromResult(result);
+    this.setValueFromResult({ result });
   }
 
   /**
@@ -1560,7 +1608,7 @@ class UrlbarInput {
   }
 
   set value(val) {
-    return this._setValue(val, true);
+    this._setValue(val, true);
   }
 
   get lastSearchString() {
@@ -1878,7 +1926,7 @@ class UrlbarInput {
     return val;
   }
 
-  _getValueFromResult(result) {
+  _getValueFromResult(result, urlOverride = null) {
     switch (result.type) {
       case UrlbarUtils.RESULT_TYPE.KEYWORD:
         return result.payload.input;
@@ -1895,7 +1943,7 @@ class UrlbarInput {
     }
 
     try {
-      let uri = Services.io.newURI(result.payload.url);
+      let uri = Services.io.newURI(urlOverride || result.payload.url);
       if (uri) {
         return losslessDecodeURI(uri);
       }
@@ -2089,12 +2137,12 @@ class UrlbarInput {
     // url. First check for a trimmed value.
 
     if (
-      !selectedVal.startsWith(BrowserUtils.trimURLProtocol) &&
+      !selectedVal.startsWith(BrowserUIUtils.trimURLProtocol) &&
       // Note _trimValue may also trim a trailing slash, thus we can't just do
       // a straight string compare to tell if the protocol was trimmed.
       !displaySpec.startsWith(this._trimValue(displaySpec))
     ) {
-      selectedVal = BrowserUtils.trimURLProtocol + selectedVal;
+      selectedVal = BrowserUIUtils.trimURLProtocol + selectedVal;
     }
 
     return selectedVal;
@@ -2176,7 +2224,7 @@ class UrlbarInput {
    *   The trimmed string
    */
   _trimValue(val) {
-    return UrlbarPrefs.get("trimURLs") ? BrowserUtils.trimURL(val) : val;
+    return UrlbarPrefs.get("trimURLs") ? BrowserUIUtils.trimURL(val) : val;
   }
 
   /**
@@ -2921,7 +2969,7 @@ class UrlbarInput {
     // We should do nothing during composition or if composition was canceled
     // and we didn't close the popup on composition start.
     if (
-      UrlbarPrefs.get("imeCompositionClosesPanel") &&
+      !UrlbarPrefs.get("keepPanelOpenDuringImeComposition") &&
       (compositionState == UrlbarUtils.COMPOSITION.COMPOSING ||
         (compositionState == UrlbarUtils.COMPOSITION.CANCELED &&
           !compositionClosedPopup))
@@ -2931,7 +2979,9 @@ class UrlbarInput {
 
     // Autofill only when text is inserted (i.e., event.data is not empty) and
     // it's not due to pasting.
-    let allowAutofill =
+    const allowAutofill =
+      (!UrlbarPrefs.get("keepPanelOpenDuringImeComposition") ||
+        compositionState !== UrlbarUtils.COMPOSITION.COMPOSING) &&
       !!event.data &&
       !UrlbarUtils.isPasteEvent(event) &&
       this._maybeAutofillOnInput(value);
@@ -3021,7 +3071,18 @@ class UrlbarInput {
     }
     let oldEnd = oldValue.substring(this.selectionEnd);
 
-    let pasteData = UrlbarUtils.stripUnsafeProtocolOnPaste(originalPasteData);
+    let pasteData = originalPasteData;
+    try {
+      Services.uriFixup.getFixupURIInfo(
+        pasteData,
+        Ci.nsIURIFixup.FIXUP_FLAG_FIX_SCHEME_TYPOS
+      );
+    } catch (e) {
+      pasteData = pasteData.replace(/\s/g, " ");
+    }
+
+    pasteData = UrlbarUtils.stripUnsafeProtocolOnPaste(pasteData);
+
     if (originalPasteData != pasteData) {
       // Unfortunately we're not allowed to set the bits being pasted
       // so cancel this event:
@@ -3029,6 +3090,8 @@ class UrlbarInput {
       event.stopImmediatePropagation();
 
       this.inputField.value = oldStart + pasteData + oldEnd;
+      this._untrimmedValue = this.inputField.value;
+
       // Fix up cursor/selection:
       let newCursorPos = oldStart.length + pasteData.length;
       this.selectionStart = newCursorPos;
@@ -3106,7 +3169,7 @@ class UrlbarInput {
     }
     this._compositionState = UrlbarUtils.COMPOSITION.COMPOSING;
 
-    if (!UrlbarPrefs.get("imeCompositionClosesPanel")) {
+    if (UrlbarPrefs.get("keepPanelOpenDuringImeComposition")) {
       return;
     }
 
@@ -3136,7 +3199,7 @@ class UrlbarInput {
       throw new Error("Trying to stop a non existing composition?");
     }
 
-    if (UrlbarPrefs.get("imeCompositionClosesPanel")) {
+    if (!UrlbarPrefs.get("keepPanelOpenDuringImeComposition")) {
       // Clear the selection and the cached result, since they refer to the
       // state before this composition. A new input even will be generated
       // after this.
@@ -3257,10 +3320,11 @@ function getDroppableData(event) {
     }
 
     try {
-      // If this throws, urlSecurityCheck would also throw, as that's what it
-      // does with things that don't pass the IO service's newURI constructor
-      // without fixup. It's conceivable we may want to relax this check in
-      // the future (so e.g. www.foo.com gets fixed up), but not right now.
+      // If this throws, checkLoadURStrWithPrincipal would also throw,
+      // as that's what it does with things that don't pass the IO
+      // service's newURI constructor without fixup. It's conceivable we
+      // may want to relax this check in the future (so e.g. www.foo.com
+      // gets fixed up), but not right now.
       let url = new URL(href);
       // If we succeed, try to pass security checks. If this works, return the
       // URL object. If the *security checks* fail, return null.
@@ -3268,9 +3332,9 @@ function getDroppableData(event) {
         let principal = Services.droppedLinkHandler.getTriggeringPrincipal(
           event
         );
-        BrowserUtils.urlSecurityCheck(
-          url,
+        Services.scriptSecurityManager.checkLoadURIStrWithPrincipal(
           principal,
+          url.href,
           Ci.nsIScriptSecurityManager.DISALLOW_INHERIT_PRINCIPAL
         );
         return url;

@@ -331,6 +331,14 @@ pref("browser.urlbar.suggest.openpage",             true);
 pref("browser.urlbar.suggest.searches",             true);
 pref("browser.urlbar.suggest.topsites",             true);
 pref("browser.urlbar.suggest.engines",              true);
+pref("browser.urlbar.suggest.quicksuggest",         true);
+
+// Whether the QuickSuggest experiment is enabled.
+pref("browser.urlbar.quicksuggest.enabled", false);
+
+// Whether to show search suggestions before general results like history and
+// bookmarks.
+pref("browser.urlbar.showSearchSuggestionsFirst", true);
 
 // As a user privacy measure, don't fetch search suggestions if a pasted string
 // is longer than this.
@@ -352,6 +360,9 @@ pref("browser.urlbar.openintab", false);
 
 // If true, we show tail suggestions when available.
 pref("browser.urlbar.richSuggestions.tail", true);
+
+// If true, top sites may include sponsored ones.
+pref("browser.urlbar.sponsoredTopSites", false);
 
 // Controls the empty search behavior in Search Mode:
 //  0 - Show nothing
@@ -377,12 +388,12 @@ pref("browser.urlbar.extension.timeout", 400);
 // 0 - never resolve; 1 - use heuristics (default); 2 - always resolve
 pref("browser.urlbar.dnsResolveSingleWordsAfterSearch", 1);
 
-// Whether IME composition should close the results panel.
-// The default value is true because some IME open a picker panel, and we end
+// Whether the results panel should be kept open during IME composition.
+// The default value is false because some IME open a picker panel, and we end
 // up with two panels on top of each other. Since for now we can't detect that
 // we leave this choice to the user, hopefully in the future this can be flipped
 // for everyone.
-pref("browser.urlbar.imeCompositionClosesPanel", true);
+pref("browser.urlbar.keepPanelOpenDuringImeComposition", false);
 
 pref("browser.altClickSave", false);
 
@@ -578,9 +589,7 @@ pref("browser.tabs.tooltipsShowPidAndActiveness", false);
 pref("security.allow_eval_with_system_principal", false);
 pref("security.allow_eval_in_parent_process", false);
 
-#if defined(NIGHTLY_BUILD)
-  pref("security.allow_parent_unrestricted_js_loads", false);
-#endif
+pref("security.allow_parent_unrestricted_js_loads", false);
 
 // Unload tabs when available memory is running low
 pref("browser.tabs.unloadOnLowMemory", false);
@@ -820,19 +829,14 @@ pref("browser.preferences.experimental", false);
 pref("browser.preferences.experimental.hidden", false);
 pref("browser.preferences.defaultPerformanceSettings.enabled", true);
 
-pref("browser.preferences.exposeHTTPSOnly", true);
-
 pref("browser.proton.enabled", false);
+pref("browser.proton.toolbar.version", 0);
 
 // Backspace and Shift+Backspace behavior
 // 0 goes Back/Forward
 // 1 act like PgUp/PgDown
 // 2 and other values, nothing
-#ifdef UNIX_BUT_NOT_MAC
-  pref("browser.backspace_action", 2);
-#else
-  pref("browser.backspace_action", 0);
-#endif
+pref("browser.backspace_action", 2);
 
 pref("intl.regional_prefs.use_os_locales", false);
 
@@ -957,6 +961,9 @@ pref("browser.sessionstore.max_write_failures", 5);
 
 // Whether to warn the user when quitting, even though their tabs will be restored.
 pref("browser.sessionstore.warnOnQuit", false);
+
+// Don't quit the browser when Ctrl + Q is pressed.
+pref("browser.quitShortcut.disabled", false);
 
 // allow META refresh by default
 pref("accessibility.blockautorefresh", false);
@@ -1262,8 +1269,9 @@ pref("services.sync.prefs.sync.browser.tabs.loadInBackground", true);
 pref("services.sync.prefs.sync.browser.tabs.warnOnClose", true);
 pref("services.sync.prefs.sync.browser.tabs.warnOnOpen", true);
 pref("services.sync.prefs.sync.browser.taskbar.previews.enable", true);
-pref("services.sync.prefs.sync.browser.urlbar.matchBuckets", true);
 pref("services.sync.prefs.sync.browser.urlbar.maxRichResults", true);
+pref("services.sync.prefs.sync.browser.urlbar.resultBuckets", true);
+pref("services.sync.prefs.sync.browser.urlbar.showSearchSuggestionsFirst", true);
 pref("services.sync.prefs.sync.browser.urlbar.suggest.bookmark", true);
 pref("services.sync.prefs.sync.browser.urlbar.suggest.history", true);
 pref("services.sync.prefs.sync.browser.urlbar.suggest.openpage", true);
@@ -1345,7 +1353,7 @@ pref("browser.menu.showCharacterEncoding", "chrome://browser/locale/browser.prop
 // This is a fallback value for when prompt callers do not specify a modalType.
 pref("prompts.defaultModalType", 3);
 
-pref("browser.topsites.useRemoteSetting", false);
+pref("browser.topsites.useRemoteSetting", true);
 
 // The base URL for the Quick Suggest anonymizing proxy. To make a request to
 // the proxy, include a campaign ID in the path.
@@ -1365,6 +1373,15 @@ pref("prompts.tabChromePromptSubDialog", true);
   pref("prompts.contentPromptSubDialog", false);
 #endif
 
+// Whether to show window-modal dialogs opened for browser windows
+// in a SubDialog inside their parent, instead of an OS level window.
+#ifdef NIGHTLY_BUILD
+  pref("prompts.windowPromptSubDialog", true);
+#else
+  pref("prompts.windowPromptSubDialog", false);
+#endif
+
+
 // Activates preloading of the new tab url.
 pref("browser.newtab.preload", true);
 
@@ -1380,8 +1397,6 @@ pref("browser.newtabpage.activity-stream.newNewtabExperience.colors", "#0090ED,#
 #ifndef RELEASE_OR_BETA
   pref("browser.newtabpage.activity-stream.debug", false);
 #endif
-
-pref("browser.library.activity-stream.enabled", true);
 
 // The remote FxA root content URL for the Activity Stream firstrun page.
 pref("browser.newtabpage.activity-stream.fxaccounts.endpoint", "https://accounts.firefox.com/");
@@ -1457,6 +1472,7 @@ pref("trailhead.firstrun.newtab.triplets", "");
 pref("browser.aboutwelcome.enabled", true);
 // Used to set multistage welcome UX
 pref("browser.aboutwelcome.overrideContent", "");
+pref("browser.aboutwelcome.skipFocus", false);
 
 // The pref that controls if the What's New panel is enabled.
 pref("browser.messaging-system.whatsNewPanel.enabled", true);
@@ -1691,10 +1707,8 @@ pref("dom.storage_access.enabled", true);
 
 pref("browser.contentblocking.cryptomining.preferences.ui.enabled", true);
 pref("browser.contentblocking.fingerprinting.preferences.ui.enabled", true);
-#ifdef NIGHTLY_BUILD
-  // Enable cookieBehavior = BEHAVIOR_REJECT_TRACKER_AND_PARTITION_FOREIGN as an option in the custom category ui
-  pref("browser.contentblocking.reject-and-isolate-cookies.preferences.ui.enabled", true);
-#endif
+// Enable cookieBehavior = BEHAVIOR_REJECT_TRACKER_AND_PARTITION_FOREIGN as an option in the custom category ui
+pref("browser.contentblocking.reject-and-isolate-cookies.preferences.ui.enabled", true);
 // State Partitioning MVP UI.
 pref("browser.contentblocking.state-partitioning.mvp.ui.enabled", true);
 
@@ -2120,14 +2134,6 @@ pref("devtools.browsertoolbox.fission", true);
 pref("devtools.browsertoolbox.fission", false);
 #endif
 
-// This pref is also related to fission, but not only. It allows the toolbox
-// to stay open even if the debugged tab switches to another process.
-// It can happen between two documents, one running in the parent process like
-// about:sessionrestore and another one running in the content process like
-// any web page. Or between two distinct domain when running with fission turned
-// on. See bug 1565263.
-pref("devtools.target-switching.enabled", true);
-
 // Toolbox Button preferences
 pref("devtools.command-button-pick.enabled", true);
 pref("devtools.command-button-frames.enabled", true);
@@ -2162,8 +2168,6 @@ pref("devtools.inspector.imagePreviewTooltipSize", 300);
 pref("devtools.inspector.showUserAgentStyles", false);
 // Show native anonymous content and user agent shadow roots
 pref("devtools.inspector.showAllAnonymousContent", false);
-// Enable the new Rules View
-pref("devtools.inspector.new-rulesview.enabled", false);
 // Enable the inline CSS compatiblity warning in inspector rule view
 pref("devtools.inspector.ruleview.inline-compatibility-warning.enabled", false);
 // Enable the compatibility tool in the inspector.
@@ -2173,7 +2177,7 @@ pref("devtools.inspector.compatibility.enabled", true);
 pref("devtools.inspector.compatibility.enabled", false);
 #endif
 // Enable color scheme simulation in the inspector.
-pref("devtools.inspector.color-scheme-simulation.enabled", false);
+pref("devtools.inspector.color-scheme-simulation.enabled", true);
 // Enable overflow debugging in the inspector.
 pref("devtools.overflow.debugging.enabled", true);
 
@@ -2412,8 +2416,12 @@ pref("devtools.browserconsole.input.editorWidth", 0);
 // Display an onboarding UI for the Editor mode.
 pref("devtools.webconsole.input.editorOnboarding", true);
 
-// Disable the new performance recording panel by default
-pref("devtools.performance.new-panel-enabled", false);
+// Enable the new performance recording panel in Nightly builds.
+#if defined(NIGHTLY_BUILD)
+  pref("devtools.performance.new-panel-enabled", true);
+#else
+  pref("devtools.performance.new-panel-enabled", false);
+#endif
 
 // Enable message grouping in the console, true by default
 pref("devtools.webconsole.groupWarningMessages", true);

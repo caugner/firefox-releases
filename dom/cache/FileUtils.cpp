@@ -30,6 +30,8 @@ using mozilla::dom::quota::Client;
 using mozilla::dom::quota::CloneFileAndAppend;
 using mozilla::dom::quota::FileInputStream;
 using mozilla::dom::quota::FileOutputStream;
+using mozilla::dom::quota::GetDirEntryKind;
+using mozilla::dom::quota::nsIFileKind;
 using mozilla::dom::quota::PERSISTENCE_TYPE_DEFAULT;
 using mozilla::dom::quota::QuotaManager;
 using mozilla::dom::quota::QuotaObject;
@@ -140,16 +142,12 @@ Result<std::pair<nsID, nsCOMPtr<nsISupports>>, nsresult> BodyStartWriteStream(
   CACHE_TRY_INSPECT(const auto& tmpFile,
                     BodyIdToFile(aBaseDir, id, BODY_FILE_TMP));
 
-  CACHE_TRY_INSPECT(const bool& exists, MOZ_TO_RESULT_INVOKE(*tmpFile, Exists));
+  CACHE_TRY_INSPECT(const auto& fileStream,
+                    CreateFileOutputStream(PERSISTENCE_TYPE_DEFAULT, aQuotaInfo,
+                                           Client::DOMCACHE, tmpFile.get()));
 
-  CACHE_TRY(OkIf(!exists), Err(NS_ERROR_FILE_ALREADY_EXISTS));
-
-  const nsCOMPtr<nsIOutputStream> fileStream = CreateFileOutputStream(
-      PERSISTENCE_TYPE_DEFAULT, aQuotaInfo, Client::DOMCACHE, tmpFile.get());
-
-  CACHE_TRY(OkIf(fileStream), Err(NS_ERROR_UNEXPECTED));
-
-  const auto compressed = MakeRefPtr<SnappyCompressOutputStream>(fileStream);
+  const auto compressed =
+      MakeRefPtr<SnappyCompressOutputStream>(fileStream.get());
 
   const nsCOMPtr<nsIEventTarget> target =
       do_GetService(NS_STREAMTRANSPORTSERVICE_CONTRACTID);
@@ -194,20 +192,12 @@ Result<NotNull<nsCOMPtr<nsIInputStream>>, nsresult> BodyOpen(
   CACHE_TRY_INSPECT(const auto& finalFile,
                     BodyIdToFile(aBaseDir, aId, BODY_FILE_FINAL));
 
-  CACHE_TRY_INSPECT(const bool& exists,
-                    MOZ_TO_RESULT_INVOKE(*finalFile, Exists));
-
-  // XXX This is somewhat redundant. We could just return
-  // NS_ERROR_FILE_NOT_FOUND if CreateFileInputStream fails? Or, if that might
-  // fail for other reasons, it should probably be changed to return a Result,
-  // and then we can just propagate its result.
-  CACHE_TRY(OkIf(exists), Err(NS_ERROR_FILE_NOT_FOUND));
-
-  nsCOMPtr<nsIInputStream> fileStream = CreateFileInputStream(
-      PERSISTENCE_TYPE_DEFAULT, aQuotaInfo, Client::DOMCACHE, finalFile.get());
-  CACHE_TRY(OkIf(fileStream), Err(NS_ERROR_UNEXPECTED));
-
-  return WrapNotNullUnchecked(std::move(fileStream));
+  CACHE_TRY_RETURN(CreateFileInputStream(PERSISTENCE_TYPE_DEFAULT, aQuotaInfo,
+                                         Client::DOMCACHE, finalFile.get())
+                       .map([](NotNull<RefPtr<FileInputStream>>&& stream) {
+                         return WrapNotNullUnchecked(
+                             nsCOMPtr<nsIInputStream>{stream.get()});
+                       }));
 }
 
 nsresult BodyMaybeUpdatePaddingSize(const QuotaInfo& aQuotaInfo,
@@ -358,41 +348,66 @@ nsresult BodyDeleteOrphanedFiles(const QuotaInfo& aQuotaInfo, nsIFile& aBaseDir,
       *dir,
       [&aQuotaInfo, &aKnownBodyIdList](
           const nsCOMPtr<nsIFile>& subdir) -> Result<Ok, nsresult> {
-        CACHE_TRY_INSPECT(const bool& isDir,
-                          MOZ_TO_RESULT_INVOKE(subdir, IsDirectory));
+        CACHE_TRY_INSPECT(const auto& dirEntryKind, GetDirEntryKind(*subdir));
 
-        // If a file got in here somehow, try to remove it and move on
-        CACHE_TRY(OkIf(isDir), Ok{}, ([&aQuotaInfo, &subdir](const auto&) {
-                    DebugOnly<nsresult> result = RemoveNsIFile(
-                        aQuotaInfo, *subdir, /* aTrackQuota */ false);
-                    MOZ_ASSERT(NS_SUCCEEDED(result));
-                  }));
+        switch (dirEntryKind) {
+          case nsIFileKind::ExistsAsDirectory: {
+            const auto removeOrphanedFiles =
+                [&aQuotaInfo, &aKnownBodyIdList](
+                    nsIFile& bodyFile,
+                    const nsACString& leafName) -> Result<bool, nsresult> {
+              // Finally, parse the uuid out of the name.  If it fails to parse,
+              // then ignore the file.
+              auto cleanup = MakeScopeExit([&aQuotaInfo, &bodyFile] {
+                DebugOnly<nsresult> result =
+                    RemoveNsIFile(aQuotaInfo, bodyFile);
+                MOZ_ASSERT(NS_SUCCEEDED(result));
+              });
 
-        const auto removeOrphanedFiles =
-            [&aQuotaInfo, &aKnownBodyIdList](
-                nsIFile& bodyFile,
-                const nsACString& leafName) -> Result<bool, nsresult> {
-          // Finally, parse the uuid out of the name.  If it fails to parse,
-          // then ignore the file.
-          auto cleanup = MakeScopeExit([&aQuotaInfo, &bodyFile] {
-            DebugOnly<nsresult> result = RemoveNsIFile(aQuotaInfo, bodyFile);
-            MOZ_ASSERT(NS_SUCCEEDED(result));
-          });
+              nsID id;
+              CACHE_TRY(OkIf(id.Parse(leafName.BeginReading())), true);
 
-          nsID id;
-          CACHE_TRY(OkIf(id.Parse(leafName.BeginReading())), true);
+              if (!aKnownBodyIdList.Contains(id)) {
+                return true;
+              }
 
-          if (!aKnownBodyIdList.Contains(id)) {
-            return true;
+              cleanup.release();
+
+              return false;
+            };
+            CACHE_TRY(
+                ToResult(BodyTraverseFiles(aQuotaInfo, *subdir,
+                                           removeOrphanedFiles,
+                                           /* aCanRemoveFiles */ true,
+                                           /* aTrackQuota */ true))
+#ifdef WIN32
+                    .orElse([](const nsresult rv) -> Result<Ok, nsresult> {
+                      // We treat ERROR_FILE_CORRUPT as if the directory did
+                      // not exist at all.
+                      if (NS_ERROR_GET_MODULE(rv) == NS_ERROR_MODULE_WIN32 &&
+                          NS_ERROR_GET_CODE(rv) == ERROR_FILE_CORRUPT) {
+                        return Ok{};
+                      }
+
+                      return Err(rv);
+                    })
+#endif
+            );
+            break;
           }
 
-          cleanup.release();
+          case nsIFileKind::ExistsAsFile: {
+            // If a file got in here somehow, try to remove it and move on
+            DebugOnly<nsresult> result =
+                RemoveNsIFile(aQuotaInfo, *subdir, /* aTrackQuota */ false);
+            MOZ_ASSERT(NS_SUCCEEDED(result));
+            break;
+          }
 
-          return false;
-        };
-        CACHE_TRY(BodyTraverseFiles(aQuotaInfo, *subdir, removeOrphanedFiles,
-                                    /* aCanRemoveFiles */ true,
-                                    /* aTrackQuota */ true));
+          case nsIFileKind::DoesNotExist:
+            // Ignore files that got removed externally while iterating.
+            break;
+        }
 
         return Ok{};
       }));
@@ -452,31 +467,34 @@ bool MarkerFileExists(const QuotaInfo& aQuotaInfo) {
 
 nsresult RemoveNsIFileRecursively(const QuotaInfo& aQuotaInfo, nsIFile& aFile,
                                   const bool aTrackQuota) {
-  CACHE_TRY_INSPECT(const Maybe<bool>& maybeIsDirectory,
-                    MOZ_TO_RESULT_INVOKE(aFile, IsDirectory)
-                        .map(Some<bool>)
-                        .orElse(MapNotFoundToDefault<Maybe<bool>>));
-  if (!maybeIsDirectory) {
-    return NS_OK;
+  CACHE_TRY_INSPECT(const auto& dirEntryKind, GetDirEntryKind(aFile));
+
+  switch (dirEntryKind) {
+    case nsIFileKind::ExistsAsDirectory:
+      // Unfortunately, we need to traverse all the entries and delete files one
+      // by
+      // one to update their usages to the QuotaManager.
+      CACHE_TRY(quota::CollectEachFile(
+          aFile,
+          [&aQuotaInfo, &aTrackQuota](
+              const nsCOMPtr<nsIFile>& file) -> Result<Ok, nsresult> {
+            CACHE_TRY(RemoveNsIFileRecursively(aQuotaInfo, *file, aTrackQuota));
+
+            return Ok{};
+          }));
+
+      // In the end, remove the folder
+      CACHE_TRY(aFile.Remove(/* recursive */ false));
+
+      break;
+
+    case nsIFileKind::ExistsAsFile:
+      return RemoveNsIFile(aQuotaInfo, aFile, aTrackQuota);
+
+    case nsIFileKind::DoesNotExist:
+      // Ignore files that got removed externally while iterating.
+      break;
   }
-
-  if (!maybeIsDirectory.value()) {
-    return RemoveNsIFile(aQuotaInfo, aFile, aTrackQuota);
-  }
-
-  // Unfortunately, we need to traverse all the entries and delete files one by
-  // one to update their usages to the QuotaManager.
-  CACHE_TRY(quota::CollectEachFile(
-      aFile,
-      [&aQuotaInfo,
-       &aTrackQuota](const nsCOMPtr<nsIFile>& file) -> Result<Ok, nsresult> {
-        CACHE_TRY(RemoveNsIFileRecursively(aQuotaInfo, *file, aTrackQuota));
-
-        return Ok{};
-      }));
-
-  // In the end, remove the folder
-  CACHE_TRY(aFile.Remove(/* recursive */ false));
 
   return NS_OK;
 }

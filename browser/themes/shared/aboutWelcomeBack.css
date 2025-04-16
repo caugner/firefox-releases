@@ -7,7 +7,7 @@
 }
 
 .radioRestoreContainer:not(:last-child) {
-  margin-bottom: 0.2em;
+  margin-bottom: 0.3em;
 }
 
 /* tablist starts out hidden, but JS may make it visible in response to

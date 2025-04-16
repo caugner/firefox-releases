@@ -64,11 +64,12 @@ typedef nsClassHashtable<nsCStringHashKey, CacheEntryTable> GlobalEntryTables;
  */
 static GlobalEntryTables* sGlobalEntryTables;
 
-CacheMemoryConsumer::CacheMemoryConsumer(uint32_t aFlags)
-    : mReportedMemoryConsumption(0), mFlags(aFlags) {}
+CacheMemoryConsumer::CacheMemoryConsumer(uint32_t aFlags) {
+  StoreFlags(aFlags);
+}
 
 void CacheMemoryConsumer::DoMemoryReport(uint32_t aCurrentSize) {
-  if (!(mFlags & DONT_REPORT) && CacheStorageService::Self()) {
+  if (!(LoadFlags() & DONT_REPORT) && CacheStorageService::Self()) {
     CacheStorageService::Self()->OnMemoryConsumptionChange(this, aCurrentSize);
   }
 }
@@ -1019,8 +1020,6 @@ NS_IMETHODIMP CacheStorageService::AsyncVisitAllStorages(
   RefPtr<WalkDiskCacheRunnable> event =
       new WalkDiskCacheRunnable(nullptr, aVisitEntries, aVisitor);
   return event->Walk();
-
-  return NS_OK;
 }
 
 // Methods used by CacheEntry for management of in-memory structures.
@@ -1193,8 +1192,11 @@ void CacheStorageService::RecordMemoryOnlyEntry(CacheEntry* aEntry,
       return;
     }
 
-    entries = new CacheEntryTable(CacheEntryTable::MEMORY_ONLY);
-    sGlobalEntryTables->Put(memoryStorageID, entries);
+    entries =
+        sGlobalEntryTables
+            ->Put(memoryStorageID,
+                  MakeUnique<CacheEntryTable>(CacheEntryTable::MEMORY_ONLY))
+            .get();
     LOG(("  new memory-only storage table for %s", memoryStorageID.get()));
   }
 
@@ -1280,13 +1282,13 @@ void CacheStorageService::OnMemoryConsumptionChange(
   LOG(("CacheStorageService::OnMemoryConsumptionChange [consumer=%p, size=%u]",
        aConsumer, aCurrentMemoryConsumption));
 
-  uint32_t savedMemorySize = aConsumer->mReportedMemoryConsumption;
+  uint32_t savedMemorySize = aConsumer->LoadReportedMemoryConsumption();
   if (savedMemorySize == aCurrentMemoryConsumption) return;
 
   // Exchange saved size with current one.
-  aConsumer->mReportedMemoryConsumption = aCurrentMemoryConsumption;
+  aConsumer->StoreReportedMemoryConsumption(aCurrentMemoryConsumption);
 
-  bool usingDisk = !(aConsumer->mFlags & CacheMemoryConsumer::MEMORY_ONLY);
+  bool usingDisk = !(aConsumer->LoadFlags() & CacheMemoryConsumer::MEMORY_ONLY);
   bool overLimit = Pool(usingDisk).OnMemoryConsumptionChange(
       savedMemorySize, aCurrentMemoryConsumption);
 
@@ -1561,13 +1563,17 @@ nsresult CacheStorageService::AddStorageEntry(
     NS_ENSURE_FALSE(mShutdown, NS_ERROR_NOT_INITIALIZED);
 
     // Ensure storage table
-    CacheEntryTable* entries;
-    if (!sGlobalEntryTables->Get(aContextKey, &entries)) {
-      entries = new CacheEntryTable(CacheEntryTable::ALL_ENTRIES);
-      sGlobalEntryTables->Put(aContextKey, entries);
-      LOG(("  new storage entries table for context '%s'",
-           aContextKey.BeginReading()));
-    }
+    CacheEntryTable* const entries =
+        sGlobalEntryTables
+            ->GetOrInsertWith(
+                aContextKey,
+                [&aContextKey] {
+                  LOG(("  new storage entries table for context '%s'",
+                       aContextKey.BeginReading()));
+                  return MakeUnique<CacheEntryTable>(
+                      CacheEntryTable::ALL_ENTRIES);
+                })
+            .get();
 
     bool entryExists = entries->Get(entryKey, getter_AddRefs(entry));
 

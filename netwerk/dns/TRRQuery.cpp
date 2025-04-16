@@ -4,6 +4,7 @@
 
 #include "TRRQuery.h"
 #include "TRR.h"
+#include "ODoH.h"
 
 namespace mozilla {
 namespace net {
@@ -33,23 +34,28 @@ static already_AddRefed<AddrInfo> merge_rrset(AddrInfo* rrto,
   return builder.Finish();
 }
 
-void TRRQuery::Cancel() {
+void TRRQuery::Cancel(nsresult aStatus) {
   MutexAutoLock trrlock(mTrrLock);
   if (mTrrA) {
-    mTrrA->Cancel();
+    mTrrA->Cancel(aStatus);
     mTrrA = nullptr;
   }
   if (mTrrAAAA) {
-    mTrrAAAA->Cancel();
+    mTrrAAAA->Cancel(aStatus);
     mTrrAAAA = nullptr;
   }
   if (mTrrByType) {
-    mTrrByType->Cancel();
+    mTrrByType->Cancel(aStatus);
     mTrrByType = nullptr;
   }
 }
 
-nsresult TRRQuery::DispatchLookup(TRR* pushedTRR) {
+nsresult TRRQuery::DispatchLookup(TRR* pushedTRR, bool aUseODoH) {
+  if (aUseODoH && pushedTRR) {
+    MOZ_ASSERT(false, "ODoH should not support push");
+    return NS_ERROR_UNKNOWN_HOST;
+  }
+
   mTrrStart = TimeStamp::Now();
 
   RefPtr<AddrHostRecord> addrRec;
@@ -78,7 +84,10 @@ nsresult TRRQuery::DispatchLookup(TRR* pushedTRR) {
       rectype = pushedTRR->Type();
     }
     bool sendAgain;
-
+    // Need to dispatch TRR requests after |mTrrA| and |mTrrAAAA| are set
+    // properly so as to avoid the race when CompleteLookup() is called at the
+    // same time.
+    nsTArray<RefPtr<TRR>> requestsToSend;
     do {
       sendAgain = false;
       if ((TRRTYPE_AAAA == rectype) && gTRRService &&
@@ -91,8 +100,13 @@ nsresult TRRQuery::DispatchLookup(TRR* pushedTRR) {
       }
       LOG(("TRR Resolve %s type %d\n", addrRec->host.get(), (int)rectype));
       RefPtr<TRR> trr;
-      trr = pushedTRR ? pushedTRR : new TRR(this, mRecord, rectype);
-      if (pushedTRR || NS_SUCCEEDED(gTRRService->DispatchTRRRequest(trr))) {
+      if (aUseODoH) {
+        trr = new ODoH(this, mRecord, rectype);
+      } else {
+        trr = pushedTRR ? pushedTRR : new TRR(this, mRecord, rectype);
+      }
+
+      {
         MutexAutoLock trrlock(mTrrLock);
         if (rectype == TRRTYPE_A) {
           MOZ_ASSERT(!mTrrA);
@@ -106,14 +120,35 @@ nsresult TRRQuery::DispatchLookup(TRR* pushedTRR) {
           LOG(("TrrLookup called with bad type set: %d\n", rectype));
           MOZ_ASSERT(0);
         }
-        madeQuery = true;
-        if (!pushedTRR && (mRecord->af == AF_UNSPEC) &&
-            (rectype == TRRTYPE_A)) {
-          rectype = TRRTYPE_AAAA;
-          sendAgain = true;
+
+        if (!pushedTRR) {
+          requestsToSend.AppendElement(trr);
+          if ((mRecord->af == AF_UNSPEC) && (rectype == TRRTYPE_A)) {
+            rectype = TRRTYPE_AAAA;
+            sendAgain = true;
+          }
+        } else {
+          madeQuery = true;
         }
       }
     } while (sendAgain);
+
+    for (const auto& request : requestsToSend) {
+      if (NS_SUCCEEDED(gTRRService->DispatchTRRRequest(request))) {
+        madeQuery = true;
+      } else {
+        MutexAutoLock trrlock(mTrrLock);
+        if (request == mTrrA) {
+          mTrrA = nullptr;
+          mTrrAUsed = INIT;
+        }
+        if (request == mTrrAAAA) {
+          mTrrAAAA = nullptr;
+          mTrrAAAAUsed = INIT;
+        }
+      }
+    }
+    requestsToSend.Clear();
   } else {
     typeRec->mStart = TimeStamp::Now();
     enum TrrType rectype;
@@ -132,8 +167,12 @@ nsresult TRRQuery::DispatchLookup(TRR* pushedTRR) {
 
     LOG(("TRR Resolve %s type %d\n", typeRec->host.get(), (int)rectype));
     RefPtr<TRR> trr;
-    trr = pushedTRR ? pushedTRR : new TRR(this, mRecord, rectype);
-    RefPtr<TRR> trrRequest = trr;
+    if (aUseODoH) {
+      trr = new ODoH(this, mRecord, rectype);
+    } else {
+      trr = pushedTRR ? pushedTRR : new TRR(this, mRecord, rectype);
+    }
+
     if (pushedTRR || NS_SUCCEEDED(gTRRService->DispatchTRRRequest(trr))) {
       MutexAutoLock trrlock(mTrrLock);
       MOZ_ASSERT(!mTrrByType);
@@ -147,23 +186,25 @@ nsresult TRRQuery::DispatchLookup(TRR* pushedTRR) {
 
 AHostResolver::LookupStatus TRRQuery::CompleteLookup(
     nsHostRecord* rec, nsresult status, AddrInfo* aNewRRSet, bool pb,
-    const nsACString& aOriginsuffix, nsHostRecord::TRRSkippedReason aReason) {
+    const nsACString& aOriginsuffix, nsHostRecord::TRRSkippedReason aReason,
+    TRR* aTRRRequest) {
   if (rec != mRecord) {
     return mHostResolver->CompleteLookup(rec, status, aNewRRSet, pb,
-                                         aOriginsuffix, aReason);
+                                         aOriginsuffix, aReason, aTRRRequest);
   }
 
   RefPtr<AddrInfo> newRRSet(aNewRRSet);
+  DNSResolverType resolverType = newRRSet->ResolverType();
   bool pendingARequest = false;
   bool pendingAAAARequest = false;
   {
     MutexAutoLock trrlock(mTrrLock);
-    if (newRRSet->IsTRR() == TRRTYPE_A) {
+    if (newRRSet->TRRType() == TRRTYPE_A) {
       MOZ_ASSERT(mTrrA);
       mTRRAFailReason = aReason;
       mTrrA = nullptr;
       mTrrAUsed = NS_SUCCEEDED(status) ? OK : FAILED;
-    } else if (newRRSet->IsTRR() == TRRTYPE_AAAA) {
+    } else if (newRRSet->TRRType() == TRRTYPE_AAAA) {
       MOZ_ASSERT(mTrrAAAA);
       mTRRAAAAFailReason = aReason;
       mTrrAAAA = nullptr;
@@ -202,24 +243,8 @@ AHostResolver::LookupStatus TRRQuery::CompleteLookup(
     mFirstTRR.swap(newRRSet);  // autoPtr.swap()
     MOZ_ASSERT(mFirstTRR && !newRRSet);
 
-    if (StaticPrefs::network_trr_wait_for_A_and_AAAA()) {
-      LOG(("CompleteLookup: waiting for all responses!\n"));
-      return LOOKUP_OK;
-    }
-
-    if (pendingARequest && !StaticPrefs::network_trr_early_AAAA()) {
-      // This is an early AAAA with a pending A response. Allowed
-      // only by pref.
-      LOG(("CompleteLookup: avoiding early use of TRR AAAA!\n"));
-      return LOOKUP_OK;
-    }
-
-    // we can do some callbacks with this partial result which requires
-    // a deep copy
-    newRRSet = mFirstTRR;
-
-    // Increment mResolving so we wait for the next resolve too.
-    rec->mResolving++;
+    LOG(("CompleteLookup: waiting for all responses!\n"));
+    return LOOKUP_OK;
   } else {
     // no more outstanding TRRs
     // If mFirstTRR is set, merge those addresses into current set!
@@ -250,28 +275,30 @@ AHostResolver::LookupStatus TRRQuery::CompleteLookup(
     }
   }
 
-  if (mTrrAUsed == OK) {
-    AccumulateCategoricalKeyed(
-        TRRService::AutoDetectedKey(),
-        Telemetry::LABELS_DNS_LOOKUP_DISPOSITION2::trrAOK);
-  } else if (mTrrAUsed == FAILED) {
-    AccumulateCategoricalKeyed(
-        TRRService::AutoDetectedKey(),
-        Telemetry::LABELS_DNS_LOOKUP_DISPOSITION2::trrAFail);
-  }
+  if (resolverType == DNSResolverType::TRR) {
+    if (mTrrAUsed == OK) {
+      AccumulateCategoricalKeyed(
+          TRRService::AutoDetectedKey(),
+          Telemetry::LABELS_DNS_LOOKUP_DISPOSITION2::trrAOK);
+    } else if (mTrrAUsed == FAILED) {
+      AccumulateCategoricalKeyed(
+          TRRService::AutoDetectedKey(),
+          Telemetry::LABELS_DNS_LOOKUP_DISPOSITION2::trrAFail);
+    }
 
-  if (mTrrAAAAUsed == OK) {
-    AccumulateCategoricalKeyed(
-        TRRService::AutoDetectedKey(),
-        Telemetry::LABELS_DNS_LOOKUP_DISPOSITION2::trrAAAAOK);
-  } else if (mTrrAAAAUsed == FAILED) {
-    AccumulateCategoricalKeyed(
-        TRRService::AutoDetectedKey(),
-        Telemetry::LABELS_DNS_LOOKUP_DISPOSITION2::trrAAAAFail);
+    if (mTrrAAAAUsed == OK) {
+      AccumulateCategoricalKeyed(
+          TRRService::AutoDetectedKey(),
+          Telemetry::LABELS_DNS_LOOKUP_DISPOSITION2::trrAAAAOK);
+    } else if (mTrrAAAAUsed == FAILED) {
+      AccumulateCategoricalKeyed(
+          TRRService::AutoDetectedKey(),
+          Telemetry::LABELS_DNS_LOOKUP_DISPOSITION2::trrAAAAFail);
+    }
   }
 
   return mHostResolver->CompleteLookup(rec, status, newRRSet, pb, aOriginsuffix,
-                                       aReason);
+                                       aReason, aTRRRequest);
 }
 
 AHostResolver::LookupStatus TRRQuery::CompleteLookupByType(

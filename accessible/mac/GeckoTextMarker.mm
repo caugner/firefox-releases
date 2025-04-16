@@ -108,7 +108,7 @@ GeckoTextMarker GeckoTextMarker::MarkerFromIndex(const AccessibleOrProxy& aRoot,
     DocAccessibleParent* ipcDoc = aRoot.AsProxy()->Document();
     Unused << ipcDoc->GetPlatformExtension()->SendOffsetAtIndex(
         aRoot.AsProxy()->ID(), aIndex, &containerID, &offset);
-    ProxyAccessible* container = ipcDoc->GetAccessible(containerID);
+    RemoteAccessible* container = ipcDoc->GetAccessible(containerID);
     return GeckoTextMarker(container, offset);
   } else if (auto htWrap = static_cast<HyperTextAccessibleWrap*>(
                  aRoot.AsAccessible()->AsHyperText())) {
@@ -235,7 +235,7 @@ bool GeckoTextMarker::Next() {
     DocAccessibleParent* ipcDoc = mContainer.AsProxy()->Document();
     Unused << ipcDoc->GetPlatformExtension()->SendNextClusterAt(
         mContainer.AsProxy()->ID(), mOffset, &nextContainerID, &nextOffset);
-    ProxyAccessible* nextContainer = ipcDoc->GetAccessible(nextContainerID);
+    RemoteAccessible* nextContainer = ipcDoc->GetAccessible(nextContainerID);
     bool moved = nextContainer != mContainer.AsProxy() || nextOffset != mOffset;
     mContainer = nextContainer;
     mOffset = nextOffset;
@@ -260,7 +260,7 @@ bool GeckoTextMarker::Previous() {
     DocAccessibleParent* ipcDoc = mContainer.AsProxy()->Document();
     Unused << ipcDoc->GetPlatformExtension()->SendPreviousClusterAt(
         mContainer.AsProxy()->ID(), mOffset, &prevContainerID, &prevOffset);
-    ProxyAccessible* prevContainer = ipcDoc->GetAccessible(prevContainerID);
+    RemoteAccessible* prevContainer = ipcDoc->GetAccessible(prevContainerID);
     bool moved = prevContainer != mContainer.AsProxy() || prevOffset != mOffset;
     mContainer = prevContainer;
     mOffset = prevOffset;
@@ -400,6 +400,140 @@ NSString* GeckoTextMarkerRange::Text() const {
                          mEnd.mOffset);
   }
   return nsCocoaUtils::ToNSString(text);
+}
+
+static NSColor* ColorFromString(const nsString& aColorStr) {
+  uint32_t r, g, b;
+  if (sscanf(NS_ConvertUTF16toUTF8(aColorStr).get(), "rgb(%u, %u, %u)", &r, &g,
+             &b) > 0) {
+    return [NSColor colorWithCalibratedRed:(CGFloat)r / 0xff
+                                     green:(CGFloat)g / 0xff
+                                      blue:(CGFloat)b / 0xff
+                                     alpha:1.0];
+  }
+
+  return nil;
+}
+
+static NSDictionary* StringAttributesFromAttributes(
+    nsTArray<Attribute>& aAttributes, const AccessibleOrProxy& aContainer) {
+  NSMutableDictionary* attrDict =
+      [NSMutableDictionary dictionaryWithCapacity:aAttributes.Length()];
+  NSMutableDictionary* fontAttrDict = [[NSMutableDictionary alloc] init];
+  [attrDict setObject:fontAttrDict forKey:@"AXFont"];
+  for (size_t ii = 0; ii < aAttributes.Length(); ii++) {
+    RefPtr<nsAtom> attrName = NS_Atomize(aAttributes.ElementAt(ii).Name());
+    if (attrName == nsGkAtoms::backgroundColor) {
+      if (NSColor* color = ColorFromString(aAttributes.ElementAt(ii).Value())) {
+        [attrDict setObject:(__bridge id)color.CGColor
+                     forKey:@"AXBackgroundColor"];
+      }
+    } else if (attrName == nsGkAtoms::color) {
+      if (NSColor* color = ColorFromString(aAttributes.ElementAt(ii).Value())) {
+        [attrDict setObject:(__bridge id)color.CGColor
+                     forKey:@"AXForegroundColor"];
+      }
+    } else if (attrName == nsGkAtoms::font_size) {
+      float fontPointSize = 0;
+      if (sscanf(NS_ConvertUTF16toUTF8(aAttributes.ElementAt(ii).Value()).get(),
+                 "%fpt", &fontPointSize) > 0) {
+        int32_t fontPixelSize = static_cast<int32_t>(fontPointSize * 4 / 3);
+        [fontAttrDict setObject:@(fontPixelSize) forKey:@"AXFontSize"];
+      }
+    } else if (attrName == nsGkAtoms::font_family) {
+      [fontAttrDict
+          setObject:nsCocoaUtils::ToNSString(aAttributes.ElementAt(ii).Value())
+             forKey:@"AXFontFamily"];
+    } else if (attrName == nsGkAtoms::textUnderlineColor) {
+      [attrDict setObject:@1 forKey:@"AXUnderline"];
+      if (NSColor* color = ColorFromString(aAttributes.ElementAt(ii).Value())) {
+        [attrDict setObject:(__bridge id)color.CGColor
+                     forKey:@"AXUnderlineColor"];
+      }
+    } else if (attrName == nsGkAtoms::invalid) {
+      // XXX: There is currently no attribute for grammar
+      if (aAttributes.ElementAt(ii).Value().EqualsLiteral("spelling")) {
+        [attrDict setObject:@YES
+                     forKey:NSAccessibilityMarkedMisspelledTextAttribute];
+      }
+    } else {
+      [attrDict
+          setObject:nsCocoaUtils::ToNSString(aAttributes.ElementAt(ii).Value())
+             forKey:nsCocoaUtils::ToNSString(NS_ConvertUTF8toUTF16(
+                        aAttributes.ElementAt(ii).Name()))];
+    }
+  }
+
+  mozAccessible* container = GetNativeFromGeckoAccessible(aContainer);
+  id<MOXAccessible> link =
+      [container moxFindAncestor:^BOOL(id<MOXAccessible> moxAcc, BOOL* stop) {
+        return [[moxAcc moxRole] isEqualToString:NSAccessibilityLinkRole];
+      }];
+  if (link) {
+    [attrDict setObject:link forKey:@"AXLink"];
+  }
+
+  id<MOXAccessible> heading =
+      [container moxFindAncestor:^BOOL(id<MOXAccessible> moxAcc, BOOL* stop) {
+        return [[moxAcc moxRole] isEqualToString:@"AXHeading"];
+      }];
+  if (heading) {
+    [attrDict setObject:[heading moxValue] forKey:@"AXHeadingLevel"];
+  }
+
+  return attrDict;
+}
+
+NSAttributedString* GeckoTextMarkerRange::AttributedText() const {
+  NSMutableAttributedString* str =
+      [[[NSMutableAttributedString alloc] init] autorelease];
+
+  if (mStart.mContainer.IsProxy() && mEnd.mContainer.IsProxy()) {
+    nsTArray<TextAttributesRun> textAttributesRuns;
+    DocAccessibleParent* ipcDoc = mStart.mContainer.AsProxy()->Document();
+    Unused << ipcDoc->GetPlatformExtension()->SendAttributedTextForRange(
+        mStart.mContainer.AsProxy()->ID(), mStart.mOffset,
+        mEnd.mContainer.AsProxy()->ID(), mEnd.mOffset, &textAttributesRuns);
+
+    for (size_t i = 0; i < textAttributesRuns.Length(); i++) {
+      nsTArray<Attribute>& attributes =
+          textAttributesRuns.ElementAt(i).TextAttributes();
+      RemoteAccessible* container =
+          ipcDoc->GetAccessible(textAttributesRuns.ElementAt(i).ContainerID());
+
+      NSAttributedString* substr = [[[NSAttributedString alloc]
+          initWithString:nsCocoaUtils::ToNSString(
+                             textAttributesRuns.ElementAt(i).Text())
+              attributes:StringAttributesFromAttributes(attributes, container)]
+          autorelease];
+
+      [str appendAttributedString:substr];
+    }
+  } else if (auto htWrap = mStart.ContainerAsHyperTextWrap()) {
+    nsTArray<nsString> texts;
+    nsTArray<LocalAccessible*> containers;
+    nsTArray<nsCOMPtr<nsIPersistentProperties>> props;
+
+    htWrap->AttributedTextForRange(texts, props, containers, mStart.mOffset,
+                                   mEnd.ContainerAsHyperTextWrap(),
+                                   mEnd.mOffset);
+
+    MOZ_ASSERT(texts.Length() == props.Length() &&
+               texts.Length() == containers.Length());
+
+    for (size_t i = 0; i < texts.Length(); i++) {
+      nsTArray<Attribute> attributes;
+      nsAccUtils::PersistentPropertiesToArray(props.ElementAt(i), &attributes);
+
+      NSAttributedString* substr = [[[NSAttributedString alloc]
+          initWithString:nsCocoaUtils::ToNSString(texts.ElementAt(i))
+              attributes:StringAttributesFromAttributes(
+                             attributes, containers.ElementAt(i))] autorelease];
+      [str appendAttributedString:substr];
+    }
+  }
+
+  return str;
 }
 
 int32_t GeckoTextMarkerRange::Length() const {

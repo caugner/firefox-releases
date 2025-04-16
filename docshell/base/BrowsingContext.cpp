@@ -11,7 +11,7 @@
 #ifdef ACCESSIBILITY
 #  include "mozilla/a11y/DocAccessibleParent.h"
 #  include "mozilla/a11y/Platform.h"
-#  include "mozilla/a11y/ProxyAccessibleBase.h"
+#  include "mozilla/a11y/RemoteAccessibleBase.h"
 #  include "nsAccessibilityService.h"
 #  if defined(XP_WIN)
 #    include "mozilla/a11y/AccessibleWrap.h"
@@ -97,6 +97,13 @@ struct ParamTraits<mozilla::dom::DisplayMode>
                                       mozilla::dom::DisplayMode::EndGuard_> {};
 
 template <>
+struct ParamTraits<mozilla::dom::PrefersColorSchemeOverride>
+    : public ContiguousEnumSerializer<
+          mozilla::dom::PrefersColorSchemeOverride,
+          mozilla::dom::PrefersColorSchemeOverride::None,
+          mozilla::dom::PrefersColorSchemeOverride::EndGuard_> {};
+
+template <>
 struct ParamTraits<mozilla::dom::ExplicitActiveStatus>
     : public ContiguousEnumSerializer<
           mozilla::dom::ExplicitActiveStatus,
@@ -125,6 +132,7 @@ extern mozilla::LazyLogModule gUserInteractionPRLog;
   MOZ_LOG(gUserInteractionPRLog, LogLevel::Debug, (msg, ##__VA_ARGS__))
 
 static LazyLogModule gBrowsingContextLog("BrowsingContext");
+static LazyLogModule gBrowsingContextSyncLog("BrowsingContextSync");
 
 typedef nsDataHashtable<nsUint64HashKey, BrowsingContext*> BrowsingContextMap;
 
@@ -178,6 +186,14 @@ BrowsingContext* BrowsingContext::Top() {
   return bc;
 }
 
+const BrowsingContext* BrowsingContext::Top() const {
+  const BrowsingContext* bc = this;
+  while (bc->mParentWindow) {
+    bc = bc->GetParent();
+  }
+  return bc;
+}
+
 int32_t BrowsingContext::IndexOf(BrowsingContext* aChild) {
   int32_t index = -1;
   for (BrowsingContext* child : Children()) {
@@ -208,6 +224,9 @@ void BrowsingContext::Init() {
 
 /* static */
 LogModule* BrowsingContext::GetLog() { return gBrowsingContextLog; }
+
+/* static */
+LogModule* BrowsingContext::GetSyncLog() { return gBrowsingContextSyncLog; }
 
 /* static */
 already_AddRefed<BrowsingContext> BrowsingContext::Get(uint64_t aId) {
@@ -1753,8 +1772,19 @@ bool BrowsingContext::RemoveRootFromBFCacheSync() {
 
 nsresult BrowsingContext::CheckSandboxFlags(nsDocShellLoadState* aLoadState) {
   const auto& sourceBC = aLoadState->SourceBrowsingContext();
-  if (sourceBC.IsDiscarded() || (sourceBC && sourceBC->IsSandboxedFrom(this))) {
-    return NS_ERROR_DOM_INVALID_ACCESS_ERR;
+  if (sourceBC.IsNull()) {
+    return NS_OK;
+  }
+
+  // We might be called after the source BC has been discarded, but before we've
+  // destroyed our in-process instance of the BrowsingContext object in some
+  // situations (e.g. after creating a new pop-up with window.open while the
+  // window is being closed). In these situations we want to still perform the
+  // sandboxing check against our in-process copy. If we've forgotten about the
+  // context already, assume it is sanboxed. (bug 1643450)
+  BrowsingContext* bc = sourceBC.GetMaybeDiscarded();
+  if (!bc || bc->IsSandboxedFrom(this)) {
+    return NS_ERROR_DOM_SECURITY_ERR;
   }
   return NS_OK;
 }
@@ -1787,6 +1817,19 @@ nsresult BrowsingContext::LoadURI(nsDocShellLoadState* aLoadState,
                                     aLoadState->GetLoadIdentifier());
 
   const auto& sourceBC = aLoadState->SourceBrowsingContext();
+
+  if (net::SchemeIsJavascript(aLoadState->URI())) {
+    if (!XRE_IsParentProcess()) {
+      // Web content should only be able to load javascript: URIs into documents
+      // whose principals the caller principal subsumes, which by definition
+      // excludes any document in a cross-process BrowsingContext.
+      return NS_ERROR_DOM_BAD_CROSS_ORIGIN_URI;
+    }
+    MOZ_DIAGNOSTIC_ASSERT(!sourceBC,
+                          "Should never see a cross-process javascript: load "
+                          "triggered from content");
+  }
+
   MOZ_DIAGNOSTIC_ASSERT(!sourceBC || sourceBC->Group() == Group());
   if (sourceBC && sourceBC->IsInProcess()) {
     if (!sourceBC->CanAccess(this)) {
@@ -1869,6 +1912,19 @@ nsresult BrowsingContext::InternalLoad(nsDocShellLoadState* aLoadState) {
   MOZ_TRY(CheckSandboxFlags(aLoadState));
 
   const auto& sourceBC = aLoadState->SourceBrowsingContext();
+
+  if (net::SchemeIsJavascript(aLoadState->URI())) {
+    if (!XRE_IsParentProcess()) {
+      // Web content should only be able to load javascript: URIs into documents
+      // whose principals the caller principal subsumes, which by definition
+      // excludes any document in a cross-process BrowsingContext.
+      return NS_ERROR_DOM_BAD_CROSS_ORIGIN_URI;
+    }
+    MOZ_DIAGNOSTIC_ASSERT(!sourceBC,
+                          "Should never see a cross-process javascript: load "
+                          "triggered from content");
+  }
+
   if (XRE_IsParentProcess()) {
     ContentParent* cp = Canonical()->GetContentParent();
     if (!cp || !cp->CanSend()) {
@@ -2040,6 +2096,10 @@ PopupBlocker::PopupControlState BrowsingContext::RevisePopupAbuseLevel(
   return abuse;
 }
 
+void BrowsingContext::IncrementHistoryEntryCountForBrowsingContext() {
+  Unused << SetHistoryEntryCount(GetHistoryEntryCount() + 1);
+}
+
 std::tuple<bool, bool> BrowsingContext::CanFocusCheck(CallerType aCallerType) {
   nsFocusManager* fm = nsFocusManager::GetFocusManager();
   if (!fm) {
@@ -2100,11 +2160,22 @@ void BrowsingContext::Focus(CallerType aCallerType, ErrorResult& aError) {
   }
 }
 
-void BrowsingContext::Blur(ErrorResult& aError) {
+bool BrowsingContext::CanBlurCheck(CallerType aCallerType) {
+  // If dom.disable_window_flip == true, then content should not be allowed
+  // to do blur (this would allow popunders, bug 369306)
+  return aCallerType == CallerType::System ||
+         !Preferences::GetBool("dom.disable_window_flip", true);
+}
+
+void BrowsingContext::Blur(CallerType aCallerType, ErrorResult& aError) {
+  if (!CanBlurCheck(aCallerType)) {
+    return;
+  }
+
   if (ContentChild* cc = ContentChild::GetSingleton()) {
-    cc->SendWindowBlur(this);
+    cc->SendWindowBlur(this, aCallerType);
   } else if (ContentParent* cp = Canonical()->GetContentParent()) {
-    Unused << cp->SendWindowBlur(this);
+    Unused << cp->SendWindowBlur(this, aCallerType);
   }
 }
 
@@ -2405,7 +2476,7 @@ void BrowsingContext::DidSet(FieldIndex<IDX_ExplicitActive>,
 
 bool BrowsingContext::CanSet(FieldIndex<IDX_HasMainMediaController>,
                              bool aNewValue, ContentParent* aSource) {
-  return IsTop() && CheckOnlyOwningProcessCanSet(aSource);
+  return IsTop() && LegacyCheckOnlyOwningProcessCanSet(aSource);
 }
 
 void BrowsingContext::DidSet(FieldIndex<IDX_HasMainMediaController>,
@@ -2427,17 +2498,48 @@ bool BrowsingContext::InactiveForSuspend() const {
   return !IsActive() && !GetHasMainMediaController();
 }
 
-bool BrowsingContext::CanSet(
-    FieldIndex<IDX_TouchEventsOverrideInternal>,
-    const enum TouchEventsOverride& aTouchEventsOverride,
-    ContentParent* aSource) {
-  return CheckOnlyOwningProcessCanSet(aSource);
+bool BrowsingContext::CanSet(FieldIndex<IDX_TouchEventsOverrideInternal>,
+                             dom::TouchEventsOverride, ContentParent*) {
+  // TODO: Bug 1688948 - Should only be set in the parent process.
+  return true;
 }
 
-bool BrowsingContext::CanSet(FieldIndex<IDX_DisplayMode>,
-                             const enum DisplayMode& aDisplayMOde,
-                             ContentParent* aSource) {
-  return IsTop();
+void BrowsingContext::DidSet(FieldIndex<IDX_PrefersColorSchemeOverride>,
+                             dom::PrefersColorSchemeOverride aOldValue) {
+  MOZ_ASSERT(IsTop());
+  if (PrefersColorSchemeOverride() == aOldValue) {
+    return;
+  }
+  PreOrderWalk([&](BrowsingContext* aContext) {
+    if (nsIDocShell* shell = aContext->GetDocShell()) {
+      if (nsPresContext* pc = shell->GetPresContext()) {
+        // This is a bit of a lie, but it's the code-path that gets taken for
+        // regular system metrics changes via ThemeChanged().
+        // TODO(emilio): The JustThisDocument is a bit suspect here,
+        // prefers-color-scheme also applies to images or such, but the override
+        // means that we could need to render the same image both with "light"
+        // and "dark" appearance, so we just don't bother.
+        pc->MediaFeatureValuesChanged(
+            {MediaFeatureChangeReason::SystemMetricsChange},
+            MediaFeatureChangePropagation::JustThisDocument);
+      }
+    }
+  });
+}
+
+void BrowsingContext::DidSet(FieldIndex<IDX_MediumOverride>,
+                             nsString&& aOldValue) {
+  MOZ_ASSERT(IsTop());
+  if (GetMediumOverride() == aOldValue) {
+    return;
+  }
+  PreOrderWalk([&](BrowsingContext* aContext) {
+    if (nsIDocShell* shell = aContext->GetDocShell()) {
+      if (nsPresContext* pc = shell->GetPresContext()) {
+        pc->RecomputeBrowsingContextDependentData();
+      }
+    }
+  });
 }
 
 void BrowsingContext::DidSet(FieldIndex<IDX_DisplayMode>,
@@ -2473,6 +2575,28 @@ void BrowsingContext::DidSet(FieldIndex<IDX_Muted>) {
     nsPIDOMWindowOuter* win = aContext->GetDOMWindow();
     if (win) {
       win->RefreshMediaElementsVolume();
+    }
+  });
+}
+
+bool BrowsingContext::CanSet(FieldIndex<IDX_OverrideDPPX>, const float& aValue,
+                             ContentParent* aSource) {
+  // FIXME: Should only be settable by the parent process, but devtools code
+  // currently sets it from the child.
+  return IsTop() && LegacyCheckOnlyOwningProcessCanSet(aSource);
+}
+
+void BrowsingContext::DidSet(FieldIndex<IDX_OverrideDPPX>, float aOldValue) {
+  MOZ_ASSERT(IsTop());
+  if (GetOverrideDPPX() == aOldValue) {
+    return;
+  }
+
+  PreOrderWalk([&](BrowsingContext* aContext) {
+    if (nsIDocShell* shell = aContext->GetDocShell()) {
+      if (nsPresContext* pc = shell->GetPresContext()) {
+        pc->RecomputeBrowsingContextDependentData();
+      }
     }
   });
 }
@@ -2513,7 +2637,7 @@ void BrowsingContext::DidSet(FieldIndex<IDX_PlatformOverride>) {
   });
 }
 
-bool BrowsingContext::CheckOnlyOwningProcessCanSet(
+bool BrowsingContext::LegacyCheckOnlyOwningProcessCanSet(
     ContentParent* aSource) {
   if (aSource) {
     MOZ_ASSERT(XRE_IsParentProcess());
@@ -2565,19 +2689,19 @@ void BrowsingContext::DidSet(FieldIndex<IDX_IsActiveBrowserWindowInternal>,
 bool BrowsingContext::CanSet(FieldIndex<IDX_AllowContentRetargeting>,
                              const bool& aAllowContentRetargeting,
                              ContentParent* aSource) {
-  return CheckOnlyOwningProcessCanSet(aSource);
+  return LegacyCheckOnlyOwningProcessCanSet(aSource);
 }
 
 bool BrowsingContext::CanSet(FieldIndex<IDX_AllowContentRetargetingOnChildren>,
                              const bool& aAllowContentRetargetingOnChildren,
                              ContentParent* aSource) {
-  return CheckOnlyOwningProcessCanSet(aSource);
+  return LegacyCheckOnlyOwningProcessCanSet(aSource);
 }
 
 bool BrowsingContext::CanSet(FieldIndex<IDX_AllowPlugins>,
                              const bool& aAllowPlugins,
                              ContentParent* aSource) {
-  return CheckOnlyOwningProcessCanSet(aSource);
+  return LegacyCheckOnlyOwningProcessCanSet(aSource);
 }
 
 bool BrowsingContext::CanSet(FieldIndex<IDX_FullscreenAllowedByOwner>,
@@ -2606,16 +2730,9 @@ mozilla::dom::TouchEventsOverride BrowsingContext::TouchEventsOverride() const {
   return mozilla::dom::TouchEventsOverride::None;
 }
 
-void BrowsingContext::SetTouchEventsOverride(
-    const enum TouchEventsOverride aTouchEventsOverride, ErrorResult& aRv) {
-  SetTouchEventsOverrideInternal(aTouchEventsOverride, aRv);
-}
-
-nsresult BrowsingContext::SetTouchEventsOverride(
-    const enum TouchEventsOverride aTouchEventsOverride) {
-  ErrorResult rv;
-  SetTouchEventsOverride(aTouchEventsOverride, rv);
-  return rv.StealNSResult();
+void BrowsingContext::SetTouchEventsOverride(dom::TouchEventsOverride aOverride,
+                                             ErrorResult& aRv) {
+  SetTouchEventsOverrideInternal(aOverride, aRv);
 }
 
 // We map `watchedByDevTools` WebIDL attribute to `watchedByDevToolsInternal`
@@ -2646,7 +2763,7 @@ bool BrowsingContext::CanSet(FieldIndex<IDX_DefaultLoadFlags>,
                              ContentParent* aSource) {
   // Bug 1623565 - Are these flags only used by the debugger, which makes it
   // possible that this field can only be settable by the parent process?
-  return CheckOnlyOwningProcessCanSet(aSource);
+  return LegacyCheckOnlyOwningProcessCanSet(aSource);
 }
 
 void BrowsingContext::DidSet(FieldIndex<IDX_DefaultLoadFlags>) {
@@ -2680,7 +2797,7 @@ bool BrowsingContext::CanSet(FieldIndex<IDX_UserAgentOverride>,
     return false;
   }
 
-  return CheckOnlyOwningProcessCanSet(aSource);
+  return LegacyCheckOnlyOwningProcessCanSet(aSource);
 }
 
 bool BrowsingContext::CanSet(FieldIndex<IDX_PlatformOverride>,
@@ -2690,7 +2807,7 @@ bool BrowsingContext::CanSet(FieldIndex<IDX_PlatformOverride>,
     return false;
   }
 
-  return CheckOnlyOwningProcessCanSet(aSource);
+  return LegacyCheckOnlyOwningProcessCanSet(aSource);
 }
 
 bool BrowsingContext::CheckOnlyEmbedderCanSet(ContentParent* aSource) {
@@ -2718,37 +2835,32 @@ bool BrowsingContext::CanSet(FieldIndex<IDX_EmbedderElementType>,
   return CheckOnlyEmbedderCanSet(aSource);
 }
 
-bool BrowsingContext::CanSet(FieldIndex<IDX_CurrentInnerWindowId>,
-                             const uint64_t& aValue, ContentParent* aSource) {
+auto BrowsingContext::CanSet(FieldIndex<IDX_CurrentInnerWindowId>,
+                             const uint64_t& aValue, ContentParent* aSource)
+    -> CanSetResult {
   // Generally allow clearing this. We may want to be more precise about this
   // check in the future.
   if (aValue == 0) {
-    return true;
-  }
-
-  if (aSource) {
-    MOZ_ASSERT(XRE_IsParentProcess());
-
-    // If in the parent process, double-check ownership and WindowGlobalParent
-    // as well.
-    RefPtr<WindowGlobalParent> wgp =
-        WindowGlobalParent::GetByInnerWindowId(aValue);
-    if (NS_WARN_IF(!wgp) || NS_WARN_IF(wgp->BrowsingContext() != this)) {
-      return false;
-    }
-
-    // Double-check ownership if we aren't the setter.
-    if (!Canonical()->IsOwnedByProcess(aSource->ChildID()) &&
-        aSource->ChildID() != Canonical()->GetInFlightProcessId()) {
-      return false;
-    }
-  } else if (XRE_IsContentProcess() && !IsOwnedByProcess()) {
-    return false;
+    return CanSetResult::Allow;
   }
 
   // We must have access to the specified context.
   RefPtr<WindowContext> window = WindowContext::GetById(aValue);
-  return window && window->GetBrowsingContext() == this;
+  if (!window || window->GetBrowsingContext() != this) {
+    return CanSetResult::Deny;
+  }
+
+  if (aSource) {
+    // If the sending process is no longer the current owner, revert
+    MOZ_ASSERT(XRE_IsParentProcess());
+    if (!Canonical()->IsOwnedByProcess(aSource->ChildID())) {
+      return CanSetResult::Revert;
+    }
+  } else if (XRE_IsContentProcess() && !IsOwnedByProcess()) {
+    return CanSetResult::Deny;
+  }
+
+  return CanSetResult::Allow;
 }
 
 void BrowsingContext::DidSet(FieldIndex<IDX_CurrentInnerWindowId>) {
@@ -3132,11 +3244,11 @@ void BrowsingContext::RemoveDynEntriesFromActiveSessionHistoryEntry() {
   }
 }
 
-void BrowsingContext::RemoveFromSessionHistory() {
+void BrowsingContext::RemoveFromSessionHistory(const nsID& aChangeID) {
   if (XRE_IsContentProcess()) {
-    ContentChild::GetSingleton()->SendRemoveFromSessionHistory(this);
+    ContentChild::GetSingleton()->SendRemoveFromSessionHistory(this, aChangeID);
   } else {
-    Canonical()->RemoveFromSessionHistory();
+    Canonical()->RemoveFromSessionHistory(aChangeID);
   }
 }
 

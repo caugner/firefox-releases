@@ -232,7 +232,95 @@ Unenroll Failed
       changedPref
          In some cases, the preference that was detected to change that
          caused the attempted unenrollment.
+      caller
+         On Nightly builds only, a string identifying the source of the requested stop.
+      originalReason
+         The code that would had been used for the unenrollment, had it not failed.
 
+
+Preference Rollouts
+^^^^^^^^^^^^^^^^^^^
+Enrollment
+   Sent when a user first enrolls in a rollout.
+
+   method
+      The string ``"enroll"``
+   object
+      The string ``"preference_rollout"``
+   value
+      The slug of the rollout (``recipe.arguments.slug``)
+   extra
+      enrollmentId
+         A UUID that is unique to this user's enrollment in this rollout. It
+         will be included in all future telemetry for this user in this
+         rollout.
+
+Enroll Failed
+   Sent when a user attempts to enroll in a rollout, but the enrollment process fails.
+
+   method
+      The string ``"enrollFailed"``
+   object
+      The string ``"preference_rollout"``
+   value
+      The slug of the rollout (``recipe.arguments.slug``)
+   extra
+      reason
+         A code describing the reason the unenroll failed. Possible values are:
+
+         * ``"invalid type"``: The preferences specified in the rollout do not
+           match the preferences built in to the browser. The represents a
+           misconfiguration of the preferences in the recipe on the server.
+         * ``"would-be-no-op"``: All of the preference specified in the rollout
+           already have the given values. This represents an error in targeting
+           on the server.
+         * ``"conflict"``: At least one of the preferences specified in the
+           rollout is already managed by another active rollout.
+      preference
+         For ``reason="invalid type"``, the first preference that was invalid.
+         For ``reason="conflict"``, the first preference that is conflicting.
+
+Update
+   Sent when the preferences specified in the recipe have changed, and the
+   client updates the preferences of the browser to match.
+
+   method
+      The string ``"update"``
+   object
+      The string ``"preference_rollout"``
+   value
+      The slug of the rollout (``recipe.arguments.slug``)
+   extra
+      previousState
+         The state the rollout was in before this update (such as ``"active"`` or ``"graduated"``).
+      enrollmentId
+         The ID that was generated at enrollment.
+
+Graduation
+   Sent when Normandy determines that further intervention is no longer
+   needed for this rollout. After this point, Normandy will stop making
+   changes to the browser for this rollout, unless the rollout recipe changes
+   to specify preferences different than the built-in.
+
+   method
+      The string ``"graduate"``
+   object
+      The string ``"preference_rollout"``
+   value
+      The slug of the rollout (``recipe.arguments.slug``)
+   extra
+      reason
+         A code describing the reason for the graduation. Possible values are:
+
+         * ``"all-prefs-match"``: All preferences specified in the rollout now
+           have built-in values that match the rollouts values.
+           ``"in-graduation-set"``: The browser has changed versions (usually
+           updated) to one that specifies this rollout no longer applies and
+           should be graduated regardless of the built-in preference values.
+           This behavior is controlled by the constant
+           ``PreferenceRollouts.GRADUATION_SET``.
+      enrollmentId
+         The ID that was generated at enrollment.
 
 Add-on Studies
 ^^^^^^^^^^^^^^

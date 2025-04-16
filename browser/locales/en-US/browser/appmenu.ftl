@@ -7,12 +7,25 @@
 appmenuitem-update-banner =
     .label-update-downloading = Downloading { -brand-shorter-name } update
 appmenuitem-protection-dashboard-title = Protections Dashboard
-appmenuitem-customize-mode =
-    .label = Customize…
 appmenuitem-new-window =
     .label = New Window
 appmenuitem-new-private-window =
     .label = New Private Window
+appmenuitem-passwords =
+    .label = Passwords
+appmenuitem-extensions-and-themes =
+    .label = Extensions and Themes
+appmenuitem-find-in-page =
+    .label = Find In Page…
+appmenuitem-more-tools =
+    .label = More Tools
+appmenuitem-exit =
+    .label = Exit
+
+# Settings is now used to access the browser settings across all platforms,
+# instead of Options or Preferences.
+appmenuitem-settings =
+    .label = Settings
 
 ## Zoom and Fullscreen Controls
 
@@ -97,26 +110,28 @@ profiler-popup-capture-shortcut =
      *[other] Ctrl+Shift+2
   }
 
+## History panel
+
+appmenu-manage-history =
+    .label = Manage History
+appmenu-reopen-all-tabs = Reopen All Tabs
+appmenu-reopen-all-windows = Reopen All Windows
+
 ## Help panel
 
+appmenu-help-header =
+    .title = { -brand-shorter-name } Help
 appmenu-about =
     .label = About { -brand-shorter-name }
     .accesskey = A
-appmenu-help-product =
-    .label = { -brand-shorter-name } Help
+appmenu-get-help =
+    .label = Get Help
     .accesskey = H
-appmenu-help-show-tour =
-    .label = { -brand-shorter-name } Tour
-    .accesskey = o
-appmenu-help-import-from-another-browser =
-    .label = Import From Another Browser…
-    .accesskey = I
-appmenu-help-keyboard-shortcuts =
-    .label = Keyboard Shortcuts
-    .accesskey = K
 appmenu-help-troubleshooting-info =
     .label = Troubleshooting Information
     .accesskey = T
+appmenu-help-taskmanager =
+    .label = Task Manager
 appmenu-help-feedback-page =
     .label = Submit Feedback…
     .accesskey = S
@@ -141,7 +156,9 @@ appmenu-help-not-deceptive =
     .label = This Isn’t a Deceptive Site…
     .accesskey = D
 
-##
+## More Tools
 
-appmenu-help-check-for-update =
-    .label = Check for Updates…
+appmenu-customizetoolbar =
+    .label = Customize Toolbar…
+
+appmenu-developer-tools-subheader = Browser Tools

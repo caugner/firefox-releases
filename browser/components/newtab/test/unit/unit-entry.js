@@ -66,6 +66,13 @@ class JSWindowActorChild {
   }
 }
 
+class ExperimentFeature {
+  isEnabled() {}
+  getValue() {}
+  onUpdate() {}
+  off() {}
+}
+
 const TEST_GLOBAL = {
   JSWindowActorParent,
   JSWindowActorChild,
@@ -258,8 +265,7 @@ const TEST_GLOBAL = {
   },
   Region: {
     home: "US",
-    REGION_TOPIC: "browser-region",
-    REGION_UPDATED: "region-updated",
+    REGION_TOPIC: "browser-region-updated",
   },
   Services: {
     dirsvc: {
@@ -285,6 +291,7 @@ const TEST_GLOBAL = {
       setEventRecordingEnabled: () => {},
       recordEvent: eventDetails => {},
       scalarSet: () => {},
+      keyedScalarAdd: () => {},
     },
     console: { logStringMessage: () => {} },
     prefs: {
@@ -435,6 +442,7 @@ const TEST_GLOBAL = {
     on: () => {},
     off: () => {},
   },
+  ExperimentFeature,
   TelemetryEnvironment: {
     setExperimentActive() {},
     currentEnvironment: {

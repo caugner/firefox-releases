@@ -115,7 +115,14 @@ void OverrideDefaultLocaleIfNeeded();
 void MozExpectedExit();
 
 class nsINativeAppSupport;
-nsresult LaunchChild(bool aBlankCommandLine);
+
+// If aBlankCommandLine is true, then the application will be launched with a
+// blank command line instead of being launched with the same command line that
+// it was initially started with.
+// If aTryExec is true then we use exec on platforms that support it to
+// remain in the foreground.
+nsresult LaunchChild(bool aBlankCommandLine, bool aTryExec = false);
+
 void UnlockProfile();
 
 #ifdef XP_WIN
@@ -161,9 +168,6 @@ void setASanReporterPath(nsIFile* aDir);
 
 #ifdef MOZ_WAYLAND
 bool IsWaylandDisabled();
-#endif
-#ifdef MOZ_X11
-bool IsX11EGLEnabled();
 #endif
 
 #endif  // nsAppRunner_h__

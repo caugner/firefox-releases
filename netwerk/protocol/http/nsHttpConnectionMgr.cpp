@@ -16,7 +16,7 @@
 #include <utility>
 
 #include "NullHttpTransaction.h"
-#include "mozilla/Services.h"
+#include "mozilla/Components.h"
 #include "mozilla/SpinEventLoopUntil.h"
 #include "mozilla/Telemetry.h"
 #include "mozilla/Unused.h"
@@ -43,7 +43,6 @@
 #include "ConnectionHandle.h"
 #include "HttpConnectionUDP.h"
 #include "SpeculativeTransaction.h"
-#include "TCPFastOpenLayer.h"
 
 namespace mozilla {
 namespace net {
@@ -74,7 +73,7 @@ nsHttpConnectionMgr::nsHttpConnectionMgr()
       mNumActiveConns(0),
       mNumIdleConns(0),
       mNumSpdyHttp3ActiveConns(0),
-      mNumHalfOpenConns(0),
+      mNumDnsAndConnectSockets(0),
       mTimeOfNextWakeUp(UINT64_MAX),
       mPruningNoTraffic(false),
       mTimeoutTickArmed(false),
@@ -94,10 +93,10 @@ nsHttpConnectionMgr::~nsHttpConnectionMgr() {
 
 nsresult nsHttpConnectionMgr::EnsureSocketThreadTarget() {
   nsCOMPtr<nsIEventTarget> sts;
-  nsCOMPtr<nsIIOService> ioService = services::GetIOService();
+  nsCOMPtr<nsIIOService> ioService = components::IO::Service();
   if (ioService) {
     nsCOMPtr<nsISocketTransportService> realSTS =
-        services::GetSocketTransportService();
+        components::SocketTransport::Service();
     sts = do_QueryInterface(realSTS);
   }
 
@@ -594,9 +593,9 @@ void nsHttpConnectionMgr::OnMsgClearConnectionHistory(int32_t,
   for (auto iter = mCT.Iter(); !iter.Done(); iter.Next()) {
     RefPtr<ConnectionEntry> ent = iter.Data();
     if (ent->IdleConnectionsLength() == 0 && ent->ActiveConnsLength() == 0 &&
-        ent->HalfOpensLength() == 0 && ent->UrgentStartQueueLength() == 0 &&
-        ent->PendingQueueLength() == 0 &&
-        ent->HalfOpenFastOpenBackupsLength() == 0 && !ent->mDoNotDestroy) {
+        ent->DnsAndConnectSocketsLength() == 0 &&
+        ent->UrgentStartQueueLength() == 0 && ent->PendingQueueLength() == 0 &&
+        !ent->mDoNotDestroy) {
       iter.Remove();
     }
   }
@@ -804,15 +803,16 @@ void nsHttpConnectionMgr::UpdateCoalescingForNewConn(
         "UpdateCoalescingForNewConn() registering newConn %p %s under key %s\n",
         newConn, newConn->ConnectionInfo()->HashKey().get(),
         ent->mCoalescingKeys[i].get()));
-    nsTArray<nsWeakPtr>* listOfWeakConns =
-        mCoalescingHash.Get(ent->mCoalescingKeys[i]);
-    if (!listOfWeakConns) {
-      LOG(("UpdateCoalescingForNewConn() need new list element\n"));
-      listOfWeakConns = new nsTArray<nsWeakPtr>(1);
-      mCoalescingHash.Put(ent->mCoalescingKeys[i], listOfWeakConns);
-    }
-    listOfWeakConns->AppendElement(
-        do_GetWeakReference(static_cast<nsISupportsWeakReference*>(newConn)));
+
+    mCoalescingHash
+        .GetOrInsertWith(
+            ent->mCoalescingKeys[i],
+            [] {
+              LOG(("UpdateCoalescingForNewConn() need new list element\n"));
+              return MakeUnique<nsTArray<nsWeakPtr>>(1);
+            })
+        ->AppendElement(do_GetWeakReference(
+            static_cast<nsISupportsWeakReference*>(newConn)));
   }
 
   // this is a new connection that can be coalesced onto. hooray!
@@ -915,12 +915,12 @@ bool nsHttpConnectionMgr::DispatchPendingQ(
   for (uint32_t i = 0; i < pendingQ.Length();) {
     pendingTransInfo = pendingQ[i];
 
-    bool alreadyHalfOpenOrWaitingForTLS =
+    bool alreadyDnsAndConnectSocketOrWaitingForTLS =
         pendingTransInfo->IsAlreadyClaimedInitializingConn();
 
     rv = TryDispatchTransaction(
         ent,
-        alreadyHalfOpenOrWaitingForTLS ||
+        alreadyDnsAndConnectSocketOrWaitingForTLS ||
             !!pendingTransInfo->Transaction()->TunnelProvider(),
         pendingTransInfo);
     if (NS_SUCCEEDED(rv) || (rv != NS_ERROR_NOT_AVAILABLE)) {
@@ -1505,7 +1505,6 @@ nsresult nsHttpConnectionMgr::DispatchTransaction(ConnectionEntry* ent,
          "Connection host = %s\n",
          trans->ConnectionInfo()->Origin(), conn->ConnectionInfo()->Origin()));
     rv = conn->Activate(trans, caps, priority);
-    MOZ_ASSERT(NS_SUCCEEDED(rv), "SPDY Cannot Fail Dispatch");
     if (NS_SUCCEEDED(rv) && !trans->GetPendingTime().IsNull()) {
       if (conn->UsingSpdy()) {
         AccumulateTimeDelta(Telemetry::TRANSACTION_WAIT_TIME_SPDY,
@@ -1724,7 +1723,7 @@ nsresult nsHttpConnectionMgr::CreateTransport(
   MOZ_ASSERT((speculative && !pendingTransInfo) ||
              (!speculative && pendingTransInfo));
 
-  RefPtr<HalfOpenSocket> sock = new HalfOpenSocket(
+  RefPtr<DnsAndConnectSocket> sock = new DnsAndConnectSocket(
       ent, trans, caps, speculative, isFromPredictor, urgentStart);
 
   if (speculative) {
@@ -1733,15 +1732,16 @@ nsresult nsHttpConnectionMgr::CreateTransport(
   // The socket stream holds the reference to the half open
   // socket - so if the stream fails to init the half open
   // will go away.
-  nsresult rv = sock->SetupPrimaryStreams();
+  nsresult rv = sock->Init();
   NS_ENSURE_SUCCESS(rv, rv);
 
   if (pendingTransInfo) {
-    DebugOnly<bool> claimed = pendingTransInfo->TryClaimingHalfOpen(sock);
+    DebugOnly<bool> claimed =
+        pendingTransInfo->TryClaimingDnsAndConnectSocket(sock);
     MOZ_ASSERT(claimed);
   }
 
-  ent->InsertIntoHalfOpens(sock);
+  ent->InsertIntoDnsAndConnectSockets(sock);
   return NS_OK;
 }
 
@@ -1914,10 +1914,9 @@ void nsHttpConnectionMgr::AbortAndCloseAllConnections(int32_t, ARefBase*) {
     ent->CancelAllTransactions(NS_ERROR_ABORT);
 
     // Close all half open tcp connections.
-    ent->CloseAllHalfOpens();
+    ent->CloseAllDnsAndConnectSockets();
 
-    MOZ_ASSERT(ent->HalfOpenFastOpenBackupsLength() == 0 &&
-               !ent->mDoNotDestroy);
+    MOZ_ASSERT(!ent->mDoNotDestroy);
     iter.Remove();
   }
 
@@ -2181,10 +2180,10 @@ void nsHttpConnectionMgr::OnMsgPruneDeadConnections(int32_t, ARefBase*) {
       // If this entry is empty, we have too many entries busy then
       // we can clean it up and restart
       if (mCT.Count() > 125 && ent->IdleConnectionsLength() == 0 &&
-          ent->ActiveConnsLength() == 0 && ent->HalfOpensLength() == 0 &&
+          ent->ActiveConnsLength() == 0 &&
+          ent->DnsAndConnectSocketsLength() == 0 &&
           ent->PendingQueueLength() == 0 &&
-          ent->UrgentStartQueueLength() == 0 &&
-          ent->HalfOpenFastOpenBackupsLength() == 0 && !ent->mDoNotDestroy &&
+          ent->UrgentStartQueueLength() == 0 && !ent->mDoNotDestroy &&
           (!ent->mUsingSpdy || mCT.Count() > 300)) {
         LOG(("    removing empty connection entry\n"));
         iter.Remove();
@@ -3282,7 +3281,7 @@ void nsHttpConnectionMgr::DoSpeculativeConnection(
   bool allow1918 = aTrans->Allow1918() ? *aTrans->Allow1918() : false;
 
   bool keepAlive = aTrans->Caps() & NS_HTTP_ALLOW_KEEPALIVE;
-  if (mNumHalfOpenConns < parallelSpeculativeConnectLimit &&
+  if (mNumDnsAndConnectSockets < parallelSpeculativeConnectLimit &&
       ((ignoreIdle &&
         (ent->IdleConnectionsLength() < parallelSpeculativeConnectLimit)) ||
        !ent->IdleConnectionsLength()) &&
@@ -3345,13 +3344,11 @@ void nsHttpConnectionMgr::RegisterOriginCoalescingKey(HttpConnectionBase* conn,
 
   nsCString newKey;
   BuildOriginFrameHashKey(newKey, ci, host, port);
-  nsTArray<nsWeakPtr>* listOfWeakConns = mCoalescingHash.Get(newKey);
-  if (!listOfWeakConns) {
-    listOfWeakConns = new nsTArray<nsWeakPtr>(1);
-    mCoalescingHash.Put(newKey, listOfWeakConns);
-  }
-  listOfWeakConns->AppendElement(
-      do_GetWeakReference(static_cast<nsISupportsWeakReference*>(conn)));
+  mCoalescingHash
+      .GetOrInsertWith(newKey,
+                       [] { return MakeUnique<nsTArray<nsWeakPtr>>(1); })
+      ->AppendElement(
+          do_GetWeakReference(static_cast<nsISupportsWeakReference*>(conn)));
 
   LOG(
       ("nsHttpConnectionMgr::RegisterOriginCoalescingKey "
@@ -3437,13 +3434,13 @@ void nsHttpConnectionMgr::MoveToWildCardConnEntry(
       ("nsHttpConnectionMgr::MakeConnEntryWildCard ent %p "
        "idle=%zu active=%zu half=%zu pending=%zu\n",
        ent, ent->IdleConnectionsLength(), ent->ActiveConnsLength(),
-       ent->HalfOpensLength(), ent->PendingQueueLength()));
+       ent->DnsAndConnectSocketsLength(), ent->PendingQueueLength()));
 
   LOG(
       ("nsHttpConnectionMgr::MakeConnEntryWildCard wc-ent %p "
        "idle=%zu active=%zu half=%zu pending=%zu\n",
        wcEnt, wcEnt->IdleConnectionsLength(), wcEnt->ActiveConnsLength(),
-       wcEnt->HalfOpensLength(), wcEnt->PendingQueueLength()));
+       wcEnt->DnsAndConnectSocketsLength(), wcEnt->PendingQueueLength()));
 
   ent->MoveConnection(proxyConn, wcEnt);
 }
@@ -3472,12 +3469,14 @@ bool nsHttpConnectionMgr::MoveTransToNewConnEntry(
   return true;
 }
 
-void nsHttpConnectionMgr::IncreaseNumHalfOpenConns() { mNumHalfOpenConns++; }
+void nsHttpConnectionMgr::IncreaseNumDnsAndConnectSockets() {
+  mNumDnsAndConnectSockets++;
+}
 
-void nsHttpConnectionMgr::DecreaseNumHalfOpenConns() {
-  MOZ_ASSERT(mNumHalfOpenConns);
-  if (mNumHalfOpenConns) {  // just in case
-    mNumHalfOpenConns--;
+void nsHttpConnectionMgr::DecreaseNumDnsAndConnectSockets() {
+  MOZ_ASSERT(mNumDnsAndConnectSockets);
+  if (mNumDnsAndConnectSockets) {  // just in case
+    mNumDnsAndConnectSockets--;
   }
 }
 

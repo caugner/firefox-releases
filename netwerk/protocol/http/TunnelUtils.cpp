@@ -11,7 +11,6 @@
 #include "nsHttp.h"
 #include "nsHttpHandler.h"
 #include "nsHttpRequestHead.h"
-#include "TCPFastOpen.h"
 #include "nsISocketProvider.h"
 #include "nsSocketProviderService.h"
 #include "nsISSLSocketControl.h"
@@ -1183,7 +1182,7 @@ bool SpdyConnectTransaction::MapStreamToHttpConnection(
   TimeDuration rtt = TimeStamp::Now() - mTimestampSyn;
   DebugOnly<nsresult> rv = mTunneledConn->Init(
       aConnInfo, gHttpHandler->ConnMgr()->MaxRequestDelay(), mTunnelTransport,
-      mTunnelStreamIn, mTunnelStreamOut, true, callbacks,
+      mTunnelStreamIn, mTunnelStreamOut, true, NS_OK, callbacks,
       PR_MillisecondsToInterval(static_cast<uint32_t>(rtt.ToMilliseconds())));
   MOZ_ASSERT(NS_SUCCEEDED(rv));
   if (mForcePlainText) {
@@ -2037,14 +2036,6 @@ SocketTransportShim::Bind(NetAddr* aLocalAddr) {
 }
 
 NS_IMETHODIMP
-SocketTransportShim::GetFirstRetryError(nsresult* aFirstRetryError) {
-  if (mIsWebsocket) {
-    LOG3(("WARNING: SocketTransportShim::GetFirstRetryError %p", this));
-  }
-  return NS_ERROR_NOT_IMPLEMENTED;
-}
-
-NS_IMETHODIMP
 SocketTransportShim::GetEchConfigUsed(bool* aEchConfigUsed) {
   if (mIsWebsocket) {
     LOG3(("WARNING: SocketTransportShim::GetEchConfigUsed %p", this));
@@ -2157,8 +2148,13 @@ SocketTransportShim::SetQoSBits(uint8_t aQoSBits) {
 }
 
 NS_IMETHODIMP
-SocketTransportShim::SetFastOpenCallback(TCPFastOpen* aFastOpen) {
-  return mWrapped->SetFastOpenCallback(aFastOpen);
+SocketTransportShim::GetRetryDnsIfPossible(bool* aRetry) {
+  return mWrapped->GetRetryDnsIfPossible(aRetry);
+}
+
+NS_IMETHODIMP
+SocketTransportShim::GetStatus(nsresult* aStatus) {
+  return mWrapped->GetStatus(aStatus);
 }
 
 NS_IMPL_ISUPPORTS(TLSFilterTransaction, nsITimerCallback, nsINamed)

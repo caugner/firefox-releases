@@ -814,12 +814,7 @@ function checkCellUneditable(id, column) {
 function showColumn(id, state) {
   const columns = gUI.table.columns;
   const column = columns.get(id);
-
-  if (state) {
-    column.wrapper.removeAttribute("hidden");
-  } else {
-    column.wrapper.setAttribute("hidden", true);
-  }
+  column.wrapper.hidden = !state;
 }
 
 /**
@@ -1083,19 +1078,27 @@ async function scroll() {
 }
 
 /**
- * Checks whether a storage has a certain host
+ * Asserts that the given tree path exists
  * @param {Document} doc
- * @param {String} storage
- * @param {String} host
+ * @param {Array} path
  * @param {Boolean} isExpected
  */
-function checkTree(doc, storage, host, isExpected = true) {
-  const treeId = JSON.stringify([storage, host]);
-  const element = doc.querySelector(`[data-id='${treeId}']`);
+function checkTree(doc, path, isExpected = true) {
+  const doesExist = isInTree(doc, path);
   ok(
-    isExpected ? element : !element,
-    `${storage} > ${host} is ${isExpected ? "" : "not "}in the tree`
+    isExpected ? doesExist : !doesExist,
+    `${path.join(" > ")} is ${isExpected ? "" : "not "}in the tree`
   );
+}
+
+/**
+ * Returns whether a tree path exists
+ * @param {Document} doc
+ * @param {Array} path
+ */
+function isInTree(doc, path) {
+  const treeId = JSON.stringify(path);
+  return !!doc.querySelector(`[data-id='${treeId}']`);
 }
 
 /**
@@ -1109,4 +1112,13 @@ function checkStorageData(name, value) {
     value,
     `Table row has an entry for: ${name} with value: ${value}`
   );
+}
+
+/**
+ * Returns an URL of a page that uses the document-builder to generate its content
+ * @param {String} domain
+ * @param {String} html
+ */
+function buildURLWithContent(domain, html) {
+  return `http://${domain}/document-builder.sjs?html=${encodeURI(html)}`;
 }

@@ -131,7 +131,7 @@ input[type="url"]:read-only {
 }
 
 .edit-button {
-  background-image: url("chrome://browser/skin/edit.svg");
+  background-image: url("chrome://global/skin/icons/edit.svg");
   padding-inline-start: 32px; /* 8px on each side, and 16px for icon width */
 }
 
@@ -463,12 +463,6 @@ input[name="password"] {
   color: currentColor;
   text-decoration: underline;
   font-weight: 600;
-}
-
-@media (-moz-windows-default-theme: 0) {
-  .alert-icon {
-    fill: currentColor;
-  }
 }
 
 @media (prefers-color-scheme: dark) {

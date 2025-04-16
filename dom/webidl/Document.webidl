@@ -439,6 +439,9 @@ partial interface Document {
   [ChromeOnly]
   attribute boolean styleSheetChangeEventsEnabled;
 
+  [ChromeOnly]
+  attribute boolean shadowRootAttachedEventEnabled;
+
   [ChromeOnly] readonly attribute DOMString contentLanguage;
 
   [ChromeOnly] readonly attribute nsILoadGroup? documentLoadGroup;
@@ -447,6 +450,9 @@ partial interface Document {
   [ChromeOnly, Throws]
   Promise<any> blockParsing(Promise<any> promise,
                             optional BlockParsingOptions options = {});
+
+  [Func="nsContentUtils::IsPDFJS", BinaryName="blockUnblockOnloadForPDFJS"]
+  void blockUnblockOnload(boolean block);
 
   // like documentURI, except that for error pages, it returns the URI we were
   // trying to load when we hit an error, rather than the error page's own URI.

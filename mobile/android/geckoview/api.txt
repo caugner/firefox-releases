@@ -616,6 +616,7 @@ package org.mozilla.geckoview {
 
   @AnyThread public final class GeckoRuntimeSettings extends RuntimeSettings {
     method public boolean getAboutConfigEnabled();
+    method public int getAllowInsecureConnections();
     method @NonNull public String[] getArguments();
     method public boolean getAutomaticFontSizeAdjustment();
     method @Nullable public String getConfigFilePath();
@@ -644,6 +645,7 @@ package org.mozilla.geckoview {
     method public boolean getWebFontsEnabled();
     method public boolean getWebManifestEnabled();
     method @NonNull public GeckoRuntimeSettings setAboutConfigEnabled(boolean);
+    method @NonNull public GeckoRuntimeSettings setAllowInsecureConnections(int);
     method @NonNull public GeckoRuntimeSettings setAutomaticFontSizeAdjustment(boolean);
     method @NonNull public GeckoRuntimeSettings setConsoleOutputEnabled(boolean);
     method @NonNull public GeckoRuntimeSettings setDoubleTapZoomingEnabled(boolean);
@@ -659,15 +661,19 @@ package org.mozilla.geckoview {
     method @NonNull public GeckoRuntimeSettings setRemoteDebuggingEnabled(boolean);
     method @NonNull public GeckoRuntimeSettings setWebFontsEnabled(boolean);
     method @NonNull public GeckoRuntimeSettings setWebManifestEnabled(boolean);
+    field public static final int ALLOW_ALL = 0;
     field public static final int COLOR_SCHEME_DARK = 1;
     field public static final int COLOR_SCHEME_LIGHT = 0;
     field public static final int COLOR_SCHEME_SYSTEM = -1;
     field public static final Parcelable.Creator<GeckoRuntimeSettings> CREATOR;
+    field public static final int HTTPS_ONLY = 2;
+    field public static final int HTTPS_ONLY_PRIVATE = 1;
   }
 
   @AnyThread public static final class GeckoRuntimeSettings.Builder extends RuntimeSettings.Builder {
     ctor public Builder();
     method @NonNull public GeckoRuntimeSettings.Builder aboutConfigEnabled(boolean);
+    method @NonNull public GeckoRuntimeSettings.Builder allowInsecureConnections(int);
     method @NonNull public GeckoRuntimeSettings.Builder arguments(@NonNull String[]);
     method @NonNull public GeckoRuntimeSettings.Builder automaticFontSizeAdjustment(boolean);
     method @NonNull public GeckoRuntimeSettings.Builder configFilePath(@Nullable String);
@@ -1341,6 +1347,10 @@ package org.mozilla.geckoview {
     method @NonNull public GeckoResult<Bitmap> getBitmap(int);
   }
 
+  public static class Image.ImageProcessingException extends RuntimeException {
+    ctor public ImageProcessingException(String);
+  }
+
   @AnyThread public class MediaElement {
     method @Nullable public MediaElement.Delegate getDelegate();
     method public void pause();
@@ -1718,11 +1728,68 @@ package org.mozilla.geckoview {
 
   public static class WebExtension.Download {
     ctor protected Download(int);
-    field @NonNull public final int id;
+    field public static final int INTERRUPT_REASON_CRASH = 24;
+    field public static final int INTERRUPT_REASON_FILE_ACCESS_DENIED = 2;
+    field public static final int INTERRUPT_REASON_FILE_BLOCKED = 8;
+    field public static final int INTERRUPT_REASON_FILE_FAILED = 1;
+    field public static final int INTERRUPT_REASON_FILE_NAME_TOO_LONG = 4;
+    field public static final int INTERRUPT_REASON_FILE_NO_SPACE = 3;
+    field public static final int INTERRUPT_REASON_FILE_SECURITY_CHECK_FAILED = 9;
+    field public static final int INTERRUPT_REASON_FILE_TOO_LARGE = 5;
+    field public static final int INTERRUPT_REASON_FILE_TOO_SHORT = 10;
+    field public static final int INTERRUPT_REASON_FILE_TRANSIENT_ERROR = 7;
+    field public static final int INTERRUPT_REASON_FILE_VIRUS_INFECTED = 6;
+    field public static final int INTERRUPT_REASON_NETWORK_DISCONNECTED = 13;
+    field public static final int INTERRUPT_REASON_NETWORK_FAILED = 11;
+    field public static final int INTERRUPT_REASON_NETWORK_INVALID_REQUEST = 15;
+    field public static final int INTERRUPT_REASON_NETWORK_SERVER_DOWN = 14;
+    field public static final int INTERRUPT_REASON_NETWORK_TIMEOUT = 12;
+    field public static final int INTERRUPT_REASON_NO_INTERRUPT = 0;
+    field public static final int INTERRUPT_REASON_SERVER_BAD_CONTENT = 18;
+    field public static final int INTERRUPT_REASON_SERVER_CERT_PROBLEM = 20;
+    field public static final int INTERRUPT_REASON_SERVER_FAILED = 16;
+    field public static final int INTERRUPT_REASON_SERVER_FORBIDDEN = 21;
+    field public static final int INTERRUPT_REASON_SERVER_NO_RANGE = 17;
+    field public static final int INTERRUPT_REASON_SERVER_UNAUTHORIZED = 19;
+    field public static final int INTERRUPT_REASON_USER_CANCELED = 22;
+    field public static final int INTERRUPT_REASON_USER_SHUTDOWN = 23;
+    field public static final int STATE_COMPLETE = 2;
+    field public static final int STATE_INTERRUPTED = 1;
+    field public static final int STATE_IN_PROGRESS = 0;
+    field public final int id;
+  }
+
+  public static interface WebExtension.Download.DownloadInterruptReason {
+  }
+
+  public static interface WebExtension.Download.DownloadState {
+  }
+
+  public static interface WebExtension.Download.Info {
+    method @UiThread default public long bytesReceived();
+    method @UiThread default public boolean canResume();
+    method @Nullable @UiThread default public Long endTime();
+    method @Nullable @UiThread default public Integer error();
+    method @Nullable @UiThread default public Long estimatedEndTime();
+    method @UiThread default public boolean fileExists();
+    method @UiThread default public long fileSize();
+    method @NonNull @UiThread default public String filename();
+    method @NonNull @UiThread default public String mime();
+    method @UiThread default public boolean paused();
+    method @NonNull @UiThread default public String referrer();
+    method @UiThread default public long startTime();
+    method @UiThread default public int state();
+    method @UiThread default public long totalBytes();
   }
 
   public static interface WebExtension.DownloadDelegate {
-    method @AnyThread @Nullable default public GeckoResult<WebExtension.Download> onDownload(@NonNull WebExtension, @NonNull WebExtension.DownloadRequest);
+    method @AnyThread @Nullable default public GeckoResult<WebExtension.DownloadInitData> onDownload(@NonNull WebExtension, @NonNull WebExtension.DownloadRequest);
+  }
+
+  public static class WebExtension.DownloadInitData {
+    ctor public DownloadInitData(WebExtension.Download, WebExtension.Download.Info);
+    field @NonNull public final WebExtension.Download download;
+    field @NonNull public final WebExtension.Download.Info initData;
   }
 
   public static class WebExtension.DownloadRequest {

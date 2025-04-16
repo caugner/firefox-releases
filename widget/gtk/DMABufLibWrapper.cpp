@@ -116,6 +116,12 @@ static void dmabuf_modifiers(void* data,
                              struct zwp_linux_dmabuf_v1* zwp_linux_dmabuf,
                              uint32_t format, uint32_t modifier_hi,
                              uint32_t modifier_lo) {
+  // skip modifiers marked as invalid
+  if (modifier_hi == (DRM_FORMAT_MOD_INVALID >> 32) &&
+      modifier_lo == (DRM_FORMAT_MOD_INVALID & 0xffffffff)) {
+    return;
+  }
+
   auto* device = static_cast<nsDMABufDevice*>(data);
   switch (format) {
     case GBM_FORMAT_ARGB8888:
@@ -242,9 +248,9 @@ bool nsDMABufDevice::IsDMABufTexturesEnabled() {
 bool nsDMABufDevice::IsDMABufTexturesEnabled() { return false; }
 #endif
 bool nsDMABufDevice::IsDMABufVAAPIEnabled() {
-  return gfx::gfxVars::UseEGL() && IsDMABufEnabled() &&
-         StaticPrefs::media_ffmpeg_vaapi_enabled() &&
-         gfx::gfxVars::CanUseHardwareVideoDecoding() && !XRE_IsRDDProcess();
+  return StaticPrefs::media_ffmpeg_vaapi_enabled() && !XRE_IsRDDProcess() &&
+         gfx::gfxVars::UseEGL() && IsDMABufEnabled() &&
+         gfx::gfxVars::CanUseHardwareVideoDecoding();
 }
 bool nsDMABufDevice::IsDMABufWebGLEnabled() {
   return gfx::gfxVars::UseEGL() && IsDMABufEnabled() &&

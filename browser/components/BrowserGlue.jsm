@@ -32,7 +32,7 @@ XPCOMUtils.defineLazyModuleGetters(this, {
   BookmarkJSONUtils: "resource://gre/modules/BookmarkJSONUtils.jsm",
   BrowserSearchTelemetry: "resource:///modules/BrowserSearchTelemetry.jsm",
   BrowserUsageTelemetry: "resource:///modules/BrowserUsageTelemetry.jsm",
-  BrowserUtils: "resource://gre/modules/BrowserUtils.jsm",
+  BrowserUIUtils: "resource:///modules/BrowserUIUtils.jsm",
   BrowserWindowTracker: "resource:///modules/BrowserWindowTracker.jsm",
   ContextualIdentityService:
     "resource://gre/modules/ContextualIdentityService.jsm",
@@ -44,7 +44,7 @@ XPCOMUtils.defineLazyModuleGetters(this, {
     "resource:///modules/DownloadsViewableInternally.jsm",
   E10SUtils: "resource://gre/modules/E10SUtils.jsm",
   ExtensionsUI: "resource:///modules/ExtensionsUI.jsm",
-  ExperimentAPI: "resource://messaging-system/experiments/ExperimentAPI.jsm",
+  ExperimentAPI: "resource://nimbus/ExperimentAPI.jsm",
   FeatureGate: "resource://featuregates/FeatureGate.jsm",
   FirefoxMonitor: "resource:///modules/FirefoxMonitor.jsm",
   FxAccounts: "resource://gre/modules/FxAccounts.jsm",
@@ -84,6 +84,7 @@ XPCOMUtils.defineLazyModuleGetters(this, {
   TelemetryUtils: "resource://gre/modules/TelemetryUtils.jsm",
   TRRRacer: "resource:///modules/TRRPerformance.jsm",
   UIState: "resource://services-sync/UIState.jsm",
+  UrlbarPrefs: "resource:///modules/UrlbarPrefs.jsm",
   WebChannel: "resource://gre/modules/WebChannel.jsm",
   WindowsRegistry: "resource://gre/modules/WindowsRegistry.jsm",
 });
@@ -191,6 +192,7 @@ let JSWINDOWACTORS = {
         AboutLoginsDismissBreachAlert: { wantUntrusted: true },
         AboutLoginsImportFromBrowser: { wantUntrusted: true },
         AboutLoginsImportFromFile: { wantUntrusted: true },
+        AboutLoginsImportReportInit: { wantUntrusted: true },
         AboutLoginsInit: { wantUntrusted: true },
         AboutLoginsGetHelp: { wantUntrusted: true },
         AboutLoginsOpenPreferences: { wantUntrusted: true },
@@ -204,7 +206,7 @@ let JSWINDOWACTORS = {
         AboutLoginsExportPasswords: { wantUntrusted: true },
       },
     },
-    matches: ["about:logins", "about:logins?*"],
+    matches: ["about:logins", "about:logins?*", "about:loginsimportreport"],
   },
 
   AboutNewInstall: {
@@ -257,6 +259,21 @@ let JSWINDOWACTORS = {
     },
 
     matches: ["about:plugins"],
+  },
+
+  AboutPocket: {
+    parent: {
+      moduleURI: "resource:///actors/AboutPocketParent.jsm",
+    },
+    child: {
+      moduleURI: "resource:///actors/AboutPocketChild.jsm",
+
+      events: {
+        DOMWindowCreated: { capture: true },
+      },
+    },
+
+    matches: ["about:pocket-saved*", "about:pocket-signup*"],
   },
 
   AboutPrivateBrowsing: {
@@ -2068,17 +2085,6 @@ BrowserGlue.prototype = {
     );
   },
 
-  _sendMediaTelemetry() {
-    let win = Services.wm.getMostRecentWindow("navigator:browser");
-    if (win) {
-      let v = win.document.createElementNS(
-        "http://www.w3.org/1999/xhtml",
-        "video"
-      );
-      v.reportCanPlayTelemetry();
-    }
-  },
-
   /**
    * Application shutdown handler.
    */
@@ -2490,6 +2496,47 @@ BrowserGlue.prototype = {
         },
       },
 
+      // Report pinning status and the type of shortcut used to launch
+      {
+        condition: AppConstants.platform == "win",
+        task: async () => {
+          let shellService = Cc[
+            "@mozilla.org/browser/shell-service;1"
+          ].getService(Ci.nsIWindowsShellService);
+
+          try {
+            Services.telemetry.scalarSet(
+              "os.environment.is_taskbar_pinned",
+              await shellService.isCurrentAppPinnedToTaskbarAsync()
+            );
+          } catch (ex) {
+            Cu.reportError(ex);
+          }
+
+          let classification;
+          let shortcut;
+          try {
+            shortcut = Services.appinfo.processStartupShortcut;
+            classification = shellService.classifyShortcut(shortcut);
+          } catch (ex) {
+            Cu.reportError(ex);
+          }
+
+          if (!classification) {
+            if (shortcut) {
+              classification = "OtherShortcut";
+            } else {
+              classification = "Other";
+            }
+          }
+
+          Services.telemetry.scalarSet(
+            "os.environment.launch_method",
+            classification
+          );
+        },
+      },
+
       {
         condition: AppConstants.platform == "win",
         task: () => {
@@ -2710,10 +2757,6 @@ BrowserGlue.prototype = {
   _scheduleBestEffortUserIdleTasks() {
     const idleTasks = [
       () => {
-        this._sendMediaTelemetry();
-      },
-
-      () => {
         // Telemetry for master-password - we do this after a delay as it
         // can cause IO if NSS/PSM has not already initialized.
         let tokenDB = Cc["@mozilla.org/security/pk11tokendb;1"].getService(
@@ -2760,7 +2803,9 @@ BrowserGlue.prototype = {
 
       () => OsEnvironment.reportAllowedAppSources(),
 
-      () => Services.search.checkWebExtensionEngines(),
+      () => Services.search.runBackgroundChecks(),
+
+      () => BrowserUsageTelemetry.reportInstallationTelemetry(),
     ];
 
     for (let task of idleTasks) {
@@ -3286,7 +3331,7 @@ BrowserGlue.prototype = {
   _migrateUI: function BG__migrateUI() {
     // Use an increasing number to keep track of the current migration state.
     // Completely unrelated to the current Firefox release number.
-    const UI_VERSION = 104;
+    const UI_VERSION = 107;
     const BROWSER_DOCURL = AppConstants.BROWSER_CHROME_URL;
 
     if (!Services.prefs.prefHasUserValue("browser.migration.version")) {
@@ -3829,6 +3874,37 @@ BrowserGlue.prototype = {
       );
     }
 
+    // Renamed and flipped the logic of a pref to make its purpose more clear.
+    if (currentUIVersion < 105) {
+      const oldPrefName = "browser.urlbar.imeCompositionClosesPanel";
+      const oldPrefValue = Services.prefs.getBoolPref(oldPrefName, true);
+      Services.prefs.setBoolPref(
+        "browser.urlbar.keepPanelOpenDuringImeComposition",
+        !oldPrefValue
+      );
+      Services.prefs.clearUserPref(oldPrefName);
+    }
+
+    // Initialize the new browser.urlbar.showSuggestionsBeforeGeneral pref.
+    if (currentUIVersion < 106) {
+      UrlbarPrefs.initializeShowSearchSuggestionsFirstPref();
+    }
+
+    if (currentUIVersion < 107) {
+      // Migrate old http URIs for mailto handlers to their https equivalents.
+      // The handler service will do this. We need to wait with migrating
+      // until the handler service has started up, so just set a pref here.
+      const kPref = "browser.handlers.migrations";
+      // We might have set up another migration further up. Create an array,
+      // and drop empty strings resulting from the `split`:
+      let migrations = Services.prefs
+        .getCharPref(kPref, "")
+        .split(",")
+        .filter(x => !!x);
+      migrations.push("secure-mail");
+      Services.prefs.setCharPref(kPref, migrations.join(","));
+    }
+
     // Update the migration version.
     Services.prefs.setIntPref("browser.migration.version", UI_VERSION);
   },
@@ -3842,13 +3918,9 @@ BrowserGlue.prototype = {
         "resource:///actors/AboutNewTabParent.jsm",
         {}
       );
-      let isFeatureEnabled = false;
-      try {
-        isFeatureEnabled = ExperimentAPI.getExperiment({
-          featureId: "infobar",
-          sendExposurePing: false,
-        })?.branch.feature.enabled;
-      } catch (e) {}
+      let isFeatureEnabled = ExperimentAPI.getExperiment({
+        featureId: "infobar",
+      })?.branch.feature.enabled;
       if (willPrompt) {
         // Prevent the related notification from appearing and
         // show the modal prompt.
@@ -3963,7 +4035,7 @@ BrowserGlue.prototype = {
         // same way that the url bar would.
         body = URIs[0].uri.replace(/([?#]).*$/, "$1");
         let wasTruncated = body.length < URIs[0].uri.length;
-        body = BrowserUtils.trimURL(body);
+        body = BrowserUIUtils.trimURL(body);
         if (wasTruncated) {
           body = bundle.formatStringFromName(
             "singleTabArrivingWithTruncatedURL.body",

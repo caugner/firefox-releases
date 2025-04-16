@@ -66,7 +66,6 @@
 #include "nsIAppWindow.h"
 #include "nsIBaseWindow.h"
 #include "nsIContent.h"
-#include "nsIKeyEventInPluginCallback.h"
 #include "nsIScreenManager.h"
 #include "nsISimpleEnumerator.h"
 #include "nsIWidgetListener.h"
@@ -899,8 +898,7 @@ void nsBaseWidget::ConfigureAPZCTreeManager() {
   // When APZ is enabled, we can actually enable raw touch events because we
   // have code that can deal with them properly. If APZ is not enabled, this
   // function doesn't get called.
-  if (StaticPrefs::dom_w3c_touch_events_enabled() ||
-      StaticPrefs::dom_w3c_pointer_events_enabled()) {
+  if (StaticPrefs::dom_w3c_touch_events_enabled()) {
     RegisterTouchWindow();
   }
 }
@@ -1220,13 +1218,6 @@ already_AddRefed<LayerManager> nsBaseWidget::CreateCompositorSession(
         gfx::gfxVars::UseWebRender() && WidgetTypeSupportsAcceleration();
     bool enableAPZ = UseAPZ();
     CompositorOptions options(enableAPZ, enableWR);
-
-    // Bug 1588484 - Advanced Layers is currently disabled for fission windows,
-    // since it doesn't properly support nested RefLayers.
-    bool enableAL =
-        gfx::gfxConfig::IsEnabled(gfx::Feature::ADVANCED_LAYERS) &&
-        (!mFissionWindow || StaticPrefs::layers_advanced_fission_enabled());
-    options.SetUseAdvancedLayers(enableAL);
 
 #ifdef MOZ_WIDGET_ANDROID
     if (!GetNativeData(NS_JAVA_SURFACE)) {
@@ -1801,7 +1792,7 @@ void nsBaseWidget::ZoomToRect(const uint32_t& aPresShellId,
 
 #ifdef ACCESSIBILITY
 
-a11y::Accessible* nsBaseWidget::GetRootAccessible() {
+a11y::LocalAccessible* nsBaseWidget::GetRootAccessible() {
   NS_ENSURE_TRUE(mWidgetListener, nullptr);
 
   PresShell* presShell = mWidgetListener->GetPresShell();
@@ -1812,7 +1803,7 @@ a11y::Accessible* nsBaseWidget::GetRootAccessible() {
   nsPresContext* presContext = presShell->GetPresContext();
   NS_ENSURE_TRUE(presContext->GetContainerWeak(), nullptr);
 
-  // Accessible creation might be not safe so use IsSafeToRunScript to
+  // LocalAccessible creation might be not safe so use IsSafeToRunScript to
   // make sure it's not created at unsafe times.
   nsAccessibilityService* accService = GetOrCreateAccService();
   if (accService) {
@@ -2218,12 +2209,6 @@ void nsBaseWidget::DefaultFillScrollCapture(DrawTarget* aSnapshotDrawTarget) {
 const IMENotificationRequests& nsIWidget::IMENotificationRequestsRef() {
   TextEventDispatcher* dispatcher = GetTextEventDispatcher();
   return dispatcher->IMENotificationRequestsRef();
-}
-
-nsresult nsIWidget::OnWindowedPluginKeyEvent(
-    const NativeEventData& aKeyEventData,
-    nsIKeyEventInPluginCallback* aCallback) {
-  return NS_ERROR_NOT_IMPLEMENTED;
 }
 
 void nsIWidget::PostHandleKeyEvent(mozilla::WidgetKeyboardEvent* aEvent) {}

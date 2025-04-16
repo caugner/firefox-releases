@@ -22,7 +22,6 @@
 #ifdef ACCESSIBILITY
 #  include "mozilla/a11y/PDocAccessible.h"
 #endif
-#include "GeckoProfiler.h"
 #include "GMPServiceParent.h"
 #include "HandlerServiceParent.h"
 #include "IHistory.h"
@@ -51,7 +50,6 @@
 #include "mozilla/BenchmarkStorageParent.h"
 #include "mozilla/ContentBlockingUserInteraction.h"
 #include "mozilla/ClearOnShutdown.h"
-#include "mozilla/Components.h"
 #include "mozilla/DataStorage.h"
 #ifdef MOZ_GLEAN
 #  include "mozilla/FOGIPC.h"
@@ -60,15 +58,18 @@
 #include "mozilla/HangDetails.h"
 #include "mozilla/LoginReputationIPC.h"
 #include "mozilla/LookAndFeel.h"
+#include "mozilla/Maybe.h"
 #include "mozilla/NullPrincipal.h"
 #include "mozilla/PerformanceMetricsCollector.h"
 #include "mozilla/Preferences.h"
 #include "mozilla/PresShell.h"
 #include "mozilla/ProcessHangMonitor.h"
 #include "mozilla/ProcessHangMonitorIPC.h"
+#include "mozilla/ProfilerLabels.h"
+#include "mozilla/ProfilerMarkers.h"
 #include "mozilla/ScopeExit.h"
 #include "mozilla/ScriptPreloader.h"
-#include "mozilla/Services.h"
+#include "mozilla/Components.h"
 #include "mozilla/Sprintf.h"
 #include "mozilla/StaticPrefs_dom.h"
 #include "mozilla/StaticPrefs_media.h"
@@ -158,6 +159,9 @@
 #include "mozilla/net/NeckoParent.h"
 #include "mozilla/net/PCookieServiceParent.h"
 #include "mozilla/plugins/PluginBridge.h"
+#include "mozilla/Telemetry.h"
+#include "mozilla/TelemetryComms.h"
+#include "mozilla/TelemetryEventEnums.h"
 #include "mozilla/RemoteLazyInputStreamParent.h"
 #include "mozilla/widget/RemoteLookAndFeel.h"
 #include "mozilla/widget/ScreenManager.h"
@@ -294,7 +298,6 @@
 #endif
 
 #ifdef XP_WIN
-#  include "mozilla/audio/AudioNotificationSender.h"
 #  include "mozilla/widget/AudioSession.h"
 #  include "mozilla/widget/WinContentSystemParameters.h"
 #  include "mozilla/WinDllServices.h"
@@ -343,6 +346,7 @@ using namespace mozilla::layout;
 using namespace mozilla::net;
 using namespace mozilla::psm;
 using namespace mozilla::widget;
+using namespace mozilla::Telemetry;
 using mozilla::loader::PScriptCacheParent;
 using mozilla::Telemetry::ProcessID;
 
@@ -369,6 +373,12 @@ LazyLogModule gProcessLog("Process");
 
 static std::map<RemoteDecodeIn, PDMFactory::MediaCodecsSupported>
     sCodecsSupported;
+
+/* static */
+uint32_t ContentParent::sMaxContentProcesses = 0;
+
+/* static */
+Maybe<TimeStamp> ContentParent::sLastContentProcessLaunch = Nothing();
 
 /* static */
 LogModule* ContentParent::GetLog() { return gProcessLog; }
@@ -1297,25 +1307,56 @@ mozilla::ipc::IPCResult ContentParent::RecvUngrabPointer(
 #endif
 }
 
-static void LogFailedPrincipalValidationInfo(nsIPrincipal* aPrincipal,
-                                             const char* aMethod) {
-  // no need to do the dance if logging is disabled
-  if (MOZ_LOG_TEST(ContentParent::GetLog(), LogLevel::Error)) {
-    nsAutoCString spec;
-    if (!aPrincipal) {
-      spec.AssignLiteral("NullPtr");
-    } else if (aPrincipal->IsSystemPrincipal()) {
-      spec.AssignLiteral("SystemPrincipal");
-    } else if (aPrincipal->GetIsExpandedPrincipal()) {
-      spec.AssignLiteral("ExpandedPrincipal");
-    } else if (aPrincipal->GetIsContentPrincipal()) {
-      aPrincipal->GetSpec(spec);
-    }
+Atomic<bool, mozilla::Relaxed> sContentParentTelemetryEventEnabled(false);
 
-    MOZ_LOG(ContentParent::GetLog(), LogLevel::Error,
-            ("  Receiving unexpected Principal (%s) within %s", spec.get(),
-             aMethod));
+static void LogAndAssertFailedPrincipalValidationInfo(nsIPrincipal* aPrincipal,
+                                                      const char* aMethod) {
+  // nsContentSecurityManager may also enable this same event, but that's okay
+  if (!sContentParentTelemetryEventEnabled.exchange(true)) {
+    sContentParentTelemetryEventEnabled = true;
+    Telemetry::SetEventRecordingEnabled("security"_ns, true);
   }
+
+  // Send Telemetry
+  nsAutoCString principalScheme, principalType, spec;
+  CopyableTArray<EventExtraEntry> extra(2);
+
+  if (!aPrincipal) {
+    principalType.AssignLiteral("NullPtr");
+  } else if (aPrincipal->IsSystemPrincipal()) {
+    principalType.AssignLiteral("SystemPrincipal");
+  } else if (aPrincipal->GetIsExpandedPrincipal()) {
+    principalType.AssignLiteral("ExpandedPrincipal");
+  } else if (aPrincipal->GetIsContentPrincipal()) {
+    principalType.AssignLiteral("ContentPrincipal");
+    aPrincipal->GetSpec(spec);
+    aPrincipal->GetScheme(principalScheme);
+
+    extra.AppendElement(EventExtraEntry{"scheme"_ns, principalScheme});
+  } else {
+    principalType.AssignLiteral("Unknown");
+  }
+
+  extra.AppendElement(EventExtraEntry{"principalType"_ns, principalType});
+
+  Telemetry::EventID eventType =
+      Telemetry::EventID::Security_Fissionprincipals_Contentparent;
+  Telemetry::RecordEvent(eventType, mozilla::Some(aMethod),
+                         mozilla::Some(extra));
+
+  // And log it
+  MOZ_LOG(
+      ContentParent::GetLog(), LogLevel::Error,
+      ("  Receiving unexpected Principal (%s) within %s",
+       aPrincipal && aPrincipal->GetIsContentPrincipal() ? spec.get()
+                                                         : principalType.get(),
+       aMethod));
+
+#ifdef DEBUG
+  // Not only log but also ensure we do not receive an unexpected
+  // principal when running in debug mode.
+  MOZ_ASSERT(false, "Receiving unexpected Principal");
+#endif
 }
 
 bool ContentParent::ValidatePrincipal(
@@ -1418,7 +1459,7 @@ mozilla::ipc::IPCResult ContentParent::RecvRemovePermission(
     const IPC::Principal& aPrincipal, const nsCString& aPermissionType,
     nsresult* aRv) {
   if (!ValidatePrincipal(aPrincipal)) {
-    LogFailedPrincipalValidationInfo(aPrincipal, __func__);
+    LogAndAssertFailedPrincipalValidationInfo(aPrincipal, __func__);
   }
   *aRv = Permissions::RemovePermission(aPrincipal, aPermissionType);
   return IPC_OK();
@@ -2656,6 +2697,7 @@ bool ContentParent::LaunchSubprocessSync(
   }
   const bool ok = mSubprocess->WaitForProcessHandle();
   if (ok && LaunchSubprocessResolve(/* aIsSync = */ true, aInitialPriority)) {
+    ContentParent::DidLaunchSubprocess();
     return true;
   }
   LaunchSubprocessReject();
@@ -2685,6 +2727,7 @@ RefPtr<ContentParent::LaunchPromise> ContentParent::LaunchSubprocessAsync(
         if (aValue.IsResolve() &&
             self->LaunchSubprocessResolve(/* aIsSync = */ false,
                                           aInitialPriority)) {
+          ContentParent::DidLaunchSubprocess();
           return LaunchPromise::CreateAndResolve(self, __func__);
         }
         self->LaunchSubprocessReject();
@@ -2731,9 +2774,6 @@ ContentParent::ContentParent(const nsACString& aRemoteType, int32_t aJSPluginID)
   mMessageManager = nsFrameMessageManager::NewProcessMessageManager(true);
 
 #if defined(XP_WIN)
-  if (XRE_IsParentProcess()) {
-    audio::AudioNotificationSender::Init();
-  }
   // Request Windows message deferral behavior on our side of the PContent
   // channel. Generally only applies to the situation where we get caught in
   // a deadlock with the plugin process when sending CPOWs.
@@ -2905,7 +2945,7 @@ bool ContentParent::InitInternal(ProcessPriority aInitialPriority) {
   // 3. Start listening for gfxVars updates, to notify content process later on.
   gfxVars::AddReceiver(this);
 
-  nsCOMPtr<nsIGfxInfo> gfxInfo = services::GetGfxInfo();
+  nsCOMPtr<nsIGfxInfo> gfxInfo = components::GfxInfo::Service();
   if (gfxInfo) {
     GfxInfoBase* gfxInfoRaw = static_cast<GfxInfoBase*>(gfxInfo.get());
     xpcomInit.gfxFeatureStatus() = gfxInfoRaw->GetAllFeatures();
@@ -2955,7 +2995,7 @@ bool ContentParent::InitInternal(ProcessPriority aInitialPriority) {
   chromeRegistry->SendRegisteredChrome(this);
 
   nsCOMPtr<nsIStringBundleService> stringBundleService =
-      services::GetStringBundleService();
+      components::StringBundle::Service();
   stringBundleService->SendContentBundles(this);
 
   if (gAppData) {
@@ -3270,7 +3310,7 @@ mozilla::ipc::IPCResult ContentParent::RecvSetClipboard(
     const int32_t& aWhichClipboard) {
   if (!ValidatePrincipal(aRequestingPrincipal,
                          {ValidatePrincipalOptions::AllowNullPtr})) {
-    LogFailedPrincipalValidationInfo(aRequestingPrincipal, __func__);
+    LogAndAssertFailedPrincipalValidationInfo(aRequestingPrincipal, __func__);
   }
 
   nsresult rv;
@@ -4377,7 +4417,7 @@ mozilla::ipc::IPCResult ContentParent::RecvPSpeechSynthesisConstructor(
 
 mozilla::ipc::IPCResult ContentParent::RecvStartVisitedQueries(
     const nsTArray<RefPtr<nsIURI>>& aUris) {
-  nsCOMPtr<IHistory> history = services::GetHistory();
+  nsCOMPtr<IHistory> history = components::History::Service();
   if (!history) {
     return IPC_OK();
   }
@@ -4395,7 +4435,7 @@ mozilla::ipc::IPCResult ContentParent::RecvSetURITitle(nsIURI* uri,
   if (!uri) {
     return IPC_FAIL_NO_REASON(this);
   }
-  nsCOMPtr<IHistory> history = services::GetHistory();
+  nsCOMPtr<IHistory> history = components::History::Service();
   if (history) {
     history->SetURITitle(uri, title);
   }
@@ -4502,7 +4542,7 @@ mozilla::ipc::IPCResult ContentParent::RecvCloseAlert(const nsString& aName) {
 mozilla::ipc::IPCResult ContentParent::RecvDisableNotifications(
     const IPC::Principal& aPrincipal) {
   if (!ValidatePrincipal(aPrincipal)) {
-    LogFailedPrincipalValidationInfo(aPrincipal, __func__);
+    LogAndAssertFailedPrincipalValidationInfo(aPrincipal, __func__);
   }
   Unused << Notification::RemovePermission(aPrincipal);
   return IPC_OK();
@@ -4511,7 +4551,7 @@ mozilla::ipc::IPCResult ContentParent::RecvDisableNotifications(
 mozilla::ipc::IPCResult ContentParent::RecvOpenNotificationSettings(
     const IPC::Principal& aPrincipal) {
   if (!ValidatePrincipal(aPrincipal)) {
-    LogFailedPrincipalValidationInfo(aPrincipal, __func__);
+    LogAndAssertFailedPrincipalValidationInfo(aPrincipal, __func__);
   }
   Unused << Notification::OpenSettings(aPrincipal);
   return IPC_OK();
@@ -4520,7 +4560,7 @@ mozilla::ipc::IPCResult ContentParent::RecvOpenNotificationSettings(
 mozilla::ipc::IPCResult ContentParent::RecvNotificationEvent(
     const nsString& aType, const NotificationEventData& aData) {
   nsCOMPtr<nsIServiceWorkerManager> swm =
-      mozilla::services::GetServiceWorkerManager();
+      mozilla::components::ServiceWorkerManager::Service();
   if (NS_WARN_IF(!swm)) {
     // Probably shouldn't happen, but no need to crash the child process.
     return IPC_OK();
@@ -4664,6 +4704,10 @@ mozilla::ipc::IPCResult ContentParent::RecvConsoleMessage(
 mozilla::ipc::IPCResult ContentParent::RecvReportFrameTimingData(
     uint64_t aInnerWindowId, const nsString& entryName,
     const nsString& initiatorType, UniquePtr<PerformanceTimingData>&& aData) {
+  if (!aData) {
+    return IPC_FAIL(this, "aData should not be null");
+  }
+
   RefPtr<WindowGlobalParent> parent =
       WindowGlobalParent::GetByInnerWindowId(aInnerWindowId);
   if (!parent || !parent->GetContentParent()) {
@@ -5061,7 +5105,7 @@ bool ContentParent::DeallocPWebrtcGlobalParent(PWebrtcGlobalParent* aActor) {
 mozilla::ipc::IPCResult ContentParent::RecvSetOfflinePermission(
     const Principal& aPrincipal) {
   if (!ValidatePrincipal(aPrincipal)) {
-    LogFailedPrincipalValidationInfo(aPrincipal, __func__);
+    LogAndAssertFailedPrincipalValidationInfo(aPrincipal, __func__);
   }
   nsCOMPtr<nsIOfflineCacheUpdateService> updateService =
       components::OfflineCacheUpdate::Service();
@@ -5399,7 +5443,7 @@ mozilla::ipc::IPCResult ContentParent::RecvCreateWindow(
     CreateWindowResolver&& aResolve) {
   if (!ValidatePrincipal(aTriggeringPrincipal,
                          {ValidatePrincipalOptions::AllowSystem})) {
-    LogFailedPrincipalValidationInfo(aTriggeringPrincipal, __func__);
+    LogAndAssertFailedPrincipalValidationInfo(aTriggeringPrincipal, __func__);
   }
 
   nsresult rv = NS_OK;
@@ -5431,8 +5475,9 @@ mozilla::ipc::IPCResult ContentParent::RecvCreateWindow(
     }
   });
 
-  // Don't continue to try to create a new window if we've been discarded.
-  if (aParent.IsDiscarded()) {
+  // Don't continue to try to create a new window if we've been fully discarded.
+  RefPtr<BrowsingContext> parent = aParent.GetMaybeDiscarded();
+  if (NS_WARN_IF(!parent)) {
     rv = NS_ERROR_FAILURE;
     return IPC_OK();
   }
@@ -5443,8 +5488,8 @@ mozilla::ipc::IPCResult ContentParent::RecvCreateWindow(
     return IPC_FAIL(this, "Missing BrowsingContext for new tab");
   }
 
-  RefPtr<BrowsingContext> newBCOpener = newBC->GetOpener();
-  if (newBCOpener && aParent.get() != newBCOpener) {
+  uint64_t newBCOpenerId = newBC->GetOpenerId();
+  if (newBCOpenerId != 0 && parent->Id() != newBCOpenerId) {
     return IPC_FAIL(this, "Invalid opener BrowsingContext for new tab");
   }
   if (newBC->GetParent() != nullptr) {
@@ -5475,7 +5520,7 @@ mozilla::ipc::IPCResult ContentParent::RecvCreateWindow(
   nsCOMPtr<nsIRemoteTab> newRemoteTab;
   int32_t openLocation = nsIBrowserDOMWindow::OPEN_NEWWINDOW;
   mozilla::ipc::IPCResult ipcResult = CommonCreateWindow(
-      aThisTab, aParent.get(), !!newBCOpener, aChromeFlags, aCalledFromJS,
+      aThisTab, parent, newBCOpenerId != 0, aChromeFlags, aCalledFromJS,
       aWidthSpecified, aForPrinting, aForPrintPreview, aURIToLoad, aFeatures,
       aFullZoom, newTab, VoidString(), rv, newRemoteTab, &cwi.windowOpened(),
       openLocation, aTriggeringPrincipal, aReferrerInfo, /* aLoadUri = */ false,
@@ -5514,8 +5559,9 @@ mozilla::ipc::IPCResult ContentParent::RecvCreateWindowInDifferentProcess(
     nsIReferrerInfo* aReferrerInfo, const OriginAttributes& aOriginAttributes) {
   MOZ_DIAGNOSTIC_ASSERT(!nsContentUtils::IsSpecialName(aName));
 
-  // Don't continue to try to create a new window if we've been discarded.
-  if (NS_WARN_IF(aParent.IsDiscarded())) {
+  // Don't continue to try to create a new window if we've been fully discarded.
+  RefPtr<BrowsingContext> parent = aParent.GetMaybeDiscarded();
+  if (NS_WARN_IF(!parent)) {
     return IPC_OK();
   }
 
@@ -5550,8 +5596,8 @@ mozilla::ipc::IPCResult ContentParent::RecvCreateWindowInDifferentProcess(
 
   nsresult rv;
   mozilla::ipc::IPCResult ipcResult = CommonCreateWindow(
-      aThisTab, aParent.get(), /* aSetOpener = */ false, aChromeFlags,
-      aCalledFromJS, aWidthSpecified, /* aForPrinting = */ false,
+      aThisTab, parent, /* aSetOpener = */ false, aChromeFlags, aCalledFromJS,
+      aWidthSpecified, /* aForPrinting = */ false,
       /* aForPrintPreview = */ false, aURIToLoad, aFeatures, aFullZoom,
       /* aNextRemoteBrowser = */ nullptr, aName, rv, newRemoteTab, &windowIsNew,
       openLocation, aTriggeringPrincipal, aReferrerInfo,
@@ -5715,7 +5761,7 @@ mozilla::ipc::IPCResult ContentParent::RecvNotifyPushObservers(
     const nsCString& aScope, const IPC::Principal& aPrincipal,
     const nsString& aMessageId) {
   if (!ValidatePrincipal(aPrincipal)) {
-    LogFailedPrincipalValidationInfo(aPrincipal, __func__);
+    LogAndAssertFailedPrincipalValidationInfo(aPrincipal, __func__);
   }
   PushMessageDispatcher dispatcher(aScope, aPrincipal, aMessageId, Nothing());
   Unused << NS_WARN_IF(NS_FAILED(dispatcher.NotifyObserversAndWorkers()));
@@ -5726,7 +5772,7 @@ mozilla::ipc::IPCResult ContentParent::RecvNotifyPushObserversWithData(
     const nsCString& aScope, const IPC::Principal& aPrincipal,
     const nsString& aMessageId, nsTArray<uint8_t>&& aData) {
   if (!ValidatePrincipal(aPrincipal)) {
-    LogFailedPrincipalValidationInfo(aPrincipal, __func__);
+    LogAndAssertFailedPrincipalValidationInfo(aPrincipal, __func__);
   }
   PushMessageDispatcher dispatcher(aScope, aPrincipal, aMessageId,
                                    Some(std::move(aData)));
@@ -5738,7 +5784,7 @@ mozilla::ipc::IPCResult
 ContentParent::RecvNotifyPushSubscriptionChangeObservers(
     const nsCString& aScope, const IPC::Principal& aPrincipal) {
   if (!ValidatePrincipal(aPrincipal)) {
-    LogFailedPrincipalValidationInfo(aPrincipal, __func__);
+    LogAndAssertFailedPrincipalValidationInfo(aPrincipal, __func__);
   }
   PushSubscriptionChangeDispatcher dispatcher(aScope, aPrincipal);
   Unused << NS_WARN_IF(NS_FAILED(dispatcher.NotifyObserversAndWorkers()));
@@ -5749,7 +5795,7 @@ mozilla::ipc::IPCResult ContentParent::RecvPushError(
     const nsCString& aScope, const IPC::Principal& aPrincipal,
     const nsString& aMessage, const uint32_t& aFlags) {
   if (!ValidatePrincipal(aPrincipal)) {
-    LogFailedPrincipalValidationInfo(aPrincipal, __func__);
+    LogAndAssertFailedPrincipalValidationInfo(aPrincipal, __func__);
   }
   PushErrorDispatcher dispatcher(aScope, aPrincipal, aMessage, aFlags);
   Unused << NS_WARN_IF(NS_FAILED(dispatcher.NotifyObserversAndWorkers()));
@@ -5760,7 +5806,7 @@ mozilla::ipc::IPCResult
 ContentParent::RecvNotifyPushSubscriptionModifiedObservers(
     const nsCString& aScope, const IPC::Principal& aPrincipal) {
   if (!ValidatePrincipal(aPrincipal)) {
-    LogFailedPrincipalValidationInfo(aPrincipal, __func__);
+    LogAndAssertFailedPrincipalValidationInfo(aPrincipal, __func__);
   }
   PushSubscriptionModifiedDispatcher dispatcher(aScope, aPrincipal);
   Unused << NS_WARN_IF(NS_FAILED(dispatcher.NotifyObservers()));
@@ -5833,7 +5879,7 @@ mozilla::ipc::IPCResult ContentParent::RecvStoreAndBroadcastBlobURLRegistration(
     const nsCString& aURI, const IPCBlob& aBlob, const Principal& aPrincipal,
     const Maybe<nsID>& aAgentClusterId) {
   if (!ValidatePrincipal(aPrincipal, {ValidatePrincipalOptions::AllowSystem})) {
-    LogFailedPrincipalValidationInfo(aPrincipal, __func__);
+    LogAndAssertFailedPrincipalValidationInfo(aPrincipal, __func__);
   }
   RefPtr<BlobImpl> blobImpl = IPCBlobUtils::Deserialize(aBlob);
   if (NS_WARN_IF(!blobImpl)) {
@@ -5856,7 +5902,7 @@ mozilla::ipc::IPCResult
 ContentParent::RecvUnstoreAndBroadcastBlobURLUnregistration(
     const nsCString& aURI, const Principal& aPrincipal) {
   if (!ValidatePrincipal(aPrincipal, {ValidatePrincipalOptions::AllowSystem})) {
-    LogFailedPrincipalValidationInfo(aPrincipal, __func__);
+    LogAndAssertFailedPrincipalValidationInfo(aPrincipal, __func__);
   }
   BlobURLProtocolHandler::RemoveDataEntry(aURI, false /* Don't broadcast */);
   BroadcastBlobURLUnregistration(aURI, aPrincipal, this);
@@ -6213,7 +6259,7 @@ mozilla::ipc::IPCResult ContentParent::RecvPURLClassifierConstructor(
     return IPC_OK();
   }
   if (!ValidatePrincipal(aPrincipal)) {
-    LogFailedPrincipalValidationInfo(aPrincipal, __func__);
+    LogAndAssertFailedPrincipalValidationInfo(aPrincipal, __func__);
   }
   return actor->StartClassify(principal, aSuccess);
 }
@@ -6382,7 +6428,7 @@ ContentParent::RecvAutomaticStorageAccessPermissionCanBeGranted(
     const Principal& aPrincipal,
     AutomaticStorageAccessPermissionCanBeGrantedResolver&& aResolver) {
   if (!ValidatePrincipal(aPrincipal)) {
-    LogFailedPrincipalValidationInfo(aPrincipal, __func__);
+    LogAndAssertFailedPrincipalValidationInfo(aPrincipal, __func__);
   }
   aResolver(Document::AutomaticStorageAccessPermissionCanBeGranted(aPrincipal));
   return IPC_OK();
@@ -6456,7 +6502,7 @@ mozilla::ipc::IPCResult ContentParent::RecvCompleteAllowAccessFor(
 mozilla::ipc::IPCResult ContentParent::RecvStoreUserInteractionAsPermission(
     const Principal& aPrincipal) {
   if (!ValidatePrincipal(aPrincipal)) {
-    LogFailedPrincipalValidationInfo(aPrincipal, __func__);
+    LogAndAssertFailedPrincipalValidationInfo(aPrincipal, __func__);
   }
   ContentBlockingUserInteraction::Observe(aPrincipal);
   return IPC_OK();
@@ -6771,7 +6817,7 @@ mozilla::ipc::IPCResult ContentParent::RecvWindowFocus(
 }
 
 mozilla::ipc::IPCResult ContentParent::RecvWindowBlur(
-    const MaybeDiscarded<BrowsingContext>& aContext) {
+    const MaybeDiscarded<BrowsingContext>& aContext, CallerType aCallerType) {
   if (aContext.IsNullOrDiscarded()) {
     MOZ_LOG(
         BrowsingContext::GetLog(), LogLevel::Debug,
@@ -6783,7 +6829,7 @@ mozilla::ipc::IPCResult ContentParent::RecvWindowBlur(
   ContentProcessManager* cpm = ContentProcessManager::GetSingleton();
   ContentParent* cp =
       cpm->GetContentProcessById(ContentParentId(context->OwnerProcessId()));
-  Unused << cp->SendWindowBlur(context);
+  Unused << cp->SendWindowBlur(context, aCallerType);
   return IPC_OK();
 }
 
@@ -7150,7 +7196,7 @@ PFileDescriptorSetParent* ContentParent::SendPFileDescriptorSetConstructor(
 mozilla::ipc::IPCResult ContentParent::RecvBlobURLDataRequest(
     const nsCString& aBlobURL, nsIPrincipal* aTriggeringPrincipal,
     nsIPrincipal* aLoadingPrincipal, const OriginAttributes& aOriginAttributes,
-    const Maybe<nsID>& aAgentClusterId,
+    uint64_t aInnerWindowId, const Maybe<nsID>& aAgentClusterId,
     BlobURLDataRequestResolver&& aResolver) {
   RefPtr<BlobImpl> blobImpl;
 
@@ -7158,8 +7204,8 @@ mozilla::ipc::IPCResult ContentParent::RecvBlobURLDataRequest(
   // longer exists (due to the 5 second timeout) when execution reaches here
   if (!BlobURLProtocolHandler::GetDataEntry(
           aBlobURL, getter_AddRefs(blobImpl), aLoadingPrincipal,
-          aTriggeringPrincipal, aOriginAttributes, aAgentClusterId,
-          true /* AlsoIfRevoked */)) {
+          aTriggeringPrincipal, aOriginAttributes, aInnerWindowId,
+          aAgentClusterId, true /* AlsoIfRevoked */)) {
     aResolver(NS_ERROR_DOM_BAD_URI);
     return IPC_OK();
   }
@@ -7375,9 +7421,9 @@ ContentParent::RecvRemoveDynEntriesFromActiveSessionHistoryEntry(
 }
 
 mozilla::ipc::IPCResult ContentParent::RecvRemoveFromSessionHistory(
-    const MaybeDiscarded<BrowsingContext>& aContext) {
+    const MaybeDiscarded<BrowsingContext>& aContext, const nsID& aChangeID) {
   if (!aContext.IsDiscarded()) {
-    aContext.get_canonical()->RemoveFromSessionHistory();
+    aContext.get_canonical()->RemoveFromSessionHistory(aChangeID);
   }
   return IPC_OK();
 }
@@ -7501,6 +7547,28 @@ NS_IMETHODIMP ContentParent::GetCanSend(bool* aCanSend) {
 ContentParent* ContentParent::AsContentParent() { return this; }
 
 JSActorManager* ContentParent::AsJSActorManager() { return this; }
+
+/* static */
+void ContentParent::DidLaunchSubprocess() {
+  TimeStamp now = TimeStamp::Now();
+  uint32_t count = 0;
+  for (auto* parent : ContentParent::AllProcesses(ContentParent::eLive)) {
+    Unused << parent;
+    count += 1;
+  }
+
+  if (count > sMaxContentProcesses) {
+    Telemetry::Accumulate(Telemetry::CONTENT_PROCESS_MAX, count);
+  }
+
+  if (sLastContentProcessLaunch) {
+    TimeStamp last = *sLastContentProcessLaunch;
+
+    Telemetry::AccumulateTimeDelta(
+        Telemetry::CONTENT_PROCESS_TIME_SINCE_LAST_LAUNCH_MS, last, now);
+  }
+  sLastContentProcessLaunch = Some(now);
+}
 
 }  // namespace dom
 }  // namespace mozilla

@@ -160,6 +160,7 @@ EXTRA_JS_MODULES += [
     "AppMenuNotifications.jsm",
     "AsyncPrefs.jsm",
     "BinarySearch.jsm",
+    "BrowserTelemetryUtils.jsm",
     "BrowserUtils.jsm",
     "CanonicalJSON.jsm",
     "CertUtils.jsm",
@@ -190,6 +191,8 @@ EXTRA_JS_MODULES += [
     "InlineSpellCheckerContent.jsm",
     "Integration.jsm",
     "JSONFile.jsm",
+    "KeywordUtils.jsm",
+    "LayoutUtils.jsm",
     "Log.jsm",
     "NewTabUtils.jsm",
     "NLP.jsm",
@@ -210,6 +213,7 @@ EXTRA_JS_MODULES += [
     "RemotePageAccessManager.jsm",
     "ResetProfile.jsm",
     "ResponsivenessMonitor.jsm",
+    "SelectionUtils.jsm",
     "ServiceRequest.jsm",
     "Services.jsm",
     "ShortcutUtils.jsm",
@@ -292,6 +296,7 @@ for var in (
 
 for var in (
     "MOZ_ALLOW_ADDON_SIDELOAD",
+    "MOZ_BACKGROUNDTASKS",
     "MOZ_SYSTEM_NSS",
     "MOZ_UNSIGNED_APP_SCOPE",
     "MOZ_UNSIGNED_SYSTEM_SCOPE",

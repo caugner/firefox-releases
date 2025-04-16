@@ -15,8 +15,7 @@ var { ExtensionsUI } = ChromeUtils.import(
 XPCOMUtils.defineLazyGetter(this, "Management", () => {
   // eslint-disable-next-line no-shadow
   const { Management } = ChromeUtils.import(
-    "resource://gre/modules/Extension.jsm",
-    null
+    "resource://gre/modules/Extension.jsm"
   );
   return Management;
 });
@@ -179,10 +178,7 @@ async function waitForUpdate(addon) {
  * Trigger an action from the page options menu.
  */
 function triggerPageOptionsAction(win, action) {
-  win
-    .getHtmlBrowser()
-    .contentDocument.querySelector(`#page-options [action="${action}"]`)
-    .click();
+  win.document.querySelector(`#page-options [action="${action}"]`).click();
 }
 
 function isDefaultIcon(icon) {
@@ -266,19 +262,11 @@ function checkNotification(panel, checkIcon, permissions) {
     `Permissions list has ${permissions.length} entries`
   );
   if (!permissions.length) {
-    is(header.getAttribute("hidden"), "true", "Permissions header is hidden");
-    is(
-      learnMoreLink.getAttribute("hidden"),
-      "true",
-      "Permissions learn more is hidden"
-    );
+    ok(header.hidden, "Permissions header is hidden");
+    ok(learnMoreLink.hidden, "Permissions learn more is hidden");
   } else {
-    is(header.getAttribute("hidden"), "", "Permissions header is visible");
-    is(
-      learnMoreLink.getAttribute("hidden"),
-      "",
-      "Permissions learn more is visible"
-    );
+    ok(!header.hidden, "Permissions header is visible");
+    ok(!learnMoreLink.hidden, "Permissions learn more is visible");
   }
 
   for (let i in permissions) {
@@ -484,16 +472,13 @@ async function interactiveUpdateTest(autoUpdate, checkFn) {
     if (manualUpdatePromise) {
       await manualUpdatePromise;
 
-      let doc = win.getHtmlBrowser().contentDocument;
+      let doc = win.document;
       if (win.gViewController.currentViewId !== "addons://updates/available") {
         let showUpdatesBtn = doc.querySelector("addon-updates-message").button;
         await TestUtils.waitForCondition(() => {
           return !showUpdatesBtn.hidden;
         }, "Wait for show updates button");
-        let viewChanged = BrowserTestUtils.waitForEvent(
-          win.document,
-          "ViewChanged"
-        );
+        let viewChanged = BrowserTestUtils.waitForEvent(doc, "ViewChanged");
         showUpdatesBtn.click();
         await viewChanged;
       }

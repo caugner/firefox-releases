@@ -1843,6 +1843,13 @@ static void MergeStacks(uint32_t aFeatures, bool aIsSynchronous,
                 !profilingStackFrame.pc(),
             &profilingStackFrame ==
                 &profilingStack.frames[profilingStack.stackSize() - 1]);
+        if (aIsSynchronous && profilingStackFrame.categoryPair() ==
+                                  JS::ProfilingCategoryPair::PROFILER) {
+          // For stacks captured synchronously (ie. marker stacks), stop
+          // walking the stack as soon as we enter the profiler category,
+          // to avoid showing profiler internal code in marker stacks.
+          return;
+        }
         aCollector.CollectProfilingStackFrame(profilingStackFrame);
       }
       profilingStackIndex++;
@@ -2206,10 +2213,11 @@ static void DoNativeBacktrace(PSLockRef aLock,
 //
 // The grammar for entry sequences is in a comment above
 // ProfileBuffer::StreamSamplesToJSON.
-static inline void DoSharedSample(PSLockRef aLock, bool aIsSynchronous,
-                                  RegisteredThread& aRegisteredThread,
-                                  const Registers& aRegs, uint64_t aSamplePos,
-                                  ProfileBuffer& aBuffer) {
+static inline void DoSharedSample(
+    PSLockRef aLock, bool aIsSynchronous, RegisteredThread& aRegisteredThread,
+    const Registers& aRegs, uint64_t aSamplePos, uint64_t aBufferRangeStart,
+    ProfileBuffer& aBuffer,
+    StackCaptureOptions aCaptureOptions = StackCaptureOptions::Full) {
   // WARNING: this function runs within the profiler's "critical section".
 
   MOZ_ASSERT(!aBuffer.IsThreadSafe(),
@@ -2217,10 +2225,11 @@ static inline void DoSharedSample(PSLockRef aLock, bool aIsSynchronous,
 
   MOZ_RELEASE_ASSERT(ActivePS::Exists(aLock));
 
-  ProfileBufferCollector collector(aBuffer, aSamplePos);
+  ProfileBufferCollector collector(aBuffer, aSamplePos, aBufferRangeStart);
   NativeStack nativeStack;
 #if defined(HAVE_NATIVE_UNWIND)
-  if (ActivePS::FeatureStackWalk(aLock)) {
+  if (ActivePS::FeatureStackWalk(aLock) &&
+      aCaptureOptions == StackCaptureOptions::Full) {
     DoNativeBacktrace(aLock, aRegisteredThread, aRegs, nativeStack);
 
     MergeStacks(ActivePS::Features(aLock), aIsSynchronous, aRegisteredThread,
@@ -2232,7 +2241,8 @@ static inline void DoSharedSample(PSLockRef aLock, bool aIsSynchronous,
                 aRegs, nativeStack, collector, CorePS::JsFrames(aLock));
 
     // We can't walk the whole native stack, but we can record the top frame.
-    if (ActivePS::FeatureLeaf(aLock)) {
+    if (ActivePS::FeatureLeaf(aLock) &&
+        aCaptureOptions == StackCaptureOptions::Full) {
       aBuffer.AddEntry(ProfileBufferEntry::NativeLeafAddr((void*)aRegs.mPC));
     }
   }
@@ -2241,17 +2251,23 @@ static inline void DoSharedSample(PSLockRef aLock, bool aIsSynchronous,
 // Writes the components of a synchronous sample to the given ProfileBuffer.
 static void DoSyncSample(PSLockRef aLock, RegisteredThread& aRegisteredThread,
                          const TimeStamp& aNow, const Registers& aRegs,
-                         ProfileBuffer& aBuffer) {
+                         ProfileBuffer& aBuffer,
+                         StackCaptureOptions aCaptureOptions) {
   // WARNING: this function runs within the profiler's "critical section".
 
-  uint64_t samplePos =
+  MOZ_ASSERT(aCaptureOptions != StackCaptureOptions::NoStack,
+             "DoSyncSample should not be called when no capture is needed");
+
+  const uint64_t bufferRangeStart = aBuffer.BufferRangeStart();
+
+  const uint64_t samplePos =
       aBuffer.AddThreadIdEntry(aRegisteredThread.Info()->ThreadId());
 
   TimeDuration delta = aNow - CorePS::ProcessStartTime();
   aBuffer.AddEntry(ProfileBufferEntry::Time(delta.ToMilliseconds()));
 
   DoSharedSample(aLock, /* aIsSynchronous = */ true, aRegisteredThread, aRegs,
-                 samplePos, aBuffer);
+                 samplePos, bufferRangeStart, aBuffer, aCaptureOptions);
 }
 
 // Writes the components of a periodic sample to ActivePS's ProfileBuffer.
@@ -2260,11 +2276,12 @@ static void DoSyncSample(PSLockRef aLock, RegisteredThread& aRegisteredThread,
 static inline void DoPeriodicSample(PSLockRef aLock,
                                     RegisteredThread& aRegisteredThread,
                                     const Registers& aRegs, uint64_t aSamplePos,
+                                    uint64_t aBufferRangeStart,
                                     ProfileBuffer& aBuffer) {
   // WARNING: this function runs within the profiler's "critical section".
 
   DoSharedSample(aLock, /* aIsSynchronous = */ false, aRegisteredThread, aRegs,
-                 aSamplePos, aBuffer);
+                 aSamplePos, aBufferRangeStart, aBuffer);
 }
 
 // END sampling/unwinding code
@@ -3011,6 +3028,10 @@ static void PrintUsageThenExit(int aExitCode) {
       "  Ignored if  MOZ_PROFILER_STARTUP_FEATURES_BITFIELD is set.\n"
       "  If unset, the platform default is used.\n"
       "\n"
+      "  MOZ_PROFILER_STARTUP_ACTIVE_BROWSING_CONTEXT_ID=<Number>\n"
+      "  This variable is used to propagate the activeBrowsingContextID of\n"
+      "  the profiler init params to subprocesses.\n"
+      "\n"
       "    Features: (x=unavailable, D/d=default/unavailable,\n"
       "               S/s=MOZ_PROFILER_STARTUP extra default/unavailable)\n",
       unsigned(ActivePS::scMinimumBufferEntries),
@@ -3467,10 +3488,14 @@ void SamplerThread::Run() {
 
             AUTO_PROFILER_STATS(gecko_SamplerThread_Run_DoPeriodicSample);
 
+            // Record the global profiler buffer's range start now, before
+            // adding the first entry for this thread's sample.
+            const uint64_t bufferRangeStart = buffer.BufferRangeStart();
+
             // Add the thread ID now, so we know its position in the main
             // buffer, which is used by some JS data.
             // (DoPeriodicSample only knows about the temporary local buffer.)
-            uint64_t samplePos =
+            const uint64_t samplePos =
                 buffer.AddThreadIdEntry(registeredThread->Info()->ThreadId());
             profiledThreadData->LastSample() = Some(samplePos);
 
@@ -3496,7 +3521,7 @@ void SamplerThread::Run() {
                   lock, *registeredThread, now,
                   [&](const Registers& aRegs, const TimeStamp& aNow) {
                     DoPeriodicSample(lock, *registeredThread, aRegs, samplePos,
-                                     localProfileBuffer);
+                                     bufferRangeStart, localProfileBuffer);
 
                     // For "eventDelay", we want the input delay - but if
                     // there are no events in the input queue (or even if there
@@ -4090,6 +4115,8 @@ void profiler_init(void* aStackTop) {
   PowerOfTwo32 capacity = PROFILER_DEFAULT_ENTRIES;
   Maybe<double> duration = Nothing();
   double interval = PROFILER_DEFAULT_INTERVAL;
+  uint64_t activeBrowsingContextID =
+      PROFILER_DEFAULT_ACTIVE_BROWSING_CONTEXT_ID;
 
   {
     PSAutoLock lock(gPSMutex);
@@ -4217,8 +4244,25 @@ void profiler_init(void* aStackTop) {
       LOG("- MOZ_PROFILER_STARTUP_FILTERS = %s", startupFilters);
     }
 
+    const char* startupActiveBrowsingContextID =
+        getenv("MOZ_PROFILER_STARTUP_ACTIVE_BROWSING_CONTEXT_ID");
+    if (startupActiveBrowsingContextID &&
+        startupActiveBrowsingContextID[0] != '\0') {
+      std::istringstream iss(startupActiveBrowsingContextID);
+      iss >> activeBrowsingContextID;
+      if (!iss.fail()) {
+        LOG("- MOZ_PROFILER_STARTUP_ACTIVE_BROWSING_CONTEXT_ID = %" PRIu64,
+            activeBrowsingContextID);
+      } else {
+        LOG("- MOZ_PROFILER_STARTUP_ACTIVE_BROWSING_CONTEXT_ID not a valid "
+            "uint64_t: %s",
+            startupActiveBrowsingContextID);
+        PrintUsageThenExit(1);
+      }
+    }
+
     locked_profiler_start(lock, capacity, interval, features, filters.begin(),
-                          filters.length(), 0, duration);
+                          filters.length(), activeBrowsingContextID, duration);
   }
 
 #if defined(MOZ_REPLACE_MALLOC) && defined(MOZ_PROFILER_MEMORY)
@@ -4456,6 +4500,11 @@ void GetProfilerEnvVarsForChildProcess(
     filtersString += filters[i];
   }
   aSetEnv("MOZ_PROFILER_STARTUP_FILTERS", filtersString.c_str());
+
+  auto activeBrowsingContextIDString =
+      Smprintf("%" PRIu64, ActivePS::ActiveBrowsingContextID(lock));
+  aSetEnv("MOZ_PROFILER_STARTUP_ACTIVE_BROWSING_CONTEXT_ID",
+          activeBrowsingContextIDString.get());
 }
 
 }  // namespace mozilla
@@ -5431,12 +5480,14 @@ double profiler_time() {
   return delta.ToMilliseconds();
 }
 
-bool profiler_capture_backtrace_into(ProfileChunkedBuffer& aChunkedBuffer) {
+bool profiler_capture_backtrace_into(ProfileChunkedBuffer& aChunkedBuffer,
+                                     StackCaptureOptions aCaptureOptions) {
   MOZ_RELEASE_ASSERT(CorePS::Exists());
 
   PSAutoLock lock(gPSMutex);
 
-  if (!ActivePS::Exists(lock)) {
+  if (!ActivePS::Exists(lock) ||
+      aCaptureOptions == StackCaptureOptions::NoStack) {
     return false;
   }
 
@@ -5460,13 +5511,14 @@ bool profiler_capture_backtrace_into(ProfileChunkedBuffer& aChunkedBuffer) {
 #endif
 
   DoSyncSample(lock, *registeredThread, TimeStamp::NowUnfuzzed(), regs,
-               profileBuffer);
+               profileBuffer, aCaptureOptions);
 
   return true;
 }
 
 UniquePtr<ProfileChunkedBuffer> profiler_capture_backtrace() {
   MOZ_RELEASE_ASSERT(CorePS::Exists());
+  AUTO_PROFILER_LABEL("profiler_capture_backtrace", PROFILER);
 
   // Quick is-active check before allocating a buffer.
   if (!profiler_is_active()) {
@@ -5478,7 +5530,7 @@ UniquePtr<ProfileChunkedBuffer> profiler_capture_backtrace() {
       MakeUnique<ProfileBufferChunkManagerSingle>(
           ProfileBufferChunkManager::scExpectedMaximumStackSize));
 
-  if (!profiler_capture_backtrace_into(*buffer)) {
+  if (!profiler_capture_backtrace_into(*buffer, StackCaptureOptions::Full)) {
     return nullptr;
   }
 

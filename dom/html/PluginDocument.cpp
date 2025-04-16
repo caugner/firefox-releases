@@ -7,7 +7,6 @@
 #include "MediaDocument.h"
 #include "nsIPluginDocument.h"
 #include "nsGkAtoms.h"
-#include "nsIObjectFrame.h"
 #include "nsNPAPIPluginInstance.h"
 #include "DocumentInlines.h"
 #include "nsIDocShellTreeItem.h"
@@ -16,8 +15,8 @@
 #include "nsContentPolicyUtils.h"
 #include "mozilla/dom/Element.h"
 #include "mozilla/PresShell.h"
+#include "mozilla/ProfilerLabels.h"
 #include "nsObjectLoadingContent.h"
-#include "GeckoProfiler.h"
 
 namespace mozilla::dom {
 
@@ -238,21 +237,6 @@ nsresult PluginDocument::CreateSyntheticPluginDocument() {
 NS_IMETHODIMP
 PluginDocument::Print() {
   NS_ENSURE_TRUE(mPluginContent, NS_ERROR_FAILURE);
-
-  nsIObjectFrame* objectFrame =
-      do_QueryFrame(mPluginContent->GetPrimaryFrame());
-  if (objectFrame) {
-    RefPtr<nsNPAPIPluginInstance> pi = objectFrame->GetPluginInstance();
-    if (pi) {
-      NPPrint npprint;
-      npprint.mode = NP_FULL;
-      npprint.print.fullPrint.pluginPrinted = false;
-      npprint.print.fullPrint.printOne = false;
-      npprint.print.fullPrint.platformPrint = nullptr;
-
-      pi->Print(&npprint);
-    }
-  }
 
   return NS_OK;
 }

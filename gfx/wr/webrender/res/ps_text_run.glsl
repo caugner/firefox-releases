@@ -5,7 +5,7 @@
 #include shared,prim_shared
 
 flat varying vec4 v_color;
-flat varying vec2 v_mask_swizzle;
+flat varying vec3 v_mask_swizzle;
 // Normalized bounds of the source image in the texture.
 flat varying vec4 v_uv_bounds;
 
@@ -47,10 +47,8 @@ Glyph fetch_glyph(int specific_prim_address,
                         int(uint(glyph_index) / GLYPHS_PER_GPU_BLOCK);
     vec4 data = fetch_from_gpu_cache_1(glyph_address);
     // Select XY or ZW based on glyph index.
-    // We use "!= 0" instead of "== 1" here in order to work around a driver
-    // bug with equality comparisons on integers.
     vec2 glyph = mix(data.xy, data.zw,
-                     bvec2(uint(glyph_index) % GLYPHS_PER_GPU_BLOCK != 0U));
+                     bvec2(uint(glyph_index) % GLYPHS_PER_GPU_BLOCK == 1U));
 
     return Glyph(glyph);
 }
@@ -226,31 +224,37 @@ void main() {
 
     switch (color_mode) {
         case COLOR_MODE_ALPHA:
+            v_mask_swizzle = vec3(0.0, 1.0, 1.0);
+            v_color = text.color;
+            break;
         case COLOR_MODE_BITMAP:
-            v_mask_swizzle = vec2(0.0, 1.0);
+            v_mask_swizzle = vec3(0.0, 1.0, 0.0);
             v_color = text.color;
             break;
         case COLOR_MODE_SUBPX_BG_PASS2:
-        case COLOR_MODE_SUBPX_DUAL_SOURCE:
-            v_mask_swizzle = vec2(1.0, 0.0);
+            v_mask_swizzle = vec3(1.0, 0.0, 0.0);
             v_color = text.color;
             break;
         case COLOR_MODE_SUBPX_CONST_COLOR:
         case COLOR_MODE_SUBPX_BG_PASS0:
         case COLOR_MODE_COLOR_BITMAP:
-            v_mask_swizzle = vec2(1.0, 0.0);
+            v_mask_swizzle = vec3(1.0, 0.0, 0.0);
             v_color = vec4(text.color.a);
             break;
         case COLOR_MODE_SUBPX_BG_PASS1:
-            v_mask_swizzle = vec2(-1.0, 1.0);
+            v_mask_swizzle = vec3(-1.0, 1.0, 0.0);
             v_color = vec4(text.color.a) * text.bg_color;
             break;
+        case COLOR_MODE_SUBPX_DUAL_SOURCE:
+            v_mask_swizzle = vec3(text.color.a, 0.0, 0.0);
+            v_color = text.color;
+            break;
         default:
-            v_mask_swizzle = vec2(0.0);
+            v_mask_swizzle = vec3(0.0, 0.0, 0.0);
             v_color = vec4(1.0);
     }
 
-    vec2 texture_size = vec2(textureSize(sColor0, 0));
+    vec2 texture_size = vec2(TEX_SIZE(sColor0));
     vec2 st0 = res.uv_rect.xy / texture_size;
     vec2 st1 = res.uv_rect.zw / texture_size;
 
@@ -267,7 +271,12 @@ Fragment text_fs(void) {
 
     vec2 tc = clamp(v_uv, v_uv_bounds.xy, v_uv_bounds.zw);
     vec4 mask = texture(sColor0, tc);
-    mask.rgb = mask.rgb * v_mask_swizzle.x + mask.aaa * v_mask_swizzle.y;
+    // v_mask_swizzle.z != 0 means we are using an R8 texture as alpha,
+    // and therefore must swizzle from the r channel to all channels.
+    mask = mix(mask, mask.rrrr, bvec4(v_mask_swizzle.z != 0.0));
+    #ifndef WR_FEATURE_DUAL_SOURCE_BLENDING
+        mask.rgb = mask.rgb * v_mask_swizzle.x + mask.aaa * v_mask_swizzle.y;
+    #endif
 
     #ifdef WR_FEATURE_GLYPH_TRANSFORM
         mask *= float(all(greaterThanEqual(v_uv_clip, vec4(0.0))));
@@ -276,7 +285,7 @@ Fragment text_fs(void) {
     frag.color = v_color * mask;
 
     #ifdef WR_FEATURE_DUAL_SOURCE_BLENDING
-        frag.blend = v_color.a * mask;
+        frag.blend = mask * v_mask_swizzle.x + mask.aaaa * v_mask_swizzle.y;
     #endif
 
     return frag;

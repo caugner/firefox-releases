@@ -7,6 +7,7 @@
 #include "RenderCompositor.h"
 
 #include "gfxConfig.h"
+#include "gfxPlatform.h"
 #include "GLContext.h"
 #include "mozilla/StaticPrefs_gfx.h"
 #include "mozilla/gfx/Logging.h"
@@ -111,9 +112,10 @@ void wr_compositor_enable_native_compositor(void* aCompositor, bool aEnable) {
   compositor->EnableNativeCompositor(aEnable);
 }
 
-CompositorCapabilities wr_compositor_get_capabilities(void* aCompositor) {
+void wr_compositor_get_capabilities(void* aCompositor,
+                                    CompositorCapabilities* aCaps) {
   RenderCompositor* compositor = static_cast<RenderCompositor*>(aCompositor);
-  return compositor->GetCompositorCapabilities();
+  compositor->GetCompositorCapabilities(aCaps);
 }
 
 void wr_compositor_unbind(void* aCompositor) {
@@ -151,7 +153,9 @@ UniquePtr<RenderCompositor> RenderCompositor::Create(
   if (gfx::gfxVars::UseSoftwareWebRender()) {
 #ifdef XP_MACOSX
     // Mac uses NativeLayerCA
-    return RenderCompositorNativeSWGL::Create(std::move(aWidget), aError);
+    if (!gfxPlatform::IsHeadless()) {
+      return RenderCompositorNativeSWGL::Create(std::move(aWidget), aError);
+    }
 #elif defined(XP_WIN)
     if (StaticPrefs::gfx_webrender_software_d3d11_AtStartup() &&
         gfx::gfxConfig::IsEnabled(gfx::Feature::D3D11_COMPOSITING)) {

@@ -10,7 +10,6 @@
 #include <vector>  // for vector
 
 #include "ClientLayerManager.h"  // for ClientLayerManager
-#include "GeckoProfiler.h"       // for AUTO_PROFILER_LABEL
 #include "IPDLActor.h"
 #include "ISurfaceAllocator.h"    // for IsSurfaceDescriptorValid
 #include "Layers.h"               // for Layer
@@ -35,6 +34,7 @@
 #  include "mozilla/layers/TextureSync.h"
 #endif
 #include "ShadowLayerUtils.h"
+#include "mozilla/ProfilerLabels.h"
 #include "mozilla/ReentrantMonitor.h"
 #include "mozilla/StaticPrefs_layers.h"
 #include "mozilla/layers/TextureClient.h"  // for TextureClient
@@ -911,13 +911,13 @@ already_AddRefed<gfx::DataSourceSurface> GetSurfaceForDescriptor(
 }
 
 already_AddRefed<gfx::DrawTarget> GetDrawTargetForDescriptor(
-    const SurfaceDescriptor& aDescriptor, gfx::BackendType aBackend) {
+    const SurfaceDescriptor& aDescriptor) {
   uint8_t* data = GetAddressFromDescriptor(aDescriptor);
   auto rgb =
       aDescriptor.get_SurfaceDescriptorBuffer().desc().get_RGBDescriptor();
   uint32_t stride = ImageDataSerializer::GetRGBStride(rgb);
   return gfx::Factory::CreateDrawTargetForData(
-      gfx::BackendType::CAIRO, data, rgb.size(), stride, rgb.format());
+      gfx::BackendType::SKIA, data, rgb.size(), stride, rgb.format());
 }
 
 void DestroySurfaceDescriptor(IShmemAllocator* aAllocator,

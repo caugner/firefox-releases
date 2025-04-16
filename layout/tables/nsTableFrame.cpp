@@ -1523,15 +1523,21 @@ nsTableFrame::IntrinsicISizeOffsets(nscoord aPercentageBasis) {
 nsIFrame::SizeComputationResult nsTableFrame::ComputeSize(
     gfxContext* aRenderingContext, WritingMode aWM, const LogicalSize& aCBSize,
     nscoord aAvailableISize, const LogicalSize& aMargin,
-    const LogicalSize& aBorderPadding, ComputeSizeFlags aFlags) {
-  auto result = nsContainerFrame::ComputeSize(aRenderingContext, aWM, aCBSize,
-                                              aAvailableISize, aMargin,
-                                              aBorderPadding, aFlags);
+    const LogicalSize& aBorderPadding, const StyleSizeOverrides& aSizeOverrides,
+    ComputeSizeFlags aFlags) {
+  // Only table wrapper calls this method, and it should use our writing mode.
+  MOZ_ASSERT(aWM == GetWritingMode(),
+             "aWM should be the same as our writing mode!");
 
-  // XXX The code below doesn't make sense if the caller's writing mode
-  // is orthogonal to this frame's. Not sure yet what should happen then;
-  // for now, just bail out.
-  if (aWM.IsVertical() != GetWritingMode().IsVertical()) {
+  auto result = nsContainerFrame::ComputeSize(
+      aRenderingContext, aWM, aCBSize, aAvailableISize, aMargin, aBorderPadding,
+      aSizeOverrides, aFlags);
+
+  // If our containing block wants to override inner table frame's inline-size
+  // (e.g. when resolving flex base size), don't enforce the min inline-size
+  // later in this method.
+  if (aSizeOverrides.mApplyOverridesVerbatim && aSizeOverrides.mStyleISize &&
+      aSizeOverrides.mStyleISize->IsLengthPercentage()) {
     return result;
   }
 
@@ -1580,7 +1586,8 @@ nscoord nsTableFrame::TableShrinkISizeToFit(gfxContext* aRenderingContext,
 LogicalSize nsTableFrame::ComputeAutoSize(
     gfxContext* aRenderingContext, WritingMode aWM, const LogicalSize& aCBSize,
     nscoord aAvailableISize, const LogicalSize& aMargin,
-    const LogicalSize& aBorderPadding, ComputeSizeFlags aFlags) {
+    const LogicalSize& aBorderPadding, const StyleSizeOverrides& aSizeOverrides,
+    ComputeSizeFlags aFlags) {
   // Tables always shrink-wrap.
   nscoord cbBased =
       aAvailableISize - aMargin.ISize(aWM) - aBorderPadding.ISize(aWM);
@@ -1748,8 +1755,11 @@ void nsTableFrame::Reflow(nsPresContext* aPresContext,
   MOZ_ASSERT(!HasAnyStateBits(NS_FRAME_OUT_OF_FLOW),
              "The nsTableWrapperFrame should be the out-of-flow if needed");
 
+  const WritingMode wm = aReflowInput.GetWritingMode();
+  MOZ_ASSERT(aReflowInput.ComputedLogicalMargin(wm).IsAllZero(),
+             "Only nsTableWrapperFrame can have margins!");
+
   bool isPaginated = aPresContext->IsPaginated();
-  WritingMode wm = aReflowInput.GetWritingMode();
 
   if (!GetPrevInFlow() && !mTableLayoutStrategy) {
     NS_ERROR("strategy should have been created in Init");
@@ -2656,6 +2666,17 @@ static LogicalMargin GetSeparateModelBorderPadding(
     borderPadding += aReflowInput->ComputedLogicalPadding(aWM);
   }
   return borderPadding;
+}
+
+void nsTableFrame::GetCollapsedBorderPadding(
+    Maybe<LogicalMargin>& aBorder, Maybe<LogicalMargin>& aPadding) const {
+  if (IsBorderCollapse()) {
+    // Border-collapsed tables don't use any of their padding, and only part of
+    // their border.
+    const auto wm = GetWritingMode();
+    aBorder.emplace(GetIncludedOuterBCBorder(wm));
+    aPadding.emplace(wm);
+  }
 }
 
 LogicalMargin nsTableFrame::GetChildAreaOffset(
@@ -3855,14 +3876,38 @@ void nsTableFrame::Dump(bool aDumpRows, bool aDumpCols, bool aDumpCellMap) {
 #endif
 
 bool nsTableFrame::ColumnHasCellSpacingBefore(int32_t aColIndex) const {
+  if (aColIndex == 0) {
+    return true;
+  }
   // Since fixed-layout tables should not have their column sizes change
   // as they load, we assume that all columns are significant.
-  if (LayoutStrategy()->GetType() == nsITableLayoutStrategy::Fixed) return true;
-  // the first column is always significant
-  if (aColIndex == 0) return true;
-  nsTableCellMap* cellMap = GetCellMap();
-  if (!cellMap) return false;
-  return cellMap->GetNumCellsOriginatingInCol(aColIndex) > 0;
+  auto* fif = static_cast<nsTableFrame*>(FirstInFlow());
+  if (fif->LayoutStrategy()->GetType() == nsITableLayoutStrategy::Fixed) {
+    return true;
+  }
+  nsTableCellMap* cellMap = fif->GetCellMap();
+  if (!cellMap) {
+    return false;
+  }
+  if (cellMap->GetNumCellsOriginatingInCol(aColIndex) > 0) {
+    return true;
+  }
+  // Check if we have a <col> element with a non-zero definite inline size.
+  // Note: percentages and calc(%) are intentionally not considered.
+  if (const auto* col = fif->GetColFrame(aColIndex)) {
+    const auto& iSize = col->StylePosition()->ISize(GetWritingMode());
+    if (iSize.ConvertsToLength() && iSize.ToLength() > 0) {
+      const auto& maxISize = col->StylePosition()->MaxISize(GetWritingMode());
+      if (!maxISize.ConvertsToLength() || maxISize.ToLength() > 0) {
+        return true;
+      }
+    }
+    const auto& minISize = col->StylePosition()->MinISize(GetWritingMode());
+    if (minISize.ConvertsToLength() && minISize.ToLength() > 0) {
+      return true;
+    }
+  }
+  return false;
 }
 
 /********************************************************************************
@@ -6298,7 +6343,6 @@ bool BCPaintBorderIterator::SetDamageArea(const nsRect& aDirtyRect) {
 
   Reset();
   mBlockDirInfo = new BCBlockDirSeg[mDamageArea.ColCount() + 1];
-  if (!mBlockDirInfo) return false;
   return true;
 }
 

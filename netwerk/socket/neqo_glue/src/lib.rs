@@ -9,7 +9,7 @@ use neqo_http3::Error as Http3Error;
 use neqo_http3::{Http3Client, Http3ClientEvent, Http3Parameters, Http3State};
 use neqo_qpack::QpackSettings;
 use neqo_transport::{
-    ConnectionParameters, Error as TransportError, FixedConnectionIdManager, Output, QuicVersion,
+    ConnectionParameters, Error as TransportError, Output, QuicVersion, RandomConnectionIdGenerator,
 };
 use nserror::*;
 use nsstring::*;
@@ -88,10 +88,12 @@ impl NeqoHttp3Conn {
 
         let mut conn = match Http3Client::new(
             origin_conv,
-            Rc::new(RefCell::new(FixedConnectionIdManager::new(3))),
+            Rc::new(RefCell::new(RandomConnectionIdGenerator::new(3))),
             local,
             remote,
-            &ConnectionParameters::default().quic_version(quic_version),
+            ConnectionParameters::default()
+                .quic_version(quic_version)
+                .disable_preferred_address(),
             &http3_settings,
         ) {
             Ok(c) => c,
@@ -389,20 +391,101 @@ pub extern "C" fn neqo_htttp3conn_send_request_body(
     }
 }
 
+fn crypto_error_code(err: neqo_crypto::Error) -> u64 {
+    match err {
+        neqo_crypto::Error::AeadInitFailure => 0,
+        neqo_crypto::Error::AeadError => 1,
+        neqo_crypto::Error::CertificateLoading => 2,
+        neqo_crypto::Error::CreateSslSocket => 3,
+        neqo_crypto::Error::HkdfError => 4,
+        neqo_crypto::Error::InternalError => 5,
+        neqo_crypto::Error::IntegerOverflow => 6,
+        neqo_crypto::Error::InvalidEpoch => 7,
+        neqo_crypto::Error::MixedHandshakeMethod => 8,
+        neqo_crypto::Error::NoDataAvailable => 9,
+        neqo_crypto::Error::NssError { .. } => 10,
+        neqo_crypto::Error::OverrunError => 11,
+        neqo_crypto::Error::SelfEncryptFailure => 12,
+        neqo_crypto::Error::TimeTravelError => 13,
+        neqo_crypto::Error::UnsupportedCipher => 14,
+        neqo_crypto::Error::UnsupportedVersion => 15,
+    }
+}
+
 // This is only used for telemetry. Therefore we only return error code
 // numbers and do not label them. Recording telemetry is easier with a
 // number.
 #[repr(C)]
 pub enum CloseError {
-    QuicTransportError(u64),
-    Http3AppError(u64),
+    TransportInternalError(u16),
+    TransportInternalErrorOther(u16),
+    TransportError(u64),
+    CryptoError(u64),
+    CryptoAlert(u8),
+    PeerAppError(u64),
+    PeerError(u64),
+    AppError(u64),
 }
 
-impl From<neqo_transport::CloseError> for CloseError {
-    fn from(error: neqo_transport::CloseError) -> CloseError {
+impl From<TransportError> for CloseError {
+    fn from(error: TransportError) -> CloseError {
         match error {
-            neqo_transport::CloseError::Transport(c) => CloseError::QuicTransportError(c),
-            neqo_transport::CloseError::Application(c) => CloseError::Http3AppError(c),
+            TransportError::InternalError(c) => CloseError::TransportInternalError(c),
+            TransportError::CryptoError(c) => CloseError::CryptoError(crypto_error_code(c)),
+            TransportError::CryptoAlert(c) => CloseError::CryptoAlert(c),
+            TransportError::PeerApplicationError(c) => CloseError::PeerAppError(c),
+            TransportError::PeerError(c) => CloseError::PeerError(c),
+            TransportError::NoError
+            | TransportError::IdleTimeout
+            | TransportError::ConnectionRefused
+            | TransportError::FlowControlError
+            | TransportError::StreamLimitError
+            | TransportError::StreamStateError
+            | TransportError::FinalSizeError
+            | TransportError::FrameEncodingError
+            | TransportError::TransportParameterError
+            | TransportError::ProtocolViolation
+            | TransportError::InvalidToken
+            | TransportError::KeysExhausted
+            | TransportError::ApplicationError
+            | TransportError::NoAvailablePath => CloseError::TransportError(error.code()),
+            TransportError::AckedUnsentPacket => CloseError::TransportInternalErrorOther(0),
+            TransportError::ConnectionIdLimitExceeded => CloseError::TransportInternalErrorOther(1),
+            TransportError::ConnectionIdsExhausted => CloseError::TransportInternalErrorOther(2),
+            TransportError::ConnectionState => CloseError::TransportInternalErrorOther(3),
+            TransportError::DecodingFrame => CloseError::TransportInternalErrorOther(4),
+            TransportError::DecryptError => CloseError::TransportInternalErrorOther(5),
+            TransportError::HandshakeFailed => CloseError::TransportInternalErrorOther(6),
+            TransportError::IntegerOverflow => CloseError::TransportInternalErrorOther(7),
+            TransportError::InvalidInput => CloseError::TransportInternalErrorOther(8),
+            TransportError::InvalidMigration => CloseError::TransportInternalErrorOther(9),
+            TransportError::InvalidPacket => CloseError::TransportInternalErrorOther(10),
+            TransportError::InvalidResumptionToken => CloseError::TransportInternalErrorOther(11),
+            TransportError::InvalidRetry => CloseError::TransportInternalErrorOther(12),
+            TransportError::InvalidStreamId => CloseError::TransportInternalErrorOther(13),
+            TransportError::KeysDiscarded => CloseError::TransportInternalErrorOther(14),
+            TransportError::KeysPending(_) => CloseError::TransportInternalErrorOther(15),
+            TransportError::KeyUpdateBlocked => CloseError::TransportInternalErrorOther(16),
+            TransportError::NoMoreData => CloseError::TransportInternalErrorOther(17),
+            TransportError::NotConnected => CloseError::TransportInternalErrorOther(18),
+            TransportError::PacketNumberOverlap => CloseError::TransportInternalErrorOther(19),
+            TransportError::StatelessReset => CloseError::TransportInternalErrorOther(20),
+            TransportError::TooMuchData => CloseError::TransportInternalErrorOther(21),
+            TransportError::UnexpectedMessage => CloseError::TransportInternalErrorOther(22),
+            TransportError::UnknownConnectionId => CloseError::TransportInternalErrorOther(23),
+            TransportError::UnknownFrameType => CloseError::TransportInternalErrorOther(24),
+            TransportError::VersionNegotiation => CloseError::TransportInternalErrorOther(25),
+            TransportError::WrongRole => CloseError::TransportInternalErrorOther(26),
+            TransportError::QlogError => CloseError::TransportInternalErrorOther(27),
+        }
+    }
+}
+
+impl From<neqo_transport::ConnectionError> for CloseError {
+    fn from(error: neqo_transport::ConnectionError) -> CloseError {
+        match error {
+            neqo_transport::ConnectionError::Transport(c) => c.into(),
+            neqo_transport::ConnectionError::Application(c) => CloseError::AppError(c),
         }
     }
 }

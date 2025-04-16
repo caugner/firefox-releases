@@ -13,7 +13,7 @@ XPCOMUtils.defineLazyModuleGetters(this, {
   AddonTestUtils: "resource://testing-common/AddonTestUtils.jsm",
   AppConstants: "resource://gre/modules/AppConstants.jsm",
   BrowserTestUtils: "resource://testing-common/BrowserTestUtils.jsm",
-  BrowserUtils: "resource://gre/modules/BrowserUtils.jsm",
+  BrowserUIUtils: "resource:///modules/BrowserUIUtils.jsm",
   BrowserWindowTracker: "resource:///modules/BrowserWindowTracker.jsm",
   FormHistoryTestUtils: "resource://testing-common/FormHistoryTestUtils.jsm",
   PrivateBrowsingUtils: "resource://gre/modules/PrivateBrowsingUtils.jsm",
@@ -26,6 +26,13 @@ XPCOMUtils.defineLazyModuleGetters(this, {
   UrlbarSearchUtils: "resource:///modules/UrlbarSearchUtils.jsm",
   UrlbarUtils: "resource:///modules/UrlbarUtils.jsm",
 });
+
+XPCOMUtils.defineLazyServiceGetter(
+  this,
+  "uuidGenerator",
+  "@mozilla.org/uuid-generator;1",
+  "nsIUUIDGenerator"
+);
 
 var UrlbarTestUtils = {
   /**
@@ -56,6 +63,7 @@ var UrlbarTestUtils = {
       this.Assert = scope.Assert;
       this.EventUtils = scope.EventUtils;
     }
+    // If you add other properties to `this`, null them in uninit().
   },
 
   /**
@@ -65,6 +73,8 @@ var UrlbarTestUtils = {
    */
   uninit() {
     this._testScope = null;
+    this.Assert = null;
+    this.EventUtils = null;
   },
 
   /**
@@ -113,7 +123,7 @@ var UrlbarTestUtils = {
     window.gURLBar.inputField.focus();
     // Using the value setter in some cases may trim and fetch unexpected
     // results, then pick an alternate path.
-    if (UrlbarPrefs.get("trimURLs") && value != BrowserUtils.trimURL(value)) {
+    if (UrlbarPrefs.get("trimURLs") && value != BrowserUIUtils.trimURL(value)) {
       window.gURLBar.inputField.value = value;
       fireInputEvent = true;
     } else {
@@ -193,6 +203,7 @@ var UrlbarTestUtils = {
     details.image = element.getElementsByClassName("urlbarView-favicon")[0].src;
     details.title = result.title;
     details.tags = "tags" in result.payload ? result.payload.tags : [];
+    details.isSponsored = result.payload.isSponsored;
     let actions = element.getElementsByClassName("urlbarView-action");
     let urls = element.getElementsByClassName("urlbarView-url");
     let typeIcon = element.querySelector(".urlbarView-type-icon");
@@ -857,7 +868,7 @@ class TestProvider extends UrlbarProvider {
    */
   constructor({
     results,
-    name = Math.floor(Math.random() * 100000),
+    name = "TestProvider" + uuidGenerator.generateUUID(),
     type = UrlbarUtils.PROVIDER_TYPE.PROFILE,
     priority = 0,
     addTimeout = 0,
@@ -874,7 +885,7 @@ class TestProvider extends UrlbarProvider {
     this._onSelection = onSelection;
   }
   get name() {
-    return "TestProvider" + this._name;
+    return this._name;
   }
   get type() {
     return this._type;

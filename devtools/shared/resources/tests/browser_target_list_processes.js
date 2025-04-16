@@ -20,16 +20,14 @@ add_task(async function() {
   await pushPref("dom.ipc.keepProcessesAlive.web", 1);
 
   const client = await createLocalClient();
-  const mainRoot = client.mainRoot;
-  const targetDescriptor = await mainRoot.getMainProcess();
-  const mainProcess = await targetDescriptor.getTarget();
+  const targetDescriptor = await client.mainRoot.getMainProcess();
 
-  const targetList = new TargetList(mainRoot, mainProcess);
+  const targetList = new TargetList(targetDescriptor);
   await targetList.startListening();
 
-  await testProcesses(targetList, mainProcess);
+  await testProcesses(targetList, targetList.targetFront);
 
-  await targetList.destroy();
+  targetList.destroy();
   // Wait for all the targets to be fully attached so we don't have pending requests.
   await Promise.all(
     targetList

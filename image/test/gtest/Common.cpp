@@ -56,7 +56,7 @@ AutoInitializeImageLib::AutoInitializeImageLib() {
 
   // Ensure we always color manage images with gtests.
   gfxPlatform::GetCMSMode();
-  gfxPlatform::SetCMSModeOverride(eCMSMode_All);
+  gfxPlatform::SetCMSModeOverride(CMSMode::All);
 
   // Depending on initialization order, it is possible that our pref changes
   // have not taken effect yet because there are pending gfx-related events on
@@ -436,6 +436,105 @@ ImageTestCase GreenWebPTestCase() {
 ImageTestCase GreenAVIFTestCase() {
   return ImageTestCase("green.avif", "image/avif", IntSize(100, 100))
       .WithSurfaceFlags(SurfaceFlags::TO_SRGB_COLORSPACE);
+}
+
+// Forcing sRGB is required until nsAVIFDecoder supports ICC profiles
+// See bug 1634741
+ImageTestCase Transparent10bit420AVIFTestCase() {
+  auto testCase =
+      ImageTestCase("transparent-green-50pct-10bit-yuv420.avif", "image/avif",
+                    IntSize(100, 100), TEST_CASE_IS_TRANSPARENT)
+          .WithSurfaceFlags(SurfaceFlags::TO_SRGB_COLORSPACE);
+  testCase.mColor = BGRAColor(0x00, 0xFF, 0x00, 0x80);
+  return testCase;
+}
+
+// Forcing sRGB is required until nsAVIFDecoder supports ICC profiles
+// See bug 1634741
+ImageTestCase Transparent10bit422AVIFTestCase() {
+  auto testCase =
+      ImageTestCase("transparent-green-50pct-10bit-yuv422.avif", "image/avif",
+                    IntSize(100, 100), TEST_CASE_IS_TRANSPARENT)
+          .WithSurfaceFlags(SurfaceFlags::TO_SRGB_COLORSPACE);
+  testCase.mColor = BGRAColor(0x00, 0xFF, 0x00, 0x80);
+  return testCase;
+}
+
+// Forcing sRGB is required until nsAVIFDecoder supports ICC profiles
+// See bug 1634741
+ImageTestCase Transparent10bit444AVIFTestCase() {
+  auto testCase =
+      ImageTestCase("transparent-green-50pct-10bit-yuv444.avif", "image/avif",
+                    IntSize(100, 100), TEST_CASE_IS_TRANSPARENT)
+          .WithSurfaceFlags(SurfaceFlags::TO_SRGB_COLORSPACE);
+  testCase.mColor = BGRAColor(0x00, 0xFF, 0x00, 0x80);
+  return testCase;
+}
+
+// Forcing sRGB is required until nsAVIFDecoder supports ICC profiles
+// See bug 1634741
+ImageTestCase Transparent12bit420AVIFTestCase() {
+  auto testCase =
+      ImageTestCase("transparent-green-50pct-12bit-yuv420.avif", "image/avif",
+                    IntSize(100, 100), TEST_CASE_IS_TRANSPARENT)
+          .WithSurfaceFlags(SurfaceFlags::TO_SRGB_COLORSPACE);
+  testCase.mColor = BGRAColor(0x00, 0xFF, 0x00, 0x80);
+  return testCase;
+}
+
+// Forcing sRGB is required until nsAVIFDecoder supports ICC profiles
+// See bug 1634741
+ImageTestCase Transparent12bit422AVIFTestCase() {
+  auto testCase =
+      ImageTestCase("transparent-green-50pct-12bit-yuv422.avif", "image/avif",
+                    IntSize(100, 100), TEST_CASE_IS_TRANSPARENT)
+          .WithSurfaceFlags(SurfaceFlags::TO_SRGB_COLORSPACE);
+  testCase.mColor = BGRAColor(0x00, 0xFF, 0x00, 0x80);
+  return testCase;
+}
+
+// Forcing sRGB is required until nsAVIFDecoder supports ICC profiles
+// See bug 1634741
+ImageTestCase Transparent12bit444AVIFTestCase() {
+  auto testCase =
+      ImageTestCase("transparent-green-50pct-12bit-yuv444.avif", "image/avif",
+                    IntSize(100, 100), TEST_CASE_IS_TRANSPARENT)
+          .WithSurfaceFlags(SurfaceFlags::TO_SRGB_COLORSPACE);
+  testCase.mColor = BGRAColor(0x00, 0xFF, 0x00, 0x80);
+  return testCase;
+}
+
+// Forcing sRGB is required until nsAVIFDecoder supports ICC profiles
+// See bug 1634741
+ImageTestCase Transparent8bit420AVIFTestCase() {
+  auto testCase =
+      ImageTestCase("transparent-green-50pct-8bit-yuv420.avif", "image/avif",
+                    IntSize(100, 100), TEST_CASE_IS_TRANSPARENT)
+          .WithSurfaceFlags(SurfaceFlags::TO_SRGB_COLORSPACE);
+  testCase.mColor = BGRAColor(0x00, 0xFF, 0x00, 0x80);
+  return testCase;
+}
+
+// Forcing sRGB is required until nsAVIFDecoder supports ICC profiles
+// See bug 1634741
+ImageTestCase Transparent8bit422AVIFTestCase() {
+  auto testCase =
+      ImageTestCase("transparent-green-50pct-8bit-yuv422.avif", "image/avif",
+                    IntSize(100, 100), TEST_CASE_IS_TRANSPARENT)
+          .WithSurfaceFlags(SurfaceFlags::TO_SRGB_COLORSPACE);
+  testCase.mColor = BGRAColor(0x00, 0xFF, 0x00, 0x80);
+  return testCase;
+}
+
+// Forcing sRGB is required until nsAVIFDecoder supports ICC profiles
+// See bug 1634741
+ImageTestCase Transparent8bit444AVIFTestCase() {
+  auto testCase =
+      ImageTestCase("transparent-green-50pct-8bit-yuv444.avif", "image/avif",
+                    IntSize(100, 100), TEST_CASE_IS_TRANSPARENT)
+          .WithSurfaceFlags(SurfaceFlags::TO_SRGB_COLORSPACE);
+  testCase.mColor = BGRAColor(0x00, 0xFF, 0x00, 0x80);
+  return testCase;
 }
 
 // Forcing sRGB is required until nsAVIFDecoder supports ICC profiles

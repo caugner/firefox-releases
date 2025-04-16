@@ -14,7 +14,6 @@ flat varying float v_gradient_repeat;
 varying vec2 v_pos;
 
 #ifdef WR_FEATURE_ALPHA_PASS
-varying vec2 v_local_pos;
 flat varying vec2 v_tile_repeat;
 #endif
 
@@ -46,18 +45,17 @@ void write_gradient_vertex(
     v_gradient_address = prim_user_data.x;
 
     // Whether to repeat the gradient along the line instead of clamping.
-    v_gradient_repeat = float(extend_mode != EXTEND_MODE_CLAMP);
+    v_gradient_repeat = float(extend_mode == EXTEND_MODE_REPEAT);
 
 #ifdef WR_FEATURE_ALPHA_PASS
     v_tile_repeat = tile_repeat;
-    v_local_pos = vi.local_pos;
 #endif
 }
 #endif //WR_VERTEX_SHADER
 
 #ifdef WR_FRAGMENT_SHADER
-vec2 compute_gradient_pos() {
-#ifdef WR_FEATURE_ALPHA_PASS
+vec2 compute_repeated_pos() {
+#if defined(WR_FEATURE_ALPHA_PASS) && !defined(SWGL_ANTIALIAS)
     // Handle top and left inflated edges (see brush_image).
     vec2 local_pos = max(v_pos, vec2(0.0));
 
@@ -94,10 +92,9 @@ vec4 dither(vec4 color) {
 }
 #endif //WR_FEATURE_DITHERING
 
-vec4 sample_gradient(float offset) {
-    // Modulo the offset if the gradient repeats.
-    float x = offset - floor(offset) * v_gradient_repeat;
+#define GRADIENT_ENTRIES 128.0
 
+float clamp_gradient_entry(float offset) {
     // Calculate the color entry index to use for this offset:
     //     offsets < 0 use the first color entry, 0
     //     offsets from [0, 1) use the color entries in the range of [1, N-1)
@@ -107,12 +104,17 @@ vec4 sample_gradient(float offset) {
     // TODO(gw): In the future we might consider making the size of the
     // LUT vary based on number / distribution of stops in the gradient.
     // Ensure we don't fetch outside the valid range of the LUT.
-    const float GRADIENT_ENTRIES = 128.0;
-    x = clamp(1.0 + x * GRADIENT_ENTRIES, 0.0, 1.0 + GRADIENT_ENTRIES);
+    return clamp(1.0 + offset * GRADIENT_ENTRIES, 0.0, 1.0 + GRADIENT_ENTRIES);
+}
+
+vec4 sample_gradient(float offset) {
+    // Modulo the offset if the gradient repeats.
+    offset -= floor(offset) * v_gradient_repeat;
 
     // Calculate the texel to index into the gradient color entries:
     //     floor(x) is the gradient color entry index
     //     fract(x) is the linear filtering factor between start and end
+    float x = clamp_gradient_entry(offset);
     float entry_index = floor(x);
     float entry_fract = x - entry_index;
 
@@ -120,7 +122,7 @@ vec4 sample_gradient(float offset) {
     vec4 texels[2] = fetch_from_gpu_cache_2(v_gradient_address + 2 * int(entry_index));
 
     // Finally interpolate and apply dithering
-    return dither(mix(texels[0], texels[1], entry_fract));
+    return dither(texels[0] + texels[1] * entry_fract);
 }
 
 #endif //WR_FRAGMENT_SHADER

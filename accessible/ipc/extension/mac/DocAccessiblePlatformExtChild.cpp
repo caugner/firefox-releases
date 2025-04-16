@@ -8,6 +8,8 @@
 
 #include "DocAccessibleChild.h"
 #include "HyperTextAccessibleWrap.h"
+#include "nsPersistentProperties.h"
+#include "nsAccUtils.h"
 
 #define UNIQUE_ID(acc)               \
   !acc || acc->Document() == acc ? 0 \
@@ -168,7 +170,7 @@ mozilla::ipc::IPCResult DocAccessiblePlatformExtChild::RecvRangeOfChild(
   *aEndOffset = 0;
 
   HyperTextAccessibleWrap* acc = IdToHyperTextAccessibleWrap(aID);
-  Accessible* child =
+  LocalAccessible* child =
       static_cast<DocAccessibleChild*>(Manager())->IdToAccessible(aChild);
   if (!acc || !child) {
     return IPC_OK();
@@ -187,11 +189,43 @@ mozilla::ipc::IPCResult DocAccessiblePlatformExtChild::RecvLeafAtOffset(
     return IPC_OK();
   }
 
-  Accessible* leaf = acc->LeafAtOffset(aOffset);
+  LocalAccessible* leaf = acc->LeafAtOffset(aOffset);
 
   MOZ_ASSERT(!leaf || leaf->Document() == acc->Document());
 
   *aLeaf = UNIQUE_ID(leaf);
+
+  return IPC_OK();
+}
+
+mozilla::ipc::IPCResult
+DocAccessiblePlatformExtChild::RecvAttributedTextForRange(
+    const uint64_t& aID, const int32_t& aStartOffset,
+    const uint64_t& aEndContainer, const int32_t& aEndOffset,
+    nsTArray<TextAttributesRun>* aAttributes) {
+  HyperTextAccessibleWrap* acc = IdToHyperTextAccessibleWrap(aID);
+  HyperTextAccessibleWrap* endContainer =
+      IdToHyperTextAccessibleWrap(aEndContainer);
+  if (!acc || !endContainer) {
+    return IPC_OK();
+  }
+
+  nsTArray<nsString> texts;
+  nsTArray<LocalAccessible*> containers;
+  nsTArray<nsCOMPtr<nsIPersistentProperties>> props;
+
+  acc->AttributedTextForRange(texts, props, containers, aStartOffset,
+                              endContainer, aEndOffset);
+
+  MOZ_ASSERT(texts.Length() == props.Length() &&
+             texts.Length() == containers.Length());
+
+  for (size_t i = 0; i < texts.Length(); i++) {
+    nsTArray<Attribute> textAttrArray;
+    nsAccUtils::PersistentPropertiesToArray(props.ElementAt(i), &textAttrArray);
+    aAttributes->AppendElement(TextAttributesRun(
+        texts.ElementAt(i), UNIQUE_ID(containers.ElementAt(i)), textAttrArray));
+  }
 
   return IPC_OK();
 }

@@ -182,7 +182,11 @@ class nsDocShellLoadState final {
     return mSourceBrowsingContext;
   }
 
-  void SetSourceBrowsingContext(BrowsingContext* aSourceBrowsingContext);
+  void SetSourceBrowsingContext(BrowsingContext*);
+
+  void SetAllowFocusMove(bool aAllow) { mAllowFocusMove = aAllow; }
+
+  bool AllowFocusMove() const { return mAllowFocusMove; }
 
   const MaybeDiscarded<BrowsingContext>& TargetBrowsingContext() const {
     return mTargetBrowsingContext;
@@ -212,6 +216,16 @@ class nsDocShellLoadState final {
   void UnsetLoadFlag(uint32_t aFlag);
 
   bool HasLoadFlags(uint32_t aFlag);
+
+  uint32_t InternalLoadFlags() const;
+
+  void SetInternalLoadFlags(uint32_t aFlags);
+
+  void SetInternalLoadFlag(uint32_t aFlag);
+
+  void UnsetInternalLoadFlag(uint32_t aFlag);
+
+  bool HasInternalLoadFlags(uint32_t aFlag);
 
   bool FirstParty() const;
 
@@ -434,11 +448,17 @@ class nsDocShellLoadState final {
   // Set of Load Flags, taken from nsDocShellLoadTypes.h and nsIWebNavigation
   uint32_t mLoadFlags;
 
+  // Set of internal load flags
+  uint32_t mInternalLoadFlags;
+
   // Is this a First Party Load?
   bool mFirstParty;
 
   // Is this load triggered by a user gesture?
   bool mHasValidUserGestureActivation;
+
+  // Whether this load can steal the focus from the source browsing context.
+  bool mAllowFocusMove;
 
   // A hint as to the content-type of the resulting data. If no hint, IsVoid()
   // should return true.

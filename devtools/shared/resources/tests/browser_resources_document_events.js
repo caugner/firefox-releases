@@ -24,8 +24,7 @@ async function testDocumentEventResources() {
   // Create a TargetList for the test tab
   const client = await createLocalClient();
   const descriptor = await client.mainRoot.getTab({ tab });
-  const target = await descriptor.getTarget();
-  const targetList = new TargetList(client.mainRoot, target);
+  const targetList = new TargetList(descriptor);
   await targetList.startListening();
 
   // Activate ResourceWatcher
@@ -59,7 +58,7 @@ async function testDocumentEventResources() {
   );
   ok(true, "Document events are fired after reloading");
 
-  await targetList.destroy();
+  targetList.destroy();
   await client.close();
 }
 
@@ -86,7 +85,7 @@ async function testDocumentEventResourcesWithIgnoreExistingResources() {
   await waitUntil(() => documentEvents.length === 3);
   assertEvents(...documentEvents);
 
-  await targetList.destroy();
+  targetList.destroy();
   await client.close();
 }
 

@@ -170,6 +170,8 @@ scheme host and port.""")
                                  help="Halt the test runner after each test (this happens by default if only a single test is run)")
     debugging_group.add_argument('--no-pause-after-test', dest="pause_after_test", action="store_false",
                                  help="Don't halt the test runner irrespective of the number of tests run")
+    debugging_group.add_argument('--debug-test', dest="debug_test", action="store_true",
+                                 help="Run tests with additional debugging features enabled")
 
     debugging_group.add_argument('--pause-on-unexpected', action="store_true",
                                  help="Halt the test runner when an unexpected result is encountered")
@@ -364,6 +366,10 @@ scheme host and port.""")
     webkit_group = parser.add_argument_group("WebKit-specific")
     webkit_group.add_argument("--webkit-port", dest="webkit_port",
                               help="WebKit port")
+
+    safari_group = parser.add_argument_group("Safari-specific")
+    safari_group.add_argument("--kill-safari", dest="kill_safari", action="store_true", default=False,
+                              help="Kill Safari when stopping the browser")
 
     parser.add_argument("test_list", nargs="*",
                         help="List of URLs for tests to run, or paths including tests to run. "
@@ -592,7 +598,7 @@ def check_args(kwargs):
         kwargs["reftest_internal"] = True
 
     if kwargs["reftest_screenshot"] is None:
-        kwargs["reftest_screenshot"] = "unexpected"
+        kwargs["reftest_screenshot"] = "unexpected" if not kwargs["debug_test"] else "always"
 
     if kwargs["enable_webrender"] is None:
         kwargs["enable_webrender"] = False

@@ -2887,6 +2887,22 @@ APZCTreeManager::HitTestResult APZCTreeManager::GetAPZCAtPointWR(
   return hit;
 }
 
+AsyncPanZoomController* APZCTreeManager::FindHandoffParent(
+    const AsyncPanZoomController* aApzc) {
+  RefPtr<HitTestingTreeNode> node = GetTargetNode(aApzc->GetGuid(), nullptr);
+  while (node) {
+    if (auto* apzc = GetTargetApzcForNode(node->GetParent())) {
+      // avoid infinite recursion in the overscroll handoff chain.
+      if (apzc != aApzc) {
+        return apzc;
+      }
+    }
+    node = node->GetParent();
+  }
+
+  return nullptr;
+}
+
 RefPtr<const OverscrollHandoffChain>
 APZCTreeManager::BuildOverscrollHandoffChain(
     const RefPtr<AsyncPanZoomController>& aInitialTarget) {
@@ -2918,7 +2934,11 @@ APZCTreeManager::BuildOverscrollHandoffChain(
         // This probably indicates a bug or missed case in layout code
         NS_WARNING("Found a non-root APZ with no handoff parent");
       }
-      apzc = apzc->GetParent();
+
+      // Find the parent APZC by using HitTestingTree (i.e. by using
+      // GetTargetApzcForNode) so that we can properly find the parent APZC for
+      // cases where cross-process iframes are inside position:fixed subtree.
+      apzc = FindHandoffParent(apzc);
       continue;
     }
 
@@ -2955,7 +2975,7 @@ void APZCTreeManager::AddInputBlockCallback(uint64_t aInputBlockId,
 }
 
 void APZCTreeManager::FindScrollThumbNode(
-    const AsyncDragMetrics& aDragMetrics,
+    const AsyncDragMetrics& aDragMetrics, LayersId aLayersId,
     HitTestingTreeNodeAutoLock& aOutThumbNode) {
   if (!aDragMetrics.mDirection) {
     // The AsyncDragMetrics has not been initialized yet - there will be
@@ -2966,8 +2986,8 @@ void APZCTreeManager::FindScrollThumbNode(
   RecursiveMutexAutoLock lock(mTreeLock);
 
   RefPtr<HitTestingTreeNode> result = DepthFirstSearch<ReverseIterator>(
-      mRootNode.get(), [&aDragMetrics](HitTestingTreeNode* aNode) {
-        return aNode->MatchesScrollDragMetrics(aDragMetrics);
+      mRootNode.get(), [&aDragMetrics, &aLayersId](HitTestingTreeNode* aNode) {
+        return aNode->MatchesScrollDragMetrics(aDragMetrics, aLayersId);
       });
   if (result) {
     aOutThumbNode.Initialize(lock, result.forget(), mTreeLock);

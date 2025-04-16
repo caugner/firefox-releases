@@ -2,7 +2,7 @@
  * @licstart The following is the entire license notice for the
  * Javascript code in this page
  *
- * Copyright 2020 Mozilla Foundation
+ * Copyright 2021 Mozilla Foundation
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -50,8 +50,8 @@ Object.defineProperty(exports, "initSandbox", ({
 
 var _initialization = __w_pdfjs_require__(1);
 
-const pdfjsVersion = '2.7.510';
-const pdfjsBuild = '631bada0d';
+const pdfjsVersion = '2.8.117';
+const pdfjsBuild = '3d80c21a8';
 
 /***/ }),
 /* 1 */
@@ -116,14 +116,14 @@ function initSandbox(params) {
   const util = new _util.Util({
     externalCall
   });
-  const aform = new _aform.AForm(doc, app, util);
 
   if (data.objects) {
     for (const [name, objs] of Object.entries(data.objects)) {
       const obj = objs[0];
       obj.send = send;
       obj.globalEval = globalEval;
-      obj.doc = _document.wrapped;
+      obj.doc = _document;
+      obj.fieldPath = name;
       let field;
 
       if (obj.type === "radiobutton") {
@@ -151,10 +151,11 @@ function initSandbox(params) {
     }
   }
 
+  const color = new _color.Color();
   globalThis.event = null;
   globalThis.global = Object.create(null);
   globalThis.app = new Proxy(app, proxyHandler);
-  globalThis.color = new Proxy(new _color.Color(), proxyHandler);
+  globalThis.color = new Proxy(color, proxyHandler);
   globalThis.console = new Proxy(new _console.Console({
     send
   }), proxyHandler);
@@ -170,6 +171,7 @@ function initSandbox(params) {
   globalThis.style = _constants.Style;
   globalThis.trans = _constants.Trans;
   globalThis.zoomtype = _constants.ZoomType;
+  const aform = new _aform.AForm(doc, app, util, color);
 
   for (const name of Object.getOwnPropertyNames(_aform.AForm.prototype)) {
     if (name !== "constructor" && !name.startsWith("_")) {
@@ -177,6 +179,23 @@ function initSandbox(params) {
     }
   }
 
+  for (const [name, value] of Object.entries(_constants.GlobalConstants)) {
+    Object.defineProperty(globalThis, name, {
+      value,
+      writable: false
+    });
+  }
+
+  Object.defineProperties(globalThis, {
+    ColorConvert: {
+      value: color.convert.bind(color),
+      writable: true
+    },
+    ColorEqual: {
+      value: color.equal.bind(color),
+      writable: true
+    }
+  });
   const properties = Object.create(null);
 
   for (const name of Object.getOwnPropertyNames(_doc.Doc.prototype)) {
@@ -225,7 +244,7 @@ function initSandbox(params) {
 Object.defineProperty(exports, "__esModule", ({
   value: true
 }));
-exports.ZoomType = exports.Trans = exports.Style = exports.ScaleWhen = exports.ScaleHow = exports.Position = exports.Highlight = exports.Font = exports.Display = exports.Cursor = exports.Border = void 0;
+exports.ZoomType = exports.Trans = exports.Style = exports.ScaleWhen = exports.ScaleHow = exports.Position = exports.Highlight = exports.GlobalConstants = exports.Font = exports.Display = exports.Cursor = exports.Border = void 0;
 const Border = Object.freeze({
   s: "solid",
   d: "dashed",
@@ -335,6 +354,32 @@ const ZoomType = Object.freeze({
   refW: "ReflowWidth"
 });
 exports.ZoomType = ZoomType;
+const GlobalConstants = Object.freeze({
+  IDS_GREATER_THAN: "Invalid value: must be greater than or equal to % s.",
+  IDS_GT_AND_LT: "Invalid value: must be greater than or equal to % s " + "and less than or equal to % s.",
+  IDS_LESS_THAN: "Invalid value: must be less than or equal to % s.",
+  IDS_INVALID_MONTH: "** Invalid **",
+  IDS_INVALID_DATE: "Invalid date / time: please ensure that the date / time exists.Field",
+  IDS_INVALID_DATE2: " should match format ",
+  IDS_INVALID_VALUE: "The value entered does not match the format of the field",
+  IDS_AM: "am",
+  IDS_PM: "pm",
+  IDS_MONTH_INFO: "January[1] February[2] March[3] April[4] May[5] " + "June[6] July[7] August[8] September[9] October[10] " + "November[11] December[12] Sept[9] Jan[1] Feb[2] Mar[3] " + "Apr[4] Jun[6] Jul[7] Aug[8] Sep[9] Oct[10] Nov[11] Dec[12]",
+  IDS_STARTUP_CONSOLE_MSG: "** ^ _ ^ **",
+  RE_NUMBER_ENTRY_DOT_SEP: ["[+-]?\\d*\\.?\\d*"],
+  RE_NUMBER_COMMIT_DOT_SEP: ["[+-]?\\d+(\\.\\d+)?", "[+-]?\\.\\d+", "[+-]?\\d+\\."],
+  RE_NUMBER_ENTRY_COMMA_SEP: ["[+-]?\\d*,?\\d*"],
+  RE_NUMBER_COMMIT_COMMA_SEP: ["[+-]?\\d+([.,]\\d+)?", "[+-]?[.,]\\d+", "[+-]?\\d+[.,]"],
+  RE_ZIP_ENTRY: ["\\d{0,5}"],
+  RE_ZIP_COMMIT: ["\\d{5}"],
+  RE_ZIP4_ENTRY: ["\\d{0,5}(\\.|[- ])?\\d{0,4}"],
+  RE_ZIP4_COMMIT: ["\\d{5}(\\.|[- ])?\\d{4}"],
+  RE_PHONE_ENTRY: ["\\d{0,3}(\\.|[- ])?\\d{0,3}(\\.|[- ])?\\d{0,4}", "\\(\\d{0,3}", "\\(\\d{0,3}\\)(\\.|[- ])?\\d{0,3}(\\.|[- ])?\\d{0,4}", "\\(\\d{0,3}(\\.|[- ])?\\d{0,3}(\\.|[- ])?\\d{0,4}", "\\d{0,3}\\)(\\.|[- ])?\\d{0,3}(\\.|[- ])?\\d{0,4}", "011(\\.|[- \\d])*"],
+  RE_PHONE_COMMIT: ["\\d{3}(\\.|[- ])?\\d{4}", "\\d{3}(\\.|[- ])?\\d{3}(\\.|[- ])?\\d{4}", "\\(\\d{3}\\)(\\.|[- ])?\\d{3}(\\.|[- ])?\\d{4}", "011(\\.|[- \\d])*"],
+  RE_SSN_ENTRY: ["\\d{0,3}(\\.|[- ])?\\d{0,2}(\\.|[- ])?\\d{0,4}"],
+  RE_SSN_COMMIT: ["\\d{3}(\\.|[- ])?\\d{2}(\\.|[- ])?\\d{4}"]
+});
+exports.GlobalConstants = GlobalConstants;
 
 /***/ }),
 /* 3 */
@@ -375,7 +420,7 @@ class Field extends _pdf_object.PDFObject {
     this.doNotSpellCheck = data.doNotSpellCheck;
     this.delay = data.delay;
     this.display = data.display;
-    this.doc = data.doc;
+    this.doc = data.doc.wrapped;
     this.editable = data.editable;
     this.exportValues = data.exportValues;
     this.fileSelect = data.fileSelect;
@@ -385,7 +430,6 @@ class Field extends _pdf_object.PDFObject {
     this.multiline = data.multiline;
     this.multipleSelection = !!data.multipleSelection;
     this.name = data.name;
-    this.numItems = data.numItems;
     this.page = data.page;
     this.password = data.password;
     this.print = data.print;
@@ -402,14 +446,65 @@ class Field extends _pdf_object.PDFObject {
     this.textSize = data.textSize;
     this.type = data.type;
     this.userName = data.userName;
-    this._document = data.doc;
-    this._value = data.value || "";
-    this._valueAsString = data.valueAsString;
     this._actions = (0, _common.createActionsMap)(data.actions);
+    this._browseForFileToSubmit = data.browseForFileToSubmit || null;
+    this._buttonCaption = null;
+    this._buttonIcon = null;
+    this._children = null;
+    this._currentValueIndices = data.currentValueIndices || 0;
+    this._document = data.doc;
+    this._fieldPath = data.fieldPath;
     this._fillColor = data.fillColor || ["T"];
+    this._isChoice = Array.isArray(data.items);
+    this._items = data.items || [];
     this._strokeColor = data.strokeColor || ["G", 0];
     this._textColor = data.textColor || ["G", 0];
+    this._value = data.value || "";
+    this._valueAsString = data.valueAsString;
     this._globalEval = data.globalEval;
+  }
+
+  get currentValueIndices() {
+    if (!this._isChoice) {
+      return 0;
+    }
+
+    return this._currentValueIndices;
+  }
+
+  set currentValueIndices(indices) {
+    if (!this._isChoice) {
+      return;
+    }
+
+    if (!Array.isArray(indices)) {
+      indices = [indices];
+    }
+
+    if (!indices.every(i => typeof i === "number" && Number.isInteger(i) && i >= 0 && i < this.numItems)) {
+      return;
+    }
+
+    indices.sort();
+
+    if (this.multipleSelection) {
+      this._currentValueIndices = indices;
+      this._value = [];
+      indices.forEach(i => {
+        this._value.push(this._items[i].displayValue);
+      });
+    } else {
+      if (indices.length > 0) {
+        indices = indices.splice(1, indices.length - 1);
+        this._currentValueIndices = indices[0];
+        this._value = this._items[this._currentValueIndices];
+      }
+    }
+
+    this._send({
+      id: this._id,
+      indices
+    });
   }
 
   get fillColor() {
@@ -420,6 +515,18 @@ class Field extends _pdf_object.PDFObject {
     if (_color.Color._isValidColor(color)) {
       this._fillColor = color;
     }
+  }
+
+  get numItems() {
+    if (!this._isChoice) {
+      throw new Error("Not a choice widget");
+    }
+
+    return this._items.length;
+  }
+
+  set numItems(_) {
+    throw new Error("field.numItems is read-only");
   }
 
   get strokeColor() {
@@ -447,8 +554,25 @@ class Field extends _pdf_object.PDFObject {
   }
 
   set value(value) {
-    if (!this.multipleSelection) {
-      this._value = value;
+    this._value = value;
+
+    if (this._isChoice) {
+      if (this.multipleSelection) {
+        const values = new Set(value);
+        this._currentValueIndices.length = 0;
+
+        this._items.forEach(({
+          displayValue
+        }, i) => {
+          if (values.has(displayValue)) {
+            this._currentValueIndices.push(i);
+          }
+        });
+      } else {
+        this._currentValueIndices = this._items.findIndex(({
+          displayValue
+        }) => value === displayValue);
+      }
     }
   }
 
@@ -460,7 +584,131 @@ class Field extends _pdf_object.PDFObject {
     this._valueAsString = val ? val.toString() : "";
   }
 
+  browseForFileToSubmit() {
+    if (this._browseForFileToSubmit) {
+      this._browseForFileToSubmit();
+    }
+  }
+
+  buttonGetCaption(nFace = 0) {
+    if (this._buttonCaption) {
+      return this._buttonCaption[nFace];
+    }
+
+    return "";
+  }
+
+  buttonGetIcon(nFace = 0) {
+    if (this._buttonIcon) {
+      return this._buttonIcon[nFace];
+    }
+
+    return null;
+  }
+
+  buttonImportIcon(cPath = null, nPave = 0) {}
+
+  buttonSetCaption(cCaption, nFace = 0) {
+    if (!this._buttonCaption) {
+      this._buttonCaption = ["", "", ""];
+    }
+
+    this._buttonCaption[nFace] = cCaption;
+  }
+
+  buttonSetIcon(oIcon, nFace = 0) {
+    if (!this._buttonIcon) {
+      this._buttonIcon = [null, null, null];
+    }
+
+    this._buttonIcon[nFace] = oIcon;
+  }
+
   checkThisBox(nWidget, bCheckIt = true) {}
+
+  clearItems() {
+    if (!this._isChoice) {
+      throw new Error("Not a choice widget");
+    }
+
+    this._items = [];
+
+    this._send({
+      id: this._id,
+      clear: null
+    });
+  }
+
+  deleteItemAt(nIdx = null) {
+    if (!this._isChoice) {
+      throw new Error("Not a choice widget");
+    }
+
+    if (!this.numItems) {
+      return;
+    }
+
+    if (nIdx === null) {
+      nIdx = Array.isArray(this._currentValueIndices) ? this._currentValueIndices[0] : this._currentValueIndices;
+      nIdx = nIdx || 0;
+    }
+
+    if (nIdx < 0 || nIdx >= this.numItems) {
+      nIdx = this.numItems - 1;
+    }
+
+    this._items.splice(nIdx, 1);
+
+    if (Array.isArray(this._currentValueIndices)) {
+      let index = this._currentValueIndices.findIndex(i => i >= nIdx);
+
+      if (index !== -1) {
+        if (this._currentValueIndices[index] === nIdx) {
+          this._currentValueIndices.splice(index, 1);
+        }
+
+        for (const ii = this._currentValueIndices.length; index < ii; index++) {
+          --this._currentValueIndices[index];
+        }
+      }
+    } else {
+      if (this._currentValueIndices === nIdx) {
+        this._currentValueIndices = this.numItems > 0 ? 0 : -1;
+      } else if (this._currentValueIndices > nIdx) {
+        --this._currentValueIndices;
+      }
+    }
+
+    this._send({
+      id: this._id,
+      remove: nIdx
+    });
+  }
+
+  getItemAt(nIdx = -1, bExportValue = false) {
+    if (!this._isChoice) {
+      throw new Error("Not a choice widget");
+    }
+
+    if (nIdx < 0 || nIdx >= this.numItems) {
+      nIdx = this.numItems - 1;
+    }
+
+    const item = this._items[nIdx];
+    return bExportValue ? item.exportValue : item.displayValue;
+  }
+
+  getArray() {
+    if (this._children === null) {
+      this._children = this._document.obj._getChildren(this._fieldPath);
+    }
+
+    return this._children;
+  }
+
+  getLock() {
+    return undefined;
+  }
 
   isBoxChecked(nWidget) {
     return false;
@@ -468,6 +716,57 @@ class Field extends _pdf_object.PDFObject {
 
   isDefaultChecked(nWidget) {
     return false;
+  }
+
+  insertItemAt(cName, cExport = undefined, nIdx = 0) {
+    if (!this._isChoice) {
+      throw new Error("Not a choice widget");
+    }
+
+    if (!cName) {
+      return;
+    }
+
+    if (nIdx < 0 || nIdx > this.numItems) {
+      nIdx = this.numItems;
+    }
+
+    if (this._items.some(({
+      displayValue
+    }) => displayValue === cName)) {
+      return;
+    }
+
+    if (cExport === undefined) {
+      cExport = cName;
+    }
+
+    const data = {
+      displayValue: cName,
+      exportValue: cExport
+    };
+
+    this._items.splice(nIdx, 0, data);
+
+    if (Array.isArray(this._currentValueIndices)) {
+      let index = this._currentValueIndices.findIndex(i => i >= nIdx);
+
+      if (index !== -1) {
+        for (const ii = this._currentValueIndices.length; index < ii; index++) {
+          ++this._currentValueIndices[index];
+        }
+      }
+    } else if (this._currentValueIndices >= nIdx) {
+      ++this._currentValueIndices;
+    }
+
+    this._send({
+      id: this._id,
+      insert: {
+        index: nIdx,
+        ...data
+      }
+    });
   }
 
   setAction(cTrigger, cScript) {
@@ -488,6 +787,51 @@ class Field extends _pdf_object.PDFObject {
       focus: true
     });
   }
+
+  setItems(oArray) {
+    if (!this._isChoice) {
+      throw new Error("Not a choice widget");
+    }
+
+    this._items.length = 0;
+
+    for (const element of oArray) {
+      let displayValue, exportValue;
+
+      if (Array.isArray(element)) {
+        displayValue = element[0]?.toString() || "";
+        exportValue = element[1]?.toString() || "";
+      } else {
+        displayValue = exportValue = element?.toString() || "";
+      }
+
+      this._items.push({
+        displayValue,
+        exportValue
+      });
+    }
+
+    this._currentValueIndices = 0;
+
+    this._send({
+      id: this._id,
+      items: this._items
+    });
+  }
+
+  setLock() {}
+
+  signatureGetModifications() {}
+
+  signatureGetSeedValue() {}
+
+  signatureInfo() {}
+
+  signatureSetSeedValue() {}
+
+  signatureSign() {}
+
+  signatureValidate() {}
 
   _isButton() {
     return false;
@@ -892,7 +1236,7 @@ function createActionsMap(actions) {
 
 /***/ }),
 /* 8 */
-/***/ ((__unused_webpack_module, exports) => {
+/***/ ((__unused_webpack_module, exports, __w_pdfjs_require__) => {
 
 
 
@@ -901,14 +1245,21 @@ Object.defineProperty(exports, "__esModule", ({
 }));
 exports.AForm = void 0;
 
+var _constants = __w_pdfjs_require__(2);
+
 class AForm {
-  constructor(document, app, util) {
+  constructor(document, app, util, color) {
     this._document = document;
     this._app = app;
     this._util = util;
+    this._color = color;
     this._dateFormats = ["m/d", "m/d/yy", "mm/dd/yy", "mm/yy", "d-mmm", "d-mmm-yy", "dd-mmm-yy", "yy-mm-dd", "mmm-yy", "mmmm-yy", "mmm d, yyyy", "mmmm d, yyyy", "m/d/yy h:MM tt", "m/d/yy HH:MM"];
     this._timeFormats = ["HH:MM", "h:MM tt", "HH:MM:ss", "h:MM:ss tt"];
     this._emailRegex = new RegExp("^[a-zA-Z0-9.!#$%&'*+\\/=?^_`{|}~-]+" + "@[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?" + "(?:\\.[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?)*$");
+  }
+
+  _mkTargetName(event) {
+    return event.target ? `[ ${event.target.name} ]` : "";
   }
 
   _parseDate(cFormat, cDate) {
@@ -1035,7 +1386,7 @@ class AForm {
     }
 
     if (negStyle === 1 || negStyle === 3) {
-      event.target.textColor = sign === 1 ? color.black : color.red;
+      event.target.textColor = sign === 1 ? this._color.black : this._color.red;
     }
 
     if ((negStyle !== 0 || bCurrencyPrepend) && sign === -1) {
@@ -1065,14 +1416,16 @@ class AForm {
 
     if (!pattern.test(value)) {
       if (event.willCommit) {
-        if (event.target) {
-          this._app.alert(`Invalid number in [ ${event.target.name} ]`);
-        } else {
-          this._app.alert(`Invalid number`);
-        }
+        const err = `${_constants.GlobalConstants.IDS_INVALID_VALUE} ${this._mkTargetName(event)}`;
+
+        this._app.alert(err);
       }
 
       event.rc = false;
+    }
+
+    if (event.willCommit && sepStyle > 1) {
+      event.value = parseFloat(value.replace(",", "."));
     }
   }
 
@@ -1147,14 +1500,18 @@ class AForm {
       return;
     }
 
-    const value = event.value;
+    const value = this.AFMergeChange(event);
 
     if (!value) {
       return;
     }
 
     if (this._parseDate(cFormat, value) === null) {
-      this._app.alert("Invalid date");
+      const invalid = _constants.GlobalConstants.IDS_INVALID_DATE;
+      const invalid2 = _constants.GlobalConstants.IDS_INVALID_DATE2;
+      const err = `${invalid} ${this._mkTargetName(event)}${invalid2}${cFormat}`;
+
+      this._app.alert(err);
 
       event.rc = false;
     }
@@ -1202,14 +1559,14 @@ class AForm {
 
     if (bGreaterThan && bLessThan) {
       if (value < nGreaterThan || value > nLessThan) {
-        err = `${event.value} is not between ${nGreaterThan} and ${nLessThan}`;
+        err = this._util.printf(_constants.GlobalConstants.IDS_GT_AND_LT, nGreaterThan, nLessThan);
       }
     } else if (bGreaterThan) {
       if (value < nGreaterThan) {
-        err = `${event.value} is not greater or equal than ${nGreaterThan}`;
+        err = this._util.printf(_constants.GlobalConstants.IDS_GREATER_THAN, nGreaterThan);
       }
     } else if (value > nLessThan) {
-      err = `${event.value} is not less or equal than ${nLessThan}`;
+      err = this._util.printf(_constants.GlobalConstants.IDS_LESS_THAN, nLessThan);
     }
 
     if (err) {
@@ -1364,8 +1721,10 @@ class AForm {
       return;
     }
 
+    const err = `${_constants.GlobalConstants.IDS_INVALID_VALUE} = "${cMask}"`;
+
     if (value.length > cMask.length) {
-      this._app.alert("Value is too long");
+      this._app.alert(err);
 
       event.rc = false;
       return;
@@ -1373,19 +1732,20 @@ class AForm {
 
     if (event.willCommit) {
       if (value.length < cMask.length) {
-        this._app.alert("Value is too short");
+        this._app.alert(err);
 
         event.rc = false;
         return;
       }
 
       if (!_checkValidity(value, cMask)) {
-        this._app.alert("Value doesn't fit the specified format");
+        this._app.alert(err);
 
         event.rc = false;
         return;
       }
 
+      event.value += cMask.subString(value.length);
       return;
     }
 
@@ -1394,6 +1754,8 @@ class AForm {
     }
 
     if (!_checkValidity(value, cMask)) {
+      this._app.alert(err);
+
       event.rc = false;
     }
   }
@@ -2088,7 +2450,7 @@ class EventDispatcher {
       return;
     }
 
-    const name = baseEvent.name.replace(" ", "");
+    const name = baseEvent.name;
     const source = this._objects[id];
     const event = globalThis.event = new Event(baseEvent);
     let savedChange;
@@ -2449,7 +2811,7 @@ class Doc extends _pdf_object.PDFObject {
     this._dirty = false;
     this._disclosed = false;
     this._media = undefined;
-    this._metadata = data.metadata;
+    this._metadata = data.metadata || "";
     this._noautocomplete = undefined;
     this._nocache = undefined;
     this._spellDictionaryOrder = [];
@@ -2475,12 +2837,13 @@ class Doc extends _pdf_object.PDFObject {
     this._title = data.Title || "";
     this._URL = data.URL || "";
     this._info = new Proxy({
-      title: this.title,
-      author: this.author,
-      subject: this.subject,
-      keywords: this.keywords,
-      creator: this.creator,
-      producer: this.producer,
+      title: this._title,
+      author: this._author,
+      authors: data.authors || [this._author],
+      subject: this._subject,
+      keywords: this._keywords,
+      creator: this._creator,
+      producer: this._producer,
       creationdate: this._creationDate,
       moddate: this._modDate,
       trapped: data.Trapped || "Unknown"
@@ -3183,13 +3546,55 @@ class Doc extends _pdf_object.PDFObject {
       return searchedField;
     }
 
+    const parts = cName.split("#");
+    let childIndex = NaN;
+
+    if (parts.length === 2) {
+      childIndex = Math.floor(parseFloat(parts[1]));
+      cName = parts[0];
+    }
+
     for (const [name, field] of this._fields.entries()) {
-      if (name.includes(cName)) {
+      if (name.endsWith(cName)) {
+        if (!isNaN(childIndex)) {
+          const children = this._getChildren(name);
+
+          if (childIndex < 0 || childIndex >= children.length) {
+            childIndex = 0;
+          }
+
+          if (childIndex < children.length) {
+            this._fields.set(cName, children[childIndex]);
+
+            return children[childIndex];
+          }
+        }
+
+        this._fields.set(cName, field);
+
         return field;
       }
     }
 
     return undefined;
+  }
+
+  _getChildren(fieldName) {
+    const len = fieldName.length;
+    const children = [];
+    const pattern = /^\.[^.]+$/;
+
+    for (const [name, field] of this._fields.entries()) {
+      if (name.startsWith(fieldName)) {
+        const finalPart = name.slice(len);
+
+        if (finalPart.match(pattern)) {
+          children.push(field);
+        }
+      }
+    }
+
+    return children;
   }
 
   getIcon() {}

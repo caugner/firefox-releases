@@ -25,6 +25,7 @@
 #include "mozilla/dom/Document.h"
 
 #include "js/CompileOptions.h"  // JS::ReadOnlyCompileOptions
+#include "js/Transcoding.h"
 #include "MainThreadUtils.h"
 #include "nsDebug.h"
 #include "nsDirectoryServiceUtils.h"
@@ -570,8 +571,8 @@ Result<Ok, nsresult> ScriptPreloader::InitCacheInternal(
         script->mReadyToExecute = true;
       }
 
-      mScripts.Put(script->mCachePath, script.get());
-      Unused << script.release();
+      const auto& cachePath = script->mCachePath;
+      mScripts.Put(cachePath, std::move(script));
     }
 
     if (buf.error()) {
@@ -858,15 +859,27 @@ void ScriptPreloader::NoteScript(const nsCString& url,
 /* static */
 void ScriptPreloader::FillCompileOptionsForCachedScript(
     JS::CompileOptions& options) {
-  // See IsMultiDecodeCompileOptionsMatching in js/src/vm/JSScript.cpp.
+  // Users of the cache do not require return values, so inform the JS parser in
+  // order for it to generate simpler bytecode.
   options.setNoScriptRval(true);
-  MOZ_ASSERT(!options.selfHostingMode);
-  MOZ_ASSERT(!options.isRunOnce);
+
+  // The ScriptPreloader trades off having bytecode available but not source
+  // text. This means the JS syntax-only parser is not used. If `toString` is
+  // called on functions in these scripts, the source-hook will fetch it over,
+  // so using `toString` of functions should be avoided in chrome js.
+  options.setSourceIsLazy(true);
 }
 
 JSScript* ScriptPreloader::GetCachedScript(
     JSContext* cx, const JS::ReadOnlyCompileOptions& options,
     const nsCString& path) {
+  // Users of ScriptPreloader must agree on a standard set of compile options so
+  // that bytecode data can safely saved from one context and loaded in another.
+  MOZ_ASSERT(options.noScriptRval);
+  MOZ_ASSERT(!options.selfHostingMode);
+  MOZ_ASSERT(!options.isRunOnce);
+  MOZ_ASSERT(options.sourceIsLazy);
+
   // If a script is used by both the parent and the child, it's stored only
   // in the child cache.
   if (mChildCache) {
@@ -1088,7 +1101,6 @@ void ScriptPreloader::DecodeNextBatch(size_t chunkSize,
 
   JS::CompileOptions options(cx);
   FillCompileOptionsForCachedScript(options);
-  options.setSourceIsLazy(true);
 
   if (!JS::CanCompileOffThread(cx, options, size) ||
       !JS::DecodeMultiOffThreadScripts(cx, options, mParsingSources,
@@ -1156,7 +1168,7 @@ bool ScriptPreloader::CachedScript::XDREncode(JSContext* cx) {
   mXDRData.construct<JS::TranscodeBuffer>();
 
   JS::TranscodeResult code = JS::EncodeScript(cx, Buffer(), jsscript);
-  if (code == JS::TranscodeResult_Ok) {
+  if (code == JS::TranscodeResult::Ok) {
     mXDRRange.emplace(Buffer().begin(), Buffer().length());
     mSize = Range().length();
     return true;
@@ -1194,7 +1206,8 @@ JSScript* ScriptPreloader::CachedScript::GetJSScript(
   LOG(Info, "Decoding script %s on main thread...\n", mURL.get());
 
   JS::RootedScript script(cx);
-  if (JS::DecodeScript(cx, options, Range(), &script)) {
+  if (JS::DecodeScript(cx, options, Range(), &script) ==
+      JS::TranscodeResult::Ok) {
     mScript.Set(script);
 
     if (mCache.mSaveComplete) {

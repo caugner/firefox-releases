@@ -92,7 +92,6 @@
 
 #include "mozilla/WidgetTraceEvent.h"
 #include "nsISupportsPrimitives.h"
-#include "nsIKeyEventInPluginCallback.h"
 #include "nsITheme.h"
 #include "nsIObserverService.h"
 #include "nsIScreenManager.h"
@@ -114,7 +113,7 @@
 #include "nsTHashtable.h"
 #include "nsHashKeys.h"
 #include "nsString.h"
-#include "mozilla/Services.h"
+#include "mozilla/Components.h"
 #include "nsNativeThemeWin.h"
 #include "nsWindowsDllInterceptor.h"
 #include "nsLayoutUtils.h"
@@ -139,7 +138,6 @@
 #include "mozilla/TextEvents.h"  // For WidgetKeyboardEvent
 #include "mozilla/TextEventDispatcherListener.h"
 #include "mozilla/widget/nsAutoRollup.h"
-#include "mozilla/widget/WinNativeEventData.h"
 #include "mozilla/widget/PlatformWidgetTypes.h"
 #include "nsStyleConsts.h"
 #include "nsBidiKeyboard.h"
@@ -283,6 +281,8 @@ BYTE nsWindow::sLastMouseButton = 0;
 
 bool nsWindow::sHaveInitializedPrefs = false;
 bool nsWindow::sIsRestoringSession = false;
+
+bool nsWindow::sFirstTopLevelWindowCreated = false;
 
 TriStateBool nsWindow::sHasBogusPopupsDropShadowOnMultiMonitor = TRI_UNKNOWN;
 
@@ -893,9 +893,18 @@ nsresult nsWindow::Create(nsIWidget* aParent, nsNativeWidget aNativeParent,
     style |= WS_DISABLED;
   }
 
-  if (aInitData->mWindowType == eWindowType_toplevel && !aParent) {
-    mWnd = ConsumePreXULSkeletonUIHandle();
-    if (mWnd) {
+  if (aInitData->mWindowType == eWindowType_toplevel && !aParent &&
+      !sFirstTopLevelWindowCreated) {
+    sFirstTopLevelWindowCreated = true;
+    auto skeletonUIResult = ConsumePreXULSkeletonUIHandle();
+    if (skeletonUIResult.isErr()) {
+      nsAutoString errorString(
+          GetPreXULSkeletonUIErrorString(skeletonUIResult.unwrapErr()));
+      Telemetry::ScalarSet(
+          Telemetry::ScalarID::STARTUP_SKELETON_UI_DISABLED_REASON,
+          errorString);
+    } else {
+      mWnd = skeletonUIResult.unwrap();
       MOZ_ASSERT(style == kPreXULSkeletonUIWindowStyle,
                  "The skeleton UI window style should match the expected "
                  "style for the first window created");
@@ -4414,17 +4423,6 @@ void nsWindow::DispatchPendingEvents() {
   }
 }
 
-bool nsWindow::DispatchPluginEvent(UINT aMessage, WPARAM aWParam,
-                                   LPARAM aLParam,
-                                   bool aDispatchPendingEvents) {
-  bool ret = nsWindowBase::DispatchPluginEvent(
-      WinUtils::InitMSG(aMessage, aWParam, aLParam, mWnd));
-  if (aDispatchPendingEvents && !Destroyed()) {
-    DispatchPendingEvents();
-  }
-  return ret;
-}
-
 void nsWindow::DispatchCustomEvent(const nsString& eventName) {
   if (Document* doc = GetDocument()) {
     if (nsPIDOMWindowOuter* win = doc->GetWindow()) {
@@ -4528,8 +4526,7 @@ bool nsWindow::DispatchMouseEvent(EventMessage aEventMessage, WPARAM wParam,
       // Messages should be only at topLevel window.
       && nsWindowType::eWindowType_toplevel == mWindowType
       // Currently this scheme is used only when pointer events is enabled.
-      && StaticPrefs::dom_w3c_pointer_events_enabled() &&
-      InkCollector::sInkCollector) {
+      && InkCollector::sInkCollector) {
     InkCollector::sInkCollector->SetTarget(mWnd);
     InkCollector::sInkCollector->SetPointerId(pointerId);
   }
@@ -5959,6 +5956,10 @@ bool nsWindow::ProcessMessage(UINT msg, WPARAM& wParam, LPARAM& lParam,
 
     case WM_DISPLAYCHANGE: {
       ScreenHelperWin::RefreshScreens();
+      nsCOMPtr<nsIGfxInfo> gfxInfo = components::GfxInfo::Service();
+      if (gfxInfo) {
+        gfxInfo->RefreshMonitors();
+      }
       if (mWidgetListener) {
         mWidgetListener->UIResolutionChanged();
       }
@@ -7519,7 +7520,7 @@ bool nsWindow::HasBogusPopupsDropShadowOnMultiMonitor() {
       // Otherwise check if Direct3D 9 may be used.
       if (gfxConfig::IsEnabled(gfx::Feature::HW_COMPOSITING) &&
           !gfxConfig::IsEnabled(gfx::Feature::OPENGL_COMPOSITING)) {
-        nsCOMPtr<nsIGfxInfo> gfxInfo = services::GetGfxInfo();
+        nsCOMPtr<nsIGfxInfo> gfxInfo = components::GfxInfo::Service();
         if (gfxInfo) {
           int32_t status;
           nsCString discardFailureId;
@@ -7628,7 +7629,7 @@ TextEventDispatcherListener* nsWindow::GetNativeTextEventDispatcherListener() {
 #    define NS_LOG_WMGETOBJECT(aWnd, aHwnd, aAcc)
 #  endif
 
-a11y::Accessible* nsWindow::GetAccessible() {
+a11y::LocalAccessible* nsWindow::GetAccessible() {
   // If the pref was ePlatformIsDisabled, return null here, disabling a11y.
   if (a11y::PlatformDisabledState() == a11y::ePlatformIsDisabled)
     return nullptr;
@@ -8491,47 +8492,31 @@ bool nsWindow::WidgetTypeSupportsAcceleration() {
   // transparent windows so don't even try. I'm also not sure if we even
   // want to support this case. See bug 593471.
   //
+  // Windows' support for transparent accelerated surfaces isn't great.
+  // Some possible approaches:
+  //  - Readback the data and update it using
+  //  UpdateLayeredWindow/UpdateLayeredWindowIndirect
+  //    This is what WPF does. See
+  //    CD3DDeviceLevel1::PresentWithGDI/CD3DSwapChainWithSwDC in WpfGfx. The
+  //    rationale for not using IDirect3DSurface9::GetDC is explained here:
+  //    https://web.archive.org/web/20160521191104/https://blogs.msdn.microsoft.com/dwayneneed/2008/09/08/transparent-windows-in-wpf/
+  //  - Use D3D11_RESOURCE_MISC_GDI_COMPATIBLE, IDXGISurface1::GetDC(),
+  //    and UpdateLayeredWindowIndirect.
+  //    This is suggested here:
+  //    https://docs.microsoft.com/en-us/archive/msdn-magazine/2009/december/windows-with-c-layered-windows-with-direct2d
+  //    but might have the same problem that IDirect3DSurface9::GetDC has.
+  //  - Creating the window with the WS_EX_NOREDIRECTIONBITMAP flag and use
+  //  DirectComposition.
+  //    Not supported on Win7.
+  //  - Using DwmExtendFrameIntoClientArea with negative margins and something
+  //  to turn off the glass effect.
+  //    This doesn't work when the DWM is not running (Win7)
+  //
   // Also see bug 1150376, D3D11 composition can cause issues on some devices
   // on Windows 7 where presentation fails randomly for windows with drop
   // shadows.
   return mTransparencyMode != eTransparencyTransparent &&
          !(IsPopup() && DeviceManagerDx::Get()->IsWARP());
-}
-
-nsresult nsWindow::OnWindowedPluginKeyEvent(
-    const NativeEventData& aKeyEventData,
-    nsIKeyEventInPluginCallback* aCallback) {
-  if (NS_WARN_IF(!mWnd)) {
-    return NS_OK;
-  }
-  const WinNativeKeyEventData* eventData =
-      static_cast<const WinNativeKeyEventData*>(aKeyEventData);
-  switch (eventData->mMessage) {
-    case WM_KEYDOWN:
-    case WM_SYSKEYDOWN: {
-      MSG mozMsg = WinUtils::InitMSG(MOZ_WM_KEYDOWN, eventData->mWParam,
-                                     eventData->mLParam, mWnd);
-      ModifierKeyState modifierKeyState(eventData->mModifiers);
-      NativeKey nativeKey(this, mozMsg, modifierKeyState,
-                          eventData->GetKeyboardLayout());
-      return nativeKey.HandleKeyDownMessage() ? NS_SUCCESS_EVENT_CONSUMED
-                                              : NS_OK;
-    }
-    case WM_KEYUP:
-    case WM_SYSKEYUP: {
-      MSG mozMsg = WinUtils::InitMSG(MOZ_WM_KEYUP, eventData->mWParam,
-                                     eventData->mLParam, mWnd);
-      ModifierKeyState modifierKeyState(eventData->mModifiers);
-      NativeKey nativeKey(this, mozMsg, modifierKeyState,
-                          eventData->GetKeyboardLayout());
-      return nativeKey.HandleKeyUpMessage() ? NS_SUCCESS_EVENT_CONSUMED : NS_OK;
-    }
-    default:
-      // We shouldn't consume WM_*CHAR messages here even if the preceding
-      // keydown or keyup event on the plugin is consumed.  It should be
-      // managed in each plugin window rather than top level window.
-      return NS_OK;
-  }
 }
 
 bool nsWindow::OnPointerEvents(UINT msg, WPARAM aWParam, LPARAM aLParam) {

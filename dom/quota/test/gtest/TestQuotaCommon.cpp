@@ -814,6 +814,20 @@ TEST(QuotaCommon_TryReturn, Success)
   EXPECT_EQ(res.unwrap(), 42);
 }
 
+TEST(QuotaCommon_TryReturn, Success_nsresult)
+{
+  bool tryReturnDidNotReturn = false;
+
+  auto res = [&tryReturnDidNotReturn] {
+    QM_TRY_RETURN(NS_OK);
+
+    tryReturnDidNotReturn = true;
+  }();
+
+  EXPECT_FALSE(tryReturnDidNotReturn);
+  EXPECT_TRUE(res.isOk());
+}
+
 #ifdef DEBUG
 TEST(QuotaCommon_TryReturn, Success_CustomErr_AssertUnreachable)
 {
@@ -857,6 +871,21 @@ TEST(QuotaCommon_TryReturn, Failure_PropagateErr)
 
   auto res = [&tryReturnDidNotReturn] {
     QM_TRY_RETURN((Result<int32_t, nsresult>{Err(NS_ERROR_FAILURE)}));
+
+    tryReturnDidNotReturn = true;
+  }();
+
+  EXPECT_FALSE(tryReturnDidNotReturn);
+  EXPECT_TRUE(res.isErr());
+  EXPECT_EQ(res.unwrapErr(), NS_ERROR_FAILURE);
+}
+
+TEST(QuotaCommon_TryReturn, Failure_PropagateErr_nsresult)
+{
+  bool tryReturnDidNotReturn = false;
+
+  auto res = [&tryReturnDidNotReturn] {
+    QM_TRY_RETURN(NS_ERROR_FAILURE);
 
     tryReturnDidNotReturn = true;
   }();
@@ -1458,6 +1487,53 @@ TEST(QuotaCommon_ScopedLogExtraInfo, Nested)
 
   EXPECT_EQ(0u, extraInfoMap.count(ScopedLogExtraInfo::kTagQuery));
 #endif
+}
+
+TEST(QuotaCommon_CallWithDelayedRetriesIfAccessDenied, NoFailures)
+{
+  uint32_t tries = 0;
+
+  auto res = CallWithDelayedRetriesIfAccessDenied(
+      [&tries]() -> Result<Ok, nsresult> {
+        ++tries;
+        return Ok{};
+      },
+      10, 2);
+
+  EXPECT_EQ(tries, 1u);
+  EXPECT_TRUE(res.isOk());
+}
+
+TEST(QuotaCommon_CallWithDelayedRetriesIfAccessDenied, PermanentFailures)
+{
+  uint32_t tries = 0;
+
+  auto res = CallWithDelayedRetriesIfAccessDenied(
+      [&tries]() -> Result<Ok, nsresult> {
+        ++tries;
+        return Err(NS_ERROR_FILE_IS_LOCKED);
+      },
+      10, 2);
+
+  EXPECT_EQ(tries, 11u);
+  EXPECT_TRUE(res.isErr());
+}
+
+TEST(QuotaCommon_CallWithDelayedRetriesIfAccessDenied, FailuresAndSuccess)
+{
+  uint32_t tries = 0;
+
+  auto res = CallWithDelayedRetriesIfAccessDenied(
+      [&tries]() -> Result<Ok, nsresult> {
+        if (++tries == 5) {
+          return Ok{};
+        }
+        return Err(NS_ERROR_FILE_ACCESS_DENIED);
+      },
+      10, 2);
+
+  EXPECT_EQ(tries, 5u);
+  EXPECT_TRUE(res.isOk());
 }
 
 #ifdef __clang__

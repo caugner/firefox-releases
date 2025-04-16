@@ -260,11 +260,15 @@ var WalkerActor = protocol.ActorClassWithSpec(walkerSpec, {
     // Keep a reference to the chromeEventHandler for the current targetActor, to make
     // sure we will be able to remove the listener during the WalkerActor destroy().
     this.chromeEventHandler = targetActor.chromeEventHandler;
-    // shadowrootattached is a chrome-only event.
+    // shadowrootattached is a chrome-only event. We enable it below.
     this.chromeEventHandler.addEventListener(
       "shadowrootattached",
       this.onShadowrootattached
     );
+
+    for (const { document } of this.targetActor.windows) {
+      document.shadowRootAttachedEventEnabled = true;
+    }
 
     // Ensure that the root document node actor is ready and
     // managed.
@@ -398,6 +402,11 @@ var WalkerActor = protocol.ActorClassWithSpec(walkerSpec, {
         "shadowrootattached",
         this.onShadowrootattached
       );
+
+      // This event is just for devtools, so we can unset once we're done.
+      for (const { document } of this.targetActor.windows) {
+        document.shadowRootAttachedEventEnabled = false;
+      }
 
       this.onFrameLoad = null;
       this.onFrameUnload = null;
@@ -1699,7 +1708,9 @@ var WalkerActor = protocol.ActorClassWithSpec(walkerSpec, {
       // created nodes can be adopted into rawNode.parentNode.
       parser = new win.DOMParser();
     }
-    const parsedDOM = parser.parseFromString(value, "text/html");
+
+    const mimeType = rawNode.tagName === "svg" ? "image/svg+xml" : "text/html";
+    const parsedDOM = parser.parseFromString(value, mimeType);
     const parentNode = rawNode.parentNode;
 
     // Special case for head and body.  Setting document.body.outerHTML
@@ -1721,8 +1732,8 @@ var WalkerActor = protocol.ActorClassWithSpec(walkerSpec, {
         rawNode.outerHTML = value;
       }
     } else if (node.isDocumentElement()) {
-      // Unable to set outerHTML on the document element.  Fall back by
-      // setting attributes manually, then replace the body and head elements.
+      // Unable to set outerHTML on the document element. Fall back by
+      // setting attributes manually. Then replace all the child nodes.
       const finalAttributeModifications = [];
       const attributeModifications = {};
       for (const attribute of rawNode.attributes) {
@@ -1738,8 +1749,8 @@ var WalkerActor = protocol.ActorClassWithSpec(walkerSpec, {
         });
       }
       node.modifyAttributes(finalAttributeModifications);
-      rawNode.replaceChild(parsedDOM.head, rawNode.querySelector("head"));
-      rawNode.replaceChild(parsedDOM.body, rawNode.querySelector("body"));
+
+      rawNode.replaceChildren(...parsedDOM.firstElementChild.childNodes);
     } else {
       // eslint-disable-next-line no-unsanitized/property
       rawNode.outerHTML = value;
@@ -2489,6 +2500,8 @@ var WalkerActor = protocol.ActorClassWithSpec(walkerSpec, {
       );
       return;
     }
+
+    window.document.shadowRootAttachedEventEnabled = true;
 
     if (isTopLevel) {
       // If we initialize the inspector while the document is loading,

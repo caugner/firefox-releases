@@ -4984,7 +4984,7 @@ static nscoord MeasuringReflow(nsIFrame* aChild,
   } else {
     aChild->RemoveProperty(nsIFrame::BClampMarginBoxMinSizeProperty());
   }
-  ReflowInput childRI(pc, *rs, aChild, aAvailableSize, Some(aCBSize), {},
+  ReflowInput childRI(pc, *rs, aChild, aAvailableSize, Some(aCBSize), {}, {},
                       csFlags);
 
   // Because we pass ComputeSizeFlag::UseAutoBSize, and the
@@ -5036,7 +5036,7 @@ static void PostReflowStretchChild(
     aChild->RemoveProperty(nsIFrame::BClampMarginBoxMinSizeProperty());
   }
   ReflowInput ri(pc, aReflowInput, aChild, aAvailableSize, Some(aCBSize), {},
-                 csFlags);
+                 {}, csFlags);
   if (aChildAxis == eLogicalAxisBlock) {
     ri.SetComputedBSize(ri.ApplyMinMaxBSize(aNewContentBoxSize));
   } else {
@@ -7245,7 +7245,7 @@ void nsGridContainerFrame::ReflowInFlowChild(
   }
   LogicalSize percentBasis(cb.Size(wm).ConvertTo(childWM, wm));
   ReflowInput childRI(pc, *aState.mReflowInput, aChild, childCBSize,
-                      Some(percentBasis), {}, csFlags);
+                      Some(percentBasis), {}, {}, csFlags);
   childRI.mFlags.mIsTopOfPage =
       aFragmentainer ? aFragmentainer->mIsTopOfPage : false;
 
@@ -7258,18 +7258,6 @@ void nsGridContainerFrame::ReflowInFlowChild(
   // ComputeSizeFlag::UseAutoBSize.
   childRI.SetBResize(true);
   childRI.mFlags.mIsBResizeForPercentages = true;
-
-  // A table-wrapper needs to propagate the CB size we give it to its
-  // inner table frame later.  @see nsTableWrapperFrame::InitChildReflowInput.
-  if (aChild->IsTableWrapperFrame()) {
-    LogicalSize* cb =
-        aChild->GetProperty(nsTableWrapperFrame::GridItemCBSizeProperty());
-    if (!cb) {
-      cb = new LogicalSize(childWM);
-      aChild->SetProperty(nsTableWrapperFrame::GridItemCBSizeProperty(), cb);
-    }
-    *cb = percentBasis;
-  }
 
   // If the child is stretching in its block axis, and we might be fragmenting
   // it in that axis, then setup a frame property to tell

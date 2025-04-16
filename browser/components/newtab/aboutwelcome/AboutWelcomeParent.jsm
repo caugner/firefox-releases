@@ -147,11 +147,9 @@ class RegionHomeObserver {
   observe(aSubject, aTopic, aData) {
     switch (aTopic) {
       case Region.REGION_TOPIC:
-        if (aData === Region.REGION_UPDATED) {
-          Services.obs.removeObserver(this, Region.REGION_TOPIC);
-          this.regionHomeDeferred.resolve(Region.home);
-          this.regionHomeDeferred = null;
-        }
+        Services.obs.removeObserver(this, Region.REGION_TOPIC);
+        this.regionHomeDeferred.resolve(Region.home);
+        this.regionHomeDeferred = null;
         break;
     }
   }
@@ -269,6 +267,8 @@ class AboutWelcomeParent extends JSWindowActorParent {
           this.RegionHomeObserver = new RegionHomeObserver(this);
         }
         return this.RegionHomeObserver.promiseRegionHome();
+      case "AWPage:IS_DEFAULT_BROWSER":
+        return window.getShellService().isDefaultBrowser();
       case "AWPage:WAIT_FOR_MIGRATION_CLOSE":
         return new Promise(resolve =>
           Services.ww.registerNotification(function observer(subject, topic) {

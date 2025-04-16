@@ -2313,19 +2313,22 @@ pub fn show_declaration(state: &mut OutputState, d: &hir::Declaration) {
             //state.write(";\n");
         }
         hir::Declaration::Global(ref qual, ref identifiers) => {
-            show_type_qualifier(state, &qual);
+            // We only want to output GLSL layout qualifiers if not C++
+            if !state.output_cxx {
+                show_type_qualifier(state, &qual);
 
-            if !identifiers.is_empty() {
-                let mut iter = identifiers.iter();
-                let first = iter.next().unwrap();
-                show_identifier(state, first);
+                if !identifiers.is_empty() {
+                    let mut iter = identifiers.iter();
+                    let first = iter.next().unwrap();
+                    show_identifier(state, first);
 
-                for identifier in iter {
-                    let _ = write!(state, ", {}", identifier);
+                    for identifier in iter {
+                        let _ = write!(state, ", {}", identifier);
+                    }
                 }
-            }
 
-            state.write(";\n");
+                state.write(";\n");
+            }
         }
         hir::Declaration::StructDefinition(ref sym) => {
             show_sym_decl(state, sym);
@@ -3161,7 +3164,7 @@ pub fn show_iteration_statement(state: &mut OutputState, ist: &hir::IterationSta
             show_statement(state, body);
             state.write(" while (");
             show_hir_expr(state, cond);
-            state.write(")\n");
+            state.write(");\n");
         }
         hir::IterationStatement::For(ref init, ref rest, ref body) => {
             state.write("for (");
@@ -3581,11 +3584,11 @@ fn write_abi(state: &mut OutputState) {
             }
             if state.hir.lookup("swgl_drawSpanRGBA8").is_some() {
                 state.write(
-                    "static void draw_span_RGBA8(Self* self) { DISPATCH_DRAW_SPAN(self, RGBA8); }\n");
+                    "static int draw_span_RGBA8(Self* self) { DISPATCH_DRAW_SPAN(self, RGBA8); }\n");
             }
             if state.hir.lookup("swgl_drawSpanR8").is_some() {
                 state.write(
-                    "static void draw_span_R8(Self* self) { DISPATCH_DRAW_SPAN(self, R8); }\n");
+                    "static int draw_span_R8(Self* self) { DISPATCH_DRAW_SPAN(self, R8); }\n");
             }
 
             write!(state, "public:\n{}_frag() {{\n", state.name);

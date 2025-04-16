@@ -8,13 +8,20 @@ const { XPCOMUtils } = ChromeUtils.import(
   "resource://gre/modules/XPCOMUtils.jsm"
 );
 const { Services } = ChromeUtils.import("resource://gre/modules/Services.jsm");
-const { objectToPropBag } = ChromeUtils.import(
-  "resource://gre/modules/BrowserUtils.jsm"
-).BrowserUtils;
 // This is redefined below, for strange and unfortunate reasons.
 var { PromptUtils } = ChromeUtils.import(
   "resource://gre/modules/SharedPromptUtils.jsm"
 );
+
+const {
+  // MODAL_TYPE_TAB, // currently not read in this file.
+  MODAL_TYPE_CONTENT,
+  MODAL_TYPE_WINDOW,
+  MODAL_TYPE_INTERNAL_WINDOW,
+} = Ci.nsIPrompt;
+
+const COMMON_DIALOG = "chrome://global/content/commonDialog.xhtml";
+const SELECT_DIALOG = "chrome://global/content/selectDialog.xhtml";
 
 function Prompter() {
   // Note that EmbedPrompter clones this implementation.
@@ -691,75 +698,25 @@ Prompter.prototype = {
   },
 
   /**
-   * Asynchronously prompt the user for a username and password.
-   * This has largely the same semantics as promptUsernameAndPassword(),
-   * but returns immediately after calling and returns the entered
-   * data in a callback.
-   *
-   * @param {mozIDOMWindowProxy} domWin - The parent window or null.
-   * @param {nsIChannel} channel - The channel that requires authentication.
-   * @param {nsIAuthPromptCallback} callback - Called once the prompt has been
-   *        closed.
-   * @param {nsISupports} context
-   * @param {Number} level - Security level of the credential transmission.
-   *        Any of nsIAuthPrompt2.<LEVEL_NONE|LEVEL_PW_ENCRYPTED|LEVEL_SECURE>
-   * @param {nsIAuthInformation} authInfo
-   * @param {String} checkLabel - Text to appear with the checkbox.
-   *        If null, check box will not be shown.
-   * @param {Object} checkValue - Contains the initial checked state of the
-   *        checkbox when this method is called and the final checked state
-   *        after the callback.
-   * @returns {nsICancelable} Interface to cancel prompt.
-   */
-  asyncPromptAuth(
-    domWin,
-    channel,
-    callback,
-    context,
-    level,
-    authInfo,
-    checkLabel,
-    checkValue
-  ) {
-    let p = this.pickPrompter({ domWin });
-    return p.asyncPromptAuth(
-      channel,
-      callback,
-      context,
-      level,
-      authInfo,
-      checkLabel,
-      checkValue
-    );
-  },
-
-  /**
-   * Asynchronously prompt the user for a username and password.
-   * This has largely the same semantics as promptUsernameAndPassword(),
-   * but returns immediately after calling and returns the entered
-   * data in a callback.
-   *
+   * Requests a username and a password. Shows a dialog with username and
+   * password field, depending on flags also a domain field.
    * @param {BrowsingContext} browsingContext - The browsing context the
    *        prompt should be opened for.
    * @param {Number} modalType - The modal type of the prompt.
    *        nsIPromptService.<MODAL_TYPE_WINDOW|MODAL_TYPE_TAB|MODAL_TYPE_CONTENT>
    * @param {nsIChannel} channel - The channel that requires authentication.
-   * @param {nsIAuthPromptCallback} callback - Called once the prompt has been
-   *        closed.
-   * @param {nsISupports} context
    * @param {Number} level - Security level of the credential transmission.
    *        Any of nsIAuthPrompt2.<LEVEL_NONE|LEVEL_PW_ENCRYPTED|LEVEL_SECURE>
-   * @param {nsIAuthInformation} authInfo
+   * @param {nsIAuthInformation} authInfo - Authentication information object.
    * @param {String} checkLabel - Text to appear with the checkbox.
    *        If null, check box will not be shown.
-   * @param {Object} checkValue - Contains the initial checked state of the
-   *        checkbox when this method is called and the final checked state
-   *        after the callback.
-   * @returns {nsICancelable} Interface to cancel prompt.
+   * @param {Object} checkValue - Initial checked state of the checkbox.
+   * @returns {Promise<nsIPropertyBag<{ ok: Boolean }>>}
+   *          A promise which resolves when the prompt is dismissed.
    */
-  asyncPromptAuthBC(browsingContext, modalType, ...promptArgs) {
-    let p = this.pickPrompter({ browsingContext, modalType });
-    return p.asyncPromptAuth(...promptArgs);
+  asyncPromptAuth(browsingContext, modalType, ...promptArgs) {
+    let p = this.pickPrompter({ browsingContext, modalType, async: true });
+    return p.promptAuth(...promptArgs);
   },
 };
 
@@ -1020,6 +977,14 @@ class ModalPrompter {
       this.browsingContext = browsingContext;
     }
 
+    if (
+      domWin &&
+      (!modalType || modalType == MODAL_TYPE_WINDOW) &&
+      !this.browsingContext?.isContent
+    ) {
+      modalType = MODAL_TYPE_INTERNAL_WINDOW;
+    }
+
     // Use given modal type or fallback to default
     this.modalType = modalType || ModalPrompter.defaultModalType;
 
@@ -1035,19 +1000,42 @@ class ModalPrompter {
 
   set modalType(modalType) {
     // Setting modal type window is always allowed
-    if (modalType == Ci.nsIPrompt.MODAL_TYPE_WINDOW) {
+    if (modalType == MODAL_TYPE_WINDOW) {
       this._modalType = modalType;
       return;
     }
 
-    // We can't use content / tab prompts if we don't have a suitable parent.
-    if (!this.browsingContext?.isContent) {
-      modalType = Ci.nsIPrompt.MODAL_TYPE_WINDOW;
-
-      Cu.reportError(
-        "Prompter: Browser not available. Falling back to window prompt."
-      );
+    // For content prompts for non-content windows, use window prompts:
+    if (modalType == MODAL_TYPE_CONTENT && !this.browsingContext?.isContent) {
+      this._modalType = MODAL_TYPE_WINDOW;
+      return;
     }
+
+    // We can't use content / tab prompts if we don't have a suitable parent.
+    if (
+      !this.browsingContext?.isContent &&
+      modalType != MODAL_TYPE_INTERNAL_WINDOW
+    ) {
+      // Only show this error if we're not about to fall back again and show a different one.
+      if (this.browsingContext?.associatedWindow?.gDialogBox) {
+        Cu.reportError(
+          "Prompter: Browser not available. Falling back to internal window prompt."
+        );
+      }
+      modalType = MODAL_TYPE_INTERNAL_WINDOW;
+    }
+
+    if (
+      modalType == MODAL_TYPE_INTERNAL_WINDOW &&
+      (this.browsingContext?.isContent ||
+        !this.browsingContext?.associatedWindow?.gDialogBox)
+    ) {
+      Cu.reportError(
+        "Prompter: internal dialogs not available in this context. Falling back to window prompt."
+      );
+      modalType = MODAL_TYPE_WINDOW;
+    }
+
     this._modalType = modalType;
   }
 
@@ -1084,17 +1072,22 @@ class ModalPrompter {
       return args;
     }
 
+    if (this._modalType == MODAL_TYPE_INTERNAL_WINDOW) {
+      await this.openInternalWindowPrompt(
+        this.browsingContext.associatedWindow,
+        args
+      );
+      return args;
+    }
+
     // Select prompts are not part of CommonDialog
     // and thus not supported as tab or content prompts yet. See Bug 1622817.
     // Once they are integrated this override should be removed.
-    if (
-      args.promptType == "select" &&
-      this.modalType !== Ci.nsIPrompt.MODAL_TYPE_WINDOW
-    ) {
+    if (args.promptType == "select" && this.modalType !== MODAL_TYPE_WINDOW) {
       Cu.reportError(
         "Prompter: 'select' prompts do not support tab/content prompting. Falling back to window prompt."
       );
-      args.modalType = Ci.nsIPrompt.MODAL_TYPE_WINDOW;
+      args.modalType = MODAL_TYPE_WINDOW;
     } else {
       args.modalType = this.modalType;
     }
@@ -1135,7 +1128,7 @@ class ModalPrompter {
       args.inPermitUnload = inPermitUnload;
       let eventDetail = Cu.cloneInto(
         {
-          tabPrompt: this.modalType != Ci.nsIPrompt.MODAL_TYPE_WINDOW,
+          tabPrompt: this.modalType != MODAL_TYPE_WINDOW,
           inPermitUnload,
         },
         this.browsingContext.window
@@ -1217,9 +1210,6 @@ class ModalPrompter {
    * @param {Object} args - Prompt options and return values.
    */
   openWindowPrompt(parentWindow = null, args) {
-    const COMMON_DIALOG = "chrome://global/content/commonDialog.xhtml";
-    const SELECT_DIALOG = "chrome://global/content/selectDialog.xhtml";
-
     let uri = args.promptType == "select" ? SELECT_DIALOG : COMMON_DIALOG;
     let propBag = PromptUtils.objectToPropBag(args);
     Services.ww.openWindow(
@@ -1229,6 +1219,17 @@ class ModalPrompter {
       "centerscreen,chrome,modal,titlebar",
       propBag
     );
+    PromptUtils.propBagToObject(propBag, args);
+  }
+
+  async openInternalWindowPrompt(parentWindow, args) {
+    if (!parentWindow?.gDialogBox || !ModalPrompter.windowPromptSubDialog) {
+      this.openWindowPrompt(parentWindow, args);
+      return;
+    }
+    let propBag = PromptUtils.objectToPropBag(args);
+    let uri = args.promptType == "select" ? SELECT_DIALOG : COMMON_DIALOG;
+    await parentWindow.gDialogBox.open(uri, propBag);
     PromptUtils.propBagToObject(propBag, args);
   }
 
@@ -1254,7 +1255,7 @@ class ModalPrompter {
     if (!(taskResult instanceof Object)) {
       throw new Error("task must return object");
     }
-    return objectToPropBag(taskResult);
+    return PromptUtils.objectToPropBag(taskResult);
   }
 
   /*
@@ -1646,12 +1647,12 @@ class ModalPrompter {
 
     let [username, password] = PromptUtils.getAuthInfo(authInfo);
 
-    let userParam = { value: username };
-    let passParam = { value: password };
+    let userParam = this.async ? username : { value: username };
+    let passParam = this.async ? password : { value: password };
 
-    let ok;
+    let result;
     if (authInfo.flags & Ci.nsIAuthInformation.ONLY_PASSWORD) {
-      ok = this.nsIPrompt_promptPassword(
+      result = this.nsIPrompt_promptPassword(
         null,
         message,
         passParam,
@@ -1659,7 +1660,7 @@ class ModalPrompter {
         checkValue
       );
     } else {
-      ok = this.nsIPrompt_promptUsernameAndPassword(
+      result = this.nsIPrompt_promptUsernameAndPassword(
         null,
         message,
         userParam,
@@ -1669,10 +1670,25 @@ class ModalPrompter {
       );
     }
 
-    if (ok) {
+    // For the async case result is an nsIPropertyBag with prompt results.
+    if (this.async) {
+      return result.then(bag => {
+        let ok = bag.getProperty("ok");
+        if (ok) {
+          let username = bag.getProperty("user");
+          let password = bag.getProperty("pass");
+          PromptUtils.setAuthInfo(authInfo, username, password);
+        }
+        return ok;
+      });
+    }
+
+    // For the sync case result is the "ok" boolean which indicates whether
+    // the user has confirmed the dialog.
+    if (result) {
       PromptUtils.setAuthInfo(authInfo, userParam.value, passParam.value);
     }
-    return ok;
+    return result;
   }
 
   asyncPromptAuth(
@@ -1709,7 +1725,14 @@ XPCOMUtils.defineLazyPreferenceGetter(
   ModalPrompter,
   "defaultModalType",
   "prompts.defaultModalType",
-  Ci.nsIPrompt.MODAL_TYPE_WINDOW
+  MODAL_TYPE_WINDOW
+);
+
+XPCOMUtils.defineLazyPreferenceGetter(
+  ModalPrompter,
+  "windowPromptSubDialog",
+  "prompts.windowPromptSubDialog",
+  false
 );
 
 function AuthPromptAdapterFactory() {}

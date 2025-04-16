@@ -1,13 +1,23 @@
 "use strict";
 
-ChromeUtils.import("resource://gre/modules/Services.jsm", this);
-ChromeUtils.import("resource://gre/modules/TelemetryEnvironment.jsm", this);
-ChromeUtils.import("resource://normandy/actions/AddonRollbackAction.jsm", this);
-ChromeUtils.import("resource://normandy/actions/AddonRolloutAction.jsm", this);
-ChromeUtils.import("resource://normandy/actions/BaseAction.jsm", this);
-ChromeUtils.import("resource://normandy/lib/AddonRollouts.jsm", this);
-ChromeUtils.import("resource://normandy/lib/TelemetryEvents.jsm", this);
-ChromeUtils.import("resource://testing-common/NormandyTestUtils.jsm", this);
+const { TelemetryEnvironment } = ChromeUtils.import(
+  "resource://gre/modules/TelemetryEnvironment.jsm"
+);
+const { AddonRollbackAction } = ChromeUtils.import(
+  "resource://normandy/actions/AddonRollbackAction.jsm"
+);
+const { AddonRolloutAction } = ChromeUtils.import(
+  "resource://normandy/actions/AddonRolloutAction.jsm"
+);
+const { BaseAction } = ChromeUtils.import(
+  "resource://normandy/actions/BaseAction.jsm"
+);
+const { AddonRollouts } = ChromeUtils.import(
+  "resource://normandy/lib/AddonRollouts.jsm"
+);
+const { NormandyTestUtils } = ChromeUtils.import(
+  "resource://testing-common/NormandyTestUtils.jsm"
+);
 
 // Test that a simple recipe unenrolls as expected
 decorate_task(
@@ -15,7 +25,7 @@ decorate_task(
   ensureAddonCleanup,
   withMockNormandyApi,
   withStub(TelemetryEnvironment, "setExperimentInactive"),
-  withSendEventStub,
+  withSendEventSpy,
   async function simple_recipe_unenrollment(
     mockApi,
     setExperimentInactiveStub,
@@ -109,7 +119,7 @@ decorate_task(
   AddonRollouts.withTestMock,
   ensureAddonCleanup,
   withMockNormandyApi,
-  withSendEventStub,
+  withSendEventSpy,
   async function addon_already_uninstalled(mockApi, sendEventStub) {
     const rolloutRecipe = {
       id: 1,
@@ -192,7 +202,7 @@ decorate_task(
   AddonRollouts.withTestMock,
   ensureAddonCleanup,
   withMockNormandyApi,
-  withSendEventStub,
+  withSendEventSpy,
   async function already_rolled_back(mockApi, sendEventStub) {
     const rollout = {
       recipeId: 1,

@@ -12,7 +12,6 @@
 #include "mozilla/dom/HTMLObjectElementBinding.h"
 #include "npapi.h"
 #include "nsCOMPtr.h"
-#include "nsIKeyEventInPluginCallback.h"
 #include "nsIPluginInstanceOwner.h"
 #include "nsIPrivacyTransitionObserver.h"
 #include "nsIDOMEventListener.h"
@@ -28,7 +27,6 @@
 
 class nsIInputStream;
 class nsPluginDOMContextMenuListener;
-class nsPluginFrame;
 class nsDisplayListBuilder;
 
 #if defined(MOZ_X11)
@@ -55,7 +53,6 @@ using mozilla::widget::PuppetWidget;
 class nsPluginInstanceOwner final : public nsIPluginInstanceOwner,
                                     public nsIDOMEventListener,
                                     public nsIPrivacyTransitionObserver,
-                                    public nsIKeyEventInPluginCallback,
                                     public nsSupportsWeakReference {
  public:
   typedef mozilla::gfx::DrawTarget DrawTarget;
@@ -168,9 +165,6 @@ class nsPluginInstanceOwner final : public nsIPluginInstanceOwner,
 
   void UpdateDocumentActiveState(bool aIsActive);
 
-  void SetFrame(nsPluginFrame* aFrame);
-  nsPluginFrame* GetFrame();
-
   uint32_t GetLastEventloopNestingLevel() const {
     return mLastEventloopNestingLevel;
   }
@@ -258,19 +252,6 @@ class nsPluginInstanceOwner final : public nsIPluginInstanceOwner,
                             int32_t* aLength);
   bool RequestCommitOrCancel(bool aCommitted);
 
-  // See nsIKeyEventInPluginCallback
-  virtual void HandledWindowedPluginKeyEvent(
-      const mozilla::NativeEventData& aKeyEventData, bool aIsConsumed) override;
-
-  /**
-   * OnWindowedPluginKeyEvent() is called when the plugin process receives
-   * native key event directly.
-   *
-   * @param aNativeKeyData      The key event which was received by the
-   *                            plugin process directly.
-   */
-  void OnWindowedPluginKeyEvent(const mozilla::NativeEventData& aNativeKeyData);
-
   void GetCSSZoomFactor(float* result);
 
  private:
@@ -299,7 +280,6 @@ class nsPluginInstanceOwner final : public nsIPluginInstanceOwner,
 
   nsPluginNativeWindow* mPluginWindow;
   RefPtr<nsNPAPIPluginInstance> mInstance;
-  nsPluginFrame* mPluginFrame;
   nsWeakPtr mContent;  // WEAK, content owns us
   nsCString mDocumentBase;
   bool mWidgetCreationComplete;
@@ -353,17 +333,6 @@ class nsPluginInstanceOwner final : public nsIPluginInstanceOwner,
 #endif
 
 #ifdef XP_MACOSX
-  static NPBool ConvertPointPuppet(PuppetWidget* widget,
-                                   nsPluginFrame* pluginFrame, double sourceX,
-                                   double sourceY,
-                                   NPCoordinateSpace sourceSpace, double* destX,
-                                   double* destY, NPCoordinateSpace destSpace);
-  static NPBool ConvertPointNoPuppet(nsIWidget* widget,
-                                     nsPluginFrame* pluginFrame, double sourceX,
-                                     double sourceY,
-                                     NPCoordinateSpace sourceSpace,
-                                     double* destX, double* destY,
-                                     NPCoordinateSpace destSpace);
   void PerformDelayedBlurs();
 #endif  // XP_MACOSX
 

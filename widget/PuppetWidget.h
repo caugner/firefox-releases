@@ -20,7 +20,6 @@
 #include "nsBaseScreen.h"
 #include "nsBaseWidget.h"
 #include "nsCOMArray.h"
-#include "nsIKeyEventInPluginCallback.h"
 #include "nsIScreenManager.h"
 #include "nsThreadUtils.h"
 #include "mozilla/Attributes.h"
@@ -154,7 +153,7 @@ class PuppetWidget : public nsBaseWidget,
       const mozilla::Maybe<ZoomConstraints>& aConstraints) override;
   bool AsyncPanZoomEnabled() const override;
 
-  virtual bool GetEditCommands(
+  MOZ_CAN_RUN_SCRIPT virtual bool GetEditCommands(
       NativeKeyBindingsType aType, const mozilla::WidgetKeyboardEvent& aEvent,
       nsTArray<mozilla::CommandInt>& aCommands) override;
 
@@ -268,6 +267,9 @@ class PuppetWidget : public nsBaseWidget,
                                               double aPointerPressure,
                                               uint32_t aPointerOrientation,
                                               nsIObserver* aObserver) override;
+  virtual nsresult SynthesizeNativeTouchPadPinch(
+      TouchpadPinchPhase aEventPhase, float aScale, LayoutDeviceIntPoint aPoint,
+      int32_t aModifierFlags) override;
   virtual nsresult SynthesizeNativeTouchTap(LayoutDeviceIntPoint aPoint,
                                             bool aLongTap,
                                             nsIObserver* aObserver) override;
@@ -283,13 +285,6 @@ class PuppetWidget : public nsBaseWidget,
                           const uint32_t& aFlags) override;
 
   virtual bool HasPendingInputEvent() override;
-
-  void HandledWindowedPluginKeyEvent(const NativeEventData& aKeyEventData,
-                                     bool aIsConsumed);
-
-  virtual nsresult OnWindowedPluginKeyEvent(
-      const NativeEventData& aKeyEventData,
-      nsIKeyEventInPluginCallback* aCallback) override;
 
   virtual void LookUpDictionary(
       const nsAString& aText,
@@ -375,8 +370,6 @@ class PuppetWidget : public nsBaseWidget,
 
   ScreenIntMargin mSafeAreaInsets;
 
-  nsCOMArray<nsIKeyEventInPluginCallback> mKeyEventInPluginCallbacks;
-
   RefPtr<TextEventDispatcherListener> mNativeTextEventDispatcherListener;
 
  protected:
@@ -389,9 +382,9 @@ class PuppetWidget : public nsBaseWidget,
   // composition may have already been committed in the main process.  In such
   // case, this will receive remaining composition events for the old
   // composition even after requesting to commit/cancel the old composition
-  // but the TextComposition for the old composition has already been destroyed.
-  // So, until this meets new eCompositionStart, following composition events
-  // should be ignored if this is set to true.
+  // but the TextComposition for the old composition has already been
+  // destroyed. So, until this meets new eCompositionStart, following
+  // composition events should be ignored if this is set to true.
   bool mIgnoreCompositionEvents;
 };
 

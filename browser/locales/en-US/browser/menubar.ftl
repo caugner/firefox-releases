@@ -209,6 +209,8 @@ menu-history-undo-menu =
     .label = Recently Closed Tabs
 menu-history-undo-window-menu =
     .label = Recently Closed Windows
+menu-history-reopen-all-tabs = Reopen All Tabs
+menu-history-reopen-all-windows = Reopen All Windows
 
 ## Bookmarks Menu
 
@@ -289,7 +291,7 @@ menu-window-bring-all-to-front =
 # NOTE: For Engineers, any additions or changes to Help menu strings should
 # also be reflected in the related strings in appmenu.ftl. Those strings, by
 # convention, will have the same ID as these, but prefixed with "app".
-# Example: appmenu-help-product
+# Example: appmenu-get-help
 #
 # These strings are duplicated to allow for different casing depending on
 # where the strings appear.
@@ -297,21 +299,14 @@ menu-window-bring-all-to-front =
 menu-help =
     .label = Help
     .accesskey = H
-menu-help-product =
-    .label = { -brand-shorter-name } Help
+menu-get-help =
+    .label = Get Help
     .accesskey = H
-menu-help-show-tour =
-    .label = { -brand-shorter-name } Tour
-    .accesskey = o
-menu-help-import-from-another-browser =
-    .label = Import From Another Browser…
-    .accesskey = I
-menu-help-keyboard-shortcuts =
-    .label = Keyboard Shortcuts
-    .accesskey = K
 menu-help-troubleshooting-info =
     .label = Troubleshooting Information
     .accesskey = T
+menu-help-taskmanager =
+    .label = Task Manager
 menu-help-feedback-page =
     .label = Submit Feedback…
     .accesskey = S
@@ -329,6 +324,3 @@ menu-help-report-deceptive-site =
 menu-help-not-deceptive =
     .label = This Isn’t a Deceptive Site…
     .accesskey = D
-menu-help-check-for-update =
-    .label = Check for Updates…
-    .accesskey = C

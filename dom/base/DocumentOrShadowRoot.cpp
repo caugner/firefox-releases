@@ -7,6 +7,7 @@
 #include "DocumentOrShadowRoot.h"
 #include "mozilla/AnimationComparator.h"
 #include "mozilla/EventStateManager.h"
+#include "mozilla/PointerLockManager.h"
 #include "mozilla/PresShell.h"
 #include "mozilla/SVGUtils.h"
 #include "mozilla/dom/AnimatableBinding.h"
@@ -217,8 +218,11 @@ void DocumentOrShadowRoot::CloneAdoptedSheetsFrom(
   MOZ_ASSERT(clonedSheetMap);
 
   for (const StyleSheet* sheet : aSource.mAdoptedStyleSheets) {
-    RefPtr<StyleSheet> clone = clonedSheetMap->LookupForAdd(sheet).OrInsert(
-        [&] { return sheet->CloneAdoptedSheet(ownerDoc); });
+    RefPtr<StyleSheet> clone = clonedSheetMap->WithEntryHandle(
+        sheet, [&sheet, &ownerDoc](auto&& entry) {
+          return entry.OrInsertWith(
+              [&] { return sheet->CloneAdoptedSheet(ownerDoc); });
+        });
     MOZ_ASSERT(clone);
     MOZ_DIAGNOSTIC_ASSERT(clone->ConstructorDocumentMatches(ownerDoc));
     DebugOnly<bool> succeeded = list.AppendElement(std::move(clone), fallible);
@@ -300,7 +304,7 @@ Element* DocumentOrShadowRoot::GetRetargetedFocusedElement() {
 
 Element* DocumentOrShadowRoot::GetPointerLockElement() {
   nsCOMPtr<Element> pointerLockedElement =
-      do_QueryReferent(EventStateManager::sPointerLockedElement);
+      PointerLockManager::GetLockedElement();
   if (!pointerLockedElement) {
     return nullptr;
   }
@@ -751,9 +755,10 @@ nsRadioGroupStruct* DocumentOrShadowRoot::GetRadioGroup(
 
 nsRadioGroupStruct* DocumentOrShadowRoot::GetOrCreateRadioGroup(
     const nsAString& aName) {
-  return mRadioGroups.LookupForAdd(aName)
-      .OrInsert([]() { return new nsRadioGroupStruct(); })
-      .get();
+  return mRadioGroups.WithEntryHandle(aName, [](auto&& entry) {
+    return entry.OrInsertWith([] { return MakeUnique<nsRadioGroupStruct>(); })
+        .get();
+  });
 }
 
 int32_t DocumentOrShadowRoot::StyleOrderIndexOfSheet(

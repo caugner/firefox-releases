@@ -37,18 +37,12 @@ namespace mozilla {
 namespace net {
 class TRR;
 class TRRQuery;
-enum ResolverMode {
-  MODE_NATIVEONLY,  // 0 - TRR OFF (by default)
-  MODE_RESERVED1,   // 1 - Reserved value. Used to be parallel resolve.
-  MODE_TRRFIRST,    // 2 - fallback to native on TRR failure
-  MODE_TRRONLY,     // 3 - don't even fallback
-  MODE_RESERVED4,   // 4 - Reserved value. Used to be race TRR with native.
-  MODE_TRROFF       // 5 - identical to MODE_NATIVEONLY but explicitly selected
-};
 }  // namespace net
 }  // namespace mozilla
 
-#define TRR_DISABLED(x) (((x) == MODE_NATIVEONLY) || ((x) == MODE_TRROFF))
+#define TRR_DISABLED(x)                       \
+  (((x) == nsIDNSService::MODE_NATIVEONLY) || \
+   ((x) == nsIDNSService::MODE_TRROFF))
 
 extern mozilla::Atomic<bool, mozilla::Relaxed> gNativeIsLocalhost;
 
@@ -125,6 +119,13 @@ class nsHostRecord : public mozilla::LinkedListElement<RefPtr<nsHostRecord>>,
     TRR_SERVER_RESPONSE_ERR = 27,  // Server responded with non-200 code
     TRR_RCODE_FAIL = 28,           // DNS response contains a non-NOERROR rcode
     TRR_NO_CONNECTIVITY = 29,      // Not confirmed because of no connectivity
+    TRR_NXDOMAIN = 30,            // DNS response contains NXDOMAIN rcode (0x03)
+    TRR_REQ_CANCELLED = 31,       // The request has been cancelled
+    ODOH_KEY_NOT_USABLE = 32,     // We don't have a valid ODoHConfig to use.
+    ODOH_UPDATE_KEY_FAILED = 33,  // Failed to update the ODoHConfigs.
+    ODOH_KEY_NOT_AVAILABLE = 34,  // ODoH requests timeout because of no key.
+    ODOH_ENCRYPTION_FAILED = 35,  // Failed to encrypt DNS packets.
+    ODOH_DECRYPTION_FAILED = 36,  // Failed to decrypt DNS packets.
   };
 
   // Records the first reason that caused TRR to be skipped or to fail.
@@ -292,9 +293,10 @@ class AddrHostRecord final : public nsHostRecord {
   mozilla::TimeDuration mTrrDuration;
   mozilla::TimeDuration mNativeDuration;
 
-  mozilla::Atomic<bool> mTRRUsed;  // TRR was used on this record
-  uint8_t mTRRSuccess;             // number of successful TRR responses
-  uint8_t mNativeSuccess;          // number of native lookup responses
+  // TRR or ODoH was used on this record
+  mozilla::Atomic<mozilla::net::DNSResolverType> mResolverType;
+  uint8_t mTRRSuccess;     // number of successful TRR responses
+  uint8_t mNativeSuccess;  // number of native lookup responses
 
   // clang-format off
   MOZ_ATOMIC_BITFIELDS(mAtomicBitfields, 8, (
@@ -425,10 +427,11 @@ class AHostResolver {
     LOOKUP_RESOLVEAGAIN,
   };
 
-  virtual LookupStatus CompleteLookup(
-      nsHostRecord*, nsresult, mozilla::net::AddrInfo*, bool pb,
-      const nsACString& aOriginsuffix,
-      nsHostRecord::TRRSkippedReason aReason) = 0;
+  virtual LookupStatus CompleteLookup(nsHostRecord*, nsresult,
+                                      mozilla::net::AddrInfo*, bool pb,
+                                      const nsACString& aOriginsuffix,
+                                      nsHostRecord::TRRSkippedReason aReason,
+                                      mozilla::net::TRR*) = 0;
   virtual LookupStatus CompleteLookupByType(
       nsHostRecord*, nsresult, mozilla::net::TypeRecordResultType& aResult,
       uint32_t aTtl, bool pb) = 0;
@@ -555,7 +558,8 @@ class nsHostResolver : public nsISupports, public AHostResolver {
 
   LookupStatus CompleteLookup(nsHostRecord*, nsresult, mozilla::net::AddrInfo*,
                               bool pb, const nsACString& aOriginsuffix,
-                              nsHostRecord::TRRSkippedReason aReason) override;
+                              nsHostRecord::TRRSkippedReason aReason,
+                              mozilla::net::TRR* aTRRRequest) override;
   LookupStatus CompleteLookupByType(nsHostRecord*, nsresult,
                                     mozilla::net::TypeRecordResultType& aResult,
                                     uint32_t aTtl, bool pb) override;
@@ -565,7 +569,7 @@ class nsHostResolver : public nsISupports, public AHostResolver {
                          nsHostRecord** result) override;
   nsresult TrrLookup_unlocked(nsHostRecord*,
                               mozilla::net::TRR* pushedTRR = nullptr) override;
-  static mozilla::net::ResolverMode Mode();
+  static nsIDNSService::ResolverMode Mode();
 
   virtual void MaybeRenewHostRecord(nsHostRecord* aRec) override;
 

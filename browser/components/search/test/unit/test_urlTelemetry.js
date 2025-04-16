@@ -147,6 +147,9 @@ const TESTS = [
     title: "Baidu search access point",
     trackingUrl: "https://www.baidu.com/baidu?wd=test&tn=monline_7_dg&ie=utf-8",
     expectedSearchCountEntry: "baidu.in-content:sap:monline_7_dg",
+    expectedAdKey: "baidu:sap",
+    adUrls: ["https://www.baidu.com/baidu.php?url=encoded"],
+    nonAdUrls: ["https://www.baidu.com/link?url=encoded"],
   },
   {
     title: "Baidu search access point follow-on",
@@ -209,6 +212,8 @@ async function testAdUrlClicked(serpUrl, adUrl, expectedAdKey) {
     );
   }
 }
+
+do_get_profile();
 
 add_task(async function setup() {
   Services.prefs.setBoolPref(SearchUtils.BROWSER_SEARCH_PREF + "log", true);

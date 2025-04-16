@@ -189,8 +189,6 @@ class ContentChild final : public PContentChild,
       Endpoint<PRemoteDecoderManagerChild>&& aVideoManager,
       nsTArray<uint32_t>&& namespaces);
 
-  mozilla::ipc::IPCResult RecvAudioDefaultDeviceChange();
-
   mozilla::ipc::IPCResult RecvReinitRenderingForDeviceReset();
 
   mozilla::ipc::IPCResult RecvSetProcessSandbox(
@@ -565,9 +563,6 @@ class ContentChild final : public PContentChild,
   mozilla::ipc::IPCResult RecvFlushCodeCoverageCounters(
       FlushCodeCoverageCountersResolver&& aResolver);
 
-  mozilla::ipc::IPCResult RecvGetMemoryUniqueSetSize(
-      GetMemoryUniqueSetSizeResolver&& aResolver);
-
   mozilla::ipc::IPCResult RecvSetInputEventQueueEnabled();
 
   mozilla::ipc::IPCResult RecvFlushInputEventQueue();
@@ -717,7 +712,7 @@ class ContentChild final : public PContentChild,
       const MaybeDiscarded<BrowsingContext>& aContext, CallerType aCallerType,
       uint64_t aActionId);
   mozilla::ipc::IPCResult RecvWindowBlur(
-      const MaybeDiscarded<BrowsingContext>& aContext);
+      const MaybeDiscarded<BrowsingContext>& aContext, CallerType aCallerType);
   mozilla::ipc::IPCResult RecvRaiseWindow(
       const MaybeDiscarded<BrowsingContext>& aContext, CallerType aCallerType,
       uint64_t aActionId);

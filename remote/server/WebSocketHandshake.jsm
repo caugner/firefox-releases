@@ -15,7 +15,9 @@ const { XPCOMUtils } = ChromeUtils.import(
   "resource://gre/modules/XPCOMUtils.jsm"
 );
 
-const { executeSoon } = ChromeUtils.import("chrome://remote/content/Sync.jsm");
+const { executeSoon } = ChromeUtils.import(
+  "chrome://remote/content/shared/Sync.jsm"
+);
 
 XPCOMUtils.defineLazyGetter(this, "WebSocket", () => {
   return Services.appShell.hiddenDOMWindow.WebSocket;
@@ -93,8 +95,8 @@ function processRequest({ requestLine, headers }) {
     !connection ||
     !connection
       .split(",")
-      .map(t => t.trim())
-      .includes("Upgrade")
+      .map(t => t.trim().toLowerCase())
+      .includes("upgrade")
   ) {
     throw new Error("The handshake request has incorrect Connection header");
   }

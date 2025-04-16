@@ -1,12 +1,14 @@
 use minidump::*;
 use minidump_common::format::{GUID, MINIDUMP_STREAM_TYPE::*};
 use minidump_writer_linux::app_memory::AppMemory;
-use minidump_writer_linux::crash_context::{fpstate_t, CrashContext};
+#[cfg(not(any(target_arch = "mips", target_arch = "arm")))]
+use minidump_writer_linux::crash_context::fpstate_t;
+use minidump_writer_linux::crash_context::CrashContext;
+use minidump_writer_linux::errors::*;
 use minidump_writer_linux::linux_ptrace_dumper::LinuxPtraceDumper;
 use minidump_writer_linux::maps_reader::{MappingEntry, MappingInfo, SystemMappingInfo};
 use minidump_writer_linux::minidump_writer::MinidumpWriter;
 use minidump_writer_linux::thread_info::Pid;
-use minidump_writer_linux::Result;
 use nix::errno::Errno;
 use nix::sys::signal::Signal;
 use std::convert::TryInto;
@@ -24,6 +26,7 @@ enum Context {
     Without,
 }
 
+#[cfg(not(any(target_arch = "mips", target_arch = "arm")))]
 fn get_ucontext() -> Result<libc::ucontext_t> {
     let mut context = std::mem::MaybeUninit::<libc::ucontext_t>::uninit();
     let res = unsafe { libc::getcontext(context.as_mut_ptr()) };
@@ -32,14 +35,28 @@ fn get_ucontext() -> Result<libc::ucontext_t> {
 }
 
 fn get_crash_context(tid: Pid) -> CrashContext {
-    let context = get_ucontext().expect("Failed to get ucontext");
     let siginfo: libc::siginfo_t = unsafe { std::mem::zeroed() };
-    let float_state: fpstate_t = unsafe { std::mem::zeroed() };
-    CrashContext {
-        siginfo,
-        tid,
-        context,
-        float_state,
+    #[cfg(not(any(target_arch = "mips", target_arch = "arm")))]
+    {
+        let context = get_ucontext().expect("Failed to get ucontext");
+        let float_state: fpstate_t = unsafe { std::mem::zeroed() };
+        CrashContext {
+            siginfo,
+            tid,
+            context,
+            float_state,
+        }
+    }
+    #[cfg(any(target_arch = "mips", target_arch = "arm"))]
+    {
+        // TODO: `libc` doesn't provide `getcontext()` for ARM and mips, so
+        //       for now I just use zeroes. But this should be filled in properly!
+        let context: libc::ucontext_t = unsafe { std::mem::zeroed() };
+        CrashContext {
+            siginfo,
+            tid,
+            context,
+        }
     }
 }
 
@@ -501,9 +518,18 @@ fn test_skip_if_requested_helper(context: Context) {
         tmp.set_crash_context(crash_context);
     }
 
+    let pr_mapping_addr;
+    #[cfg(target_pointer_width = "64")]
+    {
+        pr_mapping_addr = 0x0102030405060708;
+    }
+    #[cfg(target_pointer_width = "32")]
+    {
+        pr_mapping_addr = 0x010203040;
+    };
     let res = tmp
         .skip_stacks_if_mapping_unreferenced()
-        .set_principal_mapping_address(0x0102030405060708)
+        .set_principal_mapping_address(pr_mapping_addr)
         .dump(&mut tmpfile);
     child.kill().expect("Failed to kill process");
 
@@ -556,10 +582,14 @@ fn test_sanitized_stacks_helper(context: Context) {
     let thread_list: MinidumpThreadList =
         dump.get_stream().expect("Couldn't find MinidumpThreadList");
 
-    let defaced = if cfg!(target_pointer_width = "64") {
-        0x0defaced0defacedusize.to_ne_bytes()
-    } else {
-        0x0defacedusize.to_ne_bytes()
+    let defaced;
+    #[cfg(target_pointer_width = "64")]
+    {
+        defaced = 0x0defaced0defacedusize.to_ne_bytes();
+    }
+    #[cfg(target_pointer_width = "32")]
+    {
+        defaced = 0x0defacedusize.to_ne_bytes()
     };
 
     for thread in thread_list.threads {
@@ -580,4 +610,68 @@ fn test_sanitized_stacks() {
 #[test]
 fn test_sanitized_stacks_with_context() {
     test_sanitized_stacks_helper(Context::Without)
+}
+
+fn test_write_early_abort_helper(context: Context) {
+    let mut child = start_child_and_return("spawn_alloc_wait");
+    let pid = child.id() as i32;
+
+    let mut tmpfile = tempfile::Builder::new()
+        .prefix("additional_memory")
+        .tempfile()
+        .unwrap();
+
+    let mut f = BufReader::new(child.stdout.as_mut().expect("Can't open stdout"));
+    let mut buf = String::new();
+    let _ = f
+        .read_line(&mut buf)
+        .expect("Couldn't read address provided by child");
+    let mut output = buf.split_whitespace();
+    // We do not read the actual memory_address, but use NULL, which
+    // should create an error during dumping and lead to a truncated minidump.
+    let _ = usize::from_str_radix(output.next().unwrap().trim_start_matches("0x"), 16)
+        .expect("unable to parse mmap_addr");
+    let memory_addr = 0;
+    let memory_size = usize::from_str(output.next().unwrap()).expect("unable to parse memory_size");
+
+    let app_memory = AppMemory {
+        ptr: memory_addr,
+        length: memory_size,
+    };
+
+    let mut tmp = MinidumpWriter::new(pid, pid);
+    if context == Context::With {
+        let crash_context = get_crash_context(pid);
+        tmp.set_crash_context(crash_context);
+    }
+
+    // This should fail, because during the dump an error is detected (try_from fails)
+    match tmp.set_app_memory(vec![app_memory]).dump(&mut tmpfile) {
+        Err(WriterError::SectionAppMemoryError(_)) => (),
+        _ => panic!("Wrong kind of error returned"),
+    }
+
+    child.kill().expect("Failed to kill process");
+    // Reap child
+    let waitres = child.wait().expect("Failed to wait for child");
+    let status = waitres.signal().expect("Child did not die due to signal");
+    assert_eq!(waitres.code(), None);
+    assert_eq!(status, Signal::SIGKILL as i32);
+
+    // Read dump file and check its contents. There should be a truncated minidump available
+    let dump = Minidump::read_path(tmpfile.path()).expect("Failed to read minidump");
+    // Should be there
+    let _: MinidumpThreadList = dump.get_stream().expect("Couldn't find MinidumpThreadList");
+    let _: MinidumpModuleList = dump.get_stream().expect("Couldn't find MinidumpThreadList");
+
+    // Should be missing:
+    assert!(dump.get_stream::<MinidumpMemoryList>().is_err());
+}
+#[test]
+fn test_write_early_abort() {
+    test_write_early_abort_helper(Context::Without)
+}
+#[test]
+fn test_write_early_abort_with_context() {
+    test_write_early_abort_helper(Context::With)
 }

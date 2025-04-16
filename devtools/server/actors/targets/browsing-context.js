@@ -14,8 +14,7 @@
  * BrowsingContextTargetActor is an abstract class used by target actors that hold
  * documents, such as frames, chrome windows, etc.
  *
- * This class is extended by FrameTargetActor, ParentProcessTargetActor, and
- * ChromeWindowTargetActor.
+ * This class is extended by FrameTargetActor, ParentProcessTargetActor.
  *
  * See devtools/docs/backend/actor-hierarchy.md for more details.
  *
@@ -92,20 +91,24 @@ function getDocShellChromeEventHandler(docShell) {
   return handler;
 }
 
+/**
+ * Helper to retrieve all children docshells of a given docshell.
+ *
+ * Given that docshell interfaces can only be used within the same process,
+ * this only returns docshells for children documents that runs in the same process
+ * as the given docshell.
+ */
 function getChildDocShells(parentDocShell) {
-  const allDocShells = parentDocShell.getAllDocShellsInSubtree(
-    Ci.nsIDocShellTreeItem.typeAll,
-    Ci.nsIDocShell.ENUMERATE_FORWARDS
-  );
-
-  const docShells = [];
-  for (const docShell of allDocShells) {
-    docShell
-      .QueryInterface(Ci.nsIInterfaceRequestor)
-      .getInterface(Ci.nsIWebProgress);
-    docShells.push(docShell);
-  }
-  return docShells;
+  return parentDocShell.browsingContext
+    .getAllBrowsingContextsInSubtree()
+    .filter(browsingContext => {
+      // Filter out browsingContext which don't expose any docshell (e.g. remote frame)
+      return browsingContext.docShell;
+    })
+    .map(browsingContext => {
+      // Map BrowsingContext to DocShell
+      return browsingContext.docShell;
+    });
 }
 
 exports.getChildDocShells = getChildDocShells;
@@ -233,22 +236,40 @@ const browsingContextTargetPrototype = {
    *
    * @param connection DevToolsServerConnection
    *        The conection to the client.
-   * @param docShell nsIDocShell
-   *        The |docShell| for the debugged frame.
    * @param options Object
    *        Object with following attributes:
+   *        - docShell nsIDocShell
+   *          The |docShell| for the debugged frame.
+   *        - doNotFireFrameUpdates Boolean
+   *          If true, omit emitting `frameUpdate` events. This is only useful
+   *          for the top level target, in order to populate the toolbox iframe selector dropdown.
+   *          But we can avoid sending these RDP messages for any additional remote target.
    *        - followWindowGlobalLifeCycle Boolean
    *          If true, the target actor will only inspect the current WindowGlobal (and its children windows).
    *          But won't inspect next document loaded in the same BrowsingContext.
    *          The actor will behave more like a WindowGlobalTarget rather than a BrowsingContextTarget.
    *          We may eventually switch everything to this, i.e. uses only WindowGlobalTarget.
    *          But for now, we restrict this behavior to remoted iframes.
-   *        - doNotFireFrameUpdates Boolean
-   *          If true, omit emitting `frameUpdate` events. This is only useful
-   *          for the top level target, in order to populate the toolbox iframe selector dropdown.
-   *          But we can avoid sending these RDP messages for any additional remote target.
+   *        - isTopLevelTarget Boolean
+   *          Should be set to true for all top-level targets. A top level target
+   *          is the topmost target of a DevTools "session". For instance for a local
+   *          tab toolbox, the FrameTargetActor for the content page is the top level target.
+   *          For the Multiprocess Browser Toolbox, the parent process target is the top level
+   *          target.
+   *          At the moment this only impacts the BrowsingContextTarget `reconfigure`
+   *          implementation. But for server-side target switching this flag will be exposed
+   *          to the client and should be available for all target actor classes. It will be
+   *          used to detect target switching. (Bug 1644397)
    */
-  initialize: function(connection, docShell, options = {}) {
+  initialize: function(
+    connection,
+    {
+      docShell,
+      doNotFireFrameUpdates,
+      followWindowGlobalLifeCycle,
+      isTopLevelTarget,
+    }
+  ) {
     Actor.prototype.initialize.call(this, connection);
 
     if (!docShell) {
@@ -258,8 +279,9 @@ const browsingContextTargetPrototype = {
     }
     this.docShell = docShell;
 
-    this.followWindowGlobalLifeCycle = options.followWindowGlobalLifeCycle;
-    this.doNotFireFrameUpdates = options.doNotFireFrameUpdates;
+    this.followWindowGlobalLifeCycle = followWindowGlobalLifeCycle;
+    this.doNotFireFrameUpdates = doNotFireFrameUpdates;
+    this.isTopLevelTarget = !!isTopLevelTarget;
 
     // A map of actor names to actor instances provided by extensions.
     this._extraActors = {};
@@ -285,7 +307,6 @@ const browsingContextTargetPrototype = {
     this.watchNewDocShells = false;
 
     this.traits = {
-      reconfigure: true,
       // Supports frame listing via `listFrames` request and `frameUpdate` events
       // as well as frame switching via `switchToFrame` request
       frames: true,
@@ -535,6 +556,9 @@ const browsingContextTargetPrototype = {
         // @backward-compat { version 64 } Exposes a new trait to help identify
         // BrowsingContextActor's inherited actors from the client side.
         isBrowsingContext: true,
+        // @backward-compat { version 87 } Print & color scheme simulations
+        // should now be set using reconfigure.
+        reconfigureSupportsSimulationFeatures: true,
       },
     };
 
@@ -1006,7 +1030,7 @@ const browsingContextTargetPrototype = {
     // Firefox shutdown.
     if (this.docShell) {
       this._unwatchDocShell(this.docShell);
-      this._restoreDocumentSettings();
+      this._restoreTargetConfiguration();
     }
     this._unwatchDocshells();
 
@@ -1164,21 +1188,6 @@ const browsingContextTargetPrototype = {
   },
 
   /**
-   * Reconfigure options.
-   */
-  reconfigure(request) {
-    const options = request.options || {};
-
-    if (!this.docShell) {
-      // The browsing context is already closed.
-      return {};
-    }
-    this._toggleDevToolsSettings(options);
-
-    return {};
-  },
-
-  /**
    * Ensure that CSS error reporting is enabled.
    */
   async ensureCSSErrorReportingEnabled(request) {
@@ -1218,9 +1227,33 @@ const browsingContextTargetPrototype = {
   },
 
   /**
-   * Handle logic to enable/disable JS/cache/Service Worker testing.
+   * For browsing-context targets which can't use the watcher configuration
+   * actor (eg webextension targets), the client directly calls `reconfigure`.
+   * Once all targets support the watcher, this method can be removed.
    */
-  _toggleDevToolsSettings(options) {
+  reconfigure(request) {
+    const options = request.options || {};
+    return this.updateTargetConfiguration(options);
+  },
+
+  /**
+   * Apply target-specific options.
+   *
+   * This will be called by the watcher when the DevTools target-configuration
+   * is updated, or when a target is created via JSWindowActors.
+   */
+  updateTargetConfiguration(options = {}) {
+    if (!this.docShell) {
+      // The browsing context is already closed.
+      return;
+    }
+
+    if (!this.isTopLevelTarget) {
+      // DevTools target options should only apply to the top target and be
+      // propagated through the browsing context tree via the platform.
+      return;
+    }
+
     // Wait a tick so that the response packet can be dispatched before the
     // subsequent navigation event packet.
     let reload = false;
@@ -1244,11 +1277,13 @@ const browsingContextTargetPrototype = {
     ) {
       this._setPaintFlashingEnabled(options.paintFlashing);
     }
-    if (
-      typeof options.serviceWorkersTestingEnabled !== "undefined" &&
-      options.serviceWorkersTestingEnabled !==
-        this._getServiceWorkersTestingEnabled()
-    ) {
+    if (typeof options.colorSchemeSimulation !== "undefined") {
+      this._setColorSchemeSimulation(options.colorSchemeSimulation);
+    }
+    if (typeof options.printSimulationEnabled !== "undefined") {
+      this._setPrintSimulationEnabled(options.printSimulationEnabled);
+    }
+    if (typeof options.serviceWorkersTestingEnabled !== "undefined") {
       this._setServiceWorkersTestingEnabled(
         options.serviceWorkersTestingEnabled
       );
@@ -1257,27 +1292,22 @@ const browsingContextTargetPrototype = {
       this._restoreFocus = options.restoreFocus;
     }
 
-    // Reload if:
-    //  - there's an explicit `performReload` flag and it's true
-    //  - there's no `performReload` flag, but it makes sense to do so
-    const hasExplicitReloadFlag = "performReload" in options;
-    if (
-      (hasExplicitReloadFlag && options.performReload) ||
-      (!hasExplicitReloadFlag && reload)
-    ) {
+    if (reload) {
       this.reload();
     }
   },
 
   /**
-   * Opposite of the _toggleDevToolsSettings method, that reset document state
-   * when closing the toolbox.
+   * Opposite of the updateTargetConfiguration method, that resets document
+   * state when closing the toolbox.
    */
-  _restoreDocumentSettings() {
+  _restoreTargetConfiguration() {
     this._restoreJavascript();
     this._setCacheDisabled(false);
     this._setServiceWorkersTestingEnabled(false);
     this._setPaintFlashingEnabled(false);
+    this._setPrintSimulationEnabled(false);
+    this._setColorSchemeSimulation(null);
 
     if (this._restoreFocus && this.browsingContext?.isActive) {
       this.window.focus();
@@ -1331,8 +1361,29 @@ const browsingContextTargetPrototype = {
    * Disable or enable the service workers testing features.
    */
   _setServiceWorkersTestingEnabled(enabled) {
-    const windowUtils = this.window.windowUtils;
-    windowUtils.serviceWorkersTestingEnabled = enabled;
+    if (this.browsingContext.serviceWorkersTestingEnabled != enabled) {
+      this.browsingContext.serviceWorkersTestingEnabled = enabled;
+    }
+  },
+
+  /**
+   * Disable or enable the print simulation.
+   */
+  _setPrintSimulationEnabled(enabled) {
+    const value = enabled ? "print" : "";
+    if (this.browsingContext.mediumOverride != value) {
+      this.browsingContext.mediumOverride = value;
+    }
+  },
+
+  /**
+   * Disable or enable the color-scheme simulation.
+   */
+  _setColorSchemeSimulation(override) {
+    const value = override || "none";
+    if (this.browsingContext.prefersColorSchemeOverride != value) {
+      this.browsingContext.prefersColorSchemeOverride = value;
+    }
   },
 
   /**
@@ -1366,19 +1417,6 @@ const browsingContextTargetPrototype = {
     }
 
     return this.window.windowUtils.paintFlashing;
-  },
-
-  /**
-   * Return service workers testing allowed status.
-   */
-  _getServiceWorkersTestingEnabled() {
-    if (!this.docShell) {
-      // The browsing context is already closed.
-      return null;
-    }
-
-    const windowUtils = this.window.windowUtils;
-    return windowUtils.serviceWorkersTestingEnabled;
   },
 
   _changeTopLevelDocument(window) {

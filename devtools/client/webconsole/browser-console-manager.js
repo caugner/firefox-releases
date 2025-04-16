@@ -99,6 +99,9 @@ class BrowserConsoleManager {
     // gets called again we can return this console instead of opening another one.
     this._browserConsoleInitializing = (async () => {
       const target = await this.connect();
+      // Hack something in order to help TargetMixinFront to distinguish targets
+      // related to the BrowserConsole.
+      target.isBrowserConsoleTarget = true;
       await target.attach();
       const win = await this.openWindow();
       const browserConsole = await this.openBrowserConsole(target, win);
@@ -127,10 +130,11 @@ class BrowserConsoleManager {
 
     DevToolsServer.init();
 
-    // Ensure that the root actor and the target-scoped actors have been registered on
-    // the DevToolsServer, so that the Browser Console can retrieve the console actors.
-    // (See Bug 1416105 for rationale).
-    DevToolsServer.registerActors({ root: true, target: true });
+    // We want all the actors (root, browser and target-scoped) to be registered on the
+    // DevToolsServer. This is needed so the Browser Console can retrieve:
+    // - the console actors, which are target-scoped (See Bug 1416105)
+    // - the screenshotActor, which is browser-scoped (for the `:screenshot` command)
+    DevToolsServer.registerAllActors();
 
     DevToolsServer.allowChromeProcess = true;
 

@@ -147,7 +147,7 @@ xpcAccessibleDocument::GetVirtualCursor(nsIAccessiblePivot** aVirtualCursor) {
 // xpcAccessibleDocument
 
 xpcAccessibleGeneric* xpcAccessibleDocument::GetAccessible(
-    Accessible* aAccessible) {
+    LocalAccessible* aAccessible) {
   MOZ_ASSERT(!mRemote);
   if (ToXPCDocument(aAccessible->Document()) != this) {
     NS_ERROR(
@@ -160,23 +160,24 @@ xpcAccessibleGeneric* xpcAccessibleDocument::GetAccessible(
   xpcAccessibleGeneric* xpcAcc = mCache.Get(aAccessible);
   if (xpcAcc) return xpcAcc;
 
-  if (aAccessible->IsImage())
+  if (aAccessible->IsImage()) {
     xpcAcc = new xpcAccessibleImage(aAccessible);
-  else if (aAccessible->IsTable())
+  } else if (aAccessible->IsTable()) {
     xpcAcc = new xpcAccessibleTable(aAccessible);
-  else if (aAccessible->IsTableCell())
+  } else if (aAccessible->IsTableCell()) {
     xpcAcc = new xpcAccessibleTableCell(aAccessible);
-  else if (aAccessible->IsHyperText())
+  } else if (aAccessible->IsHyperText()) {
     xpcAcc = new xpcAccessibleHyperText(aAccessible);
-  else
+  } else {
     xpcAcc = new xpcAccessibleGeneric(aAccessible);
+  }
 
   mCache.Put(aAccessible, xpcAcc);
   return xpcAcc;
 }
 
 xpcAccessibleGeneric* xpcAccessibleDocument::GetXPCAccessible(
-    ProxyAccessible* aProxy) {
+    RemoteAccessible* aProxy) {
   MOZ_ASSERT(mRemote);
   MOZ_ASSERT(aProxy->Document() == mIntl.AsProxy());
   if (aProxy->IsDoc()) {

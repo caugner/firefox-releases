@@ -6,9 +6,13 @@
 "use strict";
 
 const { Log } = ChromeUtils.import("resource://gre/modules/Log.jsm");
-ChromeUtils.import("resource://gre/modules/Services.jsm", this);
-ChromeUtils.import("resource://gre/modules/XPCOMUtils.jsm", this);
-ChromeUtils.import("resource://gre/modules/TelemetryUtils.jsm", this);
+const { Services } = ChromeUtils.import("resource://gre/modules/Services.jsm");
+const { XPCOMUtils } = ChromeUtils.import(
+  "resource://gre/modules/XPCOMUtils.jsm"
+);
+const { TelemetryUtils } = ChromeUtils.import(
+  "resource://gre/modules/TelemetryUtils.jsm"
+);
 const { AppConstants } = ChromeUtils.import(
   "resource://gre/modules/AppConstants.jsm"
 );
@@ -430,12 +434,6 @@ var Impl = {
     }
 
     ret.startupInterrupted = Number(Services.startup.interrupted);
-
-    let maximalNumberOfConcurrentThreads =
-      Telemetry.maximalNumberOfConcurrentThreads;
-    if (maximalNumberOfConcurrentThreads) {
-      ret.maximalNumberOfConcurrentThreads = maximalNumberOfConcurrentThreads;
-    }
 
     if (Utils.isContentProcess) {
       return ret;

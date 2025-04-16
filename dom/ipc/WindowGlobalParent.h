@@ -119,7 +119,9 @@ class WindowGlobalParent final : public WindowContext,
   // The current URI which loaded in the document.
   nsIURI* GetDocumentURI() override { return mDocumentURI; }
 
-  void GetDocumentTitle(nsAString& aTitle) const { aTitle = mDocumentTitle; }
+  void GetDocumentTitle(nsAString& aTitle) const {
+    aTitle = mDocumentTitle.valueOr(nsString());
+  }
 
   nsIPrincipal* GetContentBlockingAllowListPrincipal() const {
     return mDocContentBlockingAllowListPrincipal;
@@ -250,15 +252,6 @@ class WindowGlobalParent final : public WindowContext,
   mozilla::ipc::IPCResult RecvShare(IPCWebShareData&& aData,
                                     ShareResolver&& aResolver);
 
-  mozilla::ipc::IPCResult RecvUpdateDocumentWouldPreloadResources();
-  mozilla::ipc::IPCResult RecvSubmitLoadEventPreloadTelemetry(
-      TimeStamp aNavigationStart, TimeStamp aLoadEventStart,
-      TimeStamp aLoadEventEnd);
-  mozilla::ipc::IPCResult RecvSubmitTimeToFirstInteractionPreloadTelemetry(
-      uint32_t aMillis);
-  mozilla::ipc::IPCResult RecvSubmitLoadInputEventResponsePreloadTelemetry(
-      uint32_t aMillis);
-
   mozilla::ipc::IPCResult RecvCheckPermitUnload(
       bool aHasInProcessBlocker, XPCOMPermitUnloadAction aAction,
       CheckPermitUnloadResolver&& aResolver);
@@ -284,7 +277,7 @@ class WindowGlobalParent final : public WindowContext,
   // The principal to use for the content blocking allow list.
   nsCOMPtr<nsIPrincipal> mDocContentBlockingAllowListPrincipal;
   nsCOMPtr<nsIURI> mDocumentURI;
-  nsString mDocumentTitle;
+  Maybe<nsString> mDocumentTitle;
 
   bool mIsInitialDocument;
 

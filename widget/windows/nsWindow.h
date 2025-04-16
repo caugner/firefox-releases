@@ -42,7 +42,7 @@
 
 #ifdef ACCESSIBILITY
 #  include "oleacc.h"
-#  include "mozilla/a11y/Accessible.h"
+#  include "mozilla/a11y/LocalAccessible.h"
 #endif
 
 #include "nsUXThemeData.h"
@@ -125,8 +125,6 @@ class nsWindow final : public nsWindowBase {
       mozilla::WidgetContentCommandEvent* aEvent) override;
   virtual nsWindowBase* GetParentWindowBase(bool aIncludeOwner) override;
   virtual bool IsTopLevelWidget() override { return mIsTopWidgetWindow; }
-
-  using nsWindowBase::DispatchPluginEvent;
 
   // nsIWidget interface
   using nsWindowBase::Create;  // for Create signature not overridden here
@@ -263,25 +261,21 @@ class nsWindow final : public nsWindowBase {
   /**
    * Event helpers
    */
-  virtual bool DispatchMouseEvent(
-      mozilla::EventMessage aEventMessage, WPARAM wParam, LPARAM lParam,
-      bool aIsContextMenuKey = false,
-      int16_t aButton = mozilla::MouseButton::ePrimary,
-      uint16_t aInputSource =
-          mozilla::dom::MouseEvent_Binding::MOZ_SOURCE_MOUSE,
-      WinPointerInfo* aPointerInfo = nullptr);
+  virtual bool DispatchMouseEvent(mozilla::EventMessage aEventMessage,
+                                  WPARAM wParam, LPARAM lParam,
+                                  bool aIsContextMenuKey, int16_t aButton,
+                                  uint16_t aInputSource,
+                                  WinPointerInfo* aPointerInfo = nullptr);
   virtual bool DispatchWindowEvent(mozilla::WidgetGUIEvent* aEvent,
                                    nsEventStatus& aStatus);
   void DispatchPendingEvents();
-  bool DispatchPluginEvent(UINT aMessage, WPARAM aWParam, LPARAM aLParam,
-                           bool aDispatchPendingEvents);
   void DispatchCustomEvent(const nsString& eventName);
 
 #ifdef ACCESSIBILITY
   /**
    * Return an accessible associated with the window.
    */
-  mozilla::a11y::Accessible* GetAccessible();
+  mozilla::a11y::LocalAccessible* GetAccessible();
 #endif  // ACCESSIBILITY
 
   /**
@@ -355,10 +349,6 @@ class nsWindow final : public nsWindowBase {
   virtual bool ShouldUseOffMainThreadCompositing() override;
 
   const IMEContext& DefaultIMC() const { return mDefaultIMC; }
-
-  virtual nsresult OnWindowedPluginKeyEvent(
-      const mozilla::NativeEventData& aKeyEventData,
-      nsIKeyEventInPluginCallback* aCallback) override;
 
   void GetCompositorWidgetInitData(
       mozilla::widget::CompositorWidgetInitData* aInitData) override;
@@ -625,6 +615,7 @@ class nsWindow final : public nsWindowBase {
   static bool sIsInMouseCapture;
   static bool sHaveInitializedPrefs;
   static bool sIsRestoringSession;
+  static bool sFirstTopLevelWindowCreated;
 
   PlatformCompositorWidgetDelegate* mCompositorWidgetDelegate;
 

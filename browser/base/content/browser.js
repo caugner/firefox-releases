@@ -22,6 +22,8 @@ XPCOMUtils.defineLazyModuleGetters(this, {
   NewTabPagePreloading: "resource:///modules/NewTabPagePreloading.jsm",
   BrowserSearchTelemetry: "resource:///modules/BrowserSearchTelemetry.jsm",
   BrowserUsageTelemetry: "resource:///modules/BrowserUsageTelemetry.jsm",
+  BrowserTelemetryUtils: "resource://gre/modules/BrowserTelemetryUtils.jsm",
+  BrowserUIUtils: "resource:///modules/BrowserUIUtils.jsm",
   BrowserUtils: "resource://gre/modules/BrowserUtils.jsm",
   BrowserWindowTracker: "resource:///modules/BrowserWindowTracker.jsm",
   CFRPageActions: "resource://activity-stream/lib/CFRPageActions.jsm",
@@ -31,6 +33,8 @@ XPCOMUtils.defineLazyModuleGetters(this, {
     "resource://gre/modules/ContextualIdentityService.jsm",
   CustomizableUI: "resource:///modules/CustomizableUI.jsm",
   Deprecated: "resource://gre/modules/Deprecated.jsm",
+  DevToolsSocketStatus:
+    "resource://devtools/shared/security/DevToolsSocketStatus.jsm",
   DownloadsCommon: "resource:///modules/DownloadsCommon.jsm",
   DownloadUtils: "resource://gre/modules/DownloadUtils.jsm",
   E10SUtils: "resource://gre/modules/E10SUtils.jsm",
@@ -58,6 +62,7 @@ XPCOMUtils.defineLazyModuleGetters(this, {
   PrivateBrowsingUtils: "resource://gre/modules/PrivateBrowsingUtils.jsm",
   ProcessHangMonitor: "resource:///modules/ProcessHangMonitor.jsm",
   PromiseUtils: "resource://gre/modules/PromiseUtils.jsm",
+  PromptUtils: "resource://gre/modules/SharedPromptUtils.jsm",
   // TODO (Bug 1529552): Remove once old urlbar code goes away.
   ReaderMode: "resource://gre/modules/ReaderMode.jsm",
   RFPHelper: "resource://gre/modules/RFPHelper.jsm",
@@ -69,6 +74,7 @@ XPCOMUtils.defineLazyModuleGetters(this, {
   SimpleServiceDiscovery: "resource://gre/modules/SimpleServiceDiscovery.jsm",
   SiteDataManager: "resource:///modules/SiteDataManager.jsm",
   SitePermissions: "resource:///modules/SitePermissions.jsm",
+  SubDialog: "resource://gre/modules/SubDialog.jsm",
   SubDialogManager: "resource://gre/modules/SubDialog.jsm",
   TabModalPrompt: "chrome://global/content/tabprompts.jsm",
   TabCrashHandler: "resource:///modules/ContentCrashHandlers.jsm",
@@ -165,6 +171,11 @@ XPCOMUtils.defineLazyScriptGetter(
 );
 XPCOMUtils.defineLazyScriptGetter(
   this,
+  "gPermissionPanel",
+  "chrome://browser/content/browser-sitePermissionPanel.js"
+);
+XPCOMUtils.defineLazyScriptGetter(
+  this,
   "gProtectionsHandler",
   "chrome://browser/content/browser-siteProtections.js"
 );
@@ -198,7 +209,6 @@ XPCOMUtils.defineLazyScriptGetter(
   [
     "DownloadsPanel",
     "DownloadsOverlayLoader",
-    "DownloadsSubview",
     "DownloadsView",
     "DownloadsViewUI",
     "DownloadsViewController",
@@ -472,6 +482,9 @@ XPCOMUtils.defineLazyPreferenceGetter(
   "browser.toolbars.keyboard_navigation",
   false,
   (aPref, aOldVal, aNewVal) => {
+    if (window.closed) {
+      return;
+    }
     if (aNewVal) {
       ToolbarKeyboardNavigator.init();
     } else {
@@ -566,11 +579,17 @@ XPCOMUtils.defineLazyPreferenceGetter(
   this,
   "gProtonTabs",
   "browser.proton.tabs.enabled",
-  false,
-  (pref, oldValue, newValue) => {
-    document.documentElement.toggleAttribute("proton", newValue);
-  }
+  false
 );
+
+/* Import aboutWelcomeFeature from Nimbus Experiment API
+   to access experiment values */
+XPCOMUtils.defineLazyGetter(this, "aboutWelcomeFeature", () => {
+  const { ExperimentFeature } = ChromeUtils.import(
+    "resource://nimbus/ExperimentAPI.jsm"
+  );
+  return new ExperimentFeature("aboutwelcome");
+});
 
 customElements.setElementCreationCallback("translation-notification", () => {
   Services.scriptloader.loadSubScript(
@@ -1034,7 +1053,7 @@ var gPopupBlockerObserver = {
       return;
     }
 
-    gIdentityHandler.refreshIdentityBlock();
+    gPermissionPanel.refreshPermissionIcons();
 
     let popupCount = gBrowser.selectedBrowser.popupBlocker.getBlockedPopupCount();
 
@@ -1170,7 +1189,7 @@ var gPopupBlockerObserver = {
         blockedPopupAllowSite.removeAttribute("block");
       }
     } catch (e) {
-      blockedPopupAllowSite.setAttribute("hidden", "true");
+      blockedPopupAllowSite.hidden = true;
     }
 
     if (PrivateBrowsingUtils.isWindowPrivate(window)) {
@@ -1194,7 +1213,7 @@ var gPopupBlockerObserver = {
     let blockedPopupsSeparator = document.getElementById(
       "blockedPopupsSeparator"
     );
-    blockedPopupsSeparator.setAttribute("hidden", true);
+    blockedPopupsSeparator.hidden = true;
 
     browser.popupBlocker.getBlockedPopups().then(blockedPopups => {
       let foundUsablePopupURI = false;
@@ -1870,6 +1889,15 @@ var gBrowserInit = {
       document.getElementById("key_privatebrowsing").remove();
     }
 
+    if (BrowserUIUtils.quitShortcutDisabled) {
+      document.getElementById("key_quitApplication").remove();
+      document.getElementById("menu_FileQuitItem").removeAttribute("key");
+      PanelMultiView.getViewNode(
+        document,
+        "appMenu-quit-button"
+      )?.removeAttribute("key");
+    }
+
     this._loadHandled = true;
   },
 
@@ -1901,6 +1929,7 @@ var gBrowserInit = {
     this._handleURIToLoad();
 
     Services.obs.addObserver(gIdentityHandler, "perm-changed");
+    Services.obs.addObserver(gRemoteControl, "devtools-socket");
     Services.obs.addObserver(gRemoteControl, "marionette-listening");
     Services.obs.addObserver(gRemoteControl, "remote-listening");
     Services.obs.addObserver(
@@ -1968,6 +1997,26 @@ var gBrowserInit = {
     if (!Services.prefs.getBoolPref("ui.click_hold_context_menus", false)) {
       SetClickAndHoldHandlers();
     }
+
+    function initBackForwardButtonTooltip(tooltipId, l10nId, shortcutId) {
+      let shortcut = document.getElementById(shortcutId);
+      shortcut = ShortcutUtils.prettifyShortcut(shortcut);
+
+      let tooltip = document.getElementById(tooltipId);
+      document.l10n.setAttributes(tooltip, l10nId, { shortcut });
+    }
+
+    initBackForwardButtonTooltip(
+      "back-button-tooltip-description",
+      "navbar-tooltip-back-2",
+      "goBackKb"
+    );
+
+    initBackForwardButtonTooltip(
+      "forward-button-tooltip-description",
+      "navbar-tooltip-forward-2",
+      "goForwardKb"
+    );
 
     PlacesToolbarHelper.init();
 
@@ -2163,7 +2212,16 @@ var gBrowserInit = {
     let shouldRemoveFocusedAttribute = true;
 
     this._callWithURIToLoad(uriToLoad => {
-      if (isBlankPageURL(uriToLoad) || uriToLoad == "about:privatebrowsing") {
+      // Check if user is enrolled in an aboutWelcome experiment that has skipFocus
+      // property set to true, if yes remove focus from urlbar for about:welcome
+      const aboutWelcomeSkipUrlBarFocus =
+        uriToLoad == "about:welcome" &&
+        aboutWelcomeFeature.getValue()?.skipFocus;
+
+      if (
+        (isBlankPageURL(uriToLoad) && !aboutWelcomeSkipUrlBarFocus) ||
+        uriToLoad == "about:privatebrowsing"
+      ) {
         gURLBar.select();
         shouldRemoveFocusedAttribute = false;
         return;
@@ -2514,6 +2572,7 @@ var gBrowserInit = {
       FullZoom.destroy();
 
       Services.obs.removeObserver(gIdentityHandler, "perm-changed");
+      Services.obs.removeObserver(gRemoteControl, "devtools-socket");
       Services.obs.removeObserver(gRemoteControl, "marionette-listening");
       Services.obs.removeObserver(gRemoteControl, "remote-listening");
       Services.obs.removeObserver(
@@ -3482,6 +3541,7 @@ function BrowserReloadWithFlags(reloadFlags) {
     delete tab.linkedBrowser.authPromptAbuseCounter;
   }
   gIdentityHandler.hidePopup();
+  gPermissionPanel.hidePopup();
 
   let handlingUserInput = window.windowUtils.isHandlingUserInput;
 
@@ -4935,7 +4995,7 @@ var XULBrowserWindow = {
       );
 
       if (UrlbarPrefs.get("trimURLs")) {
-        url = BrowserUtils.trimURL(url);
+        url = BrowserUIUtils.trimURL(url);
       }
     }
 
@@ -5124,7 +5184,7 @@ var XULBrowserWindow = {
         aFlags & Ci.nsIWebProgressListener.LOCATION_CHANGE_SAME_DOCUMENT;
       if (
         (location == "about:blank" &&
-          BrowserUtils.checkEmptyPageOrigin(gBrowser.selectedBrowser)) ||
+          BrowserUIUtils.checkEmptyPageOrigin(gBrowser.selectedBrowser)) ||
         location == ""
       ) {
         // Second condition is for new tabs, otherwise
@@ -5152,7 +5212,7 @@ var XULBrowserWindow = {
         );
       }
 
-      gIdentityHandler.onLocationChange();
+      gPermissionPanel.onLocationChange();
 
       gProtectionsHandler.onLocationChange();
 
@@ -5587,7 +5647,7 @@ var CombinedStopReload = {
 
     this._cancelTransition();
     if (shouldAnimate) {
-      BrowserUtils.setToolbarButtonHeightProperty(this.stopReloadContainer);
+      BrowserUIUtils.setToolbarButtonHeightProperty(this.stopReloadContainer);
       this.stopReloadContainer.setAttribute("animate", "true");
     } else {
       this.stopReloadContainer.removeAttribute("animate");
@@ -5610,7 +5670,7 @@ var CombinedStopReload = {
       this.stopReloadContainer.closest("#nav-bar-customization-target");
 
     if (shouldAnimate) {
-      BrowserUtils.setToolbarButtonHeightProperty(this.stopReloadContainer);
+      BrowserUIUtils.setToolbarButtonHeightProperty(this.stopReloadContainer);
       this.stopReloadContainer.setAttribute("animate", "true");
     } else {
       this.stopReloadContainer.removeAttribute("animate");
@@ -5720,8 +5780,17 @@ var TabsProgressListener = {
           stopwatchRunning /* we won't see STATE_START events for pre-rendered tabs */
         ) {
           if (recordLoadTelemetry) {
+            if (aBrowser.browsingContext?.topWindowContext?.hadLazyLoadImage) {
+              let timeElapsed = TelemetryStopwatch.timeElapsed(
+                histogram,
+                aBrowser
+              );
+              Services.telemetry
+                .getHistogramById("FX_LAZYLOAD_IMAGE_PAGE_LOAD_MS")
+                .add(timeElapsed);
+            }
             TelemetryStopwatch.finish(histogram, aBrowser);
-            BrowserUtils.recordSiteOriginTelemetry(browserWindows());
+            BrowserTelemetryUtils.recordSiteOriginTelemetry(browserWindows());
           }
         }
       } else if (
@@ -6570,6 +6639,7 @@ const nodeToTooltipMap = {
   "downloads-button": "downloads.tooltip",
   "fullscreen-button": "fullscreenButton.tooltip",
   "appMenu-fullscreen-button": "fullscreenButton.tooltip",
+  "appMenu-fullscreen-button2": "fullscreenButton.tooltip",
   "new-window-button": "newWindowButton.tooltip",
   "new-tab-button": "newTabButton.tooltip",
   "tabs-newtab-button": "newTabButton.tooltip",
@@ -6580,8 +6650,11 @@ const nodeToTooltipMap = {
   "appMenu-copy-button": "copy-button.tooltip",
   "appMenu-paste-button": "paste-button.tooltip",
   "appMenu-zoomEnlarge-button": "zoomEnlarge-button.tooltip",
+  "appMenu-zoomEnlarge-button2": "zoomEnlarge-button.tooltip",
   "appMenu-zoomReset-button": "zoomReset-button.tooltip",
+  "appMenu-zoomReset-button2": "zoomReset-button.tooltip",
   "appMenu-zoomReduce-button": "zoomReduce-button.tooltip",
+  "appMenu-zoomReduce-button2": "zoomReduce-button.tooltip",
   "reader-mode-button": "reader-mode-button.tooltip",
   "print-button": "printButton.tooltip",
 };
@@ -6592,6 +6665,7 @@ const nodeToShortcutMap = {
   "downloads-button": "key_openDownloads",
   "fullscreen-button": "key_fullScreen",
   "appMenu-fullscreen-button": "key_fullScreen",
+  "appMenu-fullscreen-button2": "key_fullScreen",
   "new-window-button": "key_newNavigator",
   "new-tab-button": "key_newNavigatorTab",
   "tabs-newtab-button": "key_newNavigatorTab",
@@ -6602,8 +6676,11 @@ const nodeToShortcutMap = {
   "appMenu-copy-button": "key_copy",
   "appMenu-paste-button": "key_paste",
   "appMenu-zoomEnlarge-button": "key_fullZoomEnlarge",
+  "appMenu-zoomEnlarge-button2": "key_fullZoomEnlarge",
   "appMenu-zoomReset-button": "key_fullZoomReset",
+  "appMenu-zoomReset-button2": "key_fullZoomReset",
   "appMenu-zoomReduce-button": "key_fullZoomReduce",
+  "appMenu-zoomReduce-button2": "key_fullZoomReduce",
   "reader-mode-button": "key_toggleReaderMode",
   "print-button": "printKb",
 };
@@ -8073,7 +8150,11 @@ const gRemoteControl = {
 
   updateVisualCue() {
     const mainWindow = document.documentElement;
-    if (Marionette.running || RemoteAgent.listening) {
+    if (
+      DevToolsSocketStatus.opened ||
+      Marionette.running ||
+      RemoteAgent.listening
+    ) {
       mainWindow.setAttribute("remotecontrol", "true");
     } else {
       mainWindow.removeAttribute("remotecontrol");
@@ -8364,9 +8445,7 @@ var RestoreLastSessionObserver = {
       Services.obs.addObserver(this, "sessionstore-last-session-cleared", true);
       goSetCommandEnabled("Browser:RestoreLastSession", true);
     } else if (SessionStore.willAutoRestore) {
-      document
-        .getElementById("Browser:RestoreLastSession")
-        .setAttribute("hidden", true);
+      document.getElementById("Browser:RestoreLastSession").hidden = true;
     }
   },
 
@@ -8848,6 +8927,7 @@ class TabDialogBox {
       sizeTo,
       keepOpenSameOriginNav,
       modalType = null,
+      allowFocusCheckbox = false,
     } = {},
     ...aParams
   ) {
@@ -8865,9 +8945,13 @@ class TabDialogBox {
         this._onFirstDialogOpen();
       }
 
-      let closingCallback = () => {
+      let closingCallback = event => {
         if (!hasDialogs) {
           this._onLastDialogClose();
+        }
+
+        if (allowFocusCheckbox) {
+          this.maybeSetAllowTabSwitchPermission(event.target);
         }
       };
 
@@ -9013,6 +9097,28 @@ class TabDialogBox {
       this._buildContentPromptDialog();
     }
     return this._contentDialogManager;
+  }
+
+  onNextPromptShowAllowFocusCheckboxFor(principal) {
+    this._allowTabFocusByPromptPrincipal = principal;
+  }
+
+  /**
+   * Sets the "focus-tab-by-prompt" permission for the dialog.
+   */
+  maybeSetAllowTabSwitchPermission(dialog) {
+    let checkbox = dialog.querySelector("checkbox");
+
+    if (checkbox.checked) {
+      Services.perms.addFromPrincipal(
+        this._allowTabFocusByPromptPrincipal,
+        "focus-tab-by-prompt",
+        Services.perms.ALLOW_ACTION
+      );
+    }
+
+    // Don't show the "allow tab switch checkbox" for subsequent prompts.
+    this._allowTabFocusByPromptPrincipal = null;
   }
 }
 
@@ -9235,6 +9341,147 @@ TabModalPromptBox.prototype = {
     return browser;
   },
 };
+
+// Handle window-modal prompts that we want to display with the same style as
+// tab-modal prompts.
+var gDialogBox = {
+  _dialog: null,
+
+  get isOpen() {
+    return !!this._dialog;
+  },
+
+  async open(uri, args) {
+    try {
+      await this._open(uri, args);
+    } catch (ex) {
+      Cu.reportError(ex);
+    } finally {
+      let dialog = document.getElementById("window-modal-dialog");
+      dialog.close();
+      dialog.style.visibility = "hidden";
+      dialog.style.height = "0";
+      dialog.style.width = "0";
+      document.documentElement.removeAttribute("window-modal-open");
+      dialog.removeEventListener("dialogopen", this);
+      this._updateMenuAndCommandState(true /* to enable */);
+      this._dialog = null;
+    }
+    return args;
+  },
+
+  handleEvent(event) {
+    if (event.type == "dialogopen") {
+      this._dialog.focus(true);
+    }
+  },
+
+  _open(uri, args) {
+    // Get this offset before we touch style below, as touching style seems
+    // to reset the cached layout bounds.
+    let offset = window.windowUtils.getBoundsWithoutFlushing(
+      gBrowser.selectedBrowser
+    ).top;
+    let parentElement = document.getElementById("window-modal-dialog");
+    // The dialog has 1em padding; compensate for that:
+    parentElement.style.marginTop = `calc(${offset}px - 1em)`;
+    parentElement.style.removeProperty("visibility");
+    parentElement.style.removeProperty("width");
+    parentElement.style.removeProperty("height");
+    document.documentElement.setAttribute("window-modal-open", true);
+    // Call this first so the contents show up and get layout, which is
+    // required for SubDialog to work.
+    parentElement.showModal();
+
+    // Disable menus and shortcuts.
+    this._updateMenuAndCommandState(false /* to disable */);
+
+    // Now actually set up the dialog contents:
+    let template = document.getElementById("window-modal-dialog-template")
+      .content.firstElementChild;
+    parentElement.addEventListener("dialogopen", this);
+    this._dialog = new SubDialog({
+      template,
+      parentElement,
+      id: "window-modal-dialog-subdialog",
+      options: {
+        consumeOutsideClicks: false,
+      },
+    });
+    let closedPromise = new Promise(resolve => {
+      this._closedCallback = function() {
+        PromptUtils.fireDialogEvent(window, "DOMModalDialogClosed");
+        resolve();
+      };
+    });
+    this._dialog.open(
+      uri,
+      {
+        features: "resizable=no",
+        modalType: Ci.nsIPrompt.MODAL_TYPE_INTERNAL_WINDOW,
+        closedCallback: () => {
+          this._closedCallback();
+        },
+      },
+      args
+    );
+    return closedPromise;
+  },
+
+  _nonUpdatableElements: new Set([
+    // Make an exception for debugging tools, for developer ease of use.
+    "key_browserConsole",
+    "key_browserToolbox",
+
+    // Don't touch the editing keys/commands which we might want inside the dialog.
+    "key_undo",
+    "key_redo",
+
+    "key_cut",
+    "key_copy",
+    "key_paste",
+    "key_delete",
+    "key_selectAll",
+  ]),
+
+  _updateMenuAndCommandState(shouldBeEnabled) {
+    let editorCommands = document.getElementById("editMenuCommands");
+    // For the following items, set or clear disabled state:
+    // - toplevel menubar items (will affect inner items on macOS)
+    // - command elements
+    // - key elements not connected to command elements.
+    for (let element of document.querySelectorAll(
+      "menubar > menu, command, key:not([command])"
+    )) {
+      if (
+        editorCommands?.contains(element) ||
+        (element.id && this._nonUpdatableElements.has(element.id))
+      ) {
+        continue;
+      }
+      if (element.nodeName == "key" && element.command) {
+        continue;
+      }
+      if (!shouldBeEnabled) {
+        if (element.getAttribute("disabled") != "true") {
+          element.setAttribute("disabled", true);
+        } else {
+          element.setAttribute("wasdisabled", true);
+        }
+      } else if (element.getAttribute("wasdisabled") != "true") {
+        element.removeAttribute("disabled");
+      } else {
+        element.removeAttribute("wasdisabled");
+      }
+    }
+  },
+};
+
+// browser.js loads in the library window, too, but we can only show prompts
+// in the main browser window:
+if (window.location.href != AppConstants.BROWSER_CHROME_URL) {
+  gDialogBox = null;
+}
 
 var ConfirmationHint = {
   _timerID: null,

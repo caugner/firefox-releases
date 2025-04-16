@@ -54,7 +54,6 @@ class nsIContent;
 class ViewWrapper;
 class nsIScreen;
 class nsIRunnable;
-class nsIKeyEventInPluginCallback;
 class nsUint64HashKey;
 
 namespace mozilla {
@@ -1188,12 +1187,6 @@ class nsIWidget : public nsISupports {
   virtual void SetDrawsTitle(bool aDrawTitle) {}
 
   /**
-   * Indicates whether the widget should attempt to make titlebar controls
-   * easier to see on dark titlebar backgrounds.
-   */
-  virtual void SetUseBrightTitlebarForeground(bool aBrightForeground) {}
-
-  /**
    * Hide window chrome (borders, buttons) for this widget.
    *
    */
@@ -1651,7 +1644,11 @@ class nsIWidget : public nsISupports {
     // ALL_BITS used for validity checking during IPC serialization
     ALL_BITS = (1 << 4) - 1
   };
-
+  /*
+   * TouchpadPinchPhase states for SynthesizeNativeTouchPadPinch. Match
+   * Phase states in nsIDOMWindowUtils.idl.
+   */
+  enum TouchpadPinchPhase { PHASE_BEGIN = 0, PHASE_UPDATE = 1, PHASE_END = 2 };
   /*
    * Create a new or update an existing touch pointer on the digitizer.
    * To trigger os level gestures, individual touch points should
@@ -1673,6 +1670,13 @@ class nsIWidget : public nsISupports {
                                               double aPointerPressure,
                                               uint32_t aPointerOrientation,
                                               nsIObserver* aObserver) = 0;
+  /*
+   * See nsIDOMWindowUtils.sendNativeTouchpadPinch().
+   */
+  virtual nsresult SynthesizeNativeTouchPadPinch(TouchpadPinchPhase aEventPhase,
+                                                 float aScale,
+                                                 LayoutDeviceIntPoint aPoint,
+                                                 int32_t aModifierFlags) = 0;
 
   /*
    * Helper for simulating a simple tap event with one touch point. When
@@ -1884,9 +1888,9 @@ class nsIWidget : public nsISupports {
     NativeKeyBindingsForMultiLineEditor,
     NativeKeyBindingsForRichTextEditor
   };
-  virtual bool GetEditCommands(NativeKeyBindingsType aType,
-                               const mozilla::WidgetKeyboardEvent& aEvent,
-                               nsTArray<mozilla::CommandInt>& aCommands);
+  MOZ_CAN_RUN_SCRIPT virtual bool GetEditCommands(
+      NativeKeyBindingsType aType, const mozilla::WidgetKeyboardEvent& aEvent,
+      nsTArray<mozilla::CommandInt>& aCommands);
 
   /*
    * Retrieves a reference to notification requests of IME.  Note that the
@@ -2051,28 +2055,6 @@ class nsIWidget : public nsISupports {
   virtual void ZoomToRect(const uint32_t& aPresShellId,
                           const ScrollableLayerGuid::ViewID& aViewId,
                           const CSSRect& aRect, const uint32_t& aFlags) = 0;
-
-  /**
-   * OnWindowedPluginKeyEvent() is called when native key event is
-   * received in the focused plugin process directly in PluginInstanceChild.
-   *
-   * @param aKeyEventData     The native key event data.  The actual type
-   *                          copied into NativeEventData depends on the
-   *                          caller.  Please check PluginInstanceChild.
-   * @param aCallback         Callback interface.  When this returns
-   *                          NS_SUCCESS_EVENT_HANDLED_ASYNCHRONOUSLY,
-   *                          the event handler has to call this callback.
-   *                          Otherwise, the caller should do that instead.
-   * @return                  NS_ERROR_* if this fails to handle the event.
-   *                          NS_SUCCESS_EVENT_CONSUMED if the key event is
-   *                          consumed.
-   *                          NS_OK if the key event isn't consumed.
-   *                          NS_SUCCESS_EVENT_HANDLED_ASYNCHRONOUSLY if the
-   *                          key event will be handled asynchronously.
-   */
-  virtual nsresult OnWindowedPluginKeyEvent(
-      const mozilla::NativeEventData& aKeyEventData,
-      nsIKeyEventInPluginCallback* aCallback);
 
   /**
    * LookUpDictionary shows the dictionary for the word around current point.

@@ -420,19 +420,16 @@ class PageAction {
           args: { total: users },
         })
       );
-      footerUsers.removeAttribute("hidden");
+      footerUsers.hidden = false;
     } else {
       // Prevent whitespace around empty label from affecting other spacing
-      footerUsers.setAttribute("hidden", true);
+      footerUsers.hidden = true;
       footerUsers.removeAttribute("value");
     }
 
     // Spacer pushes the link to the opposite end when there's other content
-    if (rating || users) {
-      footerSpacer.removeAttribute("hidden");
-    } else {
-      footerSpacer.setAttribute("hidden", true);
-    }
+
+    footerSpacer.hidden = !rating && !users;
   }
 
   _createElementAndAppend({ type, id }, parent) {
@@ -521,17 +518,8 @@ class PageAction {
 
     let { content, id } = message;
     let { primary, secondary } = content.buttons;
-
-    let dateFormat = new Services.intl.DateTimeFormat(
-      this.window.gBrowser.ownerGlobal.navigator.language,
-      {
-        month: "long",
-        year: "numeric",
-      }
-    ).format;
-
     let earliestDate = await TrackingDBService.getEarliestRecordedDate();
-    let monthName = dateFormat(new Date(earliestDate));
+    let timestamp = new Date().getTime(earliestDate);
     let panelTitle = "";
     let headerLabel = this.window.document.getElementById(
       "cfr-notification-header-label"
@@ -551,7 +539,7 @@ class PageAction {
         content: message.content.heading_text,
         attributes: {
           blockedCount: reachedMilestone,
-          date: monthName,
+          date: timestamp,
         },
       })
     );

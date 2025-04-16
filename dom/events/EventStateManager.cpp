@@ -15,6 +15,7 @@
 #include "mozilla/MiscEvents.h"
 #include "mozilla/MathAlgorithms.h"
 #include "mozilla/MouseEvents.h"
+#include "mozilla/PointerLockManager.h"
 #include "mozilla/PresShell.h"
 #include "mozilla/ScopeExit.h"
 #include "mozilla/ScrollTypes.h"
@@ -81,7 +82,6 @@
 #include "nsIContentViewer.h"
 #include "nsFrameManager.h"
 #include "nsIBrowserChild.h"
-#include "nsPluginFrame.h"
 #include "nsMenuPopupFrame.h"
 
 #include "nsIObserverService.h"
@@ -115,7 +115,7 @@
 
 #include "mozilla/Preferences.h"
 #include "mozilla/LookAndFeel.h"
-#include "GeckoProfiler.h"
+#include "mozilla/ProfilerLabels.h"
 #include "Units.h"
 
 #ifdef XP_MACOSX
@@ -224,11 +224,6 @@ LayoutDeviceIntPoint EventStateManager::sLastRefPoint = kInvalidRefPoint;
 CSSIntPoint EventStateManager::sLastScreenPoint = CSSIntPoint(0, 0);
 LayoutDeviceIntPoint EventStateManager::sSynthCenteringPoint = kInvalidRefPoint;
 CSSIntPoint EventStateManager::sLastClientPoint = CSSIntPoint(0, 0);
-bool EventStateManager::sIsPointerLocked = false;
-// Reference to the pointer locked element.
-nsWeakPtr EventStateManager::sPointerLockedElement;
-// Reference to the document which requested pointer lock.
-nsWeakPtr EventStateManager::sPointerLockedDoc;
 nsCOMPtr<nsIContent> EventStateManager::sDragOverContent = nullptr;
 
 EventStateManager::WheelPrefs* EventStateManager::WheelPrefs::sInstance =
@@ -535,11 +530,10 @@ nsresult EventStateManager::PreHandleEvent(nsPresContext* aPresContext,
     return NS_ERROR_NULL_POINTER;
   }
 #ifdef DEBUG
-  if (aEvent->HasDragEventMessage() && sIsPointerLocked) {
-    NS_ASSERTION(
-        sIsPointerLocked,
-        "sIsPointerLocked is true. Drag events should be suppressed when "
-        "the pointer is locked.");
+  if (aEvent->HasDragEventMessage() && PointerLockManager::IsLocked()) {
+    NS_ASSERTION(PointerLockManager::IsLocked(),
+                 "Pointer is locked. Drag events should be suppressed when "
+                 "the pointer is locked.");
   }
 #endif
   // Store last known screenPoint and clientPoint so pointer lock
@@ -547,7 +541,7 @@ nsresult EventStateManager::PreHandleEvent(nsPresContext* aPresContext,
   if (aEvent->IsTrusted() &&
       ((mouseEvent && mouseEvent->IsReal()) ||
        aEvent->mClass == eWheelEventClass) &&
-      !sIsPointerLocked) {
+      !PointerLockManager::IsLocked()) {
     sLastScreenPoint =
         Event::GetScreenCoords(aPresContext, aEvent, aEvent->mRefPoint);
     sLastClientPoint = Event::GetClientCoords(
@@ -573,7 +567,7 @@ nsresult EventStateManager::PreHandleEvent(nsPresContext* aPresContext,
 
   switch (aEvent->mMessage) {
     case eContextMenu:
-      if (sIsPointerLocked) {
+      if (PointerLockManager::IsLocked()) {
         return NS_ERROR_DOM_INVALID_STATE_ERR;
       }
       break;
@@ -687,19 +681,20 @@ nsresult EventStateManager::PreHandleEvent(nsPresContext* aPresContext,
       }
       [[fallthrough]];
     case ePointerMove: {
+      if (!mInTouchDrag &&
+          PointerEventHandler::IsDragAndDropEnabled(*mouseEvent)) {
+        GenerateDragGesture(aPresContext, mouseEvent);
+      }
       // on the Mac, GenerateDragGesture() may not return until the drag
       // has completed and so |aTargetFrame| may have been deleted (moving
       // a bookmark, for example).  If this is the case, however, we know
       // that ClearFrameRefs() has been called and it cleared out
       // |mCurrentTarget|. As a result, we should pass |mCurrentTarget|
       // into UpdateCursor().
-      if (!mInTouchDrag) {
-        GenerateDragGesture(aPresContext, mouseEvent);
-      }
       UpdateCursor(aPresContext, aEvent, mCurrentTarget, aStatus);
 
       UpdateLastRefPointOfMouseEvent(mouseEvent);
-      if (sIsPointerLocked) {
+      if (PointerLockManager::IsLocked()) {
         ResetPointerToWindowCenterWhilePointerLocked(mouseEvent);
       }
       UpdateLastPointerPosition(mouseEvent);
@@ -1384,7 +1379,7 @@ void EventStateManager::DispatchCrossProcessEvent(WidgetEvent* aEvent,
       }
 
       if (BrowserParent* pointerLockedRemote =
-              BrowserParent::GetPointerLockedRemoteTarget()) {
+              PointerLockManager::GetLockedRemoteTarget()) {
         remote = pointerLockedRemote;
       } else if (BrowserParent* pointerCapturedRemote =
                      PointerEventHandler::GetPointerCapturingRemoteTarget(
@@ -1578,7 +1573,8 @@ void EventStateManager::CreateClickHoldTimer(nsPresContext* inPresContext,
                                              nsIFrame* inDownFrame,
                                              WidgetGUIEvent* inMouseDownEvent) {
   if (!inMouseDownEvent->IsTrusted() ||
-      IsTopLevelRemoteTarget(mGestureDownContent) || sIsPointerLocked) {
+      IsTopLevelRemoteTarget(mGestureDownContent) ||
+      PointerLockManager::IsLocked()) {
     return;
   }
 
@@ -1645,7 +1641,7 @@ void EventStateManager::sClickHoldCallback(nsITimer* aTimer, void* aESM) {
 // length of time, which is _not_ what we want.
 //
 void EventStateManager::FireContextClick() {
-  if (!mGestureDownContent || !mPresContext || sIsPointerLocked) {
+  if (!mGestureDownContent || !mPresContext || PointerLockManager::IsLocked()) {
     return;
   }
 
@@ -1860,8 +1856,7 @@ void EventStateManager::MaybeFirePointerCancel(WidgetInputEvent* aEvent) {
   RefPtr<PresShell> presShell = mPresContext->GetPresShell();
   AutoWeakFrame targetFrame = mCurrentTarget;
 
-  if (!StaticPrefs::dom_w3c_pointer_events_enabled() || !presShell ||
-      !targetFrame) {
+  if (!presShell || !targetFrame) {
     return;
   }
 
@@ -2626,13 +2621,6 @@ nsIFrame* EventStateManager::ComputeScrollTargetAndMayAdjustWheelEvent(
     // hasn't moved.
     nsIFrame* lastScrollFrame = WheelTransaction::GetTargetFrame();
     if (lastScrollFrame) {
-      if (aOptions & INCLUDE_PLUGIN_AS_TARGET) {
-        nsPluginFrame* pluginFrame = do_QueryFrame(lastScrollFrame);
-        if (pluginFrame &&
-            pluginFrame->WantsToHandleWheelEventAsDefaultAction()) {
-          return lastScrollFrame;
-        }
-      }
       nsIScrollableFrame* scrollableFrame =
           lastScrollFrame->GetScrollTargetFrame();
       if (scrollableFrame) {
@@ -2684,18 +2672,6 @@ nsIFrame* EventStateManager::ComputeScrollTargetAndMayAdjustWheelEvent(
     // Check whether the frame wants to provide us with a scrollable view.
     nsIScrollableFrame* scrollableFrame = scrollFrame->GetScrollTargetFrame();
     if (!scrollableFrame) {
-      // If the frame is a plugin frame, then, the plugin content may handle
-      // wheel events.  Only when the caller computes the scroll target for
-      // default action handling, we should assume the plugin frame as
-      // scrollable if the plugin wants to handle wheel events as default
-      // action.
-      if (aOptions & INCLUDE_PLUGIN_AS_TARGET) {
-        nsPluginFrame* pluginFrame = do_QueryFrame(scrollFrame);
-        if (pluginFrame &&
-            pluginFrame->WantsToHandleWheelEventAsDefaultAction()) {
-          return scrollFrame;
-        }
-      }
       nsMenuPopupFrame* menuPopupFrame = do_QueryFrame(scrollFrame);
       if (menuPopupFrame) {
         return nullptr;
@@ -3500,19 +3476,9 @@ nsresult EventStateManager::PostHandleEvent(nsPresContext* aPresContext,
       // values is adjusted during its lifetime, the instance will restore the
       // adjusted delta when it's being destrcuted.
       ESMAutoDirWheelDeltaRestorer restorer(*wheelEvent);
-      // Check if the frame to scroll before checking the default action
-      // because if the scroll target is a plugin, the default action should be
-      // chosen by the plugin rather than by our prefs.
       nsIFrame* frameToScroll = ComputeScrollTargetAndMayAdjustWheelEvent(
           mCurrentTarget, wheelEvent,
           COMPUTE_DEFAULT_ACTION_TARGET_WITH_AUTO_DIR);
-      nsPluginFrame* pluginFrame = do_QueryFrame(frameToScroll);
-      if (pluginFrame) {
-        MOZ_ASSERT(pluginFrame->WantsToHandleWheelEventAsDefaultAction());
-        // Plugins should receive original values instead of adjusted values.
-        horizontalizer.CancelHorizontalization();
-        action = WheelPrefs::ACTION_SEND_TO_PLUGIN;
-      }
 
       switch (action) {
         case WheelPrefs::ACTION_SCROLL:
@@ -3574,23 +3540,6 @@ nsresult EventStateManager::PostHandleEvent(nsPresContext* aPresContext,
           DoScrollZoom(mCurrentTarget, intDelta);
           break;
         }
-        case WheelPrefs::ACTION_SEND_TO_PLUGIN:
-          MOZ_ASSERT(pluginFrame);
-
-          if (wheelEvent->mMessage != eWheel ||
-              (!wheelEvent->mDeltaX && !wheelEvent->mDeltaY)) {
-            break;
-          }
-
-          MOZ_ASSERT(static_cast<void*>(frameToScroll) ==
-                     static_cast<void*>(pluginFrame));
-          if (!WheelTransaction::WillHandleDefaultAction(wheelEvent,
-                                                         frameToScroll)) {
-            break;
-          }
-
-          pluginFrame->HandleWheelEventAsDefaultAction(wheelEvent);
-          break;
         case WheelPrefs::ACTION_NONE:
         default:
           bool allDeltaOverflown = false;
@@ -4299,11 +4248,12 @@ nsIFrame* EventStateManager::DispatchMouseOrPointerEvent(
   // "[When the mouse is locked on an element...e]vents that require the concept
   // of a mouse cursor must not be dispatched (for example: mouseover,
   // mouseout).
-  if (sIsPointerLocked && (aMessage == eMouseLeave || aMessage == eMouseEnter ||
-                           aMessage == eMouseOver || aMessage == eMouseOut)) {
+  if (PointerLockManager::IsLocked() &&
+      (aMessage == eMouseLeave || aMessage == eMouseEnter ||
+       aMessage == eMouseOver || aMessage == eMouseOut)) {
     mCurrentTargetContent = nullptr;
     nsCOMPtr<Element> pointerLockedElement =
-        do_QueryReferent(EventStateManager::sPointerLockedElement);
+        PointerLockManager::GetLockedElement();
     if (!pointerLockedElement) {
       NS_WARNING("Should have pointer locked element, but didn't.");
       return nullptr;
@@ -4513,8 +4463,7 @@ void EventStateManager::NotifyMouseOver(WidgetMouseEvent* aMouseEvent,
   // content associated with our subdocument.
   EnsureDocument(mPresContext);
   if (Document* parentDoc = mDocument->GetInProcessParentDocument()) {
-    if (nsCOMPtr<nsIContent> docContent =
-            parentDoc->FindContentForSubDocument(mDocument)) {
+    if (nsCOMPtr<nsIContent> docContent = mDocument->GetEmbedderElement()) {
       if (PresShell* parentPresShell = parentDoc->GetPresShell()) {
         RefPtr<EventStateManager> parentESM =
             parentPresShell->GetPresContext()->EventStateManager();
@@ -4576,9 +4525,6 @@ static LayoutDeviceIntPoint GetWindowClientRectCenter(nsIWidget* aWidget) {
 
 void EventStateManager::GeneratePointerEnterExit(EventMessage aMessage,
                                                  WidgetMouseEvent* aEvent) {
-  if (!StaticPrefs::dom_w3c_pointer_events_enabled()) {
-    return;
-  }
   WidgetPointerEvent pointerEvent(*aEvent);
   pointerEvent.mMessage = aMessage;
   GenerateMouseEnterExit(&pointerEvent);
@@ -4595,7 +4541,7 @@ void EventStateManager::UpdateLastRefPointOfMouseEvent(
   // Mouse movement is reported on the MouseEvent.movement{X,Y} fields.
   // Movement is calculated in UIEvent::GetMovementPoint() as:
   //   previous_mousemove_mRefPoint - current_mousemove_mRefPoint.
-  if (sIsPointerLocked && aMouseEvent->mWidget) {
+  if (PointerLockManager::IsLocked() && aMouseEvent->mWidget) {
     // The pointer is locked. If the pointer is not located at the center of
     // the window, dispatch a synthetic mousemove to return the pointer there.
     // Doing this between "real" pointer moves gives the impression that the
@@ -4619,7 +4565,7 @@ void EventStateManager::UpdateLastRefPointOfMouseEvent(
 /* static */
 void EventStateManager::ResetPointerToWindowCenterWhilePointerLocked(
     WidgetMouseEvent* aMouseEvent) {
-  MOZ_ASSERT(sIsPointerLocked);
+  MOZ_ASSERT(PointerLockManager::IsLocked());
   if ((aMouseEvent->mMessage != eMouseMove &&
        aMouseEvent->mMessage != ePointerMove) ||
       !aMouseEvent->mWidget) {
@@ -4750,16 +4696,16 @@ OverOutElementsWrapper* EventStateManager::GetWrapperByEventID(
     }
     return mMouseEnterLeaveHelper;
   }
-  return mPointersEnterLeaveHelper.LookupForAdd(pointer->pointerId)
-      .OrInsert([]() { return new OverOutElementsWrapper(); });
+  return mPointersEnterLeaveHelper.WithEntryHandle(
+      pointer->pointerId, [](auto&& entry) {
+        return entry.OrInsertWith([] { return new OverOutElementsWrapper(); })
+            .get();
+      });
 }
 
 /* static */
 void EventStateManager::SetPointerLock(nsIWidget* aWidget,
                                        nsIContent* aElement) {
-  // NOTE: aElement will be nullptr when unlocking.
-  sIsPointerLocked = !!aElement;
-
   // Reset mouse wheel transaction
   WheelTransaction::EndTransaction();
 
@@ -4767,7 +4713,7 @@ void EventStateManager::SetPointerLock(nsIWidget* aWidget,
   nsCOMPtr<nsIDragService> dragService =
       do_GetService("@mozilla.org/widget/dragservice;1");
 
-  if (sIsPointerLocked) {
+  if (PointerLockManager::IsLocked()) {
     MOZ_ASSERT(aWidget, "Locking pointer requires a widget");
 
     // Release all pointer capture when a pointer lock is successfully applied

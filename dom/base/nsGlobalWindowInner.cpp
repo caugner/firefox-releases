@@ -71,7 +71,7 @@
 #include "mozilla/ScopeExit.h"
 #include "mozilla/ScrollOrigin.h"
 #include "mozilla/ScrollTypes.h"
-#include "mozilla/Services.h"
+#include "mozilla/Components.h"
 #include "mozilla/SizeOfState.h"
 #include "mozilla/Span.h"
 #include "mozilla/SpinEventLoopUntil.h"
@@ -1684,7 +1684,7 @@ void nsGlobalWindowInner::UpdateShortcutsPermission() {
 uint32_t nsGlobalWindowInner::GetShortcutsPermission(nsIPrincipal* aPrincipal) {
   uint32_t perm = nsIPermissionManager::DENY_ACTION;
   nsCOMPtr<nsIPermissionManager> permMgr =
-      mozilla::services::GetPermissionManager();
+      mozilla::components::PermissionManager::Service();
   if (aPrincipal && permMgr) {
     permMgr->TestExactPermissionFromPrincipal(aPrincipal, "shortcuts"_ns,
                                               &perm);
@@ -3723,9 +3723,10 @@ void nsGlobalWindowInner::Prompt(const nsAString& aMessage,
 }
 
 void nsGlobalWindowInner::Focus(CallerType aCallerType, ErrorResult& aError) {
-  FORWARD_TO_OUTER_OR_THROW(
-      FocusOuter, (aCallerType, nsFocusManager::GenerateFocusActionId()),
-      aError, );
+  FORWARD_TO_OUTER_OR_THROW(FocusOuter,
+                            (aCallerType, /* aFromOtherProcess */ false,
+                             nsFocusManager::GenerateFocusActionId()),
+                            aError, );
 }
 
 nsresult nsGlobalWindowInner::Focus(CallerType aCallerType) {
@@ -3735,8 +3736,8 @@ nsresult nsGlobalWindowInner::Focus(CallerType aCallerType) {
   return rv.StealNSResult();
 }
 
-void nsGlobalWindowInner::Blur(ErrorResult& aError) {
-  FORWARD_TO_OUTER_OR_THROW(BlurOuter, (), aError, );
+void nsGlobalWindowInner::Blur(CallerType aCallerType, ErrorResult& aError) {
+  FORWARD_TO_OUTER_OR_THROW(BlurOuter, (aCallerType), aError, );
 }
 
 void nsGlobalWindowInner::Stop(ErrorResult& aError) {
@@ -4340,7 +4341,8 @@ void nsGlobalWindowInner::StopVRActivity() {
 
 void nsGlobalWindowInner::SetFocusedElement(Element* aElement,
                                             uint32_t aFocusMethod,
-                                            bool aNeedsFocus) {
+                                            bool aNeedsFocus,
+                                            bool aWillShowOutline) {
   if (aElement && aElement->GetComposedDoc() != mDoc) {
     NS_WARNING("Trying to set focus to a node from a wrong document");
     return;
@@ -4350,12 +4352,16 @@ void nsGlobalWindowInner::SetFocusedElement(Element* aElement,
     NS_ASSERTION(!aElement, "Trying to focus cleaned up window!");
     aElement = nullptr;
     aNeedsFocus = false;
+    aWillShowOutline = false;
   }
   if (mFocusedElement != aElement) {
     UpdateCanvasFocus(false, aElement);
     mFocusedElement = aElement;
+    // TODO: Maybe this should be set on refocus too?
     mFocusMethod = aFocusMethod & FOCUSMETHOD_MASK;
   }
+
+  mFocusedElementShowedOutlines = aWillShowOutline;
 
   if (mFocusedElement) {
     // if a node was focused by a keypress, turn on focus rings for the
@@ -4365,7 +4371,9 @@ void nsGlobalWindowInner::SetFocusedElement(Element* aElement,
     }
   }
 
-  if (aNeedsFocus) mNeedsFocus = aNeedsFocus;
+  if (aNeedsFocus) {
+    mNeedsFocus = aNeedsFocus;
+  }
 }
 
 uint32_t nsGlobalWindowInner::GetFocusMethod() { return mFocusMethod; }
@@ -4916,7 +4924,8 @@ already_AddRefed<CacheStorage> nsGlobalWindowInner::GetCaches(
     ErrorResult& aRv) {
   if (!mCacheStorage) {
     bool forceTrustedOrigin =
-        GetOuterWindow()->GetServiceWorkersTestingEnabled();
+        GetBrowsingContext() &&
+        GetBrowsingContext()->Top()->GetServiceWorkersTestingEnabled();
     mCacheStorage = CacheStorage::CreateOnMainThread(
         cache::DEFAULT_NAMESPACE, this, GetEffectiveStoragePrincipal(),
         forceTrustedOrigin, aRv);
@@ -6573,6 +6582,8 @@ void nsGlobalWindowInner::AddSizeOfIncludingThis(
         mPerformance->SizeOfUserEntries(aWindowSizes.mState.mMallocSizeOf);
     aWindowSizes.mDOMPerformanceResourceEntries =
         mPerformance->SizeOfResourceEntries(aWindowSizes.mState.mMallocSizeOf);
+    aWindowSizes.mDOMPerformanceEventEntries =
+        mPerformance->SizeOfEventEntries(aWindowSizes.mState.mMallocSizeOf);
   }
 }
 
@@ -7149,10 +7160,13 @@ ChromeMessageBroadcaster* nsGlobalWindowInner::GetGroupMessageManager(
     const nsAString& aGroup) {
   MOZ_ASSERT(IsChromeWindow());
 
-  RefPtr<ChromeMessageBroadcaster> messageManager =
-      mChromeFields.mGroupMessageManagers.LookupForAdd(aGroup).OrInsert(
-          [this]() { return new ChromeMessageBroadcaster(MessageManager()); });
-  return messageManager;
+  return mChromeFields.mGroupMessageManagers.WithEntryHandle(
+      aGroup, [&](auto&& entry) {
+        return entry
+            .OrInsertWith(
+                [&] { return new ChromeMessageBroadcaster(MessageManager()); })
+            .get();
+      });
 }
 
 void nsGlobalWindowInner::InitWasOffline() { mWasOffline = NS_IsOffline(); }
@@ -7531,6 +7545,22 @@ ContentMediaController* nsGlobalWindowInner::GetContentMediaController() {
 
   mContentMediaController = new ContentMediaController(mBrowsingContext->Id());
   return mContentMediaController;
+}
+
+void nsGlobalWindowInner::SetScrollMarks(
+    const nsTArray<uint32_t>& aScrollMarks) {
+  mScrollMarks.Assign(aScrollMarks);
+
+  // Mark the scrollbar for repainting.
+  if (mDoc) {
+    PresShell* presShell = mDoc->GetPresShell();
+    if (presShell) {
+      nsIScrollableFrame* sf = presShell->GetRootScrollFrameAsScrollable();
+      if (sf) {
+        sf->InvalidateVerticalScrollbar();
+      }
+    }
+  }
 }
 
 /* static */

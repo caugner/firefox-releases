@@ -6,13 +6,13 @@
 
 #include "mozilla/ArrayUtils.h"
 #include "mozilla/DebugOnly.h"
+#include "mozilla/ProfilerLabels.h"
 #include "mozilla/TextUtils.h"
 #include "mozilla/UniquePtrExtensions.h"
 #include "mozilla/Utf8.h"
 
 #include "nsCOMPtr.h"
 #include "nsMemory.h"
-#include "GeckoProfiler.h"
 
 #include "nsLocalFile.h"
 #include "nsLocalFileCommon.h"
@@ -238,6 +238,10 @@ class nsDriveEnumerator : public nsSimpleEnumerator,
  * code will be logged to stderr. Error codes, names, and descriptions can be
  * found at the following MSDN page:
  * https://docs.microsoft.com/en-us/windows/win32/debug/system-error-codes
+ *
+ * \note When adding more mappings here, it must be checked if there's code that
+ * depends on the current generic NS_ERROR_MODULE_WIN32 mapping for such error
+ * codes.
  */
 static nsresult ConvertWinError(DWORD aWinErr) {
   nsresult rv;

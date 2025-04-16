@@ -10,10 +10,14 @@
 #include "CacheFileChunk.h"
 #include "CacheFileInputStream.h"
 #include "CacheFileOutputStream.h"
+#include "CacheFileUtils.h"
+#include "CacheIndex.h"
 #include "CacheLog.h"
 #include "mozilla/DebugOnly.h"
 #include "mozilla/Telemetry.h"
+#include "mozilla/TelemetryHistogramEnums.h"
 #include "nsComponentManagerUtils.h"
+#include "nsICacheEntry.h"
 #include "nsProxyRelease.h"
 #include "nsThreadUtils.h"
 
@@ -2191,13 +2195,9 @@ void CacheFile::QueueChunkListener(uint32_t aIndex,
   }
   item->mCallback = aCallback;
 
-  ChunkListeners* listeners;
-  if (!mChunkListeners.Get(aIndex, &listeners)) {
-    listeners = new ChunkListeners();
-    mChunkListeners.Put(aIndex, listeners);
-  }
-
-  listeners->mItems.AppendElement(item);
+  mChunkListeners
+      .GetOrInsertWith(aIndex, [] { return MakeUnique<ChunkListeners>(); })
+      ->mItems.AppendElement(item);
 }
 
 nsresult CacheFile::NotifyChunkListeners(uint32_t aIndex, nsresult aResult,

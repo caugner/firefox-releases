@@ -233,15 +233,9 @@ with modules["GFX"]:
 with modules["WIDGET"]:
     # Used by:
     #   - nsIWidget::NotifyIME()
-    #   - nsIWidget::OnWindowedPluginKeyEvent()
     # Returned when the notification or the event is handled and it's consumed
     # by somebody.
     errors["NS_SUCCESS_EVENT_CONSUMED"] = SUCCESS(1)
-    # Used by:
-    #   - nsIWidget::OnWindowedPluginKeyEvent()
-    # Returned when the event is handled correctly but the result will be
-    # notified asynchronously.
-    errors["NS_SUCCESS_EVENT_HANDLED_ASYNCHRONOUSLY"] = SUCCESS(2)
 
 
 # =======================================================================
@@ -342,6 +336,8 @@ with modules["NETWORK"]:
     errors["NS_ERROR_NET_HTTP2_SENT_GOAWAY"] = FAILURE(83)
     # HTTP/3 protocol internal error
     errors["NS_ERROR_NET_HTTP3_PROTOCOL_ERROR"] = FAILURE(84)
+    # A timeout error code that can be used to cancel requests.
+    errors["NS_ERROR_NET_TIMEOUT_EXTERNAL"] = FAILURE(85)
 
     # XXX really need to better rationalize these error codes.  are consumers of
     # necko really expected to know how to discern the meaning of these??
@@ -784,6 +780,10 @@ with modules["DOM"]:
     # response header set failed the origin check.
     # https://fetch.spec.whatwg.org/#cross-origin-resource-policy-header
     errors["NS_ERROR_DOM_CORP_FAILED"] = FAILURE(1036)
+
+    # Used to indicate that a URI may not be loaded into a cross-origin
+    # context.
+    errors["NS_ERROR_DOM_BAD_CROSS_ORIGIN_URI"] = FAILURE(1037)
 
     # May be used to indicate when e.g. setting a property value didn't
     # actually change the value, like for obj.foo = "bar"; obj.foo = "bar";

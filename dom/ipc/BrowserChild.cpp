@@ -21,7 +21,6 @@
 #include "DocumentInlines.h"
 #include "EventStateManager.h"
 #include "FrameLayerBuilder.h"
-#include "GeckoProfiler.h"
 #include "Layers.h"
 #include "MMPrinter.h"
 #include "PermissionMessageUtils.h"
@@ -43,6 +42,7 @@
 #include "mozilla/Preferences.h"
 #include "mozilla/PresShell.h"
 #include "mozilla/ProcessHangMonitor.h"
+#include "mozilla/ProfilerLabels.h"
 #include "mozilla/ResultExtensions.h"
 #include "mozilla/ScopeExit.h"
 #include "mozilla/Services.h"
@@ -1552,8 +1552,10 @@ mozilla::ipc::IPCResult BrowserChild::RecvRealMouseMoveEvent(
     mToBeDispatchedMouseData.Push(dispatchData.release());
 
     // Put new data to replace the old one in the hash table.
-    CoalescedMouseData* newData = new CoalescedMouseData();
-    mCoalescedMouseData.Put(aEvent.pointerId, newData);
+    CoalescedMouseData* newData =
+        mCoalescedMouseData
+            .Put(aEvent.pointerId, MakeUnique<CoalescedMouseData>())
+            .get();
     newData->Coalesce(aEvent, aGuid, aInputBlockId);
 
     // Dispatch all pending mouse events.
@@ -2613,15 +2615,6 @@ mozilla::ipc::IPCResult BrowserChild::RecvNavigateByKey(
   return IPC_OK();
 }
 
-mozilla::ipc::IPCResult BrowserChild::RecvHandledWindowedPluginKeyEvent(
-    const NativeEventData& aKeyEventData, const bool& aIsConsumed) {
-  if (NS_WARN_IF(!mPuppetWidget)) {
-    return IPC_OK();
-  }
-  mPuppetWidget->HandledWindowedPluginKeyEvent(aKeyEventData, aIsConsumed);
-  return IPC_OK();
-}
-
 bool BrowserChild::InitBrowserChildMessageManager() {
   if (!mBrowserChildMessageManager) {
     nsCOMPtr<nsPIDOMWindowOuter> window = do_GetInterface(WebNavigation());
@@ -2881,19 +2874,12 @@ void BrowserChild::MakeHidden() {
   }
 
   if (nsCOMPtr<nsIDocShell> docShell = do_GetInterface(WebNavigation())) {
-    // Hide all plugins in this tab. We don't use
+    // We don't use
     // BrowserChildBase::GetPresShell() here because that would create a content
     // viewer if one doesn't exist yet. Creating a content viewer can cause JS
     // to run, which we want to avoid. nsIDocShell::GetPresShell returns null if
     // no content viewer exists yet.
     if (RefPtr<PresShell> presShell = docShell->GetPresShell()) {
-      if (nsPresContext* presContext = presShell->GetPresContext()) {
-        nsRootPresContext* rootPresContext = presContext->GetRootPresContext();
-        nsIFrame* rootFrame = presShell->GetRootFrame();
-        rootPresContext->ComputePluginGeometryUpdates(rootFrame, nullptr,
-                                                      nullptr);
-        rootPresContext->ApplyPluginGeometryUpdates();
-      }
       presShell->SetIsActive(false);
     }
   }

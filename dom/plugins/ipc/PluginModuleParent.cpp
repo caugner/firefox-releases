@@ -27,6 +27,7 @@
 #include "mozilla/plugins/PStreamNotifyParent.h"
 #include "mozilla/Preferences.h"
 #include "mozilla/ProcessHangMonitor.h"
+#include "mozilla/ProfilerLabels.h"
 #include "mozilla/Services.h"
 #include "mozilla/Telemetry.h"
 #include "mozilla/Unused.h"
@@ -42,7 +43,6 @@
 #include "prclist.h"
 #include "PluginQuirks.h"
 #include "gfxPlatform.h"
-#include "GeckoProfiler.h"
 #include "nsPluginTags.h"
 #include "nsUnicharUtils.h"
 #include "mozilla/layers/TextureClientRecycleAllocator.h"
@@ -1678,13 +1678,6 @@ nsresult PluginModuleParent::GetScrollCaptureContainer(
   return pip ? pip->GetScrollCaptureContainer(aContainer) : NS_ERROR_FAILURE;
 }
 #endif
-
-nsresult PluginModuleParent::HandledWindowedPluginKeyEvent(
-    NPP aInstance, const NativeEventData& aNativeKeyData, bool aIsConsumed) {
-  PluginInstanceParent* pip = PluginInstanceParent::Cast(aInstance);
-  return pip ? pip->HandledWindowedPluginKeyEvent(aNativeKeyData, aIsConsumed)
-             : NS_ERROR_FAILURE;
-}
 
 void PluginModuleParent::OnInitFailure() {
   if (GetIPCChannel()->CanSend()) {

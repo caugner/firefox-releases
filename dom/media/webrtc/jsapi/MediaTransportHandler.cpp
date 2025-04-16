@@ -41,6 +41,8 @@
 #include "mozilla/PublicSSL.h"  // For psm::InitializeCipherSuite
 
 #include "nsISocketTransportService.h"
+#include "nsDNSService2.h"
+#include "nsNetUtil.h"  // NS_CheckPortSafety
 
 #include <string>
 #include <vector>
@@ -285,6 +287,13 @@ static NrIceCtx::Policy toNrIcePolicy(dom::RTCIceTransportPolicy aPolicy) {
   return NrIceCtx::ICE_POLICY_ALL;
 }
 
+// list of known acceptable ports for webrtc
+int16_t gGoodWebrtcPortList[] = {
+    3478,  // stun or turn
+    5349,  // stuns or turns
+    0,     // Sentinel value: This MUST be zero
+};
+
 static nsresult addNrIceServer(const nsString& aIceUrl,
                                const dom::RTCIceServer& aIceServer,
                                std::vector<NrIceStunServer>* aStunServersOut,
@@ -353,6 +362,21 @@ static nsresult addNrIceServer(const nsString& aIceUrl,
   }
   if (port == -1) port = (isStuns || isTurns) ? 5349 : 3478;
 
+  // First check the known good ports for webrtc
+  bool goodPort = false;
+  for (int i = 0; !goodPort && gGoodWebrtcPortList[i]; i++) {
+    if (port == gGoodWebrtcPortList[i]) {
+      goodPort = true;
+    }
+  }
+
+  // if not in the list of known good ports for webrtc, check
+  // the generic block list using NS_CheckPortSafety.
+  if (!goodPort) {
+    rv = NS_CheckPortSafety(port, nullptr);
+    NS_ENSURE_SUCCESS(rv, rv);
+  }
+
   if (isStuns || isTurns) {
     // Should we barf if transport is set to udp or something?
     transport = kNrIceTransportTls;
@@ -375,12 +399,22 @@ static nsresult addNrIceServer(const nsString& aIceUrl,
     if (!server) {
       return NS_ERROR_FAILURE;
     }
+    if (server->HasFqdn()) {
+      // Add an IPv4 entry, then an IPv6 entry
+      aTurnServersOut->push_back(*server);
+      server->SetUseIPv6IfFqdn();
+    }
     aTurnServersOut->emplace_back(std::move(*server));
   } else {
     UniquePtr<NrIceStunServer> server(
         NrIceStunServer::Create(host.get(), port, transport.get()));
     if (!server) {
       return NS_ERROR_FAILURE;
+    }
+    if (server->HasFqdn()) {
+      // Add an IPv4 entry, then an IPv6 entry
+      aStunServersOut->push_back(*server);
+      server->SetUseIPv6IfFqdn();
     }
     aStunServersOut->emplace_back(std::move(*server));
   }
@@ -495,6 +529,10 @@ nsresult MediaTransportHandlerSTS::CreateIceCtx(
 
         static bool globalInitDone = false;
         if (!globalInitDone) {
+          // Ensure the DNS service is initted for the first time on main
+          DebugOnly<RefPtr<nsIDNSService>> dnsService =
+              RefPtr<nsIDNSService>(nsDNSService::GetXPCOMSingleton());
+          MOZ_ASSERT(dnsService.value);
           mStsThread->Dispatch(
               WrapRunnableNM(&NrIceCtx::InitializeGlobals, GetGlobalConfig()),
               NS_DISPATCH_NORMAL);
@@ -610,14 +648,10 @@ void MediaTransportHandlerSTS::Destroy() {
   }
 
   MOZ_ASSERT(NS_IsMainThread());
-  if (!STSShutdownHandler::Instance()) {
-    CSFLogDebug(LOGTAG, "%s Already shut down. Nothing else to do.", __func__);
-    delete this;
-    return;
+  if (STSShutdownHandler::Instance()) {
+    STSShutdownHandler::Instance()->Deregister(this);
+    Shutdown();
   }
-
-  STSShutdownHandler::Instance()->Deregister(this);
-  Shutdown();
 
   // mIceCtx still has a reference to us via sigslot! We must dispach to STS,
   // and clean up there. However, by the time _that_ happens, we may have

@@ -540,8 +540,17 @@ addon-details {
   margin: 0;
 }
 
+.addon-detail-actions,
 .addon-detail-rating {
   display: flex;
+}
+
+.addon-detail-actions {
+  gap: 20px;
+}
+
+.addon-detail-actions > label {
+  flex-wrap: wrap;
 }
 
 .addon-detail-rating > a {

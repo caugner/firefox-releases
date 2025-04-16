@@ -45,7 +45,7 @@ class LiveResizeListener;
 
 #ifdef ACCESSIBILITY
 namespace a11y {
-class Accessible;
+class LocalAccessible;
 }
 #endif
 
@@ -345,7 +345,7 @@ class nsBaseWidget : public nsIWidget, public nsSupportsWeakReference {
 
 #ifdef ACCESSIBILITY
   // Get the accessible for the window.
-  mozilla::a11y::Accessible* GetRootAccessible();
+  mozilla::a11y::LocalAccessible* GetRootAccessible();
 #endif
 
   // Return true if this is a simple widget (that is typically not worth
@@ -517,6 +517,14 @@ class nsBaseWidget : public nsIWidget, public nsSupportsWeakReference {
                                               uint32_t aPointerOrientation,
                                               nsIObserver* aObserver) override {
     mozilla::widget::AutoObserverNotifier notifier(aObserver, "touchpoint");
+    return NS_ERROR_UNEXPECTED;
+  }
+
+  virtual nsresult SynthesizeNativeTouchPadPinch(
+      TouchpadPinchPhase aEventPhase, float aScale, LayoutDeviceIntPoint aPoint,
+      int32_t aModifierFlags) override {
+    MOZ_RELEASE_ASSERT(
+        false, "This method is not implemented on the current platform");
     return NS_ERROR_UNEXPECTED;
   }
 

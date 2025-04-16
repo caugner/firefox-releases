@@ -1177,6 +1177,19 @@ function isServiceInstalled() {
 }
 
 /**
+ * Gets the appropriate pending update state. Returns STATE_PENDING_SERVICE,
+ * STATE_PENDING_ELEVATE, or STATE_PENDING.
+ */
+function getBestPendingState() {
+  if (shouldUseService()) {
+    return STATE_PENDING_SERVICE;
+  } else if (getElevationRequired()) {
+    return STATE_PENDING_ELEVATE;
+  }
+  return STATE_PENDING;
+}
+
+/**
  * Removes the contents of the ready update directory and rotates the update
  * logs when present. If the update.log exists in the patch directory this will
  * move the last-update.log if it exists to backup-update.log in the parent
@@ -3109,12 +3122,16 @@ UpdateService.prototype = {
   _checkForBackgroundUpdates: function AUS__checkForBackgroundUpdates(
     isNotify
   ) {
-    if (this.disabledByPolicy) {
+    if (this.disabledByPolicy || this.manualUpdateOnly) {
       // Return immediately if we are disabled by policy. Otherwise, just the
       // telemetry we try to collect below can potentially trigger a restart
       // prompt if the update directory isn't writable. And we shouldn't be
       // telling the user about update failures if update is disabled.
       // See Bug 1599590.
+      // Note that we exit unconditionally here if we are only doing manual
+      // update checks, because manual update checking uses a completely
+      // different code path (AppUpdater.jsm creates its own nsIUpdateChecker),
+      // bypassing this function completely.
       AUSTLMY.pingCheckCode(this._pingSuffix, AUSTLMY.CHK_DISABLED_BY_POLICY);
       return false;
     }
@@ -3471,7 +3488,7 @@ UpdateService.prototype = {
     }
 
     if (this.disabledByPolicy) {
-      AUSTLMY.pingCheckCode(this._pingSuffix, AUSTLMY.CHK_PREF_DISABLED);
+      AUSTLMY.pingCheckCode(this._pingSuffix, AUSTLMY.CHK_DISABLED_BY_POLICY);
       LOG(
         "UpdateService:_selectAndInstallUpdate - not prompting because " +
           "update is disabled"
@@ -3575,6 +3592,15 @@ UpdateService.prototype = {
     return (
       (Services.policies && !Services.policies.isAllowed("appUpdate")) ||
       this.disabledForTesting
+    );
+  },
+
+  /**
+   * See nsIUpdateService.idl
+   */
+  get manualUpdateOnly() {
+    return (
+      Services.policies && !Services.policies.isAllowed("autoAppUpdateChecking")
     );
   },
 
@@ -4324,7 +4350,8 @@ UpdateManager.prototype = {
         parts[1] == DELETE_ERROR_STAGING_LOCK_FILE ||
         parts[1] == UNEXPECTED_STAGING_ERROR
       ) {
-        writeStatusFile(getReadyUpdateDir(), (update.state = STATE_PENDING));
+        update.state = getBestPendingState();
+        writeStatusFile(getReadyUpdateDir(), update.state);
       } else if (!handleUpdateFailure(update, parts[1])) {
         handleFallbackToCompleteUpdate(true);
       }
@@ -5682,13 +5709,7 @@ Downloader.prototype = {
 
         if (migratedToReadyUpdate) {
           AUSTLMY.pingMoveResult(AUSTLMY.MOVE_RESULT_SUCCESS);
-          if (shouldUseService()) {
-            state = STATE_PENDING_SERVICE;
-          } else if (getElevationRequired()) {
-            state = STATE_PENDING_ELEVATE;
-          } else {
-            state = STATE_PENDING;
-          }
+          state = getBestPendingState();
           shouldShowPrompt = !getCanStageUpdates();
 
           // Tell the updater.exe we're ready to apply.

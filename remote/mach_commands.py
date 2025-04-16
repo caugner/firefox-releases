@@ -405,6 +405,8 @@ class PuppeteerRunner(MozbuildObject):
         `extra_prefs`:
           Dictionary of extra preferences to write to the profile,
           before invoking npm.  Overrides default preferences.
+        `enable_webrender`:
+          Boolean to indicate whether to enable WebRender compositor in Gecko.
         `write_results`:
           Path to write the results json file
         `subset`
@@ -442,6 +444,9 @@ class PuppeteerRunner(MozbuildObject):
         if product == "firefox":
             env["BINARY"] = binary
             env["PUPPETEER_PRODUCT"] = "firefox"
+
+            env["MOZ_WEBRENDER"] = "%d" % params.get("enable_webrender", False)
+
         command = ["run", "unit", "--"] + mocha_options
 
         env["HEADLESS"] = str(params.get("headless", False))
@@ -508,9 +513,19 @@ def create_parser_puppeteer():
         help="Path to browser binary.  Defaults to local Firefox build.",
     )
     p.add_argument(
+        "--ci",
+        action="store_true",
+        help="Flag that indicates that tests run in a CI environment.",
+    )
+    p.add_argument(
         "--enable-fission",
         action="store_true",
         help="Enable Fission (site isolation) in Gecko.",
+    )
+    p.add_argument(
+        "--enable-webrender",
+        action="store_true",
+        help="Enable the WebRender compositor in Gecko.",
     )
     p.add_argument(
         "-z", "--headless", action="store_true", help="Run browser in headless mode."
@@ -571,7 +586,9 @@ class PuppeteerTest(MachCommandBase):
     def puppeteer_test(
         self,
         binary=None,
+        ci=False,
         enable_fission=False,
+        enable_webrender=False,
         headless=False,
         extra_prefs=None,
         extra_options=None,
@@ -582,6 +599,8 @@ class PuppeteerTest(MachCommandBase):
         subset=False,
         **kwargs
     ):
+
+        self.ci = ci
 
         logger = mozlog.commandline.setup_logging(
             "puppeteer-test", kwargs, {"mach": sys.stdout}
@@ -634,6 +653,7 @@ class PuppeteerTest(MachCommandBase):
         params = {
             "binary": binary,
             "headless": headless,
+            "enable_webrender": enable_webrender,
             "extra_prefs": prefs,
             "product": product,
             "extra_launcher_options": options,
@@ -669,7 +689,9 @@ class PuppeteerTest(MachCommandBase):
         if changed_files and os.path.isdir(lib_dir):
             # clobber lib to force `tsc compile` step
             shutil.rmtree(lib_dir)
-        npm("ci", cwd=os.path.join(self.topsrcdir, puppeteer_dir), env=env)
+
+        command = "ci" if self.ci else "install"
+        npm(command, cwd=os.path.join(self.topsrcdir, puppeteer_dir), env=env)
 
 
 def exit(code, error=None):

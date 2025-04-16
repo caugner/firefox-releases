@@ -3701,7 +3701,8 @@ class CGCreateInterfaceObjectsMethod(CGAbstractMethod):
                                         ${name}, aDefineOnGlobal,
                                         ${unscopableNames},
                                         ${isGlobal},
-                                        ${legacyWindowAliases});
+                                        ${legacyWindowAliases},
+                                        ${isNamespace});
             """,
             protoClass=protoClass,
             parentProto=parentProto,
@@ -3721,6 +3722,7 @@ class CGCreateInterfaceObjectsMethod(CGAbstractMethod):
             legacyWindowAliases="legacyWindowAliases"
             if self.haveLegacyWindowAliases
             else "nullptr",
+            isNamespace=toStringBool(self.descriptor.interface.isNamespace()),
         )
 
         # If we fail after here, we must clear interface and prototype caches
@@ -5678,6 +5680,12 @@ def getJSToNativeConversionInfo(
             "%s" % (firstCap(sourceDescription), exceptionCode)
         )
 
+    def onFailureIsLarge():
+        return CGGeneric(
+            'cx.ThrowErrorMessage<MSG_TYPEDARRAY_IS_LARGE>("%s");\n'
+            "%s" % (firstCap(sourceDescription), exceptionCode)
+        )
+
     def onFailureNotCallable(failureCode):
         return CGGeneric(
             failureCode
@@ -6897,21 +6905,37 @@ def getJSToNativeConversionInfo(
             objRef=objRef,
             badType=onFailureBadType(failureCode, type.name).define(),
         )
-        if not isAllowShared and type.isBufferSource():
+        if type.isBufferSource():
             if type.isArrayBuffer():
                 isSharedMethod = "JS::IsSharedArrayBufferObject"
+                isLargeMethod = "JS::IsLargeArrayBufferMaybeShared"
             else:
                 assert type.isArrayBufferView() or type.isTypedArray()
                 isSharedMethod = "JS::IsArrayBufferViewShared"
+                isLargeMethod = "JS::IsLargeArrayBufferView"
+            if not isAllowShared:
+                template += fill(
+                    """
+                    if (${isSharedMethod}(${objRef}.Obj())) {
+                      $*{badType}
+                    }
+                    """,
+                    isSharedMethod=isSharedMethod,
+                    objRef=objRef,
+                    badType=onFailureIsShared().define(),
+                )
+            # For now reject large (> 2 GB) ArrayBuffers and ArrayBufferViews.
+            # Supporting this will require changing dom::TypedArray and
+            # consumers.
             template += fill(
                 """
-                if (${isSharedMethod}(${objRef}.Obj())) {
+                if (${isLargeMethod}(${objRef}.Obj())) {
                   $*{badType}
                 }
                 """,
-                isSharedMethod=isSharedMethod,
+                isLargeMethod=isLargeMethod,
                 objRef=objRef,
-                badType=onFailureIsShared().define(),
+                badType=onFailureIsLarge().define(),
             )
         template = wrapObjectTemplate(
             template, type, "${declName}.SetNull();\n", failureCode

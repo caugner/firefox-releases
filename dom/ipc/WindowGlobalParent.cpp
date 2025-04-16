@@ -300,6 +300,11 @@ mozilla::ipc::IPCResult WindowGlobalParent::RecvLoadURI(
         ("ParentIPC: Trying to send a message with dead or detached context"));
     return IPC_OK();
   }
+
+  if (net::SchemeIsJavascript(aLoadState->URI())) {
+    return IPC_FAIL(this, "Illegal cross-process javascript: load attempt");
+  }
+
   CanonicalBrowsingContext* targetBC = aTargetBC.get_canonical();
 
   // FIXME: For cross-process loads, we should double check CanAccess() for the
@@ -328,6 +333,11 @@ mozilla::ipc::IPCResult WindowGlobalParent::RecvInternalLoad(
         ("ParentIPC: Trying to send a message with dead or detached context"));
     return IPC_OK();
   }
+
+  if (net::SchemeIsJavascript(aLoadState->URI())) {
+    return IPC_FAIL(this, "Illegal cross-process javascript: load attempt");
+  }
+
   CanonicalBrowsingContext* targetBC =
       aLoadState->TargetBrowsingContext().get_canonical();
 
@@ -364,11 +374,11 @@ IPCResult WindowGlobalParent::RecvUpdateDocumentPrincipal(
 }
 mozilla::ipc::IPCResult WindowGlobalParent::RecvUpdateDocumentTitle(
     const nsString& aTitle) {
-  if (mDocumentTitle == aTitle) {
+  if (mDocumentTitle.isSome() && mDocumentTitle.value() == aTitle) {
     return IPC_OK();
   }
 
-  mDocumentTitle = aTitle;
+  mDocumentTitle = Some(aTitle);
 
   // Send a pagetitlechanged event only for changes to the title
   // for top-level frames.
@@ -636,73 +646,6 @@ mozilla::ipc::IPCResult WindowGlobalParent::RecvShare(
   // Handler finally awaits response...
   RefPtr<ShareHandler> handler = new ShareHandler(std::move(aResolver));
   promise->AppendNativeHandler(handler);
-
-  return IPC_OK();
-}
-
-mozilla::ipc::IPCResult
-WindowGlobalParent::RecvUpdateDocumentWouldPreloadResources() {
-  TopWindowContext()->mDocumentTreeWouldPreloadResources = true;
-  return IPC_OK();
-}
-
-mozilla::ipc::IPCResult WindowGlobalParent::RecvSubmitLoadEventPreloadTelemetry(
-    TimeStamp aNavigationStart, TimeStamp aLoadEventStart,
-    TimeStamp aLoadEventEnd) {
-  if (!IsTop()) {
-    return IPC_FAIL(this, "submit preload telemetry on non-toplevel document");
-  }
-
-  if (mDocumentTreeWouldPreloadResources) {
-    Telemetry::AccumulateTimeDelta(
-        Telemetry::TIME_TO_LOAD_EVENT_START_PRELOAD_MS, aNavigationStart,
-        aLoadEventStart);
-    Telemetry::AccumulateTimeDelta(Telemetry::TIME_TO_LOAD_EVENT_END_PRELOAD_MS,
-                                   aNavigationStart, aLoadEventEnd);
-  } else {
-    Telemetry::AccumulateTimeDelta(
-        Telemetry::TIME_TO_LOAD_EVENT_START_NO_PRELOAD_MS, aNavigationStart,
-        aLoadEventStart);
-    Telemetry::AccumulateTimeDelta(
-        Telemetry::TIME_TO_LOAD_EVENT_END_NO_PRELOAD_MS, aNavigationStart,
-        aLoadEventEnd);
-  }
-
-  return IPC_OK();
-}
-
-mozilla::ipc::IPCResult
-WindowGlobalParent::RecvSubmitTimeToFirstInteractionPreloadTelemetry(
-    uint32_t aMillis) {
-  if (!IsTop()) {
-    return IPC_FAIL(this, "submit preload telemetry on non-toplevel document");
-  }
-
-  if (mDocumentTreeWouldPreloadResources) {
-    Telemetry::Accumulate(Telemetry::TIME_TO_FIRST_INTERACTION_PRELOAD_MS,
-                          aMillis);
-  } else {
-    Telemetry::Accumulate(Telemetry::TIME_TO_FIRST_INTERACTION_NO_PRELOAD_MS,
-                          aMillis);
-  }
-
-  return IPC_OK();
-}
-
-mozilla::ipc::IPCResult
-WindowGlobalParent::RecvSubmitLoadInputEventResponsePreloadTelemetry(
-    uint32_t aMillis) {
-  if (!IsTop()) {
-    return IPC_FAIL(this, "submit preload telemetry on non-toplevel document");
-  }
-
-  if (mDocumentTreeWouldPreloadResources) {
-    Telemetry::Accumulate(Telemetry::LOAD_INPUT_EVENT_RESPONSE_PRELOAD_MS,
-                          aMillis);
-  } else {
-    Telemetry::Accumulate(Telemetry::LOAD_INPUT_EVENT_RESPONSE_NO_PRELOAD_MS,
-                          aMillis);
-  }
 
   return IPC_OK();
 }

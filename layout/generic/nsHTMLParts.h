@@ -85,8 +85,6 @@ nsIFrame* NS_NewImageFrame(mozilla::PresShell* aPresShell,
 class nsInlineFrame;
 nsInlineFrame* NS_NewInlineFrame(mozilla::PresShell* aPresShell,
                                  mozilla::ComputedStyle* aStyle);
-nsIFrame* NS_NewObjectFrame(mozilla::PresShell* aPresShell,
-                            mozilla::ComputedStyle* aStyle);
 nsIFrame* NS_NewTextFrame(mozilla::PresShell* aPresShell,
                           mozilla::ComputedStyle* aStyle);
 nsIFrame* NS_NewContinuingTextFrame(mozilla::PresShell* aPresShell,
@@ -140,8 +138,6 @@ nsIFrame* NS_NewFileControlFrame(mozilla::PresShell* aPresShell,
                                  mozilla::ComputedStyle* aStyle);
 nsIFrame* NS_NewColorControlFrame(mozilla::PresShell* aPresShell,
                                   mozilla::ComputedStyle* aStyle);
-nsIFrame* NS_NewLegendFrame(mozilla::PresShell* aPresShell,
-                            mozilla::ComputedStyle* aStyle);
 nsIFrame* NS_NewTextControlFrame(mozilla::PresShell* aPresShell,
                                  mozilla::ComputedStyle* aStyle);
 nsContainerFrame* NS_NewListControlFrame(mozilla::PresShell* aPresShell,

@@ -155,6 +155,7 @@ WINDOWS_WORKER_TYPES = {
 MACOSX_WORKER_TYPES = {
     "macosx1014-64": "t-osx-1014",
     "macosx1014-64-power": "t-osx-1014-power",
+    "macosx1015-64": "t-osx-1015-r8-qa",
 }
 
 
@@ -319,6 +320,18 @@ TEST_VARIANTS = {
                 },
             },
         },
+        "merge": {
+            "mozharness": {
+                "extra-options": [
+                    "--setpref=webgl.out-of-process=true",
+                ],
+            },
+        },
+    },
+    "webgl-ipc-profiling": {
+        # TODO: After 2021-02-01, verify this variant is still needed.
+        "description": "{description} with WebGL IPC process enabled",
+        "suffix": "gli",
         "merge": {
             "mozharness": {
                 "extra-options": [
@@ -1071,34 +1084,34 @@ def setup_browsertime(config, tasks):
 
         cd_fetches = {
             "android.*": [
-                "linux64-chromedriver-85",
                 "linux64-chromedriver-86",
                 "linux64-chromedriver-87",
+                "linux64-chromedriver-88",
             ],
             "linux.*": [
-                "linux64-chromedriver-85",
                 "linux64-chromedriver-86",
                 "linux64-chromedriver-87",
+                "linux64-chromedriver-88",
             ],
             "macosx.*": [
-                "mac64-chromedriver-85",
                 "mac64-chromedriver-86",
                 "mac64-chromedriver-87",
+                "mac64-chromedriver-88",
             ],
             "windows.*aarch64.*": [
-                "win32-chromedriver-85",
                 "win32-chromedriver-86",
                 "win32-chromedriver-87",
+                "win32-chromedriver-88",
             ],
             "windows.*-32.*": [
-                "win32-chromedriver-85",
                 "win32-chromedriver-86",
                 "win32-chromedriver-87",
+                "win32-chromedriver-88",
             ],
             "windows.*-64.*": [
-                "win32-chromedriver-85",
                 "win32-chromedriver-86",
                 "win32-chromedriver-87",
+                "win32-chromedriver-88",
             ],
         }
 
@@ -1795,7 +1808,7 @@ def set_worker_type(config, tasks):
             if task.get("suite", "") in ["talos", "raptor"] and not task[
                 "build-platform"
             ].startswith("linux64-ccov"):
-                task["worker-type"] = "t-linux-talos"
+                task["worker-type"] = "t-linux-talos-1804"
             else:
                 task["worker-type"] = LINUX_WORKER_TYPES[task["instance-size"]]
         else:

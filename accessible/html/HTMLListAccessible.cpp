@@ -42,7 +42,8 @@ HTMLLIAccessible::HTMLLIAccessible(nsIContent* aContent, DocAccessible* aDoc)
   if (nsBulletFrame* bulletFrame =
           do_QueryFrame(nsLayoutUtils::GetMarkerFrame(aContent))) {
     const nsStyleList* styleList = bulletFrame->StyleList();
-    if (styleList->GetListStyleImage() || !styleList->mCounterStyle.IsNone()) {
+    if (!styleList->mListStyleImage.IsNone() ||
+        !styleList->mCounterStyle.IsNone()) {
       mBullet = new HTMLListBulletAccessible(mContent, mDoc);
       Document()->BindToDocument(mBullet, nullptr);
       AppendChild(mBullet);
@@ -77,7 +78,7 @@ nsRect HTMLLIAccessible::BoundsInAppUnits() const {
   return rect;
 }
 
-bool HTMLLIAccessible::InsertChildAt(uint32_t aIndex, Accessible* aChild) {
+bool HTMLLIAccessible::InsertChildAt(uint32_t aIndex, LocalAccessible* aChild) {
   // Adjust index if there's a bullet.
   if (mBullet && aIndex == 0 && aChild != mBullet) {
     return HyperTextAccessible::InsertChildAt(aIndex + 1, aChild);
@@ -86,7 +87,8 @@ bool HTMLLIAccessible::InsertChildAt(uint32_t aIndex, Accessible* aChild) {
   return HyperTextAccessible::InsertChildAt(aIndex, aChild);
 }
 
-void HTMLLIAccessible::RelocateChild(uint32_t aNewIndex, Accessible* aChild) {
+void HTMLLIAccessible::RelocateChild(uint32_t aNewIndex,
+                                     LocalAccessible* aChild) {
   // Don't allow moving a child in front of the bullet.
   if (mBullet && aChild != mBullet && aNewIndex != 0) {
     HyperTextAccessible::RelocateChild(aNewIndex, aChild);
@@ -127,7 +129,7 @@ HTMLListBulletAccessible::HTMLListBulletAccessible(nsIContent* aContent,
 }
 
 ////////////////////////////////////////////////////////////////////////////////
-// HTMLListBulletAccessible: Accessible
+// HTMLListBulletAccessible: LocalAccessible
 
 nsIFrame* HTMLListBulletAccessible::GetFrame() const {
   return nsLayoutUtils::GetMarkerFrame(mContent);
@@ -142,7 +144,7 @@ ENameValueFlag HTMLListBulletAccessible::Name(nsString& aName) const {
     return eNameOK;
   }
 
-  if (frame->StyleList()->GetListStyleImage()) {
+  if (!frame->StyleList()->mListStyleImage.IsNone()) {
     // Bullet is an image, so use default bullet character.
     const char16_t kDiscCharacter = 0x2022;
     aName.Assign(kDiscCharacter);

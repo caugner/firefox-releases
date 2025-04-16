@@ -1203,6 +1203,9 @@ var Policies = {
             "pref.browser.homepage.disable_button.restore_default",
             true
           );
+          if (param.URL != "about:blank") {
+            manager.disallowFeature("removeHomeButtonByDefault");
+          }
         } else {
           // Clear out old run once modification that is no longer used.
           clearRunOnceModification("setHomepage");
@@ -1291,6 +1294,14 @@ var Policies = {
   },
 
   ManagedBookmarks: {},
+
+  ManualAppUpdateOnly: {
+    onBeforeAddons(manager, param) {
+      if (param) {
+        manager.disallowFeature("autoAppUpdateChecking");
+      }
+    },
+  },
 
   NetworkPrediction: {
     onBeforeAddons(manager, param) {
@@ -2359,11 +2370,6 @@ function blockAboutPage(manager, feature, neededOnContentProcess = false) {
     gBlockedAboutPages.push(chromeURL);
   } catch (e) {
     // Some about pages don't have chrome URLS (compat)
-  }
-
-  if (feature == "about:config") {
-    // Hide old page until it is removed
-    gBlockedAboutPages.push("chrome://global/content/config.xhtml");
   }
 }
 

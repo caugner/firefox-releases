@@ -26,13 +26,19 @@ ChromeUtils.defineModuleGetter(
   "resource:///modules/UrlbarUtils.jsm"
 );
 
+XPCOMUtils.defineLazyModuleGetters(this, {
+  UrlbarProviderQuickSuggest:
+    "resource:///modules/UrlbarProviderQuickSuggest.jsm",
+});
+
 Preferences.addAll([
   { id: "browser.search.suggest.enabled", type: "bool" },
   { id: "browser.urlbar.suggest.searches", type: "bool" },
   { id: "browser.search.suggest.enabled.private", type: "bool" },
+  { id: "browser.urlbar.suggest.quicksuggest", type: "bool" },
   { id: "browser.search.hiddenOneOffs", type: "unichar" },
   { id: "browser.search.widget.inNavBar", type: "bool" },
-  { id: "browser.urlbar.matchBuckets", type: "string" },
+  { id: "browser.urlbar.showSearchSuggestionsFirst", type: "bool" },
   { id: "browser.search.separatePrivateDefault", type: "bool" },
   { id: "browser.search.separatePrivateDefault.ui.enabled", type: "bool" },
 ]);
@@ -40,6 +46,10 @@ Preferences.addAll([
 const ENGINE_FLAVOR = "text/x-moz-search-engine";
 const SEARCH_TYPE = "default_search";
 const SEARCH_KEY = "defaultSearch";
+
+// This pref is true when the user is enrolled in the en-US Quick Suggest
+// experiment.
+const QUICK_SUGGEST_EXPERIMENT_PREF = "browser.urlbar.quicksuggest.enabled";
 
 var gEngineView = null;
 
@@ -120,9 +130,14 @@ var gSearchPane = {
     });
 
     this._initDefaultEngines();
-    this._initShowSearchSuggestionsFirst();
     this._updateSuggestionCheckboxes();
     this._showAddEngineButton();
+
+    Services.prefs.addObserver(QUICK_SUGGEST_EXPERIMENT_PREF, this);
+    window.addEventListener("unload", () => {
+      Services.prefs.removeObserver(QUICK_SUGGEST_EXPERIMENT_PREF, this);
+    });
+    this._updateQuickSuggest();
   },
 
   /**
@@ -168,49 +183,6 @@ var gSearchPane = {
     this._separatePrivateDefaultPref.value = !event.target.checked;
   },
 
-  _initShowSearchSuggestionsFirst() {
-    this._urlbarSuggestionsPosPref = Preferences.get(
-      "browser.urlbar.matchBuckets"
-    );
-    let checkbox = document.getElementById(
-      "showSearchSuggestionsFirstCheckbox"
-    );
-
-    this._urlbarSuggestionsPosPref.on("change", () => {
-      this._syncFromShowSearchSuggestionsFirstPref(checkbox);
-    });
-    this._syncFromShowSearchSuggestionsFirstPref(checkbox);
-
-    checkbox.addEventListener("command", () => {
-      this._syncToShowSearchSuggestionsFirstPref(checkbox.checked);
-    });
-  },
-
-  _syncFromShowSearchSuggestionsFirstPref(checkbox) {
-    if (!this._urlbarSuggestionsPosPref.value) {
-      // The pref is cleared, meaning search suggestions are shown first.
-      checkbox.checked = true;
-      return;
-    }
-    // The pref has a value.  If the first bucket in the pref is search
-    // suggestions, then check the checkbox.
-    let buckets = PlacesUtils.convertMatchBucketsStringToArray(
-      this._urlbarSuggestionsPosPref.value
-    );
-    checkbox.checked = buckets[0] && buckets[0][0] == "suggestion";
-  },
-
-  _syncToShowSearchSuggestionsFirstPref(checked) {
-    if (checked) {
-      // Show search suggestions first, so clear the pref since that's the
-      // default.
-      this._urlbarSuggestionsPosPref.reset();
-      return;
-    }
-    // Show history first.
-    this._urlbarSuggestionsPosPref.value = "general:5,suggestion:Infinity";
-  },
-
   _updateSuggestionCheckboxes() {
     let suggestsPref = Preferences.get("browser.search.suggest.enabled");
     let permanentPB = Services.prefs.getBoolPref(
@@ -223,6 +195,7 @@ var gSearchPane = {
     let privateWindowCheckbox = document.getElementById(
       "showSearchSuggestionsPrivateWindows"
     );
+    let quickSuggestCheckbox = document.getElementById("showQuickSuggest");
 
     urlbarSuggests.disabled = !suggestsPref.value || permanentPB;
     privateWindowCheckbox.disabled = !suggestsPref.value;
@@ -241,16 +214,65 @@ var gSearchPane = {
 
     if (urlbarSuggests.checked) {
       positionCheckbox.disabled = false;
-      this._syncFromShowSearchSuggestionsFirstPref(positionCheckbox);
+      // Update the checked state of the show-suggestions-first checkbox.  Note
+      // that this does *not* also update its pref, it only checks the box.
+      positionCheckbox.checked = Preferences.get(
+        positionCheckbox.getAttribute("preference")
+      ).value;
+      quickSuggestCheckbox.disabled = false;
+      quickSuggestCheckbox.checked = Preferences.get(
+        quickSuggestCheckbox.getAttribute("preference")
+      ).value;
     } else {
       positionCheckbox.disabled = true;
       positionCheckbox.checked = false;
+      quickSuggestCheckbox.disabled = true;
+      quickSuggestCheckbox.checked = false;
     }
 
     let permanentPBLabel = document.getElementById(
       "urlBarSuggestionPermanentPBLabel"
     );
     permanentPBLabel.hidden = urlbarSuggests.hidden || !permanentPB;
+  },
+
+  /**
+   * Shows or hides the Quick Suggest checkbox depending on whether the en-US
+   * Quick Suggest experiment is enabled.
+   *
+   * @param {boolean} [experimentPrefChanged]
+   *   False when this is called on init and true when called due to a change in
+   *   QUICK_SUGGEST_EXPERIMENT_PREF.
+   */
+  _updateQuickSuggest(experimentPrefChanged = false) {
+    let container = document.getElementById("showQuickSuggestContainer");
+    let desc = document.getElementById("searchSuggestionsDesc");
+
+    if (!Services.prefs.getBoolPref(QUICK_SUGGEST_EXPERIMENT_PREF, false)) {
+      // The experiment is not enabled.  This is the default, so to avoid
+      // accidentally messing anything up, only modify the doc if we're being
+      // called due to a change in the experiment enabled status.
+      if (experimentPrefChanged) {
+        container.setAttribute("hidden", "true");
+        if (desc.dataset.l10nIdOriginal) {
+          desc.dataset.l10nId = desc.dataset.l10nIdOriginal;
+          delete desc.dataset.l10nIdOriginal;
+        }
+        document.l10n.translateElements([desc]);
+      }
+      return;
+    }
+
+    // The experiment is enabled.
+    document
+      .getElementById("showQuickSuggestLearnMore")
+      .setAttribute("href", UrlbarProviderQuickSuggest.helpUrl);
+    container.removeAttribute("hidden");
+    if (desc.dataset.l10nId) {
+      desc.dataset.l10nIdOriginal = desc.dataset.l10nId;
+      delete desc.dataset.l10nId;
+    }
+    desc.textContent = "Choose how search suggestions appear.";
   },
 
   _showAddEngineButton() {
@@ -406,12 +428,21 @@ var gSearchPane = {
     }
   },
 
-  observe(aEngine, aTopic, aVerb) {
-    if (aTopic == "browser-search-engine-modified") {
-      aEngine.QueryInterface(Ci.nsISearchEngine);
-      switch (aVerb) {
+  /**
+   * nsIObserver implementation.  We observe the following:
+   *
+   * * browser-search-engine-modified: Update the default engine UI and engine
+   *   tree view as appropriate when engine changes occur.
+   * * nsPref:changed: Observe changes to QUICK_SUGGEST_EXPERIMENT_PREF in order
+   *   to update the UI for the en-US Quick Suggest experiment.
+   */
+  observe(subject, topic, data) {
+    if (topic == "browser-search-engine-modified") {
+      let engine = subject;
+      engine.QueryInterface(Ci.nsISearchEngine);
+      switch (data) {
         case "engine-added":
-          gEngineView._engineStore.addEngine(aEngine);
+          gEngineView._engineStore.addEngine(engine);
           gEngineView.rowCountChanged(gEngineView.lastEngineIndex, 1);
           gSearchPane.buildDefaultEngineDropDowns();
           break;
@@ -426,7 +457,7 @@ var gSearchPane = {
           }
           break;
         case "engine-removed":
-          gSearchPane.remove(aEngine);
+          gSearchPane.remove(engine);
           break;
         case "engine-default": {
           // If the user is going through the drop down using up/down keys, the
@@ -434,7 +465,7 @@ var gSearchPane = {
           // fired, so rebuilding the list unconditionally would get in the way.
           let selectedEngine = document.getElementById("defaultEngine")
             .selectedItem.engine;
-          if (selectedEngine.name != aEngine.name) {
+          if (selectedEngine.name != engine.name) {
             gSearchPane.buildDefaultEngineDropDowns();
           }
           break;
@@ -450,13 +481,17 @@ var gSearchPane = {
             const selectedEngine = document.getElementById(
               "defaultPrivateEngine"
             ).selectedItem.engine;
-            if (selectedEngine.name != aEngine.name) {
+            if (selectedEngine.name != engine.name) {
               gSearchPane.buildDefaultEngineDropDowns();
             }
           }
           break;
         }
       }
+      return;
+    }
+    if (topic == "nsPref:changed" && data == QUICK_SUGGEST_EXPERIMENT_PREF) {
+      this._updateQuickSuggest(true);
     }
   },
 
@@ -666,7 +701,6 @@ EngineStore.prototype = {
   },
   set engines(val) {
     this._engines = val;
-    return val;
   },
 
   _getIndexForEngine(aEngine) {

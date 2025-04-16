@@ -45,6 +45,12 @@ loader.lazyRequireGetter(
   "devtools/server/actors/breakpoint-list",
   true
 );
+loader.lazyRequireGetter(
+  this,
+  "TargetConfigurationActor",
+  "devtools/server/actors/target-configuration",
+  true
+);
 
 exports.WatcherActor = protocol.ActorClassWithSpec(watcherSpec, {
   /**
@@ -150,11 +156,18 @@ exports.WatcherActor = protocol.ActorClassWithSpec(watcherSpec, {
           [Resources.TYPES.STYLESHEET]:
             enableServerWatcher && hasBrowserElement,
           [Resources.TYPES.SOURCE]: hasBrowserElement,
+          [Resources.TYPES.THREAD_STATE]: hasBrowserElement,
         },
         // @backward-compat { version 85 } When removing this trait, consumers using
         // the TargetList to retrieve the Breakpoints front should still be careful to check
         // that the Watcher is available
         "set-breakpoints": true,
+        // @backward-compat { version 87 } Starting with FF87, if the watcher is
+        // supported, the TargetConfiguration actor can be used to set configuration
+        // flags which impact BrowsingContext targets.
+        // When removing this trait, consumers should still check that the Watcher is
+        // available.
+        "target-configuration": true,
       },
     };
   },
@@ -449,7 +462,11 @@ exports.WatcherActor = protocol.ActorClassWithSpec(watcherSpec, {
    *        The network actor.
    */
   getNetworkParentActor() {
-    return new NetworkParentActor(this);
+    if (!this._networkParentActor) {
+      this._networkParentActor = new NetworkParentActor(this);
+    }
+
+    return this._networkParentActor;
   },
 
   /**
@@ -459,7 +476,24 @@ exports.WatcherActor = protocol.ActorClassWithSpec(watcherSpec, {
    *        The breakpoint list actor.
    */
   getBreakpointListActor() {
-    return new BreakpointListActor(this);
+    if (!this._breakpointListActor) {
+      this._breakpointListActor = new BreakpointListActor(this);
+    }
+
+    return this._breakpointListActor;
+  },
+
+  /**
+   * Returns the configuration actor.
+   *
+   * @return {Object} actor
+   *        The configuration actor.
+   */
+  getTargetConfigurationActor() {
+    if (!this._configurationListActor) {
+      this._configurationListActor = new TargetConfigurationActor(this);
+    }
+    return this._configurationListActor;
   },
 
   /**
@@ -526,5 +560,15 @@ exports.WatcherActor = protocol.ActorClassWithSpec(watcherSpec, {
     if (targetActor) {
       targetActor.removeWatcherDataEntry(type, entries);
     }
+  },
+
+  /**
+   * Retrieve the current watched data for the provided type.
+   *
+   * @param {String} type
+   *        Data type to retrieve.
+   */
+  getWatchedData(type) {
+    return this.watchedData?.[type];
   },
 });

@@ -100,7 +100,7 @@
 #include "mozilla/SMILAnimationController.h"
 #include "mozilla/SMILTimeContainer.h"
 #include "mozilla/ScopeExit.h"
-#include "mozilla/Services.h"
+#include "mozilla/Components.h"
 #include "mozilla/ServoCSSPropList.h"
 #include "mozilla/ServoStyleConsts.h"
 #include "mozilla/ServoStyleSet.h"
@@ -890,18 +890,6 @@ void ExternalResourceMap::ShowViewers() {
   }
 }
 
-void TransferOverrideDPPX(Document* aFromDoc, Document* aToDoc) {
-  MOZ_ASSERT(aFromDoc && aToDoc, "transferring zoom levels from/to null doc");
-
-  nsPresContext* fromCtxt = aFromDoc->GetPresContext();
-  if (!fromCtxt) return;
-
-  nsPresContext* toCtxt = aToDoc->GetPresContext();
-  if (!toCtxt) return;
-
-  toCtxt->SetOverrideDPPX(fromCtxt->GetOverrideDPPX());
-}
-
 void TransferShowingState(Document* aFromDoc, Document* aToDoc) {
   MOZ_ASSERT(aFromDoc && aToDoc, "transferring showing state from/to null doc");
 
@@ -945,8 +933,8 @@ nsresult ExternalResourceMap::AddExternalResource(nsIURI* aURI,
     }
   }
 
-  ExternalResource* newResource = new ExternalResource();
-  mMap.Put(aURI, newResource);
+  ExternalResource* newResource =
+      mMap.Put(aURI, MakeUnique<ExternalResource>()).get();
 
   newResource->mDocument = doc;
   newResource->mViewer = aViewer;
@@ -955,7 +943,6 @@ nsresult ExternalResourceMap::AddExternalResource(nsIURI* aURI,
     if (nsPresContext* pc = doc->GetPresContext()) {
       pc->RecomputeBrowsingContextDependentData();
     }
-    TransferOverrideDPPX(aDisplayDocument, doc);
     TransferShowingState(aDisplayDocument, doc);
   }
 
@@ -1347,6 +1334,7 @@ Document::Document(const char* aContentType)
       mBFCacheDisallowed(false),
       mHasHadDefaultView(false),
       mStyleSheetChangeEventsEnabled(false),
+      mShadowRootAttachedEventEnabled(false),
       mIsSrcdocDocument(false),
       mHasDisplayDocument(false),
       mFontFaceSetDirty(true),
@@ -1402,6 +1390,10 @@ Document::Document(const char* aContentType)
       mOnloadBlockCount(0),
       mAsyncOnloadBlockCount(0),
       mWriteLevel(0),
+      mLazyLoadImageCount(0),
+      mLazyLoadImageStarted(0),
+      mLazyLoadImageReachViewportLoading(0),
+      mLazyLoadImageReachViewportLoaded(0),
       mContentEditableCount(0),
       mEditingState(EditingState::eOff),
       mCompatMode(eCompatibility_FullStandards),
@@ -2373,6 +2365,7 @@ NS_IMPL_CYCLE_COLLECTION_TRAVERSE_BEGIN_INTERNAL(Document)
 
   NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mOnloadBlocker)
   NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mLazyLoadImageObserver)
+  NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mLazyLoadImageObserverViewport)
   NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mDOMImplementation)
   NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mImageMaps)
   NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mOrientationPendingPromise)
@@ -2495,6 +2488,7 @@ NS_IMPL_CYCLE_COLLECTION_UNLINK_BEGIN(Document)
   NS_IMPL_CYCLE_COLLECTION_UNLINK(mSecurityInfo)
   NS_IMPL_CYCLE_COLLECTION_UNLINK(mDisplayDocument)
   NS_IMPL_CYCLE_COLLECTION_UNLINK(mLazyLoadImageObserver)
+  NS_IMPL_CYCLE_COLLECTION_UNLINK(mLazyLoadImageObserverViewport)
   NS_IMPL_CYCLE_COLLECTION_UNLINK(mFontFaceSet)
   NS_IMPL_CYCLE_COLLECTION_UNLINK(mReadyForIdle)
   NS_IMPL_CYCLE_COLLECTION_UNLINK(mDocumentL10n)
@@ -2660,17 +2654,6 @@ void Document::RemoveAllProperties() { PropertyTable().RemoveAllProperties(); }
 
 void Document::RemoveAllPropertiesFor(nsINode* aNode) {
   PropertyTable().RemoveAllPropertiesFor(aNode);
-}
-
-bool Document::IsVisibleConsideringAncestors() const {
-  const Document* parent = this;
-  do {
-    if (!parent->IsVisible()) {
-      return false;
-    }
-  } while ((parent = parent->GetInProcessParentDocument()));
-
-  return true;
 }
 
 void Document::Reset(nsIChannel* aChannel, nsILoadGroup* aLoadGroup) {
@@ -3071,7 +3054,6 @@ void Document::FillStyleSetUserAndUASheets() {
 
   mStyleSet->AppendStyleSheet(*cache->FormsSheet());
   mStyleSet->AppendStyleSheet(*cache->ScrollbarsSheet());
-  mStyleSet->AppendStyleSheet(*cache->PluginProblemSheet());
 
   for (StyleSheet* sheet : *sheetService->AgentStyleSheets()) {
     mStyleSet->AppendStyleSheet(*sheet);
@@ -6706,19 +6688,15 @@ Document* Document::GetSubDocumentFor(nsIContent* aContent) const {
   return nullptr;
 }
 
-Element* Document::FindContentForSubDocument(Document* aDocument) const {
-  NS_ENSURE_TRUE(aDocument, nullptr);
-
-  if (!mSubDocuments) {
-    return nullptr;
+Element* Document::GetEmbedderElement() const {
+  // We check if we're the active document in our BrowsingContext
+  // by comparing against its document, rather than checking if the
+  // WindowContext is cached, since mWindow may be null when we're
+  // called (such as in nsPresContext::Init).
+  if (BrowsingContext* bc = GetBrowsingContext()) {
+    return bc->GetExtantDocument() == this ? bc->GetEmbedderElement() : nullptr;
   }
 
-  for (auto iter = mSubDocuments->Iter(); !iter.Done(); iter.Next()) {
-    auto entry = static_cast<SubDocMapEntry*>(iter.Get());
-    if (entry->mSubDocument == aDocument) {
-      return entry->mKey;
-    }
-  }
   return nullptr;
 }
 
@@ -7509,15 +7487,11 @@ void Document::DispatchContentLoadedEvents() {
   // target_frame is the [i]frame element that will be used as the
   // target for the event. It's the [i]frame whose content is done
   // loading.
-  nsCOMPtr<EventTarget> target_frame;
+  nsCOMPtr<Element> target_frame = GetEmbedderElement();
 
-  if (mParentDocument) {
-    target_frame = mParentDocument->FindContentForSubDocument(this);
-  }
-
-  if (target_frame) {
-    nsCOMPtr<Document> parent = mParentDocument;
-    do {
+  if (target_frame && target_frame->IsInComposedDoc()) {
+    nsCOMPtr<Document> parent = target_frame->OwnerDoc();
+    while (parent) {
       RefPtr<Event> event;
       if (parent) {
         IgnoredErrorResult ignored;
@@ -7548,7 +7522,7 @@ void Document::DispatchContentLoadedEvents() {
       }
 
       parent = parent->GetInProcessParentDocument();
-    } while (parent);
+    }
   }
 
   // If the document has a manifest attribute, fire a MozApplicationManifest
@@ -11840,11 +11814,17 @@ void Document::MaybePreconnect(nsIURI* aOrigURI, mozilla::CORSMode aCORSMode) {
     return;
   }
 
-  auto entry = mPreloadedPreconnects.LookupForAdd(uri);
-  if (entry) {
-    return;  // we found an existing entry
+  const bool existingEntryFound =
+      mPreloadedPreconnects.WithEntryHandle(uri, [](auto&& entry) {
+        if (entry) {
+          return true;
+        }
+        entry.Insert(true);
+        return false;
+      });
+  if (existingEntryFound) {
+    return;
   }
-  entry.OrInsert([]() { return true; });
 
   nsCOMPtr<nsISpeculativeConnect> speculator(
       do_QueryInterface(nsContentUtils::GetIOService()));
@@ -11920,19 +11900,18 @@ NS_IMPL_ISUPPORTS(StubCSSLoaderObserver, nsICSSLoaderObserver)
 SheetPreloadStatus Document::PreloadStyle(
     nsIURI* uri, const Encoding* aEncoding, const nsAString& aCrossOriginAttr,
     const enum ReferrerPolicy aReferrerPolicy, const nsAString& aIntegrity,
-    bool aIsLinkPreload) {
+    css::StylePreloadKind aKind) {
+  MOZ_ASSERT(aKind != css::StylePreloadKind::None);
+
   // The CSSLoader will retain this object after we return.
   nsCOMPtr<nsICSSLoaderObserver> obs = new StubCSSLoaderObserver();
 
   nsCOMPtr<nsIReferrerInfo> referrerInfo =
       ReferrerInfo::CreateFromDocumentAndPolicyOverride(this, aReferrerPolicy);
 
-  auto preloadType = aIsLinkPreload ? css::Loader::IsPreload::FromLink
-                                    : css::Loader::IsPreload::FromParser;
-
   // Charset names are always ASCII.
   auto result = CSSLoader()->LoadSheet(
-      uri, preloadType, aEncoding, referrerInfo, obs,
+      uri, aKind, aEncoding, referrerInfo, obs,
       Element::StringToCORSMode(aCrossOriginAttr), aIntegrity);
   if (result.isErr()) {
     return SheetPreloadStatus::Errored;
@@ -12821,6 +12800,11 @@ void Document::GetPlugins(nsTArray<nsIObjectLoadingContent*>& aPlugins) {
 void Document::ScheduleSVGUseElementShadowTreeUpdate(
     SVGUseElement& aUseElement) {
   MOZ_ASSERT(aUseElement.IsInComposedDoc());
+
+  if (MOZ_UNLIKELY(mIsStaticDocument)) {
+    // Printing doesn't deal well with dynamic DOM mutations.
+    return;
+  }
 
   mSVGUseElementsNeedingShadowTreeUpdate.PutEntry(&aUseElement);
 
@@ -13726,7 +13710,7 @@ void Document::ExitFullscreenInDocTree(Document* aMaybeNotARootDoc) {
   MOZ_ASSERT(aMaybeNotARootDoc);
 
   // Unlock the pointer
-  UnlockPointer();
+  PointerLockManager::Unlock();
 
   // Resolve all promises which waiting for exit fullscreen.
   PendingFullscreenChangeList::Iterator<FullscreenExit> iter(
@@ -13833,7 +13817,7 @@ void Document::RestorePreviousFullscreenState(UniquePtr<FullscreenExit> aExit) {
   }
 
   // If fullscreen mode is updated the pointer should be unlocked
-  UnlockPointer();
+  PointerLockManager::Unlock();
   // All documents listed in the array except the last one are going to
   // completely exit from the fullscreen state.
   for (auto i : IntegerRange(exitElements.Length() - 1)) {
@@ -14436,7 +14420,7 @@ bool Document::ApplyFullscreen(UniquePtr<FullscreenRequest> aRequest) {
 
   // If a document is already in fullscreen, then unlock the mouse pointer
   // before setting a new document to fullscreen
-  UnlockPointer();
+  PointerLockManager::Unlock();
 
   // Set the fullscreen element. This sets the fullscreen style on the
   // element, and the fullscreen-ancestor styles on ancestors of the element
@@ -14480,13 +14464,15 @@ bool Document::ApplyFullscreen(UniquePtr<FullscreenRequest> aRequest) {
     if (child == fullScreenRootDoc) {
       break;
     }
-    Document* parent = child->GetInProcessParentDocument();
-    Element* element = parent->FindContentForSubDocument(child);
+
+    Element* element = child->GetEmbedderElement();
     if (!element) {
       // We've reached the root.No more changes need to be made
       // to the top layer stacks of documents further up the tree.
       break;
     }
+
+    Document* parent = child->GetInProcessParentDocument();
     parent->SetFullscreenElement(element);
     changed.AppendElement(parent);
     child = parent;
@@ -14538,350 +14524,6 @@ bool Document::SetOrientationPendingPromise(Promise* aPromise) {
 
   mOrientationPendingPromise = aPromise;
   return true;
-}
-
-static void DispatchPointerLockChange(Document* aTarget) {
-  if (!aTarget) {
-    return;
-  }
-
-  RefPtr<AsyncEventDispatcher> asyncDispatcher =
-      new AsyncEventDispatcher(aTarget, u"pointerlockchange"_ns,
-                               CanBubble::eYes, ChromeOnlyDispatch::eNo);
-  asyncDispatcher->PostDOMEvent();
-}
-
-static void DispatchPointerLockError(Document* aTarget, const char* aMessage) {
-  if (!aTarget) {
-    return;
-  }
-
-  RefPtr<AsyncEventDispatcher> asyncDispatcher =
-      new AsyncEventDispatcher(aTarget, u"pointerlockerror"_ns, CanBubble::eYes,
-                               ChromeOnlyDispatch::eNo);
-  asyncDispatcher->PostDOMEvent();
-  nsContentUtils::ReportToConsole(nsIScriptError::warningFlag, "DOM"_ns,
-                                  aTarget, nsContentUtils::eDOM_PROPERTIES,
-                                  aMessage);
-}
-
-static const char* GetPointerLockError(Element* aElement, Element* aCurrentLock,
-                                       bool aNoFocusCheck = false) {
-  // Check if pointer lock pref is enabled
-  if (!StaticPrefs::full_screen_api_pointer_lock_enabled()) {
-    return "PointerLockDeniedDisabled";
-  }
-
-  nsCOMPtr<Document> ownerDoc = aElement->OwnerDoc();
-  if (aCurrentLock && aCurrentLock->OwnerDoc() != ownerDoc) {
-    return "PointerLockDeniedInUse";
-  }
-
-  if (!aElement->IsInComposedDoc()) {
-    return "PointerLockDeniedNotInDocument";
-  }
-
-  if (ownerDoc->GetSandboxFlags() & SANDBOXED_POINTER_LOCK) {
-    return "PointerLockDeniedSandboxed";
-  }
-
-  // Check if the element is in a document with a docshell.
-  if (!ownerDoc->GetContainer()) {
-    return "PointerLockDeniedHidden";
-  }
-  nsCOMPtr<nsPIDOMWindowOuter> ownerWindow = ownerDoc->GetWindow();
-  if (!ownerWindow) {
-    return "PointerLockDeniedHidden";
-  }
-  nsCOMPtr<nsPIDOMWindowInner> ownerInnerWindow = ownerDoc->GetInnerWindow();
-  if (!ownerInnerWindow) {
-    return "PointerLockDeniedHidden";
-  }
-  if (ownerWindow->GetCurrentInnerWindow() != ownerInnerWindow) {
-    return "PointerLockDeniedHidden";
-  }
-
-  BrowsingContext* bc = ownerDoc->GetBrowsingContext();
-  BrowsingContext* topBC = bc ? bc->Top() : nullptr;
-  WindowContext* topWC = ownerDoc->GetTopLevelWindowContext();
-  if (!topBC || !topBC->IsActive() || !topWC ||
-      topWC != topBC->GetCurrentWindowContext()) {
-    return "PointerLockDeniedHidden";
-  }
-
-  if (!aNoFocusCheck) {
-    if (!IsInActiveTab(ownerDoc)) {
-      return "PointerLockDeniedNotFocused";
-    }
-  }
-
-  return nullptr;
-}
-
-static void ChangePointerLockedElement(Element* aElement, Document* aDocument,
-                                       Element* aPointerLockedElement) {
-  // aDocument here is not really necessary, as it is the uncomposed
-  // document of both aElement and aPointerLockedElement as far as one
-  // is not nullptr, and they wouldn't both be nullptr in any case.
-  // But since the caller of this function should have known what the
-  // document is, we just don't try to figure out what it should be.
-  MOZ_ASSERT(aDocument);
-  MOZ_ASSERT(aElement != aPointerLockedElement);
-  if (aPointerLockedElement) {
-    MOZ_ASSERT(aPointerLockedElement->GetComposedDoc() == aDocument);
-    aPointerLockedElement->ClearPointerLock();
-  }
-  if (aElement) {
-    MOZ_ASSERT(aElement->GetComposedDoc() == aDocument);
-    aElement->SetPointerLock();
-    EventStateManager::sPointerLockedElement = do_GetWeakReference(aElement);
-    EventStateManager::sPointerLockedDoc = do_GetWeakReference(aDocument);
-    NS_ASSERTION(EventStateManager::sPointerLockedElement &&
-                     EventStateManager::sPointerLockedDoc,
-                 "aElement and this should support weak references!");
-  } else {
-    EventStateManager::sPointerLockedElement = nullptr;
-    EventStateManager::sPointerLockedDoc = nullptr;
-  }
-  // Retarget all events to aElement via capture or
-  // stop retargeting if aElement is nullptr.
-  PresShell::SetCapturingContent(aElement, CaptureFlags::PointerLock);
-  DispatchPointerLockChange(aDocument);
-}
-
-MOZ_CAN_RUN_SCRIPT_BOUNDARY static bool StartSetPointerLock(
-    Element* aElement, Document* aDocument) {
-  if (!aDocument->SetPointerLock(aElement, StyleCursorKind::None)) {
-    DispatchPointerLockError(aDocument, "PointerLockDeniedFailedToLock");
-    return false;
-  }
-
-  ChangePointerLockedElement(aElement, aDocument, nullptr);
-  nsContentUtils::DispatchEventOnlyToChrome(
-      aDocument, ToSupports(aElement), u"MozDOMPointerLock:Entered"_ns,
-      CanBubble::eYes, Cancelable::eNo, /* DefaultAction */ nullptr);
-
-  return true;
-}
-
-class PointerLockRequest final : public Runnable {
- public:
-  PointerLockRequest(Element* aElement, bool aUserInputOrChromeCaller)
-      : mozilla::Runnable("PointerLockRequest"),
-        mElement(do_GetWeakReference(aElement)),
-        mDocument(do_GetWeakReference(aElement->OwnerDoc())),
-        mUserInputOrChromeCaller(aUserInputOrChromeCaller) {}
-
-  NS_IMETHOD Run() final {
-    nsCOMPtr<Element> element = do_QueryReferent(mElement);
-    nsCOMPtr<Document> document = do_QueryReferent(mDocument);
-
-    const char* error = nullptr;
-    if (!element || !document || !element->GetComposedDoc()) {
-      error = "PointerLockDeniedNotInDocument";
-    } else if (element->GetComposedDoc() != document) {
-      error = "PointerLockDeniedMovedDocument";
-    }
-    if (!error) {
-      nsCOMPtr<Element> pointerLockedElement =
-          do_QueryReferent(EventStateManager::sPointerLockedElement);
-      if (element == pointerLockedElement) {
-        DispatchPointerLockChange(document);
-        return NS_OK;
-      }
-      // Note, we must bypass focus change, so pass true as the last parameter!
-      error = GetPointerLockError(element, pointerLockedElement, true);
-      // Another element in the same document is requesting pointer lock,
-      // just grant it without user input check.
-      if (!error && pointerLockedElement) {
-        ChangePointerLockedElement(element, document, pointerLockedElement);
-        return NS_OK;
-      }
-    }
-    // If it is neither user input initiated, nor requested in fullscreen,
-    // it should be rejected.
-    if (!error && !mUserInputOrChromeCaller &&
-        !document->GetUnretargetedFullScreenElement()) {
-      error = "PointerLockDeniedNotInputDriven";
-    }
-
-    if (error) {
-      DispatchPointerLockError(document, error);
-      return NS_OK;
-    }
-
-    if (BrowserChild* browserChild =
-            BrowserChild::GetFrom(document->GetDocShell())) {
-      nsWeakPtr e = do_GetWeakReference(element);
-      nsWeakPtr doc = do_GetWeakReference(element->OwnerDoc());
-      nsWeakPtr bc = do_GetWeakReference(browserChild);
-      browserChild->SendRequestPointerLock(
-          [e, doc, bc](const nsCString& aError) {
-            nsCOMPtr<Document> document = do_QueryReferent(doc);
-            if (!aError.IsEmpty()) {
-              DispatchPointerLockError(document, aError.get());
-              return;
-            }
-
-            const char* error = nullptr;
-            auto autoCleanup = MakeScopeExit([&] {
-              if (error) {
-                DispatchPointerLockError(document, error);
-                // If we are failed to set pointer lock, notify parent to stop
-                // redirect mouse event to this process.
-                if (nsCOMPtr<nsIBrowserChild> browserChild =
-                        do_QueryReferent(bc)) {
-                  static_cast<BrowserChild*>(browserChild.get())
-                      ->SendReleasePointerLock();
-                }
-              }
-            });
-
-            nsCOMPtr<Element> element = do_QueryReferent(e);
-            if (!element || !document || !element->GetComposedDoc()) {
-              error = "PointerLockDeniedNotInDocument";
-              return;
-            }
-
-            if (element->GetComposedDoc() != document) {
-              error = "PointerLockDeniedMovedDocument";
-              return;
-            }
-
-            nsCOMPtr<Element> pointerLockedElement =
-                do_QueryReferent(EventStateManager::sPointerLockedElement);
-            error = GetPointerLockError(element, pointerLockedElement, true);
-            if (error) {
-              return;
-            }
-
-            if (!StartSetPointerLock(element, document)) {
-              error = "PointerLockDeniedFailedToLock";
-              return;
-            }
-          },
-          [doc](mozilla::ipc::ResponseRejectReason) {
-            // IPC layer error
-            nsCOMPtr<Document> document = do_QueryReferent(doc);
-            if (!document) {
-              return;
-            }
-
-            DispatchPointerLockError(document, "PointerLockDeniedFailedToLock");
-          });
-    } else {
-      StartSetPointerLock(element, document);
-    }
-
-    return NS_OK;
-  };
-
- private:
-  nsWeakPtr mElement;
-  nsWeakPtr mDocument;
-  bool mUserInputOrChromeCaller;
-};
-
-void Document::RequestPointerLock(Element* aElement, CallerType aCallerType) {
-  NS_ASSERTION(aElement,
-               "Must pass non-null element to Document::RequestPointerLock");
-
-  nsCOMPtr<Element> pointerLockedElement =
-      do_QueryReferent(EventStateManager::sPointerLockedElement);
-  if (aElement == pointerLockedElement) {
-    DispatchPointerLockChange(this);
-    return;
-  }
-
-  if (const char* msg = GetPointerLockError(aElement, pointerLockedElement)) {
-    DispatchPointerLockError(this, msg);
-    return;
-  }
-
-  bool userInputOrSystemCaller = HasValidTransientUserGestureActivation() ||
-                                 aCallerType == CallerType::System;
-  nsCOMPtr<nsIRunnable> request =
-      new PointerLockRequest(aElement, userInputOrSystemCaller);
-  Dispatch(TaskCategory::Other, request.forget());
-}
-
-bool Document::SetPointerLock(Element* aElement, StyleCursorKind aCursorStyle) {
-  MOZ_ASSERT(!aElement || aElement->OwnerDoc() == this,
-             "We should be either unlocking pointer (aElement is nullptr), "
-             "or locking pointer to an element in this document");
-#ifdef DEBUG
-  if (!aElement) {
-    nsCOMPtr<Document> pointerLockedDoc =
-        do_QueryReferent(EventStateManager::sPointerLockedDoc);
-    MOZ_ASSERT(pointerLockedDoc == this);
-  }
-#endif
-
-  PresShell* presShell = GetPresShell();
-  if (!presShell) {
-    NS_WARNING("SetPointerLock(): No PresShell");
-    if (!aElement) {
-      // If we are unlocking pointer lock, but for some reason the doc
-      // has already detached from the presshell, just ask the event
-      // state manager to release the pointer.
-      EventStateManager::SetPointerLock(nullptr, nullptr);
-      return true;
-    }
-    return false;
-  }
-  nsPresContext* presContext = presShell->GetPresContext();
-  if (!presContext) {
-    NS_WARNING("SetPointerLock(): Unable to get PresContext");
-    return false;
-  }
-
-  nsCOMPtr<nsIWidget> widget;
-  nsIFrame* rootFrame = presShell->GetRootFrame();
-  if (!NS_WARN_IF(!rootFrame)) {
-    widget = rootFrame->GetNearestWidget();
-    NS_WARNING_ASSERTION(widget,
-                         "SetPointerLock(): Unable to find widget in "
-                         "presShell->GetRootFrame()->GetNearestWidget();");
-    if (aElement && !widget) {
-      return false;
-    }
-  }
-
-  // Hide the cursor and set pointer lock for future mouse events
-  RefPtr<EventStateManager> esm = presContext->EventStateManager();
-  esm->SetCursor(aCursorStyle, nullptr, Nothing(), widget, true);
-  EventStateManager::SetPointerLock(widget, aElement);
-
-  return true;
-}
-
-void Document::UnlockPointer(Document* aDoc) {
-  if (!EventStateManager::sIsPointerLocked) {
-    return;
-  }
-
-  nsCOMPtr<Document> pointerLockedDoc =
-      do_QueryReferent(EventStateManager::sPointerLockedDoc);
-  if (!pointerLockedDoc || (aDoc && aDoc != pointerLockedDoc)) {
-    return;
-  }
-  if (!pointerLockedDoc->SetPointerLock(nullptr, StyleCursorKind::Auto)) {
-    return;
-  }
-
-  nsCOMPtr<Element> pointerLockedElement =
-      do_QueryReferent(EventStateManager::sPointerLockedElement);
-  ChangePointerLockedElement(nullptr, pointerLockedDoc, pointerLockedElement);
-
-  if (BrowserChild* browserChild =
-          BrowserChild::GetFrom(pointerLockedDoc->GetDocShell())) {
-    browserChild->SendReleasePointerLock();
-  }
-
-  RefPtr<AsyncEventDispatcher> asyncDispatcher = new AsyncEventDispatcher(
-      pointerLockedElement, u"MozDOMPointerLock:Exited"_ns, CanBubble::eYes,
-      ChromeOnlyDispatch::eYes);
-  asyncDispatcher->RunDOMEventWhenSafe();
 }
 
 void Document::UpdateVisibilityState(DispatchVisibilityChange aDispatchEvent) {
@@ -15415,6 +15057,25 @@ void Document::ReportDocumentUseCounters() {
             (" > %s\n", Telemetry::GetHistogramName(id)));
     Telemetry::Accumulate(id, 1);
   }
+
+  ReportDocumentLazyLoadCounters();
+}
+
+void Document::ReportDocumentLazyLoadCounters() {
+  if (!mLazyLoadImageCount) {
+    return;
+  }
+  Telemetry::Accumulate(Telemetry::LAZYLOAD_IMAGE_TOTAL, mLazyLoadImageCount);
+  Telemetry::Accumulate(Telemetry::LAZYLOAD_IMAGE_STARTED,
+                        mLazyLoadImageStarted);
+  Telemetry::Accumulate(Telemetry::LAZYLOAD_IMAGE_NOT_VIEWPORT,
+                        mLazyLoadImageStarted -
+                            mLazyLoadImageReachViewportLoading -
+                            mLazyLoadImageReachViewportLoaded);
+  Telemetry::Accumulate(Telemetry::LAZYLOAD_IMAGE_VIEWPORT_LOADING,
+                        mLazyLoadImageReachViewportLoading);
+  Telemetry::Accumulate(Telemetry::LAZYLOAD_IMAGE_VIEWPORT_LOADED,
+                        mLazyLoadImageReachViewportLoaded);
 }
 
 void Document::SendPageUseCounters() {
@@ -15543,6 +15204,22 @@ DOMIntersectionObserver& Document::EnsureLazyLoadImageObserver() {
   return *mLazyLoadImageObserver;
 }
 
+DOMIntersectionObserver& Document::EnsureLazyLoadImageObserverViewport() {
+  if (!mLazyLoadImageObserverViewport) {
+    mLazyLoadImageObserverViewport =
+        DOMIntersectionObserver::CreateLazyLoadObserverViewport(*this);
+  }
+  return *mLazyLoadImageObserverViewport;
+}
+
+void Document::IncLazyLoadImageReachViewport(bool aLoading) {
+  if (aLoading) {
+    ++mLazyLoadImageReachViewportLoading;
+  } else {
+    ++mLazyLoadImageReachViewportLoaded;
+  }
+}
+
 void Document::NotifyLayerManagerRecreated() {
   EnumerateActivityObservers(NotifyActivityChanged);
   EnumerateSubDocuments([](Document& aSubDoc) {
@@ -15633,38 +15310,32 @@ already_AddRefed<Element> Document::CreateHTMLElement(nsAtom* aTag) {
   return element.forget();
 }
 
-static CallState MarkDocumentTreeToBeInSyncOperation(
-    Document& aDoc, nsTArray<RefPtr<Document>>& aDocuments) {
-  aDoc.SetIsInSyncOperation(true);
-  if (nsCOMPtr<nsPIDOMWindowInner> window = aDoc.GetInnerWindow()) {
-    window->TimeoutManager().BeginSyncOperation();
+void AutoWalkBrowsingContextGroup::SuppressBrowsingContextGroup(
+    BrowsingContextGroup* aGroup) {
+  for (const auto& bc : aGroup->Toplevels()) {
+    bc->PreOrderWalk([&](BrowsingContext* aBC) {
+      if (nsCOMPtr<nsPIDOMWindowOuter> win = aBC->GetDOMWindow()) {
+        if (RefPtr<Document> doc = win->GetExtantDoc()) {
+          SuppressDocument(doc);
+          mDocuments.AppendElement(doc);
+        }
+      }
+    });
   }
-  aDocuments.AppendElement(&aDoc);
-  auto recurse = [&aDocuments](Document& aSubDoc) {
-    return MarkDocumentTreeToBeInSyncOperation(aSubDoc, aDocuments);
-  };
-  aDoc.EnumerateSubDocuments(recurse);
-  return CallState::Continue;
 }
 
 nsAutoSyncOperation::nsAutoSyncOperation(Document* aDoc,
                                          SyncOperationBehavior aSyncBehavior)
     : mSyncBehavior(aSyncBehavior) {
   mMicroTaskLevel = 0;
-  CycleCollectedJSContext* ccjs = CycleCollectedJSContext::Get();
-  if (ccjs) {
+  if (CycleCollectedJSContext* ccjs = CycleCollectedJSContext::Get()) {
     mMicroTaskLevel = ccjs->MicroTaskLevel();
     ccjs->SetMicroTaskLevel(0);
   }
   if (aDoc) {
-    if (nsPIDOMWindowOuter* win = aDoc->GetWindow()) {
-      if (nsCOMPtr<nsPIDOMWindowOuter> top = win->GetInProcessTop()) {
-        if (RefPtr<Document> doc = top->GetExtantDoc()) {
-          MarkDocumentTreeToBeInSyncOperation(*doc, mDocuments);
-        }
-      }
+    if (auto* bcg = aDoc->GetDocGroup()->GetBrowsingContextGroup()) {
+      SuppressBrowsingContextGroup(bcg);
     }
-
     mBrowsingContext = aDoc->GetBrowsingContext();
     if (mBrowsingContext &&
         mSyncBehavior == SyncOperationBehavior::eSuspendInput &&
@@ -15674,18 +15345,26 @@ nsAutoSyncOperation::nsAutoSyncOperation(Document* aDoc,
   }
 }
 
-nsAutoSyncOperation::~nsAutoSyncOperation() {
-  for (RefPtr<Document>& doc : mDocuments) {
-    if (nsCOMPtr<nsPIDOMWindowInner> window = doc->GetInnerWindow()) {
-      window->TimeoutManager().EndSyncOperation();
-    }
-    doc->SetIsInSyncOperation(false);
+void nsAutoSyncOperation::SuppressDocument(Document* aDoc) {
+  if (nsCOMPtr<nsPIDOMWindowInner> win = aDoc->GetInnerWindow()) {
+    win->TimeoutManager().BeginSyncOperation();
   }
+  aDoc->SetIsInSyncOperation(true);
+}
+
+void nsAutoSyncOperation::UnsuppressDocument(Document* aDoc) {
+  if (nsCOMPtr<nsPIDOMWindowInner> win = aDoc->GetInnerWindow()) {
+    win->TimeoutManager().EndSyncOperation();
+  }
+  aDoc->SetIsInSyncOperation(false);
+}
+
+nsAutoSyncOperation::~nsAutoSyncOperation() {
+  UnsuppressDocuments();
   CycleCollectedJSContext* ccjs = CycleCollectedJSContext::Get();
   if (ccjs) {
     ccjs->SetMicroTaskLevel(mMicroTaskLevel);
   }
-
   if (mBrowsingContext &&
       mSyncBehavior == SyncOperationBehavior::eSuspendInput &&
       InputTaskManager::CanSuspendInputEvent()) {
@@ -15891,6 +15570,17 @@ bool Document::HasValidTransientUserGestureActivation() {
 bool Document::ConsumeTransientUserGestureActivation() {
   RefPtr<WindowContext> wc = GetWindowContext();
   return wc && wc->ConsumeTransientUserGestureActivation();
+}
+
+void Document::IncLazyLoadImageCount() {
+  if (!mLazyLoadImageCount) {
+    if (WindowContext* wc = GetTopLevelWindowContext()) {
+      if (!wc->HadLazyLoadImage()) {
+        MOZ_ALWAYS_SUCCEEDS(wc->SetHadLazyLoadImage(true));
+      }
+    }
+  }
+  ++mLazyLoadImageCount;
 }
 
 void Document::SetDocTreeHadMedia() {
@@ -17136,11 +16826,19 @@ StylePrefersColorScheme Document::PrefersColorScheme(
     return StylePrefersColorScheme::Light;
   }
 
-  if (nsPresContext* pc = GetPresContext()) {
-    if (auto devtoolsOverride = pc->GetOverridePrefersColorScheme()) {
-      return *devtoolsOverride;
+  if (auto* bc = GetBrowsingContext()) {
+    switch (bc->Top()->PrefersColorSchemeOverride()) {
+      case dom::PrefersColorSchemeOverride::Dark:
+        return StylePrefersColorScheme::Dark;
+      case dom::PrefersColorSchemeOverride::Light:
+        return StylePrefersColorScheme::Light;
+      case dom::PrefersColorSchemeOverride::None:
+      case dom::PrefersColorSchemeOverride::EndGuard_:
+        break;
     }
+  }
 
+  if (nsPresContext* pc = GetPresContext()) {
     if (pc->IsPrintingOrPrintPreview()) {
       return StylePrefersColorScheme::Light;
     }
@@ -17213,7 +16911,8 @@ bool Document::HasThirdPartyChannel() {
     // We assume that the channel is a third-party by default.
     bool thirdParty = true;
 
-    nsCOMPtr<mozIThirdPartyUtil> thirdPartyUtil = services::GetThirdPartyUtil();
+    nsCOMPtr<mozIThirdPartyUtil> thirdPartyUtil =
+        components::ThirdPartyUtil::Service();
     if (!thirdPartyUtil) {
       return thirdParty;
     }

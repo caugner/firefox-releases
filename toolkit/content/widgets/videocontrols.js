@@ -554,14 +554,10 @@ this.VideoControlsImplWidget = class {
             },
             _updateHiddenAttribute: {
               value: () => {
-                if (
-                  control._isHiddenExplicitly ||
-                  control._isHiddenByAdjustment
-                ) {
-                  control.setAttribute("hidden", "");
-                } else {
-                  control.removeAttribute("hidden");
-                }
+                control.toggleAttribute(
+                  "hidden",
+                  control._isHiddenExplicitly || control._isHiddenByAdjustment
+                );
               },
             },
           });
@@ -576,7 +572,7 @@ this.VideoControlsImplWidget = class {
 
       updatePictureInPictureToggleDisplay() {
         if (this.isAudioOnly) {
-          this.pictureInPictureToggle.setAttribute("hidden", true);
+          this.pictureInPictureToggle.hidden = true;
           return;
         }
 
@@ -589,14 +585,14 @@ this.VideoControlsImplWidget = class {
             this.reflowedDimensions
           )
         ) {
-          this.pictureInPictureToggle.removeAttribute("hidden");
+          this.pictureInPictureToggle.hidden = false;
           VideoControlsWidget.setupToggle(
             this.prefs,
             this.pictureInPictureToggle,
             this.reflowedDimensions
           );
         } else {
-          this.pictureInPictureToggle.setAttribute("hidden", true);
+          this.pictureInPictureToggle.hidden = true;
         }
       },
 
@@ -1070,12 +1066,7 @@ this.VideoControlsImplWidget = class {
       },
 
       setShowPictureInPictureMessage(showMessage) {
-        if (showMessage) {
-          this.pictureInPictureOverlay.removeAttribute("hidden");
-        } else {
-          this.pictureInPictureOverlay.setAttribute("hidden", true);
-        }
-
+        this.pictureInPictureOverlay.hidden = !showMessage;
         this.isShowingPictureInPictureMessage = showMessage;
       },
 
@@ -2791,7 +2782,7 @@ this.VideoControlsImplWidget = class {
           <div id="controlsOverlay" class="controlsOverlay stackItem" role="none">
             <div class="controlsSpacerStack">
               <div id="controlsSpacer" class="controlsSpacer stackItem" role="none"></div>
-              <div id="clickToPlay" class="clickToPlay" hidden="true"></div>
+              <button id="clickToPlay" class="clickToPlay" hidden="true"></button>
             </div>
 
             <button id="pictureInPictureToggle" class="pip-wrapper" position="left" hidden="true">
@@ -3075,7 +3066,7 @@ this.NoControlsMobileImplWidget = class {
         <div id="controlsContainer" class="controlsContainer" role="none" hidden="true">
           <div class="controlsOverlay stackItem">
             <div class="controlsSpacerStack">
-              <div id="clickToPlay" class="clickToPlay"></div>
+              <button id="clickToPlay" class="clickToPlay"></button>
             </div>
           </div>
         </div>
@@ -3197,14 +3188,14 @@ this.NoControlsDesktopImplWidget = class {
             this.reflowedDimensions
           )
         ) {
-          this.pictureInPictureToggle.removeAttribute("hidden");
+          this.pictureInPictureToggle.hidden = false;
           VideoControlsWidget.setupToggle(
             this.prefs,
             this.pictureInPictureToggle,
             this.reflowedDimensions
           );
         } else {
-          this.pictureInPictureToggle.setAttribute("hidden", true);
+          this.pictureInPictureToggle.hidden = true;
         }
       },
 
@@ -3227,7 +3218,7 @@ this.NoControlsDesktopImplWidget = class {
 
         // Default the Picture-in-Picture toggle button to being hidden. We might unhide it
         // later if we determine that this video is qualified to show it.
-        this.pictureInPictureToggle.setAttribute("hidden", true);
+        this.pictureInPictureToggle.hidden = true;
 
         if (this.video.readyState >= this.video.HAVE_METADATA) {
           // According to the spec[1], at the HAVE_METADATA (or later) state, we know

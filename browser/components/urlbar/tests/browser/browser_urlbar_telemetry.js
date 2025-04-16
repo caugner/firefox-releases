@@ -72,9 +72,9 @@ async function clickURLBarSuggestion(resultTitle, button = 1) {
  *   The function to run with the new search engine as default.
  */
 async function withNewSearchEngine(taskFn) {
-  const url =
-    getRootDirectory(gTestPath) + "urlbarTelemetrySearchSuggestions.xml";
-  let suggestionEngine = await Services.search.addOpenSearchEngine(url, "");
+  let suggestionEngine = await SearchTestUtils.promiseNewSearchEngine(
+    getRootDirectory(gTestPath) + "urlbarTelemetrySearchSuggestions.xml"
+  );
   let previousEngine = await Services.search.getDefault();
   await Services.search.setDefault(suggestionEngine);
 
@@ -123,9 +123,9 @@ add_task(async function setup() {
     set: [["browser.urlbar.maxHistoricalSearchSuggestions", 0]],
   });
 
-  // Use the default matching bucket configuration.
+  // This test assumes that general results are shown before suggestions.
   await SpecialPowers.pushPrefEnv({
-    set: [["browser.urlbar.matchBuckets", "general:5,suggestion:4"]],
+    set: [["browser.urlbar.showSearchSuggestionsFirst", false]],
   });
 
   // Allows UrlbarTestUtils to access this scope's test helpers, like Assert.

@@ -21,10 +21,6 @@
 #  include "nsThreadUtils.h"
 #  include "WavDumper.h"
 
-#  if defined(XP_WIN)
-#    include "mozilla/audio/AudioNotificationReceiver.h"
-#  endif
-
 namespace soundtouch {
 class MOZ_EXPORT SoundTouch;
 }
@@ -173,11 +169,7 @@ class AudioBufferWriter : private AudioBufferCursor {
 // callers, or made from a single thread.  One exception is that access to
 // GetPosition, GetPositionInFrames, SetVolume, and Get{Rate,Channels},
 // SetMicrophoneActive is thread-safe without external synchronization.
-class AudioStream final
-#  if defined(XP_WIN)
-    : public audio::DeviceChangeListener
-#  endif
-{
+class AudioStream final {
   virtual ~AudioStream();
 
  public:
@@ -238,11 +230,6 @@ class AudioStream final
 
   // Resume audio playback.
   void Resume();
-
-#  if defined(XP_WIN)
-  // Reset stream to the default device.
-  void ResetDefaultDevice() override;
-#  endif
 
   // Return the position in microseconds of the audio frame being played by
   // the audio hardware, compensated for playback rate change. Thread-safe.

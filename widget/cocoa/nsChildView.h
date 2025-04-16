@@ -9,7 +9,7 @@
 // formal protocols
 #include "mozView.h"
 #ifdef ACCESSIBILITY
-#  include "mozilla/a11y/Accessible.h"
+#  include "mozilla/a11y/LocalAccessible.h"
 #  include "mozAccessibleProtocol.h"
 #endif
 
@@ -375,13 +375,9 @@ class nsChildView final : public nsBaseWidget {
   virtual TextEventDispatcherListener* GetNativeTextEventDispatcherListener() override;
   [[nodiscard]] virtual nsresult AttachNativeKeyEvent(
       mozilla::WidgetKeyboardEvent& aEvent) override;
-  virtual bool GetEditCommands(NativeKeyBindingsType aType,
-                               const mozilla::WidgetKeyboardEvent& aEvent,
-                               nsTArray<mozilla::CommandInt>& aCommands) override;
-  void GetEditCommandsRemapped(NativeKeyBindingsType aType,
-                               const mozilla::WidgetKeyboardEvent& aEvent,
-                               nsTArray<mozilla::CommandInt>& aCommands, uint32_t aGeckoKeyCode,
-                               uint32_t aCocoaKeyCode);
+  MOZ_CAN_RUN_SCRIPT virtual bool GetEditCommands(
+      NativeKeyBindingsType aType, const mozilla::WidgetKeyboardEvent& aEvent,
+      nsTArray<mozilla::CommandInt>& aCommands) override;
 
   virtual void SuppressAnimation(bool aSuppress) override;
 
@@ -422,7 +418,7 @@ class nsChildView final : public nsBaseWidget {
   void HandleMainThreadCATransaction();
 
 #ifdef ACCESSIBILITY
-  already_AddRefed<mozilla::a11y::Accessible> GetDocumentAccessible();
+  already_AddRefed<mozilla::a11y::LocalAccessible> GetDocumentAccessible();
 #endif
 
   virtual void CreateCompositor() override;

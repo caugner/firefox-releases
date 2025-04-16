@@ -507,16 +507,19 @@ const GfxDeviceFamily* GfxDriverInfo::GetDeviceFamily(DeviceFamily id) {
       break;
     case DeviceFamily::IntelRolloutWebRender:
 #ifdef EARLY_BETA_OR_EARLIER
+      // gen4.5 - G45
+      APPEND_DEVICE(0x2e22);
+
       // gen5 (ironlake)
       APPEND_DEVICE(0x0042);
       APPEND_DEVICE(0x0046);
+#endif
 
       // cherryview
       APPEND_DEVICE(0x22b0);
       APPEND_DEVICE(0x22b1);
       APPEND_DEVICE(0x22b2);
       APPEND_DEVICE(0x22b3);
-#endif
 
       [[fallthrough]];
     case DeviceFamily::IntelModernRolloutWebRender:
@@ -607,7 +610,6 @@ const GfxDeviceFamily* GfxDriverInfo::GetDeviceFamily(DeviceFamily id) {
       APPEND_DEVICE(0x0d2b);
       APPEND_DEVICE(0x0d2e);
 
-#ifdef EARLY_BETA_OR_EARLIER
       // broxton (apollolake)
       APPEND_DEVICE(0x0a84);
       APPEND_DEVICE(0x1a84);
@@ -618,7 +620,7 @@ const GfxDeviceFamily* GfxDriverInfo::GetDeviceFamily(DeviceFamily id) {
       // geminilake
       APPEND_DEVICE(0x3184);
       APPEND_DEVICE(0x3185);
-#endif
+
       // broadwell gt1 (gen8)
       APPEND_DEVICE(0x1602);
       APPEND_DEVICE(0x1606);
@@ -735,9 +737,7 @@ const GfxDeviceFamily* GfxDriverInfo::GetDeviceFamily(DeviceFamily id) {
       APPEND_DEVICE(0x9b41);
       APPEND_DEVICE(0x9bc0);
       APPEND_DEVICE(0x9bc2);
-      APPEND_RANGE(0x9bc4, 0x9bc5);
-      APPEND_DEVICE(0x9bc8);
-      APPEND_RANGE(0x9bca, 0x9bcc);
+      APPEND_RANGE(0x9bc4, 0x9bf6);
 
       // icelake gt1,gt1.5,gt2
       APPEND_RANGE(0x8a50, 0x8a5d);
@@ -1020,6 +1020,7 @@ const nsAString& GfxDriverInfo::GetDriverVendor(DriverVendor id) {
     DECLARE_DRIVER_VENDOR_ID(MesaSoftPipe, "mesa/softpipe");
     DECLARE_DRIVER_VENDOR_ID(MesaSWRast, "mesa/swrast");
     DECLARE_DRIVER_VENDOR_ID(MesaUnknown, "mesa/unknown");
+    DECLARE_DRIVER_VENDOR_ID(MesaR600, "mesa/r600");
     DECLARE_DRIVER_VENDOR_ID(MesaNouveau, "mesa/nouveau");
     DECLARE_DRIVER_VENDOR_ID(NonMesaAll, "non-mesa/all");
     DECLARE_DRIVER_VENDOR_ID(HardwareMesaAll, "mesa/hw-all");

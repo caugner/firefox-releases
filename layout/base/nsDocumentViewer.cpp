@@ -239,6 +239,9 @@ NS_IMPL_ISUPPORTS(BFCachePreventionObserver, nsIMutationObserver)
 
 void BFCachePreventionObserver::CharacterDataChanged(
     nsIContent* aContent, const CharacterDataChangeInfo&) {
+  if (aContent->IsInNativeAnonymousSubtree()) {
+    return;
+  }
   MutationHappened();
 }
 
@@ -247,19 +250,31 @@ void BFCachePreventionObserver::AttributeChanged(Element* aElement,
                                                  nsAtom* aAttribute,
                                                  int32_t aModType,
                                                  const nsAttrValue* aOldValue) {
+  if (aElement->IsInNativeAnonymousSubtree()) {
+    return;
+  }
   MutationHappened();
 }
 
 void BFCachePreventionObserver::ContentAppended(nsIContent* aFirstNewContent) {
+  if (aFirstNewContent->IsInNativeAnonymousSubtree()) {
+    return;
+  }
   MutationHappened();
 }
 
 void BFCachePreventionObserver::ContentInserted(nsIContent* aChild) {
+  if (aChild->IsInNativeAnonymousSubtree()) {
+    return;
+  }
   MutationHappened();
 }
 
 void BFCachePreventionObserver::ContentRemoved(nsIContent* aChild,
                                                nsIContent* aPreviousSibling) {
+  if (aChild->IsInNativeAnonymousSubtree()) {
+    return;
+  }
   MutationHappened();
 }
 
@@ -338,11 +353,6 @@ class nsDocumentViewer final : public nsIContentViewer,
 
   // nsIDocumentViewerPrint Printing Methods
   NS_DECL_NSIDOCUMENTVIEWERPRINT
-
-  void EmulateMediumInternal(nsAtom*);
-
-  using ColorSchemeOverride = Maybe<StylePrefersColorScheme>;
-  void EmulatePrefersColorSchemeInternal(const ColorSchemeOverride&);
 
  protected:
   virtual ~nsDocumentViewer();
@@ -449,8 +459,6 @@ class nsDocumentViewer final : public nsIContentViewer,
 
   nsIntRect mBounds;
 
-  float mOverrideDPPX;  // DPPX overrided, defaults to 0.0
-
   int16_t mNumURLStarts;
   int16_t mDestroyBlockedCount;
 
@@ -527,7 +535,6 @@ void nsDocumentViewer::PrepareToStartLoad() {
 nsDocumentViewer::nsDocumentViewer()
     : mParentWidget(nullptr),
       mAttachedToParent(false),
-      mOverrideDPPX(0.0),
       mNumURLStarts(0),
       mDestroyBlockedCount(0),
       mStopped(false),
@@ -748,7 +755,6 @@ nsresult nsDocumentViewer::InitPresentationStuff(bool aDoInitialReflow) {
     mPresContext->SetVisibleArea(nsRect(0, 0, width, height));
     // We rely on the default zoom not being initialized until here.
     mPresContext->RecomputeBrowsingContextDependentData();
-    mPresContext->SetOverrideDPPX(mOverrideDPPX);
   }
 
   if (mWindow && mDocument->IsTopLevelContentDocument()) {
@@ -2424,7 +2430,7 @@ MOZ_CAN_RUN_SCRIPT_BOUNDARY NS_IMETHODIMP nsDocumentViewer::ClearSelection() {
   return rv.StealNSResult();
 }
 
-NS_IMETHODIMP nsDocumentViewer::SelectAll() {
+MOZ_CAN_RUN_SCRIPT_BOUNDARY NS_IMETHODIMP nsDocumentViewer::SelectAll() {
   // XXX this is a temporary implementation copied from nsWebShell
   // for now. I think Document and friends should have some helper
   // functions to make this easier.
@@ -2601,34 +2607,6 @@ nsDocumentViewer::GetDeviceFullZoomForTest(float* aDeviceFullZoom) {
 }
 
 NS_IMETHODIMP
-nsDocumentViewer::SetOverrideDPPX(float aDPPX) {
-  // If we don't have a document, then we need to bail.
-  if (!mDocument) {
-    return NS_ERROR_FAILURE;
-  }
-
-  mOverrideDPPX = aDPPX;
-
-  auto childFn = [aDPPX](nsDocumentViewer* aChild) {
-    aChild->SetOverrideDPPX(aDPPX);
-  };
-  auto presContextFn = [aDPPX](nsPresContext* aPc) {
-    aPc->SetOverrideDPPX(aDPPX);
-  };
-  PropagateToPresContextsHelper(childFn, presContextFn);
-  return NS_OK;
-}
-
-NS_IMETHODIMP
-nsDocumentViewer::GetOverrideDPPX(float* aDPPX) {
-  NS_ENSURE_ARG_POINTER(aDPPX);
-
-  nsPresContext* pc = GetPresContext();
-  *aDPPX = pc ? pc->GetOverrideDPPX() : mOverrideDPPX;
-  return NS_OK;
-}
-
-NS_IMETHODIMP
 nsDocumentViewer::SetAuthorStyleDisabled(bool aStyleDisabled) {
   if (mPresShell) {
     mPresShell->SetAuthorStyleDisabled(aStyleDisabled);
@@ -2644,61 +2622,6 @@ nsDocumentViewer::GetAuthorStyleDisabled(bool* aStyleDisabled) {
     *aStyleDisabled = false;
   }
   return NS_OK;
-}
-
-void nsDocumentViewer::EmulateMediumInternal(nsAtom* aMedia) {
-  auto childFn = [&](nsDocumentViewer* aChild) {
-    aChild->EmulateMediumInternal(aMedia);
-  };
-  auto presContextFn = [&](nsPresContext* aPc) { aPc->EmulateMedium(aMedia); };
-  PropagateToPresContextsHelper(childFn, presContextFn);
-}
-
-NS_IMETHODIMP
-nsDocumentViewer::EmulateMedium(const nsAString& aMediaType) {
-  nsAutoString mediaType;
-  nsContentUtils::ASCIIToLower(aMediaType, mediaType);
-  RefPtr<nsAtom> media = NS_Atomize(mediaType);
-
-  EmulateMediumInternal(media);
-  return NS_OK;
-}
-
-NS_IMETHODIMP
-nsDocumentViewer::StopEmulatingMedium() {
-  EmulateMediumInternal(nullptr);
-  return NS_OK;
-}
-
-NS_IMETHODIMP
-nsDocumentViewer::EmulatePrefersColorScheme(PrefersColorScheme aScheme) {
-  auto ToStyle = [](PrefersColorScheme aScheme) -> ColorSchemeOverride {
-    switch (aScheme) {
-      case PREFERS_COLOR_SCHEME_LIGHT:
-        return Some(StylePrefersColorScheme::Light);
-      case PREFERS_COLOR_SCHEME_DARK:
-        return Some(StylePrefersColorScheme::Dark);
-      case PREFERS_COLOR_SCHEME_NONE:
-        return Nothing();
-      default:
-        MOZ_ASSERT_UNREACHABLE("Unknown prefers color scheme value?");
-        return Nothing();
-    };
-  };
-
-  EmulatePrefersColorSchemeInternal(ToStyle(aScheme));
-  return NS_OK;
-}
-
-void nsDocumentViewer::EmulatePrefersColorSchemeInternal(
-    const ColorSchemeOverride& aOverride) {
-  auto childFn = [&aOverride](nsDocumentViewer* aChild) {
-    aChild->EmulatePrefersColorSchemeInternal(aOverride);
-  };
-  auto presContextFn = [&aOverride](nsPresContext* aPc) {
-    aPc->SetOverridePrefersColorScheme(aOverride);
-  };
-  PropagateToPresContextsHelper(childFn, presContextFn);
 }
 
 NS_IMETHODIMP nsDocumentViewer::GetHintCharacterSet(

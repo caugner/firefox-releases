@@ -85,7 +85,7 @@ const URL_ROOT_ORG_SSL = CHROME_URL_ROOT.replace(
 );
 const URL_ROOT_NET = CHROME_URL_ROOT.replace(
   "chrome://mochitests/content/",
-  "http://example.org/"
+  "http://example.net/"
 );
 // mochi.test:8888 is the actual primary location where files are served.
 const URL_ROOT_MOCHI_8888 = CHROME_URL_ROOT.replace(
@@ -295,7 +295,6 @@ registerCleanupFunction(async function cleanup() {
   // Closing the browser console if there's one
   const browserConsole = BrowserConsoleManager.getBrowserConsole();
   if (browserConsole) {
-    browserConsole.targetList.destroy();
     await safeCloseBrowserConsole({ clearOutput: true });
   }
 
@@ -351,6 +350,9 @@ async function safeCloseBrowserConsole({ clearOutput = false } = {}) {
     waitForAllTargetsToBeAttached(hud.targetList),
     wait(1000),
   ]);
+
+  hud.targetList.destroy();
+
   info("Close the Browser Console");
   await BrowserConsoleManager.closeBrowserConsole();
   info("Browser Console closed");
@@ -493,17 +495,6 @@ async function navigateTo(uri, { isErrorPage = false } = {}) {
   const switchedToAnotherProcess =
     currentPID !== browser.browsingContext.currentWindowGlobal.osPid;
 
-  // If we switched to another process and the target switching pref is false,
-  // the toolbox will close and reopen.
-  // For now, this helper doesn't support this case
-  if (switchedToAnotherProcess && !isTargetSwitchingEnabled()) {
-    ok(
-      false,
-      `navigateTo(${uri}) navigated to another process, but the target switching is disabled`
-    );
-    return;
-  }
-
   if (onPanelReloaded) {
     info(`Waiting for ${toolbox.currentToolId} to be reloaded…`);
     await onPanelReloaded();
@@ -560,10 +551,6 @@ function waitForPanelReload(currentToolId, target, panel) {
 
 function isFissionEnabled() {
   return SpecialPowers.useRemoteSubframes;
-}
-
-function isTargetSwitchingEnabled() {
-  return Services.prefs.getBoolPref("devtools.target-switching.enabled", false);
 }
 
 /**
@@ -1202,4 +1189,174 @@ async function unregisterAllServiceWorkers(client) {
     promises.push(worker.registrationFront.unregister());
   }
   await Promise.all(promises);
+}
+
+/**********************
+ * Screenshot helpers *
+ **********************/
+
+/**
+ * Returns an object containing the r,g and b colors of the provided image at
+ * the passed position
+ *
+ * @param {Image} image
+ * @param {Int} x
+ * @param {Int} y
+ * @returns Object with the following properties:
+ *           - {Int} r: The red component of the pixel
+ *           - {Int} g: The green component of the pixel
+ *           - {Int} b: The blue component of the pixel
+ */
+
+function colorAt(image, x, y) {
+  // Create a test canvas element.
+  const HTML_NS = "http://www.w3.org/1999/xhtml";
+  const canvas = document.createElementNS(HTML_NS, "canvas");
+  canvas.width = image.width;
+  canvas.height = image.height;
+
+  // Draw the image in the canvas
+  const context = canvas.getContext("2d");
+  context.drawImage(image, 0, 0, image.width, image.height);
+
+  // Return the color found at the provided x,y coordinates as a "r, g, b" string.
+  const [r, g, b] = context.getImageData(x, y, 1, 1).data;
+  return { r, g, b };
+}
+
+let allDownloads = [];
+/**
+ * Returns a Promise that resolves when a new screenshot is available in the download folder.
+ */
+async function waitUntilScreenshot() {
+  const { Downloads } = require("resource://gre/modules/Downloads.jsm");
+  const list = await Downloads.getList(Downloads.ALL);
+
+  return new Promise(function(resolve) {
+    const view = {
+      onDownloadAdded: async download => {
+        await download.whenSucceeded();
+        if (allDownloads.includes(download)) {
+          return;
+        }
+
+        allDownloads.push(download);
+        resolve(download.target.path);
+        list.removeView(view);
+      },
+    };
+
+    list.addView(view);
+  });
+}
+
+/**
+ * Clear all the download references.
+ */
+async function resetDownloads() {
+  info("Reset downloads");
+  const { Downloads } = require("resource://gre/modules/Downloads.jsm");
+  const publicList = await Downloads.getList(Downloads.PUBLIC);
+  const downloads = await publicList.getAll();
+  for (const download of downloads) {
+    publicList.remove(download);
+    await download.finalize(true);
+  }
+  allDownloads = [];
+}
+
+/**
+ * Return a screenshot of the currently selected node in the inspector (using the internal
+ * Inspector#screenshotNode method).
+ *
+ * @param {Inspector} inspector
+ * @returns {Image}
+ */
+async function takeNodeScreenshot(inspector) {
+  // Cleanup all downloads at the end of the test.
+  registerCleanupFunction(resetDownloads);
+
+  info(
+    "Call screenshotNode() and wait until the screenshot is found in the Downloads"
+  );
+  const whenScreenshotSucceeded = waitUntilScreenshot();
+  inspector.screenshotNode();
+  const filePath = await whenScreenshotSucceeded;
+
+  info("Create an image using the downloaded fileas source");
+  const image = new Image();
+  const onImageLoad = once(image, "load");
+  image.src = OS.Path.toFileURI(filePath);
+  await onImageLoad;
+
+  info("Remove the downloaded screenshot file");
+  await OS.File.remove(filePath);
+
+  // See intermittent Bug 1508435. Even after removing the file, tests still manage to
+  // reuse files from the previous test if they have the same name. Since our file name
+  // is based on a timestamp that has "second" precision, wait for one second to make sure
+  // screenshots will have different names.
+  info(
+    "Wait for one second to make sure future screenshots will use a different name"
+  );
+  await new Promise(r => setTimeout(r, 1000));
+
+  return image;
+}
+
+/**
+ * Check that the provided image has the expected width, height, and color.
+ * NOTE: This test assumes that the image is only made of a single color and will only
+ * check one pixel.
+ */
+async function assertSingleColorScreenshotImage(
+  image,
+  width,
+  height,
+  { r, g, b }
+) {
+  info(`Assert ${image.src} content`);
+  const ratio = await SpecialPowers.spawn(
+    gBrowser.selectedBrowser,
+    [],
+    () => content.wrappedJSObject.devicePixelRatio
+  );
+
+  is(
+    image.width,
+    ratio * width,
+    `node screenshot has the expected width (dpr = ${ratio})`
+  );
+  is(
+    image.height,
+    height * ratio,
+    `node screenshot has the expected height (dpr = ${ratio})`
+  );
+
+  const color = colorAt(image, 0, 0);
+  is(color.r, r, "node screenshot has the expected red component");
+  is(color.g, g, "node screenshot has the expected green component");
+  is(color.b, b, "node screenshot has the expected blue component");
+}
+
+/**
+ * Check that the provided image has the expected color at a given position
+ */
+function checkImageColorAt({ image, x = 0, y, expectedColor, label }) {
+  const color = colorAt(image, x, y);
+  is(`rgb(${Object.values(color).join(", ")})`, expectedColor, label);
+}
+
+/**
+ * Assert that a given parent pool has the expected number of children for
+ * a given typeName.
+ */
+function checkPoolChildrenSize(parentPool, typeName, expected) {
+  const children = [...parentPool.poolChildren()];
+  const childrenByType = children.filter(pool => pool.typeName === typeName);
+  is(
+    childrenByType.length,
+    expected,
+    `${parentPool.actorID} should have ${expected} children of type ${typeName}`
+  );
 }

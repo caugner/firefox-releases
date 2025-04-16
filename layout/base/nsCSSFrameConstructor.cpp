@@ -30,6 +30,8 @@
 #include "mozilla/PresShell.h"
 #include "mozilla/PresShellInlines.h"
 #include "mozilla/PrintedSheetFrame.h"
+#include "mozilla/ProfilerLabels.h"
+#include "mozilla/ProfilerMarkers.h"
 #include "mozilla/ScopeExit.h"
 #include "mozilla/ServoBindings.h"
 #include "mozilla/ServoStyleSetInlines.h"
@@ -129,10 +131,6 @@
 #include "nsRefreshDriver.h"
 #include "nsTextNode.h"
 #include "ActiveLayerTracker.h"
-
-#ifdef MOZ_GECKO_PROFILER
-#  include "mozilla/ProfilerMarkerTypes.h"
-#endif
 
 using namespace mozilla;
 using namespace mozilla::dom;
@@ -702,6 +700,10 @@ class MOZ_STACK_CLASS nsFrameConstructorState {
   // mode).
   bool mCreatingExtraFrames;
 
+  // This keeps track of whether we have found a "rendered legend" for
+  // the current FieldSetFrame.
+  bool mHasRenderedLegend;
+
   nsTArray<RefPtr<nsIContent>> mGeneratedContentWithInitializer;
 
   // Constructor
@@ -851,7 +853,8 @@ nsFrameConstructorState::nsFrameConstructorState(
       // frames.
       mFixedPosIsAbsPos(aFixedContainingBlock == aAbsoluteContainingBlock),
       mHavePendingPopupgroup(false),
-      mCreatingExtraFrames(false) {
+      mCreatingExtraFrames(false),
+      mHasRenderedLegend(false) {
 #ifdef MOZ_XUL
   nsIPopupContainer* popupContainer =
       nsIPopupContainer::GetPopupContainer(aPresShell);
@@ -2541,7 +2544,6 @@ void nsCSSFrameConstructor::SetUpDocElementContainingBlock(
     rootFrame = mPageSequenceFrame =
         NS_NewPageSequenceFrame(mPresShell, viewportPseudoStyle);
     rootPseudo = PseudoStyleType::pageSequence;
-    rootFrame->AddStateBits(NS_FRAME_OWNS_ANON_BOXES);
   }
 
   // --------- IF SCROLLABLE WRAP IN SCROLLFRAME --------
@@ -2637,7 +2639,6 @@ void nsCSSFrameConstructor::SetUpDocElementContainingBlock(
     // page sequence frame (rootFrame).
     auto* printedSheetFrame =
         ConstructPrintedSheetFrame(mPresShell, rootFrame, nullptr);
-    printedSheetFrame->AddStateBits(NS_FRAME_OWNS_ANON_BOXES);
     SetInitialSingleChild(rootFrame, printedSheetFrame);
 
     // Create the first page, as the sole child (for now) of the printed sheet
@@ -2686,12 +2687,9 @@ void nsCSSFrameConstructor::ConstructAnonymousContentForCanvas(
 PrintedSheetFrame* nsCSSFrameConstructor::ConstructPrintedSheetFrame(
     PresShell* aPresShell, nsContainerFrame* aParentFrame,
     nsIFrame* aPrevSheetFrame) {
-  ComputedStyle* parentComputedStyle = aParentFrame->Style();
-  ServoStyleSet* styleSet = aPresShell->StyleSet();
-
   RefPtr<ComputedStyle> printedSheetPseudoStyle =
-      styleSet->ResolveInheritingAnonymousBoxStyle(
-          PseudoStyleType::printedSheet, parentComputedStyle);
+      aPresShell->StyleSet()->ResolveNonInheritingAnonymousBoxStyle(
+          PseudoStyleType::printedSheet);
 
   auto* printedSheetFrame =
       NS_NewPrintedSheetFrame(aPresShell, printedSheetPseudoStyle);
@@ -2704,12 +2702,10 @@ PrintedSheetFrame* nsCSSFrameConstructor::ConstructPrintedSheetFrame(
 nsContainerFrame* nsCSSFrameConstructor::ConstructPageFrame(
     PresShell* aPresShell, nsContainerFrame* aParentFrame,
     nsIFrame* aPrevPageFrame, nsContainerFrame*& aCanvasFrame) {
-  ComputedStyle* parentComputedStyle = aParentFrame->Style();
   ServoStyleSet* styleSet = aPresShell->StyleSet();
 
   RefPtr<ComputedStyle> pagePseudoStyle =
-      styleSet->ResolveInheritingAnonymousBoxStyle(PseudoStyleType::page,
-                                                   parentComputedStyle);
+      styleSet->ResolveNonInheritingAnonymousBoxStyle(PseudoStyleType::page);
 
   nsContainerFrame* pageFrame = NS_NewPageFrame(aPresShell, pagePseudoStyle);
 
@@ -2718,8 +2714,8 @@ nsContainerFrame* nsCSSFrameConstructor::ConstructPageFrame(
   pageFrame->Init(nullptr, aParentFrame, aPrevPageFrame);
 
   RefPtr<ComputedStyle> pageContentPseudoStyle;
-  pageContentPseudoStyle = styleSet->ResolveInheritingAnonymousBoxStyle(
-      PseudoStyleType::pageContent, pagePseudoStyle);
+  pageContentPseudoStyle = styleSet->ResolveNonInheritingAnonymousBoxStyle(
+      PseudoStyleType::pageContent);
 
   nsContainerFrame* pageContentFrame =
       NS_NewPageContentFrame(aPresShell, pageContentPseudoStyle);
@@ -2733,6 +2729,8 @@ nsContainerFrame* nsCSSFrameConstructor::ConstructPageFrame(
   }
   pageContentFrame->Init(nullptr, pageFrame, prevPageContentFrame);
   if (!prevPageContentFrame) {
+    // The canvas is an inheriting anon box, so needs to be "owned" by the page
+    // content.
     pageContentFrame->AddStateBits(NS_FRAME_OWNS_ANON_BOXES);
   }
   SetInitialSingleChild(pageFrame, pageContentFrame);
@@ -2971,6 +2969,8 @@ nsIFrame* nsCSSFrameConstructor::ConstructFieldSetFrame(
     nsFrameConstructorState& aState, FrameConstructionItem& aItem,
     nsContainerFrame* aParentFrame, const nsStyleDisplay* aStyleDisplay,
     nsFrameList& aFrameList) {
+  AutoRestore<bool> savedHasRenderedLegend(aState.mHasRenderedLegend);
+  aState.mHasRenderedLegend = false;
   nsIContent* const content = aItem.mContent;
   ComputedStyle* const computedStyle = aItem.mComputedStyle;
 
@@ -3050,32 +3050,9 @@ nsIFrame* nsCSSFrameConstructor::ConstructFieldSetFrame(
 
   ProcessChildren(aState, content, computedStyle, contentFrame, true, childList,
                   true);
-
   nsFrameList fieldsetKids;
   fieldsetKids.AppendFrame(nullptr,
                            scrollFrame ? scrollFrame : contentFrameTop);
-
-  for (nsFrameList::Enumerator e(childList); !e.AtEnd(); e.Next()) {
-    nsIFrame* child = e.get();
-    nsContainerFrame* cif = child->GetContentInsertionFrame();
-    if (cif && cif->IsLegendFrame()) {
-      // We want the legend to be the first frame in the fieldset child list.
-      // That way the EventStateManager will do the right thing when tabbing
-      // from a selection point within the legend (bug 236071), which is
-      // used for implementing legend access keys (bug 81481).
-      // GetAdjustedParentFrame() below depends on this frame order.
-      childList.RemoveFrame(child);
-      // Make sure to reparent the legend so it has the fieldset as the parent.
-      fieldsetKids.InsertFrame(fieldsetFrame, nullptr, child);
-      // Legend is no longer in the multicol container. Remove the bit.
-      child->RemoveStateBits(NS_FRAME_HAS_MULTI_COLUMN_ANCESTOR);
-      if (scrollFrame) {
-        StickyScrollContainer::NotifyReparentedFrameAcrossScrollFrameBoundary(
-            child, contentFrame);
-      }
-      break;
-    }
-  }
 
   if (!MayNeedToCreateColumnSpanSiblings(contentFrame, childList)) {
     // Set the inner frame's initial child lists.
@@ -3102,10 +3079,10 @@ nsIFrame* nsCSSFrameConstructor::ConstructFieldSetFrame(
     FinishBuildingScrollFrame(scrollFrame, contentFrameTop);
   }
 
-  // Set the outer frame's initial child list
-  fieldsetFrame->SetInitialChildList(kPrincipalList, fieldsetKids);
+  // We use AppendFrames here because the rendered legend will already
+  // be present in the principal child list if it exists.
+  fieldsetFrame->AppendFrames(nsIFrame::kNoReflowPrincipalList, fieldsetKids);
 
-  // Our new frame returned is the outer frame, which is the fieldset frame.
   return fieldsetFrame;
 }
 
@@ -3329,25 +3306,11 @@ nsCSSFrameConstructor::FindHTMLData(const Element& aElement,
                                     nsIFrame* aParentFrame,
                                     ComputedStyle& aStyle) {
   MOZ_ASSERT(aElement.IsHTMLElement());
-
-  nsAtom* tag = aElement.NodeInfo()->NameAtom();
   NS_ASSERTION(!aParentFrame ||
                    aParentFrame->Style()->GetPseudoType() !=
                        PseudoStyleType::fieldsetContent ||
                    aParentFrame->GetParent()->IsFieldSetFrame(),
                "Unexpected parent for fieldset content anon box");
-  if (tag == nsGkAtoms::legend &&
-      (!aParentFrame || !IsFrameForFieldSet(aParentFrame) ||
-       aStyle.StyleDisplay()->IsFloatingStyle() ||
-       aStyle.StyleDisplay()->IsAbsolutelyPositionedStyle())) {
-    // <legend> is only special inside fieldset, we only check the frame tree
-    // parent because the content tree parent may not be a <fieldset> due to
-    // display:contents, or Shadow DOM. For floated or absolutely positioned
-    // legends we want to construct by display type and not do special legend
-    // stuff.
-    return nullptr;
-  }
-
   static const FrameConstructionDataByTag sHTMLData[] = {
       SIMPLE_TAG_CHAIN(img, nsCSSFrameConstructor::FindImgData),
       SIMPLE_TAG_CHAIN(mozgeneratedcontentimage,
@@ -3363,9 +3326,6 @@ nsCSSFrameConstructor::FindHTMLData(const Element& aElement,
       SIMPLE_TAG_CHAIN(embed, nsCSSFrameConstructor::FindObjectData),
       COMPLEX_TAG_CREATE(fieldset,
                          &nsCSSFrameConstructor::ConstructFieldSetFrame),
-      {nsGkAtoms::legend,
-       FCDATA_DECL(FCDATA_ALLOW_BLOCK_STYLES | FCDATA_MAY_NEED_SCROLLFRAME,
-                   NS_NewLegendFrame)},
       SIMPLE_TAG_CREATE(frameset, NS_NewHTMLFramesetFrame),
       SIMPLE_TAG_CREATE(iframe, NS_NewSubDocumentFrame),
       {nsGkAtoms::button,
@@ -3518,12 +3478,11 @@ nsCSSFrameConstructor::FindObjectData(const Element& aElement,
   static const FrameConstructionDataByInt sObjectData[] = {
       SIMPLE_INT_CREATE(nsIObjectLoadingContent::TYPE_LOADING,
                         NS_NewEmptyFrame),
-      SIMPLE_INT_CREATE(nsIObjectLoadingContent::TYPE_PLUGIN,
-                        NS_NewObjectFrame),
       SIMPLE_INT_CREATE(nsIObjectLoadingContent::TYPE_IMAGE, NS_NewImageFrame),
       SIMPLE_INT_CREATE(nsIObjectLoadingContent::TYPE_DOCUMENT,
                         NS_NewSubDocumentFrame),
       // Fake plugin handlers load as documents
+      // XXXmats is TYPE_FAKE_PLUGIN something we need?
       SIMPLE_INT_CREATE(nsIObjectLoadingContent::TYPE_FAKE_PLUGIN,
                         NS_NewSubDocumentFrame)
       // Nothing for TYPE_NULL so we'll construct frames by display there
@@ -5249,6 +5208,17 @@ nsCSSFrameConstructor::FindElementData(const Element& aElement,
     return &sImgData;
   }
 
+  if (aFlags.contains(ItemFlag::IsForRenderedLegend) &&
+      !aStyle.StyleDisplay()->IsBlockOutsideStyle()) {
+    // Make a temp copy of StyleDisplay and blockify its mDisplay value.
+    auto display = *aStyle.StyleDisplay();
+    bool isRootElement = false;
+    uint16_t rawDisplayValue =
+        Servo_ComputedValues_BlockifiedDisplay(&aStyle, isRootElement);
+    display.mDisplay = StyleDisplay(rawDisplayValue);
+    return FindDisplayData(display, aElement);
+  }
+
   const auto& display = *aStyle.StyleDisplay();
   return FindDisplayData(display, aElement);
 }
@@ -5360,6 +5330,14 @@ void nsCSSFrameConstructor::AddFrameConstructionItemsInternal(
     return;
   }
 
+  if (aContent->IsHTMLElement(nsGkAtoms::legend) && aParentFrame &&
+      IsFrameForFieldSet(aParentFrame) && !aState.mHasRenderedLegend &&
+      !aComputedStyle->StyleDisplay()->IsFloatingStyle() &&
+      !aComputedStyle->StyleDisplay()->IsAbsolutelyPositionedStyle()) {
+    aState.mHasRenderedLegend = true;
+    aFlags += ItemFlag::IsForRenderedLegend;
+  }
+
   const FrameConstructionData* data =
       FindDataForContent(*aContent, *aComputedStyle, aParentFrame, aFlags);
   if (!data || data->mBits & FCDATA_SUPPRESS_FRAME) {
@@ -5412,6 +5390,9 @@ void nsCSSFrameConstructor::AddFrameConstructionItemsInternal(
   if (!item) {
     item = aItems.AppendItem(this, data, aContent, do_AddRef(aComputedStyle),
                              aSuppressWhiteSpaceOptimizations);
+    if (aFlags.contains(ItemFlag::IsForRenderedLegend)) {
+      item->mIsRenderedLegend = true;
+    }
   }
   item->mIsText = !aContent->IsElement();
   item->mIsGeneratedContent = isGeneratedContent;
@@ -5970,20 +5951,6 @@ bool nsCSSFrameConstructor::IsValidSibling(nsIFrame* aSibling,
     // below.
   }
 
-  if (IsFrameForFieldSet(parentFrame)) {
-    // Legends can be sibling of legends but not of other content in the
-    // fieldset
-    if (nsContainerFrame* cif = aSibling->GetContentInsertionFrame()) {
-      aSibling = cif;
-    }
-    LayoutFrameType sibType = aSibling->Type();
-    bool legendContent = aContent->IsHTMLElement(nsGkAtoms::legend);
-
-    if ((legendContent && (LayoutFrameType::Legend != sibType)) ||
-        (!legendContent && (LayoutFrameType::Legend == sibType)))
-      return false;
-  }
-
   return true;
 }
 
@@ -6068,6 +6035,10 @@ nsIFrame* nsCSSFrameConstructor::AdjustSiblingFrame(
     nsIFrame* aSibling, nsIContent* aTargetContent,
     Maybe<StyleDisplay>& aTargetContentDisplay, SiblingDirection aDirection) {
   if (!aSibling) {
+    return nullptr;
+  }
+
+  if (aSibling->IsRenderedLegend()) {
     return nullptr;
   }
 
@@ -7985,9 +7956,6 @@ nsIFrame* nsCSSFrameConstructor::CreateContinuingFrame(
   } else if (LayoutFrameType::FieldSet == frameType) {
     newFrame = NS_NewFieldSetFrame(mPresShell, computedStyle);
     newFrame->Init(content, aParentFrame, aFrame);
-  } else if (LayoutFrameType::Legend == frameType) {
-    newFrame = NS_NewLegendFrame(mPresShell, computedStyle);
-    newFrame->Init(content, aParentFrame, aFrame);
   } else if (LayoutFrameType::FlexContainer == frameType) {
     newFrame = NS_NewFlexContainerFrame(mPresShell, computedStyle);
     newFrame->Init(content, aParentFrame, aFrame);
@@ -8246,12 +8214,9 @@ bool nsCSSFrameConstructor::MaybeRecreateContainerForFrameRemoval(
     return true;
   }
 
-  nsContainerFrame* insertionFrame = aFrame->GetContentInsertionFrame();
-  if (insertionFrame && insertionFrame->IsLegendFrame() &&
-      aFrame->GetParent()->IsFieldSetFrame()) {
+  if (inFlowFrame->IsRenderedLegend()) {
     TRACE("Fieldset / Legend");
-    RecreateFramesForContent(aFrame->GetParent()->GetContent(),
-                             InsertionKind::Async);
+    RecreateFramesForContent(parent->GetContent(), InsertionKind::Async);
     return true;
   }
 
@@ -9356,6 +9321,38 @@ inline void nsCSSFrameConstructor::ConstructFramesFromItemList(
   // that information offhand in many cases.
   MOZ_ASSERT(ParentIsWrapperAnonBox(aParentFrame) == aParentIsWrapperAnonBox);
 
+  // Note: we explicitly exclude TableColGroupFrame because it doesn't
+  // have the FCDATA_IS_WRAPPER_ANON_BOX on pseudos so aParentIsWrapperAnonBox
+  // is false for such pseudos (see sPseudoParentData below).
+  if (!aParentIsWrapperAnonBox && aState.mHasRenderedLegend &&
+      aParentFrame->GetContent()->IsHTMLElement(nsGkAtoms::fieldset) &&
+      !aParentFrame->IsTableColGroupFrame()) {
+    DebugOnly<bool> found = false;
+    for (FCItemIterator iter(aItems); !iter.IsDone(); iter.Next()) {
+      if (iter.item().mIsRenderedLegend) {
+        // This makes the rendered legend the first frame in the fieldset child
+        // list which makes keyboard traversal follow the visual order.
+        nsContainerFrame* fieldSetFrame = aParentFrame->GetParent();
+        while (!fieldSetFrame->IsFieldSetFrame()) {
+          fieldSetFrame = fieldSetFrame->GetParent();
+        }
+        nsFrameList renderedLegend;
+        ConstructFramesFromItem(aState, iter, fieldSetFrame, renderedLegend);
+        MOZ_ASSERT(
+            renderedLegend.FirstChild() &&
+                renderedLegend.FirstChild() == renderedLegend.LastChild(),
+            "a rendered legend should have exactly one frame");
+        fieldSetFrame->SetInitialChildList(kPrincipalList, renderedLegend);
+        FCItemIterator next = iter;
+        next.Next();
+        iter.DeleteItemsTo(this, next);
+        found = true;
+        break;
+      }
+    }
+    MOZ_ASSERT(found, "should have found our rendered legend");
+  }
+
   CreateNeededPseudoContainers(aState, aItems, aParentFrame);
   CreateNeededAnonFlexOrGridItems(aState, aItems, aParentFrame);
   CreateNeededPseudoInternalRubyBoxes(aState, aItems, aParentFrame);
@@ -9363,6 +9360,9 @@ inline void nsCSSFrameConstructor::ConstructFramesFromItemList(
 
   bool listItemListIsDirty = false;
   for (FCItemIterator iter(aItems); !iter.IsDone(); iter.Next()) {
+    MOZ_ASSERT(!iter.item().mIsRenderedLegend,
+               "Only one item can be the rendered legend, "
+               "and it should've been handled above");
     NS_ASSERTION(iter.item().DesiredParentType() == GetParentType(aParentFrame),
                  "Needed pseudos didn't get created; expect bad things");
     // display:list-item boxes affects the start value of the "list-item"

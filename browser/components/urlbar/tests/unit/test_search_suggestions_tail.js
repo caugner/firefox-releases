@@ -47,11 +47,6 @@ async function cleanUpSuggestions() {
 }
 
 add_task(async function setup() {
-  Services.prefs.setCharPref(
-    "browser.urlbar.matchBuckets",
-    "general:5,suggestion:Infinity"
-  );
-
   let engine = await addTestTailSuggestionsEngine(searchStr => {
     return suggestionsFn(searchStr);
   });
@@ -78,6 +73,7 @@ add_task(async function setup() {
     Services.prefs.clearUserPref(PRIVATE_SEARCH_PREF);
     Services.prefs.clearUserPref(TAIL_SUGGESTIONS_PREF);
     Services.prefs.clearUserPref(SUGGEST_ENABLED_PREF);
+    UrlbarPrefs.clear("resultBuckets");
   });
   Services.search.setDefault(engine);
   Services.prefs.setBoolPref(PRIVATE_SEARCH_PREF, false);

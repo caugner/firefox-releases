@@ -15,11 +15,11 @@
 #include "js/LocaleSensitive.h"
 #include "js/MemoryMetrics.h"
 #include "js/SourceText.h"
-#include "GeckoProfiler.h"
 #include "MessageEventRunnable.h"
 #include "mozilla/BasePrincipal.h"
 #include "mozilla/CycleCollectedJSContext.h"
 #include "mozilla/HoldDropJSObjects.h"
+#include "mozilla/ProfilerLabels.h"
 #include "mozilla/Result.h"
 #include "mozilla/ScopeExit.h"
 #include "mozilla/StaticPrefs_browser.h"
@@ -2593,11 +2593,15 @@ nsresult WorkerPrivate::GetLoadInfo(JSContext* aCx, nsPIDOMWindowInner* aWindow,
       // access it.
       if (nsPIDOMWindowOuter* outerWindow = globalWindow->GetOuterWindow()) {
         loadInfo.mWindow = outerWindow->GetCurrentInnerWindow();
-        // TODO: fix this for SharedWorkers with multiple documents (bug
-        // 1177935)
-        loadInfo.mServiceWorkersTestingInWindow =
-            outerWindow->GetServiceWorkersTestingEnabled();
       }
+
+      BrowsingContext* browsingContext = globalWindow->GetBrowsingContext();
+
+      // TODO: fix this for SharedWorkers with multiple documents (bug
+      // 1177935)
+      loadInfo.mServiceWorkersTestingInWindow =
+          browsingContext &&
+          browsingContext->Top()->ServiceWorkersTestingEnabled();
 
       if (!loadInfo.mWindow ||
           (globalWindow != loadInfo.mWindow &&
@@ -2671,9 +2675,8 @@ nsresult WorkerPrivate::GetLoadInfo(JSContext* aCx, nsPIDOMWindowInner* aWindow,
 
       loadInfo.mXHRParamsAllowed = perm == nsIPermissionManager::ALLOW_ACTION;
 
-      BrowsingContext* browsingContext = globalWindow->GetBrowsingContext();
       loadInfo.mWatchedByDevTools =
-          browsingContext ? browsingContext->WatchedByDevTools() : false;
+          browsingContext && browsingContext->WatchedByDevTools();
 
       loadInfo.mReferrerInfo =
           ReferrerInfo::CreateForFetch(loadInfo.mLoadingPrincipal, document);

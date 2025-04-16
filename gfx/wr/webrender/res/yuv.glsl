@@ -11,9 +11,9 @@
 #ifdef WR_VERTEX_SHADER
 
 #ifdef WR_FEATURE_TEXTURE_RECT
-    #define TEX_SIZE(sampler) vec2(1.0)
+    #define TEX_SIZE_YUV(sampler) vec2(1.0)
 #else
-    #define TEX_SIZE(sampler) vec2(textureSize(sampler, 0).xy)
+    #define TEX_SIZE_YUV(sampler) vec2(TEX_SIZE(sampler).xy)
 #endif
 
 #define YUV_COLOR_SPACE_REC601      0
@@ -86,8 +86,7 @@ mat3 get_yuv_color_matrix(int color_space) {
 }
 
 vec3 get_yuv_offset_vector(int color_space) {
-    // Float conversion to work around a macOS Intel shader compiler bug
-    if (float(color_space) == float(YUV_COLOR_SPACE_IDENTITY)) {
+    if (color_space == YUV_COLOR_SPACE_IDENTITY) {
         return vec3(0.0, 0.0, 0.0);
     } else {
         return vec3(0.06275, 0.50196, 0.50196);

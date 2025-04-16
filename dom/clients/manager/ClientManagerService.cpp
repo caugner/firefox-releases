@@ -193,14 +193,22 @@ already_AddRefed<ClientManagerService> ClientManagerService::GetInstance() {
 bool ClientManagerService::AddSource(ClientSourceParent* aSource) {
   AssertIsOnBackgroundThread();
   MOZ_ASSERT(aSource);
-  auto entry = mSourceTable.LookupForAdd(aSource->Info().Id());
-  // Do not permit overwriting an existing ClientSource with the same
-  // UUID.  This would allow a spoofed ClientParentSource actor to
-  // intercept postMessage() intended for the real actor.
-  if (NS_WARN_IF(!!entry)) {
+  if (!mSourceTable.WithEntryHandle(aSource->Info().Id(),
+                                    [aSource](auto&& entry) {
+                                      // Do not permit overwriting an existing
+                                      // ClientSource with the same UUID.  This
+                                      // would allow a spoofed
+                                      // ClientParentSource actor to intercept
+                                      // postMessage() intended for the real
+                                      // actor.
+                                      if (NS_WARN_IF(entry.HasEntry())) {
+                                        return false;
+                                      }
+                                      entry.Insert(aSource);
+                                      return true;
+                                    })) {
     return false;
   }
-  entry.OrInsert([&] { return aSource; });
 
   // Now that we've been created, notify any handles that were
   // waiting on us.
@@ -532,12 +540,8 @@ RefPtr<ClientOpPromise> ClientManagerService::Claim(
       continue;
     }
 
-    if (ServiceWorkerParentInterceptEnabled()) {
-      promiseList->AddPromise(ClaimOnMainThread(
-          source->Info(), ServiceWorkerDescriptor(serviceWorker)));
-    } else {
-      promiseList->AddPromise(source->StartOp(aArgs));
-    }
+    promiseList->AddPromise(ClaimOnMainThread(
+        source->Info(), ServiceWorkerDescriptor(serviceWorker)));
   }
 
   // Maybe finish the promise now in case we didn't find any matching clients.

@@ -7,7 +7,10 @@
 #ifndef MOZILLA_GFX_RENDERCOMPOSITOR_NATIVE_H
 #define MOZILLA_GFX_RENDERCOMPOSITOR_NATIVE_H
 
+#include <unordered_map>
+
 #include "GLTypes.h"
+#include "mozilla/HashFunctions.h"
 #include "mozilla/layers/ScreenshotGrabber.h"
 #include "mozilla/webrender/RenderCompositor.h"
 #include "mozilla/TimeStamp.h"
@@ -67,7 +70,6 @@ class RenderCompositorNative : public RenderCompositor {
                   const wr::CompositorSurfaceTransform& aTransform,
                   wr::DeviceIntRect aClipRect,
                   wr::ImageRendering aImageRendering) override;
-  CompositorCapabilities GetCompositorCapabilities() override;
 
   struct TileKey {
     TileKey(int32_t aX, int32_t aY) : mX(aX), mY(aY) {}

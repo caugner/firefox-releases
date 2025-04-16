@@ -12,7 +12,7 @@
 namespace mozilla {
 namespace a11y {
 
-class Accessible;
+class LocalAccessible;
 class DocAccessiblePlatformExtChild;
 class HyperTextAccessible;
 class TextLeafAccessible;
@@ -442,9 +442,9 @@ class DocAccessibleChild : public DocAccessibleChildBase {
 
   virtual mozilla::ipc::IPCResult RecvTakeFocus(const uint64_t& aID) override;
 
-  virtual mozilla::ipc::IPCResult RecvFocusedChild(const uint64_t& aID,
-                                                   uint64_t* aChild,
-                                                   bool* aOk) override;
+  virtual mozilla::ipc::IPCResult RecvFocusedChild(
+      const uint64_t& aID, PDocAccessibleChild** aResultDoc,
+      uint64_t* aResultID) override;
 
   virtual mozilla::ipc::IPCResult RecvLanguage(const uint64_t& aID,
                                                nsString* aLocale) override;
@@ -485,9 +485,9 @@ class DocAccessibleChild : public DocAccessibleChildBase {
   DocAccessiblePlatformExtChild* GetPlatformExtension();
 
  private:
-  Accessible* IdToAccessible(const uint64_t& aID) const;
-  Accessible* IdToAccessibleLink(const uint64_t& aID) const;
-  Accessible* IdToAccessibleSelect(const uint64_t& aID) const;
+  LocalAccessible* IdToAccessible(const uint64_t& aID) const;
+  LocalAccessible* IdToAccessibleLink(const uint64_t& aID) const;
+  LocalAccessible* IdToAccessibleSelect(const uint64_t& aID) const;
   HyperTextAccessible* IdToHyperTextAccessible(const uint64_t& aID) const;
   TextLeafAccessible* IdToTextLeafAccessible(const uint64_t& aID) const;
   ImageAccessible* IdToImageAccessible(const uint64_t& aID) const;

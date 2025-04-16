@@ -42,7 +42,7 @@ def executor_kwargs(test_type, server_config, cache_manager, run_info_data,
     # want to view the results, however, the executor has to skip that cleanup.
     if kwargs["pause_after_test"] or kwargs["pause_on_unexpected"]:
         executor_kwargs["cleanup_after_test"] = False
-
+    executor_kwargs["debug_test"] = kwargs["debug_test"]
     return executor_kwargs
 
 
@@ -424,7 +424,7 @@ class RefTestImplementation(object):
 
         if len(lhs_hashes) != len(rhs_hashes):
             self.logger.info("Got different number of pages")
-            return False
+            return relation == "!="
 
         assert len(lhs_screenshots) == len(lhs_hashes) == len(rhs_screenshots) == len(rhs_hashes)
 

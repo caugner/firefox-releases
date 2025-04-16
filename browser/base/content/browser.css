@@ -144,6 +144,12 @@ panelview[mainview] > .panel-header {
   transition: height var(--panelui-subview-transition-duration);
 }
 
+@supports -moz-bool-pref("browser.proton.doorhangers.enabled") {
+:is(panel, menupopup)::part(arrow) {
+  display: none;
+}
+} /** END Proton **/
+
 @supports -moz-bool-pref("layout.css.emulate-moz-box-with-flex") {
   #tabbrowser-tabs {
     /* Without this, the tabs container width extends beyond the window width */
@@ -234,6 +240,7 @@ panelview[mainview] > .panel-header {
   pointer-events: none; /* avoid blocking dragover events on scroll buttons */
 }
 
+#tabbrowser-tabs[movingtab] > #tabbrowser-arrowscrollbox > .tabbrowser-tab[fadein]:not([selected]):not([multiselected]),
 .tabbrowser-tab[tab-grouping],
 .tabbrowser-tab[tabdrop-samewindow] {
   transition: transform 200ms var(--animation-easing-function);
@@ -373,16 +380,9 @@ toolbarpaletteitem {
 }
 
 %ifdef XP_MACOSX
-#titlebar-fullscreen-button {
-  appearance: auto;
-  -moz-default-appearance: -moz-mac-fullscreen-button;
-}
-
 /**
  * On macOS, the window caption buttons are on the left side of the window titlebar,
- * even when using the RTL UI direction. Similarly, the fullscreen button is on the
- * right side of the window titlebar, even when using the RTL UI direction. These
- * next rules enforce that ordering.
+ * even when using the RTL UI direction. These next rules enforce that ordering.
  */
 #titlebar-secondary-buttonbox:-moz-locale-dir(ltr) {
   -moz-box-ordinal-group: 1000;
@@ -738,7 +738,7 @@ toolbar:not(#TabsToolbar) > #personal-bookmarks {
   min-width: 280px;
 }
 
-#identity-box {
+#identity-icon-box {
   max-width: calc(30px + 10em);
 }
 
@@ -752,7 +752,7 @@ toolbar:not(#TabsToolbar) > #personal-bookmarks {
   :root[customizing] #urlbar-container {
     min-width: 245px;
   }
-  #identity-box {
+  #identity-icon-box {
     max-width: 80px;
   }
   /* Contenxtual identity labels are user-customizable and can be very long,
@@ -779,7 +779,7 @@ toolbar:not(#TabsToolbar) > #personal-bookmarks {
   #nav-bar[downloadsbuttonshown] #urlbar-container {
     min-width: 225px;
   }
-  #identity-box {
+  #identity-icon-box {
     max-width: 70px;
   }
   #urlbar-zoom-button {
@@ -868,8 +868,7 @@ menupopup[emptyplacesresult="true"] > .hide-if-empty-places-result {
 
 /* Pocket */
 :root[pocketdisabled=true] #context-pocket,
-:root[pocketdisabled=true] #context-savelinktopocket,
-:root[pocketdisabled=true] #appMenu-library-pocket-button {
+:root[pocketdisabled=true] #context-savelinktopocket {
   display: none;
 }
 
@@ -1041,6 +1040,10 @@ toolbarpaletteitem[place="palette"] > #downloads-button[indicator] > .toolbarbut
 
 #ContentSelectDropdown > menupopup::part(arrowscrollbox-scrollbox) {
   scrollbar-width: var(--content-select-scrollbar-width, auto);
+}
+
+#ContentSelectDropdown > menupopup::part(arrowscrollbox) {
+  background-image: var(--content-select-background-image, none);
 }
 
 /* Indent options in optgroups */
@@ -1480,7 +1483,7 @@ toolbar[keyNav=true]:not([collapsed=true], [customizing=true]) toolbartabstop {
 }
 
 /**
- * Tab Dialogs
+ * Dialogs
  */
 
 .dialogStack {
@@ -1573,6 +1576,21 @@ toolbar[keyNav=true]:not([collapsed=true], [customizing=true]) toolbartabstop {
   place-content: center;
 }
 
+/* Override default <html:dialog> styles */
+#window-modal-dialog {
+  border-width: 0;
+  background-color: transparent;
+}
+
+#window-modal-dialog::backdrop {
+  background-color: rgba(0, 0, 0, 0.5);
+}
+
+/* Hide tab-modal dialogs when a window-modal one is up. */
+:root[window-modal-open] .browserStack > .dialogStack {
+  visibility: hidden;
+}
+
 /**
- * End Tab Dialogs
+ * End Dialogs
  */

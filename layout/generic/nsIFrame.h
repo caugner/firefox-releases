@@ -1380,10 +1380,6 @@ class nsIFrame : public nsQueryFrame {
 
   NS_DECLARE_FRAME_PROPERTY_SMALL_VALUE(LineBaselineOffset, nscoord)
 
-  // Temporary override for a flex item's main-size property (either width
-  // or height), imposed by its flex container.
-  NS_DECLARE_FRAME_PROPERTY_SMALL_VALUE(FlexItemMainSizeOverride, nscoord)
-
   NS_DECLARE_FRAME_PROPERTY_DELETABLE(InvalidationRect, nsRect)
 
   NS_DECLARE_FRAME_PROPERTY_SMALL_VALUE(RefusedAsyncAnimationProperty, bool)
@@ -2382,6 +2378,11 @@ class nsIFrame : public nsQueryFrame {
   bool IsPrimaryFrameOfRootOrBodyElement() const;
 
   /**
+   * @return true if this frame is used as a fieldset's rendered legend.
+   */
+  bool IsRenderedLegend() const;
+
+  /**
    * This call is invoked on the primary frame for a character data content
    * node, when it is changed in the content tree.
    */
@@ -2668,6 +2669,7 @@ class nsIFrame : public nsQueryFrame {
     nscoord padding = 0;
     nscoord border = 0;
     nscoord margin = 0;
+    nscoord BorderPadding() const { return border + padding; };
   };
 
   /**
@@ -2741,6 +2743,9 @@ class nsIFrame : public nsQueryFrame {
    * @param aBorderPadding  The sum of the frame's inline / block border-widths
    *                        and padding (including actual values resulting from
    *                        percentage padding values).
+   * @param aSizeOverride Optional override values for size properties, which
+   *                      this function will use internally instead of the
+   *                      actual property values.
    * @param aFlags   Flags to further customize behavior (definitions in
    *                 LayoutConstants.h).
    *
@@ -2767,6 +2772,7 @@ class nsIFrame : public nsQueryFrame {
       const mozilla::LogicalSize& aCBSize, nscoord aAvailableISize,
       const mozilla::LogicalSize& aMargin,
       const mozilla::LogicalSize& aBorderPadding,
+      const mozilla::StyleSizeOverrides& aSizeOverrides,
       mozilla::ComputeSizeFlags aFlags);
 
  protected:
@@ -2780,15 +2786,21 @@ class nsIFrame : public nsQueryFrame {
    * should override only ComputeAutoSize, and frames that cannot do so need to
    * override ComputeSize to enforce their inline-size/block-size invariants.
    *
-   * Implementations may optimize by returning a garbage width if
-   * StylePosition()->ISize() is not 'auto', and likewise for BSize(), since in
-   * such cases the result is guaranteed to be unused.
+   * Implementations may optimize by returning a garbage inline-size if
+   * StylePosition()->ISize() is not 'auto' (or inline-size override in
+   * aSizeOverrides is not 'auto' if provided), and likewise for BSize(), since
+   * in such cases the result is guaranteed to be unused.
+   *
+   * Most of the frame are not expected to check the aSizeOverrides parameter
+   * apart from checking the inline size override for 'auto' if they want to
+   * optimize and return garbage inline-size.
    */
   virtual mozilla::LogicalSize ComputeAutoSize(
       gfxContext* aRenderingContext, mozilla::WritingMode aWM,
       const mozilla::LogicalSize& aCBSize, nscoord aAvailableISize,
       const mozilla::LogicalSize& aMargin,
       const mozilla::LogicalSize& aBorderPadding,
+      const mozilla::StyleSizeOverrides& aSizeOverrides,
       mozilla::ComputeSizeFlags aFlags);
 
   /**
@@ -3286,6 +3298,9 @@ class nsIFrame : public nsQueryFrame {
     // other).
     eSupportsContainLayoutAndPaint = 1 << 12,
 
+    // Does this frame class support `aspect-ratio` property.
+    eSupportsAspectRatio = 1 << 13,
+
     // These are to allow nsIFrame::Init to assert that IsFrameOfType
     // implementations all call the base class method.  They are only
     // meaningful in DEBUG builds.
@@ -3306,7 +3321,8 @@ class nsIFrame : public nsQueryFrame {
                           nsIFrame::eDEBUGAllFrames |
 #endif
                           nsIFrame::eSupportsCSSTransforms |
-                          nsIFrame::eSupportsContainLayoutAndPaint));
+                          nsIFrame::eSupportsContainLayoutAndPaint |
+                          nsIFrame::eSupportsAspectRatio));
   }
 
   /**
@@ -3818,6 +3834,8 @@ class nsIFrame : public nsQueryFrame {
     /** whether we met selectable text frame that isn't editable during the
      *  search */
     bool mHasSelectableFrame = false;
+    /** whether we ignored a br frame */
+    bool mIgnoredBrFrame = false;
 
     FrameSearchResult PeekOffsetNoAmount(bool aForward) {
       return mFrame->PeekOffsetNoAmount(aForward, &mOffset);
@@ -3905,8 +3923,8 @@ class nsIFrame : public nsQueryFrame {
    * Called to retrieve this frame's accessible.
    * If this frame implements Accessibility return a valid accessible
    * If not return NS_ERROR_NOT_IMPLEMENTED.
-   * Note: Accessible must be refcountable. Do not implement directly on your
-   * frame Use a mediatior of some kind.
+   * Note: LocalAccessible must be refcountable. Do not implement directly on
+   * your frame Use a mediatior of some kind.
    */
 #ifdef ACCESSIBILITY
   virtual mozilla::a11y::AccType AccessibleType();

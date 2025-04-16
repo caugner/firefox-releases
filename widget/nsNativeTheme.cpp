@@ -192,7 +192,9 @@ bool nsNativeTheme::IsWidgetStyled(nsPresContext* aPresContext,
                                    nsIFrame* aFrame,
                                    StyleAppearance aAppearance) {
   // Check for specific widgets to see if HTML has overridden the style.
-  if (!aFrame) return false;
+  if (!aFrame) {
+    return false;
+  }
 
   // Resizers have some special handling, dependent on whether in a scrollable
   // container or not. If so, use the scrollable container's to determine
@@ -204,12 +206,18 @@ bool nsNativeTheme::IsWidgetStyled(nsPresContext* aPresContext,
     if (parentFrame && parentFrame->IsScrollFrame()) {
       // if the parent is a scrollframe, the resizer should be native themed
       // only if the scrollable area doesn't override the widget style.
+      //
+      // note that the condition below looks a bit suspect but it's the right
+      // one. If there's no valid appearance, then we should return true, it's
+      // effectively the same as if it had overridden the appearance.
       parentFrame = parentFrame->GetParent();
-      if (parentFrame) {
-        return IsWidgetStyled(
-            aPresContext, parentFrame,
-            parentFrame->StyleDisplay()->EffectiveAppearance());
+      if (!parentFrame) {
+        return false;
       }
+      auto parentAppearance =
+          parentFrame->StyleDisplay()->EffectiveAppearance();
+      return parentAppearance == StyleAppearance::None ||
+             IsWidgetStyled(aPresContext, parentFrame, parentAppearance);
     }
   }
 
@@ -265,13 +273,8 @@ bool nsNativeTheme::IsWidgetStyled(nsPresContext* aPresContext,
     }
   }
 
-  return (aAppearance == StyleAppearance::NumberInput ||
-          aAppearance == StyleAppearance::Button ||
-          aAppearance == StyleAppearance::Textfield ||
-          aAppearance == StyleAppearance::Textarea ||
-          aAppearance == StyleAppearance::Listbox ||
-          aAppearance == StyleAppearance::Menulist ||
-          aAppearance == StyleAppearance::MenulistButton) &&
+  return nsLayoutUtils::AuthorSpecifiedBorderBackgroundDisablesTheming(
+             aAppearance) &&
          aFrame->GetContent()->IsHTMLElement() &&
          aPresContext->HasAuthorSpecifiedRules(
              aFrame, NS_AUTHOR_SPECIFIED_BORDER_OR_BACKGROUND);
@@ -607,15 +610,37 @@ bool nsNativeTheme::IsRangeHorizontal(nsIFrame* aFrame) {
 }
 
 static nsIFrame* GetBodyFrame(nsIFrame* aCanvasFrame) {
-  nsIContent* content = aCanvasFrame->GetContent();
-  if (!content) {
-    return nullptr;
-  }
-  nsIContent* body = content->OwnerDoc()->GetBodyElement();
+  nsIContent* body = aCanvasFrame->PresContext()->Document()->GetBodyElement();
   if (!body) {
     return nullptr;
   }
   return body->GetPrimaryFrame();
+}
+
+static const ComputedStyle* GetBackgroundStyle(nsIFrame* aFrame) {
+  if (nsCSSRendering::IsCanvasFrame(aFrame)) {
+    // For canvas frames, prefer to look at the body first, because the body
+    // background color is most likely what will be visible as the background
+    // color of the page, even if the html element has a different background
+    // color which prevents that of the body frame to propagate to the viewport.
+    if (nsIFrame* bodyFrame = GetBodyFrame(aFrame)) {
+      if (!bodyFrame->StyleBackground()->IsTransparent(bodyFrame->Style())) {
+        return bodyFrame->Style();
+      }
+    }
+  }
+  ComputedStyle* bgSC = nullptr;
+  if (nsCSSRendering::FindBackground(aFrame, &bgSC) &&
+      !bgSC->StyleBackground()->IsTransparent(bgSC)) {
+    return bgSC;
+  }
+
+  nsIFrame* backgroundFrame =
+      nsCSSRendering::FindNonTransparentBackgroundFrame(aFrame, true);
+  if (!backgroundFrame) {
+    return nullptr;
+  }
+  return backgroundFrame->Style();
 }
 
 /* static */
@@ -625,28 +650,12 @@ bool nsNativeTheme::IsDarkBackground(nsIFrame* aFrame) {
     scrollFrame = aFrame->GetScrollTargetFrame();
     aFrame = aFrame->GetParent();
   }
-  if (!scrollFrame) return false;
+  if (!scrollFrame) {
+    return false;
+  }
 
-  nsIFrame* frame = scrollFrame->GetScrolledFrame();
-  if (nsCSSRendering::IsCanvasFrame(frame)) {
-    // For canvas frames, prefer to look at the body first, because the body
-    // background color is most likely what will be visible as the background
-    // color of the page, even if the html element has a different background
-    // color which prevents that of the body frame to propagate to the viewport.
-    nsIFrame* bodyFrame = GetBodyFrame(frame);
-    if (bodyFrame) {
-      frame = bodyFrame;
-    }
-  }
-  ComputedStyle* bgSC = nullptr;
-  if (!nsCSSRendering::FindBackground(frame, &bgSC) ||
-      bgSC->StyleBackground()->IsTransparent(bgSC)) {
-    nsIFrame* backgroundFrame =
-        nsCSSRendering::FindNonTransparentBackgroundFrame(frame, true);
-    nsCSSRendering::FindBackground(backgroundFrame, &bgSC);
-  }
-  if (bgSC) {
-    nscolor bgColor = bgSC->StyleBackground()->BackgroundColor(bgSC);
+  if (const auto* style = GetBackgroundStyle(scrollFrame->GetScrolledFrame())) {
+    nscolor bgColor = style->StyleBackground()->BackgroundColor(style);
     // Consider the background color dark if the sum of the r, g and b values is
     // less than 384 in a semi-transparent document.  This heuristic matches
     // what WebKit does, and we can improve it later if needed.

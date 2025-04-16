@@ -2082,7 +2082,8 @@ void PluginInstanceParent::SubclassPluginWindow(HWND aWnd) {
     mPluginWndProc = nullptr;
     // Note sPluginInstanceList wil delete 'this' if we do not remove
     // it on shutdown.
-    sPluginInstanceList->Put((void*)mPluginHWND, this);
+    sPluginInstanceList->Put((void*)mPluginHWND,
+                             UniquePtr<PluginInstanceParent>(this));
     return;
   }
 
@@ -2276,28 +2277,6 @@ mozilla::ipc::IPCResult PluginInstanceParent::RecvRequestCommitOrCancel(
     owner->RequestCommitOrCancel(aCommitted);
   }
 #endif
-  return IPC_OK();
-}
-
-nsresult PluginInstanceParent::HandledWindowedPluginKeyEvent(
-    const NativeEventData& aKeyEventData, bool aIsConsumed) {
-  if (NS_WARN_IF(
-          !SendHandledWindowedPluginKeyEvent(aKeyEventData, aIsConsumed))) {
-    return NS_ERROR_FAILURE;
-  }
-  return NS_OK;
-}
-
-mozilla::ipc::IPCResult PluginInstanceParent::RecvOnWindowedPluginKeyEvent(
-    const NativeEventData& aKeyEventData) {
-  nsPluginInstanceOwner* owner = GetOwner();
-  if (NS_WARN_IF(!owner)) {
-    // Notifies the plugin process of the key event being not consumed
-    // by us.
-    HandledWindowedPluginKeyEvent(aKeyEventData, false);
-    return IPC_OK();
-  }
-  owner->OnWindowedPluginKeyEvent(aKeyEventData);
   return IPC_OK();
 }
 

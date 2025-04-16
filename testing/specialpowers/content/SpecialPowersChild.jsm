@@ -1182,18 +1182,12 @@ class SpecialPowersChild extends JSWindowActorChild {
     BrowsingContext.getFromWindow(window).textZoom = zoom;
   }
 
-  getOverrideDPPX(window) {
-    return this._getMUDV(window).overrideDPPX;
-  }
-  setOverrideDPPX(window, dppx) {
-    this._getMUDV(window).overrideDPPX = dppx;
+  emulateMedium(window, mediaType) {
+    BrowsingContext.getFromWindow(window).top.mediumOverride = mediaType;
   }
 
-  emulateMedium(window, mediaType) {
-    this._getMUDV(window).emulateMedium(mediaType);
-  }
   stopEmulatingMedium(window) {
-    this._getMUDV(window).stopEmulatingMedium();
+    BrowsingContext.getFromWindow(window).top.mediumOverride = "";
   }
 
   // Takes a snapshot of the given window and returns a <canvas>
@@ -1630,6 +1624,14 @@ class SpecialPowersChild extends JSWindowActorChild {
   }
   set SimpleTest(val) {
     this._SimpleTest = val;
+  }
+
+  async evictAllContentViewers() {
+    if (Services.appinfo.sessionHistoryInParent) {
+      await this.sendQuery("EvictAllContentViewers");
+    } else {
+      this.browsingContext.top.childSessionHistory.legacySHistory.evictAllContentViewers();
+    }
   }
 
   /**
@@ -2094,6 +2096,11 @@ class SpecialPowersChild extends JSWindowActorChild {
     });
   }
 
+  /**
+   * Which commands are available can be determined by checking which commands
+   * are registered. See \ref
+   * nsIControllerCommandTable.registerCommand(in String, in nsIControllerCommand).
+   */
   doCommand(window, cmd, param) {
     switch (cmd) {
       case "cmd_align":
@@ -2117,6 +2124,9 @@ class SpecialPowersChild extends JSWindowActorChild {
     return window.docShell.isCommandEnabled(cmd);
   }
 
+  /**
+   * See \ref nsIContentViewerEdit.setCommandNode(in Node).
+   */
   setCommandNode(window, node) {
     return window.docShell.contentViewer
       .QueryInterface(Ci.nsIContentViewerEdit)

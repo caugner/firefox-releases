@@ -54,6 +54,16 @@ static int32_t GetPoolThreadCount() {
   return std::min<int32_t>(kMaximumPoolThreadCount, numCores - 1);
 }
 
+#if defined(MOZ_GECKO_PROFILER) && defined(MOZ_COLLECTING_RUNNABLE_TELEMETRY)
+#  define AUTO_PROFILE_FOLLOWING_TASK(task)                                  \
+    nsAutoCString name;                                                      \
+    (task)->GetName(name);                                                   \
+    AUTO_PROFILER_LABEL_DYNAMIC_NSCSTRING_NONSENSITIVE("Task", OTHER, name); \
+    AUTO_PROFILER_MARKER_TEXT("Runnable", OTHER, {}, name);
+#else
+#  define AUTO_PROFILE_FOLLOWING_TASK(task)
+#endif
+
 bool TaskManager::
     UpdateCachesForCurrentIterationAndReportPriorityModifierChanged(
         const MutexAutoLock& aProofOfLock, IterationType aIterationType) {
@@ -245,6 +255,7 @@ void TaskController::RunPoolThread() {
         {
           MutexAutoUnlock unlock(mGraphMutex);
           lastTask = nullptr;
+          AUTO_PROFILE_FOLLOWING_TASK(task);
           taskCompleted = task->Run();
           ranTask = true;
         }
@@ -644,10 +655,15 @@ bool TaskController::ExecuteNextTaskOnlyMainThreadInternal(
 
 bool TaskController::DoExecuteNextTaskOnlyMainThreadInternal(
     const MutexAutoLock& aProofOfLock) {
+#ifdef MOZ_GECKO_PROFILER
   nsCOMPtr<nsIThread> mainIThread;
   NS_GetMainThread(getter_AddRefs(mainIThread));
+
   nsThread* mainThread = static_cast<nsThread*>(mainIThread.get());
-  mainThread->SetRunningEventDelay(TimeDuration(), TimeStamp());
+  if (mainThread) {
+    mainThread->SetRunningEventDelay(TimeDuration(), TimeStamp());
+  }
+#endif
 
   uint32_t totalSuspended = 0;
   for (TaskManager* manager : mTaskManagers) {
@@ -724,10 +740,12 @@ bool TaskController::DoExecuteNextTaskOnlyMainThreadInternal(
         TimeStamp now = TimeStamp::Now();
 
 #ifdef MOZ_GECKO_PROFILER
-        if (task->GetPriority() < uint32_t(EventQueuePriority::InputHigh)) {
-          mainThread->SetRunningEventDelay(TimeDuration(), now);
-        } else {
-          mainThread->SetRunningEventDelay(now - task->mInsertionTime, now);
+        if (mainThread) {
+          if (task->GetPriority() < uint32_t(EventQueuePriority::InputHigh)) {
+            mainThread->SetRunningEventDelay(TimeDuration(), now);
+          } else {
+            mainThread->SetRunningEventDelay(now - task->mInsertionTime, now);
+          }
         }
 #endif
 
@@ -738,6 +756,7 @@ bool TaskController::DoExecuteNextTaskOnlyMainThreadInternal(
 
         {
           LogTask::Run log(task);
+          AUTO_PROFILE_FOLLOWING_TASK(task);
           result = task->Run();
         }
 

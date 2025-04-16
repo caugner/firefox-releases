@@ -294,6 +294,7 @@ class APZCTreeManager : public IAPZCTreeManager, public APZInputBridge {
    * drag metrics. Initializes aOutThumbNode with the node, if there is one.
    */
   void FindScrollThumbNode(const AsyncDragMetrics& aDragMetrics,
+                           LayersId aLayersId,
                            HitTestingTreeNodeAutoLock& aOutThumbNode);
 
   /**
@@ -621,6 +622,8 @@ class APZCTreeManager : public IAPZCTreeManager, public APZInputBridge {
                                      const ScrollableLayerGuid& aGuid,
                                      GuidComparator aComparator);
   AsyncPanZoomController* GetTargetApzcForNode(HitTestingTreeNode* aNode);
+  AsyncPanZoomController* FindHandoffParent(
+      const AsyncPanZoomController* aApzc);
   HitTestResult GetAPZCAtPoint(const ScreenPoint& aHitTestPoint,
                                const RecursiveMutexAutoLock& aProofOfTreeLock);
   HitTestResult GetAPZCAtPointWR(

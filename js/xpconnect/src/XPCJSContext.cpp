@@ -38,6 +38,7 @@
 #include "nsCycleCollectionNoteRootCallback.h"
 #include "nsCycleCollector.h"
 #include "jsapi.h"
+#include "js/ArrayBuffer.h"
 #include "js/ContextOptions.h"
 #include "js/MemoryMetrics.h"
 #include "js/OffThreadScriptCompilation.h"
@@ -878,9 +879,6 @@ static void LoadStartupJSPrefs(XPCJSContext* xpccx) {
   bool disableWasmHugeMemory =
       Preferences::GetBool(JS_OPTIONS_DOT_STR "wasm_disable_huge_memory");
 
-  bool useOffThreadParseGlobal =
-      Preferences::GetBool(JS_OPTIONS_DOT_STR "off_thread_parse_global");
-
   nsCOMPtr<nsIXULRuntime> xr = do_GetService("@mozilla.org/xre/runtime;1");
   if (xr) {
     bool safeMode = false;
@@ -940,7 +938,8 @@ static void LoadStartupJSPrefs(XPCJSContext* xpccx) {
     MOZ_RELEASE_ASSERT(disabledHugeMemory);
   }
 
-  JS::SetUseOffThreadParseGlobal(useOffThreadParseGlobal);
+  JS::SetLargeArrayBuffersEnabled(
+      StaticPrefs::javascript_options_large_arraybuffers());
 }
 
 static void ReloadPrefsCallback(const char* pref, void* aXpccx) {
@@ -974,8 +973,13 @@ static void ReloadPrefsCallback(const char* pref, void* aXpccx) {
   bool useWasmSimd = Preferences::GetBool(JS_OPTIONS_DOT_STR "wasm_simd");
 #endif
 #ifdef ENABLE_WASM_SIMD_WORMHOLE
-  bool useWasmSimdWormhole =
+  bool useWasmSimdWormhole = false;
+#  ifdef EARLY_BETA_OR_EARLIER
+  // In late beta and release, the functionality is available but only to
+  // privileged content.
+  useWasmSimdWormhole =
       Preferences::GetBool(JS_OPTIONS_DOT_STR "wasm_simd_wormhole");
+#  endif
 #endif
   bool useWasmVerbose = Preferences::GetBool(JS_OPTIONS_DOT_STR "wasm_verbose");
   bool throwOnAsmJSValidationFailure = Preferences::GetBool(

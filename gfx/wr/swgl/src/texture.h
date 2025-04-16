@@ -470,7 +470,7 @@ SI T samplerScale(S sampler, T P) {
 }
 
 template <typename T>
-SI T samplerScale(sampler2DRect sampler, T P) {
+SI T samplerScale(UNUSED sampler2DRect sampler, T P) {
   return P;
 }
 
@@ -488,10 +488,10 @@ SI auto computeRow(S sampler, I i, int32_t zoffset, size_t margin = 1)
 }
 
 // Compute clamped offset of second row for linear interpolation from first row
-template <typename S>
-SI I32 computeNextRowOffset(S sampler, ivec2 i) {
-  return (i.y >= 0 && i.y < int32_t(sampler->height) - 1) &
-         I32(sampler->stride);
+template <typename S, typename I>
+SI auto computeNextRowOffset(S sampler, I i) -> decltype(i.x) {
+  return if_then_else(i.y >= 0 && i.y < int32_t(sampler->height) - 1,
+                      sampler->stride, 0);
 }
 
 // Convert X coordinate to a 2^7 scale fraction for interpolation
@@ -502,7 +502,8 @@ SI I16 computeFracX(S sampler, ivec2 i, ivec2 frac) {
 }
 
 // Convert Y coordinate to a 2^7 scale fraction for interpolation
-SI I16 computeFracY(ivec2 frac) { return CONVERT(frac.y & 0x7F, I16); }
+SI I16 computeFracNoClamp(I32 frac) { return CONVERT(frac & 0x7F, I16); }
+SI I16 computeFracY(ivec2 frac) { return computeFracNoClamp(frac.y); }
 
 struct WidePlanarRGBA8 {
   V8<uint16_t> rg;
@@ -589,13 +590,13 @@ static inline U16 textureLinearUnpackedR8(S sampler, ivec2 i,
   auto b0 = unaligned_load<V2<uint8_t>>(&buf[row0.y]);
   auto c0 = unaligned_load<V2<uint8_t>>(&buf[row0.z]);
   auto d0 = unaligned_load<V2<uint8_t>>(&buf[row0.w]);
-  auto abcd0 = CONVERT(combine(combine(a0, b0), combine(c0, d0)), V8<int16_t>);
+  auto abcd0 = CONVERT(combine(a0, b0, c0, d0), V8<int16_t>);
 
   auto a1 = unaligned_load<V2<uint8_t>>(&buf[row1.x]);
   auto b1 = unaligned_load<V2<uint8_t>>(&buf[row1.y]);
   auto c1 = unaligned_load<V2<uint8_t>>(&buf[row1.z]);
   auto d1 = unaligned_load<V2<uint8_t>>(&buf[row1.w]);
-  auto abcd1 = CONVERT(combine(combine(a1, b1), combine(c1, d1)), V8<int16_t>);
+  auto abcd1 = CONVERT(combine(a1, b1, c1, d1), V8<int16_t>);
 
   abcd0 += ((abcd1 - abcd0) * fracy.xxyyzzww) >> 7;
 
@@ -709,15 +710,13 @@ static inline I16 textureLinearUnpackedR16(S sampler, ivec2 i,
   auto b0 = unaligned_load<V2<uint16_t>>(&buf[row0.y]);
   auto c0 = unaligned_load<V2<uint16_t>>(&buf[row0.z]);
   auto d0 = unaligned_load<V2<uint16_t>>(&buf[row0.w]);
-  auto abcd0 =
-      CONVERT(combine(combine(a0, b0), combine(c0, d0)) >> 1, V8<int16_t>);
+  auto abcd0 = CONVERT(combine(a0, b0, c0, d0) >> 1, V8<int16_t>);
 
   auto a1 = unaligned_load<V2<uint16_t>>(&buf[row1.x]);
   auto b1 = unaligned_load<V2<uint16_t>>(&buf[row1.y]);
   auto c1 = unaligned_load<V2<uint16_t>>(&buf[row1.z]);
   auto d1 = unaligned_load<V2<uint16_t>>(&buf[row1.w]);
-  auto abcd1 =
-      CONVERT(combine(combine(a1, b1), combine(c1, d1)) >> 1, V8<int16_t>);
+  auto abcd1 = CONVERT(combine(a1, b1, c1, d1) >> 1, V8<int16_t>);
 
   // The samples occupy 15 bits and the fraction occupies 15 bits, so that when
   // they are multiplied together, the new scaled sample will fit in the high
@@ -766,6 +765,9 @@ vec4 textureLinearR16(S sampler, vec2 P, int32_t zoffset = 0) {
   Float r = CONVERT(textureLinearUnpackedR16(sampler, i, zoffset), Float);
   return vec4(r * (1.0f / 32767.0f), 0.0f, 0.0f, 1.0f);
 }
+
+using PackedRGBA32F = V16<float>;
+using WideRGBA32F = V16<float>;
 
 template <typename S>
 vec4 textureLinearRGBA32F(S sampler, vec2 P, int32_t zoffset = 0) {
@@ -1050,6 +1052,17 @@ template <typename S>
 static PackedRGBA8 textureLinearPackedRGBA8(S sampler, ivec2 i,
                                             int zoffset = 0) {
   return pack(textureLinearUnpackedRGBA8(sampler, i, zoffset));
+}
+
+template <typename S>
+static PackedRGBA8 textureNearestPackedRGBA8(S sampler, ivec2 i,
+                                             int zoffset = 0) {
+  assert(sampler->format == TextureFormat::RGBA8);
+  I32 row = computeRow(sampler, i, zoffset, 0);
+  return combine(unaligned_load<V4<uint8_t>>(&sampler->buf[row.x]),
+                 unaligned_load<V4<uint8_t>>(&sampler->buf[row.y]),
+                 unaligned_load<V4<uint8_t>>(&sampler->buf[row.z]),
+                 unaligned_load<V4<uint8_t>>(&sampler->buf[row.w]));
 }
 
 template <typename S>

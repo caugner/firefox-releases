@@ -52,7 +52,8 @@
 
     <groupbox id="searchSuggestionsGroup" data-category="paneSearch" hidden="true">
       <label><html:h2 data-l10n-id="search-suggestions-header" /></label>
-      <description data-l10n-id="search-suggestions-desc" />
+      <description id="searchSuggestionsDesc"
+                   data-l10n-id="search-suggestions-desc" />
 
       <checkbox id="suggestionsInSearchFieldsCheckbox"
                 data-l10n-id="search-suggestions-option"
@@ -60,7 +61,19 @@
       <vbox class="indent">
         <checkbox id="urlBarSuggestion" data-l10n-id="search-show-suggestions-url-bar-option" />
         <checkbox id="showSearchSuggestionsFirstCheckbox"
-                  data-l10n-id="search-show-suggestions-above-history-option"/>
+                  data-l10n-id="search-show-suggestions-above-history-option"
+                  preference="browser.urlbar.showSearchSuggestionsFirst"/>
+        <!-- This box is visible only for users enrolled in the en-US Quick Suggest experiment. -->
+        <hbox id="showQuickSuggestContainer" align="center" hidden="true">
+          <checkbox id="showQuickSuggest"
+                    class="tail-with-learn-more"
+                    label="Show Firefox Suggest in the address bar (suggested and sponsored results)"
+                    preference="browser.urlbar.suggest.quicksuggest"/>
+          <label id="showQuickSuggestLearnMore"
+                 class="learnMore"
+                 is="text-link"
+                 value="Learn more about Firefox Suggest"/>
+        </hbox>
         <checkbox id="showSearchSuggestionsPrivateWindows"
                   data-l10n-id="search-show-suggestions-private-windows"/>
         <hbox id="urlBarSuggestionPermanentPBLabel"

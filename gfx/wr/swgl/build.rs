@@ -108,6 +108,7 @@ fn main() {
     let shader_flags =
         ShaderFeatureFlags::GL |
         ShaderFeatureFlags::DUAL_SOURCE_BLENDING |
+        ShaderFeatureFlags::ADVANCED_BLEND_EQUATION |
         ShaderFeatureFlags::DEBUG;
     let mut shaders: Vec<String> = Vec::new();
     for (name, features) in get_shader_features(shader_flags) {
@@ -124,10 +125,12 @@ fn main() {
 
     write_load_shader(&shaders);
 
+    println!("cargo:rerun-if-changed=src/blend.h");
     println!("cargo:rerun-if-changed=src/composite.h");
     println!("cargo:rerun-if-changed=src/gl_defs.h");
     println!("cargo:rerun-if-changed=src/glsl.h");
     println!("cargo:rerun-if-changed=src/program.h");
+    println!("cargo:rerun-if-changed=src/rasterize.h");
     println!("cargo:rerun-if-changed=src/swgl_ext.h");
     println!("cargo:rerun-if-changed=src/texture.h");
     println!("cargo:rerun-if-changed=src/vector_type.h");
@@ -135,7 +138,7 @@ fn main() {
     cc::Build::new()
         .cpp(true)
         .file("src/gl.cc")
-        .flag("-std=c++14")
+        .flag("-std=c++17")
         .flag("-UMOZILLA_CONFIG_H")
         .flag("-fno-exceptions")
         .flag("-fno-rtti")

@@ -109,6 +109,10 @@ void RenderCompositorD3D11SWGL::CompositorEndFrame() {
     Surface& surface = surfaceCursor->second;
 
     for (auto it = surface.mTiles.begin(); it != surface.mTiles.end(); ++it) {
+      if (!it->second.mTexture) {
+        continue;
+      }
+
       gfx::Point tileOffset(it->first.mX * surface.mTileSize.width,
                             it->first.mY * surface.mTileSize.height);
       gfx::Rect drawRect = it->second.mValidRect + tileOffset;
@@ -239,13 +243,6 @@ GLenum RenderCompositorD3D11SWGL::IsContextLost(bool aForce) {
   }
 }
 
-CompositorCapabilities RenderCompositorD3D11SWGL::GetCompositorCapabilities() {
-  CompositorCapabilities caps;
-
-  caps.virtual_surface_size = 0;
-  return caps;
-}
-
 void RenderCompositorD3D11SWGL::Bind(wr::NativeTileId aId,
                                      wr::DeviceIntPoint* aOffset,
                                      uint32_t* aFboId,
@@ -267,28 +264,31 @@ bool RenderCompositorD3D11SWGL::MapTile(wr::NativeTileId aId,
   auto layerCursor = surface.mTiles.find(TileKey(aId.x, aId.y));
   MOZ_RELEASE_ASSERT(layerCursor != surface.mTiles.end());
 
-  // Check if this tile's upload method matches what we're using for this frame,
-  // and if not then reallocate to fix it. Do this before we copy the struct
-  // into mCurrentTile.
-  if (mUploadMode == Upload_Immediate) {
-    if (layerCursor->second.mStagingTexture) {
-      MOZ_ASSERT(!layerCursor->second.mSurface);
-      layerCursor->second.mStagingTexture = nullptr;
-      layerCursor->second.mSurface = CreateStagingSurface(surface.TileSize());
-    }
-  } else {
-    if (layerCursor->second.mSurface) {
-      MOZ_ASSERT(!layerCursor->second.mStagingTexture);
-      layerCursor->second.mSurface = nullptr;
-      layerCursor->second.mStagingTexture =
-          CreateStagingTexture(surface.TileSize());
-    }
-  }
-
   mCurrentTile = layerCursor->second;
   mCurrentTileId = aId;
   mCurrentTileDirty = IntRect(aDirtyRect.origin.x, aDirtyRect.origin.y,
                               aDirtyRect.size.width, aDirtyRect.size.height);
+
+  if (!mCurrentTile.mTexture) {
+    return false;
+  }
+
+  // Check if this tile's upload method matches what we're using for this frame,
+  // and if not then reallocate to fix it. Do this before we copy the struct
+  // into mCurrentTile.
+  if (mUploadMode == Upload_Immediate) {
+    if (mCurrentTile.mStagingTexture) {
+      MOZ_ASSERT(!mCurrentTile.mSurface);
+      mCurrentTile.mStagingTexture = nullptr;
+      mCurrentTile.mSurface = CreateStagingSurface(surface.TileSize());
+    }
+  } else {
+    if (mCurrentTile.mSurface) {
+      MOZ_ASSERT(!mCurrentTile.mStagingTexture);
+      mCurrentTile.mSurface = nullptr;
+      mCurrentTile.mStagingTexture = CreateStagingTexture(surface.TileSize());
+    }
+  }
 
   if (mUploadMode == Upload_Immediate) {
     DataSourceSurface::MappedSurface map;
@@ -364,6 +364,10 @@ bool RenderCompositorD3D11SWGL::MapTile(wr::NativeTileId aId,
 }
 
 void RenderCompositorD3D11SWGL::UnmapTile() {
+  if (!mCurrentTile.mTexture) {
+    return;
+  }
+
   if (mCurrentTile.mSurface) {
     MOZ_ASSERT(mUploadMode == Upload_Immediate);
     mCurrentTile.mSurface->Unmap();
@@ -480,6 +484,11 @@ void RenderCompositorD3D11SWGL::CreateTile(wr::NativeSurfaceId aId, int32_t aX,
   DebugOnly<HRESULT> hr = mCompositor->GetDevice()->CreateTexture2D(
       &desc, nullptr, getter_AddRefs(texture));
   MOZ_ASSERT(SUCCEEDED(hr));
+  if (!texture) {
+    gfxCriticalNote << "Failed to allocate Texture2D: " << surface.TileSize();
+    surface.mTiles.insert({TileKey(aX, aY), Tile{nullptr, nullptr, nullptr}});
+    return;
+  }
 
   RefPtr<DataTextureSourceD3D11> source = new DataTextureSourceD3D11(
       mCompositor->GetDevice(), gfx::SurfaceFormat::B8G8R8A8, texture);
@@ -504,7 +513,13 @@ void RenderCompositorD3D11SWGL::AttachExternalImage(
     wr::NativeSurfaceId aId, wr::ExternalImageId aExternalImage) {
   RenderTextureHost* image =
       RenderThread::Get()->GetRenderTexture(aExternalImage);
-  MOZ_RELEASE_ASSERT(image);
+  MOZ_ASSERT(image);
+  if (!image) {
+    gfxCriticalNoteOnce
+        << "Failed to get RenderTextureHost for D3D11SWGL extId:"
+        << AsUint64(aExternalImage);
+    return;
+  }
   MOZ_RELEASE_ASSERT(image->AsRenderDXGITextureHost() ||
                      image->AsRenderDXGIYCbCrTextureHost());
 

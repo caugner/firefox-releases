@@ -226,7 +226,7 @@ typedef OfflineResourceList ApplicationCache;
   [Throws, CrossOriginReadable] readonly attribute boolean closed;
   [Throws] void stop();
   [Throws, CrossOriginCallable, NeedsCallerType] void focus();
-  [Throws, CrossOriginCallable] void blur();
+  [Throws, CrossOriginCallable, NeedsCallerType] void blur();
   [Replaceable, Pref="dom.window.event.enabled"] readonly attribute any event;
 
   // other browsing contexts
@@ -794,7 +794,14 @@ partial interface Window {
 partial interface Window {
   [SameObject, Pref="dom.visualviewport.enabled", Replaceable]
   readonly attribute VisualViewport visualViewport;
+};
 
+// Used to assign marks to appear on the scrollbar when
+// finding on a page.
+partial interface Window {
+  // The marks are values between 0 and scrollMaxY.
+  [ChromeOnly]
+  void setScrollMarks(sequence<unsigned long> marks);
 };
 
 dictionary WindowPostMessageOptions : PostMessageOptions {

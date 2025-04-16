@@ -290,13 +290,13 @@
     set selectedTab(val) {
       if (
         gSharedTabWarning.willShowSharedTabWarning(val) ||
+        document.documentElement.hasAttribute("window-modal-open") ||
         (gNavToolbox.collapsed && !this._allowTabChange)
       ) {
-        return this.tabbox.selectedTab;
+        return;
       }
       // Update the tab
       this.tabbox.selectedTab = val;
-      return val;
     },
 
     get selectedTab() {
@@ -947,7 +947,7 @@
       // XXX https://bugzilla.mozilla.org/show_bug.cgi?id=22183#c239
       try {
         if (docElement.getAttribute("chromehidden").includes("location")) {
-          const uri = Services.uriFixup.createExposableURI(aBrowser.currentURI);
+          const uri = Services.io.createExposableURI(aBrowser.currentURI);
           let prefix = uri.prePath;
           if (uri.scheme == "about") {
             prefix = uri.spec;
@@ -1228,7 +1228,7 @@
       }
 
       updateUserContextUIIndicator();
-      gIdentityHandler.updateSharingIndicator();
+      gPermissionPanel.updateSharingIndicator();
 
       // Enable touch events to start a native dragging
       // session to allow the user to easily drag the selected tab.
@@ -1302,7 +1302,9 @@
 
       if (newBrowser.hasAttribute("tabDialogShowing")) {
         newBrowser.tabDialogBox.focus();
-      } else if (newBrowser.hasAttribute("tabmodalPromptShowing")) {
+        return;
+      }
+      if (newBrowser.hasAttribute("tabmodalPromptShowing")) {
         // If there's a tabmodal prompt showing, focus it.
         let prompts = newBrowser.tabModalPromptBox.listPrompts();
         let prompt = prompts[prompts.length - 1];
@@ -1401,7 +1403,7 @@
       tab.removeAttribute("sharing");
       this._tabAttrModified(tab, ["sharing"]);
       if (aBrowser == this.selectedBrowser) {
-        gIdentityHandler.updateSharingIndicator();
+        gPermissionPanel.updateSharingIndicator();
       }
     },
 
@@ -1430,7 +1432,7 @@
       }
 
       if (aBrowser == this.selectedBrowser) {
-        gIdentityHandler.updateSharingIndicator();
+        gPermissionPanel.updateSharingIndicator();
       }
     },
 
@@ -2946,7 +2948,7 @@
           }
         } else {
           if (tab.hidden) {
-            tab.setAttribute("hidden", "true");
+            tab.hidden = true;
             hiddenTabs.set(tab, tabData.extData && tabData.extData.hiddenBy);
           }
 
@@ -4186,6 +4188,7 @@
       // Also reset DOS mitigations for the basic auth prompt on reload.
       delete browser.authPromptAbuseCounter;
       gIdentityHandler.hidePopup();
+      gPermissionPanel.hidePopup();
       browser.reload();
     },
 
@@ -5450,7 +5453,7 @@
               return;
             }
 
-            // For non-system/expanded principals, we bail and show the checkbox
+            // For non-system/expanded principals without permission, we bail and show the checkbox.
             if (promptPrincipal.URI && !promptPrincipal.isSystemPrincipal) {
               let permission = Services.perms.testPermissionFromPrincipal(
                 promptPrincipal,
@@ -5458,9 +5461,12 @@
               );
               if (permission != Services.perms.ALLOW_ACTION) {
                 // Tell the prompt box we want to show the user a checkbox:
-                let tabPrompt = this.getTabModalPromptBox(
-                  tabForEvent.linkedBrowser
-                );
+                let tabPrompt = Services.prefs.getBoolPref(
+                  "prompts.contentPromptSubDialog"
+                )
+                  ? this.getTabDialogBox(tabForEvent.linkedBrowser)
+                  : this.getTabModalPromptBox(tabForEvent.linkedBrowser);
+
                 tabPrompt.onNextPromptShowAllowFocusCheckboxFor(
                   promptPrincipal
                 );
@@ -6448,8 +6454,6 @@ var StatusPanel = {
       this.panel.setAttribute("inactive", "true");
       MousePosTracker.removeListener(this);
     }
-
-    return val;
   },
 
   getMouseTargetRect() {

@@ -165,7 +165,6 @@
 
 #include <utility>
 
-#include "GeckoProfiler.h"
 #include "js/SliceBudget.h"
 #include "mozilla/Attributes.h"
 #include "mozilla/AutoGlobalTimelineMarker.h"
@@ -174,6 +173,7 @@
 #include "mozilla/MemoryReporting.h"
 #include "mozilla/MruCache.h"
 #include "mozilla/PoisonIOInterposer.h"
+#include "mozilla/ProfilerLabels.h"
 #include "mozilla/SegmentedVector.h"
 #include "mozilla/Telemetry.h"
 #include "mozilla/ThreadLocal.h"
@@ -2043,7 +2043,8 @@ void CCGraphBuilder::DoneAddingRoots() {
 
 MOZ_NEVER_INLINE bool CCGraphBuilder::BuildGraph(SliceBudget& aBudget) {
   const intptr_t kNumNodesBetweenTimeChecks = 1000;
-  const intptr_t kStep = SliceBudget::CounterReset / kNumNodesBetweenTimeChecks;
+  const intptr_t kStep =
+      SliceBudget::StepsPerTimeCheck / kNumNodesBetweenTimeChecks;
 
   MOZ_ASSERT(mCurrNode);
 
@@ -3450,7 +3451,7 @@ bool nsCycleCollector::Collect(ccType aCCType, SliceBudget& aBudget,
     }
     if (continueSlice) {
       // Force SliceBudget::isOverBudget to check the time.
-      aBudget.step(SliceBudget::CounterReset);
+      aBudget.step(SliceBudget::StepsPerTimeCheck);
       continueSlice = !aBudget.isOverBudget();
     }
   } while (continueSlice);

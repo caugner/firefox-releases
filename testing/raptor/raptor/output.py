@@ -23,17 +23,17 @@ LOG = RaptorLogger(component="perftest-output")
 class PerftestOutput(object):
     """Abstract base class to handle output of perftest results"""
 
-    def __init__(self, results, supporting_data, subtest_alert_on):
+    def __init__(self, results, supporting_data, subtest_alert_on, app):
         """
         - results : list of RaptorTestResult instances
         """
+        self.app = app
         self.results = results
         self.summarized_results = {}
         self.supporting_data = supporting_data
         self.summarized_supporting_data = []
         self.summarized_screenshots = []
         self.subtest_alert_on = subtest_alert_on
-        self.mozproxy_data = False
         self.browser_name = None
         self.browser_version = None
 
@@ -95,10 +95,6 @@ class PerftestOutput(object):
 
             data_type = data_set["type"]
             LOG.info("summarizing %s data" % data_type)
-
-            if "mozproxy" in data_type:
-                self.mozproxy_data = True
-                LOG.info("data: {}".format(self.supporting_data))
 
             if data_type not in support_data_by_type:
                 support_data_by_type[data_type] = {
@@ -252,7 +248,7 @@ class PerftestOutput(object):
             # dumped out. TODO: Bug 1515406 - Add option to output both supplementary
             # data (i.e. power) and the regular Raptor test result
             # Both are already available as separate PERFHERDER_DATA json blobs
-            if len(self.summarized_supporting_data) == 0 or self.mozproxy_data:
+            if len(self.summarized_supporting_data) == 0:
                 LOG.info("PERFHERDER_DATA: %s" % json.dumps(self.summarized_results))
                 total_perfdata = 1
             else:
@@ -592,6 +588,71 @@ class PerftestOutput(object):
         # pylint W1656
         return list(_subtests.values()), sorted(vals, reverse=True)
 
+    def parseMotionmarkOutput(self, test):
+        # for motionmark we want the frameLength:average value for each test
+
+        # this is the format we receive the results in from the benchmark
+        # i.e. this is ONE pagecycle of motionmark htmlsuite test:composited Transforms:
+
+        # {u'name': u'raptor-motionmark-firefox',
+        #  u'type': u'benchmark',
+        #  u'measurements': {
+        #    u'motionmark':
+        #      [[{u'HTMLsuite':
+        #        {u'Composited Transforms':
+        #          {u'scoreLowerBound': 272.9947975553528,
+        #           u'frameLength': {u'average': 25.2, u'stdev': 27.0,
+        #                            u'percent': 68.2, u'concern': 39.5},
+        #           u'controller': {u'average': 300, u'stdev': 0, u'percent': 0, u'concern': 3},
+        #           u'scoreUpperBound': 327.0052024446473,
+        #           u'complexity': {u'segment1': [[300, 16.6], [300, 16.6]], u'complexity': 300,
+        #                           u'segment2': [[300, None], [300, None]], u'stdev': 6.8},
+        #           u'score': 300.00000000000006,
+        #           u'complexityAverage': {u'segment1': [[30, 30], [30, 30]], u'complexity': 30,
+        #                                  u'segment2': [[300, 300], [300, 300]], u'stdev': None}
+        #  }}}]]}}
+
+        _subtests = {}
+        data = test["measurements"]["motionmark"]
+        for page_cycle in data:
+            page_cycle_results = page_cycle[0]
+
+            # TODO: this assumes a single suite is run
+            suite = list(page_cycle_results)[0]
+            for sub in page_cycle_results[suite].keys():
+                try:
+                    # pylint: disable=W1633
+                    replicate = round(
+                        float(page_cycle_results[suite][sub]["frameLength"]["average"]),
+                        3,
+                    )
+                except TypeError as e:
+                    LOG.warning(
+                        "[{}][{}] : {} - {}".format(suite, sub, e.__class__.__name__, e)
+                    )
+
+                if sub not in _subtests:
+                    # subtest not added yet, first pagecycle, so add new one
+                    _subtests[sub] = {
+                        "unit": test["subtest_unit"],
+                        "alertThreshold": float(test["alert_threshold"]),
+                        "lowerIsBetter": test["subtest_lower_is_better"],
+                        "name": sub,
+                        "replicates": [],
+                    }
+                _subtests[sub]["replicates"].extend([replicate])
+
+        vals = []
+        subtests = []
+        names = list(_subtests)
+        names.sort(reverse=True)
+        for name in names:
+            _subtests[name]["value"] = filters.median(_subtests[name]["replicates"])
+            subtests.append(_subtests[name])
+            vals.append([_subtests[name]["value"], name])
+
+        return subtests, vals
+
     def parseYoutubePlaybackPerformanceOutput(self, test):
         """Parse the metrics for the Youtube playback performance test.
 
@@ -869,6 +930,7 @@ class RaptorOutput(PerftestOutput):
                 elif "motionmark" in test["measurements"]:
                     subtests, vals = self.parseMotionmarkOutput(test)
                 elif "speedometer" in test["measurements"]:
+                    # this includes stylebench
                     subtests, vals = self.parseSpeedometerOutput(test)
                 elif "sunspider" in test["measurements"]:
                     subtests, vals = self.parseSunspiderOutput(test)
@@ -1209,71 +1271,6 @@ class RaptorOutput(PerftestOutput):
         print(subtests)
         return subtests, vals
 
-    def parseMotionmarkOutput(self, test):
-        # for motionmark we want the frameLength:average value for each test
-
-        # this is the format we receive the results in from the benchmark
-        # i.e. this is ONE pagecycle of motionmark htmlsuite test:composited Transforms:
-
-        # {u'name': u'raptor-motionmark-firefox',
-        #  u'type': u'benchmark',
-        #  u'measurements': {
-        #    u'motionmark':
-        #      [[{u'HTMLsuite':
-        #        {u'Composited Transforms':
-        #          {u'scoreLowerBound': 272.9947975553528,
-        #           u'frameLength': {u'average': 25.2, u'stdev': 27.0,
-        #                            u'percent': 68.2, u'concern': 39.5},
-        #           u'controller': {u'average': 300, u'stdev': 0, u'percent': 0, u'concern': 3},
-        #           u'scoreUpperBound': 327.0052024446473,
-        #           u'complexity': {u'segment1': [[300, 16.6], [300, 16.6]], u'complexity': 300,
-        #                           u'segment2': [[300, None], [300, None]], u'stdev': 6.8},
-        #           u'score': 300.00000000000006,
-        #           u'complexityAverage': {u'segment1': [[30, 30], [30, 30]], u'complexity': 30,
-        #                                  u'segment2': [[300, 300], [300, 300]], u'stdev': None}
-        #  }}}]]}}
-
-        _subtests = {}
-        data = test["measurements"]["motionmark"]
-        for page_cycle in data:
-            page_cycle_results = page_cycle[0]
-
-            # TODO: this assumes a single suite is run
-            suite = list(page_cycle_results)[0]
-            for sub in page_cycle_results[suite].keys():
-                try:
-                    # pylint: disable=W1633
-                    replicate = round(
-                        float(page_cycle_results[suite][sub]["frameLength"]["average"]),
-                        3,
-                    )
-                except TypeError as e:
-                    LOG.warning(
-                        "[{}][{}] : {} - {}".format(suite, sub, e.__class__.__name__, e)
-                    )
-
-                if sub not in _subtests:
-                    # subtest not added yet, first pagecycle, so add new one
-                    _subtests[sub] = {
-                        "unit": test["subtest_unit"],
-                        "alertThreshold": float(test["alert_threshold"]),
-                        "lowerIsBetter": test["subtest_lower_is_better"],
-                        "name": sub,
-                        "replicates": [],
-                    }
-                _subtests[sub]["replicates"].extend([replicate])
-
-        vals = []
-        subtests = []
-        names = list(_subtests)
-        names.sort(reverse=True)
-        for name in names:
-            _subtests[name]["value"] = filters.median(_subtests[name]["replicates"])
-            subtests.append(_subtests[name])
-            vals.append([_subtests[name]["value"], name])
-
-        return subtests, vals
-
     def parseSunspiderOutput(self, test):
         _subtests = {}
         data = test["measurements"]["sunspider"]
@@ -1521,7 +1518,9 @@ class BrowsertimeOutput(PerftestOutput):
                     "subtests": {},
                 },
             )
-
+            # Setting shouldAlert to False whenever self.app is either chrome, chrome-m, chromium
+            if self.app in ("chrome", "chrome-m", "chromium"):
+                suite["shouldAlert"] = False
             # Check if the test has set optional properties
             if "alert_change_type" in test and "alertChangeType" not in suite:
                 suite["alertChangeType"] = test["alert_change_type"]
@@ -1544,6 +1543,8 @@ class BrowsertimeOutput(PerftestOutput):
                                     % measurement_name
                                 )
                                 subtest["shouldAlert"] = True
+                                if self.app in ("chrome", "chrome-m", "chromium"):
+                                    subtest["shouldAlert"] = False
                         subtest["replicates"] = []
                         suite["subtests"][measurement_name] = subtest
                     else:
@@ -1553,10 +1554,13 @@ class BrowsertimeOutput(PerftestOutput):
 
             elif "benchmark" in test["type"]:
                 subtests = None
-                if "speedometer" in test["name"]:
+                if "speedometer" in test["measurements"]:
+                    # this includes stylebench
                     subtests, vals = self.parseSpeedometerOutput(test)
                 if "ares6" in test["name"]:
                     subtests, vals = self.parseAresSixOutput(test)
+                if "motionmark" in test["measurements"]:
+                    subtests, vals = self.parseMotionmarkOutput(test)
                 if any(
                     "youtube-playback" in key for key in test["measurements"].keys()
                 ):

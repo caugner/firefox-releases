@@ -219,7 +219,7 @@ body {
   .icon.icon-delete {
     background-image: url("chrome://activity-stream/content/data/content/assets/glyph-delete-16.svg"); }
   .icon.icon-search {
-    background-image: url("chrome://browser/skin/search-glass.svg"); }
+    background-image: url("chrome://global/skin/icons/search-glass.svg"); }
   .icon.icon-modal-delete {
     flex-shrink: 0;
     background-image: url("chrome://activity-stream/content/data/content/assets/glyph-modal-delete-32.svg");
@@ -1153,6 +1153,13 @@ main {
     opacity: 1;
     transform: translateY(0); } }
 
+.topsite-impression-observer {
+  position: absolute;
+  top: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none; }
+
 .sections-list .section-list {
   display: grid;
   grid-gap: 32px;
@@ -1308,6 +1315,9 @@ main {
     color: var(--newtab-search-text-color);
     font-weight: 500;
     font-size: 15px; }
+    .outer-wrapper.newtab-experience .search-wrapper .search-handoff-button:dir(rtl),
+    .outer-wrapper.newtab-experience .search-wrapper input:dir(rtl) {
+      background-position-x: right 16px; }
   .outer-wrapper.newtab-experience .search-wrapper .search-handoff-button {
     padding-inline-end: 15px; }
     .outer-wrapper.newtab-experience .search-wrapper .search-handoff-button .fake-caret {
@@ -1776,6 +1786,7 @@ main {
       padding-block: 7px;
       padding-inline: 10px 13px;
       margin-inline-start: 2px;
+      margin-bottom: 2px;
       -moz-context-properties: fill;
       fill: var(--customize-menu-primary-text-color);
       background: url("chrome://activity-stream/content/data/content/assets/glyph-arrowhead-down-12.svg") right no-repeat;

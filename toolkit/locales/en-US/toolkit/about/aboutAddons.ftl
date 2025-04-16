@@ -2,8 +2,6 @@
 # License, v. 2.0. If a copy of the MPL was not distributed with this
 # file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
-addons-window =
-    .title = Add-ons Manager
 addons-page-title = Add-ons Manager
 
 search-header =
@@ -240,7 +238,6 @@ extensions-warning-update-security = Add-on update security checking is disabled
 extensions-warning-update-security-button = Enable
     .title = Enable add-on update security checking
 
-
 ## Strings connected to add-on updates
 
 addon-updates-check-for-updates = Check for Updates
@@ -366,6 +363,7 @@ addon-options-button =
     .aria-label = More Options
 
 ## Add-on actions
+
 report-addon-button = Report
 remove-addon-button = Remove
 # The link will always be shown after the other text.

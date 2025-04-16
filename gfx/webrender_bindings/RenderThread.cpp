@@ -234,8 +234,9 @@ void RenderThread::RemoveRenderer(wr::WindowId aWindowId) {
 
   mRenderers.erase(aWindowId);
 
-  if (mRenderers.size() == 0 && mHandlingDeviceReset) {
+  if (mRenderers.empty()) {
     mHandlingDeviceReset = false;
+    mHandlingWebRenderError = false;
   }
 
   auto windows = mWindowInfos.Lock();
@@ -1056,8 +1057,11 @@ static already_AddRefed<gl::GLContext> CreateGLContextANGLE(
     return nullptr;
   }
 
-  gl::CreateContextFlags flags = gl::CreateContextFlags::PREFER_ES3 |
-                                 gl::CreateContextFlags::PREFER_ROBUSTNESS;
+  gl::CreateContextFlags flags = gl::CreateContextFlags::PREFER_ES3;
+
+  if (StaticPrefs::gfx_webrender_prefer_robustness_AtStartup()) {
+    flags |= gl::CreateContextFlags::PREFER_ROBUSTNESS;
+  }
 
   if (egl->IsExtensionSupported(
           gl::EGLExtension::MOZ_create_context_provoking_vertex_dont_care)) {

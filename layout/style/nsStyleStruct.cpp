@@ -119,21 +119,6 @@ void StyleComputedUrl::ResolveImage(Document& aDocument,
 
   data.flags |= StyleLoadDataFlags::TRIED_TO_RESOLVE_IMAGE;
 
-  nsIURI* docURI = aDocument.GetDocumentURI();
-  if (HasRef()) {
-    bool isEqualExceptRef = false;
-    nsIURI* imageURI = GetURI();
-    if (!imageURI) {
-      return;
-    }
-
-    if (NS_SUCCEEDED(imageURI->EqualsExceptRef(docURI, &isEqualExceptRef)) &&
-        isEqualExceptRef) {
-      // Prevent loading an internal resource.
-      return;
-    }
-  }
-
   MOZ_ASSERT(NS_IsMainThread());
 
   // TODO(emilio, bug 1440442): This is a hackaround to avoid flickering due the
@@ -512,6 +497,9 @@ nsChangeHint nsStyleBorder::CalcDifference(
     }
   }
 
+  // Note that border radius also controls the outline radius if the
+  // layout.css.outline-follows-border-radius.enabled pref is set. Any
+  // optimizations here should apply to both.
   if (mBorderRadius != aNewData.mBorderRadius) {
     return nsChangeHint_RepaintFrame;
   }
@@ -603,7 +591,7 @@ nsChangeHint nsStyleOutline::CalcDifference(
 nsStyleList::nsStyleList(const Document& aDocument)
     : mListStylePosition(NS_STYLE_LIST_STYLE_POSITION_OUTSIDE),
       mQuotes(StyleQuotes::Auto()),
-      mListStyleImage(StyleImageUrlOrNone::None()),
+      mListStyleImage(StyleImage::None()),
       mImageRegion(StyleClipRectOrAuto::Auto()),
       mMozListReversed(StyleMozListReversed::False) {
   MOZ_COUNT_CTOR(nsStyleList);
@@ -627,14 +615,8 @@ nsStyleList::nsStyleList(const nsStyleList& aSource)
 void nsStyleList::TriggerImageLoads(Document& aDocument,
                                     const nsStyleList* aOldStyle) {
   MOZ_ASSERT(NS_IsMainThread());
-
-  if (mListStyleImage.IsUrl() && !mListStyleImage.AsUrl().IsImageResolved()) {
-    auto* oldUrl = aOldStyle && aOldStyle->mListStyleImage.IsUrl()
-                       ? &aOldStyle->mListStyleImage.AsUrl()
-                       : nullptr;
-    const_cast<StyleComputedImageUrl&>(mListStyleImage.AsUrl())
-        .ResolveImage(aDocument, oldUrl);
-  }
+  mListStyleImage.ResolveImage(
+      aDocument, aOldStyle ? &aOldStyle->mListStyleImage : nullptr);
 }
 
 nsChangeHint nsStyleList::CalcDifference(
@@ -688,8 +670,7 @@ already_AddRefed<nsIURI> nsStyleList::GetListStyleImageURI() const {
     return nullptr;
   }
 
-  nsCOMPtr<nsIURI> uri = mListStyleImage.AsUrl().GetURI();
-  return uri.forget();
+  return do_AddRef(mListStyleImage.AsUrl().GetURI());
 }
 
 // --------------------
@@ -1377,7 +1358,7 @@ nsStyleTableBorder::nsStyleTableBorder(const Document& aDocument)
     : mBorderSpacingCol(0),
       mBorderSpacingRow(0),
       mBorderCollapse(StyleBorderCollapse::Separate),
-      mCaptionSide(NS_STYLE_CAPTION_SIDE_TOP),
+      mCaptionSide(StyleCaptionSide::Top),
       mEmptyCells(StyleEmptyCells::Show) {
   MOZ_COUNT_CTOR(nsStyleTableBorder);
 }
@@ -2087,7 +2068,7 @@ nscolor nsStyleBackground::BackgroundColor(const nsIFrame* aFrame) const {
   return mBackgroundColor.CalcColor(aFrame);
 }
 
-nscolor nsStyleBackground::BackgroundColor(ComputedStyle* aStyle) const {
+nscolor nsStyleBackground::BackgroundColor(const ComputedStyle* aStyle) const {
   return mBackgroundColor.CalcColor(*aStyle);
 }
 
@@ -3105,16 +3086,8 @@ nsChangeHint nsStyleUI::CalcDifference(const nsStyleUI& aNewData) const {
     hint |= NS_STYLE_HINT_VISUAL;
   }
 
-  if (mUserInput != aNewData.mUserInput) {
-    if (StyleUserInput::None == mUserInput ||
-        StyleUserInput::None == aNewData.mUserInput) {
-      hint |= nsChangeHint_ReconstructFrame;
-    } else {
-      hint |= nsChangeHint_NeutralChange;
-    }
-  }
-
-  if (mUserFocus != aNewData.mUserFocus || mInert != aNewData.mInert) {
+  if (mUserFocus != aNewData.mUserFocus || mInert != aNewData.mInert ||
+      mUserInput != aNewData.mUserInput) {
     hint |= nsChangeHint_NeutralChange;
   }
 

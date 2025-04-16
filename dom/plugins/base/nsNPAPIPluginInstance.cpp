@@ -35,7 +35,7 @@
 #include "mozilla/dom/Element.h"
 #include "mozilla/dom/HTMLObjectElementBinding.h"
 #include "AudioChannelService.h"
-#include "GeckoProfiler.h"
+#include "mozilla/ProfilerLabels.h"
 
 using namespace mozilla;
 using namespace mozilla::dom;
@@ -680,20 +680,6 @@ nsresult nsNPAPIPluginInstance::GetScrollCaptureContainer(
                   : library->GetScrollCaptureContainer(&mNPP, aContainer);
 }
 #endif
-
-nsresult nsNPAPIPluginInstance::HandledWindowedPluginKeyEvent(
-    const NativeEventData& aKeyEventData, bool aIsConsumed) {
-  if (NS_WARN_IF(!mPlugin)) {
-    return NS_ERROR_FAILURE;
-  }
-
-  PluginLibrary* library = mPlugin->GetLibrary();
-  if (NS_WARN_IF(!library)) {
-    return NS_ERROR_FAILURE;
-  }
-  return library->HandledWindowedPluginKeyEvent(&mNPP, aKeyEventData,
-                                                aIsConsumed);
-}
 
 void nsNPAPIPluginInstance::DidComposite() {
   if (RUNNING != mRunning) return;

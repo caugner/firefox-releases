@@ -10,6 +10,7 @@
 #include "mozilla/AsyncEventDispatcher.h"
 #include "mozilla/BasePrincipal.h"
 #include "mozilla/DebugOnly.h"
+#include "mozilla/Components.h"
 #include "mozilla/dom/AutocompleteInfoBinding.h"
 #include "mozilla/dom/BlobImpl.h"
 #include "mozilla/dom/Directory.h"
@@ -5715,7 +5716,8 @@ HTMLInputElement::SubmitNamesValues(HTMLFormSubmission* aFormSubmission) {
     return NS_OK;
   }
 
-  if (mType == NS_FORM_INPUT_HIDDEN && name.EqualsLiteral("_charset_")) {
+  if (mType == NS_FORM_INPUT_HIDDEN &&
+      name.LowerCaseEqualsLiteral("_charset_")) {
     nsCString charset;
     aFormSubmission->GetCharset(charset);
     return aFormSubmission->AddNameValuePair(name,
@@ -6733,7 +6735,7 @@ void HTMLInputElement::SetFilePickerFiltersFromAccept(
 
   // Services to retrieve image/*, audio/*, video/* filters
   nsCOMPtr<nsIStringBundleService> stringService =
-      mozilla::services::GetStringBundleService();
+      mozilla::components::StringBundle::Service();
   if (!stringService) {
     return;
   }

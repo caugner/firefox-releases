@@ -608,7 +608,7 @@ class nsGlobalWindowInner final : public mozilla::dom::EventTarget,
   void Focus(mozilla::dom::CallerType aCallerType,
              mozilla::ErrorResult& aError);
   nsresult Focus(mozilla::dom::CallerType aCallerType) override;
-  void Blur(mozilla::ErrorResult& aError);
+  void Blur(mozilla::dom::CallerType aCallerType, mozilla::ErrorResult& aError);
   mozilla::dom::WindowProxyHolder GetFrames(mozilla::ErrorResult& aError);
   uint32_t Length();
   mozilla::dom::Nullable<mozilla::dom::WindowProxyHolder> GetTop(
@@ -1115,13 +1115,13 @@ class nsGlobalWindowInner final : public mozilla::dom::EventTarget,
 
   bool IsInModalState();
 
-  virtual void SetFocusedElement(mozilla::dom::Element* aElement,
-                                 uint32_t aFocusMethod = 0,
-                                 bool aNeedsFocus = false) override;
+  void SetFocusedElement(mozilla::dom::Element* aElement,
+                         uint32_t aFocusMethod = 0, bool aNeedsFocus = false,
+                         bool aWillShowOutline = false) override;
 
-  virtual uint32_t GetFocusMethod() override;
+  uint32_t GetFocusMethod() override;
 
-  virtual bool ShouldShowFocusRing() override;
+  bool ShouldShowFocusRing() override;
 
   // Inner windows only.
   void UpdateCanvasFocus(bool aFocusChanged, nsIContent* aNewContent);
@@ -1264,6 +1264,9 @@ class nsGlobalWindowInner final : public mozilla::dom::EventTarget,
     return true;
   }
 
+  nsTArray<uint32_t>& GetScrollMarks() { return mScrollMarks; }
+  void SetScrollMarks(const nsTArray<uint32_t>& aScrollMarks);
+
  private:
   RefPtr<mozilla::dom::ContentMediaController> mContentMediaController;
 
@@ -1394,7 +1397,7 @@ class nsGlobalWindowInner final : public mozilla::dom::EventTarget,
   uint32_t mSerial;
 #endif
 
-  // the method that was used to focus mFocusedNode
+  // the method that was used to focus mFocusedElement
   uint32_t mFocusMethod;
 
   // The current idle request callback handle
@@ -1466,6 +1469,8 @@ class nsGlobalWindowInner final : public mozilla::dom::EventTarget,
 
   nsTArray<mozilla::UniquePtr<PromiseDocumentFlushedResolver>>
       mDocumentFlushedResolvers;
+
+  nsTArray<uint32_t> mScrollMarks;
 
   static InnerWindowByIdTable* sInnerWindowsById;
 

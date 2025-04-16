@@ -124,9 +124,9 @@ class HeadlessWidget : public nsBaseWidget {
 
   [[nodiscard]] virtual nsresult AttachNativeKeyEvent(
       WidgetKeyboardEvent& aEvent) override;
-  virtual bool GetEditCommands(NativeKeyBindingsType aType,
-                               const WidgetKeyboardEvent& aEvent,
-                               nsTArray<CommandInt>& aCommands) override;
+  MOZ_CAN_RUN_SCRIPT virtual bool GetEditCommands(
+      NativeKeyBindingsType aType, const WidgetKeyboardEvent& aEvent,
+      nsTArray<CommandInt>& aCommands) override;
 
   virtual nsresult DispatchEvent(WidgetGUIEvent* aEvent,
                                  nsEventStatus& aStatus) override;
@@ -153,6 +153,10 @@ class HeadlessWidget : public nsBaseWidget {
                                               uint32_t aPointerOrientation,
                                               nsIObserver* aObserver) override;
 
+  virtual nsresult SynthesizeNativeTouchPadPinch(
+      TouchpadPinchPhase aEventPhase, float aScale, LayoutDeviceIntPoint aPoint,
+      int32_t aModifierFlags) override;
+
  private:
   ~HeadlessWidget();
   bool mEnabled;
@@ -164,6 +168,7 @@ class HeadlessWidget : public nsBaseWidget {
   nsSizeMode mLastSizeMode;
   // The last size mode set while the window was visible.
   nsSizeMode mEffectiveSizeMode;
+  mozilla::ScreenCoord mLastPinchSpan;
   InputContext mInputContext;
   mozilla::UniquePtr<mozilla::MultiTouchInput> mSynthesizedTouchInput;
   // In headless there is no window manager to track window bounds

@@ -50,11 +50,16 @@ extern mozilla::LazyLogModule gHostResolverLog;
 NS_IMPL_ISUPPORTS(TRR, nsIHttpPushListener, nsIInterfaceRequestor,
                   nsIStreamListener, nsIRunnable)
 
+void TRR::HandleTimeout() {
+  mTimeout = nullptr;
+  RecordReason(nsHostRecord::TRR_TIMEOUT);
+  Cancel(NS_ERROR_NET_TIMEOUT_EXTERNAL);
+}
+
 NS_IMETHODIMP
 TRR::Notify(nsITimer* aTimer) {
   if (aTimer == mTimeout) {
-    mTimeout = nullptr;
-    Cancel();
+    HandleTimeout();
   } else {
     MOZ_CRASH("Unknown timer");
   }
@@ -134,17 +139,33 @@ nsresult TRR::CreateChannelHelper(nsIURI* aUri, nsIChannel** aResult) {
                                                aResult);
 }
 
-nsresult TRR::SendHTTPRequest() {
-  // This is essentially the "run" method - created from nsHostResolver
-
-  if ((mType != TRRTYPE_A) && (mType != TRRTYPE_AAAA) &&
-      (mType != TRRTYPE_NS) && (mType != TRRTYPE_TXT) &&
-      (mType != TRRTYPE_HTTPSSVC)) {
-    // limit the calling interface because nsHostResolver has explicit slots for
-    // these types
-    return NS_ERROR_FAILURE;
+DNSPacket* TRR::GetOrCreateDNSPacket() {
+  if (!mPacket) {
+    mPacket = MakeUnique<DNSPacket>();
   }
 
+  return mPacket.get();
+}
+
+nsresult TRR::CreateQueryURI(nsIURI** aOutURI) {
+  nsAutoCString uri;
+  nsCOMPtr<nsIURI> dnsURI;
+  if (UseDefaultServer()) {
+    gTRRService->GetURI(uri);
+  } else {
+    uri = mRec->mTrrServer;
+  }
+
+  nsresult rv = NS_NewURI(getter_AddRefs(dnsURI), uri);
+  if (NS_FAILED(rv)) {
+    return rv;
+  }
+
+  dnsURI.forget(aOutURI);
+  return NS_OK;
+}
+
+bool TRR::MaybeBlockRequest() {
   if (((mType == TRRTYPE_A) || (mType == TRRTYPE_AAAA)) &&
       mRec->mEffectiveTRRMode != nsIRequest::TRR_ONLY_MODE) {
     // let NS resolves skip the blocklist check
@@ -161,12 +182,12 @@ nsresult TRR::SendHTTPRequest() {
 
       RecordReason(nsHostRecord::TRR_HOST_BLOCKED_TEMPORARY);
       // not really an error but no TRR is issued
-      return NS_ERROR_UNKNOWN_HOST;
+      return true;
     }
 
     if (gTRRService->IsExcludedFromTRR(mHost)) {
       RecordReason(nsHostRecord::TRR_EXCLUDED);
-      return NS_ERROR_UNKNOWN_HOST;
+      return true;
     }
 
     if (UseDefaultServer() && (mType == TRRTYPE_A)) {
@@ -175,38 +196,51 @@ nsresult TRR::SendHTTPRequest() {
     }
   }
 
-  bool useGet = StaticPrefs::network_trr_useGET();
-  nsAutoCString body;
-  nsCOMPtr<nsIURI> dnsURI;
-  bool disableECS = StaticPrefs::network_trr_disable_ECS();
-  nsresult rv;
+  return false;
+}
+
+nsresult TRR::SendHTTPRequest() {
+  // This is essentially the "run" method - created from nsHostResolver
+
+  if ((mType != TRRTYPE_A) && (mType != TRRTYPE_AAAA) &&
+      (mType != TRRTYPE_NS) && (mType != TRRTYPE_TXT) &&
+      (mType != TRRTYPE_HTTPSSVC)) {
+    // limit the calling interface because nsHostResolver has explicit slots for
+    // these types
+    return NS_ERROR_FAILURE;
+  }
+
+  if (MaybeBlockRequest()) {
+    return NS_ERROR_UNKNOWN_HOST;
+  }
 
   LOG(("TRR::SendHTTPRequest resolve %s type %u\n", mHost.get(), mType));
 
-  if (useGet) {
-    nsAutoCString tmp;
-    rv = DNSPacket::EncodeRequest(tmp, mHost, mType, disableECS);
-    NS_ENSURE_SUCCESS(rv, rv);
+  nsAutoCString body;
+  bool disableECS = StaticPrefs::network_trr_disable_ECS();
+  nsresult rv =
+      GetOrCreateDNSPacket()->EncodeRequest(body, mHost, mType, disableECS);
+  if (NS_FAILED(rv)) {
+    HandleEncodeError(rv);
+    return rv;
+  }
 
+  bool useGet = StaticPrefs::network_trr_useGET();
+  nsCOMPtr<nsIURI> dnsURI;
+  rv = CreateQueryURI(getter_AddRefs(dnsURI));
+  if (NS_FAILED(rv)) {
+    LOG(("TRR:SendHTTPRequest: NewURI failed!\n"));
+    return rv;
+  }
+
+  if (useGet) {
     /* For GET requests, the outgoing packet needs to be Base64url-encoded and
        then appended to the end of the URI. */
-    rv = Base64URLEncode(tmp.Length(),
-                         reinterpret_cast<const unsigned char*>(tmp.get()),
-                         Base64URLEncodePaddingPolicy::Omit, body);
+    nsAutoCString encoded;
+    rv = Base64URLEncode(body.Length(),
+                         reinterpret_cast<const unsigned char*>(body.get()),
+                         Base64URLEncodePaddingPolicy::Omit, encoded);
     NS_ENSURE_SUCCESS(rv, rv);
-
-    nsAutoCString uri;
-    if (UseDefaultServer()) {
-      gTRRService->GetURI(uri);
-    } else {
-      uri = mRec->mTrrServer;
-    }
-
-    rv = NS_NewURI(getter_AddRefs(dnsURI), uri);
-    if (NS_FAILED(rv)) {
-      LOG(("TRR:SendHTTPRequest: NewURI failed!\n"));
-      return rv;
-    }
 
     nsAutoCString query;
     rv = dnsURI->GetQuery(query);
@@ -219,25 +253,10 @@ nsresult TRR::SendHTTPRequest() {
     } else {
       query.Append("&dns="_ns);
     }
-    query.Append(body);
+    query.Append(encoded);
 
     rv = NS_MutateURI(dnsURI).SetQuery(query).Finalize(dnsURI);
     LOG(("TRR::SendHTTPRequest GET dns=%s\n", body.get()));
-  } else {
-    rv = DNSPacket::EncodeRequest(body, mHost, mType, disableECS);
-    NS_ENSURE_SUCCESS(rv, rv);
-
-    nsAutoCString uri;
-    if (UseDefaultServer()) {
-      gTRRService->GetURI(uri);
-    } else {
-      uri = mRec->mTrrServer;
-    }
-    rv = NS_NewURI(getter_AddRefs(dnsURI), uri);
-  }
-  if (NS_FAILED(rv)) {
-    LOG(("TRR:SendHTTPRequest: NewURI failed!\n"));
-    return rv;
   }
 
   nsCOMPtr<nsIChannel> channel;
@@ -264,8 +283,8 @@ nsresult TRR::SendHTTPRequest() {
   rv = httpChannel->SetTRRMode(nsIRequest::TRR_DISABLED_MODE);
   NS_ENSURE_SUCCESS(rv, rv);
 
-  rv = httpChannel->SetRequestHeader("Accept"_ns, "application/dns-message"_ns,
-                                     false);
+  nsCString contentType(ContentType());
+  rv = httpChannel->SetRequestHeader("Accept"_ns, contentType, false);
   NS_ENSURE_SUCCESS(rv, rv);
 
   nsAutoCString cred;
@@ -303,13 +322,12 @@ nsresult TRR::SendHTTPRequest() {
         NS_NewCStringInputStream(getter_AddRefs(uploadStream), std::move(body));
     NS_ENSURE_SUCCESS(rv, rv);
 
-    rv = uploadChannel->ExplicitSetUploadStream(uploadStream,
-                                                "application/dns-message"_ns,
+    rv = uploadChannel->ExplicitSetUploadStream(uploadStream, contentType,
                                                 streamLength, "POST"_ns, false);
     NS_ENSURE_SUCCESS(rv, rv);
   }
 
-  rv = SetupTRRServiceChannelInternal(httpChannel, useGet);
+  rv = SetupTRRServiceChannelInternal(httpChannel, useGet, contentType);
   if (NS_FAILED(rv)) {
     return rv;
   }
@@ -323,12 +341,13 @@ nsresult TRR::SendHTTPRequest() {
   // use the TRR connection.
   RefPtr<AddrHostRecord> addrRec = do_QueryObject(mRec);
   if (addrRec) {
-    addrRec->mTRRUsed = true;
+    addrRec->mResolverType = ResolverType();
   }
 
-  NS_NewTimerWithCallback(getter_AddRefs(mTimeout), this,
-                          gTRRService->GetRequestTimeout(),
-                          nsITimer::TYPE_ONE_SHOT);
+  NS_NewTimerWithCallback(
+      getter_AddRefs(mTimeout), this,
+      mTimeoutMs ? mTimeoutMs : gTRRService->GetRequestTimeout(),
+      nsITimer::TYPE_ONE_SHOT);
 
   mChannel = channel;
   return NS_OK;
@@ -336,7 +355,8 @@ nsresult TRR::SendHTTPRequest() {
 
 // static
 nsresult TRR::SetupTRRServiceChannelInternal(nsIHttpChannel* aChannel,
-                                             bool aUseGet) {
+                                             bool aUseGet,
+                                             const nsACString& aContentType) {
   nsCOMPtr<nsIHttpChannel> httpChannel = aChannel;
   MOZ_ASSERT(httpChannel);
 
@@ -366,7 +386,7 @@ nsresult TRR::SetupTRRServiceChannelInternal(nsIHttpChannel* aChannel,
   }
 
   // set the *default* response content type
-  if (NS_FAILED(httpChannel->SetContentType("application/dns-message"_ns))) {
+  if (NS_FAILED(httpChannel->SetContentType(aContentType))) {
     LOG(("TRR::SetupTRRServiceChannelInternal: couldn't set content-type!\n"));
   }
 
@@ -573,6 +593,7 @@ TRR::OnStartRequest(nsIRequest* aRequest) {
         RecordReason(nsHostRecord::TRR_NET_RESET);
         break;
       case NS_ERROR_NET_TIMEOUT:
+      case NS_ERROR_NET_TIMEOUT_EXTERNAL:
         RecordReason(nsHostRecord::TRR_NET_TIMEOUT);
         break;
       case NS_ERROR_PROXY_CONNECTION_REFUSED:
@@ -613,7 +634,7 @@ void TRR::SaveAdditionalRecords(
            nsCString(iter.Key()).get()));
       continue;
     }
-    RefPtr<AddrInfo> ai(new AddrInfo(iter.Key(), TRRTYPE_A,
+    RefPtr<AddrInfo> ai(new AddrInfo(iter.Key(), ResolverType(), TRRTYPE_A,
                                      std::move(iter.Data()->mAddresses),
                                      iter.Data()->mTtl));
     mHostResolver->MaybeRenewHostRecord(hostRecord);
@@ -627,7 +648,8 @@ void TRR::SaveAdditionalRecords(
     addrRec->mTrrStart = TimeStamp::Now();
     LOG(("Completing lookup for additional: %s", nsCString(iter.Key()).get()));
     (void)mHostResolver->CompleteLookup(hostRecord, NS_OK, ai, mPB,
-                                        mOriginSuffix, AddrHostRecord::TRR_OK);
+                                        mOriginSuffix, AddrHostRecord::TRR_OK,
+                                        this);
   }
 }
 
@@ -654,8 +676,8 @@ void TRR::StoreIPHintAsDNSRecord(const struct SVCB& aSVCBRecord) {
   mHostResolver->MaybeRenewHostRecord(hostRecord);
 
   uint32_t ttl = AddrInfo::NO_TTL_DATA;
-  RefPtr<AddrInfo> ai(new AddrInfo(aSVCBRecord.mSvcDomainName, TRRTYPE_A,
-                                   std::move(addresses), ttl));
+  RefPtr<AddrInfo> ai(new AddrInfo(aSVCBRecord.mSvcDomainName, ResolverType(),
+                                   TRRTYPE_A, std::move(addresses), ttl));
 
   // Since we're not actually calling NameLookup for this record, we need
   // to set these fields to avoid assertions in CompleteLookup.
@@ -666,14 +688,14 @@ void TRR::StoreIPHintAsDNSRecord(const struct SVCB& aSVCBRecord) {
   addrRec->mTrrStart = TimeStamp::Now();
 
   (void)mHostResolver->CompleteLookup(hostRecord, NS_OK, ai, mPB, mOriginSuffix,
-                                      AddrHostRecord::TRR_OK);
+                                      AddrHostRecord::TRR_OK, this);
 }
 
 nsresult TRR::ReturnData(nsIChannel* aChannel) {
   if (mType != TRRTYPE_TXT && mType != TRRTYPE_HTTPSSVC) {
     // create and populate an AddrInfo instance to pass on
-    RefPtr<AddrInfo> ai(
-        new AddrInfo(mHost, mType, nsTArray<NetAddr>(), mDNS.mTtl));
+    RefPtr<AddrInfo> ai(new AddrInfo(mHost, ResolverType(), mType,
+                                     nsTArray<NetAddr>(), mDNS.mTtl));
     auto builder = ai->Build();
     builder.SetAddresses(std::move(mDNS.mAddresses));
     builder.SetCanonicalHostname(mCname);
@@ -699,7 +721,7 @@ nsresult TRR::ReturnData(nsIChannel* aChannel) {
       return NS_ERROR_FAILURE;
     }
     (void)mHostResolver->CompleteLookup(mRec, NS_OK, ai, mPB, mOriginSuffix,
-                                        mTRRSkippedReason);
+                                        mTRRSkippedReason, this);
     mHostResolver = nullptr;
     mRec = nullptr;
   } else {
@@ -723,15 +745,28 @@ nsresult TRR::FailData(nsresult error) {
     // create and populate an TRR AddrInfo instance to pass on to signal that
     // this comes from TRR
     nsTArray<NetAddr> noAddresses;
-    RefPtr<AddrInfo> ai = new AddrInfo(mHost, mType, std::move(noAddresses));
+    RefPtr<AddrInfo> ai =
+        new AddrInfo(mHost, ResolverType(), mType, std::move(noAddresses));
 
     (void)mHostResolver->CompleteLookup(mRec, error, ai, mPB, mOriginSuffix,
-                                        mTRRSkippedReason);
+                                        mTRRSkippedReason, this);
   }
 
   mHostResolver = nullptr;
   mRec = nullptr;
   return NS_OK;
+}
+
+void TRR::HandleDecodeError(nsresult aStatusCode) {
+  auto rcode = mPacket->GetRCode();
+  if (rcode.isOk() && rcode.unwrap() != 0) {
+    RecordReason(nsHostRecord::TRR_RCODE_FAIL);
+  } else if (aStatusCode == NS_ERROR_UNKNOWN_HOST ||
+             aStatusCode == NS_ERROR_DEFINITIVE_UNKNOWN_HOST) {
+    RecordReason(nsHostRecord::TRR_NO_ANSWERS);
+  } else {
+    RecordReason(nsHostRecord::TRR_DECODE_FAILED);
+  }
 }
 
 nsresult TRR::FollowCname(nsIChannel* aChannel) {
@@ -748,11 +783,12 @@ nsresult TRR::FollowCname(nsIChannel* aChannel) {
     LOG(("TRR: check for CNAME record for %s within previous response\n",
          cname.get()));
     nsClassHashtable<nsCStringHashKey, DOHresp> additionalRecords;
-    rv = mPacket.Decode(
-        cname, mType, mCname, StaticPrefs::network_trr_allow_rfc1918(),
-        mTRRSkippedReason, mDNS, mResult, additionalRecords, mTTL);
+    rv = GetOrCreateDNSPacket()->Decode(
+        cname, mType, mCname, StaticPrefs::network_trr_allow_rfc1918(), mDNS,
+        mResult, additionalRecords, mTTL);
     if (NS_FAILED(rv)) {
-      LOG(("TRR::On200Response DohDecode %x\n", (int)rv));
+      LOG(("TRR::FollowCname DohDecode %x\n", (int)rv));
+      HandleDecodeError(rv);
     }
   }
 
@@ -771,7 +807,9 @@ nsresult TRR::FollowCname(nsIChannel* aChannel) {
   LOG(("TRR::On200Response CNAME %s => %s (%u)\n", mHost.get(), mCname.get(),
        mCnameLoop));
   RefPtr<TRR> trr =
-      new TRR(mHostResolver, mRec, mCname, mType, mCnameLoop, mPB);
+      ResolverType() == DNSResolverType::ODoH
+          ? new ODoH(mHostResolver, mRec, mCname, mType, mCnameLoop, mPB)
+          : new TRR(mHostResolver, mRec, mCname, mType, mCnameLoop, mPB);
   if (!gTRRService) {
     return NS_ERROR_FAILURE;
   }
@@ -781,13 +819,12 @@ nsresult TRR::FollowCname(nsIChannel* aChannel) {
 nsresult TRR::On200Response(nsIChannel* aChannel) {
   // decode body and create an AddrInfo struct for the response
   nsClassHashtable<nsCStringHashKey, DOHresp> additionalRecords;
-  nsresult rv = mPacket.Decode(
-      mHost, mType, mCname, StaticPrefs::network_trr_allow_rfc1918(),
-      mTRRSkippedReason, mDNS, mResult, additionalRecords, mTTL);
-
+  nsresult rv = GetOrCreateDNSPacket()->Decode(
+      mHost, mType, mCname, StaticPrefs::network_trr_allow_rfc1918(), mDNS,
+      mResult, additionalRecords, mTTL);
   if (NS_FAILED(rv)) {
     LOG(("TRR::On200Response DohDecode %x\n", (int)rv));
-    RecordReason(nsHostRecord::TRR_DECODE_FAILED);
+    HandleDecodeError(rv);
     return rv;
   }
   SaveAdditionalRecords(additionalRecords);
@@ -809,7 +846,7 @@ nsresult TRR::On200Response(nsIChannel* aChannel) {
   return FollowCname(aChannel);
 }
 
-static void RecordProcessingTime(nsIChannel* aChannel) {
+void TRR::RecordProcessingTime(nsIChannel* aChannel) {
   // This method records the time it took from the last received byte of the
   // DoH response until we've notified the consumer with a host record.
   nsCOMPtr<nsITimedChannel> timedChan = do_QueryInterface(aChannel);
@@ -831,6 +868,15 @@ static void RecordProcessingTime(nsIChannel* aChannel) {
        (TimeStamp::Now() - end).ToMilliseconds()));
 }
 
+void TRR::ReportStatus(nsresult aStatusCode) {
+  // If the TRR was cancelled by nsHostResolver, then we don't need to report
+  // it as failed; otherwise it can cause the confirmation to fail.
+  if (UseDefaultServer() && aStatusCode != NS_ERROR_ABORT) {
+    // Bad content is still considered "okay" if the HTTP response is okay
+    gTRRService->TRRIsOkay(aStatusCode);
+  }
+}
+
 NS_IMETHODIMP
 TRR::OnStopRequest(nsIRequest* aRequest, nsresult aStatusCode) {
   // The dtor will be run after the function returns
@@ -838,6 +884,8 @@ TRR::OnStopRequest(nsIRequest* aRequest, nsresult aStatusCode) {
        mType, mFailed, (unsigned int)aStatusCode));
   nsCOMPtr<nsIChannel> channel;
   channel.swap(mChannel);
+
+  mChannelStatus = aStatusCode;
 
   {
     // Cancel the timer since we don't need it anymore.
@@ -848,11 +896,7 @@ TRR::OnStopRequest(nsIRequest* aRequest, nsresult aStatusCode) {
     }
   }
 
-  if (UseDefaultServer()) {
-    // Bad content is still considered "okay" if the HTTP response is okay
-    gTRRService->TRRIsOkay(NS_SUCCEEDED(aStatusCode) ? TRRService::OKAY_NORMAL
-                                                     : TRRService::OKAY_BAD);
-  }
+  ReportStatus(aStatusCode);
 
   nsresult rv = NS_OK;
   // if status was "fine", parse the response and pass on the answer
@@ -864,7 +908,7 @@ TRR::OnStopRequest(nsIRequest* aRequest, nsresult aStatusCode) {
     nsAutoCString contentType;
     httpChannel->GetContentType(contentType);
     if (contentType.Length() &&
-        !contentType.LowerCaseEqualsLiteral("application/dns-message")) {
+        !contentType.LowerCaseEqualsASCII(ContentType())) {
       LOG(("TRR:OnStopRequest %p %s %d wrong content type %s\n", this,
            mHost.get(), mType, contentType.get()));
       FailData(NS_ERROR_UNEXPECTED);
@@ -903,8 +947,8 @@ TRR::OnDataAvailable(nsIRequest* aRequest, nsIInputStream* aInputStream,
     return NS_ERROR_FAILURE;
   }
 
-  nsresult rv =
-      mPacket.OnDataAvailable(aRequest, aInputStream, aOffset, aCount);
+  nsresult rv = GetOrCreateDNSPacket()->OnDataAvailable(aRequest, aInputStream,
+                                                        aOffset, aCount);
   if (NS_FAILED(rv)) {
     LOG(("TRR::OnDataAvailable:%d fail\n", __LINE__));
     mFailed = true;
@@ -913,46 +957,32 @@ TRR::OnDataAvailable(nsIRequest* aRequest, nsIInputStream* aInputStream,
   return NS_OK;
 }
 
-class ProxyCancel : public Runnable {
- public:
-  explicit ProxyCancel(TRR* aTRR) : Runnable("proxyTrrCancel"), mTRR(aTRR) {}
-
-  NS_IMETHOD Run() override {
-    mTRR->Cancel();
-    mTRR = nullptr;
-    return NS_OK;
-  }
-
- private:
-  RefPtr<TRR> mTRR;
-};
-
-void TRR::Cancel() {
+void TRR::Cancel(nsresult aStatus) {
   RefPtr<TRRServiceChannel> trrServiceChannel = do_QueryObject(mChannel);
   if (trrServiceChannel && !XRE_IsSocketProcess()) {
     if (gTRRService) {
       nsCOMPtr<nsIThread> thread = gTRRService->TRRThread();
       if (thread && !thread->IsOnCurrentThread()) {
-        nsCOMPtr<nsIRunnable> r = new ProxyCancel(this);
-        thread->Dispatch(r.forget());
+        thread->Dispatch(NS_NewRunnableFunction(
+            "TRR::Cancel",
+            [self = RefPtr(this), aStatus]() { self->Cancel(aStatus); }));
         return;
       }
     }
   } else {
     if (!NS_IsMainThread()) {
-      NS_DispatchToMainThread(new ProxyCancel(this));
+      NS_DispatchToMainThread(NS_NewRunnableFunction(
+          "TRR::Cancel",
+          [self = RefPtr(this), aStatus]() { self->Cancel(aStatus); }));
       return;
     }
   }
 
   if (mChannel) {
-    RecordReason(nsHostRecord::TRR_TIMEOUT);
-    LOG(("TRR: %p canceling Channel %p %s %d\n", this, mChannel.get(),
-         mHost.get(), mType));
-    mChannel->Cancel(NS_ERROR_ABORT);
-    if (UseDefaultServer()) {
-      gTRRService->TRRIsOkay(TRRService::OKAY_TIMEOUT);
-    }
+    RecordReason(nsHostRecord::TRR_REQ_CANCELLED);
+    LOG(("TRR: %p canceling Channel %p %s %d status=%" PRIx32 "\n", this,
+         mChannel.get(), mHost.get(), mType, static_cast<uint32_t>(aStatus)));
+    mChannel->Cancel(aStatus);
   }
 }
 

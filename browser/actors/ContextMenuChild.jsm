@@ -17,11 +17,11 @@ XPCOMUtils.defineLazyGlobalGetters(this, ["URL"]);
 
 XPCOMUtils.defineLazyModuleGetters(this, {
   E10SUtils: "resource://gre/modules/E10SUtils.jsm",
-  BrowserUtils: "resource://gre/modules/BrowserUtils.jsm",
   SpellCheckHelper: "resource://gre/modules/InlineSpellChecker.jsm",
   LoginManagerChild: "resource://gre/modules/LoginManagerChild.jsm",
   WebNavigationFrames: "resource://gre/modules/WebNavigationFrames.jsm",
   PrivateBrowsingUtils: "resource://gre/modules/PrivateBrowsingUtils.jsm",
+  SelectionUtils: "resource://gre/modules/SelectionUtils.jsm",
   InlineSpellCheckerContent:
     "resource://gre/modules/InlineSpellCheckerContent.jsm",
   ContentDOMReference: "resource://gre/modules/ContentDOMReference.jsm",
@@ -237,9 +237,9 @@ class ContextMenuChild extends JSWindowActorChild {
 
         if (!disable) {
           try {
-            BrowserUtils.urlSecurityCheck(
-              target.currentURI.spec,
-              target.ownerDocument.nodePrincipal
+            Services.scriptSecurityManager.checkLoadURIWithPrincipal(
+              target.ownerDocument.nodePrincipal,
+              target.currentURI
             );
             let canvas = this.document.createElement("canvas");
             canvas.width = target.naturalWidth;
@@ -614,7 +614,7 @@ class ContextMenuChild extends JSWindowActorChild {
       } catch (e) {}
     }
 
-    let selectionInfo = BrowserUtils.getSelectionDetails(this.contentWindow);
+    let selectionInfo = SelectionUtils.getSelectionDetails(this.contentWindow);
     let loadContext = this.docShell.QueryInterface(Ci.nsILoadContext);
     let userContextId = loadContext.originAttributes.userContextId;
 
@@ -801,7 +801,7 @@ class ContextMenuChild extends JSWindowActorChild {
     let node = aEvent.composedTarget;
 
     // Set the node to containing <video>/<audio>/<embed>/<object> if the node
-    // is in the videocontrols/pluginProblem UA Widget.
+    // is in the videocontrols UA Widget.
     if (this.contentWindow.ShadowRoot) {
       let n = node;
       while (n) {

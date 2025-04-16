@@ -107,6 +107,7 @@ urlbar-tip-icon-description =
 ## homepage of their default search engine.
 ## Variables:
 ##  $engineName (String): The name of the user's default search engine. e.g. "Google" or "DuckDuckGo".
+
 urlbar-search-tips-onboard = Type less, find more: Search { $engineName } right from your address bar.
 urlbar-search-tips-redirect-2 = Start your search in the address bar to see suggestions from { $engineName } and your browsing history.
 
@@ -307,13 +308,10 @@ identity-https-only-info-turn-on2 = Turn on HTTPS-Only Mode for this site if you
 identity-https-only-info-turn-off2 = If the page seems broken, you may want to turn off HTTPS-Only Mode for this site to reload using insecure HTTP.
 identity-https-only-info-no-upgrade = Unable to upgrade connection from HTTP.
 
-identity-permissions =
-    .value = Permissions
 identity-permissions-storage-access-header = Cross-site cookies
 identity-permissions-storage-access-hint = These parties can use cross-site cookies and site data while you are on this site.
 
 identity-permissions-reload-hint = You may need to reload the page for changes to apply.
-identity-permissions-empty = You have not granted this site any special permissions.
 identity-clear-site-data =
     .label = Clear Cookies and Site Data…
 identity-connection-not-secure-security-view = You are not securely connected to this site.
@@ -357,8 +355,14 @@ browser-window-close-button =
 
 ## Tab actions
 
-browser-tab-audio-playing = Playing
-browser-tab-audio-muted = Muted
+# This label should be written in all capital letters if your locale supports them.
+browser-tab-audio-playing2 = PLAYING
+# This label should be written in all capital letters if your locale supports them.
+browser-tab-audio-muted2 = MUTED
+# This label should be written in all capital letters if your locale supports them.
+browser-tab-audio-blocked = AUTOPLAY BLOCKED
+# This label should be written in all capital letters if your locale supports them.
+browser-tab-audio-pip = PICTURE-IN-PICTURE
 
 ## Bookmarks toolbar items
 
@@ -401,7 +405,6 @@ sharing-warning-disable-for-session =
 ## DevTools F12 popup
 
 enable-devtools-popup-description = To use the F12 shortcut, first open DevTools via the Web Developer menu.
-
 
 ## URL Bar
 
@@ -546,8 +549,10 @@ crashed-subframe-submit =
 
 bookmarks-show-all-bookmarks =
   .label = Show All Bookmarks
-bookmarks-recent-bookmarks =
-  .value = Recently Bookmarked
+bookmarks-manage-bookmarks =
+  .label = Manage Bookmarks
+bookmarks-recent-bookmarks-panel =
+  .value = Recent Bookmarks
 bookmarks-toolbar-chevron =
   .tooltiptext = Show more bookmarks
 bookmarks-sidebar-content =
@@ -563,10 +568,15 @@ bookmarks-tools-sidebar-visibility =
      [true] Hide Bookmarks Sidebar
     *[other] View Bookmarks Sidebar
   }
-bookmarks-tools-toolbar-visibility =
+bookmarks-tools-toolbar-visibility-menuitem =
   .label = { $isVisible ->
      [true] Hide Bookmarks Toolbar
     *[other] View Bookmarks Toolbar
+  }
+bookmarks-tools-toolbar-visibility-panel =
+  .label = { $isVisible ->
+     [true] Hide Bookmarks Toolbar
+    *[other] Show Bookmarks Toolbar
   }
 bookmarks-tools-menu-button-visibility =
   .label = { $isVisible ->
@@ -577,6 +587,8 @@ bookmarks-search =
   .label = Search Bookmarks
 bookmarks-tools =
   .label = Bookmarking Tools
+bookmarks-bookmark-edit-panel =
+  .label = Edit This Bookmark
 
 # The aria-label is a spoken label that should not include the word "toolbar" or
 # such, because screen readers already know that this container is a toolbar.
@@ -592,14 +604,14 @@ bookmarks-toolbar-placeholder =
 bookmarks-toolbar-placeholder-button =
   .label = Bookmarks Toolbar Items
 
+# "Bookmark" is a verb, as in "Add current tab to bookmarks".
+bookmarks-current-tab =
+  .label = Bookmark Current Tab
+
 ## Library Panel items
 
 library-bookmarks-menu =
   .label = Bookmarks
-library-bookmarks-bookmark-this-page =
-  .label = Bookmark This Page
-library-bookmarks-bookmark-edit =
-  .label = Edit This Bookmark
 library-recent-activity-title =
   .value = Recent Activity
 

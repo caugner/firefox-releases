@@ -53,9 +53,6 @@
   scale: inherit;
   translate: inherit;
   /* When the table wrapper is a Flex/Grid item we need these: */
-  flex-grow: inherit;
-  flex-shrink: inherit;
-  flex-basis: inherit;
   align-self: inherit;
   justify-self: inherit;
   grid-column-start: inherit;
@@ -134,7 +131,7 @@
 }
 
 /* https://drafts.csswg.org/css-lists-3/#ua-stylesheet */
-*|*::marker {
+::marker {
   text-align: end;
   text-transform: none;
   unicode-bidi: isolate;
@@ -146,19 +143,19 @@
  * the same changes to svg.css.
  */
 
-/* Links */
+/* Links and focusable content */
 
-*|*:any-link {
+:any-link {
   cursor: pointer;
 }
 
-*|*:any-link:-moz-focusring {
+:focus-visible {
   /* Don't specify the outline-color, we should always use initial value. */
   outline: 1px dotted;
 }
 
 /* Inert subtrees */
-*|*:-moz-inert {
+:-moz-inert {
   -moz-inert: inert;
 }
 
@@ -319,12 +316,12 @@
   }
 }
 
-*|*::-moz-pagecontent {
+*|*::-moz-page-content {
   display: block;
   margin: auto;
 }
 
-*|*::-moz-pagebreak {
+*|*::-moz-page-break {
   display: block;
 }
 

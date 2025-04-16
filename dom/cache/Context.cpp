@@ -14,6 +14,7 @@
 #include "mozilla/dom/cache/FileUtils.h"
 #include "mozilla/dom/cache/Manager.h"
 #include "mozilla/dom/cache/ManagerId.h"
+#include "mozilla/dom/quota/DirectoryLock.h"
 #include "mozilla/dom/quota/QuotaManager.h"
 #include "mozIStorageConnection.h"
 #include "nsIPrincipal.h"
@@ -230,14 +231,16 @@ void Context::QuotaInitRunnable::OpenDirectory() {
                         mState == STATE_OPEN_DIRECTORY);
   MOZ_DIAGNOSTIC_ASSERT(QuotaManager::Get());
 
-  // QuotaManager::OpenDirectory() will hold a reference to us as
-  // a listener.  We will then get DirectoryLockAcquired() on the owning
-  // thread when it is safe to access our storage directory.
+  RefPtr<DirectoryLock> directoryLock =
+      QuotaManager::Get()->CreateDirectoryLock(
+          PERSISTENCE_TYPE_DEFAULT, mQuotaInfo, quota::Client::DOMCACHE,
+          /* aExclusive */ false);
+
+  // DirectoryLock::Acquire() will hold a reference to us as a listener. We will
+  // then get DirectoryLockAcquired() on the owning thread when it is safe to
+  // access our storage directory.
   mState = STATE_WAIT_FOR_DIRECTORY_LOCK;
-  RefPtr<DirectoryLock> pendingDirectoryLock =
-      QuotaManager::Get()->OpenDirectory(PERSISTENCE_TYPE_DEFAULT, mQuotaInfo,
-                                         quota::Client::DOMCACHE,
-                                         /* aExclusive */ false, this);
+  directoryLock->Acquire(this);
 }
 
 void Context::QuotaInitRunnable::DirectoryLockAcquired(DirectoryLock* aLock) {
@@ -347,9 +350,9 @@ Context::QuotaInitRunnable::Run() {
       nsCOMPtr<nsIPrincipal> principal = mManager->GetManagerId().Principal();
       DebugOnly res =
           QuotaManager::GetInfoFromPrincipal(principal)
-              .andThen([&self = *this](quota::QuotaInfo&& quotaInfo) {
-                static_cast<quota::QuotaInfo&>(self.mQuotaInfo) =
-                    std::move(quotaInfo);
+              .andThen([&self = *this](quota::OriginMetadata&& originMetadata) {
+                static_cast<quota::OriginMetadata&>(self.mQuotaInfo) =
+                    std::move(originMetadata);
 
                 self.mState = STATE_CREATE_QUOTA_MANAGER;
                 MOZ_ALWAYS_SUCCEEDS(self.mInitiatingEventTarget->Dispatch(

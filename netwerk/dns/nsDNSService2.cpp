@@ -130,7 +130,9 @@ NS_IMETHODIMP
 nsDNSRecord::IsTRR(bool* retval) {
   MutexAutoLock lock(mHostRecord->addr_info_lock);
   if (mHostRecord->addr_info) {
-    *retval = mHostRecord->addr_info->IsTRR();
+    // TODO: Let the consumers of nsIDNSRecord be unaware of the difference of
+    // TRR and ODoH. Will let them know the truth when needed.
+    *retval = mHostRecord->addr_info->IsTRROrODoH();
   } else {
     *retval = false;
   }
@@ -140,7 +142,7 @@ nsDNSRecord::IsTRR(bool* retval) {
 NS_IMETHODIMP
 nsDNSRecord::GetTrrFetchDuration(double* aTime) {
   MutexAutoLock lock(mHostRecord->addr_info_lock);
-  if (mHostRecord->addr_info && mHostRecord->addr_info->IsTRR()) {
+  if (mHostRecord->addr_info && mHostRecord->addr_info->IsTRROrODoH()) {
     *aTime = mHostRecord->addr_info->GetTrrFetchDuration();
   } else {
     *aTime = 0;
@@ -151,7 +153,7 @@ nsDNSRecord::GetTrrFetchDuration(double* aTime) {
 NS_IMETHODIMP
 nsDNSRecord::GetTrrFetchDurationNetworkOnly(double* aTime) {
   MutexAutoLock lock(mHostRecord->addr_info_lock);
-  if (mHostRecord->addr_info && mHostRecord->addr_info->IsTRR()) {
+  if (mHostRecord->addr_info && mHostRecord->addr_info->IsTRROrODoH()) {
     *aTime = mHostRecord->addr_info->GetTrrFetchDurationNetworkOnly();
   } else {
     *aTime = 0;
@@ -518,6 +520,7 @@ size_t nsDNSAsyncRequest::SizeOfIncludingThis(MallocSizeOf mallocSizeOf) const {
 NS_IMETHODIMP
 nsDNSAsyncRequest::Cancel(nsresult reason) {
   NS_ENSURE_ARG(NS_FAILED(reason));
+  MOZ_DIAGNOSTIC_ASSERT(mResolver, "mResolver should not be null");
   mResolver->DetachCallback(mHost, mTrrServer, mType, mOriginAttributes, mFlags,
                             mAF, this, reason);
   return NS_OK;
@@ -775,6 +778,7 @@ nsDNSService::Init() {
     observerService->AddObserver(this, "last-pb-context-exited", false);
     observerService->AddObserver(this, NS_NETWORK_LINK_TOPIC, false);
     observerService->AddObserver(this, NS_XPCOM_SHUTDOWN_OBSERVER_ID, false);
+    observerService->AddObserver(this, "odoh-service-activated", false);
   }
 
   RefPtr<nsHostResolver> res;
@@ -827,10 +831,10 @@ nsDNSService::Shutdown() {
   RefPtr<nsHostResolver> res;
   {
     MutexAutoLock lock(mLock);
-    res = mResolver;
-    mResolver = nullptr;
+    res = std::move(mResolver);
   }
   if (res) {
+    // Shutdown outside lock.
     res->Shutdown();
   }
 
@@ -886,6 +890,11 @@ bool nsDNSService::DNSForbiddenByActiveProxy(const nsACString& aHostname,
     }
   }
   return false;
+}
+
+already_AddRefed<nsHostResolver> nsDNSService::GetResolverLocked() {
+  MutexAutoLock lock(mLock);
+  return do_AddRef(mResolver);
 }
 
 nsresult nsDNSService::PreprocessHostname(bool aLocalDomain,
@@ -1241,29 +1250,41 @@ nsDNSService::GetMyHostName(nsACString& result) {
 }
 
 NS_IMETHODIMP
+nsDNSService::GetODoHActivated(bool* aResult) {
+  NS_ENSURE_ARG(aResult);
+
+  *aResult = mODoHActivated;
+  return NS_OK;
+}
+
+NS_IMETHODIMP
 nsDNSService::Observe(nsISupports* subject, const char* topic,
                       const char16_t* data) {
   bool flushCache = false;
+  RefPtr<nsHostResolver> resolver = GetResolverLocked();
+
   if (!strcmp(topic, NS_NETWORK_LINK_TOPIC)) {
     nsAutoCString converted = NS_ConvertUTF16toUTF8(data);
-    if (mResolver && !strcmp(converted.get(), NS_NETWORK_LINK_DATA_CHANGED)) {
+    if (!strcmp(converted.get(), NS_NETWORK_LINK_DATA_CHANGED)) {
       flushCache = true;
     }
   } else if (!strcmp(topic, "last-pb-context-exited")) {
     flushCache = true;
   } else if (!strcmp(topic, NS_PREFBRANCH_PREFCHANGE_TOPIC_ID)) {
     ReadPrefs(NS_ConvertUTF16toUTF8(data).get());
-    NS_ENSURE_TRUE(mResolver, NS_ERROR_NOT_INITIALIZED);
-    if (mResolverPrefsUpdated && mResolver) {
-      mResolver->SetCacheLimits(mResCacheEntries, mResCacheExpiration,
-                                mResCacheGrace);
+    NS_ENSURE_TRUE(resolver, NS_ERROR_NOT_INITIALIZED);
+    if (mResolverPrefsUpdated && resolver) {
+      resolver->SetCacheLimits(mResCacheEntries, mResCacheExpiration,
+                               mResCacheGrace);
     }
   } else if (!strcmp(topic, NS_XPCOM_SHUTDOWN_OBSERVER_ID)) {
     Shutdown();
+  } else if (!strcmp(topic, "odoh-service-activated")) {
+    mODoHActivated = u"true"_ns.Equals(data);
   }
 
-  if (flushCache && mResolver) {
-    mResolver->FlushCache(false);
+  if (flushCache && resolver) {
+    resolver->FlushCache(false);
     return NS_OK;
   }
 
@@ -1333,15 +1354,17 @@ uint16_t nsDNSService::GetAFForLookup(const nsACString& host, uint32_t flags) {
 NS_IMETHODIMP
 nsDNSService::GetDNSCacheEntries(
     nsTArray<mozilla::net::DNSCacheEntries>* args) {
-  NS_ENSURE_TRUE(mResolver, NS_ERROR_NOT_INITIALIZED);
-  mResolver->GetDNSCacheEntries(args);
+  RefPtr<nsHostResolver> resolver = GetResolverLocked();
+  NS_ENSURE_TRUE(resolver, NS_ERROR_NOT_INITIALIZED);
+  resolver->GetDNSCacheEntries(args);
   return NS_OK;
 }
 
 NS_IMETHODIMP
 nsDNSService::ClearCache(bool aTrrToo) {
-  NS_ENSURE_TRUE(mResolver, NS_ERROR_NOT_INITIALIZED);
-  mResolver->FlushCache(aTrrToo);
+  RefPtr<nsHostResolver> resolver = GetResolverLocked();
+  NS_ENSURE_TRUE(resolver, NS_ERROR_NOT_INITIALIZED);
+  resolver->FlushCache(aTrrToo);
   return NS_OK;
 }
 
@@ -1371,8 +1394,8 @@ nsDNSService::GetCurrentTrrURI(nsACString& aURI) {
 }
 
 NS_IMETHODIMP
-nsDNSService::GetCurrentTrrMode(uint32_t* aMode) {
-  *aMode = 0;  // The default mode.
+nsDNSService::GetCurrentTrrMode(nsIDNSService::ResolverMode* aMode) {
+  *aMode = nsIDNSService::MODE_NATIVEONLY;  // The default mode.
   if (mTrrService) {
     *aMode = mTrrService->Mode();
   }
@@ -1418,13 +1441,10 @@ nsDNSService::ReportFailedSVCDomainName(const nsACString& aOwnerName,
                                         const nsACString& aSVCDomainName) {
   MutexAutoLock lock(mLock);
 
-  nsTArray<nsCString>* failedList = mFailedSVCDomainNames.Get(aOwnerName);
-  if (!failedList) {
-    failedList = new nsTArray<nsCString>(1);
-    mFailedSVCDomainNames.Put(aOwnerName, failedList);
-  }
-
-  failedList->AppendElement(aSVCDomainName);
+  mFailedSVCDomainNames
+      .GetOrInsertWith(aOwnerName,
+                       [] { return MakeUnique<nsTArray<nsCString>>(1); })
+      ->AppendElement(aSVCDomainName);
   return NS_OK;
 }
 
