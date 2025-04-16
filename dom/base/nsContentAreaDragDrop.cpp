@@ -80,10 +80,8 @@ class MOZ_STACK_CLASS DragDataProducer {
                                             nsIContent* inRealTargetNode,
                                             nsIContent** outImageOrLinkNode,
                                             bool* outDragSelectedText);
-  static already_AddRefed<nsIContent> FindParentLinkNode(nsIContent* inNode);
   [[nodiscard]] static nsresult GetAnchorURL(nsIContent* inNode,
                                              nsAString& outURL);
-  static void GetNodeString(nsIContent* inNode, nsAString& outNodeString);
   static void CreateLinkText(const nsAString& inURL, const nsAString& inText,
                              nsAString& outLinkText);
 
@@ -343,19 +341,21 @@ DragDataProducer::DragDataProducer(nsPIDOMWindowOuter* aWindow,
       mIsAltKeyPressed(aIsAltKeyPressed),
       mIsAnchor(false) {}
 
-//
-// FindParentLinkNode
-//
-// Finds the parent with the given link tag starting at |aContent|. If
-// it gets up to the root without finding it, we stop looking and
-// return null.
-//
-already_AddRefed<nsIContent> DragDataProducer::FindParentLinkNode(
-    nsIContent* aContent) {
+static nsIContent* FindDragTarget(nsIContent* aContent) {
+  for (nsIContent* content = aContent; content;
+       content = content->GetFlattenedTreeParent()) {
+    if (nsContentUtils::ContentIsDraggable(content)) {
+      return content;
+    }
+  }
+  return nullptr;
+}
+
+static nsIContent* FindParentLinkNode(nsIContent* aContent) {
   for (nsIContent* content = aContent; content;
        content = content->GetFlattenedTreeParent()) {
     if (nsContentUtils::IsDraggableLink(content)) {
-      return do_AddRef(content);
+      return content;
     }
   }
   return nullptr;
@@ -399,26 +399,6 @@ void DragDataProducer::CreateLinkText(const nsAString& inURL,
                         u"</a>"_ns);
 
   outLinkText = linkText;
-}
-
-//
-// GetNodeString
-//
-// Gets the text associated with a node
-//
-void DragDataProducer::GetNodeString(nsIContent* inNode,
-                                     nsAString& outNodeString) {
-  nsCOMPtr<nsINode> node = inNode;
-
-  outNodeString.Truncate();
-
-  // use a range to get the text-equivalent of the node
-  nsCOMPtr<Document> doc = node->OwnerDoc();
-  RefPtr<nsRange> range = doc->CreateRange(IgnoreErrors());
-  if (range) {
-    range->SelectNode(*node, IgnoreErrors());
-    range->ToString(outNodeString, IgnoreErrors());
-  }
 }
 
 nsresult DragDataProducer::GetImageData(imgIContainer* aImage,
@@ -592,7 +572,7 @@ nsresult DragDataProducer::Produce(DataTransfer* aDataTransfer, bool* aCanDrag,
         return NS_OK;
       }
 
-      draggedNode = mTarget;
+      draggedNode = FindDragTarget(mTarget);
     }
 
     nsCOMPtr<nsIImageLoadingContent> image;
@@ -626,10 +606,7 @@ nsresult DragDataProducer::Produce(DataTransfer* aDataTransfer, bool* aCanDrag,
     {
       // set for linked images, and links
       nsCOMPtr<nsIContent> linkNode;
-
-      RefPtr<HTMLAreaElement> areaElem =
-          HTMLAreaElement::FromNodeOrNull(draggedNode);
-      if (areaElem) {
+      if (const auto* areaElem = HTMLAreaElement::FromNodeOrNull(draggedNode)) {
         // use the alt text (or, if missing, the href) as the title
         areaElem->GetAttr(nsGkAtoms::alt, mTitleString);
         if (mTitleString.IsEmpty()) {
@@ -697,10 +674,6 @@ nsresult DragDataProducer::Produce(DataTransfer* aDataTransfer, bool* aCanDrag,
           nodeToSerialize = draggedNode;
         }
         dragNode = nodeToSerialize;
-      } else if (draggedNode && draggedNode->IsHTMLElement(nsGkAtoms::a)) {
-        // set linkNode. The code below will handle this
-        linkNode = draggedNode;  // XXX test this
-        GetNodeString(draggedNode, mTitleString);
       } else if (parentLink) {
         // parentLink will always be null if there's selected content
         linkNode = parentLink;

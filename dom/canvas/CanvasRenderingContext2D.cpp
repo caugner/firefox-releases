@@ -1006,6 +1006,7 @@ CanvasRenderingContext2D::ContextState::ContextState(const ContextState& aOther)
       font(aOther.font),
       textAlign(aOther.textAlign),
       textBaseline(aOther.textBaseline),
+      textDirection(aOther.textDirection),
       shadowColor(aOther.shadowColor),
       transform(aOther.transform),
       shadowOffset(aOther.shadowOffset),
@@ -1401,14 +1402,12 @@ bool CanvasRenderingContext2D::EnsureTarget(const gfx::Rect* aCoveredRect,
   IntRect persistedRect =
       canDiscardContent ? IntRect() : IntRect(0, 0, mWidth, mHeight);
 
-  if (mBufferProvider) {
+  if (mBufferProvider && !mBufferProvider->RequiresRefresh()) {
     mTarget = mBufferProvider->BorrowDrawTarget(persistedRect);
-
-    if (mTarget && !mBufferProvider->PreservesDrawingState()) {
-      RestoreClipsAndTransformToTarget();
-    }
-
     if (mTarget && mTarget->IsValid()) {
+      if (!mBufferProvider->PreservesDrawingState()) {
+        RestoreClipsAndTransformToTarget();
+      }
       return true;
     }
   }
@@ -1534,6 +1533,15 @@ static WindowRenderer* WindowRendererFromCanvasElement(
 bool CanvasRenderingContext2D::TryAcceleratedTarget(
     RefPtr<gfx::DrawTarget>& aOutDT,
     RefPtr<layers::PersistentBufferProvider>& aOutProvider) {
+  if (mBufferProvider && mBufferProvider->IsAccelerated() &&
+      mBufferProvider->RequiresRefresh()) {
+    // If there is already a provider and we got here, then the provider needs
+    // to be refreshed and we should avoid using acceleration in the future.
+    mAllowAcceleration = false;
+  }
+  if (!mAllowAcceleration) {
+    return false;
+  }
   aOutDT = DrawTargetWebgl::Create(GetSize(), GetSurfaceFormat());
   if (!aOutDT) {
     return false;
@@ -1678,6 +1686,7 @@ void CanvasRenderingContext2D::ClearTarget(int32_t aWidth, int32_t aHeight) {
     data.mSize = {mWidth, mHeight};
     data.mIsOpaque = mOpaque;
     data.mIsAlphaPremult = true;
+    data.mDoPaintCallbacks = true;
     mOffscreenCanvas->UpdateDisplayData(data);
   }
 
@@ -2494,10 +2503,20 @@ static already_AddRefed<ComputedStyle> GetFontStyleForServo(
   RefPtr<ComputedStyle> sc =
       styleSet->ResolveForDeclarations(parentStyle, declarations);
 
+  // https://html.spec.whatwg.org/multipage/canvas.html#dom-context-2d-font
+  // The font-size component must be converted to CSS px for reserialization,
+  // so we update the declarations with the value from the computed style.
+  if (!sc->StyleFont()->mFont.family.is_system_font) {
+    nsAutoCString computedFontSize;
+    sc->GetComputedPropertyValue(eCSSProperty_font_size, computedFontSize);
+    Servo_DeclarationBlock_SetPropertyById(
+        declarations, eCSSProperty_font_size, &computedFontSize, false, nullptr,
+        ParsingMode::Default, eCompatibility_FullStandards, nullptr,
+        StyleCssRuleType::Style, {});
+  }
+
   // The font getter is required to be reserialized based on what we
-  // parsed (including having line-height removed).  (Older drafts of
-  // the spec required font sizes be converted to pixels, but that no
-  // longer seems to be required.)
+  // parsed (including having line-height removed).
   Servo_SerializeFontValueForCanvas(declarations, &aOutUsedFont);
   return sc.forget();
 }
@@ -3527,6 +3546,30 @@ void CanvasRenderingContext2D::GetTextBaseline(nsAString& aTextBaseline) {
   }
 }
 
+void CanvasRenderingContext2D::SetDirection(const nsAString& aDirection) {
+  if (aDirection.EqualsLiteral("ltr")) {
+    CurrentState().textDirection = TextDirection::LTR;
+  } else if (aDirection.EqualsLiteral("rtl")) {
+    CurrentState().textDirection = TextDirection::RTL;
+  } else if (aDirection.EqualsLiteral("inherit")) {
+    CurrentState().textDirection = TextDirection::INHERIT;
+  }
+}
+
+void CanvasRenderingContext2D::GetDirection(nsAString& aDirection) {
+  switch (CurrentState().textDirection) {
+    case TextDirection::LTR:
+      aDirection.AssignLiteral("ltr");
+      break;
+    case TextDirection::RTL:
+      aDirection.AssignLiteral("rtl");
+      break;
+    case TextDirection::INHERIT:
+      aDirection.AssignLiteral("inherit");
+      break;
+  }
+}
+
 /*
  * Helper function that replaces the whitespace characters in a string
  * with U+0020 SPACE. The whitespace characters are defined as U+0020 SPACE,
@@ -3682,11 +3725,11 @@ struct MOZ_STACK_CLASS CanvasBidiProcessor
   using ContextState = CanvasRenderingContext2D::ContextState;
 
   virtual void SetText(const char16_t* aText, int32_t aLength,
-                       mozilla::intl::BidiDirection aDirection) override {
+                       intl::BidiDirection aDirection) override {
     mFontgrp->UpdateUserFonts();  // ensure user font generation is current
     // adjust flags for current direction run
     gfx::ShapedTextFlags flags = mTextRunFlags;
-    if (aDirection == mozilla::intl::BidiDirection::RTL) {
+    if (aDirection == intl::BidiDirection::RTL) {
       flags |= gfx::ShapedTextFlags::TEXT_IS_RTL;
     } else {
       flags &= ~gfx::ShapedTextFlags::TEXT_IS_RTL;
@@ -3955,9 +3998,6 @@ TextMetrics* CanvasRenderingContext2D::DrawOrMeasureText(
     textToDraw.Truncate();
   }
 
-  // for now, default to ltr if not in doc
-  bool isRTL = false;
-
   RefPtr<ComputedStyle> canvasStyle;
   if (mCanvasElement && mCanvasElement->IsInComposedDoc()) {
     // try to find the closest context
@@ -3966,11 +4006,25 @@ TextMetrics* CanvasRenderingContext2D::DrawOrMeasureText(
       aError = NS_ERROR_FAILURE;
       return nullptr;
     }
+  }
 
-    isRTL = canvasStyle->StyleVisibility()->mDirection == StyleDirection::Rtl;
-  } else {
-    isRTL = GET_BIDI_OPTION_DIRECTION(document->GetBidiOptions()) ==
-            IBMBIDI_TEXTDIRECTION_RTL;
+  // Get text direction, either from the property or inherited from context.
+  const ContextState& state = CurrentState();
+  bool isRTL;
+  switch (state.textDirection) {
+    case TextDirection::LTR:
+      isRTL = false;
+      break;
+    case TextDirection::RTL:
+      isRTL = true;
+      break;
+    case TextDirection::INHERIT:
+      isRTL = canvasStyle
+                  ? canvasStyle->StyleVisibility()->mDirection ==
+                        StyleDirection::Rtl
+                  : GET_BIDI_OPTION_DIRECTION(document->GetBidiOptions()) ==
+                        IBMBIDI_TEXTDIRECTION_RTL;
+      break;
   }
 
   // This is only needed to know if we can know the drawing bounding box easily.
@@ -4053,8 +4107,7 @@ TextMetrics* CanvasRenderingContext2D::DrawOrMeasureText(
   // bounding boxes before rendering anything
   aError = nsBidiPresUtils::ProcessText(
       textToDraw.get(), textToDraw.Length(),
-      isRTL ? mozilla::intl::BidiEmbeddingLevel::RTL()
-            : mozilla::intl::BidiEmbeddingLevel::LTR(),
+      isRTL ? intl::BidiEmbeddingLevel::RTL() : intl::BidiEmbeddingLevel::LTR(),
       presShell->GetPresContext(), processor, nsBidiPresUtils::MODE_MEASURE,
       nullptr, 0, &totalWidthCoord, &mBidiEngine);
   if (aError.Failed()) {
@@ -4066,7 +4119,6 @@ TextMetrics* CanvasRenderingContext2D::DrawOrMeasureText(
   // offset pt.x based on text align
   gfxFloat anchorX;
 
-  const ContextState& state = CurrentState();
   if (state.textAlign == TextAlign::CENTER) {
     anchorX = .5;
   } else if (state.textAlign == TextAlign::LEFT ||
@@ -4196,8 +4248,7 @@ TextMetrics* CanvasRenderingContext2D::DrawOrMeasureText(
 
   aError = nsBidiPresUtils::ProcessText(
       textToDraw.get(), textToDraw.Length(),
-      isRTL ? mozilla::intl::BidiEmbeddingLevel::RTL()
-            : mozilla::intl::BidiEmbeddingLevel::LTR(),
+      isRTL ? intl::BidiEmbeddingLevel::RTL() : intl::BidiEmbeddingLevel::LTR(),
       presShell->GetPresContext(), processor, nsBidiPresUtils::MODE_DRAW,
       nullptr, 0, nullptr, &mBidiEngine);
 
@@ -4853,7 +4904,7 @@ void CanvasRenderingContext2D::DrawImage(const CanvasImageSource& aImage,
   // If any dimension is up-scaled, we consider the image as being up-scaled.
   auto scale = mTarget->GetTransform().ScaleFactors();
   bool isDownScale =
-      aDw * Abs(scale.width) < aSw && aDh * Abs(scale.height) < aSh;
+      aDw * Abs(scale.xScale) < aSw && aDh * Abs(scale.yScale) < aSh;
 
   SamplingFilter samplingFilter;
   AntialiasMode antialiasMode;
@@ -4958,10 +5009,10 @@ void CanvasRenderingContext2D::DrawDirectlyToCanvas(
   // for context shadow.
   Matrix matrix = tempTarget->GetTransform();
   gfxMatrix contextMatrix = ThebesMatrix(matrix);
-  gfxSize contextScale(contextMatrix.ScaleFactors());
+  MatrixScalesDouble contextScale = contextMatrix.ScaleFactors();
 
   // Scale the dest rect to include the context scale.
-  aDest.Scale(contextScale.width, contextScale.height);
+  aDest.Scale((float)contextScale.xScale, (float)contextScale.yScale);
 
   // Scale the image size to the dest rect, and adjust the source rect to match.
   gfxSize scale(aDest.width / aSrc.width, aDest.height / aSrc.height);
@@ -4980,7 +5031,7 @@ void CanvasRenderingContext2D::DrawDirectlyToCanvas(
   }
   context->SetMatrixDouble(
       contextMatrix
-          .PreScale(1.0 / contextScale.width, 1.0 / contextScale.height)
+          .PreScale(1.0 / contextScale.xScale, 1.0 / contextScale.yScale)
           .PreTranslate(aDest.x - aSrc.x, aDest.y - aSrc.y));
 
   context->SetOp(tempTarget.UsedOperation());
@@ -5323,6 +5374,16 @@ already_AddRefed<ImageData> CanvasRenderingContext2D::GetImageData(
   return MakeAndAddRef<ImageData>(w, h, *array);
 }
 
+static IntRect ClipImageDataTransfer(IntRect& aSrc, const IntPoint& aDestOffset,
+                                     const IntSize& aDestBounds) {
+  IntRect dest = aSrc;
+  dest.SafeMoveBy(aDestOffset);
+  dest = IntRect(IntPoint(0, 0), aDestBounds).SafeIntersect(dest);
+
+  aSrc = aSrc.SafeIntersect(dest - aDestOffset);
+  return aSrc + aDestOffset;
+}
+
 nsresult CanvasRenderingContext2D::GetImageDataArray(
     JSContext* aCx, int32_t aX, int32_t aY, uint32_t aWidth, uint32_t aHeight,
     Maybe<nsIPrincipal*> aSubjectPrincipal, JSObject** aRetval) {
@@ -5352,9 +5413,9 @@ nsresult CanvasRenderingContext2D::GetImageDataArray(
     return NS_OK;
   }
 
-  IntRect srcRect(0, 0, mWidth, mHeight);
-  IntRect destRect(aX, aY, aWidth, aHeight);
-  IntRect srcReadRect = srcRect.Intersect(destRect);
+  IntRect dstWriteRect(0, 0, aWidth, aHeight);
+  IntRect srcReadRect = ClipImageDataTransfer(dstWriteRect, IntPoint(aX, aY),
+                                              IntSize(mWidth, mHeight));
   if (srcReadRect.IsEmpty()) {
     *aRetval = darray;
     return NS_OK;
@@ -5378,9 +5439,6 @@ nsresult CanvasRenderingContext2D::GetImageDataArray(
   if (!readback || !readback->Map(DataSourceSurface::READ, &rawData)) {
     return NS_ERROR_OUT_OF_MEMORY;
   }
-
-  IntRect dstWriteRect = srcReadRect;
-  dstWriteRect.MoveBy(-aX, -aY);
 
   // Check for site-specific permission.  This check is not needed if the
   // canvas was created with a docshell (that is only done for special
@@ -5534,10 +5592,10 @@ void CanvasRenderingContext2D::PutImageData_explicit(
     dirtyRect = imageDataRect;
   }
 
-  dirtyRect.MoveBy(IntPoint(aX, aY));
-  dirtyRect = IntRect(0, 0, mWidth, mHeight).Intersect(dirtyRect);
-
-  if (dirtyRect.Width() <= 0 || dirtyRect.Height() <= 0) {
+  IntRect srcRect = dirtyRect;
+  dirtyRect = ClipImageDataTransfer(srcRect, IntPoint(aX, aY),
+                                    IntSize(mWidth, mHeight));
+  if (dirtyRect.IsEmpty()) {
     return;
   }
 
@@ -5592,7 +5650,6 @@ void CanvasRenderingContext2D::PutImageData_explicit(
     dstFormat = sourceSurface->GetFormat();
   }
 
-  IntRect srcRect = dirtyRect - IntPoint(aX, aY);
   uint8_t* srcData = arr.Data() + srcRect.y * (width * 4) + srcRect.x * 4;
 
   PremultiplyData(

@@ -127,10 +127,6 @@ AllocatableGeneralRegisterSet BaselineICAvailableGeneralRegs(size_t numInputs) {
 #endif
   regs.take(BaselineFrameReg);
   regs.take(ICStubReg);
-#ifdef JS_CODEGEN_X64
-  regs.take(ExtractTemp0);
-  regs.take(ExtractTemp1);
-#endif
 
   switch (numInputs) {
     case 0:
@@ -834,12 +830,6 @@ bool DoSetElemFallback(JSContext* cx, BaselineFrame* frame,
     }
   }
 
-  // Don't try to attach stubs that wish to be hidden. We don't know how to
-  // have different enumerability in the stubs for the moment.
-  if (op == JSOp::InitHiddenElem) {
-    return true;
-  }
-
   // Overwrite the object on the stack (pushed for the decompiler) with the rhs.
   MOZ_ASSERT(stack[2] == objv);
   stack[2] = rhs;
@@ -1388,7 +1378,7 @@ bool DoSetPropFallback(JSContext* cx, BaselineFrame* frame,
 
   if (op == JSOp::InitProp || op == JSOp::InitLockedProp ||
       op == JSOp::InitHiddenProp) {
-    if (!InitPropertyOperation(cx, op, obj, name, rhs)) {
+    if (!InitPropertyOperation(cx, pc, obj, name, rhs)) {
       return false;
     }
   } else if (op == JSOp::SetName || op == JSOp::StrictSetName ||
@@ -1923,7 +1913,7 @@ bool DoInstanceOfFallback(JSContext* cx, BaselineFrame* frame,
 
   RootedObject obj(cx, &rhs.toObject());
   bool cond = false;
-  if (!HasInstance(cx, obj, lhs, &cond)) {
+  if (!InstanceofOperator(cx, obj, lhs, &cond)) {
     return false;
   }
 

@@ -134,14 +134,7 @@ ClassList.prototype = {
  * @return {Boolean}
  */
 function isXUL(window) {
-  // XXX: We temporarily return true for HTML documents if the document disables
-  // scroll frames since the regular highlighter is broken in this case. This
-  // should be removed when bug 1594587 is fixed.
-  return (
-    window.document.documentElement.namespaceURI === XUL_NS ||
-    (window.isChromeWindow &&
-      window.document.documentElement.getAttribute("scrolling") === "false")
-  );
+  return window.document.documentElement.namespaceURI === XUL_NS;
 }
 exports.isXUL = isXUL;
 
@@ -767,9 +760,6 @@ function waitForContentLoaded(iframeOrWindow) {
  * @param  {String} options.position
  *         Force the infobar to be displayed either on "top" or "bottom". Any other value
  *         will be ingnored.
- * @param  {Boolean} options.hideIfOffscreen
- *         If set to `true`, hides the infobar if it's offscreen, instead of automatically
- *         reposition it.
  */
 function moveInfobar(container, bounds, win, options = {}) {
   const zoom = getCurrentZoom(win);
@@ -842,10 +832,7 @@ function moveInfobar(container, bounds, win, options = {}) {
     top -= pageYOffset;
   }
 
-  if (isOverlapTheNode && options.hideIfOffscreen) {
-    container.setAttribute("hidden", "true");
-    return;
-  } else if (isOverlapTheNode) {
+  if (isOverlapTheNode) {
     left = Math.min(Math.max(leftBoundary, left - pageXOffset), rightBoundary);
 
     position = "fixed";

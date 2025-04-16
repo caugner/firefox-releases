@@ -214,7 +214,8 @@ ReferrerPolicy ReferrerInfo::GetDefaultReferrerPolicy(nsIHttpChannel* aChannel,
           !ContentBlocking::ShouldAllowAccessFor(aChannel, aURI,
                                                  &rejectedReason) &&
           rejectedReason !=
-              nsIWebProgressListener::STATE_COOKIES_PARTITIONED_FOREIGN;
+              static_cast<uint32_t>(
+                  nsIWebProgressListener::STATE_COOKIES_PARTITIONED_FOREIGN);
       // Here we intentionally do not notify about the rejection reason, if any
       // in order to avoid this check to have any visible side-effects (e.g. a
       // web console report.)
@@ -524,7 +525,7 @@ bool ReferrerInfo::IsCrossSiteRequest(nsIHttpChannel* aChannel) {
 
   bool isCrossSite = true;
   rv = loadInfo->TriggeringPrincipal()->IsThirdPartyURI(uri, &isCrossSite);
-  if (NS_WARN_IF(NS_FAILED(rv))) {
+  if (NS_FAILED(rv)) {
     return true;
   }
 

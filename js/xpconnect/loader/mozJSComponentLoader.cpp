@@ -75,7 +75,8 @@ using namespace mozilla::loader;
 using namespace xpc;
 using namespace JS;
 
-#define JS_CACHE_PREFIX(aType) "jsloader/" aType
+#define JS_CACHE_PREFIX(aScopeType, aCompilationTarget) \
+  "jsloader/" aScopeType "/" aCompilationTarget
 
 /**
  * Buffer sizes for serialization and deserialization of scripts.
@@ -747,8 +748,9 @@ nsresult mozJSComponentLoader::ObjectForLocation(
 
   aInfo.EnsureResolvedURI();
 
-  nsAutoCString cachePath(JS_CACHE_PREFIX("non-syntactic"));
-  rv = PathifyURI(aInfo.ResolvedURI(), cachePath);
+  nsAutoCString cachePath;
+  rv = PathifyURI(JS_CACHE_PREFIX("non-syntactic", "script"),
+                  aInfo.ResolvedURI(), cachePath);
   NS_ENSURE_SUCCESS(rv, rv);
 
   JS::DecodeOptions decodeOptions;
@@ -1252,6 +1254,12 @@ nsresult mozJSComponentLoader::Import(JSContext* aCx,
 
     // Note: This implies EnsureURI().
     MOZ_TRY(info.EnsureResolvedURI());
+
+    // Reject imports from untrusted sources.
+    if ((!info.URI()->SchemeIs("resource")) &&
+        (!info.URI()->SchemeIs("chrome"))) {
+      return NS_ERROR_DOM_SECURITY_ERR;
+    }
 
     // get the JAR if there is one
     nsCOMPtr<nsIJARURI> jarURI;

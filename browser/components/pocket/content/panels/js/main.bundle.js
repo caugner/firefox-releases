@@ -195,7 +195,9 @@ function Article(props) {
   }, /*#__PURE__*/react.createElement(react.Fragment, null, thumbnail ? /*#__PURE__*/react.createElement("img", {
     className: "stp_article_list_thumb",
     src: thumbnail,
-    alt: alt
+    alt: alt,
+    width: "40",
+    height: "40"
   }) : /*#__PURE__*/react.createElement("div", {
     className: "stp_article_list_thumb_placeholder"
   }), /*#__PURE__*/react.createElement("div", {
@@ -487,6 +489,10 @@ HomeOverlay.prototype = {
           topic: "must-reads"
         }]
       }), document.querySelector(`body`));
+
+      if (window?.matchMedia(`(prefers-color-scheme: dark)`).matches) {
+        document.querySelector(`body`).classList.add(`theme_dark`);
+      }
     } else {
       // For English, we have a discover topics link.
       // For non English, we don't have a link yet for this.
@@ -662,6 +668,10 @@ var SignupOverlay = function (options) {
         utmContent: utmContent,
         locale: locale
       }), document.querySelector(`body`));
+
+      if (window?.matchMedia(`(prefers-color-scheme: dark)`).matches) {
+        document.querySelector(`body`).classList.add(`theme_dark`);
+      }
     } else {
       const templateData = {
         pockethost,
@@ -1556,6 +1566,10 @@ SavedOverlay.prototype = {
         utmCampaign: utmCampaign,
         utmContent: utmContent
       }), document.querySelector(`body`));
+
+      if (window?.matchMedia(`(prefers-color-scheme: dark)`).matches) {
+        document.querySelector(`body`).classList.add(`theme_dark`);
+      }
     } else {
       // set host
       const templateData = {
@@ -1629,25 +1643,35 @@ StyleGuideOverlay.prototype = {
     // TODO: Wrap popular topics component in JSX to work without needing an explicit container hierarchy for styling
     react_dom.render( /*#__PURE__*/react.createElement("div", null, /*#__PURE__*/react.createElement("h3", null, "JSX Components:"), /*#__PURE__*/react.createElement("h4", {
       className: "stp_styleguide_h4"
-    }, "Button"), /*#__PURE__*/react.createElement(Button_Button, {
+    }, "Buttons"), /*#__PURE__*/react.createElement("h5", {
+      className: "stp_styleguide_h5"
+    }, "text"), /*#__PURE__*/react.createElement(Button_Button, {
       style: "text",
       url: "https://example.org",
       source: "styleguide"
-    }, "Text Button"), /*#__PURE__*/react.createElement("br", null), /*#__PURE__*/react.createElement(Button_Button, {
+    }, "Text Button"), /*#__PURE__*/react.createElement("h5", {
+      className: "stp_styleguide_h5"
+    }, "primary"), /*#__PURE__*/react.createElement(Button_Button, {
       style: "primary",
       url: "https://example.org",
       source: "styleguide"
-    }, "Primary Button"), /*#__PURE__*/react.createElement("br", null), /*#__PURE__*/react.createElement(Button_Button, {
+    }, "Primary Button"), /*#__PURE__*/react.createElement("h5", {
+      className: "stp_styleguide_h5"
+    }, "secondary"), /*#__PURE__*/react.createElement(Button_Button, {
       style: "secondary",
       url: "https://example.org",
       source: "styleguide"
-    }, "Secondary Button"), /*#__PURE__*/react.createElement("span", {
+    }, "Secondary Button"), /*#__PURE__*/react.createElement("h5", {
+      className: "stp_styleguide_h5"
+    }, "primary wide"), /*#__PURE__*/react.createElement("span", {
       className: "stp_button_wide"
     }, /*#__PURE__*/react.createElement(Button_Button, {
       style: "primary",
       url: "https://example.org",
       source: "styleguide"
-    }, "Primary Wide Button")), /*#__PURE__*/react.createElement("span", {
+    }, "Primary Wide Button")), /*#__PURE__*/react.createElement("h5", {
+      className: "stp_styleguide_h5"
+    }, "secondary wide"), /*#__PURE__*/react.createElement("span", {
       className: "stp_button_wide"
     }, /*#__PURE__*/react.createElement(Button_Button, {
       style: "secondary",

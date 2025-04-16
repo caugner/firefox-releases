@@ -16,6 +16,7 @@
 #endif
 #include "mozilla/Components.h"
 #include "mozilla/dom/BrowserHost.h"
+#include "mozilla/dom/BrowserSessionStore.h"
 #include "mozilla/dom/BrowsingContextGroup.h"
 #include "mozilla/dom/CancelContentJSOptionsBinding.h"
 #include "mozilla/dom/ChromeMessageSender.h"
@@ -32,8 +33,7 @@
 #include "mozilla/dom/RemoteDragStartData.h"
 #include "mozilla/dom/RemoteWebProgressRequest.h"
 #include "mozilla/dom/SessionHistoryEntry.h"
-#include "mozilla/dom/SessionStoreUtils.h"
-#include "mozilla/dom/SessionStoreUtilsBinding.h"
+#include "mozilla/dom/SessionStoreParent.h"
 #include "mozilla/dom/UserActivation.h"
 #include "mozilla/EventStateManager.h"
 #include "mozilla/gfx/2D.h"
@@ -53,6 +53,7 @@
 #include "mozilla/Preferences.h"
 #include "mozilla/PresShell.h"
 #include "mozilla/ProcessHangMonitor.h"
+#include "mozilla/RefPtr.h"
 #include "mozilla/StaticPrefs_accessibility.h"
 #include "mozilla/StaticPrefs_dom.h"
 #include "mozilla/TextEventDispatcher.h"
@@ -128,7 +129,6 @@
 #include "mozilla/dom/CanonicalBrowsingContext.h"
 #include "mozilla/ProfilerLabels.h"
 #include "MMPrinter.h"
-#include "SessionStoreFunctions.h"
 #include "mozilla/dom/CrashReport.h"
 #include "nsISecureBrowserUI.h"
 #include "nsIXULRuntime.h"
@@ -231,6 +231,7 @@ BrowserParent::BrowserParent(ContentParent* aManager, const TabId& aTabId,
       mRemoteTargetSetsCursor(false),
       mIsPreservingLayers(false),
       mRenderLayers(true),
+      mPriorityHint(false),
       mHasLayers(false),
       mHasPresented(false),
       mIsReadyToHandleInputEvents(false),
@@ -1371,6 +1372,17 @@ IPCResult BrowserParent::RecvIndexedDBPermissionRequest(
   return IPC_OK();
 }
 
+already_AddRefed<PSessionStoreParent>
+BrowserParent::AllocPSessionStoreParent() {
+  RefPtr<BrowserSessionStore> sessionStore =
+      BrowserSessionStore::GetOrCreate(mBrowsingContext->Top());
+  if (!sessionStore) {
+    return nullptr;
+  }
+
+  return do_AddRef(new SessionStoreParent(mBrowsingContext, sessionStore));
+}
+
 IPCResult BrowserParent::RecvNewWindowGlobal(
     ManagedEndpoint<PWindowGlobalParent>&& aEndpoint,
     const WindowGlobalInit& aInit) {
@@ -1860,6 +1872,9 @@ mozilla::ipc::IPCResult BrowserParent::RecvSynthesizeNativeMouseEvent(
     const LayoutDeviceIntPoint& aPoint, const uint32_t& aNativeMessage,
     const int16_t& aButton, const uint32_t& aModifierFlags,
     const uint64_t& aObserverId) {
+  const uint32_t last =
+      static_cast<uint32_t>(nsIWidget::NativeMouseMessage::LeaveWindow);
+  NS_ENSURE_TRUE(aNativeMessage <= last, IPC_FAIL(this, "Bogus message"));
   AutoSynthesizedEventResponder responder(this, aObserverId, "mouseevent");
   nsCOMPtr<nsIWidget> widget = GetWidget();
   if (widget) {
@@ -1970,12 +1985,16 @@ mozilla::ipc::IPCResult BrowserParent::RecvSynthesizeNativeTouchpadDoubleTap(
 
 mozilla::ipc::IPCResult BrowserParent::RecvSynthesizeNativeTouchpadPan(
     const TouchpadGesturePhase& aEventPhase, const LayoutDeviceIntPoint& aPoint,
-    const double& aDeltaX, const double& aDeltaY,
-    const int32_t& aModifierFlags) {
+    const double& aDeltaX, const double& aDeltaY, const int32_t& aModifierFlags,
+    const uint64_t& aObserverId) {
+  AutoSynthesizedEventResponder responder(this, aObserverId,
+                                          "touchpadpanevent");
+
   nsCOMPtr<nsIWidget> widget = GetWidget();
   if (widget) {
     widget->SynthesizeNativeTouchpadPan(aEventPhase, aPoint, aDeltaX, aDeltaY,
-                                        aModifierFlags);
+                                        aModifierFlags,
+                                        responder.GetObserver());
   }
   return IPC_OK();
 }
@@ -3000,41 +3019,6 @@ BrowserParent::BrowsingContextForWebProgress(
   return browsingContext.forget();
 }
 
-mozilla::ipc::IPCResult BrowserParent::RecvSessionStoreUpdate(
-    const Maybe<nsCString>& aDocShellCaps, const Maybe<bool>& aPrivatedMode,
-    const bool aNeedCollectSHistory, const uint32_t& aEpoch) {
-  UpdateSessionStoreData data;
-  if (aDocShellCaps.isSome()) {
-    data.mDocShellCaps.Construct() = aDocShellCaps.value();
-  }
-  if (aPrivatedMode.isSome()) {
-    data.mIsPrivate.Construct() = aPrivatedMode.value();
-  }
-
-  nsCOMPtr<nsISessionStoreFunctions> funcs = do_ImportModule(
-      "resource://gre/modules/SessionStoreFunctions.jsm", fallible);
-  nsCOMPtr<nsIXPConnectWrappedJS> wrapped = do_QueryInterface(funcs);
-  NS_ENSURE_TRUE(wrapped, IPC_OK());
-
-  AutoJSAPI jsapi;
-  if (!jsapi.Init(wrapped->GetJSObjectGlobal())) {
-    return IPC_OK();
-  }
-
-  JS::Rooted<JS::Value> update(jsapi.cx());
-  if (!ToJSValue(jsapi.cx(), data, &update)) {
-    return IPC_OK();
-  }
-
-  JS::RootedValue key(jsapi.cx(),
-                      mBrowsingContext->Canonical()->Top()->PermanentKey());
-
-  Unused << funcs->UpdateSessionStore(mFrameElement, mBrowsingContext, key,
-                                      aEpoch, aNeedCollectSHistory, update);
-
-  return IPC_OK();
-}
-
 mozilla::ipc::IPCResult BrowserParent::RecvIntrinsicSizeOrRatioChanged(
     const Maybe<IntrinsicSize>& aIntrinsicSize,
     const Maybe<AspectRatio>& aIntrinsicRatio) {
@@ -3054,8 +3038,7 @@ bool BrowserParent::HandleQueryContentEvent(WidgetQueryContentEvent& aEvent) {
   if (!textInputHandlingWidget) {
     return true;
   }
-  if (NS_WARN_IF(!mContentCache.HandleQueryContentEvent(
-          aEvent, textInputHandlingWidget)) ||
+  if (!mContentCache.HandleQueryContentEvent(aEvent, textInputHandlingWidget) ||
       NS_WARN_IF(aEvent.Failed())) {
     return true;
   }
@@ -3478,6 +3461,12 @@ void BrowserParent::SetRenderLayersInternal(bool aEnabled) {
   if (aEnabled) {
     Manager()->PaintTabWhileInterruptingJS(this, mLayerTreeEpoch);
   }
+}
+
+bool BrowserParent::GetPriorityHint() { return mPriorityHint; }
+
+void BrowserParent::SetPriorityHint(bool aPriorityHint) {
+  mPriorityHint = aPriorityHint;
 }
 
 void BrowserParent::PreserveLayers(bool aPreserveLayers) {

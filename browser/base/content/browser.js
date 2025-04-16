@@ -300,7 +300,7 @@ if (AppConstants.ENABLE_WEBDRIVER) {
   );
 } else {
   this.Marionette = { running: false };
-  this.RemoteAgent = { listening: false };
+  this.RemoteAgent = { running: false };
 }
 
 XPCOMUtils.defineLazyGetter(this, "RTL_UI", () => {
@@ -5363,11 +5363,15 @@ var XULBrowserWindow = {
       this.reloadCommand.removeAttribute("disabled");
     }
 
+    let isSessionRestore = !!(
+      aFlags & Ci.nsIWebProgressListener.LOCATION_CHANGE_SESSION_STORE
+    );
+
     // We want to update the popup visibility if we received this notification
     // via simulated locationchange events such as switching between tabs, however
     // if this is a document navigation then PopupNotifications will be updated
     // via TabsProgressListener.onLocationChange and we do not want it called twice
-    gURLBar.setURI(aLocationURI, aIsSimulated);
+    gURLBar.setURI(aLocationURI, aIsSimulated, isSessionRestore);
 
     BookmarkingUI.onLocationChange();
     // If we've actually changed document, update the toolbar visibility.
@@ -6314,7 +6318,7 @@ nsBrowserAccess.prototype = {
           forceNotRemote,
           userContextId,
           aOpenWindowInfo,
-          null,
+          aOpenWindowInfo?.parent?.top.embedderElement,
           aTriggeringPrincipal,
           "",
           aCsp,
@@ -6326,9 +6330,9 @@ nsBrowserAccess.prototype = {
         break;
       }
       case Ci.nsIBrowserDOMWindow.OPEN_PRINT_BROWSER: {
-        let browser = PrintUtils.startPrintWindow(aOpenWindowInfo.parent, {
-          openWindowInfo: aOpenWindowInfo,
-        });
+        let browser = PrintUtils.handleStaticCloneCreatedForPrint(
+          aOpenWindowInfo
+        );
         if (browser) {
           browsingContext = browser.browsingContext;
         }
@@ -6408,9 +6412,9 @@ nsBrowserAccess.prototype = {
     aSkipLoad
   ) {
     if (aWhere == Ci.nsIBrowserDOMWindow.OPEN_PRINT_BROWSER) {
-      return PrintUtils.startPrintWindow(aParams.openWindowInfo.parent, {
-        openWindowInfo: aParams.openWindowInfo,
-      });
+      return PrintUtils.handleStaticCloneCreatedForPrint(
+        aParams.openWindowInfo
+      );
     }
 
     if (aWhere != Ci.nsIBrowserDOMWindow.OPEN_NEWTAB) {
@@ -8405,7 +8409,7 @@ const gRemoteControl = {
       return "Marionette";
     }
 
-    if (RemoteAgent.listening) {
+    if (RemoteAgent.running) {
       return "RemoteAgent";
     }
 
@@ -8626,12 +8630,16 @@ function switchToTabHavingURI(aURI, aOpenNew, aOpenParams = {}) {
           adoptIntoActiveWindow && isBrowserWindow && aWindow != window;
 
         if (doAdopt) {
-          window.gBrowser.adoptTab(
+          const newTab = window.gBrowser.adoptTab(
             aWindow.gBrowser.getTabForBrowser(browser),
             window.gBrowser.tabContainer.selectedIndex + 1,
             /* aSelectTab = */ true
           );
-        } else {
+          if (!newTab) {
+            doAdopt = false;
+          }
+        }
+        if (!doAdopt) {
           aWindow.focus();
         }
 

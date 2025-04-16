@@ -49,6 +49,7 @@ EXPORTS.mozilla.net += [
     "ClassifierDummyChannel.h",
     "ClassifierDummyChannelChild.h",
     "ClassifierDummyChannelParent.h",
+    "ClassOfService.h",
     "EarlyHintsService.h",
     "HttpAuthUtils.h",
     "HttpBackgroundChannelChild.h",
@@ -153,6 +154,7 @@ UNIFIED_SOURCES += [
     "SocketWrapper.cpp",
     "SpeculativeTransaction.cpp",
     "TLSFilterTransaction.cpp",
+    "TlsHandshaker.cpp",
     "TRRServiceChannel.cpp",
 ]
 

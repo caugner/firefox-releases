@@ -755,9 +755,6 @@ void MemoryTracker::untrackGCMemory(Cell* cell, size_t nbytes, MemoryUse use) {
 }
 
 void MemoryTracker::swapGCMemory(Cell* a, Cell* b, MemoryUse use) {
-  MOZ_ASSERT(a->isTenured());
-  MOZ_ASSERT(b->isTenured());
-
   Key<Cell> ka{a, use};
   Key<Cell> kb{b, use};
 
@@ -768,7 +765,8 @@ void MemoryTracker::swapGCMemory(Cell* a, Cell* b, MemoryUse use) {
 
   AutoEnterOOMUnsafeRegion oomUnsafe;
 
-  if ((sa && !gcMap.put(kb, sa)) || (sb && !gcMap.put(ka, sb))) {
+  if ((sa && b->isTenured() && !gcMap.put(kb, sa)) ||
+      (sb && a->isTenured() && !gcMap.put(ka, sb))) {
     oomUnsafe.crash("MemoryTracker::swapGCMemory");
   }
 }

@@ -31,6 +31,9 @@ class PromptFactory {
       case "mozshowdropdown-sourcetouch":
         this._handleSelect(aEvent.composedTarget, /* aIsDropDown = */ true);
         break;
+      case "MozOpenDateTimePicker":
+        this._handleDateTime(aEvent.composedTarget);
+        break;
       case "click":
         this._handleClick(aEvent);
         break;
@@ -43,8 +46,6 @@ class PromptFactory {
     }
   }
 
-  // TODO(emilio): We should listen to MozOpenDateTimePicker instead, except
-  // the Gecko widget isn't supported for stuff like <input type=week>
   _handleClick(aEvent) {
     const target = aEvent.composedTarget;
     const className = ChromeUtils.getClassName(target);
@@ -73,15 +74,15 @@ class PromptFactory {
     }
 
     const type = target.type;
-    if (
-      type === "date" ||
-      type === "month" ||
-      type === "week" ||
-      type === "time" ||
-      type === "datetime-local"
-    ) {
-      this._handleDateTime(target, type);
-      aEvent.preventDefault();
+    if (type === "month" || type === "week") {
+      // If there's a shadow root, the MozOpenDateTimePicker event takes care
+      // of this. Right now for these input types there's never a shadow root.
+      // Once we support UA widgets for month/week inputs (see bug 888320), we
+      // can remove this.
+      if (!target.openOrClosedShadowRoot) {
+        this._handleDateTime(target);
+        aEvent.preventDefault();
+      }
     }
   }
 
@@ -102,10 +103,10 @@ class PromptFactory {
           id: String(id),
           disabled: disabled || child.disabled,
         };
-        if (child instanceof win.HTMLOptGroupElement) {
+        if (win.HTMLOptGroupElement.isInstance(child)) {
           item.label = child.label;
           item.items = enumList(child, item.disabled);
-        } else if (child instanceof win.HTMLOptionElement) {
+        } else if (win.HTMLOptionElement.isInstance(child)) {
           item.label = child.label || child.text;
           item.selected = child.selected;
         } else {
@@ -140,7 +141,7 @@ class PromptFactory {
         let dispatchEvents = false;
         if (!aElement.multiple) {
           const elem = map[result.choices[0]];
-          if (elem && elem instanceof win.HTMLOptionElement) {
+          if (elem && win.HTMLOptionElement.isInstance(elem)) {
             dispatchEvents = !elem.selected;
             elem.selected = true;
           } else {
@@ -153,7 +154,7 @@ class PromptFactory {
             const elem = map[i];
             const index = result.choices.indexOf(String(i));
             if (
-              elem instanceof win.HTMLOptionElement &&
+              win.HTMLOptionElement.isInstance(elem) &&
               elem.selected !== index >= 0
             ) {
               // Current selected is not the same as the new selected state.
@@ -179,12 +180,12 @@ class PromptFactory {
     );
   }
 
-  _handleDateTime(aElement, aType) {
+  _handleDateTime(aElement) {
     const prompt = new GeckoViewPrompter(aElement.ownerGlobal);
     prompt.asyncShowPrompt(
       {
         type: "datetime",
-        mode: aType,
+        mode: aElement.type,
         value: aElement.value,
         min: aElement.min,
         max: aElement.max,
@@ -386,7 +387,7 @@ class PromptFactory {
   callProxy(aMethod, aArguments) {
     const prompt = new PromptDelegate(aArguments[0]);
     let promptArgs;
-    if (aArguments[0] instanceof BrowsingContext) {
+    if (BrowsingContext.isInstance(aArguments[0])) {
       // Called by BrowsingContext prompt method, strip modalType.
       [, , /*browsingContext*/ /*modalType*/ ...promptArgs] = aArguments;
     } else {

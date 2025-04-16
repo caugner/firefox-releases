@@ -1897,7 +1897,7 @@ nsresult AppWindow::MaybeSaveEarlyWindowPersistentValues(
     return NS_ERROR_FAILURE;
   }
   mozilla::Vector<CSSPixelSpan> springs;
-  for (int i = 0; i < toolbarSprings->Length(); i++) {
+  for (size_t i = 0; i < toolbarSprings->Length(); i++) {
     RefPtr<Element> springEl = toolbarSprings->Item(i);
     RefPtr<dom::DOMRect> springRect;
     rv = utils->GetBoundsWithoutFlushing(springEl, getter_AddRefs(springRect));
@@ -2577,6 +2577,16 @@ AppWindow::BeforeStartLayout() {
 NS_IMETHODIMP
 AppWindow::LockAspectRatio(bool aShouldLock) {
   mWindow->LockAspectRatio(aShouldLock);
+  return NS_OK;
+}
+
+NS_IMETHODIMP
+AppWindow::NeedFastSnaphot() {
+  MOZ_ASSERT(mWindow);
+  if (!mWindow) {
+    return NS_ERROR_FAILURE;
+  }
+  mWindow->SetNeedFastSnaphot();
   return NS_OK;
 }
 

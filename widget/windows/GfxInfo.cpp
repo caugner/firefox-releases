@@ -1705,13 +1705,6 @@ const nsTArray<GfxDriverInfo>& GfxInfo::GetGfxDriverInfo() {
         DRIVER_BETWEEN_INCLUSIVE, V(9,17,10,0), V(9,17,10,2849),
         "FEATURE_FAILURE_BUG_1203199_1", "Intel driver > 9.17.10.2849");
 
-    /* Bug 1203199/1092166: DXVA startup crashes on some intel drivers. */
-    APPEND_TO_DRIVER_BLOCKLIST_RANGE(OperatingSystem::Windows, DeviceFamily::IntelAll,
-        nsIGfxInfo::FEATURE_HARDWARE_VIDEO_DECODING,
-        nsIGfxInfo::FEATURE_BLOCKED_DRIVER_VERSION,
-        DRIVER_BETWEEN_INCLUSIVE, V(8,15,10,0), V(8,15,10,2849),
-        "FEATURE_FAILURE_BUG_1203199_1", "Intel driver > 8.15.10.2849");
-
     APPEND_TO_DRIVER_BLOCKLIST2(
         OperatingSystem::Windows, DeviceFamily::Nvidia8800GTS,
         nsIGfxInfo::FEATURE_HARDWARE_VIDEO_DECODING,
@@ -1854,6 +1847,33 @@ const nsTArray<GfxDriverInfo>& GfxInfo::GetGfxDriverInfo() {
         OperatingSystem::Windows, DeviceFamily::IntelAll,
         nsIGfxInfo::FEATURE_VIDEO_OVERLAY, nsIGfxInfo::FEATURE_ALLOW_ALWAYS,
         DRIVER_COMPARISON_IGNORED, V(0, 0, 0, 0), "FEATURE_ROLLOUT_INTEL");
+#endif
+
+    ////////////////////////////////////
+    // FEATURE_HW_DECODED_VIDEO_NO_COPY
+
+    APPEND_TO_DRIVER_BLOCKLIST_RANGE(
+        OperatingSystem::Windows10, DeviceFamily::IntelSkylake,
+        nsIGfxInfo::FEATURE_HW_DECODED_VIDEO_NO_COPY,
+        nsIGfxInfo::FEATURE_BLOCKED_DRIVER_VERSION, DRIVER_BETWEEN_INCLUSIVE,
+        V(20, 19, 15, 4285), V(20, 19, 15, 4380), "FEATURE_FAILURE_BUG_1763280",
+        "Intel driver 20.19.15.*");
+
+    APPEND_TO_DRIVER_BLOCKLIST_RANGE(
+        OperatingSystem::Windows10, DeviceFamily::IntelSkylake,
+        nsIGfxInfo::FEATURE_HW_DECODED_VIDEO_NO_COPY,
+        nsIGfxInfo::FEATURE_BLOCKED_DRIVER_VERSION, DRIVER_BETWEEN_INCLUSIVE,
+        V(10, 18, 15, 4256), V(10, 18, 15, 4293), "FEATURE_FAILURE_BUG_1763280",
+        "Intel driver 10.18.15.*");
+
+    ////////////////////////////////////
+    // FEATURE_HW_DECODED_VIDEO_NO_COPY - ALLOWLIST
+#ifdef NIGHTLY_BUILD
+    APPEND_TO_DRIVER_BLOCKLIST2(
+        OperatingSystem::Windows, DeviceFamily::IntelAll,
+        nsIGfxInfo::FEATURE_HW_DECODED_VIDEO_NO_COPY,
+        nsIGfxInfo::FEATURE_ALLOW_ALWAYS, DRIVER_COMPARISON_IGNORED,
+        V(0, 0, 0, 0), "FEATURE_ROLLOUT_INTEL");
 #endif
 
     ////////////////////////////////////
@@ -2028,6 +2048,7 @@ nsresult GfxInfo::GetFeatureStatusImpl(
     }
 
     if (mHasDriverVersionMismatch) {
+      aFailureId = "FEATURE_FAILURE_MISMATCHED_VERSION";
       *aStatus = nsIGfxInfo::FEATURE_BLOCKED_MISMATCHED_VERSION;
       return NS_OK;
     }

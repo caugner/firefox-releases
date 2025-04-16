@@ -598,8 +598,6 @@ bool nsContentSecurityUtils::IsEvalAllowed(JSContext* cx,
   static nsLiteralCString evalAllowlist[] = {
       // Test-only third-party library
       "resource://testing-common/sinon-7.2.7.js"_ns,
-      // Test-only third-party library
-      "resource://testing-common/ajv-6.12.6.js"_ns,
       // Test-only utility
       "resource://testing-common/content-task.js"_ns,
 
@@ -814,6 +812,12 @@ void nsContentSecurityUtils::DetectJsHacks() {
   if (!NS_IsMainThread()) {
     return;
   }
+
+  // If the pref service isn't available, do nothing and re-do this later.
+  if (!Preferences::IsServiceAvailable()) {
+    return;
+  }
+
   // No need to check again.
   if (MOZ_LIKELY(sJSHacksChecked || sJSHacksPresent)) {
     return;
@@ -895,6 +899,12 @@ void nsContentSecurityUtils::DetectCssHacks() {
   if (!NS_IsMainThread()) {
     return;
   }
+
+  // If the pref service isn't available, do nothing and re-do this later.
+  if (!Preferences::IsServiceAvailable()) {
+    return;
+  }
+
   // No need to check again.
   if (MOZ_LIKELY(sCSSHacksChecked || sCSSHacksPresent)) {
     return;
@@ -1157,8 +1167,6 @@ void nsContentSecurityUtils::AssertAboutPageHasCSP(Document* aDocument) {
     "about:srcdoc"_ns,
     // about:sync-log displays plain text only -> no CSP
     "about:sync-log"_ns,
-    // about:printpreview displays plain text only -> no CSP
-    "about:printpreview"_ns,
     // about:logo just displays the firefox logo -> no CSP
     "about:logo"_ns,
     // about:sync is a special mozilla-signed developer addon with low usage ->

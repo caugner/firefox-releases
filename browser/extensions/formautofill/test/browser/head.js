@@ -2,7 +2,7 @@
             BASE_URL, TEST_ADDRESS_1, TEST_ADDRESS_2, TEST_ADDRESS_3, TEST_ADDRESS_4, TEST_ADDRESS_5, TEST_ADDRESS_CA_1, TEST_ADDRESS_DE_1,
             TEST_ADDRESS_IE_1,
             TEST_CREDIT_CARD_1, TEST_CREDIT_CARD_2, TEST_CREDIT_CARD_3, TEST_CREDIT_CARD_4, TEST_CREDIT_CARD_5,
-            FORM_URL, CREDITCARD_FORM_URL, CREDITCARD_FORM_IFRAME_URL
+            FORM_URL, CREDITCARD_FORM_URL, CREDITCARD_FORM_IFRAME_URL, CREDITCARD_FORM_COMBINED_EXPIRY_URL,
             FTU_PREF, ENABLED_AUTOFILL_ADDRESSES_PREF,
             AUTOFILL_ADDRESSES_AVAILABLE_PREF,
             ENABLED_AUTOFILL_ADDRESSES_SUPPORTED_COUNTRIES_PREF,
@@ -48,6 +48,10 @@ const CREDITCARD_FORM_IFRAME_URL =
   "https://example.org" +
   HTTP_TEST_PATH +
   "creditCard/autocomplete_creditcard_iframe.html";
+const CREDITCARD_FORM_COMBINED_EXPIRY_URL =
+  "https://example.org" +
+  HTTP_TEST_PATH +
+  "creditCard/autocomplete_creditcard_cc_exp_field.html";
 
 const FTU_PREF = "extensions.formautofill.firstTimeUse";
 const CREDITCARDS_USED_STATUS_PREF = "extensions.formautofill.creditCards.used";
@@ -250,7 +254,7 @@ async function waitForAutofill(target, selector, value) {
       let form = content.document.getElementById("form");
       let element = form.querySelector(selector);
       return element.value == val;
-    }, "Credit card detail never fills");
+    }, "Autofill never fills");
   });
 }
 
@@ -270,6 +274,8 @@ async function waitForAutofill(target, selector, value) {
  * @param {string} args.formId
  *        The id of the form to be updated. This function uses "form" if
  *        this argument is not present
+ * @param {string} args.formSelector
+ *        A selector used to query the form element
  * @param {Object} args.newValues
  *        Elements to be updated. Key is the element selector, value is the
  *        new value of the element.
@@ -294,10 +300,15 @@ async function focusUpdateSubmitForm(target, args, submit = true) {
   let alreadyFocused = await SpecialPowers.spawn(target, [args], obj => {
     let focused = false;
 
-    let formId = obj.formId ?? "form";
-    let form = content.document.getElementById(formId);
+    let form;
+    if (obj.formSelector) {
+      form = content.document.querySelector(obj.formSelector);
+    } else {
+      form = content.document.getElementById(obj.formId ?? "form");
+    }
     let element = form.querySelector(obj.focusSelector);
     if (element != content.document.activeElement) {
+      info(`focus on element (id=${element.id})`);
       element.focus();
     } else {
       focused = true;
@@ -325,8 +336,13 @@ async function focusUpdateSubmitForm(target, args, submit = true) {
 
   if (submit) {
     await SpecialPowers.spawn(target, [args], obj => {
-      let formId = obj.formId ?? "form";
-      let form = content.document.getElementById(formId);
+      let form;
+      if (obj.formSelector) {
+        form = content.document.querySelector(obj.formSelector);
+      } else {
+        form = content.document.getElementById(obj.formId ?? "form");
+      }
+      info(`submit form (id=${form.id})`);
       form.querySelector("input[type=submit]").click();
     });
   }
@@ -672,6 +688,17 @@ function getDoorhangerButton(button) {
   return getNotification()[button];
 }
 
+/**
+ * Removes all addresses and credit cards from storage.
+ *
+ * **NOTE: If you add or update a record in a test, then you must wait for the
+ * respective storage event to fire before calling this function.**
+ * This is because this function doesn't guarantee that a record that
+ * is about to be added or update will also be removed,
+ * since the add or update is triggered by an asynchronous call.
+ *
+ * @see waitForStorageChangedEvents for more details about storage events to wait for
+ */
 async function removeAllRecords() {
   let addresses = await getAddresses();
   if (addresses.length) {

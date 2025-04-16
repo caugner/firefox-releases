@@ -593,6 +593,10 @@ void GeckoChildProcessHost::PrepareLaunch() {
 #  if defined(MOZ_SANDBOX)
   // We need to get the pref here as the process is launched off main thread.
   if (mProcessType == GeckoProcessType_Content) {
+    // Win32k Lockdown state must be initialized on the main thread.
+    // This is our last chance to do it before it is read on the IPC Launch
+    // thread
+    GetWin32kLockdownState();
     mSandboxLevel = GetEffectiveContentSandboxLevel();
     mEnableSandboxLogging =
         Preferences::GetBool("security.sandbox.logging.enabled");
@@ -1575,7 +1579,7 @@ bool GeckoChildProcessHost::OpenPrivilegedHandle(base::ProcessId aPid) {
   return base::OpenPrivilegedProcessHandle(aPid, &mChildProcessHandle);
 }
 
-void GeckoChildProcessHost::OnChannelConnected(int32_t peer_pid) {
+void GeckoChildProcessHost::OnChannelConnected(base::ProcessId peer_pid) {
   if (!OpenPrivilegedHandle(peer_pid)) {
     MOZ_CRASH("can't open handle to child process");
   }

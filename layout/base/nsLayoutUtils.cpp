@@ -2111,7 +2111,7 @@ gfxSize nsLayoutUtils::GetTransformToAncestorScale(const nsIFrame* aFrame) {
       RelativeTo{nsLayoutUtils::GetDisplayRootFrame(aFrame)});
   Matrix transform2D;
   if (transform.CanDraw2D(&transform2D)) {
-    return ThebesMatrix(transform2D).ScaleFactors();
+    return ThebesMatrix(transform2D).ScaleFactors().ToSize();
   }
   return gfxSize(1, 1);
 }
@@ -2147,7 +2147,7 @@ gfxSize nsLayoutUtils::GetTransformToAncestorScaleExcludingAnimated(
       aFrame, nsLayoutUtils::GetDisplayRootFrame(aFrame));
   Matrix transform2D;
   if (transform.Is2D(&transform2D)) {
-    return ThebesMatrix(transform2D).ScaleFactors();
+    return ThebesMatrix(transform2D).ScaleFactors().ToSize();
   }
   return gfxSize(1, 1);
 }
@@ -6151,9 +6151,9 @@ static SnappedImageDrawingParameters ComputeSnappedImageDrawingParameters(
   // scale and has integer coordinates. If not, we need these properties to
   // compute the optimal drawn image size, so compute |snappedDestSize| here.
   gfxSize snappedDestSize = dest.Size();
-  gfxSize scaleFactors = currentMatrix.ScaleFactors();
+  auto scaleFactors = currentMatrix.ScaleFactors();
   if (!didSnap) {
-    snappedDestSize.Scale(scaleFactors.width, scaleFactors.height);
+    snappedDestSize.Scale(scaleFactors.xScale, scaleFactors.yScale);
     snappedDestSize.width = NS_round(snappedDestSize.width);
     snappedDestSize.height = NS_round(snappedDestSize.height);
   }
@@ -6173,7 +6173,7 @@ static SnappedImageDrawingParameters ComputeSnappedImageDrawingParameters(
       aImageFlags);
 
   nsIntSize svgViewportSize;
-  if (scaleFactors.width == 1.0 && scaleFactors.height == 1.0) {
+  if (scaleFactors.xScale == 1.0 && scaleFactors.yScale == 1.0) {
     // intImageSize is scaled by currentMatrix. But since there are no scale
     // factors in currentMatrix, it is safe to assign intImageSize to
     // svgViewportSize directly.
@@ -6242,7 +6242,7 @@ static SnappedImageDrawingParameters ComputeSnappedImageDrawingParameters(
     // follow the pattern that we take |currentMatrix| into account only if
     // |didSnap| is true.
     gfxSize unsnappedDestSize =
-        didSnap ? devPixelDest.Size() * currentMatrix.ScaleFactors()
+        didSnap ? devPixelDest.Size() * currentMatrix.ScaleFactors().ToSize()
                 : devPixelDest.Size();
 
     gfxRect anchoredDestRect(anchorPoint, unsnappedDestSize);
@@ -6706,7 +6706,8 @@ ImgDrawResult nsLayoutUtils::DrawImage(
     const nsRect& aFill, const nsPoint& aAnchor, const nsRect& aDirty,
     uint32_t aImageFlags, float aOpacity) {
   Maybe<SVGImageContext> svgContext;
-  SVGImageContext::MaybeStoreContextPaint(svgContext, aComputedStyle, aImage);
+  SVGImageContext::MaybeStoreContextPaint(svgContext, *aPresContext,
+                                          *aComputedStyle, aImage);
 
   return DrawImageInternal(aContext, aPresContext, aImage, aSamplingFilter,
                            aDest, aFill, aAnchor, aDirty, svgContext,
@@ -8106,23 +8107,28 @@ bool nsLayoutUtils::GetContentViewerSize(
 bool nsLayoutUtils::UpdateCompositionBoundsForRCDRSF(
     ParentLayerRect& aCompBounds, const nsPresContext* aPresContext) {
   SubtractDynamicToolbar shouldSubtractDynamicToolbar =
-      SubtractDynamicToolbar::Yes;
+      aPresContext->IsRootContentDocumentCrossProcess() &&
+              aPresContext->HasDynamicToolbar()
+          ? SubtractDynamicToolbar::Yes
+          : SubtractDynamicToolbar::No;
 
-  if (RefPtr<MobileViewportManager> MVM =
-          aPresContext->PresShell()->GetMobileViewportManager()) {
-    CSSSize intrinsicCompositionSize = MVM->GetIntrinsicCompositionSize();
+  if (shouldSubtractDynamicToolbar == SubtractDynamicToolbar::Yes) {
+    if (RefPtr<MobileViewportManager> MVM =
+            aPresContext->PresShell()->GetMobileViewportManager()) {
+      CSSSize intrinsicCompositionSize = MVM->GetIntrinsicCompositionSize();
 
-    if (nsIScrollableFrame* rootScrollableFrame =
-            aPresContext->PresShell()->GetRootScrollFrameAsScrollable()) {
-      // Expand the composition size to include the area initially covered by
-      // the dynamic toolbar only if the content is taller than the intrinsic
-      // composition size (i.e. the dynamic toolbar should be able to move only
-      // if the content is vertically scrollable).
-      if (intrinsicCompositionSize.height <
-          CSSPixel::FromAppUnits(
-              CalculateScrollableRectForFrame(rootScrollableFrame, nullptr)
-                  .Height())) {
-        shouldSubtractDynamicToolbar = SubtractDynamicToolbar::No;
+      if (nsIScrollableFrame* rootScrollableFrame =
+              aPresContext->PresShell()->GetRootScrollFrameAsScrollable()) {
+        // Expand the composition size to include the area initially covered by
+        // the dynamic toolbar only if the content is taller than the intrinsic
+        // composition size (i.e. the dynamic toolbar should be able to move
+        // only if the content is vertically scrollable).
+        if (intrinsicCompositionSize.height <
+            CSSPixel::FromAppUnits(
+                CalculateScrollableRectForFrame(rootScrollableFrame, nullptr)
+                    .Height())) {
+          shouldSubtractDynamicToolbar = SubtractDynamicToolbar::No;
+        }
       }
     }
   }
@@ -9216,10 +9222,10 @@ static nsSize ComputeMaxSizeForPartialPrerender(nsIFrame* aFrame,
   }
 
   gfx::Rect result(0, 0, aMaxSize.width, aMaxSize.height);
-  gfx::Size scale = transform2D.ScaleFactors();
-  if (scale.width != 0 && scale.height != 0) {
-    result.width /= scale.width;
-    result.height /= scale.height;
+  auto scale = transform2D.ScaleFactors();
+  if (scale.xScale != 0 && scale.yScale != 0) {
+    result.width /= scale.xScale;
+    result.height /= scale.yScale;
   }
 
   // Don't apply translate.
@@ -9227,11 +9233,11 @@ static nsSize ComputeMaxSizeForPartialPrerender(nsIFrame* aFrame,
   transform2D._32 = 0.0f;
 
   // Don't apply scale.
-  if (scale.width != 0 && scale.height != 0) {
-    transform2D._11 /= scale.width;
-    transform2D._12 /= scale.width;
-    transform2D._21 /= scale.height;
-    transform2D._22 /= scale.height;
+  if (scale.xScale != 0 && scale.yScale != 0) {
+    transform2D._11 /= scale.xScale;
+    transform2D._12 /= scale.xScale;
+    transform2D._21 /= scale.yScale;
+    transform2D._22 /= scale.yScale;
   }
 
   // Theoretically we should use transform2D.Inverse() here but in this case
@@ -9609,9 +9615,10 @@ void nsLayoutUtils::ComputeSystemFont(nsFont* aSystemFont,
       aFontID == LookAndFeel::FontID::MozList) {
     const bool isWindowsOrNonNativeTheme =
 #ifdef XP_WIN
-        true ||
-#endif
+        true;
+#else
         aDocument->ShouldAvoidNativeTheme();
+#endif
 
     if (isWindowsOrNonNativeTheme) {
       // For textfields, buttons and selects, we use whatever font is defined by
@@ -9738,7 +9745,7 @@ static std::pair<Maybe<ScreenRect>, FramePosition> GetFrameVisibleRectOnScreen(
 
   nsIFrame* rootFrame = topContextInProcess->PresShell()->GetRootFrame();
   nsRect transformedToIFrame = nsLayoutUtils::TransformFrameRectToAncestor(
-      aFrame, aFrame->GetRectRelativeToSelf(), rootFrame);
+      aFrame, aFrame->InkOverflowRectRelativeToSelf(), rootFrame);
 
   LayoutDeviceRect rectInLayoutDevicePixel = LayoutDeviceRect::FromAppUnits(
       transformedToIFrame, topContextInProcess->AppUnitsPerDevPixel());
@@ -9796,10 +9803,10 @@ bool nsLayoutUtils::FrameIsMostlyScrolledOutOfViewInCrossProcess(
   BrowserChild* browserChild = BrowserChild::GetFrom(docShell);
   MOZ_ASSERT(browserChild);
 
-  Size scale =
+  auto scale =
       browserChild->GetChildToParentConversionMatrix().As2D().ScaleFactors();
-  ScreenSize margin(scale.width * CSSPixel::FromAppUnits(aMargin),
-                    scale.height * CSSPixel::FromAppUnits(aMargin));
+  ScreenSize margin(scale.xScale * CSSPixel::FromAppUnits(aMargin),
+                    scale.yScale * CSSPixel::FromAppUnits(aMargin));
 
   return visibleRect->width < margin.width ||
          visibleRect->height < margin.height;
@@ -9843,9 +9850,16 @@ template <typename SizeType>
           mozilla::PixelCastJustification::LayoutDeviceIsScreenForBounds)
           .height;
 
-  return SizeType(
-      aSize.width,
-      NSCoordSaturatingAdd(aSize.height, aSize.height * toolbarHeightRatio));
+  SizeType expandedSize = aSize;
+  static_assert(std::is_same_v<nsSize, SizeType> ||
+                std::is_same_v<CSSSize, SizeType>);
+  if constexpr (std::is_same_v<nsSize, SizeType>) {
+    expandedSize.height =
+        NSCoordSaturatingAdd(aSize.height, aSize.height * toolbarHeightRatio);
+  } else if (std::is_same_v<CSSSize, SizeType>) {
+    expandedSize.height = aSize.height + aSize.height * toolbarHeightRatio;
+  }
+  return expandedSize;
 }
 
 CSSSize nsLayoutUtils::ExpandHeightForDynamicToolbar(

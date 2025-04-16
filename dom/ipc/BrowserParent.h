@@ -317,10 +317,6 @@ class BrowserParent final : public PBrowserParent,
   already_AddRefed<CanonicalBrowsingContext> BrowsingContextForWebProgress(
       const WebProgressData& aWebProgressData);
 
-  mozilla::ipc::IPCResult RecvSessionStoreUpdate(
-      const Maybe<nsCString>& aDocShellCaps, const Maybe<bool>& aPrivatedMode,
-      const bool aNeedCollectSHistory, const uint32_t& aEpoch);
-
   mozilla::ipc::IPCResult RecvIntrinsicSizeOrRatioChanged(
       const Maybe<IntrinsicSize>& aIntrinsicSize,
       const Maybe<AspectRatio>& aIntrinsicRatio);
@@ -445,6 +441,8 @@ class BrowserParent final : public PBrowserParent,
       const IAccessibleHolder& aDocCOMProxy) override;
 #endif
 
+  already_AddRefed<PSessionStoreParent> AllocPSessionStoreParent();
+
   mozilla::ipc::IPCResult RecvNewWindowGlobal(
       ManagedEndpoint<PWindowGlobalParent>&& aEndpoint,
       const WindowGlobalInit& aInit);
@@ -553,7 +551,8 @@ class BrowserParent final : public PBrowserParent,
   mozilla::ipc::IPCResult RecvSynthesizeNativeTouchpadPan(
       const TouchpadGesturePhase& aEventPhase,
       const LayoutDeviceIntPoint& aPoint, const double& aDeltaX,
-      const double& aDeltaY, const int32_t& aModifierFlags);
+      const double& aDeltaY, const int32_t& aModifierFlags,
+      const uint64_t& aObserverId);
 
   mozilla::ipc::IPCResult RecvLockNativePointer();
 
@@ -706,6 +705,8 @@ class BrowserParent final : public PBrowserParent,
   bool GetHasLayers();
   bool GetRenderLayers();
   void SetRenderLayers(bool aRenderLayers);
+  bool GetPriorityHint();
+  void SetPriorityHint(bool aPriorityHint);
   void PreserveLayers(bool aPreserveLayers);
   void NotifyResolutionChanged();
 
@@ -962,6 +963,9 @@ class BrowserParent final : public PBrowserParent,
   // does not necessarily mean that the layers have finished rendering
   // and have uploaded - for that, use mHasLayers.
   bool mRenderLayers : 1;
+
+  // True if process should be set to a higher priority.
+  bool mPriorityHint : 1;
 
   // True if the compositor has reported that the BrowserChild has uploaded
   // layers.

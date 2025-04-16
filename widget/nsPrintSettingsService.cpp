@@ -5,12 +5,11 @@
 
 #include "nsPrintSettingsService.h"
 
-#include "mozilla/embedding/PPrinting.h"
+#include "mozilla/embedding/PPrintingTypes.h"
 #include "mozilla/layout/RemotePrintJobChild.h"
 #include "mozilla/RefPtr.h"
 #include "nsCoord.h"
 #include "nsIPrinterList.h"
-#include "nsPrintingProxy.h"
 #include "nsReadableUtils.h"
 #include "nsPrintSettingsImpl.h"
 #include "nsIPrintSession.h"
@@ -136,7 +135,6 @@ nsPrintSettingsService::SerializeToPrintData(nsIPrintSettings* aSettings,
   aSettings->GetFooterStrCenter(data->footerStrCenter());
   aSettings->GetFooterStrRight(data->footerStrRight());
 
-  aSettings->GetIsCancelled(&data->isCancelled());
   aSettings->GetPrintSilent(&data->printSilent());
   aSettings->GetShrinkToFit(&data->shrinkToFit());
 
@@ -225,7 +223,6 @@ nsPrintSettingsService::DeserializeToPrintSettings(const PrintData& data,
   settings->SetFooterStrCenter(data.footerStrCenter());
   settings->SetFooterStrRight(data.footerStrRight());
 
-  settings->SetIsCancelled(data.isCancelled());
   settings->SetPrintSilent(data.printSilent());
   settings->SetShrinkToFit(data.shrinkToFit());
 
@@ -950,7 +947,18 @@ nsresult nsPrintSettingsService::SavePrintSettingsToPrefs(
   nsresult rv = GetAdjustedPrinterName(aPS, aUsePrinterNamePrefix, prtName);
   NS_ENSURE_SUCCESS(rv, rv);
 
-  // Write the prefs, with or without a printer name prefix.
+#ifndef MOZ_WIDGET_ANDROID
+  // On most platforms we should always use a prefix when saving print settings
+  // to prefs.  Saving without a prefix risks breaking printing for users
+  // without a good way for us to fix things for them (unprefixed prefs act as
+  // defaults and can result in values being inappropriately propagated to
+  // prefixed prefs).
+  if (prtName.IsEmpty() && aFlags != nsIPrintSettings::kInitSavePrinterName) {
+    MOZ_DIAGNOSTIC_ASSERT(false, "Print settings must be saved with a prefix");
+    return NS_ERROR_FAILURE;
+  }
+#endif
+
   return WritePrefs(aPS, prtName, aFlags);
 }
 

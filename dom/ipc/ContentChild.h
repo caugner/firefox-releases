@@ -230,9 +230,7 @@ class ContentChild final : public PContentChild,
       PScriptCacheChild*, const FileDescOrError& cacheFile,
       const bool& wantCacheData) override;
 
-  PPrintingChild* AllocPPrintingChild();
-
-  bool DeallocPPrintingChild(PPrintingChild*);
+  PRemotePrintJobChild* AllocPRemotePrintJobChild();
 
   PChildToParentStreamChild* AllocPChildToParentStreamChild();
   bool DeallocPChildToParentStreamChild(PChildToParentStreamChild*);
@@ -805,16 +803,16 @@ class ContentChild final : public PContentChild,
       const MaybeDiscarded<BrowsingContext>& aContext, const uint32_t& aIndex,
       const uint32_t& aLength, const nsID& aChangeID);
 
+  mozilla::ipc::IPCResult RecvGetLayoutHistoryState(
+      const MaybeDiscarded<BrowsingContext>& aContext,
+      GetLayoutHistoryStateResolver&& aResolver);
+
   mozilla::ipc::IPCResult RecvDispatchLocationChangeEvent(
       const MaybeDiscarded<BrowsingContext>& aContext);
 
   mozilla::ipc::IPCResult RecvDispatchBeforeUnloadToSubtree(
       const MaybeDiscarded<BrowsingContext>& aStartingAt,
       DispatchBeforeUnloadToSubtreeResolver&& aResolver);
-
-  mozilla::ipc::IPCResult RecvFlushTabState(
-      const MaybeDiscarded<BrowsingContext>& aContext,
-      FlushTabStateResolver&& aResolver);
 
   mozilla::ipc::IPCResult RecvDecoderSupportedMimeTypes(
       nsTArray<nsCString>&& aSupportedTypes);

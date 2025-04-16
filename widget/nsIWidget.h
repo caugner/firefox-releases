@@ -150,8 +150,7 @@ typedef void* nsNativeWidget;
 #endif
 #ifdef MOZ_WIDGET_ANDROID
 #  define NS_JAVA_SURFACE 100
-#  define NS_PRESENTATION_WINDOW 101
-#  define NS_PRESENTATION_SURFACE 102
+#  define NS_JAVA_SURFACE_CONTROL 101
 #endif
 
 #define MOZ_WIDGET_MAX_SIZE 16384
@@ -1314,6 +1313,12 @@ class nsIWidget : public nsISupports {
     return mozilla::LayoutDeviceToLayoutDeviceMatrix4x4();
   }
 
+  mozilla::LayoutDeviceIntPoint WidgetToTopLevelWidgetOffset() {
+    return mozilla::LayoutDeviceIntPoint::Round(
+        WidgetToTopLevelWidgetTransform().TransformPoint(
+            mozilla::LayoutDevicePoint()));
+  }
+
   /**
    * Given the specified client size, return the corresponding window size,
    * which includes the area for the borders and titlebar. This method
@@ -1670,7 +1675,8 @@ class nsIWidget : public nsISupports {
   virtual nsresult SynthesizeNativeTouchpadPan(TouchpadGesturePhase aEventPhase,
                                                LayoutDeviceIntPoint aPoint,
                                                double aDeltaX, double aDeltaY,
-                                               int32_t aModifierFlags) = 0;
+                                               int32_t aModifierFlags,
+                                               nsIObserver* aObserver) = 0;
 
   virtual void StartAsyncScrollbarDrag(
       const AsyncDragMetrics& aDragMetrics) = 0;
@@ -1984,6 +1990,12 @@ class nsIWidget : public nsISupports {
    * Clear WebRender resources
    */
   virtual void ClearCachedWebrenderResources() {}
+
+  /**
+   * Request fast snapshot at RenderCompositor of WebRender.
+   * Since readback of Windows DirectComposition is very slow.
+   */
+  virtual bool SetNeedFastSnaphot() { return false; }
 
   /**
    * If this widget has its own vsync source, return it, otherwise return

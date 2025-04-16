@@ -675,7 +675,7 @@ WithEnvironmentObject* WithEnvironmentObject::createNonSyntactic(
 }
 
 static inline bool IsUnscopableDotName(JSContext* cx, HandleId id) {
-  return id.isAtom(cx->names().dotThis);
+  return id.isAtom(cx->names().dotThis) || id.isAtom(cx->names().dotNewTarget);
 }
 
 #ifdef DEBUG
@@ -687,6 +687,7 @@ static bool IsInternalDotName(JSContext* cx, HandleId id) {
          id.isAtom(cx->names().dotStaticInitializers) ||
          id.isAtom(cx->names().dotStaticFieldKeys) ||
          id.isAtom(cx->names().dotArgs) ||
+         id.isAtom(cx->names().dotNewTarget) ||
          id.isAtom(cx->names().starNamespaceStar);
 }
 #endif
@@ -715,7 +716,8 @@ static bool CheckUnscopables(JSContext* cx, HandleObject obj, HandleId id,
 static bool with_LookupProperty(JSContext* cx, HandleObject obj, HandleId id,
                                 MutableHandleObject objp,
                                 PropertyResult* propp) {
-  // SpiderMonkey-specific: consider the internal '.this' name to be unscopable.
+  // SpiderMonkey-specific: consider the internal '.this' and '.newTarget' names
+  // to be unscopable.
   if (IsUnscopableDotName(cx, id)) {
     objp.set(nullptr);
     propp->setNotFound();

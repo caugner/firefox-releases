@@ -154,7 +154,6 @@ module.exports = {
     // See bug 1224289.
     "mozilla/reject-importGlobalProperties": ["error", "everything"],
     "mozilla/var-only-at-top-level": "error",
-    "mozilla/use-chromeutils-import": ["error", { allowCu: true }],
 
     // Rules from the React plugin
     "react/display-name": "error",
@@ -393,5 +392,10 @@ module.exports = {
     // require assignment operator shorthand where possible or prohibit it
     // entirely
     "operator-assignment": "off",
+  },
+  settings: {
+    react: {
+      version: "16.8",
+    },
   },
 };

@@ -616,6 +616,7 @@ void MBasicBlock::discardResumePoint(
   if (refType & RefType_DiscardOperands) {
     rp->releaseUses();
   }
+  rp->setDiscarded();
 #ifdef DEBUG
   MResumePointIterator iter = resumePointsBegin();
   while (*iter != rp) {
@@ -668,14 +669,6 @@ void MBasicBlock::discardIgnoreOperands(MInstruction* ins) {
 
   prepareForDiscard(ins, RefType_IgnoreOperands);
   instructions_.remove(ins);
-}
-
-void MBasicBlock::discardDef(MDefinition* at) {
-  if (at->isPhi()) {
-    at->block()->discardPhi(at->toPhi());
-  } else {
-    at->block()->discard(at->toInstruction());
-  }
 }
 
 void MBasicBlock::discardAllInstructions() {

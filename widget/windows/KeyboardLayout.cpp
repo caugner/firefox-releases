@@ -1969,6 +1969,7 @@ uint32_t NativeKey::GetKeyLocation() const {
     case VK_CONTROL:
     case VK_MENU:
       NS_WARNING("Failed to decide the key location?");
+      [[fallthrough]];
 
     default:
       return eKeyLocationStandard;
@@ -2023,15 +2024,12 @@ nsEventStatus NativeKey::InitKeyEvent(
       if (mCharMessageHasGone) {
         aKeyEvent.PreventDefaultBeforeDispatch(CrossProcessForwarding::eAllow);
       }
-      [[fallthrough]];
-    case eKeyDownOnPlugin:
       aKeyEvent.mKeyCode = mDOMKeyCode;
       // Unique id for this keydown event and its associated keypress.
       sUniqueKeyEventId++;
       aKeyEvent.mUniqueId = sUniqueKeyEventId;
       break;
     case eKeyUp:
-    case eKeyUpOnPlugin:
       aKeyEvent.mKeyCode = mDOMKeyCode;
       // Set defaultPrevented of the key event if the VK_MENU is not a system
       // key release, so that the menu bar does not trigger.  This helps avoid

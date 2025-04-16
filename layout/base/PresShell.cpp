@@ -758,7 +758,7 @@ already_AddRefed<nsFrameSelection> PresShell::FrameSelection() {
 
 //----------------------------------------------------------------------
 
-static uint32_t sNextPresShellId;
+static uint32_t sNextPresShellId = 0;
 
 /* static */
 bool PresShell::AccessibleCaretEnabled(nsIDocShell* aDocShell) {
@@ -780,10 +780,13 @@ PresShell::PresShell(Document* aDocument)
     : mDocument(aDocument),
       mViewManager(nullptr),
       mFrameManager(nullptr),
+#ifdef MOZ_DIAGNOSTIC_ASSERT_ENABLED
+      mAllocatedPointers(MakeUnique<nsTHashSet<void*>>()),
+#endif  // MOZ_DIAGNOSTIC_ASSERT_ENABLED
       mAutoWeakFrames(nullptr),
 #ifdef ACCESSIBILITY
       mDocAccessible(nullptr),
-#endif  // #ifdef ACCESSIBILITY
+#endif  // ACCESSIBILITY
       mCurrentEventFrame(nullptr),
       mMouseLocation(NS_UNCONSTRAINEDSIZE, NS_UNCONSTRAINEDSIZE),
       mLastResolutionChangeOrigin(ResolutionChangeOrigin::Apz),
@@ -791,7 +794,7 @@ PresShell::PresShell(Document* aDocument)
       mAPZFocusSequenceNumber(0),
       mCanvasBackgroundColor(NS_RGBA(0, 0, 0, 0)),
       mActiveSuppressDisplayport(0),
-      mPresShellId(sNextPresShellId++),
+      mPresShellId(++sNextPresShellId),
       mFontSizeInflationEmPerLine(0),
       mFontSizeInflationMinTwips(0),
       mFontSizeInflationLineThreshold(0),
@@ -896,7 +899,7 @@ PresShell::~PresShell() {
                    mLastCallbackEventRequest == nullptr,
                "post-reflow queues not empty.  This means we're leaking");
 
-  MOZ_ASSERT(mAllocatedPointers.IsEmpty(),
+  MOZ_ASSERT(!mAllocatedPointers || mAllocatedPointers->IsEmpty(),
              "Some pres arena objects were not freed");
 
   mFrameManager = nullptr;
@@ -3654,7 +3657,7 @@ void PresShell::DoScrollContentIntoView() {
   NS_ASSERTION(mDidInitialize, "should have done initial reflow by now");
 
   nsIFrame* frame = mContentToScrollTo->GetPrimaryFrame();
-  if (!frame) {
+  if (!frame || frame->AncestorHidesContent()) {
     mContentToScrollTo->RemoveProperty(nsGkAtoms::scrolling);
     mContentToScrollTo = nullptr;
     return;
@@ -3667,16 +3670,21 @@ void PresShell::DoScrollContentIntoView() {
     return;
   }
 
-  // Make sure we skip 'frame' ... if it's scrollable, we should use its
-  // scrollable ancestor as the container.
+  // We really just need a non-fragmented frame so that we can accumulate the
+  // bounds of all our continuations relative to it. We shouldn't jump out of
+  // our nearest scrollable frame, and that's an ok reference frame, so try to
+  // use that, or the root frame if there's nothing to scroll in this document.
   nsIFrame* container = nsLayoutUtils::GetClosestFrameOfType(
       frame->GetParent(), LayoutFrameType::Scroll);
   if (!container) {
-    // nothing can be scrolled
-    return;
+    container = frame->PresShell()->GetRootFrame();
+    MOZ_DIAGNOSTIC_ASSERT(container);
+    if (!container) {
+      return;
+    }
   }
 
-  ScrollIntoViewData* data = static_cast<ScrollIntoViewData*>(
+  auto* data = static_cast<ScrollIntoViewData*>(
       mContentToScrollTo->GetProperty(nsGkAtoms::scrolling));
   if (MOZ_UNLIKELY(!data)) {
     mContentToScrollTo = nullptr;
@@ -3725,6 +3733,10 @@ bool PresShell::ScrollFrameRectIntoView(nsIFrame* aFrame, const nsRect& aRect,
                                         ScrollAxis aVertical,
                                         ScrollAxis aHorizontal,
                                         ScrollFlags aScrollFlags) {
+  if (aFrame->AncestorHidesContent()) {
+    return false;
+  }
+
   bool didScroll = false;
   // This function needs to work even if rect has a width or height of 0.
   nsRect rect = aRect;

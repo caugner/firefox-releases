@@ -10,6 +10,7 @@
 #include "mozilla/ComposerCommandsUpdater.h"
 #include "mozilla/CSSEditUtils.h"
 #include "mozilla/EditorBase.h"
+#include "mozilla/EditorForwards.h"
 #include "mozilla/EditorUtils.h"
 #include "mozilla/HTMLEditHelpers.h"
 #include "mozilla/ManualNAC.h"
@@ -47,25 +48,12 @@ namespace mozilla {
 class AlignStateAtSelection;
 class AutoSelectionSetterAfterTableEdit;
 class AutoSetTemporaryAncestorLimiter;
-class EditActionResult;
-class EditResult;
 class EmptyEditableFunctor;
-class JoinNodesTransaction;
 class ListElementSelectionState;
 class ListItemElementSelectionState;
-class MoveNodeResult;
 class ParagraphStateAtSelection;
 class ResizerSelectionListener;
 class Runnable;
-class SplitNodeTransaction;
-class SplitRangeOffFromNodeResult;
-class SplitRangeOffResult;
-class WhiteSpaceVisibilityKeeper;
-class WSRunScanner;
-class WSScanResult;
-enum class EditSubAction : int32_t;
-enum class SpecifiedStyle : uint8_t;
-struct PropItem;
 template <class T>
 class OwningNonNull;
 namespace dom {
@@ -73,6 +61,7 @@ class AbstractRange;
 class Blob;
 class DocumentFragment;
 class Event;
+class HTMLBRElement;
 class MouseEvent;
 class StaticRange;
 }  // namespace dom
@@ -795,10 +784,10 @@ class HTMLEditor final : public EditorBase,
   /**
    * InsertTextWithTransaction() inserts aStringToInsert at aPointToInsert.
    */
-  MOZ_CAN_RUN_SCRIPT nsresult InsertTextWithTransaction(
-      Document& aDocument, const nsAString& aStringToInsert,
-      const EditorRawDOMPoint& aPointToInsert,
-      EditorRawDOMPoint* aPointAfterInsertedString = nullptr) final;
+  [[nodiscard]] MOZ_CAN_RUN_SCRIPT Result<EditorDOMPoint, nsresult>
+  InsertTextWithTransaction(Document& aDocument,
+                            const nsAString& aStringToInsert,
+                            const EditorDOMPoint& aPointToInsert) final;
 
   /**
    * CopyLastEditableChildStyles() clones inline container elements into
@@ -807,14 +796,17 @@ class HTMLEditor final : public EditorBase,
    * @param aPreviousBlock      The previous block element.  All inline
    *                            elements which are last sibling of each level
    *                            are cloned to aNewBlock.
-   * @param aNewBlock           New block container element.
-   * @param aNewBRElement       If this method creates a new <br> element for
-   *                            placeholder, this is set to the new <br>
+   * @param aNewBlock           New block container element.  All children of
+   *                            this is deleted first.
+   * @param aEditingHost        Current editing host.
+   * @return                    If this method creates a new <br> element for
+   *                            placeholder, this returns the new <br>
    *                            element.
    */
-  MOZ_CAN_RUN_SCRIPT nsresult CopyLastEditableChildStylesWithTransaction(
-      Element& aPreviousBlock, Element& aNewBlock,
-      RefPtr<Element>* aNewBRElement);
+  [[nodiscard]] MOZ_CAN_RUN_SCRIPT Result<RefPtr<dom::HTMLBRElement>, nsresult>
+  CopyLastEditableChildStylesWithTransaction(Element& aPreviousBlock,
+                                             Element& aNewBlock,
+                                             Element& aEditingHost);
 
   /**
    * RemoveBlockContainerWithTransaction() removes aElement from the DOM tree
@@ -1120,23 +1112,29 @@ class HTMLEditor final : public EditorBase,
   CreateStyleForInsertText(const dom::AbstractRange& aAbstractRange);
 
   /**
-   * GetMostAncestorMailCiteElement() returns most-ancestor mail cite element.
-   * "mail cite element" is <pre> element when it's in plaintext editor mode
-   * or an element with which calling HTMLEditUtils::IsMailCite() returns true.
+   * GetMostDistantAncestorMailCiteElement() returns most-ancestor mail cite
+   * element. "mail cite element" is <pre> element when it's in plaintext editor
+   * mode or an element with which calling HTMLEditUtils::IsMailCite() returns
+   * true.
    *
    * @param aNode       The start node to look for parent mail cite elements.
    */
-  Element* GetMostAncestorMailCiteElement(nsINode& aNode) const;
+  Element* GetMostDistantAncestorMailCiteElement(const nsINode& aNode) const;
 
   /**
-   * SplitMailCiteElements() splits mail-cite elements at start of Selection if
-   * Selection starts from inside a mail-cite element.  Of course, if it's
-   * necessary, this inserts <br> node to new left nodes or existing right
-   * nodes.
-   * XXX This modifies Selection, but should return SplitNodeResult() instead.
+   * HandleInsertParagraphInMailCiteElement() splits aMailCiteElement at
+   * aPointToSplit.
+   *
+   * @param aMailCiteElement    The mail-cite element which should be split.
+   * @param aPointToSplit       The point to split.
+   * @param aEditingHost        Current editing host element.
+   * @return                    Candidate caret position where is at inserted
+   *                            <br> element into the split point.
    */
-  [[nodiscard]] MOZ_CAN_RUN_SCRIPT EditActionResult
-  SplitMailCiteElements(const EditorDOMPoint& aPointToSplit);
+  [[nodiscard]] MOZ_CAN_RUN_SCRIPT Result<EditorDOMPoint, nsresult>
+  HandleInsertParagraphInMailCiteElement(Element& aMailCiteElement,
+                                         const EditorDOMPoint& aPointToSplit,
+                                         Element& aEditingHost);
 
   /**
    * HandleInsertBRElement() inserts a <br> element into aInsertToBreak.
@@ -1737,27 +1735,31 @@ class HTMLEditor final : public EditorBase,
   /**
    * HandleInsertParagraphInHeadingElement() handles insertParagraph command
    * (i.e., handling Enter key press) in a heading element.  This splits
-   * aHeader element at aPointToSplit.  Then, if right heading element is
-   * empty, it'll be removed and new paragraph is created (its type is decided
-   * with default paragraph separator).
+   * aHeadingElement element at aPointToSplit.  Then, if right heading element
+   * is empty, it'll be removed and new paragraph is created (its type is
+   * decided with default paragraph separator).
    *
-   * @param aHeader             The heading element to be split.
-   * @param aPointToSplit       The point to split aHeader.
+   * @param aHeadingElement     The heading element to be split.
+   * @param aPointToSplit       The point to split aHeadingElement.
+   * @return                    A candidate position to put caret.
    */
-  [[nodiscard]] MOZ_CAN_RUN_SCRIPT nsresult
-  HandleInsertParagraphInHeadingElement(Element& aHeader,
+  [[nodiscard]] MOZ_CAN_RUN_SCRIPT Result<EditorDOMPoint, nsresult>
+  HandleInsertParagraphInHeadingElement(Element& aHeadingElement,
                                         const EditorDOMPoint& aPointToSplit);
 
   /**
    * HandleInsertParagraphInListItemElement() handles insertParagraph command
    * (i.e., handling Enter key press) in a list item element.
    *
-   * @param aListItem           The list item which has the following point.
-   * @param aPointToSplit       The point to split aListItem.
+   * @param aListItemElement    The list item which has the following point.
+   * @param aPointToSplit       The point to split aListItemElement.
+   * @param aEditingHost        The editing host for aListItemElement
+   * @return                    A candidate position to put caret.
    */
-  [[nodiscard]] MOZ_CAN_RUN_SCRIPT nsresult
-  HandleInsertParagraphInListItemElement(Element& aListItem,
-                                         const EditorDOMPoint& aPointToSplit);
+  [[nodiscard]] MOZ_CAN_RUN_SCRIPT Result<EditorDOMPoint, nsresult>
+  HandleInsertParagraphInListItemElement(Element& aListItemElement,
+                                         const EditorDOMPoint& aPointToSplit,
+                                         Element& aEditingHost);
 
   /**
    * InsertParagraphSeparatorAsSubAction() handles insertPargraph commad
@@ -2848,39 +2850,6 @@ class HTMLEditor final : public EditorBase,
 
  protected:  // Shouldn't be used by friend classes
   virtual ~HTMLEditor();
-
-  template <typename PT, typename CT>
-  [[nodiscard]] MOZ_CAN_RUN_SCRIPT MOZ_NEVER_INLINE_DEBUG nsresult
-  CollapseSelectionTo(const EditorDOMPointBase<PT, CT>& aPoint) const {
-    ErrorResult error;
-    CollapseSelectionTo(aPoint, error);
-    return error.StealNSResult();
-  }
-
-  template <typename PT, typename CT>
-  MOZ_CAN_RUN_SCRIPT MOZ_NEVER_INLINE_DEBUG void CollapseSelectionTo(
-      const EditorDOMPointBase<PT, CT>& aPoint, ErrorResult& aRv) const {
-    MOZ_ASSERT(IsEditActionDataAvailable());
-    MOZ_ASSERT(!aRv.Failed());
-
-    SelectionRef().CollapseInLimiter(aPoint, aRv);
-    if (NS_WARN_IF(Destroyed())) {
-      aRv = NS_ERROR_EDITOR_DESTROYED;
-      return;
-    }
-    NS_WARNING_ASSERTION(!aRv.Failed(),
-                         "Selection::CollapseInLimiter() failed");
-  }
-
-  [[nodiscard]] MOZ_CAN_RUN_SCRIPT MOZ_NEVER_INLINE_DEBUG nsresult
-  CollapseSelectionToStartOf(nsINode& aNode) {
-    return CollapseSelectionTo(EditorRawDOMPoint(&aNode, 0));
-  }
-
-  MOZ_CAN_RUN_SCRIPT MOZ_NEVER_INLINE_DEBUG void CollapseSelectionToStartOf(
-      nsINode& aNode, ErrorResult& aRv) const {
-    CollapseSelectionTo(EditorRawDOMPoint(&aNode, 0), aRv);
-  }
 
   /**
    * InitEditorContentAndSelection() may insert `<br>` elements and padding

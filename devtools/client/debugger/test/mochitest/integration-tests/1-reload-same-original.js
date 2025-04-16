@@ -7,6 +7,13 @@
 /**
  * This first test will focus on original.js file whose content changes
  * which affects the related generated file: bundle.js
+ *
+ * In the first reload, v2/original.js will only change with new lines being added
+ * before the line where we set a breakpoint. So that the breakpoint, if not
+ * automatically shifted, will now be against an empty line.
+ *
+ * In the second reload, v3/original.js will be trimmed, so that the line
+ * where we set a breakpoint against, has been removed.
  */
 
 "use strict";
@@ -25,6 +32,11 @@ addIntegrationTask(async function testReloadingStableOriginalSource(
 
   info("Check that only one breakpoint is set");
   is(dbg.selectors.getBreakpointCount(), 1, "Only one breakpoint exists");
+  is(
+    dbg.client.getServerBreakpointsList().length,
+    1,
+    "One breakpoint exists on the server"
+  );
 
   info("Check that the breakpoint location info is correct");
   let breakpoint = dbg.selectors.getBreakpointsList(dbg)[0];
@@ -73,6 +85,11 @@ addIntegrationTask(async function testReloadingStableOriginalSource(
 
   info("Check that only one breakpoint is set");
   is(dbg.selectors.getBreakpointCount(), 1, "Only one breakpoint exists");
+  is(
+    dbg.client.getServerBreakpointsList().length,
+    1,
+    "One breakpoint exists on the server"
+  );
 
   info("Check that the original location has changed");
   breakpoint = dbg.selectors.getBreakpointsList(dbg)[0];
@@ -130,6 +147,11 @@ addIntegrationTask(async function testReloadingStableOriginalSource(
   await addBreakpoint(dbg, "original.js", 13);
 
   is(dbg.selectors.getBreakpointCount(dbg), 2, "Two breakpoints exist");
+  is(
+    dbg.client.getServerBreakpointsList().length,
+    2,
+    "Two breakpoint exists on the server"
+  );
 
   info("Check that the original location of the new breakpoint is correct");
   breakpoint = dbg.selectors.getBreakpointsList(dbg)[1];
@@ -153,4 +175,10 @@ addIntegrationTask(async function testReloadingStableOriginalSource(
 
   assertNotPaused(dbg);
   is(dbg.selectors.getBreakpointCount(dbg), 0, "No breakpoints");
+  // TODO: fails intermitently, look to fix
+  /*is(
+    dbg.client.getServerBreakpointsList().length,
+    2,
+    "No breakpoint exists on the server"
+  );*/
 });

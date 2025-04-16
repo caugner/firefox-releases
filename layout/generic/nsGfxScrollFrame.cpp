@@ -584,9 +584,9 @@ bool nsHTMLScrollFrame::TryLayout(ScrollReflowInput& aState,
 
   // First, compute our inside-border size and scrollport size
   // XXXldb Can we depend more on ComputeSize here?
-  nsSize kidSize = aState.mReflowInput.mStyleDisplay->IsContainSize()
-                       ? nsSize(0, 0)
-                       : aKidMetrics->PhysicalSize();
+  nsSize kidSize =
+      aState.mReflowInput.mStyleDisplay->GetContainSizeAxes().ContainSize(
+          aKidMetrics->PhysicalSize(), wm);
   const nsSize desiredInsideBorderSize = kidSize + scrollbarGutterSize;
   aState.mInsideBorderSize =
       ComputeInsideBorderSize(aState, desiredInsideBorderSize);
@@ -969,7 +969,8 @@ bool nsHTMLScrollFrame::InInitialReflow() const {
 
 void nsHTMLScrollFrame::ReflowContents(ScrollReflowInput& aState,
                                        const ReflowOutput& aDesiredSize) {
-  ReflowOutput kidDesiredSize(aDesiredSize.GetWritingMode());
+  const WritingMode desiredWm = aDesiredSize.GetWritingMode();
+  ReflowOutput kidDesiredSize(desiredWm);
   ReflowScrolledFrame(aState, GuessHScrollbarNeeded(aState),
                       GuessVScrollbarNeeded(aState), &kidDesiredSize);
 
@@ -996,9 +997,9 @@ void nsHTMLScrollFrame::ReflowContents(ScrollReflowInput& aState,
        aState.mReflowedContentsWithVScrollbar) &&
       aState.mVScrollbar != ShowScrollbar::Always &&
       aState.mHScrollbar != ShowScrollbar::Always) {
-    nsSize kidSize = aState.mReflowInput.mStyleDisplay->IsContainSize()
-                         ? nsSize(0, 0)
-                         : kidDesiredSize.PhysicalSize();
+    nsSize kidSize =
+        aState.mReflowInput.mStyleDisplay->GetContainSizeAxes().ContainSize(
+            kidDesiredSize.PhysicalSize(), desiredWm);
     nsSize insideBorderSize = ComputeInsideBorderSize(aState, kidSize);
     nsRect scrolledRect = mHelper.GetUnsnappedScrolledRectInternal(
         kidDesiredSize.ScrollableOverflow(), insideBorderSize);
@@ -1160,7 +1161,7 @@ static bool IsMarqueeScrollbox(const nsIFrame& aScrollFrame) {
 /* virtual */
 nscoord nsHTMLScrollFrame::GetMinISize(gfxContext* aRenderingContext) {
   nscoord result = [&] {
-    if (StyleDisplay()->IsContainSize()) {
+    if (StyleDisplay()->GetContainSizeAxes().mIContained) {
       return 0;
     }
     if (MOZ_UNLIKELY(IsMarqueeScrollbox(*this))) {
@@ -1176,7 +1177,7 @@ nscoord nsHTMLScrollFrame::GetMinISize(gfxContext* aRenderingContext) {
 /* virtual */
 nscoord nsHTMLScrollFrame::GetPrefISize(gfxContext* aRenderingContext) {
   nscoord result =
-      StyleDisplay()->IsContainSize()
+      StyleDisplay()->GetContainSizeAxes().mIContained
           ? 0
           : mHelper.mScrolledFrame->GetPrefISize(aRenderingContext);
   DISPLAY_PREF_INLINE_SIZE(this, result);
@@ -3688,6 +3689,41 @@ class MOZ_RAII AutoContainsBlendModeCapturer {
   }
 };
 
+// This is an equivalent to the AutoContainsBlendModeCapturer helper class
+// above but for backdrop filters.
+class MOZ_RAII AutoContainsBackdropFilterCapturer {
+  nsDisplayListBuilder& mBuilder;
+  bool mSavedContainsBackdropFilter;
+
+ public:
+  explicit AutoContainsBackdropFilterCapturer(nsDisplayListBuilder& aBuilder)
+      : mBuilder(aBuilder),
+        mSavedContainsBackdropFilter(aBuilder.ContainsBackdropFilter()) {
+    mBuilder.SetContainsBackdropFilter(false);
+  }
+
+  bool CaptureContainsBackdropFilter() {
+    // "Capture" the flag by extracting and clearing the ContainsBackdropFilter
+    // flag on the builder.
+    bool capturedBackdropFilter = mBuilder.ContainsBackdropFilter();
+    mBuilder.SetContainsBackdropFilter(false);
+    return capturedBackdropFilter;
+  }
+
+  ~AutoContainsBackdropFilterCapturer() {
+    // If CaptureContainsBackdropFilter() was called, the descendant filter was
+    // "captured" and so uncapturedContainsBackdropFilter will be false. If
+    // CaptureContainsBackdropFilter() wasn't called, then no capture occurred,
+    // and uncapturedContainsBackdropFilter may be true if there was a
+    // descendant filter. In that case, we set the flag on the DL builder so
+    // that we restore state to what it would have been without this RAII class
+    // on the stack.
+    bool uncapturedContainsBackdropFilter = mBuilder.ContainsBackdropFilter();
+    mBuilder.SetContainsBackdropFilter(mSavedContainsBackdropFilter ||
+                                       uncapturedContainsBackdropFilter);
+  }
+};
+
 // Finds the max z-index of the items in aList that meet the following
 // conditions
 //   1) have z-index auto or z-index >= 0.
@@ -3907,6 +3943,7 @@ void ScrollFrameHelper::BuildDisplayList(nsDisplayListBuilder* aBuilder,
 
   nsDisplayListCollection set(aBuilder);
   AutoContainsBlendModeCapturer blendCapture(*aBuilder);
+  AutoContainsBackdropFilterCapturer backdropFilterCapture(*aBuilder);
 
   bool willBuildAsyncZoomContainer =
       mWillBuildScrollableLayer && aBuilder->ShouldBuildAsyncZoomContainer() &&
@@ -4161,6 +4198,30 @@ void ScrollFrameHelper::BuildDisplayList(nsDisplayListBuilder* aBuilder,
       // if there's a blend container involved. There is equivalent code to this
       // in the BuildDisplayListForStackingContext function as well, with a more
       // detailed comment explaining things better.
+      if (aBuilder->IsRetainingDisplayList()) {
+        if (aBuilder->IsPartialUpdate()) {
+          aBuilder->SetPartialBuildFailed(true);
+        } else {
+          aBuilder->SetDisablePartialUpdates(true);
+        }
+      }
+    }
+
+    if (backdropFilterCapture.CaptureContainsBackdropFilter()) {
+      // The async zoom contents contain a backdrop-filter, so let's wrap all
+      // those contents into a backdrop root container, and then wrap the
+      // backdrop container in the async zoom container. Otherwise the
+      // backdrop-root container ends up outside the zoom container which
+      // results in blend failure for WebRender.
+      resultList.AppendNewToTop<nsDisplayBackdropRootContainer>(
+          aBuilder, mOuter, &resultList, aBuilder->CurrentActiveScrolledRoot());
+
+      // Backdrop root containers can be created or omitted during partial
+      // updates depending on the dirty rect. So we basically can't do partial
+      // updates if there's a backdrop root container involved. There is
+      // equivalent code to this in the BuildDisplayListForStackingContext
+      // function as well, with a more detailed comment explaining things
+      // better.
       if (aBuilder->IsRetainingDisplayList()) {
         if (aBuilder->IsPartialUpdate()) {
           aBuilder->SetPartialBuildFailed(true);
@@ -7139,12 +7200,12 @@ nsRect ScrollFrameHelper::GetScrolledRect() const {
   nsRect result = GetUnsnappedScrolledRectInternal(
       mScrolledFrame->ScrollableOverflowRect(), mScrollPort.Size());
 
-  if (result.width < mScrollPort.width) {
+#if 0
+  // This happens often enough.
+  if (result.width < mScrollPort.width || result.height < mScrollPort.height) {
     NS_WARNING("Scrolled rect smaller than scrollport?");
   }
-  if (result.height < mScrollPort.height) {
-    NS_WARNING("Scrolled rect smaller than scrollport?");
-  }
+#endif
 
   // Expand / contract the result by up to half a layer pixel so that scrolling
   // to the right / bottom edge does not change the layer pixel alignment of

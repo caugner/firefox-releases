@@ -502,8 +502,7 @@ bool BaselineCacheIRCompiler::emitCallScriptedGetterShared(
 
   // Handle arguments underflow.
   Label noUnderflow;
-  masm.load32(Address(callee, JSFunction::offsetOfFlagsAndArgCount()), callee);
-  masm.rshift32(Imm32(JSFunction::ArgCountShift), callee);
+  masm.loadFunctionArgCount(callee, callee);
   masm.branch32(Assembler::Equal, callee, Imm32(0), &noUnderflow);
 
   // Call the arguments rectifier.
@@ -1060,6 +1059,41 @@ bool BaselineCacheIRCompiler::emitPackedArraySliceResult(
   return true;
 }
 
+bool BaselineCacheIRCompiler::emitArgumentsSliceResult(
+    uint32_t templateObjectOffset, ObjOperandId argsId, Int32OperandId beginId,
+    Int32OperandId endId) {
+  JitSpew(JitSpew_Codegen, "%s", __FUNCTION__);
+
+  AutoOutputRegister output(*this);
+  AutoScratchRegisterMaybeOutput scratch(allocator, masm, output);
+
+  Register args = allocator.useRegister(masm, argsId);
+  Register begin = allocator.useRegister(masm, beginId);
+  Register end = allocator.useRegister(masm, endId);
+
+  allocator.discardStack(masm);
+
+  AutoStubFrame stubFrame(*this);
+  stubFrame.enter(masm, scratch);
+
+  // Don't attempt to pre-allocate the object, instead always use the slow path.
+  ImmPtr result(nullptr);
+
+  masm.Push(result);
+  masm.Push(end);
+  masm.Push(begin);
+  masm.Push(args);
+
+  using Fn =
+      JSObject* (*)(JSContext*, HandleObject, int32_t, int32_t, HandleObject);
+  callVM<Fn, ArgumentsSliceDense>(masm);
+
+  stubFrame.leave(masm);
+
+  masm.tagValue(JSVAL_TYPE_OBJECT, ReturnReg, output.valueReg());
+  return true;
+}
+
 bool BaselineCacheIRCompiler::emitIsArrayResult(ValOperandId inputId) {
   JitSpew(JitSpew_Codegen, "%s", __FUNCTION__);
 
@@ -1577,9 +1611,7 @@ bool BaselineCacheIRCompiler::emitCallScriptedSetterShared(
   // can be used as scratch.
   Label noUnderflow;
   Register scratch2 = val.scratchReg();
-  masm.load32(Address(callee, JSFunction::offsetOfFlagsAndArgCount()),
-              scratch2);
-  masm.rshift32(Imm32(JSFunction::ArgCountShift), scratch2);
+  masm.loadFunctionArgCount(callee, scratch2);
   masm.branch32(Assembler::BelowOrEqual, scratch2, Imm32(1), &noUnderflow);
 
   // Call the arguments rectifier.
@@ -2871,9 +2903,7 @@ bool BaselineCacheIRCompiler::emitCallScriptedFunction(ObjOperandId calleeId,
 
   // Handle arguments underflow.
   Label noUnderflow;
-  masm.load32(Address(calleeReg, JSFunction::offsetOfFlagsAndArgCount()),
-              calleeReg);
-  masm.rshift32(Imm32(JSFunction::ArgCountShift), calleeReg);
+  masm.loadFunctionArgCount(calleeReg, calleeReg);
   masm.branch32(Assembler::AboveOrEqual, argcReg, calleeReg, &noUnderflow);
   {
     // Call the arguments rectifier.
@@ -2983,9 +3013,7 @@ bool BaselineCacheIRCompiler::emitCallInlinedFunction(ObjOperandId calleeId,
 
   // Handle arguments underflow.
   Label noUnderflow;
-  masm.load32(Address(calleeReg, JSFunction::offsetOfFlagsAndArgCount()),
-              calleeReg);
-  masm.rshift32(Imm32(JSFunction::ArgCountShift), calleeReg);
+  masm.loadFunctionArgCount(calleeReg, calleeReg);
   masm.branch32(Assembler::AboveOrEqual, argcReg, calleeReg, &noUnderflow);
 
   // Call the trial-inlining arguments rectifier.

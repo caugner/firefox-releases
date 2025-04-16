@@ -111,18 +111,6 @@ pref("security.pki.sha1_enforcement_level", 3);
 // x_11_x: COSE is required, PKCS#7 disabled (fail when present)
 pref("security.signed_app_signatures.policy", 2);
 
-// security.pki.name_matching_mode controls how the platform matches hostnames
-// to name information in TLS certificates. The possible values are:
-// 0: always fall back to the subject common name if necessary (as in, if the
-//    subject alternative name extension is either not present or does not
-//    contain any DNS names or IP addresses)
-// 1: fall back to the subject common name for certificates valid before 23
-//    August 2016 if necessary
-// 2: fall back to the subject common name for certificates valid before 23
-//    August 2015 if necessary
-// 3: only use name information from the subject alternative name extension
-pref("security.pki.name_matching_mode", 3);
-
 // security.pki.netscape_step_up_policy controls how the platform handles the
 // id-Netscape-stepUp OID in extended key usage extensions of CA certificates.
 // 0: id-Netscape-stepUp is always considered equivalent to id-kp-serverAuth
@@ -410,16 +398,13 @@ pref("media.decoder-doctor.verbose", false);
 pref("media.decoder-doctor.new-issue-endpoint", "https://webcompat.com/issues/new");
 
 pref("media.videocontrols.picture-in-picture.enabled", false);
-#ifdef NIGHTLY_BUILD
 pref("media.videocontrols.picture-in-picture.display-text-tracks.enabled", true);
-#else
-pref("media.videocontrols.picture-in-picture.display-text-tracks.enabled", false);
-#endif
 pref("media.videocontrols.picture-in-picture.video-toggle.enabled", false);
 pref("media.videocontrols.picture-in-picture.video-toggle.always-show", false);
 pref("media.videocontrols.picture-in-picture.video-toggle.min-video-secs", 45);
 pref("media.videocontrols.picture-in-picture.video-toggle.position", "right");
 pref("media.videocontrols.picture-in-picture.video-toggle.has-used", false);
+pref("media.videocontrols.picture-in-picture.display-text-tracks.size", "medium");
 pref("media.videocontrols.keyboard-tab-to-all-controls", true);
 
 #ifdef MOZ_WEBRTC
@@ -952,6 +937,11 @@ pref("browser.fixup.fallback-to-https", true);
 // encounter a printer for the first time, but only a subset of prefs will be
 // used in this case.  See nsPrintSettingsService::InitPrintSettingsFromPrefs
 // for the restrictions on which prefs can act as defaults.
+
+// Whether we directly use the system print dialog to collect the user's print
+// settings rather than using the tab-modal print preview dialog.
+// Note: `print.always_print_silent` overrides this.
+pref("print.prefer_system_dialog", false);
 
 // Print/Preview Shrink-To-Fit won't shrink below 20% for text-ish documents.
 pref("print.shrink-to-fit.scale-limit-percent", 20);
@@ -2209,6 +2199,11 @@ pref("extensions.blocklist.addonItemURL", "https://addons.mozilla.org/%LOCALE%/%
 // Controls what level the blocklist switches from warning about items to forcibly
 // blocking them.
 pref("extensions.blocklist.level", 2);
+// Whether event pages should be enabled for "manifest_version: 2" extensions.
+pref("extensions.eventPages.enabled", false);
+// Whether "manifest_version: 3" extensions should be allowed to install successfully.
+pref("extensions.manifestV3.enabled", false);
+
 // Blocklist via settings server (Kinto)
 pref("services.blocklist.bucket", "blocklists");
 pref("services.blocklist.addons.collection", "addons");
@@ -2425,9 +2420,6 @@ pref("plugins.favorfallback.rules", "");
   #endif
 #endif
 
-pref("dom.ipc.plugins.flash.disable-protected-mode", false);
-
-pref("dom.ipc.plugins.flash.subprocess.crashreporter.enabled", true);
 pref("dom.ipc.plugins.reportCrashURL", true);
 
 // Force the accelerated direct path for a subset of Flash wmode values
@@ -2891,11 +2883,11 @@ pref("font.size.monospace.x-math", 13);
   // available.  Note that this is ignored if active ATOK is or older than
   // 2016 and create_native_caret is true.
   pref("intl.tsf.hack.atok.do_not_return_no_layout_error_of_composition_string", true);
-  // Whether disable "search" input scope when the ATOK is active on windows. 
+  // Whether disable "search" input scope when the ATOK is active on windows.
   // When "search" is set to the input scope, ATOK may stop their suggestions.
   // To avoid it, turn this pref on, or changing the settings in ATOK.
   // Note that if you enable this pref and you use the touch keyboard for touch
-  // screens, you cannot access some specific features for a "search" input 
+  // screens, you cannot access some specific features for a "search" input
   // field.
   pref("intl.tsf.hack.atok.search_input_scope_disabled", false);
   // Whether use available composition string rect for result of
@@ -3695,9 +3687,6 @@ pref("network.psl.onUpdate_notify", false);
   pref("widget.disable-workspace-management", false);
   pref("widget.titlebar-x11-use-shape-mask", false);
 #endif
-#ifdef MOZ_WAYLAND
-  pref("widget.wayland.use-move-to-rect", true);
-#endif
 
 // All the Geolocation preferences are here.
 //
@@ -4101,13 +4090,10 @@ pref("media.gmp-manager.url", "https://aus5.mozilla.org/update/3/GMP/%VERSION%/%
 // header. Information from this header will be used to validate the response.
 // If this header is not present, is malformed, or cannot be determined as
 // valid then the update will fail.
-#ifdef EARLY_BETA_OR_EARLIER
-  // The plan is to have the feature gated by this pref to eventually replace
-  // the features controlled by the media.gmp-manager.cert.* prefs. Once that
-  // happens we can remove related code and prefs, but while testing we'll use
-  // this to gate (see bug 1714621 for more info).
-  pref("media.gmp-manager.checkContentSignature", true);
-#endif
+// We should eventually remove this pref and any cert pinning code and make
+// the content signature path the sole path. We retain this for now in case
+// we need to debug content sig vs cert pin.
+pref("media.gmp-manager.checkContentSignature", true);
 
 // When |media.gmp-manager.cert.requireBuiltIn| is true or not specified the
 // final certificate and all certificates the connection is redirected to before
@@ -4441,15 +4427,7 @@ pref("services.common.log.logger.tokenserverclient", "Debug");
   // 1: WebDriver BiDi
   // 2: CDP (Chrome DevTools Protocol)
   // 3: WebDriver BiDi + CDP
-  #if defined(NIGHTLY_BUILD)
-    pref("remote.active-protocols", 3);
-  #else
-    pref("remote.active-protocols", 2);
-  #endif
-
-  // Limits remote agent to listen on loopback devices,
-  // e.g. 127.0.0.1, localhost, and ::1.
-  pref("remote.force-local", true);
+  pref("remote.active-protocols", 3);
 
   // Defines the verbosity of the internal logger.
   //

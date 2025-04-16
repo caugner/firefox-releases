@@ -50,6 +50,7 @@ class DXVA2Manager {
   }
 
   virtual HRESULT CopyToBGRATexture(ID3D11Texture2D* aInTexture,
+                                    uint32_t aArrayIndex,
                                     ID3D11Texture2D** aOutTexture) {
     // Not implemented!
     MOZ_CRASH("CopyToBGRATexture not implemented on this manager.");
@@ -67,8 +68,8 @@ class DXVA2Manager {
 
   virtual ~DXVA2Manager();
 
-  virtual bool SupportsConfig(IMFMediaType* aInputType,
-                              IMFMediaType* aOutputType, float aFramerate) = 0;
+  virtual bool SupportsConfig(const VideoInfo& aInfo, IMFMediaType* aInputType,
+                              IMFMediaType* aOutputType) = 0;
 
   static bool IsNV12Supported(uint32_t aVendorID, uint32_t aDeviceID,
                               const nsAString& aDriverVersionString);

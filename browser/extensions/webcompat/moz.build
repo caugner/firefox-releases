@@ -66,6 +66,7 @@ FINAL_TARGET_FILES.features["webcompat@mozilla.org"]["injections"]["css"] += [
     "injections/css/bug1754473-m.intl.taobao.com-number-arrow-buttons-overlapping-fix.css",
     "injections/css/bug1756054-tataplayrecharge.com-clear-float.css",
     "injections/css/bug1756915-efectococuyo.com-shifted-content-fix.css",
+    "injections/css/bug1765947-veniceincoming.com-left-fix.css",
 ]
 
 FINAL_TARGET_FILES.features["webcompat@mozilla.org"]["injections"]["js"] += [
@@ -84,6 +85,7 @@ FINAL_TARGET_FILES.features["webcompat@mozilla.org"]["injections"]["js"] += [
     "injections/js/bug1731825-office365-email-handling-prompt-autohide.js",
     "injections/js/bug1739489-draftjs-beforeinput.js",
     "injections/js/bug1756692-effectiveType-shim.js",
+    "injections/js/bug1769762-tiktok.com-plugins-shim.js",
 ]
 
 FINAL_TARGET_FILES.features["webcompat@mozilla.org"]["shims"] += [

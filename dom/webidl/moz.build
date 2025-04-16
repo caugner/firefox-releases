@@ -391,7 +391,6 @@ GENERATED_WEBIDL_FILES = [
 
 PREPROCESSED_WEBIDL_FILES = [
     "Animation.webidl",
-    "FileSystemFileHandle.webidl",
     "Node.webidl",
     "Window.webidl",
 ]
@@ -475,6 +474,7 @@ WEBIDL_FILES = [
     "CSS.webidl",
     "CSSAnimation.webidl",
     "CSSConditionRule.webidl",
+    "CSSContainerRule.webidl",
     "CSSCounterStyleRule.webidl",
     "CSSFontFaceRule.webidl",
     "CSSFontFeatureValuesRule.webidl",
@@ -554,6 +554,7 @@ WEBIDL_FILES = [
     "FileSystemDirectoryReader.webidl",
     "FileSystemEntry.webidl",
     "FileSystemFileEntry.webidl",
+    "FileSystemFileHandle.webidl",
     "FileSystemHandle.webidl",
     "FileSystemSyncAccessHandle.webidl",
     "FinalizationRegistry.webidl",
@@ -984,6 +985,7 @@ WEBIDL_FILES = [
     "WebGLRenderingContext.webidl",
     "WebGPU.webidl",
     "WebSocket.webidl",
+    "WebTaskScheduling.webidl",
     "WebXR.webidl",
     "WheelEvent.webidl",
     "WidevineCDMManifest.webidl",
@@ -1047,6 +1049,7 @@ if CONFIG["MOZ_WEBRTC"]:
         "RTCIdentityProvider.webidl",
         "RTCPeerConnection.webidl",
         "RTCPeerConnectionStatic.webidl",
+        "RTCRtpParameters.webidl",
         "RTCRtpReceiver.webidl",
         "RTCRtpSender.webidl",
         "RTCRtpSources.webidl",
@@ -1156,6 +1159,7 @@ GENERATED_EVENTS_WEBIDL_FILES = [
     "SecurityPolicyViolationEvent.webidl",
     "StyleSheetApplicableStateChangeEvent.webidl",
     "SubmitEvent.webidl",
+    "TaskPriorityChangeEvent.webidl",
     "TCPServerSocketEvent.webidl",
     "TCPSocketErrorEvent.webidl",
     "TCPSocketEvent.webidl",

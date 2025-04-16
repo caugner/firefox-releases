@@ -31,6 +31,10 @@ void ScopedFfiBundleTraits::release(ffi::WGPURenderBundleEncoder* raw) {
 ffi::WGPURenderBundleEncoder* CreateRenderBundleEncoder(
     RawId aDeviceId, const dom::GPURenderBundleEncoderDescriptor& aDesc,
     WebGPUChild* const aBridge) {
+  if (!aBridge->CanSend()) {
+    return nullptr;
+  }
+
   ffi::WGPURenderBundleEncoderDescriptor desc = {};
   desc.sample_count = aDesc.mSampleCount;
 
@@ -40,7 +44,7 @@ ffi::WGPURenderBundleEncoder* CreateRenderBundleEncoder(
     desc.label = label.get();
   }
 
-  ffi::WGPUTextureFormat depthStencilFormat = ffi::WGPUTextureFormat_Sentinel;
+  ffi::WGPUTextureFormat depthStencilFormat = {ffi::WGPUTextureFormat_Sentinel};
   if (aDesc.mDepthStencilFormat.WasPassed()) {
     WebGPUChild::ConvertTextureFormatRef(aDesc.mDepthStencilFormat.Value(),
                                          depthStencilFormat);
@@ -49,7 +53,7 @@ ffi::WGPURenderBundleEncoder* CreateRenderBundleEncoder(
 
   std::vector<ffi::WGPUTextureFormat> colorFormats = {};
   for (const auto i : IntegerRange(aDesc.mColorFormats.Length())) {
-    ffi::WGPUTextureFormat format = ffi::WGPUTextureFormat_Sentinel;
+    ffi::WGPUTextureFormat format = {ffi::WGPUTextureFormat_Sentinel};
     WebGPUChild::ConvertTextureFormatRef(aDesc.mColorFormats[i], format);
     colorFormats.push_back(format);
   }
@@ -183,7 +187,7 @@ already_AddRefed<RenderBundle> RenderBundleEncoder::Finish(
   if (mValid) {
     mValid = false;
     auto bridge = mParent->GetBridge();
-    if (bridge && bridge->IsOpen()) {
+    if (bridge && bridge->CanSend()) {
       auto* encoder = mEncoder.forget();
       MOZ_ASSERT(encoder);
       id = bridge->RenderBundleEncoderFinish(*encoder, mParent->mId, aDesc);

@@ -26,6 +26,7 @@ ef gh</pre>
 <p id="linksStartEnd"><a href="https://example.com/">a</a>b<a href="https://example.com/">c</a></p>
 <p id="linksBreaking">a<a href="https://example.com/">b<br>c</a>d</p>
 <p id="p">a<br role="presentation">b</p>
+<p id="leafThenWrap" style="font-family: monospace; width: 2ch; word-break: break-word;"><span>a</span>bc</p>
   `,
   async function(browser, docAcc) {
     for (const id of ["br", "pre"]) {
@@ -157,6 +158,62 @@ ef gh</pre>
       [1, 2, "b", 1, 2],
     ]);
     testTextAtOffset(p, BOUNDARY_PARAGRAPH, [[0, 2, "ab", 0, 2]]);
+    const leafThenWrap = findAccessibleChildByID(docAcc, "leafThenWrap");
+    testTextAtOffset(leafThenWrap, BOUNDARY_LINE_START, [
+      [0, 1, "ab", 0, 2],
+      [2, 3, "c", 2, 3],
+    ]);
+  },
+  { chrome: true, topLevel: true, iframe: true, remoteIframe: true }
+);
+
+/**
+ * Test line offsets after text mutation.
+ */
+addAccessibleTask(
+  `
+<p id="initBr"><br></p>
+<p id="rewrap" style="font-family: monospace; width: 2ch; word-break: break-word;"><span id="rewrap1">ac</span>def</p>
+  `,
+  async function(browser, docAcc) {
+    const initBr = findAccessibleChildByID(docAcc, "initBr");
+    testTextAtOffset(initBr, BOUNDARY_LINE_START, [
+      [0, 0, "\n", 0, 1],
+      [1, 1, "", 1, 1],
+    ]);
+    info("initBr: Inserting text before br");
+    let reordered = waitForEvent(EVENT_REORDER, initBr);
+    await invokeContentTask(browser, [], () => {
+      const initBrNode = content.document.getElementById("initBr");
+      initBrNode.insertBefore(
+        content.document.createTextNode("a"),
+        initBrNode.firstElementChild
+      );
+    });
+    await reordered;
+    testTextAtOffset(initBr, BOUNDARY_LINE_START, [
+      [0, 1, "a\n", 0, 2],
+      [2, 2, "", 2, 2],
+    ]);
+
+    const rewrap = findAccessibleChildByID(docAcc, "rewrap");
+    testTextAtOffset(rewrap, BOUNDARY_LINE_START, [
+      [0, 1, "ac", 0, 2],
+      [2, 3, "de", 2, 4],
+      [4, 5, "f", 4, 5],
+    ]);
+    info("rewrap: Changing ac to abc");
+    reordered = waitForEvent(EVENT_REORDER, rewrap);
+    await invokeContentTask(browser, [], () => {
+      const rewrap1 = content.document.getElementById("rewrap1");
+      rewrap1.textContent = "abc";
+    });
+    await reordered;
+    testTextAtOffset(rewrap, BOUNDARY_LINE_START, [
+      [0, 1, "ab", 0, 2],
+      [2, 3, "cd", 2, 4],
+      [4, 6, "ef", 4, 6],
+    ]);
   },
   { chrome: true, topLevel: true, iframe: true, remoteIframe: true }
 );
@@ -170,14 +227,16 @@ addAccessibleTask(
     const container = findAccessibleChildByID(docAcc, "container", [
       nsIAccessibleHyperText,
     ]);
+    is(container.linkCount, 1, "container linkCount is 1");
     let link = container.getLinkAt(0);
-    queryInterfaces(link, [nsIAccessible]);
+    queryInterfaces(link, [nsIAccessible, nsIAccessibleHyperText]);
     is(getAccessibleDOMNodeID(link), "link", "LinkAt 0 is the link");
     is(container.getLinkIndex(link), 0, "getLinkIndex for link is 0");
     is(link.startIndex, 1, "link's startIndex is 1");
     is(link.endIndex, 2, "link's endIndex is 2");
     is(container.getLinkIndexAtOffset(1), 0, "getLinkIndexAtOffset(1) is 0");
     is(container.getLinkIndexAtOffset(0), -1, "getLinkIndexAtOffset(0) is -1");
+    is(link.linkCount, 0, "link linkCount is 0");
   },
   {
     chrome: true,
@@ -753,6 +812,8 @@ addAccessibleTask(
 </div>
   `,
   async function(browser, docAcc) {
+    queryInterfaces(docAcc, [nsIAccessibleText]);
+
     const textarea = findAccessibleChildByID(docAcc, "textarea", [
       nsIAccessibleText,
     ]);
@@ -762,6 +823,7 @@ addAccessibleTask(
     await caretMoved;
     testSelectionRange(browser, textarea, textarea, 0, textarea, 0);
     is(textarea.selectionCount, 0, "textarea selectionCount is 0");
+    is(docAcc.selectionCount, 0, "document selectionCount is 0");
 
     info("Selecting a in textarea");
     let selChanged = waitForSelectionChange(textarea);
@@ -803,6 +865,7 @@ addAccessibleTask(
     testSelectionRange(browser, editable, p1, 0, p1, 0);
     is(editable.selectionCount, 0, "editable selectionCount is 0");
     is(p1.selectionCount, 0, "p1 selectionCount is 0");
+    is(docAcc.selectionCount, 0, "document selectionCount is 0");
 
     info("Selecting a in editable");
     selChanged = waitForSelectionChange(p1);

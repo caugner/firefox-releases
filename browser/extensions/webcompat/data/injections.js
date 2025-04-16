@@ -608,6 +608,34 @@ const AVAILABLE_INJECTIONS = [
       ],
     },
   },
+  {
+    id: "bug1765947",
+    platform: "android",
+    domain: "veniceincoming.com",
+    bug: "1765947",
+    contentScripts: {
+      matches: ["*://veniceincoming.com/*"],
+      js: [
+        {
+          file: "injections/css/bug1765947-veniceincoming.com-left-fix.css",
+        },
+      ],
+    },
+  },
+  {
+    id: "bug11769762",
+    platform: "all",
+    domain: "tiktok.com",
+    bug: "1769762",
+    contentScripts: {
+      matches: ["https://www.tiktok.com/*"],
+      js: [
+        {
+          file: "injections/js/bug1769762-tiktok.com-plugins-shim.js",
+        },
+      ],
+    },
+  },
 ];
 
 module.exports = AVAILABLE_INJECTIONS;

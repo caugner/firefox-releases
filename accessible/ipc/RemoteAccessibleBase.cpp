@@ -94,7 +94,7 @@ void RemoteAccessibleBase<Derived>::ClearChildDoc(
 }
 
 template <class Derived>
-uint32_t RemoteAccessibleBase<Derived>::EmbeddedChildCount() const {
+uint32_t RemoteAccessibleBase<Derived>::EmbeddedChildCount() {
   size_t count = 0, kids = mChildren.Length();
   for (size_t i = 0; i < kids; i++) {
     if (mChildren[i]->IsEmbeddedObject()) {
@@ -641,6 +641,11 @@ already_AddRefed<AccAttributes> RemoteAccessibleBase<Derived>::Attributes() {
     }
   }
 
+  nsAutoString name;
+  if (Name(name) != eNameFromSubtree && !name.IsVoid()) {
+    attributes->SetAttribute(nsGkAtoms::explicit_name, true);
+  }
+
   return attributes.forget();
 }
 
@@ -835,6 +840,11 @@ bool RemoteAccessibleBase<Derived>::HasPrimaryAction() const {
 template <class Derived>
 void RemoteAccessibleBase<Derived>::TakeFocus() const {
   Unused << mDoc->SendTakeFocus(mID);
+}
+
+template <class Derived>
+void RemoteAccessibleBase<Derived>::ScrollTo(uint32_t aHow) const {
+  Unused << mDoc->SendScrollTo(mID, aHow);
 }
 
 ////////////////////////////////////////////////////////////////////////////////

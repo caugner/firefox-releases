@@ -1399,13 +1399,13 @@ void CodeGenerator::visitUnbox(LUnbox* unbox) {
 }
 
 void CodeGenerator::visitDouble(LDouble* ins) {
-  ARMFPRegister output(ToFloatRegister(ins->getDef(0)), 64);
-  masm.Fmov(output, ins->value());
+  const LDefinition* out = ins->getDef(0);
+  masm.loadConstantDouble(ins->value(), ToFloatRegister(out));
 }
 
 void CodeGenerator::visitFloat32(LFloat32* ins) {
-  ARMFPRegister output(ToFloatRegister(ins->getDef(0)), 32);
-  masm.Fmov(output, ins->value());
+  const LDefinition* out = ins->getDef(0);
+  masm.loadConstantFloat32(ins->value(), ToFloatRegister(out));
 }
 
 void CodeGenerator::visitTestDAndBranch(LTestDAndBranch* test) {
@@ -2592,11 +2592,10 @@ void CodeGenerator::visitWasmAddOffset(LWasmAddOffset* lir) {
 
   masm.Adds(ARMRegister(out, 32), ARMRegister(base, 32),
             Operand(mir->offset()));
-
-  Label ok;
-  masm.j(Assembler::CarryClear, &ok);
-  masm.wasmTrap(wasm::Trap::OutOfBounds, mir->bytecodeOffset());
-  masm.bind(&ok);
+  OutOfLineAbortingWasmTrap* ool = new (alloc())
+      OutOfLineAbortingWasmTrap(mir->bytecodeOffset(), wasm::Trap::OutOfBounds);
+  addOutOfLineCode(ool, mir);
+  masm.j(Assembler::CarrySet, ool->entry());
 }
 
 void CodeGenerator::visitWasmAddOffset64(LWasmAddOffset64* lir) {
@@ -2606,11 +2605,10 @@ void CodeGenerator::visitWasmAddOffset64(LWasmAddOffset64* lir) {
 
   masm.Adds(ARMRegister(out.reg, 64), ARMRegister(base.reg, 64),
             Operand(mir->offset()));
-
-  Label ok;
-  masm.j(Assembler::CarryClear, &ok);
-  masm.wasmTrap(wasm::Trap::OutOfBounds, mir->bytecodeOffset());
-  masm.bind(&ok);
+  OutOfLineAbortingWasmTrap* ool = new (alloc())
+      OutOfLineAbortingWasmTrap(mir->bytecodeOffset(), wasm::Trap::OutOfBounds);
+  addOutOfLineCode(ool, mir);
+  masm.j(Assembler::CarrySet, ool->entry());
 }
 
 void CodeGenerator::visitWasmSelectI64(LWasmSelectI64* lir) {

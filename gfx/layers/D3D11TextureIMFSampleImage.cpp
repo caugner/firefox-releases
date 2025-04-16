@@ -4,12 +4,12 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
+#include <d3d11.h>
 #include <memory>
 #include <mfobjects.h>
 
 #include "D3D11TextureIMFSampleImage.h"
 #include "WMF.h"
-#include "d3d11.h"
 #include "mozilla/layers/KnowsCompositor.h"
 #include "mozilla/layers/TextureForwarder.h"
 
@@ -57,7 +57,8 @@ D3D11TextureIMFSampleImage::GetAsSourceSurface() {
     return nullptr;
   }
 
-  return gfx::Factory::CreateBGRA8DataSourceSurfaceForD3D11Texture(src);
+  return gfx::Factory::CreateBGRA8DataSourceSurfaceForD3D11Texture(src,
+                                                                   mArrayIndex);
 }
 
 ID3D11Texture2D* D3D11TextureIMFSampleImage::GetTexture() const {

@@ -20,7 +20,7 @@ function setLocale(locale) {
 }
 
 add_task(async function test_focus_promo_in_allowed_region() {
-  ASRouter._resetMessageState();
+  ASRouter.resetMessageState();
 
   const allowedRegion = "ES"; // Spain
   setupRegions(allowedRegion, allowedRegion);
@@ -38,7 +38,7 @@ add_task(async function test_focus_promo_in_allowed_region() {
 });
 
 add_task(async function test_focus_promo_in_disallowed_region() {
-  ASRouter._resetMessageState();
+  ASRouter.resetMessageState();
 
   const disallowedRegion = "CN"; // China
   setupRegions(disallowedRegion);
@@ -62,7 +62,7 @@ add_task(
 
     const testRegion = async region => {
       setupRegions(region);
-      ASRouter._resetMessageState();
+      ASRouter.resetMessageState();
       const { win, tab } = await openTabAndWaitForRender();
       await SpecialPowers.spawn(tab, [], async function() {
         const buttonText = content.document.querySelector(

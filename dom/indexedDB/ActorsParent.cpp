@@ -3796,13 +3796,15 @@ class ObjectStoreAddOrPutRequestOp final : public NormalTransactionOp {
 #if defined(NS_BUILD_REFCNT_LOGGING)
     // Only for MOZ_COUNT_CTOR.
     StoredFileInfo(StoredFileInfo&& aOther)
-        : mFileInfo{std::move(aOther.mFileInfo)}, mFileActorOrInputStream {
-      std::move(aOther.mFileActorOrInputStream)
-    }
+        : mFileInfo{std::move(aOther.mFileInfo)},
+          mFileActorOrInputStream{std::move(aOther.mFileActorOrInputStream)}
 #  ifdef DEBUG
-    , mType { aOther.mType }
+          ,
+          mType{aOther.mType}
 #  endif
-    { MOZ_COUNT_CTOR(ObjectStoreAddOrPutRequestOp::StoredFileInfo); }
+    {
+      MOZ_COUNT_CTOR(ObjectStoreAddOrPutRequestOp::StoredFileInfo);
+    }
 #else
     StoredFileInfo(StoredFileInfo&&) = default;
 #endif
@@ -3915,11 +3917,11 @@ void ObjectStoreAddOrPutRequestOp::StoredFileInfo::AssertInvariants() const {
 
 ObjectStoreAddOrPutRequestOp::StoredFileInfo::StoredFileInfo(
     SafeRefPtr<DatabaseFileInfo> aFileInfo)
-    : mFileInfo{WrapNotNull(std::move(aFileInfo))}, mFileActorOrInputStream {
-  Nothing {}
-}
+    : mFileInfo{WrapNotNull(std::move(aFileInfo))},
+      mFileActorOrInputStream{Nothing{}}
 #ifdef DEBUG
-, mType { StructuredCloneFileBase::eMutableFile }
+      ,
+      mType{StructuredCloneFileBase::eMutableFile}
 #endif
 {
   AssertIsOnBackgroundThread();
@@ -3930,11 +3932,11 @@ ObjectStoreAddOrPutRequestOp::StoredFileInfo::StoredFileInfo(
 
 ObjectStoreAddOrPutRequestOp::StoredFileInfo::StoredFileInfo(
     SafeRefPtr<DatabaseFileInfo> aFileInfo, RefPtr<DatabaseFile> aFileActor)
-    : mFileInfo{WrapNotNull(std::move(aFileInfo))}, mFileActorOrInputStream {
-  std::move(aFileActor)
-}
+    : mFileInfo{WrapNotNull(std::move(aFileInfo))},
+      mFileActorOrInputStream{std::move(aFileActor)}
 #ifdef DEBUG
-, mType { StructuredCloneFileBase::eBlob }
+      ,
+      mType{StructuredCloneFileBase::eBlob}
 #endif
 {
   AssertIsOnBackgroundThread();
@@ -3946,11 +3948,11 @@ ObjectStoreAddOrPutRequestOp::StoredFileInfo::StoredFileInfo(
 ObjectStoreAddOrPutRequestOp::StoredFileInfo::StoredFileInfo(
     SafeRefPtr<DatabaseFileInfo> aFileInfo,
     nsCOMPtr<nsIInputStream> aInputStream)
-    : mFileInfo{WrapNotNull(std::move(aFileInfo))}, mFileActorOrInputStream {
-  std::move(aInputStream)
-}
+    : mFileInfo{WrapNotNull(std::move(aFileInfo))},
+      mFileActorOrInputStream{std::move(aInputStream)}
 #ifdef DEBUG
-, mType { StructuredCloneFileBase::eStructuredClone }
+      ,
+      mType{StructuredCloneFileBase::eStructuredClone}
 #endif
 {
   AssertIsOnBackgroundThread();
@@ -4914,7 +4916,6 @@ class QuotaClient final : public mozilla::dom::quota::Client {
   RefPtr<nsThreadPool> mMaintenanceThreadPool;
   nsClassHashtable<nsRefPtrHashKey<DatabaseFileManager>, nsTArray<int64_t>>
       mPendingDeleteInfos;
-  FlippedOnce<false> mShutdownRequested;
 
  public:
   QuotaClient();
@@ -4925,31 +4926,9 @@ class QuotaClient final : public mozilla::dom::quota::Client {
     return sInstance;
   }
 
-  static bool IsShuttingDownOnBackgroundThread() {
-    AssertIsOnBackgroundThread();
-
-    if (sInstance) {
-      return sInstance->IsShuttingDown();
-    }
-
-    return QuotaManager::IsShuttingDown();
-  }
-
-  static bool IsShuttingDownOnNonBackgroundThread() {
-    MOZ_ASSERT(!IsOnBackgroundThread());
-
-    return QuotaManager::IsShuttingDown();
-  }
-
   nsIEventTarget* BackgroundThread() const {
     MOZ_ASSERT(mBackgroundThread);
     return mBackgroundThread;
-  }
-
-  bool IsShuttingDown() const {
-    AssertIsOnBackgroundThread();
-
-    return mShutdownRequested;
   }
 
   nsresult AsyncDeleteFile(DatabaseFileManager* aFileManager, int64_t aFileId);
@@ -5718,8 +5697,7 @@ SerializeStructuredCloneFiles(PBackgroundParent* aBackgroundActor,
 }
 
 bool IsFileNotFoundError(const nsresult aRv) {
-  return aRv == NS_ERROR_FILE_NOT_FOUND ||
-         aRv == NS_ERROR_FILE_TARGET_DOES_NOT_EXIST;
+  return aRv == NS_ERROR_FILE_NOT_FOUND;
 }
 
 enum struct Idempotency { Yes, No };
@@ -5739,8 +5717,8 @@ nsresult DeleteFile(nsIFile& aFile, QuotaManager* const aQuotaManager,
 
   // Callers which pass Idempotency::Yes call this function without checking if
   // the file already exists (idempotent usage). QM_OR_ELSE_WARN_IF is not used
-  // here since we just want to log NS_ERROR_FILE_NOT_FOUND and
-  // NS_ERROR_FILE_TARGET_DOES_NOT_EXIST results and not spam the reports.
+  // here since we just want to log NS_ERROR_FILE_NOT_FOUND results and not spam
+  // the reports.
   // Theoretically, there should be no QM_OR_ELSE_(WARN|LOG_VERBOSE)_IF when a
   // caller passes Idempotency::No, but it's simpler when the predicate just
   // always returns false in that case.
@@ -10172,9 +10150,11 @@ mozilla::ipc::IPCResult Database::RecvBlocked() {
 
   DatabaseActorInfo* info;
   MOZ_ALWAYS_TRUE(gLiveDatabaseHashtable->Get(Id(), &info));
-
   MOZ_ASSERT(info->mLiveDatabases.Contains(this));
-  MOZ_ASSERT(info->mWaitingFactoryOp);
+
+  if (NS_WARN_IF(!info->mWaitingFactoryOp)) {
+    return IPC_FAIL(this, "Database info has no mWaitingFactoryOp!");
+  }
 
   info->mWaitingFactoryOp->NoteDatabaseBlocked(this);
 
@@ -12381,10 +12361,10 @@ Result<FileUsageType, nsresult> DatabaseFileManager::GetUsage(
         }
 
         // Usually we only use QM_OR_ELSE_LOG_VERBOSE(_IF) with Remove and
-        // NS_ERROR_FILE_NOT_FOUND/NS_ERROR_FILE_TARGET_DOES_NOT_EXIST
-        // check, but the file was found by a directory traversal and ToInteger
-        // on the name succeeded, so it should be our file and if the file
-        // disappears, the use of QM_OR_ELSE_WARN_IF is ok here.
+        // NS_ERROR_FILE_NOT_FOUND check, but the file was found by a directory
+        // traversal and ToInteger on the name succeeded, so it should be our
+        // file and if the file disappears, the use of QM_OR_ELSE_WARN_IF is ok
+        // here.
         QM_TRY_INSPECT(const auto& thisUsage,
                        QM_OR_ELSE_WARN_IF(
                            // Expression.
@@ -12394,8 +12374,7 @@ Result<FileUsageType, nsresult> DatabaseFileManager::GetUsage(
                                }),
                            // Predicate.
                            ([](const nsresult rv) {
-                             return rv == NS_ERROR_FILE_TARGET_DOES_NOT_EXIST ||
-                                    rv == NS_ERROR_FILE_NOT_FOUND;
+                             return rv == NS_ERROR_FILE_NOT_FOUND;
                            }),
                            // Fallback. If the file does no longer exist, treat
                            // it as 0-sized.
@@ -12483,7 +12462,7 @@ nsresult QuotaClient::AsyncDeleteFile(DatabaseFileManager* aFileManager,
                                       int64_t aFileId) {
   AssertIsOnBackgroundThread();
 
-  if (mShutdownRequested) {
+  if (IsShuttingDownOnBackgroundThread()) {
     // Whoops! We want to delete an IndexedDB disk-backed File but it's too late
     // to actually delete the file! This means we're going to "leak" the file
     // and leave it around when we shouldn't! (The file will stay around until
@@ -12517,7 +12496,7 @@ nsresult QuotaClient::FlushPendingFileDeletions() {
 
 nsThreadPool* QuotaClient::GetOrCreateThreadPool() {
   AssertIsOnBackgroundThread();
-  MOZ_ASSERT(!mShutdownRequested);
+  MOZ_ASSERT(!IsShuttingDownOnBackgroundThread());
 
   if (!mMaintenanceThreadPool) {
     RefPtr<nsThreadPool> threadPool = new nsThreadPool();
@@ -12822,17 +12801,15 @@ nsresult QuotaClient::GetUsageForOriginInternal(
                                           databaseFilename + kSQLiteWALSuffix));
 
         // QM_OR_ELSE_WARN_IF is not used here since we just want to log
-        // NS_ERROR_FILE_NOT_FOUND/NS_ERROR_FILE_TARGET_DOES_NOT_EXIST
-        // result and not spam the reports (the -wal file doesn't have to
-        // exist).
+        // NS_ERROR_FILE_NOT_FOUND result and not spam the reports (the -wal
+        // file doesn't have to exist).
         QM_TRY_INSPECT(const int64_t& walFileSize,
                        QM_OR_ELSE_LOG_VERBOSE_IF(
                            // Expression.
                            MOZ_TO_RESULT_INVOKE_MEMBER(walFile, GetFileSize),
                            // Predicate.
                            ([](const nsresult rv) {
-                             return rv == NS_ERROR_FILE_NOT_FOUND ||
-                                    rv == NS_ERROR_FILE_TARGET_DOES_NOT_EXIST;
+                             return rv == NS_ERROR_FILE_NOT_FOUND;
                            }),
                            // Fallback.
                            (ErrToOk<0, int64_t>)));
@@ -12896,7 +12873,10 @@ void QuotaClient::AbortAllOperations() {
 
 void QuotaClient::StartIdleMaintenance() {
   AssertIsOnBackgroundThread();
-  MOZ_ASSERT(!mShutdownRequested);
+  if (IsShuttingDownOnBackgroundThread()) {
+    MOZ_ASSERT(false, "!IsShuttingDownOnBackgroundThread()");
+    return;
+  }
 
   mBackgroundThread = GetCurrentEventTarget();
 
@@ -12906,7 +12886,6 @@ void QuotaClient::StartIdleMaintenance() {
 
 void QuotaClient::StopIdleMaintenance() {
   AssertIsOnBackgroundThread();
-  MOZ_ASSERT(!mShutdownRequested);
 
   if (mCurrentMaintenance) {
     mCurrentMaintenance->Abort();
@@ -12919,8 +12898,6 @@ void QuotaClient::StopIdleMaintenance() {
 
 void QuotaClient::InitiateShutdown() {
   AssertIsOnBackgroundThread();
-
-  mShutdownRequested.Flip();
 
   AbortAllOperations();
 }

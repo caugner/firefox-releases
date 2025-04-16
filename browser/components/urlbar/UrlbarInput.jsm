@@ -321,8 +321,11 @@ class UrlbarInput {
    * @param {boolean} [dueToTabSwitch]
    *        True if this is being called due to switching tabs and false
    *        otherwise.
+   * @param {boolean} [dueToSessionRestore]
+   *        True if this is being called due to session restore and false
+   *        otherwise.
    */
-  setURI(uri = null, dueToTabSwitch = false) {
+  setURI(uri = null, dueToTabSwitch = false, dueToSessionRestore = false) {
     let value = this.window.gBrowser.userTypedValue;
     let valid = false;
 
@@ -355,9 +358,13 @@ class UrlbarInput {
           value = "about:blank";
         }
       }
-
+      // If we update the URI while restoring a session, set the proxyState to
+      // invalid, because we don't have a valid security state to show via site
+      // identity yet. See Bug 1746383.
       valid =
-        !this.window.isBlankPageURL(uri.spec) || uri.schemeIs("moz-extension");
+        !dueToSessionRestore &&
+        (!this.window.isBlankPageURL(uri.spec) ||
+          uri.schemeIs("moz-extension"));
     } else if (
       this.window.isInitialPage(value) &&
       BrowserUIUtils.checkEmptyPageOrigin(this.window.gBrowser.selectedBrowser)
@@ -366,14 +373,27 @@ class UrlbarInput {
       valid = true;
     }
 
+    const previousUntrimmedValue = this.untrimmedValue;
+    const previousSelectionStart = this.selectionStart;
+    const previousSelectionEnd = this.selectionEnd;
+
     let isDifferentValidValue = valid && value != this.untrimmedValue;
     this.value = value;
     this.valueIsTyped = !valid;
     this.removeAttribute("usertyping");
     if (isDifferentValidValue) {
-      // The selection is enforced only for new values, to avoid overriding the
-      // cursor position when the user switches windows while typing.
-      this.selectionStart = this.selectionEnd = 0;
+      // If the caret is at the end of the input or its position is beyond the
+      // end of the new value, keep it at the end. Otherwise keep its current
+      // position.
+      const isCaretPositionEnd =
+        previousUntrimmedValue.length === previousSelectionEnd ||
+        value.length <= previousSelectionEnd;
+      if (isCaretPositionEnd) {
+        this.selectionStart = this.selectionEnd = value.length;
+      } else {
+        this.selectionStart = previousSelectionStart;
+        this.selectionEnd = previousSelectionEnd;
+      }
     }
 
     // The proxystate must be set before setting search mode below because
@@ -436,7 +456,7 @@ class UrlbarInput {
    * @param {Event} [event] The event triggering the open.
    */
   handleCommand(event = null) {
-    let isMouseEvent = event instanceof this.window.MouseEvent;
+    let isMouseEvent = this.window.MouseEvent.isInstance(event);
     if (isMouseEvent && event.button == 2) {
       // Do nothing for right clicks.
       return;
@@ -2322,7 +2342,7 @@ class UrlbarInput {
     // Only add the suffix when the URL bar value isn't already "URL-like",
     // and only if we get a keyboard event, to match user expectations.
     if (
-      !(event instanceof KeyboardEvent) ||
+      !KeyboardEvent.isInstance(event) ||
       event._disableCanonization ||
       !event.ctrlKey ||
       !UrlbarPrefs.get("ctrlCanonizesURLs") ||
@@ -2529,7 +2549,7 @@ class UrlbarInput {
    * @returns {"current" | "tabshifted" | "tab" | "save" | "window"}
    */
   _whereToOpen(event) {
-    let isKeyboardEvent = event instanceof KeyboardEvent;
+    let isKeyboardEvent = KeyboardEvent.isInstance(event);
     let reuseEmpty = isKeyboardEvent;
     let where = undefined;
     if (
@@ -3390,8 +3410,9 @@ class UrlbarInput {
 
   _on_drop(event) {
     let droppedItem = getDroppableData(event);
-    let droppedURL =
-      droppedItem instanceof URL ? droppedItem.href : droppedItem;
+    let droppedURL = URL.isInstance(droppedItem)
+      ? droppedItem.href
+      : droppedItem;
     if (droppedURL && droppedURL !== this.window.gBrowser.currentURI.spec) {
       let principal = Services.droppedLinkHandler.getTriggeringPrincipal(event);
       this.value = droppedURL;

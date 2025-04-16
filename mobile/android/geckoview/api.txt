@@ -24,6 +24,7 @@ import android.view.MenuItem;
 import android.view.MotionEvent;
 import android.view.PointerIcon;
 import android.view.Surface;
+import android.view.SurfaceControl;
 import android.view.View;
 import android.view.ViewStructure;
 import android.view.autofill.AutofillValue;
@@ -625,8 +626,9 @@ package org.mozilla.geckoview {
     method @UiThread public void setDynamicToolbarMaxHeight(int);
     method @UiThread public void setVerticalClipping(int);
     method @UiThread public boolean shouldPinOnScreen();
-    method @UiThread public void surfaceChanged(@NonNull Surface, int, int);
-    method @UiThread public void surfaceChanged(@NonNull Surface, int, int, int, int);
+    method @Deprecated @DeprecationSchedule(id="surfaceChanged",version=104) @UiThread public void surfaceChanged(@NonNull Surface, int, int);
+    method @Deprecated @DeprecationSchedule(id="surfaceChanged",version=104) @UiThread public void surfaceChanged(@NonNull Surface, int, int, int, int);
+    method @UiThread public void surfaceChanged(@NonNull GeckoDisplay.SurfaceInfo);
     method @UiThread public void surfaceDestroyed();
   }
 
@@ -638,6 +640,17 @@ package org.mozilla.geckoview {
     method @AnyThread @NonNull public GeckoDisplay.ScreenshotBuilder size(int, int);
     method @AnyThread @NonNull public GeckoDisplay.ScreenshotBuilder source(int, int, int, int);
     method @AnyThread @NonNull public GeckoDisplay.ScreenshotBuilder source(@NonNull Rect);
+  }
+
+  public static class GeckoDisplay.SurfaceInfo {
+  }
+
+  public static class GeckoDisplay.SurfaceInfo.Builder {
+    ctor public Builder(@NonNull Surface);
+    method @NonNull @UiThread public GeckoDisplay.SurfaceInfo build();
+    method @NonNull @UiThread public GeckoDisplay.SurfaceInfo.Builder offset(int, int);
+    method @NonNull @UiThread public GeckoDisplay.SurfaceInfo.Builder size(int, int);
+    method @NonNull @UiThread public GeckoDisplay.SurfaceInfo.Builder surfaceControl(@Nullable SurfaceControl);
   }
 
   @AnyThread public class GeckoResult<T> {
@@ -730,7 +743,6 @@ package org.mozilla.geckoview {
     field public static final String CRASHED_PROCESS_TYPE_FOREGROUND_CHILD = "FOREGROUND_CHILD";
     field public static final String CRASHED_PROCESS_TYPE_MAIN = "MAIN";
     field public static final Parcelable.Creator<GeckoRuntime> CREATOR;
-    field @Deprecated @DeprecationSchedule(id="crashreporter-fatal",version=100) public static final String EXTRA_CRASH_FATAL = "fatal";
     field public static final String EXTRA_CRASH_PROCESS_TYPE = "processType";
     field public static final String EXTRA_EXTRAS_PATH = "extrasPath";
     field public static final String EXTRA_MINIDUMP_PATH = "minidumpPath";
@@ -1145,7 +1157,6 @@ package org.mozilla.geckoview {
     field public static final int TYPE_VIDEO = 0;
     field @NonNull public final String id;
     field @Nullable public final String name;
-    field @Deprecated @DeprecationSchedule(id="media-source-rawId",version=100) @NonNull public final String rawId;
     field public final int source;
     field public final int type;
   }

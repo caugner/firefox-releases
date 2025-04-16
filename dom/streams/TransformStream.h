@@ -15,10 +15,6 @@
 #include "nsCycleCollectionParticipant.h"
 #include "nsWrapperCache.h"
 
-#ifndef MOZ_DOM_STREAMS
-#  error "Shouldn't be compiling with this header without MOZ_DOM_STREAMS set"
-#endif
-
 namespace mozilla::dom {
 
 class WritableStream;
@@ -69,8 +65,8 @@ class TransformStream final : public nsISupports, public nsWrapperCache {
               const QueuingStrategy& aWritableStrategy,
               const QueuingStrategy& aReadableStrategy, ErrorResult& aRv);
 
-  already_AddRefed<ReadableStream> GetReadable(ErrorResult& aRv);
-  already_AddRefed<WritableStream> GetWritable(ErrorResult& aRv);
+  already_AddRefed<ReadableStream> GetReadable();
+  already_AddRefed<WritableStream> GetWritable();
 
  private:
   nsCOMPtr<nsIGlobalObject> mGlobal;

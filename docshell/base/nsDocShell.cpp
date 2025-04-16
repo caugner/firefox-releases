@@ -78,7 +78,7 @@
 #include "mozilla/dom/SessionHistoryEntry.h"
 #include "mozilla/dom/SessionStorageManager.h"
 #include "mozilla/dom/SessionStoreChangeListener.h"
-#include "mozilla/dom/SessionStoreDataCollector.h"
+#include "mozilla/dom/SessionStoreChild.h"
 #include "mozilla/dom/SessionStoreUtils.h"
 #include "mozilla/dom/BrowserChild.h"
 #include "mozilla/dom/ToJSValue.h"
@@ -234,7 +234,6 @@
 #include "nsXULAppAPI.h"
 
 #include "ThirdPartyUtil.h"
-#include "BRNameMatchingPolicy.h"
 #include "GeckoProfiler.h"
 #include "mozilla/NullPrincipal.h"
 #include "Navigator.h"
@@ -1325,7 +1324,10 @@ void nsDocShell::FirePageHideShowNonRecursive(bool aShow) {
           // performance.navigation.type is 2.
           // Traditionally this type change has been done to the top level page
           // only.
-          inner->GetPerformance()->GetDOMTiming()->NotifyRestoreStart();
+          Performance* performance = inner->GetPerformance();
+          if (performance) {
+            performance->GetDOMTiming()->NotifyRestoreStart();
+          }
         }
       }
 
@@ -1572,12 +1574,16 @@ nsDocShell::GetChromeEventHandler(EventTarget** aChromeEventHandler) {
 }
 
 NS_IMETHODIMP
-nsDocShell::SetCurrentURI(nsIURI* aURI) {
+nsDocShell::SetCurrentURIForSessionStore(nsIURI* aURI) {
   // Note that securityUI will set STATE_IS_INSECURE, even if
   // the scheme of |aURI| is "https".
-  SetCurrentURI(aURI, nullptr, /* aFireOnLocationChange */ true,
-                /* aIsInitialAboutBlank */ false,
-                /* aLocationFlags */ 0);
+  SetCurrentURI(aURI, nullptr,
+                /* aFireOnLocationChange */
+                true,
+                /* aIsInitialAboutBlank */
+                false,
+                /* aLocationFlags */
+                nsIWebProgressListener::LOCATION_CHANGE_SESSION_STORE);
   return NS_OK;
 }
 
@@ -3668,8 +3674,6 @@ nsDocShell::DisplayLoadError(nsresult aError, nsIURI* aURI,
       // If this is an HTTP Strict Transport Security host or a pinned host
       // and the certificate is bad, don't allow overrides (RFC 6797 section
       // 12.1).
-      uint32_t flags =
-          UsePrivateBrowsing() ? nsISocketProvider::NO_PERMANENT_STORAGE : 0;
       bool isStsHost = false;
       bool isPinnedHost = false;
       OriginAttributes attrsForHSTS;
@@ -3684,13 +3688,12 @@ nsDocShell::DisplayLoadError(nsresult aError, nsIURI* aURI,
         nsCOMPtr<nsISiteSecurityService> sss =
             do_GetService(NS_SSSERVICE_CONTRACTID, &rv);
         NS_ENSURE_SUCCESS(rv, rv);
-        rv = sss->IsSecureURI(aURI, flags, attrsForHSTS, nullptr, nullptr,
-                              &isStsHost);
+        rv = sss->IsSecureURI(aURI, attrsForHSTS, nullptr, nullptr, &isStsHost);
         NS_ENSURE_SUCCESS(rv, rv);
       } else {
         mozilla::dom::ContentChild* cc =
             mozilla::dom::ContentChild::GetSingleton();
-        cc->SendIsSecureURI(aURI, flags, attrsForHSTS, &isStsHost);
+        cc->SendIsSecureURI(aURI, attrsForHSTS, &isStsHost);
       }
       nsCOMPtr<nsIPublicKeyPinningService> pkps =
           do_GetService(NS_PKPSERVICE_CONTRACTID, &rv);
@@ -5812,7 +5815,12 @@ nsDocShell::OnStateChange(nsIWebProgress* aProgress, nsIRequest* aRequest,
 
       if constexpr (SessionStoreUtils::NATIVE_LISTENER) {
         if (IsForceReloadType(mLoadType)) {
-          SessionStoreUtils::ResetSessionStore(mBrowsingContext);
+          if (WindowContext* windowContext =
+                  mBrowsingContext->GetCurrentWindowContext()) {
+            SessionStoreChild::From(windowContext->GetWindowGlobalChild())
+                ->SendResetSessionStore(
+                    mBrowsingContext, mBrowsingContext->GetSessionStoreEpoch());
+          }
         }
       }
     }
@@ -6081,10 +6089,7 @@ already_AddRefed<nsIURI> nsDocShell::MaybeFixBadCertDomainErrorURI(
 
   // Check if adding a "www." prefix to the request's hostname will
   // cause the response's certificate to match.
-  mozilla::psm::BRNameMatchingPolicy nameMatchingPolicy(
-      mozilla::psm::BRNameMatchingPolicy::Mode::Enforce);
-  rv1 = mozilla::pkix::CheckCertHostname(serverCertInput, newHostInput,
-                                         nameMatchingPolicy);
+  rv1 = mozilla::pkix::CheckCertHostname(serverCertInput, newHostInput);
   if (rv1 != mozilla::pkix::Success) {
     return nullptr;
   }
@@ -6553,13 +6558,13 @@ nsresult nsDocShell::EndPageLoad(nsIWebProgress* aProgress,
     return NS_OK;
   }
   if constexpr (SessionStoreUtils::NATIVE_LISTENER) {
-    if (Document* document = GetDocument()) {
-      if (WindowGlobalChild* windowChild = document->GetWindowGlobalChild()) {
-        RefPtr<SessionStoreDataCollector> collector =
-            SessionStoreDataCollector::CollectSessionStoreData(windowChild);
-        collector->RecordInputChange();
-        collector->RecordScrollChange();
-      }
+    if (WindowContext* windowContext =
+            mBrowsingContext->GetCurrentWindowContext()) {
+      // TODO(farre): File bug: From a user perspective this would probably be
+      // just fine to run off the change listener timer. Turns out that a flush
+      // is needed. Several tests depend on this behaviour. Could potentially be
+      // an optimization for later. See Bug 1756995.
+      SessionStoreChangeListener::FlushAllSessionStoreData(windowContext);
     }
   }
 
@@ -7754,7 +7759,10 @@ nsresult nsDocShell::RestoreFromHistory() {
   // Now that we have found the inner window of the page restored
   // from the history, we have to  make sure that
   // performance.navigation.type is 2.
-  privWinInner->GetPerformance()->GetDOMTiming()->NotifyRestoreStart();
+  Performance* performance = privWinInner->GetPerformance();
+  if (performance) {
+    performance->GetDOMTiming()->NotifyRestoreStart();
+  }
 
   // Restore the refresh URI list.  The refresh timers will be restarted
   // when EndPageLoad() is called.
@@ -9445,23 +9453,6 @@ nsresult nsDocShell::InternalLoad(nsDocShellLoadState* aLoadState,
       mBrowsingContext->Focus(CallerType::System, IgnoreErrors());
     }
     return rv;
-  }
-
-  if (mBrowsingContext->IsTopContent() &&
-      !aLoadState->GetPendingRedirectedChannel()) {
-    nsCOMPtr<nsITopLevelNavigationDelegate> delegate =
-        do_GetInterface(mTreeOwner);
-    if (delegate) {
-      bool shouldNavigate = false;
-      nsIReferrerInfo* referrerInfo = aLoadState->GetReferrerInfo();
-      rv = delegate->ShouldNavigate(
-          this, aLoadState->URI(), aLoadState->LoadType(), referrerInfo,
-          !!aLoadState->PostDataStream(), aLoadState->TriggeringPrincipal(),
-          aLoadState->Csp(), &shouldNavigate);
-      if (NS_SUCCEEDED(rv) && !shouldNavigate) {
-        return NS_OK;
-      }
-    }
   }
 
   // mContentViewer->PermitUnload can destroy |this| docShell, which
@@ -11191,27 +11182,35 @@ bool nsDocShell::OnNewURI(nsIURI* aURI, nsIChannel* aChannel,
   return onLocationChangeNeeded;
 }
 
-void nsDocShell::CollectWireframe() {
-  if (mozilla::SessionHistoryInParent() &&
+bool nsDocShell::CollectWireframe() {
+  const bool collectWireFrame =
+      mozilla::SessionHistoryInParent() &&
       StaticPrefs::browser_history_collectWireframes() &&
-      mBrowsingContext->IsTopContent() && mActiveEntry) {
-    RefPtr<Document> doc = mContentViewer->GetDocument();
-    Nullable<Wireframe> wireframe;
-    doc->GetWireframeWithoutFlushing(false, wireframe);
-    if (!wireframe.IsNull()) {
-      if (XRE_IsParentProcess()) {
-        SessionHistoryEntry* entry =
-            mBrowsingContext->Canonical()->GetActiveSessionHistoryEntry();
-        if (entry) {
-          entry->SetWireframe(Some(wireframe.Value()));
-        }
-      } else {
-        mozilla::Unused
-            << ContentChild::GetSingleton()->SendSessionHistoryEntryWireframe(
-                   mBrowsingContext, wireframe.Value());
-      }
-    }
+      mBrowsingContext->IsTopContent() && mActiveEntry;
+
+  if (!collectWireFrame) {
+    return false;
   }
+
+  RefPtr<Document> doc = mContentViewer->GetDocument();
+  Nullable<Wireframe> wireframe;
+  doc->GetWireframeWithoutFlushing(false, wireframe);
+  if (wireframe.IsNull()) {
+    return false;
+  }
+  if (XRE_IsParentProcess()) {
+    SessionHistoryEntry* entry =
+        mBrowsingContext->Canonical()->GetActiveSessionHistoryEntry();
+    if (entry) {
+      entry->SetWireframe(Some(wireframe.Value()));
+    }
+  } else {
+    mozilla::Unused
+        << ContentChild::GetSingleton()->SendSessionHistoryEntryWireframe(
+               mBrowsingContext, wireframe.Value());
+  }
+
+  return true;
 }
 
 //*****************************************************************************
@@ -12859,7 +12858,8 @@ nsresult nsDocShell::OnLinkClick(
 
   bool noOpenerImplied = false;
   nsAutoString target(aTargetSpec);
-  if (ShouldOpenInBlankTarget(aTargetSpec, aURI, aContent)) {
+  if (aFileName.IsVoid() &&
+      ShouldOpenInBlankTarget(aTargetSpec, aURI, aContent, aIsUserTriggered)) {
     target = u"_blank";
     if (!aTargetSpec.Equals(target)) {
       noOpenerImplied = true;
@@ -12885,17 +12885,9 @@ nsresult nsDocShell::OnLinkClick(
 }
 
 bool nsDocShell::ShouldOpenInBlankTarget(const nsAString& aOriginalTarget,
-                                         nsIURI* aLinkURI,
-                                         nsIContent* aContent) {
-  // Don't modify non-default targets.
-  if (!aOriginalTarget.IsEmpty()) {
-    return false;
-  }
-
-  // Only check targets that are in extension panels or app tabs.
-  // (isAppTab will be false for app tab subframes).
-  nsString mmGroup = mBrowsingContext->Top()->GetMessageManagerGroup();
-  if (!mmGroup.EqualsLiteral("webext-browsers") && !mIsAppTab) {
+                                         nsIURI* aLinkURI, nsIContent* aContent,
+                                         bool aIsUserTriggered) {
+  if (net::SchemeIsJavascript(aLinkURI)) {
     return false;
   }
 
@@ -12905,6 +12897,29 @@ bool nsDocShell::ShouldOpenInBlankTarget(const nsAString& aOriginalTarget,
   // get either host, just return false to use the original target.
   nsAutoCString linkHost;
   if (NS_FAILED(aLinkURI->GetHost(linkHost))) {
+    return false;
+  }
+
+  // The targetTopLevelLinkClicksToBlank property on BrowsingContext allows
+  // privileged code to change the default targeting behaviour. In particular,
+  // if a user-initiated link click for the (or targetting the) top-level frame
+  // is detected, we default the target to "_blank" to give it a new
+  // top-level BrowsingContext.
+  if (mBrowsingContext->TargetTopLevelLinkClicksToBlank() && aIsUserTriggered &&
+      ((aOriginalTarget.IsEmpty() && mBrowsingContext->IsTop()) ||
+       aOriginalTarget == u"_top"_ns)) {
+    return true;
+  }
+
+  // Don't modify non-default targets.
+  if (!aOriginalTarget.IsEmpty()) {
+    return false;
+  }
+
+  // Only check targets that are in extension panels or app tabs.
+  // (isAppTab will be false for app tab subframes).
+  nsString mmGroup = mBrowsingContext->Top()->GetMessageManagerGroup();
+  if (!mmGroup.EqualsLiteral("webext-browsers") && !mIsAppTab) {
     return false;
   }
 
@@ -12974,9 +12989,12 @@ nsresult nsDocShell::OnLinkClickSync(nsIContent* aContent,
         nsresult rv =
             extProtService->IsExposedProtocol(scheme.get(), &isExposed);
         if (NS_SUCCEEDED(rv) && !isExposed) {
-          return extProtService->LoadURI(aLoadState->URI(), triggeringPrincipal,
-                                         nullptr, mBrowsingContext,
-                                         /* aTriggeredExternally */ false);
+          return extProtService->LoadURI(
+              aLoadState->URI(), triggeringPrincipal, nullptr, mBrowsingContext,
+              /* aTriggeredExternally */
+              false,
+              /* aHasValidUserGestureActivation */
+              aContent->OwnerDoc()->HasValidTransientUserGestureActivation());
         }
       }
     }

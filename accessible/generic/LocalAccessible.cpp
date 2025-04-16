@@ -57,6 +57,7 @@
 #include "nsView.h"
 #include "nsIDocShellTreeItem.h"
 #include "nsIScrollableFrame.h"
+#include "nsStyleStructInlines.h"
 #include "nsFocusManager.h"
 
 #include "nsString.h"
@@ -120,6 +121,7 @@ LocalAccessible::LocalAccessible(nsIContent* aContent, DocAccessible* aDoc)
       mParent(nullptr),
       mIndexInParent(-1),
       mBounds(),
+      mFirstLineStart(-1),
       mStateFlags(0),
       mContextFlags(0),
       mReorderEventTarget(false),
@@ -671,22 +673,34 @@ nsRect LocalAccessible::ParentRelativeBounds() {
     }
 
     nsIFrame* boundingFrame = FindNearestAccessibleAncestorFrame();
-    nsRect unionRect =
-        nsLayoutUtils::GetAllInFlowRectsUnion(frame, boundingFrame);
+    nsRect result = nsLayoutUtils::GetAllInFlowRectsUnion(frame, boundingFrame);
 
-    if (unionRect.IsEmpty()) {
+    if (result.IsEmpty()) {
       // If we end up with a 0x0 rect from above (or one with negative
       // height/width) we should try using the ink overflow rect instead. If we
       // use this rect, our relative bounds will match the bounds of what
       // appears visually. We do this because some web authors (icloud.com for
       // example) employ things like 0x0 buttons with visual overflow. Without
       // this, such frames aren't navigable by screen readers.
-      nsRect overflow = frame->InkOverflowRectRelativeToSelf();
-      nsLayoutUtils::TransformRect(frame, boundingFrame, overflow);
-      return overflow;
+      result = frame->InkOverflowRectRelativeToSelf();
+      nsLayoutUtils::TransformRect(frame, boundingFrame, result);
     }
 
-    return unionRect;
+    if (nsIScrollableFrame* sf =
+            mParent == mDoc
+                ? mDoc->PresShellPtr()->GetRootScrollFrameAsScrollable()
+                : boundingFrame->GetScrollTargetFrame()) {
+      // If boundingFrame has a scroll position, result is currently relative
+      // to that. Instead, we want result to remain the same regardless of
+      // scrolling. We then subtract the scroll position later when calculating
+      // absolute bounds. We do this because we don't want to push cache
+      // updates for the bounds of all descendants every time we scroll.
+      nsPoint scrollPos = sf->GetScrollPosition().ApplyResolution(
+          mDoc->PresShellPtr()->GetResolution());
+      result.MoveBy(scrollPos.x, scrollPos.y);
+    }
+
+    return result;
   }
 
   return nsRect();
@@ -3187,6 +3201,7 @@ already_AddRefed<AccAttributes> LocalAccessible::BundleFieldsForCache(
     }
   }
 
+  bool boundsChanged = false;
   if (aCacheDomain & CacheDomain::Bounds) {
     nsRect newBoundsRect = ParentRelativeBounds();
 
@@ -3199,8 +3214,9 @@ already_AddRefed<AccAttributes> LocalAccessible::BundleFieldsForCache(
     // do an initial cache push.
     MOZ_ASSERT(aUpdateType == CacheUpdateType::Initial || mBounds.isSome(),
                "Incremental cache push but mBounds is not set!");
-    if (aUpdateType == CacheUpdateType::Initial ||
-        !newBoundsRect.IsEqualEdges(mBounds.value())) {
+    boundsChanged = aUpdateType == CacheUpdateType::Initial ||
+                    !newBoundsRect.IsEqualEdges(mBounds.value());
+    if (boundsChanged) {
       mBounds = Some(newBoundsRect);
 
       nsTArray<int32_t> boundsArray(4);
@@ -3227,25 +3243,51 @@ already_AddRefed<AccAttributes> LocalAccessible::BundleFieldsForCache(
             /* aIncludeDefaults */ false);
         fields->SetAttribute(nsGkAtoms::style, std::move(attrs));
       }
-      // We cache line start offsets for both text and non-text leaf Accessibles
-      // because non-text leaf Accessibles can still start a line.
-      nsTArray<int32_t> lineStarts;
-      for (TextLeafPoint lineStart =
-               TextLeafPoint(this, 0).FindNextLineStartSameLocalAcc(
-                   /* aIncludeOrigin */ true);
-           lineStart;
-           lineStart = lineStart.FindNextLineStartSameLocalAcc(false)) {
-        lineStarts.AppendElement(lineStart.mOffset);
-      }
-      if (!lineStarts.IsEmpty()) {
-        fields->SetAttribute(nsGkAtoms::line, std::move(lineStarts));
-      }
     }
     if (HyperTextAccessible* ht = AsHyperText()) {
       RefPtr<AccAttributes> attrs = ht->DefaultTextAttributes();
       fields->SetAttribute(nsGkAtoms::style, std::move(attrs));
     }
   }
+
+  if (aCacheDomain & (CacheDomain::Text | CacheDomain::Bounds) &&
+      !HasChildren()) {
+    // We cache line start offsets for both text and non-text leaf Accessibles
+    // because non-text leaf Accessibles can still start a line.
+    TextLeafPoint lineStart =
+        TextLeafPoint(this, 0).FindNextLineStartSameLocalAcc(
+            /* aIncludeOrigin */ true);
+    int32_t lineStartOffset = lineStart ? lineStart.mOffset : -1;
+    // We push line starts in two cases:
+    // 1. Text or bounds changed, which means it's very likely that line starts
+    // changed too.
+    // 2. CacheDomain::Bounds was requested (indicating that the frame was
+    // reflowed) but the bounds  didn't actually change. This can happen when
+    // the spanned text is non-rectangular. For example, an Accessible might
+    // cover two characters on one line and a single character on another line.
+    // An insertion in a previous text node might cause it to shift such that it
+    // now covers a single character on the first line and two characters on the
+    // second line. Its bounding rect will be the same both before and after the
+    // insertion. In this case, we use the first line start to determine whether
+    // there was a change. This should be safe because the text didn't change in
+    // this Accessible, so if the first line start doesn't shift, none of them
+    // should shift.
+    if (aCacheDomain & CacheDomain::Text || boundsChanged ||
+        mFirstLineStart != lineStartOffset) {
+      mFirstLineStart = lineStartOffset;
+      nsTArray<int32_t> lineStarts;
+      for (; lineStart;
+           lineStart = lineStart.FindNextLineStartSameLocalAcc(false)) {
+        lineStarts.AppendElement(lineStart.mOffset);
+      }
+      if (!lineStarts.IsEmpty()) {
+        fields->SetAttribute(nsGkAtoms::line, std::move(lineStarts));
+      } else if (aUpdateType == CacheUpdateType::Update) {
+        fields->SetAttribute(nsGkAtoms::line, DeleteEntry());
+      }
+    }
+  }
+
   nsIFrame* frame = GetFrame();
   if (aCacheDomain & CacheDomain::TransformMatrix) {
     if (frame && frame->IsTransformed()) {
@@ -3264,7 +3306,7 @@ already_AddRefed<AccAttributes> LocalAccessible::BundleFieldsForCache(
 
       UniquePtr<gfx::Matrix4x4> ptr = MakeUnique<gfx::Matrix4x4>(mtx);
       fields->SetAttribute(nsGkAtoms::transform, std::move(ptr));
-    } else {
+    } else if (aUpdateType == CacheUpdateType::Update) {
       // Otherwise, if we're bundling a transform update but this
       // frame isn't transformed (or doesn't exist), we need
       // to send a DeleteEntry() to remove any
@@ -3276,11 +3318,14 @@ already_AddRefed<AccAttributes> LocalAccessible::BundleFieldsForCache(
   if (aCacheDomain & CacheDomain::ScrollPosition) {
     nsPoint scrollPosition;
     std::tie(scrollPosition, std::ignore) = mDoc->ComputeScrollData(this);
-
-    nsTArray<int32_t> positionArr(2);
-    positionArr.AppendElement(scrollPosition.x);
-    positionArr.AppendElement(scrollPosition.y);
-    fields->SetAttribute(nsGkAtoms::scrollPosition, std::move(positionArr));
+    if (scrollPosition.x || scrollPosition.y) {
+      nsTArray<int32_t> positionArr(2);
+      positionArr.AppendElement(scrollPosition.x);
+      positionArr.AppendElement(scrollPosition.y);
+      fields->SetAttribute(nsGkAtoms::scrollPosition, std::move(positionArr));
+    } else if (aUpdateType == CacheUpdateType::Update) {
+      fields->SetAttribute(nsGkAtoms::scrollPosition, DeleteEntry());
+    }
   }
 
   if (aCacheDomain & CacheDomain::DOMNodeID && mContent) {
@@ -3459,7 +3504,8 @@ void LocalAccessible::MaybeQueueCacheUpdateForStyleChanges() {
       mDoc->QueueCacheUpdate(this, CacheDomain::Style);
     }
 
-    bool newHasValidTransformStyle = frame->IsTransformed();
+    bool newHasValidTransformStyle =
+        newStyle->StyleDisplay()->HasTransform(frame);
     bool oldHasValidTransformStyle =
         (mStateFlags & eOldFrameHasValidTransformStyle) != 0;
 
@@ -3514,6 +3560,15 @@ Maybe<float> LocalAccessible::Opacity() const {
   }
 
   return Nothing();
+}
+
+void LocalAccessible::DOMNodeID(nsString& aID) const {
+  aID.Truncate();
+  if (mContent) {
+    if (nsAtom* id = mContent->GetID()) {
+      id->ToString(aID);
+    }
+  }
 }
 
 void LocalAccessible::StaticAsserts() const {

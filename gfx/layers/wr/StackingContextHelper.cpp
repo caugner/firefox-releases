@@ -75,7 +75,7 @@ Size ChooseScale(nsIFrame* aContainerFrame, nsDisplayItem* aContainerItem,
     } else {
       // Scale factors are normalized to a power of 2 to reduce the number of
       // resolution changes
-      scale = aTransform2d.ScaleFactors();
+      scale = aTransform2d.ScaleFactors().ToSize();
       // For frames with a changing scale transform round scale factors up to
       // nearest power-of-2 boundary so that we don't keep having to redraw
       // the content as it scales up and down. Rounding up to nearest
@@ -185,22 +185,21 @@ StackingContextHelper::StackingContextHelper(
   } else if (!aAsr && !aContainerFrame && !aContainerItem &&
              aParams.mRootReferenceFrame) {
     // this is the root stacking context helper
-    float resolutionX = 1.f;
-    float resolutionY = 1.f;
+    Scale2D resolution;
 
     // If we are in a remote browser, then apply scaling from ancestor browsers
     if (mozilla::dom::BrowserChild* browserChild =
             mozilla::dom::BrowserChild::GetFrom(
                 aParams.mRootReferenceFrame->PresShell())) {
-      resolutionX *= browserChild->GetEffectsInfo().mScaleX;
-      resolutionY *= browserChild->GetEffectsInfo().mScaleY;
+      resolution = browserChild->GetEffectsInfo().mRasterScale;
     }
 
-    gfx::Matrix transform = gfx::Matrix::Scaling(resolutionX, resolutionY);
+    gfx::Matrix transform =
+        gfx::Matrix::Scaling(resolution.xScale, resolution.yScale);
 
     mInheritedTransform = transform * aParentSC.mInheritedTransform;
-    mScale = gfx::Size(aParentSC.mScale.width * resolutionX,
-                       aParentSC.mScale.height * resolutionY);
+    mScale = gfx::Size(aParentSC.mScale.width * resolution.xScale,
+                       aParentSC.mScale.height * resolution.yScale);
 
     MOZ_ASSERT(!aParams.mAnimated);
     mSnappingSurfaceTransform = transform * aParentSC.mSnappingSurfaceTransform;
@@ -265,6 +264,9 @@ Maybe<gfx::Matrix4x4> StackingContextHelper::GetDeferredTransformMatrix()
     // transform from all the deferred ancestors, including
     // mDeferredTransformItem.
     gfx::Matrix4x4 result = mDeferredTransformItem->GetTransform().GetMatrix();
+    if (!mDeferredTransformItem->mFrame->Combines3DTransformWithAncestors()) {
+      result.ProjectTo2D();
+    }
     if (mDeferredAncestorTransform) {
       result = result * *mDeferredAncestorTransform;
     }

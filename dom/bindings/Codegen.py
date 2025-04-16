@@ -1425,10 +1425,7 @@ class CGHeaders(CGWrapper):
                         # just include their header if we need to have functions
                         # taking references to them declared in that header.
                         headerSet = declareIncludes
-                    if unrolled.isReadableStream():
-                        headerSet.add("mozilla/dom/ReadableStream.h")
-                    else:
-                        headerSet.add("mozilla/dom/TypedArray.h")
+                    headerSet.add("mozilla/dom/TypedArray.h")
                 else:
                     try:
                         typeDesc = config.getDescriptor(unrolled.inner.identifier.name)
@@ -1673,10 +1670,7 @@ def UnionTypes(unionTypes, config):
                     if f.isSpiderMonkeyInterface():
                         headers.add("js/RootingAPI.h")
                         headers.add("js/Value.h")
-                        if f.isReadableStream():
-                            headers.add("mozilla/dom/ReadableStream.h")
-                        else:
-                            headers.add("mozilla/dom/TypedArray.h")
+                        headers.add("mozilla/dom/TypedArray.h")
                     else:
                         try:
                             typeDesc = config.getDescriptor(f.inner.identifier.name)
@@ -1788,10 +1782,7 @@ def UnionConversions(unionTypes, config):
                 elif f.isInterface():
                     if f.isSpiderMonkeyInterface():
                         headers.add("js/RootingAPI.h")
-                        if f.isReadableStream():
-                            headers.add("mozilla/dom/ReadableStream.h")
-                        else:
-                            headers.add("mozilla/dom/TypedArray.h")
+                        headers.add("mozilla/dom/TypedArray.h")
                     elif f.inner.isExternal():
                         try:
                             typeDesc = config.getDescriptor(f.inner.identifier.name)
@@ -6248,7 +6239,7 @@ def getJSToNativeConversionInfo(
             interfaceObject = CGWrapper(
                 CGList(interfaceObject, " ||\n"),
                 pre="done = ",
-                post=";\n\n",
+                post=";\n",
                 reindent=True,
             )
         else:
@@ -9903,9 +9894,7 @@ class CGSwitch(CGList):
         if default is not None:
             self.append(
                 CGIndenter(
-                    CGWrapper(
-                        CGIndenter(default), pre="default: {\n", post="  break;\n}\n"
-                    )
+                    CGWrapper(CGIndenter(default), pre="default: {\n", post="}\n")
                 )
             )
 
@@ -9918,16 +9907,28 @@ class CGCase(CGList):
 
     Takes three constructor arguments: an expression, a CGThing for
     the body (allowed to be None if there is no body), and an optional
-    argument (defaulting to False) for whether to fall through.
+    argument for whether add a break, add fallthrough annotation or add nothing
+    (defaulting to add a break).
     """
 
-    def __init__(self, expression, body, fallThrough=False):
+    ADD_BREAK = 0
+    ADD_FALLTHROUGH = 1
+    DONT_ADD_BREAK = 2
+
+    def __init__(self, expression, body, breakOrFallthrough=ADD_BREAK):
         CGList.__init__(self, [])
+
+        assert (
+            breakOrFallthrough == CGCase.ADD_BREAK
+            or breakOrFallthrough == CGCase.ADD_FALLTHROUGH
+            or breakOrFallthrough == CGCase.DONT_ADD_BREAK
+        )
+
         self.append(CGGeneric("case " + expression + ": {\n"))
         bodyList = CGList([body])
-        if fallThrough:
+        if breakOrFallthrough == CGCase.ADD_FALLTHROUGH:
             bodyList.append(CGGeneric("[[fallthrough]];\n"))
-        else:
+        elif breakOrFallthrough == CGCase.ADD_BREAK:
             bodyList.append(CGGeneric("break;\n"))
         self.append(CGIndenter(bodyList))
         self.append(CGGeneric("}\n"))
@@ -10035,7 +10036,9 @@ class CGMethodCall(CGThing):
                         allowedArgCounts[argCountIdx + 1]
                     )
                 )
-                argCountCases.append(CGCase(str(argCount), None, True))
+                argCountCases.append(
+                    CGCase(str(argCount), None, CGCase.ADD_FALLTHROUGH)
+                )
                 continue
 
             if len(possibleSignatures) == 1:
@@ -12670,7 +12673,11 @@ class CGUnionStruct(CGThing):
 
         methods = []
         enumValues = ["eUninitialized"]
-        toJSValCases = [CGCase("eUninitialized", CGGeneric("return false;\n"))]
+        toJSValCases = [
+            CGCase(
+                "eUninitialized", CGGeneric("return false;\n"), CGCase.DONT_ADD_BREAK
+            )
+        ]
         destructorCases = [CGCase("eUninitialized", None)]
         assignmentCases = [
             CGCase(
@@ -12716,7 +12723,12 @@ class CGUnionStruct(CGThing):
                 )
             )
             toJSValCases.append(
-                CGCase("eNull", CGGeneric("rval.setNull();\n" "return true;\n"))
+                CGCase(
+                    "eNull",
+                    CGGeneric(
+                        "rval.setNull();\n" "return true;\n", CGCase.DONT_ADD_BREAK
+                    ),
+                )
             )
 
         hasObjectType = any(t.isObject() for t in self.type.flatMemberTypes)
@@ -12862,7 +12874,9 @@ class CGUnionStruct(CGThing):
 
             conversionToJS = self.getConversionToJS(vars, t)
             if conversionToJS:
-                toJSValCases.append(CGCase("e" + vars["name"], conversionToJS))
+                toJSValCases.append(
+                    CGCase("e" + vars["name"], conversionToJS, CGCase.DONT_ADD_BREAK)
+                )
             else:
                 skipToJSVal = True
 
@@ -12957,8 +12971,7 @@ class CGUnionStruct(CGThing):
                     ],
                     body=CGSwitch(
                         "mType", toJSValCases, default=CGGeneric("return false;\n")
-                    ).define()
-                    + "\nreturn false;\n",
+                    ).define(),
                     const=True,
                 )
             )
@@ -12970,13 +12983,14 @@ class CGUnionStruct(CGThing):
                 traceBody = CGSwitch(
                     "mType", traceCases, default=CGGeneric("")
                 ).define()
-            else:
-                traceBody = ""
-            methods.append(
-                ClassMethod(
-                    "TraceUnion", "void", [Argument("JSTracer*", "trc")], body=traceBody
+                methods.append(
+                    ClassMethod(
+                        "TraceUnion",
+                        "void",
+                        [Argument("JSTracer*", "trc")],
+                        body=traceBody,
+                    )
                 )
-            )
             if CGUnionStruct.isUnionCopyConstructible(self.type):
                 constructors.append(
                     ClassConstructor(
@@ -13005,10 +13019,13 @@ class CGUnionStruct(CGThing):
             disallowCopyConstruction = True
 
         if self.ownsMembers:
-            friend = (
-                "  friend void ImplCycleCollectionUnlink(%s& aUnion);\n"
-                % CGUnionStruct.unionTypeName(self.type, True)
-            )
+            if idlTypeNeedsCycleCollection(self.type):
+                friend = (
+                    "  friend void ImplCycleCollectionUnlink(%s& aUnion);\n"
+                    % CGUnionStruct.unionTypeName(self.type, True)
+                )
+            else:
+                friend = ""
         else:
             friend = "  friend class %sArgument;\n" % str(self.type)
 
@@ -18036,17 +18053,16 @@ class CGForwardDeclarations(CGWrapper):
                         d.interface.maplikeOrSetlikeOrIterable.valueType, config
                     )
 
+            # Add the atoms cache type, even if we don't need it.
+            builder.add(d.nativeType + "Atoms", isStruct=True)
+
+            for m in d.interface.members:
+                if m.isAttr() and m.type.isObservableArray():
+                    builder.forwardDeclareForType(m.type, config)
+
         # We just about always need NativePropertyHooks
         builder.addInMozillaDom("NativePropertyHooks", isStruct=True)
         builder.addInMozillaDom("ProtoAndIfaceCache")
-        # Add the atoms cache type, even if we don't need it.
-        for d in descriptors:
-            # Iterators have native types that are template classes, so
-            # creating an 'Atoms' cache type doesn't work for them, and is one
-            # of the cases where we don't need it anyways.
-            if d.interface.isIteratorInterface():
-                continue
-            builder.add(d.nativeType + "Atoms", isStruct=True)
 
         for callback in callbacks:
             builder.addInMozillaDom(callback.identifier.name)
@@ -22060,19 +22076,20 @@ def getObservableArrayBackingObject(descriptor, attr, errorReturn="return false;
     assert attr.isAttr()
     assert attr.type.isObservableArray()
 
+    # GetObservableArrayBackingObject may return a wrapped object for Xrays, so
+    # when we create it we need to unwrap it to store the interface in the
+    # reserved slot.
     return fill(
         """
         JS::Rooted<JSObject*> backingObj(cx);
         bool created = false;
         if (!GetObservableArrayBackingObject(cx, obj, ${slot},
-                &backingObj, &created, ${namespace}::ObservableArrayProxyHandler::getInstance())) {
+                &backingObj, &created, ${namespace}::ObservableArrayProxyHandler::getInstance(),
+                self)) {
           $*{errorReturn}
         }
         if (created) {
           PreserveWrapper(self);
-          js::SetProxyReservedSlot(backingObj,
-                                   OBSERVABLE_ARRAY_DOM_INTERFACE_SLOT,
-                                   JS::PrivateValue(self));
         }
         """,
         namespace=toBindingNamespace(MakeNativeName(attr.identifier.name)),
@@ -22089,10 +22106,6 @@ def getObservableArrayGetterBody(descriptor, attr):
     assert attr.type.isObservableArray()
     return fill(
         """
-        if (xpc::WrapperFactory::IsXrayWrapper(obj)) {
-          JS_ReportErrorASCII(cx, "Accessing from Xray wrapper is not supported.");
-          return false;
-        }
         $*{getBackingObj}
         MOZ_ASSERT(!JS_IsExceptionPending(cx));
         args.rval().setObject(*backingObj);

@@ -7,35 +7,33 @@
 
 #if defined(NS_PRINTING)
 #  include "nsPrintingPromptService.h"
-#  include "nsPrintingProxy.h"
 
 NS_GENERIC_FACTORY_SINGLETON_CONSTRUCTOR(nsPrintingPromptService,
                                          nsPrintingPromptService::GetSingleton)
-#  ifdef PROXY_PRINTING
-NS_GENERIC_FACTORY_SINGLETON_CONSTRUCTOR(nsPrintingProxy,
-                                         nsPrintingProxy::GetInstance)
-#  endif
 
 NS_DEFINE_NAMED_CID(NS_PRINTINGPROMPTSERVICE_CID);
 #endif
 
 static const mozilla::Module::CIDEntry kEmbeddingCIDs[] = {
 #if defined(NS_PRINTING)
+    {&kNS_PRINTINGPROMPTSERVICE_CID, false, nullptr,
+     nsPrintingPromptServiceConstructor
 #  ifdef PROXY_PRINTING
-    {&kNS_PRINTINGPROMPTSERVICE_CID, false, nullptr,
-     nsPrintingPromptServiceConstructor, mozilla::Module::MAIN_PROCESS_ONLY},
-    {&kNS_PRINTINGPROMPTSERVICE_CID, false, nullptr, nsPrintingProxyConstructor,
-     mozilla::Module::CONTENT_PROCESS_ONLY},
-#  else
-    {&kNS_PRINTINGPROMPTSERVICE_CID, false, nullptr,
-     nsPrintingPromptServiceConstructor},
+     ,
+     mozilla::Module::MAIN_PROCESS_ONLY
 #  endif
+    },
 #endif
     {nullptr}};
 
 static const mozilla::Module::ContractIDEntry kEmbeddingContracts[] = {
 #if defined(NS_PRINTING)
-    {NS_PRINTINGPROMPTSERVICE_CONTRACTID, &kNS_PRINTINGPROMPTSERVICE_CID},
+    {NS_PRINTINGPROMPTSERVICE_CONTRACTID, &kNS_PRINTINGPROMPTSERVICE_CID
+#  ifdef PROXY_PRINTING
+     ,
+     mozilla::Module::MAIN_PROCESS_ONLY
+#  endif
+    },
 #endif
     {nullptr}};
 

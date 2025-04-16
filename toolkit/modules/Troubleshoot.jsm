@@ -63,8 +63,10 @@ const PREFS_FOR_DISPLAY = [
   "doh-rollout.",
   "dom.",
   "extensions.checkCompatibility",
+  "extensions.eventPages.enabled",
   "extensions.formautofill.",
   "extensions.lastAppVersion",
+  "extensions.manifestV3.enabled",
   "extensions.InstallTrigger.enabled",
   "extensions.InstallTriggerImpl.enabled",
   "fission.autostart",
@@ -979,11 +981,11 @@ if (AppConstants.ENABLE_WEBDRIVER) {
     const { RemoteAgent } = ChromeUtils.import(
       "chrome://remote/content/components/RemoteAgent.jsm"
     );
-    const { listening, scheme, host, port } = RemoteAgent;
+    const { running, scheme, host, port } = RemoteAgent;
     let url = "";
-    if (listening) {
+    if (running) {
       url = `${scheme}://${host}:${port}/`;
     }
-    done({ listening, url });
+    done({ running, url });
   };
 }

@@ -932,7 +932,7 @@ void gfxPlatform::Init() {
 
   if (gfxConfig::IsEnabled(Feature::GPU_PROCESS)) {
     GPUProcessManager* gpu = GPUProcessManager::Get();
-    gpu->LaunchGPUProcess();
+    Unused << gpu->LaunchGPUProcess();
   }
 
   if (XRE_IsParentProcess()) {
@@ -2446,15 +2446,6 @@ void gfxPlatform::InitGPUProcessPrefs() {
 
   FeatureState& gpuProc = gfxConfig::GetFeature(Feature::GPU_PROCESS);
 
-  nsCString message;
-  nsCString failureId;
-  if (!gfxPlatform::IsGfxInfoStatusOkay(nsIGfxInfo::FEATURE_GPU_PROCESS,
-                                        &message, failureId)) {
-    gpuProc.Disable(FeatureStatus::Blocklisted, message.get(), failureId);
-    // Don't return early here. We must continue the checks below in case
-    // the user has force-enabled the GPU process.
-  }
-
   // We require E10S - otherwise, there is very little benefit to the GPU
   // process, since the UI process must still use acceleration for
   // performance.
@@ -2470,6 +2461,14 @@ void gfxPlatform::InitGPUProcessPrefs() {
 
   if (StaticPrefs::layers_gpu_process_force_enabled_AtStartup()) {
     gpuProc.UserForceEnable("User force-enabled via pref");
+  }
+
+  nsCString message;
+  nsCString failureId;
+  if (!gfxPlatform::IsGfxInfoStatusOkay(nsIGfxInfo::FEATURE_GPU_PROCESS,
+                                        &message, failureId)) {
+    gpuProc.Disable(FeatureStatus::Blocklisted, message.get(), failureId);
+    return;
   }
 
   if (IsHeadless()) {
@@ -2692,6 +2691,47 @@ void gfxPlatform::InitWebRenderConfig() {
     FeatureState& feature = gfxConfig::GetFeature(Feature::VIDEO_OVERLAY);
     feature.EnableByDefault();
     gfxVars::SetUseWebRenderDCompVideoOverlayWin(true);
+  }
+
+  bool useHwVideoNoCopy = false;
+  if (StaticPrefs::media_wmf_no_copy_nv12_textures_AtStartup()) {
+    // XXX relax limitation to Windows 8.1
+    if (IsWin10OrLater() && hasHardware) {
+      useHwVideoNoCopy = true;
+    }
+
+    if (useHwVideoNoCopy &&
+        !StaticPrefs::
+            media_wmf_no_copy_nv12_textures_force_enabled_AtStartup()) {
+      nsCString failureId;
+      int32_t status;
+      const nsCOMPtr<nsIGfxInfo> gfxInfo = components::GfxInfo::Service();
+      if (NS_FAILED(gfxInfo->GetFeatureStatus(
+              nsIGfxInfo::FEATURE_HW_DECODED_VIDEO_NO_COPY, failureId,
+              &status))) {
+        FeatureState& feature =
+            gfxConfig::GetFeature(Feature::HW_DECODED_VIDEO_NO_COPY);
+        feature.DisableByDefault(FeatureStatus::BlockedNoGfxInfo,
+                                 "gfxInfo is broken",
+                                 "FEATURE_FAILURE_WR_NO_GFX_INFO"_ns);
+        useHwVideoNoCopy = false;
+      } else {
+        if (status != nsIGfxInfo::FEATURE_ALLOW_ALWAYS) {
+          FeatureState& feature =
+              gfxConfig::GetFeature(Feature::HW_DECODED_VIDEO_NO_COPY);
+          feature.DisableByDefault(FeatureStatus::Blocked,
+                                   "Blocklisted by gfxInfo", failureId);
+          useHwVideoNoCopy = false;
+        }
+      }
+    }
+  }
+
+  if (useHwVideoNoCopy) {
+    FeatureState& feature =
+        gfxConfig::GetFeature(Feature::HW_DECODED_VIDEO_NO_COPY);
+    feature.EnableByDefault();
+    gfxVars::SetHwDecodedVideoNoCopy(true);
   }
 
   if (Preferences::GetBool("gfx.webrender.flip-sequential", false)) {
@@ -3276,7 +3316,8 @@ void gfxPlatform::NotifyCompositorCreated(LayersBackend aBackend) {
 /* static */
 bool gfxPlatform::FallbackFromAcceleration(FeatureStatus aStatus,
                                            const char* aMessage,
-                                           const nsACString& aFailureId) {
+                                           const nsACString& aFailureId,
+                                           bool aCrashAfterFinalFallback) {
   // We always want to ensure (Hardware) WebRender is disabled.
   if (gfxConfig::IsEnabled(Feature::WEBRENDER)) {
     gfxConfig::GetFeature(Feature::WEBRENDER)
@@ -3373,6 +3414,10 @@ bool gfxPlatform::FallbackFromAcceleration(FeatureStatus aStatus,
     gfxCriticalNoteOnce << "Fallback WR to SW-WR, forced";
     gfxVars::SetUseSoftwareWebRender(true);
     return true;
+  }
+
+  if (aCrashAfterFinalFallback) {
+    MOZ_CRASH("Fallback configurations exhausted");
   }
 
   // Continue using Software WebRender (disabled fallback to Basic).

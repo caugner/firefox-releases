@@ -43,7 +43,7 @@ XPCOMUtils.defineLazyModuleGetters(this, {
   permissions: "chrome://remote/content/marionette/permissions.js",
   PollPromise: "chrome://remote/content/marionette/sync.js",
   pprint: "chrome://remote/content/shared/Format.jsm",
-  print: "chrome://remote/content/marionette/print.js",
+  print: "chrome://remote/content/shared/PDF.jsm",
   reftest: "chrome://remote/content/marionette/reftest.js",
   registerCommandsActor:
     "chrome://remote/content/marionette/actors/MarionetteCommandsParent.jsm",
@@ -416,7 +416,7 @@ GeckoDriver.prototype.newSession = async function(cmd) {
     // itself needs to handle it, and has to nullify the "webSocketUrl"
     // capability.
     if (RemoteAgent.webDriverBiDi) {
-      RemoteAgent.webDriverBiDi.createSession(capabilities);
+      await RemoteAgent.webDriverBiDi.createSession(capabilities);
     } else {
       this._currentSession = new WebDriverSession(capabilities);
       this._currentSession.capabilities.delete("webSocketUrl");

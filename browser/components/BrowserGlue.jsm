@@ -94,6 +94,7 @@ XPCOMUtils.defineLazyModuleGetters(this, {
   TelemetryUtils: "resource://gre/modules/TelemetryUtils.jsm",
   TRRRacer: "resource:///modules/TRRPerformance.jsm",
   UIState: "resource://services-sync/UIState.jsm",
+  UpdateListener: "resource://gre/modules/UpdateListener.jsm",
   UrlbarQuickSuggest: "resource:///modules/UrlbarQuickSuggest.jsm",
   UrlbarPrefs: "resource:///modules/UrlbarPrefs.jsm",
   WebChannel: "resource://gre/modules/WebChannel.jsm",
@@ -104,23 +105,6 @@ XPCOMUtils.defineLazyModuleGetters(this, {
 XPCOMUtils.defineLazyModuleGetters(this, {
   AboutLoginsParent: "resource:///modules/AboutLoginsParent.jsm",
   PluginManager: "resource:///actors/PluginParent.jsm",
-});
-
-// Modules requiring an initialization method call.
-let initializedModules = {};
-[
-  [
-    "ContentPrefServiceParent",
-    "resource://gre/modules/ContentPrefServiceParent.jsm",
-    "alwaysInit",
-  ],
-  ["UpdateListener", "resource://gre/modules/UpdateListener.jsm", "init"],
-].forEach(([name, resource, init]) => {
-  XPCOMUtils.defineLazyGetter(this, name, () => {
-    ChromeUtils.import(resource, initializedModules);
-    initializedModules[name][init]();
-    return initializedModules[name];
-  });
 });
 
 XPCOMUtils.defineLazyServiceGetters(this, {
@@ -694,6 +678,7 @@ let JSWINDOWACTORS = {
         // The 'unload' event is only used to clean up state, and should not
         // force actor creation.
         unload: { createActor: false },
+        load: { mozSystemGroup: true, capture: true },
       },
     },
   },
@@ -1075,9 +1060,6 @@ BrowserGlue.prototype = {
           );
         }
         break;
-      case "flash-plugin-hang":
-        this._handleFlashHang();
-        break;
       case "xpi-signature-changed":
         let disabledAddons = JSON.parse(data).disabled;
         let addons = await AddonManager.getAddonsByIDs(disabledAddons);
@@ -1132,7 +1114,6 @@ BrowserGlue.prototype = {
       "keyword-search",
       "browser-search-engine-modified",
       "restart-in-safe-mode",
-      "flash-plugin-hang",
       "xpi-signature-changed",
       "sync-ui-state:update",
       "handlersvc-store-initialized",
@@ -1145,7 +1126,6 @@ BrowserGlue.prototype = {
     ActorManagerParent.addJSProcessActors(JSPROCESSACTORS);
     ActorManagerParent.addJSWindowActors(JSWINDOWACTORS);
 
-    this._flashHangCount = 0;
     this._firstWindowReady = new Promise(
       resolve => (this._firstWindowLoaded = resolve)
     );
@@ -1220,6 +1200,7 @@ BrowserGlue.prototype = {
       PREF_DFPI_ENABLED_BY_DEFAULT,
       this._setDefaultCookieBehavior
     );
+    NimbusFeatures.tcpByDefault.off(this._setDefaultCookieBehavior);
   },
 
   // runs on startup, before the first command line handler is invoked
@@ -1739,6 +1720,7 @@ BrowserGlue.prototype = {
       PREF_DFPI_ENABLED_BY_DEFAULT,
       this._setDefaultCookieBehavior
     );
+    NimbusFeatures.tcpByDefault.onUpdate(this._setDefaultCookieBehavior);
   },
 
   _updateAutoplayPref() {
@@ -1752,16 +1734,44 @@ BrowserGlue.prototype = {
     }
   },
 
-  // For the initial rollout of dFPI, set the default cookieBehavior based on the pref
-  // set during onboarding when the user chooses to enable protections or not.
   _setDefaultCookieBehavior() {
+    let defaultPrefs = Services.prefs.getDefaultBranch("");
+
+    let hasCookieBehaviorPolicy = () =>
+      Services.policies.status == Services.policies.ACTIVE &&
+      Services.policies.getActivePolicies()?.Cookies?.Behavior;
+
+    // For phase 2 we enable dFPI / TCP for all clients which are part of the
+    // rollout.
+    // Avoid overwriting cookie behavior set by enterprise policy.
+    if (NimbusFeatures.tcpByDefault.isEnabled() && !hasCookieBehaviorPolicy()) {
+      Services.telemetry.scalarSet(
+        "privacy.dfpi_rollout_tcpByDefault_feature",
+        true
+      );
+
+      // Enable TCP by updating the default pref state for cookie behaviour. This
+      // means we won't override user choice.
+      defaultPrefs.setIntPref(
+        "network.cookie.cookieBehavior",
+        Ci.nsICookieService.BEHAVIOR_REJECT_TRACKER_AND_PARTITION_FOREIGN
+      );
+
+      return;
+    }
+    Services.telemetry.scalarSet(
+      "privacy.dfpi_rollout_tcpByDefault_feature",
+      false
+    );
+
+    // For the initial rollout of dFPI, set the default cookieBehavior based on the pref
+    // set during onboarding when the user chooses to enable protections or not.
     if (!Services.prefs.prefHasUserValue(PREF_DFPI_ENABLED_BY_DEFAULT)) {
       Services.telemetry.scalarSet("privacy.dfpi_rollout_enabledByDefault", 2);
       return;
     }
     let dFPIEnabled = Services.prefs.getBoolPref(PREF_DFPI_ENABLED_BY_DEFAULT);
 
-    let defaultPrefs = Services.prefs.getDefaultBranch("");
     defaultPrefs.setIntPref(
       "network.cookie.cookieBehavior",
       dFPIEnabled
@@ -1773,34 +1783,6 @@ BrowserGlue.prototype = {
       "privacy.dfpi_rollout_enabledByDefault",
       dFPIEnabled ? 1 : 0
     );
-
-    if (dFPIEnabled) {
-      Services.prefs.setStringPref(
-        "browser.search.param.google_channel_us",
-        "tus7"
-      );
-      Services.prefs.setStringPref(
-        "browser.search.param.google_channel_row",
-        "trow7"
-      );
-      Services.prefs.setStringPref(
-        "browser.search.param.bing_ptag",
-        "MOZZ0000000031"
-      );
-    } else {
-      Services.prefs.setStringPref(
-        "browser.search.param.google_channel_us",
-        "tus7"
-      );
-      Services.prefs.setStringPref(
-        "browser.search.param.google_channel_row",
-        "trow7"
-      );
-      Services.prefs.setStringPref(
-        "browser.search.param.bing_ptag",
-        "MOZZ0000000031"
-      );
-    }
   },
 
   _setPrefExpectations() {
@@ -1984,13 +1966,8 @@ BrowserGlue.prototype = {
       () => Normandy.uninit(),
       () => RFPHelper.uninit(),
       () => ASRouterNewTabHook.destroy(),
+      () => UpdateListener.reset(),
     ];
-
-    tasks.push(
-      ...Object.values(initializedModules)
-        .filter(m => m.uninit)
-        .map(m => () => m.uninit())
-    );
 
     for (let task of tasks) {
       try {
@@ -2295,7 +2272,7 @@ BrowserGlue.prototype = {
 
     if (AppConstants.ASAN_REPORTER) {
       var { AsanReporter } = ChromeUtils.import(
-        "resource:///modules/AsanReporter.jsm"
+        "resource://gre/modules/AsanReporter.jsm"
       );
       AsanReporter.init();
     }
@@ -2750,7 +2727,13 @@ BrowserGlue.prototype = {
         },
       },
 
-      // WebDriver components (Remote Agent and Marionette) need to be
+      {
+        task: () => {
+          UpdateListener.maybeShowUnsupportedNotification();
+        },
+      },
+
+      // WebDriver components (Marionette) need to be
       // initialized as very last step.
       {
         condition: AppConstants.ENABLE_WEBDRIVER,
@@ -2763,9 +2746,6 @@ BrowserGlue.prototype = {
               "browser-startup-idle-tasks-finished"
             );
 
-            // Request startup of the Remote Agent (support for WebDriver BiDi
-            // and the partial Chrome DevTools protocol) before Marionette.
-            Services.obs.notifyObservers(null, "remote-startup-requested");
             Services.obs.notifyObservers(null, "marionette-startup-requested");
           });
         },
@@ -3389,7 +3369,7 @@ BrowserGlue.prototype = {
   _migrateUI: function BG__migrateUI() {
     // Use an increasing number to keep track of the current migration state.
     // Completely unrelated to the current Firefox release number.
-    const UI_VERSION = 125;
+    const UI_VERSION = 127;
     const BROWSER_DOCURL = AppConstants.BROWSER_CHROME_URL;
 
     const PROFILE_DIR = Services.dirsvc.get("ProfD", Ci.nsIFile).path;
@@ -4165,12 +4145,34 @@ BrowserGlue.prototype = {
       }
     }
 
+    if (currentUIVersion < 126) {
+      // Bug 1747343 - Add a pref to set the default download action to "Always
+      // ask" so the UCT dialog will be opened for mime types that are not
+      // stored already. Users who wanted this behavior would have disabled the
+      // experimental pref browser.download.improvements_to_download_panel so we
+      // can migrate its inverted value to this new pref.
+      if (
+        !Services.prefs.getBoolPref(
+          "browser.download.improvements_to_download_panel",
+          true
+        )
+      ) {
+        Services.prefs.setBoolPref(
+          "browser.download.always_ask_before_handling_new_types",
+          true
+        );
+      }
+    }
+
+    // Bug 1769071: The UI Version 127 was used for a clean up code that is not
+    // necessary anymore. Please do not use 127 because this number is probably
+    // set in Nightly and Beta channel.
+
     // Update the migration version.
     Services.prefs.setIntPref("browser.migration.version", UI_VERSION);
   },
 
   async _showUpgradeDialog() {
-    // TO DO Bug 1762666: Remove "chrome://browser/content/upgradeDialog.html"
     const msg = await OnboardingMessageProvider.getUpgradeMessage();
     const win = BrowserWindowTracker.getTopWindow();
     const browser = win.gBrowser.selectedBrowser;
@@ -4390,7 +4392,7 @@ BrowserGlue.prototype = {
         } else {
           tab = win.gBrowser.addWebTab(URI.uri);
         }
-        tab.setAttribute("attention", true);
+        tab.attention = true;
         return tab;
       };
 
@@ -4489,7 +4491,7 @@ BrowserGlue.prototype = {
     } else {
       tab = win.gBrowser.addWebTab(url);
     }
-    tab.setAttribute("attention", true);
+    tab.attention = true;
     let clickCallback = (subject, topic, data) => {
       if (topic != "alertclickcallback") {
         return;
@@ -4570,65 +4572,6 @@ BrowserGlue.prototype = {
       true,
       null,
       clickCallback
-    );
-  },
-
-  _handleFlashHang() {
-    ++this._flashHangCount;
-    if (this._flashHangCount < 2) {
-      return;
-    }
-    // protected mode only applies to win32
-    if (Services.appinfo.XPCOMABI != "x86-msvc") {
-      return;
-    }
-
-    if (
-      Services.prefs.getBoolPref("dom.ipc.plugins.flash.disable-protected-mode")
-    ) {
-      return;
-    }
-    if (
-      !Services.prefs.getBoolPref("browser.flash-protected-mode-flip.enable")
-    ) {
-      return;
-    }
-    if (Services.prefs.getBoolPref("browser.flash-protected-mode-flip.done")) {
-      return;
-    }
-    Services.prefs.setBoolPref(
-      "dom.ipc.plugins.flash.disable-protected-mode",
-      true
-    );
-    Services.prefs.setBoolPref("browser.flash-protected-mode-flip.done", true);
-
-    let win = BrowserWindowTracker.getTopWindow();
-    if (!win) {
-      return;
-    }
-    let productName = gBrandBundle.GetStringFromName("brandShortName");
-    let message = win.gNavigatorBundle.getFormattedString("flashHang.message", [
-      productName,
-    ]);
-    let buttons = [
-      {
-        label: win.gNavigatorBundle.getString("flashHang.helpButton.label"),
-        accessKey: win.gNavigatorBundle.getString(
-          "flashHang.helpButton.accesskey"
-        ),
-        link:
-          "https://support.mozilla.org/kb/flash-protected-mode-autodisabled",
-      },
-    ];
-
-    // XXXndeakin is this notification still relevant?
-    win.gNotificationBox.appendNotification(
-      "flash-hang",
-      {
-        label: message,
-        priority: win.gNotificationBox.PRIORITY_INFO_MEDIUM,
-      },
-      buttons
     );
   },
 

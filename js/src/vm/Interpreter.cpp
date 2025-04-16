@@ -320,8 +320,8 @@ InterpreterFrame* InvokeState::pushInterpreterFrame(JSContext* cx) {
 }
 
 InterpreterFrame* ExecuteState::pushInterpreterFrame(JSContext* cx) {
-  return cx->interpreterStack().pushExecuteFrame(cx, script_, newTargetValue_,
-                                                 envChain_, evalInFrame_);
+  return cx->interpreterStack().pushExecuteFrame(cx, script_, envChain_,
+                                                 evalInFrame_);
 }
 
 InterpreterFrame* RunState::pushInterpreterFrame(JSContext* cx) {
@@ -542,27 +542,34 @@ bool js::InternalCallOrConstruct(JSContext* cx, const CallArgs& args,
   return ok;
 }
 
+// Returns true if the callee needs an outerized |this| object. Outerization
+// means passing the WindowProxy instead of the Window (a GlobalObject) because
+// we must never expose the Window to script. This returns false only for DOM
+// getters or setters.
+static bool CalleeNeedsOuterizedThisObject(const Value& callee) {
+  if (!callee.isObject() || !callee.toObject().is<JSFunction>()) {
+    return true;
+  }
+  JSFunction& fun = callee.toObject().as<JSFunction>();
+  if (!fun.isNativeFun() || !fun.hasJitInfo()) {
+    return true;
+  }
+  return fun.jitInfo()->needsOuterizedThisObject();
+}
+
 static bool InternalCall(JSContext* cx, const AnyInvokeArgs& args,
                          CallReason reason = CallReason::Call) {
   MOZ_ASSERT(args.array() + args.length() == args.end(),
              "must pass calling arguments to a calling attempt");
 
+#ifdef DEBUG
+  // The caller is responsible for calling GetThisObject if needed.
   if (args.thisv().isObject()) {
-    // We must call the thisValue hook in case we are not called from the
-    // interpreter, where a prior bytecode has computed an appropriate
-    // |this| already.  But don't do that if fval is a DOM function.
-    HandleValue fval = args.calleev();
-    if (!fval.isObject() || !fval.toObject().is<JSFunction>() ||
-        !fval.toObject().as<JSFunction>().isNativeFun() ||
-        !fval.toObject().as<JSFunction>().hasJitInfo() ||
-        fval.toObject()
-            .as<JSFunction>()
-            .jitInfo()
-            ->needsOuterizedThisObject()) {
-      JSObject* thisObj = GetThisObject(&args.thisv().toObject());
-      args.mutableThisv().setObject(*thisObj);
-    }
+    JSObject* thisObj = &args.thisv().toObject();
+    MOZ_ASSERT_IF(CalleeNeedsOuterizedThisObject(args.calleev()),
+                  GetThisObject(thisObj) == thisObj);
   }
+#endif
 
   return InternalCallOrConstruct(cx, args, NO_CONSTRUCT, reason);
 }
@@ -580,6 +587,20 @@ bool js::Call(JSContext* cx, HandleValue fval, HandleValue thisv,
   // shadowing.
   args.CallArgs::setCallee(fval);
   args.CallArgs::setThis(thisv);
+
+  if (thisv.isObject()) {
+    // If |this| is a global object, it might be a Window and in that case we
+    // usually have to pass the WindowProxy instead.
+    JSObject* thisObj = &thisv.toObject();
+    if (thisObj->is<GlobalObject>()) {
+      if (CalleeNeedsOuterizedThisObject(fval)) {
+        args.mutableThisv().setObject(*GetThisObject(thisObj));
+      }
+    } else {
+      // Fast path: we don't have to do anything if the object isn't a global.
+      MOZ_ASSERT(GetThisObject(thisObj) == thisObj);
+    }
+  }
 
   if (!InternalCall(cx, args, reason)) {
     return false;
@@ -726,8 +747,7 @@ bool js::CallSetter(JSContext* cx, HandleValue thisv, HandleValue setter,
 }
 
 bool js::ExecuteKernel(JSContext* cx, HandleScript script,
-                       HandleObject envChainArg, HandleValue newTargetValue,
-                       AbstractFramePtr evalInFrame,
+                       HandleObject envChainArg, AbstractFramePtr evalInFrame,
                        MutableHandleValue result) {
   MOZ_ASSERT_IF(script->isGlobalCode(),
                 IsGlobalLexicalEnvironment(envChainArg) ||
@@ -757,8 +777,7 @@ bool js::ExecuteKernel(JSContext* cx, HandleScript script,
   }
 
   probes::StartExecution(script);
-  ExecuteState state(cx, script, newTargetValue, envChainArg, evalInFrame,
-                     result);
+  ExecuteState state(cx, script, envChainArg, evalInFrame, result);
   bool ok = RunScript(cx, state);
   probes::StopExecution(script);
 
@@ -791,15 +810,15 @@ bool js::Execute(JSContext* cx, HandleScript script, HandleObject envChain,
   } while ((s = s->enclosingEnvironment()));
 #endif
 
-  return ExecuteKernel(cx, script, envChain, NullHandleValue,
-                       NullFramePtr() /* evalInFrame */, rval);
+  return ExecuteKernel(cx, script, envChain, NullFramePtr() /* evalInFrame */,
+                       rval);
 }
 
 /*
  * ES6 (4-25-16) 12.10.4 InstanceofOperator
  */
-extern bool JS::InstanceofOperator(JSContext* cx, HandleObject obj,
-                                   HandleValue v, bool* bp) {
+bool js::InstanceofOperator(JSContext* cx, HandleObject obj, HandleValue v,
+                            bool* bp) {
   /* Step 1. is handled by caller. */
 
   /* Step 2. */
@@ -831,14 +850,6 @@ extern bool JS::InstanceofOperator(JSContext* cx, HandleObject obj,
 
   /* Step 5. */
   return OrdinaryHasInstance(cx, obj, v, bp);
-}
-
-bool js::HasInstance(JSContext* cx, HandleObject obj, HandleValue v, bool* bp) {
-  if (MOZ_UNLIKELY(obj->is<ProxyObject>())) {
-    RootedValue local(cx, v);
-    return Proxy::hasInstance(cx, obj, &local, bp);
-  }
-  return JS::InstanceofOperator(cx, obj, v, bp);
 }
 
 JSType js::TypeOfObject(JSObject* obj) {
@@ -3756,22 +3767,6 @@ static MOZ_NEVER_INLINE JS_HAZ_JSNATIVE_CALLER bool Interpret(JSContext* cx,
     }
     END_CASE(Lambda)
 
-    CASE(LambdaArrow) {
-      /* Load the specified function object literal. */
-      ReservedRooted<JSFunction*> fun(&rootFunction0,
-                                      script->getFunction(REGS.pc));
-      ReservedRooted<Value> newTarget(&rootValue1, REGS.sp[-1]);
-      JSObject* obj =
-          LambdaArrow(cx, fun, REGS.fp()->environmentChain(), newTarget);
-      if (!obj) {
-        goto error;
-      }
-
-      MOZ_ASSERT(obj->staticPrototype());
-      REGS.sp[-1].setObject(*obj);
-    }
-    END_CASE(LambdaArrow)
-
     CASE(ToAsyncIter) {
       ReservedRooted<Value> nextMethod(&rootValue0, REGS.sp[-1]);
       ReservedRooted<JSObject*> iter(&rootObject1, &REGS.sp[-2].toObject());
@@ -3962,7 +3957,7 @@ static MOZ_NEVER_INLINE JS_HAZ_JSNATIVE_CALLER bool Interpret(JSContext* cx,
 
       ReservedRooted<PropertyName*> name(&rootName0, script->getName(REGS.pc));
 
-      if (!InitPropertyOperation(cx, JSOp(*REGS.pc), obj, name, rval)) {
+      if (!InitPropertyOperation(cx, REGS.pc, obj, name, rval)) {
         goto error;
       }
 
@@ -4137,7 +4132,7 @@ static MOZ_NEVER_INLINE JS_HAZ_JSNATIVE_CALLER bool Interpret(JSContext* cx,
       }
       ReservedRooted<JSObject*> obj(&rootObject0, &rref.toObject());
       bool cond = false;
-      if (!HasInstance(cx, obj, REGS.stackHandleAt(-2), &cond)) {
+      if (!InstanceofOperator(cx, obj, REGS.stackHandleAt(-2), &cond)) {
         goto error;
       }
       REGS.sp--;
@@ -4685,8 +4680,6 @@ bool js::GetProperty(JSContext* cx, HandleValue v, HandlePropertyName name,
 }
 
 JSObject* js::Lambda(JSContext* cx, HandleFunction fun, HandleObject parent) {
-  MOZ_ASSERT(!fun->isArrow());
-
   JSFunction* clone;
   if (fun->isNativeFun()) {
     MOZ_ASSERT(IsAsmJSModule(fun));
@@ -4698,23 +4691,6 @@ JSObject* js::Lambda(JSContext* cx, HandleFunction fun, HandleObject parent) {
   if (!clone) {
     return nullptr;
   }
-
-  MOZ_ASSERT(fun->global() == clone->global());
-  return clone;
-}
-
-JSObject* js::LambdaArrow(JSContext* cx, HandleFunction fun,
-                          HandleObject parent, HandleValue newTargetv) {
-  MOZ_ASSERT(fun->isArrow());
-
-  RootedObject proto(cx, fun->staticPrototype());
-  JSFunction* clone = CloneFunctionReuseScript(cx, fun, parent, proto);
-  if (!clone) {
-    return nullptr;
-  }
-
-  MOZ_ASSERT(clone->isArrow());
-  clone->setExtendedSlot(FunctionExtended::ARROW_NEWTARGET_SLOT, newTargetv);
 
   MOZ_ASSERT(fun->global() == clone->global());
   return clone;

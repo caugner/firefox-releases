@@ -20,6 +20,7 @@
 
 #include <algorithm>
 #include <iterator>
+#include <type_traits>
 
 #include "jit/ABIArgGenerator.h"
 #include "jit/JitFrames.h"
@@ -2340,8 +2341,7 @@ static bool GenerateImportJitExit(MacroAssembler& masm, const FuncImport& fi,
   masm.storePtr(callee, Address(masm.getStackPointer(), calleeArgOffset));
 
   // 6. Check if we need to rectify arguments.
-  masm.load32(Address(callee, JSFunction::offsetOfFlagsAndArgCount()), scratch);
-  masm.rshift32(Imm32(JSFunction::ArgCountShift), scratch);
+  masm.loadFunctionArgCount(callee, scratch);
 
   Label rectify;
   masm.branch32(Assembler::Above, scratch, Imm32(fi.funcType().args().length()),
@@ -2663,7 +2663,8 @@ bool wasm::GenerateBuiltinThunk(MacroAssembler& masm, ABIFunctionType abiType,
 #elif defined(JS_CODEGEN_X86)
   // x86 passes the return value on the x87 FP stack.
   Operand op(esp, 0);
-  MIRType retType = ToMIRType(ABIArgType(abiType & ArgType_Mask));
+  MIRType retType = ToMIRType(ABIArgType(
+      std::underlying_type_t<ABIFunctionType>(abiType) & ArgType_Mask));
   if (retType == MIRType::Float32) {
     masm.fstp32(op);
     masm.loadFloat32(op, ReturnFloat32Reg);
@@ -2673,7 +2674,8 @@ bool wasm::GenerateBuiltinThunk(MacroAssembler& masm, ABIFunctionType abiType,
   }
 #elif defined(JS_CODEGEN_ARM)
   // Non hard-fp passes the return values in GPRs.
-  MIRType retType = ToMIRType(ABIArgType(abiType & ArgType_Mask));
+  MIRType retType = ToMIRType(ABIArgType(
+      std::underlying_type_t<ABIFunctionType>(abiType) & ArgType_Mask));
   if (!UseHardFpABI() && IsFloatingPointType(retType)) {
     masm.ma_vxfer(r0, r1, d0);
   }
@@ -2745,12 +2747,12 @@ static const LiveRegisterSet RegsToPreserve(
 #  endif
 #endif
 
-// Generate a MachineState which describes the locations of the GPRs as saved
+// Generate a RegisterOffsets which describes the locations of the GPRs as saved
 // by GenerateTrapExit.  FP registers are ignored.  Note that the values
-// stored in the MachineState are offsets in words downwards from the top of
+// stored in the RegisterOffsets are offsets in words downwards from the top of
 // the save area.  That is, a higher value implies a lower address.
-void wasm::GenerateTrapExitMachineState(MachineState* machine,
-                                        size_t* numWords) {
+void wasm::GenerateTrapExitRegisterOffsets(RegisterOffsets* offsets,
+                                           size_t* numWords) {
   // This is the number of words pushed by the initial WasmPush().
   *numWords = WasmPushSize / sizeof(void*);
   MOZ_ASSERT(*numWords == TrapExitDummyValueOffsetFromTop + 1);
@@ -2758,8 +2760,7 @@ void wasm::GenerateTrapExitMachineState(MachineState* machine,
   // And these correspond to the PushRegsInMask() that immediately follows.
   for (GeneralRegisterBackwardIterator iter(RegsToPreserve.gprs()); iter.more();
        ++iter) {
-    machine->setRegisterLocation(*iter,
-                                 reinterpret_cast<uintptr_t*>(*numWords));
+    offsets->setOffset(*iter, *numWords);
     (*numWords)++;
   }
 }
@@ -2914,34 +2915,33 @@ static bool GenerateThrowStub(MacroAssembler& masm, Label* throwLabel,
               scratch1);
 
   masm.branch32(Assembler::Equal, scratch1,
-                Imm32(jit::ResumeFromException::RESUME_WASM_CATCH),
-                &resumeCatch);
+                Imm32(jit::ExceptionResumeKind::WasmCatch), &resumeCatch);
   masm.branch32(Assembler::Equal, scratch1,
-                Imm32(jit::ResumeFromException::RESUME_WASM), &leaveWasm);
+                Imm32(jit::ExceptionResumeKind::Wasm), &leaveWasm);
 
   masm.breakpoint();
 
   // The case where a Wasm catch handler was found while unwinding the stack.
   masm.bind(&resumeCatch);
-  masm.loadPtr(Address(ReturnReg, offsetof(ResumeFromException, tlsData)),
+  masm.loadPtr(Address(ReturnReg, ResumeFromException::offsetOfTlsData()),
                InstanceReg);
   masm.loadWasmPinnedRegsFromInstance();
   masm.switchToWasmInstanceRealm(scratch1, scratch2);
-  masm.loadPtr(Address(ReturnReg, offsetof(ResumeFromException, target)),
+  masm.loadPtr(Address(ReturnReg, ResumeFromException::offsetOfTarget()),
                scratch1);
-  masm.loadPtr(Address(ReturnReg, offsetof(ResumeFromException, framePointer)),
+  masm.loadPtr(Address(ReturnReg, ResumeFromException::offsetOfFramePointer()),
                FramePointer);
   masm.loadStackPtr(
-      Address(ReturnReg, offsetof(ResumeFromException, stackPointer)));
+      Address(ReturnReg, ResumeFromException::offsetOfStackPointer()));
   MoveSPForJitABI(masm);
   ClobberWasmRegsForLongJmp(masm, scratch1);
   masm.jump(scratch1);
 
   // No catch handler was found, so we will just return out.
   masm.bind(&leaveWasm);
-  masm.loadPtr(Address(ReturnReg, offsetof(ResumeFromException, framePointer)),
+  masm.loadPtr(Address(ReturnReg, ResumeFromException::offsetOfFramePointer()),
                FramePointer);
-  masm.loadPtr(Address(ReturnReg, offsetof(ResumeFromException, stackPointer)),
+  masm.loadPtr(Address(ReturnReg, ResumeFromException::offsetOfStackPointer()),
                scratch1);
   masm.moveToStackPtr(scratch1);
 #ifdef JS_CODEGEN_ARM64

@@ -12,13 +12,14 @@ let AVAILABLE_PIP_OVERRIDES;
   // See PictureInPictureControls.jsm for these values.
   // eslint-disable-next-line no-unused-vars
   const TOGGLE_POLICIES = browser.pictureInPictureChild.getPolicies();
-  const KEYBOARD_CONTROLS = browser.pictureInPictureChild.getKeyboardControls();
 
   AVAILABLE_PIP_OVERRIDES = {
     // The keys of this object are match patterns for URLs, as documented in
     // https://developer.mozilla.org/en-US/docs/Mozilla/Add-ons/WebExtensions/Match_patterns
     //
     // Example:
+    //  const KEYBOARD_CONTROLS = browser.pictureInPictureChild.getKeyboardControls();
+    //
     //
     // "https://*.youtube.com/*": {
     //   policy: TOGGLE_POLICIES.THREE_QUARTERS,
@@ -34,6 +35,27 @@ let AVAILABLE_PIP_OVERRIDES;
       "https://mochitest.youtube.com/*browser/browser/extensions/pictureinpicture/tests/browser/test-mock-wrapper.html": {
         videoWrapperScriptPath: "video-wrappers/mock-wrapper.js",
       },
+      "https://mochitest.youtube.com/*browser/browser/extensions/pictureinpicture/tests/browser/test-toggle-visibility.html": {
+        videoWrapperScriptPath: "video-wrappers/mock-wrapper.js",
+      },
+    },
+
+    airmozilla: {
+      "https://*.mozilla.hosted.panopto.com/*": {
+        videoWrapperScriptPath: "video-wrappers/airmozilla.js",
+      },
+    },
+
+    funimation: {
+      "https://*.funimation.com/*": {
+        videoWrapperScriptPath: "video-wrappers/funimation.js",
+      },
+    },
+
+    hotstar: {
+      "https://*.hotstar.com/*": {
+        videoWrapperScriptPath: "video-wrappers/hotstar.js",
+      },
     },
 
     instagram: {
@@ -46,7 +68,6 @@ let AVAILABLE_PIP_OVERRIDES;
 
     netflix: {
       "https://*.netflix.com/*": {
-        keyboardControls: ~KEYBOARD_CONTROLS.SEEK,
         videoWrapperScriptPath: "video-wrappers/netflix.js",
       },
       "https://*.netflix.com/browse*": { policy: TOGGLE_POLICIES.HIDDEN },
@@ -55,6 +76,21 @@ let AVAILABLE_PIP_OVERRIDES;
       "https://*.netflix.com/title*": { policy: TOGGLE_POLICIES.HIDDEN },
       "https://*.netflix.com/notification*": { policy: TOGGLE_POLICIES.HIDDEN },
       "https://*.netflix.com/search*": { policy: TOGGLE_POLICIES.HIDDEN },
+    },
+
+    tubi: {
+      "https://*.tubitv.com/*": {
+        videoWrapperScriptPath: "video-wrappers/tubi.js",
+      },
+    },
+
+    piped: {
+      "https://*.piped.kavin.rocks/*": {
+        videoWrapperScriptPath: "video-wrappers/piped.js",
+      },
+      "https://*.piped.silkky.cloud/*": {
+        videoWrapperScriptPath: "video-wrappers/piped.js",
+      },
     },
 
     twitch: {

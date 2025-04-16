@@ -571,7 +571,8 @@ class nsBaseWidget : public nsIWidget, public nsSupportsWeakReference {
   nsresult SynthesizeNativeTouchpadPan(TouchpadGesturePhase aEventPhase,
                                        LayoutDeviceIntPoint aPoint,
                                        double aDeltaX, double aDeltaY,
-                                       int32_t aModifierFlags) override {
+                                       int32_t aModifierFlags,
+                                       nsIObserver* aObserver) override {
     MOZ_RELEASE_ASSERT(
         false, "This method is not implemented on the current platform");
     return NS_ERROR_UNEXPECTED;
@@ -618,6 +619,8 @@ class nsBaseWidget : public nsIWidget, public nsSupportsWeakReference {
   CompositorBridgeChild* GetRemoteRenderer() override;
 
   void ClearCachedWebrenderResources() override;
+
+  bool SetNeedFastSnaphot() override;
 
   /**
    * Notify the widget that this window is being used with OMTC.
@@ -729,6 +732,7 @@ class nsBaseWidget : public nsIWidget, public nsSupportsWeakReference {
   bool mIMEHasFocus;
   bool mIMEHasQuit;
   bool mIsFullyOccluded;
+  bool mNeedFastSnaphot;
   // This flag is only used when APZ is off. It indicates that the current pan
   // gesture was processed as a swipe. Sometimes the swipe animation can finish
   // before momentum events of the pan gesture have stopped firing, so this

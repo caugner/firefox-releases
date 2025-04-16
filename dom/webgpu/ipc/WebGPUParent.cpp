@@ -19,8 +19,17 @@ const uint64_t POLL_TIME_MS = 100;
 
 static mozilla::LazyLogModule sLogger("WebGPU");
 
-// A helper class to force error checks coming across FFI.
-// It will assert in destructor if unchecked.
+// A fixed-capacity buffer for receiving textual error messages from
+// `wgpu_bindings`.
+//
+// The `ToFFI` method returns an `ffi::WGPUErrorBuffer` pointing to our
+// buffer, for you to pass to fallible FFI-visible `wgpu_bindings`
+// functions. These indicate failure by storing an error message in the
+// buffer, which you can retrieve by calling `GetError`.
+//
+// If you call `ToFFI` on this type, you must also call `GetError` to check for
+// an error. Otherwise, the destructor asserts.
+//
 // TODO: refactor this to avoid stack-allocating the buffer all the time.
 class ErrorBuffer {
   // if the message doesn't fit, it will be truncated
@@ -638,6 +647,36 @@ static void PresentCallback(ffi::WGPUBufferMapAsyncStatus status,
   }
   // free yourself
   delete req;
+}
+
+ipc::IPCResult WebGPUParent::GetFrontBufferSnapshot(
+    IProtocol* aProtocol, const CompositableHandle& aHandle,
+    Maybe<Shmem>& aShmem, gfx::IntSize& aSize) {
+  const auto& lookup = mCanvasMap.find(aHandle.Value());
+  if (lookup == mCanvasMap.end()) {
+    return IPC_OK();
+  }
+
+  RefPtr<PresentationData> data = lookup->second.get();
+  aSize = data->mTextureHost->GetSize();
+  uint32_t stride =
+      aSize.width * BytesPerPixel(data->mTextureHost->GetFormat());
+  uint32_t len = data->mRowCount * stride;
+  Shmem shmem;
+  if (!AllocShmem(len, ipc::Shmem::SharedMemory::TYPE_BASIC, &shmem)) {
+    return IPC_OK();
+  }
+
+  uint8_t* dst = shmem.get<uint8_t>();
+  uint8_t* src = data->mTextureHost->GetBuffer();
+  for (uint32_t row = 0; row < data->mRowCount; ++row) {
+    memcpy(dst, src, stride);
+    src += data->mTargetPitch;
+    dst += stride;
+  }
+
+  aShmem.emplace(std::move(shmem));
+  return IPC_OK();
 }
 
 ipc::IPCResult WebGPUParent::RecvSwapChainPresent(

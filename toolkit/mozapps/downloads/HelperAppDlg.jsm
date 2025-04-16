@@ -306,13 +306,6 @@ nsUnknownContentTypeDialog.prototype = {
 
           // Check to make sure we have a valid directory, otherwise, prompt
           if (result) {
-            // Notifications for CloudStorage API consumers to show offer
-            // prompts while downloading. See Bug 1365129
-            Services.obs.notifyObservers(
-              null,
-              "cloudstorage-prompt-notification",
-              result.path
-            );
             // This path is taken when we have a writable default download directory.
             aLauncher.saveDestinationAvailable(result);
             return;
@@ -1118,7 +1111,9 @@ nsUnknownContentTypeDialog.prototype = {
       ) {
         this.updateHelperAppPref();
       }
-    } catch (e) {}
+    } catch (e) {
+      Cu.reportError(e);
+    }
 
     this.onUnload();
   },
@@ -1130,7 +1125,10 @@ nsUnknownContentTypeDialog.prototype = {
     // Cancel app launcher.
     try {
       this.mLauncher.cancel(Cr.NS_BINDING_ABORTED);
-    } catch (exception) {}
+    } catch (e) {
+      Cu.reportError(e);
+    }
+
     this.onUnload();
   },
 

@@ -285,7 +285,7 @@ nsPresContext::nsPresContext(dom::Document* aDocument, nsPresContextType aType)
 #ifdef DEBUG
       mInitialized(false),
 #endif
-      mColorSchemeOverride(dom::PrefersColorSchemeOverride::None) {
+      mOverriddenOrEmbedderColorScheme(dom::PrefersColorSchemeOverride::None) {
 #ifdef DEBUG
   PodZero(&mLayoutPhaseCount);
 #endif
@@ -869,12 +869,12 @@ void nsPresContext::AttachPresShell(mozilla::PresShell* aPresShell) {
   UpdateCharSet(doc->GetDocumentCharacterSet());
 }
 
-Maybe<ColorScheme> nsPresContext::GetOverriddenColorScheme() const {
+Maybe<ColorScheme> nsPresContext::GetOverriddenOrEmbedderColorScheme() const {
   if (IsPrintingOrPrintPreview()) {
     return Some(ColorScheme::Light);
   }
 
-  switch (mColorSchemeOverride) {
+  switch (mOverriddenOrEmbedderColorScheme) {
     case dom::PrefersColorSchemeOverride::Dark:
       return Some(ColorScheme::Dark);
     case dom::PrefersColorSchemeOverride::Light:
@@ -885,6 +885,22 @@ Maybe<ColorScheme> nsPresContext::GetOverriddenColorScheme() const {
   }
 
   return Nothing();
+}
+
+void nsPresContext::SetColorSchemeOverride(
+    PrefersColorSchemeOverride aOverride) {
+  auto oldScheme = mDocument->PreferredColorScheme();
+
+  mOverriddenOrEmbedderColorScheme = aOverride;
+
+  if (mDocument->PreferredColorScheme() != oldScheme) {
+    // We need to restyle because not only media queries have changed, system
+    // colors may as well via the prefers-color-scheme meta tag / effective
+    // color-scheme property value.
+    MediaFeatureValuesChanged({RestyleHint::RecascadeSubtree(), nsChangeHint(0),
+                               MediaFeatureChangeReason::SystemMetricsChange},
+                              MediaFeatureChangePropagation::JustThisDocument);
+  }
 }
 
 void nsPresContext::RecomputeBrowsingContextDependentData() {
@@ -905,20 +921,23 @@ void nsPresContext::RecomputeBrowsingContextDependentData() {
   SetTextZoom(browsingContext->TextZoom());
   SetOverrideDPPX(browsingContext->OverrideDPPX());
 
-  auto oldOverride = mColorSchemeOverride;
-  mColorSchemeOverride = browsingContext->Top()->PrefersColorSchemeOverride();
-  if (oldOverride != mColorSchemeOverride) {
-    // We need to restyle because not only media queries have changed, system
-    // colors may as well via the prefers-color-scheme meta tag / effective
-    // color-scheme property value.
-    MediaFeatureValuesChanged({RestyleHint::RecascadeSubtree(), nsChangeHint(0),
-                               MediaFeatureChangeReason::SystemMetricsChange},
-                              MediaFeatureChangePropagation::JustThisDocument);
-  }
+  auto* top = browsingContext->Top();
+  SetColorSchemeOverride([&] {
+    auto overriden = top->PrefersColorSchemeOverride();
+    if (overriden != PrefersColorSchemeOverride::None) {
+      return overriden;
+    }
+    for (auto* cur = browsingContext; cur; cur = cur->GetParent()) {
+      auto embedder = cur->GetEmbedderColorScheme();
+      if (embedder != PrefersColorSchemeOverride::None) {
+        return embedder;
+      }
+    }
+    return PrefersColorSchemeOverride::None;
+  }());
 
   if (doc == mDocument) {
     // Medium doesn't apply to resource documents, etc.
-    auto* top = browsingContext->Top();
     RefPtr<nsAtom> mediumToEmulate;
     if (MOZ_UNLIKELY(!top->GetMediumOverride().IsEmpty())) {
       nsAutoString lower;
@@ -2753,6 +2772,9 @@ void nsPresContext::UpdateDynamicToolbarOffset(ScreenIntCoord aOffset) {
           mPresShell->GetMobileViewportManager()) {
     mvm->UpdateVisualViewportSizeByDynamicToolbar(-aOffset);
   }
+
+  mPresShell->StyleSet()->InvalidateForViewportUnits(
+      ServoStyleSet::OnlyDynamic::Yes);
 }
 
 DynamicToolbarState nsPresContext::GetDynamicToolbarState() const {
