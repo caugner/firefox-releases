@@ -25,7 +25,6 @@
 #include "ImageRegion.h"
 #include "imgIContainer.h"
 #include "imgIRequest.h"
-#include "Layers.h"
 #include "LayoutLogging.h"
 #include "MobileViewportManager.h"
 #include "mozilla/AccessibleCaretEventHub.h"
@@ -5852,6 +5851,17 @@ bool nsLayoutUtils::GetFirstLinePosition(WritingMode aWM,
         aResult->mBEnd = aFrame->BSize(aWM);
         return true;
       }
+      if (fType == LayoutFrameType::TableWrapper &&
+          aFrame->GetWritingMode().IsOrthogonalTo(aWM)) {
+        // For tables, the upcoming GetLogicalBaseline call would determine the
+        // table's baseline from its first row that has a baseline. However:
+        // this doesn't make sense for an orthogonal writing mode, so in that
+        // case we report no baseline instead. The table wrapper and its rows
+        // should flow the same way, so we can bail out early, but this logic
+        // wouldn't be correct to transplant into other places in the codebase
+        // (Depending on how bug 1786633 is resolved).
+        return false;
+      }
       aResult->mBStart = 0;
       aResult->mBaseline = aFrame->GetLogicalBaseline(aWM);
       // This is what we want for the list bullet caller; not sure if
@@ -6884,10 +6894,6 @@ nsTransparencyMode nsLayoutUtils::GetFrameTransparency(
   StyleAppearance appearance =
       aCSSRootFrame->StyleDisplay()->EffectiveAppearance();
 
-  if (appearance == StyleAppearance::MozWinGlass) {
-    return eTransparencyGlass;
-  }
-
   if (appearance == StyleAppearance::MozWinBorderlessGlass) {
     return eTransparencyBorderlessGlass;
   }
@@ -7387,7 +7393,7 @@ SurfaceFromElementResult nsLayoutUtils::SurfaceFromElement(
     pAlphaType =
         nullptr;  // Coersce GetSurfaceSnapshot to give us Opaque/Premult only.
   }
-  result.mSourceSurface = aElement->GetSurfaceSnapshot(pAlphaType);
+  result.mSourceSurface = aElement->GetSurfaceSnapshot(pAlphaType, aTarget);
   if (!result.mSourceSurface) {
     // If the element doesn't have a context then we won't get a snapshot. The
     // canvas spec wants us to not error and just draw nothing, so return an
@@ -9703,24 +9709,15 @@ void nsLayoutUtils::ComputeSystemFont(nsFont* aSystemFont,
   if (aFontID == LookAndFeel::FontID::MozField ||
       aFontID == LookAndFeel::FontID::MozButton ||
       aFontID == LookAndFeel::FontID::MozList) {
-    const bool isWindowsOrNonNativeTheme =
-#ifdef XP_WIN
-        true;
-#else
-        aDocument->ShouldAvoidNativeTheme();
-#endif
-
-    if (isWindowsOrNonNativeTheme) {
-      // For textfields, buttons and selects, we use whatever font is defined by
-      // the system. Which it appears (and the assumption is) it is always a
-      // proportional font. Then we always use 2 points smaller than what the
-      // browser has defined as the default proportional font.
-      //
-      // This matches historical Windows behavior and other browsers.
-      auto newSize =
-          aDefaultVariableFont.size.ToCSSPixels() - CSSPixel::FromPoints(2.0f);
-      aSystemFont->size = Length::FromPixels(std::max(float(newSize), 0.0f));
-    }
+    // For textfields, buttons and selects, we use whatever font is defined by
+    // the system. Which it appears (and the assumption is) it is always a
+    // proportional font. Then we always use 2 points smaller than what the
+    // browser has defined as the default proportional font.
+    //
+    // This matches historical Windows behavior and other browsers.
+    auto newSize =
+        aDefaultVariableFont.size.ToCSSPixels() - CSSPixel::FromPoints(2.0f);
+    aSystemFont->size = Length::FromPixels(std::max(float(newSize), 0.0f));
   }
 }
 

@@ -254,12 +254,13 @@ void nsTreeBodyFrame::DestroyFrom(nsIFrame* aDestructRoot,
     mTree->BodyDestroyed(mTopRowIndex);
   }
 
-  if (mView) {
+  if (nsCOMPtr<nsITreeView> view = std::move(mView)) {
     nsCOMPtr<nsITreeSelection> sel;
-    mView->GetSelection(getter_AddRefs(sel));
-    if (sel) sel->SetTree(nullptr);
-    mView->SetTree(nullptr);
-    mView = nullptr;
+    view->GetSelection(getter_AddRefs(sel));
+    if (sel) {
+      sel->SetTree(nullptr);
+    }
+    view->SetTree(nullptr);
   }
 
   nsLeafBoxFrame::DestroyFrom(aDestructRoot, aPostDestroyData);
@@ -400,8 +401,7 @@ nsresult nsTreeBodyFrame::SetView(nsITreeView* aView) {
   RefPtr<XULTreeElement> treeContent = GetBaseElement();
   if (treeContent) {
 #ifdef ACCESSIBILITY
-    if (nsAccessibilityService* accService =
-            PresShell::GetAccessibilityService()) {
+    if (nsAccessibilityService* accService = GetAccService()) {
       accService->TreeViewChanged(PresContext()->GetPresShell(), treeContent,
                                   mView);
     }
@@ -439,13 +439,19 @@ nsresult nsTreeBodyFrame::SetView(nsITreeView* aView) {
   return NS_OK;
 }
 
+already_AddRefed<nsITreeSelection> nsTreeBodyFrame::GetSelection() const {
+  nsCOMPtr<nsITreeSelection> sel;
+  if (nsCOMPtr<nsITreeView> view = GetExistingView()) {
+    view->GetSelection(getter_AddRefs(sel));
+  }
+  return sel.forget();
+}
+
 nsresult nsTreeBodyFrame::SetFocused(bool aFocused) {
   if (mFocused != aFocused) {
     mFocused = aFocused;
-    if (mView) {
-      nsCOMPtr<nsITreeSelection> sel;
-      mView->GetSelection(getter_AddRefs(sel));
-      if (sel) sel->InvalidateSelection();
+    if (nsCOMPtr<nsITreeSelection> sel = GetSelection()) {
+      sel->InvalidateSelection();
     }
   }
   return NS_OK;
@@ -477,9 +483,9 @@ Maybe<CSSIntRegion> nsTreeBodyFrame::GetSelectionRegion() {
     return Nothing();
   }
 
-  nsCOMPtr<nsITreeSelection> selection;
-  mView->GetSelection(getter_AddRefs(selection));
-  if (!selection) {
+  AutoWeakFrame wf(this);
+  nsCOMPtr<nsITreeSelection> selection = GetSelection();
+  if (!selection || !wf.IsAlive()) {
     return Nothing();
   }
 
@@ -527,7 +533,7 @@ nsresult nsTreeBodyFrame::InvalidateColumn(nsTreeColumn* aCol) {
   if (!aCol) return NS_ERROR_INVALID_ARG;
 
 #ifdef ACCESSIBILITY
-  if (PresShell::IsAccessibilityActive()) {
+  if (GetAccService()) {
     FireInvalidateEvent(-1, -1, aCol, aCol);
   }
 #endif  // #ifdef ACCESSIBILITY
@@ -547,7 +553,7 @@ nsresult nsTreeBodyFrame::InvalidateRow(int32_t aIndex) {
   if (mUpdateBatchNest) return NS_OK;
 
 #ifdef ACCESSIBILITY
-  if (PresShell::IsAccessibilityActive()) {
+  if (GetAccService()) {
     FireInvalidateEvent(aIndex, aIndex, nullptr, nullptr);
   }
 #endif  // #ifdef ACCESSIBILITY
@@ -566,7 +572,7 @@ nsresult nsTreeBodyFrame::InvalidateCell(int32_t aIndex, nsTreeColumn* aCol) {
   if (mUpdateBatchNest) return NS_OK;
 
 #ifdef ACCESSIBILITY
-  if (PresShell::IsAccessibilityActive()) {
+  if (GetAccService()) {
     FireInvalidateEvent(aIndex, aIndex, aCol, aCol);
   }
 #endif  // #ifdef ACCESSIBILITY
@@ -599,7 +605,7 @@ nsresult nsTreeBodyFrame::InvalidateRange(int32_t aStart, int32_t aEnd) {
   if (aEnd > last) aEnd = last;
 
 #ifdef ACCESSIBILITY
-  if (PresShell::IsAccessibilityActive()) {
+  if (GetAccService()) {
     int32_t end =
         mRowCount > 0 ? ((mRowCount <= aEnd) ? mRowCount - 1 : aEnd) : 0;
     FireInvalidateEvent(aStart, end, nullptr, nullptr);
@@ -1516,7 +1522,7 @@ nsresult nsTreeBodyFrame::RowCountChanged(int32_t aIndex, int32_t aCount) {
   if (aCount == 0 || !mView) return NS_OK;  // Nothing to do.
 
 #ifdef ACCESSIBILITY
-  if (PresShell::IsAccessibilityActive()) {
+  if (GetAccService()) {
     FireRowCountChangedEvent(aIndex, aCount);
   }
 #endif  // #ifdef ACCESSIBILITY
@@ -1524,10 +1530,7 @@ nsresult nsTreeBodyFrame::RowCountChanged(int32_t aIndex, int32_t aCount) {
   AutoWeakFrame weakFrame(this);
 
   // Adjust our selection.
-  nsCOMPtr<nsITreeView> view = mView;
-  nsCOMPtr<nsITreeSelection> sel;
-  view->GetSelection(getter_AddRefs(sel));
-  if (sel) {
+  if (nsCOMPtr<nsITreeSelection> sel = GetSelection()) {
     sel->AdjustSelection(aIndex, aCount);
   }
 
@@ -1631,9 +1634,7 @@ void nsTreeBodyFrame::PrefillPropertyArray(int32_t aRowIndex,
     if (aRowIndex == mMouseOverRow)
       mScratchArray.AppendElement((nsStaticAtom*)nsGkAtoms::hover);
 
-    nsCOMPtr<nsITreeSelection> selection;
-    mView->GetSelection(getter_AddRefs(selection));
-
+    nsCOMPtr<nsITreeSelection> selection = GetSelection();
     if (selection) {
       // selected
       bool isSelected;
@@ -2560,7 +2561,7 @@ ImgDrawResult nsTreeBodyFrame::PaintTreeBody(gfxContext& aRenderingContext,
   if (oldPageCount != mPageLength ||
       mHorzWidth != CalcHorzWidth(GetScrollParts())) {
     // Schedule a ResizeReflow that will update our info properly.
-    PresShell()->FrameNeedsReflow(this, IntrinsicDirty::Resize,
+    PresShell()->FrameNeedsReflow(this, IntrinsicDirty::None,
                                   NS_FRAME_IS_DIRTY);
   }
 #ifdef DEBUG

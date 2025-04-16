@@ -6,6 +6,7 @@
 
 #include "mozilla/dom/HTMLInputElement.h"
 
+#include "Units.h"
 #include "mozilla/ArrayUtils.h"
 #include "mozilla/AsyncEventDispatcher.h"
 #include "mozilla/BasePrincipal.h"
@@ -36,6 +37,7 @@
 
 #include "nsIRadioVisitor.h"
 
+#include "HTMLDataListElement.h"
 #include "HTMLFormSubmissionConstants.h"
 #include "mozilla/Telemetry.h"
 #include "nsBaseCommandController.h"
@@ -1644,7 +1646,7 @@ void HTMLInputElement::SetValue(const nsAString& aValue, CallerType aCallerType,
   }
 }
 
-nsGenericHTMLElement* HTMLInputElement::GetList() const {
+HTMLDataListElement* HTMLInputElement::GetList() const {
   nsAutoString dataListId;
   GetAttr(kNameSpaceID_None, nsGkAtoms::list_, dataListId);
   if (dataListId.IsEmpty()) {
@@ -1656,12 +1658,8 @@ nsGenericHTMLElement* HTMLInputElement::GetList() const {
     return nullptr;
   }
 
-  Element* element = docOrShadow->GetElementById(dataListId);
-  if (!element || !element->IsHTMLElement(nsGkAtoms::datalist)) {
-    return nullptr;
-  }
-
-  return static_cast<nsGenericHTMLElement*>(element);
+  return HTMLDataListElement::FromNodeOrNull(
+      docOrShadow->GetElementById(dataListId));
 }
 
 void HTMLInputElement::SetValue(Decimal aValue, CallerType aCallerType) {
@@ -3279,7 +3277,8 @@ void HTMLInputElement::StartRangeThumbDrag(WidgetGUIEvent* aEvent) {
   // have changed it by then).
   GetValue(mFocusedValue, CallerType::System);
 
-  SetValueOfRangeForUserEvent(rangeFrame->GetValueAtEventPoint(aEvent));
+  SetValueOfRangeForUserEvent(rangeFrame->GetValueAtEventPoint(aEvent),
+                              SnapToTickMarks::Yes);
 }
 
 void HTMLInputElement::FinishRangeThumbDrag(WidgetGUIEvent* aEvent) {
@@ -3290,7 +3289,8 @@ void HTMLInputElement::FinishRangeThumbDrag(WidgetGUIEvent* aEvent) {
   }
   if (aEvent) {
     nsRangeFrame* rangeFrame = do_QueryFrame(GetPrimaryFrame());
-    SetValueOfRangeForUserEvent(rangeFrame->GetValueAtEventPoint(aEvent));
+    SetValueOfRangeForUserEvent(rangeFrame->GetValueAtEventPoint(aEvent),
+                                SnapToTickMarks::Yes);
   }
   mIsDraggingRange = false;
   FireChangeEventIfNeeded();
@@ -3304,7 +3304,8 @@ void HTMLInputElement::CancelRangeThumbDrag(bool aIsForUserEvent) {
     PresShell::ReleaseCapturingContent();
   }
   if (aIsForUserEvent) {
-    SetValueOfRangeForUserEvent(mRangeThumbDragStartValue);
+    SetValueOfRangeForUserEvent(mRangeThumbDragStartValue,
+                                SnapToTickMarks::Yes);
   } else {
     // Don't dispatch an 'input' event - at least not using
     // DispatchTrustedEvent.
@@ -3325,8 +3326,12 @@ void HTMLInputElement::CancelRangeThumbDrag(bool aIsForUserEvent) {
   }
 }
 
-void HTMLInputElement::SetValueOfRangeForUserEvent(Decimal aValue) {
+void HTMLInputElement::SetValueOfRangeForUserEvent(
+    Decimal aValue, SnapToTickMarks aSnapToTickMarks) {
   MOZ_ASSERT(aValue.isFinite());
+  if (aSnapToTickMarks == SnapToTickMarks::Yes) {
+    MaybeSnapToTickMark(aValue);
+  }
 
   Decimal oldValue = GetValueAsDecimal();
 
@@ -4159,7 +4164,8 @@ void HTMLInputElement::PostHandleEventForRangeThumb(
         break;
       }
       SetValueOfRangeForUserEvent(
-          rangeFrame->GetValueAtEventPoint(aVisitor.mEvent->AsInputEvent()));
+          rangeFrame->GetValueAtEventPoint(aVisitor.mEvent->AsInputEvent()),
+          SnapToTickMarks::Yes);
       aVisitor.mEvent->mFlags.mMultipleActionsPrevented = true;
       break;
 
@@ -4482,6 +4488,14 @@ void HTMLInputElement::HandleTypeChange(FormControlType aNewType,
 
   UpdateBarredFromConstraintValidation();
 
+  // Changing type may affect directionality because of the special-case for
+  // <input type=tel>, as specified in
+  // https://html.spec.whatwg.org/multipage/dom.html#the-directionality
+  if (!HasDirAuto() && (oldType == FormControlType::InputTel ||
+                        mType == FormControlType::InputTel)) {
+    RecomputeDirectionality(this, aNotify);
+  }
+
   if (oldType == FormControlType::InputImage) {
     // We're no longer an image input.  Cancel our image requests, if we have
     // any.
@@ -4534,6 +4548,33 @@ void HTMLInputElement::HandleTypeChange(FormControlType aNewType,
         !IsSingleLineTextControl(/* aExcludePassword = */ false, oldType)) {
       AddStates(ElementState::FOCUSRING);
     }
+  }
+}
+
+void HTMLInputElement::MaybeSnapToTickMark(Decimal& aValue) {
+  nsRangeFrame* rangeFrame = do_QueryFrame(GetPrimaryFrame());
+  if (!rangeFrame) {
+    return;
+  }
+  auto tickMark = rangeFrame->NearestTickMark(aValue);
+  if (tickMark.isNaN()) {
+    return;
+  }
+  auto rangeFrameSize = CSSPixel::FromAppUnits(rangeFrame->GetSize());
+  CSSCoord rangeTrackLength;
+  if (rangeFrame->IsHorizontal()) {
+    rangeTrackLength = rangeFrameSize.width;
+  } else {
+    rangeTrackLength = rangeFrameSize.height;
+  }
+  auto stepBase = GetStepBase();
+  auto distanceToTickMark =
+      rangeTrackLength * float(rangeFrame->GetDoubleAsFractionOfRange(
+                             stepBase + (tickMark - aValue).abs()));
+  const CSSCoord magnetEffectRange(
+      StaticPrefs::dom_range_element_magnet_effect_threshold());
+  if (distanceToTickMark <= magnetEffectRange) {
+    aValue = tickMark;
   }
 }
 
@@ -6504,8 +6545,24 @@ bool HTMLInputElement::IsRangeUnderflow() const {
   return mInputType->IsRangeUnderflow();
 }
 
-bool HTMLInputElement::HasStepMismatch(bool aUseZeroIfValueNaN) const {
-  return mInputType->HasStepMismatch(aUseZeroIfValueNaN);
+bool HTMLInputElement::ValueIsStepMismatch(const Decimal& aValue) const {
+  if (aValue.isNaN()) {
+    // The element can't suffer from step mismatch if its value isn't a
+    // number.
+    return false;
+  }
+
+  Decimal step = GetStep();
+  if (step == kStepAny) {
+    return false;
+  }
+
+  // Value has to be an integral multiple of step.
+  return NS_floorModulo(aValue - GetStepBase(), step) != Decimal(0);
+}
+
+bool HTMLInputElement::HasStepMismatch() const {
+  return mInputType->HasStepMismatch();
 }
 
 bool HTMLInputElement::HasBadInput() const { return mInputType->HasBadInput(); }

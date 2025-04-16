@@ -670,8 +670,8 @@ Result<EditActionResult, nsresult> HTMLEditor::HTMLWithContextInserter::Run(
       // pasting does not inherit local inline styles
       Result<EditorDOMPoint, nsresult> pointToPutCaretOrError =
           mHTMLEditor.ClearStyleAt(
-              EditorDOMPoint(mHTMLEditor.SelectionRef().AnchorRef()), nullptr,
-              nullptr, SpecifiedStyle::Preserve);
+              EditorDOMPoint(mHTMLEditor.SelectionRef().AnchorRef()),
+              EditorInlineStyle::RemoveAllStyles(), SpecifiedStyle::Preserve);
       if (MOZ_UNLIKELY(pointToPutCaretOrError.isErr())) {
         NS_WARNING("HTMLEditor::ClearStyleAt() failed");
         return pointToPutCaretOrError.propagateErr();
@@ -1726,10 +1726,9 @@ nsresult HTMLEditor::BlobReader::OnResult(const nsACString& aResult) {
 nsresult HTMLEditor::BlobReader::OnError(const nsAString& aError) {
   AutoTArray<nsString, 1> error;
   error.AppendElement(aError);
-  nsContentUtils::ReportToConsole(nsIScriptError::warningFlag, "Editor"_ns,
-                                  mPointToInsert.GetContainer()->OwnerDoc(),
-                                  nsContentUtils::eDOM_PROPERTIES,
-                                  "EditorFileDropFailed", error);
+  nsContentUtils::ReportToConsole(
+      nsIScriptError::warningFlag, "Editor"_ns, mHTMLEditor->GetDocument(),
+      nsContentUtils::eDOM_PROPERTIES, "EditorFileDropFailed", error);
   return NS_OK;
 }
 
