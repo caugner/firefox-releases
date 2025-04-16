@@ -1641,7 +1641,7 @@ AttachDecision GetPropIRGenerator::tryAttachProxy(HandleObject obj,
       break;
     case ProxyStubType::DOMExpando:
       TRY_ATTACH(tryAttachDOMProxyExpando(obj, objId, id));
-      MOZ_FALLTHROUGH;  // Fall through to the generic shadowed case.
+      [[fallthrough]];  // Fall through to the generic shadowed case.
     case ProxyStubType::DOMShadowed:
       return tryAttachDOMProxyShadowed(obj, objId, id);
     case ProxyStubType::DOMUnshadowed:
@@ -1828,7 +1828,7 @@ AttachDecision GetPropIRGenerator::tryAttachModuleNamespace(HandleObject obj,
     return AttachDecision::NoAction;
   }
 
-  if (IsIonEnabled()) {
+  if (IsIonEnabled(cx_)) {
     EnsureTrackPropertyTypes(cx_, env, shape->propid());
   }
 
@@ -1894,7 +1894,7 @@ AttachDecision GetPropIRGenerator::tryAttachPrimitive(ValOperandId valId,
     case CanAttachReadSlot: {
       if (holder) {
         // Instantiate this property, for use during Ion compilation.
-        if (IsIonEnabled()) {
+        if (IsIonEnabled(cx_)) {
           EnsureTrackPropertyTypes(cx_, holder, id);
         }
       }
@@ -2492,7 +2492,7 @@ AttachDecision GetNameIRGenerator::tryAttachGlobalNameValue(ObjOperandId objId,
   }
 
   // Instantiate this global property, for use during Ion compilation.
-  if (IsIonEnabled()) {
+  if (IsIonEnabled(cx_)) {
     EnsureTrackPropertyTypes(cx_, holder, id);
   }
 
@@ -2560,7 +2560,7 @@ AttachDecision GetNameIRGenerator::tryAttachGlobalNameGetter(ObjOperandId objId,
     return AttachDecision::NoAction;
   }
 
-  if (IsIonEnabled()) {
+  if (IsIonEnabled(cx_)) {
     EnsureTrackPropertyTypes(cx_, holder, id);
   }
 
@@ -4210,7 +4210,7 @@ AttachDecision SetPropIRGenerator::tryAttachProxy(HandleObject obj,
       break;
     case ProxyStubType::DOMExpando:
       TRY_ATTACH(tryAttachDOMProxyExpando(obj, objId, id, rhsId));
-      MOZ_FALLTHROUGH;  // Fall through to the generic shadowed case.
+      [[fallthrough]];  // Fall through to the generic shadowed case.
     case ProxyStubType::DOMShadowed:
       return tryAttachDOMProxyShadowed(obj, objId, id, rhsId);
     case ProxyStubType::DOMUnshadowed:
@@ -5200,7 +5200,7 @@ AttachDecision CallIRGenerator::tryAttachCallScripted(
 
   // Keep track of the function's |prototype| property in type
   // information, for use during Ion compilation.
-  if (IsIonEnabled()) {
+  if (IsIonEnabled(cx_)) {
     EnsureTrackPropertyTypes(cx_, calleeFunc, NameToId(cx_->names().prototype));
   }
 

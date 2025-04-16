@@ -37,7 +37,6 @@
 #include "nsIContent.h"
 #include "mozilla/dom/DocumentInlines.h"
 #include "nsIScrollableFrame.h"
-#include "imgIRequest.h"
 #include "imgIContainer.h"
 #include "ImageOps.h"
 #include "nsCSSRendering.h"
@@ -3640,7 +3639,7 @@ void nsCSSRendering::GetTableBorderSolidSegments(
         break;
       }
       // else fall through to solid
-      MOZ_FALLTHROUGH;
+      [[fallthrough]];
     case StyleBorderStyle::Solid:
       aSegments.AppendElement(
           SolidBeveledBorderSegment{aBorder,
@@ -3762,7 +3761,7 @@ static void GetPositioning(
 
   // the upper and lower lines/edges of the under or over line
   SkScalar upperLine, lowerLine;
-  if (aParams.decoration == mozilla::StyleTextDecorationLine_OVERLINE) {
+  if (aParams.decoration == mozilla::StyleTextDecorationLine::OVERLINE) {
     lowerLine =
         -aParams.offset + aParams.defaultLineThickness - aCenterBaselineOffset;
     upperLine = lowerLine - rectThickness;
@@ -4018,9 +4017,9 @@ void nsCSSRendering::PaintDecorationLine(
     return;
   }
 
-  if (aParams.decoration != StyleTextDecorationLine_UNDERLINE &&
-      aParams.decoration != StyleTextDecorationLine_OVERLINE &&
-      aParams.decoration != StyleTextDecorationLine_LINE_THROUGH) {
+  if (aParams.decoration != StyleTextDecorationLine::UNDERLINE &&
+      aParams.decoration != StyleTextDecorationLine::OVERLINE &&
+      aParams.decoration != StyleTextDecorationLine::LINE_THROUGH) {
     MOZ_ASSERT_UNREACHABLE("Invalid text decoration value");
     return;
   }
@@ -4031,7 +4030,7 @@ void nsCSSRendering::PaintDecorationLine(
       aFrame->StyleText()->mTextDecorationSkipInk;
   bool skipInkEnabled =
       skipInk == mozilla::StyleTextDecorationSkipInk::Auto &&
-      aParams.decoration != StyleTextDecorationLine_LINE_THROUGH &&
+      aParams.decoration != StyleTextDecorationLine::LINE_THROUGH &&
       StaticPrefs::layout_css_text_decoration_skip_ink_enabled();
 
   if (!skipInkEnabled || aParams.glyphRange.Length() == 0) {
@@ -4101,9 +4100,17 @@ void nsCSSRendering::PaintDecorationLine(
       continue;
     }
 
-    // get the glyph run's font
-    SkFont font;
-    if (!GetSkFontFromGfxFont(aDrawTarget, iter.GetGlyphRun()->mFont, font)) {
+    gfxFont* font = iter.GetGlyphRun()->mFont;
+    // Don't try to apply skip-ink to 'sbix' fonts like Apple Color Emoji,
+    // because old macOS (10.9) may crash trying to retrieve glyph paths
+    // that don't exist.
+    if (font->GetFontEntry()->HasFontTable(TRUETYPE_TAG('s', 'b', 'i', 'x'))) {
+      continue;
+    }
+
+    // get a Skia version of the glyph run's font
+    SkFont skiafont;
+    if (!GetSkFontFromGfxFont(aDrawTarget, font, skiafont)) {
       PaintDecorationLineInternal(aFrame, aDrawTarget, aParams, rect);
       return;
     }
@@ -4111,7 +4118,7 @@ void nsCSSRendering::PaintDecorationLine(
     // Create a text blob with correctly positioned glyphs. This also updates
     // textPos.fX with the advance of the glyphs.
     sk_sp<const SkTextBlob> textBlob =
-        CreateTextBlob(textRun, characterGlyphs, font, spacing.Elements(),
+        CreateTextBlob(textRun, characterGlyphs, skiafont, spacing.Elements(),
                        iter.GetStringStart(), iter.GetStringEnd(),
                        (float)appUnitsPerDevPixel, textPos, spacingOffset);
 
@@ -4124,8 +4131,7 @@ void nsCSSRendering::PaintDecorationLine(
       // font-by-font basis since Skia lines up the text on a alphabetic
       // baseline, but for some vertical-* writing modes the offset is from the
       // center.
-      gfxFont::Metrics metrics =
-          iter.GetGlyphRun()->mFont->GetMetrics(nsFontMetrics::eHorizontal);
+      gfxFont::Metrics metrics = font->GetMetrics(nsFontMetrics::eHorizontal);
       Float centerToBaseline = (metrics.emAscent - metrics.emDescent) / 2.0f;
       GetPositioning(aParams, rect, oneCSSPixel, centerToBaseline, bounds);
     }
@@ -4423,9 +4429,9 @@ Rect nsCSSRendering::DecorationLineToPath(
     return path;
   }
 
-  if (aParams.decoration != StyleTextDecorationLine_UNDERLINE &&
-      aParams.decoration != StyleTextDecorationLine_OVERLINE &&
-      aParams.decoration != StyleTextDecorationLine_LINE_THROUGH) {
+  if (aParams.decoration != StyleTextDecorationLine::UNDERLINE &&
+      aParams.decoration != StyleTextDecorationLine::OVERLINE &&
+      aParams.decoration != StyleTextDecorationLine::LINE_THROUGH) {
     MOZ_ASSERT_UNREACHABLE("Invalid text decoration value");
     return path;
   }
@@ -4573,7 +4579,7 @@ gfxRect nsCSSRendering::GetTextDecorationRectInternal(
   // upwards. We'll swap them to be physical coords at the end.
   gfxFloat offset = 0.0;
 
-  if (aParams.decoration == StyleTextDecorationLine_UNDERLINE) {
+  if (aParams.decoration == StyleTextDecorationLine::UNDERLINE) {
     offset = aParams.offset;
     if (canLiftUnderline) {
       if (descentLimit < -offset + r.Height()) {
@@ -4586,14 +4592,14 @@ gfxRect nsCSSRendering::GetTextDecorationRectInternal(
         offset = std::min(offsetBottomAligned, offsetTopAligned);
       }
     }
-  } else if (aParams.decoration == StyleTextDecorationLine_OVERLINE) {
+  } else if (aParams.decoration == StyleTextDecorationLine::OVERLINE) {
     // For overline, we adjust the offset by defaultlineThickness (the default
     // thickness of a single decoration line) because empirically it looks
     // better to draw the overline just inside rather than outside the font's
     // ascent, which is what nsTextFrame passes as aParams.offset (as fonts
     // don't provide an explicit overline-offset).
     offset = aParams.offset - defaultLineThickness + r.Height();
-  } else if (aParams.decoration == StyleTextDecorationLine_LINE_THROUGH) {
+  } else if (aParams.decoration == StyleTextDecorationLine::LINE_THROUGH) {
     // To maintain a consistent mid-point for line-through decorations,
     // we adjust the offset by half of the decoration rect's height.
     gfxFloat extra = floor(r.Height() / 2.0 + 0.5);

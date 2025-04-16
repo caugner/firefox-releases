@@ -16,6 +16,7 @@
 #include "nsJSUtils.h"
 #include "jsfriendapi.h"
 #include "js/CompilationAndEvaluation.h"  // JS::Compile{,DontInflate}
+#include "js/ContextOptions.h"
 #include "js/PropertySpec.h"
 #include "js/SourceText.h"  // JS::Source{Ownership,Text}
 #include "js/Utility.h"
@@ -579,6 +580,8 @@ class JSContextWrapper {
     JSContext* cx = JS_NewContext(JS::DefaultHeapMaxBytes + aExtraHeapSize);
     if (NS_WARN_IF(!cx)) return nullptr;
 
+    JS::ContextOptionsRef(cx).setDisableIon();
+
     JSContextWrapper* entry = new JSContextWrapper(cx);
     if (NS_FAILED(entry->Init())) {
       delete entry;
@@ -728,6 +731,7 @@ nsresult ProxyAutoConfig::SetupJS() {
 
   auto CompilePACScript = [this](JSContext* cx) -> JSScript* {
     JS::CompileOptions options(cx);
+    options.setSkipFilenameValidation(true);
     options.setFileAndLine(this->mPACURI.get(), 1);
 
     // Per ProxyAutoConfig::Init, compile as UTF-8 if the full data is UTF-8,

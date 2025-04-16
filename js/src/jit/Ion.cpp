@@ -14,6 +14,7 @@
 
 #include "gc/FreeOp.h"
 #include "gc/Marking.h"
+#include "gc/PublicIterators.h"
 #include "jit/AliasAnalysis.h"
 #include "jit/AlignmentMaskAnalysis.h"
 #include "jit/BacktrackingAllocator.h"
@@ -57,7 +58,7 @@
 #endif
 
 #include "debugger/DebugAPI-inl.h"
-#include "gc/PrivateIterators-inl.h"
+#include "gc/GC-inl.h"
 #include "jit/JitFrames-inl.h"
 #include "jit/MacroAssembler-inl.h"
 #include "jit/shared/Lowering-shared-inl.h"
@@ -2069,9 +2070,9 @@ static OptimizationLevel GetOptimizationLevel(HandleScript script,
 static MethodStatus Compile(JSContext* cx, HandleScript script,
                             BaselineFrame* osrFrame, uint32_t osrFrameSize,
                             jsbytecode* osrPc, bool forceRecompile = false) {
-  MOZ_ASSERT(jit::IsIonEnabled());
+  MOZ_ASSERT(jit::IsIonEnabled(cx));
   MOZ_ASSERT(jit::IsBaselineJitEnabled());
-  MOZ_ASSERT_IF(osrPc != nullptr, LoopEntryCanIonOsr(osrPc));
+
   AutoGeckoProfilerEntry pseudoFrame(
       cx, "Ion script compilation",
       JS::ProfilingCategoryPair::JS_IonCompilation);
@@ -2169,7 +2170,7 @@ bool jit::OffThreadCompilationAvailable(JSContext* cx) {
 }
 
 MethodStatus jit::CanEnterIon(JSContext* cx, RunState& state) {
-  MOZ_ASSERT(jit::IsIonEnabled());
+  MOZ_ASSERT(jit::IsIonEnabled(cx));
 
   HandleScript script = state.script();
 
@@ -2245,7 +2246,7 @@ MethodStatus jit::CanEnterIon(JSContext* cx, RunState& state) {
 static MethodStatus BaselineCanEnterAtEntry(JSContext* cx, HandleScript script,
                                             BaselineFrame* frame,
                                             uint32_t frameSize) {
-  MOZ_ASSERT(jit::IsIonEnabled());
+  MOZ_ASSERT(jit::IsIonEnabled(cx));
   MOZ_ASSERT(script->canIonCompile());
   MOZ_ASSERT(!script->isIonCompilingOffThread());
   MOZ_ASSERT(!script->hasIonScript());
@@ -2275,9 +2276,8 @@ static MethodStatus BaselineCanEnterAtBranch(JSContext* cx, HandleScript script,
                                              BaselineFrame* osrFrame,
                                              uint32_t osrFrameSize,
                                              jsbytecode* pc) {
-  MOZ_ASSERT(jit::IsIonEnabled());
-  MOZ_ASSERT((JSOp)*pc == JSOP_LOOPENTRY);
-  MOZ_ASSERT(LoopEntryCanIonOsr(pc));
+  MOZ_ASSERT(jit::IsIonEnabled(cx));
+  MOZ_ASSERT((JSOp)*pc == JSOP_LOOPHEAD);
 
   // Skip if the script has been disabled.
   if (!script->canIonCompile()) {
@@ -2349,13 +2349,11 @@ static MethodStatus BaselineCanEnterAtBranch(JSContext* cx, HandleScript script,
 
 static bool IonCompileScriptForBaseline(JSContext* cx, BaselineFrame* frame,
                                         uint32_t frameSize, jsbytecode* pc) {
-  MOZ_ASSERT(IsIonEnabled());
+  MOZ_ASSERT(IsIonEnabled(cx));
   MOZ_ASSERT(frame->debugFrameSize() == frameSize);
 
   RootedScript script(cx, frame->script());
-  bool isLoopEntry = JSOp(*pc) == JSOP_LOOPENTRY;
-
-  MOZ_ASSERT(!isLoopEntry || LoopEntryCanIonOsr(pc));
+  bool isLoopHead = JSOp(*pc) == JSOP_LOOPHEAD;
 
   // The Baseline JIT code checks for Ion disabled or compiling off-thread.
   MOZ_ASSERT(script->canIonCompile());
@@ -2364,7 +2362,7 @@ static bool IonCompileScriptForBaseline(JSContext* cx, BaselineFrame* frame,
   // If Ion script exists, but PC is not at a loop entry, then Ion will be
   // entered for this script at an appropriate LOOPENTRY or the next time this
   // function is called.
-  if (script->hasIonScript() && !isLoopEntry) {
+  if (script->hasIonScript() && !isLoopHead) {
     JitSpew(JitSpew_BaselineOSR, "IonScript exists, but not at loop entry!");
     // TODO: ASSERT that a ion-script-already-exists checker stub doesn't exist.
     // TODO: Clear all optimized stubs.
@@ -2380,9 +2378,8 @@ static bool IonCompileScriptForBaseline(JSContext* cx, BaselineFrame* frame,
           (int)script->getWarmUpCount(), (void*)pc);
 
   MethodStatus stat;
-  if (isLoopEntry) {
-    MOZ_ASSERT(LoopEntryCanIonOsr(pc));
-    JitSpew(JitSpew_BaselineOSR, "  Compile at loop entry!");
+  if (isLoopHead) {
+    JitSpew(JitSpew_BaselineOSR, "  Compile at loop head!");
     stat = BaselineCanEnterAtBranch(cx, script, frame, frameSize, pc);
   } else if (frame->isFunctionFrame()) {
     JitSpew(JitSpew_BaselineOSR,
@@ -2510,7 +2507,7 @@ bool jit::IonCompileScriptForBaselineOSR(JSContext* cx, BaselineFrame* frame,
   *infoPtr = nullptr;
 
   MOZ_ASSERT(frame->debugFrameSize() == frameSize);
-  MOZ_ASSERT(JSOp(*pc) == JSOP_LOOPENTRY);
+  MOZ_ASSERT(JSOp(*pc) == JSOP_LOOPHEAD);
 
   if (!IonCompileScriptForBaseline(cx, frame, frameSize, pc)) {
     return false;

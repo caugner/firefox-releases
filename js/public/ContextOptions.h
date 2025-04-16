@@ -27,14 +27,19 @@ class JS_PUBLIC_API ContextOptions {
         wasmCranelift_(false),
         wasmGc_(false),
         testWasmAwaitTier2_(false),
+#ifdef ENABLE_WASM_BIGINT
+        enableWasmBigInt_(false),
+#endif
         throwOnAsmJSValidationFailure_(false),
+        disableIon_(false),
         asyncStack_(true),
         throwOnDebuggeeWouldRun_(true),
         dumpStackOnDebuggeeWouldRun_(false),
         werror_(false),
         strictMode_(false),
         extraWarnings_(false),
-        fuzzing_(false) {}
+        fuzzing_(false) {
+  }
 
   bool asmJS() const { return asmJS_; }
   ContextOptions& setAsmJS(bool flag) {
@@ -90,6 +95,14 @@ class JS_PUBLIC_API ContextOptions {
     return *this;
   }
 
+#ifdef ENABLE_WASM_BIGINT
+  bool isWasmBigIntEnabled() const { return enableWasmBigInt_; }
+  ContextOptions& setWasmBigIntEnabled(bool flag) {
+    enableWasmBigInt_ = flag;
+    return *this;
+  }
+#endif
+
   bool wasmGc() const { return wasmGc_; }
   // Defined out-of-line because it depends on a compile-time option
   ContextOptions& setWasmGc(bool flag);
@@ -103,6 +116,15 @@ class JS_PUBLIC_API ContextOptions {
   }
   ContextOptions& toggleThrowOnAsmJSValidationFailure() {
     throwOnAsmJSValidationFailure_ = !throwOnAsmJSValidationFailure_;
+    return *this;
+  }
+
+  // Override to allow disabling Ion for this context irrespective of the
+  // process-wide Ion-enabled setting. This must be set right after creating
+  // the context.
+  bool disableIon() const { return disableIon_; }
+  ContextOptions& setDisableIon() {
+    disableIon_ = true;
     return *this;
   }
 
@@ -178,7 +200,11 @@ class JS_PUBLIC_API ContextOptions {
   bool wasmCranelift_ : 1;
   bool wasmGc_ : 1;
   bool testWasmAwaitTier2_ : 1;
+#ifdef ENABLE_WASM_BIGINT
+  bool enableWasmBigInt_ : 1;
+#endif
   bool throwOnAsmJSValidationFailure_ : 1;
+  bool disableIon_ : 1;
   bool asyncStack_ : 1;
   bool throwOnDebuggeeWouldRun_ : 1;
   bool dumpStackOnDebuggeeWouldRun_ : 1;
