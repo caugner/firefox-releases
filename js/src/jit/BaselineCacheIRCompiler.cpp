@@ -52,9 +52,10 @@ BaseValueIndex CacheRegisterAllocator::addressOf(MacroAssembler& masm,
 
 // BaselineCacheIRCompiler compiles CacheIR to BaselineIC native code.
 BaselineCacheIRCompiler::BaselineCacheIRCompiler(JSContext* cx,
+                                                 TempAllocator& alloc,
                                                  const CacheIRWriter& writer,
                                                  uint32_t stubDataOffset)
-    : CacheIRCompiler(cx, writer, stubDataOffset, Mode::Baseline,
+    : CacheIRCompiler(cx, alloc, writer, stubDataOffset, Mode::Baseline,
                       StubFieldPolicy::Address),
       makesGCCalls_(false) {}
 
@@ -1192,7 +1193,8 @@ bool BaselineCacheIRCompiler::emitLoadStringCharResult(StringOperandId strId,
   Register str = allocator.useRegister(masm, strId);
   Register index = allocator.useRegister(masm, indexId);
   AutoScratchRegisterMaybeOutput scratch1(allocator, masm, output);
-  AutoScratchRegister scratch2(allocator, masm);
+  AutoScratchRegisterMaybeOutputType scratch2(allocator, masm, output);
+  AutoScratchRegister scratch3(allocator, masm);
 
   FailurePath* failure;
   if (!addFailurePath(&failure)) {
@@ -1202,7 +1204,8 @@ bool BaselineCacheIRCompiler::emitLoadStringCharResult(StringOperandId strId,
   // Bounds check, load string char.
   masm.spectreBoundsCheck32(index, Address(str, JSString::offsetOfLength()),
                             scratch1, failure->label());
-  masm.loadStringChar(str, index, scratch1, scratch2, failure->label());
+  masm.loadStringChar(str, index, scratch1, scratch2, scratch3,
+                      failure->label());
 
   allocator.discardStack(masm);
 
@@ -1787,7 +1790,7 @@ bool BaselineCacheIRCompiler::emitCallAddOrUpdateSparseElementHelper(
   masm.Push(id);
   masm.Push(obj);
 
-  using Fn = bool (*)(JSContext * cx, Handle<ArrayObject*> obj, int32_t int_id,
+  using Fn = bool (*)(JSContext * cx, Handle<NativeObject*> obj, int32_t int_id,
                       HandleValue v, bool strict);
   callVM<Fn, AddOrUpdateSparseElementHelper>(masm);
 
@@ -2138,8 +2141,9 @@ ICAttachResult js::jit::AttachBaselineCacheIRStub(
   JitCode* code = jitZone->getBaselineCacheIRStubCode(lookup, &stubInfo);
   if (!code) {
     // We have to generate stub code.
-    JitContext jctx(cx, nullptr);
-    BaselineCacheIRCompiler comp(cx, writer, stubDataOffset);
+    TempAllocator temp(&cx->tempLifoAlloc());
+    JitContext jctx(cx);
+    BaselineCacheIRCompiler comp(cx, temp, writer, stubDataOffset);
     if (!comp.init(kind)) {
       return ICAttachResult::OOM;
     }

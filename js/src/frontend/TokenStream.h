@@ -211,6 +211,7 @@
 #include "js/UniquePtr.h"
 #include "js/Vector.h"
 #include "util/Unicode.h"
+#include "vm/ErrorContext.h"
 #include "vm/ErrorReporting.h"
 
 struct JS_PUBLIC_API JSContext;
@@ -562,6 +563,8 @@ class TokenStreamAnyChars : public TokenStreamShared {
 
   JSContext* const cx;
 
+  ErrorContext* const ec;
+
   /** Options used for parsing/tokenizing. */
   const JS::ReadOnlyCompileOptions& options_;
 
@@ -719,7 +722,8 @@ class TokenStreamAnyChars : public TokenStreamShared {
   // End of fields.
 
  public:
-  TokenStreamAnyChars(JSContext* cx, const JS::ReadOnlyCompileOptions& options,
+  TokenStreamAnyChars(JSContext* cx, ErrorContext* ec,
+                      const JS::ReadOnlyCompileOptions& options,
                       StrictModeGetter* smg);
 
   template <typename Unit, class AnyCharsAccess>
@@ -872,7 +876,8 @@ class TokenStreamAnyChars : public TokenStreamShared {
 
   char16_t* sourceMapURL() { return sourceMapURL_.get(); }
 
-  JSContext* context() const { return cx; }
+  ErrorContext* context() const { return ec; }
+  JSContext* jsContext() const { return cx; }
 
   using LineToken = SourceCoords::LineToken;
 
@@ -1563,6 +1568,7 @@ using CharBuffer = Vector<char16_t, 32>;
 class TokenStreamCharsShared {
  protected:
   JSContext* cx;
+  ErrorContext* ec;
 
   /**
    * Buffer transiently used to store sequences of identifier or string code
@@ -1575,8 +1581,9 @@ class TokenStreamCharsShared {
   ParserAtomsTable* parserAtoms;
 
  protected:
-  explicit TokenStreamCharsShared(JSContext* cx, ParserAtomsTable* parserAtoms)
-      : cx(cx), charBuffer(cx), parserAtoms(parserAtoms) {}
+  explicit TokenStreamCharsShared(JSContext* cx, ErrorContext* ec,
+                                  ParserAtomsTable* parserAtoms)
+      : cx(cx), ec(ec), charBuffer(cx), parserAtoms(parserAtoms) {}
 
   [[nodiscard]] bool copyCharBufferTo(
       JSContext* cx, UniquePtr<char16_t[], JS::FreePolicy>* destination);
@@ -1593,7 +1600,7 @@ class TokenStreamCharsShared {
 
   TaggedParserAtomIndex drainCharBufferIntoAtom() {
     // Add to parser atoms table.
-    auto atom = this->parserAtoms->internChar16(cx, charBuffer.begin(),
+    auto atom = this->parserAtoms->internChar16(ec, charBuffer.begin(),
                                                 charBuffer.length());
     charBuffer.clear();
     return atom;
@@ -1622,8 +1629,9 @@ class TokenStreamCharsBase : public TokenStreamCharsShared {
   // End of fields.
 
  protected:
-  TokenStreamCharsBase(JSContext* cx, ParserAtomsTable* parserAtoms,
-                       const Unit* units, size_t length, size_t startOffset);
+  TokenStreamCharsBase(JSContext* cx, ErrorContext* ec,
+                       ParserAtomsTable* parserAtoms, const Unit* units,
+                       size_t length, size_t startOffset);
 
   /**
    * Convert a non-EOF code unit returned by |getCodeUnit()| or
@@ -1721,14 +1729,14 @@ template <>
 MOZ_ALWAYS_INLINE TaggedParserAtomIndex
 TokenStreamCharsBase<char16_t>::atomizeSourceChars(
     mozilla::Span<const char16_t> units) {
-  return this->parserAtoms->internChar16(cx, units.data(), units.size());
+  return this->parserAtoms->internChar16(ec, units.data(), units.size());
 }
 
 template <>
 /* static */ MOZ_ALWAYS_INLINE TaggedParserAtomIndex
 TokenStreamCharsBase<mozilla::Utf8Unit>::atomizeSourceChars(
     mozilla::Span<const mozilla::Utf8Unit> units) {
-  return this->parserAtoms->internUtf8(cx, units.data(), units.size());
+  return this->parserAtoms->internUtf8(ec, units.data(), units.size());
 }
 
 template <typename Unit>
@@ -2486,7 +2494,8 @@ class MOZ_STACK_CLASS TokenStreamSpecific
   friend class TokenStreamPosition;
 
  public:
-  TokenStreamSpecific(JSContext* cx, ParserAtomsTable* parserAtoms,
+  TokenStreamSpecific(JSContext* cx, ErrorContext* ec,
+                      ParserAtomsTable* parserAtoms,
                       const JS::ReadOnlyCompileOptions& options,
                       const Unit* units, size_t length);
 
@@ -2547,7 +2556,9 @@ class MOZ_STACK_CLASS TokenStreamSpecific
  private:
   // Implement ErrorReportMixin.
 
-  JSContext* getContext() const override { return anyCharsAccess().cx; }
+  ErrorContext* getContext() const override {
+    return anyCharsAccess().context();
+  }
 
   [[nodiscard]] bool strictMode() const override {
     return anyCharsAccess().strictMode();
@@ -2926,18 +2937,19 @@ class MOZ_STACK_CLASS TokenStream
   using Unit = char16_t;
 
  public:
-  TokenStream(JSContext* cx, ParserAtomsTable* parserAtoms,
+  TokenStream(JSContext* cx, ErrorContext* ec, ParserAtomsTable* parserAtoms,
               const JS::ReadOnlyCompileOptions& options, const Unit* units,
               size_t length, StrictModeGetter* smg)
-      : TokenStreamAnyChars(cx, options, smg),
+      : TokenStreamAnyChars(cx, ec, options, smg),
         TokenStreamSpecific<Unit, TokenStreamAnyCharsAccess>(
-            cx, parserAtoms, options, units, length) {}
+            cx, ec, parserAtoms, options, units, length) {}
 };
 
 class MOZ_STACK_CLASS DummyTokenStream final : public TokenStream {
  public:
-  DummyTokenStream(JSContext* cx, const JS::ReadOnlyCompileOptions& options)
-      : TokenStream(cx, nullptr, options, nullptr, 0, nullptr) {}
+  DummyTokenStream(JSContext* cx, ErrorContext* ec,
+                   const JS::ReadOnlyCompileOptions& options)
+      : TokenStream(cx, ec, nullptr, options, nullptr, 0, nullptr) {}
 };
 
 template <class TokenStreamSpecific>

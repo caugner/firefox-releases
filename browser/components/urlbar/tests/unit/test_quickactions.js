@@ -4,20 +4,24 @@
 
 "use strict";
 
-XPCOMUtils.defineLazyModuleGetters(this, {
+ChromeUtils.defineESModuleGetters(this, {
   UrlbarProviderQuickActions:
-    "resource:///modules/UrlbarProviderQuickActions.jsm",
+    "resource:///modules/UrlbarProviderQuickActions.sys.mjs",
 });
 
 const EXPECTED_MATCH = {
   type: UrlbarUtils.RESULT_TYPE.DYNAMIC,
   source: UrlbarUtils.RESULT_SOURCE.ACTIONS,
   heuristic: false,
-  payload: { results: [{ key: "newaction" }], dynamicType: "quickactions" },
+  payload: {
+    results: [{ key: "newaction" }],
+    dynamicType: "quickactions",
+    helpUrl: UrlbarProviderQuickActions.helpUrl,
+  },
 };
 
 add_task(async function init() {
-  UrlbarPrefs.set("quickactions.enabled", true);
+  UrlbarPrefs.set("suggest.quickactions", true);
   // Install a default test engine.
   let engine = await addTestSuggestionsEngine();
   await Services.search.setDefault(engine);
@@ -27,7 +31,7 @@ add_task(async function init() {
   });
 
   registerCleanupFunction(async () => {
-    UrlbarPrefs.clear("quickactions.enabled");
+    UrlbarPrefs.clear("suggest.quickactions");
     UrlbarProviderQuickActions.removeAction("newaction");
   });
 });
@@ -44,7 +48,7 @@ add_task(async function nomatch() {
 });
 
 add_task(async function quickactions_disabled() {
-  UrlbarPrefs.set("quickactions.enabled", false);
+  UrlbarPrefs.set("suggest.quickactions", false);
   let context = createContext("new", {
     providers: [UrlbarProviderQuickActions.name],
     isPrivate: false,
@@ -56,7 +60,7 @@ add_task(async function quickactions_disabled() {
 });
 
 add_task(async function quickactions_match() {
-  UrlbarPrefs.set("quickactions.enabled", true);
+  UrlbarPrefs.set("suggest.quickactions", true);
   let context = createContext("new", {
     providers: [UrlbarProviderQuickActions.name],
     isPrivate: false,

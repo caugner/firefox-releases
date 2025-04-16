@@ -4,9 +4,8 @@
 
 /* eslint no-shadow: error, mozilla/no-aArgs: error */
 
-const { XPCOMUtils } = ChromeUtils.importESModule(
-  "resource://gre/modules/XPCOMUtils.sys.mjs"
-);
+import { XPCOMUtils } from "resource://gre/modules/XPCOMUtils.sys.mjs";
+
 const { PromiseUtils } = ChromeUtils.import(
   "resource://gre/modules/PromiseUtils.jsm"
 );
@@ -1160,12 +1159,12 @@ export class SearchService {
 
     // No default loaded, so find it from settings.
     const attributeName = privateMode ? "private" : "current";
-    let name = this._settings.getAttribute(attributeName);
+    let name = this._settings.getMetaDataAttribute(attributeName);
     let engine = this._engines.get(name) || null;
     if (
       engine &&
       (engine.isAppProvided ||
-        this._settings.getVerifiedAttribute(attributeName))
+        this._settings.getVerifiedMetaDataAttribute(attributeName))
     ) {
       // If the current engine is a default one, we can relax the
       // verification hash check to reduce the annoyance for users who
@@ -1495,7 +1494,7 @@ export class SearchService {
     lazy.logConsole.debug("#loadEngines: done");
 
     let newCurrentEngine = this._getEngineDefault(false)?.name;
-    this._settings.setAttribute(
+    this._settings.setMetaDataAttribute(
       "appDefaultEngine",
       this.appDefaultEngine?.name
     );
@@ -1773,13 +1772,13 @@ export class SearchService {
       prevCurrentEngine &&
       enginesToRemove.some(e => e.name == prevCurrentEngine.name)
     ) {
-      this._settings.setAttribute("current", "");
+      this._settings.setMetaDataAttribute("current", "");
     }
     if (
       prevPrivateEngine &&
       enginesToRemove.some(e => e.name == prevPrivateEngine.name)
     ) {
-      this._settings.setAttribute("private", "");
+      this._settings.setMetaDataAttribute("private", "");
     }
 
     this.#setDefaultAndOrdersFromSelector(
@@ -1874,7 +1873,7 @@ export class SearchService {
 
     // Save app default engine to the user's settings metaData incase it has
     // been updated
-    this._settings.setAttribute(
+    this._settings.setMetaDataAttribute(
       "appDefaultEngine",
       this.appDefaultEngine?.name
     );
@@ -2085,7 +2084,7 @@ export class SearchService {
     };
 
     for (let [key, value] of Object.entries(searchEngineSelectorProperties)) {
-      this._settings.setAttribute(key, value);
+      this._settings.setMetaDataAttribute(key, value);
     }
 
     let {
@@ -2125,7 +2124,7 @@ export class SearchService {
 
     // Set the useSavedOrder attribute to indicate that from now on we should
     // use the user's order information stored in settings.
-    this._settings.setAttribute("useSavedOrder", true);
+    this._settings.setMetaDataAttribute("useSavedOrder", true);
 
     var engines = this.#sortedEngines;
 
@@ -2143,7 +2142,7 @@ export class SearchService {
 
     // If the user has specified a custom engine order, read the order
     // information from the metadata instead of the default prefs.
-    if (this._settings.getAttribute("useSavedOrder")) {
+    if (this._settings.getMetaDataAttribute("useSavedOrder")) {
       lazy.logConsole.debug("#buildSortedEngineList: using saved order");
       let addedEngines = {};
 
@@ -2504,10 +2503,10 @@ export class SearchService {
         this._engines.delete(appDefaultName);
         this._engines.set(engine.name, engine);
         if (isDefault) {
-          this._settings.setVerifiedAttribute("current", engine.name);
+          this._settings.setVerifiedMetaDataAttribute("current", engine.name);
         }
         if (isDefaultPrivate) {
-          this._settings.setVerifiedAttribute("private", engine.name);
+          this._settings.setVerifiedMetaDataAttribute("private", engine.name);
         }
         this._cachedSortedEngines = null;
       }
@@ -2758,7 +2757,7 @@ export class SearchService {
       newName = "";
     }
 
-    this._settings.setVerifiedAttribute(
+    this._settings.setVerifiedMetaDataAttribute(
       privateMode ? "private" : "current",
       newName
     );
@@ -2797,9 +2796,9 @@ export class SearchService {
         this.defaultPrivateEngine,
         lazy.SearchUtils.MODIFIED_TYPE.DEFAULT_PRIVATE
       );
-      // Also update the telemetry data.
-      this.#recordTelemetryData();
     }
+    // Update the telemetry data.
+    this.#recordTelemetryData();
   }
 
   #getEngineInfo(engine) {
@@ -3193,7 +3192,7 @@ export class SearchService {
     ];
 
     return metaDataProperties.some(p => {
-      return metaData?.[p] !== this._settings.getAttribute(p);
+      return metaData?.[p] !== this._settings.getMetaDataAttribute(p);
     });
   }
 
