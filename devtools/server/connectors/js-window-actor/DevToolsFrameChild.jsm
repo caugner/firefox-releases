@@ -70,39 +70,23 @@ function shouldNotifyWindowGlobal(
   // For client-side target switching, only mention the "remote frames".
   // i.e. the frames which are in a distinct process compared to their parent document
   // If there is no parent, this is most likely the top level document.
-  // Ignore it only if this is the top level target we are watching.
+  //
+  // Ignore this check for the browser toolbox, as tab's BrowsingContext have no
+  // parent and aren't the top level target.
   //
   // `acceptTopLevelTarget` is set both when server side target switching is enabled
   // or when navigating to and from pages in the bfcache
-  if (
-    !browsingContext.parent &&
-    browsingContext.browserId == watchedBrowserId &&
-    !acceptTopLevelTarget
-  ) {
+  if (!acceptTopLevelTarget && watchedBrowserId && !browsingContext.parent) {
     return false;
   }
 
-  // `isInProcess` is always false, even if the window runs in the same process.
-  // `osPid` attribute is not set on WindowGlobalChild
-  // so it is hard to guess if the given WindowGlobal runs in this process or not,
-  // which is what we want to know here. Here is a workaround way to know it :/
-  // ---
-  // Also. It might be a bit surprising to have a DevToolsFrameChild/JSWindowActorChild
-  // to be instantiated for WindowGlobals that aren't from this process... Is that expected?
-  if (Cu.isRemoteProxy(windowGlobal.window)) {
-    return false;
-  }
-
-  // When Fission is turned off, we still process here the iframes that are running in the
-  // same process.
-  // As we can't use isInProcess, nor osPid (see previous block), we have
-  // to fallback to other checks. Here we check if we are able to access the parent document's window.
-  // If we can, it means that it runs in the same process as the current iframe we are processing.
-  if (
-    browsingContext.parent &&
-    browsingContext.parent.window &&
-    !Cu.isRemoteProxy(browsingContext.parent.window)
-  ) {
+  // We may process an iframe that runs in the same process as its parent
+  // and we don't want to create targets for them yet. Instead the BrowsingContextTargetActor
+  // will inspect these children document via docShell tree (typically via `docShells` or `windows` getters).
+  // This is quite common when Fission is off as any iframe will run in same process
+  // as their parent document. But it can also happen with Fission enabled if iframes have
+  // children iframes using the same origin.
+  if (!windowGlobal.isProcessRoot) {
     return false;
   }
 
@@ -180,8 +164,6 @@ class DevToolsFrameChild extends JSWindowActorChild {
             forceOverridingFirstTarget || this.isServerTargetSwitchingEnabled,
         })
       ) {
-        const browsingContext = this.manager.browsingContext;
-
         // Bail if there is already an existing BrowsingContextTargetActor.
         // This means we are reloading or navigating (same-process) a Target
         // which has not been created using the Watcher, but from the client.
@@ -205,15 +187,7 @@ class DevToolsFrameChild extends JSWindowActorChild {
           return;
         }
 
-        const isTopLevelTarget =
-          !browsingContext.parent && browsingContext.browserId == browserId;
-
-        this._createTargetActor(
-          watcherActorID,
-          connectionPrefix,
-          watchedData,
-          isTopLevelTarget
-        );
+        this._createTargetActor(watcherActorID, connectionPrefix, watchedData);
       }
     }
   }
@@ -226,20 +200,12 @@ class DevToolsFrameChild extends JSWindowActorChild {
    * @param String parentConnectionPrefix
    *        The prefix of the DevToolsServerConnection of the Watcher Actor.
    *        This is used to compute a unique ID for the target actor.
-   * @param Object initialData
+   * @param Object watchedData
    *        All data managed by the Watcher Actor and WatcherRegistry.jsm, containing
    *        target types, resources types to be listened as well as breakpoints and any
    *        other data meant to be shared across processes and threads.
-   * @param Boolean isTopLevelTarget
-   *        To be set to true if we will instantiate a top level target.
-   *        This will typically be the top level document of a tab for the regular toolbox.
    */
-  _createTargetActor(
-    watcherActorID,
-    parentConnectionPrefix,
-    initialData,
-    isTopLevelTarget
-  ) {
+  _createTargetActor(watcherActorID, parentConnectionPrefix, watchedData) {
     if (this._connections.get(watcherActorID)) {
       throw new Error(
         "DevToolsFrameChild _createTargetActor was called more than once" +
@@ -261,6 +227,14 @@ class DevToolsFrameChild extends JSWindowActorChild {
       "Instantiate WindowGlobalTarget with prefix: " + forwardingPrefix
     );
 
+    // In the case of the browser toolbox, tab's BrowsingContext don't have
+    // any parent BC and shouldn't be considered as top-level.
+    // This is why we check for browserId's.
+    const browsingContext = this.manager.browsingContext;
+    const isTopLevelTarget =
+      !browsingContext.parent &&
+      browsingContext.browserId == watchedData.browserId;
+
     const { connection, targetActor } = this._createConnectionAndActor(
       forwardingPrefix,
       isTopLevelTarget
@@ -272,8 +246,14 @@ class DevToolsFrameChild extends JSWindowActorChild {
     });
 
     // Pass initialization data to the target actor
-    for (const type in initialData) {
-      targetActor.addWatcherDataEntry(type, initialData[type]);
+    for (const type in watchedData) {
+      // `watchedData` will also contain `browserId` and `watcherTraits`,
+      // as well as entries with empty arrays, which shouldn't be processed.
+      const entries = watchedData[type];
+      if (!Array.isArray(entries) || entries.length == 0) {
+        continue;
+      }
+      targetActor.addWatcherDataEntry(type, entries);
     }
 
     // Immediately queue a message for the parent process,
@@ -343,10 +323,14 @@ class DevToolsFrameChild extends JSWindowActorChild {
     const targetActor = new FrameTargetActor(connection, {
       docShell: this.docShell,
       doNotFireFrameUpdates: true,
-      followWindowGlobalLifeCycle: true,
+      // Only toggle this flag ON when the target-switching pref is true for the top level target.
+      // Otherwise it is always true for iframe targets.
+      followWindowGlobalLifeCycle:
+        !isTopLevelTarget || this.isServerTargetSwitchingEnabled,
       isTopLevelTarget,
     });
     targetActor.manage(targetActor);
+    targetActor.createdFromJsWindowActor = true;
 
     return { connection, targetActor };
   }
@@ -423,17 +407,10 @@ class DevToolsFrameChild extends JSWindowActorChild {
       case "DevToolsFrameParent:instantiate-already-available": {
         const { watcherActorID, connectionPrefix, watchedData } = message.data;
 
-        // XXX: For now we only instantiate remote frame targets via this
-        // mechanism. When we want to support creating the first target via
-        // the Watcher (Bug 1686748), the message data should also provide the
-        // `isTopLevelTarget` information.
-        const isTopLevelTarget = false;
-
         return this._createTargetActor(
           watcherActorID,
           connectionPrefix,
-          watchedData,
-          isTopLevelTarget
+          watchedData
         );
       }
       case "DevToolsFrameParent:destroy": {

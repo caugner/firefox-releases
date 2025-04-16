@@ -92,7 +92,7 @@ class ImportEntryObject : public NativeObject {
 
 using RootedImportEntryObject = Rooted<ImportEntryObject*>;
 using HandleImportEntryObject = Handle<ImportEntryObject*>;
-using RootedImportEntryVector = Rooted<GCVector<ImportEntryObject*> >;
+using RootedImportEntryVector = Rooted<GCVector<ImportEntryObject*>>;
 using MutableHandleImportEntryObject = MutableHandle<ImportEntryObject*>;
 
 template <XDRMode mode>
@@ -149,7 +149,7 @@ class RequestedModuleObject : public NativeObject {
 
 using RootedRequestedModuleObject = Rooted<RequestedModuleObject*>;
 using HandleRequestedModuleObject = Handle<RequestedModuleObject*>;
-using RootedRequestedModuleVector = Rooted<GCVector<RequestedModuleObject*> >;
+using RootedRequestedModuleVector = Rooted<GCVector<RequestedModuleObject*>>;
 using MutableHandleRequestedModuleObject =
     MutableHandle<RequestedModuleObject*>;
 
@@ -177,7 +177,7 @@ class IndirectBindingMap {
   bool has(jsid name) const { return map_ ? map_->has(name) : false; }
 
   bool lookup(jsid name, ModuleEnvironmentObject** envOut,
-              mozilla::Maybe<ShapeProperty>* propOut) const;
+              mozilla::Maybe<PropertyInfo>* propOut) const;
 
   template <typename Func>
   void forEachExportedName(Func func) const {
@@ -193,12 +193,12 @@ class IndirectBindingMap {
  private:
   struct Binding {
     Binding(ModuleEnvironmentObject* environment, jsid targetName,
-            ShapeProperty prop);
+            PropertyInfo prop);
     HeapPtr<ModuleEnvironmentObject*> environment;
 #ifdef DEBUG
     HeapPtr<jsid> targetName;
 #endif
-    ShapeProperty prop;
+    PropertyInfo prop;
   };
 
   using Map =
@@ -230,7 +230,7 @@ class ModuleNamespaceObject : public ProxyObject {
 
     bool getOwnPropertyDescriptor(
         JSContext* cx, HandleObject proxy, HandleId id,
-        MutableHandle<PropertyDescriptor> desc) const override;
+        MutableHandle<mozilla::Maybe<PropertyDescriptor>> desc) const override;
     bool defineProperty(JSContext* cx, HandleObject proxy, HandleId id,
                         Handle<PropertyDescriptor> desc,
                         ObjectOpResult& result) const override;

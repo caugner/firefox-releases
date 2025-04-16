@@ -6,7 +6,6 @@
 package org.mozilla.geckoview;
 
 import org.mozilla.gecko.GeckoAppShell;
-import org.mozilla.gecko.PrefsHelper;
 import org.mozilla.gecko.annotation.WrapForJNI;
 import org.mozilla.gecko.mozglue.JNIObject;
 import org.mozilla.gecko.util.GeckoBundle;
@@ -37,8 +36,7 @@ public class PanZoomController {
     private static final int EVENT_SOURCE_SCROLL = 0;
     private static final int EVENT_SOURCE_MOTION = 1;
     private static final int EVENT_SOURCE_MOUSE = 2;
-    private static final String PREF_MOUSE_AS_TOUCH = "ui.android.mouse_as_touch";
-    private static boolean sTreatMouseAsTouch = true;
+    private static Boolean sTreatMouseAsTouch = null;
 
     private final GeckoSession mSession;
     private final Rect mTempRect = new Rect();
@@ -434,30 +432,21 @@ public class PanZoomController {
     protected PanZoomController(final GeckoSession session) {
         mSession = session;
         enableEventQueue();
-        initMouseAsTouch();
     }
 
-    private static void initMouseAsTouch() {
-        final PrefsHelper.PrefHandler prefHandler = new PrefsHelper.PrefHandlerBase() {
-            @Override
-            public void prefValue(final String pref, final int value) {
-                if (!PREF_MOUSE_AS_TOUCH.equals(pref)) {
-                    return;
-                }
-                if (value == 0) {
-                    sTreatMouseAsTouch = false;
-                } else if (value == 1) {
-                    sTreatMouseAsTouch = true;
-                } else if (value == 2) {
-                    final Context c = GeckoAppShell.getApplicationContext();
-                    final UiModeManager m = (UiModeManager)c.getSystemService(Context.UI_MODE_SERVICE);
-                    // on TV devices, treat mouse as touch. everywhere else, don't
-                    sTreatMouseAsTouch = (m.getCurrentModeType() == Configuration.UI_MODE_TYPE_TELEVISION);
-                }
+    private boolean treatMouseAsTouch() {
+        if (sTreatMouseAsTouch == null) {
+            final Context c = GeckoAppShell.getApplicationContext();
+            if (c == null) {
+                // This might happen if the GeckoRuntime has not been initialized yet.
+                return false;
             }
-        };
-        PrefsHelper.addObserver(new String[] { PREF_MOUSE_AS_TOUCH }, prefHandler);
-        PrefsHelper.getPref(PREF_MOUSE_AS_TOUCH, prefHandler);
+            final UiModeManager m = (UiModeManager) c.getSystemService(Context.UI_MODE_SERVICE);
+            // on TV devices, treat mouse as touch. everywhere else, don't
+            sTreatMouseAsTouch = (m.getCurrentModeType() == Configuration.UI_MODE_TYPE_TELEVISION);
+        }
+
+        return sTreatMouseAsTouch;
     }
 
     /**
@@ -504,31 +493,11 @@ public class PanZoomController {
     public void onTouchEvent(final @NonNull MotionEvent event) {
         ThreadUtils.assertOnUiThread();
 
-        if (!sTreatMouseAsTouch && event.getToolType(0) == MotionEvent.TOOL_TYPE_MOUSE && !mayTouchpadScroll(event)) {
+        if (!treatMouseAsTouch() && event.getToolType(0) == MotionEvent.TOOL_TYPE_MOUSE && !mayTouchpadScroll(event)) {
             handleMouseEvent(event);
             return;
         }
         handleMotionEvent(event);
-    }
-
-    /**
-     * Process a touch event through the pan-zoom controller. Treat any mouse events as
-     * "touch" rather than as "mouse". Pointer coordinates should be relative to the
-     * display surface.
-     *
-     * NOTE: It is highly recommended to only call this with ACTION_DOWN or in otherwise
-     * limited capacity. Returning a GeckoResult for every touch event will generate
-     * a lot of allocations and unnecessary GC pressure. Instead, prefer to call
-     * {@link #onTouchEvent(MotionEvent)}.
-     *
-     * @param event MotionEvent to process.
-     * @return A GeckoResult resolving to one of the
-     *         {@link PanZoomController#INPUT_RESULT_UNHANDLED INPUT_RESULT_*}) constants indicating
-     *         how the event was handled.
-     */
-    @Deprecated @DeprecationSchedule(version = 90, id = "on-touch-event-for-result")
-    public @NonNull GeckoResult<Integer> onTouchEventForResult(final @NonNull MotionEvent event) {
-        return onTouchEventForDetailResult(event).map(detail -> detail.handledResult());
     }
 
     /**
@@ -547,7 +516,7 @@ public class PanZoomController {
     public @NonNull GeckoResult<InputResultDetail> onTouchEventForDetailResult(final @NonNull MotionEvent event) {
         ThreadUtils.assertOnUiThread();
 
-        if (!sTreatMouseAsTouch && event.getToolType(0) == MotionEvent.TOOL_TYPE_MOUSE && !mayTouchpadScroll(event)) {
+        if (!treatMouseAsTouch() && event.getToolType(0) == MotionEvent.TOOL_TYPE_MOUSE && !mayTouchpadScroll(event)) {
             return GeckoResult.fromValue(
                 new InputResultDetail(handleMouseEvent(event), SCROLLABLE_FLAG_NONE, OVERSCROLL_FLAG_NONE));
         }

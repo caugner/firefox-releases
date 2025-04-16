@@ -467,7 +467,7 @@ nsresult nsHttpTransaction::Init(
 static inline void CreateAndStartTimer(nsCOMPtr<nsITimer>& aTimer,
                                        nsITimerCallback* aCallback,
                                        uint32_t aTimeout) {
-  MOZ_ASSERT(OnSocketThread(), "not on socket thread");
+  MOZ_DIAGNOSTIC_ASSERT(OnSocketThread(), "not on socket thread");
   MOZ_ASSERT(!aTimer);
 
   if (!aTimeout) {
@@ -602,7 +602,7 @@ void nsHttpTransaction::OnActivated() {
 
   if (mConnection && mRequestHead &&
       mConnection->Version() >= HttpVersion::v2_0) {
-    // So this is fun. On http/2, we want to send TE: Trailers, to be
+    // So this is fun. On http/2, we want to send TE: trailers, to be
     // spec-compliant. So we add it to the request head here. The fun part
     // is that adding a header to the request head at this point has no
     // effect on what we send on the wire, as the headers are already
@@ -610,7 +610,7 @@ void nsHttpTransaction::OnActivated() {
     // of the header happens in the h2 compression code. We still have to
     // add the header to the request head here, though, so that devtools can
     // show that we sent the header. FUN!
-    Unused << mRequestHead->SetHeader(nsHttp::TE, "Trailers"_ns);
+    Unused << mRequestHead->SetHeader(nsHttp::TE, "trailers"_ns);
   }
 
   mActivated = true;
@@ -1868,13 +1868,14 @@ char* nsHttpTransaction::LocateHttpStart(char* buf, uint32_t len,
   static const uint32_t ICYHeaderLen = sizeof(ICYHeader) - 1;
 
   if (aAllowPartialMatch && (len < HTTPHeaderLen))
-    return (PL_strncasecmp(buf, HTTPHeader, len) == 0) ? buf : nullptr;
+    return (nsCRT::strncasecmp(buf, HTTPHeader, len) == 0) ? buf : nullptr;
 
   // mLineBuf can contain partial match from previous search
   if (!mLineBuf.IsEmpty()) {
     MOZ_ASSERT(mLineBuf.Length() < HTTPHeaderLen);
     int32_t checkChars = std::min(len, HTTPHeaderLen - mLineBuf.Length());
-    if (PL_strncasecmp(buf, HTTPHeader + mLineBuf.Length(), checkChars) == 0) {
+    if (nsCRT::strncasecmp(buf, HTTPHeader + mLineBuf.Length(), checkChars) ==
+        0) {
       mLineBuf.Append(buf, checkChars);
       if (mLineBuf.Length() == HTTPHeaderLen) {
         // We've found whole HTTPHeader sequence. Return pointer at the
@@ -1891,8 +1892,8 @@ char* nsHttpTransaction::LocateHttpStart(char* buf, uint32_t len,
 
   bool firstByte = true;
   while (len > 0) {
-    if (PL_strncasecmp(buf, HTTPHeader,
-                       std::min<uint32_t>(len, HTTPHeaderLen)) == 0) {
+    if (nsCRT::strncasecmp(buf, HTTPHeader,
+                           std::min<uint32_t>(len, HTTPHeaderLen)) == 0) {
       if (len < HTTPHeaderLen) {
         // partial HTTPHeader sequence found
         // save partial match to mLineBuf
@@ -1910,7 +1911,7 @@ char* nsHttpTransaction::LocateHttpStart(char* buf, uint32_t len,
     // other browsers
 
     if (firstByte && !mInvalidResponseBytesRead && len >= HTTP2HeaderLen &&
-        (PL_strncasecmp(buf, HTTP2Header, HTTP2HeaderLen) == 0)) {
+        (nsCRT::strncasecmp(buf, HTTP2Header, HTTP2HeaderLen) == 0)) {
       LOG(("nsHttpTransaction:: Identified HTTP/2.0 treating as 1.x\n"));
       return buf;
     }
@@ -1920,7 +1921,7 @@ char* nsHttpTransaction::LocateHttpStart(char* buf, uint32_t len,
     // other browsers
 
     if (firstByte && !mInvalidResponseBytesRead && len >= HTTP3HeaderLen &&
-        (PL_strncasecmp(buf, HTTP3Header, HTTP3HeaderLen) == 0)) {
+        (nsCRT::strncasecmp(buf, HTTP3Header, HTTP3HeaderLen) == 0)) {
       LOG(("nsHttpTransaction:: Identified HTTP/3.0 treating as 1.x\n"));
       return buf;
     }
@@ -1930,7 +1931,7 @@ char* nsHttpTransaction::LocateHttpStart(char* buf, uint32_t len,
     // as HTTP/1.0 in nsHttpResponseHead::ParseVersion
 
     if (firstByte && !mInvalidResponseBytesRead && len >= ICYHeaderLen &&
-        (PL_strncasecmp(buf, ICYHeader, ICYHeaderLen) == 0)) {
+        (nsCRT::strncasecmp(buf, ICYHeader, ICYHeaderLen) == 0)) {
       LOG(("nsHttpTransaction:: Identified ICY treating as HTTP/1.0\n"));
       return buf;
     }
@@ -2215,19 +2216,9 @@ nsresult nsHttpTransaction::HandleContentStart() {
     }
 
     // Remember whether HTTP3 is supported
-    if ((mHttpVersion >= HttpVersion::v2_0) &&
-        (mResponseHead->Status() < 500) && (mResponseHead->Status() != 421)) {
-      nsAutoCString altSvc;
-      Unused << mResponseHead->GetHeader(nsHttp::Alternate_Service, altSvc);
-      if (!altSvc.IsEmpty() || nsHttp::IsReasonableHeaderValue(altSvc)) {
-        for (uint32_t i = 0; i < kHttp3VersionCount; i++) {
-          if (PL_strstr(altSvc.get(), kHttp3Versions[i].get())) {
-            mSupportsHTTP3 = true;
-            break;
-          }
-        }
-      }
-    }
+    mSupportsHTTP3 = nsHttpHandler::IsHttp3SupportedByServer(mResponseHead);
+
+    CollectTelemetryForUploads();
 
     // Report telemetry
     if (mSupportsHTTP3) {
@@ -2841,7 +2832,7 @@ nsHttpTransaction::Release() {
 }
 
 NS_IMPL_QUERY_INTERFACE(nsHttpTransaction, nsIInputStreamCallback,
-                        nsIOutputStreamCallback)
+                        nsIOutputStreamCallback, nsITimerCallback)
 
 //-----------------------------------------------------------------------------
 // nsHttpTransaction::nsIInputStreamCallback
@@ -3198,6 +3189,8 @@ uint32_t nsHttpTransaction::HTTPSSVCReceivedStage() {
 }
 
 void nsHttpTransaction::MaybeCancelFallbackTimer() {
+  MOZ_DIAGNOSTIC_ASSERT(OnSocketThread(), "not on socket thread");
+
   if (mFastFallbackTimer) {
     mFastFallbackTimer->Cancel();
     mFastFallbackTimer = nullptr;
@@ -3263,6 +3256,7 @@ void nsHttpTransaction::OnBackupConnectionReady(bool aTriggeredByHTTPSRR) {
 static void CreateBackupConnection(
     nsHttpConnectionInfo* aBackupConnInfo, nsIInterfaceRequestor* aCallbacks,
     uint32_t aCaps, std::function<void(bool)>&& aResultCallback) {
+  aBackupConnInfo->SetFallbackConnection(true);
   RefPtr<SpeculativeTransaction> trans = new SpeculativeTransaction(
       aBackupConnInfo, aCallbacks, aCaps | NS_HTTP_DISALLOW_HTTP3,
       std::move(aResultCallback));
@@ -3272,7 +3266,7 @@ static void CreateBackupConnection(
     trans->SetParallelSpeculativeConnectLimit(limit);
     trans->SetIgnoreIdle(true);
   }
-  gHttpHandler->ConnMgr()->DoSpeculativeConnection(trans, false);
+  gHttpHandler->ConnMgr()->DoFallbackConnection(trans, false);
 }
 
 void nsHttpTransaction::OnHttp3BackupTimer() {
@@ -3365,7 +3359,7 @@ void nsHttpTransaction::HandleFallback(
 
 NS_IMETHODIMP
 nsHttpTransaction::Notify(nsITimer* aTimer) {
-  MOZ_ASSERT(OnSocketThread(), "not on socket thread");
+  MOZ_DIAGNOSTIC_ASSERT(OnSocketThread(), "not on socket thread");
 
   if (!gHttpHandler || !gHttpHandler->ConnMgr()) {
     return NS_OK;
@@ -3381,6 +3375,34 @@ nsHttpTransaction::Notify(nsITimer* aTimer) {
 }
 
 bool nsHttpTransaction::GetSupportsHTTP3() { return mSupportsHTTP3; }
+
+const int64_t TELEMETRY_REQUEST_SIZE_10M = (int64_t)10 * (int64_t)(1 << 20);
+const int64_t TELEMETRY_REQUEST_SIZE_50M = (int64_t)50 * (int64_t)(1 << 20);
+const int64_t TELEMETRY_REQUEST_SIZE_100M = (int64_t)100 * (int64_t)(1 << 20);
+
+void nsHttpTransaction::CollectTelemetryForUploads() {
+  if ((mHttpVersion != HttpVersion::v3_0) && !mSupportsHTTP3) {
+    return;
+  }
+  if ((mRequestSize < TELEMETRY_REQUEST_SIZE_10M) ||
+      mTimings.requestStart.IsNull() || mTimings.responseStart.IsNull()) {
+    return;
+  }
+
+  nsCString key = (mHttpVersion == HttpVersion::v3_0) ? "uses_http3"_ns
+                                                      : "supports_http3"_ns;
+  auto hist = Telemetry::HTTP3_UPLOAD_TIME_10M_100M;
+  if (mRequestSize <= TELEMETRY_REQUEST_SIZE_50M) {
+    key.Append("_10_50"_ns);
+  } else if (mRequestSize <= TELEMETRY_REQUEST_SIZE_100M) {
+    key.Append("_50_100"_ns);
+  } else {
+    hist = Telemetry::HTTP3_UPLOAD_TIME_GT_100M;
+  }
+
+  Telemetry::AccumulateTimeDelta(hist, key, mTimings.requestStart,
+                                 mTimings.responseStart);
+}
 
 }  // namespace net
 }  // namespace mozilla

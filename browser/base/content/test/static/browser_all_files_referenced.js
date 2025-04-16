@@ -27,11 +27,16 @@ var gExceptionPaths = [
   // These resources are referenced using relative paths from html files.
   "resource://payments/",
 
+  // These chrome resources are referenced using relative paths from JS files.
+  "chrome://global/content/certviewer/components/",
+
   // https://github.com/mozilla/activity-stream/issues/3053
   "chrome://activity-stream/content/data/content/tippytop/images/",
   "chrome://activity-stream/content/data/content/tippytop/favicons/",
   // These resources are referenced by messages delivered through Remote Settings
   "chrome://activity-stream/content/data/content/assets/remote/",
+  "chrome://browser/content/assets/moz-vpn.svg",
+  "chrome://browser/content/assets/vpn-logo.svg",
 
   // toolkit/components/pdfjs/content/build/pdf.js
   "resource://pdf.js/web/images/",
@@ -46,6 +51,10 @@ var gExceptionPaths = [
   // Exclude all services-automation because they are used through webdriver
   "resource://gre/modules/services-automation/",
   "resource://services-automation/ServicesAutomation.jsm",
+
+  // Paths from this folder are constructed in NetErrorParent.jsm based on
+  // the type of cert or net error the user is encountering.
+  "chrome://browser/content/certerror/supportpages/",
 ];
 
 // These are not part of the omni.ja file, so we find them only when running
@@ -60,6 +69,11 @@ if (AppConstants.MOZ_BACKGROUNDTASKS) {
   gExceptionPaths.push("resource://gre/defaults/backgroundtasks/");
   // `BackgroundTask_id.jsm` is loaded at runtime by `app --backgroundtask id ...`.
   gExceptionPaths.push("resource://gre/modules/backgroundtasks/");
+}
+
+// Bug 1710546 https://bugzilla.mozilla.org/show_bug.cgi?id=1710546
+if (AppConstants.NIGHTLY_BUILD) {
+  gExceptionPaths.push("resource://builtin-addons/translations/");
 }
 
 // Each whitelist entry should have a comment indicating which file is
@@ -233,6 +247,11 @@ var whitelist = [
     file:
       "resource://gre/localization/en-US/toolkit/updates/backgroundupdate.ftl",
   },
+  // Bug 1713242 - referenced by aboutThirdParty.html which is only for Windows
+  {
+    file: "resource://gre/localization/en-US/toolkit/about/aboutThirdParty.ftl",
+    platforms: ["linux", "macosx"],
+  },
 ];
 
 if (AppConstants.NIGHTLY_BUILD && AppConstants.platform != "win") {
@@ -311,7 +330,7 @@ if (!isDevtools) {
   }
   // resource://devtools/shared/worker/loader.js,
   // resource://devtools/shared/builtin-modules.js
-  if (!AppConstants.ENABLE_REMOTE_AGENT) {
+  if (!AppConstants.ENABLE_WEBDRIVER) {
     whitelist.add("resource://gre/modules/jsdebugger.jsm");
   }
 }

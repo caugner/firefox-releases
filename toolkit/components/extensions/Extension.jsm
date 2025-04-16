@@ -118,6 +118,20 @@ XPCOMUtils.defineLazyPreferenceGetter(
   true
 );
 
+XPCOMUtils.defineLazyPreferenceGetter(
+  this,
+  "userContextIsolation",
+  "extensions.userContextIsolation.enabled",
+  false
+);
+
+XPCOMUtils.defineLazyPreferenceGetter(
+  this,
+  "userContextIsolationDefaultRestricted",
+  "extensions.userContextIsolation.defaults.restricted",
+  "[]"
+);
+
 var {
   GlobalManager,
   ParentAPIManager,
@@ -365,7 +379,7 @@ var ExtensionAddonObserver = {
         ExtensionStorage.clear(addon.id, { shouldNotifyListeners: false })
       );
 
-      // Clear any IndexedDB storage created by the extension
+      // Clear any IndexedDB and Cache API storage created by the extension.
       // If LSNG is enabled, this also clears localStorage.
       Services.qms.clearStoragesForPrincipal(principal);
 
@@ -835,6 +849,10 @@ class ExtensionData {
     return this.experimentsAllowed && manifest.experiment_apis;
   }
 
+  get manifestVersion() {
+    return this.manifest.manifest_version;
+  }
+
   /**
    * Load a locale and return a localized manifest.  The extension must
    * be initialized, and manifest parsed prior to calling.
@@ -883,7 +901,7 @@ class ExtensionData {
         this.manifestWarning(error);
       },
       preprocessors: {},
-      manifestVersion: this.manifest.manifest_version,
+      manifestVersion: this.manifestVersion,
     };
 
     if (this.fluentL10n || this.localeData) {
@@ -1114,10 +1132,18 @@ class ExtensionData {
 
       // Normalize all patterns to contain a single leading /
       if (manifest.web_accessible_resources) {
+        // Normalize into V3 objects
+        let wac =
+          this.manifestVersion >= 3
+            ? manifest.web_accessible_resources
+            : [{ resources: manifest.web_accessible_resources }];
         webAccessibleResources.push(
-          ...manifest.web_accessible_resources.map(path =>
-            path.replace(/^\/*/, "/")
-          )
+          ...wac.map(obj => {
+            obj.resources = obj.resources.map(path =>
+              path.replace(/^\/*/, "/")
+            );
+            return obj;
+          })
         );
       }
     } else if (this.type == "langpack") {
@@ -1252,9 +1278,7 @@ class ExtensionData {
     this.apiManager = this.getAPIManager();
     await this.apiManager.lazyInit();
 
-    this.webAccessibleResources = manifestData.webAccessibleResources.map(
-      res => new MatchGlob(res)
-    );
+    this.webAccessibleResources = manifestData.webAccessibleResources;
     this.allowedOrigins = new MatchPatternSet(manifestData.originPermissions, {
       restrictSchemes: this.restrictSchemes,
     });
@@ -1901,6 +1925,7 @@ class Extension extends ExtensionData {
 
     this.startupStates = new Set();
     this.state = "Not started";
+    this.userContextIsolation = userContextIsolation;
 
     this.sharedDataKeys = new Set();
 
@@ -2181,10 +2206,6 @@ class Extension extends ExtensionData {
     return manifest;
   }
 
-  get manifestVersion() {
-    return this.manifest.manifest_version;
-  }
-
   get extensionPageCSP() {
     const { content_security_policy } = this.manifest;
     // While only manifest v3 should contain an object,
@@ -2218,6 +2239,28 @@ class Extension extends ExtensionData {
     return this.policy.canAccessWindow(window);
   }
 
+  // TODO bug 1699481: move this logic to WebExtensionPolicy
+  canAccessContainer(userContextId) {
+    userContextId = userContextId ?? 0; // firefox-default has userContextId as 0.
+    let defaultRestrictedContainers = JSON.parse(
+      userContextIsolationDefaultRestricted
+    );
+    let extensionRestrictedContainers = JSON.parse(
+      Services.prefs.getStringPref(
+        `extensions.userContextIsolation.${this.id}.restricted`,
+        "[]"
+      )
+    );
+    if (
+      extensionRestrictedContainers.includes(userContextId) ||
+      defaultRestrictedContainers.includes(userContextId)
+    ) {
+      return false;
+    }
+
+    return true;
+  }
+
   // Representation of the extension to send to content
   // processes. This should include anything the content process might
   // need.
@@ -2231,7 +2274,7 @@ class Extension extends ExtensionData {
       instanceId: this.instanceId,
       resourceURL: this.resourceURL,
       contentScripts: this.contentScripts,
-      webAccessibleResources: this.webAccessibleResources.map(res => res.glob),
+      webAccessibleResources: this.webAccessibleResources,
       allowedOrigins: this.allowedOrigins.patterns.map(pat => pat.pattern),
       permissions: this.permissions,
       optionalPermissions: this.optionalPermissions,

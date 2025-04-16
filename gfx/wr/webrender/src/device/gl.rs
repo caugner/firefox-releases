@@ -20,7 +20,6 @@ use std::{
     cell::{Cell, RefCell},
     cmp,
     collections::hash_map::Entry,
-    fmt::Write,
     marker::PhantomData,
     mem,
     num::NonZeroUsize,
@@ -34,7 +33,6 @@ use std::{
     thread,
     time::Duration,
 };
-use uuid::Uuid;
 use webrender_build::shader::{
     ProgramSourceDigest, ShaderKind, ShaderVersion, build_shader_main_string,
     build_shader_prefix_string, do_build_shader_string, shader_source_from_file,
@@ -462,9 +460,6 @@ pub struct Texture {
     /// configurations). But that would complicate a lot of logic in this module,
     /// and FBOs are cheap enough to create.
     fbo_with_depth: Option<FBOId>,
-    /// If we are unable to blit directly to a texture array then we need
-    /// an intermediate renderbuffer.
-    blit_workaround_buffer: Option<(RBOId, FBOId)>,
     last_frame_used: GpuFrameId,
 }
 
@@ -991,6 +986,8 @@ pub struct Capabilities {
     /// textures can be used as normal. If false, external textures can only be rendered with
     /// certain shaders, and must first be copied in to regular textures for others.
     pub supports_image_external_essl3: bool,
+    /// Whether the VAO must be rebound after an attached VBO has been orphaned.
+    pub requires_vao_rebind_after_orphaning: bool,
     /// The name of the renderer, as reported by GL
     pub renderer_name: String,
 }
@@ -1130,10 +1127,6 @@ pub struct Device {
     /// are null-terminated, to work around driver bugs.
     requires_null_terminated_shader_source: bool,
 
-    /// Whether we must ensure the source strings passed to glShaderSource()
-    /// are unique, to work around driver bugs.
-    requires_unique_shader_source: bool,
-
     /// Whether we must unbind any texture from GL_TEXTURE_EXTERNAL_OES before
     /// binding to GL_TEXTURE_2D, to work around an android emulator bug.
     requires_texture_external_unbind: bool,
@@ -1180,8 +1173,6 @@ pub enum DrawTarget {
         dimensions: DeviceIntSize,
         /// Whether to draw with the texture's associated depth target
         with_depth: bool,
-        /// Workaround buffers for devices with broken texture array copy implementation
-        blit_workaround_buffer: Option<(RBOId, FBOId)>,
         /// FBO that corresponds to the selected layer / depth mode
         fbo_id: FBOId,
         /// Native GL texture ID
@@ -1199,7 +1190,6 @@ pub enum DrawTarget {
         offset: DeviceIntPoint,
         external_fbo_id: u32,
         dimensions: DeviceIntSize,
-        surface_origin_is_top_left: bool,
     },
 }
 
@@ -1235,7 +1225,6 @@ impl DrawTarget {
             dimensions: texture.get_dimensions(),
             fbo_id,
             with_depth,
-            blit_workaround_buffer: texture.blit_workaround_buffer,
             id: texture.id,
             target: texture.target,
         }
@@ -1261,13 +1250,7 @@ impl DrawTarget {
                     fb_rect.origin.x += rect.origin.x;
                 }
             }
-            DrawTarget::NativeSurface { surface_origin_is_top_left, .. } => {
-                if !surface_origin_is_top_left {
-                    let dimensions = self.dimensions();
-                    fb_rect.origin.y = dimensions.height - fb_rect.origin.y - fb_rect.size.height;
-                }
-            }
-            DrawTarget::Texture { .. } | DrawTarget::External { .. } => (),
+            DrawTarget::Texture { .. } | DrawTarget::External { .. } | DrawTarget::NativeSurface { .. } => (),
         }
         fb_rect
     }
@@ -1275,8 +1258,7 @@ impl DrawTarget {
     pub fn surface_origin_is_top_left(&self) -> bool {
         match *self {
             DrawTarget::Default { surface_origin_is_top_left, .. } => surface_origin_is_top_left,
-            DrawTarget::NativeSurface { surface_origin_is_top_left, .. } => surface_origin_is_top_left,
-            DrawTarget::Texture { .. } | DrawTarget::External { .. } => true,
+            DrawTarget::Texture { .. } | DrawTarget::External { .. } | DrawTarget::NativeSurface { .. } => true,
         }
     }
 
@@ -1297,7 +1279,7 @@ impl DrawTarget {
                         .unwrap_or_else(FramebufferIntRect::zero)
                 }
                 DrawTarget::NativeSurface { offset, .. } => {
-                    self.to_framebuffer_rect(scissor_rect.translate(offset.to_vector()))
+                    device_rect_as_framebuffer_rect(&scissor_rect.translate(offset.to_vector()))
                 }
                 DrawTarget::Texture { .. } | DrawTarget::External { .. } => {
                     device_rect_as_framebuffer_rect(&scissor_rect)
@@ -1640,12 +1622,6 @@ impl Device {
         // strings are not null-terminated. See bug 1591945.
         let requires_null_terminated_shader_source = is_emulator;
 
-        // On Adreno 505 and 506 we encounter crashes during glLinkProgram(), which
-        // appear to be caused by some driver-internal caching of shader strings.
-        // We attempt to workaround this by appending unique comments to each source.
-        // See bug 1609191.
-        let requires_unique_shader_source = renderer_name == "Adreno (TM) 505" || renderer_name == "Adreno (TM) 506";
-
         // The android emulator gets confused if you don't explicitly unbind any texture
         // from GL_TEXTURE_EXTERNAL_OES before binding another to GL_TEXTURE_2D. See bug 1636085.
         let requires_texture_external_unbind = is_emulator;
@@ -1741,6 +1717,10 @@ impl Device {
             true
         };
 
+        // On some Adreno 3xx devices the vertex array object must be unbound and rebound after
+        // an attached buffer has been orphaned.
+        let requires_vao_rebind_after_orphaning = is_adreno_3xx;
+
         Device {
             gl,
             base_gl: None,
@@ -1772,6 +1752,7 @@ impl Device {
                 uses_native_clip_mask,
                 uses_native_antialiasing,
                 supports_image_external_essl3,
+                requires_vao_rebind_after_orphaning,
                 renderer_name,
             },
 
@@ -1803,7 +1784,6 @@ impl Device {
             extensions,
             texture_storage_usage,
             requires_null_terminated_shader_source,
-            requires_unique_shader_source,
             requires_texture_external_unbind,
             required_pbo_stride,
             dump_shader_source,
@@ -1949,13 +1929,6 @@ impl Device {
         let id = self.gl.create_shader(shader_type);
 
         let mut new_source = Cow::from(source.as_str());
-        // On some drivers we encounter crashes during glLinkProgram(), which
-        // appear to be caused by some driver-internal caching of shader strings.
-        // We attempt to workaround this by appending unique comments to each source.
-        if self.requires_unique_shader_source {
-            let uuid = Uuid::new_v4().to_hyphenated();
-            write!(new_source.to_mut(), "\n//{}\n", uuid).unwrap();
-        }
         // Ensure the source strings we pass to glShaderSource are
         // null-terminated on buggy platforms.
         if self.requires_null_terminated_shader_source {
@@ -2153,7 +2126,7 @@ impl Device {
     ) {
         let (fbo_id, rect, depth_available) = match target {
             DrawTarget::Default { rect, .. } => {
-                (self.default_draw_fbo, rect, true)
+                (self.default_draw_fbo, rect, false)
             }
             DrawTarget::Texture { dimensions, fbo_id, with_depth, .. } => {
                 let rect = FramebufferIntRect::new(
@@ -2441,7 +2414,6 @@ impl Device {
             active_swizzle: Cell::default(),
             fbo: None,
             fbo_with_depth: None,
-            blit_workaround_buffer: None,
             last_frame_used: self.frame_id,
             flags: TextureFlags::default(),
         };
@@ -2830,10 +2802,6 @@ impl Device {
 
         if had_depth {
             self.release_depth_target(texture.get_dimensions());
-        }
-        if let Some((rbo, fbo)) = texture.blit_workaround_buffer {
-            self.gl.delete_framebuffers(&[fbo.0]);
-            self.gl.delete_renderbuffers(&[rbo.0]);
         }
 
         self.gl.delete_textures(&[texture.id]);
@@ -3447,6 +3415,14 @@ impl Device {
             None => {
                 self.update_vbo_data(vao.instance_vbo_id, instances, usage_hint);
             }
+        }
+
+        // On some devices the VAO must be manually unbound and rebound after an attached buffer has
+        // been orphaned. Failure to do so appeared to result in the orphaned buffer's contents
+        // being used for the subsequent draw call, rather than the new buffer's contents.
+        if self.capabilities.requires_vao_rebind_after_orphaning {
+            self.bind_vao_impl(0);
+            self.bind_vao_impl(vao.id);
         }
     }
 

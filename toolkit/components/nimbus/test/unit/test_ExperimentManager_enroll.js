@@ -12,17 +12,18 @@ const { Sampling } = ChromeUtils.import(
 const { ClientEnvironment } = ChromeUtils.import(
   "resource://normandy/lib/ClientEnvironment.jsm"
 );
+const { TestUtils } = ChromeUtils.import(
+  "resource://testing-common/TestUtils.jsm"
+);
 const { OS } = ChromeUtils.import("resource://gre/modules/osfile.jsm");
 
-// Experiment store caches in prefs Enrollments for fast sync access
-function cleanupStorePrefCache() {
-  const SYNC_DATA_PREF_BRANCH = "nimbus.syncdatastore.";
-  try {
-    Services.prefs.deleteBranch(SYNC_DATA_PREF_BRANCH);
-  } catch (e) {
-    // Expected if nothing is cached
-  }
-}
+const { cleanupStorePrefCache } = ExperimentFakes;
+
+const { ExperimentStore } = ChromeUtils.import(
+  "resource://nimbus/lib/ExperimentStore.jsm"
+);
+
+const { SYNC_DATA_PREF_BRANCH } = ExperimentStore;
 
 /**
  * The normal case: Enrollment of a new experiment
@@ -215,7 +216,6 @@ add_task(async function test_sampling_check() {
 add_task(async function enroll_in_reference_aw_experiment() {
   cleanupStorePrefCache();
 
-  const SYNC_DATA_PREF_BRANCH = "nimbus.syncdatastore.";
   let dir = await OS.File.getCurrentDirectory();
   let src = OS.Path.join(dir, "reference_aboutwelcome_experiment_content.json");
   let bytes = await OS.File.read(src);
@@ -246,4 +246,54 @@ add_task(async function enroll_in_reference_aw_experiment() {
   // In case some regression causes us to store a significant amount of data
   // in prefs.
   Assert.ok(prefValue.length < 3498, "Make sure we don't bloat the prefs");
+});
+
+add_task(async function test_forceEnroll_cleanup() {
+  const manager = ExperimentFakes.manager();
+  const sandbox = sinon.createSandbox();
+  let unenrollStub = sandbox.spy(manager, "unenroll");
+  let existingRecipe = ExperimentFakes.recipe("foo", {
+    branches: [
+      {
+        slug: "treatment",
+        ratio: 1,
+        feature: { featureId: "force-enrollment", enabled: true },
+      },
+    ],
+  });
+  let forcedRecipe = ExperimentFakes.recipe("bar", {
+    branches: [
+      {
+        slug: "treatment",
+        ratio: 1,
+        feature: { featureId: "force-enrollment", enabled: true },
+      },
+    ],
+  });
+
+  await manager.onStartup();
+  await manager.enroll(existingRecipe);
+
+  let setExperimentActiveSpy = sandbox.spy(manager, "setExperimentActive");
+  manager.forceEnroll(forcedRecipe, forcedRecipe.branches[0]);
+
+  Assert.ok(unenrollStub.called, "Unenrolled from existing experiment");
+  Assert.equal(
+    unenrollStub.firstCall.args[0],
+    existingRecipe.slug,
+    "Called with existing recipe slug"
+  );
+  Assert.ok(setExperimentActiveSpy.calledOnce, "Activated forced experiment");
+  Assert.equal(
+    setExperimentActiveSpy.firstCall.args[0].slug,
+    `optin-${forcedRecipe.slug}`,
+    "Called with forced experiment slug"
+  );
+  Assert.equal(
+    manager.store.getExperimentForFeature("force-enrollment").slug,
+    `optin-${forcedRecipe.slug}`,
+    "Enrolled in forced experiment"
+  );
+
+  sandbox.restore();
 });

@@ -1763,7 +1763,7 @@ void DocAccessible::DoInitialUpdate() {
           IAccessibleHolder holder(
               CreateHolderFromAccessible(WrapNotNull(this)));
           MOZ_ASSERT(!holder.IsNull());
-          int32_t childID = AccessibleWrap::GetChildIDFor(this);
+          int32_t childID = MsaaAccessible::GetChildIDFor(this);
 #else
           int32_t holder = 0, childID = 0;
 #endif
@@ -1794,6 +1794,9 @@ void DocAccessible::DoInitialUpdate() {
 #ifdef A11Y_LOG
   if (logging::IsEnabled(logging::eVerbose)) {
     logging::Tree("TREE", "Initial subtree", this);
+  }
+  if (logging::IsEnabled(logging::eTreeSize)) {
+    logging::TreeSize("TREE SIZE", "Initial subtree", this);
   }
 #endif
 
@@ -1875,15 +1878,7 @@ void DocAccessible::AddDependentIDsFor(LocalAccessible* aRelProvider,
       const nsDependentSubstring id = iter.NextID();
       if (id.IsEmpty()) break;
 
-      nsIContent* dependentContent = iter.GetElem(id);
-      if (!dependentContent ||
-          (relAttr == nsGkAtoms::aria_owns &&
-           !aRelProvider->IsAcceptableChild(dependentContent))) {
-        continue;
-      }
-
-      AttrRelProviders* providers =
-          GetOrCreateRelProviders(dependentContent->AsElement(), id);
+      AttrRelProviders* providers = GetOrCreateRelProviders(relProviderEl, id);
       if (providers) {
         AttrRelProvider* provider = new AttrRelProvider(relAttr, relProviderEl);
         if (provider) {
@@ -1893,6 +1888,7 @@ void DocAccessible::AddDependentIDsFor(LocalAccessible* aRelProvider,
           // content is not accessible then store it to pend its container
           // children invalidation (this happens immediately after the caching
           // is finished).
+          nsIContent* dependentContent = iter.GetElem(id);
           if (dependentContent) {
             if (!HasAccessible(dependentContent)) {
               mInvalidationList.AppendElement(dependentContent);
@@ -2350,7 +2346,22 @@ void DocAccessible::DoARIAOwnsRelocation(LocalAccessible* aOwner) {
     // Make an attempt to create an accessible if it wasn't created yet.
     if (!child) {
       // An owned child cannot be an ancestor of the owner.
-      if (aOwner->Elm()->IsInclusiveDescendantOf(childEl)) {
+      bool ok = true;
+      bool check = true;
+      for (LocalAccessible* parent = aOwner; parent && !parent->IsDoc();
+           parent = parent->LocalParent()) {
+        if (check) {
+          if (parent->Elm()->IsInclusiveDescendantOf(childEl)) {
+            ok = false;
+            break;
+          }
+        }
+        // We need to do the DOM descendant check again whenever the DOM
+        // lineage changes. If parent is relocated, that means the next
+        // ancestor will have a different DOM lineage.
+        check = parent->IsRelocated();
+      }
+      if (!ok) {
         continue;
       }
 

@@ -48,3 +48,27 @@ add_task(async function test_enrollmentHelper() {
     "Sync pref cache is cleared"
   );
 });
+
+add_task(async function test_enrollWithFeatureConfig() {
+  let manager = ExperimentFakes.manager();
+  await manager.onStartup();
+  let doExperimentCleanup = await ExperimentFakes.enrollWithFeatureConfig(
+    {
+      featureId: "enrollWithFeatureConfig",
+      value: { enabled: true },
+    },
+    { manager }
+  );
+
+  Assert.ok(
+    manager.store.hasExperimentForFeature("enrollWithFeatureConfig"),
+    "Enrolled successfully"
+  );
+
+  await doExperimentCleanup();
+
+  Assert.ok(
+    !manager.store.hasExperimentForFeature("enrollWithFeatureConfig"),
+    "Unenrolled successfully"
+  );
+});

@@ -403,6 +403,9 @@ nsIWidget::ContentAndAPZEventStatus PuppetWidget::DispatchInputEvent(
       Unused << mBrowserChild->SendDispatchKeyboardEvent(
           *aEvent->AsKeyboardEvent());
       break;
+    case eTouchEventClass:
+      Unused << mBrowserChild->SendDispatchTouchEvent(*aEvent->AsTouchEvent());
+      break;
     default:
       MOZ_ASSERT_UNREACHABLE("unsupported event type");
   }
@@ -531,6 +534,20 @@ nsresult PuppetWidget::SynthesizeNativeTouchpadDoubleTap(
   }
   mBrowserChild->SendSynthesizeNativeTouchpadDoubleTap(aPoint, aModifierFlags);
   return NS_OK;
+}
+
+void PuppetWidget::LockNativePointer() {
+  if (!mBrowserChild) {
+    return;
+  }
+  mBrowserChild->SendLockNativePointer();
+}
+
+void PuppetWidget::UnlockNativePointer() {
+  if (!mBrowserChild) {
+    return;
+  }
+  mBrowserChild->SendUnlockNativePointer();
 }
 
 void PuppetWidget::SetConfirmedTargetAPZC(
@@ -908,13 +925,28 @@ void PuppetWidget::SetCursor(const Cursor& aCursor) {
   IntSize customCursorSize;
   int32_t stride = 0;
   auto format = SurfaceFormat::B8G8R8A8;
+  ImageResolution resolution = aCursor.mResolution;
   if (aCursor.IsCustom()) {
-    // NOTE(emilio): We get the frame at the full size, ignoring resolution,
-    // because we're going to rasterize it, and we'd effectively lose the extra
-    // pixels if we rasterized to CustomCursorSize.
-    RefPtr<SourceSurface> surface = aCursor.mContainer->GetFrame(
-        imgIContainer::FRAME_CURRENT,
-        imgIContainer::FLAG_SYNC_DECODE | imgIContainer::FLAG_ASYNC_NOTIFY);
+    int32_t width = 0, height = 0;
+    aCursor.mContainer->GetWidth(&width);
+    aCursor.mContainer->GetHeight(&height);
+    const int32_t flags =
+        imgIContainer::FLAG_SYNC_DECODE | imgIContainer::FLAG_ASYNC_NOTIFY;
+    RefPtr<SourceSurface> surface;
+    if (width && height &&
+        aCursor.mContainer->GetType() == imgIContainer::TYPE_VECTOR) {
+      // For vector images, scale to device pixels.
+      resolution.ScaleBy(GetDefaultScale().scale);
+      resolution.ApplyInverseTo(width, height);
+      surface = aCursor.mContainer->GetFrameAtSize(
+          {width, height}, imgIContainer::FRAME_CURRENT, flags);
+    } else {
+      // NOTE(emilio): We get the frame at the full size, ignoring resolution,
+      // because we're going to rasterize it, and we'd effectively lose the
+      // extra pixels if we rasterized to CustomCursorSize.
+      surface =
+          aCursor.mContainer->GetFrame(imgIContainer::FRAME_CURRENT, flags);
+    }
     if (surface) {
       if (RefPtr<DataSourceSurface> dataSurface = surface->GetDataSurface()) {
         hasCustomCursor = true;
@@ -930,8 +962,9 @@ void PuppetWidget::SetCursor(const Cursor& aCursor) {
                                 length);
   if (!mBrowserChild->SendSetCursor(
           aCursor.mDefaultCursor, hasCustomCursor, cursorData,
-          customCursorSize.width, customCursorSize.height, aCursor.mResolution,
-          stride, format, aCursor.mHotspotX, aCursor.mHotspotY, force)) {
+          customCursorSize.width, customCursorSize.height, resolution.mX,
+          resolution.mY, stride, format, aCursor.mHotspotX, aCursor.mHotspotY,
+          force)) {
     return;
   }
   mCursor = aCursor;
@@ -998,52 +1031,6 @@ float PuppetWidget::GetDPI() { return mDPI; }
 double PuppetWidget::GetDefaultScaleInternal() { return mDefaultScale; }
 
 int32_t PuppetWidget::RoundsWidgetCoordinatesTo() { return mRounding; }
-
-void* PuppetWidget::GetNativeData(uint32_t aDataType) {
-  switch (aDataType) {
-    case NS_NATIVE_SHAREABLE_WINDOW: {
-      // NOTE: We can not have a tab child in some situations, such as when
-      // we're rendering to a fake widget for thumbnails.
-      if (!mBrowserChild) {
-        NS_WARNING("Need BrowserChild to get the nativeWindow from!");
-      }
-      mozilla::WindowsHandle nativeData = 0;
-      if (mBrowserChild) {
-        nativeData = mBrowserChild->WidgetNativeData();
-      }
-      return (void*)nativeData;
-    }
-    case NS_NATIVE_WINDOW:
-    case NS_NATIVE_WIDGET:
-    case NS_NATIVE_DISPLAY:
-      // These types are ignored (see bug 1183828, bug 1240891).
-      break;
-    case NS_RAW_NATIVE_IME_CONTEXT:
-      MOZ_CRASH("You need to call GetNativeIMEContext() instead");
-    case NS_NATIVE_PLUGIN_PORT:
-    case NS_NATIVE_GRAPHIC:
-    case NS_NATIVE_SHELLWIDGET:
-    default:
-      NS_WARNING("nsWindow::GetNativeData called with bad value");
-      break;
-  }
-  return nullptr;
-}
-
-#if defined(XP_WIN)
-void PuppetWidget::SetNativeData(uint32_t aDataType, uintptr_t aVal) {
-  switch (aDataType) {
-    case NS_NATIVE_CHILD_OF_SHAREABLE_WINDOW:
-      MOZ_ASSERT(mBrowserChild, "Need BrowserChild to send the message.");
-      if (mBrowserChild) {
-        mBrowserChild->SendSetNativeChildOfShareableWindow(aVal);
-      }
-      break;
-    default:
-      NS_WARNING("SetNativeData called with unsupported data type.");
-  }
-}
-#endif
 
 LayoutDeviceIntPoint PuppetWidget::GetChromeOffset() {
   if (!GetOwningBrowserChild()) {

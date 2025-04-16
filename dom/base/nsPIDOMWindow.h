@@ -638,7 +638,11 @@ class nsPIDOMWindowInner : public mozIDOMWindow {
   // These variables are only used on inner windows.
   uint32_t mMutationBits;
 
-  uint32_t mActivePeerConnections;
+  uint32_t mActivePeerConnections = 0;
+
+  // This is the count for active peer connections for all the windows in the
+  // subtree rooted at this window (only set on the top window).
+  uint32_t mTotalActivePeerConnections = 0;
 
   bool mIsDocumentLoaded;
   bool mIsHandlingResizeEvent;
@@ -909,8 +913,12 @@ class nsPIDOMWindowOuter : public mozIDOMWindowProxy {
   /**
    * Callback for notifying a window about a modal dialog being
    * opened/closed with the window as a parent.
+   *
+   * If any script can run between the enter and leave modal states, and the
+   * window isn't top, the LeaveModalState() should be called on the window
+   * returned by EnterModalState().
    */
-  virtual void EnterModalState() = 0;
+  virtual nsPIDOMWindowOuter* EnterModalState() = 0;
   virtual void LeaveModalState() = 0;
 
   virtual bool CanClose() = 0;

@@ -272,9 +272,9 @@ interface CanonicalBrowsingContext : BrowsingContext {
   /**
    * These methods implement the nsIWebNavigation methods of the same names
    */
-  void goBack(optional long aCancelContentJSEpoch, optional boolean aRequireUserInteraction = false);
-  void goForward(optional long aCancelContentJSEpoch, optional boolean aRequireUserInteraction  = false);
-  void goToIndex(long aIndex, optional long aCancelContentJSEpoch);
+  void goBack(optional long aCancelContentJSEpoch, optional boolean aRequireUserInteraction = false, optional boolean aUserActivation = false);
+  void goForward(optional long aCancelContentJSEpoch, optional boolean aRequireUserInteraction  = false, optional boolean aUserActivation = false);
+  void goToIndex(long aIndex, optional long aCancelContentJSEpoch, optional boolean aUserActivation = false);
   void reload(unsigned long aReloadFlags);
   void stop(unsigned long aStopFlags);
 
@@ -287,6 +287,8 @@ interface CanonicalBrowsingContext : BrowsingContext {
   // The current URI loaded in this BrowsingContext according to nsDocShell.
   // This may not match the current window global's document URI in some cases.
   readonly attribute URI? currentURI;
+
+  void clearRestoreState();
 };
 
 [Exposed=Window, ChromeOnly]

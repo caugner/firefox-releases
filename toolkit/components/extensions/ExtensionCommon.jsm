@@ -458,6 +458,7 @@ class BaseContext {
     this.contextId = getUniqueId();
     this.unloaded = false;
     this.extension = extension;
+    this.manifestVersion = extension.manifestVersion;
     this.jsonSandbox = null;
     this.active = true;
     this.incognito = null;
@@ -491,6 +492,10 @@ class BaseContext {
 
   canAccessWindow(window) {
     return this.extension.canAccessWindow(window);
+  }
+
+  canAccessContainer(userContextId) {
+    return this.extension.canAccessContainer(userContextId);
   }
 
   /**

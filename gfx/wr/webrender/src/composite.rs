@@ -97,6 +97,14 @@ bitflags! {
     }
 }
 
+#[derive(Copy, Clone, Debug, PartialEq)]
+#[cfg_attr(feature = "capture", derive(Serialize))]
+#[cfg_attr(feature = "replay", derive(Deserialize))]
+pub enum TileKind {
+    Opaque,
+    Alpha,
+    Clear,
+}
 
 /// Describes the geometry and surface of a tile to be composited
 #[cfg_attr(feature = "capture", derive(Serialize))]
@@ -109,6 +117,27 @@ pub struct CompositeTile {
     pub valid_rect: DeviceRect,
     pub transform: Option<CompositorSurfaceTransform>,
     pub z_id: ZBufferId,
+    pub kind: TileKind,
+}
+
+fn tile_kind(surface: &CompositeTileSurface, is_opaque: bool) -> TileKind {
+    match surface {
+        // Color tiles are, by definition, opaque. We might support non-opaque color
+        // tiles if we ever find pages that have a lot of these.
+        CompositeTileSurface::Color { .. } => TileKind::Opaque,
+        // Clear tiles have a special bucket
+        CompositeTileSurface::Clear => TileKind::Clear,
+        CompositeTileSurface::Texture { .. }
+        | CompositeTileSurface::ExternalSurface { .. } => {
+            // Texture surfaces get bucketed by opaque/alpha, for z-rejection
+            // on the Draw compositor mode.
+            if is_opaque {
+                TileKind::Opaque
+            } else {
+                TileKind::Alpha
+            }
+        }
+    }
 }
 
 pub enum ExternalSurfaceDependency {
@@ -229,10 +258,6 @@ pub enum CompositorConfig {
     /// the Compositor trait, but can be significantly more power efficient on operating
     /// systems that support it.
     Native {
-        /// The maximum number of dirty rects that can be provided per compositor
-        /// surface update. If this is zero, the entire compositor surface for
-        /// a given tile will be drawn if it's dirty.
-        max_update_rects: usize,
         /// A client provided interface to a native / OS compositor.
         compositor: Box<dyn Compositor>,
     }
@@ -290,8 +315,6 @@ pub enum CompositorKind {
     },
     /// Native OS compositor.
     Native {
-        /// Maximum dirty rects per compositor surface.
-        max_update_rects: usize,
         /// The capabilities of the underlying platform.
         capabilities: CompositorCapabilities,
     },
@@ -405,9 +428,7 @@ impl CompositeDescriptor {
 }
 
 pub struct CompositeStatePreallocator {
-    opaque_tiles: Preallocator,
-    alpha_tiles: Preallocator,
-    clear_tiles: Preallocator,
+    tiles: Preallocator,
     external_surfaces: Preallocator,
     occluders: Preallocator,
     occluders_events: Preallocator,
@@ -417,9 +438,7 @@ pub struct CompositeStatePreallocator {
 
 impl CompositeStatePreallocator {
     pub fn record(&mut self, state: &CompositeState) {
-        self.opaque_tiles.record_vec(&state.opaque_tiles);
-        self.alpha_tiles.record_vec(&state.alpha_tiles);
-        self.clear_tiles.record_vec(&state.clear_tiles);
+        self.tiles.record_vec(&state.tiles);
         self.external_surfaces.record_vec(&state.external_surfaces);
         self.occluders.record_vec(&state.occluders.occluders);
         self.occluders_events.record_vec(&state.occluders.events);
@@ -428,9 +447,7 @@ impl CompositeStatePreallocator {
     }
 
     pub fn preallocate(&self, state: &mut CompositeState) {
-        self.opaque_tiles.preallocate_vec(&mut state.opaque_tiles);
-        self.alpha_tiles.preallocate_vec(&mut state.alpha_tiles);
-        self.clear_tiles.preallocate_vec(&mut state.clear_tiles);
+        self.tiles.preallocate_vec(&mut state.tiles);
         self.external_surfaces.preallocate_vec(&mut state.external_surfaces);
         self.occluders.preallocate_vec(&mut state.occluders.occluders);
         self.occluders_events.preallocate_vec(&mut state.occluders.events);
@@ -442,9 +459,7 @@ impl CompositeStatePreallocator {
 impl Default for CompositeStatePreallocator {
     fn default() -> Self {
         CompositeStatePreallocator {
-            opaque_tiles: Preallocator::new(40),
-            alpha_tiles: Preallocator::new(16),
-            clear_tiles: Preallocator::new(0),
+            tiles: Preallocator::new(56),
             external_surfaces: Preallocator::new(0),
             occluders: Preallocator::new(16),
             occluders_events: Preallocator::new(32),
@@ -461,12 +476,10 @@ pub struct CompositeState {
     // TODO(gw): Consider splitting up CompositeState into separate struct types depending
     //           on the selected compositing mode. Many of the fields in this state struct
     //           are only applicable to either Native or Draw compositing mode.
-    /// List of opaque tiles to be drawn by the Draw compositor.
-    pub opaque_tiles: Vec<CompositeTile>,
-    /// List of alpha tiles to be drawn by the Draw compositor.
-    pub alpha_tiles: Vec<CompositeTile>,
-    /// List of clear tiles to be drawn by the Draw compositor.
-    pub clear_tiles: Vec<CompositeTile>,
+    /// List of tiles to be drawn by the Draw compositor.
+    /// Tiles are accumulated in this vector and sorted from front to back at the end of the
+    /// frame.
+    pub tiles: Vec<CompositeTile>,
     /// List of primitives that were promoted to be compositor surfaces.
     pub external_surfaces: Vec<ResolvedExternalSurface>,
     /// Used to generate z-id values for tiles in the Draw compositor mode.
@@ -480,8 +493,6 @@ pub struct CompositeState {
     pub dirty_rects_are_valid: bool,
     /// The kind of compositor for picture cache tiles (e.g. drawn by WR, or OS compositor)
     pub compositor_kind: CompositorKind,
-    /// The overall device pixel scale, used for tile occlusion conversions.
-    global_device_pixel_scale: DevicePixelScale,
     /// List of registered occluders
     pub occluders: Occluders,
     /// Description of the surfaces and properties that are being composited.
@@ -495,18 +506,14 @@ impl CompositeState {
     /// during each frame construction and passed to the renderer.
     pub fn new(
         compositor_kind: CompositorKind,
-        global_device_pixel_scale: DevicePixelScale,
         max_depth_ids: i32,
         dirty_rects_are_valid: bool,
     ) -> Self {
         CompositeState {
-            opaque_tiles: Vec::new(),
-            alpha_tiles: Vec::new(),
-            clear_tiles: Vec::new(),
+            tiles: Vec::new(),
             z_generator: ZBufferIdGenerator::new(max_depth_ids),
             dirty_rects_are_valid,
             compositor_kind,
-            global_device_pixel_scale,
             occluders: Occluders::new(),
             descriptor: CompositeDescriptor::empty(),
             external_surfaces: Vec::new(),
@@ -521,9 +528,9 @@ impl CompositeState {
         z_id: ZBufferId,
         rect: WorldRect,
     ) {
-        let device_rect = (rect * self.global_device_pixel_scale).round().to_i32();
+        let world_rect = rect.round().to_i32();
 
-        self.occluders.push(device_rect, z_id);
+        self.occluders.push(world_rect, z_id);
     }
 
     /// Add a picture cache to be composited
@@ -573,13 +580,14 @@ impl CompositeState {
                         (CompositeTileSurface::Color { color: *color }, true)
                     }
                     TileSurface::Clear => {
+                        // Clear tiles are rendered with blend mode pre-multiply-dest-out.
                         (CompositeTileSurface::Clear, false)
                     }
                     TileSurface::Texture { descriptor, .. } => {
                         let surface = descriptor.resolve(resource_cache, tile_cache.current_tile_size);
                         (
                             CompositeTileSurface::Texture { surface },
-                            tile.is_opaque
+                            tile.is_opaque 
                         )
                     }
                 };
@@ -593,6 +601,7 @@ impl CompositeState {
                 }
 
                 let tile = CompositeTile {
+                    kind: tile_kind(&surface, is_opaque),
                     surface,
                     rect: device_rect,
                     valid_rect: tile.device_valid_rect.translate(-device_rect.origin.to_vector()),
@@ -602,7 +611,7 @@ impl CompositeState {
                     z_id: tile.z_id,
                 };
 
-                self.push_tile(tile, is_opaque);
+                self.tiles.push(tile);
             }
 
             // Sort the tile descriptor lists, since iterating values in the tile_cache.tiles
@@ -714,8 +723,10 @@ impl CompositeState {
                     ResolvedExternalSurfaceIndex::INVALID
                 };
 
+                let surface = CompositeTileSurface::ExternalSurface { external_surface_index };
                 let tile = CompositeTile {
-                    surface: CompositeTileSurface::ExternalSurface { external_surface_index },
+                    kind: tile_kind(&surface, compositor_surface.is_opaque),
+                    surface,
                     rect: external_surface.surface_rect,
                     valid_rect: external_surface.surface_rect.translate(-external_surface.surface_rect.origin.to_vector()),
                     dirty_rect: external_surface.surface_rect.translate(-external_surface.surface_rect.origin.to_vector()),
@@ -738,7 +749,7 @@ impl CompositeState {
                     }
                 );
 
-                self.push_tile(tile, compositor_surface.is_opaque);
+                self.tiles.push(tile);
             }
         }
     }
@@ -791,7 +802,7 @@ impl CompositeState {
             );
             return ResolvedExternalSurfaceIndex::INVALID;
         }
-            
+
         let external_surface_index = ResolvedExternalSurfaceIndex(self.external_surfaces.len());
 
         // If the external surface descriptor reports that the native surface
@@ -841,39 +852,9 @@ impl CompositeState {
         external_surface_index
     }
 
-    /// Add a tile to the appropriate array, depending on tile properties and compositor mode.
-    fn push_tile(
-        &mut self,
-        tile: CompositeTile,
-        is_opaque: bool,
-    ) {
-        match tile.surface {
-            CompositeTileSurface::Color { .. } => {
-                // Color tiles are, by definition, opaque. We might support non-opaque color
-                // tiles if we ever find pages that have a lot of these.
-                self.opaque_tiles.push(tile);
-            }
-            CompositeTileSurface::Clear => {
-                // Clear tiles have a special bucket
-                self.clear_tiles.push(tile);
-            }
-            CompositeTileSurface::Texture { .. } => {
-                // Texture surfaces get bucketed by opaque/alpha, for z-rejection
-                // on the Draw compositor mode.
-                if is_opaque {
-                    self.opaque_tiles.push(tile);
-                } else {
-                    self.alpha_tiles.push(tile);
-                }
-            }
-            CompositeTileSurface::ExternalSurface { .. } => {
-                if is_opaque {
-                    self.opaque_tiles.push(tile);
-                } else {
-                    self.alpha_tiles.push(tile);
-                }
-            }
-        }
+    pub fn end_frame(&mut self) {
+        // Sort tiles from front to back.
+        self.tiles.sort_by_key(|tile| tile.z_id.0);
     }
 }
 
@@ -938,6 +919,10 @@ pub struct CompositorCapabilities {
     pub virtual_surface_size: i32,
     /// Whether the compositor requires redrawing on invalidation.
     pub redraw_on_invalidation: bool,
+    /// The maximum number of dirty rects that can be provided per compositor
+    /// surface update. If this is zero, the entire compositor surface for
+    /// a given tile will be drawn if it's dirty.
+    pub max_update_rects: usize,
 }
 
 impl Default for CompositorCapabilities {
@@ -949,6 +934,9 @@ impl Default for CompositorCapabilities {
         CompositorCapabilities {
             virtual_surface_size: 0,
             redraw_on_invalidation: false,
+            // Assume compositors can do at least partial update of surfaces. If not,
+            // the native compositor should override this to be 0.
+            max_update_rects: 1,
         }
     }
 }
@@ -1168,7 +1156,7 @@ pub trait PartialPresentCompositor {
 #[cfg_attr(feature = "replay", derive(Deserialize))]
 struct Occluder {
     z_id: ZBufferId,
-    device_rect: DeviceIntRect,
+    world_rect: WorldIntRect,
 }
 
 // Whether this event is the start or end of a rectangle
@@ -1207,7 +1195,7 @@ impl OcclusionEvent {
 pub struct Occluders {
     occluders: Vec<Occluder>,
 
-    // The two vectors below are kept to avoid unnecessary reallocations in area(). 
+    // The two vectors below are kept to avoid unnecessary reallocations in area().
 
     #[cfg_attr(feature = "serde", serde(skip))]
     events: Vec<OcclusionEvent>,
@@ -1225,8 +1213,8 @@ impl Occluders {
         }
     }
 
-    fn push(&mut self, device_rect: DeviceIntRect, z_id: ZBufferId) {
-        self.occluders.push(Occluder { device_rect, z_id });
+    fn push(&mut self, world_rect: WorldIntRect, z_id: ZBufferId) {
+        self.occluders.push(Occluder { world_rect, z_id });
     }
 
     /// Returns true if a tile with the specified rectangle and z_id
@@ -1234,7 +1222,7 @@ impl Occluders {
     pub fn is_tile_occluded(
         &mut self,
         z_id: ZBufferId,
-        device_rect: DeviceRect,
+        world_rect: WorldRect,
     ) -> bool {
         // It's often the case that a tile is only occluded by considering multiple
         // picture caches in front of it (for example, the background tiles are
@@ -1249,11 +1237,11 @@ impl Occluders {
         //       Then the entire tile must be occluded and can be skipped during rasterization and compositing.
 
         // Get the reference area we will compare against.
-        let device_rect = device_rect.round().to_i32();
-        let ref_area = device_rect.size.width * device_rect.size.height;
+        let world_rect = world_rect.round().to_i32();
+        let ref_area = world_rect.size.width * world_rect.size.height;
 
         // Calculate the non-overlapping area of the valid occluders.
-        let cover_area = self.area(z_id, &device_rect);
+        let cover_area = self.area(z_id, &world_rect);
         debug_assert!(cover_area <= ref_area);
 
         // Check if the tile area is completely covered
@@ -1265,7 +1253,7 @@ impl Occluders {
     fn area(
         &mut self,
         z_id: ZBufferId,
-        clip_rect: &DeviceIntRect,
+        clip_rect: &WorldIntRect,
     ) -> i32 {
         // This implementation is based on the article https://leetcode.com/articles/rectangle-area-ii/.
         // This is not a particularly efficient implementation (it skips building segment trees), however
@@ -1279,10 +1267,10 @@ impl Occluders {
         // Step through each rectangle and build the y-axis event list
         for occluder in &self.occluders {
             // Only consider occluders in front of this rect
-            if occluder.z_id.0 > z_id.0 {
+            if occluder.z_id.0 < z_id.0 {
                 // Clip the source rect to the rectangle we care about, since we only
                 // want to record area for the tile we are comparing to.
-                if let Some(rect) = occluder.device_rect.intersection(clip_rect) {
+                if let Some(rect) = occluder.world_rect.intersection(clip_rect) {
                     let x0 = rect.origin.x;
                     let x1 = x0 + rect.size.width;
                     self.events.push(OcclusionEvent::new(rect.origin.y, OcclusionEventKind::Begin, x0, x1));

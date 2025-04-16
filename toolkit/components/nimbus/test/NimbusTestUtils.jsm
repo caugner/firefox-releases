@@ -3,8 +3,10 @@
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 "use strict";
-
 Cu.importGlobalProperties(["fetch"]);
+
+const { Services } = ChromeUtils.import("resource://gre/modules/Services.jsm");
+
 const { XPCOMUtils } = ChromeUtils.import(
   "resource://gre/modules/XPCOMUtils.jsm"
 );
@@ -19,6 +21,8 @@ XPCOMUtils.defineLazyModuleGetters(this, {
     "resource://nimbus/lib/RemoteSettingsExperimentLoader.jsm",
   Ajv: "resource://testing-common/ajv-4.1.1.js",
 });
+
+const { SYNC_DATA_PREF_BRANCH, SYNC_DEFAULTS_PREF_BRANCH } = ExperimentStore;
 
 const PATH = FileTestUtils.getTempFile("shared-data-map").path;
 
@@ -73,14 +77,51 @@ const ExperimentFakes = {
     store = ExperimentManager.store,
     configuration,
   }) {
+    if (!store._isReady) {
+      throw new Error("Store not ready, need to `await ExperimentAPI.ready()`");
+    }
     store.updateRemoteConfigs(feature.featureId, configuration);
 
     return feature.ready();
+  },
+  async enrollWithFeatureConfig(
+    featureConfig,
+    { manager = ExperimentManager } = {}
+  ) {
+    await manager.store.ready();
+    let recipe = this.recipe(
+      `${featureConfig.featureId}-experiment-${Math.random()}`,
+      {
+        bucketConfig: {
+          namespace: "mstest-utils",
+          randomizationUnit: "normandy_id",
+          start: 0,
+          count: 1000,
+          total: 1000,
+        },
+        branches: [
+          {
+            slug: "control",
+            ratio: 1,
+            feature: featureConfig,
+          },
+        ],
+      }
+    );
+    let {
+      enrollmentPromise,
+      doExperimentCleanup,
+    } = this.enrollmentHelper(recipe, { manager });
+
+    await enrollmentPromise;
+
+    return doExperimentCleanup;
   },
   enrollmentHelper(recipe = {}, { manager = ExperimentManager } = {}) {
     let enrollmentPromise = new Promise(resolve =>
       manager.store.on(`update:${recipe.slug}`, (event, experiment) => {
         if (experiment.active) {
+          manager.store._syncToChildren({ flush: true });
           resolve(experiment);
         }
       })
@@ -116,6 +157,15 @@ const ExperimentFakes = {
 
     return { enrollmentPromise, doExperimentCleanup };
   },
+  // Experiment store caches in prefs Enrollments for fast sync access
+  cleanupStorePrefCache() {
+    try {
+      Services.prefs.deleteBranch(SYNC_DATA_PREF_BRANCH);
+      Services.prefs.deleteBranch(SYNC_DEFAULTS_PREF_BRANCH);
+    } catch (e) {
+      // Expected if nothing is cached
+    }
+  },
   childStore() {
     return new ExperimentStore("FakeStore", { isParent: false });
   },
@@ -139,8 +189,7 @@ const ExperimentFakes = {
         slug: "treatment",
         feature: {
           featureId: "test-feature",
-          enabled: true,
-          value: { title: "hello" },
+          value: { title: "hello", enabled: true },
         },
         ...props,
       },
@@ -165,27 +214,26 @@ const ExperimentFakes = {
         {
           slug: "control",
           ratio: 1,
-          feature: { featureId: "test-feature", enabled: true, value: null },
+          feature: { featureId: "test-feature", value: { enabled: true } },
         },
         {
           slug: "treatment",
           ratio: 1,
           feature: {
             featureId: "test-feature",
-            enabled: true,
-            value: { title: "hello" },
+            value: { title: "hello", enabled: true },
           },
         },
       ],
       bucketConfig: {
-        namespace: "mstest-utils",
+        namespace: "nimbus-test-utils",
         randomizationUnit: "normandy_id",
         start: 0,
         count: 100,
         total: 1000,
       },
-      userFacingName: "Messaging System recipe",
-      userFacingDescription: "Messaging System MSTestUtils recipe",
+      userFacingName: "Nimbus recipe",
+      userFacingDescription: "NimbusTestUtils recipe",
       ...props,
     };
   },

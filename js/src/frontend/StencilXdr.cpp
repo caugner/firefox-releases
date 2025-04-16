@@ -176,11 +176,11 @@ template <XDRMode mode>
   uint8_t flags = 0;
 
   if (mode == XDR_ENCODE) {
-    flags = stencil.flags_.serialize();
+    flags = stencil.flags_.toRaw();
   }
   MOZ_TRY(xdr->codeUint8(&flags));
   if (mode == XDR_DECODE) {
-    stencil.flags_.deserialize(flags);
+    stencil.flags_.setRaw(flags);
   }
 
   MOZ_TRY(xdr->codeUint32(&stencil.propertyCount_));
@@ -218,12 +218,13 @@ template <XDRMode mode>
   if (mode == XDR_ENCODE) {
     length = baseScopeData->length;
   } else {
-    MOZ_TRY(xdr->peekRawUint32(&length));
+    MOZ_TRY(xdr->peekUint32(&length));
   }
 
   AssertScopeSpecificDataIsEncodable<FunctionScope>();
   AssertScopeSpecificDataIsEncodable<VarScope>();
   AssertScopeSpecificDataIsEncodable<LexicalScope>();
+  AssertScopeSpecificDataIsEncodable<ClassBodyScope>();
   AssertScopeSpecificDataIsEncodable<EvalScope>();
   AssertScopeSpecificDataIsEncodable<GlobalScope>();
   AssertScopeSpecificDataIsEncodable<ModuleScope>();
@@ -243,7 +244,7 @@ template <XDRMode mode>
 XDRResult StencilXDR::codeSharedData(XDRState<mode>* xdr,
                                      RefPtr<SharedImmutableScriptData>& sisd) {
   if (mode == XDR_ENCODE) {
-    MOZ_TRY(XDRImmutableScriptData<mode>(xdr, sisd->isd_));
+    MOZ_TRY(XDRImmutableScriptData<mode>(xdr, *sisd));
   } else {
     JSContext* cx = xdr->cx();
     UniquePtr<SharedImmutableScriptData> data(
@@ -251,7 +252,7 @@ XDRResult StencilXDR::codeSharedData(XDRState<mode>* xdr,
     if (!data) {
       return xdr->fail(JS::TranscodeResult::Throw);
     }
-    MOZ_TRY(XDRImmutableScriptData<mode>(xdr, data->isd_));
+    MOZ_TRY(XDRImmutableScriptData<mode>(xdr, *data));
     sisd = data.release();
 
     if (!SharedImmutableScriptData::shareScriptData(cx, sisd)) {
@@ -597,6 +598,7 @@ enum class SectionMarker : uint32_t {
   ScriptData = 0x840458FF,
   ScriptExtra = 0xA90E489D,
   ModuleMetadata = 0x94FDCE6D,
+  End = 0x16DDA135,
 };
 
 template <XDRMode mode>
@@ -695,6 +697,8 @@ template <XDRMode mode>
     MOZ_TRY(CodeMarker(xdr, SectionMarker::ModuleMetadata));
     MOZ_TRY(codeModuleMetadata(xdr, *stencil.moduleMetadata));
   }
+
+  MOZ_TRY(CodeMarker(xdr, SectionMarker::End));
 
   return Ok();
 }

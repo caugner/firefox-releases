@@ -1000,6 +1000,10 @@ const SNAPSHOT_SCHEMA = {
           required: AppConstants.MOZ_SANDBOX,
           type: "number",
         },
+        contentWin32kLockdownState: {
+          required: AppConstants.MOZ_SANDBOX,
+          type: "string",
+        },
         syscallLog: {
           required: AppConstants.platform == "linux",
           type: "array",
@@ -1161,6 +1165,32 @@ const SNAPSHOT_SCHEMA = {
             },
           },
           required: true,
+        },
+        nimbusExperiments: {
+          type: "array",
+          items: {
+            type: "object",
+            properties: {
+              userFacingName: { type: "string", required: true },
+              branch: {
+                type: "object",
+                properties: {
+                  slug: { type: "string", required: true },
+                },
+              },
+            },
+          },
+          required: true,
+        },
+        remoteConfigs: {
+          type: "array",
+          items: {
+            type: "object",
+            properties: {
+              featureId: { type: "string", required: true },
+              slug: { type: "string", required: true },
+            },
+          },
         },
       },
     },

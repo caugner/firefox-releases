@@ -60,6 +60,7 @@
 #include "mozilla/MouseEvents.h"
 #include "mozilla/ProfilerLabels.h"
 #include "mozilla/ProfilerMarkers.h"
+#include "mozilla/ScopeExit.h"
 #include "mozilla/Telemetry.h"
 #include "mozilla/TextEvents.h"
 #include "mozilla/TouchEvents.h"
@@ -1012,6 +1013,22 @@ nsresult EventDispatcher::Dispatch(nsISupports* aTarget,
         for (uint32_t i = 0; i < chain.Length(); ++i) {
           chain[i].PreHandleEvent(preVisitor);
         }
+
+        RefPtr<nsRefreshDriver> refreshDriver;
+        if (aPresContext && aPresContext->GetRootPresContext() &&
+            aEvent->IsTrusted() &&
+            (aEvent->mMessage == eKeyPress ||
+             aEvent->mMessage == eMouseClick)) {
+          refreshDriver = aPresContext->GetRootPresContext()->RefreshDriver();
+          if (refreshDriver) {
+            refreshDriver->EnterUserInputProcessing();
+          }
+        }
+        auto cleanup = MakeScopeExit([&] {
+          if (refreshDriver) {
+            refreshDriver->ExitUserInputProcessing();
+          }
+        });
 
         clearTargets = ShouldClearTargets(aEvent);
 

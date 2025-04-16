@@ -101,8 +101,8 @@ class WebConsole {
     return this.commands.targetCommand.targetFront;
   }
 
-  get resourceWatcher() {
-    return this.toolbox.resourceWatcher;
+  get resourceCommand() {
+    return this.commands.resourceCommand;
   }
 
   /**
@@ -125,7 +125,7 @@ class WebConsole {
   }
 
   getFrontByID(id) {
-    return this.currentTarget.client.getFrontByID(id);
+    return this.commands.client.getFrontByID(id);
   }
 
   /**
@@ -444,7 +444,7 @@ class WebConsole {
    *                          devtools/client/fronts/webconsole.js
    */
   evaluateJSAsync(expression, options = {}) {
-    return this.ui._commands.evaluateJSAsync(expression, options);
+    return this.ui._consoleCommands.evaluateJSAsync(expression, options);
   }
 
   /**

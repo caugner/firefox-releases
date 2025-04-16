@@ -726,20 +726,48 @@ def enable_shared_memory(value):
 set_config("ENABLE_SHARED_MEMORY", enable_shared_memory)
 set_define("ENABLE_SHARED_MEMORY", enable_shared_memory)
 
+# Support for WebAssembly extended constant expressions
+# =====================================================
+
+
+@depends(milestone.is_nightly)
+def default_wasm_extended_const(is_nightly):
+    if is_nightly:
+        return True
+
+
+option(
+    "--enable-wasm-extended-const",
+    default=default_wasm_extended_const,
+    help="{Enable|Disable} WebAssembly extended constant expressions",
+)
+
+
+@depends("--enable-wasm-extended-const")
+def wasm_extended_const(value):
+    if value:
+        return True
+
+
+set_config("ENABLE_WASM_EXTENDED_CONST", wasm_extended_const)
+set_define("ENABLE_WASM_EXTENDED_CONST", wasm_extended_const)
 
 # Support for WebAssembly SIMD
 # =====================================================
 
 
-@depends("--enable-jit", "--enable-simulator", target)
-def default_wasm_simd(jit_enabled, simulator, target):
+@depends("--enable-jit", "--enable-simulator", "--enable-cranelift", target)
+def default_wasm_simd(jit_enabled, simulator, cranelift_enabled, target):
     if not jit_enabled:
         return
 
-    if simulator:
+    if cranelift_enabled:
         return
 
-    if target.cpu in ("x86_64", "x86"):
+    if simulator and (simulator[0] != "arm64"):
+        return
+
+    if target.cpu in ("x86_64", "x86", "aarch64"):
         return True
 
 
@@ -750,21 +778,30 @@ option(
 )
 
 
-@depends("--enable-wasm-simd", "--enable-jit", "--enable-simulator", target)
-def wasm_simd(value, jit_enabled, simulator, target):
+@depends(
+    "--enable-wasm-simd",
+    "--enable-jit",
+    "--enable-simulator",
+    "--enable-cranelift",
+    target,
+)
+def wasm_simd(value, jit_enabled, simulator, cranelift_enabled, target):
     if not value:
         return
 
     if not jit_enabled:
-        return
+        die("--enable-wasm-simd requires --enable-jit")
 
-    if simulator:
-        return
+    if cranelift_enabled:
+        die("--enable-wasm-simd is not supported for --enable-cranelift")
 
-    if target.cpu in ("x86_64", "x86"):
+    if simulator and (simulator[0] != "arm64"):
+        die("--enable-wasm-simd is not supported for simulators, except arm64")
+
+    if target.cpu in ("x86_64", "x86", "aarch64"):
         return True
 
-    die("--enable-wasm-simd only possible when targeting the x86_64/x86 jits")
+    die("--enable-wasm-simd only possible when targeting the x86_64/x86/arm64 jits")
 
 
 set_config("ENABLE_WASM_SIMD", wasm_simd)
@@ -804,6 +841,38 @@ set_config("ENABLE_WASM_SIMD_WORMHOLE", wasm_simd_wormhole)
 set_define("ENABLE_WASM_SIMD_WORMHOLE", wasm_simd_wormhole)
 
 
+# Support for WebAssembly relaxed SIMD
+# =====================================================
+
+
+@depends(milestone.is_nightly, "--enable-wasm-simd")
+def default_wasm_relaxed_simd(is_nightly, wasm_simd):
+    if is_nightly and wasm_simd:
+        return True
+
+
+option(
+    "--enable-wasm-relaxed-simd",
+    default=default_wasm_relaxed_simd,
+    help="{Enable|Disable} WebAssembly relaxed SIMD",
+)
+
+
+@depends("--enable-wasm-relaxed-simd", "--enable-wasm-simd")
+def wasm_relaxed_simd(value, wasm_simd):
+    if not value:
+        return
+
+    if not wasm_simd:
+        die("relaxed SIMD requires SIMD")
+
+    return True
+
+
+set_config("ENABLE_WASM_RELAXED_SIMD", wasm_relaxed_simd)
+set_define("ENABLE_WASM_RELAXED_SIMD", wasm_relaxed_simd)
+
+
 # Options for generating the shell as a script
 # ============================================
 option("--with-qemu-exe", nargs=1, help="Use path as an arm emulator on host platforms")
@@ -837,9 +906,11 @@ set_config("SIXGILL_PATH", sixgill)
 
 # Support for readline
 # =====================================================
-@depends("--enable-js-shell", target_is_windows, compile_environment)
-def editline(js_shell, is_windows, compile_environment):
-    return js_shell and not is_windows and compile_environment
+
+
+@depends("--enable-js-shell", target_is_windows, compile_environment, target)
+def editline(js_shell, is_windows, compile_environment, target):
+    return js_shell and not is_windows and compile_environment and (target.os != "WASI")
 
 
 option(

@@ -12,7 +12,6 @@
 #include "mozilla/PodOperations.h"
 #include "mozilla/Range.h"
 #include "mozilla/TextUtils.h"
-#include "mozilla/Unused.h"
 
 #include <algorithm>
 #include <limits>
@@ -3598,9 +3597,7 @@ static const JSFunctionSpec string_methods[] = {
     JS_SELF_HOSTED_FN("concat", "String_concat", 1, 0),
     JS_SELF_HOSTED_FN("slice", "String_slice", 2, 0),
 
-#ifdef NIGHTLY_BUILD
     JS_SELF_HOSTED_FN("at", "String_at", 1, 0),
-#endif
 
     /* HTML string methods. */
     JS_SELF_HOSTED_FN("bold", "String_bold", 0, 0),
@@ -3879,8 +3876,14 @@ Shape* StringObject::assignInitialShape(JSContext* cx,
                                         Handle<StringObject*> obj) {
   MOZ_ASSERT(obj->empty());
 
-  return NativeObject::addProperty(cx, obj, cx->names().length, LENGTH_SLOT,
-                                   JSPROP_PERMANENT | JSPROP_READONLY);
+  uint32_t slot;
+  if (!NativeObject::addProperty(cx, obj, cx->names().length, LENGTH_SLOT, {},
+                                 &slot)) {
+    return nullptr;
+  }
+  MOZ_ASSERT(slot == LENGTH_SLOT);
+
+  return obj->shape();
 }
 
 JSObject* StringObject::createPrototype(JSContext* cx, JSProtoKey key) {

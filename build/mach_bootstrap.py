@@ -8,12 +8,19 @@ import math
 import os
 import platform
 import shutil
+import site
 import sys
 
 if sys.version_info[0] < 3:
     import __builtin__ as builtins
+
+    class MetaPathFinder(object):
+        pass
+
+
 else:
-    import builtins
+    from importlib.abc import MetaPathFinder
+
 
 from types import ModuleType
 
@@ -199,6 +206,15 @@ def bootstrap(topsrcdir):
     if os.path.exists(deleted_dir):
         shutil.rmtree(deleted_dir, ignore_errors=True)
 
+    if major == 3 and sys.prefix == sys.base_prefix:
+        # We are not in a virtualenv. Remove global site packages
+        # from sys.path.
+        # Note that we don't ever invoke mach from a Python 2 virtualenv,
+        # and "sys.base_prefix" doesn't exist before Python 3.3, so we
+        # guard with the "major == 3" check.
+        site_paths = set(site.getsitepackages() + [site.getusersitepackages()])
+        sys.path = [path for path in sys.path if path not in site_paths]
+
     # Global build system and mach state is stored in a central directory. By
     # default, this is ~/.mozbuild. However, it can be defined via an
     # environment variable. We detect first run (by lack of this directory
@@ -373,15 +389,18 @@ def bootstrap(topsrcdir):
     for category, meta in CATEGORIES.items():
         driver.define_category(category, meta["short"], meta["long"], meta["priority"])
 
+    # Sparse checkouts may not have all mach_commands.py files. Ignore
+    # errors from missing files. Same for spidermonkey tarballs.
     repo = resolve_repository()
+    missing_ok = (
+        repo is not None and repo.sparse_checkout_present()
+    ) or os.path.exists(os.path.join(topsrcdir, "INSTALL"))
 
     for path in MACH_MODULES:
-        # Sparse checkouts may not have all mach_commands.py files. Ignore
-        # errors from missing files.
         try:
             driver.load_commands_from_file(os.path.join(topsrcdir, path))
         except mach.base.MissingFileError:
-            if not repo or not repo.sparse_checkout_present():
+            if not missing_ok:
                 raise
 
     return driver
@@ -399,16 +418,23 @@ def _finalize_telemetry_glean(telemetry, is_bootstrap, success):
         get_cpu_brand,
         get_distro_and_version,
         get_psutil_stats,
+        get_shell_info,
     )
 
     mach_metrics = telemetry.metrics(MACH_METRICS_PATH)
     mach_metrics.mach.duration.stop()
     mach_metrics.mach.success.set(success)
     system_metrics = mach_metrics.mach.system
-    system_metrics.cpu_brand.set(get_cpu_brand())
+    cpu_brand = get_cpu_brand()
+    if cpu_brand:
+        system_metrics.cpu_brand.set(cpu_brand)
     distro, version = get_distro_and_version()
     system_metrics.distro.set(distro)
     system_metrics.distro_version.set(version)
+
+    vscode_terminal, ssh_connection = get_shell_info()
+    system_metrics.vscode_terminal.set(vscode_terminal)
+    system_metrics.ssh_connection.set(ssh_connection)
 
     has_psutil, logical_cores, physical_cores, memory_total = get_psutil_stats()
     if has_psutil:
@@ -493,6 +519,69 @@ class ImportHook(object):
         return module
 
 
+# Hook import such that .pyc/.pyo files without a corresponding .py file in
+# the source directory are essentially ignored. See further below for details
+# and caveats.
+# Objdirs outside the source directory are ignored because in most cases, if
+# a .pyc/.pyo file exists there, a .py file will be next to it anyways.
+class FinderHook(MetaPathFinder):
+    def __init__(self, klass):
+        # Assume the source directory is the parent directory of the one
+        # containing this file.
+        self._source_dir = (
+            os.path.normcase(
+                os.path.abspath(os.path.dirname(os.path.dirname(__file__)))
+            )
+            + os.sep
+        )
+        self.finder_class = klass
+
+    def find_spec(self, full_name, paths=None, target=None):
+        spec = self.finder_class.find_spec(full_name, paths, target)
+
+        # Some modules don't have an origin.
+        if spec is None or spec.origin is None:
+            return spec
+
+        # Normalize the origin path.
+        path = os.path.normcase(os.path.abspath(spec.origin))
+        # Note: we could avoid normcase and abspath above for non pyc/pyo
+        # files, but those are actually rare, so it doesn't really matter.
+        if not path.endswith((".pyc", ".pyo")):
+            return spec
+
+        # Ignore modules outside our source directory
+        if not path.startswith(self._source_dir):
+            return spec
+
+        # If there is no .py corresponding to the .pyc/.pyo module we're
+        # resolving, remove the .pyc/.pyo file, and try again.
+        if not os.path.exists(spec.origin[:-1]):
+            if os.path.exists(spec.origin):
+                os.remove(spec.origin)
+            spec = self.finder_class.find_spec(full_name, paths, target)
+
+        return spec
+
+
+# Additional hook for python >= 3.8's importlib.metadata.
+class MetadataHook(FinderHook):
+    def find_distributions(self, *args, **kwargs):
+        return self.finder_class.find_distributions(*args, **kwargs)
+
+
+def hook(finder):
+    has_find_spec = hasattr(finder, "find_spec")
+    has_find_distributions = hasattr(finder, "find_distributions")
+    if has_find_spec and has_find_distributions:
+        return MetadataHook(finder)
+    elif has_find_spec:
+        return FinderHook(finder)
+    return finder
+
+
 # Install our hook. This can be deleted when the Python 3 migration is complete.
 if sys.version_info[0] < 3:
     builtins.__import__ = ImportHook(builtins.__import__)
+else:
+    sys.meta_path = [hook(c) for c in sys.meta_path]

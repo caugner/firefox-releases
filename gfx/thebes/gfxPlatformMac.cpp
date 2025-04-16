@@ -16,13 +16,18 @@
 #include "gfxUserFontSet.h"
 #include "gfxConfig.h"
 
+#include "AppleUtils.h"
 #include "nsTArray.h"
 #include "mozilla/Preferences.h"
 #include "mozilla/VsyncDispatcher.h"
 #include "nsCocoaFeatures.h"
+#include "nsComponentManagerUtils.h"
+#include "nsIFile.h"
 #include "nsUnicodeProperties.h"
 #include "qcms.h"
 #include "gfx2DGlue.h"
+#include "GeckoProfiler.h"
+#include "nsThreadUtils.h"
 
 #include <dlfcn.h>
 #include <CoreVideo/CoreVideo.h>
@@ -72,6 +77,135 @@ static void DisableFontActivation() {
   }
 }
 
+// Helpers for gfxPlatformMac::RegisterSupplementalFonts below.
+static void ActivateFontsFromDir(const nsACString& aDir) {
+  AutoCFRelease<CFURLRef> directory = CFURLCreateFromFileSystemRepresentation(
+      kCFAllocatorDefault, (const UInt8*)nsPromiseFlatCString(aDir).get(),
+      aDir.Length(), true);
+  if (!directory) {
+    return;
+  }
+  AutoCFRelease<CFURLEnumeratorRef> enumerator =
+      CFURLEnumeratorCreateForDirectoryURL(kCFAllocatorDefault, directory,
+                                           kCFURLEnumeratorDefaultBehavior,
+                                           nullptr);
+  if (!enumerator) {
+    return;
+  }
+  AutoCFRelease<CFMutableArrayRef> urls =
+      ::CFArrayCreateMutable(kCFAllocatorDefault, 0, &kCFTypeArrayCallBacks);
+  if (!urls) {
+    return;
+  }
+
+  CFURLRef url;
+  CFURLEnumeratorResult result;
+  do {
+    result = CFURLEnumeratorGetNextURL(enumerator, &url, nullptr);
+    if (result == kCFURLEnumeratorSuccess) {
+      CFArrayAppendValue(urls, url);
+    }
+  } while (result != kCFURLEnumeratorEnd);
+
+  CTFontManagerRegisterFontsForURLs(urls, kCTFontManagerScopeProcess, nullptr);
+}
+
+#ifdef MOZ_BUNDLED_FONTS
+static void ActivateBundledFonts() {
+  nsCOMPtr<nsIFile> localDir;
+  if (NS_FAILED(NS_GetSpecialDirectory(NS_GRE_DIR, getter_AddRefs(localDir)))) {
+    return;
+  }
+  if (NS_FAILED(localDir->Append(u"fonts"_ns))) {
+    return;
+  }
+  nsAutoCString path;
+  if (NS_FAILED(localDir->GetNativePath(path))) {
+    return;
+  }
+  ActivateFontsFromDir(path);
+}
+#endif
+
+// A bunch of fonts for "additional language support" are shipped in a
+// "Language Support" directory, and don't show up in the standard font
+// list returned by CTFontManagerCopyAvailableFontFamilyNames unless
+// we explicitly activate them.
+//
+// On macOS Big Sur, the various Noto fonts etc have moved to a new location
+// under /System/Fonts. Whether they're exposed in the font list by default
+// depends on the SDK used; when built with SDK 10.15, they're absent. So
+// we explicitly activate them to be sure they'll be available.
+#if __MAC_OS_X_VERSION_MAX_ALLOWED < 101500
+static const nsLiteralCString kLangFontsDirs[] = {
+    "/Library/Application Support/Apple/Fonts/Language Support"_ns};
+#else
+static const nsLiteralCString kLangFontsDirs[] = {
+    "/Library/Application Support/Apple/Fonts/Language Support"_ns,
+    "/System/Library/Fonts/Supplemental"_ns};
+#endif
+
+static void FontRegistrationCallback(void* aUnused) {
+  AUTO_PROFILER_REGISTER_THREAD("RegisterFonts");
+  PR_SetCurrentThreadName("RegisterFonts");
+
+  for (const auto& dir : kLangFontsDirs) {
+    ActivateFontsFromDir(dir);
+  }
+}
+
+PRThread* gfxPlatformMac::sFontRegistrationThread = nullptr;
+
+/* This is called from XPCOM_Init during startup (before gfxPlatform has been
+   initialized), so that it can kick off the font activation on a secondary
+   thread, and hope that it'll be finished by the time we're ready to build
+   our font list. */
+/* static */
+void gfxPlatformMac::RegisterSupplementalFonts() {
+  if (XRE_IsParentProcess()) {
+    sFontRegistrationThread = PR_CreateThread(
+        PR_USER_THREAD, FontRegistrationCallback, nullptr, PR_PRIORITY_NORMAL,
+        PR_GLOBAL_THREAD, PR_JOINABLE_THREAD, 0);
+  } else if (!nsCocoaFeatures::OnCatalinaOrLater()) {
+    // On Catalina+, it appears to be sufficient to activate fonts in the
+    // parent process; they are then also usable in child processes. But on
+    // pre-Catalina systems we need to explicitly activate them in each child
+    // process (per bug 1704273).
+    //
+    // But at least on 10.14 (Mojave), doing font registration on a separate
+    // thread in the content process seems crashy (bug 1708821), despite the
+    // CTFontManager.h header claiming that it's thread-safe. So we just do it
+    // immediately on the main thread, and accept the startup-time hit (sigh).
+    for (const auto& dir : kLangFontsDirs) {
+      ActivateFontsFromDir(dir);
+    }
+  }
+}
+
+/* static */
+void gfxPlatformMac::WaitForFontRegistration() {
+  if (sFontRegistrationThread) {
+    PR_JoinThread(sFontRegistrationThread);
+    sFontRegistrationThread = nullptr;
+
+#ifdef MOZ_BUNDLED_FONTS
+    // This is not done by the font registration thread because it uses the
+    // XPCOM directory service, which is not yet available at the time we start
+    // the registration thread.
+    //
+    // We activate bundled fonts if the pref is > 0 (on) or < 0 (auto), only an
+    // explicit value of 0 (off) will disable them.
+    if (StaticPrefs::gfx_bundled_fonts_activate_AtStartup() != 0) {
+      TimeStamp start = TimeStamp::Now();
+      ActivateBundledFonts();
+      TimeStamp end = TimeStamp::Now();
+      Telemetry::Accumulate(Telemetry::FONTLIST_BUNDLEDFONTS_ACTIVATE,
+                            (end - start).ToMilliseconds());
+    }
+#endif
+  }
+}
+
 gfxPlatformMac::gfxPlatformMac() {
   DisableFontActivation();
   mFontAntiAliasingThreshold = ReadAntiAliasingThreshold();
@@ -104,13 +238,8 @@ bool gfxPlatformMac::UsesTiling() const {
 
 bool gfxPlatformMac::ContentUsesTiling() const { return UsesTiling(); }
 
-gfxPlatformFontList* gfxPlatformMac::CreatePlatformFontList() {
-  gfxPlatformFontList* list = new gfxMacPlatformFontList();
-  if (NS_SUCCEEDED(list->InitFontList())) {
-    return list;
-  }
-  gfxPlatformFontList::Shutdown();
-  return nullptr;
+bool gfxPlatformMac::CreatePlatformFontList() {
+  return gfxPlatformFontList::Initialize(new gfxMacPlatformFontList);
 }
 
 void gfxPlatformMac::ReadSystemFontList(SystemFontList* aFontList) {

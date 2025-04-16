@@ -225,7 +225,6 @@ class TransactionWrapper final {
       const wr::WrPipelineId& aPipelineId,
       const layers::ScrollableLayerGuid::ViewID& aScrollId,
       const wr::LayoutPoint& aScrollPosition);
-  void UpdatePinchZoom(float aZoom);
   void UpdateIsTransformAsyncZooming(uint64_t aAnimationId, bool aIsZooming);
 
  private:
@@ -497,8 +496,6 @@ class DisplayListBuilder final {
                    const layers::ScrollableLayerGuid::ViewID& aScrollId,
                    gfx::CompositorHitTestInfo aHitInfo, SideBits aSideBits);
   void PushClearRect(const wr::LayoutRect& aBounds);
-  void PushClearRectWithComplexRegion(const wr::LayoutRect& aBounds,
-                                      const wr::ComplexClipRegion& aRegion);
 
   void PushBackdropFilter(const wr::LayoutRect& aBounds,
                           const wr::ComplexClipRegion& aRegion,

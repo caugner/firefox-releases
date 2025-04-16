@@ -65,7 +65,7 @@ inline uint32_t BackendTypeBit(BackendType b) { return 1 << uint8_t(b); }
 namespace dom {
 class SystemFontListEntry;
 class SystemFontList;
-}
+}  // namespace dom
 }  // namespace mozilla
 
 #define MOZ_PERFORMANCE_WARNING(module, ...)      \
@@ -311,6 +311,9 @@ class gfxPlatform : public mozilla::layers::MemoryPressureListener {
 
   static bool AsyncPanZoomEnabled();
 
+  const char* GetAzureCanvasBackend() const;
+  const char* GetAzureContentBackend() const;
+
   virtual void GetAzureBackendInfo(mozilla::widget::InfoObject& aObj);
   void GetApzSupportInfo(mozilla::widget::InfoObject& aObj);
   void GetTilesSupportInfo(mozilla::widget::InfoObject& aObj);
@@ -374,12 +377,7 @@ class gfxPlatform : public mozilla::layers::MemoryPressureListener {
    * subclass). This function is responsible to create the appropriate subclass
    * of gfxPlatformFontList *and* to call its InitFontList() method.
    */
-  virtual gfxPlatformFontList* CreatePlatformFontList() {
-    MOZ_ASSERT_UNREACHABLE(
-        "oops, this platform doesn't have a "
-        "gfxPlatformFontList implementation");
-    return nullptr;
-  }
+  virtual bool CreatePlatformFontList() = 0;
 
   /**
    * Resolving a font name to family name. The result MUST be in the result of

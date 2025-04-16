@@ -395,7 +395,7 @@ void GCRuntime::attemptLastDitchGC(JSContext* cx) {
   }
 
   JS::PrepareForFullGC(cx);
-  gc(GC_SHRINK, JS::GCReason::LAST_DITCH);
+  gc(JS::GCOptions::Shrink, JS::GCReason::LAST_DITCH);
   waitBackgroundAllocEnd();
   waitBackgroundFreeEnd();
 
@@ -480,7 +480,7 @@ TenuredCell* js::gc::AllocateCellInGC(Zone* zone, AllocKind thingKind) {
     AutoEnterOOMUnsafeRegion oomUnsafe;
     cell = GCRuntime::refillFreeListInGC(zone, thingKind);
     if (!cell) {
-      oomUnsafe.crash(ChunkSize, "Failed not allocate new chunk during GC");
+      oomUnsafe.crash(ChunkSize, "Failed to allocate new chunk during GC");
     }
   }
   return cell;

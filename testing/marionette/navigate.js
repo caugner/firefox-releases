@@ -166,6 +166,8 @@ navigate.navigateTo = async function(browsingContext, url) {
   const opts = {
     loadFlags: Ci.nsIWebNavigation.LOAD_FLAGS_IS_LINK,
     triggeringPrincipal: Services.scriptSecurityManager.getSystemPrincipal(),
+    // Fake user activation.
+    hasValidUserGestureActivation: true,
   };
   browsingContext.loadURI(url, opts);
 };
@@ -221,6 +223,7 @@ navigate.waitForNavigationCompleted = async function waitForNavigationCompleted(
   let rejectNavigation;
   let resolveNavigation;
 
+  let browsingContextChanged = false;
   let seenBeforeUnload = false;
   let seenUnload = false;
 
@@ -236,12 +239,7 @@ navigate.waitForNavigationCompleted = async function waitForNavigationCompleted(
     }
   };
 
-  const onDialogOpened = (action, dialog, win) => {
-    // Only care about modals of the currently selected window.
-    if (win !== chromeWindow) {
-      return;
-    }
-
+  const onDialogOpened = action => {
     if (action === modal.ACTION_OPENED) {
       logger.trace("Canceled page load listener because a dialog opened");
       checkDone({ finished: true });
@@ -277,14 +275,16 @@ navigate.waitForNavigationCompleted = async function waitForNavigationCompleted(
   };
 
   const onNavigation = (eventName, data) => {
-    // Only care about navigation events from the actor of the current frame.
-    // Bug 1674329: Always use the currently active browsing context,
-    // and not the original one to not cause hangs for remoteness changes.
-    if (data.browsingContext != browsingContextFn()) {
+    const browsingContext = browsingContextFn();
+
+    // Ignore events from other browsing contexts than the selected one.
+    if (data.browsingContext != browsingContext) {
       return;
     }
 
-    logger.trace(truncate`Received event ${data.type} for ${data.documentURI}`);
+    logger.trace(
+      truncate`[${data.browsingContext.id}] Received event ${data.type} for ${data.documentURI}`
+    );
 
     switch (data.type) {
       case "beforeunload":
@@ -302,7 +302,9 @@ navigate.waitForNavigationCompleted = async function waitForNavigationCompleted(
 
       case "DOMContentLoaded":
       case "pageshow":
-        if (!seenUnload) {
+        // Don't require an unload event when a top-level browsing context
+        // change occurred.
+        if (!seenUnload && !browsingContextChanged) {
           return;
         }
         const result = checkReadyState(pageLoadStrategy, data);
@@ -326,6 +328,14 @@ navigate.waitForNavigationCompleted = async function waitForNavigationCompleted(
     }
   };
 
+  // Detect changes to the top-level browsing context to not
+  // necessarily require an unload event.
+  const onBrowsingContextChanged = event => {
+    if (event.target === driver.curBrowser.contentBrowser) {
+      browsingContextChanged = true;
+    }
+  };
+
   const onUnload = event => {
     logger.trace(
       "Canceled page load listener " +
@@ -336,6 +346,10 @@ navigate.waitForNavigationCompleted = async function waitForNavigationCompleted(
 
   chromeWindow.addEventListener("TabClose", onUnload);
   chromeWindow.addEventListener("unload", onUnload);
+  driver.curBrowser.tabBrowser?.addEventListener(
+    "XULFrameLoaderCreated",
+    onBrowsingContextChanged
+  );
   driver.dialogObserver.add(onDialogOpened);
   Services.obs.addObserver(
     onBrowsingContextDiscarded,
@@ -382,6 +396,10 @@ navigate.waitForNavigationCompleted = async function waitForNavigationCompleted(
     );
     chromeWindow.removeEventListener("TabClose", onUnload);
     chromeWindow.removeEventListener("unload", onUnload);
+    driver.curBrowser.tabBrowser?.removeEventListener(
+      "XULFrameLoaderCreated",
+      onBrowsingContextChanged
+    );
     driver.dialogObserver?.remove(onDialogOpened);
     unloadTimer?.cancel();
 

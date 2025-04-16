@@ -136,14 +136,13 @@ add_task(async function test_fog_uuid_works() {
   Assert.notEqual(kTestUuid, Glean.testOnly.whatIdIt.testGetValue("test-ping"));
 });
 
-// Enable test after bug 1677448 is fixed.
-add_task({ skip_if: () => true }, function test_fog_datetime_works() {
+add_task(function test_fog_datetime_works() {
   const value = new Date("2020-06-11T12:00:00");
 
   Glean.testOnly.whatADate.set(value.getTime() * 1000);
 
   const received = Glean.testOnly.whatADate.testGetValue("test-ping");
-  Assert.ok(received.startsWith("2020-06-11T12:00:00"));
+  Assert.equal(received.getTime(), value.getTime());
 });
 
 add_task(function test_fog_boolean_works() {
@@ -186,8 +185,14 @@ add_task(async function test_fog_memory_distribution_works() {
 
 add_task(function test_fog_custom_pings() {
   Assert.ok("onePingOnly" in GleanPings);
-  // Don't bother sending it, we'll test that in the integration suite.
-  // See also bug 1681742.
+  let submitted = false;
+  Glean.testOnly.onePingOneBool.set(false);
+  GleanPings.onePingOnly.testBeforeNextSubmit(reason => {
+    submitted = true;
+    Assert.equal(false, Glean.testOnly.onePingOneBool.testGetValue());
+  });
+  GleanPings.onePingOnly.submit();
+  Assert.ok(submitted, "Ping was submitted, callback was called.");
 });
 
 add_task(async function test_fog_timing_distribution_works() {
@@ -309,4 +314,9 @@ add_task(async function test_fog_labeled_string_works() {
     Glean.testOnly.mabelsBalloonStrings.__other__.testGetValue()
   );
   // TODO: Test that we have the right number and type of errors (bug 1683171)
+});
+
+add_task(function test_fog_quantity_works() {
+  Glean.testOnly.meaningOfLife.set(42);
+  Assert.equal(42, Glean.testOnly.meaningOfLife.testGetValue());
 });

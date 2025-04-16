@@ -2412,7 +2412,7 @@ bool nsLayoutUtils::GetLayerTransformForFrame(nsIFrame* aFrame,
                                               Matrix4x4Flagged* aTransform) {
   // FIXME/bug 796690: we can sometimes compute a transform in these
   // cases, it just increases complexity considerably.  Punt for now.
-  if (aFrame->Extend3DContext() || aFrame->HasTransformGetter()) {
+  if (aFrame->Extend3DContext() || aFrame->GetTransformGetter()) {
     return false;
   }
 
@@ -3080,7 +3080,7 @@ static void DumpAfterPaintDisplayList(UniquePtr<std::stringstream>& aStream,
 
   std::stringstream lsStream;
   nsIFrame::PrintDisplayList(aBuilder, *aList, lsStream);
-  if (aManager->GetRoot()) {
+  if (aManager && aManager->GetRoot()) {
     aManager->GetRoot()->SetDisplayListLog(lsStream.str().c_str());
   }
 }
@@ -3131,6 +3131,10 @@ nsresult nsLayoutUtils::PaintFrame(gfxContext* aRenderingContext,
   TimeStamp startBuildDisplayList = TimeStamp::Now();
 
   const bool buildCaret = !(aFlags & PaintFrameFlags::HideCaret);
+
+  // Note that isForPainting here does not include the PaintForPrinting builder
+  // mode; that's OK because there is no point in using retained display lists
+  // for a print destination.
   const bool isForPainting = (aFlags & PaintFrameFlags::WidgetLayers) &&
                              aBuilderMode == nsDisplayListBuilderMode::Painting;
 
@@ -3306,8 +3310,6 @@ nsresult nsLayoutUtils::PaintFrame(gfxContext* aRenderingContext,
     AUTO_PROFILER_TRACING_MARKER("Paint", "DisplayList", GRAPHICS);
     PerfStats::AutoMetricRecording<PerfStats::Metric::DisplayListBuilding>
         autoRecording;
-
-    PaintTelemetry::AutoRecord record(PaintTelemetry::Metric::DisplayList);
     {
       // If a scrollable container layer is created in
       // nsDisplayList::PaintForFrame, it will be the scroll parent for display
@@ -3508,7 +3510,7 @@ nsresult nsLayoutUtils::PaintFrame(gfxContext* aRenderingContext,
   gfxUtils::sDumpPaintFile = savedDumpFile;
 #endif
 
-  if (StaticPrefs::layers_dump_client_layers()) {
+  if (StaticPrefs::layers_dump_client_layers() && layerManager) {
     std::stringstream ss;
     FrameLayerBuilder::DumpRetainedLayerTree(layerManager, ss, false);
     print_stderr(ss);
@@ -6296,6 +6298,8 @@ ImgDrawResult nsLayoutUtils::DrawSingleUnscaledImage(
   CSSIntSize imageSize;
   aImage->GetWidth(&imageSize.width);
   aImage->GetHeight(&imageSize.height);
+  aImage->GetResolution().ApplyTo(imageSize.width, imageSize.height);
+
   if (imageSize.width < 1 || imageSize.height < 1) {
     NS_WARNING("Image width or height is non-positive");
     return ImgDrawResult::TEMPORARY_ERROR;
@@ -6323,13 +6327,15 @@ ImgDrawResult nsLayoutUtils::DrawSingleUnscaledImage(
 /* static */
 ImgDrawResult nsLayoutUtils::DrawSingleImage(
     gfxContext& aContext, nsPresContext* aPresContext, imgIContainer* aImage,
-    float aResolution, SamplingFilter aSamplingFilter, const nsRect& aDest,
-    const nsRect& aDirty, const Maybe<SVGImageContext>& aSVGContext,
-    uint32_t aImageFlags, const nsPoint* aAnchorPoint,
-    const nsRect* aSourceArea) {
+    SamplingFilter aSamplingFilter, const nsRect& aDest, const nsRect& aDirty,
+    const Maybe<SVGImageContext>& aSVGContext, uint32_t aImageFlags,
+    const nsPoint* aAnchorPoint, const nsRect* aSourceArea) {
   nscoord appUnitsPerCSSPixel = AppUnitsPerCSSPixel();
-  CSSIntSize pixelImageSize(
-      ComputeSizeForDrawingWithFallback(aImage, aResolution, aDest.Size()));
+  // NOTE(emilio): We can hardcode resolution to 1 here, since we're interested
+  // in the actual image pixels, for snapping purposes, not on the adjusted
+  // size.
+  CSSIntSize pixelImageSize(ComputeSizeForDrawingWithFallback(
+      aImage, ImageResolution(), aDest.Size()));
   if (pixelImageSize.width < 1 || pixelImageSize.height < 1) {
     NS_ASSERTION(pixelImageSize.width >= 0 && pixelImageSize.height >= 0,
                  "Image width or height is negative");
@@ -6370,7 +6376,7 @@ ImgDrawResult nsLayoutUtils::DrawSingleImage(
 
 /* static */
 void nsLayoutUtils::ComputeSizeForDrawing(
-    imgIContainer* aImage, float aResolution,
+    imgIContainer* aImage, const ImageResolution& aResolution,
     /* outparam */ CSSIntSize& aImageSize,
     /* outparam */ AspectRatio& aIntrinsicRatio,
     /* outparam */ bool& aGotWidth,
@@ -6380,13 +6386,11 @@ void nsLayoutUtils::ComputeSizeForDrawing(
   Maybe<AspectRatio> intrinsicRatio = aImage->GetIntrinsicRatio();
   aIntrinsicRatio = intrinsicRatio.valueOr(AspectRatio());
 
-  if (aResolution != 0.0f && aResolution != 1.0f) {
-    if (aGotWidth) {
-      aImageSize.width = std::round(float(aImageSize.width) / aResolution);
-    }
-    if (aGotHeight) {
-      aImageSize.height = std::round(float(aImageSize.height) / aResolution);
-    }
+  if (aGotWidth) {
+    aResolution.ApplyXTo(aImageSize.width);
+  }
+  if (aGotHeight) {
+    aResolution.ApplyYTo(aImageSize.height);
   }
 
   if (!(aGotWidth && aGotHeight) && intrinsicRatio.isNothing()) {
@@ -6399,7 +6403,8 @@ void nsLayoutUtils::ComputeSizeForDrawing(
 
 /* static */
 CSSIntSize nsLayoutUtils::ComputeSizeForDrawingWithFallback(
-    imgIContainer* aImage, float aResolution, const nsSize& aFallbackSize) {
+    imgIContainer* aImage, const ImageResolution& aResolution,
+    const nsSize& aFallbackSize) {
   CSSIntSize imageSize;
   AspectRatio imageRatio;
   bool gotHeight, gotWidth;
@@ -6436,11 +6441,65 @@ CSSIntSize nsLayoutUtils::ComputeSizeForDrawingWithFallback(
   return imageSize;
 }
 
+/* static */ LayerIntRect SnapRectForImage(const gfx::Matrix& aTransform,
+                                           const gfx::Size& aScaleFactors,
+                                           const LayoutDeviceRect& aRect) {
+  // Attempt to snap pixels, the same as ComputeSnappedImageDrawingParameters.
+  // Any changes to the algorithm here will need to be reflected there.
+  bool snapped = false;
+  LayerIntRect snapRect;
+  if (!aTransform.HasNonAxisAlignedTransform() && aTransform._11 > 0.0 &&
+      aTransform._22 > 0.0) {
+    gfxRect rect(gfxPoint(aRect.X(), aRect.Y()),
+                 gfxSize(aRect.Width(), aRect.Height()));
+
+    gfxPoint p1 =
+        ThebesPoint(aTransform.TransformPoint(ToPoint(rect.TopLeft())));
+    gfxPoint p2 =
+        ThebesPoint(aTransform.TransformPoint(ToPoint(rect.TopRight())));
+    gfxPoint p3 =
+        ThebesPoint(aTransform.TransformPoint(ToPoint(rect.BottomRight())));
+
+    if (p2 == gfxPoint(p1.x, p3.y) || p2 == gfxPoint(p3.x, p1.y)) {
+      p1.Round();
+      p3.Round();
+
+      IntPoint p1i(int32_t(p1.x), int32_t(p1.y));
+      IntPoint p3i(int32_t(p3.x), int32_t(p3.y));
+
+      snapRect.MoveTo(std::min(p1i.x, p3i.x), std::min(p1i.y, p3i.y));
+      snapRect.SizeTo(std::max(p1i.x, p3i.x) - snapRect.X(),
+                      std::max(p1i.y, p3i.y) - snapRect.Y());
+      snapped = true;
+    }
+  }
+
+  if (!snapped) {
+    // If we couldn't snap directly with the transform, we need to go best
+    // effort in layer pixels.
+    snapRect = RoundedToInt(LayerRect(aRect.X() * aScaleFactors.width,
+                                      aRect.Y() * aScaleFactors.height,
+                                      aRect.Width() * aScaleFactors.width,
+                                      aRect.Height() * aScaleFactors.height));
+  }
+
+  // An empty size is unacceptable so we ensure our suggested size is at least
+  // 1 pixel wide/tall.
+  if (snapRect.Width() < 1) {
+    snapRect.SetWidth(1);
+  }
+  if (snapRect.Height() < 1) {
+    snapRect.SetHeight(1);
+  }
+  return snapRect;
+}
+
 /* static */
 IntSize nsLayoutUtils::ComputeImageContainerDrawingParameters(
     imgIContainer* aImage, nsIFrame* aForFrame,
-    const LayoutDeviceRect& aDestRect, const StackingContextHelper& aSc,
-    uint32_t aFlags, Maybe<SVGImageContext>& aSVGContext) {
+    const LayoutDeviceRect& aDestRect, const LayoutDeviceRect& aFillRect,
+    const StackingContextHelper& aSc, uint32_t aFlags,
+    Maybe<SVGImageContext>& aSVGContext, Maybe<ImageIntRegion>& aRegion) {
   MOZ_ASSERT(aImage);
   MOZ_ASSERT(aForFrame);
 
@@ -6466,49 +6525,44 @@ IntSize nsLayoutUtils::ComputeImageContainerDrawingParameters(
     }
   }
 
-  // Attempt to snap pixels, the same as ComputeSnappedImageDrawingParameters.
-  // Any changes to the algorithm here will need to be reflected there.
-  bool snapped = false;
-  gfxSize gfxLayerSize;
   const gfx::Matrix& itm = aSc.GetInheritedTransform();
-  if (!itm.HasNonAxisAlignedTransform() && itm._11 > 0.0 && itm._22 > 0.0) {
-    gfxRect rect(gfxPoint(aDestRect.X(), aDestRect.Y()),
-                 gfxSize(aDestRect.Width(), aDestRect.Height()));
+  LayerIntRect destRect = SnapRectForImage(itm, scaleFactors, aDestRect);
 
-    gfxPoint p1 = ThebesPoint(itm.TransformPoint(ToPoint(rect.TopLeft())));
-    gfxPoint p2 = ThebesPoint(itm.TransformPoint(ToPoint(rect.TopRight())));
-    gfxPoint p3 = ThebesPoint(itm.TransformPoint(ToPoint(rect.BottomRight())));
+  // Since we always decode entire raster images, we only care about the
+  // ImageIntRegion for vector images, for which we may only draw part of in
+  // some cases.
+  if (aImage->GetType() != imgIContainer::TYPE_VECTOR) {
+    return aImage->OptimalImageSizeForDest(
+        gfxSize(destRect.Width(), destRect.Height()),
+        imgIContainer::FRAME_CURRENT, samplingFilter, aFlags);
+  }
 
-    if (p2 == gfxPoint(p1.x, p3.y) || p2 == gfxPoint(p3.x, p1.y)) {
-      p1.Round();
-      p3.Round();
+  // If the dest rect contains the fill rect, then we are only displaying part
+  // of the vector image. We need to calculate the restriction region to avoid
+  // drawing more than we need, and sampling outside the desired bounds.
+  LayerIntRect clipRect = SnapRectForImage(itm, scaleFactors, aFillRect);
+  if (destRect.Contains(clipRect)) {
+    LayerIntRect restrictRect = destRect.Intersect(clipRect);
+    restrictRect.MoveBy(-destRect.TopLeft());
 
-      rect.MoveTo(gfxPoint(std::min(p1.x, p3.x), std::min(p1.y, p3.y)));
-      rect.SizeTo(gfxSize(std::max(p1.x, p3.x) - rect.X(),
-                          std::max(p1.y, p3.y) - rect.Y()));
+    if (restrictRect.Width() < 1) {
+      restrictRect.SetWidth(1);
+    }
+    if (restrictRect.Height() < 1) {
+      restrictRect.SetHeight(1);
+    }
 
-      // An empty size is unacceptable so we ensure our suggested size is at
-      // least 1 pixel wide/tall.
-      gfxLayerSize =
-          gfxSize(std::max(rect.Width(), 1.0), std::max(rect.Height(), 1.0));
-      snapped = true;
+    if (restrictRect.X() != 0 || restrictRect.Y() != 0 ||
+        restrictRect.Size() != destRect.Size()) {
+      IntRect sampleRect = restrictRect.ToUnknownRect();
+      aRegion = Some(ImageIntRegion::CreateWithSamplingRestriction(
+          sampleRect, sampleRect, ExtendMode::CLAMP));
     }
   }
 
-  if (!snapped) {
-    // Compute our size in layer pixels.
-    const LayerIntSize layerSize =
-        RoundedToInt(LayerSize(aDestRect.Width() * scaleFactors.width,
-                               aDestRect.Height() * scaleFactors.height));
-
-    // An empty size is unacceptable so we ensure our suggested size is at least
-    // 1 pixel wide/tall.
-    gfxLayerSize =
-        gfxSize(std::max(layerSize.width, 1), std::max(layerSize.height, 1));
-  }
-
-  return aImage->OptimalImageSizeForDest(
-      gfxLayerSize, imgIContainer::FRAME_CURRENT, samplingFilter, aFlags);
+  // VectorImage::OptimalImageSizeForDest will just round up, but we already
+  // have an integer size.
+  return destRect.Size().ToUnknownSize();
 }
 
 /* static */
@@ -6981,6 +7035,29 @@ SurfaceFromElementResult nsLayoutUtils::SurfaceFromOffscreenCanvas(
   return result;
 }
 
+static RefPtr<SourceSurface> ScaleSourceSurface(SourceSurface& aSurface,
+                                                const IntSize& aTargetSize) {
+  const IntSize surfaceSize = aSurface.GetSize();
+
+  MOZ_ASSERT(surfaceSize != aTargetSize);
+  MOZ_ASSERT(!surfaceSize.IsEmpty());
+  MOZ_ASSERT(!aTargetSize.IsEmpty());
+
+  RefPtr<DrawTarget> dt = Factory::CreateDrawTarget(
+      gfxVars::ContentBackend(), aTargetSize, aSurface.GetFormat());
+
+  if (!dt || !dt->IsValid()) {
+    return nullptr;
+  }
+
+  RefPtr<gfxContext> context = gfxContext::CreateOrNull(dt);
+  MOZ_ASSERT(context);
+
+  dt->DrawSurface(&aSurface, Rect(Point(), Size(aTargetSize)),
+                  Rect(Point(), Size(surfaceSize)));
+  return dt->GetBackingSurface();
+}
+
 SurfaceFromElementResult nsLayoutUtils::SurfaceFromElement(
     nsIImageLoadingContent* aElement, uint32_t aSurfaceFlags,
     RefPtr<DrawTarget>& aTarget) {
@@ -7038,11 +7115,13 @@ SurfaceFromElementResult nsLayoutUtils::SurfaceFromElement(
   }
   imgContainer = OrientImage(imgContainer, orientation);
 
-  uint32_t noRasterize = aSurfaceFlags & SFE_NO_RASTERIZING_VECTORS;
+  const bool noRasterize = aSurfaceFlags & SFE_NO_RASTERIZING_VECTORS;
 
-  uint32_t whichFrame = (aSurfaceFlags & SFE_WANT_FIRST_FRAME_IF_IMAGE)
+  uint32_t whichFrame = aSurfaceFlags & SFE_WANT_FIRST_FRAME_IF_IMAGE
                             ? (uint32_t)imgIContainer::FRAME_FIRST
                             : (uint32_t)imgIContainer::FRAME_CURRENT;
+  const bool exactSize = aSurfaceFlags & SFE_EXACT_SIZE_SURFACE;
+
   uint32_t frameFlags =
       imgIContainer::FLAG_SYNC_DECODE | imgIContainer::FLAG_ASYNC_NOTIFY;
   if (aSurfaceFlags & SFE_NO_COLORSPACE_CONVERSION)
@@ -7062,18 +7141,22 @@ SurfaceFromElementResult nsLayoutUtils::SurfaceFromElement(
     rv = imgContainer->GetWidth(&imgWidth);
     nsresult rv2 = imgContainer->GetHeight(&imgHeight);
     if (NS_FAILED(rv) || NS_FAILED(rv2)) return result;
+    imgContainer->GetResolution().ApplyTo(imgWidth, imgHeight);
   }
-  result.mSize = IntSize(imgWidth, imgHeight);
-  result.mIntrinsicSize = IntSize(imgWidth, imgHeight);
+  result.mSize = result.mIntrinsicSize = IntSize(imgWidth, imgHeight);
 
   if (!noRasterize || imgContainer->GetType() == imgIContainer::TYPE_RASTER) {
-    if (aSurfaceFlags & SFE_WANT_IMAGE_SURFACE) {
-      frameFlags |= imgIContainer::FLAG_WANT_DATA_SURFACE;
-    }
     result.mSourceSurface =
         imgContainer->GetFrameAtSize(result.mSize, whichFrame, frameFlags);
     if (!result.mSourceSurface) {
       return result;
+    }
+    if (exactSize && result.mSourceSurface->GetSize() != result.mSize) {
+      result.mSourceSurface =
+          ScaleSourceSurface(*result.mSourceSurface, result.mSize);
+      if (!result.mSourceSurface) {
+        return result;
+      }
     }
     // The surface we return is likely to be cached. We don't want to have to
     // convert to a surface that's compatible with aTarget each time it's used
@@ -7103,7 +7186,7 @@ SurfaceFromElementResult nsLayoutUtils::SurfaceFromElement(
 
   int32_t corsmode;
   if (NS_SUCCEEDED(imgRequest->GetCORSMode(&corsmode))) {
-    result.mCORSUsed = (corsmode != imgIRequest::CORS_NONE);
+    result.mCORSUsed = corsmode != CORS_NONE;
   }
 
   bool hadCrossOriginRedirects = true;
@@ -7193,23 +7276,13 @@ SurfaceFromElementResult nsLayoutUtils::SurfaceFromElement(
 
   // If it doesn't have a principal, just bail
   nsCOMPtr<nsIPrincipal> principal = aElement->GetCurrentVideoPrincipal();
-  if (!principal) return result;
+  if (!principal) {
+    return result;
+  }
 
   result.mLayersImage = aElement->GetCurrentImage();
-  if (!result.mLayersImage) return result;
-
-  if (aTarget) {
-    // They gave us a DrawTarget to optimize for, so even though we have a
-    // layers::Image, we should unconditionally grab a SourceSurface and try to
-    // optimize it.
-    result.mSourceSurface = result.mLayersImage->GetAsSourceSurface();
-    if (!result.mSourceSurface) return result;
-
-    RefPtr<SourceSurface> opt =
-        aTarget->OptimizeSourceSurface(result.mSourceSurface);
-    if (opt) {
-      result.mSourceSurface = opt;
-    }
+  if (!result.mLayersImage) {
+    return result;
   }
 
   result.mCORSUsed = aElement->GetCORSMode() != CORS_NONE;
@@ -7221,6 +7294,19 @@ SurfaceFromElementResult nsLayoutUtils::SurfaceFromElement(
   result.mHadCrossOriginRedirects = aElement->HadCrossOriginRedirects();
   result.mIsWriteOnly = CanvasUtils::CheckWriteOnlySecurity(
       result.mCORSUsed, result.mPrincipal, result.mHadCrossOriginRedirects);
+
+  if (aTarget) {
+    // They gave us a DrawTarget to optimize for, so even though we have a
+    // layers::Image, we should unconditionally try to grab a SourceSurface and
+    // try to optimize it.
+    if ((result.mSourceSurface = result.mLayersImage->GetAsSourceSurface())) {
+      RefPtr<SourceSurface> opt =
+          aTarget->OptimizeSourceSurface(result.mSourceSurface);
+      if (opt) {
+        result.mSourceSurface = opt;
+      }
+    }
+  }
 
   return result;
 }
@@ -9090,12 +9176,15 @@ CSSPoint nsLayoutUtils::GetCumulativeApzCallbackTransform(nsIFrame* aFrame) {
     // Apply the callback transform for the current frame.
     applyCallbackTransformForFrame(frame);
 
-    // Keep track of whether we've encountered the RCD-RSF.
+    // Keep track of whether we've encountered the RCD-RSF's content element.
     nsPresContext* pc = frame->PresContext();
-    if (nsIScrollableFrame* scrollFrame = do_QueryFrame(frame)) {
-      if (scrollFrame->IsRootScrollFrameOfDocument() &&
-          pc->IsRootContentDocument()) {
-        seenRcdRsf = true;
+    if (pc->IsRootContentDocument()) {
+      if (PresShell* shell = pc->GetPresShell()) {
+        if (nsIFrame* rsf = shell->GetRootScrollFrame()) {
+          if (frame->GetContent() == rsf->GetContent()) {
+            seenRcdRsf = true;
+          }
+        }
       }
     }
 

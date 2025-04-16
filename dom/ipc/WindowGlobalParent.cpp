@@ -22,7 +22,6 @@
 #include "mozilla/dom/BrowserHost.h"
 #include "mozilla/dom/BrowserParent.h"
 #include "mozilla/dom/MediaController.h"
-#include "mozilla/dom/RemoteWebProgress.h"
 #include "mozilla/dom/WindowGlobalChild.h"
 #include "mozilla/dom/ChromeUtils.h"
 #include "mozilla/dom/ipc/IdType.h"
@@ -67,9 +66,12 @@
 #include "nsIXPConnect.h"
 #include "nsImportModule.h"
 
+#include "mozilla/dom/PBackgroundSessionStorageCache.h"
+
 using namespace mozilla::ipc;
 using namespace mozilla::dom::ipc;
 
+extern mozilla::LazyLogModule gSHIPBFCacheLog;
 extern mozilla::LazyLogModule gUseCountersLog;
 
 namespace mozilla::dom {
@@ -114,6 +116,10 @@ already_AddRefed<WindowGlobalParent> WindowGlobalParent::CreateDisconnected(
   net::CookieJarSettings::Deserialize(aInit.cookieJarSettings(),
                                       getter_AddRefs(wgp->mCookieJarSettings));
   MOZ_RELEASE_ASSERT(wgp->mDocumentPrincipal, "Must have a valid principal");
+
+  nsresult rv = wgp->SetDocumentStoragePrincipal(aInit.storagePrincipal());
+  MOZ_RELEASE_ASSERT(NS_SUCCEEDED(rv),
+                     "Must succeed in setting storage principal");
 
   return wgp.forget();
 }
@@ -369,14 +375,55 @@ IPCResult WindowGlobalParent::RecvUpdateDocumentURI(nsIURI* aURI) {
   return IPC_OK();
 }
 
+nsresult WindowGlobalParent::SetDocumentStoragePrincipal(
+    nsIPrincipal* aNewDocumentStoragePrincipal) {
+  if (mDocumentPrincipal->Equals(aNewDocumentStoragePrincipal)) {
+    mDocumentStoragePrincipal = mDocumentPrincipal;
+    return NS_OK;
+  }
+
+  // Compare originNoSuffix to ensure it's equal.
+  nsCString noSuffix;
+  nsresult rv = mDocumentPrincipal->GetOriginNoSuffix(noSuffix);
+  if (NS_FAILED(rv)) {
+    return rv;
+  }
+
+  nsCString storageNoSuffix;
+  rv = aNewDocumentStoragePrincipal->GetOriginNoSuffix(storageNoSuffix);
+  if (NS_FAILED(rv)) {
+    return rv;
+  }
+
+  if (noSuffix != storageNoSuffix) {
+    return NS_ERROR_FAILURE;
+  }
+
+  if (!mDocumentPrincipal->OriginAttributesRef().EqualsIgnoringPartitionKey(
+          aNewDocumentStoragePrincipal->OriginAttributesRef())) {
+    return NS_ERROR_FAILURE;
+  }
+
+  mDocumentStoragePrincipal = aNewDocumentStoragePrincipal;
+  return NS_OK;
+}
+
 IPCResult WindowGlobalParent::RecvUpdateDocumentPrincipal(
-    nsIPrincipal* aNewDocumentPrincipal) {
+    nsIPrincipal* aNewDocumentPrincipal,
+    nsIPrincipal* aNewDocumentStoragePrincipal) {
   if (!mDocumentPrincipal->Equals(aNewDocumentPrincipal)) {
     return IPC_FAIL(this,
                     "Trying to reuse WindowGlobalParent but the principal of "
                     "the new document does not match the old one");
   }
   mDocumentPrincipal = aNewDocumentPrincipal;
+
+  if (NS_FAILED(SetDocumentStoragePrincipal(aNewDocumentStoragePrincipal))) {
+    return IPC_FAIL(this,
+                    "Trying to reuse WindowGlobalParent but the principal of "
+                    "the new document does not match the storage principal");
+  }
+
   return IPC_OK();
 }
 mozilla::ipc::IPCResult WindowGlobalParent::RecvUpdateDocumentTitle(
@@ -524,20 +571,21 @@ void WindowGlobalParent::NotifyContentBlockingEvent(
 
   // Notify the OnContentBlockingEvent if necessary.
   if (event) {
-    if (!GetBrowsingContext()->GetWebProgress()) {
-      return;
+    if (auto* webProgress = GetBrowsingContext()->GetWebProgress()) {
+      webProgress->OnContentBlockingEvent(webProgress, aRequest, event.value());
     }
-
-    nsCOMPtr<nsIWebProgress> webProgress =
-        new RemoteWebProgress(0, false, BrowsingContext()->IsTopContent());
-    GetBrowsingContext()->Top()->GetWebProgress()->OnContentBlockingEvent(
-        webProgress, aRequest, event.value());
   }
 }
 
 already_AddRefed<JSWindowActorParent> WindowGlobalParent::GetActor(
     JSContext* aCx, const nsACString& aName, ErrorResult& aRv) {
   return JSActorManager::GetActor(aCx, aName, aRv)
+      .downcast<JSWindowActorParent>();
+}
+
+already_AddRefed<JSWindowActorParent> WindowGlobalParent::GetExistingActor(
+    const nsACString& aName) {
+  return JSActorManager::GetExistingActor(aName)
       .downcast<JSWindowActorParent>();
 }
 
@@ -1192,7 +1240,7 @@ Element* WindowGlobalParent::GetRootOwnerElement() {
   return nullptr;
 }
 
-nsresult WindowGlobalParent::UpdateSessionStore(
+nsresult WindowGlobalParent::WriteFormDataAndScrollToSessionStore(
     const Maybe<FormData>& aFormData, const Maybe<nsPoint>& aScrollPosition,
     uint32_t aEpoch) {
   if (!aFormData && !aScrollPosition) {
@@ -1290,7 +1338,8 @@ nsresult WindowGlobalParent::ResetSessionStore(uint32_t aEpoch) {
 mozilla::ipc::IPCResult WindowGlobalParent::RecvUpdateSessionStore(
     const Maybe<FormData>& aFormData, const Maybe<nsPoint>& aScrollPosition,
     uint32_t aEpoch) {
-  if (NS_FAILED(UpdateSessionStore(aFormData, aScrollPosition, aEpoch))) {
+  if (NS_FAILED(WriteFormDataAndScrollToSessionStore(aFormData, aScrollPosition,
+                                                     aEpoch))) {
     MOZ_LOG(BrowsingContext::GetLog(), LogLevel::Debug,
             ("ParentIPC: Failed to update session store entry."));
   }
@@ -1312,6 +1361,65 @@ mozilla::ipc::IPCResult WindowGlobalParent::RecvRequestRestoreTabContent() {
   if (bc && bc->AncestorsAreCurrent()) {
     bc->Top()->RequestRestoreTabContent(this);
   }
+  return IPC_OK();
+}
+
+nsCString BFCacheStatusToString(uint16_t aFlags) {
+  if (aFlags == 0) {
+    return "0"_ns;
+  }
+
+  nsCString flags;
+#define ADD_BFCACHESTATUS_TO_STRING(_flag) \
+  if (aFlags & BFCacheStatus::_flag) {     \
+    if (!flags.IsEmpty()) {                \
+      flags.Append('|');                   \
+    }                                      \
+    flags.AppendLiteral(#_flag);           \
+    aFlags &= ~BFCacheStatus::_flag;       \
+  }
+
+  ADD_BFCACHESTATUS_TO_STRING(NOT_ALLOWED);
+  ADD_BFCACHESTATUS_TO_STRING(EVENT_HANDLING_SUPPRESSED);
+  ADD_BFCACHESTATUS_TO_STRING(SUSPENDED);
+  ADD_BFCACHESTATUS_TO_STRING(UNLOAD_LISTENER);
+  ADD_BFCACHESTATUS_TO_STRING(REQUEST);
+  ADD_BFCACHESTATUS_TO_STRING(ACTIVE_GET_USER_MEDIA);
+  ADD_BFCACHESTATUS_TO_STRING(ACTIVE_PEER_CONNECTION);
+  ADD_BFCACHESTATUS_TO_STRING(CONTAINS_EME_CONTENT);
+  ADD_BFCACHESTATUS_TO_STRING(CONTAINS_MSE_CONTENT);
+  ADD_BFCACHESTATUS_TO_STRING(HAS_ACTIVE_SPEECH_SYNTHESIS);
+  ADD_BFCACHESTATUS_TO_STRING(HAS_USED_VR);
+  ADD_BFCACHESTATUS_TO_STRING(CONTAINS_REMOTE_SUBFRAMES);
+  ADD_BFCACHESTATUS_TO_STRING(NOT_ONLY_TOPLEVEL_IN_BCG);
+
+#undef ADD_BFCACHESTATUS_TO_STRING
+
+  MOZ_ASSERT(aFlags == 0,
+             "Missing stringification for enum value in BFCacheStatus.");
+  return flags;
+}
+
+mozilla::ipc::IPCResult WindowGlobalParent::RecvUpdateBFCacheStatus(
+    const uint16_t& aOnFlags, const uint16_t& aOffFlags) {
+  if (MOZ_UNLIKELY(MOZ_LOG_TEST(gSHIPBFCacheLog, LogLevel::Debug))) {
+    nsAutoCString uri("[no uri]");
+    if (mDocumentURI) {
+      uri = mDocumentURI->GetSpecOrDefault();
+    }
+    MOZ_LOG(gSHIPBFCacheLog, LogLevel::Debug,
+            ("Setting BFCache flags for %s +(%s) -(%s)", uri.get(),
+             BFCacheStatusToString(aOnFlags).get(),
+             BFCacheStatusToString(aOffFlags).get()));
+  }
+  mBFCacheStatus |= aOnFlags;
+  mBFCacheStatus &= ~aOffFlags;
+  return IPC_OK();
+}
+
+mozilla::ipc::IPCResult WindowGlobalParent::RecvSetSingleChannelId(
+    const Maybe<uint64_t>& aSingleChannelId) {
+  mSingleChannelId = aSingleChannelId;
   return IPC_OK();
 }
 

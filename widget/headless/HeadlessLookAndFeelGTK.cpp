@@ -54,9 +54,6 @@ nsresult HeadlessLookAndFeel::NativeGetColor(ColorID aID, ColorScheme,
     case ColorID::MozEventreerow:
       aColor = NS_RGB(0xff, 0xff, 0xff);
       break;
-    case ColorID::MozGtkInfoBarText:
-      aColor = NS_RGB(0x00, 0x00, 0x00);
-      break;
     case ColorID::MozMacButtonactivetext:
     case ColorID::MozMacDefaultbuttontext:
       aColor = NS_RGB(0xff, 0xff, 0xff);
@@ -86,7 +83,7 @@ nsresult HeadlessLookAndFeel::NativeGetColor(ColorID aID, ColorScheme,
       aColor = NS_RGB(0xaa, 0xaa, 0xaa);
       break;
     case ColorID::TextSelectForeground:
-      aColor = NS_DONT_CHANGE_COLOR;
+      aColor = NS_SAME_AS_FOREGROUND_COLOR;
       break;
     case ColorID::Widget3DHighlight:
       aColor = NS_RGB(0xa0, 0xa0, 0xa0);

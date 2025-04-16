@@ -209,8 +209,6 @@ class Proxy {
   /** @class */
   constructor() {
     this.proxyType = null;
-    this.ftpProxy = null;
-    this.ftpProxyPort = null;
     this.httpProxy = null;
     this.httpProxyPort = null;
     this.noProxy = null;
@@ -242,13 +240,6 @@ class Proxy {
 
       case "manual":
         Preferences.set("network.proxy.type", 1);
-
-        if (this.ftpProxy) {
-          Preferences.set("network.proxy.ftp", this.ftpProxy);
-          if (Number.isInteger(this.ftpProxyPort)) {
-            Preferences.set("network.proxy.ftp_port", this.ftpProxyPort);
-          }
-        }
 
         if (this.httpProxy) {
           Preferences.set("network.proxy.http", this.httpProxy);
@@ -400,7 +391,9 @@ class Proxy {
 
       case "manual":
         if (typeof json.ftpProxy != "undefined") {
-          [p.ftpProxy, p.ftpProxyPort] = fromHost("ftp", json.ftpProxy);
+          throw new error.InvalidArgumentError(
+            "Since Firefox 90 'ftpProxy' is no longer supported"
+          );
         }
         if (typeof json.httpProxy != "undefined") {
           [p.httpProxy, p.httpProxyPort] = fromHost("http", json.httpProxy);
@@ -470,7 +463,6 @@ class Proxy {
 
     return marshal({
       proxyType: this.proxyType,
-      ftpProxy: toHost(this.ftpProxy, this.ftpProxyPort),
       httpProxy: toHost(this.httpProxy, this.httpProxyPort),
       noProxy: excludes,
       sslProxy: toHost(this.sslProxy, this.sslProxyPort),
@@ -573,7 +565,14 @@ class Capabilities extends Map {
    */
   toJSON() {
     let marshalled = marshal(this);
+
+    // Always return the proxy capability even if it's empty
+    if (!("proxy" in marshalled)) {
+      marshalled.proxy = {};
+    }
+
     marshalled.timeouts = super.get("timeouts");
+
     return marshalled;
   }
 
@@ -650,6 +649,11 @@ class Capabilities extends Map {
             );
           }
           break;
+
+        case "webSocketUrl":
+          throw new error.InvalidArgumentError(
+            "webSocketURL is not supported yet"
+          );
 
         case "moz:accessibilityChecks":
           assert.boolean(v, pprint`Expected ${k} to be boolean, got ${v}`);

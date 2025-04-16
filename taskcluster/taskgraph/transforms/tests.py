@@ -84,14 +84,29 @@ WINDOWS_WORKER_TYPES = {
         "virtual-with-gpu": "t-win7-32-gpu",
         "hardware": "t-win10-64-1803-hw",
     },
-    "windows7-32-mingwclang": {
-        "virtual": "t-win7-32",
-        "virtual-with-gpu": "t-win7-32-gpu",
+    "windows10-32-mingwclang": {
+        "virtual": "t-win10-64",
+        "virtual-with-gpu": "t-win10-64-gpu-s",
         "hardware": "t-win10-64-1803-hw",
     },
     "windows7-32-qr": {
         "virtual": "t-win7-32",
         "virtual-with-gpu": "t-win7-32-gpu",
+        "hardware": "t-win10-64-1803-hw",
+    },
+    "windows10-32": {
+        "virtual": "t-win10-64",
+        "virtual-with-gpu": "t-win10-64-gpu-s",
+        "hardware": "t-win10-64-1803-hw",
+    },
+    "windows10-32-shippable": {
+        "virtual": "t-win10-64",
+        "virtual-with-gpu": "t-win10-64-gpu-s",
+        "hardware": "t-win10-64-1803-hw",
+    },
+    "windows10-32-qr": {
+        "virtual": "t-win10-64",
+        "virtual-with-gpu": "t-win10-64-gpu-s",
         "hardware": "t-win10-64-1803-hw",
     },
     "windows10-64": {
@@ -156,6 +171,7 @@ MACOSX_WORKER_TYPES = {
     "macosx1014-64": "t-osx-1014",
     "macosx1014-64-power": "t-osx-1014-power",
     "macosx1015-64": "t-osx-1015-r8",
+    "macosx1100-64": "t-osx-1100-m1",
 }
 
 
@@ -164,7 +180,7 @@ def gv_e10s_filter(task):
 
 
 def fission_filter(task):
-    return task.get("e10s") in (True, "both") and get_mobile_project(task) != "fennec"
+    return task.get("e10s") in (True, "both")
 
 
 TEST_VARIANTS = {
@@ -809,7 +825,7 @@ def setup_browsertime_flag(config, tasks):
             continue
 
         if task["treeherder-symbol"].startswith("Rap"):
-            # The Rap group is subdivided as Rap{-fenix,-refbrow,-fennec}(...),
+            # The Rap group is subdivided as Rap{-fenix,-refbrow(...),
             # so `taskgraph.util.treeherder.replace_group` isn't appropriate.
             task["treeherder-symbol"] = task["treeherder-symbol"].replace(
                 "Rap", "Btime", 1
@@ -874,6 +890,8 @@ def set_treeherder_machine_platform(config, tasks):
         "macosx1014-64/debug": "osx-10-14/debug",
         "macosx1014-64/opt": "osx-10-14/opt",
         "macosx1014-64-shippable/opt": "osx-10-14-shippable/opt",
+        "macosx1100-64/opt": "osx-1100/opt",
+        "macosx1100-64-shippable/opt": "osx-1100-shippable/opt",
         "win64-asan/opt": "windows10-64/asan",
         "win64-aarch64/opt": "windows10-aarch64/opt",
     }
@@ -1028,39 +1046,39 @@ def setup_browsertime(config, tasks):
         cd_fetches = {
             "android.*": [
                 "linux64-chromedriver-87",
-                "linux64-chromedriver-88",
                 "linux64-chromedriver-89",
                 "linux64-chromedriver-90",
+                "linux64-chromedriver-91",
             ],
             "linux.*": [
                 "linux64-chromedriver-87",
-                "linux64-chromedriver-88",
                 "linux64-chromedriver-89",
                 "linux64-chromedriver-90",
+                "linux64-chromedriver-91",
             ],
             "macosx.*": [
                 "mac64-chromedriver-87",
-                "mac64-chromedriver-88",
                 "mac64-chromedriver-89",
                 "mac64-chromedriver-90",
+                "mac64-chromedriver-91",
             ],
             "windows.*aarch64.*": [
                 "win32-chromedriver-87",
-                "win32-chromedriver-88",
                 "win32-chromedriver-89",
                 "win32-chromedriver-90",
+                "win32-chromedriver-91",
             ],
             "windows.*-32.*": [
                 "win32-chromedriver-87",
-                "win32-chromedriver-88",
                 "win32-chromedriver-89",
                 "win32-chromedriver-90",
+                "win32-chromedriver-91",
             ],
             "windows.*-64.*": [
                 "win32-chromedriver-87",
-                "win32-chromedriver-88",
                 "win32-chromedriver-89",
                 "win32-chromedriver-90",
+                "win32-chromedriver-91",
             ],
         }
 
@@ -1156,7 +1174,7 @@ def get_mobile_project(task):
     if not task["build-platform"].startswith("android"):
         return
 
-    mobile_projects = ("fenix", "fennec", "geckoview", "refbrow", "chrome-m")
+    mobile_projects = ("fenix", "geckoview", "refbrow", "chrome-m")
 
     for name in mobile_projects:
         if name in task["test-name"]:
@@ -1171,7 +1189,7 @@ def get_mobile_project(task):
             if name in target:
                 return name
 
-    return "fennec"
+    return None
 
 
 @transforms.add
@@ -1181,9 +1199,6 @@ def adjust_mobile_e10s(config, tasks):
         if project == "geckoview":
             # Geckoview is always-e10s
             task["e10s"] = True
-        elif project == "fennec":
-            # Fennec is non-e10s
-            task["e10s"] = False
         yield task
 
 
@@ -1378,6 +1393,9 @@ def handle_tier(config, tasks):
                 "windows7-32/opt",
                 "windows7-32-devedition/opt",
                 "windows7-32-shippable/opt",
+                "windows10-32/debug",
+                "windows10-32/opt",
+                "windows10-32-shippable/opt",
                 "windows10-aarch64/opt",
                 "windows10-64/debug",
                 "windows10-64/opt",
@@ -1405,6 +1423,7 @@ def handle_tier(config, tasks):
                 "macosx1015-64-qr/debug",
                 "android-em-7.0-x86_64-shippable/opt",
                 "android-em-7.0-x86_64/debug",
+                "android-em-7.0-x86_64/debug-isolated-process",
                 "android-em-7.0-x86_64/opt",
                 "android-em-7.0-x86-shippable/opt",
                 "android-em-7.0-x86_64-shippable-qr/opt",
@@ -1438,7 +1457,10 @@ def apply_raptor_tier_optimization(config, tasks):
 @transforms.add
 def disable_try_only_platforms(config, tasks):
     """Turns off platforms that should only run on try."""
-    try_only_platforms = ("windows7-32-qr/.*",)
+    try_only_platforms = (
+        "windows7-32-qr/.*",
+        "windows10-32-qr/.*",
+    )
     for task in tasks:
         if any(re.match(k + "$", task["test-platform"]) for k in try_only_platforms):
             task["run-on-projects"] = []
@@ -1741,11 +1763,34 @@ def set_retry_exit_status(config, tasks):
 @transforms.add
 def set_profile(config, tasks):
     """Set profiling mode for tests."""
-    profile = config.params["try_task_config"].get("gecko-profile", False)
+    ttconfig = config.params["try_task_config"]
+    profile = ttconfig.get("gecko-profile", False)
+    settings = (
+        "gecko-profile-interval",
+        "gecko-profile-entries",
+        "gecko-profile-threads",
+        "gecko-profile-features",
+    )
 
     for task in tasks:
         if profile and task["suite"] in ["talos", "raptor"]:
-            task["mozharness"]["extra-options"].append("--gecko-profile")
+            extras = task["mozharness"]["extra-options"]
+            extras.append("--gecko-profile")
+            for setting in settings:
+                value = ttconfig.get(setting)
+                if value is not None:
+                    # These values can contain spaces (eg the "DOM Worker"
+                    # thread) and the command is constructed in different,
+                    # incompatible ways on different platforms.
+
+                    if task["test-platform"].startswith("win"):
+                        # Double quotes for Windows (single won't work).
+                        extras.append("--" + setting + '="' + str(value) + '"')
+                    else:
+                        # Other platforms keep things as separate values,
+                        # rather than joining with spaces.
+                        extras.append("--" + setting + "=" + str(value))
+
         yield task
 
 
@@ -1788,6 +1833,8 @@ def set_worker_type(config, tasks):
                 task["worker-type"] = MACOSX_WORKER_TYPES["macosx1014-64-power"]
             else:
                 task["worker-type"] = MACOSX_WORKER_TYPES["macosx1015-64"]
+        elif test_platform.startswith("macosx1100-64"):
+            task["worker-type"] = MACOSX_WORKER_TYPES["macosx1100-64"]
         elif test_platform.startswith("win"):
             # figure out what platform the job needs to run on
             if task["virtualization"] == "hardware":

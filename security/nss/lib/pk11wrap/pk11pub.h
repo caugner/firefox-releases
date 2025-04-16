@@ -627,10 +627,20 @@ SECKEYPrivateKeyInfo *PK11_ExportPrivateKeyInfo(
     CERTCertificate *cert, void *wincx);
 SECKEYEncryptedPrivateKeyInfo *PK11_ExportEncryptedPrivKeyInfo(
     PK11SlotInfo *slot, SECOidTag algTag, SECItem *pwitem,
-    SECKEYPrivateKey *pk, int iteration, void *wincx);
+    SECKEYPrivateKey *pk, int iteration, void *pwArg);
 SECKEYEncryptedPrivateKeyInfo *PK11_ExportEncryptedPrivateKeyInfo(
     PK11SlotInfo *slot, SECOidTag algTag, SECItem *pwitem,
-    CERTCertificate *cert, int iteration, void *wincx);
+    CERTCertificate *cert, int iteration, void *pwArg);
+/* V2 refers to PKCS #5 V2 here. If a PKCS #5 v1 or PKCS #12 pbe is passed
+ * for pbeTag, then encTag and hashTag are ignored. If pbe is an encryption
+ * algorithm, then PKCS #5 V2 is used with prfTag for the prf. If prfTag isn't
+ * supplied prf will be SEC_OID_HMAC_SHA1 */
+SECKEYEncryptedPrivateKeyInfo *PK11_ExportEncryptedPrivKeyInfoV2(
+    PK11SlotInfo *slot, SECOidTag pbeTag, SECOidTag encTag, SECOidTag prfTag,
+    SECItem *pwitem, SECKEYPrivateKey *pk, int iteration, void *pwArg);
+SECKEYEncryptedPrivateKeyInfo *PK11_ExportEncryptedPrivateKeyInfoV2(
+    PK11SlotInfo *slot, SECOidTag pbeTag, SECOidTag encTag, SECOidTag prfTag,
+    SECItem *pwitem, CERTCertificate *cert, int iteration, void *pwArg);
 SECKEYPrivateKey *PK11_FindKeyByDERCert(PK11SlotInfo *slot,
                                         CERTCertificate *cert, void *wincx);
 SECKEYPublicKey *PK11_MakeKEAPubKey(unsigned char *data, int length);
@@ -728,14 +738,8 @@ CK_BBOOL PK11_HasAttributeSet(PK11SlotInfo *slot,
                               PRBool haslock /* must be set to PR_FALSE */);
 
 /**********************************************************************
- *                   Hybrid Public Key Encryption  (draft-07)
+ *                   Hybrid Public Key Encryption
  **********************************************************************/
-/*
- * NOTE: All HPKE functions will fail with SEC_ERROR_INVALID_ALGORITHM
- * unless NSS is compiled with NSS_ENABLE_DRAFT_HPKE while spec (and
- * implementation) is in draft. The eventual RFC number is an input to
- * the key schedule, so applications opting into this MUST be prepared for
- * outputs to change when the implementation is updated or finalized. */
 
 /* Some of the various HPKE arguments would ideally be const, but the
  * underlying PK11 functions take them as non-const. To avoid lying to
@@ -811,7 +815,17 @@ SECStatus PK11_VerifyWithMechanism(SECKEYPublicKey *key,
  **********************************************************************/
 void PK11_DestroyContext(PK11Context *context, PRBool freeit);
 PK11Context *PK11_CreateContextBySymKey(CK_MECHANISM_TYPE type,
-                                        CK_ATTRIBUTE_TYPE operation, PK11SymKey *symKey, SECItem *param);
+                                        CK_ATTRIBUTE_TYPE operation,
+                                        PK11SymKey *symKey,
+                                        const SECItem *param);
+PK11Context *PK11_CreateContextByPubKey(CK_MECHANISM_TYPE type,
+                                        CK_ATTRIBUTE_TYPE operation,
+                                        SECKEYPublicKey *pubKey,
+                                        const SECItem *param, void *pwArg);
+PK11Context *PK11_CreateContextByPrivKey(CK_MECHANISM_TYPE type,
+                                         CK_ATTRIBUTE_TYPE operation,
+                                         SECKEYPrivateKey *privKey,
+                                         const SECItem *param);
 PK11Context *PK11_CreateDigestContext(SECOidTag hashAlg);
 PK11Context *PK11_CloneContext(PK11Context *old);
 SECStatus PK11_DigestBegin(PK11Context *cx);
@@ -1007,13 +1021,31 @@ PRBool SECMOD_HasRootCerts(void);
 /**********************************************************************
  * Other Utilities
  **********************************************************************/
-/* 
+/*
  * Get the state of the system FIPS mode -
  *  NSS uses this to force FIPS mode if the system bit is on. This returns
  *  the system state independent of the database state and can be called
  *  before NSS initializes.
  */
 int SECMOD_GetSystemFIPSEnabled(void);
+
+/* FIPS indicator functions. Some operations are physically allowed, but
+ * are against the NSS FIPS security policy. This is because sometimes NSS
+ * functions are used in non-security contexts. You can call these functions
+ * to determine if you are operating inside or outside the the current vendor's
+ * FIPS Security Policy for NSS. NOTE: if the current version of NSS is not
+ * actually FIPS certified, then these functions will always return PR_FALSE */
+
+/* This function tells if if the last single shot operation on the slot
+ * was inside or outside the FIPS security policy */
+PRBool PK11_SlotGetLastFIPSStatus(PK11SlotInfo *slot);
+/* This tells you if the current operation is within the FIPS security policy. If
+ * you have called finalize on the context, it tells you if the last operation
+ * was within the FIPS security policy */
+PRBool PK11_ContextGetFIPSStatus(PK11Context *context);
+/* This tells you if the requested object was created in accordance to the
+ * NSS FIPS security policy. */
+PRBool PK11_ObjectGetFIPSStatus(PK11ObjectType objType, void *objSpec);
 
 SEC_END_PROTOS
 

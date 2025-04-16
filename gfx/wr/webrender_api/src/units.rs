@@ -32,6 +32,7 @@ pub type DeviceIntLength = Length<i32, DevicePixel>;
 pub type DeviceIntSideOffsets = SideOffsets2D<i32, DevicePixel>;
 
 pub type DeviceRect = Rect<f32, DevicePixel>;
+pub type DeviceBox2D = Box2D<f32, DevicePixel>;
 pub type DevicePoint = Point2D<f32, DevicePixel>;
 pub type DeviceVector2D = Vector2D<f32, DevicePixel>;
 pub type DeviceSize = Size2D<f32, DevicePixel>;
@@ -99,6 +100,7 @@ pub type LayoutIntSize = Size2D<i32, LayoutPixel>;
 pub struct WorldPixel;
 
 pub type WorldRect = Rect<f32, WorldPixel>;
+pub type WorldIntRect = Rect<i32, WorldPixel>;
 pub type WorldPoint = Point2D<f32, WorldPixel>;
 pub type WorldSize = Size2D<f32, WorldPixel>;
 pub type WorldPoint3D = Point3D<f32, WorldPixel>;
@@ -131,6 +133,9 @@ pub type RasterToLayoutTransform = Transform3D<f32, RasterPixel, LayoutPixel>;
 
 pub type PictureToRasterTransform = Transform3D<f32, PicturePixel, RasterPixel>;
 pub type RasterToPictureTransform = Transform3D<f32, RasterPixel, PicturePixel>;
+
+/// Scaling ratio from picture pixels to raster pixels (e.g. if scaling a picture surface up/down).
+pub type RasterPixelScale = Scale<f32, PicturePixel, RasterPixel>;
 
 // Fixed position coordinates, to avoid float precision errors.
 pub type LayoutPointAu = Point2D<Au, LayoutPixel>;

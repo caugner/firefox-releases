@@ -22,7 +22,6 @@ class CentOSFedoraBootstrapper(LinuxBootstrapper, BaseBootstrapper):
         # and include the npm package.
         self.packages = [
             "nodejs",
-            "python-devel",
             "which",
         ]
 
@@ -34,7 +33,6 @@ class CentOSFedoraBootstrapper(LinuxBootstrapper, BaseBootstrapper):
             "alsa-lib-devel",
             "dbus-glib-devel",
             "glibc-static",
-            "gtk2-devel",  # It is optional in Fedora 20's GNOME Software
             # Development group.
             "libstdc++-static",
             "libXt-devel",
@@ -94,6 +92,15 @@ class CentOSFedoraBootstrapper(LinuxBootstrapper, BaseBootstrapper):
 
             self.mobile_android_packages += [
                 "ncurses-compat-libs",
+            ]
+
+        if self.distro in ("centos") and self.version == 8:
+            self.packages += [
+                "python3-devel",
+            ]
+        else:
+            self.packages += [
+                "python-devel",
             ]
 
     def install_system_packages(self):

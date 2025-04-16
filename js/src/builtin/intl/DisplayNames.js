@@ -5,25 +5,25 @@
 /**
  * Intl.DisplayNames internal properties.
  */
+function displayNamesLocaleData() {
+    // Intl.DisplayNames doesn't support any extension keys.
+    return {};
+}
 var displayNamesInternalProperties = {
-    localeData: function() // eslint-disable-line object-shorthand
-    {
-        // Intl.DisplayNames doesn't support any extension keys.
-        return {};
-    },
+    localeData: displayNamesLocaleData,
     relevantExtensionKeys: []
 };
 
+function mozDisplayNamesLocaleData() {
+    return {
+        ca: intl_availableCalendars,
+        default: {
+            ca: intl_defaultCalendar,
+        },
+    };
+}
 var mozDisplayNamesInternalProperties = {
-    localeData: function() // eslint-disable-line object-shorthand
-    {
-        return {
-            ca: intl_availableCalendars,
-            default: {
-                ca: intl_defaultCalendar,
-            },
-        };
-    },
+    localeData: mozDisplayNamesLocaleData,
     relevantExtensionKeys: ["ca"]
 };
 
@@ -149,7 +149,7 @@ function InitializeDisplayNames(displayNames, locales, options, mozExtensions) {
         ThrowTypeError(JSMSG_OBJECT_REQUIRED, options === null ? "null" : typeof options);
 
     // Step 5.
-    var opt = new Record();
+    var opt = new_Record();
     lazyDisplayNamesData.opt = opt;
     lazyDisplayNamesData.mozExtensions = mozExtensions;
 

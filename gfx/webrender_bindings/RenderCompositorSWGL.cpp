@@ -16,18 +16,18 @@ namespace wr {
 
 /* static */
 UniquePtr<RenderCompositor> RenderCompositorSWGL::Create(
-    RefPtr<widget::CompositorWidget>&& aWidget, nsACString& aError) {
+    const RefPtr<widget::CompositorWidget>& aWidget, nsACString& aError) {
   void* ctx = wr_swgl_create_context();
   if (!ctx) {
     gfxCriticalNote << "Failed SWGL context creation for WebRender";
     return nullptr;
   }
-  return MakeUnique<RenderCompositorSWGL>(std::move(aWidget), ctx);
+  return MakeUnique<RenderCompositorSWGL>(aWidget, ctx);
 }
 
 RenderCompositorSWGL::RenderCompositorSWGL(
-    RefPtr<widget::CompositorWidget>&& aWidget, void* aContext)
-    : RenderCompositor(std::move(aWidget)), mContext(aContext) {
+    const RefPtr<widget::CompositorWidget>& aWidget, void* aContext)
+    : RenderCompositor(aWidget), mContext(aContext) {
   MOZ_ASSERT(mContext);
 }
 
@@ -62,7 +62,7 @@ bool RenderCompositorSWGL::AllocateMappedBuffer(
   layers::BufferMode bufferMode = layers::BufferMode::BUFFERED;
   mDT = mWidget->StartRemoteDrawingInRegion(mDirtyRegion, &bufferMode);
   if (!mDT) {
-    gfxCriticalNote
+    gfxCriticalNoteOnce
         << "RenderCompositorSWGL failed mapping default framebuffer, no dt";
     return false;
   }
@@ -117,7 +117,7 @@ bool RenderCompositorSWGL::AllocateMappedBuffer(
       // We failed mapping the data surface, so need to cancel the frame.
       mWidget->EndRemoteDrawingInRegion(mDT, mDirtyRegion);
       ClearMappedBuffer();
-      gfxCriticalNote
+      gfxCriticalNoteOnce
           << "RenderCompositorSWGL failed mapping default framebuffer, no surf";
       return false;
     }
@@ -222,6 +222,8 @@ void RenderCompositorSWGL::CommitMappedBuffer(bool aDirty) {
     // Otherwise, we had locked the DT directly. Just release the data.
     mDT->ReleaseBits(mMappedData);
   }
+  mDT->Flush();
+
   // Done with the DT. Hand it back to the widget and clear out any trace of it.
   mWidget->EndRemoteDrawingInRegion(mDT, mDirtyRegion);
   mDirtyRegion.SetEmpty();
@@ -259,6 +261,9 @@ LayoutDeviceIntSize RenderCompositorSWGL::GetBufferSize() {
 
 void RenderCompositorSWGL::GetCompositorCapabilities(
     CompositorCapabilities* aCaps) {
+  // Always support a single update rect for SwCompositor
+  aCaps->max_update_rects = 1;
+
   // When the window contents may be damaged, we need to force a full redraw.
   aCaps->redraw_on_invalidation = true;
 }

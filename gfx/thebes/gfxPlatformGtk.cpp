@@ -115,12 +115,11 @@ gfxPlatformGtk::gfxPlatformGtk() {
     }
   }
 
-  InitBackendPrefs(GetBackendPrefs());
-
 #ifdef MOZ_WAYLAND
-  mUseWebGLDmabufBackend =
-      gfxVars::UseDMABuf() && GetDMABufDevice()->IsDMABufWebGLEnabled();
+  mUseWebGLDmabufBackend = true;
 #endif
+
+  InitBackendPrefs(GetBackendPrefs());
 
   gPlatformFTLibrary = Factory::NewFTLibrary();
   MOZ_RELEASE_ASSERT(gPlatformFTLibrary);
@@ -221,6 +220,35 @@ void gfxPlatformGtk::InitDmabufConfig() {
 #endif
 }
 
+void gfxPlatformGtk::InitWebRenderConfig() {
+  gfxPlatform::InitWebRenderConfig();
+
+  if (!XRE_IsParentProcess()) {
+    return;
+  }
+
+  FeatureState& feature = gfxConfig::GetFeature(Feature::WEBRENDER_COMPOSITOR);
+  if (feature.IsEnabled()) {
+    if (!(gfxConfig::IsEnabled(Feature::WEBRENDER) ||
+          gfxConfig::IsEnabled(Feature::WEBRENDER_SOFTWARE))) {
+      feature.ForceDisable(FeatureStatus::Unavailable, "WebRender disabled",
+                           "FEATURE_FAILURE_WR_DISABLED"_ns);
+    } else if (!IsWaylandDisplay()) {
+      feature.ForceDisable(FeatureStatus::Unavailable,
+                           "Wayland support missing",
+                           "FEATURE_FAILURE_NO_WAYLAND"_ns);
+    }
+#ifdef MOZ_WAYLAND
+    else if (!widget::WaylandDisplayGet()->GetViewporter()) {
+      feature.ForceDisable(FeatureStatus::Unavailable,
+                           "Requires wp_viewporter protocol support",
+                           "FEATURE_FAILURE_REQUIRES_WPVIEWPORTER"_ns);
+    }
+#endif
+  }
+  gfxVars::SetUseWebRenderCompositor(feature.IsEnabled());
+}
+
 void gfxPlatformGtk::FlushContentDrawing() {
   if (gfxVars::UseXRender()) {
     XFlush(DefaultXDisplay());
@@ -311,6 +339,8 @@ static const char kFontDroidSansFallback[] = "Droid Sans Fallback";
 static const char kFontWenQuanYiMicroHei[] = "WenQuanYi Micro Hei";
 static const char kFontNanumGothic[] = "NanumGothic";
 static const char kFontSymbola[] = "Symbola";
+static const char kFontNotoSansSymbols[] = "Noto Sans Symbols";
+static const char kFontNotoSansSymbols2[] = "Noto Sans Symbols2";
 
 void gfxPlatformGtk::GetCommonFallbackFonts(uint32_t aCh, Script aRunScript,
                                             eFontPresentation aPresentation,
@@ -324,6 +354,8 @@ void gfxPlatformGtk::GetCommonFallbackFonts(uint32_t aCh, Script aRunScript,
   aFontList.AppendElement(kFontDejaVuSans);
   aFontList.AppendElement(kFontFreeSans);
   aFontList.AppendElement(kFontSymbola);
+  aFontList.AppendElement(kFontNotoSansSymbols);
+  aFontList.AppendElement(kFontNotoSansSymbols2);
 
   // add fonts for CJK ranges
   // xxx - this isn't really correct, should use the same CJK font ordering
@@ -342,13 +374,8 @@ void gfxPlatformGtk::ReadSystemFontList(
   gfxFcPlatformFontList::PlatformFontList()->ReadSystemFontList(retValue);
 }
 
-gfxPlatformFontList* gfxPlatformGtk::CreatePlatformFontList() {
-  gfxPlatformFontList* list = new gfxFcPlatformFontList();
-  if (NS_SUCCEEDED(list->InitFontList())) {
-    return list;
-  }
-  gfxPlatformFontList::Shutdown();
-  return nullptr;
+bool gfxPlatformGtk::CreatePlatformFontList() {
+  return gfxPlatformFontList::Initialize(new gfxFcPlatformFontList);
 }
 
 int32_t gfxPlatformGtk::GetFontScaleDPI() {
@@ -412,7 +439,7 @@ gfxImageFormat gfxPlatformGtk::GetOffscreenFormat() {
 
 void gfxPlatformGtk::FontsPrefsChanged(const char* aPref) {
   // only checking for generic substitions, pass other changes up
-  if (strcmp(GFX_PREF_MAX_GENERIC_SUBSTITUTIONS, aPref)) {
+  if (strcmp(GFX_PREF_MAX_GENERIC_SUBSTITUTIONS, aPref) != 0) {
     gfxPlatform::FontsPrefsChanged(aPref);
     return;
   }
@@ -436,6 +463,15 @@ uint32_t gfxPlatformGtk::MaxGenericSubstitions() {
 }
 
 bool gfxPlatformGtk::AccelerateLayersByDefault() { return true; }
+
+#ifdef MOZ_WAYLAND
+bool gfxPlatformGtk::UseDMABufWebGL() {
+  static bool dmabufAvailable = []() {
+    return gfxVars::UseDMABuf() && GetDMABufDevice()->IsDMABufWebGLEnabled();
+  }();
+  return dmabufAvailable && mUseWebGLDmabufBackend;
+}
+#endif
 
 #if defined(MOZ_X11)
 
@@ -518,7 +554,7 @@ nsTArray<uint8_t> gfxPlatformGtk::GetPlatformCMSOutputProfileData() {
   }
 
   // Format documented in "VESA E-EDID Implementation Guide"
-  float gamma = (100 + retProperty[0x17]) / 100.0f;
+  float gamma = (100 + (float)retProperty[0x17]) / 100.0f;
 
   qcms_CIE_xyY whitePoint;
   whitePoint.x =
@@ -738,7 +774,7 @@ class GtkVsyncSource final : public VsyncSource {
         // until the parity of the counter value changes.
         unsigned int nextSync = syncCounter + 1;
         int status;
-        if ((status = gl::sGLXLibrary.fWaitVideoSync(2, nextSync % 2,
+        if ((status = gl::sGLXLibrary.fWaitVideoSync(2, (int)nextSync % 2,
                                                      &syncCounter)) != 0) {
           gfxWarningOnce() << "glXWaitVideoSync returned " << status;
           useSoftware = true;
@@ -754,7 +790,7 @@ class GtkVsyncSource final : public VsyncSource {
           double remaining =
               (1000.f / 60.f) - (TimeStamp::Now() - lastVsync).ToMilliseconds();
           if (remaining > 0) {
-            PlatformThread::Sleep(remaining);
+            PlatformThread::Sleep((int)remaining);
           }
         }
 

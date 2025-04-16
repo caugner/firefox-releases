@@ -3,7 +3,6 @@
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 const {
-  gBrowser,
   PrintUtils,
   Services,
   AppConstants,
@@ -67,7 +66,7 @@ function serializeSettings(settings, logPrefix) {
       logger.warn("Exception accessing setting: ", key, e);
     }
   }
-  return nameValues;
+  return JSON.stringify(nameValues, null, 2);
 }
 
 let printPending = false;
@@ -281,9 +280,9 @@ var PrintEventHandler = {
       // We cannot close the window yet because the browsing context for the
       // print preview browser is needed to print the page.
       let sourceBrowser = this.getSourceBrowsingContext().top.embedderElement;
-      let dialogBoxManager = gBrowser
-        .getTabDialogBox(sourceBrowser)
-        .getTabDialogManager();
+      let dialogBoxManager = PrintUtils.getTabDialogBox(
+        sourceBrowser
+      ).getTabDialogManager();
       dialogBoxManager.hideDialog(sourceBrowser);
 
       // Use our settings to prepopulate the system dialog.
@@ -1032,6 +1031,7 @@ var PrintEventHandler = {
   },
 
   reportPrintingError(aMessage) {
+    logger.debug("reportPrintingError:", aMessage);
     Services.telemetry.keyedScalarAdd("printing.error", aMessage, 1);
   },
 
@@ -1208,11 +1208,13 @@ var PrintSettingsViewProxy = {
     }
     printerInfo.settings = printerInfo.defaultSettings.clone();
     // Apply any previously persisted user values
-    let flags = printerInfo.settings.kInitSaveAll;
-    if (printerName == PrintUtils.SAVE_TO_PDF_PRINTER) {
-      // Don't apply potentially-bad printToFile setting that may be in some user's prefs.
-      flags ^= printerInfo.settings.kInitSavePrintToFile;
-    }
+    // Don't apply kInitSavePrintToFile though, that should only be true for
+    // the PDF printer.
+    printerInfo.settings.printToFile =
+      printerName == PrintUtils.SAVE_TO_PDF_PRINTER;
+    let flags =
+      printerInfo.settings.kInitSaveAll ^
+      printerInfo.settings.kInitSavePrintToFile;
     PSSVC.initPrintSettingsFromPrefs(printerInfo.settings, true, flags);
     // We set `isInitializedFromPrinter` to make sure that that's set on the
     // SAVE_TO_PDF_PRINTER settings.  The naming is poor, but that tells the
@@ -1259,6 +1261,7 @@ var PrintSettingsViewProxy = {
 
     // The printer properties don't change, mark this as resolved for next time
     printerInfo._resolved = true;
+    logger.debug("Resolved printerInfo:", printerInfo);
     return printerInfo;
   },
 

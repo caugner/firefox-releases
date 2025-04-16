@@ -425,12 +425,17 @@ BookmarksEngine.prototype = {
       if (
         Async.isShutdownException(ex) ||
         ex.status > 0 ||
-        ex.name == "MergeConflictError" ||
         ex.name == "InterruptedError"
       ) {
         // Don't run maintenance on shutdown or HTTP errors, or if we aborted
         // the sync because the user changed their bookmarks during merging.
         throw ex;
+      }
+      if (ex.name == "MergeConflictError") {
+        this._log.warn(
+          "Bookmark syncing ran into a merge conflict error...will retry later"
+        );
+        return;
       }
       // Run Places maintenance periodically to try to recover from corruption
       // that might have caused the sync to fail. We cap the interval because
@@ -505,7 +510,6 @@ BookmarksEngine.prototype = {
     try {
       let recordsToUpload = await buf.apply({
         remoteTimeSeconds: Resource.serverTime,
-        weakUpload: [...this._needWeakUpload.keys()],
         signal: watchdog.signal,
       });
       this._modified.replace(recordsToUpload);
@@ -514,7 +518,6 @@ BookmarksEngine.prototype = {
       if (watchdog.abortReason) {
         this._log.warn(`Aborting bookmark merge: ${watchdog.abortReason}`);
       }
-      this._needWeakUpload.clear();
     }
   },
 
@@ -541,9 +544,6 @@ BookmarksEngine.prototype = {
   },
 
   async _doCreateRecord(id) {
-    if (this._needWeakUpload.has(id)) {
-      return this._store.createRecord(id, this.name);
-    }
     let change = this._modified.changes[id];
     if (!change) {
       this._log.error(
@@ -805,7 +805,7 @@ BookmarksTracker.prototype = {
       this.handlePlacesEvents.bind(this)
     );
     PlacesUtils.observers.addListener(
-      ["bookmark-added", "bookmark-removed"],
+      ["bookmark-added", "bookmark-removed", "bookmark-moved"],
       this._placesListener
     );
     Svc.Obs.add("bookmarks-restore-begin", this);
@@ -816,7 +816,7 @@ BookmarksTracker.prototype = {
   onStop() {
     PlacesUtils.bookmarks.removeObserver(this);
     PlacesUtils.observers.removeListener(
-      ["bookmark-added", "bookmark-removed"],
+      ["bookmark-added", "bookmark-removed", "bookmark-moved"],
       this._placesListener
     );
     Svc.Obs.remove("bookmarks-restore-begin", this);
@@ -884,6 +884,14 @@ BookmarksTracker.prototype = {
           this._log.trace("'bookmark-removed': " + event.id);
           this._upScore();
           break;
+        case "bookmark-moved":
+          if (IGNORED_SOURCES.includes(event.source)) {
+            return;
+          }
+
+          this._log.trace("'bookmark-moved': " + event.id);
+          this._upScore();
+          break;
         case "purge-caches":
           this._log.trace("purge-caches");
           this._upScore();
@@ -923,26 +931,6 @@ BookmarksTracker.prototype = {
         (", " + property + (isAnno ? " (anno)" : "")) +
         (value ? ' = "' + value + '"' : "")
     );
-    this._upScore();
-  },
-
-  onItemMoved: function BMT_onItemMoved(
-    itemId,
-    oldParent,
-    oldIndex,
-    newParent,
-    newIndex,
-    itemType,
-    guid,
-    oldParentGuid,
-    newParentGuid,
-    source
-  ) {
-    if (IGNORED_SOURCES.includes(source)) {
-      return;
-    }
-
-    this._log.trace("onItemMoved: " + itemId);
     this._upScore();
   },
 };

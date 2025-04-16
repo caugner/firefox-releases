@@ -15,11 +15,6 @@ job-defaults:
             linux1804-64.*:
                 docker-image: {in-tree: "lint"}
                 max-run-time: 3600
-                env:
-                    RUSTFMT: /build/rust/bin/rustfmt
-                    RUSTUP_HOME: /build/rust
-                    CARGO_HOME: /build/rust
-                    CLANG_FORMAT: /builds/worker/fetches/clang-tidy/bin/clang-format
             macosx.*:
                 max-run-time: 3600
                 env:
@@ -28,7 +23,7 @@ job-defaults:
                 max-run-time: 3600
     treeherder:
         kind: test
-        tier: 2
+        tier: 1
     run:
         using: mach
     when:
@@ -172,20 +167,6 @@ mozbase:
 mozharness:
     description: mozharness integration tests
     treeherder:
-        symbol: py2(mh)
-    run:
-        using: run-task
-        cache-dotcache: true
-        cwd: '{checkout}/testing/mozharness'
-        command: >
-            /usr/local/bin/tox -e py27-hg5.2
-    when:
-        files-changed:
-            - 'testing/mozharness/**'
-
-mozharness-py3:
-    description: mozharness integration tests
-    treeherder:
         symbol: py3(mh)
     run:
         using: run-task
@@ -206,21 +187,31 @@ mozlint:
     python-version: [3]
     treeherder:
         symbol: mozlint
+        tier: 2
     run:
         using: python-test
         subsuite: mozlint
+    dependencies:
+        clang-tidy:
+            by-platform:
+                linux1804-64/opt: toolchain-linux64-clang-tidy
+                macosx1014-64/opt: toolchain-macosx64-clang-tidy
+                windows10-64/opt: toolchain-win64-clang-tidy
     fetches:
         toolchain:
             by-platform:
                 linux1804-64/opt:
-                    - linux64-clang-tidy
                     - linux64-node
+                    - linux64-rust
                 macosx1014-64/opt:
-                    - macosx64-clang-tidy
                     - macosx64-node
+                    - macosx64-rust
                 windows10-64/opt:
-                    - win64-clang-tidy
                     - win64-node
+                    - win64-rust
+        clang-tidy:
+            - artifact: clang-tidy.tar.zst
+              dest: clang-tools
     when:
         files-changed:
             - 'python/mozlint/**'
@@ -429,7 +420,7 @@ condprof:
         - linux1804-64/opt
         - macosx1014-64/opt
         - windows10-64/opt
-    python-version: [2]
+    python-version: [3]
     treeherder:
         symbol: condprof
     run:
@@ -465,7 +456,7 @@ featuregates:
 talos:
     description: testing/talos unit tests
     platform: windows10-64/opt
-    python-version: [2]
+    python-version: [3]
     treeherder:
         symbol: tal
     run:
@@ -502,7 +493,7 @@ telemetry-integration-tests:
             source /builds/worker/scripts/xvfb.sh &&
             start_xvfb '1600x1200x24' 0 &&
             export GECKO_BINARY_PATH=$MOZ_FETCHES_DIR/firefox/firefox &&
-            python2 ./mach python-test --subsuite telemetry-integration-tests
+            ./mach python-test --subsuite telemetry-integration-tests
     fetches:
         build:
             - target.tar.bz2
@@ -520,7 +511,7 @@ telemetry-python:
         - linux1804-64/opt
         - macosx1014-64/opt
         - windows10-64/opt
-    python-version: [2]
+    python-version: [3]
     treeherder:
         symbol: tp
     run:

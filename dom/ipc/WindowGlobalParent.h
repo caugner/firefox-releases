@@ -46,6 +46,7 @@ class JSActorMessageMeta;
 struct PageUseCounters;
 class WindowSessionStoreState;
 struct WindowSessionStoreUpdate;
+class SSCacheQueryResult;
 
 /**
  * A handle in the parent process to a specific nsGlobalWindowInner object.
@@ -96,6 +97,8 @@ class WindowGlobalParent final : public WindowContext,
   already_AddRefed<JSWindowActorParent> GetActor(JSContext* aCx,
                                                  const nsACString& aName,
                                                  ErrorResult& aRv);
+  already_AddRefed<JSWindowActorParent> GetExistingActor(
+      const nsACString& aName);
 
   // Get this actor's manager if it is not an in-process actor. Returns
   // |nullptr| if the actor has been torn down, or is in-process.
@@ -107,6 +110,8 @@ class WindowGlobalParent final : public WindowContext,
   // lifetime of the WindowGlobal object, even to reflect changes in
   // |document.domain|.
   nsIPrincipal* DocumentPrincipal() { return mDocumentPrincipal; }
+
+  nsIPrincipal* DocumentStoragePrincipal() { return mDocumentStoragePrincipal; }
 
   // The BrowsingContext which this WindowGlobal has been loaded into.
   // FIXME: It's quite awkward that this method has a slightly different name
@@ -209,9 +214,13 @@ class WindowGlobalParent final : public WindowContext,
 
   const nsACString& GetRemoteType() override;
 
-  nsresult UpdateSessionStore(const Maybe<FormData>& aFormData,
-                              const Maybe<nsPoint>& aScrollPosition,
-                              uint32_t aEpoch);
+  nsresult WriteFormDataAndScrollToSessionStore(
+      const Maybe<FormData>& aFormData, const Maybe<nsPoint>& aScrollPosition,
+      uint32_t aEpoch);
+
+  Maybe<uint64_t> GetSingleChannelId() { return mSingleChannelId; }
+
+  uint16_t GetBFCacheStatus() { return mBFCacheStatus; }
 
  protected:
   already_AddRefed<JSActor> InitJSActor(JS::HandleObject aMaybeActor,
@@ -226,7 +235,8 @@ class WindowGlobalParent final : public WindowContext,
   mozilla::ipc::IPCResult RecvInternalLoad(nsDocShellLoadState* aLoadState);
   mozilla::ipc::IPCResult RecvUpdateDocumentURI(nsIURI* aURI);
   mozilla::ipc::IPCResult RecvUpdateDocumentPrincipal(
-      nsIPrincipal* aNewDocumentPrincipal);
+      nsIPrincipal* aNewDocumentPrincipal,
+      nsIPrincipal* aNewDocumentStoragePrincipal);
   mozilla::ipc::IPCResult RecvUpdateDocumentHasLoaded(bool aDocumentHasLoaded);
   mozilla::ipc::IPCResult RecvUpdateDocumentHasUserInteracted(
       bool aDocumentHasUserInteracted);
@@ -280,6 +290,13 @@ class WindowGlobalParent final : public WindowContext,
 
   mozilla::ipc::IPCResult RecvResetSessionStore(uint32_t aEpoch);
 
+  mozilla::ipc::IPCResult RecvUpdateBFCacheStatus(const uint16_t& aOnFlags,
+                                                  const uint16_t& aOffFlags);
+
+ public:
+  mozilla::ipc::IPCResult RecvSetSingleChannelId(
+      const Maybe<uint64_t>& aSingleChannelId);
+
  private:
   WindowGlobalParent(CanonicalBrowsingContext* aBrowsingContext,
                      uint64_t aInnerWindowId, uint64_t aOuterWindowId,
@@ -292,11 +309,20 @@ class WindowGlobalParent final : public WindowContext,
 
   nsresult ResetSessionStore(uint32_t aEpoch);
 
-  // NOTE: This document principal doesn't reflect possible |document.domain|
-  // mutations which may have been made in the actual document.
+  // Returns failure if the new storage principal cannot be validated
+  // against the current document principle.
+  nsresult SetDocumentStoragePrincipal(
+      nsIPrincipal* aNewDocumentStoragePrincipal);
+
+  // NOTE: Neither this document principal nor the document storage
+  // principal doesn't reflect possible |document.domain| mutations
+  // which may have been made in the actual document.
   nsCOMPtr<nsIPrincipal> mDocumentPrincipal;
+  nsCOMPtr<nsIPrincipal> mDocumentStoragePrincipal;
+
   // The principal to use for the content blocking allow list.
   nsCOMPtr<nsIPrincipal> mDocContentBlockingAllowListPrincipal;
+
   nsCOMPtr<nsIURI> mDocumentURI;
   Maybe<nsString> mDocumentTitle;
 
@@ -352,6 +378,19 @@ class WindowGlobalParent final : public WindowContext,
   // Whether we have sent our page use counters, and so should ignore any
   // subsequent ExpectPageUseCounters calls.
   bool mSentPageUseCounters = false;
+
+  uint16_t mBFCacheStatus = 0;
+
+  // mSingleChannelId records whether the loadgroup contains a single request
+  // with an id. If there is one channel in the loadgroup and it has an id then
+  // mSingleChannelId is set to Some(id) (ids are non-zero). If there is one
+  // request in the loadgroup and it's not a channel or it doesn't have an id,
+  // or there are multiple requests in the loadgroup, then mSingleChannelId is
+  // set to Some(0). If there are no requests in the loadgroup then
+  // mSingleChannelId is set to Nothing().
+  // Note: We ignore favicon loads when considering the requests in the
+  // loadgroup.
+  Maybe<uint64_t> mSingleChannelId;
 };
 
 }  // namespace dom

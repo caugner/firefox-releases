@@ -38,6 +38,7 @@ using namespace dom;
 
 using LeafNodeType = HTMLEditUtils::LeafNodeType;
 using LeafNodeTypes = HTMLEditUtils::LeafNodeTypes;
+using WalkTreeOption = HTMLEditUtils::WalkTreeOption;
 
 const char16_t kNBSP = 160;
 
@@ -162,7 +163,8 @@ EditActionResult WhiteSpaceVisibilityKeeper::
   // Do br adjustment.
   RefPtr<HTMLBRElement> invisibleBRElementAtEndOfLeftBlockElement =
       WSRunScanner::GetPrecedingBRElementUnlessVisibleContentFound(
-          aHTMLEditor, EditorDOMPoint::AtEndOf(aLeftBlockElement));
+          aHTMLEditor.GetActiveEditingHost(),
+          EditorDOMPoint::AtEndOf(aLeftBlockElement));
   NS_ASSERTION(
       aPrecedingInvisibleBRElement == invisibleBRElementAtEndOfLeftBlockElement,
       "The preceding invisible BR element computation was different");
@@ -311,7 +313,7 @@ EditActionResult WhiteSpaceVisibilityKeeper::
   // Do br adjustment.
   RefPtr<HTMLBRElement> invisibleBRElementBeforeLeftBlockElement =
       WSRunScanner::GetPrecedingBRElementUnlessVisibleContentFound(
-          aHTMLEditor, atLeftBlockChild);
+          aHTMLEditor.GetActiveEditingHost(), atLeftBlockChild);
   NS_ASSERTION(
       aPrecedingInvisibleBRElement == invisibleBRElementBeforeLeftBlockElement,
       "The preceding invisible BR element computation was different");
@@ -488,7 +490,8 @@ EditActionResult WhiteSpaceVisibilityKeeper::
   // Do br adjustment.
   RefPtr<HTMLBRElement> invisibleBRElementAtEndOfLeftBlockElement =
       WSRunScanner::GetPrecedingBRElementUnlessVisibleContentFound(
-          aHTMLEditor, EditorDOMPoint::AtEndOf(aLeftBlockElement));
+          aHTMLEditor.GetActiveEditingHost(),
+          EditorDOMPoint::AtEndOf(aLeftBlockElement));
   NS_ASSERTION(
       aPrecedingInvisibleBRElement == invisibleBRElementAtEndOfLeftBlockElement,
       "The preceding invisible BR element computation was different");
@@ -712,16 +715,15 @@ Result<RefPtr<Element>, nsresult> WhiteSpaceVisibilityKeeper::InsertBRElement(
     }
   }
 
-  RefPtr<Element> newBRElement = aHTMLEditor.InsertBRElementWithTransaction(
-      pointToInsert, nsIEditor::eNone);
-  if (NS_WARN_IF(aHTMLEditor.Destroyed())) {
-    return Err(NS_ERROR_EDITOR_DESTROYED);
-  }
-  if (!newBRElement) {
-    NS_WARNING("HTMLEditor::InsertBRElementWithTransaction() failed");
-    return Err(NS_ERROR_FAILURE);
-  }
-  return newBRElement;
+  Result<RefPtr<Element>, nsresult> resultOfInsertingBRElement =
+      aHTMLEditor.InsertBRElementWithTransaction(pointToInsert,
+                                                 nsIEditor::eNone);
+  NS_WARNING_ASSERTION(
+      resultOfInsertingBRElement.isOk(),
+      "HTMLEditor::InsertBRElementWithTransaction(eNone) failed");
+  MOZ_ASSERT_IF(resultOfInsertingBRElement.isOk(),
+                resultOfInsertingBRElement.inspect());
+  return resultOfInsertingBRElement;
 }
 
 // static
@@ -1200,7 +1202,8 @@ nsresult WhiteSpaceVisibilityKeeper::DeleteContentNodeAndJoinTextNodesAroundIt(
   }
 
   nsCOMPtr<nsIContent> previousEditableSibling =
-      aHTMLEditor.GetPriorHTMLSibling(&aContentToDelete);
+      HTMLEditUtils::GetPreviousSibling(
+          aContentToDelete, {WalkTreeOption::IgnoreNonEditableNode});
   // Delete the node, and join like nodes if appropriate
   rv = aHTMLEditor.DeleteNodeWithTransaction(aContentToDelete);
   if (NS_WARN_IF(aHTMLEditor.Destroyed())) {
@@ -1218,8 +1221,8 @@ nsresult WhiteSpaceVisibilityKeeper::DeleteContentNodeAndJoinTextNodesAroundIt(
     return NS_OK;
   }
 
-  nsIContent* nextEditableSibling =
-      aHTMLEditor.GetNextHTMLSibling(previousEditableSibling);
+  nsIContent* nextEditableSibling = HTMLEditUtils::GetNextSibling(
+      *previousEditableSibling, {WalkTreeOption::IgnoreNonEditableNode});
   if (aCaretPoint.GetContainer() != nextEditableSibling) {
     return NS_OK;
   }
@@ -2302,7 +2305,7 @@ WSRunScanner::TextFragmentData::GetInclusiveNextEditableCharPoint(
   if (nsIContent* child =
           aPoint.CanContainerHaveChildren() ? aPoint.GetChild() : nullptr) {
     nsIContent* leafContent = child->HasChildren()
-                                  ? HTMLEditUtils::GetFirstLeafChild(
+                                  ? HTMLEditUtils::GetFirstLeafContent(
                                         *child, {LeafNodeType::OnlyLeafNode})
                                   : child;
     if (NS_WARN_IF(!leafContent)) {
@@ -2382,8 +2385,8 @@ WSRunScanner::TextFragmentData::GetPreviousEditableCharPoint(
                                       : nullptr) {
     nsIContent* leafContent =
         previousChild->HasChildren()
-            ? HTMLEditUtils::GetLastLeafChild(*previousChild,
-                                              {LeafNodeType::OnlyLeafNode})
+            ? HTMLEditUtils::GetLastLeafContent(*previousChild,
+                                                {LeafNodeType::OnlyLeafNode})
             : previousChild;
     if (NS_WARN_IF(!leafContent)) {
       return EditorDOMPointInText();
@@ -2788,16 +2791,14 @@ nsresult WhiteSpaceVisibilityKeeper::NormalizeVisibleWhiteSpacesAt(
           // the beginning of soft wrapped lines, and lets the user see 2 spaces
           // when they type 2 spaces.
 
-          RefPtr<Element> brElement =
+          Result<RefPtr<Element>, nsresult> resultOfInsertingBRElement =
               aHTMLEditor.InsertBRElementWithTransaction(
                   atEndOfVisibleWhiteSpaces);
-          if (NS_WARN_IF(aHTMLEditor.Destroyed())) {
-            return NS_ERROR_EDITOR_DESTROYED;
-          }
-          if (!brElement) {
+          if (resultOfInsertingBRElement.isErr()) {
             NS_WARNING("HTMLEditor::InsertBRElementWithTransaction() failed");
-            return NS_ERROR_FAILURE;
+            return resultOfInsertingBRElement.unwrapErr();
           }
+          MOZ_ASSERT(resultOfInsertingBRElement.inspect());
 
           atPreviousCharOfEndOfVisibleWhiteSpaces =
               textFragmentData.GetPreviousEditableCharPoint(
@@ -3222,14 +3223,13 @@ WSRunScanner::ComputeRangeInTextNodesContainingInvisibleWhiteSpaces(
 
 // static
 Result<EditorDOMRangeInTexts, nsresult>
-WSRunScanner::GetRangeInTextNodesToBackspaceFrom(const HTMLEditor& aHTMLEditor,
+WSRunScanner::GetRangeInTextNodesToBackspaceFrom(Element* aEditingHost,
                                                  const EditorDOMPoint& aPoint) {
   // Corresponding to computing delete range part of
   // `WhiteSpaceVisibilityKeeper::DeletePreviousWhiteSpace()`
   MOZ_ASSERT(aPoint.IsSetAndValid());
 
-  Element* editingHost = aHTMLEditor.GetActiveEditingHost();
-  TextFragmentData textFragmentDataAtCaret(aPoint, editingHost);
+  TextFragmentData textFragmentDataAtCaret(aPoint, aEditingHost);
   if (NS_WARN_IF(!textFragmentDataAtCaret.IsInitialized())) {
     return Err(NS_ERROR_FAILURE);
   }
@@ -3299,11 +3299,11 @@ WSRunScanner::GetRangeInTextNodesToBackspaceFrom(const HTMLEditor& aHTMLEditor,
   // And also delete invisible white-spaces if they become visible.
   TextFragmentData textFragmentDataAtStart =
       rangeToDelete.StartRef() != aPoint
-          ? TextFragmentData(rangeToDelete.StartRef(), editingHost)
+          ? TextFragmentData(rangeToDelete.StartRef(), aEditingHost)
           : textFragmentDataAtCaret;
   TextFragmentData textFragmentDataAtEnd =
       rangeToDelete.EndRef() != aPoint
-          ? TextFragmentData(rangeToDelete.EndRef(), editingHost)
+          ? TextFragmentData(rangeToDelete.EndRef(), aEditingHost)
           : textFragmentDataAtCaret;
   if (NS_WARN_IF(!textFragmentDataAtStart.IsInitialized()) ||
       NS_WARN_IF(!textFragmentDataAtEnd.IsInitialized())) {
@@ -3320,13 +3320,12 @@ WSRunScanner::GetRangeInTextNodesToBackspaceFrom(const HTMLEditor& aHTMLEditor,
 // static
 Result<EditorDOMRangeInTexts, nsresult>
 WSRunScanner::GetRangeInTextNodesToForwardDeleteFrom(
-    const HTMLEditor& aHTMLEditor, const EditorDOMPoint& aPoint) {
+    Element* aEditingHost, const EditorDOMPoint& aPoint) {
   // Corresponding to computing delete range part of
   // `WhiteSpaceVisibilityKeeper::DeleteInclusiveNextWhiteSpace()`
   MOZ_ASSERT(aPoint.IsSetAndValid());
 
-  Element* editingHost = aHTMLEditor.GetActiveEditingHost();
-  TextFragmentData textFragmentDataAtCaret(aPoint, editingHost);
+  TextFragmentData textFragmentDataAtCaret(aPoint, aEditingHost);
   if (NS_WARN_IF(!textFragmentDataAtCaret.IsInitialized())) {
     return Err(NS_ERROR_FAILURE);
   }
@@ -3394,11 +3393,11 @@ WSRunScanner::GetRangeInTextNodesToForwardDeleteFrom(
   // And also delete invisible white-spaces if they become visible.
   TextFragmentData textFragmentDataAtStart =
       rangeToDelete.StartRef() != aPoint
-          ? TextFragmentData(rangeToDelete.StartRef(), editingHost)
+          ? TextFragmentData(rangeToDelete.StartRef(), aEditingHost)
           : textFragmentDataAtCaret;
   TextFragmentData textFragmentDataAtEnd =
       rangeToDelete.EndRef() != aPoint
-          ? TextFragmentData(rangeToDelete.EndRef(), editingHost)
+          ? TextFragmentData(rangeToDelete.EndRef(), aEditingHost)
           : textFragmentDataAtCaret;
   if (NS_WARN_IF(!textFragmentDataAtStart.IsInitialized()) ||
       NS_WARN_IF(!textFragmentDataAtEnd.IsInitialized())) {
@@ -3414,13 +3413,12 @@ WSRunScanner::GetRangeInTextNodesToForwardDeleteFrom(
 
 // static
 EditorDOMRange WSRunScanner::GetRangesForDeletingAtomicContent(
-    const HTMLEditor& aHTMLEditor, const nsIContent& aAtomicContent) {
+    Element* aEditingHost, const nsIContent& aAtomicContent) {
   if (aAtomicContent.IsHTMLElement(nsGkAtoms::br)) {
     // Preceding white-spaces should be preserved, but the following
     // white-spaces should be invisible around `<br>` element.
-    Element* editingHost = aHTMLEditor.GetActiveEditingHost();
     TextFragmentData textFragmentDataAfterBRElement(
-        EditorDOMPoint::After(aAtomicContent), editingHost);
+        EditorDOMPoint::After(aAtomicContent), aEditingHost);
     if (NS_WARN_IF(!textFragmentDataAfterBRElement.IsInitialized())) {
       return EditorDOMRange();  // TODO: Make here return error with Err.
     }
@@ -3448,9 +3446,8 @@ EditorDOMRange WSRunScanner::GetRangesForDeletingAtomicContent(
 
   // Both preceding and following white-spaces can be invisible around a
   // block element.
-  Element* editingHost = aHTMLEditor.GetActiveEditingHost();
   TextFragmentData textFragmentDataBeforeAtomicContent(
-      EditorDOMPoint(const_cast<nsIContent*>(&aAtomicContent)), editingHost);
+      EditorDOMPoint(const_cast<nsIContent*>(&aAtomicContent)), aEditingHost);
   if (NS_WARN_IF(!textFragmentDataBeforeAtomicContent.IsInitialized())) {
     return EditorDOMRange();  // TODO: Make here return error with Err.
   }
@@ -3459,7 +3456,7 @@ EditorDOMRange WSRunScanner::GetRangesForDeletingAtomicContent(
           textFragmentDataBeforeAtomicContent
               .InvisibleTrailingWhiteSpaceRangeRef());
   TextFragmentData textFragmentDataAfterAtomicContent(
-      EditorDOMPoint::After(aAtomicContent), editingHost);
+      EditorDOMPoint::After(aAtomicContent), aEditingHost);
   if (NS_WARN_IF(!textFragmentDataAfterAtomicContent.IsInitialized())) {
     return EditorDOMRange();  // TODO: Make here return error with Err.
   }
@@ -3527,9 +3524,7 @@ EditorDOMRange WSRunScanner::GetRangeForDeletingBlockElementBoundaries(
   if (NS_WARN_IF(!textFragmentDataAtEndOfLeftBlockElement.IsInitialized())) {
     return EditorDOMRange();  // TODO: Make here return error with Err.
   }
-  if (textFragmentDataAtEndOfLeftBlockElement.StartsFromBRElement() &&
-      !aHTMLEditor.IsVisibleBRElement(
-          textFragmentDataAtEndOfLeftBlockElement.StartReasonBRElementPtr())) {
+  if (textFragmentDataAtEndOfLeftBlockElement.StartsFromInvisibleBRElement()) {
     // If the left block element ends with an invisible `<br>` element,
     // it'll be deleted (and it means there is no invisible trailing
     // white-spaces).  Therefore, the range should start from the invisible
@@ -3570,15 +3565,13 @@ EditorDOMRange WSRunScanner::GetRangeForDeletingBlockElementBoundaries(
 // static
 EditorDOMRange
 WSRunScanner::GetRangeContainingInvisibleWhiteSpacesAtRangeBoundaries(
-    const HTMLEditor& aHTMLEditor, const EditorDOMRange& aRange) {
+    Element* aEditingHost, const EditorDOMRange& aRange) {
   MOZ_ASSERT(aRange.IsPositionedAndValid());
   MOZ_ASSERT(aRange.EndRef().IsSetAndValid());
   MOZ_ASSERT(aRange.StartRef().IsSetAndValid());
 
-  const Element* editingHost = aHTMLEditor.GetActiveEditingHost();
-
   EditorDOMRange result;
-  TextFragmentData textFragmentDataAtStart(aRange.StartRef(), editingHost);
+  TextFragmentData textFragmentDataAtStart(aRange.StartRef(), aEditingHost);
   if (NS_WARN_IF(!textFragmentDataAtStart.IsInitialized())) {
     return EditorDOMRange();  // TODO: Make here return error with Err.
   }
@@ -3611,7 +3604,7 @@ WSRunScanner::GetRangeContainingInvisibleWhiteSpacesAtRangeBoundaries(
     result.SetStart(aRange.StartRef());
   }
 
-  TextFragmentData textFragmentDataAtEnd(aRange.EndRef(), editingHost);
+  TextFragmentData textFragmentDataAtEnd(aRange.EndRef(), aEditingHost);
   if (NS_WARN_IF(!textFragmentDataAtEnd.IsInitialized())) {
     return EditorDOMRange();  // TODO: Make here return error with Err.
   }
@@ -3691,11 +3684,8 @@ WSRunScanner::ShrinkRangeIfStartsFromOrEndsAfterAtomicContent(
     if (NS_WARN_IF(!textFragmentDataAtStart.IsInitialized())) {
       return Err(NS_ERROR_FAILURE);
     }
-    if (textFragmentDataAtStart.EndsByBRElement()) {
-      if (aHTMLEditor.IsVisibleBRElement(
-              textFragmentDataAtStart.EndReasonBRElementPtr())) {
-        startContent = textFragmentDataAtStart.EndReasonBRElementPtr();
-      }
+    if (textFragmentDataAtStart.EndsByVisibleBRElement()) {
+      startContent = textFragmentDataAtStart.EndReasonBRElementPtr();
     } else if (textFragmentDataAtStart.EndsBySpecialContent() ||
                (textFragmentDataAtStart.EndsByOtherBlockElement() &&
                 !HTMLEditUtils::IsContainerNode(
@@ -3716,11 +3706,8 @@ WSRunScanner::ShrinkRangeIfStartsFromOrEndsAfterAtomicContent(
     if (NS_WARN_IF(!textFragmentDataAtEnd.IsInitialized())) {
       return Err(NS_ERROR_FAILURE);
     }
-    if (textFragmentDataAtEnd.StartsFromBRElement()) {
-      if (aHTMLEditor.IsVisibleBRElement(
-              textFragmentDataAtEnd.StartReasonBRElementPtr())) {
-        endContent = textFragmentDataAtEnd.StartReasonBRElementPtr();
-      }
+    if (textFragmentDataAtEnd.StartsFromVisibleBRElement()) {
+      endContent = textFragmentDataAtEnd.StartReasonBRElementPtr();
     } else if (textFragmentDataAtEnd.StartsFromSpecialContent() ||
                (textFragmentDataAtEnd.StartsFromOtherBlockElement() &&
                 !HTMLEditUtils::IsContainerNode(

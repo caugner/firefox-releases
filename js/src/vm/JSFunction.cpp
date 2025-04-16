@@ -36,6 +36,7 @@
 #include "jit/InlinableNatives.h"
 #include "jit/Ion.h"
 #include "js/CallNonGenericMethod.h"
+#include "js/CompilationAndEvaluation.h"
 #include "js/CompileOptions.h"
 #include "js/friend/ErrorMessages.h"  // js::GetErrorMessage, JSMSG_*
 #include "js/friend/StackLimits.h"    // js::AutoCheckRecursionLimit
@@ -433,15 +434,14 @@ bool JSFunction::hasNonConfigurablePrototypeDataProperty() {
 
   if (isSelfHostedBuiltin()) {
     // Self-hosted constructors other than bound functions have a
-    // non-configurable .prototype data property. See the MakeConstructible
-    // intrinsic.
+    // non-configurable .prototype data property.
     if (!isConstructor() || isBoundFunction()) {
       return false;
     }
 #ifdef DEBUG
     PropertyName* prototypeName =
         runtimeFromMainThread()->commonNames->prototype;
-    Maybe<ShapeProperty> prop = lookupPure(prototypeName);
+    Maybe<PropertyInfo> prop = lookupPure(prototypeName);
     MOZ_ASSERT(prop.isSome());
     MOZ_ASSERT(prop->isDataProperty());
     MOZ_ASSERT(!prop->configurable());
@@ -455,7 +455,7 @@ bool JSFunction::hasNonConfigurablePrototypeDataProperty() {
   }
 
   PropertyName* prototypeName = runtimeFromMainThread()->commonNames->prototype;
-  Maybe<ShapeProperty> prop = lookupPure(prototypeName);
+  Maybe<PropertyInfo> prop = lookupPure(prototypeName);
   return prop.isSome() && prop->isDataProperty() && !prop->configurable();
 }
 
@@ -464,7 +464,7 @@ static bool fun_mayResolve(const JSAtomState& names, jsid id, JSObject*) {
     return false;
   }
 
-  JSAtom* atom = JSID_TO_ATOM(id);
+  JSAtom* atom = id.toAtom();
   return atom == names.prototype || atom == names.length || atom == names.name;
 }
 
@@ -1118,49 +1118,32 @@ bool js::fun_apply(JSContext* cx, unsigned argc, Value* vp) {
     return fun_call(cx, (args.length() > 0) ? 1 : 0, vp);
   }
 
+  // Step 3.
+  if (!args[1].isObject()) {
+    JS_ReportErrorNumberASCII(cx, GetErrorMessage, nullptr,
+                              JSMSG_BAD_APPLY_ARGS, js_apply_str);
+    return false;
+  }
+
+  // Steps 4-5 (note erratum removing steps originally numbered 5 and 7 in
+  // original version of ES5).
+  RootedObject aobj(cx, &args[1].toObject());
+  uint64_t length;
+  if (!GetLengthProperty(cx, aobj, &length)) {
+    return false;
+  }
+
+  // Step 6.
   InvokeArgs args2(cx);
+  if (!args2.init(cx, length)) {
+    return false;
+  }
 
-  // A JS_OPTIMIZED_ARGUMENTS magic value means that 'arguments' flows into
-  // this apply call from a scripted caller and, as an optimization, we've
-  // avoided creating it since apply can simply pull the argument values from
-  // the calling frame (which we must do now).
-  if (args[1].isMagic(JS_OPTIMIZED_ARGUMENTS)) {
-    // Step 3-6.
-    ScriptFrameIter iter(cx);
-    MOZ_ASSERT(iter.numActualArgs() <= ARGS_LENGTH_MAX);
-    if (!args2.init(cx, iter.numActualArgs())) {
-      return false;
-    }
+  MOZ_ASSERT(length <= ARGS_LENGTH_MAX);
 
-    // Steps 7-8.
-    iter.unaliasedForEachActual(cx, CopyTo(args2.array()));
-  } else {
-    // Step 3.
-    if (!args[1].isObject()) {
-      JS_ReportErrorNumberASCII(cx, GetErrorMessage, nullptr,
-                                JSMSG_BAD_APPLY_ARGS, js_apply_str);
-      return false;
-    }
-
-    // Steps 4-5 (note erratum removing steps originally numbered 5 and 7 in
-    // original version of ES5).
-    RootedObject aobj(cx, &args[1].toObject());
-    uint64_t length;
-    if (!GetLengthProperty(cx, aobj, &length)) {
-      return false;
-    }
-
-    // Step 6.
-    if (!args2.init(cx, length)) {
-      return false;
-    }
-
-    MOZ_ASSERT(length <= ARGS_LENGTH_MAX);
-
-    // Steps 7-8.
-    if (!GetElements(cx, aobj, length, args2.array())) {
-      return false;
-    }
+  // Steps 7-8.
+  if (!GetElements(cx, aobj, length, args2.array())) {
+    return false;
   }
 
   // Step 9.
@@ -1676,8 +1659,8 @@ static bool CreateDynamicFunction(JSContext* cx, const CallArgs& args,
       .setFileAndLine(filename, 1)
       .setNoScriptRval(false)
       .setIntroductionInfo(introducerFilename, introductionType, lineno,
-                           maybeScript, pcOffset)
-      .setScriptOrModule(maybeScript);
+                           pcOffset)
+      .setdeferDebugMetadata();
 
   JSStringBuilder sb(cx);
 
@@ -1809,6 +1792,13 @@ static bool CreateDynamicFunction(JSContext* cx, const CallArgs& args,
     }
   }
   if (!fun) {
+    return false;
+  }
+
+  RootedValue undefValue(cx);
+  RootedScript funScript(cx, JS_GetFunctionScript(cx, fun));
+  if (funScript && !UpdateDebugMetadata(cx, funScript, options, undefValue,
+                                        nullptr, maybeScript, maybeScript)) {
     return false;
   }
 
@@ -2291,7 +2281,7 @@ JSAtom* js::IdToFunctionName(
 
   // No prefix fastpath.
   if (id.isAtom() && prefixKind == FunctionPrefixKind::None) {
-    return JSID_TO_ATOM(id);
+    return id.toAtom();
   }
 
   // Step 3 (implicit).

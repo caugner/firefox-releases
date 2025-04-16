@@ -13,7 +13,7 @@ use crate::events::ConnectionEvent;
 use crate::recv_stream::RECV_BUFFER_SIZE;
 use crate::send_stream::{SendStreamState, SEND_BUFFER_SIZE};
 use crate::tparams::{self, TransportParameter};
-use crate::tracking::MAX_UNACKED_PKTS;
+use crate::tracking::DEFAULT_ACK_PACKET_TOLERANCE;
 use crate::ConnectionParameters;
 use crate::{Error, StreamId, StreamType};
 
@@ -83,7 +83,7 @@ fn transfer() {
         let out = server.process(Some(d), now());
         assert_eq!(
             out.as_dgram_ref().is_some(),
-            (d_num + 1) % (MAX_UNACKED_PKTS + 1) == 0
+            (d_num + 1) % usize::try_from(DEFAULT_ACK_PACKET_TOLERANCE + 1).unwrap() == 0
         );
         qdebug!("Output={:0x?}", out.as_dgram_ref());
     }
@@ -169,14 +169,14 @@ fn max_data() {
 
     assert_eq!(client.stream_send(stream_id, b"hello").unwrap(), 0);
     client
-        .send_streams
-        .get_mut(stream_id.into())
+        .streams
+        .get_send_stream_mut(stream_id.into())
         .unwrap()
         .mark_as_sent(0, 4096, false);
     assert_eq!(client.events().count(), 0);
     client
-        .send_streams
-        .get_mut(stream_id.into())
+        .streams
+        .get_send_stream_mut(stream_id.into())
         .unwrap()
         .mark_as_acked(0, 4096, false);
     assert_eq!(client.events().count(), 0);
@@ -186,7 +186,7 @@ fn max_data() {
     assert_eq!(client.events().count(), 0);
 
     // Increase max data. Avail space now limited by stream credit
-    client.handle_max_data(100_000_000);
+    client.streams.handle_max_data(100_000_000);
     assert_eq!(
         client.stream_avail_send_space(stream_id).unwrap(),
         SEND_BUFFER_SIZE - SMALL_MAX_DATA
@@ -194,8 +194,8 @@ fn max_data() {
 
     // Increase max stream data. Avail space now limited by tx buffer
     client
-        .send_streams
-        .get_mut(stream_id.into())
+        .streams
+        .get_send_stream_mut(stream_id.into())
         .unwrap()
         .set_max_stream_data(100_000_000);
     assert_eq!(
@@ -406,8 +406,8 @@ fn stream_data_blocked_generates_max_stream_data() {
 
     // Now send `STREAM_DATA_BLOCKED`.
     let internal_stream = server
-        .send_streams
-        .get_mut(StreamId::from(stream_id))
+        .streams
+        .get_send_stream_mut(StreamId::from(stream_id))
         .unwrap();
     if let SendStreamState::Send { fc, .. } = internal_stream.state() {
         fc.blocked();

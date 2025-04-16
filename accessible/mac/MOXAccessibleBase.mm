@@ -95,7 +95,8 @@ mozilla::LogModule* GetMacAccessibilityLog() {
   }
 
   NSMutableArray* attributes =
-      attributesForEachClass [[self class]] ?: [[NSMutableArray alloc] init];
+      attributesForEachClass [[self class]]
+          ?: [[[NSMutableArray alloc] init] autorelease];
 
   NSDictionary* getters = mac::AttributeGetters();
   if (![attributes count]) {
@@ -162,7 +163,8 @@ mozilla::LogModule* GetMacAccessibilityLog() {
     // If this is an array of mozAccessibles, get each element's represented
     // view and remove it from the returned array if it should be ignored.
     NSUInteger arrSize = [value count];
-    NSMutableArray* arr = [[NSMutableArray alloc] initWithCapacity:arrSize];
+    NSMutableArray* arr =
+        [[[NSMutableArray alloc] initWithCapacity:arrSize] autorelease];
     for (NSUInteger i = 0; i < arrSize; i++) {
       id<mozAccessible> mozAcc = GetObjectOrRepresentedView(value[i]);
       if ([mozAcc isAccessibilityElement]) {
@@ -259,7 +261,7 @@ mozilla::LogModule* GetMacAccessibilityLog() {
     return nil;
   }
 
-  NSMutableArray* actionNames = [[NSMutableArray alloc] init];
+  NSMutableArray* actionNames = [[[NSMutableArray alloc] init] autorelease];
 
   NSDictionary* actions = mac::Actions();
   for (NSString* action in actions) {
@@ -309,7 +311,7 @@ mozilla::LogModule* GetMacAccessibilityLog() {
     return nil;
   }
 
-  NSMutableArray* attributeNames = [[NSMutableArray alloc] init];
+  NSMutableArray* attributeNames = [[[NSMutableArray alloc] init] autorelease];
 
   NSDictionary* attributes = mac::ParameterizedAttributeGetters();
   for (NSString* attribute in attributes) {
@@ -374,13 +376,13 @@ mozilla::LogModule* GetMacAccessibilityLog() {
 
 - (id)accessibilityHitTest:(NSPoint)point {
   NS_OBJC_BEGIN_TRY_BLOCK_RETURN;
-  return [self moxHitTest:point];
+  return GetObjectOrRepresentedView([self moxHitTest:point]);
   NS_OBJC_END_TRY_BLOCK_RETURN(nil);
 }
 
 - (id)accessibilityFocusedUIElement {
   NS_OBJC_BEGIN_TRY_BLOCK_RETURN;
-  return [self moxFocusedUIElement];
+  return GetObjectOrRepresentedView([self moxFocusedUIElement]);
   NS_OBJC_END_TRY_BLOCK_RETURN(nil);
 }
 
@@ -416,11 +418,11 @@ mozilla::LogModule* GetMacAccessibilityLog() {
 }
 
 - (id)moxHitTest:(NSPoint)point {
-  return GetObjectOrRepresentedView(self);
+  return self;
 }
 
 - (id)moxFocusedUIElement {
-  return GetObjectOrRepresentedView(self);
+  return self;
 }
 
 - (void)moxPostNotification:(NSString*)notification {
@@ -467,7 +469,8 @@ mozilla::LogModule* GetMacAccessibilityLog() {
 }
 
 - (NSArray*)moxUnignoredChildren {
-  NSMutableArray* unignoredChildren = [[NSMutableArray alloc] init];
+  NSMutableArray* unignoredChildren =
+      [[[NSMutableArray alloc] init] autorelease];
   NSArray* allChildren = [self moxChildren];
 
   for (MOXAccessibleBase* nativeChild in allChildren) {

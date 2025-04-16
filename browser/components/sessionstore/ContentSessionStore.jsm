@@ -504,7 +504,6 @@ class MessageQueue extends Handler {
  */
 const MESSAGES = [
   "SessionStore:restoreHistory",
-  "SessionStore:restoreDocShellState",
   "SessionStore:restoreTabContent",
   "SessionStore:resetRestore",
   "SessionStore:flush",
@@ -534,9 +533,6 @@ class ContentSessionStore {
 
     MESSAGES.forEach(m => mm.addMessageListener(m, this));
 
-    // If we're browsing from the tab crashed UI to a blacklisted URI that keeps
-    // this browser non-remote, we'll handle that in a pagehide event.
-    mm.addEventListener("pagehide", this);
     mm.addEventListener("unload", this);
   }
 
@@ -558,9 +554,6 @@ class ContentSessionStore {
     switch (name) {
       case "SessionStore:restoreHistory":
         this.restoreHistory(data);
-        break;
-      case "SessionStore:restoreDocShellState":
-        this.restoreDocShellState(data);
         break;
       case "SessionStore:restoreTabContent":
         this.restoreTabContent(data);
@@ -643,31 +636,6 @@ class ContentSessionStore {
     }
   }
 
-  // SHIP only
-  restoreDocShellState(data) {
-    let { epoch, tabData } = data;
-
-    if (!Services.appinfo.sessionHistoryInParent) {
-      throw new Error("This function should only be used with SHIP");
-    }
-    let { docShell } = this.mm;
-
-    if (tabData.uri) {
-      docShell.setCurrentURI(Services.io.newURI(tabData.uri));
-    }
-
-    if (tabData.disallow) {
-      SessionStoreUtils.restoreDocShellCapabilities(docShell, tabData.disallow);
-    }
-
-    if (tabData.storage) {
-      SessionStoreUtils.restoreSessionStorage(docShell, tabData.storage);
-    }
-    // Since we don't send restoreHistory, we need to tell the parent when
-    // to call SSTabRestoring (via restoreHistoryComplete)
-    this.mm.sendAsyncMessage("SessionStore:restoreHistoryComplete", { epoch });
-  }
-
   restoreTabContent({ loadArguments, isRemotenessUpdate, reason }) {
     if (Services.appinfo.sessionHistoryInParent) {
       throw new Error("This function should be unused with SHIP");
@@ -709,9 +677,7 @@ class ContentSessionStore {
   }
 
   handleEvent(event) {
-    if (event.type == "pagehide") {
-      this.handleRevivedTab();
-    } else if (event.type == "unload") {
+    if (event.type == "unload") {
       this.onUnload();
     }
   }
@@ -720,13 +686,6 @@ class ContentSessionStore {
     // Upon frameLoader destruction, send a final update message to
     // the parent and flush all data currently held in the child.
     this.messageQueue.send({ isFinal: true });
-
-    // If we're browsing from the tab crashed UI to a URI that causes the tab
-    // to go remote again, we catch this in the unload event handler, because
-    // swapping out the non-remote browser for a remote one in
-    // tabbrowser.xml's updateBrowserRemoteness doesn't cause the pagehide
-    // event to be fired.
-    this.handleRevivedTab();
 
     for (let handler of this.handlers) {
       if (handler.uninit) {
@@ -742,31 +701,5 @@ class ContentSessionStore {
     // We don't need to take care of any StateChangeNotifier observers as they
     // will die with the content script. The same goes for the privacy transition
     // observer that will die with the docShell when the tab is closed.
-  }
-
-  handleRevivedTab() {
-    let { content } = this.mm;
-
-    if (!content) {
-      this.mm.removeEventListener("pagehide", this);
-      return;
-    }
-
-    if (content.document.documentURI.startsWith("about:tabcrashed")) {
-      if (
-        Services.appinfo.processType != Services.appinfo.PROCESS_TYPE_DEFAULT
-      ) {
-        // Sanity check - we'd better be loading this in a non-remote browser.
-        throw new Error(
-          "We seem to be navigating away from about:tabcrashed in " +
-            "a non-remote browser. This should really never happen."
-        );
-      }
-
-      this.mm.removeEventListener("pagehide", this);
-
-      // Notify the parent.
-      this.mm.sendAsyncMessage("SessionStore:crashedTabRevived");
-    }
   }
 }

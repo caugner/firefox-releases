@@ -103,6 +103,10 @@ namespace gfx {
 struct RectCornerRadii;
 enum class ShapedTextFlags : uint16_t;
 }  // namespace gfx
+namespace image {
+class ImageIntRegion;
+struct Resolution;
+}  // namespace image
 namespace layers {
 struct FrameMetrics;
 struct ScrollMetadata;
@@ -1901,11 +1905,6 @@ class nsLayoutUtils {
    *                            appropriate scale and transform for drawing in
    *                            app units.
    *   @param aImage            The image.
-   *   @param aResolution       The resolution specified by the author for the
-   *                            image, in dppx. This will affect the intrinsic
-   *                            size of the image (so e.g., if resolution is 2,
-   *                            and the image is 100x100, the intrinsic size of
-   *                            the image will be 50x50).
    *   @param aDest             The area that the image should fill.
    *   @param aDirty            Pixels outside this area may be skipped.
    *   @param aSVGContext       Optionally provides an SVGImageContext.
@@ -1927,9 +1926,9 @@ class nsLayoutUtils {
    */
   static ImgDrawResult DrawSingleImage(
       gfxContext& aContext, nsPresContext* aPresContext, imgIContainer* aImage,
-      float aResolution, SamplingFilter aSamplingFilter, const nsRect& aDest,
-      const nsRect& aDirty, const mozilla::Maybe<SVGImageContext>& aSVGContext,
-      uint32_t aImageFlags, const nsPoint* aAnchorPoint = nullptr,
+      SamplingFilter aSamplingFilter, const nsRect& aDest, const nsRect& aDirty,
+      const mozilla::Maybe<SVGImageContext>& aSVGContext, uint32_t aImageFlags,
+      const nsPoint* aAnchorPoint = nullptr,
       const nsRect* aSourceArea = nullptr);
 
   /**
@@ -1947,8 +1946,16 @@ class nsLayoutUtils {
    * NOTE: This method is similar to ComputeSizeWithIntrinsicDimensions.  The
    * difference is that this one is simpler and is suited to places where we
    * have less information about the frame tree.
+   *
+   * @param aResolution The resolution specified by the author for the image, or
+   *                    its intrinsic resolution.
+   *
+   *                    This will affect the intrinsic size size of the image
+   *                    (so e.g., if resolution is 2, and the image is 100x100,
+   *                    the intrinsic size of the image will be 50x50).
    */
-  static void ComputeSizeForDrawing(imgIContainer* aImage, float aResolution,
+  static void ComputeSizeForDrawing(imgIContainer* aImage,
+                                    const mozilla::image::Resolution&,
                                     CSSIntSize& aImageSize,
                                     AspectRatio& aIntrinsicRatio,
                                     bool& aGotWidth, bool& aGotHeight);
@@ -1962,7 +1969,8 @@ class nsLayoutUtils {
    * dimensions, the corresponding dimension of aFallbackSize is used instead.
    */
   static CSSIntSize ComputeSizeForDrawingWithFallback(
-      imgIContainer* aImage, float aResolution, const nsSize& aFallbackSize);
+      imgIContainer* aImage, const mozilla::image::Resolution&,
+      const nsSize& aFallbackSize);
 
   /**
    * Given the image container, frame, and dest rect, determine the best fitting
@@ -1970,8 +1978,10 @@ class nsLayoutUtils {
    */
   static mozilla::gfx::IntSize ComputeImageContainerDrawingParameters(
       imgIContainer* aImage, nsIFrame* aForFrame,
-      const LayoutDeviceRect& aDestRect, const StackingContextHelper& aSc,
-      uint32_t aFlags, mozilla::Maybe<SVGImageContext>& aSVGContext);
+      const LayoutDeviceRect& aDestRect, const LayoutDeviceRect& aFillRect,
+      const StackingContextHelper& aSc, uint32_t aFlags,
+      mozilla::Maybe<SVGImageContext>& aSVGContext,
+      mozilla::Maybe<mozilla::image::ImageIntRegion>& aRegion);
 
   /**
    * Given a source area of an image (in appunits) and a destination area
@@ -2142,21 +2152,25 @@ class nsLayoutUtils {
    */
 
   enum {
-    /* When creating a new surface, create an image surface */
-    SFE_WANT_IMAGE_SURFACE = 1 << 0,
     /* Whether to extract the first frame (as opposed to the
        current frame) in the case that the element is an image. */
-    SFE_WANT_FIRST_FRAME_IF_IMAGE = 1 << 1,
+    SFE_WANT_FIRST_FRAME_IF_IMAGE = 1 << 0,
     /* Whether we should skip colorspace/gamma conversion */
-    SFE_NO_COLORSPACE_CONVERSION = 1 << 2,
+    SFE_NO_COLORSPACE_CONVERSION = 1 << 1,
     /* Caller handles SFER::mAlphaType = NonPremult */
-    SFE_ALLOW_NON_PREMULT = 1 << 3,
+    SFE_ALLOW_NON_PREMULT = 1 << 2,
     /* Whether we should skip getting a surface for vector images and
        return a DirectDrawInfo containing an imgIContainer instead. */
-    SFE_NO_RASTERIZING_VECTORS = 1 << 4,
+    SFE_NO_RASTERIZING_VECTORS = 1 << 3,
     /* If image type is vector, the return surface size will same as
        element size, not image's intrinsic size. */
-    SFE_USE_ELEMENT_SIZE_IF_VECTOR = 1 << 5
+    SFE_USE_ELEMENT_SIZE_IF_VECTOR = 1 << 4,
+    /* Ensure that the returned surface has a size that matches the
+     * SurfaceFromElementResult::mSize. This is mostly a convenience thing so
+     * that callers who want this don't have to deal with it themselves.
+     * The surface might be different for, e.g., a EXIF-scaled raster image, if
+     * we don't rescale during decode. */
+    SFE_EXACT_SIZE_SURFACE = 1 << 6,
   };
 
   // This function can be called on any thread.

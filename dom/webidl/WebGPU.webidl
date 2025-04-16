@@ -8,7 +8,6 @@
  */
 
 
-
 typedef [EnforceRange] unsigned long GPUBufferDynamicOffset;
 typedef [EnforceRange] unsigned long GPUStencilValue;
 typedef [EnforceRange] unsigned long GPUSampleMask;
@@ -171,8 +170,8 @@ interface GPUDevice: EventTarget {
 
     [NewObject]
     GPUCommandEncoder createCommandEncoder(optional GPUCommandEncoderDescriptor descriptor = {});
-    //[NewObject]
-    //GPURenderBundleEncoder createRenderBundleEncoder(GPURenderBundleEncoderDescriptor descriptor);
+    [NewObject]
+    GPURenderBundleEncoder createRenderBundleEncoder(GPURenderBundleEncoderDescriptor descriptor);
     //[NewObject]
     //GPUQuerySet createQuerySet(GPUQuerySetDescriptor descriptor);
 };
@@ -755,17 +754,17 @@ dictionary GPUMultisampleState {
 enum GPUBlendFactor {
     "zero",
     "one",
-    "src-color",
-    "one-minus-src-color",
+    "src",
+    "one-minus-src",
     "src-alpha",
     "one-minus-src-alpha",
-    "dst-color",
-    "one-minus-dst-color",
+    "dst",
+    "one-minus-dst",
     "dst-alpha",
     "one-minus-dst-alpha",
     "src-alpha-saturated",
-    "blend-color",
-    "one-minus-blend-color",
+    "constant",
+    "one-minus-constant",
 };
 
 enum GPUBlendOperation {
@@ -1009,7 +1008,7 @@ interface GPURenderPassEncoder {
     void setScissorRect(GPUIntegerCoordinate x, GPUIntegerCoordinate y,
                         GPUIntegerCoordinate width, GPUIntegerCoordinate height);
 
-    void setBlendColor(GPUColor color);
+    void setBlendConstant(GPUColor color);
     void setStencilReference(GPUStencilValue reference);
 
     //void beginOcclusionQuery(GPUSize32 queryIndex);
@@ -1020,7 +1019,7 @@ interface GPURenderPassEncoder {
 
     //void writeTimestamp(GPUQuerySet querySet, GPUSize32 queryIndex);
 
-    //void executeBundles(sequence<GPURenderBundle> bundles);
+    void executeBundles(sequence<GPURenderBundle> bundles);
 
     [Throws]
     void endPass();
@@ -1075,12 +1074,11 @@ dictionary GPURenderBundleEncoderDescriptor : GPUObjectDescriptorBase {
 [Pref="dom.webgpu.enabled",
  Exposed=Window]
 interface GPURenderBundleEncoder {
-    //GPURenderBundle finish(optional GPURenderBundleDescriptor descriptor = {});
+    GPURenderBundle finish(optional GPURenderBundleDescriptor descriptor = {});
 };
 GPURenderBundleEncoder includes GPUObjectBase;
-//TODO
-//GPURenderBundleEncoder includes GPUProgrammablePassEncoder;
-//GPURenderBundleEncoder includes GPURenderEncoderBase;
+GPURenderBundleEncoder includes GPUProgrammablePassEncoder;
+GPURenderBundleEncoder includes GPURenderEncoderBase;
 
 // ****************************************************************************
 // OTHER (Query, Queue, SwapChain, Device)
@@ -1155,6 +1153,12 @@ dictionary GPUSwapChainDescriptor : GPUObjectDescriptorBase {
     required GPUDevice device;
     required GPUTextureFormat format;
     GPUTextureUsageFlags usage = 0x10; //GPUTextureUsage.OUTPUT_ATTACHMENT
+    GPUCanvasCompositingAlphaMode compositingAlphaMode = "opaque";
+};
+
+enum GPUCanvasCompositingAlphaMode {
+    "opaque",
+    "premultiplied",
 };
 
 [Pref="dom.webgpu.enabled",

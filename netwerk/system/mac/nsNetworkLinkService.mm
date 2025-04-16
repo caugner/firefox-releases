@@ -85,7 +85,7 @@ static void CFReleaseSafe(CFTypeRef cf) {
   }
 }
 
-NS_IMPL_ISUPPORTS(nsNetworkLinkService, nsINetworkLinkService, nsIObserver)
+NS_IMPL_ISUPPORTS(nsNetworkLinkService, nsINetworkLinkService, nsIObserver, nsITimerCallback)
 
 nsNetworkLinkService::nsNetworkLinkService()
     : mLinkUp(true),
@@ -174,8 +174,7 @@ nsNetworkLinkService::GetResolvers(nsTArray<RefPtr<nsINetAddr>>& aResolvers) {
 }
 
 NS_IMETHODIMP
-nsNetworkLinkService::GetNativeResolvers(
-    nsTArray<mozilla::net::NetAddr>& aResolvers) {
+nsNetworkLinkService::GetNativeResolvers(nsTArray<mozilla::net::NetAddr>& aResolvers) {
   return NS_ERROR_NOT_IMPLEMENTED;
 }
 

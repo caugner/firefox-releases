@@ -143,10 +143,11 @@ void InputTaskManager::InputPriorityController::EnterPendingVsyncState(
   mRunInputStartTime = TimeStamp::Now();
 }
 
-void InputTaskManager::InputPriorityController::DidVsync() {
+void InputTaskManager::InputPriorityController::WillRunVsync() {
   MOZ_ASSERT(StaticPrefs::dom_input_events_strict_input_vsync_alignment());
 
-  if (mInputVsyncState == InputVsyncState::RunVsync) {
+  if (mInputVsyncState == InputVsyncState::RunVsync ||
+      mInputVsyncState == InputVsyncState::HasPendingVsync) {
     LeavePendingVsyncState(false);
   }
 }
@@ -159,7 +160,6 @@ void InputTaskManager::InputPriorityController::LeavePendingVsyncState(
     MOZ_ASSERT(mInputVsyncState == InputVsyncState::HasPendingVsync);
     mInputVsyncState = InputVsyncState::RunVsync;
   } else {
-    MOZ_ASSERT(mInputVsyncState == InputVsyncState::RunVsync);
     mInputVsyncState = InputVsyncState::NoPendingVsync;
   }
 
@@ -171,7 +171,6 @@ void InputTaskManager::InputPriorityController::DidRunTask() {
 
   switch (mInputVsyncState) {
     case InputVsyncState::NoPendingVsync:
-      MOZ_ASSERT(mMaxInputTasksToRun == 0);
       return;
     case InputVsyncState::HasPendingVsync:
       MOZ_ASSERT(mMaxInputTasksToRun > 0);
@@ -182,7 +181,8 @@ void InputTaskManager::InputPriorityController::DidRunTask() {
       }
       return;
     default:
-      MOZ_CRASH("Shouldn't run this input task when we suppose to run vsync");
+      MOZ_DIAGNOSTIC_ASSERT(
+          false, "Shouldn't run this input task when we suppose to run vsync");
       return;
   }
 }

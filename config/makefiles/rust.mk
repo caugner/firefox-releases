@@ -84,9 +84,12 @@ endif
 
 rustflags_neon =
 ifeq (neon,$(MOZ_FPU))
-# Enable neon and disable restriction to 16 FPU registers
+ifneq (,$(filter thumbv7neon-,$(RUST_TARGET)))
+# Enable neon and disable restriction to 16 FPU registers when neon is enabled
+# but we're not using a thumbv7neon target, where it's already the default.
 # (CPUs with neon have 32 FPU registers available)
 rustflags_neon += -C target_feature=+neon,-d16
+endif
 endif
 
 rustflags_sancov =
@@ -207,7 +210,10 @@ export PKG_CONFIG_LIBDIR
 endif
 export RUST_BACKTRACE=full
 export MOZ_TOPOBJDIR=$(topobjdir)
+export MOZ_FOLD_LIBS
 export PYTHON3
+export CARGO_PROFILE_RELEASE_OPT_LEVEL
+export CARGO_PROFILE_DEV_OPT_LEVEL
 
 # Set COREAUDIO_SDK_PATH for third_party/rust/coreaudio-sys/build.rs
 ifeq ($(OS_ARCH), Darwin)
@@ -237,6 +243,11 @@ ifdef MOZ_PROFILE_GENERATE
 # because -C panic=unwind (the compiler default) is not compatible with -C profile-generate
 # (https://github.com/rust-lang/rust/issues/61002).
 rust_pgo_flags := -C panic=abort -C profile-generate=$(topobjdir)
+ifeq (1,$(words $(filter 5.% 6.% 7.% 8.% 9.% 10.% 11.%,$(CC_VERSION) $(RUSTC_LLVM_VERSION))))
+# Disable value profiling when:
+# (RUSTC_LLVM_VERSION < 12 and CC_VERSION >= 12) or (RUSTC_LLVM_VERSION >= 12 and CC_VERSION < 12)
+rust_pgo_flags += -C llvm-args=--disable-vp=true
+endif
 # The C compiler may be passed extra llvm flags for PGO that we also want to pass to rust as well.
 # In PROFILE_GEN_CFLAGS, they look like "-mllvm foo", and we want "-C llvm-args=foo", so first turn
 # "-mllvm foo" into "-mllvm:foo" so that it becomes a unique argument, that we can then filter for,
@@ -289,10 +300,6 @@ endef
 cargo_host_linker_env_var := CARGO_TARGET_$(call varize,$(RUST_HOST_TARGET))_LINKER
 cargo_linker_env_var := CARGO_TARGET_$(call varize,$(RUST_TARGET))_LINKER
 
-# Cargo needs the same linker flags as the C/C++ compiler,
-# but not the final libraries. Filter those out because they
-# cause problems on macOS 10.7; see bug 1365993 for details.
-# Also, we don't want to pass PGO flags until cargo supports them.
 export MOZ_CARGO_WRAP_LDFLAGS
 export MOZ_CARGO_WRAP_LD
 export MOZ_CARGO_WRAP_HOST_LDFLAGS
@@ -316,12 +323,43 @@ export $(cargo_linker_env_var):=$(topsrcdir)/build/cargo-linker
 WRAP_HOST_LINKER_LIBPATHS:=$(HOST_LINKER_LIBPATHS)
 endif
 
-# Defining all of this for TSan builds results in crashes while running
-# some crates's build scripts (!), so disable it for now.
-# See https://github.com/rust-lang/cargo/issues/5754
-ifndef NATIVE_TSAN
+# Cargo needs the same linker flags as the C/C++ compiler,
+# but not the final libraries. Filter those out because they
+# cause problems on macOS 10.7; see bug 1365993 for details.
+# Also, we don't want to pass PGO flags until cargo supports them.
 $(TARGET_RECIPES): MOZ_CARGO_WRAP_LDFLAGS:=$(filter-out -fsanitize=cfi% -framework Cocoa -lobjc AudioToolbox ExceptionHandling -fprofile-%,$(LDFLAGS))
-endif # NATIVE_TSAN
+
+# When building with sanitizer, rustc links its own runtime, which conflicts
+# with the one that passing -fsanitize=* to the linker would add.
+# Ideally, we'd always do this filtering, but because the flags may also apply
+# to build scripts because cargo doesn't allow the distinction, we only filter
+# when building programs, except when using thread sanitizer where we filter
+# everywhere.
+ifneq (,$(filter -Zsanitizer=%,$(RUSTFLAGS)))
+$(if $(filter -Zsanitizer=thread,$(RUSTFLAGS)),$(TARGET_RECIPES),force-cargo-program-build): MOZ_CARGO_WRAP_LDFLAGS:=$(filter-out -fsanitize=%,$(MOZ_CARGO_WRAP_LDFLAGS))
+endif
+
+# Rustc assumes that *-windows-gnu targets build with mingw-gcc and manually
+# add runtime libraries that don't exist with mingw-clang. We created dummy
+# libraries in $(topobjdir)/build/win32, but that's not enough, because some
+# of the wanted symbols that come from these libraries are available in a
+# different library, that we add manually. We also need to avoid rustc
+# passing -nodefaultlibs to clang so that it adds clang_rt.
+ifeq (WINNT_clang,$(OS_ARCH)_$(CC_TYPE))
+force-cargo-program-build: MOZ_CARGO_WRAP_LDFLAGS+=-L$(topobjdir)/build/win32 -lunwind
+force-cargo-program-build: CARGO_RUSTCFLAGS += -C default-linker-libraries=yes
+endif
+
+# Rustc passes -nodefaultlibs to the linker (clang) on mac, which prevents
+# clang from adding the necessary sanitizer runtimes when building with
+# C/C++ sanitizer but without rust sanitizer.
+ifeq (Darwin,$(OS_ARCH))
+ifeq (,$(filter -Zsanitizer=%,$(RUSTFLAGS)))
+ifneq (,$(filter -fsanitize=%,$(LDFLAGS)))
+force-cargo-program-build: CARGO_RUSTCFLAGS += -C default-linker-libraries=yes
+endif
+endif
+endif
 
 $(HOST_RECIPES): MOZ_CARGO_WRAP_LDFLAGS:=$(HOST_LDFLAGS) $(WRAP_HOST_LINKER_LIBPATHS)
 $(TARGET_RECIPES) $(HOST_RECIPES): MOZ_CARGO_WRAP_HOST_LDFLAGS:=$(HOST_LDFLAGS) $(WRAP_HOST_LINKER_LIBPATHS)
@@ -419,7 +457,7 @@ ifdef RUST_PROGRAMS
 
 force-cargo-program-build: $(call resfile,module)
 	$(REPORT_BUILD)
-	$(call CARGO_BUILD) $(addprefix --bin ,$(RUST_CARGO_PROGRAMS)) $(cargo_target_flag) -- $(addprefix -C link-arg=$(CURDIR)/,$(call resfile,module))
+	$(call CARGO_BUILD) $(addprefix --bin ,$(RUST_CARGO_PROGRAMS)) $(cargo_target_flag) -- $(addprefix -C link-arg=$(CURDIR)/,$(call resfile,module)) $(CARGO_RUSTCFLAGS)
 
 $(RUST_PROGRAMS): force-cargo-program-build ;
 

@@ -162,7 +162,7 @@ class MachCommands(MachCommandBase):
         category="ci",
         description="Manipulate TaskCluster task graphs defined in-tree",
     )
-    def taskgraph(self):
+    def taskgraph(self, command_context):
         """The taskgraph subcommands all relate to the generation of task graphs
         for Gecko continuous integration.  A task graph is a set of tasks linked
         by dependencies: for example, a binary must be built before it is tested,
@@ -172,35 +172,35 @@ class MachCommands(MachCommandBase):
     @ShowTaskGraphSubCommand(
         "taskgraph", "tasks", description="Show all tasks in the taskgraph"
     )
-    def taskgraph_tasks(self, **options):
+    def taskgraph_tasks(self, command_context, **options):
         return self.show_taskgraph("full_task_set", options)
 
     @ShowTaskGraphSubCommand("taskgraph", "full", description="Show the full taskgraph")
-    def taskgraph_full(self, **options):
+    def taskgraph_full(self, command_context, **options):
         return self.show_taskgraph("full_task_graph", options)
 
     @ShowTaskGraphSubCommand(
         "taskgraph", "target", description="Show the target task set"
     )
-    def taskgraph_target(self, **options):
+    def taskgraph_target(self, command_context, **options):
         return self.show_taskgraph("target_task_set", options)
 
     @ShowTaskGraphSubCommand(
         "taskgraph", "target-graph", description="Show the target taskgraph"
     )
-    def taskgraph_target_taskgraph(self, **options):
+    def taskgraph_target_taskgraph(self, command_context, **options):
         return self.show_taskgraph("target_task_graph", options)
 
     @ShowTaskGraphSubCommand(
         "taskgraph", "optimized", description="Show the optimized taskgraph"
     )
-    def taskgraph_optimized(self, **options):
+    def taskgraph_optimized(self, command_context, **options):
         return self.show_taskgraph("optimized_task_graph", options)
 
     @ShowTaskGraphSubCommand(
         "taskgraph", "morphed", description="Show the morphed taskgraph"
     )
-    def taskgraph_morphed(self, **options):
+    def taskgraph_morphed(self, command_context, **options):
         return self.show_taskgraph("morphed_task_graph", options)
 
     @SubCommand("taskgraph", "actions", description="Write actions.json to stdout")
@@ -223,7 +223,7 @@ class MachCommands(MachCommandBase):
         help="parameters file (.yml or .json; see "
         "`taskcluster/docs/parameters.rst`)`",
     )
-    def taskgraph_actions(self, **options):
+    def taskgraph_actions(self, command_context, **options):
         return self.show_actions(options)
 
     @SubCommand("taskgraph", "decision", description="Run the decision task")
@@ -339,7 +339,7 @@ class MachCommands(MachCommandBase):
         default=argparse.SUPPRESS,
         help="Kinds that should not be re-used from the on-push graph.",
     )
-    def taskgraph_decision(self, **options):
+    def taskgraph_decision(self, command_context, **options):
         """Run the decision task: generate a task graph and submit to
         TaskCluster.  This is only meant to be called within decision tasks,
         and requires a great many arguments.  Commands like `mach taskgraph
@@ -380,7 +380,7 @@ class MachCommands(MachCommandBase):
         "cron",
         description="Provide a pointer to the new `.cron.yml` handler.",
     )
-    def taskgraph_cron(self, **options):
+    def taskgraph_cron(self, command_context, **options):
         print(
             'Handling of ".cron.yml" files has move to '
             "https://hg.mozilla.org/ci/ci-admin/file/default/build-decision."
@@ -398,7 +398,7 @@ class MachCommands(MachCommandBase):
         default="taskcluster/ci",
         help="root of the taskgraph definition relative to topsrcdir",
     )
-    def action_callback(self, **options):
+    def action_callback(self, command_context, **options):
         from taskgraph.actions import trigger_action_callback
         from taskgraph.actions.util import get_parameters
 
@@ -456,7 +456,7 @@ class MachCommands(MachCommandBase):
     @CommandArgument(
         "callback", default=None, help="Action callback name (Python function name)"
     )
-    def test_action_callback(self, **options):
+    def test_action_callback(self, command_context, **options):
         import taskgraph.actions
         import taskgraph.parameters
         from taskgraph.util import yaml
@@ -526,10 +526,11 @@ class MachCommands(MachCommandBase):
 
     def show_taskgraph(self, graph_attr, options):
         self.setup_logging(quiet=options["quiet"], verbose=options["verbose"])
-
+        vcs = None
         base_out = ""
         base_ref = None
         cur_ref = None
+
         if options["diff"]:
             from mozversioncontrol import get_repository_object
 
@@ -544,6 +545,18 @@ class MachCommands(MachCommandBase):
                 # branch or bookmark (which are both available on the VCS object)
                 # as `branch` is preferable to a specific revision.
                 cur_ref = vcs.branch or vcs.head_ref[:12]
+            logger.info("Generating {} @ {}".format(graph_attr, cur_ref))
+
+        out = self.format_taskgraph(graph_attr, options)
+
+        if options["diff"]:
+            with vcs:
+                # Some transforms use global state for checks, so will fail
+                # when running taskgraph a second time in the same session.
+                # Reload all taskgraph modules to avoid this.
+                for mod in sys.modules.copy():
+                    if mod.startswith("taskgraph"):
+                        del sys.modules[mod]
 
                 if options["diff"] == "default":
                     base_ref = vcs.base_ref
@@ -557,18 +570,7 @@ class MachCommands(MachCommandBase):
                     base_out = self.format_taskgraph(graph_attr, options)
                 finally:
                     vcs.update(cur_ref)
-                    logger.info("Generating {} @ {}".format(graph_attr, cur_ref))
 
-            # Some transforms use global state for checks, so will fail when
-            # running taskgraph a second time in the same session. Reload all
-            # taskgraph modules to avoid this.
-            for mod in sys.modules.copy():
-                if mod.startswith("taskgraph"):
-                    del sys.modules[mod]
-
-        out = self.format_taskgraph(graph_attr, options)
-
-        if options["diff"]:
             diffcmd = self._mach_context.settings["taskgraph"]["diffcmd"]
             diffcmd = diffcmd.format(attr=graph_attr, base=base_ref, cur=cur_ref)
 
@@ -577,15 +579,24 @@ class MachCommands(MachCommandBase):
 
                 with tempfile.NamedTemporaryFile(mode="w") as cur:
                     cur.write(out)
-                    out = subprocess.run(
-                        shlex.split(diffcmd)
-                        + [
-                            base.name,
-                            cur.name,
-                        ],
-                        capture_output=True,
-                        universal_newlines=True,
-                    ).stdout
+                    try:
+                        out = subprocess.run(
+                            shlex.split(diffcmd)
+                            + [
+                                base.name,
+                                cur.name,
+                            ],
+                            stdout=subprocess.PIPE,
+                            stderr=subprocess.PIPE,
+                            universal_newlines=True,
+                            check=True,
+                        ).stdout
+                    except subprocess.CalledProcessError as e:
+                        # returncode 1 simply means diffs were found
+                        if e.returncode != 1:
+                            print(e.stderr, file=sys.stderr)
+                            raise
+                        out = e.output
 
         fh = options["output_file"]
         if fh:
@@ -714,7 +725,7 @@ class TaskClusterImagesProvider(MachCommandBase):
         "contents of the tree (as built for mozilla-central "
         "or mozilla-inbound)",
     )
-    def load_image(self, image_name, task_id, tag):
+    def load_image(self, command_context, image_name, task_id, tag):
         from taskgraph.docker import load_image_by_name, load_image_by_task_id
 
         if not image_name and not task_id:
@@ -744,7 +755,7 @@ class TaskClusterImagesProvider(MachCommandBase):
         "with this option it will only build the context.tar.",
         metavar="context.tar",
     )
-    def build_image(self, image_name, tag, context_only):
+    def build_image(self, command_context, image_name, tag, context_only):
         from taskgraph.docker import build_context, build_image
 
         try:
@@ -773,7 +784,7 @@ class TaskClusterPartialsData(MachCommandBase):
     @CommandArgument(
         "--product", default="Firefox", help="The product identifier, such as 'Firefox'"
     )
-    def generate_partials_builds(self, product, branch):
+    def generate_partials_builds(self, command_context, product, branch):
         from taskgraph.util.partials import populate_release_history
 
         try:

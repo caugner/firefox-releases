@@ -188,6 +188,10 @@ static nsCString ImageAcceptHeader() {
     mimeTypes.Append("image/avif,");
   }
 
+  if (mozilla::StaticPrefs::image_jxl_enabled()) {
+    mimeTypes.Append("image/jxl,");
+  }
+
   if (mozilla::StaticPrefs::image_webp_enabled()) {
     mimeTypes.Append("image/webp,");
   }
@@ -355,6 +359,7 @@ static const char* gCallbackPrefs[] = {
     DOM_SECURITY_PREFIX,
     "image.http.accept",
     "image.avif.enabled",
+    "image.jxl.enabled",
     "image.webp.enabled",
     nullptr,
 };
@@ -688,8 +693,9 @@ bool nsHttpHandler::IsAcceptableEncoding(const char* enc, bool isSecure) {
   // gzip and deflate are inherently acceptable in modern HTTP - always
   // process them if a stream converter can also be found.
   if (!rv &&
-      (!PL_strcasecmp(enc, "gzip") || !PL_strcasecmp(enc, "deflate") ||
-       !PL_strcasecmp(enc, "x-gzip") || !PL_strcasecmp(enc, "x-deflate"))) {
+      (!nsCRT::strcasecmp(enc, "gzip") || !nsCRT::strcasecmp(enc, "deflate") ||
+       !nsCRT::strcasecmp(enc, "x-gzip") ||
+       !nsCRT::strcasecmp(enc, "x-deflate"))) {
     rv = true;
   }
   LOG(("nsHttpHandler::IsAceptableEncoding %s https=%d %d\n", enc, isSecure,
@@ -878,24 +884,22 @@ void nsHttpHandler::InitUserAgentComponents() {
     return;
   }
 
-#ifndef MOZ_UA_OS_AGNOSTIC
   // Gather platform.
   mPlatform.AssignLiteral(
-#  if defined(ANDROID)
+#if defined(ANDROID)
       "Android"
-#  elif defined(XP_WIN)
+#elif defined(XP_WIN)
       "Windows"
-#  elif defined(XP_MACOSX)
+#elif defined(XP_MACOSX)
       "Macintosh"
-#  elif defined(XP_UNIX)
+#elif defined(XP_UNIX)
       // We historically have always had X11 here,
       // and there seems little a webpage can sensibly do
       // based on it being something else, so use X11 for
       // backwards compatibility in all cases.
       "X11"
-#  endif
-  );
 #endif
+  );
 
 #ifdef ANDROID
   nsCOMPtr<nsIPropertyBag2> infoService =
@@ -903,9 +907,6 @@ void nsHttpHandler::InitUserAgentComponents() {
   MOZ_ASSERT(infoService, "Could not find a system info service");
   nsresult rv;
   // Add the Android version number to the Fennec platform identifier.
-#  if defined MOZ_WIDGET_ANDROID
-#    ifndef MOZ_UA_OS_AGNOSTIC  // Don't add anything to mPlatform since it's
-                                // empty.
   nsAutoString androidVersion;
   rv = infoService->GetPropertyAsAString(u"release_version"_ns, androidVersion);
   if (NS_SUCCEEDED(rv)) {
@@ -919,8 +920,7 @@ void nsHttpHandler::InitUserAgentComponents() {
       mPlatform += NS_LossyConvertUTF16toASCII(androidVersion);
     }
   }
-#    endif
-#  endif
+
   // Add the `Mobile` or `Tablet` or `TV` token when running on device.
   bool isTablet;
   rv = infoService->GetPropertyAsBool(u"tablet"_ns, &isTablet);
@@ -941,45 +941,38 @@ void nsHttpHandler::InitUserAgentComponents() {
   }
 #endif  // ANDROID
 
-#ifndef MOZ_UA_OS_AGNOSTIC
   // Gather OS/CPU.
-#  if defined(XP_WIN)
+#if defined(XP_WIN)
   OSVERSIONINFO info = {sizeof(OSVERSIONINFO)};
-#    pragma warning(push)
-#    pragma warning(disable : 4996)
-  if (GetVersionEx(&info)) {
-#    pragma warning(pop)
-
-    if (info.dwMajorVersion >= 10) {
-      // Cap the reported Windows version to 10.0. This way, Microsoft doesn't
-      // get to change Web compat-sensitive values without our veto. The
-      // compat-sensitivity keeps going up as 10.0 stays as the current value
-      // for longer and longer. If the system-reported version ever changes,
-      // we'll be able to take our time to evaluate the Web compat impact
-      // instead of having to scamble to react like happened with macOS
-      // changing from 10.x to 11.x.
-      info.dwMajorVersion = 10;
-      info.dwMinorVersion = 0;
-    }
-
-    const char* format;
-#    if defined _M_X64 || defined _M_AMD64
-    format = OSCPU_WIN64;
-#    else
-    BOOL isWow64 = FALSE;
-    if (!IsWow64Process(GetCurrentProcess(), &isWow64)) {
-      isWow64 = FALSE;
-    }
-    format = isWow64 ? OSCPU_WIN64 : OSCPU_WINDOWS;
-#    endif
-
-    SmprintfPointer buf =
-        mozilla::Smprintf(format, info.dwMajorVersion, info.dwMinorVersion);
-    if (buf) {
-      mOscpu = buf.get();
-    }
+  if (!GetVersionEx(&info) || info.dwMajorVersion >= 10) {
+    // Cap the reported Windows version to 10.0. This way, Microsoft doesn't
+    // get to change Web compat-sensitive values without our veto. The
+    // compat-sensitivity keeps going up as 10.0 stays as the current value
+    // for longer and longer. If the system-reported version ever changes,
+    // we'll be able to take our time to evaluate the Web compat impact
+    // instead of having to scramble to react like happened with macOS
+    // changing from 10.x to 11.x.
+    info.dwMajorVersion = 10;
+    info.dwMinorVersion = 0;
   }
-#  elif defined(XP_MACOSX)
+
+  const char* format;
+#  if defined _M_X64 || defined _M_AMD64
+  format = OSCPU_WIN64;
+#  else
+  BOOL isWow64 = FALSE;
+  if (!IsWow64Process(GetCurrentProcess(), &isWow64)) {
+    isWow64 = FALSE;
+  }
+  format = isWow64 ? OSCPU_WIN64 : OSCPU_WINDOWS;
+#  endif
+
+  SmprintfPointer buf =
+      mozilla::Smprintf(format, info.dwMajorVersion, info.dwMinorVersion);
+  if (buf) {
+    mOscpu = buf.get();
+  }
+#elif defined(XP_MACOSX)
   SInt32 majorVersion = nsCocoaFeatures::macOSVersionMajor();
   SInt32 minorVersion = nsCocoaFeatures::macOSVersionMinor();
 
@@ -989,7 +982,7 @@ void nsHttpHandler::InitUserAgentComponents() {
 
   // Always return an "Intel" UA string, even on ARM64 macOS like Safari does.
   mOscpu = nsPrintfCString("Intel Mac OS X 10.%d", uaVersion);
-#  elif defined(XP_UNIX)
+#elif defined(XP_UNIX)
   struct utsname name;
   int ret = uname(&name);
   if (ret >= 0) {
@@ -997,20 +990,19 @@ void nsHttpHandler::InitUserAgentComponents() {
     buf = (char*)name.sysname;
     buf += ' ';
 
-#    ifdef AIX
+#  ifdef AIX
     // AIX uname returns machine specific info in the uname.machine
     // field and does not return the cpu type like other platforms.
     // We use the AIX version and release numbers instead.
     buf += (char*)name.version;
     buf += '.';
     buf += (char*)name.release;
-#    else
+#  else
     buf += (char*)name.machine;
-#    endif
+#  endif
 
     mOscpu.Assign(buf);
   }
-#  endif
 #endif
 
   mUserAgentIsDirty = true;
@@ -1828,9 +1820,9 @@ void nsHttpHandler::PrefsChanged(const char* pref) {
     }
   }
 
-  const bool imageAcceptPrefChanged = PREF_CHANGED("image.http.accept") ||
-                                      PREF_CHANGED("image.avif.enabled") ||
-                                      PREF_CHANGED("image.webp.enabled");
+  const bool imageAcceptPrefChanged =
+      PREF_CHANGED("image.http.accept") || PREF_CHANGED("image.avif.enabled") ||
+      PREF_CHANGED("image.jxl.enabled") || PREF_CHANGED("image.webp.enabled");
 
   if (imageAcceptPrefChanged) {
     nsAutoCString userSetImageAcceptHeader;
@@ -1930,6 +1922,16 @@ static nsresult PrepareAcceptLanguages(const char* i_AcceptLanguages,
   const nsAutoCString ns_accept_languages(i_AcceptLanguages);
   return rust_prepare_accept_languages(&ns_accept_languages,
                                        &o_AcceptLanguages);
+}
+
+// Ensure that we've fetched the AcceptLanguages setting
+/* static */
+void nsHttpHandler::PresetAcceptLanguages() {
+  if (!gHttpHandler) {
+    RefPtr<nsHttpHandler> handler = nsHttpHandler::GetInstance();
+    Unused << handler.get();
+  }
+  [[maybe_unused]] nsresult rv = gHttpHandler->SetAcceptLanguages();
 }
 
 nsresult nsHttpHandler::SetAcceptLanguages() {
@@ -2710,11 +2712,39 @@ HttpTrafficAnalyzer* nsHttpHandler::GetHttpTrafficAnalyzer() {
 }
 
 bool nsHttpHandler::IsHttp3VersionSupported(const nsACString& version) {
+  if (!StaticPrefs::network_http_http3_support_version1() &&
+      version.EqualsLiteral("h3")) {
+    return false;
+  }
   for (uint32_t i = 0; i < kHttp3VersionCount; i++) {
     if (version.Equals(kHttp3Versions[i])) {
       return true;
     }
   }
+  return false;
+}
+
+bool nsHttpHandler::IsHttp3SupportedByServer(
+    nsHttpResponseHead* aResponseHead) {
+  if ((aResponseHead->Version() != HttpVersion::v2_0) ||
+      (aResponseHead->Status() >= 500) || (aResponseHead->Status() == 421)) {
+    return false;
+  }
+
+  nsAutoCString altSvc;
+  Unused << aResponseHead->GetHeader(nsHttp::Alternate_Service, altSvc);
+  if (altSvc.IsEmpty() || !nsHttp::IsReasonableHeaderValue(altSvc)) {
+    return false;
+  }
+
+  for (uint32_t i = 0; i < kHttp3VersionCount; i++) {
+    nsAutoCString value(kHttp3Versions[i]);
+    value.Append("="_ns);
+    if (PL_strstr(altSvc.get(), value.get())) {
+      return true;
+    }
+  }
+
   return false;
 }
 
@@ -2828,7 +2858,7 @@ void nsHttpHandler::MaybeAddAltSvcForTesting(
 
   bool isHttps = false;
   if (NS_FAILED(aUri->SchemeIs("https", &isHttps)) || !isHttps) {
-    // Only set forr HTTPS.
+    // Only set for HTTPS.
     return;
   }
 

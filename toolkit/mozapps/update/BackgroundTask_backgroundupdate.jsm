@@ -5,7 +5,7 @@
 
 "use strict";
 
-var EXPORTED_SYMBOLS = ["runBackgroundTask"];
+var EXPORTED_SYMBOLS = ["backgroundTaskTimeoutSec", "runBackgroundTask"];
 
 const { EXIT_CODE } = ChromeUtils.import(
   "resource://gre/modules/BackgroundUpdate.jsm"
@@ -45,6 +45,11 @@ XPCOMUtils.defineLazyGetter(this, "log", () => {
 });
 
 Cu.importGlobalProperties(["Glean", "GleanPings"]);
+
+const backgroundTaskTimeoutSec = Services.prefs.getIntPref(
+  "app.update.background.timeoutSec",
+  10 * 60
+);
 
 /**
  * Verify that pre-conditions to update this installation (both persistent and
@@ -127,8 +132,8 @@ async function _attemptBackgroundUpdate() {
         UpdateService.onlyDownloadUpdatesThisSession = true;
       } else if (
         status == AppUpdater.STATUS.DOWNLOADING &&
-        progress !== undefined &&
-        progressMax !== undefined
+        (UpdateService.onlyDownloadUpdatesThisSession ||
+          (progress !== undefined && progressMax !== undefined))
       ) {
         // We get a DOWNLOADING callback with no progress or progressMax values
         // when we initially switch to the DOWNLOADING state. But when we get
@@ -137,9 +142,9 @@ async function _attemptBackgroundUpdate() {
         // we can count on being meaningful, but it will be set to -1 for BITS
         // transfers that haven't begun yet.
         if (
+          UpdateService.onlyDownloadUpdatesThisSession ||
           progressMax < 0 ||
-          progress != progressMax ||
-          UpdateService.onlyDownloadUpdatesThisSession
+          progress != progressMax
         ) {
           log.debug(
             `${SLUG}: Download in progress. Exiting task while download ` +

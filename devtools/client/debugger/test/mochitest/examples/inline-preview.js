@@ -32,6 +32,23 @@ function objectProperties() {
   debugger;
 }
 
+function classProperties() {
+  class Foo {
+    x = 1;
+    #privateVar = 2;
+    #privateMethod() {
+      return this.#privateVar;
+    }
+    breakFn() {
+      let i = this.x * this.#privateVar;
+      const self = this;
+      debugger;
+    }
+  }
+  const foo = new Foo();
+  foo.breakFn();
+}
+
 function btnClick() {
   const btn = document.querySelector("button");
   debugger;

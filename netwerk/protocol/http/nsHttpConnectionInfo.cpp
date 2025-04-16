@@ -139,11 +139,12 @@ void nsHttpConnectionInfo::BuildHashKey() {
   // byte 5 is X/. X is for disallow_spdy flag
   // byte 6 is C/. C is for be Conservative
   // byte 7 is B/. B is for allowing client certs on an anonymous channel
+  // byte 8 is F/. F is for indicating a fallback connection
   // Note: when adding/removing fields from this list which do not have
   // corresponding data fields on the object itself, you may also need to
   // modify RebuildHashKey.
 
-  mHashKey.AssignLiteral("........[tlsflags0x00000000]");
+  mHashKey.AssignLiteral(".........[tlsflags0x00000000]");
 
   mHashKey.Append(keyHost);
   mHashKey.Append(':');
@@ -257,6 +258,7 @@ void nsHttpConnectionInfo::RebuildHashKey() {
   bool isNoSpdy = GetNoSpdy();
   bool isBeConservative = GetBeConservative();
   bool isAnonymousAllowClientCert = GetAnonymousAllowClientCert();
+  bool isFallback = GetFallbackConnection();
 
   BuildHashKey();
 
@@ -267,6 +269,7 @@ void nsHttpConnectionInfo::RebuildHashKey() {
   SetNoSpdy(isNoSpdy);
   SetBeConservative(isBeConservative);
   SetAnonymousAllowClientCert(isAnonymousAllowClientCert);
+  SetFallbackConnection(isFallback);
 }
 
 void nsHttpConnectionInfo::SetOriginServer(const nsACString& host,
@@ -302,6 +305,7 @@ already_AddRefed<nsHttpConnectionInfo> nsHttpConnectionInfo::Clone() const {
   clone->SetNoSpdy(GetNoSpdy());
   clone->SetBeConservative(GetBeConservative());
   clone->SetAnonymousAllowClientCert(GetAnonymousAllowClientCert());
+  clone->SetFallbackConnection(GetFallbackConnection());
   clone->SetTlsFlags(GetTlsFlags());
   clone->SetIsTrrServiceChannel(GetIsTrrServiceChannel());
   clone->SetTRRMode(GetTRRMode());
@@ -355,6 +359,7 @@ nsHttpConnectionInfo::CloneAndAdoptHTTPSSVCRecord(
   clone->SetNoSpdy(GetNoSpdy());
   clone->SetBeConservative(GetBeConservative());
   clone->SetAnonymousAllowClientCert(GetAnonymousAllowClientCert());
+  clone->SetFallbackConnection(GetFallbackConnection());
   clone->SetTlsFlags(GetTlsFlags());
   clone->SetIsTrrServiceChannel(GetIsTrrServiceChannel());
   clone->SetTRRMode(GetTRRMode());
@@ -436,6 +441,7 @@ nsHttpConnectionInfo::DeserializeHttpConnectionInfoCloneArgs(
   cinfo->SetNoSpdy(aInfoArgs.noSpdy());
   cinfo->SetBeConservative(aInfoArgs.beConservative());
   cinfo->SetAnonymousAllowClientCert(aInfoArgs.anonymousAllowClientCert());
+  cinfo->SetFallbackConnection(aInfoArgs.fallbackConnection());
   cinfo->SetTlsFlags(aInfoArgs.tlsFlags());
   cinfo->SetIsTrrServiceChannel(aInfoArgs.isTrrServiceChannel());
   cinfo->SetTRRMode(static_cast<nsIRequest::TRRMode>(aInfoArgs.trrMode()));
@@ -461,6 +467,7 @@ void nsHttpConnectionInfo::CloneAsDirectRoute(nsHttpConnectionInfo** outCI) {
   clone->SetNoSpdy(GetNoSpdy());
   clone->SetBeConservative(GetBeConservative());
   clone->SetAnonymousAllowClientCert(GetAnonymousAllowClientCert());
+  clone->SetFallbackConnection(GetFallbackConnection());
   clone->SetTlsFlags(GetTlsFlags());
   clone->SetIsTrrServiceChannel(GetIsTrrServiceChannel());
   clone->SetTRRMode(GetTRRMode());
@@ -515,7 +522,7 @@ void nsHttpConnectionInfo::SetIPv6Disabled(bool aNoIPv6) {
 void nsHttpConnectionInfo::SetTlsFlags(uint32_t aTlsFlags) {
   mTlsFlags = aTlsFlags;
 
-  mHashKey.Replace(19, 8, nsPrintfCString("%08x", mTlsFlags));
+  mHashKey.Replace(20, 8, nsPrintfCString("%08x", mTlsFlags));
 }
 
 bool nsHttpConnectionInfo::UsingProxy() {
@@ -524,16 +531,12 @@ bool nsHttpConnectionInfo::UsingProxy() {
 }
 
 bool nsHttpConnectionInfo::HostIsLocalIPLiteral() const {
-  PRNetAddr prAddr;
+  NetAddr netAddr;
   // If the host/proxy host is not an IP address literal, return false.
-  if (ProxyHost()) {
-    if (PR_StringToNetAddr(ProxyHost(), &prAddr) != PR_SUCCESS) {
-      return false;
-    }
-  } else if (PR_StringToNetAddr(Origin(), &prAddr) != PR_SUCCESS) {
+  nsAutoCString host(ProxyHost() ? ProxyHost() : Origin());
+  if (NS_FAILED(netAddr.InitFromString(host))) {
     return false;
   }
-  NetAddr netAddr(&prAddr);
   return netAddr.IsIPAddrLocal();
 }
 

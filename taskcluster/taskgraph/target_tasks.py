@@ -44,33 +44,6 @@ UNCOMMON_TRY_TASK_LABELS = [
 ]
 
 
-# These are live site performance tests we run three times a week
-LIVE_SITES = [
-    "amazon-search",
-    "bbc",
-    "booking-sf",
-    "cnn-ampstories",
-    "discord",
-    "espn",
-    "expedia",
-    "facebook-cristiano",
-    "fashionbeans",
-    "google",
-    "google-accounts",
-    "imdb-firefox",
-    "medium-article",
-    "microsoft-support",
-    "nytimes",
-    "people-article",
-    "reddit-thread",
-    "rumble-fox",
-    "stackoverflow-question",
-    "urbandictionary-define",
-    "wikia-marvel",
-    "youtube-watch",
-]
-
-
 def _target_task(name):
     def wrap(func):
         _target_task_methods[name] = func
@@ -274,6 +247,10 @@ def filter_unsupported_artifact_builds(task, parameters):
     return not val
 
 
+def filter_out_shippable(task):
+    return not task.attributes.get("shippable", False)
+
+
 def _try_task_config(full_task_graph, parameters, graph_config):
     requested_tasks = parameters["try_task_config"]["tasks"]
     return list(set(requested_tasks) & full_task_graph.graph.nodes)
@@ -423,6 +400,7 @@ def target_tasks_try_auto(full_task_graph, parameters, graph_config):
         and filter_by_regex(t.label, include_regexes, mode="include")
         and filter_by_regex(t.label, exclude_regexes, mode="exclude")
         and filter_unsupported_artifact_builds(t, parameters)
+        and filter_out_shippable(t)
     ]
 
 
@@ -456,9 +434,8 @@ def target_tasks_autoland(full_task_graph, parameters, graph_config):
             return True
 
         build_type = task.attributes.get("build_type")
-        shippable = task.attributes.get("shippable", False)
 
-        if not build_type or build_type != "opt" or not shippable:
+        if not build_type or build_type != "opt" or filter_out_shippable(task):
             return True
 
         return False
@@ -757,53 +734,6 @@ def target_tasks_ship_geckoview(full_task_graph, parameters, graph_config):
     return [l for l, t in six.iteritems(full_task_graph.tasks) if filter(t)]
 
 
-@_target_task("live_site_perf_testing")
-def target_tasks_live_site_perf_testing(full_task_graph, parameters, graph_config):
-    """
-    Select browsertime live site tasks that should only run once a week.
-    """
-
-    def filter(task):
-        attributes = task.attributes
-        platform = attributes.get("test_platform")
-        try_name = attributes.get("raptor_try_name")
-
-        vismet = attributes.get("kind") == "visual-metrics-dep"
-        if vismet:
-            platform = task.task.get("extra").get("treeherder-platform")
-            try_name = task.label
-
-        if attributes.get("unittest_suite") != "raptor" and not vismet:
-            return False
-        elif "live" not in try_name:
-            return False
-        elif "browsertime" not in try_name:
-            return False
-        elif "shippable" not in platform:
-            return False
-
-        # android
-        if "android" in platform:
-            if not accept_raptor_android_build(platform):
-                return False
-            elif "-qr" not in platform:
-                return False
-            elif "fenix" not in try_name:
-                return False
-
-        # desktop
-        if "windows7" in platform:
-            return False
-
-        for test in LIVE_SITES:
-            if re.search(test + r"(-fis)?$", try_name):
-                # These tests run 3 times a week, ignore them
-                return False
-        return True
-
-    return [l for l, t in six.iteritems(full_task_graph.tasks) if filter(t)]
-
-
 @_target_task("general_perf_testing")
 def target_tasks_general_perf_testing(full_task_graph, parameters, graph_config):
     """
@@ -823,18 +753,12 @@ def target_tasks_general_perf_testing(full_task_graph, parameters, graph_config)
             platform = task.task.get("extra").get("treeherder-platform")
             try_name = task.label
 
-        def _run_live_site():
-            for test in LIVE_SITES:
-                if try_name.endswith(test) or try_name.endswith(test + "-e10s"):
-                    return True
-            return False
-
         # Completely ignore all non-shippable platforms
         if "shippable" not in platform:
             return False
 
         # ignore all windows 7 perf jobs scheduled automatically
-        if "windows7" in platform:
+        if "windows7" in platform or "windows10-32" in platform:
             return False
 
         # Desktop selection
@@ -851,6 +775,8 @@ def target_tasks_general_perf_testing(full_task_graph, parameters, graph_config)
                     if "tp6" in try_name and "macosx" in platform:
                         return False
                     return True
+                if "-live" in try_name:
+                    return True
                 if "-fis" in try_name:
                     return False
                 if "linux" in platform:
@@ -860,11 +786,6 @@ def target_tasks_general_perf_testing(full_task_graph, parameters, graph_config)
                 # Don't run tp6 raptor tests
                 if "tp6" in try_name:
                     return False
-                # Run raptor-webext benchmark tests on chrome/chromium
-                if "-chrome" in try_name:
-                    return True
-                if "-chromium" in try_name:
-                    return True
         # Android selection
         elif accept_raptor_android_build(platform):
             # Ignore all fennec tests here, we run those weekly
@@ -874,8 +795,8 @@ def target_tasks_general_perf_testing(full_task_graph, parameters, graph_config)
             if "chrome-m" not in try_name and "-qr" not in platform:
                 return False
             # Select live site tests
-            if "-live" in try_name and ("fenix" in try_name or "chrome-m" in try_name):
-                return _run_live_site()
+            if "-live" in try_name:
+                return True
             # Select fenix resource usage tests
             if "fenix" in try_name:
                 if "-power" in try_name:

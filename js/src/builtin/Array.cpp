@@ -534,7 +534,9 @@ static bool SetArrayLengthProperty(JSContext* cx, HandleArrayObject obj,
   RootedId id(cx, NameToId(cx->names().length));
   ObjectOpResult result;
   if (obj->lengthIsWritable()) {
-    if (!ArraySetLength(cx, obj, id, JSPROP_PERMANENT, value, result)) {
+    Rooted<PropertyDescriptor> desc(
+        cx, PropertyDescriptor::Data(value, JS::PropertyAttribute::Writable));
+    if (!ArraySetLength(cx, obj, id, desc, result)) {
       return false;
     }
   } else {
@@ -578,7 +580,9 @@ bool js::ArrayLengthSetter(JSContext* cx, HandleObject obj, HandleId id,
   MOZ_ASSERT(arr->lengthIsWritable(),
              "setter shouldn't be called if property is non-writable");
 
-  return ArraySetLength(cx, arr, id, JSPROP_PERMANENT, v, result);
+  Rooted<PropertyDescriptor> desc(
+      cx, PropertyDescriptor::Data(v, JS::PropertyAttribute::Writable));
+  return ArraySetLength(cx, arr, id, desc, result);
 }
 
 struct ReverseIndexComparator {
@@ -591,15 +595,14 @@ struct ReverseIndexComparator {
 
 /* ES6 draft rev 34 (2015 Feb 20) 9.4.2.4 ArraySetLength */
 bool js::ArraySetLength(JSContext* cx, Handle<ArrayObject*> arr, HandleId id,
-                        unsigned attrs, HandleValue value,
+                        Handle<PropertyDescriptor> desc,
                         ObjectOpResult& result) {
   MOZ_ASSERT(id == NameToId(cx->names().length));
+  MOZ_ASSERT(desc.isDataDescriptor() || desc.isGenericDescriptor());
 
   // Step 1.
   uint32_t newLen;
-  if (attrs & JSPROP_IGNORE_VALUE) {
-    MOZ_ASSERT(value.isUndefined());
-
+  if (!desc.hasValue()) {
     // The spec has us calling OrdinaryDefineOwnProperty if
     // Desc.[[Value]] is absent, but our implementation is so different that
     // this is impossible. Instead, set newLen to the current length and
@@ -609,13 +612,13 @@ bool js::ArraySetLength(JSContext* cx, Handle<ArrayObject*> arr, HandleId id,
     // Step 2 is irrelevant in our implementation.
 
     // Step 3.
-    if (!ToUint32(cx, value, &newLen)) {
+    if (!ToUint32(cx, desc.value(), &newLen)) {
       return false;
     }
 
     // Step 4.
     double d;
-    if (!ToNumber(cx, value, &d)) {
+    if (!ToNumber(cx, desc.value(), &d)) {
       return false;
     }
 
@@ -633,7 +636,7 @@ bool js::ArraySetLength(JSContext* cx, Handle<ArrayObject*> arr, HandleId id,
   bool lengthIsWritable = arr->lengthIsWritable();
 #ifdef DEBUG
   {
-    mozilla::Maybe<ShapeProperty> lengthProp = arr->lookupPure(id);
+    mozilla::Maybe<PropertyInfo> lengthProp = arr->lookupPure(id);
     MOZ_ASSERT(lengthProp.isSome());
     MOZ_ASSERT(lengthProp->writable() == lengthIsWritable);
   }
@@ -644,12 +647,9 @@ bool js::ArraySetLength(JSContext* cx, Handle<ArrayObject*> arr, HandleId id,
   // enumerability or configurability, or otherwise break the object
   // invariants. (ES6 checks these by calling OrdinaryDefineOwnProperty, but
   // in SM, the array length property is hardly ordinary.)
-  if ((attrs & (JSPROP_PERMANENT | JSPROP_IGNORE_PERMANENT)) == 0 ||
-      (attrs & (JSPROP_ENUMERATE | JSPROP_IGNORE_ENUMERATE)) ==
-          JSPROP_ENUMERATE ||
-      (attrs & (JSPROP_GETTER | JSPROP_SETTER)) != 0 ||
-      (!lengthIsWritable &&
-       (attrs & (JSPROP_READONLY | JSPROP_IGNORE_READONLY)) == 0)) {
+  if ((desc.hasConfigurable() && desc.configurable()) ||
+      (desc.hasEnumerable() && desc.enumerable()) ||
+      (!lengthIsWritable && desc.hasWritable() && desc.writable())) {
     return result.fail(JSMSG_CANT_REDEFINE_PROP);
   }
 
@@ -824,12 +824,13 @@ bool js::ArraySetLength(JSContext* cx, Handle<ArrayObject*> arr, HandleId id,
   arr->setLength(newLen);
 
   // Step 20.
-  if (attrs & JSPROP_READONLY) {
-    Maybe<ShapeProperty> lengthProp = arr->lookup(cx, id);
+  if (desc.hasWritable() && !desc.writable()) {
+    Maybe<PropertyInfo> lengthProp = arr->lookup(cx, id);
     MOZ_ASSERT(lengthProp.isSome());
     MOZ_ASSERT(lengthProp->isCustomDataProperty());
-    unsigned attrs = lengthProp->attributes() | JSPROP_READONLY;
-    if (!NativeObject::changeCustomDataPropAttributes(cx, arr, id, attrs)) {
+    PropertyFlags flags = lengthProp->flags();
+    flags.clearFlag(PropertyFlag::Writable);
+    if (!NativeObject::changeCustomDataPropAttributes(cx, arr, id, flags)) {
       return false;
     }
   }
@@ -847,7 +848,7 @@ bool js::ArraySetLength(JSContext* cx, Handle<ArrayObject*> arr, HandleId id,
     arr->shrinkCapacityToInitializedLength(cx);
   }
 
-  if (attrs & JSPROP_READONLY) {
+  if (desc.hasWritable() && !desc.writable()) {
     arr->setNonWritableLength(cx);
   }
 
@@ -930,8 +931,9 @@ static bool AddLengthProperty(JSContext* cx, HandleArrayObject obj) {
   MOZ_ASSERT(obj->empty());
 
   RootedId lengthId(cx, NameToId(cx->names().length));
-  return NativeObject::addCustomDataProperty(
-      cx, obj, lengthId, JSPROP_CUSTOM_DATA_PROP | JSPROP_PERMANENT);
+  constexpr PropertyFlags flags = {PropertyFlag::CustomDataProperty,
+                                   PropertyFlag::Writable};
+  return NativeObject::addCustomDataProperty(cx, obj, lengthId, flags);
 }
 
 static bool IsArrayConstructor(const JSObject* obj) {
@@ -3616,10 +3618,8 @@ static const JSFunctionSpec array_methods[] = {
     JS_SELF_HOSTED_FN("flatMap", "ArrayFlatMap", 1, 0),
     JS_SELF_HOSTED_FN("flat", "ArrayFlat", 0, 0),
 
-/* Proposal */
-#ifdef NIGHTLY_BUILD
+    /* Proposal */
     JS_SELF_HOSTED_FN("at", "ArrayAt", 1, 0),
-#endif
 
     JS_FS_END};
 
@@ -3753,13 +3753,8 @@ static bool array_proto_finish(JSContext* cx, JS::HandleObject ctor,
   }
 
   RootedValue value(cx, BooleanValue(true));
-#ifdef NIGHTLY_BUILD
-  if (!DefineDataProperty(cx, unscopables, cx->names().at, value)) {
-    return false;
-  }
-#endif
-
-  if (!DefineDataProperty(cx, unscopables, cx->names().copyWithin, value) ||
+  if (!DefineDataProperty(cx, unscopables, cx->names().at, value) ||
+      !DefineDataProperty(cx, unscopables, cx->names().copyWithin, value) ||
       !DefineDataProperty(cx, unscopables, cx->names().entries, value) ||
       !DefineDataProperty(cx, unscopables, cx->names().fill, value) ||
       !DefineDataProperty(cx, unscopables, cx->names().find, value) ||
@@ -3894,6 +3889,9 @@ static MOZ_ALWAYS_INLINE ArrayObject* NewArray(JSContext* cx, uint32_t length,
     }
     shape = arr->lastProperty();
     EmptyShape::insertInitialShape(cx, shape);
+    if (proto == cx->global()->maybeGetArrayPrototype()) {
+      cx->global()->setArrayShape(shape);
+    }
   }
 
   if (isCachable) {
@@ -4053,7 +4051,7 @@ void js::ArraySpeciesLookup::initialize(JSContext* cx) {
   state_ = State::Disabled;
 
   // Look up Array.prototype[@@iterator] and ensure it's a data property.
-  Maybe<ShapeProperty> ctorProp =
+  Maybe<PropertyInfo> ctorProp =
       arrayProto->lookup(cx, NameToId(cx->names().constructor));
   if (ctorProp.isNothing() || !ctorProp->isDataProperty()) {
     return;
@@ -4070,7 +4068,7 @@ void js::ArraySpeciesLookup::initialize(JSContext* cx) {
   }
 
   // Look up the '@@species' value on Array
-  Maybe<ShapeProperty> speciesProp =
+  Maybe<PropertyInfo> speciesProp =
       arrayCtor->lookup(cx, SYMBOL_TO_JSID(cx->wellKnownSymbols().species));
   if (speciesProp.isNothing() || !arrayCtor->hasGetter(*speciesProp)) {
     return;
@@ -4168,7 +4166,7 @@ bool js::ArraySpeciesLookup::tryOptimizeArray(JSContext* cx,
   // shadow Array.prototype.constructor.
   ShapePropertyIter<NoGC> iter(array->shape());
   MOZ_ASSERT(!iter.done(), "Array must have at least one property");
-  DebugOnly<JS::PropertyKey> key = iter->key();
+  DebugOnly<PropertyKey> key = iter->key();
   iter++;
   if (!iter.done()) {
     return false;

@@ -8,6 +8,7 @@
 
 #include <algorithm>  // for std::stable_sort
 #include "mozilla/Assertions.h"
+#include "mozilla/FloatingPoint.h"
 #include "AsyncPanZoomController.h"
 
 namespace mozilla {
@@ -95,6 +96,18 @@ void OverscrollHandoffChain::SnapBackOverscrolledApzc(
   }
 }
 
+void OverscrollHandoffChain::SnapBackOverscrolledApzcForMomentum(
+    const AsyncPanZoomController* aStart,
+    const ParentLayerPoint& aVelocity) const {
+  uint32_t i = IndexOf(aStart);
+  for (; i < Length(); ++i) {
+    AsyncPanZoomController* apzc = mChain[i];
+    if (!apzc->IsDestroyed()) {
+      apzc->SnapBackIfOverscrolledForMomentum(aVelocity);
+    }
+  }
+}
+
 bool OverscrollHandoffChain::CanBePanned(
     const AsyncPanZoomController* aApzc) const {
   // Find |aApzc| in the handoff chain.
@@ -160,8 +173,25 @@ RefPtr<AsyncPanZoomController> OverscrollHandoffChain::FindFirstScrollable(
     if (StaticPrefs::apz_overscroll_enabled() &&
         // FIXME: Bug 1707491: Drop this pan gesture input check.
         aInput.mInputType == PANGESTURE_INPUT && mChain[i]->IsRootContent()) {
-      *aOutAllowedScrollDirections &= mChain[i]->GetOverscrollableDirections();
-      if (!aOutAllowedScrollDirections->isEmpty()) {
+      // Check whether the root content APZC is also overscrollable governed by
+      // overscroll-behavior in the same directions where we allow scrolling
+      // handoff and where we are going to scroll, if it matches we do handoff
+      // to the root content APZC.
+      // In other words, if the root content is not scrollable, we don't
+      // handoff.
+      ScrollDirections allowedOverscrollDirections =
+          mChain[i]->GetOverscrollableDirections();
+      ParentLayerPoint delta = mChain[i]->GetDeltaForEvent(aInput);
+      if (FuzzyEqualsAdditive(delta.x, 0.0f, COORDINATE_EPSILON)) {
+        allowedOverscrollDirections -= ScrollDirection::eHorizontal;
+      }
+      if (FuzzyEqualsAdditive(delta.y, 0.0f, COORDINATE_EPSILON)) {
+        allowedOverscrollDirections -= ScrollDirection::eVertical;
+      }
+
+      allowedOverscrollDirections &= *aOutAllowedScrollDirections;
+      if (!allowedOverscrollDirections.isEmpty()) {
+        *aOutAllowedScrollDirections = allowedOverscrollDirections;
         return mChain[i];
       }
     }

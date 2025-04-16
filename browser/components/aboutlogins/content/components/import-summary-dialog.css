@@ -5,6 +5,7 @@
 .content {
   display: flex;
   flex-direction: column;
+  align-items: flex-start;
 }
 
 .import-summary {
@@ -37,4 +38,5 @@
 
 .open-detailed-report {
   margin-block-start: 30px;
+  font-weight: 600;
 }

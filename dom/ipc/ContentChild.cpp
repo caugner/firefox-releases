@@ -9,6 +9,7 @@
 #endif
 
 #include "BrowserChild.h"
+#include "nsNSSComponent.h"
 #include "ContentChild.h"
 #include "GeckoProfiler.h"
 #include "HandlerServiceChild.h"
@@ -49,7 +50,6 @@
 #include "mozilla/Unused.h"
 #include "mozilla/WebBrowserPersistDocumentChild.h"
 #include "mozilla/devtools/HeapSnapshotTempFileHelperChild.h"
-#include "mozilla/docshell/OfflineCacheUpdateChild.h"
 #include "mozilla/dom/AutoSuppressEventHandlingAndSuspend.h"
 #include "mozilla/dom/BlobImpl.h"
 #include "mozilla/dom/BrowserBridgeHost.h"
@@ -118,6 +118,7 @@
 #include "nsBaseDragService.h"
 #include "nsDocShellLoadTypes.h"
 #include "nsFocusManager.h"
+#include "nsHttpHandler.h"
 #include "nsIConsoleService.h"
 #include "nsIInputStreamChannel.h"
 #include "nsILoadGroup.h"
@@ -296,7 +297,6 @@
 extern mozilla::LazyLogModule gSHIPBFCacheLog;
 
 using namespace mozilla;
-using namespace mozilla::docshell;
 using namespace mozilla::dom::ipc;
 using namespace mozilla::media;
 using namespace mozilla::embedding;
@@ -2009,11 +2009,36 @@ mozilla::ipc::IPCResult ContentChild::RecvRegisterChromeItem(
 
   return IPC_OK();
 }
-
 mozilla::ipc::IPCResult ContentChild::RecvClearStyleSheetCache(
-    const Maybe<RefPtr<nsIPrincipal>>& aForPrincipal) {
-  nsIPrincipal* prin = aForPrincipal ? aForPrincipal.value().get() : nullptr;
-  SharedStyleSheetCache::Clear(prin);
+    const Maybe<RefPtr<nsIPrincipal>>& aForPrincipal,
+    const Maybe<nsCString>& aBaseDomain) {
+  nsIPrincipal* principal =
+      aForPrincipal ? aForPrincipal.value().get() : nullptr;
+  const nsCString* baseDomain = aBaseDomain ? aBaseDomain.ptr() : nullptr;
+  SharedStyleSheetCache::Clear(principal, baseDomain);
+  return IPC_OK();
+}
+
+mozilla::ipc::IPCResult ContentChild::RecvClearImageCacheFromPrincipal(
+    nsIPrincipal* aPrincipal) {
+  imgLoader* loader;
+  if (aPrincipal->OriginAttributesRef().mPrivateBrowsingId ==
+      nsIScriptSecurityManager::DEFAULT_PRIVATE_BROWSING_ID) {
+    loader = imgLoader::NormalLoader();
+  } else {
+    loader = imgLoader::PrivateBrowsingLoader();
+  }
+
+  loader->RemoveEntriesInternal(aPrincipal, nullptr);
+  return IPC_OK();
+}
+
+mozilla::ipc::IPCResult ContentChild::RecvClearImageCacheFromBaseDomain(
+    const nsCString& aBaseDomain) {
+  imgLoader::NormalLoader()->RemoveEntriesInternal(nullptr, &aBaseDomain);
+  imgLoader::PrivateBrowsingLoader()->RemoveEntriesInternal(nullptr,
+                                                            &aBaseDomain);
+
   return IPC_OK();
 }
 
@@ -2347,13 +2372,27 @@ mozilla::ipc::IPCResult ContentChild::RecvUpdateDictionaryList(
 mozilla::ipc::IPCResult ContentChild::RecvUpdateFontList(
     dom::SystemFontList&& aFontList) {
   mFontList = std::move(aFontList);
-  gfxPlatform::GetPlatform()->UpdateFontList(true);
+  if (gfxPlatform::Initialized()) {
+    gfxPlatform::GetPlatform()->UpdateFontList(true);
+  }
   return IPC_OK();
 }
 
 mozilla::ipc::IPCResult ContentChild::RecvRebuildFontList(
     const bool& aFullRebuild) {
-  gfxPlatform::GetPlatform()->UpdateFontList(aFullRebuild);
+  if (gfxPlatform::Initialized()) {
+    gfxPlatform::GetPlatform()->UpdateFontList(aFullRebuild);
+  }
+  return IPC_OK();
+}
+
+mozilla::ipc::IPCResult ContentChild::RecvFontListShmBlockAdded(
+    const uint32_t& aGeneration, const uint32_t& aIndex,
+    const base::SharedMemoryHandle& aHandle) {
+  if (gfxPlatform::Initialized()) {
+    gfxPlatformFontList::PlatformFontList()->ShmBlockAdded(aGeneration, aIndex,
+                                                           aHandle);
+  }
   return IPC_OK();
 }
 
@@ -2530,6 +2569,10 @@ mozilla::ipc::IPCResult ContentChild::RecvRemoteType(
     MOZ_LOG(ContentParent::GetLog(), LogLevel::Debug,
             ("Setting remoteType of process %d to %s", getpid(),
              aRemoteType.get()));
+
+    if (aRemoteType == PREALLOC_REMOTE_TYPE) {
+      PreallocInit();
+    }
   }
 
   auto remoteTypePrefix = RemoteTypePrefix(aRemoteType);
@@ -2583,6 +2626,15 @@ mozilla::ipc::IPCResult ContentChild::RecvRemoteType(
   }
 
   return IPC_OK();
+}
+
+// A method to initialize anything we need during the preallocation phase
+void ContentChild::PreallocInit() {
+  EnsureNSSInitializedChromeOrContent();
+
+  // SetAcceptLanguages() needs to read localized strings (file access),
+  // which is slow, so do this in prealloc
+  nsHttpHandler::PresetAcceptLanguages();
 }
 
 // Call RemoteTypePrefix() on the result to remove URIs if you want to use this
@@ -3636,6 +3688,15 @@ mozilla::ipc::IPCResult ContentChild::RecvRegisterBrowsingContextGroup(
   return IPC_OK();
 }
 
+mozilla::ipc::IPCResult ContentChild::RecvDestroyBrowsingContextGroup(
+    uint64_t aGroupId) {
+  if (RefPtr<BrowsingContextGroup> group =
+          BrowsingContextGroup::GetExisting(aGroupId)) {
+    group->ChildDestroy();
+  }
+  return IPC_OK();
+}
+
 mozilla::ipc::IPCResult ContentChild::RecvWindowClose(
     const MaybeDiscarded<BrowsingContext>& aContext, bool aTrustedCaller) {
   if (aContext.IsNullOrDiscarded()) {
@@ -4313,7 +4374,8 @@ mozilla::ipc::IPCResult ContentChild::RecvFlushTabState(
 
 mozilla::ipc::IPCResult ContentChild::RecvGoBack(
     const MaybeDiscarded<BrowsingContext>& aContext,
-    const Maybe<int32_t>& aCancelContentJSEpoch, bool aRequireUserInteraction) {
+    const Maybe<int32_t>& aCancelContentJSEpoch, bool aRequireUserInteraction,
+    bool aUserActivation) {
   if (aContext.IsNullOrDiscarded()) {
     return IPC_OK();
   }
@@ -4323,7 +4385,7 @@ mozilla::ipc::IPCResult ContentChild::RecvGoBack(
     if (aCancelContentJSEpoch) {
       docShell->SetCancelContentJSEpoch(*aCancelContentJSEpoch);
     }
-    docShell->GoBack(aRequireUserInteraction);
+    docShell->GoBack(aRequireUserInteraction, aUserActivation);
 
     if (BrowserChild* browserChild = BrowserChild::GetFrom(docShell)) {
       browserChild->NotifyNavigationFinished();
@@ -4335,7 +4397,8 @@ mozilla::ipc::IPCResult ContentChild::RecvGoBack(
 
 mozilla::ipc::IPCResult ContentChild::RecvGoForward(
     const MaybeDiscarded<BrowsingContext>& aContext,
-    const Maybe<int32_t>& aCancelContentJSEpoch, bool aRequireUserInteraction) {
+    const Maybe<int32_t>& aCancelContentJSEpoch, bool aRequireUserInteraction,
+    bool aUserActivation) {
   if (aContext.IsNullOrDiscarded()) {
     return IPC_OK();
   }
@@ -4345,7 +4408,7 @@ mozilla::ipc::IPCResult ContentChild::RecvGoForward(
     if (aCancelContentJSEpoch) {
       docShell->SetCancelContentJSEpoch(*aCancelContentJSEpoch);
     }
-    docShell->GoForward(aRequireUserInteraction);
+    docShell->GoForward(aRequireUserInteraction, aUserActivation);
 
     if (BrowserChild* browserChild = BrowserChild::GetFrom(docShell)) {
       browserChild->NotifyNavigationFinished();
@@ -4357,7 +4420,7 @@ mozilla::ipc::IPCResult ContentChild::RecvGoForward(
 
 mozilla::ipc::IPCResult ContentChild::RecvGoToIndex(
     const MaybeDiscarded<BrowsingContext>& aContext, const int32_t& aIndex,
-    const Maybe<int32_t>& aCancelContentJSEpoch) {
+    const Maybe<int32_t>& aCancelContentJSEpoch, bool aUserActivation) {
   if (aContext.IsNullOrDiscarded()) {
     return IPC_OK();
   }
@@ -4367,7 +4430,7 @@ mozilla::ipc::IPCResult ContentChild::RecvGoToIndex(
     if (aCancelContentJSEpoch) {
       docShell->SetCancelContentJSEpoch(*aCancelContentJSEpoch);
     }
-    docShell->GotoIndex(aIndex);
+    docShell->GotoIndex(aIndex, aUserActivation);
 
     if (BrowserChild* browserChild = BrowserChild::GetFrom(docShell)) {
       browserChild->NotifyNavigationFinished();
@@ -4432,6 +4495,14 @@ NS_IMETHODIMP ContentChild::GetActor(const nsACString& aName, JSContext* aCx,
   if (error.MaybeSetPendingException(aCx)) {
     return NS_ERROR_FAILURE;
   }
+  actor.forget(retval);
+  return NS_OK;
+}
+
+NS_IMETHODIMP ContentChild::GetExistingActor(const nsACString& aName,
+                                             JSProcessActorChild** retval) {
+  RefPtr<JSProcessActorChild> actor =
+      JSActorManager::GetExistingActor(aName).downcast<JSProcessActorChild>();
   actor.forget(retval);
   return NS_OK;
 }

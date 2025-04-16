@@ -171,6 +171,7 @@ pref("app.update.langpack.enabled", true);
 
 #if defined(MOZ_UPDATE_AGENT)
   pref("app.update.background.loglevel", "error");
+  pref("app.update.background.timeoutSec", 600);
   // If set to true, on Windows, the browser will attempt to schedule OS-level
   // background tasks to update itself even when it is not running.  This pref
   // is special: any profile that believes itself the default profile will
@@ -187,6 +188,12 @@ pref("app.update.langpack.enabled", true);
 #endif
   // By default, check for updates when the browser is not running every 7 hours.
   pref("app.update.background.interval", 25200);
+#endif
+
+#if defined(MOZ_BACKGROUNDTASKS)
+  // The amount of time, in seconds, before background tasks time out and exit.
+  // Tasks can override this default (10 minutes).
+  pref("toolkit.backgroundtasks.defaultTimeoutSec", 600);
 #endif
 
 // Symmetric (can be overridden by individual extensions) update preferences.
@@ -287,7 +294,11 @@ pref("browser.startup.firstrunSkipsHomepage", true);
 // Show a skeleton UI window prior to loading libxul. Only visible for windows
 // users as it is not implemented anywhere else.
 #if defined(XP_WIN)
+#ifdef NIGHTLY_BUILD
 pref("browser.startup.preXulSkeletonUI", true);
+#else
+pref("browser.startup.preXulSkeletonUI", false);
+#endif
 #endif
 
 // Show an upgrade dialog on major upgrades.
@@ -359,6 +370,18 @@ pref("browser.urlbar.quicksuggest.shouldShowOnboardingDialog", true);
 
 // Show QuickSuggest onboarding dialog on the nth browser restarts.
 pref("browser.urlbar.quicksuggest.showOnboardingDialogAfterNRestarts", 2);
+
+// The indexes of the sponsored and non-sponsored quick suggest results within
+// the general results group.
+pref("browser.urlbar.quicksuggest.sponsoredIndex", -1);
+pref("browser.urlbar.quicksuggest.nonSponsoredIndex", -1);
+
+// Whether unit conversion is enabled.
+#ifdef NIGHTLY_BUILD
+pref("browser.urlbar.unitConversion.enabled", true);
+#else
+pref("browser.urlbar.unitConversion.enabled", false);
+#endif
 
 // Whether to show search suggestions before general results like history and
 // bookmarks.
@@ -454,7 +477,7 @@ pref("browser.download.alwaysOpenInSystemViewerContextMenuItem", true);
 // Open downloaded file types internally for the given types.
 // This is a comma-separated list, the empty string ("") means no types are
 // viewable internally.
-pref("browser.download.viewableInternally.enabledTypes", "xml,svg,webp,avif");
+pref("browser.download.viewableInternally.enabledTypes", "xml,svg,webp,avif,jxl");
 
 
 // This controls whether the button is automatically shown/hidden depending
@@ -507,6 +530,8 @@ pref("browser.privatebrowsing.promoEnabled", true);
 pref("browser.privatebrowsing.promoTitle", "");
 pref("browser.privatebrowsing.promoLinkText", "");
 pref("browser.privatebrowsing.promoLinkUrl", "");
+pref("browser.privatebrowsing.infoTitleEnabled", true);
+pref("browser.privatebrowsing.promoTitleEnabled", true);
 
 pref("browser.sessionhistory.max_entries", 50);
 
@@ -1048,6 +1073,14 @@ pref("places.frecency.defaultVisitBonus", 0);
 pref("places.frecency.unvisitedBookmarkBonus", 140);
 pref("places.frecency.unvisitedTypedBonus", 200);
 
+#ifdef NIGHTLY_BUILD
+  // Clear data by base domain (including partitioned storage) when the user
+  // selects "Forget About This Site".
+  pref("places.forgetThisSite.clearByBaseDomain", true);
+#else
+  pref("places.forgetThisSite.clearByBaseDomain", false);
+#endif
+
 // Controls behavior of the "Add Exception" dialog launched from SSL error pages
 // 0 - don't pre-populate anything
 // 1 - pre-populate site URL, but don't fetch certificate
@@ -1384,6 +1417,9 @@ pref("browser.menu.showCharacterEncoding", "chrome://browser/locale/browser.prop
 pref("prompts.defaultModalType", 3);
 
 pref("browser.topsites.useRemoteSetting", true);
+// Fetch sponsored Top Sites from Mozilla Tiles Service (Contile)
+pref("browser.topsites.contile.enabled", false);
+pref("browser.topsites.contile.endpoint", "https://contile.services.mozilla.com/v1/tiles");
 
 // The base URL for the Quick Suggest anonymizing proxy. To make a request to
 // the proxy, include a campaign ID in the path.
@@ -1487,6 +1523,7 @@ pref("browser.newtabpage.activity-stream.logowordmark.alwaysVisible", true);
 pref("trailhead.firstrun.newtab.triplets", "");
 // Separate about welcome
 pref("browser.aboutwelcome.enabled", true);
+pref("browser.aboutwelcome.protonDesign", true);
 // Used to set multistage welcome UX
 pref("browser.aboutwelcome.screens", "");
 pref("browser.aboutwelcome.skipFocus", true);
@@ -1502,6 +1539,7 @@ pref("browser.messaging-system.personalized-cfr.score-threshold", 5000);
 pref("messaging-system.log", "warn");
 pref("messaging-system.rsexperimentloader.enabled", true);
 pref("messaging-system.rsexperimentloader.collection_id", "nimbus-desktop-experiments");
+pref("nimbus.debug", false);
 
 // Enable the DOM fullscreen API.
 pref("full-screen-api.enabled", true);
@@ -2551,3 +2589,8 @@ pref("first-startup.timeout", 30000);
 // are expected to go away once a standardized alternative becomes
 // available.
 pref("svg.context-properties.content.allowed-domains", "profile.accounts.firefox.com,profile.stage.mozaws.net");
+
+// Preference that allows individual users to disable Firefox Translations.
+#ifdef NIGHTLY_BUILD
+  pref("extensions.translations.disabled", true);
+#endif

@@ -378,7 +378,7 @@ ModuleRequestObject* ModuleRequestObject::create(JSContext* cx,
 // IndirectBindingMap
 
 IndirectBindingMap::Binding::Binding(ModuleEnvironmentObject* environment,
-                                     jsid targetName, ShapeProperty prop)
+                                     jsid targetName, PropertyInfo prop)
     : environment(environment),
 #ifdef DEBUG
       targetName(targetName),
@@ -414,7 +414,7 @@ bool IndirectBindingMap::put(JSContext* cx, HandleId name,
     map_.emplace(cx->zone());
   }
 
-  mozilla::Maybe<ShapeProperty> prop = environment->lookup(cx, targetName);
+  mozilla::Maybe<PropertyInfo> prop = environment->lookup(cx, targetName);
   MOZ_ASSERT(prop.isSome());
   if (!map_->put(name, Binding(environment, targetName, *prop))) {
     ReportOutOfMemory(cx);
@@ -425,7 +425,7 @@ bool IndirectBindingMap::put(JSContext* cx, HandleId name,
 }
 
 bool IndirectBindingMap::lookup(jsid name, ModuleEnvironmentObject** envOut,
-                                mozilla::Maybe<ShapeProperty>* propOut) const {
+                                mozilla::Maybe<PropertyInfo>* propOut) const {
   if (!map_) {
     return false;
   }
@@ -556,26 +556,25 @@ bool ModuleNamespaceObject::ProxyHandler::preventExtensions(
 
 bool ModuleNamespaceObject::ProxyHandler::getOwnPropertyDescriptor(
     JSContext* cx, HandleObject proxy, HandleId id,
-    MutableHandle<PropertyDescriptor> desc) const {
+    MutableHandle<mozilla::Maybe<PropertyDescriptor>> desc) const {
   Rooted<ModuleNamespaceObject*> ns(cx, &proxy->as<ModuleNamespaceObject>());
-  if (JSID_IS_SYMBOL(id)) {
-    if (JSID_TO_SYMBOL(id) == cx->wellKnownSymbols().toStringTag) {
-      RootedValue value(cx, StringValue(cx->names().Module));
-      desc.object().set(proxy);
-      desc.setWritable(false);
-      desc.setEnumerable(false);
-      desc.setConfigurable(false);
-      desc.setValue(value);
+  if (id.isSymbol()) {
+    if (id.isWellKnownSymbol(JS::SymbolCode::toStringTag)) {
+      desc.set(mozilla::Some(
+          PropertyDescriptor::Data(StringValue(cx->names().Module))));
       return true;
     }
 
+    desc.reset();
     return true;
   }
 
   const IndirectBindingMap& bindings = ns->bindings();
   ModuleEnvironmentObject* env;
-  mozilla::Maybe<ShapeProperty> prop;
+  mozilla::Maybe<PropertyInfo> prop;
   if (!bindings.lookup(id, &env, &prop)) {
+    // Not found.
+    desc.reset();
     return true;
   }
 
@@ -585,10 +584,9 @@ bool ModuleNamespaceObject::ProxyHandler::getOwnPropertyDescriptor(
     return false;
   }
 
-  desc.object().set(env);
-  desc.setConfigurable(false);
-  desc.setEnumerable(true);
-  desc.setValue(value);
+  desc.set(mozilla::Some(PropertyDescriptor::Data(
+      value,
+      {JS::PropertyAttribute::Enumerable, JS::PropertyAttribute::Writable})));
   return true;
 }
 
@@ -640,7 +638,7 @@ bool ModuleNamespaceObject::ProxyHandler::defineProperty(
   const IndirectBindingMap& bindings =
       proxy->as<ModuleNamespaceObject>().bindings();
   ModuleEnvironmentObject* env;
-  mozilla::Maybe<ShapeProperty> prop;
+  mozilla::Maybe<PropertyInfo> prop;
   if (!bindings.lookup(id, &env, &prop)) {
     return result.fail(JSMSG_CANT_DEFINE_PROP_OBJECT_NOT_EXTENSIBLE);
   }
@@ -681,7 +679,7 @@ bool ModuleNamespaceObject::ProxyHandler::get(JSContext* cx, HandleObject proxy,
   }
 
   ModuleEnvironmentObject* env;
-  mozilla::Maybe<ShapeProperty> prop;
+  mozilla::Maybe<PropertyInfo> prop;
   if (!ns->bindings().lookup(id, &env, &prop)) {
     vp.setUndefined();
     return true;

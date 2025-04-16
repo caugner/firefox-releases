@@ -76,6 +76,11 @@ service("History", "mozilla::IHistory", "@mozilla.org/browser/history;1")
 service("ThirdPartyUtil", "mozIThirdPartyUtil", "@mozilla.org/thirdpartyutil;1")
 service("URIFixup", "nsIURIFixup", "@mozilla.org/docshell/uri-fixup;1")
 service("Bits", "nsIBits", "@mozilla.org/bits;1")
+service(
+    "MemoryReporterManager",
+    "nsIMemoryReporterManager",
+    "@mozilla.org/memory-reporter-manager;1",
+)
 # If you want nsIXULAppInfo, as returned by Services.jsm, you need to call:
 #
 # nsCOMPtr<nsIXULRuntime> runtime = mozilla::services::GetXULRuntime();
@@ -90,7 +95,7 @@ service("Bits", "nsIBits", "@mozilla.org/bits;1")
 # nsIXULAppInfo.
 service("XULRuntime", "nsIXULRuntime", "@mozilla.org/xre/app-info;1")
 
-if buildconfig.substs.get("ENABLE_REMOTE_AGENT"):
+if buildconfig.substs.get("ENABLE_WEBDRIVER"):
     service("RemoteAgent", "nsIRemoteAgent", "@mozilla.org/remote/agent;1")
 
 # The definition file needs access to the definitions of the particular
@@ -128,7 +133,7 @@ CPP_INCLUDES = """
 #include "nsIXULRuntime.h"
 """
 
-if buildconfig.substs.get("ENABLE_REMOTE_AGENT"):
+if buildconfig.substs.get("ENABLE_WEBDRIVER"):
     CPP_INCLUDES += '#include "nsIRemoteAgent.h"'
 
 

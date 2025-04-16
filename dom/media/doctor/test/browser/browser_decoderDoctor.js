@@ -30,11 +30,14 @@ async function test_decoder_doctor_notification(
     await BrowserTestUtils.withNewTab(
       { gBrowser, url: TEST_URL },
       async function(browser) {
-        let awaitNotificationBar = BrowserTestUtils.waitForNotificationBar(
-          gBrowser,
-          browser,
-          "decoder-doctor-notification"
-        );
+        let awaitNotificationBar;
+        if (notificationMessage) {
+          awaitNotificationBar = BrowserTestUtils.waitForNotificationBar(
+            gBrowser,
+            browser,
+            "decoder-doctor-notification"
+          );
+        }
 
         await SpecialPowers.spawn(
           browser,
@@ -96,7 +99,7 @@ async function test_decoder_doctor_notification(
 
         is(
           notification.messageText.textContent,
-          notificationMessage + (gProton && isLink && label ? " " : ""),
+          notificationMessage + (isLink && label ? " " : ""),
           "notification message should match expectation"
         );
 

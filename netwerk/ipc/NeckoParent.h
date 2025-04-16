@@ -56,36 +56,6 @@ class NeckoParent : public PNeckoParent {
     return PNeckoParent::RecvPCookieServiceConstructor(aActor);
   }
 
-  /*
-   * This implementation of nsIAuthPrompt2 is used for nested remote iframes
-   * that want an auth prompt.  This class lives in the parent process and
-   * informs the NeckoChild that we want an auth prompt, which forwards the
-   * request to the BrowserParent in the remote iframe that contains the nested
-   * iframe
-   */
-  class NestedFrameAuthPrompt final : public nsIAuthPrompt2 {
-    ~NestedFrameAuthPrompt() {}
-
-   public:
-    NS_DECL_ISUPPORTS
-
-    NestedFrameAuthPrompt(PNeckoParent* aParent, TabId aNestedFrameId);
-
-    NS_IMETHOD PromptAuth(nsIChannel*, uint32_t, nsIAuthInformation*,
-                          bool*) override {
-      return NS_ERROR_NOT_IMPLEMENTED;
-    }
-
-    NS_IMETHOD AsyncPromptAuth(nsIChannel* aChannel,
-                               nsIAuthPromptCallback* callback, nsISupports*,
-                               uint32_t, nsIAuthInformation* aInfo,
-                               nsICancelable**) override;
-
-   protected:
-    PNeckoParent* mNeckoParent;
-    TabId mNestedFrameId;
-  };
-
  protected:
   bool mSocketProcessBridgeInited;
 
@@ -110,14 +80,6 @@ class NeckoParent : public PNeckoParent {
   bool DeallocPAltDataOutputStreamParent(PAltDataOutputStreamParent* aActor);
 
   bool DeallocPCookieServiceParent(PCookieServiceParent*);
-  PFTPChannelParent* AllocPFTPChannelParent(
-      PBrowserParent* aBrowser, const SerializedLoadContext& aSerialized,
-      const FTPChannelCreationArgs& aOpenArgs);
-  virtual mozilla::ipc::IPCResult RecvPFTPChannelConstructor(
-      PFTPChannelParent* aActor, PBrowserParent* aBrowser,
-      const SerializedLoadContext& aSerialized,
-      const FTPChannelCreationArgs& aOpenArgs) override;
-  bool DeallocPFTPChannelParent(PFTPChannelParent*);
   PWebSocketParent* AllocPWebSocketParent(
       PBrowserParent* browser, const SerializedLoadContext& aSerialized,
       const uint32_t& aSerial);
@@ -201,13 +163,6 @@ class NeckoParent : public PNeckoParent {
 
   PTransportProviderParent* AllocPTransportProviderParent();
   bool DeallocPTransportProviderParent(PTransportProviderParent* aActor);
-
-  mozilla::ipc::IPCResult RecvOnAuthAvailable(const uint64_t& aCallbackId,
-                                              const nsString& aUser,
-                                              const nsString& aPassword,
-                                              const nsString& aDomain);
-  mozilla::ipc::IPCResult RecvOnAuthCancelled(const uint64_t& aCallbackId,
-                                              const bool& aUserCancel);
 
   /* Predictor Messages */
   mozilla::ipc::IPCResult RecvPredPredict(

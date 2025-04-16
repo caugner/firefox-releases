@@ -47,14 +47,14 @@ bool nsHTTPSOnlyUtils::IsHttpsOnlyModeEnabled(bool aFromPrivateWindow) {
 /* static */
 bool nsHTTPSOnlyUtils::IsHttpsFirstModeEnabled(bool aFromPrivateWindow) {
   // if the general pref is set to true, then we always return
-  if (mozilla::StaticPrefs::dom_security_https_only_mode_https_first()) {
+  if (mozilla::StaticPrefs::dom_security_https_first()) {
     return true;
   }
 
   // otherwise we check if executing in private browsing mode and return true
   // if the PBM pref for HTTPS-First is set.
   if (aFromPrivateWindow &&
-      mozilla::StaticPrefs::dom_security_https_only_mode_https_first_pbm()) {
+      mozilla::StaticPrefs::dom_security_https_first_pbm()) {
     return true;
   }
   return false;
@@ -231,8 +231,7 @@ bool nsHTTPSOnlyUtils::IsUpgradeDowngradeEndlessLoop(nsIURI* aURI,
                                                      nsILoadInfo* aLoadInfo) {
   // 1. Check if the HTTPS-Only Mode is even enabled, before we do anything else
   bool isPrivateWin = aLoadInfo->GetOriginAttributes().mPrivateBrowsingId > 0;
-  if (!IsHttpsOnlyModeEnabled(isPrivateWin) &&
-      !IsHttpsFirstModeEnabled(isPrivateWin)) {
+  if (!IsHttpsOnlyModeEnabled(isPrivateWin)) {
     return false;
   }
 
@@ -320,16 +319,33 @@ bool nsHTTPSOnlyUtils::ShouldUpgradeHttpsFirstRequest(nsIURI* aURI,
     return false;
   }
 
-  // 3. Don't upgrade if upgraded previously or exempt from upgrades
+  // 3. Check for general exceptions
+  if (OnionException(aURI) || LoopbackOrLocalException(aURI)) {
+    return false;
+  }
+
+  // 4. Don't upgrade if upgraded previously or exempt from upgrades
   uint32_t httpsOnlyStatus = aLoadInfo->GetHttpsOnlyStatus();
   if (httpsOnlyStatus & nsILoadInfo::HTTPS_ONLY_UPGRADED_HTTPS_FIRST ||
       httpsOnlyStatus & nsILoadInfo::HTTPS_ONLY_EXEMPT) {
     return false;
   }
 
+  // 5. HTTPS-First Mode only upgrades default ports - do not upgrade the
+  // request to https if port is specified and not the default port of 80.
+  MOZ_ASSERT(aURI->SchemeIs("http"), "how come the request is not 'http'?");
+  int defaultPortforScheme = NS_GetDefaultPort("http");
+  // If no port is specified, then the API returns -1 to indicate the default
+  // port.
+  int32_t port = 0;
+  nsresult rv = aURI->GetPort(&port);
+  NS_ENSURE_SUCCESS(rv, false);
+  if (port != defaultPortforScheme && port != -1) {
+    return false;
+  }
+
   // We can upgrade the request - let's log to the console and set the status
   // so we know that we upgraded the request.
-  MOZ_ASSERT(aURI->SchemeIs("http"), "how come the request is not 'http'?");
   nsAutoCString scheme;
   aURI->GetScheme(scheme);
   scheme.AppendLiteral("s");
@@ -574,18 +590,10 @@ bool nsHTTPSOnlyUtils::LoopbackOrLocalException(nsIURI* aURI) {
     return true;
   }
 
-  // The local-ip and loopback checks expect a NetAddr struct. We only have a
-  // host-string but can convert it to a NetAddr by first converting it to
-  // PRNetAddr.
-  PRNetAddr tempAddr;
-  memset(&tempAddr, 0, sizeof(PRNetAddr));
-  // PR_StringToNetAddr does not properly initialize the output buffer in the
-  // case of IPv6 input. See bug 223145.
-  if (PR_StringToNetAddr(asciiHost.get(), &tempAddr) != PR_SUCCESS) {
+  mozilla::net::NetAddr addr;
+  if (NS_FAILED(addr.InitFromString(asciiHost))) {
     return false;
   }
-
-  mozilla::net::NetAddr addr(&tempAddr);
   // Loopback IPs are always exempt
   if (addr.IsLoopbackAddr()) {
     return true;
@@ -615,7 +623,8 @@ bool nsHTTPSOnlyUtils::IsEqualURIExceptSchemeAndRef(nsIURI* aHTTPSSchemeURI,
 
   // 3. Check if the HTTPS-Only Mode is even enabled, before we do anything else
   bool isPrivateWin = aLoadInfo->GetOriginAttributes().mPrivateBrowsingId > 0;
-  if (!IsHttpsOnlyModeEnabled(isPrivateWin)) {
+  if (!IsHttpsOnlyModeEnabled(isPrivateWin) &&
+      !IsHttpsFirstModeEnabled(isPrivateWin)) {
     return false;
   }
 
@@ -665,6 +674,50 @@ TestHTTPAnswerRunnable::TestHTTPAnswerRunnable(
       mURI(aURI),
       mDocumentLoadListener(aDocumentLoadListener) {}
 
+/* static */
+bool TestHTTPAnswerRunnable::IsBackgroundRequestRedirected(
+    nsIHttpChannel* aChannel) {
+  // If there is no background request (aChannel), then there is nothing
+  // to do here.
+  if (!aChannel) {
+    return false;
+  }
+  // If the request was not redirected, then there is nothing to do here.
+  nsCOMPtr<nsILoadInfo> loadinfo = aChannel->LoadInfo();
+  if (loadinfo->RedirectChain().IsEmpty()) {
+    return false;
+  }
+
+  // If the final URI is not targeting an https scheme, then we definitely not
+  // dealing with a 'same-origin' redirect.
+  nsCOMPtr<nsIURI> finalURI;
+  nsresult rv = NS_GetFinalChannelURI(aChannel, getter_AddRefs(finalURI));
+  NS_ENSURE_SUCCESS(rv, false);
+  if (!finalURI->SchemeIs("https")) {
+    return false;
+  }
+
+  // If the background request was not http, then there is nothing to do here.
+  nsCOMPtr<nsIPrincipal> firstURIPrincipal;
+  loadinfo->RedirectChain()[0]->GetPrincipal(getter_AddRefs(firstURIPrincipal));
+  if (!firstURIPrincipal || !firstURIPrincipal->SchemeIs("http")) {
+    return false;
+  }
+
+  // By now we have verified that the inital background request was http and
+  // that the redirected scheme is https. We want to find the following case
+  // where the background channel redirects to the https version of the
+  // top-level request.
+  // --> background channel: http://example.com
+  //      |--> redirects to: https://example.com
+  // Now we have to check that the hosts are 'same-origin'.
+  nsAutoCString redirectHost;
+  nsAutoCString finalHost;
+  firstURIPrincipal->GetAsciiHost(redirectHost);
+  finalURI->GetAsciiHost(finalHost);
+  return finalHost.Equals(redirectHost);
+}
+
 NS_IMETHODIMP
 TestHTTPAnswerRunnable::OnStartRequest(nsIRequest* aRequest) {
   // If the request status is not OK, it means it encountered some
@@ -691,6 +744,17 @@ TestHTTPAnswerRunnable::OnStartRequest(nsIRequest* aRequest) {
         do_QueryInterface(httpsOnlyChannel);
     bool isAuthChannel = false;
     mozilla::Unused << httpChannelInternal->GetIsAuthChannel(&isAuthChannel);
+    // some server configurations need a long time to respond to an https
+    // connection, but also redirect any http connection to the https version of
+    // it. If the top-level load has not started yet, but the http background
+    // request redirects to https, then do not show the error page, but keep
+    // waiting for the https response of the upgraded top-level request.
+    if (!topLevelLoadInProgress) {
+      nsCOMPtr<nsIHttpChannel> backgroundHttpChannel =
+          do_QueryInterface(aRequest);
+      topLevelLoadInProgress =
+          IsBackgroundRequestRedirected(backgroundHttpChannel);
+    }
     if (!topLevelLoadInProgress && !isAuthChannel) {
       // Only really cancel the original top-level channel if it's
       // status is still NS_OK, otherwise it might have already

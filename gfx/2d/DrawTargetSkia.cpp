@@ -273,7 +273,7 @@ static sk_sp<SkImage> GetSkImageForSurface(SourceSurface* aSurface,
     releaseProc = ReleaseTemporarySurface;
   }
 
-  DataSourceSurface* surf = aSurface->GetDataSurface().take();
+  DataSourceSurface* surf = dataSurface.forget().take();
 
   // Skia doesn't support RGBX surfaces so ensure that the alpha value is opaque
   // white.
@@ -1603,7 +1603,7 @@ already_AddRefed<DrawTarget> DrawTargetSkia::CreateSimilarDrawTarget(
 bool DrawTargetSkia::CanCreateSimilarDrawTarget(const IntSize& aSize,
                                                 SurfaceFormat aFormat) const {
   auto minmaxPair = std::minmax(aSize.width, aSize.height);
-  return minmaxPair.first >= 0 &&
+  return minmaxPair.first > 0 &&
          size_t(minmaxPair.second) < GetMaxSurfaceSize();
 }
 

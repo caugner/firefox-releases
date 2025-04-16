@@ -39,6 +39,7 @@ pub const RGB_SIGNATURE: u32 = 0x52474220;
 pub const GRAY_SIGNATURE: u32 = 0x47524159;
 pub const XYZ_SIGNATURE: u32 = 0x58595A20;
 pub const LAB_SIGNATURE: u32 = 0x4C616220;
+pub const CMYK_SIGNATURE: u32 = 0x434D594B; // 'CMYK'
 
 /// A color profile
 #[derive(Default)]
@@ -58,7 +59,7 @@ pub struct Profile {
     pub(crate) B2A0: Option<Box<lutType>>,
     pub(crate) mAB: Option<Box<lutmABType>>,
     pub(crate) mBA: Option<Box<lutmABType>>,
-    pub(crate) chromaticAdaption: Matrix,
+    pub(crate) chromaticAdaption: Option<Matrix>,
     pub(crate) output_table_r: Option<Arc<PrecacheOuput>>,
     pub(crate) output_table_g: Option<Arc<PrecacheOuput>>,
     pub(crate) output_table_b: Option<Arc<PrecacheOuput>>,
@@ -90,7 +91,7 @@ pub(crate) struct lutmABType {
     pub b_curves: [Option<Box<curveType>>; MAX_CHANNELS],
     pub m_curves: [Option<Box<curveType>>; MAX_CHANNELS],
 }
-
+#[derive(Clone)]
 pub(crate) enum curveType {
     Curve(Vec<uInt16Number>),
     Parametric(Vec<f32>),
@@ -285,6 +286,8 @@ fn read_color_space(mut profile: &mut Profile, mem: &mut MemSource) {
     profile.color_space = read_u32(mem, 16);
     match profile.color_space {
         RGB_SIGNATURE | GRAY_SIGNATURE => {}
+        #[cfg(feature = "cmyk")]
+        CMYK_SIGNATURE => {}
         _ => {
             invalid_source(mem, "Unsupported colorspace");
         }
@@ -437,28 +440,20 @@ pub const LUT_MAB_TYPE: u32 = 0x6d414220; // 'mAB '
 pub const LUT_MBA_TYPE: u32 = 0x6d424120; // 'mBA '
 pub const CHROMATIC_TYPE: u32 = 0x73663332; // 'sf32'
 
-fn read_tag_s15Fixed16ArrayType(src: &mut MemSource, index: &TagIndex, tag_id: u32) -> Matrix {
-    let tag = find_tag(index, tag_id);
+fn read_tag_s15Fixed16ArrayType(src: &mut MemSource, tag: &Tag) -> Matrix {
     let mut matrix: Matrix = Matrix {
         m: [[0.; 3]; 3],
-        invalid: false,
     };
-    if let Some(tag) = tag {
-        let offset: u32 = tag.offset;
-        let type_0: u32 = read_u32(src, offset as usize);
-        // Check mandatory type signature for s16Fixed16ArrayType
-        if type_0 != CHROMATIC_TYPE {
-            invalid_source(src, "unexpected type, expected \'sf32\'");
-        }
-        for i in 0..=8 {
-            matrix.m[(i / 3) as usize][(i % 3) as usize] = s15Fixed16Number_to_float(
-                read_s15Fixed16Number(src, (offset + 8 + (i * 4) as u32) as usize),
-            );
-        }
-        matrix.invalid = false
-    } else {
-        matrix.invalid = true;
-        invalid_source(src, "missing sf32tag");
+    let offset: u32 = tag.offset;
+    let type_0: u32 = read_u32(src, offset as usize);
+    // Check mandatory type signature for s16Fixed16ArrayType
+    if type_0 != CHROMATIC_TYPE {
+        invalid_source(src, "unexpected type, expected \'sf32\'");
+    }
+    for i in 0..=8 {
+        matrix.m[(i / 3) as usize][(i % 3) as usize] = s15Fixed16Number_to_float(
+            read_s15Fixed16Number(src, (offset + 8 + (i * 4) as u32) as usize),
+        );
     }
     matrix
 }
@@ -734,8 +729,8 @@ fn read_tag_lutType(src: &mut MemSource, tag: &Tag) -> Option<Box<lutType>> {
     }
     let in_chan = read_u8(src, (offset + 8) as usize);
     let out_chan = read_u8(src, (offset + 9) as usize);
-    if in_chan != 3 || out_chan != 3 {
-        invalid_source(src, "CLUT only supports RGB");
+    if !(in_chan == 3 || in_chan == 4) || out_chan != 3 {
+        invalid_source(src, "CLUT only supports RGB and CMYK");
         return None;
     }
 
@@ -1020,6 +1015,51 @@ impl Profile {
         matches!(self.is_srgb, Some(true))
     }
 
+    pub(crate) fn new_sRGB_parametric() -> Box<Profile> {
+        let primaries = qcms_CIE_xyYTRIPLE {
+            red: {
+                qcms_CIE_xyY {
+                    x: 0.6400,
+                    y: 0.3300,
+                    Y: 1.0,
+                }
+            },
+            green: {
+                qcms_CIE_xyY {
+                    x: 0.3000,
+                    y: 0.6000,
+                    Y: 1.0,
+                }
+            },
+            blue: {
+                qcms_CIE_xyY {
+                    x: 0.1500,
+                    y: 0.0600,
+                    Y: 1.0,
+                }
+            },
+        };
+        let white_point = qcms_white_point_sRGB();
+        let mut profile = profile_create();
+        set_rgb_colorants(&mut profile, white_point, primaries);
+
+        let curve = Box::new(curveType::Parametric(vec![
+            2.4,
+            1. / 1.055,
+            0.055 / 1.055,
+            1. / 12.92,
+            0.04045,
+        ]));
+        profile.redTRC = Some(curve.clone());
+        profile.blueTRC = Some(curve.clone());
+        profile.greenTRC = Some(curve);
+        profile.class_type = DISPLAY_DEVICE_PROFILE;
+        profile.rendering_intent = Perceptual;
+        profile.color_space = RGB_SIGNATURE;
+        profile.pcs = XYZ_TYPE;
+        profile
+    }
+
     /// Create a new profile with D50 adopted white and identity transform functions
     pub fn new_XYZD50() -> Box<Profile> {
         let mut profile = profile_create();
@@ -1119,10 +1159,10 @@ impl Profile {
             return None;
         }
 
-        if find_tag(&index, TAG_CHAD).is_some() {
-            profile.chromaticAdaption = read_tag_s15Fixed16ArrayType(src, &index, TAG_CHAD)
+        if let Some(chad) = find_tag(&index, TAG_CHAD) {
+            profile.chromaticAdaption = Some(read_tag_s15Fixed16ArrayType(src, chad))
         } else {
-            profile.chromaticAdaption.invalid = true //Signal the data is not present
+            profile.chromaticAdaption = None; //Signal the data is not present
         }
 
         if profile.class_type == DISPLAY_DEVICE_PROFILE
@@ -1170,6 +1210,15 @@ impl Profile {
             } else if profile.color_space == GRAY_SIGNATURE {
                 profile.grayTRC = read_tag_curveType(src, &index, TAG_kTRC);
                 profile.grayTRC.as_ref()?;
+            } else if profile.color_space == CMYK_SIGNATURE {
+                if let Some(A2B0) = find_tag(&index, TAG_A2B0) {
+                    let lut_type = read_u32(src, A2B0.offset as usize);
+                    if lut_type == LUT8_TYPE || lut_type == LUT16_TYPE {
+                        profile.A2B0 = read_tag_lutType(src, A2B0)
+                    } else if lut_type == LUT_MBA_TYPE {
+                        profile.mAB = read_tag_lutmABType(src, A2B0)
+                    }
+                }
             } else {
                 debug_assert!(false, "read_color_space protects against entering here");
                 return None;

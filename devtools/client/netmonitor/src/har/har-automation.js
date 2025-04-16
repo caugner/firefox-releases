@@ -35,18 +35,16 @@ const trace = {
  * If the default log directory preference isn't set the following
  * directory is used by default: <profile>/har/logs
  */
-function HarAutomation(toolbox) {
-  this.initialize(toolbox);
-}
+function HarAutomation() {}
 
 HarAutomation.prototype = {
   // Initialization
 
-  initialize: function(toolbox) {
+  initialize: async function(toolbox) {
     this.toolbox = toolbox;
+    this.commands = toolbox.commands;
 
-    const { target } = toolbox;
-    this.startMonitoring(target.client);
+    await this.startMonitoring();
   },
 
   destroy: function() {
@@ -61,16 +59,26 @@ HarAutomation.prototype = {
 
   // Automation
 
-  startMonitoring: async function(client, callback) {
-    if (!client) {
-      return;
-    }
-
-    this.devToolsClient = client;
-    this.webConsoleFront = await this.toolbox.target.getFront("console");
-
-    this.tabWatcher = new TabWatcher(this.toolbox, this);
-    this.tabWatcher.connect();
+  startMonitoring: async function() {
+    await this.toolbox.resourceCommand.watchResources(
+      [this.toolbox.resourceCommand.TYPES.DOCUMENT_EVENT],
+      {
+        onAvailable: resources => {
+          if (resources.find(r => r.name == "dom-complete")) {
+            this.pageLoadDone();
+          }
+        },
+        ignoreExistingResources: true,
+      }
+    );
+    await this.toolbox.commands.targetCommand.watchTargets(
+      [this.toolbox.commands.targetCommand.TYPES.FRAME],
+      ({ targetFront }) => {
+        if (targetFront.isTopLevel) {
+          targetFront.on("will-navigate", this.pageLoadBegin.bind(this));
+        }
+      }
+    );
   },
 
   pageLoadBegin: function(response) {
@@ -85,8 +93,7 @@ HarAutomation.prototype = {
     // A page is about to be loaded, start collecting HTTP
     // data from events sent from the backend.
     this.collector = new HarCollector({
-      webConsoleFront: this.webConsoleFront,
-      resourceWatcher: this.toolbox.resourceWatcher,
+      commands: this.commands,
     });
 
     this.collector.start();
@@ -160,7 +167,7 @@ HarAutomation.prototype = {
    */
   executeExport: async function(data) {
     const items = this.collector.getItems();
-    const { title } = this.toolbox.target;
+    const { title } = this.commands.targetCommand.targetFront;
 
     const netMonitor = await this.toolbox.getNetMonitorAPI();
     const connector = await netMonitor.getHarExportConnector();
@@ -201,46 +208,9 @@ HarAutomation.prototype = {
   /**
    * Fetches the full text of a string.
    */
-  getString: function(stringGrip) {
-    return this.webConsoleFront.getString(stringGrip);
-  },
-};
-
-// Helpers
-
-function TabWatcher(toolbox, listener) {
-  this.target = toolbox.target;
-  this.listener = listener;
-
-  this.onNavigate = this.onNavigate.bind(this);
-  this.onWillNavigate = this.onWillNavigate.bind(this);
-}
-
-TabWatcher.prototype = {
-  // Connection
-
-  connect: function() {
-    this.target.on("navigate", this.onNavigate);
-    this.target.on("will-navigate", this.onWillNavigate);
-  },
-
-  disconnect: function() {
-    if (!this.target) {
-      return;
-    }
-
-    this.target.off("navigate", this.onNavigate);
-    this.target.off("will-navigate", this.onWillNavigate);
-  },
-
-  // Event Handlers
-
-  onNavigate: function(packet) {
-    this.listener.pageLoadDone(packet);
-  },
-
-  onWillNavigate: function(packet) {
-    this.listener.pageLoadBegin(packet);
+  getString: async function(stringGrip) {
+    const webConsoleFront = await this.toolbox.target.getFront("console");
+    return webConsoleFront.getString(stringGrip);
   },
 };
 

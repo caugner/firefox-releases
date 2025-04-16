@@ -29,7 +29,6 @@
 #include "mozilla/dom/PointerEventHandler.h"
 #include "mozilla/dom/BrowserBridgeParent.h"
 #include "mozilla/dom/RemoteDragStartData.h"
-#include "mozilla/dom/RemoteWebProgress.h"
 #include "mozilla/dom/RemoteWebProgressRequest.h"
 #include "mozilla/dom/SessionHistoryEntry.h"
 #include "mozilla/dom/SessionStoreUtils.h"
@@ -156,7 +155,6 @@ using namespace mozilla::widget;
 using namespace mozilla::gfx;
 
 using mozilla::LazyLogModule;
-using mozilla::StaticAutoPtr;
 using mozilla::Unused;
 
 LazyLogModule gBrowserFocusLog("BrowserFocus");
@@ -225,15 +223,23 @@ BrowserParent::BrowserParent(ContentParent* aManager, const TabId& aTabId,
       mRemoteTargetSetsCursor(false),
       mPreserveLayers(false),
       mRenderLayers(true),
-      mActiveInPriorityManager(false),
       mHasLayers(false),
       mHasPresented(false),
       mIsReadyToHandleInputEvents(false),
-      mIsMouseEnterIntoWidgetEventSuppressed(false) {
+      mIsMouseEnterIntoWidgetEventSuppressed(false),
+      mLockedNativePointer(false) {
   MOZ_ASSERT(aManager);
   // When the input event queue is disabled, we don't need to handle the case
   // that some input events are dispatched before PBrowserConstructor.
   mIsReadyToHandleInputEvents = !ContentParent::IsInputEventQueueSupported();
+
+  // If we're in a BC tree that is active with respect to the priority manager,
+  // ensure that this new BrowserParent is marked as active. This ensures that
+  // the process will be prioritized in a cross-site iframe navigation in an
+  // active tab.
+  if (aBrowsingContext->Top()->IsPriorityActive()) {
+    ProcessPriorityManager::ActivityChanged(this, true);
+  }
 }
 
 BrowserParent::~BrowserParent() = default;
@@ -532,17 +538,6 @@ void BrowserParent::SetOwnerElement(Element* aElement) {
   AddWindowListeners();
   TryCacheDPIAndScale();
 
-  // Try to send down WidgetNativeData, now that this BrowserParent is
-  // associated with a widget.
-  nsCOMPtr<nsIWidget> widget = GetTopLevelWidget();
-  if (widget) {
-    WindowsHandle widgetNativeData = reinterpret_cast<WindowsHandle>(
-        widget->GetNativeData(NS_NATIVE_SHAREABLE_WINDOW));
-    if (widgetNativeData) {
-      Unused << SendSetWidgetNativeData(widgetNativeData);
-    }
-  }
-
   if (mRemoteLayerTreeOwner.IsInitialized()) {
     mRemoteLayerTreeOwner.OwnerContentChanged();
   }
@@ -594,6 +589,7 @@ void BrowserParent::RemoveWindowListeners() {
 }
 
 void BrowserParent::Deactivated() {
+  UnlockNativePointer();
   UnsetTopLevelWebFocus(this);
   UnsetLastMouseRemoteTarget(this);
   PointerLockManager::ReleaseLockedRemoteTarget(this);
@@ -855,8 +851,7 @@ void BrowserParent::LoadURL(nsDocShellLoadState* aLoadState) {
   if (mIsDestroyed) {
     return;
   }
-  nsCString spec;
-  aLoadState->URI()->GetSpec(spec);
+
   if (mCreatingWindow) {
     // Don't send the message if the child wants to load its own URL.
     return;
@@ -1078,6 +1073,7 @@ void BrowserParent::UpdateDimensions(const nsIntRect& rect,
     mChromeOffset = chromeOffset;
 
     Unused << SendUpdateDimensions(GetDimensionInfo());
+    UpdateNativePointerLockCenter(widget);
   }
 }
 
@@ -1096,6 +1092,17 @@ DimensionInfo BrowserParent::GetDimensionInfo() {
   DimensionInfo di(unscaledRect, unscaledSize, mOrientation, mClientOffset,
                    mChromeOffset);
   return di;
+}
+
+void BrowserParent::UpdateNativePointerLockCenter(nsIWidget* aWidget) {
+  if (!mLockedNativePointer) {
+    return;
+  }
+  LayoutDeviceIntRect dims(
+      {0, 0},
+      ViewAs<LayoutDevicePixel>(
+          mDimensions, PixelCastJustification::LayoutDeviceIsScreenForTabDims));
+  aWidget->SetNativePointerLockCenter((dims + mChromeOffset).Center());
 }
 
 void BrowserParent::SizeModeChanged(const nsSizeMode& aSizeMode) {
@@ -1131,7 +1138,7 @@ void BrowserParent::HandleAccessKey(const WidgetKeyboardEvent& aEvent,
 }
 
 void BrowserParent::Activate(uint64_t aActionId) {
-  LOGBROWSERFOCUS(("Activate %p", this));
+  LOGBROWSERFOCUS(("Activate %p actionid: %" PRIu64, this, aActionId));
   if (!mIsDestroyed) {
     SetTopLevelWebFocus(this);  // Intentionally inside "if"
     Unused << SendActivate(aActionId);
@@ -1139,7 +1146,7 @@ void BrowserParent::Activate(uint64_t aActionId) {
 }
 
 void BrowserParent::Deactivate(bool aWindowLowering, uint64_t aActionId) {
-  LOGBROWSERFOCUS(("Deactivate %p", this));
+  LOGBROWSERFOCUS(("Deactivate %p actionid: %" PRIu64, this, aActionId));
   if (!aWindowLowering) {
     UnsetTopLevelWebFocus(this);  // Intentionally outside the next "if"
   }
@@ -1176,6 +1183,7 @@ mozilla::ipc::IPCResult BrowserParent::RecvPDocAccessibleConstructor(
   }
 
   if (aParentDoc) {
+    // Iframe document rendered in the same process as its embedder.
     // A document should never directly be the parent of another document.
     // There should always be an outer doc accessible child of the outer
     // document containing the child.
@@ -1185,6 +1193,15 @@ mozilla::ipc::IPCResult BrowserParent::RecvPDocAccessibleConstructor(
     }
 
     auto parentDoc = static_cast<a11y::DocAccessibleParent*>(aParentDoc);
+    if (parentDoc->IsShutdown()) {
+      // This can happen if parentDoc is an OOP iframe, but its embedder has
+      // been destroyed. (DocAccessibleParent::Destroy destroys any child
+      // documents.) The OOP iframe (and anything it embeds) will die soon
+      // anyway, so mark this document as shutdown and ignore it.
+      doc->MarkAsShutdown();
+      return IPC_OK();
+    }
+
     mozilla::ipc::IPCResult added = parentDoc->AddChildDoc(doc, aParentID);
     if (!added) {
 #  ifdef DEBUG
@@ -1196,7 +1213,7 @@ mozilla::ipc::IPCResult BrowserParent::RecvPDocAccessibleConstructor(
 
 #  ifdef XP_WIN
     MOZ_ASSERT(aDocCOMProxy.IsNull());
-    a11y::WrapperFor(doc)->SetID(aMsaaID);
+    a11y::WrapperFor(doc)->GetMsaa()->SetID(aMsaaID);
     if (a11y::nsWinUtils::IsWindowEmulationStarted()) {
       doc->SetEmulatedWindowHandle(parentDoc->GetEmulatedWindowHandle());
     }
@@ -1223,7 +1240,7 @@ mozilla::ipc::IPCResult BrowserParent::RecvPDocAccessibleConstructor(
     // before that.
     a11y::AccessibleWrap* wrapper = a11y::WrapperFor(doc);
     MOZ_ASSERT(wrapper);
-    wrapper->SetID(aMsaaID);
+    wrapper->GetMsaa()->SetID(aMsaaID);
 #  endif
     a11y::DocAccessibleParent* embedderDoc;
     uint64_t embedderID;
@@ -1257,7 +1274,7 @@ mozilla::ipc::IPCResult BrowserParent::RecvPDocAccessibleConstructor(
     doc->SetTopLevel();
     a11y::DocManager::RemoteDocAdded(doc);
 #  ifdef XP_WIN
-    a11y::WrapperFor(doc)->SetID(aMsaaID);
+    a11y::WrapperFor(doc)->GetMsaa()->SetID(aMsaaID);
     MOZ_ASSERT(!aDocCOMProxy.IsNull());
 
     RefPtr<IAccessible> proxy(aDocCOMProxy.Get());
@@ -1672,6 +1689,25 @@ mozilla::ipc::IPCResult BrowserParent::RecvDispatchKeyboardEvent(
   return IPC_OK();
 }
 
+mozilla::ipc::IPCResult BrowserParent::RecvDispatchTouchEvent(
+    const mozilla::WidgetTouchEvent& aEvent) {
+  nsCOMPtr<nsIWidget> widget = GetWidget();
+  if (!widget) {
+    return IPC_OK();
+  }
+
+  WidgetTouchEvent localEvent(aEvent);
+  localEvent.mWidget = widget;
+
+  for (uint32_t i = 0; i < localEvent.mTouches.Length(); i++) {
+    localEvent.mTouches[i]->mRefPoint =
+        TransformChildToParent(localEvent.mTouches[i]->mRefPoint);
+  }
+
+  widget->DispatchInputEvent(&localEvent);
+  return IPC_OK();
+}
+
 mozilla::ipc::IPCResult BrowserParent::RecvRequestNativeKeyBindings(
     const uint32_t& aType, const WidgetKeyboardEvent& aEvent,
     nsTArray<CommandInt>* aCommands) {
@@ -1896,6 +1932,30 @@ mozilla::ipc::IPCResult BrowserParent::RecvSynthesizeNativeTouchpadDoubleTap(
   if (widget) {
     widget->SynthesizeNativeTouchpadDoubleTap(aPoint, aModifierFlags);
   }
+  return IPC_OK();
+}
+
+mozilla::ipc::IPCResult BrowserParent::RecvLockNativePointer() {
+  if (nsCOMPtr<nsIWidget> widget = GetWidget()) {
+    mLockedNativePointer = true;  // do before updating the center
+    UpdateNativePointerLockCenter(widget);
+    widget->LockNativePointer();
+  }
+  return IPC_OK();
+}
+
+void BrowserParent::UnlockNativePointer() {
+  if (!mLockedNativePointer) {
+    return;
+  }
+  if (nsCOMPtr<nsIWidget> widget = GetWidget()) {
+    widget->UnlockNativePointer();
+    mLockedNativePointer = false;
+  }
+}
+
+mozilla::ipc::IPCResult BrowserParent::RecvUnlockNativePointer() {
+  UnlockNativePointer();
   return IPC_OK();
 }
 
@@ -2138,7 +2198,8 @@ mozilla::ipc::IPCResult BrowserParent::RecvAsyncMessage(
 mozilla::ipc::IPCResult BrowserParent::RecvSetCursor(
     const nsCursor& aCursor, const bool& aHasCustomCursor,
     const nsCString& aCursorData, const uint32_t& aWidth,
-    const uint32_t& aHeight, const float& aResolution, const uint32_t& aStride,
+    const uint32_t& aHeight, const float& aResolutionX,
+    const float& aResolutionY, const uint32_t& aStride,
     const gfx::SurfaceFormat& aFormat, const uint32_t& aHotspotX,
     const uint32_t& aHotspotY, const bool& aForce) {
   nsCOMPtr<nsIWidget> widget = GetWidget();
@@ -2167,8 +2228,11 @@ mozilla::ipc::IPCResult BrowserParent::RecvSetCursor(
     cursorImage = image::ImageOps::CreateFromDrawable(drawable);
   }
 
-  mCursor = nsIWidget::Cursor{aCursor, std::move(cursorImage), aHotspotX,
-                              aHotspotY, aResolution};
+  mCursor = nsIWidget::Cursor{aCursor,
+                              std::move(cursorImage),
+                              aHotspotX,
+                              aHotspotY,
+                              {aResolutionX, aResolutionY}};
   if (!mRemoteTargetSetsCursor) {
     return IPC_OK();
   }
@@ -2446,7 +2510,14 @@ BrowserParent::GetChildToParentConversionMatrix() {
 void BrowserParent::SetChildToParentConversionMatrix(
     const Maybe<LayoutDeviceToLayoutDeviceMatrix4x4>& aMatrix,
     const ScreenRect& aRemoteDocumentRect) {
+  if (mChildToParentConversionMatrix == aMatrix &&
+      mRemoteDocumentRect.isSome() &&
+      mRemoteDocumentRect.value() == aRemoteDocumentRect) {
+    return;
+  }
+
   mChildToParentConversionMatrix = aMatrix;
+  mRemoteDocumentRect = Some(aRemoteDocumentRect);
   if (mIsDestroyed) {
     return;
   }
@@ -2621,14 +2692,17 @@ mozilla::ipc::IPCResult BrowserParent::RecvOnStateChange(
     const WebProgressData& aWebProgressData, const RequestData& aRequestData,
     const uint32_t aStateFlags, const nsresult aStatus,
     const Maybe<WebProgressStateChangeData>& aStateChangeData) {
-  nsCOMPtr<nsIWebProgress> webProgress;
-  nsCOMPtr<nsIRequest> request;
-  RefPtr<CanonicalBrowsingContext> browsingContext;
-
-  if (!ReconstructWebProgressAndRequest(
-          aWebProgressData, aRequestData, getter_AddRefs(webProgress),
-          getter_AddRefs(request), getter_AddRefs(browsingContext))) {
+  RefPtr<CanonicalBrowsingContext> browsingContext =
+      BrowsingContextForWebProgress(aWebProgressData);
+  if (!browsingContext) {
     return IPC_OK();
+  }
+
+  nsCOMPtr<nsIRequest> request;
+  if (aRequestData.requestURI()) {
+    request = MakeAndAddRef<RemoteWebProgressRequest>(
+        aRequestData.requestURI(), aRequestData.originalRequestURI(),
+        aRequestData.matchedList());
   }
 
   if (aStateChangeData.isSome()) {
@@ -2650,9 +2724,8 @@ mozilla::ipc::IPCResult BrowserParent::RecvOnStateChange(
     }
   }
 
-  if (nsCOMPtr<nsIWebProgressListener> listener =
-          GetBrowsingContext()->Top()->GetWebProgress()) {
-    listener->OnStateChange(webProgress, request, aStateFlags, aStatus);
+  if (auto* listener = browsingContext->GetWebProgress()) {
+    listener->OnStateChange(listener, request, aStateFlags, aStatus);
   }
 
   return IPC_OK();
@@ -2680,14 +2753,17 @@ mozilla::ipc::IPCResult BrowserParent::RecvOnLocationChange(
     nsIURI* aLocation, const uint32_t aFlags, const bool aCanGoBack,
     const bool aCanGoForward,
     const Maybe<WebProgressLocationChangeData>& aLocationChangeData) {
-  nsCOMPtr<nsIWebProgress> webProgress;
-  nsCOMPtr<nsIRequest> request;
-  RefPtr<CanonicalBrowsingContext> browsingContext;
-
-  if (!ReconstructWebProgressAndRequest(
-          aWebProgressData, aRequestData, getter_AddRefs(webProgress),
-          getter_AddRefs(request), getter_AddRefs(browsingContext))) {
+  RefPtr<CanonicalBrowsingContext> browsingContext =
+      BrowsingContextForWebProgress(aWebProgressData);
+  if (!browsingContext) {
     return IPC_OK();
+  }
+
+  nsCOMPtr<nsIRequest> request;
+  if (aRequestData.requestURI()) {
+    request = MakeAndAddRef<RemoteWebProgressRequest>(
+        aRequestData.requestURI(), aRequestData.originalRequestURI(),
+        aRequestData.matchedList());
   }
 
   browsingContext->SetCurrentRemoteURI(aLocation);
@@ -2722,9 +2798,8 @@ mozilla::ipc::IPCResult BrowserParent::RecvOnLocationChange(
     }
   }
 
-  if (nsCOMPtr<nsIWebProgressListener> listener =
-          browsingContext->Top()->GetWebProgress()) {
-    listener->OnLocationChange(webProgress, request, aLocation, aFlags);
+  if (auto* listener = browsingContext->GetWebProgress()) {
+    listener->OnLocationChange(listener, request, aLocation, aFlags);
   }
 
   // Since we've now changed Documents, notify the BrowsingContext that we've
@@ -2827,20 +2902,13 @@ already_AddRefed<nsIBrowser> BrowserParent::GetBrowser() {
   return browser.forget();
 }
 
-bool BrowserParent::ReconstructWebProgressAndRequest(
-    const WebProgressData& aWebProgressData, const RequestData& aRequestData,
-    nsIWebProgress** aOutWebProgress, nsIRequest** aOutRequest,
-    CanonicalBrowsingContext** aOutBrowsingContext) {
-  MOZ_DIAGNOSTIC_ASSERT(aOutWebProgress,
-                        "aOutWebProgress should never be null");
-  MOZ_DIAGNOSTIC_ASSERT(aOutRequest, "aOutRequest should never be null");
-  MOZ_DIAGNOSTIC_ASSERT(aOutBrowsingContext,
-                        "aOutBrowsingContext should never be null");
-
+already_AddRefed<CanonicalBrowsingContext>
+BrowserParent::BrowsingContextForWebProgress(
+    const WebProgressData& aWebProgressData) {
   // Look up the BrowsingContext which this notification was fired for.
   if (aWebProgressData.browsingContext().IsNullOrDiscarded()) {
     NS_WARNING("WebProgress Ignored: BrowsingContext is null or discarded");
-    return false;
+    return nullptr;
   }
   RefPtr<CanonicalBrowsingContext> browsingContext =
       aWebProgressData.browsingContext().get_canonical();
@@ -2853,7 +2921,7 @@ bool BrowserParent::ReconstructWebProgressAndRequest(
     WindowGlobalParent* embedder = browsingContext->GetParentWindowContext();
     if (!embedder || embedder->GetBrowserParent() != this) {
       NS_WARNING("WebProgress Ignored: wrong embedder process");
-      return false;
+      return nullptr;
     }
   }
 
@@ -2864,32 +2932,19 @@ bool BrowserParent::ReconstructWebProgressAndRequest(
           browsingContext->GetCurrentWindowGlobal();
       current && current->GetBrowserParent() != this) {
     NS_WARNING("WebProgress Ignored: no longer current window global");
-    return false;
+    return nullptr;
   }
 
-  // Construct a temporary RemoteWebProgress and RemoteWebProgressRequest which
-  // contains relevant state used by our in-parent callbacks.
-  nsCOMPtr<nsIWebProgress> webProgress = MakeAndAddRef<RemoteWebProgress>(
-      aWebProgressData.loadType(), aWebProgressData.isLoadingDocument(),
-      browsingContext->IsTopContent());
-
-  nsCOMPtr<nsIRequest> request;
-  if (aRequestData.requestURI()) {
-    request = MakeAndAddRef<RemoteWebProgressRequest>(
-        aRequestData.requestURI(), aRequestData.originalRequestURI(),
-        aRequestData.matchedList());
+  if (RefPtr<BrowsingContextWebProgress> progress =
+          browsingContext->GetWebProgress()) {
+    progress->SetLoadType(aWebProgressData.loadType());
   }
 
-  webProgress.forget(aOutWebProgress);
-  request.forget(aOutRequest);
-  browsingContext.forget(aOutBrowsingContext);
-  return true;
+  return browsingContext.forget();
 }
 
 mozilla::ipc::IPCResult BrowserParent::RecvSessionStoreUpdate(
     const Maybe<nsCString>& aDocShellCaps, const Maybe<bool>& aPrivatedMode,
-    nsTArray<nsCString>&& aOrigins, nsTArray<nsString>&& aKeys,
-    nsTArray<nsString>&& aValues, const bool aIsFullStorage,
     const bool aNeedCollectSHistory, const bool& aIsFinal,
     const uint32_t& aEpoch) {
   UpdateSessionStoreData data;
@@ -2898,16 +2953,6 @@ mozilla::ipc::IPCResult BrowserParent::RecvSessionStoreUpdate(
   }
   if (aPrivatedMode.isSome()) {
     data.mIsPrivate.Construct() = aPrivatedMode.value();
-  }
-  // In normal case, we only update the storage when needed.
-  // However, we need to reset the session storage(aOrigins.Length() will be 0)
-  //   if the usage is over the "browser_sessionstore_dom_storage_limit".
-  // In this case, aIsFullStorage is true.
-  if (aOrigins.Length() != 0 || aIsFullStorage) {
-    data.mStorageOrigins.Construct(std::move(aOrigins));
-    data.mStorageKeys.Construct(std::move(aKeys));
-    data.mStorageValues.Construct(std::move(aValues));
-    data.mIsFullStorage.Construct() = aIsFullStorage;
   }
 
   nsCOMPtr<nsISessionStoreFunctions> funcs =
@@ -3007,6 +3052,15 @@ bool BrowserParent::SendSelectionEvent(WidgetSelectionEvent& aEvent) {
   MOZ_ASSERT(aEvent.HasBeenPostedToRemoteProcess());
   aEvent.mSucceeded = true;
   return true;
+}
+
+bool BrowserParent::SendInsertText(const nsString& aStringToInsert) {
+  if (mIsDestroyed) {
+    return false;
+  }
+  return Manager()->IsInputPriorityEventEnabled()
+             ? PBrowserParent::SendInsertText(aStringToInsert)
+             : PBrowserParent::SendNormalPriorityInsertText(aStringToInsert);
 }
 
 bool BrowserParent::SendPasteTransferable(
@@ -3147,23 +3201,6 @@ mozilla::ipc::IPCResult BrowserParent::RecvSetInputContext(
     const InputContext& aContext, const InputContextAction& aAction) {
   IMEStateManager::SetInputContextForChildProcess(this, aContext, aAction);
   return IPC_OK();
-}
-
-mozilla::ipc::IPCResult BrowserParent::RecvSetNativeChildOfShareableWindow(
-    const uintptr_t& aChildWindow) {
-#if defined(XP_WIN)
-  nsCOMPtr<nsIWidget> widget = GetTopLevelWidget();
-  if (widget) {
-    // Note that this call will probably cause a sync native message to the
-    // process that owns the child window.
-    widget->SetNativeData(NS_NATIVE_CHILD_OF_SHAREABLE_WINDOW, aChildWindow);
-  }
-  return IPC_OK();
-#else
-  MOZ_ASSERT_UNREACHABLE(
-      "BrowserParent::RecvSetNativeChildOfShareableWindow not implemented!");
-  return IPC_FAIL_NO_REASON(this);
-#endif
 }
 
 mozilla::ipc::IPCResult BrowserParent::RecvDispatchFocusToTopLevelWindow() {
@@ -3338,13 +3375,6 @@ bool BrowserParent::GetHasLayers() { return mHasLayers; }
 bool BrowserParent::GetRenderLayers() { return mRenderLayers; }
 
 void BrowserParent::SetRenderLayers(bool aEnabled) {
-  if (mActiveInPriorityManager != aEnabled) {
-    mActiveInPriorityManager = aEnabled;
-    // Let's inform the priority manager. This operation can end up with the
-    // changing of the process priority.
-    ProcessPriorityManager::ActivityChanged(this, aEnabled);
-  }
-
   if (aEnabled == mRenderLayers) {
     if (aEnabled && mHasLayers && mPreserveLayers) {
       // RenderLayers might be called when we've been preserving layers,
@@ -3404,13 +3434,6 @@ void BrowserParent::NotifyResolutionChanged() {
     // that case.
     Unused << SendUIResolutionChanged(mDPI, mRounding,
                                       mDPI < 0 ? -1.0 : mDefaultScale.scale);
-  }
-}
-
-void BrowserParent::Deprioritize() {
-  if (mActiveInPriorityManager) {
-    ProcessPriorityManager::ActivityChanged(this, false);
-    mActiveInPriorityManager = false;
   }
 }
 
@@ -3679,137 +3702,6 @@ nsresult BrowserParent::HandleEvent(Event* aEvent) {
   return NS_OK;
 }
 
-class FakeChannel final : public nsIChannel,
-                          public nsIAuthPromptCallback,
-                          public nsIInterfaceRequestor,
-                          public nsILoadContext {
- public:
-  FakeChannel(const nsCString& aUri, uint64_t aCallbackId, Element* aElement)
-      : mCallbackId(aCallbackId), mElement(aElement) {
-    NS_NewURI(getter_AddRefs(mUri), aUri);
-  }
-
-  NS_DECL_ISUPPORTS
-
-#define NO_IMPL \
-  override { return NS_ERROR_NOT_IMPLEMENTED; }
-  NS_IMETHOD GetName(nsACString&) NO_IMPL;
-  NS_IMETHOD IsPending(bool*) NO_IMPL;
-  NS_IMETHOD GetStatus(nsresult*) NO_IMPL;
-  NS_IMETHOD Cancel(nsresult) NO_IMPL;
-  NS_IMETHOD GetCanceled(bool* aCanceled) NO_IMPL;
-  NS_IMETHOD Suspend() NO_IMPL;
-  NS_IMETHOD Resume() NO_IMPL;
-  NS_IMETHOD GetLoadGroup(nsILoadGroup**) NO_IMPL;
-  NS_IMETHOD SetLoadGroup(nsILoadGroup*) NO_IMPL;
-  NS_IMETHOD SetLoadFlags(nsLoadFlags) NO_IMPL;
-  NS_IMETHOD GetLoadFlags(nsLoadFlags*) NO_IMPL;
-  NS_IMETHOD GetTRRMode(nsIRequest::TRRMode* aTRRMode) NO_IMPL;
-  NS_IMETHOD SetTRRMode(nsIRequest::TRRMode aMode) NO_IMPL;
-  NS_IMETHOD GetIsDocument(bool*) NO_IMPL;
-  NS_IMETHOD GetOriginalURI(nsIURI**) NO_IMPL;
-  NS_IMETHOD SetOriginalURI(nsIURI*) NO_IMPL;
-  NS_IMETHOD GetURI(nsIURI** aUri) override {
-    nsCOMPtr<nsIURI> copy = mUri;
-    copy.forget(aUri);
-    return NS_OK;
-  }
-  NS_IMETHOD GetOwner(nsISupports**) NO_IMPL;
-  NS_IMETHOD SetOwner(nsISupports*) NO_IMPL;
-  NS_IMETHOD GetLoadInfo(nsILoadInfo** aLoadInfo) override {
-    nsCOMPtr<nsILoadInfo> copy = mLoadInfo;
-    copy.forget(aLoadInfo);
-    return NS_OK;
-  }
-  NS_IMETHOD SetLoadInfo(nsILoadInfo* aLoadInfo) override {
-    mLoadInfo = aLoadInfo;
-    return NS_OK;
-  }
-  NS_IMETHOD GetNotificationCallbacks(
-      nsIInterfaceRequestor** aRequestor) override {
-    NS_ADDREF(*aRequestor = this);
-    return NS_OK;
-  }
-  NS_IMETHOD SetNotificationCallbacks(nsIInterfaceRequestor*) NO_IMPL;
-  NS_IMETHOD GetSecurityInfo(nsISupports**) NO_IMPL;
-  NS_IMETHOD GetContentType(nsACString&) NO_IMPL;
-  NS_IMETHOD SetContentType(const nsACString&) NO_IMPL;
-  NS_IMETHOD GetContentCharset(nsACString&) NO_IMPL;
-  NS_IMETHOD SetContentCharset(const nsACString&) NO_IMPL;
-  NS_IMETHOD GetContentLength(int64_t*) NO_IMPL;
-  NS_IMETHOD SetContentLength(int64_t) NO_IMPL;
-  NS_IMETHOD Open(nsIInputStream**) NO_IMPL;
-  NS_IMETHOD AsyncOpen(nsIStreamListener*) NO_IMPL;
-  NS_IMETHOD GetContentDisposition(uint32_t*) NO_IMPL;
-  NS_IMETHOD SetContentDisposition(uint32_t) NO_IMPL;
-  NS_IMETHOD GetContentDispositionFilename(nsAString&) NO_IMPL;
-  NS_IMETHOD SetContentDispositionFilename(const nsAString&) NO_IMPL;
-  NS_IMETHOD GetContentDispositionHeader(nsACString&) NO_IMPL;
-  NS_IMETHOD OnAuthAvailable(nsISupports* aContext,
-                             nsIAuthInformation* aAuthInfo) override;
-  NS_IMETHOD OnAuthCancelled(nsISupports* aContext, bool userCancel) override;
-  NS_IMETHOD GetInterface(const nsIID& uuid, void** result) override {
-    return QueryInterface(uuid, result);
-  }
-  NS_IMETHOD GetAssociatedWindow(mozIDOMWindowProxy**) NO_IMPL;
-  NS_IMETHOD GetTopWindow(mozIDOMWindowProxy**) NO_IMPL;
-  NS_IMETHOD GetTopFrameElement(Element** aElement) override {
-    RefPtr<Element> elem = mElement;
-    elem.forget(aElement);
-    return NS_OK;
-  }
-  NS_IMETHOD GetIsContent(bool*) NO_IMPL;
-  NS_IMETHOD GetUsePrivateBrowsing(bool*) NO_IMPL;
-  NS_IMETHOD SetUsePrivateBrowsing(bool) NO_IMPL;
-  NS_IMETHOD SetPrivateBrowsing(bool) NO_IMPL;
-  NS_IMETHOD GetScriptableOriginAttributes(JSContext*,
-                                           JS::MutableHandleValue) NO_IMPL;
-  NS_IMETHOD_(void)
-  GetOriginAttributes(mozilla::OriginAttributes& aAttrs) override {}
-  NS_IMETHOD GetUseRemoteTabs(bool*) NO_IMPL;
-  NS_IMETHOD SetRemoteTabs(bool) NO_IMPL;
-  NS_IMETHOD GetUseRemoteSubframes(bool*) NO_IMPL;
-  NS_IMETHOD SetRemoteSubframes(bool) NO_IMPL;
-  NS_IMETHOD GetUseTrackingProtection(bool*) NO_IMPL;
-  NS_IMETHOD SetUseTrackingProtection(bool) NO_IMPL;
-#undef NO_IMPL
-
- protected:
-  ~FakeChannel() = default;
-
-  nsCOMPtr<nsIURI> mUri;
-  uint64_t mCallbackId;
-  RefPtr<Element> mElement;
-  nsCOMPtr<nsILoadInfo> mLoadInfo;
-};
-
-NS_IMPL_ISUPPORTS(FakeChannel, nsIChannel, nsIAuthPromptCallback, nsIRequest,
-                  nsIInterfaceRequestor, nsILoadContext);
-
-mozilla::ipc::IPCResult BrowserParent::RecvAsyncAuthPrompt(
-    const nsCString& aUri, const nsString& aRealm,
-    const uint64_t& aCallbackId) {
-  nsCOMPtr<nsIAuthPrompt2> authPrompt;
-  GetAuthPrompt(nsIAuthPromptProvider::PROMPT_NORMAL,
-                NS_GET_IID(nsIAuthPrompt2), getter_AddRefs(authPrompt));
-  RefPtr<FakeChannel> channel =
-      new FakeChannel(aUri, aCallbackId, mFrameElement);
-  uint32_t promptFlags = nsIAuthInformation::AUTH_HOST;
-
-  RefPtr<nsAuthInformationHolder> holder =
-      new nsAuthInformationHolder(promptFlags, aRealm, ""_ns);
-
-  uint32_t level = nsIAuthPrompt2::LEVEL_NONE;
-  nsCOMPtr<nsICancelable> dummy;
-  nsresult rv = authPrompt->AsyncPromptAuth(channel, channel, nullptr, level,
-                                            holder, getter_AddRefs(dummy));
-
-  if (NS_FAILED(rv)) {
-    return IPC_FAIL_NO_REASON(this);
-  }
-  return IPC_OK();
-}
-
 mozilla::ipc::IPCResult BrowserParent::RecvInvokeDragSession(
     nsTArray<IPCDataTransfer>&& aTransfers, const uint32_t& aAction,
     Maybe<Shmem>&& aVisualDnDData, const uint32_t& aStride,
@@ -4019,27 +3911,6 @@ mozilla::ipc::IPCResult BrowserParent::RecvScrollRectIntoView(
   Unused << bridge->SendScrollRectIntoView(aRect, aVertical, aHorizontal,
                                            aScrollFlags, aAppUnitsPerDevPixel);
   return IPC_OK();
-}
-
-NS_IMETHODIMP
-FakeChannel::OnAuthAvailable(nsISupports* aContext,
-                             nsIAuthInformation* aAuthInfo) {
-  nsAuthInformationHolder* holder =
-      static_cast<nsAuthInformationHolder*>(aAuthInfo);
-
-  if (!net::gNeckoChild->SendOnAuthAvailable(
-          mCallbackId, holder->User(), holder->Password(), holder->Domain())) {
-    return NS_ERROR_FAILURE;
-  }
-  return NS_OK;
-}
-
-NS_IMETHODIMP
-FakeChannel::OnAuthCancelled(nsISupports* aContext, bool userCancel) {
-  if (!net::gNeckoChild->SendOnAuthCancelled(mCallbackId, userCancel)) {
-    return NS_ERROR_FAILURE;
-  }
-  return NS_OK;
 }
 
 mozilla::ipc::IPCResult BrowserParent::RecvIsWindowSupportingProtectedMedia(

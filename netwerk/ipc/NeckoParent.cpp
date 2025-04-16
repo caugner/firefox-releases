@@ -14,7 +14,6 @@
 #include "mozilla/net/NeckoParent.h"
 #include "mozilla/net/HttpChannelParent.h"
 #include "mozilla/net/CookieServiceParent.h"
-#include "mozilla/net/FTPChannelParent.h"
 #include "mozilla/net/WebSocketChannelParent.h"
 #include "mozilla/net/WebSocketEventListenerParent.h"
 #include "mozilla/net/DataChannelParent.h"
@@ -51,7 +50,6 @@
 #include "nsEscape.h"
 #include "SerializedLoadContext.h"
 #include "nsAuthInformationHolder.h"
-#include "nsIAuthPromptCallback.h"
 #include "nsINetworkPredictor.h"
 #include "nsINetworkPredictorVerifier.h"
 #include "nsISpeculativeConnect.h"
@@ -123,16 +121,6 @@ static already_AddRefed<nsIPrincipal> GetRequestingPrincipal(
   }
 
   const HttpChannelOpenArgs& args = aArgs.get_HttpChannelOpenArgs();
-  return GetRequestingPrincipal(args.loadInfo());
-}
-
-static already_AddRefed<nsIPrincipal> GetRequestingPrincipal(
-    const FTPChannelCreationArgs& aArgs) {
-  if (aArgs.type() != FTPChannelCreationArgs::TFTPChannelOpenArgs) {
-    return nullptr;
-  }
-
-  const FTPChannelOpenArgs& args = aArgs.get_FTPChannelOpenArgs();
   return GetRequestingPrincipal(args.loadInfo());
 }
 
@@ -276,47 +264,6 @@ bool NeckoParent::DeallocPAltDataOutputStreamParent(
       static_cast<AltDataOutputStreamParent*>(aActor);
   parent->Release();
   return true;
-}
-
-PFTPChannelParent* NeckoParent::AllocPFTPChannelParent(
-    PBrowserParent* aBrowser, const SerializedLoadContext& aSerialized,
-    const FTPChannelCreationArgs& aOpenArgs) {
-  nsCOMPtr<nsIPrincipal> requestingPrincipal =
-      GetRequestingPrincipal(aOpenArgs);
-
-  nsCOMPtr<nsILoadContext> loadContext;
-  const char* error = CreateChannelLoadContext(
-      aBrowser, Manager(), aSerialized, requestingPrincipal, loadContext);
-  if (error) {
-    printf_stderr(
-        "NeckoParent::AllocPFTPChannelParent: "
-        "FATAL error: %s: KILLING CHILD PROCESS\n",
-        error);
-    return nullptr;
-  }
-  PBOverrideStatus overrideStatus =
-      PBOverrideStatusFromLoadContext(aSerialized);
-  FTPChannelParent* p = new FTPChannelParent(BrowserParent::GetFrom(aBrowser),
-                                             loadContext, overrideStatus);
-  p->AddRef();
-  return p;
-}
-
-bool NeckoParent::DeallocPFTPChannelParent(PFTPChannelParent* channel) {
-  FTPChannelParent* p = static_cast<FTPChannelParent*>(channel);
-  p->Release();
-  return true;
-}
-
-mozilla::ipc::IPCResult NeckoParent::RecvPFTPChannelConstructor(
-    PFTPChannelParent* aActor, PBrowserParent* aBrowser,
-    const SerializedLoadContext& aSerialized,
-    const FTPChannelCreationArgs& aOpenArgs) {
-  FTPChannelParent* p = static_cast<FTPChannelParent*>(aActor);
-  if (!p->Init(aOpenArgs)) {
-    return IPC_FAIL_NO_REASON(this);
-  }
-  return IPC_OK();
 }
 
 already_AddRefed<PDocumentChannelParent>
@@ -618,76 +565,6 @@ bool NeckoParent::DeallocPTransportProviderParent(
   RefPtr<TransportProviderParent> provider =
       dont_AddRef(static_cast<TransportProviderParent*>(aActor));
   return true;
-}
-
-namespace {
-std::map<uint64_t, nsCOMPtr<nsIAuthPromptCallback> >& CallbackMap() {
-  MOZ_ASSERT(NS_IsMainThread());
-  static std::map<uint64_t, nsCOMPtr<nsIAuthPromptCallback> > sCallbackMap;
-  return sCallbackMap;
-}
-}  // namespace
-
-NS_IMPL_ISUPPORTS(NeckoParent::NestedFrameAuthPrompt, nsIAuthPrompt2)
-
-NeckoParent::NestedFrameAuthPrompt::NestedFrameAuthPrompt(PNeckoParent* aParent,
-                                                          TabId aNestedFrameId)
-    : mNeckoParent(aParent), mNestedFrameId(aNestedFrameId) {}
-
-NS_IMETHODIMP
-NeckoParent::NestedFrameAuthPrompt::AsyncPromptAuth(
-    nsIChannel* aChannel, nsIAuthPromptCallback* callback, nsISupports*,
-    uint32_t, nsIAuthInformation* aInfo, nsICancelable**) {
-  static uint64_t callbackId = 0;
-  MOZ_ASSERT(XRE_IsParentProcess());
-  nsCOMPtr<nsIURI> uri;
-  nsresult rv = aChannel->GetURI(getter_AddRefs(uri));
-  NS_ENSURE_SUCCESS(rv, rv);
-  nsAutoCString spec;
-  if (uri) {
-    rv = uri->GetSpec(spec);
-    NS_ENSURE_SUCCESS(rv, rv);
-  }
-  nsString realm;
-  rv = aInfo->GetRealm(realm);
-  NS_ENSURE_SUCCESS(rv, rv);
-  callbackId++;
-  if (mNeckoParent->SendAsyncAuthPromptForNestedFrame(mNestedFrameId, spec,
-                                                      realm, callbackId)) {
-    CallbackMap()[callbackId] = callback;
-    return NS_OK;
-  }
-  return NS_ERROR_FAILURE;
-}
-
-mozilla::ipc::IPCResult NeckoParent::RecvOnAuthAvailable(
-    const uint64_t& aCallbackId, const nsString& aUser,
-    const nsString& aPassword, const nsString& aDomain) {
-  nsCOMPtr<nsIAuthPromptCallback> callback = CallbackMap()[aCallbackId];
-  if (!callback) {
-    return IPC_OK();
-  }
-  CallbackMap().erase(aCallbackId);
-
-  RefPtr<nsAuthInformationHolder> holder =
-      new nsAuthInformationHolder(0, u""_ns, ""_ns);
-  holder->SetUsername(aUser);
-  holder->SetPassword(aPassword);
-  holder->SetDomain(aDomain);
-
-  callback->OnAuthAvailable(nullptr, holder);
-  return IPC_OK();
-}
-
-mozilla::ipc::IPCResult NeckoParent::RecvOnAuthCancelled(
-    const uint64_t& aCallbackId, const bool& aUserCancel) {
-  nsCOMPtr<nsIAuthPromptCallback> callback = CallbackMap()[aCallbackId];
-  if (!callback) {
-    return IPC_OK();
-  }
-  CallbackMap().erase(aCallbackId);
-  callback->OnAuthCancelled(nullptr, aUserCancel);
-  return IPC_OK();
 }
 
 /* Predictor Messages */

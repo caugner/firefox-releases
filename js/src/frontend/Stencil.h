@@ -12,7 +12,6 @@
 #include "mozilla/MemoryReporting.h"  // mozilla::MallocSizeOf
 #include "mozilla/Range.h"            // mozilla::Range
 #include "mozilla/Span.h"             // mozilla::Span
-#include "mozilla/Unused.h"           // mozilla::Unused
 #include "mozilla/Variant.h"          // mozilla::Variant
 
 #include <stddef.h>  // size_t
@@ -65,6 +64,7 @@ using ParserScopeSlotInfo = typename Scope::SlotInfo;
 using ParserGlobalScopeSlotInfo = ParserScopeSlotInfo<GlobalScope>;
 using ParserEvalScopeSlotInfo = ParserScopeSlotInfo<EvalScope>;
 using ParserLexicalScopeSlotInfo = ParserScopeSlotInfo<LexicalScope>;
+using ParserClassBodyScopeSlotInfo = ParserScopeSlotInfo<ClassBodyScope>;
 using ParserFunctionScopeSlotInfo = ParserScopeSlotInfo<FunctionScope>;
 using ParserModuleScopeSlotInfo = ParserScopeSlotInfo<ModuleScope>;
 using ParserVarScopeSlotInfo = ParserScopeSlotInfo<VarScope>;
@@ -152,7 +152,7 @@ FunctionFlags InitialFunctionFlags(FunctionSyntaxKind kind,
                                    GeneratorKind generatorKind,
                                    FunctionAsyncKind asyncKind,
                                    bool isSelfHosting = false,
-                                   bool hasUnclonedName = false);
+                                   bool forceExtended = false);
 
 // A syntax-checked regular expression string.
 class RegExpStencil {
@@ -283,7 +283,7 @@ class ScopeStencil {
                (isArrow ? IsArrow : 0)) {
     MOZ_ASSERT((kind == ScopeKind::Function) == functionIndex.isSome());
     // Silence -Wunused-private-field warnings.
-    mozilla::Unused << padding_;
+    (void)padding_;
   }
 
  private:
@@ -305,6 +305,11 @@ class ScopeStencil {
   static bool createForLexicalScope(
       JSContext* cx, CompilationState& compilationState, ScopeKind kind,
       LexicalScope::ParserData* dataArg, uint32_t firstFrameSlot,
+      mozilla::Maybe<ScopeIndex> enclosing, ScopeIndex* index);
+
+  static bool createForClassBodyScope(
+      JSContext* cx, CompilationState& compilationState, ScopeKind kind,
+      ClassBodyScope::ParserData* dataArg, uint32_t firstFrameSlot,
       mozilla::Maybe<ScopeIndex> enclosing, ScopeIndex* index);
 
   static bool createForVarScope(JSContext* cx,
@@ -416,9 +421,11 @@ class ScopeStencil {
       case ScopeKind::Catch:
       case ScopeKind::NamedLambda:
       case ScopeKind::StrictNamedLambda:
-      case ScopeKind::FunctionLexical:
-      case ScopeKind::ClassBody: {
+      case ScopeKind::FunctionLexical: {
         return std::is_same_v<ScopeT, LexicalScope>;
+      }
+      case ScopeKind::ClassBody: {
+        return std::is_same_v<ScopeT, ClassBodyScope>;
       }
       case ScopeKind::FunctionBodyVar: {
         return std::is_same_v<ScopeT, VarScope>;
@@ -766,7 +773,11 @@ class ScriptStencil {
   // partially initialized enclosing scopes, so we must avoid storing the
   // scope in the BaseScript until compilation has completed
   // successfully.)
-  ScopeIndex lazyFunctionEnclosingScopeIndex_;
+  //
+  // OR
+  //
+  // This may be used for self-hosting canonical name (TaggedParserAtomIndex).
+  TaggedScriptThingIndex enclosingScopeOrCanonicalName;
 
   // See: `FunctionFlags`.
   FunctionFlags functionFlags = {};
@@ -785,9 +796,14 @@ class ScriptStencil {
   // The shared data is stored into CompilationStencil.sharedData.
   static constexpr uint16_t HasSharedDataFlag = 1 << 2;
 
-  // True if this script is lazy function and has enclosing scope.
-  // `lazyFunctionEnclosingScopeIndex_` is valid only if this flag is set.
+  // True if this script is lazy function and has enclosing scope.  In that
+  // case, `enclosingScopeOrCanonicalName` will hold the ScopeIndex.
   static constexpr uint16_t HasLazyFunctionEnclosingScopeIndexFlag = 1 << 3;
+
+  // True if this script is a self-hosted function with a canonical name
+  // explicitly set. In that case, `enclosingScopeOrCanonicalName` will hold the
+  // TaggedParserAtomIndex.
+  static constexpr uint16_t HasSelfHostedCanonicalName = 1 << 4;
 
   uint16_t flags_ = 0;
 
@@ -830,25 +846,43 @@ class ScriptStencil {
     return flags_ & HasLazyFunctionEnclosingScopeIndexFlag;
   }
 
+  bool hasSelfHostedCanonicalName() const {
+    return flags_ & HasSelfHostedCanonicalName;
+  }
+
  private:
   void setHasLazyFunctionEnclosingScopeIndex() {
     flags_ |= HasLazyFunctionEnclosingScopeIndexFlag;
   }
 
+  void setHasSelfHostedCanonicalName() { flags_ |= HasSelfHostedCanonicalName; }
+
  public:
   void setLazyFunctionEnclosingScopeIndex(ScopeIndex index) {
-    lazyFunctionEnclosingScopeIndex_ = index;
+    MOZ_ASSERT(enclosingScopeOrCanonicalName.isNull());
+    enclosingScopeOrCanonicalName = TaggedScriptThingIndex(index);
     setHasLazyFunctionEnclosingScopeIndex();
   }
 
   void resetHasLazyFunctionEnclosingScopeIndexAfterStencilMerge() {
     flags_ &= ~HasLazyFunctionEnclosingScopeIndexFlag;
-    lazyFunctionEnclosingScopeIndex_ = ScopeIndex::invalid();
+    enclosingScopeOrCanonicalName = TaggedScriptThingIndex();
   }
 
   ScopeIndex lazyFunctionEnclosingScopeIndex() const {
     MOZ_ASSERT(hasLazyFunctionEnclosingScopeIndex());
-    return lazyFunctionEnclosingScopeIndex_;
+    return enclosingScopeOrCanonicalName.toScope();
+  }
+
+  void setSelfHostedCanonicalName(TaggedParserAtomIndex name) {
+    MOZ_ASSERT(enclosingScopeOrCanonicalName.isNull());
+    enclosingScopeOrCanonicalName = TaggedScriptThingIndex(name);
+    setHasSelfHostedCanonicalName();
+  }
+
+  TaggedParserAtomIndex selfHostedCanonicalName() const {
+    MOZ_ASSERT(hasSelfHostedCanonicalName());
+    return enclosingScopeOrCanonicalName.toAtom();
   }
 
 #if defined(DEBUG) || defined(JS_JITSPEW)
@@ -895,7 +929,7 @@ class ScriptStencilExtra {
 
   MemberInitializers memberInitializers() const {
     MOZ_ASSERT(useMemberInitializers());
-    return MemberInitializers(memberInitializers_);
+    return MemberInitializers::deserialize(memberInitializers_);
   }
 
 #if defined(DEBUG) || defined(JS_JITSPEW)

@@ -26,11 +26,25 @@
   --button-hover-bgcolor: color-mix(in srgb, currentColor 17%, transparent);
   --button-active-bgcolor: color-mix(in srgb, currentColor 30%, transparent);
   --button-color: currentColor;
+  --button-primary-bgcolor: -moz-accent-color;
+  --button-primary-hover-bgcolor: color-mix(in srgb, black 10%, -moz-accent-color);
+  --button-primary-active-bgcolor: color-mix(in srgb, black 20%, -moz-accent-color);
+  --button-primary-color: -moz-accent-color-foreground;
 
   --buttons-destructive-bgcolor: #e22850;
   --buttons-destructive-hover-bgcolor: #c50042;
   --buttons-destructive-active-bgcolor: #810220;
   --buttons-destructive-color: #fbfbfe;
+
+  --checkbox-border-color: var(--input-border-color);
+  --checkbox-unchecked-bgcolor: var(--button-bgcolor);
+  --checkbox-unchecked-hover-bgcolor: var(--button-hover-bgcolor);
+  --checkbox-unchecked-active-bgcolor: var(--button-active-bgcolor);
+  --checkbox-checked-border-color: transparent;
+  --checkbox-checked-bgcolor: var(--button-primary-bgcolor);
+  --checkbox-checked-color: var(--button-primary-color);
+  --checkbox-checked-hover-bgcolor: var(--button-primary-hover-bgcolor);
+  --checkbox-checked-active-bgcolor: var(--button-primary-active-bgcolor);
 
   --autocomplete-popup-hover-background: var(--arrowpanel-dimmed);
   --autocomplete-popup-separator-color: color-mix(in srgb, currentColor 14%, transparent);
@@ -58,6 +72,7 @@
   :root {
     --autocomplete-popup-separator-color: color-mix(in srgb, currentColor 86%, transparent);
     --urlbar-icon-fill-opacity: 1;
+    --checkbox-checked-border-color: var(--checkbox-checked-bgcolor);
   }
 }
 
@@ -370,9 +385,9 @@ menupopup::part(drop-indicator) {
 /* Override theme colors since the picker uses extra colors that
    themes cannot set */
 #DateTimePickerPanel {
-  --arrowpanel-background: var(--default-arrowpanel-background);
-  --arrowpanel-color: var(--default-arrowpanel-color);
-  --arrowpanel-border-color: var(--default-arrowpanel-border-color);
+  --arrowpanel-background: Field;
+  --arrowpanel-color: FieldText;
+  --arrowpanel-border-color: ThreeDShadow;
 }
 
 #DateTimePickerPanel[side="top"],
@@ -479,10 +494,13 @@ menupopup::part(drop-indicator) {
   float: inline-end;
   background-color: transparent;
   flex-direction: row-reverse;
+  /* Override proton-doorhanger default styles that increase the size of the button */
+  margin: 0;
 }
 
 #contextual-feature-recommendation-notification[data-notification-bucket="CFR_MILESTONE_MESSAGE"] .popup-notification-button.popup-notification-primary-button {
   background-color: rgba(216, 216, 216, 0.2);
+  color: white;
   border: none;
   border-radius: 2px;
   margin: 4px;
@@ -514,7 +532,7 @@ menupopup::part(drop-indicator) {
   margin: 3px;
   border: none;
   border-radius: 2px;
-  background-image: url(chrome://browser/skin/stop.svg);
+  background-image: url(chrome://global/skin/icons/close.svg);
   background-color: transparent;
   background-repeat: no-repeat;
   background-position: center;
@@ -773,7 +791,7 @@ popupnotificationcontent {
 }
 
 .popup-notification-body menulist {
-  margin-inline: 0;
+  margin: 0;
 }
 
 .popup-notification-checkbox {

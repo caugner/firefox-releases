@@ -97,6 +97,8 @@ namespace jit {
   _(CheckOverRecursed, js::jit::CheckOverRecursed)                             \
   _(CheckOverRecursedBaseline, js::jit::CheckOverRecursedBaseline)             \
   _(CheckPrivateFieldOperation, js::CheckPrivateFieldOperation)                \
+  _(ClassBodyLexicalEnvironmentObjectCreate,                                   \
+    js::ClassBodyLexicalEnvironmentObject::create)                             \
   _(CloneRegExpObject, js::CloneRegExpObject)                                  \
   _(ConcatStrings, js::ConcatStrings<CanGC>)                                   \
   _(CopyLexicalEnvironmentObject, js::jit::CopyLexicalEnvironmentObject)       \
@@ -215,12 +217,14 @@ namespace jit {
   _(ProxyHasOwn, js::ProxyHasOwn)                                              \
   _(ProxySetProperty, js::ProxySetProperty)                                    \
   _(ProxySetPropertyByValue, js::ProxySetPropertyByValue)                      \
+  _(PushClassBodyEnv, js::jit::PushClassBodyEnv)                               \
   _(PushLexicalEnv, js::jit::PushLexicalEnv)                                   \
   _(PushVarEnv, js::jit::PushVarEnv)                                           \
   _(RecreateLexicalEnv, js::jit::RecreateLexicalEnv)                           \
   _(RegExpMatcherRaw, js::RegExpMatcherRaw)                                    \
   _(RegExpSearcherRaw, js::RegExpSearcherRaw)                                  \
   _(RegExpTesterRaw, js::RegExpTesterRaw)                                      \
+  _(SameValue, js::SameValue)                                                  \
   _(SetArrayLength, js::jit::SetArrayLength)                                   \
   _(SetDenseElement, js::jit::SetDenseElement)                                 \
   _(SetFunctionName, js::SetFunctionName)                                      \

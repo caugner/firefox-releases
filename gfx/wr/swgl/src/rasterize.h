@@ -561,6 +561,36 @@ static ALWAYS_INLINE IntRange aa_span(P* buf, const E& left, const E& right,
   return {leftAA.start, rightAA.end};
 }
 
+// Calculate the span the user clip distances occupy from the left and right
+// edges at the current row.
+template <typename E>
+static ALWAYS_INLINE IntRange clip_distance_range(const E& left,
+                                                  const E& right) {
+  Float leftClip = get_clip_distances(left.interp);
+  Float rightClip = get_clip_distances(right.interp);
+  // Get the change in clip dist per X step.
+  Float clipStep = (rightClip - leftClip) / (right.cur_x() - left.cur_x());
+  // Find the zero intercepts starting from the left edge.
+  Float clipDist = left.cur_x() - leftClip * recip(clipStep);
+  // Find the distance to the start of the span for any clip distances that
+  // are increasing in value. If the clip distance is constant or decreasing
+  // in value, then check if it starts outside the clip volume.
+  Float start = if_then_else(clipStep > 0.0f, clipDist,
+                             if_then_else(leftClip < 0.0f, 1.0e6f, 0.0f));
+  // Find the distance to the end of the span for any clip distances that are
+  // decreasing in value. If the clip distance is constant or increasing in
+  // value, then check if it ends inside the clip volume.
+  Float end = if_then_else(clipStep < 0.0f, clipDist,
+                           if_then_else(rightClip >= 0.0f, 1.0e6f, 0.0f));
+  // Find the furthest start offset.
+  start = max(start, start.zwxy);
+  // Find the closest end offset.
+  end = min(end, end.zwxy);
+  // Finally, round the offsets to an integer span that can be used to bound
+  // the current span.
+  return FloatRange{max(start.x, start.y), min(end.x, end.y)}.round();
+}
+
 // Converts a run array into a flattened array of depth samples. This just
 // walks through every run and fills the samples with the depth value from
 // the run.
@@ -727,26 +757,17 @@ static ALWAYS_INLINE auto perpDot(T a, T b) {
 }
 
 // Check if the winding of the initial edges is flipped, requiring us to swap
-// the edges to avoid spans having negative lengths.
+// the edges to avoid spans having negative lengths. Assume that l0.y == r0.y
+// due to the initial edge scan in draw_quad/perspective_spans.
 template <typename T>
 static ALWAYS_INLINE bool checkIfEdgesFlipped(T l0, T l1, T r0, T r1) {
   // If the starting point of the left edge is to the right of the starting
-  // point of the right edge, then just assume the edges are flipped.
-  if (l0.x > r0.x) {
-    return true;
-  }
-  // The left starting point is either at or to the left of the right starting
-  // point. Now we need to check if the edges possibly intersect at some point.
-  float side = perpDot(l1 - l0, r1 - r0);
-  if (side <= 0.0f) {
-    // If the edges are simply facing away from each other, then they won't
-    // intersect.
-    return false;
-  }
-  // If the lines intersect inside an edge but before the end, we assume they
-  // crossed each other and require flipping any resulting spans.
-  float t = perpDot(r0 - l0, r1 - r0);
-  return t >= 0.0f && t < side;
+  // point of the right edge, then just assume the edges are flipped. If the
+  // left and right starting points are the same, then check the sign of the
+  // cross-product of the edges to see if the edges are flipped. Otherwise,
+  // if the left starting point is actually just to the left of the right
+  // starting point, then assume no edge flip.
+  return l0.x > r0.x || (l0.x == r0.x && perpDot(l1 - l0, r1 - r0) > 0.0f);
 }
 
 // Draw spans for each row of a given quad (or triangle) with a constant Z
@@ -889,35 +910,29 @@ static inline void draw_quad_spans(int nump, Point2D p[4], uint32_t z,
       // If we're outside the clip rect, we're done.
       if (y > clipRect.y1) break;
         // Helper to find the next non-duplicate vertex that doesn't loop back.
-#define STEP_EDGE(e0i, e0, e1i, e1, STEP_POINT, end)               \
-  for (;;) {                                                       \
-    /* Set new start of edge to be end of old edge */              \
-    e0i = e1i;                                                     \
-    e0 = e1;                                                       \
-    /* Set new end of edge to next point */                        \
-    e1i = STEP_POINT(e1i);                                         \
-    e1 = p[e1i];                                                   \
-    /* If the edge is descending, use it. */                       \
-    if (e1.y > e0.y) break;                                        \
-    /* If the edge is ascending or crossed the end, we're done. */ \
-    if (e1.y < e0.y || e0i == end) return;                         \
-    /* Otherwise, it's a duplicate, so keep searching. */          \
-  }
+#define STEP_EDGE(y, e0i, e0, e1i, e1, STEP_POINT, end)     \
+  do {                                                      \
+    /* Set new start of edge to be end of old edge */       \
+    e0i = e1i;                                              \
+    e0 = e1;                                                \
+    /* Set new end of edge to next point */                 \
+    e1i = STEP_POINT(e1i);                                  \
+    e1 = p[e1i];                                            \
+    /* If the edge crossed the end, we're done. */          \
+    if (e0i == end) return;                                 \
+    /* Otherwise, it doesn't advance, so keep searching. */ \
+  } while (y > e1.y)
       // Check if Y advanced past the end of the left edge
       if (y > l1.y) {
         // Step to next left edge past Y and reset edge interpolants.
-        do {
-          STEP_EDGE(l0i, l0, l1i, l1, NEXT_POINT, r1i);
-        } while (y > l1.y);
+        STEP_EDGE(y, l0i, l0, l1i, l1, NEXT_POINT, r1i);
         (flipped ? right : left) =
             Edge(y, l0, l1, interp_outs[l0i], interp_outs[l1i], l1i);
       }
       // Check if Y advanced past the end of the right edge
       if (y > r1.y) {
         // Step to next right edge past Y and reset edge interpolants.
-        do {
-          STEP_EDGE(r0i, r0, r1i, r1, PREV_POINT, l1i);
-        } while (y > r1.y);
+        STEP_EDGE(y, r0i, r0, r1i, r1, PREV_POINT, l1i);
         (flipped ? left : right) =
             Edge(y, r0, r1, interp_outs[r0i], interp_outs[r1i], r0i);
       }
@@ -931,6 +946,11 @@ static inline void draw_quad_spans(int nump, Point2D p[4], uint32_t z,
     // Calculate a potentially AA'd span and check if it is non-empty.
     IntRange span = aa_span(fbuf, left, right, clipSpan);
     if (span.len() > 0) {
+      // If user clip planes are enabled, use them to bound the current span.
+      if (vertex_shader->use_clip_distance()) {
+        span = span.intersect(clip_distance_range(left, right));
+        if (span.len() <= 0) goto next_span;
+      }
       ctx->shaded_rows++;
       ctx->shaded_pixels += span.len();
       // Advance color/depth buffer pointers to the start of the span.
@@ -1155,18 +1175,14 @@ static inline void draw_perspective_spans(int nump, Point3D* p,
       // Check if Y advanced past the end of the left edge
       if (y > l1.y) {
         // Step to next left edge past Y and reset edge interpolants.
-        do {
-          STEP_EDGE(l0i, l0, l1i, l1, NEXT_POINT, r1i);
-        } while (y > l1.y);
+        STEP_EDGE(y, l0i, l0, l1i, l1, NEXT_POINT, r1i);
         (flipped ? right : left) =
             Edge(y, l0, l1, interp_outs[l0i], interp_outs[l1i], l1i);
       }
       // Check if Y advanced past the end of the right edge
       if (y > r1.y) {
         // Step to next right edge past Y and reset edge interpolants.
-        do {
-          STEP_EDGE(r0i, r0, r1i, r1, PREV_POINT, l1i);
-        } while (y > r1.y);
+        STEP_EDGE(y, r0i, r0, r1i, r1, PREV_POINT, l1i);
         (flipped ? left : right) =
             Edge(y, r0, r1, interp_outs[r0i], interp_outs[r1i], r0i);
       }
@@ -1180,6 +1196,11 @@ static inline void draw_perspective_spans(int nump, Point3D* p,
     // Calculate a potentially AA'd span and check if it is non-empty.
     IntRange span = aa_span(fbuf, left, right, clipSpan);
     if (span.len() > 0) {
+      // If user clip planes are enabled, use them to bound the current span.
+      if (vertex_shader->use_clip_distance()) {
+        span = span.intersect(clip_distance_range(left, right));
+        if (span.len() <= 0) goto next_span;
+      }
       ctx->shaded_rows++;
       ctx->shaded_pixels += span.len();
       // Advance color/depth buffer pointers to the start of the span.
@@ -1236,6 +1257,7 @@ static inline void draw_perspective_spans(int nump, Point3D* p,
         draw_span<true, true>(buf, depth, span.len(), packDepth);
       }
     }
+  next_span:
     // Advance Y and edge interpolants to next row.
     y++;
     left.nextRow();
@@ -1439,7 +1461,8 @@ static void draw_perspective(int nump, Interpolants interp_outs[4],
   vec3_scalar offset =
       make_vec3(make_vec2(ctx->viewport.origin() - colortex.offset), 0.0f) +
       scale;
-  if (test_none(pos.z <= -pos.w || pos.z >= pos.w)) {
+  // Verify if point is between near and far planes, rejecting NaN.
+  if (test_all(pos.z > -pos.w && pos.z < pos.w)) {
     // No points cross the near or far planes, so no clipping required.
     // Just divide coords by W and convert to viewport. We assume the W
     // coordinate is non-zero and the reciprocal is finite since it would

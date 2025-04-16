@@ -34,7 +34,7 @@ skip-if(!asyncPan) == sticky-pos-scrollable-3.html sticky-pos-scrollable-3-ref.h
 skip-if(!asyncPan) == sticky-pos-scrollable-4.html sticky-pos-scrollable-4-ref.html
 skip-if(!asyncPan) == sticky-pos-scrollable-5.html sticky-pos-scrollable-5-ref.html
 skip-if(!asyncPan) == sticky-pos-scrollable-6.html sticky-pos-scrollable-6-ref.html
-skip-if(!asyncPan) == sticky-pos-scrollable-7.html sticky-pos-scrollable-7-ref.html
+skip-if(!asyncPan) fuzzy-if(appleSilicon,1-1,8-8) == sticky-pos-scrollable-7.html sticky-pos-scrollable-7-ref.html
 skip-if(!asyncPan) fuzzy(0-2,0-2) fuzzy-if(cocoaWidget&&!webrender,1-1,7-16) fuzzy-if(gtkWidget&&!nativeThemePref,0-1,0-4) fuzzy-if(winWidget&&!nativeThemePref,0-1,0-51) == fixed-pos-scrollable-1.html fixed-pos-scrollable-1-ref.html
 skip-if(!asyncPan) == culling-1.html culling-1-ref.html
 skip-if(!asyncPan) == position-fixed-iframe-1.html position-fixed-iframe-1-ref.html
@@ -71,11 +71,11 @@ skip-if(!asyncPan) == position-sticky-bug1434250.html position-sticky-bug1434250
 fuzzy-if(Android,0-8,0-4) fuzzy-if(webrender&&gtkWidget,16-25,12-32) fuzzy-if(webrender&&cocoaWidget,13-16,20-44) skip-if(!asyncPan) == position-sticky-scrolled-clip-1.html position-sticky-scrolled-clip-1-ref.html # Bug 1604338
 fuzzy-if(Android,0-6,0-4) skip == position-sticky-scrolled-clip-2.html position-sticky-scrolled-clip-2-ref.html # bug ?????? - incorrectly applying clip to sticky contents
 fuzzy-if(Android,0-8,0-27) fuzzy-if(webrender&&cocoaWidget,9-11,20-44) skip-if(!asyncPan) == curtain-effect-1.html curtain-effect-1-ref.html
-fuzzy-if(Android,0-6,0-4) fuzzy-if(webrender&&gtkWidget,10-15,12-32) fuzzy-if(webrender&&cocoaWidget,5-9,20-42) skip-if(!asyncPan) == transformed-1.html transformed-1-ref.html # Bug 1604338
-fuzzy-if(Android&&!webrender,2-2,4-4) fuzzy-if(Android&&webrender,7-7,4-4) fuzzy-if(webrender&&gtkWidget,3-5,12-28) fuzzy-if(webrender&&cocoaWidget,5-6,18-38) skip-if(!asyncPan) == position-sticky-transformed-in-scrollframe-1.html position-sticky-transformed-in-scrollframe-1-ref.html # Bug 1604338
+fuzzy-if(Android,0-7,0-4) fuzzy-if(webrender&&gtkWidget,10-15,12-32) fuzzy-if(webrender&&cocoaWidget,5-9,20-42) skip-if(!asyncPan) == transformed-1.html transformed-1-ref.html # Bug 1604338
+fuzzy-if(Android&&!webrender,2-6,4-4) fuzzy-if(Android&&webrender,6-7,4-4) fuzzy-if(webrender&&gtkWidget,3-5,12-28) fuzzy-if(webrender&&cocoaWidget,5-6,18-38) skip-if(!asyncPan) == position-sticky-transformed-in-scrollframe-1.html position-sticky-transformed-in-scrollframe-1-ref.html # Bug 1604338
 fuzzy-if(Android&&!webrender,3-3,4-4) fuzzy-if(Android&&webrender,10-10,4-4) fuzzy-if(webrender&&gtkWidget,13-20,12-32) fuzzy-if(webrender&&cocoaWidget,12-16,20-44) skip-if(!asyncPan) == position-sticky-transformed-in-scrollframe-2.html position-sticky-transformed-in-scrollframe-2-ref.html # Bug 1604338
-fuzzy-if(Android&&!webrender,3-3,4-4) fuzzy-if(Android&&webrender,13-13,4-4) fuzzy-if(webrender&&gtkWidget,16-27,14-32) fuzzy-if(webrender&&cocoaWidget,13-16,20-44) skip-if(!asyncPan) == position-sticky-in-transformed-scrollframe-1.html position-sticky-in-transformed-scrollframe-ref.html # Bug 1604338
-fuzzy-if(Android&&!webrender,3-3,4-4) fuzzy-if(Android&&webrender,13-13,4-4) fuzzy-if(webrender&&gtkWidget,16-27,14-32) fuzzy-if(webrender&&cocoaWidget,13-16,20-44) skip-if(!asyncPan) == position-sticky-in-transformed-scrollframe-2.html position-sticky-in-transformed-scrollframe-ref.html # Bug 1604338
+fuzzy-if(Android&&!webrender,3-3,4-4) fuzzy-if(Android&&webrender,12-13,4-4) fuzzy-if(webrender&&gtkWidget,16-27,14-32) fuzzy-if(webrender&&cocoaWidget,13-16,20-44) skip-if(!asyncPan) == position-sticky-in-transformed-scrollframe-1.html position-sticky-in-transformed-scrollframe-ref.html # Bug 1604338
+fuzzy-if(Android&&!webrender,3-3,4-4) fuzzy-if(Android&&webrender,12-13,4-4) fuzzy-if(webrender&&gtkWidget,16-27,14-32) fuzzy-if(webrender&&cocoaWidget,13-16,20-44) skip-if(!asyncPan) == position-sticky-in-transformed-scrollframe-2.html position-sticky-in-transformed-scrollframe-ref.html # Bug 1604338
 
 # for the following tests, we want to disable the low-precision buffer
 # as it will expand the displayport beyond what the test specifies in
@@ -101,6 +101,9 @@ fuzzy-if(!webrender,111-112,600-600) pref(apz.allow_zooming,true) == async-scrol
 skip-if(!asyncPan||Android) pref(apz.overscroll.enabled,true) pref(apz.overscroll.test_async_scroll_offset.enabled,true) == overscroll.html overscroll-ref.html
 skip-if(!asyncPan||Android) pref(apz.overscroll.enabled,true) pref(apz.overscroll.test_async_scroll_offset.enabled,true) == overscroll-subframe.html overscroll-ref.html
 skip-if(!asyncPan||Android) pref(apz.overscroll.enabled,true) pref(apz.overscroll.test_async_scroll_offset.enabled,true) == overscroll-fixed.html overscroll-ref.html
+# This one needs to be fuzzed due to the fact that squishing a scrollbar
+# thumb on the compositor doesn't preserve its shape exactly.
+skip-if(!asyncPan||Android) fuzzy(0-56,0-33) pref(apz.overscroll.enabled,true) pref(apz.overscroll.test_async_scroll_offset.enabled,true) == overscroll-scrollbar.html overscroll-scrollbar-ref.html
 skip-if(!asyncPan||Android) pref(ui.prefersReducedMotion,1) pref(apz.overscroll.enabled,true) pref(apz.overscroll.test_async_scroll_offset.enabled,true) == overscroll-reduced-motion.html no-overscroll-ref.html
 
 # for this test, apz.allow_zooming is needed to ensure we take the containerless scrolling codepath that creates

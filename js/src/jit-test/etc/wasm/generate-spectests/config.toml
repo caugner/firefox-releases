@@ -1,6 +1,6 @@
 # Standard 'directives.txt' prologues for jit-tests
 harness_directive = "|jit-test| skip-if: true"
-directive = "|jit-test| test-also=--wasm-compiler=optimizing; test-also=--wasm-compiler=baseline; test-also=--test-wasm-await-tier2; test-also=--disable-wasm-huge-memory; skip-variant-if: --disable-wasm-huge-memory, !wasmHugeMemorySupported(); include:wasm-testharness.js; local-include:harness/sync_index.js"
+directive = "|jit-test| test-also=--wasm-compiler=optimizing; test-also=--wasm-compiler=baseline; test-also=--test-wasm-await-tier2; test-also=--disable-wasm-huge-memory; skip-variant-if: --disable-wasm-huge-memory, !wasmHugeMemorySupported(); local-include:harness/harness.js"
 
 # Failing tests across all testsuites
 excluded_tests = [
@@ -50,19 +50,9 @@ skip_wpt = true
 directive = "; skip-if: !wasmThreadsEnabled()"
 
 [[repos]]
-name = "bulk-memory-operations"
-url = "https://github.com/WebAssembly/bulk-memory-operations"
+name = "simd"
+url = "https://github.com/WebAssembly/simd"
 parent = "spec"
-excluded_tests = []
-# Skip in WPT where we can't guard on features being enabled
-skip_wpt = true
-
-[[repos]]
-name = "reference-types"
-url = "https://github.com/WebAssembly/reference-types"
-parent = "spec"
-excluded_tests = []
-# Skip in WPT where we can't guard on features being enabled
-skip_wpt = true
 # Skip in jit-test when it's not enabled
-directive = "; skip-if: !wasmReftypesEnabled()"
+directive = "; skip-if: !wasmSimdEnabled()"
+excluded_tests = []

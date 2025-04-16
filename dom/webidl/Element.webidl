@@ -115,9 +115,9 @@ interface Element : Node {
   boolean mozMatchesSelector(UTF8String selector);
 
   // Pointer events methods.
-  [Throws]
+  [UseCounter, Throws]
   void setPointerCapture(long pointerId);
-  [Throws]
+  [UseCounter, Throws]
   void releasePointerCapture(long pointerId);
   boolean hasPointerCapture(long pointerId);
 
@@ -130,14 +130,14 @@ interface Element : Node {
    * element.
    *
    */
-  [UseCounter]
+  [Deprecated=ElementSetCapture, Pref="dom.mouse_capture.enabled"]
   void setCapture(optional boolean retargetToElement = false);
 
   /**
    * If this element has captured the mouse, release the capture. If another
    * element has captured the mouse, this method has no effect.
    */
-  [UseCounter]
+  [Deprecated=ElementReleaseCapture, Pref="dom.mouse_capture.enabled"]
   void releaseCapture();
 
   /*
@@ -170,7 +170,8 @@ interface Element : Node {
 dictionary FocusOptions {
   boolean preventScroll = false;
   // Prevents the focus ring if this is not a text control / editable element.
-  [ChromeOnly] boolean preventFocusRing = false;
+  [Func="nsContentUtils::IsCallerChromeOrErrorPage"]
+  boolean preventFocusRing = false;
 };
 
 interface mixin HTMLOrForeignElement {

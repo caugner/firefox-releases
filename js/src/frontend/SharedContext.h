@@ -400,6 +400,9 @@ class FunctionBox : public SuspendableContext {
   // Arrow function with expression body like: `() => 1`.
   bool hasExprBody_ : 1;
 
+  // Used to issue an early error in static class blocks.
+  bool allowReturn_ : 1;
+
   // Tracks if function-related fields are already copied to ScriptStencil.
   // If this field is true, modification to those fields should be synced with
   // ScriptStencil by copyUpdated* methods.
@@ -493,8 +496,7 @@ class FunctionBox : public SuspendableContext {
   IMMUTABLE_FLAG_GETTER_SETTER(functionHasExtraBodyVarScope,
                                FunctionHasExtraBodyVarScope)
   IMMUTABLE_FLAG_GETTER_SETTER(shouldDeclareArguments, ShouldDeclareArguments)
-  IMMUTABLE_FLAG_GETTER_SETTER(argumentsHasVarBinding, ArgumentsHasVarBinding)
-  // AlwaysNeedsArgsObj: custom logic below.
+  IMMUTABLE_FLAG_GETTER_SETTER(needsArgsObj, NeedsArgsObj)
   // HasMappedArgsObj: custom logic below.
 
   bool needsCallObjectRegardlessOfBindings() const {
@@ -536,6 +538,8 @@ class FunctionBox : public SuspendableContext {
     hasExprBody_ = true;
   }
 
+  bool allowReturn() const { return allowReturn_; }
+
   bool isNamedLambda() const { return flags_.isNamedLambda(!!explicitName()); }
   bool isGetter() const { return flags_.isGetter(); }
   bool isSetter() const { return flags_.isSetter(); }
@@ -572,11 +576,6 @@ class FunctionBox : public SuspendableContext {
     if (isFunctionFieldCopiedToStencil) {
       copyUpdatedAtomAndFlags();
     }
-  }
-
-  void setAlwaysNeedsArgsObj() {
-    MOZ_ASSERT(argumentsHasVarBinding());
-    setFlag(ImmutableFlags::AlwaysNeedsArgsObj);
   }
 
   bool needsHomeObject() const {
@@ -649,6 +648,13 @@ class FunctionBox : public SuspendableContext {
     }
   }
 
+  void setIsInlinableLargeFunction() {
+    immutableFlags_.setFlag(ImmutableFlags::IsInlinableLargeFunction, true);
+    if (isScriptExtraFieldCopiedToStencil) {
+      copyUpdatedImmutableFlags();
+    }
+  }
+
   uint16_t length() { return length_; }
   void setLength(uint16_t length) { length_ = length; }
 
@@ -680,6 +686,8 @@ class FunctionBox : public SuspendableContext {
 
   // * setCtorFunctionHasThisBinding can be called to a class constructor
   //   with a lazy function, while parsing enclosing class
+  // * setIsInlinableLargeFunction can be called by BCE to update flags of the
+  //   previous top-level function, but only in self-hosted mode.
   void copyUpdatedImmutableFlags();
 
   // * setCtorToStringEnd bcan be called to a class constructor with a lazy

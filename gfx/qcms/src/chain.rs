@@ -24,7 +24,7 @@ use crate::{
     iccread::LAB_SIGNATURE,
     iccread::RGB_SIGNATURE,
     iccread::XYZ_SIGNATURE,
-    iccread::{lutType, lutmABType, Profile},
+    iccread::{lutType, lutmABType, Profile, CMYK_SIGNATURE},
     matrix::Matrix,
     s15Fixed16Number_to_float,
     transform_util::clamp_float,
@@ -46,7 +46,6 @@ fn lerp(a: f32, b: f32, t: f32) -> f32 {
 fn build_lut_matrix(lut: &lutType) -> Matrix {
     let mut result: Matrix = Matrix {
         m: [[0.; 3]; 3],
-        invalid: false,
     };
     result.m[0][0] = s15Fixed16Number_to_float(lut.e00);
     result.m[0][1] = s15Fixed16Number_to_float(lut.e01);
@@ -57,13 +56,11 @@ fn build_lut_matrix(lut: &lutType) -> Matrix {
     result.m[2][0] = s15Fixed16Number_to_float(lut.e20);
     result.m[2][1] = s15Fixed16Number_to_float(lut.e21);
     result.m[2][2] = s15Fixed16Number_to_float(lut.e22);
-    result.invalid = false;
     result
 }
 fn build_mAB_matrix(lut: &lutmABType) -> Matrix {
     let mut result: Matrix = Matrix {
         m: [[0.; 3]; 3],
-        invalid: false,
     };
 
     result.m[0][0] = s15Fixed16Number_to_float(lut.e00);
@@ -75,7 +72,6 @@ fn build_mAB_matrix(lut: &lutmABType) -> Matrix {
     result.m[2][0] = s15Fixed16Number_to_float(lut.e20);
     result.m[2][1] = s15Fixed16Number_to_float(lut.e21);
     result.m[2][2] = s15Fixed16Number_to_float(lut.e22);
-    result.invalid = false;
 
     result
 }
@@ -214,13 +210,13 @@ impl ModularTransform for ClutOnly {
     }
 }
 #[derive(Default)]
-struct Clut {
+struct Clut3x3 {
     input_clut_table: [Option<Vec<f32>>; 3],
     clut: Option<Vec<f32>>,
     grid_size: u16,
     output_clut_table: [Option<Vec<f32>>; 3],
 }
-impl ModularTransform for Clut {
+impl ModularTransform for Clut3x3 {
     fn transform(&self, src: &[f32], dest: &mut [f32]) {
         let xy_len: i32 = 1;
         let x_len: i32 = self.grid_size as i32;
@@ -280,6 +276,88 @@ impl ModularTransform for Clut {
             let pcs_g: f32 =
                 lut_interp_linear_float(clut_g, &self.output_clut_table[1].as_ref().unwrap());
             let pcs_b: f32 =
+                lut_interp_linear_float(clut_b, &self.output_clut_table[2].as_ref().unwrap());
+            dest[0] = clamp_float(pcs_r);
+            dest[1] = clamp_float(pcs_g);
+            dest[2] = clamp_float(pcs_b);
+        }
+    }
+}
+#[derive(Default)]
+struct Clut4x3 {
+    input_clut_table: [Option<Vec<f32>>; 4],
+    clut: Option<Vec<f32>>,
+    grid_size: u16,
+    output_clut_table: [Option<Vec<f32>>; 3],
+}
+impl ModularTransform for Clut4x3 {
+    fn transform(&self, src: &[f32], dest: &mut [f32]) {
+        let z_stride: i32 = self.grid_size as i32;
+        let y_stride: i32 = z_stride * z_stride;
+        let x_stride: i32 = z_stride * z_stride * z_stride;
+
+        let r_tbl = &self.clut.as_ref().unwrap()[0..];
+        let g_tbl = &self.clut.as_ref().unwrap()[1..];
+        let b_tbl = &self.clut.as_ref().unwrap()[2..];
+
+        let CLU =
+            |table: &[f32], x, y, z, w| table[((x * x_stride + y * y_stride + z * z_stride + w) * 3) as usize];
+
+        let input_clut_table_0 = self.input_clut_table[0].as_ref().unwrap();
+        let input_clut_table_1 = self.input_clut_table[1].as_ref().unwrap();
+        let input_clut_table_2 = self.input_clut_table[2].as_ref().unwrap();
+        let input_clut_table_3 = self.input_clut_table[3].as_ref().unwrap();
+        for (dest, src) in dest.chunks_exact_mut(3).zip(src.chunks_exact(4)) {
+            debug_assert!(self.grid_size as i32 >= 1);
+            let linear_x: f32 = lut_interp_linear_float(src[0], &input_clut_table_0);
+            let linear_y: f32 = lut_interp_linear_float(src[1], &input_clut_table_1);
+            let linear_z: f32 = lut_interp_linear_float(src[2], &input_clut_table_2);
+            let linear_w: f32 = lut_interp_linear_float(src[3], &input_clut_table_3);
+
+            let x: i32 = (linear_x * (self.grid_size as i32 - 1) as f32).floor() as i32;
+            let y: i32 = (linear_y * (self.grid_size as i32 - 1) as f32).floor() as i32;
+            let z: i32 = (linear_z * (self.grid_size as i32 - 1) as f32).floor() as i32;
+            let w: i32 = (linear_w * (self.grid_size as i32 - 1) as f32).floor() as i32;
+
+            let x_n: i32 = (linear_x * (self.grid_size as i32 - 1) as f32).ceil() as i32;
+            let y_n: i32 = (linear_y * (self.grid_size as i32 - 1) as f32).ceil() as i32;
+            let z_n: i32 = (linear_z * (self.grid_size as i32 - 1) as f32).ceil() as i32;
+            let w_n: i32 = (linear_w * (self.grid_size as i32 - 1) as f32).ceil() as i32;
+
+            let x_d: f32 = linear_x * (self.grid_size as i32 - 1) as f32 - x as f32;
+            let y_d: f32 = linear_y * (self.grid_size as i32 - 1) as f32 - y as f32;
+            let z_d: f32 = linear_z * (self.grid_size as i32 - 1) as f32 - z as f32;
+            let w_d: f32 = linear_w * (self.grid_size as i32 - 1) as f32 - w as f32;
+
+            let quadlinear = |tbl| {
+                let CLU = |x, y, z, w| CLU(tbl, x, y, z, w);
+                let r_x1 = lerp(CLU(x, y, z, w), CLU(x_n, y, z, w), x_d);
+                let r_x2 = lerp(CLU(x, y_n, z, w), CLU(x_n, y_n, z, w), x_d);
+                let r_y1 = lerp(r_x1, r_x2, y_d);
+                let r_x3 = lerp(CLU(x, y, z_n, w), CLU(x_n, y, z_n, w), x_d);
+                let r_x4 = lerp(CLU(x, y_n, z_n, w), CLU(x_n, y_n, z_n, w), x_d);
+                let r_y2 = lerp(r_x3, r_x4, y_d);
+                let r_z1 = lerp(r_y1, r_y2, z_d);
+
+                let r_x1 = lerp(CLU(x, y, z, w_n), CLU(x_n, y, z, w_n), x_d);
+                let r_x2 = lerp(CLU(x, y_n, z, w_n), CLU(x_n, y_n, z, w_n), x_d);
+                let r_y1 = lerp(r_x1, r_x2, y_d);
+                let r_x3 = lerp(CLU(x, y, z_n, w_n), CLU(x_n, y, z_n, w_n), x_d);
+                let r_x4 = lerp(CLU(x, y_n, z_n, w_n), CLU(x_n, y_n, z_n, w_n), x_d);
+                let r_y2 = lerp(r_x3, r_x4, y_d);
+                let r_z2 = lerp(r_y1, r_y2, z_d);
+                lerp(r_z1, r_z2, w_d)
+            };
+            // TODO: instead of reading each component separately we should read all three components at once.
+            let clut_r = quadlinear(r_tbl);
+            let clut_g = quadlinear(g_tbl);
+            let clut_b = quadlinear(b_tbl);
+
+            let pcs_r =
+                lut_interp_linear_float(clut_r, &self.output_clut_table[0].as_ref().unwrap());
+            let pcs_g =
+                lut_interp_linear_float(clut_g, &self.output_clut_table[1].as_ref().unwrap());
+            let pcs_b =
                 lut_interp_linear_float(clut_b, &self.output_clut_table[2].as_ref().unwrap());
             dest[0] = clamp_float(pcs_r);
             dest[1] = clamp_float(pcs_g);
@@ -474,7 +552,6 @@ impl ModularTransform for MatrixTranslate {
     fn transform(&self, src: &[f32], dest: &mut [f32]) {
         let mut mat: Matrix = Matrix {
             m: [[0.; 3]; 3],
-            invalid: false,
         };
         /* store the results in column major mode
          * this makes doing the multiplication with sse easier */
@@ -508,7 +585,6 @@ impl ModularTransform for MatrixTransform {
     fn transform(&self, src: &[f32], dest: &mut [f32]) {
         let mut mat: Matrix = Matrix {
             m: [[0.; 3]; 3],
-            invalid: false,
         };
         /* store the results in column major mode
          * this makes doing the multiplication with sse easier */
@@ -585,9 +661,6 @@ fn modular_transform_create_mAB(lut: &lutmABType) -> Option<Vec<Box<dyn ModularT
         // Prepare Matrix
         let mut transform = Box::new(MatrixTranslate::default());
         transform.matrix = build_mAB_matrix(lut);
-        if transform.matrix.invalid {
-            return None;
-        }
         transform.tx = s15Fixed16Number_to_float(lut.e03);
         transform.ty = s15Fixed16Number_to_float(lut.e13);
         transform.tz = s15Fixed16Number_to_float(lut.e23);
@@ -624,11 +697,11 @@ fn modular_transform_create_lut(lut: &lutType) -> Option<Vec<Box<dyn ModularTran
     let mut transform = Box::new(MatrixTransform::default());
 
     transform.matrix = build_lut_matrix(lut);
-    if !transform.matrix.invalid {
+    if true {
         transforms.push(transform);
 
         // Prepare input curves
-        let mut transform = Box::new(Clut::default());
+        let mut transform = Box::new(Clut3x3::default());
         transform.input_clut_table[0] =
             Some(lut.input_table[0..lut.num_input_table_entries as usize].to_vec());
         transform.input_clut_table[1] = Some(
@@ -666,10 +739,64 @@ fn modular_transform_create_lut(lut: &lutType) -> Option<Vec<Box<dyn ModularTran
     None
 }
 
+fn modular_transform_create_lut4x3(lut: &lutType) -> Option<Vec<Box<dyn ModularTransform>>> {
+    let mut transforms: Vec<Box<dyn ModularTransform>> = Vec::new();
+
+    let clut_length: usize;
+    // the matrix of lutType is only used when the input color space is XYZ.
+
+    // Prepare input curves
+    let mut transform = Box::new(Clut4x3::default());
+    transform.input_clut_table[0] =
+        Some(lut.input_table[0..lut.num_input_table_entries as usize].to_vec());
+    transform.input_clut_table[1] = Some(
+        lut.input_table
+            [lut.num_input_table_entries as usize..lut.num_input_table_entries as usize * 2]
+            .to_vec(),
+    );
+    transform.input_clut_table[2] = Some(
+        lut.input_table
+            [lut.num_input_table_entries as usize * 2..lut.num_input_table_entries as usize * 3]
+            .to_vec(),
+    );
+    transform.input_clut_table[3] = Some(
+        lut.input_table
+            [lut.num_input_table_entries as usize * 3..lut.num_input_table_entries as usize * 4]
+            .to_vec(),
+    );
+    // Prepare table
+    clut_length = (lut.num_clut_grid_points as usize).pow(lut.num_input_channels as u32)
+        * lut.num_output_channels as usize;
+    assert_eq!(clut_length, lut.clut_table.len());
+    transform.clut = Some(lut.clut_table.clone());
+
+    transform.grid_size = lut.num_clut_grid_points as u16;
+    // Prepare output curves
+    transform.output_clut_table[0] =
+        Some(lut.output_table[0..lut.num_output_table_entries as usize].to_vec());
+    transform.output_clut_table[1] = Some(
+        lut.output_table
+            [lut.num_output_table_entries as usize..lut.num_output_table_entries as usize * 2]
+            .to_vec(),
+    );
+    transform.output_clut_table[2] = Some(
+        lut.output_table
+            [lut.num_output_table_entries as usize * 2..lut.num_output_table_entries as usize * 3]
+            .to_vec(),
+    );
+    transforms.push(transform);
+    Some(transforms)
+}
+
 fn modular_transform_create_input(input: &Profile) -> Option<Vec<Box<dyn ModularTransform>>> {
     let mut transforms = Vec::new();
-    if input.A2B0.is_some() {
-        let lut_transform = modular_transform_create_lut(input.A2B0.as_deref().unwrap());
+    if let Some(A2B0) = &input.A2B0 {
+        let lut_transform;
+        if A2B0.num_input_channels == 4 {
+            lut_transform = modular_transform_create_lut4x3(&A2B0);
+        } else {
+            lut_transform = modular_transform_create_lut(&A2B0);
+        }
         if let Some(lut_transform) = lut_transform {
             transforms.extend(lut_transform);
         } else {
@@ -711,7 +838,6 @@ fn modular_transform_create_input(input: &Profile) -> Option<Vec<Box<dyn Modular
             transform.matrix.m[2][0] = 0.0;
             transform.matrix.m[2][1] = 0.0;
             transform.matrix.m[2][2] = 1. / 1.999_969_5;
-            transform.matrix.invalid = false;
             transforms.push(transform);
 
             let mut transform = Box::new(MatrixTransform::default());
@@ -724,6 +850,9 @@ fn modular_transform_create_input(input: &Profile) -> Option<Vec<Box<dyn Modular
 fn modular_transform_create_output(out: &Profile) -> Option<Vec<Box<dyn ModularTransform>>> {
     let mut transforms = Vec::new();
     if let Some(B2A0) = &out.B2A0 {
+        if B2A0.num_input_channels != 3 || B2A0.num_output_channels != 3 {
+            return None;
+        }
         let lut_transform = modular_transform_create_lut(B2A0);
         if let Some(lut_transform) = lut_transform {
             transforms.extend(lut_transform);
@@ -744,7 +873,7 @@ fn modular_transform_create_output(out: &Profile) -> Option<Vec<Box<dyn ModularT
         (&out.redTRC, &out.greenTRC, &out.blueTRC)
     {
         let mut transform = Box::new(MatrixTransform::default());
-        transform.matrix = build_colorant_matrix(out).invert();
+        transform.matrix = build_colorant_matrix(out).invert()?;
         transforms.push(transform);
 
         let mut transform = Box::new(MatrixTransform::default());
@@ -757,13 +886,12 @@ fn modular_transform_create_output(out: &Profile) -> Option<Vec<Box<dyn ModularT
         transform.matrix.m[2][0] = 0.0;
         transform.matrix.m[2][1] = 0.0;
         transform.matrix.m[2][2] = 1.999_969_5;
-        transform.matrix.invalid = false;
         transforms.push(transform);
 
         let mut transform = Box::new(GammaLut::default());
-        transform.output_gamma_lut_r = Some(build_output_lut(redTRC));
-        transform.output_gamma_lut_g = Some(build_output_lut(greenTRC));
-        transform.output_gamma_lut_b = Some(build_output_lut(blueTRC));
+        transform.output_gamma_lut_r = Some(build_output_lut(redTRC)?);
+        transform.output_gamma_lut_g = Some(build_output_lut(greenTRC)?);
+        transform.output_gamma_lut_b = Some(build_output_lut(blueTRC)?);
         transforms.push(transform);
     } else {
         debug_assert!(false, "Unsupported output profile workflow.");
@@ -827,7 +955,7 @@ fn modular_transform_create(
     output: &Profile,
 ) -> Option<Vec<Box<dyn ModularTransform>>> {
     let mut transforms = Vec::new();
-    if input.color_space == RGB_SIGNATURE {
+    if input.color_space == RGB_SIGNATURE || input.color_space == CMYK_SIGNATURE {
         let rgb_to_pcs = modular_transform_create_input(input);
         if let Some(rgb_to_pcs) = rgb_to_pcs {
             transforms.extend(rgb_to_pcs);
@@ -865,6 +993,9 @@ fn modular_transform_create(
         } else {
             return None;
         }
+    } else if output.color_space == CMYK_SIGNATURE {
+        let pcs_to_cmyk = modular_transform_create_output(output)?;
+        transforms.extend(pcs_to_cmyk);
     } else {
         debug_assert!(false, "output color space not supported");
     }

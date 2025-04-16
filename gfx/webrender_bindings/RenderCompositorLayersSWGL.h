@@ -24,10 +24,10 @@ class SurfaceD3D11SWGL;
 class RenderCompositorLayersSWGL : public RenderCompositor {
  public:
   static UniquePtr<RenderCompositor> Create(
-      RefPtr<widget::CompositorWidget>&& aWidget, nsACString& aError);
+      const RefPtr<widget::CompositorWidget>& aWidget, nsACString& aError);
 
   RenderCompositorLayersSWGL(layers::Compositor* aCompositor,
-                             RefPtr<widget::CompositorWidget>&& aWidget,
+                             const RefPtr<widget::CompositorWidget>& aWidget,
                              void* aContext);
   virtual ~RenderCompositorLayersSWGL();
 
@@ -37,7 +37,7 @@ class RenderCompositorLayersSWGL : public RenderCompositor {
 
   bool BeginFrame() override;
   void CancelFrame() override;
-  RenderedFrameId EndFrame(const nsTArray<DeviceIntRect>& aDirtyRects) final;
+  RenderedFrameId EndFrame(const nsTArray<DeviceIntRect>& aDirtyRects) override;
 
   bool SurfaceOriginIsTopLeft() override { return true; }
 

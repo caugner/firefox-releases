@@ -31,7 +31,9 @@
 #include "VRManagerChild.h"
 #include "ipc/nsGUIEventIPC.h"
 #include "js/JSON.h"
+#include "mozilla/Assertions.h"
 #include "mozilla/AsyncEventDispatcher.h"
+#include "mozilla/BasePrincipal.h"
 #include "mozilla/ClearOnShutdown.h"
 #include "mozilla/EventForwards.h"
 #include "mozilla/EventListenerManager.h"
@@ -39,6 +41,7 @@
 #include "mozilla/IMEStateManager.h"
 #include "mozilla/LookAndFeel.h"
 #include "mozilla/MouseEvents.h"
+#include "mozilla/NullPrincipal.h"
 #include "mozilla/Preferences.h"
 #include "mozilla/PresShell.h"
 #include "mozilla/ProcessHangMonitor.h"
@@ -162,7 +165,6 @@ using namespace mozilla::dom::ipc;
 using namespace mozilla::ipc;
 using namespace mozilla::layers;
 using namespace mozilla::layout;
-using namespace mozilla::docshell;
 using namespace mozilla::widget;
 using mozilla::layers::GeckoContentController;
 
@@ -342,8 +344,7 @@ BrowserChild::BrowserChild(ContentChild* aManager, const TabId& aTabId,
       mPendingRenderLayersReceivedMessage(false),
       mPendingLayersObserverEpoch{0},
       mPendingDocShellBlockers(0),
-      mCancelContentJSEpoch(0),
-      mWidgetNativeData(0) {
+      mCancelContentJSEpoch(0) {
   mozilla::HoldJSObjects(this);
 
   nsWeakPtr weakPtrThis(do_GetWeakReference(
@@ -751,9 +752,6 @@ BrowserChild::GetDimensions(uint32_t aFlags, int32_t* aX, int32_t* aY,
 }
 
 NS_IMETHODIMP
-BrowserChild::SetFocus() { return NS_ERROR_NOT_IMPLEMENTED; }
-
-NS_IMETHODIMP
 BrowserChild::GetVisibility(bool* aVisibility) {
   *aVisibility = true;
   return NS_OK;
@@ -978,6 +976,39 @@ mozilla::ipc::IPCResult BrowserChild::RecvLoadURL(
   nsDocShell::Cast(docShell)->MaybeClearStorageAccessFlag();
 
   CrashReporter::AnnotateCrashReport(CrashReporter::Annotation::URL, spec);
+  return IPC_OK();
+}
+
+mozilla::ipc::IPCResult BrowserChild::RecvCreateAboutBlankContentViewer(
+    nsIPrincipal* aPrincipal, nsIPrincipal* aPartitionedPrincipal) {
+  if (aPrincipal->GetIsExpandedPrincipal() ||
+      aPartitionedPrincipal->GetIsExpandedPrincipal()) {
+    return IPC_FAIL(this, "Cannot create document with an expanded principal");
+  }
+  if (aPrincipal->IsSystemPrincipal() ||
+      aPartitionedPrincipal->IsSystemPrincipal()) {
+    MOZ_ASSERT_UNREACHABLE(
+        "Cannot use CreateAboutBlankContentViewer to create system principal "
+        "document in content");
+    return IPC_OK();
+  }
+
+  nsCOMPtr<nsIDocShell> docShell = do_GetInterface(WebNavigation());
+  if (!docShell) {
+    MOZ_ASSERT_UNREACHABLE("WebNavigation does not have a docshell");
+    return IPC_OK();
+  }
+
+  nsCOMPtr<nsIURI> currentURI;
+  MOZ_ALWAYS_SUCCEEDS(
+      WebNavigation()->GetCurrentURI(getter_AddRefs(currentURI)));
+  if (!currentURI || !NS_IsAboutBlank(currentURI)) {
+    NS_WARNING("Can't create a ContentViewer unless on about:blank");
+    return IPC_OK();
+  }
+
+  docShell->CreateAboutBlankContentViewer(aPrincipal, aPartitionedPrincipal,
+                                          nullptr);
   return IPC_OK();
 }
 
@@ -2072,6 +2103,21 @@ mozilla::ipc::IPCResult BrowserChild::RecvSelectionEvent(
 mozilla::ipc::IPCResult BrowserChild::RecvNormalPrioritySelectionEvent(
     const WidgetSelectionEvent& aEvent) {
   return RecvSelectionEvent(aEvent);
+}
+
+mozilla::ipc::IPCResult BrowserChild::RecvInsertText(
+    const nsString& aStringToInsert) {
+  // Use normal event path to reach focused document.
+  WidgetContentCommandEvent localEvent(true, eContentCommandInsertText,
+                                       mPuppetWidget);
+  localEvent.mString = Some(aStringToInsert);
+  DispatchWidgetEventViaAPZ(localEvent);
+  return IPC_OK();
+}
+
+mozilla::ipc::IPCResult BrowserChild::RecvNormalPriorityInsertText(
+    const nsString& aStringToInsert) {
+  return RecvInsertText(aStringToInsert);
 }
 
 mozilla::ipc::IPCResult BrowserChild::RecvPasteTransferable(
@@ -3229,12 +3275,6 @@ mozilla::ipc::IPCResult BrowserChild::RecvAllowScriptsToClose() {
   return IPC_OK();
 }
 
-mozilla::ipc::IPCResult BrowserChild::RecvSetWidgetNativeData(
-    const WindowsHandle& aWidgetNativeData) {
-  mWidgetNativeData = aWidgetNativeData;
-  return IPC_OK();
-}
-
 mozilla::ipc::IPCResult BrowserChild::RecvReleaseAllPointerCapture() {
   PointerEventHandler::ReleaseAllPointerCapture();
   return IPC_OK();
@@ -3726,10 +3766,7 @@ nsresult BrowserChild::PrepareProgressListenerData(
   }
 
   aWebProgressData.browsingContext() = docShell->GetBrowsingContext();
-  nsresult rv =
-      aWebProgress->GetIsLoadingDocument(&aWebProgressData.isLoadingDocument());
-  NS_ENSURE_SUCCESS(rv, rv);
-  rv = aWebProgress->GetLoadType(&aWebProgressData.loadType());
+  nsresult rv = aWebProgress->GetLoadType(&aWebProgressData.loadType());
   NS_ENSURE_SUCCESS(rv, rv);
 
   return PrepareRequestData(aRequest, aRequestData);
@@ -3751,15 +3788,7 @@ bool BrowserChild::UpdateSessionStore(bool aIsFinal) {
     privatedMode.emplace(store->GetPrivateModeEnabled());
   }
 
-  nsTArray<nsCString> origins;
-  nsTArray<nsString> keys, values;
-  bool isFullStorage = false;
-  if (store->IsStorageUpdated()) {
-    isFullStorage = store->GetAndClearStorageChanges(origins, keys, values);
-  }
-
-  Unused << SendSessionStoreUpdate(docShellCaps, privatedMode, origins, keys,
-                                   values, isFullStorage,
+  Unused << SendSessionStoreUpdate(docShellCaps, privatedMode,
                                    store->GetAndClearSHistoryChanged(),
                                    aIsFinal, mSessionStoreListener->GetEpoch());
   return true;

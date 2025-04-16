@@ -441,11 +441,6 @@ recommended-addon-card .addon-description:not(:empty) {
   margin-inline-end: 0;
 }
 
-.disco-cta-button[action="install-addon"]::before {
-  content: "+";
-  padding-inline-end: 4px;
-}
-
 .discopane-notice {
   margin: 24px 0;
 }
@@ -707,21 +702,24 @@ button.tab-button {
   line-height: 20px;
   margin: 0;
   padding: 4px 16px;
-  color: var(--in-content-text-color);
 }
 
 button.tab-button:hover {
-  background-color: var(--in-content-button-background);
   border-top-color: var(--in-content-box-border-color);
 }
 
-button.tab-button:hover:active {
-  background-color: var(--in-content-button-background-hover);
+button.tab-button[selected],
+button.tab-button[selected]:hover {
+  border-top-color: currentColor;
+  color: var(--in-content-accent-color);
 }
 
-button.tab-button[selected] {
-  border-top-color: currentColor;
-  color: var(--in-content-accent-color) !important;
+@media (prefers-contrast) {
+  button.tab-button[selected],
+  button.tab-button[selected]:hover {
+    color: var(--in-content-primary-button-text-color);
+    background-color: var(--in-content-primary-button-background);
+  }
 }
 
 button.tab-button:-moz-focusring {
@@ -735,6 +733,10 @@ button.tab-button:-moz-focusring {
 
 panel-list {
   font: menu;
+}
+
+section:not(:empty) ~ #empty-addons-message {
+  display: none;
 }
 
 @media (max-width: 830px) {

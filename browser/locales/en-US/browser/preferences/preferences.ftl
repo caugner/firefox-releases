@@ -167,8 +167,8 @@ warn-on-open-many-tabs =
     .label = Warn you when opening multiple tabs might slow down { -brand-short-name }
     .accesskey = d
 
-switch-links-to-new-tabs =
-    .label = When you open a link in a new tab, switch to it immediately
+switch-to-new-tabs =
+    .label = When you open a link, image or media in a new tab, switch to it immediately
     .accesskey = h
 
 show-tabs-in-taskbar =
@@ -1127,6 +1127,7 @@ enhanced-tracking-protection-setting-custom =
 content-blocking-etp-standard-desc = Balanced for protection and performance. Pages will load normally.
 content-blocking-etp-strict-desc = Stronger protection, but may cause some sites or content to break.
 content-blocking-etp-custom-desc = Choose which trackers and scripts to block.
+content-blocking-etp-blocking-desc = { -brand-short-name } blocks the following:
 
 content-blocking-private-windows = Tracking content in Private Windows
 content-blocking-cross-site-cookies-in-all-windows = Cross-site cookies in all windows (includes tracking cookies)
@@ -1269,10 +1270,8 @@ addon-recommendations-link = Learn more
 # or builds with no Telemetry support available.
 collection-health-report-disabled = Data reporting is disabled for this build configuration
 
-collection-backlogged-crash-reports =
-    .label = Allow { -brand-short-name } to send backlogged crash reports on your behalf
+collection-backlogged-crash-reports-with-link = Allow { -brand-short-name } to send backlogged crash reports on your behalf <a data-l10n-name="crash-reports-link">Learn more</a>
     .accesskey = c
-collection-backlogged-crash-reports-link = Learn more
 
 ## Privacy Section - Security
 ##

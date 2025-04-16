@@ -1053,7 +1053,8 @@ function getDefaultFileName(
     // This is something like a data: and so forth URI... no filename here.
   }
 
-  if (docTitle) {
+  // Don't use the title if it's from a data URI
+  if (docTitle && aURI?.scheme != "data") {
     // 4) Use the document title
     return docTitle;
   }
@@ -1135,6 +1136,7 @@ const kImageExtensions = new Set([
   "svg",
   "webp",
   "avif",
+  "jxl",
 ]);
 
 function getNormalizedLeafName(aFile, aDefaultExtension) {

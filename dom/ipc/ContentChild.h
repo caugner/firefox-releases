@@ -277,7 +277,13 @@ class ContentChild final : public PContentChild,
       const ChromeRegistryItem& item);
 
   mozilla::ipc::IPCResult RecvClearStyleSheetCache(
-      const Maybe<RefPtr<nsIPrincipal>>& aForPrincipal);
+      const Maybe<RefPtr<nsIPrincipal>>& aForPrincipal,
+      const Maybe<nsCString>& aBaseDomain);
+
+  mozilla::ipc::IPCResult RecvClearImageCacheFromPrincipal(
+      nsIPrincipal* aPrincipal);
+  mozilla::ipc::IPCResult RecvClearImageCacheFromBaseDomain(
+      const nsCString& aBaseDomain);
   mozilla::ipc::IPCResult RecvClearImageCache(const bool& privateLoader,
                                               const bool& chrome);
 
@@ -352,6 +358,9 @@ class ContentChild final : public PContentChild,
 
   mozilla::ipc::IPCResult RecvUpdateFontList(SystemFontList&&);
   mozilla::ipc::IPCResult RecvRebuildFontList(const bool& aFullRebuild);
+  mozilla::ipc::IPCResult RecvFontListShmBlockAdded(
+      const uint32_t& aGeneration, const uint32_t& aIndex,
+      const base::SharedMemoryHandle& aHandle);
 
   mozilla::ipc::IPCResult RecvUpdateAppLocales(
       nsTArray<nsCString>&& aAppLocales);
@@ -380,6 +389,8 @@ class ContentChild final : public PContentChild,
       const nsCString& sourceURL, const nsCString& updateURL);
 
   mozilla::ipc::IPCResult RecvRemoteType(const nsCString& aRemoteType);
+
+  void PreallocInit();
 
   // Call RemoteTypePrefix() on the result to remove URIs if you want to use
   // this for telemetry.
@@ -620,9 +631,6 @@ class ContentChild final : public PContentChild,
       const MaybeDiscarded<BrowsingContext>& aContext,
       const MediaControlAction& aAction);
 
-  void HoldBrowsingContextGroup(BrowsingContextGroup* aBCG);
-  void ReleaseBrowsingContextGroup(BrowsingContextGroup* aBCG);
-
   // See `BrowsingContext::mEpochs` for an explanation of this field.
   uint64_t GetBrowsingContextFieldEpoch() const {
     return mBrowsingContextFieldEpoch;
@@ -685,6 +693,7 @@ class ContentChild final : public PContentChild,
 
   mozilla::ipc::IPCResult RecvRegisterBrowsingContextGroup(
       uint64_t aGroupId, nsTArray<SyncedContextInitializer>&& aInits);
+  mozilla::ipc::IPCResult RecvDestroyBrowsingContextGroup(uint64_t aGroupId);
 
   mozilla::ipc::IPCResult RecvWindowClose(
       const MaybeDiscarded<BrowsingContext>& aContext, bool aTrustedCaller);
@@ -775,15 +784,15 @@ class ContentChild final : public PContentChild,
 
   mozilla::ipc::IPCResult RecvGoBack(
       const MaybeDiscarded<BrowsingContext>& aContext,
-      const Maybe<int32_t>& aCancelContentJSEpoch,
-      bool aRequireUserInteraction);
+      const Maybe<int32_t>& aCancelContentJSEpoch, bool aRequireUserInteraction,
+      bool aUserActivation);
   mozilla::ipc::IPCResult RecvGoForward(
       const MaybeDiscarded<BrowsingContext>& aContext,
-      const Maybe<int32_t>& aCancelContentJSEpoch,
-      bool aRequireUserInteraction);
+      const Maybe<int32_t>& aCancelContentJSEpoch, bool aRequireUserInteraction,
+      bool aUserActivation);
   mozilla::ipc::IPCResult RecvGoToIndex(
       const MaybeDiscarded<BrowsingContext>& aContext, const int32_t& aIndex,
-      const Maybe<int32_t>& aCancelContentJSEpoch);
+      const Maybe<int32_t>& aCancelContentJSEpoch, bool aUserActivation);
   mozilla::ipc::IPCResult RecvReload(
       const MaybeDiscarded<BrowsingContext>& aContext,
       const uint32_t aReloadFlags);

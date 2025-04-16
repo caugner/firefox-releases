@@ -73,23 +73,23 @@ static bool ProxyGetOnExpando(JSContext* cx, HandleObject proxy,
   // Because we controlled the creation of the expando, we know it's not a
   // proxy, and so can safely call internal methods on it without worrying about
   // exposing information about private names.
-  Rooted<PropertyDescriptor> desc(cx);
+  Rooted<mozilla::Maybe<PropertyDescriptor>> desc(cx);
   if (!GetOwnPropertyDescriptor(cx, expando, id, &desc)) {
     return false;
   }
+  // We must have the object, same reasoning as the expando.
+  MOZ_ASSERT(desc.isSome());
 
   // If the private name has a getter, delegate to that.
-  if (desc.hasGetterObject()) {
-    RootedValue getter(cx, JS::ObjectValue(*desc.getterObject().get()));
+  if (desc->hasGetter()) {
+    RootedValue getter(cx, JS::ObjectValue(*desc->getter()));
     return js::CallGetter(cx, receiver, getter, vp);
   }
 
-  // We must have the object, same reasoning as the expando.
-  MOZ_ASSERT(desc.object());
-  MOZ_ASSERT(desc.hasValue());
-  MOZ_ASSERT(desc.isDataDescriptor());
+  MOZ_ASSERT(desc->hasValue());
+  MOZ_ASSERT(desc->isDataDescriptor());
 
-  vp.set(desc.value());
+  vp.set(desc->value());
   return true;
 }
 
@@ -171,16 +171,15 @@ JS_FRIEND_API void js::assertEnteredPolicy(JSContext* cx, JSObject* proxy,
 }
 #endif
 
-bool Proxy::getOwnPropertyDescriptor(JSContext* cx, HandleObject proxy,
-                                     HandleId id,
-                                     MutableHandle<PropertyDescriptor> desc) {
+bool Proxy::getOwnPropertyDescriptor(
+    JSContext* cx, HandleObject proxy, HandleId id,
+    MutableHandle<mozilla::Maybe<PropertyDescriptor>> desc) {
   AutoCheckRecursionLimit recursion(cx);
   if (!recursion.check(cx)) {
     return false;
   }
   const BaseProxyHandler* handler = proxy->as<ProxyObject>().handler();
-  desc.object().set(
-      nullptr);  // default result if we refuse to perform this action
+  desc.reset();  // default result if we refuse to perform this action
   AutoEnterPolicy policy(cx, handler, proxy, id,
                          BaseProxyHandler::GET_PROPERTY_DESCRIPTOR, true);
   if (!policy.allowed()) {
@@ -191,7 +190,6 @@ bool Proxy::getOwnPropertyDescriptor(JSContext* cx, HandleObject proxy,
   // this would be incorrect.
   MOZ_ASSERT_IF(handler->useProxyExpandoObjectForPrivateFields(),
                 !id.isPrivateName());
-
   return handler->getOwnPropertyDescriptor(cx, proxy, id, desc);
 }
 

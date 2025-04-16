@@ -319,7 +319,7 @@ bool Axis::CanScroll(ParentLayerCoord aDelta) const {
 }
 
 CSSCoord Axis::ClampOriginToScrollableRect(CSSCoord aOrigin) const {
-  CSSToParentLayerScale zoom = GetScaleForAxis(GetFrameMetrics().GetZoom());
+  CSSToParentLayerScale zoom = GetAxisScale(GetFrameMetrics().GetZoom());
   ParentLayerCoord origin = aOrigin * zoom;
   ParentLayerCoord result;
   if (origin < GetPageStart()) {
@@ -475,6 +475,10 @@ bool Axis::OverscrollBehaviorAllowsOverscrollEffect() const {
 AxisX::AxisX(AsyncPanZoomController* aAsyncPanZoomController)
     : Axis(aAsyncPanZoomController) {}
 
+CSSCoord AxisX::GetPointOffset(const CSSPoint& aPoint) const {
+  return aPoint.x;
+}
+
 ParentLayerCoord AxisX::GetPointOffset(const ParentLayerPoint& aPoint) const {
   return aPoint.x;
 }
@@ -492,9 +496,24 @@ ParentLayerCoord AxisX::GetRectOffset(const ParentLayerRect& aRect) const {
   return aRect.X();
 }
 
-CSSToParentLayerScale AxisX::GetScaleForAxis(
-    const CSSToParentLayerScale2D& aScale) const {
-  return CSSToParentLayerScale(aScale.xScale);
+float AxisX::GetTransformScale(
+    const AsyncTransformComponentMatrix& aMatrix) const {
+  return aMatrix._11;
+}
+
+ParentLayerCoord AxisX::GetTransformTranslation(
+    const AsyncTransformComponentMatrix& aMatrix) const {
+  return aMatrix._41;
+}
+
+void AxisX::PostScale(AsyncTransformComponentMatrix& aMatrix,
+                      float aScale) const {
+  aMatrix.PostScale(aScale, 1.f, 1.f);
+}
+
+void AxisX::PostTranslate(AsyncTransformComponentMatrix& aMatrix,
+                          ParentLayerCoord aTranslation) const {
+  aMatrix.PostTranslate(aTranslation, 0, 0);
 }
 
 ScreenPoint AxisX::MakePoint(ScreenCoord aCoord) const {
@@ -535,6 +554,10 @@ OverscrollBehavior AxisX::GetOverscrollBehavior() const {
 AxisY::AxisY(AsyncPanZoomController* aAsyncPanZoomController)
     : Axis(aAsyncPanZoomController) {}
 
+CSSCoord AxisY::GetPointOffset(const CSSPoint& aPoint) const {
+  return aPoint.y;
+}
+
 ParentLayerCoord AxisY::GetPointOffset(const ParentLayerPoint& aPoint) const {
   return aPoint.y;
 }
@@ -552,9 +575,24 @@ ParentLayerCoord AxisY::GetRectOffset(const ParentLayerRect& aRect) const {
   return aRect.Y();
 }
 
-CSSToParentLayerScale AxisY::GetScaleForAxis(
-    const CSSToParentLayerScale2D& aScale) const {
-  return CSSToParentLayerScale(aScale.yScale);
+float AxisY::GetTransformScale(
+    const AsyncTransformComponentMatrix& aMatrix) const {
+  return aMatrix._22;
+}
+
+ParentLayerCoord AxisY::GetTransformTranslation(
+    const AsyncTransformComponentMatrix& aMatrix) const {
+  return aMatrix._42;
+}
+
+void AxisY::PostScale(AsyncTransformComponentMatrix& aMatrix,
+                      float aScale) const {
+  aMatrix.PostScale(1.f, aScale, 1.f);
+}
+
+void AxisY::PostTranslate(AsyncTransformComponentMatrix& aMatrix,
+                          ParentLayerCoord aTranslation) const {
+  aMatrix.PostTranslate(0, aTranslation, 0);
 }
 
 ScreenPoint AxisY::MakePoint(ScreenCoord aCoord) const {

@@ -460,20 +460,6 @@
     sym: SymbolId
     expected: SymbolField
 
-- name: GuardMagicValue
-  shared: true
-  transpile: true
-  cost_estimate: 1
-  args:
-    val: ValId
-    magic: JSWhyMagicImm
-
-- name: GuardFrameHasNoArgumentsObject
-  shared: false
-  transpile: true
-  cost_estimate: 1
-  args:
-
 - name: GuardNoDenseElements
   shared: true
   transpile: true
@@ -608,9 +594,10 @@
 
 - name: GuardNoAllocationMetadataBuilder
   shared: true
-  transpile: false
+  transpile: true
   cost_estimate: 1
   args:
+    builderAddr: RawPointerField
 
 - name: GuardFunctionHasJitEntry
   shared: true
@@ -1859,25 +1846,6 @@
   args:
     str: StringId
 
-- name: LoadFrameCalleeResult
-  shared: false
-  transpile: true
-  cost_estimate: 1
-  args:
-
-- name: LoadFrameNumActualArgsResult
-  shared: false
-  transpile: true
-  cost_estimate: 1
-  args:
-
-- name: LoadFrameArgumentResult
-  shared: false
-  transpile: true
-  cost_estimate: 1
-  args:
-    index: Int32Id
-
 - name: FrameIsConstructingResult
   shared: false
   transpile: true
@@ -2459,23 +2427,22 @@
   args:
     val: ValueField
 
-- name: LoadNewObjectFromTemplateResult
-  shared: true
-  transpile: false
-  cost_estimate: 4
-  args:
-    templateObject: ObjectField
-    disambiguationIdHi: UInt32Imm
-    disambiguationIdLo: UInt32Imm
-
 - name: NewPlainObjectResult
-  shared: true
-  transpile: false
+  shared: false
+  transpile: true
   cost_estimate: 4
   args:
     numFixedSlots: UInt32Imm
     numDynamicSlots: UInt32Imm
     allocKind: AllocKindImm
+    shape: ShapeField
+
+- name: NewArrayObjectResult
+  shared: false
+  transpile: true
+  cost_estimate: 4
+  args:
+    arrayLength: UInt32Imm
     shape: ShapeField
 
 - name: CallStringConcatResult
@@ -2598,6 +2565,14 @@
   args:
     lhs: NumberId
     rhs: NumberId
+
+- name: SameValueResult
+  shared: false
+  transpile: true
+  cost_estimate: 4
+  args:
+    lhs: ValId
+    rhs: ValId
 
 - name: IndirectTruncateInt32Result
   shared: true

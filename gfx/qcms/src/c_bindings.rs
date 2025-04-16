@@ -273,11 +273,11 @@ pub unsafe extern "C" fn qcms_data_create_rgb_with_gamma(
     }
     memset(data, 0, length as usize);
     // Part1 : write rXYZ, gXYZ and bXYZ
-    let colorants = get_rgb_colorants(white_point, primaries);
-    if colorants.invalid {
-        free(data);
-        return;
-    }
+    let colorants = match get_rgb_colorants(white_point, primaries) {
+        Some(colorants) => colorants,
+        None => { free(data); return }
+    };
+
     let data = std::slice::from_raw_parts_mut(data as *mut u8, length as usize);
     // the position of first tag's signature in tag table
     tag_table_offset = (128 + 4) as usize; // the start of tag data elements.
@@ -359,8 +359,9 @@ pub unsafe extern "C" fn qcms_transform_data(
 }
 
 pub type icColorSpaceSignature = u32;
-pub const icSigGrayData: icColorSpaceSignature = 1196573017;
-pub const icSigRgbData: icColorSpaceSignature = 1380401696;
+pub const icSigGrayData: icColorSpaceSignature = 0x47524159; // 'GRAY'
+pub const icSigRgbData: icColorSpaceSignature = 0x52474220; // 'RGB '
+pub const icSigCmykData: icColorSpaceSignature = 0x434d594b; // 'CMYK'
 
 pub use crate::iccread::qcms_profile_is_bogus;
 pub use crate::iccread::Profile as qcms_profile;

@@ -34,7 +34,7 @@ namespace mozilla::wr {
 
 /* static */
 UniquePtr<RenderCompositor> RenderCompositorEGL::Create(
-    RefPtr<widget::CompositorWidget> aWidget, nsACString& aError) {
+    const RefPtr<widget::CompositorWidget>& aWidget, nsACString& aError) {
 #ifdef MOZ_WAYLAND
   if (!gfx::gfxVars::UseEGL()) {
     return nullptr;
@@ -58,8 +58,8 @@ EGLSurface RenderCompositorEGL::CreateEGLSurface() {
 }
 
 RenderCompositorEGL::RenderCompositorEGL(
-    RefPtr<widget::CompositorWidget> aWidget)
-    : RenderCompositor(std::move(aWidget)), mEGLSurface(EGL_NO_SURFACE) {}
+    const RefPtr<widget::CompositorWidget>& aWidget)
+    : RenderCompositor(aWidget), mEGLSurface(EGL_NO_SURFACE) {}
 
 RenderCompositorEGL::~RenderCompositorEGL() {
 #ifdef MOZ_WIDGET_ANDROID
@@ -75,8 +75,8 @@ bool RenderCompositorEGL::BeginFrame() {
         << "We don't have EGLSurface to draw into. Called too early?";
     return false;
   }
-  if (mWidget->AsX11()) {
-    mWidget->AsX11()->SetEGLNativeWindowSize(GetBufferSize());
+  if (mWidget->AsGTK()) {
+    mWidget->AsGTK()->SetEGLNativeWindowSize(GetBufferSize());
   }
 #endif
   if (!MakeCurrent()) {

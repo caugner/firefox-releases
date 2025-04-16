@@ -30,7 +30,7 @@ class HandleValueArray;
 
 class ObjectOpResult;
 
-struct JS_PUBLIC_API PropertyDescriptor;
+class JS_PUBLIC_API PropertyDescriptor;
 
 }  // namespace JS
 
@@ -136,6 +136,7 @@ using JS::HandleValueArray;
 using JS::ObjectOpResult;
 
 using JS::PropertyDescriptor;
+using JS::PropertyKey;
 
 using JS::Compartment;
 using JS::Realm;

@@ -23,11 +23,6 @@ class WorkerDescriptorFront extends DescriptorMixin(
     super(client, targetFront, parentFront);
 
     this.traits = {};
-
-    // @backward-compat { version 88 } Fx88 now emits descriptor-destroyed event,
-    // which is generic to all descriptor actors and listened from the DescriptorFrontMixin.
-    // Once we support 88+, we can remove this listener.
-    this.once("worker-close", this.destroy.bind(this));
   }
 
   form(json) {
@@ -45,6 +40,10 @@ class WorkerDescriptorFront extends DescriptorMixin(
 
   get name() {
     return this.url.split("/").pop();
+  }
+
+  get isWorkerDescriptor() {
+    return true;
   }
 
   get isDedicatedWorker() {

@@ -22,7 +22,6 @@ XPCOMUtils.defineLazyModuleGetters(this, {
   error: "chrome://marionette/content/error.js",
   evaluate: "chrome://marionette/content/evaluate.js",
   Log: "chrome://marionette/content/log.js",
-  modal: "chrome://marionette/content/modal.js",
 });
 
 XPCOMUtils.defineLazyGetter(this, "logger", () => Log.get());
@@ -33,9 +32,6 @@ XPCOMUtils.defineLazyGetter(this, "elementIdCache", () => {
 class MarionetteCommandsParent extends JSWindowActorParent {
   actorCreated() {
     this._resolveDialogOpened = null;
-
-    this.dialogObserver = new modal.DialogObserver();
-    this.dialogObserver.add(this.onDialog.bind(this));
 
     this.topWindow = this.browsingContext.top.embedderElement?.ownerGlobal;
     this.topWindow?.addEventListener("TabClose", _onTabClose);
@@ -66,18 +62,11 @@ class MarionetteCommandsParent extends JSWindowActorParent {
   }
 
   didDestroy() {
-    this.dialogObserver.remove(this.onDialog);
-    this.dialogObserver.unregister();
-
     this.topWindow?.removeEventListener("TabClose", _onTabClose);
   }
 
-  onDialog(action, dialogRef, win) {
-    if (
-      this._resolveDialogOpened &&
-      action == "opened" &&
-      win == this.browsingContext.topChromeWindow
-    ) {
+  notifyDialogOpened() {
+    if (this._resolveDialogOpened) {
       this._resolveDialogOpened({ data: null });
     }
   }
@@ -322,11 +311,20 @@ function getMarionetteCommandsActorProxy(browsingContextFn) {
           let attempts = 0;
           while (true) {
             try {
+              const browsingContext = browsingContextFn();
+              if (!browsingContext) {
+                throw new DOMException(
+                  "No BrowsingContext found",
+                  "NoBrowsingContext"
+                );
+              }
+
               // TODO: Scenarios where the window/tab got closed and
               // currentWindowGlobal is null will be handled in Bug 1662808.
-              const actor = browsingContextFn().currentWindowGlobal.getActor(
+              const actor = browsingContext.currentWindowGlobal.getActor(
                 "MarionetteCommands"
               );
+
               const result = await actor[methodName](...args);
               return result;
             } catch (e) {

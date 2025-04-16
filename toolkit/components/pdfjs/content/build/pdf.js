@@ -1548,8 +1548,6 @@ var _optional_content_config = __w_pdfjs_require__(15);
 
 var _transport_stream = __w_pdfjs_require__(16);
 
-var _webgl = __w_pdfjs_require__(17);
-
 const DEFAULT_RANGE_CHUNK_SIZE = 65536;
 const RENDERING_CANCELLED_TIMEOUT = 100;
 const DefaultCanvasFactory = _display_utils.DOMCanvasFactory;
@@ -1753,7 +1751,7 @@ function _fetchDocument(worker, source, pdfDataRangeTransport, docId) {
 
   return worker.messageHandler.sendWithPromise("GetDocRequest", {
     docId,
-    apiVersion: '2.9.45',
+    apiVersion: '2.9.273',
     source: {
       data: source.data,
       url: source.url,
@@ -2104,7 +2102,6 @@ class PDFPageProxy {
     canvasContext,
     viewport,
     intent = "display",
-    enableWebGL = false,
     renderInteractiveForms = false,
     transform = null,
     imageLayer = null,
@@ -2139,9 +2136,6 @@ class PDFPageProxy {
 
     const canvasFactoryInstance = canvasFactory || new DefaultCanvasFactory({
       ownerDocument: this._ownerDocument
-    });
-    const webGLContext = new _webgl.WebGLContext({
-      enable: enableWebGL
     });
     const annotationStorage = includeAnnotationStorage ? this._transport.annotationStorage.serializable : null;
 
@@ -2206,7 +2200,6 @@ class PDFPageProxy {
       operatorList: intentState.operatorList,
       pageIndex: this._pageIndex,
       canvasFactory: canvasFactoryInstance,
-      webGLContext,
       useRequestAnimationFrame: renderingIntent !== "print",
       pdfBug: this._pdfBug
     });
@@ -2972,11 +2965,13 @@ class WorkerTransport {
     }
 
     const waitOn = [];
-    this.pageCache.forEach(function (page) {
+
+    for (const page of this.pageCache) {
       if (page) {
         waitOn.push(page._destroy());
       }
-    });
+    }
+
     this.pageCache.length = 0;
     this.pagePromises.length = 0;
 
@@ -3618,7 +3613,6 @@ const InternalRenderTask = function InternalRenderTaskClosure() {
       operatorList,
       pageIndex,
       canvasFactory,
-      webGLContext,
       useRequestAnimationFrame = false,
       pdfBug = false
     }) {
@@ -3630,7 +3624,6 @@ const InternalRenderTask = function InternalRenderTaskClosure() {
       this.operatorList = operatorList;
       this._pageIndex = pageIndex;
       this.canvasFactory = canvasFactory;
-      this.webGLContext = webGLContext;
       this._pdfBug = pdfBug;
       this.running = false;
       this.graphicsReadyCallback = null;
@@ -3679,7 +3672,7 @@ const InternalRenderTask = function InternalRenderTaskClosure() {
         imageLayer,
         background
       } = this.params;
-      this.gfx = new _canvas.CanvasGraphics(canvasContext, this.commonObjs, this.objs, this.canvasFactory, this.webGLContext, imageLayer, optionalContentConfig);
+      this.gfx = new _canvas.CanvasGraphics(canvasContext, this.commonObjs, this.objs, this.canvasFactory, imageLayer, optionalContentConfig);
       this.gfx.beginDrawing({
         transform,
         viewport,
@@ -3780,9 +3773,9 @@ const InternalRenderTask = function InternalRenderTaskClosure() {
   return InternalRenderTask;
 }();
 
-const version = '2.9.45';
+const version = '2.9.273';
 exports.version = version;
-const build = 'bb478928b';
+const build = 'e394da586';
 exports.build = build;
 
 /***/ }),
@@ -3836,9 +3829,10 @@ class BaseFontLoader {
   }
 
   clear() {
-    this.nativeFontFaces.forEach(nativeFontFace => {
+    for (const nativeFontFace of this.nativeFontFaces) {
       this._document.fonts.delete(nativeFontFace);
-    });
+    }
+
     this.nativeFontFaces.length = 0;
 
     if (this.styleElement) {
@@ -3952,7 +3946,21 @@ class FontFaceObject {
       return null;
     }
 
-    const nativeFontFace = new FontFace(this.loadedName, this.data, {});
+    let nativeFontFace;
+
+    if (!this.cssFontInfo) {
+      nativeFontFace = new FontFace(this.loadedName, this.data, {});
+    } else {
+      const css = {
+        weight: this.cssFontInfo.fontWeight
+      };
+
+      if (this.cssFontInfo.italicAngle) {
+        css.style = `oblique ${this.cssFontInfo.italicAngle}deg`;
+      }
+
+      nativeFontFace = new FontFace(this.cssFontInfo.fontFamily, this.data, css);
+    }
 
     if (this.fontRegistry) {
       this.fontRegistry.registerFont(this);
@@ -3966,9 +3974,21 @@ class FontFaceObject {
       return null;
     }
 
-    const data = (0, _util.bytesToString)(new Uint8Array(this.data));
+    const data = (0, _util.bytesToString)(this.data);
     const url = `url(data:${this.mimetype};base64,${btoa(data)});`;
-    const rule = `@font-face {font-family:"${this.loadedName}";src:${url}}`;
+    let rule;
+
+    if (!this.cssFontInfo) {
+      rule = `@font-face {font-family:"${this.loadedName}";src:${url}}`;
+    } else {
+      let css = `font-weight: ${this.cssFontInfo.fontWeight};`;
+
+      if (this.cssFontInfo.italicAngle) {
+        css += `font-style: oblique ${this.cssFontInfo.italicAngle}deg;`;
+      }
+
+      rule = `@font-face {font-family:"${this.cssFontInfo.fontFamily}";${css}src:${url}}`;
+    }
 
     if (this.fontRegistry) {
       this.fontRegistry.registerFont(this, url);
@@ -4196,157 +4216,150 @@ const FULL_CHUNK_HEIGHT = 16;
 const LINEWIDTH_SCALE_FACTOR = 1.000001;
 
 function addContextCurrentTransform(ctx) {
-  if (!ctx.mozCurrentTransform) {
-    ctx._originalSave = ctx.save;
-    ctx._originalRestore = ctx.restore;
-    ctx._originalRotate = ctx.rotate;
-    ctx._originalScale = ctx.scale;
-    ctx._originalTranslate = ctx.translate;
-    ctx._originalTransform = ctx.transform;
-    ctx._originalSetTransform = ctx.setTransform;
-    ctx._originalResetTransform = ctx.resetTransform;
-    ctx._transformMatrix = ctx._transformMatrix || [1, 0, 0, 1, 0, 0];
-    ctx._transformStack = [];
-
-    try {
-      const desc = Object.getOwnPropertyDescriptor(Object.getPrototypeOf(ctx), "lineWidth");
-      ctx._setLineWidth = desc.set;
-      ctx._getLineWidth = desc.get;
-      Object.defineProperty(ctx, "lineWidth", {
-        set: function setLineWidth(width) {
-          this._setLineWidth(width * LINEWIDTH_SCALE_FACTOR);
-        },
-        get: function getLineWidth() {
-          return this._getLineWidth();
-        }
-      });
-    } catch (_) {}
-
-    Object.defineProperty(ctx, "mozCurrentTransform", {
-      get: function getCurrentTransform() {
-        return this._transformMatrix;
-      }
-    });
-    Object.defineProperty(ctx, "mozCurrentTransformInverse", {
-      get: function getCurrentTransformInverse() {
-        const m = this._transformMatrix;
-        const a = m[0],
-              b = m[1],
-              c = m[2],
-              d = m[3],
-              e = m[4],
-              f = m[5];
-        const ad_bc = a * d - b * c;
-        const bc_ad = b * c - a * d;
-        return [d / ad_bc, b / bc_ad, c / bc_ad, a / ad_bc, (d * e - c * f) / bc_ad, (b * e - a * f) / ad_bc];
-      }
-    });
-
-    ctx.save = function ctxSave() {
-      const old = this._transformMatrix;
-
-      this._transformStack.push(old);
-
-      this._transformMatrix = old.slice(0, 6);
-
-      this._originalSave();
-    };
-
-    ctx.restore = function ctxRestore() {
-      const prev = this._transformStack.pop();
-
-      if (prev) {
-        this._transformMatrix = prev;
-
-        this._originalRestore();
-      }
-    };
-
-    ctx.translate = function ctxTranslate(x, y) {
-      const m = this._transformMatrix;
-      m[4] = m[0] * x + m[2] * y + m[4];
-      m[5] = m[1] * x + m[3] * y + m[5];
-
-      this._originalTranslate(x, y);
-    };
-
-    ctx.scale = function ctxScale(x, y) {
-      const m = this._transformMatrix;
-      m[0] = m[0] * x;
-      m[1] = m[1] * x;
-      m[2] = m[2] * y;
-      m[3] = m[3] * y;
-
-      this._originalScale(x, y);
-    };
-
-    ctx.transform = function ctxTransform(a, b, c, d, e, f) {
-      const m = this._transformMatrix;
-      this._transformMatrix = [m[0] * a + m[2] * b, m[1] * a + m[3] * b, m[0] * c + m[2] * d, m[1] * c + m[3] * d, m[0] * e + m[2] * f + m[4], m[1] * e + m[3] * f + m[5]];
-
-      ctx._originalTransform(a, b, c, d, e, f);
-    };
-
-    ctx.setTransform = function ctxSetTransform(a, b, c, d, e, f) {
-      this._transformMatrix = [a, b, c, d, e, f];
-
-      ctx._originalSetTransform(a, b, c, d, e, f);
-    };
-
-    ctx.resetTransform = function ctxResetTransform() {
-      this._transformMatrix = [1, 0, 0, 1, 0, 0];
-
-      ctx._originalResetTransform();
-    };
-
-    ctx.rotate = function ctxRotate(angle) {
-      const cosValue = Math.cos(angle);
-      const sinValue = Math.sin(angle);
-      const m = this._transformMatrix;
-      this._transformMatrix = [m[0] * cosValue + m[2] * sinValue, m[1] * cosValue + m[3] * sinValue, m[0] * -sinValue + m[2] * cosValue, m[1] * -sinValue + m[3] * cosValue, m[4], m[5]];
-
-      this._originalRotate(angle);
-    };
+  if (ctx.mozCurrentTransform) {
+    return;
   }
+
+  ctx._originalSave = ctx.save;
+  ctx._originalRestore = ctx.restore;
+  ctx._originalRotate = ctx.rotate;
+  ctx._originalScale = ctx.scale;
+  ctx._originalTranslate = ctx.translate;
+  ctx._originalTransform = ctx.transform;
+  ctx._originalSetTransform = ctx.setTransform;
+  ctx._originalResetTransform = ctx.resetTransform;
+  ctx._transformMatrix = ctx._transformMatrix || [1, 0, 0, 1, 0, 0];
+  ctx._transformStack = [];
+
+  try {
+    const desc = Object.getOwnPropertyDescriptor(Object.getPrototypeOf(ctx), "lineWidth");
+    ctx._setLineWidth = desc.set;
+    ctx._getLineWidth = desc.get;
+    Object.defineProperty(ctx, "lineWidth", {
+      set: function setLineWidth(width) {
+        this._setLineWidth(width * LINEWIDTH_SCALE_FACTOR);
+      },
+      get: function getLineWidth() {
+        return this._getLineWidth();
+      }
+    });
+  } catch (_) {}
+
+  Object.defineProperty(ctx, "mozCurrentTransform", {
+    get: function getCurrentTransform() {
+      return this._transformMatrix;
+    }
+  });
+  Object.defineProperty(ctx, "mozCurrentTransformInverse", {
+    get: function getCurrentTransformInverse() {
+      const [a, b, c, d, e, f] = this._transformMatrix;
+      const ad_bc = a * d - b * c;
+      const bc_ad = b * c - a * d;
+      return [d / ad_bc, b / bc_ad, c / bc_ad, a / ad_bc, (d * e - c * f) / bc_ad, (b * e - a * f) / ad_bc];
+    }
+  });
+
+  ctx.save = function ctxSave() {
+    const old = this._transformMatrix;
+
+    this._transformStack.push(old);
+
+    this._transformMatrix = old.slice(0, 6);
+
+    this._originalSave();
+  };
+
+  ctx.restore = function ctxRestore() {
+    const prev = this._transformStack.pop();
+
+    if (prev) {
+      this._transformMatrix = prev;
+
+      this._originalRestore();
+    }
+  };
+
+  ctx.translate = function ctxTranslate(x, y) {
+    const m = this._transformMatrix;
+    m[4] = m[0] * x + m[2] * y + m[4];
+    m[5] = m[1] * x + m[3] * y + m[5];
+
+    this._originalTranslate(x, y);
+  };
+
+  ctx.scale = function ctxScale(x, y) {
+    const m = this._transformMatrix;
+    m[0] = m[0] * x;
+    m[1] = m[1] * x;
+    m[2] = m[2] * y;
+    m[3] = m[3] * y;
+
+    this._originalScale(x, y);
+  };
+
+  ctx.transform = function ctxTransform(a, b, c, d, e, f) {
+    const m = this._transformMatrix;
+    this._transformMatrix = [m[0] * a + m[2] * b, m[1] * a + m[3] * b, m[0] * c + m[2] * d, m[1] * c + m[3] * d, m[0] * e + m[2] * f + m[4], m[1] * e + m[3] * f + m[5]];
+
+    ctx._originalTransform(a, b, c, d, e, f);
+  };
+
+  ctx.setTransform = function ctxSetTransform(a, b, c, d, e, f) {
+    this._transformMatrix = [a, b, c, d, e, f];
+
+    ctx._originalSetTransform(a, b, c, d, e, f);
+  };
+
+  ctx.resetTransform = function ctxResetTransform() {
+    this._transformMatrix = [1, 0, 0, 1, 0, 0];
+
+    ctx._originalResetTransform();
+  };
+
+  ctx.rotate = function ctxRotate(angle) {
+    const cosValue = Math.cos(angle);
+    const sinValue = Math.sin(angle);
+    const m = this._transformMatrix;
+    this._transformMatrix = [m[0] * cosValue + m[2] * sinValue, m[1] * cosValue + m[3] * sinValue, m[0] * -sinValue + m[2] * cosValue, m[1] * -sinValue + m[3] * cosValue, m[4], m[5]];
+
+    this._originalRotate(angle);
+  };
 }
 
-const CachedCanvases = function CachedCanvasesClosure() {
-  function CachedCanvases(canvasFactory) {
+class CachedCanvases {
+  constructor(canvasFactory) {
     this.canvasFactory = canvasFactory;
     this.cache = Object.create(null);
   }
 
-  CachedCanvases.prototype = {
-    getCanvas: function CachedCanvases_getCanvas(id, width, height, trackTransform) {
-      let canvasEntry;
+  getCanvas(id, width, height, trackTransform) {
+    let canvasEntry;
 
-      if (this.cache[id] !== undefined) {
-        canvasEntry = this.cache[id];
-        this.canvasFactory.reset(canvasEntry, width, height);
-        canvasEntry.context.setTransform(1, 0, 0, 1, 0, 0);
-      } else {
-        canvasEntry = this.canvasFactory.create(width, height);
-        this.cache[id] = canvasEntry;
-      }
-
-      if (trackTransform) {
-        addContextCurrentTransform(canvasEntry.context);
-      }
-
-      return canvasEntry;
-    },
-
-    clear() {
-      for (const id in this.cache) {
-        const canvasEntry = this.cache[id];
-        this.canvasFactory.destroy(canvasEntry);
-        delete this.cache[id];
-      }
+    if (this.cache[id] !== undefined) {
+      canvasEntry = this.cache[id];
+      this.canvasFactory.reset(canvasEntry, width, height);
+      canvasEntry.context.setTransform(1, 0, 0, 1, 0, 0);
+    } else {
+      canvasEntry = this.canvasFactory.create(width, height);
+      this.cache[id] = canvasEntry;
     }
 
-  };
-  return CachedCanvases;
-}();
+    if (trackTransform) {
+      addContextCurrentTransform(canvasEntry.context);
+    }
+
+    return canvasEntry;
+  }
+
+  clear() {
+    for (const id in this.cache) {
+      const canvasEntry = this.cache[id];
+      this.canvasFactory.destroy(canvasEntry);
+      delete this.cache[id];
+    }
+  }
+
+}
 
 function compileType3Glyph(imgData) {
   const POINT_TO_PROCESS_LIMIT = 1000;
@@ -4522,8 +4535,8 @@ function compileType3Glyph(imgData) {
   return drawOutline;
 }
 
-const CanvasExtraState = function CanvasExtraStateClosure() {
-  function CanvasExtraState() {
+class CanvasExtraState {
+  constructor() {
     this.alphaIsShape = false;
     this.fontSize = 0;
     this.fontSizeScale = 1;
@@ -4551,54 +4564,20 @@ const CanvasExtraState = function CanvasExtraStateClosure() {
     this.transferMaps = null;
   }
 
-  CanvasExtraState.prototype = {
-    clone: function CanvasExtraState_clone() {
-      return Object.create(this);
-    },
-    setCurrentPoint: function CanvasExtraState_setCurrentPoint(x, y) {
-      this.x = x;
-      this.y = y;
-    }
-  };
-  return CanvasExtraState;
-}();
+  clone() {
+    return Object.create(this);
+  }
+
+  setCurrentPoint(x, y) {
+    this.x = x;
+    this.y = y;
+  }
+
+}
 
 const CanvasGraphics = function CanvasGraphicsClosure() {
   const EXECUTION_TIME = 15;
   const EXECUTION_STEPS = 10;
-
-  function CanvasGraphics(canvasCtx, commonObjs, objs, canvasFactory, webGLContext, imageLayer, optionalContentConfig) {
-    this.ctx = canvasCtx;
-    this.current = new CanvasExtraState();
-    this.stateStack = [];
-    this.pendingClip = null;
-    this.pendingEOFill = false;
-    this.res = null;
-    this.xobjs = null;
-    this.commonObjs = commonObjs;
-    this.objs = objs;
-    this.canvasFactory = canvasFactory;
-    this.webGLContext = webGLContext;
-    this.imageLayer = imageLayer;
-    this.groupStack = [];
-    this.processingType3 = null;
-    this.baseTransform = null;
-    this.baseTransformStack = [];
-    this.groupLevel = 0;
-    this.smaskStack = [];
-    this.smaskCounter = 0;
-    this.tempSMask = null;
-    this.contentVisible = true;
-    this.markedContentStack = [];
-    this.optionalContentConfig = optionalContentConfig;
-    this.cachedCanvases = new CachedCanvases(this.canvasFactory);
-
-    if (canvasCtx) {
-      addContextCurrentTransform(canvasCtx);
-    }
-
-    this._cachedGetSinglePixelWidth = null;
-  }
 
   function putBinaryImageData(ctx, imgData, transferMaps = null) {
     if (typeof ImageData !== "undefined" && imgData instanceof ImageData) {
@@ -4924,27 +4903,11 @@ const CanvasGraphics = function CanvasGraphicsClosure() {
     }
   }
 
-  function composeSMask(ctx, smask, layerCtx, webGLContext) {
+  function composeSMask(ctx, smask, layerCtx) {
     const mask = smask.canvas;
     const maskCtx = smask.context;
     ctx.setTransform(smask.scaleX, 0, 0, smask.scaleY, smask.offsetX, smask.offsetY);
-    const backdrop = smask.backdrop || null;
-
-    if (!smask.transferMap && webGLContext.isEnabled) {
-      const composed = webGLContext.composeSMask({
-        layer: layerCtx.canvas,
-        mask,
-        properties: {
-          subtype: smask.subtype,
-          backdrop
-        }
-      });
-      ctx.setTransform(1, 0, 0, 1, 0, 0);
-      ctx.drawImage(composed, smask.offsetX, smask.offsetY);
-      return;
-    }
-
-    genericComposeSMask(maskCtx, layerCtx, mask.width, mask.height, smask.subtype, backdrop, smask.transferMap);
+    genericComposeSMask(maskCtx, layerCtx, mask.width, mask.height, smask.subtype, smask.backdrop, smask.transferMap);
     ctx.drawImage(mask, 0, 0);
   }
 
@@ -4952,7 +4915,40 @@ const CanvasGraphics = function CanvasGraphicsClosure() {
   const LINE_JOIN_STYLES = ["miter", "round", "bevel"];
   const NORMAL_CLIP = {};
   const EO_CLIP = {};
-  CanvasGraphics.prototype = {
+
+  class CanvasGraphics {
+    constructor(canvasCtx, commonObjs, objs, canvasFactory, imageLayer, optionalContentConfig) {
+      this.ctx = canvasCtx;
+      this.current = new CanvasExtraState();
+      this.stateStack = [];
+      this.pendingClip = null;
+      this.pendingEOFill = false;
+      this.res = null;
+      this.xobjs = null;
+      this.commonObjs = commonObjs;
+      this.objs = objs;
+      this.canvasFactory = canvasFactory;
+      this.imageLayer = imageLayer;
+      this.groupStack = [];
+      this.processingType3 = null;
+      this.baseTransform = null;
+      this.baseTransformStack = [];
+      this.groupLevel = 0;
+      this.smaskStack = [];
+      this.smaskCounter = 0;
+      this.tempSMask = null;
+      this.contentVisible = true;
+      this.markedContentStack = [];
+      this.optionalContentConfig = optionalContentConfig;
+      this.cachedCanvases = new CachedCanvases(this.canvasFactory);
+
+      if (canvasCtx) {
+        addContextCurrentTransform(canvasCtx);
+      }
+
+      this._cachedGetSinglePixelWidth = null;
+    }
+
     beginDrawing({
       transform,
       viewport,
@@ -4989,9 +4985,9 @@ const CanvasGraphics = function CanvasGraphicsClosure() {
       if (this.imageLayer) {
         this.imageLayer.beginLayout();
       }
-    },
+    }
 
-    executeOperatorList: function CanvasGraphics_executeOperatorList(operatorList, executionStartIdx, continueCallback, stepper) {
+    executeOperatorList(operatorList, executionStartIdx, continueCallback, stepper) {
       const argsArray = operatorList.argsArray;
       const fnArray = operatorList.fnArray;
       let i = executionStartIdx || 0;
@@ -5044,8 +5040,9 @@ const CanvasGraphics = function CanvasGraphicsClosure() {
           steps = 0;
         }
       }
-    },
-    endDrawing: function CanvasGraphics_endDrawing() {
+    }
+
+    endDrawing() {
       while (this.stateStack.length || this.current.activeSMask !== null) {
         this.restore();
       }
@@ -5062,39 +5059,43 @@ const CanvasGraphics = function CanvasGraphicsClosure() {
       }
 
       this.cachedCanvases.clear();
-      this.webGLContext.clear();
 
       if (this.imageLayer) {
         this.imageLayer.endLayout();
       }
-    },
-    setLineWidth: function CanvasGraphics_setLineWidth(width) {
+    }
+
+    setLineWidth(width) {
       this.current.lineWidth = width;
       this.ctx.lineWidth = width;
-    },
-    setLineCap: function CanvasGraphics_setLineCap(style) {
+    }
+
+    setLineCap(style) {
       this.ctx.lineCap = LINE_CAP_STYLES[style];
-    },
-    setLineJoin: function CanvasGraphics_setLineJoin(style) {
+    }
+
+    setLineJoin(style) {
       this.ctx.lineJoin = LINE_JOIN_STYLES[style];
-    },
-    setMiterLimit: function CanvasGraphics_setMiterLimit(limit) {
+    }
+
+    setMiterLimit(limit) {
       this.ctx.miterLimit = limit;
-    },
-    setDash: function CanvasGraphics_setDash(dashArray, dashPhase) {
+    }
+
+    setDash(dashArray, dashPhase) {
       const ctx = this.ctx;
 
       if (ctx.setLineDash !== undefined) {
         ctx.setLineDash(dashArray);
         ctx.lineDashOffset = dashPhase;
       }
-    },
+    }
 
-    setRenderingIntent(intent) {},
+    setRenderingIntent(intent) {}
 
-    setFlatness(flatness) {},
+    setFlatness(flatness) {}
 
-    setGState: function CanvasGraphics_setGState(states) {
+    setGState(states) {
       for (let i = 0, ii = states.length; i < ii; i++) {
         const state = states[i];
         const key = state[0];
@@ -5168,8 +5169,9 @@ const CanvasGraphics = function CanvasGraphicsClosure() {
             this.current.transferMaps = value;
         }
       }
-    },
-    beginSMaskGroup: function CanvasGraphics_beginSMaskGroup() {
+    }
+
+    beginSMaskGroup() {
       const activeSMask = this.current.activeSMask;
       const drawnWidth = activeSMask.canvas.width;
       const drawnHeight = activeSMask.canvas.height;
@@ -5188,12 +5190,13 @@ const CanvasGraphics = function CanvasGraphicsClosure() {
       this.setGState([["BM", "source-over"], ["ca", 1], ["CA", 1]]);
       this.groupStack.push(currentCtx);
       this.groupLevel++;
-    },
-    suspendSMaskGroup: function CanvasGraphics_endSMaskGroup() {
+    }
+
+    suspendSMaskGroup() {
       const groupCtx = this.ctx;
       this.groupLevel--;
       this.ctx = this.groupStack.pop();
-      composeSMask(this.ctx, this.current.activeSMask, groupCtx, this.webGLContext);
+      composeSMask(this.ctx, this.current.activeSMask, groupCtx);
       this.ctx.restore();
       this.ctx.save();
       copyCtxState(groupCtx, this.ctx);
@@ -5206,34 +5209,38 @@ const CanvasGraphics = function CanvasGraphicsClosure() {
       groupCtx.setTransform(1, 0, 0, 1, 0, 0);
       groupCtx.clearRect(0, 0, groupCtx.canvas.width, groupCtx.canvas.height);
       groupCtx.restore();
-    },
-    resumeSMaskGroup: function CanvasGraphics_resumeSMaskGroup() {
+    }
+
+    resumeSMaskGroup() {
       const groupCtx = this.current.resumeSMaskCtx;
       const currentCtx = this.ctx;
       this.ctx = groupCtx;
       this.groupStack.push(currentCtx);
       this.groupLevel++;
-    },
-    endSMaskGroup: function CanvasGraphics_endSMaskGroup() {
+    }
+
+    endSMaskGroup() {
       const groupCtx = this.ctx;
       this.groupLevel--;
       this.ctx = this.groupStack.pop();
-      composeSMask(this.ctx, this.current.activeSMask, groupCtx, this.webGLContext);
+      composeSMask(this.ctx, this.current.activeSMask, groupCtx);
       this.ctx.restore();
       copyCtxState(groupCtx, this.ctx);
 
       const deltaTransform = _util.Util.transform(this.current.activeSMask.startTransformInverse, groupCtx.mozCurrentTransform);
 
       this.ctx.transform.apply(this.ctx, deltaTransform);
-    },
-    save: function CanvasGraphics_save() {
+    }
+
+    save() {
       this.ctx.save();
       const old = this.current;
       this.stateStack.push(old);
       this.current = old.clone();
       this.current.resumeSMaskCtx = null;
-    },
-    restore: function CanvasGraphics_restore() {
+    }
+
+    restore() {
       if (this.current.resumeSMaskCtx) {
         this.resumeSMaskGroup();
       }
@@ -5250,12 +5257,14 @@ const CanvasGraphics = function CanvasGraphicsClosure() {
       } else {
         this.current.activeSMask = null;
       }
-    },
-    transform: function CanvasGraphics_transform(a, b, c, d, e, f) {
+    }
+
+    transform(a, b, c, d, e, f) {
       this.ctx.transform(a, b, c, d, e, f);
       this._cachedGetSinglePixelWidth = null;
-    },
-    constructPath: function CanvasGraphics_constructPath(ops, args) {
+    }
+
+    constructPath(ops, args) {
       const ctx = this.ctx;
       const current = this.current;
       let x = current.x,
@@ -5323,11 +5332,13 @@ const CanvasGraphics = function CanvasGraphicsClosure() {
       }
 
       current.setCurrentPoint(x, y);
-    },
-    closePath: function CanvasGraphics_closePath() {
+    }
+
+    closePath() {
       this.ctx.closePath();
-    },
-    stroke: function CanvasGraphics_stroke(consumePath) {
+    }
+
+    stroke(consumePath) {
       consumePath = typeof consumePath !== "undefined" ? consumePath : true;
       const ctx = this.ctx;
       const strokeColor = this.current.strokeColor;
@@ -5335,22 +5346,10 @@ const CanvasGraphics = function CanvasGraphicsClosure() {
 
       if (this.contentVisible) {
         if (typeof strokeColor === "object" && strokeColor?.getPattern) {
-          ctx.save();
-          const transform = ctx.mozCurrentTransform;
-
-          const scale = _util.Util.singularValueDecompose2dScale(transform)[0];
-
-          ctx.strokeStyle = strokeColor.getPattern(ctx, this);
           const lineWidth = this.getSinglePixelWidth();
-          const scaledLineWidth = this.current.lineWidth * scale;
-
-          if (lineWidth < 0 && -lineWidth >= scaledLineWidth) {
-            ctx.resetTransform();
-            ctx.lineWidth = Math.round(this._combinedScaleFactor);
-          } else {
-            ctx.lineWidth = Math.max(lineWidth, scaledLineWidth);
-          }
-
+          ctx.save();
+          ctx.strokeStyle = strokeColor.getPattern(ctx, this);
+          ctx.lineWidth = Math.max(lineWidth, this.current.lineWidth);
           ctx.stroke();
           ctx.restore();
         } else {
@@ -5374,12 +5373,14 @@ const CanvasGraphics = function CanvasGraphicsClosure() {
       }
 
       ctx.globalAlpha = this.current.fillAlpha;
-    },
-    closeStroke: function CanvasGraphics_closeStroke() {
+    }
+
+    closeStroke() {
       this.closePath();
       this.stroke();
-    },
-    fill: function CanvasGraphics_fill(consumePath) {
+    }
+
+    fill(consumePath) {
       consumePath = typeof consumePath !== "undefined" ? consumePath : true;
       const ctx = this.ctx;
       const fillColor = this.current.fillColor;
@@ -5388,11 +5389,6 @@ const CanvasGraphics = function CanvasGraphicsClosure() {
 
       if (isPatternFill) {
         ctx.save();
-
-        if (this.baseTransform) {
-          ctx.setTransform.apply(ctx, this.baseTransform);
-        }
-
         ctx.fillStyle = fillColor.getPattern(ctx, this);
         needRestore = true;
       }
@@ -5413,45 +5409,55 @@ const CanvasGraphics = function CanvasGraphicsClosure() {
       if (consumePath) {
         this.consumePath();
       }
-    },
-    eoFill: function CanvasGraphics_eoFill() {
+    }
+
+    eoFill() {
       this.pendingEOFill = true;
       this.fill();
-    },
-    fillStroke: function CanvasGraphics_fillStroke() {
+    }
+
+    fillStroke() {
       this.fill(false);
       this.stroke(false);
       this.consumePath();
-    },
-    eoFillStroke: function CanvasGraphics_eoFillStroke() {
+    }
+
+    eoFillStroke() {
       this.pendingEOFill = true;
       this.fillStroke();
-    },
-    closeFillStroke: function CanvasGraphics_closeFillStroke() {
+    }
+
+    closeFillStroke() {
       this.closePath();
       this.fillStroke();
-    },
-    closeEOFillStroke: function CanvasGraphics_closeEOFillStroke() {
+    }
+
+    closeEOFillStroke() {
       this.pendingEOFill = true;
       this.closePath();
       this.fillStroke();
-    },
-    endPath: function CanvasGraphics_endPath() {
+    }
+
+    endPath() {
       this.consumePath();
-    },
-    clip: function CanvasGraphics_clip() {
+    }
+
+    clip() {
       this.pendingClip = NORMAL_CLIP;
-    },
-    eoClip: function CanvasGraphics_eoClip() {
+    }
+
+    eoClip() {
       this.pendingClip = EO_CLIP;
-    },
-    beginText: function CanvasGraphics_beginText() {
+    }
+
+    beginText() {
       this.current.textMatrix = _util.IDENTITY_MATRIX;
       this.current.textMatrixScale = 1;
       this.current.x = this.current.lineX = 0;
       this.current.y = this.current.lineY = 0;
-    },
-    endText: function CanvasGraphics_endText() {
+    }
+
+    endText() {
       const paths = this.pendingTextPaths;
       const ctx = this.ctx;
 
@@ -5474,20 +5480,25 @@ const CanvasGraphics = function CanvasGraphicsClosure() {
       ctx.clip();
       ctx.beginPath();
       delete this.pendingTextPaths;
-    },
-    setCharSpacing: function CanvasGraphics_setCharSpacing(spacing) {
+    }
+
+    setCharSpacing(spacing) {
       this.current.charSpacing = spacing;
-    },
-    setWordSpacing: function CanvasGraphics_setWordSpacing(spacing) {
+    }
+
+    setWordSpacing(spacing) {
       this.current.wordSpacing = spacing;
-    },
-    setHScale: function CanvasGraphics_setHScale(scale) {
+    }
+
+    setHScale(scale) {
       this.current.textHScale = scale / 100;
-    },
-    setLeading: function CanvasGraphics_setLeading(leading) {
+    }
+
+    setLeading(leading) {
       this.current.leading = -leading;
-    },
-    setFont: function CanvasGraphics_setFont(fontRefName, size) {
+    }
+
+    setFont(fontRefName, size) {
       const fontObj = this.commonObjs.get(fontRefName);
       const current = this.current;
 
@@ -5536,30 +5547,36 @@ const CanvasGraphics = function CanvasGraphicsClosure() {
 
       this.current.fontSizeScale = size / browserFontSize;
       this.ctx.font = `${italic} ${bold} ${browserFontSize}px ${typeface}`;
-    },
-    setTextRenderingMode: function CanvasGraphics_setTextRenderingMode(mode) {
+    }
+
+    setTextRenderingMode(mode) {
       this.current.textRenderingMode = mode;
-    },
-    setTextRise: function CanvasGraphics_setTextRise(rise) {
+    }
+
+    setTextRise(rise) {
       this.current.textRise = rise;
-    },
-    moveText: function CanvasGraphics_moveText(x, y) {
+    }
+
+    moveText(x, y) {
       this.current.x = this.current.lineX += x;
       this.current.y = this.current.lineY += y;
-    },
-    setLeadingMoveText: function CanvasGraphics_setLeadingMoveText(x, y) {
+    }
+
+    setLeadingMoveText(x, y) {
       this.setLeading(-y);
       this.moveText(x, y);
-    },
-    setTextMatrix: function CanvasGraphics_setTextMatrix(a, b, c, d, e, f) {
+    }
+
+    setTextMatrix(a, b, c, d, e, f) {
       this.current.textMatrix = [a, b, c, d, e, f];
       this.current.textMatrixScale = Math.hypot(a, b);
       this.current.x = this.current.lineX = 0;
       this.current.y = this.current.lineY = 0;
-    },
-    nextLine: function CanvasGraphics_nextLine() {
+    }
+
+    nextLine() {
       this.moveText(0, this.current.leading);
-    },
+    }
 
     paintChar(character, x, y, patternTransform, resetLineWidthToOne) {
       const ctx = this.ctx;
@@ -5629,7 +5646,7 @@ const CanvasGraphics = function CanvasGraphicsClosure() {
           addToPath
         });
       }
-    },
+    }
 
     get isFontSubpixelAAEnabled() {
       const {
@@ -5648,9 +5665,9 @@ const CanvasGraphics = function CanvasGraphicsClosure() {
       }
 
       return (0, _util.shadow)(this, "isFontSubpixelAAEnabled", enabled);
-    },
+    }
 
-    showText: function CanvasGraphics_showText(glyphs) {
+    showText(glyphs) {
       const current = this.current;
       const font = current.font;
 
@@ -5798,8 +5815,10 @@ const CanvasGraphics = function CanvasGraphicsClosure() {
       }
 
       ctx.restore();
-    },
-    showType3Text: function CanvasGraphics_showType3Text(glyphs) {
+      return undefined;
+    }
+
+    showType3Text(glyphs) {
       const ctx = this.ctx;
       const current = this.current;
       const font = current.font;
@@ -5860,14 +5879,17 @@ const CanvasGraphics = function CanvasGraphicsClosure() {
 
       ctx.restore();
       this.processingType3 = null;
-    },
-    setCharWidth: function CanvasGraphics_setCharWidth(xWidth, yWidth) {},
-    setCharWidthAndBounds: function CanvasGraphics_setCharWidthAndBounds(xWidth, yWidth, llx, lly, urx, ury) {
+    }
+
+    setCharWidth(xWidth, yWidth) {}
+
+    setCharWidthAndBounds(xWidth, yWidth, llx, lly, urx, ury) {
       this.ctx.rect(llx, lly, urx - llx, ury - lly);
       this.clip();
       this.endPath();
-    },
-    getColorN_Pattern: function CanvasGraphics_getColorN_Pattern(IR) {
+    }
+
+    getColorN_Pattern(IR) {
       let pattern;
 
       if (IR[0] === "TilingPattern") {
@@ -5875,7 +5897,7 @@ const CanvasGraphics = function CanvasGraphicsClosure() {
         const baseTransform = this.baseTransform || this.ctx.mozCurrentTransform.slice();
         const canvasGraphicsFactory = {
           createCanvasGraphics: ctx => {
-            return new CanvasGraphics(ctx, this.commonObjs, this.objs, this.canvasFactory, this.webGLContext);
+            return new CanvasGraphics(ctx, this.commonObjs, this.objs, this.canvasFactory);
           }
         };
         pattern = new _pattern_helper.TilingPattern(IR, color, this.ctx, canvasGraphicsFactory, baseTransform);
@@ -5884,28 +5906,33 @@ const CanvasGraphics = function CanvasGraphicsClosure() {
       }
 
       return pattern;
-    },
-    setStrokeColorN: function CanvasGraphics_setStrokeColorN() {
+    }
+
+    setStrokeColorN() {
       this.current.strokeColor = this.getColorN_Pattern(arguments);
-    },
-    setFillColorN: function CanvasGraphics_setFillColorN() {
+    }
+
+    setFillColorN() {
       this.current.fillColor = this.getColorN_Pattern(arguments);
       this.current.patternFill = true;
-    },
-    setStrokeRGBColor: function CanvasGraphics_setStrokeRGBColor(r, g, b) {
+    }
+
+    setStrokeRGBColor(r, g, b) {
       const color = _util.Util.makeHexColor(r, g, b);
 
       this.ctx.strokeStyle = color;
       this.current.strokeColor = color;
-    },
-    setFillRGBColor: function CanvasGraphics_setFillRGBColor(r, g, b) {
+    }
+
+    setFillRGBColor(r, g, b) {
       const color = _util.Util.makeHexColor(r, g, b);
 
       this.ctx.fillStyle = color;
       this.current.fillColor = color;
       this.current.patternFill = false;
-    },
-    shadingFill: function CanvasGraphics_shadingFill(patternIR) {
+    }
+
+    shadingFill(patternIR) {
       if (!this.contentVisible) {
         return;
       }
@@ -5939,14 +5966,17 @@ const CanvasGraphics = function CanvasGraphicsClosure() {
       }
 
       this.restore();
-    },
-    beginInlineImage: function CanvasGraphics_beginInlineImage() {
+    }
+
+    beginInlineImage() {
       (0, _util.unreachable)("Should not call beginInlineImage");
-    },
-    beginImageData: function CanvasGraphics_beginImageData() {
+    }
+
+    beginImageData() {
       (0, _util.unreachable)("Should not call beginImageData");
-    },
-    paintFormXObjectBegin: function CanvasGraphics_paintFormXObjectBegin(matrix, bbox) {
+    }
+
+    paintFormXObjectBegin(matrix, bbox) {
       if (!this.contentVisible) {
         return;
       }
@@ -5967,16 +5997,18 @@ const CanvasGraphics = function CanvasGraphicsClosure() {
         this.clip();
         this.endPath();
       }
-    },
-    paintFormXObjectEnd: function CanvasGraphics_paintFormXObjectEnd() {
+    }
+
+    paintFormXObjectEnd() {
       if (!this.contentVisible) {
         return;
       }
 
       this.restore();
       this.baseTransform = this.baseTransformStack.pop();
-    },
-    beginGroup: function CanvasGraphics_beginGroup(group) {
+    }
+
+    beginGroup(group) {
       if (!this.contentVisible) {
         return;
       }
@@ -6060,8 +6092,9 @@ const CanvasGraphics = function CanvasGraphicsClosure() {
       this.groupStack.push(currentCtx);
       this.groupLevel++;
       this.current.activeSMask = null;
-    },
-    endGroup: function CanvasGraphics_endGroup(group) {
+    }
+
+    endGroup(group) {
       if (!this.contentVisible) {
         return;
       }
@@ -6083,18 +6116,21 @@ const CanvasGraphics = function CanvasGraphicsClosure() {
       }
 
       this.restore();
-    },
-    beginAnnotations: function CanvasGraphics_beginAnnotations() {
+    }
+
+    beginAnnotations() {
       this.save();
 
       if (this.baseTransform) {
         this.ctx.setTransform.apply(this.ctx, this.baseTransform);
       }
-    },
-    endAnnotations: function CanvasGraphics_endAnnotations() {
+    }
+
+    endAnnotations() {
       this.restore();
-    },
-    beginAnnotation: function CanvasGraphics_beginAnnotation(rect, transform, matrix) {
+    }
+
+    beginAnnotation(rect, transform, matrix) {
       this.save();
       resetCtxToDefault(this.ctx);
       this.current = new CanvasExtraState();
@@ -6109,11 +6145,13 @@ const CanvasGraphics = function CanvasGraphicsClosure() {
 
       this.transform.apply(this, transform);
       this.transform.apply(this, matrix);
-    },
-    endAnnotation: function CanvasGraphics_endAnnotation() {
+    }
+
+    endAnnotation() {
       this.restore();
-    },
-    paintImageMaskXObject: function CanvasGraphics_paintImageMaskXObject(img) {
+    }
+
+    paintImageMaskXObject(img) {
       if (!this.contentVisible) {
         return;
       }
@@ -6151,7 +6189,7 @@ const CanvasGraphics = function CanvasGraphicsClosure() {
       maskCtx.fillRect(0, 0, width, height);
       maskCtx.restore();
       this.paintInlineImageXObject(maskCanvas.canvas);
-    },
+    }
 
     paintImageMaskXObjectRepeat(imgData, scaleX, skewX = 0, skewY = 0, scaleY, positions) {
       if (!this.contentVisible) {
@@ -6179,9 +6217,9 @@ const CanvasGraphics = function CanvasGraphicsClosure() {
         ctx.drawImage(maskCanvas.canvas, 0, 0, width, height, 0, -1, 1, 1);
         ctx.restore();
       }
-    },
+    }
 
-    paintImageMaskXObjectGroup: function CanvasGraphics_paintImageMaskXObjectGroup(images) {
+    paintImageMaskXObjectGroup(images) {
       if (!this.contentVisible) {
         return;
       }
@@ -6208,8 +6246,9 @@ const CanvasGraphics = function CanvasGraphicsClosure() {
         ctx.drawImage(maskCanvas.canvas, 0, 0, width, height, 0, -1, 1, 1);
         ctx.restore();
       }
-    },
-    paintImageXObject: function CanvasGraphics_paintImageXObject(objId) {
+    }
+
+    paintImageXObject(objId) {
       if (!this.contentVisible) {
         return;
       }
@@ -6222,8 +6261,9 @@ const CanvasGraphics = function CanvasGraphicsClosure() {
       }
 
       this.paintInlineImageXObject(imgData);
-    },
-    paintImageXObjectRepeat: function CanvasGraphics_paintImageXObjectRepeat(objId, scaleX, scaleY, positions) {
+    }
+
+    paintImageXObjectRepeat(objId, scaleX, scaleY, positions) {
       if (!this.contentVisible) {
         return;
       }
@@ -6250,8 +6290,9 @@ const CanvasGraphics = function CanvasGraphicsClosure() {
       }
 
       this.paintInlineImageXObjectGroup(imgData, map);
-    },
-    paintInlineImageXObject: function CanvasGraphics_paintInlineImageXObject(imgData) {
+    }
+
+    paintInlineImageXObject(imgData) {
       if (!this.contentVisible) {
         return;
       }
@@ -6317,8 +6358,9 @@ const CanvasGraphics = function CanvasGraphicsClosure() {
       }
 
       this.restore();
-    },
-    paintInlineImageXObjectGroup: function CanvasGraphics_paintInlineImageXObjectGroup(imgData, map) {
+    }
+
+    paintInlineImageXObjectGroup(imgData, map) {
       if (!this.contentVisible) {
         return;
       }
@@ -6350,22 +6392,27 @@ const CanvasGraphics = function CanvasGraphicsClosure() {
 
         ctx.restore();
       }
-    },
-    paintSolidColorImageMask: function CanvasGraphics_paintSolidColorImageMask() {
+    }
+
+    paintSolidColorImageMask() {
       if (!this.contentVisible) {
         return;
       }
 
       this.ctx.fillRect(0, 0, 1, 1);
-    },
-    markPoint: function CanvasGraphics_markPoint(tag) {},
-    markPointProps: function CanvasGraphics_markPointProps(tag, properties) {},
-    beginMarkedContent: function CanvasGraphics_beginMarkedContent(tag) {
+    }
+
+    markPoint(tag) {}
+
+    markPointProps(tag, properties) {}
+
+    beginMarkedContent(tag) {
       this.markedContentStack.push({
         visible: true
       });
-    },
-    beginMarkedContentProps: function CanvasGraphics_beginMarkedContentProps(tag, properties) {
+    }
+
+    beginMarkedContentProps(tag, properties) {
       if (tag === "OC") {
         this.markedContentStack.push({
           visible: this.optionalContentConfig.isVisible(properties)
@@ -6377,14 +6424,18 @@ const CanvasGraphics = function CanvasGraphicsClosure() {
       }
 
       this.contentVisible = this.isContentVisible();
-    },
-    endMarkedContent: function CanvasGraphics_endMarkedContent() {
+    }
+
+    endMarkedContent() {
       this.markedContentStack.pop();
       this.contentVisible = this.isContentVisible();
-    },
-    beginCompat: function CanvasGraphics_beginCompat() {},
-    endCompat: function CanvasGraphics_endCompat() {},
-    consumePath: function CanvasGraphics_consumePath() {
+    }
+
+    beginCompat() {}
+
+    endCompat() {}
+
+    consumePath() {
       const ctx = this.ctx;
 
       if (this.pendingClip) {
@@ -6398,7 +6449,7 @@ const CanvasGraphics = function CanvasGraphicsClosure() {
       }
 
       ctx.beginPath();
-    },
+    }
 
     getSinglePixelWidth() {
       if (this._cachedGetSinglePixelWidth === null) {
@@ -6418,13 +6469,14 @@ const CanvasGraphics = function CanvasGraphicsClosure() {
       }
 
       return this._cachedGetSinglePixelWidth;
-    },
+    }
 
-    getCanvasPosition: function CanvasGraphics_getCanvasPosition(x, y) {
+    getCanvasPosition(x, y) {
       const transform = this.ctx.mozCurrentTransform;
       return [transform[0] * x + transform[2] * y + transform[4], transform[1] * x + transform[3] * y + transform[5]];
-    },
-    isContentVisible: function CanvasGraphics_isContentVisible() {
+    }
+
+    isContentVisible() {
       for (let i = this.markedContentStack.length - 1; i >= 0; i--) {
         if (!this.markedContentStack[i].visible) {
           return false;
@@ -6433,7 +6485,8 @@ const CanvasGraphics = function CanvasGraphicsClosure() {
 
       return true;
     }
-  };
+
+  }
 
   for (const op in _util.OPS) {
     CanvasGraphics.prototype[_util.OPS[op]] = CanvasGraphics.prototype[op];
@@ -6459,6 +6512,19 @@ exports.TilingPattern = void 0;
 var _util = __w_pdfjs_require__(2);
 
 const ShadingIRs = {};
+let svgElement;
+
+function createMatrix(matrix) {
+  if (typeof DOMMatrix !== "undefined") {
+    return new DOMMatrix(matrix);
+  }
+
+  if (!svgElement) {
+    svgElement = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+  }
+
+  return svgElement.createSVGMatrix(matrix);
+}
 
 function applyBoundingBox(ctx, bbox) {
   if (!bbox || typeof Path2D === "undefined") {
@@ -6481,15 +6547,32 @@ ShadingIRs.RadialAxial = {
     const p1 = raw[5];
     const r0 = raw[6];
     const r1 = raw[7];
+    const matrix = raw[8];
     return {
-      getPattern: function RadialAxial_getPattern(ctx) {
-        applyBoundingBox(ctx, bbox);
+      getPattern: function RadialAxial_getPattern(ctx, owner, shadingFill) {
+        const tmpCanvas = owner.cachedCanvases.getCanvas("pattern", ctx.canvas.width, ctx.canvas.height, true);
+        const tmpCtx = tmpCanvas.context;
+        tmpCtx.clearRect(0, 0, tmpCtx.canvas.width, tmpCtx.canvas.height);
+        tmpCtx.beginPath();
+        tmpCtx.rect(0, 0, tmpCtx.canvas.width, tmpCtx.canvas.height);
+
+        if (!shadingFill) {
+          tmpCtx.setTransform.apply(tmpCtx, owner.baseTransform);
+
+          if (matrix) {
+            tmpCtx.transform.apply(tmpCtx, matrix);
+          }
+        } else {
+          tmpCtx.setTransform.apply(tmpCtx, ctx.mozCurrentTransform);
+        }
+
+        applyBoundingBox(tmpCtx, bbox);
         let grad;
 
         if (type === "axial") {
-          grad = ctx.createLinearGradient(p0[0], p0[1], p1[0], p1[1]);
+          grad = tmpCtx.createLinearGradient(p0[0], p0[1], p1[0], p1[1]);
         } else if (type === "radial") {
-          grad = ctx.createRadialGradient(p0[0], p0[1], r0, p1[0], p1[1], r1);
+          grad = tmpCtx.createRadialGradient(p0[0], p0[1], r0, p1[0], p1[1], r1);
         }
 
         for (let i = 0, ii = colorStops.length; i < ii; ++i) {
@@ -6497,7 +6580,11 @@ ShadingIRs.RadialAxial = {
           grad.addColorStop(c[0], c[1]);
         }
 
-        return grad;
+        tmpCtx.fillStyle = grad;
+        tmpCtx.fill();
+        const pattern = ctx.createPattern(tmpCanvas.canvas, "repeat");
+        pattern.setTransform(createMatrix(ctx.mozCurrentTransformInverse));
+        return pattern;
       }
     };
   }
@@ -6665,7 +6752,7 @@ const createMeshCanvas = function createMeshCanvasClosure() {
     }
   }
 
-  function createMeshCanvas(bounds, combinesScale, coords, colors, figures, backgroundColor, cachedCanvases, webGLContext) {
+  function createMeshCanvas(bounds, combinesScale, coords, colors, figures, backgroundColor, cachedCanvases) {
     const EXPECTED_SCALE = 1.1;
     const MAX_PATTERN_SIZE = 3000;
     const BORDER_SIZE = 2;
@@ -6687,43 +6774,27 @@ const createMeshCanvas = function createMeshCanvasClosure() {
     };
     const paddedWidth = width + BORDER_SIZE * 2;
     const paddedHeight = height + BORDER_SIZE * 2;
-    let canvas, tmpCanvas, i, ii;
+    const tmpCanvas = cachedCanvases.getCanvas("mesh", paddedWidth, paddedHeight, false);
+    const tmpCtx = tmpCanvas.context;
+    const data = tmpCtx.createImageData(width, height);
 
-    if (webGLContext.isEnabled) {
-      canvas = webGLContext.drawFigures({
-        width,
-        height,
-        backgroundColor,
-        figures,
-        context
-      });
-      tmpCanvas = cachedCanvases.getCanvas("mesh", paddedWidth, paddedHeight, false);
-      tmpCanvas.context.drawImage(canvas, BORDER_SIZE, BORDER_SIZE);
-      canvas = tmpCanvas.canvas;
-    } else {
-      tmpCanvas = cachedCanvases.getCanvas("mesh", paddedWidth, paddedHeight, false);
-      const tmpCtx = tmpCanvas.context;
-      const data = tmpCtx.createImageData(width, height);
+    if (backgroundColor) {
+      const bytes = data.data;
 
-      if (backgroundColor) {
-        const bytes = data.data;
-
-        for (i = 0, ii = bytes.length; i < ii; i += 4) {
-          bytes[i] = backgroundColor[0];
-          bytes[i + 1] = backgroundColor[1];
-          bytes[i + 2] = backgroundColor[2];
-          bytes[i + 3] = 255;
-        }
+      for (let i = 0, ii = bytes.length; i < ii; i += 4) {
+        bytes[i] = backgroundColor[0];
+        bytes[i + 1] = backgroundColor[1];
+        bytes[i + 2] = backgroundColor[2];
+        bytes[i + 3] = 255;
       }
-
-      for (i = 0; i < figures.length; i++) {
-        drawFigure(data, figures[i], context);
-      }
-
-      tmpCtx.putImageData(data, BORDER_SIZE, BORDER_SIZE);
-      canvas = tmpCanvas.canvas;
     }
 
+    for (let i = 0, ii = figures.length; i < ii; i++) {
+      drawFigure(data, figures[i], context);
+    }
+
+    tmpCtx.putImageData(data, BORDER_SIZE, BORDER_SIZE);
+    const canvas = tmpCanvas.canvas;
     return {
       canvas,
       offsetX: offsetX - BORDER_SIZE * scaleX,
@@ -6762,7 +6833,7 @@ ShadingIRs.Mesh = {
           }
         }
 
-        const temporaryPatternCanvas = createMeshCanvas(bounds, scale, coords, colors, figures, shadingFill ? null : background, owner.cachedCanvases, owner.webGLContext);
+        const temporaryPatternCanvas = createMeshCanvas(bounds, scale, coords, colors, figures, shadingFill ? null : background, owner.cachedCanvases);
 
         if (!shadingFill) {
           ctx.setTransform.apply(ctx, owner.baseTransform);
@@ -6849,12 +6920,15 @@ const TilingPattern = function TilingPatternClosure() {
       graphics.groupLevel = owner.groupLevel;
       this.setFillAndStrokeStyleToContext(graphics, paintType, color);
       graphics.transform(dimx.scale, 0, 0, dimy.scale, 0, 0);
-      graphics.transform(1, 0, 0, 1, -x0, -y0);
       this.clipBbox(graphics, bbox, x0, y0, x1, y1);
+      graphics.baseTransform = graphics.ctx.mozCurrentTransform.slice();
       graphics.executeOperatorList(operatorList);
-      this.ctx.transform(1, 0, 0, 1, x0, y0);
-      this.ctx.scale(1 / dimx.scale, 1 / dimy.scale);
-      return tmpCanvas.canvas;
+      graphics.endDrawing();
+      return {
+        canvas: tmpCanvas.canvas,
+        scaleX: dimx.scale,
+        scaleY: dimy.scale
+      };
     },
     getSizeAndScale: function TilingPattern_getSizeAndScale(step, realOutputSize, scale) {
       step = Math.abs(step);
@@ -6907,12 +6981,24 @@ const TilingPattern = function TilingPatternClosure() {
           throw new _util.FormatError(`Unsupported paint type: ${paintType}`);
       }
     },
-    getPattern: function TilingPattern_getPattern(ctx, owner) {
+    getPattern: function TilingPattern_getPattern(ctx, owner, shadingFill) {
       ctx = this.ctx;
-      ctx.setTransform.apply(ctx, this.baseTransform);
-      ctx.transform.apply(ctx, this.matrix);
+      let matrix = ctx.mozCurrentTransformInverse;
+
+      if (!shadingFill) {
+        matrix = _util.Util.transform(matrix, owner.baseTransform);
+
+        if (this.matrix) {
+          matrix = _util.Util.transform(matrix, this.matrix);
+        }
+      }
+
       const temporaryPatternCanvas = this.createPatternCanvas(owner);
-      return ctx.createPattern(temporaryPatternCanvas, "repeat");
+      let domMatrix = createMatrix(matrix);
+      domMatrix = domMatrix.scale(1 / temporaryPatternCanvas.scaleX, 1 / temporaryPatternCanvas.scaleY);
+      const pattern = ctx.createPattern(temporaryPatternCanvas.canvas, "repeat");
+      pattern.setTransform(domMatrix);
+      return pattern;
     }
   };
   return TilingPattern;
@@ -7533,6 +7619,54 @@ class OptionalContentConfig {
     }
   }
 
+  _evaluateVisibilityExpression(array) {
+    const length = array.length;
+
+    if (length < 2) {
+      return true;
+    }
+
+    const operator = array[0];
+
+    for (let i = 1; i < length; i++) {
+      const element = array[i];
+      let state;
+
+      if (Array.isArray(element)) {
+        state = this._evaluateVisibilityExpression(element);
+      } else if (this._groups.has(element)) {
+        state = this._groups.get(element).visible;
+      } else {
+        (0, _util.warn)(`Optional content group not found: ${element}`);
+        return true;
+      }
+
+      switch (operator) {
+        case "And":
+          if (!state) {
+            return false;
+          }
+
+          break;
+
+        case "Or":
+          if (state) {
+            return true;
+          }
+
+          break;
+
+        case "Not":
+          return !state;
+
+        default:
+          return true;
+      }
+    }
+
+    return operator === "And";
+  }
+
   isVisible(group) {
     if (group.type === "OCG") {
       if (!this._groups.has(group.id)) {
@@ -7543,7 +7677,7 @@ class OptionalContentConfig {
       return this._groups.get(group.id).visible;
     } else if (group.type === "OCMD") {
       if (group.expression) {
-        (0, _util.warn)("Visibility expression not supported yet.");
+        return this._evaluateVisibilityExpression(group.expression);
       }
 
       if (!group.policy || group.policy === "AnyOn") {
@@ -7795,11 +7929,9 @@ class PDFDataTransportStream {
       this._fullRequestReader.cancel(reason);
     }
 
-    const readers = this._rangeReaders.slice(0);
-
-    readers.forEach(function (rangeReader) {
-      rangeReader.cancel(reason);
-    });
+    for (const reader of this._rangeReaders.slice(0)) {
+      reader.cancel(reason);
+    }
 
     this._pdfDataRangeTransport.abort();
   }
@@ -7892,14 +8024,14 @@ class PDFDataTransportStreamReader {
   cancel(reason) {
     this._done = true;
 
-    this._requests.forEach(function (requestCapability) {
+    for (const requestCapability of this._requests) {
       requestCapability.resolve({
         value: undefined,
         done: true
       });
-    });
+    }
 
-    this._requests = [];
+    this._requests.length = 0;
   }
 
   progressiveDone() {
@@ -7938,14 +8070,14 @@ class PDFDataTransportStreamRangeReader {
         done: false
       });
 
-      this._requests.forEach(function (requestCapability) {
+      for (const requestCapability of this._requests) {
         requestCapability.resolve({
           value: undefined,
           done: true
         });
-      });
+      }
 
-      this._requests = [];
+      this._requests.length = 0;
     }
 
     this._done = true;
@@ -7984,14 +8116,14 @@ class PDFDataTransportStreamRangeReader {
   cancel(reason) {
     this._done = true;
 
-    this._requests.forEach(function (requestCapability) {
+    for (const requestCapability of this._requests) {
       requestCapability.resolve({
         value: undefined,
         done: true
       });
-    });
+    }
 
-    this._requests = [];
+    this._requests.length = 0;
 
     this._stream._removeRangeReader(this);
   }
@@ -8007,449 +8139,6 @@ class PDFDataTransportStreamRangeReader {
 Object.defineProperty(exports, "__esModule", ({
   value: true
 }));
-exports.WebGLContext = void 0;
-
-var _util = __w_pdfjs_require__(2);
-
-class WebGLContext {
-  constructor({
-    enable = false
-  }) {
-    this._enabled = enable === true;
-  }
-
-  get isEnabled() {
-    let enabled = this._enabled;
-
-    if (enabled) {
-      enabled = WebGLUtils.tryInitGL();
-    }
-
-    return (0, _util.shadow)(this, "isEnabled", enabled);
-  }
-
-  composeSMask({
-    layer,
-    mask,
-    properties
-  }) {
-    return WebGLUtils.composeSMask(layer, mask, properties);
-  }
-
-  drawFigures({
-    width,
-    height,
-    backgroundColor,
-    figures,
-    context
-  }) {
-    return WebGLUtils.drawFigures(width, height, backgroundColor, figures, context);
-  }
-
-  clear() {
-    WebGLUtils.cleanup();
-  }
-
-}
-
-exports.WebGLContext = WebGLContext;
-
-const WebGLUtils = function WebGLUtilsClosure() {
-  function loadShader(gl, code, shaderType) {
-    const shader = gl.createShader(shaderType);
-    gl.shaderSource(shader, code);
-    gl.compileShader(shader);
-    const compiled = gl.getShaderParameter(shader, gl.COMPILE_STATUS);
-
-    if (!compiled) {
-      const errorMsg = gl.getShaderInfoLog(shader);
-      throw new Error("Error during shader compilation: " + errorMsg);
-    }
-
-    return shader;
-  }
-
-  function createVertexShader(gl, code) {
-    return loadShader(gl, code, gl.VERTEX_SHADER);
-  }
-
-  function createFragmentShader(gl, code) {
-    return loadShader(gl, code, gl.FRAGMENT_SHADER);
-  }
-
-  function createProgram(gl, shaders) {
-    const program = gl.createProgram();
-
-    for (let i = 0, ii = shaders.length; i < ii; ++i) {
-      gl.attachShader(program, shaders[i]);
-    }
-
-    gl.linkProgram(program);
-    const linked = gl.getProgramParameter(program, gl.LINK_STATUS);
-
-    if (!linked) {
-      const errorMsg = gl.getProgramInfoLog(program);
-      throw new Error("Error during program linking: " + errorMsg);
-    }
-
-    return program;
-  }
-
-  function createTexture(gl, image, textureId) {
-    gl.activeTexture(textureId);
-    const texture = gl.createTexture();
-    gl.bindTexture(gl.TEXTURE_2D, texture);
-    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
-    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
-    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
-    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
-    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, image);
-    return texture;
-  }
-
-  let currentGL, currentCanvas;
-
-  function generateGL() {
-    if (currentGL) {
-      return;
-    }
-
-    currentCanvas = document.createElement("canvas");
-    currentGL = currentCanvas.getContext("webgl", {
-      premultipliedalpha: false
-    });
-  }
-
-  const smaskVertexShaderCode = "\
-  attribute vec2 a_position;                                    \
-  attribute vec2 a_texCoord;                                    \
-                                                                \
-  uniform vec2 u_resolution;                                    \
-                                                                \
-  varying vec2 v_texCoord;                                      \
-                                                                \
-  void main() {                                                 \
-    vec2 clipSpace = (a_position / u_resolution) * 2.0 - 1.0;   \
-    gl_Position = vec4(clipSpace * vec2(1, -1), 0, 1);          \
-                                                                \
-    v_texCoord = a_texCoord;                                    \
-  }                                                             ";
-  const smaskFragmentShaderCode = "\
-  precision mediump float;                                      \
-                                                                \
-  uniform vec4 u_backdrop;                                      \
-  uniform int u_subtype;                                        \
-  uniform sampler2D u_image;                                    \
-  uniform sampler2D u_mask;                                     \
-                                                                \
-  varying vec2 v_texCoord;                                      \
-                                                                \
-  void main() {                                                 \
-    vec4 imageColor = texture2D(u_image, v_texCoord);           \
-    vec4 maskColor = texture2D(u_mask, v_texCoord);             \
-    if (u_backdrop.a > 0.0) {                                   \
-      maskColor.rgb = maskColor.rgb * maskColor.a +             \
-                      u_backdrop.rgb * (1.0 - maskColor.a);     \
-    }                                                           \
-    float lum;                                                  \
-    if (u_subtype == 0) {                                       \
-      lum = maskColor.a;                                        \
-    } else {                                                    \
-      lum = maskColor.r * 0.3 + maskColor.g * 0.59 +            \
-            maskColor.b * 0.11;                                 \
-    }                                                           \
-    imageColor.a *= lum;                                        \
-    imageColor.rgb *= imageColor.a;                             \
-    gl_FragColor = imageColor;                                  \
-  }                                                             ";
-  let smaskCache = null;
-
-  function initSmaskGL() {
-    generateGL();
-    const canvas = currentCanvas;
-    currentCanvas = null;
-    const gl = currentGL;
-    currentGL = null;
-    const vertexShader = createVertexShader(gl, smaskVertexShaderCode);
-    const fragmentShader = createFragmentShader(gl, smaskFragmentShaderCode);
-    const program = createProgram(gl, [vertexShader, fragmentShader]);
-    gl.useProgram(program);
-    const cache = {};
-    cache.gl = gl;
-    cache.canvas = canvas;
-    cache.resolutionLocation = gl.getUniformLocation(program, "u_resolution");
-    cache.positionLocation = gl.getAttribLocation(program, "a_position");
-    cache.backdropLocation = gl.getUniformLocation(program, "u_backdrop");
-    cache.subtypeLocation = gl.getUniformLocation(program, "u_subtype");
-    const texCoordLocation = gl.getAttribLocation(program, "a_texCoord");
-    const texLayerLocation = gl.getUniformLocation(program, "u_image");
-    const texMaskLocation = gl.getUniformLocation(program, "u_mask");
-    const texCoordBuffer = gl.createBuffer();
-    gl.bindBuffer(gl.ARRAY_BUFFER, texCoordBuffer);
-    gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([0.0, 0.0, 1.0, 0.0, 0.0, 1.0, 0.0, 1.0, 1.0, 0.0, 1.0, 1.0]), gl.STATIC_DRAW);
-    gl.enableVertexAttribArray(texCoordLocation);
-    gl.vertexAttribPointer(texCoordLocation, 2, gl.FLOAT, false, 0, 0);
-    gl.uniform1i(texLayerLocation, 0);
-    gl.uniform1i(texMaskLocation, 1);
-    smaskCache = cache;
-  }
-
-  function composeSMask(layer, mask, properties) {
-    const width = layer.width,
-          height = layer.height;
-
-    if (!smaskCache) {
-      initSmaskGL();
-    }
-
-    const cache = smaskCache,
-          canvas = cache.canvas,
-          gl = cache.gl;
-    canvas.width = width;
-    canvas.height = height;
-    gl.viewport(0, 0, gl.drawingBufferWidth, gl.drawingBufferHeight);
-    gl.uniform2f(cache.resolutionLocation, width, height);
-
-    if (properties.backdrop) {
-      gl.uniform4f(cache.resolutionLocation, properties.backdrop[0], properties.backdrop[1], properties.backdrop[2], 1);
-    } else {
-      gl.uniform4f(cache.resolutionLocation, 0, 0, 0, 0);
-    }
-
-    gl.uniform1i(cache.subtypeLocation, properties.subtype === "Luminosity" ? 1 : 0);
-    const texture = createTexture(gl, layer, gl.TEXTURE0);
-    const maskTexture = createTexture(gl, mask, gl.TEXTURE1);
-    const buffer = gl.createBuffer();
-    gl.bindBuffer(gl.ARRAY_BUFFER, buffer);
-    gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([0, 0, width, 0, 0, height, 0, height, width, 0, width, height]), gl.STATIC_DRAW);
-    gl.enableVertexAttribArray(cache.positionLocation);
-    gl.vertexAttribPointer(cache.positionLocation, 2, gl.FLOAT, false, 0, 0);
-    gl.clearColor(0, 0, 0, 0);
-    gl.enable(gl.BLEND);
-    gl.blendFunc(gl.ONE, gl.ONE_MINUS_SRC_ALPHA);
-    gl.clear(gl.COLOR_BUFFER_BIT);
-    gl.drawArrays(gl.TRIANGLES, 0, 6);
-    gl.flush();
-    gl.deleteTexture(texture);
-    gl.deleteTexture(maskTexture);
-    gl.deleteBuffer(buffer);
-    return canvas;
-  }
-
-  const figuresVertexShaderCode = "\
-  attribute vec2 a_position;                                    \
-  attribute vec3 a_color;                                       \
-                                                                \
-  uniform vec2 u_resolution;                                    \
-  uniform vec2 u_scale;                                         \
-  uniform vec2 u_offset;                                        \
-                                                                \
-  varying vec4 v_color;                                         \
-                                                                \
-  void main() {                                                 \
-    vec2 position = (a_position + u_offset) * u_scale;          \
-    vec2 clipSpace = (position / u_resolution) * 2.0 - 1.0;     \
-    gl_Position = vec4(clipSpace * vec2(1, -1), 0, 1);          \
-                                                                \
-    v_color = vec4(a_color / 255.0, 1.0);                       \
-  }                                                             ";
-  const figuresFragmentShaderCode = "\
-  precision mediump float;                                      \
-                                                                \
-  varying vec4 v_color;                                         \
-                                                                \
-  void main() {                                                 \
-    gl_FragColor = v_color;                                     \
-  }                                                             ";
-  let figuresCache = null;
-
-  function initFiguresGL() {
-    generateGL();
-    const canvas = currentCanvas;
-    currentCanvas = null;
-    const gl = currentGL;
-    currentGL = null;
-    const vertexShader = createVertexShader(gl, figuresVertexShaderCode);
-    const fragmentShader = createFragmentShader(gl, figuresFragmentShaderCode);
-    const program = createProgram(gl, [vertexShader, fragmentShader]);
-    gl.useProgram(program);
-    const cache = {};
-    cache.gl = gl;
-    cache.canvas = canvas;
-    cache.resolutionLocation = gl.getUniformLocation(program, "u_resolution");
-    cache.scaleLocation = gl.getUniformLocation(program, "u_scale");
-    cache.offsetLocation = gl.getUniformLocation(program, "u_offset");
-    cache.positionLocation = gl.getAttribLocation(program, "a_position");
-    cache.colorLocation = gl.getAttribLocation(program, "a_color");
-    figuresCache = cache;
-  }
-
-  function drawFigures(width, height, backgroundColor, figures, context) {
-    if (!figuresCache) {
-      initFiguresGL();
-    }
-
-    const cache = figuresCache,
-          canvas = cache.canvas,
-          gl = cache.gl;
-    canvas.width = width;
-    canvas.height = height;
-    gl.viewport(0, 0, gl.drawingBufferWidth, gl.drawingBufferHeight);
-    gl.uniform2f(cache.resolutionLocation, width, height);
-    let count = 0;
-
-    for (let i = 0, ii = figures.length; i < ii; i++) {
-      switch (figures[i].type) {
-        case "lattice":
-          const rows = figures[i].coords.length / figures[i].verticesPerRow | 0;
-          count += (rows - 1) * (figures[i].verticesPerRow - 1) * 6;
-          break;
-
-        case "triangles":
-          count += figures[i].coords.length;
-          break;
-      }
-    }
-
-    const coords = new Float32Array(count * 2);
-    const colors = new Uint8Array(count * 3);
-    const coordsMap = context.coords,
-          colorsMap = context.colors;
-    let pIndex = 0,
-        cIndex = 0;
-
-    for (let i = 0, ii = figures.length; i < ii; i++) {
-      const figure = figures[i],
-            ps = figure.coords,
-            cs = figure.colors;
-
-      switch (figure.type) {
-        case "lattice":
-          const cols = figure.verticesPerRow;
-          const rows = ps.length / cols | 0;
-
-          for (let row = 1; row < rows; row++) {
-            let offset = row * cols + 1;
-
-            for (let col = 1; col < cols; col++, offset++) {
-              coords[pIndex] = coordsMap[ps[offset - cols - 1]];
-              coords[pIndex + 1] = coordsMap[ps[offset - cols - 1] + 1];
-              coords[pIndex + 2] = coordsMap[ps[offset - cols]];
-              coords[pIndex + 3] = coordsMap[ps[offset - cols] + 1];
-              coords[pIndex + 4] = coordsMap[ps[offset - 1]];
-              coords[pIndex + 5] = coordsMap[ps[offset - 1] + 1];
-              colors[cIndex] = colorsMap[cs[offset - cols - 1]];
-              colors[cIndex + 1] = colorsMap[cs[offset - cols - 1] + 1];
-              colors[cIndex + 2] = colorsMap[cs[offset - cols - 1] + 2];
-              colors[cIndex + 3] = colorsMap[cs[offset - cols]];
-              colors[cIndex + 4] = colorsMap[cs[offset - cols] + 1];
-              colors[cIndex + 5] = colorsMap[cs[offset - cols] + 2];
-              colors[cIndex + 6] = colorsMap[cs[offset - 1]];
-              colors[cIndex + 7] = colorsMap[cs[offset - 1] + 1];
-              colors[cIndex + 8] = colorsMap[cs[offset - 1] + 2];
-              coords[pIndex + 6] = coords[pIndex + 2];
-              coords[pIndex + 7] = coords[pIndex + 3];
-              coords[pIndex + 8] = coords[pIndex + 4];
-              coords[pIndex + 9] = coords[pIndex + 5];
-              coords[pIndex + 10] = coordsMap[ps[offset]];
-              coords[pIndex + 11] = coordsMap[ps[offset] + 1];
-              colors[cIndex + 9] = colors[cIndex + 3];
-              colors[cIndex + 10] = colors[cIndex + 4];
-              colors[cIndex + 11] = colors[cIndex + 5];
-              colors[cIndex + 12] = colors[cIndex + 6];
-              colors[cIndex + 13] = colors[cIndex + 7];
-              colors[cIndex + 14] = colors[cIndex + 8];
-              colors[cIndex + 15] = colorsMap[cs[offset]];
-              colors[cIndex + 16] = colorsMap[cs[offset] + 1];
-              colors[cIndex + 17] = colorsMap[cs[offset] + 2];
-              pIndex += 12;
-              cIndex += 18;
-            }
-          }
-
-          break;
-
-        case "triangles":
-          for (let j = 0, jj = ps.length; j < jj; j++) {
-            coords[pIndex] = coordsMap[ps[j]];
-            coords[pIndex + 1] = coordsMap[ps[j] + 1];
-            colors[cIndex] = colorsMap[cs[j]];
-            colors[cIndex + 1] = colorsMap[cs[j] + 1];
-            colors[cIndex + 2] = colorsMap[cs[j] + 2];
-            pIndex += 2;
-            cIndex += 3;
-          }
-
-          break;
-      }
-    }
-
-    if (backgroundColor) {
-      gl.clearColor(backgroundColor[0] / 255, backgroundColor[1] / 255, backgroundColor[2] / 255, 1.0);
-    } else {
-      gl.clearColor(0, 0, 0, 0);
-    }
-
-    gl.clear(gl.COLOR_BUFFER_BIT);
-    const coordsBuffer = gl.createBuffer();
-    gl.bindBuffer(gl.ARRAY_BUFFER, coordsBuffer);
-    gl.bufferData(gl.ARRAY_BUFFER, coords, gl.STATIC_DRAW);
-    gl.enableVertexAttribArray(cache.positionLocation);
-    gl.vertexAttribPointer(cache.positionLocation, 2, gl.FLOAT, false, 0, 0);
-    const colorsBuffer = gl.createBuffer();
-    gl.bindBuffer(gl.ARRAY_BUFFER, colorsBuffer);
-    gl.bufferData(gl.ARRAY_BUFFER, colors, gl.STATIC_DRAW);
-    gl.enableVertexAttribArray(cache.colorLocation);
-    gl.vertexAttribPointer(cache.colorLocation, 3, gl.UNSIGNED_BYTE, false, 0, 0);
-    gl.uniform2f(cache.scaleLocation, context.scaleX, context.scaleY);
-    gl.uniform2f(cache.offsetLocation, context.offsetX, context.offsetY);
-    gl.drawArrays(gl.TRIANGLES, 0, count);
-    gl.flush();
-    gl.deleteBuffer(coordsBuffer);
-    gl.deleteBuffer(colorsBuffer);
-    return canvas;
-  }
-
-  return {
-    tryInitGL() {
-      try {
-        generateGL();
-        return !!currentGL;
-      } catch (ex) {}
-
-      return false;
-    },
-
-    composeSMask,
-    drawFigures,
-
-    cleanup() {
-      if (smaskCache?.canvas) {
-        smaskCache.canvas.width = 0;
-        smaskCache.canvas.height = 0;
-      }
-
-      if (figuresCache?.canvas) {
-        figuresCache.canvas.width = 0;
-        figuresCache.canvas.height = 0;
-      }
-
-      smaskCache = null;
-      figuresCache = null;
-    }
-
-  };
-}();
-
-/***/ }),
-/* 18 */
-/***/ ((__unused_webpack_module, exports, __w_pdfjs_require__) => {
-
-
-
-Object.defineProperty(exports, "__esModule", ({
-  value: true
-}));
 exports.AnnotationLayer = void 0;
 
 var _display_utils = __w_pdfjs_require__(1);
@@ -8458,7 +8147,7 @@ var _util = __w_pdfjs_require__(2);
 
 var _annotation_storage = __w_pdfjs_require__(8);
 
-var _scripting_utils = __w_pdfjs_require__(19);
+var _scripting_utils = __w_pdfjs_require__(18);
 
 class AnnotationElementFactory {
   static create(parameters) {
@@ -8691,9 +8380,10 @@ class AnnotationElement {
   }
 
   _renderQuadrilaterals(className) {
-    this.quadrilaterals.forEach(quadrilateral => {
+    for (const quadrilateral of this.quadrilaterals) {
       quadrilateral.className = className;
-    });
+    }
+
     return this.quadrilaterals;
   }
 
@@ -8930,6 +8620,19 @@ class TextWidgetAnnotationElement extends WidgetAnnotationElement {
     });
   }
 
+  setPropertyOnSiblings(base, key, value, keyInStorage) {
+    const storage = this.annotationStorage;
+
+    for (const element of document.getElementsByName(base.name)) {
+      if (element !== base) {
+        element[key] = value;
+        const data = Object.create(null);
+        data[keyInStorage] = value;
+        storage.setValue(element.getAttribute("id"), data);
+      }
+    }
+  }
+
   render() {
     const storage = this.annotationStorage;
     const id = this.data.id;
@@ -8960,10 +8663,11 @@ class TextWidgetAnnotationElement extends WidgetAnnotationElement {
 
       elementData.userValue = textContent;
       element.setAttribute("id", id);
-      element.addEventListener("input", function (event) {
+      element.addEventListener("input", event => {
         storage.setValue(id, {
           value: event.target.value
         });
+        this.setPropertyOnSiblings(element, "value", event.target.value, "value");
       });
 
       let blurListener = event => {
@@ -8971,7 +8675,7 @@ class TextWidgetAnnotationElement extends WidgetAnnotationElement {
           event.target.value = elementData.formattedValue;
         }
 
-        event.target.setSelectionRange(0, 0);
+        event.target.scrollLeft = 0;
         elementData.beforeInputSelectionRange = null;
       };
 
@@ -9196,9 +8900,17 @@ class CheckboxWidgetAnnotationElement extends WidgetAnnotationElement {
     const storage = this.annotationStorage;
     const data = this.data;
     const id = data.id;
-    const value = storage.getValue(id, {
+    let value = storage.getValue(id, {
       value: data.fieldValue && (data.exportValue && data.exportValue === data.fieldValue || !data.exportValue && data.fieldValue !== "Off")
     }).value;
+
+    if (typeof value === "string") {
+      value = value !== "Off";
+      storage.setValue(id, {
+        value
+      });
+    }
+
     this.container.className = "buttonWidgetAnnotation checkBox";
     const element = document.createElement("input");
     element.disabled = data.readOnly;
@@ -9284,9 +8996,17 @@ class RadioButtonWidgetAnnotationElement extends WidgetAnnotationElement {
     const storage = this.annotationStorage;
     const data = this.data;
     const id = data.id;
-    const value = storage.getValue(id, {
+    let value = storage.getValue(id, {
       value: data.fieldValue === data.buttonValue
     }).value;
+
+    if (typeof value === "string") {
+      value = value !== data.buttonValue;
+      storage.setValue(id, {
+        value
+      });
+    }
+
     const element = document.createElement("input");
     element.disabled = data.readOnly;
     element.type = "radio";
@@ -9707,11 +9427,12 @@ class PopupElement {
       this.trigger = [this.trigger];
     }
 
-    this.trigger.forEach(element => {
+    for (const element of this.trigger) {
       element.addEventListener("click", this._toggle.bind(this));
       element.addEventListener("mouseover", this._show.bind(this, false));
       element.addEventListener("mouseout", this._hide.bind(this, false));
-    });
+    }
+
     popup.addEventListener("click", this._hide.bind(this, true));
     wrapper.appendChild(popup);
     return wrapper;
@@ -10233,9 +9954,9 @@ class AnnotationLayer {
       const elements = parameters.div.querySelectorAll(`[data-annotation-id="${data.id}"]`);
 
       if (elements) {
-        elements.forEach(element => {
+        for (const element of elements) {
           element.style.transform = transform;
-        });
+        }
       }
     }
 
@@ -10247,7 +9968,7 @@ class AnnotationLayer {
 exports.AnnotationLayer = AnnotationLayer;
 
 /***/ }),
-/* 19 */
+/* 18 */
 /***/ ((__unused_webpack_module, exports) => {
 
 
@@ -10315,7 +10036,7 @@ class ColorConverters {
 exports.ColorConverters = ColorConverters;
 
 /***/ }),
-/* 20 */
+/* 19 */
 /***/ ((__unused_webpack_module, exports, __w_pdfjs_require__) => {
 
 
@@ -10323,487 +10044,485 @@ exports.ColorConverters = ColorConverters;
 Object.defineProperty(exports, "__esModule", ({
   value: true
 }));
-exports.renderTextLayer = void 0;
+exports.renderTextLayer = renderTextLayer;
 
 var _util = __w_pdfjs_require__(2);
 
-const renderTextLayer = function renderTextLayerClosure() {
-  const MAX_TEXT_DIVS_TO_RENDER = 100000;
-  const DEFAULT_FONT_SIZE = 30;
-  const DEFAULT_FONT_ASCENT = 0.8;
-  const ascentCache = new Map();
-  const NonWhitespaceRegexp = /\S/;
+const MAX_TEXT_DIVS_TO_RENDER = 100000;
+const DEFAULT_FONT_SIZE = 30;
+const DEFAULT_FONT_ASCENT = 0.8;
+const ascentCache = new Map();
+const AllWhitespaceRegexp = /^\s+$/g;
 
-  function isAllWhitespace(str) {
-    return !NonWhitespaceRegexp.test(str);
+function getAscent(fontFamily, ctx) {
+  const cachedAscent = ascentCache.get(fontFamily);
+
+  if (cachedAscent) {
+    return cachedAscent;
   }
 
-  function getAscent(fontFamily, ctx) {
-    const cachedAscent = ascentCache.get(fontFamily);
+  ctx.save();
+  ctx.font = `${DEFAULT_FONT_SIZE}px ${fontFamily}`;
+  const metrics = ctx.measureText("");
+  let ascent = metrics.fontBoundingBoxAscent;
+  let descent = Math.abs(metrics.fontBoundingBoxDescent);
 
-    if (cachedAscent) {
-      return cachedAscent;
-    }
-
-    ctx.save();
-    ctx.font = `${DEFAULT_FONT_SIZE}px ${fontFamily}`;
-    const metrics = ctx.measureText("");
-    let ascent = metrics.fontBoundingBoxAscent;
-    let descent = Math.abs(metrics.fontBoundingBoxDescent);
-
-    if (ascent) {
-      ctx.restore();
-      const ratio = ascent / (ascent + descent);
-      ascentCache.set(fontFamily, ratio);
-      return ratio;
-    }
-
-    ctx.strokeStyle = "red";
-    ctx.clearRect(0, 0, DEFAULT_FONT_SIZE, DEFAULT_FONT_SIZE);
-    ctx.strokeText("g", 0, 0);
-    let pixels = ctx.getImageData(0, 0, DEFAULT_FONT_SIZE, DEFAULT_FONT_SIZE).data;
-    descent = 0;
-
-    for (let i = pixels.length - 1 - 3; i >= 0; i -= 4) {
-      if (pixels[i] > 0) {
-        descent = Math.ceil(i / 4 / DEFAULT_FONT_SIZE);
-        break;
-      }
-    }
-
-    ctx.clearRect(0, 0, DEFAULT_FONT_SIZE, DEFAULT_FONT_SIZE);
-    ctx.strokeText("A", 0, DEFAULT_FONT_SIZE);
-    pixels = ctx.getImageData(0, 0, DEFAULT_FONT_SIZE, DEFAULT_FONT_SIZE).data;
-    ascent = 0;
-
-    for (let i = 0, ii = pixels.length; i < ii; i += 4) {
-      if (pixels[i] > 0) {
-        ascent = DEFAULT_FONT_SIZE - Math.floor(i / 4 / DEFAULT_FONT_SIZE);
-        break;
-      }
-    }
-
+  if (ascent) {
     ctx.restore();
-
-    if (ascent) {
-      const ratio = ascent / (ascent + descent);
-      ascentCache.set(fontFamily, ratio);
-      return ratio;
-    }
-
-    ascentCache.set(fontFamily, DEFAULT_FONT_ASCENT);
-    return DEFAULT_FONT_ASCENT;
+    const ratio = ascent / (ascent + descent);
+    ascentCache.set(fontFamily, ratio);
+    return ratio;
   }
 
-  function appendText(task, geom, styles, ctx) {
-    const textDiv = document.createElement("span");
-    const textDivProperties = {
-      angle: 0,
-      canvasWidth: 0,
-      isWhitespace: false,
-      originalTransform: null,
-      paddingBottom: 0,
-      paddingLeft: 0,
-      paddingRight: 0,
-      paddingTop: 0,
-      scale: 1
-    };
+  ctx.strokeStyle = "red";
+  ctx.clearRect(0, 0, DEFAULT_FONT_SIZE, DEFAULT_FONT_SIZE);
+  ctx.strokeText("g", 0, 0);
+  let pixels = ctx.getImageData(0, 0, DEFAULT_FONT_SIZE, DEFAULT_FONT_SIZE).data;
+  descent = 0;
 
-    task._textDivs.push(textDiv);
-
-    if (isAllWhitespace(geom.str)) {
-      textDivProperties.isWhitespace = true;
-
-      task._textDivProperties.set(textDiv, textDivProperties);
-
-      return;
+  for (let i = pixels.length - 1 - 3; i >= 0; i -= 4) {
+    if (pixels[i] > 0) {
+      descent = Math.ceil(i / 4 / DEFAULT_FONT_SIZE);
+      break;
     }
+  }
 
-    const tx = _util.Util.transform(task._viewport.transform, geom.transform);
+  ctx.clearRect(0, 0, DEFAULT_FONT_SIZE, DEFAULT_FONT_SIZE);
+  ctx.strokeText("A", 0, DEFAULT_FONT_SIZE);
+  pixels = ctx.getImageData(0, 0, DEFAULT_FONT_SIZE, DEFAULT_FONT_SIZE).data;
+  ascent = 0;
 
-    let angle = Math.atan2(tx[1], tx[0]);
-    const style = styles[geom.fontName];
+  for (let i = 0, ii = pixels.length; i < ii; i += 4) {
+    if (pixels[i] > 0) {
+      ascent = DEFAULT_FONT_SIZE - Math.floor(i / 4 / DEFAULT_FONT_SIZE);
+      break;
+    }
+  }
 
+  ctx.restore();
+
+  if (ascent) {
+    const ratio = ascent / (ascent + descent);
+    ascentCache.set(fontFamily, ratio);
+    return ratio;
+  }
+
+  ascentCache.set(fontFamily, DEFAULT_FONT_ASCENT);
+  return DEFAULT_FONT_ASCENT;
+}
+
+function appendText(task, geom, styles, ctx) {
+  const textDiv = document.createElement("span");
+  const textDivProperties = {
+    angle: 0,
+    canvasWidth: 0,
+    hasText: geom.str !== "",
+    hasEOL: geom.hasEOL,
+    originalTransform: null,
+    paddingBottom: 0,
+    paddingLeft: 0,
+    paddingRight: 0,
+    paddingTop: 0,
+    scale: 1
+  };
+
+  task._textDivs.push(textDiv);
+
+  const tx = _util.Util.transform(task._viewport.transform, geom.transform);
+
+  let angle = Math.atan2(tx[1], tx[0]);
+  const style = styles[geom.fontName];
+
+  if (style.vertical) {
+    angle += Math.PI / 2;
+  }
+
+  const fontHeight = Math.hypot(tx[2], tx[3]);
+  const fontAscent = fontHeight * getAscent(style.fontFamily, ctx);
+  let left, top;
+
+  if (angle === 0) {
+    left = tx[4];
+    top = tx[5] - fontAscent;
+  } else {
+    left = tx[4] + fontAscent * Math.sin(angle);
+    top = tx[5] - fontAscent * Math.cos(angle);
+  }
+
+  textDiv.style.left = `${left}px`;
+  textDiv.style.top = `${top}px`;
+  textDiv.style.fontSize = `${fontHeight}px`;
+  textDiv.style.fontFamily = style.fontFamily;
+  textDiv.setAttribute("role", "presentation");
+  textDiv.textContent = geom.str;
+  textDiv.dir = geom.dir;
+
+  if (task._fontInspectorEnabled) {
+    textDiv.dataset.fontName = geom.fontName;
+  }
+
+  if (angle !== 0) {
+    textDivProperties.angle = angle * (180 / Math.PI);
+  }
+
+  let shouldScaleText = false;
+
+  if (geom.str.length > 1 || task._enhanceTextSelection && AllWhitespaceRegexp.test(geom.str)) {
+    shouldScaleText = true;
+  } else if (geom.transform[0] !== geom.transform[3]) {
+    const absScaleX = Math.abs(geom.transform[0]),
+          absScaleY = Math.abs(geom.transform[3]);
+
+    if (absScaleX !== absScaleY && Math.max(absScaleX, absScaleY) / Math.min(absScaleX, absScaleY) > 1.5) {
+      shouldScaleText = true;
+    }
+  }
+
+  if (shouldScaleText) {
     if (style.vertical) {
-      angle += Math.PI / 2;
-    }
-
-    const fontHeight = Math.hypot(tx[2], tx[3]);
-    const fontAscent = fontHeight * getAscent(style.fontFamily, ctx);
-    let left, top;
-
-    if (angle === 0) {
-      left = tx[4];
-      top = tx[5] - fontAscent;
+      textDivProperties.canvasWidth = geom.height * task._viewport.scale;
     } else {
-      left = tx[4] + fontAscent * Math.sin(angle);
-      top = tx[5] - fontAscent * Math.cos(angle);
+      textDivProperties.canvasWidth = geom.width * task._viewport.scale;
     }
+  }
 
-    textDiv.style.left = `${left}px`;
-    textDiv.style.top = `${top}px`;
-    textDiv.style.fontSize = `${fontHeight}px`;
-    textDiv.style.fontFamily = style.fontFamily;
-    textDiv.textContent = geom.str;
-    textDiv.dir = geom.dir;
+  task._textDivProperties.set(textDiv, textDivProperties);
 
-    if (task._fontInspectorEnabled) {
-      textDiv.dataset.fontName = geom.fontName;
-    }
+  if (task._textContentStream) {
+    task._layoutText(textDiv);
+  }
+
+  if (task._enhanceTextSelection && textDivProperties.hasText) {
+    let angleCos = 1,
+        angleSin = 0;
 
     if (angle !== 0) {
-      textDivProperties.angle = angle * (180 / Math.PI);
+      angleCos = Math.cos(angle);
+      angleSin = Math.sin(angle);
     }
 
-    let shouldScaleText = false;
+    const divWidth = (style.vertical ? geom.height : geom.width) * task._viewport.scale;
+    const divHeight = fontHeight;
+    let m, b;
 
-    if (geom.str.length > 1) {
-      shouldScaleText = true;
-    } else if (geom.transform[0] !== geom.transform[3]) {
-      const absScaleX = Math.abs(geom.transform[0]),
-            absScaleY = Math.abs(geom.transform[3]);
-
-      if (absScaleX !== absScaleY && Math.max(absScaleX, absScaleY) / Math.min(absScaleX, absScaleY) > 1.5) {
-        shouldScaleText = true;
-      }
+    if (angle !== 0) {
+      m = [angleCos, angleSin, -angleSin, angleCos, left, top];
+      b = _util.Util.getAxialAlignedBoundingBox([0, 0, divWidth, divHeight], m);
+    } else {
+      b = [left, top, left + divWidth, top + divHeight];
     }
 
-    if (shouldScaleText) {
-      if (style.vertical) {
-        textDivProperties.canvasWidth = geom.height * task._viewport.scale;
-      } else {
-        textDivProperties.canvasWidth = geom.width * task._viewport.scale;
-      }
-    }
+    task._bounds.push({
+      left: b[0],
+      top: b[1],
+      right: b[2],
+      bottom: b[3],
+      div: textDiv,
+      size: [divWidth, divHeight],
+      m
+    });
+  }
+}
 
-    task._textDivProperties.set(textDiv, textDivProperties);
-
-    if (task._textContentStream) {
-      task._layoutText(textDiv);
-    }
-
-    if (task._enhanceTextSelection) {
-      let angleCos = 1,
-          angleSin = 0;
-
-      if (angle !== 0) {
-        angleCos = Math.cos(angle);
-        angleSin = Math.sin(angle);
-      }
-
-      const divWidth = (style.vertical ? geom.height : geom.width) * task._viewport.scale;
-      const divHeight = fontHeight;
-      let m, b;
-
-      if (angle !== 0) {
-        m = [angleCos, angleSin, -angleSin, angleCos, left, top];
-        b = _util.Util.getAxialAlignedBoundingBox([0, 0, divWidth, divHeight], m);
-      } else {
-        b = [left, top, left + divWidth, top + divHeight];
-      }
-
-      task._bounds.push({
-        left: b[0],
-        top: b[1],
-        right: b[2],
-        bottom: b[3],
-        div: textDiv,
-        size: [divWidth, divHeight],
-        m
-      });
-    }
+function render(task) {
+  if (task._canceled) {
+    return;
   }
 
-  function render(task) {
-    if (task._canceled) {
-      return;
-    }
+  const textDivs = task._textDivs;
+  const capability = task._capability;
+  const textDivsLength = textDivs.length;
 
-    const textDivs = task._textDivs;
-    const capability = task._capability;
-    const textDivsLength = textDivs.length;
-
-    if (textDivsLength > MAX_TEXT_DIVS_TO_RENDER) {
-      task._renderingDone = true;
-      capability.resolve();
-      return;
-    }
-
-    if (!task._textContentStream) {
-      for (let i = 0; i < textDivsLength; i++) {
-        task._layoutText(textDivs[i]);
-      }
-    }
-
+  if (textDivsLength > MAX_TEXT_DIVS_TO_RENDER) {
     task._renderingDone = true;
     capability.resolve();
+    return;
   }
 
-  function findPositiveMin(ts, offset, count) {
-    let result = 0;
+  if (!task._textContentStream) {
+    for (let i = 0; i < textDivsLength; i++) {
+      task._layoutText(textDivs[i]);
+    }
+  }
 
-    for (let i = 0; i < count; i++) {
-      const t = ts[offset++];
+  task._renderingDone = true;
+  capability.resolve();
+}
 
-      if (t > 0) {
-        result = result ? Math.min(t, result) : t;
+function findPositiveMin(ts, offset, count) {
+  let result = 0;
+
+  for (let i = 0; i < count; i++) {
+    const t = ts[offset++];
+
+    if (t > 0) {
+      result = result ? Math.min(t, result) : t;
+    }
+  }
+
+  return result;
+}
+
+function expand(task) {
+  const bounds = task._bounds;
+  const viewport = task._viewport;
+  const expanded = expandBounds(viewport.width, viewport.height, bounds);
+
+  for (let i = 0; i < expanded.length; i++) {
+    const div = bounds[i].div;
+
+    const divProperties = task._textDivProperties.get(div);
+
+    if (divProperties.angle === 0) {
+      divProperties.paddingLeft = bounds[i].left - expanded[i].left;
+      divProperties.paddingTop = bounds[i].top - expanded[i].top;
+      divProperties.paddingRight = expanded[i].right - bounds[i].right;
+      divProperties.paddingBottom = expanded[i].bottom - bounds[i].bottom;
+
+      task._textDivProperties.set(div, divProperties);
+
+      continue;
+    }
+
+    const e = expanded[i],
+          b = bounds[i];
+    const m = b.m,
+          c = m[0],
+          s = m[1];
+    const points = [[0, 0], [0, b.size[1]], [b.size[0], 0], b.size];
+    const ts = new Float64Array(64);
+
+    for (let j = 0, jj = points.length; j < jj; j++) {
+      const t = _util.Util.applyTransform(points[j], m);
+
+      ts[j + 0] = c && (e.left - t[0]) / c;
+      ts[j + 4] = s && (e.top - t[1]) / s;
+      ts[j + 8] = c && (e.right - t[0]) / c;
+      ts[j + 12] = s && (e.bottom - t[1]) / s;
+      ts[j + 16] = s && (e.left - t[0]) / -s;
+      ts[j + 20] = c && (e.top - t[1]) / c;
+      ts[j + 24] = s && (e.right - t[0]) / -s;
+      ts[j + 28] = c && (e.bottom - t[1]) / c;
+      ts[j + 32] = c && (e.left - t[0]) / -c;
+      ts[j + 36] = s && (e.top - t[1]) / -s;
+      ts[j + 40] = c && (e.right - t[0]) / -c;
+      ts[j + 44] = s && (e.bottom - t[1]) / -s;
+      ts[j + 48] = s && (e.left - t[0]) / s;
+      ts[j + 52] = c && (e.top - t[1]) / -c;
+      ts[j + 56] = s && (e.right - t[0]) / s;
+      ts[j + 60] = c && (e.bottom - t[1]) / -c;
+    }
+
+    const boxScale = 1 + Math.min(Math.abs(c), Math.abs(s));
+    divProperties.paddingLeft = findPositiveMin(ts, 32, 16) / boxScale;
+    divProperties.paddingTop = findPositiveMin(ts, 48, 16) / boxScale;
+    divProperties.paddingRight = findPositiveMin(ts, 0, 16) / boxScale;
+    divProperties.paddingBottom = findPositiveMin(ts, 16, 16) / boxScale;
+
+    task._textDivProperties.set(div, divProperties);
+  }
+}
+
+function expandBounds(width, height, boxes) {
+  const bounds = boxes.map(function (box, i) {
+    return {
+      x1: box.left,
+      y1: box.top,
+      x2: box.right,
+      y2: box.bottom,
+      index: i,
+      x1New: undefined,
+      x2New: undefined
+    };
+  });
+  expandBoundsLTR(width, bounds);
+  const expanded = new Array(boxes.length);
+
+  for (const b of bounds) {
+    const i = b.index;
+    expanded[i] = {
+      left: b.x1New,
+      top: 0,
+      right: b.x2New,
+      bottom: 0
+    };
+  }
+
+  boxes.map(function (box, i) {
+    const e = expanded[i],
+          b = bounds[i];
+    b.x1 = box.top;
+    b.y1 = width - e.right;
+    b.x2 = box.bottom;
+    b.y2 = width - e.left;
+    b.index = i;
+    b.x1New = undefined;
+    b.x2New = undefined;
+  });
+  expandBoundsLTR(height, bounds);
+
+  for (const b of bounds) {
+    const i = b.index;
+    expanded[i].top = b.x1New;
+    expanded[i].bottom = b.x2New;
+  }
+
+  return expanded;
+}
+
+function expandBoundsLTR(width, bounds) {
+  bounds.sort(function (a, b) {
+    return a.x1 - b.x1 || a.index - b.index;
+  });
+  const fakeBoundary = {
+    x1: -Infinity,
+    y1: -Infinity,
+    x2: 0,
+    y2: Infinity,
+    index: -1,
+    x1New: 0,
+    x2New: 0
+  };
+  const horizon = [{
+    start: -Infinity,
+    end: Infinity,
+    boundary: fakeBoundary
+  }];
+
+  for (const boundary of bounds) {
+    let i = 0;
+
+    while (i < horizon.length && horizon[i].end <= boundary.y1) {
+      i++;
+    }
+
+    let j = horizon.length - 1;
+
+    while (j >= 0 && horizon[j].start >= boundary.y2) {
+      j--;
+    }
+
+    let horizonPart, affectedBoundary;
+    let q,
+        k,
+        maxXNew = -Infinity;
+
+    for (q = i; q <= j; q++) {
+      horizonPart = horizon[q];
+      affectedBoundary = horizonPart.boundary;
+      let xNew;
+
+      if (affectedBoundary.x2 > boundary.x1) {
+        xNew = affectedBoundary.index > boundary.index ? affectedBoundary.x1New : boundary.x1;
+      } else if (affectedBoundary.x2New === undefined) {
+        xNew = (affectedBoundary.x2 + boundary.x1) / 2;
+      } else {
+        xNew = affectedBoundary.x2New;
+      }
+
+      if (xNew > maxXNew) {
+        maxXNew = xNew;
       }
     }
 
-    return result;
-  }
+    boundary.x1New = maxXNew;
 
-  function expand(task) {
-    const bounds = task._bounds;
-    const viewport = task._viewport;
-    const expanded = expandBounds(viewport.width, viewport.height, bounds);
+    for (q = i; q <= j; q++) {
+      horizonPart = horizon[q];
+      affectedBoundary = horizonPart.boundary;
 
-    for (let i = 0; i < expanded.length; i++) {
-      const div = bounds[i].div;
+      if (affectedBoundary.x2New === undefined) {
+        if (affectedBoundary.x2 > boundary.x1) {
+          if (affectedBoundary.index > boundary.index) {
+            affectedBoundary.x2New = affectedBoundary.x2;
+          }
+        } else {
+          affectedBoundary.x2New = maxXNew;
+        }
+      } else if (affectedBoundary.x2New > maxXNew) {
+        affectedBoundary.x2New = Math.max(maxXNew, affectedBoundary.x2);
+      }
+    }
 
-      const divProperties = task._textDivProperties.get(div);
+    const changedHorizon = [];
+    let lastBoundary = null;
 
-      if (divProperties.angle === 0) {
-        divProperties.paddingLeft = bounds[i].left - expanded[i].left;
-        divProperties.paddingTop = bounds[i].top - expanded[i].top;
-        divProperties.paddingRight = expanded[i].right - bounds[i].right;
-        divProperties.paddingBottom = expanded[i].bottom - bounds[i].bottom;
+    for (q = i; q <= j; q++) {
+      horizonPart = horizon[q];
+      affectedBoundary = horizonPart.boundary;
+      const useBoundary = affectedBoundary.x2 > boundary.x2 ? affectedBoundary : boundary;
 
-        task._textDivProperties.set(div, divProperties);
+      if (lastBoundary === useBoundary) {
+        changedHorizon[changedHorizon.length - 1].end = horizonPart.end;
+      } else {
+        changedHorizon.push({
+          start: horizonPart.start,
+          end: horizonPart.end,
+          boundary: useBoundary
+        });
+        lastBoundary = useBoundary;
+      }
+    }
 
+    if (horizon[i].start < boundary.y1) {
+      changedHorizon[0].start = boundary.y1;
+      changedHorizon.unshift({
+        start: horizon[i].start,
+        end: boundary.y1,
+        boundary: horizon[i].boundary
+      });
+    }
+
+    if (boundary.y2 < horizon[j].end) {
+      changedHorizon[changedHorizon.length - 1].end = boundary.y2;
+      changedHorizon.push({
+        start: boundary.y2,
+        end: horizon[j].end,
+        boundary: horizon[j].boundary
+      });
+    }
+
+    for (q = i; q <= j; q++) {
+      horizonPart = horizon[q];
+      affectedBoundary = horizonPart.boundary;
+
+      if (affectedBoundary.x2New !== undefined) {
         continue;
       }
 
-      const e = expanded[i],
-            b = bounds[i];
-      const m = b.m,
-            c = m[0],
-            s = m[1];
-      const points = [[0, 0], [0, b.size[1]], [b.size[0], 0], b.size];
-      const ts = new Float64Array(64);
-      points.forEach(function (p, j) {
-        const t = _util.Util.applyTransform(p, m);
+      let used = false;
 
-        ts[j + 0] = c && (e.left - t[0]) / c;
-        ts[j + 4] = s && (e.top - t[1]) / s;
-        ts[j + 8] = c && (e.right - t[0]) / c;
-        ts[j + 12] = s && (e.bottom - t[1]) / s;
-        ts[j + 16] = s && (e.left - t[0]) / -s;
-        ts[j + 20] = c && (e.top - t[1]) / c;
-        ts[j + 24] = s && (e.right - t[0]) / -s;
-        ts[j + 28] = c && (e.bottom - t[1]) / c;
-        ts[j + 32] = c && (e.left - t[0]) / -c;
-        ts[j + 36] = s && (e.top - t[1]) / -s;
-        ts[j + 40] = c && (e.right - t[0]) / -c;
-        ts[j + 44] = s && (e.bottom - t[1]) / -s;
-        ts[j + 48] = s && (e.left - t[0]) / s;
-        ts[j + 52] = c && (e.top - t[1]) / -c;
-        ts[j + 56] = s && (e.right - t[0]) / s;
-        ts[j + 60] = c && (e.bottom - t[1]) / -c;
-      });
-      const boxScale = 1 + Math.min(Math.abs(c), Math.abs(s));
-      divProperties.paddingLeft = findPositiveMin(ts, 32, 16) / boxScale;
-      divProperties.paddingTop = findPositiveMin(ts, 48, 16) / boxScale;
-      divProperties.paddingRight = findPositiveMin(ts, 0, 16) / boxScale;
-      divProperties.paddingBottom = findPositiveMin(ts, 16, 16) / boxScale;
+      for (k = i - 1; !used && k >= 0 && horizon[k].start >= affectedBoundary.y1; k--) {
+        used = horizon[k].boundary === affectedBoundary;
+      }
 
-      task._textDivProperties.set(div, divProperties);
+      for (k = j + 1; !used && k < horizon.length && horizon[k].end <= affectedBoundary.y2; k++) {
+        used = horizon[k].boundary === affectedBoundary;
+      }
+
+      for (k = 0; !used && k < changedHorizon.length; k++) {
+        used = changedHorizon[k].boundary === affectedBoundary;
+      }
+
+      if (!used) {
+        affectedBoundary.x2New = maxXNew;
+      }
+    }
+
+    Array.prototype.splice.apply(horizon, [i, j - i + 1].concat(changedHorizon));
+  }
+
+  for (const horizonPart of horizon) {
+    const affectedBoundary = horizonPart.boundary;
+
+    if (affectedBoundary.x2New === undefined) {
+      affectedBoundary.x2New = Math.max(width, affectedBoundary.x2);
     }
   }
+}
 
-  function expandBounds(width, height, boxes) {
-    const bounds = boxes.map(function (box, i) {
-      return {
-        x1: box.left,
-        y1: box.top,
-        x2: box.right,
-        y2: box.bottom,
-        index: i,
-        x1New: undefined,
-        x2New: undefined
-      };
-    });
-    expandBoundsLTR(width, bounds);
-    const expanded = new Array(boxes.length);
-    bounds.forEach(function (b) {
-      const i = b.index;
-      expanded[i] = {
-        left: b.x1New,
-        top: 0,
-        right: b.x2New,
-        bottom: 0
-      };
-    });
-    boxes.map(function (box, i) {
-      const e = expanded[i],
-            b = bounds[i];
-      b.x1 = box.top;
-      b.y1 = width - e.right;
-      b.x2 = box.bottom;
-      b.y2 = width - e.left;
-      b.index = i;
-      b.x1New = undefined;
-      b.x2New = undefined;
-    });
-    expandBoundsLTR(height, bounds);
-    bounds.forEach(function (b) {
-      const i = b.index;
-      expanded[i].top = b.x1New;
-      expanded[i].bottom = b.x2New;
-    });
-    return expanded;
-  }
-
-  function expandBoundsLTR(width, bounds) {
-    bounds.sort(function (a, b) {
-      return a.x1 - b.x1 || a.index - b.index;
-    });
-    const fakeBoundary = {
-      x1: -Infinity,
-      y1: -Infinity,
-      x2: 0,
-      y2: Infinity,
-      index: -1,
-      x1New: 0,
-      x2New: 0
-    };
-    const horizon = [{
-      start: -Infinity,
-      end: Infinity,
-      boundary: fakeBoundary
-    }];
-    bounds.forEach(function (boundary) {
-      let i = 0;
-
-      while (i < horizon.length && horizon[i].end <= boundary.y1) {
-        i++;
-      }
-
-      let j = horizon.length - 1;
-
-      while (j >= 0 && horizon[j].start >= boundary.y2) {
-        j--;
-      }
-
-      let horizonPart, affectedBoundary;
-      let q,
-          k,
-          maxXNew = -Infinity;
-
-      for (q = i; q <= j; q++) {
-        horizonPart = horizon[q];
-        affectedBoundary = horizonPart.boundary;
-        let xNew;
-
-        if (affectedBoundary.x2 > boundary.x1) {
-          xNew = affectedBoundary.index > boundary.index ? affectedBoundary.x1New : boundary.x1;
-        } else if (affectedBoundary.x2New === undefined) {
-          xNew = (affectedBoundary.x2 + boundary.x1) / 2;
-        } else {
-          xNew = affectedBoundary.x2New;
-        }
-
-        if (xNew > maxXNew) {
-          maxXNew = xNew;
-        }
-      }
-
-      boundary.x1New = maxXNew;
-
-      for (q = i; q <= j; q++) {
-        horizonPart = horizon[q];
-        affectedBoundary = horizonPart.boundary;
-
-        if (affectedBoundary.x2New === undefined) {
-          if (affectedBoundary.x2 > boundary.x1) {
-            if (affectedBoundary.index > boundary.index) {
-              affectedBoundary.x2New = affectedBoundary.x2;
-            }
-          } else {
-            affectedBoundary.x2New = maxXNew;
-          }
-        } else if (affectedBoundary.x2New > maxXNew) {
-          affectedBoundary.x2New = Math.max(maxXNew, affectedBoundary.x2);
-        }
-      }
-
-      const changedHorizon = [];
-      let lastBoundary = null;
-
-      for (q = i; q <= j; q++) {
-        horizonPart = horizon[q];
-        affectedBoundary = horizonPart.boundary;
-        const useBoundary = affectedBoundary.x2 > boundary.x2 ? affectedBoundary : boundary;
-
-        if (lastBoundary === useBoundary) {
-          changedHorizon[changedHorizon.length - 1].end = horizonPart.end;
-        } else {
-          changedHorizon.push({
-            start: horizonPart.start,
-            end: horizonPart.end,
-            boundary: useBoundary
-          });
-          lastBoundary = useBoundary;
-        }
-      }
-
-      if (horizon[i].start < boundary.y1) {
-        changedHorizon[0].start = boundary.y1;
-        changedHorizon.unshift({
-          start: horizon[i].start,
-          end: boundary.y1,
-          boundary: horizon[i].boundary
-        });
-      }
-
-      if (boundary.y2 < horizon[j].end) {
-        changedHorizon[changedHorizon.length - 1].end = boundary.y2;
-        changedHorizon.push({
-          start: boundary.y2,
-          end: horizon[j].end,
-          boundary: horizon[j].boundary
-        });
-      }
-
-      for (q = i; q <= j; q++) {
-        horizonPart = horizon[q];
-        affectedBoundary = horizonPart.boundary;
-
-        if (affectedBoundary.x2New !== undefined) {
-          continue;
-        }
-
-        let used = false;
-
-        for (k = i - 1; !used && k >= 0 && horizon[k].start >= affectedBoundary.y1; k--) {
-          used = horizon[k].boundary === affectedBoundary;
-        }
-
-        for (k = j + 1; !used && k < horizon.length && horizon[k].end <= affectedBoundary.y2; k++) {
-          used = horizon[k].boundary === affectedBoundary;
-        }
-
-        for (k = 0; !used && k < changedHorizon.length; k++) {
-          used = changedHorizon[k].boundary === affectedBoundary;
-        }
-
-        if (!used) {
-          affectedBoundary.x2New = maxXNew;
-        }
-      }
-
-      Array.prototype.splice.apply(horizon, [i, j - i + 1].concat(changedHorizon));
-    });
-    horizon.forEach(function (horizonPart) {
-      const affectedBoundary = horizonPart.boundary;
-
-      if (affectedBoundary.x2New === undefined) {
-        affectedBoundary.x2New = Math.max(width, affectedBoundary.x2);
-      }
-    });
-  }
-
-  function TextLayerRenderTask({
+class TextLayerRenderTask {
+  constructor({
     textContent,
     textContentStream,
     container,
@@ -10841,252 +10560,251 @@ const renderTextLayer = function renderTextLayerClosure() {
     }).catch(() => {});
   }
 
-  TextLayerRenderTask.prototype = {
-    get promise() {
-      return this._capability.promise;
-    },
-
-    cancel: function TextLayer_cancel() {
-      this._canceled = true;
-
-      if (this._reader) {
-        this._reader.cancel(new _util.AbortException("TextLayer task cancelled."));
-
-        this._reader = null;
-      }
-
-      if (this._renderTimer !== null) {
-        clearTimeout(this._renderTimer);
-        this._renderTimer = null;
-      }
-
-      this._capability.reject(new Error("TextLayer task cancelled."));
-    },
-
-    _processItems(items, styleCache) {
-      for (let i = 0, len = items.length; i < len; i++) {
-        if (items[i].str === undefined) {
-          if (items[i].type === "beginMarkedContentProps" || items[i].type === "beginMarkedContent") {
-            const parent = this._container;
-            this._container = document.createElement("span");
-
-            this._container.classList.add("markedContent");
-
-            if (items[i].id !== null) {
-              this._container.setAttribute("id", `${items[i].id}`);
-            }
-
-            parent.appendChild(this._container);
-          } else if (items[i].type === "endMarkedContent") {
-            this._container = this._container.parentNode;
-          }
-
-          continue;
-        }
-
-        this._textContentItemsStr.push(items[i].str);
-
-        appendText(this, items[i], styleCache, this._layoutTextCtx);
-      }
-    },
-
-    _layoutText(textDiv) {
-      const textDivProperties = this._textDivProperties.get(textDiv);
-
-      if (textDivProperties.isWhitespace) {
-        return;
-      }
-
-      let transform = "";
-
-      if (textDivProperties.canvasWidth !== 0) {
-        const {
-          fontSize,
-          fontFamily
-        } = textDiv.style;
-
-        if (fontSize !== this._layoutTextLastFontSize || fontFamily !== this._layoutTextLastFontFamily) {
-          this._layoutTextCtx.font = `${fontSize} ${fontFamily}`;
-          this._layoutTextLastFontSize = fontSize;
-          this._layoutTextLastFontFamily = fontFamily;
-        }
-
-        const {
-          width
-        } = this._layoutTextCtx.measureText(textDiv.textContent);
-
-        if (width > 0) {
-          textDivProperties.scale = textDivProperties.canvasWidth / width;
-          transform = `scaleX(${textDivProperties.scale})`;
-        }
-      }
-
-      if (textDivProperties.angle !== 0) {
-        transform = `rotate(${textDivProperties.angle}deg) ${transform}`;
-      }
-
-      if (transform.length > 0) {
-        if (this._enhanceTextSelection) {
-          textDivProperties.originalTransform = transform;
-        }
-
-        textDiv.style.transform = transform;
-      }
-
-      this._textDivProperties.set(textDiv, textDivProperties);
-
-      this._container.appendChild(textDiv);
-    },
-
-    _render: function TextLayer_render(timeout) {
-      const capability = (0, _util.createPromiseCapability)();
-      let styleCache = Object.create(null);
-
-      const canvas = this._document.createElement("canvas");
-
-      canvas.height = canvas.width = DEFAULT_FONT_SIZE;
-      canvas.mozOpaque = true;
-      this._layoutTextCtx = canvas.getContext("2d", {
-        alpha: false
-      });
-
-      if (this._textContent) {
-        const textItems = this._textContent.items;
-        const textStyles = this._textContent.styles;
-
-        this._processItems(textItems, textStyles);
-
-        capability.resolve();
-      } else if (this._textContentStream) {
-        const pump = () => {
-          this._reader.read().then(({
-            value,
-            done
-          }) => {
-            if (done) {
-              capability.resolve();
-              return;
-            }
-
-            Object.assign(styleCache, value.styles);
-
-            this._processItems(value.items, styleCache);
-
-            pump();
-          }, capability.reject);
-        };
-
-        this._reader = this._textContentStream.getReader();
-        pump();
-      } else {
-        throw new Error('Neither "textContent" nor "textContentStream"' + " parameters specified.");
-      }
-
-      capability.promise.then(() => {
-        styleCache = null;
-
-        if (!timeout) {
-          render(this);
-        } else {
-          this._renderTimer = setTimeout(() => {
-            render(this);
-            this._renderTimer = null;
-          }, timeout);
-        }
-      }, this._capability.reject);
-    },
-    expandTextDivs: function TextLayer_expandTextDivs(expandDivs) {
-      if (!this._enhanceTextSelection || !this._renderingDone) {
-        return;
-      }
-
-      if (this._bounds !== null) {
-        expand(this);
-        this._bounds = null;
-      }
-
-      const transformBuf = [],
-            paddingBuf = [];
-
-      for (let i = 0, ii = this._textDivs.length; i < ii; i++) {
-        const div = this._textDivs[i];
-
-        const divProps = this._textDivProperties.get(div);
-
-        if (divProps.isWhitespace) {
-          continue;
-        }
-
-        if (expandDivs) {
-          transformBuf.length = 0;
-          paddingBuf.length = 0;
-
-          if (divProps.originalTransform) {
-            transformBuf.push(divProps.originalTransform);
-          }
-
-          if (divProps.paddingTop > 0) {
-            paddingBuf.push(`${divProps.paddingTop}px`);
-            transformBuf.push(`translateY(${-divProps.paddingTop}px)`);
-          } else {
-            paddingBuf.push(0);
-          }
-
-          if (divProps.paddingRight > 0) {
-            paddingBuf.push(`${divProps.paddingRight / divProps.scale}px`);
-          } else {
-            paddingBuf.push(0);
-          }
-
-          if (divProps.paddingBottom > 0) {
-            paddingBuf.push(`${divProps.paddingBottom}px`);
-          } else {
-            paddingBuf.push(0);
-          }
-
-          if (divProps.paddingLeft > 0) {
-            paddingBuf.push(`${divProps.paddingLeft / divProps.scale}px`);
-            transformBuf.push(`translateX(${-divProps.paddingLeft / divProps.scale}px)`);
-          } else {
-            paddingBuf.push(0);
-          }
-
-          div.style.padding = paddingBuf.join(" ");
-
-          if (transformBuf.length) {
-            div.style.transform = transformBuf.join(" ");
-          }
-        } else {
-          div.style.padding = null;
-          div.style.transform = divProps.originalTransform;
-        }
-      }
-    }
-  };
-
-  function renderTextLayer(renderParameters) {
-    const task = new TextLayerRenderTask({
-      textContent: renderParameters.textContent,
-      textContentStream: renderParameters.textContentStream,
-      container: renderParameters.container,
-      viewport: renderParameters.viewport,
-      textDivs: renderParameters.textDivs,
-      textContentItemsStr: renderParameters.textContentItemsStr,
-      enhanceTextSelection: renderParameters.enhanceTextSelection
-    });
-
-    task._render(renderParameters.timeout);
-
-    return task;
+  get promise() {
+    return this._capability.promise;
   }
 
-  return renderTextLayer;
-}();
+  cancel() {
+    this._canceled = true;
 
-exports.renderTextLayer = renderTextLayer;
+    if (this._reader) {
+      this._reader.cancel(new _util.AbortException("TextLayer task cancelled."));
+
+      this._reader = null;
+    }
+
+    if (this._renderTimer !== null) {
+      clearTimeout(this._renderTimer);
+      this._renderTimer = null;
+    }
+
+    this._capability.reject(new Error("TextLayer task cancelled."));
+  }
+
+  _processItems(items, styleCache) {
+    for (let i = 0, len = items.length; i < len; i++) {
+      if (items[i].str === undefined) {
+        if (items[i].type === "beginMarkedContentProps" || items[i].type === "beginMarkedContent") {
+          const parent = this._container;
+          this._container = document.createElement("span");
+
+          this._container.classList.add("markedContent");
+
+          if (items[i].id !== null) {
+            this._container.setAttribute("id", `${items[i].id}`);
+          }
+
+          parent.appendChild(this._container);
+        } else if (items[i].type === "endMarkedContent") {
+          this._container = this._container.parentNode;
+        }
+
+        continue;
+      }
+
+      this._textContentItemsStr.push(items[i].str);
+
+      appendText(this, items[i], styleCache, this._layoutTextCtx);
+    }
+  }
+
+  _layoutText(textDiv) {
+    const textDivProperties = this._textDivProperties.get(textDiv);
+
+    let transform = "";
+
+    if (textDivProperties.canvasWidth !== 0 && textDivProperties.hasText) {
+      const {
+        fontSize,
+        fontFamily
+      } = textDiv.style;
+
+      if (fontSize !== this._layoutTextLastFontSize || fontFamily !== this._layoutTextLastFontFamily) {
+        this._layoutTextCtx.font = `${fontSize} ${fontFamily}`;
+        this._layoutTextLastFontSize = fontSize;
+        this._layoutTextLastFontFamily = fontFamily;
+      }
+
+      const {
+        width
+      } = this._layoutTextCtx.measureText(textDiv.textContent);
+
+      if (width > 0) {
+        textDivProperties.scale = textDivProperties.canvasWidth / width;
+        transform = `scaleX(${textDivProperties.scale})`;
+      }
+    }
+
+    if (textDivProperties.angle !== 0) {
+      transform = `rotate(${textDivProperties.angle}deg) ${transform}`;
+    }
+
+    if (transform.length > 0) {
+      if (this._enhanceTextSelection) {
+        textDivProperties.originalTransform = transform;
+      }
+
+      textDiv.style.transform = transform;
+    }
+
+    if (textDivProperties.hasText) {
+      this._container.appendChild(textDiv);
+    }
+
+    if (textDivProperties.hasEOL) {
+      const br = document.createElement("br");
+      br.setAttribute("role", "presentation");
+
+      this._container.appendChild(br);
+    }
+  }
+
+  _render(timeout = 0) {
+    const capability = (0, _util.createPromiseCapability)();
+    let styleCache = Object.create(null);
+
+    const canvas = this._document.createElement("canvas");
+
+    canvas.height = canvas.width = DEFAULT_FONT_SIZE;
+    canvas.mozOpaque = true;
+    this._layoutTextCtx = canvas.getContext("2d", {
+      alpha: false
+    });
+
+    if (this._textContent) {
+      const textItems = this._textContent.items;
+      const textStyles = this._textContent.styles;
+
+      this._processItems(textItems, textStyles);
+
+      capability.resolve();
+    } else if (this._textContentStream) {
+      const pump = () => {
+        this._reader.read().then(({
+          value,
+          done
+        }) => {
+          if (done) {
+            capability.resolve();
+            return;
+          }
+
+          Object.assign(styleCache, value.styles);
+
+          this._processItems(value.items, styleCache);
+
+          pump();
+        }, capability.reject);
+      };
+
+      this._reader = this._textContentStream.getReader();
+      pump();
+    } else {
+      throw new Error('Neither "textContent" nor "textContentStream"' + " parameters specified.");
+    }
+
+    capability.promise.then(() => {
+      styleCache = null;
+
+      if (!timeout) {
+        render(this);
+      } else {
+        this._renderTimer = setTimeout(() => {
+          render(this);
+          this._renderTimer = null;
+        }, timeout);
+      }
+    }, this._capability.reject);
+  }
+
+  expandTextDivs(expandDivs = false) {
+    if (!this._enhanceTextSelection || !this._renderingDone) {
+      return;
+    }
+
+    if (this._bounds !== null) {
+      expand(this);
+      this._bounds = null;
+    }
+
+    const transformBuf = [],
+          paddingBuf = [];
+
+    for (let i = 0, ii = this._textDivs.length; i < ii; i++) {
+      const div = this._textDivs[i];
+
+      const divProps = this._textDivProperties.get(div);
+
+      if (!divProps.hasText) {
+        continue;
+      }
+
+      if (expandDivs) {
+        transformBuf.length = 0;
+        paddingBuf.length = 0;
+
+        if (divProps.originalTransform) {
+          transformBuf.push(divProps.originalTransform);
+        }
+
+        if (divProps.paddingTop > 0) {
+          paddingBuf.push(`${divProps.paddingTop}px`);
+          transformBuf.push(`translateY(${-divProps.paddingTop}px)`);
+        } else {
+          paddingBuf.push(0);
+        }
+
+        if (divProps.paddingRight > 0) {
+          paddingBuf.push(`${divProps.paddingRight / divProps.scale}px`);
+        } else {
+          paddingBuf.push(0);
+        }
+
+        if (divProps.paddingBottom > 0) {
+          paddingBuf.push(`${divProps.paddingBottom}px`);
+        } else {
+          paddingBuf.push(0);
+        }
+
+        if (divProps.paddingLeft > 0) {
+          paddingBuf.push(`${divProps.paddingLeft / divProps.scale}px`);
+          transformBuf.push(`translateX(${-divProps.paddingLeft / divProps.scale}px)`);
+        } else {
+          paddingBuf.push(0);
+        }
+
+        div.style.padding = paddingBuf.join(" ");
+
+        if (transformBuf.length) {
+          div.style.transform = transformBuf.join(" ");
+        }
+      } else {
+        div.style.padding = null;
+        div.style.transform = divProps.originalTransform;
+      }
+    }
+  }
+
+}
+
+function renderTextLayer(renderParameters) {
+  const task = new TextLayerRenderTask({
+    textContent: renderParameters.textContent,
+    textContentStream: renderParameters.textContentStream,
+    container: renderParameters.container,
+    viewport: renderParameters.viewport,
+    textDivs: renderParameters.textDivs,
+    textContentItemsStr: renderParameters.textContentItemsStr,
+    enhanceTextSelection: renderParameters.enhanceTextSelection
+  });
+
+  task._render(renderParameters.timeout);
+
+  return task;
+}
 
 /***/ }),
-/* 21 */
+/* 20 */
 /***/ ((__unused_webpack_module, exports, __w_pdfjs_require__) => {
 
 
@@ -11102,15 +10820,17 @@ var _display_utils = __w_pdfjs_require__(1);
 
 var _is_node = __w_pdfjs_require__(4);
 
-let SVGGraphics = function () {
-  throw new Error("Not implemented: SVGGraphics");
-};
+let SVGGraphics = class {
+  constructor() {
+    (0, _util.unreachable)("Not implemented: SVGGraphics");
+  }
 
+};
 exports.SVGGraphics = SVGGraphics;
 ;
 
 /***/ }),
-/* 22 */
+/* 21 */
 /***/ ((__unused_webpack_module, exports) => {
 
 
@@ -11452,20 +11172,20 @@ var _api = __w_pdfjs_require__(5);
 
 var _util = __w_pdfjs_require__(2);
 
-var _annotation_layer = __w_pdfjs_require__(18);
+var _annotation_layer = __w_pdfjs_require__(17);
 
 var _api_compatibility = __w_pdfjs_require__(9);
 
 var _worker_options = __w_pdfjs_require__(12);
 
-var _text_layer = __w_pdfjs_require__(20);
+var _text_layer = __w_pdfjs_require__(19);
 
-var _svg = __w_pdfjs_require__(21);
+var _svg = __w_pdfjs_require__(20);
 
-var _xfa_layer = __w_pdfjs_require__(22);
+var _xfa_layer = __w_pdfjs_require__(21);
 
-const pdfjsVersion = '2.9.45';
-const pdfjsBuild = 'bb478928b';
+const pdfjsVersion = '2.9.273';
+const pdfjsBuild = 'e394da586';
 ;
 })();
 

@@ -232,6 +232,10 @@ bool GLXLibrary::EnsureInitialized() {
 
   mInitialized = true;
 
+  // This needs to be after `fQueryServerString` is called so that the
+  // driver is loaded.
+  MesaMemoryLeakWorkaround();
+
   return true;
 }
 
@@ -781,10 +785,10 @@ already_AddRefed<GLContext> GLContextProviderGLX::CreateForCompositorWidget(
     MOZ_ASSERT(false);
     return nullptr;
   }
-  GtkCompositorWidget* compWidget = aCompositorWidget->AsX11();
+  GtkCompositorWidget* compWidget = aCompositorWidget->AsGTK();
   MOZ_ASSERT(compWidget);
 
-  return CreateForWidget(compWidget->XDisplay(), compWidget->XWindow(),
+  return CreateForWidget(DefaultXDisplay(), compWidget->XWindow(),
                          aHardwareWebRender, aForceAccelerated);
 }
 
@@ -937,11 +941,7 @@ bool GLContextGLX::FindFBConfigForWindow(
   int numConfigs;
   const int webrenderAttribs[] = {LOCAL_GLX_ALPHA_SIZE,
                                   windowAttrs.depth == 32 ? 8 : 0,
-                                  LOCAL_GLX_DEPTH_SIZE,
-                                  24,
-                                  LOCAL_GLX_DOUBLEBUFFER,
-                                  X11True,
-                                  0};
+                                  LOCAL_GLX_DOUBLEBUFFER, X11True, 0};
 
   if (aWebRender) {
     cfgs = sGLXLibrary.fChooseFBConfig(display, screen, webrenderAttribs,

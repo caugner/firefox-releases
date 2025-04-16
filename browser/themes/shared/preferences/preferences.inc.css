@@ -113,7 +113,10 @@ button > hbox > label {
 }
 
 .indent {
-  margin-inline-start: 28px !important;
+  /* This should match the checkboxes/radiobuttons' width and inline margin,
+     such that when we have a toggle with a label followed by another element
+     with this class, the other element's text aligns with the toggle label. */
+  margin-inline-start: 22px !important;
 }
 
 checkbox {
@@ -297,7 +300,7 @@ checkbox {
 }
 
 #useDocumentColors {
-  margin: 0;
+  margin: 4px 0;
 }
 
 #translationAttributionImage {
@@ -437,10 +440,10 @@ checkbox {
   margin-inline-end: 0;
 }
 
-#homeContentsGroup checkbox[src] .checkbox-icon {
+#homeContentsGroup .checkbox-icon[src] {
   -moz-context-properties: fill;
   fill: currentColor;
-  margin-inline: 4px 8px;
+  margin-inline: 2px 8px;
   width: 16px;
 }
 
@@ -477,6 +480,14 @@ checkbox {
 #blocklistsTree > treechildren::-moz-tree-image(selectionCol, checked, selected) {
   fill: var(--in-content-item-selected-text);
   stroke: var(--in-content-item-selected);
+}
+
+@media (prefers-contrast) {
+  #engineList > treechildren::-moz-tree-image(hover),
+  #blocklistsTree > treechildren::-moz-tree-image(hover) {
+    fill: var(--in-content-item-hover-text);
+    stroke: var(--in-content-item-hover);
+  }
 }
 
 #engineList > treechildren::-moz-tree-row,
@@ -627,7 +638,7 @@ checkbox {
 }
 
 .dialogFrame {
-  margin: 20px;
+  margin: 10px;
   -moz-box-flex: 1;
   /* Default dialog dimensions */
   width: 66ch;
@@ -782,7 +793,7 @@ dialog > .sync-engines-list + hbox {
 
 .sync-engines-list checkbox .checkbox-icon,
 .sync-engine-image {
-  margin-inline: 4px 8px;
+  margin-inline: 2px 8px;
   width: 16px;
   height: 16px;
   -moz-context-properties: fill;
@@ -1192,4 +1203,17 @@ richlistitem .text-link:hover {
 
 .featureGateDescription {
   margin-inline-start: 28px;
+}
+
+.checkbox-row {
+  display: flex;
+  align-items: baseline;
+}
+
+.checkbox-row input[type=checkbox] {
+  translate: 0 2px
+}
+
+.checkbox-row a {
+  margin-inline-start: 6px;
 }

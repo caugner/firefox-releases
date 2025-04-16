@@ -1465,7 +1465,7 @@ struct MOZ_NEEDS_MEMMOVABLE_MEMBERS nsStyleDisplay {
 
   bool IsPositionedStyle() const {
     return mPosition != mozilla::StylePositionProperty::Static ||
-           (mWillChange.bits & mozilla::StyleWillChangeBits::ABSPOS_CB);
+           (mWillChange.bits & mozilla::StyleWillChangeBits::POSITION);
   }
 
   bool IsAbsolutelyPositionedStyle() const {
@@ -1747,7 +1747,8 @@ struct MOZ_NEEDS_MEMMOVABLE_MEMBERS nsStyleUI {
 
   mozilla::StyleCursor mCursor;
 
-  mozilla::StyleColorOrAuto mCaretColor;
+  mozilla::StyleColorOrAuto mAccentColor;
+  mozilla::StyleCaretColor mCaretColor;
   mozilla::StyleScrollbarColor mScrollbarColor;
 
   inline mozilla::StylePointerEvents GetEffectivePointerEvents(

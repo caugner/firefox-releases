@@ -20,19 +20,19 @@ use crate::render_api::CaptureBits;
 #[cfg(feature = "replay")]
 use crate::render_api::CapturedDocument;
 use crate::render_api::{MemoryReport, TransactionMsg, ResourceUpdate, ApiMsg, FrameMsg, ClearCache, DebugCommand};
-use crate::clip::ClipIntern;
+use crate::clip::{ClipIntern, PolygonIntern, ClipStoreScratchBuffer};
 use crate::filterdata::FilterDataIntern;
 #[cfg(any(feature = "capture", feature = "replay"))]
 use crate::capture::CaptureConfig;
 use crate::composite::{CompositorKind, CompositeDescriptor};
-#[cfg(feature = "debugger")]
-use crate::debug_server;
 use crate::frame_builder::{FrameBuilder, FrameBuilderConfig, FrameScratchBuffer};
 use crate::glyph_rasterizer::{FontInstance};
 use crate::gpu_cache::GpuCache;
 use crate::hit_test::{HitTest, HitTester, SharedHitTester};
 use crate::intern::DataStore;
-use crate::internal_types::{DebugOutput, FastHashMap, RenderedDocument, ResultMsg};
+#[cfg(any(feature = "capture", feature = "replay"))]
+use crate::internal_types::DebugOutput;
+use crate::internal_types::{FastHashMap, RenderedDocument, ResultMsg};
 use malloc_size_of::{MallocSizeOf, MallocSizeOfOps};
 use crate::picture::{TileCacheLogger, PictureScratchBuffer, SliceId, TileCacheInstance, TileCacheParams};
 use crate::prim_store::{PrimitiveScratchBuffer, PrimitiveInstance};
@@ -52,8 +52,6 @@ use crate::scene::{BuiltScene, SceneProperties};
 use crate::scene_builder_thread::*;
 #[cfg(feature = "serialize")]
 use serde::{Serialize, Deserialize};
-#[cfg(feature = "debugger")]
-use serde_json;
 #[cfg(feature = "replay")]
 use std::collections::hash_map::Entry::{Occupied, Vacant};
 use std::sync::Arc;
@@ -72,7 +70,6 @@ use crate::util::{Recycler, VecHelper, drain_filter};
 #[derive(Copy, Clone)]
 pub struct DocumentView {
     scene: SceneView,
-    frame: FrameView,
 }
 
 /// Some rendering parameters applying at the scene level.
@@ -81,37 +78,7 @@ pub struct DocumentView {
 #[derive(Copy, Clone)]
 pub struct SceneView {
     pub device_rect: DeviceIntRect,
-    pub device_pixel_ratio: f32,
-    pub page_zoom_factor: f32,
     pub quality_settings: QualitySettings,
-}
-
-impl SceneView {
-    pub fn accumulated_scale_factor_for_snapping(&self) -> DevicePixelScale {
-        DevicePixelScale::new(
-            self.device_pixel_ratio *
-            self.page_zoom_factor
-        )
-    }
-}
-
-/// Some rendering parameters applying at the frame level.
-#[cfg_attr(feature = "capture", derive(Serialize))]
-#[cfg_attr(feature = "replay", derive(Deserialize))]
-#[derive(Copy, Clone)]
-pub struct FrameView {
-    pan: DeviceIntPoint,
-    pinch_zoom_factor: f32,
-}
-
-impl DocumentView {
-    pub fn accumulated_scale_factor(&self) -> DevicePixelScale {
-        DevicePixelScale::new(
-            self.scene.device_pixel_ratio *
-            self.scene.page_zoom_factor *
-            self.frame.pinch_zoom_factor
-        )
-    }
 }
 
 #[derive(Copy, Clone, Hash, MallocSizeOf, PartialEq, PartialOrd, Debug, Eq, Ord)]
@@ -348,7 +315,8 @@ impl DataStores {
                 let prim_data = &self.line_decoration[data_handle];
                 &prim_data.common
             }
-            PrimitiveInstanceKind::LinearGradient { data_handle, .. } => {
+            PrimitiveInstanceKind::LinearGradient { data_handle, .. }
+            | PrimitiveInstanceKind::CachedLinearGradient { data_handle, .. } => {
                 let prim_data = &self.linear_grad[data_handle];
                 &prim_data.common
             }
@@ -388,6 +356,7 @@ pub struct ScratchBuffer {
     pub primitive: PrimitiveScratchBuffer,
     pub picture: PictureScratchBuffer,
     pub frame: FrameScratchBuffer,
+    pub clip_store: ClipStoreScratchBuffer,
 }
 
 impl ScratchBuffer {
@@ -404,10 +373,11 @@ impl ScratchBuffer {
     }
 
     pub fn memory_pressure(&mut self) {
-        // TODO: causes browser chrome test crahes on windows.
+        // TODO: causes browser chrome test crashes on windows.
         //self.primitive = Default::default();
         self.picture = Default::default();
         self.frame = Default::default();
+        self.clip_store = Default::default();
     }
 }
 
@@ -479,7 +449,6 @@ impl Document {
     pub fn new(
         id: DocumentId,
         size: DeviceIntSize,
-        default_device_pixel_ratio: f32,
     ) -> Self {
         Document {
             id,
@@ -487,13 +456,7 @@ impl Document {
             view: DocumentView {
                 scene: SceneView {
                     device_rect: size.into(),
-                    page_zoom_factor: 1.0,
-                    device_pixel_ratio: default_device_pixel_ratio,
                     quality_settings: QualitySettings::default(),
-                },
-                frame: FrameView {
-                    pan: DeviceIntPoint::new(0, 0),
-                    pinch_zoom_factor: 1.0,
                 },
             },
             stamp: FrameStamp::first(id),
@@ -551,13 +514,6 @@ impl Document {
             FrameMsg::RequestHitTester(tx) => {
                 tx.send(self.shared_hit_tester.clone()).unwrap();
             }
-            FrameMsg::SetPan(pan) => {
-                if self.view.frame.pan != pan {
-                    self.view.frame.pan = pan;
-                    self.hit_tester_is_valid = false;
-                    self.frame_is_valid = false;
-                }
-            }
             FrameMsg::ScrollNodeWithId(origin, id, clamp) => {
                 profile_scope!("ScrollNodeWithScrollId");
 
@@ -580,12 +536,6 @@ impl Document {
             }
             FrameMsg::AppendDynamicTransformProperties(property_bindings) => {
                 self.dynamic_properties.add_transforms(property_bindings);
-            }
-            FrameMsg::SetPinchZoom(factor) => {
-                if self.view.frame.pinch_zoom_factor != factor.get() {
-                    self.view.frame.pinch_zoom_factor = factor.get();
-                    self.frame_is_valid = false;
-                }
             }
             FrameMsg::SetIsTransformAsyncZooming(is_zooming, animation_id) => {
                 let node = self.scene.spatial_tree.spatial_nodes.iter_mut()
@@ -613,9 +563,6 @@ impl Document {
     ) -> RenderedDocument {
         let frame_build_start_time = precise_time_ns();
 
-        let accumulated_scale_factor = self.view.accumulated_scale_factor();
-        let pan = self.view.frame.pan.to_f32() / accumulated_scale_factor;
-
         // Advance to the next frame.
         self.stamp.advance();
 
@@ -629,9 +576,7 @@ impl Document {
                 gpu_cache,
                 &mut self.rg_builder,
                 self.stamp,
-                accumulated_scale_factor,
                 self.view.scene.device_rect.origin,
-                pan,
                 &self.dynamic_properties,
                 &mut self.data_stores,
                 &mut self.scratch,
@@ -669,14 +614,7 @@ impl Document {
     }
 
     fn rebuild_hit_tester(&mut self) {
-        let accumulated_scale_factor = self.view.accumulated_scale_factor();
-        let pan = self.view.frame.pan.to_f32() / accumulated_scale_factor;
-
-        self.scene.spatial_tree.update_tree(
-            pan,
-            accumulated_scale_factor,
-            &self.dynamic_properties,
-        );
+        self.scene.spatial_tree.update_tree(&self.dynamic_properties);
 
         let hit_tester = Arc::new(self.scene.create_hit_tester());
         self.hit_tester = Some(Arc::clone(&hit_tester));
@@ -798,7 +736,6 @@ static NEXT_NAMESPACE_ID: AtomicUsize = AtomicUsize::new(1);
 #[cfg_attr(feature = "capture", derive(Serialize))]
 #[cfg_attr(feature = "replay", derive(Deserialize))]
 struct PlainRenderBackend {
-    default_device_pixel_ratio: f32,
     frame_config: FrameBuilderConfig,
     documents: FastHashMap<DocumentId, DocumentView>,
     resource_sequence_id: u32,
@@ -812,8 +749,6 @@ pub struct RenderBackend {
     api_rx: Receiver<ApiMsg>,
     result_tx: Sender<ResultMsg>,
     scene_tx: Sender<SceneBuilderRequest>,
-
-    default_device_pixel_ratio: f32,
 
     gpu_cache: GpuCache,
     resource_cache: ResourceCache,
@@ -855,7 +790,6 @@ impl RenderBackend {
         api_rx: Receiver<ApiMsg>,
         result_tx: Sender<ResultMsg>,
         scene_tx: Sender<SceneBuilderRequest>,
-        default_device_pixel_ratio: f32,
         resource_cache: ResourceCache,
         notifier: Box<dyn RenderNotifier>,
         blob_image_handler: Option<Box<dyn BlobImageHandler>>,
@@ -869,7 +803,6 @@ impl RenderBackend {
             api_rx,
             result_tx,
             scene_tx,
-            default_device_pixel_ratio,
             resource_cache,
             gpu_cache: GpuCache::new(),
             frame_config,
@@ -1083,7 +1016,6 @@ impl RenderBackend {
                 let document = Document::new(
                     document_id,
                     initial_size,
-                    self.default_device_pixel_ratio,
                 );
                 let old = self.documents.insert(document_id, document);
                 debug_assert!(old.is_none());
@@ -1133,16 +1065,6 @@ impl RenderBackend {
                         self.update_frame_builder_config();
 
                         return RenderBackendStatus::Continue;
-                    }
-                    DebugCommand::FetchDocuments => {
-                        // Ask SceneBuilderThread to send JSON presentation of the documents,
-                        // that will be forwarded to Renderer.
-                        self.send_backend_message(SceneBuilderRequest::DocumentsForDebugger);
-                        return RenderBackendStatus::Continue;
-                    }
-                    DebugCommand::FetchClipScrollTree => {
-                        let json = self.get_spatial_tree_for_debugger();
-                        ResultMsg::DebugOutput(DebugOutput::FetchClipScrollTree(json))
                     }
                     #[cfg(feature = "capture")]
                     DebugCommand::SaveCapture(root, bits) => {
@@ -1356,11 +1278,6 @@ impl RenderBackend {
             SceneBuilderResult::ShutDown(sender) => {
                 info!("Recycling stats: {:?}", self.recycler);
                 return RenderBackendStatus::ShutDown(sender);
-            }
-            SceneBuilderResult::DocumentsForDebugger(json) => {
-                let msg = ResultMsg::DebugOutput(DebugOutput::FetchDocuments(json));
-                self.result_tx.send(msg).unwrap();
-                self.notifier.wake_up(false);
             }
         }
 
@@ -1664,29 +1581,6 @@ impl RenderBackend {
         self.scene_tx.send(msg).unwrap();
     }
 
-    #[cfg(not(feature = "debugger"))]
-    fn get_spatial_tree_for_debugger(&self) -> String {
-        String::new()
-    }
-
-    #[cfg(feature = "debugger")]
-    fn get_spatial_tree_for_debugger(&self) -> String {
-        use crate::print_tree::PrintableTree;
-
-        let mut debug_root = debug_server::SpatialTreeList::new();
-
-        for (_, doc) in &self.documents {
-            let debug_node = debug_server::TreeNode::new("document spatial tree");
-            let mut builder = debug_server::TreeNodeBuilder::new(debug_node);
-
-            doc.scene.spatial_tree.print_with(&mut builder);
-
-            debug_root.add(builder.build());
-        }
-
-        serde_json::to_string(&debug_root).unwrap()
-    }
-
     fn report_memory(&mut self, tx: Sender<Box<MemoryReport>>) {
         let mut report = Box::new(MemoryReport::default());
         let ops = self.size_of_ops.as_mut().unwrap();
@@ -1721,7 +1615,6 @@ impl RenderBackend {
             let deferred = self.resource_cache.save_capture_sequence(config);
 
             let backend = PlainRenderBackend {
-                default_device_pixel_ratio: self.default_device_pixel_ratio,
                 frame_config: self.frame_config.clone(),
                 resource_sequence_id: config.resource_id,
                 documents: self.documents
@@ -1850,7 +1743,6 @@ impl RenderBackend {
 
         info!("\tbackend");
         let backend = PlainRenderBackend {
-            default_device_pixel_ratio: self.default_device_pixel_ratio,
             frame_config: self.frame_config.clone(),
             resource_sequence_id: 0,
             documents: self.documents
@@ -1954,7 +1846,6 @@ impl RenderBackend {
             };
         }
 
-        self.default_device_pixel_ratio = backend.default_device_pixel_ratio;
         self.frame_config = backend.frame_config;
 
         let mut scenes_to_build = Vec::new();

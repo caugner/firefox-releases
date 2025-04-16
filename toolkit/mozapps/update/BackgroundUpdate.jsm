@@ -50,6 +50,15 @@ XPCOMUtils.defineLazyServiceGetter(
 
 Cu.importGlobalProperties(["Glean"]);
 
+// We may want to change the definition of the task over time. When we do this,
+// we need to remove and re-register the task. We will make sure this happens
+// by storing the installed version number of the task to a pref and comparing
+// that version number to the current version. If they aren't equal, we know
+// that we have to re-register the task.
+const TASK_DEF_CURRENT_VERSION = 2;
+const TASK_INSTALLED_VERSION_PREF =
+  "app.update.background.lastInstalledTaskVersion";
+
 var BackgroundUpdate = {
   _initialized: false,
 
@@ -169,6 +178,10 @@ var BackgroundUpdate = {
       reasons.push(this.REASON.NO_OMNIJAR);
     }
 
+    if (updateService.manualUpdateOnly) {
+      reasons.push(this.REASON.MANUAL_UPDATE_ONLY);
+    }
+
     return reasons;
   },
 
@@ -223,6 +236,21 @@ var BackgroundUpdate = {
       }
     }
 
+    let serviceRegKeyExists;
+    try {
+      serviceRegKeyExists = Cc["@mozilla.org/updates/update-processor;1"]
+        .createInstance(Ci.nsIUpdateProcessor)
+        .getServiceRegKeyExists();
+    } catch (ex) {
+      log.error(
+        `${SLUG}: Failed to check for Maintenance Service Registry Key: ${ex}`
+      );
+      serviceRegKeyExists = false;
+    }
+    if (!serviceRegKeyExists) {
+      reasons.push(this.REASON.SERVICE_REGISTRY_KEY_MISSING);
+    }
+
     return reasons;
   },
 
@@ -254,6 +282,10 @@ var BackgroundUpdate = {
       "backgroundupdate-task-description"
     );
 
+    // Let the task run for a maximum of 20 minutes before the task scheduler
+    // stops it.
+    let executionTimeoutSec = 20 * 60;
+
     let result = await TaskScheduler.registerTask(
       taskId,
       binary.path,
@@ -263,7 +295,13 @@ var BackgroundUpdate = {
         workingDirectory,
         args,
         description,
+        executionTimeoutSec,
       }
+    );
+
+    Services.prefs.setIntPref(
+      TASK_INSTALLED_VERSION_PREF,
+      TASK_DEF_CURRENT_VERSION
     );
 
     return result;
@@ -271,9 +309,10 @@ var BackgroundUpdate = {
 
   async _mirrorToPerInstallationPref() {
     try {
-      let scheduling = Services.prefs
-        .getDefaultBranch("")
-        .getBoolPref("app.update.background.scheduling.enabled");
+      let scheduling = Services.prefs.getBoolPref(
+        "app.update.background.scheduling.enabled",
+        true
+      );
       await UpdateUtils.writeUpdateConfigSetting(
         "app.update.background.enabled",
         scheduling,
@@ -448,11 +487,27 @@ var BackgroundUpdate = {
       }
 
       if (successfullyReadPrevious && previousEnabled) {
-        log.info(
-          `${SLUG}: background update was previously enabled; not registering task.`
+        let taskInstalledVersion = Services.prefs.getIntPref(
+          TASK_INSTALLED_VERSION_PREF,
+          1
         );
+        if (taskInstalledVersion == TASK_DEF_CURRENT_VERSION) {
+          log.info(
+            `${SLUG}: background update was previously enabled; not registering task.`
+          );
 
-        return true;
+          return true;
+        }
+        log.info(
+          `${SLUG}: Detected task version change from ` +
+            `${taskInstalledVersion} to ${TASK_DEF_CURRENT_VERSION}. ` +
+            `Removing task so the new version can be registered`
+        );
+        try {
+          await TaskScheduler.deleteTask(this.taskId);
+        } catch (e) {
+          log.error(`${SLUG}: Error removing old task: ${e}`);
+        }
       }
 
       log.info(
@@ -528,12 +583,15 @@ BackgroundUpdate.REASON = {
     "updates cannot usually stage and cannot usually apply",
   LANGPACK_INSTALLED:
     "app.update.langpack.enabled=true and at least one langpack is installed",
+  MANUAL_UPDATE_ONLY: "the ManualAppUpdateOnly policy is enabled",
   NO_DEFAULT_PROFILE_EXISTS: "no default profile exists",
   NOT_DEFAULT_PROFILE: "not default profile",
   NO_APP_UPDATE_AUTO: "app.update.auto=false",
   NO_APP_UPDATE_BACKGROUND_ENABLED: "app.update.background.enabled=false",
   NO_MOZ_BACKGROUNDTASKS: "MOZ_BACKGROUNDTASKS=0",
   NO_OMNIJAR: "no omnijar",
+  SERVICE_REGISTRY_KEY_MISSING:
+    "the maintenance service registry key is not present",
   WINDOWS_CANNOT_USUALLY_USE_BITS: "on Windows but cannot usually use BITS",
 };
 

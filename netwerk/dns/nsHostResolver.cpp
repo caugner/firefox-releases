@@ -254,20 +254,7 @@ bool nsHostRecord::HasUsableResult(const mozilla::TimeStamp& now,
     return false;
   }
 
-  // don't use cached negative results for high priority queries.
-  if (negative && IsHighPriority(queryFlags)) {
-    return false;
-  }
-
-  if (CheckExpiration(now) == EXP_EXPIRED) {
-    return false;
-  }
-
-  if (negative) {
-    return true;
-  }
-
-  return HasUsableResultInternal();
+  return HasUsableResultInternal(now, queryFlags);
 }
 
 static size_t SizeOfResolveHostCallbackListExcludingHead(
@@ -360,7 +347,21 @@ size_t AddrHostRecord::SizeOfIncludingThis(MallocSizeOf mallocSizeOf) const {
   return n;
 }
 
-bool AddrHostRecord::HasUsableResultInternal() const {
+bool AddrHostRecord::HasUsableResultInternal(const mozilla::TimeStamp& now,
+                                             uint16_t queryFlags) const {
+  // don't use cached negative results for high priority queries.
+  if (negative && IsHighPriority(queryFlags)) {
+    return false;
+  }
+
+  if (CheckExpiration(now) == EXP_EXPIRED) {
+    return false;
+  }
+
+  if (negative) {
+    return true;
+  }
+
   return addr_info || addr;
 }
 
@@ -505,9 +506,20 @@ TypeHostRecord::TypeHostRecord(const nsHostKey& key)
 
 TypeHostRecord::~TypeHostRecord() { mCallbacks.clear(); }
 
-bool TypeHostRecord::HasUsableResultInternal() const {
+bool TypeHostRecord::HasUsableResultInternal(const mozilla::TimeStamp& now,
+                                             uint16_t queryFlags) const {
+  if (CheckExpiration(now) == EXP_EXPIRED) {
+    return false;
+  }
+
+  if (negative) {
+    return true;
+  }
+
   return !mResults.is<Nothing>();
 }
+
+bool TypeHostRecord::RefreshForNegativeResponse() const { return false; }
 
 NS_IMETHODIMP TypeHostRecord::GetRecords(CopyableTArray<nsCString>& aRecords) {
   // deep copy
@@ -925,15 +937,14 @@ already_AddRefed<nsHostRecord> nsHostResolver::InitLoopbackRecord(
   RefPtr<nsHostRecord> rec = InitRecord(key);
 
   nsTArray<NetAddr> addresses;
-  PRNetAddr prAddr;
-  memset(&prAddr, 0, sizeof(prAddr));
+  NetAddr addr;
   if (key.af == PR_AF_INET || key.af == PR_AF_UNSPEC) {
-    MOZ_RELEASE_ASSERT(PR_StringToNetAddr("127.0.0.1", &prAddr) == PR_SUCCESS);
-    addresses.AppendElement(NetAddr(&prAddr));
+    MOZ_RELEASE_ASSERT(NS_SUCCEEDED(addr.InitFromString("127.0.0.1"_ns)));
+    addresses.AppendElement(addr);
   }
   if (key.af == PR_AF_INET6 || key.af == PR_AF_UNSPEC) {
-    MOZ_RELEASE_ASSERT(PR_StringToNetAddr("::1", &prAddr) == PR_SUCCESS);
-    addresses.AppendElement(NetAddr(&prAddr));
+    MOZ_RELEASE_ASSERT(NS_SUCCEEDED(addr.InitFromString("::1"_ns)));
+    addresses.AppendElement(addr);
   }
 
   RefPtr<AddrInfo> ai =
@@ -978,17 +989,11 @@ nsresult nsHostResolver::ResolveHost(const nsACString& aHost,
   }
 
   // Used to try to parse to an IP address literal.
-  PRNetAddr tempAddr;
-  // Unfortunately, PR_StringToNetAddr does not properly initialize
-  // the output buffer in the case of IPv6 input. See bug 223145.
-  memset(&tempAddr, 0, sizeof(PRNetAddr));
-
-  if (IS_OTHER_TYPE(type) &&
-      (PR_StringToNetAddr(host.get(), &tempAddr) == PR_SUCCESS)) {
+  NetAddr tempAddr;
+  if (IS_OTHER_TYPE(type) && (NS_SUCCEEDED(tempAddr.InitFromString(host)))) {
     // For by-type queries the host cannot be IP literal.
     return NS_ERROR_UNKNOWN_HOST;
   }
-  memset(&tempAddr, 0, sizeof(PRNetAddr));
 
   RefPtr<nsResolveHostCallback> callback(aCallback);
   // if result is set inside the lock, then we need to issue the
@@ -1079,8 +1084,7 @@ nsresult nsHostResolver::ResolveHost(const nsACString& aHost,
       LOG(("  Using cached address for IP Literal [%s].\n", host.get()));
       Telemetry::Accumulate(Telemetry::DNS_LOOKUP_METHOD2, METHOD_LITERAL);
       result = rec;
-    } else if (addrRec &&
-               PR_StringToNetAddr(host.get(), &tempAddr) == PR_SUCCESS) {
+    } else if (addrRec && NS_SUCCEEDED(tempAddr.InitFromString(host))) {
       // try parsing the host name as an IP address literal to short
       // circuit full host resolution.  (this is necessary on some
       // platforms like Win9x.  see bug 219376 for more details.)
@@ -1088,8 +1092,7 @@ nsresult nsHostResolver::ResolveHost(const nsACString& aHost,
 
       // ok, just copy the result into the host record, and be
       // done with it! ;-)
-      addrRec->addr = MakeUnique<NetAddr>();
-      PRNetAddrToNetAddr(&tempAddr, addrRec->addr.get());
+      addrRec->addr = MakeUnique<NetAddr>(tempAddr);
       // put reference to host record on stack...
       Telemetry::Accumulate(Telemetry::DNS_LOOKUP_METHOD2, METHOD_LITERAL);
       result = rec;
@@ -1347,11 +1350,18 @@ void nsHostResolver::MaybeRenewHostRecord(nsHostRecord* aRec) {
 void nsHostResolver::MaybeRenewHostRecordLocked(nsHostRecord* aRec) {
   mLock.AssertCurrentThreadOwns();
   if (aRec->isInList()) {
+    MOZ_DIAGNOSTIC_ASSERT(!mHighQ.contains(aRec), "Already in high queue");
+    MOZ_DIAGNOSTIC_ASSERT(!mMediumQ.contains(aRec), "Already in med queue");
+    MOZ_DIAGNOSTIC_ASSERT(!mLowQ.contains(aRec), "Already in low queue");
+
+    bool inEvictionQ = mEvictionQ.contains(aRec);
+    MOZ_DIAGNOSTIC_ASSERT(inEvictionQ, "Should be in eviction queue");
     // we're already on the eviction queue. This is a renewal
-    MOZ_ASSERT(mEvictionQSize);
-    AssertOnQ(aRec, mEvictionQ);
     aRec->remove();
-    mEvictionQSize--;
+    if (inEvictionQ) {
+      MOZ_DIAGNOSTIC_ASSERT(mEvictionQSize > 0);
+      mEvictionQSize--;
+    }
   }
 }
 
@@ -1671,7 +1681,7 @@ nsresult nsHostResolver::ConditionallyRefreshRecord(nsHostRecord* rec,
                                                     const nsACString& host) {
   if ((rec->CheckExpiration(TimeStamp::NowLoRes()) != nsHostRecord::EXP_VALID ||
        rec->negative) &&
-      !rec->mResolving) {
+      !rec->mResolving && rec->RefreshForNegativeResponse()) {
     LOG(("  Using %s cache entry for host [%s] but starting async renewal.",
          rec->negative ? "negative" : "positive", host.BeginReading()));
     NameLookup(rec);
@@ -1834,8 +1844,8 @@ static bool different_rrset(AddrInfo* rrset1, AddrInfo* rrset2) {
 
 void nsHostResolver::AddToEvictionQ(nsHostRecord* rec) {
   if (rec->isInList()) {
-    MOZ_DIAGNOSTIC_ASSERT(!mEvictionQ.contains(rec),
-                          "Already in eviction queue");
+    bool inEvictionQ = mEvictionQ.contains(rec);
+    MOZ_DIAGNOSTIC_ASSERT(!inEvictionQ, "Already in eviction queue");
     MOZ_DIAGNOSTIC_ASSERT(!mHighQ.contains(rec), "Already in high queue");
     MOZ_DIAGNOSTIC_ASSERT(!mMediumQ.contains(rec), "Already in med queue");
     MOZ_DIAGNOSTIC_ASSERT(!mLowQ.contains(rec), "Already in low queue");
@@ -1844,6 +1854,10 @@ void nsHostResolver::AddToEvictionQ(nsHostRecord* rec) {
     // Bug 1678117 - it's not clear why this can happen, but let's fix it
     // for release users.
     rec->remove();
+    if (inEvictionQ) {
+      MOZ_DIAGNOSTIC_ASSERT(mEvictionQSize > 0);
+      mEvictionQSize--;
+    }
   }
   mEvictionQ.insertBack(rec);
   if (mEvictionQSize < mMaxCacheEntries) {
@@ -2085,7 +2099,9 @@ nsHostResolver::LookupStatus nsHostResolver::CompleteLookupByType(
   if (NS_FAILED(status)) {
     LOG(("nsHostResolver::CompleteLookupByType record %p [%s] status %x\n",
          typeRec.get(), typeRec->host.get(), (unsigned int)status));
-    typeRec->SetExpiration(TimeStamp::NowLoRes(), NEGATIVE_RECORD_LIFETIME, 0);
+    typeRec->SetExpiration(
+        TimeStamp::NowLoRes(),
+        StaticPrefs::network_dns_negative_ttl_for_type_record(), 0);
     MOZ_ASSERT(aResult.is<TypeRecordEmpty>());
     status = NS_ERROR_UNKNOWN_HOST;
     typeRec->negative = true;

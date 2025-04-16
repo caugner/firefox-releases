@@ -15,7 +15,6 @@
 #  include "WidgetUtilsGtk.h"
 
 #  if defined(MOZ_X11)
-#    include "gfxPlatformGtk.h"
 #    include "prlink.h"
 #    include <gdk/gdk.h>
 #    include <gdk/gdkx.h>
@@ -48,7 +47,7 @@ StaticRefPtr<WakeLockListener> WakeLockListener::sSingleton;
     MOZ_LOG(gLinuxWakeLockLog, mozilla::LogLevel::Debug, (__VA_ARGS__))
 static mozilla::LazyLogModule gLinuxWakeLockLog("LinuxWakeLock");
 
-enum DesktopEnvironment {
+enum WakeLockDesktopEnvironment {
   FreeDesktop,
   GNOME,
 #  if defined(MOZ_X11)
@@ -105,7 +104,7 @@ class WakeLockTopic {
   nsCString mTopic;
   RefPtr<DBusConnection> mConnection;
 
-  DesktopEnvironment mDesktopEnvironment;
+  WakeLockDesktopEnvironment mDesktopEnvironment;
 
   uint32_t mInhibitRequest;
 

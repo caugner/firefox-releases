@@ -25,6 +25,9 @@
 #include "nsThread.h"
 #include "prenv.h"
 #include "prsystem.h"
+#ifdef XP_WIN
+#  include "objbase.h"
+#endif
 
 #ifdef XP_WIN
 typedef HRESULT(WINAPI* SetThreadDescriptionPtr)(HANDLE hThread,
@@ -214,7 +217,9 @@ void TaskController::RunPoolThread() {
         ::GetCurrentThread(),
         reinterpret_cast<const WCHAR*>(threadWName.BeginReading()));
   }
+  ::CoInitializeEx(nullptr, COINIT_MULTITHREADED);
 #endif
+
   nsAutoCString threadName;
   threadName.AppendLiteral("TaskController Thread #");
   threadName.AppendInt(static_cast<int64_t>(mThreadPoolIndex));
@@ -317,6 +322,10 @@ void TaskController::RunPoolThread() {
       mThreadPoolCV.Wait();
     }
   }
+
+#ifdef XP_WIN
+  ::CoUninitialize();
+#endif
 }
 
 void TaskController::AddTask(already_AddRefed<Task>&& aTask) {
@@ -611,6 +620,25 @@ bool TaskController::ExecuteNextTaskOnlyMainThreadInternal(
   do {
     taskRan = DoExecuteNextTaskOnlyMainThreadInternal(aProofOfLock);
     if (taskRan) {
+      if (mIdleTaskManager && mIdleTaskManager->mTaskCount &&
+          mIdleTaskManager->IsSuspended(aProofOfLock)) {
+        uint32_t activeTasks = mMainThreadTasks.size();
+        for (TaskManager* manager : mTaskManagers) {
+          if (manager->IsSuspended(aProofOfLock)) {
+            activeTasks -= manager->mTaskCount;
+          } else {
+            break;
+          }
+        }
+
+        if (!activeTasks) {
+          // We have only idle (and maybe other suspended) tasks left, so need
+          // to update the idle state. We need to temporarily release the lock
+          // while we do that.
+          MutexAutoUnlock unlock(mGraphMutex);
+          mIdleTaskManager->State().RequestIdleDeadlineIfNeeded(unlock);
+        }
+      }
       break;
     }
 

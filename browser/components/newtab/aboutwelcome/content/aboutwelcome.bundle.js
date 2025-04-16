@@ -128,7 +128,10 @@ class AboutWelcome extends react__WEBPACK_IMPORTED_MODULE_0___default.a.PureComp
   }
 
   componentDidMount() {
-    this.fetchFxAFlowUri(); // Rely on shared proton in-content styling for consistency.
+    if (!this.props.skipFxA) {
+      this.fetchFxAFlowUri();
+    } // Rely on shared proton in-content styling for consistency.
+
 
     if (this.props.design === "proton") {
       const sheet = document.head.appendChild(document.createElement("link"));
@@ -219,10 +222,10 @@ function ComputeTelemetryInfo(welcomeContent, experimentId, branchId) {
 }
 
 async function retrieveRenderContent() {
-  // Feature config includes:
+  // Feature config includes RTAMO attribution data if exists
+  // else below data in order specified
   // user prefs
   // experiment data
-  // attribution data
   // defaults
   let featureConfig = await window.AWGetFeatureConfig();
   let {
@@ -338,7 +341,12 @@ const MultiStageAboutWelcome = props => {
   }, [transition]); // Transition to next screen, opening about:home on last screen button CTA
 
   const handleTransition = () => {
-    // Start transitioning things "out" immediately when moving forwards.
+    // Only handle transitioning out from a screen once.
+    if (transition === "out") {
+      return;
+    } // Start transitioning things "out" immediately when moving forwards.
+
+
     setTransition(props.transitions ? "out" : ""); // Actually move forwards after all transitions finish.
 
     setTimeout(() => {
@@ -1123,9 +1131,12 @@ class MultiStageProtonScreen extends react__WEBPACK_IMPORTED_MODULE_0___default.
       content,
       totalNumberOfScreens: total
     } = this.props;
-    const isWelcomeScreen = this.props.order === 0;
+    const isWelcomeScreen = this.props.order === 0; // Assign proton screen style 'screen-1' or 'screen-2' by checking
+    // if screen order is even or odd.
+
+    const screenClassName = isWelcomeScreen ? "screen-0" : `${this.props.order === 1 ? `dialog-initial` : ``} ${this.props.order === total ? `dialog-last` : ``} screen-${this.props.order % 2 !== 0 ? 1 : 2}`;
     return /*#__PURE__*/react__WEBPACK_IMPORTED_MODULE_0___default.a.createElement("main", {
-      className: `screen ${this.props.id} screen-${this.props.order}`
+      className: `screen ${this.props.id} ${screenClassName}`
     }, isWelcomeScreen ? /*#__PURE__*/react__WEBPACK_IMPORTED_MODULE_0___default.a.createElement("div", {
       className: "section-left"
     }, /*#__PURE__*/react__WEBPACK_IMPORTED_MODULE_0___default.a.createElement("div", {

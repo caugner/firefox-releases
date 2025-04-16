@@ -183,7 +183,8 @@ void WindowGlobalChild::OnNewDocument(Document* aDocument) {
 
   // FIXME: Perhaps these should be combined into a smaller number of messages?
   SetDocumentURI(aDocument->GetDocumentURI());
-  SetDocumentPrincipal(aDocument->NodePrincipal());
+  SetDocumentPrincipal(aDocument->NodePrincipal(),
+                       aDocument->EffectiveStoragePrincipal());
 
   nsCOMPtr<nsITransportSecurityInfo> securityInfo;
   if (nsCOMPtr<nsIChannel> channel = aDocument->GetChannel()) {
@@ -557,6 +558,17 @@ mozilla::ipc::IPCResult WindowGlobalChild::RecvSetContainerFeaturePolicy(
   return IPC_OK();
 }
 
+mozilla::ipc::IPCResult WindowGlobalChild::RecvRestoreDocShellState(
+    const dom::sessionstore::DocShellRestoreState& aState,
+    RestoreDocShellStateResolver&& aResolve) {
+  if (mWindowGlobal) {
+    SessionStoreUtils::RestoreDocShellState(mWindowGlobal->GetDocShell(),
+                                            aState);
+  }
+  aResolve(true);
+  return IPC_OK();
+}
+
 mozilla::ipc::IPCResult WindowGlobalChild::RecvRestoreTabContent(
     dom::SessionStoreRestoreData* aData, RestoreTabContentResolver&& aResolve) {
   aData->RestoreInto(BrowsingContext());
@@ -600,10 +612,12 @@ void WindowGlobalChild::SetDocumentURI(nsIURI* aDocumentURI) {
 }
 
 void WindowGlobalChild::SetDocumentPrincipal(
-    nsIPrincipal* aNewDocumentPrincipal) {
+    nsIPrincipal* aNewDocumentPrincipal,
+    nsIPrincipal* aNewDocumentStoragePrincipal) {
   MOZ_ASSERT(mDocumentPrincipal->Equals(aNewDocumentPrincipal));
   mDocumentPrincipal = aNewDocumentPrincipal;
-  SendUpdateDocumentPrincipal(aNewDocumentPrincipal);
+  SendUpdateDocumentPrincipal(aNewDocumentPrincipal,
+                              aNewDocumentStoragePrincipal);
 }
 
 const nsACString& WindowGlobalChild::GetRemoteType() {
@@ -618,6 +632,11 @@ already_AddRefed<JSWindowActorChild> WindowGlobalChild::GetActor(
     JSContext* aCx, const nsACString& aName, ErrorResult& aRv) {
   return JSActorManager::GetActor(aCx, aName, aRv)
       .downcast<JSWindowActorChild>();
+}
+
+already_AddRefed<JSWindowActorChild> WindowGlobalChild::GetExistingActor(
+    const nsACString& aName) {
+  return JSActorManager::GetExistingActor(aName).downcast<JSWindowActorChild>();
 }
 
 already_AddRefed<JSActor> WindowGlobalChild::InitJSActor(
@@ -669,6 +688,14 @@ bool WindowGlobalChild::IsSameOriginWith(
 
 bool WindowGlobalChild::SameOriginWithTop() {
   return IsSameOriginWith(WindowContext()->TopWindowContext());
+}
+
+void WindowGlobalChild::UnblockBFCacheFor(BFCacheStatus aStatus) {
+  SendUpdateBFCacheStatus(0, aStatus);
+}
+
+void WindowGlobalChild::BlockBFCacheFor(BFCacheStatus aStatus) {
+  SendUpdateBFCacheStatus(aStatus, 0);
 }
 
 WindowGlobalChild::~WindowGlobalChild() = default;

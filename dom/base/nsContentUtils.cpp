@@ -297,7 +297,6 @@
 #include "nsIObjectLoadingContent.h"
 #include "nsIObserver.h"
 #include "nsIObserverService.h"
-#include "nsIOfflineCacheUpdate.h"
 #include "nsIParser.h"
 #include "nsIParserUtils.h"
 #include "nsIPermissionManager.h"
@@ -460,6 +459,8 @@ nsIParser* nsContentUtils::sXMLFragmentParser = nullptr;
 nsIFragmentContentSink* nsContentUtils::sXMLFragmentSink = nullptr;
 bool nsContentUtils::sFragmentParsingActive = false;
 
+mozilla::LazyLogModule nsContentUtils::gResistFingerprintingLog(
+    "nsResistFingerprinting");
 mozilla::LazyLogModule nsContentUtils::sDOMDumpLog("Dump");
 
 int32_t nsContentUtils::sInnerOrOuterWindowCount = 0;
@@ -1844,29 +1845,11 @@ void nsContentUtils::GetOfflineAppManifest(Document* aDocument, nsIURI** aURI) {
 }
 
 /* static */
-bool nsContentUtils::OfflineAppAllowed(nsIURI* aURI) {
-  nsCOMPtr<nsIOfflineCacheUpdateService> updateService =
-      components::OfflineCacheUpdate::Service();
-  if (!updateService) {
-    return false;
-  }
-
-  bool allowed;
-  nsresult rv = updateService->OfflineAppAllowedForURI(aURI, &allowed);
-  return NS_SUCCEEDED(rv) && allowed;
-}
+bool nsContentUtils::OfflineAppAllowed(nsIURI* aURI) { return false; }
 
 /* static */
 bool nsContentUtils::OfflineAppAllowed(nsIPrincipal* aPrincipal) {
-  nsCOMPtr<nsIOfflineCacheUpdateService> updateService =
-      components::OfflineCacheUpdate::Service();
-  if (!updateService) {
-    return false;
-  }
-
-  bool allowed;
-  nsresult rv = updateService->OfflineAppAllowed(aPrincipal, &allowed);
-  return NS_SUCCEEDED(rv) && allowed;
+  return false;
 }
 // Static
 bool nsContentUtils::IsErrorPage(nsIURI* aURI) {
@@ -2147,6 +2130,21 @@ bool nsContentUtils::IsCallerChromeOrElementTransformGettersEnabled(
 }
 
 /* static */
+bool nsContentUtils::IsCallerChromeOrErrorPage(JSContext* aCx,
+                                               JSObject* aObject) {
+  if (ThreadsafeIsSystemCaller(aCx)) {
+    return true;
+  }
+  nsGlobalWindowInner* win =
+      xpc::WindowGlobalOrNull(js::UncheckedUnwrap(aObject));
+  if (!win) {
+    return false;
+  }
+  Document* doc = win->GetExtantDoc();
+  return doc && IsErrorPage(doc->GetDocumentURI());
+}
+
+/* static */
 bool nsContentUtils::ShouldResistFingerprinting() {
   return StaticPrefs::privacy_resistFingerprinting();
 }
@@ -2161,10 +2159,16 @@ bool nsContentUtils::ShouldResistFingerprinting(nsIDocShell* aDocShell) {
 /* static */
 bool nsContentUtils::ShouldResistFingerprinting(const Document* aDoc) {
   if (!aDoc) {
+    MOZ_LOG(nsContentUtils::ResistFingerprintingLog(), LogLevel::Info,
+            ("Called nsContentUtils::ShouldResistFingerprinting(const "
+             "Document* aDoc) with NULL document"));
     return ShouldResistFingerprinting();
   }
   bool isChrome = nsContentUtils::IsChromeDoc(aDoc);
-  return !isChrome && ShouldResistFingerprinting();
+  if (isChrome) {
+    return false;
+  }
+  return ShouldResistFingerprinting(aDoc->GetChannel());
 }
 
 /* static */
@@ -2183,7 +2187,136 @@ bool nsContentUtils::ShouldResistFingerprinting(WorkerPrivate* aWorkerPrivate) {
     return ShouldResistFingerprinting();
   }
   bool isChrome = aWorkerPrivate->UsesSystemPrincipal();
-  return !isChrome && ShouldResistFingerprinting();
+  if (isChrome) {
+    return false;
+  }
+  return ShouldResistFingerprinting(aWorkerPrivate->GetDocument());
+}
+
+inline void LogDomainAndPrefList(const char* exemptedDomainsPrefName,
+                                 nsAutoCString& url, bool isExemptDomain) {
+  nsAutoCString list;
+  Preferences::GetCString(exemptedDomainsPrefName, list);
+  MOZ_LOG(nsContentUtils::ResistFingerprintingLog(), LogLevel::Debug,
+          ("Domain \"%s\" is %s the exempt list \"%s\"",
+           PromiseFlatCString(url).get(), isExemptDomain ? "in" : "NOT in",
+           PromiseFlatCString(list).get()));
+}
+
+/* static */
+bool nsContentUtils::ShouldResistFingerprinting(nsIChannel* aChannel) {
+  const unsigned int webExtensionExemptMask = 0x01;
+  const unsigned int nonPBMExemptMask = 0x02;
+  const unsigned int specificDomainsExemptMask = 0x04;
+
+  if (!ShouldResistFingerprinting()) {
+    return false;
+  }
+
+  if (!aChannel) {
+    MOZ_LOG(nsContentUtils::ResistFingerprintingLog(), LogLevel::Info,
+            ("Called nsContentUtils::ShouldResistFingerprinting(nsIChannel* "
+             "aChannel) with NULL channel"));
+    return true;
+  }
+
+  nsCOMPtr<nsILoadInfo> loadInfo = aChannel->LoadInfo();
+
+  if (StaticPrefs::privacy_resistFingerprinting_testGranularityMask() &
+      nonPBMExemptMask) {
+    // if non-PBM exempt mask is true, exempt non-PBM channels.
+    if (loadInfo->GetOriginAttributes().mPrivateBrowsingId == 0) {
+      return false;
+    }
+  }
+
+  bool isExemptDomain = false;
+  const char* exemptedDomainsPrefName =
+      "privacy.resistFingerprinting.exemptedDomains";
+
+  if (loadInfo->GetExternalContentPolicyType() ==
+      ExtContentPolicy::TYPE_DOCUMENT) {
+    // Case 1: Top Level Load
+
+    nsCOMPtr<nsIURI> channelURI;
+    nsresult rv = NS_GetFinalChannelURI(aChannel, getter_AddRefs(channelURI));
+    MOZ_ASSERT(
+        NS_SUCCEEDED(rv),
+        "Failed to get URI in "
+        "nsContentUtils::ShouldResistFingerprinting(nsIChannel* aChannel)");
+    // this check is to ensure that we do not crash in non-debug builds.
+    if (NS_FAILED(rv)) {
+      return true;
+    }
+
+    // Exclude internal schemes
+    if (channelURI->SchemeIs("about") || channelURI->SchemeIs("chrome") ||
+        channelURI->SchemeIs("resource") ||
+        channelURI->SchemeIs("view-source")) {
+      return false;
+    }
+
+    if (StaticPrefs::privacy_resistFingerprinting_testGranularityMask() &
+        webExtensionExemptMask) {
+      if (channelURI->SchemeIs("web-extension")) {
+        return false;
+      }
+    }
+
+    if (StaticPrefs::privacy_resistFingerprinting_testGranularityMask() &
+        specificDomainsExemptMask) {
+      nsAutoCString list;
+      Preferences::GetCString(exemptedDomainsPrefName, list);
+      ToLowerCase(list);
+      isExemptDomain = IsURIInList(channelURI, list);
+
+      if (MOZ_LOG_TEST(nsContentUtils::ResistFingerprintingLog(),
+                       mozilla::LogLevel::Debug)) {
+        nsAutoCString url;
+        channelURI->GetHost(url);
+        LogDomainAndPrefList(exemptedDomainsPrefName, url, isExemptDomain);
+      }
+    }
+
+    return !isExemptDomain;
+  }
+  // Case 2: Subresource Load
+
+  nsIPrincipal* loadingPrincipal = loadInfo->GetLoadingPrincipal();
+  // If it is not a document load then we are promised that the
+  // loadingPrincipal is not null.
+  MOZ_RELEASE_ASSERT(
+      loadingPrincipal,
+      "Got NULL loadingPrincipal in "
+      "nsContentUtils::ShouldResistFingerprinting(nsIChannel* aChannel)");
+
+  if (loadingPrincipal->IsSystemPrincipal()) {
+    MOZ_LOG(nsContentUtils::ResistFingerprintingLog(), LogLevel::Info,
+            ("Called nsContentUtils::ShouldResistFingerprinting(nsIChannel* "
+             "aChannel) with a system loadingPrincipal"));
+    return false;
+  }
+
+  if (StaticPrefs::privacy_resistFingerprinting_testGranularityMask() &
+      webExtensionExemptMask) {
+    if (BasePrincipal::Cast(loadingPrincipal)->AddonPolicy()) {
+      return false;
+    }
+  }
+
+  if (StaticPrefs::privacy_resistFingerprinting_testGranularityMask() &
+      specificDomainsExemptMask) {
+    loadingPrincipal->IsURIInPrefList(exemptedDomainsPrefName, &isExemptDomain);
+
+    if (MOZ_LOG_TEST(nsContentUtils::ResistFingerprintingLog(),
+                     mozilla::LogLevel::Debug)) {
+      nsAutoCString origin;
+      loadingPrincipal->GetAsciiOrigin(origin);
+      LogDomainAndPrefList(exemptedDomainsPrefName, origin, isExemptDomain);
+    }
+  }
+
+  return !isExemptDomain;
 }
 
 /* static */
@@ -6832,7 +6965,7 @@ void nsContentUtils::FireMutationEventsForDirectParsing(
 }
 
 /* static */
-Document* nsContentUtils::GetRootDocument(Document* aDoc) {
+Document* nsContentUtils::GetInProcessSubtreeRootDocument(Document* aDoc) {
   if (!aDoc) {
     return nullptr;
   }
@@ -7163,6 +7296,9 @@ bool nsContentUtils::IsCORSSafelistedRequestHeader(const nsACString& aName,
           nsContentUtils::IsAllowedNonCorsContentType(aValue));
 }
 
+mozilla::LogModule* nsContentUtils::ResistFingerprintingLog() {
+  return gResistFingerprintingLog;
+}
 mozilla::LogModule* nsContentUtils::DOMDumpLog() { return sDOMDumpLog; }
 
 bool nsContentUtils::GetNodeTextContent(nsINode* aNode, bool aDeep,
@@ -9594,6 +9730,19 @@ void nsContentUtils::AppendNativeAnonymousChildren(const nsIContent* aContent,
       aContent == aContent->OwnerDoc()->GetRootElement()) {
     AppendDocumentLevelNativeAnonymousContentTo(aContent->OwnerDoc(), aKids);
   }
+}
+
+bool nsContentUtils::IsImageAvailable(nsIContent* aLoadingNode, nsIURI* aURI,
+                                      nsIPrincipal* aDefaultTriggeringPrincipal,
+                                      CORSMode aCORSMode) {
+  nsCOMPtr<nsIPrincipal> triggeringPrincipal;
+  QueryTriggeringPrincipal(aLoadingNode, aDefaultTriggeringPrincipal,
+                           getter_AddRefs(triggeringPrincipal));
+  MOZ_ASSERT(triggeringPrincipal);
+
+  Document* doc = aLoadingNode->OwnerDoc();
+  imgLoader* imgLoader = GetImgLoaderForDocument(doc);
+  return imgLoader->IsImageAvailable(aURI, triggeringPrincipal, aCORSMode, doc);
 }
 
 /* static */

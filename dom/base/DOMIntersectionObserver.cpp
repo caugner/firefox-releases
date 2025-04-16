@@ -152,7 +152,8 @@ static void LazyLoadCallback(
     MOZ_ASSERT(entry->Target()->IsHTMLElement(nsGkAtoms::img));
     if (entry->IsIntersecting()) {
       static_cast<HTMLImageElement*>(entry->Target())
-          ->StopLazyLoadingAndStartLoadIfNeeded(true);
+          ->StopLazyLoading(HTMLImageElement::FromIntersectionObserver::Yes,
+                            HTMLImageElement::StartLoading::Yes);
     }
   }
 }
@@ -449,7 +450,8 @@ struct OopIframeMetrics {
 
 static Maybe<OopIframeMetrics> GetOopIframeMetrics(Document& aDocument,
                                                    Document* aRootDocument) {
-  Document* rootDoc = nsContentUtils::GetRootDocument(&aDocument);
+  Document* rootDoc =
+      nsContentUtils::GetInProcessSubtreeRootDocument(&aDocument);
   MOZ_ASSERT(rootDoc);
 
   if (rootDoc->IsTopLevelContentDocument()) {
@@ -457,7 +459,8 @@ static Maybe<OopIframeMetrics> GetOopIframeMetrics(Document& aDocument,
   }
 
   if (aRootDocument &&
-      rootDoc == nsContentUtils::GetRootDocument(aRootDocument)) {
+      rootDoc ==
+          nsContentUtils::GetInProcessSubtreeRootDocument(aRootDocument)) {
     // aRootDoc, if non-null, is either the implicit root
     // (top-level-content-document) or a same-origin document passed explicitly.
     //

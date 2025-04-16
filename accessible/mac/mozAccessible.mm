@@ -336,8 +336,8 @@ static const uint64_t kCacheInitialized = ((uint64_t)0x1) << 63;
 - (NSArray*)moxChildren {
   MOZ_ASSERT(!mGeckoAccessible.IsNull());
 
-  NSMutableArray* children =
-      [[NSMutableArray alloc] initWithCapacity:mGeckoAccessible.ChildCount()];
+  NSMutableArray* children = [[[NSMutableArray alloc]
+      initWithCapacity:mGeckoAccessible.ChildCount()] autorelease];
 
   for (uint32_t childIdx = 0; childIdx < mGeckoAccessible.ChildCount();
        childIdx++) {
@@ -354,35 +354,16 @@ static const uint64_t kCacheInitialized = ((uint64_t)0x1) << 63;
 }
 
 - (NSValue*)moxPosition {
-  MOZ_ASSERT(!mGeckoAccessible.IsNull());
+  CGRect frame = [[self moxFrame] rectValue];
 
-  nsIntRect rect = mGeckoAccessible.IsAccessible()
-                       ? mGeckoAccessible.AsAccessible()->Bounds()
-                       : mGeckoAccessible.AsProxy()->Bounds();
-
-  NSScreen* mainView = [[NSScreen screens] objectAtIndex:0];
-  CGFloat scaleFactor = nsCocoaUtils::GetBackingScaleFactor(mainView);
-  NSPoint p =
-      NSMakePoint(static_cast<CGFloat>(rect.x) / scaleFactor,
-                  [mainView frame].size.height -
-                      static_cast<CGFloat>(rect.y + rect.height) / scaleFactor);
-
-  return [NSValue valueWithPoint:p];
+  return [NSValue valueWithPoint:NSMakePoint(frame.origin.x, frame.origin.y)];
 }
 
 - (NSValue*)moxSize {
-  MOZ_ASSERT(!mGeckoAccessible.IsNull());
+  CGRect frame = [[self moxFrame] rectValue];
 
-  nsIntRect rect = mGeckoAccessible.IsAccessible()
-                       ? mGeckoAccessible.AsAccessible()->Bounds()
-                       : mGeckoAccessible.AsProxy()->Bounds();
-
-  CGFloat scaleFactor =
-      nsCocoaUtils::GetBackingScaleFactor([[NSScreen screens] objectAtIndex:0]);
-  return [NSValue
-      valueWithSize:NSMakeSize(
-                        static_cast<CGFloat>(rect.width) / scaleFactor,
-                        static_cast<CGFloat>(rect.height) / scaleFactor)];
+  return
+      [NSValue valueWithSize:NSMakeSize(frame.size.width, frame.size.height)];
 }
 
 - (NSString*)moxRole {
@@ -712,6 +693,25 @@ struct RoleDescrComparator {
   return @NO;
 }
 
+- (NSValue*)moxFrame {
+  MOZ_ASSERT(!mGeckoAccessible.IsNull());
+
+  nsIntRect rect = mGeckoAccessible.IsAccessible()
+                       ? mGeckoAccessible.AsAccessible()->Bounds()
+                       : mGeckoAccessible.AsProxy()->Bounds();
+  NSScreen* mainView = [[NSScreen screens] objectAtIndex:0];
+  CGFloat scaleFactor = nsCocoaUtils::GetBackingScaleFactor(mainView);
+
+  return [NSValue
+      valueWithRect:NSMakeRect(
+                        static_cast<CGFloat>(rect.x) / scaleFactor,
+                        [mainView frame].size.height -
+                            static_cast<CGFloat>(rect.y + rect.height) /
+                                scaleFactor,
+                        static_cast<CGFloat>(rect.width) / scaleFactor,
+                        static_cast<CGFloat>(rect.height) / scaleFactor)];
+}
+
 - (NSString*)moxARIACurrent {
   if (![self stateWithMask:states::CURRENT]) {
     return nil;
@@ -875,7 +875,8 @@ struct RoleDescrComparator {
   // reference to the web area to use as a start element if one is not
   // specified.
   MOXSearchInfo* search =
-      [[MOXSearchInfo alloc] initWithParameters:searchPredicate andRoot:self];
+      [[[MOXSearchInfo alloc] initWithParameters:searchPredicate
+                                         andRoot:self] autorelease];
 
   return [search performSearch];
 }
@@ -972,7 +973,8 @@ struct RoleDescrComparator {
 
 - (NSArray<mozAccessible*>*)getRelationsByType:(RelationType)relationType {
   if (LocalAccessible* acc = mGeckoAccessible.AsAccessible()) {
-    NSMutableArray<mozAccessible*>* relations = [[NSMutableArray alloc] init];
+    NSMutableArray<mozAccessible*>* relations =
+        [[[NSMutableArray alloc] init] autorelease];
     Relation rel = acc->RelationByType(relationType);
     while (LocalAccessible* relAcc = rel.Next()) {
       if (mozAccessible* relNative = GetNativeFromGeckoAccessible(relAcc)) {
@@ -1023,7 +1025,7 @@ struct RoleDescrComparator {
       MOXTextMarkerDelegate* delegate =
           static_cast<MOXTextMarkerDelegate*>([self moxTextMarkerDelegate]);
       NSMutableDictionary* userInfo =
-          [[delegate selectionChangeInfo] mutableCopy];
+          [[[delegate selectionChangeInfo] mutableCopy] autorelease];
       userInfo[@"AXTextChangeElement"] = self;
 
       mozAccessible* webArea = [self topWebArea];

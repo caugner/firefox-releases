@@ -20,11 +20,6 @@
 #include "js/TraceKind.h"
 #include "js/TypeDecls.h"
 
-#ifndef JS_BITS_PER_WORD
-#  error \
-      "JS_BITS_PER_WORD must be defined. Did you forget to include js-config.h?"
-#endif
-
 /* These values are private to the JS engine. */
 namespace js {
 
@@ -257,9 +252,9 @@ const size_t ChunkStoreBufferOffset = offsetof(ChunkBase, storeBuffer);
 const size_t ChunkMarkBitmapOffset = offsetof(TenuredChunkBase, markBits);
 
 // Hardcoded offsets into Arena class.
-const size_t ArenaZoneOffset = sizeof(size_t);
-const size_t ArenaHeaderSize =
-    sizeof(size_t) + 2 * sizeof(uintptr_t) + sizeof(size_t) + sizeof(uintptr_t);
+const size_t ArenaZoneOffset = 2 * sizeof(uint32_t);
+const size_t ArenaHeaderSize = ArenaZoneOffset + 2 * sizeof(uintptr_t) +
+                               sizeof(size_t) + sizeof(uintptr_t);
 
 // The first word of a GC thing has certain requirements from the GC and is used
 // to store flags in the low bits.

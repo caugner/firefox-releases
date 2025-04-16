@@ -34,7 +34,7 @@
 #include "js/RootingAPI.h"     // MovableCellHasher
 #include "js/SweepingAPI.h"    // JS::WeakCache
 #include "js/TypeDecls.h"  // HandleValue, HandleObject, MutableHandleObject, MutableHandleFunction
-#include "js/Vector.h"        // JS::Vector
+#include "js/Vector.h"  // JS::Vector
 #include "js/WasmFeatures.h"
 #include "vm/JSFunction.h"    // JSFunction
 #include "vm/NativeObject.h"  // NativeObject
@@ -99,6 +99,11 @@ bool CraneliftAvailable(JSContext* cx);
 // Test all three.
 
 bool AnyCompilerAvailable(JSContext* cx);
+
+// Asm.JS is translated to wasm and then compiled using the wasm optimizing
+// compiler; test whether this compiler is available.
+
+bool WasmCompilerForAsmJSAvailable(JSContext* cx);
 
 // Predicates for white-box compiler disablement testing.
 //

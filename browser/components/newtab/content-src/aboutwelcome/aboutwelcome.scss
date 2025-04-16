@@ -6,9 +6,7 @@
 
 $break-point-medium: 610px;
 $break-point-large: 866px;
-$break-point-widest: 1122px;
 $logo-size: 112px;
-$proton-break-point-smallest: 690px;
 
 html {
   height: 100%;
@@ -25,7 +23,6 @@ body {
   --newtab-button-secondary-color: #0060DF;
   --newtab-card-background-color: #FFF;
   --newtab-card-shadow: 0 1px 4px 0 rgba(12, 12, 13, 0.4);
-  --tiles-theme-section-border-width: 1px;
   --welcome-header-text-color-1: #20133A;
   --welcome-button-box-shadow-color: #0A84FF;
   --welcome-button-text-color: #FFF;
@@ -158,7 +155,6 @@ body {
 
   .tiles-theme-container {
     margin: 10px auto;
-    border: 0;
   }
 
   .sr-only {
@@ -173,25 +169,17 @@ body {
   }
 
   .tiles-theme-section {
-    display: grid;
-    grid-gap: 21px;
-    grid-template-columns: repeat(4, auto);
+    border: 0;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 21px; // sass-lint:disable-line no-misspelled-properties
+    justify-content: space-evenly;
 
-    /* --newtab-background-color-1 will be invisible, but it's necessary to
-     * keep the content from jumping around when it gets focus-within and
-     * does sprout a dotted border.  This way it keeps a 1 pixel wide border
-     * either way so things don't change position.
-     */
-    border: var(--tiles-theme-section-border-width)
-    solid
-    var(--newtab-background-color-1);
-
-    @media (max-width: $break-point-medium) {
-      grid-template-columns: repeat(2, auto);
-    }
-
+    &:hover,
+    &:active,
     &:focus-within {
-      border: var(--tiles-theme-section-border-width) dotted;
+      outline: 1px #0090ED solid;
+      border-radius: 10px;
     }
 
     .theme {
@@ -639,12 +627,17 @@ body {
 
       button {
         color: #FFF !important; // sass-lint:disable-line no-important
+
+        &:hover {
+          background-color: #5B5B66;
+          color: #E0E0E6 !important; // sass-lint:disable-line no-important
+        }
       }
     }
 
     .steps {
       margin-top: 0;
-      padding-bottom: 0;
+      padding-block: 16px 0;
       transition: var(--transition);
 
       .indicator {
@@ -663,17 +656,21 @@ body {
     }
 
     .tiles-theme-section {
-      border: var(--tiles-theme-section-border-width) solid var(--in-content-page-background);
+      gap: 5px; // sass-lint:disable-line no-misspelled-properties
+      margin-inline: 10px;
+      padding: 10px;
       transition: var(--transition);
 
+      &:hover,
+      &:active,
       &:focus-within {
-        border: var(--tiles-theme-section-border-width) dotted;
+        outline-color: var(--in-content-primary-button-background);
       }
     }
 
     .theme {
       align-items: center;
-      width: auto;
+      flex: 1;
       min-width: 50px;
       height: initial;
       background-color: inherit;
@@ -689,13 +686,13 @@ body {
         color: var(--in-content-page-color);
         font-weight: normal;
         line-height: 20px;
+        margin-inline-start: 0;
       }
 
       .icon {
         width: 40px;
         height: 40px;
         border-radius: 40px;
-        margin-inline-start: 12px;
         outline: 1px solid var(--in-content-border-color);
         outline-offset: -0.5px;
 
@@ -753,6 +750,8 @@ body {
 
     .purple-C {
       background-image: url('chrome://activity-stream/content/data/content/assets/noodle-C.svg');
+      -moz-context-properties: fill;
+      fill: #F6429A;
     }
 
     .orange-L {
@@ -765,14 +764,9 @@ body {
       min-width: 700px;
 
       .section-left {
-        width: 50%;
         display: flex;
         flex-direction: column;
-        margin-inline-start: 101px;
-
-        @media (max-width: $break-point-widest) {
-          margin-inline-start: 71px;
-        }
+        margin-inline-start: 6vw;
 
         .message-text {
           flex-grow: 1;
@@ -791,30 +785,12 @@ body {
           h1 {
             color: #FFF;
             font-weight: bold;
-            font-size: 104px;
-            line-height: 104px;
+            font-size: clamp(48px, 7vw, 104px);
+            line-height: 1em;
             margin: 0 6px;
-            width: 517px;
+            max-width: 5em;
             text-align: initial;
             white-space: pre-wrap;
-
-            @media (max-width: $break-point-widest) {
-              width: 300px;
-              font-size: 48px;
-              line-height: 56px;
-            }
-
-            @media (max-width: $break-point-large) {
-              width: 284px;
-              font-size: 48px;
-              line-height: 56px;
-            }
-
-            @media (max-width: $break-point-medium) {
-              width: 208px;
-              font-size: 48px;
-              line-height: 56px;
-            }
           }
         }
 
@@ -827,21 +803,13 @@ body {
           color: #F9F9FB;
           text-shadow: 0 0 7px rgba(0, 0, 0, 0.6);
           transition-delay: 0.5s;
-
-          @media (max-width: 900px) {
-            width: 200px;
-          }
-
-          @media (max-width: 750px) {
-            width: 200px;
-            margin-inline-start: -50px;
-          }
         }
       }
 
       .section-main {
+        flex-shrink: 0;
+        width: 490px;
         z-index: 1;
-        width: 50%;
 
         .main-content {
           background: transparent;
@@ -923,20 +891,6 @@ body {
           width: 420px;
           height: auto;
         }
-
-        .brand-logo {
-          transition-delay: 0.6s;
-        }
-
-        .welcome-text {
-          transition-delay: 0.8s;
-        }
-
-        .primary,
-        .secondary-cta,
-        .steps {
-          transition-delay: 1s;
-        }
       }
 
       //Position of noodles on second screen
@@ -966,7 +920,7 @@ body {
         height: 165px;
         border-radius: 50%;
         transform: translate(230%, -5%);
-        background: #FF7139;
+        background: #952BB9;
         transition-delay: -0.2s;
 
         @media (max-width: $break-point-large) {
@@ -976,6 +930,40 @@ body {
         @media (max-width: $break-point-medium) {
           transform: translate(185%, -5%);
         }
+      }
+    }
+
+    // Defining the timing of the transition-in for items within the dialog,
+    // These longer delays are to allow for the dialog to slide down on first screen
+    .dialog-initial {
+      .brand-logo {
+        transition-delay: 0.6s;
+      }
+
+      .welcome-text {
+        transition-delay: 0.8s;
+      }
+
+      .tiles-theme-section {
+        transition-delay: 0.9s;
+      }
+
+      .primary,
+      .secondary-cta,
+      .steps {
+        transition-delay: 1s;
+      }
+    }
+
+    // Delays for transitioning-in of intermediate screens
+    .screen:not(.dialog-initial):not(.screen-0) {
+      .tiles-theme-section {
+        transition-delay: 0.2s;
+      }
+
+      .primary,
+      .secondary-cta {
+        transition-delay: 0.4s;
       }
     }
 
@@ -996,15 +984,6 @@ body {
         @media (max-width: $break-point-medium) {
           width: 420px;
           height: auto;
-        }
-
-        .tiles-theme-section {
-          transition-delay: 0.2s;
-        }
-
-        .primary,
-        .secondary-cta {
-          transition-delay: 0.4s;
         }
       }
 
@@ -1038,6 +1017,7 @@ body {
         height: 394px;
         transform: rotate(260deg) translate(-34%, -35%);
         transition-delay: -0.2s;
+        fill: #952BB9;
       }
 
       .yellow-circle {
@@ -1045,7 +1025,7 @@ body {
         height: 165px;
         border-radius: 50%;
         transform: translate(160%, 130%);
-        background: #FF7139;
+        background: #FF4AA2;
       }
     }
 
@@ -1072,7 +1052,7 @@ body {
         }
       }
 
-      .screen-1 {
+      .dialog-initial {
         .main-content {
           translate: 0 calc(-2 * var(--translate));
         }
@@ -1084,14 +1064,13 @@ body {
         }
       }
 
-      .screen-2 {
+      .screen:not(.dialog-initial):not(.screen-0) {
         .steps {
           opacity: 0.2;
         }
       }
 
-      .screen-1,
-      .screen-2 {
+      .screen:not(.screen-0) {
         .welcome-text,
         .tiles-theme-section,
         .primary,
@@ -1133,7 +1112,7 @@ body {
         }
       }
 
-      .screen-1 {
+      .screen:not(.dialog-last):not(.screen-0) {
         .main-content {
           overflow: hidden;
         }
@@ -1142,6 +1121,13 @@ body {
           opacity: 0;
           translate: 0 var(--translate);
           transition-delay: 0.1s;
+        }
+
+        .tiles-theme-section {
+          opacity: 0;
+          translate: 0 var(--translate);
+          transition-delay: 0.2s;
+
         }
 
         .primary,
@@ -1157,7 +1143,7 @@ body {
         }
       }
 
-      .screen-2 {
+      .dialog-last {
         .noodle {
           transition-delay: 0s;
         }

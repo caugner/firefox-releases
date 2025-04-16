@@ -440,7 +440,7 @@ class LookAndFeel {
   // color id.
   //
   // NOTE:
-  //   ColorID::TextSelectForeground might return NS_DONT_CHANGE_COLOR.
+  //   ColorID::TextSelectForeground might return NS_SAME_AS_FOREGROUND_COLOR.
   //   ColorID::IME* might return NS_TRANSPARENT, NS_SAME_AS_FOREGROUND_COLOR or
   //   NS_40PERCENT_FOREGROUND_COLOR.
   //   These values have particular meaning.  Then, they are not an actual
@@ -557,18 +557,6 @@ class LookAndFeel {
 };
 
 }  // namespace mozilla
-
-// On the Mac, GetColor(ColorID::TextSelectForeground, color) returns this
-// constant to specify that the foreground color should not be changed
-// (ie. a colored text keeps its colors  when selected).
-// Of course if other plaforms work like the Mac, they can use it too.
-#define NS_DONT_CHANGE_COLOR NS_RGB(0x01, 0x01, 0x01)
-
-// Similar with NS_DONT_CHANGE_COLOR, except NS_DONT_CHANGE_COLOR would returns
-// complementary color if fg color is same as bg color.
-// NS_CHANGE_COLOR_IF_SAME_AS_BG would returns
-// ColorID::TextSelectForegroundCustom if fg and bg color are the same.
-#define NS_CHANGE_COLOR_IF_SAME_AS_BG NS_RGB(0x02, 0x02, 0x02)
 
 // ---------------------------------------------------------------------
 //  Special colors for ColorID::IME* and ColorID::SpellCheckerUnderline

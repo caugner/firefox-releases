@@ -140,6 +140,17 @@ var gDevToolsBrowser = (exports.gDevToolsBrowser = {
       "menu_browserContentToolbox",
       remoteEnabled && win.gMultiProcessBrowser
     );
+
+    if (Services.prefs.getBoolPref("devtools.policy.disabled", false)) {
+      toggleMenuItem("menu_devToolbox", false);
+      toggleMenuItem("menu_devtools_remotedebugging", false);
+      toggleMenuItem("menu_browserToolbox", false);
+      toggleMenuItem("menu_browserContentToolbox", false);
+      toggleMenuItem("menu_browserConsole", false);
+      toggleMenuItem("menu_responsiveUI", false);
+      toggleMenuItem("menu_eyedropper", false);
+      toggleMenuItem("extensionsForDevelopers", false);
+    }
   },
 
   /**
@@ -387,7 +398,7 @@ var gDevToolsBrowser = (exports.gDevToolsBrowser = {
         // the devtools client and also the server created in the
         // content process
         toolbox.target.on("target-destroyed", () => {
-          toolbox.target.client.close();
+          toolbox.commands.client.close();
         });
 
         return toolbox;

@@ -38,7 +38,6 @@ body {
   --newtab-button-secondary-color: #0060DF;
   --newtab-card-background-color: #FFF;
   --newtab-card-shadow: 0 1px 4px 0 rgba(12, 12, 13, 0.4);
-  --tiles-theme-section-border-width: 1px;
   --welcome-header-text-color-1: #20133A;
   --welcome-button-box-shadow-color: #0A84FF;
   --welcome-button-text-color: #FFF;
@@ -136,8 +135,7 @@ body {
       width: 20px;
       height: 20px; }
   .onboardingContainer .tiles-theme-container {
-    margin: 10px auto;
-    border: 0; }
+    margin: 10px auto; }
   .onboardingContainer .sr-only {
     opacity: 0;
     overflow: hidden;
@@ -146,20 +144,14 @@ body {
       height: 1px;
       width: 1px; }
   .onboardingContainer .tiles-theme-section {
-    display: grid;
-    grid-gap: 21px;
-    grid-template-columns: repeat(4, auto);
-    /* --newtab-background-color-1 will be invisible, but it's necessary to
-     * keep the content from jumping around when it gets focus-within and
-     * does sprout a dotted border.  This way it keeps a 1 pixel wide border
-     * either way so things don't change position.
-     */
-    border: var(--tiles-theme-section-border-width) solid var(--newtab-background-color-1); }
-    @media (max-width: 610px) {
-      .onboardingContainer .tiles-theme-section {
-        grid-template-columns: repeat(2, auto); } }
-    .onboardingContainer .tiles-theme-section:focus-within {
-      border: var(--tiles-theme-section-border-width) dotted; }
+    border: 0;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 21px;
+    justify-content: space-evenly; }
+    .onboardingContainer .tiles-theme-section:hover, .onboardingContainer .tiles-theme-section:active, .onboardingContainer .tiles-theme-section:focus-within {
+      outline: 1px #0090ED solid;
+      border-radius: 10px; }
     .onboardingContainer .tiles-theme-section .theme {
       display: flex;
       flex-direction: column;
@@ -441,9 +433,12 @@ body {
       z-index: 2; }
       .onboardingContainer.proton .secondary-cta.top button {
         color: #FFF !important; }
+        .onboardingContainer.proton .secondary-cta.top button:hover {
+          background-color: #5B5B66;
+          color: #E0E0E6 !important; }
     .onboardingContainer.proton .steps {
       margin-top: 0;
-      padding-bottom: 0;
+      padding-block: 16px 0;
       transition: var(--transition); }
       .onboardingContainer.proton .steps .indicator {
         width: 6px;
@@ -454,13 +449,15 @@ body {
     .onboardingContainer.proton .tiles-theme-container {
       margin: auto 0; }
     .onboardingContainer.proton .tiles-theme-section {
-      border: var(--tiles-theme-section-border-width) solid var(--in-content-page-background);
+      gap: 5px;
+      margin-inline: 10px;
+      padding: 10px;
       transition: var(--transition); }
-      .onboardingContainer.proton .tiles-theme-section:focus-within {
-        border: var(--tiles-theme-section-border-width) dotted; }
+      .onboardingContainer.proton .tiles-theme-section:hover, .onboardingContainer.proton .tiles-theme-section:active, .onboardingContainer.proton .tiles-theme-section:focus-within {
+        outline-color: var(--in-content-primary-button-background); }
     .onboardingContainer.proton .theme {
       align-items: center;
-      width: auto;
+      flex: 1;
       min-width: 50px;
       height: initial;
       background-color: inherit;
@@ -471,12 +468,12 @@ body {
       .onboardingContainer.proton .theme .text {
         color: var(--in-content-page-color);
         font-weight: normal;
-        line-height: 20px; }
+        line-height: 20px;
+        margin-inline-start: 0; }
       .onboardingContainer.proton .theme .icon {
         width: 40px;
         height: 40px;
         border-radius: 40px;
-        margin-inline-start: 12px;
         outline: 1px solid var(--in-content-border-color);
         outline-offset: -0.5px; }
         .onboardingContainer.proton .theme .icon:focus, .onboardingContainer.proton .theme .icon:active, .onboardingContainer.proton .theme .icon.selected {
@@ -507,7 +504,9 @@ body {
       -moz-context-properties: fill;
       fill: var(--in-content-page-background); }
     .onboardingContainer.proton .purple-C {
-      background-image: url("chrome://activity-stream/content/data/content/assets/noodle-C.svg"); }
+      background-image: url("chrome://activity-stream/content/data/content/assets/noodle-C.svg");
+      -moz-context-properties: fill;
+      fill: #F6429A; }
     .onboardingContainer.proton .orange-L {
       background-image: url("chrome://activity-stream/content/data/content/assets/noodle-solid-L.svg");
       -moz-context-properties: fill;
@@ -515,13 +514,9 @@ body {
     .onboardingContainer.proton .screen-0 {
       min-width: 700px; }
       .onboardingContainer.proton .screen-0 .section-left {
-        width: 50%;
         display: flex;
         flex-direction: column;
-        margin-inline-start: 101px; }
-        @media (max-width: 1122px) {
-          .onboardingContainer.proton .screen-0 .section-left {
-            margin-inline-start: 71px; } }
+        margin-inline-start: 6vw; }
         .onboardingContainer.proton .screen-0 .section-left .message-text {
           flex-grow: 1;
           display: flex;
@@ -534,27 +529,12 @@ body {
           .onboardingContainer.proton .screen-0 .section-left .message-text h1 {
             color: #FFF;
             font-weight: bold;
-            font-size: 104px;
-            line-height: 104px;
+            font-size: clamp(48px, 7vw, 104px);
+            line-height: 1em;
             margin: 0 6px;
-            width: 517px;
+            max-width: 5em;
             text-align: initial;
             white-space: pre-wrap; }
-            @media (max-width: 1122px) {
-              .onboardingContainer.proton .screen-0 .section-left .message-text h1 {
-                width: 300px;
-                font-size: 48px;
-                line-height: 56px; } }
-            @media (max-width: 866px) {
-              .onboardingContainer.proton .screen-0 .section-left .message-text h1 {
-                width: 284px;
-                font-size: 48px;
-                line-height: 56px; } }
-            @media (max-width: 610px) {
-              .onboardingContainer.proton .screen-0 .section-left .message-text h1 {
-                width: 208px;
-                font-size: 48px;
-                line-height: 56px; } }
         .onboardingContainer.proton .screen-0 .section-left .attrib-text {
           height: 18px;
           margin-bottom: 25px;
@@ -564,16 +544,10 @@ body {
           color: #F9F9FB;
           text-shadow: 0 0 7px rgba(0, 0, 0, 0.6);
           transition-delay: 0.5s; }
-          @media (max-width: 900px) {
-            .onboardingContainer.proton .screen-0 .section-left .attrib-text {
-              width: 200px; } }
-          @media (max-width: 750px) {
-            .onboardingContainer.proton .screen-0 .section-left .attrib-text {
-              width: 200px;
-              margin-inline-start: -50px; } }
       .onboardingContainer.proton .screen-0 .section-main {
-        z-index: 1;
-        width: 50%; }
+        flex-shrink: 0;
+        width: 490px;
+        z-index: 1; }
         .onboardingContainer.proton .screen-0 .section-main .main-content {
           background: transparent;
           display: block;
@@ -630,14 +604,6 @@ body {
           .onboardingContainer.proton .screen-1 .section-main {
             width: 420px;
             height: auto; } }
-        .onboardingContainer.proton .screen-1 .section-main .brand-logo {
-          transition-delay: 0.6s; }
-        .onboardingContainer.proton .screen-1 .section-main .welcome-text {
-          transition-delay: 0.8s; }
-        .onboardingContainer.proton .screen-1 .section-main .primary,
-        .onboardingContainer.proton .screen-1 .section-main .secondary-cta,
-        .onboardingContainer.proton .screen-1 .section-main .steps {
-          transition-delay: 1s; }
       .onboardingContainer.proton .screen-1 .outline-L {
         width: 87px;
         height: 80px;
@@ -658,7 +624,7 @@ body {
         height: 165px;
         border-radius: 50%;
         transform: translate(230%, -5%);
-        background: #FF7139;
+        background: #952BB9;
         transition-delay: -0.2s; }
         @media (max-width: 866px) {
           .onboardingContainer.proton .screen-1 .yellow-circle {
@@ -666,6 +632,21 @@ body {
         @media (max-width: 610px) {
           .onboardingContainer.proton .screen-1 .yellow-circle {
             transform: translate(185%, -5%); } }
+    .onboardingContainer.proton .dialog-initial .brand-logo {
+      transition-delay: 0.6s; }
+    .onboardingContainer.proton .dialog-initial .welcome-text {
+      transition-delay: 0.8s; }
+    .onboardingContainer.proton .dialog-initial .tiles-theme-section {
+      transition-delay: 0.9s; }
+    .onboardingContainer.proton .dialog-initial .primary,
+    .onboardingContainer.proton .dialog-initial .secondary-cta,
+    .onboardingContainer.proton .dialog-initial .steps {
+      transition-delay: 1s; }
+    .onboardingContainer.proton .screen:not(.dialog-initial):not(.screen-0) .tiles-theme-section {
+      transition-delay: 0.2s; }
+    .onboardingContainer.proton .screen:not(.dialog-initial):not(.screen-0) .primary,
+    .onboardingContainer.proton .screen:not(.dialog-initial):not(.screen-0) .secondary-cta {
+      transition-delay: 0.4s; }
     .onboardingContainer.proton .screen-2 {
       background-color: rgba(21, 20, 26, 0.5); }
       .onboardingContainer.proton .screen-2 .section-main {
@@ -681,11 +662,6 @@ body {
           .onboardingContainer.proton .screen-2 .section-main {
             width: 420px;
             height: auto; } }
-        .onboardingContainer.proton .screen-2 .section-main .tiles-theme-section {
-          transition-delay: 0.2s; }
-        .onboardingContainer.proton .screen-2 .section-main .primary,
-        .onboardingContainer.proton .screen-2 .section-main .secondary-cta {
-          transition-delay: 0.4s; }
       .onboardingContainer.proton .screen-2 .outline-L {
         width: 87px;
         height: 80px;
@@ -708,13 +684,14 @@ body {
         width: 392px;
         height: 394px;
         transform: rotate(260deg) translate(-34%, -35%);
-        transition-delay: -0.2s; }
+        transition-delay: -0.2s;
+        fill: #952BB9; }
       .onboardingContainer.proton .screen-2 .yellow-circle {
         width: 165px;
         height: 165px;
         border-radius: 50%;
         transform: translate(160%, 130%);
-        background: #FF7139; }
+        background: #FF4AA2; }
     .onboardingContainer.proton.transition-in .noodle {
       opacity: 0;
       rotate: var(--rotate);
@@ -729,22 +706,18 @@ body {
     .onboardingContainer.proton.transition-in .screen-0 .attrib-text,
     .onboardingContainer.proton.transition-in .screen-0 .secondary-cta.top {
       opacity: 0; }
-    .onboardingContainer.proton.transition-in .screen-1 .main-content {
+    .onboardingContainer.proton.transition-in .dialog-initial .main-content {
       translate: 0 calc(-2 * var(--translate)); }
-    .onboardingContainer.proton.transition-in .screen-1 .brand-logo,
-    .onboardingContainer.proton.transition-in .screen-1 .steps {
+    .onboardingContainer.proton.transition-in .dialog-initial .brand-logo,
+    .onboardingContainer.proton.transition-in .dialog-initial .steps {
       opacity: 0;
       translate: 0 calc(-1 * var(--translate)); }
-    .onboardingContainer.proton.transition-in .screen-2 .steps {
+    .onboardingContainer.proton.transition-in .screen:not(.dialog-initial):not(.screen-0) .steps {
       opacity: 0.2; }
-    .onboardingContainer.proton.transition-in .screen-1 .welcome-text,
-    .onboardingContainer.proton.transition-in .screen-1 .tiles-theme-section,
-    .onboardingContainer.proton.transition-in .screen-1 .primary,
-    .onboardingContainer.proton.transition-in .screen-1 .secondary-cta:not(.top),
-    .onboardingContainer.proton.transition-in .screen-2 .welcome-text,
-    .onboardingContainer.proton.transition-in .screen-2 .tiles-theme-section,
-    .onboardingContainer.proton.transition-in .screen-2 .primary,
-    .onboardingContainer.proton.transition-in .screen-2 .secondary-cta:not(.top) {
+    .onboardingContainer.proton.transition-in .screen:not(.screen-0) .welcome-text,
+    .onboardingContainer.proton.transition-in .screen:not(.screen-0) .tiles-theme-section,
+    .onboardingContainer.proton.transition-in .screen:not(.screen-0) .primary,
+    .onboardingContainer.proton.transition-in .screen:not(.screen-0) .secondary-cta:not(.top) {
       opacity: 0;
       translate: 0 calc(-1 * var(--translate)); }
     .onboardingContainer.proton.transition-out .noodle {
@@ -765,23 +738,27 @@ body {
     .onboardingContainer.proton.transition-out .screen-0 .secondary-cta.top {
       opacity: 0;
       transition-delay: 0.2s; }
-    .onboardingContainer.proton.transition-out .screen-1 .main-content {
+    .onboardingContainer.proton.transition-out .screen:not(.dialog-last):not(.screen-0) .main-content {
       overflow: hidden; }
-    .onboardingContainer.proton.transition-out .screen-1 .welcome-text {
+    .onboardingContainer.proton.transition-out .screen:not(.dialog-last):not(.screen-0) .welcome-text {
       opacity: 0;
       translate: 0 var(--translate);
       transition-delay: 0.1s; }
-    .onboardingContainer.proton.transition-out .screen-1 .primary,
-    .onboardingContainer.proton.transition-out .screen-1 .secondary-cta:not(.top) {
+    .onboardingContainer.proton.transition-out .screen:not(.dialog-last):not(.screen-0) .tiles-theme-section {
+      opacity: 0;
+      translate: 0 var(--translate);
+      transition-delay: 0.2s; }
+    .onboardingContainer.proton.transition-out .screen:not(.dialog-last):not(.screen-0) .primary,
+    .onboardingContainer.proton.transition-out .screen:not(.dialog-last):not(.screen-0) .secondary-cta:not(.top) {
       opacity: 0;
       translate: 0 var(--translate);
       transition-delay: 0.3s; }
-    .onboardingContainer.proton.transition-out .screen-1 .steps {
+    .onboardingContainer.proton.transition-out .screen:not(.dialog-last):not(.screen-0) .steps {
       opacity: 0.2;
       transition-delay: 0.5s; }
-    .onboardingContainer.proton.transition-out .screen-2 .noodle {
+    .onboardingContainer.proton.transition-out .dialog-last .noodle {
       transition-delay: 0s; }
-    .onboardingContainer.proton.transition-out .screen-2 .main-content {
+    .onboardingContainer.proton.transition-out .dialog-last .main-content {
       opacity: 0;
       translate: 0 calc(2 * var(--translate));
       transition-delay: 0.4s; }

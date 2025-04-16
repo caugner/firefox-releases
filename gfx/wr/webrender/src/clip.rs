@@ -111,8 +111,7 @@ use crate::resource_cache::{ImageRequest, ResourceCache};
 use crate::space::SpaceMapper;
 use crate::util::{clamp_to_scale_factor, MaxRect, extract_inner_rect_safe, project_rect, ScaleOffset, VecHelper};
 use euclid::approxeq::ApproxEq;
-use std::{iter, ops, u32};
-use smallvec::SmallVec;
+use std::{iter, ops, u32, mem};
 
 // Type definitions for interning clip nodes.
 
@@ -126,6 +125,7 @@ pub type ClipDataHandle = intern::Handle<ClipIntern>;
 /// Defines a clip that is positioned by a specific spatial node
 #[cfg_attr(feature = "capture", derive(Serialize))]
 #[derive(Copy, Clone, PartialEq)]
+#[derive(MallocSizeOf)]
 pub struct ClipInstance {
     /// Handle to the interned clip
     pub handle: ClipDataHandle,
@@ -150,6 +150,7 @@ impl ClipInstance {
 /// during scene building (since interned clips cannot retrieve the underlying
 /// data from the scene building thread).
 #[cfg_attr(feature = "capture", derive(Serialize))]
+#[derive(MallocSizeOf)]
 #[derive(Copy, Clone)]
 pub struct SceneClipInstance {
     /// The interned clip + positioning information that is used during frame building.
@@ -165,8 +166,8 @@ pub struct SceneClipInstance {
 pub struct ClipTemplate {
     /// Parent of this clip, in terms of the public clip API
     pub parent: ClipId,
-    /// List of instances that define this clip template
-    pub clips: SmallVec<[SceneClipInstance; 2]>,
+    /// Range of instances that define this clip template
+    pub clips: ops::Range<u32>,
 }
 
 /// A helper used during scene building to construct (internal) clip chains from
@@ -197,6 +198,7 @@ impl ClipChainBuilder {
         clip_id: Option<ClipId>,
         clip_chain_nodes: &mut Vec<ClipChainNode>,
         templates: &FastHashMap<ClipId, ClipTemplate>,
+        instances: &[SceneClipInstance],
     ) -> Self {
         let mut parent_clips = FastHashSet::default();
 
@@ -217,6 +219,7 @@ impl ClipChainBuilder {
                     &mut parent_clips,
                     clip_chain_nodes,
                     templates,
+                    instances,
                 )
             }
             None => {
@@ -243,11 +246,13 @@ impl ClipChainBuilder {
         existing_clips: &mut FastHashSet<(ItemUid, SpatialNodeIndex)>,
         clip_chain_nodes: &mut Vec<ClipChainNode>,
         templates: &FastHashMap<ClipId, ClipTemplate>,
+        clip_instances: &[SceneClipInstance],
     ) -> ClipChainId {
         let template = &templates[&clip_id];
+        let instances = &clip_instances[template.clips.start as usize .. template.clips.end as usize];
         let mut clip_chain_id = parent_clip_chain_id;
 
-        for clip in &template.clips {
+        for clip in instances {
             let key = (clip.clip.handle.uid(), clip.clip.spatial_node_index);
 
             // If this clip chain already has this clip instance, skip it
@@ -277,6 +282,7 @@ impl ClipChainBuilder {
             existing_clips,
             clip_chain_nodes,
             templates,
+            clip_instances,
         )
     }
 
@@ -288,11 +294,13 @@ impl ClipChainBuilder {
         &self,
         clip_id: ClipId,
         templates: &FastHashMap<ClipId, ClipTemplate>,
+        instances: &[SceneClipInstance],
     ) -> bool {
         let template = &templates[&clip_id];
 
         // Check if any of the clips in this template are complex
-        for clip in &template.clips {
+        let clips = &instances[template.clips.start as usize .. template.clips.end as usize];
+        for clip in clips {
             if let ClipNodeKind::Complex = clip.key.kind.node_kind() {
                 return true;
             }
@@ -307,6 +315,7 @@ impl ClipChainBuilder {
         self.has_complex_clips(
             template.parent,
             templates,
+            instances,
         )
     }
 
@@ -318,6 +327,7 @@ impl ClipChainBuilder {
         clip_id: ClipId,
         clip_chain_nodes: &mut Vec<ClipChainNode>,
         templates: &FastHashMap<ClipId, ClipTemplate>,
+        instances: &[SceneClipInstance],
     ) -> ClipChainId {
         if self.prev_clip_id == clip_id {
             return self.prev_clip_chain_id;
@@ -338,6 +348,7 @@ impl ClipChainBuilder {
             &mut self.existing_clips_cache,
             clip_chain_nodes,
             templates,
+            instances,
         );
 
         self.prev_clip_id = clip_id;
@@ -398,12 +409,12 @@ impl From<ClipItemKey> for ClipNode {
                     mode,
                 }
             }
-            ClipItemKeyKind::ImageMask(rect, image, repeat, polygon) => {
+            ClipItemKeyKind::ImageMask(rect, image, repeat, polygon_handle) => {
                 ClipItemKind::Image {
                     image,
                     rect: rect.into(),
                     repeat,
-                    polygon,
+                    polygon_handle,
                 }
             }
             ClipItemKeyKind::BoxShadow(shadow_rect_fract_offset, shadow_rect_size, shadow_radius, prim_shadow_rect, blur_radius, clip_mode) => {
@@ -487,7 +498,13 @@ pub struct ClipNodeInstance {
     pub handle: ClipDataHandle,
     pub spatial_node_index: SpatialNodeIndex,
     pub flags: ClipNodeFlags,
-    pub visible_tiles: Option<Vec<VisibleMaskImageTile>>,
+    pub visible_tiles: Option<ops::Range<usize>>,
+}
+
+impl ClipNodeInstance {
+    pub fn has_visible_tiles(&self) -> bool {
+        self.visible_tiles.is_some()
+    }
 }
 
 // A range of clip node instances that were found by
@@ -589,6 +606,7 @@ impl ClipNodeInfo {
         clipped_rect: &LayoutRect,
         gpu_cache: &mut GpuCache,
         resource_cache: &mut ResourceCache,
+        mask_tiles: &mut Vec<VisibleMaskImageTile>,
         spatial_tree: &SpatialTree,
         request_resources: bool,
     ) -> Option<ClipNodeInstance> {
@@ -619,7 +637,7 @@ impl ClipNodeInfo {
 
             if let Some(props) = resource_cache.get_image_properties(image) {
                 if let Some(tile_size) = props.tiling {
-                    let mut mask_tiles = Vec::new();
+                    let tile_range_start = mask_tiles.len();
 
                     let visible_rect = if repeat {
                         *clipped_rect
@@ -661,7 +679,7 @@ impl ClipNodeInfo {
                             });
                         }
                     }
-                    visible_tiles = Some(mask_tiles);
+                    visible_tiles = Some(tile_range_start..mask_tiles.len());
                 } else if request_resources {
                     resource_cache.request_image(request, gpu_cache);
                 }
@@ -722,12 +740,33 @@ impl ClipNode {
     }
 }
 
+pub struct ClipStoreStats {
+    templates_capacity: usize,
+    instances_capacity: usize,
+}
+
+impl ClipStoreStats {
+    pub fn empty() -> Self {
+        ClipStoreStats {
+            templates_capacity: 0,
+            instances_capacity: 0,
+        }
+    }
+}
+
+#[derive(Default)]
+pub struct ClipStoreScratchBuffer {
+    clip_node_instances: Vec<ClipNodeInstance>,
+    mask_tiles: Vec<VisibleMaskImageTile>,
+}
+
 /// The main clipping public interface that other modules access.
 #[derive(MallocSizeOf)]
 #[cfg_attr(feature = "capture", derive(Serialize))]
 pub struct ClipStore {
     pub clip_chain_nodes: Vec<ClipChainNode>,
     pub clip_node_instances: Vec<ClipNodeInstance>,
+    mask_tiles: Vec<VisibleMaskImageTile>,
 
     active_clip_node_info: Vec<ClipNodeInfo>,
     active_local_clip_rect: Option<LayoutRect>,
@@ -739,6 +778,7 @@ pub struct ClipStore {
     /// Map of all clip templates defined by the public API to templates
     #[ignore_malloc_size_of = "range missing"]
     pub templates: FastHashMap<ClipId, ClipTemplate>,
+    pub instances: Vec<SceneClipInstance>,
 
     /// A stack of current clip-chain builders. A new clip-chain builder is
     /// typically created each time a clip root (such as an iframe or stacking
@@ -971,15 +1011,33 @@ impl ClipChainStack {
 }
 
 impl ClipStore {
-    pub fn new() -> Self {
+    pub fn new(stats: &ClipStoreStats) -> Self {
+        let mut templates = FastHashMap::default();
+        templates.reserve(stats.templates_capacity);
+
         ClipStore {
             clip_chain_nodes: Vec::new(),
             clip_node_instances: Vec::new(),
+            mask_tiles: Vec::new(),
             active_clip_node_info: Vec::new(),
             active_local_clip_rect: None,
             active_pic_clip_rect: PictureRect::max_rect(),
-            templates: FastHashMap::default(),
+            templates,
+            instances: Vec::with_capacity(stats.instances_capacity),
             chain_builder_stack: Vec::new(),
+        }
+    }
+
+    pub fn get_stats(&self) -> ClipStoreStats {
+        // Selecting the smaller of the current capacity and 2*len ensures we don't
+        // retain a huge hashmap alloc after navigating away from a page with a large
+        // number of clip templates.
+        let templates_capacity = self.templates.capacity().min(self.templates.len() * 2);
+        let instances_capacity = self.instances.capacity().min(self.instances.len() * 2);
+
+        ClipStoreStats {
+            templates_capacity,
+            instances_capacity,
         }
     }
 
@@ -990,9 +1048,13 @@ impl ClipStore {
         parent: ClipId,
         clips: &[SceneClipInstance],
     ) {
+        let start = self.instances.len() as u32;
+        self.instances.extend_from_slice(clips);
+        let end = self.instances.len() as u32;
+
         self.templates.insert(clip_id, ClipTemplate {
             parent,
-            clips: clips.into(),
+            clips: start..end,
         });
     }
 
@@ -1019,6 +1081,7 @@ impl ClipStore {
                 clip_id,
                 &mut self.clip_chain_nodes,
                 &self.templates,
+                &self.instances,
             )
     }
 
@@ -1036,6 +1099,7 @@ impl ClipStore {
             .has_complex_clips(
                 clip_id,
                 &self.templates,
+                &self.instances,
             )
     }
 
@@ -1059,6 +1123,7 @@ impl ClipStore {
             clip_id,
             &mut self.clip_chain_nodes,
             &self.templates,
+            &self.instances,
         );
 
         self.chain_builder_stack.push(builder);
@@ -1251,6 +1316,7 @@ impl ClipStore {
                         &local_bounding_rect,
                         gpu_cache,
                         resource_cache,
+                        &mut self.mask_tiles,
                         spatial_tree,
                         request_resources,
                     ) {
@@ -1307,8 +1373,24 @@ impl ClipStore {
         })
     }
 
-    pub fn clear_old_instances(&mut self) {
+    pub fn begin_frame(&mut self, scratch: &mut ClipStoreScratchBuffer) {
+        mem::swap(&mut self.clip_node_instances, &mut scratch.clip_node_instances);
+        mem::swap(&mut self.mask_tiles, &mut scratch.mask_tiles);
         self.clip_node_instances.clear();
+        self.mask_tiles.clear();
+    }
+
+    pub fn end_frame(&mut self, scratch: &mut ClipStoreScratchBuffer) {
+        mem::swap(&mut self.clip_node_instances, &mut scratch.clip_node_instances);
+        mem::swap(&mut self.mask_tiles, &mut scratch.mask_tiles);
+    }
+
+    pub fn visible_mask_tiles(&self, instance: &ClipNodeInstance) -> &[VisibleMaskImageTile] {
+        if let Some(range) = &instance.visible_tiles {
+            &self.mask_tiles[range.clone()]
+        } else {
+            &[]
+        }
     }
 }
 
@@ -1354,18 +1436,6 @@ impl<J> ClipRegion<ComplexTranslateIter<J>> {
     }
 }
 
-impl ClipRegion<Option<ComplexClipRegion>> {
-    pub fn create_for_clip_node_with_local_clip(
-        local_clip: &LayoutRect,
-        reference_frame_relative_offset: &LayoutVector2D
-    ) -> Self {
-        ClipRegion {
-            main: local_clip.translate(*reference_frame_relative_offset),
-            complex_clips: None,
-        }
-    }
-}
-
 // The ClipItemKey is a hashable representation of the contents
 // of a clip item. It is used during interning to de-duplicate
 // clip nodes between frames and display lists. This allows quick
@@ -1379,7 +1449,7 @@ impl ClipRegion<Option<ComplexClipRegion>> {
 pub enum ClipItemKeyKind {
     Rectangle(RectangleKey, ClipMode),
     RoundedRectangle(RectangleKey, BorderRadiusAu, ClipMode),
-    ImageMask(RectangleKey, ImageKey, bool, PolygonKey),
+    ImageMask(RectangleKey, ImageKey, bool, Option<PolygonDataHandle>),
     BoxShadow(PointKey, SizeKey, BorderRadiusAu, RectangleKey, Au, BoxShadowClipMode),
 }
 
@@ -1402,12 +1472,12 @@ impl ClipItemKeyKind {
     }
 
     pub fn image_mask(image_mask: &ImageMask, mask_rect: LayoutRect,
-                      points: Vec<LayoutPoint>, fill_rule: FillRule) -> Self {
+                      polygon_handle: Option<PolygonDataHandle>) -> Self {
         ClipItemKeyKind::ImageMask(
             mask_rect.into(),
             image_mask.image,
             image_mask.repeat,
-            PolygonKey::new(&points, fill_rule)
+            polygon_handle,
         )
     }
 
@@ -1489,7 +1559,7 @@ pub enum ClipItemKind {
         image: ImageKey,
         rect: LayoutRect,
         repeat: bool,
-        polygon: PolygonKey,
+        polygon_handle: Option<PolygonDataHandle>,
     },
     BoxShadow {
         source: BoxShadowClipSource,
@@ -2136,4 +2206,25 @@ mod tests {
             "Empty rectangle is considered to include a non-empty!"
         );
     }
+}
+
+/// PolygonKeys get interned, because it's a convenient way to move the data
+/// for the polygons out of the ClipItemKind and ClipItemKeyKind enums. The
+/// polygon data is both interned and retrieved by the scene builder, and not
+/// accessed at all by the frame builder. Another oddity is that the
+/// PolygonKey contains the totality of the information about the polygon, so
+/// the InternData and StoreData types are both PolygonKey.
+#[derive(Copy, Clone, Debug, Hash, MallocSizeOf, PartialEq, Eq)]
+#[cfg_attr(any(feature = "serde"), derive(Deserialize, Serialize))]
+pub enum PolygonIntern {}
+
+pub type PolygonDataHandle = intern::Handle<PolygonIntern>;
+
+impl intern::InternDebug for PolygonKey {}
+
+impl intern::Internable for PolygonIntern {
+    type Key = PolygonKey;
+    type StoreData = PolygonKey;
+    type InternData = PolygonKey;
+    const PROFILE_COUNTER: usize = crate::profiler::INTERNED_POLYGONS;
 }

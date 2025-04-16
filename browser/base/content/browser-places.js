@@ -380,7 +380,6 @@ var StarUI = {
     }
 
     this._batchBlockingDeferred.resolve();
-    this._batchBlockingDeferred = null;
     this._batching = false;
   },
 
@@ -1818,7 +1817,7 @@ var BookmarkingUI = {
     if (this._hasBookmarksObserver) {
       PlacesUtils.bookmarks.removeObserver(this);
       PlacesUtils.observers.removeListener(
-        ["bookmark-added", "bookmark-removed"],
+        ["bookmark-added", "bookmark-removed", "bookmark-moved"],
         this.handlePlacesEvents
       );
     }
@@ -1869,7 +1868,7 @@ var BookmarkingUI = {
             PlacesUtils.bookmarks.addObserver(this);
             this.handlePlacesEvents = this.handlePlacesEvents.bind(this);
             PlacesUtils.observers.addListener(
-              ["bookmark-added", "bookmark-removed"],
+              ["bookmark-added", "bookmark-removed", "bookmark-moved"],
               this.handlePlacesEvents
             );
             this._hasBookmarksObserver = true;
@@ -1905,7 +1904,7 @@ var BookmarkingUI = {
       }
     }
 
-    if (!this.star) {
+    if (!this.starBox) {
       // The BOOKMARK_BUTTON_SHORTCUT exists only in browser.xhtml.
       // Return early if we're not in this context, but still reset the
       // Bookmark This Page items.
@@ -1919,7 +1918,7 @@ var BookmarkingUI = {
       shortcut: ShortcutUtils.prettifyShortcut(shortcut),
     };
     document.l10n.setAttributes(
-      this.star,
+      this.starBox,
       starred ? "urlbar-star-edit-bookmark" : "urlbar-star-add-bookmark",
       l10nArgs
     );
@@ -2012,19 +2011,12 @@ var BookmarkingUI = {
         // We assume that menuItemL10nId has a single attribute.
         let label = l10n[0].attributes[0].value;
 
-        // Update the label, tooltip, and the starred state for the
-        // page action panel.
+        // Update the label for the page action panel.
         let panelButton = BrowserPageActions.panelButtonNodeForActionID(
           PageActions.ACTION_ID_BOOKMARK
         );
         if (panelButton) {
           panelButton.setAttribute("label", label);
-        }
-        let urlbarButton = BrowserPageActions.urlbarButtonNodeForActionID(
-          PageActions.ACTION_ID_BOOKMARK
-        );
-        if (urlbarButton) {
-          urlbarButton.setAttribute("tooltiptext", label);
         }
       });
     }
@@ -2222,6 +2214,22 @@ var BookmarkingUI = {
             }
           }
           break;
+        case "bookmark-moved":
+          const hasMovedInOutOtherBookmarks =
+            ev.parentGuid === PlacesUtils.bookmarks.unfiledGuid ||
+            ev.oldParentGuid === PlacesUtils.bookmarks.unfiledGuid;
+          if (hasMovedInOutOtherBookmarks) {
+            this.maybeShowOtherBookmarksFolder();
+          }
+
+          const hasMovedInOutToolbar =
+            ev.parentGuid === PlacesUtils.bookmarks.toolbarGuid ||
+            ev.oldParentGuid === PlacesUtils.bookmarks.toolbarGuid;
+          if (hasMovedInOutToolbar) {
+            this.updateEmptyToolbarMessage();
+          }
+
+          break;
       }
 
       if (ev.parentGuid === PlacesUtils.bookmarks.unfiledGuid) {
@@ -2272,10 +2280,8 @@ var BookmarkingUI = {
 
   onItemMoved(
     aItemId,
-    aProperty,
-    aIsAnnotationProperty,
-    aNewValue,
-    aLastModified,
+    aOldIndex,
+    aNewIndex,
     aItemType,
     aGuid,
     oldParentGuid,

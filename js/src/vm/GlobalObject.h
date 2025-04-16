@@ -124,7 +124,8 @@ class GlobalObject : public NativeObject {
     GLOBAL_THIS_RESOLVED,
     INSTRUMENTATION,
     SOURCE_URLS,
-    REALM_WEAK_MAP_KEY,
+    REALM_KEY_OBJECT,
+    ARRAY_SHAPE,
 
     /* Total reserved-slot count for global objects. */
     RESERVED_SLOTS
@@ -749,7 +750,7 @@ class GlobalObject : public NativeObject {
     }
 
     NativeObject* holder = &slot.toObject().as<NativeObject>();
-    mozilla::Maybe<ShapeProperty> prop = holder->lookupPure(name);
+    mozilla::Maybe<PropertyInfo> prop = holder->lookupPure(name);
     if (prop.isNothing()) {
       *vp = UndefinedValue();
       return false;
@@ -768,7 +769,7 @@ class GlobalObject : public NativeObject {
       return false;
     }
 
-    if (mozilla::Maybe<ShapeProperty> prop = holder->lookup(cx, name)) {
+    if (mozilla::Maybe<PropertyInfo> prop = holder->lookup(cx, name)) {
       vp.set(holder->getSlot(prop->slot()));
       *exists = true;
     } else {
@@ -789,11 +790,12 @@ class GlobalObject : public NativeObject {
     if (exists) {
       return true;
     }
-    if (!cx->runtime()->cloneSelfHostedValue(cx, name, value)) {
-      return false;
-    }
-    return GlobalObject::addIntrinsicValue(cx, global, name, value);
+    return getIntrinsicValueSlow(cx, global, name, value);
   }
+
+  static bool getIntrinsicValueSlow(JSContext* cx, Handle<GlobalObject*> global,
+                                    HandlePropertyName name,
+                                    MutableHandleValue value);
 
   static bool addIntrinsicValue(JSContext* cx, Handle<GlobalObject*> global,
                                 HandlePropertyName name, HandleValue value);
@@ -904,9 +906,19 @@ class GlobalObject : public NativeObject {
     getSlotRef(SOURCE_URLS).unbarrieredSet(UndefinedValue());
   }
 
-  // Returns a key for a weak map, used by embedder.
-  static JSObject* getOrCreateRealmWeakMapKey(JSContext* cx,
-                                              Handle<GlobalObject*> global);
+  void setArrayShape(Shape* shape) {
+    MOZ_ASSERT(getSlot(ARRAY_SHAPE).isUndefined());
+    initSlot(ARRAY_SHAPE, PrivateGCThingValue(shape));
+  }
+  Shape* maybeArrayShape() const {
+    Value v = getSlot(ARRAY_SHAPE);
+    MOZ_ASSERT(v.isUndefined() || v.isPrivateGCThing());
+    return v.isPrivateGCThing() ? v.toGCThing()->as<Shape>() : nullptr;
+  }
+
+  // Returns an object that represents the realm, used by embedder.
+  static JSObject* getOrCreateRealmKeyObject(JSContext* cx,
+                                             Handle<GlobalObject*> global);
 
   // A class used in place of a prototype during off-thread parsing.
   struct OffThreadPlaceholderObject : public NativeObject {

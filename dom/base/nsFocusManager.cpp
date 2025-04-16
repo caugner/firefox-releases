@@ -418,7 +418,7 @@ nsFocusManager::GetFocusedContentBrowsingContext(
 nsresult nsFocusManager::SetFocusedWindowWithCallerType(
     mozIDOMWindowProxy* aWindowToFocus, CallerType aCallerType,
     uint64_t aActionId) {
-  LOGFOCUS(("<<SetFocusedWindow begin>>"));
+  LOGFOCUS(("<<SetFocusedWindow begin actionid: %" PRIu64 ">>", aActionId));
 
   nsCOMPtr<nsPIDOMWindowOuter> windowToFocus =
       nsPIDOMWindowOuter::From(aWindowToFocus);
@@ -446,7 +446,7 @@ nsresult nsFocusManager::SetFocusedWindowWithCallerType(
     RaiseWindow(rootWindow, aCallerType, aActionId);
   }
 
-  LOGFOCUS(("<<SetFocusedWindow end>>"));
+  LOGFOCUS(("<<SetFocusedWindow end actionid: %" PRIu64 ">>", aActionId));
 
   return NS_OK;
 }
@@ -478,7 +478,7 @@ nsFocusManager::GetLastFocusMethod(mozIDOMWindowProxy* aWindow,
 
   *aLastFocusMethod = window ? window->GetFocusMethod() : 0;
 
-  NS_ASSERTION((*aLastFocusMethod & FOCUSMETHOD_MASK) == *aLastFocusMethod,
+  NS_ASSERTION((*aLastFocusMethod & METHOD_MASK) == *aLastFocusMethod,
                "invalid focus method");
   return NS_OK;
 }
@@ -527,7 +527,7 @@ nsFocusManager::MoveFocus(mozIDOMWindowProxy* aWindow, Element* aStartElement,
   // the other focus methods is already set, or we're just moving to the root
   // or caret position.
   if (aType != MOVEFOCUS_ROOT && aType != MOVEFOCUS_CARET &&
-      (aFlags & FOCUSMETHOD_MASK) == 0) {
+      (aFlags & METHOD_MASK) == 0) {
     aFlags |= FLAG_BYMOVEFOCUS;
   }
 
@@ -670,8 +670,8 @@ void nsFocusManager::WindowRaised(mozIDOMWindowProxy* aWindow,
   BrowsingContext* bc = window->GetBrowsingContext();
 
   if (MOZ_LOG_TEST(gFocusLog, LogLevel::Debug)) {
-    LOGFOCUS(("Window %p Raised [Currently: %p %p]", aWindow,
-              mActiveWindow.get(), mFocusedWindow.get()));
+    LOGFOCUS(("Window %p Raised [Currently: %p %p] actionid: %" PRIu64, aWindow,
+              mActiveWindow.get(), mFocusedWindow.get(), aActionId));
     Document* doc = window->GetExtantDoc();
     if (doc && doc->GetDocumentURI()) {
       LOGFOCUS(("  Raised Window: %p %s", aWindow,
@@ -1011,8 +1011,9 @@ void nsFocusManager::WindowHidden(mozIDOMWindowProxy* aWindow,
   nsCOMPtr<nsPIDOMWindowOuter> window = nsPIDOMWindowOuter::From(aWindow);
 
   if (MOZ_LOG_TEST(gFocusLog, LogLevel::Debug)) {
-    LOGFOCUS(("Window %p Hidden [Currently: %p %p]", window.get(),
-              mActiveWindow.get(), mFocusedWindow.get()));
+    LOGFOCUS(("Window %p Hidden [Currently: %p %p] actionid: %" PRIu64,
+              window.get(), mActiveWindow.get(), mFocusedWindow.get(),
+              aActionId));
     nsAutoCString spec;
     Document* doc = window->GetExtantDoc();
     if (doc && doc->GetDocumentURI()) {
@@ -1061,7 +1062,7 @@ void nsFocusManager::WindowHidden(mozIDOMWindowProxy* aWindow,
     if (presShell) {
       SendFocusOrBlurEvent(eBlur, presShell,
                            oldFocusedElement->GetComposedDoc(),
-                           oldFocusedElement, 1, false);
+                           oldFocusedElement, false);
     }
   }
 
@@ -1475,6 +1476,16 @@ void nsFocusManager::SetFocusInner(Element* aNewContent, int32_t aFlags,
     // called during reflow, calling GetBrowsingContext() could cause frame
     // loader initialization at a time when it isn't safe.
     if (BrowsingContext* bc = flo->GetExtantBrowsingContext()) {
+      // If focus is already in the subtree rooted at bc, return early
+      // to match the single-process focus semantics. Otherwise, we'd
+      // blur and immediately refocus whatever is focused.
+      BrowsingContext* walk = focusedBrowsingContext;
+      while (walk) {
+        if (walk == bc) {
+          return;
+        }
+        walk = walk->GetParent();
+      }
       browsingContextToFocus = bc;
     }
   }
@@ -1595,8 +1606,8 @@ void nsFocusManager::SetFocusInner(Element* aNewContent, int32_t aFlags,
 
   // Exit fullscreen if a website focuses another window
   if (StaticPrefs::full_screen_api_exit_on_windowRaise() &&
-      !isElementInActiveWindow &&
-      aFlags & (FLAG_RAISE | FLAG_NONSYSTEMCALLER)) {
+      !isElementInActiveWindow && (aFlags & FLAG_RAISE) &&
+      (aFlags & FLAG_NONSYSTEMCALLER)) {
     if (XRE_IsParentProcess()) {
       if (Document* doc = mActiveWindow ? mActiveWindow->GetDoc() : nullptr) {
         if (doc->GetFullscreenElement()) {
@@ -1630,7 +1641,8 @@ void nsFocusManager::SetFocusInner(Element* aNewContent, int32_t aFlags,
   // to guard against phishing.
 #ifndef XP_MACOSX
   if (elementToFocus &&
-      nsContentUtils::GetRootDocument(elementToFocus->OwnerDoc())
+      nsContentUtils::GetInProcessSubtreeRootDocument(
+          elementToFocus->OwnerDoc())
           ->GetFullscreenElement() &&
       nsContentUtils::HasPluginWithUncontrolledEventDispatch(elementToFocus)) {
     nsContentUtils::ReportToConsole(nsIScriptError::warningFlag, "DOM"_ns,
@@ -1668,8 +1680,9 @@ void nsFocusManager::SetFocusInner(Element* aNewContent, int32_t aFlags,
             mFocusedElement.get()));
   LOGFOCUS(
       (" In Active Window: %d Moves to different BrowsingContext: %d "
-       "SendFocus: %d",
-       isElementInActiveWindow, focusMovesToDifferentBC, sendFocusEvent));
+       "SendFocus: %d actionid: %" PRIu64,
+       isElementInActiveWindow, focusMovesToDifferentBC, sendFocusEvent,
+       aActionId));
 
   if (sendFocusEvent) {
     Maybe<BlurredElementInfo> blurredInfo;
@@ -1733,7 +1746,7 @@ void nsFocusManager::SetFocusInner(Element* aNewContent, int32_t aFlags,
 
     // set the focus node and method as needed
     uint32_t focusMethod =
-        aFocusChanged ? aFlags & FOCUSMETHODANDRING_MASK
+        aFocusChanged ? aFlags & METHODANDRING_MASK
                       : newWindow->GetFocusMethod() |
                             (aFlags & (FLAG_SHOWRING | FLAG_NOSHOWRING));
     newWindow->SetFocusedElement(elementToFocus, focusMethod);
@@ -2191,7 +2204,7 @@ bool nsFocusManager::BlurImpl(BrowsingContext* aBrowsingContextToClear,
                               BrowsingContext* aAncestorBrowsingContextToFocus,
                               bool aIsLeavingDocument, bool aAdjustWidget,
                               Element* aElementToFocus, uint64_t aActionId) {
-  LOGFOCUS(("<<Blur begin>>"));
+  LOGFOCUS(("<<Blur begin actionid: %" PRIu64 ">>", aActionId));
 
   // hold a reference to the focused content, which may be null
   RefPtr<Element> element = mFocusedElement;
@@ -2224,7 +2237,8 @@ bool nsFocusManager::BlurImpl(BrowsingContext* aBrowsingContextToClear,
       // Unclear if this ever happens.
       LOGFOCUS(
           ("Ignored an attempt to null out focused BrowsingContext when "
-           "docShell is null due to a stale action id."));
+           "docShell is null due to a stale action id %" PRIu64 ".",
+           aActionId));
       return true;
     }
 
@@ -2246,7 +2260,8 @@ bool nsFocusManager::BlurImpl(BrowsingContext* aBrowsingContextToClear,
       // Unclear if this ever happens.
       LOGFOCUS(
           ("Ignored an attempt to null out focused BrowsingContext when "
-           "presShell is null due to a stale action id."));
+           "presShell is null due to a stale action id %" PRIu64 ".",
+           aActionId));
       return true;
     }
     mFocusedElement = nullptr;
@@ -2303,10 +2318,11 @@ bool nsFocusManager::BlurImpl(BrowsingContext* aBrowsingContextToClear,
           if (RefPtr<BrowserParent> browserParent =
                   windowGlobalParent->GetBrowserParent()) {
             browserParent->Deactivate(windowBeingLowered, aActionId);
-            LOGFOCUS(("%s remote browser deactivated %p, %d",
-                      aContext == topLevelBrowsingContext ? "Top-level"
-                                                          : "OOP iframe",
-                      browserParent.get(), windowBeingLowered));
+            LOGFOCUS(
+                ("%s remote browser deactivated %p, %d, actionid: %" PRIu64,
+                 aContext == topLevelBrowsingContext ? "Top-level"
+                                                     : "OOP iframe",
+                 browserParent.get(), windowBeingLowered, aActionId));
           }
         }
       });
@@ -2315,8 +2331,8 @@ bool nsFocusManager::BlurImpl(BrowsingContext* aBrowsingContextToClear,
     // Same as above but for out-of-process iframes
     if (BrowserBridgeChild* bbc = BrowserBridgeChild::GetFrom(element)) {
       bbc->Deactivate(windowBeingLowered, aActionId);
-      LOGFOCUS(("Out-of-process iframe deactivated %p, %d", bbc,
-                windowBeingLowered));
+      LOGFOCUS(("Out-of-process iframe deactivated %p, %d, actionid: %" PRIu64,
+                bbc, windowBeingLowered, aActionId));
     }
   }
 
@@ -2330,7 +2346,7 @@ bool nsFocusManager::BlurImpl(BrowsingContext* aBrowsingContextToClear,
     }
 
     SendFocusOrBlurEvent(eBlur, presShell, element->GetComposedDoc(), element,
-                         1, false, false, aElementToFocus);
+                         false, false, aElementToFocus);
   }
 
   // if we are leaving the document or the window was lowered, make the caret
@@ -2371,16 +2387,13 @@ bool nsFocusManager::BlurImpl(BrowsingContext* aBrowsingContextToClear,
     SetFocusedWindowInternal(nullptr, aActionId);
     mFocusedElement = nullptr;
 
-    // pass 1 for the focus method when calling SendFocusOrBlurEvent just so
-    // that the check is made for suppressed documents. Check to ensure that
-    // the document isn't null in case someone closed it during the blur above
     Document* doc = window->GetExtantDoc();
     if (doc) {
-      SendFocusOrBlurEvent(eBlur, presShell, doc, ToSupports(doc), 1, false);
+      SendFocusOrBlurEvent(eBlur, presShell, doc, ToSupports(doc), false);
     }
     if (!GetFocusedBrowsingContext()) {
       SendFocusOrBlurEvent(eBlur, presShell, doc,
-                           window->GetCurrentInnerWindow(), 1, false);
+                           window->GetCurrentInnerWindow(), false);
     }
 
     // check if a different window was focused
@@ -2401,13 +2414,15 @@ void nsFocusManager::ActivateRemoteFrameIfNeeded(Element& aElement,
                                                  uint64_t aActionId) {
   if (BrowserParent* remote = BrowserParent::GetFrom(&aElement)) {
     remote->Activate(aActionId);
-    LOGFOCUS(("Remote browser activated %p", remote));
+    LOGFOCUS(
+        ("Remote browser activated %p, actionid: %" PRIu64, remote, aActionId));
   }
 
   // Same as above but for out-of-process iframes
   if (BrowserBridgeChild* bbc = BrowserBridgeChild::GetFrom(&aElement)) {
     bbc->Activate(aActionId);
-    LOGFOCUS(("Out-of-process iframe activated %p", bbc));
+    LOGFOCUS(("Out-of-process iframe activated %p, actionid: %" PRIu64, bbc,
+              aActionId));
   }
 }
 
@@ -2416,7 +2431,7 @@ void nsFocusManager::Focus(
     bool aIsNewDocument, bool aFocusChanged, bool aWindowRaised,
     bool aAdjustWidget, uint64_t aActionId,
     const Maybe<BlurredElementInfo>& aBlurredElementInfo) {
-  LOGFOCUS(("<<Focus begin>>"));
+  LOGFOCUS(("<<Focus begin actionid: %" PRIu64 ">>", aActionId));
 
   if (!aWindow) {
     return;
@@ -2457,7 +2472,9 @@ void nsFocusManager::Focus(
             aActionId, mActionIdForFocusedBrowsingContextInContent)) {
       // Unclear if this ever happens.
       LOGFOCUS(
-          ("Ignored an attempt to focus an element due to stale action id."));
+          ("Ignored an attempt to focus an element due to stale action id "
+           "%" PRIu64 ".",
+           aActionId));
       return;
     }
   }
@@ -2466,7 +2483,7 @@ void nsFocusManager::Focus(
   // Otherwise, just get the current focus method and use that. This ensures
   // that the method is set during the document and window focus events.
   uint32_t focusMethod = aFocusChanged
-                             ? aFlags & FOCUSMETHODANDRING_MASK
+                             ? aFlags & METHODANDRING_MASK
                              : aWindow->GetFocusMethod() |
                                    (aFlags & (FLAG_SHOWRING | FLAG_NOSHOWRING));
 
@@ -2496,8 +2513,10 @@ void nsFocusManager::Focus(
     if (docm) {
       LOGCONTENT(" from %s", docm->GetRootElement());
     }
-    LOGFOCUS((" [Newdoc: %d FocusChanged: %d Raised: %d Flags: %x]",
-              aIsNewDocument, aFocusChanged, aWindowRaised, aFlags));
+    LOGFOCUS(
+        (" [Newdoc: %d FocusChanged: %d Raised: %d Flags: %x actionid: %" PRIu64
+         "]",
+         aIsNewDocument, aFocusChanged, aWindowRaised, aFlags, aActionId));
   }
 
   if (aIsNewDocument) {
@@ -2539,13 +2558,13 @@ void nsFocusManager::Focus(
     }
     if (doc && !focusInOtherContentProcess) {
       SendFocusOrBlurEvent(eFocus, presShell, doc, ToSupports(doc),
-                           aFlags & FOCUSMETHOD_MASK, aWindowRaised);
+                           aWindowRaised);
     }
     if (GetFocusedBrowsingContext() == aWindow->GetBrowsingContext() &&
         !mFocusedElement && !focusInOtherContentProcess) {
       SendFocusOrBlurEvent(eFocus, presShell, doc,
                            aWindow->GetCurrentInnerWindow(),
-                           aFlags & FOCUSMETHOD_MASK, aWindowRaised);
+                           aWindowRaised);
     }
   }
 
@@ -2594,7 +2613,7 @@ void nsFocusManager::Focus(
       if (!focusInOtherContentProcess) {
         SendFocusOrBlurEvent(
             eFocus, presShell, aElement->GetComposedDoc(), aElement,
-            aFlags & FOCUSMETHOD_MASK, aWindowRaised, isRefocus,
+            aWindowRaised, isRefocus,
             aBlurredElementInfo ? aBlurredElementInfo->mElement.get()
                                 : nullptr);
       }
@@ -2725,7 +2744,7 @@ void nsFocusManager::FireFocusInOrOutEvent(
 
 void nsFocusManager::SendFocusOrBlurEvent(
     EventMessage aEventMessage, PresShell* aPresShell, Document* aDocument,
-    nsISupports* aTarget, uint32_t aFocusMethod, bool aWindowRaised,
+    nsISupports* aTarget, bool aWindowRaised,
     bool aIsRefocus, EventTarget* aRelatedTarget) {
   NS_ASSERTION(aEventMessage == eFocus || aEventMessage == eBlur,
                "Wrong event type for SendFocusOrBlurEvent");
@@ -3620,15 +3639,19 @@ nsresult nsFocusManager::DetermineElementToMoveFocus(
   return NS_OK;
 }
 
-uint32_t nsFocusManager::FocusOptionsToFocusManagerFlags(
-    const mozilla::dom::FocusOptions& aOptions) {
-  uint32_t flags = 0;
+uint32_t nsFocusManager::ProgrammaticFocusFlags(const FocusOptions& aOptions) {
+  uint32_t flags = FLAG_BYJS;
   if (aOptions.mPreventScroll) {
     flags |= FLAG_NOSCROLL;
   }
   if (aOptions.mPreventFocusRing) {
     flags |= FLAG_NOSHOWRING;
   }
+  if (UserActivation::IsHandlingKeyboardInput()) {
+    flags |= FLAG_BYKEY;
+  }
+  // TODO: We could do a similar thing if we're handling mouse input, but that
+  // changes focusability of some elements so may be more risky.
   return flags;
 }
 
@@ -4801,8 +4824,8 @@ void nsFocusManager::SetFocusedBrowsingContextFromOtherProcess(
     // Unclear if this ever happens.
     LOGFOCUS(
         ("Ignored an attempt to set an in-process BrowsingContext [%p] as "
-         "focused from another process due to stale action id.",
-         aContext));
+         "focused from another process due to stale action id %" PRIu64 ".",
+         aContext, aActionId));
     return;
   }
   if (aContext->IsInProcess()) {
@@ -4814,8 +4837,8 @@ void nsFocusManager::SetFocusedBrowsingContextFromOtherProcess(
     // was in-flight. Let's just ignore this.
     LOGFOCUS(
         ("Ignored an attempt to set an in-process BrowsingContext [%p] as "
-         "focused from another process.",
-         aContext));
+         "focused from another process, actionid: %" PRIu64 ".",
+         aContext, aActionId));
     return;
   }
   mFocusedBrowsingContextInContent = aContext;
@@ -4865,8 +4888,8 @@ void nsFocusManager::SetActiveBrowsingContextInContent(
                                  mActionIdForActiveBrowsingContextInContent)) {
     LOGFOCUS(
         ("Ignored an attempt to set an in-process BrowsingContext [%p] as "
-         "the active browsing context due to a stale action id.",
-         aContext));
+         "the active browsing context due to a stale action id %" PRIu64 ".",
+         aContext, aActionId));
     return;
   }
 
@@ -4909,8 +4932,8 @@ void nsFocusManager::SetActiveBrowsingContextFromOtherProcess(
                                  mActionIdForActiveBrowsingContextInContent)) {
     LOGFOCUS(
         ("Ignored an attempt to set active BrowsingContext [%p] from "
-         "another process due to a stale action id.",
-         aContext));
+         "another process due to a stale action id %" PRIu64 ".",
+         aContext, aActionId));
     return;
   }
   if (aContext->IsInProcess()) {
@@ -4922,8 +4945,8 @@ void nsFocusManager::SetActiveBrowsingContextFromOtherProcess(
     // was in-flight. Let's just ignore this.
     LOGFOCUS(
         ("Ignored an attempt to set an in-process BrowsingContext [%p] as "
-         "active from another process.",
-         aContext));
+         "active from another process. actionid: %" PRIu64,
+         aContext, aActionId));
     return;
   }
   mActiveBrowsingContextInContentSetFromOtherProcess = true;
@@ -4940,8 +4963,8 @@ void nsFocusManager::UnsetActiveBrowsingContextFromOtherProcess(
                                  mActionIdForActiveBrowsingContextInContent)) {
     LOGFOCUS(
         ("Ignored an attempt to unset the active BrowsingContext [%p] from "
-         "another process due to stale action id.",
-         aContext));
+         "another process due to stale action id: %" PRIu64 ".",
+         aContext, aActionId));
     return;
   }
   if (mActiveBrowsingContextInContent == aContext) {
@@ -4951,8 +4974,8 @@ void nsFocusManager::UnsetActiveBrowsingContextFromOtherProcess(
   } else {
     LOGFOCUS(
         ("Ignored an attempt to unset the active BrowsingContext [%p] from "
-         "another process.",
-         aContext));
+         "another process. actionid: %" PRIu64,
+         aContext, aActionId));
   }
 }
 
@@ -4961,12 +4984,17 @@ void nsFocusManager::ReviseActiveBrowsingContext(
     uint64_t aNewActionId) {
   MOZ_ASSERT(XRE_IsContentProcess());
   if (mActionIdForActiveBrowsingContextInContent == aOldActionId) {
+    LOGFOCUS(("Revising the active BrowsingContext [%p]. old actionid: %" PRIu64
+              ", new "
+              "actionid: %" PRIu64,
+              aContext, aOldActionId, aNewActionId));
     mActiveBrowsingContextInContent = aContext;
     mActionIdForActiveBrowsingContextInContent = aNewActionId;
   } else {
     LOGFOCUS(
-        ("Ignored a stale attempt to revise the active BrowsingContext [%p].",
-         aContext));
+        ("Ignored a stale attempt to revise the active BrowsingContext [%p]. "
+         "old actionid: %" PRIu64 ", new actionid: %" PRIu64,
+         aContext, aOldActionId, aNewActionId));
   }
 }
 
@@ -4975,13 +5003,19 @@ void nsFocusManager::ReviseFocusedBrowsingContext(
     uint64_t aNewActionId) {
   MOZ_ASSERT(XRE_IsContentProcess());
   if (mActionIdForFocusedBrowsingContextInContent == aOldActionId) {
+    LOGFOCUS(
+        ("Revising the focused BrowsingContext [%p]. old actionid: %" PRIu64
+         ", new "
+         "actionid: %" PRIu64,
+         aContext, aOldActionId, aNewActionId));
     mFocusedBrowsingContextInContent = aContext;
     mActionIdForFocusedBrowsingContextInContent = aNewActionId;
     mFocusedElement = nullptr;
   } else {
     LOGFOCUS(
-        ("Ignored a stale attempt to revise the focused BrowsingContext [%p].",
-         aContext));
+        ("Ignored a stale attempt to revise the focused BrowsingContext [%p]. "
+         "old actionid: %" PRIu64 ", new actionid: %" PRIu64,
+         aContext, aOldActionId, aNewActionId));
   }
 }
 
@@ -5011,6 +5045,7 @@ BrowsingContext* nsFocusManager::GetActiveBrowsingContextInChrome() {
 }
 
 void nsFocusManager::InsertNewFocusActionId(uint64_t aActionId) {
+  LOGFOCUS(("InsertNewFocusActionId %" PRIu64, aActionId));
   MOZ_ASSERT(XRE_IsParentProcess());
   MOZ_ASSERT(!mPendingActiveBrowsingContextActions.Contains(aActionId));
   mPendingActiveBrowsingContextActions.AppendElement(aActionId);
@@ -5103,6 +5138,7 @@ uint64_t nsFocusManager::GenerateFocusActionId() {
     MOZ_ASSERT(contentChild);
     contentChild->SendInsertNewFocusActionId(id);
   }
+  LOGFOCUS(("GenerateFocusActionId %" PRIu64, id));
   return id;
 }
 
@@ -5138,7 +5174,8 @@ void nsFocusManager::SetFocusedWindowInternal(nsPIDOMWindowOuter* aWindow,
     // Unclear if this ever happens.
     LOGFOCUS(
         ("Ignored an attempt to set an in-process BrowsingContext as "
-         "focused due to stale action id."));
+         "focused due to stale action id %" PRIu64 ".",
+         aActionId));
     return;
   }
 

@@ -171,8 +171,8 @@ bool CacheIRHealth::spewNonFallbackICInformation(AutoStructuredSpewer& spew,
 
 bool CacheIRHealth::spewICEntryHealth(AutoStructuredSpewer& spew,
                                       HandleScript script, ICEntry* entry,
-                                      jsbytecode* pc, JSOp op,
-                                      Happiness* entryHappiness) {
+                                      ICFallbackStub* fallback, jsbytecode* pc,
+                                      JSOp op, Happiness* entryHappiness) {
   spew->property("op", CodeName(op));
 
   // TODO: If a perf issue arises, look into improving the SrcNotes
@@ -188,15 +188,15 @@ bool CacheIRHealth::spewICEntryHealth(AutoStructuredSpewer& spew,
     }
   }
 
-  if (entry->fallbackStub()->state().mode() != ICState::Mode::Specialized) {
+  if (fallback->state().mode() != ICState::Mode::Specialized) {
     *entryHappiness = Sad;
   }
 
   spew->property("entryHappiness", uint8_t(*entryHappiness));
 
-  spew->property("mode", uint8_t(entry->fallbackStub()->state().mode()));
+  spew->property("mode", uint8_t(fallback->state().mode()));
 
-  spew->property("fallbackCount", entry->fallbackStub()->enteredCount());
+  spew->property("fallbackCount", fallback->enteredCount());
 
   return true;
 }
@@ -245,6 +245,7 @@ static bool addScriptToFinalWarmUpCountMap(JSContext* cx, HandleScript script) {
 }
 
 void CacheIRHealth::healthReportForIC(JSContext* cx, ICEntry* entry,
+                                      ICFallbackStub* fallback,
                                       HandleScript script,
                                       SpewContext context) {
   AutoStructuredSpewer spew(cx, SpewChannel::CacheIRHealthReport, script);
@@ -258,11 +259,12 @@ void CacheIRHealth::healthReportForIC(JSContext* cx, ICEntry* entry,
   }
   spew->property("spewContext", uint8_t(context));
 
-  jsbytecode* op = entry->pc(script);
+  jsbytecode* op = fallback->pc(script);
   JSOp jsOp = JSOp(*op);
 
   Happiness entryHappiness = Happy;
-  if (!spewICEntryHealth(spew, script, entry, op, jsOp, &entryHappiness)) {
+  if (!spewICEntryHealth(spew, script, entry, fallback, op, jsOp,
+                         &entryHappiness)) {
     cx->recoverFromOutOfMemory();
     return;
   }
@@ -288,43 +290,29 @@ void CacheIRHealth::healthReportForScript(JSContext* cx, HandleScript script,
 
   spew->property("spewContext", uint8_t(context));
 
-  jsbytecode* next = script->code();
-  jsbytecode* end = script->codeEnd();
-
   spew->beginListProperty("entries");
-  ICEntry* prevEntry = nullptr;
+
   Happiness scriptHappiness = Happy;
-  while (next < end) {
-    uint32_t len = 0;
-    uint32_t pcOffset = script->pcToOffset(next);
 
-    jit::ICEntry* entry =
-        jitScript->maybeICEntryFromPCOffset(pcOffset, prevEntry);
-    if (entry) {
-      prevEntry = entry;
+  for (size_t i = 0; i < jitScript->numICEntries(); i++) {
+    ICEntry& entry = jitScript->icEntry(i);
+    ICFallbackStub* fallback = jitScript->fallbackStub(i);
+    jsbytecode* pc = fallback->pc(script);
+    JSOp op = JSOp(*pc);
+
+    spew->beginObject();
+    Happiness entryHappiness = Happy;
+    if (!spewICEntryHealth(spew, script, &entry, fallback, pc, op,
+                           &entryHappiness)) {
+      cx->recoverFromOutOfMemory();
+      return;
     }
-
-    JSOp op = JSOp(*next);
-    const JSCodeSpec& cs = CodeSpec(op);
-    len = cs.length;
-    MOZ_ASSERT(len);
-
-    if (entry) {
-      spew->beginObject();
-      Happiness entryHappiness = Happy;
-      if (!spewICEntryHealth(spew, script, entry, next, op, &entryHappiness)) {
-        cx->recoverFromOutOfMemory();
-        return;
-      }
-
-      if (entryHappiness < scriptHappiness) {
-        scriptHappiness = entryHappiness;
-      }
-      spew->endObject();
+    if (entryHappiness < scriptHappiness) {
+      scriptHappiness = entryHappiness;
     }
-
-    next += len;
+    spew->endObject();
   }
+
   spew->endList();  // entries
 
   spew->property("scriptHappiness", uint8_t(scriptHappiness));

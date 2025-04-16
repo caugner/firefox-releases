@@ -21,6 +21,7 @@
 #include "nspr.h"
 #include "nsJSPrincipals.h"
 #include "mozilla/BasePrincipal.h"
+#include "mozilla/ContentPrincipal.h"
 #include "ExpandedPrincipal.h"
 #include "SystemPrincipal.h"
 #include "DomainPolicy.h"
@@ -669,6 +670,21 @@ nsScriptSecurityManager::CheckLoadURIWithPrincipal(nsIPrincipal* aPrincipal,
     return NS_ERROR_DOM_BAD_URI;
   }
 
+  // Extensions may allow access to a web accessible resource.
+  bool maybeWebAccessible = false;
+  NS_URIChainHasFlags(targetBaseURI,
+                      nsIProtocolHandler::WEBEXT_URI_WEB_ACCESSIBLE,
+                      &maybeWebAccessible);
+  NS_ENSURE_SUCCESS(rv, rv);
+  if (maybeWebAccessible) {
+    bool isWebAccessible = false;
+    rv = ExtensionPolicyService::GetSingleton().SourceMayLoadExtensionURI(
+        sourceURI, targetBaseURI, &isWebAccessible);
+    if (!(NS_SUCCEEDED(rv) && isWebAccessible)) {
+      return NS_ERROR_DOM_BAD_URI;
+    }
+  }
+
   // Check for uris that are only loadable by principals that subsume them
   bool targetURIIsLoadableBySubsumers = false;
   rv = NS_URIChainHasFlags(targetBaseURI,
@@ -1302,10 +1318,10 @@ nsScriptSecurityManager::PrincipalWithOA(
     if (!aOriginAttributes.isObject() || !attrs.Init(aCx, aOriginAttributes)) {
       return NS_ERROR_INVALID_ARG;
     }
-    RefPtr<ContentPrincipal> copy = new ContentPrincipal();
     auto* contentPrincipal = static_cast<ContentPrincipal*>(aPrincipal);
-    nsresult rv = copy->Init(contentPrincipal, attrs);
-    NS_ENSURE_SUCCESS(rv, rv);
+    RefPtr<ContentPrincipal> copy =
+        new ContentPrincipal(contentPrincipal, attrs);
+    NS_ENSURE_TRUE(copy, NS_ERROR_FAILURE);
     copy.forget(aReturnPrincipal);
   } else {
     // We do this for null principals, system principals (both fine)

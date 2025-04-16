@@ -46,6 +46,7 @@
 #include "vm/Uint8Clamped.h"
 
 #include "builtin/Boolean-inl.h"
+#include "gc/ObjectKind-inl.h"
 #include "jit/MacroAssembler-inl.h"
 #include "jit/SharedICHelpers-inl.h"
 #include "jit/VMFunctionList-inl.h"
@@ -184,7 +185,7 @@ void CacheRegisterAllocator::ensureDoubleRegister(MacroAssembler& masm,
       MOZ_ASSERT(loc.payloadType() == JSVAL_TYPE_INT32,
                  "Caller must ensure the operand is a number value");
       MOZ_ASSERT(loc.payloadStack() <= stackPushed_);
-      Address addr(masm.getStackPointer(), stackPushed_ - loc.payloadStack());
+      Address addr = payloadAddress(masm, &loc);
       addr.offset += stackOffset;
       masm.convertInt32ToDouble(addr, dest);
       return;
@@ -236,7 +237,7 @@ void CacheRegisterAllocator::copyToScratchRegister(MacroAssembler& masm,
     case OperandLocation::PayloadStack: {
       MOZ_ASSERT(loc.payloadType() == typedId.type());
       MOZ_ASSERT(loc.payloadStack() <= stackPushed_);
-      Address addr(masm.getStackPointer(), stackPushed_ - loc.payloadStack());
+      Address addr = payloadAddress(masm, &loc);
       addr.offset += stackOffset;
       masm.loadPtr(addr, dest);
       return;
@@ -248,51 +249,46 @@ void CacheRegisterAllocator::copyToScratchRegister(MacroAssembler& masm,
   }
 }
 
-ValueOperand CacheRegisterAllocator::useFixedValueRegister(MacroAssembler& masm,
-                                                           ValOperandId valId,
-                                                           ValueOperand reg) {
-  allocateFixedValueRegister(masm, reg);
+void CacheRegisterAllocator::copyToScratchValueRegister(
+    MacroAssembler& masm, ValOperandId valId, ValueOperand dest) const {
+  MOZ_ASSERT(!addedFailurePath_);
+  MOZ_ASSERT(!hasAutoScratchFloatRegisterSpill());
 
-  OperandLocation& loc = operandLocations_[valId.id()];
+  const OperandLocation& loc = operandLocations_[valId.id()];
   switch (loc.kind()) {
     case OperandLocation::ValueReg:
-      masm.moveValue(loc.valueReg(), reg);
-      MOZ_ASSERT(!currentOpRegs_.aliases(loc.valueReg()),
-                 "Register shouldn't be in use");
-      availableRegs_.add(loc.valueReg());
+      masm.moveValue(loc.valueReg(), dest);
       break;
-    case OperandLocation::ValueStack:
-      popValue(masm, &loc, reg);
+    case OperandLocation::ValueStack: {
+      Address addr = valueAddress(masm, &loc);
+      masm.loadValue(addr, dest);
       break;
+    }
     case OperandLocation::BaselineFrame: {
       Address addr = addressOf(masm, loc.baselineFrameSlot());
-      masm.loadValue(addr, reg);
+      masm.loadValue(addr, dest);
       break;
     }
     case OperandLocation::Constant:
-      masm.moveValue(loc.constant(), reg);
+      masm.moveValue(loc.constant(), dest);
       break;
     case OperandLocation::PayloadReg:
-      masm.tagValue(loc.payloadType(), loc.payloadReg(), reg);
-      MOZ_ASSERT(!currentOpRegs_.has(loc.payloadReg()),
-                 "Register shouldn't be in use");
-      availableRegs_.add(loc.payloadReg());
+      masm.tagValue(loc.payloadType(), loc.payloadReg(), dest);
       break;
-    case OperandLocation::PayloadStack:
-      popPayload(masm, &loc, reg.scratchReg());
-      masm.tagValue(loc.payloadType(), reg.scratchReg(), reg);
+    case OperandLocation::PayloadStack: {
+      Address addr = payloadAddress(masm, &loc);
+      masm.loadPtr(addr, dest.scratchReg());
+      masm.tagValue(loc.payloadType(), dest.scratchReg(), dest);
       break;
+    }
     case OperandLocation::DoubleReg: {
       ScratchDoubleScope fpscratch(masm);
-      masm.boxDouble(loc.doubleReg(), reg, fpscratch);
+      masm.boxDouble(loc.doubleReg(), dest, fpscratch);
       break;
     }
     case OperandLocation::Uninitialized:
       MOZ_CRASH();
   }
-
-  loc.setValueReg(reg);
-  return reg;
 }
 
 Register CacheRegisterAllocator::useRegister(MacroAssembler& masm,
@@ -837,9 +833,7 @@ void CacheRegisterAllocator::popPayload(MacroAssembler& masm,
     stackPushed_ -= sizeof(uintptr_t);
   } else {
     MOZ_ASSERT(loc->payloadStack() < stackPushed_);
-    masm.loadPtr(
-        Address(masm.getStackPointer(), stackPushed_ - loc->payloadStack()),
-        dest);
+    masm.loadPtr(payloadAddress(masm, loc), dest);
     masm.propagateOOM(freePayloadSlots_.append(loc->payloadStack()));
   }
 
@@ -850,6 +844,12 @@ Address CacheRegisterAllocator::valueAddress(MacroAssembler& masm,
                                              const OperandLocation* loc) const {
   MOZ_ASSERT(loc >= operandLocations_.begin() && loc < operandLocations_.end());
   return Address(masm.getStackPointer(), stackPushed_ - loc->valueStack());
+}
+
+Address CacheRegisterAllocator::payloadAddress(
+    MacroAssembler& masm, const OperandLocation* loc) const {
+  MOZ_ASSERT(loc >= operandLocations_.begin() && loc < operandLocations_.end());
+  return Address(masm.getStackPointer(), stackPushed_ - loc->payloadStack());
 }
 
 void CacheRegisterAllocator::popValue(MacroAssembler& masm,
@@ -2142,20 +2142,6 @@ bool CacheIRCompiler::emitGuardIsNotDOMProxy(ObjOperandId objId) {
   masm.branchTestProxyHandlerFamily(Assembler::Equal, obj, scratch,
                                     GetDOMProxyHandlerFamily(),
                                     failure->label());
-  return true;
-}
-
-bool CacheIRCompiler::emitGuardMagicValue(ValOperandId valId,
-                                          JSWhyMagic magic) {
-  JitSpew(JitSpew_Codegen, "%s", __FUNCTION__);
-  ValueOperand val = allocator.useValueRegister(masm, valId);
-
-  FailurePath* failure;
-  if (!addFailurePath(&failure)) {
-    return false;
-  }
-
-  masm.branchTestMagicValue(Assembler::NotEqual, val, magic, failure->label());
   return true;
 }
 
@@ -3600,16 +3586,20 @@ bool CacheIRCompiler::emitGuardXrayNoExpando(ObjOperandId objId) {
   return true;
 }
 
-bool CacheIRCompiler::emitGuardNoAllocationMetadataBuilder() {
+bool CacheIRCompiler::emitGuardNoAllocationMetadataBuilder(
+    uint32_t builderAddrOffset) {
   JitSpew(JitSpew_Codegen, "%s", __FUNCTION__);
+  AutoScratchRegister scratch(allocator, masm);
+
   FailurePath* failure;
   if (!addFailurePath(&failure)) {
     return false;
   }
 
-  masm.branchPtr(Assembler::NotEqual,
-                 AbsoluteAddress(cx_->realm()->addressOfMetadataBuilder()),
-                 ImmWord(0), failure->label());
+  StubFieldOffset builderField(builderAddrOffset, StubField::Type::RawPointer);
+  emitLoadStubField(builderField, scratch);
+  masm.branchPtr(Assembler::NotEqual, Address(scratch, 0), ImmWord(0),
+                 failure->label());
 
   return true;
 }
@@ -6078,66 +6068,6 @@ bool CacheIRCompiler::emitLoadValueTruthyResult(ValOperandId inputId) {
   masm.moveValue(BooleanValue(false), output.valueReg());
 
   masm.bind(&done);
-  return true;
-}
-
-bool CacheIRCompiler::emitLoadNewObjectFromTemplateResult(
-    uint32_t templateObjectOffset, uint32_t, uint32_t) {
-  JitSpew(JitSpew_Codegen, "%s", __FUNCTION__);
-  AutoOutputRegister output(*this);
-  AutoScratchRegister obj(allocator, masm);
-  AutoScratchRegisterMaybeOutput scratch(allocator, masm, output);
-
-  TemplateObject templateObj(objectStubFieldUnchecked(templateObjectOffset));
-
-  FailurePath* failure;
-  if (!addFailurePath(&failure)) {
-    return false;
-  }
-
-  masm.createGCObject(obj, scratch, templateObj, gc::DefaultHeap,
-                      failure->label());
-  masm.tagValue(JSVAL_TYPE_OBJECT, obj, output.valueReg());
-  return true;
-}
-
-bool CacheIRCompiler::emitNewPlainObjectResult(uint32_t numFixedSlots,
-                                               uint32_t numDynamicSlots,
-                                               gc::AllocKind allocKind,
-                                               uint32_t shapeOffset) {
-  JitSpew(JitSpew_Codegen, "%s", __FUNCTION__);
-  AutoCallVM callvm(masm, this, allocator);
-  AutoScratchRegister obj(allocator, masm);
-  AutoScratchRegister scratch(allocator, masm);
-  AutoScratchRegisterMaybeOutput shape(allocator, masm, callvm.output());
-
-  StubFieldOffset shapeSlot(shapeOffset, StubField::Type::Shape);
-
-  Label success;
-  Label fail;
-
-  emitLoadStubField(shapeSlot, shape);
-  masm.createPlainGCObject(obj, shape, scratch, shape, numFixedSlots,
-                           numDynamicSlots, allocKind, gc::DefaultHeap, &fail);
-  masm.tagValue(JSVAL_TYPE_OBJECT, obj, callvm.output().valueReg());
-  masm.jump(&success);
-
-  masm.bind(&fail);
-
-  // We get here if the nursery is full (unlikely) but also if the current arena
-  // is full and we need to allocate a new one (fairly common).
-
-  callvm.prepare();
-  masm.Push(Imm32(gc::DefaultHeap));
-  masm.Push(Imm32(int32_t(allocKind)));
-  emitLoadStubField(shapeSlot, shape);  // This might have been overwritten.
-  masm.Push(shape);
-
-  using Fn =
-      JSObject* (*)(JSContext*, HandleShape, gc::AllocKind, gc::InitialHeap);
-  callvm.call<Fn, NewPlainObject>();
-
-  masm.bind(&success);
   return true;
 }
 

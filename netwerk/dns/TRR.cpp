@@ -49,7 +49,7 @@ extern mozilla::LazyLogModule gHostResolverLog;
   MOZ_LOG_TEST(mozilla::net::gHostResolverLog, mozilla::LogLevel::Debug)
 
 NS_IMPL_ISUPPORTS(TRR, nsIHttpPushListener, nsIInterfaceRequestor,
-                  nsIStreamListener, nsIRunnable)
+                  nsIStreamListener, nsIRunnable, nsITimerCallback)
 
 // when firing off a normal A or AAAA query
 TRR::TRR(AHostResolver* aResolver, nsHostRecord* aRec, enum TrrType aType)
@@ -503,9 +503,8 @@ nsresult TRR::ReceivePush(nsIHttpChannel* pushed, nsHostRecord* pushedRec) {
     uri->GetQuery(query);
   }
 
-  PRNetAddr tempAddr;
   if (NS_FAILED(DohDecodeQuery(query, mHost, mType)) ||
-      (PR_StringToNetAddr(mHost.get(), &tempAddr) == PR_SUCCESS)) {  // literal
+      HostIsIPLiteral(mHost)) {  // literal
     LOG(("TRR::ReceivePush failed to decode %s\n", mHost.get()));
     return NS_ERROR_UNEXPECTED;
   }
@@ -883,7 +882,7 @@ void TRR::ReportStatus(nsresult aStatusCode) {
   // it as failed; otherwise it can cause the confirmation to fail.
   if (UseDefaultServer() && aStatusCode != NS_ERROR_ABORT) {
     // Bad content is still considered "okay" if the HTTP response is okay
-    gTRRService->TRRIsOkay(aStatusCode);
+    gTRRService->RecordTRRStatus(aStatusCode);
   }
 }
 

@@ -58,6 +58,7 @@
 #include "mozilla/StaticPrefs_fission.h"
 #include "mozilla/StaticPrefs_page_load.h"
 #include "mozilla/StaticPtr.h"
+#include "mozilla/URLQueryStringStripper.h"
 #include "nsIURIFixup.h"
 #include "nsIXULRuntime.h"
 
@@ -535,6 +536,7 @@ BrowsingContext::BrowsingContext(WindowContext* aParentWindow,
       mUseRemoteTabs(false),
       mUseRemoteSubframes(false),
       mCreatedDynamically(false),
+      mIsInBFCache(false),
       mChildOffset(0) {
   MOZ_RELEASE_ASSERT(!mParentWindow || mParentWindow->Group() == mGroup);
   MOZ_RELEASE_ASSERT(mBrowsingContextId != 0);
@@ -777,8 +779,10 @@ void BrowsingContext::Attach(bool aFromIPC, ContentParent* aOriginProcess) {
       }
     });
 
-    if (IsTopContent() && !Canonical()->GetWebProgress()) {
-      Canonical()->mWebProgress = new BrowsingContextWebProgress();
+    // We want to create a BrowsingContextWebProgress for all content
+    // BrowsingContexts.
+    if (IsContent() && !Canonical()->mWebProgress) {
+      Canonical()->mWebProgress = new BrowsingContextWebProgress(Canonical());
     }
   }
 
@@ -815,22 +819,6 @@ void BrowsingContext::Detach(bool aFromIPC) {
     mGroup->Toplevels().RemoveElement(this);
   }
 
-  auto callSendDiscard = [&](auto* aActor) {
-    // Hold a strong reference to ourself, and keep our BrowsingContextGroup
-    // alive, until the responses comes back to ensure we don't die while
-    // messages relating to this context are in-flight.
-    //
-    // When the callback is called, the keepalive on our group will be
-    // destroyed, and the reference to the BrowsingContext will be dropped,
-    // which may cause it to be fully destroyed.
-    mGroup->AddKeepAlive();
-    auto callback = [self = RefPtr{this}](auto) {
-      self->mGroup->RemoveKeepAlive();
-    };
-
-    aActor->SendDiscardBrowsingContext(this, callback, callback);
-  };
-
   if (XRE_IsParentProcess()) {
     Group()->EachParent([&](ContentParent* aParent) {
       // Only the embedder process is allowed to initiate a BrowsingContext
@@ -842,11 +830,25 @@ void BrowsingContext::Detach(bool aFromIPC) {
       // destroyed.
       if (!Canonical()->IsEmbeddedInProcess(aParent->ChildID()) &&
           !Canonical()->IsOwnedByProcess(aParent->ChildID())) {
-        callSendDiscard(aParent);
+        // Hold a strong reference to ourself, and keep our BrowsingContextGroup
+        // alive, until the responses comes back to ensure we don't die while
+        // messages relating to this context are in-flight.
+        //
+        // When the callback is called, the keepalive on our group will be
+        // destroyed, and the reference to the BrowsingContext will be dropped,
+        // which may cause it to be fully destroyed.
+        mGroup->AddKeepAlive();
+        auto callback = [self = RefPtr{this}](auto) {
+          self->mGroup->RemoveKeepAlive();
+        };
+
+        aParent->SendDiscardBrowsingContext(this, callback, callback);
       }
     });
   } else if (!aFromIPC) {
-    callSendDiscard(ContentChild::GetSingleton());
+    auto callback = [](auto) {};
+    ContentChild::GetSingleton()->SendDiscardBrowsingContext(this, callback,
+                                                             callback);
   }
 
   mGroup->Unregister(this);
@@ -1907,6 +1909,10 @@ nsresult BrowsingContext::LoadURI(nsDocShellLoadState* aLoadState,
       wgc->SendLoadURI(this, aLoadState, aSetNavigating);
     }
   } else if (XRE_IsParentProcess()) {
+    // Strip the target query parameters before loading the URI in the parent.
+    // The loading in content will be handled in nsDocShell.
+    aLoadState->MaybeStripTrackerQueryStrings(this);
+
     if (Canonical()->LoadInParent(aLoadState, aSetNavigating)) {
       return NS_OK;
     }
@@ -2689,15 +2695,9 @@ void BrowsingContext::DidSet(FieldIndex<IDX_Muted>) {
   });
 }
 
-auto BrowsingContext::CanSet(FieldIndex<IDX_OverrideDPPX>, const float& aValue,
-                             ContentParent* aSource) -> CanSetResult {
-  // FIXME: Should only be settable by the parent process, but devtools code
-  // currently sets it from the child.
-  if (!IsTop()) {
-    return CanSetResult::Deny;
-  }
-
-  return LegacyRevertIfNotOwningOrParentProcess(aSource);
+bool BrowsingContext::CanSet(FieldIndex<IDX_OverrideDPPX>, const float& aValue,
+                             ContentParent* aSource) {
+  return XRE_IsParentProcess() && !aSource && IsTop();
 }
 
 void BrowsingContext::DidSet(FieldIndex<IDX_OverrideDPPX>, float aOldValue) {
@@ -2745,6 +2745,15 @@ void BrowsingContext::DidSet(FieldIndex<IDX_IsInBFCache>) {
   MOZ_DIAGNOSTIC_ASSERT(IsTop());
 
   const bool isInBFCache = GetIsInBFCache();
+  if (!isInBFCache) {
+    PreOrderWalk(
+        [&](BrowsingContext* aContext) { aContext->mIsInBFCache = false; });
+  }
+
+  if (isInBFCache && XRE_IsContentProcess() && mDocShell) {
+    nsDocShell::Cast(mDocShell)->MaybeDisconnectChildListenersOnPageHide();
+  }
+
   PreOrderWalk([&](BrowsingContext* aContext) {
     nsCOMPtr<nsIDocShell> shell = aContext->GetDocShell();
     if (shell) {
@@ -2752,6 +2761,11 @@ void BrowsingContext::DidSet(FieldIndex<IDX_IsInBFCache>) {
           ->FirePageHideShowNonRecursive(!isInBFCache);
     }
   });
+
+  if (isInBFCache) {
+    PreOrderWalk(
+        [&](BrowsingContext* aContext) { aContext->mIsInBFCache = true; });
+  }
 }
 
 void BrowsingContext::SetCustomPlatform(const nsAString& aPlatform,
@@ -3011,6 +3025,14 @@ void BrowsingContext::DidSet(FieldIndex<IDX_CurrentInnerWindowId>) {
         prevWindowContext->Canonical()->DidBecomeCurrentWindowGlobal(false);
       }
       if (mCurrentWindowContext) {
+        // We set a timer when we set the current inner window. This
+        // will then flush the session storage to session store to
+        // make sure that we don't miss to store session storage to
+        // session store that is a result of navigation. This is due
+        // to Bug 1700623. We wish to fix this in Bug 1711886, where
+        // making sure to store everything would make this timer
+        // unnecessary.
+        Canonical()->MaybeScheduleSessionStoreUpdate();
         mCurrentWindowContext->Canonical()->DidBecomeCurrentWindowGlobal(true);
       }
     }
@@ -3361,16 +3383,17 @@ void BrowsingContext::RemoveFromSessionHistory(const nsID& aChangeID) {
 
 void BrowsingContext::HistoryGo(int32_t aOffset, uint64_t aHistoryEpoch,
                                 bool aRequireUserInteraction,
+                                bool aUserActivation,
                                 std::function<void(int32_t&&)>&& aResolver) {
   if (XRE_IsContentProcess()) {
     ContentChild::GetSingleton()->SendHistoryGo(
-        this, aOffset, aHistoryEpoch, aRequireUserInteraction,
+        this, aOffset, aHistoryEpoch, aRequireUserInteraction, aUserActivation,
         std::move(aResolver),
         [](mozilla::ipc::
                ResponseRejectReason) { /* FIXME Is ignoring this fine? */ });
   } else {
     Canonical()->HistoryGo(
-        aOffset, aHistoryEpoch, aRequireUserInteraction,
+        aOffset, aHistoryEpoch, aRequireUserInteraction, aUserActivation,
         Canonical()->GetContentParent()
             ? Some(Canonical()->GetContentParent()->ChildID())
             : Nothing(),

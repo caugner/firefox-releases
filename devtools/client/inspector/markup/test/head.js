@@ -111,14 +111,16 @@ var getContainerForSelector = async function(
  * Retrieve the nodeValue for the firstChild of a provided selector on the content page.
  *
  * @param {String} selector
- * @param {TestActorFront} testActor The current TestActorFront instance.
  * @return {String} the nodeValue of the first
  */
-async function getFirstChildNodeValue(selector, testActor) {
-  const nodeValue = await testActor.eval(`
-    document.querySelector("${selector}").firstChild.nodeValue;
-  `);
-  return nodeValue;
+function getFirstChildNodeValue(selector) {
+  return SpecialPowers.spawn(
+    gBrowser.selectedBrowser,
+    [selector],
+    _selector => {
+      return content.document.querySelector(_selector).firstChild.nodeValue;
+    }
+  );
 }
 
 /**
@@ -153,7 +155,7 @@ var clickContainer = async function(selector, inspector) {
   const container = getContainerForNodeFront(nodeFront, inspector);
 
   const updated = container.selected
-    ? promise.resolve()
+    ? Promise.resolve()
     : inspector.once("inspector-updated");
   EventUtils.synthesizeMouseAtCenter(
     container.tagLine,
@@ -250,7 +252,7 @@ function undoChange(inspector) {
   const canUndo = inspector.markup.undo.canUndo();
   ok(canUndo, "The last change in the markup-view can be undone");
   if (!canUndo) {
-    return promise.reject();
+    return Promise.reject();
   }
 
   const mutated = inspector.once("markupmutation");
@@ -270,7 +272,7 @@ function redoChange(inspector) {
   const canRedo = inspector.markup.undo.canRedo();
   ok(canRedo, "The last change in the markup-view can be redone");
   if (!canRedo) {
-    return promise.reject();
+    return Promise.reject();
   }
 
   const mutated = inspector.once("markupmutation");

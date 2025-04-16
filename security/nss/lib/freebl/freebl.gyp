@@ -285,6 +285,54 @@
       ]
     },
     {
+      'target_name': 'gcm-aes-ppc_lib',
+      'type': 'static_library',
+      'sources': [
+        'ppc-gcm.s',
+      ],
+      'dependencies': [
+        '<(DEPTH)/exports.gyp:nss_exports'
+      ],
+      'conditions': [
+        [ 'cc_is_clang==1', {
+          'cflags': [
+            '-no-integrated-as',
+          ],
+          'cflags_mozilla': [
+            '-no-integrated-as',
+          ],
+          'asflags_mozilla': [
+            '-no-integrated-as',
+          ],
+        }],
+      ],
+    },
+    {
+      'target_name': 'ppc-gcm-wrap-nodepend_c_lib',
+      'type': 'static_library',
+      'sources': [
+        'ppc-gcm-wrap.c',
+      ],
+      'dependencies': [
+        '<(DEPTH)/exports.gyp:nss_exports',
+        'gcm-aes-ppc_lib',
+      ],
+    },
+    {
+      'target_name': 'ppc-gcm-wrap_c_lib',
+      'type': 'static_library',
+      'sources': [
+        'ppc-gcm-wrap.c',
+      ],
+      'dependencies': [
+        '<(DEPTH)/exports.gyp:nss_exports',
+        'gcm-aes-ppc_lib',
+      ],
+      'defines!': [
+        'FREEBL_NO_DEPEND',
+      ],
+    },
+    {
       'target_name': 'gcm-sha512-nodepend-ppc_c_lib',
       'type': 'static_library',
       'sources': [
@@ -466,6 +514,7 @@
             'gcm-aes-ppc_c_lib',
             'gcm-sha512-ppc_c_lib',
             'chacha20-ppc_lib',
+            'ppc-gcm-wrap_c_lib',
           ],
         }],
         [ 'disable_altivec==1 and (target_arch=="ppc64" or target_arch=="ppc64le")', {
@@ -484,6 +533,7 @@
             'FREEBL_LOWHASH',
             'USE_HW_AES',
             'INTEL_GCM',
+            'PPC_GCM',
           ],
           'conditions': [
             [ 'target_arch=="x64"', {
@@ -535,10 +585,20 @@
             'gcm-aes-aarch64_c_lib',
           ],
         }],
-        [ 'disable_altivec==0 and (target_arch=="ppc64" or target_arch=="ppc64le")', {
-          'dependencies': [
-            'gcm-aes-ppc_c_lib',
-            'gcm-sha512-nodepend-ppc_c_lib',
+        [ 'disable_altivec==0', {
+          'conditions': [
+            [ 'target_arch=="ppc64"', {
+              'dependencies': [
+                'gcm-aes-ppc_c_lib',
+                'gcm-sha512-nodepend-ppc_c_lib',
+              ],
+            }, 'target_arch=="ppc64le"', {
+               'dependencies': [
+                 'gcm-aes-ppc_c_lib',
+                 'gcm-sha512-nodepend-ppc_c_lib',
+                 'ppc-gcm-wrap-nodepend_c_lib',
+               ],
+            }],
           ],
         }],
         [ 'disable_altivec==1 and (target_arch=="ppc64" or target_arch=="ppc64le")', {
@@ -742,6 +802,13 @@
         'defines': [
           'FREEBL_LOWHASH',
           'FREEBL_NO_DEPEND',
+        ],
+        'conditions': [
+          [ 'disable_altivec==0 and target_arch=="ppc64le"', {
+            'defines': [
+              'PPC_GCM',
+            ],
+          }],
         ],
       }],
       [ 'OS=="linux" or OS=="android"', {

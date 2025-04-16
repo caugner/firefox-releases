@@ -196,10 +196,11 @@ bool nsDisplayFieldSetBorder::CreateWebRenderCommands(
           LayoutDeviceRect::FromAppUnits(legendRect, appUnitsPerDevPixel));
       region.mode = wr::ClipMode::ClipOut;
       region.radii = wr::EmptyBorderRadius();
-      nsTArray<mozilla::wr::ComplexClipRegion> array{region};
 
-      auto clip = aBuilder.DefineClip(Nothing(), layoutRect, &array);
-      auto clipChain = aBuilder.DefineClipChain({clip}, true);
+      auto rect_clip = aBuilder.DefineRectClip(layoutRect);
+      auto complex_clip = aBuilder.DefineRoundedRectClip(region);
+      auto clipChain =
+          aBuilder.DefineClipChain({rect_clip, complex_clip}, true);
       clipOut.emplace(aBuilder, clipChain);
     }
   } else {
@@ -432,10 +433,9 @@ void nsFieldSetFrame::Reflow(nsPresContext* aPresContext,
   // @note |this| frame applies borders but not any padding.  Our anonymous
   // inner frame applies the padding (but not borders).
   const auto wm = GetWritingMode();
-  LogicalMargin border = aReflowInput.ComputedLogicalBorderPadding(wm) -
-                         aReflowInput.ComputedLogicalPadding(wm);
   auto skipSides = PreReflowBlockLevelLogicalSkipSides();
-  border.ApplySkipSides(skipSides);
+  LogicalMargin border =
+      aReflowInput.ComputedLogicalBorder(wm).ApplySkipSides(skipSides);
   LogicalSize availSize(wm, aReflowInput.ComputedSize().ISize(wm),
                         aReflowInput.AvailableBSize());
 

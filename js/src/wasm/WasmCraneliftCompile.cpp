@@ -460,7 +460,7 @@ size_t env_func_sig_index(const CraneliftModuleEnvironment* env,
 }
 bool env_is_func_valid_for_ref(const CraneliftModuleEnvironment* env,
                                uint32_t index) {
-  return env->env->validForRefFunc.getBit(index);
+  return env->env->funcs[index].canRefFunc();
 }
 
 size_t env_func_import_tls_offset(const CraneliftModuleEnvironment* env,
@@ -607,7 +607,6 @@ bool wasm::CraneliftCompileFunctions(const ModuleEnvironment& moduleEnv,
 
       for (size_t i = 0; i < inputs.length(); i++) {
         int funcIndex = inputs[i].index;
-        mozilla::Unused << funcIndex;
 
         JitSpew(JitSpew_Codegen, "# ========================================");
         JitSpew(JitSpew_Codegen, "# Start of wasm cranelift code for index %d",
@@ -656,6 +655,8 @@ static_assert(offsetof(wasm::FuncImportTls, tls) == sizeof(void*),
 bool global_isConstant(const GlobalDesc* global) {
   return global->isConstant();
 }
+
+bool global_isMutable(const GlobalDesc* global) { return global->isMutable(); }
 
 bool global_isIndirect(const GlobalDesc* global) {
   return global->isIndirect();

@@ -2004,9 +2004,8 @@ void MacroAssembler::absInt32x4(FloatRegister src, FloatRegister dest) {
 
 void MacroAssembler::absInt64x2(FloatRegister src, FloatRegister dest) {
   ScratchSimd128Scope scratch(*this);
-  vpshufd(ComputeShuffleMask(1, 1, 3, 3), src, scratch);
   moveSimd128(src, dest);
-  vpsrad(Imm32(31), scratch, scratch);
+  signReplicationInt64x2(src, scratch);
   vpxor(Operand(scratch), dest, dest);
   vpsubq(Operand(scratch), dest, dest);
 }
@@ -2069,9 +2068,8 @@ void MacroAssembler::rightShiftInt8x16(Register rhs, FloatRegister lhsDest,
 }
 
 void MacroAssembler::rightShiftInt8x16(Imm32 count, FloatRegister src,
-                                       FloatRegister dest, FloatRegister temp) {
-  MacroAssemblerX86Shared::packedRightShiftByScalarInt8x16(count, src, temp,
-                                                           dest);
+                                       FloatRegister dest) {
+  MacroAssemblerX86Shared::packedRightShiftByScalarInt8x16(count, src, dest);
 }
 
 void MacroAssembler::unsignedRightShiftInt8x16(Register rhs,
@@ -2138,6 +2136,12 @@ void MacroAssembler::unsignedRightShiftInt32x4(Imm32 count, FloatRegister src,
   vpsrld(count, src, dest);
 }
 
+void MacroAssembler::rightShiftInt64x2(Register rhs, FloatRegister lhsDest,
+                                       Register temp1, FloatRegister temp2) {
+  MacroAssemblerX86Shared::packedRightShiftByScalarInt64x2(lhsDest, rhs, temp1,
+                                                           temp2, lhsDest);
+}
+
 void MacroAssembler::rightShiftInt64x2(Imm32 count, FloatRegister src,
                                        FloatRegister dest) {
   MacroAssemblerX86Shared::packedRightShiftByScalarInt64x2(count, src, dest);
@@ -2154,6 +2158,33 @@ void MacroAssembler::unsignedRightShiftInt64x2(Imm32 count, FloatRegister src,
                                                FloatRegister dest) {
   moveSimd128(src, dest);
   vpsrlq(count, src, dest);
+}
+
+// Sign replication operation
+
+void MacroAssembler::signReplicationInt8x16(FloatRegister src,
+                                            FloatRegister dest) {
+  MOZ_ASSERT(src != dest);
+  vpxor(Operand(dest), dest, dest);
+  vpcmpgtb(Operand(src), dest, dest);
+}
+
+void MacroAssembler::signReplicationInt16x8(FloatRegister src,
+                                            FloatRegister dest) {
+  moveSimd128(src, dest);
+  vpsraw(Imm32(15), dest, dest);
+}
+
+void MacroAssembler::signReplicationInt32x4(FloatRegister src,
+                                            FloatRegister dest) {
+  moveSimd128(src, dest);
+  vpsrad(Imm32(31), dest, dest);
+}
+
+void MacroAssembler::signReplicationInt64x2(FloatRegister src,
+                                            FloatRegister dest) {
+  vpshufd(ComputeShuffleMask(1, 1, 3, 3), src, dest);
+  vpsrad(Imm32(31), dest, dest);
 }
 
 // Bitwise and, or, xor, not

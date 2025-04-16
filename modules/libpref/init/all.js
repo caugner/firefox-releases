@@ -77,11 +77,7 @@ pref("security.enterprise_roots.enabled", false);
 // background thread. This module allows Firefox to use client certificates
 // stored in OS certificate storage. Currently only available for Windows and
 // macOS.
-#ifdef EARLY_BETA_OR_EARLIER
-  pref("security.osclientcerts.autoload", true);
-#else
-  pref("security.osclientcerts.autoload", false);
-#endif
+pref("security.osclientcerts.autoload", true);
 
 // The supported values of this pref are:
 // 0: do not fetch OCSP
@@ -301,8 +297,6 @@ pref("dom.mouseevent.click.hack.use_legacy_non-primary_dispatch", "");
 // Fastback caching - if this pref is negative, then we calculate the number
 // of content viewers to cache based on the amount of available memory.
 pref("browser.sessionhistory.max_total_viewers", -1);
-// 0 = false, 1 = true, 2 = autodetect.
-pref("ui.android.mouse_as_touch", 1);
 
 pref("browser.display.force_inline_alttext", false); // true = force ALT text for missing images to be layed out inline
 // 0 = no external leading,
@@ -979,13 +973,6 @@ pref("print.print_edge_left", 0);
 pref("print.print_edge_right", 0);
 pref("print.print_edge_bottom", 0);
 
-// Print via the parent process. This is only used when e10s is enabled.
-#if !defined(MOZ_WIDGET_ANDROID)
-  pref("print.print_via_parent", true);
-#else
-  pref("print.print_via_parent", false);
-#endif
-
 // Should this just be checking for MOZ_WIDGET_GTK?
 #if defined(ANDROID) || defined(XP_UNIX) && !defined(XP_MACOSX)
   pref("print.print_reversed", false);
@@ -1052,6 +1039,10 @@ pref("dom.cycle_collector.incremental", true);
 //   2 = openBlocked
 //   3 = openAbused
 pref("privacy.popups.disable_from_plugins", 3);
+
+// If enabled by privacy.resistFingerprinting.testGranularityMask, list of
+// domains exempted from RFP.
+pref("privacy.resistFingerprinting.exemptedDomains", "*.example.invalid");
 
 // Fix cookie blocking breakage by providing ephemeral Paritioned LocalStorage
 // for a list of hosts when detected as trackers.
@@ -1194,7 +1185,6 @@ pref("javascript.options.dump_stack_on_debuggee_would_run", false);
 pref("javascript.options.dynamicImport", true);
 
 // advanced prefs
-pref("advanced.mailftp",                    false);
 pref("image.animation_mode",                "normal");
 
 // If this pref is true, prefs in the logging.config branch will be cleared on
@@ -1415,11 +1405,7 @@ pref("network.http.spdy.websockets", true);
 pref("network.http.spdy.enable-hpack-dump", false);
 
 // Http3 parameters
-#if defined(EARLY_BETA_OR_EARLIER)
 pref("network.http.http3.enabled", true);
-#else
-pref("network.http.http3.enabled", false);
-#endif
 
 // Http3 qpack table size.
 pref("network.http.http3.default-qpack-table-size", 65536); // 64k
@@ -1490,14 +1476,6 @@ pref("network.http.send_window_size", 1024);
 // by DocumentAcceptHeader() in nsHttpHandler.cpp. If set, this pref overrides it.
 // There is also image.http.accept which works in scope of image.
 pref("network.http.accept", "");
-
-// default values for FTP
-// in a DSCP environment this should be 40 (0x28, or AF11), per RFC-4594,
-// Section 4.8 "High-Throughput Data Service Class", and 80 (0x50, or AF22)
-// per Section 4.7 "Low-Latency Data Service Class".
-pref("network.ftp.data.qos", 0);
-pref("network.ftp.control.qos", 0);
-pref("network.ftp.enabled", false);
 
 // The max time to spend on xpcom events between two polls in ms.
 pref("network.sts.max_time_for_events_between_two_polls", 100);
@@ -1762,9 +1740,6 @@ pref("network.dns.offline-localhost", true);
 // A negative value will keep the thread alive forever.
 pref("network.dns.resolver-thread-extra-idle-time-seconds", 60);
 
-// Idle timeout for ftp control connections - 5 minute default
-pref("network.ftp.idleConnectionTimeout", 300);
-
 // enables the prefetch service (i.e., prefetching of <link rel="next"> and
 // <link rel="prefetch"> URLs).
 pref("network.prefetch-next", true);
@@ -1887,8 +1862,6 @@ pref("network.http.tailing.total-max", 45000);
 // Enable or disable the whole fix from bug 1563538
 pref("network.http.spdy.bug1563538", true);
 
-pref("network.proxy.ftp",                   "");
-pref("network.proxy.ftp_port",              0);
 pref("network.proxy.http",                  "");
 pref("network.proxy.http_port",             0);
 pref("network.proxy.ssl",                   "");
@@ -2259,11 +2232,6 @@ pref("services.blocklist.addons-mlbf.signer", "remote-settings.content-signature
 pref("services.blocklist.plugins.collection", "plugins");
 pref("services.blocklist.plugins.checked", 0);
 pref("services.blocklist.plugins.signer", "remote-settings.content-signature.mozilla.org");
-pref("services.blocklist.pinning.enabled", true);
-pref("services.blocklist.pinning.bucket", "pinning");
-pref("services.blocklist.pinning.collection", "pins");
-pref("services.blocklist.pinning.checked", 0);
-pref("services.blocklist.pinning.signer", "pinning-preload.content-signature.mozilla.org");
 pref("services.blocklist.gfx.collection", "gfx");
 pref("services.blocklist.gfx.checked", 0);
 pref("services.blocklist.gfx.signer", "remote-settings.content-signature.mozilla.org");
@@ -3757,7 +3725,6 @@ pref("network.psl.onUpdate_notify", false);
   pref("widget.titlebar-x11-use-shape-mask", false);
 #endif
 #ifdef MOZ_WAYLAND
-  pref("widget.wayland_vsync.enabled", true);
   pref("widget.use-xdg-desktop-portal", false);
 #endif
 
@@ -4263,9 +4230,6 @@ pref("narrate.filter-voices", true);
 
 pref("memory.report_concurrency", 10);
 
-// Add Mozilla AudioChannel APIs.
-pref("media.useAudioChannelAPI", false);
-
 pref("toolkit.pageThumbs.screenSizeDivisor", 7);
 pref("toolkit.pageThumbs.minWidth", 0);
 pref("toolkit.pageThumbs.minHeight", 0);
@@ -4408,7 +4372,7 @@ pref("services.common.log.logger.tokenserverclient", "Debug");
   pref("services.sync.engine.passwords", true);
   pref("services.sync.engine.prefs", true);
   pref("services.sync.engine.tabs", true);
-  pref("services.sync.engine.tabs.filteredUrls", "^(about:.*|resource:.*|chrome:.*|wyciwyg:.*|file:.*|blob:.*|moz-extension:.*)$");
+  pref("services.sync.engine.tabs.filteredUrls", "^(about:.*|resource:.*|chrome:.*|file:.*|blob:.*|moz-extension:.*)$");
 
   // The addresses and CC engines might not actually be available at all.
   pref("services.sync.engine.addresses.available", false);
@@ -4481,50 +4445,51 @@ pref("services.common.log.logger.tokenserverclient", "Debug");
   pref("services.sync.extension-storage.skipPercentageChance", 50);
 #endif // MOZ_SERVICES_SYNC
 
-// Marionette is the remote protocol that lets OOP programs communicate with,
-// instrument, and control Gecko.
+#if defined(ENABLE_WEBDRIVER)
+  // WebDriver is a remote control interface that enables introspection and
+  // control of user agents. It provides a platform- and language-neutral wire
+  // protocol as a way for out-of-process programs to remotely instruct the
+  // behavior of web browsers.
+  //
+  // Gecko's implementation is backed by Marionette (WebDriver HTTP) and the
+  // Remote Agent (WebDriver BiDi).
 
-// Delay server startup until a modal dialogue has been clicked to allow time
-// for user to set breakpoints in the Browser Toolbox.
-pref("marionette.debugging.clicktostart", false);
+  // Delay server startup until a modal dialogue has been clicked to allow time
+  // for user to set breakpoints in the Browser Toolbox.
+  pref("marionette.debugging.clicktostart", false);
 
-// Verbosity of Marionette logger repository.
-//
-// Available levels are, in descending order of severity, "trace", "debug",
-// "config", "info", "warn", "error", and "fatal". The value is treated
-// case-insensitively.
-pref("marionette.log.level", "Info");
+  // Verbosity of Marionette logger repository.
+  //
+  // Available levels are, in descending order of severity, "trace", "debug",
+  // "config", "info", "warn", "error", and "fatal". The value is treated
+  // case-insensitively.
+  pref("marionette.log.level", "Info");
 
-// Certain log messages that are known to be long are truncated. This
-// preference causes them to not be truncated.
-pref("marionette.log.truncate", true);
+  // Certain log messages that are known to be long are truncated. This
+  // preference causes them to not be truncated.
+  pref("marionette.log.truncate", true);
 
-// Port to start Marionette server on.
-pref("marionette.port", 2828);
+  // Port to start Marionette server on.
+  pref("marionette.port", 2828);
 
-// Sets recommended automation preferences when Marionette is started.
-pref("marionette.prefs.recommended", true);
-
-#if defined(ENABLE_REMOTE_AGENT)
-  // Indicates whether the remote agent is enabled.
-  // If it is false, the remote agent will not be loaded.
-  pref("remote.enabled", true);
+  // Sets recommended automation preferences when Marionette is started.
+  pref("marionette.prefs.recommended", true);
 
   // Limits remote agent to listen on loopback devices,
   // e.g. 127.0.0.1, localhost, and ::1.
   pref("remote.force-local", true);
+
+  // Defines the verbosity of the internal logger.
+  //
+  // Available levels are, in descending order of severity, "Trace", "Debug",
+  // "Config", "Info", "Warn", "Error", and "Fatal". The value is treated
+  // case-sensitively.
+  pref("remote.log.level", "Info");
+
+  // Certain log messages that are known to be long are truncated. This
+  // preference causes them to not be truncated.
+  pref("remote.log.truncate", true);
 #endif
-
-// Defines the verbosity of the internal logger.
-//
-// Available levels are, in descending order of severity, "Trace", "Debug",
-// "Config", "Info", "Warn", "Error", and "Fatal". The value is treated
-// case-sensitively.
-pref("remote.log.level", "Info");
-
-// Certain log messages that are known to be long are truncated. This
-// preference causes them to not be truncated.
-pref("remote.log.truncate", true);
 
 // Enable the JSON View tool (an inspector for application/json documents).
 pref("devtools.jsonview.enabled", true);

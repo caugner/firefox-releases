@@ -958,6 +958,9 @@ NS_IMETHODIMP AppWindow::SetVisibility(bool aVisibility) {
   if (mDebuting) {
     return NS_OK;
   }
+
+  NS_ENSURE_STATE(mDocShell);
+
   mDebuting = true;  // (Show / Focus is recursive)
 
   // XXXTAB Do we really need to show docshell and the window?  Isn't
@@ -1012,12 +1015,6 @@ NS_IMETHODIMP AppWindow::GetMainWidget(nsIWidget** aMainWidget) {
 
   *aMainWidget = mWindow;
   NS_IF_ADDREF(*aMainWidget);
-  return NS_OK;
-}
-
-NS_IMETHODIMP AppWindow::SetFocus() {
-  // XXX First Check In
-  NS_ASSERTION(false, "Not Yet Implemented");
   return NS_OK;
 }
 

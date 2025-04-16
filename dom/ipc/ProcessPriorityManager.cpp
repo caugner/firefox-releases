@@ -6,6 +6,7 @@
 
 #include "ProcessPriorityManager.h"
 #include "mozilla/ClearOnShutdown.h"
+#include "mozilla/dom/CanonicalBrowsingContext.h"
 #include "mozilla/dom/ContentParent.h"
 #include "mozilla/dom/Element.h"
 #include "mozilla/dom/BrowserHost.h"
@@ -142,6 +143,7 @@ class ProcessPriorityManagerImpl final : public nsIObserver,
       ParticularProcessPriorityManager* aParticularManager,
       hal::ProcessPriority aOldPriority);
 
+  void ActivityChanged(CanonicalBrowsingContext* aBC, bool aIsActive);
   void ActivityChanged(BrowserParent* aBrowserParent, bool aIsActive);
 
   void ResetPriority(ContentParent* aContentParent);
@@ -305,7 +307,6 @@ void ProcessPriorityManagerImpl::PrefChangedCallback(const char* aPref,
 /* static */
 bool ProcessPriorityManagerImpl::PrefsEnabled() {
   return StaticPrefs::dom_ipc_processPriorityManager_enabled() &&
-         hal::SetProcessPrioritySupported() &&
          !StaticPrefs::dom_ipc_tabs_disabled();
 }
 
@@ -394,6 +395,12 @@ ProcessPriorityManagerImpl::Observe(nsISupports* aSubject, const char* aTopic,
 already_AddRefed<ParticularProcessPriorityManager>
 ProcessPriorityManagerImpl::GetParticularProcessPriorityManager(
     ContentParent* aContentParent) {
+  // If this content parent is already being shut down, there's no
+  // need to adjust its priority.
+  if (aContentParent->IsDead()) {
+    return nullptr;
+  }
+
   const uint64_t cpId = aContentParent->ChildID();
   return mParticularManagers.WithEntryHandle(cpId, [&](auto&& entry) {
     if (!entry) {
@@ -407,9 +414,7 @@ ProcessPriorityManagerImpl::GetParticularProcessPriorityManager(
 void ProcessPriorityManagerImpl::SetProcessPriority(
     ContentParent* aContentParent, ProcessPriority aPriority) {
   MOZ_ASSERT(aContentParent);
-  RefPtr<ParticularProcessPriorityManager> pppm =
-      GetParticularProcessPriorityManager(aContentParent);
-  if (pppm) {
+  if (RefPtr pppm = GetParticularProcessPriorityManager(aContentParent)) {
     pppm->SetPriorityNow(aPriority);
   }
 }
@@ -444,28 +449,48 @@ void ProcessPriorityManagerImpl::NotifyProcessPriorityChanged(
   }
 }
 
-void ProcessPriorityManagerImpl::ActivityChanged(BrowserParent* aBrowserParent,
-                                                 bool aIsActive) {
-  RefPtr<ParticularProcessPriorityManager> pppm =
-      GetParticularProcessPriorityManager(aBrowserParent->Manager());
-  if (!pppm) {
+void ProcessPriorityManagerImpl::ActivityChanged(
+    dom::CanonicalBrowsingContext* aBC, bool aIsActive) {
+  MOZ_ASSERT(aBC->IsTop());
+
+  bool alreadyActive = aBC->IsPriorityActive();
+  if (alreadyActive == aIsActive) {
     return;
   }
 
   Telemetry::ScalarAdd(
       Telemetry::ScalarID::DOM_CONTENTPROCESS_OS_PRIORITY_CHANGE_CONSIDERED, 1);
 
-  pppm->ActivityChanged(aBrowserParent, aIsActive);
+  aBC->SetPriorityActive(aIsActive);
+
+  aBC->PreOrderWalk([&](BrowsingContext* aContext) {
+    CanonicalBrowsingContext* canonical = aContext->Canonical();
+    if (ContentParent* cp = canonical->GetContentParent()) {
+      if (RefPtr pppm = GetParticularProcessPriorityManager(cp)) {
+        if (auto* bp = canonical->GetBrowserParent()) {
+          pppm->ActivityChanged(bp, aIsActive);
+        }
+      }
+    }
+  });
+}
+
+void ProcessPriorityManagerImpl::ActivityChanged(BrowserParent* aBrowserParent,
+                                                 bool aIsActive) {
+  if (RefPtr pppm =
+          GetParticularProcessPriorityManager(aBrowserParent->Manager())) {
+    Telemetry::ScalarAdd(
+        Telemetry::ScalarID::DOM_CONTENTPROCESS_OS_PRIORITY_CHANGE_CONSIDERED,
+        1);
+
+    pppm->ActivityChanged(aBrowserParent, aIsActive);
+  }
 }
 
 void ProcessPriorityManagerImpl::ResetPriority(ContentParent* aContentParent) {
-  RefPtr<ParticularProcessPriorityManager> pppm =
-      GetParticularProcessPriorityManager(aContentParent);
-  if (!pppm) {
-    return;
+  if (RefPtr pppm = GetParticularProcessPriorityManager(aContentParent)) {
+    pppm->ResetPriority();
   }
-
-  pppm->ResetPriority();
 }
 
 NS_IMPL_ISUPPORTS(ParticularProcessPriorityManager, nsITimerCallback,
@@ -481,6 +506,7 @@ ParticularProcessPriorityManager::ParticularProcessPriorityManager(
       mHoldsPlayingAudioWakeLock(false),
       mHoldsPlayingVideoWakeLock(false) {
   MOZ_ASSERT(XRE_IsParentProcess());
+  MOZ_RELEASE_ASSERT(!aContentParent->IsDead());
   LOGP("Creating ParticularProcessPriorityManager.");
 }
 
@@ -512,14 +538,7 @@ bool ParticularProcessPriorityManager::IsHoldingWakeLock(
 ParticularProcessPriorityManager::~ParticularProcessPriorityManager() {
   LOGP("Destroying ParticularProcessPriorityManager.");
 
-  // Unregister our wake lock observer if ShutDown hasn't been called.  (The
-  // wake lock observer takes raw refs, so we don't want to take chances here!)
-  // We don't call UnregisterWakeLockObserver unconditionally because the code
-  // will print a warning if it's called unnecessarily.
-
-  if (mContentParent) {
-    UnregisterWakeLockObserver(this);
-  }
+  ShutDown();
 }
 
 /* virtual */
@@ -719,11 +738,15 @@ void ParticularProcessPriorityManager::ActivityChanged(
 }
 
 void ParticularProcessPriorityManager::ShutDown() {
-  MOZ_ASSERT(mContentParent);
-
   LOGP("shutdown for %p (mContentParent %p)", this, mContentParent);
 
-  UnregisterWakeLockObserver(this);
+  // Unregister our wake lock observer if ShutDown hasn't been called.  (The
+  // wake lock observer takes raw refs, so we don't want to take chances here!)
+  // We don't call UnregisterWakeLockObserver unconditionally because the code
+  // will print a warning if it's called unnecessarily.
+  if (mContentParent) {
+    UnregisterWakeLockObserver(this);
+  }
 
   if (mResetPriorityTimer) {
     mResetPriorityTimer->Cancel();
@@ -855,6 +878,14 @@ void ProcessPriorityManager::SetProcessPriority(ContentParent* aContentParent,
 /* static */
 bool ProcessPriorityManager::CurrentProcessIsForeground() {
   return ProcessPriorityManagerChild::Singleton()->CurrentProcessIsForeground();
+}
+
+/* static */
+void ProcessPriorityManager::ActivityChanged(CanonicalBrowsingContext* aBC,
+                                             bool aIsActive) {
+  if (auto* singleton = ProcessPriorityManagerImpl::GetSingleton()) {
+    singleton->ActivityChanged(aBC, aIsActive);
+  }
 }
 
 /* static */

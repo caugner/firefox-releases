@@ -12,9 +12,6 @@ const {
 } = require("devtools/client/responsive/utils/orientation");
 const Constants = require("devtools/client/responsive/constants");
 const {
-  ResourceWatcher,
-} = require("devtools/shared/resources/resource-watcher");
-const {
   CommandsFactory,
 } = require("devtools/shared/commands/commands-factory");
 
@@ -117,7 +114,7 @@ class ResponsiveUI {
   }
 
   get watcherFront() {
-    return this.resourceWatcher.watcherFront;
+    return this.resourceCommand.watcherFront;
   }
 
   /**
@@ -262,8 +259,6 @@ class ResponsiveUI {
     const isTabContentDestroying =
       isWindowClosing || options?.reason === "TabClose";
 
-    let currentTarget;
-
     // Ensure init has finished before starting destroy
     if (!isTabContentDestroying) {
       await this.inited;
@@ -275,10 +270,6 @@ class ResponsiveUI {
 
       // Hide browser UI to avoid displaying weird intermediate states while closing.
       this.hideBrowserUI();
-
-      // Save reference to tab target before RDM stops listening to it. Will need it if
-      // the tab has to be reloaded to remove the emulated settings created by RDM.
-      currentTarget = this.currentTarget;
 
       // Resseting the throtting needs to be done before the
       // network events watching is stopped.
@@ -319,8 +310,8 @@ class ResponsiveUI {
       reloadNeeded |=
         (await this.updateTouchSimulation()) &&
         this.reloadOnChange("touchSimulation");
-      if (reloadNeeded && currentTarget) {
-        await currentTarget.reload();
+      if (reloadNeeded) {
+        await this.reloadBrowser();
       }
 
       // Unwatch targets & resources as the last step. If we are not waching for
@@ -332,8 +323,8 @@ class ResponsiveUI {
         this.onTargetAvailable
       );
 
-      this.resourceWatcher.unwatchResources(
-        [this.resourceWatcher.TYPES.NETWORK_EVENT],
+      this.resourceCommand.unwatchResources(
+        [this.resourceCommand.TYPES.NETWORK_EVENT],
         { onAvailable: this.onNetworkResourceAvailable }
       );
 
@@ -370,7 +361,7 @@ class ResponsiveUI {
 
   async connectToServer() {
     this.commands = await CommandsFactory.forTab(this.tab);
-    this.resourceWatcher = new ResourceWatcher(this.commands.targetCommand);
+    this.resourceCommand = this.commands.resourceCommand;
 
     await this.commands.targetCommand.startListening();
 
@@ -379,10 +370,10 @@ class ResponsiveUI {
       this.onTargetAvailable
     );
 
-    // To support network throttling the resource watcher
+    // To support network throttling the resource command
     // needs to be watching for network resources.
-    await this.resourceWatcher.watchResources(
-      [this.resourceWatcher.TYPES.NETWORK_EVENT],
+    await this.resourceCommand.watchResources(
+      [this.resourceCommand.TYPES.NETWORK_EVENT],
       { onAvailable: this.onNetworkResourceAvailable }
     );
 
@@ -811,7 +802,7 @@ class ResponsiveUI {
         this.reloadOnChange("userAgent");
     }
     if (reloadNeeded) {
-      this.reloadBrowser();
+      await this.reloadBrowser();
     }
   }
 
@@ -852,14 +843,21 @@ class ResponsiveUI {
   /**
    * Set or clear the emulated user agent.
    *
-   * @return boolean
-   *         Whether a reload is needed to apply the change.
+   * @param {String|null} userAgent: The user agent to set on the page. Set to null to revert
+   *                      the user agent to its original value
+   * @return {Boolean} Whether a reload is needed to apply the change.
    */
-  updateUserAgent(userAgent) {
-    if (!userAgent) {
-      return this.responsiveFront.clearUserAgentOverride();
-    }
-    return this.responsiveFront.setUserAgentOverride(userAgent);
+  async updateUserAgent(userAgent) {
+    const getConfigurationCustomUserAgent = () =>
+      this.commands.targetConfigurationCommand.configuration.customUserAgent ||
+      "";
+    const previousCustomUserAgent = getConfigurationCustomUserAgent();
+    await this.commands.targetConfigurationCommand.updateConfiguration({
+      customUserAgent: userAgent,
+    });
+
+    const updatedUserAgent = getConfigurationCustomUserAgent();
+    return previousCustomUserAgent !== updatedUserAgent;
   }
 
   /**
@@ -928,7 +926,9 @@ class ResponsiveUI {
    *        Whether or not touch is enabled for the simulated device.
    */
   async updateMaxTouchPointsEnabled(touchSimulationEnabled) {
-    return this.responsiveFront.setMaxTouchPoints(touchSimulationEnabled);
+    return this.commands.targetConfigurationCommand.updateConfiguration({
+      rdmPaneMaxTouchPoints: touchSimulationEnabled ? 1 : 0,
+    });
   }
 
   /**
@@ -1041,6 +1041,11 @@ class ResponsiveUI {
 
     if (targetFront.isTopLevel) {
       this.responsiveFront = await targetFront.getFront("responsive");
+
+      if (this.destroying) {
+        return;
+      }
+
       await this.restoreActorState();
     }
   }
@@ -1052,7 +1057,7 @@ class ResponsiveUI {
    * Reload the current tab.
    */
   async reloadBrowser() {
-    await this.currentTarget.reload();
+    await this.commands.targetCommand.reloadTopLevelTarget();
   }
 }
 

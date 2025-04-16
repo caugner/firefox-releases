@@ -1,4 +1,48 @@
 
+@media (max-height: 701px) {
+  .personalize-button {
+    position: absolute;
+    top: 16px;
+    inset-inline-end: 16px;
+  }
+}
+
+@media (min-height: 700px) {
+  .personalize-button {
+    position: fixed;
+    top: 16px;
+    inset-inline-end: 16px;
+    z-index: 1000;
+  }
+}
+
+.personalize-button {
+  font-size: 12px;
+  font-weight: 600;
+  border: 0;
+  border-radius: 4px;
+  background-color: var(--newtab-background-button-color);
+  color: var(--newtab-background-button-text-color);
+  padding: 3px 10px;
+  min-height: 32px;
+
+  &:hover {
+    background-color: var(--newtab-background-button-hover-color);
+  }
+
+  &:active {
+    background-color: var(--newtab-background-button-active-color);
+  }
+
+  &:focus-visible {
+    @include ds-focus-nte;
+  }
+
+  &.personalize-animate-exit-done {
+    visibility: hidden;
+  }
+}
+
 .customize-menu {
   color: var(--customize-menu-primary-text-color);
   background-color: var(--customize-menu-background);
@@ -9,7 +53,7 @@
   inset-inline-end: 0;
   z-index: 1001;
   padding: 16px;
-  transition: transform 250ms $customize-menu-slide-bezier;
+  transition: transform 250ms $customize-menu-slide-bezier, visibility 250ms;
   overflow: auto;
   transform: translateX(435px);
   visibility: hidden;
@@ -23,32 +67,15 @@
     transform: translateX(-435px);
   }
 
-  &.customize-animate-enter-done {
+  &.customize-animate-enter-done,
+  &.customize-animate-enter-active {
+    box-shadow: 0 0 64px var(--customize-menu-first-shadow), 0 0 24px var(--customize-menu-second-shadow);
+    visibility: visible;
     transform: translateX(0);
   }
 
-  &.customize-animate-enter-done,
-  &.customize-animate-enter-active,
-  &.customize-animate-enter {
+  &.customize-animate-exit-active {
     box-shadow: 0 0 64px var(--customize-menu-first-shadow), 0 0 24px var(--customize-menu-second-shadow);
-    transition: transform 250ms $customize-menu-slide-bezier, visibility 1ms;
-    visibility: visible;
-  }
-
-  &.customize-animate-exit-active,
-  &.customize-animate-exit {
-    box-shadow: 0 0 64px var(--customize-menu-first-shadow), 0 0 24px var(--customize-menu-second-shadow);
-    transition: transform 250ms $customize-menu-slide-bezier, visibility 1ms 250ms;
-    visibility: visible;
-  }
-
-  &.customize-animate-exit-done {
-    transform: translateX(435px);
-    transition: transform 250ms $customize-menu-slide-bezier, visibility 1ms 250ms;
-
-    &:dir(rtl) {
-      transform: translateX(-435px);
-    }
   }
 
   .close-button {

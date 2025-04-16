@@ -188,13 +188,10 @@ class StyleImageRequestCleanupTask final : public mozilla::Runnable {
 // This is defined here for parallelism with LoadURI.
 void Gecko_LoadData_Drop(StyleLoadData* aData) {
   if (aData->resolved_image) {
+    // We want to dispatch this async to prevent reentrancy issues, as
+    // imgRequestProxy going away can destroy documents, etc, see bug 1677555.
     auto task = MakeRefPtr<StyleImageRequestCleanupTask>(*aData);
-    if (NS_IsMainThread()) {
-      task->Run();
-    } else {
-      // if Resolve was not called at some point, mDocGroup is not set.
-      SchedulerGroup::Dispatch(TaskCategory::Other, task.forget());
-    }
+    SchedulerGroup::Dispatch(TaskCategory::Other, task.forget());
   }
 
   // URIs are safe to refcount from any thread.
@@ -1630,9 +1627,26 @@ void StyleImage::ResolveImage(Document& aDoc, const StyleImage* aOld) {
 }
 
 template <>
+ImageResolution StyleImage::GetResolution() const {
+  ImageResolution resolution;
+  if (imgRequestProxy* request = GetImageRequest()) {
+    RefPtr<imgIContainer> image;
+    request->GetImage(getter_AddRefs(image));
+    if (image) {
+      resolution = image->GetResolution();
+    }
+  }
+  if (IsImageSet()) {
+    auto& set = AsImageSet();
+    float r = set->items.AsSpan()[set->selected_index].resolution._0;
+    resolution.ScaleBy(r);
+  }
+  return resolution;
+}
+
+template <>
 Maybe<CSSIntSize> StyleImage::GetIntrinsicSize() const {
-  auto [finalImage, resolution] = FinalImageAndResolution();
-  imgRequestProxy* request = finalImage->GetImageRequest();
+  imgRequestProxy* request = GetImageRequest();
   if (!request) {
     return Nothing();
   }
@@ -1647,10 +1661,7 @@ Maybe<CSSIntSize> StyleImage::GetIntrinsicSize() const {
   int32_t w = 0, h = 0;
   image->GetWidth(&w);
   image->GetHeight(&h);
-  if (resolution != 0.0f && resolution != 1.0f) {
-    w = std::round(float(w) / resolution);
-    h = std::round(float(h) / resolution);
-  }
+  GetResolution().ApplyTo(w, h);
   return Some(CSSIntSize{w, h});
 }
 
@@ -1909,9 +1920,9 @@ static bool SizeDependsOnPositioningAreaSize(const StyleBackgroundSize& aSize,
       bool hasWidth, hasHeight;
       // We could bother getting the right resolution here but it doesn't matter
       // since we ignore `imageSize`.
-      nsLayoutUtils::ComputeSizeForDrawing(imgContainer,
-                                           /* aResolution = */ 1.0f, imageSize,
-                                           imageRatio, hasWidth, hasHeight);
+      nsLayoutUtils::ComputeSizeForDrawing(imgContainer, ImageResolution(),
+                                           imageSize, imageRatio, hasWidth,
+                                           hasHeight);
 
       // If the image has a fixed width and height, rendering never depends on
       // the frame size.
@@ -2596,13 +2607,17 @@ nsChangeHint nsStyleDisplay::CalcDifference(
   auto willChangeBitsChanged = mWillChange.bits ^ aNewData.mWillChange.bits;
 
   if (willChangeBitsChanged &
-      (StyleWillChangeBits::STACKING_CONTEXT | StyleWillChangeBits::SCROLL |
-       StyleWillChangeBits::OPACITY)) {
+      (StyleWillChangeBits::STACKING_CONTEXT_UNCONDITIONAL |
+       StyleWillChangeBits::SCROLL | StyleWillChangeBits::OPACITY |
+       StyleWillChangeBits::PERSPECTIVE | StyleWillChangeBits::TRANSFORM |
+       StyleWillChangeBits::Z_INDEX)) {
     hint |= nsChangeHint_RepaintFrame;
   }
 
   if (willChangeBitsChanged &
-      (StyleWillChangeBits::FIXPOS_CB | StyleWillChangeBits::ABSPOS_CB)) {
+      (StyleWillChangeBits::FIXPOS_CB_NON_SVG | StyleWillChangeBits::TRANSFORM |
+       StyleWillChangeBits::PERSPECTIVE | StyleWillChangeBits::POSITION |
+       StyleWillChangeBits::CONTAIN)) {
     hint |= nsChangeHint_UpdateContainingBlock;
   }
 
@@ -2884,9 +2899,7 @@ nsStyleText::nsStyleText(const Document& aDocument)
       mWhiteSpace(StyleWhiteSpace::Normal),
       mHyphens(StyleHyphens::Manual),
       mRubyAlign(StyleRubyAlign::SpaceAround),
-      mRubyPosition(StaticPrefs::layout_css_ruby_position_alternate_enabled()
-                        ? StyleRubyPosition::AlternateOver
-                        : StyleRubyPosition::Over),
+      mRubyPosition(StyleRubyPosition::AlternateOver),
       mTextSizeAdjust(StyleTextSizeAdjust::Auto),
       mTextCombineUpright(NS_STYLE_TEXT_COMBINE_UPRIGHT_NONE),
       mMozControlCharacterVisibility(
@@ -3066,6 +3079,7 @@ nsStyleUI::nsStyleUI(const Document& aDocument)
       mUserFocus(StyleUserFocus::None),
       mPointerEvents(StylePointerEvents::Auto),
       mCursor{{}, StyleCursorKind::Auto},
+      mAccentColor(StyleColorOrAuto::Auto()),
       mCaretColor(StyleColorOrAuto::Auto()),
       mScrollbarColor(StyleScrollbarColor::Auto()) {
   MOZ_COUNT_CTOR(nsStyleUI);
@@ -3078,6 +3092,7 @@ nsStyleUI::nsStyleUI(const nsStyleUI& aSource)
       mUserFocus(aSource.mUserFocus),
       mPointerEvents(aSource.mPointerEvents),
       mCursor(aSource.mCursor),
+      mAccentColor(aSource.mAccentColor),
       mCaretColor(aSource.mCaretColor),
       mScrollbarColor(aSource.mScrollbarColor) {
   MOZ_COUNT_CTOR(nsStyleUI);
@@ -3128,6 +3143,7 @@ nsChangeHint nsStyleUI::CalcDifference(const nsStyleUI& aNewData) const {
   }
 
   if (mCaretColor != aNewData.mCaretColor ||
+      mAccentColor != aNewData.mAccentColor ||
       mScrollbarColor != aNewData.mScrollbarColor) {
     hint |= nsChangeHint_RepaintFrame;
   }

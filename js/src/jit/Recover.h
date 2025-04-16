@@ -118,6 +118,8 @@ namespace jit {
   _(ToFloat32)                    \
   _(TruncateToInt32)              \
   _(NewObject)                    \
+  _(NewPlainObject)               \
+  _(NewArrayObject)               \
   _(NewTypedArray)                \
   _(NewArray)                     \
   _(NewIterator)                  \
@@ -730,6 +732,30 @@ class RNewObject final : public RInstruction {
 
  public:
   RINSTRUCTION_HEADER_NUM_OP_(NewObject, 1)
+
+  [[nodiscard]] bool recover(JSContext* cx,
+                             SnapshotIterator& iter) const override;
+};
+
+class RNewPlainObject final : public RInstruction {
+ private:
+  gc::AllocKind allocKind_;
+  gc::InitialHeap initialHeap_;
+
+ public:
+  RINSTRUCTION_HEADER_NUM_OP_(NewPlainObject, 1)
+
+  [[nodiscard]] bool recover(JSContext* cx,
+                             SnapshotIterator& iter) const override;
+};
+
+class RNewArrayObject final : public RInstruction {
+ private:
+  uint32_t length_;
+  gc::InitialHeap initialHeap_;
+
+ public:
+  RINSTRUCTION_HEADER_NUM_OP_(NewArrayObject, 1)
 
   [[nodiscard]] bool recover(JSContext* cx,
                              SnapshotIterator& iter) const override;

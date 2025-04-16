@@ -195,6 +195,10 @@ class SingleTouchData {
 
   // How hard the screen is being pressed.
   float mForce;
+
+  uint32_t mTiltX = 0;
+  uint32_t mTiltY = 0;
+  uint32_t mTwist = 0;
 };
 
 /**
@@ -231,7 +235,10 @@ class MultiTouchInput : public InputData {
 
   void Translate(const ScreenPoint& aTranslation);
 
-  WidgetTouchEvent ToWidgetTouchEvent(nsIWidget* aWidget) const;
+  WidgetTouchEvent ToWidgetEvent(
+      nsIWidget* aWidget,
+      uint16_t aInputSource =
+          /* MouseEvent_Binding::MOZ_SOURCE_TOUCH = */ 5) const;
 
   // Return the index into mTouches of the SingleTouchData with the given
   // identifier, or -1 if there is no such SingleTouchData.
@@ -715,6 +722,10 @@ class ScrollWheelInput : public InputData {
   // scrolling down.
   double mDeltaX;
   double mDeltaY;
+
+  // The number of scroll wheel ticks.
+  double mWheelTicksX = 0.0;
+  double mWheelTicksY = 0.0;
 
   // The location of the scroll in local coordinates. This is set and used by
   // APZ.

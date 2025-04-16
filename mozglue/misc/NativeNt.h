@@ -471,11 +471,20 @@ inline void GetLeafName(PUNICODE_STRING aDestString,
 
 #if defined(MOZILLA_INTERNAL_API)
 
-inline const nsDependentSubstring GetLeafName(const nsString& aString) {
-  int32_t lastBackslashPos = aString.RFindChar(L'\\');
-  int32_t leafStartPos =
-      (lastBackslashPos == kNotFound) ? 0 : (lastBackslashPos + 1);
-  return Substring(aString, leafStartPos);
+inline const nsDependentSubstring GetLeafName(const nsAString& aString) {
+  auto it = aString.EndReading();
+  size_t pos = aString.Length();
+  while (it > aString.BeginReading()) {
+    if (*(it - 1) == u'\\') {
+      return Substring(aString, pos);
+    }
+
+    MOZ_ASSERT(pos > 0);
+    --pos;
+    --it;
+  }
+
+  return Substring(aString, 0);  // No backslash in the string
 }
 
 #endif  // defined(MOZILLA_INTERNAL_API)
@@ -519,6 +528,15 @@ inline size_t StrlenASCII(const char* aStr) {
 
   return len;
 }
+
+struct CodeViewRecord70 {
+  uint32_t signature;
+  GUID pdbSignature;
+  uint32_t pdbAge;
+  // A UTF-8 string, according to
+  // https://github.com/Microsoft/microsoft-pdb/blob/082c5290e5aff028ae84e43affa8be717aa7af73/PDB/dbi/locator.cpp#L785
+  char pdbFileName[1];
+};
 
 class MOZ_RAII PEHeaders final {
   /**
@@ -627,6 +645,10 @@ class MOZ_RAII PEHeaders final {
     auto base = reinterpret_cast<const uint8_t*>(mMzHeader);
     DWORD imageSize = mPeHeader->OptionalHeader.SizeOfImage;
     return Some(Range(base, imageSize));
+  }
+
+  DWORD GetFileCharacteristics() const {
+    return mPeHeader ? mPeHeader->FileHeader.Characteristics : 0;
   }
 
   bool IsWithinImage(const void* aAddress) const {
@@ -882,6 +904,19 @@ class MOZ_RAII PEHeaders final {
     // Use the unchecked version because the entrypoint may be tampered.
     return RVAToPtrUnchecked<FARPROC>(
         mPeHeader->OptionalHeader.AddressOfEntryPoint);
+  }
+
+  const CodeViewRecord70* GetPdbInfo() const {
+    PIMAGE_DEBUG_DIRECTORY debugDirectory =
+        GetImageDirectoryEntry<PIMAGE_DEBUG_DIRECTORY>(
+            IMAGE_DIRECTORY_ENTRY_DEBUG);
+    if (!debugDirectory) {
+      return nullptr;
+    }
+
+    const CodeViewRecord70* debugInfo =
+        RVAToPtr<CodeViewRecord70*>(debugDirectory->AddressOfRawData);
+    return (debugInfo && debugInfo->signature == 'SDSR') ? debugInfo : nullptr;
   }
 
  private:

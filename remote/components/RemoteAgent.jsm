@@ -23,7 +23,6 @@ XPCOMUtils.defineLazyModuleGetters(this, {
 
 XPCOMUtils.defineLazyGetter(this, "logger", () => Log.get());
 
-const ENABLED = "remote.enabled";
 const FORCE_LOCAL = "remote.force-local";
 
 const LOOPBACKS = ["localhost", "127.0.0.1", "[::1]"];
@@ -46,12 +45,6 @@ class RemoteAgentClass {
   }
 
   listen(url) {
-    if (!Preferences.get(ENABLED, false)) {
-      throw Components.Exception(
-        "Disabled by preference",
-        Cr.NS_ERROR_NOT_AVAILABLE
-      );
-    }
     if (Services.appinfo.processType != Ci.nsIXULRuntime.PROCESS_TYPE_DEFAULT) {
       throw Components.Exception(
         "May only be instantiated in parent process",
@@ -114,7 +107,7 @@ class RemoteAgentClass {
       Services.obs.notifyObservers(
         null,
         "remote-listening",
-        mainTarget.wsDebuggerURL
+        `DevTools listening on ${mainTarget.wsDebuggerURL}`
       );
     } catch (e) {
       await this.close();

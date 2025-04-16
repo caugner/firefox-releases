@@ -15,11 +15,14 @@ async function pause(tab, options) {
 
   try {
     let browser = tab.linkedBrowser;
-    let awaitDOMAudioPlaybackStopped = BrowserTestUtils.waitForEvent(
-      browser,
-      "DOMAudioPlaybackStopped",
-      "DOMAudioPlaybackStopped event should get fired after pause"
-    );
+    let awaitDOMAudioPlaybackStopped;
+    if (!browser.audioMuted) {
+      awaitDOMAudioPlaybackStopped = BrowserTestUtils.waitForEvent(
+        browser,
+        "DOMAudioPlaybackStopped",
+        "DOMAudioPlaybackStopped event should get fired after pause"
+      );
+    }
     await SpecialPowers.spawn(browser, [], async function() {
       let audio = content.document.querySelector("audio");
       audio.pause();
@@ -77,9 +80,7 @@ async function test_tooltip(icon, expectedTooltip, isActiveTab, tab) {
   let tooltip = document.getElementById("tabbrowser-tab-tooltip");
 
   let tabContent = tab.querySelector(".tab-content");
-  if (gProton) {
-    await hover_icon(tabContent, tooltip);
-  }
+  await hover_icon(tabContent, tooltip);
 
   await hover_icon(icon, tooltip);
   if (isActiveTab) {

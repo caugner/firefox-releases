@@ -14,6 +14,7 @@
 #include "mozilla/dom/JSExecutionContext.h"
 
 #include <utility>
+#include "ErrorList.h"
 #include "MainThreadUtils.h"
 #include "js/CompilationAndEvaluation.h"
 #include "js/CompileOptions.h"
@@ -47,8 +48,11 @@ static nsresult EvaluationExceptionToNSResult(JSContext* aCx) {
   return NS_SUCCESS_DOM_SCRIPT_EVALUATION_THREW_UNCATCHABLE;
 }
 
-JSExecutionContext::JSExecutionContext(JSContext* aCx,
-                                       JS::Handle<JSObject*> aGlobal)
+JSExecutionContext::JSExecutionContext(
+    JSContext* aCx, JS::Handle<JSObject*> aGlobal,
+    JS::CompileOptions& aCompileOptions,
+    JS::Handle<JS::Value> aDebuggerPrivateValue,
+    JS::Handle<JSScript*> aDebuggerIntroductionScript)
     :
 #ifdef MOZ_GECKO_PROFILER
       mAutoProfilerLabel("JSExecutionContext",
@@ -59,6 +63,9 @@ JSExecutionContext::JSExecutionContext(JSContext* aCx,
       mRealm(aCx, aGlobal),
       mRetValue(aCx),
       mScript(aCx),
+      mCompileOptions(aCompileOptions),
+      mDebuggerPrivateValue(aCx, aDebuggerPrivateValue),
+      mDebuggerIntroductionScript(aCx, aDebuggerIntroductionScript),
       mRv(NS_OK),
       mSkip(false),
       mCoerceToString(false),
@@ -103,12 +110,14 @@ nsresult JSExecutionContext::JoinCompile(JS::OffThreadToken** aOffThreadToken) {
     return mRv;
   }
 
+  if (!UpdateDebugMetadata()) {
+    return NS_ERROR_OUT_OF_MEMORY;
+  }
   return NS_OK;
 }
 
 template <typename Unit>
-nsresult JSExecutionContext::InternalCompile(
-    JS::CompileOptions& aCompileOptions, JS::SourceText<Unit>& aSrcBuf) {
+nsresult JSExecutionContext::InternalCompile(JS::SourceText<Unit>& aSrcBuf) {
   if (mSkip) {
     return mRv;
   }
@@ -116,16 +125,16 @@ nsresult JSExecutionContext::InternalCompile(
   MOZ_ASSERT(aSrcBuf.get());
   MOZ_ASSERT(mRetValue.isUndefined());
 #ifdef DEBUG
-  mWantsReturnValue = !aCompileOptions.noScriptRval;
+  mWantsReturnValue = !mCompileOptions.noScriptRval;
 #endif
 
   MOZ_ASSERT(!mScript);
 
   if (mEncodeBytecode) {
     mScript =
-        JS::CompileAndStartIncrementalEncoding(mCx, aCompileOptions, aSrcBuf);
+        JS::CompileAndStartIncrementalEncoding(mCx, mCompileOptions, aSrcBuf);
   } else {
-    mScript = JS::Compile(mCx, aCompileOptions, aSrcBuf);
+    mScript = JS::Compile(mCx, mCompileOptions, aSrcBuf);
   }
 
   if (!mScript) {
@@ -134,21 +143,22 @@ nsresult JSExecutionContext::InternalCompile(
     return mRv;
   }
 
+  if (!UpdateDebugMetadata()) {
+    return NS_ERROR_OUT_OF_MEMORY;
+  }
+
   return NS_OK;
 }
 
-nsresult JSExecutionContext::Compile(JS::CompileOptions& aCompileOptions,
-                                     JS::SourceText<char16_t>& aSrcBuf) {
-  return InternalCompile(aCompileOptions, aSrcBuf);
+nsresult JSExecutionContext::Compile(JS::SourceText<char16_t>& aSrcBuf) {
+  return InternalCompile(aSrcBuf);
 }
 
-nsresult JSExecutionContext::Compile(JS::CompileOptions& aCompileOptions,
-                                     JS::SourceText<Utf8Unit>& aSrcBuf) {
-  return InternalCompile(aCompileOptions, aSrcBuf);
+nsresult JSExecutionContext::Compile(JS::SourceText<Utf8Unit>& aSrcBuf) {
+  return InternalCompile(aSrcBuf);
 }
 
-nsresult JSExecutionContext::Compile(JS::CompileOptions& aCompileOptions,
-                                     const nsAString& aScript) {
+nsresult JSExecutionContext::Compile(const nsAString& aScript) {
   if (mSkip) {
     return mRv;
   }
@@ -162,11 +172,10 @@ nsresult JSExecutionContext::Compile(JS::CompileOptions& aCompileOptions,
     return mRv;
   }
 
-  return Compile(aCompileOptions, srcBuf);
+  return Compile(srcBuf);
 }
 
-nsresult JSExecutionContext::Decode(JS::CompileOptions& aCompileOptions,
-                                    mozilla::Vector<uint8_t>& aBytecodeBuf,
+nsresult JSExecutionContext::Decode(mozilla::Vector<uint8_t>& aBytecodeBuf,
                                     size_t aBytecodeIndex) {
   if (mSkip) {
     return mRv;
@@ -174,7 +183,7 @@ nsresult JSExecutionContext::Decode(JS::CompileOptions& aCompileOptions,
 
   MOZ_ASSERT(!mWantsReturnValue);
   JS::TranscodeResult tr = JS::DecodeScriptMaybeStencil(
-      mCx, aCompileOptions, aBytecodeBuf, &mScript, aBytecodeIndex);
+      mCx, mCompileOptions, aBytecodeBuf, &mScript, aBytecodeIndex);
   // These errors are external parameters which should be handled before the
   // decoding phase, and which are the only reasons why you might want to
   // fallback on decoding failures.
@@ -186,7 +195,20 @@ nsresult JSExecutionContext::Decode(JS::CompileOptions& aCompileOptions,
     return mRv;
   }
 
+  if (!UpdateDebugMetadata()) {
+    return NS_ERROR_OUT_OF_MEMORY;
+  }
+
   return mRv;
+}
+
+bool JSExecutionContext::UpdateDebugMetadata() {
+  if (!mCompileOptions.deferDebugMetadata) {
+    return true;
+  }
+  return JS::UpdateDebugMetadata(mCx, mScript, mCompileOptions,
+                                 mDebuggerPrivateValue, nullptr,
+                                 mDebuggerIntroductionScript, nullptr);
 }
 
 nsresult JSExecutionContext::JoinDecode(JS::OffThreadToken** aOffThreadToken) {
@@ -201,6 +223,10 @@ nsresult JSExecutionContext::JoinDecode(JS::OffThreadToken** aOffThreadToken) {
     mSkip = true;
     mRv = EvaluationExceptionToNSResult(mCx);
     return mRv;
+  }
+
+  if (!UpdateDebugMetadata()) {
+    return NS_ERROR_OUT_OF_MEMORY;
   }
 
   return NS_OK;

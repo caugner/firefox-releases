@@ -92,6 +92,9 @@
 #include "mozilla/dom/quota/QuotaManager.h"
 #include "mozilla/scache/StartupCache.h"
 #include "gfxPlatform.h"
+#ifdef XP_MACOSX
+#  include "gfxPlatformMac.h"
+#endif
 
 #include "mozilla/Unused.h"
 
@@ -178,8 +181,6 @@
 #  include <shlobj.h>
 #  include "mozilla/WinDllServices.h"
 #  include "nsThreadUtils.h"
-#  include <comdef.h>
-#  include <wbemidl.h>
 #  include "WinUtils.h"
 #endif
 
@@ -285,6 +286,9 @@ static const char gToolkitVersion[] = MOZ_STRINGIFY(GRE_MILESTONE);
 extern const char gToolkitBuildID[];
 
 static nsIProfileLock* gProfileLock;
+#if defined(MOZ_HAS_REMOTE)
+static nsRemoteService* gRemoteService;
+#endif
 
 int gRestartArgc;
 char** gRestartArgv;
@@ -2451,6 +2455,12 @@ static ReturnAbortOnError ProfileLockedDialog(nsIFile* aProfileDir,
         SaveFileToEnv("XRE_PROFILE_PATH", aProfileDir);
         SaveFileToEnv("XRE_PROFILE_LOCAL_PATH", aProfileLocalDir);
 
+#if defined(MOZ_HAS_REMOTE)
+        if (gRemoteService) {
+          gRemoteService->UnlockStartup();
+          gRemoteService = nullptr;
+        }
+#endif
         return LaunchChild(false, true);
       }
     } else {
@@ -2553,7 +2563,12 @@ static ReturnAbortOnError ShowProfileManager(
     gRestartArgv[gRestartArgc++] = const_cast<char*>("-os-restarted");
     gRestartArgv[gRestartArgc] = nullptr;
   }
-
+#if defined(MOZ_HAS_REMOTE)
+  if (gRemoteService) {
+    gRemoteService->UnlockStartup();
+    gRemoteService = nullptr;
+  }
+#endif
   return LaunchChild(false, true);
 }
 
@@ -3986,127 +4001,6 @@ int XREMain::XRE_mainInit(bool* aExitFlag) {
   return 0;
 }
 
-#ifdef XP_WIN
-static bool QueryOneWMIProperty(IWbemServices* aServices,
-                                const wchar_t* aWMIClass,
-                                const wchar_t* aProperty, VARIANT* aResult) {
-  RefPtr<IEnumWbemClassObject> enumerator;
-
-  _bstr_t query(L"SELECT * FROM ");
-  query += _bstr_t(aWMIClass);
-
-  HRESULT hr = aServices->ExecQuery(
-      _bstr_t(L"WQL"), query,
-      WBEM_FLAG_FORWARD_ONLY | WBEM_FLAG_RETURN_IMMEDIATELY, nullptr,
-      getter_AddRefs(enumerator));
-
-  if (FAILED(hr) || !enumerator) {
-    return false;
-  }
-
-  RefPtr<IWbemClassObject> classObject;
-  ULONG results;
-
-  hr =
-      enumerator->Next(WBEM_INFINITE, 1, getter_AddRefs(classObject), &results);
-
-  if (FAILED(hr) || results == 0) {
-    return false;
-  }
-
-  hr = classObject->Get(aProperty, 0, aResult, 0, 0);
-
-  return SUCCEEDED(hr);
-}
-
-/**
- * Uses WMI to read some information that may be useful for diagnosing
- * crashes. This function is best-effort; failures shouldn't burden the
- * caller. COM must be initialized before calling.
- */
-
-static const char kMemoryErrorCorrectionValues[][15] = {
-    "Reserved",        // 0
-    "Other",           // 1
-    "Unknown",         // 2
-    "None",            // 3
-    "Parity",          // 4
-    "Single-bit ECC",  // 5
-    "Multi-bit ECC",   // 6
-    "CRC"              // 7
-};
-
-static void AnnotateWMIData() {
-  RefPtr<IWbemLocator> locator;
-
-  HRESULT hr =
-      CoCreateInstance(CLSID_WbemLocator, nullptr, CLSCTX_INPROC_SERVER,
-                       IID_IWbemLocator, getter_AddRefs(locator));
-
-  if (FAILED(hr)) {
-    return;
-  }
-
-  RefPtr<IWbemServices> services;
-
-  hr =
-      locator->ConnectServer(_bstr_t(L"ROOT\\CIMV2"), nullptr, nullptr, nullptr,
-                             0, nullptr, nullptr, getter_AddRefs(services));
-
-  if (FAILED(hr)) {
-    return;
-  }
-
-  hr = CoSetProxyBlanket(services, RPC_C_AUTHN_WINNT, RPC_C_AUTHZ_NONE, nullptr,
-                         RPC_C_AUTHN_LEVEL_CALL, RPC_C_IMP_LEVEL_IMPERSONATE,
-                         nullptr, EOAC_NONE);
-
-  if (FAILED(hr)) {
-    return;
-  }
-
-  VARIANT value;
-  VariantInit(&value);
-
-  // Annotate information about the system manufacturer.
-  if (QueryOneWMIProperty(services, L"Win32_BIOS", L"Manufacturer", &value) &&
-      V_VT(&value) == VT_BSTR) {
-    CrashReporter::AnnotateCrashReport(
-        CrashReporter::Annotation::BIOS_Manufacturer,
-        NS_ConvertUTF16toUTF8(V_BSTR(&value)));
-  }
-
-  VariantClear(&value);
-
-  // Annotate information about type of memory error correction.
-  if (QueryOneWMIProperty(services, L"Win32_PhysicalMemoryArray",
-                          L"MemoryErrorCorrection", &value) &&
-      V_VT(&value) == VT_I4) {
-    long valueInt = V_I4(&value);
-    nsCString valueString;
-    if (valueInt < 0 ||
-        valueInt >= long(ArrayLength(kMemoryErrorCorrectionValues))) {
-      valueString.AssignLiteral("Unexpected value");
-    } else {
-      valueString.AssignASCII(kMemoryErrorCorrectionValues[valueInt]);
-    }
-    CrashReporter::AnnotateCrashReport(
-        CrashReporter::Annotation::MemoryErrorCorrection, valueString);
-  }
-
-  VariantClear(&value);
-}
-
-static void PR_CALLBACK AnnotateWMIData_ThreadStart(void*) {
-  mscom::MTARegion mta;
-  if (!mta.IsValid()) {
-    return;
-  }
-
-  AnnotateWMIData();
-}
-#endif  // XP_WIN
-
 #if defined(XP_LINUX) && !defined(ANDROID)
 
 static void AnnotateLSBRelease(void*) {
@@ -4480,6 +4374,7 @@ int XREMain::XRE_mainStartup(bool* aExitFlag) {
   mRemoteService = new nsRemoteService(gAppData->remotingName);
   if (mRemoteService && !mDisableRemoteServer) {
     mRemoteService->LockStartup();
+    gRemoteService = mRemoteService;
   }
 #endif
 #if defined(MOZ_WIDGET_GTK)
@@ -4940,11 +4835,6 @@ nsresult XREMain::XRE_mainRun() {
         "toolkit.crashreporter.include_context_heap", false);
     CrashReporter::SetIncludeContextHeap(includeContextHeap);
 
-#ifdef XP_WIN
-    PR_CreateThread(PR_USER_THREAD, AnnotateWMIData_ThreadStart, 0,
-                    PR_PRIORITY_LOW, PR_GLOBAL_THREAD, PR_UNJOINABLE_THREAD, 0);
-#endif
-
 #if defined(XP_LINUX) && !defined(ANDROID)
     PR_CreateThread(PR_USER_THREAD, AnnotateLSBRelease, 0, PR_PRIORITY_LOW,
                     PR_GLOBAL_THREAD, PR_UNJOINABLE_THREAD, 0);
@@ -5261,6 +5151,7 @@ nsresult XREMain::XRE_mainRun() {
       if (mRemoteService && !mDisableRemoteServer) {
         mRemoteService->StartupServer();
         mRemoteService->UnlockStartup();
+        gRemoteService = nullptr;
       }
 #endif /* MOZ_WIDGET_GTK */
 
@@ -5400,6 +5291,13 @@ int XREMain::XRE_main(int argc, char* argv[], const BootstrapConfig& aConfig) {
   AUTO_BASE_PROFILER_LABEL("XREMain::XRE_main (around Gecko Profiler)", OTHER);
   AUTO_PROFILER_INIT;
   AUTO_PROFILER_LABEL("XREMain::XRE_main", OTHER);
+
+#ifdef XP_MACOSX
+  // We call this early because it will kick off a background-thread task
+  // to register the fonts, and we'd like it to have a chance to complete
+  // before gfxPlatform initialization actually requires it.
+  gfxPlatformMac::RegisterSupplementalFonts();
+#endif
 
 #ifdef MOZ_CODE_COVERAGE
   CodeCoverageHandler::Init();

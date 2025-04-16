@@ -68,9 +68,6 @@
   --panel-banner-item-background-color: var(--button-bgcolor);
   --panel-banner-item-hover-bgcolor: var(--button-hover-bgcolor);
   --panel-banner-item-active-bgcolor: var(--button-active-bgcolor);
-  /* These colors are normally defined by the theme, but we need fallbacks in
-     case the theme doesn't supply them, because otherwise icons that use these
-     would not appear at all. The values are from the default light theme. */
   --panel-banner-item-update-supported-bgcolor: #2AC3A2;
   --panel-banner-item-warning-icon-bgcolor: #FFA436;
   --panel-banner-item-info-icon-bgcolor: #0090ED;
@@ -256,12 +253,6 @@ panelmultiview[transitioning] > .panel-viewcontainer > .panel-viewstack > panelv
 #BMB_bookmarksPopup {
   margin-top: -8px;
 }
-
-@media (-moz-proton) {
-#notification-popup {
-  margin-top: 2px;
-}
-} /** END Proton **/
 
 @media not (-moz-proton) {
 /* This section is to anchor all the drop down panels at the same height, shift the
@@ -887,6 +878,16 @@ toolbarbutton[constrain-size="true"][cui-areatype="menu-panel"] > .toolbarbutton
 }
 
 @media (-moz-proton) {
+  #appMenu-fxa-status2 {
+    display: flex;
+  }
+
+  #appMenu-fxa-text,
+  #appMenu-fxa-status2[fxastatus] > #appMenu-fxa-label2 {
+    flex: 1;
+    align-self: center;
+  }
+
   #appMenu-fxa-status2[fxastatus] {
     margin: 0;
     padding: 0;
@@ -899,10 +900,6 @@ toolbarbutton[constrain-size="true"][cui-areatype="menu-panel"] > .toolbarbutton
   #appMenu-fxa-status2[fxastatus] > #appMenu-fxa-label2 > vbox > #appMenu-header-description,
   #appMenu-fxa-text {
     font-weight: 600;
-  }
-
-  #appMenu-fxa-status2[fxastatus] > #appMenu-fxa-label2 {
-    -moz-box-flex: 1;
   }
 
   #appMenu-fxa-status2:not([fxastatus]) > #appMenu-fxa-label2 {
@@ -1210,6 +1207,30 @@ panelmultiview[mainViewId="PanelUI-fxa"] #PanelUI-remotetabs-syncnow {
 
 #PanelUI-remotetabs {
   --panel-ui-sync-illustration-height: 141px;
+}
+
+.sendToDevice-device[clientType=phone] {
+  list-style-image: url("chrome://browser/skin/device-phone.svg");
+}
+
+.sendToDevice-device[clientType=tablet] {
+  list-style-image: url("chrome://browser/skin/device-tablet.svg");
+}
+
+.sendToDevice-device[clientType=desktop] {
+  list-style-image: url("chrome://browser/skin/device-desktop.svg");
+}
+
+.sendToDevice-device[clientType=tv] {
+  list-style-image: url("chrome://browser/skin/device-tv.svg");
+}
+
+.sendToDevice-device[clientType=vr] {
+  list-style-image: url("chrome://browser/skin/device-vr.svg");
+}
+
+.sendToDevice-device.signintosync {
+  list-style-image: url("chrome://browser/skin/sync.svg");
 }
 
 .PanelUI-fxa-service-description-label,
@@ -1575,6 +1596,7 @@ panelview .toolbarbutton-1,
   color: var(--panel-shortcut-color);
 }
 
+#protections-popup-mainView .subviewbutton-nav:not(.notFound)::after,
 #identity-popup-mainView .subviewbutton-nav::after,
 .widget-overflow-list .subviewbutton-nav::after,
 .PanelUI-subView .subviewbutton-nav::after {
@@ -1585,6 +1607,7 @@ panelview .toolbarbutton-1,
   display: -moz-box;
 }
 
+#protections-popup-mainView .subviewbutton-nav:not(.notFound):-moz-locale-dir(rtl)::after,
 #identity-popup-mainView .subviewbutton-nav:-moz-locale-dir(rtl)::after,
 .widget-overflow-list .subviewbutton-nav:-moz-locale-dir(rtl)::after,
 .PanelUI-subView .subviewbutton-nav:-moz-locale-dir(rtl)::after {
@@ -1605,7 +1628,7 @@ panelview .toolbarbutton-1,
 } /* END not Proton */
 
 .PanelUI-subView .subviewbutton-nav-down::after {
-  rotate: 90deg;
+  content: url(chrome://global/skin/icons/arrow-dropdown-16.svg);
 }
 
 .subviewbutton[shortcut]::after,
@@ -2414,10 +2437,6 @@ panelview:not([mainview]) #PanelUI-whatsNew-title {
 
 #PanelUI-whatsNew checkbox:hover .checkbox-check {
   border-color: #0a84ff;
-}
-
-#PanelUI-whatsNew .checkbox-icon {
-  display: none;
 }
 } /*** END !proton ***/
 

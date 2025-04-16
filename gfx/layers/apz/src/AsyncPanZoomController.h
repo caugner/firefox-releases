@@ -74,6 +74,10 @@ class AndroidSpecificState;
 struct KeyboardScrollAction;
 struct ZoomTarget;
 
+namespace apz {
+struct AsyncScrollThumbTransformer;
+}
+
 // Base class for grouping platform-specific APZC state variables.
 class PlatformSpecificStateBase {
  public:
@@ -808,6 +812,12 @@ class AsyncPanZoomController {
    */
   ParentLayerPoint GetOverscrollAmount() const;
 
+ private:
+  // Internal version of GetOverscrollAmount() which does not set
+  // the test async properties.
+  ParentLayerPoint GetOverscrollAmountInternal() const;
+
+ protected:
   /**
    * Returns SideBits where this APZC is overscrolled.
    */
@@ -1206,6 +1216,9 @@ class AsyncPanZoomController {
     return mScrollMetadata.GetMetrics().GetCumulativeResolution();
   }
 
+  // Returns the delta for the given InputData.
+  ParentLayerPoint GetDeltaForEvent(const InputData& aEvent) const;
+
  private:
   /**
    * Advances to the next sample, if there is one, the list of sampled states
@@ -1456,6 +1469,7 @@ class AsyncPanZoomController {
 
   friend class GenericOverscrollEffect;
   friend class WidgetOverscrollEffect;
+  friend struct apz::AsyncScrollThumbTransformer;
 
   FlingAccelerator mFlingAccelerator;
 
@@ -1578,10 +1592,18 @@ class AsyncPanZoomController {
   void FlushRepaintForOverscrollHandoff();
 
   /**
-   * If overscrolled, start a snap-back animation and return true.
+   * If overscrolled, start a snap-back animation and return true. Even if not
+   * overscrolled, this function tries to snap back to if there's an applicable
+   * scroll snap point.
    * Otherwise return false.
    */
   bool SnapBackIfOverscrolled();
+
+  /**
+   * NOTE: Similar to above but this function doesn't snap back to the scroll
+   * snap point.
+   */
+  bool SnapBackIfOverscrolledForMomentum(const ParentLayerPoint& aVelocity);
 
   /**
    * Build the chain of APZCs along which scroll will be handed off when
@@ -1630,9 +1652,6 @@ class AsyncPanZoomController {
    * is transferred to any existing overscroll.
    */
   void OverscrollBy(ParentLayerPoint& aOverscroll);
-
-  // Helper function for CanScroll().
-  ParentLayerPoint GetDeltaForEvent(const InputData& aEvent) const;
 
   /* ===================================================================
    * The functions and members in this section are used to maintain the

@@ -59,6 +59,7 @@
 #    define HREPORT HANDLE
 #    define PWER_SUBMIT_RESULT WER_SUBMIT_RESULT*
 #    define WER_MAX_PREFERRED_MODULES_BUFFER (256)
+#    define WER_FAULT_REPORTING_DISABLE_SNAPSHOT_HANG (256)
 #  endif               // defined(__MINGW32__) || defined(__MINGW64__)
 #  include "werapi.h"  // For WerRegisterRuntimeExceptionModule()
 #elif defined(XP_MACOSX)
@@ -447,8 +448,6 @@ static XP_CHAR* Concat(XP_CHAR* str, const XP_CHAR* toAppend, size_t* size) {
 
   return str;
 }
-
-static size_t gOOMAllocationSize = 0;
 
 void AnnotateOOMAllocationSize(size_t size) { gOOMAllocationSize = size; }
 
@@ -1284,6 +1283,12 @@ static void WriteMainThreadRunnableName(AnnotationWriter& aWriter) {
 #endif
 }
 
+static void WriteOOMAllocationSize(AnnotationWriter& aWriter) {
+  if (gOOMAllocationSize) {
+    aWriter.Write(Annotation::OOMAllocationSize, gOOMAllocationSize);
+  }
+}
+
 static void WriteMozCrashReason(AnnotationWriter& aWriter) {
   if (gMozCrashReason != nullptr) {
     aWriter.Write(Annotation::MozCrashReason, gMozCrashReason);
@@ -1352,9 +1357,7 @@ static void WriteAnnotationsForMainProcessCrash(PlatformWriter& pw,
 
   WriteMainThreadRunnableName(writer);
 
-  if (gOOMAllocationSize) {
-    writer.Write(Annotation::OOMAllocationSize, gOOMAllocationSize);
-  }
+  WriteOOMAllocationSize(writer);
 
   if (gTexturesSize) {
     writer.Write(Annotation::TextureUsage, gTexturesSize);
@@ -1640,13 +1643,11 @@ static void PrepareChildExceptionTimeAnnotations(
   apiData.OpenHandle(GetAnnotationTimeCrashFd());
   BinaryAnnotationWriter writer(apiData);
 
-  if (gOOMAllocationSize) {
-    writer.Write(Annotation::OOMAllocationSize, gOOMAllocationSize);
-  }
-
   WriteMozCrashReason(writer);
 
   WriteMainThreadRunnableName(writer);
+
+  WriteOOMAllocationSize(writer);
 
 #ifdef MOZ_PHC
   WritePHCAddrInfo(writer, addrInfo);
@@ -2155,8 +2156,6 @@ nsresult SetExceptionHandler(nsIFile* aXREDirectory, bool force /*=false*/) {
       &keyExistsAndHasValidFormat);
   if (keyExistsAndHasValidFormat) showOSCrashReporter = prefValue;
 #endif
-
-  mozalloc_set_oom_abort_handler(AnnotateOOMAllocationSize);
 
   oldTerminateHandler = std::set_terminate(&TerminateHandler);
 
@@ -3559,8 +3558,6 @@ bool SetRemoteExceptionHandler(const char* aCrashPipe,
       true,     // install signal handlers
       aCrashPipe);
 #endif
-
-  mozalloc_set_oom_abort_handler(AnnotateOOMAllocationSize);
 
   oldTerminateHandler = std::set_terminate(&TerminateHandler);
 

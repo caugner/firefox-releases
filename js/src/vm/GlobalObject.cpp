@@ -599,12 +599,10 @@ JSObject* GlobalObject::getOrCreateThrowTypeError(
     return nullptr;
   }
 
-  // The "length" property of %ThrowTypeError% is non-configurable, adjust
-  // the default property attributes accordingly.
-  Rooted<PropertyDescriptor> nonConfigurableDesc(cx);
-  nonConfigurableDesc.setAttributes(JSPROP_PERMANENT | JSPROP_IGNORE_READONLY |
-                                    JSPROP_IGNORE_ENUMERATE |
-                                    JSPROP_IGNORE_VALUE);
+  // The "length" property of %ThrowTypeError% is non-configurable.
+  Rooted<PropertyDescriptor> nonConfigurableDesc(cx,
+                                                 PropertyDescriptor::Empty());
+  nonConfigurableDesc.setConfigurable(false);
 
   RootedId lengthId(cx, NameToId(cx->names().length));
   ObjectOpResult lengthResult;
@@ -964,10 +962,10 @@ NativeObject* GlobalObject::getOrCreateForOfPICObject(
 }
 
 /* static */
-JSObject* GlobalObject::getOrCreateRealmWeakMapKey(
+JSObject* GlobalObject::getOrCreateRealmKeyObject(
     JSContext* cx, Handle<GlobalObject*> global) {
   cx->check(global);
-  Value v = global->getReservedSlot(REALM_WEAK_MAP_KEY);
+  Value v = global->getReservedSlot(REALM_KEY_OBJECT);
   if (v.isObject()) {
     return &v.toObject();
   }
@@ -977,7 +975,7 @@ JSObject* GlobalObject::getOrCreateRealmWeakMapKey(
     return nullptr;
   }
 
-  global->setReservedSlot(REALM_WEAK_MAP_KEY, ObjectValue(*key));
+  global->setReservedSlot(REALM_KEY_OBJECT, ObjectValue(*key));
   return key;
 }
 
@@ -1084,6 +1082,30 @@ bool GlobalObject::getSelfHostedFunction(JSContext* cx,
 }
 
 /* static */
+bool GlobalObject::getIntrinsicValueSlow(JSContext* cx,
+                                         Handle<GlobalObject*> global,
+                                         HandlePropertyName name,
+                                         MutableHandleValue value) {
+  if (!cx->runtime()->cloneSelfHostedValue(cx, name, value)) {
+    return false;
+  }
+
+  // It's possible in certain edge cases that cloning the value ended up
+  // defining the intrinsic. For instance, cloning can call NewArray, which
+  // resolves Array.prototype, which defines some self-hosted functions. If this
+  // happens we use the value already defined on the intrinsics holder.
+  bool exists = false;
+  if (!GlobalObject::maybeGetIntrinsicValue(cx, global, name, value, &exists)) {
+    return false;
+  }
+  if (exists) {
+    return true;
+  }
+
+  return GlobalObject::addIntrinsicValue(cx, global, name, value);
+}
+
+/* static */
 bool GlobalObject::addIntrinsicValue(JSContext* cx,
                                      Handle<GlobalObject*> global,
                                      HandlePropertyName name,
@@ -1093,13 +1115,17 @@ bool GlobalObject::addIntrinsicValue(JSContext* cx,
     return false;
   }
 
+  RootedId id(cx, NameToId(name));
+  MOZ_ASSERT(!holder->containsPure(id));
+
+  constexpr PropertyFlags propFlags = {PropertyFlag::Configurable,
+                                       PropertyFlag::Writable};
+
   uint32_t slot = holder->slotSpan();
   RootedShape last(cx, holder->lastProperty());
   Rooted<BaseShape*> base(cx, last->base());
-
-  RootedId id(cx, NameToId(name));
-  Rooted<StackShape> child(cx,
-                           StackShape(base, last->objectFlags(), id, slot, 0));
+  Rooted<StackShape> child(
+      cx, StackShape(base, last->objectFlags(), id, slot, propFlags));
   Shape* shape = cx->zone()->propertyTree().getChild(cx, last, child);
   if (!shape) {
     return false;
@@ -1109,7 +1135,7 @@ bool GlobalObject::addIntrinsicValue(JSContext* cx,
     return false;
   }
 
-  holder->setSlot(shape->slot(), value);
+  holder->setSlot(slot, value);
   return true;
 }
 

@@ -151,20 +151,17 @@ class HTMLEditor final : public TextEditor,
   MOZ_CAN_RUN_SCRIPT_BOUNDARY NS_IMETHOD BeginningOfDocument() override;
   MOZ_CAN_RUN_SCRIPT NS_IMETHOD SetFlags(uint32_t aFlags) override;
 
-  /**
-   * IsEmpty() checks whether the editor is empty.  If editor has only padding
-   * <br> element for empty editor, returns true.  If editor's root element has
-   * non-empty text nodes or other nodes like <br>, returns false even if there
-   * are only empty blocks.
-   */
-  virtual bool IsEmpty() const override;
+  NS_IMETHOD GetDocumentCharacterSet(nsACString& aCharacterSet) final;
+  MOZ_CAN_RUN_SCRIPT NS_IMETHOD
+  SetDocumentCharacterSet(const nsACString& aCharacterSet) final;
 
-  virtual bool CanPaste(int32_t aClipboardType) const override;
+  bool IsEmpty() const final;
+
+  bool CanPaste(int32_t aClipboardType) const final;
   using EditorBase::CanPaste;
 
-  MOZ_CAN_RUN_SCRIPT virtual nsresult PasteTransferableAsAction(
-      nsITransferable* aTransferable,
-      nsIPrincipal* aPrincipal = nullptr) override;
+  MOZ_CAN_RUN_SCRIPT nsresult PasteTransferableAsAction(
+      nsITransferable* aTransferable, nsIPrincipal* aPrincipal = nullptr) final;
 
   MOZ_CAN_RUN_SCRIPT NS_IMETHOD DeleteNode(nsINode* aNode) override;
 
@@ -219,41 +216,14 @@ class HTMLEditor final : public TextEditor,
   MOZ_CAN_RUN_SCRIPT nsresult PasteNoFormattingAsAction(
       int32_t aSelectionType, nsIPrincipal* aPrincipal = nullptr);
 
-  /**
-   * PasteAsQuotationAsAction() pastes content in clipboard with newly created
-   * blockquote element.  If the editor is in plaintext mode, will paste the
-   * content with appending ">" to start of each line.
-   *
-   * @param aClipboardType      nsIClipboard::kGlobalClipboard or
-   *                            nsIClipboard::kSelectionClipboard.
-   * @param aDispatchPasteEvent true if this should dispatch ePaste event
-   *                            before pasting.  Otherwise, false.
-   * @param aPrincipal          Set subject principal if it may be called by
-   *                            JS.  If set to nullptr, will be treated as
-   *                            called by system.
-   */
-  MOZ_CAN_RUN_SCRIPT virtual nsresult PasteAsQuotationAsAction(
-      int32_t aClipboardType, bool aDispatchPasteEvent,
-      nsIPrincipal* aPrincipal = nullptr) override;
+  MOZ_CAN_RUN_SCRIPT nsresult
+  PasteAsQuotationAsAction(int32_t aClipboardType, bool aDispatchPasteEvent,
+                           nsIPrincipal* aPrincipal = nullptr) final;
 
-  /**
-   * Can we paste |aTransferable| or, if |aTransferable| is null, will a call
-   * to pasteTransferable later possibly succeed if given an instance of
-   * nsITransferable then? True if the doc is modifiable, and, if
-   * |aTransfeable| is non-null, we have pasteable data in |aTransfeable|.
-   */
-  virtual bool CanPasteTransferable(nsITransferable* aTransferable) override;
+  bool CanPasteTransferable(nsITransferable* aTransferable) final;
 
-  /**
-   * InsertLineBreakAsAction() is called when user inputs a line break with
-   * Shift + Enter or something.
-   *
-   * @param aPrincipal          Set subject principal if it may be called by
-   *                            JS.  If set to nullptr, will be treated as
-   *                            called by system.
-   */
-  MOZ_CAN_RUN_SCRIPT virtual nsresult InsertLineBreakAsAction(
-      nsIPrincipal* aPrincipal = nullptr) override;
+  MOZ_CAN_RUN_SCRIPT nsresult
+  InsertLineBreakAsAction(nsIPrincipal* aPrincipal = nullptr) final;
 
   /**
    * InsertParagraphSeparatorAsAction() is called when user tries to separate
@@ -698,10 +668,11 @@ class HTMLEditor final : public TextEditor,
    *                            If ePrevious, selection will be collapsed at
    *                            the <br> element.
    * @return                    The new <br> node.  If failed to create new
-   *                            <br> node, returns nullptr.
+   *                            <br> node, returns error.
    */
-  MOZ_CAN_RUN_SCRIPT already_AddRefed<Element> InsertBRElementWithTransaction(
-      const EditorDOMPoint& aPointToInsert, EDirection aSelect = eNone);
+  MOZ_CAN_RUN_SCRIPT Result<RefPtr<Element>, nsresult>
+  InsertBRElementWithTransaction(const EditorDOMPoint& aPointToInsert,
+                                 EDirection aSelect = eNone);
 
   /**
    * DeleteNodeWithTransaction() removes aContent from the DOM tree if it's
@@ -798,15 +769,6 @@ class HTMLEditor final : public TextEditor,
    */
   MOZ_CAN_RUN_SCRIPT nsresult DeleteTableCellContentsWithTransaction();
 
-  static void IsNextCharInNodeWhiteSpace(nsIContent* aContent, int32_t aOffset,
-                                         bool* outIsSpace, bool* outIsNBSP,
-                                         nsIContent** outNode = nullptr,
-                                         int32_t* outOffset = 0);
-  static void IsPrevCharInNodeWhiteSpace(nsIContent* aContent, int32_t aOffset,
-                                         bool* outIsSpace, bool* outIsNBSP,
-                                         nsIContent** outNode = nullptr,
-                                         int32_t* outOffset = 0);
-
   /**
    * extracts an element from the normal flow of the document and
    * positions it, and puts it back in the normal flow.
@@ -832,35 +794,6 @@ class HTMLEditor final : public TextEditor,
    */
   MOZ_CAN_RUN_SCRIPT nsresult CollapseAdjacentTextNodes(nsRange& aRange);
 
-  /**
-   * IsInVisibleTextFrames() returns true if all text in aText is in visible
-   * text frames.  Callers have to guarantee that there is no pending reflow.
-   */
-  bool IsInVisibleTextFrames(dom::Text& aText) const;
-
-  /**
-   * IsVisibleTextNode() returns true if aText has visible text.  If it has
-   * only white-spaces and they are collapsed, returns false.
-   */
-  bool IsVisibleTextNode(Text& aText) const;
-
-  /**
-   * IsEmptyNode() figures out if aNode is an empty node.  A block can have
-   * children and still be considered empty, if the children are empty or
-   * non-editable.
-   */
-  bool IsEmptyNode(nsINode& aNode, bool aSingleBRDoesntCount = false,
-                   bool aListOrCellNotEmpty = false,
-                   bool aSafeToAskFrames = false) const {
-    bool seenBR = false;
-    return IsEmptyNodeImpl(aNode, aSingleBRDoesntCount, aListOrCellNotEmpty,
-                           aSafeToAskFrames, &seenBR);
-  }
-
-  bool IsEmptyNodeImpl(nsINode& aNode, bool aSingleBRDoesntCount,
-                       bool aListOrCellNotEmpty, bool aSafeToAskFrames,
-                       bool* aSeenBR) const;
-
   static bool HasAttributes(Element* aElement) {
     MOZ_ASSERT(aElement);
     uint32_t attrCount = aElement->GetAttrCount();
@@ -869,36 +802,7 @@ class HTMLEditor final : public TextEditor,
             !aElement->GetAttrNameAt(0)->Equals(nsGkAtoms::mozdirty));
   }
 
-  /**
-   * Content-based query returns true if <aProperty aAttribute=aValue> effects
-   * aNode.  If <aProperty aAttribute=aValue> contains aNode, but
-   * <aProperty aAttribute=SomeOtherValue> also contains aNode and the second is
-   * more deeply nested than the first, then the first does not effect aNode.
-   *
-   * @param aNode      The target of the query
-   * @param aProperty  The property that we are querying for
-   * @param aAttribute The attribute of aProperty, example: color in
-   *                   <FONT color="blue"> May be null.
-   * @param aValue     The value of aAttribute, example: blue in
-   *                   <FONT color="blue"> May be null.  Ignored if aAttribute
-   *                   is null.
-   * @param outValue   [OUT] the value of the attribute, if aIsSet is true
-   * @return           true if <aProperty aAttribute=aValue> effects
-   *                   aNode.
-   *
-   * The nsIContent variant returns aIsSet instead of using an out parameter.
-   */
-  static bool IsTextPropertySetByContent(nsINode* aNode, nsAtom* aProperty,
-                                         nsAtom* aAttribute,
-                                         const nsAString* aValue,
-                                         nsAString* outValue = nullptr);
-
   static dom::Element* GetLinkElement(nsINode* aNode);
-
-  /**
-   * Small utility routine to test if a break node is visible to user.
-   */
-  bool IsVisibleBRElement(const nsINode* aNode) const;
 
   /**
    * Helper routines for font size changing.
@@ -949,175 +853,6 @@ class HTMLEditor final : public TextEditor,
   [[nodiscard]] MOZ_CAN_RUN_SCRIPT SplitNodeResult
   SplitAncestorStyledInlineElementsAt(const EditorDOMPoint& aPointToSplit,
                                       nsAtom* aProperty, nsAtom* aAttribute);
-
-  /**
-   * GetPriorHTMLSibling() returns the previous editable sibling, if there is
-   * one within the parent, optionally skipping text nodes that are only
-   * white-space.
-   */
-  enum class SkipWhiteSpace { Yes, No };
-  nsIContent* GetPriorHTMLSibling(nsINode* aNode,
-                                  SkipWhiteSpace = SkipWhiteSpace::No) const;
-
-  /**
-   * GetNextHTMLSibling() returns the next editable sibling, if there is
-   * one within the parent, optionally skipping text nodes that are only
-   * white-space.
-   */
-  nsIContent* GetNextHTMLSibling(nsINode* aNode,
-                                 SkipWhiteSpace = SkipWhiteSpace::No) const;
-
-  // Helper for GetPriorHTMLSibling/GetNextHTMLSibling.
-  static bool SkippableWhiteSpace(nsINode* aNode, SkipWhiteSpace aSkipWS) {
-    return aSkipWS == SkipWhiteSpace::Yes && aNode->IsText() &&
-           aNode->AsText()->TextIsOnlyWhitespace();
-  }
-
-  /**
-   * GetPreviousHTMLElementOrText*() methods are similar to
-   * EditorBase::GetPreviousElementOrText*() but this won't return nodes
-   * outside active editing host.
-   */
-  nsIContent* GetPreviousHTMLElementOrText(const nsINode& aNode) const {
-    return GetPreviousHTMLElementOrTextInternal(aNode, false);
-  }
-  nsIContent* GetPreviousHTMLElementOrTextInBlock(const nsINode& aNode) const {
-    return GetPreviousHTMLElementOrTextInternal(aNode, true);
-  }
-  template <typename PT, typename CT>
-  nsIContent* GetPreviousHTMLElementOrText(
-      const EditorDOMPointBase<PT, CT>& aPoint) const {
-    return GetPreviousHTMLElementOrTextInternal(aPoint, false);
-  }
-  template <typename PT, typename CT>
-  nsIContent* GetPreviousHTMLElementOrTextInBlock(
-      const EditorDOMPointBase<PT, CT>& aPoint) const {
-    return GetPreviousHTMLElementOrTextInternal(aPoint, true);
-  }
-
-  /**
-   * GetPreviousHTMLElementOrTextInternal() methods are common implementation
-   * of above methods.  Please don't use this method directly.
-   */
-  nsIContent* GetPreviousHTMLElementOrTextInternal(const nsINode& aNode,
-                                                   bool aNoBlockCrossing) const;
-  template <typename PT, typename CT>
-  nsIContent* GetPreviousHTMLElementOrTextInternal(
-      const EditorDOMPointBase<PT, CT>& aPoint, bool aNoBlockCrossing) const;
-
-  /**
-   * GetPreviousEditableHTMLNode*() methods are similar to
-   * EditorBase::GetPreviousEditableNode() but this won't return nodes outside
-   * active editing host.
-   */
-  nsIContent* GetPreviousEditableHTMLNode(nsINode& aNode) const {
-    return GetPreviousEditableHTMLNodeInternal(aNode, false);
-  }
-  nsIContent* GetPreviousEditableHTMLNodeInBlock(nsINode& aNode) const {
-    return GetPreviousEditableHTMLNodeInternal(aNode, true);
-  }
-  template <typename PT, typename CT>
-  nsIContent* GetPreviousEditableHTMLNode(
-      const EditorDOMPointBase<PT, CT>& aPoint) const {
-    return GetPreviousEditableHTMLNodeInternal(aPoint, false);
-  }
-  template <typename PT, typename CT>
-  nsIContent* GetPreviousEditableHTMLNodeInBlock(
-      const EditorDOMPointBase<PT, CT>& aPoint) const {
-    return GetPreviousEditableHTMLNodeInternal(aPoint, true);
-  }
-
-  /**
-   * GetPreviousEditableHTMLNodeInternal() methods are common implementation
-   * of above methods.  Please don't use this method directly.
-   */
-  nsIContent* GetPreviousEditableHTMLNodeInternal(nsINode& aNode,
-                                                  bool aNoBlockCrossing) const;
-  template <typename PT, typename CT>
-  nsIContent* GetPreviousEditableHTMLNodeInternal(
-      const EditorDOMPointBase<PT, CT>& aPoint, bool aNoBlockCrossing) const;
-
-  /**
-   * GetNextHTMLElementOrText*() methods are similar to
-   * EditorBase::GetNextElementOrText*() but this won't return nodes outside
-   * active editing host.
-   *
-   * Note that same as EditorBase::GetTextEditableNode(), methods which take
-   * |const EditorRawDOMPoint&| start to search from the node pointed by it.
-   * On the other hand, methods which take |nsINode&| start to search from
-   * next node of aNode.
-   */
-  nsIContent* GetNextHTMLElementOrText(const nsINode& aNode) const {
-    return GetNextHTMLElementOrTextInternal(aNode, false);
-  }
-  nsIContent* GetNextHTMLElementOrTextInBlock(const nsINode& aNode) const {
-    return GetNextHTMLElementOrTextInternal(aNode, true);
-  }
-  template <typename PT, typename CT>
-  nsIContent* GetNextHTMLElementOrText(
-      const EditorDOMPointBase<PT, CT>& aPoint) const {
-    return GetNextHTMLElementOrTextInternal(aPoint, false);
-  }
-  template <typename PT, typename CT>
-  nsIContent* GetNextHTMLElementOrTextInBlock(
-      const EditorDOMPointBase<PT, CT>& aPoint) const {
-    return GetNextHTMLElementOrTextInternal(aPoint, true);
-  }
-
-  /**
-   * GetNextHTMLNodeInternal() methods are common implementation
-   * of above methods.  Please don't use this method directly.
-   */
-  nsIContent* GetNextHTMLElementOrTextInternal(const nsINode& aNode,
-                                               bool aNoBlockCrossing) const;
-  template <typename PT, typename CT>
-  nsIContent* GetNextHTMLElementOrTextInternal(
-      const EditorDOMPointBase<PT, CT>& aPoint, bool aNoBlockCrossing) const;
-
-  /**
-   * GetNextEditableHTMLNode*() methods are similar to
-   * EditorBase::GetNextEditableNode() but this won't return nodes outside
-   * active editing host.
-   *
-   * Note that same as EditorBase::GetTextEditableNode(), methods which take
-   * |const EditorRawDOMPoint&| start to search from the node pointed by it.
-   * On the other hand, methods which take |nsINode&| start to search from
-   * next node of aNode.
-   */
-  nsIContent* GetNextEditableHTMLNode(nsINode& aNode) const {
-    return GetNextEditableHTMLNodeInternal(aNode, false);
-  }
-  nsIContent* GetNextEditableHTMLNodeInBlock(nsINode& aNode) const {
-    return GetNextEditableHTMLNodeInternal(aNode, true);
-  }
-  template <typename PT, typename CT>
-  nsIContent* GetNextEditableHTMLNode(
-      const EditorDOMPointBase<PT, CT>& aPoint) const {
-    return GetNextEditableHTMLNodeInternal(aPoint, false);
-  }
-  template <typename PT, typename CT>
-  nsIContent* GetNextEditableHTMLNodeInBlock(
-      const EditorDOMPointBase<PT, CT>& aPoint) const {
-    return GetNextEditableHTMLNodeInternal(aPoint, true);
-  }
-
-  /**
-   * GetNextEditableHTMLNodeInternal() methods are common implementation
-   * of above methods.  Please don't use this method directly.
-   */
-  nsIContent* GetNextEditableHTMLNodeInternal(nsINode& aNode,
-                                              bool aNoBlockCrossing) const;
-  template <typename PT, typename CT>
-  nsIContent* GetNextEditableHTMLNodeInternal(
-      const EditorDOMPointBase<PT, CT>& aPoint, bool aNoBlockCrossing) const;
-
-  bool IsFirstEditableChild(nsINode* aNode) const;
-  bool IsLastEditableChild(nsINode* aNode) const;
-  nsIContent* GetFirstEditableChild(nsINode& aNode) const;
-  nsIContent* GetLastEditableChild(nsINode& aNode) const;
-
-  nsIContent* GetFirstEditableLeaf(nsINode& aNode) const;
-  nsIContent* GetLastEditableLeaf(nsINode& aNode) const;
 
   [[nodiscard]] MOZ_CAN_RUN_SCRIPT nsresult GetInlinePropertyBase(
       nsAtom& aHTMLProperty, nsAtom* aAttribute, const nsAString* aValue,
@@ -1221,14 +956,7 @@ class HTMLEditor final : public TextEditor,
    */
   [[nodiscard]] MOZ_CAN_RUN_SCRIPT nsresult PrepareInlineStylesForCaret();
 
-  /**
-   * HandleInsertText() handles inserting text at selection.
-   *
-   * @param aEditSubAction      Must be EditSubAction::eInsertText or
-   *                            EditSubAction::eInsertTextComingFromIME.
-   * @param aInsertionString    String to be inserted at selection.
-   */
-  [[nodiscard]] MOZ_CAN_RUN_SCRIPT virtual EditActionResult HandleInsertText(
+  [[nodiscard]] MOZ_CAN_RUN_SCRIPT EditActionResult HandleInsertText(
       EditSubAction aEditSubAction, const nsAString& aInsertionString) final;
 
   /**
@@ -1297,13 +1025,6 @@ class HTMLEditor final : public TextEditor,
    */
   [[nodiscard]] MOZ_CAN_RUN_SCRIPT nsresult
   InsertBRElement(const EditorDOMPoint& aInsertToBreak);
-
-  /**
-   * GetMostAncestorInlineElement() returns the most ancestor inline element
-   * between aNode and the editing host.  Even if the editing host is an inline
-   * element, this method never returns the editing host as the result.
-   */
-  nsIContent* GetMostAncestorInlineElement(nsINode& aNode) const;
 
   /**
    * SplitParentInlineElementsAtRangeEdges() splits parent inline nodes at both
@@ -1420,17 +1141,6 @@ class HTMLEditor final : public TextEditor,
       nsTArray<OwningNonNull<nsIContent>>& aOutArrayOfContents,
       EditSubAction aEditSubAction,
       CollectNonEditableNodes aCollectNonEditableNodes);
-
-  /**
-   * GetWhiteSpaceEndPoint() returns point at first or last ASCII white-space
-   * or non-breakable space starting from aPoint.  I.e., this returns next or
-   * previous point whether the character is neither ASCII white-space nor
-   * non-brekable space.
-   */
-  enum class ScanDirection { Backward, Forward };
-  template <typename PT, typename RT>
-  static EditorDOMPoint GetWhiteSpaceEndPoint(
-      const RangeBoundaryBase<PT, RT>& aPoint, ScanDirection aScanDirection);
 
   /**
    * GetCurrentHardLineStartPoint() returns start point of hard line
@@ -1619,16 +1329,6 @@ class HTMLEditor final : public TextEditor,
   }
 
   /**
-   * GetDeepestEditableOnlyChildDivBlockquoteOrListElement() returns a `<div>`,
-   * `<blockquote>` or one of list elements.  This method climbs down from
-   * aContent while there is only one editable children and the editable child
-   * is `<div>`, `<blockquote>` or a list element.  When it reaches different
-   * kind of node, returns the last found element.
-   */
-  Element* GetDeepestEditableOnlyChildDivBlockquoteOrListElement(
-      nsINode& aNode);
-
-  /**
    * Try to get parent list element at `Selection`.  This returns first find
    * parent list element of common ancestor of ranges (looking for it from
    * first range to last range).
@@ -1643,43 +1343,6 @@ class HTMLEditor final : public TextEditor,
    */
   [[nodiscard]] MOZ_CAN_RUN_SCRIPT nsresult
   MaybeExtendSelectionToHardLineEdgesForBlockEditAction();
-
-  /**
-   * IsEmptyInlineNode() returns true if aContent is an inline node and it does
-   * not have meaningful content.
-   */
-  bool IsEmptyInlineNode(nsIContent& aContent) const;
-
-  /**
-   * IsEmptyOneHardLine() returns true if aArrayOfContents does not represent
-   * 2 or more lines and have meaningful content.
-   */
-  bool IsEmptyOneHardLine(
-      nsTArray<OwningNonNull<nsIContent>>& aArrayOfContents) const {
-    if (NS_WARN_IF(aArrayOfContents.IsEmpty())) {
-      return true;
-    }
-
-    bool brElementHasFound = false;
-    for (OwningNonNull<nsIContent>& content : aArrayOfContents) {
-      if (!EditorUtils::IsEditableContent(content, EditorType::HTML)) {
-        continue;
-      }
-      if (content->IsHTMLElement(nsGkAtoms::br)) {
-        // If there are 2 or more `<br>` elements, it's not empty line since
-        // there may be only one `<br>` element in a hard line.
-        if (brElementHasFound) {
-          return false;
-        }
-        brElementHasFound = true;
-        continue;
-      }
-      if (!IsEmptyInlineNode(content)) {
-        return false;
-      }
-    }
-    return true;
-  }
 
   /**
    * MaybeSplitAncestorsForInsertWithTransaction() does nothing if container of
@@ -1831,14 +1494,6 @@ class HTMLEditor final : public TextEditor,
   MaybeInsertPaddingBRElementForEmptyLastLineAtSelection();
 
   /**
-   * IsEmptyBlockElement() returns true if aElement is a block level element
-   * and it doesn't have any visible content.
-   */
-  enum class IgnoreSingleBR { Yes, No };
-  bool IsEmptyBlockElement(Element& aElement,
-                           IgnoreSingleBR aIgnoreSingleBR) const;
-
-  /**
    * SplitParagraph() splits the parent block, aParentDivOrP, at
    * aStartOfRightNode.
    *
@@ -1902,27 +1557,11 @@ class HTMLEditor final : public TextEditor,
                                          int32_t aOffset);
 
   /**
-   * GetNearestAncestorListItemElement() returns a list item element if
-   * aContent or its ancestor in editing host is one.  However, this won't
-   * cross table related element.
-   */
-  Element* GetNearestAncestorListItemElement(nsIContent& aContent) const;
-
-  /**
    * InsertParagraphSeparatorAsSubAction() handles insertPargraph commad
    * (i.e., handling Enter key press) with the above helper methods.
    */
   [[nodiscard]] MOZ_CAN_RUN_SCRIPT EditActionResult
   InsertParagraphSeparatorAsSubAction();
-
-  /**
-   * Returns true if aNode1 or aNode2 or both is the descendant of some type of
-   * table element, but their nearest table element ancestors differ.  "Table
-   * element" here includes not just <table> but also <td>, <tbody>, <tr>, etc.
-   * The nodes count as being their own descendants for this purpose, so a
-   * table element is its own nearest table element ancestor.
-   */
-  static bool NodesInDifferentTableElements(nsINode& aNode1, nsINode& aNode2);
 
   /**
    * ChangeListElementType() replaces child list items of aListElement with
@@ -2360,19 +1999,6 @@ class HTMLEditor final : public TextEditor,
   SplitNodeDeepWithTransaction(nsIContent& aMostAncestorToSplit,
                                const EditorDOMPoint& aDeepestStartOfRightNode,
                                SplitAtEdges aSplitAtEdges);
-
-  /**
-   * GetGoodCaretPointFor() returns a good point to collapse `Selection`
-   * after handling edit action with aDirectionAndAmount.
-   *
-   * @param aContent            The content where you want to put caret
-   *                            around.
-   * @param aDirectionAndAmount Muse be one of eNext, eNextWord, eToEndOfLine,
-   *                            ePrevious, ePreviousWord and eToBeggingOfLine.
-   *                            Set the direction of handled edit action.
-   */
-  EditorDOMPoint GetGoodCaretPointFor(
-      nsIContent& aContent, nsIEditor::EDirection aDirectionAndAmount) const;
 
   /**
    * RemoveEmptyInclusiveAncestorInlineElements() removes empty inclusive
@@ -2887,29 +2513,6 @@ class HTMLEditor final : public TextEditor,
    */
   [[nodiscard]] MOZ_CAN_RUN_SCRIPT EditActionResult
   AlignAsSubAction(const nsAString& aAlignType);
-
-  /**
-   * StartOrEndOfSelectionRangesIsIn() returns true if start or end of one
-   * of selection ranges is in aContent.
-   */
-  bool StartOrEndOfSelectionRangesIsIn(nsIContent& aContent) const;
-
-  /**
-   * FindNearEditableContent() tries to find an editable node near aPoint.
-   *
-   * @param aPoint      The DOM point where to start to search from.
-   * @param aDirection  If nsIEditor::ePrevious is set, this searches an
-   *                    editable node from next nodes.  Otherwise, from
-   *                    previous nodes.
-   * @return            If found, returns non-nullptr.  Otherwise, nullptr.
-   *                    Note that if found node is in different table element,
-   *                    this returns nullptr.
-   *                    And also if aDirection is not nsIEditor::ePrevious,
-   *                    the result may be the node pointed by aPoint.
-   */
-  template <typename PT, typename CT>
-  nsIContent* FindNearEditableContent(const EditorDOMPointBase<PT, CT>& aPoint,
-                                      nsIEditor::EDirection aDirection);
 
   /**
    * AdjustCaretPositionAndEnsurePaddingBRElement() may adjust caret
@@ -3511,14 +3114,7 @@ class HTMLEditor final : public TextEditor,
    */
   MOZ_CAN_RUN_SCRIPT nsresult PasteInternal(int32_t aClipboardType);
 
-  /**
-   * InsertWithQuotationsAsSubAction() inserts aQuotedText with appending ">"
-   * to start of every line.
-   *
-   * @param aQuotedText         String to insert.  This will be quoted by ">"
-   *                            automatically.
-   */
-  [[nodiscard]] MOZ_CAN_RUN_SCRIPT virtual nsresult
+  [[nodiscard]] MOZ_CAN_RUN_SCRIPT nsresult
   InsertWithQuotationsAsSubAction(const nsAString& aQuotedText) final;
 
   /**
@@ -3650,10 +3246,10 @@ class HTMLEditor final : public TextEditor,
    *
    * @param aPointToInsert      Candidate point to insert new <br> element.
    * @return                    Computed point to insert new <br> element.
-   *                            If something failed, this is unset.
+   *                            If something failed, this return error.
    */
-  MOZ_CAN_RUN_SCRIPT EditorDOMPoint
-  PrepareToInsertBRElement(const EditorDOMPoint& aPointToInsert);
+  MOZ_CAN_RUN_SCRIPT Result<EditorDOMPoint, nsresult> PrepareToInsertBRElement(
+      const EditorDOMPoint& aPointToInsert);
 
   /**
    * IndentAsSubAction() indents the content around Selection.
@@ -3666,6 +3262,15 @@ class HTMLEditor final : public TextEditor,
   [[nodiscard]] MOZ_CAN_RUN_SCRIPT EditActionResult OutdentAsSubAction();
 
   MOZ_CAN_RUN_SCRIPT nsresult LoadHTML(const nsAString& aInputString);
+
+  /**
+   * UpdateMetaCharsetWithTransaction() scans all <meta> elements in the
+   * document and if and only if there is a <meta> element having `httpEquiv`
+   * attribute and whose value includes `content-type`, updates its `content`
+   * attribute value to aCharacterSet.
+   */
+  MOZ_CAN_RUN_SCRIPT bool UpdateMetaCharsetWithTransaction(
+      Document& aDocument, const nsACString& aCharacterSet);
 
   /**
    * SetInlinePropertyInternal() stores new style with `mTypeInState` if
@@ -4244,21 +3849,6 @@ class HTMLEditor final : public TextEditor,
   };
 
   /**
-   * GetBetterInsertionPointFor() returns better insertion point to insert
-   * aContentToInsert.
-   *
-   * @param aContentToInsert    The content to insert.
-   * @param aPointToInsert      A candidate point to insert the node.
-   * @return                    Better insertion point if next visible node
-   *                            is a <br> element and previous visible node
-   *                            is neither none, another <br> element nor
-   *                            different block level element.
-   */
-  EditorRawDOMPoint GetBetterInsertionPointFor(
-      nsIContent& aContentToInsert,
-      const EditorRawDOMPoint& aPointToInsert) const;
-
-  /**
    * MakeDefinitionListItemWithTransaction() replaces parent list of current
    * selection with <dl> or create new <dl> element and creates a definition
    * list item whose name is aTagName.
@@ -4584,14 +4174,6 @@ class HTMLEditor final : public TextEditor,
    * during moving.
    */
   MOZ_CAN_RUN_SCRIPT nsresult RefreshInlineTableEditingUIInternal();
-
-  /**
-   * IsEmptyTextNode() returns true if aNode is a text node and does not have
-   * any visible characters.
-   */
-  bool IsEmptyTextNode(nsINode& aNode) const {
-    return aNode.IsText() && IsEmptyNode(aNode);
-  }
 
   /**
    * ElementIsGoodContainerForTheStyle() returns true if aElement is a

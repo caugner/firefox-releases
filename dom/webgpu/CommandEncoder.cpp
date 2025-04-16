@@ -133,6 +133,11 @@ void CommandEncoder::CopyBufferToTexture(
         ConvertBufferCopyView(aSource), ConvertTextureCopyView(aDestination),
         ConvertExtent(aCopySize), ToFFI(&bb));
     mBridge->SendCommandEncoderAction(mId, mParent->mId, std::move(bb));
+
+    const auto& targetCanvas = aDestination.mTexture->mTargetCanvasElement;
+    if (targetCanvas) {
+      mTargetCanvases.AppendElement(targetCanvas);
+    }
   }
 }
 void CommandEncoder::CopyTextureToBuffer(
@@ -157,6 +162,11 @@ void CommandEncoder::CopyTextureToTexture(
         ConvertTextureCopyView(aSource), ConvertTextureCopyView(aDestination),
         ConvertExtent(aCopySize), ToFFI(&bb));
     mBridge->SendCommandEncoderAction(mId, mParent->mId, std::move(bb));
+
+    const auto& targetCanvas = aDestination.mTexture->mTargetCanvasElement;
+    if (targetCanvas) {
+      mTargetCanvases.AppendElement(targetCanvas);
+    }
   }
 }
 
@@ -171,11 +181,11 @@ already_AddRefed<RenderPassEncoder> CommandEncoder::BeginRenderPass(
   for (const auto& at : aDesc.mColorAttachments) {
     auto* targetCanvasElement = at.mView->GetTargetCanvasElement();
     if (targetCanvasElement) {
-      if (mTargetCanvasElement) {
-        NS_WARNING("Command encoder touches more than one canvas");
-      } else {
-        mTargetCanvasElement = targetCanvasElement;
-      }
+      mTargetCanvases.AppendElement(targetCanvasElement);
+    }
+    if (at.mResolveTarget.WasPassed()) {
+      targetCanvasElement = at.mResolveTarget.Value().GetTargetCanvasElement();
+      mTargetCanvases.AppendElement(targetCanvasElement);
     }
   }
 
@@ -213,7 +223,7 @@ already_AddRefed<CommandBuffer> CommandEncoder::Finish(
     id = mBridge->CommandEncoderFinish(mId, mParent->mId, aDesc);
   }
   RefPtr<CommandBuffer> comb =
-      new CommandBuffer(mParent, id, mTargetCanvasElement);
+      new CommandBuffer(mParent, id, std::move(mTargetCanvases));
   return comb.forget();
 }
 

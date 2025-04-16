@@ -147,7 +147,7 @@ use crate::scene_builder_thread::InternerUpdates;
 #[cfg(any(feature = "capture", feature = "replay"))]
 use crate::intern::{Internable, UpdateList};
 #[cfg(any(feature = "capture", feature = "replay"))]
-use crate::clip::ClipIntern;
+use crate::clip::{ClipIntern, PolygonIntern};
 #[cfg(any(feature = "capture", feature = "replay"))]
 use crate::filterdata::FilterDataIntern;
 #[cfg(any(feature = "capture", feature = "replay"))]
@@ -220,16 +220,33 @@ impl PartialEq for MatrixKey {
     }
 }
 
+/// A comparable scale-offset, that compares with epsilon checks.
+#[derive(Debug, Clone)]
+struct ScaleOffsetKey {
+    sx: f32,
+    sy: f32,
+    tx: f32,
+    ty: f32,
+}
+
+impl PartialEq for ScaleOffsetKey {
+    fn eq(&self, other: &Self) -> bool {
+        const EPSILON: f32 = 0.001;
+
+        self.sx.approx_eq_eps(&other.sx, &EPSILON) &&
+        self.sy.approx_eq_eps(&other.sy, &EPSILON) &&
+        self.tx.approx_eq_eps(&other.tx, &EPSILON) &&
+        self.ty.approx_eq_eps(&other.ty, &EPSILON)
+    }
+}
+
 /// A comparable / hashable version of a coordinate space mapping. Used to determine
 /// if a transform dependency for a tile has changed.
 #[derive(Debug, PartialEq, Clone)]
 enum TransformKey {
     Local,
     ScaleOffset {
-        scale_x: f32,
-        scale_y: f32,
-        offset_x: f32,
-        offset_y: f32,
+        so: ScaleOffsetKey,
     },
     Transform {
         m: MatrixKey,
@@ -244,10 +261,12 @@ impl<Src, Dst> From<CoordinateSpaceMapping<Src, Dst>> for TransformKey {
             }
             CoordinateSpaceMapping::ScaleOffset(ref scale_offset) => {
                 TransformKey::ScaleOffset {
-                    scale_x: scale_offset.scale.x,
-                    scale_y: scale_offset.scale.y,
-                    offset_x: scale_offset.offset.x,
-                    offset_y: scale_offset.offset.y,
+                    so: ScaleOffsetKey {
+                        sx: scale_offset.scale.x,
+                        sy: scale_offset.scale.y,
+                        tx: scale_offset.offset.x,
+                        ty: scale_offset.offset.y,
+                    }
                 }
             }
             CoordinateSpaceMapping::Transform(ref m) => {
@@ -850,6 +869,8 @@ pub struct Tile {
     /// TODO(gw): We have multiple dirty rects available due to the quadtree above. In future,
     ///           expose these as multiple dirty rects, which will help in some cases.
     pub device_dirty_rect: DeviceRect,
+    /// World space rect that contains valid pixels region of this tile.
+    pub world_valid_rect: WorldRect,
     /// Device space rect that contains valid pixels region of this tile.
     pub device_valid_rect: DeviceRect,
     /// Uniquely describes the content of this tile, in a way that can be
@@ -901,6 +922,7 @@ impl Tile {
             local_tile_rect: PictureRect::zero(),
             local_tile_box: PictureBox2D::zero(),
             world_tile_rect: WorldRect::zero(),
+            world_valid_rect: WorldRect::zero(),
             device_valid_rect: DeviceRect::zero(),
             local_dirty_rect: PictureRect::zero(),
             device_dirty_rect: DeviceRect::zero(),
@@ -1226,7 +1248,7 @@ impl Tile {
 
         // The device_valid_rect is referenced during `update_content_validity` so it
         // must be updated here first.
-        let world_valid_rect = ctx.pic_to_world_mapper
+        self.world_valid_rect = ctx.pic_to_world_mapper
             .map(&self.current_descriptor.local_valid_rect)
             .expect("bug: map local valid rect");
 
@@ -1235,7 +1257,7 @@ impl Tile {
         // always aligned to a device pixel. To handle this, round out to get all
         // required pixels, and intersect with the tile device rect.
         let device_rect = (self.world_tile_rect * ctx.global_device_pixel_scale).round();
-        self.device_valid_rect = (world_valid_rect * ctx.global_device_pixel_scale)
+        self.device_valid_rect = (self.world_valid_rect * ctx.global_device_pixel_scale)
             .round_out()
             .intersection(&device_rect)
             .unwrap_or_else(DeviceRect::zero);
@@ -1300,8 +1322,8 @@ impl Tile {
             CompositorKind::Draw { .. } => {
                 (frame_context.config.gpu_supports_render_target_partial_update, true)
             }
-            CompositorKind::Native { max_update_rects, .. } => {
-                (max_update_rects > 0, false)
+            CompositorKind::Native { capabilities, .. } => {
+                (capabilities.max_update_rects > 0, false)
             }
         };
 
@@ -2316,8 +2338,6 @@ pub struct TileCacheInstance {
     /// The currently considered tile size override. Used to check if we should
     /// re-evaluate tile size, even if the frame timer hasn't expired.
     tile_size_override: Option<DeviceIntSize>,
-    /// z-buffer ID assigned to the opaque backdrop, if there is one, in this slice
-    pub z_id_backdrop: ZBufferId,
     /// A cache of compositor surfaces that are retained between frames
     pub external_native_surface_cache: FastHashMap<ExternalNativeSurfaceKey, ExternalNativeSurface>,
     /// Current frame ID of this tile cache instance. Used for book-keeping / garbage collecting
@@ -2378,7 +2398,6 @@ impl TileCacheInstance {
             compare_cache: FastHashMap::default(),
             device_position: DevicePoint::zero(),
             tile_size_override: None,
-            z_id_backdrop: ZBufferId::invalid(),
             external_native_surface_cache: FastHashMap::default(),
             frame_id: FrameId::INVALID,
         }
@@ -2503,10 +2522,6 @@ impl TileCacheInstance {
         for sub_slice in &mut self.sub_slices {
             sub_slice.reset();
         }
-
-        // Backdrop surfaces get the first z_id. Subslices and compositor surfaces then get
-        // allocated a z_id each.
-        self.z_id_backdrop = frame_state.composite_state.z_generator.next();
 
         // Reset the opaque rect + subpixel mode, as they are calculated
         // during the prim dependency checks.
@@ -2978,14 +2993,16 @@ impl TileCacheInstance {
         format: YuvFormat,
     ) -> bool {
         for &key in api_keys {
-            // TODO: See comment in setup_compositor_surfaces_rgb.
-            resource_cache.request_image(ImageRequest {
-                    key,
-                    rendering: image_rendering,
-                    tile: None,
-                },
-                gpu_cache,
-            );
+            if key != ImageKey::DUMMY {
+                // TODO: See comment in setup_compositor_surfaces_rgb.
+                resource_cache.request_image(ImageRequest {
+                        key,
+                        rendering: image_rendering,
+                        tile: None,
+                    },
+                    gpu_cache,
+                );
+            }
         }
 
         self.setup_compositor_surfaces_impl(
@@ -3492,9 +3509,11 @@ impl TileCacheInstance {
                     // - Have a valid, opaque image descriptor
                     // - Not use tiling (since they can fail to draw)
                     // - Not having any spacing / padding
+                    // - Have opaque alpha in the instance (flattened) color
                     if image_properties.descriptor.is_opaque() &&
                        image_properties.tiling.is_none() &&
-                       image_data.tile_spacing == LayoutSize::zero() {
+                       image_data.tile_spacing == LayoutSize::zero() &&
+                       image_data.color.a >= 1.0 {
                         backdrop_candidate = Some(BackdropInfo {
                             opaque_rect: pic_clip_rect,
                             kind: None,
@@ -3620,7 +3639,8 @@ impl TileCacheInstance {
                     kind: Some(BackdropKind::Clear),
                 });
             }
-            PrimitiveInstanceKind::LinearGradient { data_handle, .. } => {
+            PrimitiveInstanceKind::LinearGradient { data_handle, .. }
+            | PrimitiveInstanceKind::CachedLinearGradient { data_handle, .. } => {
                 let gradient_data = &data_stores.linear_grad[data_handle];
                 if gradient_data.stops_opacity.is_opaque
                     && gradient_data.tile_spacing == LayoutSize::zero()
@@ -3840,33 +3860,14 @@ impl TileCacheInstance {
             frame_context.spatial_tree,
         );
 
-        // Register the opaque region of this tile cache as an occluder, which
-        // is used later in the frame to occlude other tiles.
-        if !self.backdrop.opaque_rect.is_empty() {
-            let backdrop_rect = self.backdrop.opaque_rect
-                .intersection(&self.local_rect)
-                .and_then(|r| {
-                    r.intersection(&self.local_clip_rect)
-                });
-
-            if let Some(backdrop_rect) = backdrop_rect {
-                let world_backdrop_rect = map_pic_to_world
-                    .map(&backdrop_rect)
-                    .expect("bug: unable to map backdrop to world space");
-
-                // Since we register the entire backdrop rect, use the opaque z-id for the
-                // picture cache slice.
-                frame_state.composite_state.register_occluder(
-                    self.z_id_backdrop,
-                    world_backdrop_rect,
-                );
-            }
-        }
-
         // A simple GC of the native external surface cache, to remove and free any
         // surfaces that were not referenced during the update_prim_dependencies pass.
         self.external_native_surface_cache.retain(|_, surface| {
             if !surface.used_this_frame {
+                // If we removed an external surface, we need to mark the dirty rects as
+                // invalid so a full composite occurs on the next frame.
+                frame_state.composite_state.dirty_rects_are_valid = false;
+
                 frame_state.resource_cache.destroy_compositor_surface(surface.native_surface_id);
             }
 
@@ -3911,12 +3912,12 @@ impl TileCacheInstance {
             pic_to_world_mapper,
             global_device_pixel_scale: frame_context.global_device_pixel_scale,
             local_clip_rect: self.local_clip_rect,
-            backdrop: Some(self.backdrop),
+            backdrop: None,
             opacity_bindings: &self.opacity_bindings,
             color_bindings: &self.color_bindings,
             current_tile_size: self.current_tile_size,
             local_rect: self.local_rect,
-            z_id: self.z_id_backdrop,
+            z_id: ZBufferId::invalid(),
             invalidate_all: root_scale_changed || frame_context.config.force_invalidation,
         };
 
@@ -3929,18 +3930,21 @@ impl TileCacheInstance {
 
         // Step through each tile and invalidate if the dependencies have changed. Determine
         // the current opacity setting and whether it's changed.
-        for sub_slice in &mut self.sub_slices {
-            for tile in sub_slice.tiles.values_mut() {
-                tile.post_update(&ctx, &mut state, frame_context);
+        for (i, sub_slice) in self.sub_slices.iter_mut().enumerate().rev() {
+            // The backdrop is only relevant for the first sub-slice
+            if i == 0 {
+                ctx.backdrop = Some(self.backdrop);
             }
 
-            for compositor_surface in &mut sub_slice.compositor_surfaces {
+            for compositor_surface in sub_slice.compositor_surfaces.iter_mut().rev() {
                 compositor_surface.descriptor.z_id = state.composite_state.z_generator.next();
             }
 
-            // After the first sub-slice, the backdrop is no longer relevant
-            ctx.backdrop = None;
             ctx.z_id = state.composite_state.z_generator.next();
+
+            for tile in sub_slice.tiles.values_mut() {
+                tile.post_update(&ctx, &mut state, frame_context);
+            }
         }
 
         // Register any opaque external compositor surfaces as potential occluders. This
@@ -3970,6 +3974,31 @@ impl TileCacheInstance {
                         );
                     }
                 }
+            }
+        }
+
+        // Register the opaque region of this tile cache as an occluder, which
+        // is used later in the frame to occlude other tiles.
+        if !self.backdrop.opaque_rect.is_empty() {
+            let z_id_backdrop = frame_state.composite_state.z_generator.next();
+
+            let backdrop_rect = self.backdrop.opaque_rect
+                .intersection(&self.local_rect)
+                .and_then(|r| {
+                    r.intersection(&self.local_clip_rect)
+                });
+
+            if let Some(backdrop_rect) = backdrop_rect {
+                let world_backdrop_rect = map_pic_to_world
+                    .map(&backdrop_rect)
+                    .expect("bug: unable to map backdrop to world space");
+
+                // Since we register the entire backdrop rect, use the opaque z-id for the
+                // picture cache slice.
+                frame_state.composite_state.register_occluder(
+                    z_id_backdrop,
+                    world_backdrop_rect,
+                );
             }
         }
     }
@@ -4845,26 +4874,26 @@ impl PicturePrimitive {
                 // the tile rects below for occlusion testing to the relevant area.
                 let world_clip_rect = map_pic_to_world
                     .map(&tile_cache.local_clip_rect)
-                    .expect("bug: unable to map clip rect");
-                let device_clip_rect = (world_clip_rect * frame_context.global_device_pixel_scale).round();
+                    .expect("bug: unable to map clip rect")
+                    .round();
 
                 for (sub_slice_index, sub_slice) in tile_cache.sub_slices.iter_mut().enumerate() {
                     for tile in sub_slice.tiles.values_mut() {
                         surface_device_rect = surface_device_rect.union(&tile.device_valid_rect);
 
                         if tile.is_visible {
-                            // Get the world space rect that this tile will actually occupy on screem
-                            let device_draw_rect = device_clip_rect.intersection(&tile.device_valid_rect);
+                            // Get the world space rect that this tile will actually occupy on screen
+                            let world_draw_rect = world_clip_rect.intersection(&tile.world_valid_rect);
 
                             // If that draw rect is occluded by some set of tiles in front of it,
                             // then mark it as not visible and skip drawing. When it's not occluded
                             // it will fail this test, and get rasterized by the render task setup
                             // code below.
-                            match device_draw_rect {
-                                Some(device_draw_rect) => {
+                            match world_draw_rect {
+                                Some(world_draw_rect) => {
                                     // Only check for occlusion on visible tiles that are fixed position.
                                     if tile_cache.spatial_node_index == ROOT_SPATIAL_NODE_INDEX &&
-                                       frame_state.composite_state.occluders.is_tile_occluded(tile.z_id, device_draw_rect) {
+                                       frame_state.composite_state.occluders.is_tile_occluded(tile.z_id, world_draw_rect) {
                                         // If this tile has an allocated native surface, free it, since it's completely
                                         // occluded. We will need to re-allocate this surface if it becomes visible,
                                         // but that's likely to be rare (e.g. when there is no content display list

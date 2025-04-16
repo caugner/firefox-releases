@@ -51,7 +51,12 @@ function ReadManifest(aURL, aFilter, aManifestID)
     var listURL = aURL;
     var channel = NetUtil.newChannel({uri: aURL,
                                       loadUsingSystemPrincipal: true});
-    var inputStream = channel.open();
+    try {
+        var inputStream = channel.open();
+    } catch (e) {
+        g.logger.error("failed to open manifest at : " + aURL.spec);
+        throw e;
+    }
     if (channel instanceof Ci.nsIHttpChannel
         && channel.responseStatus != 200) {
       g.logger.error("HTTP ERROR : " + channel.responseStatus);
@@ -473,9 +478,8 @@ function BuildConditionSandbox(aURL) {
       sandbox.embeddedInFirefoxReality = false;
     }
 
-    var info = gfxInfo.getInfo();
-    var canvasBackend = readGfxInfo(info, "AzureCanvasBackend");
-    var contentBackend = readGfxInfo(info, "AzureContentBackend");
+    var canvasBackend = readGfxInfo(gfxInfo, "AzureCanvasBackend");
+    var contentBackend = readGfxInfo(gfxInfo, "AzureContentBackend");
 
     sandbox.gpuProcess = gfxInfo.usingGPUProcess;
     sandbox.azureCairo = canvasBackend == "cairo";
@@ -506,9 +510,6 @@ function BuildConditionSandbox(aURL) {
       g.windowUtils.usingAdvancedLayers == true;
     sandbox.layerChecksEnabled = !sandbox.webrender;
 
-    sandbox.retainedDisplayList =
-      prefs.getBoolPref("layout.display-list.retain");
-
     sandbox.usesOverlayScrollbars = g.windowUtils.usesOverlayScrollbars;
 
     // Shortcuts for widget toolkits.
@@ -519,6 +520,17 @@ function BuildConditionSandbox(aURL) {
     sandbox.winWidget = xr.widgetToolkit == "windows";
 
     sandbox.is64Bit = xr.is64Bit;
+
+    // Use this to annotate reftests that fail in drawSnapshot, but
+    // the reason hasn't been investigated (or fixed) yet.
+    sandbox.useDrawSnapshot = g.useDrawSnapshot;
+    // Use this to annotate reftests that use functionality
+    // that isn't available to drawSnapshot (like any sort of
+    // compositor feature such as async scrolling).
+    sandbox.unsupportedWithDrawSnapshot = g.useDrawSnapshot;
+
+    sandbox.retainedDisplayList =
+      prefs.getBoolPref("layout.display-list.retain") && !sandbox.useDrawSnapshot;
 
     // GeckoView is currently uniquely identified by "android + e10s" but
     // we might want to make this condition more precise in the future.
@@ -545,14 +557,26 @@ function BuildConditionSandbox(aURL) {
     sandbox.AddressSanitizer = false;
 #endif
 
+#if MOZ_TSAN
+    sandbox.ThreadSanitizer = true;
+#else
+    sandbox.ThreadSanitizer = false;
+#endif
+
 #if MOZ_WEBRTC
     sandbox.webrtc = true;
 #else
     sandbox.webrtc = false;
 #endif
 
+#if MOZ_JXL
+    sandbox.jxl = true;
+#else
+    sandbox.jxl = false;
+#endif
+
     let retainedDisplayListsEnabled = prefs.getBoolPref("layout.display-list.retain", false);
-    sandbox.retainedDisplayLists = retainedDisplayListsEnabled && !g.compareRetainedDisplayLists;
+    sandbox.retainedDisplayLists = retainedDisplayListsEnabled && !g.compareRetainedDisplayLists && !sandbox.useDrawSnapshot;
     sandbox.compareRetainedDisplayLists = g.compareRetainedDisplayLists;
 
 #ifdef RELEASE_OR_BETA
@@ -578,8 +602,6 @@ function BuildConditionSandbox(aURL) {
 
     // config specific prefs
     sandbox.appleSilicon = prefs.getBoolPref("sandbox.apple_silicon", false);
-    // Plugins are no longer supported.  Don't try to use TestPlugin.
-    sandbox.haveTestPlugin = false;
 
     // Set a flag on sandbox if the windows default theme is active
     sandbox.windowsDefaultTheme = g.containingWindow.matchMedia("(-moz-windows-default-theme)").matches;
@@ -602,7 +624,7 @@ function BuildConditionSandbox(aURL) {
     sandbox.browserIsFission = g.browserIsFission;
 
     try {
-        sandbox.asyncPan = g.containingWindow.docShell.asyncPanZoomEnabled;
+        sandbox.asyncPan = g.containingWindow.docShell.asyncPanZoomEnabled && !sandbox.useDrawSnapshot;
     } catch (e) {
         sandbox.asyncPan = false;
     }

@@ -394,9 +394,9 @@ class nsGlobalWindowInner final : public mozilla::dom::EventTarget,
 
   static bool ContentPropertyEnabled(JSContext* aCx, JSObject*);
 
-  bool DoResolve(JSContext* aCx, JS::Handle<JSObject*> aObj,
-                 JS::Handle<jsid> aId,
-                 JS::MutableHandle<JS::PropertyDescriptor> aDesc);
+  bool DoResolve(
+      JSContext* aCx, JS::Handle<JSObject*> aObj, JS::Handle<jsid> aId,
+      JS::MutableHandle<mozilla::Maybe<JS::PropertyDescriptor>> aDesc);
   // The return value is whether DoResolve might end up resolving the given id.
   // If in doubt, return true.
   static bool MayResolve(jsid aId);
@@ -473,6 +473,10 @@ class nsGlobalWindowInner final : public mozilla::dom::EventTarget,
 #endif
 
   void AddSizeOfIncludingThis(nsWindowSizes& aWindowSizes) const;
+
+  void CollectDOMSizesForDataDocuments(nsWindowSizes&) const;
+  void RegisterDataDocumentForMemoryReporting(Document*);
+  void UnregisterDataDocumentForMemoryReporting(Document*);
 
   enum SlowScriptResponse {
     ContinueSlowScript = 0,
@@ -945,7 +949,20 @@ class nsGlobalWindowInner final : public mozilla::dom::EventTarget,
 
   virtual bool IsInSyncOperation() override;
 
-  bool IsSharedMemoryAllowed() const override;
+  // Early during inner window creation, `IsSharedMemoryAllowedInternal`
+  // is called before the `mDoc` field has been initialized in order to
+  // determine whether to expose the `SharedArrayBuffer` constructor on the
+  // JS global. We still want to consider the document's principal to see if
+  // it is a privileged extension which should be exposed to
+  // `SharedArrayBuffer`, however the inner window doesn't know the document's
+  // principal yet. `aPrincipalOverride` is used in that situation to provide
+  // the principal for the to-be-loaded document.
+  bool IsSharedMemoryAllowed() const override {
+    return IsSharedMemoryAllowedInternal(
+        const_cast<nsGlobalWindowInner*>(this)->GetPrincipal());
+  }
+
+  bool IsSharedMemoryAllowedInternal(nsIPrincipal* aPrincipal = nullptr) const;
 
   // https://whatpr.org/html/4734/structured-data.html#cross-origin-isolated
   bool CrossOriginIsolated() const override;
@@ -1191,8 +1208,9 @@ class nsGlobalWindowInner final : public mozilla::dom::EventTarget,
   void FireOnNewGlobalObject();
 
   // Helper for resolving the components shim.
-  bool ResolveComponentsShim(JSContext* aCx, JS::Handle<JSObject*> aObj,
-                             JS::MutableHandle<JS::PropertyDescriptor> aDesc);
+  bool ResolveComponentsShim(
+      JSContext* aCx, JS::Handle<JSObject*> aObj,
+      JS::MutableHandle<mozilla::Maybe<JS::PropertyDescriptor>> aDesc);
 
   // nsPIDOMWindow{Inner,Outer} should be able to see these helper methods.
   friend class nsPIDOMWindowInner;
@@ -1473,7 +1491,9 @@ class nsGlobalWindowInner final : public mozilla::dom::EventTarget,
 
   RefPtr<mozilla::dom::VREventObserver> mVREventObserver;
 
-  int64_t mBeforeUnloadListenerCount;
+  // The number of unload and beforeunload even listeners registered on this
+  // window.
+  uint64_t mUnloadOrBeforeUnloadListenerCount = 0;
 
   RefPtr<mozilla::dom::IntlUtils> mIntlUtils;
 
@@ -1483,6 +1503,8 @@ class nsGlobalWindowInner final : public mozilla::dom::EventTarget,
       mDocumentFlushedResolvers;
 
   nsTArray<uint32_t> mScrollMarks;
+
+  nsTArray<nsWeakPtr> mDataDocumentsForMemoryReporting;
 
   static InnerWindowByIdTable* sInnerWindowsById;
 

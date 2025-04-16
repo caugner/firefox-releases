@@ -447,16 +447,6 @@ class TabBase {
   }
 
   /**
-   * @property {boolean} selected
-   *        An alias for `active`.
-   *        @readonly
-   *        @abstract
-   */
-  get selected() {
-    throw new Error("Not implemented");
-  }
-
-  /**
    * @property {string} status
    *        Returns the current loading status of the tab. May be either
    *        "loading" or "complete".
@@ -2058,7 +2048,10 @@ class TabManagerBase {
       if (queryInfo) {
         let { active, highlighted, index } = queryInfo;
         if (active === true) {
-          yield windowWrapper.activeTab;
+          let { activeTab } = windowWrapper;
+          if (activeTab) {
+            yield activeTab;
+          }
           return;
         }
         if (index != null) {
@@ -2313,6 +2306,9 @@ function getUserContextIdForCookieStoreId(
       throw new ExtensionError(
         `No cookie store exists with ID ${cookieStoreId}`
       );
+    }
+    if (!extension.canAccessContainer(userContextId)) {
+      throw new ExtensionError(`Cannot access ${cookieStoreId}`);
     }
     return userContextId;
   }

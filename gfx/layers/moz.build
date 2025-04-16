@@ -298,8 +298,14 @@ if CONFIG["MOZ_X11"]:
 if CONFIG["MOZ_WAYLAND"]:
     EXPORTS.mozilla.layers += [
         "DMABUFSurfaceImage.h",
+        "NativeLayerWayland.h",
         "opengl/DMABUFTextureClientOGL.h",
         "opengl/DMABUFTextureHostOGL.h",
+        "SurfacePoolWayland.h",
+    ]
+    UNIFIED_SOURCES += [
+        "NativeLayerWayland.cpp",
+        "SurfacePoolWayland.cpp",
     ]
     SOURCES += [
         "DMABUFSurfaceImage.cpp",
@@ -372,6 +378,7 @@ UNIFIED_SOURCES += [
     "apz/src/PotentialCheckerboardDurationTracker.cpp",
     "apz/src/QueuedInput.cpp",
     "apz/src/SampledAPZCState.cpp",
+    "apz/src/ScrollThumbUtils.cpp",
     "apz/src/SimpleVelocityTracker.cpp",
     "apz/src/SmoothMsdScrollAnimation.cpp",
     "apz/src/SmoothScrollAnimation.cpp",

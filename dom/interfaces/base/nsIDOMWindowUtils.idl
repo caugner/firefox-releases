@@ -821,8 +821,20 @@ interface nsIDOMWindowUtils : nsISupports {
   /**
    * Trigger whichever GC or CC timer is currently active and waiting to fire.
    * Don't do this too much for initiating heavy actions, like the start of a IGC.
+   *
+   * @param aReason the reason for the GC, from js/public/GCAPI.h. Defaults to
+   * DOM_WINDOW_UTILS.
    */
-  void runNextCollectorTimer();
+  void runNextCollectorTimer([optional] in ACString aReason);
+
+  /**
+   * "Poke" the GC: set a timer to run a GC soon (usually 4 seconds), unless
+   * another GC timer has already been set. This is used for testing.
+   *
+   * @param aReason the reason for the GC, from js/public/GCAPI.h. Defaults to
+   * DOM_WINDOW_UTILS.
+   */
+  void pokeGC([optional] in ACString aReason);
 
   /** Synthesize a simple gesture event for a window. The event types
    *  supported are: MozSwipeGestureMayStart, MozSwipeGestureStart,
@@ -1084,6 +1096,14 @@ interface nsIDOMWindowUtils : nsISupports {
   readonly attribute unsigned long IMEStatus;
 
   /**
+   * Get whether current input context (including IME status) in the widget
+   * is set by content or not.
+   */
+  const unsigned long INPUT_CONTEXT_ORIGIN_MAIN = 0;
+  const unsigned long INPUT_CONTEXT_ORIGIN_CONTENT = 1;
+  readonly attribute unsigned long inputContextOrigin;
+
+  /**
    * Get the number of screen pixels per CSS pixel.
    *
    * This is the same as window.devicePixelRatio, except it bypasses
@@ -1150,12 +1170,16 @@ interface nsIDOMWindowUtils : nsISupports {
    * Will throw a DOM security error if called without chrome privileges.
    *
    * @param aType Type of command content event to send.  Can be one of "cut",
-   *        "copy", "paste", "delete", "undo", "redo", or "pasteTransferable".
+   *        "copy", "paste", "delete", "undo", "redo", "insertText" or
+   *        "pasteTransferable".
    * @param aTransferable an instance of nsITransferable when aType is
    *        "pasteTransferable"
+   * @param aString The string to be inserted into focused editor when aType is
+   *        "insertText"
    */
   void sendContentCommandEvent(in AString aType,
-                               [optional] in nsITransferable aTransferable);
+                               [optional] in nsITransferable aTransferable,
+                               [optional] in AString aString);
 
   /**
    * If sendQueryContentEvent()'s aAdditionalFlags argument is
@@ -1412,13 +1436,6 @@ interface nsIDOMWindowUtils : nsISupports {
   AString getVisitedDependentComputedStyle(in Element aElement,
                                            in AString aPseudoElement,
                                            in AString aPropertyName);
-
-  /**
-   * DEPRECATED. Use WindowGlobalChild.outerWindowId instead.
-   *
-   * Get the id of the outer window of this window.
-   */
-  readonly attribute unsigned long long deprecatedOuterWindowID;
 
   /**
    * Put the window into a state where scripts are frozen and events

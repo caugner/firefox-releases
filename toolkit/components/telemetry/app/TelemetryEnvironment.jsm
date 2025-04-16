@@ -257,6 +257,7 @@ const DEFAULT_ENVIRONMENT_PREFS = new Map([
   ["browser.startup.page", { what: RECORD_PREF_VALUE }],
   ["browser.touchmode.auto", { what: RECORD_PREF_VALUE }],
   ["browser.uidensity", { what: RECORD_PREF_VALUE }],
+  ["browser.urlbar.showSearchSuggestionsFirst", { what: RECORD_PREF_VALUE }],
   ["browser.urlbar.suggest.searches", { what: RECORD_PREF_VALUE }],
   ["devtools.chrome.enabled", { what: RECORD_PREF_VALUE }],
   ["devtools.debugger.enabled", { what: RECORD_PREF_VALUE }],
@@ -336,6 +337,7 @@ const DEFAULT_ENVIRONMENT_PREFS = new Map([
     { what: RECORD_DEFAULTPREF_VALUE },
   ],
   ["xpinstall.signatures.required", { what: RECORD_PREF_VALUE }],
+  ["nimbus.debug", { what: RECORD_PREF_VALUE }],
 ]);
 
 const LOGGER_NAME = "Toolkit.Telemetry";
@@ -358,7 +360,11 @@ const SEARCH_SERVICE_TOPIC = "browser-search-service";
 const SESSIONSTORE_WINDOWS_RESTORED_TOPIC = "sessionstore-windows-restored";
 const PREF_CHANGED_TOPIC = "nsPref:changed";
 const BLOCKLIST_LOADED_TOPIC = "plugin-blocklist-loaded";
-const AUTO_UPDATE_PREF_CHANGE_TOPIC = "auto-update-config-change";
+const AUTO_UPDATE_PREF_CHANGE_TOPIC =
+  UpdateUtils.PER_INSTALLATION_PREFS["app.update.auto"].observerTopic;
+const BACKGROUND_UPDATE_PREF_CHANGE_TOPIC =
+  UpdateUtils.PER_INSTALLATION_PREFS["app.update.background.enabled"]
+    .observerTopic;
 const SERVICES_INFO_CHANGE_TOPIC = "sync-ui-state:update";
 
 /**
@@ -946,7 +952,7 @@ function EnvironmentCache() {
   if (AppConstants.MOZ_BUILD_APP == "browser") {
     p.push(this._loadAttributionAsync());
   }
-  p.push(this._loadAutoUpdateAsync());
+  p.push(this._loadAsyncUpdateSettings());
   p.push(this._loadIntlData());
 
   for (const [
@@ -1285,6 +1291,7 @@ EnvironmentCache.prototype = {
     Services.obs.addObserver(this, SEARCH_ENGINE_MODIFIED_TOPIC);
     Services.obs.addObserver(this, SEARCH_SERVICE_TOPIC);
     Services.obs.addObserver(this, AUTO_UPDATE_PREF_CHANGE_TOPIC);
+    Services.obs.addObserver(this, BACKGROUND_UPDATE_PREF_CHANGE_TOPIC);
     Services.obs.addObserver(this, SERVICES_INFO_CHANGE_TOPIC);
   },
 
@@ -1302,6 +1309,7 @@ EnvironmentCache.prototype = {
     Services.obs.removeObserver(this, SEARCH_ENGINE_MODIFIED_TOPIC);
     Services.obs.removeObserver(this, SEARCH_SERVICE_TOPIC);
     Services.obs.removeObserver(this, AUTO_UPDATE_PREF_CHANGE_TOPIC);
+    Services.obs.removeObserver(this, BACKGROUND_UPDATE_PREF_CHANGE_TOPIC);
     Services.obs.removeObserver(this, SERVICES_INFO_CHANGE_TOPIC);
   },
 
@@ -1369,6 +1377,9 @@ EnvironmentCache.prototype = {
         break;
       case AUTO_UPDATE_PREF_CHANGE_TOPIC:
         this._currentEnvironment.settings.update.autoDownload = aData == "true";
+        break;
+      case BACKGROUND_UPDATE_PREF_CHANGE_TOPIC:
+        this._currentEnvironment.settings.update.background = aData == "true";
         break;
       case SERVICES_INFO_CHANGE_TOPIC:
         this._updateServicesInfo();
@@ -1581,20 +1592,32 @@ EnvironmentCache.prototype = {
     this._updateAttribution();
     this._updateDefaultBrowser();
     await this._updateSearchEngine();
-    this._updateAutoDownload();
+    this._loadAsyncUpdateSettingsFromCache();
   },
 
   _getSandboxData() {
     let effectiveContentProcessLevel = null;
+    let contentWin32kLockdownState = null;
     try {
       let sandboxSettings = Cc[
         "@mozilla.org/sandbox/sandbox-settings;1"
       ].getService(Ci.mozISandboxSettings);
       effectiveContentProcessLevel =
         sandboxSettings.effectiveContentSandboxLevel;
+
+      // See `ContentWin32kLockdownState` in
+      // <security/sandbox/common/SandboxSettings.h>
+      //
+      // Values:
+      // 1 = LockdownEnabled
+      // 2 = MissingWebRender
+      // 3 = OperatingSystemNotSupported
+      // 4 = PrefNotSet
+      contentWin32kLockdownState = sandboxSettings.contentWin32kLockdownState;
     } catch (e) {}
     return {
       effectiveContentProcessLevel,
+      contentWin32kLockdownState,
     };
   },
 
@@ -1666,26 +1689,33 @@ EnvironmentCache.prototype = {
   },
 
   /**
-   * Load the auto update pref and adds it to the environment
+   * Load the per-installation update settings, cache them, and add them to the
+   * environment.
    */
-  async _loadAutoUpdateAsync() {
+  async _loadAsyncUpdateSettings() {
     if (AppConstants.MOZ_UPDATER) {
       this._updateAutoDownloadCache = await UpdateUtils.getAppUpdateAutoEnabled();
+      this._updateBackgroundCache = await UpdateUtils.readUpdateConfigSetting(
+        "app.update.background.enabled"
+      );
     } else {
       this._updateAutoDownloadCache = false;
+      this._updateBackgroundCache = false;
     }
-    this._updateAutoDownload();
+    this._loadAsyncUpdateSettingsFromCache();
   },
 
   /**
-   * Update the environment with the cached value for whether updates can auto-
-   * download.
+   * Update the environment with the cached values for per-installation update
+   * settings.
    */
-  _updateAutoDownload() {
-    if (this._updateAutoDownloadCache === undefined) {
-      return;
+  _loadAsyncUpdateSettingsFromCache() {
+    if (this._updateAutoDownloadCache !== undefined) {
+      this._currentEnvironment.settings.update.autoDownload = this._updateAutoDownloadCache;
     }
-    this._currentEnvironment.settings.update.autoDownload = this._updateAutoDownloadCache;
+    if (this._updateBackgroundCache !== undefined) {
+      this._currentEnvironment.settings.update.background = this._updateBackgroundCache;
+    }
   },
 
   /**

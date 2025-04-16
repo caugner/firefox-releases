@@ -258,6 +258,10 @@ JS_PUBLIC_API bool JS::ObjectOpResult::failCantDeleteWindowElement() {
   return fail(JSMSG_CANT_DELETE_WINDOW_ELEMENT);
 }
 
+JS_PUBLIC_API bool JS::ObjectOpResult::failCantDefineWindowNamedProperty() {
+  return fail(JSMSG_CANT_DEFINE_WINDOW_NAMED_PROPERTY);
+}
+
 JS_PUBLIC_API bool JS::ObjectOpResult::failCantDeleteWindowNamedProperty() {
   return fail(JSMSG_CANT_DELETE_WINDOW_NAMED_PROPERTY);
 }
@@ -444,39 +448,6 @@ JS::ContextOptions& JS::ContextOptions::setFuzzing(bool flag) {
   fuzzing_ = flag;
 #endif
   return *this;
-}
-
-JS_PUBLIC_API bool JS::InitSelfHostedCode(JSContext* cx) {
-  MOZ_RELEASE_ASSERT(!cx->runtime()->hasInitializedSelfHosting(),
-                     "JS::InitSelfHostedCode() called more than once");
-
-  AutoNoteSingleThreadedRegion anstr;
-
-  JSRuntime* rt = cx->runtime();
-
-  if (!rt->initializeAtoms(cx)) {
-    return false;
-  }
-
-  if (!rt->initializeParserAtoms(cx)) {
-    return false;
-  }
-
-#ifndef JS_CODEGEN_NONE
-  if (!rt->createJitRuntime(cx)) {
-    return false;
-  }
-#endif
-
-  if (!rt->initSelfHosting(cx)) {
-    return false;
-  }
-
-  if (!rt->parentRuntime && !rt->initMainAtomsTables(cx)) {
-    return false;
-  }
-
-  return true;
 }
 
 JS_PUBLIC_API const char* JS_GetImplementationVersion(void) {
@@ -1348,7 +1319,7 @@ JS_PUBLIC_API void JS::RunIdleTimeGCTask(JSRuntime* rt) {
 JS_PUBLIC_API void JS_GC(JSContext* cx, JS::GCReason reason) {
   AssertHeapIsIdle();
   JS::PrepareForFullGC(cx);
-  cx->runtime()->gc.gc(GC_NORMAL, reason);
+  cx->runtime()->gc.gc(JS::GCOptions::Normal, reason);
 }
 
 JS_PUBLIC_API void JS_MaybeGC(JSContext* cx) {
@@ -1993,17 +1964,16 @@ JS_PUBLIC_API bool JS_SetImmutablePrototype(JSContext* cx, JS::HandleObject obj,
 
 JS_PUBLIC_API bool JS_GetOwnPropertyDescriptorById(
     JSContext* cx, HandleObject obj, HandleId id,
-    MutableHandle<PropertyDescriptor> desc) {
+    MutableHandle<Maybe<PropertyDescriptor>> desc) {
   AssertHeapIsIdle();
   CHECK_THREAD(cx);
   cx->check(obj, id);
-
   return GetOwnPropertyDescriptor(cx, obj, id, desc);
 }
 
 JS_PUBLIC_API bool JS_GetOwnPropertyDescriptor(
     JSContext* cx, HandleObject obj, const char* name,
-    MutableHandle<PropertyDescriptor> desc) {
+    MutableHandle<Maybe<PropertyDescriptor>> desc) {
   JSAtom* atom = Atomize(cx, name, strlen(name));
   if (!atom) {
     return false;
@@ -2014,7 +1984,7 @@ JS_PUBLIC_API bool JS_GetOwnPropertyDescriptor(
 
 JS_PUBLIC_API bool JS_GetOwnUCPropertyDescriptor(
     JSContext* cx, HandleObject obj, const char16_t* name, size_t namelen,
-    MutableHandle<PropertyDescriptor> desc) {
+    MutableHandle<Maybe<PropertyDescriptor>> desc) {
   JSAtom* atom = AtomizeChars(cx, name, namelen);
   if (!atom) {
     return false;
@@ -2025,31 +1995,31 @@ JS_PUBLIC_API bool JS_GetOwnUCPropertyDescriptor(
 
 JS_PUBLIC_API bool JS_GetPropertyDescriptorById(
     JSContext* cx, HandleObject obj, HandleId id,
-    MutableHandle<PropertyDescriptor> desc) {
+    MutableHandle<Maybe<PropertyDescriptor>> desc, MutableHandleObject holder) {
   cx->check(obj, id);
-  return GetPropertyDescriptor(cx, obj, id, desc);
+  return GetPropertyDescriptor(cx, obj, id, desc, holder);
 }
 
 JS_PUBLIC_API bool JS_GetPropertyDescriptor(
     JSContext* cx, HandleObject obj, const char* name,
-    MutableHandle<PropertyDescriptor> desc) {
+    MutableHandle<Maybe<PropertyDescriptor>> desc, MutableHandleObject holder) {
   JSAtom* atom = Atomize(cx, name, strlen(name));
   if (!atom) {
     return false;
   }
   RootedId id(cx, AtomToId(atom));
-  return JS_GetPropertyDescriptorById(cx, obj, id, desc);
+  return JS_GetPropertyDescriptorById(cx, obj, id, desc, holder);
 }
 
 JS_PUBLIC_API bool JS_GetUCPropertyDescriptor(
     JSContext* cx, HandleObject obj, const char16_t* name, size_t namelen,
-    MutableHandle<PropertyDescriptor> desc) {
+    MutableHandle<Maybe<PropertyDescriptor>> desc, MutableHandleObject holder) {
   JSAtom* atom = AtomizeChars(cx, name, namelen);
   if (!atom) {
     return false;
   }
   RootedId id(cx, AtomToId(atom));
-  return JS_GetPropertyDescriptorById(cx, obj, id, desc);
+  return JS_GetPropertyDescriptorById(cx, obj, id, desc, holder);
 }
 
 static bool DefinePropertyByDescriptor(JSContext* cx, HandleObject obj,
@@ -2080,16 +2050,11 @@ JS_PUBLIC_API bool JS_DefinePropertyById(JSContext* cx, HandleObject obj,
 static bool DefineAccessorPropertyById(JSContext* cx, HandleObject obj,
                                        HandleId id, HandleObject getter,
                                        HandleObject setter, unsigned attrs) {
-  MOZ_ASSERT_IF(getter, attrs & JSPROP_GETTER);
-  MOZ_ASSERT_IF(setter, attrs & JSPROP_SETTER);
-
   // JSPROP_READONLY has no meaning when accessors are involved. Ideally we'd
   // throw if this happens, but we've accepted it for long enough that it's
   // not worth trying to make callers change their ways. Just flip it off on
   // its way through the API layer so that we can enforce this internally.
-  if (attrs & (JSPROP_GETTER | JSPROP_SETTER)) {
-    attrs &= ~JSPROP_READONLY;
-  }
+  attrs &= ~JSPROP_READONLY;
 
   AssertHeapIsIdle();
   CHECK_THREAD(cx);
@@ -2103,8 +2068,6 @@ static bool DefineAccessorPropertyById(JSContext* cx, HandleObject obj,
                                        const JSNativeWrapper& set,
                                        unsigned attrs) {
   // Getter/setter are both possibly-null JSNatives. Wrap them in JSFunctions.
-
-  MOZ_ASSERT(!(attrs & (JSPROP_GETTER | JSPROP_SETTER)));
 
   RootedFunction getter(cx);
   if (get.op) {
@@ -2120,8 +2083,6 @@ static bool DefineAccessorPropertyById(JSContext* cx, HandleObject obj,
     if (get.info) {
       getter->setJitInfo(get.info);
     }
-
-    attrs |= JSPROP_GETTER;
   }
 
   RootedFunction setter(cx);
@@ -2138,8 +2099,6 @@ static bool DefineAccessorPropertyById(JSContext* cx, HandleObject obj,
     if (set.info) {
       setter->setJitInfo(set.info);
     }
-
-    attrs |= JSPROP_SETTER;
   }
 
   return DefineAccessorPropertyById(cx, obj, id, getter, setter, attrs);
@@ -2147,8 +2106,6 @@ static bool DefineAccessorPropertyById(JSContext* cx, HandleObject obj,
 
 static bool DefineDataPropertyById(JSContext* cx, HandleObject obj, HandleId id,
                                    HandleValue value, unsigned attrs) {
-  MOZ_ASSERT(!(attrs & (JSPROP_GETTER | JSPROP_SETTER)));
-
   AssertHeapIsIdle();
   CHECK_THREAD(cx);
   cx->check(obj, id, value);
@@ -3151,7 +3108,6 @@ JS_PUBLIC_API bool JS::ObjectToCompletePropertyDescriptor(
     return false;
   }
   CompletePropertyDescriptor(desc);
-  desc.object().set(obj);
   return true;
 }
 
@@ -3464,10 +3420,12 @@ void JS::TransitiveCompileOptions::copyPODTransitiveOptions(
   introductionOffset = rhs.introductionOffset;
   hasIntroductionInfo = rhs.hasIntroductionInfo;
   hideScriptFromDebugger = rhs.hideScriptFromDebugger;
+  deferDebugMetadata = rhs.deferDebugMetadata;
   nonSyntacticScope = rhs.nonSyntacticScope;
   privateClassFields = rhs.privateClassFields;
   privateClassMethods = rhs.privateClassMethods;
   topLevelAwait = rhs.topLevelAwait;
+  classStaticBlocks = rhs.classStaticBlocks;
   useStencilXDR = rhs.useStencilXDR;
   useOffThreadParseGlobal = rhs.useOffThreadParseGlobal;
 };
@@ -3482,11 +3440,7 @@ void JS::ReadOnlyCompileOptions::copyPODNonTransitiveOptions(
 }
 
 JS::OwningCompileOptions::OwningCompileOptions(JSContext* cx)
-    : ReadOnlyCompileOptions(),
-      elementAttributeNameRoot(cx),
-      introductionScriptRoot(cx),
-      scriptOrModuleRoot(cx),
-      privateValueRoot(cx) {}
+    : ReadOnlyCompileOptions() {}
 
 void JS::OwningCompileOptions::release() {
   // OwningCompileOptions always owns these, so these casts are okay.
@@ -3515,11 +3469,6 @@ bool JS::OwningCompileOptions::copy(JSContext* cx,
   copyPODNonTransitiveOptions(rhs);
   copyPODTransitiveOptions(rhs);
 
-  elementAttributeNameRoot = rhs.elementAttributeName();
-  introductionScriptRoot = rhs.introductionScript();
-  scriptOrModuleRoot = rhs.scriptOrModule();
-  privateValueRoot = rhs.privateValue();
-
   if (rhs.filename()) {
     filename_ = DuplicateString(cx, rhs.filename()).release();
     if (!filename_) {
@@ -3545,16 +3494,13 @@ bool JS::OwningCompileOptions::copy(JSContext* cx,
   return true;
 }
 
-JS::CompileOptions::CompileOptions(JSContext* cx)
-    : ReadOnlyCompileOptions(),
-      elementAttributeNameRoot(cx),
-      introductionScriptRoot(cx),
-      scriptOrModuleRoot(cx),
-      privateValueRoot(cx) {
-  discardSource = cx->realm()->behaviors().discardSource();
-  if (!cx->options().asmJS()) {
-    asmJSOption = AsmJSOption::Disabled;
-  } else if (cx->realm()->debuggerObservesAsmJS()) {
+JS::CompileOptions::CompileOptions(JSContext* cx) : ReadOnlyCompileOptions() {
+  if (!js::IsAsmJSCompilationAvailable(cx)) {
+    // Distinguishing the cases is just for error reporting.
+    asmJSOption = !cx->options().asmJS()
+                      ? AsmJSOption::DisabledByAsmJSPref
+                      : AsmJSOption::DisabledByNoWasmCompiler;
+  } else if (cx->realm() && cx->realm()->debuggerObservesAsmJS()) {
     asmJSOption = AsmJSOption::DisabledByDebugger;
   } else {
     asmJSOption = AsmJSOption::Enabled;
@@ -3564,6 +3510,8 @@ JS::CompileOptions::CompileOptions(JSContext* cx)
   privateClassFields = cx->options().privateClassFields();
   privateClassMethods = cx->options().privateClassMethods();
   topLevelAwait = cx->options().topLevelAwait();
+
+  classStaticBlocks = cx->options().classStaticBlocks();
 
   useStencilXDR = !UseOffThreadParseGlobal();
   useOffThreadParseGlobal = UseOffThreadParseGlobal();
@@ -3576,14 +3524,21 @@ JS::CompileOptions::CompileOptions(JSContext* cx)
   // Certain modes of operation disallow syntax parsing in general.
   forceFullParse_ = coverage::IsLCovEnabled();
 
-  // If instrumentation is enabled in the realm, the compiler should insert the
-  // requested kinds of instrumentation into all scripts.
-  instrumentationKinds =
-      RealmInstrumentation::getInstrumentationKinds(cx->global());
+  // Note: If we parse outside of a specific realm, we do not inherit any realm
+  // behaviours. These can still be set manually on the options though.
+  if (cx->realm()) {
+    discardSource = cx->realm()->behaviors().discardSource();
+
+    // If instrumentation is enabled in the realm, the compiler should insert
+    // the requested kinds of instrumentation into all scripts.
+    instrumentationKinds =
+        RealmInstrumentation::getInstrumentationKinds(cx->global());
+  }
 }
 
 CompileOptions& CompileOptions::setIntroductionInfoToCaller(
-    JSContext* cx, const char* introductionType) {
+    JSContext* cx, const char* introductionType,
+    MutableHandle<JSScript*> introductionScript) {
   RootedScript maybeScript(cx);
   const char* filename;
   unsigned lineno;
@@ -3592,11 +3547,10 @@ CompileOptions& CompileOptions::setIntroductionInfoToCaller(
   DescribeScriptedCallerForCompilation(cx, &maybeScript, &filename, &lineno,
                                        &pcOffset, &mutedErrors);
   if (filename) {
-    return setIntroductionInfo(filename, introductionType, lineno, maybeScript,
-                               pcOffset);
-  } else {
-    return setIntroductionType(introductionType);
+    introductionScript.set(maybeScript);
+    return setIntroductionInfo(filename, introductionType, lineno, pcOffset);
   }
+  return setIntroductionType(introductionType);
 }
 
 JS_PUBLIC_API JSObject* JS_GetGlobalFromScript(JSScript* script) {

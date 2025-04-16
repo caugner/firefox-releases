@@ -84,10 +84,7 @@ static bool GetEnglishOrFirstName(nsACString& aName,
   UINT32 englishIdx = 0;
   BOOL exists;
   HRESULT hr = aStrings->FindLocaleName(L"en-us", &englishIdx, &exists);
-  if (FAILED(hr)) {
-    return false;
-  }
-  if (!exists) {
+  if (FAILED(hr) || !exists) {
     // Use 0 index if english is not found.
     englishIdx = 0;
   }
@@ -579,12 +576,18 @@ bool gfxDWriteFontEntry::HasVariations() {
     return mHasVariations;
   }
   mHasVariationsInitialized = true;
+  mHasVariations = false;
+
+  if (!gfxPlatform::GetPlatform()->HasVariationFontSupport()) {
+    return mHasVariations;
+  }
+
   if (!mFontFace) {
     // CreateFontFace will initialize the mFontFace field, and also
     // mFontFace5 if available on the current DWrite version.
     RefPtr<IDWriteFontFace> fontFace;
     if (NS_FAILED(CreateFontFace(getter_AddRefs(fontFace)))) {
-      return false;
+      return mHasVariations;
     }
   }
   if (mFontFace5) {
@@ -656,7 +659,8 @@ gfxFont* gfxDWriteFontEntry::CreateFontInstance(
   RefPtr<UnscaledFontDWrite> unscaledFont(unscaledFontPtr);
   if (!unscaledFont) {
     RefPtr<IDWriteFontFace> fontFace;
-    nsresult rv = CreateFontFace(getter_AddRefs(fontFace), nullptr, sims);
+    nsresult rv =
+        CreateFontFace(getter_AddRefs(fontFace), nullptr, sims, nullptr);
     if (NS_FAILED(rv)) {
       return nullptr;
     }
@@ -668,10 +672,18 @@ gfxFont* gfxDWriteFontEntry::CreateFontInstance(
     unscaledFontPtr = unscaledFont;
   }
   RefPtr<IDWriteFontFace> fontFace;
-  if (HasVariations() && !aFontStyle->variationSettings.IsEmpty()) {
-    nsresult rv = CreateFontFace(getter_AddRefs(fontFace), aFontStyle, sims);
-    if (NS_FAILED(rv)) {
-      return nullptr;
+  if (HasVariations()) {
+    // Get the variation settings needed to instantiate the fontEntry
+    // for a particular fontStyle.
+    AutoTArray<gfxFontVariation, 4> vars;
+    GetVariationsForStyle(vars, *aFontStyle);
+
+    if (!vars.IsEmpty()) {
+      nsresult rv =
+          CreateFontFace(getter_AddRefs(fontFace), aFontStyle, sims, &vars);
+      if (NS_FAILED(rv)) {
+        return nullptr;
+      }
     }
   }
   return new gfxDWriteFont(unscaledFont, this, aFontStyle, fontFace);
@@ -679,7 +691,8 @@ gfxFont* gfxDWriteFontEntry::CreateFontInstance(
 
 nsresult gfxDWriteFontEntry::CreateFontFace(
     IDWriteFontFace** aFontFace, const gfxFontStyle* aFontStyle,
-    DWRITE_FONT_SIMULATIONS aSimulations) {
+    DWRITE_FONT_SIMULATIONS aSimulations,
+    const nsTArray<gfxFontVariation>* aVariations) {
   // Convert an OpenType font tag from our uint32_t representation
   // (as constructed by TRUETYPE_TAG(...)) to the order DWrite wants.
   auto makeDWriteAxisTag = [](uint32_t aTag) {
@@ -742,15 +755,9 @@ nsresult gfxDWriteFontEntry::CreateFontFace(
     if (SUCCEEDED(hr) && resource) {
       AutoTArray<DWRITE_FONT_AXIS_VALUE, 4> fontAxisValues;
 
-      // Get the variation settings needed to instantiate the fontEntry
-      // for a particular fontStyle, or use default style if no aFontStyle
-      // was passed (e.g. instantiating a face just to read font tables).
-      AutoTArray<gfxFontVariation, 4> vars;
-      GetVariationsForStyle(vars, aFontStyle ? *aFontStyle : gfxFontStyle());
-
       // Copy variation settings to DWrite's type.
-      if (!vars.IsEmpty()) {
-        for (const auto& v : vars) {
+      if (aVariations) {
+        for (const auto& v : *aVariations) {
           DWRITE_FONT_AXIS_VALUE axisValue = {makeDWriteAxisTag(v.mTag),
                                               v.mValue};
           fontAxisValues.AppendElement(axisValue);
@@ -1137,6 +1144,7 @@ void gfxDWriteFontList::AppendFamiliesFromCollection(
     RefPtr<IDWriteLocalizedStrings> localizedNames;
     HRESULT hr = family->GetFamilyNames(getter_AddRefs(localizedNames));
     if (FAILED(hr)) {
+      gfxWarning() << "Failed to get names for font-family " << i;
       continue;
     }
 
@@ -1170,6 +1178,7 @@ void gfxDWriteFontList::AppendFamiliesFromCollection(
       // en-US family name.
       nsAutoCString name;
       if (!GetNameAsUtf8(name, localizedNames, 0)) {
+        gfxWarning() << "GetNameAsUtf8 failed for index 0 in font-family " << i;
         continue;
       }
       addFamily(name);
@@ -1179,16 +1188,17 @@ void gfxDWriteFontList::AppendFamiliesFromCollection(
       for (unsigned index = 0; index < count; ++index) {
         nsAutoCString name;
         if (!GetNameAsUtf8(name, localizedNames, index)) {
+          gfxWarning() << "GetNameAsUtf8 failed for index " << index
+                       << " in font-family " << i;
           continue;
         }
         if (!names.Contains(name)) {
           if (sysLocIndex == -1) {
             WCHAR buf[32];
-            if (FAILED(localizedNames->GetLocaleName(index, buf, 32))) {
-              continue;
-            }
-            if (loc16.Equals(buf)) {
-              sysLocIndex = names.Length();
+            if (SUCCEEDED(localizedNames->GetLocaleName(index, buf, 32))) {
+              if (loc16.Equals(buf)) {
+                sysLocIndex = names.Length();
+              }
             }
           }
           names.AppendElement(name);
@@ -1477,7 +1487,7 @@ void gfxDWriteFontList::InitSharedFontListForPlatform() {
       "gfx.font_rendering.cleartype_params.force_gdi_classic_max_size",
       mForceGDIClassicMaxFontSize);
 
-  mFontSubstitutes.Clear();
+  mSubstitutions.Clear();
   mNonExistingFonts.Clear();
 
   RefPtr<IDWriteFactory> factory = Factory::GetDWriteFactory();
@@ -1884,11 +1894,15 @@ nsresult gfxDWriteFontList::GetFontSubstitutes() {
     RemoveCharsetFromFontSubstitute(actualFontName);
     BuildKeyNameFromFontName(actualFontName);
     if (SharedFontList()) {
-      // Font substitutions are recorded for the canonical family names; we
-      // don't need FindFamily to consider localized aliases when searching.
-      if (SharedFontList()->FindFamily(substituteName,
-                                       /*aPrimaryNameOnly*/ true)) {
-        continue;
+      // Skip substitution if the original font is available, unless the option
+      // to apply substitutions unconditionally is enabled.
+      if (!StaticPrefs::gfx_windows_font_substitutes_always_AtStartup()) {
+        // Font substitutions are recorded for the canonical family names; we
+        // don't need FindFamily to consider localized aliases when searching.
+        if (SharedFontList()->FindFamily(substituteName,
+                                         /*aPrimaryNameOnly*/ true)) {
+          continue;
+        }
       }
       if (SharedFontList()->FindFamily(actualFontName,
                                        /*aPrimaryNameOnly*/ true)) {
@@ -1933,11 +1947,15 @@ void gfxDWriteFontList::GetDirectWriteSubstitutes() {
     nsAutoCString substituteName(sub.aliasName);
     BuildKeyNameFromFontName(substituteName);
     if (SharedFontList()) {
-      // We don't need FindFamily to consider localized aliases when searching
-      // for the DirectWrite substitutes, we know the canonical names.
-      if (SharedFontList()->FindFamily(substituteName,
-                                       /*aPrimaryNameOnly*/ true)) {
-        continue;
+      // Skip substitution if the original font is available, unless the option
+      // to apply substitutions unconditionally is enabled.
+      if (!StaticPrefs::gfx_windows_font_substitutes_always_AtStartup()) {
+        // We don't need FindFamily to consider localized aliases when searching
+        // for the DirectWrite substitutes, we know the canonical names.
+        if (SharedFontList()->FindFamily(substituteName,
+                                         /*aPrimaryNameOnly*/ true)) {
+          continue;
+        }
       }
       nsAutoCString actualFontName(sub.actualName);
       BuildKeyNameFromFontName(actualFontName);
@@ -2099,6 +2117,9 @@ gfxFontEntry* gfxDWriteFontList::PlatformGlobalFontFallback(
   if (!mFallbackRenderer) {
     mFallbackRenderer = new DWriteFontFallbackRenderer(dwFactory);
   }
+  if (!mFallbackRenderer->IsValid()) {
+    return nullptr;
+  }
 
   // initialize text format
   if (!mFallbackFormat) {
@@ -2137,8 +2158,14 @@ gfxFontEntry* gfxDWriteFontList::PlatformGlobalFontFallback(
 
   // call the draw method to invoke the DirectWrite layout functions
   // which determine the fallback font
-  hr = fallbackLayout->Draw(nullptr, mFallbackRenderer, 50.0f, 50.0f);
-  if (FAILED(hr)) {
+  MOZ_SEH_TRY {
+    hr = fallbackLayout->Draw(nullptr, mFallbackRenderer, 50.0f, 50.0f);
+    if (FAILED(hr)) {
+      return nullptr;
+    }
+  }
+  MOZ_SEH_EXCEPT(EXCEPTION_EXECUTE_HANDLER) {
+    gfxCriticalNote << "Exception occurred during DWrite font fallback";
     return nullptr;
   }
 

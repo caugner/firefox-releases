@@ -652,8 +652,8 @@ class DevToolsExtensionPageContextParent extends ExtensionPageContextParent {
     if (!this._onNavigatedListeners) {
       this._onNavigatedListeners = new Set();
 
-      await this.devToolsToolbox.resourceWatcher.watchResources(
-        [this.devToolsToolbox.resourceWatcher.TYPES.DOCUMENT_EVENT],
+      await this.devToolsToolbox.resourceCommand.watchResources(
+        [this.devToolsToolbox.resourceCommand.TYPES.DOCUMENT_EVENT],
         {
           onAvailable: this._onResourceAvailable,
           ignoreExistingResources: true,
@@ -705,8 +705,8 @@ class DevToolsExtensionPageContextParent extends ExtensionPageContextParent {
     }
 
     if (this._onNavigatedListeners) {
-      this.devToolsToolbox.resourceWatcher.unwatchResources(
-        [this.devToolsToolbox.resourceWatcher.TYPES.DOCUMENT_EVENT],
+      this.devToolsToolbox.resourceCommand.unwatchResources(
+        [this.devToolsToolbox.resourceCommand.TYPES.DOCUMENT_EVENT],
         { onAvailable: this._onResourceAvailable }
       );
     }
@@ -975,11 +975,18 @@ ParentAPIManager = {
     let handlingUserInput = false;
 
     let listener = async (...listenerArgs) => {
+      // Extract urgentSend flag to avoid deserializing args holder later.
+      let urgentSend = false;
+      if (listenerArgs[0] && data.path.startsWith("webRequest.")) {
+        urgentSend = listenerArgs[0].urgentSend;
+        delete listenerArgs[0].urgentSend;
+      }
       let result = await this.conduit.queryRunListener(childId, {
         childId,
         handlingUserInput,
         listenerId: data.listenerId,
         path: data.path,
+        urgentSend,
         get args() {
           return new StructuredCloneHolder(listenerArgs);
         },
@@ -1165,6 +1172,7 @@ class HiddenXULWindow {
     const browser = chromeDoc.createXULElement("browser");
     browser.setAttribute("type", "content");
     browser.setAttribute("disableglobalhistory", "true");
+    browser.setAttribute("messagemanagergroup", "webext-browsers");
 
     for (const [name, value] of Object.entries(xulAttributes)) {
       if (value != null) {
@@ -1754,7 +1762,7 @@ StartupCache = {
 
       result = aomStartup.decodeBlob(buffer);
     } catch (e) {
-      if (typeof e !== DOMException || e.name !== "NotFoundError") {
+      if (!(e instanceof DOMException) || e.name !== "NotFoundError") {
         Cu.reportError(e);
       }
     }

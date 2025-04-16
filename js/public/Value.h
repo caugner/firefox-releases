@@ -17,7 +17,6 @@
 
 #include <limits> /* for std::numeric_limits */
 
-#include "js-config.h"
 #include "jstypes.h"
 
 #include "js/HeapAPI.h"
@@ -221,9 +220,6 @@ enum JSWhyMagic {
   /** an empty subnode in the AST serializer */
   JS_SERIALIZE_NO_NODE,
 
-  /** optimized-away 'arguments' value */
-  JS_OPTIMIZED_ARGUMENTS,
-
   /** magic value passed to natives to indicate construction */
   JS_IS_CONSTRUCTING,
 
@@ -241,6 +237,9 @@ enum JSWhyMagic {
 
   /** uninitialized lexical bindings that produce ReferenceError on touch. */
   JS_UNINITIALIZED_LEXICAL,
+
+  /** arguments object can't be created because environment is dead. */
+  JS_MISSING_ARGUMENTS,
 
   /** standard constructors are not created for off-thread parsing. */
   JS_OFF_THREAD_CONSTRUCTOR,
@@ -914,15 +913,6 @@ class alignas(8) Value {
 static_assert(sizeof(Value) == 8,
               "Value size must leave three tag bits, be a binary power, and "
               "is ubiquitously depended upon everywhere");
-
-inline bool IsOptimizedPlaceholderMagicValue(const Value& v) {
-  if (v.isMagic()) {
-    MOZ_ASSERT(v.whyMagic() == JS_OPTIMIZED_ARGUMENTS ||
-               v.whyMagic() == JS_OPTIMIZED_OUT);
-    return true;
-  }
-  return false;
-}
 
 static MOZ_ALWAYS_INLINE void ExposeValueToActiveJS(const Value& v) {
 #ifdef DEBUG

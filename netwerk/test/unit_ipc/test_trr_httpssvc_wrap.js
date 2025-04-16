@@ -3,6 +3,10 @@
 let h2Port;
 let prefs;
 
+const dns = Cc["@mozilla.org/network/dns-service;1"].getService(
+  Ci.nsIDNSService
+);
+
 function setup() {
   let env = Cc["@mozilla.org/process/environment;1"].getService(
     Ci.nsIEnvironment
@@ -25,7 +29,7 @@ function setup() {
   prefs.setBoolPref("network.dns.native-is-localhost", true);
 
   // 0 - off, 1 - race, 2 TRR first, 3 TRR only, 4 shadow
-  prefs.setIntPref("network.trr.mode", 2); // TRR first
+  prefs.setIntPref("network.trr.mode", 3); // TRR first
   prefs.setBoolPref("network.trr.wait-for-portal", false);
   // don't confirm that TRR is working, just go!
   prefs.setCharPref("network.trr.confirmationNS", "skip");
@@ -63,6 +67,7 @@ registerCleanupFunction(() => {
 });
 
 function run_test() {
+  prefs.setIntPref("network.trr.mode", 3);
   prefs.setCharPref(
     "network.trr.uri",
     "https://foo.example.com:" + h2Port + "/httpssvc"
@@ -75,6 +80,11 @@ function run_test() {
       `https://foo.example.com:${port}/dns-query`
     );
     do_send_remote_message("mode3-port-done");
+  });
+
+  do_await_remote_message("clearCache").then(() => {
+    dns.clearCache(true);
+    do_send_remote_message("clearCache-done");
   });
 
   run_test_in_child("../unit/test_trr_httpssvc.js");

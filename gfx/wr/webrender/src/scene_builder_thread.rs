@@ -14,7 +14,7 @@ use crate::render_api::{ApiMsg, FrameMsg, SceneMsg, ResourceUpdate, TransactionM
 use crate::capture::CaptureConfig;
 use crate::frame_builder::FrameBuilderConfig;
 use crate::scene_building::SceneBuilder;
-use crate::clip::ClipIntern;
+use crate::clip::{ClipIntern, PolygonIntern};
 use crate::filterdata::FilterDataIntern;
 use crate::intern::{Internable, Interner, UpdateList};
 use crate::internal_types::{FastHashMap, FastHashSet};
@@ -35,11 +35,6 @@ use time::precise_time_ns;
 use crate::util::drain_filter;
 use std::thread;
 use std::time::Duration;
-
-#[cfg(feature = "debugger")]
-use crate::debug_server;
-#[cfg(feature = "debugger")]
-use api::{BuiltDisplayListIter, DisplayItem};
 
 fn rasterize_blobs(txn: &mut TransactionMsg, is_low_priority: bool) {
     profile_scope!("rasterize_blobs");
@@ -110,7 +105,6 @@ pub enum SceneBuilderRequest {
     StartCaptureSequence(CaptureConfig),
     #[cfg(feature = "capture")]
     StopCaptureSequence,
-    DocumentsForDebugger
 }
 
 // Message from scene builder to render backend.
@@ -124,7 +118,6 @@ pub enum SceneBuilderResult {
     GetGlyphIndices(GlyphIndexRequest),
     StopRenderBackend,
     ShutDown(Option<Sender<()>>),
-    DocumentsForDebugger(String),
 
     #[cfg(feature = "capture")]
     /// The same as `Transactions`, but also supplies a `CaptureConfig` that the
@@ -214,15 +207,13 @@ struct Document {
 }
 
 impl Document {
-    fn new(device_rect: DeviceIntRect, device_pixel_ratio: f32) -> Self {
+    fn new(device_rect: DeviceIntRect) -> Self {
         Document {
             scene: Scene::new(),
             interners: Interners::default(),
             stats: SceneStats::empty(),
             view: SceneView {
                 device_rect,
-                device_pixel_ratio,
-                page_zoom_factor: 1.0,
                 quality_settings: QualitySettings::default(),
             },
         }
@@ -234,7 +225,6 @@ pub struct SceneBuilderThread {
     rx: Receiver<SceneBuilderRequest>,
     tx: Sender<ApiMsg>,
     config: FrameBuilderConfig,
-    default_device_pixel_ratio: f32,
     font_instances: SharedFontInstanceMap,
     size_of_ops: Option<MallocSizeOfOps>,
     hooks: Option<Box<dyn SceneBuilderHooks + Send>>,
@@ -267,7 +257,6 @@ impl SceneBuilderThreadChannels {
 impl SceneBuilderThread {
     pub fn new(
         config: FrameBuilderConfig,
-        default_device_pixel_ratio: f32,
         font_instances: SharedFontInstanceMap,
         size_of_ops: Option<MallocSizeOfOps>,
         hooks: Option<Box<dyn SceneBuilderHooks + Send>>,
@@ -280,7 +269,6 @@ impl SceneBuilderThread {
             rx,
             tx,
             config,
-            default_device_pixel_ratio,
             font_instances,
             size_of_ops,
             hooks,
@@ -327,7 +315,6 @@ impl SceneBuilderThread {
                 Ok(SceneBuilderRequest::AddDocument(document_id, initial_size)) => {
                     let old = self.documents.insert(document_id, Document::new(
                         initial_size.into(),
-                        self.default_device_pixel_ratio,
                     ));
                     debug_assert!(old.is_none());
                 }
@@ -383,10 +370,6 @@ impl SceneBuilderThread {
                     // rebuild?
                     self.capture_config = None;
                     self.send(SceneBuilderResult::StopCaptureSequence);
-                }
-                Ok(SceneBuilderRequest::DocumentsForDebugger) => {
-                    let json = self.get_docs_for_debugger();
-                    self.send(SceneBuilderResult::DocumentsForDebugger(json));
                 }
                 Err(_) => {
                     break;
@@ -502,70 +485,6 @@ impl SceneBuilderThread {
         self.save_capture_sequence();
     }
 
-    #[cfg(feature = "debugger")]
-    fn traverse_items<'a>(
-        &self,
-        traversal: &mut BuiltDisplayListIter<'a>,
-        node: &mut debug_server::TreeNode,
-    ) {
-        loop {
-            let subtraversal = {
-                let item = match traversal.next() {
-                    Some(item) => item,
-                    None => break,
-                };
-
-                match *item.item() {
-                    display_item @ DisplayItem::PushStackingContext(..) => {
-                        let mut subtraversal = item.sub_iter();
-                        let mut child_node =
-                            debug_server::TreeNode::new(&display_item.debug_name().to_string());
-                        self.traverse_items(&mut subtraversal, &mut child_node);
-                        node.add_child(child_node);
-                        Some(subtraversal)
-                    }
-                    DisplayItem::PopStackingContext => {
-                        return;
-                    }
-                    display_item => {
-                        node.add_item(&display_item.debug_name().to_string());
-                        None
-                    }
-                }
-            };
-
-            // If flatten_item created a sub-traversal, we need `traversal` to have the
-            // same state as the completed subtraversal, so we reinitialize it here.
-            if let Some(subtraversal) = subtraversal {
-                *traversal = subtraversal;
-            }
-        }
-    }
-
-    #[cfg(not(feature = "debugger"))]
-    fn get_docs_for_debugger(&self) -> String {
-        String::new()
-    }
-
-    #[cfg(feature = "debugger")]
-    fn get_docs_for_debugger(&self) -> String {
-        let mut docs = debug_server::DocumentList::new();
-
-        for (_, doc) in &self.documents {
-            let mut debug_doc = debug_server::TreeNode::new("document");
-
-            for (_, pipeline) in &doc.scene.pipelines {
-                let mut debug_dl = debug_server::TreeNode::new("display-list");
-                self.traverse_items(&mut pipeline.display_list.iter(), &mut debug_dl);
-                debug_doc.add_child(debug_dl);
-            }
-
-            docs.add(debug_doc);
-        }
-
-        serde_json::to_string(&docs).unwrap()
-    }
-
     /// Do the bulk of the work of the scene builder thread.
     fn process_transaction(&mut self, mut txn: TransactionMsg) -> Box<BuiltTransaction> {
         profile_scope!("process_transaction");
@@ -590,15 +509,11 @@ impl SceneBuilderThread {
                 SceneMsg::UpdateEpoch(pipeline_id, epoch) => {
                     scene.update_epoch(pipeline_id, epoch);
                 }
-                SceneMsg::SetPageZoom(factor) => {
-                    doc.view.page_zoom_factor = factor.get();
-                }
                 SceneMsg::SetQualitySettings { settings } => {
                     doc.view.quality_settings = settings;
                 }
-                SceneMsg::SetDocumentView { device_rect, device_pixel_ratio } => {
+                SceneMsg::SetDocumentView { device_rect } => {
                     doc.view.device_rect = device_rect;
-                    doc.view.device_pixel_ratio = device_pixel_ratio;
                 }
                 SceneMsg::SetDisplayList {
                     epoch,
@@ -608,16 +523,17 @@ impl SceneBuilderThread {
                     display_list,
                     preserve_frame_state,
                 } => {
-                    let (gecko_display_list_time, builder_start_time_ns,
-                         builder_end_time_ns, send_time_ns) = display_list.times();
-
+                    let (builder_start_time_ns, builder_end_time_ns, send_time_ns) =
+                      display_list.times();
                     let content_send_time = profiler::ns_to_ms(precise_time_ns() - send_time_ns);
                     let dl_build_time = profiler::ns_to_ms(builder_end_time_ns - builder_start_time_ns);
                     profile.set(profiler::CONTENT_SEND_TIME, content_send_time);
                     profile.set(profiler::DISPLAY_LIST_BUILD_TIME, dl_build_time);
                     profile.set(profiler::DISPLAY_LIST_MEM, profiler::bytes_to_mb(display_list.data().len()));
 
-                    frame_stats.gecko_display_list_time += gecko_display_list_time;
+                    let (gecko_display_list_time, full_display_list) = display_list.gecko_display_list_stats();
+                    frame_stats.full_display_list = full_display_list;
+                    frame_stats.gecko_display_list_time = gecko_display_list_time;
                     frame_stats.wr_display_list_time += dl_build_time;
 
                     if self.removed_pipelines.contains(&pipeline_id) {

@@ -17,6 +17,7 @@
 #include "mozilla/layers/SynchronousTask.h"
 #include "TextDrawTarget.h"
 #include "malloc_decls.h"
+#include "GLContext.h"
 
 // clang-format off
 #define WRDL_LOG(...)
@@ -134,27 +135,40 @@ class NewRenderer : public RendererEvent {
                         ? aRenderThread.GetShaders()->RawShaders()
                         : nullptr;
 
+    // Check That if we are not using SWGL, we have at least a GL or GLES 3.0
+    // context.
+    if (gl && !swgl) {
+      bool versionCheck =
+          gl->IsAtLeast(gl::ContextProfile::OpenGLCore, 300) ||
+          gl->IsAtLeast(gl::ContextProfile::OpenGLCompatibility, 300) ||
+          gl->IsAtLeast(gl::ContextProfile::OpenGLES, 300);
+
+      if (!versionCheck) {
+        gfxCriticalNote << "GL context version (" << gl->Version()
+                        << ") insufficent for hardware WebRender";
+
+        mError->AssignASCII("GL context version insufficient");
+        return;
+      }
+    }
+
     if (!wr_window_new(
             aWindowId, mSize.width, mSize.height,
             mWindowKind == WindowKind::MAIN, supportLowPriorityTransactions,
             supportLowPriorityThreadpool, gfx::gfxVars::UseGLSwizzle(),
-            gfx::gfxVars::UseWebRenderScissoredCacheClears(),
-#ifdef NIGHTLY_BUILD
-            StaticPrefs::gfx_webrender_start_debug_server(),
-#else
-            false,
-#endif
-            swgl, gl, compositor->SurfaceOriginIsTopLeft(), progCache, shaders,
+            gfx::gfxVars::UseWebRenderScissoredCacheClears(), swgl, gl,
+            compositor->SurfaceOriginIsTopLeft(), progCache, shaders,
             aRenderThread.ThreadPool().Raw(),
             aRenderThread.ThreadPoolLP().Raw(), &WebRenderMallocSizeOf,
             &WebRenderMallocEnclosingSizeOf, 0, compositor.get(),
             compositor->ShouldUseNativeCompositor(),
-            compositor->GetMaxUpdateRects(), compositor->UsePartialPresent(),
+            compositor->UsePartialPresent(),
             compositor->GetMaxPartialPresentRects(),
             compositor->ShouldDrawPreviousPartialPresentRegions(), mDocHandle,
             &wrRenderer, mMaxTextureSize, &errorMessage,
             StaticPrefs::gfx_webrender_enable_gpu_markers_AtStartup(),
-            panic_on_gl_error, picTileWidth, picTileHeight)) {
+            panic_on_gl_error, picTileWidth, picTileHeight,
+            gfx::gfxVars::WebRenderRequiresHardwareDriver())) {
       // wr_window_new puts a message into gfxCriticalNote if it returns false
       MOZ_ASSERT(errorMessage);
       mError->AssignASCII(errorMessage);
@@ -333,10 +347,6 @@ void TransactionWrapper::UpdateScrollPosition(
     const layers::ScrollableLayerGuid::ViewID& aScrollId,
     const wr::LayoutPoint& aScrollPosition) {
   wr_transaction_scroll_layer(mTxn, aPipelineId, aScrollId, aScrollPosition);
-}
-
-void TransactionWrapper::UpdatePinchZoom(float aZoom) {
-  wr_transaction_pinch_zoom(mTxn, aZoom);
 }
 
 void TransactionWrapper::UpdateIsTransformAsyncZooming(uint64_t aAnimationId,
@@ -1249,28 +1259,6 @@ void DisplayListBuilder::PushClearRect(const wr::LayoutRect& aBounds) {
   wr_dp_push_clear_rect(mWrState, aBounds, clip, &mCurrentSpaceAndClipChain);
 }
 
-void DisplayListBuilder::PushClearRectWithComplexRegion(
-    const wr::LayoutRect& aBounds, const wr::ComplexClipRegion& aRegion) {
-  wr::LayoutRect clip = MergeClipLeaf(aBounds);
-  WRDL_LOG("PushClearRectWithComplexRegion b=%s c=%s\n", mWrState,
-           ToString(aBounds).c_str(), ToString(clip).c_str());
-
-  // TODO(gw): This doesn't pass the complex region through to WR, as clear
-  //           rects with complex clips are currently broken. This is the
-  //           only place they are used, and they are used only for a single
-  //           case (close buttons on Win7 machines). We might be able to
-  //           get away with not supporting this at all in WR, using the
-  //           non-clipped clear rect is an improvement for now, at least.
-  //           See https://bugzilla.mozilla.org/show_bug.cgi?id=1636683 for
-  //           more information.
-  AutoTArray<wr::ComplexClipRegion, 1> clips;
-  auto clipId = DefineClip(Nothing(), aBounds, &clips);
-  auto spaceAndClip = WrSpaceAndClip{mCurrentSpaceAndClipChain.space, clipId};
-
-  wr_dp_push_clear_rect_with_parent_clip(mWrState, aBounds, clip,
-                                         &spaceAndClip);
-}
-
 void DisplayListBuilder::PushBackdropFilter(
     const wr::LayoutRect& aBounds, const wr::ComplexClipRegion& aRegion,
     const nsTArray<wr::FilterOp>& aFilters,
@@ -1279,9 +1267,7 @@ void DisplayListBuilder::PushBackdropFilter(
   WRDL_LOG("PushBackdropFilter b=%s c=%s\n", mWrState,
            ToString(aBounds).c_str(), ToString(clip).c_str());
 
-  AutoTArray<wr::ComplexClipRegion, 1> clips;
-  clips.AppendElement(aRegion);
-  auto clipId = DefineClip(Nothing(), aBounds, &clips);
+  auto clipId = DefineRoundedRectClip(aRegion);
   auto spaceAndClip = WrSpaceAndClip{mCurrentSpaceAndClipChain.space, clipId};
 
   wr_dp_push_backdrop_filter_with_parent_clip(

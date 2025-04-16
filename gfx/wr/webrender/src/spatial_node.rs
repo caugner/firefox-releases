@@ -6,12 +6,12 @@
 use api::{ExternalScrollId, PipelineId, PropertyBinding, PropertyBindingId, ReferenceFrameKind, ScrollClamping, ScrollLocation};
 use api::{TransformStyle, ScrollSensitivity, StickyOffsetBounds};
 use api::units::*;
-use crate::spatial_tree::{CoordinateSystem, CoordinateSystemId, SpatialNodeIndex, TransformUpdateState};
-use euclid::{Point2D, Vector2D, SideOffsets2D};
+use crate::spatial_tree::{CoordinateSystem, SpatialNodeIndex, TransformUpdateState};
+use crate::spatial_tree::{CoordinateSystemId, StaticCoordinateSystemId};
+use euclid::{Vector2D, SideOffsets2D};
 use crate::scene::SceneProperties;
 use crate::util::{LayoutFastTransform, MatrixHelpers, ScaleOffset, TransformedRectKind, PointHelpers};
 
-#[derive(Clone, Debug)]
 pub enum SpatialNodeType {
     /// A special kind of node that adjusts its position based on the position
     /// of its parent node and a given set of sticky positioning offset bounds.
@@ -28,7 +28,6 @@ pub enum SpatialNodeType {
 }
 
 /// Contains information common among all types of SpatialTree nodes.
-#[derive(Clone, Debug)]
 pub struct SpatialNode {
     /// The scale/offset of the viewport for this spatial node, relative to the
     /// coordinate system. Includes any accumulated scrolling offsets from nodes
@@ -44,6 +43,10 @@ pub struct SpatialNode {
 
     /// The axis-aligned coordinate system id of this node.
     pub coordinate_system_id: CoordinateSystemId,
+
+    /// Coordinate system statically assigned during scene building (doesn't change regardless of
+    /// the current property binding value during frame building).
+    pub static_coordinate_system_id: StaticCoordinateSystemId,
 
     /// The current transform kind of this node.
     pub transform_kind: TransformedRectKind,
@@ -107,20 +110,17 @@ fn compute_offset_from(
 }
 
 /// Snap an offset to be incorporated into a transform, where the local space
-/// may be considered the world space. We convert from world space to device
-/// space using the global device pixel scale, which may not always be correct
-/// if there are intermediate surfaces used, however those are either cases
-/// where snapping is not important (e.g. has perspective or is not axis
-/// aligned), or an edge case (e.g. SVG filters) which we can accept
+/// may be considered the world space. We assume raster scale is 1.0, which
+/// may not always be correct if there are intermediate surfaces used, however
+/// those are either cases where snapping is not important (e.g. has perspective
+/// or is not axis aligned), or an edge case (e.g. SVG filters) which we can accept
 /// imperfection for now.
 fn snap_offset<OffsetUnits, ScaleUnits>(
     offset: Vector2D<f32, OffsetUnits>,
     scale: Vector2D<f32, ScaleUnits>,
-    global_device_pixel_scale: DevicePixelScale,
 ) -> Vector2D<f32, OffsetUnits> {
-    let world_offset = Point2D::new(offset.x * scale.x, offset.y * scale.y);
-    let snapped_device_offset = (world_offset * global_device_pixel_scale).snap();
-    let snapped_world_offset = snapped_device_offset / global_device_pixel_scale;
+    let world_offset = WorldPoint::new(offset.x * scale.x, offset.y * scale.y);
+    let snapped_world_offset = world_offset.snap();
     Vector2D::new(
         if scale.x != 0.0 { snapped_world_offset.x / scale.x } else { offset.x },
         if scale.y != 0.0 { snapped_world_offset.y / scale.y } else { offset.y },
@@ -132,12 +132,14 @@ impl SpatialNode {
         pipeline_id: PipelineId,
         parent_index: Option<SpatialNodeIndex>,
         node_type: SpatialNodeType,
+        static_coordinate_system_id: StaticCoordinateSystemId,
     ) -> Self {
         SpatialNode {
             viewport_transform: ScaleOffset::identity(),
             content_transform: ScaleOffset::identity(),
             snapping_transform: None,
             coordinate_system_id: CoordinateSystemId(0),
+            static_coordinate_system_id,
             transform_kind: TransformedRectKind::AxisAligned,
             parent: parent_index,
             children: Vec::new(),
@@ -158,6 +160,7 @@ impl SpatialNode {
         scroll_sensitivity: ScrollSensitivity,
         frame_kind: ScrollFrameKind,
         external_scroll_offset: LayoutVector2D,
+        static_coordinate_system_id: StaticCoordinateSystemId,
     ) -> Self {
         let node_type = SpatialNodeType::ScrollFrame(ScrollFrameInfo::new(
                 *frame_rect,
@@ -172,7 +175,12 @@ impl SpatialNode {
             )
         );
 
-        Self::new(pipeline_id, Some(parent_index), node_type)
+        Self::new(
+            pipeline_id,
+            Some(parent_index),
+            node_type,
+            static_coordinate_system_id,
+        )
     }
 
     pub fn new_reference_frame(
@@ -182,6 +190,7 @@ impl SpatialNode {
         kind: ReferenceFrameKind,
         origin_in_parent_reference_frame: LayoutVector2D,
         pipeline_id: PipelineId,
+        static_coordinate_system_id: StaticCoordinateSystemId,
     ) -> Self {
         let info = ReferenceFrameInfo {
             transform_style,
@@ -190,15 +199,26 @@ impl SpatialNode {
             origin_in_parent_reference_frame,
             invertible: true,
         };
-        Self::new(pipeline_id, parent_index, SpatialNodeType::ReferenceFrame(info))
+        Self::new(
+            pipeline_id,
+            parent_index,
+            SpatialNodeType::ReferenceFrame(info),
+            static_coordinate_system_id,
+        )
     }
 
     pub fn new_sticky_frame(
         parent_index: SpatialNodeIndex,
         sticky_frame_info: StickyFrameInfo,
         pipeline_id: PipelineId,
+        static_coordinate_system_id: StaticCoordinateSystemId,
     ) -> Self {
-        Self::new(pipeline_id, Some(parent_index), SpatialNodeType::StickyFrame(sticky_frame_info))
+        Self::new(
+            pipeline_id,
+            Some(parent_index),
+            SpatialNodeType::StickyFrame(sticky_frame_info),
+            static_coordinate_system_id,
+        )
     }
 
     pub fn add_child(&mut self, child: SpatialNodeIndex) {
@@ -269,7 +289,6 @@ impl SpatialNode {
         &mut self,
         state: &mut TransformUpdateState,
         coord_systems: &mut Vec<CoordinateSystem>,
-        global_device_pixel_scale: DevicePixelScale,
         scene_properties: &SceneProperties,
         previous_spatial_nodes: &[SpatialNode],
     ) {
@@ -280,7 +299,7 @@ impl SpatialNode {
             return;
         }
 
-        self.update_transform(state, coord_systems, global_device_pixel_scale, scene_properties, previous_spatial_nodes);
+        self.update_transform(state, coord_systems, scene_properties, previous_spatial_nodes);
         //TODO: remove the field entirely?
         self.transform_kind = if self.coordinate_system_id.0 == 0 {
             TransformedRectKind::AxisAligned
@@ -309,7 +328,6 @@ impl SpatialNode {
         &mut self,
         state: &mut TransformUpdateState,
         coord_systems: &mut Vec<CoordinateSystem>,
-        global_device_pixel_scale: DevicePixelScale,
         scene_properties: &SceneProperties,
         previous_spatial_nodes: &[SpatialNode],
     ) {
@@ -357,7 +375,7 @@ impl SpatialNode {
                     // between our reference frame and this node. Finally, we also include
                     // whatever local transformation this reference frame provides.
                     let relative_transform = resolved_transform
-                        .then_translate(snap_offset(state.parent_accumulated_scroll_offset, state.coordinate_system_relative_scale_offset.scale, global_device_pixel_scale))
+                        .then_translate(snap_offset(state.parent_accumulated_scroll_offset, state.coordinate_system_relative_scale_offset.scale))
                         .to_transform()
                         .with_destination::<LayoutPixel>();
 
@@ -381,7 +399,6 @@ impl SpatialNode {
                                     maybe_snapped.offset = snap_offset(
                                         scale_offset.offset,
                                         state.coordinate_system_relative_scale_offset.scale,
-                                        global_device_pixel_scale
                                     );
                                 }
                                 cs_scale_offset =
@@ -443,13 +460,13 @@ impl SpatialNode {
                 // provided by our own sticky positioning.
                 let accumulated_offset = state.parent_accumulated_scroll_offset + sticky_offset;
                 self.viewport_transform = state.coordinate_system_relative_scale_offset
-                    .offset(snap_offset(accumulated_offset, state.coordinate_system_relative_scale_offset.scale, global_device_pixel_scale).to_untyped());
+                    .offset(snap_offset(accumulated_offset, state.coordinate_system_relative_scale_offset.scale).to_untyped());
 
                 // The transformation for any content inside of us is the viewport transformation, plus
                 // whatever scrolling offset we supply as well.
                 let added_offset = accumulated_offset + self.scroll_offset();
                 self.content_transform = state.coordinate_system_relative_scale_offset
-                    .offset(snap_offset(added_offset, state.coordinate_system_relative_scale_offset.scale, global_device_pixel_scale).to_untyped());
+                    .offset(snap_offset(added_offset, state.coordinate_system_relative_scale_offset.scale).to_untyped());
 
                 if let SpatialNodeType::StickyFrame(ref mut info) = self.node_type {
                     info.current_offset = sticky_offset;
@@ -957,7 +974,7 @@ fn test_cst_perspective_relative_scroll() {
         pipeline_id,
     );
 
-    cst.update_tree(WorldPoint::zero(), DevicePixelScale::new(1.0), &SceneProperties::new());
+    cst.update_tree(&SceneProperties::new());
 
     let scroll_offset = compute_offset_from(
         cst.spatial_nodes[ref_frame.0 as usize].parent,

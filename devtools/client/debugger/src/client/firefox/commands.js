@@ -136,9 +136,7 @@ async function sourceContents({ actor, thread }) {
 }
 
 async function setXHRBreakpoint(path, method) {
-  const hasWatcherSupport = commands.targetCommand.hasTargetWatcherSupport(
-    "set-xhr-breakpoints"
-  );
+  const hasWatcherSupport = commands.targetCommand.hasTargetWatcherSupport();
   if (!hasWatcherSupport) {
     // Without watcher support, forward setXHRBreakpoint to all threads.
     return forEachThread(thread => thread.setXHRBreakpoint(path, method));
@@ -148,11 +146,9 @@ async function setXHRBreakpoint(path, method) {
 }
 
 async function removeXHRBreakpoint(path, method) {
-  const hasWatcherSupport = commands.targetCommand.hasTargetWatcherSupport(
-    "set-xhr-breakpoints"
-  );
+  const hasWatcherSupport = commands.targetCommand.hasTargetWatcherSupport();
   if (!hasWatcherSupport) {
-    // Without watcher support, forward setXHRBreakpoint to all threads.
+    // Without watcher support, forward removeXHRBreakpoint to all threads.
     return forEachThread(thread => thread.removeXHRBreakpoint(path, method));
   }
   const breakpointsFront = await commands.targetCommand.watcherFront.getBreakpointListActor();
@@ -202,9 +198,7 @@ async function setBreakpoint(location, options) {
     condition: options.condition,
     logValue: options.logValue,
   };
-  const hasWatcherSupport = commands.targetCommand.hasTargetWatcherSupport(
-    "set-breakpoints"
-  );
+  const hasWatcherSupport = commands.targetCommand.hasTargetWatcherSupport();
   if (!hasWatcherSupport) {
     // Without watcher support, unconditionally forward setBreakpoint to all threads.
     return forEachThread(async thread =>
@@ -230,9 +224,7 @@ async function setBreakpoint(location, options) {
 async function removeBreakpoint(location) {
   delete breakpoints[makePendingLocationId(location)];
 
-  const hasWatcherSupport = commands.targetCommand.hasTargetWatcherSupport(
-    "set-breakpoints"
-  );
+  const hasWatcherSupport = commands.targetCommand.hasTargetWatcherSupport();
   if (!hasWatcherSupport) {
     // Without watcher support, unconditionally forward removeBreakpoint to all threads.
     return forEachThread(async thread => thread.removeBreakpoint(location));
@@ -295,14 +287,6 @@ async function autocomplete(input, cursor, frameId) {
   });
 }
 
-function navigate(url) {
-  return currentTarget().navigateTo({ url });
-}
-
-function reload() {
-  return currentTarget().reload();
-}
-
 function getProperties(thread, grip) {
   const objClient = lookupThreadFront(thread).pauseGrip(grip);
 
@@ -334,22 +318,10 @@ async function pauseOnExceptions(
   shouldPauseOnExceptions,
   shouldPauseOnCaughtExceptions
 ) {
-  if (commands.targetCommand.hasTargetWatcherSupport("thread-configuration")) {
-    const threadConfigurationActor = await commands.targetCommand.watcherFront.getThreadConfigurationActor();
-    await threadConfigurationActor.updateConfiguration({
-      pauseOnExceptions: shouldPauseOnExceptions,
-      ignoreCaughtExceptions: !shouldPauseOnCaughtExceptions,
-    });
-  } else {
-    return forEachThread(thread =>
-      thread.pauseOnExceptions(
-        shouldPauseOnExceptions,
-        // Providing opposite value because server
-        // uses "shouldIgnoreCaughtExceptions"
-        !shouldPauseOnCaughtExceptions
-      )
-    );
-  }
+  await commands.threadConfigurationCommand.updateConfiguration({
+    pauseOnExceptions: shouldPauseOnExceptions,
+    ignoreCaughtExceptions: !shouldPauseOnCaughtExceptions,
+  });
 }
 
 async function blackBox(sourceActor, isBlackBoxed, range) {
@@ -485,8 +457,6 @@ const clientCommands = {
   evaluate,
   evaluateInFrame,
   evaluateExpressions,
-  navigate,
-  reload,
   getProperties,
   getFrameScopes,
   getFrames,

@@ -2,7 +2,6 @@
 
 var gTestTab;
 var gContentAPI;
-var gContentWindow;
 
 var hasPocket = Services.prefs.getBoolPref("extensions.pocket.enabled");
 var hasQuit = AppConstants.platform != "macosx";
@@ -17,17 +16,9 @@ function getExpectedTargets() {
     "backForward",
     "devtools",
     "help",
-    ...(CustomizableUI.protonToolbarEnabled ? [] : ["home"]),
     "library",
     "logins",
     "pageAction-bookmark",
-    ...(gProton
-      ? []
-      : [
-          "pageAction-copyURL",
-          "pageAction-emailLink",
-          "pageAction-sendToDevice",
-        ]),
     ...(hasPocket ? ["pocket"] : []),
     "privateWindow",
     ...(hasQuit ? ["quit"] : []),

@@ -3,7 +3,7 @@
  * You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 /* globals log */
-/* globals main, makeUuid, deviceInfo, analytics, catcher, buildSettings, communication, browser */
+/* globals main, makeUuid, deviceInfo, analytics, catcher, communication, browser */
 
 "use strict";
 
@@ -28,13 +28,8 @@ this.auth = (function() {
     })
   );
 
-  exports.getDeviceId = function() {
-    return registrationInfo && registrationInfo.deviceId;
-  };
-
   function generateRegistrationInfo() {
     const info = {
-      deviceId: `anon${makeUuid()}`,
       secret: makeUuid(),
       registered: false,
     };
@@ -71,7 +66,6 @@ this.auth = (function() {
       });
       req.send(
         JSON.stringify({
-          deviceId: registrationInfo.deviceId,
           secret: registrationInfo.secret,
           deviceInfo: JSON.stringify(deviceInfo()),
         })
@@ -133,7 +127,6 @@ this.auth = (function() {
         req.setRequestHeader("content-type", "application/json");
         req.send(
           JSON.stringify({
-            deviceId: registrationInfo.deviceId,
             secret: registrationInfo.secret,
             deviceInfo: JSON.stringify(deviceInfo()),
             ownershipCheck,
@@ -184,7 +177,7 @@ this.auth = (function() {
   };
 
   exports.getSentryPublicDSN = function() {
-    return sentryPublicDSN || buildSettings.defaultSentryDsn;
+    return sentryPublicDSN;
   };
 
   exports.getAbTests = function() {
@@ -208,7 +201,6 @@ this.auth = (function() {
           return login({ ownershipCheck }).then(result => {
             return {
               isOwner: result && result.isOwner,
-              deviceId: registrationInfo.deviceId,
               accountId,
               authHeaders,
             };

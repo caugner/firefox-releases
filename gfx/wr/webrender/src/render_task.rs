@@ -16,17 +16,13 @@ use crate::internal_types::{CacheTextureId, FastHashMap, TextureSource, Swizzle}
 use crate::picture::{ResolvedSurfaceTexture, SurfaceInfo};
 use crate::prim_store::{ClipData, PictureIndex};
 use crate::prim_store::gradient::{
-    GRADIENT_FP_STOPS, GradientStopKey, FastLinearGradientTask, RadialGradientTask,
-    ConicGradientTask,
+    FastLinearGradientTask, RadialGradientTask,
+    ConicGradientTask, LinearGradientTask,
 };
-#[cfg(feature = "debugger")]
-use crate::print_tree::{PrintTreePrinter};
 use crate::resource_cache::{ResourceCache, ImageRequest};
 use std::{usize, f32, i32, u32};
 use crate::render_target::RenderTargetKind;
 use crate::render_task_graph::{PassId, RenderTaskId, RenderTaskGraphBuilder};
-#[cfg(feature = "debugger")]
-use crate::render_task_graph::RenderTaskGraph;
 use crate::render_task_cache::{RenderTaskCacheEntryHandle, RenderTaskCacheKey, RenderTaskCacheKeyKind, RenderTaskParent};
 use smallvec::SmallVec;
 
@@ -190,12 +186,6 @@ pub struct BlurTask {
 }
 
 impl BlurTask {
-    #[cfg(feature = "debugger")]
-    fn print_with<T: PrintTreePrinter>(&self, pt: &mut T) {
-        pt.add_item(format!("std deviation: {}", self.blur_std_deviation));
-        pt.add_item(format!("target: {:?}", self.target_kind));
-    }
-
     // In order to do the blur down-scaling passes without introducing errors, we need the
     // source of each down-scale pass to be a multuple of two. If need be, this inflates
     // the source size so that each down-scale pass will sample correctly.
@@ -307,6 +297,7 @@ pub enum RenderTaskKind {
     Border(BorderTask),
     LineDecoration(LineDecorationTask),
     FastLinearGradient(FastLinearGradientTask),
+    LinearGradient(LinearGradientTask),
     RadialGradient(RadialGradientTask),
     ConicGradient(ConicGradientTask),
     SvgFilter(SvgFilterTask),
@@ -338,6 +329,7 @@ impl RenderTaskKind {
             RenderTaskKind::Border(..) => "Border",
             RenderTaskKind::LineDecoration(..) => "LineDecoration",
             RenderTaskKind::FastLinearGradient(..) => "FastLinearGradient",
+            RenderTaskKind::LinearGradient(..) => "LinearGradient",
             RenderTaskKind::RadialGradient(..) => "RadialGradient",
             RenderTaskKind::ConicGradient(..) => "ConicGradient",
             RenderTaskKind::SvgFilter(..) => "SvgFilter",
@@ -353,6 +345,7 @@ impl RenderTaskKind {
             RenderTaskKind::Readback(..) |
             RenderTaskKind::Border(..) |
             RenderTaskKind::FastLinearGradient(..) |
+            RenderTaskKind::LinearGradient(..) |
             RenderTaskKind::RadialGradient(..) |
             RenderTaskKind::ConicGradient(..) |
             RenderTaskKind::Picture(..) |
@@ -409,20 +402,6 @@ impl RenderTaskKind {
             batch_filter,
             scissor_rect,
             valid_rect,
-        })
-    }
-
-    pub fn new_gradient(
-        stops: [GradientStopKey; GRADIENT_FP_STOPS],
-        orientation: LineOrientation,
-        start_point: f32,
-        end_point: f32,
-    ) -> Self {
-        RenderTaskKind::FastLinearGradient(FastLinearGradientTask {
-            stops,
-            orientation,
-            start_point,
-            end_point,
         })
     }
 
@@ -634,6 +613,7 @@ impl RenderTaskKind {
             RenderTaskKind::Border(..) |
             RenderTaskKind::LineDecoration(..) |
             RenderTaskKind::FastLinearGradient(..) |
+            RenderTaskKind::LinearGradient(..) |
             RenderTaskKind::RadialGradient(..) |
             RenderTaskKind::ConicGradient(..) |
             RenderTaskKind::Blit(..) => {
@@ -1411,81 +1391,6 @@ impl RenderTask {
 
     pub fn target_kind(&self) -> RenderTargetKind {
         self.kind.target_kind()
-    }
-
-    #[cfg(feature = "debugger")]
-    pub fn print_with<T: PrintTreePrinter>(&self, pt: &mut T, tree: &RenderTaskGraph) -> bool {
-        match self.kind {
-            RenderTaskKind::Image(ref task) => {
-                pt.new_level(format!("Image {:?}", task.key));
-            }
-            RenderTaskKind::Cached(..) => {
-                pt.new_level("Cached".to_owned());
-            }
-            RenderTaskKind::Picture(ref task) => {
-                pt.new_level(format!("Picture of {:?}", task.pic_index));
-            }
-            RenderTaskKind::CacheMask(ref task) => {
-                pt.new_level(format!("CacheMask with {} clips", task.clip_node_range.count));
-                pt.add_item(format!("rect: {:?}", task.actual_rect));
-            }
-            RenderTaskKind::LineDecoration(..) => {
-                pt.new_level("LineDecoration".to_owned());
-            }
-            RenderTaskKind::ClipRegion(..) => {
-                pt.new_level("ClipRegion".to_owned());
-            }
-            RenderTaskKind::VerticalBlur(ref task) => {
-                pt.new_level("VerticalBlur".to_owned());
-                task.print_with(pt);
-            }
-            RenderTaskKind::HorizontalBlur(ref task) => {
-                pt.new_level("HorizontalBlur".to_owned());
-                task.print_with(pt);
-            }
-            RenderTaskKind::Readback(..) => {
-                pt.new_level("Readback".to_owned());
-            }
-            RenderTaskKind::Scaling(ref kind) => {
-                pt.new_level("Scaling".to_owned());
-                pt.add_item(format!("kind: {:?}", kind));
-            }
-            RenderTaskKind::Border(..) => {
-                pt.new_level("Border".to_owned());
-            }
-            RenderTaskKind::Blit(ref task) => {
-                pt.new_level("Blit".to_owned());
-                pt.add_item(format!("source: {:?}", task.source));
-            }
-            RenderTaskKind::FastLinearGradient(..) => {
-                pt.new_level("FastLinearGradient".to_owned());
-            }
-            RenderTaskKind::RadialGradient(..) => {
-                pt.new_level("RadialGradient".to_owned());
-            }
-            RenderTaskKind::ConicGradient(..) => {
-                pt.new_level("ConicGradient".to_owned());
-            }
-            RenderTaskKind::SvgFilter(ref task) => {
-                pt.new_level("SvgFilter".to_owned());
-                pt.add_item(format!("primitive: {:?}", task.info));
-            }
-            #[cfg(test)]
-            RenderTaskKind::Test(..) => {
-                pt.new_level("Test".to_owned());
-            }
-        }
-
-        pt.add_item(format!("dimensions: {:?}", self.location.size()));
-
-        for &child_id in &self.children {
-            if tree[child_id].print_with(pt, tree) {
-                pt.add_item(format!("self: {:?}", child_id))
-            }
-        }
-
-        pt.end_level();
-        true
     }
 
     pub fn write_gpu_blocks(

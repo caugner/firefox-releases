@@ -2,7 +2,6 @@
 
 var gTestTab;
 var gContentAPI;
-var gContentWindow;
 
 add_task(setup_UITourTest);
 
@@ -40,9 +39,7 @@ add_UITour_task(async function test_highlight_help_and_show_help_subview() {
     "Should hide highlight"
   );
 
-  let helpButtonID = PanelUI.protonAppMenuEnabled
-    ? "appMenu-help-button2"
-    : "appMenu-help-button";
+  let helpButtonID = "appMenu-help-button2";
   let helpBtn = document.getElementById(helpButtonID);
   helpBtn.dispatchEvent(new Event("command"));
   await highlightHiddenPromise;

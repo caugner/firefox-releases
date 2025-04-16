@@ -192,7 +192,6 @@ exports.CSS_PROPERTIES = {
     ],
     "supports": [],
     "values": [
-      "-moz-gtk-info-bar",
       "-moz-mac-active-source-list-selection",
       "-moz-mac-disclosure-button-closed",
       "-moz-mac-disclosure-button-open",
@@ -673,35 +672,6 @@ exports.CSS_PROPERTIES = {
       "initial",
       "revert",
       "unset"
-    ]
-  },
-  "-moz-context-properties": {
-    "isInherited": true,
-    "subproperties": [
-      "-moz-context-properties"
-    ],
-    "supports": [],
-    "values": [
-      "inherit",
-      "initial",
-      "none",
-      "revert",
-      "unset"
-    ]
-  },
-  "-moz-control-character-visibility": {
-    "isInherited": true,
-    "subproperties": [
-      "-moz-control-character-visibility"
-    ],
-    "supports": [],
-    "values": [
-      "hidden",
-      "inherit",
-      "initial",
-      "revert",
-      "unset",
-      "visible"
     ]
   },
   "-moz-float-edge": {
@@ -1431,7 +1401,6 @@ exports.CSS_PROPERTIES = {
     ],
     "supports": [],
     "values": [
-      "-moz-gtk-info-bar",
       "-moz-mac-active-source-list-selection",
       "-moz-mac-disclosure-button-closed",
       "-moz-mac-disclosure-button-open",
@@ -2621,6 +2590,29 @@ exports.CSS_PROPERTIES = {
       "unset"
     ]
   },
+  "accent-color": {
+    "isInherited": true,
+    "subproperties": [
+      "accent-color"
+    ],
+    "supports": [
+      "color"
+    ],
+    "values": [
+      "COLOR",
+      "auto",
+      "currentColor",
+      "hsl",
+      "hsla",
+      "inherit",
+      "initial",
+      "revert",
+      "rgb",
+      "rgba",
+      "transparent",
+      "unset"
+    ]
+  },
   "align-content": {
     "isInherited": false,
     "subproperties": [
@@ -2976,6 +2968,7 @@ exports.CSS_PROPERTIES = {
       "-moz-user-modify",
       "-moz-user-focus",
       "caret-color",
+      "accent-color",
       "scrollbar-color",
       "list-style-position",
       "list-style-type",
@@ -3276,7 +3269,6 @@ exports.CSS_PROPERTIES = {
     ],
     "supports": [],
     "values": [
-      "-moz-gtk-info-bar",
       "-moz-mac-active-source-list-selection",
       "-moz-mac-disclosure-button-closed",
       "-moz-mac-disclosure-button-open",
@@ -10920,6 +10912,10 @@ exports.PREFERENCES = [
     "layout.css.math-style.enabled"
   ],
   [
+    "-moz-control-character-visibility",
+    "layout.css.moz-control-character-visibility.enabled"
+  ],
+  [
     "-moz-osx-font-smoothing",
     "layout.css.osx-font-smoothing.enabled"
   ],
@@ -10972,6 +10968,10 @@ exports.PREFERENCES = [
     "layout.css.overscroll-behavior.enabled"
   ],
   [
+    "accent-color",
+    "layout.css.accent-color.enabled"
+  ],
+  [
     "align-tracks",
     "layout.css.grid-template-masonry-value.enabled"
   ],
@@ -10986,6 +10986,10 @@ exports.PREFERENCES = [
   [
     "justify-tracks",
     "layout.css.grid-template-masonry-value.enabled"
+  ],
+  [
+    "-moz-context-properties",
+    "svg.context-properties.content.enabled"
   ],
   [
     "offset-anchor",

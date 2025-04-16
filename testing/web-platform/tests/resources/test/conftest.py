@@ -4,12 +4,11 @@ import os
 import ssl
 import sys
 import subprocess
+import urllib
 
 import html5lib
 import py
 import pytest
-from six import text_type
-from six.moves import urllib
 
 from wptserver import WPTServer
 
@@ -112,7 +111,7 @@ class HTMLItem(pytest.Item, pytest.Collector):
         includes_variants_script = False
         self.expected = None
 
-        for element in parsed.getiterator():
+        for element in parsed.iter():
             if not name and element.tag == 'title':
                 name = element.text
                 continue
@@ -122,7 +121,7 @@ class HTMLItem(pytest.Item, pytest.Collector):
             if element.tag == 'script':
                 if element.attrib.get('id') == 'expected':
                     try:
-                        self.expected = json.loads(text_type(element.text))
+                        self.expected = json.loads(element.text)
                     except ValueError:
                         print("Failed parsing JSON in %s" % filename)
                         raise

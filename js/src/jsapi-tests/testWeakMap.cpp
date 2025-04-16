@@ -64,11 +64,9 @@ bool checkSize(JS::HandleObject map, uint32_t expected) {
 END_TEST(testWeakMap_basicOperations)
 
 BEGIN_TEST(testWeakMap_keyDelegates) {
-#ifdef JS_GC_ZEAL
   AutoLeaveZeal nozeal(cx);
-#endif /* JS_GC_ZEAL */
 
-  JS_SetGCParameter(cx, JSGC_INCREMENTAL_GC_ENABLED, true);
+  AutoGCParameter param(cx, JSGC_INCREMENTAL_GC_ENABLED, true);
   JS_GC(cx);
   JS::RootedObject map(cx, JS::NewWeakMapObject(cx));
   CHECK(map);
@@ -100,7 +98,7 @@ BEGIN_TEST(testWeakMap_keyDelegates) {
   JSRuntime* rt = cx->runtime();
   CHECK(newCCW(map, delegateRoot));
   js::SliceBudget budget(js::WorkBudget(1000));
-  rt->gc.startDebugGC(GC_NORMAL, budget);
+  rt->gc.startDebugGC(JS::GCOptions::Normal, budget);
   if (JS::IsIncrementalGCInProgress(cx)) {
     // Wait until we've started marking before finishing the GC
     // non-incrementally.
@@ -125,7 +123,7 @@ BEGIN_TEST(testWeakMap_keyDelegates) {
   key = nullptr;
   CHECK(newCCW(map, delegateRoot));
   budget = js::SliceBudget(js::WorkBudget(1000));
-  rt->gc.startDebugGC(GC_NORMAL, budget);
+  rt->gc.startDebugGC(JS::GCOptions::Normal, budget);
   if (JS::IsIncrementalGCInProgress(cx)) {
     // Wait until we've started marking before finishing the GC
     // non-incrementally.

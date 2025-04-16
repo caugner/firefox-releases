@@ -69,6 +69,9 @@ already_AddRefed<Touch> SingleTouchData::ToNewDOMTouch() const {
                 LayoutDeviceIntPoint::Truncate(mScreenPoint.x, mScreenPoint.y),
                 LayoutDeviceIntPoint::Truncate(mRadius.width, mRadius.height),
                 mRotationAngle, mForce);
+  touch->tiltX = mTiltX;
+  touch->tiltY = mTiltY;
+  touch->twist = mTwist;
   return touch.forget();
 }
 
@@ -154,9 +157,13 @@ void MultiTouchInput::Translate(const ScreenPoint& aTranslation) {
   }
 }
 
-WidgetTouchEvent MultiTouchInput::ToWidgetTouchEvent(nsIWidget* aWidget) const {
+WidgetTouchEvent MultiTouchInput::ToWidgetEvent(nsIWidget* aWidget,
+                                                uint16_t aInputSource) const {
   MOZ_ASSERT(NS_IsMainThread(),
              "Can only convert To WidgetTouchEvent on main thread");
+  MOZ_ASSERT(aInputSource ==
+                 mozilla::dom::MouseEvent_Binding::MOZ_SOURCE_TOUCH ||
+             aInputSource == mozilla::dom::MouseEvent_Binding::MOZ_SOURCE_PEN);
 
   EventMessage touchEventMessage = eVoidEvent;
   switch (mType) {
@@ -189,6 +196,7 @@ WidgetTouchEvent MultiTouchInput::ToWidgetTouchEvent(nsIWidget* aWidget) const {
   event.mFlags.mHandledByAPZ = mHandledByAPZ;
   event.mFocusSequenceNumber = mFocusSequenceNumber;
   event.mLayersId = mLayersId;
+  event.mInputSource = aInputSource;
 
   for (size_t i = 0; i < mTouches.Length(); i++) {
     *event.mTouches.AppendElement() = mTouches[i].ToNewDOMTouch();
@@ -773,6 +781,8 @@ ScrollWheelInput::ScrollWheelInput(const WidgetWheelEvent& aWheelEvent)
       mHandledByAPZ(aWheelEvent.mFlags.mHandledByAPZ),
       mDeltaX(aWheelEvent.mDeltaX),
       mDeltaY(aWheelEvent.mDeltaY),
+      mWheelTicksX(aWheelEvent.mWheelTicksX),
+      mWheelTicksY(aWheelEvent.mWheelTicksX),
       mLineOrPageDeltaX(aWheelEvent.mLineOrPageDeltaX),
       mLineOrPageDeltaY(aWheelEvent.mLineOrPageDeltaY),
       mScrollSeriesNumber(0),
@@ -846,6 +856,8 @@ WidgetWheelEvent ScrollWheelInput::ToWidgetEvent(nsIWidget* aWidget) const {
   wheelEvent.mIsMomentum = mIsMomentum;
   wheelEvent.mDeltaX = mDeltaX;
   wheelEvent.mDeltaY = mDeltaY;
+  wheelEvent.mWheelTicksX = mWheelTicksX;
+  wheelEvent.mWheelTicksY = mWheelTicksY;
   wheelEvent.mLineOrPageDeltaX = mLineOrPageDeltaX;
   wheelEvent.mLineOrPageDeltaY = mLineOrPageDeltaY;
   wheelEvent.mAllowToOverrideSystemScrollSpeed =

@@ -4,8 +4,22 @@
 
 /* eslint-env mozilla/frame-script */
 
-import { parse } from "chrome://global/content/certviewer/certDecoder.js";
-import { pemToDER } from "chrome://global/content/certviewer/utils.js";
+import "chrome://global/content/certviewer/pvutils_bundle.js";
+import "chrome://global/content/certviewer/asn1js_bundle.js";
+import "chrome://global/content/certviewer/pkijs_bundle.js";
+import "chrome://global/content/certviewer/certDecoder.js";
+
+const { Integer, fromBER } = globalThis.asn1js.asn1js;
+const { Certificate } = globalThis.pkijs.pkijs;
+const { fromBase64, stringToArrayBuffer } = globalThis.pvutils.pvutils;
+const { parse, pemToDER } = globalThis.certDecoderInitializer(
+  Integer,
+  fromBER,
+  Certificate,
+  fromBase64,
+  stringToArrayBuffer,
+  crypto
+);
 
 const formatter = new Intl.DateTimeFormat("default");
 
@@ -114,7 +128,7 @@ function showPrefChangeContainer() {
     .addEventListener("click", function resetPreferences() {
       RPMSendAsyncMessage("Browser:ResetSSLPreferences");
     });
-  addAutofocus("#prefResetButton", "beforeend");
+  setFocus("#prefResetButton", "beforeend");
 }
 
 function showTls10Container() {
@@ -126,7 +140,7 @@ function showTls10Container() {
     RPMSetBoolPref("security.tls.version.enable-deprecated", true);
     retryThis(button);
   });
-  addAutofocus("#enableTls10Button", "beforeend");
+  setFocus("#enableTls10Button", "beforeend");
 }
 
 function setupAdvancedButton() {
@@ -226,6 +240,23 @@ function setErrorPageStrings(err) {
 }
 
 function initPage() {
+  // We show an offline support page in case of a system-wide error,
+  // when a user cannot connect to the internet and access the SUMO website.
+  // For example, clock error, which causes certerrors across the web or
+  // a security software conflict where the user is unable to connect
+  // to the internet.
+  // The URL that prompts us to show an offline support page should have the following
+  // format: "https://support.mozilla.org/1/firefox/%VERSION%/%OS%/%LOCALE%/supportPageSlug",
+  // so we can extract the support page slug.
+  let baseURL = RPMGetFormatURLPref("app.support.baseURL");
+  let location = document.location.href;
+  if (location.startsWith(baseURL)) {
+    let supportPageSlug = document.location.pathname.split("/").pop();
+    RPMSendAsyncMessage("DisplayOfflineSupportPage", {
+      supportPageSlug,
+    });
+  }
+
   var err = getErrorCode();
   // List of error pages with an illustration.
   let illustratedErrors = [
@@ -301,7 +332,7 @@ function initPage() {
     return;
   }
 
-  addAutofocus("#netErrorButtonContainer > .try-again");
+  setFocus("#netErrorButtonContainer > .try-again");
 
   document.body.classList.add("neterror");
 
@@ -327,7 +358,6 @@ function initPage() {
   }
 
   let learnMoreLink = document.getElementById("learnMoreLink");
-  let baseURL = RPMGetFormatURLPref("app.support.baseURL");
   learnMoreLink.setAttribute("href", baseURL + "connection-not-secure");
 
   if (err == "cspBlocked" || err == "xfoBlocked") {
@@ -587,7 +617,7 @@ function initPageCaptivePortal() {
       RPMSendAsyncMessage("Browser:OpenCaptivePortalPage");
     });
 
-  addAutofocus("#openPortalLoginPageButton");
+  setFocus("#openPortalLoginPageButton");
   setupAdvancedButton();
 
   // When the portal is freed, an event is sent by the parent process
@@ -603,7 +633,7 @@ function initPageCertError() {
     host.textContent = HOST_NAME;
   }
 
-  addAutofocus("#returnButton");
+  setFocus("#returnButton");
   setupAdvancedButton();
   document.getElementById("learnMoreContainer").style.display = "block";
 
@@ -1233,19 +1263,21 @@ function handleErrorCodeClick(event) {
   recordClickTelemetry(event);
 }
 
-/* Only do autofocus if we're the toplevel frame; otherwise we
-   don't want to call attention to ourselves!  The key part is
-   that autofocus happens on insertion into the tree, so we
-   can remove the button, add @autofocus, and reinsert the
-   button.
+/* Only focus if we're the toplevel frame; otherwise we
+   don't want to call attention to ourselves!
 */
-function addAutofocus(selector, position = "afterbegin") {
+function setFocus(selector, position = "afterbegin") {
   if (window.top == window) {
     var button = document.querySelector(selector);
     var parent = button.parentNode;
-    button.remove();
-    button.setAttribute("autofocus", "true");
     parent.insertAdjacentElement(position, button);
+    // It's possible setFocus was called via the DOMContentLoaded event
+    // handler and that the button has no frame. Things without a frame cannot
+    // be focused. We use a requestAnimationFrame to queue up the focus to occur
+    // once the button has its frame.
+    requestAnimationFrame(() => {
+      button.focus({ preventFocusRing: true });
+    });
   }
 }
 

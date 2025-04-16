@@ -153,21 +153,6 @@ def debug_defines(debug, labels):
 
 set_config("MOZ_DEBUG_DEFINES", debug_defines)
 
-option(
-    "--enable-rust-debug",
-    default=depends(when="--enable-debug")(lambda: True),
-    help="{Build|Do not build} Rust code with debug assertions turned " "on.",
-)
-
-
-@depends(when="--enable-rust-debug")
-def debug_rust():
-    return True
-
-
-set_config("MOZ_DEBUG_RUST", debug_rust)
-set_define("MOZ_DEBUG_RUST", debug_rust)
-
 option(env="MOZ_PGO", help="Build with profile guided optimizations")
 
 set_config("MOZ_PGO", depends("MOZ_PGO")(lambda x: bool(x)))
@@ -606,7 +591,11 @@ def build_backend_defaults(
     # Normally, we'd use target.os == 'WINNT', but a dependency on target
     # would require target to depend on --help, as well as host and shell,
     # and this is not a can of worms we can open at the moment.
-    if sys.platform == "win32" and compile_environment and project != "mobile/android":
+    if (
+        sys.platform == "win32"
+        and compile_environment
+        and project not in ("mobile/android", "memory", "tools/update-programs")
+    ):
         all_backends.append("VisualStudio")
     return tuple(all_backends) or None
 
@@ -712,6 +701,7 @@ def clang_plugin_path(library_name_info, build_env):
     )
 
 
+set_config("CLANG_PLUGIN", clang_plugin_path)
 add_old_configure_assignment("CLANG_PLUGIN", clang_plugin_path)
 
 
@@ -792,13 +782,13 @@ def possible_makes(make, host):
     if make:
         candidates.append(make[0])
     if host.kernel == "WINNT":
-        candidates.extend(("make", "gmake"))
+        candidates.extend(("mozmake", "make", "gmake"))
     else:
         candidates.extend(("gmake", "make"))
     return candidates
 
 
-check_prog("GMAKE", possible_makes)
+check_prog("GMAKE", possible_makes, bootstrap="mozmake")
 
 # watchman detection
 # ==============================================================

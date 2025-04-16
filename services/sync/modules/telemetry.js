@@ -61,7 +61,7 @@ const TOPICS = [
   "fxaccounts:new_device_id",
   "fxaccounts:onlogout",
   "weave:service:ready",
-  "weave:service:login:change",
+  "weave:service:login:got-hashed-id",
 
   // For whole-of-sync metrics.
   "weave:service:sync:start",
@@ -261,7 +261,8 @@ class EngineRecord {
     }
 
     let incomingData = {};
-    let properties = ["applied", "failed", "newFailed", "reconciled"];
+    // Counts has extra stuff used for logging, but we only care about a few
+    let properties = ["applied", "failed"];
     // Only record non-zero properties and only record incoming at all if
     // there's at least one property we care about.
     for (let property of properties) {
@@ -952,7 +953,7 @@ class SyncTelemetryImpl {
 
     switch (topic) {
       case "weave:service:ready":
-      case "weave:service:login:change":
+      case "weave:service:login:got-hashed-id":
       case "fxaccounts:new_device_id":
         this.onAccountInitOrChange();
         break;

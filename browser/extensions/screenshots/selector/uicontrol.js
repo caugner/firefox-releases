@@ -3,7 +3,7 @@
  * You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 /* globals log, catcher, util, ui, slides, global */
-/* globals shooter, callBackground, selectorLoader, assertIsTrusted, buildSettings, selection */
+/* globals shooter, callBackground, selectorLoader, assertIsTrusted, selection */
 
 "use strict";
 
@@ -49,8 +49,8 @@ this.uicontrol = (function() {
 
   const { watchFunction, watchPromise } = catcher;
 
-  const MAX_PAGE_HEIGHT = buildSettings.maxImageHeight;
-  const MAX_PAGE_WIDTH = buildSettings.maxImageWidth;
+  const MAX_PAGE_HEIGHT = 10000;
+  const MAX_PAGE_WIDTH = 10000;
   // An autoselection smaller than these will be ignored entirely:
   const MIN_DETECT_ABSOLUTE_HEIGHT = 10;
   const MIN_DETECT_ABSOLUTE_WIDTH = 30;
@@ -179,14 +179,6 @@ this.uicontrol = (function() {
       e.preventDefault();
       e.stopPropagation();
       exports.deactivate();
-    },
-    onOpenMyShots: () => {
-      sendEvent("goto-myshots", "selection-button");
-      callBackground("openMyShots")
-        .then(() => exports.deactivate())
-        .catch(() => {
-          // Handled in communication.js
-        });
     },
     onClickVisible: () => {
       sendEvent("capture-visible", "selection-button");
@@ -987,7 +979,7 @@ this.uicontrol = (function() {
       sendEvent("cancel-shot", "keyboard-escape");
       exports.deactivate();
     }
-    // Enter to trigger Save or Download by default. But if the user tabbed to
+    // Enter to trigger Download by default. But if the user tabbed to
     // select another button, then we do not want this.
     if (
       (event.key || event.code) === "Enter" &&

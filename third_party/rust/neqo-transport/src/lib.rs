@@ -9,6 +9,7 @@
 
 use neqo_common::qinfo;
 
+mod ackrate;
 mod addr_valid;
 mod cc;
 mod cid;
@@ -17,7 +18,6 @@ mod crypto;
 mod dump;
 mod events;
 mod fc;
-mod flow_mgr;
 mod frame;
 mod pace;
 mod packet;
@@ -31,6 +31,7 @@ mod sender;
 pub mod server;
 mod stats;
 pub mod stream_id;
+pub mod streams;
 pub mod tparams;
 mod tracking;
 
@@ -39,7 +40,9 @@ pub use self::cid::{
     ConnectionId, ConnectionIdDecoder, ConnectionIdGenerator, ConnectionIdRef,
     EmptyConnectionIdGenerator, RandomConnectionIdGenerator,
 };
-pub use self::connection::{params::ConnectionParameters, Connection, Output, State, ZeroRttState};
+pub use self::connection::{
+    params::ConnectionParameters, params::ACK_RATIO_SCALE, Connection, Output, State, ZeroRttState,
+};
 pub use self::events::{ConnectionEvent, ConnectionEvents};
 pub use self::frame::CloseError;
 pub use self::packet::QuicVersion;

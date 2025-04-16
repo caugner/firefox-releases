@@ -6,25 +6,15 @@ const { ASRouter } = ChromeUtils.import(
 const { AddonRepository } = ChromeUtils.import(
   "resource://gre/modules/addons/AddonRepository.jsm"
 );
-const { AttributionCode } = ChromeUtils.import(
-  "resource:///modules/AttributionCode.jsm"
+const { ExperimentFakes } = ChromeUtils.import(
+  "resource://testing-common/NimbusTestUtils.jsm"
+);
+const { ExperimentAPI } = ChromeUtils.import(
+  "resource://nimbus/ExperimentAPI.jsm"
 );
 
-async function openRTAMOWelcomePage() {
+add_task(function setup() {
   let sandbox = sinon.createSandbox();
-  // Can't properly stub the child/parent actors so instead
-  // we stub the modules they depend on for the RTAMO flow
-  // to ensure the right thing is rendered.
-  await ASRouter.forceAttribution({
-    source: "addons.mozilla.org",
-    medium: "referral",
-    campaign: "non-fx-button",
-    content: "iridium@particlecore.github.io",
-    experiment: "ua-onboarding",
-    variation: "chrome",
-    ua: "Google Chrome 123",
-    dltoken: "00000000-0000-0000-0000-000000000000",
-  });
 
   sandbox
     .stub(AddonRepository, "getAddonsByIDs")
@@ -32,13 +22,34 @@ async function openRTAMOWelcomePage() {
       { sourceURI: { scheme: "https", spec: "https://test.xpi" }, icons: {} },
     ]);
 
+  registerCleanupFunction(() => {
+    sandbox.restore();
+  });
+});
+
+async function openRTAMOWelcomePage() {
+  // Can't properly stub the child/parent actors so instead
+  // we stub the modules they depend on for the RTAMO flow
+  // to ensure the right thing is rendered.
+  await ASRouter.forceAttribution({
+    source: "addons.mozilla.org",
+    medium: "referral",
+    campaign: "non-fx-button",
+    // with the sinon override, the id doesn't matter
+    content: "rta:whatever",
+    experiment: "ua-onboarding",
+    variation: "chrome",
+    ua: "Google Chrome 123",
+    dltoken: "00000000-0000-0000-0000-000000000000",
+  });
+
   let tab = await BrowserTestUtils.openNewForegroundTab(
     gBrowser,
     "about:welcome",
     true
   );
+
   registerCleanupFunction(async () => {
-    sandbox.restore();
     BrowserTestUtils.removeTab(tab);
     // Clear cache call is only possible in a testing environment
     let env = Cc["@mozilla.org/process/environment;1"].getService(
@@ -55,9 +66,6 @@ async function openRTAMOWelcomePage() {
       ua: "",
       dltoken: "",
     });
-    // Clear and refresh Attribution, and then fetch the messages again to update
-    AttributionCode._clearCache();
-    await AttributionCode.getAttrDataAsync();
   });
 
   return tab.linkedBrowser;
@@ -198,5 +206,51 @@ add_task(async function test_rtamo_aboutwelcome() {
     telemetryCall.args[1].message_id,
     "RTAMO_DEFAULT_WELCOME",
     "Message Id sent in telemetry for default RTAMO"
+  );
+});
+
+add_task(async function test_rtamo_over_experiments() {
+  let doExperimentCleanup = await ExperimentFakes.enrollWithFeatureConfig({
+    featureId: "aboutwelcome",
+    value: { screens: [], enabled: true },
+  });
+
+  let browser = await openRTAMOWelcomePage();
+
+  // If addon attribution exist, we should see RTAMO even if enrolled
+  // in about:welcome experiment
+  await test_screen_content(
+    browser,
+    "Experiment RTAMO UI",
+    // Expected selectors:
+    ["h2[data-l10n-id='return-to-amo-addon-title']"],
+    // Unexpected selectors:
+    []
+  );
+
+  await doExperimentCleanup();
+  ExperimentAPI._store._syncToChildren({ flush: true });
+
+  browser = await openRTAMOWelcomePage();
+
+  await test_screen_content(
+    browser,
+    "No Experiment RTAMO UI",
+    // Expected selectors:
+    [
+      "div.onboardingContainer",
+      "div.brand-logo",
+      "h2[data-l10n-id='return-to-amo-addon-title']",
+      "img[data-l10n-name='icon']",
+      "button.primary",
+      "button.secondary",
+    ],
+    // Unexpected selectors:
+    [
+      "main.AW_STEP1",
+      "main.AW_STEP2",
+      "main.AW_STEP3",
+      "div.tiles-container.info",
+    ]
   );
 });

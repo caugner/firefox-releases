@@ -23,6 +23,7 @@
 #include "mozilla/layers/LayersTypes.h"
 #include "mozilla/layers/ScrollableLayerGuid.h"
 #include "mozilla/layers/ZoomConstraints.h"
+#include "mozilla/image/Resolution.h"
 #include "mozilla/widget/IMEData.h"
 #include "nsCOMPtr.h"
 #include "nsColor.h"
@@ -131,9 +132,6 @@ typedef void* nsNativeWidget;
 #define NS_NATIVE_SCREEN 9
 // The toplevel GtkWidget containing this nsIWidget:
 #define NS_NATIVE_SHELLWIDGET 10
-// Has to match to NPNVnetscapeWindow, and shareable across processes
-// HWND on Windows and XID on X11
-#define NS_NATIVE_SHAREABLE_WINDOW 11
 #define NS_NATIVE_OPENGL_CONTEXT 12
 // See RegisterPluginWindowForRemoteUpdates
 #define NS_NATIVE_PLUGIN_ID 13
@@ -154,8 +152,6 @@ typedef void* nsNativeWidget;
 #  define NS_NATIVE_TSF_CATEGORY_MGR 101
 #  define NS_NATIVE_TSF_DISPLAY_ATTR_MGR 102
 #  define NS_NATIVE_ICOREWINDOW 103  // winrt specific
-#  define NS_NATIVE_CHILD_WINDOW 104
-#  define NS_NATIVE_CHILD_OF_SHAREABLE_WINDOW 105
 #endif
 #if defined(MOZ_WIDGET_GTK)
 // set/get nsPluginNativeWindowGtk, e10s specific
@@ -997,7 +993,7 @@ class nsIWidget : public nsISupports {
     nsCOMPtr<imgIContainer> mContainer;
     uint32_t mHotspotX = 0;
     uint32_t mHotspotY = 0;
-    float mResolution = 1.0f;
+    mozilla::ImageResolution mResolution;
 
     bool IsCustom() const { return !!mContainer; }
 
@@ -1008,7 +1004,7 @@ class nsIWidget : public nsISupports {
              mResolution == aOther.mResolution;
     }
 
-    bool operator!=(const Cursor& aOther) { return !(*this == aOther); }
+    bool operator!=(const Cursor& aOther) const { return !(*this == aOther); }
   };
 
   /**
@@ -1834,6 +1830,16 @@ class nsIWidget : public nsISupports {
 
 #endif
 
+  /**
+   * If this widget uses native pointer lock instead of warp-to-center
+   * (currently only GTK on Wayland), these methods provide access to that
+   * functionality.
+   */
+  virtual void SetNativePointerLockCenter(
+      const LayoutDeviceIntPoint& aLockCenter) {}
+  virtual void LockNativePointer() {}
+  virtual void UnlockNativePointer() {}
+
   /*
    * Get safe area insets except to cutout.
    * See https://drafts.csswg.org/css-env-1/#safe-area-insets.
@@ -2072,6 +2078,14 @@ class nsIWidget : public nsISupports {
    * @return the constraints in device pixels
    */
   virtual const SizeConstraints GetSizeConstraints() = 0;
+
+  /**
+   * Apply the current size constraints to the given size.
+   *
+   * @param aWidth width to constrain
+   * @param aHeight height to constrain
+   */
+  virtual void ConstrainSize(int32_t* aWidth, int32_t* aHeight) = 0;
 
   /**
    * If this is owned by a BrowserChild, return that.  Otherwise return

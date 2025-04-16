@@ -1179,8 +1179,13 @@ Instance::Instance(JSContext* cx, Handle<WasmInstanceObject*> object,
       memory_(memory),
       exceptionTags_(std::move(exceptionTags)),
       tables_(std::move(tables)),
-      maybeDebug_(std::move(maybeDebug)),
-      hasGcTypes_(false) {}
+      maybeDebug_(std::move(maybeDebug))
+#ifdef ENABLE_WASM_GC
+      ,
+      hasGcTypes_(false)
+#endif
+{
+}
 
 bool Instance::init(JSContext* cx, const JSFunctionVector& funcImports,
                     const ValVector& globalImportValues,
@@ -1278,33 +1283,11 @@ bool Instance::init(JSContext* cx, const JSFunctionVector& funcImports,
         break;
       }
       case GlobalKind::Variable: {
-        const InitExpr& init = global.initExpr();
-
         RootedVal val(cx);
-        switch (init.kind()) {
-          case InitExpr::Kind::Constant: {
-            val = Val(init.val());
-            break;
-          }
-          case InitExpr::Kind::GetGlobal: {
-            const GlobalDesc& imported = metadata().globals[init.globalIndex()];
-
-            // Global-ref initializers cannot reference mutable globals, so
-            // the source global should never be indirect.
-            MOZ_ASSERT(!imported.isIndirect());
-
-            val = globalImportValues[imported.importIndex()];
-            break;
-          }
-          case InitExpr::Kind::RefFunc: {
-            void* fnref = Instance::refFunc(this, init.refFuncIndex());
-            if (fnref == AnyRef::invalid().forCompiledCode()) {
-              return false;  // OOM, which has already been reported.
-            }
-            val =
-                Val(ValType(RefType::func()), FuncRef::fromCompiledCode(fnref));
-            break;
-          }
+        const InitExpr& init = global.initExpr();
+        RootedWasmInstanceObject instanceObj(cx, object());
+        if (!init.evaluate(cx, globalImportValues, instanceObj, &val)) {
+          return false;
         }
 
         if (global.isIndirect()) {

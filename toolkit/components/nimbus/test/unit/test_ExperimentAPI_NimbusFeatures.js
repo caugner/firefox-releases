@@ -33,15 +33,13 @@ const REMOTE_CONFIGURATION = Object.freeze({
     {
       slug: "non-matching-configuration",
       description: "This configuration does not match because of targeting.",
-      variables: { skipFocus: false, remoteValue: false },
-      enabled: false,
+      variables: { skipFocus: false, remoteValue: false, enabled: false },
       targeting: "false",
     },
     {
       slug: "matching-configuration",
       description: "This configuration will match targeting.",
-      variables: { skipFocus: true, remoteValue: true },
-      enabled: true,
+      variables: { skipFocus: true, remoteValue: true, enabled: true },
       targeting: "true",
     },
   ],
@@ -177,7 +175,7 @@ add_task(async function update_remote_defaults_enabled() {
   Assert.equal(
     feature.isEnabled(),
     true,
-    "Feature is enabled by enabledFallbackPref"
+    "Feature is enabled by manifest.variables.enabled"
   );
 
   manager.store.updateRemoteConfigs(
@@ -194,4 +192,51 @@ add_task(async function update_remote_defaults_enabled() {
 
   manager.store._deleteForTests("aboutwelcome");
   sandbox.restore();
+});
+
+// If the branch data returned from the store is not modified
+// this test should not throw
+add_task(async function test_getValue_no_mutation() {
+  let { sandbox, manager } = await setupForExperimentFeature();
+  sandbox.stub(manager.store, "getExperimentForFeature").returns(
+    Cu.cloneInto(
+      {
+        branch: {
+          feature: { value: { mochitest: true } },
+        },
+      },
+      {},
+      { deepFreeze: true }
+    )
+  );
+  let feature = new ExperimentFeature("aboutwelcome");
+
+  Assert.ok(feature.getValue().mochitest, "Got back the expected feature");
+
+  sandbox.restore();
+});
+
+add_task(async function remote_isEarlyStartup_config() {
+  let { manager } = await setupForExperimentFeature();
+  let feature = new ExperimentFeature("password-autocomplete");
+
+  manager.store.updateRemoteConfigs("password-autocomplete", {
+    slug: "remote-config-isEarlyStartup",
+    description: "This feature normally is not marked isEarlyStartup",
+    variables: { remote: true },
+    isEarlyStartup: true,
+  });
+
+  await feature.ready();
+
+  Assert.ok(
+    Services.prefs.prefHasUserValue(
+      "nimbus.syncdefaultsstore.password-autocomplete"
+    ),
+    "Configuration is marked early startup"
+  );
+
+  Services.prefs.clearUserPref(
+    "nimbus.syncdefaultsstore.password-autocomplete"
+  );
 });

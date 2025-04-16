@@ -56,9 +56,6 @@ const {
 } = require("devtools/shared/commands/commands-factory");
 const DevToolsUtils = require("devtools/shared/DevToolsUtils");
 
-// This is overridden in files that load shared-head via loadSubScript.
-// eslint-disable-next-line prefer-const
-let promise = require("promise");
 const defer = require("devtools/shared/defer");
 const KeyShortcuts = require("devtools/client/shared/key-shortcuts");
 
@@ -206,18 +203,12 @@ async function getTestActor(toolbox) {
 // Sometimes, we need the test actor before opening or without a toolbox then just
 // create a front for the given `tab`
 async function getTestActorWithoutToolbox(tab) {
-  const { DevToolsServer } = require("devtools/server/devtools-server");
-  const { DevToolsClient } = require("devtools/client/devtools-client");
+  const commands = await CommandsFactory.forTab(tab);
+  // Initialize the TargetCommands which require some async stuff to be done
+  // before being fully ready. This will define the `targetCommand.targetFront` attribute.
+  await commands.targetCommand.startListening();
 
-  // We need to spawn a client instance,
-  // but for that we have to first ensure a server is running
-  DevToolsServer.init();
-  DevToolsServer.registerAllActors();
-  const client = new DevToolsClient(DevToolsServer.connectPipe());
-  await client.connect();
-
-  const descriptor = await client.mainRoot.getTab({ tab });
-  const targetFront = await descriptor.getTarget();
+  const targetFront = commands.targetCommand.targetFront;
   return targetFront.getFront("test");
 }
 
@@ -485,14 +476,20 @@ async function navigateTo(uri, { isErrorPage = false } = {}) {
     toolbox.getCurrentPanel()
   );
 
-  info(`Load document "${uri}"`);
+  uri = uri.replaceAll("\n", "");
+  info(`Navigating to "${uri}"`);
   const browser = gBrowser.selectedBrowser;
   const currentPID = browser.browsingContext.currentWindowGlobal.osPid;
   const currentBrowsingContextID = browser.browsingContext.id;
   const onBrowserLoaded = BrowserTestUtils.browserLoaded(
     browser,
+    // includeSubFrames
     false,
-    null,
+    // resolve on this specific page to load (if null, it would be any page load)
+    loadedUrl => {
+      // loadedUrl is encoded, while uri might not be.
+      return loadedUrl === uri || decodeURI(loadedUrl) === uri;
+    },
     isErrorPage
   );
   BrowserTestUtils.loadURI(browser, uri);
@@ -684,10 +681,24 @@ function wait(ms) {
  *        A message to output if the condition fails.
  * @param number interval [optional]
  *        How often the predicate is invoked, in milliseconds.
+ *        Can be set globally for a test via `waitFor.overrideIntervalForTestFile = someNumber;`.
+ * @param number maxTries [optional]
+ *        How many times the predicate is invoked before timing out.
+ *        Can be set globally for a test via `waitFor.overrideMaxTriesForTestFile = someNumber;`.
  * @return object
  *         A promise that is resolved with the result of the condition.
  */
 async function waitFor(condition, message = "", interval = 10, maxTries = 500) {
+  // Update interval & maxTries if overrides are defined on the waitFor object.
+  interval =
+    typeof waitFor.overrideIntervalForTestFile !== "undefined"
+      ? waitFor.overrideIntervalForTestFile
+      : interval;
+  maxTries =
+    typeof waitFor.overrideMaxTriesForTestFile !== "undefined"
+      ? waitFor.overrideMaxTriesForTestFile
+      : maxTries;
+
   try {
     const value = await BrowserTestUtils.waitForCondition(
       condition,
@@ -1177,10 +1188,10 @@ function getCurrentTestFilePath() {
 /**
  * Wait for a single resource of the provided resourceType.
  *
- * @param {ResourceWatcher} resourceWatcher
- *        The ResourceWatcher instance that should emit the expected resource.
+ * @param {ResourceCommand} resourceCommand
+ *        The ResourceCommand instance that should emit the expected resource.
  * @param {String} resourceType
- *        One of ResourceWatcher.TYPES, type of the expected resource.
+ *        One of ResourceCommand.TYPES, type of the expected resource.
  * @param {Object} additional options
  *        - {Boolean} ignoreExistingResources: ignore existing resources or not.
  *        - {Function} predicate: if provided, will wait until a resource makes
@@ -1190,7 +1201,7 @@ function getCurrentTestFilePath() {
  *         - targetFront {TargetFront} the target which owns the resource
  */
 function waitForNextResource(
-  resourceWatcher,
+  resourceCommand,
   resourceType,
   { ignoreExistingResources = false, predicate } = {}
 ) {
@@ -1203,11 +1214,11 @@ function waitForNextResource(
       const matchingResource = resources.find(resource => predicate(resource));
       if (matchingResource) {
         resolve(matchingResource);
-        resourceWatcher.unwatchResources([resourceType], { onAvailable });
+        resourceCommand.unwatchResources([resourceType], { onAvailable });
       }
     };
 
-    resourceWatcher.watchResources([resourceType], {
+    resourceCommand.watchResources([resourceType], {
       ignoreExistingResources,
       onAvailable,
     });
@@ -1445,4 +1456,94 @@ function waitForDispatch(store, actionType, repeat = 1) {
       },
     });
   });
+}
+
+/**
+ * Retrieve a browsing context in nested frames.
+ *
+ * @param {BrowsingContext|XULBrowser} browsingContext
+ *        The topmost browsing context under which we should search for the
+ *        browsing context.
+ * @param {Array<String>} selectors
+ *        Array of CSS selectors that form a path to a specific nested frame.
+ * @return {BrowsingContext} The nested browsing context.
+ */
+async function getBrowsingContextInFrames(browsingContext, selectors) {
+  let context = browsingContext;
+
+  if (!Array.isArray(selectors)) {
+    throw new Error(
+      "getBrowsingContextInFrames called with an invalid selectors argument"
+    );
+  }
+
+  if (selectors.length === 0) {
+    throw new Error(
+      "getBrowsingContextInFrames called with an empty selectors array"
+    );
+  }
+
+  while (selectors.length) {
+    const selector = selectors.shift();
+    context = await SpecialPowers.spawn(context, [selector], _selector => {
+      return content.document.querySelector(_selector).browsingContext;
+    });
+  }
+
+  return context;
+}
+
+/**
+ * Get an attribute on a DOM Node living in the provided browser.
+ *
+ * @param {Browser|BrowsingContext} browser The browser or browsing context
+ * @param {String} selector The node selector
+ * @param {String} attribute The attribute name
+ * @return {String} value The attribute value
+ */
+async function getAttributeInBrowser(browser, selector, attribute) {
+  return SpecialPowers.spawn(
+    browser,
+    [selector, attribute],
+    (_selector, _attribute) => {
+      return content.document.querySelector(_selector).getAttribute(_attribute);
+    }
+  );
+}
+
+/**
+ * Set an attribute on a DOM Node living in the provided browser.
+ *
+ * @param {Browser|BrowsingContext} browser The browser or browsing context
+ * @param {String} selector The node selector
+ * @param {String} attribute The attribute name
+ * @param {String} value The attribute value
+ */
+async function setAttributeInBrowser(browser, selector, attribute, value) {
+  return SpecialPowers.spawn(
+    browser,
+    [selector, attribute, value],
+    (_selector, _attribute, _value) => {
+      content.document
+        .querySelector(_selector)
+        .setAttribute(_attribute, _value);
+    }
+  );
+}
+
+/**
+ * Remove an attribute from a DOM Node living in the provided browser.
+ *
+ * @param {Browser|BrowsingContext} browser The browser or browsing context
+ * @param {String} selector The node selector
+ * @param {String} attribute The attribute name
+ */
+async function removeAttributeInBrowser(browser, selector, attribute) {
+  return SpecialPowers.spawn(
+    browser,
+    [selector, attribute],
+    (_selector, _attribute) => {
+      content.document.querySelector(_selector).removeAttribute(_attribute);
+    }
+  );
 }

@@ -407,22 +407,36 @@ bool Compartment::rewrap(JSContext* cx, MutableHandleObject obj,
 
 bool Compartment::wrap(JSContext* cx,
                        MutableHandle<JS::PropertyDescriptor> desc) {
-  if (!wrap(cx, desc.object())) {
+  if (desc.hasGetter()) {
+    if (!wrap(cx, desc.getter())) {
+      return false;
+    }
+  }
+  if (desc.hasSetter()) {
+    if (!wrap(cx, desc.setter())) {
+      return false;
+    }
+  }
+  if (desc.hasValue()) {
+    if (!wrap(cx, desc.value())) {
+      return false;
+    }
+  }
+  return true;
+}
+
+bool Compartment::wrap(JSContext* cx,
+                       MutableHandle<mozilla::Maybe<PropertyDescriptor>> desc) {
+  if (desc.isNothing()) {
+    return true;
+  }
+
+  Rooted<PropertyDescriptor> desc_(cx, *desc);
+  if (!wrap(cx, &desc_)) {
     return false;
   }
-
-  if (desc.hasGetterObject()) {
-    if (!wrap(cx, desc.getterObject())) {
-      return false;
-    }
-  }
-  if (desc.hasSetterObject()) {
-    if (!wrap(cx, desc.setterObject())) {
-      return false;
-    }
-  }
-
-  return wrap(cx, desc.value());
+  desc.set(mozilla::Some(desc_.get()));
+  return true;
 }
 
 bool Compartment::wrap(JSContext* cx, MutableHandle<GCVector<Value>> vec) {

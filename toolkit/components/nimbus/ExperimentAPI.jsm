@@ -28,6 +28,7 @@ XPCOMUtils.defineLazyModuleGetters(this, {
   setTimeout: "resource://gre/modules/Timer.jsm",
   clearTimeout: "resource://gre/modules/Timer.jsm",
   FeatureManifest: "resource://nimbus/FeatureManifest.js",
+  AppConstants: "resource://gre/modules/AppConstants.jsm",
 });
 
 const IS_MAIN_PROCESS =
@@ -287,11 +288,10 @@ const ExperimentAPI = {
  */
 const NimbusFeatures = {};
 for (let feature in FeatureManifest) {
-  XPCOMUtils.defineLazyGetter(NimbusFeatures, feature, () =>
-    // Alias upgradeDialog to reuse aboutwelcome, which has sync access in 88.
-    feature === "upgradeDialog"
-      ? NimbusFeatures.aboutwelcome
-      : new ExperimentFeature(feature)
+  XPCOMUtils.defineLazyGetter(
+    NimbusFeatures,
+    feature,
+    () => new ExperimentFeature(feature)
   );
 }
 
@@ -313,22 +313,6 @@ class ExperimentFeature {
     );
     this._listenForRemoteDefaults = this._listenForRemoteDefaults.bind(this);
     const variables = this.manifest?.variables || {};
-
-    // Add special enabled flag
-    if (this.manifest?.enabledFallbackPref) {
-      XPCOMUtils.defineLazyPreferenceGetter(
-        this,
-        "enabled",
-        this.manifest?.enabledFallbackPref,
-        null,
-        () => {
-          ExperimentAPI._store._emitFeatureUpdate(
-            this.featureId,
-            "pref-updated"
-          );
-        }
-      );
-    }
 
     Object.keys(variables).forEach(key => {
       const { type, fallbackPref } = variables[key];
@@ -380,6 +364,10 @@ class ExperimentFeature {
     }
   }
 
+  getPreferenceName(variable) {
+    return this.manifest?.variables?.[variable]?.fallbackPref;
+  }
+
   _getUserPrefsValues() {
     let userPrefs = {};
     Object.keys(this.manifest?.variables || {}).forEach(variable => {
@@ -406,12 +394,16 @@ class ExperimentFeature {
   async ready(timeout) {
     const REMOTE_DEFAULTS_TIMEOUT_MS = 15 * 1000; // 15 seconds
     await ExperimentAPI.ready();
-    let remoteTimeoutId = setTimeout(
-      this._onRemoteReady,
-      timeout || REMOTE_DEFAULTS_TIMEOUT_MS
-    );
-    await this._waitForRemote;
-    clearTimeout(remoteTimeoutId);
+    if (ExperimentAPI._store.hasRemoteDefaultsReady()) {
+      this._onRemoteReady();
+    } else {
+      let remoteTimeoutId = setTimeout(
+        this._onRemoteReady,
+        timeout || REMOTE_DEFAULTS_TIMEOUT_MS
+      );
+      await this._waitForRemote;
+      clearTimeout(remoteTimeoutId);
+    }
   }
 
   /**
@@ -440,19 +432,21 @@ class ExperimentFeature {
       return this.getRemoteConfig().enabled;
     }
 
-    // Then check the fallback pref, if it is defined
-    if (isBooleanValueDefined(this.enabled)) {
-      return this.enabled;
+    let enabled;
+    try {
+      enabled = this.getVariable("enabled", { sendExposureEvent });
+    } catch (e) {
+      /* This is expected not all features have an enabled flag defined */
+    }
+    if (isBooleanValueDefined(enabled)) {
+      return enabled;
     }
 
-    // Finally, return options.defaulValue if neither was found
     return defaultValue;
   }
 
   /**
-   * Lookup feature in active experiments and return value.
-   * By default, this will send an exposure event.
-   * @param {{sendExposureEvent: boolean, defaultValue?: any}} options
+   * @deprecated Please use .getAllVariables() instead.
    * @returns {obj} The feature value
    */
   getValue({ sendExposureEvent } = {}) {
@@ -479,13 +473,80 @@ class ExperimentFeature {
     };
   }
 
+  /**
+   * Lookup feature variables in experiments, prefs, and remote defaults.
+   * @param {{sendExposureEvent: boolean, defaultValues?: {[variableName: string]: any}}} options
+   * @returns {{[variableName: string]: any}} The feature value
+   */
+  getAllVariables({ sendExposureEvent, defaultValues = null } = {}) {
+    // Any user pref will override any other configuration
+    let userPrefs = this._getUserPrefsValues();
+    const branch = ExperimentAPI.activateBranch({
+      featureId: this.featureId,
+      sendExposureEvent: sendExposureEvent && this._sendExposureEventOnce,
+    });
+
+    // Prevent future exposure events if user is enrolled in an experiment
+    if (branch && sendExposureEvent) {
+      this._sendExposureEventOnce = false;
+    }
+
+    return {
+      ...this.prefGetters,
+      ...defaultValues,
+      ...this.getRemoteConfig()?.variables,
+      ...(branch?.feature?.value || null),
+      ...userPrefs,
+    };
+  }
+
+  getVariable(variable, { sendExposureEvent } = {}) {
+    const prefName = this.getPreferenceName(variable);
+    const prefValue = prefName ? this.prefGetters[variable] : undefined;
+
+    if (!this.manifest?.variables?.[variable]) {
+      // Only throw in nightly/tests
+      if (Cu.isInAutomation || AppConstants.NIGHTLY_BUILD) {
+        throw new Error(
+          `Nimbus: Warning - variable "${variable}" is not defined in FeatureManifest.js`
+        );
+      }
+    }
+
+    // If a user value is set for the defined preference, always return that first
+    if (prefName && Services.prefs.prefHasUserValue(prefName)) {
+      return prefValue;
+    }
+
+    // Next, check if an experiment is defined
+    const experimentValue = ExperimentAPI.activateBranch({
+      featureId: this.featureId,
+      sendExposureEvent: sendExposureEvent && this._sendExposureEventOnce,
+    })?.feature?.value?.[variable];
+
+    // Prevent future exposure events if user is enrolled in an experiment
+    if (typeof experimentValue !== "undefined" && sendExposureEvent) {
+      this._sendExposureEventOnce = false;
+    }
+
+    if (typeof experimentValue !== "undefined") {
+      return experimentValue;
+    }
+
+    // Next, check remote defaults
+    const remoteValue = this.getRemoteConfig()?.variables?.[variable];
+    if (typeof remoteValue !== "undefined") {
+      return remoteValue;
+    }
+    // Return the default preference value
+    return prefValue;
+  }
+
   getRemoteConfig() {
     let remoteConfig = ExperimentAPI._store.getRemoteConfig(this.featureId);
     if (!remoteConfig) {
       return null;
     }
-    // Used to select a matching client config
-    delete remoteConfig.targeting;
 
     return remoteConfig;
   }

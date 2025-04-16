@@ -286,18 +286,14 @@ if (AppConstants.MOZ_CRASHREPORTER) {
   );
 }
 
-if ("@mozilla.org/remote/marionette;1" in Cc) {
+if (AppConstants.ENABLE_WEBDRIVER) {
   XPCOMUtils.defineLazyServiceGetter(
     this,
     "Marionette",
     "@mozilla.org/remote/marionette;1",
     "nsIMarionette"
   );
-} else {
-  this.Marionette = { running: false };
-}
 
-if (AppConstants.ENABLE_REMOTE_AGENT) {
   XPCOMUtils.defineLazyServiceGetter(
     this,
     "RemoteAgent",
@@ -305,6 +301,7 @@ if (AppConstants.ENABLE_REMOTE_AGENT) {
     "nsIRemoteAgent"
   );
 } else {
+  this.Marionette = { running: false };
   this.RemoteAgent = { listening: false };
 }
 
@@ -668,7 +665,6 @@ var gPageIcons = {
   "about:home": "chrome://branding/content/icon32.png",
   "about:newtab": "chrome://branding/content/icon32.png",
   "about:welcome": "chrome://branding/content/icon32.png",
-  "about:newinstall": "chrome://branding/content/icon32.png",
   "about:privatebrowsing": "chrome://browser/skin/privatebrowsing/favicon.svg",
 };
 
@@ -680,7 +676,6 @@ var gInitialPages = [
   "about:welcomeback",
   "about:sessionrestore",
   "about:welcome",
-  "about:newinstall",
 ];
 
 function isInitialPage(url) {
@@ -2189,7 +2184,7 @@ var gBrowserInit = {
       // property set to true, if yes remove focus from urlbar for about:welcome
       const aboutWelcomeSkipUrlBarFocus =
         uriToLoad == "about:welcome" &&
-        NimbusFeatures.aboutwelcome.getValue()?.skipFocus;
+        NimbusFeatures.aboutwelcome.getVariable("skipFocus");
 
       if (
         (isBlankPageURL(uriToLoad) && !aboutWelcomeSkipUrlBarFocus) ||
@@ -3048,8 +3043,8 @@ function BrowserCloseTabOrWindow(event) {
   gBrowser.removeCurrentTab({ animate: true });
 }
 
-function BrowserTryToCloseWindow() {
-  if (WindowIsClosing()) {
+function BrowserTryToCloseWindow(event) {
+  if (WindowIsClosing(event)) {
     window.close();
   } // WindowIsClosing does all the necessary checks
 }
@@ -3526,7 +3521,7 @@ function BrowserReloadWithFlags(reloadFlags) {
   gIdentityHandler.hidePopup();
   gPermissionPanel.hidePopup();
 
-  let handlingUserInput = window.windowUtils.isHandlingUserInput;
+  let handlingUserInput = document.hasValidTransientUserGestureActivation;
 
   for (let tab of unchangedRemoteness) {
     if (tab.linkedPanel) {
@@ -4171,13 +4166,9 @@ const BrowserSearch = {
    * has search engines.
    */
   updateOpenSearchBadge() {
-    if (gProton) {
-      gURLBar.addSearchEngineHelper.setEnginesFromBrowser(
-        gBrowser.selectedBrowser
-      );
-    } else {
-      BrowserPageActions.addSearchEngine.updateEngines();
-    }
+    gURLBar.addSearchEngineHelper.setEnginesFromBrowser(
+      gBrowser.selectedBrowser
+    );
 
     var searchBar = this.searchBar;
     if (!searchBar) {
@@ -6688,7 +6679,7 @@ const nodeToTooltipMap = {
   "appMenu-zoomReset-button2": "zoomReset-button.tooltip",
   "appMenu-zoomReduce-button": "zoomReduce-button.tooltip",
   "appMenu-zoomReduce-button2": "zoomReduce-button.tooltip",
-  "reader-mode-button": "reader-mode-button.tooltip",
+  "reader-mode-button-icon": "reader-mode-button.tooltip",
   "print-button": "printButton.tooltip",
 };
 const nodeToShortcutMap = {
@@ -6714,7 +6705,7 @@ const nodeToShortcutMap = {
   "appMenu-zoomReset-button2": "key_fullZoomReset",
   "appMenu-zoomReduce-button": "key_fullZoomReduce",
   "appMenu-zoomReduce-button2": "key_fullZoomReduce",
-  "reader-mode-button": "key_toggleReaderMode",
+  "reader-mode-button-icon": "key_toggleReaderMode",
   "print-button": "printKb",
 };
 
@@ -7865,8 +7856,20 @@ function CanCloseWindow() {
   return true;
 }
 
-function WindowIsClosing() {
-  if (!closeWindow(false, warnAboutClosingWindow)) {
+function WindowIsClosing(event) {
+  let source;
+  if (event) {
+    let target = event.sourceEvent?.target;
+    if (target?.id?.startsWith("menu_")) {
+      source = "menuitem";
+    } else if (target?.nodeName == "toolbarbutton") {
+      source = "close-button";
+    } else {
+      let key = AppConstants.platform == "macosx" ? "metaKey" : "ctrlKey";
+      source = event[key] ? "shortcut" : "OS";
+    }
+  }
+  if (!closeWindow(false, warnAboutClosingWindow, source)) {
     return false;
   }
 
@@ -7888,9 +7891,11 @@ function WindowIsClosing() {
 /**
  * Checks if this is the last full *browser* window around. If it is, this will
  * be communicated like quitting. Otherwise, we warn about closing multiple tabs.
+ *
+ * @param source where the request to close came from (used for telemetry)
  * @returns true if closing can proceed, false if it got cancelled.
  */
-function warnAboutClosingWindow() {
+function warnAboutClosingWindow(source) {
   // Popups aren't considered full browser windows; we also ignore private windows.
   let isPBWindow =
     PrivateBrowsingUtils.isWindowPrivate(window) &&
@@ -7901,7 +7906,8 @@ function warnAboutClosingWindow() {
   if (!isPBWindow && !toolbar.visible) {
     return gBrowser.warnAboutClosingTabs(
       closingTabs,
-      gBrowser.closingTabsEnum.ALL
+      gBrowser.closingTabsEnum.ALL,
+      source
     );
   }
 
@@ -7939,7 +7945,11 @@ function warnAboutClosingWindow() {
   if (otherWindowExists) {
     return (
       isPBWindow ||
-      gBrowser.warnAboutClosingTabs(closingTabs, gBrowser.closingTabsEnum.ALL)
+      gBrowser.warnAboutClosingTabs(
+        closingTabs,
+        gBrowser.closingTabsEnum.ALL,
+        source
+      )
     );
   }
 
@@ -7961,7 +7971,11 @@ function warnAboutClosingWindow() {
   return (
     AppConstants.platform != "macosx" ||
     isPBWindow ||
-    gBrowser.warnAboutClosingTabs(closingTabs, gBrowser.closingTabsEnum.ALL)
+    gBrowser.warnAboutClosingTabs(
+      closingTabs,
+      gBrowser.closingTabsEnum.ALL,
+      source
+    )
   );
 }
 
@@ -8188,15 +8202,34 @@ const gRemoteControl = {
 
   updateVisualCue() {
     const mainWindow = document.documentElement;
-    if (
-      DevToolsSocketStatus.opened ||
-      Marionette.running ||
-      RemoteAgent.listening
-    ) {
+    const remoteControlComponent = this.getRemoteControlComponent();
+    if (remoteControlComponent) {
       mainWindow.setAttribute("remotecontrol", "true");
+      const remoteControlIcon = document.getElementById("remote-control-icon");
+      document.l10n.setAttributes(
+        remoteControlIcon,
+        "urlbar-remote-control-notification-anchor2",
+        { component: remoteControlComponent }
+      );
     } else {
       mainWindow.removeAttribute("remotecontrol");
     }
+  },
+
+  getRemoteControlComponent() {
+    if (DevToolsSocketStatus.opened) {
+      return "DevTools";
+    }
+
+    if (Marionette.running) {
+      return "Marionette";
+    }
+
+    if (RemoteAgent.listening) {
+      return "RemoteAgent";
+    }
+
+    return null;
   },
 };
 
@@ -8681,6 +8714,7 @@ var ToolbarIconColor = {
   init() {
     this._initialized = true;
 
+    Services.obs.addObserver(this, "look-and-feel-changed");
     window.addEventListener("activate", this);
     window.addEventListener("deactivate", this);
     window.addEventListener("toolbarvisibilitychange", this);
@@ -8697,10 +8731,18 @@ var ToolbarIconColor = {
   uninit() {
     this._initialized = false;
 
+    Services.obs.removeObserver(this, "look-and-feel-changed");
     window.removeEventListener("activate", this);
     window.removeEventListener("deactivate", this);
     window.removeEventListener("toolbarvisibilitychange", this);
     window.removeEventListener("windowlwthemeupdate", this);
+  },
+
+  observe(subject, topic, data) {
+    if (topic != "look-and-feel-changed") {
+      return;
+    }
+    this.inferFromText("nativethemechange");
   },
 
   handleEvent(event) {
@@ -8738,6 +8780,7 @@ var ToolbarIconColor = {
       case "fullscreen":
         this._windowState.fullscreen = reasonValue;
         break;
+      case "nativethemechange":
       case "windowlwthemeupdate":
         // theme change, we'll need to recalculate all color values
         this._toolbarLuminanceCache.clear();
@@ -8775,8 +8818,9 @@ var ToolbarIconColor = {
       luminances.set(toolbar, luminance);
     }
 
+    const luminanceThreshold = 127; // In between 0 and 255
     for (let [toolbar, luminance] of luminances) {
-      if (luminance <= 110) {
+      if (luminance <= luminanceThreshold) {
         toolbar.removeAttribute("brighttext");
       } else {
         toolbar.setAttribute("brighttext", "true");
@@ -9388,6 +9432,7 @@ TabModalPromptBox.prototype = {
 // tab-modal prompts.
 var gDialogBox = {
   _dialog: null,
+  _nextOpenJumpsQueue: false,
   _queued: [],
 
   // Used to wait for a `close` event from the HTML
@@ -9408,12 +9453,21 @@ var gDialogBox = {
     return !!this._dialog;
   },
 
+  replaceDialogIfOpen() {
+    this._dialog?.close();
+    this._nextOpenJumpsQueue = true;
+  },
+
   async open(uri, args) {
+    // If we need to queue, some callers indicate they should go first.
+    const queueMethod = this._nextOpenJumpsQueue ? "unshift" : "push";
+    this._nextOpenJumpsQueue = false;
+
     // If we already have a dialog opened and are trying to open another,
     // queue the next one to be opened later.
     if (this.isOpen) {
       return new Promise((resolve, reject) => {
-        this._queued.push({ resolve, reject, uri, args });
+        this._queued[queueMethod]({ resolve, reject, uri, args });
       });
     }
 
@@ -9492,8 +9546,7 @@ var gDialogBox = {
       gBrowser.selectedBrowser
     ).top;
     let parentElement = document.getElementById("window-modal-dialog");
-    // The dialog has 1em padding; compensate for that:
-    parentElement.style.marginTop = `calc(${offset}px - 1em)`;
+    parentElement.style.setProperty("--chrome-offset", offset + "px");
     parentElement.style.removeProperty("visibility");
     parentElement.style.removeProperty("width");
     parentElement.style.removeProperty("height");

@@ -11,7 +11,7 @@ job-defaults:
     suite: raptor
     run-on-projects:
         by-test-platform:
-            linux.*shippable[^-qr].*: ['mozilla-central']
+            linux.*shippable[^-qr].*: [mozilla-central]
             default: []
     limit-platforms:
         by-app:
@@ -78,7 +78,8 @@ browsertime-tp6:
                         firefox:
                             by-test-platform:
                                 linux.*shippable.*: [trunk, mozilla-beta]
-                                macos.*shippable-qr.*: [trunk, mozilla-beta]
+                                macosx1014-64-shippable-qr.*: [trunk]
+                                macosx1015.*shippable-qr.*: [trunk, mozilla-beta]
                                 windows10-64.*shippable.*: [trunk, mozilla-beta]
                                 default: []
                         default: []
@@ -138,9 +139,11 @@ browsertime-tp6-essential:
                 by-app:
                     firefox:
                         by-test-platform:
-                            linux.*shippable.*: ["trunk", "mozilla-beta"]
-                            macos.*shippable.*: ["trunk", "mozilla-beta"]
-                            windows10-64.*shippable.*: ["trunk", "mozilla-beta"]
+                            linux.*shippable.*: [trunk, mozilla-beta]
+                            macosx1014-64-shippable-qr.*: [trunk]
+                            macosx1015.*shippable.*: [trunk, mozilla-beta]
+                            windows10-64.*shippable.*: [trunk, mozilla-beta]
+                            macosx1100.*shippable.*: [mozilla-central, mozilla-beta]
                             default: []
                     default: []
     tier:
@@ -149,7 +152,7 @@ browsertime-tp6-essential:
             default: 3
 
 browsertime-benchmark:
-    description: "Raptor (browsertime) Benchmark tests "
+    description: Raptor (browsertime) Benchmark tests
     raptor-subtests:
         - ares6
         - [assorted-dom, dom]
@@ -171,13 +174,17 @@ browsertime-benchmark:
                     firefox:
                         by-subtest:
                             motionmark-animometer: 1
+                            unity-webgl: 3
                             default:
                                 by-test-platform:
                                     windows10-64-ref-hw-2017/opt: 2
                                     windows10-64-ccov.*/.*: 3
                                     linux64-ccov.*/.*: 3
                                     default: 2
-                    default: 2
+                    default:
+                        by-subtest:
+                            unity-webgl: 3
+                            default: 2
     run-on-projects:
         by-variant:
             fission:
@@ -200,16 +207,17 @@ browsertime-benchmark:
                                 by-test-platform:
                                     windows.*-32.*: []
                                     (linux|windows10-64|macos)(?!.*shippable).*: []
-                                    default: ["autoland"]
+                                    default: [autoland]
                             default: []
                     default:
                         by-app:
                             firefox:
                                 by-test-platform:
                                     (linux|windows|macos)(?!.*shippable).*: []
-                                    linux.*shippable.*: ["trunk", "mozilla-beta"]
-                                    macos.*shippable.*: ["trunk", "mozilla-beta"]
-                                    windows10-64.*shippable.*: ["trunk", "mozilla-beta"]
+                                    linux.*shippable.*: [trunk, mozilla-beta]
+                                    macosx1014-64-shippable-qr.*: [trunk]
+                                    macosx1015.*shippable.*: [trunk, mozilla-beta]
+                                    windows10-64.*shippable.*: [trunk, mozilla-beta]
                                     default: []
                             default: []
     max-run-time:
@@ -230,7 +238,7 @@ browsertime-benchmark:
             - unity-webgl
 
 browsertime-benchmark-wasm:
-    description: "Raptor (browsertime) WASM benchmarks"
+    description: Raptor (browsertime) WASM benchmarks
     raptor-subtests:
         by-app:
             firefox:
@@ -251,15 +259,17 @@ browsertime-benchmark-wasm:
             fission:
                 by-test-platform:
                     windows.*-32.*: []
+                    macosx1014.*: []
                     default: [mozilla-central]
             default:
                 by-app:
                     firefox:
                         by-test-platform:
+                            macosx1014.*: []
                             (linux|windows|macos)(?!.*shippable).*: []
-                            linux.*shippable.*: ["trunk", "mozilla-beta"]
-                            macos.*shippable.*: ["trunk", "mozilla-beta"]
-                            windows10-64.*shippable.*: ["trunk", "mozilla-beta"]
+                            linux.*shippable.*: [trunk, mozilla-beta]
+                            macosx1015.*shippable.*: [trunk, mozilla-beta]
+                            windows10-64.*shippable.*: [trunk, mozilla-beta]
                             default: []
                     default: []
     max-run-time:
@@ -326,7 +336,8 @@ browsertime-tp6-live-sheriffed:
             default:
                 by-test-platform:
                     (linux|windows10-64|macos)(?!.*shippable).*: []
-                    windows.*-32.*shippable.*: []
+                    windows.*-32.*: []
+                    macosx1014.*: []
                     default: [autoland]
     tier: 2
     treeherder-symbol: Btime-live(tp6)
@@ -345,10 +356,34 @@ browsertime-tp6-profiling:
             fission: []
             default:
                 by-test-platform:
-                    linux.*shippable[^-qr].*: ['mozilla-central']
+                    linux.*shippable[^-qr].*: [mozilla-central]
                     default: []
     tier:
         by-variant:
             fission: 2
             default: 3
     treeherder-symbol: Btime-Prof(tp6)
+
+browsertime-custom:
+    apps: [firefox]
+    description: Raptor (browsertime) custom pageload tests
+    run-visual-metrics: true
+    max-run-time: 2700
+    mozharness:
+        extra-options:
+            - --chimera
+    raptor-subtests: [[process-switch, ps]]
+    run-on-projects:
+        by-variant:
+            fission:
+                by-test-platform:
+                    windows.*-32.*: []
+                    default: [mozilla-central]
+            default:
+                by-test-platform:
+                    linux.*shippable.*: [mozilla-central]
+                    macos.*shippable-qr.*: [mozilla-central]
+                    windows10-64.*shippable.*: [mozilla-central]
+                    default: []
+    tier: 2
+    treeherder-symbol: Btime(ps)

@@ -427,6 +427,11 @@ class Selection final : public nsSupportsWeakReference,
   }
   SelectionType Type() const { return mSelectionType; }
 
+  /**
+   * See documentation of `GetRangesForInterval` in Selection.webidl.
+   *
+   * @param aReturn references, not copies, of the internal ranges.
+   */
   void GetRangesForInterval(nsINode& aBeginNode, int32_t aBeginOffset,
                             nsINode& aEndNode, int32_t aEndOffset,
                             bool aAllowAdjacent,

@@ -18,8 +18,7 @@ NS_IMETHODIMP
 HeadlessThemeGTK::DrawWidgetBackground(gfxContext* aContext, nsIFrame* aFrame,
                                        StyleAppearance aAppearance,
                                        const nsRect& aRect,
-                                       const nsRect& aDirtyRect,
-                                       DrawOverflow) {
+                                       const nsRect& aDirtyRect, DrawOverflow) {
   return NS_OK;
 }
 
@@ -54,7 +53,6 @@ LayoutDeviceIntMargin HeadlessThemeGTK::GetWidgetBorder(
     case StyleAppearance::SpinnerTextfield:
     case StyleAppearance::Textarea:
     case StyleAppearance::Menupopup:
-    case StyleAppearance::MozGtkInfoBar:
       result.top = 1;
       result.right = 1;
       result.bottom = 1;
@@ -382,7 +380,6 @@ HeadlessThemeGTK::ThemeSupportsWidget(nsPresContext* aPresContext,
     case StyleAppearance::Radiomenuitem:
     case StyleAppearance::Menuseparator:
     case StyleAppearance::Menuarrow:
-    case StyleAppearance::MozGtkInfoBar:
       return !IsWidgetStyled(aPresContext, aFrame, aAppearance);
     case StyleAppearance::MozMenulistArrowButton:
       return (!aFrame ||

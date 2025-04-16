@@ -15,12 +15,12 @@ import sourceQueue from "../utils/source-queue";
 
 let actions;
 let targetCommand;
-let resourceWatcher;
+let resourceCommand;
 
-export async function onConnect(commands, _resourceWatcher, _actions, store) {
+export async function onConnect(commands, _resourceCommand, _actions, store) {
   actions = _actions;
   targetCommand = commands.targetCommand;
-  resourceWatcher = _resourceWatcher;
+  resourceCommand = _resourceCommand;
 
   setupCommands(commands);
   setupCreate({ store });
@@ -43,14 +43,20 @@ export async function onConnect(commands, _resourceWatcher, _actions, store) {
 
   // Use independant listeners for SOURCE and THREAD_STATE in order to ease
   // doing batching and notify about a set of SOURCE's in one redux action.
-  await resourceWatcher.watchResources([resourceWatcher.TYPES.SOURCE], {
+  await resourceCommand.watchResources([resourceCommand.TYPES.SOURCE], {
     onAvailable: onSourceAvailable,
   });
-  await resourceWatcher.watchResources([resourceWatcher.TYPES.THREAD_STATE], {
+  await resourceCommand.watchResources([resourceCommand.TYPES.THREAD_STATE], {
     onAvailable: onBreakpointAvailable,
   });
-  await resourceWatcher.watchResources([resourceWatcher.TYPES.ERROR_MESSAGE], {
+
+  await resourceCommand.watchResources([resourceCommand.TYPES.ERROR_MESSAGE], {
     onAvailable: actions.addExceptionFromResources,
+  });
+  await resourceCommand.watchResources([resourceCommand.TYPES.DOCUMENT_EVENT], {
+    onAvailable: onDocumentEventAvailable,
+    // we only care about future events for DOCUMENT_EVENT
+    ignoreExistingResources: true,
   });
 }
 
@@ -60,14 +66,17 @@ export function onDisconnect() {
     onTargetAvailable,
     onTargetDestroyed
   );
-  resourceWatcher.unwatchResources([resourceWatcher.TYPES.SOURCE], {
+  resourceCommand.unwatchResources([resourceCommand.TYPES.SOURCE], {
     onAvailable: onSourceAvailable,
   });
-  resourceWatcher.unwatchResources([resourceWatcher.TYPES.THREAD_STATE], {
+  resourceCommand.unwatchResources([resourceCommand.TYPES.THREAD_STATE], {
     onAvailable: onBreakpointAvailable,
   });
-  resourceWatcher.unwatchResources([resourceWatcher.TYPES.ERROR_MESSAGE], {
+  resourceCommand.unwatchResources([resourceCommand.TYPES.ERROR_MESSAGE], {
     onAvailable: actions.addExceptionFromResources,
+  });
+  resourceCommand.unwatchResources([resourceCommand.TYPES.DOCUMENT_EVENT], {
+    onAvailable: onDocumentEventAvailable,
   });
   sourceQueue.clear();
 }
@@ -107,7 +116,6 @@ async function onTargetAvailable({ targetFront, isTargetSwitching }) {
   }
 
   targetFront.on("will-navigate", actions.willNavigate);
-  targetFront.on("navigate", actions.navigated);
 
   await threadFront.reconfigure({
     observeAsmJS: true,
@@ -135,7 +143,6 @@ async function onTargetAvailable({ targetFront, isTargetSwitching }) {
 function onTargetDestroyed({ targetFront }) {
   if (targetFront.isTopLevel) {
     targetFront.off("will-navigate", actions.willNavigate);
-    targetFront.off("navigate", actions.navigated);
   }
   actions.removeTarget(targetFront);
 }
@@ -164,6 +171,14 @@ async function onBreakpointAvailable(breakpoints) {
       recordEvent("pause", { reason: resource.why.type });
     } else if (resource.state == "resumed") {
       actions.resumed(threadFront.actorID);
+    }
+  }
+}
+
+function onDocumentEventAvailable(events) {
+  for (const event of events) {
+    if (event.name == "dom-complete") {
+      actions.navigated();
     }
   }
 }

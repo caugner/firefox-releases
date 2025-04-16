@@ -332,7 +332,6 @@ CompositorBridgeParent::CompositorBridgeParent(
       mWidget(nullptr),
       mScale(aScale),
       mVsyncRate(aVsyncRate),
-      mPendingTransaction{0},
       mPaused(false),
       mHaveCompositionRecorder(false),
       mIsForcedFirstPaint(false),
@@ -1164,9 +1163,9 @@ void CompositorBridgeParent::ShadowLayersUpdated(
   // The transaction ID might get reset to 1 if the page gets reloaded, see
   // https://bugzilla.mozilla.org/show_bug.cgi?id=1145295#c41
   // Otherwise, it should be continually increasing.
-  MOZ_ASSERT(aInfo.id() == TransactionId{1} ||
-             aInfo.id() > mPendingTransaction);
-  mPendingTransaction = aInfo.id();
+  MOZ_ASSERT(aInfo.id() == TransactionId{1} || mPendingTransactions.IsEmpty() ||
+             aInfo.id() > mPendingTransactions.LastElement());
+  mPendingTransactions.AppendElement(aInfo.id());
   mRefreshStartTime = aInfo.refreshStart();
   mTxnStartTime = aInfo.transactionStart();
   mFwdTime = aInfo.fwdTime();
@@ -1652,7 +1651,6 @@ mozilla::ipc::IPCResult CompositorBridgeParent::RecvAdoptChild(
   APZCTreeManagerParent* parent;
   bool scheduleComposition = false;
   bool apzEnablementChanged = false;
-  RefPtr<ContentCompositorBridgeParent> cpcp;
   RefPtr<WebRenderBridgeParent> childWrBridge;
 
   // Before adopting the child, save the old compositor's root content
@@ -1707,7 +1705,6 @@ mozilla::ipc::IPCResult CompositorBridgeParent::RecvAdoptChild(
     }
     if (mWrBridge) {
       childWrBridge = sIndirectLayerTrees[child].mWrBridge;
-      cpcp = sIndirectLayerTrees[child].mContentCompositorBridgeParent;
     }
     parent = sIndirectLayerTrees[child].mApzcTreeManagerParent;
   }
@@ -1810,6 +1807,16 @@ PWebRenderBridgeParent* CompositorBridgeParent::AllocPWebRenderBridgeParent(
     mWrBridge.get()->AddRef();  // IPDL reference
     return mWrBridge;
   }
+
+#ifdef MOZ_WIDGET_ANDROID
+  // On Android, WebRenderAPI::Resume() call is triggered from Java side. But
+  // Java side does not know about fallback to RenderCompositorOGLSWGL. In this
+  // fallback case, RenderCompositor::Resume() needs to be called from gfx code.
+  if (!mPaused && mWidget->GetCompositorOptions().UseSoftwareWebRender() &&
+      mWidget->GetCompositorOptions().AllowSoftwareWebRenderOGL()) {
+    api->Resume();
+  }
+#endif
 
   wr::TransactionBuilder txn(api);
   txn.SetRootPipeline(aPipelineId);
@@ -1997,6 +2004,7 @@ Maybe<TimeStamp> CompositorBridgeParent::GetTestingTimeStamp() const {
 
 void EraseLayerState(LayersId aId) {
   RefPtr<APZUpdater> apz;
+  RefPtr<WebRenderBridgeParent> wrBridge;
 
   {  // scope lock
     MonitorAutoLock lock(*sIndirectLayerTreesLock);
@@ -2006,12 +2014,17 @@ void EraseLayerState(LayersId aId) {
       if (parent) {
         apz = parent->GetAPZUpdater();
       }
+      wrBridge = iter->second.mWrBridge;
       sIndirectLayerTrees.erase(iter);
     }
   }
 
   if (apz) {
     apz->NotifyLayerTreeRemoved(aId);
+  }
+
+  if (wrBridge) {
+    wrBridge->Destroy();
   }
 }
 
@@ -2192,10 +2205,10 @@ void CompositorBridgeParent::DidComposite(const VsyncId& aId,
   if (mWrBridge) {
     MOZ_ASSERT(false);  // This should never get called for a WR compositor
   } else {
-    NotifyDidComposite(mPendingTransaction, aId, aCompositeStart,
+    NotifyDidComposite(mPendingTransactions, aId, aCompositeStart,
                        aCompositeEnd);
 #if defined(ENABLE_FRAME_LATENCY_LOG)
-    if (mPendingTransaction.IsValid()) {
+    if (!mPendingTransactions.IsEmpty()) {
       if (mRefreshStartTime) {
         int32_t latencyMs =
             lround((aCompositeEnd - mRefreshStartTime).ToMilliseconds());
@@ -2216,7 +2229,7 @@ void CompositorBridgeParent::DidComposite(const VsyncId& aId,
     mTxnStartTime = TimeStamp();
     mFwdTime = TimeStamp();
 #endif
-    mPendingTransaction = TransactionId{0};
+    mPendingTransactions.Clear();
   }
 }
 
@@ -2319,14 +2332,15 @@ void CompositorBridgeParent::NotifyPipelineRendered(
   wrBridge->RemoveEpochDataPriorTo(aEpoch);
 
   nsTArray<FrameStats> stats;
+  nsTArray<TransactionId> transactions;
 
   RefPtr<UiCompositorControllerParent> uiController =
       UiCompositorControllerParent::GetFromRootLayerTreeId(mRootLayerTreeID);
 
-  Maybe<TransactionId> transactionId = wrBridge->FlushTransactionIdsForEpoch(
+  wrBridge->FlushTransactionIdsForEpoch(
       aEpoch, aCompositeStartId, aCompositeStart, aRenderStart, aCompositeEnd,
-      uiController, aStats, &stats);
-  if (!transactionId) {
+      uiController, aStats, stats, transactions);
+  if (transactions.IsEmpty()) {
     MOZ_ASSERT(stats.IsEmpty());
     return;
   }
@@ -2334,7 +2348,7 @@ void CompositorBridgeParent::NotifyPipelineRendered(
   MaybeDeclareStable();
 
   LayersId layersId = isRoot ? LayersId{0} : wrBridge->GetLayersId();
-  Unused << compBridge->SendDidComposite(layersId, *transactionId,
+  Unused << compBridge->SendDidComposite(layersId, transactions,
                                          aCompositeStart, aCompositeEnd);
 
   if (!stats.IsEmpty()) {
@@ -2347,16 +2361,15 @@ CompositorBridgeParent::GetAsyncImagePipelineManager() const {
   return mAsyncImageManager;
 }
 
-void CompositorBridgeParent::NotifyDidComposite(TransactionId aTransactionId,
-                                                VsyncId aId,
-                                                TimeStamp& aCompositeStart,
-                                                TimeStamp& aCompositeEnd) {
+void CompositorBridgeParent::NotifyDidComposite(
+    const nsTArray<TransactionId>& aTransactionIds, VsyncId aId,
+    TimeStamp& aCompositeStart, TimeStamp& aCompositeEnd) {
   MOZ_ASSERT(!mWrBridge,
              "We should be going through NotifyDidRender and "
              "NotifyPipelineRendered instead");
 
   MaybeDeclareStable();
-  Unused << SendDidComposite(LayersId{0}, aTransactionId, aCompositeStart,
+  Unused << SendDidComposite(LayersId{0}, aTransactionIds, aCompositeStart,
                              aCompositeEnd);
 
   if (mLayerManager) {

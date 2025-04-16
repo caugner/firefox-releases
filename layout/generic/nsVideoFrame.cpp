@@ -12,9 +12,11 @@
 #include "nsGkAtoms.h"
 
 #include "mozilla/PresShell.h"
+#include "mozilla/dom/HTMLImageElement.h"
 #include "mozilla/dom/HTMLVideoElement.h"
 #include "mozilla/dom/ShadowRoot.h"
 #include "mozilla/layers/RenderRootStateManager.h"
+#include "BasicLayers.h"
 #include "nsDisplayList.h"
 #include "nsGenericHTMLElement.h"
 #include "nsPresContext.h"
@@ -104,8 +106,7 @@ nsresult nsVideoFrame::CreateAnonymousContent(
     // image will always report its state as 0, so it will never be reframed
     // to show frames for loading or the broken image icon. This is important,
     // as the image is native anonymous, and so can't be reframed (currently).
-    nsCOMPtr<nsIImageLoadingContent> imgContent =
-        do_QueryInterface(mPosterImage);
+    HTMLImageElement* imgContent = HTMLImageElement::FromNode(mPosterImage);
     NS_ENSURE_TRUE(imgContent, NS_ERROR_FAILURE);
 
     imgContent->ForceImageState(true, 0);
@@ -210,7 +211,9 @@ already_AddRefed<Layer> nsVideoFrame::BuildLayer(
   container->SetScaleHint(scaleHint);
 
   RefPtr<ImageLayer> layer = static_cast<ImageLayer*>(
-      aManager->GetLayerBuilder()->GetLeafLayerFor(aBuilder, aItem));
+      aManager->GetLayerBuilder()
+          ? aManager->GetLayerBuilder()->GetLeafLayerFor(aBuilder, aItem)
+          : nullptr);
   if (!layer) {
     layer = aManager->CreateImageLayer();
     if (!layer) return nullptr;
@@ -496,6 +499,26 @@ class nsDisplayVideo : public nsPaintedDisplayItem {
     nsVideoFrame* f = static_cast<nsVideoFrame*>(Frame());
     HTMLVideoElement* video = HTMLVideoElement::FromNode(f->GetContent());
     return video->VideoWidth() > 0;
+  }
+
+  virtual void Paint(nsDisplayListBuilder* aBuilder,
+                     gfxContext* aCtx) override {
+    // This currently uses BasicLayerManager to re-use the code for extracting
+    // the current Image and generating DrawTarget rendering commands for it.
+    // Ideally we'll factor out that code and use it directly soon.
+    RefPtr<BasicLayerManager> layerManager =
+        new BasicLayerManager(BasicLayerManager::BLM_OFFSCREEN);
+
+    layerManager->BeginTransactionWithTarget(aCtx);
+    RefPtr<Layer> layer =
+        BuildLayer(aBuilder, layerManager, ContainerLayerParameters());
+    if (!layer) {
+      layerManager->AbortTransaction();
+      return;
+    }
+
+    layerManager->SetRoot(layer);
+    layerManager->EndEmptyTransaction();
   }
 };
 

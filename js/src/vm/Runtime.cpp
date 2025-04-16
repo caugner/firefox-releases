@@ -8,7 +8,6 @@
 #include "mozilla/DebugOnly.h"
 #include "mozilla/MemoryReporting.h"
 #include "mozilla/ThreadLocal.h"
-#include "mozilla/Unused.h"
 
 #if defined(XP_DARWIN)
 #  include <mach/mach.h>
@@ -173,8 +172,10 @@ JSRuntime::JSRuntime(JSRuntime* parentRuntime)
   JS_COUNT_CTOR(JSRuntime);
   liveRuntimesCount++;
 
+#ifndef __wasi__
   // See function comment for why we call this now, not in JS_Init().
   wasm::EnsureEagerProcessSignalHandlers();
+#endif  // __wasi__
 }
 
 JSRuntime::~JSRuntime() {
@@ -287,7 +288,7 @@ void JSRuntime::destroyRuntime() {
     profilingScripts = false;
 
     JS::PrepareForFullGC(cx);
-    gc.gc(GC_NORMAL, JS::GCReason::DESTROY_RUNTIME);
+    gc.gc(JS::GCOptions::Normal, JS::GCReason::DESTROY_RUNTIME);
   }
 
   AutoNoteSingleThreadedRegion anstr;
@@ -330,9 +331,9 @@ void JSRuntime::setTelemetryCallback(
   rt->telemetryCallback = callback;
 }
 
-void JSRuntime::setElementCallback(JSRuntime* rt,
-                                   JSGetElementCallback callback) {
-  rt->getElementCallback = callback;
+void JSRuntime::setSourceElementCallback(JSRuntime* rt,
+                                         JSSourceElementCallback callback) {
+  rt->sourceElementCallback = callback;
 }
 
 void JSRuntime::setUseCounter(JSObject* obj, JSUseCounter counter) {

@@ -6,7 +6,7 @@ http://creativecommons.org/publicdomain/zero/1.0/ */
 const { ExperimentFakes } = ChromeUtils.import(
   "resource://testing-common/NimbusTestUtils.jsm"
 );
-const { NimbusFeatures, ExperimentFeature } = ChromeUtils.import(
+const { NimbusFeatures, ExperimentFeature, ExperimentAPI } = ChromeUtils.import(
   "resource://nimbus/ExperimentAPI.jsm"
 );
 
@@ -40,7 +40,7 @@ add_task(async function open_close_dialog() {
 
 add_task(async function set_as_default() {
   mockAppConstants({ isWin7: false });
-  const mock = mockShell();
+  const mock = mockShell({ isPinned: true });
 
   await showAndWaitForDialog(async win => {
     await BrowserTestUtils.waitForEvent(win, "ready");
@@ -148,7 +148,7 @@ add_task(async function theme_change() {
   const theme = await AddonManager.getAddonByID(
     "firefox-alpenglow@mozilla.org"
   );
-  mockShell();
+  mockShell({ isPinned: true });
 
   await showAndWaitForDialog(async win => {
     await BrowserTestUtils.waitForEvent(win, "ready");
@@ -165,7 +165,7 @@ add_task(async function theme_change() {
 
 add_task(async function skip_screens() {
   Services.telemetry.clearEvents();
-  const mock = mockShell();
+  const mock = mockShell({ isPinned: true });
 
   await showAndWaitForDialog(async win => {
     await BrowserTestUtils.waitForEvent(win, "ready");
@@ -191,7 +191,7 @@ add_task(async function skip_screens() {
 });
 
 add_task(async function exit_early() {
-  const mock = mockShell({ isDefault: true });
+  const mock = mockShell({ isDefault: true, isPinned: true });
 
   await showAndWaitForDialog(async win => {
     await BrowserTestUtils.waitForEvent(win, "ready");
@@ -227,10 +227,10 @@ add_task(async function need_pin_and_default() {
   AssertEvents(
     "Pin and default shows 3 screens",
     ["content", "show", "3-screens"],
-    ["content", "show", "upgrade-dialog-new-primary-pin-alt-button"],
-    ["content", "button", "upgrade-dialog-new-primary-pin-alt-button"],
-    ["content", "show", "upgrade-dialog-default-primary-button"],
-    ["content", "button", "upgrade-dialog-default-primary-button"],
+    ["content", "show", "upgrade-dialog-pin-primary-button"],
+    ["content", "button", "upgrade-dialog-pin-primary-button"],
+    ["content", "show", "upgrade-dialog-default-primary-button-2"],
+    ["content", "button", "upgrade-dialog-default-primary-button-2"],
     ["content", "show", "upgrade-dialog-theme-primary-button"],
     ["content", "close", "external"]
   );
@@ -248,14 +248,14 @@ add_task(async function win7_okay() {
   AssertEvents(
     "Dialog uses special windows 7 primary button",
     ["content", "show", "2-screens"],
-    ["content", "show", "cfr-doorhanger-doh-primary-button-2"],
-    ["content", "button", "cfr-doorhanger-doh-primary-button-2"],
+    ["content", "show", "upgrade-dialog-new-primary-win7-button"],
+    ["content", "button", "upgrade-dialog-new-primary-win7-button"],
     ["content", "close", "win7"]
   );
 });
 
 add_task(async function win7_1screen() {
-  mockShell();
+  mockShell({ isPinned: true });
 
   await showAndWaitForDialog(async win => {
     await BrowserTestUtils.waitForEvent(win, "ready");
@@ -290,9 +290,29 @@ add_task(async function quit_app() {
 
   AssertEvents(
     "Dialog closed on quit request",
-    ["content", "show", "2-screens"],
-    ["content", "show", "upgrade-dialog-new-primary-default-button"],
+    ["content", "show", "3-screens"],
+    ["content", "show", "upgrade-dialog-pin-primary-button"],
     ["content", "close", "quit-application-requested"]
+  );
+});
+
+add_task(async function window_warning() {
+  // Dismiss the alert when it opens.
+  const warning = BrowserTestUtils.promiseAlertDialog("cancel");
+
+  await showAndWaitForDialog(async win => {
+    await BrowserTestUtils.waitForEvent(win, "ready");
+
+    // Show close warning without blocking to allow this callback to complete.
+    setTimeout(() => gBrowser.warnAboutClosingTabs());
+  });
+  await warning;
+
+  AssertEvents(
+    "Dialog closed when close warning wants to open",
+    ["content", "show", "3-screens"],
+    ["content", "show", "upgrade-dialog-pin-primary-button"],
+    ["content", "close", "external"]
   );
 });
 
@@ -307,6 +327,7 @@ add_task(async function not_major_upgrade() {
 });
 
 add_task(async function remote_disabled() {
+  await ExperimentAPI.ready();
   await ExperimentFakes.remoteDefaultsHelper({
     feature: NimbusFeatures.upgradeDialog,
     configuration: { enabled: false, variables: {} },
@@ -344,8 +365,8 @@ add_task(async function show_major_upgrade() {
   AssertEvents(
     "Upgrade dialog opened and closed from major upgrade",
     ["trigger", "reason", "satisfied"],
-    ["content", "show", "2-screens"],
-    ["content", "show", "upgrade-dialog-new-primary-default-button"],
+    ["content", "show", "3-screens"],
+    ["content", "show", "upgrade-dialog-pin-primary-button"],
     ["content", "close", "external"]
   );
 });

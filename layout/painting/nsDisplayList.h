@@ -46,6 +46,7 @@
 #include "mozilla/gfx/UserData.h"
 #include "mozilla/layers/LayerAttributes.h"
 #include "mozilla/layers/ScrollableLayerGuid.h"
+#include "mozilla/layers/BSPTree.h"
 #include "nsCSSRenderingBorders.h"
 #include "nsPresArena.h"
 #include "nsAutoLayoutPhase.h"
@@ -341,6 +342,7 @@ struct ActiveScrolledRoot {
 
 enum class nsDisplayListBuilderMode : uint8_t {
   Painting,
+  PaintForPrinting,
   EventDelivery,
   FrameVisibility,
   TransformComputation,
@@ -463,10 +465,20 @@ class nsDisplayListBuilder {
   }
 
   /**
-   * @return true if the display list is being built for painting.
+   * @return true if the display list is being built for painting. This
+   * includes both painting to a window or other buffer and painting to
+   * a print/pdf destination.
    */
   bool IsForPainting() const {
-    return mMode == nsDisplayListBuilderMode::Painting;
+    return mMode == nsDisplayListBuilderMode::Painting ||
+           mMode == nsDisplayListBuilderMode::PaintForPrinting;
+  }
+
+  /**
+   * @return true if the display list is being built specifically for printing.
+   */
+  bool IsForPrinting() const {
+    return mMode == nsDisplayListBuilderMode::PaintForPrinting;
   }
 
   /**
@@ -1093,11 +1105,6 @@ class nsDisplayListBuilder {
    */
   class AutoBuildingDisplayList {
    public:
-    AutoBuildingDisplayList(nsDisplayListBuilder* aBuilder, nsIFrame* aForChild)
-        : AutoBuildingDisplayList(
-              aBuilder, aForChild, aBuilder->GetVisibleRect(),
-              aBuilder->GetDirtyRect(), aForChild->IsTransformed()) {}
-
     AutoBuildingDisplayList(nsDisplayListBuilder* aBuilder, nsIFrame* aForChild,
                             const nsRect& aVisibleRect,
                             const nsRect& aDirtyRect)
@@ -1120,7 +1127,6 @@ class nsDisplayListBuilder {
       mBuilder->mAdditionalOffset = mozilla::Some(aOffset);
 
       mBuilder->mCurrentOffsetToReferenceFrame += aOffset;
-      mBuilder->mAdditionalOffsetFrame = mBuilder->mCurrentReferenceFrame;
     }
 
     bool IsAnimatedGeometryRoot() const { return mCurrentAGRState == AGR_YES; }
@@ -1813,6 +1819,25 @@ class nsDisplayListBuilder {
   void AddScrollFrameToNotify(nsIScrollableFrame* aScrollFrame);
   void NotifyAndClearScrollFrames();
 
+  // Helper class to find what link spec (if any) to associate with a frame,
+  // recording it in the builder, and generate the corresponding DisplayItem.
+  class Linkifier {
+   public:
+    Linkifier(nsDisplayListBuilder* aBuilder, nsIFrame* aFrame);
+
+    ~Linkifier() {
+      if (mBuilderToReset) {
+        mBuilderToReset->mLinkSpec.Truncate(0);
+      }
+    }
+
+    void MaybeAppendLink(nsDisplayListBuilder* aBuilder, nsIFrame* aFrame,
+                         nsDisplayList* aList);
+
+   private:
+    nsDisplayListBuilder* mBuilderToReset = nullptr;
+  };
+
  private:
   bool MarkOutOfFlowFrameForDisplay(nsIFrame* aDirtyFrame, nsIFrame* aFrame,
                                     const nsRect& aVisibleRect,
@@ -1915,7 +1940,6 @@ class nsDisplayListBuilder {
   // The offset from mCurrentFrame to mCurrentReferenceFrame.
   nsPoint mCurrentOffsetToReferenceFrame;
 
-  const nsIFrame* mAdditionalOffsetFrame;
   mozilla::Maybe<nsPoint> mAdditionalOffset;
 
   RefPtr<AnimatedGeometryRoot> mRootAGR;
@@ -1991,6 +2015,7 @@ class nsDisplayListBuilder {
   // filter. Otherwise nullptr.
   const ActiveScrolledRoot* mFilterASR;
   std::unordered_set<nsIScrollableFrame*> mScrollFramesToNotify;
+  nsCString mLinkSpec;  // Destination of link currently being emitted, if any.
   bool mContainsBlendMode;
   bool mIsBuildingScrollbar;
   bool mCurrentScrollbarWillHaveLayer;
@@ -2211,7 +2236,7 @@ class nsDisplayItemBase : public nsDisplayItemLink {
   /**
    * Create a clone of this item.
    */
-  virtual nsDisplayItem* Clone(nsDisplayListBuilder* aBuilder) const {
+  virtual nsDisplayWrapList* Clone(nsDisplayListBuilder* aBuilder) const {
     return nullptr;
   }
 
@@ -3230,10 +3255,7 @@ class nsPaintedDisplayItem : public nsDisplayItem {
   /**
    * Paint this item to some rendering context.
    */
-  virtual void Paint(nsDisplayListBuilder* aBuilder, gfxContext* aCtx) {
-    // TODO(miko): Make this a pure virtual function to force implementation.
-    MOZ_ASSERT_UNREACHABLE("Paint() is not implemented!");
-  }
+  virtual void Paint(nsDisplayListBuilder* aBuilder, gfxContext* aCtx) = 0;
 
   /**
    * External storage used by |DisplayItemCache| to avoid hashmap lookups.
@@ -3633,6 +3655,10 @@ class nsDisplayList {
                                           LayerManager* aLayerManager,
                                           uint32_t aFlags,
                                           bool aIsWidgetTransaction);
+
+  void Paint(nsDisplayListBuilder* aBuilder, gfxContext* aCtx,
+             int32_t aAppUnitsPerDevPixel);
+
   /**
    * Get the bounds. Takes the union of the bounds of all children.
    * The result is not cached.
@@ -4481,6 +4507,13 @@ class nsDisplayBackgroundImage : public nsDisplayImageContainer {
                                     nsIFrame* aFrameForBounds = nullptr);
   ~nsDisplayBackgroundImage() override;
 
+  bool RestoreState() override {
+    bool superChanged = nsDisplayImageContainer::RestoreState();
+    bool opacityChanged = (mOpacity != 1.0f);
+    mOpacity = 1.0f;
+    return (superChanged || opacityChanged);
+  }
+
   NS_DISPLAY_DECL_NAME("Background", TYPE_BACKGROUND)
 
   /**
@@ -4520,6 +4553,13 @@ class nsDisplayBackgroundImage : public nsDisplayImageContainer {
                            bool* aSnap) const override;
   mozilla::Maybe<nscolor> IsUniform(
       nsDisplayListBuilder* aBuilder) const override;
+
+  bool CanApplyOpacity() const override { return true; }
+
+  void ApplyOpacity(nsDisplayListBuilder* aBuilder, float aOpacity,
+                    const DisplayItemClipChain* aClip) override {
+    mOpacity = aOpacity;
+  }
 
   /**
    * GetBounds() returns the background painting area.
@@ -4629,6 +4669,7 @@ class nsDisplayBackgroundImage : public nsDisplayImageContainer {
   /* Whether the image should be treated as fixed to the viewport. */
   bool mShouldFixToViewport;
   uint32_t mImageFlags;
+  float mOpacity;
 };
 
 /**
@@ -5266,8 +5307,6 @@ class nsDisplayWrapList : public nsPaintedDisplayItem {
 
   ~nsDisplayWrapList() override;
 
-  NS_DISPLAY_DECL_NAME("WrapList", TYPE_WRAP_LIST)
-
   const nsDisplayWrapList* AsDisplayWrapList() const final { return this; }
   nsDisplayWrapList* AsDisplayWrapList() final { return this; }
 
@@ -5320,7 +5359,6 @@ class nsDisplayWrapList : public nsPaintedDisplayItem {
                            bool* aSnap) const override;
   mozilla::Maybe<nscolor> IsUniform(
       nsDisplayListBuilder* aBuilder) const override;
-  void Paint(nsDisplayListBuilder* aBuilder, gfxContext* aCtx) override;
   bool ComputeVisibility(nsDisplayListBuilder* aBuilder,
                          nsRegion* aVisibleRegion) override;
 
@@ -5444,10 +5482,30 @@ class nsDisplayWrapList : public nsPaintedDisplayItem {
   int32_t mOverrideZIndex;
   bool mHasZIndexOverride;
   bool mClearingClipChain = false;
+};
+
+class nsDisplayWrapper : public nsDisplayWrapList {
+ public:
+  NS_DISPLAY_DECL_NAME("WrapList", TYPE_WRAP_LIST)
+
+  nsDisplayWrapper(nsDisplayListBuilder* aBuilder, nsIFrame* aFrame,
+                   nsDisplayList* aList,
+                   const ActiveScrolledRoot* aActiveScrolledRoot,
+                   bool aClearClipChain = false)
+      : nsDisplayWrapList(aBuilder, aFrame, aList, aActiveScrolledRoot,
+                          aClearClipChain) {}
+
+  nsDisplayWrapper(const nsDisplayWrapper& aOther) = delete;
+  nsDisplayWrapper(nsDisplayListBuilder* aBuilder,
+                   const nsDisplayWrapList& aOther)
+      : nsDisplayWrapList(aBuilder, aOther) {}
+
+  void Paint(nsDisplayListBuilder* aBuilder, gfxContext* aCtx) override;
 
  private:
   NS_DISPLAY_ALLOW_CLONING()
   friend class nsDisplayListBuilder;
+  friend class nsDisplayWrapList;
 };
 
 /**
@@ -5457,7 +5515,7 @@ class nsDisplayWrapList : public nsPaintedDisplayItem {
  * and Floats(). This is done to support special wrapping processing for frames
  * that may not be in-flow descendants of the current frame.
  */
-class nsDisplayWrapper {
+class nsDisplayItemWrapper {
  public:
   // This is never instantiated directly (it has pure virtual methods), so no
   // need to count constructors and destructors.
@@ -5474,7 +5532,7 @@ class nsDisplayWrapper {
                             const nsDisplayListSet& aLists);
 
  protected:
-  nsDisplayWrapper() = default;
+  nsDisplayItemWrapper() = default;
 };
 
 /**
@@ -5528,6 +5586,7 @@ class nsDisplayOpacity : public nsDisplayWrapList {
   LayerState GetLayerState(
       nsDisplayListBuilder* aBuilder, LayerManager* aManager,
       const ContainerLayerParameters& aParameters) override;
+  void Paint(nsDisplayListBuilder* aBuilder, gfxContext* aCtx) override;
   bool ComputeVisibility(nsDisplayListBuilder* aBuilder,
                          nsRegion* aVisibleRegion) override;
 
@@ -5657,6 +5716,7 @@ class nsDisplayBlendMode : public nsDisplayWrapList {
       const StackingContextHelper& aSc,
       mozilla::layers::RenderRootStateManager* aManager,
       nsDisplayListBuilder* aDisplayListBuilder) override;
+  void Paint(nsDisplayListBuilder* aBuilder, gfxContext* aCtx) override;
   bool ComputeVisibility(nsDisplayListBuilder* aBuilder,
                          nsRegion* aVisibleRegion) override;
 
@@ -5745,6 +5805,7 @@ class nsDisplayBlendContainer : public nsDisplayWrapList {
   LayerState GetLayerState(
       nsDisplayListBuilder* aBuilder, LayerManager* aManager,
       const ContainerLayerParameters& aParameters) override;
+  void Paint(nsDisplayListBuilder* aBuilder, gfxContext* aCtx) override;
   bool CreateWebRenderCommands(
       mozilla::wr::DisplayListBuilder& aBuilder,
       mozilla::wr::IpcResourceUpdateQueue& aResources,
@@ -5908,6 +5969,10 @@ class nsDisplayOwnLayer : public nsDisplayWrapList {
   LayerState GetLayerState(
       nsDisplayListBuilder* aBuilder, LayerManager* aManager,
       const ContainerLayerParameters& aParameters) override;
+  void Paint(nsDisplayListBuilder* aBuilder, gfxContext* aCtx) override {
+    GetChildren()->Paint(aBuilder, aCtx,
+                         mFrame->PresContext()->AppUnitsPerDevPixel());
+  }
 
   bool CanMerge(const nsDisplayItem* aItem) const override {
     // Don't allow merging, each sublist must have its own layer
@@ -6030,6 +6095,10 @@ class nsDisplayStickyPosition : public nsDisplayOwnLayer {
       const ContainerLayerParameters& aParameters) override {
     return mozilla::LayerState::LAYER_ACTIVE;
   }
+  void Paint(nsDisplayListBuilder* aBuilder, gfxContext* aCtx) override {
+    GetChildren()->Paint(aBuilder, aCtx,
+                         mFrame->PresContext()->AppUnitsPerDevPixel());
+  }
 
   bool CreateWebRenderCommands(
       mozilla::wr::DisplayListBuilder& aBuilder,
@@ -6105,6 +6174,10 @@ class nsDisplayFixedPosition : public nsDisplayOwnLayer {
       nsDisplayListBuilder* aBuilder, LayerManager* aManager,
       const ContainerLayerParameters& aParameters) override {
     return mozilla::LayerState::LAYER_ACTIVE_FORCE;
+  }
+  void Paint(nsDisplayListBuilder* aBuilder, gfxContext* aCtx) override {
+    GetChildren()->Paint(aBuilder, aCtx,
+                         mFrame->PresContext()->AppUnitsPerDevPixel());
   }
 
   bool ShouldFixToViewport(nsDisplayListBuilder* aBuilder) const override {
@@ -6205,6 +6278,9 @@ class nsDisplayScrollInfoLayer : public nsDisplayWrapList {
   LayerState GetLayerState(
       nsDisplayListBuilder* aBuilder, LayerManager* aManager,
       const ContainerLayerParameters& aParameters) override;
+  void Paint(nsDisplayListBuilder* aBuilder, gfxContext* aCtx) override {
+    return;
+  }
 
   bool ShouldFlattenAway(nsDisplayListBuilder* aBuilder) override {
     return false;
@@ -6429,6 +6505,7 @@ class nsDisplayMasksAndClipPaths : public nsDisplayEffectsBase {
   LayerState GetLayerState(
       nsDisplayListBuilder* aBuilder, LayerManager* aManager,
       const ContainerLayerParameters& aParameters) override;
+  void Paint(nsDisplayListBuilder* aBuilder, gfxContext* aCtx) override;
   bool ComputeVisibility(nsDisplayListBuilder* aBuilder,
                          nsRegion* aVisibleRegion) override;
 
@@ -6505,6 +6582,7 @@ class nsDisplayBackdropRootContainer : public nsDisplayWrapList {
   LayerState GetLayerState(
       nsDisplayListBuilder* aBuilder, LayerManager* aManager,
       const ContainerLayerParameters& aParameters) override;
+  void Paint(nsDisplayListBuilder* aBuilder, gfxContext* aCtx) override;
 
   bool CreateWebRenderCommands(
       mozilla::wr::DisplayListBuilder& aBuilder,
@@ -6537,6 +6615,7 @@ class nsDisplayBackdropFilters : public nsDisplayWrapList {
       const StackingContextHelper& aSc,
       mozilla::layers::RenderRootStateManager* aManager,
       nsDisplayListBuilder* aDisplayListBuilder) override;
+  void Paint(nsDisplayListBuilder* aBuilder, gfxContext* aCtx) override;
 
   static bool CanCreateWebRenderCommands(nsDisplayListBuilder* aBuilder,
                                          nsIFrame* aFrame);
@@ -6594,6 +6673,7 @@ class nsDisplayFilters : public nsDisplayEffectsBase {
   LayerState GetLayerState(
       nsDisplayListBuilder* aBuilder, LayerManager* aManager,
       const ContainerLayerParameters& aParameters) override;
+  void Paint(nsDisplayListBuilder* aBuilder, gfxContext* aCtx) override;
 
   nsRect GetBounds(nsDisplayListBuilder* aBuilder, bool* aSnap) const override {
     *aSnap = false;
@@ -6617,6 +6697,10 @@ class nsDisplayFilters : public nsDisplayEffectsBase {
 
   void PaintAsLayer(nsDisplayListBuilder* aBuilder, gfxContext* aCtx,
                     LayerManager* aManager);
+
+  void PaintWithContentsPaintCallback(
+      nsDisplayListBuilder* aBuilder, gfxContext* aCtx,
+      const std::function<void(gfxContext* aContext)>& aPaintChildren);
 
   bool CreateWebRenderCommands(
       mozilla::wr::DisplayListBuilder& aBuilder,
@@ -6655,15 +6739,9 @@ class nsDisplayTransform : public nsPaintedDisplayItem {
  public:
   enum class PrerenderDecision : uint8_t { No, Full, Partial };
 
-  /**
-   * Returns a matrix (in pixels) for the current frame. The matrix should be
-   * relative to the current frame's coordinate space.
-   *
-   * @param aFrame The frame to compute the transform for.
-   * @param aAppUnitsPerPixel The number of app units per graphics unit.
-   */
-  typedef Matrix4x4 (*ComputeTransformFunction)(nsIFrame* aFrame,
-                                                float aAppUnitsPerPixel);
+  enum {
+    WithTransformGetter,
+  };
 
   /* Constructor accepts a display list, empties it, and wraps it up.  It also
    * ferries the underlying frame to the nsDisplayItem constructor.
@@ -6677,7 +6755,7 @@ class nsDisplayTransform : public nsPaintedDisplayItem {
 
   nsDisplayTransform(nsDisplayListBuilder* aBuilder, nsIFrame* aFrame,
                      nsDisplayList* aList, const nsRect& aChildrenBuildingRect,
-                     ComputeTransformFunction aTransformGetter);
+                     decltype(WithTransformGetter));
 
   MOZ_COUNTED_DTOR_OVERRIDE(nsDisplayTransform)
 
@@ -6734,6 +6812,9 @@ class nsDisplayTransform : public nsPaintedDisplayItem {
   already_AddRefed<Layer> BuildLayer(
       nsDisplayListBuilder* aBuilder, LayerManager* aManager,
       const ContainerLayerParameters& aContainerParameters) override;
+  void Paint(nsDisplayListBuilder* aBuilder, gfxContext* aCtx) override;
+  void Paint(nsDisplayListBuilder* aBuilder, gfxContext* aCtx,
+             const mozilla::Maybe<mozilla::gfx::Polygon>& aPolygon);
   bool CreateWebRenderCommands(
       mozilla::wr::DisplayListBuilder& aBuilder,
       mozilla::wr::IpcResourceUpdateQueue& aResources,
@@ -6774,7 +6855,7 @@ class nsDisplayTransform : public nsPaintedDisplayItem {
     // If we were created using a transform-getter, then we don't
     // belong to a transformed frame, and aren't a reference frame
     // for our children.
-    if (!mTransformGetter) {
+    if (!mHasTransformGetter) {
       return mFrame;
     }
     return nsPaintedDisplayItem::ReferenceFrameForChildren();
@@ -7005,11 +7086,15 @@ class nsDisplayTransform : public nsPaintedDisplayItem {
       TransformReferenceBox& aRefBox, const nsPoint& aOrigin,
       float aAppUnitsPerPixel, uint32_t aFlags);
 
+  void Collect3DTransformLeaves(nsTArray<nsDisplayTransform*>& aLeaves);
+  using TransformPolygon = mozilla::layers::BSPPolygon<nsDisplayTransform>;
+  void CollectSorted3DTransformLeaves(nsDisplayListBuilder* aBuilder,
+                                      nsTArray<TransformPolygon>& aLeaves);
+
   mutable mozilla::Maybe<Matrix4x4Flagged> mTransform;
   mutable mozilla::Maybe<Matrix4x4Flagged> mInverseTransform;
   // Accumulated transform of ancestors on the preserves-3d chain.
   mozilla::UniquePtr<Matrix4x4> mTransformPreserves3D;
-  ComputeTransformFunction mTransformGetter;
   RefPtr<AnimatedGeometryRoot> mAnimatedGeometryRootForChildren;
   RefPtr<AnimatedGeometryRoot> mAnimatedGeometryRootForScrollMetadata;
   nsRect mChildrenBuildingRect;
@@ -7030,6 +7115,8 @@ class nsDisplayTransform : public nsPaintedDisplayItem {
   bool mIsTransformSeparator : 1;
   // True if this nsDisplayTransform should get flattened
   bool mShouldFlatten : 1;
+  // True if we have a transform getter.
+  bool mHasTransformGetter : 1;
 };
 
 /* A display item that applies a perspective transformation to a single
@@ -7086,6 +7173,7 @@ class nsDisplayPerspective : public nsPaintedDisplayItem {
   already_AddRefed<Layer> BuildLayer(
       nsDisplayListBuilder* aBuilder, LayerManager* aManager,
       const ContainerLayerParameters& aContainerParameters) override;
+  void Paint(nsDisplayListBuilder* aBuilder, gfxContext* aCtx) override;
 
   RetainedDisplayList* GetSameCoordinateSystemChildren() const override {
     return &mList;
@@ -7255,6 +7343,10 @@ class nsDisplaySVGWrapper : public nsDisplayWrapList {
   LayerState GetLayerState(
       nsDisplayListBuilder* aBuilder, LayerManager* aManager,
       const ContainerLayerParameters& aParameters) override;
+  void Paint(nsDisplayListBuilder* aBuilder, gfxContext* aCtx) override {
+    GetChildren()->Paint(aBuilder, aCtx,
+                         mFrame->PresContext()->AppUnitsPerDevPixel());
+  }
   bool ShouldFlattenAway(nsDisplayListBuilder* aBuilder) override;
   bool CreateWebRenderCommands(
       mozilla::wr::DisplayListBuilder& aBuilder,
@@ -7284,6 +7376,10 @@ class nsDisplayForeignObject : public nsDisplayWrapList {
       nsDisplayListBuilder* aBuilder, LayerManager* aManager,
       const ContainerLayerParameters& aParameters) override;
   virtual bool ShouldFlattenAway(nsDisplayListBuilder* aBuilder) override;
+  void Paint(nsDisplayListBuilder* aBuilder, gfxContext* aCtx) override {
+    GetChildren()->Paint(aBuilder, aCtx,
+                         mFrame->PresContext()->AppUnitsPerDevPixel());
+  }
 
   bool CreateWebRenderCommands(
       mozilla::wr::DisplayListBuilder& aBuilder,
@@ -7293,13 +7389,31 @@ class nsDisplayForeignObject : public nsDisplayWrapList {
       nsDisplayListBuilder* aDisplayListBuilder) override;
 };
 
+/**
+ * A display item to represent a hyperlink.
+ */
+class nsDisplayLink : public nsPaintedDisplayItem {
+ public:
+  nsDisplayLink(nsDisplayListBuilder* aBuilder, nsIFrame* aFrame,
+                const char* aLinkSpec, const nsRect& aRect)
+      : nsPaintedDisplayItem(aBuilder, aFrame),
+        mLinkSpec(aLinkSpec),
+        mRect(aRect) {}
+
+  NS_DISPLAY_DECL_NAME("Link", TYPE_LINK)
+
+  void Paint(nsDisplayListBuilder* aBuilder, gfxContext* aCtx) override;
+
+ private:
+  nsCString mLinkSpec;
+  nsRect mRect;
+};
+
 class FlattenedDisplayListIterator {
  public:
   FlattenedDisplayListIterator(nsDisplayListBuilder* aBuilder,
                                nsDisplayList* aList)
       : FlattenedDisplayListIterator(aBuilder, aList, true) {}
-
-  ~FlattenedDisplayListIterator() { MOZ_ASSERT(!HasNext()); }
 
   virtual bool HasNext() const { return mNext || !mStack.IsEmpty(); }
 
@@ -7409,26 +7523,6 @@ namespace mozilla {
 
 class PaintTelemetry {
  public:
-  enum class Metric {
-    DisplayList,
-    Layerization,
-    FlushRasterization,
-    Rasterization,
-    COUNT,
-  };
-
-  class AutoRecord {
-   public:
-    explicit AutoRecord(Metric aMetric);
-    ~AutoRecord();
-
-    TimeStamp GetStart() const { return mStart; }
-
-   private:
-    Metric mMetric;
-    mozilla::TimeStamp mStart;
-  };
-
   class AutoRecordPaint {
    public:
     AutoRecordPaint();
@@ -7440,8 +7534,6 @@ class PaintTelemetry {
 
  private:
   static uint32_t sPaintLevel;
-  static uint32_t sMetricLevel;
-  static mozilla::EnumeratedArray<Metric, Metric::COUNT, double> sMetrics;
 };
 
 }  // namespace mozilla

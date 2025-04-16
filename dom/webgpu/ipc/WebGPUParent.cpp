@@ -408,6 +408,11 @@ ipc::IPCResult WebGPUParent::RecvCommandBufferDestroy(RawId aSelfId) {
   return IPC_OK();
 }
 
+ipc::IPCResult WebGPUParent::RecvRenderBundleDestroy(RawId aSelfId) {
+  ffi::wgpu_server_render_bundle_drop(mContext, aSelfId);
+  return IPC_OK();
+}
+
 ipc::IPCResult WebGPUParent::RecvQueueSubmit(
     RawId aSelfId, RawId aDeviceId, const nsTArray<RawId>& aCommandBuffers) {
   ErrorBuffer error;
@@ -457,6 +462,15 @@ ipc::IPCResult WebGPUParent::RecvComputePipelineDestroy(RawId aSelfId) {
 
 ipc::IPCResult WebGPUParent::RecvRenderPipelineDestroy(RawId aSelfId) {
   ffi::wgpu_server_render_pipeline_drop(mContext, aSelfId);
+  return IPC_OK();
+}
+
+ipc::IPCResult WebGPUParent::RecvImplicitLayoutDestroy(
+    RawId aImplicitPlId, const nsTArray<RawId>& aImplicitBglIds) {
+  ffi::wgpu_server_pipeline_layout_drop(mContext, aImplicitPlId);
+  for (const auto& id : aImplicitBglIds) {
+    ffi::wgpu_server_bind_group_layout_drop(mContext, id);
+  }
   return IPC_OK();
 }
 
@@ -520,16 +534,23 @@ static void PresentCallback(ffi::WGPUBufferMapAsyncStatus status,
   data->mQueuedBufferIds.pop_back();
   data->mAvailableBufferIds.push_back(bufferId);
   data->mBuffersLock.Unlock();
+  MOZ_LOG(
+      sLogger, LogLevel::Info,
+      ("PresentCallback for buffer %" PRIu64 " status=%d\n", bufferId, status));
   // copy the data
   if (status == ffi::WGPUBufferMapAsyncStatus_Success) {
     const auto bufferSize = data->mRowCount * data->mSourcePitch;
     const uint8_t* ptr = ffi::wgpu_server_buffer_get_mapped_range(
         req->mContext, bufferId, 0, bufferSize);
-    uint8_t* dst = data->mTextureHost->GetBuffer();
-    for (uint32_t row = 0; row < data->mRowCount; ++row) {
-      memcpy(dst, ptr, data->mTargetPitch);
-      dst += data->mTargetPitch;
-      ptr += data->mSourcePitch;
+    if (data->mTextureHost) {
+      uint8_t* dst = data->mTextureHost->GetBuffer();
+      for (uint32_t row = 0; row < data->mRowCount; ++row) {
+        memcpy(dst, ptr, data->mTargetPitch);
+        dst += data->mTargetPitch;
+        ptr += data->mSourcePitch;
+      }
+    } else {
+      NS_WARNING("WebGPU present skipped: the swapchain is resized!");
     }
     wgpu_server_buffer_unmap(req->mContext, bufferId);
   } else {
@@ -578,10 +599,13 @@ ipc::IPCResult WebGPUParent::RecvSwapChainPresent(
   } else {
     bufferId = 0;
   }
+
   if (bufferId) {
     data->mQueuedBufferIds.insert(data->mQueuedBufferIds.begin(), bufferId);
   }
   data->mBuffersLock.Unlock();
+  MOZ_LOG(sLogger, LogLevel::Info,
+          ("RecvSwapChainPresent with buffer %" PRIu64 "\n", bufferId));
   if (!bufferId) {
     // TODO: add a warning - no buffer are available!
     return IPC_OK();
@@ -696,16 +720,9 @@ ipc::IPCResult WebGPUParent::RecvShutdown() {
 
 ipc::IPCResult WebGPUParent::RecvDeviceAction(RawId aSelf,
                                               const ipc::ByteBuf& aByteBuf) {
-  ipc::ByteBuf byteBuf;
   ErrorBuffer error;
   ffi::wgpu_server_device_action(mContext, aSelf, ToFFI(&aByteBuf),
-                                 ToFFI(&byteBuf), error.ToFFI());
-
-  if (byteBuf.mData) {
-    if (!SendDropAction(std::move(byteBuf))) {
-      NS_WARNING("Unable to set a drop action!");
-    }
-  }
+                                 error.ToFFI());
 
   error.CheckAndForward(this, aSelf);
   return IPC_OK();

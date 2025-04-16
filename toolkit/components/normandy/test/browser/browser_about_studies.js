@@ -12,7 +12,12 @@ const { ExperimentFakes } = ChromeUtils.import(
 const { ExperimentManager } = ChromeUtils.import(
   "resource://nimbus/lib/ExperimentManager.jsm"
 );
-
+const { RemoteSettingsExperimentLoader } = ChromeUtils.import(
+  "resource://nimbus/lib/RemoteSettingsExperimentLoader.jsm"
+);
+const { PromiseUtils } = ChromeUtils.import(
+  "resource://gre/modules/PromiseUtils.jsm"
+);
 const { NormandyTestUtils } = ChromeUtils.import(
   "resource://testing-common/NormandyTestUtils.jsm"
 );
@@ -730,4 +735,86 @@ add_task(async function test_nimbus_backwards_compatibility() {
   // Cleanup for multiple test runs
   ExperimentManager.store._deleteForTests(recipe.slug);
   Assert.equal(ExperimentManager.store.getAll().length, 0, "Cleanup done");
+});
+
+add_task(async function test_getStudiesEnabled() {
+  RecipeRunner.initializedPromise = PromiseUtils.defer();
+  let promise = AboutPages.aboutStudies.getStudiesEnabled();
+
+  RecipeRunner.initializedPromise.resolve();
+  let result = await promise;
+
+  Assert.equal(
+    result,
+    Services.prefs.getBoolPref("app.shield.optoutstudies.enabled"),
+    "about:studies is enabled if the pref is enabled"
+  );
+});
+
+add_task(async function test_forceEnroll() {
+  let sandbox = sinon.createSandbox();
+
+  // This simulates a succesful enrollment
+  let stub = sandbox.stub(RemoteSettingsExperimentLoader, "optInToExperiment");
+
+  await BrowserTestUtils.withNewTab(
+    {
+      gBrowser,
+      url:
+        "about:studies?optin_collection=collection123&optin_branch=branch123&optin_slug=slug123",
+    },
+    async browser => {
+      await SpecialPowers.spawn(browser, [], async () => {
+        await ContentTaskUtils.waitForCondition(
+          () => content.document.querySelector(".opt-in-box"),
+          "Should show the opt in message"
+        );
+
+        Assert.equal(
+          content.document
+            .querySelector(".opt-in-box")
+            .classList.contains("opt-in-error"),
+          false,
+          "should not have an error class since the enrollment was successful"
+        );
+
+        return true;
+      });
+    }
+  );
+
+  // Simulates a problem force enrolling
+  stub.rejects(new Error("Testing error"));
+  await BrowserTestUtils.withNewTab(
+    {
+      gBrowser,
+      url:
+        "about:studies?optin_collection=collection123&optin_branch=branch123&optin_slug=slug123",
+    },
+    async browser => {
+      await SpecialPowers.spawn(browser, [], async () => {
+        await ContentTaskUtils.waitForCondition(
+          () => content.document.querySelector(".opt-in-box"),
+          "Should show the opt in message"
+        );
+
+        Assert.ok(
+          content.document
+            .querySelector(".opt-in-box")
+            .classList.contains("opt-in-error"),
+          "should have an error class since the enrollment rejected"
+        );
+
+        Assert.equal(
+          content.document.querySelector(".opt-in-box").textContent,
+          "Testing error",
+          "should render the error"
+        );
+
+        return true;
+      });
+    }
+  );
+
+  sandbox.restore();
 });

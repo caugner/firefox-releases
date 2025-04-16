@@ -116,7 +116,6 @@ namespace dom {
 struct WebProgressData
 {
   MaybeDiscardedBrowsingContext browsingContext;
-  bool isLoadingDocument;
   uint32_t loadType;
 };
 
@@ -218,12 +217,6 @@ parent:
      * Create a new Vsync connection for our associated root widget
      */
     async PVsync();
-
-    /**
-     * Sends an NS_NATIVE_CHILD_OF_SHAREABLE_WINDOW to be adopted by the
-     * widget's shareable window on the chrome side. Only used on Windows.
-     */
-    async SetNativeChildOfShareableWindow(uintptr_t childWindow);
 
     /**
      * When content moves focus from a native plugin window that's a child
@@ -395,8 +388,10 @@ parent:
      *   Width of the image.
      * @param height
      *   Height of the image.
-     * @param resolution
-     *   Resolution of the image in dppx units.
+     * @param resolutionX
+     *   Resolution of the image X axis in dppx units.
+     * @param resolutionY
+     *   Resolution of the image Y axis in dppx units.
      * @param stride
      *   Stride used in the image data.
      * @param format
@@ -413,7 +408,8 @@ parent:
                     bool hasCustomCursor,
                     nsCString customCursorData,
                     uint32_t width, uint32_t height,
-                    float resolution, uint32_t stride, SurfaceFormat format,
+                    float resolutionX, float resolutionY,
+                    uint32_t stride, SurfaceFormat format,
                     uint32_t hotspotX, uint32_t hotspotY, bool force);
 
     /**
@@ -456,15 +452,6 @@ parent:
      * mFlags.mCanTriggerSwipe set on it.
      */
     async RespondStartSwipeEvent(uint64_t aInputBlockId, bool aStartSwipe);
-
-    /**
-     * Brings up the auth prompt dialog.
-     * Called when this is the PBrowserParent for a nested remote iframe.
-     * aCallbackId corresponds to an nsIAuthPromptCallback that lives in the
-     * root process.  It will be passed back to the root process with either the
-     * OnAuthAvailable or OnAuthCancelled message.
-     */
-    async AsyncAuthPrompt(nsCString uri, nsString realm, uint64_t aCallbackId);
 
     /**
      * Look up dictionary by selected word for OSX
@@ -538,6 +525,9 @@ parent:
     async SynthesizeNativeTouchpadDoubleTap(LayoutDeviceIntPoint aPoint,
                                             uint32_t aModifierFlags);
 
+    async LockNativePointer();
+    async UnlockNativePointer();
+
     async AccessKeyNotHandled(WidgetKeyboardEvent event);
 
     async RegisterProtocolHandler(nsString scheme, nsIURI handlerURI, nsString title,
@@ -572,8 +562,6 @@ parent:
     async NavigationFinished();
 
     async SessionStoreUpdate(nsCString? aDocShellCaps, bool? aPrivatedMode,
-                             nsCString[] aOrigins, nsString[] aKeys,
-                             nsString[] aValues, bool aIsFullStorage,
                              bool aNeedCollectSHistory,
                              bool aIsFinal, uint32_t aEpoch);
 
@@ -644,6 +632,7 @@ parent:
     [Nested=inside_sync] sync DispatchWheelEvent(WidgetWheelEvent event);
     [Nested=inside_sync] sync DispatchMouseEvent(WidgetMouseEvent event);
     [Nested=inside_sync] sync DispatchKeyboardEvent(WidgetKeyboardEvent event);
+    [Nested=inside_sync] sync DispatchTouchEvent(WidgetTouchEvent event);
 
     async InvokeDragSession(IPCDataTransfer[] transfers, uint32_t action,
                             Shmem? visualData,
@@ -707,6 +696,9 @@ child:
     async CompositorOptionsChanged(CompositorOptions newOptions);
 
     async LoadURL(nsDocShellLoadState loadState, ParentShowInfo info);
+
+    async CreateAboutBlankContentViewer(nsIPrincipal principal,
+                                        nsIPrincipal partitionedPrincipal);
 
     async ResumeLoad(uint64_t pendingSwitchID, ParentShowInfo info);
 
@@ -866,6 +858,12 @@ child:
     async NormalPrioritySelectionEvent(WidgetSelectionEvent event);
 
     /**
+     * Dispatch eContentCommandInsertText event in the remote process.
+     */
+    [Priority=input] async InsertText(nsString aStringToInsert);
+    async NormalPriorityInsertText(nsString aStringToInsert);
+
+    /**
      * Call PasteTransferable via a controller on the content process
      * to handle the command content event, "pasteTransferable".
      */
@@ -1001,12 +999,6 @@ child:
      * Tell the BrowserChild to allow scripts in the docshell to close the window.
      */
     async AllowScriptsToClose();
-
-    /**
-     * Pass the current handle for the current native widget to the content
-     * process, so it can be used by PuppetWidget.
-     */
-    async SetWidgetNativeData(WindowsHandle aHandle);
 
     async WillChangeProcess();
 

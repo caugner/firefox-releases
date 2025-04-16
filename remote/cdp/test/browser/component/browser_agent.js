@@ -22,7 +22,6 @@ function add_agent_task(originalTask) {
       await RemoteAgent.close();
       await originalTask();
     } finally {
-      Preferences.reset("remote.enabled");
       Preferences.reset("remote.force-local");
     }
   };
@@ -55,8 +54,13 @@ add_agent_task(async function listen() {
 
   let boundURL;
   function observer(subject, topic, data) {
+    const prefix = "DevTools listening on ";
+    if (!data.startsWith(prefix)) {
+      return;
+    }
+
     Services.obs.removeObserver(observer, topic);
-    boundURL = Services.io.newURI(data);
+    boundURL = Services.io.newURI(data.split(prefix)[1]);
   }
   Services.obs.addObserver(observer, "remote-listening");
 
@@ -67,17 +71,6 @@ add_agent_task(async function listen() {
     port,
     `expected default port ${port}, got ${boundURL.port}`
   );
-});
-
-add_agent_task(async function listenWhenDisabled() {
-  Preferences.set("remote.enabled", false);
-  try {
-    await RemoteAgent.listen(URL);
-    fail("listen() did not return exception");
-  } catch (e) {
-    is(e.result, Cr.NS_ERROR_NOT_AVAILABLE);
-    is(e.message, "Disabled by preference");
-  }
 });
 
 // TODO(ato): https://bugzil.la/1590829

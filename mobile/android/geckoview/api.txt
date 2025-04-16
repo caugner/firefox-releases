@@ -621,7 +621,7 @@ package org.mozilla.geckoview {
     method @NonNull @UiThread public static synchronized GeckoRuntime getDefault(@NonNull Context);
     method @Nullable @UiThread public GeckoRuntime.Delegate getDelegate();
     method @Deprecated @DeprecationSchedule(version=93,id="login-storage") @Nullable @UiThread public Autocomplete.LoginStorageDelegate getLoginStorageDelegate();
-    method @Nullable @UiThread public File getProfileDir();
+    method @Deprecated @DeprecationSchedule(id="get-profile-dir",version=93) @Nullable @UiThread public File getProfileDir();
     method @NonNull @UiThread public ProfilerController getProfilerController();
     method @AnyThread @NonNull public GeckoRuntimeSettings getSettings();
     method @NonNull @UiThread public StorageController getStorageController();
@@ -673,6 +673,7 @@ package org.mozilla.geckoview {
     method @NonNull public Bundle getExtras();
     method public boolean getFontInflationEnabled();
     method public float getFontSizeFactor();
+    method public boolean getForceEnableAccessibility();
     method public boolean getForceUserScalableEnabled();
     method public int getGlMsaaLevel();
     method public boolean getInputAutoZoomEnabled();
@@ -696,6 +697,7 @@ package org.mozilla.geckoview {
     method @NonNull public GeckoRuntimeSettings setEnterpriseRootsEnabled(boolean);
     method @NonNull public GeckoRuntimeSettings setFontInflationEnabled(boolean);
     method @NonNull public GeckoRuntimeSettings setFontSizeFactor(float);
+    method @NonNull public GeckoRuntimeSettings setForceEnableAccessibility(boolean);
     method @NonNull public GeckoRuntimeSettings setForceUserScalableEnabled(boolean);
     method @NonNull public GeckoRuntimeSettings setGlMsaaLevel(int);
     method @NonNull public GeckoRuntimeSettings setInputAutoZoomEnabled(boolean);
@@ -1376,7 +1378,6 @@ package org.mozilla.geckoview {
     method @NonNull public PanZoomController getPanZoomController();
     method @AnyThread @Nullable public GeckoSession getSession();
     method @NonNull public GeckoResult<PanZoomController.InputResultDetail> onTouchEventForDetailResult(@NonNull MotionEvent);
-    method @Deprecated @DeprecationSchedule(version=90,id="on-touch-event-for-result") @NonNull public GeckoResult<Integer> onTouchEventForResult(@NonNull MotionEvent);
     method @Nullable @UiThread public GeckoSession releaseSession();
     method public void setAutofillEnabled(boolean);
     method public void setDynamicToolbarMaxHeight(int);
@@ -1563,7 +1564,6 @@ package org.mozilla.geckoview {
     method public void onMouseEvent(@NonNull MotionEvent);
     method public void onTouchEvent(@NonNull MotionEvent);
     method @NonNull public GeckoResult<PanZoomController.InputResultDetail> onTouchEventForDetailResult(@NonNull MotionEvent);
-    method @Deprecated @DeprecationSchedule(version=90,id="on-touch-event-for-result") @NonNull public GeckoResult<Integer> onTouchEventForResult(@NonNull MotionEvent);
     method @UiThread public void scrollBy(@NonNull ScreenLength, @NonNull ScreenLength);
     method @UiThread public void scrollBy(@NonNull ScreenLength, @NonNull ScreenLength, int);
     method @UiThread public void scrollTo(@NonNull ScreenLength, @NonNull ScreenLength);
@@ -2050,11 +2050,13 @@ package org.mozilla.geckoview {
     field @Nullable public final String imageUrl;
     field @Nullable public final String lang;
     field @NonNull public final boolean requireInteraction;
+    field public final boolean silent;
     field @Nullable public final String source;
     field @NonNull public final String tag;
     field @Nullable public final String text;
     field @Nullable public final String textDirection;
     field @Nullable public final String title;
+    field @NonNull public final int[] vibrate;
   }
 
   public interface WebNotificationDelegate {

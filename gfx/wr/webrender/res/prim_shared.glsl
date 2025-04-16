@@ -32,7 +32,7 @@ varying vec2 vClipMaskUv;
 #define COLOR_MODE_SUBPX_BG_PASS1       4
 #define COLOR_MODE_SUBPX_BG_PASS2       5
 #define COLOR_MODE_SUBPX_DUAL_SOURCE    6
-#define COLOR_MODE_BITMAP               7
+#define COLOR_MODE_BITMAP_SHADOW        7
 #define COLOR_MODE_COLOR_BITMAP         8
 #define COLOR_MODE_IMAGE                9
 #define COLOR_MODE_MULTIPLY_DUAL_SOURCE 10
@@ -182,8 +182,11 @@ VertexInfo write_transform_vertex(RectWithSize local_segment_rect,
     prim_rect.p0 = clamp(prim_rect.p0, clip_rect.p0, clip_rect.p1);
     prim_rect.p1 = clamp(prim_rect.p1, clip_rect.p0, clip_rect.p1);
 
-    // Select between the segment and prim edges based on edge mask
-    bvec4 clip_edge_mask = notEqual(edge_flags & ivec4(1, 2, 4, 8), ivec4(0));
+    // Select between the segment and prim edges based on edge mask.
+    // We must perform the bitwise-and for each component individually, as a
+    // vector bitwise-and followed by conversion to bvec4 causes shader
+    // compilation crashes on some Adreno devices. See bug 1715746.
+    bvec4 clip_edge_mask = bvec4(bool(edge_flags & 1), bool(edge_flags & 2), bool(edge_flags & 4), bool(edge_flags & 8));
     init_transform_vs(mix(
         vec4(prim_rect.p0, prim_rect.p1),
         vec4(segment_rect.p0, segment_rect.p1),

@@ -575,7 +575,8 @@ class PresShell final : public nsStubDocumentObserver,
    */
   MOZ_CAN_RUN_SCRIPT
   bool ScrollFrameRectIntoView(nsIFrame* aFrame, const nsRect& aRect,
-                               ScrollAxis aVertical, ScrollAxis aHorizontal,
+                               const nsMargin& aMargin, ScrollAxis aVertical,
+                               ScrollAxis aHorizontal,
                                ScrollFlags aScrollFlags);
 
   /**
@@ -1239,6 +1240,10 @@ class PresShell final : public nsStubDocumentObserver,
    */
   nsresult SetResolutionAndScaleTo(float aResolution,
                                    ResolutionChangeOrigin aOrigin);
+
+  ResolutionChangeOrigin GetLastResolutionChangeOrigin() {
+    return mLastResolutionChangeOrigin;
+  }
 
   // Widget notificiations
   void WindowSizeMoveDone();
@@ -2945,6 +2950,7 @@ class PresShell final : public nsStubDocumentObserver,
   // Used to force allocation and rendering of proportionally more or
   // less pixels in both dimensions.
   Maybe<float> mResolution;
+  ResolutionChangeOrigin mLastResolutionChangeOrigin;
 
   TimeStamp mLoadBegin;  // used to time loads
 

@@ -875,6 +875,9 @@ nsresult EventStateManager::PreHandleEvent(nsPresContext* aPresContext,
     case eContentCommandLookUpDictionary:
       DoContentCommandEvent(aEvent->AsContentCommandEvent());
       break;
+    case eContentCommandInsertText:
+      DoContentCommandInsertTextEvent(aEvent->AsContentCommandEvent());
+      break;
     case eContentCommandScroll:
       DoContentCommandScrollEvent(aEvent->AsContentCommandEvent());
       break;
@@ -2362,11 +2365,11 @@ void EventStateManager::DoScrollHistory(int32_t direction) {
       // This is doing user-initiated history traversal, hence we want
       // to require that history entries we navigate to have user interaction.
       if (direction > 0)
-        webNav->GoBack(
-            StaticPrefs::browser_navigation_requireUserInteraction());
+        webNav->GoBack(StaticPrefs::browser_navigation_requireUserInteraction(),
+                       true);
       else
         webNav->GoForward(
-            StaticPrefs::browser_navigation_requireUserInteraction());
+            StaticPrefs::browser_navigation_requireUserInteraction(), true);
     }
   }
 }
@@ -2598,11 +2601,6 @@ nsIFrame* EventStateManager::ComputeScrollTargetAndMayAdjustWheelEvent(
 nsIFrame* EventStateManager::ComputeScrollTargetAndMayAdjustWheelEvent(
     nsIFrame* aTargetFrame, double aDirectionX, double aDirectionY,
     WidgetWheelEvent* aEvent, ComputeScrollTargetOptions aOptions) {
-  if ((aOptions & INCLUDE_PLUGIN_AS_TARGET) &&
-      !StaticPrefs::plugin_mousewheel_enabled()) {
-    aOptions = RemovePluginFromTarget(aOptions);
-  }
-
   bool isAutoDir = false;
   bool honoursRoot = false;
   if (MAY_BE_ADJUSTED_BY_AUTO_DIR & aOptions) {
@@ -3906,7 +3904,7 @@ void EventStateManager::ClearFrameRefs(nsIFrame* aFrame) {
 struct CursorImage {
   gfx::IntPoint mHotspot;
   nsCOMPtr<imgIContainer> mContainer;
-  float mResolution = 1.0f;
+  ImageResolution mResolution;
   bool mEarlierCursorLoading = false;
 };
 
@@ -3934,10 +3932,7 @@ static bool ShouldBlockCustomCursor(nsPresContext* aPresContext,
   int32_t height = 0;
   aCursor.mContainer->GetWidth(&width);
   aCursor.mContainer->GetHeight(&height);
-  if (aCursor.mResolution != 0.0f && aCursor.mResolution != 1.0f) {
-    width = std::round(width / aCursor.mResolution);
-    height = std::round(height / aCursor.mResolution);
-  }
+  aCursor.mResolution.ApplyTo(width, height);
 
   int32_t maxSize = StaticPrefs::layout_cursor_block_max_size();
 
@@ -4010,8 +4005,7 @@ static CursorImage ComputeCustomCursor(nsPresContext* aPresContext,
     MOZ_ASSERT(image.image.IsImageRequestType(),
                "Cursor image should only parse url() types");
     uint32_t status;
-    auto [finalImage, resolution] = image.image.FinalImageAndResolution();
-    imgRequestProxy* req = finalImage->GetImageRequest();
+    imgRequestProxy* req = image.image.GetImageRequest();
     if (!req || NS_FAILED(req->GetImageStatus(&status))) {
       continue;
     }
@@ -4033,14 +4027,15 @@ static CursorImage ComputeCustomCursor(nsPresContext* aPresContext,
         image.has_hotspot ? Some(gfx::Point{image.hotspot_x, image.hotspot_y})
                           : Nothing();
     gfx::IntPoint hotspot = ComputeHotspot(container, specifiedHotspot);
-    CursorImage result{hotspot, std::move(container), resolution, loading};
+    CursorImage result{hotspot, std::move(container),
+                       image.image.GetResolution(), loading};
     if (ShouldBlockCustomCursor(aPresContext, aEvent, result)) {
       continue;
     }
     // This is the one we want!
     return result;
   }
-  return {{}, nullptr, 1.0f, loading};
+  return {{}, nullptr, {}, loading};
 }
 
 void EventStateManager::UpdateCursor(nsPresContext* aPresContext,
@@ -4053,7 +4048,7 @@ void EventStateManager::UpdateCursor(nsPresContext* aPresContext,
 
   auto cursor = StyleCursorKind::Default;
   nsCOMPtr<imgIContainer> container;
-  float resolution = 1.0f;
+  ImageResolution resolution;
   Maybe<gfx::IntPoint> hotspot;
 
   // If cursor is locked just use the locked one
@@ -4138,7 +4133,7 @@ void EventStateManager::ClearCachedWidgetCursor(nsIFrame* aTargetFrame) {
 
 nsresult EventStateManager::SetCursor(StyleCursorKind aCursor,
                                       imgIContainer* aContainer,
-                                      float aResolution,
+                                      const ImageResolution& aResolution,
                                       const Maybe<gfx::IntPoint>& aHotspot,
                                       nsIWidget* aWidget, bool aLockCursor) {
   EnsureDocument(mPresContext);
@@ -4816,7 +4811,15 @@ void EventStateManager::SetPointerLock(nsIWidget* aWidget,
     if (dragService) {
       dragService->Suppress();
     }
+
+    // Activate native pointer lock on platforms where it is required (Wayland)
+    aWidget->LockNativePointer();
   } else {
+    if (aWidget) {
+      // Deactivate native pointer lock on platforms where it is required
+      aWidget->UnlockNativePointer();
+    }
+
     // Unlocking, so return pointer to the original position by firing a
     // synthetic mouse event. We first reset sLastRefPoint to its
     // pre-pointerlock position, so that the synthetic mouse event reports
@@ -5923,6 +5926,43 @@ nsresult EventStateManager::DoContentCommandEvent(
   return NS_OK;
 }
 
+nsresult EventStateManager::DoContentCommandInsertTextEvent(
+    WidgetContentCommandEvent* aEvent) {
+  MOZ_ASSERT(aEvent);
+  MOZ_ASSERT(aEvent->mMessage == eContentCommandInsertText);
+  MOZ_DIAGNOSTIC_ASSERT(aEvent->mString.isSome());
+  MOZ_DIAGNOSTIC_ASSERT(!aEvent->mString.ref().IsEmpty());
+
+  aEvent->mIsEnabled = false;
+  aEvent->mSucceeded = false;
+
+  NS_ENSURE_TRUE(mPresContext, NS_ERROR_NOT_AVAILABLE);
+
+  if (XRE_IsParentProcess()) {
+    // Handle it in focused content process if there is.
+    if (BrowserParent* remote = BrowserParent::GetFocused()) {
+      remote->SendInsertText(aEvent->mString.ref());
+      aEvent->mIsEnabled = true;  // XXX it can be a lie...
+      aEvent->mSucceeded = true;
+      return NS_OK;
+    }
+  }
+
+  // If there is no active editor in this process, we should treat the command
+  // is disabled.
+  RefPtr<TextEditor> activeEditor =
+      nsContentUtils::GetActiveEditor(mPresContext);
+  if (!activeEditor) {
+    aEvent->mSucceeded = true;
+    return NS_OK;
+  }
+
+  nsresult rv = activeEditor->InsertTextAsAction(aEvent->mString.ref());
+  aEvent->mIsEnabled = rv != NS_SUCCESS_DOM_NO_OPERATION;
+  aEvent->mSucceeded = NS_SUCCEEDED(rv);
+  return NS_OK;
+}
+
 nsresult EventStateManager::DoContentCommandScrollEvent(
     WidgetContentCommandEvent* aEvent) {
   NS_ENSURE_TRUE(mPresContext, NS_ERROR_NOT_AVAILABLE);
@@ -6046,6 +6086,7 @@ void EventStateManager::DeltaAccumulator::InitLineOrPageDelta(
   // If it's handling neither a device that does not provide line or page deltas
   // nor delta values multiplied by prefs, we must not modify lineOrPageDelta
   // values.
+  // TODO(emilio): Does this care about overridden scroll speed?
   if (!mIsNoLineOrPageDeltaDevice &&
       !EventStateManager::WheelPrefs::GetInstance()
            ->NeedToComputeLineOrPageDelta(aEvent)) {
@@ -6105,13 +6146,7 @@ EventStateManager::DeltaAccumulator::ComputeScrollAmountForDefaultAction(
     WidgetWheelEvent* aEvent, const nsIntSize& aScrollAmountInDevPixels) {
   MOZ_ASSERT(aEvent);
 
-  // If the wheel event is line scroll and the delta value is computed from
-  // system settings, allow to override the system speed.
-  bool allowScrollSpeedOverride =
-      (!aEvent->mCustomizedByUserPrefs &&
-       aEvent->mDeltaMode == WheelEvent_Binding::DOM_DELTA_LINE);
-  DeltaValues acceleratedDelta =
-      WheelTransaction::AccelerateWheelDelta(aEvent, allowScrollSpeedOverride);
+  DeltaValues acceleratedDelta = WheelTransaction::AccelerateWheelDelta(aEvent);
 
   nsIntPoint result(0, 0);
   if (aEvent->mDeltaMode == WheelEvent_Binding::DOM_DELTA_PIXEL) {

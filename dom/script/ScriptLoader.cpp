@@ -652,18 +652,19 @@ nsresult ScriptLoader::CreateModuleScript(ModuleLoadRequest* aRequest) {
   {
     JSContext* cx = aes.cx();
     JS::Rooted<JSObject*> module(cx);
+    JS::Rooted<JSObject*> global(cx, globalObject->GetGlobalJSObject());
 
-    if (aRequest->mWasCompiledOMT) {
-      module = JS::FinishOffThreadModule(cx, aRequest->mOffThreadToken);
-      aRequest->mOffThreadToken = nullptr;
-      rv = module ? NS_OK : NS_ERROR_FAILURE;
-    } else {
-      JS::Rooted<JSObject*> global(cx, globalObject->GetGlobalJSObject());
+    JS::CompileOptions options(cx);
+    JS::RootedScript introductionScript(cx);
+    rv = FillCompileOptionsForRequest(aes, aRequest, global, &options,
+                                      &introductionScript);
 
-      JS::CompileOptions options(cx);
-      rv = FillCompileOptionsForRequest(aes, aRequest, global, &options);
-
-      if (NS_SUCCEEDED(rv)) {
+    if (NS_SUCCEEDED(rv)) {
+      if (aRequest->mWasCompiledOMT) {
+        module = JS::FinishOffThreadModule(cx, aRequest->mOffThreadToken);
+        aRequest->mOffThreadToken = nullptr;
+        rv = module ? NS_OK : NS_ERROR_FAILURE;
+      } else {
         MaybeSourceText maybeSource;
         rv = GetScriptSource(cx, aRequest, &maybeSource);
         if (NS_SUCCEEDED(rv)) {
@@ -679,6 +680,15 @@ nsresult ScriptLoader::CreateModuleScript(ModuleLoadRequest* aRequest) {
     }
 
     MOZ_ASSERT(NS_SUCCEEDED(rv) == (module != nullptr));
+
+    if (module) {
+      JS::RootedValue privateValue(cx);
+      JS::RootedScript moduleScript(cx, JS::GetModuleScript(module));
+      if (!JS::UpdateDebugMetadata(cx, moduleScript, options, privateValue,
+                                   nullptr, introductionScript, nullptr)) {
+        return NS_ERROR_OUT_OF_MEMORY;
+      }
+    }
 
     RefPtr<ModuleScript> moduleScript =
         new ModuleScript(aRequest->mFetchOptions, aRequest->mBaseURL);
@@ -2542,7 +2552,11 @@ nsresult ScriptLoader::AttemptAsyncScriptCompile(ScriptLoadRequest* aRequest,
   JS::Rooted<JSObject*> global(cx, globalObject->GetGlobalJSObject());
   JS::CompileOptions options(cx);
 
-  nsresult rv = FillCompileOptionsForRequest(jsapi, aRequest, global, &options);
+  // Introduction script will actually be computed and set when the script is
+  // collected from offthread
+  JS::RootedScript dummyIntroductionScript(cx);
+  nsresult rv = FillCompileOptionsForRequest(jsapi, aRequest, global, &options,
+                                             &dummyIntroductionScript);
   if (NS_WARN_IF(NS_FAILED(rv))) {
     return rv;
   }
@@ -2908,7 +2922,8 @@ already_AddRefed<nsIScriptGlobalObject> ScriptLoader::GetScriptGlobalObject(
 
 nsresult ScriptLoader::FillCompileOptionsForRequest(
     const mozilla::dom::AutoJSAPI& jsapi, ScriptLoadRequest* aRequest,
-    JS::Handle<JSObject*> aScopeChain, JS::CompileOptions* aOptions) {
+    JS::Handle<JSObject*> aScopeChain, JS::CompileOptions* aOptions,
+    JS::MutableHandle<JSScript*> aIntroductionScript) {
   // It's very important to use aRequest->mURI, not the final URI of the channel
   // aRequest ended up getting script data from, as the script filename.
   nsresult rv = aRequest->mURI->GetSpec(aRequest->mURL);
@@ -2931,7 +2946,8 @@ nsresult ScriptLoader::FillCompileOptionsForRequest(
   } else {
     introductionType = "injectedScript";
   }
-  aOptions->setIntroductionInfoToCaller(jsapi.cx(), introductionType);
+  aOptions->setIntroductionInfoToCaller(jsapi.cx(), introductionType,
+                                        aIntroductionScript);
   aOptions->setFileAndLine(aRequest->mURL.get(), aRequest->mLineNo);
   aOptions->setIsRunOnce(true);
   aOptions->setNoScriptRval(true);
@@ -2947,6 +2963,8 @@ nsresult ScriptLoader::FillCompileOptionsForRequest(
   if (aRequest->IsModuleRequest()) {
     aOptions->hideScriptFromDebugger = true;
   }
+
+  aOptions->setdeferDebugMetadata(true);
 
   return NS_OK;
 }
@@ -3123,8 +3141,15 @@ nsresult ScriptLoader::EvaluateScript(ScriptLoadRequest* aRequest) {
   nsAutoCString profilerLabelString;
   GetProfilerLabelForRequest(aRequest, profilerLabelString);
 
+  // Update our current script
+  // This must be destroyed after destroying nsAutoMicroTask, see:
+  // https://bugzilla.mozilla.org/show_bug.cgi?id=1620505#c4
+  nsIScriptElement* currentScript =
+      aRequest->IsModuleRequest() ? nullptr : aRequest->GetScriptElement();
+  AutoCurrentScriptUpdater scriptUpdater(this, currentScript);
+
   // New script entry point required, due to the "Create a script" sub-step of
-  // http://www.whatwg.org/specs/web-apps/current-work/#execute-the-script-block
+  // http://html.spec.whatwg.org/multipage/#execute-the-script-block
   nsAutoMicroTask mt;
   AutoEntryScript aes(globalObject, profilerLabelString.get(), true);
   JSContext* cx = aes.cx();
@@ -3233,22 +3258,21 @@ nsresult ScriptLoader::EvaluateScript(ScriptLoadRequest* aRequest) {
                           "scriptloader_no_encode");
       aRequest->mCacheInfo = nullptr;
     } else {
-      // Update our current script.
-      AutoCurrentScriptUpdater scriptUpdater(this,
-                                             aRequest->GetScriptElement());
-
       // Create a ClassicScript object and associate it with the JSScript.
       RefPtr<ClassicScript> classicScript =
           new ClassicScript(aRequest->mFetchOptions, aRequest->mBaseURL);
+      JS::RootedValue classicScriptValue(cx, JS::PrivateValue(classicScript));
 
       JS::CompileOptions options(cx);
-      rv = FillCompileOptionsForRequest(aes, aRequest, global, &options);
-      options.setPrivateValue(JS::PrivateValue(classicScript));
+      JS::RootedScript introductionScript(cx);
+      rv = FillCompileOptionsForRequest(aes, aRequest, global, &options,
+                                        &introductionScript);
 
       if (NS_SUCCEEDED(rv)) {
         if (aRequest->IsBytecode()) {
           TRACE_FOR_TEST(aRequest->GetScriptElement(), "scriptloader_execute");
-          JSExecutionContext exec(cx, global);
+          JSExecutionContext exec(cx, global, options, classicScriptValue,
+                                  introductionScript);
           if (aRequest->mOffThreadToken) {
             LOG(("ScriptLoadRequest (%p): Decode Bytecode & Join and Execute",
                  aRequest));
@@ -3260,7 +3284,7 @@ nsresult ScriptLoader::EvaluateScript(ScriptLoadRequest* aRequest) {
                                       MarkerInnerWindowIdFromDocShell(docShell),
                                       profilerLabelString);
 
-            rv = exec.Decode(options, aRequest->mScriptBytecode,
+            rv = exec.Decode(aRequest->mScriptBytecode,
                              aRequest->mBytecodeOffset);
           }
 
@@ -3280,7 +3304,8 @@ nsresult ScriptLoader::EvaluateScript(ScriptLoadRequest* aRequest) {
           bool encodeBytecode = ShouldCacheBytecode(aRequest);
 
           {
-            JSExecutionContext exec(cx, global);
+            JSExecutionContext exec(cx, global, options, classicScriptValue,
+                                    introductionScript);
             exec.SetEncodeBytecode(encodeBytecode);
             TRACE_FOR_TEST(aRequest->GetScriptElement(),
                            "scriptloader_execute");
@@ -3304,12 +3329,12 @@ nsresult ScriptLoader::EvaluateScript(ScriptLoadRequest* aRequest) {
                     MarkerInnerWindowIdFromDocShell(docShell),
                     profilerLabelString);
 
+                TimeStamp startTime = TimeStamp::Now();
                 rv =
                     maybeSource.constructed<SourceText<char16_t>>()
-                        ? exec.Compile(options,
-                                       maybeSource.ref<SourceText<char16_t>>())
-                        : exec.Compile(options,
-                                       maybeSource.ref<SourceText<Utf8Unit>>());
+                        ? exec.Compile(maybeSource.ref<SourceText<char16_t>>())
+                        : exec.Compile(maybeSource.ref<SourceText<Utf8Unit>>());
+                mMainThreadParseTime += TimeStamp::Now() - startTime;
               }
             }
 
@@ -3373,6 +3398,12 @@ void ScriptLoader::RegisterForBytecodeEncoding(ScriptLoadRequest* aRequest) {
 void ScriptLoader::LoadEventFired() {
   mLoadEventFired = true;
   MaybeTriggerBytecodeEncoding();
+
+  if (!mMainThreadParseTime.IsZero()) {
+    Telemetry::Accumulate(
+        Telemetry::JS_PAGELOAD_PARSE_MS,
+        static_cast<uint32_t>(mMainThreadParseTime.ToMilliseconds()));
+  }
 }
 
 void ScriptLoader::Destroy() {
@@ -3454,8 +3485,6 @@ void ScriptLoader::EncodeBytecode() {
     return;
   }
 
-  TimeStamp startTime = TimeStamp::Now();
-
   AutoEntryScript aes(globalObject, "encode bytecode", true);
   RefPtr<ScriptLoadRequest> request;
   while (!mBytecodeEncodingQueue.isEmpty()) {
@@ -3466,10 +3495,6 @@ void ScriptLoader::EncodeBytecode() {
     request->mScriptBytecode.clearAndFree();
     request->DropBytecodeCacheReferences();
   }
-
-  TimeDuration delta = TimeStamp::Now() - startTime;
-  Telemetry::Accumulate(Telemetry::JS_BYTECODE_CACHING_TIME,
-                        static_cast<uint32_t>(delta.ToMilliseconds()));
 }
 
 void ScriptLoader::EncodeRequestBytecode(JSContext* aCx,

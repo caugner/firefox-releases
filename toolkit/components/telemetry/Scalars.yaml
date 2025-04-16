@@ -1866,9 +1866,10 @@ pictureinpicture:
   most_concurrent_players:
     bug_numbers:
       - 1677107
+      - 1706843
     description:
       The most concurrent Picture-in-Picture players the user had open at any one time.
-    expires: "91"
+    expires: "96"
     kind: uint
     notification_emails:
       - mconley@mozilla.com
@@ -3160,21 +3161,6 @@ telemetry:
     record_in_processes:
       - all
 
-  sync_shutdown_ping_sent:
-    bug_numbers:
-      - 1673795
-    description: >
-      Whether a sync shutdown ping has been sent in this session.
-    expires: "90"
-    kind: boolean
-    notification_emails:
-      - sync-team@mozilla.com
-    products:
-      - 'firefox'
-    release_channel_collection: opt-out
-    record_in_processes:
-      - main
-
   state_file_save_errors:
     bug_numbers:
       - 1689438
@@ -3420,10 +3406,11 @@ gfx.canvas.remote:
     bug_numbers:
       - 1641722
       - 1672582
+      - 1706844
     description: >
       Number of times remote canvas 2D has been activated.
     kind: uint
-    expires: "91"
+    expires: "97"
     notification_emails:
       - gfx-telemetry-alerts@mozilla.com
       - bowen@mozilla.com
@@ -3437,10 +3424,11 @@ gfx.canvas.remote:
     bug_numbers:
       - 1641722
       - 1672582
+      - 1706844
     description: >
       Number of times remote canvas 2D has been deactivated due to device creation failure.
     kind: uint
-    expires: "91"
+    expires: "97"
     notification_emails:
       - gfx-telemetry-alerts@mozilla.com
       - bowen@mozilla.com
@@ -3454,10 +3442,11 @@ gfx.canvas.remote:
     bug_numbers:
       - 1641722
       - 1672582
+      - 1706844
     description: >
       Number of times remote canvas 2D has been deactivated due to a stream read failure.
     kind: uint
-    expires: "91"
+    expires: "97"
     notification_emails:
       - gfx-telemetry-alerts@mozilla.com
       - bowen@mozilla.com
@@ -5424,23 +5413,6 @@ browser.search.adclicks:
       - main
 
 browser.searchinit:
-  init_result_status_code:
-    bug_numbers:
-      - 1651194
-      - 1683105
-    description: >-
-          Status code (nsresult) for the search service initialization routine.
-          Stored as a string due to issues with large uint scalars when the scalar was created.
-    expires: "91"
-    kind: string
-    notification_emails:
-      - fx-search@mozilla.com
-      - mbanner@mozilla.com
-    release_channel_collection: opt-out
-    products:
-      - 'firefox'
-    record_in_processes:
-      - main
   engine_invalid_webextension:
     bug_numbers:
       - 1665938
@@ -5471,9 +5443,10 @@ encoding:
       - 1554592
       - 1603047
       - 1648464
+      - 1706838
     description: >-
       Whether an item other than Automatic in the Text Encoding menu was used to override an encoding in this subsession.
-    expires: "91"
+    expires: "96"
     kind: boolean
     notification_emails:
       - hsivonen@mozilla.com
@@ -5487,9 +5460,10 @@ encoding:
   override_used_automatic:
     bug_numbers:
       - 1648464
+      - 1706838
     description: >-
       Whether the item Automatic in the Text Encoding menu was used to override an encoding in this subsession.
-    expires: "91"
+    expires: "96"
     kind: boolean
     notification_emails:
       - hsivonen@mozilla.com
@@ -5994,6 +5968,32 @@ blocklist:
     record_in_processes:
       - main
 
+  mlbf_source:
+    bug_numbers:
+      - 1662857
+    description: >
+      The source of the RemoteSettings attachment that holds the bloom filter.
+      Possible values are "dump_match", "cache_match", "remote_match", "dump_fallback", "cache_fallback", "unknown".
+      "dump_match", "cache_match" and "remote_match" are expected known-good values, and means that the loaded
+      bloomfilter matches the blocklist record in the RemoteSettings collection. The prefix denotes the immediate
+      source of the loaded data: "dump" means packaged with the application, "remote" means a freshly downloaded
+      bloomfilter, "cache" means a previously downloaded bloomfilter.
+      "dump_fallback" and "cache_fallback" means that the last known bloomfilter was used, despite it not matching
+      the latest record in the RemoteSettings collection. In this case the outdated bloomfilter is used as a fallback
+      (e.g. because the latest version cannot be downloaded).
+      "unknown" means that the bloomfilter cannot be loaded at all. This can happen if the blocklist is disabled
+      via preferences or enterprise policies.
+    expires: "95"
+    kind: string
+    release_channel_collection: opt-out
+    notification_emails:
+      - addons-dev-internal@mozilla.com
+      - rwu@mozilla.com
+    products:
+      - 'firefox'
+    record_in_processes:
+      - main
+
   mlbf_generation_time:
     bug_numbers:
       - 1633466
@@ -6058,38 +6058,6 @@ blocklist:
       - rwu@mozilla.com
     products:
       - 'firefox'
-    record_in_processes:
-      - main
-
-firstStartup:
-  statusCode:
-    bug_numbers:
-      - 1582608
-    description: >-
-      Status of the FirstRun service, which runs post-install/early-startup in Firefox.
-    expires: "90"
-    kind: uint
-    notification_emails:
-      - rhelmer@mozilla.com
-    release_channel_collection: opt-out
-    products:
-      - 'firefox'
-      - 'thunderbird'
-    record_in_processes:
-      - main
-  elapsed:
-    bug_numbers:
-      - 1582608
-    description: >-
-      Number of milliseconds the FirstRun service took to run.
-    expires: "90"
-    kind: uint
-    notification_emails:
-      - rhelmer@mozilla.com
-    release_channel_collection: opt-out
-    products:
-      - 'firefox'
-      - 'thunderbird'
     record_in_processes:
       - main
 
@@ -7623,6 +7591,15 @@ telemetry.test:
     expires: never
     kind: boolean
     keyed: true
+    notification_emails: [glean-team@mozilla.com]
+    products: ["firefox", "thunderbird"]
+    record_in_processes: ["all"]
+
+  mirror_for_quantity:
+    bug_numbers: [1704846]
+    description: Test only. This is a mirror probe for a Glean quantity metric.
+    expires: never
+    kind: uint
     notification_emails: [glean-team@mozilla.com]
     products: ["firefox", "thunderbird"]
     record_in_processes: ["all"]

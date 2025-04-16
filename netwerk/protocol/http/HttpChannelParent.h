@@ -18,7 +18,6 @@
 #include "nsIChannelEventSink.h"
 #include "nsIRedirectResultListener.h"
 #include "nsHttpChannel.h"
-#include "nsIAuthPromptProvider.h"
 #include "mozilla/dom/ipc/IdType.h"
 #include "nsIDeprecationWarner.h"
 #include "nsIMultiPartChannel.h"
@@ -52,7 +51,6 @@ class HttpChannelParent final : public nsIInterfaceRequestor,
                                 public PHttpChannelParent,
                                 public nsIParentRedirectingChannel,
                                 public nsIProgressEventSink,
-                                public nsIAuthPromptProvider,
                                 public nsIDeprecationWarner,
                                 public HttpChannelSecurityWarningReporter,
                                 public nsIAsyncVerifyRedirectReadyCallback,
@@ -69,7 +67,6 @@ class HttpChannelParent final : public nsIInterfaceRequestor,
   NS_DECL_NSIPARENTREDIRECTINGCHANNEL
   NS_DECL_NSIPROGRESSEVENTSINK
   NS_DECL_NSIINTERFACEREQUESTOR
-  NS_DECL_NSIAUTHPROMPTPROVIDER
   NS_DECL_NSIDEPRECATIONWARNER
   NS_DECL_NSIASYNCVERIFYREDIRECTREADYCALLBACK
   NS_DECL_NSICHANNELEVENTSINK
@@ -147,7 +144,6 @@ class HttpChannelParent final : public nsIInterfaceRequestor,
       const uint8_t& redirectionLimit, const bool& allowSTS,
       const uint32_t& thirdPartyFlags, const bool& doResumeAt,
       const uint64_t& startPos, const nsCString& entityID,
-      const bool& chooseApplicationCache, const nsCString& appCacheClientID,
       const bool& allowSpdy, const bool& allowHttp3, const bool& allowAltSvc,
       const bool& beConservative, const uint32_t& tlsFlags,
       const Maybe<LoadInfoArgs>& aLoadInfoArgs, const uint32_t& aCacheKey,
@@ -185,11 +181,9 @@ class HttpChannelParent final : public nsIInterfaceRequestor,
       const Maybe<ChildLoadInfoForwarderArgs>& aTargetLoadInfoForwarder,
       const uint32_t& loadFlags, nsIReferrerInfo* aReferrerInfo,
       const Maybe<URIParams>& apiRedirectUri,
-      const Maybe<CorsPreflightArgs>& aCorsPreflightArgs,
-      const bool& aChooseAppcache) override;
+      const Maybe<CorsPreflightArgs>& aCorsPreflightArgs) override;
   virtual mozilla::ipc::IPCResult RecvDocumentChannelCleanup(
       const bool& clearCacheEntry) override;
-  virtual mozilla::ipc::IPCResult RecvMarkOfflineCacheEntryAsForeign() override;
   virtual mozilla::ipc::IPCResult RecvRemoveCorsPreflightCacheEntry(
       const URIParams& uri,
       const mozilla::ipc::PrincipalInfo& requestingPrincipal,
@@ -253,8 +247,6 @@ class HttpChannelParent final : public nsIInterfaceRequestor,
   nsCOMPtr<nsIChannel> mRedirectChannel;
   nsCOMPtr<nsIAsyncVerifyRedirectCallback> mRedirectCallback;
 
-  UniquePtr<class nsHttpChannel::OfflineCacheEntryAsForeignMarker>
-      mOfflineForeignMarker;
   nsCOMPtr<nsILoadContext> mLoadContext;
   RefPtr<nsHttpHandler> mHttpHandler;
 

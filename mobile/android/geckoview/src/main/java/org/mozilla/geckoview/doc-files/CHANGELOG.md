@@ -13,6 +13,26 @@ exclude: true
 
 ⚠️  breaking change and deprecation notices
 
+## v90
+- Added [`WebNotification.silent`][90.1] and [`WebNotification.vibrate`][90.2]
+  support. See also [Web/API/Notification/silent][90.3] and
+  [Web/API/Notification/vibrate][90.4].
+  ([bug 1696145]({{bugzilla}}1696145))
+- ⚠️ Deprecated [`GeckoRuntime.getProfileDir`][90.5], the API is being kept for
+  compatibility but it always returns null.
+- Added [`forceEnableAccessibility`][90.6] runtime setting to enable
+  accessibility during testing.
+  ([bug 1701269]({{bugzilla}}1701269))
+- Removed deprecated [`GeckoView.onTouchEventForResult`][88.4].
+  ([bug 1706403]({{bugzilla}}1706403))
+
+[90.1]: {{javadoc_uri}}/WebNotification.html#silent
+[90.2]: {{javadoc_uri}}/WebNotification.html#vibrate
+[90.3]: https://developer.mozilla.org/en-US/docs/Web/API/Notification/silent
+[90.4]: https://developer.mozilla.org/en-US/docs/Web/API/Notification/vibrate
+[90.5]: {{javadoc_uri}}/GeckoRuntime.html#getProfileDir--
+[90.6]: {{javadoc_uri}}/GeckoRuntimeSettings.html#setForceEnableAccessibility-boolean-
+
 ## v89
 - Added [`ContentPermission`][89.1], which is used to report what permissions content
   is loaded with in `onLocationChange`.
@@ -979,4 +999,4 @@ to allow adding gecko profiler markers.
 [65.24]: {{javadoc_uri}}/CrashReporter.html#sendCrashReport-android.content.Context-android.os.Bundle-java.lang.String-
 [65.25]: {{javadoc_uri}}/GeckoResult.html
 
-[api-version]: c05004eab960bfec2c1dbe3dc59724539eb5008d
+[api-version]: 2d5e889898a86955980ea9f802f734da5848d730

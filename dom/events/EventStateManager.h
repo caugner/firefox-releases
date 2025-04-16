@@ -243,9 +243,9 @@ class EventStateManager : public nsSupportsWeakReference, public nsIObserver {
   bool CheckIfEventMatchesAccessKey(WidgetKeyboardEvent* aEvent,
                                     nsPresContext* aPresContext);
 
-  nsresult SetCursor(StyleCursorKind aCursor, imgIContainer* aContainer,
-                     float aResolution, const Maybe<gfx::IntPoint>& aHotspot,
-                     nsIWidget* aWidget, bool aLockCursor);
+  nsresult SetCursor(StyleCursorKind, imgIContainer*, const ImageResolution&,
+                     const Maybe<gfx::IntPoint>& aHotspot, nsIWidget* aWidget,
+                     bool aLockCursor);
 
   /**
    * Checks if the current mouse over element matches the given
@@ -793,18 +793,10 @@ class EventStateManager : public nsSupportsWeakReference, public nsIObserver {
     // Default action prefers the scrolled element immediately before if it's
     // still under the mouse cursor.  Otherwise, it prefers the nearest
     // scrollable ancestor which will be scrolled actually.
-    COMPUTE_DEFAULT_ACTION_TARGET_EXCEPT_PLUGIN =
+    COMPUTE_DEFAULT_ACTION_TARGET =
         (PREFER_MOUSE_WHEEL_TRANSACTION |
          PREFER_ACTUAL_SCROLLABLE_TARGET_ALONG_X_AXIS |
          PREFER_ACTUAL_SCROLLABLE_TARGET_ALONG_Y_AXIS),
-    // When this is specified, the result may be nsPluginFrame.  In such case,
-    // the frame doesn't have nsIScrollableFrame interface.
-    COMPUTE_DEFAULT_ACTION_TARGET =
-        (COMPUTE_DEFAULT_ACTION_TARGET_EXCEPT_PLUGIN |
-         INCLUDE_PLUGIN_AS_TARGET),
-    COMPUTE_DEFAULT_ACTION_TARGET_WITH_AUTO_DIR_EXCEPT_PLUGIN =
-        (COMPUTE_DEFAULT_ACTION_TARGET_EXCEPT_PLUGIN |
-         MAY_BE_ADJUSTED_BY_AUTO_DIR),
     COMPUTE_DEFAULT_ACTION_TARGET_WITH_AUTO_DIR =
         (COMPUTE_DEFAULT_ACTION_TARGET | MAY_BE_ADJUSTED_BY_AUTO_DIR),
     // Look for the nearest scrollable ancestor which can be scrollable with
@@ -820,18 +812,6 @@ class EventStateManager : public nsSupportsWeakReference, public nsIObserver {
         (COMPUTE_SCROLLABLE_ANCESTOR_ALONG_Y_AXIS |
          MAY_BE_ADJUSTED_BY_AUTO_DIR),
   };
-  static ComputeScrollTargetOptions RemovePluginFromTarget(
-      ComputeScrollTargetOptions aOptions) {
-    switch (aOptions) {
-      case COMPUTE_DEFAULT_ACTION_TARGET:
-        return COMPUTE_DEFAULT_ACTION_TARGET_EXCEPT_PLUGIN;
-      case COMPUTE_DEFAULT_ACTION_TARGET_WITH_AUTO_DIR:
-        return COMPUTE_DEFAULT_ACTION_TARGET_WITH_AUTO_DIR_EXCEPT_PLUGIN;
-      default:
-        MOZ_ASSERT(!(aOptions & INCLUDE_PLUGIN_AS_TARGET));
-        return aOptions;
-    }
-  }
 
   // Compute the scroll target.
   // The delta values in the wheel event may be changed if the event is for
@@ -1059,6 +1039,8 @@ class EventStateManager : public nsSupportsWeakReference, public nsIObserver {
 
   MOZ_CAN_RUN_SCRIPT
   nsresult DoContentCommandEvent(WidgetContentCommandEvent* aEvent);
+  MOZ_CAN_RUN_SCRIPT
+  nsresult DoContentCommandInsertTextEvent(WidgetContentCommandEvent* aEvent);
   nsresult DoContentCommandScrollEvent(WidgetContentCommandEvent* aEvent);
 
   dom::BrowserParent* GetCrossProcessTarget();

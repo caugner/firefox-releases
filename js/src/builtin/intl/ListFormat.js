@@ -5,12 +5,12 @@
 /**
  * ListFormat internal properties.
  */
+function listFormatLocaleData() {
+    // ListFormat don't support any extension keys.
+    return {};
+}
 var listFormatInternalProperties = {
-    localeData: function() // eslint-disable-line object-shorthand
-    {
-        // ListFormat don't support any extension keys.
-        return {};
-    },
+    localeData: listFormatLocaleData,
     relevantExtensionKeys: []
 };
 
@@ -119,7 +119,7 @@ function InitializeListFormat(listFormat, locales, options, supportsTypeAndStyle
         ThrowTypeError(JSMSG_OBJECT_REQUIRED, options === null ? "null" : typeof options);
 
     // Step 6.
-    var opt = new Record();
+    var opt = new_Record();
     lazyListFormatData.opt = opt;
 
     // Steps 7-8.

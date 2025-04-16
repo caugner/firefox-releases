@@ -90,6 +90,7 @@ class LIRGeneratorARM64 : public LIRGeneratorShared {
   void lowerWasmBuiltinModI64(MWasmBuiltinModI64* mod);
   void lowerUDivI64(MDiv* div);
   void lowerUModI64(MMod* mod);
+  void lowerNegI(MInstruction* ins, MDefinition* input, int32_t inputNo);
   void lowerMulI(MMul* mul, MDefinition* lhs, MDefinition* rhs);
   void lowerUDiv(MDiv* div);
   void lowerUMod(MMod* mod);
@@ -101,6 +102,11 @@ class LIRGeneratorARM64 : public LIRGeneratorShared {
 
   void lowerAtomicLoad64(MLoadUnboxedScalar* ins);
   void lowerAtomicStore64(MStoreUnboxedScalar* ins);
+
+#ifdef ENABLE_WASM_SIMD
+  bool canFoldReduceSimd128AndBranch(wasm::SimdOp op);
+  bool canEmitWasmReduceSimd128AtUses(MWasmReduceSimd128* ins);
+#endif
 
   LTableSwitchV* newLTableSwitchV(MTableSwitch* ins);
   LTableSwitch* newLTableSwitch(const LAllocation& in,

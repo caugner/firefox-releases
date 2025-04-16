@@ -106,11 +106,12 @@ bool EmulateStateOf<MemoryView>::run(MemoryView& view) {
   return true;
 }
 
-static bool IsObjectEscaped(MInstruction* ins, JSObject* objDefault = nullptr);
+static bool IsObjectEscaped(MInstruction* ins,
+                            const Shape* shapeDefault = nullptr);
 
 // Returns False if the lambda is not escaped and if it is optimizable by
 // ScalarReplacementOfObject.
-static bool IsLambdaEscaped(MInstruction* lambda, JSObject* obj) {
+static bool IsLambdaEscaped(MInstruction* lambda, const Shape* shape) {
   MOZ_ASSERT(lambda->isLambda() || lambda->isLambdaArrow() ||
              lambda->isFunctionWithProto());
   JitSpewDef(JitSpew_Escape, "Check lambda\n", lambda);
@@ -135,7 +136,7 @@ static bool IsLambdaEscaped(MInstruction* lambda, JSObject* obj) {
       return true;
     }
 
-    if (IsObjectEscaped(def->toInstruction(), obj)) {
+    if (IsObjectEscaped(def->toInstruction(), shape)) {
       JitSpewDef(JitSpew_Escape, "is indirectly escaped by\n", def);
       return true;
     }
@@ -145,8 +146,9 @@ static bool IsLambdaEscaped(MInstruction* lambda, JSObject* obj) {
 }
 
 static inline bool IsOptimizableObjectInstruction(MInstruction* ins) {
-  return ins->isNewObject() || ins->isCreateThisWithTemplate() ||
-         ins->isNewCallObject() || ins->isNewIterator();
+  return ins->isNewObject() || ins->isNewPlainObject() ||
+         ins->isCreateThisWithTemplate() || ins->isNewCallObject() ||
+         ins->isNewIterator();
 }
 
 // Returns False if the object is not escaped and if it is optimizable by
@@ -154,19 +156,23 @@ static inline bool IsOptimizableObjectInstruction(MInstruction* ins) {
 //
 // For the moment, this code is dumb as it only supports objects which are not
 // changing shape, and which are known by TI at the object creation.
-static bool IsObjectEscaped(MInstruction* ins, JSObject* objDefault) {
+static bool IsObjectEscaped(MInstruction* ins, const Shape* shapeDefault) {
   MOZ_ASSERT(ins->type() == MIRType::Object);
 
   JitSpewDef(JitSpew_Escape, "Check object\n", ins);
   JitSpewIndent spewIndent(JitSpew_Escape);
 
-  JSObject* obj = objDefault;
-  if (!obj) {
-    obj = MObjectState::templateObjectOf(ins);
+  const Shape* shape = shapeDefault;
+  if (!shape) {
+    if (ins->isNewPlainObject()) {
+      shape = ins->toNewPlainObject()->shape();
+    } else if (JSObject* templateObj = MObjectState::templateObjectOf(ins)) {
+      shape = templateObj->shape();
+    }
   }
 
-  if (!obj) {
-    JitSpew(JitSpew_Escape, "No template object defined.");
+  if (!shape) {
+    JitSpew(JitSpew_Escape, "No shape defined.");
     return true;
   }
 
@@ -219,11 +225,11 @@ static bool IsObjectEscaped(MInstruction* ins, JSObject* objDefault) {
       case MDefinition::Opcode::GuardShape: {
         MGuardShape* guard = def->toGuardShape();
         MOZ_ASSERT(!ins->isGuardShape());
-        if (obj->shape() != guard->shape()) {
+        if (shape != guard->shape()) {
           JitSpewDef(JitSpew_Escape, "has a non-matching guard shape\n", guard);
           return true;
         }
-        if (IsObjectEscaped(def->toInstruction(), obj)) {
+        if (IsObjectEscaped(def->toInstruction(), shape)) {
           JitSpewDef(JitSpew_Escape, "is indirectly escaped by\n", def);
           return true;
         }
@@ -231,7 +237,7 @@ static bool IsObjectEscaped(MInstruction* ins, JSObject* objDefault) {
       }
 
       case MDefinition::Opcode::CheckIsObj: {
-        if (IsObjectEscaped(def->toInstruction(), obj)) {
+        if (IsObjectEscaped(def->toInstruction(), shape)) {
           JitSpewDef(JitSpew_Escape, "is indirectly escaped by\n", def);
           return true;
         }
@@ -243,7 +249,7 @@ static bool IsObjectEscaped(MInstruction* ins, JSObject* objDefault) {
           JitSpewDef(JitSpew_Escape, "has an invalid unbox\n", def);
           return true;
         }
-        if (IsObjectEscaped(def->toInstruction(), obj)) {
+        if (IsObjectEscaped(def->toInstruction(), shape)) {
           JitSpewDef(JitSpew_Escape, "is indirectly escaped by\n", def);
           return true;
         }
@@ -253,7 +259,7 @@ static bool IsObjectEscaped(MInstruction* ins, JSObject* objDefault) {
       case MDefinition::Opcode::Lambda:
       case MDefinition::Opcode::LambdaArrow:
       case MDefinition::Opcode::FunctionWithProto: {
-        if (IsLambdaEscaped(def->toInstruction(), obj)) {
+        if (IsLambdaEscaped(def->toInstruction(), shape)) {
           JitSpewDef(JitSpew_Escape, "is indirectly escaped by\n", def);
           return true;
         }
@@ -830,7 +836,7 @@ static bool IsElementEscaped(MDefinition* def, uint32_t arraySize) {
 }
 
 static inline bool IsOptimizableArrayInstruction(MInstruction* ins) {
-  return ins->isNewArray();
+  return ins->isNewArray() || ins->isNewArrayObject();
 }
 
 // Returns False if the array is not escaped and if it is optimizable by
@@ -845,13 +851,20 @@ static bool IsArrayEscaped(MInstruction* ins, MInstruction* newArray) {
   JitSpewDef(JitSpew_Escape, "Check array\n", ins);
   JitSpewIndent spewIndent(JitSpew_Escape);
 
-  JSObject* templateObject = newArray->toNewArray()->templateObject();
-  if (!templateObject) {
-    JitSpew(JitSpew_Escape, "No template object defined.");
-    return true;
+  const Shape* shape;
+  uint32_t length;
+  if (newArray->isNewArrayObject()) {
+    length = newArray->toNewArrayObject()->length();
+    shape = newArray->toNewArrayObject()->shape();
+  } else {
+    length = newArray->toNewArray()->length();
+    JSObject* templateObject = newArray->toNewArray()->templateObject();
+    if (!templateObject) {
+      JitSpew(JitSpew_Escape, "No template object defined.");
+      return true;
+    }
+    shape = templateObject->shape();
   }
-
-  uint32_t length = newArray->toNewArray()->length();
 
   if (length >= 16) {
     JitSpew(JitSpew_Escape, "Array has too many elements");
@@ -887,7 +900,7 @@ static bool IsArrayEscaped(MInstruction* ins, MInstruction* newArray) {
 
       case MDefinition::Opcode::GuardShape: {
         MGuardShape* guard = def->toGuardShape();
-        if (templateObject->shape() != guard->shape()) {
+        if (shape != guard->shape()) {
           JitSpewDef(JitSpew_Escape, "has a non-matching guard shape\n", guard);
           return true;
         }
@@ -901,7 +914,7 @@ static bool IsArrayEscaped(MInstruction* ins, MInstruction* newArray) {
 
       case MDefinition::Opcode::GuardToClass: {
         MGuardToClass* guard = def->toGuardToClass();
-        if (templateObject->getClass() != guard->getClass()) {
+        if (shape->getObjectClass() != guard->getClass()) {
           JitSpewDef(JitSpew_Escape, "has a non-matching class guard\n", guard);
           return true;
         }
@@ -1386,6 +1399,14 @@ bool ArgumentsReplacer::escapes(MInstruction* ins, bool guardedForMapped) {
   JitSpewDef(JitSpew_Escape, "Check arguments object\n", ins);
   JitSpewIndent spewIndent(JitSpew_Escape);
 
+  // We can replace inlined arguments in scripts with OSR entries, but
+  // the outermost arguments object has already been allocated before
+  // we enter via OSR and can't be replaced.
+  if (ins->isCreateArgumentsObject() && graph_.osrBlock()) {
+    JitSpew(JitSpew_Escape, "Can't replace outermost OSR arguments");
+    return true;
+  }
+
   // Check all uses to see whether they can be supported without
   // allocating an ArgumentsObject.
   for (MUseIterator i(ins->usesBegin()); i != ins->usesEnd(); i++) {
@@ -1449,10 +1470,18 @@ bool ArgumentsReplacer::escapes(MInstruction* ins, bool guardedForMapped) {
         return true;
       }
 
+      case MDefinition::Opcode::ApplyArgsObj: {
+        if (ins == def->toApplyArgsObj()->getThis()) {
+          JitSpew(JitSpew_Escape, "is escaped as |this| arg of ApplyArgsObj\n");
+          return true;
+        }
+        MOZ_ASSERT(ins == def->toApplyArgsObj()->getArgsObj());
+        break;
+      }
+
       // This is a replaceable consumer.
       case MDefinition::Opcode::ArgumentsObjectLength:
       case MDefinition::Opcode::GetArgumentsObjectArg:
-      case MDefinition::Opcode::ApplyArgsObj:
       case MDefinition::Opcode::LoadArgumentsObjectArg:
         break;
 
@@ -1619,7 +1648,7 @@ void ArgumentsReplacer::visitGetArgumentsObjectArg(
 void ArgumentsReplacer::visitLoadArgumentsObjectArg(
     MLoadArgumentsObjectArg* ins) {
   // Skip other arguments objects.
-  if (ins->getArgsObject() != args_) {
+  if (ins->argsObject() != args_) {
     return;
   }
 
@@ -1673,7 +1702,7 @@ void ArgumentsReplacer::visitLoadArgumentsObjectArg(
 void ArgumentsReplacer::visitArgumentsObjectLength(
     MArgumentsObjectLength* ins) {
   // Skip other arguments objects.
-  if (ins->getArgsObject() != args_) {
+  if (ins->argsObject() != args_) {
     return;
   }
 
@@ -1730,6 +1759,7 @@ void ArgumentsReplacer::visitApplyArgsObj(MApplyArgsObj* ins) {
     // TODO: Should we rename MApplyArgs?
     auto* apply = MApplyArgs::New(alloc(), ins->getSingleTarget(),
                                   ins->getFunction(), numArgs, ins->getThis());
+    apply->setBailoutKind(ins->bailoutKind());
     if (!ins->maybeCrossRealm()) {
       apply->setNotCrossRealm();
     }
@@ -1774,8 +1804,6 @@ bool ScalarReplacement(MIRGenerator* mir, MIRGraph& graph) {
   EmulateStateOf<ObjectMemoryView> replaceObject(mir, graph);
   EmulateStateOf<ArrayMemoryView> replaceArray(mir, graph);
   bool addedPhi = false;
-  bool shouldReplaceArguments =
-      JitOptions.scalarReplaceArguments && !graph.osrBlock();
 
   for (ReversePostorderIterator block = graph.rpoBegin();
        block != graph.rpoEnd(); block++) {
@@ -1805,7 +1833,7 @@ bool ScalarReplacement(MIRGenerator* mir, MIRGraph& graph) {
         continue;
       }
 
-      if (shouldReplaceArguments && IsOptimizableArgumentsInstruction(*ins)) {
+      if (IsOptimizableArgumentsInstruction(*ins)) {
         ArgumentsReplacer replacer(mir, graph, *ins);
         if (replacer.escapes(*ins)) {
           continue;

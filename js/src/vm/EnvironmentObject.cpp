@@ -23,6 +23,7 @@
 #include "vm/JSObject.h"
 #include "vm/ProxyObject.h"
 #include "vm/Realm.h"
+#include "vm/Scope.h"
 #include "vm/Shape.h"
 #include "vm/Xdr.h"
 #include "wasm/WasmInstance.h"
@@ -455,7 +456,7 @@ bool ModuleEnvironmentObject::hasImportBinding(HandlePropertyName name) {
 
 bool ModuleEnvironmentObject::lookupImport(
     jsid name, ModuleEnvironmentObject** envOut,
-    mozilla::Maybe<ShapeProperty>* propOut) {
+    mozilla::Maybe<PropertyInfo>* propOut) {
   return importBindings().lookup(name, envOut, propOut);
 }
 
@@ -471,11 +472,11 @@ bool ModuleEnvironmentObject::lookupProperty(JSContext* cx, HandleObject obj,
                                              PropertyResult* propp) {
   const IndirectBindingMap& bindings =
       obj->as<ModuleEnvironmentObject>().importBindings();
-  mozilla::Maybe<ShapeProperty> shapeProp;
+  mozilla::Maybe<PropertyInfo> propInfo;
   ModuleEnvironmentObject* env;
-  if (bindings.lookup(id, &env, &shapeProp)) {
+  if (bindings.lookup(id, &env, &propInfo)) {
     objp.set(env);
-    propp->setNativeProperty(*shapeProp);
+    propp->setNativeProperty(*propInfo);
     return true;
   }
 
@@ -506,7 +507,7 @@ bool ModuleEnvironmentObject::getProperty(JSContext* cx, HandleObject obj,
                                           MutableHandleValue vp) {
   const IndirectBindingMap& bindings =
       obj->as<ModuleEnvironmentObject>().importBindings();
-  mozilla::Maybe<ShapeProperty> prop;
+  mozilla::Maybe<PropertyInfo> prop;
   ModuleEnvironmentObject* env;
   if (bindings.lookup(id, &env, &prop)) {
     vp.set(env->getSlot(prop->slot()));
@@ -533,17 +534,15 @@ bool ModuleEnvironmentObject::setProperty(JSContext* cx, HandleObject obj,
 /* static */
 bool ModuleEnvironmentObject::getOwnPropertyDescriptor(
     JSContext* cx, HandleObject obj, HandleId id,
-    MutableHandle<PropertyDescriptor> desc) {
+    MutableHandle<mozilla::Maybe<PropertyDescriptor>> desc) {
   const IndirectBindingMap& bindings =
       obj->as<ModuleEnvironmentObject>().importBindings();
-  mozilla::Maybe<ShapeProperty> prop;
+  mozilla::Maybe<PropertyInfo> prop;
   ModuleEnvironmentObject* env;
   if (bindings.lookup(id, &env, &prop)) {
-    desc.setAttributes(JSPROP_ENUMERATE | JSPROP_PERMANENT);
-    desc.object().set(obj);
-    RootedValue value(cx, env->getSlot(prop->slot()));
-    desc.setValue(value);
-    desc.assertComplete();
+    desc.set(mozilla::Some(PropertyDescriptor::Data(
+        env->getSlot(prop->slot()),
+        {JS::PropertyAttribute::Enumerable, JS::PropertyAttribute::Writable})));
     return true;
   }
 
@@ -790,7 +789,7 @@ static bool with_SetProperty(JSContext* cx, HandleObject obj, HandleId id,
 
 static bool with_GetOwnPropertyDescriptor(
     JSContext* cx, HandleObject obj, HandleId id,
-    MutableHandle<PropertyDescriptor> desc) {
+    MutableHandle<mozilla::Maybe<PropertyDescriptor>> desc) {
   MOZ_ASSERT(!IsInternalDotName(cx, id));
   RootedObject actual(cx, &obj->as<WithEnvironmentObject>().object());
   return GetOwnPropertyDescriptor(cx, actual, id, desc);
@@ -940,8 +939,9 @@ BlockLexicalEnvironmentObject* BlockLexicalEnvironmentObject::create(
   }
 
   // All lexical bindings start off uninitialized for TDZ.
-  uint32_t lastSlot = shape->slot();
-  MOZ_ASSERT(lastSlot == env->lastProperty()->slot());
+  ShapePropertyIter<NoGC> iter(shape);
+  uint32_t lastSlot = iter->slot();
+  MOZ_ASSERT(lastSlot == env->getLastProperty().slot());
   for (uint32_t slot = JSSLOT_FREE(&class_); slot <= lastSlot; slot++) {
     env->initSlot(slot, MagicValue(JS_UNINITIALIZED_LEXICAL));
   }
@@ -954,7 +954,11 @@ BlockLexicalEnvironmentObject* BlockLexicalEnvironmentObject::create(
 BlockLexicalEnvironmentObject* BlockLexicalEnvironmentObject::createForFrame(
     JSContext* cx, Handle<LexicalScope*> scope, AbstractFramePtr frame) {
   RootedObject enclosing(cx, frame.environmentChain());
-  return create(cx, scope, enclosing, gc::DefaultHeap);
+  auto* env = create(cx, scope, enclosing, gc::DefaultHeap);
+  if (!env) {
+    return nullptr;
+  }
+  return &env->as<BlockLexicalEnvironmentObject>();
 }
 
 /* static */
@@ -993,9 +997,8 @@ BlockLexicalEnvironmentObject::createHollowForDebug(
     return nullptr;
   }
 
-  auto blockEnv = &env->as<BlockLexicalEnvironmentObject>();
-  blockEnv->initScope(scope);
-  return blockEnv;
+  env->as<ScopedLexicalEnvironmentObject>().initScope(scope);
+  return &env->as<BlockLexicalEnvironmentObject>();
 }
 
 /* static */
@@ -1036,14 +1039,21 @@ NamedLambdaObject* NamedLambdaObject::create(JSContext* cx,
   MOZ_ASSERT(callee->isNamedLambda());
   RootedScope scope(cx, callee->nonLazyScript()->maybeNamedLambdaScope());
   MOZ_ASSERT(scope && scope->environmentShape());
-  MOZ_ASSERT(scope->environmentShape()->slot() == lambdaSlot());
-  MOZ_ASSERT(!scope->environmentShape()->writable());
 
 #ifdef DEBUG
-  // There should be exactly one binding in the named lambda scope.
-  BindingIter bi(scope);
-  bi++;
-  MOZ_ASSERT(bi.done());
+  {
+    // Named lambda objects have one (non-writable) property.
+    ShapePropertyIter<NoGC> iter(scope->environmentShape());
+    MOZ_ASSERT(iter->slot() == lambdaSlot());
+    MOZ_ASSERT(!iter->writable());
+    iter++;
+    MOZ_ASSERT(iter.done());
+
+    // There should be exactly one binding in the named lambda scope.
+    BindingIter bi(scope);
+    bi++;
+    MOZ_ASSERT(bi.done());
+  }
 #endif
 
   BlockLexicalEnvironmentObject* obj = BlockLexicalEnvironmentObject::create(
@@ -1074,6 +1084,33 @@ NamedLambdaObject* NamedLambdaObject::create(JSContext* cx,
 size_t NamedLambdaObject::lambdaSlot() {
   // Named lambda environments have exactly one name.
   return JSSLOT_FREE(&LexicalEnvironmentObject::class_);
+}
+
+/* static */
+ClassBodyLexicalEnvironmentObject* ClassBodyLexicalEnvironmentObject::create(
+    JSContext* cx, Handle<ClassBodyScope*> scope, HandleObject enclosing,
+    gc::InitialHeap heap) {
+  cx->check(enclosing);
+  MOZ_ASSERT(scope->hasEnvironment());
+
+  RootedShape shape(cx, scope->environmentShape());
+  auto* env = static_cast<ClassBodyLexicalEnvironmentObject*>(
+      createTemplateObject(cx, shape, enclosing, heap));
+  if (!env) {
+    return nullptr;
+  }
+
+  env->initScope(scope);
+  return env;
+}
+
+/* static */
+ClassBodyLexicalEnvironmentObject*
+ClassBodyLexicalEnvironmentObject::createForFrame(JSContext* cx,
+                                                  Handle<ClassBodyScope*> scope,
+                                                  AbstractFramePtr frame) {
+  RootedObject enclosing(cx, frame.environmentChain());
+  return create(cx, scope, enclosing, gc::DefaultHeap);
 }
 
 JSObject* ExtensibleLexicalEnvironmentObject::thisObject() const {
@@ -1216,7 +1253,7 @@ static bool lexicalError_SetProperty(JSContext* cx, HandleObject obj,
 
 static bool lexicalError_GetOwnPropertyDescriptor(
     JSContext* cx, HandleObject obj, HandleId id,
-    MutableHandle<PropertyDescriptor> desc) {
+    MutableHandle<mozilla::Maybe<PropertyDescriptor>> desc) {
   ReportRuntimeLexicalErrorId(
       cx, obj->as<RuntimeLexicalErrorObject>().errorNumber(), id);
   return false;
@@ -1481,9 +1518,6 @@ class DebugEnvironmentProxyHandler : public BaseProxyHandler {
         CallObject& callobj = env->as<CallObject>();
         RootedFunction fun(cx, &callobj.callee());
         script = JSFunction::getOrCreateScript(cx, fun);
-        if (!script->ensureHasAnalyzedArgsUsage(cx)) {
-          return false;
-        }
       } else {
         script = env->as<ModuleEnvironmentObject>().module().maybeScript();
         if (!script) {
@@ -1609,14 +1643,7 @@ class DebugEnvironmentProxyHandler : public BaseProxyHandler {
       }
 
       RootedScope scope(cx, getEnvironmentScope(*env));
-      uint32_t firstFrameSlot;
-      if (scope->is<LexicalScope>()) {
-        firstFrameSlot = scope->as<LexicalScope>().firstFrameSlot();
-      } else if (scope->is<VarScope>()) {
-        firstFrameSlot = scope->as<VarScope>().firstFrameSlot();
-      } else {
-        firstFrameSlot = scope->as<EvalScope>().firstFrameSlot();
-      }
+      uint32_t firstFrameSlot = scope->firstFrameSlot();
 
       BindingIter bi(scope);
       while (bi && NameToId(bi.name()->asPropertyName()) != id) {
@@ -1784,7 +1811,7 @@ class DebugEnvironmentProxyHandler : public BaseProxyHandler {
   }
 
   static bool isNonExtensibleLexicalEnvironment(const JSObject& env) {
-    return env.is<BlockLexicalEnvironmentObject>();
+    return env.is<ScopedLexicalEnvironmentObject>();
   }
 
   static Scope* getEnvironmentScope(const JSObject& env) {
@@ -1797,7 +1824,7 @@ class DebugEnvironmentProxyHandler : public BaseProxyHandler {
       return script ? script->bodyScope() : nullptr;
     }
     if (isNonExtensibleLexicalEnvironment(env)) {
-      return &env.as<BlockLexicalEnvironmentObject>().scope();
+      return &env.as<ScopedLexicalEnvironmentObject>().scope();
     }
     if (env.is<VarEnvironmentObject>()) {
       return &env.as<VarEnvironmentObject>().scope();
@@ -1820,10 +1847,8 @@ class DebugEnvironmentProxyHandler : public BaseProxyHandler {
    * 'arguments' may be missing from the list of bindings.
    */
   static bool isMissingArgumentsBinding(EnvironmentObject& env) {
-    return isFunctionEnvironment(env) && !env.as<CallObject>()
-                                              .callee()
-                                              .baseScript()
-                                              ->argumentsHasVarBinding();
+    return isFunctionEnvironment(env) &&
+           !env.as<CallObject>().callee().baseScript()->needsArgsObj();
   }
 
   /*
@@ -1841,64 +1866,14 @@ class DebugEnvironmentProxyHandler : public BaseProxyHandler {
   /*
    * This function checks if an arguments object needs to be created when
    * the debugger requests 'arguments' for a function scope where the
-   * arguments object has been optimized away (either because the binding is
-   * missing altogether or because !ScriptAnalysis::needsArgsObj).
+   * arguments object was not otherwise needed.
    */
   static bool isMissingArguments(JSContext* cx, jsid id,
                                  EnvironmentObject& env) {
-    return isArguments(cx, id) && isFunctionEnvironment(env) &&
-           !env.as<CallObject>().callee().nonLazyScript()->needsArgsObj();
+    return isArguments(cx, id) && isMissingArgumentsBinding(env);
   }
   static bool isMissingThis(JSContext* cx, jsid id, EnvironmentObject& env) {
     return isThis(cx, id) && isMissingThisBinding(env);
-  }
-
-  /*
-   * Check if the value is the magic value JS_OPTIMIZED_ARGUMENTS. The
-   * arguments analysis may have optimized out the 'arguments', and this
-   * magic value could have propagated to other local slots. e.g.,
-   *
-   *   function f() { var a = arguments; h(); }
-   *   function h() { evalInFrame(1, "a.push(0)"); }
-   *
-   * where evalInFrame(N, str) means to evaluate str N frames up.
-   *
-   * In this case we don't know we need to recover a missing arguments
-   * object until after we've performed the property get.
-   */
-  static bool isMagicMissingArgumentsValue(EnvironmentObject& env,
-                                           HandleValue v) {
-    bool isMagic = v.isMagic() && v.whyMagic() == JS_OPTIMIZED_ARGUMENTS;
-
-#ifdef DEBUG
-    // The |env| object here is not limited to CallObjects but may also
-    // be lexical envs in case of the following:
-    //
-    //   function f() { { let a = arguments; } }
-    //
-    // We need to check that |env|'s scope's nearest function scope has an
-    // 'arguments' var binding. The environment chain is not sufficient:
-    // |f| above will not have a CallObject because there are no aliased
-    // body-level bindings.
-    if (isMagic) {
-      JSFunction* callee = nullptr;
-      if (isFunctionEnvironment(env)) {
-        callee = &env.as<CallObject>().callee();
-      } else {
-        // We will never have a WithEnvironmentObject here because no
-        // binding accesses on with scopes are unaliased.
-        for (ScopeIter si(getEnvironmentScope(env)); si; si++) {
-          if (si.kind() == ScopeKind::Function) {
-            callee = si.scope()->as<FunctionScope>().canonicalFunction();
-            break;
-          }
-        }
-      }
-      MOZ_ASSERT(callee && callee->baseScript()->argumentsHasVarBinding());
-    }
-#endif
-
-    return isMagic;
   }
 
   /*
@@ -2007,7 +1982,8 @@ class DebugEnvironmentProxyHandler : public BaseProxyHandler {
 
   bool getMissingArgumentsPropertyDescriptor(
       JSContext* cx, Handle<DebugEnvironmentProxy*> debugEnv,
-      EnvironmentObject& env, MutableHandle<PropertyDescriptor> desc) const {
+      EnvironmentObject& env,
+      MutableHandle<mozilla::Maybe<PropertyDescriptor>> desc) const {
     RootedArgumentsObject argsObj(cx);
     if (!createMissingArguments(cx, env, &argsObj)) {
       return false;
@@ -2019,16 +1995,14 @@ class DebugEnvironmentProxyHandler : public BaseProxyHandler {
       return false;
     }
 
-    desc.object().set(debugEnv);
-    desc.setAttributes(JSPROP_READONLY | JSPROP_ENUMERATE | JSPROP_PERMANENT);
-    desc.value().setObject(*argsObj);
-    desc.setGetter(nullptr);
-    desc.setSetter(nullptr);
+    desc.set(mozilla::Some(PropertyDescriptor::Data(
+        ObjectValue(*argsObj), {JS::PropertyAttribute::Enumerable})));
     return true;
   }
   bool getMissingThisPropertyDescriptor(
       JSContext* cx, Handle<DebugEnvironmentProxy*> debugEnv,
-      EnvironmentObject& env, MutableHandle<PropertyDescriptor> desc) const {
+      EnvironmentObject& env,
+      MutableHandle<mozilla::Maybe<PropertyDescriptor>> desc) const {
     RootedValue thisv(cx);
     bool success;
     if (!createMissingThis(cx, env, &thisv, &success)) {
@@ -2041,17 +2015,14 @@ class DebugEnvironmentProxyHandler : public BaseProxyHandler {
       return false;
     }
 
-    desc.object().set(debugEnv);
-    desc.setAttributes(JSPROP_READONLY | JSPROP_ENUMERATE | JSPROP_PERMANENT);
-    desc.value().set(thisv);
-    desc.setGetter(nullptr);
-    desc.setSetter(nullptr);
+    desc.set(mozilla::Some(
+        PropertyDescriptor::Data(thisv, {JS::PropertyAttribute::Enumerable})));
     return true;
   }
 
   bool getOwnPropertyDescriptor(
       JSContext* cx, HandleObject proxy, HandleId id,
-      MutableHandle<PropertyDescriptor> desc) const override {
+      MutableHandle<mozilla::Maybe<PropertyDescriptor>> desc) const override {
     Rooted<DebugEnvironmentProxy*> debugEnv(
         cx, &proxy->as<DebugEnvironmentProxy>());
     Rooted<EnvironmentObject*> env(cx, &debugEnv->environment());
@@ -2071,20 +2042,13 @@ class DebugEnvironmentProxyHandler : public BaseProxyHandler {
     }
 
     switch (access) {
-      case ACCESS_UNALIASED:
-        if (isMagicMissingArgumentsValue(*env, v)) {
-          return getMissingArgumentsPropertyDescriptor(cx, debugEnv, *env,
-                                                       desc);
-        }
-        desc.object().set(debugEnv);
-        desc.setAttributes(JSPROP_READONLY | JSPROP_ENUMERATE |
-                           JSPROP_PERMANENT);
-        desc.value().set(v);
-        desc.setGetter(nullptr);
-        desc.setSetter(nullptr);
+      case ACCESS_UNALIASED: {
+        desc.set(mozilla::Some(
+            PropertyDescriptor::Data(v, {JS::PropertyAttribute::Enumerable})));
         return true;
+      }
       case ACCESS_GENERIC:
-        return JS_GetOwnPropertyDescriptorById(cx, env, id, desc);
+        return GetOwnPropertyDescriptor(cx, env, id, desc);
       case ACCESS_LOST:
         reportOptimizedOut(cx, id);
         return false;
@@ -2150,9 +2114,6 @@ class DebugEnvironmentProxyHandler : public BaseProxyHandler {
 
     switch (access) {
       case ACCESS_UNALIASED:
-        if (isMagicMissingArgumentsValue(*env, vp)) {
-          return getMissingArguments(cx, *env, vp);
-        }
         if (isMaybeUninitializedThisValue(cx, id, vp)) {
           return getMissingThis(cx, *env, vp);
         }
@@ -2180,8 +2141,7 @@ class DebugEnvironmentProxyHandler : public BaseProxyHandler {
     if (!createMissingArguments(cx, env, &argsObj)) {
       return false;
     }
-    vp.set(argsObj ? ObjectValue(*argsObj)
-                   : MagicValue(JS_OPTIMIZED_ARGUMENTS));
+    vp.set(argsObj ? ObjectValue(*argsObj) : MagicValue(JS_MISSING_ARGUMENTS));
     return true;
   }
 
@@ -2219,9 +2179,6 @@ class DebugEnvironmentProxyHandler : public BaseProxyHandler {
 
     switch (access) {
       case ACCESS_UNALIASED:
-        if (isMagicMissingArgumentsValue(*env, vp)) {
-          return getMissingArgumentsMaybeSentinelValue(cx, *env, vp);
-        }
         if (isMaybeUninitializedThisValue(cx, id, vp)) {
           return getMissingThisMaybeSentinelValue(cx, *env, vp);
         }
@@ -2731,8 +2688,7 @@ void DebugEnvironments::takeFrameSnapshot(
      * Copy in formals that are not aliased via the scope chain
      * but are aliased via the arguments object.
      */
-    if (!script->needsArgsAnalysis() && script->needsArgsObj() &&
-        frame.hasArgsObj()) {
+    if (script->needsArgsObj() && frame.hasArgsObj()) {
       for (unsigned i = 0; i < frame.numFormalArgs(); ++i) {
         if (script->formalLivesInArgumentsObject(i)) {
           vec[i].set(frame.argsObj().arg(i));
@@ -2746,6 +2702,13 @@ void DebugEnvironments::takeFrameSnapshot(
     if (debugEnv->environment().is<BlockLexicalEnvironmentObject>()) {
       LexicalScope* scope =
           &debugEnv->environment().as<BlockLexicalEnvironmentObject>().scope();
+      frameSlotStart = scope->firstFrameSlot();
+      frameSlotEnd = scope->nextFrameSlot();
+    } else if (debugEnv->environment()
+                   .is<ClassBodyLexicalEnvironmentObject>()) {
+      ClassBodyScope* scope = &debugEnv->environment()
+                                   .as<ClassBodyLexicalEnvironmentObject>()
+                                   .scope();
       frameSlotStart = scope->firstFrameSlot();
       frameSlotEnd = scope->nextFrameSlot();
     } else if (debugEnv->environment().is<VarEnvironmentObject>()) {
@@ -2886,7 +2849,11 @@ void DebugEnvironments::onPopGeneric(JSContext* cx, const EnvironmentIter& ei) {
 }
 
 void DebugEnvironments::onPopLexical(JSContext* cx, const EnvironmentIter& ei) {
-  onPopGeneric<BlockLexicalEnvironmentObject, LexicalScope>(cx, ei);
+  if (ei.scope().is<ClassBodyScope>()) {
+    onPopGeneric<ScopedLexicalEnvironmentObject, ClassBodyScope>(cx, ei);
+  } else {
+    onPopGeneric<ScopedLexicalEnvironmentObject, LexicalScope>(cx, ei);
+  }
 }
 
 void DebugEnvironments::onPopVar(JSContext* cx, const EnvironmentIter& ei) {
@@ -3475,7 +3442,7 @@ bool js::CheckLexicalNameConflict(
     HandleObject varObj, HandlePropertyName name) {
   const char* redeclKind = nullptr;
   RootedId id(cx, NameToId(name));
-  mozilla::Maybe<ShapeProperty> prop;
+  mozilla::Maybe<PropertyInfo> prop;
   if (varObj->is<GlobalObject>() &&
       varObj->as<GlobalObject>().realm()->isInVarNames(name)) {
     // ES 15.1.11 step 5.a
@@ -3512,7 +3479,7 @@ bool js::CheckLexicalNameConflict(
 [[nodiscard]] static bool CheckVarNameConflict(
     JSContext* cx, Handle<LexicalEnvironmentObject*> lexicalEnv,
     HandlePropertyName name) {
-  mozilla::Maybe<ShapeProperty> prop = lexicalEnv->lookup(cx, name);
+  mozilla::Maybe<PropertyInfo> prop = lexicalEnv->lookup(cx, name);
   if (prop.isSome()) {
     ReportRuntimeRedeclaration(cx, name, prop->writable() ? "let" : "const");
     return false;
@@ -3707,15 +3674,15 @@ static bool InitHoistedFunctionDeclarations(JSContext* cx, HandleScript script,
     MOZ_ASSERT(varObj->is<NativeObject>() ||
                varObj->is<DebugEnvironmentProxy>());
     if (varObj->is<GlobalObject>()) {
-      ShapeProperty shapeProp = prop.shapeProperty();
-      if (shapeProp.configurable()) {
+      PropertyInfo propInfo = prop.propertyInfo();
+      if (propInfo.configurable()) {
         if (!DefineDataProperty(cx, varObj, name, rval, attrs)) {
           return false;
         }
       } else {
-        MOZ_ASSERT(shapeProp.isDataProperty());
-        MOZ_ASSERT(shapeProp.writable());
-        MOZ_ASSERT(shapeProp.enumerable());
+        MOZ_ASSERT(propInfo.isDataProperty());
+        MOZ_ASSERT(propInfo.writable());
+        MOZ_ASSERT(propInfo.enumerable());
       }
 
       // Careful: the presence of a shape, even one appearing to derive from
@@ -4228,7 +4195,7 @@ JSObject* js::MaybeOptimizeBindGlobalName(JSContext* cx,
   // 'let') at compile time.
   Rooted<GlobalLexicalEnvironmentObject*> env(cx,
                                               &global->lexicalEnvironment());
-  mozilla::Maybe<ShapeProperty> prop = env->lookup(cx, name);
+  mozilla::Maybe<PropertyInfo> prop = env->lookup(cx, name);
   if (prop.isSome()) {
     if (prop->writable() &&
         !env->getSlot(prop->slot()).isMagic(JS_UNINITIALIZED_LEXICAL)) {
@@ -4250,3 +4217,110 @@ JSObject* js::MaybeOptimizeBindGlobalName(JSContext* cx,
 
   return nullptr;
 }
+
+#if defined(DEBUG) || defined(JS_JITSPEW)
+static void DumpEnvironmentObject(JSObject* unrootedEnvObj) {
+  JSContext* cx = TlsContext.get();
+  if (!cx) {
+    fprintf(stderr, "*** can't get JSContext for current thread\n");
+    return;
+  }
+
+  Rooted<JSObject*> envObj(cx, unrootedEnvObj);
+  while (envObj) {
+    Rooted<EnvironmentObject*> env(cx);
+    if (envObj->is<EnvironmentObject>()) {
+      env = &envObj->as<EnvironmentObject>();
+    } else if (envObj->is<DebugEnvironmentProxy>()) {
+      fprintf(stderr, "[DebugProxy] ");
+      env = &envObj->as<DebugEnvironmentProxy>().environment();
+    } else {
+      MOZ_ASSERT(envObj->is<GlobalObject>());
+      fprintf(stderr, "global\n");
+      break;
+    }
+
+    Rooted<Scope*> scope(cx);
+    if (env->is<CallObject>()) {
+      fprintf(stderr, "CallObject");
+    } else if (env->is<VarEnvironmentObject>()) {
+      fprintf(stderr, "VarEnvironmentObject");
+      scope = &env->as<VarEnvironmentObject>().scope();
+    } else if (env->is<ModuleEnvironmentObject>()) {
+      fprintf(stderr, "ModuleEnvironmentObject");
+    } else if (env->is<WasmInstanceEnvironmentObject>()) {
+      fprintf(stderr, "WasmInstanceEnvironmentObject");
+      scope = &env->as<WasmInstanceEnvironmentObject>().scope();
+    } else if (env->is<WasmFunctionCallObject>()) {
+      fprintf(stderr, "WasmFunctionCallObject");
+      scope = &env->as<WasmFunctionCallObject>().scope();
+    } else if (env->is<LexicalEnvironmentObject>()) {
+      if (env->is<ScopedLexicalEnvironmentObject>()) {
+        if (env->is<BlockLexicalEnvironmentObject>()) {
+          if (env->is<NamedLambdaObject>()) {
+            fprintf(stderr, "NamedLambdaObject");
+          } else {
+            fprintf(stderr, "BlockLexicalEnvironmentObject");
+          }
+        } else if (env->is<ClassBodyLexicalEnvironmentObject>()) {
+          fprintf(stderr, "ClassBodyLexicalEnvironmentObject");
+        } else {
+          fprintf(stderr, "ScopedLexicalEnvironmentObject");
+        }
+        scope = &env->as<ScopedLexicalEnvironmentObject>().scope();
+      } else if (env->is<ExtensibleLexicalEnvironmentObject>()) {
+        if (env->is<GlobalLexicalEnvironmentObject>()) {
+          fprintf(stderr, "GlobalLexicalEnvironmentObject");
+        } else if (env->is<NonSyntacticLexicalEnvironmentObject>()) {
+          fprintf(stderr, "NonSyntacticLexicalEnvironmentObject");
+        } else {
+          fprintf(stderr, "ExtensibleLexicalEnvironmentObject");
+        }
+      } else {
+        fprintf(stderr, "LexicalEnvironmentObject");
+      }
+    } else if (env->is<NonSyntacticVariablesObject>()) {
+      fprintf(stderr, "NonSyntacticVariablesObject");
+    } else if (env->is<WithEnvironmentObject>()) {
+      fprintf(stderr, "WithEnvironmentObject");
+    } else if (env->is<RuntimeLexicalErrorObject>()) {
+      fprintf(stderr, "RuntimeLexicalErrorObject");
+    } else {
+      fprintf(stderr, "EnvironmentObject");
+    }
+
+    if (scope) {
+      fprintf(stderr, " {\n");
+      for (Rooted<BindingIter> bi(cx, BindingIter(scope)); bi; bi++) {
+        if (bi.location().kind() == BindingLocation::Kind::Environment) {
+          UniqueChars bytes = AtomToPrintableString(cx, bi.name());
+          if (!bytes) {
+            fprintf(stderr, "  *** out of memory\n");
+            return;
+          }
+
+          fprintf(stderr, "  %u: %s %s\n", bi.location().slot(),
+                  BindingKindString(bi.kind()), bytes.get());
+        }
+      }
+      fprintf(stderr, "}");
+    }
+
+    fprintf(stderr, "\n");
+
+    if (envObj->is<DebugEnvironmentProxy>()) {
+      envObj = &envObj->as<DebugEnvironmentProxy>().enclosingEnvironment();
+    } else {
+      envObj = &env->enclosingEnvironment();
+    }
+
+    if (envObj) {
+      fprintf(stderr, "-> ");
+    }
+  }
+}
+
+void EnvironmentObject::dump() { DumpEnvironmentObject(this); }
+
+void DebugEnvironmentProxy::dump() { DumpEnvironmentObject(this); }
+#endif /* defined(DEBUG) || defined(JS_JITSPEW) */

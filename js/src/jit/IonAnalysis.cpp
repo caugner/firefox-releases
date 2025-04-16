@@ -1432,6 +1432,10 @@ bool TypeAnalyzer::shouldSpecializeOsrPhis() const {
   //
   //     * TypeAnalyzer::replaceRedundantPhi: adds a type guard for values that
   //       can't be unboxed (null/undefined/magic Values).
+  if (!mir->graph().osrBlock()) {
+    return false;
+  }
+
   return !mir->outerInfo().hadSpeculativePhiBailout();
 }
 
@@ -1444,8 +1448,7 @@ MIRType TypeAnalyzer::guessPhiType(MPhi* phi) const {
   MIRType magicType = MIRType::None;
   for (size_t i = 0; i < phi->numOperands(); i++) {
     MDefinition* in = phi->getOperand(i);
-    if (in->type() == MIRType::MagicOptimizedArguments ||
-        in->type() == MIRType::MagicHole ||
+    if (in->type() == MIRType::MagicHole ||
         in->type() == MIRType::MagicIsConstructing) {
       if (magicType == MIRType::None) {
         magicType = in->type();
@@ -1457,6 +1460,7 @@ MIRType TypeAnalyzer::guessPhiType(MPhi* phi) const {
 
   MIRType type = MIRType::None;
   bool convertibleToFloat32 = false;
+  bool hasOSRValueInput = false;
   DebugOnly<bool> hasSpecializableInput = false;
   for (size_t i = 0, e = phi->numOperands(); i < e; i++) {
     MDefinition* in = phi->getOperand(i);
@@ -1476,15 +1480,8 @@ MIRType TypeAnalyzer::guessPhiType(MPhi* phi) const {
     // See shouldSpecializeOsrPhis comment. This is the first step mentioned
     // there.
     if (shouldSpecializeOsrPhis() && in->isOsrValue()) {
+      hasOSRValueInput = true;
       hasSpecializableInput = true;
-
-      // TODO(post-Warp): simplify float32 handling in this function or (better)
-      // make the float32 analysis a stand-alone optimization pass instead of
-      // complicating type analysis. See bug 1655773.
-      convertibleToFloat32 = false;
-      if (type == MIRType::Float32) {
-        type = MIRType::Double;
-      }
       continue;
     }
 
@@ -1513,6 +1510,13 @@ MIRType TypeAnalyzer::guessPhiType(MPhi* phi) const {
         return MIRType::Value;
       }
     }
+  }
+
+  if (hasOSRValueInput && type == MIRType::Float32) {
+    // TODO(post-Warp): simplify float32 handling in this function or (better)
+    // make the float32 analysis a stand-alone optimization pass instead of
+    // complicating type analysis. See bug 1655773.
+    type = MIRType::Double;
   }
 
   MOZ_ASSERT_IF(type == MIRType::None, hasSpecializableInput);
@@ -1654,7 +1658,7 @@ bool TypeAnalyzer::specializePhis() {
     return false;
   }
 
-  if (shouldSpecializeOsrPhis() && graph.osrBlock()) {
+  if (shouldSpecializeOsrPhis()) {
     // See shouldSpecializeOsrPhis comment. This is the second step, propagating
     // loop header phi types to preheader phis.
     MBasicBlock* preHeader = graph.osrPreHeaderBlock();
@@ -1825,9 +1829,6 @@ void TypeAnalyzer::replaceRedundantPhi(MPhi* phi) {
     case MIRType::Null:
       v = NullValue();
       break;
-    case MIRType::MagicOptimizedArguments:
-      v = MagicValue(JS_OPTIMIZED_ARGUMENTS);
-      break;
     case MIRType::MagicOptimizedOut:
       v = MagicValue(JS_OPTIMIZED_OUT);
       break;
@@ -1849,16 +1850,14 @@ void TypeAnalyzer::replaceRedundantPhi(MPhi* phi) {
   if (shouldSpecializeOsrPhis()) {
     // See shouldSpecializeOsrPhis comment. This is part of the third step,
     // guard the incoming MOsrValue is of this type.
-    MBasicBlock* osrBlock = graph.osrBlock();
     for (uint32_t i = 0; i < phi->numOperands(); i++) {
       MDefinition* def = phi->getOperand(i);
-      if (def->isOsrValue()) {
-        MOZ_ASSERT(def->block() == osrBlock);
+      if (def->type() != phi->type()) {
+        MOZ_ASSERT(def->isOsrValue() || def->isPhi());
+        MOZ_ASSERT(def->type() == MIRType::Value);
         MGuardValue* guard = MGuardValue::New(alloc(), def, v);
         guard->setBailoutKind(BailoutKind::SpeculativePhi);
-        osrBlock->insertBefore(osrBlock->lastIns(), guard);
-      } else {
-        MOZ_ASSERT(def->type() == phi->type());
+        def->block()->insertBefore(def->block()->lastIns(), guard);
       }
     }
   }
@@ -2850,7 +2849,7 @@ static bool IsResumableMIRType(MIRType type) {
     case MIRType::Symbol:
     case MIRType::BigInt:
     case MIRType::Object:
-    case MIRType::MagicOptimizedArguments:
+    case MIRType::Shape:
     case MIRType::MagicOptimizedOut:
     case MIRType::MagicUninitializedLexical:
     case MIRType::MagicIsConstructing:
@@ -2863,7 +2862,6 @@ static bool IsResumableMIRType(MIRType type) {
     case MIRType::Slots:
     case MIRType::Elements:
     case MIRType::Pointer:
-    case MIRType::Shape:
     case MIRType::Int64:
     case MIRType::RefOrNull:
     case MIRType::StackResults:
@@ -2894,9 +2892,6 @@ static void AssertIfResumableInstruction(MDefinition* def) {
 static void AssertResumePointDominatedByOperands(MResumePoint* resume) {
   for (size_t i = 0, e = resume->numOperands(); i < e; ++i) {
     MDefinition* op = resume->getOperand(i);
-    if (op->type() == MIRType::MagicOptimizedArguments) {
-      continue;
-    }
     MOZ_ASSERT(op->block()->dominates(resume->block()),
                "Resume point is not dominated by its operands");
   }
@@ -3691,229 +3686,6 @@ MDefinition* jit::ConvertLinearSum(TempAllocator& alloc, MBasicBlock* block,
   }
 
   return def;
-}
-
-static bool ArgumentsUseCanBeLazy(JSContext* cx, JSScript* script,
-                                  MInstruction* ins, size_t index,
-                                  bool* argumentsContentsObserved) {
-  // We can read the frame's arguments directly for f.apply(x, arguments).
-  if (ins->isCall()) {
-    if (JSOp(*ins->toCall()->resumePoint()->pc()) == JSOp::FunApply &&
-        ins->toCall()->numActualArgs() == 2 &&
-        index == MCall::IndexOfArgument(1)) {
-      *argumentsContentsObserved = true;
-      return true;
-    }
-  }
-
-  // arguments[i] can read fp->unaliasedActual(i) directly.
-  if (ins->isGetPropertyCache() && index == 0 &&
-      IsGetElemPC(ins->resumePoint()->pc())) {
-    script->setUninlineable();
-    *argumentsContentsObserved = true;
-    return true;
-  }
-
-  // MGetArgumentsObjectArg needs to be considered as a use that allows
-  // laziness.
-  if (ins->isGetArgumentsObjectArg() && index == 0) {
-    return true;
-  }
-
-  // arguments.length length can read fp->numActualArgs() directly.
-  // arguments.callee can read fp->callee() directly if the arguments object
-  // is mapped.
-  auto getPropCanBeLazy = [cx, script](JSString* name) {
-    if (name == cx->names().length) {
-      return true;
-    }
-    if (script->hasMappedArgsObj() && name == cx->names().callee) {
-      return true;
-    }
-    return false;
-  };
-
-  if (ins->isGetPropertyCache() && index == 0) {
-    MDefinition* id = ins->toGetPropertyCache()->idval();
-    if (id->isConstant() && id->type() == MIRType::String &&
-        getPropCanBeLazy(id->toConstant()->toString())) {
-      return true;
-    }
-  }
-
-  return false;
-}
-
-bool jit::AnalyzeArgumentsUsage(JSContext* cx, JSScript* scriptArg) {
-  RootedScript script(cx, scriptArg);
-  gc::AutoSuppressGC suppressGC(cx);
-
-  MOZ_ASSERT(script->needsArgsAnalysis());
-  MOZ_ASSERT(script->argumentsHasVarBinding());
-
-  // Treat the script as needing an arguments object until we determine it
-  // does not need one. This both allows us to easily see where the arguments
-  // object can escape through assignments to the function's named arguments,
-  // and also simplifies handling of early returns.
-  script->setNeedsArgsObj(true);
-
-  if (JitOptions.scalarReplaceArguments) {
-    return true;
-  }
-
-  // Always construct arguments objects when in debug mode, for generator
-  // scripts (generators can be suspended when speculation fails) or when
-  // direct eval is present.
-  //
-  // FIXME: Don't build arguments for ES6 generator expressions.
-  if (scriptArg->isDebuggee() || script->isGenerator() || script->isAsync() ||
-      script->bindingsAccessedDynamically()) {
-    return true;
-  }
-
-  if (!jit::IsIonEnabled(cx)) {
-    return true;
-  }
-
-  static const uint32_t MAX_SCRIPT_SIZE = 10000;
-  if (script->length() > MAX_SCRIPT_SIZE) {
-    return true;
-  }
-
-  // Check this before calling ensureJitRealmExists, so we're less
-  // likely to report OOM in JSRuntime::createJitRuntime.
-  if (!jit::CanLikelyAllocateMoreExecutableMemory()) {
-    return true;
-  }
-
-  if (!cx->realm()->ensureJitRealmExists(cx)) {
-    return false;
-  }
-
-  AutoKeepJitScripts keepJitScript(cx);
-  if (!script->ensureHasJitScript(cx, keepJitScript)) {
-    return false;
-  }
-
-  TraceLoggerThread* logger = TraceLoggerForCurrentThread(cx);
-  TraceLoggerEvent event(TraceLogger_AnnotateScripts, script);
-  AutoTraceLog logScript(logger, event);
-  AutoTraceLog logCompile(logger, TraceLogger_IonAnalysis);
-
-  LifoAlloc alloc(TempAllocator::PreferredLifoChunkSize);
-  TempAllocator temp(&alloc);
-  JitContext jctx(cx, &temp);
-
-  MIRGraph graph(&temp);
-  InlineScriptTree* inlineScriptTree =
-      InlineScriptTree::New(&temp, nullptr, nullptr, script);
-  if (!inlineScriptTree) {
-    ReportOutOfMemory(cx);
-    return false;
-  }
-
-  CompileInfo info(CompileRuntime::get(cx->runtime()), script,
-                   script->function(),
-                   /* osrPc = */ nullptr, Analysis_ArgumentsUsage,
-                   /* needsArgsObj = */ true, inlineScriptTree);
-
-  const OptimizationInfo* optimizationInfo =
-      IonOptimizations.get(OptimizationLevel::Normal);
-
-  const JitCompileOptions options(cx);
-
-  MIRGenerator mirGen(CompileRealm::get(cx->realm()), options, &temp, &graph,
-                      &info, optimizationInfo);
-
-  {
-    WarpOracle oracle(cx, mirGen, script);
-
-    AbortReasonOr<WarpSnapshot*> result = oracle.createSnapshot();
-    if (result.isErr()) {
-      AbortReason reason = result.unwrapErr();
-      if (cx->isThrowingOverRecursed() || cx->isThrowingOutOfMemory()) {
-        return false;
-      }
-      if (reason == AbortReason::Alloc) {
-        ReportOutOfMemory(cx);
-        return false;
-      }
-      MOZ_ASSERT(!cx->isExceptionPending());
-      return true;
-    }
-
-    WarpCompilation comp(temp);
-    WarpBuilder builder(*result.unwrap(), mirGen, &comp);
-    if (!builder.build()) {
-      ReportOutOfMemory(cx);
-      return false;
-    }
-  }
-
-  if (!SplitCriticalEdges(graph)) {
-    ReportOutOfMemory(cx);
-    return false;
-  }
-
-  RenumberBlocks(graph);
-
-  if (!BuildDominatorTree(graph)) {
-    ReportOutOfMemory(cx);
-    return false;
-  }
-
-  if (!EliminatePhis(&mirGen, graph, AggressiveObservability)) {
-    ReportOutOfMemory(cx);
-    return false;
-  }
-
-  MDefinition* argumentsValue = graph.entryBlock()->getSlot(info.argsObjSlot());
-
-  bool argumentsContentsObserved = false;
-
-  if (argumentsValue->isImplicitlyUsed()) {
-    return true;
-  }
-
-  for (MUseDefIterator uses(argumentsValue); uses; uses++) {
-    MDefinition* use = uses.def();
-
-    // Don't track |arguments| through assignments to phis.
-    if (!use->isInstruction()) {
-      return true;
-    }
-
-    if (!ArgumentsUseCanBeLazy(cx, script, use->toInstruction(),
-                               use->indexOf(uses.use()),
-                               &argumentsContentsObserved)) {
-      return true;
-    }
-  }
-
-  // If a script explicitly accesses the contents of 'arguments', and has
-  // formals which may be stored as part of a call object, don't use lazy
-  // arguments. The compiler can then assume that accesses through
-  // arguments[i] will be on unaliased variables.
-  if (argumentsContentsObserved) {
-    for (PositionalFormalParameterIter fi(script); fi; fi++) {
-      if (fi.closedOver()) {
-        return true;
-      }
-    }
-  }
-
-  // If we assign to a positional formal parameter and the arguments object is
-  // unmapped (strict mode or function with default/rest/destructing args),
-  // parameters do not alias arguments[i], and to make the arguments object
-  // reflect initial parameter values prior to any mutation we create it eagerly
-  // whenever parameters are (or might, in the case of calls to eval) assigned.
-  if (!script->hasMappedArgsObj() && script->jitScript()->modifiesArguments() &&
-      argumentsContentsObserved) {
-    return true;
-  }
-
-  script->setNeedsArgsObj(false);
-  return true;
 }
 
 // Mark all the blocks that are in the loop with the given header.

@@ -8,9 +8,7 @@
  */
 
 add_task(function test_setup() {
-  if (CustomizableUI.protonToolbarEnabled) {
-    CustomizableUI.addWidgetToArea("home-button", "nav-bar");
-  }
+  CustomizableUI.addWidgetToArea("home-button", "nav-bar");
 
   registerCleanupFunction(() => {
     Services.prefs.clearUserPref("middlemouse.paste");
@@ -20,15 +18,20 @@ add_task(function test_setup() {
     Services.prefs.clearUserPref("browser.tabs.loadBookmarksInBackground");
     SpecialPowers.clipboardCopyString("");
 
-    if (CustomizableUI.protonToolbarEnabled) {
-      CustomizableUI.removeWidgetFromArea("home-button");
-    }
+    CustomizableUI.removeWidgetFromArea("home-button");
   });
 });
 
 add_task(async function test_middleClickOnTab() {
   await testMiddleClickOnTab(false);
   await testMiddleClickOnTab(true);
+});
+
+add_task(async function test_middleClickToOpenNewTab() {
+  await testMiddleClickToOpenNewTab(false, "#tabs-newtab-button");
+  await testMiddleClickToOpenNewTab(true, "#tabs-newtab-button");
+  await testMiddleClickToOpenNewTab(false, "#TabsToolbar");
+  await testMiddleClickToOpenNewTab(true, "#TabsToolbar");
 });
 
 add_task(async function test_middleClickOnURLBar() {
@@ -135,6 +138,28 @@ async function testMiddleClickOnTab(isMiddleMousePastePrefOn) {
   Assert.equal(gURLBar.value, "", "URLBar has no pasted value");
 
   BrowserTestUtils.removeTab(tab1);
+}
+
+async function testMiddleClickToOpenNewTab(isMiddleMousePastePrefOn, selector) {
+  info(`Set middlemouse.paste [${isMiddleMousePastePrefOn}]`);
+  Services.prefs.setBoolPref("middlemouse.paste", isMiddleMousePastePrefOn);
+
+  info("Set initial value");
+  SpecialPowers.clipboardCopyString("test\nsample");
+  gURLBar.value = "";
+  gURLBar.focus();
+
+  info(`Click on ${selector}`);
+  const originalTab = gBrowser.selectedTab;
+  const element = document.querySelector(selector);
+  EventUtils.synthesizeMouseAtCenter(element, { button: 1 });
+
+  info("Wait until the new tab is opened");
+  await TestUtils.waitForCondition(() => gBrowser.selectedTab !== originalTab);
+
+  Assert.equal(gURLBar.value, "", "URLBar has no pasted value");
+
+  BrowserTestUtils.removeTab(gBrowser.selectedTab);
 }
 
 async function testMiddleClickOnURLBar(isMiddleMousePastePrefOn) {

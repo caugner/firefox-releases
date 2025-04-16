@@ -41,7 +41,7 @@ inline unsigned StartArgSlot(JSScript* script) {
 
   // Note: when updating this, please also update the assert in
   // SnapshotWriter::startFrame
-  return 2 + (script->argumentsHasVarBinding() ? 1 : 0);
+  return 2 + (script->needsArgsObj() ? 1 : 0);
 }
 
 inline unsigned CountArgSlots(JSScript* script, JSFunction* fun) {
@@ -55,27 +55,15 @@ inline unsigned CountArgSlots(JSScript* script, JSFunction* fun) {
   return StartArgSlot(script) + (fun ? fun->nargs() + 1 : 0);
 }
 
-enum AnalysisMode {
-  /* JavaScript execution, not analysis. */
-  Analysis_None,
-
-  /*
-   * MIR analysis performed when executing a script which uses its arguments,
-   * when it is not known whether a lazy arguments value can be used.
-   */
-  Analysis_ArgumentsUsage
-};
-
 // Contains information about the compilation source for IR being generated.
 class CompileInfo {
  public:
   CompileInfo(CompileRuntime* runtime, JSScript* script, JSFunction* fun,
-              jsbytecode* osrPc, AnalysisMode analysisMode,
-              bool scriptNeedsArgsObj, InlineScriptTree* inlineScriptTree)
+              jsbytecode* osrPc, bool scriptNeedsArgsObj,
+              InlineScriptTree* inlineScriptTree)
       : script_(script),
         fun_(fun),
         osrPc_(osrPc),
-        analysisMode_(analysisMode),
         scriptNeedsArgsObj_(scriptNeedsArgsObj),
         hadEagerTruncationBailout_(script->hadEagerTruncationBailout()),
         hadSpeculativePhiBailout_(script->hadSpeculativePhiBailout()),
@@ -141,7 +129,6 @@ class CompileInfo {
       : script_(nullptr),
         fun_(nullptr),
         osrPc_(nullptr),
-        analysisMode_(Analysis_None),
         scriptNeedsArgsObj_(false),
         hadEagerTruncationBailout_(false),
         hadSpeculativePhiBailout_(false),
@@ -194,7 +181,7 @@ class CompileInfo {
     return 1;
   }
   uint32_t argsObjSlot() const {
-    MOZ_ASSERT(hasArguments());
+    MOZ_ASSERT(needsArgsObj());
     return 2;
   }
   uint32_t thisSlot() const {
@@ -226,19 +213,11 @@ class CompileInfo {
     return nimplicit() + nargs() + nlocals();
   }
 
-  bool hasArguments() const { return script()->argumentsHasVarBinding(); }
-  bool argumentsAliasesFormals() const {
-    return script()->argumentsAliasesFormals();
-  }
   bool hasMappedArgsObj() const { return script()->hasMappedArgsObj(); }
   bool needsArgsObj() const { return scriptNeedsArgsObj_; }
   bool argsObjAliasesFormals() const {
     return scriptNeedsArgsObj_ && script()->hasMappedArgsObj();
   }
-
-  AnalysisMode analysisMode() const { return analysisMode_; }
-
-  bool isAnalysis() const { return analysisMode_ != Analysis_None; }
 
   bool needsBodyEnvironmentObject() const {
     return needsBodyEnvironmentObject_;
@@ -301,7 +280,7 @@ class CompileInfo {
       // If the function may need an arguments object, also preserve the
       // environment chain because it may be needed to reconstruct the arguments
       // object during bailout.
-      if (funNeedsSomeEnvironmentObject_ || hasArguments()) {
+      if (funNeedsSomeEnvironmentObject_ || needsArgsObj()) {
         return SlotObservableKind::ObservableRecoverable;
       }
       return SlotObservableKind::NotObservable;
@@ -309,7 +288,7 @@ class CompileInfo {
 
     // The arguments object is observable. If it does not escape, it can
     // be recovered.
-    if (hasArguments() && slot == argsObjSlot()) {
+    if (needsArgsObj() && slot == argsObjSlot()) {
       MOZ_ASSERT(funMaybeLazy());
       return SlotObservableKind::ObservableRecoverable;
     }
@@ -361,11 +340,7 @@ class CompileInfo {
   JSScript* script_;
   JSFunction* fun_;
   jsbytecode* osrPc_;
-  AnalysisMode analysisMode_;
 
-  // Whether a script needs an arguments object is unstable over compilation
-  // since the arguments optimization could be marked as failed on the active
-  // thread, so cache a value here and use it throughout for consistency.
   bool scriptNeedsArgsObj_;
 
   // Record the state of previous bailouts in order to prevent compiling the

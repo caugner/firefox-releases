@@ -206,7 +206,6 @@ static const char sColorPrefs[][41] = {
     "ui.textForeground",
     "ui.textSelectBackground",
     "ui.textSelectForeground",
-    "ui.textSelectForegroundCustom",
     "ui.textSelectBackgroundDisabled",
     "ui.textSelectBackgroundAttention",
     "ui.textHighlightBackground",
@@ -309,9 +308,11 @@ static const char sColorPrefs[][41] = {
     "ui.-moz-visitedhyperlinktext",
     "ui.-moz-comboboxtext",
     "ui.-moz-combobox",
-    "ui.-moz-gtk-info-bar-text",
     "ui.-moz-colheadertext",
-    "ui.-moz-colheaderhovertext"};
+    "ui.-moz-colheaderhovertext",
+    "ui.-moz-gtk-titlebar-text",
+    "ui.-moz-gtk-titlebar-inactive-text",
+};
 
 static_assert(ArrayLength(sColorPrefs) == size_t(LookAndFeel::ColorID::End),
               "Should have a pref for each color value");
@@ -465,7 +466,6 @@ static bool IsSpecialColor(LookAndFeel::ColorID aID, nscolor aColor) {
 
   switch (aID) {
     case ColorID::TextSelectForeground:
-      return aColor == NS_DONT_CHANGE_COLOR;
     case ColorID::IMESelectedRawTextBackground:
     case ColorID::IMESelectedConvertedTextBackground:
     case ColorID::IMERawInputBackground:
@@ -887,8 +887,8 @@ namespace mozilla {
 // static
 void LookAndFeel::NotifyChangedAllWindows(widget::ThemeChangeKind aKind) {
   if (nsCOMPtr<nsIObserverService> obs = services::GetObserverService()) {
-    obs->NotifyObservers(nullptr, "look-and-feel-changed",
-                         reinterpret_cast<char16_t*>(uintptr_t(aKind)));
+    const char16_t kind[] = {char16_t(aKind), 0};
+    obs->NotifyObservers(nullptr, "look-and-feel-changed", kind);
   }
 }
 
@@ -927,30 +927,45 @@ static bool ShouldUseStandinsForNativeColorForNonNativeTheme(
   return false;
 }
 
+static bool ShouldRespectSystemAppearanceForChromeDoc() {
+#ifdef XP_MACOSX
+  return StaticPrefs::widget_macos_respect_system_appearance();
+#else
+  // GTK historically has behaved like this. Other platforms don't have support
+  // for light / dark color schemes yet so it doesn't matter for them.
+  return true;
+#endif
+}
+
+static bool ShouldRespectThemeAppearanceForChromeDoc() {
+  return StaticPrefs::widget_system_colors_follow_theme();
+}
+
 LookAndFeel::ColorScheme LookAndFeel::ColorSchemeForDocument(
     const dom::Document& aDoc) {
-#ifdef XP_MACOSX
   if (nsContentUtils::IsChromeDoc(&aDoc) &&
-      StaticPrefs::widget_macos_respect_system_appearance()) {
-    const auto* doc = &aDoc;
-    while (const auto* parent = doc->GetInProcessParentDocument()) {
-      doc = parent;
+      ShouldRespectSystemAppearanceForChromeDoc()) {
+    if (ShouldRespectThemeAppearanceForChromeDoc()) {
+      const auto* doc = &aDoc;
+      while (const auto* parent = doc->GetInProcessParentDocument()) {
+        doc = parent;
+      }
+      switch (doc->ThreadSafeGetDocumentLWTheme()) {
+        case dom::Document::Doc_Theme_Dark:
+          return ColorScheme::Light;
+        case dom::Document::Doc_Theme_Bright:
+          // NOTE(emilio): This looks backwards, but it's actually correct.
+          // Doc_Theme_Bright means that the theme has bright _text_ (and thus
+          // dark background). Tricky!
+          return ColorScheme::Dark;
+        case dom::Document::Doc_Theme_Neutral:
+        case dom::Document::Doc_Theme_None:
+        default:
+          break;
+      }
     }
-    switch (doc->ThreadSafeGetDocumentLWTheme()) {
-      case dom::Document::Doc_Theme_None:
-        return LookAndFeel::SystemColorScheme();
-      case dom::Document::Doc_Theme_Dark:
-        return LookAndFeel::ColorScheme::Light;
-      case dom::Document::Doc_Theme_Bright:
-        // NOTE(emilio): This looks backwards, but it's actually correct.
-        // Doc_Theme_Bright means that the theme has bright _text_ (and thus
-        // dark background). Tricky!
-        return LookAndFeel::ColorScheme::Dark;
-      default:
-        break;
-    }
+    return SystemColorScheme();
   }
-#endif
   return LookAndFeel::ColorScheme::Light;
 }
 

@@ -7,11 +7,8 @@ import sys
 import tempfile
 import time
 
-try:
-    from urllib.request import urlopen
-    from urllib.error import URLError
-except ImportError:
-    from urllib2 import urlopen, URLError
+from urllib.request import urlopen
+from urllib.error import URLError
 
 import pytest
 
@@ -97,6 +94,8 @@ def test_help():
 
 
 @pytest.mark.slow
+@pytest.mark.skipif(sys.platform == "win32",
+                    reason="https://github.com/web-platform-tests/wpt/issues/28745")
 def test_list_tests(manifest_dir):
     """The `--list-tests` option should not produce an error under normal
     conditions."""
@@ -161,6 +160,8 @@ def test_list_tests_invalid_manifest(manifest_dir):
 
 @pytest.mark.slow
 @pytest.mark.remote_network
+@pytest.mark.skipif(sys.platform == "win32",
+                    reason="https://github.com/web-platform-tests/wpt/issues/28745")
 def test_run_zero_tests():
     """A test execution describing zero tests should be reported as an error
     even in the presence of the `--no-fail-on-unexpected` option."""
@@ -181,6 +182,8 @@ def test_run_zero_tests():
 
 @pytest.mark.slow
 @pytest.mark.remote_network
+@pytest.mark.skipif(sys.platform == "win32",
+                    reason="https://github.com/web-platform-tests/wpt/issues/28745")
 def test_run_failing_test():
     """Failing tests should be reported with a non-zero exit status unless the
     `--no-fail-on-unexpected` option has been specified."""
@@ -203,6 +206,8 @@ def test_run_failing_test():
 
 @pytest.mark.slow
 @pytest.mark.remote_network
+@pytest.mark.skipif(sys.platform == "win32",
+                    reason="https://github.com/web-platform-tests/wpt/issues/28745")
 def test_run_verify_unstable(temp_test):
     """Unstable tests should be reported with a non-zero exit status. Stable
     tests should be reported with a zero exit status."""
@@ -314,8 +319,9 @@ def test_tests_affected_idlharness(capsys, manifest_dir):
         wpt.main(argv=["tests-affected", "--metadata", manifest_dir, "%s~..%s" % (commit, commit)])
     assert excinfo.value.code == 0
     out, err = capsys.readouterr()
-    assert ("webrtc-identity/idlharness.https.window.js\n" +
-            "webrtc-insertable-streams/idlharness.https.window.js\n" +
+    assert ("mst-content-hint/idlharness.window.js\n" +
+            "webrtc-encoded-transform/idlharness.https.window.js\n" +
+            "webrtc-identity/idlharness.https.window.js\n" +
             "webrtc-stats/idlharness.window.js\n" +
             "webrtc-stats/supported-stats.html\n" +
             "webrtc/idlharness.https.window.js\n") == out

@@ -405,7 +405,6 @@ nsresult nsTextControlFrame::CreateAnonymousContent(
     return rv;
   }
 
-  aElements.AppendElement(mRootNode);
   CreatePlaceholderIfNeeded();
   if (mPlaceholderDiv) {
     aElements.AppendElement(mPlaceholderDiv);
@@ -414,6 +413,10 @@ nsresult nsTextControlFrame::CreateAnonymousContent(
   if (mPreviewDiv) {
     aElements.AppendElement(mPreviewDiv);
   }
+
+  // NOTE(emilio): We want the root node always after the placeholder so that
+  // background on the placeholder doesn't obscure the caret.
+  aElements.AppendElement(mRootNode);
 
   rv = UpdateValueDisplay(false);
   NS_ENSURE_SUCCESS(rv, rv);
@@ -516,8 +519,6 @@ void nsTextControlFrame::CreatePreviewIfNeeded() {
 
 void nsTextControlFrame::AppendAnonymousContentTo(
     nsTArray<nsIContent*>& aElements, uint32_t aFilter) {
-  aElements.AppendElement(mRootNode);
-
   if (mPlaceholderDiv && !(aFilter & nsIContent::eSkipPlaceholderContent)) {
     aElements.AppendElement(mPlaceholderDiv);
   }
@@ -525,6 +526,8 @@ void nsTextControlFrame::AppendAnonymousContentTo(
   if (mPreviewDiv) {
     aElements.AppendElement(mPreviewDiv);
   }
+
+  aElements.AppendElement(mRootNode);
 }
 
 nscoord nsTextControlFrame::GetPrefISize(gfxContext* aRenderingContext) {
@@ -607,6 +610,12 @@ Maybe<nscoord> nsTextControlFrame::ComputeBaseline(
               aReflowInput.ComputedLogicalBorderPadding(wm).BStart(wm));
 }
 
+static bool IsButtonBox(const nsIFrame* aFrame) {
+  auto pseudoType = aFrame->Style()->GetPseudoType();
+  return pseudoType == PseudoStyleType::mozNumberSpinBox ||
+         pseudoType == PseudoStyleType::mozSearchClearButton;
+}
+
 void nsTextControlFrame::Reflow(nsPresContext* aPresContext,
                                 ReflowOutput& aDesiredSize,
                                 const ReflowInput& aReflowInput,
@@ -631,12 +640,32 @@ void nsTextControlFrame::Reflow(nsPresContext* aPresContext,
 
   // overflow handling
   aDesiredSize.SetOverflowAreasToDesiredBounds();
+
+  nsIFrame* buttonBox = [&]() -> nsIFrame* {
+    nsIFrame* last = mFrames.LastChild();
+    if (!last || !IsButtonBox(last)) {
+      return nullptr;
+    }
+    return last;
+  }();
+
+  // Reflow the button box first, so that we can use its size for the other
+  // frames.
+  nscoord buttonBoxISize = 0;
+  if (buttonBox) {
+    ReflowTextControlChild(buttonBox, aPresContext, aReflowInput, aStatus,
+                           aDesiredSize, buttonBoxISize);
+  }
+
   // perform reflow on all kids
   nsIFrame* kid = mFrames.FirstChild();
-  nscoord buttonBoxISize = 0;
   while (kid) {
-    ReflowTextControlChild(kid, aPresContext, aReflowInput, aStatus,
-                           aDesiredSize, buttonBoxISize);
+    if (kid != buttonBox) {
+      MOZ_ASSERT(!IsButtonBox(kid),
+                 "Should only have one button box, and should be last");
+      ReflowTextControlChild(kid, aPresContext, aReflowInput, aStatus,
+                             aDesiredSize, buttonBoxISize);
+    }
     kid = kid->GetNextSibling();
   }
 
@@ -645,12 +674,6 @@ void nsTextControlFrame::Reflow(nsPresContext* aPresContext,
 
   aStatus.Reset();  // This type of frame can't be split.
   NS_FRAME_SET_TRUNCATION(aStatus, aReflowInput, aDesiredSize);
-}
-
-static bool IsButtonBox(const nsIFrame* aFrame) {
-  auto pseudoType = aFrame->Style()->GetPseudoType();
-  return pseudoType == PseudoStyleType::mozNumberSpinBox ||
-         pseudoType == PseudoStyleType::mozSearchClearButton;
 }
 
 void nsTextControlFrame::ReflowTextControlChild(
@@ -663,7 +686,7 @@ void nsTextControlFrame::ReflowTextControlChild(
   LogicalSize availSize = aReflowInput.ComputedSizeWithPadding(wm);
   availSize.BSize(wm) = NS_UNCONSTRAINEDSIZE;
 
-  const bool isButtonBox = IsButtonBox(aKid);
+  bool isButtonBox = IsButtonBox(aKid);
 
   ReflowInput kidReflowInput(aPresContext, aReflowInput, aKid, availSize,
                              Nothing(), ReflowInput::InitFlag::CallerWillInit);
@@ -1005,16 +1028,8 @@ nsresult nsTextControlFrame::OffsetToDOMPoint(uint32_t aOffset,
     *aPosition = 0;
   } else if (textNode) {
     uint32_t textLength = textNode->Length();
-    if (length == 2 && aOffset == textLength) {
-      // If we're at the end of the text node and we have a trailing BR node,
-      // set the selection on the BR node.
-      rootNode.forget(aResult);
-      *aPosition = 1;
-    } else {
-      // Otherwise, set the selection on the textnode itself.
-      firstNode.forget(aResult);
-      *aPosition = std::min(aOffset, textLength);
-    }
+    firstNode.forget(aResult);
+    *aPosition = std::min(aOffset, textLength);
   } else {
     rootNode.forget(aResult);
     *aPosition = 0;
@@ -1274,12 +1289,6 @@ nsresult nsTextControlFrame::PeekOffset(nsPeekOffsetStruct* aPos) {
 
 void nsTextControlFrame::BuildDisplayList(nsDisplayListBuilder* aBuilder,
                                           const nsDisplayListSet& aLists) {
-  /*
-   * The implementation of this method is equivalent as:
-   * nsContainerFrame::BuildDisplayList()
-   * with the difference that we filter-out the placeholder frame when it
-   * should not be visible.
-   */
   DO_GLOBAL_REFLOW_COUNT_DSP("nsTextControlFrame");
 
   DisplayBorderBackgroundOutline(aBuilder, aLists);
@@ -1290,34 +1299,8 @@ void nsTextControlFrame::BuildDisplayList(nsDisplayListBuilder* aBuilder,
   nsDisplayList* content = aLists.Content();
   nsDisplayListSet set(content, content, content, content, content, content);
 
-  // We build the ::placeholder first so that it renders below mRootNode which
-  // draws the caret and we always want that on top (bug 1637476).
-  //
-  // TODO(emilio): We should consider just changing the DOM order instead.
-  if (mPlaceholderDiv && mPlaceholderDiv->GetPrimaryFrame()) {
-    auto* kid = mPlaceholderDiv->GetPrimaryFrame();
-    MOZ_ASSERT(kid->GetParent() == this);
-    BuildDisplayListForChild(aBuilder, kid, set);
-  }
-
-  nsIFrame* buttonBox = nullptr;
   for (auto* kid : mFrames) {
-    if (kid->GetContent() == mPlaceholderDiv) {
-      continue;  // Handled above already.
-    }
-    if (IsButtonBox(kid)) {
-      MOZ_ASSERT(!buttonBox);
-      buttonBox = kid;
-      continue;  // Handled below.
-    }
     BuildDisplayListForChild(aBuilder, kid, set);
-  }
-
-  if (buttonBox) {
-    // We add the display items for our button-box *after* all other children,
-    // in order to be sure these buttons paint & hit-test in front of the other
-    // components.
-    BuildDisplayListForChild(aBuilder, buttonBox, set);
   }
 }
 

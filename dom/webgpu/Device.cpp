@@ -17,6 +17,7 @@
 #include "Buffer.h"
 #include "ComputePipeline.h"
 #include "Queue.h"
+#include "RenderBundleEncoder.h"
 #include "RenderPipeline.h"
 #include "Sampler.h"
 #include "Texture.h"
@@ -166,10 +167,17 @@ already_AddRefed<CommandEncoder> Device::CreateCommandEncoder(
   return encoder.forget();
 }
 
+already_AddRefed<RenderBundleEncoder> Device::CreateRenderBundleEncoder(
+    const dom::GPURenderBundleEncoderDescriptor& aDesc) {
+  RefPtr<RenderBundleEncoder> encoder =
+      new RenderBundleEncoder(this, mBridge, aDesc);
+  return encoder.forget();
+}
+
 already_AddRefed<BindGroupLayout> Device::CreateBindGroupLayout(
     const dom::GPUBindGroupLayoutDescriptor& aDesc) {
   RawId id = mBridge->DeviceCreateBindGroupLayout(mId, aDesc);
-  RefPtr<BindGroupLayout> object = new BindGroupLayout(this, id);
+  RefPtr<BindGroupLayout> object = new BindGroupLayout(this, id, true);
   return object.forget();
 }
 already_AddRefed<PipelineLayout> Device::CreatePipelineLayout(
@@ -196,20 +204,24 @@ already_AddRefed<ShaderModule> Device::CreateShaderModule(
 already_AddRefed<ComputePipeline> Device::CreateComputePipeline(
     const dom::GPUComputePipelineDescriptor& aDesc) {
   nsTArray<RawId> implicitBindGroupLayoutIds;
-  RawId id = mBridge->DeviceCreateComputePipeline(mId, aDesc,
-                                                  &implicitBindGroupLayoutIds);
+  RawId implicitPipelineLayoutId = 0;
+  RawId id = mBridge->DeviceCreateComputePipeline(
+      mId, aDesc, &implicitPipelineLayoutId, &implicitBindGroupLayoutIds);
   RefPtr<ComputePipeline> object =
-      new ComputePipeline(this, id, std::move(implicitBindGroupLayoutIds));
+      new ComputePipeline(this, id, implicitPipelineLayoutId,
+                          std::move(implicitBindGroupLayoutIds));
   return object.forget();
 }
 
 already_AddRefed<RenderPipeline> Device::CreateRenderPipeline(
     const dom::GPURenderPipelineDescriptor& aDesc) {
   nsTArray<RawId> implicitBindGroupLayoutIds;
-  RawId id = mBridge->DeviceCreateRenderPipeline(mId, aDesc,
-                                                 &implicitBindGroupLayoutIds);
+  RawId implicitPipelineLayoutId = 0;
+  RawId id = mBridge->DeviceCreateRenderPipeline(
+      mId, aDesc, &implicitPipelineLayoutId, &implicitBindGroupLayoutIds);
   RefPtr<RenderPipeline> object =
-      new RenderPipeline(this, id, std::move(implicitBindGroupLayoutIds));
+      new RenderPipeline(this, id, implicitPipelineLayoutId,
+                         std::move(implicitBindGroupLayoutIds));
   return object.forget();
 }
 

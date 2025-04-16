@@ -107,8 +107,9 @@ var BookmarkPropertiesPanel = {
   _hiddenRows: [],
 
   /**
-   * This method returns the correct label for the dialog's "accept"
-   * button based on the variant of the dialog.
+   * @returns {string}
+   *   This method returns the correct label for the dialog's "accept"
+   *   button based on the variant of the dialog.
    */
   _getAcceptLabel: function BPP__getAcceptLabel() {
     if (Services.prefs.getBoolPref("browser.proton.modals.enabled", false)) {
@@ -130,8 +131,9 @@ var BookmarkPropertiesPanel = {
   },
 
   /**
-   * This method returns the correct title for the current variant
-   * of this dialog.
+   * @returns {string}
+   *   This method returns the correct title for the current variant
+   *   of this dialog.
    */
   _getDialogTitle: function BPP__getDialogTitle() {
     if (this._action == ACTION_ADD) {
@@ -304,7 +306,6 @@ var BookmarkPropertiesPanel = {
     // grow at every opening.
     // Since elements can be uncollapsed asynchronously, we must observe their
     // mutations and resize the dialog using a cached element size.
-    this._height = window.outerHeight;
     this._mutationObserver = new MutationObserver(mutations => {
       for (let mutation of mutations) {
         let target = mutation.target;
@@ -313,33 +314,21 @@ var BookmarkPropertiesPanel = {
           continue;
         }
 
-        if (
-          Services.prefs.getBoolPref("browser.proton.modals.enabled", false)
-        ) {
-          this._height = window.innerHeight;
-        }
-
         let collapsed = target.getAttribute("collapsed") === "true";
         let wasCollapsed = mutation.oldValue === "true";
         if (collapsed == wasCollapsed) {
           continue;
         }
 
+        let heightDiff;
         if (collapsed) {
-          this._height -= elementsHeight.get(id);
+          heightDiff = -elementsHeight.get(id);
           elementsHeight.delete(id);
         } else {
-          elementsHeight.set(id, target.getBoundingClientRect().height);
-          this._height += elementsHeight.get(id);
+          heightDiff = target.getBoundingClientRect().height;
+          elementsHeight.set(id, heightDiff);
         }
-        window.resizeTo(window.outerWidth, this._height);
-
-        if (
-          Services.prefs.getBoolPref("browser.proton.modals.enabled", false)
-        ) {
-          let frame = window.parent.document.querySelector(".dialogFrame");
-          frame.style.height = this._height + "px";
-        }
+        window.resizeBy(0, heightDiff);
       }
     });
 
@@ -417,11 +406,9 @@ var BookmarkPropertiesPanel = {
         }
         break;
       case "resize":
-        for (let [id, oldHeight] of elementsHeight) {
-          let newHeight = document.getElementById(id).getBoundingClientRect()
-            .height;
-          this._height += -oldHeight + newHeight;
-          elementsHeight.set(id, newHeight);
+        for (let id of elementsHeight.keys()) {
+          let { height } = document.getElementById(id).getBoundingClientRect();
+          elementsHeight.set(id, height);
         }
         break;
     }
@@ -467,7 +454,7 @@ var BookmarkPropertiesPanel = {
   /**
    * This method checks to see if the input fields are in a valid state.
    *
-   * @returns  true if the input is valid, false otherwise
+   * @returns {boolean} true if the input is valid, false otherwise
    */
   _inputIsValid: function BPP__inputIsValid() {
     if (
@@ -490,10 +477,10 @@ var BookmarkPropertiesPanel = {
    * Determines whether the input with the given ID contains a
    * string that can be converted into an nsIURI.
    *
-   * @param aTextboxID
+   * @param {number} aTextboxID
    *        the ID of the textbox element whose contents we'll test
    *
-   * @returns true if the textbox contains a valid URI string, false otherwise
+   * @returns {boolean} true if the textbox contains a valid URI string, false otherwise
    */
   _containsValidURI: function BPP__containsValidURI(aTextboxID) {
     try {

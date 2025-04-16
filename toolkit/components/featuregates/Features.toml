@@ -31,6 +31,17 @@ bug-numbers = [1443863]
 is-public = {default = false, nightly = true}
 default-value = {default = false, nightly = false}
 
+[media-jxl]
+title = "experimental-features-media-jxl"
+description = "experimental-features-media-jxl-description"
+description-links = {bugzilla = "https://bugzilla.mozilla.org/show_bug.cgi?id=1539075"}
+restart-required = false
+preference = "image.jxl.enabled"
+type = "boolean"
+bug-numbers = [1539075]
+is-public = {default = false, nightly = true}
+default-value = false
+
 [web-api-inputmode]
 title = "experimental-features-web-api-inputmode"
 description = "experimental-features-web-api-inputmode-description"
@@ -146,6 +157,16 @@ bug-numbers = [1643027]
 is-public = true
 default-value = false
 
+[win32-lockdown]
+title = "experimental-features-win32k-lockdown"
+description = "experimental-features-win32k-lockdown-description"
+restart-required = true
+preference = "security.sandbox.content.win32k-disable"
+type = "boolean"
+bug-numbers = [1697865]
+is-public = true
+default-value = false
+
 [fission]
 title = "experimental-features-fission"
 description = "experimental-features-fission-description"
@@ -166,16 +187,6 @@ type = "boolean"
 bug-numbers = [1676162]
 is-public = true
 default-value = true
-
-[http3]
-title = "experimental-features-http3"
-description = "experimental-features-http3-description"
-restart-required = false
-preference = "network.http.http3.enabled"
-type = "boolean"
-bug-numbers = [1682539]
-is-public = true
-default-value = {default = false, early_beta_or_earlier = true}
 
 [url-bar-ime-search]
 title = "experimental-features-ime-search"

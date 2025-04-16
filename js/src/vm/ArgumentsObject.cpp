@@ -95,7 +95,7 @@ void ArgumentsObject::MaybeForwardToCallObject(AbstractFramePtr frame,
                                                ArgumentsObject* obj,
                                                ArgumentsData* data) {
   JSScript* script = frame.script();
-  if (frame.callee()->needsCallObject() && script->argumentsAliasesFormals()) {
+  if (frame.callee()->needsCallObject() && script->argsObjAliasesFormals()) {
     obj->initFixedSlot(MAYBE_CALL_SLOT, ObjectValue(frame.callObj()));
     for (PositionalFormalParameterIter fi(script); fi; fi++) {
       if (fi.closedOver()) {
@@ -112,7 +112,7 @@ void ArgumentsObject::MaybeForwardToCallObject(JSFunction* callee,
                                                ArgumentsObject* obj,
                                                ArgumentsData* data) {
   JSScript* script = callee->nonLazyScript();
-  if (callee->needsCallObject() && script->argumentsAliasesFormals()) {
+  if (callee->needsCallObject() && script->argsObjAliasesFormals()) {
     MOZ_ASSERT(callObj && callObj->is<CallObject>());
     obj->initFixedSlot(MAYBE_CALL_SLOT, ObjectValue(*callObj));
     for (PositionalFormalParameterIter fi(script); fi; fi++) {
@@ -559,12 +559,12 @@ bool js::MappedArgSetter(JSContext* cx, HandleObject obj, HandleId id,
     return false;
   }
   MOZ_ASSERT(desc.isSome());
-  unsigned attrs = desc->attributes();
-  MOZ_ASSERT(!(attrs & JSPROP_READONLY));
-  attrs &= (JSPROP_ENUMERATE | JSPROP_PERMANENT); /* only valid attributes */
+  MOZ_ASSERT(desc->isDataDescriptor());
+  MOZ_ASSERT(desc->writable());
+  MOZ_ASSERT(!desc->resolving());
 
-  if (JSID_IS_INT(id)) {
-    unsigned arg = unsigned(JSID_TO_INT(id));
+  if (id.isInt()) {
+    unsigned arg = unsigned(id.toInt());
     if (arg < argsobj->initialLength() && !argsobj->isElementDeleted(arg)) {
       argsobj->setElement(arg, v);
       return result.succeed();
@@ -581,9 +581,11 @@ bool js::MappedArgSetter(JSContext* cx, HandleObject obj, HandleId id,
    * the user has changed the prototype to an object that has a setter for
    * this id.
    */
+  Rooted<PropertyDescriptor> desc_(cx, *desc);
+  desc_.setValue(v);
   ObjectOpResult ignored;
   return NativeDeleteProperty(cx, argsobj, id, ignored) &&
-         NativeDefineDataProperty(cx, argsobj, id, v, attrs, result);
+         NativeDefineProperty(cx, argsobj, id, desc_, result);
 }
 
 /* static */
@@ -633,15 +635,15 @@ bool ArgumentsObject::reifyIterator(JSContext* cx,
 
 static bool ResolveArgumentsProperty(JSContext* cx,
                                      Handle<ArgumentsObject*> obj, HandleId id,
-                                     unsigned attrs, bool* resolvedp) {
+                                     PropertyFlags flags, bool* resolvedp) {
   // Note: we don't need to call ReshapeForShadowedProp here because we're just
   // resolving an existing property instead of defining a new property.
 
   MOZ_ASSERT(id.isInt() || id.isAtom(cx->names().length) ||
              id.isAtom(cx->names().callee));
+  MOZ_ASSERT(flags.isCustomDataProperty());
 
-  attrs |= JSPROP_CUSTOM_DATA_PROP;
-  if (!NativeObject::addCustomDataProperty(cx, obj, id, attrs)) {
+  if (!NativeObject::addCustomDataProperty(cx, obj, id, flags)) {
     return false;
   }
 
@@ -667,14 +669,15 @@ bool MappedArgumentsObject::obj_resolve(JSContext* cx, HandleObject obj,
     return true;
   }
 
-  unsigned attrs = JSPROP_RESOLVING;
+  PropertyFlags flags = {PropertyFlag::CustomDataProperty,
+                         PropertyFlag::Configurable, PropertyFlag::Writable};
   if (JSID_IS_INT(id)) {
     uint32_t arg = uint32_t(JSID_TO_INT(id));
     if (arg >= argsobj->initialLength() || argsobj->isElementDeleted(arg)) {
       return true;
     }
 
-    attrs |= JSPROP_ENUMERATE;
+    flags.setFlag(PropertyFlag::Enumerable);
   } else if (id.isAtom(cx->names().length)) {
     if (argsobj->hasOverriddenLength()) {
       return true;
@@ -689,7 +692,7 @@ bool MappedArgumentsObject::obj_resolve(JSContext* cx, HandleObject obj,
     }
   }
 
-  return ResolveArgumentsProperty(cx, argsobj, id, attrs, resolvedp);
+  return ResolveArgumentsProperty(cx, argsobj, id, flags, resolvedp);
 }
 
 /* static */
@@ -756,17 +759,17 @@ static bool DefineMappedIndex(JSContext* cx, Handle<MappedArgumentsObject*> obj,
 
   MOZ_ASSERT(prop.isNativeProperty());
 
-  ShapeProperty shapeProp = prop.shapeProperty();
-  MOZ_ASSERT(shapeProp.writable());
-  MOZ_ASSERT(shapeProp.isCustomDataProperty());
+  PropertyInfo propInfo = prop.propertyInfo();
+  MOZ_ASSERT(propInfo.writable());
+  MOZ_ASSERT(propInfo.isCustomDataProperty());
 
   // Change the property's attributes by implementing the relevant parts of
   // ValidateAndApplyPropertyDescriptor (ES2021 draft, 10.1.6.3), in particular
   // steps 4 and 9.
 
   // Determine whether the property should be configurable and/or enumerable.
-  bool configurable = shapeProp.configurable();
-  bool enumerable = shapeProp.enumerable();
+  bool configurable = propInfo.configurable();
+  bool enumerable = propInfo.enumerable();
   if (configurable) {
     if (desc.hasConfigurable()) {
       configurable = desc.configurable();
@@ -782,14 +785,10 @@ static bool DefineMappedIndex(JSContext* cx, Handle<MappedArgumentsObject*> obj,
     }
   }
 
-  unsigned attrs = JSPROP_CUSTOM_DATA_PROP;
-  if (!configurable) {
-    attrs |= JSPROP_PERMANENT;
-  }
-  if (enumerable) {
-    attrs |= JSPROP_ENUMERATE;
-  }
-  if (!NativeObject::changeCustomDataPropAttributes(cx, obj, id, attrs)) {
+  PropertyFlags flags = propInfo.flags();
+  flags.setFlag(PropertyFlag::Configurable, configurable);
+  flags.setFlag(PropertyFlag::Enumerable, enumerable);
+  if (!NativeObject::changeCustomDataPropAttributes(cx, obj, id, flags)) {
     return false;
   }
 
@@ -825,8 +824,6 @@ bool MappedArgumentsObject::obj_defineProperty(JSContext* cx, HandleObject obj,
         RootedValue v(cx, argsobj->element(JSID_TO_INT(id)));
         newArgDesc.setValue(v);
       }
-      newArgDesc.setGetter(nullptr);
-      newArgDesc.setSetter(nullptr);
     } else {
       // In this case the live mapping is supposed to keep working.
       defineMapped = true;
@@ -903,12 +900,12 @@ bool js::UnmappedArgSetter(JSContext* cx, HandleObject obj, HandleId id,
     return false;
   }
   MOZ_ASSERT(desc.isSome());
-  unsigned attrs = desc->attributes();
-  MOZ_ASSERT(!(attrs & JSPROP_READONLY));
-  attrs &= (JSPROP_ENUMERATE | JSPROP_PERMANENT); /* only valid attributes */
+  MOZ_ASSERT(desc->isDataDescriptor());
+  MOZ_ASSERT(desc->writable());
+  MOZ_ASSERT(!desc->resolving());
 
-  if (JSID_IS_INT(id)) {
-    unsigned arg = unsigned(JSID_TO_INT(id));
+  if (id.isInt()) {
+    unsigned arg = unsigned(id.toInt());
     if (arg < argsobj->initialLength()) {
       argsobj->setElement(arg, v);
       return result.succeed();
@@ -922,9 +919,11 @@ bool js::UnmappedArgSetter(JSContext* cx, HandleObject obj, HandleId id,
    * simple data property. Note that we rely on ArgumentsObject::obj_delProperty
    * to set the corresponding override-bit.
    */
+  Rooted<PropertyDescriptor> desc_(cx, *desc);
+  desc_.setValue(v);
   ObjectOpResult ignored;
   return NativeDeleteProperty(cx, argsobj, id, ignored) &&
-         NativeDefineDataProperty(cx, argsobj, id, v, attrs, result);
+         NativeDefineProperty(cx, argsobj, id, desc_, result);
 }
 
 /* static */
@@ -953,8 +952,7 @@ bool UnmappedArgumentsObject::obj_resolve(JSContext* cx, HandleObject obj,
       return false;
     }
 
-    unsigned attrs =
-        JSPROP_RESOLVING | JSPROP_PERMANENT | JSPROP_GETTER | JSPROP_SETTER;
+    unsigned attrs = JSPROP_RESOLVING | JSPROP_PERMANENT;
     if (!NativeDefineAccessorProperty(cx, argsobj, id, throwTypeError,
                                       throwTypeError, attrs)) {
       return false;
@@ -964,14 +962,15 @@ bool UnmappedArgumentsObject::obj_resolve(JSContext* cx, HandleObject obj,
     return true;
   }
 
-  unsigned attrs = JSPROP_RESOLVING;
+  PropertyFlags flags = {PropertyFlag::CustomDataProperty,
+                         PropertyFlag::Configurable, PropertyFlag::Writable};
   if (JSID_IS_INT(id)) {
     uint32_t arg = uint32_t(JSID_TO_INT(id));
     if (arg >= argsobj->initialLength() || argsobj->isElementDeleted(arg)) {
       return true;
     }
 
-    attrs |= JSPROP_ENUMERATE;
+    flags.setFlag(PropertyFlag::Enumerable);
   } else if (id.isAtom(cx->names().length)) {
     if (argsobj->hasOverriddenLength()) {
       return true;
@@ -980,7 +979,7 @@ bool UnmappedArgumentsObject::obj_resolve(JSContext* cx, HandleObject obj,
     return true;
   }
 
-  return ResolveArgumentsProperty(cx, argsobj, id, attrs, resolvedp);
+  return ResolveArgumentsProperty(cx, argsobj, id, flags, resolvedp);
 }
 
 /* static */

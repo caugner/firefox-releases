@@ -53,21 +53,18 @@ static bool IsCompatiblePropertyDescriptor(
   }
 
   // Step 3.
-  if (!desc.hasValue() && !desc.hasWritable() && !desc.hasGetterObject() &&
-      !desc.hasSetterObject() && !desc.hasEnumerable() &&
-      !desc.hasConfigurable()) {
+  if (!desc.hasValue() && !desc.hasWritable() && !desc.hasGetter() &&
+      !desc.hasSetter() && !desc.hasEnumerable() && !desc.hasConfigurable()) {
     return true;
   }
 
   // Step 4.
-  JSObject* currentGetter =
-      current->hasGetterObject() ? current->getterObject() : nullptr;
-  JSObject* currentSetter =
-      current->hasSetterObject() ? current->setterObject() : nullptr;
+  JSObject* currentGetter = current->hasGetter() ? current->getter() : nullptr;
+  JSObject* currentSetter = current->hasSetter() ? current->setter() : nullptr;
   if ((!desc.hasWritable() ||
        (current->hasWritable() && desc.writable() == current->writable())) &&
-      (!desc.hasGetterObject() || desc.getterObject() == currentGetter) &&
-      (!desc.hasSetterObject() || desc.setterObject() == currentSetter) &&
+      (!desc.hasGetter() || desc.getter() == currentGetter) &&
+      (!desc.hasSetter() || desc.setter() == currentSetter) &&
       (!desc.hasEnumerable() || desc.enumerable() == current->enumerable()) &&
       (!desc.hasConfigurable() ||
        desc.configurable() == current->configurable())) {
@@ -75,8 +72,9 @@ static bool IsCompatiblePropertyDescriptor(
       return true;
     }
 
+    RootedValue value(cx, current->value());
     bool same = false;
-    if (!SameValue(cx, desc.value(), current->value(), &same)) {
+    if (!SameValue(cx, desc.value(), value, &same)) {
       return false;
     }
 
@@ -136,8 +134,9 @@ static bool IsCompatiblePropertyDescriptor(
       }
 
       if (desc.hasValue()) {
+        RootedValue value(cx, current->value());
         bool same;
-        if (!SameValue(cx, desc.value(), current->value(), &same)) {
+        if (!SameValue(cx, desc.value(), value, &same)) {
           return false;
         }
         if (!same) {
@@ -160,12 +159,12 @@ static bool IsCompatiblePropertyDescriptor(
   if (current->configurable()) {
     return true;
   }
-  if (desc.hasSetterObject() && desc.setterObject() != currentSetter) {
+  if (desc.hasSetter() && desc.setter() != currentSetter) {
     static const char DETAILS_SETTERS_DIFFERENT[] =
         "proxy can't report different setters for a currently non-configurable "
         "property";
     *errorDetails = DETAILS_SETTERS_DIFFERENT;
-  } else if (desc.hasGetterObject() && desc.getterObject() != currentGetter) {
+  } else if (desc.hasGetter() && desc.getter() != currentGetter) {
     static const char DETAILS_GETTERS_DIFFERENT[] =
         "proxy can't report different getters for a currently non-configurable "
         "property";
@@ -518,7 +517,7 @@ bool ScriptedProxyHandler::isExtensible(JSContext* cx, HandleObject proxy,
 // 9.5.5 Proxy.[[GetOwnProperty]](P)
 bool ScriptedProxyHandler::getOwnPropertyDescriptor(
     JSContext* cx, HandleObject proxy, HandleId id,
-    MutableHandle<PropertyDescriptor> desc) const {
+    MutableHandle<mozilla::Maybe<PropertyDescriptor>> desc) const {
   // Steps 2-4.
   RootedObject handler(cx, ScriptedProxyHandler::handlerObject(proxy));
   if (!handler) {
@@ -569,7 +568,7 @@ bool ScriptedProxyHandler::getOwnPropertyDescriptor(
   if (trapResult.isUndefined()) {
     // Step 11a.
     if (targetDesc.isNothing()) {
-      desc.object().set(nullptr);
+      desc.reset();
       return true;
     }
 
@@ -590,7 +589,7 @@ bool ScriptedProxyHandler::getOwnPropertyDescriptor(
     }
 
     // Step 11f.
-    desc.object().set(nullptr);
+    desc.reset();
     return true;
   }
 
@@ -638,8 +637,7 @@ bool ScriptedProxyHandler::getOwnPropertyDescriptor(
   }
 
   // Step 18.
-  desc.set(resultDesc);
-  desc.object().set(proxy);
+  desc.set(mozilla::Some(resultDesc.get()));
   return true;
 }
 
@@ -1174,8 +1172,9 @@ bool ScriptedProxyHandler::get(JSContext* cx, HandleObject proxy,
     // Step 10a.
     if (desc->isDataDescriptor() && !desc->configurable() &&
         !desc->writable()) {
+      RootedValue value(cx, desc->value());
       bool same;
-      if (!SameValue(cx, trapResult, desc->value(), &same)) {
+      if (!SameValue(cx, trapResult, value, &same)) {
         return false;
       }
       if (!same) {
@@ -1185,7 +1184,7 @@ bool ScriptedProxyHandler::get(JSContext* cx, HandleObject proxy,
 
     // Step 10b.
     if (desc->isAccessorDescriptor() && !desc->configurable() &&
-        (desc->getterObject() == nullptr) && !trapResult.isUndefined()) {
+        (desc->getter() == nullptr) && !trapResult.isUndefined()) {
       return js::Throw(cx, id, JSMSG_MUST_REPORT_UNDEFINED);
     }
   }
@@ -1260,8 +1259,9 @@ bool ScriptedProxyHandler::set(JSContext* cx, HandleObject proxy, HandleId id,
     // Step 11a.
     if (desc->isDataDescriptor() && !desc->configurable() &&
         !desc->writable()) {
+      RootedValue value(cx, desc->value());
       bool same;
-      if (!SameValue(cx, v, desc->value(), &same)) {
+      if (!SameValue(cx, v, value, &same)) {
         return false;
       }
       if (!same) {
@@ -1271,7 +1271,7 @@ bool ScriptedProxyHandler::set(JSContext* cx, HandleObject proxy, HandleId id,
 
     // Step 11b.
     if (desc->isAccessorDescriptor() && !desc->configurable() &&
-        desc->setterObject() == nullptr) {
+        desc->setter() == nullptr) {
       return js::Throw(cx, id, JSMSG_CANT_SET_WO_SETTER);
     }
   }

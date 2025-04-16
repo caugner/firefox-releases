@@ -30,41 +30,6 @@
 namespace js {
 
 /*
- * Every possible consumer of MagicValue(JS_OPTIMIZED_ARGUMENTS) (as determined
- * by ScriptAnalysis::needsArgsObj) must check for these magic values and, when
- * one is received, act as if the value were the function's ArgumentsObject.
- * Additionally, it is possible that, after 'arguments' was copied into a
- * temporary, the arguments object has been created a some other failed guard
- * that called JSScript::argumentsOptimizationFailed. In this case, it is
- * always valid (and necessary) to replace JS_OPTIMIZED_ARGUMENTS with the real
- * arguments object.
- */
-static inline bool IsOptimizedArguments(AbstractFramePtr frame,
-                                        MutableHandleValue vp) {
-  if (vp.isMagic(JS_OPTIMIZED_ARGUMENTS) && frame.script()->needsArgsObj()) {
-    vp.setObject(frame.argsObj());
-  }
-  return vp.isMagic(JS_OPTIMIZED_ARGUMENTS);
-}
-
-/*
- * One optimized consumer of MagicValue(JS_OPTIMIZED_ARGUMENTS) is f.apply.
- * However, this speculation must be guarded before calling 'apply' in case it
- * is not the builtin Function.prototype.apply.
- */
-static inline void GuardFunApplyArgumentsOptimization(JSContext* cx,
-                                                      AbstractFramePtr frame,
-                                                      CallArgs& args) {
-  if (args.length() == 2 && IsOptimizedArguments(frame, args[1])) {
-    if (!IsNativeFunction(args.calleev(), js::fun_apply)) {
-      RootedScript script(cx, frame.script());
-      JSScript::argumentsOptimizationFailed(cx, script);
-      args[1].setObject(frame.argsObj());
-    }
-  }
-}
-
-/*
  * Per ES6, lexical declarations may not be accessed in any fashion until they
  * are initialized (i.e., until the actual declaring statement is
  * executed). The various LEXICAL opcodes need to check if the slot is an
@@ -72,7 +37,7 @@ static inline void GuardFunApplyArgumentsOptimization(JSContext* cx,
  * JS_UNINITIALIZED_LEXICAL.
  */
 static inline bool IsUninitializedLexical(const Value& val) {
-  // Use whyMagic here because JS_OPTIMIZED_ARGUMENTS could flow into here.
+  // Use whyMagic here because JS_OPTIMIZED_OUT could flow into here.
   return val.isMagic() && val.whyMagic() == JS_UNINITIALIZED_LEXICAL;
 }
 
@@ -88,13 +53,13 @@ static inline bool IsUninitializedLexicalSlot(HandleObject obj,
     return false;
   }
 
-  ShapeProperty shapeProp = prop.shapeProperty();
-  if (!shapeProp.isDataProperty()) {
+  PropertyInfo propInfo = prop.propertyInfo();
+  if (!propInfo.isDataProperty()) {
     return false;
   }
 
   return IsUninitializedLexical(
-      obj->as<NativeObject>().getSlot(shapeProp.slot()));
+      obj->as<NativeObject>().getSlot(propInfo.slot()));
 }
 
 static inline bool CheckUninitializedLexical(JSContext* cx, PropertyName* name_,
@@ -158,17 +123,17 @@ inline bool FetchName(JSContext* cx, HandleObject receiver, HandleObject holder,
       return false;
     }
   } else {
-    ShapeProperty shapeProp = prop.shapeProperty();
-    if (shapeProp.isDataProperty()) {
+    PropertyInfo propInfo = prop.propertyInfo();
+    if (propInfo.isDataProperty()) {
       /* Fast path for Object instance properties. */
-      vp.set(holder->as<NativeObject>().getSlot(shapeProp.slot()));
+      vp.set(holder->as<NativeObject>().getSlot(propInfo.slot()));
     } else {
       // Unwrap 'with' environments for reasons given in
       // GetNameBoundInEnvironment.
       RootedObject normalized(cx, MaybeUnwrapWithEnvironment(receiver));
       RootedId id(cx, NameToId(name));
       if (!NativeGetExistingProperty(cx, normalized, holder.as<NativeObject>(),
-                                     id, shapeProp, vp)) {
+                                     id, propInfo, vp)) {
         return false;
       }
     }
@@ -189,12 +154,12 @@ inline bool FetchNameNoGC(NativeObject* pobj, PropertyResult prop, Value* vp) {
     return false;
   }
 
-  ShapeProperty shapeProp = prop.shapeProperty();
-  if (!shapeProp.isDataProperty()) {
+  PropertyInfo propInfo = prop.propertyInfo();
+  if (!propInfo.isDataProperty()) {
     return false;
   }
 
-  *vp = pobj->getSlot(shapeProp.slot());
+  *vp = pobj->getSlot(propInfo.slot());
   return !IsUninitializedLexical(*vp);
 }
 
@@ -318,7 +283,7 @@ inline void InitGlobalLexicalOperation(
                 lexicalEnv == &cx->global()->lexicalEnvironment());
   MOZ_ASSERT(JSOp(*pc) == JSOp::InitGLexical);
 
-  mozilla::Maybe<ShapeProperty> prop =
+  mozilla::Maybe<PropertyInfo> prop =
       lexicalEnv->lookup(cx, script->getName(pc));
   MOZ_ASSERT(prop.isSome());
   MOZ_ASSERT(IsUninitializedLexical(lexicalEnv->getSlot(prop->slot())));
@@ -513,27 +478,6 @@ static MOZ_ALWAYS_INLINE bool GetPrimitiveElementOperation(
   return true;
 }
 
-static MOZ_ALWAYS_INLINE bool MaybeGetElemOptimizedArguments(
-    JSContext* cx, AbstractFramePtr frame, MutableHandleValue lref,
-    HandleValue rref, MutableHandleValue res) {
-  if (IsOptimizedArguments(frame, lref)) {
-    if (rref.isInt32()) {
-      int32_t i = rref.toInt32();
-      if (i >= 0 && uint32_t(i) < frame.numActualArgs()) {
-        res.set(frame.unaliasedActual(i));
-        return true;
-      }
-    }
-
-    RootedScript script(cx, frame.script());
-    JSScript::argumentsOptimizationFailed(cx, script);
-
-    lref.set(ObjectValue(frame.argsObj()));
-  }
-
-  return false;
-}
-
 static MOZ_ALWAYS_INLINE bool GetElementOperationWithStackIndex(
     JSContext* cx, HandleValue lref, int lrefIndex, HandleValue rref,
     MutableHandleValue res) {
@@ -605,6 +549,18 @@ static MOZ_ALWAYS_INLINE bool CheckPrivateFieldOperation(JSContext* cx,
   ThrowCondition condition;
   ThrowMsgKind msgKind;
   GetCheckPrivateFieldOperands(pc, &condition, &msgKind);
+
+  // When we are using OnlyCheckRhs, we are implementing PrivateInExpr
+  // This requires we throw if the rhs is not an object;
+  //
+  // The InlineCache for CheckPrivateField already checks for a
+  // non-object rhs and refuses to attach in that circumstance.
+  if (condition == ThrowCondition::OnlyCheckRhs) {
+    if (!val.isObject()) {
+      ReportInNotObjectError(cx, idval, val);
+      return false;
+    }
+  }
 
   MOZ_ASSERT(idval.isSymbol());
   MOZ_ASSERT(idval.toSymbol()->isPrivateName());

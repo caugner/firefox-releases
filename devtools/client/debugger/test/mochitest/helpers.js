@@ -167,7 +167,7 @@ async function waitForElementWithSelector(dbg, selector) {
 }
 
 function waitForRequestsToSettle(dbg) {
-  return dbg.toolbox.target.client.waitForRequestsToSettle();
+  return dbg.commands.client.waitForRequestsToSettle();
 }
 
 function assertClass(el, className, exists = true) {
@@ -782,7 +782,9 @@ function deleteExpression(dbg, input) {
  */
 async function reload(dbg, ...sources) {
   const navigated = waitForDispatch(dbg.store, "NAVIGATE");
-  await dbg.client.reload();
+  // We aren't waiting for reloadTopLevelTarget resolution
+  // as the page may not load because of a breakpoint
+  dbg.commands.targetCommand.reloadTopLevelTarget();
   await navigated;
   return waitForSources(dbg, ...sources);
 }
@@ -798,10 +800,7 @@ async function reload(dbg, ...sources) {
  * @static
  */
 async function navigate(dbg, url, ...sources) {
-  info(`Navigating to ${url}`);
-  const navigated = waitForDispatch(dbg.store, "NAVIGATE");
-  await dbg.client.navigate(url);
-  await navigated;
+  await navigateTo(EXAMPLE_URL + url);
   return waitForSources(dbg, ...sources);
 }
 
@@ -1071,7 +1070,13 @@ function clickElementInTab(selector) {
     gBrowser.selectedBrowser,
     [{ selector }],
     function({ selector }) {
-      content.wrappedJSObject.document.querySelector(selector).click();
+      const element = content.document.querySelector(selector);
+      // Run the click in another event loop in order to immediately resolve spawn's promise.
+      // Otherwise if we pause on click and navigate, the JSWindowActor used by spawn will
+      // be destroyed while its query is still pending. And this would reject the promise.
+      content.setTimeout(() => {
+        element.click();
+      });
     }
   );
 }
@@ -1113,7 +1118,7 @@ const keyMappings = {
   fileSearchPrev: { code: "g", modifiers: cmdShift },
   goToLine: { code: "g", modifiers: { ctrlKey: true } },
   Enter: { code: "VK_RETURN" },
-  ShiftEnter: { code: "VK_RETURN", modifiers: shiftOrAlt },
+  ShiftEnter: { code: "VK_RETURN", modifiers: { shiftKey: true } },
   AltEnter: {
     code: "VK_RETURN",
     modifiers: { altKey: true },
@@ -1571,14 +1576,16 @@ async function waitForContextMenu(dbg) {
   const doc = dbg.toolbox.topDoc;
 
   // there are several context menus, we want the one with the menu-api
-  const popup = await waitFor(() => doc.querySelector('menupopup[menu-api="true"]'));
+  const popup = await waitFor(() =>
+    doc.querySelector('menupopup[menu-api="true"]')
+  );
 
   if (popup.state == "open") {
     return;
   }
 
   await new Promise(resolve => {
-    popup.addEventListener("popupshown", () => resolve(), {once: true});
+    popup.addEventListener("popupshown", () => resolve(), { once: true });
   });
 }
 
@@ -1591,7 +1598,7 @@ async function openContextMenuSubmenu(dbg, selector) {
   const item = findContextMenu(dbg, selector);
   const popup = item.menupopup;
   const popupshown = new Promise(resolve => {
-    popup.addEventListener("popupshown", () => resolve(), {once: true});
+    popup.addEventListener("popupshown", () => resolve(), { once: true });
   });
   item.openMenu(true);
   await popupshown;
@@ -1845,31 +1852,6 @@ async function assertPreviewTooltip(dbg, line, column, { result, expression }) {
   is(preview.expression, expression, "Preview.expression");
 }
 
-async function hoverOnToken(dbg, line, column, selector) {
-  await tryHovering(dbg, line, column, selector);
-  return dbg.selectors.getPreview();
-}
-
-function getPreviewProperty(preview, field) {
-  const { resultGrip } = preview;
-  const properties =
-    resultGrip.preview.ownProperties || resultGrip.preview.items;
-  const property = properties[field];
-  return property.value || property;
-}
-
-async function assertPreviewPopup(
-  dbg,
-  line,
-  column,
-  { field, value, expression }
-) {
-  const preview = await hoverOnToken(dbg, line, column, "popup");
-  is(`${getPreviewProperty(preview, field)}`, value, "Preview.result");
-
-  is(preview.expression, expression, "Preview.expression");
-}
-
 async function assertPreviews(dbg, previews) {
   for (const { line, column, expression, result, fields } of previews) {
     if (fields && result) {
@@ -1877,12 +1859,24 @@ async function assertPreviews(dbg, previews) {
     }
 
     if (fields) {
+      const popupEl = await tryHovering(dbg, line, column, "popup");
+      const oiNodes = Array.from(
+        popupEl.querySelectorAll(".preview-popup .node")
+      );
+
       for (const [field, value] of fields) {
-        await assertPreviewPopup(dbg, line, column, {
-          expression,
-          field,
-          value,
-        });
+        const node = oiNodes.find(
+          oiNode => oiNode.querySelector(".object-label")?.textContent === field
+        );
+        if (!node) {
+          ok(false, `The "${field}" property is not displayed in the popup`);
+        } else {
+          is(
+            node.querySelector(".objectBox").textContent,
+            value,
+            `The "${field}" property has the expected value`
+          );
+        }
       }
     } else {
       await assertPreviewTextValue(dbg, line, column, {

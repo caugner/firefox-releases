@@ -161,6 +161,11 @@ const PREF_BLOCKLIST_ADDONS3_CHECKED_SECONDS =
 const PREF_BLOCKLIST_ADDONS3_SIGNER = "services.blocklist.addons-mlbf.signer";
 
 const BlocklistTelemetry = {
+  init() {
+    // Used by BlocklistTelemetry.recordAddonBlockChangeTelemetry.
+    Services.telemetry.setEventRecordingEnabled("blocklist", true);
+  },
+
   /**
    * Record the RemoteSettings Blocklist lastModified server time into the
    * "blocklist.lastModified_rs keyed scalar (or "Missing Date" when unable
@@ -206,6 +211,48 @@ const BlocklistTelemetry = {
     } else {
       Services.telemetry.scalarSet("blocklist." + telemetryKey, "Missing Date");
     }
+  },
+
+  /**
+   * Record whether an add-on is blocked and the parameters that guided the
+   * decision to block or unblock the add-on.
+   *
+   * @param {AddonWrapper|object} addon
+   *        The blocked or unblocked add-on. Not necessarily installed.
+   *        Could be an object with the id, version and blocklistState
+   *        properties when the AddonWrapper is not available (e.g. during
+   *        update checks).
+   * @param {string} reason
+   *        The reason for recording the event,
+   *        "addon_install", "addon_update", "addon_update_check",
+   *        "addon_db_modified", "blocklist_update".
+   */
+  recordAddonBlockChangeTelemetry(addon, reason) {
+    // Reduce the timer resolution for anonymity.
+    let hoursSinceInstall = -1;
+    if (reason === "blocklist_update" || reason === "addon_db_modified") {
+      hoursSinceInstall = Math.round(
+        (Date.now() - addon.installDate.getTime()) / 3600000
+      );
+    }
+
+    const value = addon.id;
+    const extra = {
+      blocklistState: `${addon.blocklistState}`,
+      addon_version: addon.version,
+      signed_date: `${addon.signedDate?.getTime() || 0}`,
+      hours_since: `${hoursSinceInstall}`,
+
+      ...ExtensionBlocklistMLBF.getBlocklistMetadataForTelemetry(),
+    };
+
+    Services.telemetry.recordEvent(
+      "blocklist",
+      "addonBlockChange",
+      reason,
+      value,
+      extra
+    );
   },
 };
 
@@ -939,6 +986,7 @@ this.ExtensionBlocklistMLBF = {
     const {
       buffer,
       record: actualRecord,
+      _source: rsAttachmentSource,
     } = await this._client.attachments.download(record, {
       attachmentId: this.RS_ATTACHMENT_ID,
       useCache: true,
@@ -953,6 +1001,8 @@ this.ExtensionBlocklistMLBF = {
       // should be in sync with the signing service's clock.
       // In contrast, last_modified does not have such strong requirements.
       generationTime: actualRecord.generation_time,
+      // Used for telemetry.
+      rsAttachmentSource,
     };
   },
 
@@ -1041,6 +1091,10 @@ this.ExtensionBlocklistMLBF = {
       "addons_mlbf",
       this._client
     );
+    Services.telemetry.scalarSet(
+      "blocklist.mlbf_source",
+      this._mlbfData?.rsAttachmentSource || "unknown"
+    );
     BlocklistTelemetry.recordTimeScalar(
       "mlbf_generation_time",
       this._mlbfData?.generationTime
@@ -1055,6 +1109,24 @@ this.ExtensionBlocklistMLBF = {
       "mlbf_stash_time_newest",
       stashes[0]?.stash_time
     );
+  },
+
+  // Used by BlocklistTelemetry.recordAddonBlockChangeTelemetry.
+  getBlocklistMetadataForTelemetry() {
+    // Blocklist telemetry can only be reported when a blocklist decision
+    // has been made. That implies that the blocklist has been loaded, so
+    // ExtensionBlocklistMLBF should have been initialized.
+    // (except when the blocklist is disabled, or blocklist v2 is used)
+    const generationTime = this._mlbfData?.generationTime ?? 0;
+
+    // Keys to include in the blocklist.addonBlockChange telemetry event.
+    return {
+      mlbf_last_time:
+        // stashes are sorted, newest first. Stashes are newer than the MLBF.
+        `${this._stashes?.[0]?.stash_time ?? generationTime}`,
+      mlbf_generation: `${generationTime}`,
+      mlbf_source: this._mlbfData?.rsAttachmentSource ?? "unknown",
+    };
   },
 
   ensureInitialized() {
@@ -1125,6 +1197,11 @@ this.ExtensionBlocklistMLBF = {
       if (state != Ci.nsIBlocklistService.STATE_SOFTBLOCKED) {
         await addon.setSoftDisabled(false);
       }
+
+      BlocklistTelemetry.recordAddonBlockChangeTelemetry(
+        addon,
+        "blocklist_update"
+      );
     }
 
     AddonManagerPrivate.updateAddonAppDisabledStates();
@@ -1329,6 +1406,7 @@ let Blocklist = {
     this._chooseExtensionBlocklistImplementationFromPref();
     Services.prefs.addObserver("extensions.blocklist.", this);
     Services.prefs.addObserver(PREF_EM_LOGGING_ENABLED, this);
+    BlocklistTelemetry.init();
   },
   isLoaded: true,
 
@@ -1412,6 +1490,10 @@ let Blocklist = {
   getAddonBlocklistEntry(addon, appVersion, toolkitVersion) {
     // NOTE: appVersion/toolkitVersion are only used by ExtensionBlocklistRS.
     return this.ExtensionBlocklist.getEntry(addon, appVersion, toolkitVersion);
+  },
+
+  recordAddonBlockChangeTelemetry(addon, reason) {
+    BlocklistTelemetry.recordAddonBlockChangeTelemetry(addon, reason);
   },
 
   _chooseExtensionBlocklistImplementationFromPref() {

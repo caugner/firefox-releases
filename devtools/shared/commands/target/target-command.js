@@ -8,8 +8,6 @@ const Services = require("Services");
 const EventEmitter = require("devtools/shared/event-emitter");
 
 const BROWSERTOOLBOX_FISSION_ENABLED = "devtools.browsertoolbox.fission";
-const SERVER_TARGET_SWITCHING_ENABLED =
-  "devtools.target-switching.server.enabled";
 
 const {
   LegacyProcessesWatcher,
@@ -42,10 +40,13 @@ class TargetCommand extends EventEmitter {
    *
    * @param {DescriptorFront} descriptorFront
    *        The context to inspector identified by this descriptor.
+   * @param {Object} commands
+   *        The commands object with all interfaces defined from devtools/shared/commands/
    */
-  constructor({ descriptorFront }) {
+  constructor({ descriptorFront, commands }) {
     super();
 
+    this.commands = commands;
     this.descriptorFront = descriptorFront;
     this.rootFront = descriptorFront.client.mainRoot;
 
@@ -59,6 +60,12 @@ class TargetCommand extends EventEmitter {
         "remoteness-change",
         this.onLocalTabRemotenessChange
       );
+    }
+
+    if (this.isServerTargetSwitchingEnabled()) {
+      // XXX: Will only be used for local tab server side target switching if
+      // the first target is generated from the server.
+      this._onFirstTarget = new Promise(r => (this._resolveOnFirstTarget = r));
     }
 
     // Reports if we have at least one listener for the given target type
@@ -109,6 +116,17 @@ class TargetCommand extends EventEmitter {
       false;
     this.listenForServiceWorkers = false;
     this.destroyServiceWorkersOnNavigation = false;
+
+    // Tells us if we received the first top level target.
+    // If target switching is done on:
+    // * client side, this is done from startListening => _createFirstTarget
+    //                and pull from the Descriptor front.
+    // * server side, this is also done from startListening,
+    //                but we wait for the watcher actor to notify us about it
+    //                via target-available-form avent.
+    this._gotFirstTopLevelTarget = false;
+    this.commands = commands;
+    this._onResourceAvailable = this._onResourceAvailable.bind(this);
   }
 
   // Called whenever a new Target front is available.
@@ -120,6 +138,8 @@ class TargetCommand extends EventEmitter {
     // targets which should always have the topLevelTarget flag initialized
     // on the server.
     const isTargetSwitching = targetFront.isTopLevel;
+    const isFirstTarget =
+      targetFront.isTopLevel && !this._gotFirstTopLevelTarget;
 
     if (this._targets.has(targetFront)) {
       // The top level target front can be reported via listProcesses in the
@@ -143,23 +163,30 @@ class TargetCommand extends EventEmitter {
     // i.e. the one that is passed to TargetCommand constructor.
     if (targetFront.isTopLevel) {
       // First report that all existing targets are destroyed
-      for (const target of this._targets) {
-        // We only consider the top level target to be switched
-        const isDestroyedTargetSwitching = target == this.targetFront;
-        this._onTargetDestroyed(target, {
-          isTargetSwitching: isDestroyedTargetSwitching,
-        });
-      }
-      // Stop listening to legacy listeners as we now have to listen
-      // on the new target.
-      this.stopListening({ onlyLegacy: true });
+      if (!isFirstTarget) {
+        for (const target of this._targets) {
+          // We only consider the top level target to be switched
+          const isDestroyedTargetSwitching = target == this.targetFront;
+          this._onTargetDestroyed(target, {
+            isTargetSwitching: isDestroyedTargetSwitching,
+          });
+        }
+        // Stop listening to legacy listeners as we now have to listen
+        // on the new target.
+        this.stopListening({ onlyLegacy: true });
 
-      // Clear the cached target list
-      this._targets.clear();
+        // Clear the cached target list
+        this._targets.clear();
+      }
 
       // Update the reference to the memoized top level target
       this.targetFront = targetFront;
       this.descriptorFront.setTarget(targetFront);
+
+      if (isFirstTarget && this.isServerTargetSwitchingEnabled()) {
+        this._gotFirstTopLevelTarget = true;
+        this._resolveOnFirstTarget();
+      }
     }
 
     // Map the descriptor typeName to a target type.
@@ -191,7 +218,7 @@ class TargetCommand extends EventEmitter {
 
     // Re-register the listeners as the top level target changed
     // and some targets are fetched from it
-    if (targetFront.isTopLevel) {
+    if (targetFront.isTopLevel && !isFirstTarget) {
       await this.startListening({ onlyLegacy: true });
     }
 
@@ -273,28 +300,41 @@ class TargetCommand extends EventEmitter {
     return this._listenersStarted.has(type);
   }
 
-  hasTargetWatcherSupport(type) {
+  /**
+   * Check if the watcher is currently supported.
+   *
+   * When no typeOrTrait is provided, we will only check that the watcher is
+   * available.
+   *
+   * When a typeOrTrait is provided, we will check for an explicit trait on the
+   * watcherFront that indicates either that:
+   *   - a target type is supported
+   *   - or that a custom trait is true
+   *
+   * @param {String} [targetTypeOrTrait]
+   *        Optional target type or trait.
+   * @return {Boolean} true if the watcher is available and supports the
+   *          optional targetTypeOrTrait
+   */
+  hasTargetWatcherSupport(targetTypeOrTrait) {
     // If the top level target is a parent process, we're in the browser console or browser toolbox.
     // In such case, if the browser toolbox fission pref is disabled, we don't want to use watchers
     // (even if traits on the server are enabled).
     if (
-      this.targetFront.isParentProcess &&
+      this.descriptorFront.isParent &&
       !Services.prefs.getBoolPref(BROWSERTOOLBOX_FISSION_ENABLED, false)
     ) {
       return false;
     }
 
-    return !!this.watcherFront?.traits[type];
-  }
-
-  isServerTargetSwitchingEnabled() {
-    if (typeof this._isServerTargetSwitchingEnabled == "undefined") {
-      this._isServerTargetSwitchingEnabled = Services.prefs.getBoolPref(
-        SERVER_TARGET_SWITCHING_ENABLED,
-        false
-      );
+    if (targetTypeOrTrait) {
+      // Target types are also exposed as traits, where resource types are
+      // exposed under traits.resources (cf hasResourceWatcherSupport
+      // implementation).
+      return !!this.watcherFront?.traits[targetTypeOrTrait];
     }
-    return this._isServerTargetSwitchingEnabled;
+
+    return !!this.watcherFront;
   }
 
   /**
@@ -314,19 +354,15 @@ class TargetCommand extends EventEmitter {
    */
   async startListening({ onlyLegacy = false } = {}) {
     // The first time we call this method, we pull the current top level target from the descriptor
-    if (!this.targetFront) {
-      // Note that this is a public attribute, used outside of this class
-      // and helps knowing what is the current top level target we debug.
-      this.targetFront = await this.descriptorFront.getTarget();
-      this.targetFront.setTargetType(this.getTargetType(this.targetFront));
-      this.targetFront.setIsTopLevel(true);
-
-      // Add the top-level target to the list of targets.
-      this._targets.add(this.targetFront);
+    if (
+      !this.isServerTargetSwitchingEnabled() &&
+      !this._gotFirstTopLevelTarget
+    ) {
+      await this._createFirstTarget();
     }
 
     // Cache the Watcher once for all, the first time we call `startListening()`.
-    // This `watcherFront` attribute may be then used in any function in TargetCommand or ResourceWatcher after this.
+    // This `watcherFront` attribute may be then used in any function in TargetCommand or ResourceCommand after this.
     if (!this.watcherFront) {
       // Bug 1675763: Watcher actor is not available in all situations yet.
       const supportsWatcher = this.descriptorFront.traits?.watcher;
@@ -337,36 +373,10 @@ class TargetCommand extends EventEmitter {
       }
     }
 
-    let types = [];
-    if (this.targetFront.isParentProcess) {
-      const fissionBrowserToolboxEnabled = Services.prefs.getBoolPref(
-        BROWSERTOOLBOX_FISSION_ENABLED
-      );
-      if (fissionBrowserToolboxEnabled) {
-        types = TargetCommand.ALL_TYPES;
-      }
-    } else if (this.descriptorFront.isLocalTab) {
-      types = [TargetCommand.TYPES.FRAME];
-    }
-    if (this.listenForWorkers && !types.includes(TargetCommand.TYPES.WORKER)) {
-      types.push(TargetCommand.TYPES.WORKER);
-    }
-    if (
-      this.listenForWorkers &&
-      !types.includes(TargetCommand.TYPES.SHARED_WORKER)
-    ) {
-      types.push(TargetCommand.TYPES.SHARED_WORKER);
-    }
-    if (
-      this.listenForServiceWorkers &&
-      !types.includes(TargetCommand.TYPES.SERVICE_WORKER)
-    ) {
-      types.push(TargetCommand.TYPES.SERVICE_WORKER);
-    }
-
     // If no pref are set to true, nor is listenForWorkers set to true,
     // we won't listen for any additional target. Only the top level target
     // will be managed. We may still do target-switching.
+    const types = this._computeTargetTypes();
 
     for (const type of types) {
       if (this._isListening(type)) {
@@ -389,6 +399,69 @@ class TargetCommand extends EventEmitter {
         throw new Error(`Unsupported target type '${type}'`);
       }
     }
+
+    if (!this._watchingDocumentEvent && !this.isDestroyed()) {
+      // We want to watch DOCUMENT_EVENT in order to update the url and title of target fronts,
+      // as the initial value that is set in them might be erroneous (if the target was
+      // created so early that the document url is still pointing to about:blank and the
+      // html hasn't be parsed yet, so we can't know the <title> content).
+
+      this._watchingDocumentEvent = true;
+      await this.commands.resourceCommand.watchResources(
+        [this.commands.resourceCommand.TYPES.DOCUMENT_EVENT],
+        {
+          onAvailable: this._onResourceAvailable,
+        }
+      );
+    }
+
+    if (this.isServerTargetSwitchingEnabled()) {
+      await this._onFirstTarget;
+    }
+  }
+
+  async _createFirstTarget() {
+    // Note that this is a public attribute, used outside of this class
+    // and helps knowing what is the current top level target we debug.
+    this.targetFront = await this.descriptorFront.getTarget();
+    this.targetFront.setTargetType(this.getTargetType(this.targetFront));
+    this.targetFront.setIsTopLevel(true);
+    this._gotFirstTopLevelTarget = true;
+
+    // Add the top-level target to the list of targets.
+    this._targets.add(this.targetFront);
+  }
+
+  _computeTargetTypes() {
+    let types = [];
+
+    if (this.descriptorFront.isLocalTab) {
+      types = [TargetCommand.TYPES.FRAME];
+    } else if (this.targetFront.isParentProcess) {
+      const fissionBrowserToolboxEnabled = Services.prefs.getBoolPref(
+        BROWSERTOOLBOX_FISSION_ENABLED
+      );
+      if (fissionBrowserToolboxEnabled) {
+        types = TargetCommand.ALL_TYPES;
+      }
+    }
+    if (this.listenForWorkers && !types.includes(TargetCommand.TYPES.WORKER)) {
+      types.push(TargetCommand.TYPES.WORKER);
+    }
+    if (
+      this.listenForWorkers &&
+      !types.includes(TargetCommand.TYPES.SHARED_WORKER)
+    ) {
+      types.push(TargetCommand.TYPES.SHARED_WORKER);
+    }
+    if (
+      this.listenForServiceWorkers &&
+      !types.includes(TargetCommand.TYPES.SERVICE_WORKER)
+    ) {
+      types.push(TargetCommand.TYPES.SERVICE_WORKER);
+    }
+
+    return types;
   }
 
   /**
@@ -400,6 +473,16 @@ class TargetCommand extends EventEmitter {
    *        but still unregister listeners set via Legacy Listeners.
    */
   stopListening({ onlyLegacy = false } = {}) {
+    if (this._watchingDocumentEvent) {
+      this.commands.resourceCommand.unwatchResources(
+        [this.commands.resourceCommand.TYPES.DOCUMENT_EVENT],
+        {
+          onAvailable: this._onResourceAvailable,
+        }
+      );
+      this._watchingDocumentEvent = false;
+    }
+
     for (const type of TargetCommand.ALL_TYPES) {
       if (!this._isListening(type)) {
         continue;
@@ -453,6 +536,23 @@ class TargetCommand extends EventEmitter {
 
   _matchTargetType(type, target) {
     return type === target.targetType;
+  }
+
+  _onResourceAvailable(resources) {
+    for (const resource of resources) {
+      if (
+        resource.resourceType ===
+        this.commands.resourceCommand.TYPES.DOCUMENT_EVENT
+      ) {
+        const { targetFront } = resource;
+        if (resource.title !== undefined && targetFront?.setTitle) {
+          targetFront.setTitle(resource.title);
+        }
+        if (resource.url !== undefined && targetFront?.setUrl) {
+          targetFront.setUrl(resource.url);
+        }
+      }
+    }
   }
 
   /**
@@ -579,16 +679,19 @@ class TargetCommand extends EventEmitter {
   }
 
   /**
-   * For all the target fronts of a given type, retrieve all the target-scoped fronts of a given type.
+   * For all the target fronts of given types, retrieve all the target-scoped fronts of the given types.
    *
-   * @param {String} targetType
-   *        The type of target to iterate over. Constant of TargetCommand.TYPES.
+   * @param {Array<String>} targetTypes
+   *        The types of target to iterate over. Constant of TargetCommand.TYPES.
    * @param {String} frontType
    *        The type of target-scoped front to retrieve. It can be "inspector", "console", "thread",...
    */
-  async getAllFronts(targetType, frontType) {
+  async getAllFronts(targetTypes, frontType) {
+    if (!Array.isArray(targetTypes) || !targetTypes?.length) {
+      throw new Error("getAllFronts expects a non-empty array of target types");
+    }
     const fronts = [];
-    const targets = this.getAllTargets([targetType]);
+    const targets = this.getAllTargets(targetTypes);
     for (const target of targets) {
       const front = await target.getFront(frontType);
       fronts.push(front);
@@ -605,7 +708,7 @@ class TargetCommand extends EventEmitter {
    */
   async onLocalTabRemotenessChange(targetFront) {
     if (this.isServerTargetSwitchingEnabled()) {
-      // For server-side target switchting, everything will be handled by the
+      // For server-side target switching, everything will be handled by the
       // _onTargetAvailable callback.
       return;
     }
@@ -620,7 +723,66 @@ class TargetCommand extends EventEmitter {
     // Fetch the new target from the descriptor.
     const newTarget = await this.descriptorFront.getTarget();
 
+    // If a navigation happens while we try to get the target for the page that triggered
+    // the remoteness change, `getTarget` will return null. In such case, we'll get the
+    // "next" target through onTargetAvailable so it's safe to bail here.
+    if (!newTarget) {
+      console.warn(
+        `Couldn't get the target for descriptor ${this.descriptorFront.actorID}`
+      );
+      return;
+    }
+
     this.switchToTarget(newTarget);
+  }
+
+  /**
+   * Reload the current top level target.
+   * This only works for targets inheriting from BrowsingContextTarget.
+   *
+   * @param {Boolean} bypassCache
+   *        If true, the reload will be forced to bypass any cache.
+   */
+  async reloadTopLevelTarget(bypassCache = false) {
+    if (!this.targetFront.isBrowsingContext) {
+      throw new Error(
+        "The top level target isn't a BrowsingContext and don't support being reloaded"
+      );
+    }
+
+    // Wait for the next DOCUMENT_EVENT's dom-complete event
+    let resolve = null;
+    const onReloaded = new Promise(r => (resolve = r));
+    const { resourceCommand } = this.commands;
+    const { DOCUMENT_EVENT } = resourceCommand.TYPES;
+    const onAvailable = resources => {
+      if (resources.find(resource => resource.name == "dom-complete")) {
+        resourceCommand.unwatchResources([DOCUMENT_EVENT], { onAvailable });
+        resolve();
+      }
+    };
+    // Wait for watchResources completion before reloading, otherwise we might miss the dom-complete event
+    // if watchResources is still pending while the reload already started and finished loading the document early.
+    await resourceCommand.watchResources([DOCUMENT_EVENT], {
+      onAvailable,
+      ignoreExistingResources: true,
+    });
+
+    const { targetFront } = this;
+    try {
+      // Arguments of reload are a bit convoluted.
+      // We expect an dictionary object, which only support one attribute
+      // called "force" which force bypassing the caches.
+      await targetFront.reload({ options: { force: bypassCache } });
+    } catch (e) {
+      // If the target follows the window global lifecycle, the reload request
+      // will fail, and we should swallow the error. Re-throw it otherwise.
+      if (!targetFront.targetForm.followWindowGlobalLifeCycle) {
+        throw e;
+      }
+    }
+
+    await onReloaded;
   }
 
   /**
@@ -644,10 +806,18 @@ class TargetCommand extends EventEmitter {
     return this._isDestroyed;
   }
 
+  isServerTargetSwitchingEnabled() {
+    if (this.descriptorFront.isServerTargetSwitchingEnabled) {
+      return this.descriptorFront.isServerTargetSwitchingEnabled();
+    }
+    return false;
+  }
+
   destroy() {
     this.stopListening();
     this._createListeners.off();
     this._destroyListeners.off();
+
     this._isDestroyed = true;
   }
 }

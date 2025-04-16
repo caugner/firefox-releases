@@ -156,10 +156,17 @@ static void RejectJSPromise(Promise* aPromise, const IOUtils::IOError& aError) {
   const auto& errMsg = aError.Message();
 
   switch (aError.Code()) {
+    case NS_ERROR_FILE_UNRESOLVABLE_SYMLINK:
+      [[fallthrough]];  // to NS_ERROR_FILE_INVALID_PATH
     case NS_ERROR_FILE_TARGET_DOES_NOT_EXIST:
+      [[fallthrough]];  // to NS_ERROR_FILE_INVALID_PATH
     case NS_ERROR_FILE_NOT_FOUND:
+      [[fallthrough]];  // to NS_ERROR_FILE_INVALID_PATH
+    case NS_ERROR_FILE_INVALID_PATH:
       aPromise->MaybeRejectWithNotFoundError(errMsg.refOr("File not found"_ns));
       break;
+    case NS_ERROR_FILE_IS_LOCKED:
+      [[fallthrough]];  // to NS_ERROR_FILE_ACCESS_DENIED
     case NS_ERROR_FILE_ACCESS_DENIED:
       aPromise->MaybeRejectWithNotAllowedError(
           errMsg.refOr("Access was denied to the target file"_ns));
@@ -167,6 +174,10 @@ static void RejectJSPromise(Promise* aPromise, const IOUtils::IOError& aError) {
     case NS_ERROR_FILE_TOO_BIG:
       aPromise->MaybeRejectWithNotReadableError(
           errMsg.refOr("Target file is too big"_ns));
+      break;
+    case NS_ERROR_FILE_NO_DEVICE_SPACE:
+      aPromise->MaybeRejectWithNotReadableError(
+          errMsg.refOr("Target device is full"_ns));
       break;
     case NS_ERROR_FILE_ALREADY_EXISTS:
       aPromise->MaybeRejectWithNoModificationAllowedError(
@@ -181,9 +192,22 @@ static void RejectJSPromise(Promise* aPromise, const IOUtils::IOError& aError) {
           errMsg.refOr("Target file is read only"_ns));
       break;
     case NS_ERROR_FILE_NOT_DIRECTORY:
+      [[fallthrough]];  // to NS_ERROR_FILE_DESTINATION_NOT_DIR
     case NS_ERROR_FILE_DESTINATION_NOT_DIR:
       aPromise->MaybeRejectWithInvalidAccessError(
           errMsg.refOr("Target file is not a directory"_ns));
+      break;
+    case NS_ERROR_FILE_IS_DIRECTORY:
+      aPromise->MaybeRejectWithInvalidAccessError(
+          errMsg.refOr("Target file is a directory"_ns));
+      break;
+    case NS_ERROR_FILE_UNKNOWN_TYPE:
+      aPromise->MaybeRejectWithInvalidAccessError(
+          errMsg.refOr("Target file is of unknown type"_ns));
+      break;
+    case NS_ERROR_FILE_NAME_TOO_LONG:
+      aPromise->MaybeRejectWithOperationError(
+          errMsg.refOr("Target file path is too long"_ns));
       break;
     case NS_ERROR_FILE_UNRECOGNIZED_PATH:
       aPromise->MaybeRejectWithOperationError(
@@ -193,11 +217,18 @@ static void RejectJSPromise(Promise* aPromise, const IOUtils::IOError& aError) {
       aPromise->MaybeRejectWithOperationError(
           errMsg.refOr("Target directory is not empty"_ns));
       break;
+    case NS_ERROR_FILE_DEVICE_FAILURE:
+      [[fallthrough]];  // to NS_ERROR_FILE_FS_CORRUPTED
+    case NS_ERROR_FILE_FS_CORRUPTED:
+      aPromise->MaybeRejectWithNotReadableError(
+          errMsg.refOr("Target file system may be corrupt or unavailable"_ns));
+      break;
     case NS_ERROR_FILE_CORRUPTED:
       aPromise->MaybeRejectWithNotReadableError(
           errMsg.refOr("Target file could not be read and may be corrupt"_ns));
       break;
     case NS_ERROR_ILLEGAL_INPUT:
+      [[fallthrough]];  // NS_ERROR_ILLEGAL_VALUE
     case NS_ERROR_ILLEGAL_VALUE:
       aPromise->MaybeRejectWithDataError(
           errMsg.refOr("Argument is not allowed"_ns));
@@ -263,8 +294,10 @@ already_AddRefed<Promise> IOUtils::Read(GlobalObject& aGlobal,
 
     DispatchAndResolve<JsBuffer>(
         state.ref()->mEventQueue, promise,
-        [file = std::move(file), toRead, decompress = aOptions.mDecompress]() {
-          return ReadSync(file, toRead, decompress, BufferKind::Uint8Array);
+        [file = std::move(file), offset = aOptions.mOffset, toRead,
+         decompress = aOptions.mDecompress]() {
+          return ReadSync(file, offset, toRead, decompress,
+                          BufferKind::Uint8Array);
         });
   } else {
     RejectShuttingDown(promise);
@@ -457,6 +490,12 @@ already_AddRefed<Promise> IOUtils::WriteJSON(GlobalObject& aGlobal,
     auto opts = InternalWriteOpts::FromBinding(aOptions);
     if (opts.isErr()) {
       RejectJSPromise(promise, opts.unwrapErr());
+      return promise.forget();
+    }
+
+    if (opts.inspect().mMode == WriteMode::Append) {
+      promise->MaybeRejectWithNotSupportedError(
+          "IOUtils.writeJSON does not support appending to files."_ns);
       return promise.forget();
     }
 
@@ -744,8 +783,8 @@ already_AddRefed<Promise> IOUtils::CreateJSPromise(GlobalObject& aGlobal) {
 
 /* static */
 Result<IOUtils::JsBuffer, IOUtils::IOError> IOUtils::ReadSync(
-    nsIFile* aFile, const Maybe<uint32_t>& aMaxBytes, const bool aDecompress,
-    IOUtils::BufferKind aBufferKind) {
+    nsIFile* aFile, const uint32_t aOffset, const Maybe<uint32_t> aMaxBytes,
+    const bool aDecompress, IOUtils::BufferKind aBufferKind) {
   MOZ_ASSERT(!NS_IsMainThread());
 
   if (aMaxBytes.isSome() && aDecompress) {
@@ -785,8 +824,22 @@ Result<IOUtils::JsBuffer, IOUtils::IOError> IOUtils::ReadSync(
                            aFile->HumanReadablePath().get(), streamSize));
     }
     bufSize = static_cast<uint32_t>(streamSize);
+
+    if (aOffset >= bufSize) {
+      bufSize = 0;
+    } else {
+      bufSize = bufSize - aOffset;
+    }
   } else {
     bufSize = aMaxBytes.value();
+  }
+
+  if (aOffset > 0) {
+    if (nsresult rv = stream->Seek(PR_SEEK_SET, aOffset); NS_FAILED(rv)) {
+      return Err(IOError(rv).WithMessage(
+          "Could not seek to position %" PRId64 " in file %s", aOffset,
+          aFile->HumanReadablePath().get()));
+    }
   }
 
   JsBuffer buffer = JsBuffer::CreateEmpty(aBufferKind);
@@ -831,7 +884,7 @@ Result<IOUtils::JsBuffer, IOUtils::IOError> IOUtils::ReadSync(
 /* static */
 Result<IOUtils::JsBuffer, IOUtils::IOError> IOUtils::ReadUTF8Sync(
     nsIFile* aFile, bool aDecompress) {
-  auto result = ReadSync(aFile, Nothing{}, aDecompress, BufferKind::String);
+  auto result = ReadSync(aFile, 0, Nothing{}, aDecompress, BufferKind::String);
   if (result.isErr()) {
     return result.propagateErr();
   }
@@ -860,10 +913,10 @@ Result<uint32_t, IOUtils::IOError> IOUtils::WriteSync(
   bool exists = false;
   MOZ_TRY(aFile->Exists(&exists));
 
-  if (aOptions.mNoOverwrite && exists) {
+  if (exists && aOptions.mMode == WriteMode::Create) {
     return Err(IOError(NS_ERROR_DOM_TYPE_MISMATCH_ERR)
                    .WithMessage("Refusing to overwrite the file at %s\n"
-                                "Specify `noOverwrite: false` to allow "
+                                "Specify `mode: \"overwrite\"` to allow "
                                 "overwriting the destination",
                                 aFile->HumanReadablePath().get()));
   }
@@ -879,7 +932,9 @@ Result<uint32_t, IOUtils::IOError> IOUtils::WriteSync(
     nsCOMPtr<nsIFile> toMove;
     MOZ_ALWAYS_SUCCEEDS(aFile->Clone(getter_AddRefs(toMove)));
 
-    if (MoveSync(toMove, backupFile, aOptions.mNoOverwrite).isErr()) {
+    bool noOverwrite = aOptions.mMode == WriteMode::Create;
+
+    if (MoveSync(toMove, backupFile, noOverwrite).isErr()) {
       return Err(IOError(NS_ERROR_FILE_COPY_OR_MOVE_FAILED)
                      .WithMessage("Failed to backup the source file(%s) to %s",
                                   aFile->HumanReadablePath().get(),
@@ -897,7 +952,25 @@ Result<uint32_t, IOUtils::IOError> IOUtils::WriteSync(
     writeFile = aFile;
   }
 
-  int32_t flags = PR_WRONLY | PR_TRUNCATE | PR_CREATE_FILE;
+  int32_t flags = PR_WRONLY;
+
+  switch (aOptions.mMode) {
+    case WriteMode::Overwrite:
+      flags |= PR_TRUNCATE | PR_CREATE_FILE;
+      break;
+
+    case WriteMode::Append:
+      flags |= PR_APPEND;
+      break;
+
+    case WriteMode::Create:
+      flags |= PR_CREATE_FILE | PR_EXCL;
+      break;
+
+    default:
+      MOZ_CRASH("IOUtils: unknown write mode");
+  }
+
   if (aOptions.mFlush) {
     flags |= PR_SYNC;
   }
@@ -924,6 +997,11 @@ Result<uint32_t, IOUtils::IOError> IOUtils::WriteSync(
 
     RefPtr<nsFileOutputStream> stream = new nsFileOutputStream();
     if (nsresult rv = stream->Init(writeFile, flags, 0666, 0); NS_FAILED(rv)) {
+      // Normalize platform-specific errors for opening a directory to an access
+      // denied error.
+      if (rv == nsresult::NS_ERROR_FILE_IS_DIRECTORY) {
+        rv = NS_ERROR_FILE_ACCESS_DENIED;
+      }
       return Err(
           IOError(rv).WithMessage("Could not open the file at %s for writing",
                                   writeFile->HumanReadablePath().get()));
@@ -964,12 +1042,38 @@ Result<uint32_t, IOUtils::IOError> IOUtils::WriteSync(
 
     // nsIFile::MoveToFollowingLinks will only update the path of the file if
     // the move succeeds.
-    if (destPath != writePath && MoveSync(writeFile, aFile, false).isErr()) {
-      return Err(IOError(NS_ERROR_FILE_COPY_OR_MOVE_FAILED)
-                     .WithMessage(
-                         "Could not move temporary file(%s) to destination(%s)",
-                         writeFile->HumanReadablePath().get(),
-                         aFile->HumanReadablePath().get()));
+    if (destPath != writePath) {
+      if (aOptions.mTmpFile) {
+        bool isDir = false;
+        if (nsresult rv = aFile->IsDirectory(&isDir);
+            NS_FAILED(rv) && !IsFileNotFound(rv)) {
+          return Err(IOError(rv).WithMessage("Could not stat the file at %s",
+                                             aFile->HumanReadablePath().get()));
+        }
+
+        // If we attempt to write to a directory *without* a temp file, we get a
+        // permission error.
+        //
+        // However, if we are writing to a temp file first, when we copy the
+        // temp file over the destination file, we actually end up copying it
+        // inside the directory, which is not what we want. In this case, we are
+        // just going to bail out early.
+        if (isDir) {
+          return Err(
+              IOError(NS_ERROR_FILE_ACCESS_DENIED)
+                  .WithMessage("Could not open the file at %s for writing",
+                               aFile->HumanReadablePath().get()));
+        }
+      }
+
+      if (MoveSync(writeFile, aFile, /* aNoOverwrite = */ false).isErr()) {
+        return Err(
+            IOError(NS_ERROR_FILE_COPY_OR_MOVE_FAILED)
+                .WithMessage(
+                    "Could not move temporary file(%s) to destination(%s)",
+                    writeFile->HumanReadablePath().get(),
+                    aFile->HumanReadablePath().get()));
+      }
     }
   }
   return totalWritten;
@@ -1730,7 +1834,7 @@ Result<IOUtils::InternalWriteOpts, IOUtils::IOError>
 IOUtils::InternalWriteOpts::FromBinding(const WriteOptions& aOptions) {
   InternalWriteOpts opts;
   opts.mFlush = aOptions.mFlush;
-  opts.mNoOverwrite = aOptions.mNoOverwrite;
+  opts.mMode = aOptions.mMode;
 
   if (aOptions.mBackupFile.WasPassed()) {
     opts.mBackupFile = new nsLocalFile();

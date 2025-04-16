@@ -17,12 +17,13 @@ class CustomProxyHandler : public Wrapper {
 
   bool getOwnPropertyDescriptor(
       JSContext* cx, HandleObject proxy, HandleId id,
-      MutableHandle<PropertyDescriptor> desc) const override {
+      MutableHandle<mozilla::Maybe<PropertyDescriptor>> desc) const override {
     if (JSID_IS_STRING(id) &&
         JS_LinearStringEqualsLiteral(JSID_TO_LINEAR_STRING(id), "phantom")) {
-      desc.object().set(proxy);
-      desc.attributesRef() = JSPROP_ENUMERATE;
-      desc.value().setInt32(42);
+      desc.set(mozilla::Some(PropertyDescriptor::Data(
+          Int32Value(42),
+          {PropertyAttribute::Configurable, PropertyAttribute::Enumerable,
+           PropertyAttribute::Writable})));
       return true;
     }
 
@@ -31,15 +32,9 @@ class CustomProxyHandler : public Wrapper {
 
   bool set(JSContext* cx, HandleObject proxy, HandleId id, HandleValue v,
            HandleValue receiver, ObjectOpResult& result) const override {
-    Rooted<PropertyDescriptor> desc_(cx);
-    if (!Wrapper::getOwnPropertyDescriptor(cx, proxy, id, &desc_)) {
-      return false;
-    }
     Rooted<mozilla::Maybe<PropertyDescriptor>> desc(cx);
-    if (desc_.object()) {
-      desc.set(mozilla::Some(desc_.get()));
-    } else {
-      desc.reset();
+    if (!Wrapper::getOwnPropertyDescriptor(cx, proxy, id, &desc)) {
+      return false;
     }
     return SetPropertyIgnoringNamedGetter(cx, proxy, id, v, receiver, desc,
                                           result);

@@ -51,26 +51,48 @@ function TargetMixin(parentClass) {
       // [typeName:string => Front instance]
       this.fronts = new Map();
 
-      // `resource-available-form` events can be emitted by target actors before the
-      // ResourceWatcher could add event listeners. The target front will cache those
-      // events until the ResourceWatcher has added the listeners.
-      this._resourceCache = [];
-      this._onResourceAvailable = this._onResourceAvailable.bind(this);
-      // In order to avoid destroying the `_resourceCache`, we need to call `super.on()`
+      // `resource-available-form` and `resource-updated-form` events can be emitted
+      // by target actors before the ResourceCommand could add event listeners.
+      // The target front will cache those events until the ResourceCommand has
+      // added the listeners.
+      this._resourceCache = {};
+
+      // In order to avoid destroying the `_resourceCache[event]`, we need to call `super.on()`
       // instead of `this.on()`.
-      super.on("resource-available-form", this._onResourceAvailable);
+      const offResourceAvailable = super.on(
+        "resource-available-form",
+        this._onResourceEvent.bind(this, "resource-available-form")
+      );
+      const offResourceUpdated = super.on(
+        "resource-updated-form",
+        this._onResourceEvent.bind(this, "resource-updated-form")
+      );
+
+      this._offResourceEvent = new Map([
+        ["resource-available-form", offResourceAvailable],
+        ["resource-updated-form", offResourceUpdated],
+      ]);
     }
 
     on(eventName, listener) {
-      if (eventName === "resource-available-form" && this._resourceCache) {
-        this.off("resource-available-form", this._onResourceAvailable);
-        for (const cache of this._resourceCache) {
-          listener(cache);
+      if (this._offResourceEvent && this._offResourceEvent.has(eventName)) {
+        // If a callsite sets an event listener for resource-(available|update)-form:
+
+        // we want to remove the listener we set here in the constructor…
+        const off = this._offResourceEvent.get(eventName);
+        this._offResourceEvent.delete(eventName);
+        off();
+
+        // …and call the new listener with the resources that were put in the cache.
+        if (this._resourceCache[eventName]) {
+          for (const cache of this._resourceCache[eventName]) {
+            listener(cache);
+          }
+          delete this._resourceCache[eventName];
         }
-        this._resourceCache = null;
       }
 
-      super.on(eventName, listener);
+      return super.on(eventName, listener);
     }
 
     /**
@@ -623,6 +645,7 @@ function TargetMixin(parentClass) {
       }
 
       this.threadFront = null;
+      this._offResourceEvent = null;
 
       // This event should be emitted before calling super.destroy(), because
       // super.destroy() will remove all event listeners attached to this front.
@@ -693,10 +716,11 @@ function TargetMixin(parentClass) {
       this._url = null;
     }
 
-    _onResourceAvailable(resources) {
-      if (this._resourceCache) {
-        this._resourceCache.push(resources);
+    _onResourceEvent(eventName, resources) {
+      if (!this._resourceCache[eventName]) {
+        this._resourceCache[eventName] = [];
       }
+      this._resourceCache[eventName].push(resources);
     }
 
     toString() {

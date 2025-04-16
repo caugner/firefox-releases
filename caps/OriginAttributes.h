@@ -80,10 +80,19 @@ class OriginAttributes : public dom::OriginAttributesDictionary {
            mGeckoViewSessionContextId == aOther.mGeckoViewSessionContextId;
   }
 
+  [[nodiscard]] bool EqualsIgnoringPartitionKey(
+      const OriginAttributes& aOther) const {
+    return EqualsIgnoringFPD(aOther) &&
+           mFirstPartyDomain == aOther.mFirstPartyDomain;
+  }
+
   // Serializes/Deserializes non-default values into the suffix format, i.e.
   // |!key1=value1&key2=value2|. If there are no non-default attributes, this
   // returns an empty string.
   void CreateSuffix(nsACString& aStr) const;
+
+  // Like CreateSuffix, but returns an atom instead of producing a string.
+  already_AddRefed<nsAtom> CreateSuffixAtom() const;
 
   // Don't use this method for anything else than debugging!
   void CreateAnonymizedSuffix(nsACString& aStr) const;

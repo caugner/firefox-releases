@@ -3,7 +3,7 @@
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 #if JS_HAS_INTL_API
-var numberFormatCache = new Record();
+var numberFormatCache = new_Record();
 
 /**
  * Format this Number object into a string, using the locale and formatting options
@@ -35,7 +35,7 @@ function Number_toLocaleString() {
     }
 
     // Step 5.
-    return intl_FormatNumber(numberFormat, x, /* formatToParts = */ false, /* unitStyle = */ false);
+    return intl_FormatNumber(numberFormat, x, /* formatToParts = */ false);
 }
 #endif  // JS_HAS_INTL_API
 

@@ -105,14 +105,13 @@ class ProviderQuickSuggest extends UrlbarProvider {
     return (
       queryContext.trimmedSearchString &&
       !queryContext.searchMode &&
+      !queryContext.isPrivate &&
       UrlbarPrefs.get("quickSuggestEnabled") &&
       (UrlbarPrefs.get("quicksuggest.showedOnboardingDialog") ||
         !UrlbarPrefs.get("quickSuggestShouldShowOnboardingDialog")) &&
       UrlbarPrefs.get(SUGGEST_PREF) &&
       UrlbarPrefs.get("suggest.searches") &&
-      UrlbarPrefs.get("browser.search.suggest.enabled") &&
-      (!queryContext.isPrivate ||
-        UrlbarPrefs.get("browser.search.suggest.enabled.private"))
+      UrlbarPrefs.get("browser.search.suggest.enabled")
     );
   }
 
@@ -148,6 +147,9 @@ class ProviderQuickSuggest extends UrlbarProvider {
     };
 
     if (!suggestion.isSponsored) {
+      // In addition to the view, we also use `sponsoredText` in the muxer to
+      // tell whether the result is sponsored or non-sponsored, so be careful
+      // about changing it. See also bug 1695302 re: these property names.
       payload.sponsoredText = NONSPONSORED_ACTION_TEXT;
     }
 
@@ -190,12 +192,21 @@ class ProviderQuickSuggest extends UrlbarProvider {
       return;
     }
 
-    // Get the index of the quick suggest result.
+    // Get the index of the quick suggest result. Usually it will be last, so to
+    // avoid an O(n) lookup in the common case, check the last result first. It
+    // may not be last if `browser.urlbar.showSearchSuggestionsFirst` is false
+    // or its position is configured differently via Nimbus.
     let resultIndex = queryContext.results.length - 1;
-    let lastResult = queryContext.results[resultIndex];
-    if (!lastResult?.payload.isSponsored) {
-      Cu.reportError(`Last result is not a quick suggest`);
-      return;
+    let result = queryContext.results[resultIndex];
+    if (result.providerName != this.name) {
+      resultIndex = queryContext.results.findIndex(
+        r => r.providerName == this.name
+      );
+      if (resultIndex < 0) {
+        Cu.reportError(`Could not find quick suggest result`);
+        return;
+      }
+      result = queryContext.results[resultIndex];
     }
 
     // Record telemetry.  We want to record the 1-based index of the result, so
@@ -229,7 +240,7 @@ class ProviderQuickSuggest extends UrlbarProvider {
         sponsoredImpressionUrl,
         sponsoredClickUrl,
         sponsoredBlockId,
-      } = lastResult.payload;
+      } = result.payload;
       // impression
       PartnerLinkAttribution.sendContextualServicesPing(
         {
@@ -261,8 +272,6 @@ class ProviderQuickSuggest extends UrlbarProvider {
   /**
    * Called when a urlbar pref changes.  We use this to listen for changes to
    * `browser.urlbar.suggest.quicksuggest` so we can record a telemetry event.
-   * We also need to listen for `browser.urlbar.quicksuggest.enabled` so we can
-   * enable/disable the event telemetry.
    *
    * @param {string} pref
    *   The name of the pref relative to `browser.urlbar`.

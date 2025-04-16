@@ -140,7 +140,7 @@ uint32_t DocAccessibleParent::AddSubtree(
   ProxyCreated(newProxy);
 
 #if defined(XP_WIN)
-  WrapperFor(newProxy)->SetID(newChild.MsaaID());
+  WrapperFor(newProxy)->GetMsaa()->SetID(newChild.MsaaID());
 #endif
 
   for (uint32_t index = 0, len = mPendingChildDocs.Length(); index < len;
@@ -593,6 +593,7 @@ ipc::IPCResult DocAccessibleParent::AddChildDoc(DocAccessibleParent* aChildDoc,
       }
       return IPC_OK();
     }
+    MOZ_DIAGNOSTIC_ASSERT(false, "Binding to nonexistent proxy!");
     return IPC_FAIL(this, "binding to nonexistant proxy!");
   }
 
@@ -602,9 +603,11 @@ ipc::IPCResult DocAccessibleParent::AddChildDoc(DocAccessibleParent* aChildDoc,
   // OuterDocAccessibles are expected to only have a document as a child.
   // However for compatibility we tolerate replacing one document with another
   // here.
-  if (outerDoc->ChildCount() > 1 ||
+  if (!outerDoc->IsOuterDoc() || outerDoc->ChildCount() > 1 ||
       (outerDoc->ChildCount() == 1 && !outerDoc->RemoteChildAt(0)->IsDoc())) {
-    return IPC_FAIL(this, "binding to proxy that can't be a outerDoc!");
+    MOZ_DIAGNOSTIC_ASSERT(false,
+                          "Binding to parent that isn't a valid OuterDoc!");
+    return IPC_FAIL(this, "Binding to parent that isn't a valid OuterDoc!");
   }
 
   if (outerDoc->ChildCount() == 1) {
@@ -1006,6 +1009,19 @@ Tuple<DocAccessibleParent*, uint64_t> DocAccessibleParent::GetRemoteEmbedder() {
     id = 0;
   }
   return Tuple<DocAccessibleParent*, uint64_t>(doc, id);
+}
+
+void DocAccessibleParent::RemovePendingChildDoc(DocAccessibleParent* aChildDoc,
+                                                uint64_t aParentID) {
+  for (uint32_t index = 0, len = mPendingChildDocs.Length(); index < len;
+       ++index) {
+    PendingChildDoc& pending = mPendingChildDocs[index];
+    if (pending.mParentID == aParentID) {
+      MOZ_ASSERT(pending.mChildDoc == aChildDoc);
+      mPendingChildDocs.RemoveElementAt(index);
+      break;
+    }
+  }
 }
 
 }  // namespace a11y

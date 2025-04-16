@@ -135,8 +135,7 @@ class Message;
 
 namespace JS {
 class Value;
-
-struct PropertyDescriptor;
+class PropertyDescriptor;
 }  // namespace JS
 
 namespace mozilla {
@@ -281,6 +280,8 @@ class nsContentUtils {
   static bool IsCallerChromeOrElementTransformGettersEnabled(JSContext* aCx,
                                                              JSObject*);
 
+  static bool IsCallerChromeOrErrorPage(JSContext*, JSObject*);
+
   // The APIs for checking whether the caller is system (in the sense of system
   // principal) should only be used when the JSContext is known to accurately
   // represent the caller.  In practice, that means you should only use them in
@@ -353,6 +354,7 @@ class nsContentUtils {
   static bool ShouldResistFingerprinting(
       mozilla::dom::WorkerPrivate* aWorkerPrivate);
   static bool ShouldResistFingerprinting(const Document* aDoc);
+  static bool ShouldResistFingerprinting(nsIChannel* aChannel);
 
   // Prevent system colors from being exposed to CSS or canvas.
   static bool UseStandinsForNativeColors();
@@ -2445,10 +2447,10 @@ class nsContentUtils {
   static bool HasPluginWithUncontrolledEventDispatch(nsIContent* aContent);
 
   /**
-   * Returns the root document in a document hierarchy. Normally this
-   * will be the chrome document.
+   * Returns the in-process subtree root document in a document hierarchy.
+   * This could be a chrome document.
    */
-  static Document* GetRootDocument(Document* aDoc);
+  static Document* GetInProcessSubtreeRootDocument(Document* aDoc);
 
   static void GetShiftText(nsAString& text);
   static void GetControlText(nsAString& text);
@@ -2725,6 +2727,11 @@ class nsContentUtils {
    * @param aNode The node to test.
    */
   static bool IsNodeInEditableRegion(nsINode* aNode);
+
+  /**
+   * Returns a LogModule that logs debugging info from RFP functions.
+   */
+  static mozilla::LogModule* ResistFingerprintingLog();
 
   /**
    * Returns a LogModule that dump calls from content script are logged to.
@@ -3079,6 +3086,14 @@ class nsContentUtils {
                                     aTriggeringPrincipal);
   }
 
+  // Returns whether the image for the given URI and triggering principal is
+  // already available. Ideally this should exactly match the "list of available
+  // images" in the HTML spec, but our implementation of that at best only
+  // resembles it.
+  static bool IsImageAvailable(nsIContent*, nsIURI*,
+                               nsIPrincipal* aDefaultTriggeringPrincipal,
+                               mozilla::CORSMode);
+
   /**
    * Returns the content policy type that should be used for loading images
    * for displaying in the UI.  The sources of such images can be <xul:image>,
@@ -3412,6 +3427,7 @@ class nsContentUtils {
   // bytecode out of the nsCacheInfoChannel.
   static nsCString* sJSBytecodeMimeType;
 
+  static mozilla::LazyLogModule gResistFingerprintingLog;
   static mozilla::LazyLogModule sDOMDumpLog;
 
   static int32_t sInnerOrOuterWindowCount;

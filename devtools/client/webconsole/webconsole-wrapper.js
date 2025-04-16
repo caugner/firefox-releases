@@ -26,7 +26,6 @@ const Telemetry = require("devtools/client/shared/telemetry");
 
 const EventEmitter = require("devtools/shared/event-emitter");
 const App = createFactory(require("devtools/client/webconsole/components/App"));
-const DataProvider = require("devtools/client/netmonitor/src/connector/firefox-data-provider");
 
 const {
   setupServiceContainer,
@@ -83,16 +82,6 @@ class WebConsoleWrapper {
   async init() {
     const { webConsoleUI } = this;
 
-    const webConsoleFront = await this.hud.currentTarget.getFront("console");
-
-    this.networkDataProvider = new DataProvider({
-      actions: {
-        updateRequest: (id, data) => this.batchedRequestUpdates({ id, data }),
-      },
-      webConsoleFront,
-      resourceWatcher: this.hud.resourceWatcher,
-    });
-
     return new Promise(resolve => {
       store = configureStore(this.webConsoleUI, {
         // We may not have access to the toolbox (e.g. in the browser console).
@@ -101,7 +90,7 @@ class WebConsoleWrapper {
           webConsoleUI,
           hud: this.hud,
           toolbox: this.toolbox,
-          client: this.webConsoleUI._commands,
+          client: this.webConsoleUI._consoleCommands,
         },
       });
 
@@ -264,10 +253,6 @@ class WebConsoleWrapper {
       this.queuedMessageAdds.push(...messages);
       this.setTimeoutIfNeeded();
     }
-  }
-
-  requestData(id, type) {
-    this.networkDataProvider.requestData(id, type);
   }
 
   dispatchClearHistory() {

@@ -56,79 +56,7 @@ class TextEditor : public EditorBase, public nsITimerCallback, public nsINamed {
   NS_DECL_NSINAMED
 
   // Overrides of nsIEditor
-  NS_IMETHOD GetDocumentIsEmpty(bool* aDocumentIsEmpty) override;
-
-  MOZ_CAN_RUN_SCRIPT NS_IMETHOD
-  SetDocumentCharacterSet(const nsACString& characterSet) override;
-
   NS_IMETHOD GetTextLength(int32_t* aCount) override;
-
-  /**
-   * Do "undo" or "redo".
-   *
-   * @param aCount              How many count of transactions should be
-   *                            handled.
-   * @param aPrincipal          Set subject principal if it may be called by
-   *                            JS.  If set to nullptr, will be treated as
-   *                            called by system.
-   */
-  MOZ_CAN_RUN_SCRIPT nsresult UndoAsAction(uint32_t aCount,
-                                           nsIPrincipal* aPrincipal = nullptr);
-  MOZ_CAN_RUN_SCRIPT nsresult RedoAsAction(uint32_t aCount,
-                                           nsIPrincipal* aPrincipal = nullptr);
-
-  /**
-   * Do "cut".
-   *
-   * @param aPrincipal          If you know current context is subject
-   *                            principal or system principal, set it.
-   *                            When nullptr, this checks it automatically.
-   */
-  MOZ_CAN_RUN_SCRIPT nsresult CutAsAction(nsIPrincipal* aPrincipal = nullptr);
-
-  /**
-   * See Document::AreClipboardCommandsUnconditionallyEnabled.
-   */
-  bool AreClipboardCommandsUnconditionallyEnabled() const;
-
-  /**
-   * IsCutCommandEnabled() returns whether cut command can be enabled or
-   * disabled.  This always returns true if we're in non-chrome HTML/XHTML
-   * document.  Otherwise, same as the result of `IsCopyToClipboardAllowed()`.
-   */
-  MOZ_CAN_RUN_SCRIPT bool IsCutCommandEnabled() const;
-
-  NS_IMETHOD Copy() override;
-
-  /**
-   * IsCopyCommandEnabled() returns copy command can be enabled or disabled.
-   * This always returns true if we're in non-chrome HTML/XHTML document.
-   * Otherwise, same as the result of `IsCopyToClipboardAllowed()`.
-   */
-  MOZ_CAN_RUN_SCRIPT bool IsCopyCommandEnabled() const;
-
-  /**
-   * IsCopyToClipboardAllowed() returns true if the selected content can
-   * be copied into the clipboard.  This returns true when:
-   * - `Selection` is not collapsed and we're not a password editor.
-   * - `Selection` is not collapsed and we're a password editor but selection
-   *   range is in unmasked range.
-   */
-  bool IsCopyToClipboardAllowed() const {
-    AutoEditActionDataSetter editActionData(*this, EditAction::eNotEditing);
-    if (NS_WARN_IF(!editActionData.CanHandle())) {
-      return false;
-    }
-    return IsCopyToClipboardAllowedInternal();
-  }
-
-  /**
-   * CanDeleteSelection() returns true if `Selection` is not collapsed and
-   * it's allowed to be removed.
-   */
-  bool CanDeleteSelection() const;
-
-  virtual bool CanPaste(int32_t aClipboardType) const;
 
   // Shouldn't be used internally, but we need these using declarations for
   // avoiding warnings of clang.
@@ -136,26 +64,8 @@ class TextEditor : public EditorBase, public nsITimerCallback, public nsINamed {
   using EditorBase::CanCut;
   using EditorBase::CanPaste;
 
-  /**
-   * Paste aTransferable at Selection.
-   *
-   * @param aTransferable       Must not be nullptr.
-   * @param aPrincipal          Set subject principal if it may be called by
-   *                            JS.  If set to nullptr, will be treated as
-   *                            called by system.
-   */
-  MOZ_CAN_RUN_SCRIPT virtual nsresult PasteTransferableAsAction(
-      nsITransferable* aTransferable, nsIPrincipal* aPrincipal = nullptr);
-
   NS_IMETHOD OutputToString(const nsAString& aFormatType, uint32_t aFlags,
                             nsAString& aOutputString) override;
-
-  /** Can we paste |aTransferable| or, if |aTransferable| is null, will a call
-   * to pasteTransferable later possibly succeed if given an instance of
-   * nsITransferable then? True if the doc is modifiable, and, if
-   * |aTransfeable| is non-null, we have pasteable data in |aTransfeable|.
-   */
-  virtual bool CanPasteTransferable(nsITransferable* aTransferable);
 
   // Overrides of EditorBase
   MOZ_CAN_RUN_SCRIPT virtual nsresult Init(Document& aDoc, Element* aRoot,
@@ -163,12 +73,15 @@ class TextEditor : public EditorBase, public nsITimerCallback, public nsINamed {
                                            uint32_t aFlags,
                                            const nsAString& aValue) override;
 
-  /**
-   * IsEmpty() checks whether the editor is empty.  If editor has only padding
-   * <br> element for empty editor, returns true.  If editor's root element has
-   * non-empty text nodes or other nodes like <br>, returns false.
-   */
-  virtual bool IsEmpty() const;
+  bool IsEmpty() const override;
+
+  bool CanPaste(int32_t aClipboardType) const override;
+
+  MOZ_CAN_RUN_SCRIPT nsresult
+  PasteTransferableAsAction(nsITransferable* aTransferable,
+                            nsIPrincipal* aPrincipal = nullptr) override;
+
+  virtual bool CanPasteTransferable(nsITransferable* aTransferable) override;
 
   MOZ_CAN_RUN_SCRIPT virtual nsresult HandleKeyPressEvent(
       WidgetKeyboardEvent* aKeyboardEvent) override;
@@ -192,22 +105,9 @@ class TextEditor : public EditorBase, public nsITimerCallback, public nsINamed {
                                             bool aDispatchPasteEvent,
                                             nsIPrincipal* aPrincipal = nullptr);
 
-  /**
-   * PasteAsQuotationAsAction() pastes content in clipboard as quotation.
-   * If the editor is TextEditor or in plaintext mode, will paste the content
-   * with appending ">" to start of each line.
-   *
-   * @param aClipboardType      nsIClipboard::kGlobalClipboard or
-   *                            nsIClipboard::kSelectionClipboard.
-   * @param aDispatchPasteEvent true if this should dispatch ePaste event
-   *                            before pasting.  Otherwise, false.
-   * @param aPrincipal          Set subject principal if it may be called by
-   *                            JS.  If set to nullptr, will be treated as
-   *                            called by system.
-   */
-  MOZ_CAN_RUN_SCRIPT virtual nsresult PasteAsQuotationAsAction(
-      int32_t aClipboardType, bool aDispatchPasteEvent,
-      nsIPrincipal* aPrincipal = nullptr);
+  MOZ_CAN_RUN_SCRIPT nsresult
+  PasteAsQuotationAsAction(int32_t aClipboardType, bool aDispatchPasteEvent,
+                           nsIPrincipal* aPrincipal = nullptr) override;
 
   /**
    * The maximum number of characters allowed.
@@ -215,11 +115,6 @@ class TextEditor : public EditorBase, public nsITimerCallback, public nsINamed {
    */
   int32_t MaxTextLength() const { return mMaxTextLength; }
   void SetMaxTextLength(int32_t aLength) { mMaxTextLength = aLength; }
-
-  enum class AllowBeforeInputEventCancelable {
-    No,
-    Yes,
-  };
 
   /**
    * Replace existed string with a string.
@@ -238,59 +133,8 @@ class TextEditor : public EditorBase, public nsITimerCallback, public nsINamed {
       AllowBeforeInputEventCancelable aAllowBeforeInputEventCancelable,
       nsIPrincipal* aPrincipal = nullptr);
 
-  /**
-   * Replace text in aReplaceRange or all text in this editor with aString and
-   * treat the change as inserting the string.
-   *
-   * @param aString             The string to set.
-   * @param aReplaceRange       The range to be replaced.
-   *                            If nullptr, all contents will be replaced.
-   * @param aAllowBeforeInputEventCancelable
-   *                            Whether `beforeinput` event which will be
-   *                            dispatched for this can be cancelable or not.
-   * @param aPrincipal          Set subject principal if it may be called by
-   *                            JS.  If set to nullptr, will be treated as
-   *                            called by system.
-   */
-  MOZ_CAN_RUN_SCRIPT nsresult ReplaceTextAsAction(
-      const nsAString& aString, nsRange* aReplaceRange,
-      AllowBeforeInputEventCancelable aAllowBeforeInputEventCancelable,
-      nsIPrincipal* aPrincipal = nullptr);
-
-  /**
-   * InsertLineBreakAsAction() is called when user inputs a line break with
-   * Enter or something.
-   *
-   * @param aPrincipal          Set subject principal if it may be called by
-   *                            JS.  If set to nullptr, will be treated as
-   *                            called by system.
-   */
-  MOZ_CAN_RUN_SCRIPT virtual nsresult InsertLineBreakAsAction(
-      nsIPrincipal* aPrincipal = nullptr);
-
-  /**
-   * OnCompositionStart() is called when editor receives eCompositionStart
-   * event which should be handled in this editor.
-   */
-  nsresult OnCompositionStart(WidgetCompositionEvent& aCompositionStartEvent);
-
-  /**
-   * OnCompositionChange() is called when editor receives an eCompositioChange
-   * event which should be handled in this editor.
-   *
-   * @param aCompositionChangeEvent     eCompositionChange event which should
-   *                                    be handled in this editor.
-   */
   MOZ_CAN_RUN_SCRIPT nsresult
-  OnCompositionChange(WidgetCompositionEvent& aCompositionChangeEvent);
-
-  /**
-   * OnCompositionEnd() is called when editor receives an eCompositionChange
-   * event and it's followed by eCompositionEnd event and after
-   * OnCompositionChange() is called.
-   */
-  MOZ_CAN_RUN_SCRIPT void OnCompositionEnd(
-      WidgetCompositionEvent& aCompositionEndEvent);
+  InsertLineBreakAsAction(nsIPrincipal* aPrincipal = nullptr) override;
 
   /**
    * OnDrop() is called from EditorEventListener::Drop that is handler of drop
@@ -390,14 +234,6 @@ class TextEditor : public EditorBase, public nsITimerCallback, public nsINamed {
    */
   [[nodiscard]] MOZ_CAN_RUN_SCRIPT nsresult
   SetTextAsSubAction(const nsAString& aString);
-
-  /**
-   * ReplaceSelectionAsSubAction() replaces selection with aString.
-   *
-   * @param aString    The string to replace.
-   */
-  MOZ_CAN_RUN_SCRIPT nsresult
-  ReplaceSelectionAsSubAction(const nsAString& aString);
 
   /**
    * MaybeDoAutoPasswordMasking() may mask password if we're doing auto-masking.
@@ -540,15 +376,8 @@ class TextEditor : public EditorBase, public nsITimerCallback, public nsINamed {
    */
   void HandleNewLinesInStringForSingleLineEditor(nsString& aString) const;
 
-  /**
-   * HandleInsertText() handles inserting text at selection.
-   *
-   * @param aEditSubAction      Must be EditSubAction::eInsertText or
-   *                            EditSubAction::eInsertTextComingFromIME.
-   * @param aInsertionString    String to be inserted at selection.
-   */
-  [[nodiscard]] MOZ_CAN_RUN_SCRIPT virtual EditActionResult HandleInsertText(
-      EditSubAction aEditSubAction, const nsAString& aInsertionString);
+  [[nodiscard]] MOZ_CAN_RUN_SCRIPT EditActionResult HandleInsertText(
+      EditSubAction aEditSubAction, const nsAString& aInsertionString) override;
 
   /**
    * HandleDeleteSelectionInternal() is a helper method of
@@ -657,14 +486,6 @@ class TextEditor : public EditorBase, public nsITimerCallback, public nsINamed {
   MOZ_CAN_RUN_SCRIPT virtual nsresult SelectEntireDocument() override;
 
   /**
-   * OnInputText() is called when user inputs text with keyboard or something.
-   *
-   * @param aStringToInsert     The string to insert.
-   */
-  [[nodiscard]] MOZ_CAN_RUN_SCRIPT nsresult
-  OnInputText(const nsAString& aStringToInsert);
-
-  /**
    * PrepareInsertContent() is a helper method of InsertTextAt(),
    * HTMLEditor::DoInsertHTMLWithContext().  They insert content coming from
    * clipboard or drag and drop.  Before that, they may need to remove selected
@@ -691,15 +512,8 @@ class TextEditor : public EditorBase, public nsITimerCallback, public nsINamed {
                                            const EditorDOMPoint& aPointToInsert,
                                            bool aDoDeleteSelection);
 
-  /**
-   * InsertWithQuotationsAsSubAction() inserts aQuotedText with appending ">"
-   * to start of every line.
-   *
-   * @param aQuotedText         String to insert.  This will be quoted by ">"
-   *                            automatically.
-   */
-  [[nodiscard]] MOZ_CAN_RUN_SCRIPT virtual nsresult
-  InsertWithQuotationsAsSubAction(const nsAString& aQuotedText);
+  [[nodiscard]] MOZ_CAN_RUN_SCRIPT nsresult
+  InsertWithQuotationsAsSubAction(const nsAString& aQuotedText) override;
 
   /**
    * Return true if the data is safe to insert as the source and destination
@@ -749,28 +563,7 @@ class TextEditor : public EditorBase, public nsITimerCallback, public nsINamed {
   nsresult SharedOutputString(uint32_t aFlags, bool* aIsCollapsed,
                               nsAString& aResult) const;
 
-  /**
-   * See comment of IsCopyToClipboardAllowed() for the detail.
-   */
-  bool IsCopyToClipboardAllowedInternal() const;
-
-  bool FireClipboardEvent(EventMessage aEventMessage, int32_t aSelectionType,
-                          bool* aActionTaken = nullptr);
-
-  MOZ_CAN_RUN_SCRIPT bool UpdateMetaCharset(Document& aDocument,
-                                            const nsACString& aCharacterSet);
-
-  /**
-   * EnsureComposition() should be called by composition event handlers.  This
-   * tries to get the composition for the event and set it to mComposition.
-   * However, this may fail because the composition may be committed before
-   * the event comes to the editor.
-   *
-   * @return            true if there is a composition.  Otherwise, for example,
-   *                    a composition event handler in web contents moved focus
-   *                    for committing the composition, returns false.
-   */
-  bool EnsureComposition(WidgetCompositionEvent& aCompositionEvent);
+  bool IsCopyToClipboardAllowedInternal() const final;
 
   virtual already_AddRefed<Element> GetInputEventTargetElement() const override;
 
@@ -785,13 +578,6 @@ class TextEditor : public EditorBase, public nsITimerCallback, public nsINamed {
                                                      uint32_t aTimeout,
                                                      bool aNotify,
                                                      bool aForceStartMasking);
-
-  /**
-   * Helper for Is{Cut|Copy}CommandEnabled.
-   * Look for a listener for the given command, including up the target chain.
-   */
-  MOZ_CAN_RUN_SCRIPT bool CheckForClipboardCommandListener(
-      nsAtom* aCommand, EventMessage aEventMessage) const;
 
  protected:
   mutable nsCOMPtr<nsIDocumentEncoder> mCachedDocumentEncoder;

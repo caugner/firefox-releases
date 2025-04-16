@@ -12,6 +12,7 @@
 #include "mozilla/dom/PWindowGlobalChild.h"
 #include "nsRefPtrHashtable.h"
 #include "nsWrapperCache.h"
+#include "mozilla/dom/Document.h"
 #include "mozilla/dom/WindowGlobalActor.h"
 
 class nsGlobalWindowInner;
@@ -67,7 +68,8 @@ class WindowGlobalChild final : public WindowGlobalActor,
   void SetDocumentURI(nsIURI* aDocumentURI);
   // See the corresponding comment for `UpdateDocumentPrincipal` in
   // PWindowGlobal on why and when this is allowed
-  void SetDocumentPrincipal(nsIPrincipal* aNewDocumentPrincipal);
+  void SetDocumentPrincipal(nsIPrincipal* aNewDocumentPrincipal,
+                            nsIPrincipal* aNewDocumentStoragePrincipal);
 
   nsIPrincipal* DocumentPrincipal() { return mDocumentPrincipal; }
 
@@ -97,6 +99,8 @@ class WindowGlobalChild final : public WindowGlobalActor,
   already_AddRefed<JSWindowActorChild> GetActor(JSContext* aCx,
                                                 const nsACString& aName,
                                                 ErrorResult& aRv);
+  already_AddRefed<JSWindowActorChild> GetExistingActor(
+      const nsACString& aName);
 
   // Create and initialize the WindowGlobalChild object.
   static already_AddRefed<WindowGlobalChild> Create(
@@ -131,6 +135,9 @@ class WindowGlobalChild final : public WindowGlobalActor,
 
   void SetSessionStoreDataCollector(SessionStoreDataCollector* aCollector);
   SessionStoreDataCollector* GetSessionStoreDataCollector() const;
+
+  void UnblockBFCacheFor(BFCacheStatus aStatus);
+  void BlockBFCacheFor(BFCacheStatus aStatus);
 
  protected:
   const nsACString& GetRemoteType() override;
@@ -175,6 +182,10 @@ class WindowGlobalChild final : public WindowGlobalActor,
 
   mozilla::ipc::IPCResult RecvSetContainerFeaturePolicy(
       dom::FeaturePolicy* aContainerFeaturePolicy);
+
+  mozilla::ipc::IPCResult RecvRestoreDocShellState(
+      const dom::sessionstore::DocShellRestoreState& aState,
+      RestoreDocShellStateResolver&& aResolve);
 
   mozilla::ipc::IPCResult RecvRestoreTabContent(
       dom::SessionStoreRestoreData* aData,

@@ -49,7 +49,8 @@ use api::units::*;
 use crate::image_tiling::simplify_repeated_primitive;
 use crate::clip::{ClipChainId, ClipRegion, ClipItemKey, ClipStore, ClipItemKeyKind};
 use crate::clip::{ClipInternData, ClipNodeKind, ClipInstance, SceneClipInstance};
-use crate::spatial_tree::{ROOT_SPATIAL_NODE_INDEX, SpatialTree, SpatialNodeIndex};
+use crate::clip::{PolygonDataHandle};
+use crate::spatial_tree::{ROOT_SPATIAL_NODE_INDEX, SpatialTree, SpatialNodeIndex, StaticCoordinateSystemId};
 use crate::frame_builder::{ChasePrimitive, FrameBuilderConfig};
 use crate::glyph_rasterizer::FontInstance;
 use crate::hit_test::HitTestingScene;
@@ -60,11 +61,13 @@ use crate::picture::{BlitReason, OrderedPictureChild, PrimitiveList};
 use crate::prim_store::{PrimitiveInstance, register_prim_chase_id};
 use crate::prim_store::{PrimitiveInstanceKind, NinePatchDescriptor, PrimitiveStore};
 use crate::prim_store::{InternablePrimitive, SegmentInstanceIndex, PictureIndex};
+use crate::prim_store::PolygonKey;
 use crate::prim_store::backdrop::Backdrop;
 use crate::prim_store::borders::{ImageBorder, NormalBorderPrim};
 use crate::prim_store::gradient::{
     GradientStopKey, LinearGradient, RadialGradient, RadialGradientParams, ConicGradient,
-    ConicGradientParams, optimize_radial_gradient,
+    ConicGradientParams, optimize_radial_gradient, apply_gradient_local_clip,
+    optimize_linear_gradient,
 };
 use crate::prim_store::image::{Image, YuvImage};
 use crate::prim_store::line_dec::{LineDecoration, LineDecorationCacheKey, get_line_decoration_size};
@@ -528,12 +531,12 @@ impl<'a> SceneBuilder<'a> {
             .background_color
             .and_then(|color| if color.a > 0.0 { Some(color) } else { None });
 
-        let device_pixel_scale = view.accumulated_scale_factor_for_snapping();
         let spatial_tree = SpatialTree::new();
 
+        // During scene building, we assume a 1:1 picture -> raster pixel scale
         let snap_to_device = SpaceSnapper::new(
             ROOT_SPATIAL_NODE_INDEX,
-            device_pixel_scale,
+            RasterPixelScale::new(1.0),
         );
 
         let mut builder = SceneBuilder {
@@ -548,7 +551,7 @@ impl<'a> SceneBuilder<'a> {
             containing_block_stack: Vec::new(),
             raster_space_stack: vec![RasterSpace::Screen],
             prim_store: PrimitiveStore::new(&stats.prim_store_stats),
-            clip_store: ClipStore::new(),
+            clip_store: ClipStore::new(&stats.clip_store_stats),
             interners,
             rf_mapper: ReferenceFrameMapper::new(),
             external_scroll_mapper: ScrollOffsetMapper::new(),
@@ -882,18 +885,20 @@ impl<'a> SceneBuilder<'a> {
         pipeline_id: PipelineId,
     ) {
         let current_offset = self.current_offset(parent_node_index);
-        let clip_region = ClipRegion::create_for_clip_node_with_local_clip(
-            &info.clip_rect,
-            &current_offset,
-        );
+        let clip_rect = info.clip_rect.translate(current_offset);
+
         // Just use clip rectangle as the frame rect for this scroll frame.
         // This is useful when calculating scroll extents for the
         // SpatialNode::scroll(..) API as well as for properly setting sticky
         // positioning offsets.
-        let frame_rect = clip_region.main;
+        let frame_rect = clip_rect;
         let content_size = info.content_rect.size;
 
-        self.add_clip_node(info.clip_id, &info.parent_space_and_clip, clip_region);
+        self.add_rect_clip_node(
+            info.clip_id,
+            &info.parent_space_and_clip,
+            &clip_rect,
+        );
 
         self.add_scroll_frame(
             info.scroll_frame_id,
@@ -923,13 +928,12 @@ impl<'a> SceneBuilder<'a> {
         };
 
         let current_offset = self.current_offset(spatial_node_index);
-        self.add_clip_node(
+        let clip_rect = info.clip_rect.translate(current_offset);
+
+        self.add_rect_clip_node(
             ClipId::root(iframe_pipeline_id),
             &info.space_and_clip,
-            ClipRegion::create_for_clip_node_with_local_clip(
-                &info.clip_rect,
-                &current_offset,
-            ),
+            &clip_rect,
         );
 
         self.clip_store.push_clip_root(
@@ -1217,43 +1221,92 @@ impl<'a> SceneBuilder<'a> {
             DisplayItem::Gradient(ref info) => {
                 profile_scope!("gradient");
 
-                let (layout, unsnapped_rect, spatial_node_index, clip_chain_id) = self.process_common_properties_with_bounds(
-                    &info.common,
-                    &info.bounds,
-                );
-
-                let tile_size = process_repeat_size(
-                    &layout.rect,
-                    &unsnapped_rect,
-                    info.tile_size,
-                );
-
-                if let Some(prim_key_kind) = self.create_linear_gradient_prim(
-                    &layout,
-                    info.gradient.start_point,
-                    info.gradient.end_point,
-                    item.gradient_stops(),
-                    info.gradient.extend_mode,
-                    tile_size,
-                    info.tile_spacing,
-                    None,
-                ) {
-                    self.add_nonshadowable_primitive(
-                        spatial_node_index,
-                        clip_chain_id,
-                        &layout,
-                        Vec::new(),
-                        prim_key_kind,
-                    );
+                if !info.gradient.is_valid() {
+                    return;
                 }
-            }
-            DisplayItem::RadialGradient(ref info) => {
-                profile_scope!("radial");
 
                 let (mut layout, unsnapped_rect, spatial_node_index, clip_chain_id) = self.process_common_properties_with_bounds(
                     &info.common,
                     &info.bounds,
                 );
+
+                let mut tile_size = process_repeat_size(
+                    &layout.rect,
+                    &unsnapped_rect,
+                    info.tile_size,
+                );
+
+                let mut stops = read_gradient_stops(item.gradient_stops());
+                let mut start = info.gradient.start_point;
+                let mut end = info.gradient.end_point;
+                let flags = layout.flags;
+
+                let optimized = optimize_linear_gradient(
+                    &mut layout.rect,
+                    &mut tile_size,
+                    info.tile_spacing,
+                    &layout.clip_rect,
+                    &mut start,
+                    &mut end,
+                    info.gradient.extend_mode,
+                    &mut stops,
+                    &mut |rect, start, end, stops| {
+                        let layout = LayoutPrimitiveInfo { rect: *rect, clip_rect: *rect, flags };
+                        if let Some(prim_key_kind) = self.create_linear_gradient_prim(
+                            &layout,
+                            start,
+                            end,
+                            stops.to_vec(),
+                            ExtendMode::Clamp,
+                            rect.size,
+                            LayoutSize::zero(),
+                            None,
+                        ) {
+                            self.add_nonshadowable_primitive(
+                                spatial_node_index,
+                                clip_chain_id,
+                                &layout,
+                                Vec::new(),
+                                prim_key_kind,
+                            );
+                        }
+                    }
+                );
+
+                if !optimized && !tile_size.ceil().is_empty() {
+                    if let Some(prim_key_kind) = self.create_linear_gradient_prim(
+                        &layout,
+                        start,
+                        end,
+                        stops,
+                        info.gradient.extend_mode,
+                        tile_size,
+                        info.tile_spacing,
+                        None,
+                    ) {
+                        self.add_nonshadowable_primitive(
+                            spatial_node_index,
+                            clip_chain_id,
+                            &layout,
+                            Vec::new(),
+                            prim_key_kind,
+                        );
+                    }
+                }
+            }
+            DisplayItem::RadialGradient(ref info) => {
+                profile_scope!("radial");
+
+                if !info.gradient.is_valid() {
+                    return;
+                }
+
+                let (mut layout, unsnapped_rect, spatial_node_index, clip_chain_id) = self.process_common_properties_with_bounds(
+                    &info.common,
+                    &info.bounds,
+                );
+
+                let mut center = info.gradient.center;
 
                 let stops = read_gradient_stops(item.gradient_stops());
 
@@ -1265,12 +1318,12 @@ impl<'a> SceneBuilder<'a> {
 
                 let mut prim_rect = layout.rect;
                 let mut tile_spacing = info.tile_spacing;
-                let mut center = info.gradient.center;
                 optimize_radial_gradient(
                     &mut prim_rect,
                     &mut tile_size,
                     &mut center,
                     &mut tile_spacing,
+                    &layout.clip_rect,
                     info.gradient.radius,
                     info.gradient.end_offset,
                     info.gradient.extend_mode,
@@ -1289,7 +1342,7 @@ impl<'a> SceneBuilder<'a> {
                     }
                 );
 
-                // TODO: create_radial_gradient_prim already calls 
+                // TODO: create_radial_gradient_prim already calls
                 // this, but it leaves the info variable that is
                 // passed to add_nonshadowable_primitive unmodified
                 // which can cause issues.
@@ -1322,7 +1375,11 @@ impl<'a> SceneBuilder<'a> {
             DisplayItem::ConicGradient(ref info) => {
                 profile_scope!("conic");
 
-                let (layout, unsnapped_rect, spatial_node_index, clip_chain_id) = self.process_common_properties_with_bounds(
+                if !info.gradient.is_valid() {
+                    return;
+                }
+
+                let (mut layout, unsnapped_rect, spatial_node_index, clip_chain_id) = self.process_common_properties_with_bounds(
                     &info.common,
                     &info.bounds,
                 );
@@ -1333,10 +1390,18 @@ impl<'a> SceneBuilder<'a> {
                     info.tile_size,
                 );
 
+                let offset = apply_gradient_local_clip(
+                    &mut layout.rect,
+                    &tile_size,
+                    &info.tile_spacing,
+                    &layout.clip_rect,
+                );
+                let center = info.gradient.center + offset;
+
                 if !tile_size.ceil().is_empty() {
                     let prim_key_kind = self.create_conic_gradient_prim(
                         &layout,
-                        info.gradient.center,
+                        center,
                         info.gradient.angle,
                         info.gradient.start_offset,
                         info.gradient.end_offset,
@@ -1457,7 +1522,8 @@ impl<'a> SceneBuilder<'a> {
 
                 for clip_item in item.clip_chain_items() {
                     let template = self.clip_store.get_template(clip_item);
-                    clips.extend_from_slice(&template.clips);
+                    let instances = &self.clip_store.instances[template.clips.start as usize .. template.clips.end as usize];
+                    clips.extend_from_slice(instances);
                 }
 
                 self.clip_store.register_clip_template(
@@ -1639,6 +1705,7 @@ impl<'a> SceneBuilder<'a> {
             spatial_node_index,
             clip_id,
             &self.clip_store,
+            self.interners,
         );
     }
 
@@ -2019,7 +2086,8 @@ impl<'a> SceneBuilder<'a> {
         // are handled by doing partial reads of the picture cache tiles during rendering.
         if stacking_context.flags.contains(StackingContextFlags::IS_BLEND_CONTAINER) &&
            self.sc_stack.is_empty() &&
-           self.tile_cache_builder.can_add_container_tile_cache()
+           self.tile_cache_builder.can_add_container_tile_cache() &&
+           self.spatial_tree.get_static_coordinate_system_id(stacking_context.spatial_node_index) == StaticCoordinateSystemId::ROOT
         {
             self.tile_cache_builder.add_tile_cache(
                 stacking_context.prim_list,
@@ -2361,9 +2429,22 @@ impl<'a> SceneBuilder<'a> {
             &image_mask.rect,
             spatial_node_index,
         );
-        let points = points_range.iter().collect();
+        let points: Vec<LayoutPoint> = points_range.iter().collect();
+
+        // If any points are provided, then intern a polygon with the points and fill rule.
+        let mut polygon_handle: Option<PolygonDataHandle> = None;
+        if points.len() > 0 {
+            let item = PolygonKey::new(&points, fill_rule);
+
+            let handle = self
+                .interners
+                .polygon
+                .intern(&item, || item);
+            polygon_handle = Some(handle);
+        }
+
         let item = ClipItemKey {
-            kind: ClipItemKeyKind::image_mask(image_mask, snapped_mask_rect, points, fill_rule),
+            kind: ClipItemKeyKind::image_mask(image_mask, snapped_mask_rect, polygon_handle),
         };
 
         let handle = self
@@ -2985,7 +3066,7 @@ impl<'a> SceneBuilder<'a> {
                             &info,
                             gradient.start_point,
                             gradient.end_point,
-                            gradient_stops,
+                            read_gradient_stops(gradient_stops),
                             gradient.extend_mode,
                             LayoutSize::new(border.height as f32, border.width as f32),
                             LayoutSize::zero(),
@@ -3066,7 +3147,7 @@ impl<'a> SceneBuilder<'a> {
         info: &LayoutPrimitiveInfo,
         start_point: LayoutPoint,
         end_point: LayoutPoint,
-        stops: ItemRange<GradientStop>,
+        stops: Vec<GradientStopKey>,
         extend_mode: ExtendMode,
         stretch_size: LayoutSize,
         mut tile_spacing: LayoutSize,
@@ -3075,19 +3156,17 @@ impl<'a> SceneBuilder<'a> {
         let mut prim_rect = info.rect;
         simplify_repeated_primitive(&stretch_size, &mut tile_spacing, &mut prim_rect);
 
-        let mut max_alpha: f32 = 0.0;
-
-        let stops = stops.iter().map(|stop| {
-            max_alpha = max_alpha.max(stop.color.a);
-            GradientStopKey {
-                offset: stop.offset,
-                color: stop.color.into(),
+        let mut is_entirely_transparent = true;
+        for stop in &stops {
+            if stop.color.a > 0 {
+                is_entirely_transparent = false;
+                break;
             }
-        }).collect();
+        }
 
         // If all the stops have no alpha, then this
         // gradient can't contribute to the scene.
-        if max_alpha <= 0.0 {
+        if is_entirely_transparent {
             return None;
         }
 
@@ -3109,6 +3188,13 @@ impl<'a> SceneBuilder<'a> {
             (start_point, end_point)
         };
 
+        let is_tiled = prim_rect.size.width > stretch_size.width
+         || prim_rect.size.height > stretch_size.height;
+        // SWGL has a fast-path that can render gradients faster than it can sample from the
+        // texture cache so we disable caching in this configuration. Cached gradients are
+        // faster on hardware.
+        let cached = !self.config.is_software || is_tiled;
+
         Some(LinearGradient {
             extend_mode,
             start_point: sp.into(),
@@ -3118,6 +3204,7 @@ impl<'a> SceneBuilder<'a> {
             stops,
             reverse_stops,
             nine_patch,
+            cached,
         })
     }
 

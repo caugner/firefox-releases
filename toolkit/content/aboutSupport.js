@@ -1036,7 +1036,7 @@ var snapshotFormatters = {
   },
 
   remoteAgent(data) {
-    if (!AppConstants.ENABLE_REMOTE_AGENT) {
+    if (!AppConstants.ENABLE_WEBDRIVER) {
       return;
     }
     $("remote-debugging-accepting-connections").textContent = data.listening;
@@ -1365,7 +1365,13 @@ var snapshotFormatters = {
       return;
     }
 
-    const { prefStudies, addonStudies, prefRollouts } = data;
+    const {
+      prefStudies,
+      addonStudies,
+      prefRollouts,
+      nimbusExperiments,
+      remoteConfigs,
+    } = data;
     $.append(
       $("remote-features-tbody"),
       prefRollouts.map(({ slug, state }) =>
@@ -1377,13 +1383,23 @@ var snapshotFormatters = {
     );
 
     $.append(
+      $("remote-features-tbody"),
+      remoteConfigs.map(({ featureId, slug }) =>
+        $.new("tr", [
+          $.new("td", [document.createTextNode(featureId)]),
+          $.new("td", [document.createTextNode(`(${slug})`)]),
+        ])
+      )
+    );
+
+    $.append(
       $("remote-experiments-tbody"),
-      [addonStudies, prefStudies]
+      [addonStudies, prefStudies, nimbusExperiments]
         .flat()
         .map(({ userFacingName, branch }) =>
           $.new("tr", [
             $.new("td", [document.createTextNode(userFacingName)]),
-            $.new("td", [document.createTextNode(branch)]),
+            $.new("td", [document.createTextNode(branch?.slug || branch)]),
           ])
         )
     );

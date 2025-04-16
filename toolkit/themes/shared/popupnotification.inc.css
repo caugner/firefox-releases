@@ -187,7 +187,7 @@ popupnotification {
 
 .panel-footer:not(.panel-footer-menulike) > button:focus-visible {
   outline: 2px solid var(--focus-outline-color);
-  outline-offset: 0;
+  outline-offset: var(--focus-outline-offset, 2px);
 }
 
 .panel-footer > button:not([disabled]):hover {
@@ -199,16 +199,16 @@ popupnotification {
 }
 
 .panel-footer > button:not([disabled])[default] {
-  color: var(--buttons-primary-button-color, -moz-accent-color-foreground);
-  background-color: var(--buttons-primary-button-bgcolor, -moz-accent-color);
+  color: var(--button-primary-color);
+  background-color: var(--button-primary-bgcolor);
 }
 
 .panel-footer > button:not([disabled])[default]:hover {
-  background-color: var(--buttons-primary-button-hover-bgcolor, color-mix(in srgb, black 10%, -moz-accent-color));
+  background-color: var(--button-primary-hover-bgcolor);
 }
 
 .panel-footer > button:not([disabled])[default]:hover:active {
-  background-color: var(--buttons-primary-button-active-bgcolor, color-mix(in srgb, black 20%, -moz-accent-color));
+  background-color: var(--button-primary-active-bgcolor);
 }
 
 .panel-footer:not(.panel-footer-menulike) > button > .button-box {
@@ -227,6 +227,17 @@ popupnotification {
 .panel-footer > .popup-notification-secondary-button:not([dropmarkerhidden="true"]) {
   border-start-end-radius: 0;
   border-end-end-radius: 0;
+}
+
+/**
+ * The focus ring is an outline thicker than 1px, meaning that for split buttons,
+ * if the main button part of the split button has :focus-visible, the ring will
+ * be partially hidden behind the dropmarker button. We work around this by
+ * temporarily boosting the z-index of the main button while showing its focus
+ * ring.
+ */
+.panel-footer > .popup-notification-secondary-button:not([dropmarkerhidden="true"]):focus-visible {
+  z-index: 2;
 }
 
 .popup-notification-icon:not([hasicon]) {

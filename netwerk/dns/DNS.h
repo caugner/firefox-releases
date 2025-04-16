@@ -13,7 +13,6 @@
 #include "prnetdb.h"
 #include "plstr.h"
 #include "nsISupportsImpl.h"
-#include "mozilla/LinkedList.h"
 #include "mozilla/MemoryReporting.h"
 #include "nsTArray.h"
 
@@ -140,6 +139,12 @@ union NetAddr {
   NetAddr() { memset(this, 0, sizeof(NetAddr)); }
   explicit NetAddr(const PRNetAddr* prAddr);
 
+  // Will parse aString into a NetAddr using PR_StringToNetAddr.
+  // Returns an error code if parsing fails.
+  // If aPort is non-0 will set the NetAddr's port to (the network endian
+  // value of) that.
+  nsresult InitFromString(const nsACString& aString, uint16_t aPort = 0);
+
   bool IsIPAddrAny() const;
   bool IsLoopbackAddr() const;
   bool IsLoopBackAddressWithoutIPv6Mapping() const;
@@ -151,10 +156,10 @@ union NetAddr {
   bool ToStringBuffer(char* buf, uint32_t bufSize) const;
 };
 
-#define ODOH_VERSION 0xff04
+#define ODOH_VERSION 0xff06
 static const char kODoHQuery[] = "odoh query";
 static const char hODoHConfigID[] = "odoh key id";
-static const char kODoHSecret[] = "odoh secret";
+static const char kODoHResponse[] = "odoh response";
 static const char kODoHKey[] = "odoh key";
 static const char kODoHNonce[] = "odoh nonce";
 
@@ -281,6 +286,8 @@ void PRNetAddrToNetAddr(const PRNetAddr* prAddr, NetAddr* addr);
 void NetAddrToPRNetAddr(const NetAddr* addr, PRNetAddr* prAddr);
 
 bool IsLoopbackHostname(const nsACString& aAsciiHost);
+
+bool HostIsIPLiteral(const nsACString& aAsciiHost);
 
 }  // namespace net
 }  // namespace mozilla

@@ -3,6 +3,7 @@
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 "use strict";
 
+const Services = require("Services");
 const { tabDescriptorSpec } = require("devtools/shared/specs/descriptors/tab");
 
 loader.lazyRequireGetter(
@@ -24,6 +25,9 @@ const {
 const {
   DescriptorMixin,
 } = require("devtools/client/fronts/descriptors/descriptor-mixin");
+
+const SERVER_TARGET_SWITCHING_ENABLED_PREF =
+  "devtools.target-switching.server.enabled";
 
 /**
  * DescriptorFront for tab targets.
@@ -88,6 +92,20 @@ class TabDescriptorFront extends DescriptorMixin(
     // but also ensure cleaning up the client and everything on tab closing.
     // (this flag is handled by DescriptorMixin)
     this.shouldCloseClient = true;
+
+    // When the target is created from the server side,
+    // it is not created via TabDescriptor.getTarget.
+    // Instead, it is retrieved by the TargetCommand which
+    // will call TabDescriptor.setTarget from TargetCommand.onTargetAvailable
+    if (this.isServerTargetSwitchingEnabled()) {
+      this._targetFrontPromise = new Promise(
+        r => (this._resolveTargetFrontPromise = r)
+      );
+    }
+  }
+
+  get isTabDescriptor() {
+    return true;
   }
 
   get isLocalTab() {
@@ -109,6 +127,14 @@ class TabDescriptorFront extends DescriptorMixin(
       "TabRemotenessChange",
       this._handleTabEvent
     );
+  }
+
+  isServerTargetSwitchingEnabled() {
+    const isEnabled = Services.prefs.getBoolPref(
+      SERVER_TARGET_SWITCHING_ENABLED_PREF,
+      false
+    );
+    return isEnabled && this.isLocalTab;
   }
 
   get isZombieTab() {
@@ -154,17 +180,11 @@ class TabDescriptorFront extends DescriptorMixin(
     // in getTarget, this acts as an additional security to avoid races.
     this._targetFront = null;
 
-    // @backward-compat { version 88 } Descriptor actors now emit descriptor-destroyed.
-    // But about:debugging / remote debugging tabs doesn't support top level target switching
-    // so that we also have to remove the descriptor when the target is destroyed.
-    // Should be kept until about:debugging supports target switching and we remove the
-    // !isLocalTab check.
-    // Also destroy descriptor of web extension as they expect the client to be closed immediately
-    if (
-      !this.traits.emitDescriptorDestroyed ||
-      !this.isLocalTab ||
-      this.isDevToolsExtensionContext
-    ) {
+    // about:debugging / remote debugging tabs don't support top level
+    // target-switching so we have to remove the descriptor when the target is
+    // destroyed. When about:debugging supports target switching, we can remove
+    // the !isLocalTab check. See Bug 1709267.
+    if (!this.isLocalTab) {
       this.destroy();
     }
   }
@@ -204,6 +224,10 @@ class TabDescriptorFront extends DescriptorMixin(
     targetFront.setDescriptor(this);
 
     targetFront.on("target-destroyed", this._onTargetDestroyed);
+
+    if (this.isServerTargetSwitchingEnabled()) {
+      this._resolveTargetFrontPromise(targetFront);
+    }
   }
 
   async getTarget() {
@@ -221,13 +245,13 @@ class TabDescriptorFront extends DescriptorMixin(
         const targetForm = await super.getTarget();
         newTargetFront = this._createTabTarget(targetForm);
         await newTargetFront.attach();
+        this.setTarget(newTargetFront);
       } catch (e) {
         console.log(
           `Request to connect to TabDescriptor "${this.id}" failed: ${e}`
         );
       }
 
-      this.setTarget(newTargetFront);
       this._targetFrontPromise = null;
       return newTargetFront;
     })();

@@ -15,6 +15,7 @@
 #include "TRRServiceBase.h"
 #include "nsICaptivePortalService.h"
 #include "nsTHashSet.h"
+#include "TRR.h"
 
 class nsDNSService;
 class nsIPrefBranch;
@@ -29,13 +30,11 @@ class TRRServiceParent;
 
 class TRRService : public TRRServiceBase,
                    public nsIObserver,
-                   public nsITimerCallback,
                    public nsSupportsWeakReference,
                    public AHostResolver {
  public:
   NS_DECL_THREADSAFE_ISUPPORTS
   NS_DECL_NSIOBSERVER
-  NS_DECL_NSITIMERCALLBACK
 
   TRRService();
   nsresult Init();
@@ -64,7 +63,7 @@ class TRRService : public TRRServiceBase,
   bool IsExcludedFromTRR(const nsACString& aHost);
 
   bool MaybeBootstrap(const nsACString& possible, nsACString& result);
-  void TRRIsOkay(nsresult aChannelStatus);
+  void RecordTRRStatus(nsresult aChannelStatus);
   bool ParentalControlEnabled() const { return mParentalControlEnabled; }
 
   nsresult DispatchTRRRequest(TRR* aTrrRequest);
@@ -113,8 +112,6 @@ class TRRService : public TRRServiceBase,
   virtual void ReadEtcHostsFile() override;
   void AddEtcHosts(const nsTArray<nsCString>&);
 
-  void CompleteConfirmation(nsresult aStatus, TRR* aTrrRequest);
-
   bool mInitialized{false};
   Atomic<uint32_t, Relaxed> mBlocklistDurationSeconds{60};
 
@@ -152,9 +149,6 @@ class TRRService : public TRRServiceBase,
     ConfirmFail,
   };
 
-  void HandleConfirmationEvent(ConfirmationEvent aEvent);
-  void HandleConfirmationEvent(ConfirmationEvent aEvent, const MutexAutoLock&);
-
   //                                 (FailedLookups/URIChange/NetworkUp)
   //                                    +-------------------------+
   // +-----------+                      |                         |
@@ -191,11 +185,11 @@ class TRRService : public TRRServiceBase,
     CONFIRM_DISABLED = 5,
   };
 
-  class ConfirmationContext {
-    friend void TRRService::HandleConfirmationEvent(ConfirmationEvent,
-                                                    const MutexAutoLock&);
+  class ConfirmationContext final : public nsITimerCallback {
+    NS_DECL_ISUPPORTS_INHERITED
+    NS_DECL_NSITIMERCALLBACK
 
-   public:
+   private:
     static const size_t RESULTS_SIZE = 32;
 
     RefPtr<TRR> mTask;
@@ -205,7 +199,7 @@ class TRRService : public TRRServiceBase,
     Atomic<uint32_t, Relaxed> mTRRFailures{0};
 
     // This buffer holds consecutive TRR failures reported by calling
-    // TRRIsOkay(). It is only meant for reporting event telemetry.
+    // RecordTRRStatus(). It is only meant for reporting event telemetry.
     char mFailureReasons[RESULTS_SIZE] = {0};
 
     // The number of confirmation retries.
@@ -233,6 +227,7 @@ class TRRService : public TRRServiceBase,
     // confirmation.
     nsCString mFailedLookups;
 
+   public:
     // Called when a confirmation completes successfully or when the
     // confirmation context changes.
     void RecordEvent(const char* aReason);
@@ -243,11 +238,87 @@ class TRRService : public TRRServiceBase,
 
     enum ConfirmationState State() { return mState; }
 
+    void CompleteConfirmation(nsresult aStatus, TRR* aTrrRequest);
+
+    void RecordTRRStatus(nsresult aChannelStatus);
+
+    void HandleEvent(ConfirmationEvent aEvent);
+    void HandleEvent(ConfirmationEvent aEvent, const MutexAutoLock&);
+
+    void SetCaptivePortalStatus(int32_t aStatus) {
+      mCaptivePortalStatus = aStatus;
+    }
+
+    uintptr_t TaskAddr() { return uintptr_t(mTask.get()); }
+
    private:
+    // Since the ConfirmationContext is embedded in the TRRService object
+    // we can easily get a pointer to the TRRService. ConfirmationContext
+    // delegates AddRef/Release calls to the owning object since they are
+    // guaranteed to have the same lifetime.
+    TRRService* OwningObject() {
+      return reinterpret_cast<TRRService*>(
+          reinterpret_cast<uint8_t*>(this) -
+          offsetof(TRRService, mConfirmation) -
+          offsetof(ConfirmationWrapper, mConfirmation));
+    }
+
     Atomic<enum ConfirmationState, Relaxed> mState{CONFIRM_OFF};
+
+    // TRRService needs to be a friend class because it needs to access the
+    // destructor.
+    friend class TRRService;
+    ~ConfirmationContext() = default;
   };
 
-  ConfirmationContext mConfirmation;
+  // Because TRRService needs to be a friend class to ConfirmationContext that
+  // means it can access member variables. In order to properly separate logic
+  // and prevent direct access to its member variables we embed it in a wrapper
+  // class.
+  class ConfirmationWrapper {
+   public:
+    // Called when a confirmation completes successfully or when the
+    // confirmation context changes.
+    void RecordEvent(const char* aReason) {
+      mConfirmation.RecordEvent(aReason);
+    }
+
+    // Called when a confirmation request is completed. The status is recorded
+    // in the results.
+    void RequestCompleted(nsresult aLookupStatus, nsresult aChannelStatus) {
+      mConfirmation.RequestCompleted(aLookupStatus, aChannelStatus);
+    }
+
+    enum ConfirmationState State() { return mConfirmation.State(); }
+
+    void CompleteConfirmation(nsresult aStatus, TRR* aTrrRequest) {
+      mConfirmation.CompleteConfirmation(aStatus, aTrrRequest);
+    }
+
+    void RecordTRRStatus(nsresult aChannelStatus) {
+      mConfirmation.RecordTRRStatus(aChannelStatus);
+    }
+
+    void HandleEvent(ConfirmationEvent aEvent) {
+      mConfirmation.HandleEvent(aEvent);
+    }
+
+    void HandleEvent(ConfirmationEvent aEvent, const MutexAutoLock& lock) {
+      mConfirmation.HandleEvent(aEvent, lock);
+    }
+
+    void SetCaptivePortalStatus(int32_t aStatus) {
+      mConfirmation.SetCaptivePortalStatus(aStatus);
+    }
+
+    uintptr_t TaskAddr() { return mConfirmation.TaskAddr(); }
+
+   private:
+    friend TRRService* ConfirmationContext::OwningObject();
+    ConfirmationContext mConfirmation;
+  };
+
+  ConfirmationWrapper mConfirmation;
 
   bool mParentalControlEnabled{false};
   RefPtr<ODoHService> mODoHService;

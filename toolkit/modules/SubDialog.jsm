@@ -245,6 +245,7 @@ SubDialog.prototype = {
     this._box.removeAttribute("height");
     this._box.style.removeProperty("min-height");
     this._box.style.removeProperty("min-width");
+    this._overlay.parentNode.style.removeProperty("--inner-height");
 
     let onClosed = () => {
       this._openedURL = null;
@@ -361,14 +362,25 @@ SubDialog.prototype = {
     let oldResizeBy = this._frame.contentWindow.resizeBy;
     this._frame.contentWindow.resizeBy = (resizeByWidth, resizeByHeight) => {
       // Only handle resizeByHeight currently.
-      let frameHeight = this._frame.clientHeight;
+      let frameHeight = this._overlay.parentNode.style.getPropertyValue(
+        "--inner-height"
+      );
+      if (frameHeight) {
+        frameHeight = parseFloat(frameHeight, 10);
+      } else {
+        frameHeight = this._frame.clientHeight;
+      }
       let boxMinHeight = parseFloat(
         this._window.getComputedStyle(this._box).minHeight,
         10
       );
 
-      this._frame.style.height = frameHeight + resizeByHeight + "px";
       this._box.style.minHeight = boxMinHeight + resizeByHeight + "px";
+
+      this._overlay.parentNode.style.setProperty(
+        "--inner-height",
+        frameHeight + resizeByHeight + "px"
+      );
 
       oldResizeBy.call(
         this._frame.contentWindow,
@@ -553,7 +565,8 @@ SubDialog.prototype = {
 
     // Now check if the frame height we calculated is possible at this window size,
     // accounting for titlebar, padding/border and some spacing.
-    let maxHeight = this._window.innerHeight - frameSizeDifference - 30;
+    let frameOverhead = frameSizeDifference + (this._titleBar ? 30 : 0);
+    let maxHeight = this._window.innerHeight - frameOverhead;
     // Do this with a frame height in pixels...
     let comparisonFrameHeight;
     if (frameHeight.endsWith("em")) {
@@ -582,7 +595,6 @@ SubDialog.prototype = {
       // contents scroll. The class is set on the "dialog" element, unless a
       // content pane exists, which is usually the case when the "window"
       // element is used to implement the subdialog instead.
-      frameHeight = maxHeight + "px";
       frameMinHeight = maxHeight + "px";
 
       if (contentPane) {
@@ -594,13 +606,15 @@ SubDialog.prototype = {
       }
     }
 
-    this._frame.style.height = frameHeight;
-    this._box.style.minHeight =
-      "calc(" +
-      (boxVerticalBorder + titleBarHeight + frameVerticalMargin) +
-      "px + " +
-      frameMinHeight +
-      ")";
+    this._overlay.parentNode.style.setProperty("--inner-height", frameHeight);
+    this._frame.style.height = `min(
+      calc(100vh - ${frameOverhead}px),
+      var(--inner-height, ${frameHeight})
+    )`;
+    this._box.style.minHeight = `calc(
+      ${boxVerticalBorder + titleBarHeight + frameVerticalMargin}px +
+      ${frameMinHeight}
+    )`;
   },
 
   _onResize(mutations) {

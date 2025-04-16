@@ -26,6 +26,7 @@
 #include "nsEscape.h"
 #include "nsDOMString.h"
 #include "mozilla/net/rust_helper.h"
+#include "mozilla/net/DNS.h"
 
 using namespace mozilla;
 
@@ -675,7 +676,8 @@ static void net_ParseMediaType(const nsACString& aMediaTypeStr,
       const char* paramName = net_FindCharNotInSet(
           start + curParamStart, start + curParamEnd, HTTP_LWS);
       static const char charsetStr[] = "charset=";
-      if (PL_strncasecmp(paramName, charsetStr, sizeof(charsetStr) - 1) == 0) {
+      if (nsCRT::strncasecmp(paramName, charsetStr, sizeof(charsetStr) - 1) ==
+          0) {
         charset = paramName + sizeof(charsetStr) - 1;
         charsetEnd = start + curParamEnd;
         typeHasCharset = true;
@@ -888,9 +890,7 @@ bool net_IsValidHostName(const nsACString& host) {
     return true;
 
   // Might be a valid IPv6 link-local address containing a percent sign
-  nsAutoCString strhost(host);
-  PRNetAddr addr;
-  return PR_StringToNetAddr(strhost.get(), &addr) == PR_SUCCESS;
+  return mozilla::net::HostIsIPLiteral(host);
 }
 
 bool net_IsValidIPv4Addr(const nsACString& aAddr) {

@@ -344,11 +344,11 @@ class SubtestResult(Result):
             rv["disabled"] = list(self.disabled)
         bugs = self.bugs - self.parent.bugs
         if bugs:
-            rv["bugs"] = bugs
+            rv["bugs"] = list(bugs)
         return rv
 
     def is_triaged(self):
-        return bool(self.parent.bugs or self.bugs)
+        return bool(not self.regressions or self.parent.bugs or self.bugs)
 
 
 def run(logger, src_root, obj_root, **kwargs):

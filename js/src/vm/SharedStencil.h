@@ -408,10 +408,7 @@ class alignas(uint32_t) ImmutableScriptData final : public TrailingArray {
   static js::UniquePtr<ImmutableScriptData> new_(JSContext* cx,
                                                  uint32_t totalSize);
 
-#ifdef DEBUG
-  // Validate the content, after XDR decoding.
-  void validate(uint32_t totalSize);
-#endif
+  uint32_t computedSize();
 
  private:
   static mozilla::CheckedInt<uint32_t> sizeFor(uint32_t codeLength,
@@ -515,7 +512,11 @@ class SharedImmutableScriptData {
   // script data table.
   mozilla::Atomic<uint32_t, mozilla::SequentiallyConsistent> refCount_ = {};
 
-  js::UniquePtr<ImmutableScriptData> isd_ = nullptr;
+ public:
+  bool isExternal = false;
+
+ private:
+  ImmutableScriptData* isd_ = nullptr;
 
   // End of fields.
 
@@ -525,6 +526,17 @@ class SharedImmutableScriptData {
  public:
   SharedImmutableScriptData() = default;
 
+  ~SharedImmutableScriptData() { reset(); }
+
+ private:
+  void reset() {
+    if (isd_ && !isExternal) {
+      js_delete(isd_);
+    }
+    isd_ = nullptr;
+  }
+
+ public:
   // Hash over the contents of SharedImmutableScriptData and its
   // ImmutableScriptData.
   struct Hasher;
@@ -535,7 +547,7 @@ class SharedImmutableScriptData {
     MOZ_ASSERT(refCount_ != 0);
     uint32_t remain = --refCount_;
     if (remain == 0) {
-      isd_ = nullptr;
+      reset();
       js_free(this);
     }
   }
@@ -552,7 +564,8 @@ class SharedImmutableScriptData {
       JSContext* cx, js::UniquePtr<ImmutableScriptData>&& isd);
 
   size_t sizeOfIncludingThis(mozilla::MallocSizeOf mallocSizeOf) {
-    return mallocSizeOf(this) + mallocSizeOf(isd_.get());
+    size_t isdSize = isExternal ? 0 : mallocSizeOf(isd_);
+    return mallocSizeOf(this) + isdSize;
   }
 
   // SharedImmutableScriptData has trailing data so isn't copyable or movable.
@@ -565,6 +578,20 @@ class SharedImmutableScriptData {
 
   size_t immutableDataLength() const { return isd_->immutableData().Length(); }
   uint32_t nfixed() const { return isd_->nfixed; }
+
+  ImmutableScriptData* get() { return isd_; }
+
+  void setOwn(js::UniquePtr<ImmutableScriptData>&& isd) {
+    MOZ_ASSERT(!isd_);
+    isd_ = isd.release();
+    isExternal = false;
+  }
+
+  void setExternal(ImmutableScriptData* isd) {
+    MOZ_ASSERT(!isd_);
+    isd_ = isd;
+    isExternal = true;
+  }
 };
 
 // Matches SharedImmutableScriptData objects that have the same atoms as well as
@@ -587,22 +614,29 @@ using SharedImmutableScriptDataTable =
                      SharedImmutableScriptData::Hasher, SystemAllocPolicy>;
 
 struct MemberInitializers {
-  static constexpr uint32_t MaxInitializers = INT32_MAX;
+  static constexpr size_t NumBits = 31;
+  static constexpr uint32_t MaxInitializers = BitMask(NumBits);
 
 #ifdef DEBUG
   bool valid = false;
 #endif
 
+  bool hasPrivateBrand : 1;
+
   // This struct will eventually have a vector of constant values for optimizing
   // field initializers.
-  uint32_t numMemberInitializers = 0;
+  uint32_t numMemberInitializers : NumBits;
 
-  explicit MemberInitializers(uint32_t numMemberInitializers)
+  MemberInitializers(bool hasPrivateBrand, uint32_t numMemberInitializers)
       :
 #ifdef DEBUG
         valid(true),
 #endif
+        hasPrivateBrand(hasPrivateBrand),
         numMemberInitializers(numMemberInitializers) {
+    MOZ_ASSERT(
+        this->numMemberInitializers == numMemberInitializers,
+        "numMemberInitializers should easily fit in the 31-bit bitfield");
   }
 
   static MemberInitializers Invalid() { return MemberInitializers(); }
@@ -611,14 +645,28 @@ struct MemberInitializers {
   // fields. This is used when we elide the trivial data but still need a valid
   // set to stop scope walking.
   static const MemberInitializers& Empty() {
-    static const MemberInitializers zeroInitializers(0);
+    static const MemberInitializers zeroInitializers(false, 0);
     return zeroInitializers;
   }
 
-  uint32_t serialize() const { return numMemberInitializers; }
+  uint32_t serialize() const {
+    return (hasPrivateBrand << NumBits) | numMemberInitializers;
+  }
+
+  static MemberInitializers deserialize(uint32_t bits) {
+    return MemberInitializers((bits & Bit(NumBits)) != 0,
+                              bits & BitMask(NumBits));
+  }
 
  private:
-  MemberInitializers() = default;
+  MemberInitializers()
+      :
+#ifdef DEBUG
+        valid(false),
+#endif
+        hasPrivateBrand(false),
+        numMemberInitializers(0) {
+  }
 };
 
 }  // namespace js

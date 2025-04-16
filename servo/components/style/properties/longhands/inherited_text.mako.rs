@@ -304,7 +304,7 @@ ${helpers.single_keyword(
 ${helpers.predefined_type(
     "ruby-position",
     "RubyPosition",
-    "Default::default()",
+    "computed::RubyPosition::AlternateOver",
     engines="gecko",
     spec="https://drafts.csswg.org/css-ruby/#ruby-position-property",
     animation_value_type="discrete",
@@ -337,6 +337,9 @@ ${helpers.predefined_type(
     "text::MozControlCharacterVisibility",
     "Default::default()",
     engines="gecko",
+    enabled_in="chrome",
+    gecko_pref="layout.css.moz-control-character-visibility.enabled",
+    has_effect_on_gecko_scrollbars=False,
     animation_value_type="none",
     spec="Nonstandard"
 )}

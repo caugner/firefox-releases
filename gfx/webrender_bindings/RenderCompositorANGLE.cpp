@@ -43,7 +43,7 @@ namespace wr {
 
 /* static */
 UniquePtr<RenderCompositor> RenderCompositorANGLE::Create(
-    RefPtr<widget::CompositorWidget>&& aWidget, nsACString& aError) {
+    const RefPtr<widget::CompositorWidget>& aWidget, nsACString& aError) {
   const auto& gl = RenderThread::Get()->SingletonGL(aError);
   if (!gl) {
     if (aError.IsEmpty()) {
@@ -55,7 +55,7 @@ UniquePtr<RenderCompositor> RenderCompositorANGLE::Create(
   }
 
   UniquePtr<RenderCompositorANGLE> compositor =
-      MakeUnique<RenderCompositorANGLE>(std::move(aWidget));
+      MakeUnique<RenderCompositorANGLE>(aWidget);
   if (!compositor->Initialize(aError)) {
     return nullptr;
   }
@@ -63,8 +63,8 @@ UniquePtr<RenderCompositor> RenderCompositorANGLE::Create(
 }
 
 RenderCompositorANGLE::RenderCompositorANGLE(
-    RefPtr<widget::CompositorWidget>&& aWidget)
-    : RenderCompositor(std::move(aWidget)),
+    const RefPtr<widget::CompositorWidget>& aWidget)
+    : RenderCompositor(aWidget),
       mEGLConfig(nullptr),
       mEGLSurface(nullptr),
       mUseTripleBuffering(false),
@@ -162,7 +162,7 @@ bool RenderCompositorANGLE::Initialize(nsACString& aError) {
   const auto& gle = gl::GLContextEGL::Cast(gl);
   const auto& egl = gle->mEgl;
   if (!gl::CreateConfig(*egl, &mEGLConfig, /* bpp */ 32,
-                        /* enableDepthBuffer */ true, gl->IsGLES())) {
+                        /* enableDepthBuffer */ false, gl->IsGLES())) {
     aError.Assign("RcANGLE(create EGLConfig failed)"_ns);
     return false;
   }
@@ -878,14 +878,6 @@ bool RenderCompositorANGLE::ShouldUseNativeCompositor() {
   return UseCompositor();
 }
 
-uint32_t RenderCompositorANGLE::GetMaxUpdateRects() {
-  if (UseCompositor() &&
-      StaticPrefs::gfx_webrender_compositor_max_update_rects_AtStartup() > 0) {
-    return 1;
-  }
-  return 0;
-}
-
 void RenderCompositorANGLE::CompositorBeginFrame() {
   mDCLayerTree->CompositorBeginFrame();
 }
@@ -942,6 +934,8 @@ void RenderCompositorANGLE::AddSurface(
 
 void RenderCompositorANGLE::GetCompositorCapabilities(
     CompositorCapabilities* aCaps) {
+  RenderCompositor::GetCompositorCapabilities(aCaps);
+
   aCaps->virtual_surface_size = VIRTUAL_SURFACE_SIZE;
 }
 

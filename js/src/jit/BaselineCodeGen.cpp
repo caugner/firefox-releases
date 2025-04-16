@@ -552,15 +552,15 @@ bool BaselineCompilerCodeGen::emitNextIC() {
 
   // We don't use every ICEntry and we can skip unreachable ops, so we have
   // to loop until we find an ICEntry for the current pc.
-  const ICEntry* entry;
+  const ICFallbackStub* stub;
   uint32_t entryIndex;
   do {
-    entry = &script->jitScript()->icEntry(handler.icEntryIndex());
+    stub = script->jitScript()->fallbackStub(handler.icEntryIndex());
     entryIndex = handler.icEntryIndex();
     handler.moveToNextICEntry();
-  } while (entry->pcOffset() < pcOffset);
+  } while (stub->pcOffset() < pcOffset);
 
-  MOZ_RELEASE_ASSERT(entry->pcOffset() == pcOffset);
+  MOZ_ASSERT(stub->pcOffset() == pcOffset);
   MOZ_ASSERT(BytecodeOpHasIC(JSOp(*handler.pc())));
 
   // Load stub pointer into ICStubReg.
@@ -2793,9 +2793,6 @@ template <typename Handler>
 bool BaselineCodeGen<Handler>::emit_NewArray() {
   frame.syncStack(0);
 
-  // Pass length in R0.
-  loadInt32LengthBytecodeOperand(R0.scratchReg());
-
   if (!emitNextIC()) {
     return false;
   }
@@ -3752,7 +3749,7 @@ bool BaselineCompilerCodeGen::emit_GetImport() {
 
   jsid id = NameToId(script->getName(handler.pc()));
   ModuleEnvironmentObject* targetEnv;
-  Maybe<ShapeProperty> prop;
+  Maybe<PropertyInfo> prop;
   MOZ_ALWAYS_TRUE(env->lookupImport(id, &targetEnv, &prop));
 
   frame.syncStack(0);
@@ -4021,7 +4018,7 @@ bool BaselineCompilerCodeGen::emitFormalArgAccess(JSOp op) {
 
   // Fast path: the script does not use |arguments| or formals don't
   // alias the arguments object.
-  if (!handler.script()->argumentsAliasesFormals()) {
+  if (!handler.script()->argsObjAliasesFormals()) {
     if (op == JSOp::GetArg) {
       frame.pushArg(arg);
     } else {
@@ -4035,23 +4032,6 @@ bool BaselineCompilerCodeGen::emitFormalArgAccess(JSOp op) {
 
   // Sync so that we can use R0.
   frame.syncStack(0);
-
-  // If the script is known to have an arguments object, we can just use it.
-  // Else, we *may* have an arguments object (because we can't invalidate
-  // when needsArgsObj becomes |true|), so we have to test HAS_ARGS_OBJ.
-  Label done;
-  if (!handler.script()->needsArgsObj()) {
-    Label hasArgsObj;
-    masm.branchTest32(Assembler::NonZero, frame.addressOfFlags(),
-                      Imm32(BaselineFrame::HAS_ARGS_OBJ), &hasArgsObj);
-    if (op == JSOp::GetArg) {
-      masm.loadValue(frame.addressOfArg(arg), R0);
-    } else {
-      frame.storeStackValue(-1, frame.addressOfArg(arg), R0);
-    }
-    masm.jump(&done);
-    masm.bind(&hasArgsObj);
-  }
 
   // Load the arguments object data vector.
   Register reg = R2.scratchReg();
@@ -4085,7 +4065,6 @@ bool BaselineCompilerCodeGen::emitFormalArgAccess(JSOp op) {
     masm.bind(&skipBarrier);
   }
 
-  masm.bind(&done);
   return true;
 }
 
@@ -4734,6 +4713,19 @@ bool BaselineCodeGen<Handler>::emit_PushLexicalEnv() {
 
   using Fn = bool (*)(JSContext*, BaselineFrame*, Handle<LexicalScope*>);
   return callVM<Fn, jit::PushLexicalEnv>();
+}
+
+template <typename Handler>
+bool BaselineCodeGen<Handler>::emit_PushClassBodyEnv() {
+  prepareVMCall();
+  masm.loadBaselineFramePtr(BaselineFrameReg, R0.scratchReg());
+
+  pushScriptGCThingArg(ScriptGCThingType::Scope, R1.scratchReg(),
+                       R2.scratchReg());
+  pushArg(R0.scratchReg());
+
+  using Fn = bool (*)(JSContext*, BaselineFrame*, Handle<ClassBodyScope*>);
+  return callVM<Fn, jit::PushClassBodyEnv>();
 }
 
 template <typename Handler>
@@ -5510,23 +5502,7 @@ template <typename Handler>
 bool BaselineCodeGen<Handler>::emit_Arguments() {
   frame.syncStack(0);
 
-  MOZ_ASSERT_IF(handler.maybeScript(),
-                handler.maybeScript()->argumentsHasVarBinding());
-
-  Label done;
-  if (!handler.maybeScript() || !handler.maybeScript()->needsArgsObj()) {
-    // We assume the script does not need an arguments object. However, this
-    // assumption can be invalidated later, see argumentsOptimizationFailed
-    // in JSScript. Guard on the script's NeedsArgsObj flag.
-    masm.moveValue(MagicValue(JS_OPTIMIZED_ARGUMENTS), R0);
-
-    // If we don't need an arguments object, skip the VM call.
-    Register scratch = R1.scratchReg();
-    loadScript(scratch);
-    masm.branchTest32(
-        Assembler::Zero, Address(scratch, JSScript::offsetOfMutableFlags()),
-        Imm32(uint32_t(JSScript::MutableFlags::NeedsArgsObj)), &done);
-  }
+  MOZ_ASSERT_IF(handler.maybeScript(), handler.maybeScript()->needsArgsObj());
 
   prepareVMCall();
 
@@ -5538,7 +5514,6 @@ bool BaselineCodeGen<Handler>::emit_Arguments() {
     return false;
   }
 
-  masm.bind(&done);
   frame.push(R0);
   return true;
 }
@@ -6182,17 +6157,12 @@ bool BaselineInterpreterCodeGen::emit_JumpTarget() {
   // Load icIndex in scratch1.
   LoadInt32Operand(masm, scratch1);
 
-  // scratch1 := scratch1 * sizeof(ICEntry)
-  static_assert(sizeof(ICEntry) == 8 || sizeof(ICEntry) == 16,
-                "shift below depends on ICEntry size");
-  uint32_t shift = (sizeof(ICEntry) == 16) ? 4 : 3;
-  masm.lshiftPtr(Imm32(shift), scratch1);
-
   // Compute ICEntry* and store to frame->interpreterICEntry.
   masm.loadPtr(frame.addressOfICScript(), scratch2);
-  masm.computeEffectiveAddress(
-      BaseIndex(scratch2, scratch1, TimesOne, ICScript::offsetOfICEntries()),
-      scratch2);
+  static_assert(sizeof(ICEntry) == sizeof(uintptr_t));
+  masm.computeEffectiveAddress(BaseIndex(scratch2, scratch1, ScalePointer,
+                                         ICScript::offsetOfICEntries()),
+                               scratch2);
   masm.storePtr(scratch2, frame.addressOfInterpreterICEntry());
   return true;
 }

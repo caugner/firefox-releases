@@ -110,6 +110,9 @@ class CodeGenerator final : public CodeGeneratorSpecific {
                          Register scratch);
   void emitIntToString(Register input, Register output, Label* ool);
 
+  void emitTypeOfCheck(JSValueType type, Register tag, Register output,
+                       Label* done, Label* oolObject);
+  void emitTypeOfName(JSValueType type, Register output);
   void emitTypeOfObject(Register obj, Register output, Label* done);
 
   template <typename Fn, Fn fn, class ArgSeq, class StoreOutputTo>
@@ -194,7 +197,6 @@ class CodeGenerator final : public CodeGeneratorSpecific {
 
   void emitRest(LInstruction* lir, Register array, Register numActuals,
                 Register temp0, Register temp1, unsigned numFormals,
-                JSObject* templateObject, bool saveAndRestore,
                 Register resultreg);
   void emitInstanceOf(LInstruction* ins, const LAllocation* prototypeObject);
 

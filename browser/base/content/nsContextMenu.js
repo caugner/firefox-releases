@@ -1403,7 +1403,7 @@ class nsContextMenu {
     let systemPrincipal = Services.scriptSecurityManager.getSystemPrincipal();
     if (this.onCanvas) {
       this._canvasToBlobURL(this.targetIdentifier).then(function(blobURL) {
-        openUILinkIn(blobURL, where, {
+        openLinkIn(blobURL, where, {
           referrerInfo,
           triggeringPrincipal: systemPrincipal,
         });
@@ -1416,7 +1416,7 @@ class nsContextMenu {
       );
 
       // Default to opening in a new tab.
-      openUILinkIn(this.mediaURL, where, {
+      openLinkIn(this.mediaURL, where, {
         referrerInfo,
         forceAllowDataURI: true,
         triggeringPrincipal: this.principal,
@@ -1834,7 +1834,7 @@ class nsContextMenu {
         referrerInfo,
         cookieJarSettings,
         this.frameOuterWindowID,
-        "",
+        this.mediaURL.startsWith("data") ? "index" : "", // use default file name "index" for data URIs
         isContentWindowPrivate
       );
     }

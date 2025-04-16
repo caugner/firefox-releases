@@ -7,6 +7,8 @@
 #ifndef mozilla_dom_quota_quotacommon_h__
 #define mozilla_dom_quota_quotacommon_h__
 
+#include "mozilla/dom/quota/Config.h"
+
 #include <algorithm>
 #include <cstddef>
 #include <cstdint>
@@ -23,6 +25,10 @@
 #include "mozilla/Result.h"
 #include "mozilla/ResultExtensions.h"
 #include "mozilla/ThreadLocal.h"
+#if defined(QM_LOG_ERROR_ENABLED) && defined(QM_ERROR_STACKS_ENABLED)
+#  include "mozilla/Variant.h"
+#endif
+#include "mozilla/dom/QMResult.h"
 #include "mozilla/ipc/ProtocolUtils.h"
 #include "nsCOMPtr.h"
 #include "nsDebug.h"
@@ -478,61 +484,58 @@ class NotNull;
 // QM_TRY_CUSTOM_RET_VAL_WITH_CLEANUP and QM_TRY_GLUE macros are implementation
 // details of QM_TRY and shouldn't be used directly.
 
-// Handles the three arguments case when the error is propagated.
-#define QM_TRY_PROPAGATE_ERR(ns, tryResult, expr)                        \
-  auto tryResult = ::mozilla::ToResult(expr);                            \
-  static_assert(std::is_empty_v<typename decltype(tryResult)::ok_type>); \
-  if (MOZ_UNLIKELY(tryResult.isErr())) {                                 \
-    ns::QM_HANDLE_ERROR(expr, tryResult.inspectErr(),                    \
-                        mozilla::dom::quota::Severity::Error);           \
-    return tryResult.propagateErr();                                     \
+// Handles the two arguments case when the error is propagated.
+#define QM_TRY_PROPAGATE_ERR(tryResult, expr)                                \
+  auto tryResult = ::mozilla::ToResult(expr);                                \
+  static_assert(std::is_empty_v<typename decltype(tryResult)::ok_type>);     \
+  if (MOZ_UNLIKELY(tryResult.isErr())) {                                     \
+    mozilla::dom::quota::QM_HANDLE_ERROR(                                    \
+        expr, tryResult.inspectErr(), mozilla::dom::quota::Severity::Error); \
+    return tryResult.propagateErr();                                         \
   }
 
-// Handles the four arguments case when a custom return value needs to be
+// Handles the three arguments case when a custom return value needs to be
 // returned
-#define QM_TRY_CUSTOM_RET_VAL(ns, tryResult, expr, customRetVal)         \
+#define QM_TRY_CUSTOM_RET_VAL(tryResult, expr, customRetVal)             \
   auto tryResult = ::mozilla::ToResult(expr);                            \
   static_assert(std::is_empty_v<typename decltype(tryResult)::ok_type>); \
   if (MOZ_UNLIKELY(tryResult.isErr())) {                                 \
     auto tryTempError MOZ_MAYBE_UNUSED = tryResult.unwrapErr();          \
-    ns::QM_HANDLE_ERROR(expr, tryTempError,                              \
-                        mozilla::dom::quota::Severity::Error);           \
+    mozilla::dom::quota::QM_HANDLE_ERROR(                                \
+        expr, tryTempError, mozilla::dom::quota::Severity::Error);       \
     return customRetVal;                                                 \
   }
 
-// Handles the five arguments case when a cleanup function needs to be called
+// Handles the four arguments case when a cleanup function needs to be called
 // before a custom return value is returned
-#define QM_TRY_CUSTOM_RET_VAL_WITH_CLEANUP(ns, tryResult, expr, customRetVal, \
-                                           cleanup)                           \
-  auto tryResult = ::mozilla::ToResult(expr);                                 \
-  static_assert(std::is_empty_v<typename decltype(tryResult)::ok_type>);      \
-  if (MOZ_UNLIKELY(tryResult.isErr())) {                                      \
-    auto tryTempError = tryResult.unwrapErr();                                \
-    ns::QM_HANDLE_ERROR(expr, tryTempError,                                   \
-                        mozilla::dom::quota::Severity::Error);                \
-    cleanup(tryTempError);                                                    \
-    return customRetVal;                                                      \
+#define QM_TRY_CUSTOM_RET_VAL_WITH_CLEANUP(tryResult, expr, customRetVal, \
+                                           cleanup)                       \
+  auto tryResult = ::mozilla::ToResult(expr);                             \
+  static_assert(std::is_empty_v<typename decltype(tryResult)::ok_type>);  \
+  if (MOZ_UNLIKELY(tryResult.isErr())) {                                  \
+    auto tryTempError = tryResult.unwrapErr();                            \
+    mozilla::dom::quota::QM_HANDLE_ERROR(                                 \
+        expr, tryTempError, mozilla::dom::quota::Severity::Error);        \
+    cleanup(tryTempError);                                                \
+    return customRetVal;                                                  \
   }
 
 // Chooses the final implementation macro for given argument count.
-// It can be used by other modules to define module specific error handling.
 // This could use MOZ_PASTE_PREFIX_AND_ARG_COUNT, but explicit named suffxes
 // read slightly better than plain numbers.
 // See also
 // https://stackoverflow.com/questions/3046889/optional-parameters-with-c-macros
 #define QM_TRY_META(...)                                                       \
   {                                                                            \
-    MOZ_ARG_7(, ##__VA_ARGS__,                                                 \
-              QM_TRY_CUSTOM_RET_VAL_WITH_CLEANUP(__VA_ARGS__),                 \
-              QM_TRY_CUSTOM_RET_VAL(__VA_ARGS__),                              \
-              QM_TRY_PROPAGATE_ERR(__VA_ARGS__), QM_MISSING_ARGS(__VA_ARGS__), \
-              QM_MISSING_ARGS(__VA_ARGS__), QM_MISSING_ARGS(__VA_ARGS__))      \
+    MOZ_ARG_6(                                                                 \
+        , ##__VA_ARGS__, QM_TRY_CUSTOM_RET_VAL_WITH_CLEANUP(__VA_ARGS__),      \
+        QM_TRY_CUSTOM_RET_VAL(__VA_ARGS__), QM_TRY_PROPAGATE_ERR(__VA_ARGS__), \
+        QM_MISSING_ARGS(__VA_ARGS__), QM_MISSING_ARGS(__VA_ARGS__))            \
   }
 
-// Specifies the namespace and generates unique variable name. This extra
-// internal macro (along with __COUNTER__) allows nesting of the final macro.
-#define QM_TRY_GLUE(...) \
-  QM_TRY_META(mozilla::dom::quota, MOZ_UNIQUE_VAR(tryResult), ##__VA_ARGS__)
+// Generates unique variable name. This extra internal macro (along with
+// __COUNTER__) allows nesting of the final macro.
+#define QM_TRY_GLUE(...) QM_TRY_META(MOZ_UNIQUE_VAR(tryResult), ##__VA_ARGS__)
 
 /**
  * QM_TRY(expr[, customRetVal, cleanup]) is the C++ equivalent of Rust's
@@ -549,60 +552,57 @@ class NotNull;
 // implementation details of QM_TRY_UNWRAP/QM_TRY_INSPECT and shouldn't be used
 // directly.
 
-// Handles the five arguments case when the error is propagated.
-#define QM_TRY_ASSIGN_PROPAGATE_ERR(ns, tryResult, accessFunction, target, \
-                                    expr)                                  \
-  auto tryResult = (expr);                                                 \
-  if (MOZ_UNLIKELY(tryResult.isErr())) {                                   \
-    ns::QM_HANDLE_ERROR(expr, tryResult.inspectErr(),                      \
-                        mozilla::dom::quota::Severity::Error);             \
-    return tryResult.propagateErr();                                       \
-  }                                                                        \
+// Handles the four arguments case when the error is propagated.
+#define QM_TRY_ASSIGN_PROPAGATE_ERR(tryResult, accessFunction, target, expr) \
+  auto tryResult = (expr);                                                   \
+  if (MOZ_UNLIKELY(tryResult.isErr())) {                                     \
+    mozilla::dom::quota::QM_HANDLE_ERROR(                                    \
+        expr, tryResult.inspectErr(), mozilla::dom::quota::Severity::Error); \
+    return tryResult.propagateErr();                                         \
+  }                                                                          \
   MOZ_REMOVE_PAREN(target) = tryResult.accessFunction();
 
-// Handles the six arguments case when a custom return value needs to be
+// Handles the five arguments case when a custom return value needs to be
 // returned
-#define QM_TRY_ASSIGN_CUSTOM_RET_VAL(ns, tryResult, accessFunction, target, \
-                                     expr, customRetVal)                    \
-  auto tryResult = (expr);                                                  \
-  if (MOZ_UNLIKELY(tryResult.isErr())) {                                    \
-    auto tryTempError MOZ_MAYBE_UNUSED = tryResult.unwrapErr();             \
-    ns::QM_HANDLE_ERROR(expr, tryTempError,                                 \
-                        mozilla::dom::quota::Severity::Error);              \
-    return customRetVal;                                                    \
-  }                                                                         \
+#define QM_TRY_ASSIGN_CUSTOM_RET_VAL(tryResult, accessFunction, target, expr, \
+                                     customRetVal)                            \
+  auto tryResult = (expr);                                                    \
+  if (MOZ_UNLIKELY(tryResult.isErr())) {                                      \
+    auto tryTempError MOZ_MAYBE_UNUSED = tryResult.unwrapErr();               \
+    mozilla::dom::quota::QM_HANDLE_ERROR(                                     \
+        expr, tryTempError, mozilla::dom::quota::Severity::Error);            \
+    return customRetVal;                                                      \
+  }                                                                           \
   MOZ_REMOVE_PAREN(target) = tryResult.accessFunction();
 
-// Handles the seven arguments case when a cleanup function needs to be called
+// Handles the six arguments case when a cleanup function needs to be called
 // before a custom return value is returned
-#define QM_TRY_ASSIGN_CUSTOM_RET_VAL_WITH_CLEANUP(                      \
-    ns, tryResult, accessFunction, target, expr, customRetVal, cleanup) \
-  auto tryResult = (expr);                                              \
-  if (MOZ_UNLIKELY(tryResult.isErr())) {                                \
-    auto tryTempError = tryResult.unwrapErr();                          \
-    ns::QM_HANDLE_ERROR(expr, tryTempError,                             \
-                        mozilla::dom::quota::Severity::Error);          \
-    cleanup(tryTempError);                                              \
-    return customRetVal;                                                \
-  }                                                                     \
+#define QM_TRY_ASSIGN_CUSTOM_RET_VAL_WITH_CLEANUP(                  \
+    tryResult, accessFunction, target, expr, customRetVal, cleanup) \
+  auto tryResult = (expr);                                          \
+  if (MOZ_UNLIKELY(tryResult.isErr())) {                            \
+    auto tryTempError = tryResult.unwrapErr();                      \
+    mozilla::dom::quota::QM_HANDLE_ERROR(                           \
+        expr, tryTempError, mozilla::dom::quota::Severity::Error);  \
+    cleanup(tryTempError);                                          \
+    return customRetVal;                                            \
+  }                                                                 \
   MOZ_REMOVE_PAREN(target) = tryResult.accessFunction();
 
 // Chooses the final implementation macro for given argument count.
-// It can be used by other modules to define module specific error handling.
 // See also the comment for QM_TRY_META.
-#define QM_TRY_ASSIGN_META(...)                                                \
-  MOZ_ARG_9(                                                                   \
-      , ##__VA_ARGS__, QM_TRY_ASSIGN_CUSTOM_RET_VAL_WITH_CLEANUP(__VA_ARGS__), \
-      QM_TRY_ASSIGN_CUSTOM_RET_VAL(__VA_ARGS__),                               \
-      QM_TRY_ASSIGN_PROPAGATE_ERR(__VA_ARGS__), QM_MISSING_ARGS(__VA_ARGS__),  \
-      QM_MISSING_ARGS(__VA_ARGS__), QM_MISSING_ARGS(__VA_ARGS__),              \
-      QM_MISSING_ARGS(__VA_ARGS__), QM_MISSING_ARGS(__VA_ARGS__))
+#define QM_TRY_ASSIGN_META(...)                                         \
+  MOZ_ARG_8(, ##__VA_ARGS__,                                            \
+            QM_TRY_ASSIGN_CUSTOM_RET_VAL_WITH_CLEANUP(__VA_ARGS__),     \
+            QM_TRY_ASSIGN_CUSTOM_RET_VAL(__VA_ARGS__),                  \
+            QM_TRY_ASSIGN_PROPAGATE_ERR(__VA_ARGS__),                   \
+            QM_MISSING_ARGS(__VA_ARGS__), QM_MISSING_ARGS(__VA_ARGS__), \
+            QM_MISSING_ARGS(__VA_ARGS__), QM_MISSING_ARGS(__VA_ARGS__))
 
-// Specifies the namespace and generates unique variable name. This extra
-// internal macro (along with __COUNTER__) allows nesting of the final macro.
-#define QM_TRY_ASSIGN_GLUE(accessFunction, ...)                      \
-  QM_TRY_ASSIGN_META(mozilla::dom::quota, MOZ_UNIQUE_VAR(tryResult), \
-                     accessFunction, ##__VA_ARGS__)
+// Generates unique variable name. This extra internal macro (along with
+// __COUNTER__) allows nesting of the final macro.
+#define QM_TRY_ASSIGN_GLUE(accessFunction, ...) \
+  QM_TRY_ASSIGN_META(MOZ_UNIQUE_VAR(tryResult), accessFunction, ##__VA_ARGS__)
 
 /**
  * QM_TRY_UNWRAP(target, expr[, customRetVal, cleanup]) is the C++ equivalent of
@@ -634,62 +634,59 @@ class NotNull;
 // QM_TRY_RETURN_CUSTOM_RET_VAL_WITH_CLEANUP and QM_TRY_RETURN_GLUE macros are
 // implementation details of QM_TRY_RETURN and shouldn't be used directly.
 
-// Handles the three arguments case when the error is (also) propagated.
+// Handles the two arguments case when the error is (also) propagated.
 // Note that this deliberately uses a single return statement without going
 // through unwrap/unwrapErr/propagateErr, so that this does not prevent NRVO or
 // tail call optimizations when possible.
-#define QM_TRY_RETURN_PROPAGATE_ERR(ns, tryResult, expr)       \
-  auto tryResult = ::mozilla::ToResult(expr);                  \
-  if (MOZ_UNLIKELY(tryResult.isErr())) {                       \
-    ns::QM_HANDLE_ERROR(expr, tryResult.inspectErr(),          \
-                        mozilla::dom::quota::Severity::Error); \
-  }                                                            \
+#define QM_TRY_RETURN_PROPAGATE_ERR(tryResult, expr)                         \
+  auto tryResult = ::mozilla::ToResult(expr);                                \
+  if (MOZ_UNLIKELY(tryResult.isErr())) {                                     \
+    mozilla::dom::quota::QM_HANDLE_ERROR(                                    \
+        expr, tryResult.inspectErr(), mozilla::dom::quota::Severity::Error); \
+  }                                                                          \
   return tryResult;
 
-// Handles the four arguments case when a custom return value needs to be
+// Handles the three arguments case when a custom return value needs to be
 // returned
-#define QM_TRY_RETURN_CUSTOM_RET_VAL(ns, tryResult, expr, customRetVal) \
-  auto tryResult = ::mozilla::ToResult(expr);                           \
-  if (MOZ_UNLIKELY(tryResult.isErr())) {                                \
-    auto tryTempError MOZ_MAYBE_UNUSED = tryResult.unwrapErr();         \
-    ns::QM_HANDLE_ERROR(expr, tryResult.inspectErr(),                   \
-                        mozilla::dom::quota::Severity::Error);          \
-    return customRetVal;                                                \
-  }                                                                     \
+#define QM_TRY_RETURN_CUSTOM_RET_VAL(tryResult, expr, customRetVal)          \
+  auto tryResult = ::mozilla::ToResult(expr);                                \
+  if (MOZ_UNLIKELY(tryResult.isErr())) {                                     \
+    auto tryTempError MOZ_MAYBE_UNUSED = tryResult.unwrapErr();              \
+    mozilla::dom::quota::QM_HANDLE_ERROR(                                    \
+        expr, tryResult.inspectErr(), mozilla::dom::quota::Severity::Error); \
+    return customRetVal;                                                     \
+  }                                                                          \
   return tryResult.unwrap();
 
-// Handles the five arguments case when a cleanup function needs to be called
+// Handles the four arguments case when a cleanup function needs to be called
 // before a custom return value is returned
-#define QM_TRY_RETURN_CUSTOM_RET_VAL_WITH_CLEANUP(ns, tryResult, expr,   \
+#define QM_TRY_RETURN_CUSTOM_RET_VAL_WITH_CLEANUP(tryResult, expr,       \
                                                   customRetVal, cleanup) \
   auto tryResult = ::mozilla::ToResult(expr);                            \
   if (MOZ_UNLIKELY(tryResult.isErr())) {                                 \
     auto tryTempError = tryResult.unwrapErr();                           \
-    ns::QM_HANDLE_ERROR(expr, tryTempError,                              \
-                        mozilla::dom::quota::Severity::Error);           \
+    mozilla::dom::quota::QM_HANDLE_ERROR(                                \
+        expr, tryTempError, mozilla::dom::quota::Severity::Error);       \
     cleanup(tryTempError);                                               \
     return customRetVal;                                                 \
   }                                                                      \
   return tryResult.unwrap();
 
 // Chooses the final implementation macro for given argument count.
-// It can be used by other modules to define module specific error handling.
 // See also the comment for QM_TRY_META.
 #define QM_TRY_RETURN_META(...)                                           \
   {                                                                       \
-    MOZ_ARG_7(, ##__VA_ARGS__,                                            \
+    MOZ_ARG_6(, ##__VA_ARGS__,                                            \
               QM_TRY_RETURN_CUSTOM_RET_VAL_WITH_CLEANUP(__VA_ARGS__),     \
               QM_TRY_RETURN_CUSTOM_RET_VAL(__VA_ARGS__),                  \
               QM_TRY_RETURN_PROPAGATE_ERR(__VA_ARGS__),                   \
-              QM_MISSING_ARGS(__VA_ARGS__), QM_MISSING_ARGS(__VA_ARGS__), \
-              QM_MISSING_ARGS(__VA_ARGS__))                               \
+              QM_MISSING_ARGS(__VA_ARGS__), QM_MISSING_ARGS(__VA_ARGS__)) \
   }
 
-// Specifies the namespace and generates unique variable name. This extra
-// internal macro (along with __COUNTER__) allows nesting of the final macro.
-#define QM_TRY_RETURN_GLUE(...)                                      \
-  QM_TRY_RETURN_META(mozilla::dom::quota, MOZ_UNIQUE_VAR(tryResult), \
-                     ##__VA_ARGS__)
+// Generates unique variable name. This extra internal macro (along with
+// __COUNTER__) allows nesting of the final macro.
+#define QM_TRY_RETURN_GLUE(...) \
+  QM_TRY_RETURN_META(MOZ_UNIQUE_VAR(tryResult), ##__VA_ARGS__)
 
 /**
  * QM_TRY_RETURN(expr[, customRetVal, cleanup]) evaluates expr, which must
@@ -703,28 +700,28 @@ class NotNull;
 // QM_FAIL_RET_VAL and QM_FAIL_RET_VAL_WITH_CLEANUP macros are implementation
 // details of QM_FAIL and shouldn't be used directly.
 
-// Handles the two arguments case when just an error is returned
-#define QM_FAIL_RET_VAL(ns, retVal)                                      \
-  ns::QM_HANDLE_ERROR(Failure, 0, mozilla::dom::quota::Severity::Error); \
+// Handles the one argument case when just an error is returned
+#define QM_FAIL_RET_VAL(retVal)                                               \
+  mozilla::dom::quota::QM_HANDLE_ERROR(Failure, 0,                            \
+                                       mozilla::dom::quota::Severity::Error); \
   return retVal;
 
-// Handles the three arguments case when a cleanup function needs to be called
+// Handles the two arguments case when a cleanup function needs to be called
 // before a return value is returned
-#define QM_FAIL_RET_VAL_WITH_CLEANUP(ns, retVal, cleanup)                \
-  ns::QM_HANDLE_ERROR(Failure, 0, mozilla::dom::quota::Severity::Error); \
-  cleanup();                                                             \
+#define QM_FAIL_RET_VAL_WITH_CLEANUP(retVal, cleanup)                         \
+  mozilla::dom::quota::QM_HANDLE_ERROR(Failure, 0,                            \
+                                       mozilla::dom::quota::Severity::Error); \
+  cleanup();                                                                  \
   return retVal;
 
 // Chooses the final implementation macro for given argument count.
-// It can be used by other modules to define module specific error handling.
 // See also the comment for QM_TRY_META.
 #define QM_FAIL_META(...)                                               \
-  MOZ_ARG_5(, ##__VA_ARGS__, QM_FAIL_RET_VAL_WITH_CLEANUP(__VA_ARGS__), \
+  MOZ_ARG_4(, ##__VA_ARGS__, QM_FAIL_RET_VAL_WITH_CLEANUP(__VA_ARGS__), \
             QM_FAIL_RET_VAL(__VA_ARGS__), QM_MISSING_ARGS(__VA_ARGS__))
 
-// Specifies the namespace. This extra internal macro allows nesting of the
-// final macro.
-#define QM_FAIL_GLUE(...) QM_FAIL_META(mozilla::dom::quota, ##__VA_ARGS__)
+// This extra internal macro allows nesting of the final macro.
+#define QM_FAIL_GLUE(...) QM_FAIL_META(__VA_ARGS__)
 
 /**
  * QM_FAIL(retVal[, cleanup]) calls HandleError and an additional cleanup
@@ -736,42 +733,39 @@ class NotNull;
 // macros are implementation details of QM_WARNONLY_TRY/QM_NOTEONLY_TRY and
 // shouldn't be used directly.
 
-// Handles the four arguments case when only a warning/note is reported.
-#define QM_REPORTONLY_TRY(ns, tryResult, severity, expr)                 \
-  auto tryResult = ::mozilla::ToResult(expr);                            \
-  static_assert(std::is_empty_v<typename decltype(tryResult)::ok_type>); \
-  if (MOZ_UNLIKELY(tryResult.isErr())) {                                 \
-    ns::QM_HANDLE_ERROR(expr, tryResult.unwrapErr(),                     \
-                        mozilla::dom::quota::Severity::severity);        \
-  }
-
-// Handles the five arguments case when a cleanup function needs to be called
-#define QM_REPORTONLY_TRY_WITH_CLEANUP(ns, tryResult, severity, expr, cleanup) \
+// Handles the three arguments case when only a warning/note is reported.
+#define QM_REPORTONLY_TRY(tryResult, severity, expr)                           \
   auto tryResult = ::mozilla::ToResult(expr);                                  \
   static_assert(std::is_empty_v<typename decltype(tryResult)::ok_type>);       \
   if (MOZ_UNLIKELY(tryResult.isErr())) {                                       \
-    auto tryTempError = tryResult.unwrapErr();                                 \
-    ns::QM_HANDLE_ERROR(expr, tryTempError,                                    \
-                        mozilla::dom::quota::Severity::severity);              \
-    cleanup(tryTempError);                                                     \
+    mozilla::dom::quota::QM_HANDLE_ERROR(                                      \
+        expr, tryResult.unwrapErr(), mozilla::dom::quota::Severity::severity); \
+  }
+
+// Handles the four arguments case when a cleanup function needs to be called
+#define QM_REPORTONLY_TRY_WITH_CLEANUP(tryResult, severity, expr, cleanup) \
+  auto tryResult = ::mozilla::ToResult(expr);                              \
+  static_assert(std::is_empty_v<typename decltype(tryResult)::ok_type>);   \
+  if (MOZ_UNLIKELY(tryResult.isErr())) {                                   \
+    auto tryTempError = tryResult.unwrapErr();                             \
+    mozilla::dom::quota::QM_HANDLE_ERROR(                                  \
+        expr, tryTempError, mozilla::dom::quota::Severity::severity);      \
+    cleanup(tryTempError);                                                 \
   }
 
 // Chooses the final implementation macro for given argument count.
-// It can be used by other modules to define module specific error handling.
 // See also the comment for QM_TRY_META.
 #define QM_REPORTONLY_TRY_META(...)                                         \
   {                                                                         \
-    MOZ_ARG_7(, ##__VA_ARGS__, QM_REPORTONLY_TRY_WITH_CLEANUP(__VA_ARGS__), \
+    MOZ_ARG_6(, ##__VA_ARGS__, QM_REPORTONLY_TRY_WITH_CLEANUP(__VA_ARGS__), \
               QM_REPORTONLY_TRY(__VA_ARGS__), QM_MISSING_ARGS(__VA_ARGS__), \
-              QM_MISSING_ARGS(__VA_ARGS__), QM_MISSING_ARGS(__VA_ARGS__),   \
-              QM_MISSING_ARGS(__VA_ARGS__))                                 \
+              QM_MISSING_ARGS(__VA_ARGS__), QM_MISSING_ARGS(__VA_ARGS__))   \
   }
 
-// Specifies the namespace and generates unique variable name. This extra
-// internal macro (along with __COUNTER__) allows nesting of the final macro.
-#define QM_REPORTONLY_TRY_GLUE(severity, ...)                            \
-  QM_REPORTONLY_TRY_META(mozilla::dom::quota, MOZ_UNIQUE_VAR(tryResult), \
-                         severity, ##__VA_ARGS__)
+// Generates unique variable name. This extra internal macro (along with
+// __COUNTER__) allows nesting of the final macro.
+#define QM_REPORTONLY_TRY_GLUE(severity, ...) \
+  QM_REPORTONLY_TRY_META(MOZ_UNIQUE_VAR(tryResult), severity, ##__VA_ARGS__)
 
 /**
  * QM_WARNONLY_TRY(expr[, cleanup]) evaluates expr, which must produce a
@@ -795,42 +789,41 @@ class NotNull;
 // QM_WARNONLY_TRY_UNWRAP/QM_NOTEONLY_TRY_UNWRAP and shouldn't be used
 // directly.
 
-// Handles the five arguments case when only a warning/note is reported.
-#define QM_REPORTONLY_TRY_ASSIGN(ns, tryResult, severity, target, expr) \
-  auto tryResult = (expr);                                              \
-  MOZ_REMOVE_PAREN(target) =                                            \
-      MOZ_LIKELY(tryResult.isOk())                                      \
-          ? Some(tryResult.unwrap())                                    \
-          : ns::QM_HANDLE_ERROR_RETURN_NOTHING(                         \
-                expr, tryResult.unwrapErr(),                            \
+// Handles the four arguments case when only a warning/note is reported.
+#define QM_REPORTONLY_TRY_ASSIGN(tryResult, severity, target, expr) \
+  auto tryResult = (expr);                                          \
+  MOZ_REMOVE_PAREN(target) =                                        \
+      MOZ_LIKELY(tryResult.isOk())                                  \
+          ? Some(tryResult.unwrap())                                \
+          : mozilla::dom::quota::QM_HANDLE_ERROR_RETURN_NOTHING(    \
+                expr, tryResult.unwrapErr(),                        \
                 mozilla::dom::quota::Severity::severity);
 
-// Handles the six arguments case when a cleanup function needs to be called
-#define QM_REPORTONLY_TRY_ASSIGN_WITH_CLEANUP(ns, tryResult, severity, target, \
-                                              expr, cleanup)                   \
-  auto tryResult = (expr);                                                     \
-  MOZ_REMOVE_PAREN(target) =                                                   \
-      MOZ_LIKELY(tryResult.isOk())                                             \
-          ? Some(tryResult.unwrap())                                           \
-          : ns::QM_HANDLE_ERROR_WITH_CLEANUP_RETURN_NOTHING(                   \
-                expr, tryResult.unwrapErr(),                                   \
+// Handles the five arguments case when a cleanup function needs to be called
+#define QM_REPORTONLY_TRY_ASSIGN_WITH_CLEANUP(tryResult, severity, target,    \
+                                              expr, cleanup)                  \
+  auto tryResult = (expr);                                                    \
+  MOZ_REMOVE_PAREN(target) =                                                  \
+      MOZ_LIKELY(tryResult.isOk())                                            \
+          ? Some(tryResult.unwrap())                                          \
+          : mozilla::dom::quota::QM_HANDLE_ERROR_WITH_CLEANUP_RETURN_NOTHING( \
+                expr, tryResult.unwrapErr(),                                  \
                 mozilla::dom::quota::Severity::severity, cleanup);
 
 // Chooses the final implementation macro for given argument count.
-// It can be used by other modules to define module specific error handling.
 // See also the comment for QM_TRY_META.
-#define QM_REPORTONLY_TRY_ASSIGN_META(...)                                 \
-  MOZ_ARG_8(                                                               \
-      , ##__VA_ARGS__, QM_REPORTONLY_TRY_ASSIGN_WITH_CLEANUP(__VA_ARGS__), \
-      QM_REPORTONLY_TRY_ASSIGN(__VA_ARGS__), QM_MISSING_ARGS(__VA_ARGS__), \
-      QM_MISSING_ARGS(__VA_ARGS__), QM_MISSING_ARGS(__VA_ARGS__),          \
-      QM_MISSING_ARGS(__VA_ARGS__), QM_MISSING_ARGS(__VA_ARGS__))
+#define QM_REPORTONLY_TRY_ASSIGN_META(...)                              \
+  MOZ_ARG_7(, ##__VA_ARGS__,                                            \
+            QM_REPORTONLY_TRY_ASSIGN_WITH_CLEANUP(__VA_ARGS__),         \
+            QM_REPORTONLY_TRY_ASSIGN(__VA_ARGS__),                      \
+            QM_MISSING_ARGS(__VA_ARGS__), QM_MISSING_ARGS(__VA_ARGS__), \
+            QM_MISSING_ARGS(__VA_ARGS__), QM_MISSING_ARGS(__VA_ARGS__))
 
-// Specifies the namespace and generates unique variable name. This extra
-// internal macro (along with __COUNTER__) allows nesting of the final macro.
-#define QM_REPORTONLY_TRY_ASSIGN_GLUE(severity, ...) \
-  QM_REPORTONLY_TRY_ASSIGN_META(                     \
-      mozilla::dom::quota, MOZ_UNIQUE_VAR(tryResult), severity, ##__VA_ARGS__)
+// Generates unique variable name. This extra internal macro (along with
+// __COUNTER__) allows nesting of the final macro.
+#define QM_REPORTONLY_TRY_ASSIGN_GLUE(severity, ...)                 \
+  QM_REPORTONLY_TRY_ASSIGN_META(MOZ_UNIQUE_VAR(tryResult), severity, \
+                                ##__VA_ARGS__)
 
 /**
  * QM_WARNONLY_TRY_UNWRAP(target, expr[, cleanup]) evaluates expr, which must
@@ -858,32 +851,108 @@ class NotNull;
 
 // QM_NOTEONLY_TRY_INSPECT doesn't make sense.
 
-/*
- * QM_OR_ELSE_WARN(expr, orElse) evaluates expr, which must produce a Result
- * value. On Success, it just moves the success over. On error, it calls
- * HandleError and a custom orElse function (passed as the second argument).
- * Failures are always reported as warnings. The macro essentially wraps the
- * orElse function with a warning. The macro is a sub macro and is intended to
- * be used along with one of the main macros such as QM_TRY.
- */
-#define QM_OR_ELSE_WARN(expr, orElseFunc)                         \
-  (expr).orElse([&](const auto& firstRes) {                       \
-    mozilla::dom::quota::QM_HANDLE_ERROR(                         \
-        #expr, firstRes, mozilla::dom::quota::Severity::Warning); \
-    return orElseFunc(firstRes);                                  \
+// QM_OR_ELSE_REPORT macro is an implementation detail of
+// QM_OR_ELSE_WARN/QM_OR_ELSE_NOTE/QM_OR_ELSE_LOG and shouldn't be used
+// directly.
+
+#define QM_OR_ELSE_REPORT(severity, expr, fallback)                \
+  (expr).orElse([&](const auto& firstRes) {                        \
+    mozilla::dom::quota::QM_HANDLE_ERROR(                          \
+        #expr, firstRes, mozilla::dom::quota::Severity::severity); \
+    return fallback(firstRes);                                     \
   })
+
+/*
+ * QM_OR_ELSE_WARN(expr, fallback) evaluates expr, which must produce a Result
+ * value. On Success, it just moves the success over. On error, it calls
+ * HandleError (with the Warning severity) and a fallback function (passed as
+ * the second argument) which produces a new result. Failed expr is always
+ * reported as a warning (the macro essentially wraps the fallback function
+ * with a warning). QM_OR_ELSE_WARN is a sub macro and is intended to be used
+ * along with one of the main macros such as QM_TRY.
+ */
+#define QM_OR_ELSE_WARN(...) QM_OR_ELSE_REPORT(Warning, __VA_ARGS__)
 
 /**
  * QM_OR_ELSE_NOTE is like QM_OR_ELSE_WARN. The only difference is that
  * failures are reported using a lower level of severity relative to failures
  * reported by QM_OR_ELSE_WARN.
  */
-#define QM_OR_ELSE_NOTE(expr, orElseFunc)                                      \
-  (expr).orElse([&](const auto& firstRes) {                                    \
-    mozilla::dom::quota::QM_HANDLE_ERROR(#expr, firstRes,                      \
-                                         mozilla::dom::quota::Severity::Note); \
-    return orElseFunc(firstRes);                                               \
-  })
+#define QM_OR_ELSE_NOTE(...) QM_OR_ELSE_REPORT(Note, __VA_ARGS__)
+
+/**
+ * QM_OR_ELSE_LOG is like QM_OR_ELSE_WARN. The only difference is that
+ * failures are reported using the lowest severity which is currently ignored
+ * in LogError, so nothing goes to the console, browser console and telemetry.
+ * Since nothing goes to the telemetry, the macro can't signal the end of the
+ * underlying error stack or change the type of the error stack in the
+ * telemetry. For that reason, the expression shouldn't contain nested QM_TRY
+ * macro uses.
+ */
+#define QM_OR_ELSE_LOG(...) QM_OR_ELSE_REPORT(Log, __VA_ARGS__)
+
+namespace mozilla::dom::quota {
+
+// XXX Support orElseIf directly in mozilla::Result
+template <typename V, typename E, typename P, typename F>
+auto OrElseIf(Result<V, E>&& aResult, P&& aPred, F&& aFunc) -> Result<V, E> {
+  return MOZ_UNLIKELY(aResult.isErr())
+             ? (std::forward<P>(aPred)(aResult.inspectErr()))
+                   ? std::forward<F>(aFunc)(aResult.unwrapErr())
+                   : aResult.propagateErr()
+             : aResult.unwrap();
+}
+
+}  // namespace mozilla::dom::quota
+
+// QM_OR_ELSE_REPORT_IF macro is an implementation detail of
+// QM_OR_ELSE_WARN_IF/QM_OR_ELSE_NOTE_IF/QM_OR_ELSE_LOG_IF and shouldn't be
+// used directly.
+
+#define QM_OR_ELSE_REPORT_IF(severity, expr, predicate, fallback) \
+  mozilla::dom::quota::OrElseIf(                                  \
+      (expr),                                                     \
+      [&](const auto& firstRes) {                                 \
+        bool res = predicate(firstRes);                           \
+        mozilla::dom::quota::QM_HANDLE_ERROR(                     \
+            #expr, firstRes,                                      \
+            res ? mozilla::dom::quota::Severity::severity         \
+                : mozilla::dom::quota::Severity::Error);          \
+        return res;                                               \
+      },                                                          \
+      fallback)
+
+/*
+ * QM_OR_ELSE_WARN_IF(expr, predicate, fallback) evaluates expr first, which
+ * must produce a Result value. On Success, it just moves the success over.
+ * On error, it calls a predicate function (passed as the second argument) and
+ * then it either calls HandleError (with the Warning severity) and a fallback
+ * function (passed as the third argument) which produces a new result if the
+ * predicate returned true. Or it calls HandleError (with the Error severity)
+ * and propagates the error result if the predicate returned false. So failed
+ * expr can be reported as a warning or as an error depending on the predicate.
+ * QM_OR_ELSE_WARN_IF is a sub macro and is intended to be used along with one
+ * of the main macros such as QM_TRY.
+ */
+#define QM_OR_ELSE_WARN_IF(...) QM_OR_ELSE_REPORT_IF(Warning, __VA_ARGS__)
+
+/**
+ * QM_OR_ELSE_NOTE_IF is like QM_OR_ELSE_WARN_IF. The only difference is that
+ * failures are reported using a lower level of severity relative to failures
+ * reported by QM_OR_ELSE_WARN_IF.
+ */
+#define QM_OR_ELSE_NOTE_IF(...) QM_OR_ELSE_REPORT_IF(Note, __VA_ARGS__)
+
+/**
+ * QM_OR_ELSE_LOG_IF is like QM_OR_ELSE_WARN_IF. The only difference is that
+ * failures are reported using the lowest severity which is currently ignored
+ * in LogError, so nothing goes to the console, browser console and telemetry.
+ * Since nothing goes to the telemetry, the macro can't signal the end of the
+ * underlying error stack or change the type of the error stack in the
+ * telemetry. For that reason, the expression shouldn't contain nested QM_TRY
+ * macro uses.
+ */
+#define QM_OR_ELSE_LOG_IF(...) QM_OR_ELSE_REPORT_IF(Log, __VA_ARGS__)
 
 // Telemetry probes to collect number of failure during the initialization.
 #ifdef NIGHTLY_BUILD
@@ -948,6 +1017,34 @@ auto ErrToDefaultOkOrErr(nsresult aValue) -> Result<V, nsresult> {
     return V{};
   }
   return Err(aValue);
+}
+
+// Helper template function so that QM_TRY predicates checking for a specific
+// error can be concisely written as IsSpecificError<NS_SOME_ERROR> instead of
+// as a more verbose lambda.
+template <nsresult ErrorValue>
+bool IsSpecificError(const nsresult aValue) {
+  return aValue == ErrorValue;
+}
+
+// Helper template function so that QM_TRY fallback functions that are
+// converting errors into specific in-band success values can be concisely
+// written as ErrToOk<SuccessValueToReturn> (with the return type inferred).
+// For example, many file-related APIs that access information about a file may
+// return an nsresult error code if the file does not exist. From an
+// application perspective, the file not existing is not actually exceptional
+// and can instead be handled by the success case.
+template <auto SuccessValue, typename V = decltype(SuccessValue)>
+auto ErrToOk(const nsresult aValue) -> Result<V, nsresult> {
+  return V{SuccessValue};
+}
+
+// Helper template function so that QM_TRY fallback functions that are
+// suppressing errors by converting them into (generic) success can be
+// concisely written as ErrToDefaultOk<>.
+template <typename V = mozilla::Ok>
+auto ErrToDefaultOk(const nsresult aValue) -> Result<V, nsresult> {
+  return V{};
 }
 
 // TODO: Maybe move this to mfbt/ResultExtensions.h
@@ -1073,6 +1170,10 @@ class MOZ_MUST_USE_TYPE GenericErrorResult<mozilla::ipc::IPCResult> {
     MOZ_ASSERT(!aErrorValue);
   }
 
+  GenericErrorResult(mozilla::ipc::IPCResult aErrorValue,
+                     const ErrorPropagationTag&)
+      : GenericErrorResult(aErrorValue) {}
+
   operator mozilla::ipc::IPCResult() const { return mErrorValue; }
 };
 
@@ -1192,9 +1293,22 @@ CreateAndExecuteSingleStepStatement(mozIStorageConnection& aConnection,
 
 namespace detail {
 
+// Determine the absolute path of the root of our built source tree so we can
+// derive source-relative paths for non-exported header files in
+// MakeSourceFileRelativePath. Exported header files end up in the objdir and
+// we have GetObjdirDistIncludeTreeBase for that.
 nsDependentCSubstring GetSourceTreeBase();
 
-nsDependentCSubstring MakeRelativeSourceFileName(const nsACString& aSourceFile);
+// Determine the absolute path of the root of our built OBJDIR/dist/include
+// directory. The aQuotaCommonHPath argument cleverly defaults to __FILE__
+// initialized in our exported header; no argument should ever be provided to
+// this method. GetSourceTreeBase handles identifying the root of the source
+// tree.
+nsDependentCSubstring GetObjdirDistIncludeTreeBase(
+    const nsLiteralCString& aQuotaCommonHPath = nsLiteralCString(__FILE__));
+
+nsDependentCSubstring MakeSourceFileRelativePath(
+    const nsACString& aSourceFilePath);
 
 }  // namespace detail
 
@@ -1202,27 +1316,35 @@ enum class Severity {
   Error,
   Warning,
   Note,
+  Log,
 };
 
-void LogError(const nsACString& aExpr, Maybe<nsresult> aRv,
-              const nsACString& aSourceFile, int32_t aSourceLine,
-              Severity aSeverity);
+#ifdef QM_LOG_ERROR_ENABLED
+#  ifdef QM_ERROR_STACKS_ENABLED
+using ResultType = Variant<QMResult, nsresult, Nothing>;
+
+void LogError(const nsACString& aExpr, const ResultType& aResult,
+              const nsACString& aSourceFilePath, int32_t aSourceFileLine,
+              Severity aSeverity)
+#  else
+void LogError(const nsACString& aExpr, Maybe<nsresult> aMaybeRv,
+              const nsACString& aSourceFilePath, int32_t aSourceFileLine,
+              Severity aSeverity)
+#  endif
+    ;
+#endif
 
 #ifdef DEBUG
 Result<bool, nsresult> WarnIfFileIsUnknown(nsIFile& aFile,
-                                           const char* aSourceFile,
-                                           int32_t aSourceLine);
-#endif
-
-#if defined(EARLY_BETA_OR_EARLIER) || defined(DEBUG)
-#  define QM_ENABLE_SCOPED_LOG_EXTRA_INFO
+                                           const char* aSourceFilePath,
+                                           int32_t aSourceFileLine);
 #endif
 
 struct MOZ_STACK_CLASS ScopedLogExtraInfo {
   static constexpr const char kTagQuery[] = "query";
   static constexpr const char kTagContext[] = "context";
 
-#ifdef QM_ENABLE_SCOPED_LOG_EXTRA_INFO
+#ifdef QM_SCOPED_LOG_EXTRA_INFO_ENABLED
  private:
   static auto FindSlot(const char* aTag);
 
@@ -1281,44 +1403,58 @@ struct MOZ_STACK_CLASS ScopedLogExtraInfo {
 //
 // This functions are not intended to be called
 // directly, they should only be called from the QM_* macros.
-#if defined(EARLY_BETA_OR_EARLIER) || defined(DEBUG)
+#ifdef QM_LOG_ERROR_ENABLED
 template <typename T>
-MOZ_COLD void HandleError(const char* aExpr, const T& aRv,
-                          const char* aSourceFile, int32_t aSourceLine,
-                          const Severity aSeverity) {
+MOZ_COLD MOZ_NEVER_INLINE void HandleError(const char* aExpr, const T& aRv,
+                                           const char* aSourceFilePath,
+                                           int32_t aSourceFileLine,
+                                           const Severity aSeverity) {
+#  ifdef QM_ERROR_STACKS_ENABLED
+  if constexpr (std::is_same_v<T, QMResult> || std::is_same_v<T, nsresult>) {
+    mozilla::dom::quota::LogError(nsDependentCString(aExpr), ResultType(aRv),
+                                  nsDependentCString(aSourceFilePath),
+                                  aSourceFileLine, aSeverity);
+  } else {
+    mozilla::dom::quota::LogError(
+        nsDependentCString(aExpr), ResultType(Nothing{}),
+        nsDependentCString(aSourceFilePath), aSourceFileLine, aSeverity);
+  }
+#  else
   if constexpr (std::is_same_v<T, nsresult>) {
     mozilla::dom::quota::LogError(nsDependentCString(aExpr), Some(aRv),
-                                  nsDependentCString(aSourceFile), aSourceLine,
-                                  aSeverity);
+                                  nsDependentCString(aSourceFilePath),
+                                  aSourceFileLine, aSeverity);
   } else {
     mozilla::dom::quota::LogError(nsDependentCString(aExpr), Nothing{},
-                                  nsDependentCString(aSourceFile), aSourceLine,
-                                  aSeverity);
+                                  nsDependentCString(aSourceFilePath),
+                                  aSourceFileLine, aSeverity);
   }
+#  endif
 }
 #else
 template <typename T>
 MOZ_ALWAYS_INLINE constexpr void HandleError(const char* aExpr, const T& aRv,
-                                             const char* aSourceFile,
-                                             int32_t aSourceLine,
+                                             const char* aSourceFilePath,
+                                             int32_t aSourceFileLine,
                                              const Severity aSeverity) {}
 #endif
 
 template <typename T>
 Nothing HandleErrorReturnNothing(const char* aExpr, const T& aRv,
-                                 const char* aSourceFile, int32_t aSourceLine,
+                                 const char* aSourceFilePath,
+                                 int32_t aSourceFileLine,
                                  const Severity aSeverity) {
-  HandleError(aExpr, aRv, aSourceFile, aSourceLine, aSeverity);
+  HandleError(aExpr, aRv, aSourceFilePath, aSourceFileLine, aSeverity);
   return Nothing();
 }
 
 template <typename T, typename CleanupFunc>
 Nothing HandleErrorWithCleanupReturnNothing(const char* aExpr, const T& aRv,
-                                            const char* aSourceFile,
-                                            int32_t aSourceLine,
+                                            const char* aSourceFilePath,
+                                            int32_t aSourceFileLine,
                                             const Severity aSeverity,
                                             CleanupFunc&& aCleanupFunc) {
-  HandleError(aExpr, aRv, aSourceFile, aSourceLine, aSeverity);
+  HandleError(aExpr, aRv, aSourceFilePath, aSourceFileLine, aSeverity);
   std::forward<CleanupFunc>(aCleanupFunc)(aRv);
   return Nothing();
 }
@@ -1427,15 +1563,6 @@ auto ReduceEachFileAtomicCancelable(nsIFile& aDirectory,
 
 constexpr bool IsDatabaseCorruptionError(const nsresult aRv) {
   return aRv == NS_ERROR_FILE_CORRUPTED || aRv == NS_ERROR_STORAGE_IOERR;
-}
-
-template <auto SuccessValue, typename V = decltype(SuccessValue)>
-auto FilterDatabaseCorruptionError(const nsresult aValue)
-    -> Result<V, nsresult> {
-  if (IsDatabaseCorruptionError(aValue)) {
-    return V{SuccessValue};
-  }
-  return Err(aValue);
 }
 
 template <typename Func>

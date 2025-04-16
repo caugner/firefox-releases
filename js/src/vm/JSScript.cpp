@@ -19,7 +19,6 @@
 #include "mozilla/ScopeExit.h"
 #include "mozilla/Span.h"  // mozilla::{Span,Span}
 #include "mozilla/Sprintf.h"
-#include "mozilla/Unused.h"
 #include "mozilla/Utf8.h"
 #include "mozilla/Vector.h"
 
@@ -263,15 +262,14 @@ XDRResult BaseScript::XDRLazyScriptData(XDRState<mode>* xdr,
   RootedFunction func(cx);
 
   if (lazy->useMemberInitializers()) {
-    uint32_t numMemberInitializers;
+    uint32_t bits;
     if (mode == XDR_ENCODE) {
       MOZ_ASSERT(lazy->getMemberInitializers().valid);
-      numMemberInitializers =
-          lazy->getMemberInitializers().numMemberInitializers;
+      bits = lazy->getMemberInitializers().serialize();
     }
-    MOZ_TRY(xdr->codeUint32(&numMemberInitializers));
+    MOZ_TRY(xdr->codeUint32(&bits));
     if (mode == XDR_DECODE) {
-      lazy->setMemberInitializers(MemberInitializers(numMemberInitializers));
+      lazy->setMemberInitializers(MemberInitializers::deserialize(bits));
     }
   }
 
@@ -497,8 +495,10 @@ static XDRResult XDRScope(XDRState<mode>* xdr, js::PrivateScriptData* data,
     case ScopeKind::NamedLambda:
     case ScopeKind::StrictNamedLambda:
     case ScopeKind::FunctionLexical:
-    case ScopeKind::ClassBody:
       MOZ_TRY(LexicalScope::XDR(xdr, scopeKind, enclosing, scope));
+      break;
+    case ScopeKind::ClassBody:
+      MOZ_TRY(ClassBodyScope::XDR(xdr, scopeKind, enclosing, scope));
       break;
     case ScopeKind::With:
       MOZ_TRY(WithScope::XDR(xdr, enclosing, scope));
@@ -817,15 +817,14 @@ XDRResult js::PrivateScriptData::XDR(XDRState<mode>* xdr, HandleScript script,
 
   // Code the field initializer data.
   if (script->useMemberInitializers()) {
-    uint32_t numMemberInitializers;
+    uint32_t bits;
     if (mode == XDR_ENCODE) {
       MOZ_ASSERT(data->getMemberInitializers().valid);
-      numMemberInitializers =
-          data->getMemberInitializers().numMemberInitializers;
+      bits = data->getMemberInitializers().serialize();
     }
-    MOZ_TRY(xdr->codeUint32(&numMemberInitializers));
+    MOZ_TRY(xdr->codeUint32(&bits));
     if (mode == XDR_DECODE) {
-      data->setMemberInitializers(MemberInitializers(numMemberInitializers));
+      data->setMemberInitializers(MemberInitializers::deserialize(bits));
     }
   }
 
@@ -946,7 +945,7 @@ ImmutableScriptData::ImmutableScriptData(uint32_t codeLength,
 
 template <XDRMode mode>
 XDRResult js::XDRImmutableScriptData(XDRState<mode>* xdr,
-                                     UniquePtr<ImmutableScriptData>& isd) {
+                                     SharedImmutableScriptData& sisd) {
   static_assert(frontend::CanCopyDataToDisk<ImmutableScriptData>::value,
                 "ImmutableScriptData cannot be bulk-copied to disk");
   static_assert(frontend::CanCopyDataToDisk<jsbytecode>::value,
@@ -960,36 +959,48 @@ XDRResult js::XDRImmutableScriptData(XDRState<mode>* xdr,
 
   uint32_t size;
   if (mode == XDR_ENCODE) {
-    size = isd->immutableData().size();
+    size = sisd.immutableDataLength();
   }
   MOZ_TRY(xdr->codeUint32(&size));
 
-  uint8_t* data;
+  MOZ_TRY(xdr->align32());
+  static_assert(alignof(ImmutableScriptData) <= alignof(uint32_t));
+
   if (mode == XDR_ENCODE) {
-    data = const_cast<uint8_t*>(isd->immutableData().data());
-    MOZ_ASSERT(data == reinterpret_cast<const uint8_t*>(isd.get()),
+    uint8_t* data = const_cast<uint8_t*>(sisd.get()->immutableData().data());
+    MOZ_ASSERT(data == reinterpret_cast<const uint8_t*>(sisd.get()),
                "Decode below relies on the data placement");
+    MOZ_TRY(xdr->codeBytes(data, size));
   } else {
-    isd = ImmutableScriptData::new_(xdr->cx(), size);
-    if (!isd) {
-      return xdr->fail(JS::TranscodeResult::Throw);
+    MOZ_ASSERT(!sisd.get());
+
+    if (xdr->hasOptions() && xdr->options().usePinnedBytecode) {
+      ImmutableScriptData* isd;
+      MOZ_TRY(xdr->borrowedData(&isd, size));
+      sisd.setExternal(isd);
+    } else {
+      auto isd = ImmutableScriptData::new_(xdr->cx(), size);
+      if (!isd) {
+        return xdr->fail(JS::TranscodeResult::Throw);
+      }
+      uint8_t* data = reinterpret_cast<uint8_t*>(isd.get());
+      MOZ_TRY(xdr->codeBytes(data, size));
+      sisd.setOwn(std::move(isd));
     }
-    data = reinterpret_cast<uint8_t*>(isd.get());
-  }
-  MOZ_TRY(xdr->codeBytes(data, size));
-  if (mode == XDR_DECODE) {
-#ifdef DEBUG
-    isd->validate(size);
-#endif
+
+    if (size != sisd.get()->computedSize()) {
+      MOZ_ASSERT(false, "Bad ImmutableScriptData");
+      return xdr->fail(JS::TranscodeResult::Failure_BadDecode);
+    }
   }
 
   return Ok();
 }
 
-template XDRResult js::XDRImmutableScriptData(
-    XDRState<XDR_ENCODE>* xdr, UniquePtr<ImmutableScriptData>& isd);
-template XDRResult js::XDRImmutableScriptData(
-    XDRState<XDR_DECODE>* xdr, UniquePtr<ImmutableScriptData>& isd);
+template XDRResult js::XDRImmutableScriptData(XDRState<XDR_ENCODE>* xdr,
+                                              SharedImmutableScriptData& sisd);
+template XDRResult js::XDRImmutableScriptData(XDRState<XDR_DECODE>* xdr,
+                                              SharedImmutableScriptData& sisd);
 
 template <XDRMode mode>
 XDRResult js::XDRSourceExtent(XDRState<mode>* xdr, SourceExtent* extent) {
@@ -1226,7 +1237,8 @@ XDRResult js::XDRScript(XDRState<mode>* xdr, HandleScope scriptEnclosingScope,
     }
 
     /* see BytecodeEmitter::tellDebuggerAboutCompiledScript */
-    if (!isFunctionScript && !cx->isHelperThreadContext()) {
+    if (!isFunctionScript && !cx->isHelperThreadContext() &&
+        !xdr->options().hideFromNewScriptInitial()) {
       DebugAPI::onNewScript(cx, script);
     }
   }
@@ -1686,40 +1698,20 @@ bool ScriptSourceObject::initFromOptions(
     return false;
   }
 
-  RootedString elementAttributeName(cx, options.elementAttributeName());
+  if (options.deferDebugMetadata) {
+    return true;
+  }
+
+  // Initialize the element attribute slot and introduction script slot
+  // this marks the SSO as initialized for asserts.
+
+  RootedString elementAttributeName(cx);
   if (!initElementProperties(cx, source, elementAttributeName)) {
     return false;
   }
 
-  // There is no equivalent of cross-compartment wrappers for scripts. If the
-  // introduction script and ScriptSourceObject are in different compartments,
-  // we would be creating a cross-compartment script reference, which is
-  // forbidden. We can still store a CCW to the script source object though.
   RootedValue introductionScript(cx);
-  if (JSScript* script = options.introductionScript()) {
-    if (script->compartment() == cx->compartment()) {
-      introductionScript.setPrivateGCThing(options.introductionScript());
-    }
-  }
   source->setReservedSlot(INTRODUCTION_SCRIPT_SLOT, introductionScript);
-
-  RootedValue privateValue(cx, UndefinedValue());
-  if (options.privateValue().isUndefined()) {
-    // Set the private value to that of the script or module that this source is
-    // part of, if any.
-    if (JSScript* script = options.scriptOrModule()) {
-      privateValue = script->sourceObject()->canonicalPrivate();
-    }
-  } else {
-    privateValue = options.privateValue();
-  }
-
-  if (!privateValue.isUndefined()) {
-    if (!JS_WrapValue(cx, &privateValue)) {
-      return false;
-    }
-  }
-  source->setPrivate(cx->runtime(), privateValue);
 
   return true;
 }
@@ -1760,8 +1752,11 @@ JSObject* ScriptSourceObject::unwrappedElement(JSContext* cx) const {
     return nullptr;
   }
 
-  MOZ_ASSERT(cx->runtime()->getElementCallback);
-  return (*cx->runtime()->getElementCallback)(cx, privateValue);
+  if (cx->runtime()->sourceElementCallback) {
+    return (*cx->runtime()->sourceElementCallback)(cx, privateValue);
+  }
+
+  return nullptr;
 }
 
 class ScriptSource::LoadSourceMatcher {
@@ -2273,10 +2268,10 @@ template <typename Unit>
 
   if (retrievable == SourceRetrievable::Yes) {
     data = SourceType(
-        Uncompressed<Unit, SourceRetrievable::Yes>(std::move(*deduped)));
+        Uncompressed<Unit, SourceRetrievable::Yes>(std::move(deduped)));
   } else {
     data = SourceType(
-        Uncompressed<Unit, SourceRetrievable::No>(std::move(*deduped)));
+        Uncompressed<Unit, SourceRetrievable::No>(std::move(deduped)));
   }
   return true;
 }
@@ -2296,8 +2291,8 @@ bool js::IsOffThreadSourceCompressionEnabled() {
   // If we don't have concurrent execution compression will contend with
   // main-thread execution, in which case we disable. Similarly we don't want to
   // block the thread pool if it is too small.
-  return HelperThreadState().cpuCount > 1 &&
-         HelperThreadState().threadCount > 1 && CanUseExtraThreads();
+  return GetHelperThreadCPUCount() > 1 && GetHelperThreadCount() > 1 &&
+         CanUseExtraThreads();
 }
 
 bool ScriptSource::tryCompressOffThread(JSContext* cx) {
@@ -2388,7 +2383,7 @@ template <typename Unit>
              "are pinned -- that only makes sense with a ScriptSource actively "
              "being inspected");
 
-  data = SourceType(Compressed<Unit, SourceRetrievable::No>(std::move(*deduped),
+  data = SourceType(Compressed<Unit, SourceRetrievable::No>(std::move(deduped),
                                                             sourceLength));
 
   return true;
@@ -2423,8 +2418,8 @@ bool ScriptSource::assignSource(JSContext* cx,
     return false;
   }
 
-  data = SourceType(
-      Uncompressed<Unit, SourceRetrievable::No>(std::move(*deduped)));
+  data =
+      SourceType(Uncompressed<Unit, SourceRetrievable::No>(std::move(deduped)));
   return true;
 }
 
@@ -2466,7 +2461,7 @@ ScriptSource::~ScriptSource() {
   }
 
   // Since the realloc succeeded, unique is now holding a freed pointer.
-  mozilla::Unused << unique.release();
+  (void)unique.release();
   unique.reset(newPtr);
   return true;
 }
@@ -2600,9 +2595,8 @@ void ScriptSource::triggerConvertToCompressedSourceFromTask(
 }
 
 void SourceCompressionTask::complete() {
-  if (!shouldCancel() && resultString_.isSome()) {
-    source_->triggerConvertToCompressedSourceFromTask(
-        std::move(*resultString_));
+  if (!shouldCancel() && resultString_) {
+    source_->triggerConvertToCompressedSourceFromTask(std::move(resultString_));
   }
 }
 
@@ -3253,8 +3247,8 @@ bool ScriptSource::initFromOptions(JSContext* cx,
 // Use the SharedImmutableString map to deduplicate input string. The input
 // string must be null-terminated.
 template <typename SharedT, typename CharT>
-static Maybe<SharedT> GetOrCreateStringZ(
-    JSContext* cx, UniquePtr<CharT[], JS::FreePolicy>&& str) {
+static SharedT GetOrCreateStringZ(JSContext* cx,
+                                  UniquePtr<CharT[], JS::FreePolicy>&& str) {
   JSRuntime* rt = cx->runtime();
   size_t lengthWithNull = std::char_traits<CharT>::length(str.get()) + 1;
   auto res =
@@ -3265,12 +3259,12 @@ static Maybe<SharedT> GetOrCreateStringZ(
   return res;
 }
 
-Maybe<SharedImmutableString> ScriptSource::getOrCreateStringZ(
-    JSContext* cx, UniqueChars&& str) {
+SharedImmutableString ScriptSource::getOrCreateStringZ(JSContext* cx,
+                                                       UniqueChars&& str) {
   return GetOrCreateStringZ<SharedImmutableString>(cx, std::move(str));
 }
 
-Maybe<SharedImmutableTwoByteString> ScriptSource::getOrCreateStringZ(
+SharedImmutableTwoByteString ScriptSource::getOrCreateStringZ(
     JSContext* cx, UniqueTwoByteChars&& str) {
   return GetOrCreateStringZ<SharedImmutableTwoByteString>(cx, std::move(str));
 }
@@ -3286,7 +3280,7 @@ bool ScriptSource::setFilename(JSContext* cx, const char* filename) {
 bool ScriptSource::setFilename(JSContext* cx, UniqueChars&& filename) {
   MOZ_ASSERT(!filename_);
   filename_ = getOrCreateStringZ(cx, std::move(filename));
-  return filename_.isSome();
+  return bool(filename_);
 }
 
 bool ScriptSource::setIntroducerFilename(JSContext* cx, const char* filename) {
@@ -3301,7 +3295,7 @@ bool ScriptSource::setIntroducerFilename(JSContext* cx,
                                          UniqueChars&& filename) {
   MOZ_ASSERT(!introducerFilename_);
   introducerFilename_ = getOrCreateStringZ(cx, std::move(filename));
-  return introducerFilename_.isSome();
+  return bool(introducerFilename_);
 }
 
 bool ScriptSource::setDisplayURL(JSContext* cx, const char16_t* url) {
@@ -3328,7 +3322,7 @@ bool ScriptSource::setDisplayURL(JSContext* cx, UniqueTwoByteChars&& url) {
   }
 
   displayURL_ = getOrCreateStringZ(cx, std::move(url));
-  return displayURL_.isSome();
+  return bool(displayURL_);
 }
 
 bool ScriptSource::setSourceMapURL(JSContext* cx, const char16_t* url) {
@@ -3346,7 +3340,7 @@ bool ScriptSource::setSourceMapURL(JSContext* cx, UniqueTwoByteChars&& url) {
   }
 
   sourceMapURL_ = getOrCreateStringZ(cx, std::move(url));
-  return sourceMapURL_.isSome();
+  return bool(sourceMapURL_);
 }
 
 /* static */ mozilla::Atomic<uint32_t, mozilla::SequentiallyConsistent>
@@ -3428,14 +3422,12 @@ js::UniquePtr<ImmutableScriptData> js::ImmutableScriptData::new_(
   return result;
 }
 
-#ifdef DEBUG
-void js::ImmutableScriptData::validate(uint32_t totalSize) {
+uint32_t js::ImmutableScriptData::computedSize() {
   auto size = sizeFor(codeLength(), noteLength(), resumeOffsets().size(),
                       scopeNotes().size(), tryNotes().size());
   MOZ_ASSERT(size.isValid());
-  MOZ_ASSERT(size.value() == totalSize);
+  return size.value();
 }
-#endif
 
 /* static */
 SharedImmutableScriptData* SharedImmutableScriptData::create(JSContext* cx) {
@@ -3451,7 +3443,7 @@ SharedImmutableScriptData* SharedImmutableScriptData::createWith(
     return nullptr;
   }
 
-  sisd->isd_ = std::move(isd);
+  sisd->setOwn(std::move(isd));
   return sisd;
 }
 
@@ -4206,22 +4198,14 @@ static JSObject* CloneInnerInterpretedFunction(
     return nullptr;
   }
 
-  gc::AllocKind allocKind = srcFun->getAllocKind();
-  FunctionFlags flags = srcFun->flags();
-  if (srcFun->isSelfHostedBuiltin()) {
-    // Functions in the self-hosting compartment are only extended in
-    // debug mode. For top-level functions, FUNCTION_EXTENDED gets used by
-    // the cloning algorithm. Do the same for inner functions here.
-    allocKind = gc::AllocKind::FUNCTION_EXTENDED;
-    flags.setIsExtended();
-  }
   RootedAtom atom(cx, srcFun->displayAtom());
   if (atom) {
     cx->markAtom(atom);
   }
   RootedFunction clone(
-      cx, NewFunctionWithProto(cx, nullptr, srcFun->nargs(), flags, nullptr,
-                               atom, cloneProto, allocKind, TenuredObject));
+      cx, NewFunctionWithProto(cx, nullptr, srcFun->nargs(), srcFun->flags(),
+                               nullptr, atom, cloneProto,
+                               srcFun->getAllocKind(), TenuredObject));
   if (!clone) {
     return nullptr;
   }
@@ -4393,11 +4377,6 @@ static JSScript* CopyScriptImpl(JSContext* cx, HandleScript src,
       cx, JSScript::Create(cx, functionOrGlobal, sourceObject, extent, flags));
   if (!dst) {
     return nullptr;
-  }
-
-  // Maintain this flag when cloning self-hosted functions.
-  if (src->isInlinableLargeFunction()) {
-    dst->setIsInlinableLargeFunction();
   }
 
   // Clone the PrivateScriptData into dst
@@ -4620,6 +4599,8 @@ size_t JSScript::calculateLiveFixed(jsbytecode* pc) {
         nlivefixed = scope->as<LexicalScope>().nextFrameSlot();
       } else if (scope->is<VarScope>()) {
         nlivefixed = scope->as<VarScope>().nextFrameSlot();
+      } else if (scope->is<ClassBodyScope>()) {
+        nlivefixed = scope->as<ClassBodyScope>().nextFrameSlot();
       }
     }
   }
@@ -4686,17 +4667,13 @@ Scope* JSScript::innermostScope(jsbytecode* pc) const {
   return bodyScope();
 }
 
-void JSScript::setNeedsArgsObj(bool needsArgsObj) {
-  MOZ_ASSERT_IF(needsArgsObj, argumentsHasVarBinding());
-  clearFlag(MutableFlags::NeedsArgsAnalysis);
-  setFlag(MutableFlags::NeedsArgsObj, needsArgsObj);
-}
-
 void js::SetFrameArgumentsObject(JSContext* cx, AbstractFramePtr frame,
                                  HandleScript script, JSObject* argsobj) {
   /*
-   * Replace any optimized arguments in the frame with an explicit arguments
-   * object. Note that 'arguments' may have already been overwritten.
+   * If the arguments object was optimized out by scalar replacement,
+   * we must recreate it when we bail out. Because 'arguments' may have
+   * already been overwritten, we must check to see if the slot already
+   * contains a value.
    */
 
   Rooted<BindingIter> bi(cx, BindingIter(script));
@@ -4708,9 +4685,12 @@ void js::SetFrameArgumentsObject(JSContext* cx, AbstractFramePtr frame,
   }
 
   if (bi.location().kind() == BindingLocation::Kind::Environment) {
+#ifdef DEBUG
     /*
-     * Scan the script to find the slot in the call object that 'arguments'
-     * is assigned to.
+     * If |arguments| lives in the call object, we should not have
+     * optimized it. Scan the script to find the slot in the call
+     * object that |arguments| is assigned to and verify that it
+     * already exists.
      */
     jsbytecode* pc = script->code();
     while (JSOp(*pc) != JSOp::Arguments) {
@@ -4719,95 +4699,16 @@ void js::SetFrameArgumentsObject(JSContext* cx, AbstractFramePtr frame,
     pc += JSOpLength_Arguments;
     MOZ_ASSERT(JSOp(*pc) == JSOp::SetAliasedVar);
 
-    // Note that here and below, it is insufficient to only check for
-    // JS_OPTIMIZED_ARGUMENTS, as Ion could have optimized out the
-    // arguments slot.
     EnvironmentObject& env = frame.callObj().as<EnvironmentObject>();
-    if (IsOptimizedPlaceholderMagicValue(env.aliasedBinding(bi))) {
-      env.setAliasedBinding(cx, bi, ObjectValue(*argsobj));
-    }
-  } else {
-    MOZ_ASSERT(bi.location().kind() == BindingLocation::Kind::Frame);
-    uint32_t frameSlot = bi.location().slot();
-    if (IsOptimizedPlaceholderMagicValue(frame.unaliasedLocal(frameSlot))) {
-      frame.unaliasedLocal(frameSlot) = ObjectValue(*argsobj);
-    }
-  }
-
-  // JS_OPTIMIZED_ARGUMENTS may also have been stored to a local slot
-  // during bailout. Update those local slots.
-  for (uint32_t i = 0; i < script->nfixed(); i++) {
-    Value& value = frame.unaliasedLocal(i);
-    if (value.isMagic() && value.whyMagic() == JS_OPTIMIZED_ARGUMENTS) {
-      frame.unaliasedLocal(i) = ObjectValue(*argsobj);
-    }
-  }
-}
-
-/* static */
-void JSScript::argumentsOptimizationFailed(JSContext* cx, HandleScript script) {
-  MOZ_ASSERT(script->isFunction());
-  MOZ_ASSERT(!script->needsArgsAnalysis());
-  MOZ_ASSERT(script->argumentsHasVarBinding());
-
-  /*
-   * It is possible that the arguments optimization has already failed,
-   * everything has been fixed up, but there was an outstanding magic value
-   * on the stack that has just now flowed into an apply. In this case, there
-   * is nothing to do; GuardFunApplySpeculation will patch in the real
-   * argsobj.
-   */
-  if (script->needsArgsObj()) {
+    MOZ_ASSERT(!env.aliasedBinding(bi).isMagic(JS_OPTIMIZED_OUT));
+#endif
     return;
   }
 
-  MOZ_ASSERT(!script->isGenerator());
-  MOZ_ASSERT(!script->isAsync());
-
-  script->setFlag(MutableFlags::NeedsArgsObj);
-
-  // Warp code depends on the NeedsArgsObj flag so invalidate the script
-  // (including compilations inlining the script).
-  {
-    jit::RecompileInfoVector invalid;
-    AddPendingInvalidation(invalid, script);
-    Invalidate(cx, invalid);
-  }
-
-  /*
-   * By design, the arguments optimization is only made when there are no
-   * outstanding cases of MagicValue(JS_OPTIMIZED_ARGUMENTS) at any points
-   * where the optimization could fail, other than an active invocation of
-   * 'f.apply(x, arguments)'. Thus, there are no outstanding values of
-   * MagicValue(JS_OPTIMIZED_ARGUMENTS) on the stack. However, there are
-   * three things that need fixup:
-   *  - there may be any number of activations of this script that don't have
-   *    an argsObj that now need one.
-   *  - jit code compiled (and possible active on the stack) with the static
-   *    assumption of !script->needsArgsObj();
-   *  - type inference data for the script assuming script->needsArgsObj
-   */
-  for (AllScriptFramesIter i(cx); !i.done(); ++i) {
-    /*
-     * We cannot reliably create an arguments object for Ion activations of
-     * this script.  To maintain the invariant that "script->needsArgsObj
-     * implies fp->hasArgsObj", the Ion bail mechanism will create an
-     * arguments object right after restoring the BaselineFrame and before
-     * entering Baseline code (in jit::FinishBailoutToBaseline).
-     */
-    if (i.isIon()) {
-      continue;
-    }
-    AbstractFramePtr frame = i.abstractFramePtr();
-    if (frame.isFunctionFrame() && frame.script() == script) {
-      /* We crash on OOM since cleaning up here would be complicated. */
-      AutoEnterOOMUnsafeRegion oomUnsafe;
-      ArgumentsObject* argsobj = ArgumentsObject::createExpected(cx, frame);
-      if (!argsobj) {
-        oomUnsafe.crash("JSScript::argumentsOptimizationFailed");
-      }
-      SetFrameArgumentsObject(cx, frame, script, argsobj);
-    }
+  MOZ_ASSERT(bi.location().kind() == BindingLocation::Kind::Frame);
+  uint32_t frameSlot = bi.location().slot();
+  if (frame.unaliasedLocal(frameSlot).isMagic(JS_OPTIMIZED_OUT)) {
+    frame.unaliasedLocal(frameSlot) = ObjectValue(*argsobj);
   }
 }
 
@@ -4919,7 +4820,7 @@ bool JSScript::hasLoops() {
 }
 
 bool JSScript::mayReadFrameArgsDirectly() {
-  return argumentsHasVarBinding() || hasRest();
+  return needsArgsObj() || hasRest();
 }
 
 void JSScript::resetWarmUpCounterToDelayIonCompilation() {

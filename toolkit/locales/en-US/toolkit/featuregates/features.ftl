@@ -22,6 +22,12 @@ experimental-features-media-avif-description = With this feature enabled, { -bra
 
 # The title of the experiment should be kept in English as it may be referenced
 # by various online articles and is technical in nature.
+experimental-features-media-jxl =
+    .label = Media: JPEG XL
+experimental-features-media-jxl-description = With this feature enabled, { -brand-short-name } supports the JPEG XL (JXL) format. This is an enhanced image file format that supports lossless transition from traditional JPEG files. See <a data-l10n-name="bugzilla">bug 1539075</a> for more details.
+
+# The title of the experiment should be kept in English as it may be referenced
+# by various online articles and is technical in nature.
 experimental-features-web-api-inputmode =
     .label = Web API: inputmode
 # "inputmode" and "contenteditable" are technical terms and shouldn't be translated.
@@ -78,6 +84,11 @@ experimental-features-webrtc-global-mute-toggles =
     .label = WebRTC Global Mute Toggles
 experimental-features-webrtc-global-mute-toggles-description = Add controls to the WebRTC global sharing indicator that allow users to globally mute their microphone and camera feeds.
 
+# Win32k Lockdown
+experimental-features-win32k-lockdown =
+    .label = Win32k Lockdown
+experimental-features-win32k-lockdown-description = Disable use of Win32k APIs in browser tabs. Provides an increase in security but may currently be unstable or glitchy. (Windows only)
+
 # JS JIT Warp project
 experimental-features-js-warp =
     .label = JavaScript JIT: Warp
@@ -92,10 +103,6 @@ experimental-features-fission-description = Fission (site isolation) is an exper
 experimental-features-multi-pip =
     .label = Multiple Picture-in-Picture Support
 experimental-features-multi-pip-description = Experimental support for allowing multiple Picture-in-Picture windows to be open at the same time.
-
-experimental-features-http3 =
-    .label = HTTP/3 protocol
-experimental-features-http3-description = Experimental support for the HTTP/3 protocol.
 
 # Search during IME
 experimental-features-ime-search =

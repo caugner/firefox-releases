@@ -557,17 +557,9 @@ const browsingContextTargetPrototype = {
         // @backward-compat { version 64 } Exposes a new trait to help identify
         // BrowsingContextActor's inherited actors from the client side.
         isBrowsingContext: true,
-        // @backward-compat { version 87 } Print & color scheme simulations
-        // should now be set using reconfigure.
-        reconfigureSupportsSimulationFeatures: true,
-        // @backward-compat { version 88 } Browsing context targets can compute
-        // the isTopLevelTarget flag on the server. Note that not all targets
-        // support this, so we might keep this trait until all top level targets
-        // can provide this flag consistently from the server.
+        // Browsing context targets can compute the isTopLevelTarget flag on the
+        // server. But other target actors don't support this yet. See Bug 1709314.
         supportsTopLevelTargetFlag: true,
-        // @backward-compat { version 88 } Added in version 88, will not be
-        // available on targets from older servers.
-        supportsFollowWindowGlobalLifeCycleFlag: true,
       },
     };
 
@@ -1375,7 +1367,13 @@ const browsingContextTargetPrototype = {
   _changeTopLevelDocument(window) {
     // Fake a will-navigate on the previous document
     // to let a chance to unregister it
-    this._willNavigate(this.window, window.location.href, null, true);
+    this._willNavigate({
+      window: this.window,
+      newURI: window.location.href,
+      request: null,
+      isFrameSwitching: true,
+      navigationStart: Date.now(),
+    });
 
     this._windowDestroyed(this.window, null, true);
 
@@ -1428,6 +1426,7 @@ const browsingContextTargetPrototype = {
       isTopLevel: isTopLevel,
       isBFCache,
       id: getWindowID(window),
+      isFrameSwitching,
     });
   },
 
@@ -1444,7 +1443,13 @@ const browsingContextTargetPrototype = {
    * Start notifying server and client about a new document being loaded in the
    * currently targeted browsing context.
    */
-  _willNavigate(window, newURI, request, isFrameSwitching = false) {
+  _willNavigate({
+    window,
+    newURI,
+    request,
+    isFrameSwitching = false,
+    navigationStart,
+  }) {
     let isTopLevel = window == this.window;
     let reset = false;
 
@@ -1469,10 +1474,11 @@ const browsingContextTargetPrototype = {
     // starts, (all pending user prompts are dealt with), but before the first
     // request starts.
     this.emit("will-navigate", {
-      window: window,
-      isTopLevel: isTopLevel,
-      newURI: newURI,
-      request: request,
+      window,
+      isTopLevel,
+      newURI,
+      request,
+      navigationStart,
     });
 
     // We don't do anything for inner frames here.
@@ -1674,9 +1680,11 @@ DebuggerProgressListener.prototype = {
     //  - reporting the contents of HTML loaded in the docshells,
     //  - or capturing stacks for the network monitor.
     //
-    // This attribute may already have been toggled by a parent BrowsingContext.
-    // Typically the parent process or tab target. Both are top level BrowsingContext.
-    if (docShell.browsingContext.top == docShell.browsingContext) {
+    // This flag is also set in frame-helper but in the case of the browser toolbox, we
+    // don't have the watcher enabled by default yet, and as a result we need to set it
+    // here for the parent process browsing context.
+    // This should be removed as part of Bug 1709529.
+    if (this._targetActor.typeName === "parentProcessTarget") {
       docShell.browsingContext.watchedByDevTools = true;
     }
   },
@@ -1711,11 +1719,9 @@ DebuggerProgressListener.prototype = {
       this._knownWindowIDs.delete(getWindowID(win));
     }
 
-    // We can only toggle this attribute on top level BrowsingContext,
-    // this will be propagated over the whole tree of BC.
-    // So we only need to set it from Parent Process Target
-    // and Tab Target. Tab's BrowsingContext are actually considered as top level BC.
-    if (docShell.browsingContext.top == docShell.browsingContext) {
+    // We only reset it for parent process target actor as the flag should be set in parent
+    // process, and thus is set elsewhere for other type of BrowsingContextActor.
+    if (this._targetActor.typeName === "parentProcessTarget") {
       docShell.browsingContext.watchedByDevTools = false;
     }
   },
@@ -1845,6 +1851,12 @@ DebuggerProgressListener.prototype = {
     const isDocument = flag & Ci.nsIWebProgressListener.STATE_IS_DOCUMENT;
     const isWindow = flag & Ci.nsIWebProgressListener.STATE_IS_WINDOW;
 
+    // Ideally, we would fetch navigationStart from window.performance.timing.navigationStart
+    // but as WindowGlobal isn't instantiated yet we don't have access to it.
+    // This is ultimately handed over to DocumentEventListener, which uses this.
+    // See its comment about WILL_NAVIGATE_TIME_SHIFT for more details about the related workaround.
+    const navigationStart = Date.now();
+
     // Catch any iframe location change
     if (isDocument && isStop) {
       // Watch document stop to ensure having the new iframe url.
@@ -1856,7 +1868,13 @@ DebuggerProgressListener.prototype = {
       // One of the earliest events that tells us a new URI
       // is being loaded in this window.
       const newURI = request instanceof Ci.nsIChannel ? request.URI.spec : null;
-      this._targetActor._willNavigate(window, newURI, request);
+      this._targetActor._willNavigate({
+        window,
+        newURI,
+        request,
+        isFrameSwitching: false,
+        navigationStart,
+      });
     }
     if (isWindow && isStop) {
       // Don't dispatch "navigate" event just yet when there is a redirect to

@@ -17,6 +17,8 @@ const { AppConstants } = ChromeUtils.import(
   "resource://gre/modules/AppConstants.jsm"
 );
 
+Cu.importGlobalProperties(["Glean"]);
+
 XPCOMUtils.defineLazyModuleGetters(this, {
   AboutNewTab: "resource:///modules/AboutNewTab.jsm",
   ActorManagerParent: "resource://gre/modules/ActorManagerParent.jsm",
@@ -50,6 +52,7 @@ XPCOMUtils.defineLazyModuleGetters(this, {
   FxAccounts: "resource://gre/modules/FxAccounts.jsm",
   HomePage: "resource:///modules/HomePage.jsm",
   Integration: "resource://gre/modules/Integration.jsm",
+  Interactions: "resource:///modules/Interactions.jsm",
   Log: "resource://gre/modules/Log.jsm",
   LoginBreaches: "resource:///modules/LoginBreaches.jsm",
   NetUtil: "resource://gre/modules/NetUtil.jsm",
@@ -208,21 +211,6 @@ let JSWINDOWACTORS = {
       },
     },
     matches: ["about:logins", "about:logins?*", "about:loginsimportreport"],
-  },
-
-  AboutNewInstall: {
-    parent: {
-      moduleURI: "resource:///actors/AboutNewInstallParent.jsm",
-    },
-    child: {
-      moduleURI: "resource:///actors/AboutNewInstallChild.jsm",
-
-      events: {
-        DOMWindowCreated: { capture: true },
-      },
-    },
-
-    matches: ["about:newinstall"],
   },
 
   AboutNewTab: {
@@ -515,6 +503,9 @@ let JSWINDOWACTORS = {
       moduleURI: "resource:///actors/FormValidationChild.jsm",
       events: {
         MozInvalidForm: {},
+        // Listening to ‘pageshow’ event is only relevant if an invalid form
+        // popup was open, so don't create the actor when fired.
+        pageshow: { createActor: false },
       },
     },
 
@@ -552,7 +543,9 @@ let JSWINDOWACTORS = {
         DOMLinkAdded: {},
         DOMLinkChanged: {},
         pageshow: {},
-        pagehide: {},
+        // The `pagehide` event is only used to clean up state which will not be
+        // present if the actor hasn't been created.
+        pagehide: { createActor: false },
       },
     },
 
@@ -671,7 +664,9 @@ let JSWINDOWACTORS = {
       events: {
         DOMContentLoaded: {},
         pageshow: { mozSystemGroup: true },
-        unload: {},
+        // The 'unload' event is only used to clean up state, and should not
+        // force actor creation.
+        unload: { createActor: false },
       },
     },
   },
@@ -688,7 +683,7 @@ let JSWINDOWACTORS = {
         ShieldPageEvent: { wantUntrusted: true },
       },
     },
-    matches: ["about:studies"],
+    matches: ["about:studies*"],
   },
 
   ASRouter: {
@@ -1982,6 +1977,35 @@ BrowserGlue.prototype = {
     });
   },
 
+  // Set up a listener to enable/disable the translation extension
+  // based on its preference.
+  _monitorTranslationsPref() {
+    const PREF = "extensions.translations.disabled";
+    const ID = "firefox-translations@mozilla.org";
+    const _checkTranslationsPref = async () => {
+      let addon = await AddonManager.getAddonByID(ID);
+      let disabled = Services.prefs.getBoolPref(PREF, false);
+      if (!addon && disabled) {
+        // not installed, bail out early.
+        return;
+      }
+      if (!disabled) {
+        // first time install of addon and install on firefox update
+        addon =
+          (await AddonManager.maybeInstallBuiltinAddon(
+            ID,
+            "0.4.0",
+            "resource://builtin-addons/translations/"
+          )) || addon;
+        await addon.enable();
+      } else if (addon) {
+        await addon.disable();
+      }
+    };
+    Services.prefs.addObserver(PREF, _checkTranslationsPref);
+    _checkTranslationsPref();
+  },
+
   _monitorHTTPSOnlyPref() {
     const PREF_ENABLED = "dom.security.https_only_mode";
     const PREF_WAS_ENABLED = "dom.security.https_only_mode_ever_enabled";
@@ -2107,27 +2131,6 @@ BrowserGlue.prototype = {
     Services.wm.addListener(windowListener);
   },
 
-  _showNewInstallModal() {
-    // Allow other observers of the same topic to run while we open the dialog.
-    Services.tm.dispatchToMainThread(() => {
-      let win = BrowserWindowTracker.getTopWindow();
-
-      let stack = win.gBrowser.getPanel().querySelector(".browserStack");
-      let mask = win.document.createXULElement("box");
-      mask.setAttribute("id", "content-mask");
-      stack.appendChild(mask);
-
-      Services.ww.openWindow(
-        win,
-        "chrome://browser/content/newInstall.xhtml",
-        "_blank",
-        "chrome,modal,resizable=no,centerscreen",
-        null
-      );
-      mask.remove();
-    });
-  },
-
   // All initial windows have opened.
   _onWindowsRestored: function BG__onWindowsRestored() {
     if (this._windowsWereRestored) {
@@ -2138,6 +2141,7 @@ BrowserGlue.prototype = {
     BrowserUsageTelemetry.init();
     SearchSERPTelemetry.init();
 
+    Interactions.init();
     ExtensionsUI.init();
 
     let signingRequired;
@@ -2199,12 +2203,8 @@ BrowserGlue.prototype = {
     this._monitorHTTPSOnlyPref();
     this._monitorIonPref();
     this._monitorIonStudies();
-
-    let pService = Cc["@mozilla.org/toolkit/profile-service;1"].getService(
-      Ci.nsIToolkitProfileService
-    );
-    if (pService.createdAlternateProfile) {
-      this._showNewInstallModal();
+    if (AppConstants.NIGHTLY_BUILD) {
+      this._monitorTranslationsPref();
     }
 
     FirefoxMonitor.init();
@@ -2438,15 +2438,6 @@ BrowserGlue.prototype = {
         },
       },
 
-      // request startup of Chromium remote debugging protocol
-      // (observer will only be notified when --remote-debugging-port is passed)
-      {
-        condition: AppConstants.ENABLE_REMOTE_AGENT,
-        task: () => {
-          Services.obs.notifyObservers(null, "remote-startup-requested");
-        },
-      },
-
       // Run TRR performance measurements for DoH.
       {
         task: () => {
@@ -2546,8 +2537,16 @@ BrowserGlue.prototype = {
         },
       },
 
-      // Marionette needs to be initialized as very last step
       {
+        task: () => {
+          this._collectProtonTelemetry();
+        },
+      },
+
+      // WebDriver components (Remote Agent and Marionette) need to be
+      // initialized as very last step.
+      {
+        condition: AppConstants.ENABLE_WEBDRIVER,
         task: () => {
           // Use idleDispatch a second time to run this after the per-window
           // idle tasks.
@@ -2556,11 +2555,15 @@ BrowserGlue.prototype = {
               null,
               "browser-startup-idle-tasks-finished"
             );
+
+            // Request startup of the Remote Agent (support for WebDriver BiDi
+            // and the partial Chrome DevTools protocol) before Marionette.
+            Services.obs.notifyObservers(null, "remote-startup-requested");
             Services.obs.notifyObservers(null, "marionette-startup-requested");
           });
         },
       },
-      // Do NOT add anything after marionette initialization.
+      // Do NOT add anything after WebDriver initialization.
     ];
 
     for (let task of idleTasks) {
@@ -2699,6 +2702,11 @@ BrowserGlue.prototype = {
     );
   },
 
+  _quitSource: "unknown",
+  _registerQuitSource(source) {
+    this._quitSource = source;
+  },
+
   _onQuitRequest: function BG__onQuitRequest(aCancelQuit, aQuitType) {
     // If user has already dismissed quit request, then do nothing
     if (aCancelQuit instanceof Ci.nsISupportsPRBool && aCancelQuit.data) {
@@ -2727,6 +2735,7 @@ BrowserGlue.prototype = {
 
     var windowcount = 0;
     var pagecount = 0;
+    let pinnedcount = 0;
     for (let win of BrowserWindowTracker.orderedWindows) {
       if (win.closed) {
         continue;
@@ -2734,6 +2743,7 @@ BrowserGlue.prototype = {
       windowcount++;
       let tabbrowser = win.gBrowser;
       if (tabbrowser) {
+        pinnedcount += tabbrowser._numPinnedTabs;
         pagecount +=
           tabbrowser.browsers.length -
           tabbrowser._numPinnedTabs -
@@ -2771,6 +2781,9 @@ BrowserGlue.prototype = {
     }
 
     let win = BrowserWindowTracker.getTopWindow();
+
+    // Our prompt for quitting is most important, so replace others.
+    win.gDialogBox.replaceDialogIfOpen();
 
     let warningMessage;
     // More than 1 window. Compose our own message.
@@ -2828,6 +2841,28 @@ BrowserGlue.prototype = {
       checkboxLabel,
       warnOnClose
     );
+    Services.telemetry.setEventRecordingEnabled("close_tab_warning", true);
+    let warnCheckbox = warnOnClose.value ? "checked" : "unchecked";
+    if (!checkboxLabel) {
+      warnCheckbox = "not-present";
+    }
+    Services.telemetry.recordEvent(
+      "close_tab_warning",
+      "shown",
+      "application",
+      null,
+      {
+        source: this._quitSource,
+        button: buttonPressed == 0 ? "close" : "cancel",
+        warn_checkbox: warnCheckbox,
+        closing_wins: "" + windowcount,
+        closing_tabs: "" + (pagecount + pinnedcount),
+        will_restore: sessionWillBeRestored ? "yes" : "no",
+      }
+    );
+
+    this._quitSource = "unknown";
+
     // If the user has unticked the box, and has confirmed closing, stop showing
     // the warning.
     if (!sessionWillBeRestored && buttonPressed == 0 && !warnOnClose.value) {
@@ -4181,6 +4216,14 @@ BrowserGlue.prototype = {
     }
   },
 
+  _collectProtonTelemetry() {
+    let protonEnabled = Services.prefs.getBoolPref(
+      "browser.proton.enabled",
+      true
+    );
+    Glean.browserUi.protonEnabled.set(protonEnabled);
+  },
+
   QueryInterface: ChromeUtils.generateQI([
     "nsIObserver",
     "nsISupportsWeakReference",
@@ -4602,6 +4645,10 @@ var DefaultBrowserCheck = {
     );
     // Resolve the translations for the prompt elements and return only the
     // string values
+    const pinMessage =
+      AppConstants.platform == "macosx"
+        ? "default-browser-prompt-message-pin-mac"
+        : "default-browser-prompt-message-pin";
     let [promptTitle, promptMessage, askLabel, yesButton, notNowButton] = (
       await win.document.l10n.formatMessages([
         {
@@ -4610,9 +4657,7 @@ var DefaultBrowserCheck = {
             : "default-browser-prompt-title-alt",
         },
         {
-          id: needPin
-            ? "default-browser-prompt-message-pin"
-            : "default-browser-prompt-message-alt",
+          id: needPin ? pinMessage : "default-browser-prompt-message-alt",
         },
         { id: "default-browser-prompt-checkbox-not-again-label" },
         {
@@ -4966,7 +5011,7 @@ var AboutHomeStartupCache = {
 
     this.setDeferredResult(this.CACHE_RESULT_SCALARS.UNSET);
 
-    this._enabled = Services.prefs.getBoolPref(this.ENABLED_PREF, false);
+    this._enabled = NimbusFeatures.abouthomecache.isEnabled();
 
     if (!this._enabled) {
       this.recordResult(this.CACHE_RESULT_SCALARS.DISABLED);
@@ -5013,7 +5058,7 @@ var AboutHomeStartupCache = {
     });
 
     let lci = Services.loadContextInfo.default;
-    let storage = Services.cache2.diskCacheStorage(lci, false);
+    let storage = Services.cache2.diskCacheStorage(lci);
     try {
       storage.asyncOpenURI(
         this.aboutHomeURI,
@@ -5745,11 +5790,11 @@ var AboutHomeStartupCache = {
 
   /** nsICacheEntryOpenCallback **/
 
-  onCacheEntryCheck(aEntry, aApplicationCache) {
+  onCacheEntryCheck(aEntry) {
     return Ci.nsICacheEntryOpenCallback.ENTRY_WANTED;
   },
 
-  onCacheEntryAvailable(aEntry, aNew, aApplicationCache, aResult) {
+  onCacheEntryAvailable(aEntry, aNew, aResult) {
     this.log.trace("Cache entry is available.");
 
     this._cacheEntry = aEntry;

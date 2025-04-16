@@ -16,7 +16,6 @@
 #include "mozilla/MathAlgorithms.h"
 #include "mozilla/ScopeExit.h"
 #include "mozilla/Tuple.h"
-#include "mozilla/Unused.h"
 
 #include <limits>
 #include <type_traits>
@@ -933,6 +932,7 @@ void CodeGenerator::visitOutOfLineICFallback(OutOfLineICFallback* ool) {
     case CacheKind::TypeOf:
     case CacheKind::ToBool:
     case CacheKind::GetIntrinsic:
+    case CacheKind::NewArray:
     case CacheKind::NewObject:
       MOZ_CRASH("Unsupported IC");
   }
@@ -3971,6 +3971,19 @@ void CodeGenerator::visitNewLexicalEnvironmentObject(
   callVM<Fn, BlockLexicalEnvironmentObject::create>(lir);
 }
 
+void CodeGenerator::visitNewClassBodyEnvironmentObject(
+    LNewClassBodyEnvironmentObject* lir) {
+  pushArg(Imm32(gc::DefaultHeap));
+  pushArg(ToRegister(lir->enclosing()));
+  pushArg(ImmGCPtr(lir->mir()->scope()));
+
+  using Fn =
+      ClassBodyLexicalEnvironmentObject* (*)(JSContext*,
+                                             Handle<ClassBodyScope*>,
+                                             HandleObject, gc::InitialHeap);
+  callVM<Fn, ClassBodyLexicalEnvironmentObject::create>(lir);
+}
+
 void CodeGenerator::visitCopyLexicalEnvironmentObject(
     LCopyLexicalEnvironmentObject* lir) {
   pushArg(Imm32(lir->mir()->copySlots()));
@@ -4603,15 +4616,6 @@ void CodeGenerator::visitGuardValue(LGuardValue* lir) {
   Value expected = lir->mir()->expected();
   Label bail;
   masm.branchTestValue(Assembler::NotEqual, input, expected, &bail);
-  bailoutFrom(&bail, lir->snapshot());
-}
-
-void CodeGenerator::visitGuardNotOptimizedArguments(
-    LGuardNotOptimizedArguments* lir) {
-  ValueOperand input = ToValue(lir, LGuardNotOptimizedArguments::Input);
-  Label bail;
-  masm.branchTestValue(Assembler::Equal, input,
-                       MagicValue(JS_OPTIMIZED_ARGUMENTS), &bail);
   bailoutFrom(&bail, lir->snapshot());
 }
 
@@ -7047,6 +7051,62 @@ void CodeGenerator::visitNewObject(LNewObject* lir) {
 void CodeGenerator::visitOutOfLineNewObject(OutOfLineNewObject* ool) {
   visitNewObjectVMCall(ool->lir());
   masm.jump(ool->rejoin());
+}
+
+void CodeGenerator::visitNewPlainObject(LNewPlainObject* lir) {
+  Register objReg = ToRegister(lir->output());
+  Register temp0Reg = ToRegister(lir->temp0());
+  Register temp1Reg = ToRegister(lir->temp1());
+  Register shapeReg = ToRegister(lir->temp2());
+
+  auto* mir = lir->mir();
+  const Shape* shape = mir->shape();
+  gc::InitialHeap initialHeap = mir->initialHeap();
+  gc::AllocKind allocKind = mir->allocKind();
+
+  using Fn =
+      JSObject* (*)(JSContext*, HandleShape, gc::AllocKind, gc::InitialHeap);
+  OutOfLineCode* ool = oolCallVM<Fn, NewPlainObject>(
+      lir,
+      ArgList(ImmGCPtr(shape), Imm32(int32_t(allocKind)), Imm32(initialHeap)),
+      StoreRegisterTo(objReg));
+
+  masm.movePtr(ImmGCPtr(shape), shapeReg);
+  masm.createPlainGCObject(objReg, shapeReg, temp0Reg, temp1Reg,
+                           mir->numFixedSlots(), mir->numDynamicSlots(),
+                           allocKind, initialHeap, ool->entry());
+
+  masm.bind(ool->rejoin());
+}
+
+void CodeGenerator::visitNewArrayObject(LNewArrayObject* lir) {
+  Register objReg = ToRegister(lir->output());
+  Register temp0Reg = ToRegister(lir->temp0());
+  Register shapeReg = ToRegister(lir->temp1());
+
+  auto* mir = lir->mir();
+  uint32_t arrayLength = mir->length();
+
+  gc::AllocKind allocKind = GuessArrayGCKind(arrayLength);
+  MOZ_ASSERT(CanChangeToBackgroundAllocKind(allocKind, &ArrayObject::class_));
+  allocKind = ForegroundToBackgroundAllocKind(allocKind);
+
+  uint32_t slotCount = GetGCKindSlots(allocKind);
+  MOZ_ASSERT(slotCount >= ObjectElements::VALUES_PER_HEADER);
+  uint32_t arrayCapacity = slotCount - ObjectElements::VALUES_PER_HEADER;
+
+  const Shape* shape = mir->shape();
+
+  using Fn = ArrayObject* (*)(JSContext*, uint32_t, NewObjectKind);
+  OutOfLineCode* ool = oolCallVM<Fn, NewArrayOperation>(
+      lir, ArgList(Imm32(arrayLength), Imm32(GenericObject)),
+      StoreRegisterTo(objReg));
+
+  masm.movePtr(ImmPtr(shape), shapeReg);
+  masm.createArrayWithFixedElements(objReg, shapeReg, temp0Reg, arrayLength,
+                                    arrayCapacity, allocKind,
+                                    mir->initialHeap(), ool->entry());
+  masm.bind(ool->rejoin());
 }
 
 void CodeGenerator::visitNewNamedLambdaObject(LNewNamedLambdaObject* lir) {
@@ -9701,13 +9761,35 @@ void CodeGenerator::visitIsNullOrLikeUndefinedAndBranchT(
   testObjectEmulatesUndefined(input, ifTrueLabel, ifFalseLabel, scratch, ool);
 }
 
-void CodeGenerator::visitSameValueD(LSameValueD* lir) {
+void CodeGenerator::visitSameValueDouble(LSameValueDouble* lir) {
   FloatRegister left = ToFloatRegister(lir->left());
   FloatRegister right = ToFloatRegister(lir->right());
   FloatRegister temp = ToFloatRegister(lir->tempFloat());
   Register output = ToRegister(lir->output());
 
   masm.sameValueDouble(left, right, temp, output);
+}
+
+void CodeGenerator::visitSameValue(LSameValue* lir) {
+  ValueOperand lhs = ToValue(lir, LSameValue::LhsIndex);
+  ValueOperand rhs = ToValue(lir, LSameValue::RhsIndex);
+  Register output = ToRegister(lir->output());
+
+  Label call, done;
+
+  using Fn = bool (*)(JSContext*, HandleValue, HandleValue, bool*);
+  OutOfLineCode* ool =
+      oolCallVM<Fn, SameValue>(lir, ArgList(lhs, rhs), StoreRegisterTo(output));
+
+  // First check to see if the values have identical bits.
+  // This is correct for SameValue because SameValue(NaN,NaN) is true,
+  // and SameValue(0,-0) is false.
+  masm.branch64(Assembler::NotEqual, lhs.toRegister64(), rhs.toRegister64(),
+                ool->entry());
+  masm.move32(Imm32(1), output);
+
+  // If this fails, call SameValue.
+  masm.bind(ool->rejoin());
 }
 
 void CodeGenerator::emitConcat(LInstruction* lir, Register lhs, Register rhs,
@@ -11105,7 +11187,6 @@ void CodeGenerator::visitGetFrameArgument(LGetFrameArgument* lir) {
 void CodeGenerator::emitRest(LInstruction* lir, Register array,
                              Register numActuals, Register temp0,
                              Register temp1, unsigned numFormals,
-                             JSObject* templateObject, bool saveAndRestore,
                              Register resultreg) {
   // Compute actuals() + numFormals.
   size_t actualsOffset = frameSize() + JitFrameLayout::offsetOfActualArgs();
@@ -11125,23 +11206,12 @@ void CodeGenerator::emitRest(LInstruction* lir, Register array,
   }
   masm.bind(&joinLength);
 
-  if (saveAndRestore) {
-    saveLive(lir);
-  }
-
   pushArg(array);
-  pushArg(ImmGCPtr(templateObject));
   pushArg(temp1);
   pushArg(temp0);
 
-  using Fn =
-      JSObject* (*)(JSContext*, uint32_t, Value*, HandleObject, HandleObject);
+  using Fn = JSObject* (*)(JSContext*, uint32_t, Value*, HandleObject);
   callVM<Fn, InitRestParameter>(lir);
-
-  if (saveAndRestore) {
-    storePointerResultTo(resultreg);
-    restoreLive(lir);
-  }
 }
 
 void CodeGenerator::visitRest(LRest* lir) {
@@ -11150,20 +11220,33 @@ void CodeGenerator::visitRest(LRest* lir) {
   Register temp1 = ToRegister(lir->getTemp(1));
   Register temp2 = ToRegister(lir->getTemp(2));
   unsigned numFormals = lir->mir()->numFormals();
-  ArrayObject* templateObject = lir->mir()->templateObject();
 
-  Label joinAlloc, failAlloc;
-  TemplateObject templateObj(templateObject);
-  masm.createGCObject(temp2, temp0, templateObj, gc::DefaultHeap, &failAlloc);
-  masm.jump(&joinAlloc);
-  {
-    masm.bind(&failAlloc);
+  if (Shape* shape = lir->mir()->shape()) {
+    uint32_t arrayLength = 0;
+    uint32_t arrayCapacity = 2;
+    gc::AllocKind allocKind = GuessArrayGCKind(arrayCapacity);
+    MOZ_ASSERT(CanChangeToBackgroundAllocKind(allocKind, &ArrayObject::class_));
+    allocKind = ForegroundToBackgroundAllocKind(allocKind);
+    MOZ_ASSERT(GetGCKindSlots(allocKind) ==
+               arrayCapacity + ObjectElements::VALUES_PER_HEADER);
+
+    Label joinAlloc, failAlloc;
+    masm.movePtr(ImmGCPtr(shape), temp0);
+    masm.createArrayWithFixedElements(temp2, temp0, temp1, arrayLength,
+                                      arrayCapacity, allocKind, gc::DefaultHeap,
+                                      &failAlloc);
+    masm.jump(&joinAlloc);
+    {
+      masm.bind(&failAlloc);
+      masm.movePtr(ImmPtr(nullptr), temp2);
+    }
+    masm.bind(&joinAlloc);
+  } else {
     masm.movePtr(ImmPtr(nullptr), temp2);
   }
-  masm.bind(&joinAlloc);
 
-  emitRest(lir, temp2, numActuals, temp0, temp1, numFormals, templateObject,
-           false, ToRegister(lir->output()));
+  emitRest(lir, temp2, numActuals, temp0, temp1, numFormals,
+           ToRegister(lir->output()));
 }
 
 // Create a stackmap from the given safepoint, with the structure:
@@ -12282,65 +12365,137 @@ class OutOfLineTypeOfV : public OutOfLineCodeBase<CodeGenerator> {
   LTypeOfV* ins() const { return ins_; }
 };
 
+void CodeGenerator::emitTypeOfName(JSValueType type, Register output) {
+  const JSAtomState& names = gen->runtime->names();
+
+  switch (type) {
+    case JSVAL_TYPE_OBJECT:
+      masm.movePtr(ImmGCPtr(names.object), output);
+      break;
+    case JSVAL_TYPE_DOUBLE:
+    case JSVAL_TYPE_INT32:
+      masm.movePtr(ImmGCPtr(names.number), output);
+      break;
+    case JSVAL_TYPE_BOOLEAN:
+      masm.movePtr(ImmGCPtr(names.boolean), output);
+      break;
+    case JSVAL_TYPE_UNDEFINED:
+      masm.movePtr(ImmGCPtr(names.undefined), output);
+      break;
+    case JSVAL_TYPE_NULL:
+      masm.movePtr(ImmGCPtr(names.object), output);
+      break;
+    case JSVAL_TYPE_STRING:
+      masm.movePtr(ImmGCPtr(names.string), output);
+      break;
+    case JSVAL_TYPE_SYMBOL:
+      masm.movePtr(ImmGCPtr(names.symbol), output);
+      break;
+    case JSVAL_TYPE_BIGINT:
+      masm.movePtr(ImmGCPtr(names.bigint), output);
+      break;
+    default:
+      MOZ_CRASH("Unsupported JSValueType");
+  }
+}
+
+void CodeGenerator::emitTypeOfCheck(JSValueType type, Register tag,
+                                    Register output, Label* done,
+                                    Label* oolObject) {
+  if (type == JSVAL_TYPE_OBJECT) {
+    // The input may be a callable object (result is "function") or
+    // may emulate undefined (result is "undefined"). Use an OOL path.
+    masm.branchTestObject(Assembler::Equal, tag, oolObject);
+    return;
+  }
+
+  Label notMatch;
+  switch (type) {
+    case JSVAL_TYPE_DOUBLE:
+    case JSVAL_TYPE_INT32:
+      masm.branchTestNumber(Assembler::NotEqual, tag, &notMatch);
+      break;
+    case JSVAL_TYPE_BOOLEAN:
+      masm.branchTestBoolean(Assembler::NotEqual, tag, &notMatch);
+      break;
+    case JSVAL_TYPE_UNDEFINED:
+      masm.branchTestUndefined(Assembler::NotEqual, tag, &notMatch);
+      break;
+    case JSVAL_TYPE_NULL:
+      masm.branchTestNull(Assembler::NotEqual, tag, &notMatch);
+      break;
+    case JSVAL_TYPE_STRING:
+      masm.branchTestString(Assembler::NotEqual, tag, &notMatch);
+      break;
+    case JSVAL_TYPE_SYMBOL:
+      masm.branchTestSymbol(Assembler::NotEqual, tag, &notMatch);
+      break;
+    case JSVAL_TYPE_BIGINT:
+      masm.branchTestBigInt(Assembler::NotEqual, tag, &notMatch);
+      break;
+    default:
+      MOZ_CRASH("Unsupported JSValueType");
+  }
+  emitTypeOfName(type, output);
+  masm.jump(done);
+  masm.bind(&notMatch);
+}
+
 void CodeGenerator::visitTypeOfV(LTypeOfV* lir) {
   const ValueOperand value = ToValue(lir, LTypeOfV::Input);
   Register output = ToRegister(lir->output());
   Register tag = masm.extractTag(value, output);
 
-  const JSAtomState& names = gen->runtime->names();
   Label done;
 
-  // The input may be a callable object (result is "function") or may
-  // emulate undefined (result is "undefined"). Use an OOL path.
   auto* ool = new (alloc()) OutOfLineTypeOfV(lir);
   addOutOfLineCode(ool, lir->mir());
-  masm.branchTestObject(Assembler::Equal, tag, ool->entry());
 
-  Label notNumber;
-  masm.branchTestNumber(Assembler::NotEqual, tag, &notNumber);
-  masm.movePtr(ImmGCPtr(names.number), output);
-  masm.jump(&done);
-  masm.bind(&notNumber);
+  const uint32_t NumTypes = 8;
+  const auto& defaultOrder = {JSVAL_TYPE_OBJECT,    JSVAL_TYPE_DOUBLE,
+                              JSVAL_TYPE_UNDEFINED, JSVAL_TYPE_NULL,
+                              JSVAL_TYPE_BOOLEAN,   JSVAL_TYPE_STRING,
+                              JSVAL_TYPE_SYMBOL,    JSVAL_TYPE_BIGINT};
+  MOZ_ASSERT(defaultOrder.size() == NumTypes);
 
-  Label notUndefined;
-  masm.branchTestUndefined(Assembler::NotEqual, tag, &notUndefined);
-  masm.movePtr(ImmGCPtr(names.undefined), output);
-  masm.jump(&done);
-  masm.bind(&notUndefined);
+  Vector<JSValueType, NumTypes, SystemAllocPolicy> remaining;
+  MOZ_ALWAYS_TRUE(remaining.reserve(defaultOrder.size()));
+  remaining.infallibleAppend(defaultOrder.begin(), defaultOrder.end());
 
-  Label notNull;
-  masm.branchTestNull(Assembler::NotEqual, tag, &notNull);
-  masm.movePtr(ImmGCPtr(names.object), output);
-  masm.jump(&done);
-  masm.bind(&notNull);
+  uint32_t numRemaining = remaining.length();
 
-  Label notBoolean;
-  masm.branchTestBoolean(Assembler::NotEqual, tag, &notBoolean);
-  masm.movePtr(ImmGCPtr(names.boolean), output);
-  masm.jump(&done);
-  masm.bind(&notBoolean);
+  // Generate checks for previously observed types first.
+  // The TypeDataList is sorted by descending frequency.
+  for (auto& observed : lir->mir()->observedTypes()) {
+    JSValueType type = observed.type();
 
-  Label notString;
-  masm.branchTestString(Assembler::NotEqual, tag, &notString);
-  masm.movePtr(ImmGCPtr(names.string), output);
-  masm.jump(&done);
-  masm.bind(&notString);
+    // Unify number types.
+    if (type == JSVAL_TYPE_INT32) {
+      type = JSVAL_TYPE_DOUBLE;
+    }
 
-  Label notSymbol;
-  masm.branchTestSymbol(Assembler::NotEqual, tag, &notSymbol);
-  masm.movePtr(ImmGCPtr(names.symbol), output);
-  masm.jump(&done);
-  masm.bind(&notSymbol);
+    emitTypeOfCheck(type, tag, output, &done, ool->entry());
+    MOZ_ASSERT(std::count(remaining.begin(), remaining.end(), type) == 1);
+    remaining.eraseIfEqual(type);
+    numRemaining--;
+  }
 
-  // At this point it must be a BigInt.
+  // Generate checks for remaining types.
+  for (auto type : remaining) {
+    if (numRemaining == 1) {
+      // We can skip the check for the last remaining type.
 #ifdef DEBUG
-  Label isBigInt;
-  masm.branchTestBigInt(Assembler::Equal, tag, &isBigInt);
-  masm.assumeUnreachable("Unexpected Value type in visitTypeOfV");
-  masm.bind(&isBigInt);
+      emitTypeOfCheck(type, tag, output, &done, ool->entry());
+      masm.assumeUnreachable("Unexpected Value type in visitTypeOfV");
+#else
+      emitTypeOfName(type, output);
 #endif
-  masm.movePtr(ImmGCPtr(names.bigint), output);
-  // Fall through to |done|.
+    } else {
+      emitTypeOfCheck(type, tag, output, &done, ool->entry());
+    }
+    numRemaining--;
+  }
+  MOZ_ASSERT(numRemaining == 0);
 
   masm.bind(&done);
   masm.bind(ool->rejoin());

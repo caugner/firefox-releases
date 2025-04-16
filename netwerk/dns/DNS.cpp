@@ -179,6 +179,11 @@ bool IsLoopbackHostname(const nsACString& aAsciiHost) {
          StringEndsWith(host, ".localhost"_ns);
 }
 
+bool HostIsIPLiteral(const nsACString& aAsciiHost) {
+  NetAddr addr;
+  return NS_SUCCEEDED(addr.InitFromString(aAsciiHost));
+}
+
 bool NetAddr::IsIPAddrAny() const {
   if (this->raw.family == AF_INET) {
     if (this->inet.ip == htonl(INADDR_ANY)) {
@@ -197,6 +202,24 @@ bool NetAddr::IsIPAddrAny() const {
 }
 
 NetAddr::NetAddr(const PRNetAddr* prAddr) { PRNetAddrToNetAddr(prAddr, this); }
+
+nsresult NetAddr::InitFromString(const nsACString& aString, uint16_t aPort) {
+  PRNetAddr prAddr{};
+  memset(&prAddr, 0, sizeof(PRNetAddr));
+  if (PR_StringToNetAddr(PromiseFlatCString(aString).get(), &prAddr) !=
+      PR_SUCCESS) {
+    return NS_ERROR_FAILURE;
+  }
+
+  PRNetAddrToNetAddr(&prAddr, this);
+
+  if (this->raw.family == PR_AF_INET) {
+    this->inet.port = PR_htons(aPort);
+  } else if (this->raw.family == PR_AF_INET6) {
+    this->inet6.port = PR_htons(aPort);
+  }
+  return NS_OK;
+}
 
 bool NetAddr::IsIPAddrV4() const { return this->raw.family == AF_INET; }
 

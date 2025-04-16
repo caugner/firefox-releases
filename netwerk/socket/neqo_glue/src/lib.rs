@@ -83,6 +83,7 @@ impl NeqoHttp3Conn {
             "h3-29" => QuicVersion::Draft29,
             "h3-28" => QuicVersion::Draft28,
             "h3-27" => QuicVersion::Draft27,
+            "h3" => QuicVersion::Version1,
             _ => return Err(NS_ERROR_INVALID_ARG),
         };
 
@@ -91,8 +92,7 @@ impl NeqoHttp3Conn {
             Rc::new(RefCell::new(RandomConnectionIdGenerator::new(3))),
             local,
             remote,
-            ConnectionParameters::default()
-                .quic_version(quic_version),
+            ConnectionParameters::default().quic_version(quic_version),
             &http3_settings,
             Instant::now(),
         ) {

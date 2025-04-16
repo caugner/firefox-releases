@@ -58,6 +58,16 @@ var observer = {
             index: event.index,
             itemType: event.itemType,
           });
+          break;
+        case "bookmark-moved":
+          this.itemsMoved.set(event.guid, {
+            oldParentGuid: event.oldParentGuid,
+            oldIndex: event.oldIndex,
+            newParentGuid: event.parentGuid,
+            newIndex: event.index,
+            itemType: event.itemType,
+          });
+          break;
       }
     }
   },
@@ -90,26 +100,6 @@ var observer = {
     };
     changesForGuid.set(aProperty, change);
   },
-
-  onItemMoved(
-    aItemId,
-    aOldParent,
-    aOldIndex,
-    aNewParent,
-    aNewIndex,
-    aItemType,
-    aGuid,
-    aOldParentGuid,
-    aNewParentGuid
-  ) {
-    this.itemsMoved.set(aGuid, {
-      oldParentGuid: aOldParentGuid,
-      oldIndex: aOldIndex,
-      newParentGuid: aNewParentGuid,
-      newIndex: aNewIndex,
-      itemType: aItemType,
-    });
-  },
 };
 observer.reset();
 
@@ -120,13 +110,13 @@ function run_test() {
   bmsvc.addObserver(observer);
   observer.handlePlacesEvents = observer.handlePlacesEvents.bind(observer);
   obsvc.addListener(
-    ["bookmark-added", "bookmark-removed"],
+    ["bookmark-added", "bookmark-removed", "bookmark-moved"],
     observer.handlePlacesEvents
   );
   registerCleanupFunction(function() {
     bmsvc.removeObserver(observer);
     obsvc.removeListener(
-      ["bookmark-added", "bookmark-removed"],
+      ["bookmark-added", "bookmark-removed", "bookmark-moved"],
       observer.handlePlacesEvents
     );
   });

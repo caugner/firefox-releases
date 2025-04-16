@@ -137,6 +137,7 @@ MSG_DEF(JSMSG_JSON_CYCLIC_VALUE,       0, JSEXN_TYPEERR, "cyclic object value")
 
 // Runtime errors
 MSG_DEF(JSMSG_ASSIGN_TO_CALL,          0, JSEXN_REFERENCEERR, "cannot assign to function call")
+MSG_DEF(JSMSG_ASSIGN_TO_PRIVATE_METHOD, 0, JSEXN_TYPEERR, "cannot assign to private method")
 MSG_DEF(JSMSG_BAD_INSTANCEOF_RHS,      1, JSEXN_TYPEERR, "invalid 'instanceof' operand {0}")
 MSG_DEF(JSMSG_BAD_PROTOTYPE,           1, JSEXN_TYPEERR, "'prototype' property of {0} is not an object")
 MSG_DEF(JSMSG_IN_NOT_OBJECT,           1, JSEXN_TYPEERR, "right-hand side of 'in' should be an object, got {0}")
@@ -373,6 +374,7 @@ MSG_DEF(JSMSG_UNNAMED_FUNCTION_STMT,   0, JSEXN_SYNTAXERR, "function statement r
 MSG_DEF(JSMSG_UNPAIRED_SURROGATE_EXPORT, 0, JSEXN_SYNTAXERR, "module export name contains unpaired surrogate")
 MSG_DEF(JSMSG_UNTERMINATED_COMMENT,    0, JSEXN_SYNTAXERR, "unterminated comment")
 MSG_DEF(JSMSG_UNTERMINATED_REGEXP,     0, JSEXN_SYNTAXERR, "unterminated regular expression literal")
+MSG_DEF(JSMSG_UNTERMINATED_STATIC_CLASS_BLOCK, 0, JSEXN_SYNTAXERR, "unterminated static class block")
 MSG_DEF(JSMSG_EOF_BEFORE_END_OF_LITERAL,1,JSEXN_SYNTAXERR, "{0} literal not terminated before end of script")
 MSG_DEF(JSMSG_EOL_BEFORE_END_OF_STRING,1, JSEXN_SYNTAXERR, "{0} string literal contains an unescaped line break")
 MSG_DEF(JSMSG_EOF_IN_ESCAPE_IN_LITERAL,1, JSEXN_SYNTAXERR, "reached end of script in the middle of an escape sequence in a {0} literal")
@@ -390,7 +392,9 @@ MSG_DEF(JSMSG_BAD_NEW_OPTIONAL,        0, JSEXN_SYNTAXERR, "new keyword cannot b
 MSG_DEF(JSMSG_BAD_OPTIONAL_TEMPLATE,   0, JSEXN_SYNTAXERR, "tagged template cannot be used with optional chain")
 MSG_DEF(JSMSG_ESCAPED_KEYWORD,         0, JSEXN_SYNTAXERR, "keywords must be written literally, without embedded escapes")
 MSG_DEF(JSMSG_PRIVATE_FIELDS_NOT_SUPPORTED, 0, JSEXN_SYNTAXERR, "private fields are not currently supported")
+MSG_DEF(JSMSG_CLASS_STATIC_NOT_SUPPORTED, 0, JSEXN_SYNTAXERR, "class static blocks are not currently supported")
 MSG_DEF(JSMSG_ILLEGAL_PRIVATE_FIELD,   0, JSEXN_SYNTAXERR, "private fields aren't valid in this context")
+MSG_DEF(JSMSG_ILLEGAL_PRIVATE_NAME,    0, JSEXN_SYNTAXERR, "private names aren't valid in this context")
 MSG_DEF(JSMSG_PRIVATE_FIELD_DOUBLE,    0, JSEXN_TYPEERR, "Initializing an object twice is an error with private fields")
 
 // UTF-8 source text encoding errors
@@ -560,6 +564,7 @@ MSG_DEF(JSMSG_DEBUG_PROMISE_NOT_RESOLVED, 0, JSEXN_TYPEERR, "Promise hasn't been
 MSG_DEF(JSMSG_DEBUG_PROMISE_NOT_FULFILLED, 0, JSEXN_TYPEERR, "Promise hasn't been fulfilled")
 MSG_DEF(JSMSG_DEBUG_PROMISE_NOT_REJECTED, 0, JSEXN_TYPEERR, "Promise hasn't been rejected")
 MSG_DEF(JSMSG_DEBUG_NO_BINARY_SOURCE,  0, JSEXN_ERR, "WebAssembly binary source is not available")
+MSG_DEF(JSMSG_DEBUG_NO_PRIVATE_METHOD, 0, JSEXN_ERR, "private method calls aren't available in this context")
 
 // Testing functions
 MSG_DEF(JSMSG_TESTING_SCRIPTS_ONLY, 0, JSEXN_TYPEERR, "only works on scripts")
@@ -616,6 +621,7 @@ MSG_DEF(JSMSG_DUPLICATE_CAPTURE_NAME,      0, JSEXN_SYNTAXERR, "duplicate captur
 MSG_DEF(JSMSG_INVALID_NAMED_REF,           0, JSEXN_SYNTAXERR, "invalid named reference in regular expression")
 MSG_DEF(JSMSG_INVALID_NAMED_CAPTURE_REF,   0, JSEXN_SYNTAXERR, "invalid named capture reference in regular expression")
 MSG_DEF(JSMSG_INCOMPATIBLE_REGEXP_GETTER, 2, JSEXN_TYPEERR, "RegExp.prototype.{0} getter called on non-RegExp object: {1}")
+MSG_DEF(JSMSG_SELFHOST_DECORATOR_MUST_FOLLOW, 0, JSEXN_TYPEERR, "selfhost decorator must immediately follow target function")
 
 // Self-hosting
 MSG_DEF(JSMSG_DEFAULT_LOCALE_ERROR,    0, JSEXN_ERR, "internal error getting the default locale")
@@ -636,7 +642,12 @@ MSG_DEF(JSMSG_SHORT_ARRAY_BUFFER_RETURNED, 2, JSEXN_TYPEERR, "expected ArrayBuff
 MSG_DEF(JSMSG_TYPED_ARRAY_BAD_ARGS,    0, JSEXN_TYPEERR, "invalid arguments")
 MSG_DEF(JSMSG_TYPED_ARRAY_NEGATIVE_ARG,1, JSEXN_RANGEERR, "argument {0} must be >= 0")
 MSG_DEF(JSMSG_TYPED_ARRAY_DETACHED,    0, JSEXN_TYPEERR, "attempting to access detached ArrayBuffer")
-MSG_DEF(JSMSG_TYPED_ARRAY_CONSTRUCT_BOUNDS, 0, JSEXN_RANGEERR, "attempting to construct out-of-bounds TypedArray on ArrayBuffer")
+MSG_DEF(JSMSG_TYPED_ARRAY_CONSTRUCT_OFFSET_BOUNDS, 2, JSEXN_RANGEERR, "start offset of {0}Array should be a multiple of {1}")
+MSG_DEF(JSMSG_TYPED_ARRAY_CONSTRUCT_OFFSET_MISALIGNED, 2, JSEXN_RANGEERR, "buffer length for {0}Array should be a multiple of {1}")
+MSG_DEF(JSMSG_TYPED_ARRAY_CONSTRUCT_OFFSET_LENGTH_BOUNDS, 1, JSEXN_RANGEERR, "size of buffer is too small for {0}Array with byteOffset")
+MSG_DEF(JSMSG_TYPED_ARRAY_CONSTRUCT_ARRAY_LENGTH_BOUNDS, 1, JSEXN_RANGEERR, "attempting to construct out-of-bounds {0}Array on ArrayBuffer")
+MSG_DEF(JSMSG_TYPED_ARRAY_CONSTRUCT_TOO_LARGE, 1, JSEXN_RANGEERR, "{0}Array too large")
+
 MSG_DEF(JSMSG_TYPED_ARRAY_CALL_OR_CONSTRUCT, 1, JSEXN_TYPEERR, "cannot directly {0} builtin %TypedArray%")
 MSG_DEF(JSMSG_NON_TYPED_ARRAY_RETURNED, 0, JSEXN_TYPEERR, "constructor didn't return TypedArray object")
 MSG_DEF(JSMSG_SHORT_TYPED_ARRAY_RETURNED, 2, JSEXN_TYPEERR, "expected TypedArray of at least length {0}, but constructor returned TypedArray of length {1}")
@@ -665,6 +676,7 @@ MSG_DEF(JSMSG_ATOMICS_WAIT_NOT_ALLOWED,  0, JSEXN_TYPEERR, "waiting is not allow
 MSG_DEF(JSMSG_CANT_SET_INTERPOSED,       1, JSEXN_TYPEERR, "unable to set interposed data property '{0}'")
 MSG_DEF(JSMSG_CANT_DEFINE_WINDOW_ELEMENT, 0, JSEXN_TYPEERR, "can't define elements on a Window object")
 MSG_DEF(JSMSG_CANT_DELETE_WINDOW_ELEMENT, 0, JSEXN_TYPEERR, "can't delete elements from a Window object")
+MSG_DEF(JSMSG_CANT_DEFINE_WINDOW_NAMED_PROPERTY, 1, JSEXN_TYPEERR, "can't define property {0} on window's named properties object")
 MSG_DEF(JSMSG_CANT_DELETE_WINDOW_NAMED_PROPERTY, 1, JSEXN_TYPEERR, "can't delete property {0} from window's named properties object")
 MSG_DEF(JSMSG_CANT_PREVENT_EXTENSIONS,   0, JSEXN_TYPEERR, "can't prevent extensions on this proxy object")
 MSG_DEF(JSMSG_CANT_DEFINE_WINDOW_NC,     0, JSEXN_TYPEERR, "can't define non-configurable property on WindowProxy")

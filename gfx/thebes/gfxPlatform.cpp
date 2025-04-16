@@ -968,9 +968,10 @@ void gfxPlatform::Init() {
 
   gPlatform->mHasVariationFontSupport = gPlatform->CheckVariationFontSupport();
 
-  nsresult rv;
-  rv = gfxPlatformFontList::Init();
-  if (NS_FAILED(rv)) {
+  // This *create* the platform font list instance, but may not *initialize* it
+  // yet if the gfx.font-list.lazy-init.enabled pref is set. The first *use*
+  // of the list will ensure it is initialized.
+  if (!gPlatform->CreatePlatformFontList()) {
     MOZ_CRASH("Could not initialize gfxPlatformFontList");
   }
 
@@ -993,8 +994,7 @@ void gfxPlatform::Init() {
     }
   }
 
-  rv = gfxFontCache::Init();
-  if (NS_FAILED(rv)) {
+  if (NS_FAILED(gfxFontCache::Init())) {
     MOZ_CRASH("Could not initialize gfxFontCache");
   }
 
@@ -1987,6 +1987,12 @@ void gfxPlatform::InitBackendPrefs(BackendPrefsData&& aPrefsData) {
     mSoftwareBackend = BackendType::SKIA;
   }
 
+  // If we don't have a fallback canvas backend then use the same software
+  // fallback as content.
+  if (mFallbackCanvasBackend == BackendType::NONE) {
+    mFallbackCanvasBackend = mSoftwareBackend;
+  }
+
   if (XRE_IsParentProcess()) {
     gfxVars::SetContentBackend(mContentBackend);
     gfxVars::SetSoftwareBackend(mSoftwareBackend);
@@ -2665,19 +2671,16 @@ void gfxPlatform::InitWebRenderConfig() {
 
   bool hasHardware = gfxConfig::IsEnabled(Feature::WEBRENDER);
   bool hasSoftware = gfxConfig::IsEnabled(Feature::WEBRENDER_SOFTWARE);
+  bool hasWebRender = hasHardware || hasSoftware;
 
-#if defined(XP_WIN) && !defined(EARLY_BETA_OR_EARLIER)
-  // If we have D3D11 compositing, and Software WebRender isn't forced on, then
-  // we should prefer D3D11 compositing over Software WebRender in late beta and
-  // release by default. We may chose to fallback to Software WebRender in
-  // gfxPlatform::FallbackFromAcceleration.
-  if (gfxConfig::IsEnabled(Feature::D3D11_COMPOSITING) &&
-      !gfxConfig::IsForcedOnByUser(Feature::WEBRENDER_SOFTWARE)) {
-    hasSoftware = false;
+#ifdef MOZ_WIDGET_GTK
+  // We require a hardware driver to back the GL context unless the user forced
+  // on WebRender.
+  if (!gfxConfig::IsForcedOnByUser(Feature::WEBRENDER) &&
+      StaticPrefs::gfx_webrender_reject_software_driver_AtStartup()) {
+    gfxVars::SetWebRenderRequiresHardwareDriver(true);
   }
 #endif
-
-  bool hasWebRender = hasHardware || hasSoftware;
 
 #ifdef XP_WIN
   if (gfxConfig::IsEnabled(Feature::WEBRENDER_ANGLE)) {
@@ -3052,6 +3055,40 @@ void gfxPlatform::ReInitFrameRate() {
   }
 }
 
+const char* gfxPlatform::GetAzureCanvasBackend() const {
+  BackendType backend{};
+
+  if (gfxConfig::IsEnabled(Feature::GPU_PROCESS)) {
+    // Assume content process' backend prefs.
+    BackendPrefsData data = GetBackendPrefs();
+    backend = GetCanvasBackendPref(data.mCanvasBitmask);
+    if (backend == BackendType::NONE) {
+      backend = data.mCanvasDefault;
+    }
+  } else {
+    backend = mPreferredCanvasBackend;
+  }
+
+  return GetBackendName(backend);
+}
+
+const char* gfxPlatform::GetAzureContentBackend() const {
+  BackendType backend{};
+
+  if (gfxConfig::IsEnabled(Feature::GPU_PROCESS)) {
+    // Assume content process' backend prefs.
+    BackendPrefsData data = GetBackendPrefs();
+    backend = GetContentBackendPref(data.mContentBitmask);
+    if (backend == BackendType::NONE) {
+      backend = data.mContentDefault;
+    }
+  } else {
+    backend = mContentBackend;
+  }
+
+  return GetBackendName(backend);
+}
+
 void gfxPlatform::GetAzureBackendInfo(mozilla::widget::InfoObject& aObj) {
   if (gfxConfig::IsEnabled(Feature::GPU_PROCESS)) {
     aObj.DefineProperty("AzureCanvasBackend (UI Process)",
@@ -3060,26 +3097,13 @@ void gfxPlatform::GetAzureBackendInfo(mozilla::widget::InfoObject& aObj) {
                         GetBackendName(mFallbackCanvasBackend));
     aObj.DefineProperty("AzureContentBackend (UI Process)",
                         GetBackendName(mContentBackend));
-
-    // Assume content process' backend prefs.
-    BackendPrefsData data = GetBackendPrefs();
-    BackendType canvasBackend = GetCanvasBackendPref(data.mCanvasBitmask);
-    if (canvasBackend == BackendType::NONE) {
-      canvasBackend = data.mCanvasDefault;
-    }
-    BackendType contentBackend = GetContentBackendPref(data.mContentBitmask);
-    if (contentBackend == BackendType::NONE) {
-      contentBackend = data.mContentDefault;
-    }
-    aObj.DefineProperty("AzureCanvasBackend", GetBackendName(canvasBackend));
-    aObj.DefineProperty("AzureContentBackend", GetBackendName(contentBackend));
   } else {
-    aObj.DefineProperty("AzureCanvasBackend",
-                        GetBackendName(mPreferredCanvasBackend));
     aObj.DefineProperty("AzureFallbackCanvasBackend",
                         GetBackendName(mFallbackCanvasBackend));
-    aObj.DefineProperty("AzureContentBackend", GetBackendName(mContentBackend));
   }
+
+  aObj.DefineProperty("AzureCanvasBackend", GetAzureCanvasBackend());
+  aObj.DefineProperty("AzureContentBackend", GetAzureContentBackend());
 }
 
 void gfxPlatform::GetApzSupportInfo(mozilla::widget::InfoObject& aObj) {

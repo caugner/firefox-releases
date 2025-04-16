@@ -643,11 +643,6 @@ bool Debugger::getFrame(JSContext* cx, const FrameIter& iter,
   AbstractFramePtr referent = iter.abstractFramePtr();
   MOZ_ASSERT_IF(referent.hasScript(), !referent.script()->selfHosted());
 
-  if (referent.hasScript() &&
-      !referent.script()->ensureHasAnalyzedArgsUsage(cx)) {
-    return false;
-  }
-
   FrameMap::AddPtr p = frames.lookupForAdd(referent);
   if (!p) {
     Rooted<AbstractGeneratorObject*> genObj(cx);
@@ -1411,14 +1406,14 @@ bool Debugger::wrapDebuggeeValue(JSContext* cx, MutableHandleValue vp) {
       return false;
     }
 
-    // We handle three sentinel values: missing arguments (overloading
-    // JS_OPTIMIZED_ARGUMENTS), optimized out slots (JS_OPTIMIZED_OUT),
+    // We handle three sentinel values: missing arguments
+    // (JS_MISSING_ARGUMENTS), optimized out slots (JS_OPTIMIZED_OUT),
     // and uninitialized bindings (JS_UNINITIALIZED_LEXICAL).
     //
     // Other magic values should not have escaped.
     PropertyName* name;
     switch (vp.whyMagic()) {
-      case JS_OPTIMIZED_ARGUMENTS:
+      case JS_MISSING_ARGUMENTS:
         name = cx->names().missingArguments;
         break;
       case JS_OPTIMIZED_OUT:
@@ -1562,8 +1557,8 @@ bool Debugger::unwrapPropertyDescriptor(
     desc.setValue(value);
   }
 
-  if (desc.hasGetterObject()) {
-    RootedObject get(cx, desc.getterObject());
+  if (desc.hasGetter()) {
+    RootedObject get(cx, desc.getter());
     if (get) {
       if (!unwrapDebuggeeObject(cx, &get)) {
         return false;
@@ -1572,11 +1567,11 @@ bool Debugger::unwrapPropertyDescriptor(
         return false;
       }
     }
-    desc.setGetterObject(get);
+    desc.setGetter(get);
   }
 
-  if (desc.hasSetterObject()) {
-    RootedObject set(cx, desc.setterObject());
+  if (desc.hasSetter()) {
+    RootedObject set(cx, desc.setter());
     if (set) {
       if (!unwrapDebuggeeObject(cx, &set)) {
         return false;
@@ -1585,7 +1580,7 @@ bool Debugger::unwrapPropertyDescriptor(
         return false;
       }
     }
-    desc.setSetterObject(set);
+    desc.setSetter(set);
   }
 
   return true;
@@ -5168,6 +5163,12 @@ class MOZ_STACK_CLASS Debugger::ScriptQuery : public Debugger::QueryBase {
 
       fun = script->function();
 
+      // Ignore any delazification placeholder functions. These should not be
+      // exposed to debugger in any way.
+      if (fun->isGhost()) {
+        continue;
+      }
+
       // Delazify script.
       JSScript* compiledScript = GetOrCreateFunctionScript(cx, fun);
       if (!compiledScript) {
@@ -6958,7 +6959,7 @@ JS_PUBLIC_API bool FireOnGarbageCollectionHook(
     Debugger* dbg = Debugger::fromJSObject(triggered.back());
 
     if (dbg->getHook(Debugger::OnGarbageCollection)) {
-      mozilla::Unused << dbg->enterDebuggerHook(cx, [&]() -> bool {
+      (void)dbg->enterDebuggerHook(cx, [&]() -> bool {
         return dbg->fireOnGarbageCollectionHook(cx, data);
       });
       MOZ_ASSERT(!cx->isExceptionPending());

@@ -129,8 +129,17 @@ static int RunDecodeToSurfaceFuzzingAVIF(nsCOMPtr<nsIInputStream> inputStream) {
   return RunDecodeToSurfaceFuzzing(inputStream, "image/avif");
 }
 
+#ifdef MOZ_JXL
+static int RunDecodeToSurfaceFuzzingJXL(nsCOMPtr<nsIInputStream> inputStream) {
+  return RunDecodeToSurfaceFuzzing(inputStream, "image/jxl");
+}
+#endif
+
 int FuzzingInitImage(int* argc, char*** argv) {
   Preferences::SetBool("image.avif.enabled", true);
+#ifdef MOZ_JXL
+  Preferences::SetBool("image.jxl.enabled", true);
+#endif
 
   nsCOMPtr<imgITools> imgTools =
       do_CreateInstance("@mozilla.org/image/tools;1");
@@ -162,3 +171,8 @@ MOZ_FUZZING_INTERFACE_STREAM(FuzzingInitImage, RunDecodeToSurfaceFuzzingWebP,
 
 MOZ_FUZZING_INTERFACE_STREAM(FuzzingInitImage, RunDecodeToSurfaceFuzzingAVIF,
                              ImageAVIF);
+
+#ifdef MOZ_JXL
+MOZ_FUZZING_INTERFACE_STREAM(FuzzingInitImage, RunDecodeToSurfaceFuzzingJXL,
+                             ImageJXL);
+#endif

@@ -509,7 +509,6 @@ var actionUtils = {
 "use strict";
 __webpack_require__.r(__webpack_exports__);
 /* WEBPACK VAR INJECTION */(function(global) {/* harmony export (binding) */ __webpack_require__.d(__webpack_exports__, "PrefsButton", function() { return PrefsButton; });
-/* harmony export (binding) */ __webpack_require__.d(__webpack_exports__, "PersonalizeButton", function() { return PersonalizeButton; });
 /* harmony export (binding) */ __webpack_require__.d(__webpack_exports__, "_Base", function() { return _Base; });
 /* harmony export (binding) */ __webpack_require__.d(__webpack_exports__, "BaseContent", function() { return BaseContent; });
 /* harmony export (binding) */ __webpack_require__.d(__webpack_exports__, "Base", function() { return Base; });
@@ -526,14 +525,11 @@ __webpack_require__.r(__webpack_exports__);
 /* harmony import */ var react__WEBPACK_IMPORTED_MODULE_8___default = /*#__PURE__*/__webpack_require__.n(react__WEBPACK_IMPORTED_MODULE_8__);
 /* harmony import */ var content_src_components_Search_Search__WEBPACK_IMPORTED_MODULE_9__ = __webpack_require__(65);
 /* harmony import */ var content_src_components_Sections_Sections__WEBPACK_IMPORTED_MODULE_10__ = __webpack_require__(47);
-/* harmony import */ var react_transition_group__WEBPACK_IMPORTED_MODULE_11__ = __webpack_require__(29);
-/* harmony import */ var react_transition_group__WEBPACK_IMPORTED_MODULE_11___default = /*#__PURE__*/__webpack_require__.n(react_transition_group__WEBPACK_IMPORTED_MODULE_11__);
 function _extends() { _extends = Object.assign || function (target) { for (var i = 1; i < arguments.length; i++) { var source = arguments[i]; for (var key in source) { if (Object.prototype.hasOwnProperty.call(source, key)) { target[key] = source[key]; } } } return target; }; return _extends.apply(this, arguments); }
 
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this file,
  * You can obtain one at http://mozilla.org/MPL/2.0/. */
-
 
 
 
@@ -554,14 +550,7 @@ const PrefsButton = ({
   className: `icon ${icon || "icon-settings"}`,
   onClick: onClick,
   "data-l10n-id": "newtab-settings-button"
-}));
-const PersonalizeButton = ({
-  onClick
-}) => /*#__PURE__*/react__WEBPACK_IMPORTED_MODULE_8___default.a.createElement("button", {
-  className: "personalize-button",
-  onClick: onClick,
-  "data-l10n-id": "newtab-personalize-button-label"
-}); // Returns a function will not be continuously triggered when called. The
+})); // Returns a function will not be continuously triggered when called. The
 // function will be triggered if called again after `wait` milliseconds.
 
 function debounce(func, wait) {
@@ -750,27 +739,25 @@ class BaseContent extends react__WEBPACK_IMPORTED_MODULE_8___default.a.PureCompo
       mayHaveSponsoredTopSites
     } = prefs;
     const outerClassName = ["outer-wrapper", isDiscoveryStream && pocketEnabled && "ds-outer-wrapper-search-alignment", isDiscoveryStream && "ds-outer-wrapper-breakpoint-override", prefs.showSearch && this.state.fixedSearch && !noSectionsEnabled && "fixed-search", prefs.showSearch && noSectionsEnabled && "only-search", prefs["logowordmark.alwaysVisible"] && "visible-logo", newNewtabExperienceEnabled && "newtab-experience"].filter(v => v).join(" ");
-    return /*#__PURE__*/react__WEBPACK_IMPORTED_MODULE_8___default.a.createElement("div", null, canShowCustomizationMenu ? /*#__PURE__*/react__WEBPACK_IMPORTED_MODULE_8___default.a.createElement("span", null, /*#__PURE__*/react__WEBPACK_IMPORTED_MODULE_8___default.a.createElement(PersonalizeButton, {
-      onClick: this.openCustomizationMenu
-    }), /*#__PURE__*/react__WEBPACK_IMPORTED_MODULE_8___default.a.createElement(react_transition_group__WEBPACK_IMPORTED_MODULE_11__["CSSTransition"], {
-      timeout: 0,
-      classNames: "customize-animate",
-      in: showCustomizationMenu,
-      appear: true
-    }, /*#__PURE__*/react__WEBPACK_IMPORTED_MODULE_8___default.a.createElement(content_src_components_CustomizeMenu_CustomizeMenu__WEBPACK_IMPORTED_MODULE_7__["CustomizeMenu"], {
+    const hasSnippet = enabledSections.snippetsEnabled && this.props.adminContent && this.props.adminContent.message && this.props.adminContent.message.id;
+    return /*#__PURE__*/react__WEBPACK_IMPORTED_MODULE_8___default.a.createElement("div", null, canShowCustomizationMenu ? /*#__PURE__*/react__WEBPACK_IMPORTED_MODULE_8___default.a.createElement(content_src_components_CustomizeMenu_CustomizeMenu__WEBPACK_IMPORTED_MODULE_7__["CustomizeMenu"], {
       onClose: this.closeCustomizationMenu,
+      onOpen: this.openCustomizationMenu,
       openPreferences: this.openPreferences,
       setPref: this.setPref,
       enabledSections: enabledSections,
       pocketRegion: pocketRegion,
-      mayHaveSponsoredTopSites: mayHaveSponsoredTopSites
-    }))) : /*#__PURE__*/react__WEBPACK_IMPORTED_MODULE_8___default.a.createElement(PrefsButton, {
+      mayHaveSponsoredTopSites: mayHaveSponsoredTopSites,
+      showing: showCustomizationMenu
+    }) : /*#__PURE__*/react__WEBPACK_IMPORTED_MODULE_8___default.a.createElement(PrefsButton, {
       onClick: this.openPreferences,
       icon: prefsButtonIcon
     }), /*#__PURE__*/react__WEBPACK_IMPORTED_MODULE_8___default.a.createElement("div", {
       className: outerClassName,
       onClick: this.closeCustomizationMenu
-    }, /*#__PURE__*/react__WEBPACK_IMPORTED_MODULE_8___default.a.createElement("main", null, prefs.showSearch && /*#__PURE__*/react__WEBPACK_IMPORTED_MODULE_8___default.a.createElement("div", {
+    }, /*#__PURE__*/react__WEBPACK_IMPORTED_MODULE_8___default.a.createElement("main", {
+      className: hasSnippet ? "has-snippet" : ""
+    }, prefs.showSearch && /*#__PURE__*/react__WEBPACK_IMPORTED_MODULE_8___default.a.createElement("div", {
       className: "non-collapsible-section"
     }, /*#__PURE__*/react__WEBPACK_IMPORTED_MODULE_8___default.a.createElement(content_src_components_ErrorBoundary_ErrorBoundary__WEBPACK_IMPORTED_MODULE_6__["ErrorBoundary"], null, /*#__PURE__*/react__WEBPACK_IMPORTED_MODULE_8___default.a.createElement(content_src_components_Search_Search__WEBPACK_IMPORTED_MODULE_9__["Search"], _extends({
       showLogo: noSectionsEnabled || prefs["logowordmark.alwaysVisible"],
@@ -1249,7 +1236,7 @@ class ASRouterAdminInner extends react__WEBPACK_IMPORTED_MODULE_3___default.a.Pu
         source: "addons.mozilla.org",
         medium: "referral",
         campaign: "non-fx-button",
-        content: "iridium@particlecore.github.io",
+        content: `rta:${btoa("uBlock0@raymondhill.net")}`,
         experiment: "ua-onboarding",
         variation: "chrome",
         ua: "Google Chrome 123",
@@ -1972,7 +1959,7 @@ class ASRouterAdminInner extends react__WEBPACK_IMPORTED_MODULE_3___default.a.Pu
   }
 
   renderAttributionParamers() {
-    return /*#__PURE__*/react__WEBPACK_IMPORTED_MODULE_3___default.a.createElement("div", null, /*#__PURE__*/react__WEBPACK_IMPORTED_MODULE_3___default.a.createElement("h2", null, " Attribution Parameters "), /*#__PURE__*/react__WEBPACK_IMPORTED_MODULE_3___default.a.createElement("p", null, " ", "This forces the browser to set some attribution parameters, useful for testing the Return To AMO feature. Clicking on 'Force Attribution', with the default values in each field, will demo the Return To AMO flow with the addon called 'Iridium for Youtube'. If you wish to try different attribution parameters, enter them in the text boxes. If you wish to try a different addon with the Return To AMO flow, make sure the 'content' text box has the addon GUID, then click 'Force Attribution'. Clicking on 'Force Attribution' with blank text boxes reset attribution data."), /*#__PURE__*/react__WEBPACK_IMPORTED_MODULE_3___default.a.createElement("table", null, /*#__PURE__*/react__WEBPACK_IMPORTED_MODULE_3___default.a.createElement("tr", null, /*#__PURE__*/react__WEBPACK_IMPORTED_MODULE_3___default.a.createElement("td", null, /*#__PURE__*/react__WEBPACK_IMPORTED_MODULE_3___default.a.createElement("b", null, " Source ")), /*#__PURE__*/react__WEBPACK_IMPORTED_MODULE_3___default.a.createElement("td", null, " ", /*#__PURE__*/react__WEBPACK_IMPORTED_MODULE_3___default.a.createElement("input", {
+    return /*#__PURE__*/react__WEBPACK_IMPORTED_MODULE_3___default.a.createElement("div", null, /*#__PURE__*/react__WEBPACK_IMPORTED_MODULE_3___default.a.createElement("h2", null, " Attribution Parameters "), /*#__PURE__*/react__WEBPACK_IMPORTED_MODULE_3___default.a.createElement("p", null, " ", "This forces the browser to set some attribution parameters, useful for testing the Return To AMO feature. Clicking on 'Force Attribution', with the default values in each field, will demo the Return To AMO flow with the addon called 'uBlock Origin'. If you wish to try different attribution parameters, enter them in the text boxes. If you wish to try a different addon with the Return To AMO flow, make sure the 'content' text box has a string that is 'rta:base64(addonID)', the base64 string of the addonID prefixed with 'rta:'. The addon must currently be a recommended addon on AMO. Then click 'Force Attribution'. Clicking on 'Force Attribution' with blank text boxes reset attribution data."), /*#__PURE__*/react__WEBPACK_IMPORTED_MODULE_3___default.a.createElement("table", null, /*#__PURE__*/react__WEBPACK_IMPORTED_MODULE_3___default.a.createElement("tr", null, /*#__PURE__*/react__WEBPACK_IMPORTED_MODULE_3___default.a.createElement("td", null, /*#__PURE__*/react__WEBPACK_IMPORTED_MODULE_3___default.a.createElement("b", null, " Source ")), /*#__PURE__*/react__WEBPACK_IMPORTED_MODULE_3___default.a.createElement("td", null, " ", /*#__PURE__*/react__WEBPACK_IMPORTED_MODULE_3___default.a.createElement("input", {
       type: "text",
       name: "source",
       placeholder: "addons.mozilla.org",
@@ -1993,7 +1980,7 @@ class ASRouterAdminInner extends react__WEBPACK_IMPORTED_MODULE_3___default.a.Pu
     }), " ")), /*#__PURE__*/react__WEBPACK_IMPORTED_MODULE_3___default.a.createElement("tr", null, /*#__PURE__*/react__WEBPACK_IMPORTED_MODULE_3___default.a.createElement("td", null, /*#__PURE__*/react__WEBPACK_IMPORTED_MODULE_3___default.a.createElement("b", null, " Content ")), /*#__PURE__*/react__WEBPACK_IMPORTED_MODULE_3___default.a.createElement("td", null, " ", /*#__PURE__*/react__WEBPACK_IMPORTED_MODULE_3___default.a.createElement("input", {
       type: "text",
       name: "content",
-      placeholder: "iridium@particlecore.github.io",
+      placeholder: `rta:${btoa("uBlock0@raymondhill.net")}`,
       value: this.state.attributionParameters.content,
       onChange: this.onChangeAttributionParameters
     }), " ")), /*#__PURE__*/react__WEBPACK_IMPORTED_MODULE_3___default.a.createElement("tr", null, /*#__PURE__*/react__WEBPACK_IMPORTED_MODULE_3___default.a.createElement("td", null, /*#__PURE__*/react__WEBPACK_IMPORTED_MODULE_3___default.a.createElement("b", null, " Experiment ")), /*#__PURE__*/react__WEBPACK_IMPORTED_MODULE_3___default.a.createElement("td", null, " ", /*#__PURE__*/react__WEBPACK_IMPORTED_MODULE_3___default.a.createElement("input", {
@@ -2732,9 +2719,21 @@ class ASRouterUISurface extends react__WEBPACK_IMPORTED_MODULE_7___default.a.Pur
     _asrouter_utils__WEBPACK_IMPORTED_MODULE_2__["ASRouterUtils"].removeListener(this.onMessageFromParent);
   }
 
-  componentDidUpdate(prevProps) {
+  componentDidUpdate(prevProps, prevState) {
     if (prevProps.adminContent && JSON.stringify(prevProps.adminContent) !== JSON.stringify(this.props.adminContent)) {
       this.updateContent();
+    }
+
+    if (prevState.message.id !== this.state.message.id) {
+      const main = global.window.document.querySelector("main");
+
+      if (main) {
+        if (this.state.message.id) {
+          main.classList.add("has-snippet");
+        } else {
+          main.classList.remove("has-snippet");
+        }
+      }
     }
   }
 
@@ -2788,7 +2787,7 @@ class ASRouterUISurface extends react__WEBPACK_IMPORTED_MODULE_7___default.a.Pur
     const SnippetComponent = _templates_template_manifest__WEBPACK_IMPORTED_MODULE_9__["SnippetsTemplates"][message.template];
     const {
       content
-    } = this.state.message;
+    } = message;
     return /*#__PURE__*/react__WEBPACK_IMPORTED_MODULE_7___default.a.createElement(_components_ImpressionsWrapper_ImpressionsWrapper__WEBPACK_IMPORTED_MODULE_4__["ImpressionsWrapper"], {
       id: "NEWTAB_FOOTER_BAR",
       message: this.state.message,
@@ -4522,6 +4521,8 @@ const LinkMenuOptions = {
         url: site.original_url || site.open_url || site.url,
         // pocket_id is only for pocket stories being in highlights, and then dismissed.
         pocket_id: site.pocket_id,
+        // used by PlacesFeed and TopSitesFeed for sponsored top sites blocking.
+        isSponsoredTopSite: site.sponsored_position,
         ...(site.flight_id ? {
           flight_id: site.flight_id
         } : {})
@@ -14747,6 +14748,9 @@ class ContentSection_ContentSection extends external_React_default.a.PureCompone
 // EXTERNAL MODULE: external "ReactRedux"
 var external_ReactRedux_ = __webpack_require__(7);
 
+// EXTERNAL MODULE: external "ReactTransitionGroup"
+var external_ReactTransitionGroup_ = __webpack_require__(29);
+
 // CONCATENATED MODULE: ./content-src/components/CustomizeMenu/CustomizeMenu.jsx
 /* harmony export (binding) */ __webpack_require__.d(__webpack_exports__, "_CustomizeMenu", function() { return CustomizeMenu_CustomizeMenu; });
 /* harmony export (binding) */ __webpack_require__.d(__webpack_exports__, "CustomizeMenu", function() { return CustomizeMenu; });
@@ -14758,14 +14762,53 @@ var external_ReactRedux_ = __webpack_require__(7);
 
 
 
+
 class CustomizeMenu_CustomizeMenu extends external_React_default.a.PureComponent {
+  constructor(props) {
+    super(props);
+    this.onEntered = this.onEntered.bind(this);
+    this.onExited = this.onExited.bind(this);
+  }
+
+  onEntered() {
+    if (this.closeButton) {
+      this.closeButton.focus();
+    }
+  }
+
+  onExited() {
+    if (this.openButton) {
+      this.openButton.focus();
+    }
+  }
+
   render() {
-    return /*#__PURE__*/external_React_default.a.createElement("div", {
-      className: "customize-menu"
+    return /*#__PURE__*/external_React_default.a.createElement("span", null, /*#__PURE__*/external_React_default.a.createElement(external_ReactTransitionGroup_["CSSTransition"], {
+      timeout: 300,
+      classNames: "personalize-animate",
+      in: !this.props.showing,
+      appear: true
     }, /*#__PURE__*/external_React_default.a.createElement("button", {
-      onClick: this.props.onClose,
+      className: "personalize-button",
+      onClick: () => this.props.onOpen(),
+      "data-l10n-id": "newtab-personalize-button-label",
+      ref: c => this.openButton = c
+    })), /*#__PURE__*/external_React_default.a.createElement(external_ReactTransitionGroup_["CSSTransition"], {
+      timeout: 250,
+      classNames: "customize-animate",
+      in: this.props.showing,
+      onEntered: this.onEntered,
+      onExited: this.onExited,
+      appear: true
+    }, /*#__PURE__*/external_React_default.a.createElement("div", {
+      className: "customize-menu",
+      role: "dialog",
+      "data-l10n-id": "newtab-personalize-dialog-label"
+    }, /*#__PURE__*/external_React_default.a.createElement("button", {
+      onClick: () => this.props.onClose(),
       className: "close-button",
-      "data-l10n-id": "newtab-custom-close-button"
+      "data-l10n-id": "newtab-custom-close-button",
+      ref: c => this.closeButton = c
     }), /*#__PURE__*/external_React_default.a.createElement(ThemesSection_ThemesSection, null), /*#__PURE__*/external_React_default.a.createElement(BackgroundsSection_BackgroundsSection, null), /*#__PURE__*/external_React_default.a.createElement(ContentSection_ContentSection, {
       openPreferences: this.props.openPreferences,
       setPref: this.props.setPref,
@@ -14774,7 +14817,7 @@ class CustomizeMenu_CustomizeMenu extends external_React_default.a.PureComponent
       mayHaveSponsoredTopSites: this.props.mayHaveSponsoredTopSites,
       mayHaveSponsoredStories: this.props.DiscoveryStream.config.show_spocs,
       dispatch: this.props.dispatch
-    }));
+    }))));
   }
 
 }

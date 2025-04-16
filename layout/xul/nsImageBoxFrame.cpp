@@ -39,6 +39,7 @@
 #include "nsThreadUtils.h"
 #include "nsDisplayList.h"
 #include "ImageLayers.h"
+#include "ImageRegion.h"
 #include "ImageContainer.h"
 #include "nsIContent.h"
 
@@ -48,6 +49,7 @@
 #include "mozilla/EventDispatcher.h"
 #include "mozilla/Maybe.h"
 #include "mozilla/PresShell.h"
+#include "mozilla/StaticPrefs_image.h"
 #include "mozilla/SVGImageContext.h"
 #include "Units.h"
 #include "mozilla/layers/RenderRootStateManager.h"
@@ -240,7 +242,6 @@ void nsImageBoxFrame::UpdateImage() {
   mContent->AsElement()->GetAttr(kNameSpaceID_None, nsGkAtoms::src, src);
   mUseSrcAttr = !src.IsEmpty();
   if (mUseSrcAttr) {
-    mImageResolution = 1.0f;
     nsContentPolicyType contentPolicyType;
     nsCOMPtr<nsIPrincipal> triggeringPrincipal;
     uint64_t requestContextID = 0;
@@ -270,9 +271,7 @@ void nsImageBoxFrame::UpdateImage() {
       }
     }
   } else if (auto* styleImage = GetImageFromStyle()) {
-    auto [finalImage, resolution] = styleImage->FinalImageAndResolution();
-    mImageResolution = resolution;
-    if (auto* styleRequest = finalImage->GetImageRequest()) {
+    if (auto* styleRequest = styleImage->GetImageRequest()) {
       styleRequest->SyncClone(mListener, mContent->GetComposedDoc(),
                               getter_AddRefs(mImageRequest));
     }
@@ -394,7 +393,7 @@ ImgDrawResult nsImageBoxFrame::PaintImage(gfxContext& aRenderingContext,
   Maybe<SVGImageContext> svgContext;
   SVGImageContext::MaybeStoreContextPaint(svgContext, this, imgCon);
   return nsLayoutUtils::DrawSingleImage(
-      aRenderingContext, PresContext(), imgCon, mImageResolution,
+      aRenderingContext, PresContext(), imgCon,
       nsLayoutUtils::GetSamplingFilterForFrame(this), dest, dirty, svgContext,
       aFlags, anchorPoint.ptrOr(nullptr), hasSubRect ? &mSubRect : nullptr);
 }
@@ -422,19 +421,25 @@ ImgDrawResult nsImageBoxFrame::CreateWebRenderCommands(
   if (aFlags & nsImageRenderer::FLAG_SYNC_DECODE_IMAGES) {
     containerFlags |= imgIContainer::FLAG_SYNC_DECODE;
   }
+  if (StaticPrefs::image_svg_blob_image() &&
+      imgCon->GetType() == imgIContainer::TYPE_VECTOR) {
+    containerFlags |= imgIContainer::FLAG_RECORD_BLOB;
+  }
 
   const int32_t appUnitsPerDevPixel = PresContext()->AppUnitsPerDevPixel();
   LayoutDeviceRect fillRect =
       LayoutDeviceRect::FromAppUnits(dest, appUnitsPerDevPixel);
 
   Maybe<SVGImageContext> svgContext;
+  Maybe<ImageIntRegion> region;
   gfx::IntSize decodeSize =
       nsLayoutUtils::ComputeImageContainerDrawingParameters(
-          imgCon, aItem->Frame(), fillRect, aSc, containerFlags, svgContext);
+          imgCon, aItem->Frame(), fillRect, fillRect, aSc, containerFlags,
+          svgContext, region);
 
   RefPtr<layers::ImageContainer> container;
   result = imgCon->GetImageContainerAtSize(aManager->LayerManager(), decodeSize,
-                                           svgContext, containerFlags,
+                                           svgContext, region, containerFlags,
                                            getter_AddRefs(container));
   if (!container) {
     NS_WARNING("Failed to get image container");
@@ -443,6 +448,20 @@ ImgDrawResult nsImageBoxFrame::CreateWebRenderCommands(
 
   mozilla::wr::ImageRendering rendering = wr::ToImageRendering(
       nsLayoutUtils::GetSamplingFilterForFrame(aItem->Frame()));
+  wr::LayoutRect fill = wr::ToLayoutRect(fillRect);
+
+  if (containerFlags & imgIContainer::FLAG_RECORD_BLOB) {
+    Maybe<wr::BlobImageKey> key = aManager->CommandBuilder().CreateBlobImageKey(
+        aItem, container, aResources);
+    if (key.isNothing()) {
+      return result;
+    }
+
+    aBuilder.PushImage(fill, fill, !BackfaceIsHidden(), rendering,
+                       wr::AsImageKey(key.value()));
+    return result;
+  }
+
   gfx::IntSize size;
   Maybe<wr::ImageKey> key = aManager->CommandBuilder().CreateImageKey(
       aItem, container, aBuilder, aResources, rendering, aSc, size, Nothing());
@@ -450,7 +469,6 @@ ImgDrawResult nsImageBoxFrame::CreateWebRenderCommands(
     return result;
   }
 
-  wr::LayoutRect fill = wr::ToLayoutRect(fillRect);
   aBuilder.PushImage(fill, fill, !BackfaceIsHidden(), rendering, key.value());
 
   return result;
@@ -610,11 +628,11 @@ bool nsImageBoxFrame::CanOptimizeToImageLayer() {
 }
 
 const mozilla::StyleImage* nsImageBoxFrame::GetImageFromStyle(
-    const ComputedStyle& aStyle) {
+    const ComputedStyle& aStyle) const {
   const nsStyleDisplay* disp = aStyle.StyleDisplay();
   if (disp->HasAppearance()) {
     nsPresContext* pc = PresContext();
-    if (pc->Theme()->ThemeSupportsWidget(pc, this,
+    if (pc->Theme()->ThemeSupportsWidget(pc, const_cast<nsImageBoxFrame*>(this),
                                          disp->EffectiveAppearance())) {
       return nullptr;
     }
@@ -624,6 +642,21 @@ const mozilla::StyleImage* nsImageBoxFrame::GetImageFromStyle(
     return nullptr;
   }
   return &image;
+}
+
+ImageResolution nsImageBoxFrame::GetImageResolution() const {
+  if (auto* image = GetImageFromStyle()) {
+    return image->GetResolution();
+  }
+  if (!mImageRequest) {
+    return {};
+  }
+  nsCOMPtr<imgIContainer> image;
+  mImageRequest->GetImage(getter_AddRefs(image));
+  if (!image) {
+    return {};
+  }
+  return image->GetResolution();
 }
 
 /* virtual */
@@ -803,12 +836,9 @@ void nsImageBoxFrame::OnSizeAvailable(imgIRequest* aRequest,
   aImage->GetWidth(&w);
   aImage->GetHeight(&h);
 
-  if (mImageResolution != 0.0f && mImageResolution != 1.0f) {
-    w = std::round(w / mImageResolution);
-    h = std::round(h / mImageResolution);
-  }
-
   mIntrinsicSize.SizeTo(CSSPixel::ToAppUnits(w), CSSPixel::ToAppUnits(h));
+
+  GetImageResolution().ApplyTo(mIntrinsicSize.width, mIntrinsicSize.height);
 
   if (!HasAnyStateBits(NS_FRAME_FIRST_REFLOW)) {
     PresShell()->FrameNeedsReflow(this, IntrinsicDirty::StyleChange,

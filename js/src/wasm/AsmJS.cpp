@@ -21,9 +21,9 @@
 #include "mozilla/Attributes.h"
 #include "mozilla/Compression.h"
 #include "mozilla/MathAlgorithms.h"
+#include "mozilla/Maybe.h"
 #include "mozilla/ScopeExit.h"
 #include "mozilla/Sprintf.h"  // SprintfLiteral
-#include "mozilla/Unused.h"
 #include "mozilla/Utf8.h"  // mozilla::Utf8Unit
 #include "mozilla/Variant.h"
 
@@ -89,7 +89,6 @@ using mozilla::IsPositiveZero;
 using mozilla::IsPowerOfTwo;
 using mozilla::PodZero;
 using mozilla::PositiveInfinity;
-using mozilla::Unused;
 using mozilla::Utf8Unit;
 using mozilla::Compression::LZ4;
 
@@ -1724,7 +1723,7 @@ class MOZ_STACK_CLASS ModuleValidatorShared {
     }
     seg->elemType = RefType::func();
     seg->tableIndex = tableIndex;
-    seg->offsetIfActive = Some(InitExpr::fromConstant(LitVal(uint32_t(0))));
+    seg->offsetIfActive = Some(InitExpr(LitVal(uint32_t(0))));
     seg->elemFuncIndices = std::move(elems);
     return moduleEnv_.elemSegments.append(std::move(seg));
   }
@@ -1916,8 +1915,8 @@ class MOZ_STACK_CLASS ModuleValidator : public ModuleValidatorShared {
         // If warning succeeds, no exception is set.  If warning fails,
         // an exception is set and execution will halt.  Thus it's safe
         // and correct to ignore the return value here.
-        Unused << ts.compileWarning(std::move(metadata), nullptr,
-                                    JSMSG_USE_ASM_TYPE_FAIL, &args);
+        (void)ts.compileWarning(std::move(metadata), nullptr,
+                                JSMSG_USE_ASM_TYPE_FAIL, &args);
       }
     }
 
@@ -2067,6 +2066,14 @@ class MOZ_STACK_CLASS ModuleValidator : public ModuleValidatorShared {
       moduleEnv_.funcs[funcIndex] =
           FuncDesc(&moduleEnv_.types.funcType(funcTypeIndex),
                    &moduleEnv_.typeIds[funcTypeIndex], funcTypeIndex);
+    }
+    for (const Export& exp : moduleEnv_.exports) {
+      if (exp.kind() != DefinitionKind::Function) {
+        continue;
+      }
+      uint32_t funcIndex = exp.funcIndex();
+      moduleEnv_.declareFuncExported(funcIndex, /* eager */ true,
+                                     /* canRefFunc */ false);
     }
 
     if (!moduleEnv_.funcImportGlobalDataOffsets.resize(
@@ -6436,21 +6443,22 @@ static bool GetDataProperty(JSContext* cx, HandleValue objVal, HandleAtom field,
     return LinkFail(cx, "accessing property of a Proxy");
   }
 
-  Rooted<PropertyDescriptor> desc(cx);
   RootedId id(cx, AtomToId(field));
-  if (!GetPropertyDescriptor(cx, obj, id, &desc)) {
+  Rooted<mozilla::Maybe<PropertyDescriptor>> desc(cx);
+  RootedObject holder(cx);
+  if (!GetPropertyDescriptor(cx, obj, id, &desc, &holder)) {
     return false;
   }
 
-  if (!desc.object()) {
+  if (!desc.isSome()) {
     return LinkFail(cx, "property not present on object");
   }
 
-  if (!desc.isDataDescriptor()) {
+  if (!desc->isDataDescriptor()) {
     return LinkFail(cx, "property is not a data property");
   }
 
-  v.set(desc.value());
+  v.set(desc->value());
   return true;
 }
 
@@ -6736,12 +6744,19 @@ static bool CheckBuffer(JSContext* cx, const AsmJSMetadata& metadata,
   size_t memoryLength = buffer->byteLength();
 
   if (!IsValidAsmJSHeapLength(memoryLength)) {
-    UniqueChars msg(
-        JS_smprintf("ArrayBuffer byteLength 0x%" PRIx64
-                    " is not a valid heap length. The next "
-                    "valid length is 0x%" PRIx64,
-                    uint64_t(memoryLength),
-                    RoundUpToNextValidAsmJSHeapLength(memoryLength)));
+    UniqueChars msg;
+    if (memoryLength > MaxAsmJSHeapLength) {
+      msg = JS_smprintf("ArrayBuffer byteLength 0x%" PRIx64
+                        " is not a valid heap length - it is too long."
+                        " The longest valid length is 0x%" PRIx64,
+                        uint64_t(memoryLength), MaxAsmJSHeapLength);
+    } else {
+      msg = JS_smprintf("ArrayBuffer byteLength 0x%" PRIx64
+                        " is not a valid heap length. The next "
+                        "valid length is 0x%" PRIx64,
+                        uint64_t(memoryLength),
+                        RoundUpToNextValidAsmJSHeapLength(memoryLength));
+    }
     if (!msg) {
       return false;
     }
@@ -6916,7 +6931,7 @@ static bool HandleInstantiationFailure(JSContext* cx, CallArgs args,
   options.setMutedErrors(source->mutedErrors())
       .setFile(source->filename())
       .setNoScriptRval(false);
-  options.asmJSOption = AsmJSOption::Disabled;
+  options.asmJSOption = AsmJSOption::DisabledByLinker;
 
   // The exported function inherits an implicit strict context if the module
   // also inherited it somehow.
@@ -7011,21 +7026,14 @@ static bool TypeFailureWarning(frontend::ParserBase& parser, const char* str) {
   // Per the asm.js standard convention, whether failure sets a pending
   // exception determines whether to attempt non-asm.js reparsing, so ignore
   // the return value below.
-  Unused << parser.warningNoOffset(JSMSG_USE_ASM_TYPE_FAIL, str ? str : "");
+  (void)parser.warningNoOffset(JSMSG_USE_ASM_TYPE_FAIL, str ? str : "");
   return false;
 }
 
 // asm.js requires Ion to be available on the current hardware/OS and to be
 // enabled for wasm, since asm.js compilation goes via wasm.
 static bool IsAsmJSCompilerAvailable(JSContext* cx) {
-#ifdef JS_CODEGEN_ARM64
-  // Disable asm.js-via-Ion on arm64 until such time as that pathway, along
-  // with the associated compiler-option logic, is better tested.  asm.js will
-  // still be available on arm64, but will be forced along the JS pathway,
-  // with the associated performance lossage.  See bugs 1699379 and 1697560.
-  return false;
-#endif
-  return HasPlatformSupport(cx) && IonAvailable(cx);
+  return HasPlatformSupport(cx) && WasmCompilerForAsmJSAvailable(cx);
 }
 
 static bool EstablishPreconditions(JSContext* cx,
@@ -7035,8 +7043,14 @@ static bool EstablishPreconditions(JSContext* cx,
   }
 
   switch (parser.options().asmJSOption) {
-    case AsmJSOption::Disabled:
+    case AsmJSOption::DisabledByAsmJSPref:
       return TypeFailureWarning(parser, "Disabled by 'asmjs' runtime option");
+    case AsmJSOption::DisabledByLinker:
+      return TypeFailureWarning(parser,
+                                "Disabled by linker (instantiation failure)");
+    case AsmJSOption::DisabledByNoWasmCompiler:
+      return TypeFailureWarning(
+          parser, "Disabled because no suitable wasm compiler is available");
     case AsmJSOption::DisabledByDebugger:
       return TypeFailureWarning(parser, "Disabled by debugger");
     case AsmJSOption::Enabled:
@@ -7137,11 +7151,13 @@ bool js::IsAsmJSStrictModeModuleOrFunction(JSFunction* fun) {
   return false;
 }
 
+bool js::IsAsmJSCompilationAvailable(JSContext* cx) {
+  return cx->options().asmJS() && IsAsmJSCompilerAvailable(cx);
+}
+
 bool js::IsAsmJSCompilationAvailable(JSContext* cx, unsigned argc, Value* vp) {
   CallArgs args = CallArgsFromVp(argc, vp);
-
-  bool available = cx->options().asmJS() && IsAsmJSCompilerAvailable(cx);
-
+  bool available = IsAsmJSCompilationAvailable(cx);
   args.rval().set(BooleanValue(available));
   return true;
 }

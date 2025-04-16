@@ -140,6 +140,7 @@ EXPORTS.js += [
     "../public/ComparisonOperators.h",
     "../public/CompilationAndEvaluation.h",
     "../public/CompileOptions.h",
+    "../public/Context.h",
     "../public/ContextOptions.h",
     "../public/Conversions.h",
     "../public/Date.h",
@@ -161,6 +162,7 @@ EXPORTS.js += [
     "../public/Initialization.h",
     "../public/JSON.h",
     "../public/LocaleSensitive.h",
+    "../public/MapAndSet.h",
     "../public/MemoryFunctions.h",
     "../public/MemoryMetrics.h",
     "../public/Modules.h",
@@ -177,11 +179,11 @@ EXPORTS.js += [
     "../public/ProtoKey.h",
     "../public/Proxy.h",
     "../public/Realm.h",
+    "../public/RealmIterators.h",
     "../public/RealmOptions.h",
     "../public/RefCounted.h",
     "../public/RegExp.h",
     "../public/RegExpFlags.h",
-    "../public/RequiredDefines.h",
     "../public/Result.h",
     "../public/RootingAPI.h",
     "../public/SavedFrameAPI.h",
@@ -215,8 +217,10 @@ EXPORTS.js += [
     "../public/Warnings.h",
     "../public/WasmFeatures.h",
     "../public/WasmModule.h",
+    "../public/WeakMap.h",
     "../public/WeakMapPtr.h",
     "../public/Wrapper.h",
+    "../public/Zone.h",
 ]
 
 # This lives in mozglue/baseprofiler but we re-publish ourselves to support
@@ -249,6 +253,7 @@ EXPORTS.js.friend += [
     "../public/friend/ErrorMessages.h",
     "../public/friend/ErrorNumbers.msg",
     "../public/friend/JSMEnvironment.h",
+    "../public/friend/PerformanceHint.h",
     "../public/friend/StackLimits.h",
     "../public/friend/UsageStatistics.h",
     "../public/friend/WindowProxy.h",
@@ -419,6 +424,7 @@ UNIFIED_SOURCES += [
     "vm/Scope.cpp",
     "vm/SelfHosting.cpp",
     "vm/Shape.cpp",
+    "vm/ShapeZone.cpp",
     "vm/SharedArrayObject.cpp",
     "vm/SharedImmutableStringsCache.cpp",
     "vm/SourceHook.cpp",
@@ -529,6 +535,8 @@ if CONFIG["MOZ_VTUNE"]:
     ]
     if CONFIG["CC_TYPE"] == "gcc":
         SOURCES["vtune/ittnotify_static.c"].flags += ["-Wno-stringop-overflow"]
+        if int(CONFIG["CC_VERSION"].split(".")[0]) >= 8:
+            SOURCES["vtune/ittnotify_static.c"].flags += ["-Wno-stringop-truncation"]
 
 DIRS += ["build", "debugger", "frontend", "gc", "irregexp", "jit", "wasm"]
 
@@ -597,6 +605,13 @@ GeneratedFile(
 if CONFIG["JS_HAS_CTYPES"]:
     if CONFIG["MOZ_SYSTEM_FFI"]:
         CXXFLAGS += CONFIG["MOZ_FFI_CFLAGS"]
+
+if CONFIG["JS_HAS_INTL_API"]:
+    DIRS += [
+        "../../intl/components",
+    ]
+
+    USE_LIBS += ["intlcomponents"]
 
 # Suppress warnings in third-party code.
 if CONFIG["CC_TYPE"] in ("clang", "gcc"):

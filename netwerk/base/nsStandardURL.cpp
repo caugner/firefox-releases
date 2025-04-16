@@ -229,29 +229,64 @@ nsStandardURL::nsStandardURL(bool aSupportsFileURL, bool aTrackURL)
 #endif
 }
 
-static void CheckSegment(const nsStandardURL::URLSegment& aSeg,
-                         const nsCString& aSpec) {
-  MOZ_RELEASE_ASSERT(aSeg.mLen >= -1);
-  if (aSeg.mLen < 0) {
-    return;
+bool nsStandardURL::IsValid() {
+  auto checkSegment = [&](const nsStandardURL::URLSegment& aSeg) {
+    // Bad value
+    if (NS_WARN_IF(aSeg.mLen < -1)) {
+      return false;
+    }
+    if (aSeg.mLen == -1) {
+      return true;
+    }
+
+    // Points out of string
+    if (NS_WARN_IF(aSeg.mPos + aSeg.mLen > mSpec.Length())) {
+      return false;
+    }
+
+    // Overflow
+    if (NS_WARN_IF(aSeg.mPos + aSeg.mLen < aSeg.mPos)) {
+      return false;
+    }
+
+    return true;
+  };
+
+  bool allSegmentsValid = checkSegment(mScheme) && checkSegment(mAuthority) &&
+                          checkSegment(mUsername) && checkSegment(mPassword) &&
+                          checkSegment(mHost) && checkSegment(mPath) &&
+                          checkSegment(mFilepath) && checkSegment(mDirectory) &&
+                          checkSegment(mBasename) && checkSegment(mExtension) &&
+                          checkSegment(mQuery) && checkSegment(mRef);
+  if (!allSegmentsValid) {
+    return false;
   }
-  MOZ_RELEASE_ASSERT(aSeg.mPos + aSeg.mLen <= aSpec.Length());
-  MOZ_RELEASE_ASSERT(aSeg.mPos + aSeg.mLen >= aSeg.mPos);
+
+  if (mScheme.mPos != 0) {
+    return false;
+  }
+
+  return true;
 }
 
 void nsStandardURL::SanityCheck() {
-  CheckSegment(mScheme, mSpec);
-  CheckSegment(mAuthority, mSpec);
-  CheckSegment(mUsername, mSpec);
-  CheckSegment(mPassword, mSpec);
-  CheckSegment(mHost, mSpec);
-  CheckSegment(mPath, mSpec);
-  CheckSegment(mFilepath, mSpec);
-  CheckSegment(mDirectory, mSpec);
-  CheckSegment(mBasename, mSpec);
-  CheckSegment(mExtension, mSpec);
-  CheckSegment(mQuery, mSpec);
-  CheckSegment(mRef, mSpec);
+  if (!IsValid()) {
+    nsPrintfCString msg(
+        "mLen:%X, mScheme (%X,%X), mAuthority (%X,%X), mUsername (%X,%X), "
+        "mPassword (%X,%X), mHost (%X,%X), mPath (%X,%X), mFilepath (%X,%X), "
+        "mDirectory (%X,%X), mBasename (%X,%X), mExtension (%X,%X), mQuery "
+        "(%X,%X), mRef (%X,%X)",
+        mSpec.Length(), mScheme.mPos, mScheme.mLen, mAuthority.mPos,
+        mAuthority.mLen, mUsername.mPos, mUsername.mLen, mPassword.mPos,
+        mPassword.mLen, mHost.mPos, mHost.mLen, mPath.mPos, mPath.mLen,
+        mFilepath.mPos, mFilepath.mLen, mDirectory.mPos, mDirectory.mLen,
+        mBasename.mPos, mBasename.mLen, mExtension.mPos, mExtension.mLen,
+        mQuery.mPos, mQuery.mLen, mRef.mPos, mRef.mLen);
+    CrashReporter::AnnotateCrashReport(CrashReporter::Annotation::URLSegments,
+                                       msg);
+
+    MOZ_CRASH("nsStandardURL::SanityCheck failed");
+  }
 }
 
 nsStandardURL::~nsStandardURL() {
@@ -1010,7 +1045,7 @@ bool nsStandardURL::SegmentIs(const URLSegment& seg, const char* val,
   // if the first |seg.mLen| chars of |val| match, then |val| must
   // also be null terminated at |seg.mLen|.
   if (ignoreCase) {
-    return !PL_strncasecmp(mSpec.get() + seg.mPos, val, seg.mLen) &&
+    return !nsCRT::strncasecmp(mSpec.get() + seg.mPos, val, seg.mLen) &&
            (val[seg.mLen] == '\0');
   }
 
@@ -1030,7 +1065,7 @@ bool nsStandardURL::SegmentIs(const char* spec, const URLSegment& seg,
   // if the first |seg.mLen| chars of |val| match, then |val| must
   // also be null terminated at |seg.mLen|.
   if (ignoreCase) {
-    return !PL_strncasecmp(spec + seg.mPos, val, seg.mLen) &&
+    return !nsCRT::strncasecmp(spec + seg.mPos, val, seg.mLen) &&
            (val[seg.mLen] == '\0');
   }
 
@@ -1049,7 +1084,8 @@ bool nsStandardURL::SegmentIs(const URLSegment& seg1, const char* val,
     return false;
   }
   if (ignoreCase) {
-    return !PL_strncasecmp(mSpec.get() + seg1.mPos, val + seg2.mPos, seg1.mLen);
+    return !nsCRT::strncasecmp(mSpec.get() + seg1.mPos, val + seg2.mPos,
+                               seg1.mLen);
   }
 
   return !strncmp(mSpec.get() + seg1.mPos, val + seg2.mPos, seg1.mLen);
@@ -3320,6 +3356,10 @@ nsStandardURL::Read(nsIObjectInputStream* stream) {
 nsresult nsStandardURL::ReadPrivate(nsIObjectInputStream* stream) {
   MOZ_ASSERT(mDisplayHost.IsEmpty(), "Shouldn't have cached unicode host");
 
+  // If we exit early, make sure to clear the URL so we don't fail the sanity
+  // check in the destructor
+  auto clearOnExit = MakeScopeExit([&] { Clear(); });
+
   nsresult rv;
 
   uint32_t urlType;
@@ -3461,6 +3501,12 @@ nsresult nsStandardURL::ReadPrivate(nsIObjectInputStream* stream) {
   if (NS_FAILED(rv)) {
     return rv;
   }
+
+  if (!IsValid()) {
+    return NS_ERROR_MALFORMED_URI;
+  }
+
+  clearOnExit.release();
 
   return NS_OK;
 }
@@ -3653,6 +3699,10 @@ bool nsStandardURL::Deserialize(const URIParams& aParams) {
     return false;
   }
 
+  // If we exit early, make sure to clear the URL so we don't fail the sanity
+  // check in the destructor
+  auto clearOnExit = MakeScopeExit([&] { Clear(); });
+
   const StandardURLParams& params = aParams.get_StandardURLParams();
 
   mURLType = params.urlType();
@@ -3713,6 +3763,12 @@ bool nsStandardURL::Deserialize(const URIParams& aParams) {
   NS_ENSURE_TRUE(
       mRef.mLen == -1 || (mRef.mPos > 0 && mSpec.CharAt(mRef.mPos - 1) == '#'),
       false);
+
+  if (!IsValid()) {
+    return false;
+  }
+
+  clearOnExit.release();
 
   return true;
 }

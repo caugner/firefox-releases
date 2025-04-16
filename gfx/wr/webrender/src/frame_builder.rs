@@ -414,7 +414,7 @@ impl FrameBuilder {
                 composite_state,
             };
 
-            for pic_index in &scene.tile_cache_pictures {
+            for pic_index in scene.tile_cache_pictures.iter().rev() {
                 update_primitive_visibility(
                     &mut scene.prim_store,
                     *pic_index,
@@ -528,9 +528,7 @@ impl FrameBuilder {
         gpu_cache: &mut GpuCache,
         rg_builder: &mut RenderTaskGraphBuilder,
         stamp: FrameStamp,
-        global_device_pixel_scale: DevicePixelScale,
         device_origin: DeviceIntPoint,
-        pan: WorldPoint,
         scene_properties: &SceneProperties,
         data_stores: &mut DataStores,
         scratch: &mut ScratchBuffer,
@@ -550,22 +548,20 @@ impl FrameBuilder {
 
         self.globals.update(gpu_cache);
 
-        scene.spatial_tree.update_tree(
-            pan,
-            global_device_pixel_scale,
-            scene_properties,
-        );
+        scene.spatial_tree.update_tree(scene_properties);
         let mut transform_palette = scene.spatial_tree.build_transform_palette();
-        scene.clip_store.clear_old_instances();
+        scene.clip_store.begin_frame(&mut scratch.clip_store);
 
         rg_builder.begin_frame(stamp.frame_id());
 
-        let output_size = scene.output_rect.size.to_i32();
+        // TODO(dp): Remove me completely!!
+        let global_device_pixel_scale = DevicePixelScale::new(1.0);
+
+        let output_size = scene.output_rect.size;
         let screen_world_rect = (scene.output_rect.to_f32() / global_device_pixel_scale).round_out();
 
         let mut composite_state = CompositeState::new(
             scene.config.compositor_kind,
-            global_device_pixel_scale,
             scene.config.max_depth_ids,
             dirty_rects_are_valid,
         );
@@ -688,6 +684,9 @@ impl FrameBuilder {
 
         self.prim_headers_prealloc.record_vec(&mut prim_headers.headers_int);
         self.composite_state_prealloc.record(&composite_state);
+
+        composite_state.end_frame();
+        scene.clip_store.end_frame(&mut scratch.clip_store);
 
         Frame {
             device_rect: DeviceIntRect::new(

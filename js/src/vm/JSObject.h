@@ -431,10 +431,6 @@ class JSObject
   static void swap(JSContext* cx, JS::HandleObject a, JS::HandleObject b,
                    js::AutoEnterOOMUnsafeRegion& oomUnsafe);
 
- private:
-  void fixDictionaryShapeAfterSwap();
-
- public:
   /*
    * In addition to the generic object interface provided by JSObject,
    * specific types of objects may provide additional operations. To access,
@@ -817,7 +813,7 @@ bool ToPropertyDescriptor(JSContext* cx, HandleValue descval,
                           MutableHandle<JS::PropertyDescriptor> desc);
 
 /*
- * Throw a TypeError if desc.getterObject() or setterObject() is not
+ * Throw a TypeError if desc.getter() or setter() is not
  * callable. This performs exactly the checks omitted by ToPropertyDescriptor
  * when checkAccessors is false.
  */
@@ -890,14 +886,6 @@ bool GetOwnNativeGetterPure(JSContext* cx, JSObject* obj, jsid id,
 
 bool HasOwnDataPropertyPure(JSContext* cx, JSObject* obj, jsid id,
                             bool* result);
-
-// Deprecated: Use the Maybe<PropertyDescriptor> overload!
-bool GetOwnPropertyDescriptor(JSContext* cx, HandleObject obj, HandleId id,
-                              MutableHandle<JS::PropertyDescriptor> desc);
-
-bool GetOwnPropertyDescriptor(
-    JSContext* cx, HandleObject obj, HandleId id,
-    MutableHandle<mozilla::Maybe<JS::PropertyDescriptor>> desc);
 
 /*
  * Like JS::FromPropertyDescriptor, but ignore desc.object() and always set vp

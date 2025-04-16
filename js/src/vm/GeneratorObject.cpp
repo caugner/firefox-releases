@@ -208,7 +208,7 @@ void AbstractGeneratorObject::finalSuspend(HandleObject obj) {
 static AbstractGeneratorObject* GetGeneratorObjectForCall(JSContext* cx,
                                                           CallObject& callObj) {
   // The ".generator" binding is always present and always "aliased".
-  mozilla::Maybe<ShapeProperty> prop =
+  mozilla::Maybe<PropertyInfo> prop =
       callObj.lookup(cx, cx->names().dotGenerator);
   if (prop.isNothing()) {
     return nullptr;
@@ -230,7 +230,7 @@ AbstractGeneratorObject* js::GetGeneratorObjectForFrame(
   if (frame.isModuleFrame()) {
     ModuleEnvironmentObject* moduleEnv =
         frame.script()->module()->environment();
-    mozilla::Maybe<ShapeProperty> prop =
+    mozilla::Maybe<PropertyInfo> prop =
         moduleEnv->lookup(cx, cx->names().dotGenerator);
     Value genValue = moduleEnv->getSlot(prop->slot());
     return genValue.isObject()
@@ -390,10 +390,8 @@ static bool GeneratorFunctionClassFinish(JSContext* cx,
   // Change the "constructor" property to non-writable before adding any other
   // properties, so it's still the last property and can be modified without a
   // dictionary-mode transition.
-  MOZ_ASSERT(StringEqualsAscii(
-      JSID_TO_LINEAR_STRING(
-          genFunctionProto->as<NativeObject>().lastProperty()->propid()),
-      "constructor"));
+  MOZ_ASSERT(genFunctionProto->as<NativeObject>().getLastProperty().key() ==
+             NameToId(cx->names().constructor));
   MOZ_ASSERT(!genFunctionProto->as<NativeObject>().inDictionaryMode());
 
   RootedValue genFunctionVal(cx, ObjectValue(*genFunction));

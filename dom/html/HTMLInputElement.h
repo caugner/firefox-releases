@@ -978,7 +978,7 @@ class HTMLInputElement final : public TextControlElement,
    * Visit the group of radio buttons this radio belongs to
    * @param aVisitor the visitor to visit with
    */
-  nsresult VisitGroup(nsIRadioVisitor* aVisitor, bool aFlushContent);
+  nsresult VisitGroup(nsIRadioVisitor* aVisitor);
 
   /**
    * Do all the work that |SetChecked| does (radio button handling, etc.), but
@@ -1582,8 +1582,8 @@ class HTMLInputElement final : public TextControlElement,
 
   static bool MayFireChangeOnBlur(uint8_t aType) {
     return IsSingleLineTextControl(false, aType) ||
-           CreatesDateTimeWidget(aType) ||
-           aType == NS_FORM_INPUT_RANGE || aType == NS_FORM_INPUT_NUMBER;
+           CreatesDateTimeWidget(aType) || aType == NS_FORM_INPUT_RANGE ||
+           aType == NS_FORM_INPUT_NUMBER;
   }
 
   /**

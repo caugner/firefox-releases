@@ -66,6 +66,10 @@ class WebRenderCommandBuilder final {
       mozilla::wr::ImageRendering aRendering, const StackingContextHelper& aSc,
       gfx::IntSize& aSize, const Maybe<LayoutDeviceRect>& aAsyncImageBounds);
 
+  Maybe<wr::BlobImageKey> CreateBlobImageKey(
+      nsDisplayItem* aItem, ImageContainer* aContainer,
+      mozilla::wr::IpcResourceUpdateQueue& aResources);
+
   WebRenderUserDataRefTable* GetWebRenderUserDataTable() {
     return &mWebRenderUserDatas;
   }
@@ -75,6 +79,12 @@ class WebRenderCommandBuilder final {
                  mozilla::wr::IpcResourceUpdateQueue& aResources,
                  const StackingContextHelper& aSc,
                  const LayoutDeviceRect& aRect, const LayoutDeviceRect& aClip);
+
+  bool PushBlobImage(nsDisplayItem* aItem, ImageContainer* aContainer,
+                     mozilla::wr::DisplayListBuilder& aBuilder,
+                     mozilla::wr::IpcResourceUpdateQueue& aResources,
+                     const LayoutDeviceRect& aRect,
+                     const LayoutDeviceRect& aClip);
 
   Maybe<wr::ImageMask> BuildWrMaskImage(
       nsDisplayMasksAndClipPaths* aMaskItem, wr::DisplayListBuilder& aBuilder,
@@ -176,6 +186,13 @@ class WebRenderCommandBuilder final {
                                mozilla::wr::IpcResourceUpdateQueue& aResources,
                                const StackingContextHelper& aSc,
                                nsDisplayListBuilder* aDisplayListBuilder);
+
+  bool ComputeInvalidationForDisplayItem(nsDisplayListBuilder* aBuilder,
+                                         const nsPoint& aShift,
+                                         nsDisplayItem* aItem);
+  bool ComputeInvalidationForDisplayList(nsDisplayListBuilder* aBuilder,
+                                         const nsPoint& aShift,
+                                         nsDisplayList* aList);
 
   ClipManager mClipManager;
   HitTestInfoManager mHitTestInfoManager;

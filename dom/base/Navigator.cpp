@@ -70,8 +70,9 @@
 #include "nsICookieManager.h"
 #include "nsICookieService.h"
 #include "nsIHttpChannel.h"
-#ifdef ENABLE_MARIONETTE
+#ifdef ENABLE_WEBDRIVER
 #  include "nsIMarionette.h"
+#  include "nsIRemoteAgent.h"
 #endif
 #include "nsStreamUtils.h"
 #include "WidgetUtils.h"
@@ -753,6 +754,21 @@ bool Navigator::Vibrate(uint32_t aDuration) {
   return Vibrate(pattern);
 }
 
+nsTArray<uint32_t> SanitizeVibratePattern(const nsTArray<uint32_t>& aPattern) {
+  nsTArray<uint32_t> pattern(aPattern.Clone());
+
+  if (pattern.Length() > StaticPrefs::dom_vibrator_max_vibrate_list_len()) {
+    pattern.SetLength(StaticPrefs::dom_vibrator_max_vibrate_list_len());
+  }
+
+  for (size_t i = 0; i < pattern.Length(); ++i) {
+    pattern[i] =
+        std::min(StaticPrefs::dom_vibrator_max_vibrate_ms(), pattern[i]);
+  }
+
+  return pattern;
+}
+
 bool Navigator::Vibrate(const nsTArray<uint32_t>& aPattern) {
   MOZ_ASSERT(NS_IsMainThread());
 
@@ -766,16 +782,7 @@ bool Navigator::Vibrate(const nsTArray<uint32_t>& aPattern) {
     return false;
   }
 
-  nsTArray<uint32_t> pattern(aPattern.Clone());
-
-  if (pattern.Length() > StaticPrefs::dom_vibrator_max_vibrate_list_len()) {
-    pattern.SetLength(StaticPrefs::dom_vibrator_max_vibrate_list_len());
-  }
-
-  for (size_t i = 0; i < pattern.Length(); ++i) {
-    pattern[i] =
-        std::min(StaticPrefs::dom_vibrator_max_vibrate_ms(), pattern[i]);
-  }
+  nsTArray<uint32_t> pattern = SanitizeVibratePattern(aPattern);
 
   // The spec says we check dom.vibrator.enabled after we've done the sanity
   // checking on the pattern.
@@ -858,9 +865,9 @@ uint32_t Navigator::MaxTouchPoints(CallerType aCallerType) {
 // https://html.spec.whatwg.org/multipage/system-state.html#custom-handlers
 // If you change this list, please also update the copy in E10SUtils.jsm.
 static const char* const kSafeSchemes[] = {
-    "bitcoin", "geo",  "im",   "irc",         "ircs", "magnet", "mailto",
-    "mms",     "news", "nntp", "openpgp4fpr", "sip",  "sms",    "smsto",
-    "ssh",     "tel",  "urn",  "webcal",      "wtai", "xmpp"};
+    "bitcoin", "geo", "im",   "irc",  "ircs",        "magnet", "mailto",
+    "matrix",  "mms", "news", "nntp", "openpgp4fpr", "sip",    "sms",
+    "smsto",   "ssh", "tel",  "urn",  "webcal",      "wtai",   "xmpp"};
 
 void Navigator::CheckProtocolHandlerAllowed(const nsAString& aScheme,
                                             nsIURI* aHandlerURI,
@@ -1277,6 +1284,11 @@ void Navigator::MozGetUserMedia(const MediaStreamConstraints& aConstraints,
     aRv.ThrowInvalidStateError("The document is not fully active.");
     return;
   }
+  if (Document* doc = mWindow->GetExtantDoc()) {
+    if (!mWindow->IsSecureContext()) {
+      doc->SetUseCounter(eUseCounter_custom_MozGetUserMediaInsec);
+    }
+  }
   RefPtr<MediaManager::StreamPromise> sp;
   if (!MediaManager::IsOn(aConstraints.mVideo) &&
       !MediaManager::IsOn(aConstraints.mAudio)) {
@@ -1312,27 +1324,6 @@ void Navigator::MozGetUserMedia(const MediaStreamConstraints& aConstraints,
         auto error = MakeRefPtr<MediaStreamError>(window, *aError);
         MediaManager::CallOnError(*onerror, *error);
       });
-}
-
-void Navigator::MozGetUserMediaDevices(
-    MozGetUserMediaDevicesSuccessCallback& aOnSuccess,
-    NavigatorUserMediaErrorCallback& aOnError, uint64_t aInnerWindowID,
-    const nsAString& aCallID, ErrorResult& aRv) {
-  if (!mWindow || !mWindow->GetOuterWindow() ||
-      mWindow->GetOuterWindow()->GetCurrentInnerWindow() != mWindow) {
-    aRv.Throw(NS_ERROR_NOT_AVAILABLE);
-    return;
-  }
-  if (Document* doc = mWindow->GetExtantDoc()) {
-    if (!mWindow->IsSecureContext()) {
-      doc->SetUseCounter(eUseCounter_custom_MozGetUserMediaInsec);
-    }
-  }
-  RefPtr<MediaManager> manager = MediaManager::Get();
-  // XXXbz aOnError seems to be unused?
-  nsCOMPtr<nsPIDOMWindowInner> window(mWindow);
-  aRv =
-      manager->GetUserMediaDevices(window, aOnSuccess, aInnerWindowID, aCallID);
 }
 
 //*****************************************************************************
@@ -1860,29 +1851,25 @@ nsresult Navigator::GetPlatform(nsAString& aPlatform,
     }
   }
 
-  nsresult rv;
-
-  nsCOMPtr<nsIHttpProtocolHandler> service(
-      do_GetService(NS_NETWORK_PROTOCOL_CONTRACTID_PREFIX "http", &rv));
-  NS_ENSURE_SUCCESS(rv, rv);
-
-  // Sorry for the #if platform ugliness, but Communicator is likewise
-  // hardcoded and we are seeking backward compatibility here (bug 47080).
 #if defined(WIN32)
   aPlatform.AssignLiteral("Win32");
 #elif defined(XP_MACOSX)
   // Always return "MacIntel", even on ARM64 macOS like Safari does.
   aPlatform.AssignLiteral("MacIntel");
 #else
-  // XXX Communicator uses compiled-in build-time string defines
-  // to indicate the platform it was compiled *for*, not what it is
-  // currently running *on* which is what this does.
+  nsresult rv;
+  nsCOMPtr<nsIHttpProtocolHandler> service(
+      do_GetService(NS_NETWORK_PROTOCOL_CONTRACTID_PREFIX "http", &rv));
+  NS_ENSURE_SUCCESS(rv, rv);
+
   nsAutoCString plat;
   rv = service->GetOscpu(plat);
+  NS_ENSURE_SUCCESS(rv, rv);
+
   CopyASCIItoUTF16(plat, aPlatform);
 #endif
 
-  return rv;
+  return NS_OK;
 }
 
 /* static */
@@ -2148,16 +2135,27 @@ webgpu::Instance* Navigator::Gpu() {
 
 /* static */
 bool Navigator::Webdriver() {
-  bool marionetteRunning = false;
-
-#ifdef ENABLE_MARIONETTE
+#ifdef ENABLE_WEBDRIVER
   nsCOMPtr<nsIMarionette> marionette = do_GetService(NS_MARIONETTE_CONTRACTID);
   if (marionette) {
+    bool marionetteRunning = false;
     marionette->GetRunning(&marionetteRunning);
+    if (marionetteRunning) {
+      return true;
+    }
+  }
+
+  nsCOMPtr<nsIRemoteAgent> agent = do_GetService(NS_REMOTEAGENT_CONTRACTID);
+  if (agent) {
+    bool remoteAgentListening = false;
+    agent->GetListening(&remoteAgentListening);
+    if (remoteAgentListening) {
+      return true;
+    }
   }
 #endif
 
-  return marionetteRunning;
+  return false;
 }
 
 }  // namespace mozilla::dom

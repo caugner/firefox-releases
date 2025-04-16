@@ -259,6 +259,7 @@ class ContentParent final
   static void BroadcastStringBundle(const StringBundleDescriptor&);
 
   static void BroadcastFontListChanged();
+  static void BroadcastShmBlockAdded(uint32_t aGeneration, uint32_t aIndex);
 
   static void BroadcastThemeUpdate(widget::ThemeChangeKind);
 
@@ -491,17 +492,6 @@ class ContentParent final
 
   mozilla::ipc::IPCResult RecvNotifyTabDestroying(const TabId& aTabId,
                                                   const ContentParentId& aCpId);
-
-  already_AddRefed<POfflineCacheUpdateParent> AllocPOfflineCacheUpdateParent(
-      nsIURI* aManifestURI, nsIURI* aDocumentURI,
-      const PrincipalInfo& aLoadingPrincipalInfo, const bool& aStickDocument,
-      const CookieJarSettingsArgs& aCookieJarSettingsArgs);
-
-  virtual mozilla::ipc::IPCResult RecvPOfflineCacheUpdateConstructor(
-      POfflineCacheUpdateParent* aActor, nsIURI* aManifestURI,
-      nsIURI* aDocumentURI, const PrincipalInfo& aLoadingPrincipal,
-      const bool& stickDocument,
-      const CookieJarSettingsArgs& aCookieJarSettingsArgs) override;
 
   mozilla::ipc::IPCResult RecvSetOfflinePermission(
       const IPC::Principal& principal);
@@ -1356,7 +1346,7 @@ class ContentParent final
   mozilla::ipc::IPCResult RecvHistoryGo(
       const MaybeDiscarded<BrowsingContext>& aContext, int32_t aOffset,
       uint64_t aHistoryEpoch, bool aRequireUserInteraction,
-      HistoryGoResolver&& aResolveRequestedIndex);
+      bool aUserActivation, HistoryGoResolver&& aResolveRequestedIndex);
 
   mozilla::ipc::IPCResult RecvSynchronizeLayoutHistoryState(
       const MaybeDiscarded<BrowsingContext>& aContext,

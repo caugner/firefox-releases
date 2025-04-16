@@ -583,7 +583,7 @@ MOZ_ALWAYS_INLINE bool NativeObject::setLastPropertyForNewDataProperty(
 
   MOZ_ASSERT(shape->previous() == lastProperty());
   MOZ_ASSERT(shape->base() == lastProperty()->base());
-  MOZ_ASSERT(shape->isDataProperty());
+  MOZ_ASSERT(shape->propertyInfo().isDataProperty());
   MOZ_ASSERT(shape->slotSpan() == lastProperty()->slotSpan() + 1);
 
   size_t slot = shape->slot();
@@ -681,7 +681,7 @@ static MOZ_ALWAYS_INLINE bool CallResolveOp(JSContext* cx,
 
   MOZ_ASSERT(!obj->is<TypedArrayObject>());
 
-  mozilla::Maybe<ShapeProperty> prop = obj->lookup(cx, id);
+  mozilla::Maybe<PropertyInfo> prop = obj->lookup(cx, id);
   if (prop.isSome()) {
     propp->setNativeProperty(*prop);
   } else {
@@ -745,7 +745,7 @@ static MOZ_ALWAYS_INLINE bool NativeLookupOwnPropertyInline(
   // Check for a native property. Call Shape::search directly (instead of
   // NativeObject::lookup) because it's inlined.
   if (Shape* shape = obj->lastProperty()->search(cx, id)) {
-    propp->setNativeProperty(ShapeProperty(shape));
+    propp->setNativeProperty(shape->propertyInfo());
     return true;
   }
 
@@ -887,12 +887,12 @@ MOZ_ALWAYS_INLINE bool AddDataPropertyNonPrototype(JSContext* cx,
 
   // If we know this is a new property we can call addProperty instead of
   // the slower putProperty.
-  Shape* shape = NativeObject::addEnumerableDataProperty(cx, obj, id);
-  if (!shape) {
+  uint32_t slot;
+  if (!NativeObject::addEnumerableDataProperty(cx, obj, id, &slot)) {
     return false;
   }
 
-  obj->initSlot(shape->slot(), v);
+  obj->initSlot(slot, v);
 
   MOZ_ASSERT(!obj->getClass()->getAddProperty());
   return true;

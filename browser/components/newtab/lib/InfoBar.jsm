@@ -13,6 +13,13 @@ XPCOMUtils.defineLazyModuleGetters(this, {
   Services: "resource://gre/modules/Services.jsm",
 });
 
+XPCOMUtils.defineLazyPreferenceGetter(
+  this,
+  "PROTON_ENABLED",
+  "browser.proton.enabled",
+  false
+);
+
 class InfoBarNotification {
   constructor(message, dispatch) {
     this._dispatch = dispatch;
@@ -39,11 +46,17 @@ class InfoBarNotification {
       notificationContainer = gBrowser.getNotificationBox(browser);
     }
 
+    let priority =
+      content.priority ||
+      (PROTON_ENABLED
+        ? notificationContainer.PRIORITY_SYSTEM
+        : notificationContainer.PRIORITY_INFO_MEDIUM);
+
     this.notification = notificationContainer.appendNotification(
       this.formatMessageConfig(doc, content.text),
       this.message.id,
       content.icon || "chrome://branding/content/icon64.png",
-      notificationContainer.PRIORITY_INFO_MEDIUM,
+      priority,
       content.buttons.map(b => this.formatButtonConfig(b)),
       this.infobarCallback
     );
@@ -102,9 +115,13 @@ class InfoBarNotification {
   infobarCallback(eventType) {
     if (eventType === "removed") {
       this.notification = null;
+      // eslint-disable-next-line no-use-before-define
+      InfoBar._activeInfobar = null;
     } else if (this.notification) {
       this.sendUserEventTelemetry("DISMISSED");
       this.notification = null;
+      // eslint-disable-next-line no-use-before-define
+      InfoBar._activeInfobar = null;
     }
   }
 
@@ -121,6 +138,8 @@ class InfoBarNotification {
 }
 
 const InfoBar = {
+  _activeInfobar: null,
+
   maybeLoadCustomElement(win) {
     if (!win.customElements.get("remote-text")) {
       Services.scriptloader.loadSubScript(
@@ -138,6 +157,11 @@ const InfoBar = {
   },
 
   showInfoBarMessage(browser, message, dispatch) {
+    // Prevent stacking multiple infobars
+    if (this._activeInfobar) {
+      return null;
+    }
+
     const win = browser.ownerGlobal;
 
     if (PrivateBrowsingUtils.isWindowPrivate(win)) {
@@ -149,6 +173,7 @@ const InfoBar = {
 
     let notification = new InfoBarNotification(message, dispatch);
     notification.showNotification(browser);
+    this._activeInfobar = true;
 
     return notification;
   },

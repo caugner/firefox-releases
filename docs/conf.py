@@ -28,7 +28,6 @@ EXTRA_PATHS = (
     "third_party/python/futures",
     "third_party/python/jsmin",
     "third_party/python/which",
-    "toolkit/components/glean/sphinx",
 )
 
 sys.path[:0] = [os.path.join(topsrcdir, p) for p in EXTRA_PATHS]
@@ -49,7 +48,6 @@ extensions = [
     "sphinx_copybutton",
     "sphinx_markdown_tables",
     "sphinx_panels",
-    "glean",
 ]
 
 # JSDoc must run successfully for dirs specified, so running
@@ -116,6 +114,12 @@ html_show_copyright = False
 autosectionlabel_maxdepth = 1
 
 
+def install_sphinx_panels(app, pagename, templatename, context, doctree):
+    if "raptor" in pagename:
+        app.add_js_file("sphinx_panels.js")
+        app.add_css_file("sphinx_panels.css")
+
+
 def setup(app):
     app.add_config_value(
         "recommonmark_config",
@@ -129,3 +133,4 @@ def setup(app):
     )
     app.add_stylesheet("custom_theme.css")
     app.add_transform(AutoStructify)
+    app.connect("html-page-context", install_sphinx_panels)

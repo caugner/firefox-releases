@@ -10,15 +10,13 @@
 // Cleanup.
 registerCleanupFunction(async () => {
   CustomizableUI.setToolbarVisibility("PersonalToolbar", false);
-  if (CustomizableUI.protonToolbarEnabled) {
-    CustomizableUI.removeWidgetFromArea("library-button");
-  }
+  CustomizableUI.removeWidgetFromArea("library-button");
   SidebarUI.hide();
 });
 
 async function selectAppMenuView(buttonId, viewId) {
   let btn;
-  await BrowserTestUtils.waitForCondition(() => {
+  await TestUtils.waitForCondition(() => {
     btn = document.getElementById(buttonId);
     return btn;
   }, "Should have the " + buttonId + " button");
@@ -37,23 +35,21 @@ async function openBookmarkingPanelInLibraryToolbarButton() {
 }
 
 add_task(async function test_enable_toolbar() {
-  if (CustomizableUI.protonToolbarEnabled) {
-    CustomizableUI.addWidgetToArea("library-button", "nav-bar");
-  }
+  CustomizableUI.addWidgetToArea("library-button", "nav-bar");
 
   await openBookmarkingPanelInLibraryToolbarButton();
   let toolbar = document.getElementById("PersonalToolbar");
   Assert.ok(toolbar.collapsed, "Bookmarks Toolbar is hidden");
 
   let viewBookmarksToolbarBtn;
-  await BrowserTestUtils.waitForCondition(() => {
+  await TestUtils.waitForCondition(() => {
     viewBookmarksToolbarBtn = document.getElementById(
       "panelMenu_viewBookmarksToolbar"
     );
     return viewBookmarksToolbarBtn;
   }, "Should have the library 'View Bookmarks Toolbar' button.");
   viewBookmarksToolbarBtn.click();
-  await BrowserTestUtils.waitForCondition(
+  await TestUtils.waitForCondition(
     () => !toolbar.collapsed,
     "Should have the Bookmarks Toolbar enabled."
   );

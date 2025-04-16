@@ -3,14 +3,34 @@
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 template <bool COMPOSITE, typename P>
+static inline void copy_row(P* dst, const P* src, int span) {
+  // No scaling, so just do a fast copy.
+  memcpy(dst, src, span * sizeof(P));
+}
+
+template <>
+void copy_row<true, uint32_t>(uint32_t* dst, const uint32_t* src, int span) {
+  // No scaling, so just do a fast composite.
+  auto* end = dst + span;
+  while (dst + 4 <= end) {
+    WideRGBA8 srcpx = unpack(unaligned_load<PackedRGBA8>(src));
+    WideRGBA8 dstpx = unpack(unaligned_load<PackedRGBA8>(dst));
+    PackedRGBA8 r = pack(srcpx + dstpx - muldiv255(dstpx, alphas(srcpx)));
+    unaligned_store(dst, r);
+    src += 4;
+    dst += 4;
+  }
+  if (dst < end) {
+    WideRGBA8 srcpx = unpack(partial_load_span<PackedRGBA8>(src, end - dst));
+    WideRGBA8 dstpx = unpack(partial_load_span<PackedRGBA8>(dst, end - dst));
+    auto r = pack(srcpx + dstpx - muldiv255(dstpx, alphas(srcpx)));
+    partial_store_span(dst, r, end - dst);
+  }
+}
+
+template <bool COMPOSITE, typename P>
 static inline void scale_row(P* dst, int dstWidth, const P* src, int srcWidth,
                              int span, int frac) {
-  if (srcWidth == dstWidth) {
-    // No scaling, so just do a fast copy.
-    memcpy(dst, src, span * sizeof(P));
-    return;
-  }
-
   // Do scaling with different source and dest widths.
   for (P* end = dst + span; dst < end; dst++) {
     *dst = *src;
@@ -24,28 +44,9 @@ static inline void scale_row(P* dst, int dstWidth, const P* src, int srcWidth,
 template <>
 void scale_row<true, uint32_t>(uint32_t* dst, int dstWidth, const uint32_t* src,
                                int srcWidth, int span, int frac) {
-  auto* end = dst + span;
-  if (srcWidth == dstWidth) {
-    // No scaling, so just do a fast composite.
-    while (dst + 4 <= end) {
-      WideRGBA8 srcpx = unpack(unaligned_load<PackedRGBA8>(src));
-      WideRGBA8 dstpx = unpack(unaligned_load<PackedRGBA8>(dst));
-      PackedRGBA8 r = pack(srcpx + dstpx - muldiv255(dstpx, alphas(srcpx)));
-      unaligned_store(dst, r);
-      src += 4;
-      dst += 4;
-    }
-    if (dst < end) {
-      WideRGBA8 srcpx = unpack(partial_load_span<PackedRGBA8>(src, end - dst));
-      WideRGBA8 dstpx = unpack(partial_load_span<PackedRGBA8>(dst, end - dst));
-      auto r = pack(srcpx + dstpx - muldiv255(dstpx, alphas(srcpx)));
-      partial_store_span(dst, r, end - dst);
-    }
-    return;
-  }
-
   // Do scaling with different source and dest widths.
   // Gather source pixels four at a time for better packing.
+  auto* end = dst + span;
   for (; dst + 4 <= end; dst += 4) {
     U32 srcn;
     srcn.x = *src;
@@ -73,22 +74,16 @@ void scale_row<true, uint32_t>(uint32_t* dst, int dstWidth, const uint32_t* src,
     // Process any remaining pixels. Try to gather as many pixels as possible
     // into a single source chunk for compositing.
     U32 srcn = {*src, 0, 0, 0};
-    if (dst + 1 < end) {
+    if (end - dst > 1) {
       for (frac += srcWidth; frac >= dstWidth; frac -= dstWidth) {
         src++;
       }
       srcn.y = *src;
-      if (dst + 2 < end) {
+      if (end - dst > 2) {
         for (frac += srcWidth; frac >= dstWidth; frac -= dstWidth) {
           src++;
         }
         srcn.z = *src;
-        if (dst + 3 < end) {
-          for (frac += srcWidth; frac >= dstWidth; frac -= dstWidth) {
-            src++;
-          }
-          srcn.w = *src;
-        }
       }
     }
     WideRGBA8 srcpx = unpack(bit_cast<PackedRGBA8>(srcn));
@@ -110,55 +105,64 @@ static NO_INLINE void scale_blit(Texture& srctex, const IntRect& srcReq,
   int dstWidth = dstReq.width();
   int dstHeight = dstReq.height();
   // Compute valid dest bounds
-  IntRect dstBounds = dsttex.sample_bounds(dstReq);
+  IntRect dstBounds = dsttex.sample_bounds(dstReq).intersect(clipRect);
   // Compute valid source bounds
-  // Scale source to dest, rounding inward to avoid sampling outside source
-  IntRect srcBounds =
-      srctex.sample_bounds(srcReq, invertY)
-          .scale(srcWidth, srcHeight, dstWidth, dstHeight, true);
-  // Limit dest sampling bounds to overlap source bounds
-  dstBounds.intersect(srcBounds);
-  // Compute the clipped bounds, relative to dstBounds.
-  IntRect clippedDest = dstBounds.intersection(clipRect) - dstBounds.origin();
+  IntRect srcBounds = srctex.sample_bounds(srcReq, invertY);
+  // If srcReq is outside the source texture, we need to clip the sampling
+  // bounds so that we never sample outside valid source bounds. Get texture
+  // bounds relative to srcReq and scale to dest-space rounding inward, using
+  // this rect to limit the dest bounds further.
+  IntRect srcClip = srctex.bounds() - srcReq.origin();
+  if (invertY) {
+    srcClip.invert_y(srcReq.height());
+  }
+  srcClip.scale(srcWidth, srcHeight, dstWidth, dstHeight, true);
+  dstBounds.intersect(srcClip);
   // Check if clipped sampling bounds are empty
-  if (clippedDest.is_empty()) {
+  if (dstBounds.is_empty()) {
     return;
   }
-  // Compute final source bounds from clamped dest sampling bounds
-  srcBounds =
-      IntRect(dstBounds).scale(dstWidth, dstHeight, srcWidth, srcHeight);
+
   // Calculate source and dest pointers from clamped offsets
   int bpp = srctex.bpp();
   int srcStride = srctex.stride();
   int destStride = dsttex.stride();
   char* dest = dsttex.sample_ptr(dstReq, dstBounds);
+  // Clip the source bounds by the destination offset.
+  int fracX = srcWidth * dstBounds.x0;
+  int fracY = srcHeight * dstBounds.y0;
+  srcBounds.x0 = max(fracX / dstWidth, srcBounds.x0);
+  srcBounds.y0 = max(fracY / dstHeight, srcBounds.y0);
+  fracX %= dstWidth;
+  fracY %= dstHeight;
   char* src = srctex.sample_ptr(srcReq, srcBounds, invertY);
   // Inverted Y must step downward along source rows
   if (invertY) {
     srcStride = -srcStride;
   }
-  int span = clippedDest.width();
-  int fracX = srcWidth * clippedDest.x0;
-  int fracY = srcHeight * clippedDest.y0;
-  dest += destStride * clippedDest.y0;
-  dest += bpp * clippedDest.x0;
-  src += srcStride * (fracY / dstHeight);
-  src += bpp * (fracX / dstWidth);
-  fracY %= dstHeight;
-  fracX %= dstWidth;
-  for (int rows = clippedDest.height(); rows > 0; rows--) {
+  int span = dstBounds.width();
+  for (int rows = dstBounds.height(); rows > 0; rows--) {
     switch (bpp) {
       case 1:
-        scale_row<COMPOSITE>((uint8_t*)dest, dstWidth, (uint8_t*)src, srcWidth,
-                             span, fracX);
+        if (srcWidth == dstWidth)
+          copy_row<COMPOSITE>((uint8_t*)dest, (uint8_t*)src, span);
+        else
+          scale_row<COMPOSITE>((uint8_t*)dest, dstWidth, (uint8_t*)src,
+                               srcWidth, span, fracX);
         break;
       case 2:
-        scale_row<COMPOSITE>((uint16_t*)dest, dstWidth, (uint16_t*)src,
-                             srcWidth, span, fracX);
+        if (srcWidth == dstWidth)
+          copy_row<COMPOSITE>((uint16_t*)dest, (uint16_t*)src, span);
+        else
+          scale_row<COMPOSITE>((uint16_t*)dest, dstWidth, (uint16_t*)src,
+                               srcWidth, span, fracX);
         break;
       case 4:
-        scale_row<COMPOSITE>((uint32_t*)dest, dstWidth, (uint32_t*)src,
-                             srcWidth, span, fracX);
+        if (srcWidth == dstWidth)
+          copy_row<COMPOSITE>((uint32_t*)dest, (uint32_t*)src, span);
+        else
+          scale_row<COMPOSITE>((uint32_t*)dest, dstWidth, (uint32_t*)src,
+                               srcWidth, span, fracX);
         break;
       default:
         assert(false);
@@ -401,7 +405,6 @@ void* GetResourceBuffer(LockedTexture* resource, int32_t* width,
   *stride = resource->stride();
   return resource->buf;
 }
-
 
 // Extension for optimized compositing of textures or framebuffers that may be
 // safely used across threads. The source and destination must be locked to

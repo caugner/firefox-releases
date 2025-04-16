@@ -10,9 +10,13 @@
 const Commands = {
   inspectedWindowCommand:
     "devtools/shared/commands/inspected-window/inspected-window-command",
+  inspectorCommand: "devtools/shared/commands/inspector/inspector-command",
+  resourceCommand: "devtools/shared/commands/resource/resource-command",
   targetCommand: "devtools/shared/commands/target/target-command",
   targetConfigurationCommand:
     "devtools/shared/commands/target-configuration/target-configuration-command",
+  threadConfigurationCommand:
+    "devtools/shared/commands/thread-configuration/thread-configuration-command",
 };
 
 /**

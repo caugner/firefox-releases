@@ -21,10 +21,10 @@ namespace wr {
 class RenderCompositorOGLSWGL : public RenderCompositorLayersSWGL {
  public:
   static UniquePtr<RenderCompositor> Create(
-      RefPtr<widget::CompositorWidget>&& aWidget, nsACString& aError);
+      const RefPtr<widget::CompositorWidget>& aWidget, nsACString& aError);
 
   RenderCompositorOGLSWGL(layers::Compositor* aCompositor,
-                          RefPtr<widget::CompositorWidget>&& aWidget,
+                          const RefPtr<widget::CompositorWidget>& aWidget,
                           void* aContext);
   virtual ~RenderCompositorOGLSWGL();
 
@@ -33,6 +33,14 @@ class RenderCompositorOGLSWGL : public RenderCompositorLayersSWGL {
   bool MakeCurrent() override;
 
   bool BeginFrame() override;
+  RenderedFrameId EndFrame(const nsTArray<DeviceIntRect>& aDirtyRects) override;
+
+  // Returns true for requesting rendering during readback.
+  // RenderCompositorOGLSWGL::MaybeReadback() requests rendering.
+  // This value is not used by WebRender, since native compositor API is used
+  // for sw-wr.
+  bool UsePartialPresent() override { return true; }
+  bool RequestFullRender() override;
 
   void Pause() override;
   bool Resume() override;
@@ -61,6 +69,7 @@ class RenderCompositorOGLSWGL : public RenderCompositorLayersSWGL {
   EGLSurface mEGLSurface = EGL_NO_SURFACE;
   // On android, we must track our own surface size.
   Maybe<LayoutDeviceIntSize> mEGLSurfaceSize;
+  bool mFullRender = false;
 
   class TileOGL : public RenderCompositorLayersSWGL::Tile {
    public:

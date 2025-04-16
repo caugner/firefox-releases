@@ -250,11 +250,6 @@ class MacroAssemblerCompat : public vixl::MacroAssembler {
     vixl::MacroAssembler::Drop(Operand(ARMRegister(amount, 64)));
   }
 
-#ifdef ENABLE_WASM_SIMD
-  void PushRegsInMaskForWasmStubs(LiveRegisterSet set);
-  void PopRegsInMaskForWasmStubs(LiveRegisterSet set, LiveRegisterSet ignore);
-#endif
-
   // Update sp with the value of the current active stack pointer, if necessary.
   void syncStackPtr() {
     if (!GetStackPointer64().Is(vixl::sp)) {
@@ -1421,12 +1416,14 @@ class MacroAssemblerCompat : public vixl::MacroAssembler {
                          ARMFPRegister lhs, ARMFPRegister rhs);
   void compareSimd128Float(Assembler::Condition cond, ARMFPRegister dest,
                            ARMFPRegister lhs, ARMFPRegister rhs);
-  void rightShiftInt8x16(Register rhs, FloatRegister lhsDest,
-                         FloatRegister temp, bool isUnsigned);
-  void rightShiftInt16x8(Register rhs, FloatRegister lhsDest,
-                         FloatRegister temp, bool isUnsigned);
-  void rightShiftInt32x4(Register rhs, FloatRegister lhsDest,
-                         FloatRegister temp, bool isUnsigned);
+  void rightShiftInt8x16(FloatRegister lhs, Register rhs, FloatRegister dest,
+                         bool isUnsigned);
+  void rightShiftInt16x8(FloatRegister lhs, Register rhs, FloatRegister dest,
+                         bool isUnsigned);
+  void rightShiftInt32x4(FloatRegister lhs, Register rhs, FloatRegister dest,
+                         bool isUnsigned);
+  void rightShiftInt64x2(FloatRegister lhs, Register rhs, FloatRegister dest,
+                         bool isUnsigned);
 
   void branchNegativeZero(FloatRegister reg, Register scratch, Label* label) {
     MOZ_CRASH("branchNegativeZero");
@@ -2104,6 +2101,14 @@ class MacroAssemblerCompat : public vixl::MacroAssembler {
                      Register64 val64, Register memoryBase, Register ptr);
   void wasmStoreImpl(const wasm::MemoryAccessDesc& access, MemOperand destAddr,
                      AnyRegister valany, Register64 val64);
+  // The complete address is in `address`, and `access` is used for its type
+  // attributes only; its `offset` is ignored.
+  void wasmLoadAbsolute(const wasm::MemoryAccessDesc& access,
+                        Register memoryBase, uint64_t address, AnyRegister out,
+                        Register64 out64);
+  void wasmStoreAbsolute(const wasm::MemoryAccessDesc& access,
+                         AnyRegister value, Register64 value64,
+                         Register memoryBase, uint64_t address);
 
   // Emit a BLR or NOP instruction. ToggleCall can be used to patch
   // this instruction.

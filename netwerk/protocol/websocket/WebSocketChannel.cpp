@@ -3719,7 +3719,7 @@ WebSocketChannel::OnStartRequest(nsIRequest* aRequest) {
       if (!respUpgrade.IsEmpty()) {
         val = respUpgrade.BeginWriting();
         while ((token = nsCRT::strtok(val, ", \t", &val))) {
-          if (PL_strcasecmp(token, "Websocket") == 0) {
+          if (nsCRT::strcasecmp(token, "Websocket") == 0) {
             rv = NS_OK;
             break;
           }
@@ -3743,7 +3743,7 @@ WebSocketChannel::OnStartRequest(nsIRequest* aRequest) {
       if (!respConnection.IsEmpty()) {
         val = respConnection.BeginWriting();
         while ((token = nsCRT::strtok(val, ", \t", &val))) {
-          if (PL_strcasecmp(token, "Upgrade") == 0) {
+          if (nsCRT::strcasecmp(token, "Upgrade") == 0) {
             rv = NS_OK;
             break;
           }

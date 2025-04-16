@@ -263,6 +263,9 @@ class BrowserChild final : public nsMessageManagerScriptExecutor,
   mozilla::ipc::IPCResult RecvLoadURL(nsDocShellLoadState* aLoadState,
                                       const ParentShowInfo& aInfo);
 
+  mozilla::ipc::IPCResult RecvCreateAboutBlankContentViewer(
+      nsIPrincipal* aPrincipal, nsIPrincipal* aPartitionedPrincipal);
+
   mozilla::ipc::IPCResult RecvResumeLoad(const uint64_t& aPendingSwitchID,
                                          const ParentShowInfo&);
 
@@ -413,6 +416,11 @@ class BrowserChild final : public nsMessageManagerScriptExecutor,
 
   mozilla::ipc::IPCResult RecvSetIsUnderHiddenEmbedderElement(
       const bool& aIsUnderHiddenEmbedderElement);
+
+  mozilla::ipc::IPCResult RecvInsertText(const nsString& aStringToInsert);
+
+  mozilla::ipc::IPCResult RecvNormalPriorityInsertText(
+      const nsString& aStringToInsert);
 
   MOZ_CAN_RUN_SCRIPT_BOUNDARY
   mozilla::ipc::IPCResult RecvPasteTransferable(
@@ -639,9 +647,6 @@ class BrowserChild final : public nsMessageManagerScriptExecutor,
   }
 #endif
 
-  // The HANDLE object for the widget this BrowserChild in.
-  WindowsHandle WidgetNativeData() { return mWidgetNativeData; }
-
   // The transform from the coordinate space of this BrowserChild to the
   // coordinate space of the native window its BrowserParent is in.
   mozilla::LayoutDeviceToLayoutDeviceMatrix4x4
@@ -721,9 +726,6 @@ class BrowserChild final : public nsMessageManagerScriptExecutor,
   mozilla::ipc::IPCResult RecvStopIMEStateManagement();
 
   mozilla::ipc::IPCResult RecvAllowScriptsToClose();
-
-  mozilla::ipc::IPCResult RecvSetWidgetNativeData(
-      const WindowsHandle& aWidgetNativeData);
 
   mozilla::ipc::IPCResult RecvReleaseAllPointerCapture();
 
@@ -902,8 +904,6 @@ class BrowserChild final : public nsMessageManagerScriptExecutor,
   // and once it reaches 0, it is no longer blocked.
   uint32_t mPendingDocShellBlockers;
   int32_t mCancelContentJSEpoch;
-
-  WindowsHandle mWidgetNativeData;
 
   Maybe<LayoutDeviceToLayoutDeviceMatrix4x4> mChildToParentConversionMatrix;
   ScreenRect mTopLevelViewportVisibleRectInBrowserCoords;

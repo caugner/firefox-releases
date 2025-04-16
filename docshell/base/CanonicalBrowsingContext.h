@@ -10,6 +10,7 @@
 #include "mozilla/dom/BrowsingContext.h"
 #include "mozilla/dom/MediaControlKeySource.h"
 #include "mozilla/dom/BrowsingContextWebProgress.h"
+#include "mozilla/dom/Promise.h"
 #include "mozilla/dom/SessionStoreRestoreData.h"
 #include "mozilla/dom/SessionStoreUtils.h"
 #include "mozilla/dom/ipc/IdType.h"
@@ -29,6 +30,7 @@ class nsSHistory;
 class nsBrowserStatusFilter;
 class nsSecureBrowserUI;
 class CallerWillNotifyHistoryIndexAndLengthChanges;
+class nsITimer;
 
 namespace mozilla {
 enum class CallState;
@@ -46,6 +48,7 @@ struct LoadURIOptions;
 class MediaController;
 struct LoadingSessionHistoryInfo;
 class SessionHistoryEntry;
+class SSCacheCopy;
 class WindowGlobalParent;
 
 // RemotenessChangeOptions is passed through the methods to store the state
@@ -166,7 +169,7 @@ class CanonicalBrowsingContext final : public BrowsingContext {
   void RemoveFromSessionHistory(const nsID& aChangeID);
 
   void HistoryGo(int32_t aIndex, uint64_t aHistoryEpoch,
-                 bool aRequireUserInteraction,
+                 bool aRequireUserInteraction, bool aUserActivation,
                  Maybe<ContentParentId> aContentId,
                  std::function<void(int32_t&&)>&& aResolver);
 
@@ -203,11 +206,11 @@ class CanonicalBrowsingContext final : public BrowsingContext {
                ErrorResult& aError);
 
   void GoBack(const Optional<int32_t>& aCancelContentJSEpoch,
-              bool aRequireUserInteraction);
+              bool aRequireUserInteraction, bool aUserActivation);
   void GoForward(const Optional<int32_t>& aCancelContentJSEpoch,
-                 bool aRequireUserInteraction);
-  void GoToIndex(int32_t aIndex,
-                 const Optional<int32_t>& aCancelContentJSEpoch);
+                 bool aRequireUserInteraction, bool aUserActivation);
+  void GoToIndex(int32_t aIndex, const Optional<int32_t>& aCancelContentJSEpoch,
+                 bool aUserActivation);
   void Reload(uint32_t aReloadFlags);
   void Stop(uint32_t aStopFlags);
 
@@ -286,8 +289,17 @@ class CanonicalBrowsingContext final : public BrowsingContext {
     return mContainerFeaturePolicy;
   }
 
-  void SetRestoreData(SessionStoreRestoreData* aData);
+  void SetRestoreData(SessionStoreRestoreData* aData, ErrorResult& aError);
+  void ClearRestoreState();
   void RequestRestoreTabContent(WindowGlobalParent* aWindow);
+  already_AddRefed<Promise> GetRestorePromise();
+
+  nsresult WriteSessionStorageToSessionStore(
+      const nsTArray<SSCacheCopy>& aSesssionStorage, uint32_t aEpoch);
+
+  void UpdateSessionStoreSessionStorage(const std::function<void()>& aDone);
+
+  static void UpdateSessionStoreForStorage(uint64_t aBrowsingContextId);
 
   // Called when a BrowserParent for this BrowsingContext has been fully
   // destroyed (i.e. `ActorDestroy` was called).
@@ -296,6 +308,19 @@ class CanonicalBrowsingContext final : public BrowsingContext {
 
   void StartUnloadingHost(uint64_t aChildID);
   void ClearUnloadingHost(uint64_t aChildID);
+
+  bool AllowedInBFCache(const Maybe<uint64_t>& aChannelId);
+
+  // Methods for getting and setting the active state for top level
+  // browsing contexts, for the process priority manager.
+  bool IsPriorityActive() const {
+    MOZ_RELEASE_ASSERT(IsTop());
+    return mPriorityActive;
+  }
+  void SetPriorityActive(bool aIsActive) {
+    MOZ_RELEASE_ASSERT(IsTop());
+    mPriorityActive = aIsActive;
+  }
 
  protected:
   // Called when the browsing context is being discarded.
@@ -347,6 +372,21 @@ class CanonicalBrowsingContext final : public BrowsingContext {
     RemotenessChangeOptions mOptions;
   };
 
+  struct RestoreState {
+    NS_INLINE_DECL_REFCOUNTING(RestoreState)
+
+    void ClearData() { mData = nullptr; }
+    void Resolve();
+
+    RefPtr<SessionStoreRestoreData> mData;
+    RefPtr<Promise> mPromise;
+    uint32_t mRequests = 0;
+    uint32_t mResolves = 0;
+
+   private:
+    ~RestoreState() = default;
+  };
+
   friend class net::DocumentLoadListener;
   // Called when a DocumentLoadListener is created to start a load for
   // this browsing context. Returns false if a higher priority load is
@@ -373,6 +413,10 @@ class CanonicalBrowsingContext final : public BrowsingContext {
   // Called when we want to show the subframe crashed UI as our previous browser
   // has become unloaded for one reason or another.
   void ShowSubframeCrashedUI(BrowserBridgeParent* aBridge);
+
+  void MaybeScheduleSessionStoreUpdate();
+
+  void CancelSessionStoreUpdate();
 
   // XXX(farre): Store a ContentParent pointer here rather than mProcessId?
   // Indicates which process owns the docshell.
@@ -418,13 +462,19 @@ class CanonicalBrowsingContext final : public BrowsingContext {
 
   RefPtr<nsSecureBrowserUI> mSecureBrowserUI;
   RefPtr<BrowsingContextWebProgress> mWebProgress;
+
+  nsCOMPtr<nsIWebProgressListener> mDocShellProgressBridge;
   RefPtr<nsBrowserStatusFilter> mStatusFilter;
 
   RefPtr<FeaturePolicy> mContainerFeaturePolicy;
 
-  RefPtr<SessionStoreRestoreData> mRestoreData;
-  uint32_t mRequestedContentRestores = 0;
-  uint32_t mCompletedContentRestores = 0;
+  RefPtr<RestoreState> mRestoreState;
+
+  // If this is a top level context, this is true if our browser ID is marked as
+  // active in the process priority manager.
+  bool mPriorityActive = false;
+
+  nsCOMPtr<nsITimer> mSessionStoreSessionStorageUpdateTimer;
 };
 
 }  // namespace dom

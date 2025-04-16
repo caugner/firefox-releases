@@ -22,6 +22,7 @@
 #include "nsIPrefBranch.h"
 #include "nsIPrefService.h"
 #include "nsContentUtils.h"
+#include "nsCRT.h"
 #include "nsThreadUtils.h"
 #include "nsQueryObject.h"
 #include "nsSOCKSIOLayer.h"
@@ -769,7 +770,6 @@ nsProtocolProxyService::nsProtocolProxyService()
     : mFilterLocalHosts(false),
       mProxyConfig(PROXYCONFIG_DIRECT),
       mHTTPProxyPort(-1),
-      mFTPProxyPort(-1),
       mHTTPSProxyPort(-1),
       mSOCKSProxyPort(-1),
       mSOCKSProxyVersion(4),
@@ -1004,12 +1004,6 @@ void nsProtocolProxyService::PrefsChanged(nsIPrefBranch* prefBranch,
   if (!pref || !strcmp(pref, PROXY_PREF("ssl_port")))
     proxy_GetIntPref(prefBranch, PROXY_PREF("ssl_port"), mHTTPSProxyPort);
 
-  if (!pref || !strcmp(pref, PROXY_PREF("ftp")))
-    proxy_GetStringPref(prefBranch, PROXY_PREF("ftp"), mFTPProxyHost);
-
-  if (!pref || !strcmp(pref, PROXY_PREF("ftp_port")))
-    proxy_GetIntPref(prefBranch, PROXY_PREF("ftp_port"), mFTPProxyPort);
-
   if (!pref || !strcmp(pref, PROXY_PREF("socks")))
     proxy_GetStringPref(prefBranch, PROXY_PREF("socks"), mSOCKSProxyTarget);
 
@@ -1148,7 +1142,7 @@ bool nsProtocolProxyService::CanUseProxy(nsIURI* aURI, int32_t defaultPort) {
         // compare last |filter_host_len| bytes of target hostname.
         //
         const char* host_tail = host.get() + host_len - filter_host_len;
-        if (!PL_strncasecmp(host_tail, hinfo->name.host, filter_host_len)) {
+        if (!nsCRT::strncasecmp(host_tail, hinfo->name.host, filter_host_len)) {
           // If the tail of the host string matches the filter
 
           if (filter_host_len > 0 && hinfo->name.host[0] == '.') {
@@ -1213,25 +1207,25 @@ const char* nsProtocolProxyService::ExtractProxyInfo(const char* start,
   const char* type = nullptr;
   switch (len) {
     case 4:
-      if (PL_strncasecmp(start, kProxyType_HTTP, 4) == 0) {
+      if (nsCRT::strncasecmp(start, kProxyType_HTTP, 4) == 0) {
         type = kProxyType_HTTP;
       }
       break;
     case 5:
-      if (PL_strncasecmp(start, kProxyType_PROXY, 5) == 0) {
+      if (nsCRT::strncasecmp(start, kProxyType_PROXY, 5) == 0) {
         type = kProxyType_HTTP;
-      } else if (PL_strncasecmp(start, kProxyType_SOCKS, 5) == 0) {
+      } else if (nsCRT::strncasecmp(start, kProxyType_SOCKS, 5) == 0) {
         type = kProxyType_SOCKS4;  // assume v4 for 4x compat
-      } else if (PL_strncasecmp(start, kProxyType_HTTPS, 5) == 0) {
+      } else if (nsCRT::strncasecmp(start, kProxyType_HTTPS, 5) == 0) {
         type = kProxyType_HTTPS;
       }
       break;
     case 6:
-      if (PL_strncasecmp(start, kProxyType_DIRECT, 6) == 0)
+      if (nsCRT::strncasecmp(start, kProxyType_DIRECT, 6) == 0)
         type = kProxyType_DIRECT;
-      else if (PL_strncasecmp(start, kProxyType_SOCKS4, 6) == 0)
+      else if (nsCRT::strncasecmp(start, kProxyType_SOCKS4, 6) == 0)
         type = kProxyType_SOCKS4;
-      else if (PL_strncasecmp(start, kProxyType_SOCKS5, 6) == 0)
+      else if (nsCRT::strncasecmp(start, kProxyType_SOCKS5, 6) == 0)
         // map "SOCKS5" to "socks" to match contract-id of registered
         // SOCKS-v5 socket provider.
         type = kProxyType_SOCKS;
@@ -2206,12 +2200,6 @@ nsresult nsProtocolProxyService::Resolve_Internal(nsIChannel* channel,
     host = &mHTTPSProxyHost;
     type = kProxyType_HTTP;
     port = mHTTPSProxyPort;
-  } else if (!mFTPProxyHost.IsEmpty() && mFTPProxyPort > 0 &&
-             !(flags & RESOLVE_IGNORE_URI_SCHEME) &&
-             info.scheme.EqualsLiteral("ftp")) {
-    host = &mFTPProxyHost;
-    type = kProxyType_HTTP;
-    port = mFTPProxyPort;
   } else if (!mSOCKSProxyTarget.IsEmpty() &&
              (IsHostLocalTarget(mSOCKSProxyTarget) || mSOCKSProxyPort > 0)) {
     host = &mSOCKSProxyTarget;

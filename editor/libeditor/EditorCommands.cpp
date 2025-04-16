@@ -275,7 +275,7 @@ bool UndoCommand::IsCommandEnabled(Command aCommand,
 nsresult UndoCommand::DoCommand(Command aCommand, TextEditor& aTextEditor,
                                 nsIPrincipal* aPrincipal) const {
   nsresult rv = aTextEditor.UndoAsAction(1, aPrincipal);
-  NS_WARNING_ASSERTION(NS_SUCCEEDED(rv), "TextEditor::UndoAsAction() failed");
+  NS_WARNING_ASSERTION(NS_SUCCEEDED(rv), "EditorBase::UndoAsAction() failed");
   return rv;
 }
 
@@ -303,7 +303,7 @@ bool RedoCommand::IsCommandEnabled(Command aCommand,
 nsresult RedoCommand::DoCommand(Command aCommand, TextEditor& aTextEditor,
                                 nsIPrincipal* aPrincipal) const {
   nsresult rv = aTextEditor.RedoAsAction(1, aPrincipal);
-  NS_WARNING_ASSERTION(NS_SUCCEEDED(rv), "TextEditor::RedoAsAction() failed");
+  NS_WARNING_ASSERTION(NS_SUCCEEDED(rv), "EditorBase::RedoAsAction() failed");
   return rv;
 }
 
@@ -332,7 +332,7 @@ bool CutCommand::IsCommandEnabled(Command aCommand,
 nsresult CutCommand::DoCommand(Command aCommand, TextEditor& aTextEditor,
                                nsIPrincipal* aPrincipal) const {
   nsresult rv = aTextEditor.CutAsAction(aPrincipal);
-  NS_WARNING_ASSERTION(NS_SUCCEEDED(rv), "TextEditor::CutAsAction() failed");
+  NS_WARNING_ASSERTION(NS_SUCCEEDED(rv), "EditorBase::CutAsAction() failed");
   return rv;
 }
 
@@ -369,7 +369,7 @@ nsresult CutOrDeleteCommand::DoCommand(Command aCommand,
     return rv;
   }
   nsresult rv = aTextEditor.CutAsAction(aPrincipal);
-  NS_WARNING_ASSERTION(NS_SUCCEEDED(rv), "TextEditor::CutAsAction() failed");
+  NS_WARNING_ASSERTION(NS_SUCCEEDED(rv), "EditorBase::CutAsAction() failed");
   return rv;
 }
 
@@ -507,7 +507,7 @@ nsresult PasteTransferableCommand::DoCommandParam(
   nsresult rv =
       aTextEditor.PasteTransferableAsAction(aTransferableParam, aPrincipal);
   NS_WARNING_ASSERTION(NS_SUCCEEDED(rv),
-                       "TextEditor::PasteTransferableAsAction() failed");
+                       "EditorBase::PasteTransferableAsAction() failed");
   return rv;
 }
 
@@ -892,7 +892,7 @@ nsresult InsertParagraphCommand::DoCommand(Command aCommand,
   }
   nsresult rv = aTextEditor.InsertLineBreakAsAction(aPrincipal);
   NS_WARNING_ASSERTION(NS_SUCCEEDED(rv),
-                       "TextEditor::InsertLineBreakAsAction() failed");
+                       "EditorBase::InsertLineBreakAsAction() failed");
   return rv;
 }
 
@@ -925,7 +925,7 @@ nsresult InsertLineBreakCommand::DoCommand(Command aCommand,
   }
   nsresult rv = aTextEditor.InsertLineBreakAsAction(aPrincipal);
   NS_WARNING_ASSERTION(NS_SUCCEEDED(rv),
-                       "TextEditor::InsertLineBreakAsAction() failed");
+                       "EditorBase::InsertLineBreakAsAction() failed");
   return rv;
 }
 
@@ -957,7 +957,7 @@ nsresult PasteQuotationCommand::DoCommand(Command aCommand,
   nsresult rv = aTextEditor.PasteAsQuotationAsAction(
       nsIClipboard::kGlobalClipboard, true, aPrincipal);
   NS_WARNING_ASSERTION(NS_SUCCEEDED(rv),
-                       "TextEditor::PasteAsQuotationAsAction() failed");
+                       "EditorBase::PasteAsQuotationAsAction() failed");
   return rv;
 }
 

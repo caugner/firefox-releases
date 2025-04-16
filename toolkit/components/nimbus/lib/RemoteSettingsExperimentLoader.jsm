@@ -47,12 +47,19 @@ const TIMER_NAME = "rs-experiment-loader-timer";
 const TIMER_LAST_UPDATE_PREF = `app.update.lastUpdateTime.${TIMER_NAME}`;
 // Use the same update interval as normandy
 const RUN_INTERVAL_PREF = "app.normandy.run_interval_seconds";
+const NIMBUS_DEBUG_PREF = "nimbus.debug";
 
 XPCOMUtils.defineLazyPreferenceGetter(
   this,
   "COLLECTION_ID",
   COLLECTION_ID_PREF,
   COLLECTION_ID_FALLBACK
+);
+XPCOMUtils.defineLazyPreferenceGetter(
+  this,
+  "NIMBUS_DEBUG",
+  NIMBUS_DEBUG_PREF,
+  false
 );
 
 /**
@@ -79,7 +86,6 @@ const RemoteDefaultsLoader = {
 
     if (remoteDefaults.length) {
       await ExperimentManager.store.ready();
-      const targetingContext = new TargetingContext();
 
       // Iterate over remote defaults: at most 1 per feature
       for (let remoteDefault of remoteDefaults) {
@@ -90,7 +96,10 @@ const RemoteDefaultsLoader = {
         for (let configuration of remoteDefault.configurations) {
           let result;
           try {
-            result = await targetingContext.eval(configuration.targeting);
+            result = await RemoteSettingsExperimentLoader.evaluateJexl(
+              configuration.targeting,
+              { activeRemoteDefaults: existingConfigIds }
+            );
           } catch (e) {
             Cu.reportError(e);
           }
@@ -216,9 +225,13 @@ class _RemoteSettingsExperimentLoader {
   }
 
   async evaluateJexl(jexlString, customContext) {
-    if (customContext && !customContext.experiment) {
+    if (
+      customContext &&
+      !customContext.experiment &&
+      !customContext.activeRemoteDefaults
+    ) {
       throw new Error(
-        "Expected an .experiment property in second param of this function"
+        "Expected an .experiment or .activeRemoteDefaults property in second param of this function"
       );
     }
 
@@ -308,6 +321,42 @@ class _RemoteSettingsExperimentLoader {
     this._updating = false;
   }
 
+  async optInToExperiment({ slug, branch: branchSlug, collection }) {
+    log.debug(`Attempting force enrollment with ${slug} / ${branchSlug}`);
+
+    if (!NIMBUS_DEBUG) {
+      log.debug(
+        `Force enrollment only works when '${NIMBUS_DEBUG_PREF}' is enabled.`
+      );
+      // More generic error if no debug preference is on.
+      throw new Error("Could not opt in.");
+    }
+
+    let recipes;
+    try {
+      recipes = await RemoteSettings(collection || COLLECTION_ID).get();
+    } catch (e) {
+      Cu.reportError(e);
+      throw new Error("Error getting recipes from remote settings.");
+    }
+
+    let recipe = recipes.find(r => r.slug === slug);
+
+    if (!recipe) {
+      throw new Error(
+        `Could not find experiment slug ${slug} in collection ${collection ||
+          COLLECTION_ID}.`
+      );
+    }
+
+    let branch = recipe.branches.find(b => b.slug === branchSlug);
+    if (!branch) {
+      throw new Error(`Could not find branch slug ${branchSlug} in ${slug}.`);
+    }
+
+    return ExperimentManager.forceEnroll(recipe, branch);
+  }
+
   /**
    * Handles feature status based on feature pref and STUDIES_OPT_OUT_PREF.
    * Changing any of them to false will turn off any recipe fetching and
@@ -328,6 +377,10 @@ class _RemoteSettingsExperimentLoader {
    * Sets a timer to update recipes every this.intervalInSeconds
    */
   setTimer() {
+    if (this.intervalInSeconds === 0) {
+      // Used in tests where we want to turn this mechanism off
+      return;
+    }
     // The callbacks will be called soon after the timer is registered
     timerManager.registerTimer(
       TIMER_NAME,

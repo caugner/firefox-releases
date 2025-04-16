@@ -447,6 +447,7 @@ class nsHttpHandler final : public nsIHttpProtocolHandler,
 
   bool IsHttp3VersionSupported(const nsACString& version);
 
+  static bool IsHttp3SupportedByServer(nsHttpResponseHead* aResponseHead);
   bool IsHttp3Enabled() const { return mHttp3Enabled; }
   uint32_t DefaultQpackTableSize() const { return mQpackTableSize; }
   uint16_t DefaultHttp3MaxBlockedStreams() const {
@@ -500,6 +501,10 @@ class nsHttpHandler final : public nsIHttpProtocolHandler,
   bool FallbackToOriginIfConfigsAreECHAndAllFailed() const;
 
   bool UseHTTPSRRForSpeculativeConnection() const;
+
+  // So we can ensure that this is done during process preallocation to
+  // avoid first-use overhead
+  static void PresetAcceptLanguages();
 
  private:
   nsHttpHandler();

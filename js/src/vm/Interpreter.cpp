@@ -200,17 +200,7 @@ static inline bool GetPropertyOperation(JSContext* cx, InterpreterFrame* fp,
                                         MutableHandleValue vp) {
   RootedPropertyName name(cx, script->getName(pc));
 
-  if (name == cx->names().length) {
-    if (IsOptimizedArguments(fp, lval)) {
-      vp.setInt32(fp->numActualArgs());
-      return true;
-    }
-
-    if (GetLengthProperty(lval, vp)) {
-      return true;
-    }
-  } else if (name == cx->names().callee && IsOptimizedArguments(fp, lval)) {
-    vp.setObject(fp->callee());
+  if (name == cx->names().length && GetLengthProperty(lval, vp)) {
     return true;
   }
 
@@ -968,7 +958,7 @@ static void PopEnvironment(JSContext* cx, EnvironmentIter& ei) {
       }
       if (ei.scope().hasEnvironment()) {
         ei.initialFrame()
-            .popOffEnvironmentChain<BlockLexicalEnvironmentObject>();
+            .popOffEnvironmentChain<ScopedLexicalEnvironmentObject>();
       }
       break;
     case ScopeKind::With:
@@ -1869,8 +1859,8 @@ class ReservedRooted : public RootedBase<T, ReservedRooted<T>> {
   DECLARE_POINTER_ASSIGN_OPS(ReservedRooted, T)
 };
 
-void js::ReportInNotObjectError(JSContext* cx, HandleValue lref, int lindex,
-                                HandleValue rref, int rindex) {
+void js::ReportInNotObjectError(JSContext* cx, HandleValue lref,
+                                HandleValue rref) {
   auto uniqueCharsFromString = [](JSContext* cx,
                                   HandleValue ref) -> UniqueChars {
     static const size_t MaxStringLength = 16;
@@ -2388,7 +2378,7 @@ static MOZ_NEVER_INLINE JS_HAZ_JSNATIVE_CALLER bool Interpret(JSContext* cx,
       HandleValue rref = REGS.stackHandleAt(-1);
       if (!rref.isObject()) {
         HandleValue lref = REGS.stackHandleAt(-2);
-        ReportInNotObjectError(cx, lref, -2, rref, -1);
+        ReportInNotObjectError(cx, lref, rref);
         goto error;
       }
       bool found;
@@ -3048,14 +3038,8 @@ static MOZ_NEVER_INLINE JS_HAZ_JSNATIVE_CALLER bool Interpret(JSContext* cx,
       HandleValue rval = REGS.stackHandleAt(-1);
       MutableHandleValue res = REGS.stackHandleAt(-2);
 
-      bool done =
-          MaybeGetElemOptimizedArguments(cx, REGS.fp(), lval, rval, res);
-
-      if (!done) {
-        if (!GetElementOperationWithStackIndex(cx, lval, lvalIndex, rval,
-                                               res)) {
-          goto error;
-        }
+      if (!GetElementOperationWithStackIndex(cx, lval, lvalIndex, rval, res)) {
+        goto error;
       }
 
       REGS.sp--;
@@ -3186,18 +3170,13 @@ static MOZ_NEVER_INLINE JS_HAZ_JSNATIVE_CALLER bool Interpret(JSContext* cx,
     }
     END_CASE(SpreadCall)
 
-    CASE(FunApply) {
-      CallArgs args = CallArgsFromSp(GET_ARGC(REGS.pc), REGS.sp);
-      GuardFunApplyArgumentsOptimization(cx, REGS.fp(), args);
-      /* FALL THROUGH */
-    }
-
     CASE(New)
     CASE(Call)
     CASE(CallIgnoresRv)
     CASE(CallIter)
     CASE(SuperCall)
-    CASE(FunCall) {
+    CASE(FunCall)
+    CASE(FunApply) {
       static_assert(JSOpLength_Call == JSOpLength_New,
                     "call and new must be the same size");
       static_assert(JSOpLength_Call == JSOpLength_CallIgnoresRv,
@@ -3521,18 +3500,12 @@ static MOZ_NEVER_INLINE JS_HAZ_JSNATIVE_CALLER bool Interpret(JSContext* cx,
     }
 
     CASE(Arguments) {
-      if (!script->ensureHasAnalyzedArgsUsage(cx)) {
+      MOZ_ASSERT(script->needsArgsObj());
+      ArgumentsObject* obj = ArgumentsObject::createExpected(cx, REGS.fp());
+      if (!obj) {
         goto error;
       }
-      if (script->needsArgsObj()) {
-        ArgumentsObject* obj = ArgumentsObject::createExpected(cx, REGS.fp());
-        if (!obj) {
-          goto error;
-        }
-        PUSH_COPY(ObjectValue(*obj));
-      } else {
-        PUSH_COPY(MagicValue(JS_OPTIMIZED_ARGUMENTS));
-      }
+      PUSH_COPY(ObjectValue(*obj));
     }
     END_CASE(Arguments)
 
@@ -4042,11 +4015,13 @@ static MOZ_NEVER_INLINE JS_HAZ_JSNATIVE_CALLER bool Interpret(JSContext* cx,
 
     CASE(PopLexicalEnv) {
 #ifdef DEBUG
-      // Pop block from scope chain.
       Scope* scope = script->lookupScope(REGS.pc);
       MOZ_ASSERT(scope);
-      MOZ_ASSERT(scope->is<LexicalScope>());
-      MOZ_ASSERT(scope->as<LexicalScope>().hasEnvironment());
+      MOZ_ASSERT(scope->is<LexicalScope>() || scope->is<ClassBodyScope>());
+      MOZ_ASSERT_IF(scope->is<LexicalScope>(),
+                    scope->as<LexicalScope>().hasEnvironment());
+      MOZ_ASSERT_IF(scope->is<ClassBodyScope>(),
+                    scope->as<ClassBodyScope>().hasEnvironment());
 #endif
 
       if (MOZ_UNLIKELY(cx->realm()->isDebuggee())) {
@@ -4054,16 +4029,20 @@ static MOZ_NEVER_INLINE JS_HAZ_JSNATIVE_CALLER bool Interpret(JSContext* cx,
       }
 
       // Pop block from scope chain.
-      REGS.fp()->popOffEnvironmentChain<BlockLexicalEnvironmentObject>();
+      REGS.fp()->popOffEnvironmentChain<LexicalEnvironmentObject>();
     }
     END_CASE(PopLexicalEnv)
 
     CASE(DebugLeaveLexicalEnv) {
-      MOZ_ASSERT(script->lookupScope(REGS.pc));
-      MOZ_ASSERT(script->lookupScope(REGS.pc)->is<LexicalScope>());
-      MOZ_ASSERT(
-          !script->lookupScope(REGS.pc)->as<LexicalScope>().hasEnvironment());
-
+#ifdef DEBUG
+      Scope* scope = script->lookupScope(REGS.pc);
+      MOZ_ASSERT(scope);
+      MOZ_ASSERT(scope->is<LexicalScope>() || scope->is<ClassBodyScope>());
+      MOZ_ASSERT_IF(scope->is<LexicalScope>(),
+                    !scope->as<LexicalScope>().hasEnvironment());
+      MOZ_ASSERT_IF(scope->is<ClassBodyScope>(),
+                    !scope->as<ClassBodyScope>().hasEnvironment());
+#endif
       // FIXME: This opcode should not be necessary.  The debugger shouldn't
       // need help from bytecode to do its job.  See bug 927782.
 
@@ -4094,6 +4073,16 @@ static MOZ_NEVER_INLINE JS_HAZ_JSNATIVE_CALLER bool Interpret(JSContext* cx,
       }
     }
     END_CASE(RecreateLexicalEnv)
+
+    CASE(PushClassBodyEnv) {
+      ReservedRooted<Scope*> scope(&rootScope0, script->getScope(REGS.pc));
+
+      if (!REGS.fp()->pushClassBodyEnvironment(cx,
+                                               scope.as<ClassBodyScope>())) {
+        goto error;
+      }
+    }
+    END_CASE(PushClassBodyEnv)
 
     CASE(PushVarEnv) {
       ReservedRooted<Scope*> scope(&rootScope0, script->getScope(REGS.pc));
@@ -4892,14 +4881,12 @@ static bool InitGetterSetterOperation(JSContext* cx, jsbytecode* pc,
 
   if (op == JSOp::InitPropGetter || op == JSOp::InitElemGetter ||
       op == JSOp::InitHiddenPropGetter || op == JSOp::InitHiddenElemGetter) {
-    attrs |= JSPROP_GETTER;
     return DefineAccessorProperty(cx, obj, id, val, nullptr, attrs);
   }
 
   MOZ_ASSERT(op == JSOp::InitPropSetter || op == JSOp::InitElemSetter ||
              op == JSOp::InitHiddenPropSetter ||
              op == JSOp::InitHiddenElemSetter);
-  attrs |= JSPROP_SETTER;
   return DefineAccessorProperty(cx, obj, id, nullptr, val, attrs);
 }
 

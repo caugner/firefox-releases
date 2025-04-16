@@ -488,7 +488,7 @@ static bool JO(JSContext* cx, HandleObject obj, StringifyContext* scx) {
         return false;
       }
       MOZ_ASSERT(prop.isNativeProperty() &&
-                 prop.shapeProperty().isDataDescriptor());
+                 prop.propertyInfo().isDataDescriptor());
     }
 #endif  // DEBUG
     if (!GetProperty(cx, obj, obj, id, &outputValue)) {
@@ -979,8 +979,11 @@ static bool Walk(JSContext* cx, HandleObject holder, HandleId name,
           }
         } else {
           /* Step 2a(iii)(3). The spec deliberately ignores strict failure. */
-          Rooted<PropertyDescriptor> desc(cx);
-          desc.setDataDescriptor(newElement, JSPROP_ENUMERATE);
+          Rooted<PropertyDescriptor> desc(
+              cx, PropertyDescriptor::Data(newElement,
+                                           {JS::PropertyAttribute::Configurable,
+                                            JS::PropertyAttribute::Enumerable,
+                                            JS::PropertyAttribute::Writable}));
           if (!DefineProperty(cx, obj, id, desc, ignored)) {
             return false;
           }
@@ -1015,8 +1018,11 @@ static bool Walk(JSContext* cx, HandleObject holder, HandleId name,
           }
         } else {
           /* Step 2b(ii)(3). The spec deliberately ignores strict failure. */
-          Rooted<PropertyDescriptor> desc(cx);
-          desc.setDataDescriptor(newElement, JSPROP_ENUMERATE);
+          Rooted<PropertyDescriptor> desc(
+              cx, PropertyDescriptor::Data(newElement,
+                                           {JS::PropertyAttribute::Configurable,
+                                            JS::PropertyAttribute::Enumerable,
+                                            JS::PropertyAttribute::Writable}));
           if (!DefineProperty(cx, obj, id, desc, ignored)) {
             return false;
           }

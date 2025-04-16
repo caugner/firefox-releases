@@ -58,14 +58,14 @@ panel[type="arrow"][side="right"] {
 #BMB_bookmarksPopup {
   margin-top: -4px; /* Overrides value from panelUI.inc.css */
 }
-
-#notification-popup {
-  margin-top: 5px; /* Overrides value from panelUI.inc.css */
-}
 } /** END Proton **/
 
 panelmultiview .toolbaritem-combined-buttons > spacer.before-label {
   width: 42px; /* 18px toolbarbutton padding + 16px icon + 8px label padding start */
+}
+
+.panel-subview-body {
+  scrollbar-color: color-mix(in srgb, currentColor 26%, transparent) transparent;
 }
 
 #appMenu-addon-banners > .addon-banner-item,

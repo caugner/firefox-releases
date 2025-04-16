@@ -142,8 +142,6 @@ class TenuringTracer final : public GenericTracer {
  public:
   Nursery& nursery() { return nursery_; }
 
-  template <typename T>
-  void traverse(T** thingp);
   void traverse(JS::Value* thingp);
 
   // The store buffers need to be able to call these directly.
@@ -300,7 +298,7 @@ class Nursery {
   static const size_t MaxNurseryBufferSize = 1024;
 
   // Do a minor collection.
-  void collect(JSGCInvocationKind kind, JS::GCReason reason);
+  void collect(JS::GCOptions options, JS::GCReason reason);
 
   // If the thing at |*ref| in the Nursery has been forwarded, set |*ref| to
   // the new location and return true. Otherwise return false and leave
@@ -344,8 +342,6 @@ class Nursery {
     MOZ_ASSERT(isEnabled());
     return cellsWithUid_.append(cell);
   }
-
-  [[nodiscard]] bool queueDictionaryModeObjectToSweep(NativeObject* obj);
 
   size_t sizeOfMallocedBuffers(mozilla::MallocSizeOf mallocSizeOf) const {
     size_t total = 0;
@@ -569,9 +565,6 @@ class Nursery {
   using CellsWithUniqueIdVector = Vector<gc::Cell*, 8, SystemAllocPolicy>;
   CellsWithUniqueIdVector cellsWithUid_;
 
-  using NativeObjectVector = Vector<NativeObject*, 0, SystemAllocPolicy>;
-  NativeObjectVector dictionaryModeObjects_;
-
   template <typename Key>
   struct DeduplicationStringHasher {
     using Lookup = Key;
@@ -737,12 +730,11 @@ class Nursery {
   // the nursery on debug & nightly builds.
   void clear();
 
-  void sweepDictionaryModeObjects();
   void sweepMapAndSetObjects();
 
   // Change the allocable space provided by the nursery.
-  void maybeResizeNursery(JSGCInvocationKind kind, JS::GCReason reason);
-  size_t targetSize(JSGCInvocationKind kind, JS::GCReason reason);
+  void maybeResizeNursery(JS::GCOptions options, JS::GCReason reason);
+  size_t targetSize(JS::GCOptions options, JS::GCReason reason);
   void clearRecentGrowthData();
   void growAllocableSpace(size_t newCapacity);
   void shrinkAllocableSpace(size_t newCapacity);

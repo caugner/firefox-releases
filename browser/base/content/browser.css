@@ -25,6 +25,7 @@ body {
 
 :root:not([chromehidden~="toolbar"]) {
   min-width: 450px;
+  min-height: 120px;
 }
 
 :root[customizing] {
@@ -77,12 +78,15 @@ body {
        (-moz-os-version: windows-win8) {
   :root:-moz-lwtheme {
     background-color: var(--lwt-accent-color);
+    background-image: var(--lwt-additional-images);
+    background-repeat: var(--lwt-background-tiling);
+    background-position: var(--lwt-background-alignment);
   }
 
   :root[lwtheme-image] {
-    background-image: var(--lwt-header-image) !important;
-    background-repeat: no-repeat;
-    background-position: right top !important;
+    background-image: var(--lwt-header-image, linear-gradient(transparent, transparent)),  var(--lwt-additional-images) !important;
+    background-repeat: no-repeat, var(--lwt-background-tiling);
+    background-position: right top, var(--lwt-background-alignment) !important;
   }
 
   :root:-moz-lwtheme:-moz-window-inactive {
@@ -597,16 +601,25 @@ toolbar:not(#TabsToolbar) > #personal-bookmarks {
  *
  * Attribute is controlled by browser.js:/gRemoteControl.
  */
+:root[remotecontrol] #remote-control-box {
+  visibility: visible;
+  padding-inline: var(--urlbar-icon-padding);
+}
+
+:root[remotecontrol] #remote-control-icon {
+  list-style-image: url(chrome://browser/content/static-robot.png);
+  width: 16px;
+  height: 16px;
+}
+
 :root[remotecontrol] #urlbar-background {
-  background: repeating-linear-gradient(
+  background-image: repeating-linear-gradient(
     -45deg,
-    transparent,
-    transparent 25px,
-    rgba(255,255,255,.3) 25px,
-    rgba(255,255,255,.3) 50px);
+    rgba(255, 60, 60, 0.25) 0 25px,
+    rgba(175, 0, 0, 0.25) 25px 50px
+  );
+
   background-attachment: fixed;
-  background-color: rgba(255,170,68,.8);
-  color: black;
   /* Override the usual breakout animation so the gradient doesn't shift around
      when the panel opens. */
   animation: none !important;
@@ -778,12 +791,10 @@ toolbar:not(#TabsToolbar) > #personal-bookmarks {
   }
 }
 
-@media (-moz-proton) {
-  /* The page actions menu is hidden by default, it is only shown in small
-     windows as the overflow target of multiple page action buttons */
-  #pageActionButton {
-    visibility: collapse;
-  }
+/* The page actions menu is hidden by default, it is only shown in small
+   windows as the overflow target of multiple page action buttons */
+#pageActionButton {
+  visibility: collapse;
 }
 
 /* 680px is just below half of popular 1366px wide screens, so when putting two
@@ -1064,30 +1075,6 @@ toolbarpaletteitem[place="palette"] > #downloads-button[indicator] > .toolbarbut
   display: none;
 }
 
-/* Combobox dropdown renderer */
-#ContentSelectDropdown > menupopup {
-  /* The menupopup itself should always be rendered LTR to ensure the scrollbar aligns with
-   * the dropdown arrow on the dropdown widget. If a menuitem is RTL, its style will be set accordingly */
-  direction: ltr;
-}
-
-#ContentSelectDropdown > menupopup::part(arrowscrollbox-scrollbox) {
-  scrollbar-width: var(--content-select-scrollbar-width, auto);
-}
-
-#ContentSelectDropdown > menupopup[customoptionstyling="true"]::part(arrowscrollbox) {
-  /* When authors specify a custom background, we use background-image to specify the author-supplied color.
-   * In that case, we don't want stuff like custom appearance or custom
-   * backgrounds, so we make sure to apply it on top of the default background. */
-  background-image: var(--content-select-background-image, none);
-  background-color: -moz-Combobox;
-}
-
-/* Indent options in optgroups */
-.contentSelectDropdown-ingroup .menu-iconic-text {
-  padding-inline-start: 2em;
-}
-
 /* Give this menupopup an arrow panel styling */
 #BMB_bookmarksPopup {
   background: transparent;
@@ -1306,7 +1293,7 @@ toolbarpaletteitem > toolbaritem {
   -moz-box-pack: center;
 }
 
-toolbarpaletteitem > #stop-reload-button {
+toolbarpaletteitem:not([place="palette"]) > #stop-reload-button {
   -moz-box-pack: inherit;
 }
 
@@ -1402,12 +1389,6 @@ toolbarpaletteitem > #stop-reload-button {
   appearance: none;
   opacity: 0.65;
   -moz-window-shadow: none;
-}
-
-/* Page action panel */
-#pageAction-panel-sendToDevice-subview-body:not([state="notready"]) > .pageAction-sendToDevice-notReady,
-#pageAction-urlbar-sendToDevice-subview-body:not([state="notready"]) > .pageAction-sendToDevice-notReady {
-  display: none;
 }
 
 /* Page action buttons */
@@ -1615,18 +1596,28 @@ toolbar[keyNav=true]:not([collapsed=true], [customizing=true]) toolbartabstop {
   grid-auto-rows: min(90%, var(--doc-height-px));
 }
 
-#window-modal-dialog > .dialogOverlay > .dialogBox,
-.tab-prompt-dialog > .dialogOverlay > .dialogBox:not([sizeto=available]) {
-  /* For content-prompts, we size the item using the grid-auto-rows.
-   * For tab and window prompts, where we fully control the content,
-   * we use the document height directly.  */
-  min-height: var(--doc-height-px);
-}
-
-
 :not(.content-prompt-dialog) > .dialogOverlay > .dialogBox {
   /* Make dialogs overlap with upper chrome UI. */
   margin-top: -5px;
+}
+
+#window-modal-dialog {
+  overflow: visible;
+  padding: 0;
+  --chrome-offset: 20px; /* gets overridden from JS, but pick some default... */
+  margin-top: max(
+    /* Do not go below 8px, corresponding to the negative margin above plus
+     * a tiny bit of space, as otherwise the top of the dialog would be
+     * adjacent to or clipped by the top of the window. */
+    8px,
+    /* Otherwise, use the chrome height,
+     * or the height of the parent window minus the height of the dialog,
+     * whichever is smaller. */
+    min(
+      var(--chrome-offset),
+      calc(100vh - var(--inner-height))
+    )
+  );
 }
 
 .dialogFrame {

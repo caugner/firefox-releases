@@ -31,6 +31,7 @@
 #include "nsISSLSocketControl.h"
 #include "nsISupportsPriority.h"
 #include "nsITransportSecurityInfo.h"
+#include "nsCRT.h"
 #include "nsPreloadedStream.h"
 #include "nsProxyRelease.h"
 #include "nsSocketTransport2.h"
@@ -170,8 +171,9 @@ nsresult nsHttpConnection::Init(
     nsHttpConnectionInfo* info, uint16_t maxHangTime,
     nsISocketTransport* transport, nsIAsyncInputStream* instream,
     nsIAsyncOutputStream* outstream, bool connectedTransport, nsresult status,
-    nsIInterfaceRequestor* callbacks, PRIntervalTime rtt) {
-  LOG1(("nsHttpConnection::Init this=%p sockettransport=%p", this, transport));
+    nsIInterfaceRequestor* callbacks, PRIntervalTime rtt, bool forWebSocket) {
+  LOG1(("nsHttpConnection::Init this=%p sockettransport=%p forWebSocket=%d",
+        this, transport, forWebSocket));
   NS_ENSURE_ARG_POINTER(info);
   NS_ENSURE_TRUE(!mConnInfo, NS_ERROR_ALREADY_INITIALIZED);
   MOZ_ASSERT(NS_SUCCEEDED(status) || !connectedTransport);
@@ -187,6 +189,7 @@ nsresult nsHttpConnection::Init(
   mSocketTransport = transport;
   mSocketIn = instream;
   mSocketOut = outstream;
+  mForWebSocket = forWebSocket;
 
   // See explanation for non-strictness of this operation in
   // SetSecurityCallbacks.
@@ -1282,13 +1285,13 @@ nsresult nsHttpConnection::OnHeadersAvailable(nsAHttpTransaction* trans,
     Unused << responseHead->GetHeader(nsHttp::Keep_Alive, keepAlive);
 
     if (mUsingSpdyVersion == SpdyVersion::NONE) {
-      const char* cp = PL_strcasestr(keepAlive.get(), "timeout=");
+      const char* cp = nsCRT::strcasestr(keepAlive.get(), "timeout=");
       if (cp)
         mIdleTimeout = PR_SecondsToInterval((uint32_t)atoi(cp + 8));
       else
         mIdleTimeout = gHttpHandler->IdleTimeout() * mDefaultTimeoutFactor;
 
-      cp = PL_strcasestr(keepAlive.get(), "max=");
+      cp = nsCRT::strcasestr(keepAlive.get(), "max=");
       if (cp) {
         int maxUses = atoi(cp + 4);
         if (maxUses > 0) {

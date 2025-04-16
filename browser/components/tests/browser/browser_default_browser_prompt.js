@@ -36,7 +36,6 @@ add_task(async function proton_shows_prompt() {
   await SpecialPowers.pushPrefEnv({
     set: [
       [CHECK_PREF, true],
-      ["browser.proton.enabled", true],
       ["browser.shell.didSkipDefaultBrowserCheckOnFirstRun", true],
     ],
   });
@@ -85,7 +84,7 @@ add_task(async function stop_asking() {
 });
 
 add_task(async function primary_default() {
-  const mock = mockShell();
+  const mock = mockShell({ isPinned: true });
   const histogram = getHistogram();
 
   await showAndWaitForModal(win => {
@@ -103,7 +102,7 @@ add_task(async function primary_default() {
   Assert.equal(
     mock.pinCurrentAppToTaskbar.callCount,
     0,
-    "Primary button doesn't pin if can't pin"
+    "Primary button doesn't pin if already pinned"
   );
   AssertHistogram(histogram, "accept");
 });

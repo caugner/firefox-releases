@@ -78,7 +78,7 @@ bool MaybeCrossOriginObjectMixins::IsPlatformObjectSameOrigin(JSContext* cx,
 
 bool MaybeCrossOriginObjectMixins::CrossOriginGetOwnPropertyHelper(
     JSContext* cx, JS::Handle<JSObject*> obj, JS::Handle<jsid> id,
-    JS::MutableHandle<JS::PropertyDescriptor> desc) const {
+    JS::MutableHandle<Maybe<JS::PropertyDescriptor>> desc) const {
   MOZ_ASSERT(!IsPlatformObjectSameOrigin(cx, obj) || IsRemoteObjectProxy(obj),
              "Why did we get called?");
   // First check for an IDL-defined cross-origin property with the given name.
@@ -90,22 +90,14 @@ bool MaybeCrossOriginObjectMixins::CrossOriginGetOwnPropertyHelper(
     return false;
   }
 
-  if (!JS_GetOwnPropertyDescriptorById(cx, holder, id, desc)) {
-    return false;
-  }
-
-  if (desc.object()) {
-    desc.object().set(obj);
-  }
-
-  return true;
+  return JS_GetOwnPropertyDescriptorById(cx, holder, id, desc);
 }
 
 /* static */
 bool MaybeCrossOriginObjectMixins::CrossOriginPropertyFallback(
     JSContext* cx, JS::Handle<JSObject*> obj, JS::Handle<jsid> id,
-    JS::MutableHandle<JS::PropertyDescriptor> desc) {
-  MOZ_ASSERT(!desc.object(), "Why are we being called?");
+    JS::MutableHandle<Maybe<JS::PropertyDescriptor>> desc) {
+  MOZ_ASSERT(desc.isNothing(), "Why are we being called?");
 
   // Step 1.
   if (xpc::IsCrossOriginWhitelistedProp(cx, id)) {
@@ -113,8 +105,8 @@ bool MaybeCrossOriginObjectMixins::CrossOriginPropertyFallback(
     //   [[Value]]: undefined, [[Writable]]: false, [[Enumerable]]: false,
     //   [[Configurable]]: true
     // }.
-    desc.setDataDescriptor(JS::UndefinedHandleValue, JSPROP_READONLY);
-    desc.object().set(obj);
+    desc.set(Some(JS::PropertyDescriptor::Data(
+        JS::UndefinedValue(), {JS::PropertyAttribute::Configurable})));
     return true;
   }
 
@@ -150,29 +142,29 @@ bool MaybeCrossOriginObjectMixins::CrossOriginGet(
   js::AssertSameCompartment(cx, receiver);
 
   // Step 1.
-  JS::Rooted<JS::PropertyDescriptor> desc(cx);
+  JS::Rooted<Maybe<JS::PropertyDescriptor>> desc(cx);
   if (!js::GetProxyHandler(obj)->getOwnPropertyDescriptor(cx, obj, id, &desc)) {
     return false;
   }
-  desc.assertCompleteIfFound();
 
   // Step 2.
-  MOZ_ASSERT(desc.object(),
+  MOZ_ASSERT(desc.isSome(),
              "Callees should throw in all cases when they are not finding a "
              "property decriptor");
+  desc->assertComplete();
 
   // Step 3.
-  if (desc.isDataDescriptor()) {
-    vp.set(desc.value());
+  if (desc->isDataDescriptor()) {
+    vp.set(desc->value());
     return true;
   }
 
   // Step 4.
-  MOZ_ASSERT(desc.isAccessorDescriptor());
+  MOZ_ASSERT(desc->isAccessorDescriptor());
 
   // Step 5.
   JS::Rooted<JSObject*> getter(cx);
-  if (!desc.hasGetterObject() || !(getter = desc.getterObject())) {
+  if (!desc->hasGetter() || !(getter = desc->getter())) {
     // Step 6.
     return ReportCrossOriginDenial(cx, id, "get"_ns);
   }
@@ -205,20 +197,20 @@ bool MaybeCrossOriginObjectMixins::CrossOriginSet(
   js::AssertSameCompartment(cx, v);
 
   // Step 1.
-  JS::Rooted<JS::PropertyDescriptor> desc(cx);
+  JS::Rooted<Maybe<JS::PropertyDescriptor>> desc(cx);
   if (!js::GetProxyHandler(obj)->getOwnPropertyDescriptor(cx, obj, id, &desc)) {
     return false;
   }
-  desc.assertCompleteIfFound();
 
   // Step 2.
-  MOZ_ASSERT(desc.object(),
+  MOZ_ASSERT(desc.isSome(),
              "Callees should throw in all cases when they are not finding a "
              "property decriptor");
+  desc->assertComplete();
 
   // Step 3.
   JS::Rooted<JSObject*> setter(cx);
-  if (desc.hasSetterObject() && (setter = desc.setterObject())) {
+  if (desc->hasSetter() && (setter = desc->setter())) {
     JS::Rooted<JS::Value> ignored(cx);
     // Step 3.1.
     if (!JS::Call(cx, receiver, setter, JS::HandleValueArray(v), &ignored)) {
@@ -288,7 +280,7 @@ bool MaybeCrossOriginObjectMixins::EnsureHolder(
   // existing wrapper in the cache, that contains the security wrapper created
   // here.  We should use unique/private object here, so that this doesn't
   // affect later wrap operation.
-  JS::Rooted<JSObject*> key(cx, JS::GetRealmWeakMapKey(cx));
+  JS::Rooted<JSObject*> key(cx, JS::GetRealmKeyObject(cx));
   if (!key) {
     return false;
   }

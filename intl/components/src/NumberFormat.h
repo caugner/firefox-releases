@@ -10,6 +10,8 @@
 #include "mozilla/FloatingPoint.h"
 #include "mozilla/Maybe.h"
 #include "mozilla/PodOperations.h"
+#include "mozilla/Result.h"
+#include "mozilla/ResultVariant.h"
 #include "mozilla/Utf8.h"
 #include "mozilla/Vector.h"
 
@@ -40,13 +42,13 @@ struct MOZ_STACK_CLASS NumberFormatOptions {
    * https://github.com/unicode-org/icu/blob/master/docs/userguide/format_parse/numbers/skeletons.md#unit
    * https://github.com/unicode-org/icu/blob/master/docs/userguide/format_parse/numbers/skeletons.md#unit-width
    */
-  enum class CurrencyDisplayStyle {
+  enum class CurrencyDisplay {
     Symbol,
     Code,
     Name,
     NarrowSymbol,
   };
-  Maybe<std::pair<std::string_view, CurrencyDisplayStyle>> mCurrency;
+  Maybe<std::pair<std::string_view, CurrencyDisplay>> mCurrency;
 
   /**
    * Set the fraction digits settings. |min| can be zero, |max| must be
@@ -133,64 +135,205 @@ struct MOZ_STACK_CLASS NumberFormatOptions {
   bool mRoundingModeHalfUp = true;
 };
 
+enum class NumberPartType {
+  Compact,
+  Currency,
+  Decimal,
+  ExponentInteger,
+  ExponentMinusSign,
+  ExponentSeparator,
+  Fraction,
+  Group,
+  Infinity,
+  Integer,
+  Literal,
+  MinusSign,
+  Nan,
+  Percent,
+  PlusSign,
+  Unit,
+};
+
+// Because parts fully partition the formatted string, we only track the
+// index of the end of each part -- the beginning is implicitly the last
+// part's end.
+using NumberPart = std::pair<NumberPartType, size_t>;
+
+using NumberPartVector = mozilla::Vector<NumberPart, 8 * sizeof(NumberPart)>;
+
 /**
  * According to http://userguide.icu-project.org/design, as long as we constrain
  * ourselves to const APIs ICU is const-correct.
  */
 
+/**
+ * A NumberFormat implementation that roughly mirrors the API provided by
+ * the ECMA-402 Intl.NumberFormat object.
+ *
+ * https://tc39.es/ecma402/#numberformat-objects
+ */
 class NumberFormat final {
  public:
-  explicit NumberFormat(std::string_view aLocale,
-                        const NumberFormatOptions& aOptions = {});
+  enum class FormatError {
+    InternalError,
+    OutOfMemory,
+  };
 
+  /**
+   * Initialize a new NumberFormat for the provided locale and using the
+   * provided options.
+   *
+   * https://tc39.es/ecma402/#sec-initializenumberformat
+   */
+  static Result<UniquePtr<NumberFormat>, NumberFormat::FormatError> TryCreate(
+      std::string_view aLocale, const NumberFormatOptions& aOptions);
+
+  NumberFormat() = default;
+  NumberFormat(const NumberFormat&) = delete;
+  NumberFormat& operator=(const NumberFormat&) = delete;
   ~NumberFormat();
 
-  const char16_t* format(double number) const {
-    if (!mIsInitialized || !formatInternal(number)) {
-      return nullptr;
+  /**
+   * Formats a double to a utf-16 string. The string view is valid until
+   * another number is formatted. Accessing the string view after this event
+   * is undefined behavior.
+   *
+   * https://tc39.es/ecma402/#sec-formatnumberstring
+   */
+  Result<std::u16string_view, NumberFormat::FormatError> format(
+      double number) const {
+    if (!formatInternal(number)) {
+      return Err(FormatError::InternalError);
     }
 
-    return formatResult().data();
+    return formatResult();
   }
 
+  /**
+   * Formats a double to a utf-16 string, and fills the provided parts vector.
+   * The string view is valid until another number is formatted. Accessing the
+   * string view after this event is undefined behavior.
+   *
+   * https://tc39.es/ecma402/#sec-partitionnumberpattern
+   */
+  Result<std::u16string_view, NumberFormat::FormatError> formatToParts(
+      double number, NumberPartVector& parts) const {
+    if (!formatInternal(number)) {
+      return Err(FormatError::InternalError);
+    }
+
+    bool isNegative = !IsNaN(number) && IsNegative(number);
+
+    return formatResultToParts(Some(number), isNegative, parts);
+  }
+
+  /**
+   * Formats a double to the provider buffer (either utf-8 or utf-16)
+   *
+   * https://tc39.es/ecma402/#sec-formatnumberstring
+   */
   template <typename B>
-  bool format(double number, B& buffer) const {
-    if (!mIsInitialized || !formatInternal(number)) {
-      return false;
+  Result<Ok, NumberFormat::FormatError> format(double number, B& buffer) const {
+    if (!formatInternal(number)) {
+      return Err(FormatError::InternalError);
     }
 
     return formatResult<typename B::CharType, B>(buffer);
   }
 
-  const char16_t* format(int64_t number) const {
-    if (!mIsInitialized || !formatInternal(number)) {
-      return nullptr;
+  /**
+   * Formats an int64_t to a utf-16 string. The string view is valid until
+   * another number is formatted. Accessing the string view after this event is
+   * undefined behavior.
+   *
+   * https://tc39.es/ecma402/#sec-formatnumberstring
+   */
+  Result<std::u16string_view, NumberFormat::FormatError> format(
+      int64_t number) const {
+    if (!formatInternal(number)) {
+      return Err(FormatError::InternalError);
     }
 
-    return formatResult().data();
+    return formatResult();
   }
 
+  /**
+   * Formats a int64_t to a utf-16 string, and fills the provided parts vector.
+   * The string view is valid until another number is formatted. Accessing the
+   * string view after this event is undefined behavior.
+   *
+   * https://tc39.es/ecma402/#sec-partitionnumberpattern
+   */
+  Result<std::u16string_view, NumberFormat::FormatError> formatToParts(
+      int64_t number, NumberPartVector& parts) const {
+    if (!formatInternal(number)) {
+      return Err(FormatError::InternalError);
+    }
+
+    return formatResultToParts(Nothing(), number < 0, parts);
+  }
+
+  /**
+   * Formats an int64_t to the provider buffer (either utf-8 or utf-16).
+   *
+   * https://tc39.es/ecma402/#sec-formatnumberstring
+   */
   template <typename B>
-  bool format(int64_t number, B& buffer) const {
-    if (!mIsInitialized || !formatInternal(number)) {
-      return false;
+  Result<Ok, NumberFormat::FormatError> format(int64_t number,
+                                               B& buffer) const {
+    if (!formatInternal(number)) {
+      return Err(FormatError::InternalError);
     }
 
     return formatResult<typename B::CharType, B>(buffer);
   }
 
-  const char16_t* format(std::string_view number) const {
-    if (!mIsInitialized || !formatInternal(number)) {
-      return nullptr;
+  /**
+   * Formats a string encoded big integer to a utf-16 string. The string view
+   * is valid until another number is formatted. Accessing the string view
+   * after this event is undefined behavior.
+   *
+   * https://tc39.es/ecma402/#sec-formatnumberstring
+   */
+  Result<std::u16string_view, NumberFormat::FormatError> format(
+      std::string_view number) const {
+    if (!formatInternal(number)) {
+      return Err(FormatError::InternalError);
     }
 
-    return formatResult().data();
+    return formatResult();
   }
 
+  /**
+   * Formats a string encoded big integer to a utf-16 string, and fills the
+   * provided parts vector. The string view is valid until another number is
+   * formatted. Accessing the string view after this event is undefined
+   * behavior.
+   *
+   * https://tc39.es/ecma402/#sec-partitionnumberpattern
+   */
+  Result<std::u16string_view, NumberFormat::FormatError> formatToParts(
+      std::string_view number, NumberPartVector& parts) const {
+    if (!formatInternal(number)) {
+      return Err(FormatError::InternalError);
+    }
+
+    bool isNegative = !number.empty() && number[0] == '-';
+
+    return formatResultToParts(Nothing(), isNegative, parts);
+  }
+
+  /**
+   * Formats a string encoded big integer to the provider buffer
+   * (either utf-8 or utf-16).
+   *
+   * https://tc39.es/ecma402/#sec-formatnumberstring
+   */
   template <typename B>
-  bool format(std::string_view number, B& buffer) const {
-    if (!mIsInitialized || !formatInternal(number)) {
-      return false;
+  Result<Ok, NumberFormat::FormatError> format(std::string_view number,
+                                               B& buffer) const {
+    if (!formatInternal(number)) {
+      return Err(FormatError::InternalError);
     }
 
     return formatResult<typename B::CharType, B>(buffer);
@@ -199,43 +342,50 @@ class NumberFormat final {
  private:
   UNumberFormatter* mNumberFormatter = nullptr;
   UFormattedNumber* mFormattedNumber = nullptr;
-  bool mIsInitialized = false;
+  bool mFormatForUnit = false;
 
-  bool formatInternal(double number) const;
-  bool formatInternal(int64_t number) const;
-  bool formatInternal(std::string_view number) const;
-  std::u16string_view formatResult() const;
+  Result<Ok, NumberFormat::FormatError> initialize(
+      std::string_view aLocale, const NumberFormatOptions& aOptions);
+
+  [[nodiscard]] bool formatInternal(double number) const;
+  [[nodiscard]] bool formatInternal(int64_t number) const;
+  [[nodiscard]] bool formatInternal(std::string_view number) const;
+
+  Maybe<NumberPartType> GetPartTypeForNumberField(UNumberFormatFields fieldName,
+                                                  Maybe<double> number,
+                                                  bool isNegative) const;
+
+  Result<std::u16string_view, NumberFormat::FormatError> formatResult() const;
+  Result<std::u16string_view, NumberFormat::FormatError> formatResultToParts(
+      const Maybe<double> number, bool isNegative,
+      NumberPartVector& parts) const;
 
   template <typename C, typename B>
-  bool formatResult(B& buffer) const {
-    std::u16string_view result = formatResult();
+  Result<Ok, NumberFormat::FormatError> formatResult(B& buffer) const {
+    // We only support buffers with uint8_t or char16_t for now.
+    static_assert(std::is_same<C, uint8_t>::value ||
+                  std::is_same<C, char16_t>::value);
 
-    if (result.empty()) {
-      return false;
-    }
+    return formatResult().andThen([&buffer](std::u16string_view result)
+                                      -> Result<Ok, NumberFormat::FormatError> {
+      if constexpr (std::is_same<C, uint8_t>::value) {
+        if (!FillUTF8Buffer(Span(result.data(), result.size()), buffer)) {
+          return Err(FormatError::OutOfMemory);
+        }
+        return Ok();
+      } else {
+        // ICU provides APIs which accept a buffer, but they just copy from an
+        // internal buffer behind the scenes anyway.
+        if (!buffer.allocate(result.size())) {
+          return Err(FormatError::OutOfMemory);
+        }
+        PodCopy(static_cast<char16_t*>(buffer.data()), result.data(),
+                result.size());
+        buffer.written(result.size());
 
-    if constexpr (std::is_same<C, uint8_t>::value) {
-      // Reserve 3 * the UTF-16 length to guarantee enough space for the UTF-8
-      // result.
-      if (!buffer.allocate(3 * result.size())) {
-        return false;
+        return Ok();
       }
-      size_t amount = ConvertUtf16toUtf8(
-          Span(result.data(), result.size()),
-          Span(static_cast<char*>(std::data(buffer)), std::size(buffer)));
-      buffer.written(amount);
-    } else {
-      // ICU provides APIs which accept a buffer, but they just copy from an
-      // internal buffer behind the scenes anyway.
-      if (!buffer.allocate(result.size())) {
-        return false;
-      }
-      PodCopy(static_cast<char16_t*>(buffer.data()), result.data(),
-              result.size());
-      buffer.written(result.size());
-    }
-
-    return true;
+    });
   }
 };
 

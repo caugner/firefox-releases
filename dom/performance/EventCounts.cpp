@@ -61,8 +61,9 @@ EventCounts::EventCounts(nsISupports* aParent) : mParent(aParent) {
 
   for (const EventMessage& eventType : sQualifiedEventType) {
     EventCounts_Binding::MaplikeHelpers::Set(
-        this, NS_ConvertUTF8toUTF16(Event::GetEventName(eventType)), 0, rv);
+        this, nsDependentString(Event::GetEventName(eventType)), 0, rv);
     if (NS_WARN_IF(rv.Failed())) {
+      rv.SuppressException();
 #ifdef DEBUG
       nsCOMPtr<nsIGlobalObject> global = do_QueryInterface(GetParentObject());
       if (global) {

@@ -45,6 +45,12 @@ pref("dom.push.enabled", true);
 // enable external storage API
 pref("dom.storageManager.enabled", true);
 
+// enable LocalStorage NextGen (LSNG) for all GeckoView channels.  (LSNG is
+// enabled for all of Gecko on nightly and early beta, but the rollout to
+// release has been slow because of legacy profile breakage issues that are not
+// shared by GeckoView.)
+pref("dom.storage.next_gen", true);
+
 // enable Visual Viewport API
 pref("dom.visualviewport.enabled", true);
 
@@ -63,9 +69,6 @@ pref("browser.safebrowsing.features.trackingProtection.update", true);
 pref("browser.safebrowsing.features.cryptomining.update", true);
 // Enable fingerprinting protection blocklist updates
 pref("browser.safebrowsing.features.fingerprinting.update", true);
-
-// Treat mouse as touch only on TV-ish devices
-pref("ui.android.mouse_as_touch", 2);
 
 // Enable autoplay permission prompts
 pref("media.geckoview.autoplay.request", true);

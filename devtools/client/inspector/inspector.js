@@ -208,11 +208,11 @@ Inspector.prototype = {
       this._onTargetDestroyed
     );
 
-    await this.toolbox.resourceWatcher.watchResources(
+    await this.toolbox.resourceCommand.watchResources(
       [
-        this.toolbox.resourceWatcher.TYPES.ROOT_NODE,
+        this.toolbox.resourceCommand.TYPES.ROOT_NODE,
         // To observe CSS change before opening changes view.
-        this.toolbox.resourceWatcher.TYPES.CSS_CHANGE,
+        this.toolbox.resourceCommand.TYPES.CSS_CHANGE,
       ],
       { onAvailable: this.onResourceAvailable }
     );
@@ -231,9 +231,8 @@ Inspector.prototype = {
       return;
     }
 
-    await this.initInspectorFront(targetFront);
-
     targetFront.on("will-navigate", this._onBeforeNavigate);
+    await this.initInspectorFront(targetFront);
 
     await Promise.all([
       this._getCssProperties(),
@@ -274,7 +273,7 @@ Inspector.prototype = {
    */
   async getAllInspectorFronts() {
     return this.commands.targetCommand.getAllFronts(
-      this.commands.targetCommand.TYPES.FRAME,
+      [this.commands.targetCommand.TYPES.FRAME],
       "inspector"
     );
   },
@@ -1277,7 +1276,7 @@ Inspector.prototype = {
     for (const resource of resources) {
       if (
         resource.resourceType ===
-          this.toolbox.resourceWatcher.TYPES.ROOT_NODE &&
+          this.toolbox.resourceCommand.TYPES.ROOT_NODE &&
         // It might happen that the ROOT_NODE resource (which is a Front) is already
         // destroyed, and in such case we want to ignore it.
         !resource.isDestroyed()
@@ -1680,9 +1679,9 @@ Inspector.prototype = {
       this._onTargetAvailable,
       this._onTargetDestroyed
     );
-    const { resourceWatcher } = this.toolbox;
-    resourceWatcher.unwatchResources(
-      [resourceWatcher.TYPES.ROOT_NODE, resourceWatcher.TYPES.CSS_CHANGE],
+    const { resourceCommand } = this.toolbox;
+    resourceCommand.unwatchResources(
+      [resourceCommand.TYPES.ROOT_NODE, resourceCommand.TYPES.CSS_CHANGE],
       { onAvailable: this.onResourceAvailable }
     );
 
@@ -1740,20 +1739,14 @@ Inspector.prototype = {
   },
 
   _destroyMarkup: function() {
-    let destroyPromise;
-
     if (this.markup) {
-      destroyPromise = this.markup.destroy();
+      this.markup.destroy();
       this.markup = null;
-    } else {
-      destroyPromise = promise.resolve();
     }
 
     if (this._markupBox) {
       this._markupBox.style.visibility = "hidden";
     }
-
-    return destroyPromise;
   },
 
   onEyeDropperButtonClicked: function() {
@@ -1882,7 +1875,7 @@ Inspector.prototype = {
       "devtools.screenshot.clipboard.enabled"
     );
     const args = {
-      file: true,
+      file: !clipboardEnabled,
       nodeActorID: this.selection.nodeFront.actorID,
       clipboard: clipboardEnabled,
     };

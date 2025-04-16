@@ -36,7 +36,7 @@ using namespace layers;
 namespace wr {
 
 UniquePtr<RenderCompositor> RenderCompositorOGLSWGL::Create(
-    RefPtr<widget::CompositorWidget>&& aWidget, nsACString& aError) {
+    const RefPtr<widget::CompositorWidget>& aWidget, nsACString& aError) {
   if (!aWidget->GetCompositorOptions().AllowSoftwareWebRenderOGL()) {
     return nullptr;
   }
@@ -88,14 +88,13 @@ UniquePtr<RenderCompositor> RenderCompositorOGLSWGL::Create(
     return nullptr;
   }
 
-  return MakeUnique<RenderCompositorOGLSWGL>(compositor, std::move(aWidget),
-                                             ctx);
+  return MakeUnique<RenderCompositorOGLSWGL>(compositor, aWidget, ctx);
 }
 
 RenderCompositorOGLSWGL::RenderCompositorOGLSWGL(
-    Compositor* aCompositor, RefPtr<widget::CompositorWidget>&& aWidget,
+    Compositor* aCompositor, const RefPtr<widget::CompositorWidget>& aWidget,
     void* aContext)
-    : RenderCompositorLayersSWGL(aCompositor, std::move(aWidget), aContext) {}
+    : RenderCompositorLayersSWGL(aCompositor, aWidget, aContext) {}
 
 RenderCompositorOGLSWGL::~RenderCompositorOGLSWGL() {
 #ifdef OZ_WIDGET_ANDROID
@@ -128,6 +127,10 @@ EGLSurface RenderCompositorOGLSWGL::CreateEGLSurface() {
   if (surface == EGL_NO_SURFACE) {
     gfxCriticalNote << "Failed to create EGLSurface";
   }
+
+  // The subsequent render after creating a new surface must be a full render.
+  mFullRender = true;
+
   return surface;
 }
 
@@ -158,6 +161,13 @@ bool RenderCompositorOGLSWGL::BeginFrame() {
   return true;
 }
 
+RenderedFrameId RenderCompositorOGLSWGL::EndFrame(
+    const nsTArray<DeviceIntRect>& aDirtyRects) {
+  mFullRender = false;
+
+  return RenderCompositorLayersSWGL::EndFrame(aDirtyRects);
+}
+
 void RenderCompositorOGLSWGL::HandleExternalImage(
     RenderTextureHost* aExternalImage, FrameSurface& aFrameSurface) {
   MOZ_ASSERT(aExternalImage);
@@ -185,6 +195,8 @@ void RenderCompositorOGLSWGL::HandleExternalImage(
                         aFrameSurface.mTransform, drawRect);
 #endif
 }
+
+bool RenderCompositorOGLSWGL::RequestFullRender() { return mFullRender; }
 
 void RenderCompositorOGLSWGL::Pause() {
 #ifdef MOZ_WIDGET_ANDROID

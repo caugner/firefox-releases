@@ -1175,6 +1175,8 @@ static Element* GetPropagatedScrollStylesForViewport(
 }
 
 Element* nsPresContext::UpdateViewportScrollStylesOverride() {
+  ScrollStyles oldViewportScrollStyles = mViewportScrollStyles;
+
   // Start off with our default styles, and then update them as needed.
   mViewportScrollStyles =
       ScrollStyles(StyleOverflow::Auto, StyleOverflow::Auto);
@@ -1198,6 +1200,15 @@ Element* nsPresContext::UpdateViewportScrollStylesOverride() {
           ScrollStyles(StyleOverflow::Hidden, StyleOverflow::Hidden);
     }
   }
+
+  if (mViewportScrollStyles != oldViewportScrollStyles) {
+    if (mPresShell) {
+      if (nsIFrame* frame = mPresShell->GetRootFrame()) {
+        frame->SchedulePaint();
+      }
+    }
+  }
+
   return mViewportScrollOverrideElement;
 }
 
@@ -2150,7 +2161,8 @@ void nsPresContext::NotifyDidPaintForSubtree(
         nsCOMPtr<nsIRunnable> ev = new DelayedFireDOMPaintEvent(
             this, std::move(mTransactions[i].mInvalidations),
             mTransactions[i].mTransactionId, aTimeStamp);
-        nsContentUtils::AddScriptRunner(ev);
+        NS_DispatchToCurrentThreadQueue(ev.forget(),
+                                        EventQueuePriority::MediumHigh);
         sent = true;
       }
       mTransactions.RemoveElementAt(i);
@@ -2161,7 +2173,8 @@ void nsPresContext::NotifyDidPaintForSubtree(
         nsCOMPtr<nsIRunnable> ev = new DelayedFireDOMPaintEvent(
             this, std::move(mTransactions[i].mInvalidations),
             mTransactions[i].mTransactionId, aTimeStamp);
-        nsContentUtils::AddScriptRunner(ev);
+        NS_DispatchToCurrentThreadQueue(ev.forget(),
+                                        EventQueuePriority::MediumHigh);
         sent = true;
         mTransactions.RemoveElementAt(i);
         continue;
@@ -2174,7 +2187,8 @@ void nsPresContext::NotifyDidPaintForSubtree(
     nsTArray<nsRect> dummy;
     nsCOMPtr<nsIRunnable> ev = new DelayedFireDOMPaintEvent(
         this, std::move(dummy), aTransactionId, aTimeStamp);
-    nsContentUtils::AddScriptRunner(ev);
+    NS_DispatchToCurrentThreadQueue(ev.forget(),
+                                    EventQueuePriority::MediumHigh);
   }
 
   auto recurse = [&aTransactionId, &aTimeStamp](dom::Document& aSubDoc) {

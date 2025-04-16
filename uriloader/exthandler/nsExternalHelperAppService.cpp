@@ -535,6 +535,7 @@ static const nsExtraMimeTypeEntry extraMimeEntries[] = {
     {IMAGE_SVG_XML, "svg", "Scalable Vector Graphics"},
     {IMAGE_WEBP, "webp", "WebP Image"},
     {IMAGE_AVIF, "avif", "AV1 Image File"},
+    {IMAGE_JXL, "jxl", "JPEG XL Image File"},
 
     {MESSAGE_RFC822, "eml", "RFC-822 data"},
     {TEXT_PLAIN, "txt,text", "Text File"},
@@ -605,7 +606,7 @@ static const char* forcedExtensionMimetypes[] = {
  * NOTE: These MUST be lower-case and ASCII.
  */
 static const char* descriptionOverwriteExtensions[] = {
-    "avif", "pdf", "svg", "webp", "xml",
+    "avif", "jxl", "pdf", "svg", "webp", "xml",
 };
 
 static StaticRefPtr<nsExternalHelperAppService> sExtHelperAppSvcSingleton;
@@ -1448,7 +1449,7 @@ NS_IMETHODIMP nsExternalAppHandler::GetContentLength(int64_t* aContentLength) {
 
 NS_IMETHODIMP nsExternalAppHandler::GetBrowsingContextId(
     uint64_t* aBrowsingContextId) {
-  *aBrowsingContextId = mBrowsingContext->Id();
+  *aBrowsingContextId = mBrowsingContext ? mBrowsingContext->Id() : 0;
   return NS_OK;
 }
 
@@ -1861,7 +1862,13 @@ NS_IMETHODIMP nsExternalAppHandler::OnStartRequest(nsIRequest* request) {
     alwaysAsk = false;
     action = nsIMIMEInfo::saveToDisk;
   }
-
+  // Additionally, if we are asked by the OS to open a local file,
+  // automatically downloading it to create a second copy of that file doesn't
+  // really make sense. We should ask the user what they want to do.
+  if (mSourceUrl->SchemeIs("file") && !alwaysAsk &&
+      action == nsIMIMEInfo::saveToDisk) {
+    alwaysAsk = true;
+  }
   if (alwaysAsk) {
     // Display the dialog
     mDialog = do_CreateInstance(NS_HELPERAPPLAUNCHERDLG_CONTRACTID, &rv);
@@ -1930,7 +1937,6 @@ void nsExternalAppHandler::SendStatusChange(ErrorType type, nsresult rv,
       msgId = "noMemory";
       break;
 
-    case NS_ERROR_FILE_DISK_FULL:
     case NS_ERROR_FILE_NO_DEVICE_SPACE:
       // Out of space on target volume.
       msgId = "diskFull";
@@ -2338,26 +2344,32 @@ nsresult nsExternalAppHandler::CreateFailedTransfer() {
       do_CreateInstance(NS_TRANSFER_CONTRACTID, &rv);
   NS_ENSURE_SUCCESS(rv, rv);
 
-  // If we don't have a download directory we're kinda screwed but it's OK
-  // we'll still report the error via the prompter.
-  nsCOMPtr<nsIFile> pseudoFile;
-  rv = GetDownloadDirectory(getter_AddRefs(pseudoFile), true);
-  NS_ENSURE_SUCCESS(rv, rv);
-
   // We won't pass the temp file to the transfer, so if we have one it needs to
   // get deleted now.
   if (mTempFile) {
     mTempFile->Remove(false);
   }
 
-  // Append the default suggested filename. If the user restarts the transfer
-  // we will re-trigger a filename check anyway to ensure that it is unique.
-  rv = pseudoFile->Append(mSuggestedFileName);
-  NS_ENSURE_SUCCESS(rv, rv);
-
   nsCOMPtr<nsIURI> pseudoTarget;
-  rv = NS_NewFileURI(getter_AddRefs(pseudoTarget), pseudoFile);
-  NS_ENSURE_SUCCESS(rv, rv);
+  if (!mFinalFileDestination) {
+    // If we don't have a download directory we're kinda screwed but it's OK
+    // we'll still report the error via the prompter.
+    nsCOMPtr<nsIFile> pseudoFile;
+    rv = GetDownloadDirectory(getter_AddRefs(pseudoFile), true);
+    NS_ENSURE_SUCCESS(rv, rv);
+
+    // Append the default suggested filename. If the user restarts the transfer
+    // we will re-trigger a filename check anyway to ensure that it is unique.
+    rv = pseudoFile->Append(mSuggestedFileName);
+    NS_ENSURE_SUCCESS(rv, rv);
+
+    rv = NS_NewFileURI(getter_AddRefs(pseudoTarget), pseudoFile);
+    NS_ENSURE_SUCCESS(rv, rv);
+  } else {
+    // Initialize the target, if present
+    rv = NS_NewFileURI(getter_AddRefs(pseudoTarget), mFinalFileDestination);
+    NS_ENSURE_SUCCESS(rv, rv);
+  }
 
   nsCOMPtr<nsIChannel> channel = do_QueryInterface(mRequest);
   if (mBrowsingContext) {

@@ -12,14 +12,14 @@ const SOURCE_MAP_PREF = "devtools.source-map.client-service.enabled";
  * (which is used as a cookie by the devtools-source-map service) and
  * the source map URL.
  *
- * @param {object} toolbox
- *        The toolbox.
+ * @param {object} commands
+ *        The commands object with all interfaces defined from devtools/shared/commands/
  * @param {SourceMapService} sourceMapService
  *        The devtools-source-map functions
  */
 class SourceMapURLService {
-  constructor(toolbox, sourceMapService) {
-    this._toolbox = toolbox;
+  constructor(commands, sourceMapService) {
+    this._commands = commands;
     this._sourceMapService = sourceMapService;
 
     this._prefValue = Services.prefs.getBoolPref(SOURCE_MAP_PREF);
@@ -28,25 +28,39 @@ class SourceMapURLService {
     this._urlToIDMap = new Map();
     this._mapsById = new Map();
     this._sourcesLoading = null;
+    this._onTargetAvailable = this._onTargetAvailable.bind(this);
     this._onResourceAvailable = this._onResourceAvailable.bind(this);
     this._runningCallback = false;
 
     this._syncPrevValue = this._syncPrevValue.bind(this);
     this._clearAllState = this._clearAllState.bind(this);
 
-    this._target.on("will-navigate", this._clearAllState);
-
     Services.prefs.addObserver(SOURCE_MAP_PREF, this._syncPrevValue);
   }
 
-  get _target() {
-    return this._toolbox.target;
-  }
-
   destroy() {
-    this._clearAllState();
-    this._target.off("will-navigate", this._clearAllState);
     Services.prefs.removeObserver(SOURCE_MAP_PREF, this._syncPrevValue);
+
+    // remove listener from the last registered top level target
+    const { targetCommand, resourceCommand } = this._commands;
+    targetCommand.targetFront.off("will-navigate", this._clearAllState);
+    this._clearAllState();
+
+    targetCommand.unwatchTargets(
+      targetCommand.ALL_TYPES,
+      this._onTargetAvailable
+    );
+    try {
+      resourceCommand.unwatchResources(
+        [resourceCommand.TYPES.STYLESHEET, resourceCommand.TYPES.SOURCE],
+        { onAvailable: this._onResourceAvailable }
+      );
+    } catch (e) {
+      // If unwatchResources is called before finishing process of watchResources,
+      // it throws an error during stopping listener.
+    }
+
+    this._sourcesLoading = null;
   }
 
   /**
@@ -201,19 +215,6 @@ class SourceMapURLService {
     this._pendingIDSubscriptions.clear();
     this._pendingURLSubscriptions.clear();
     this._urlToIDMap.clear();
-
-    const { resourceWatcher } = this._toolbox;
-    try {
-      resourceWatcher.unwatchResources(
-        [resourceWatcher.TYPES.STYLESHEET, resourceWatcher.TYPES.SOURCE],
-        { onAvailable: this._onResourceAvailable }
-      );
-    } catch (e) {
-      // If unwatchResources is called before finishing process of watchResources,
-      // it throws an error during stopping listener.
-    }
-
-    this._sourcesLoading = null;
   }
 
   _onNewJavascript(source) {
@@ -416,20 +417,22 @@ class SourceMapURLService {
     if (!this._prefValue) {
       return null;
     }
-    if (this._target.isWorkerTarget) {
+    if (this._commands.descriptorFront.isWorkerDescriptor) {
       return;
     }
 
     if (!this._sourcesLoading) {
-      const { resourceWatcher } = this._toolbox;
-      const { STYLESHEET, SOURCE } = resourceWatcher.TYPES;
+      const { targetCommand, resourceCommand } = this._commands;
+      const { STYLESHEET, SOURCE } = resourceCommand.TYPES;
 
-      this._sourcesLoading = resourceWatcher.watchResources(
-        [STYLESHEET, SOURCE],
-        {
-          onAvailable: this._onResourceAvailable,
-        }
+      const onTargets = targetCommand.watchTargets(
+        targetCommand.ALL_TYPES,
+        this._onTargetAvailable
       );
+      const onResources = resourceCommand.watchResources([STYLESHEET, SOURCE], {
+        onAvailable: this._onResourceAvailable,
+      });
+      this._sourcesLoading = Promise.all([onTargets, onResources]);
     }
 
     return this._sourcesLoading;
@@ -442,9 +445,22 @@ class SourceMapURLService {
     return Promise.resolve();
   }
 
+  _onTargetAvailable({ targetFront, isTargetSwitching }) {
+    if (targetFront.isTopLevel) {
+      // For navigation within the same process, listen to will-navigate, as we won't have a new target front.
+      targetFront.on("will-navigate", this._clearAllState);
+      // For navigation to another process, we won't have a will-navigate,
+      // but instead we will have a new target front.
+      if (isTargetSwitching) {
+        // onTargetAvailable should be called before any STYLESHEET/SOURCE resource
+        this._clearAllState();
+      }
+    }
+  }
+
   _onResourceAvailable(resources) {
-    const { resourceWatcher } = this._toolbox;
-    const { STYLESHEET, SOURCE } = resourceWatcher.TYPES;
+    const { resourceCommand } = this._commands;
+    const { STYLESHEET, SOURCE } = resourceCommand.TYPES;
     for (const resource of resources) {
       if (resource.resourceType == STYLESHEET) {
         this._onNewStyleSheet(resource);

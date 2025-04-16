@@ -29,6 +29,7 @@
 #include "mozilla/PendingAnimationTracker.h"
 #include "mozilla/ServoStyleSet.h"
 #include "mozilla/SharedStyleSheetCache.h"
+#include "mozilla/StaticPrefs_test.h"
 #include "mozilla/InputTaskManager.h"
 #include "nsIObjectLoadingContent.h"
 #include "nsIFrame.h"
@@ -902,7 +903,7 @@ nsresult nsDOMWindowUtils::SendTouchEventCommon(
     event.mTouches.AppendElement(t);
   }
 
-  nsEventStatus status;
+  nsEventStatus status = nsEventStatus_eIgnore;
   if (aToWindow) {
     RefPtr<PresShell> presShell;
     nsView* view = nsContentUtils::GetViewToDispatchEvent(
@@ -910,14 +911,21 @@ nsresult nsDOMWindowUtils::SendTouchEventCommon(
     if (!presShell || !view) {
       return NS_ERROR_FAILURE;
     }
-    status = nsEventStatus_eIgnore;
     *aPreventDefault = (status == nsEventStatus_eConsumeNoDefault);
     return presShell->HandleEvent(view->GetFrame(), &event, false, &status);
   }
 
-  nsresult rv = widget->DispatchEvent(&event, status);
-  *aPreventDefault = (status == nsEventStatus_eConsumeNoDefault);
-  return rv;
+  if (StaticPrefs::test_events_async_enabled()) {
+    status = widget->DispatchInputEvent(&event).mContentStatus;
+  } else {
+    nsresult rv = widget->DispatchEvent(&event, status);
+    NS_ENSURE_SUCCESS(rv, rv);
+  }
+
+  if (aPreventDefault) {
+    *aPreventDefault = (status == nsEventStatus_eConsumeNoDefault);
+  }
+  return NS_OK;
 }
 
 static_assert(
@@ -1314,9 +1322,41 @@ nsDOMWindowUtils::CycleCollect(nsICycleCollectorListener* aListener) {
   return NS_OK;
 }
 
+static bool ParseGCReason(const nsACString& aStr, JS::GCReason* aReason,
+                          JS::GCReason aDefault) {
+  if (aStr.IsEmpty()) {
+    *aReason = aDefault;
+    return true;
+  }
+#define CHECK_REASON(name, _)         \
+  if (aStr.EqualsIgnoreCase(#name)) { \
+    *aReason = JS::GCReason::name;    \
+    return true;                      \
+  }
+  GCREASONS(CHECK_REASON);
+  return false;
+}
+
 NS_IMETHODIMP
-nsDOMWindowUtils::RunNextCollectorTimer() {
-  nsJSContext::RunNextCollectorTimer(JS::GCReason::DOM_WINDOW_UTILS);
+nsDOMWindowUtils::RunNextCollectorTimer(const nsACString& aReason) {
+  JS::GCReason reason;
+  if (!ParseGCReason(aReason, &reason, JS::GCReason::DOM_WINDOW_UTILS)) {
+    return NS_ERROR_INVALID_ARG;
+  }
+
+  nsJSContext::RunNextCollectorTimer(reason);
+
+  return NS_OK;
+}
+
+NS_IMETHODIMP
+nsDOMWindowUtils::PokeGC(const nsACString& aReason) {
+  JS::GCReason reason;
+  if (!ParseGCReason(aReason, &reason, JS::GCReason::DOM_WINDOW_UTILS)) {
+    return NS_ERROR_INVALID_ARG;
+  }
+
+  nsJSContext::PokeGC(reason, nullptr);
 
   return NS_OK;
 }
@@ -1509,23 +1549,20 @@ static already_AddRefed<DataSourceSurface> CanvasToDataSourceSurface(
 NS_IMETHODIMP
 nsDOMWindowUtils::CompareCanvases(nsISupports* aCanvas1, nsISupports* aCanvas2,
                                   uint32_t* aMaxDifference, uint32_t* retVal) {
-  if (aCanvas1 == nullptr || aCanvas2 == nullptr || retVal == nullptr)
-    return NS_ERROR_FAILURE;
-
   nsCOMPtr<nsIContent> contentCanvas1 = do_QueryInterface(aCanvas1);
   nsCOMPtr<nsIContent> contentCanvas2 = do_QueryInterface(aCanvas2);
-  auto canvas1 = HTMLCanvasElement::FromNodeOrNull(contentCanvas1);
-  auto canvas2 = HTMLCanvasElement::FromNodeOrNull(contentCanvas2);
+  auto* canvas1 = HTMLCanvasElement::FromNodeOrNull(contentCanvas1);
+  auto* canvas2 = HTMLCanvasElement::FromNodeOrNull(contentCanvas2);
 
-  if (!canvas1 || !canvas2) {
+  if (NS_WARN_IF(!canvas1) || NS_WARN_IF(!canvas2)) {
     return NS_ERROR_FAILURE;
   }
 
   RefPtr<DataSourceSurface> img1 = CanvasToDataSourceSurface(canvas1);
   RefPtr<DataSourceSurface> img2 = CanvasToDataSourceSurface(canvas2);
 
-  if (img1 == nullptr || img2 == nullptr ||
-      img1->GetSize() != img2->GetSize()) {
+  if (NS_WARN_IF(!img1) || NS_WARN_IF(!img2) ||
+      NS_WARN_IF(img1->GetSize() != img2->GetSize())) {
     return NS_ERROR_FAILURE;
   }
 
@@ -1537,8 +1574,8 @@ nsDOMWindowUtils::CompareCanvases(nsISupports* aCanvas1, nsISupports* aCanvas2,
   DataSourceSurface::ScopedMap map1(img1, DataSourceSurface::READ);
   DataSourceSurface::ScopedMap map2(img2, DataSourceSurface::READ);
 
-  if (!map1.IsMapped() || !map2.IsMapped() ||
-      map1.GetStride() != map2.GetStride()) {
+  if (NS_WARN_IF(!map1.IsMapped()) || NS_WARN_IF(!map2.IsMapped()) ||
+      NS_WARN_IF(map1.GetStride() != map2.GetStride())) {
     return NS_ERROR_FAILURE;
   }
 
@@ -1989,6 +2026,26 @@ nsDOMWindowUtils::GetIMEStatus(uint32_t* aState) {
 }
 
 NS_IMETHODIMP
+nsDOMWindowUtils::GetInputContextOrigin(uint32_t* aOrigin) {
+  NS_ENSURE_ARG_POINTER(aOrigin);
+
+  nsCOMPtr<nsIWidget> widget = GetWidget();
+  if (!widget) {
+    return NS_ERROR_FAILURE;
+  }
+
+  InputContext context = widget->GetInputContext();
+  static_assert(static_cast<uint32_t>(InputContext::Origin::ORIGIN_MAIN) ==
+                INPUT_CONTEXT_ORIGIN_MAIN);
+  static_assert(static_cast<uint32_t>(InputContext::Origin::ORIGIN_CONTENT) ==
+                INPUT_CONTEXT_ORIGIN_CONTENT);
+  MOZ_ASSERT(context.mOrigin == InputContext::Origin::ORIGIN_MAIN ||
+             context.mOrigin == InputContext::Origin::ORIGIN_CONTENT);
+  *aOrigin = static_cast<uint32_t>(context.mOrigin);
+  return NS_OK;
+}
+
+NS_IMETHODIMP
 nsDOMWindowUtils::GetFocusedInputType(nsAString& aType) {
   nsCOMPtr<nsIWidget> widget = GetWidget();
   if (!widget) {
@@ -2322,7 +2379,8 @@ nsDOMWindowUtils::SendSelectionSetEvent(uint32_t aOffset, uint32_t aLength,
 
 NS_IMETHODIMP
 nsDOMWindowUtils::SendContentCommandEvent(const nsAString& aType,
-                                          nsITransferable* aTransferable) {
+                                          nsITransferable* aTransferable,
+                                          const nsAString& aString) {
   // get the widget to send the event to
   nsCOMPtr<nsIWidget> widget = GetWidget();
   if (!widget) return NS_ERROR_FAILURE;
@@ -2340,6 +2398,8 @@ nsDOMWindowUtils::SendContentCommandEvent(const nsAString& aType,
     msg = eContentCommandUndo;
   } else if (aType.EqualsLiteral("redo")) {
     msg = eContentCommandRedo;
+  } else if (aType.EqualsLiteral("insertText")) {
+    msg = eContentCommandInsertText;
   } else if (aType.EqualsLiteral("pasteTransferable")) {
     msg = eContentCommandPasteTransferable;
   } else {
@@ -2347,6 +2407,9 @@ nsDOMWindowUtils::SendContentCommandEvent(const nsAString& aType,
   }
 
   WidgetContentCommandEvent event(true, msg, widget);
+  if (msg == eContentCommandInsertText) {
+    event.mString.emplace(aString);
+  }
   if (msg == eContentCommandPasteTransferable) {
     event.mTransferable = aTransferable;
   }
@@ -2436,15 +2499,6 @@ nsDOMWindowUtils::SetDesktopModeViewport(bool aDesktopMode) {
   NS_ENSURE_STATE(window);
 
   window->SetDesktopModeViewport(aDesktopMode);
-  return NS_OK;
-}
-
-NS_IMETHODIMP
-nsDOMWindowUtils::GetDeprecatedOuterWindowID(uint64_t* aWindowID) {
-  nsCOMPtr<nsPIDOMWindowOuter> window = do_QueryReferent(mWindow);
-  NS_ENSURE_STATE(window);
-
-  *aWindowID = window->WindowID();
   return NS_OK;
 }
 
@@ -2607,7 +2661,7 @@ nsDOMWindowUtils::AudioDevices(uint16_t aSide, nsIArray** aDevices) {
     enumerator->EnumerateAudioOutputDevices(collection);
   }
 
-  for (auto device : collection) {
+  for (const auto& device : collection) {
     devices->AppendElement(device);
   }
 
@@ -3130,8 +3184,9 @@ static bool CheckLeafLayers(Layer* aLayer, const nsIntPoint& aOffset,
                             nsIntRegion* aCoveredRegion) {
   gfx::Matrix transform;
   if (!aLayer->GetTransform().Is2D(&transform) ||
-      transform.HasNonIntegerTranslation())
+      transform.HasNonIntegerTranslation()) {
     return false;
+  }
   transform.NudgeToIntegers();
   IntPoint offset = aOffset + IntPoint::Truncate(transform._31, transform._32);
 
@@ -3729,7 +3784,7 @@ nsDOMWindowUtils::AddSheet(nsIPreloadedStyleSheet* aSheet,
   NS_ENSURE_TRUE(doc, NS_ERROR_FAILURE);
 
   StyleSheet* sheet = nullptr;
-  auto preloadedSheet = static_cast<PreloadedStyleSheet*>(aSheet);
+  auto* preloadedSheet = static_cast<PreloadedStyleSheet*>(aSheet);
   nsresult rv = preloadedSheet->GetSheet(&sheet);
   NS_ENSURE_SUCCESS(rv, rv);
   NS_ENSURE_TRUE(sheet, NS_ERROR_FAILURE);

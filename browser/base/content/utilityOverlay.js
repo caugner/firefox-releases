@@ -748,6 +748,7 @@ function checkForMiddleClick(node, event) {
     // handled more than once.
     // E.g. see https://bugzilla.mozilla.org/show_bug.cgi?id=1657992#c4
     event.stopPropagation();
+    event.preventDefault();
 
     // If the middle-click was on part of a menu, close the menu.
     // (Menus close automatically with left-click but not with middle-click.)
@@ -788,9 +789,9 @@ function createUserContextMenu(
       bundle.GetStringFromName("userContextNone.accesskey")
     );
 
-    // We don't set an oncommand/command attribute because if we have
-    // to exclude a userContextId we are generating the contextMenu and
-    // isContextMenu will be true.
+    if (!isContextMenu) {
+      menuitem.setAttribute("command", "Browser:NewUserContextTab");
+    }
 
     docfrag.appendChild(menuitem);
 

@@ -234,6 +234,11 @@ bool wasm::IonAvailable(JSContext* cx) {
   return !isDisabled && !CraneliftAvailable(cx);
 }
 
+bool wasm::WasmCompilerForAsmJSAvailable(JSContext* cx) {
+  // For now, restrict this to Ion - we have not tested Cranelift properly.
+  return IonAvailable(cx);
+}
+
 template <size_t ArrayLength>
 static inline bool Append(JSStringBuilder* reason, const char (&s)[ArrayLength],
                           char* sep) {
@@ -369,7 +374,7 @@ bool wasm::ThreadsAvailable(JSContext* cx) {
 }
 
 bool wasm::HasPlatformSupport(JSContext* cx) {
-#if !MOZ_LITTLE_ENDIAN() || defined(JS_CODEGEN_NONE)
+#if !MOZ_LITTLE_ENDIAN() || defined(JS_CODEGEN_NONE) || defined(__wasi__)
   return false;
 #endif
 
@@ -1377,8 +1382,8 @@ bool WasmModuleObject::customSections(JSContext* cx, unsigned argc, Value* vp) {
       return false;
     }
 
-    mozilla::Unused << JS::DeflateStringToUTF8Buffer(
-        linear, Span(name.begin(), name.length()));
+    (void)JS::DeflateStringToUTF8Buffer(linear,
+                                        Span(name.begin(), name.length()));
   }
 
   RootedValueVector elems(cx);
@@ -4532,7 +4537,7 @@ static bool ResolveResponse_OnFulfilled(JSContext* cx, unsigned argc,
     return RejectWithPendingException(cx, promise);
   }
 
-  Unused << task.release();
+  (void)task.release();
 
   callArgs.rval().setUndefined();
   return true;

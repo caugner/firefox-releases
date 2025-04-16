@@ -724,7 +724,9 @@ var gSync = {
           return document.createXULElement("toolbarseparator");
         }
         let item = document.createXULElement("toolbarbutton");
-        item.classList.add("pageAction-sendToDevice-device", "subviewbutton");
+        item.setAttribute("wrap", true);
+        item.setAttribute("align", "start");
+        item.classList.add("sendToDevice-device", "subviewbutton");
         if (clientId) {
           item.classList.add("subviewbutton-iconic");
           if (lastModified) {
@@ -1052,7 +1054,6 @@ var gSync = {
     if (status == UIState.STATUS_NOT_CONFIGURED) {
       if (PanelUI.protonAppMenuEnabled) {
         appMenuHeaderText.hidden = false;
-        appMenuHeaderText.style.visibility = "visible";
         appMenuStatus.classList.add("toolbaritem-combined-buttons");
         appMenuLabel.classList.remove("subviewbutton-nav");
         appMenuHeaderTitle.hidden = true;
@@ -1063,7 +1064,7 @@ var gSync = {
     appMenuLabel.classList.remove("subviewbutton-nav");
 
     if (PanelUI.protonAppMenuEnabled) {
-      appMenuHeaderText.style.visibility = "collapse";
+      appMenuHeaderText.hidden = true;
       appMenuStatus.classList.remove("toolbaritem-combined-buttons");
     }
 

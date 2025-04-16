@@ -118,21 +118,8 @@ static void AddrToString(NetAddr& netAddr, nsACString& addrStr) {
 
 static nsresult StringAndPortToNetAddr(nsACString& remoteAddrStr,
                                        uint16_t remotePort, NetAddr* netAddr) {
-  memset(netAddr, 0, sizeof(*netAddr));
-  PRNetAddr remotePRAddr;
-  memset(&remotePRAddr, 0, sizeof(remotePRAddr));
-  PRStatus prRv =
-      PR_StringToNetAddr(remoteAddrStr.BeginReading(), &remotePRAddr);
-  MOZ_ASSERT(prRv == PR_SUCCESS);
-  if (prRv != PR_SUCCESS) {
+  if (NS_FAILED(netAddr->InitFromString(remoteAddrStr, remotePort))) {
     return NS_ERROR_FAILURE;
-  }
-
-  PRNetAddrToNetAddr(&remotePRAddr, netAddr);
-  if (netAddr->raw.family == AF_INET6) {
-    netAddr->inet6.port = htons(remotePort);
-  } else {
-    netAddr->inet.port = htons(remotePort);
   }
 
   return NS_OK;
@@ -482,6 +469,7 @@ nsresult Http3Session::ProcessEvents() {
         LOG(("Http3Session::ProcessEvents - ZeroRttRejected"));
         if (mState == ZERORTT) {
           mState = INITIALIZING;
+          mTransactionCount = 0;
           Finish0Rtt(true);
           ZeroRttTelemetry(ZeroRttOutcome::USED_REJECTED);
         }
@@ -881,7 +869,7 @@ nsresult Http3Session::TryActivating(
   MOZ_ASSERT(*aStreamId != UINT64_MAX);
 
   if (mTransactionCount > 0 && mStreamIdHash.IsEmpty()) {
-    // TODO: investigate why this is failing MOZ_ASSERT(mConnectionIdleStart);
+    MOZ_ASSERT(mConnectionIdleStart);
     MOZ_ASSERT(mFirstStreamIdReuseIdleConnection.isNothing());
 
     mConnectionIdleEnd = TimeStamp::Now();

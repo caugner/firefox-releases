@@ -1229,10 +1229,15 @@ gfxFloat gfxTextRun::GetMinAdvanceWidth(Range aRange) {
                ComputePartialLigatureWidth(Range(ligatureRange.end, aRange.end),
                                            nullptr));
 
-  // XXX Do we need to take spacing into account? When each grapheme cluster
-  // takes its own line, we shouldn't be adding spacings around them.
+  // Compute min advance width by assuming each grapheme cluster takes its own
+  // line.
   gfxFloat clusterAdvance = 0;
   for (uint32_t i = ligatureRange.start; i < ligatureRange.end; ++i) {
+    if (mCharacterGlyphs[i].CharIsSpace()) {
+      // Skip space char to prevent its advance width contributing to the
+      // result. That is, don't consider a space can be in its own line.
+      continue;
+    }
     clusterAdvance += GetAdvanceForGlyph(i);
     if (i + 1 == ligatureRange.end || IsClusterStart(i + 1)) {
       result = std::max(result, clusterAdvance);
@@ -2238,6 +2243,9 @@ gfxFont* gfxFontGroup::GetDefaultFont() {
 
 gfxFont* gfxFontGroup::GetFirstValidFont(uint32_t aCh,
                                          StyleGenericFontFamily* aGeneric) {
+  // Ensure cached font instances are valid.
+  CheckForUpdatedPlatformList();
+
   uint32_t count = mFonts.Length();
   bool loading = false;
   for (uint32_t i = 0; i < count; ++i) {
@@ -2935,7 +2943,8 @@ gfxFont* gfxFontGroup::FindFallbackFaceForChar(
   // If async fallback is enabled, and the family isn't fully initialized yet,
   // just start the async cmap loading and return.
   if (!aFamily->IsFullyInitialized() &&
-      StaticPrefs::gfx_font_rendering_fallback_async()) {
+      StaticPrefs::gfx_font_rendering_fallback_async() &&
+      !XRE_IsParentProcess()) {
     pfl->StartCmapLoadingFromFamily(aFamily - list->Families());
     return nullptr;
   }

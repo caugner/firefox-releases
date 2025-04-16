@@ -2,7 +2,7 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this file,
  * You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-/* globals browser, log, util, catcher, inlineSelectionCss, callBackground, assertIsTrusted, assertIsBlankDocument, buildSettings blobConverters */
+/* globals browser, log, util, catcher, inlineSelectionCss, callBackground, assertIsTrusted, assertIsBlankDocument, blobConverters */
 
 "use strict";
 
@@ -17,8 +17,7 @@ this.ui = (function() {
     while (el) {
       if (
         el.classList &&
-        (el.classList.contains("myshots-button") ||
-          el.classList.contains("visible") ||
+        (el.classList.contains("visible") ||
           el.classList.contains("full-page") ||
           el.classList.contains("cancel-shot"))
       ) {
@@ -32,7 +31,7 @@ this.ui = (function() {
   const substitutedCss = inlineSelectionCss.replace(
     /MOZ_EXTENSION([^"]+)/g,
     (match, filename) => {
-      return browser.extension.getURL(filename);
+      return browser.runtime.getURL(filename);
     }
   );
 
@@ -59,26 +58,9 @@ this.ui = (function() {
     );
   }
 
-  function highContrastCheck(win) {
-    const doc = win.document;
-    const el = doc.createElement("div");
-    el.style.backgroundImage = "url('#')";
-    el.style.display = "none";
-    doc.body.appendChild(el);
-    const computed = win.getComputedStyle(el);
-    doc.body.removeChild(el);
-    // When Windows is in High Contrast mode, Firefox replaces background
-    // image URLs with the string "none".
-    return computed && computed.backgroundImage === "none";
-  }
-
-  const showMyShots = (exports.showMyShots = function() {
-    return window.hasAnyShots;
-  });
-
   function initializeIframe() {
     const el = document.createElement("iframe");
-    el.src = browser.extension.getURL("blank.html");
+    el.src = browser.runtime.getURL("blank.html");
     el.style.zIndex = "99999999999";
     el.style.border = "none";
     el.style.top = "0";
@@ -155,9 +137,6 @@ this.ui = (function() {
       catcher.watchPromise(
         callBackground("sendEvent", "internal", "unhide-selection-frame")
       );
-      if (highContrastCheck(this.element.contentWindow)) {
-        this.element.contentDocument.body.classList.add("hcm");
-      }
       this.initSizeWatch();
       this.element.focus();
     },
@@ -292,15 +271,7 @@ this.ui = (function() {
                      </div>
                      <div class="preview-instructions" data-l10n-id="screenshots-instructions"></div>
                      <button class="cancel-shot" data-l10n-id="screenshots-cancel-button"></button>
-                     <div class="myshots-all-buttons-container">
-                       ${
-                         showMyShots()
-                           ? `
-                         <button class="myshots-button" tabindex="3" data-l10n-id="screenshots-my-shots-button"></button>
-                         <div class="spacer"></div>
-                       `
-                           : ""
-                       }
+                     <div class="all-buttons-container">
                        <button class="visible" tabindex="2" data-l10n-id="screenshots-save-visible-button"></button>
                        <button class="full-page" tabindex="1" data-l10n-id="screenshots-save-page-button"></button>
                      </div>
@@ -318,16 +289,6 @@ this.ui = (function() {
                 "@@ui_locale"
               );
               const overlay = this.document.querySelector(".preview-overlay");
-              if (showMyShots()) {
-                overlay
-                  .querySelector(".myshots-button")
-                  .addEventListener(
-                    "click",
-                    watchFunction(
-                      assertIsTrusted(standardOverlayCallbacks.onOpenMyShots)
-                    )
-                  );
-              }
               overlay
                 .querySelector(".visible")
                 .addEventListener(
@@ -385,9 +346,6 @@ this.ui = (function() {
       catcher.watchPromise(
         callBackground("sendEvent", "internal", "unhide-preselection-frame")
       );
-      if (highContrastCheck(this.element.contentWindow)) {
-        this.element.contentDocument.body.classList.add("hcm");
-      }
       this.element.focus();
     },
 
@@ -453,18 +411,18 @@ this.ui = (function() {
                     <div class="preview-image">
                       <div class="preview-buttons">
                         <button class="highlight-button-cancel" title="${cancelTitle}">
-                          <img src="${browser.extension.getURL(
+                          <img src="${browser.runtime.getURL(
                             "icons/cancel.svg"
                           )}" />
                         </button>
                         <button class="highlight-button-copy" title="${copyTitle}">
-                          <img src="${browser.extension.getURL(
+                          <img src="${browser.runtime.getURL(
                             "icons/copy.svg"
                           )}" />
                           <span data-l10n-id="screenshots-copy-button"/>
                         </button>
                         <button class="highlight-button-download" title="${downloadTitle}">
-                          <img src="${browser.extension.getURL(
+                          <img src="${browser.runtime.getURL(
                             "icons/download-white.svg"
                           )}" />
                           <span data-l10n-id="screenshots-download-button"/>
@@ -662,20 +620,6 @@ this.ui = (function() {
       } else {
         this.cancel.style.display = "none";
       }
-      if (callbacks !== undefined && callbacks.save && this.save) {
-        // We use onclick here because we don't want addEventListener
-        // to add multiple event handlers to the same button
-        this.save.removeAttribute("disabled");
-        this.save.onclick = watchFunction(
-          assertIsTrusted(e => {
-            this.save.setAttribute("disabled", "true");
-            callbacks.save(e);
-          })
-        );
-        this.save.style.display = "";
-      } else if (this.save) {
-        this.save.style.display = "none";
-      }
       if (callbacks !== undefined && callbacks.download) {
         this.download.removeAttribute("disabled");
         this.download.onclick = watchFunction(
@@ -787,7 +731,7 @@ this.ui = (function() {
       const buttons = makeEl("div", "highlight-buttons");
       const cancel = makeEl("button", "highlight-button-cancel");
       const cancelImg = makeEl("img");
-      cancelImg.src = browser.extension.getURL("icons/cancel.svg");
+      cancelImg.src = browser.runtime.getURL("icons/cancel.svg");
       cancel.title = cancelTitle;
       cancel.appendChild(cancelImg);
       buttons.appendChild(cancel);
@@ -797,14 +741,14 @@ this.ui = (function() {
       const copyImg = makeEl("img");
       const copyString = makeEl("span");
       copyString.textContent = copyText;
-      copyImg.src = browser.extension.getURL("icons/copy.svg");
+      copyImg.src = browser.runtime.getURL("icons/copy.svg");
       copy.appendChild(copyImg);
       copy.appendChild(copyString);
       buttons.appendChild(copy);
 
       const download = makeEl("button", "highlight-button-download");
       const downloadImg = makeEl("img");
-      downloadImg.src = browser.extension.getURL("icons/download-white.svg");
+      downloadImg.src = browser.runtime.getURL("icons/download-white.svg");
       download.appendChild(downloadImg);
       download.append(downloadText);
       download.title = downloadTitle;
@@ -879,15 +823,6 @@ this.ui = (function() {
         target = target.parentNode;
       }
       return false;
-    },
-
-    clearSaveDisabled() {
-      if (!this.save) {
-        // Happens if we try to remove the disabled status after the worker
-        // has been shut down
-        return;
-      }
-      this.save.removeAttribute("disabled");
     },
 
     el: null,

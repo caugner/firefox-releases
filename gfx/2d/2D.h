@@ -454,6 +454,7 @@ class SourceSurface : public external::AtomicRefCounted<SourceSurface> {
       case SurfaceType::DATA_RECYCLING_SHARED:
       case SurfaceType::DATA_ALIGNED:
       case SurfaceType::DATA_SHARED_WRAPPER:
+      case SurfaceType::DATA_MAPPED:
         return true;
       default:
         return false;
@@ -1075,6 +1076,11 @@ class DrawTarget : public external::AtomicRefCounted<DrawTarget> {
 
   virtual bool IsRecording() const { return false; }
   virtual bool IsCaptureDT() const { return false; }
+
+  /**
+   * Method to generate hyperlink in PDF output (with appropriate backend).
+   */
+  virtual void Link(const char* aDestination, const Rect& aRect) {}
 
   /**
    * Returns a SourceSurface which is a snapshot of the current contents of the

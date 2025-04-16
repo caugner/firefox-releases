@@ -217,6 +217,7 @@
 #include "mozilla/layers/ScrollInputMethods.h"
 #include "InputData.h"
 
+#include "mozilla/TaskController.h"
 #include "mozilla/Telemetry.h"
 #include "mozilla/webrender/WebRenderAPI.h"
 #include "mozilla/layers/IAPZCTreeManager.h"
@@ -366,6 +367,11 @@ static const int32_t kGlassMarginAdjustment = 2;
 // we will always display a resize cursor in, regardless of the underlying
 // content.
 static const int32_t kResizableBorderMinSize = 3;
+
+// Getting this object from the window server can be expensive. Keep it
+// around, also get it off the main thread. (See bug 1640852)
+StaticRefPtr<IVirtualDesktopManager> gVirtualDesktopManager;
+static bool gInitializedVirtualDesktopManager = false;
 
 // We should never really try to accelerate windows bigger than this. In some
 // cases this might lead to no D3D9 acceleration where we could have had it
@@ -561,6 +567,42 @@ StaticAutoPtr<TIPMessageHandler> TIPMessageHandler::sInstance;
 
 #endif  // defined(ACCESSIBILITY)
 
+namespace mozilla {
+
+// This task will get the VirtualDesktopManager from the generic thread pool
+// since doing this on the main thread on startup causes performance issues.
+//
+// See bug 1640852.
+//
+// This should be fine and should not require any locking, as when the main
+// thread will access it, if it races with this function it will either find
+// it to be null or to have a valid value.
+class InitializeVirtualDesktopManagerTask : public Task {
+ public:
+  InitializeVirtualDesktopManagerTask() : Task(false, kDefaultPriorityValue) {}
+
+  virtual bool Run() override {
+#ifndef __MINGW32__
+    if (!IsWin10OrLater()) {
+      return true;
+    }
+
+    RefPtr<IVirtualDesktopManager> desktopManager;
+    HRESULT hr = ::CoCreateInstance(
+        CLSID_VirtualDesktopManager, NULL, CLSCTX_INPROC_SERVER,
+        __uuidof(IVirtualDesktopManager), getter_AddRefs(desktopManager));
+    if (FAILED(hr)) {
+      return true;
+    }
+
+    gVirtualDesktopManager = desktopManager;
+#endif
+    return true;
+  }
+};
+
+}  // namespace mozilla
+
 /**************************************************************
  **************************************************************
  **
@@ -582,6 +624,12 @@ nsWindow::nsWindow(bool aIsChildWindow)
     : nsWindowBase(),
       mResizeState(NOT_RESIZING),
       mIsChildWindow(aIsChildWindow) {
+  if (!gInitializedVirtualDesktopManager) {
+    TaskController::Get()->AddTask(
+        MakeAndAddRef<InitializeVirtualDesktopManagerTask>());
+    gInitializedVirtualDesktopManager = true;
+  }
+
   mIconSmall = nullptr;
   mIconBig = nullptr;
   mWnd = nullptr;
@@ -2049,6 +2097,10 @@ void nsWindow::Resize(double aWidth, double aHeight, bool aRepaint) {
 
   NS_ASSERTION((width >= 0), "Negative width passed to nsWindow::Resize");
   NS_ASSERTION((height >= 0), "Negative height passed to nsWindow::Resize");
+  if (width < 0 || height < 0) {
+    gfxCriticalNoteOnce << "Negative passed to Resize(" << width << ", "
+                        << height << ") repaint: " << aRepaint;
+  }
 
   ConstrainSize(&width, &height);
 
@@ -2119,6 +2171,11 @@ void nsWindow::Resize(double aX, double aY, double aWidth, double aHeight,
 
   NS_ASSERTION((width >= 0), "Negative width passed to nsWindow::Resize");
   NS_ASSERTION((height >= 0), "Negative height passed to nsWindow::Resize");
+  if (width < 0 || height < 0) {
+    gfxCriticalNoteOnce << "Negative passed to Resize(" << x << " ," << y
+                        << ", " << width << ", " << height
+                        << ") repaint: " << aRepaint;
+  }
 
   ConstrainSize(&width, &height);
 
@@ -2346,31 +2403,8 @@ void nsWindow::SetSizeMode(nsSizeMode aMode) {
   }
 }
 
-RefPtr<IVirtualDesktopManager> GetVirtualDesktopManager() {
-#ifdef __MINGW32__
-  return nullptr;
-#else
-  if (!IsWin10OrLater()) {
-    return nullptr;
-  }
-
-  RefPtr<IServiceProvider> serviceProvider;
-  HRESULT hr = ::CoCreateInstance(
-      CLSID_ImmersiveShell, NULL, CLSCTX_LOCAL_SERVER,
-      __uuidof(IServiceProvider), getter_AddRefs(serviceProvider));
-  if (FAILED(hr)) {
-    return nullptr;
-  }
-
-  RefPtr<IVirtualDesktopManager> desktopManager;
-  serviceProvider->QueryService(__uuidof(IVirtualDesktopManager),
-                                desktopManager.StartAssignment());
-  return desktopManager;
-#endif
-}
-
 void nsWindow::GetWorkspaceID(nsAString& workspaceID) {
-  RefPtr<IVirtualDesktopManager> desktopManager = GetVirtualDesktopManager();
+  RefPtr<IVirtualDesktopManager> desktopManager = gVirtualDesktopManager;
   if (!desktopManager) {
     return;
   }
@@ -2389,7 +2423,7 @@ void nsWindow::GetWorkspaceID(nsAString& workspaceID) {
 }
 
 void nsWindow::MoveToWorkspace(const nsAString& workspaceID) {
-  RefPtr<IVirtualDesktopManager> desktopManager = GetVirtualDesktopManager();
+  RefPtr<IVirtualDesktopManager> desktopManager = gVirtualDesktopManager;
   if (!desktopManager) {
     return;
   }
@@ -3719,8 +3753,6 @@ void* nsWindow::GetNativeData(uint32_t aDataType) {
     case NS_NATIVE_WINDOW:
     case NS_NATIVE_WINDOW_WEBRTC_DEVICE_ID:
       return (void*)mWnd;
-    case NS_NATIVE_SHAREABLE_WINDOW:
-      return (void*)WinUtils::GetTopLevelHWND(mWnd);
     case NS_NATIVE_GRAPHIC:
       MOZ_ASSERT_UNREACHABLE("Not supported on Windows:");
       return nullptr;
@@ -3744,16 +3776,7 @@ void* nsWindow::GetNativeData(uint32_t aDataType) {
 }
 
 void nsWindow::SetNativeData(uint32_t aDataType, uintptr_t aVal) {
-  switch (aDataType) {
-    case NS_NATIVE_CHILD_WINDOW:
-    case NS_NATIVE_CHILD_OF_SHAREABLE_WINDOW: {
-      MOZ_ASSERT_UNREACHABLE(
-          "SetNativeData window origin was not a plugin process.");
-      break;
-    }
-    default:
-      NS_ERROR("SetNativeData called with unsupported data type.");
-  }
+  NS_ERROR("SetNativeData called with unsupported data type.");
 }
 
 // Free some native data according to aDataType
@@ -4235,10 +4258,7 @@ void nsWindow::AddWindowOverlayWebRenderCommands(
     wr::IpcResourceUpdateQueue& aResources) {
   if (mWindowButtonsRect) {
     wr::LayoutRect rect = wr::ToLayoutRect(*mWindowButtonsRect);
-    auto complexRegion = wr::ToComplexClipRegion(
-        RoundedRect(IntRectToRect(mWindowButtonsRect->ToUnknownRect()),
-                    RectCornerRadii(0, 0, 3, 3)));
-    aBuilder.PushClearRectWithComplexRegion(rect, complexRegion);
+    aBuilder.PushClearRect(rect);
   }
 }
 
@@ -7171,8 +7191,13 @@ bool nsWindow::OnTouch(WPARAM wParam, LPARAM lParam) {
       SingleTouchData touchData(
           pInputs[i].dwID,                               // aIdentifier
           ScreenIntPoint::FromUnknownPoint(touchPoint),  // aScreenPoint
-          /* radius, if known */
-          pInputs[i].dwMask & TOUCHINPUTMASKF_CONTACTAREA
+          // The contact area info cannot be trusted even when
+          // TOUCHINPUTMASKF_CONTACTAREA is set when the input source is pen,
+          // which somehow violates the API docs. (bug 1710509) Ultimately the
+          // dwFlags check will become redundant since we want to migrate to
+          // WM_POINTER for pens. (bug 1707075)
+          (pInputs[i].dwMask & TOUCHINPUTMASKF_CONTACTAREA) &&
+                  !(pInputs[i].dwFlags & TOUCHEVENTF_PEN)
               ? ScreenSize(TOUCH_COORD_TO_PIXEL(pInputs[i].cxContact) / 2,
                            TOUCH_COORD_TO_PIXEL(pInputs[i].cyContact) / 2)
               : ScreenSize(1, 1),  // aRadius
@@ -8531,6 +8556,55 @@ bool nsWindow::WidgetTypeSupportsAcceleration() {
          !(IsPopup() && DeviceManagerDx::Get()->IsWARP());
 }
 
+bool nsWindow::DispatchTouchEventFromWMPointer(
+    UINT msg, LPARAM aLParam, const WinPointerInfo& aPointerInfo) {
+  MultiTouchInput::MultiTouchType touchType;
+  switch (msg) {
+    case WM_POINTERDOWN:
+      touchType = MultiTouchInput::MULTITOUCH_START;
+      break;
+    case WM_POINTERUPDATE:
+      if (aPointerInfo.mPressure == 0) {
+        return false;  // hover
+      }
+      touchType = MultiTouchInput::MULTITOUCH_MOVE;
+      break;
+    case WM_POINTERUP:
+      touchType = MultiTouchInput::MULTITOUCH_END;
+      break;
+    default:
+      return false;
+  }
+
+  nsPointWin touchPoint;
+  touchPoint.x = GET_X_LPARAM(aLParam);
+  touchPoint.y = GET_Y_LPARAM(aLParam);
+  touchPoint.ScreenToClient(mWnd);
+
+  SingleTouchData touchData(static_cast<int32_t>(aPointerInfo.pointerId),
+                            ScreenIntPoint::FromUnknownPoint(touchPoint),
+                            ScreenSize(1, 1),  // pixel size radius for pen
+                            0.0f,              // no radius rotation
+                            aPointerInfo.mPressure);
+  touchData.mTiltX = aPointerInfo.tiltX;
+  touchData.mTiltY = aPointerInfo.tiltY;
+  touchData.mTwist = aPointerInfo.twist;
+
+  MultiTouchInput touchInput;
+  touchInput.mType = touchType;
+  touchInput.mTime = ::GetMessageTime();
+  touchInput.mTimeStamp =
+      GetMessageTimeStamp(static_cast<long>(touchInput.mTime));
+  touchInput.mTouches.AppendElement(touchData);
+
+  // POINTER_INFO.dwKeyStates can't be used as it only supports Shift and Ctrl
+  ModifierKeyState modifierKeyState;
+  touchInput.modifiers = modifierKeyState.GetModifiers();
+
+  DispatchTouchInput(touchInput, MouseEvent_Binding::MOZ_SOURCE_PEN);
+  return true;
+}
+
 bool nsWindow::OnPointerEvents(UINT msg, WPARAM aWParam, LPARAM aLParam) {
   if (!mPointerEvents.ShouldHandleWinPointerMessages(msg, aWParam)) {
     return false;
@@ -8608,7 +8682,7 @@ bool nsWindow::OnPointerEvents(UINT msg, WPARAM aWParam, LPARAM aLParam) {
       return false;
   }
   uint32_t pointerId = mPointerEvents.GetPointerId(aWParam);
-  POINTER_PEN_INFO penInfo;
+  POINTER_PEN_INFO penInfo{};
   mPointerEvents.GetPointerPenInfo(pointerId, &penInfo);
 
   // Windows defines the pen pressure is normalized to a range between 0 and
@@ -8620,6 +8694,12 @@ bool nsWindow::OnPointerEvents(UINT msg, WPARAM aWParam, LPARAM aLParam) {
                                  : MouseButtonsFlag::eNoButtons;
   WinPointerInfo pointerInfo(pointerId, penInfo.tiltX, penInfo.tiltY, pressure,
                              buttons);
+  pointerInfo.twist = penInfo.rotation;
+
+  if (StaticPrefs::dom_w3c_pointer_events_scroll_by_pen_enabled() &&
+      DispatchTouchEventFromWMPointer(msg, aLParam, pointerInfo)) {
+    return true;
+  }
 
   // The aLParam of WM_POINTER* is the screen location. Convert it to client
   // location

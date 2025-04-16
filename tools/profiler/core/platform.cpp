@@ -703,7 +703,8 @@ ProfileChunkedBuffer& profiler_get_core_buffer() {
 class SamplerThread;
 
 static SamplerThread* NewSamplerThread(PSLockRef aLock, uint32_t aGeneration,
-                                       double aInterval);
+                                       double aInterval,
+                                       bool aStackWalkEnabled);
 
 struct LiveProfiledThreadData {
   RegisteredThread* mRegisteredThread;
@@ -816,7 +817,9 @@ class ActivePS {
         // The new sampler thread doesn't start sampling immediately because the
         // main loop within Run() is blocked until this function's caller
         // unlocks gPSMutex.
-        mSamplerThread(NewSamplerThread(aLock, mGeneration, aInterval)),
+        mSamplerThread(
+            NewSamplerThread(aLock, mGeneration, aInterval,
+                             ProfilerFeature::HasStackWalk(aFeatures))),
         mInterposeObserver((ProfilerFeature::HasMainThreadIO(aFeatures) ||
                             ProfilerFeature::HasFileIO(aFeatures) ||
                             ProfilerFeature::HasFileIOAll(aFeatures))
@@ -1072,7 +1075,7 @@ class ActivePS {
 
   // Not using PS_GET, because only the "Controlled" interface of
   // `mProfileBufferChunkManager` should be exposed here.
-  static ProfileBufferControlledChunkManager& ControlledChunkManager(
+  static ProfileBufferChunkManagerWithLocalLimit& ControlledChunkManager(
       PSLockRef) {
     MOZ_ASSERT(sInstance);
     return sInstance->mProfileBufferChunkManager;
@@ -1339,6 +1342,20 @@ class ActivePS {
     return profiles;
   }
 
+#if defined(MOZ_REPLACE_MALLOC) && defined(MOZ_PROFILER_MEMORY)
+  static void SetMemoryCounter(const BaseProfilerCount* aMemoryCounter) {
+    MOZ_ASSERT(sInstance);
+
+    sInstance->mMemoryCounter = aMemoryCounter;
+  }
+
+  static bool IsMemoryCounter(const BaseProfilerCount* aMemoryCounter) {
+    MOZ_ASSERT(sInstance);
+
+    return sInstance->mMemoryCounter == aMemoryCounter;
+  }
+#endif
+
  private:
   // The singleton instance.
   static ActivePS* sInstance;
@@ -1432,6 +1449,10 @@ class ActivePS {
     uint64_t mBufferPositionAtGatherTime;
   };
   Vector<ExitProfile> mExitProfiles;
+
+#if defined(MOZ_REPLACE_MALLOC) && defined(MOZ_PROFILER_MEMORY)
+  Atomic<const BaseProfilerCount*> mMemoryCounter;
+#endif
 };
 
 ActivePS* ActivePS::sInstance = nullptr;
@@ -3253,7 +3274,7 @@ class SamplerThread {
  public:
   // Creates a sampler thread, but doesn't start it.
   SamplerThread(PSLockRef aLock, uint32_t aActivityGeneration,
-                double aIntervalMilliseconds);
+                double aIntervalMilliseconds, bool aStackWalkEnabled);
   ~SamplerThread();
 
   // This runs on (is!) the sampler thread.
@@ -3356,8 +3377,9 @@ bool ActivePS::AppendPostSamplingCallback(PSLockRef aLock,
 // ActivePS's constructor, but SamplerThread is defined after ActivePS. It
 // could probably be removed by moving some code around.
 static SamplerThread* NewSamplerThread(PSLockRef aLock, uint32_t aGeneration,
-                                       double aInterval) {
-  return new SamplerThread(aLock, aGeneration, aInterval);
+                                       double aInterval,
+                                       bool aStackWalkEnabled) {
+  return new SamplerThread(aLock, aGeneration, aInterval, aStackWalkEnabled);
 }
 
 // This function is the sampler thread.  This implementation is used for all
@@ -3465,6 +3487,16 @@ void SamplerThread::Run() {
           int64_t count;
           uint64_t number;
           counter->Sample(count, number);
+#if defined(MOZ_REPLACE_MALLOC) && defined(MOZ_PROFILER_MEMORY)
+          if (ActivePS::IsMemoryCounter(counter)) {
+            // For the memory counter, substract the size of our buffer to avoid
+            // giving the misleading impression that the memory use keeps on
+            // growing when it's just the profiler session that's using a larger
+            // buffer as it gets longer.
+            count -= static_cast<int64_t>(
+                ActivePS::ControlledChunkManager(lock).TotalSize());
+          }
+#endif
           buffer.AddEntry(ProfileBufferEntry::CounterKey(0));
           buffer.AddEntry(ProfileBufferEntry::Count(count));
           if (number) {
@@ -3498,12 +3530,20 @@ void SamplerThread::Run() {
                 (now - CorePS::ProcessStartTime()).ToMilliseconds();
 
             // If the thread is asleep and has been sampled before in the same
-            // sleep episode, find and copy the previous sample, as that's
-            // cheaper than taking a new sample.
+            // sleep episode, or otherwise(*) if there was zero CPU activity
+            // since the previous sampling, find and copy the previous sample,
+            // as that's cheaper than taking a new sample.
+            // (*) Tech note: The asleep check is done first and always, because
+            //     it is more reliable, and knows if it's the first asleep
+            //     sample, which cannot be duplicated; if the test was the other
+            //     way around, it could find zero CPU and then short-circuit
+            //     that state-changing second-asleep-check operation, which
+            //     could result in an unneeded sample.
             // However we're using current running times (instead of copying the
             // old ones) because some work could have happened.
             if (registeredThread->RacyRegisteredThread()
-                    .CanDuplicateLastSampleDueToSleep()) {
+                    .CanDuplicateLastSampleDueToSleep() ||
+                runningTimesDiff.GetThreadCPUDelta() == Some(uint64_t(0))) {
               const bool dup_ok = ActivePS::Buffer(lock).DuplicateLastSample(
                   info->ThreadId(), threadSampleDeltaMs,
                   profiledThreadData->LastSample(), runningTimesDiff);
@@ -3794,7 +3834,10 @@ void SamplerThread::Run() {
         // involves doing I/O (fprintf, __android_log_print, etc.) and so
         // can't safely be done from the critical section inside
         // SuspendAndSampleAndResumeThread, which is why it is done here.
-        CorePS::Lul(lock)->MaybeShowStats();
+        lul::LUL* lul = CorePS::Lul(lock);
+        if (lul) {
+          lul->MaybeShowStats();
+        }
 #endif
         TimeStamp threadsSampled = TimeStamp::NowUnfuzzed();
 
@@ -4291,7 +4334,7 @@ void profiler_init(void* aStackTop) {
 #if defined(MOZ_REPLACE_MALLOC) && defined(MOZ_PROFILER_MEMORY)
   // Start counting memory allocations (outside of lock because this may call
   // profiler_add_sampled_counter which would attempt to take the lock.)
-  mozilla::profiler::install_memory_hooks();
+  ActivePS::SetMemoryCounter(mozilla::profiler::install_memory_hooks());
 #endif
 
   // We do this with gPSMutex unlocked. The comment in profiler_stop() explains
@@ -4867,7 +4910,7 @@ void profiler_start(PowerOfTwo32 aCapacity, double aInterval,
 #if defined(MOZ_REPLACE_MALLOC) && defined(MOZ_PROFILER_MEMORY)
   // Start counting memory allocations (outside of lock because this may call
   // profiler_add_sampled_counter which would attempt to take the lock.)
-  mozilla::profiler::install_memory_hooks();
+  ActivePS::SetMemoryCounter(mozilla::profiler::install_memory_hooks());
 #endif
 
   // We do these operations with gPSMutex unlocked. The comments in
@@ -5901,6 +5944,15 @@ void profiler_clear_js_context() {
 void profiler_suspend_and_sample_thread(int aThreadId, uint32_t aFeatures,
                                         ProfilerStackCollector& aCollector,
                                         bool aSampleNative /* = true */) {
+  const bool isSynchronous = [&aThreadId]() {
+    const int currentThreadId = profiler_current_thread_id();
+    if (aThreadId == 0) {
+      aThreadId = currentThreadId;
+      return true;
+    }
+    return aThreadId == currentThreadId;
+  }();
+
   // Lock the profiler mutex
   PSAutoLock lock(gPSMutex);
 
@@ -5918,51 +5970,60 @@ void profiler_suspend_and_sample_thread(int aThreadId, uint32_t aFeatures,
       // Allocate the space for the native stack
       NativeStack nativeStack;
 
-      // Suspend, sample, and then resume the target thread.
-      Sampler sampler(lock);
-      TimeStamp now = TimeStamp::Now();
-      sampler.SuspendAndSampleAndResumeThread(
-          lock, registeredThread, now,
-          [&](const Registers& aRegs, const TimeStamp& aNow) {
-            // The target thread is now suspended. Collect a native backtrace,
-            // and call the callback.
-            bool isSynchronous = false;
-            JsFrameBuffer& jsFrames = CorePS::JsFrames(lock);
-            const uint32_t jsFramesCount = ExtractJsFrames(
-                isSynchronous, registeredThread, aRegs, aCollector, jsFrames);
+      auto collectStack = [&](const Registers& aRegs, const TimeStamp& aNow) {
+        // The target thread is now suspended. Collect a native backtrace,
+        // and call the callback.
+        JsFrameBuffer& jsFrames = CorePS::JsFrames(lock);
+        const uint32_t jsFramesCount = ExtractJsFrames(
+            isSynchronous, registeredThread, aRegs, aCollector, jsFrames);
 
 #if defined(HAVE_FASTINIT_NATIVE_UNWIND)
-            if (aSampleNative) {
+        if (aSampleNative) {
           // We can only use FramePointerStackWalk or MozStackWalk from
           // suspend_and_sample_thread as other stackwalking methods may not be
           // initialized.
 #  if defined(USE_FRAME_POINTER_STACK_WALK)
-              DoFramePointerBacktrace(lock, registeredThread, aRegs,
-                                      nativeStack);
+          DoFramePointerBacktrace(lock, registeredThread, aRegs, nativeStack);
 #  elif defined(USE_MOZ_STACK_WALK)
-              DoMozStackWalkBacktrace(lock, registeredThread, aRegs,
-                                      nativeStack);
+          DoMozStackWalkBacktrace(lock, registeredThread, aRegs, nativeStack);
 #  else
 #    error "Invalid configuration"
 #  endif
 
-              MergeStacks(aFeatures, isSynchronous, registeredThread, aRegs,
-                          nativeStack, aCollector, jsFrames, jsFramesCount);
-            } else
+          MergeStacks(aFeatures, isSynchronous, registeredThread, aRegs,
+                      nativeStack, aCollector, jsFrames, jsFramesCount);
+        } else
 #endif
-            {
-              MergeStacks(aFeatures, isSynchronous, registeredThread, aRegs,
-                          nativeStack, aCollector, jsFrames, jsFramesCount);
+        {
+          MergeStacks(aFeatures, isSynchronous, registeredThread, aRegs,
+                      nativeStack, aCollector, jsFrames, jsFramesCount);
 
-              if (ProfilerFeature::HasLeaf(aFeatures)) {
-                aCollector.CollectNativeLeafAddr((void*)aRegs.mPC);
-              }
-            }
-          });
+          if (ProfilerFeature::HasLeaf(aFeatures)) {
+            aCollector.CollectNativeLeafAddr((void*)aRegs.mPC);
+          }
+        }
+      };
 
-      // NOTE: Make sure to disable the sampler before it is destroyed, in case
-      // the profiler is running at the same time.
-      sampler.Disable(lock);
+      if (isSynchronous) {
+        // Sampling the current thread, do NOT suspend it!
+        Registers regs;
+#if defined(HAVE_NATIVE_UNWIND)
+        regs.SyncPopulate();
+#else
+        regs.Clear();
+#endif
+        collectStack(regs, TimeStamp::Now());
+      } else {
+        // Suspend, sample, and then resume the target thread.
+        Sampler sampler(lock);
+        TimeStamp now = TimeStamp::Now();
+        sampler.SuspendAndSampleAndResumeThread(lock, registeredThread, now,
+                                                collectStack);
+
+        // NOTE: Make sure to disable the sampler before it is destroyed, in
+        // case the profiler is running at the same time.
+        sampler.Disable(lock);
+      }
       break;
     }
   }

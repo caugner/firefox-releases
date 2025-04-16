@@ -71,6 +71,7 @@
             <vbox class="indent default-content-blocking-ui">
               <description data-l10n-id="content-blocking-etp-standard-desc"></description>
               <vbox class="content-blocking-extra-information">
+                <label class="content-blocking-extra-blocking-desc" data-l10n-id="content-blocking-etp-blocking-desc"/>
                 <vbox class="indent">
                   <hbox class="extra-information-label social-media-option" hidden="true">
                     <label class="content-blocking-label" data-l10n-id="content-blocking-social-media-trackers"/>
@@ -137,6 +138,7 @@
             <vbox class="indent">
               <label data-l10n-id="content-blocking-etp-strict-desc"></label>
               <vbox class="content-blocking-extra-information">
+                <label class="content-blocking-extra-blocking-desc" data-l10n-id="content-blocking-etp-blocking-desc"/>
                 <vbox class="indent">
                   <hbox class="extra-information-label social-media-option" hidden="true">
                     <label class="content-blocking-label" data-l10n-id="content-blocking-social-media-trackers"/>
@@ -883,14 +885,15 @@
 #endif
 
 #ifdef MOZ_CRASHREPORTER
-    <hbox align="center">
-      <checkbox id="automaticallySubmitCrashesBox"
-                class="tail-with-learn-more"
-                preference="browser.crashReports.unsubmittedCheck.autoSubmit2"
-                data-l10n-id="collection-backlogged-crash-reports"
-                flex="1"/>
-      <label id="crashReporterLearnMore"
-              class="learnMore" is="text-link" data-l10n-id="collection-backlogged-crash-reports-link"/>
+    <hbox align="center" class="checkbox-row">
+      <html:input type="checkbox"
+                id="automaticallySubmitCrashesBox"
+                preference="browser.crashReports.unsubmittedCheck.autoSubmit2"/>
+      <label for="automaticallySubmitCrashesBox"
+                id="crashReporterLabel"
+                data-l10n-id="collection-backlogged-crash-reports-with-link">
+        <html:a data-l10n-name="crash-reports-link" id="crashReporterLearnMore" target="_blank"/>
+      </label>
     </hbox>
 #endif
   </vbox>
@@ -987,6 +990,7 @@
   <vbox>
     <!-- Please don't remove the wrapping hbox/vbox/box for these elements. It's used to properly compute the search tooltip position. -->
     <hbox>
+      <vbox flex="1">
       <radiogroup id="httpsOnlyRadioGroup">
         <radio id="httpsOnlyRadioEnabled"
                data-l10n-id="httpsonly-radio-enabled"
@@ -998,6 +1002,17 @@
                data-l10n-id="httpsonly-radio-disabled"
                value="disabled"/>
       </radiogroup>
+      </vbox>
+      <vbox align="end">
+        <button id="httpsOnlyExceptionButton" is="highlightable-button" class="accessory-button" disabled="true"
+          data-l10n-id="sitedata-cookies-exceptions" search-l10n-ids="
+                        permissions-address,
+                        permissions-allow.label,
+                        permissions-remove.label,
+                        permissions-remove-all.label,
+                        permissions-exceptions-https-only-desc,
+                      " />
+      </vbox>
     </hbox>
   </vbox>
 </groupbox>

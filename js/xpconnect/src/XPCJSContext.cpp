@@ -13,6 +13,7 @@
 #include "xpcpublic.h"
 #include "XPCWrapper.h"
 #include "XPCJSMemoryReporter.h"
+#include "XPCSelfHostedShmem.h"
 #include "WrapperFactory.h"
 #include "mozJSComponentLoader.h"
 #include "nsNetUtil.h"
@@ -40,6 +41,7 @@
 #include "jsapi.h"
 #include "js/ArrayBuffer.h"
 #include "js/ContextOptions.h"
+#include "js/Initialization.h"
 #include "js/MemoryMetrics.h"
 #include "js/OffThreadScriptCompilation.h"
 #include "js/WasmFeatures.h"
@@ -794,6 +796,9 @@ void xpc::SetPrefableRealmOptions(JS::RealmOptions& options) {
       .setIteratorHelpersEnabled(sIteratorHelpersEnabled);
 }
 
+// Mirrored value of javascript.options.self_hosted.use_shared_memory.
+static bool sSelfHostedUseSharedMemory = false;
+
 static void LoadStartupJSPrefs(XPCJSContext* xpccx) {
   // Prefs that require a restart are handled here. This includes the
   // process-wide JIT options because toggling these at runtime can easily cause
@@ -830,6 +835,7 @@ static void LoadStartupJSPrefs(XPCJSContext* xpccx) {
         cx, JSJITCOMPILER_JIT_TRUSTEDPRINCIPALS_ENABLE, false);
     JS_SetGlobalJitCompilerOption(cx, JSJITCOMPILER_NATIVE_REGEXP_ENABLE,
                                   false);
+    sSelfHostedUseSharedMemory = false;
   } else {
     JS_SetGlobalJitCompilerOption(
         cx, JSJITCOMPILER_BASELINE_ENABLE,
@@ -843,6 +849,8 @@ static void LoadStartupJSPrefs(XPCJSContext* xpccx) {
     JS_SetGlobalJitCompilerOption(
         cx, JSJITCOMPILER_NATIVE_REGEXP_ENABLE,
         StaticPrefs::javascript_options_native_regexp_DoNotUseDirectly());
+    sSelfHostedUseSharedMemory = StaticPrefs::
+        javascript_options_self_hosted_use_shared_memory_DoNotUseDirectly();
   }
 
   JS_SetOffthreadIonCompilationEnabled(
@@ -967,16 +975,17 @@ static void ReloadPrefsCallback(const char* pref, void* aXpccx) {
   bool topLevelAwaitEnabled =
       Preferences::GetBool(JS_OPTIONS_DOT_STR "experimental.top_level_await");
 
-  // Require private fields disabled outside of nightly.
-  bool privateFieldsEnabled = false;
-  bool privateMethodsEnabled = false;
+  bool privateFieldsEnabled =
+      Preferences::GetBool(JS_OPTIONS_DOT_STR "experimental.private_fields");
+  bool privateMethodsEnabled =
+      Preferences::GetBool(JS_OPTIONS_DOT_STR "experimental.private_methods");
+
+  bool ergnomicBrandChecksEnabled = Preferences::GetBool(
+      JS_OPTIONS_DOT_STR "experimental.ergonomic_brand_checks");
+
 #ifdef NIGHTLY_BUILD
   sIteratorHelpersEnabled =
       Preferences::GetBool(JS_OPTIONS_DOT_STR "experimental.iterator_helpers");
-  privateFieldsEnabled =
-      Preferences::GetBool(JS_OPTIONS_DOT_STR "experimental.private_fields");
-  privateMethodsEnabled =
-      Preferences::GetBool(JS_OPTIONS_DOT_STR "experimental.private_methods");
 #endif
 
 #ifdef JS_GC_ZEAL
@@ -1022,6 +1031,7 @@ static void ReloadPrefsCallback(const char* pref, void* aXpccx) {
       .setDumpStackOnDebuggeeWouldRun(dumpStackOnDebuggeeWouldRun)
       .setPrivateClassFields(privateFieldsEnabled)
       .setPrivateClassMethods(privateMethodsEnabled)
+      .setErgnomicBrandChecks(ergnomicBrandChecksEnabled)
       .setTopLevelAwait(topLevelAwaitEnabled);
 
   nsCOMPtr<nsIXULRuntime> xr = do_GetService("@mozilla.org/xre/runtime;1");
@@ -1164,6 +1174,16 @@ class HelperThreadTaskHandler : public Task {
 bool DispatchOffThreadTask(js::UniquePtr<RunnableTask> task) {
   TaskController::Get()->AddTask(
       MakeAndAddRef<HelperThreadTaskHandler>(std::move(task)));
+  return true;
+}
+
+static bool CreateSelfHostedSharedMemory(JSContext* aCx,
+                                         JS::SelfHostedCache aBuf) {
+  auto& shm = xpc::SelfHostedShmem::GetSingleton();
+  MOZ_RELEASE_ASSERT(shm.Content().IsEmpty());
+  // Failures within InitFromParent output warnings but do not cause
+  // unrecoverable failures.
+  shm.InitFromParent(aBuf);
   return true;
 }
 
@@ -1337,7 +1357,18 @@ nsresult XPCJSContext::Initialize() {
     NS_ABORT_OOM(0);  // Size is unknown.
   }
 
-  if (!JS::InitSelfHostedCode(cx)) {
+  // When available, set the self-hosted shared memory to be read, so that we
+  // can decode the self-hosted content instead of parsing it.
+  auto& shm = xpc::SelfHostedShmem::GetSingleton();
+  JS::SelfHostedCache selfHostedContent = shm.Content();
+  JS::SelfHostedWriter writer = nullptr;
+  if (XRE_IsParentProcess() && sSelfHostedUseSharedMemory) {
+    // Only the Parent process has permissions to write to the self-hosted
+    // shared memory.
+    writer = CreateSelfHostedSharedMemory;
+  }
+
+  if (!JS::InitSelfHostedCode(cx, selfHostedContent, writer)) {
     // Note: If no exception is pending, failure is due to OOM.
     if (!JS_IsExceptionPending(cx) || JS_IsThrowingOutOfMemory(cx)) {
       NS_ABORT_OOM(0);  // Size is unknown.

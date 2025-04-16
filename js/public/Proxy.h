@@ -259,7 +259,7 @@ class JS_FRIEND_API BaseProxyHandler {
   /* Standard internal methods. */
   virtual bool getOwnPropertyDescriptor(
       JSContext* cx, JS::HandleObject proxy, JS::HandleId id,
-      JS::MutableHandle<JS::PropertyDescriptor> desc) const = 0;
+      JS::MutableHandle<mozilla::Maybe<JS::PropertyDescriptor>> desc) const = 0;
   virtual bool defineProperty(JSContext* cx, JS::HandleObject proxy,
                               JS::HandleId id,
                               JS::Handle<JS::PropertyDescriptor> desc,
@@ -517,7 +517,7 @@ inline const JS::Value& GetProxyExpando(const JSObject* obj) {
   return detail::GetProxyDataLayout(obj)->values()->expandoSlot;
 }
 
-inline JSObject* GetProxyTargetObject(JSObject* obj) {
+inline JSObject* GetProxyTargetObject(const JSObject* obj) {
   return GetProxyPrivate(obj).toObjectOrNull();
 }
 

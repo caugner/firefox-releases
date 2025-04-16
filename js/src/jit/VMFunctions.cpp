@@ -101,6 +101,10 @@ struct TypeToDataType<BlockLexicalEnvironmentObject*> {
   static const DataType result = Type_Object;
 };
 template <>
+struct TypeToDataType<ClassBodyLexicalEnvironmentObject*> {
+  static const DataType result = Type_Object;
+};
+template <>
 struct TypeToDataType<ArgumentsObject*> {
   static const DataType result = Type_Object;
 };
@@ -183,6 +187,10 @@ struct TypeToDataType<Handle<WithScope*> > {
 };
 template <>
 struct TypeToDataType<Handle<LexicalScope*> > {
+  static const DataType result = Type_Handle;
+};
+template <>
+struct TypeToDataType<Handle<ClassBodyScope*> > {
   static const DataType result = Type_Handle;
 };
 template <>
@@ -288,6 +296,11 @@ template <>
 struct TypeToArgProperties<Handle<LexicalScope*> > {
   static const uint32_t result =
       TypeToArgProperties<LexicalScope*>::result | VMFunctionData::ByRef;
+};
+template <>
+struct TypeToArgProperties<Handle<ClassBodyScope*> > {
+  static const uint32_t result =
+      TypeToArgProperties<ClassBodyScope*>::result | VMFunctionData::ByRef;
 };
 template <>
 struct TypeToArgProperties<Handle<Scope*> > {
@@ -407,6 +420,10 @@ struct TypeToRootType<Handle<RegExpObject*> > {
 };
 template <>
 struct TypeToRootType<Handle<LexicalScope*> > {
+  static const uint32_t result = VMFunctionData::RootCell;
+};
+template <>
+struct TypeToRootType<Handle<ClassBodyScope*> > {
   static const uint32_t result = VMFunctionData::RootCell;
 };
 template <>
@@ -910,7 +927,9 @@ bool SetArrayLength(JSContext* cx, HandleObject obj, HandleValue value,
   //
   // So, perform ArraySetLength if and only if "length" is writable.
   if (array->lengthIsWritable()) {
-    if (!ArraySetLength(cx, array, id, JSPROP_PERMANENT, value, result)) {
+    Rooted<PropertyDescriptor> desc(
+        cx, PropertyDescriptor::Data(value, JS::PropertyAttribute::Writable));
+    if (!ArraySetLength(cx, array, id, desc, result)) {
       return false;
     }
   } else {
@@ -1368,12 +1387,10 @@ JSObject* CopyLexicalEnvironmentObject(JSContext* cx, HandleObject env,
 }
 
 JSObject* InitRestParameter(JSContext* cx, uint32_t length, Value* rest,
-                            HandleObject templateObj, HandleObject objRes) {
+                            HandleObject objRes) {
   if (objRes) {
-    Rooted<ArrayObject*> arrRes(cx, &objRes->as<ArrayObject>());
-
-    MOZ_ASSERT(!arrRes->getDenseInitializedLength());
-    MOZ_ASSERT(arrRes->shape() == templateObj->shape());
+    Handle<ArrayObject*> arrRes = objRes.as<ArrayObject>();
+    MOZ_ASSERT(arrRes->getDenseInitializedLength() == 0);
 
     // Fast path: we managed to allocate the array inline; initialize the
     // slots.
@@ -1456,14 +1473,14 @@ bool PushLexicalEnv(JSContext* cx, BaselineFrame* frame,
 }
 
 bool PopLexicalEnv(JSContext* cx, BaselineFrame* frame) {
-  frame->popOffEnvironmentChain<BlockLexicalEnvironmentObject>();
+  frame->popOffEnvironmentChain<ScopedLexicalEnvironmentObject>();
   return true;
 }
 
 bool DebugLeaveThenPopLexicalEnv(JSContext* cx, BaselineFrame* frame,
                                  jsbytecode* pc) {
   MOZ_ALWAYS_TRUE(DebugLeaveLexicalEnv(cx, frame, pc));
-  frame->popOffEnvironmentChain<BlockLexicalEnvironmentObject>();
+  frame->popOffEnvironmentChain<ScopedLexicalEnvironmentObject>();
   return true;
 }
 
@@ -1494,6 +1511,11 @@ bool DebugLeaveLexicalEnv(JSContext* cx, BaselineFrame* frame, jsbytecode* pc) {
     DebugEnvironments::onPopLexical(cx, frame, pc);
   }
   return true;
+}
+
+bool PushClassBodyEnv(JSContext* cx, BaselineFrame* frame,
+                      Handle<ClassBodyScope*> scope) {
+  return frame->pushClassBodyEnvironment(cx, scope);
 }
 
 bool PushVarEnv(JSContext* cx, BaselineFrame* frame, HandleScope scope) {
@@ -1815,11 +1837,12 @@ static MOZ_ALWAYS_INLINE bool GetNativeDataPropertyPure(JSContext* cx,
 
   while (true) {
     if (Shape* shape = obj->lastProperty()->search(cx, id)) {
-      if (!shape->isDataProperty()) {
+      PropertyInfo prop = shape->propertyInfo();
+      if (!prop.isDataProperty()) {
         return false;
       }
 
-      *vp = obj->getSlot(shape->slot());
+      *vp = obj->getSlot(prop.slot());
       return true;
     }
 
@@ -1918,11 +1941,16 @@ bool SetNativeDataPropertyPure(JSContext* cx, JSObject* obj, PropertyName* name,
 
   NativeObject* nobj = &obj->as<NativeObject>();
   Shape* shape = nobj->lastProperty()->search(cx, NameToId(name));
-  if (!shape || !shape->isDataProperty() || !shape->writable()) {
+  if (!shape) {
     return false;
   }
 
-  nobj->setSlot(shape->slot(), *val);
+  PropertyInfo prop = shape->propertyInfo();
+  if (!prop.isDataProperty() || !prop.writable()) {
+    return false;
+  }
+
+  nobj->setSlot(prop.slot(), *val);
   return true;
 }
 
@@ -1940,11 +1968,11 @@ bool ObjectHasGetterSetterPure(JSContext* cx, JSObject* objArg, jsid id,
 
   while (true) {
     if (Shape* shape = nobj->lastProperty()->search(cx, id)) {
-      if (!shape->isAccessorDescriptor()) {
+      PropertyInfo prop = shape->propertyInfo();
+      if (!prop.isAccessorProperty()) {
         return false;
       }
-      GetterSetter* actualGetterSetter =
-          nobj->getGetterSetter(ShapeProperty(shape));
+      GetterSetter* actualGetterSetter = nobj->getGetterSetter(prop);
       if (actualGetterSetter == getterSetter) {
         return true;
       }

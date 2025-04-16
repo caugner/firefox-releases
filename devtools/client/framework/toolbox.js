@@ -36,9 +36,6 @@ var Startup = Cc["@mozilla.org/devtools/startup-clh;1"].getService(
   Ci.nsISupports
 ).wrappedJSObject;
 
-const {
-  ResourceWatcher,
-} = require("devtools/shared/resources/resource-watcher");
 const { createCommandsDictionary } = require("devtools/shared/commands/index");
 
 const { BrowserLoader } = ChromeUtils.import(
@@ -65,8 +62,9 @@ loader.lazyRequireGetter(
 loader.lazyRequireGetter(
   this,
   [
-    "registerWalkerListeners",
+    "refreshTargets",
     "registerTarget",
+    "registerWalkerListeners",
     "selectTarget",
     "unregisterTarget",
   ],
@@ -177,10 +175,6 @@ loader.lazyGetter(this, "DEBUG_TARGET_TYPES", () => {
     .DEBUG_TARGET_TYPES;
 });
 
-loader.lazyGetter(this, "registerHarOverlay", () => {
-  return require("devtools/client/netmonitor/src/har/toolbox-overlay").register;
-});
-
 loader.lazyRequireGetter(
   this,
   "NodeFront",
@@ -198,6 +192,13 @@ loader.lazyRequireGetter(
   this,
   "getF12SessionId",
   "devtools/client/framework/enable-devtools-popup",
+  true
+);
+
+loader.lazyRequireGetter(
+  this,
+  "HarAutomation",
+  "devtools/client/netmonitor/src/har/har-automation",
   true
 );
 
@@ -333,7 +334,6 @@ function Toolbox(
   this._onResumedState = this._onResumedState.bind(this);
   this._onTargetAvailable = this._onTargetAvailable.bind(this);
   this._onTargetDestroyed = this._onTargetDestroyed.bind(this);
-  this._onNavigate = this._onNavigate.bind(this);
   this._onResourceAvailable = this._onResourceAvailable.bind(this);
   this._onResourceUpdated = this._onResourceUpdated.bind(this);
 
@@ -634,7 +634,7 @@ Toolbox.prototype = {
       return null;
     }
 
-    return this.target.client.getFrontByID(selectedTarget.actorID);
+    return this.commands.client.getFrontByID(selectedTarget.actorID);
   },
 
   _onToolboxStateChange(state, oldState) {
@@ -699,7 +699,6 @@ Toolbox.prototype = {
       // Attach to a new top-level target.
       // For now, register these event listeners only on the top level target
       targetFront.on("will-navigate", this._onWillNavigate);
-      targetFront.on("navigate", this._onNavigate);
       targetFront.on("frame-update", this._updateFrames);
       targetFront.on("inspect-object", this._onInspectObject);
     }
@@ -735,7 +734,6 @@ Toolbox.prototype = {
     if (targetFront.isTopLevel) {
       this.target.off("inspect-object", this._onInspectObject);
       this.target.off("will-navigate", this._onWillNavigate);
-      this.target.off("navigate", this._onNavigate);
       this.target.off("frame-update", this._updateFrames);
     }
 
@@ -787,7 +785,8 @@ Toolbox.prototype = {
         this._onTargetThreadFrontResumeWrongOrder.bind(this)
       );
 
-      this.resourceWatcher = new ResourceWatcher(this.commands.targetCommand);
+      // Bug 1709063: Use commands.resourceCommand instead of toolbox.resourceCommand
+      this.resourceCommand = this.commands.resourceCommand;
 
       // Optimization: fire up a few other things before waiting on
       // the iframe being ready (makes startup faster)
@@ -803,18 +802,19 @@ Toolbox.prototype = {
         this._onTargetDestroyed
       );
 
-      // Watch for console API messages, errors and network events in order to populate
-      // the error count icon in the toolbox.
-      const onResourcesWatched = this.resourceWatcher.watchResources(
+      const onResourcesWatched = this.resourceCommand.watchResources(
         [
-          this.resourceWatcher.TYPES.CONSOLE_MESSAGE,
-          this.resourceWatcher.TYPES.ERROR_MESSAGE,
+          // Watch for console API messages, errors and network events in order to populate
+          // the error count icon in the toolbox.
+          this.resourceCommand.TYPES.CONSOLE_MESSAGE,
+          this.resourceCommand.TYPES.ERROR_MESSAGE,
           // Independently of watching network event resources for the error count icon,
           // we need to start tracking network activity on toolbox open for targets such
           // as tabs, in order to ensure there is always at least one listener existing
           // for network events across the lifetime of the various panels, so stopping
-          // the resource watcher from clearing out its cache of network event resources.
-          this.resourceWatcher.TYPES.NETWORK_EVENT,
+          // the resource command from clearing out its cache of network event resources.
+          this.resourceCommand.TYPES.NETWORK_EVENT,
+          this.resourceCommand.TYPES.DOCUMENT_EVENT,
         ],
         {
           onAvailable: this._onResourceAvailable,
@@ -853,7 +853,6 @@ Toolbox.prototype = {
       this._applyJavascriptEnabledSettings();
       this._addWindowListeners();
       this._addChromeEventHandlerEvents();
-      this._registerOverlays();
 
       // Get the tab bar of the ToolboxController to attach the "keypress" event listener to.
       this._tabBar = this.doc.querySelector(".devtools-tabbar");
@@ -959,6 +958,8 @@ Toolbox.prototype = {
       if (flags.testing) {
         await performanceFrontConnection;
       }
+
+      await this.initHarAutomation();
 
       this.emit("ready");
       this._resolveIsOpen();
@@ -1092,7 +1093,7 @@ Toolbox.prototype = {
     ].forEach(([id, force]) => {
       const key = L10N.getStr("toolbox." + id + ".key");
       this.shortcuts.on(key, event => {
-        this.reloadTarget(force);
+        this.commands.targetCommand.reloadTopLevelTarget(force);
 
         // Prevent Firefox shortcuts from reloading the page
         event.preventDefault();
@@ -1389,7 +1390,10 @@ Toolbox.prototype = {
       return this._sourceMapURLService;
     }
     const sourceMaps = this._createSourceMapService();
-    this._sourceMapURLService = new SourceMapURLService(this, sourceMaps);
+    this._sourceMapURLService = new SourceMapURLService(
+      this.commands,
+      sourceMaps
+    );
     return this._sourceMapURLService;
   },
 
@@ -1626,10 +1630,6 @@ Toolbox.prototype = {
     if (event.data && event.data.name === "switched-host") {
       this._onSwitchedHost(event.data);
     }
-  },
-
-  _registerOverlays: function() {
-    registerHarOverlay(this);
   },
 
   _saveSplitConsoleHeight: function() {
@@ -2933,13 +2933,6 @@ Toolbox.prototype = {
   },
 
   /**
-   * Tells the target tab to reload.
-   */
-  reloadTarget: function(force) {
-    this.target.reload({ options: { force } });
-  },
-
-  /**
    * Loads the tool next to the currently selected tool.
    */
   selectNextTool: function() {
@@ -3024,6 +3017,10 @@ Toolbox.prototype = {
     }
 
     await panel.once("reloaded");
+    // The toolbox may have been destroyed while the panel was reloading
+    if (this.isDestroying()) {
+      return;
+    }
     const delay = this.win.performance.now() - start;
 
     const telemetryKey = "DEVTOOLS_TOOLBOX_PAGE_RELOAD_DELAY_MS";
@@ -3069,7 +3066,7 @@ Toolbox.prototype = {
    * client. See the definition of the preference actor for more information.
    */
   get preferenceFront() {
-    const frontPromise = this.target.client.mainRoot.getFront("preference");
+    const frontPromise = this.commands.client.mainRoot.getFront("preference");
     frontPromise.then(front => {
       // Set the _preferenceFront property to allow the resetPreferences toolbox method
       // to cleanup the preference set when the toolbox is closed.
@@ -3679,11 +3676,7 @@ Toolbox.prototype = {
 
     // This flag will be checked by Fronts in order to decide if they should
     // skip their destroy.
-    if (this.target.client) {
-      // Note: this.target.client might be null if the target was already
-      // destroyed (eg: tab is closed during remote debugging).
-      this.target.client.isToolboxDestroy = true;
-    }
+    this.commands.client.isToolboxDestroy = true;
 
     this.off("select", this._onToolSelected);
     this.off("host-changed", this._refreshHostTitle);
@@ -3738,6 +3731,7 @@ Toolbox.prototype = {
       this._nodePicker.stop();
       this._nodePicker = null;
     }
+    this.destroyHarAutomation();
 
     const outstanding = [];
     for (const [id, panel] of this._toolPanels) {
@@ -3763,11 +3757,12 @@ Toolbox.prototype = {
       this._onTargetAvailable,
       this._onTargetDestroyed
     );
-    this.resourceWatcher.unwatchResources(
+    this.resourceCommand.unwatchResources(
       [
-        this.resourceWatcher.TYPES.CONSOLE_MESSAGE,
-        this.resourceWatcher.TYPES.ERROR_MESSAGE,
-        this.resourceWatcher.TYPES.NETWORK_EVENT,
+        this.resourceCommand.TYPES.CONSOLE_MESSAGE,
+        this.resourceCommand.TYPES.ERROR_MESSAGE,
+        this.resourceCommand.TYPES.NETWORK_EVENT,
+        this.resourceCommand.TYPES.DOCUMENT_EVENT,
       ],
       { onAvailable: this._onResourceAvailable }
     );
@@ -3964,6 +3959,23 @@ Toolbox.prototype = {
     }
 
     this._preferenceFront = null;
+  },
+
+  // HAR Automation
+
+  async initHarAutomation() {
+    const autoExport = Services.prefs.getBoolPref(
+      "devtools.netmonitor.har.enableAutoExportToFile"
+    );
+    if (autoExport) {
+      this.harAutomation = new HarAutomation();
+      await this.harAutomation.initialize(this);
+    }
+  },
+  destroyHarAutomation() {
+    if (this.harAutomation) {
+      this.harAutomation.destroy();
+    }
   },
 
   /**
@@ -4286,14 +4298,6 @@ Toolbox.prototype = {
   },
 
   /**
-   * Fired when the user navigates to another page.
-   */
-  _onNavigate: function() {
-    this._refreshHostTitle();
-    this._setDebugTargetData();
-  },
-
-  /**
    * Sets basic information on the DebugTargetInfo component
    */
   _setDebugTargetData() {
@@ -4310,7 +4314,7 @@ Toolbox.prototype = {
 
     for (const resource of resources) {
       if (
-        resource.resourceType === this.resourceWatcher.TYPES.ERROR_MESSAGE &&
+        resource.resourceType === this.resourceCommand.TYPES.ERROR_MESSAGE &&
         // ERROR_MESSAGE resources can be warnings/info, but here we only want to count errors
         resource.pageError.error
       ) {
@@ -4319,7 +4323,7 @@ Toolbox.prototype = {
       }
 
       if (
-        resource.resourceType === this.resourceWatcher.TYPES.CONSOLE_MESSAGE
+        resource.resourceType === this.resourceCommand.TYPES.CONSOLE_MESSAGE
       ) {
         const { level } = resource.message;
         if (level === "error" || level === "exception" || level === "assert") {
@@ -4330,6 +4334,28 @@ Toolbox.prototype = {
         if (level === "clear") {
           errors = 0;
         }
+      }
+
+      if (
+        resource.resourceType === this.resourceCommand.TYPES.DOCUMENT_EVENT &&
+        !resource.isFrameSwitching &&
+        // `url` is set on the targetFront when we receive dom-loading, and `title` when
+        // `dom-interactive` is received. Here we're only updating the window title in
+        // the "newer" event.
+        resource.name === "dom-interactive"
+      ) {
+        // the targetFront title and url are update on dom-interactive, so delay refreshing
+        // the host title a bit in order for the event listener in targetCommand to be
+        // executed.
+        setTimeout(() => {
+          // Update the EvaluationContext selector so url/title of targets can be updated
+          this.store.dispatch(refreshTargets());
+
+          if (resource.targetFront.isTopLevel) {
+            this._refreshHostTitle();
+            this._setDebugTargetData();
+          }
+        }, 0);
       }
     }
 
@@ -4342,7 +4368,7 @@ Toolbox.prototype = {
     for (const { update } of resources) {
       // In order to match webconsole behaviour, we treat 4xx and 5xx network calls as errors.
       if (
-        update.resourceType === this.resourceWatcher.TYPES.NETWORK_EVENT &&
+        update.resourceType === this.resourceCommand.TYPES.NETWORK_EVENT &&
         update.resourceUpdates.status &&
         update.resourceUpdates.status.toString().match(REGEX_4XX_5XX)
       ) {

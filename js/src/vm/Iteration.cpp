@@ -14,7 +14,6 @@
 #include "mozilla/Maybe.h"
 #include "mozilla/MemoryReporting.h"
 #include "mozilla/PodOperations.h"
-#include "mozilla/Unused.h"
 
 #include <algorithm>
 #include <new>
@@ -97,16 +96,16 @@ void NativeIterator::trace(JSTracer* trc) {
   });
 }
 
-using IdSet = GCHashSet<jsid, DefaultHasher<jsid>>;
+using PropertyKeySet = GCHashSet<PropertyKey, DefaultHasher<PropertyKey>>;
 
 template <bool CheckForDuplicates>
 static inline bool Enumerate(JSContext* cx, HandleObject pobj, jsid id,
                              bool enumerable, unsigned flags,
-                             MutableHandle<IdSet> visited,
+                             MutableHandle<PropertyKeySet> visited,
                              MutableHandleIdVector props) {
   if (CheckForDuplicates) {
     // If we've already seen this, we definitely won't add it.
-    IdSet::AddPtr p = visited.lookupForAdd(id);
+    PropertyKeySet::AddPtr p = visited.lookupForAdd(id);
     if (MOZ_UNLIKELY(!!p)) {
       return true;
     }
@@ -148,7 +147,7 @@ static inline bool Enumerate(JSContext* cx, HandleObject pobj, jsid id,
 
 static bool EnumerateExtraProperties(JSContext* cx, HandleObject obj,
                                      unsigned flags,
-                                     MutableHandle<IdSet> visited,
+                                     MutableHandle<PropertyKeySet> visited,
                                      MutableHandleIdVector props) {
   MOZ_ASSERT(obj->getClass()->getNewEnumerate());
 
@@ -187,7 +186,7 @@ static bool SortComparatorIntegerIds(jsid a, jsid b, bool* lessOrEqualp) {
 template <bool CheckForDuplicates>
 static bool EnumerateNativeProperties(JSContext* cx, HandleNativeObject pobj,
                                       unsigned flags,
-                                      MutableHandle<IdSet> visited,
+                                      MutableHandle<PropertyKeySet> visited,
                                       MutableHandleIdVector props) {
   bool enumerateSymbols;
   if (flags & JSITER_SYMBOLSONLY) {
@@ -320,7 +319,7 @@ static bool EnumerateNativeProperties(JSContext* cx, HandleNativeObject pobj,
 
 static bool EnumerateNativeProperties(JSContext* cx, HandleNativeObject pobj,
                                       unsigned flags,
-                                      MutableHandle<IdSet> visited,
+                                      MutableHandle<PropertyKeySet> visited,
                                       MutableHandleIdVector props,
                                       bool checkForDuplicates) {
   if (checkForDuplicates) {
@@ -332,7 +331,7 @@ static bool EnumerateNativeProperties(JSContext* cx, HandleNativeObject pobj,
 template <bool CheckForDuplicates>
 static bool EnumerateProxyProperties(JSContext* cx, HandleObject pobj,
                                      unsigned flags,
-                                     MutableHandle<IdSet> visited,
+                                     MutableHandle<PropertyKeySet> visited,
                                      MutableHandleIdVector props) {
   MOZ_ASSERT(pobj->is<ProxyObject>());
 
@@ -346,7 +345,7 @@ static bool EnumerateProxyProperties(JSContext* cx, HandleObject pobj,
       return false;
     }
 
-    Rooted<PropertyDescriptor> desc(cx);
+    Rooted<mozilla::Maybe<PropertyDescriptor>> desc(cx);
     for (size_t n = 0, len = proxyProps.length(); n < len; n++) {
       bool enumerable = false;
 
@@ -355,7 +354,7 @@ static bool EnumerateProxyProperties(JSContext* cx, HandleObject pobj,
         if (!Proxy::getOwnPropertyDescriptor(cx, pobj, proxyProps[n], &desc)) {
           return false;
         }
-        enumerable = desc.enumerable();
+        enumerable = desc.isSome() && desc->enumerable();
       }
 
       if (!Enumerate<CheckForDuplicates>(cx, pobj, proxyProps[n], enumerable,
@@ -458,7 +457,7 @@ struct SortComparatorIds {
 
 static bool Snapshot(JSContext* cx, HandleObject pobj_, unsigned flags,
                      MutableHandleIdVector props) {
-  Rooted<IdSet> visited(cx, IdSet(cx));
+  Rooted<PropertyKeySet> visited(cx, PropertyKeySet(cx));
   RootedObject pobj(cx, pobj_);
 
   // Don't check for duplicates if we're only interested in own properties.
@@ -1410,12 +1409,13 @@ static bool SuppressDeletedProperty(JSContext* cx, NativeIterator* ni,
           return false;
         }
 
-        Rooted<PropertyDescriptor> desc(cx);
-        if (!GetPropertyDescriptor(cx, proto, id, &desc)) {
+        Rooted<mozilla::Maybe<PropertyDescriptor>> desc(cx);
+        RootedObject holder(cx);
+        if (!GetPropertyDescriptor(cx, proto, id, &desc, &holder)) {
           return false;
         }
 
-        if (desc.object() && desc.enumerable()) {
+        if (desc.isSome() && desc->enumerable()) {
           continue;
         }
       }

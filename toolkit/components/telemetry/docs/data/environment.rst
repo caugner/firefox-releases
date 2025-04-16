@@ -37,7 +37,7 @@ Structure:
       settings: {
         addonCompatibilityCheckEnabled: <bool>, // Whether application compatibility is respected for add-ons
         blocklistEnabled: <bool>, // true on failure
-        isDefaultBrowser: <bool>, // null on failure and until session restore completes, not available on Android
+        isDefaultBrowser: <bool>, // whether Firefox is the default browser. On Windows, this is operationalized as whether Firefox is the default HTTP protocol handler and the default HTML file handler.
         defaultSearchEngine: <string>, // e.g. "yahoo"
         defaultSearchEngineData: {, // data about the current default engine
           name: <string>, // engine name, e.g. "Yahoo"; or "NONE" if no default
@@ -67,6 +67,7 @@ Structure:
           channel: <string>, // e.g. "release", null on failure
           enabled: <bool>, // true on failure
           autoDownload: <bool>, // true on failure
+          background: <bool>, // Indicates whether updates may be installed when Firefox is not running.
         },
         userPrefs: {
           // Only prefs which are changed are listed in this block
@@ -87,6 +88,7 @@ Structure:
         },
         sandbox: {
           effectiveContentProcessLevel: <integer>,
+          contentWin32kLockdownState: <integer>,
         }
       },
       // Optional, missing if fetching the information failed or had not yet completed.
@@ -418,6 +420,7 @@ This object contains data about the state of Firefox's sandbox.
 Specific keys are:
 
 - ``effectiveContentProcessLevel``: The meanings of the values are OS dependent. Details of the meanings can be found in the `Firefox prefs file <https://hg.mozilla.org/mozilla-central/file/tip/browser/app/profile/firefox.js>`_. The value here is the effective value, not the raw value, some platforms enforce a minimum sandbox level. If there is an error calculating this, it will be ``null``.
+- ``contentWin32kLockdownState``: The status of Win32k Lockdown for Content process. 1 = "Lockdown enabled", 2 = "Lockdown disabled -- Missing WebRender", 3 = "Lockdown disabled -- Unsupported OS", 4 = "Lockdown disabled -- User pref not set". If there is an error calculating this, it will be ``null``.
 
 profile
 -------

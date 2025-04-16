@@ -7,7 +7,6 @@
 #ifndef vm_Xdr_h
 #define vm_Xdr_h
 
-#include "mozilla/EndianUtils.h"
 #include "mozilla/MaybeOneOf.h"
 #include "mozilla/Utf8.h"
 
@@ -135,7 +134,7 @@ class XDRBuffer<XDR_DECODE> : public XDRBufferBase {
 
   const uint8_t* read(size_t n) {
     MOZ_ASSERT(cursor_ < buffer_.length());
-    uint8_t* ptr = &buffer_[cursor_];
+    const uint8_t* ptr = &buffer_[cursor_];
     cursor_ += n;
 
     // Don't let buggy code read past our buffer
@@ -148,7 +147,7 @@ class XDRBuffer<XDR_DECODE> : public XDRBufferBase {
 
   const uint8_t* peek(size_t n) {
     MOZ_ASSERT(cursor_ < buffer_.length());
-    uint8_t* ptr = &buffer_[cursor_];
+    const uint8_t* ptr = &buffer_[cursor_];
 
     // Don't let buggy code read past our buffer
     if (cursor_ + n > buffer_.length()) {
@@ -198,7 +197,8 @@ class XDRCoderBase {
 };
 
 /*
- * XDR serialization state.  All data is encoded in little endian.
+ * XDR serialization state.  All data is encoded in native endian, except
+ * bytecode.
  */
 template <XDRMode mode>
 class XDRState : public XDRCoderBase {
@@ -278,8 +278,8 @@ class XDRState : public XDRCoderBase {
     return Ok();
   }
 
-  // Peek uint32_t data, without handling endian-ness.
-  XDRResult peekRawUint32(uint32_t* n) {
+  // Peek uint32_t data.
+  XDRResult peekUint32(uint32_t* n) {
     MOZ_ASSERT(mode == XDR_DECODE);
     const uint8_t* ptr = buf->peek(sizeof(*n));
     if (!ptr) {
@@ -306,56 +306,31 @@ class XDRState : public XDRCoderBase {
     return Ok();
   }
 
-  XDRResult codeUint16(uint16_t* n) {
+ private:
+  template <typename T>
+  XDRResult codeUintImpl(T* n) {
     if (mode == XDR_ENCODE) {
-      uint8_t* ptr = buf->write(sizeof(*n));
+      uint8_t* ptr = buf->write(sizeof(T));
       if (!ptr) {
         return fail(JS::TranscodeResult::Throw);
       }
-      mozilla::LittleEndian::writeUint16(ptr, *n);
+      memcpy(ptr, n, sizeof(T));
     } else {
-      const uint8_t* ptr = buf->read(sizeof(*n));
+      const uint8_t* ptr = buf->read(sizeof(T));
       if (!ptr) {
         return fail(JS::TranscodeResult::Failure_BadDecode);
       }
-      *n = mozilla::LittleEndian::readUint16(ptr);
+      memcpy(n, ptr, sizeof(T));
     }
     return Ok();
   }
 
-  XDRResult codeUint32(uint32_t* n) {
-    if (mode == XDR_ENCODE) {
-      uint8_t* ptr = buf->write(sizeof(*n));
-      if (!ptr) {
-        return fail(JS::TranscodeResult::Throw);
-      }
-      mozilla::LittleEndian::writeUint32(ptr, *n);
-    } else {
-      const uint8_t* ptr = buf->read(sizeof(*n));
-      if (!ptr) {
-        return fail(JS::TranscodeResult::Failure_BadDecode);
-      }
-      *n = mozilla::LittleEndian::readUint32(ptr);
-    }
-    return Ok();
-  }
+ public:
+  XDRResult codeUint16(uint16_t* n) { return codeUintImpl(n); }
 
-  XDRResult codeUint64(uint64_t* n) {
-    if (mode == XDR_ENCODE) {
-      uint8_t* ptr = buf->write(sizeof(*n));
-      if (!ptr) {
-        return fail(JS::TranscodeResult::Throw);
-      }
-      mozilla::LittleEndian::writeUint64(ptr, *n);
-    } else {
-      const uint8_t* ptr = buf->read(sizeof(*n));
-      if (!ptr) {
-        return fail(JS::TranscodeResult::Failure_BadDecode);
-      }
-      *n = mozilla::LittleEndian::readUint64(ptr);
-    }
-    return Ok();
-  }
+  XDRResult codeUint32(uint32_t* n) { return codeUintImpl(n); }
+
+  XDRResult codeUint64(uint64_t* n) { return codeUintImpl(n); }
 
   /*
    * Use SFINAE to refuse any specialization which is not an enum.  Uses of
@@ -561,6 +536,15 @@ class XDRStencilDecoder : public XDRDecoderBase {
 
   XDRResult codeStencil(frontend::CompilationInput& input,
                         frontend::CompilationStencil& stencil);
+
+  bool hasOptions() const override { return !!options_; }
+  const JS::ReadOnlyCompileOptions& options() override {
+    MOZ_ASSERT(options_);
+    return *options_;
+  }
+
+ private:
+  const JS::ReadOnlyCompileOptions* options_ = nullptr;
 };
 
 class XDRStencilEncoder : public XDREncoder {

@@ -18,7 +18,6 @@
 #include "mozilla/Sprintf.h"
 #include "mozilla/TimeStamp.h"
 #include "mozilla/UniquePtrExtensions.h"  // UniqueFreePtr
-#include "mozilla/Unused.h"
 #include "mozilla/Utf8.h"
 #include "mozilla/Variant.h"
 
@@ -39,7 +38,9 @@
 #endif
 #include <ctime>
 #include <math.h>
-#include <signal.h>
+#ifndef __wasi__
+#  include <signal.h>
+#endif
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -139,6 +140,7 @@
 #include "js/Warnings.h"     // JS::SetWarningReporter
 #include "js/WasmModule.h"   // JS::WasmModule
 #include "js/Wrapper.h"
+#include "proxy/DeadObjectProxy.h"  // js::IsDeadProxyObject
 #include "shell/jsoptparse.h"
 #include "shell/jsshell.h"
 #include "shell/OSObject.h"
@@ -620,7 +622,9 @@ bool shell::enableIteratorHelpers = false;
 bool shell::enablePrivateClassFields = false;
 bool shell::enablePrivateClassMethods = false;
 bool shell::enableTopLevelAwait = true;
+bool shell::enableErgonomicBrandChecks = true;
 bool shell::useOffThreadParseGlobal = true;
+bool shell::enableClassStaticBlocks = false;
 #ifdef JS_GC_ZEAL
 uint32_t shell::gZealBits = 0;
 uint32_t shell::gZealFrequency = 0;
@@ -1120,8 +1124,8 @@ static bool MaybeRunFinalizationRegistryCleanupTasks(JSContext* cx) {
     {
       AutoReportException are(cx);
       RootedValue unused(cx);
-      mozilla::Unused << JS_CallFunction(cx, nullptr, callback,
-                                         HandleValueArray::empty(), &unused);
+      (void)JS_CallFunction(cx, nullptr, callback, HandleValueArray::empty(),
+                            &unused);
     }
 
     ranTasks = true;
@@ -1582,8 +1586,8 @@ static bool AddIntlExtras(JSContext* cx, unsigned argc, Value* vp) {
     {
       // Report exceptions but keep going.
       AutoReportException are(cx);
-      mozilla::Unused << EvalUtf8AndPrint(cx, buffer.begin(), buffer.length(),
-                                          startline, compileOnly);
+      (void)EvalUtf8AndPrint(cx, buffer.begin(), buffer.length(), startline,
+                             compileOnly);
     }
 
     // If a let or const fail to initialize they will remain in an unusable
@@ -1986,13 +1990,57 @@ static bool LoadScriptRelativeToScript(JSContext* cx, unsigned argc,
   return LoadScript(cx, argc, vp, true);
 }
 
+static bool ParseDebugMetadata(JSContext* cx, HandleObject opts,
+                               MutableHandleValue privateValue,
+                               MutableHandleString elementAttributeName) {
+  RootedValue v(cx);
+  RootedString s(cx);
+
+  if (!JS_GetProperty(cx, opts, "element", &v)) {
+    return false;
+  }
+  if (v.isObject()) {
+    RootedObject infoObject(cx, CreateScriptPrivate(cx));
+    if (!infoObject) {
+      return false;
+    }
+    RootedValue elementValue(cx, v);
+    if (!JS_WrapValue(cx, &elementValue)) {
+      return false;
+    }
+    if (!JS_DefineProperty(cx, infoObject, "element", elementValue, 0)) {
+      return false;
+    }
+    privateValue.set(ObjectValue(*infoObject));
+  }
+
+  if (!JS_GetProperty(cx, opts, "elementAttributeName", &v)) {
+    return false;
+  }
+  if (!v.isUndefined()) {
+    s = ToString(cx, v);
+    if (!s) {
+      return false;
+    }
+    elementAttributeName.set(s);
+  }
+
+  return true;
+}
+
 // Populate |options| with the options given by |opts|'s properties. If we
 // need to convert a filename to a C string, let fileNameBytes own the
 // bytes.
 static bool ParseCompileOptions(JSContext* cx, CompileOptions& options,
-                                HandleObject opts, UniqueChars* fileNameBytes) {
+                                HandleObject opts, UniqueChars* fileNameBytes,
+                                MutableHandleValue privateValue,
+                                MutableHandleString elementAttributeName) {
   RootedValue v(cx);
   RootedString s(cx);
+
+  if (!ParseDebugMetadata(cx, opts, privateValue, elementAttributeName)) {
+    return false;
+  }
 
   if (!JS_GetProperty(cx, opts, "isRunOnce", &v)) {
     return false;
@@ -2032,35 +2080,6 @@ static bool ParseCompileOptions(JSContext* cx, CompileOptions& options,
   }
   if (!v.isUndefined()) {
     options.setSkipFilenameValidation(ToBoolean(v));
-  }
-
-  if (!JS_GetProperty(cx, opts, "element", &v)) {
-    return false;
-  }
-  if (v.isObject()) {
-    RootedObject infoObject(cx, CreateScriptPrivate(cx));
-    if (!infoObject) {
-      return false;
-    }
-    RootedValue elementValue(cx, v);
-    if (!JS_WrapValue(cx, &elementValue)) {
-      return false;
-    }
-    if (!JS_DefineProperty(cx, infoObject, "element", elementValue, 0)) {
-      return false;
-    }
-    options.setPrivateValue(ObjectValue(*infoObject));
-  }
-
-  if (!JS_GetProperty(cx, opts, "elementAttributeName", &v)) {
-    return false;
-  }
-  if (!v.isUndefined()) {
-    s = ToString(cx, v);
-    if (!s) {
-      return false;
-    }
-    options.setElementAttributeName(s);
   }
 
   if (!JS_GetProperty(cx, opts, "lineNumber", &v)) {
@@ -2111,7 +2130,8 @@ static void my_LargeAllocFailCallback() {
   MOZ_ASSERT(!JS::RuntimeHeapIsBusy());
 
   JS::PrepareForFullGC(cx);
-  cx->runtime()->gc.gc(GC_SHRINK, JS::GCReason::SHARED_MEMORY_LIMIT);
+  cx->runtime()->gc.gc(JS::GCOptions::Shrink,
+                       JS::GCReason::SHARED_MEMORY_LIMIT);
 }
 
 static const uint32_t CacheEntry_SOURCE = 0;
@@ -2371,16 +2391,21 @@ static bool Evaluate(JSContext* cx, unsigned argc, Value* vp) {
   CacheOptionSet optionSet;
 
   options.setIntroductionType("js shell evaluate")
-      .setFileAndLine("@evaluate", 1);
+      .setFileAndLine("@evaluate", 1)
+      .setdeferDebugMetadata();
 
   global = JS::CurrentGlobalOrNull(cx);
   MOZ_ASSERT(global);
+
+  RootedValue privateValue(cx);
+  RootedString elementAttributeName(cx);
 
   if (args.length() == 2) {
     RootedObject opts(cx, &args[1].toObject());
     RootedValue v(cx);
 
-    if (!ParseCompileOptions(cx, options, opts, &fileNameBytes)) {
+    if (!ParseCompileOptions(cx, options, opts, &fileNameBytes, &privateValue,
+                             &elementAttributeName)) {
       return false;
     }
 
@@ -2670,6 +2695,11 @@ static bool Evaluate(JSContext* cx, unsigned argc, Value* vp) {
       if (!script->scriptSource()->setSourceMapURL(cx, std::move(chars))) {
         return false;
       }
+    }
+
+    if (!JS::UpdateDebugMetadata(cx, script, options, privateValue,
+                                 elementAttributeName, nullptr, nullptr)) {
+      return false;
     }
 
     if (!transcodeOnly) {
@@ -4688,9 +4718,16 @@ static void DestroyShellCompartmentPrivate(JSFreeOp* fop,
 static void SetWorkerContextOptions(JSContext* cx);
 static bool ShellBuildId(JS::BuildIdCharVector* buildId);
 
-JSObject* GetElementCallback(JSContext* cx, JS::HandleValue value) {
-  RootedValue privateValue(cx, value);
+static JSObject* ShellSourceElementCallback(JSContext* cx,
+                                            JS::HandleValue privateValue) {
   if (!privateValue.isObject()) {
+    return nullptr;
+  }
+
+  // Due to nukeCCW shenanigans in the shell, we need to check for dead-proxy
+  // objects that may have replaced an CCW.  Otherwise the GetProperty below
+  // would throw an exception which we do not want to support in this callback.
+  if (js::IsDeadProxyObject(&privateValue.toObject())) {
     return nullptr;
   }
 
@@ -4709,6 +4746,7 @@ JSObject* GetElementCallback(JSContext* cx, JS::HandleValue value) {
   if (elementValue.isObject()) {
     return &elementValue.toObject();
   }
+
   return nullptr;
 }
 
@@ -4746,7 +4784,7 @@ static void WorkerMain(WorkerInput* input) {
                                   DummyHasReleasedWrapperCallback);
   JS_InitDestroyPrincipalsCallback(cx, ShellPrincipals::destroy);
   JS_SetDestroyCompartmentCallback(cx, DestroyShellCompartmentPrivate);
-  JS::SetGetElementCallback(cx, &GetElementCallback);
+  JS::SetSourceElementCallback(cx, ShellSourceElementCallback);
 
   js::SetWindowProxyClass(cx, &ShellWindowProxyClass);
 
@@ -5011,6 +5049,10 @@ static bool ScheduleWatchdog(JSContext* cx, double t) {
     sc->watchdogTimeout = Nothing();
     return true;
   }
+
+#ifdef __wasi__
+  return false;
+#endif
 
   auto interval = TimeDuration::FromSeconds(t);
   auto timeout = TimeStamp::Now() + interval;
@@ -5435,7 +5477,10 @@ static bool Compile(JSContext* cx, unsigned argc, Value* vp) {
   options.setIntroductionType("js shell compile")
       .setFileAndLine("<string>", 1)
       .setIsRunOnce(true)
-      .setNoScriptRval(true);
+      .setNoScriptRval(true)
+      .setdeferDebugMetadata();
+  RootedValue privateValue(cx);
+  RootedString elementAttributeName(cx);
 
   if (args.length() >= 2) {
     if (args[1].isPrimitive()) {
@@ -5445,7 +5490,8 @@ static bool Compile(JSContext* cx, unsigned argc, Value* vp) {
     }
 
     RootedObject opts(cx, &args[1].toObject());
-    if (!ParseCompileOptions(cx, options, opts, nullptr)) {
+    if (!ParseCompileOptions(cx, options, opts, nullptr, &privateValue,
+                             &elementAttributeName)) {
       return false;
     }
   }
@@ -5458,6 +5504,11 @@ static bool Compile(JSContext* cx, unsigned argc, Value* vp) {
 
   RootedScript script(cx, JS::Compile(cx, options, srcBuf));
   if (!script) {
+    return false;
+  }
+
+  if (!JS::UpdateDebugMetadata(cx, script, options, privateValue,
+                               elementAttributeName, nullptr, nullptr)) {
     return false;
   }
 
@@ -5850,8 +5901,10 @@ static bool FrontendTest(JSContext* cx, unsigned argc, Value* vp,
                           typeName);
       return false;
     }
-
-    if (!ParseCompileOptions(cx, options, objOptions, nullptr)) {
+    RootedValue dummyValue(cx);
+    RootedString dummyAttributeName(cx);
+    if (!ParseCompileOptions(cx, options, objOptions, nullptr, &dummyValue,
+                             &dummyAttributeName)) {
       return false;
     }
 
@@ -6145,7 +6198,8 @@ static bool OffThreadCompileScript(JSContext* cx, unsigned argc, Value* vp) {
   UniqueChars fileNameBytes;
   CompileOptions options(cx);
   options.setIntroductionType("js shell offThreadCompileScript")
-      .setFileAndLine("<string>", 1);
+      .setFileAndLine("<string>", 1)
+      .setdeferDebugMetadata();
 
   if (args.length() >= 2) {
     if (args[1].isPrimitive()) {
@@ -6154,8 +6208,13 @@ static bool OffThreadCompileScript(JSContext* cx, unsigned argc, Value* vp) {
       return false;
     }
 
+    // Offthread compilation requires that the debug metadata be set when the
+    // script is collected from offthread, rather than when compiled.
+    RootedValue dummyPrivateValue(cx);
+    RootedString dummyElementAttributeName(cx);
     RootedObject opts(cx, &args[1].toObject());
-    if (!ParseCompileOptions(cx, options, opts, &fileNameBytes)) {
+    if (!ParseCompileOptions(cx, options, opts, &fileNameBytes,
+                             &dummyPrivateValue, &dummyElementAttributeName)) {
       return false;
     }
   }
@@ -6236,6 +6295,28 @@ static bool runOffThreadScript(JSContext* cx, unsigned argc, Value* vp) {
   RootedScript script(cx, JS::FinishOffThreadScript(cx, token));
   DeleteOffThreadJob(cx, job);
   if (!script) {
+    return false;
+  }
+
+  RootedValue privateValue(cx);
+  RootedString elementAttributeName(cx);
+
+  if (args.length() >= 2) {
+    if (args[1].isPrimitive()) {
+      JS_ReportErrorNumberASCII(cx, my_GetErrorMessage, nullptr,
+                                JSSMSG_INVALID_ARGS, "compile");
+      return false;
+    }
+
+    RootedObject opts(cx, &args[1].toObject());
+    if (!ParseDebugMetadata(cx, opts, &privateValue, &elementAttributeName)) {
+      return false;
+    }
+  }
+
+  CompileOptions dummyOptions(cx);
+  if (!JS::UpdateDebugMetadata(cx, script, dummyOptions, privateValue,
+                               elementAttributeName, nullptr, nullptr)) {
     return false;
   }
 
@@ -6380,7 +6461,10 @@ static bool OffThreadDecodeScript(JSContext* cx, unsigned argc, Value* vp) {
     }
 
     RootedObject opts(cx, &args[1].toObject());
-    if (!ParseCompileOptions(cx, options, opts, &fileNameBytes)) {
+    RootedValue dummyValue(cx);
+    RootedString dummyAttributeName(cx);
+    if (!ParseCompileOptions(cx, options, opts, &fileNameBytes, &dummyValue,
+                             &dummyAttributeName)) {
       return false;
     }
   }
@@ -6470,7 +6554,7 @@ class AutoCStringVector {
     }
 
     // Now owned by this vector.
-    mozilla::Unused << arg.release();
+    (void)arg.release();
     return true;
   }
   char* const* get() const { return argv_.begin(); }
@@ -6525,6 +6609,7 @@ static bool EscapeForShell(JSContext* cx, AutoCStringVector& argv) {
 }
 #endif
 
+#ifndef __wasi__
 static bool ReadAll(int fd, wasm::Bytes* bytes) {
   size_t lastLength = bytes->length();
   while (true) {
@@ -6591,11 +6676,11 @@ class AutoPipe {
   }
 
   bool init() {
-#ifdef XP_WIN
+#  ifdef XP_WIN
     return !_pipe(fds_, 4096, O_BINARY);
-#else
+#  else
     return !pipe(fds_);
-#endif
+#  endif
   }
 
   int reader() const {
@@ -6620,10 +6705,12 @@ class AutoPipe {
     fds_[1] = -1;
   }
 };
+#endif  // __wasi__
 
 int shell::sArgc;
 char** shell::sArgv;
 
+#ifndef __wasi__
 static const char sWasmCompileAndSerializeFlag[] =
     "--wasm-compile-and-serialize";
 static Vector<const char*, 5, js::SystemAllocPolicy> sCompilerProcessFlags;
@@ -6632,10 +6719,6 @@ static bool CompileAndSerializeInSeparateProcess(JSContext* cx,
                                                  const uint8_t* bytecode,
                                                  size_t bytecodeLength,
                                                  wasm::Bytes* serialized) {
-#if defined(__wasi__)
-  MOZ_CRASH("WASI doesn't support Wasm.");
-  return false;
-#else
   AutoPipe stdIn, stdOut;
   if (!stdIn.init() || !stdOut.init()) {
     return false;
@@ -6765,13 +6848,12 @@ static bool CompileAndSerializeInSeparateProcess(JSContext* cx,
 #  endif
 
   return status == 0;
-#endif  // __wasi__
 }
 
 static bool WasmCompileAndSerialize(JSContext* cx) {
   MOZ_ASSERT(wasm::CodeCachingAvailable(cx));
 
-#ifdef XP_WIN
+#  ifdef XP_WIN
   // See CompileAndSerializeInSeparateProcess for why we've had to smuggle
   // these fd values through argv. Closing the writing ends is necessary for
   // the reading ends to hit EOF.
@@ -6795,10 +6877,10 @@ static bool WasmCompileAndSerialize(JSContext* cx) {
   close(stdInWriter);
   close(stdOutReader);
   int stdOut = stdOutWriter;
-#else
+#  else
   int stdIn = STDIN_FILENO;
   int stdOut = STDOUT_FILENO;
-#endif
+#  endif
 
   wasm::MutableBytes bytecode = js_new<wasm::ShareableBytes>();
   if (!ReadAll(stdIn, &bytecode->bytes)) {
@@ -6855,6 +6937,7 @@ static bool WasmCompileInSeparateProcess(JSContext* cx, unsigned argc,
   args.rval().setObject(*module);
   return true;
 }
+#endif  // __wasi__
 
 static bool DecompileFunction(JSContext* cx, unsigned argc, Value* vp) {
   CallArgs args = CallArgsFromVp(argc, vp);
@@ -8652,6 +8735,7 @@ static bool EntryPoints(JSContext* cx, unsigned argc, Value* vp) {
   return false;
 }
 
+#ifndef __wasi__
 static bool WasmTextToBinary(JSContext* cx, unsigned argc, Value* vp) {
   CallArgs args = CallArgsFromVp(argc, vp);
   RootedObject callee(cx, &args.callee());
@@ -8736,9 +8820,9 @@ static bool WasmCodeOffsets(JSContext* cx, unsigned argc, Value* vp) {
   return true;
 }
 
-#ifndef __AFL_HAVE_MANUAL_CONTROL
-#  define __AFL_LOOP(x) true
-#endif
+#  ifndef __AFL_HAVE_MANUAL_CONTROL
+#    define __AFL_LOOP(x) true
+#  endif
 
 static bool WasmLoop(JSContext* cx, unsigned argc, Value* vp) {
   CallArgs args = CallArgsFromVp(argc, vp);
@@ -8786,10 +8870,11 @@ static bool WasmLoop(JSContext* cx, unsigned argc, Value* vp) {
     }
   }
 
-#ifdef __AFL_HAVE_MANUAL_CONTROL  // to silence unreachable code warning
+#  ifdef __AFL_HAVE_MANUAL_CONTROL  // to silence unreachable code warning
   return true;
-#endif
+#  endif
 }
+#endif  // __wasi__
 
 static constexpr uint32_t DOM_OBJECT_SLOT = 0;
 static constexpr uint32_t DOM_OBJECT_SLOT2 = 1;
@@ -9709,6 +9794,7 @@ static const JSFunctionSpecWithHelp shell_functions[] = {
 "underneath you."),
 #endif // JS_HAS_INTL_API
 
+#ifndef __wasi__
     JS_FN_HELP("wasmCompileInSeparateProcess", WasmCompileInSeparateProcess, 1, 0,
 "wasmCompileInSeparateProcess(buffer)",
 "  Compile the given buffer in a separate process, serialize the resulting\n"
@@ -9723,6 +9809,7 @@ static const JSFunctionSpecWithHelp shell_functions[] = {
 "wasmCodeOffsets(binary)",
 "  Decodes the given wasm binary to find the offsets of every instruction in the"
 "  code section."),
+#endif // __wasi__
 
     JS_FN_HELP("transplantableObject", TransplantableObject, 0, 0,
 "transplantableObject([options])",
@@ -9805,10 +9892,12 @@ TestAssertRecoveredOnBailout,
 "  generated by the crash (which only has an effect if the breakpad\n"
 "  dumping library is loaded.)"),
 
+#ifndef __wasi__
     JS_FN_HELP("wasmLoop", WasmLoop, 2, 0,
 "wasmLoop(filename, imports)",
 "  Performs an AFL-style persistent loop reading data from the given file and passing it\n"
 "  to the 'wasmEval' function together with the specified imports object."),
+#endif // __wasi__
 
     JS_FN_HELP("setBufferStreamParams", SetBufferStreamParams, 2, 0,
 "setBufferStreamParams(delayMillis, chunkByteSize)",
@@ -10940,10 +11029,12 @@ static bool SetContextOptions(JSContext* cx, const OptionParser& op) {
   enablePropertyErrorMessageFix =
       !op.getBoolOption("disable-property-error-message-fix");
   enableIteratorHelpers = op.getBoolOption("enable-iterator-helpers");
-  enablePrivateClassFields = op.getBoolOption("enable-private-fields") ||
-                             op.getBoolOption("enable-private-methods");
-  enablePrivateClassMethods = op.getBoolOption("enable-private-methods");
+  enablePrivateClassFields = !op.getBoolOption("disable-private-fields");
+  enablePrivateClassMethods = !op.getBoolOption("disable-private-methods");
+  enableErgonomicBrandChecks =
+      !op.getBoolOption("disable-ergonomic-brand-checks");
   enableTopLevelAwait = op.getBoolOption("enable-top-level-await");
+  enableClassStaticBlocks = op.getBoolOption("enable-class-static-blocks");
   useOffThreadParseGlobal = op.getBoolOption("off-thread-parse-global");
 
   JS::ContextOptionsRef(cx)
@@ -10973,7 +11064,9 @@ static bool SetContextOptions(JSContext* cx, const OptionParser& op) {
       .setAsyncStackCaptureDebuggeeOnly(enableAsyncStackCaptureDebuggeeOnly)
       .setPrivateClassFields(enablePrivateClassFields)
       .setPrivateClassMethods(enablePrivateClassMethods)
-      .setTopLevelAwait(enableTopLevelAwait);
+      .setErgnomicBrandChecks(enableErgonomicBrandChecks)
+      .setTopLevelAwait(enableTopLevelAwait)
+      .setClassStaticBlocks(enableClassStaticBlocks);
 
   JS::SetUseOffThreadParseGlobal(useOffThreadParseGlobal);
 
@@ -11276,10 +11369,6 @@ static bool SetContextOptions(JSContext* cx, const OptionParser& op) {
     jit::JitOptions.disableBailoutLoopCheck = true;
   }
 
-  if (op.getBoolOption("scalar-replace-arguments")) {
-    jit::JitOptions.scalarReplaceArguments = true;
-  }
-
 #if defined(JS_CODEGEN_ARM)
   if (const char* str = op.getStringOption("arm-hwcap")) {
     jit::ParseARMHwCapFlags(str);
@@ -11484,7 +11573,7 @@ static void SetWorkerContextOptions(JSContext* cx) {
   return true;
 }
 
-static int Shell(JSContext* cx, OptionParser* op, char** envp) {
+static int Shell(JSContext* cx, OptionParser* op) {
   if (JS::TraceLoggerSupported()) {
     JS::StartTraceLogger(cx);
   }
@@ -11503,11 +11592,15 @@ static int Shell(JSContext* cx, OptionParser* op, char** envp) {
   });
 
   if (op->getBoolOption("wasm-compile-and-serialize")) {
+#ifdef __wasi__
+    MOZ_CRASH("WASI doesn't support wasm");
+#else
     if (!WasmCompileAndSerialize(cx)) {
       // Errors have been printed directly to stderr.
       MOZ_ASSERT(!cx->isExceptionPending());
       return -1;
     }
+#endif
     return EXIT_SUCCESS;
   }
 
@@ -11718,8 +11811,7 @@ static bool ReadSelfHostedXDRFile(JSContext* cx, FileContents& buf) {
   return true;
 }
 
-static bool WriteSelfHostedXDRFile(JSContext* cx,
-                                   const JS::TranscodeBuffer& buffer) {
+static bool WriteSelfHostedXDRFile(JSContext* cx, JS::SelfHostedCache buffer) {
   FILE* file = fopen(selfHostedXDRPath, "wb");
   if (!file) {
     JS_ReportErrorUTF8(cx, "Can't open self-hosted stencil XDR file.");
@@ -11727,8 +11819,8 @@ static bool WriteSelfHostedXDRFile(JSContext* cx,
   }
   AutoCloseFile autoClose(file);
 
-  size_t cc = fwrite(buffer.begin(), 1, buffer.length(), file);
-  if (cc != buffer.length()) {
+  size_t cc = fwrite(buffer.Elements(), 1, buffer.LengthBytes(), file);
+  if (cc != buffer.LengthBytes()) {
     JS_ReportErrorUTF8(cx, "Short write on self-hosted stencil XDR file.");
     return false;
   }
@@ -11736,7 +11828,7 @@ static bool WriteSelfHostedXDRFile(JSContext* cx,
   return true;
 }
 
-int main(int argc, char** argv, char** envp) {
+int main(int argc, char** argv) {
   PreInit();
 
   sArgc = argc;
@@ -11761,6 +11853,12 @@ int main(int argc, char** argv, char** envp) {
     fprintf(gErrFile->fp, "JS_Init failed: %s\n", message);
     return 1;
   }
+
+  // `selfHostedXDRBuffer` contains XDR buffer of the self-hosted JS.
+  // A part of it is borrowed by ImmutableScriptData of the self-hosted scripts.
+  //
+  // This buffer's should outlive JS_Shutdown.
+  Maybe<FileContents> selfHostedXDRBuffer;
 
   auto shutdownEngine = MakeScopeExit([] { JS_ShutDown(); });
 
@@ -11907,12 +12005,20 @@ int main(int argc, char** argv, char** envp) {
                         "property of null or undefined") ||
       !op.addBoolOption('\0', "enable-iterator-helpers",
                         "Enable iterator helpers") ||
-      !op.addBoolOption('\0', "enable-private-fields",
-                        "Enable private class fields") ||
-      !op.addBoolOption('\0', "enable-private-methods",
-                        "Enable private class methods") ||
+      !op.addBoolOption('\0', "disable-private-fields",
+                        "Disable private class fields") ||
+      !op.addBoolOption('\0', "disable-private-methods",
+                        "Disable private class methods") ||
+      !op.addBoolOption(
+          '\0', "enable-ergonomic-brand-checks",
+          "Enable ergonomic brand checks for private class fields (no-op)") ||
+      !op.addBoolOption(
+          '\0', "disable-ergonomic-brand-checks",
+          "Disable ergonomic brand checks for private class fields") ||
       !op.addBoolOption('\0', "enable-top-level-await",
                         "Enable top-level await") ||
+      !op.addBoolOption('\0', "enable-class-static-blocks",
+                        "Enable class static blocks") ||
       !op.addBoolOption('\0', "off-thread-parse-global",
                         "Use parseGlobal in all off-thread compilation") ||
       !op.addBoolOption('\0', "no-large-arraybuffers",
@@ -12324,7 +12430,7 @@ int main(int argc, char** argv, char** envp) {
   JS_SetSecurityCallbacks(cx, &ShellPrincipals::securityCallbacks);
   JS_InitDestroyPrincipalsCallback(cx, ShellPrincipals::destroy);
   JS_SetDestroyCompartmentCallback(cx, DestroyShellCompartmentPrivate);
-  JS::SetGetElementCallback(cx, &GetElementCallback);
+  JS::SetSourceElementCallback(cx, ShellSourceElementCallback);
 
   js::SetWindowProxyClass(cx, &ShellWindowProxyClass);
 
@@ -12382,23 +12488,36 @@ int main(int argc, char** argv, char** envp) {
 
   // The file content should stay alive as long as Worker thread can be
   // initialized.
-  Maybe<FileContents> buffer;
-  if (selfHostedXDRPath && !encodeSelfHostedCode) {
-    buffer.emplace(cx);
-    if (ReadSelfHostedXDRFile(cx, *buffer)) {
-      MOZ_ASSERT(buffer->length() > 0);
-      mozilla::Span<uint8_t> xdrSpan = buffer.ref();
-      cx->runtime()->setSelfHostedXDR(xdrSpan);
+  JS::SelfHostedCache xdrSpan = nullptr;
+  JS::SelfHostedWriter xdrWriter = nullptr;
+  if (selfHostedXDRPath) {
+    if (encodeSelfHostedCode) {
+      xdrWriter = WriteSelfHostedXDRFile;
     } else {
-      fprintf(stderr, "Falling back on parsing source.\n");
-      selfHostedXDRPath = nullptr;
+      selfHostedXDRBuffer.emplace(cx);
+      if (ReadSelfHostedXDRFile(cx, *selfHostedXDRBuffer)) {
+        MOZ_ASSERT(selfHostedXDRBuffer->length() > 0);
+        JS::SelfHostedCache span(selfHostedXDRBuffer->begin(),
+                                 selfHostedXDRBuffer->end());
+        xdrSpan = span;
+      } else {
+        fprintf(stderr, "Falling back on parsing source.\n");
+        selfHostedXDRPath = nullptr;
+      }
     }
   }
-  if (selfHostedXDRPath && encodeSelfHostedCode) {
-    cx->runtime()->setSelfHostedXDRWriterCallback(&WriteSelfHostedXDRFile);
-  }
 
-  if (!JS::InitSelfHostedCode(cx)) {
+#ifndef __wasi__
+  // This must be set before self-hosted code is initialized, as self-hosted
+  // code reads the property and the property may not be changed later.
+  bool disabledHugeMemory = false;
+  if (op.getBoolOption("disable-wasm-huge-memory")) {
+    disabledHugeMemory = JS::DisableWasmHugeMemory();
+    MOZ_RELEASE_ASSERT(disabledHugeMemory);
+  }
+#endif
+
+  if (!JS::InitSelfHostedCode(cx, xdrSpan, xdrWriter)) {
     return 1;
   }
 
@@ -12466,26 +12585,24 @@ int main(int argc, char** argv, char** envp) {
   }
 #endif
 
+#ifndef __wasi__
   // --disable-wasm-huge-memory needs to be propagated.  See bug 1518210.
-  if (op.getBoolOption("disable-wasm-huge-memory")) {
-    if (!sCompilerProcessFlags.append("--disable-wasm-huge-memory")) {
-      return EXIT_FAILURE;
-    }
-    bool disabledHugeMemory = JS::DisableWasmHugeMemory();
-    MOZ_RELEASE_ASSERT(disabledHugeMemory);
+  if (disabledHugeMemory &&
+      !sCompilerProcessFlags.append("--disable-wasm-huge-memory")) {
+    return EXIT_FAILURE;
   }
 
   // Also the following are to be propagated.
   const char* to_propagate[] = {
-#define WASM_DEFAULT_FEATURE(NAME, LOWER_NAME, COMPILE_PRED, COMPILER_PRED, \
-                             FLAG_PRED, SHELL, ...)                         \
-  "--no-wasm-" SHELL,
-#define WASM_EXPERIMENTAL_FEATURE(NAME, LOWER_NAME, COMPILE_PRED,       \
-                                  COMPILER_PRED, FLAG_PRED, SHELL, ...) \
-  "--wasm-" SHELL,
+#  define WASM_DEFAULT_FEATURE(NAME, LOWER_NAME, COMPILE_PRED, COMPILER_PRED, \
+                               FLAG_PRED, SHELL, ...)                         \
+    "--no-wasm-" SHELL,
+#  define WASM_EXPERIMENTAL_FEATURE(NAME, LOWER_NAME, COMPILE_PRED,       \
+                                    COMPILER_PRED, FLAG_PRED, SHELL, ...) \
+    "--wasm-" SHELL,
       JS_FOR_WASM_FEATURES(WASM_DEFAULT_FEATURE, WASM_EXPERIMENTAL_FEATURE)
-#undef WASM_DEFAULT_FEATURE
-#undef WASM_EXPERIMENTAL_FEATURE
+#  undef WASM_DEFAULT_FEATURE
+#  undef WASM_EXPERIMENTAL_FEATURE
       // Feature selection options
       "--wasm-simd-wormhole",
       // Compiler selection options
@@ -12522,8 +12639,9 @@ int main(int argc, char** argv, char** envp) {
       return EXIT_FAILURE;
     }
   }
+#endif  // __wasi__
 
-  result = Shell(cx, &op, envp);
+  result = Shell(cx, &op);
 
 #ifdef DEBUG
   if (OOM_printAllocationCount) {

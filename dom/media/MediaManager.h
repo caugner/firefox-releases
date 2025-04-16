@@ -10,6 +10,7 @@
 #include "MediaEventSource.h"
 #include "mozilla/dom/GetUserMediaRequest.h"
 #include "mozilla/Unused.h"
+#include "nsIMediaDevice.h"
 #include "nsIMediaManager.h"
 
 #include "nsHashKeys.h"
@@ -18,7 +19,6 @@
 #include "nsIMemoryReporter.h"
 #include "nsIObserver.h"
 
-#include "nsIDOMNavigatorUserMedia.h"
 #include "nsXULAppAPI.h"
 #include "mozilla/Attributes.h"
 #include "mozilla/Preferences.h"
@@ -44,6 +44,7 @@ namespace mozilla {
 class TaskQueue;
 class MediaTimer;
 namespace dom {
+struct AudioOutputOptions;
 struct MediaStreamConstraints;
 struct MediaTrackConstraints;
 struct MediaTrackConstraintSet;
@@ -232,17 +233,15 @@ class MediaManager final : public nsIMediaManagerService,
       const dom::MediaStreamConstraints& aConstraints,
       dom::CallerType aCallerType);
 
-  MOZ_CAN_RUN_SCRIPT
-  nsresult GetUserMediaDevices(
-      nsPIDOMWindowInner* aWindow,
-      dom::MozGetUserMediaDevicesSuccessCallback& aOnSuccess,
-      uint64_t aInnerWindowID = 0, const nsAString& aCallID = nsString());
   RefPtr<DeviceSetPromise> EnumerateDevices(nsPIDOMWindowInner* aWindow,
                                             dom::CallerType aCallerType);
 
   nsresult EnumerateDevices(nsPIDOMWindowInner* aWindow,
                             dom::Promise& aPromise);
 
+  RefPtr<DevicePromise> SelectAudioOutput(
+      nsPIDOMWindowInner* aWindow, const dom::AudioOutputOptions& aOptions,
+      dom::CallerType aCallerType);
   // Get the sink that corresponds to the given device id.
   // It is resposible to check if an application is
   // authorized to play audio through the requested device.
@@ -281,8 +280,6 @@ class MediaManager final : public nsIMediaManagerService,
   static void AnonymizeDevices(MediaDeviceSet& aDevices,
                                const nsACString& aOriginKey,
                                const uint64_t aWindowId);
-  static already_AddRefed<nsIWritableVariant> ToJSArray(
-      MediaDeviceSet& aDevices);
 
   /**
    * This function tries to guess the group id for a video device in aDevices
@@ -346,6 +343,9 @@ class MediaManager final : public nsIMediaManagerService,
                             RefPtr<GetUserMediaTask> aTask);
   // Finds the task corresponding to aCallID and removes it from tracking.
   RefPtr<GetUserMediaTask> TakeGetUserMediaTask(const nsAString& aCallID);
+  // Intended for use with "media.navigator.permission.disabled" to bypass the
+  // permission prompt and use the first appropriate device.
+  void NotifyAllowed(const nsString& aCallID, const MediaDeviceSet& aDevices);
 
   MOZ_DEFINE_MALLOC_SIZE_OF(MallocSizeOf);
 

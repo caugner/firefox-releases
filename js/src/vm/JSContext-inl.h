@@ -163,7 +163,7 @@ class ContextChecks {
 
   void check(jsid id, int argIndex) {
     if (JSID_IS_ATOM(id)) {
-      checkAtom(JSID_TO_ATOM(id), argIndex);
+      checkAtom(id.toAtom(), argIndex);
     } else if (JSID_IS_SYMBOL(id)) {
       checkAtom(JSID_TO_SYMBOL(id), argIndex);
     } else {
@@ -181,14 +181,15 @@ class ContextChecks {
   void check(AbstractFramePtr frame, int argIndex);
 
   void check(const PropertyDescriptor& desc, int argIndex) {
-    check(desc.objectDoNotUse(), argIndex);
-    if (desc.hasGetterObject()) {
-      check(desc.getterObject(), argIndex);
+    if (desc.hasGetter()) {
+      check(desc.getter(), argIndex);
     }
-    if (desc.hasSetterObject()) {
-      check(desc.setterObject(), argIndex);
+    if (desc.hasSetter()) {
+      check(desc.setter(), argIndex);
     }
-    check(desc.value(), argIndex);
+    if (desc.hasValue()) {
+      check(desc.value(), argIndex);
+    }
   }
 
   void check(Handle<mozilla::Maybe<Value>> maybe, int argIndex) {

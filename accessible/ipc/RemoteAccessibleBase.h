@@ -46,6 +46,12 @@ class RemoteAccessibleBase : public Accessible {
     return mChildren.Length() ? mChildren[mChildren.Length() - 1] : nullptr;
   }
   Derived* RemotePrevSibling() const {
+    if (IsDoc()) {
+      // The normal code path doesn't work for documents because the parent
+      // might be a local OuterDoc, but IndexInParent() will return 1.
+      // A document is always a single child of an OuterDoc anyway.
+      return nullptr;
+    }
     int32_t idx = IndexInParent();
     if (idx == -1) {
       return nullptr;  // No parent.
@@ -53,6 +59,12 @@ class RemoteAccessibleBase : public Accessible {
     return idx > 0 ? RemoteParent()->mChildren[idx - 1] : nullptr;
   }
   Derived* RemoteNextSibling() const {
+    if (IsDoc()) {
+      // The normal code path doesn't work for documents because the parent
+      // might be a local OuterDoc, but IndexInParent() will return 1.
+      // A document is always a single child of an OuterDoc anyway.
+      return nullptr;
+    }
     int32_t idx = IndexInParent();
     if (idx == -1) {
       return nullptr;  // No parent.
@@ -180,8 +192,7 @@ class RemoteAccessibleBase : public Accessible {
         mDoc(aDoc),
         mWrapper(0),
         mID(aID),
-        mRole(aRole),
-        mOuterDoc(false) {}
+        mRole(aRole) {}
 
   explicit RemoteAccessibleBase(DocAccessibleParent* aThisAsDoc)
       : Accessible(),
@@ -189,8 +200,7 @@ class RemoteAccessibleBase : public Accessible {
         mDoc(aThisAsDoc),
         mWrapper(0),
         mID(0),
-        mRole(roles::DOCUMENT),
-        mOuterDoc(false) {
+        mRole(roles::DOCUMENT) {
     mGenericTypes = eDocument | eHyperText;
   }
 
@@ -212,9 +222,6 @@ class RemoteAccessibleBase : public Accessible {
   // XXX DocAccessibleParent gets to change this to change the role of
   // documents.
   role mRole : 27;
-
- private:
-  bool mOuterDoc : 1;
 };
 
 extern template class RemoteAccessibleBase<RemoteAccessible>;

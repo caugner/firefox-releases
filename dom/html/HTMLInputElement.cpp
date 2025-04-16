@@ -1136,24 +1136,25 @@ nsresult HTMLInputElement::BeforeSetAttr(int32_t aNameSpaceID, nsAtom* aName,
                                          const nsAttrValueOrString* aValue,
                                          bool aNotify) {
   if (aNameSpaceID == kNameSpaceID_None) {
-    //
-    // When name or type changes, radio should be removed from radio group.
-    // (type changes are handled in the form itself currently)
-    // If we are not done creating the radio, we also should not do it.
-    //
-    if ((aName == nsGkAtoms::name || (aName == nsGkAtoms::type && !mForm)) &&
-        mType == NS_FORM_INPUT_RADIO && (mForm || mDoneCreating)) {
-      WillRemoveFromRadioGroup();
-    } else if (aNotify && aName == nsGkAtoms::disabled) {
+    if (aNotify && aName == nsGkAtoms::disabled) {
       mDisabledChanged = true;
-    } else if (mType == NS_FORM_INPUT_RADIO && aName == nsGkAtoms::required) {
-      nsCOMPtr<nsIRadioGroupContainer> container = GetRadioGroupContainer();
+    }
 
-      if (container && ((aValue && !HasAttr(aNameSpaceID, aName)) ||
-                        (!aValue && HasAttr(aNameSpaceID, aName)))) {
-        nsAutoString name;
-        GetAttr(kNameSpaceID_None, nsGkAtoms::name, name);
-        container->RadioRequiredWillChange(name, !!aValue);
+    // When name or type changes, radio should be removed from radio group.
+    // If we are not done creating the radio, we also should not do it.
+    if (mType == NS_FORM_INPUT_RADIO) {
+      if ((aName == nsGkAtoms::name || (aName == nsGkAtoms::type && !mForm)) &&
+          (mForm || mDoneCreating)) {
+        WillRemoveFromRadioGroup();
+      } else if (aName == nsGkAtoms::required) {
+        nsCOMPtr<nsIRadioGroupContainer> container = GetRadioGroupContainer();
+
+        if (container && ((aValue && !HasAttr(aNameSpaceID, aName)) ||
+                          (!aValue && HasAttr(aNameSpaceID, aName)))) {
+          nsAutoString name;
+          GetAttr(kNameSpaceID_None, nsGkAtoms::name, name);
+          container->RadioRequiredWillChange(name, !!aValue);
+        }
       }
     }
 
@@ -1172,17 +1173,6 @@ nsresult HTMLInputElement::AfterSetAttr(int32_t aNameSpaceID, nsAtom* aName,
                                         nsIPrincipal* aSubjectPrincipal,
                                         bool aNotify) {
   if (aNameSpaceID == kNameSpaceID_None) {
-    //
-    // When name or type changes, radio should be added to radio group.
-    // (type changes are handled in the form itself currently)
-    // If we are not done creating the radio, we also should not do it.
-    //
-    if ((aName == nsGkAtoms::name || (aName == nsGkAtoms::type && !mForm)) &&
-        mType == NS_FORM_INPUT_RADIO && (mForm || mDoneCreating)) {
-      AddedToRadioGroup();
-      UpdateValueMissingValidityStateForRadio(false);
-    }
-
     if (aName == nsGkAtoms::src) {
       mSrcTriggeringPrincipal = nsContentUtils::GetAttrTriggeringPrincipal(
           this, aValue ? aValue->GetStringValue() : EmptyString(),
@@ -1239,6 +1229,14 @@ nsresult HTMLInputElement::AfterSetAttr(int32_t aNameSpaceID, nsAtom* aName,
       if (newType != mType) {
         HandleTypeChange(newType, aNotify);
       }
+    }
+
+    // When name or type changes, radio should be added to radio group.
+    // If we are not done creating the radio, we also should not do it.
+    if ((aName == nsGkAtoms::name || (aName == nsGkAtoms::type && !mForm)) &&
+        mType == NS_FORM_INPUT_RADIO && (mForm || mDoneCreating)) {
+      AddedToRadioGroup();
+      UpdateValueMissingValidityStateForRadio(false);
     }
 
     if (aName == nsGkAtoms::required || aName == nsGkAtoms::disabled ||
@@ -2772,7 +2770,7 @@ void HTMLInputElement::DoSetCheckedChanged(bool aCheckedChanged, bool aNotify) {
     if (mCheckedChanged != aCheckedChanged) {
       nsCOMPtr<nsIRadioVisitor> visitor =
           new nsRadioSetCheckedChangedVisitor(aCheckedChanged);
-      VisitGroup(visitor, aNotify);
+      VisitGroup(visitor);
     }
   } else {
     SetCheckedChangedInternal(aCheckedChanged);
@@ -2957,7 +2955,7 @@ void HTMLInputElement::SetCheckedInternal(bool aChecked, bool aNotify) {
   // radios to have the chance to update its states, e.g., :indeterminate.
   if (mType == NS_FORM_INPUT_RADIO) {
     nsCOMPtr<nsIRadioVisitor> visitor = new nsRadioUpdateStateVisitor(this);
-    VisitGroup(visitor, aNotify);
+    VisitGroup(visitor);
   }
 }
 
@@ -3741,16 +3739,19 @@ nsresult HTMLInputElement::PostHandleEvent(EventChainPostVisitor& aVisitor) {
           // for text and password fields when the field was focused by the
           // keyboard or a navigation, the platform allows it, and it wasn't
           // just because we raised a window.
+          //
+          // While it'd usually make sense, we don't do this for JS callers
+          // because it causes some compat issues, see bug 1712724 for example.
           nsFocusManager* fm = nsFocusManager::GetFocusManager();
           if (fm && IsSingleLineTextControl(false) &&
               !aVisitor.mEvent->AsFocusEvent()->mFromRaise &&
               SelectTextFieldOnFocus()) {
-            Document* document = GetComposedDoc();
-            if (document) {
+            if (Document* document = GetComposedDoc()) {
               uint32_t lastFocusMethod;
               fm->GetLastFocusMethod(document->GetWindow(), &lastFocusMethod);
               if (lastFocusMethod & (nsIFocusManager::FLAG_BYKEY |
-                                     nsIFocusManager::FLAG_BYMOVEFOCUS)) {
+                                     nsIFocusManager::FLAG_BYMOVEFOCUS) &&
+                  !(lastFocusMethod & nsIFocusManager::FLAG_BYJS)) {
                 RefPtr<nsPresContext> presContext =
                     GetPresContext(eForComposedDoc);
                 DispatchSelectEvent(presContext);
@@ -5443,6 +5444,7 @@ void HTMLInputElement::GetValueFromSetRangeText(nsAString& aValue) {
 
 nsresult HTMLInputElement::SetValueFromSetRangeText(const nsAString& aValue) {
   return SetValueInternal(aValue, {ValueSetterOption::ByContentAPI,
+                                   ValueSetterOption::BySetRangeTextAPI,
                                    ValueSetterOption::SetValueChanged});
 }
 
@@ -6089,7 +6091,7 @@ void HTMLInputElement::AddedToRadioGroup() {
 
   nsCOMPtr<nsIRadioVisitor> visitor =
       new nsRadioGetCheckedChangedVisitor(&checkedChanged, this);
-  VisitGroup(visitor, notify);
+  VisitGroup(visitor);
 
   SetCheckedChangedInternal(checkedChanged);
 
@@ -6124,7 +6126,7 @@ void HTMLInputElement::WillRemoveFromRadioGroup() {
     container->SetCurrentRadioButton(name, nullptr);
 
     nsCOMPtr<nsIRadioVisitor> visitor = new nsRadioUpdateStateVisitor(this);
-    VisitGroup(visitor, true);
+    VisitGroup(visitor);
   }
 
   // Remove this radio from its group in the container.
@@ -6204,13 +6206,12 @@ bool HTMLInputElement::IsHTMLFocusable(bool aWithMouse, bool* aIsFocusable,
   return false;
 }
 
-nsresult HTMLInputElement::VisitGroup(nsIRadioVisitor* aVisitor,
-                                      bool aFlushContent) {
+nsresult HTMLInputElement::VisitGroup(nsIRadioVisitor* aVisitor) {
   nsIRadioGroupContainer* container = GetRadioGroupContainer();
   if (container) {
     nsAutoString name;
     GetAttr(kNameSpaceID_None, nsGkAtoms::name, name);
-    return container->WalkRadioGroup(name, aVisitor, aFlushContent);
+    return container->WalkRadioGroup(name, aVisitor);
   }
 
   aVisitor->Visit(this);
@@ -6475,7 +6476,6 @@ void HTMLInputElement::UpdateValueMissingValidityStateForRadio(
   MOZ_ASSERT(mType == NS_FORM_INPUT_RADIO,
              "This should be called only for radio input types");
 
-  bool notify = mDoneCreating;
   HTMLInputElement* selection = GetSelectedRadioButton();
 
   aIgnoreSelf = aIgnoreSelf || !IsMutable();
@@ -6515,8 +6515,8 @@ void HTMLInputElement::UpdateValueMissingValidityStateForRadio(
     // nsRadioSetValueMissingState will call ContentStateChanged while visiting.
     nsAutoScriptBlocker scriptBlocker;
     nsCOMPtr<nsIRadioVisitor> visitor =
-        new nsRadioSetValueMissingState(this, valueMissing, notify);
-    VisitGroup(visitor, notify);
+        new nsRadioSetValueMissingState(this, valueMissing);
+    VisitGroup(visitor);
   }
 }
 

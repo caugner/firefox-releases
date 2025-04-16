@@ -16,7 +16,6 @@
 #include "nsIObserverService.h"
 #include "nsIAppStartup.h"
 #include "nsIGeolocationProvider.h"
-#include "nsCacheService.h"
 #include "nsIDOMWakeLockListener.h"
 #include "nsIPowerManagerService.h"
 #include "nsISpeculativeConnect.h"
@@ -25,6 +24,7 @@
 #include "mozilla/dom/GeolocationPosition.h"
 
 #include "mozilla/ArrayUtils.h"
+#include "mozilla/AppShutdown.h"
 #include "mozilla/Components.h"
 #include "mozilla/Services.h"
 #include "mozilla/Preferences.h"
@@ -68,7 +68,6 @@
 #include "GeckoTelemetryDelegate.h"
 #include "GeckoVRManager.h"
 #include "ImageDecoderSupport.h"
-#include "PrefsHelper.h"
 #include "ScreenHelperAndroid.h"
 #include "Telemetry.h"
 #include "WebExecutorSupport.h"
@@ -159,13 +158,6 @@ class GeckoThreadSupport final
 
     obsServ->NotifyObservers(nullptr, "memory-pressure", u"heap-minimize");
 
-    // If we are OOM killed with the disk cache enabled, the entire
-    // cache will be cleared (bug 105843), so shut down the cache here
-    // and re-init on foregrounding
-    if (nsCacheService::GlobalInstance()) {
-      nsCacheService::GlobalInstance()->Shutdown();
-    }
-
     // We really want to send a notification like profile-before-change,
     // but profile-before-change ends up shutting some things down instead
     // of flushing data
@@ -184,13 +176,6 @@ class GeckoThreadSupport final
     // to "resumed", so we should notify observers and so on.
     if (sPauseCount != 0) {
       return;
-    }
-
-    // If we are OOM killed with the disk cache enabled, the entire
-    // cache will be cleared (bug 105843), so shut down cache on backgrounding
-    // and re-init here
-    if (nsCacheService::GlobalInstance()) {
-      nsCacheService::GlobalInstance()->Init();
     }
 
     // We didn't return from one of our own activities, so restore
@@ -342,6 +327,11 @@ class XPCOMEventTargetWrapper final
  public:
   // Wraps a java runnable into an XPCOM runnable and dispatches it to mTarget.
   void DispatchNative(mozilla::jni::Object::Param aJavaRunnable) {
+    if (AppShutdown::GetCurrentShutdownPhase() >=
+        ShutdownPhase::XPCOMShutdownThreads) {
+      // No point in trying to dispatch this if we're already shutting down.
+      return;
+    }
     java::XPCOMEventTarget::JNIRunnable::GlobalRef r =
         java::XPCOMEventTarget::JNIRunnable::Ref::From(aJavaRunnable);
     mTarget->Dispatch(NS_NewRunnableFunction(
@@ -419,7 +409,6 @@ nsAppShell::nsAppShell()
     mozilla::GeckoProcessManager::Init();
     mozilla::GeckoScreenOrientation::Init();
     mozilla::GeckoSystemStateListener::Init();
-    mozilla::PrefsHelper::Init();
     mozilla::widget::Telemetry::Init();
     mozilla::widget::ImageDecoderSupport::Init();
     mozilla::widget::WebExecutorSupport::Init();
@@ -570,11 +559,6 @@ nsAppShell::Observe(nsISupports* aSubject, const char* aTopic,
       }
     }
     removeObserver = true;
-
-  } else if (!strcmp(aTopic, "nsPref:changed")) {
-    if (jni::IsAvailable()) {
-      mozilla::PrefsHelper::OnPrefChange(aData);
-    }
 
   } else if (!strcmp(aTopic, "content-document-global-created")) {
     // Associate the PuppetWidget of the newly-created BrowserChild with a

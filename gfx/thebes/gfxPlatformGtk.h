@@ -37,7 +37,7 @@ class gfxPlatformGtk final : public gfxPlatform {
                               eFontPresentation aPresentation,
                               nsTArray<const char*>& aFontList) override;
 
-  gfxPlatformFontList* CreatePlatformFontList() override;
+  bool CreatePlatformFontList() override;
 
   /**
    * Calls XFlush if xrender is enabled.
@@ -75,7 +75,7 @@ class gfxPlatformGtk final : public gfxPlatform {
 #endif
 
 #ifdef MOZ_WAYLAND
-  bool UseDMABufWebGL() override { return mUseWebGLDmabufBackend; }
+  bool UseDMABufWebGL() override;
   void DisableDMABufWebGL() { mUseWebGLDmabufBackend = false; }
 #endif
 
@@ -88,6 +88,7 @@ class gfxPlatformGtk final : public gfxPlatform {
   void InitX11EGLConfig();
   void InitDmabufConfig();
   void InitPlatformGPUProcessPrefs() override;
+  void InitWebRenderConfig() override;
   bool CheckVariationFontSupport() override;
 
   int8_t mMaxGenericSubstitutions;

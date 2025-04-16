@@ -18,6 +18,10 @@
 #  include <process.h>
 #  include <string.h>
 #  include <windows.h>
+#elif __wasi__
+#  include <dirent.h>
+#  include <sys/types.h>
+#  include <unistd.h>
 #else
 #  include <dirent.h>
 #  include <sys/types.h>
@@ -101,6 +105,9 @@ JSString* ResolvePath(JSContext* cx, HandleString filenameStr,
   if (!filenameStr) {
 #ifdef XP_WIN
     return JS_NewStringCopyZ(cx, "nul");
+#elif defined(__wasi__)
+    MOZ_CRASH("NYI for WASI");
+    return nullptr;
 #else
     return JS_NewStringCopyZ(cx, "/dev/null");
 #endif
@@ -148,9 +155,22 @@ JSString* ResolvePath(JSContext* cx, HandleString filenameStr,
       return nullptr;
     }
 
+#  ifdef __wasi__
+    // dirname() seems not to behave properly with wasi-libc; so we do our own
+    // simple thing here.
+    char* p = buffer + strlen(buffer);
+    while (p > buffer) {
+      if (*p == '/') {
+        *p = '\0';
+        break;
+      }
+      p--;
+    }
+#  else
     // dirname(buffer) might return buffer, or it might return a
     // statically-allocated string
     memmove(buffer, dirname(buffer), strlen(buffer) + 1);
+#  endif
 #endif
   } else {
     const char* cwd = getcwd(buffer, PATH_MAX);
@@ -886,7 +906,8 @@ static bool os_getpid(JSContext* cx, unsigned argc, Value* vp) {
   return true;
 }
 
-#if !defined(XP_WIN)
+#ifndef __wasi__
+#  if !defined(XP_WIN)
 
 // There are two possible definitions of strerror_r floating around. The GNU
 // one returns a char* which may or may not be the buffer you passed in. The
@@ -899,18 +920,18 @@ inline char* strerror_message(int result, char* buffer) {
 
 inline char* strerror_message(char* result, char* buffer) { return result; }
 
-#endif
+#  endif
 
 static void ReportSysError(JSContext* cx, const char* prefix) {
   char buffer[200];
 
-#if defined(XP_WIN)
+#  if defined(XP_WIN)
   strerror_s(buffer, sizeof(buffer), errno);
   const char* errstr = buffer;
-#else
+#  else
   const char* errstr =
       strerror_message(strerror_r(errno, buffer, sizeof(buffer)), buffer);
-#endif
+#  endif
 
   if (!errstr) {
     errstr = "unknown error";
@@ -951,7 +972,7 @@ static bool os_system(JSContext* cx, unsigned argc, Value* vp) {
   return true;
 }
 
-#ifndef XP_WIN
+#  ifndef XP_WIN
 static bool os_spawn(JSContext* cx, unsigned argc, Value* vp) {
   CallArgs args = CallArgsFromVp(argc, vp);
 
@@ -1024,7 +1045,6 @@ static bool os_kill(JSContext* cx, unsigned argc, Value* vp) {
   return true;
 }
 
-#  ifndef __wasi__
 static bool os_waitpid(JSContext* cx, unsigned argc, Value* vp) {
   CallArgs args = CallArgsFromVp(argc, vp);
 
@@ -1084,12 +1104,13 @@ static const JSFunctionSpecWithHelp os_functions[] = {
 "getpid()",
 "  Return the current process id."),
 
+#ifndef __wasi__
     JS_FN_HELP("system", os_system, 1, 0,
 "system(command)",
 "  Execute command on the current host, returning result code or throwing an\n"
 "  exception on failure."),
 
-#ifndef XP_WIN
+#  ifndef XP_WIN
     JS_FN_HELP("spawn", os_spawn, 1, 0,
 "spawn(command)",
 "  Start up a separate process running the given command. Returns the pid."),
@@ -1099,14 +1120,13 @@ static const JSFunctionSpecWithHelp os_functions[] = {
 "  Send a signal to the given pid. The default signal is SIGINT. The signal\n"
 "  passed in must be numeric, if given."),
 
-#  ifndef __wasi__
     JS_FN_HELP("waitpid", os_waitpid, 1, 0,
 "waitpid(pid[, nohang])",
 "  Calls waitpid(). 'nohang' is a boolean indicating whether to pass WNOHANG.\n"
 "  The return value is an object containing a 'pid' field, if a process was waitable\n"
 "  and an 'exitStatus' field if a pid exited."),
-#  endif  // !__wasi__
-#endif
+#  endif
+#endif  // !__wasi__
 
     JS_FS_HELP_END
 };

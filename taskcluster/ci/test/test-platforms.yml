@@ -53,7 +53,6 @@ linux1804-64/opt:
         - linux-talos-flex
         - raptor-firefox
         - browsertime
-        - raptor-fetch-firefox
 
 linux1804-64/debug:
     build-platform: linux64/debug
@@ -77,13 +76,8 @@ linux1804-64-shippable/opt:
         - talos
         - linux-talos-flex
         - raptor-chrome
-        - raptor-chromium
-        - raptor-fetch-chromium
         - raptor-firefox
         - browsertime
-        - raptor-fetch-firefox
-        - raptor-profiling
-        - raptor-fetch-profiling
         - talos-profiling
 
 linux1804-64-devedition/opt:
@@ -116,7 +110,6 @@ linux1804-64-qr/opt:
         - talos
         - raptor-firefox
         - browsertime
-        - raptor-fetch-firefox
 
 linux1804-64-shippable-qr/opt:
     build-platform: linux64-shippable/opt
@@ -129,7 +122,6 @@ linux1804-64-shippable-qr/opt:
         - talos-profiling
         - raptor-firefox
         - browsertime
-        - raptor-fetch-firefox
 
 linux1804-64-qr/debug:
     build-platform: linux64/debug
@@ -156,66 +148,77 @@ linux1804-64-ccov/opt:
 # Windows platforms (matching /windows.*/)
 
 # win32
-windows7-32/debug:
-    build-platform: win32/debug
-    test-sets:
-        - windows-reftest-gpu
-        - windows-tests
-        - web-platform-tests
-        - mochitest-webgpu
-
 windows7-32/opt:
     build-platform: win32/opt
     test-sets:
-        - awsy
-        - desktop-screenshot-capture
-        - windows-reftest-gpu
-        - windows-talos
-        - windows-tests
-        - web-platform-tests
-        - raptor-firefox
-        - browsertime
-        - mochitest-webgpu
-        - web-platform-tests-wdspec-headless
+        - windows-7-tests
 
 windows7-32-shippable/opt:
     build-platform: win32-shippable/opt
     test-sets:
-        - awsy
-        - desktop-screenshot-capture
-        - windows-reftest-gpu
-        - windows-talos
-        - windows-tests
-        - web-platform-tests
-        - web-platform-tests-wdspec-headless
-        - raptor-chrome
-        - raptor-chromium
-        - raptor-firefox
-        - browsertime
-        - mochitest-webgpu
+        - windows-7-tests
 
 # win7 qr builds for try purposes
-windows7-32-qr/debug:
-    build-platform: win32/debug
-    test-sets:
-        - mochitest-webgpu
-        - windows-qr-tests
-        - web-platform-tests
-
 windows7-32-qr/opt:
     build-platform: win32/opt
     test-sets:
-        - awsy
-        - windows-qr-tests
-        - windows-talos
+        - windows7-qr-tests
+
+# win10-32 qr builds for try purposes
+windows10-32-qr/debug:
+    build-platform: win32/debug
+    test-sets:
         - web-platform-tests
+        - windows32-qr-tests
+        - mochitest-webgpu
+        - windows7-qr-tests
+
+windows10-32-qr/opt:
+    build-platform: win32/opt
+    test-sets:
+        - awsy
+        - web-platform-tests
+        - windows-talos
+        - windows32-qr-tests
+
+windows10-32-shippable/opt:
+    build-platform: win32-shippable/opt
+    test-sets:
+        - awsy
+        - browsertime
+        - desktop-screenshot-capture
+        - raptor-chrome
+        - raptor-firefox
+        - web-platform-tests
+        - web-platform-tests-wdspec-headless
+        - windows32-tests
+        - windows-talos
+
+windows10-32/opt:
+    build-platform: win32/opt
+    test-sets:
+        - awsy
+        - browsertime
+        - desktop-screenshot-capture
+        - raptor-firefox
+        - web-platform-tests
+        - web-platform-tests-wdspec-headless
+        - windows32-tests
+        - windows-talos
+
+windows10-32/debug:
+    build-platform: win32/debug
+    test-sets:
+        - web-platform-tests
+        - windows32-tests
+        - windows-7-tests
+
 
 # win64
 windows10-64-ccov-qr/opt:
     build-platform: win64-ccov/opt
     test-sets:
         - desktop-screenshot-capture
-        - windows-reftest-gpu
         - windows-tests
         - windows-ccov-tests
         - windows10-tests
@@ -270,10 +273,8 @@ windows10-64-shippable/opt:
         - web-platform-tests-backlog
         - web-platform-tests-wdspec-headless
         - raptor-chrome
-        - raptor-chromium
         - raptor-firefox
         - browsertime
-        - raptor-profiling
         - talos-profiling
         - mochitest-webgpu
 
@@ -334,18 +335,40 @@ windows10-64-mingwclang/opt:
     test-sets:
         - mingwclang-tests-opt
 
-windows7-32-mingwclang/debug:
+windows10-32-mingwclang/debug:
     build-platform: win32-mingwclang/debug
     test-sets:
-        - mingwclang-win7-tests-debug
+        - mingwclang-win32-tests-debug
 
-windows7-32-mingwclang/opt:
+windows10-32-mingwclang/opt:
     build-platform: win32-mingwclang/opt
     test-sets:
         - mingwclang-tests-opt
 
 ##
 # MacOS X platforms (matching /macosx.*/)
+
+# macosx1100-64-qr/debug:
+#    build-platform: macosx64/debug
+#    test-sets:
+#        - macosx1100-64-jittests
+
+# macosx1100-64-shippable-qr/opt:
+#    build-platform: macosx64-shippable/opt
+#    test-sets:
+#        - macosx1100-64-qr-tests
+#        - macosx1100-64-jittests
+#        - macosx1100-64-qr-failure-tests
+#        - macosx64-talos
+#        - browsertime-high-priority
+#        - raptor-firefox
+
+# macosx1100-64-qr/opt:
+#    build-platform: macosx64/opt
+#    test-sets:
+#        - macosx1100-64-qr-tests
+#        - macosx1100-64-jittests
+#        - macosx1100-64-qr-failure-tests
 
 macosx1015-64-shippable/opt:
     build-platform: macosx64-shippable/opt
@@ -361,10 +384,8 @@ macosx1015-64-shippable-qr/opt:
         - awsy
         - browsertime
         - raptor-chrome
-        - raptor-chromium
         - raptor-firefox
         - raptor-firefox-power
-        - raptor-profiling
         - talos-profiling
         - macosx1015-64-qr-tests
         - web-platform-tests
@@ -389,6 +410,7 @@ macosx1015-64-devedition-qr/opt:
 macosx1015-64-qr/opt:
     build-platform: macosx64/opt
     test-sets:
+        - macosx1015-64-qr-failure-tests
         - macosx1015-64-qr-tests
         - web-platform-tests
         - web-platform-tests-backlog
@@ -411,6 +433,8 @@ macosx1014-64-shippable-qr/opt:
     test-sets:
         - macosx1014-64-qr-tests
         - desktop-screenshot-capture
+        - browsertime
+        - talos
 
 macosx1014-64-devedition-qr/opt:
     build-platform: macosx64-devedition/opt
@@ -446,6 +470,11 @@ android-em-7.0-x86_64-shippable/opt:
 
 android-em-7.0-x86_64/debug:
     build-platform: android-x86_64/debug
+    test-sets:
+        - android-x86_64-tests
+
+android-em-7.0-x86_64/debug-isolated-process:
+    build-platform: android-x86_64/debug-isolated-process
     test-sets:
         - android-x86_64-tests
 

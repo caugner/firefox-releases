@@ -3,11 +3,12 @@
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 :root {
-  --toolbarbutton-icon-fill-attention: var(--lwt-toolbarbutton-icon-fill-attention, rgb(0,97,224));
+  --toolbarbutton-icon-fill-attention: -moz-accent-color;
 }
 
 :root:-moz-lwtheme {
   --toolbarbutton-icon-fill-opacity: 1;
+  --toolbarbutton-icon-fill-attention: var(--lwt-toolbarbutton-icon-fill-attention, rgb(0,97,224));
 }
 
 :root[lwt-popup-brighttext] panel,
@@ -16,7 +17,7 @@ toolbar[brighttext]:-moz-lwtheme {
 }
 
 @media not (-moz-proton) {
-:root {
+:root:-moz-lwtheme {
   --toolbarbutton-icon-fill-attention: var(--lwt-toolbarbutton-icon-fill-attention, #0a84ff);
 }
 
@@ -110,6 +111,11 @@ toolbar[brighttext] {
   position: relative;
 }
 
+:where(#reload-button, #stop-button) > .toolbarbutton-icon,
+:where(#reload-button, #stop-button) > .toolbarbutton-animatable-box {
+  translate: 0 1px; /* The animation is 18px but the other icons are 16px, lower it by 1px so it is vertically centered */
+}
+
 #reload-button > .toolbarbutton-animatable-box,
 #stop-button > .toolbarbutton-animatable-box {
   top: calc(50% - 10px); /* Vertically center the 20px tall animatable image */
@@ -163,7 +169,7 @@ toolbar[brighttext] {
 }
 
 #stop-button {
-  list-style-image: url("chrome://browser/skin/stop.svg");
+  list-style-image: url("chrome://global/skin/icons/close.svg");
 }
 
 #home-button {
@@ -277,7 +283,9 @@ toolbar[brighttext] {
 #PanelUI-menu-button[badge-status="update-manual"],
 #PanelUI-menu-button[badge-status="update-other-instance"],
 #PanelUI-menu-button[badge-status="update-restart"],
-#PanelUI-menu-button[badge-status="update-unsupported"] {
+#PanelUI-menu-button[badge-status="update-unsupported"],
+#PanelUI-menu-button[badge-status="addon-alert"],
+#PanelUI-menu-button[badge-status="fxa-needs-authentication"] {
   list-style-image: url("chrome://browser/skin/menu-badged.svg");
 }
 

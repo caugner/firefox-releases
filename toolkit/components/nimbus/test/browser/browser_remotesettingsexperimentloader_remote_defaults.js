@@ -21,14 +21,6 @@ const { BrowserTestUtils } = ChromeUtils.import(
 const { ExperimentFakes } = ChromeUtils.import(
   "resource://testing-common/NimbusTestUtils.jsm"
 );
-
-XPCOMUtils.defineLazyServiceGetter(
-  this,
-  "timerManager",
-  "@mozilla.org/updates/timer-manager;1",
-  "nsIUpdateTimerManager"
-);
-
 const { TelemetryEnvironment } = ChromeUtils.import(
   "resource://gre/modules/TelemetryEnvironment.jsm"
 );
@@ -77,20 +69,15 @@ const REMOTE_CONFIGURATION_NEWTAB = {
 };
 const SYNC_DEFAULTS_PREF_BRANCH = "nimbus.syncdefaultsstore.";
 
-async function setup() {
+async function setup(configuration) {
   const client = RemoteSettings("nimbus-desktop-defaults");
   await client.db.importChanges(
     {},
     42,
-    [REMOTE_CONFIGURATION_AW, REMOTE_CONFIGURATION_NEWTAB],
+    configuration || [REMOTE_CONFIGURATION_AW, REMOTE_CONFIGURATION_NEWTAB],
     {
       clear: true,
     }
-  );
-
-  await BrowserTestUtils.waitForCondition(
-    async () => (await client.get()).length,
-    "RS is ready"
   );
 
   registerCleanupFunction(async () => {
@@ -99,19 +86,6 @@ async function setup() {
 
   return client;
 }
-
-add_task(async function setup() {
-  await SpecialPowers.pushPrefEnv({
-    set: [
-      ["messaging-system.log", "all"],
-      ["app.normandy.run_interval_seconds", 1],
-    ],
-  });
-
-  registerCleanupFunction(async () => {
-    await SpecialPowers.popPrefEnv();
-  });
-});
 
 add_task(async function test_remote_fetch_and_ready() {
   const sandbox = sinon.createSandbox();
@@ -138,11 +112,11 @@ add_task(async function test_remote_fetch_and_ready() {
 
   let rsClient = await setup();
 
-  let callCount = spy.callCount;
   await RemoteDefaultsLoader.syncRemoteDefaults();
 
-  Assert.ok(
-    spy.callCount === callCount + 1,
+  Assert.equal(
+    spy.callCount,
+    1,
     "Called finalize after processing remote configs"
   );
 
@@ -208,10 +182,7 @@ add_task(async function test_remote_fetch_and_ready() {
   await rsClient.db.clear();
   await RemoteDefaultsLoader.syncRemoteDefaults();
 
-  Assert.ok(
-    spy.callCount === callCount + 2,
-    "Called a second time by syncRemoteDefaults"
-  );
+  Assert.equal(spy.callCount, 2, "Called a second time by syncRemoteDefaults");
 
   Assert.ok(stub.calledTwice, "Second update is from the removal");
   Assert.equal(
@@ -258,12 +229,19 @@ add_task(async function test_remote_fetch_on_updateRecipes() {
     RemoteDefaultsLoader,
     "syncRemoteDefaults"
   );
-  timerManager.unregisterTimer("rs-experiment-loader-timer");
+  // Work around the pref change callback that would trigger `setTimer`
+  sandbox.replaceGetter(
+    RemoteSettingsExperimentLoader,
+    "intervalInSeconds",
+    () => 1
+  );
+
+  // This will un-register the timer
+  RemoteSettingsExperimentLoader._initialized = true;
+  RemoteSettingsExperimentLoader.uninit();
   Services.prefs.clearUserPref(
     "app.update.lastUpdateTime.rs-experiment-loader-timer"
   );
-
-  Assert.ok(syncRemoteDefaultsStub.notCalled, "Not called");
 
   RemoteSettingsExperimentLoader.setTimer();
 
@@ -273,18 +251,32 @@ add_task(async function test_remote_fetch_on_updateRecipes() {
   );
 
   Assert.ok(syncRemoteDefaultsStub.calledOnce, "Timer calls function");
-  timerManager.unregisterTimer("rs-experiment-loader-timer");
+  Assert.equal(
+    syncRemoteDefaultsStub.firstCall.args[0],
+    "timer",
+    "Called by timer"
+  );
   sandbox.restore();
+  // This will un-register the timer
+  RemoteSettingsExperimentLoader._initialized = true;
+  RemoteSettingsExperimentLoader.uninit();
+  Services.prefs.clearUserPref(
+    "app.update.lastUpdateTime.rs-experiment-loader-timer"
+  );
 });
 
 // Test that awaiting `feature.ready()` resolves even when there is no remote
 // data
 add_task(async function test_remote_fetch_no_data_syncRemoteBefore() {
+  // Reset the nonPersistentStore where remote defaults are stored
+  ExperimentAPI._store._nonPersistentStore = {};
+  const sandbox = sinon.createSandbox();
   const featureInstance = NimbusFeatures.aboutwelcome;
   const featureFoo = new ExperimentFeature("foo", {
     foo: { description: "mochitests" },
   });
-  const stub = sinon.stub();
+  const stub = sandbox.stub();
+  const spy = sandbox.spy(ExperimentAPI._store, "finalizeRemoteConfigs");
 
   ExperimentAPI._store.on("remote-defaults-finalized", stub);
 
@@ -295,6 +287,8 @@ add_task(async function test_remote_fetch_no_data_syncRemoteBefore() {
   // featureFoo will also resolve when the remote defaults cycle finishes
   await Promise.all([featureInstance.ready(), featureFoo.ready()]);
 
+  Assert.ok(spy.calledOnce, "Called finalizeRemoteConfigs");
+  Assert.deepEqual(spy.firstCall.args[0], ["aboutwelcome", "newtab"]);
   Assert.equal(stub.callCount, 1, "Notified all features");
 
   ExperimentAPI._store.off("remote-defaults-finalized", stub);
@@ -304,11 +298,14 @@ add_task(async function test_remote_fetch_no_data_syncRemoteBefore() {
   // clean state for the next run
   NimbusFeatures.aboutwelcome = new ExperimentFeature("aboutwelcome");
   NimbusFeatures.newtab = new ExperimentFeature("newtab");
+  sandbox.restore();
 });
 
 // Test that awaiting `feature.ready()` resolves even when there is no remote
 // data
 add_task(async function test_remote_fetch_no_data_noWaitRemoteLoad() {
+  // Reset the nonPersistentStore where remote defaults are stored
+  ExperimentAPI._store._nonPersistentStore = {};
   const featureInstance = NimbusFeatures.aboutwelcome;
   const featureFoo = new ExperimentFeature("foo", {
     foo: { description: "mochitests" },
@@ -317,7 +314,7 @@ add_task(async function test_remote_fetch_no_data_noWaitRemoteLoad() {
 
   ExperimentAPI._store.on("remote-defaults-finalized", stub);
 
-  await setup();
+  await setup([]);
 
   // Don't wait to load remote defaults; make sure there is no blocking issue
   // with the `ready` call
@@ -342,28 +339,14 @@ add_task(async function test_remote_ready_from_experiment() {
     foo: { description: "mochitests" },
   });
 
-  await ExperimentAPI._store.ready();
+  await ExperimentAPI.ready();
 
-  let {
-    enrollmentPromise,
-    doExperimentCleanup,
-  } = ExperimentFakes.enrollmentHelper(
-    ExperimentFakes.recipe("mochitest-1-foo", {
-      branches: [
-        {
-          slug: "mochitest-1-foo",
-          feature: {
-            enabled: true,
-            featureId: "foo",
-            value: null,
-          },
-        },
-      ],
-      active: true,
-    })
-  );
+  let doExperimentCleanup = await ExperimentFakes.enrollWithFeatureConfig({
+    enabled: true,
+    featureId: "foo",
+    value: null,
+  });
 
-  await enrollmentPromise;
   // featureFoo will also resolve when the remote defaults cycle finishes
   await featureFoo.ready();
 
@@ -437,7 +420,141 @@ add_task(async function remote_defaults_resolve_timeout() {
     foo: { description: "test" },
   });
 
-  await feature.ready(0);
+  await feature.ready(1);
 
   Assert.ok(true, "Resolves waitForRemote");
+});
+
+// If the remote config data returned from the store is not modified
+// this test should not throw
+add_task(async function remote_defaults_no_mutation() {
+  let sandbox = sinon.createSandbox();
+  sandbox
+    .stub(ExperimentAPI._store, "getRemoteConfig")
+    .returns(
+      Cu.cloneInto(
+        { targeting: "true", variables: { remoteStub: true } },
+        {},
+        { deepFreeze: true }
+      )
+    );
+
+  let config = NimbusFeatures.aboutwelcome.getValue();
+
+  Assert.ok(config.remoteStub, "Got back the expected value");
+
+  sandbox.restore();
+});
+
+add_task(async function remote_defaults_active_experiments_check() {
+  let barFeature = new ExperimentFeature("bar", {
+    bar: { description: "mochitest" },
+  });
+  let experimentOnlyRemoteDefault = {
+    id: "bar",
+    description: "if we're in the foo experiment bar should be off",
+    configurations: [
+      {
+        slug: "a",
+        variables: {},
+        enabled: false,
+        targeting: "'mochitest-active-foo' in activeExperiments",
+      },
+      {
+        slug: "b",
+        variables: {},
+        enabled: true,
+        targeting: "true",
+      },
+    ],
+  };
+
+  await setup([experimentOnlyRemoteDefault]);
+  await RemoteDefaultsLoader.syncRemoteDefaults("mochitest");
+  await barFeature.ready();
+
+  Assert.ok(barFeature.isEnabled(), "First it's enabled");
+
+  let {
+    enrollmentPromise,
+    doExperimentCleanup,
+  } = ExperimentFakes.enrollmentHelper(
+    ExperimentFakes.recipe("mochitest-active-foo", {
+      branches: [
+        {
+          slug: "mochitest-active-foo",
+          feature: {
+            enabled: true,
+            featureId: "foo",
+            value: null,
+          },
+        },
+      ],
+      active: true,
+    })
+  );
+
+  await enrollmentPromise;
+  let featureUpdate = new Promise(resolve => barFeature.onUpdate(resolve));
+  await RemoteDefaultsLoader.syncRemoteDefaults("mochitests");
+  await featureUpdate;
+
+  Assert.ok(
+    !barFeature.isEnabled(),
+    "We've enrolled in an experiment which makes us match on the first remote default that disables the feature"
+  );
+
+  await doExperimentCleanup();
+});
+
+add_task(async function remote_defaults_active_remote_defaults() {
+  ExperimentAPI._store._deleteForTests("foo");
+  ExperimentAPI._store._deleteForTests("bar");
+  let barFeature = new ExperimentFeature("bar", {
+    bar: { description: "mochitest" },
+  });
+  let fooFeature = new ExperimentFeature("foo", {
+    foo: { description: "mochitest" },
+  });
+  let remoteDefaults = [
+    {
+      id: "bar",
+      description: "will enroll first try",
+      configurations: [
+        {
+          slug: "a",
+          variables: {},
+          enabled: true,
+          targeting: "true",
+        },
+      ],
+    },
+    {
+      id: "foo",
+      description: "will enroll second try after bar",
+      configurations: [
+        {
+          slug: "b",
+          variables: {},
+          enabled: true,
+          targeting: "'bar' in activeRemoteDefaults",
+        },
+      ],
+    },
+  ];
+
+  await setup(remoteDefaults);
+  await RemoteDefaultsLoader.syncRemoteDefaults("mochitest");
+  await barFeature.ready();
+
+  Assert.ok(barFeature.isEnabled(), "Enabled on first sync");
+  Assert.ok(!fooFeature.isEnabled(), "Targeting doesn't match");
+
+  let featureUpdate = new Promise(resolve => fooFeature.onUpdate(resolve));
+  await RemoteDefaultsLoader.syncRemoteDefaults("mochitest");
+  await featureUpdate;
+
+  Assert.ok(fooFeature.isEnabled(), "Targeting should match");
+  ExperimentAPI._store._deleteForTests("foo");
+  ExperimentAPI._store._deleteForTests("bar");
 });

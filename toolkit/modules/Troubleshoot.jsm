@@ -88,7 +88,6 @@ const PREFS_WHITELIST = [
   "plugin.",
   "plugins.",
   "privacy.",
-  "remote.enabled",
   "security.",
   "services.sync.declinedEngines",
   "services.sync.lastPing",
@@ -898,13 +897,28 @@ var dataProviders = {
     const {
       PreferenceRollouts: NormandyPreferenceRollouts,
     } = ChromeUtils.import("resource://normandy/lib/PreferenceRollouts.jsm");
+    const { ExperimentManager } = ChromeUtils.import(
+      "resource://nimbus/lib/ExperimentManager.jsm"
+    );
 
     // Get Normandy data in parallel, and sort each group by slug.
-    const [addonStudies, prefRollouts, prefStudies] = await Promise.all(
+    const [
+      addonStudies,
+      prefRollouts,
+      prefStudies,
+      nimbusExperiments,
+      remoteConfigs,
+    ] = await Promise.all(
       [
         NormandyAddonStudies.getAllActive(),
         NormandyPreferenceRollouts.getAllActive(),
         NormandyPreferenceStudies.getAllActive(),
+        ExperimentManager.store
+          .ready()
+          .then(() => ExperimentManager.store.getAllActive()),
+        ExperimentManager.store
+          .ready()
+          .then(() => ExperimentManager.store.getAllRemoteConfigs()),
       ].map(promise =>
         promise
           .catch(error => {
@@ -919,6 +933,8 @@ var dataProviders = {
       addonStudies,
       prefRollouts,
       prefStudies,
+      nimbusExperiments,
+      remoteConfigs,
     });
   },
 };
@@ -985,13 +1001,15 @@ if (AppConstants.MOZ_SANDBOX) {
       );
       data.effectiveContentSandboxLevel =
         sandboxSettings.effectiveContentSandboxLevel;
+      data.contentWin32kLockdownState =
+        sandboxSettings.contentWin32kLockdownStateString;
     }
 
     done(data);
   };
 }
 
-if (AppConstants.ENABLE_REMOTE_AGENT) {
+if (AppConstants.ENABLE_WEBDRIVER) {
   dataProviders.remoteAgent = function remoteAgent(done) {
     const { RemoteAgent } = ChromeUtils.import(
       "chrome://remote/content/components/RemoteAgent.jsm"

@@ -706,6 +706,14 @@ struct LegacyFactoryFunction {
  *                  on objects in chrome compartments. This must be null if the
  *                  interface doesn't have any ChromeOnly properties or if the
  *                  object is being created in non-chrome compartment.
+ * name the name to use for 1) the WebIDL class string, which is the value
+ *      that's used for @@toStringTag, 2) the name property for interface
+ *      objects and 3) the property on the global object that would be set to
+ *      the interface object. In general this is the interface identifier.
+ *      LegacyNamespace would expect something different for 1), but we don't
+ *      support that. The class string for default iterator objects is not
+ *      usable as 2) or 3), but default iterator objects don't have an interface
+ *      object.
  * defineOnGlobal controls whether properties should be defined on the given
  *                global for the interface object (if any) and named
  *                constructors (if any) for this interface.  This can be
@@ -1762,8 +1770,6 @@ static inline bool AtomizeAndPinJSString(JSContext* cx, jsid& id,
   return false;
 }
 
-bool InitIds(JSContext* cx, const NativeProperties* properties);
-
 void GetInterfaceImpl(JSContext* aCx, nsIInterfaceRequestor* aRequestor,
                       nsWrapperCache* aCache, JS::Handle<JS::Value> aIID,
                       JS::MutableHandle<JS::Value> aRetval,
@@ -2204,10 +2210,11 @@ bool Constructor(JSContext* cx, unsigned argc, JS::Value* vp);
  * obj is the target object of the Xray, a binding's instance object or a
  *     interface or interface prototype object.
  */
-bool XrayResolveOwnProperty(JSContext* cx, JS::Handle<JSObject*> wrapper,
-                            JS::Handle<JSObject*> obj, JS::Handle<jsid> id,
-                            JS::MutableHandle<JS::PropertyDescriptor> desc,
-                            bool& cacheOnHolder);
+bool XrayResolveOwnProperty(
+    JSContext* cx, JS::Handle<JSObject*> wrapper, JS::Handle<JSObject*> obj,
+    JS::Handle<jsid> id,
+    JS::MutableHandle<mozilla::Maybe<JS::PropertyDescriptor>> desc,
+    bool& cacheOnHolder);
 
 /**
  * Define a property on obj through an Xray wrapper.
@@ -2294,6 +2301,20 @@ const JSClass* XrayGetExpandoClass(JSContext* cx, JS::Handle<JSObject*> obj);
 bool XrayDeleteNamedProperty(JSContext* cx, JS::Handle<JSObject*> wrapper,
                              JS::Handle<JSObject*> obj, JS::Handle<jsid> id,
                              JS::ObjectOpResult& opresult);
+
+namespace binding_detail {
+
+// Default implementations of the NativePropertyHooks' mResolveOwnProperty and
+// mEnumerateOwnProperties for WebIDL bindings implemented as proxies.
+bool ResolveOwnProperty(
+    JSContext* cx, JS::Handle<JSObject*> wrapper, JS::Handle<JSObject*> obj,
+    JS::Handle<jsid> id,
+    JS::MutableHandle<mozilla::Maybe<JS::PropertyDescriptor>> desc);
+bool EnumerateOwnProperties(JSContext* cx, JS::Handle<JSObject*> wrapper,
+                            JS::Handle<JSObject*> obj,
+                            JS::MutableHandleVector<jsid> props);
+
+}  // namespace binding_detail
 
 /**
  * Get the object which should be used to cache the return value of a property
@@ -2590,14 +2611,15 @@ inline size_t BindingJSObjectMallocBytes(void* aNativePtr) { return 0; }
 
 // The BindingJSObjectCreator class is supposed to be used by a caller that
 // wants to create and initialise a binding JSObject. After initialisation has
-// been successfully completed it should call ForgetObject().
-// The BindingJSObjectCreator object will root the JSObject until ForgetObject()
-// is called on it. If the native object for the binding is refcounted it will
-// also hold a strong reference to it, that reference is transferred to the
-// JSObject (which holds the native in a slot) when ForgetObject() is called. If
-// the BindingJSObjectCreator object is destroyed and ForgetObject() was never
-// called on it then the JSObject's slot holding the native will be set to
-// undefined, and for a refcounted native the strong reference will be released.
+// been successfully completed it should call InitializationSucceeded().
+// The BindingJSObjectCreator object will root the JSObject until
+// InitializationSucceeded() is called on it. If the native object for the
+// binding is refcounted it will also hold a strong reference to it, that
+// reference is transferred to the JSObject (which holds the native in a slot)
+// when InitializationSucceeded() is called. If the BindingJSObjectCreator
+// object is destroyed and InitializationSucceeded() was never called on it then
+// the JSObject's slot holding the native will be set to undefined, and for a
+// refcounted native the strong reference will be released.
 template <class T>
 class MOZ_STACK_CLASS BindingJSObjectCreator {
  public:

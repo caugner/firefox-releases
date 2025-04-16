@@ -134,9 +134,9 @@ class MOZ_STACK_CLASS frontend::SourceAwareCompiler {
 
   bool canHandleParseFailure(const Directives& newDirectives);
 
-  void handleParseFailure(const Directives& newDirectives,
-                          TokenStreamPosition& startPosition,
-                          CompilationState::CompilationStatePosition& startStatePosition);
+  void handleParseFailure(
+      const Directives& newDirectives, TokenStreamPosition& startPosition,
+      CompilationState::CompilationStatePosition& startStatePosition);
 
  public:
   CompilationState& compilationState() { return compilationState_; };
@@ -397,7 +397,7 @@ bool frontend::InstantiateStencils(JSContext* cx, CompilationInput& input,
     }
 
     Rooted<JSScript*> script(cx, gcOutput.script);
-    if (!input.options.hideScriptFromDebugger) {
+    if (!input.options.hideFromNewScriptInitial()) {
       DebugAPI::onNewScript(cx, script);
     }
   }
@@ -1100,6 +1100,8 @@ static bool DelazifyCanonicalScriptedFunctionImpl(JSContext* cx,
   MOZ_ASSERT(!lazy->hasBytecode(), "Script is already compiled!");
   MOZ_ASSERT(lazy->function() == fun);
 
+  MOZ_DIAGNOSTIC_ASSERT(!fun->isGhost());
+
   AutoIncrementalTimer timer(cx->realm()->timers.delazificationTime);
 
   size_t sourceStart = lazy->sourceStart();
@@ -1219,7 +1221,7 @@ static JSFunction* CompileStandaloneFunction(
     MOZ_ASSERT(!cx->isHelperThreadContext());
 
     Rooted<JSScript*> script(cx, gcOutput.get().script);
-    if (!options.hideScriptFromDebugger) {
+    if (!options.hideFromNewScriptInitial()) {
       DebugAPI::onNewScript(cx, script);
     }
   }

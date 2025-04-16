@@ -377,7 +377,7 @@ class nsOuterWindowProxy : public MaybeCrossOriginObject<js::Wrapper> {
    */
   bool getOwnPropertyDescriptor(
       JSContext* cx, JS::Handle<JSObject*> proxy, JS::Handle<jsid> id,
-      JS::MutableHandle<JS::PropertyDescriptor> desc) const override;
+      JS::MutableHandle<Maybe<JS::PropertyDescriptor>> desc) const override;
 
   /*
    * Implementation of the same-origin case of
@@ -539,7 +539,7 @@ class nsOuterWindowProxy : public MaybeCrossOriginObject<js::Wrapper> {
   // a "print" method.
   static bool MaybeGetPDFJSPrintMethod(
       JSContext* cx, JS::Handle<JSObject*> proxy,
-      JS::MutableHandle<JS::PropertyDescriptor> desc);
+      JS::MutableHandle<Maybe<JS::PropertyDescriptor>> desc);
 
   // The actual "print" method we use for the PDFJS case.
   static bool PDFJSPrintMethod(JSContext* cx, unsigned argc, JS::Value* vp);
@@ -603,17 +603,23 @@ static bool IsNonConfigurableReadonlyPrimitiveGlobalProp(JSContext* cx,
 
 bool nsOuterWindowProxy::getOwnPropertyDescriptor(
     JSContext* cx, JS::Handle<JSObject*> proxy, JS::Handle<jsid> id,
-    JS::MutableHandle<JS::PropertyDescriptor> desc) const {
+    JS::MutableHandle<Maybe<JS::PropertyDescriptor>> desc) const {
   // First check for indexed access.  This is
   // https://html.spec.whatwg.org/multipage/window-object.html#windowproxy-getownproperty
   // step 2, mostly.
+  JS::Rooted<JS::Value> subframe(cx);
   bool found;
-  if (!GetSubframeWindow(cx, proxy, id, desc.value(), found)) {
+  if (!GetSubframeWindow(cx, proxy, id, &subframe, found)) {
     return false;
   }
   if (found) {
     // Step 2.4.
-    FillPropertyDescriptor(desc, proxy, true);
+
+    desc.set(Some(JS::PropertyDescriptor::Data(
+        subframe, {
+                      JS::PropertyAttribute::Configurable,
+                      JS::PropertyAttribute::Enumerable,
+                  })));
     return true;
   }
 
@@ -651,8 +657,9 @@ bool nsOuterWindowProxy::getOwnPropertyDescriptor(
       }
 
 #ifndef RELEASE_OR_BETA  // To be turned on in bug 1496510.
-      if (!IsNonConfigurableReadonlyPrimitiveGlobalProp(cx, id)) {
-        desc.setConfigurable(true);
+      if (desc.isSome() &&
+          !IsNonConfigurableReadonlyPrimitiveGlobalProp(cx, id)) {
+        (*desc).setConfigurable(true);
       }
 #endif
     }
@@ -667,7 +674,7 @@ bool nsOuterWindowProxy::getOwnPropertyDescriptor(
   }
 
   // Step 5
-  if (desc.object()) {
+  if (desc.isSome()) {
     return true;
   }
 
@@ -679,7 +686,7 @@ bool nsOuterWindowProxy::getOwnPropertyDescriptor(
       return false;
     }
 
-    if (desc.object()) {
+    if (desc.isSome()) {
       return true;
     }
   }
@@ -696,9 +703,8 @@ bool nsOuterWindowProxy::getOwnPropertyDescriptor(
       if (!ToJSValue(cx, WindowProxyHolder(childDOMWin), &childValue)) {
         return false;
       }
-      FillPropertyDescriptor(desc, proxy, childValue,
-                             /* readonly = */ true,
-                             /* enumerable = */ false);
+      desc.set(Some(JS::PropertyDescriptor::Data(
+          childValue, {JS::PropertyAttribute::Configurable})));
       return true;
     }
   }
@@ -737,12 +743,12 @@ bool nsOuterWindowProxy::definePropertySameOrigin(
       return true;
     }
 
-    JS::Rooted<JS::PropertyDescriptor> existingDesc(cx);
+    JS::Rooted<Maybe<JS::PropertyDescriptor>> existingDesc(cx);
     ok = js::Wrapper::getOwnPropertyDescriptor(cx, proxy, id, &existingDesc);
     if (!ok) {
       return false;
     }
-    if (!existingDesc.object() || existingDesc.configurable()) {
+    if (existingDesc.isNothing() || existingDesc->configurable()) {
       // We have no existing property, or its descriptor is already configurable
       // (on the Window itself, where things really can be non-configurable).
       // So we failed for some other reason, which we should propagate out.
@@ -1110,8 +1116,9 @@ enum { PDFJS_SLOT_CALLEE = 0 };
 // static
 bool nsOuterWindowProxy::MaybeGetPDFJSPrintMethod(
     JSContext* cx, JS::Handle<JSObject*> proxy,
-    JS::MutableHandle<JS::PropertyDescriptor> desc) {
+    JS::MutableHandle<Maybe<JS::PropertyDescriptor>> desc) {
   MOZ_ASSERT(proxy);
+  MOZ_ASSERT(!desc.isSome());
 
   nsGlobalWindowOuter* outer = GetOuterWindow(proxy);
   nsGlobalWindowInner* inner =
@@ -1171,11 +1178,13 @@ bool nsOuterWindowProxy::MaybeGetPDFJSPrintMethod(
   JS::Rooted<JSObject*> funObj(cx, JS_GetFunctionObject(fun));
   js::SetFunctionNativeReserved(funObj, PDFJS_SLOT_CALLEE, targetFunc);
 
-  JS::Rooted<JS::Value> funVal(cx, JS::ObjectValue(*funObj));
-  // JSPROP_ENUMERATE because that's what it would have been in the same-origin
-  // case without the PDF viewer messing with things.
-  desc.setDataDescriptor(funVal, JSPROP_ENUMERATE);
-  desc.object().set(proxy);
+  // { value: <print>, writable: true, enumerable: true, configurable: true }
+  // because that's what it would have been in the same-origin case without
+  // the PDF viewer messing with things.
+  desc.set(Some(JS::PropertyDescriptor::Data(
+      JS::ObjectValue(*funObj),
+      {JS::PropertyAttribute::Configurable, JS::PropertyAttribute::Enumerable,
+       JS::PropertyAttribute::Writable})));
   return true;
 }
 
@@ -2236,7 +2245,8 @@ nsresult nsGlobalWindowOuter::SetNewDocument(Document* aDocument,
           cx, newInnerWindow, aDocument->GetDocumentURI(),
           aDocument->NodePrincipal(), &newInnerGlobal,
           ComputeIsSecureContext(aDocument),
-          newInnerWindow->IsSharedMemoryAllowed());
+          newInnerWindow->IsSharedMemoryAllowedInternal(
+              aDocument->NodePrincipal()));
       NS_ASSERTION(
           NS_SUCCEEDED(rv) && newInnerGlobal &&
               newInnerWindow->GetWrapperPreserveColor() == newInnerGlobal,
@@ -5099,11 +5109,6 @@ void nsGlobalWindowOuter::FocusOuter(CallerType aCallerType,
       NS_WARNING("Should not try to set the focus on a disabled window");
       return;
     }
-
-    // XXXndeakin not sure what this is for or if it should go somewhere else
-    nsCOMPtr<nsIEmbeddingSiteWindow> embeddingWin(
-        do_GetInterface(treeOwnerAsWin));
-    if (embeddingWin) embeddingWin->SetFocus();
   }
 
   if (!mDocShell) {
@@ -5234,6 +5239,20 @@ void nsGlobalWindowOuter::PrintOuter(ErrorResult& aError) {
 #endif
 }
 
+class MOZ_RAII AutoModalState {
+ public:
+  explicit AutoModalState(nsGlobalWindowOuter& aWin)
+      : mModalStateWin(aWin.EnterModalState()) {}
+
+  ~AutoModalState() {
+    if (mModalStateWin) {
+      mModalStateWin->LeaveModalState();
+    }
+  }
+
+  RefPtr<nsGlobalWindowOuter> mModalStateWin;
+};
+
 Nullable<WindowProxyHolder> nsGlobalWindowOuter::Print(
     nsIPrintSettings* aPrintSettings, nsIWebProgressListener* aListener,
     nsIDocShell* aDocShellToCloneInto, IsPreview aIsPreview,
@@ -5262,8 +5281,7 @@ Nullable<WindowProxyHolder> nsGlobalWindowOuter::Print(
   }
 
   nsAutoSyncOperation sync(docToPrint, SyncOperationBehavior::eAllowInput);
-  EnterModalState();
-  auto exitModal = MakeScopeExit([&] { LeaveModalState(); });
+  AutoModalState modalState(*this);
 
   nsCOMPtr<nsIContentViewer> cv;
   RefPtr<BrowsingContext> bc;
@@ -6324,14 +6342,14 @@ void nsGlobalWindowOuter::ReallyCloseWindow() {
   CleanUp();
 }
 
-void nsGlobalWindowOuter::EnterModalState() {
+nsGlobalWindowOuter* nsGlobalWindowOuter::EnterModalState() {
   // GetInProcessScriptableTop, not GetInProcessTop, so that EnterModalState
   // works properly with <iframe mozbrowser>.
   nsGlobalWindowOuter* topWin = GetInProcessScriptableTopInternal();
 
   if (!topWin) {
     NS_ERROR("Uh, EnterModalState() called w/o a reachable top window?");
-    return;
+    return nullptr;
   }
 
   // If there is an active ESM in this window, clear it. Otherwise, this can
@@ -6386,33 +6404,38 @@ void nsGlobalWindowOuter::EnterModalState() {
     }
   }
   topWin->mModalStateDepth++;
+  return topWin;
 }
 
 void nsGlobalWindowOuter::LeaveModalState() {
-  nsGlobalWindowOuter* topWin = GetInProcessScriptableTopInternal();
+  {
+    nsGlobalWindowOuter* topWin = GetInProcessScriptableTopInternal();
+    if (!topWin) {
+      NS_WARNING("Uh, LeaveModalState() called w/o a reachable top window?");
+      return;
+    }
 
-  if (!topWin) {
-    NS_WARNING("Uh, LeaveModalState() called w/o a reachable top window?");
-    return;
+    if (topWin != this) {
+      MOZ_ASSERT(IsSuspended());
+      return topWin->LeaveModalState();
+    }
   }
 
-  MOZ_ASSERT(topWin->mModalStateDepth != 0);
+  MOZ_ASSERT(mModalStateDepth != 0);
   MOZ_ASSERT(IsSuspended());
-  MOZ_ASSERT(topWin->IsSuspended());
-  topWin->mModalStateDepth--;
+  mModalStateDepth--;
 
-  nsGlobalWindowInner* inner = topWin->GetCurrentInnerWindowInternal();
-
-  if (topWin->mModalStateDepth == 0) {
+  nsGlobalWindowInner* inner = GetCurrentInnerWindowInternal();
+  if (mModalStateDepth == 0) {
     if (inner) {
       inner->Resume();
     }
 
-    if (topWin->mSuspendedDoc) {
-      nsCOMPtr<Document> currentDoc = topWin->GetExtantDoc();
-      topWin->mSuspendedDoc->UnsuppressEventHandlingAndFireEvents(
-          currentDoc == topWin->mSuspendedDoc);
-      topWin->mSuspendedDoc = nullptr;
+    if (mSuspendedDoc) {
+      nsCOMPtr<Document> currentDoc = GetExtantDoc();
+      mSuspendedDoc->UnsuppressEventHandlingAndFireEvents(currentDoc ==
+                                                          mSuspendedDoc);
+      mSuspendedDoc = nullptr;
     }
   }
 
@@ -6421,12 +6444,12 @@ void nsGlobalWindowOuter::LeaveModalState() {
     inner->mLastDialogQuitTime = TimeStamp::Now();
   }
 
-  if (topWin->mModalStateDepth == 0) {
+  if (mModalStateDepth == 0) {
     RefPtr<Event> event = NS_NewDOMEvent(inner, nullptr, nullptr);
     event->InitEvent(u"endmodalstate"_ns, true, false);
     event->SetTrusted(true);
     event->WidgetEventPtr()->mFlags.mOnlyChromeDispatch = true;
-    topWin->DispatchEvent(*event);
+    DispatchEvent(*event);
   }
 }
 
@@ -7347,7 +7370,8 @@ nsresult nsGlobalWindowOuter::RestoreWindowState(nsISupports* aState) {
 
 void nsGlobalWindowOuter::AddSizeOfIncludingThis(
     nsWindowSizes& aWindowSizes) const {
-  aWindowSizes.mDOMOtherSize += aWindowSizes.mState.mMallocSizeOf(this);
+  aWindowSizes.mDOMSizes.mDOMOtherSize +=
+      aWindowSizes.mState.mMallocSizeOf(this);
 }
 
 uint32_t nsGlobalWindowOuter::GetAutoActivateVRDisplayID() {
@@ -7421,7 +7445,7 @@ void nsGlobalWindowOuter::SetCursorOuter(const nsACString& aCursor,
 
     // Call esm and set cursor.
     aError = presContext->EventStateManager()->SetCursor(
-        cursor, nullptr, 1.0f, Nothing(), widget, true);
+        cursor, nullptr, {}, Nothing(), widget, true);
   }
 }
 

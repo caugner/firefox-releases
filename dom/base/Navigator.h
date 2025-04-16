@@ -67,9 +67,10 @@ class Gamepad;
 class GamepadServiceTest;
 class NavigatorUserMediaSuccessCallback;
 class NavigatorUserMediaErrorCallback;
-class MozGetUserMediaDevicesSuccessCallback;
 
 struct MIDIOptions;
+
+nsTArray<uint32_t> SanitizeVibratePattern(const nsTArray<uint32_t>& aPattern);
 
 namespace network {
 class Connection;
@@ -199,11 +200,6 @@ class Navigator final : public nsISupports, public nsWrapperCache {
                        NavigatorUserMediaSuccessCallback& aOnSuccess,
                        NavigatorUserMediaErrorCallback& aOnError,
                        CallerType aCallerType, ErrorResult& aRv);
-  MOZ_CAN_RUN_SCRIPT
-  void MozGetUserMediaDevices(MozGetUserMediaDevicesSuccessCallback& aOnSuccess,
-                              NavigatorUserMediaErrorCallback& aOnError,
-                              uint64_t aInnerWindowID, const nsAString& aCallID,
-                              ErrorResult& aRv);
 
   already_AddRefed<ServiceWorkerContainer> ServiceWorker();
 

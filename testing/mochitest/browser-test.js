@@ -235,40 +235,33 @@ function Tester(aTests, structuredLogger, aCallback) {
 
   this._coverageCollector = null;
 
-  const XPCOMUtilsMod = ChromeUtils.import(
-    "resource://gre/modules/XPCOMUtils.jsm",
-    null
+  const { XPCOMUtils } = ChromeUtils.import(
+    "resource://gre/modules/XPCOMUtils.jsm"
   );
 
   // Avoid failing tests when XPCOMUtils.defineLazyScriptGetter is used.
-  XPCOMUtilsMod.Services = Object.create(Services, {
-    scriptloader: {
-      configurable: true,
-      writable: true,
-      value: {
-        loadSubScript: (url, obj) => {
-          let before = Object.keys(window);
-          try {
-            return this._scriptLoader.loadSubScript(url, obj);
-          } finally {
-            for (let property of Object.keys(window)) {
-              if (
-                !before.includes(property) &&
-                !this._globalProperties.includes(property)
-              ) {
-                this._globalProperties.push(property);
-                this.SimpleTest.info(
-                  "Global property added while loading " + url + ": " + property
-                );
-              }
-            }
+  XPCOMUtils.overrideScriptLoaderForTests({
+    loadSubScript: (url, obj) => {
+      let before = Object.keys(window);
+      try {
+        return this._scriptLoader.loadSubScript(url, obj);
+      } finally {
+        for (let property of Object.keys(window)) {
+          if (
+            !before.includes(property) &&
+            !this._globalProperties.includes(property)
+          ) {
+            this._globalProperties.push(property);
+            this.SimpleTest.info(
+              `Global property added while loading ${url}: ${property}`
+            );
           }
-        },
-        loadSubScriptWithOptions: this._scriptLoader.loadSubScriptWithOptions.bind(
-          this._scriptLoader
-        ),
-      },
+        }
+      }
     },
+    loadSubScriptWithOptions: this._scriptLoader.loadSubScriptWithOptions.bind(
+      this._scriptLoader
+    ),
   });
 }
 Tester.prototype = {
@@ -626,6 +619,10 @@ Tester.prototype = {
           })
         );
       }
+
+      this.resolveFinishTestPromise();
+      this.resolveFinishTestPromise = null;
+      this.TestUtils.promiseTestFinished = null;
 
       this.PromiseTestUtils.ensureDOMPromiseRejectionsProcessed();
       this.PromiseTestUtils.assertNoUncaughtRejections();
@@ -1050,6 +1047,9 @@ Tester.prototype = {
     // Import the test script.
     try {
       this.lastStartTimestamp = performance.now();
+      this.TestUtils.promiseTestFinished = new Promise(resolve => {
+        this.resolveFinishTestPromise = resolve;
+      });
       this._scriptLoader.loadSubScript(this.currentTest.path, scope);
       // Run the test
       this.lastStartTime = Date.now();

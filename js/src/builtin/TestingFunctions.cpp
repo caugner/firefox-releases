@@ -16,7 +16,6 @@
 #include "mozilla/TextUtils.h"
 #include "mozilla/ThreadLocal.h"
 #include "mozilla/Tuple.h"
-#include "mozilla/Unused.h"
 
 #include <algorithm>
 #include <cfloat>
@@ -103,7 +102,7 @@
 #include "vm/AsyncIteration.h"
 #include "vm/ErrorObject.h"
 #include "vm/GlobalObject.h"
-#include "vm/HelperThreadState.h"
+#include "vm/HelperThreads.h"
 #include "vm/Interpreter.h"
 #include "vm/Iteration.h"
 #include "vm/JSContext.h"
@@ -132,6 +131,7 @@
 #include "vm/JSContext-inl.h"
 #include "vm/JSObject-inl.h"
 #include "vm/NativeObject-inl.h"
+#include "vm/ObjectFlags-inl.h"
 #include "vm/StringType-inl.h"
 
 using namespace js;
@@ -395,6 +395,24 @@ static bool GetBuildConfiguration(JSContext* cx, unsigned argc, Value* vp) {
     return false;
   }
 
+#ifdef JS_SIMULATOR
+  value = BooleanValue(true);
+#else
+  value = BooleanValue(false);
+#endif
+  if (!JS_SetProperty(cx, info, "simulator", value)) {
+    return false;
+  }
+
+#ifdef __wasi__
+  value = BooleanValue(true);
+#else
+  value = BooleanValue(false);
+#endif
+  if (!JS_SetProperty(cx, info, "wasi", value)) {
+    return false;
+  }
+
 #ifdef MOZ_ASAN
   value = BooleanValue(true);
 #else
@@ -557,7 +575,7 @@ static bool GC(JSContext* cx, unsigned argc, Value* vp) {
     }
   }
 
-  JSGCInvocationKind gckind = GC_NORMAL;
+  JS::GCOptions options = JS::GCOptions::Normal;
   JS::GCReason reason = JS::GCReason::API;
   if (args.length() >= 2) {
     Value arg = args[1];
@@ -573,9 +591,9 @@ static bool GC(JSContext* cx, unsigned argc, Value* vp) {
         return false;
       }
       if (shrinking) {
-        gckind = GC_SHRINK;
+        options = JS::GCOptions::Shrink;
       } else if (last_ditch) {
-        gckind = GC_SHRINK;
+        options = JS::GCOptions::Shrink;
         reason = JS::GCReason::LAST_DITCH;
       }
     }
@@ -589,7 +607,7 @@ static bool GC(JSContext* cx, unsigned argc, Value* vp) {
     JS::PrepareForFullGC(cx);
   }
 
-  JS::NonIncrementalGC(cx, gckind, reason);
+  JS::NonIncrementalGC(cx, options, reason);
 
   char buf[256] = {'\0'};
   if (!js::SupportDifferentialTesting()) {
@@ -764,7 +782,7 @@ static bool RelazifyFunctions(JSContext* cx, unsigned argc, Value* vp) {
   cx->runtime()->allowRelazificationForTesting = true;
 
   JS::PrepareForFullGC(cx);
-  JS::NonIncrementalGC(cx, GC_SHRINK, JS::GCReason::API);
+  JS::NonIncrementalGC(cx, JS::GCOptions::Shrink, JS::GCReason::API);
 
   cx->runtime()->allowRelazificationForTesting = false;
 
@@ -1224,11 +1242,13 @@ static bool WasmGlobalsEqual(JSContext* cx, unsigned argc, Value* vp) {
       break;
     }
     case wasm::ValType::F32: {
-      result = mozilla::EqualOrBothNaN(aVal.f32(), aVal.f32());
+      result = mozilla::BitwiseCast<uint32_t>(aVal.f32()) ==
+               mozilla::BitwiseCast<uint32_t>(aVal.f32());
       break;
     }
     case wasm::ValType::F64: {
-      result = mozilla::EqualOrBothNaN(aVal.f64(), aVal.f64());
+      result = mozilla::BitwiseCast<uint64_t>(aVal.f64()) ==
+               mozilla::BitwiseCast<uint64_t>(aVal.f64());
       break;
     }
     case wasm::ValType::V128: {
@@ -1244,6 +1264,121 @@ static bool WasmGlobalsEqual(JSContext* cx, unsigned argc, Value* vp) {
     }
     default:
       JS_ReportErrorASCII(cx, "unsupported type");
+      return false;
+  }
+  args.rval().setBoolean(result);
+  return true;
+}
+
+// Flavors of NaN values for WebAssembly.
+// See
+// https://webassembly.github.io/spec/core/syntax/values.html#floating-point.
+enum class NaNFlavor {
+  // A canonical NaN value.
+  //  - the sign bit is unspecified,
+  //  - the 8-bit exponent is set to all 1s
+  //  - the MSB of the payload is set to 1 (a quieted NaN) and all others to 0.
+  Canonical,
+  // An arithmetic NaN. This is the same as a canonical NaN including that the
+  // payload MSB is set to 1, but one or more of the remaining payload bits MAY
+  // BE set to 1 (a canonical NaN specifies all 0s).
+  Arithmetic,
+};
+
+static bool IsNaNFlavor(uint32_t bits, NaNFlavor flavor) {
+  switch (flavor) {
+    case NaNFlavor::Canonical: {
+      return (bits & 0x7fffffff) == 0x7fc00000;
+    }
+    case NaNFlavor::Arithmetic: {
+      const uint32_t ArithmeticNaN = 0x7f800000;
+      const uint32_t ArithmeticPayloadMSB = 0x00400000;
+      bool isNaN = (bits & ArithmeticNaN) == ArithmeticNaN;
+      bool isMSBSet = (bits & ArithmeticPayloadMSB) == ArithmeticPayloadMSB;
+      return isNaN && isMSBSet;
+    }
+    default:
+      MOZ_CRASH();
+  }
+}
+
+static bool IsNaNFlavor(uint64_t bits, NaNFlavor flavor) {
+  switch (flavor) {
+    case NaNFlavor::Canonical: {
+      return (bits & 0x7fffffffffffffff) == 0x7ff8000000000000;
+    }
+    case NaNFlavor::Arithmetic: {
+      uint64_t ArithmeticNaN = 0x7ff0000000000000;
+      uint64_t ArithmeticPayloadMSB = 0x0008000000000000;
+      bool isNaN = (bits & ArithmeticNaN) == ArithmeticNaN;
+      bool isMsbSet = (bits & ArithmeticPayloadMSB) == ArithmeticPayloadMSB;
+      return isNaN && isMsbSet;
+    }
+    default:
+      MOZ_CRASH();
+  }
+}
+
+static bool ToNaNFlavor(JSContext* cx, HandleValue v, NaNFlavor* out) {
+  RootedString flavorStr(cx, ToString(cx, v));
+  if (!flavorStr) {
+    return false;
+  }
+  RootedLinearString flavorLinearStr(cx, flavorStr->ensureLinear(cx));
+  if (!flavorLinearStr) {
+    return false;
+  }
+
+  if (StringEqualsLiteral(flavorLinearStr, "canonical_nan")) {
+    *out = NaNFlavor::Canonical;
+    return true;
+  } else if (StringEqualsLiteral(flavorLinearStr, "arithmetic_nan")) {
+    *out = NaNFlavor::Arithmetic;
+    return true;
+  }
+
+  JS_ReportErrorASCII(cx, "invalid nan flavor");
+  return false;
+}
+
+static bool WasmGlobalIsNaN(JSContext* cx, unsigned argc, Value* vp) {
+  if (!wasm::HasSupport(cx)) {
+    JS_ReportErrorASCII(cx, "wasm support unavailable");
+    return false;
+  }
+  CallArgs args = CallArgsFromVp(argc, vp);
+
+  if (args.length() < 2) {
+    JS_ReportErrorASCII(cx, "not enough arguments");
+    return false;
+  }
+
+  if (!args.get(0).isObject() ||
+      !args.get(0).toObject().is<WasmGlobalObject>()) {
+    JS_ReportErrorASCII(cx, "argument is not wasm value");
+    return false;
+  }
+  RootedWasmGlobalObject global(cx,
+                                &args.get(0).toObject().as<WasmGlobalObject>());
+
+  NaNFlavor flavor;
+  if (!ToNaNFlavor(cx, args.get(1), &flavor)) {
+    return false;
+  }
+
+  bool result;
+  const wasm::Val& val = global->val().get();
+  switch (global->type().kind()) {
+    case wasm::ValType::F32: {
+      result = IsNaNFlavor(mozilla::BitwiseCast<uint32_t>(val.f32()), flavor);
+      break;
+    }
+    case wasm::ValType::F64: {
+      result = IsNaNFlavor(mozilla::BitwiseCast<uint64_t>(val.f64()), flavor);
+      break;
+    }
+    default:
+      JS_ReportErrorASCII(cx, "global is not a floating point value");
       return false;
   }
   args.rval().setBoolean(result);
@@ -2270,8 +2405,9 @@ static bool StartGC(JSContext* cx, unsigned argc, Value* vp) {
     return false;
   }
 
-  JSGCInvocationKind gckind = shrinking ? GC_SHRINK : GC_NORMAL;
-  rt->gc.startDebugGC(gckind, budget);
+  JS::GCOptions options =
+      shrinking ? JS::GCOptions::Shrink : JS::GCOptions::Normal;
+  rt->gc.startDebugGC(options, budget);
 
   args.rval().setUndefined();
   return true;
@@ -2330,7 +2466,7 @@ static bool GCSlice(JSContext* cx, unsigned argc, Value* vp) {
   if (rt->gc.isIncrementalGCInProgress()) {
     rt->gc.debugGCSlice(budget);
   } else if (!dontStart) {
-    rt->gc.startDebugGC(GC_NORMAL, budget);
+    rt->gc.startDebugGC(JS::GCOptions::Normal, budget);
   }
 
   args.rval().setUndefined();
@@ -2713,7 +2849,7 @@ static bool NewString(JSContext* cx, unsigned argc, Value* vp) {
           cx, buf.get(), len, &TestExternalStringCallbacks, &isExternal, heap);
     }
     if (dest && isExternal) {
-      mozilla::Unused << buf.release();  // Ownership was transferred.
+      (void)buf.release();  // Ownership was transferred.
     }
   } else {
     AutoStableStringChars stable(cx);
@@ -4436,7 +4572,7 @@ static bool HelperThreadCount(JSContext* cx, unsigned argc, Value* vp) {
   }
 
   if (CanUseExtraThreads()) {
-    args.rval().setInt32(HelperThreadState().threadCount);
+    args.rval().setInt32(GetHelperThreadCount());
   } else {
     args.rval().setInt32(0);
   }
@@ -4484,30 +4620,28 @@ class ShapeSnapshot {
 
   GCVector<HeapPtr<Value>, 8> slots_;
 
-  struct PropertyInfo {
+  struct PropertySnapshot {
     HeapPtr<Shape*> propShape;
-    HeapPtr<JS::PropertyKey> key;
-    uint32_t slot;
-    uint8_t attrs;
+    HeapPtr<PropertyKey> key;
+    PropertyInfo prop;
 
-    explicit PropertyInfo(Shape* shape)
+    explicit PropertySnapshot(Shape* shape)
         : propShape(shape),
-          key(shape->propid()),
-          slot(shape->maybeSlot()),
-          attrs(propShape->attributes()) {}
+          key(propShape->propertyInfoWithKey().key()),
+          prop(propShape->propertyInfo()) {}
     void trace(JSTracer* trc) {
       TraceEdge(trc, &propShape, "propShape");
       TraceEdge(trc, &key, "key");
     }
-    bool operator==(const PropertyInfo& other) const {
+    bool operator==(const PropertySnapshot& other) const {
       return propShape == other.propShape && key == other.key &&
-             slot == other.slot && attrs == other.attrs;
+             prop == other.prop;
     }
-    bool operator!=(const PropertyInfo& other) const {
+    bool operator!=(const PropertySnapshot& other) const {
       return !operator==(other);
     }
   };
-  GCVector<PropertyInfo, 8> properties_;
+  GCVector<PropertySnapshot, 8> properties_;
 
  public:
   explicit ShapeSnapshot(JSContext* cx) : slots_(cx), properties_(cx) {}
@@ -4594,7 +4728,7 @@ bool ShapeSnapshot::init(JSObject* obj) {
     // Snapshot property information.
     Shape* propShape = shape_;
     while (!propShape->isEmptyShape()) {
-      if (!properties_.append(PropertyInfo(propShape))) {
+      if (!properties_.append(PropertySnapshot(propShape))) {
         return false;
       }
       propShape = propShape->previous();
@@ -4621,32 +4755,33 @@ void ShapeSnapshot::checkSelf(JSContext* cx) const {
     MOZ_RELEASE_ASSERT(shape_->objectFlags() == objectFlags_);
   }
 
-  for (const PropertyInfo& prop : properties_) {
-    Shape* propShape = prop.propShape;
+  for (const PropertySnapshot& propSnapshot : properties_) {
+    Shape* propShape = propSnapshot.propShape;
+    PropertyInfo prop = propSnapshot.prop;
 
     // Skip if the Shape no longer matches the snapshotted data. This can
     // only happen for non-configurable dictionary properties.
-    if (PropertyInfo(propShape) != prop) {
+    if (PropertySnapshot(propShape) != propSnapshot) {
       MOZ_RELEASE_ASSERT(propShape->inDictionary());
-      MOZ_RELEASE_ASSERT(!(prop.attrs & JSPROP_PERMANENT));
+      MOZ_RELEASE_ASSERT(prop.configurable());
       continue;
     }
 
     // Ensure ObjectFlags depending on property information are set if needed.
-    ObjectFlags expectedFlags =
-        GetObjectFlagsForNewProperty(shape_, prop.key, prop.attrs, cx);
+    ObjectFlags expectedFlags = GetObjectFlagsForNewProperty(
+        shape_, propSnapshot.key, prop.flags(), cx);
     MOZ_RELEASE_ASSERT(expectedFlags == objectFlags_);
 
     // Accessors must have a PrivateGCThingValue(GetterSetter*) slot value.
-    if (propShape->isAccessorDescriptor()) {
-      Value slotVal = slots_[prop.slot];
+    if (prop.isAccessorProperty()) {
+      Value slotVal = slots_[prop.slot()];
       MOZ_RELEASE_ASSERT(slotVal.isPrivateGCThing());
       MOZ_RELEASE_ASSERT(slotVal.toGCThing()->is<GetterSetter>());
     }
 
     // Data properties must not have a PrivateGCThingValue slot value.
-    if (propShape->isDataProperty()) {
-      Value slotVal = slots_[prop.slot];
+    if (prop.isDataProperty()) {
+      Value slotVal = slots_[prop.slot()];
       MOZ_RELEASE_ASSERT(!slotVal.isPrivateGCThing());
     }
   }
@@ -4683,11 +4818,11 @@ void ShapeSnapshot::check(JSContext* cx, const ShapeSnapshot& later) const {
       MOZ_RELEASE_ASSERT(properties_[i] == later.properties_[i]);
       // Non-configurable accessor properties and non-configurable, non-writable
       // data properties shouldn't have had their slot mutated.
-      Shape* propShape = properties_[i].propShape;
-      if (!propShape->configurable()) {
-        if (propShape->isAccessorDescriptor() ||
-            (propShape->isDataProperty() && !propShape->writable())) {
-          size_t slot = propShape->slot();
+      PropertyInfo prop = properties_[i].prop;
+      if (!prop.configurable()) {
+        if (prop.isAccessorProperty() ||
+            (prop.isDataProperty() && !prop.writable())) {
+          size_t slot = prop.slot();
           MOZ_RELEASE_ASSERT(slots_[slot] == later.slots_[slot]);
         }
       }
@@ -5913,7 +6048,7 @@ static void majorGC(JSContext* cx, JSGCStatus status, JS::GCReason reason,
   if (info->depth > 0) {
     info->depth--;
     JS::PrepareForFullGC(cx);
-    JS::NonIncrementalGC(cx, GC_NORMAL, JS::GCReason::API);
+    JS::NonIncrementalGC(cx, JS::GCOptions::Normal, JS::GCReason::API);
     info->depth++;
   }
 }
@@ -6313,30 +6448,31 @@ static bool GetTimeZone(JSContext* cx, unsigned argc, Value* vp) {
     return false;
   }
 
+#ifndef __wasi__
   auto getTimeZone = [](std::time_t* now) -> const char* {
     std::tm local{};
-#if defined(_WIN32)
+#  if defined(_WIN32)
     _tzset();
     if (localtime_s(&local, now) == 0) {
       return _tzname[local.tm_isdst > 0];
     }
-#else
-    tzset();
-#  if defined(HAVE_LOCALTIME_R)
-    if (localtime_r(now, &local)) {
 #  else
+    tzset();
+#    if defined(HAVE_LOCALTIME_R)
+    if (localtime_r(now, &local)) {
+#    else
     std::tm* localtm = std::localtime(now);
     if (localtm) {
       *local = *localtm;
-#  endif /* HAVE_LOCALTIME_R */
+#    endif /* HAVE_LOCALTIME_R */
 
-#  if defined(HAVE_TM_ZONE_TM_GMTOFF)
+#    if defined(HAVE_TM_ZONE_TM_GMTOFF)
       return local.tm_zone;
-#  else
+#    else
       return tzname[local.tm_isdst > 0];
-#  endif /* HAVE_TM_ZONE_TM_GMTOFF */
+#    endif /* HAVE_TM_ZONE_TM_GMTOFF */
     }
-#endif   /* _WIN32 */
+#  endif   /* _WIN32 */
     return nullptr;
   };
 
@@ -6346,7 +6482,7 @@ static bool GetTimeZone(JSContext* cx, unsigned argc, Value* vp) {
       return ReturnStringCopy(cx, args, tz);
     }
   }
-
+#endif /* __wasi__ */
   args.rval().setUndefined();
   return true;
 }
@@ -6366,20 +6502,21 @@ static bool SetTimeZone(JSContext* cx, unsigned argc, Value* vp) {
     return false;
   }
 
+#ifndef __wasi__
   auto setTimeZone = [](const char* value) {
-#if defined(_WIN32)
+#  if defined(_WIN32)
     return _putenv_s("TZ", value) == 0;
-#else
+#  else
     return setenv("TZ", value, true) == 0;
-#endif /* _WIN32 */
+#  endif /* _WIN32 */
   };
 
   auto unsetTimeZone = []() {
-#if defined(_WIN32)
+#  if defined(_WIN32)
     return _putenv_s("TZ", "") == 0;
-#else
+#  else
     return unsetenv("TZ") == 0;
-#endif /* _WIN32 */
+#  endif /* _WIN32 */
   };
 
   if (args[0].isString() && !args[0].toString()->empty()) {
@@ -6410,14 +6547,15 @@ static bool SetTimeZone(JSContext* cx, unsigned argc, Value* vp) {
     }
   }
 
-#if defined(_WIN32)
+#  if defined(_WIN32)
   _tzset();
-#else
+#  else
   tzset();
-#endif /* _WIN32 */
+#  endif /* _WIN32 */
 
   JS::ResetTimeZone();
 
+#endif /* __wasi__ */
   args.rval().setUndefined();
   return true;
 }
@@ -7606,8 +7744,12 @@ JS_FOR_WASM_FEATURES(WASM_FEATURE, WASM_FEATURE)
     JS_FN_HELP("wasmGlobalsEqual", WasmGlobalsEqual, 2, 0,
 "wasmGlobalsEqual(globalA, globalB)",
 "  Compares two WebAssembly.Global objects for if their types and values are\n"
-"  equal. Mutability is not compared. NaN values are considered equal and are\n"
-"  not required to have the same bit pattern.\n"),
+"  equal. Mutability is not compared. Floating point values are compared for\n"
+"  bitwise equality, not IEEE 754 equality.\n"),
+    JS_FN_HELP("wasmGlobalIsNaN", WasmGlobalIsNaN, 2, 0,
+"wasmGlobalIsNaN(global, flavor)",
+"  Compares a floating point WebAssembly.Global object for if its value is a\n"
+"  specific NaN flavor. Valid flavors are `arithmetic_nan` and `canonical_nan`.\n"),
     JS_FN_HELP("wasmGlobalToString", WasmGlobalToString, 1, 0,
 "wasmGlobalToString(global)",
 "  Returns a debug representation of the contents of a WebAssembly.Global\n"

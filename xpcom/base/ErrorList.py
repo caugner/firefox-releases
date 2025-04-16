@@ -362,14 +362,6 @@ with modules["NETWORK"]:
     # probably in the process of being torn down.
     errors["NS_ERROR_DOCSHELL_DYING"] = FAILURE(78)
 
-    # FTP specific error codes:
-
-    errors["NS_ERROR_FTP_LOGIN"] = FAILURE(21)
-    errors["NS_ERROR_FTP_CWD"] = FAILURE(22)
-    errors["NS_ERROR_FTP_PASV"] = FAILURE(23)
-    errors["NS_ERROR_FTP_PWD"] = FAILURE(24)
-    errors["NS_ERROR_FTP_LIST"] = FAILURE(28)
-
     # DNS specific error codes:
 
     # The lookup of a hostname failed.  This generally refers to the hostname
@@ -425,10 +417,6 @@ with modules["NETWORK"]:
     # observer is taking over responsibility for the data buffer, and the loader
     # should NOT free it.
     errors["NS_SUCCESS_ADOPTED_DATA"] = SUCCESS(90)
-
-    # FTP
-    errors["NS_NET_STATUS_BEGIN_FTP_TRANSACTION"] = SUCCESS(27)
-    errors["NS_NET_STATUS_END_FTP_TRANSACTION"] = SUCCESS(28)
 
     # This success code may be returned by nsIAuthModule::getNextToken to
     # indicate that the authentication is finished and thus there's no need
@@ -648,7 +636,6 @@ with modules["FILES"]:
     errors["NS_ERROR_FILE_COPY_OR_MOVE_FAILED"] = FAILURE(7)
     errors["NS_ERROR_FILE_ALREADY_EXISTS"] = FAILURE(8)
     errors["NS_ERROR_FILE_INVALID_PATH"] = FAILURE(9)
-    errors["NS_ERROR_FILE_DISK_FULL"] = FAILURE(10)
     errors["NS_ERROR_FILE_CORRUPTED"] = FAILURE(11)
     errors["NS_ERROR_FILE_NOT_DIRECTORY"] = FAILURE(12)
     errors["NS_ERROR_FILE_IS_DIRECTORY"] = FAILURE(13)
@@ -752,11 +739,6 @@ with modules["DOM"]:
     ] = FAILURE(
         1024
     )  # NOQA: E501
-    errors[
-        "NS_ERROR_DOM_INVALID_ACCESS_XHR_TIMEOUT_AND_RESPONSETYPE_UNSUPPORTED_FOR_SYNC"
-    ] = FAILURE(
-        1025
-    )  # NOQA: E501
 
     # When manipulating the bytecode cache with the JS API, some transcoding
     # errors, such as a different bytecode format can cause failures of the
@@ -767,16 +749,6 @@ with modules["DOM"]:
     errors["NS_ERROR_DOM_IMAGE_INACTIVE_DOCUMENT"] = FAILURE(1027)
     errors["NS_ERROR_DOM_IMAGE_INVALID_REQUEST"] = FAILURE(1028)
     errors["NS_ERROR_DOM_IMAGE_BROKEN"] = FAILURE(1029)
-
-    # Editing command errors.
-    errors["NS_ERROR_DOM_INVALID_STATE_DOCUMENT_EXEC_COMMAND"] = FAILURE(1030)
-    errors["NS_ERROR_DOM_INVALID_STATE_DOCUMENT_QUERY_COMMAND_ENABLED"] = FAILURE(1031)
-    errors["NS_ERROR_DOM_INVALID_STATE_DOCUMENT_QUERY_COMMAND_INDETERM"] = FAILURE(1032)
-    errors["NS_ERROR_DOM_INVALID_STATE_DOCUMENT_QUERY_COMMAND_STATE"] = FAILURE(1033)
-    errors["NS_ERROR_DOM_INVALID_STATE_DOCUMENT_QUERY_COMMAND_SUPPORTED"] = FAILURE(
-        1034
-    )
-    errors["NS_ERROR_DOM_INVALID_STATE_DOCUMENT_QUERY_COMMAND_VALUE"] = FAILURE(1035)
 
     # Used to indicate that a resource with the Cross-Origin-Resource-Policy
     # response header set failed the origin check.
@@ -955,14 +927,6 @@ with modules["SECURITY"]:
 
 
 # =======================================================================
-# 22: NS_ERROR_MODULE_DOM_XPATH
-# =======================================================================
-with modules["DOM_XPATH"]:
-    # DOM error codes from http://www.w3.org/TR/DOM-Level-3-XPath/
-    errors["NS_ERROR_DOM_INVALID_EXPRESSION_ERR"] = FAILURE(51)
-
-
-# =======================================================================
 # 24: NS_ERROR_MODULE_URILOADER
 # =======================================================================
 with modules["URILOADER"]:
@@ -1070,16 +1034,6 @@ with modules["IPC"]:
 
 
 # =======================================================================
-# 29: NS_ERROR_MODULE_SVG
-# =======================================================================
-with modules["SVG"]:
-    # SVG DOM error codes from http://www.w3.org/TR/SVG11/svgdom.html
-    errors["NS_ERROR_DOM_SVG_WRONG_TYPE_ERR"] = FAILURE(0)
-    # Yes, the spec says "INVERTABLE", not "INVERTIBLE"
-    errors["NS_ERROR_DOM_SVG_MATRIX_NOT_INVERTABLE"] = FAILURE(2)
-
-
-# =======================================================================
 # 30: NS_ERROR_MODULE_STORAGE
 # =======================================================================
 with modules["STORAGE"]:
@@ -1169,13 +1123,6 @@ with modules["DOM_FILESYSTEM"]:
 # =======================================================================
 with modules["SIGNED_APP"]:
     errors["NS_ERROR_SIGNED_APP_MANIFEST_INVALID"] = FAILURE(1)
-
-
-# =======================================================================
-# 39: NS_ERROR_MODULE_DOM_ANIM
-# =======================================================================
-with modules["DOM_ANIM"]:
-    errors["NS_ERROR_DOM_ANIM_MISSING_PROPS_ERR"] = FAILURE(1)
 
 
 # =======================================================================

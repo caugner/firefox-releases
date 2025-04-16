@@ -137,7 +137,9 @@ extern bool useOffThreadParseGlobal;
 extern bool enableIteratorHelpers;
 extern bool enablePrivateClassFields;
 extern bool enablePrivateClassMethods;
+extern bool enableErgonomicBrandChecks;
 extern bool enableTopLevelAwait;
+extern bool enableClassStaticBlocks;
 #ifdef JS_GC_ZEAL
 extern uint32_t gZealBits;
 extern uint32_t gZealFrequency;

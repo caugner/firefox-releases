@@ -33,8 +33,8 @@ use std::net::SocketAddr;
 
 const MAX_TABLE_SIZE: u64 = 65536;
 const MAX_BLOCKED_STREAMS: u16 = 10;
-const PROTOCOLS: &[&str] = &["h3-27"];
-const TIMER_TOKEN: Token = Token(0xffff_ffff);
+const PROTOCOLS: &[&str] = &["h3-27", "h3"];
+const TIMER_TOKEN: Token = Token(0xffff);
 
 const HTTP_RESPONSE_WITH_WRONG_FRAME: &[u8] = &[
     0x01, 0x06, 0x00, 0x00, 0xd9, 0x54, 0x01, 0x37, // headers
@@ -85,6 +85,8 @@ impl HttpServer for Http3TestServer {
                 } => {
                     qtrace!("Headers (request={} fin={}): {:?}", request, fin, headers);
 
+                    // Some responses do not have content-type. This is on purpose to exercise
+                    // UnknownDecoder code.
                     let default_ret = b"Hello World".to_vec();
                     let default_headers = vec![
                         (String::from(":status"), String::from("200")),
@@ -108,6 +110,10 @@ impl HttpServer for Http3TestServer {
                                             (
                                                 String::from("cache-control"),
                                                 String::from("no-cache"),
+                                            ),
+                                            (
+                                                String::from("content-type"),
+                                                String::from("text/plain"),
                                             ),
                                             (
                                                 String::from("content-length"),
@@ -198,6 +204,10 @@ impl HttpServer for Http3TestServer {
                                                 String::from("cache-control"),
                                                 String::from("no-cache"),
                                             ),
+                                            (
+                                                String::from("content-type"),
+                                                String::from("text/plain"),
+                                            ),
                                             (String::from("content-length"), 4000.to_string()),
                                         ],
                                         &vec![b'a'; 8000],
@@ -215,6 +225,10 @@ impl HttpServer for Http3TestServer {
                                                 (
                                                     String::from("cache-control"),
                                                     String::from("no-cache"),
+                                                ),
+                                                (
+                                                    String::from("content-type"),
+                                                    String::from("text/plain"),
                                                 ),
                                                 (String::from("content-length"), v.to_string()),
                                             ],
@@ -315,10 +329,15 @@ impl HttpServer for NonRespondingServer {
 }
 
 fn emit_packet(socket: &UdpSocket, out_dgram: Datagram) {
-    let sent = socket
-        .send_to(&out_dgram, &out_dgram.destination())
-        .expect("Error sending datagram");
-    if sent != out_dgram.len() {
+    let res = match socket.send_to(&out_dgram, &out_dgram.destination()) {
+        Err(ref err) if err.kind() == io::ErrorKind::WouldBlock => 0,
+        Err(err) => {
+            eprintln!("UDP send error: {:?}", err);
+            exit(1);
+        }
+        Ok(res) => res,
+    };
+    if res != out_dgram.len() {
         qinfo!("Unable to send all {} bytes of datagram", out_dgram.len());
     }
 }
@@ -476,6 +495,7 @@ impl ServersRunner {
                         max_table_size_decoder: MAX_TABLE_SIZE,
                         max_blocked_streams: MAX_BLOCKED_STREAMS,
                     },
+                    None,
                 )
                 .expect("We cannot make a server!"),
             )),

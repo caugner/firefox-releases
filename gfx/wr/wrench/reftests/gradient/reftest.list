@@ -10,6 +10,8 @@ platform(linux,mac) == premultiplied-conic-2.yaml premultiplied-conic-2.png
 
 == linear.yaml linear-ref.png
 == linear-reverse.yaml linear-ref.png
+fuzzy(255,1200) == linear-reverse-2.yaml linear-reverse-2-ref.yaml
+== linear-reverse-3.yaml linear-reverse-3-ref.yaml
 platform(linux,mac) fuzzy(1,35000) == linear-stops.yaml linear-stops-ref.png
 
 == linear-clamp-1a.yaml linear-clamp-1-ref.yaml
@@ -22,7 +24,7 @@ fuzzy-range(<=1,*4800) == linear-hard-stop.yaml linear-hard-stop-ref.png
 fuzzy(1,20000) == linear.yaml linear-ref.yaml
 fuzzy(1,20000) == linear-reverse.yaml linear-ref.yaml
 
-fuzzy(1,15200) == linear-aligned-clip.yaml linear-aligned-clip-ref.yaml
+fuzzy(1,40000) == linear-aligned-clip.yaml linear-aligned-clip-ref.yaml
 
 platform(linux,mac) fuzzy(1,80000) == radial-circle.yaml radial-circle-ref.png
 platform(linux,mac) fuzzy(1,80000) == radial-ellipse.yaml radial-ellipse-ref.png
@@ -74,6 +76,7 @@ fuzzy(1,7) == tiling-conic-3.yaml tiling-conic-3-ref.yaml
 == radial-zero-size-3.yaml radial-zero-size-ref.yaml
 
 == linear-adjust-tile-size.yaml linear-adjust-tile-size-ref.yaml
+== linear-repeat-clip.yaml linear-repeat-clip-ref.yaml
 
 platform(linux,mac) == linear-aligned-border-radius.yaml linear-aligned-border-radius.png
 # interpolation fuzz from sampling texture-baked gradient ramps
@@ -112,4 +115,12 @@ fuzzy-range(<=1,1) == gradient_cache_hardstop_clip.yaml gradient_cache_hardstop_
 == radial-tiling-optimized.yaml radial-tiling-optimized-ref.yaml
 
 # Exercise the cached gradient scaling code path
+fuzzy(2,23000) == linear-large.yaml linear-large-ref.yaml
 == conic-large.yaml conic-large-ref.yaml
+fuzzy(1,7000) == radial-large.yaml radial-large-ref.png
+
+# crash tests
+== linear-far-endpoints.yaml linear-far-endpoints.yaml
+== linear-nan.yaml linear-nan.yaml
+== radial-nan.yaml radial-nan.yaml
+== conic-nan.yaml conic-nan.yaml

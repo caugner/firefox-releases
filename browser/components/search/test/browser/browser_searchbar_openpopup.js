@@ -35,9 +35,6 @@ let goButton;
 
 add_task(async function setup() {
   searchbar = await gCUITestUtils.addSearchBar();
-  registerCleanupFunction(() => {
-    gCUITestUtils.removeSearchBar();
-  });
   textbox = searchbar.textbox;
   searchIcon = searchbar.querySelector(".searchbar-search-button");
   goButton = searchbar.querySelector(".search-go-button");
@@ -48,14 +45,7 @@ add_task(async function setup() {
   );
   await Services.search.setDefault(engine);
 
-  // First cleanup the form history in case other tests left things there.
-  await new Promise((resolve, reject) => {
-    info("cleanup the search history");
-    searchbar.FormHistory.update(
-      { op: "remove", fieldname: "searchbar-history" },
-      { handleCompletion: resolve, handleError: reject }
-    );
-  });
+  await clearSearchbarHistory();
 
   await new Promise((resolve, reject) => {
     info("adding search history values: " + kValues);
@@ -69,6 +59,7 @@ add_task(async function setup() {
   });
 
   registerCleanupFunction(async () => {
+    await clearSearchbarHistory();
     await Services.search.setDefault(defaultEngine);
     gCUITestUtils.removeSearchBar();
   });
@@ -595,9 +586,7 @@ add_task(async function dont_consume_clicks() {
 
 // Dropping text to the searchbar should open the popup
 add_task(async function drop_opens_popup() {
-  if (CustomizableUI.protonToolbarEnabled) {
-    CustomizableUI.addWidgetToArea("home-button", "nav-bar");
-  }
+  CustomizableUI.addWidgetToArea("home-button", "nav-bar");
   // The previous task leaves focus in the URL bar. However, in that case drags
   // can be interpreted as being selection drags by the drag manager, which
   // breaks the drag synthesis from EventUtils.js below. To avoid this, focus
@@ -637,9 +626,7 @@ add_task(async function drop_opens_popup() {
   await promise;
 
   textbox.value = "";
-  if (CustomizableUI.protonToolbarEnabled) {
-    CustomizableUI.removeWidgetFromArea("home-button");
-  }
+  CustomizableUI.removeWidgetFromArea("home-button");
 });
 
 // Moving the caret using the cursor keys should not close the popup.

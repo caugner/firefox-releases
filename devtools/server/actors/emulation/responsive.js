@@ -48,7 +48,6 @@ const ResponsiveActor = protocol.ActorClassWithSpec(responsiveSpec, {
     this.clearNetworkThrottling();
     this.toggleTouchSimulator({ enable: false });
     this.clearMetaViewportOverride();
-    this.clearUserAgentOverride();
 
     this.targetActor.off("window-ready", this.onWindowReady);
 
@@ -254,34 +253,6 @@ const ResponsiveActor = protocol.ActorClassWithSpec(responsiveSpec, {
     return false;
   },
 
-  /* User agent override */
-
-  _previousUserAgentOverride: undefined,
-
-  setUserAgentOverride(userAgent) {
-    if (this.getUserAgentOverride() == userAgent) {
-      return false;
-    }
-    if (this._previousUserAgentOverride === undefined) {
-      this._previousUserAgentOverride = this.getUserAgentOverride();
-    }
-    // Bug 1637494: TODO - customUserAgent should only be set from parent
-    // process.
-    this.docShell.customUserAgent = userAgent;
-    return true;
-  },
-
-  getUserAgentOverride() {
-    return this.docShell.browsingContext.customUserAgent;
-  },
-
-  clearUserAgentOverride() {
-    if (this._previousUserAgentOverride !== undefined) {
-      return this.setUserAgentOverride(this._previousUserAgentOverride);
-    }
-    return false;
-  },
-
   /**
    * Dispatches an "orientationchange" event.
    */
@@ -318,11 +289,6 @@ const ResponsiveActor = protocol.ActorClassWithSpec(responsiveSpec, {
     }
 
     this.flushStyle();
-  },
-
-  async setMaxTouchPoints(touchSimulationEnabled) {
-    const maxTouchPoints = touchSimulationEnabled ? 1 : 0;
-    this.docShell.browsingContext.setRDMPaneMaxTouchPoints(maxTouchPoints);
   },
 
   flushStyle() {

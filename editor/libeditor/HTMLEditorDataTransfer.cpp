@@ -82,6 +82,7 @@ class nsISupports;
 namespace mozilla {
 
 using namespace dom;
+using LeafNodeType = HTMLEditUtils::LeafNodeType;
 
 #define kInsertCookie "_moz_Insert Here_moz_"
 
@@ -337,12 +338,9 @@ class MOZ_STACK_CLASS
 HTMLBRElement*
 HTMLEditor::HTMLWithContextInserter::GetInvisibleBRElementAtPoint(
     const EditorDOMPoint& aPointToInsert) const {
-  WSRunScanner wsRunScannerAtInsertionPoint(mHTMLEditor, aPointToInsert);
-  if (wsRunScannerAtInsertionPoint.GetEndReasonContent() &&
-      wsRunScannerAtInsertionPoint.GetEndReasonContent()->IsHTMLElement(
-          nsGkAtoms::br) &&
-      !mHTMLEditor.IsVisibleBRElement(
-          wsRunScannerAtInsertionPoint.EndReasonBRElementPtr())) {
+  WSRunScanner wsRunScannerAtInsertionPoint(mHTMLEditor.GetActiveEditingHost(),
+                                            aPointToInsert);
+  if (wsRunScannerAtInsertionPoint.EndsByInvisibleBRElement()) {
     return wsRunScannerAtInsertionPoint.EndReasonBRElementPtr();
   }
   return nullptr;
@@ -356,8 +354,9 @@ HTMLEditor::HTMLWithContextInserter::GetNewCaretPointAfterInsertingHTML(
   // but don't cross tables
   nsIContent* containerContent = nullptr;
   if (!HTMLEditUtils::IsTable(aLastInsertedPoint.GetChild())) {
-    containerContent =
-        mHTMLEditor.GetLastEditableLeaf(*aLastInsertedPoint.GetChild());
+    containerContent = HTMLEditUtils::GetLastLeafContent(
+        *aLastInsertedPoint.GetChild(), {LeafNodeType::OnlyEditableLeafNode},
+        aLastInsertedPoint.GetChild()->GetAsElementOrParentElement());
     if (containerContent) {
       Element* mostDistantInclusiveAncestorTableElement = nullptr;
       for (Element* maybeTableElement =
@@ -399,14 +398,13 @@ HTMLEditor::HTMLWithContextInserter::GetNewCaretPointAfterInsertingHTML(
 
   // Make sure we don't end up with selection collapsed after an invisible
   // `<br>` element.
-  WSRunScanner wsRunScannerAtCaret(mHTMLEditor, pointToPutCaret);
+  Element* editingHost = mHTMLEditor.GetActiveEditingHost();
+  WSRunScanner wsRunScannerAtCaret(editingHost, pointToPutCaret);
   if (wsRunScannerAtCaret
           .ScanPreviousVisibleNodeOrBlockBoundaryFrom(pointToPutCaret)
-          .ReachedBRElement() &&
-      !mHTMLEditor.IsVisibleBRElement(
-          wsRunScannerAtCaret.GetStartReasonContent())) {
+          .ReachedInvisibleBRElement()) {
     WSRunScanner wsRunScannerAtStartReason(
-        mHTMLEditor,
+        editingHost,
         EditorDOMPoint(wsRunScannerAtCaret.GetStartReasonContent()));
     WSScanResult backwardScanFromPointToCaretResult =
         wsRunScannerAtStartReason.ScanPreviousVisibleNodeOrBlockBoundaryFrom(
@@ -635,10 +633,23 @@ nsresult HTMLEditor::HTMLWithContextInserter::Run(
     }
   }
 
+  Element* editingHost = mHTMLEditor.GetActiveEditingHost();
+  if (NS_WARN_IF(!editingHost)) {
+    // In theory, we should return NS_ERROR_FAILURE here, but we've not
+    // thrown exception in this case.  Therefore, we should allow to use
+    // the root element instead for now.
+    // XXX test_bug795418-2.html depends on this behavior
+    editingHost = mHTMLEditor.GetRoot();
+    if (NS_WARN_IF(!editingHost)) {
+      return NS_ERROR_FAILURE;
+    }
+  }
+
   // Adjust position based on the first node we are going to insert.
-  EditorDOMPoint pointToInsert = mHTMLEditor.GetBetterInsertionPointFor(
-      arrayOfTopMostChildContents[0],
-      EditorBase::GetStartPoint(mHTMLEditor.SelectionRef()));
+  EditorDOMPoint pointToInsert =
+      HTMLEditUtils::GetBetterInsertionPointFor<EditorDOMPoint>(
+          arrayOfTopMostChildContents[0],
+          EditorBase::GetStartPoint(mHTMLEditor.SelectionRef()), *editingHost);
   if (!pointToInsert.IsSet()) {
     NS_WARNING("HTMLEditor::GetBetterInsertionPointFor() failed");
     return NS_ERROR_FAILURE;
@@ -819,7 +830,7 @@ HTMLEditor::HTMLWithContextInserter::InsertContents(
           //     is not proper child of the parent element, or current node
           //     is a list element.
           if (HTMLEditUtils::IsListItem(pointToInsert.GetContainer()) &&
-              mHTMLEditor.IsEmptyNode(*pointToInsert.GetContainer(), true)) {
+              HTMLEditUtils::IsEmptyNode(*pointToInsert.GetContainer())) {
             NS_WARNING_ASSERTION(pointToInsert.GetContainerParent(),
                                  "Insertion point is out of the DOM tree");
             if (pointToInsert.GetContainerParent()) {
@@ -1627,9 +1638,24 @@ nsresult HTMLEditor::InsertObject(const nsACString& aType, nsISupports* aObject,
         return rv;
       }
     } else {
-      nsCOMPtr<nsIInputStream> imageStream = do_QueryInterface(aObject);
-      if (NS_WARN_IF(!imageStream)) {
-        return NS_ERROR_FAILURE;
+      nsCOMPtr<nsIInputStream> imageStream;
+      if (RefPtr<Blob> blob = do_QueryObject(aObject)) {
+        RefPtr<File> file = blob->ToFile();
+        if (!file) {
+          NS_WARNING("No mozilla::dom::File object");
+          return NS_ERROR_FAILURE;
+        }
+        ErrorResult error;
+        file->CreateInputStream(getter_AddRefs(imageStream), error);
+        if (error.Failed()) {
+          NS_WARNING("File::CreateInputStream() failed");
+          return error.StealNSResult();
+        }
+      } else {
+        imageStream = do_QueryInterface(aObject);
+        if (NS_WARN_IF(!imageStream)) {
+          return NS_ERROR_FAILURE;
+        }
       }
 
       nsresult rv = NS_ConsumeStream(imageStream, UINT32_MAX, imageData);
@@ -1823,12 +1849,13 @@ nsresult HTMLEditor::InsertFromDataTransfer(const DataTransfer* aDataTransfer,
                                             Document* aSourceDoc,
                                             const EditorDOMPoint& aDroppedAt,
                                             bool aDoDeleteSelection) {
-  MOZ_ASSERT(GetEditAction() == EditAction::eDrop);
-  MOZ_ASSERT(
-      mPlaceholderBatch,
-      "TextEditor::InsertFromDataTransfer() should be called only by OnDrop() "
-      "and there should've already been placeholder transaction");
-  MOZ_ASSERT(aDroppedAt.IsSet());
+  MOZ_ASSERT(GetEditAction() == EditAction::eDrop ||
+             GetEditAction() == EditAction::ePaste);
+  MOZ_ASSERT(mPlaceholderBatch,
+             "TextEditor::InsertFromDataTransfer() should be called by "
+             "OnDrop() or paste action "
+             "and there should've already been placeholder transaction");
+  MOZ_ASSERT_IF(GetEditAction() == EditAction::eDrop, aDroppedAt.IsSet());
 
   ErrorResult error;
   RefPtr<DOMStringList> types =
@@ -2078,6 +2105,8 @@ nsresult HTMLEditor::PasteTransferableAsAction(nsITransferable* aTransferable,
   if (NS_WARN_IF(!editActionData.CanHandle())) {
     return NS_ERROR_NOT_INITIALIZED;
   }
+  // InitializeDataTransfer may fetch input stream in aTransferable, so it
+  // may be invalid after calling this.
   editActionData.InitializeDataTransfer(aTransferable);
 
   // Use an invalid value for the clipboard type as data comes from
@@ -2095,11 +2124,23 @@ nsresult HTMLEditor::PasteTransferableAsAction(nsITransferable* aTransferable,
     return EditorBase::ToGenericNSResult(rv);
   }
 
-  nsAutoString contextStr, infoStr;
-  rv = InsertFromTransferable(aTransferable, nullptr, contextStr, infoStr,
-                              false, true);
-  NS_WARNING_ASSERTION(NS_SUCCEEDED(rv),
-                       "HTMLEditor::InsertFromTransferable() failed");
+  RefPtr<DataTransfer> dataTransfer = GetInputEventDataTransfer();
+  if (dataTransfer->HasFile() && dataTransfer->MozItemCount() > 0) {
+    // Now aTransferable has moved to DataTransfer. Use DataTransfer.
+    AutoPlaceholderBatch treatAsOneTransaction(*this,
+                                               ScrollSelectionIntoView::Yes);
+
+    rv = InsertFromDataTransfer(dataTransfer, 0, nullptr, EditorDOMPoint(),
+                                true);
+    NS_WARNING_ASSERTION(NS_SUCCEEDED(rv),
+                         "HTMLEditor::InsertFromDataTransfer() failed");
+  } else {
+    nsAutoString contextStr, infoStr;
+    rv = InsertFromTransferable(aTransferable, nullptr, contextStr, infoStr,
+                                false, true);
+    NS_WARNING_ASSERTION(NS_SUCCEEDED(rv),
+                         "HTMLEditor::InsertFromTransferable() failed");
+  }
   return EditorBase::ToGenericNSResult(rv);
 }
 

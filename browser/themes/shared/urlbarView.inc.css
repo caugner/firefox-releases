@@ -347,16 +347,12 @@
 
 .urlbarView-row[type=bookmark] > .urlbarView-row-inner > .urlbarView-no-wrap > .urlbarView-type-icon {
   background-image: url(chrome://browser/skin/bookmark-12.svg);
-  fill: rgb(0,97,224);
+  fill: var(--toolbarbutton-icon-fill-attention);
 }
 
 .urlbarView-row[pinned] > .urlbarView-row-inner > .urlbarView-no-wrap > .urlbarView-type-icon {
   background-image: url(chrome://browser/skin/pin-12.svg);
   fill: rgb(91,91,102);
-}
-
-:root[lwt-toolbar-field-focus-brighttext] .urlbarView-row[type=bookmark] > .urlbarView-row-inner > .urlbarView-no-wrap > .urlbarView-type-icon {
-  fill: rgb(0,221,255);
 }
 
 :root[lwt-toolbar-field-focus-brighttext] .urlbarView-row[pinned] > .urlbarView-row-inner > .urlbarView-no-wrap > .urlbarView-type-icon {
@@ -501,18 +497,18 @@
 }
 
 .urlbarView-tip-button[selected] {
-  color: var(--buttons-primary-button-color, white);
-  background-color: var(--buttons-primary-button-bgcolor, -moz-accent-color);
+  color: var(--button-primary-color);
+  background-color: var(--button-primary-bgcolor);
   outline: var(--focus-outline);
   outline-offset: 2px;
 }
 
 .urlbarView-tip-button[selected]:hover {
-  background-color: var(--buttons-primary-button-hover-bgcolor, color-mix(in srgb, black 10%, -moz-accent-color));
+  background-color: var(--button-primary-hover-bgcolor);
 }
 
 .urlbarView-tip-button[selected]:hover:active {
-  background-color: var(--buttons-primary-button-active-bgcolor, color-mix(in srgb, black 20%, -moz-accent-color));
+  background-color: var(--button-primary-active-bgcolor);
 }
 
 .urlbarView-tip-button-spacer {
@@ -737,11 +733,11 @@
 
 @media (-moz-proton) {
 #urlbar .search-one-offs:not([hidden]) {
-  padding-block: 6px;
+  padding-block: 10px;
 }
 
 :root[uidensity=touch] #urlbar .search-one-offs:not([hidden]) {
-  padding-block: 11px;
+  padding-block: 15px;
 }
 } /*** END proton ***/
 
@@ -752,7 +748,7 @@
 
 #urlbar .search-panel-header {
   padding: 0;
-  min-height: 32px;
+  min-height: 28px;
   display: flex;
   flex-direction: column;
   justify-content: center;
@@ -761,13 +757,13 @@
 #urlbar .search-panel-one-offs-header-label {
   white-space: nowrap;
   margin: 0;
-  padding-inline: 8px 16px;
+  padding-inline: 8px 12px;
 }
 
 #urlbar .searchbar-engine-one-off-item {
-  min-width: 32px;
-  height: 32px;
-  margin-inline-end: 8px;
+  min-width: 28px;
+  height: 28px;
+  margin-inline: 6px;
 }
 
 @media (-moz-proton) {
@@ -793,7 +789,7 @@
 .urlbarView-row[source="bookmarks"] > .urlbarView-row-inner > .urlbarView-no-wrap > .urlbarView-favicon,
 #urlbar-engine-one-off-item-bookmarks {
   list-style-image: url("chrome://browser/skin/bookmark.svg");
-  fill: rgb(0,97,224);
+  fill: var(--toolbarbutton-icon-fill-attention);
   fill-opacity: 1;
   -moz-context-properties: fill, fill-opacity;
 }
@@ -812,11 +808,6 @@
   -moz-context-properties: fill, fill-opacity;
   fill: currentColor;
   fill-opacity: var(--urlbar-icon-fill-opacity);
-}
-
-:root[lwt-toolbar-field-focus-brighttext] .urlbarView-row[source="bookmarks"]:not([selected]) > .urlbarView-row-inner > .urlbarView-no-wrap > .urlbarView-favicon,
-:root[lwt-toolbar-field-focus-brighttext] #urlbar-engine-one-off-item-bookmarks:not([selected]) {
-  fill: rgb(0,221,255);
 }
 
 /**

@@ -549,13 +549,15 @@ void PointerEventHandler::InitPointerEventFromTouch(
   aPointerEvent->mHeight = aTouch->RadiusY(CallerType::System);
   aPointerEvent->tiltX = aTouch->tiltX;
   aPointerEvent->tiltY = aTouch->tiltY;
+  aPointerEvent->twist = aTouch->twist;
   aPointerEvent->mTime = aTouchEvent->mTime;
   aPointerEvent->mTimeStamp = aTouchEvent->mTimeStamp;
   aPointerEvent->mFlags = aTouchEvent->mFlags;
   aPointerEvent->mButton = button;
   aPointerEvent->mButtons = buttons;
-  aPointerEvent->mInputSource = MouseEvent_Binding::MOZ_SOURCE_TOUCH;
+  aPointerEvent->mInputSource = aTouchEvent->mInputSource;
   aPointerEvent->mFromTouchEvent = true;
+  aPointerEvent->mPressure = aTouch->mForce;
 }
 
 /* static */

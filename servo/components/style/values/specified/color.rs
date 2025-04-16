@@ -9,7 +9,7 @@ use super::AllowQuirks;
 use crate::gecko_bindings::structs::nscolor;
 use crate::parser::{Parse, ParserContext};
 use crate::values::computed::{Color as ComputedColor, Context, ToComputedValue};
-use crate::values::generics::color::ColorOrAuto as GenericColorOrAuto;
+use crate::values::generics::color::{GenericColorOrAuto, GenericCaretColor};
 use crate::values::specified::calc::CalcNode;
 use crate::values::specified::Percentage;
 use cssparser::{AngleOrNumber, Color as CSSParserColor, Parser, Token, RGBA};
@@ -173,8 +173,6 @@ pub enum SystemColor {
     TextSelectBackground,
     #[css(skip)]
     TextSelectForeground,
-    #[css(skip)]
-    TextSelectForegroundCustom,
     #[css(skip)]
     TextSelectBackgroundDisabled,
     #[css(skip)]
@@ -359,13 +357,19 @@ pub enum SystemColor {
     MozComboboxtext,
     MozCombobox,
 
-    MozGtkInfoBarText,
-
     /// Color of tree column headers
     #[parse(condition = "ParserContext::in_ua_or_chrome_sheet")]
     MozColheadertext,
     #[parse(condition = "ParserContext::in_ua_or_chrome_sheet")]
     MozColheaderhovertext,
+
+    /// Color of text in the (active) titlebar.
+    #[parse(condition = "ParserContext::in_ua_or_chrome_sheet")]
+    MozGtkTitlebarText,
+
+    /// Color of text in the (inactive) titlebar.
+    #[parse(condition = "ParserContext::in_ua_or_chrome_sheet")]
+    MozGtkTitlebarInactiveText,
 
     #[css(skip)]
     End, // Just for array-indexing purposes.
@@ -789,3 +793,15 @@ impl Parse for ColorPropertyValue {
 
 /// auto | <color>
 pub type ColorOrAuto = GenericColorOrAuto<Color>;
+
+/// caret-color
+pub type CaretColor = GenericCaretColor<Color>;
+
+impl Parse for CaretColor {
+    fn parse<'i, 't>(
+        context: &ParserContext,
+        input: &mut Parser<'i, 't>,
+    ) -> Result<Self, ParseError<'i>> {
+        ColorOrAuto::parse(context, input).map(GenericCaretColor)
+    }
+}

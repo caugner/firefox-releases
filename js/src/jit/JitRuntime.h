@@ -53,7 +53,7 @@ struct VMFunctionData;
 enum class TailCallVMFunctionId;
 enum class VMFunctionId;
 
-enum class BaselineICFallbackKind {
+enum class BaselineICFallbackKind : uint8_t {
 #define DEF_ENUM_KIND(kind) kind,
   IC_BASELINE_FALLBACK_CODE_KIND_LIST(DEF_ENUM_KIND)
 #undef DEF_ENUM_KIND
@@ -228,9 +228,6 @@ class JitRuntime {
   using IonCompileTaskList = mozilla::LinkedList<js::jit::IonCompileTask>;
   MainThreadData<IonCompileTaskList> ionLazyLinkList_;
   MainThreadData<size_t> ionLazyLinkListSize_{0};
-
-  // Counter used to help dismbiguate stubs in CacheIR
-  MainThreadData<uint64_t> disambiguationId_{0};
 
 #ifdef DEBUG
   // Flag that can be set from JIT code to indicate it's invalid to call
@@ -443,8 +440,6 @@ class JitRuntime {
 
   void ionLazyLinkListRemove(JSRuntime* rt, js::jit::IonCompileTask* task);
   void ionLazyLinkListAdd(JSRuntime* rt, js::jit::IonCompileTask* task);
-
-  uint64_t nextDisambiguationId() { return disambiguationId_++; }
 };
 
 }  // namespace jit

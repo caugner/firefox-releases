@@ -259,6 +259,9 @@ Maybe<AspectRatio> RasterImage::GetIntrinsicRatio() {
 NS_IMETHODIMP_(Orientation)
 RasterImage::GetOrientation() { return mOrientation; }
 
+NS_IMETHODIMP_(Resolution)
+RasterImage::GetResolution() { return mResolution; }
+
 //******************************************************************************
 NS_IMETHODIMP
 RasterImage::GetType(uint16_t* aType) {
@@ -550,13 +553,15 @@ RasterImage::GetFrameAtSize(const IntSize& aSize, uint32_t aWhichFrame,
   NotifyDrawingObservers();
 #endif
 
-  auto result = GetFrameInternal(aSize, Nothing(), aWhichFrame, aFlags);
+  auto result =
+      GetFrameInternal(aSize, Nothing(), Nothing(), aWhichFrame, aFlags);
   return mozilla::Get<2>(result).forget();
 }
 
 Tuple<ImgDrawResult, IntSize, RefPtr<SourceSurface>>
 RasterImage::GetFrameInternal(const IntSize& aSize,
                               const Maybe<SVGImageContext>& aSVGContext,
+                              const Maybe<ImageIntRegion>& aRegion,
                               uint32_t aWhichFrame, uint32_t aFlags) {
   MOZ_ASSERT(aWhichFrame <= FRAME_MAX_VALUE);
 
@@ -648,10 +653,13 @@ RasterImage::IsImageContainerAvailable(LayerManager* aManager,
 
 NS_IMETHODIMP_(already_AddRefed<ImageContainer>)
 RasterImage::GetImageContainer(LayerManager* aManager, uint32_t aFlags) {
+  // Strip out unsupported flags for raster images.
+  uint32_t flags = aFlags & ~(FLAG_RECORD_BLOB);
+
   RefPtr<ImageContainer> container;
   ImgDrawResult drawResult =
-      GetImageContainerImpl(aManager, mSize.ToUnknownSize(), Nothing(), aFlags,
-                            getter_AddRefs(container));
+      GetImageContainerImpl(aManager, mSize.ToUnknownSize(), Nothing(),
+                            Nothing(), flags, getter_AddRefs(container));
 
   // We silence the unused warning here because anything that needs the draw
   // result should be using GetImageContainerAtSize, not GetImageContainer.
@@ -681,12 +689,13 @@ NS_IMETHODIMP_(ImgDrawResult)
 RasterImage::GetImageContainerAtSize(layers::LayerManager* aManager,
                                      const gfx::IntSize& aSize,
                                      const Maybe<SVGImageContext>& aSVGContext,
+                                     const Maybe<ImageIntRegion>& aRegion,
                                      uint32_t aFlags,
                                      layers::ImageContainer** aOutContainer) {
   // We do not pass in the given SVG context because in theory it could differ
   // between calls, but actually have no impact on the actual contents of the
   // image container.
-  return GetImageContainerImpl(aManager, aSize, Nothing(), aFlags,
+  return GetImageContainerImpl(aManager, aSize, Nothing(), Nothing(), aFlags,
                                aOutContainer);
 }
 
@@ -700,6 +709,7 @@ void RasterImage::CollectSizeOfSurfaces(
     nsTArray<SurfaceMemoryCounter>& aCounters,
     MallocSizeOf aMallocSizeOf) const {
   SurfaceCache::CollectSizeOfSurfaces(ImageKey(this), aCounters, aMallocSizeOf);
+  ImageResource::CollectSizeOfSurfaces(aCounters, aMallocSizeOf);
 }
 
 bool RasterImage::SetMetadata(const ImageMetadata& aMetadata,
@@ -709,6 +719,8 @@ bool RasterImage::SetMetadata(const ImageMetadata& aMetadata,
   if (mError) {
     return true;
   }
+
+  mResolution = aMetadata.GetResolution();
 
   if (aMetadata.HasSize()) {
     auto metadataSize = UnorientedIntSize::FromUnknownSize(aMetadata.GetSize());

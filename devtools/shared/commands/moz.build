@@ -4,8 +4,11 @@
 
 DIRS += [
     "inspected-window",
+    "inspector",
+    "resource",
     "target",
     "target-configuration",
+    "thread-configuration",
 ]
 
 DevToolsModules(

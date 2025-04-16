@@ -52,7 +52,7 @@ add_task(async function test_override_wait_after_n_restarts() {
   let doExperimentCleanup = await UrlbarTestUtils.enrollExperiment({
     valueOverrides: {
       quickSuggestEnabled: true,
-      quickSuggestShuoldShowOnboardingDialog: true,
+      quickSuggestShouldShowOnboardingDialog: true,
       // Just wait for 1 browser restart instead of the default 2
       quickSuggestShowOnboardingDialogAfterNRestarts: 1,
     },
@@ -108,4 +108,25 @@ add_task(async function test_skip_onboarding_dialog() {
   );
 
   await doExperimentCleanup();
+});
+
+add_task(async function test_indexes() {
+  await UrlbarTestUtils.withExperiment({
+    valueOverrides: {
+      quickSuggestNonSponsoredIndex: 99,
+      quickSuggestSponsoredIndex: -1337,
+    },
+    callback: () => {
+      Assert.equal(
+        UrlbarPrefs.get("quickSuggestNonSponsoredIndex"),
+        99,
+        "quickSuggestNonSponsoredIndex"
+      );
+      Assert.equal(
+        UrlbarPrefs.get("quickSuggestSponsoredIndex"),
+        -1337,
+        "quickSuggestSponsoredIndex"
+      );
+    },
+  });
 });

@@ -10,7 +10,7 @@ use neqo_common::{qtrace, Decoder, Encoder};
 
 use crate::cid::MAX_CONNECTION_ID_LEN;
 use crate::packet::{PacketBuilder, PacketType};
-use crate::stream_id::{StreamId, StreamIndex, StreamType};
+use crate::stream_id::{StreamId, StreamType};
 use crate::{AppError, ConnectionError, Error, Res, TransportError};
 
 use std::convert::TryFrom;
@@ -44,6 +44,8 @@ pub const FRAME_TYPE_PATH_RESPONSE: FrameType = 0x1b;
 pub const FRAME_TYPE_CONNECTION_CLOSE_TRANSPORT: FrameType = 0x1c;
 pub const FRAME_TYPE_CONNECTION_CLOSE_APPLICATION: FrameType = 0x1d;
 pub const FRAME_TYPE_HANDSHAKE_DONE: FrameType = 0x1e;
+// draft-ietf-quic-ack-delay
+pub const FRAME_TYPE_ACK_FREQUENCY: FrameType = 0xaf;
 
 const STREAM_FRAME_BIT_FIN: u64 = 0x01;
 const STREAM_FRAME_BIT_LEN: u64 = 0x02;
@@ -96,7 +98,7 @@ pub struct AckRange {
 /// A lot of frames here are just a collection of varints.
 /// This helper functions writes a frame like that safely, returning `true` if
 /// a frame was written.
-pub fn write_varint_frame(builder: &mut PacketBuilder, values: &[u64]) -> Res<bool> {
+pub fn write_varint_frame(builder: &mut PacketBuilder, values: &[u64]) -> bool {
     let write = builder.remaining()
         >= values
             .iter()
@@ -106,11 +108,9 @@ pub fn write_varint_frame(builder: &mut PacketBuilder, values: &[u64]) -> Res<bo
         for v in values {
             builder.encode_varint(*v);
         }
-        if builder.len() > builder.limit() {
-            return Err(Error::InternalError(16));
-        }
+        debug_assert!(builder.len() <= builder.limit());
     };
-    Ok(write)
+    write
 }
 
 #[derive(PartialEq, Debug, Clone)]
@@ -155,7 +155,7 @@ pub enum Frame<'a> {
     },
     MaxStreams {
         stream_type: StreamType,
-        maximum_streams: StreamIndex,
+        maximum_streams: u64,
     },
     DataBlocked {
         data_limit: u64,
@@ -166,7 +166,7 @@ pub enum Frame<'a> {
     },
     StreamsBlocked {
         stream_type: StreamType,
-        stream_limit: StreamIndex,
+        stream_limit: u64,
     },
     NewConnectionId {
         sequence_number: u64,
@@ -191,6 +191,18 @@ pub enum Frame<'a> {
         reason_phrase: Vec<u8>,
     },
     HandshakeDone,
+    AckFrequency {
+        /// The current ACK frequency sequence number.
+        seqno: u64,
+        /// The number of contiguous packets that can be received without
+        /// acknowledging immediately.
+        tolerance: u64,
+        /// The time to delay after receiving the first packet that is
+        /// not immediately acknowledged.
+        delay: u64,
+        /// Ignore reordering when deciding to immediately acknowledge.
+        ignore_order: bool,
+    },
 }
 
 impl<'a> Frame<'a> {
@@ -239,7 +251,23 @@ impl<'a> Frame<'a> {
                 FRAME_TYPE_CONNECTION_CLOSE_TRANSPORT + error_code.frame_type_bit()
             }
             Self::HandshakeDone => FRAME_TYPE_HANDSHAKE_DONE,
+            Self::AckFrequency { .. } => FRAME_TYPE_ACK_FREQUENCY,
         }
+    }
+
+    pub fn is_stream(&self) -> bool {
+        matches!(
+            self,
+            Self::ResetStream { .. }
+                | Self::StopSending { .. }
+                | Self::Stream { .. }
+                | Self::MaxData { .. }
+                | Self::MaxStreamData { .. }
+                | Self::MaxStreams { .. }
+                | Self::DataBlocked { .. }
+                | Self::StreamDataBlocked { .. }
+                | Self::StreamsBlocked { .. }
+        )
     }
 
     pub fn stream_type(fin: bool, nonzero_offset: bool, fill: bool) -> u64 {
@@ -468,7 +496,7 @@ impl<'a> Frame<'a> {
                 }
                 Ok(Self::MaxStreams {
                     stream_type: Self::stream_type_from_bit(t),
-                    maximum_streams: StreamIndex::new(m),
+                    maximum_streams: m,
                 })
             }
             FRAME_TYPE_DATA_BLOCKED => Ok(Self::DataBlocked {
@@ -481,7 +509,7 @@ impl<'a> Frame<'a> {
             FRAME_TYPE_STREAMS_BLOCKED_BIDI | FRAME_TYPE_STREAMS_BLOCKED_UNIDI => {
                 Ok(Self::StreamsBlocked {
                     stream_type: Self::stream_type_from_bit(t),
-                    stream_limit: StreamIndex::new(dv(dec)?),
+                    stream_limit: dv(dec)?,
                 })
             }
             FRAME_TYPE_NEW_CONNECTION_ID => {
@@ -532,6 +560,25 @@ impl<'a> Frame<'a> {
                 })
             }
             FRAME_TYPE_HANDSHAKE_DONE => Ok(Self::HandshakeDone),
+            FRAME_TYPE_ACK_FREQUENCY => {
+                let seqno = dv(dec)?;
+                let tolerance = dv(dec)?;
+                if tolerance == 0 {
+                    return Err(Error::FrameEncodingError);
+                }
+                let delay = dv(dec)?;
+                let ignore_order = match d(dec.decode_uint(1))? {
+                    0 => false,
+                    1 => true,
+                    _ => return Err(Error::FrameEncodingError),
+                };
+                Ok(Self::AckFrequency {
+                    seqno,
+                    tolerance,
+                    delay,
+                    ignore_order,
+                })
+            }
             _ => Err(Error::UnknownFrameType),
         }
     }
@@ -690,14 +737,14 @@ mod tests {
     fn max_streams() {
         let mut f = Frame::MaxStreams {
             stream_type: StreamType::BiDi,
-            maximum_streams: StreamIndex::new(0x1234),
+            maximum_streams: 0x1234,
         };
 
         just_dec(&f, "125234");
 
         f = Frame::MaxStreams {
             stream_type: StreamType::UniDi,
-            maximum_streams: StreamIndex::new(0x1234),
+            maximum_streams: 0x1234,
         };
 
         just_dec(&f, "135234");
@@ -724,14 +771,14 @@ mod tests {
     fn streams_blocked() {
         let mut f = Frame::StreamsBlocked {
             stream_type: StreamType::BiDi,
-            stream_limit: StreamIndex::new(0x1234),
+            stream_limit: 0x1234,
         };
 
         just_dec(&f, "165234");
 
         f = Frame::StreamsBlocked {
             stream_type: StreamType::UniDi,
-            stream_limit: StreamIndex::new(0x1234),
+            stream_limit: 0x1234,
         };
 
         just_dec(&f, "175234");
@@ -838,5 +885,35 @@ mod tests {
         let res = Frame::decode_ack_frame(7, 2, &[AckRange { gap: 0, range: 3 }]);
         assert!(res.is_ok());
         assert_eq!(res.unwrap(), vec![5..=7, 0..=3]);
+    }
+
+    #[test]
+    fn ack_frequency() {
+        let f = Frame::AckFrequency {
+            seqno: 10,
+            tolerance: 5,
+            delay: 2000,
+            ignore_order: true,
+        };
+        just_dec(&f, "40af0a0547d001");
+    }
+
+    #[test]
+    fn ack_frequency_ignore_error_error() {
+        let enc = Encoder::from_hex("40af0a0547d003"); // ignore_order of 3
+        assert_eq!(
+            Frame::decode(&mut enc.as_decoder()).unwrap_err(),
+            Error::FrameEncodingError
+        );
+    }
+
+    /// Hopefully this test is eventually redundant.
+    #[test]
+    fn ack_frequency_zero_packets() {
+        let enc = Encoder::from_hex("40af0a000101"); // packets of 0
+        assert_eq!(
+            Frame::decode(&mut enc.as_decoder()).unwrap_err(),
+            Error::FrameEncodingError
+        );
     }
 }

@@ -442,7 +442,7 @@ input[type='text'], input[type='search'] {
 main {
   margin: auto;
   width: 274px;
-  padding-bottom: 68px; }
+  padding: 0; }
   main section {
     margin-bottom: 20px;
     position: relative; }
@@ -457,6 +457,8 @@ main {
   @media (min-width: 1122px) {
     main {
       width: 1042px; } }
+  main.has-snippet {
+    padding-bottom: 68px; }
 
 .below-search-snippet.withButton {
   margin: auto;
@@ -467,7 +469,7 @@ main {
 
 .ds-outer-wrapper-breakpoint-override main {
   width: 266px;
-  padding-bottom: 68px; }
+  padding-bottom: 0; }
   @media (min-width: 610px) {
     .ds-outer-wrapper-breakpoint-override main {
       width: 510px; } }
@@ -477,6 +479,8 @@ main {
   @media (min-width: 1122px) {
     .ds-outer-wrapper-breakpoint-override main {
       width: 986px; } }
+  .ds-outer-wrapper-breakpoint-override main.has-snippet {
+    padding-bottom: 68px; }
 
 .base-content-fallback {
   height: 100vh; }
@@ -510,37 +514,6 @@ main {
     background-color: var(--newtab-element-hover-color); }
   .prefs-button button:active {
     background-color: var(--newtab-element-active-color); }
-
-@media (max-height: 701px) {
-  .personalize-button {
-    position: absolute;
-    top: 16px;
-    inset-inline-end: 16px; } }
-
-@media (min-height: 700px) {
-  .personalize-button {
-    position: fixed;
-    top: 16px;
-    inset-inline-end: 16px;
-    z-index: 1000; } }
-
-.personalize-button {
-  font-size: 12px;
-  font-weight: 600;
-  border: 0;
-  border-radius: 4px;
-  background-color: var(--newtab-background-button-color);
-  color: var(--newtab-background-button-text-color);
-  padding: 3px 10px;
-  min-height: 32px; }
-  .personalize-button:hover {
-    background-color: var(--newtab-background-button-hover-color); }
-  .personalize-button:active {
-    background-color: var(--newtab-background-button-active-color); }
-  .personalize-button:focus-visible {
-    border: 0;
-    outline: 0;
-    box-shadow: 0 0 0 3px var(--newtab-focus-outline), 0 0 0 1px var(--newtab-focus-border); }
 
 .as-error-fallback {
   align-items: center;
@@ -1072,12 +1045,10 @@ main {
   .outer-wrapper.newtab-experience .top-site-outer .title {
     color: var(--newtab-background-primary-text-color);
     padding-top: 8px;
-    font-size: 12px; }
+    font: caption; }
     .outer-wrapper.newtab-experience .top-site-outer .title .icon {
       margin-inline-end: 2px;
       fill: var(--newtab-background-primary-text-color); }
-    .outer-wrapper.newtab-experience .top-site-outer .title .sponsored-label {
-      font-size: 12px; }
   .outer-wrapper.newtab-experience .top-site-outer .default-icon,
   .outer-wrapper.newtab-experience .top-site-outer .search-topsite {
     height: 32px;
@@ -1684,6 +1655,39 @@ main {
   font-size: 15px;
   z-index: 11002; }
 
+@media (max-height: 701px) {
+  .personalize-button {
+    position: absolute;
+    top: 16px;
+    inset-inline-end: 16px; } }
+
+@media (min-height: 700px) {
+  .personalize-button {
+    position: fixed;
+    top: 16px;
+    inset-inline-end: 16px;
+    z-index: 1000; } }
+
+.personalize-button {
+  font-size: 12px;
+  font-weight: 600;
+  border: 0;
+  border-radius: 4px;
+  background-color: var(--newtab-background-button-color);
+  color: var(--newtab-background-button-text-color);
+  padding: 3px 10px;
+  min-height: 32px; }
+  .personalize-button:hover {
+    background-color: var(--newtab-background-button-hover-color); }
+  .personalize-button:active {
+    background-color: var(--newtab-background-button-active-color); }
+  .personalize-button:focus-visible {
+    border: 0;
+    outline: 0;
+    box-shadow: 0 0 0 3px var(--newtab-focus-outline), 0 0 0 1px var(--newtab-focus-border); }
+  .personalize-button.personalize-animate-exit-done {
+    visibility: hidden; }
+
 .customize-menu {
   color: var(--customize-menu-primary-text-color);
   background-color: var(--customize-menu-background);
@@ -1694,7 +1698,7 @@ main {
   inset-inline-end: 0;
   z-index: 1001;
   padding: 16px;
-  transition: transform 250ms cubic-bezier(0.46, 0.03, 0.52, 0.96);
+  transition: transform 250ms cubic-bezier(0.46, 0.03, 0.52, 0.96), visibility 250ms;
   overflow: auto;
   transform: translateX(435px);
   visibility: hidden;
@@ -1704,21 +1708,12 @@ main {
       border-inline-start: solid 1px; } }
   .customize-menu:dir(rtl) {
     transform: translateX(-435px); }
-  .customize-menu.customize-animate-enter-done {
+  .customize-menu.customize-animate-enter-done, .customize-menu.customize-animate-enter-active {
+    box-shadow: 0 0 64px var(--customize-menu-first-shadow), 0 0 24px var(--customize-menu-second-shadow);
+    visibility: visible;
     transform: translateX(0); }
-  .customize-menu.customize-animate-enter-done, .customize-menu.customize-animate-enter-active, .customize-menu.customize-animate-enter {
-    box-shadow: 0 0 64px var(--customize-menu-first-shadow), 0 0 24px var(--customize-menu-second-shadow);
-    transition: transform 250ms cubic-bezier(0.46, 0.03, 0.52, 0.96), visibility 1ms;
-    visibility: visible; }
-  .customize-menu.customize-animate-exit-active, .customize-menu.customize-animate-exit {
-    box-shadow: 0 0 64px var(--customize-menu-first-shadow), 0 0 24px var(--customize-menu-second-shadow);
-    transition: transform 250ms cubic-bezier(0.46, 0.03, 0.52, 0.96), visibility 1ms 250ms;
-    visibility: visible; }
-  .customize-menu.customize-animate-exit-done {
-    transform: translateX(435px);
-    transition: transform 250ms cubic-bezier(0.46, 0.03, 0.52, 0.96), visibility 1ms 250ms; }
-    .customize-menu.customize-animate-exit-done:dir(rtl) {
-      transform: translateX(-435px); }
+  .customize-menu.customize-animate-exit-active {
+    box-shadow: 0 0 64px var(--customize-menu-first-shadow), 0 0 24px var(--customize-menu-second-shadow); }
   .customize-menu .close-button {
     margin-inline-start: auto;
     margin-bottom: 28px;

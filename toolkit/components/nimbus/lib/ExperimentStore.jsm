@@ -13,6 +13,9 @@ const { XPCOMUtils } = ChromeUtils.import(
   "resource://gre/modules/XPCOMUtils.jsm"
 );
 const { Services } = ChromeUtils.import("resource://gre/modules/Services.jsm");
+XPCOMUtils.defineLazyModuleGetters(this, {
+  FeatureManifest: "resource://nimbus/FeatureManifest.js",
+});
 
 const IS_MAIN_PROCESS =
   Services.appinfo.processType === Services.appinfo.PROCESS_TYPE_DEFAULT;
@@ -86,13 +89,26 @@ XPCOMUtils.defineLazyGetter(this, "syncDataStore", () => {
 });
 
 const DEFAULT_STORE_ID = "ExperimentStoreData";
-// Experiment feature configs that should be saved to prefs for
-// fast access on startup.
-const SYNC_ACCESS_FEATURES = ["newtab", "aboutwelcome", "upgradeDialog"];
 
 class ExperimentStore extends SharedDataMap {
+  static SYNC_DATA_PREF_BRANCH = SYNC_DATA_PREF_BRANCH;
+  static SYNC_DEFAULTS_PREF_BRANCH = SYNC_DEFAULTS_PREF_BRANCH;
+
   constructor(sharedDataKey, options = { isParent: IS_MAIN_PROCESS }) {
     super(sharedDataKey || DEFAULT_STORE_ID, options);
+  }
+
+  async init() {
+    await super.init();
+
+    this.getAllActive().forEach(({ branch }) => {
+      if (branch?.feature?.featureId) {
+        this._emitFeatureUpdate(
+          branch.feature.featureId,
+          "feature-experiment-loaded"
+        );
+      }
+    });
   }
 
   /**
@@ -180,7 +196,10 @@ class ExperimentStore extends SharedDataMap {
    */
   _updateSyncStore(experiment) {
     let featureId = experiment.branch.feature?.featureId;
-    if (SYNC_ACCESS_FEATURES.includes(featureId)) {
+    if (
+      FeatureManifest[featureId]?.isEarlyStartup ||
+      experiment.branch.feature?.isEarlyStartup
+    ) {
       if (!experiment.active) {
         // Remove experiments on un-enroll, no need to check if it exists
         syncDataStore.delete(featureId);
@@ -241,6 +260,14 @@ class ExperimentStore extends SharedDataMap {
       }
     }
 
+    // In case no features exist we want to at least initialize with an empty
+    // object to signal that we completed the initial fetch step
+    if (!activeFeatureConfigIds.length) {
+      // Wait for ready, in the case users have opted out we finalize early
+      // and things might not be ready yet
+      this.ready().then(() => this.setNonPersistent(REMOTE_DEFAULTS_KEY, {}));
+    }
+
     // Notify all ExperimentFeature instances that the Remote Defaults cycle finished
     // this will resolve the `onRemoteReady` promise for features that do not
     // have any remote data available.
@@ -258,7 +285,10 @@ class ExperimentStore extends SharedDataMap {
       ...remoteConfigState,
       [featureId]: { ...configuration },
     });
-    if (SYNC_ACCESS_FEATURES.includes(featureId)) {
+    if (
+      FeatureManifest[featureId]?.isEarlyStartup ||
+      configuration.isEarlyStartup
+    ) {
       syncDataStore.setDefault(featureId, configuration);
     }
     this._emitFeatureUpdate(featureId, "remote-defaults-update");
@@ -295,6 +325,19 @@ class ExperimentStore extends SharedDataMap {
         ...Object.keys(this.get(REMOTE_DEFAULTS_KEY) || {}),
       ]),
     ];
+  }
+
+  getAllRemoteConfigs() {
+    const remoteDefaults = this.get(REMOTE_DEFAULTS_KEY);
+    if (!remoteDefaults) {
+      return [];
+    }
+
+    let featureIds = Object.keys(remoteDefaults);
+    return Object.values(remoteDefaults).map((rc, idx) => ({
+      ...rc,
+      featureId: featureIds[idx],
+    }));
   }
 
   _deleteForTests(featureId) {

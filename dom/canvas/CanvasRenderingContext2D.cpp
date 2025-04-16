@@ -1720,7 +1720,8 @@ CanvasRenderingContext2D::GetSurfaceSnapshot(gfxAlphaType* aOutAlphaType) {
     MOZ_ASSERT(
         mTarget == sErrorTarget,
         "On EnsureTarget failure mTarget should be set to sErrorTarget.");
-    return mTarget->Snapshot();
+    // In rare circumstances we may have failed to create an error target.
+    return mTarget ? mTarget->Snapshot() : nullptr;
   }
 
   // The concept of BorrowSnapshot seems a bit broken here, but the original
@@ -2183,8 +2184,10 @@ already_AddRefed<CanvasPattern> CanvasRenderingContext2D::CreatePattern(
 
   // The canvas spec says that createPattern should use the first frame
   // of animated images
-  SurfaceFromElementResult res = nsLayoutUtils::SurfaceFromElement(
-      element, nsLayoutUtils::SFE_WANT_FIRST_FRAME_IF_IMAGE, mTarget);
+  auto flags = nsLayoutUtils::SFE_WANT_FIRST_FRAME_IF_IMAGE |
+               nsLayoutUtils::SFE_EXACT_SIZE_SURFACE;
+  SurfaceFromElementResult res =
+      nsLayoutUtils::SurfaceFromElement(element, flags, mTarget);
 
   // Per spec, we should throw here for the HTMLImageElement and SVGImageElement
   // cases if the image request state is "broken".  In terms of the infromation
@@ -4415,9 +4418,9 @@ SurfaceFromElementResult CanvasRenderingContext2D::CachedSurfaceFromElement(
     return res;
   }
 
-  int32_t corsmode = imgIRequest::CORS_NONE;
+  int32_t corsmode = CORS_NONE;
   if (NS_SUCCEEDED(imgRequest->GetCORSMode(&corsmode))) {
-    res.mCORSUsed = corsmode != imgIRequest::CORS_NONE;
+    res.mCORSUsed = corsmode != CORS_NONE;
   }
 
   res.mSize = res.mIntrinsicSize = res.mSourceSurface->GetSize();
@@ -4524,7 +4527,8 @@ void CanvasRenderingContext2D::DrawImage(const CanvasImageSource& aImage,
     // The canvas spec says that drawImage should draw the first frame
     // of animated images. We also don't want to rasterize vector images.
     uint32_t sfeFlags = nsLayoutUtils::SFE_WANT_FIRST_FRAME_IF_IMAGE |
-                        nsLayoutUtils::SFE_NO_RASTERIZING_VECTORS;
+                        nsLayoutUtils::SFE_NO_RASTERIZING_VECTORS |
+                        nsLayoutUtils::SFE_EXACT_SIZE_SURFACE;
 
     SurfaceFromElementResult res =
         CanvasRenderingContext2D::CachedSurfaceFromElement(element);
@@ -4534,11 +4538,16 @@ void CanvasRenderingContext2D::DrawImage(const CanvasImageSource& aImage,
     }
 
     if (!res.mSourceSurface && !res.mDrawInfo.mImgContainer) {
-      // The spec says to silently do nothing in the following cases:
+      // https://html.spec.whatwg.org/#check-the-usability-of-the-image-argument:
+      //
+      // Only throw if the request is broken and the element is an
+      // HTMLImageElement / SVGImageElement. Note that even for those the spec
+      // says to silently do nothing in the following cases:
       //   - The element is still loading.
       //   - The image is bad, but it's not in the broken state (i.e., we could
       //     decode the headers and get the size).
-      if (!res.mIsStillLoading && !res.mHasSize) {
+      if (!res.mIsStillLoading && !res.mHasSize &&
+          (aImage.IsHTMLImageElement() || aImage.IsSVGImageElement())) {
         aError.ThrowInvalidStateError("Passed-in image is \"broken\"");
       }
       return;
@@ -5151,7 +5160,7 @@ void CanvasRenderingContext2D::EnsureErrorTarget() {
   MOZ_ASSERT(errorTarget, "Failed to allocate the error target!");
 
   sErrorTarget = errorTarget;
-  NS_ADDREF(sErrorTarget);
+  NS_IF_ADDREF(sErrorTarget);
 }
 
 void CanvasRenderingContext2D::FillRuleChanged() {

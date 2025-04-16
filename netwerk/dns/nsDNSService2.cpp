@@ -15,6 +15,7 @@
 #include "nsProxyRelease.h"
 #include "nsReadableUtils.h"
 #include "nsString.h"
+#include "nsCRT.h"
 #include "nsNetCID.h"
 #include "nsError.h"
 #include "nsDNSPrefetch.h"
@@ -900,13 +901,12 @@ bool nsDNSService::DNSForbiddenByActiveProxy(const nsACString& aHostname,
   }
 
   // We should avoid doing DNS when a proxy is in use.
-  PRNetAddr tempAddr;
+  NetAddr tempAddr;
   if (StaticPrefs::network_proxy_type() ==
           nsIProtocolProxyService::PROXYCONFIG_MANUAL &&
       mHasSocksProxy && StaticPrefs::network_proxy_socks_remote_dns()) {
     // Allow IP lookups through, but nothing else.
-    if (PR_StringToNetAddr(nsCString(aHostname).get(), &tempAddr) !=
-        PR_SUCCESS) {
+    if (!HostIsIPLiteral(aHostname)) {
       return true;
     }
   }
@@ -1350,7 +1350,7 @@ uint16_t nsDNSService::GetAFForLookup(const nsACString& host, uint32_t flags) {
       domainLen = end - domain;
       if (domainLen && hostLen >= domainLen) {
         const char* hostTail = hostStart.get() + hostLen - domainLen;
-        if (PL_strncasecmp(domain, hostTail, domainLen) == 0) {
+        if (nsCRT::strncasecmp(domain, hostTail, domainLen) == 0) {
           // now, make sure either that the hostname is a direct match or
           // that the hostname begins with a dot.
           if (hostLen == domainLen || *hostTail == '.' ||

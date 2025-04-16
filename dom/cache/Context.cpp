@@ -342,31 +342,31 @@ Context::QuotaInitRunnable::Run() {
     case STATE_GET_INFO: {
       MOZ_ASSERT(NS_IsMainThread());
 
-      if (mCanceled) {
-        resolver->Resolve(NS_ERROR_ABORT);
-        break;
+      auto res = [this]() -> Result<Ok, nsresult> {
+        if (mCanceled) {
+          return Err(NS_ERROR_ABORT);
+        }
+
+        nsCOMPtr<nsIPrincipal> principal = mManager->GetManagerId().Principal();
+
+        QM_TRY_UNWRAP(auto principalMetadata,
+                      QuotaManager::GetInfoFromPrincipal(principal));
+
+        static_cast<quota::OriginMetadata&>(mQuotaInfo) = {
+            std::move(principalMetadata), PERSISTENCE_TYPE_DEFAULT};
+
+        mState = STATE_CREATE_QUOTA_MANAGER;
+
+        MOZ_ALWAYS_SUCCEEDS(
+            mInitiatingEventTarget->Dispatch(this, nsIThread::DISPATCH_NORMAL));
+
+        return Ok{};
+      }();
+
+      if (res.isErr()) {
+        resolver->Resolve(res.inspectErr());
       }
 
-      nsCOMPtr<nsIPrincipal> principal = mManager->GetManagerId().Principal();
-      DebugOnly res =
-          QuotaManager::GetInfoFromPrincipal(principal)
-              .andThen([&self = *this](
-                           quota::PrincipalMetadata&& principalMetadata) {
-                static_cast<quota::OriginMetadata&>(self.mQuotaInfo) = {
-                    std::move(principalMetadata), PERSISTENCE_TYPE_DEFAULT};
-
-                self.mState = STATE_CREATE_QUOTA_MANAGER;
-                MOZ_ALWAYS_SUCCEEDS(self.mInitiatingEventTarget->Dispatch(
-                    &self, nsIThread::DISPATCH_NORMAL));
-
-                return Result<Ok, nsresult>{Ok{}};
-              })
-              .orElse([&resolver](const auto& res) {
-                resolver->Resolve(res);
-
-                return Result<Ok, nsresult>{Ok{}};
-              });
-      MOZ_ASSERT(res.inspect().isOk());
       break;
     }
     // ----------------------------------
@@ -411,15 +411,15 @@ Context::QuotaInitRunnable::Run() {
         QuotaManager* quotaManager = QuotaManager::Get();
         MOZ_DIAGNOSTIC_ASSERT(quotaManager);
 
-        CACHE_TRY(quotaManager->EnsureStorageIsInitialized());
+        QM_TRY(quotaManager->EnsureStorageIsInitialized());
 
-        CACHE_TRY(quotaManager->EnsureTemporaryStorageIsInitialized());
+        QM_TRY(quotaManager->EnsureTemporaryStorageIsInitialized());
 
-        CACHE_TRY_UNWRAP(mQuotaInfo.mDir,
-                         quotaManager
-                             ->EnsureTemporaryOriginIsInitialized(
-                                 PERSISTENCE_TYPE_DEFAULT, mQuotaInfo)
-                             .map([](const auto& res) { return res.first; }));
+        QM_TRY_UNWRAP(mQuotaInfo.mDir,
+                      quotaManager
+                          ->EnsureTemporaryOriginIsInitialized(
+                              PERSISTENCE_TYPE_DEFAULT, mQuotaInfo)
+                          .map([](const auto& res) { return res.first; }));
 
         mState = STATE_RUN_ON_TARGET;
 

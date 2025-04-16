@@ -290,7 +290,6 @@
 #include "nsHtml5Module.h"
 #include "nsHtml5Parser.h"
 #include "nsHtml5TreeOpExecutor.h"
-#include "nsIApplicationCache.h"
 #include "nsIAsyncShutdown.h"
 #include "nsIAuthPrompt.h"
 #include "nsIAuthPrompt2.h"
@@ -1133,7 +1132,6 @@ NS_IMPL_ISUPPORTS(ExternalResourceMap::LoadgroupCallbacks,
 IMPL_SHIM(nsILoadContext)
 IMPL_SHIM(nsIProgressEventSink)
 IMPL_SHIM(nsIChannelEventSink)
-IMPL_SHIM(nsIApplicationCacheContainer)
 
 #undef IMPL_SHIM
 
@@ -1165,7 +1163,6 @@ ExternalResourceMap::LoadgroupCallbacks::GetInterface(const nsIID& aIID,
   TRY_SHIM(nsILoadContext);
   TRY_SHIM(nsIProgressEventSink);
   TRY_SHIM(nsIChannelEventSink);
-  TRY_SHIM(nsIApplicationCacheContainer);
 
   return NS_NOINTERFACE;
 }
@@ -1310,6 +1307,7 @@ Document::Document(const char* aContentType)
       mIsInitialDocumentInWindow(false),
       mIgnoreDocGroupMismatches(false),
       mLoadedAsData(false),
+      mAddedToMemoryReportingAsDataDocument(false),
       mMayStartLayout(true),
       mHaveFiredTitleChange(false),
       mIsShowing(false),
@@ -1953,12 +1951,6 @@ void Document::LoadEventFired() {
   }
 }
 
-static uint32_t CalcPercentage(TimeDuration aSubTimer,
-                               TimeDuration aTotalTimer) {
-  return static_cast<uint32_t>(100.0 * aSubTimer.ToMilliseconds() /
-                               aTotalTimer.ToMilliseconds());
-}
-
 void Document::AccumulatePageLoadTelemetry() {
   // Interested only in top level documents for real websites that are in the
   // foreground.
@@ -2065,44 +2057,40 @@ void Document::AccumulateJSTelemetry() {
   JSAutoRealm ar(cx, globalObject);
   JS::JSTimers timers = JS::GetJSTimers(cx);
 
-  TimeDuration totalExecutionTime = timers.executionTime;
-  TimeDuration totalDelazificationTime = timers.delazificationTime;
-  TimeDuration totalXDREncodingTime = timers.xdrEncodingTime;
-  TimeDuration totalBaselineCompileTime = timers.baselineCompileTime;
-
-  if (totalExecutionTime.IsZero()) {
-    return;
-  }
-
-  if (!totalDelazificationTime.IsZero()) {
+  if (!timers.executionTime.IsZero()) {
     Telemetry::Accumulate(
-        Telemetry::JS_DELAZIFICATION_PROPORTION,
-        CalcPercentage(totalDelazificationTime, totalExecutionTime));
+        Telemetry::JS_PAGELOAD_EXECUTION_MS,
+        static_cast<uint32_t>(timers.executionTime.ToMilliseconds()));
   }
 
-  if (!totalXDREncodingTime.IsZero()) {
+  if (!timers.delazificationTime.IsZero()) {
     Telemetry::Accumulate(
-        Telemetry::JS_XDR_ENCODING_PROPORTION,
-        CalcPercentage(totalXDREncodingTime, totalExecutionTime));
+        Telemetry::JS_PAGELOAD_DELAZIFICATION_MS,
+        static_cast<uint32_t>(timers.delazificationTime.ToMilliseconds()));
   }
 
-  if (!totalBaselineCompileTime.IsZero()) {
+  if (!timers.xdrEncodingTime.IsZero()) {
     Telemetry::Accumulate(
-        Telemetry::JS_BASELINE_COMPILE_PROPORTION,
-        CalcPercentage(totalBaselineCompileTime, totalExecutionTime));
+        Telemetry::JS_PAGELOAD_XDR_ENCODING_MS,
+        static_cast<uint32_t>(timers.xdrEncodingTime.ToMilliseconds()));
   }
 
-  if (GetNavigationTiming()) {
-    TimeStamp loadEventStart =
-        GetNavigationTiming()->GetLoadEventStartTimeStamp();
-    TimeStamp navigationStart =
-        GetNavigationTiming()->GetNavigationStartTimeStamp();
+  if (!timers.baselineCompileTime.IsZero()) {
+    Telemetry::Accumulate(
+        Telemetry::JS_PAGELOAD_BASELINE_COMPILE_MS,
+        static_cast<uint32_t>(timers.baselineCompileTime.ToMilliseconds()));
+  }
 
-    if (loadEventStart && navigationStart) {
-      TimeDuration pageLoadTime = loadEventStart - navigationStart;
-      Telemetry::Accumulate(Telemetry::JS_EXECUTION_PROPORTION,
-                            CalcPercentage(totalExecutionTime, pageLoadTime));
-    }
+  if (!timers.gcTime.IsZero()) {
+    Telemetry::Accumulate(
+        Telemetry::JS_PAGELOAD_GC_MS,
+        static_cast<uint32_t>(timers.gcTime.ToMilliseconds()));
+  }
+
+  if (!timers.protectTime.IsZero()) {
+    Telemetry::Accumulate(
+        Telemetry::JS_PAGELOAD_PROTECT_MS,
+        static_cast<uint32_t>(timers.protectTime.ToMilliseconds()));
   }
 }
 
@@ -2248,11 +2236,12 @@ Document::~Document() {
 
   if (mDocGroup) {
     MOZ_ASSERT(mDocGroup->GetBrowsingContextGroup());
-    mDocGroup->GetBrowsingContextGroup()->RemoveDocument(mDocGroup->GetKey(),
-                                                         this);
+    mDocGroup->GetBrowsingContextGroup()->RemoveDocument(this, mDocGroup);
   }
 
   UnlinkOriginalDocumentIfStatic();
+
+  UnregisterFromMemoryReportingForDataDocument();
 }
 
 NS_INTERFACE_TABLE_HEAD(Document)
@@ -2265,7 +2254,6 @@ NS_INTERFACE_TABLE_HEAD(Document)
     NS_INTERFACE_TABLE_ENTRY(Document, EventTarget)
     NS_INTERFACE_TABLE_ENTRY(Document, nsISupportsWeakReference)
     NS_INTERFACE_TABLE_ENTRY(Document, nsIRadioGroupContainer)
-    NS_INTERFACE_TABLE_ENTRY(Document, nsIApplicationCacheContainer)
   NS_INTERFACE_TABLE_END
   NS_INTERFACE_TABLE_TO_MAP_SEGUE_CYCLE_COLLECTION(Document)
 NS_INTERFACE_MAP_END
@@ -2529,8 +2517,8 @@ NS_IMPL_CYCLE_COLLECTION_UNLINK_BEGIN(Document)
   NS_IMPL_CYCLE_COLLECTION_UNLINK(mPreloadReferrerInfo)
 
   if (tmp->mDocGroup && tmp->mDocGroup->GetBrowsingContextGroup()) {
-    tmp->mDocGroup->GetBrowsingContextGroup()->RemoveDocument(
-        tmp->mDocGroup->GetKey(), tmp);
+    tmp->mDocGroup->GetBrowsingContextGroup()->RemoveDocument(tmp,
+                                                              tmp->mDocGroup);
   }
   tmp->mDocGroup = nullptr;
 
@@ -2600,6 +2588,9 @@ NS_IMPL_CYCLE_COLLECTION_UNLINK_BEGIN(Document)
     tmp->mResizeObserverController->Unlink();
   }
   tmp->mMetaViewports.Clear();
+
+  tmp->UnregisterFromMemoryReportingForDataDocument();
+
   NS_IMPL_CYCLE_COLLECTION_UNLINK(mL10nProtoElements)
   NS_IMPL_CYCLE_COLLECTION_UNLINK_WEAK_PTR
   NS_IMPL_CYCLE_COLLECTION_UNLINK_WEAK_REFERENCE
@@ -2897,7 +2888,7 @@ already_AddRefed<nsIPrincipal> Document::MaybeDowngradePrincipal(
       auto* parentWin = nsGlobalWindowOuter::Cast(parent->GetDOMWindow());
       if (!parentWin || !parentWin->GetPrincipal()->IsSystemPrincipal()) {
         nsCOMPtr<nsIPrincipal> nullPrincipal =
-            do_CreateInstance("@mozilla.org/nullprincipal;1");
+            NullPrincipal::CreateWithoutOriginAttributes();
         return nullPrincipal.forget();
       }
     }
@@ -3282,6 +3273,7 @@ nsresult Document::StartDocumentLoad(const char* aCommand, nsIChannel* aChannel,
 
   if (nsCRT::strcmp(kLoadAsData, aCommand) == 0) {
     mLoadedAsData = true;
+    SetLoadedAsData(true, /* aConsiderForMemoryReporting */ true);
     // We need to disable script & style loading in this case.
     // We leave them disabled even in EndLoad(), and let anyone
     // who puts the document on display to worry about enabling.
@@ -3449,6 +3441,20 @@ nsresult Document::StartDocumentLoad(const char* aCommand, nsIChannel* aChannel,
   }
 
   return NS_OK;
+}
+
+void Document::SetLoadedAsData(bool aLoadedAsData,
+                               bool aConsiderForMemoryReporting) {
+  mLoadedAsData = aLoadedAsData;
+  if (aConsiderForMemoryReporting) {
+    nsIGlobalObject* global = GetScopeObject();
+    if (global) {
+      if (nsPIDOMWindowInner* window = global->AsInnerWindow()) {
+        nsGlobalWindowInner::Cast(window)
+            ->RegisterDataDocumentForMemoryReporting(this);
+      }
+    }
+  }
 }
 
 nsIContentSecurityPolicy* Document::GetCsp() const { return mCSP; }
@@ -4098,18 +4104,6 @@ bool Document::IsScriptTracking(JSContext* aCx) const {
     return false;
   }
   return mTrackingScripts.Contains(nsDependentCString(filename.get()));
-}
-
-NS_IMETHODIMP
-Document::GetApplicationCache(nsIApplicationCache** aApplicationCache) {
-  NS_IF_ADDREF(*aApplicationCache = mApplicationCache);
-  return NS_OK;
-}
-
-NS_IMETHODIMP
-Document::SetApplicationCache(nsIApplicationCache* aApplicationCache) {
-  mApplicationCache = aApplicationCache;
-  return NS_OK;
 }
 
 void Document::GetContentType(nsAString& aContentType) {
@@ -5173,7 +5167,8 @@ bool Document::ExecCommand(const nsAString& aHTMLCommandName, bool aShowUI,
                            nsIPrincipal& aSubjectPrincipal, ErrorResult& aRv) {
   // Only allow on HTML documents.
   if (!IsHTMLOrXHTML()) {
-    aRv.Throw(NS_ERROR_DOM_INVALID_STATE_DOCUMENT_EXEC_COMMAND);
+    aRv.ThrowInvalidStateError(
+        "execCommand is only supported on HTML documents");
     return false;
   }
   // Otherwise, don't throw exception for compatibility with Chrome.
@@ -5289,7 +5284,8 @@ bool Document::ExecCommand(const nsAString& aHTMLCommandName, bool aShowUI,
       return false;
     }
 
-    MOZ_ASSERT(commandData.IsPasteCommand());
+    MOZ_ASSERT(commandData.IsPasteCommand() ||
+               commandData.mCommand == Command::SelectAll);
     nsresult rv =
         commandManager->DoCommand(commandData.mXULCommandName, nullptr, window);
     return NS_SUCCEEDED(rv) && rv != NS_SUCCESS_DOM_NO_OPERATION;
@@ -5352,7 +5348,8 @@ bool Document::QueryCommandEnabled(const nsAString& aHTMLCommandName,
                                    ErrorResult& aRv) {
   // Only allow on HTML documents.
   if (!IsHTMLOrXHTML()) {
-    aRv.Throw(NS_ERROR_DOM_INVALID_STATE_DOCUMENT_QUERY_COMMAND_ENABLED);
+    aRv.ThrowInvalidStateError(
+        "queryCommandEnabled is only supported on HTML documents");
     return false;
   }
   // Otherwise, don't throw exception for compatibility with Chrome.
@@ -5402,7 +5399,8 @@ bool Document::QueryCommandIndeterm(const nsAString& aHTMLCommandName,
                                     ErrorResult& aRv) {
   // Only allow on HTML documents.
   if (!IsHTMLOrXHTML()) {
-    aRv.Throw(NS_ERROR_DOM_INVALID_STATE_DOCUMENT_QUERY_COMMAND_INDETERM);
+    aRv.ThrowInvalidStateError(
+        "queryCommandIndeterm is only supported on HTML documents");
     return false;
   }
   // Otherwise, don't throw exception for compatibility with Chrome.
@@ -5451,7 +5449,8 @@ bool Document::QueryCommandState(const nsAString& aHTMLCommandName,
                                  ErrorResult& aRv) {
   // Only allow on HTML documents.
   if (!IsHTMLOrXHTML()) {
-    aRv.Throw(NS_ERROR_DOM_INVALID_STATE_DOCUMENT_QUERY_COMMAND_STATE);
+    aRv.ThrowInvalidStateError(
+        "queryCommandState is only supported on HTML documents");
     return false;
   }
   // Otherwise, don't throw exception for compatibility with Chrome.
@@ -5549,7 +5548,8 @@ bool Document::QueryCommandSupported(const nsAString& aHTMLCommandName,
                                      CallerType aCallerType, ErrorResult& aRv) {
   // Only allow on HTML documents.
   if (!IsHTMLOrXHTML()) {
-    aRv.Throw(NS_ERROR_DOM_INVALID_STATE_DOCUMENT_QUERY_COMMAND_SUPPORTED);
+    aRv.ThrowInvalidStateError(
+        "queryCommandSupported is only supported on HTML documents");
     return false;
   }
   // Otherwise, don't throw exception for compatibility with Chrome.
@@ -5588,7 +5588,8 @@ void Document::QueryCommandValue(const nsAString& aHTMLCommandName,
 
   // Only allow on HTML documents.
   if (!IsHTMLOrXHTML()) {
-    aRv.Throw(NS_ERROR_DOM_INVALID_STATE_DOCUMENT_QUERY_COMMAND_VALUE);
+    aRv.ThrowInvalidStateError(
+        "queryCommandValue is only supported on HTML documents");
     return;
   }
   // Otherwise, don't throw exception for compatibility with Chrome.
@@ -6783,6 +6784,17 @@ void Document::DeletePresShell() {
   mDesignModeSheetAdded = false;
 }
 
+void Document::DisallowBFCaching() {
+  NS_ASSERTION(!mBFCacheEntry, "We're already in the bfcache!");
+  if (!mBFCacheDisallowed) {
+    WindowGlobalChild* wgc = GetWindowGlobalChild();
+    if (wgc) {
+      wgc->BlockBFCacheFor(BFCacheStatus::NOT_ALLOWED);
+    }
+  }
+  mBFCacheDisallowed = true;
+}
+
 void Document::SetBFCacheEntry(nsIBFCacheEntry* aEntry) {
   MOZ_ASSERT(IsBFCachingAllowed() || !aEntry, "You should have checked!");
 
@@ -6812,15 +6824,14 @@ bool Document::RemoveFromBFCacheSync() {
 
   if (XRE_IsContentProcess()) {
     if (BrowsingContext* bc = GetBrowsingContext()) {
-      BrowsingContext* top = bc->Top();
-      if (top->GetIsInBFCache()) {
+      if (bc->IsInBFCache()) {
         ContentChild* cc = ContentChild::GetSingleton();
         // IPC is asynchronous but the caller is supposed to check the return
         // value. The reason for 'Sync' in the method name is that the old
         // implementation may run scripts. There is Async variant in
         // the old session history implementation for the cases where
         // synchronous operation isn't safe.
-        cc->SendRemoveFromBFCache(top);
+        cc->SendRemoveFromBFCache(bc->Top());
         removed = true;
       }
     }
@@ -8909,6 +8920,11 @@ void Document::DoNotifyPossibleTitleChange() {
   nsContentUtils::DispatchChromeEvent(this, ToSupports(this),
                                       u"DOMTitleChanged"_ns, CanBubble::eYes,
                                       Cancelable::eYes);
+
+  nsCOMPtr<nsIObserverService> obs = mozilla::services::GetObserverService();
+  if (obs) {
+    obs->NotifyObservers(ToSupports(this), "document-title-changed", nullptr);
+  }
 }
 
 already_AddRefed<MediaQueryList> Document::MatchMedia(
@@ -10865,7 +10881,8 @@ void Document::CollectDescendantDocuments(
 
 bool Document::CanSavePresentation(nsIRequest* aNewRequest,
                                    uint16_t& aBFCacheCombo,
-                                   bool aIncludeSubdocuments) {
+                                   bool aIncludeSubdocuments,
+                                   bool aAllowUnloadListeners) {
   bool ret = true;
 
   if (!IsBFCachingAllowed()) {
@@ -10900,10 +10917,21 @@ bool Document::CanSavePresentation(nsIRequest* aNewRequest,
     ret = false;
   }
 
+  nsCOMPtr<nsIChannel> channel = do_QueryInterface(aNewRequest);
+  bool thirdParty = false;
+  // Currently some other mobile browsers seem to bfcache only cross-domain
+  // pages, but bfcache those also when there are unload event listeners, so
+  // this is trying to match that behavior as much as possible.
+  bool allowUnloadListeners =
+      aAllowUnloadListeners &&
+      StaticPrefs::docshell_shistory_bfcache_allow_unload_listeners() &&
+      (!channel || (NS_SUCCEEDED(NodePrincipal()->IsThirdPartyChannel(
+                        channel, &thirdParty)) &&
+                    thirdParty));
+
   // Check our event listener manager for unload/beforeunload listeners.
   nsCOMPtr<EventTarget> piTarget = do_QueryInterface(mScriptGlobalObject);
-  if (!StaticPrefs::docshell_shistory_bfcache_allow_unload_listeners() &&
-      piTarget) {
+  if (!allowUnloadListeners && piTarget) {
     EventListenerManager* manager = piTarget->GetExistingListenerManager();
     if (manager && manager->HasUnloadListeners()) {
       MOZ_LOG(gPageCacheLog, mozilla::LogLevel::Verbose,
@@ -11001,9 +11029,10 @@ bool Document::CanSavePresentation(nsIRequest* aNewRequest,
 
       uint16_t subDocBFCacheCombo = 0;
       // The aIgnoreRequest we were passed is only for us, so don't pass it on.
-      bool canCache = subdoc ? subdoc->CanSavePresentation(
-                                   nullptr, subDocBFCacheCombo, true)
-                             : false;
+      bool canCache =
+          subdoc ? subdoc->CanSavePresentation(nullptr, subDocBFCacheCombo,
+                                               true, allowUnloadListeners)
+                 : false;
       if (!canCache) {
         MOZ_LOG(gPageCacheLog, mozilla::LogLevel::Verbose,
                 ("Save of %s blocked due to subdocument blocked", uri.get()));
@@ -11666,6 +11695,8 @@ nsresult Document::CloneDocHelper(Document* clone) const {
       clone->ResetToURI(uri, loadGroup, NodePrincipal(), mPartitionedPrincipal);
     }
 
+    clone->mIsSrcdocDocument = mIsSrcdocDocument;
+
     clone->SetContainer(mDocumentContainer);
 
     // Setup the navigation time. This will be needed by any animations in the
@@ -11712,7 +11743,9 @@ nsresult Document::CloneDocHelper(Document* clone) const {
     clone->SetScopeObject(GetScopeObject());
   }
   // Make the clone a data document
-  clone->SetLoadedAsData(true);
+  clone->SetLoadedAsData(
+      true,
+      /* aConsiderForMemoryReporting */ !mCreatingStaticClone);
 
   // Misc state
 
@@ -11857,6 +11890,12 @@ void Document::GetReadyState(nsAString& aReadyState) const {
 
 void Document::SuppressEventHandling(uint32_t aIncrease) {
   mEventsSuppressed += aIncrease;
+  if (mEventsSuppressed == aIncrease) {
+    WindowGlobalChild* wgc = GetWindowGlobalChild();
+    if (wgc) {
+      wgc->BlockBFCacheFor(BFCacheStatus::EVENT_HANDLING_SUPPRESSED);
+    }
+  }
   UpdateFrameRequestCallbackSchedulingState();
   for (uint32_t i = 0; i < aIncrease; ++i) {
     ScriptLoader()->AddExecuteBlocker();
@@ -12255,6 +12294,11 @@ void Document::UnsuppressEventHandlingAndFireEvents(bool aFireEvents) {
   }
 
   if (!EventHandlingSuppressed()) {
+    WindowGlobalChild* wgc = GetWindowGlobalChild();
+    if (wgc) {
+      wgc->UnblockBFCacheFor(BFCacheStatus::EVENT_HANDLING_SUPPRESSED);
+    }
+
     MOZ_ASSERT(NS_IsMainThread());
     nsTArray<RefPtr<net::ChannelEventQueue>> queues =
         std::move(mSuspendedQueues);
@@ -13672,7 +13716,8 @@ bool FullscreenRoots::Contains(Document* aRoot) {
 
 /* static */
 void FullscreenRoots::Add(Document* aDoc) {
-  nsCOMPtr<Document> root = nsContentUtils::GetRootDocument(aDoc);
+  nsCOMPtr<Document> root =
+      nsContentUtils::GetInProcessSubtreeRootDocument(aDoc);
   if (!FullscreenRoots::Contains(root)) {
     if (!sInstance) {
       sInstance = new FullscreenRoots();
@@ -13698,7 +13743,8 @@ uint32_t FullscreenRoots::Find(Document* aRoot) {
 
 /* static */
 void FullscreenRoots::Remove(Document* aDoc) {
-  nsCOMPtr<Document> root = nsContentUtils::GetRootDocument(aDoc);
+  nsCOMPtr<Document> root =
+      nsContentUtils::GetInProcessSubtreeRootDocument(aDoc);
   uint32_t index = Find(root);
   NS_ASSERTION(index != NotFound,
                "Should only try to remove roots which are still added!");
@@ -13948,7 +13994,7 @@ static Document* GetFullscreenLeaf(Document* aDoc) {
   }
   // Otherwise we could be either in a non-fullscreen doc tree, or we're
   // below the fullscreen doc. Start the search from the root.
-  Document* root = nsContentUtils::GetRootDocument(aDoc);
+  Document* root = nsContentUtils::GetInProcessSubtreeRootDocument(aDoc);
   return GetFullscreenLeaf(*root);
 }
 
@@ -14608,8 +14654,9 @@ void Document::RequestFullscreenInContentProcess(
   // If we are in the content process, we can apply the fullscreen
   // state directly only if we have been in DOM fullscreen, because
   // otherwise we always need to notify the chrome.
-  if (applyFullScreenDirectly || !!nsContentUtils::GetRootDocument(this)
-                                       ->GetUnretargetedFullScreenElement()) {
+  if (applyFullScreenDirectly ||
+      !!nsContentUtils::GetInProcessSubtreeRootDocument(this)
+            ->GetUnretargetedFullScreenElement()) {
     ApplyFullscreen(std::move(aRequest));
     return;
   }
@@ -14706,7 +14753,8 @@ bool Document::ApplyFullscreen(UniquePtr<FullscreenRequest> aRequest) {
   // Remember the root document, so that if a fullscreen document is hidden
   // we can reset fullscreen state in the remaining visible fullscreen
   // documents.
-  Document* fullScreenRootDoc = nsContentUtils::GetRootDocument(this);
+  Document* fullScreenRootDoc =
+      nsContentUtils::GetInProcessSubtreeRootDocument(this);
 
   // If a document is already in fullscreen, then unlock the mouse pointer
   // before setting a new document to fullscreen
@@ -14864,7 +14912,8 @@ void Document::MaybeActiveMediaComponents() {
 }
 
 void Document::DocAddSizeOfExcludingThis(nsWindowSizes& aWindowSizes) const {
-  nsINode::AddSizeOfExcludingThis(aWindowSizes, &aWindowSizes.mDOMOtherSize);
+  nsINode::AddSizeOfExcludingThis(aWindowSizes,
+                                  &aWindowSizes.mDOMSizes.mDOMOtherSize);
 
   for (nsIContent* kid = GetFirstChild(); kid; kid = kid->GetNextSibling()) {
     AddSizeOfNodeTree(*kid, aWindowSizes);
@@ -14894,11 +14943,12 @@ void Document::DocAddSizeOfExcludingThis(nsWindowSizes& aWindowSizes) const {
     mNodeInfoManager->AddSizeOfIncludingThis(aWindowSizes);
   }
 
-  aWindowSizes.mDOMMediaQueryLists += mDOMMediaQueryLists.sizeOfExcludingThis(
-      aWindowSizes.mState.mMallocSizeOf);
+  aWindowSizes.mDOMSizes.mDOMMediaQueryLists +=
+      mDOMMediaQueryLists.sizeOfExcludingThis(
+          aWindowSizes.mState.mMallocSizeOf);
 
   for (const MediaQueryList* mql : mDOMMediaQueryLists) {
-    aWindowSizes.mDOMMediaQueryLists +=
+    aWindowSizes.mDOMSizes.mDOMMediaQueryLists +=
         mql->SizeOfExcludingThis(aWindowSizes.mState.mMallocSizeOf);
   }
 
@@ -14920,13 +14970,14 @@ void Document::DocAddSizeOfExcludingThis(nsWindowSizes& aWindowSizes) const {
     mResizeObserverController->AddSizeOfIncludingThis(aWindowSizes);
   }
 
-  aWindowSizes.mDOMOtherSize += mAttrStyleSheet
-                                    ? mAttrStyleSheet->DOMSizeOfIncludingThis(
-                                          aWindowSizes.mState.mMallocSizeOf)
-                                    : 0;
+  aWindowSizes.mDOMSizes.mDOMOtherSize +=
+      mAttrStyleSheet ? mAttrStyleSheet->DOMSizeOfIncludingThis(
+                            aWindowSizes.mState.mMallocSizeOf)
+                      : 0;
 
-  aWindowSizes.mDOMOtherSize += mStyledLinks.ShallowSizeOfExcludingThis(
-      aWindowSizes.mState.mMallocSizeOf);
+  aWindowSizes.mDOMSizes.mDOMOtherSize +=
+      mStyledLinks.ShallowSizeOfExcludingThis(
+          aWindowSizes.mState.mMallocSizeOf);
 
   // Measurement of the following members may be added later if DMD finds it
   // is worthwhile:
@@ -14935,7 +14986,8 @@ void Document::DocAddSizeOfExcludingThis(nsWindowSizes& aWindowSizes) const {
 }
 
 void Document::DocAddSizeOfIncludingThis(nsWindowSizes& aWindowSizes) const {
-  aWindowSizes.mDOMOtherSize += aWindowSizes.mState.mMallocSizeOf(this);
+  aWindowSizes.mDOMSizes.mDOMOtherSize +=
+      aWindowSizes.mState.mMallocSizeOf(this);
   DocAddSizeOfExcludingThis(aWindowSizes);
 }
 
@@ -14957,19 +15009,19 @@ void Document::AddSizeOfNodeTree(nsINode& aNode, nsWindowSizes& aWindowSizes) {
   // nsINode::AddSizeOfIncludingThis() to a value in nsWindowSizes.
   switch (aNode.NodeType()) {
     case nsINode::ELEMENT_NODE:
-      aWindowSizes.mDOMElementNodesSize += nodeSize;
+      aWindowSizes.mDOMSizes.mDOMElementNodesSize += nodeSize;
       break;
     case nsINode::TEXT_NODE:
-      aWindowSizes.mDOMTextNodesSize += nodeSize;
+      aWindowSizes.mDOMSizes.mDOMTextNodesSize += nodeSize;
       break;
     case nsINode::CDATA_SECTION_NODE:
-      aWindowSizes.mDOMCDATANodesSize += nodeSize;
+      aWindowSizes.mDOMSizes.mDOMCDATANodesSize += nodeSize;
       break;
     case nsINode::COMMENT_NODE:
-      aWindowSizes.mDOMCommentNodesSize += nodeSize;
+      aWindowSizes.mDOMSizes.mDOMCommentNodesSize += nodeSize;
       break;
     default:
-      aWindowSizes.mDOMOtherSize += nodeSize;
+      aWindowSizes.mDOMSizes.mDOMOtherSize += nodeSize;
       break;
   }
 
@@ -17231,4 +17283,36 @@ void Document::DisableChildElementInPictureInPictureMode() {
   MOZ_ASSERT(mPictureInPictureChildElementCount >= 0);
 }
 
+void Document::AddMediaElementWithMSE() {
+  if (mMediaElementWithMSECount++ == 0) {
+    WindowGlobalChild* wgc = GetWindowGlobalChild();
+    if (wgc) {
+      wgc->BlockBFCacheFor(BFCacheStatus::CONTAINS_MSE_CONTENT);
+    }
+  }
+}
+
+void Document::RemoveMediaElementWithMSE() {
+  MOZ_ASSERT(mMediaElementWithMSECount > 0);
+  if (--mMediaElementWithMSECount == 0) {
+    WindowGlobalChild* wgc = GetWindowGlobalChild();
+    if (wgc) {
+      wgc->UnblockBFCacheFor(BFCacheStatus::CONTAINS_MSE_CONTENT);
+    }
+  }
+}
+
+void Document::UnregisterFromMemoryReportingForDataDocument() {
+  if (!mAddedToMemoryReportingAsDataDocument) {
+    return;
+  }
+  mAddedToMemoryReportingAsDataDocument = false;
+  nsIGlobalObject* global = GetScopeObject();
+  if (global) {
+    if (nsPIDOMWindowInner* win = global->AsInnerWindow()) {
+      nsGlobalWindowInner::Cast(win)->UnregisterDataDocumentForMemoryReporting(
+          this);
+    }
+  }
+}
 }  // namespace mozilla::dom

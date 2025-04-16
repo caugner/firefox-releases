@@ -996,6 +996,14 @@ class RootingContext {
   /* Limit pointer for checking native stack consumption. */
   uintptr_t nativeStackLimit[StackKindCount];
 
+#ifdef __wasi__
+  // For WASI we can't catch call-stack overflows with stack-pointer checks, so
+  // we count recursion depth with RAII based AutoCheckRecursionLimit.
+  uint32_t wasiRecursionDepth = 0u;
+
+  static constexpr uint32_t wasiRecursionDepthLimit = 100u;
+#endif  // __wasi__
+
   static const RootingContext* get(const JSContext* cx) {
     return reinterpret_cast<const RootingContext*>(cx);
   }
@@ -1045,6 +1053,26 @@ class JS_PUBLIC_API AutoGCRooter {
   AutoGCRooter(AutoGCRooter& ida) = delete;
   void operator=(AutoGCRooter& ida) = delete;
 } JS_HAZ_ROOTED_BASE;
+
+/**
+ * Custom rooting behavior for internal and external clients.
+ *
+ * Deprecated. Where possible, use Rooted<> instead.
+ */
+class MOZ_RAII JS_PUBLIC_API CustomAutoRooter : private AutoGCRooter {
+ public:
+  template <typename CX>
+  explicit CustomAutoRooter(const CX& cx)
+      : AutoGCRooter(cx, AutoGCRooter::Kind::Custom) {}
+
+  friend void AutoGCRooter::trace(JSTracer* trc);
+
+ protected:
+  virtual ~CustomAutoRooter() = default;
+
+  /** Supplied by derived class to trace roots. */
+  virtual void trace(JSTracer* trc) = 0;
+};
 
 namespace detail {
 

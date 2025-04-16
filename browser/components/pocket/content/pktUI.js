@@ -83,7 +83,7 @@ var pktUI = (function() {
   // Initial sizes are only here to help visual load jank before the panel is ready.
   const initialPanelSize = {
     signup: {
-      control: { height: 442, width: 300 },
+      control: { height: 450, width: 300 },
       button_control: { height: 442, width: 300 },
       variant_a: { height: 408, width: 300 },
       variant_b: { height: 383, width: 300 },
@@ -91,10 +91,10 @@ var pktUI = (function() {
       button_variant: { height: 388, width: 300 },
     },
     saved: {
-      control: { height: 133, width: 350 },
+      control: { height: 132, width: 350 },
     },
     home: {
-      control: { height: 474, width: 328 },
+      control: { height: 477, width: 328 },
       // This is for non English sizes, this is not for an AB experiment.
       no_topics: { height: 247, width: 328 },
     },
@@ -274,10 +274,10 @@ var pktUI = (function() {
     // We don't have to hide and show the panel again if it's already shown
     // as if the user tries to click again on the toolbar button the overlay
     // will close instead of the button will be clicked
-    var iframe = getPanelFrame();
+    var frame = getPanelFrame();
 
-    // Load the iframe
-    iframe.setAttribute("src", url);
+    // Load the frame
+    frame.setAttribute("src", url);
   }
 
   function onShowSignup() {
@@ -440,17 +440,17 @@ var pktUI = (function() {
    * }
    */
   function resizePanel(options = {}) {
-    var iframe = getPanelFrame();
+    var frame = getPanelFrame();
 
     // Set an explicit size, panel will adapt.
-    iframe.style.width = options.width + "px";
-    iframe.style.height = options.height + "px";
+    frame.style.width = options.width + "px";
+    frame.style.height = options.height + "px";
   }
 
   // -- Browser Navigation -- //
 
   /**
-   * Open a new tab with a given url and notify the iframe panel that it was opened
+   * Open a new tab with a given url and notify the frame panel that it was opened
    */
 
   function openTabWithUrl(url, aTriggeringPrincipal, aCsp) {
@@ -638,7 +638,7 @@ var pktUI = (function() {
 // -- Communication to Background -- //
 var pktUIMessaging = (function() {
   /**
-   * Send a message to the panel's iframe
+   * Send a message to the panel's frame
    */
   function sendMessageToPanel(messageId, panelId, payload) {
     if (!isPanelIdValid(panelId)) {
@@ -660,7 +660,7 @@ var pktUIMessaging = (function() {
 
   /**
    * Helper function to package an error object and send it to the panel
-   * iframe as a message response
+   * frame as a message response
    */
   function sendErrorMessageToPanel(messageId, panelId, error) {
     var errorResponse = { status: "error", error };

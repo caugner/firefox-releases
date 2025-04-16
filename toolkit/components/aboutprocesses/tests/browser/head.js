@@ -32,10 +32,6 @@ const HARDCODED_ASSUMPTIONS_THREAD = {
 // How close we accept our rounding up/down.
 const APPROX_FACTOR = 1.51;
 const MS_PER_NS = 1000000;
-const MEMORY_REGEXP = /([0-9.,]+)(TB|GB|MB|KB|B)( \(([-+]?)([0-9.,]+)(GB|MB|KB|B)\))?/;
-//Example: "383.55MB (-12.5MB)"
-const CPU_REGEXP = /(\~0%|idle|[0-9.,]+%|[?]) \(([0-9.,]+) ?(ns|µs|ms|s|m|h|d)\)/;
-//Example: "13% (4,470ms)"
 
 // Wait for `about:processes` to be updated.
 async function promiseAboutProcessesUpdated({
@@ -51,13 +47,17 @@ async function promiseAboutProcessesUpdated({
       observer.disconnect();
       resolve();
     });
-    observer.observe(tbody, { childList: true });
+    observer.observe(tbody, {
+      childList: true,
+      attributes: true,
+      subtree: true,
+    });
   });
 
   if (force) {
     await SpecialPowers.spawn(tabAboutProcesses.linkedBrowser, [], async () => {
       info("Forcing about:processes refresh");
-      content.Control.update(/* force = */ true);
+      await content.Control.update(/* force = */ true);
     });
   }
 
@@ -153,16 +153,19 @@ function getTimeMultiplier(unit) {
   }
   throw new Error("Invalid time unit: " + unit);
 }
-function testCpu(string, total, slope, assumptions) {
-  info(`Testing CPU display ${string} vs total ${total}, slope ${slope}`);
-  if (string == "(measuring)") {
+function testCpu(element, total, slope, assumptions) {
+  info(
+    `Testing CPU display ${element.textContent} - ${element.title} vs total ${total}, slope ${slope}`
+  );
+  if (element.textContent == "(measuring)") {
     info("Still measuring");
     return;
   }
-  let [, extractedPercentage, extractedTotal, extractedUnit] = CPU_REGEXP.exec(
-    string
-  );
 
+  const CPU_TEXT_CONTENT_REGEXP = /\~0%|idle|[0-9.,]+%|[?]/;
+  let extractedPercentage = CPU_TEXT_CONTENT_REGEXP.exec(
+    element.textContent
+  )[0];
   switch (extractedPercentage) {
     case "idle":
       Assert.equal(slope, 0, "Idle means exactly 0%");
@@ -200,6 +203,13 @@ function testCpu(string, total, slope, assumptions) {
     }
   }
 
+  const CPU_TOOLTIP_REGEXP = /(?:.*: ([0-9.,]+) ?(ns|µs|ms|s|m|h|d))/;
+  // Example: "Total CPU time: 4,470ms"
+
+  let [, extractedTotal, extractedUnit] = CPU_TOOLTIP_REGEXP.exec(
+    element.title
+  );
+
   let totalMS = total / MS_PER_NS;
   let computedTotal =
     // We produce localized numbers, with "," as a thousands separator in en-US builds,
@@ -218,26 +228,20 @@ function testCpu(string, total, slope, assumptions) {
   );
 }
 
-function testMemory(string, total, delta, assumptions) {
-  Assert.ok(
-    true,
-    `Testing memory display ${string} vs total ${total}, delta ${delta}`
+function testMemory(element, total, delta, assumptions) {
+  info(
+    `Testing memory display ${element.textContent} - ${element.title} vs total ${total}, delta ${delta}`
   );
-  let extracted = MEMORY_REGEXP.exec(string);
+  const MEMORY_TEXT_CONTENT_REGEXP = /([0-9.,]+)(TB|GB|MB|KB|B)/;
+  // Example: "383.55MB"
+  let extracted = MEMORY_TEXT_CONTENT_REGEXP.exec(element.textContent);
   Assert.notEqual(
     extracted,
     null,
-    `Can we parse ${string} with ${MEMORY_REGEXP}?`
+    `Can we parse ${element.textContent} with ${MEMORY_TEXT_CONTENT_REGEXP}?`
   );
-  let [
-    ,
-    extractedTotal,
-    extractedUnit,
-    ,
-    extractedDeltaSign,
-    extractedDeltaTotal,
-    extractedDeltaUnit,
-  ] = extracted;
+  let [, extractedTotal, extractedUnit] = extracted;
+
   let extractedTotalNumber = Number.parseFloat(extractedTotal);
   Assert.ok(
     extractedTotalNumber > 0,
@@ -266,6 +270,20 @@ function testMemory(string, total, delta, assumptions) {
     );
   }
 
+  const MEMORY_TOOLTIP_REGEXP = /(?:.*: ([-+]?)([0-9.,]+)(GB|MB|KB|B))?/;
+  // Example: "Evolution: -12.5MB"
+  extracted = MEMORY_TOOLTIP_REGEXP.exec(element.title);
+  Assert.notEqual(
+    extracted,
+    null,
+    `Can we parse ${element.title} with ${MEMORY_TOOLTIP_REGEXP}?`
+  );
+  let [
+    ,
+    extractedDeltaSign,
+    extractedDeltaTotal,
+    extractedDeltaUnit,
+  ] = extracted;
   if (extractedDeltaSign == null) {
     Assert.equal(delta || 0, 0);
     return;
@@ -297,33 +315,27 @@ function testMemory(string, total, delta, assumptions) {
 
 function extractProcessDetails(row) {
   let children = row.children;
-  let memoryResidentContent = children[1].textContent;
-  let cpuContent = children[2].textContent;
-  let fluentArgs = document.l10n.getAttributes(children[0].children[0]).args;
-  let process = {
-    memoryResidentContent,
-    cpuContent,
-    pidContent: fluentArgs.pid,
-    typeContent: fluentArgs.type,
-    threads: null,
-  };
+  let memory = children[1];
+  let cpu = children[2];
+  let fluentArgs = document.l10n.getAttributes(children[0]).args;
   let threadDetailsRow = row.nextSibling;
   while (threadDetailsRow) {
+    if (threadDetailsRow.classList.contains("process")) {
+      threadDetailsRow = null;
+      break;
+    }
     if (threadDetailsRow.classList.contains("thread-summary")) {
       break;
     }
     threadDetailsRow = threadDetailsRow.nextSibling;
   }
-  if (!threadDetailsRow) {
-    return process;
-  }
-  process.threads = {
-    row: threadDetailsRow,
-    numberContent: document.l10n.getAttributes(
-      threadDetailsRow.children[0].children[1]
-    ).args.number,
+
+  return {
+    memory,
+    cpu,
+    pidContent: fluentArgs.pid,
+    threads: threadDetailsRow,
   };
-  return process;
 }
 
 function findTabRowByName(doc, name) {
@@ -331,7 +343,7 @@ function findTabRowByName(doc, name) {
     if (!row.parentNode.classList.contains("window")) {
       continue;
     }
-    let foundName = document.l10n.getAttributes(row.children[0]).args.name;
+    let foundName = document.l10n.getAttributes(row).args.name;
     if (foundName != name) {
       continue;
     }
@@ -411,6 +423,18 @@ async function testAboutProcessesWithConfig({ showAllFrames, showThreads }) {
     return tab;
   })();
 
+  let promiseUserContextTab = (async function() {
+    let tab = BrowserTestUtils.addTab(gBrowser, "http://example.com", {
+      userContextId: 1,
+      skipAnimation: true,
+    });
+    await BrowserTestUtils.browserLoaded(tab.linkedBrowser);
+    await SpecialPowers.spawn(tab.linkedBrowser, [], () => {
+      content.document.title = "Tab with User Context";
+    });
+    return tab;
+  })();
+
   info("Setting up tabs we intend to close");
 
   // The two following tabs share the same domain.
@@ -451,6 +475,7 @@ async function testAboutProcessesWithConfig({ showAllFrames, showThreads }) {
   // Wait for initialization to finish.
   let tabAboutProcesses = await promiseTabAboutProcesses;
   let tabHung = await promiseTabHung;
+  let tabUserContext = await promiseUserContextTab;
   let tabCloseSeparately1 = await promiseTabCloseSeparately1;
   let tabCloseSeparately2 = await promiseTabCloseSeparately2;
   let tabCloseProcess1 = await promiseTabCloseProcess1;
@@ -478,8 +503,8 @@ async function testAboutProcessesWithConfig({ showAllFrames, showThreads }) {
       Services.obs.notifyObservers(
         {
           childID: hungChildID,
-          hangType: Ci.nsIHangReport.PLUGIN_HANG,
-          pluginName: "Fake plug-in",
+          scriptBrowser: tabHung.linkedBrowser,
+          scriptFileName: "chrome://browser/content/browser.js",
           QueryInterface: ChromeUtils.generateQI(["nsIHangReport"]),
         },
         "process-hang-report"
@@ -504,24 +529,23 @@ async function testAboutProcessesWithConfig({ showAllFrames, showThreads }) {
     // The browser process.
     {
       name: "browser",
-      type: ["browser"],
       predicate: row => row.process.type == "browser",
     },
     // The hung process.
     {
       name: "hung",
-      type: ["web", "webIsolated"],
       predicate: row =>
-        row.classList.contains("hung") && row.classList.contains("process"),
+        row.classList.contains("hung") &&
+        row.classList.contains("process") &&
+        ["web", "webIsolated"].includes(row.process.type),
     },
     // Any non-hung process
     {
       name: "non-hung",
-      type: ["web", "webIsolated"],
       predicate: row =>
         !row.classList.contains("hung") &&
         row.classList.contains("process") &&
-        row.process.type == "web",
+        ["web", "webIsolated"].includes(row.process.type),
     },
   ];
   for (let finder of processesToBeFound) {
@@ -534,19 +558,7 @@ async function testAboutProcessesWithConfig({ showAllFrames, showThreads }) {
       row = row.nextSibling;
     }
     Assert.ok(!!row, `found a table row for ${finder.name}`);
-    let {
-      memoryResidentContent,
-      cpuContent,
-      pidContent,
-      typeContent,
-      threads,
-    } = extractProcessDetails(row);
-
-    info("Sanity checks: type");
-    Assert.ok(
-      finder.type.includes(typeContent),
-      `Type ${typeContent} should be one of ${finder.type}`
-    );
+    let { memory, cpu, pidContent, threads } = extractProcessDetails(row);
 
     info("Sanity checks: pid");
     let pid = Number.parseInt(pidContent);
@@ -555,7 +567,7 @@ async function testAboutProcessesWithConfig({ showAllFrames, showThreads }) {
 
     info("Sanity checks: memory resident");
     testMemory(
-      memoryResidentContent,
+      memory,
       row.process.totalRamSize,
       row.process.deltaRamSize,
       HARDCODED_ASSUMPTIONS_PROCESS
@@ -563,7 +575,7 @@ async function testAboutProcessesWithConfig({ showAllFrames, showThreads }) {
 
     info("Sanity checks: CPU (Total)");
     testCpu(
-      cpuContent,
+      cpu,
       row.process.totalCpu,
       row.process.slopeCpu,
       HARDCODED_ASSUMPTIONS_PROCESS
@@ -578,30 +590,62 @@ async function testAboutProcessesWithConfig({ showAllFrames, showThreads }) {
         "In hidden threads mode, we shouldn't have any thread summary"
       );
     } else {
+      Assert.ok(threads, "We have a thread summary row");
+
+      let { number, active = 0, list } = document.l10n.getAttributes(
+        threads.children[0].children[1]
+      ).args;
+
       info("Sanity checks: number of threads");
-      let numberOfThreads = Number.parseInt(threads.numberContent);
-      Assert.ok(
-        numberOfThreads >= HARDCODED_ASSUMPTIONS_PROCESS.minimalNumberOfThreads
+      Assert.greaterOrEqual(
+        number,
+        HARDCODED_ASSUMPTIONS_PROCESS.minimalNumberOfThreads
       );
-      Assert.ok(
-        numberOfThreads <= HARDCODED_ASSUMPTIONS_PROCESS.maximalNumberOfThreads
+      Assert.lessOrEqual(
+        number,
+        HARDCODED_ASSUMPTIONS_PROCESS.maximalNumberOfThreads
       );
       Assert.equal(
-        numberOfThreads,
+        number,
         row.process.threads.length,
         "The number we display should be the number of threads"
       );
 
+      info("Sanity checks: number of active threads");
+      Assert.greaterOrEqual(
+        active,
+        0,
+        "The number of active threads should never be negative"
+      );
+      Assert.lessOrEqual(
+        active,
+        number,
+        "The number of active threads should not exceed the total number of threads"
+      );
+      Assert.equal(
+        active,
+        row.process.threads.filter(t => t.slopeCpu).length,
+        "The displayed number of active threads should be correct"
+      );
+
+      info("Sanity checks: thread list");
+      Assert.equal(
+        list ? list.split(", ").length : 0,
+        active,
+        "The thread summary list of active threads should have the expected length"
+      );
+
       info("Testing that we can open the list of threads");
-      let twisty = threads.row.getElementsByClassName("twisty")[0];
+      let twisty = threads.getElementsByClassName("twisty")[0];
       twisty.click();
 
-      // Since `twisty.click()` is partially async, we need to wait
-      // until all the threads are properly displayed.
-      await promiseAboutProcessesUpdated({ doc, tbody, tabAboutProcesses });
+      // `twisty.click()` is sync, but Fluent will update the visible
+      // table content during the next refresh driver tick, wait for it.
+      await new Promise(doc.defaultView.requestAnimationFrame);
+
       let numberOfThreadsFound = 0;
       for (
-        let threadRow = threads.row.nextSibling;
+        let threadRow = threads.nextSibling;
         threadRow && threadRow.classList.contains("thread");
         threadRow = threadRow.nextSibling
       ) {
@@ -609,11 +653,12 @@ async function testAboutProcessesWithConfig({ showAllFrames, showThreads }) {
       }
       Assert.equal(
         numberOfThreadsFound,
-        numberOfThreads,
-        `We should see ${numberOfThreads} threads, found ${numberOfThreadsFound}`
+        number,
+        `We should see ${number} threads, found ${numberOfThreadsFound}`
       );
+      let threadIds = [];
       for (
-        let threadRow = threads.row.nextSibling;
+        let threadRow = threads.nextSibling;
         threadRow && threadRow.classList.contains("thread");
         threadRow = threadRow.nextSibling
       ) {
@@ -622,23 +667,39 @@ async function testAboutProcessesWithConfig({ showAllFrames, showThreads }) {
           "The thread row should be populated"
         );
         let children = threadRow.children;
-        let cpuContent = children[1].textContent;
-        let tidContent = document.l10n.getAttributes(children[0].children[0])
-          .args.tid;
+        let cpu = children[1];
+        let l10nArgs = document.l10n.getAttributes(children[0]).args;
+
+        // Sanity checks: name
+        Assert.ok(threadRow.thread.name, "Thread name is not empty");
+        Assert.equal(
+          l10nArgs.name,
+          threadRow.thread.name,
+          "Displayed thread name is correct"
+        );
 
         // Sanity checks: tid
+        let tidContent = l10nArgs.tid;
         let tid = Number.parseInt(tidContent);
+        threadIds.push(tid);
         Assert.notEqual(tid, 0, "The tid should be set");
         Assert.equal(tid, threadRow.thread.tid, "Displayed tid is correct");
 
         // Sanity checks: CPU (per thread)
         testCpu(
-          cpuContent,
+          cpu,
           threadRow.thread.totalCpu,
           threadRow.thread.slopeCpu,
           HARDCODED_ASSUMPTIONS_THREAD
         );
       }
+      // By default, threads are sorted by tid.
+      let threadList = threadIds.join(",");
+      Assert.equal(
+        threadList,
+        threadIds.sort((a, b) => a - b).join(","),
+        "The thread rows are in the default sort order."
+      );
     }
   }
 
@@ -650,7 +711,7 @@ async function testAboutProcessesWithConfig({ showAllFrames, showThreads }) {
     if (subframe.tab) {
       continue;
     }
-    let url = document.l10n.getAttributes(row.children[0].children[0]).args.url;
+    let url = document.l10n.getAttributes(row.children[0]).args.url;
     Assert.equal(url, subframe.documentURI.spec);
     if (!subframe.isProcessRoot) {
       foundAtLeastOneInProcessSubframe = true;
@@ -759,6 +820,22 @@ async function testAboutProcessesWithConfig({ showAllFrames, showThreads }) {
         `There is a process for origin ${origin}`
       );
     }
+
+    // Verify that the user context id has been correctly displayed.
+    let userContextProcessRow = findProcessRowByOrigin(
+      doc,
+      "http://example.com^userContextId=1"
+    );
+    Assert.ok(
+      userContextProcessRow,
+      "There is a separate process for the tab with a different user context"
+    );
+    Assert.equal(
+      document.l10n.getAttributes(userContextProcessRow.firstChild).args.origin,
+      "http://example.com — " +
+        ContextualIdentityService.getUserContextLabel(1),
+      "The user context ID should be replaced with the localized container name"
+    );
 
     // These origins will disappear.
     for (let origin of [
@@ -893,12 +970,12 @@ async function testAboutProcessesWithConfig({ showAllFrames, showThreads }) {
 
   info("Additional sanity check for all processes");
   for (let row of document.getElementsByClassName("process")) {
-    let { pidContent, typeContent } = extractProcessDetails(row);
-    Assert.equal(typeContent, row.process.type);
+    let { pidContent } = extractProcessDetails(row);
     Assert.equal(Number.parseInt(pidContent), row.process.pid);
   }
   BrowserTestUtils.removeTab(tabAboutProcesses);
   BrowserTestUtils.removeTab(tabHung);
+  BrowserTestUtils.removeTab(tabUserContext);
   BrowserTestUtils.removeTab(tabCloseSeparately2);
 
   // We still need to remove these tabs.

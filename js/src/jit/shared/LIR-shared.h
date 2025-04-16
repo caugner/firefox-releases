@@ -415,6 +415,41 @@ class LNewObject : public LInstructionHelper<1, 0, 1> {
   MNewObject* mir() const { return mir_->toNewObject(); }
 };
 
+class LNewPlainObject : public LInstructionHelper<1, 0, 3> {
+ public:
+  LIR_HEADER(NewPlainObject)
+
+  explicit LNewPlainObject(const LDefinition& temp0, const LDefinition& temp1,
+                           const LDefinition& temp2)
+      : LInstructionHelper(classOpcode) {
+    setTemp(0, temp0);
+    setTemp(1, temp1);
+    setTemp(2, temp2);
+  }
+
+  const LDefinition* temp0() { return getTemp(0); }
+  const LDefinition* temp1() { return getTemp(1); }
+  const LDefinition* temp2() { return getTemp(2); }
+
+  MNewPlainObject* mir() const { return mir_->toNewPlainObject(); }
+};
+
+class LNewArrayObject : public LInstructionHelper<1, 0, 2> {
+ public:
+  LIR_HEADER(NewArrayObject)
+
+  explicit LNewArrayObject(const LDefinition& temp0, const LDefinition& temp1)
+      : LInstructionHelper(classOpcode) {
+    setTemp(0, temp0);
+    setTemp(1, temp1);
+  }
+
+  const LDefinition* temp0() { return getTemp(0); }
+  const LDefinition* temp1() { return getTemp(1); }
+
+  MNewArrayObject* mir() const { return mir_->toNewArrayObject(); }
+};
+
 // Allocates a new NamedLambdaObject.
 //
 // This instruction generates two possible instruction sets:
@@ -1923,11 +1958,11 @@ class LIsNullOrLikeUndefinedAndBranchT
   const LDefinition* temp() { return getTemp(0); }
 };
 
-class LSameValueD : public LInstructionHelper<1, 2, 1> {
+class LSameValueDouble : public LInstructionHelper<1, 2, 1> {
  public:
-  LIR_HEADER(SameValueD)
-  LSameValueD(const LAllocation& left, const LAllocation& right,
-              const LDefinition& temp)
+  LIR_HEADER(SameValueDouble)
+  LSameValueDouble(const LAllocation& left, const LAllocation& right,
+                   const LDefinition& temp)
       : LInstructionHelper(classOpcode) {
     setOperand(0, left);
     setOperand(1, right);
@@ -1937,6 +1972,19 @@ class LSameValueD : public LInstructionHelper<1, 2, 1> {
   const LAllocation* left() { return getOperand(0); }
   const LAllocation* right() { return getOperand(1); }
   const LDefinition* tempFloat() { return getTemp(0); }
+};
+
+class LSameValue : public LInstructionHelper<1, 2 * BOX_PIECES, 0> {
+ public:
+  LIR_HEADER(SameValue)
+  LSameValue(const LBoxAllocation& lhs, const LBoxAllocation& rhs)
+      : LInstructionHelper(classOpcode) {
+    setBoxOperand(LhsIndex, lhs);
+    setBoxOperand(RhsIndex, rhs);
+  }
+
+  static const size_t LhsIndex = 0;
+  static const size_t RhsIndex = BOX_PIECES;
 };
 
 // Not operation on an integer.
@@ -5821,6 +5869,22 @@ class LCopyLexicalEnvironmentObject : public LCallInstructionHelper<1, 1, 0> {
   }
 };
 
+// Allocate a new ClassBodyLexicalEnvironmentObject.
+class LNewClassBodyEnvironmentObject : public LCallInstructionHelper<1, 1, 0> {
+ public:
+  LIR_HEADER(NewClassBodyEnvironmentObject)
+
+  explicit LNewClassBodyEnvironmentObject(const LAllocation& enclosing)
+      : LCallInstructionHelper(classOpcode) {
+    setOperand(0, enclosing);
+  }
+  const LAllocation* enclosing() { return getOperand(0); }
+
+  MNewClassBodyEnvironmentObject* mir() const {
+    return mir_->toNewClassBodyEnvironmentObject();
+  }
+};
+
 class LCallSetElement
     : public LCallInstructionHelper<0, 1 + 2 * BOX_PIECES, 0> {
  public:
@@ -8058,19 +8122,6 @@ class LGuardValue : public LInstructionHelper<0, BOX_PIECES, 0> {
   MGuardValue* mir() { return mir_->toGuardValue(); }
 };
 
-class LGuardNotOptimizedArguments
-    : public LInstructionHelper<0, BOX_PIECES, 0> {
- public:
-  LIR_HEADER(GuardNotOptimizedArguments)
-
-  explicit LGuardNotOptimizedArguments(const LBoxAllocation& input)
-      : LInstructionHelper(classOpcode) {
-    setBoxOperand(Input, input);
-  }
-
-  static const size_t Input = 0;
-};
-
 class LGuardNullOrUndefined : public LInstructionHelper<0, BOX_PIECES, 0> {
  public:
   LIR_HEADER(GuardNullOrUndefined)
@@ -9081,7 +9132,7 @@ class LWasmVariableShiftSimd128 : public LInstructionHelper<1, 2, 2> {
 };
 
 // (v128, i32) -> v128 effect-free constant-width shift operations
-class LWasmConstantShiftSimd128 : public LInstructionHelper<1, 1, 1> {
+class LWasmConstantShiftSimd128 : public LInstructionHelper<1, 1, 0> {
   int32_t shift_;
 
  public:
@@ -9089,16 +9140,29 @@ class LWasmConstantShiftSimd128 : public LInstructionHelper<1, 1, 1> {
 
   static constexpr uint32_t Src = 0;
 
-  LWasmConstantShiftSimd128(const LAllocation& src, const LDefinition& temp,
-                            int32_t shift)
+  LWasmConstantShiftSimd128(const LAllocation& src, int32_t shift)
       : LInstructionHelper(classOpcode), shift_(shift) {
     setOperand(Src, src);
-    setTemp(0, temp);
   }
 
   const LAllocation* src() { return getOperand(Src); }
-  const LDefinition* temp() { return getTemp(0); }
   int32_t shift() { return shift_; }
+  wasm::SimdOp simdOp() const { return mir_->toWasmShiftSimd128()->simdOp(); }
+};
+
+// (v128) -> v128 sign replication operation.
+class LWasmSignReplicationSimd128 : public LInstructionHelper<1, 1, 0> {
+ public:
+  LIR_HEADER(WasmSignReplicationSimd128)
+
+  static constexpr uint32_t Src = 0;
+
+  explicit LWasmSignReplicationSimd128(const LAllocation& src)
+      : LInstructionHelper(classOpcode) {
+    setOperand(Src, src);
+  }
+
+  const LAllocation* src() { return getOperand(Src); }
   wasm::SimdOp simdOp() const { return mir_->toWasmShiftSimd128()->simdOp(); }
 };
 
@@ -9208,12 +9272,6 @@ class LWasmPermuteSimd128 : public LInstructionHelper<1, 1, 0> {
     // Zeroes are shifted into low-order bytes and high-order bytes are lost.
     // control_[0] has the number of places to shift by.
     SHIFT_LEFT_8x16,
-  };
-
-  enum Perm16x8Action {
-    SWAP_QWORDS = 1,  // Swap qwords first
-    PERM_LOW = 2,     // Permute low qword by control_[0..3]
-    PERM_HIGH = 4     // Permute high qword by control_[4..7]
   };
 
  private:
@@ -9343,15 +9401,17 @@ class LWasmUnarySimd128 : public LInstructionHelper<1, 1, 1> {
 };
 
 // (v128, imm) -> scalar effect-free operations.
-class LWasmReduceSimd128 : public LInstructionHelper<1, 1, 0> {
+// temp is FPR (if in use).
+class LWasmReduceSimd128 : public LInstructionHelper<1, 1, 1> {
  public:
   LIR_HEADER(WasmReduceSimd128)
 
   static constexpr uint32_t Src = 0;
 
-  explicit LWasmReduceSimd128(const LAllocation& src)
+  explicit LWasmReduceSimd128(const LAllocation& src, const LDefinition& temp)
       : LInstructionHelper(classOpcode) {
     setOperand(Src, src);
+    setTemp(0, temp);
   }
 
   const LAllocation* src() { return getOperand(Src); }
@@ -9402,23 +9462,26 @@ class LWasmReduceSimd128ToInt64
   wasm::SimdOp simdOp() const { return mir_->toWasmReduceSimd128()->simdOp(); }
 };
 
-class LWasmLoadLaneSimd128 : public LInstructionHelper<1, 3, 0> {
+class LWasmLoadLaneSimd128 : public LInstructionHelper<1, 3, 1> {
  public:
   LIR_HEADER(WasmLoadLaneSimd128);
 
   static constexpr uint32_t Src = 2;
 
   explicit LWasmLoadLaneSimd128(const LAllocation& ptr, const LAllocation& src,
+                                const LDefinition& temp,
                                 const LAllocation& memoryBase = LAllocation())
       : LInstructionHelper(classOpcode) {
     setOperand(0, ptr);
     setOperand(1, memoryBase);
     setOperand(Src, src);
+    setTemp(0, temp);
   }
 
   const LAllocation* ptr() { return getOperand(0); }
   const LAllocation* memoryBase() { return getOperand(1); }
   const LAllocation* src() { return getOperand(Src); }
+  const LDefinition* temp() { return getTemp(0); }
   MWasmLoadLaneSimd128* mir() const { return mir_->toWasmLoadLaneSimd128(); }
   uint32_t laneSize() const {
     return mir_->toWasmLoadLaneSimd128()->laneSize();
@@ -9428,23 +9491,26 @@ class LWasmLoadLaneSimd128 : public LInstructionHelper<1, 3, 0> {
   }
 };
 
-class LWasmStoreLaneSimd128 : public LInstructionHelper<1, 3, 0> {
+class LWasmStoreLaneSimd128 : public LInstructionHelper<1, 3, 1> {
  public:
   LIR_HEADER(WasmStoreLaneSimd128);
 
   static constexpr uint32_t Src = 2;
 
   explicit LWasmStoreLaneSimd128(const LAllocation& ptr, const LAllocation& src,
+                                 const LDefinition& temp,
                                  const LAllocation& memoryBase = LAllocation())
       : LInstructionHelper(classOpcode) {
     setOperand(0, ptr);
     setOperand(1, memoryBase);
     setOperand(Src, src);
+    setTemp(0, temp);
   }
 
   const LAllocation* ptr() { return getOperand(0); }
   const LAllocation* memoryBase() { return getOperand(1); }
   const LAllocation* src() { return getOperand(Src); }
+  const LDefinition* temp() { return getTemp(0); }
   MWasmStoreLaneSimd128* mir() const { return mir_->toWasmStoreLaneSimd128(); }
   uint32_t laneSize() const {
     return mir_->toWasmStoreLaneSimd128()->laneSize();

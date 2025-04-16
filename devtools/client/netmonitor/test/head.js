@@ -55,6 +55,8 @@ const { L10N } = require("devtools/client/netmonitor/src/utils/l10n");
 /* eslint-disable no-unused-vars, max-len */
 const EXAMPLE_URL =
   "http://example.com/browser/devtools/client/netmonitor/test/";
+const EXAMPLE_ORG_URL =
+  "http://example.org/browser/devtools/client/netmonitor/test/";
 const HTTPS_EXAMPLE_URL =
   "https://example.com/browser/devtools/client/netmonitor/test/";
 /* Since the test server will proxy `ws://example.com` to websocket server on 9988,
@@ -93,6 +95,7 @@ const JSON_TEXT_MIME_URL = EXAMPLE_URL + "html_json-text-mime-test-page.html";
 const JSON_B64_URL = EXAMPLE_URL + "html_json-b64.html";
 const JSON_BASIC_URL = EXAMPLE_URL + "html_json-basic.html";
 const JSON_EMPTY_URL = EXAMPLE_URL + "html_json-empty.html";
+const FONTS_URL = EXAMPLE_URL + "html_fonts-test-page.html";
 const SORTING_URL = EXAMPLE_URL + "html_sorting-test-page.html";
 const FILTERING_URL = EXAMPLE_URL + "html_filter-test-page.html";
 const INFINITE_GET_URL = EXAMPLE_URL + "html_infinite-get-page.html";
@@ -196,19 +199,8 @@ registerCleanupFunction(() => {
   Services.cookies.removeAll();
 });
 
-function waitForNavigation(target) {
-  return new Promise(resolve => {
-    target.once("will-navigate", () => {
-      target.once("navigate", () => {
-        resolve();
-      });
-    });
-  });
-}
-
 async function toggleCache(toolbox, disabled) {
   const options = { cacheDisabled: disabled };
-  const navigationFinished = waitForNavigation(toolbox.target);
 
   // Disable the cache for any toolbox that it is opened from this point on.
   Services.prefs.setBoolPref("devtools.cache.disabled", disabled);
@@ -216,9 +208,7 @@ async function toggleCache(toolbox, disabled) {
   await toolbox.commands.targetConfigurationCommand.updateConfiguration(
     options
   );
-  await toolbox.target.reload();
-
-  await navigationFinished;
+  await toolbox.commands.targetCommand.reloadTopLevelTarget();
 }
 
 /**
@@ -485,8 +475,8 @@ function waitForNetworkEvents(monitor, getRequests, options = {}) {
 async function waitForNetworkResource(toolbox, noOfExpectedResources = 1) {
   let countOfAvailableResources = 0;
   return waitForNextResource(
-    toolbox.resourceWatcher,
-    toolbox.resourceWatcher.TYPES.NETWORK_EVENT,
+    toolbox.resourceCommand,
+    toolbox.resourceCommand.TYPES.NETWORK_EVENT,
     {
       ignoreExistingResources: true,
       predicate: resource =>

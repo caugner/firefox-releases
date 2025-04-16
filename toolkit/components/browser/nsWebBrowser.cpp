@@ -456,17 +456,17 @@ nsWebBrowser::GetCanGoForward(bool* aCanGoForward) {
 }
 
 NS_IMETHODIMP
-nsWebBrowser::GoBack(bool aRequireUserInteraction) {
+nsWebBrowser::GoBack(bool aRequireUserInteraction, bool aUserActivation) {
   NS_ENSURE_STATE(mDocShell);
 
-  return mDocShell->GoBack(aRequireUserInteraction);
+  return mDocShell->GoBack(aRequireUserInteraction, aUserActivation);
 }
 
 NS_IMETHODIMP
-nsWebBrowser::GoForward(bool aRequireUserInteraction) {
+nsWebBrowser::GoForward(bool aRequireUserInteraction, bool aUserActivation) {
   NS_ENSURE_STATE(mDocShell);
 
-  return mDocShell->GoForward(aRequireUserInteraction);
+  return mDocShell->GoForward(aRequireUserInteraction, aUserActivation);
 }
 
 nsresult nsWebBrowser::LoadURI(const nsAString& aURI,
@@ -508,10 +508,10 @@ nsWebBrowser::Reload(uint32_t aReloadFlags) {
 }
 
 NS_IMETHODIMP
-nsWebBrowser::GotoIndex(int32_t aIndex) {
+nsWebBrowser::GotoIndex(int32_t aIndex, bool aUserActivation) {
   NS_ENSURE_STATE(mDocShell);
 
-  return mDocShell->GotoIndex(aIndex);
+  return mDocShell->GotoIndex(aIndex, aUserActivation);
 }
 
 NS_IMETHODIMP
@@ -1076,15 +1076,6 @@ nsWebBrowser::GetMainWidget(nsIWidget** aMainWidget) {
   NS_IF_ADDREF(*aMainWidget);
 
   return NS_OK;
-}
-
-NS_IMETHODIMP
-nsWebBrowser::SetFocus() {
-  nsCOMPtr<nsPIDOMWindowOuter> window = GetWindow();
-  NS_ENSURE_TRUE(window, NS_ERROR_FAILURE);
-
-  nsFocusManager* fm = nsFocusManager::GetFocusManager();
-  return fm ? fm->SetFocusedWindow(window) : NS_OK;
 }
 
 NS_IMETHODIMP

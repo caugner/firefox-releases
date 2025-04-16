@@ -209,8 +209,12 @@ function CheckBrowserNeedsUpdate(
           const checkerInstance = UpdateChecker.createInstance(
             Ci.nsIUpdateChecker
           );
-          checkerInstance.checkForUpdates(updateServiceListener, true);
-          this._lastUpdated = now;
+          if (checkerInstance.canCheckForUpdates) {
+            checkerInstance.checkForUpdates(updateServiceListener, true);
+            this._lastUpdated = now;
+          } else {
+            resolve(false);
+          }
         } else {
           resolve(this._value);
         }
@@ -399,8 +403,6 @@ const TargetingGetters = {
   get browserSettings() {
     const { settings } = TelemetryEnvironment.currentEnvironment;
     return {
-      // This way of getting attribution is deprecated - use atttributionData instead
-      attribution: settings.attribution,
       update: settings.update,
     };
   },
@@ -655,6 +657,10 @@ const TargetingGetters = {
 
   get isMajorUpgrade() {
     return BrowserHandler.majorUpgrade;
+  },
+
+  get hasActiveEnterprisePolicies() {
+    return Services.policies.status === Services.policies.ACTIVE;
   },
 };
 
