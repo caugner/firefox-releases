@@ -17,7 +17,7 @@ add_task(async function test_translations_panel_basics() {
     "The button is available."
   );
 
-  is(button.getAttribute("data-l10n-id"), "urlbar-translations-button");
+  is(button.getAttribute("data-l10n-id"), "urlbar-translations-button2");
 
   await runInPage(async TranslationsTest => {
     const { getH1 } = TranslationsTest.getSelectors();
@@ -28,14 +28,26 @@ add_task(async function test_translations_panel_basics() {
     );
   });
 
-  await waitForTranslationsPopupEvent("popupshown", () => {
-    click(button, "Opening the popup");
-  });
+  await waitForTranslationsPopupEvent(
+    "popupshown",
+    () => {
+      click(button, "Opening the popup");
+    },
+    assertPanelDefaultView
+  );
 
   const panel = document.getElementById("translations-panel");
   const label = document.getElementById(panel.getAttribute("aria-labelledby"));
   ok(label, "The a11y label for the panel can be found.");
   ok(isVisible(label), "The a11y label for the panel is visible.");
+  ok(
+    getByL10nId("translations-panel-from-label"),
+    "The from label is visible."
+  );
+  ok(
+    isVisible(document.getElementById("translations-panel-from")),
+    "The from menulist is visible."
+  );
 
   await waitForTranslationsPopupEvent("popuphidden", () => {
     click(
@@ -51,9 +63,13 @@ add_task(async function test_translations_panel_basics() {
 
   is(button.getAttribute("data-l10n-id"), "urlbar-translations-button-loading");
 
-  await waitForTranslationsPopupEvent("popupshown", () => {
-    click(button, "Open the popup again");
-  });
+  await waitForTranslationsPopupEvent(
+    "popupshown",
+    () => {
+      click(button, "Open the popup again");
+    },
+    assertPanelDefaultView
+  );
 
   const loadingButton = getByL10nId(
     "translations-panel-translate-button-loading"
@@ -95,13 +111,26 @@ add_task(async function test_translations_panel_basics() {
     );
   });
 
-  await waitForTranslationsPopupEvent("popupshown", () => {
-    click(button, "Re-opening the popup");
-  });
+  await waitForTranslationsPopupEvent(
+    "popupshown",
+    () => {
+      click(button, "Re-opening the popup");
+    },
+    assertPanelRevisitView
+  );
 
   ok(
     getByL10nId("translations-panel-translate-button").disabled,
     "The translate button is disabled when re-opening."
+  );
+
+  ok(
+    !maybeGetByL10nId("translations-panel-from-label"),
+    "The from label is hidden."
+  );
+  ok(
+    !isVisible(document.getElementById("translations-panel-from")),
+    "The from menulist is hidden."
   );
 
   await waitForTranslationsPopupEvent("popuphidden", () => {

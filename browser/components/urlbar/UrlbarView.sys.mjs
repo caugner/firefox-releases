@@ -10,6 +10,8 @@ const lazy = {};
 ChromeUtils.defineESModuleGetters(lazy, {
   BrowserWindowTracker: "resource:///modules/BrowserWindowTracker.sys.mjs",
   L10nCache: "resource:///modules/UrlbarUtils.sys.mjs",
+  ObjectUtils: "resource://gre/modules/ObjectUtils.sys.mjs",
+  setTimeout: "resource://gre/modules/Timer.sys.mjs",
   UrlbarPrefs: "resource:///modules/UrlbarPrefs.sys.mjs",
   UrlbarProviderQuickSuggest:
     "resource:///modules/UrlbarProviderQuickSuggest.sys.mjs",
@@ -20,10 +22,6 @@ ChromeUtils.defineESModuleGetters(lazy, {
   UrlbarSearchOneOffs: "resource:///modules/UrlbarSearchOneOffs.sys.mjs",
   UrlbarTokenizer: "resource:///modules/UrlbarTokenizer.sys.mjs",
   UrlbarUtils: "resource:///modules/UrlbarUtils.sys.mjs",
-});
-
-XPCOMUtils.defineLazyModuleGetters(lazy, {
-  ObjectUtils: "resource://gre/modules/ObjectUtils.jsm",
 });
 
 XPCOMUtils.defineLazyServiceGetter(
@@ -42,6 +40,9 @@ const ZERO_PREFIX_HISTOGRAM_DWELL_TIME = "FX_URLBAR_ZERO_PREFIX_DWELL_TIME_MS";
 const ZERO_PREFIX_SCALAR_ABANDONMENT = "urlbar.zeroprefix.abandonment";
 const ZERO_PREFIX_SCALAR_ENGAGEMENT = "urlbar.zeroprefix.engagement";
 const ZERO_PREFIX_SCALAR_EXPOSURE = "urlbar.zeroprefix.exposure";
+
+// The name of the pref enabling rich suggestions relative to `browser.urlbar`.
+const RICH_SUGGESTIONS_PREF = "richSuggestions.featureGate";
 
 const RESULT_MENU_COMMANDS = {
   DISMISS: "dismiss",
@@ -109,6 +110,9 @@ export class UrlbarView {
         addDynamicStylesheet(this.window, viewTemplate.stylesheet);
       }
     }
+
+    lazy.UrlbarPrefs.addObserver(this);
+    lazy.setTimeout(() => this.updateRichSuggestionAttribute());
   }
 
   get oneOffSearchButtons() {
@@ -1111,17 +1115,27 @@ export class UrlbarView {
       return true;
     }
     let row = this.#rows.children[rowIndex];
+    // Don't replace a suggestedIndex result with a non-suggestedIndex result
+    // or vice versa.
     if (result.hasSuggestedIndex != row.result.hasSuggestedIndex) {
-      // Don't replace a suggestedIndex result with a non-suggestedIndex result
-      // or vice versa.
       return false;
     }
+    // Don't replace a suggestedIndex result with another suggestedIndex
+    // result if the suggestedIndex values are different.
     if (
       result.hasSuggestedIndex &&
       result.suggestedIndex != row.result.suggestedIndex
     ) {
-      // Don't replace a suggestedIndex result with another suggestedIndex
-      // result if the suggestedIndex values are different.
+      return false;
+    }
+    // To avoid flickering results while typing, don't try to reuse results from
+    // different providers.
+    // For example user types "moz", provider A returns results much earlier
+    // than provider B, but results from provider B stabilize in the view at the
+    // end of the search. Typing the next letter "i" results from the faster
+    // provider A would temporarily replace old results from provider B, just
+    // to be replaced as soon as provider B returns its results.
+    if (result.providerName != row.result.providerName) {
       return false;
     }
     let resultIsSearchSuggestion = this.#resultIsSearchSuggestion(result);
@@ -3186,6 +3200,28 @@ export class UrlbarView {
   on_popupshowing(event) {
     if (event.target == this.resultMenu) {
       this.#populateResultMenu();
+    }
+  }
+
+  /**
+   * Called when a urlbar pref changes.
+   *
+   * @param {string} pref
+   *   The name of the pref relative to `browser.urlbar`.
+   */
+  onPrefChanged(pref) {
+    switch (pref) {
+      case RICH_SUGGESTIONS_PREF:
+        this.updateRichSuggestionAttribute();
+        break;
+    }
+  }
+
+  updateRichSuggestionAttribute() {
+    if (lazy.UrlbarPrefs.get(RICH_SUGGESTIONS_PREF)) {
+      this.input.setAttribute("richSuggestionsEnabled", true);
+    } else {
+      this.input.removeAttribute("richSuggestionsEnabled");
     }
   }
 

@@ -167,8 +167,8 @@ FileSystemDataManager::FileSystemDataManager(
       mIOTarget(std::move(aIOTarget)),
       mIOTaskQueue(std::move(aIOTaskQueue)),
       mRegCount(0),
-      mState(State::Initial),
-      mVersion(0) {}
+      mVersion(0),
+      mState(State::Initial) {}
 
 FileSystemDataManager::~FileSystemDataManager() {
   NS_ASSERT_OWNINGTHREAD(FileSystemDataManager);
@@ -403,13 +403,13 @@ Result<bool, QMResult> FileSystemDataManager::IsLocked(
 
 Result<FileId, QMResult> FileSystemDataManager::LockExclusive(
     const EntryId& aEntryId) {
-  QM_TRY_INSPECT(const FileId& fileId,
-                 mDatabaseManager->EnsureFileId(aEntryId));
-
   QM_TRY_UNWRAP(const bool isLocked, IsLocked(aEntryId));
   if (isLocked) {
     return Err(QMResult(NS_ERROR_DOM_NO_MODIFICATION_ALLOWED_ERR));
   }
+
+  QM_TRY_INSPECT(const FileId& fileId,
+                 mDatabaseManager->EnsureFileId(aEntryId));
 
   // If the file has been removed, we should get a file not found error.
   // Otherwise, if usage tracking cannot be started because file size is not
@@ -566,12 +566,17 @@ RefPtr<BoolPromise> FileSystemDataManager::BeginOpen() {
                                                self->mDirectoryLock->Id()),
                 CreateAndRejectBoolPromiseFromQMResult);
 
+            QM_TRY_UNWRAP(UniquePtr<FileSystemFileManager> fmPtr,
+                          FileSystemFileManager::CreateFileSystemFileManager(
+                              self->mOriginMetadata),
+                          CreateAndRejectBoolPromiseFromQMResult);
+
             QM_TRY_UNWRAP(
                 self->mVersion,
                 QM_OR_ELSE_WARN_IF(
                     // Expression.
                     SchemaVersion002::InitializeConnection(
-                        connection, self->mOriginMetadata.mOrigin),
+                        connection, *fmPtr, self->mOriginMetadata.mOrigin),
                     // Predicate.
                     ([](const auto&) { return true; }),
                     // Fallback.
@@ -580,11 +585,6 @@ RefPtr<BoolPromise> FileSystemDataManager::BeginOpen() {
                           connection, self->mOriginMetadata.mOrigin));
                     })),
                 CreateAndRejectBoolPromiseFromQMResult);
-
-            QM_TRY_UNWRAP(UniquePtr<FileSystemFileManager> fmPtr,
-                          FileSystemFileManager::CreateFileSystemFileManager(
-                              self->mOriginMetadata),
-                          CreateAndRejectBoolPromiseFromQMResult);
 
             QM_TRY_UNWRAP(
                 EntryId rootId,
