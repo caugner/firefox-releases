@@ -1365,6 +1365,7 @@ void nsContentSecurityUtils::AssertAboutPageHasCSP(Document* aDocument) {
   // preferences and downloads allow legacy inline scripts through hash src.
   MOZ_ASSERT(!foundScriptSrc ||
                  StringBeginsWith(aboutSpec, "about:preferences"_ns) ||
+                 StringBeginsWith(aboutSpec, "about:settings"_ns) ||
                  StringBeginsWith(aboutSpec, "about:downloads"_ns) ||
                  StringBeginsWith(aboutSpec, "about:asrouter"_ns) ||
                  StringBeginsWith(aboutSpec, "about:newtab"_ns) ||
@@ -1383,6 +1384,7 @@ void nsContentSecurityUtils::AssertAboutPageHasCSP(Document* aDocument) {
   // remote web resources
   MOZ_ASSERT(!foundWebScheme ||
                  StringBeginsWith(aboutSpec, "about:preferences"_ns) ||
+                 StringBeginsWith(aboutSpec, "about:settings"_ns) ||
                  StringBeginsWith(aboutSpec, "about:addons"_ns) ||
                  StringBeginsWith(aboutSpec, "about:newtab"_ns) ||
                  StringBeginsWith(aboutSpec, "about:debugging"_ns) ||
@@ -1411,6 +1413,7 @@ void nsContentSecurityUtils::AssertAboutPageHasCSP(Document* aDocument) {
       // Bug 1579160: Remove 'unsafe-inline' from style-src within
       // about:preferences
       "about:preferences"_ns,
+      "about:settings"_ns,
       // Bug 1571346: Remove 'unsafe-inline' from style-src within about:addons
       "about:addons"_ns,
       // Bug 1584485: Remove 'unsafe-inline' from style-src within:
@@ -1553,7 +1556,7 @@ bool nsContentSecurityUtils::ValidateScriptFilename(JSContext* cx,
       // and this is the most reasonable. See 1727770
       u"about:downloads"_ns,
       // We think this is the same problem as about:downloads
-      u"about:preferences"_ns,
+      u"about:preferences"_ns, u"about:settings"_ns,
       // Browser console will give a filename of 'debugger' See 1763943
       // Sometimes it's 'debugger eager eval code', other times just 'debugger
       // eval code'
@@ -1667,37 +1670,25 @@ long nsContentSecurityUtils::ClassifyDownload(
   nsCOMPtr<nsIURI> contentLocation;
   aChannel->GetURI(getter_AddRefs(contentLocation));
 
-  nsCOMPtr<nsIPrincipal> loadingPrincipal = loadInfo->GetLoadingPrincipal();
-  if (!loadingPrincipal) {
-    loadingPrincipal = loadInfo->TriggeringPrincipal();
-  }
-  // Creating a fake Loadinfo that is just used for the MCB check.
-  nsCOMPtr<nsILoadInfo> secCheckLoadInfo = new mozilla::net::LoadInfo(
-      loadingPrincipal, loadInfo->TriggeringPrincipal(), nullptr,
-      nsILoadInfo::SEC_ONLY_FOR_EXPLICIT_CONTENTSEC_CHECK,
-      nsIContentPolicy::TYPE_FETCH);
-  // Disable HTTPS-Only checks for that loadinfo. This is required because
-  // otherwise nsMixedContentBlocker::ShouldLoad would assume that the request
-  // is safe, because HTTPS-Only is handling it.
-  secCheckLoadInfo->SetHttpsOnlyStatus(nsILoadInfo::HTTPS_ONLY_EXEMPT);
+  if (StaticPrefs::dom_block_download_insecure()) {
+    // If we are not dealing with a potentially trustworthy origin, or a URI
+    // that is safe to be loaded like e.g. data:, then we block the load.
+    bool isInsecureDownload =
+        !nsMixedContentBlocker::IsPotentiallyTrustworthyOrigin(
+            contentLocation) &&
+        !nsMixedContentBlocker::URISafeToBeLoadedInSecureContext(
+            contentLocation);
 
-  int16_t decission = nsIContentPolicy::ACCEPT;
-  nsMixedContentBlocker::ShouldLoad(false,  //  aHadInsecureImageRedirect
-                                    contentLocation,   //  aContentLocation,
-                                    secCheckLoadInfo,  //  aLoadinfo
-                                    false,             //  aReportError
-                                    &decission         // aDecision
-  );
-  Telemetry::Accumulate(mozilla::Telemetry::MIXED_CONTENT_DOWNLOADS,
-                        decission != nsIContentPolicy::ACCEPT);
+    Telemetry::Accumulate(mozilla::Telemetry::INSECURE_DOWNLOADS,
+                          isInsecureDownload);
 
-  if (StaticPrefs::dom_block_download_insecure() &&
-      decission != nsIContentPolicy::ACCEPT) {
-    nsCOMPtr<nsIHttpChannel> httpChannel = do_QueryInterface(aChannel);
-    if (httpChannel) {
-      LogMessageToConsole(httpChannel, "MixedContentBlockedDownload");
+    if (isInsecureDownload) {
+      nsCOMPtr<nsIHttpChannel> httpChannel = do_QueryInterface(aChannel);
+      if (httpChannel) {
+        LogMessageToConsole(httpChannel, "BlockedInsecureDownload");
+      }
+      return nsITransfer::DOWNLOAD_POTENTIALLY_UNSAFE;
     }
-    return nsITransfer::DOWNLOAD_POTENTIALLY_UNSAFE;
   }
 
   if (loadInfo->TriggeringPrincipal()->IsSystemPrincipal()) {

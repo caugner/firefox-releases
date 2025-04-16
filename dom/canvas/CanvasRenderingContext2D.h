@@ -570,6 +570,10 @@ class CanvasRenderingContext2D : public nsICanvasRenderingContextInternal,
 
   void OnShutdown();
 
+  bool IsContextLost() const { return mIsContextLost; }
+  void OnRemoteCanvasLost();
+  void OnRemoteCanvasRestored();
+
   /**
    * Update CurrentState().filter with the filter description for
    * CurrentState().filterChain.
@@ -699,8 +703,16 @@ class CanvasRenderingContext2D : public nsICanvasRenderingContextInternal,
    *
    * Returns true on success.
    */
-  bool EnsureTarget(const gfx::Rect* aCoveredRect = nullptr,
+  bool EnsureTarget(ErrorResult& aError,
+                    const gfx::Rect* aCoveredRect = nullptr,
                     bool aWillClear = false);
+
+  bool EnsureTarget(const gfx::Rect* aCoveredRect = nullptr,
+                    bool aWillClear = false) {
+    IgnoredErrorResult error;
+    return EnsureTarget(error, aCoveredRect, aWillClear);
+  }
+
   // Attempt to borrow a new target from an existing buffer provider.
   bool BorrowTarget(const gfx::IntRect& aPersistedRect, bool aNeedsClear);
 
@@ -714,7 +726,8 @@ class CanvasRenderingContext2D : public nsICanvasRenderingContextInternal,
                        RefPtr<layers::PersistentBufferProvider>& aOutProvider);
 
   bool TryBasicTarget(RefPtr<gfx::DrawTarget>& aOutDT,
-                      RefPtr<layers::PersistentBufferProvider>& aOutProvider);
+                      RefPtr<layers::PersistentBufferProvider>& aOutProvider,
+                      ErrorResult& aError);
 
   void RegisterAllocation();
 
@@ -753,7 +766,7 @@ class CanvasRenderingContext2D : public nsICanvasRenderingContextInternal,
    * Check if the target is valid after calling EnsureTarget.
    */
   bool IsTargetValid() const {
-    return !!mTarget && mTarget != sErrorTarget.get();
+    return !!mTarget && mTarget != sErrorTarget.get() && !mIsContextLost;
   }
 
   /**
@@ -836,8 +849,11 @@ class CanvasRenderingContext2D : public nsICanvasRenderingContextInternal,
   bool mWillReadFrequently = false;
   // Whether or not we have already shutdown.
   bool mHasShutdown = false;
+  // Whether or not remote canvas is currently unavailable.
+  bool mIsContextLost = false;
+  // Whether or not we can restore the context after restoration.
+  bool mAllowContextRestore = true;
 
-  RefPtr<CanvasShutdownObserver> mShutdownObserver;
   bool AddShutdownObserver();
   void RemoveShutdownObserver();
   bool AlreadyShutDown() const { return mHasShutdown; }
@@ -1008,9 +1024,11 @@ class CanvasRenderingContext2D : public nsICanvasRenderingContextInternal,
     RefPtr<nsAtom> fontLanguage;
     nsFont fontFont;
 
-    EnumeratedArray<Style, Style::MAX, RefPtr<CanvasGradient>> gradientStyles;
-    EnumeratedArray<Style, Style::MAX, RefPtr<CanvasPattern>> patternStyles;
-    EnumeratedArray<Style, Style::MAX, nscolor> colorStyles;
+    EnumeratedArray<Style, RefPtr<CanvasGradient>, size_t(Style::MAX)>
+        gradientStyles;
+    EnumeratedArray<Style, RefPtr<CanvasPattern>, size_t(Style::MAX)>
+        patternStyles;
+    EnumeratedArray<Style, nscolor, size_t(Style::MAX)> colorStyles;
 
     nsCString font;
     CanvasTextAlign textAlign = CanvasTextAlign::Start;
