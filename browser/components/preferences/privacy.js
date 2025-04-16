@@ -29,6 +29,8 @@ const PREF_OPT_OUT_STUDIES_ENABLED = "app.shield.optoutstudies.enabled";
 const PREF_NORMANDY_ENABLED = "app.normandy.enabled";
 
 const PREF_ADDON_RECOMMENDATIONS_ENABLED = "browser.discovery.enabled";
+const PREF_PRIVATE_ATTRIBUTION_ENABLED =
+  "dom.private-attribution.submission.enabled";
 
 const PREF_PASSWORD_GENERATION_AVAILABLE = "signon.generation.available";
 const { BEHAVIOR_REJECT_TRACKER_AND_PARTITION_FOREIGN } = Ci.nsICookieService;
@@ -843,6 +845,13 @@ var gPrivacyPane = {
       }
     }
 
+    // Bug 1900672
+    // When the mode is set to 5, clear the pref to ensure that
+    // network.trr.uri is set to fallbackProviderURIwhen the mode is set to 2 or 3 afterwards
+    if (value == Ci.nsIDNSService.MODE_TRROFF) {
+      Services.prefs.clearUserPref("network.trr.uri");
+    }
+
     gPrivacyPane.updateDoHStatus();
   },
 
@@ -1233,6 +1242,16 @@ var gPrivacyPane = {
       }
       this.initAddonRecommendationsCheckbox();
     }
+    dataCollectionCheckboxHandler({
+      checkbox: document.getElementById("privateAttribution"),
+      pref: PREF_PRIVATE_ATTRIBUTION_ENABLED,
+      matchPref() {
+        return AppConstants.MOZ_TELEMETRY_REPORTING;
+      },
+      isDisabled() {
+        return !AppConstants.MOZ_TELEMETRY_REPORTING;
+      },
+    });
 
     let signonBundle = document.getElementById("signonBundle");
     let pkiBundle = document.getElementById("pkiBundle");

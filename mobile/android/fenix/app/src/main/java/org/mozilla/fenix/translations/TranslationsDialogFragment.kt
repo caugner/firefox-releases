@@ -23,8 +23,6 @@ import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.platform.ViewCompositionStrategy
 import androidx.compose.ui.unit.dp
-import androidx.core.os.bundleOf
-import androidx.fragment.app.setFragmentResult
 import androidx.navigation.fragment.findNavController
 import androidx.navigation.fragment.navArgs
 import com.google.android.material.bottomsheet.BottomSheetBehavior
@@ -39,8 +37,11 @@ import org.mozilla.fenix.BrowserDirection
 import org.mozilla.fenix.GleanMetrics.Translations
 import org.mozilla.fenix.HomeActivity
 import org.mozilla.fenix.R
+import org.mozilla.fenix.components.AppStore
+import org.mozilla.fenix.components.appstate.AppAction
 import org.mozilla.fenix.ext.components
 import org.mozilla.fenix.ext.requireComponents
+import org.mozilla.fenix.ext.runIfFragmentIsAttached
 import org.mozilla.fenix.ext.settings
 import org.mozilla.fenix.nimbus.FxNimbus
 import org.mozilla.fenix.settings.SupportUtils
@@ -64,25 +65,32 @@ enum class TranslationsDialogAccessPoint {
  */
 class TranslationsDialogFragment : BottomSheetDialogFragment() {
 
-    private var behavior: BottomSheetBehavior<View>? = null
     private val args by navArgs<TranslationsDialogFragmentArgs>()
+
+    private val appStore: AppStore by lazy { requireComponents.appStore }
     private val browserStore: BrowserStore by lazy { requireComponents.core.store }
+
     private val translationDialogBinding = ViewBoundFeatureWrapper<TranslationsDialogBinding>()
     private val downloadLanguagesFeature =
         ViewBoundFeatureWrapper<DownloadLanguagesFeature>()
+
     private lateinit var translationsDialogStore: TranslationsDialogStore
+
+    private var behavior: BottomSheetBehavior<View>? = null
     private var isTranslationInProgress: Boolean? = null
     private var isDataSaverEnabledAndWifiDisabled = false
 
     override fun onCreateDialog(savedInstanceState: Bundle?): Dialog =
         super.onCreateDialog(savedInstanceState).apply {
             setOnShowListener {
-                val bottomSheet = findViewById<View?>(R.id.design_bottom_sheet)
-                bottomSheet?.setBackgroundResource(android.R.color.transparent)
-                behavior = BottomSheetBehavior.from(bottomSheet)
-                behavior?.peekHeight = resources.displayMetrics.heightPixels
-                behavior?.state = BottomSheetBehavior.STATE_EXPANDED
-                behavior?.hideFriction = DIALOG_FRICTION
+                runIfFragmentIsAttached {
+                    val bottomSheet = findViewById<View?>(R.id.design_bottom_sheet)
+                    bottomSheet?.setBackgroundResource(android.R.color.transparent)
+                    behavior = BottomSheetBehavior.from(bottomSheet)
+                    behavior?.peekHeight = resources.displayMetrics.heightPixels
+                    behavior?.state = BottomSheetBehavior.STATE_EXPANDED
+                    behavior?.hideFriction = DIALOG_FRICTION
+                }
             }
         }
 
@@ -445,12 +453,10 @@ class TranslationsDialogFragment : BottomSheetDialogFragment() {
 
     override fun onDismiss(dialog: DialogInterface) {
         super.onDismiss(dialog)
+
         if (isTranslationInProgress == true) {
-            setFragmentResult(
-                TRANSLATION_IN_PROGRESS,
-                bundleOf(
-                    SESSION_ID to browserStore.state.selectedTab?.id,
-                ),
+            appStore.dispatch(
+                AppAction.TranslationsAction.TranslationStarted(sessionId = browserStore.state.selectedTab?.id),
             )
         }
     }
@@ -468,10 +474,5 @@ class TranslationsDialogFragment : BottomSheetDialogFragment() {
             requireContext().settings().showFirstTimeTranslation = false
         }
         dismiss()
-    }
-
-    companion object {
-        const val TRANSLATION_IN_PROGRESS = "translationInProgress"
-        const val SESSION_ID = "sessionId"
     }
 }
