@@ -55,6 +55,7 @@
 #include "nsThreadUtils.h"
 #include "GeckoProfiler.h"
 #include "nsIConsoleService.h"
+#include "mozilla/AntiTrackingRedirectHeuristic.h"
 #include "mozilla/AntiTrackingUtils.h"
 #include "mozilla/Attributes.h"
 #include "mozilla/BasePrincipal.h"
@@ -618,6 +619,55 @@ nsresult nsHttpChannel::MaybeUseHTTPSRRForUpgrade(bool aShouldUpgrade,
   }
 
   if (mURI->SchemeIs("https") || aShouldUpgrade || !LoadUseHTTPSSVC()) {
+    return ContinueOnBeforeConnect(aShouldUpgrade, aStatus);
+  }
+
+  auto shouldSkipUpgradeWithHTTPSRR = [&]() -> bool {
+    if (LoadBeConservative()) {
+      return true;
+    }
+
+    // Skip upgrading channel triggered by system unless it is a top-level
+    // load.
+    if (mLoadInfo->TriggeringPrincipal()->IsSystemPrincipal() &&
+        mLoadInfo->GetExternalContentPolicyType() !=
+            ExtContentPolicy::TYPE_DOCUMENT) {
+      return true;
+    }
+
+    nsAutoCString uriHost;
+    mURI->GetAsciiHost(uriHost);
+
+    if (gHttpHandler->IsHostExcludedForHTTPSRR(uriHost)) {
+      return true;
+    }
+
+    nsCOMPtr<nsIPrincipal> triggeringPrincipal =
+        mLoadInfo->TriggeringPrincipal();
+    // If the security context that triggered the load is not https, then it's
+    // not a downgrade scenario.
+    if (!triggeringPrincipal->SchemeIs("https")) {
+      return false;
+    }
+
+    nsAutoCString triggeringHost;
+    triggeringPrincipal->GetAsciiHost(triggeringHost);
+
+    // If the initial request's host is not the same, we should upgrade this
+    // request.
+    if (!triggeringHost.Equals(uriHost)) {
+      return false;
+    }
+
+    // Add the host to a excluded list because:
+    // 1. We don't need to do the same check again.
+    // 2. Other subresources in the same host will be also excluded.
+    gHttpHandler->ExcludeHTTPSRRHost(uriHost);
+    return true;
+  };
+
+  if (shouldSkipUpgradeWithHTTPSRR()) {
+    StoreUseHTTPSSVC(false);
     return ContinueOnBeforeConnect(aShouldUpgrade, aStatus);
   }
 
@@ -6390,6 +6440,13 @@ nsresult nsHttpChannel::AsyncOpenFinal(TimeStamp aTimeStamp) {
   RefPtr<nsHttpChannel> self = this;
   bool willCallback = NS_SUCCEEDED(
       AsyncUrlChannelClassifier::CheckChannel(this, [self]() -> void {
+        nsCOMPtr<nsIURI> uri;
+        self->GetURI(getter_AddRefs(uri));
+        MOZ_ASSERT(uri);
+
+        // Finish the AntiTracking Heuristic before BeginConnect().
+        FinishAntiTrackingRedirectHeuristic(self, uri);
+
         nsresult rv = self->MaybeResolveProxyAndBeginConnect();
         if (NS_FAILED(rv)) {
           // Since this error is thrown asynchronously so that the caller
@@ -7329,8 +7386,8 @@ nsHttpChannel::OnStartRequest(nsIRequest* request) {
   } else if (gTRRService && gTRRService->IsConfirmed()) {
     // Note this telemetry probe is not working when DNS resolution is done in
     // the socket process.
-    Telemetry::Accumulate(Telemetry::HTTP_CHANNEL_ONSTART_SUCCESS_TRR,
-                          TRRService::AutoDetectedKey(), NS_SUCCEEDED(mStatus));
+    Telemetry::Accumulate(Telemetry::HTTP_CHANNEL_ONSTART_SUCCESS_TRR2,
+                          TRRService::ProviderKey(), NS_SUCCEEDED(mStatus));
   }
 
   if (mRaceCacheWithNetwork) {
@@ -7418,6 +7475,7 @@ nsHttpChannel::OnStartRequest(nsIRequest* request) {
           Telemetry::HTTP_CHANNEL_ONSTART_SUCCESS_HTTPS_RR,
           LoadEchConfigUsed() ? "echConfig-used"_ns : "echConfig-not-used"_ns,
           NS_SUCCEEDED(mStatus));
+      StoreHasHTTPSRR(true);
     }
   }
 
@@ -8068,16 +8126,18 @@ nsresult nsHttpChannel::ContinueOnStopRequest(nsresult aStatus, bool aIsFromNet,
     int32_t priority = PRIORITY_NORMAL;
     GetPriority(&priority);
 
+    uint64_t size = 0;
+    GetEncodedBodySize(&size);
+
     nsAutoCString contentType;
     if (mResponseHead) {
       mResponseHead->ContentType(contentType);
     }
     profiler_add_network_marker(
         uri, requestMethod, priority, mChannelId, NetworkLoadType::LOAD_STOP,
-        mLastStatusReported, TimeStamp::Now(), mLogicalOffset,
-        mCacheDisposition, mLoadInfo->GetInnerWindowID(), &mTransactionTimings,
-        nullptr, std::move(mSource),
-        Some(nsDependentCString(contentType.get())));
+        mLastStatusReported, TimeStamp::Now(), size, mCacheDisposition,
+        mLoadInfo->GetInnerWindowID(), &mTransactionTimings, nullptr,
+        std::move(mSource), Some(nsDependentCString(contentType.get())));
   }
 #endif
 
@@ -8761,7 +8821,6 @@ nsresult nsHttpChannel::ContinueDoAuthRetry(
     const std::function<nsresult(nsHttpChannel*, nsresult)>&
         aContinueOnStopRequestFunc) {
   LOG(("nsHttpChannel::ContinueDoAuthRetry [this=%p]\n", this));
-
   StoreIsPending(true);
 
   // get rid of the old response headers
@@ -8770,9 +8829,16 @@ nsresult nsHttpChannel::ContinueDoAuthRetry(
   // rewind the upload stream
   if (mUploadStream) {
     nsCOMPtr<nsISeekableStream> seekable = do_QueryInterface(mUploadStream);
+    nsresult rv = NS_ERROR_NO_INTERFACE;
     if (seekable) {
-      seekable->Seek(nsISeekableStream::NS_SEEK_SET, 0);
+      rv = seekable->Seek(nsISeekableStream::NS_SEEK_SET, 0);
     }
+
+    // This should not normally happen, but it's possible that big memory
+    // blobs originating in the other process can't be rewinded.
+    // In that case we just fail the request, otherwise the content length
+    // will not match and this load will never complete.
+    NS_ENSURE_SUCCESS(rv, rv);
   }
 
   // always set sticky connection flag

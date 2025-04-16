@@ -245,55 +245,55 @@ AHostResolver::LookupStatus TRRQuery::CompleteLookup(
 
     LOG(("CompleteLookup: waiting for all responses!\n"));
     return LOOKUP_OK;
-  } else {
-    // no more outstanding TRRs
-    // If mFirstTRR is set, merge those addresses into current set!
-    if (mFirstTRR) {
-      if (NS_SUCCEEDED(status)) {
-        LOG(("Merging responses"));
-        newRRSet = merge_rrset(newRRSet, mFirstTRR);
-      } else {
-        LOG(("Will use previous response"));
-        newRRSet.swap(mFirstTRR);  // transfers
-        // We must use the status of the first response, otherwise we'll
-        // pass an error result to the consumers.
-        status = mFirstTRRresult;
-      }
-      mFirstTRR = nullptr;
-    } else {
-      if (NS_FAILED(status) && status != NS_ERROR_DEFINITIVE_UNKNOWN_HOST &&
-          mFirstTRRresult == NS_ERROR_DEFINITIVE_UNKNOWN_HOST) {
-        status = NS_ERROR_DEFINITIVE_UNKNOWN_HOST;
-      }
-    }
+  }
 
-    if (mTRRSuccess && mHostResolver->GetNCS() &&
-        (mHostResolver->GetNCS()->GetNAT64() ==
-         nsINetworkConnectivityService::OK) &&
-        newRRSet) {
-      newRRSet = mHostResolver->GetNCS()->MapNAT64IPs(newRRSet);
+  // no more outstanding TRRs
+  // If mFirstTRR is set, merge those addresses into current set!
+  if (mFirstTRR) {
+    if (NS_SUCCEEDED(status)) {
+      LOG(("Merging responses"));
+      newRRSet = merge_rrset(newRRSet, mFirstTRR);
+    } else {
+      LOG(("Will use previous response"));
+      newRRSet.swap(mFirstTRR);  // transfers
+      // We must use the status of the first response, otherwise we'll
+      // pass an error result to the consumers.
+      status = mFirstTRRresult;
     }
+    mFirstTRR = nullptr;
+  } else {
+    if (NS_FAILED(status) && status != NS_ERROR_DEFINITIVE_UNKNOWN_HOST &&
+        mFirstTRRresult == NS_ERROR_DEFINITIVE_UNKNOWN_HOST) {
+      status = NS_ERROR_DEFINITIVE_UNKNOWN_HOST;
+    }
+  }
+
+  if (mTRRSuccess && mHostResolver->GetNCS() &&
+      (mHostResolver->GetNCS()->GetNAT64() ==
+       nsINetworkConnectivityService::OK) &&
+      newRRSet) {
+    newRRSet = mHostResolver->GetNCS()->MapNAT64IPs(newRRSet);
   }
 
   if (resolverType == DNSResolverType::TRR) {
     if (mTrrAUsed == OK) {
       AccumulateCategoricalKeyed(
-          TRRService::AutoDetectedKey(),
-          Telemetry::LABELS_DNS_LOOKUP_DISPOSITION2::trrAOK);
+          TRRService::ProviderKey(),
+          Telemetry::LABELS_DNS_LOOKUP_DISPOSITION3::trrAOK);
     } else if (mTrrAUsed == FAILED) {
       AccumulateCategoricalKeyed(
-          TRRService::AutoDetectedKey(),
-          Telemetry::LABELS_DNS_LOOKUP_DISPOSITION2::trrAFail);
+          TRRService::ProviderKey(),
+          Telemetry::LABELS_DNS_LOOKUP_DISPOSITION3::trrAFail);
     }
 
     if (mTrrAAAAUsed == OK) {
       AccumulateCategoricalKeyed(
-          TRRService::AutoDetectedKey(),
-          Telemetry::LABELS_DNS_LOOKUP_DISPOSITION2::trrAAAAOK);
+          TRRService::ProviderKey(),
+          Telemetry::LABELS_DNS_LOOKUP_DISPOSITION3::trrAAAAOK);
     } else if (mTrrAAAAUsed == FAILED) {
       AccumulateCategoricalKeyed(
-          TRRService::AutoDetectedKey(),
-          Telemetry::LABELS_DNS_LOOKUP_DISPOSITION2::trrAAAAFail);
+          TRRService::ProviderKey(),
+          Telemetry::LABELS_DNS_LOOKUP_DISPOSITION3::trrAAAAFail);
     }
   }
 

@@ -2758,17 +2758,14 @@ void nsStyleContent::TriggerImageLoads(Document& aDoc,
 
   for (size_t i = 0; i < items.Length(); ++i) {
     auto& item = items[i];
-    if (!item.IsUrl()) {
+    if (!item.IsImage()) {
       continue;
     }
-    auto& url = item.AsUrl();
-    if (url.IsImageResolved()) {
-      continue;
-    }
-    auto* oldUrl = i < oldItems.Length() && oldItems[i].IsUrl()
-                       ? &oldItems[i].AsUrl()
-                       : nullptr;
-    const_cast<StyleComputedImageUrl&>(url).ResolveImage(aDoc, oldUrl);
+    auto& image = item.AsImage();
+    auto* oldImage = i < oldItems.Length() && oldItems[i].IsImage()
+                         ? &oldItems[i].AsImage()
+                         : nullptr;
+    const_cast<StyleImage&>(image).ResolveImage(aDoc, oldImage);
   }
 }
 
@@ -2850,7 +2847,9 @@ nsStyleText::nsStyleText(const Document& aDocument)
       mWhiteSpace(StyleWhiteSpace::Normal),
       mHyphens(StyleHyphens::Manual),
       mRubyAlign(StyleRubyAlign::SpaceAround),
-      mRubyPosition(StyleRubyPosition::Over),
+      mRubyPosition(StaticPrefs::layout_css_ruby_position_alternate_enabled()
+                        ? StyleRubyPosition::AlternateOver
+                        : StyleRubyPosition::Over),
       mTextSizeAdjust(StyleTextSizeAdjust::Auto),
       mTextCombineUpright(NS_STYLE_TEXT_COMBINE_UPRIGHT_NONE),
       mControlCharacterVisibility(
@@ -3055,13 +3054,10 @@ void nsStyleUI::TriggerImageLoads(Document& aDocument,
                                    : Span<const StyleCursorImage>();
   for (size_t i = 0; i < cursorImages.Length(); ++i) {
     auto& cursor = cursorImages[i];
-
-    if (!cursor.url.IsImageResolved()) {
-      const auto* oldCursor =
-          oldCursorImages.Length() > i ? &oldCursorImages[i] : nullptr;
-      const_cast<StyleComputedImageUrl&>(cursor.url)
-          .ResolveImage(aDocument, oldCursor ? &oldCursor->url : nullptr);
-    }
+    const auto* oldCursorImage =
+        oldCursorImages.Length() > i ? &oldCursorImages[i].image : nullptr;
+    const_cast<StyleCursorImage&>(cursor).image.ResolveImage(aDocument,
+                                                             oldCursorImage);
   }
 }
 

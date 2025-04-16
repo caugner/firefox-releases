@@ -15,8 +15,8 @@ const EXAMPLE_NET_URI =
 
 add_task(async function() {
   const tab = await addTab(EXAMPLE_COM_URI);
-  const target = await TargetFactory.forTab(tab);
-  const toolbox = await gDevTools.showToolbox(target);
+  const toolbox = await gDevTools.showToolboxForTab(tab);
+  const target = toolbox.target;
   const client = target.client;
 
   info("Retrieve the initial list of tab descriptors");
@@ -25,6 +25,15 @@ add_task(async function() {
     d => decodeURIComponent(d.url) === EXAMPLE_COM_URI
   );
   ok(tabDescriptor, "Should have a descriptor actor for the tab");
+
+  const firstCommands = await tabDescriptor.getCommands();
+  ok(firstCommands, "Got commands");
+  const secondCommands = await tabDescriptor.getCommands();
+  is(
+    firstCommands,
+    secondCommands,
+    "Multiple calls to getCommands return the same commands object"
+  );
 
   is(
     target.descriptorFront,
@@ -76,4 +85,12 @@ add_task(async function() {
       "Without Fission, the example.com target is reused"
     );
   }
+
+  const onDescriptorDestroyed = tabDescriptor.once("descriptor-destroyed");
+
+  await removeTab(tab);
+
+  info("Wait for descriptor destroyed event");
+  await onDescriptorDestroyed;
+  ok(tabDescriptor.isDestroyed(), "the descriptor front is really destroyed");
 });

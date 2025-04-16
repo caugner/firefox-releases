@@ -263,16 +263,6 @@ class ContentChild final : public PContentChild,
 
   bool DeallocPBenchmarkStorageChild(PBenchmarkStorageChild* aActor);
 
-  PPresentationChild* AllocPPresentationChild();
-
-  bool DeallocPPresentationChild(PPresentationChild* aActor);
-
-  mozilla::ipc::IPCResult RecvNotifyPresentationReceiverLaunched(
-      PBrowserChild* aIframe, const nsString& aSessionId);
-
-  mozilla::ipc::IPCResult RecvNotifyPresentationReceiverCleanUp(
-      const nsString& aSessionId);
-
   mozilla::ipc::IPCResult RecvNotifyEmptyHTTPCache();
 
 #ifdef MOZ_WEBSPEECH
@@ -717,8 +707,8 @@ class ContentChild final : public PContentChild,
       const MaybeDiscarded<BrowsingContext>& aContext, CallerType aCallerType,
       uint64_t aActionId);
   mozilla::ipc::IPCResult RecvAdjustWindowFocus(
-      const MaybeDiscarded<BrowsingContext>& aContext, bool aCheckPermission,
-      bool aIsVisible);
+      const MaybeDiscarded<BrowsingContext>& aContext, bool aIsVisible,
+      uint64_t aActionId);
   mozilla::ipc::IPCResult RecvClearFocus(
       const MaybeDiscarded<BrowsingContext>& aContext);
   mozilla::ipc::IPCResult RecvSetFocusedBrowsingContext(
@@ -741,10 +731,12 @@ class ContentChild final : public PContentChild,
       bool aIsLeavingDocument, bool aAdjustWidget, uint64_t aActionId);
   mozilla::ipc::IPCResult RecvSetupFocusedAndActive(
       const MaybeDiscarded<BrowsingContext>& aFocusedBrowsingContext,
-      const MaybeDiscarded<BrowsingContext>& aActiveBrowsingContext);
-  mozilla::ipc::IPCResult RecvReviseActiveBrowsingContext(
       const MaybeDiscarded<BrowsingContext>& aActiveBrowsingContext,
       uint64_t aActionId);
+  mozilla::ipc::IPCResult RecvReviseActiveBrowsingContext(
+      uint64_t aOldActionId,
+      const MaybeDiscarded<BrowsingContext>& aActiveBrowsingContext,
+      uint64_t aNewActionId);
   mozilla::ipc::IPCResult RecvMaybeExitFullscreen(
       const MaybeDiscarded<BrowsingContext>& aContext);
 
@@ -823,6 +815,11 @@ class ContentChild final : public PContentChild,
   mozilla::ipc::IPCResult RecvDispatchBeforeUnloadToSubtree(
       const MaybeDiscarded<BrowsingContext>& aStartingAt,
       DispatchBeforeUnloadToSubtreeResolver&& aResolver);
+
+  mozilla::ipc::IPCResult RecvCanSavePresentation(
+      const MaybeDiscarded<BrowsingContext>& aTopLevelContext,
+      Maybe<uint64_t> aDocumentChannelId,
+      CanSavePresentationResolver&& aResolve);
 
  public:
   static void DispatchBeforeUnloadToSubtree(

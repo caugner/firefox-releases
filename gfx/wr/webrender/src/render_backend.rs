@@ -820,8 +820,13 @@ pub struct RenderBackend {
     blob_image_handler: Option<Box<dyn BlobImageHandler>>,
 
     recycler: Recycler,
+
     #[cfg(feature = "capture")]
+    /// If `Some`, do 'sequence capture' logging, recording updated documents,
+    /// frames, etc. This is set only through messages from the scene builder,
+    /// so all control of sequence capture goes through there.
     capture_config: Option<CaptureConfig>,
+
     #[cfg(feature = "replay")]
     loaded_resource_sequence_id: u32,
 
@@ -1263,6 +1268,10 @@ impl RenderBackend {
 
                 self.bookkeep_after_frames();
             },
+            #[cfg(feature = "capture")]
+            SceneBuilderResult::StopCaptureSequence => {
+                self.capture_config = None;
+            }
             SceneBuilderResult::GetGlyphDimensions(request) => {
                 let mut glyph_dimensions = Vec::with_capacity(request.glyph_indices.len());
                 if let Some(base) = self.resource_cache.get_font_instance(request.key) {
@@ -1428,7 +1437,7 @@ impl RenderBackend {
         // fiddle with things after a potentially long scene build, but just
         // before rendering. This is useful for rendering with the latest
         // async transforms.
-        if requested_frame || has_built_scene {
+        if requested_frame {
             if let Some(ref sampler) = self.sampler {
                 frame_ops.append(&mut sampler.sample(document_id, generated_frame_id));
             }
@@ -1737,7 +1746,6 @@ impl RenderBackend {
                     .expect("Failed to open the SVG file.");
                 dump_render_tasks_as_svg(
                     &rendered_document.frame.render_tasks,
-                    &rendered_document.frame.passes,
                     &mut render_tasks_file
                 ).unwrap();
 

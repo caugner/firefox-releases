@@ -256,7 +256,7 @@ ENameValueFlag XULTreeGridRowAccessible::Name(nsString& aName) const {
   return eNameOK;
 }
 
-LocalAccessible* XULTreeGridRowAccessible::ChildAtPoint(
+LocalAccessible* XULTreeGridRowAccessible::LocalChildAtPoint(
     int32_t aX, int32_t aY, EWhichChildAtPoint aWhichChild) {
   nsIFrame* frame = GetFrame();
   if (!frame) return nullptr;
@@ -309,7 +309,7 @@ XULTreeGridCellAccessible* XULTreeGridRowAccessible::GetCellAccessible(
   RefPtr<XULTreeGridCellAccessible> cell = new XULTreeGridCellAccessibleWrap(
       mContent, mDoc, const_cast<XULTreeGridRowAccessible*>(this), mTree,
       mTreeView, mRow, aColumn);
-  mAccessibleCache.Put(key, RefPtr{cell});
+  mAccessibleCache.InsertOrUpdate(key, RefPtr{cell});
   Document()->BindToDocument(cell, nullptr);
   return cell;
 }

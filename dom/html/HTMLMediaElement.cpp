@@ -9,6 +9,9 @@
 #endif
 
 #include "mozilla/dom/HTMLMediaElement.h"
+
+#include <unordered_map>
+
 #include "AudioDeviceInfo.h"
 #include "AudioStreamTrack.h"
 #include "AutoplayPolicy.h"
@@ -2079,6 +2082,59 @@ double HTMLMediaElement::VideoDecodeSuspendedTime() const {
   return mDecoder ? mDecoder->GetVideoDecodeSuspendedTimeInSeconds() : -1.0;
 }
 
+void HTMLMediaElement::SetFormatDiagnosticsReportForMimeType(
+    const nsAString& aMimeType, DecoderDoctorReportType aType) {
+  DecoderDoctorDiagnostics diagnostics;
+  diagnostics.SetDecoderDoctorReportType(aType);
+  diagnostics.StoreFormatDiagnostics(OwnerDoc(), aMimeType, false /* can play*/,
+                                     __func__);
+}
+
+void HTMLMediaElement::SetDecodeError(const nsAString& aError,
+                                      ErrorResult& aRv) {
+  // The reason we use this map-ish structure is because we can't use
+  // `CR.NS_ERROR.*` directly in test. In order to use them in test, we have to
+  // add them into `xpc.msg`. As we won't use `CR.NS_ERROR.*` in the production
+  // code, adding them to `xpc.msg` seems an overdesign and adding maintenance
+  // effort (exposing them in CR also needs to add a description, which is
+  // useless because we won't show them to users)
+  static struct {
+    const char* mName;
+    nsresult mResult;
+  } kSupportedErrorList[] = {
+      {"NS_ERROR_DOM_MEDIA_ABORT_ERR", NS_ERROR_DOM_MEDIA_ABORT_ERR},
+      {"NS_ERROR_DOM_MEDIA_NOT_ALLOWED_ERR",
+       NS_ERROR_DOM_MEDIA_NOT_ALLOWED_ERR},
+      {"NS_ERROR_DOM_MEDIA_NOT_SUPPORTED_ERR",
+       NS_ERROR_DOM_MEDIA_NOT_SUPPORTED_ERR},
+      {"NS_ERROR_DOM_MEDIA_DECODE_ERR", NS_ERROR_DOM_MEDIA_DECODE_ERR},
+      {"NS_ERROR_DOM_MEDIA_FATAL_ERR", NS_ERROR_DOM_MEDIA_FATAL_ERR},
+      {"NS_ERROR_DOM_MEDIA_METADATA_ERR", NS_ERROR_DOM_MEDIA_METADATA_ERR},
+      {"NS_ERROR_DOM_MEDIA_OVERFLOW_ERR", NS_ERROR_DOM_MEDIA_OVERFLOW_ERR},
+      {"NS_ERROR_DOM_MEDIA_MEDIASINK_ERR", NS_ERROR_DOM_MEDIA_MEDIASINK_ERR},
+      {"NS_ERROR_DOM_MEDIA_DEMUXER_ERR", NS_ERROR_DOM_MEDIA_DEMUXER_ERR},
+      {"NS_ERROR_DOM_MEDIA_CDM_ERR", NS_ERROR_DOM_MEDIA_CDM_ERR},
+      {"NS_ERROR_DOM_MEDIA_CUBEB_INITIALIZATION_ERR",
+       NS_ERROR_DOM_MEDIA_CUBEB_INITIALIZATION_ERR}};
+  for (auto& error : kSupportedErrorList) {
+    if (strcmp(error.mName, NS_ConvertUTF16toUTF8(aError).get()) == 0) {
+      DecoderDoctorDiagnostics diagnostics;
+      diagnostics.StoreDecodeError(OwnerDoc(), error.mResult, u""_ns, __func__);
+      return;
+    }
+  }
+  aRv.Throw(NS_ERROR_FAILURE);
+  return;
+}
+
+void HTMLMediaElement::SetAudioSinkFailedStartup() {
+  DecoderDoctorDiagnostics diagnostics;
+  diagnostics.StoreEvent(OwnerDoc(),
+                         {DecoderDoctorEvent::eAudioSinkStartup,
+                          NS_ERROR_DOM_MEDIA_CUBEB_INITIALIZATION_ERR},
+                         __func__);
+}
+
 already_AddRefed<layers::Image> HTMLMediaElement::GetCurrentImage() {
   MarkAsTainted();
 
@@ -3302,12 +3358,12 @@ void HTMLMediaElement::MozGetMetadata(JSContext* cx,
     return;
   }
   if (mTags) {
-    for (auto iter = mTags->ConstIter(); !iter.Done(); iter.Next()) {
+    for (const auto& entry : *mTags) {
       nsString wideValue;
-      CopyUTF8toUTF16(iter.UserData(), wideValue);
+      CopyUTF8toUTF16(entry.GetData(), wideValue);
       JS::Rooted<JSString*> string(cx,
                                    JS_NewUCStringCopyZ(cx, wideValue.Data()));
-      if (!string || !JS_DefineProperty(cx, tags, iter.Key().Data(), string,
+      if (!string || !JS_DefineProperty(cx, tags, entry.GetKey().Data(), string,
                                         JSPROP_ENUMERATE)) {
         NS_WARNING("couldn't create metadata object!");
         aRv.Throw(NS_ERROR_FAILURE);
@@ -3668,8 +3724,8 @@ void HTMLMediaElement::UpdateOutputTrackSources() {
                           source.get(), NS_ConvertUTF16toUTF8(id).get()));
 
     track->QueueSetAutoend(false);
-    MOZ_DIAGNOSTIC_ASSERT(!mOutputTrackSources.GetWeak(id));
-    mOutputTrackSources.Put(id, RefPtr{source});
+    MOZ_DIAGNOSTIC_ASSERT(!mOutputTrackSources.Contains(id));
+    mOutputTrackSources.InsertOrUpdate(id, RefPtr{source});
 
     // Add the new track source to any existing output streams
     for (OutputMediaStream& ms : mOutputStreams) {
@@ -3907,15 +3963,14 @@ static unsigned MediaElementTableCount(HTMLMediaElement* aElement,
   }
   uint32_t uriCount = 0;
   uint32_t otherCount = 0;
-  for (auto it = gElementTable->ConstIter(); !it.Done(); it.Next()) {
-    MediaElementSetForURI* entry = it.Get();
+  for (const auto& entry : *gElementTable) {
     uint32_t count = 0;
-    for (const auto& elem : entry->mElements) {
+    for (const auto& elem : entry.mElements) {
       if (elem == aElement) {
         count++;
       }
     }
-    if (URISafeEquals(aURI, entry->GetKey())) {
+    if (URISafeEquals(aURI, entry.GetKey())) {
       uriCount = count;
     } else {
       otherCount += count;
@@ -6548,9 +6603,17 @@ void HTMLMediaElement::FireTimeUpdate(TimeupdateType aType) {
 MediaError* HTMLMediaElement::GetError() const { return mErrorSink->mError; }
 
 void HTMLMediaElement::GetCurrentSpec(nsCString& aString) {
+  // If playing a regular URL, an ObjectURL of a Blob/File, return that.
   if (mLoadingSrc) {
     mLoadingSrc->GetSpec(aString);
+  } else if (mSrcMediaSource) {
+    // If playing an ObjectURL, and it's a MediaSource, return the value of the
+    // `src` attribute.
+    nsAutoString src;
+    GetSrc(src);
+    CopyUTF16toUTF8(src, aString);
   } else {
+    // Playing e.g. a MediaStream via an object URL - return an empty string
     aString.Truncate();
   }
 }

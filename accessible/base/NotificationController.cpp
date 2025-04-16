@@ -58,10 +58,10 @@ NS_IMPL_CYCLE_COLLECTION_UNLINK_END
 
 NS_IMPL_CYCLE_COLLECTION_TRAVERSE_BEGIN(NotificationController)
   NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mHangingChildDocuments)
-  for (auto it = tmp->mContentInsertions.ConstIter(); !it.Done(); it.Next()) {
+  for (const auto& entry : tmp->mContentInsertions) {
     NS_CYCLE_COLLECTION_NOTE_EDGE_NAME(cb, "mContentInsertions key");
-    cb.NoteXPCOMChild(it.Key());
-    nsTArray<nsCOMPtr<nsIContent>>* list = it.UserData();
+    cb.NoteXPCOMChild(entry.GetKey());
+    nsTArray<nsCOMPtr<nsIContent>>* list = entry.GetData().get();
     for (uint32_t i = 0; i < list->Length(); i++) {
       NS_CYCLE_COLLECTION_NOTE_EDGE_NAME(cb, "mContentInsertions value item");
       cb.NoteXPCOMChild(list->ElementAt(i));
@@ -331,7 +331,7 @@ void NotificationController::CoalesceMutationEvents() {
         }
 
         LocalAccessible* parent = acc->LocalParent();
-        if (parent->ReorderEventTarget()) {
+        if (parent && parent->ReorderEventTarget()) {
           AccReorderEvent* reorder = downcast_accEvent(
               mMutationMap.GetEvent(parent, EventMap::ReorderEvent));
 
@@ -428,7 +428,7 @@ void NotificationController::ScheduleChildDocBinding(DocAccessible* aDocument) {
 void NotificationController::ScheduleContentInsertion(
     LocalAccessible* aContainer, nsTArray<nsCOMPtr<nsIContent>>& aInsertions) {
   if (!aInsertions.IsEmpty()) {
-    mContentInsertions.LookupOrAdd(aContainer)->AppendElements(aInsertions);
+    mContentInsertions.GetOrInsertNew(aContainer)->AppendElements(aInsertions);
     ScheduleProcessing();
   }
 }
@@ -522,8 +522,7 @@ void NotificationController::ProcessMutationEvents() {
   }
 
   // Group the show events by the parent of their target.
-  nsDataHashtable<nsPtrHashKey<LocalAccessible>,
-                  nsTArray<AccTreeMutationEvent*>>
+  nsTHashMap<nsPtrHashKey<LocalAccessible>, nsTArray<AccTreeMutationEvent*>>
       showEvents;
   for (AccTreeMutationEvent* event = mFirstMutationEvent; event;
        event = event->NextEvent()) {
@@ -532,7 +531,7 @@ void NotificationController::ProcessMutationEvents() {
     }
 
     LocalAccessible* parent = event->GetAccessible()->LocalParent();
-    showEvents.GetOrInsert(parent).AppendElement(event);
+    showEvents.LookupOrInsert(parent).AppendElement(event);
   }
 
   // We need to fire show events for the children of an accessible in the order
@@ -655,8 +654,8 @@ void NotificationController::WillRefresh(mozilla::TimeStamp aTime) {
   }
 
   // Process rendered text change notifications.
-  for (auto iter = mTextHash.Iter(); !iter.Done(); iter.Next()) {
-    nsCOMPtrHashKey<nsIContent>* entry = iter.Get();
+  for (auto iter = mTextHash.ConstIter(); !iter.Done(); iter.Next()) {
+    const nsCOMPtrHashKey<nsIContent>* entry = iter.Get();
     nsIContent* textNode = entry->GetKey();
     LocalAccessible* textAcc = mDocument->GetAccessible(textNode);
 
@@ -741,7 +740,7 @@ void NotificationController::WillRefresh(mozilla::TimeStamp aTime) {
           mDocument->AccessibleOrTrueContainer(containerNode, true);
       if (container) {
         nsTArray<nsCOMPtr<nsIContent>>* list =
-            mContentInsertions.LookupOrAdd(container);
+            mContentInsertions.GetOrInsertNew(container);
         list->AppendElement(textNode);
       }
     }
@@ -755,9 +754,9 @@ void NotificationController::WillRefresh(mozilla::TimeStamp aTime) {
   // move the current insertions into a temporary data structure and process
   // them from there. Any insertions queued during processing will get handled
   // in subsequent refresh driver ticks.
-  auto contentInsertions = std::move(mContentInsertions);
-  for (auto iter = contentInsertions.ConstIter(); !iter.Done(); iter.Next()) {
-    mDocument->ProcessContentInserted(iter.Key(), iter.UserData());
+  const auto contentInsertions = std::move(mContentInsertions);
+  for (const auto& entry : contentInsertions) {
+    mDocument->ProcessContentInserted(entry.GetKey(), entry.GetData().get());
     if (!mDocument) {
       return;
     }
@@ -944,7 +943,7 @@ void NotificationController::EventMap::PutEvent(AccTreeMutationEvent* aEvent) {
   uint64_t addr = reinterpret_cast<uintptr_t>(aEvent->GetAccessible());
   MOZ_ASSERT((addr & 0x3) == 0, "accessible is not 4 byte aligned");
   addr |= type;
-  mTable.Put(addr, RefPtr{aEvent});
+  mTable.InsertOrUpdate(addr, RefPtr{aEvent});
 }
 
 AccTreeMutationEvent* NotificationController::EventMap::GetEvent(

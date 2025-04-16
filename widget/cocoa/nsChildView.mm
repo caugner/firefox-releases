@@ -55,6 +55,7 @@
 #include "nsMenuUtilsX.h"
 #include "nsMenuBarX.h"
 #include "NativeKeyBindings.h"
+#include "MacThemeGeometryType.h"
 
 #include "gfxContext.h"
 #include "gfxQuartzSurface.h"
@@ -113,6 +114,7 @@
 #include "Units.h"
 #include "UnitTransforms.h"
 #include "mozilla/UniquePtrExtensions.h"
+#include "CustomCocoaEvents.h"
 
 using namespace mozilla;
 using namespace mozilla::layers;
@@ -868,7 +870,9 @@ nsresult nsChildView::SynthesizeNativeKeyEvent(int32_t aNativeKeyboardLayout,
 }
 
 nsresult nsChildView::SynthesizeNativeMouseEvent(LayoutDeviceIntPoint aPoint,
-                                                 uint32_t aNativeMessage, uint32_t aModifierFlags,
+                                                 NativeMouseMessage aNativeMessage,
+                                                 MouseButton aButton,
+                                                 nsIWidget::Modifiers aModifierFlags,
                                                  nsIObserver* aObserver) {
   NS_OBJC_BEGIN_TRY_BLOCK_RETURN;
 
@@ -884,10 +888,54 @@ nsresult nsChildView::SynthesizeNativeMouseEvent(LayoutDeviceIntPoint aPoint,
   // expects a point in a coordinate system that has its origin on the bottom left.
   NSPoint screenPoint = NSMakePoint(pt.x, nsCocoaUtils::FlippedScreenY(pt.y));
   NSPoint windowPoint = nsCocoaUtils::ConvertPointFromScreen([mView window], screenPoint);
+  NSEventModifierFlags modifierFlags =
+      nsCocoaUtils::ConvertWidgetModifiersToMacModifierFlags(aModifierFlags);
 
-  NSEvent* event = [NSEvent mouseEventWithType:(NSEventType)aNativeMessage
+  if (aButton == MouseButton::eX1 || aButton == MouseButton::eX2) {
+    // NSEvent has `buttonNumber` for `NSEventTypeOther*`.  However, it seems that
+    // there is no way to specify it.  Therefore, we should return error for now.
+    return NS_ERROR_INVALID_ARG;
+  }
+
+  NSEventType nativeEventType;
+  switch (aNativeMessage) {
+    case NativeMouseMessage::ButtonDown:
+    case NativeMouseMessage::ButtonUp: {
+      switch (aButton) {
+        case MouseButton::ePrimary:
+          nativeEventType = aNativeMessage == NativeMouseMessage::ButtonDown
+                                ? NSEventTypeLeftMouseDown
+                                : NSEventTypeLeftMouseUp;
+          break;
+        case MouseButton::eMiddle:
+          nativeEventType = aNativeMessage == NativeMouseMessage::ButtonDown
+                                ? NSEventTypeOtherMouseDown
+                                : NSEventTypeOtherMouseUp;
+          break;
+        case MouseButton::eSecondary:
+          nativeEventType = aNativeMessage == NativeMouseMessage::ButtonDown
+                                ? NSEventTypeRightMouseDown
+                                : NSEventTypeRightMouseUp;
+          break;
+        default:
+          return NS_ERROR_INVALID_ARG;
+      }
+      break;
+    }
+    case NativeMouseMessage::Move:
+      nativeEventType = NSEventTypeMouseMoved;
+      break;
+    case NativeMouseMessage::EnterWindow:
+      nativeEventType = NSEventTypeMouseEntered;
+      break;
+    case NativeMouseMessage::LeaveWindow:
+      nativeEventType = NSEventTypeMouseExited;
+      break;
+  }
+
+  NSEvent* event = [NSEvent mouseEventWithType:nativeEventType
                                       location:windowPoint
-                                 modifierFlags:aModifierFlags
+                                 modifierFlags:modifierFlags
                                      timestamp:[[NSProcessInfo processInfo] systemUptime]
                                   windowNumber:[[mView window] windowNumber]
                                        context:nil
@@ -901,15 +949,15 @@ nsresult nsChildView::SynthesizeNativeMouseEvent(LayoutDeviceIntPoint aPoint,
     // Tracking area events don't end up in their tracking areas when sent
     // through [NSApp sendEvent:], so pass them directly to the right methods.
     BaseWindow* window = (BaseWindow*)[mView window];
-    if (aNativeMessage == NSEventTypeMouseEntered) {
+    if (nativeEventType == NSEventTypeMouseEntered) {
       [window mouseEntered:event];
       return NS_OK;
     }
-    if (aNativeMessage == NSEventTypeMouseExited) {
+    if (nativeEventType == NSEventTypeMouseExited) {
       [window mouseExited:event];
       return NS_OK;
     }
-    if (aNativeMessage == NSEventTypeMouseMoved) {
+    if (nativeEventType == NSEventTypeMouseMoved) {
       [window mouseMoved:event];
       return NS_OK;
     }
@@ -998,6 +1046,17 @@ nsresult nsChildView::SynthesizeNativeTouchPoint(
   NS_OBJC_END_TRY_BLOCK_RETURN(NS_ERROR_FAILURE);
 }
 
+nsresult nsChildView::SynthesizeNativeTouchpadDoubleTap(mozilla::LayoutDeviceIntPoint aPoint,
+                                                        uint32_t aModifierFlags) {
+  NS_OBJC_BEGIN_TRY_BLOCK_RETURN;
+
+  DispatchDoubleTapGesture(TimeStamp::Now(), aPoint, static_cast<Modifiers>(aModifierFlags));
+
+  return NS_OK;
+
+  NS_OBJC_END_TRY_BLOCK_RETURN(NS_ERROR_FAILURE);
+}
+
 bool nsChildView::SendEventToNativeMenuSystem(NSEvent* aEvent) {
   bool handled = false;
   nsCocoaWindow* widget = GetAppWindowWidget();
@@ -1041,6 +1100,8 @@ void nsChildView::PostHandleKeyEvent(mozilla::WidgetKeyboardEvent* aEvent) {
 // Used for testing native menu system structure and event handling.
 nsresult nsChildView::ActivateNativeMenuItemAt(const nsAString& indexString) {
   NS_OBJC_BEGIN_TRY_BLOCK_RETURN;
+
+  nsMenuUtilsX::CheckNativeMenuConsistency([NSApp mainMenu]);
 
   NSString* locationString =
       [NSString stringWithCharacters:reinterpret_cast<const unichar*>(indexString.BeginReading())
@@ -1581,9 +1642,9 @@ static int32_t FindTitlebarBottom(const nsTArray<nsIWidget::ThemeGeometry>& aThe
                                   int32_t aWindowWidth) {
   int32_t titlebarBottom = 0;
   for (auto& g : aThemeGeometries) {
-    if ((g.mType == nsNativeThemeCocoa::eThemeGeometryTypeTitlebar ||
-         g.mType == nsNativeThemeCocoa::eThemeGeometryTypeVibrantTitlebarLight ||
-         g.mType == nsNativeThemeCocoa::eThemeGeometryTypeVibrantTitlebarDark) &&
+    if ((g.mType == eThemeGeometryTypeTitlebar ||
+         g.mType == eThemeGeometryTypeVibrantTitlebarLight ||
+         g.mType == eThemeGeometryTypeVibrantTitlebarDark) &&
         g.mRect.X() <= 0 && g.mRect.XMost() >= aWindowWidth && g.mRect.Y() <= 0) {
       titlebarBottom = std::max(titlebarBottom, g.mRect.YMost());
     }
@@ -1596,7 +1657,7 @@ static int32_t FindUnifiedToolbarBottom(const nsTArray<nsIWidget::ThemeGeometry>
   int32_t unifiedToolbarBottom = aTitlebarBottom;
   for (uint32_t i = 0; i < aThemeGeometries.Length(); ++i) {
     const nsIWidget::ThemeGeometry& g = aThemeGeometries[i];
-    if ((g.mType == nsNativeThemeCocoa::eThemeGeometryTypeToolbar) && g.mRect.X() <= 0 &&
+    if ((g.mType == eThemeGeometryTypeToolbar) && g.mRect.X() <= 0 &&
         g.mRect.XMost() >= aWindowWidth && g.mRect.Y() <= aTitlebarBottom) {
       unifiedToolbarBottom = std::max(unifiedToolbarBottom, g.mRect.YMost());
     }
@@ -1628,11 +1689,11 @@ void nsChildView::UpdateThemeGeometries(const nsTArray<ThemeGeometry>& aThemeGeo
   int32_t titlebarBottom = FindTitlebarBottom(aThemeGeometries, windowWidth);
   int32_t unifiedToolbarBottom =
       FindUnifiedToolbarBottom(aThemeGeometries, windowWidth, titlebarBottom);
-  int32_t toolboxBottom =
-      FindFirstRectOfType(aThemeGeometries, nsNativeThemeCocoa::eThemeGeometryTypeToolbox).YMost();
+  int32_t toolboxBottom = FindFirstRectOfType(aThemeGeometries, eThemeGeometryTypeToolbox).YMost();
 
   ToolbarWindow* win = (ToolbarWindow*)[mView window];
-  int32_t titlebarHeight = CocoaPointsToDevPixels([win titlebarHeight]);
+  int32_t titlebarHeight =
+      [win drawsContentsIntoWindowFrame] ? 0 : CocoaPointsToDevPixels([win titlebarHeight]);
   int32_t devUnifiedHeight = titlebarHeight + unifiedToolbarBottom;
   [win setUnifiedToolbarHeight:DevPixelsToCocoaPoints(devUnifiedHeight)];
 
@@ -1643,32 +1704,28 @@ void nsChildView::UpdateThemeGeometries(const nsTArray<ThemeGeometry>& aThemeGeo
 
   // Update titlebar control offsets.
   LayoutDeviceIntRect windowButtonRect =
-      FindFirstRectOfType(aThemeGeometries, nsNativeThemeCocoa::eThemeGeometryTypeWindowButtons);
+      FindFirstRectOfType(aThemeGeometries, eThemeGeometryTypeWindowButtons);
   [win placeWindowButtons:[mView convertRect:DevPixelsToCocoaPoints(windowButtonRect) toView:nil]];
 }
 
 static Maybe<VibrancyType> ThemeGeometryTypeToVibrancyType(
     nsITheme::ThemeGeometryType aThemeGeometryType) {
   switch (aThemeGeometryType) {
-    case nsNativeThemeCocoa::eThemeGeometryTypeVibrancyLight:
-    case nsNativeThemeCocoa::eThemeGeometryTypeVibrantTitlebarLight:
-      return Some(VibrancyType::LIGHT);
-    case nsNativeThemeCocoa::eThemeGeometryTypeVibrancyDark:
-    case nsNativeThemeCocoa::eThemeGeometryTypeVibrantTitlebarDark:
-      return Some(VibrancyType::DARK);
-    case nsNativeThemeCocoa::eThemeGeometryTypeSheet:
-      return Some(VibrancyType::SHEET);
-    case nsNativeThemeCocoa::eThemeGeometryTypeTooltip:
+    case eThemeGeometryTypeVibrantTitlebarLight:
+      return Some(VibrancyType::TITLEBAR_LIGHT);
+    case eThemeGeometryTypeVibrantTitlebarDark:
+      return Some(VibrancyType::TITLEBAR_DARK);
+    case eThemeGeometryTypeTooltip:
       return Some(VibrancyType::TOOLTIP);
-    case nsNativeThemeCocoa::eThemeGeometryTypeMenu:
+    case eThemeGeometryTypeMenu:
       return Some(VibrancyType::MENU);
-    case nsNativeThemeCocoa::eThemeGeometryTypeHighlightedMenuItem:
+    case eThemeGeometryTypeHighlightedMenuItem:
       return Some(VibrancyType::HIGHLIGHTED_MENUITEM);
-    case nsNativeThemeCocoa::eThemeGeometryTypeSourceList:
+    case eThemeGeometryTypeSourceList:
       return Some(VibrancyType::SOURCE_LIST);
-    case nsNativeThemeCocoa::eThemeGeometryTypeSourceListSelection:
+    case eThemeGeometryTypeSourceListSelection:
       return Some(VibrancyType::SOURCE_LIST_SELECTION);
-    case nsNativeThemeCocoa::eThemeGeometryTypeActiveSourceListSelection:
+    case eThemeGeometryTypeActiveSourceListSelection:
       return Some(VibrancyType::ACTIVE_SOURCE_LIST_SELECTION);
     default:
       return Nothing();
@@ -1707,11 +1764,10 @@ static void MakeRegionsNonOverlapping(Region& aFirst, Regions&... aRest) {
 }
 
 void nsChildView::UpdateVibrancy(const nsTArray<ThemeGeometry>& aThemeGeometries) {
-  LayoutDeviceIntRegion sheetRegion = GatherVibrantRegion(aThemeGeometries, VibrancyType::SHEET);
-  LayoutDeviceIntRegion vibrantLightRegion =
-      GatherVibrantRegion(aThemeGeometries, VibrancyType::LIGHT);
-  LayoutDeviceIntRegion vibrantDarkRegion =
-      GatherVibrantRegion(aThemeGeometries, VibrancyType::DARK);
+  LayoutDeviceIntRegion vibrantTitlebarLightRegion =
+      GatherVibrantRegion(aThemeGeometries, VibrancyType::TITLEBAR_LIGHT);
+  LayoutDeviceIntRegion vibrantTitlebarDarkRegion =
+      GatherVibrantRegion(aThemeGeometries, VibrancyType::TITLEBAR_DARK);
   LayoutDeviceIntRegion menuRegion = GatherVibrantRegion(aThemeGeometries, VibrancyType::MENU);
   LayoutDeviceIntRegion tooltipRegion =
       GatherVibrantRegion(aThemeGeometries, VibrancyType::TOOLTIP);
@@ -1724,18 +1780,17 @@ void nsChildView::UpdateVibrancy(const nsTArray<ThemeGeometry>& aThemeGeometries
   LayoutDeviceIntRegion activeSourceListSelectionRegion =
       GatherVibrantRegion(aThemeGeometries, VibrancyType::ACTIVE_SOURCE_LIST_SELECTION);
 
-  MakeRegionsNonOverlapping(sheetRegion, vibrantLightRegion, vibrantDarkRegion, menuRegion,
+  MakeRegionsNonOverlapping(vibrantTitlebarLightRegion, vibrantTitlebarDarkRegion, menuRegion,
                             tooltipRegion, highlightedMenuItemRegion, sourceListRegion,
                             sourceListSelectionRegion, activeSourceListSelectionRegion);
 
   auto& vm = EnsureVibrancyManager();
   bool changed = false;
-  changed |= vm.UpdateVibrantRegion(VibrancyType::LIGHT, vibrantLightRegion);
-  changed |= vm.UpdateVibrantRegion(VibrancyType::DARK, vibrantDarkRegion);
+  changed |= vm.UpdateVibrantRegion(VibrancyType::TITLEBAR_LIGHT, vibrantTitlebarLightRegion);
+  changed |= vm.UpdateVibrantRegion(VibrancyType::TITLEBAR_DARK, vibrantTitlebarDarkRegion);
   changed |= vm.UpdateVibrantRegion(VibrancyType::MENU, menuRegion);
   changed |= vm.UpdateVibrantRegion(VibrancyType::TOOLTIP, tooltipRegion);
   changed |= vm.UpdateVibrantRegion(VibrancyType::HIGHLIGHTED_MENUITEM, highlightedMenuItemRegion);
-  changed |= vm.UpdateVibrantRegion(VibrancyType::SHEET, sheetRegion);
   changed |= vm.UpdateVibrantRegion(VibrancyType::SOURCE_LIST, sourceListRegion);
   changed |= vm.UpdateVibrantRegion(VibrancyType::SOURCE_LIST_SELECTION, sourceListSelectionRegion);
   changed |= vm.UpdateVibrantRegion(VibrancyType::ACTIVE_SOURCE_LIST_SELECTION,
@@ -1889,17 +1944,23 @@ nsEventStatus nsChildView::DispatchAPZInputEvent(InputData& aEvent) {
     result = mAPZC->InputBridge()->ReceiveInputEvent(aEvent);
   }
 
-  if (result.mStatus == nsEventStatus_eConsumeNoDefault) {
-    return result.mStatus;
+  if (result.GetStatus() == nsEventStatus_eConsumeNoDefault) {
+    return result.GetStatus();
   }
 
   if (aEvent.mInputType == PINCHGESTURE_INPUT) {
     PinchGestureInput& pinchEvent = aEvent.AsPinchGestureInput();
     WidgetWheelEvent wheelEvent = pinchEvent.ToWidgetEvent(this);
     ProcessUntransformedAPZEvent(&wheelEvent, result);
+  } else if (aEvent.mInputType == TAPGESTURE_INPUT) {
+    TapGestureInput& tapEvent = aEvent.AsTapGestureInput();
+    WidgetSimpleGestureEvent gestureEvent = tapEvent.ToWidgetEvent(this);
+    ProcessUntransformedAPZEvent(&gestureEvent, result);
+  } else {
+    MOZ_ASSERT_UNREACHABLE();
   }
 
-  return result.mStatus;
+  return result.GetStatus();
 }
 
 void nsChildView::DispatchAPZWheelInputEvent(InputData& aEvent, bool aCanTriggerSwipe) {
@@ -1921,7 +1982,7 @@ void nsChildView::DispatchAPZWheelInputEvent(InputData& aEvent, bool aCanTrigger
     switch (aEvent.mInputType) {
       case PANGESTURE_INPUT: {
         result = mAPZC->InputBridge()->ReceiveInputEvent(aEvent);
-        if (result.mStatus == nsEventStatus_eConsumeNoDefault) {
+        if (result.GetStatus() == nsEventStatus_eConsumeNoDefault) {
           return;
         }
 
@@ -1932,7 +1993,7 @@ void nsChildView::DispatchAPZWheelInputEvent(InputData& aEvent, bool aCanTrigger
           SwipeInfo swipeInfo = SendMayStartSwipe(panInput);
           event.mCanTriggerSwipe = swipeInfo.wantsSwipe;
           if (swipeInfo.wantsSwipe) {
-            if (result.mStatus == nsEventStatus_eIgnore) {
+            if (result.GetStatus() == nsEventStatus_eIgnore) {
               // APZ has determined and that scrolling horizontally in the
               // requested direction is impossible, so it didn't do any
               // scrolling for the event.
@@ -1965,7 +2026,7 @@ void nsChildView::DispatchAPZWheelInputEvent(InputData& aEvent, bool aCanTrigger
         // go straight to the APZCTreeManager subclass.
         event = aEvent.AsScrollWheelInput().ToWidgetEvent(this);
         result = mAPZC->InputBridge()->ReceiveInputEvent(event);
-        if (result.mStatus == nsEventStatus_eConsumeNoDefault) {
+        if (result.GetStatus() == nsEventStatus_eConsumeNoDefault) {
           return;
         }
         break;
@@ -2037,6 +2098,34 @@ void nsChildView::DispatchAPZWheelInputEvent(InputData& aEvent, bool aCanTrigger
   }
   if (event.mMessage == eWheel && (event.mDeltaX != 0 || event.mDeltaY != 0)) {
     DispatchEvent(&event, status);
+  }
+}
+
+void nsChildView::DispatchDoubleTapGesture(TimeStamp aEventTimeStamp,
+                                           LayoutDeviceIntPoint aScreenPosition,
+                                           mozilla::Modifiers aModifiers) {
+  if (StaticPrefs::apz_mac_enable_double_tap_zoom_touchpad_gesture()) {
+    PRIntervalTime eventIntervalTime = PR_IntervalNow();
+
+    TapGestureInput event{
+        TapGestureInput::TAPGESTURE_DOUBLE, eventIntervalTime, aEventTimeStamp,
+        ViewAs<ScreenPixel>(aScreenPosition,
+                            PixelCastJustification::LayoutDeviceIsScreenForUntransformedEvent),
+        aModifiers};
+
+    DispatchAPZInputEvent(event);
+  } else {
+    // Setup the "double tap" event.
+    WidgetSimpleGestureEvent geckoEvent(true, eTapGesture, this);
+    // do what convertCocoaMouseEvent does basically.
+    geckoEvent.mRefPoint = aScreenPosition;
+    geckoEvent.mModifiers = aModifiers;
+    geckoEvent.mTime = PR_IntervalNow();
+    geckoEvent.mTimeStamp = aEventTimeStamp;
+    geckoEvent.mClickCount = 1;
+
+    // Send the event.
+    DispatchWindowEvent(geckoEvent);
   }
 }
 
@@ -2509,7 +2598,8 @@ NSEvent* gLastDragMouseDownEvent = nil;  // [strong]
       bool shouldRollup = true;
 
       // check to see if scroll/zoom events should roll up the popup
-      if ([theEvent type] == NSEventTypeScrollWheel || [theEvent type] == NSEventTypeMagnify) {
+      if ([theEvent type] == NSEventTypeScrollWheel || [theEvent type] == NSEventTypeMagnify ||
+          [theEvent type] == NSEventTypeSmartMagnify) {
         shouldRollup = rollupListener->ShouldRollupOnMouseWheelEvent();
         // consume scroll events that aren't over the popup
         // unless the popup is an arrow panel
@@ -2673,15 +2763,28 @@ NSEvent* gLastDragMouseDownEvent = nil;  // [strong]
     return;
   }
 
+  if ([self maybeRollup:anEvent]) {
+    return;
+  }
+
   nsAutoRetainCocoaObject kungFuDeathGrip(self);
 
-  // Setup the "double tap" event.
-  WidgetSimpleGestureEvent geckoEvent(true, eTapGesture, mGeckoChild);
-  [self convertCocoaMouseEvent:anEvent toGeckoEvent:&geckoEvent];
-  geckoEvent.mClickCount = 1;
+  if (StaticPrefs::apz_mac_enable_double_tap_zoom_touchpad_gesture()) {
+    TimeStamp eventTimeStamp = nsCocoaUtils::GetEventTimeStamp([anEvent timestamp]);
+    NSPoint locationInWindow = nsCocoaUtils::EventLocationForWindow(anEvent, [self window]);
+    LayoutDevicePoint position = [self convertWindowCoordinatesRoundDown:locationInWindow];
 
-  // Send the event.
-  mGeckoChild->DispatchWindowEvent(geckoEvent);
+    mGeckoChild->DispatchDoubleTapGesture(eventTimeStamp, RoundedToInt(position),
+                                          nsCocoaUtils::ModifiersForEvent(anEvent));
+  } else {
+    // Setup the "double tap" event.
+    WidgetSimpleGestureEvent geckoEvent(true, eTapGesture, mGeckoChild);
+    [self convertCocoaMouseEvent:anEvent toGeckoEvent:&geckoEvent];
+    geckoEvent.mClickCount = 1;
+
+    // Send the event.
+    mGeckoChild->DispatchWindowEvent(geckoEvent);
+  }
 
   // Clear the gesture state
   mGestureState = eGestureState_None;
@@ -2746,21 +2849,14 @@ NSEvent* gLastDragMouseDownEvent = nil;  // [strong]
     return false;
   }
 
-  bool usingElCapitanOrLaterSDK = true;
-#if !defined(MAC_OS_X_VERSION_10_11) || MAC_OS_X_VERSION_MAX_ALLOWED < MAC_OS_X_VERSION_10_11
-  usingElCapitanOrLaterSDK = false;
-#endif
+  if (aEvent.phase == NSEventPhaseBegan) {
+    [self beginGestureWithEvent:aEvent];
+    return true;
+  }
 
-  if (usingElCapitanOrLaterSDK) {
-    if (aEvent.phase == NSEventPhaseBegan) {
-      [self beginGestureWithEvent:aEvent];
-      return true;
-    }
-
-    if (aEvent.phase == NSEventPhaseEnded || aEvent.phase == NSEventPhaseCancelled) {
-      [self endGestureWithEvent:aEvent];
-      return true;
-    }
+  if (aEvent.phase == NSEventPhaseEnded || aEvent.phase == NSEventPhaseCancelled) {
+    [self endGestureWithEvent:aEvent];
+    return true;
   }
 
   return false;
@@ -2830,7 +2926,7 @@ NSEvent* gLastDragMouseDownEvent = nil;  // [strong]
   // Only initiate horizontal tracking for gestures that have just begun --
   // otherwise a scroll to one side of the page can have a swipe tacked on
   // to it.
-  NSEventPhase eventPhase = nsCocoaUtils::EventPhase(anEvent);
+  NSEventPhase eventPhase = [anEvent phase];
   if ([anEvent type] != NSEventTypeScrollWheel || eventPhase != NSEventPhaseBegan ||
       ![anEvent hasPreciseScrollingDeltas]) {
     return false;
@@ -3184,7 +3280,7 @@ NSEvent* gLastDragMouseDownEvent = nil;  // [strong]
 }
 
 static PanGestureInput::PanGestureType PanGestureTypeForEvent(NSEvent* aEvent) {
-  switch (nsCocoaUtils::EventPhase(aEvent)) {
+  switch ([aEvent phase]) {
     case NSEventPhaseMayBegin:
       return PanGestureInput::PANGESTURE_MAYSTART;
     case NSEventPhaseCancelled:
@@ -3196,7 +3292,7 @@ static PanGestureInput::PanGestureType PanGestureTypeForEvent(NSEvent* aEvent) {
     case NSEventPhaseEnded:
       return PanGestureInput::PANGESTURE_END;
     case NSEventPhaseNone:
-      switch (nsCocoaUtils::EventMomentumPhase(aEvent)) {
+      switch ([aEvent momentumPhase]) {
         case NSEventPhaseBegan:
           return PanGestureInput::PANGESTURE_MOMENTUMSTART;
         case NSEventPhaseChanged:
@@ -3228,8 +3324,8 @@ static gfx::IntPoint GetIntegerDeltaForEvent(NSEvent* aEvent) {
     // Starting with 10.12 however, pixel scroll events no longer accumulate
     // deltaX and deltaY; they just report floating point values for every
     // single event. So we need to do our own accumulation.
-    return PanGestureInput::GetIntegerDeltaForEvent(
-        (nsCocoaUtils::EventPhase(aEvent) == NSEventPhaseBegan), [aEvent deltaX], [aEvent deltaY]);
+    return PanGestureInput::GetIntegerDeltaForEvent([aEvent phase] == NSEventPhaseBegan,
+                                                    [aEvent deltaX], [aEvent deltaY]);
   }
 
   // For line scrolls, or pre-10.12, just use the rounded up value of deltaX / deltaY.
@@ -3251,7 +3347,7 @@ static gfx::IntPoint GetIntegerDeltaForEvent(NSEvent* aEvent) {
     return;
   }
 
-  NSEventPhase phase = nsCocoaUtils::EventPhase(theEvent);
+  NSEventPhase phase = [theEvent phase];
   // Fire eWheelOperationStart/End events when 2 fingers touch/release the
   // touchpad.
   if (phase & NSEventPhaseMayBegin) {
@@ -3281,7 +3377,7 @@ static gfx::IntPoint GetIntegerDeltaForEvent(NSEvent* aEvent) {
       ViewAs<ScreenPixel>([self convertWindowCoordinatesRoundDown:locationInWindow],
                           PixelCastJustification::LayoutDeviceIsScreenForUntransformedEvent);
 
-  bool usePreciseDeltas = nsCocoaUtils::HasPreciseScrollingDeltas(theEvent) &&
+  bool usePreciseDeltas = [theEvent hasPreciseScrollingDeltas] &&
                           Preferences::GetBool("mousewheel.enable_pixel_scrolling", true);
   bool hasPhaseInformation = nsCocoaUtils::EventHasPhaseInformation(theEvent);
 
@@ -3289,14 +3385,13 @@ static gfx::IntPoint GetIntegerDeltaForEvent(NSEvent* aEvent) {
 
   Modifiers modifiers = nsCocoaUtils::ModifiersForEvent(theEvent);
 
-  NSTimeInterval beforeNow = [[NSProcessInfo processInfo] systemUptime] - [theEvent timestamp];
-  PRIntervalTime eventIntervalTime = PR_IntervalNow() - PR_MillisecondsToInterval(beforeNow * 1000);
-  TimeStamp eventTimeStamp = TimeStamp::Now() - TimeDuration::FromSeconds(beforeNow);
+  PRIntervalTime eventIntervalTime = PR_IntervalNow();
+  TimeStamp eventTimeStamp = nsCocoaUtils::GetEventTimeStamp([theEvent timestamp]);
 
   ScreenPoint preciseDelta;
   if (usePreciseDeltas) {
-    CGFloat pixelDeltaX = 0, pixelDeltaY = 0;
-    nsCocoaUtils::GetScrollingDeltas(theEvent, &pixelDeltaX, &pixelDeltaY);
+    CGFloat pixelDeltaX = [theEvent scrollingDeltaX];
+    CGFloat pixelDeltaY = [theEvent scrollingDeltaY];
     double scale = geckoChildDeathGrip->BackingScaleFactor();
     preciseDelta = ScreenPoint(-pixelDeltaX * scale, -pixelDeltaY * scale);
   }
@@ -3413,7 +3508,7 @@ static gfx::IntPoint GetIntegerDeltaForEvent(NSEvent* aEvent) {
                        toGeckoEvent:(WidgetWheelEvent*)outWheelEvent {
   [self convertCocoaMouseEvent:aMouseEvent toGeckoEvent:outWheelEvent];
 
-  bool usePreciseDeltas = nsCocoaUtils::HasPreciseScrollingDeltas(aMouseEvent) &&
+  bool usePreciseDeltas = [aMouseEvent hasPreciseScrollingDeltas] &&
                           Preferences::GetBool("mousewheel.enable_pixel_scrolling", true);
 
   outWheelEvent->mDeltaMode = usePreciseDeltas ? dom::WheelEvent_Binding::DOM_DELTA_PIXEL

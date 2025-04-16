@@ -298,6 +298,11 @@ var SessionStore = {
     SessionStoreInternal.setTabState(aTab, aState);
   },
 
+  // Return whether a tab is restoring.
+  isTabRestoring(aTab) {
+    return TAB_STATE_FOR_BROWSER.has(aTab.linkedBrowser);
+  },
+
   getInternalObjectState(obj) {
     return SessionStoreInternal.getInternalObjectState(obj);
   },
@@ -988,20 +993,18 @@ var SessionStoreInternal = {
     }
   },
 
-  // Create a sHistoryLister and register it.
+  // Create a sHistoryListener and register it.
   // We also need to save the SHistoryLister into this._browserSHistoryListener.
   addSHistoryListener(aBrowser) {
     function SHistoryListener(browser) {
       browser.browsingContext.sessionHistory.addSHistoryListener(this);
 
-      this.browser = browser;
+      this.browserId = browser.browsingContext.browserId;
       this._fromIdx = kNoIndex;
       this._sHistoryChanges = false;
-      if (this.browser.currentURI && this.browser.ownerGlobal) {
-        this._lastKnownUri = browser.currentURI.displaySpec;
+      this._permanentKey = browser.permanentKey;
+      if (browser.currentURI && browser.ownerGlobal) {
         this._lastKnownBody = browser.ownerGlobal.document.body;
-        this._lastKnownUserContextId =
-          browser.contentPrincipal.originAttributes.userContextId;
       }
     }
     SHistoryListener.prototype = {
@@ -1020,29 +1023,33 @@ var SessionStoreInternal = {
           return;
         }
 
+        let browser = BrowsingContext.getCurrentTopByBrowserId(this.browserId)
+          ?.embedderElement;
+
+        if (!browser) {
+          // The browser has gone away.
+          return;
+        }
+
         if (!this._sHistoryChanges) {
-          this.browser.frameLoader.requestSHistoryUpdate(
-            /*aImmediately*/ false
-          );
+          browser.frameLoader.requestSHistoryUpdate(/*aImmediately*/ false);
           this._sHistoryChanges = true;
         }
         this._fromIdx = index;
-        if (this.browser.currentURI && this.browser.ownerGlobal) {
-          this._lastKnownUri = this.browser.currentURI.displaySpec;
-          this._lastKnownBody = this.browser.ownerGlobal.document.body;
-          this._lastKnownUserContextId = this.browser.contentPrincipal.originAttributes.userContextId;
+        if (browser.currentURI && browser.ownerGlobal) {
+          this._lastKnownBody = browser.ownerGlobal.document.body;
         }
       },
 
       uninstall() {
-        if (this.browser.browsingContext?.sessionHistory) {
-          this.browser.browsingContext.sessionHistory.removeSHistoryListener(
-            this
-          );
-          SessionStoreInternal._browserSHistoryListener.delete(
-            this.browser.permanentKey
-          );
+        let bc = BrowsingContext.getCurrentTopByBrowserId(this.browserId);
+
+        if (bc?.sessionHistory) {
+          bc.sessionHistory.removeSHistoryListener(this);
         }
+        SessionStoreInternal._browserSHistoryListener.delete(
+          this._permanentKey
+        );
       },
 
       OnHistoryNewEntry(newURI, oldIndex) {
@@ -1258,15 +1265,9 @@ var SessionStoreInternal = {
           // No shistory changes needed.
           listener._sHistoryChanges = false;
         } else if (aBrowsingContext.sessionHistory) {
-          let uri = aBrowser.currentURI
-            ? aBrowser.currentURI.displaySpec
-            : listener._lastKnownUri;
-          let body = aBrowser.ownerGlobal
-            ? aBrowser.ownerGlobal.document.body
-            : listener._lastKnownBody;
-          let userContextId = aBrowser.contentPrincipal
-            ? aBrowser.contentPrincipal.originAttributes.userContextId
-            : listener._lastKnownUserContextId;
+          let uri = aBrowsingContext.currentURI?.displaySpec;
+          let body =
+            aBrowser.ownerGlobal?.document.body ?? listener._lastKnownBody;
           // If aData.sHistoryNeeded we need to collect all session
           // history entries, because with SHIP this indicates that we
           // either saw 'DOMTitleChanged' in
@@ -1278,7 +1279,6 @@ var SessionStoreInternal = {
             uri,
             body,
             aBrowsingContext.sessionHistory,
-            userContextId,
             listener._sHistoryChanges && !aData.sHistoryNeeded
               ? listener._fromIdx
               : -1

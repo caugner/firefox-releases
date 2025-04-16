@@ -6,7 +6,9 @@
 "use strict";
 
 const { require } = ChromeUtils.import("resource://devtools/shared/Loader.jsm");
-const { TargetFactory } = require("devtools/client/framework/target");
+const {
+  TabDescriptorFactory,
+} = require("devtools/client/framework/tab-descriptor-factory");
 const { DevToolsServer } = require("devtools/server/devtools-server");
 const {
   BrowserTestUtils,
@@ -15,7 +17,6 @@ const {
   DocumentWalker: _documentWalker,
 } = require("devtools/server/actors/inspector/document-walker");
 
-const { TargetList } = require("devtools/shared/resources/target-list");
 const {
   ResourceWatcher,
 } = require("devtools/shared/resources/resource-watcher");
@@ -53,7 +54,10 @@ SimpleTest.registerCleanupFunction(function() {
 async function getTargetForSelectedTab(gBrowser) {
   const selectedTab = gBrowser.selectedTab;
   await BrowserTestUtils.browserLoaded(selectedTab.linkedBrowser);
-  return TargetFactory.forTab(selectedTab);
+  const descriptor = await TabDescriptorFactory.createDescriptorForTab(
+    selectedTab
+  );
+  return descriptor.getTarget();
 }
 
 /**
@@ -141,7 +145,8 @@ function runNextTest() {
 }
 
 async function createResourceWatcher(target) {
-  const targetList = new TargetList(target.descriptorFront);
+  const commands = await target.descriptorFront.getCommands();
+  const targetList = commands.targetCommand;
   await targetList.startListening();
   return new ResourceWatcher(targetList);
 }

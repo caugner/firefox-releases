@@ -693,9 +693,23 @@ static bool RecomputePosition(nsIFrame* aFrame) {
     return false;
   }
 
-  // Flexbox and Grid layout supports CSS Align and the optimizations below
-  // don't support that yet.
   if (aFrame->HasAnyStateBits(NS_FRAME_OUT_OF_FLOW)) {
+    // If the frame has an intrinsic block-size, we resolve its 'auto' margins
+    // after doing layout, since we need to know the frame's block size. See
+    // nsAbsoluteContainingBlock::ResolveAutoMarginsAfterLayout().
+    //
+    // Since the size of the frame doesn't change, we could modify the below
+    // computation to compute the margin correctly without doing a full reflow,
+    // however we decided to try doing a full reflow for now.
+    if (aFrame->HasIntrinsicKeywordForBSize()) {
+      WritingMode wm = aFrame->GetWritingMode();
+      const auto* styleMargin = aFrame->StyleMargin();
+      if (styleMargin->HasBlockAxisAuto(wm)) {
+        return false;
+      }
+    }
+    // Flexbox and Grid layout supports CSS Align and the optimizations below
+    // don't support that yet.
     nsIFrame* ph = aFrame->GetPlaceholderFrame();
     if (ph && ph->HasAnyStateBits(PLACEHOLDER_STATICPOS_NEEDS_CSSALIGN)) {
       return false;
@@ -2917,7 +2931,8 @@ ServoElementSnapshot& RestyleManager::SnapshotFor(Element& aElement) {
   MOZ_ASSERT(aElement.HasServoData());
   MOZ_ASSERT(!aElement.HasFlag(ELEMENT_HANDLED_SNAPSHOT));
 
-  ServoElementSnapshot* snapshot = mSnapshots.LookupOrAdd(&aElement, aElement);
+  ServoElementSnapshot* snapshot =
+      mSnapshots.GetOrInsertNew(&aElement, aElement);
   aElement.SetFlags(ELEMENT_HAS_SNAPSHOT);
 
   // Now that we have a snapshot, make sure a restyle is triggered.

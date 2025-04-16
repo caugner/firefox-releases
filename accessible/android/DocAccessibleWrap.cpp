@@ -117,10 +117,18 @@ void DocAccessibleWrap::CacheViewportCallback(nsITimer* aTimer,
 
     for (LocalAccessible* acc = visibleAcc; acc && acc != docAcc->LocalParent();
          acc = acc->LocalParent()) {
-      if (inViewAccs.Contains(acc->UniqueID())) {
+      const bool alreadyPresent =
+          inViewAccs.WithEntryHandle(acc->UniqueID(), [&](auto&& entry) {
+            if (entry) {
+              return true;
+            }
+
+            entry.Insert(RefPtr{acc});
+            return false;
+          });
+      if (alreadyPresent) {
         break;
       }
-      inViewAccs.Put(acc->UniqueID(), RefPtr{acc});
     }
   }
 
@@ -150,9 +158,8 @@ void DocAccessibleWrap::CacheViewportCallback(nsITimer* aTimer,
   } else if (RefPtr<SessionAccessibility> sessionAcc =
                  SessionAccessibility::GetInstanceFor(docAcc)) {
     nsTArray<AccessibleWrap*> accessibles(inViewAccs.Count());
-    for (auto iter = inViewAccs.Iter(); !iter.Done(); iter.Next()) {
-      accessibles.AppendElement(
-          static_cast<AccessibleWrap*>(iter.Data().get()));
+    for (const auto& entry : inViewAccs) {
+      accessibles.AppendElement(static_cast<AccessibleWrap*>(entry.GetWeak()));
     }
 
     sessionAcc->ReplaceViewportCache(accessibles);
@@ -240,7 +247,7 @@ void DocAccessibleWrap::CacheFocusPath(AccessibleWrap* aAccessible) {
                     acc->Bounds(), acc->ActionCount(), name, textValue, nodeID,
                     description, acc->CurValue(), acc->MinValue(),
                     acc->MaxValue(), acc->Step(), attributes));
-      mFocusPath.Put(acc->UniqueID(), RefPtr{acc});
+      mFocusPath.InsertOrUpdate(acc->UniqueID(), RefPtr{acc});
     }
 
     ipcDoc->SendBatch(eBatch_FocusPath, cacheData);
@@ -250,7 +257,7 @@ void DocAccessibleWrap::CacheFocusPath(AccessibleWrap* aAccessible) {
     for (AccessibleWrap* acc = aAccessible; acc && acc != this->LocalParent();
          acc = static_cast<AccessibleWrap*>(acc->LocalParent())) {
       accessibles.AppendElement(acc);
-      mFocusPath.Put(acc->UniqueID(), RefPtr{acc});
+      mFocusPath.InsertOrUpdate(acc->UniqueID(), RefPtr{acc});
     }
 
     sessionAcc->ReplaceFocusPathCache(accessibles);

@@ -11,7 +11,7 @@
 #include "nsMenuBaseX.h"
 #include "nsIMutationObserver.h"
 #include "nsHashKeys.h"
-#include "nsDataHashtable.h"
+#include "nsTHashMap.h"
 #include "nsString.h"
 
 class nsMenuItemX;
@@ -27,10 +27,10 @@ class nsMenuGroupOwnerX : public nsMenuObjectX, public nsIMutationObserver {
 
   void RegisterForContentChanges(nsIContent* aContent, nsChangeObserver* aMenuObject);
   void UnregisterForContentChanges(nsIContent* aContent);
-  uint32_t RegisterForCommand(nsMenuItemX* aItem);
+  uint32_t RegisterForCommand(nsMenuItemX* aMenuItem);
   void UnregisterCommand(uint32_t aCommandID);
-  nsMenuItemX* GetMenuItemForCommandID(uint32_t inCommandID);
-  void AddMenuItemInfoToSet(MenuItemInfo* info);
+  nsMenuItemX* GetMenuItemForCommandID(uint32_t aCommandID);
+  void AddMenuItemInfoToSet(MenuItemInfo* aInfo);
 
   NS_DECL_ISUPPORTS
   NS_DECL_NSIMUTATIONOBSERVER
@@ -40,14 +40,16 @@ class nsMenuGroupOwnerX : public nsMenuObjectX, public nsIMutationObserver {
 
   nsChangeObserver* LookupContentChangeObserver(nsIContent* aContent);
 
+  RefPtr<nsIContent> mContent;
+
   uint32_t mCurrentCommandID;  // unique command id (per menu-bar) to
                                // give to next item that asks
 
   // stores observers for content change notification
-  nsDataHashtable<nsPtrHashKey<nsIContent>, nsChangeObserver*> mContentToObserverTable;
+  nsTHashMap<nsPtrHashKey<nsIContent>, nsChangeObserver*> mContentToObserverTable;
 
   // stores mapping of command IDs to menu objects
-  nsDataHashtable<nsUint32HashKey, nsMenuItemX*> mCommandToMenuObjectTable;
+  nsTHashMap<nsUint32HashKey, nsMenuItemX*> mCommandToMenuObjectTable;
 
   // Stores references to all the MenuItemInfo objects created with weak
   // references to us.  They may live longer than we do, so when we're

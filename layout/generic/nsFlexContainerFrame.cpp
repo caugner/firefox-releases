@@ -169,7 +169,7 @@ static nscoord AddChecked(nscoord aFirst, nscoord aSecond) {
 // Bug 567039: We treat -moz-fit-content and -moz-available as property's
 // initial value for now.
 static inline bool IsAutoOrEnumOnBSize(const StyleSize& aSize, bool aIsInline) {
-  return aSize.IsAuto() || (!aIsInline && aSize.IsExtremumLength());
+  return aSize.IsAuto() || (!aIsInline && !aSize.IsLengthPercentage());
 }
 
 // Helper-macros to let us pick one of two expressions to evaluate
@@ -1346,8 +1346,7 @@ FlexItem* nsFlexContainerFrame::GenerateFlexItemForChild(
         // value 'max-content'.
         styleFlexBaseSize.emplace(StyleSize::Auto());
       } else {
-        styleFlexBaseSize.emplace(
-            StyleSize::ExtremumLength(StyleExtremumLength::MaxContent));
+        styleFlexBaseSize.emplace(StyleSize::MaxContent());
       }
     } else if (flexBasis.IsSize() && !flexBasis.IsAuto()) {
       // For all other non-'auto' flex-basis values, we just swap in the
@@ -2024,30 +2023,37 @@ nscoord nsFlexContainerFrame::MeasureFlexItemContentBSize(
     bool aHasLineClampEllipsis, const ReflowInput& aParentReflowInput) {
   FLEX_LOG("Measuring flex item's content block-size");
 
-  // Set up a reflow input for measuring the flex item's auto-height:
+  // Set up a reflow input for measuring the flex item's content block-size:
   WritingMode wm = aFlexItem.Frame()->GetWritingMode();
   LogicalSize availSize = aParentReflowInput.ComputedSize(wm);
   availSize.BSize(wm) = NS_UNCONSTRAINEDSIZE;
-  ReflowInput childRIForMeasuringBSize(PresContext(), aParentReflowInput,
-                                       aFlexItem.Frame(), availSize, Nothing(),
-                                       ReflowInput::InitFlag::CallerWillInit);
-  childRIForMeasuringBSize.mFlags.mIsFlexContainerMeasuringBSize = true;
+
+  StyleSizeOverrides sizeOverrides;
+  if (aFlexItem.IsStretched()) {
+    sizeOverrides.mStyleISize.emplace(aFlexItem.StyleCrossSize());
+    // Suppress any AspectRatio that we might have to prevent ComputeSize() from
+    // transferring our inline-size override through the aspect-ratio to set the
+    // block-size, because that would prevent us from measuring the content
+    // block-size.
+    sizeOverrides.mAspectRatio.emplace(AspectRatio());
+    FLEX_LOGV(" Cross size override: %d", aFlexItem.CrossSize());
+  }
+  sizeOverrides.mStyleBSize.emplace(StyleSize::Auto());
+
+  ReflowInput childRIForMeasuringBSize(
+      PresContext(), aParentReflowInput, aFlexItem.Frame(), availSize,
+      Nothing(), ReflowInput::InitFlag::CallerWillInit, sizeOverrides);
   childRIForMeasuringBSize.mFlags.mInsideLineClamp = GetLineClampValue() != 0;
   childRIForMeasuringBSize.mFlags.mApplyLineClamp =
       childRIForMeasuringBSize.mFlags.mInsideLineClamp || aHasLineClampEllipsis;
   childRIForMeasuringBSize.Init(PresContext());
 
-  if (aFlexItem.IsStretched()) {
-    // TODO: This code should really use StyleSizeOverrides (rather than
-    // SetComputedISize) to impose the ISize here, in order to stretch table
-    // flex items correctly (to fix Bug 799725). However, when we make that
-    // change, we'll also need to prevent ComputeSize from transferring our
-    // ISize-override through the aspect-ratio to set the BSize, because that
-    // would prevent us from measuring the content BSize here.
-    childRIForMeasuringBSize.SetComputedISize(aFlexItem.CrossSize());
-    childRIForMeasuringBSize.SetIResize(true);
-    FLEX_LOGV(" Cross size override: %d", aFlexItem.CrossSize());
-  }
+  // When measuring flex item's content block-size, disregard the item's
+  // min-block-size and max-block-size by resetting both to to their
+  // unconstraining (extreme) values. The flexbox layout algorithm does still
+  // explicitly clamp both sizes when resolving the target main size.
+  childRIForMeasuringBSize.ComputedMinBSize() = 0;
+  childRIForMeasuringBSize.ComputedMaxBSize() = NS_UNCONSTRAINEDSIZE;
 
   if (aForceBResizeForMeasuringReflow) {
     childRIForMeasuringBSize.SetBResize(true);
@@ -4466,11 +4472,14 @@ void nsFlexContainerFrame::Reflow(nsPresContext* aPresContext,
   // "block-end" set and have block-size:auto.  (There are actually other cases,
   // too -- e.g. if our parent is itself a block-dir flex container and we're
   // flexible -- but we'll let our ancestors handle those sorts of cases.)
+  //
+  // TODO(emilio): the !bsize.IsLengthPercentage() preserves behavior, but it's
+  // too conservative. min/max-content don't really depend on the container.
   WritingMode wm = aReflowInput.GetWritingMode();
   const nsStylePosition* stylePos = StylePosition();
   const auto& bsize = stylePos->BSize(wm);
   if (bsize.HasPercent() || (StyleDisplay()->IsAbsolutelyPositionedStyle() &&
-                             (bsize.IsAuto() || bsize.IsExtremumLength()) &&
+                             (bsize.IsAuto() || !bsize.IsLengthPercentage()) &&
                              !stylePos->mOffset.GetBStart(wm).IsAuto() &&
                              !stylePos->mOffset.GetBEnd(wm).IsAuto())) {
     AddStateBits(NS_FRAME_CONTAINS_RELATIVE_BSIZE);

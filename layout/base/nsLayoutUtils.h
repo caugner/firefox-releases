@@ -445,11 +445,22 @@ class nsLayoutUtils {
    * Get the parent of aFrame. If aFrame is the root frame for a document,
    * and the document has a parent document in the same view hierarchy, then
    * we try to return the subdocumentframe in the parent document.
-   * @param aExtraOffset [in/out] if non-null, then as we cross documents
+   * @param aCrossDocOffset [in/out] if non-null, then as we cross documents
    * an extra offset may be required and it will be added to aCrossDocOffset.
    * Be careful dealing with this extra offset as it is in app units of the
    * parent document, which may have a different app units per dev pixel ratio
    * than the child document.
+   * Note that, while this function crosses document boundaries, it (naturally)
+   * cannot cross process boundaries.
+   */
+  static nsIFrame* GetCrossDocParentFrameInProcess(
+      const nsIFrame* aFrame, nsPoint* aCrossDocOffset = nullptr);
+
+  /**
+   * Does the same thing as GetCrossDocParentFrameInProcess().
+   * The purpose of having two functions is to more easily track which call
+   * sites have been audited to consider out-of-process iframes (bug 1599913).
+   * Once all call sites have been audited, this function can be removed.
    */
   static nsIFrame* GetCrossDocParentFrame(const nsIFrame* aFrame,
                                           nsPoint* aCrossDocOffset = nullptr);
@@ -1098,6 +1109,7 @@ class nsLayoutUtils {
     Compressed = 0x200,
     ForWebRender = 0x400,
     UseHighQualityScaling = 0x800,
+    ResetViewportScrolling = 0x1000,
   };
 
   /**
@@ -1126,6 +1138,9 @@ class nsLayoutUtils {
    * as being relative to the document (normally it's relative to the CSS
    * viewport) and the document is painted as if no scrolling has occured.
    * Only considered if PresShell::IgnoringViewportScrolling is true.
+   * If ResetViewportScrolling is used, then the root scroll frame's scroll
+   * position is set to 0 during painting, so that position:fixed elements
+   * are drawn in their initial position.
    * PAINT_TO_WINDOW sets painting to window to true on the display list
    * builder even if we can't tell that we are painting to the window.
    * If PAINT_EXISTING_TRANSACTION is set, then BeginTransaction() has already
@@ -2193,8 +2208,8 @@ class nsLayoutUtils {
    */
   typedef nsTArray<mozilla::UniquePtr<mozilla::dom::InspectorFontFace>>
       UsedFontFaceList;
-  typedef nsDataHashtable<nsPtrHashKey<gfxFontEntry>,
-                          mozilla::dom::InspectorFontFace*>
+  typedef nsTHashMap<nsPtrHashKey<gfxFontEntry>,
+                     mozilla::dom::InspectorFontFace*>
       UsedFontFaceTable;
 
   /**

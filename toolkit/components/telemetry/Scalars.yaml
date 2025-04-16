@@ -7,6 +7,44 @@
 
 # The following section contains the accessibility scalars.
 a11y:
+  HCM_background:
+    bug_numbers:
+      - 1694717
+    description: >
+      Unsigned int tracking the user's prefered background color \
+      (logged when HCM is enabled).
+    expires: never
+    kind: uint
+    notification_emails:
+      - accessibility@mozilla.com
+      - mreschenberg@mozilla.com
+    products:
+      - 'firefox'
+      - 'fennec'
+    record_in_processes:
+      - 'main'
+    release_channel_collection: opt-out
+    keyed: false
+
+  HCM_foreground:
+    bug_numbers:
+      - 1694717
+    description: >
+      Unsigned int tracking the user's prefered foreground color \
+      (logged when HCM is enabled).
+    expires: never
+    kind: uint
+    notification_emails:
+      - accessibility@mozilla.com
+      - mreschenberg@mozilla.com
+    products:
+      - 'firefox'
+      - 'fennec'
+    record_in_processes:
+      - 'main'
+    release_channel_collection: opt-out
+    keyed: false
+
   backplate:
     bug_numbers:
       - 1539212
@@ -54,7 +92,7 @@ a11y:
     expires: "62"
     kind: boolean
     notification_emails:
-      - yzenevich@mozilla.com
+      - accessibility@mozilla.com
     release_channel_collection: opt-out
     products:
       - 'firefox'
@@ -543,112 +581,6 @@ browser.engagement.navigation:
       - 'main'
 
 browser.startup:
-  slow_startup_notification_disabled:
-    bug_numbers:
-      - 1601993
-      - 1634224
-    description:
-      Whether the slow startup notification bar is disabled for the user.
-    expires: "85"
-    kind: boolean
-    notification_emails:
-      - mconley@mozilla.com
-      - perf-telemetry-alerts@mozilla.com
-    release_channel_collection: opt-out
-    products:
-      - 'firefox'
-    record_in_processes:
-      - 'main'
-
-  too_new_for_notification:
-    bug_numbers:
-      - 1601993
-      - 1634224
-    description:
-      Whether the slow startup notification bar was suppressed because the profile is too new.
-    expires: "85"
-    kind: boolean
-    notification_emails:
-      - mconley@mozilla.com
-      - perf-telemetry-alerts@mozilla.com
-    release_channel_collection: opt-out
-    products:
-      - 'firefox'
-    record_in_processes:
-      - 'main'
-
-  slow_startup_notified:
-    bug_numbers:
-      - 1601993
-      - 1634224
-    description:
-      Whether the slow startup notification bar was shown to the user during this session.
-    expires: "85"
-    kind: boolean
-    notification_emails:
-      - mconley@mozilla.com
-      - perf-telemetry-alerts@mozilla.com
-    release_channel_collection: opt-out
-    products:
-      - 'firefox'
-    record_in_processes:
-      - 'main'
-
-  recorded_time:
-    bug_numbers:
-      - 1601993
-      - 1634224
-    description: >
-      The startup time computed by the slow startup notification bar in milliseconds.
-    expires: "85"
-    kind: uint
-    notification_emails:
-      - mconley@mozilla.com
-      - perf-telemetry-alerts@mozilla.com
-    release_channel_collection: opt-out
-    products:
-      - 'firefox'
-    record_in_processes:
-      - 'main'
-
-  average_time:
-    bug_numbers:
-      - 1601993
-      - 1634224
-    description: >
-      The average startup time computed by the slow startup notification bar in milliseconds.
-    expires: "85"
-    kind: uint
-    notification_emails:
-      - mconley@mozilla.com
-      - perf-telemetry-alerts@mozilla.com
-    release_channel_collection: opt-out
-    products:
-      - 'firefox'
-    record_in_processes:
-      - 'main'
-
-  action:
-    bug_numbers:
-      - 1601993
-      - 1634224
-    description: >
-      The action that the user took with the slow startup notification bar.
-      0: No action (default)
-      1: User chose to open SUMO document on slow startup
-      2: User chose to never show the notification bar again
-      3: User dismissed the notification bar
-    expires: "85"
-    kind: uint
-    notification_emails:
-      - mconley@mozilla.com
-      - perf-telemetry-alerts@mozilla.com
-    release_channel_collection: opt-out
-    products:
-      - 'firefox'
-    record_in_processes:
-      - 'main'
-
   abouthome_cache_result:
     bug_numbers:
       - 1622263
@@ -2385,7 +2317,7 @@ dom.contentprocess:
   crash_subframe_ui_presented:
     bug_numbers:
       - 1676943
-    description: >  
+    description: >
       The number of times the subframe crash UI is shown to the user. This
       only triggers when a tab containing the subframe is switched to.
     expires: "98"
@@ -2841,7 +2773,7 @@ devtools.tool:
     keyed: true
     notification_emails:
       - dev-developer-tools@lists.mozilla.org
-      - yzenevich@mozilla.com
+      - accessibility@mozilla.com
     release_channel_collection: opt-out
     products:
       - 'firefox'
@@ -2862,7 +2794,7 @@ devtools.accessibility:
     kind: uint
     notification_emails:
       - dev-developer-tools@lists.mozilla.org
-      - yzenevich@mozilla.com
+      - accessibility@mozilla.com
     release_channel_collection: opt-out
     products:
       - 'firefox'
@@ -2881,7 +2813,7 @@ devtools.accessibility:
     kind: uint
     notification_emails:
       - dev-developer-tools@lists.mozilla.org
-      - yzenevich@mozilla.com
+      - accessibility@mozilla.com
     release_channel_collection: opt-out
     products:
       - 'firefox'
@@ -2901,7 +2833,7 @@ devtools.accessibility:
     kind: uint
     notification_emails:
       - dev-developer-tools@lists.mozilla.org
-      - yzenevich@mozilla.com
+      - accessibility@mozilla.com
     release_channel_collection: opt-out
     products:
       - 'firefox'
@@ -2923,7 +2855,7 @@ devtools.accessibility:
     keyed: true
     notification_emails:
       - dev-developer-tools@lists.mozilla.org
-      - yzenevich@mozilla.com
+      - accessibility@mozilla.com
     release_channel_collection: opt-out
     products:
       - 'firefox'
@@ -2943,7 +2875,7 @@ devtools.accessibility:
     kind: uint
     notification_emails:
       - dev-developer-tools@lists.mozilla.org
-      - yzenevich@mozilla.com
+      - accessibility@mozilla.com
     release_channel_collection: opt-out
     products:
       - 'firefox'
@@ -2962,7 +2894,7 @@ devtools.accessibility:
     kind: uint
     notification_emails:
       - dev-developer-tools@lists.mozilla.org
-      - yzenevich@mozilla.com
+      - accessibility@mozilla.com
     release_channel_collection: opt-out
     products:
       - 'firefox'
@@ -2983,7 +2915,7 @@ devtools.accessibility:
     keyed: true
     notification_emails:
       - dev-developer-tools@lists.mozilla.org
-      - yzenevich@mozilla.com
+      - accessibility@mozilla.com
     release_channel_collection: opt-out
     products:
       - 'firefox'
@@ -3004,7 +2936,7 @@ devtools.accessibility:
     keyed: true
     notification_emails:
       - dev-developer-tools@lists.mozilla.org
-      - yzenevich@mozilla.com
+      - accessibility@mozilla.com
     release_channel_collection: opt-out
     products:
       - 'firefox'
@@ -3025,8 +2957,7 @@ devtools.accessibility:
     keyed: true
     notification_emails:
       - dev-developer-tools@lists.mozilla.org
-      - yzenevich@mozilla.com
-      - mislam@mozilla.com
+      - accessibility@mozilla.com
     release_channel_collection: opt-out
     products:
       - 'firefox'
@@ -3044,7 +2975,7 @@ devtools.accessibility:
     kind: uint
     notification_emails:
       - dev-developer-tools@lists.mozilla.org
-      - yzenevich@mozilla.com
+      - accessibility@mozilla.com
     release_channel_collection: opt-out
     products:
       - 'firefox'
@@ -3335,22 +3266,6 @@ telemetry:
     record_in_processes:
       - 'main'
 
-  environment_didnt_change:
-    bug_numbers:
-      - 1483477
-    description: >
-      The number of times the Telemetry Environment notified listeners of environment changes
-      despite the old and new environment contents being equal.
-    expires: "89"
-    kind: uint
-    notification_emails:
-      - chutten@mozilla.com
-    products:
-      - 'firefox'
-    release_channel_collection: opt-out
-    record_in_processes:
-      - main
-
   sync_shutdown_ping_sent:
     bug_numbers:
       - 1673795
@@ -3411,6 +3326,52 @@ telemetry:
     release_channel_collection: opt-out
     record_in_processes:
       - main
+
+  state_file_read_errors:
+    bug_numbers:
+      - 1700835
+    description: >
+      How many times we errored out trying to load state.json
+    expires: "94"
+    kind: uint
+    notification_emails:
+      - chutten@mozilla.com
+    products:
+      - 'firefox'
+    release_channel_collection: opt-out
+    record_in_processes:
+      - main
+
+  using_pref_client_id:
+    bug_numbers:
+      - 1700835
+    description: >
+      How often we loaded the client_id from prefs instead of state.json.
+    expires: "94"
+    kind: uint
+    notification_emails:
+      - chutten@mozilla.com
+    products:
+      - 'firefox'
+    release_channel_collection: opt-out
+    record_in_processes:
+      - main
+
+  removed_client_ids:
+    bug_numbers:
+      - 1700835
+    description: >
+      How many times we removed the client ids.
+    expires: "94"
+    kind: uint
+    notification_emails:
+      - chutten@mozilla.com
+    products:
+      - 'firefox'
+    release_channel_collection: opt-out
+    record_in_processes:
+      - main
+
 
 telemetry.discarded:
   accumulations:
@@ -4181,9 +4142,10 @@ pdf.viewer:
     bug_numbers:
       - 1566882
       - 1666979
+      - 1689264
     description: >
       How many times PDF Viewer fallback bar was shown.
-    expires: "88"
+    expires: "92"
     kind: uint
     notification_emails:
       - bdahl@mozilla.com
@@ -4197,9 +4159,10 @@ pdf.viewer:
     bug_numbers:
       - 1566882
       - 1666979
+      - 1689264
     description: >
       How many times PDF Viewer print functionality was used.
-    expires: "88"
+    expires: "92"
     kind: uint
     notification_emails:
       - bdahl@mozilla.com
@@ -4212,23 +4175,6 @@ pdf.viewer:
 
 # The following section contains scalars for printing.
 printing:
-  trigger:
-    bug_numbers:
-      - 1669925
-    description: >
-      The thing that triggered the print dialog, like "keyboard_shortcut", etc.
-    keyed: true
-    expires: "89"
-    kind: uint
-    notification_emails:
-      - jwatt@jwatt.org
-      - emilio@mozilla.com
-    release_channel_collection: opt-out
-    products:
-      - 'firefox'
-    record_in_processes:
-      - 'main'
-
   paper_size:
     bug_numbers:
       - 1660686
@@ -4912,6 +4858,7 @@ browser.search:
       - 1614777
       - 1619954
       - 1656135
+      - 1694852
     description: >
       Records bytes that have been transferred for search requests, including
       top-level documents, sub-resources, iframes and search suggestions.
@@ -4920,7 +4867,7 @@ browser.search:
         <search-provider-name>-pb
         sggt-<search-engine-id>
         sggt-<search-engine-id>-pb
-    expires: "89"
+    expires: "96"
     keyed: true
     kind: uint
     notification_emails:
@@ -7468,16 +7415,16 @@ corroborate:
     record_in_processes:
       - main
 
-privacy.feature:
-  first_party_isolation_enabled:
+cache:
+  integrity_check_count:
     bug_numbers:
-      - 1631676
+      - 1687685
     description: >
-      The value of preference "privacy.firstparty.isolate"
-    expires: "never"
-    kind: boolean
+      The number of errors detected by a Cache API pragma_integrity_check() run in response to a constraint error detected by a VACUUM after performing a schema upgrade.
+    expires: "96"
+    kind: uint
     notification_emails:
-      - gachen@mozilla.com
+      - storage-telemetry@mozilla.com
     release_channel_collection: opt-out
     products:
       - 'firefox'

@@ -151,7 +151,7 @@ role XULTreeAccessible::NativeRole() const {
 ////////////////////////////////////////////////////////////////////////////////
 // XULTreeAccessible: LocalAccessible implementation (DON'T put methods here)
 
-LocalAccessible* XULTreeAccessible::ChildAtPoint(
+LocalAccessible* XULTreeAccessible::LocalChildAtPoint(
     int32_t aX, int32_t aY, EWhichChildAtPoint aWhichChild) {
   nsIFrame* frame = GetFrame();
   if (!frame) return nullptr;
@@ -174,11 +174,11 @@ LocalAccessible* XULTreeAccessible::ChildAtPoint(
   // If we failed to find tree cell for the given point then it might be
   // tree columns.
   if (cellInfo.mRow == -1 || !cellInfo.mCol) {
-    return AccessibleWrap::ChildAtPoint(aX, aY, aWhichChild);
+    return AccessibleWrap::LocalChildAtPoint(aX, aY, aWhichChild);
   }
 
   LocalAccessible* child = GetTreeItemAccessible(cellInfo.mRow);
-  if (aWhichChild == eDeepestChild && child) {
+  if (aWhichChild == EWhichChildAtPoint::DeepestChild && child) {
     // Look for accessible cell for the found item accessible.
     RefPtr<XULTreeItemAccessibleBase> treeitem = do_QueryObject(child);
 
@@ -438,17 +438,21 @@ LocalAccessible* XULTreeAccessible::GetTreeItemAccessible(int32_t aRow) const {
   if (NS_FAILED(rv) || aRow >= rowCount) return nullptr;
 
   void* key = reinterpret_cast<void*>(intptr_t(aRow));
-  LocalAccessible* cachedTreeItem = mAccessibleCache.GetWeak(key);
-  if (cachedTreeItem) return cachedTreeItem;
+  return mAccessibleCache.WithEntryHandle(
+      key, [&](auto&& entry) -> LocalAccessible* {
+        if (entry) {
+          return entry->get();
+        }
 
-  RefPtr<LocalAccessible> treeItem = CreateTreeItemAccessible(aRow);
-  if (treeItem) {
-    mAccessibleCache.Put(key, RefPtr{treeItem});
-    Document()->BindToDocument(treeItem, nullptr);
-    return treeItem;
-  }
+        RefPtr<LocalAccessible> treeItem = CreateTreeItemAccessible(aRow);
+        if (treeItem) {
+          entry.Insert(RefPtr{treeItem});
+          Document()->BindToDocument(treeItem, nullptr);
+          return treeItem.get();
+        }
 
-  return nullptr;
+        return nullptr;
+      });
 }
 
 void XULTreeAccessible::InvalidateCache(int32_t aRow, int32_t aCount) {

@@ -20,25 +20,9 @@ struct samplerCommon {
   TextureFormat format = TextureFormat::RGBA8;
 };
 
-struct samplerDepth {
-  int depth = 0;
-  uint32_t height_stride = 0;  // in units of BPP if < 4, or dwords if BPP >= 4
-};
-
 struct samplerFilter {
   TextureFilter filter = TextureFilter::NEAREST;
 };
-
-struct sampler2DArray_impl : samplerCommon, samplerDepth, samplerFilter {};
-typedef sampler2DArray_impl* sampler2DArray;
-
-typedef struct sampler2DArrayR8_impl : sampler2DArray_impl{} * sampler2DArrayR8;
-typedef struct sampler2DArrayRG8_impl : sampler2DArray_impl{} *
-                                        sampler2DArrayRG8;
-typedef struct sampler2DArrayRGBA8_impl : sampler2DArray_impl{} *
-                                          sampler2DArrayRGBA8;
-typedef struct sampler2DArrayRGBA32F_impl : sampler2DArray_impl{} *
-                                            sampler2DArrayRGBA32F;
 
 struct sampler2D_impl : samplerCommon, samplerFilter {};
 typedef sampler2D_impl* sampler2D;
@@ -599,6 +583,7 @@ vec2 operator*(vec2_scalar a, Float b) { return vec2(a.x * b, a.y * b); }
 vec2 operator*(Float a, vec2_scalar b) { return vec2(a * b.x, a * b.y); }
 
 SI vec2 min(vec2 a, vec2 b) { return vec2(min(a.x, b.x), min(a.y, b.y)); }
+SI vec2 min(vec2 a, Float b) { return vec2(min(a.x, b), min(a.y, b)); }
 
 SI vec2_scalar min(vec2_scalar a, vec2_scalar b) {
   return vec2_scalar{min(a.x, b.x), min(a.y, b.y)};
@@ -618,8 +603,8 @@ vec2_scalar step(vec2_scalar edge, vec2_scalar x) {
   return vec2_scalar(step(edge.x, x.x), step(edge.y, x.y));
 }
 
-vec2 max(vec2 a, vec2 b) { return vec2(max(a.x, b.x), max(a.y, b.y)); }
-vec2 max(vec2 a, Float b) { return vec2(max(a.x, b), max(a.y, b)); }
+SI vec2 max(vec2 a, vec2 b) { return vec2(max(a.x, b.x), max(a.y, b.y)); }
+SI vec2 max(vec2 a, Float b) { return vec2(max(a.x, b), max(a.y, b)); }
 
 SI vec2_scalar max(vec2_scalar a, vec2_scalar b) {
   return vec2_scalar{max(a.x, b.x), max(a.y, b.y)};
@@ -1087,6 +1072,21 @@ struct ivec4_scalar {
 
   friend ivec4_scalar operator&(int32_t a, ivec4_scalar b) {
     return ivec4_scalar{a & b.x, a & b.y, a & b.z, a & b.w};
+  }
+
+  int32_t& operator[](int index) {
+    switch (index) {
+      case 0:
+        return x;
+      case 1:
+        return y;
+      case 2:
+        return z;
+      case 3:
+        return w;
+      default:
+        UNREACHABLE;
+    }
   }
 };
 
@@ -1612,10 +1612,19 @@ vec3_scalar step(vec3_scalar edge, vec3_scalar x) {
 SI vec3 min(vec3 a, vec3 b) {
   return vec3(min(a.x, b.x), min(a.y, b.y), min(a.z, b.z));
 }
+SI vec3 min(vec3 a, Float b) {
+  return vec3(min(a.x, b), min(a.y, b), min(a.z, b));
+}
+SI vec3_scalar min(vec3_scalar a, vec3_scalar b) {
+  return vec3_scalar{min(a.x, b.x), min(a.y, b.y), min(a.z, b.z)};
+}
+
 SI vec3 max(vec3 a, vec3 b) {
   return vec3(max(a.x, b.x), max(a.y, b.y), max(a.z, b.z));
 }
-
+SI vec3 max(vec3 a, Float b) {
+  return vec3(max(a.x, b), max(a.y, b), max(a.z, b));
+}
 SI vec3_scalar max(vec3_scalar a, vec3_scalar b) {
   return vec3_scalar{max(a.x, b.x), max(a.y, b.y), max(a.z, b.z)};
 }
@@ -1786,7 +1795,7 @@ struct vec4 {
         y(Float{s0.y, s1.y, s2.y, s3.y}),
         z(Float{s0.z, s1.z, s2.z, s3.z}),
         w(Float{s0.w, s1.w, s2.w, s3.w}) {}
-  Float& select(XYZW c) {
+  ALWAYS_INLINE Float& select(XYZW c) {
     switch (c) {
       case X:
         return x;
@@ -1800,23 +1809,27 @@ struct vec4 {
         UNREACHABLE;
     }
   }
-  Float& sel(XYZW c1) { return select(c1); }
+  ALWAYS_INLINE Float& sel(XYZW c1) { return select(c1); }
 
-  vec2 sel(XYZW c1, XYZW c2) { return vec2(select(c1), select(c2)); }
+  ALWAYS_INLINE vec2 sel(XYZW c1, XYZW c2) {
+    return vec2(select(c1), select(c2));
+  }
 
-  vec3 sel(XYZW c1, XYZW c2, XYZW c3) {
+  ALWAYS_INLINE vec3 sel(XYZW c1, XYZW c2, XYZW c3) {
     return vec3(select(c1), select(c2), select(c3));
   }
-  vec3_ref lsel(XYZW c1, XYZW c2, XYZW c3) {
+  ALWAYS_INLINE vec3_ref lsel(XYZW c1, XYZW c2, XYZW c3) {
     return vec3_ref(select(c1), select(c2), select(c3));
   }
 
-  vec2_ref lsel(XYZW c1, XYZW c2) { return vec2_ref(select(c1), select(c2)); }
+  ALWAYS_INLINE vec2_ref lsel(XYZW c1, XYZW c2) {
+    return vec2_ref(select(c1), select(c2));
+  }
 
-  vec4 sel(XYZW c1, XYZW c2, XYZW c3, XYZW c4) {
+  ALWAYS_INLINE vec4 sel(XYZW c1, XYZW c2, XYZW c3, XYZW c4) {
     return vec4(select(c1), select(c2), select(c3), select(c4));
   }
-  vec4_ref lsel(XYZW c1, XYZW c2, XYZW c3, XYZW c4) {
+  ALWAYS_INLINE vec4_ref lsel(XYZW c1, XYZW c2, XYZW c3, XYZW c4) {
     return vec4_ref(select(c1), select(c2), select(c3), select(c4));
   }
 

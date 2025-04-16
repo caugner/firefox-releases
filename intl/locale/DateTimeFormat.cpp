@@ -16,7 +16,7 @@ namespace mozilla {
 using namespace mozilla::intl;
 
 nsCString* DateTimeFormat::mLocale = nullptr;
-nsDataHashtable<nsCStringHashKey, UDateFormat*>* DateTimeFormat::mFormatCache;
+nsTHashMap<nsCStringHashKey, UDateFormat*>* DateTimeFormat::mFormatCache;
 
 static const int32_t DATETIME_FORMAT_INITIAL_LEN = 127;
 
@@ -248,10 +248,10 @@ nsresult DateTimeFormat::FormatUDateTime(
   }
   if (!mFormatCache) {
     mFormatCache =
-        new nsDataHashtable<nsCStringHashKey, UDateFormat*>(kMaxCachedFormats);
+        new nsTHashMap<nsCStringHashKey, UDateFormat*>(kMaxCachedFormats);
   }
 
-  UDateFormat*& dateTimeFormat = mFormatCache->GetOrInsert(key);
+  UDateFormat*& dateTimeFormat = mFormatCache->LookupOrInsert(key);
 
   if (!dateTimeFormat) {
     // We didn't have a cached formatter for this key, so create one.

@@ -51,6 +51,7 @@
 #include "mozilla/Unused.h"
 #include "mozilla/WidgetUtils.h"
 
+#include "mozilla/dom/AutoEntryScript.h"
 #include "mozilla/dom/ChildProcessChannelListener.h"
 #include "mozilla/dom/ClientChannelHelper.h"
 #include "mozilla/dom/ClientHandle.h"
@@ -397,7 +398,6 @@ nsDocShell::nsDocShell(BrowsingContext* aBrowsingContext,
       mCSSErrorReportingEnabled(false),
       mAllowAuth(mItemType == typeContent),
       mAllowKeywordFixup(false),
-      mIsOffScreenBrowser(false),
       mDisableMetaRefreshWhenInactive(false),
       mIsAppTab(false),
       mDeviceSizeIsPageSize(false),
@@ -1195,6 +1195,89 @@ void nsDocShell::FirePageHideNotificationInternal(
   }
 }
 
+void nsDocShell::FirePageHideShowNonRecursive(bool aShow) {
+  MOZ_ASSERT(mozilla::BFCacheInParent());
+
+  if (!mContentViewer) {
+    return;
+  }
+
+  // Emulate what non-SHIP BFCache does too. In pageshow case
+  // add and remove a request and before that call SetCurrentURI to get
+  // the location change notification.
+  // For pagehide, set mFiredUnloadEvent to true, so that unload doesn't fire.
+  nsCOMPtr<nsIContentViewer> contentViewer(mContentViewer);
+  if (aShow) {
+    mRefreshURIList = std::move(mBFCachedRefreshURIList);
+    RefreshURIFromQueue();
+    mFiredUnloadEvent = false;
+    RefPtr<Document> doc = contentViewer->GetDocument();
+    if (doc) {
+      RefPtr<nsGlobalWindowInner> inner =
+          mScriptGlobal ? mScriptGlobal->GetCurrentInnerWindowInternal()
+                        : nullptr;
+      if (mBrowsingContext->IsTop()) {
+        doc->NotifyPossibleTitleChange(false);
+        if (inner) {
+          // Now that we have found the inner window of the page restored
+          // from the history, we have to make sure that
+          // performance.navigation.type is 2.
+          // Traditionally this type change has been done to the top level page
+          // only.
+          inner->GetPerformance()->GetDOMTiming()->NotifyRestoreStart();
+        }
+      }
+
+      if (inner) {
+        inner->Thaw(false);
+      }
+
+      nsCOMPtr<nsIChannel> channel = doc->GetChannel();
+      if (channel) {
+        SetCurrentURI(doc->GetDocumentURI(), channel,
+                      /* aFireOnLocationChange */ true,
+                      /* aIsInitialAboutBlank */ false, /* aLocationFlags */ 0);
+        mEODForCurrentDocument = false;
+        mIsRestoringDocument = true;
+        mLoadGroup->AddRequest(channel, nullptr);
+        mLoadGroup->RemoveRequest(channel, nullptr, NS_OK);
+        mIsRestoringDocument = false;
+      }
+      RefPtr<PresShell> presShell = GetPresShell();
+      if (presShell) {
+        presShell->Thaw(false);
+      }
+
+      if (inner) {
+        inner->FireDelayedDOMEvents(false);
+      }
+    }
+  } else if (!mFiredUnloadEvent) {
+    // XXXBFCache check again that the page can enter bfcache.
+    // XXXBFCache should mTiming->NotifyUnloadEventStart()/End() be called here?
+
+    if (mRefreshURIList) {
+      RefreshURIToQueue();
+      mBFCachedRefreshURIList = std::move(mRefreshURIList);
+    } else {
+      // If Stop was called, the list was moved to mSavedRefreshURIList after
+      // calling SuspendRefreshURIs, which calls RefreshURIToQueue.
+      mBFCachedRefreshURIList = std::move(mSavedRefreshURIList);
+    }
+
+    mFiredUnloadEvent = true;
+    contentViewer->PageHide(false);
+
+    if (mScriptGlobal && mScriptGlobal->GetCurrentInnerWindowInternal()) {
+      mScriptGlobal->GetCurrentInnerWindowInternal()->Freeze(false);
+    }
+    RefPtr<PresShell> presShell = GetPresShell();
+    if (presShell) {
+      presShell->Freeze(false);
+    }
+  }
+}
+
 nsresult nsDocShell::Dispatch(TaskCategory aCategory,
                               already_AddRefed<nsIRunnable>&& aRunnable) {
   nsCOMPtr<nsIRunnable> runnable(aRunnable);
@@ -1396,12 +1479,14 @@ NS_IMETHODIMP
 nsDocShell::SetCurrentURI(nsIURI* aURI) {
   // Note that securityUI will set STATE_IS_INSECURE, even if
   // the scheme of |aURI| is "https".
-  SetCurrentURI(aURI, nullptr, true, 0);
+  SetCurrentURI(aURI, nullptr, /* aFireOnLocationChange */ true,
+                /* aIsInitialAboutBlank */ false, /* aLocationFlags */ 0);
   return NS_OK;
 }
 
 bool nsDocShell::SetCurrentURI(nsIURI* aURI, nsIRequest* aRequest,
                                bool aFireOnLocationChange,
+                               bool aIsInitialAboutBlank,
                                uint32_t aLocationFlags) {
   MOZ_ASSERT(!mIsBeingDestroyed);
 
@@ -1431,31 +1516,15 @@ bool nsDocShell::SetCurrentURI(nsIURI* aURI, nsIRequest* aRequest,
     mHasLoadedNonBlankURI = true;
   }
 
-  bool isRoot = mBrowsingContext->IsTop();
-  bool isSubFrame = false;  // Is this a subframe navigation?
-
-  if (mozilla::SessionHistoryInParent()) {
-    if (mLoadingEntry) {
-      isSubFrame = mLoadingEntry->mInfo.IsSubFrame();
-    } else {
-      isSubFrame = !mBrowsingContext->IsTop() && mActiveEntry;
-    }
-    MOZ_LOG(gSHLog, LogLevel::Debug,
-            ("nsDocShell %p SetCurrentURI, isSubFrame=%d", this, isSubFrame));
-  } else {
-    if (mLSHE) {
-      isSubFrame = mLSHE->GetIsSubFrame();
-    }
-  }
-
-  if (!isSubFrame && !isRoot) {
-    /*
-     * We don't want to send OnLocationChange notifications when
-     * a subframe is being loaded for the first time, while
-     * visiting a frameset page
-     */
+  // Don't fire onLocationChange when creating a subframe's initial about:blank
+  // document, as this can happen when it's not safe for us to run script.
+  if (aIsInitialAboutBlank && !mHasLoadedNonBlankURI &&
+      !mBrowsingContext->IsTop()) {
+    MOZ_ASSERT(!aRequest && aLocationFlags == 0);
     return false;
   }
+
+  MOZ_ASSERT(nsContentUtils::IsSafeToRunScript());
 
   if (aFireOnLocationChange) {
     FireOnLocationChange(this, aRequest, aURI, aLocationFlags);
@@ -3455,12 +3524,14 @@ nsresult nsDocShell::LoadURI(const nsAString& aURI,
     } else {
       triggeringPrincipal = nsContentUtils::GetSystemPrincipal();
     }
-    mActiveEntry = MakeUnique<SessionHistoryInfo>(
-        uri, triggeringPrincipal, nullptr, nullptr, nullptr,
-        nsLiteralCString("text/html"));
-    mBrowsingContext->SetActiveSessionHistoryEntry(
-        Nothing(), mActiveEntry.get(), MAKE_LOAD_TYPE(LOAD_NORMAL, loadFlags),
-        /* aUpdatedCacheKey = */ 0);
+    if (mozilla::SessionHistoryInParent()) {
+      mActiveEntry = MakeUnique<SessionHistoryInfo>(
+          uri, triggeringPrincipal, nullptr, nullptr, nullptr,
+          nsLiteralCString("text/html"));
+      mBrowsingContext->SetActiveSessionHistoryEntry(
+          Nothing(), mActiveEntry.get(), MAKE_LOAD_TYPE(LOAD_NORMAL, loadFlags),
+          /* aUpdatedCacheKey = */ 0);
+    }
     if (DisplayLoadError(rv, nullptr, PromiseFlatString(aURI).get(), nullptr) &&
         (loadFlags & LOAD_FLAGS_ERROR_LOAD_CHANGES_RV) != 0) {
       return NS_ERROR_LOAD_SHOWED_ERRORPAGE;
@@ -4877,12 +4948,8 @@ nsDocShell::GetVisibility(bool* aVisibility) {
     }
 
     nsIFrame* frame = view ? view->GetFrame() : nullptr;
-    bool isDocShellOffScreen = false;
-    docShell->GetIsOffScreenBrowser(&isDocShellOffScreen);
-    if (frame &&
-        !frame->IsVisibleConsideringAncestors(
-            nsIFrame::VISIBILITY_CROSS_CHROME_CONTENT_BOUNDARY) &&
-        !isDocShellOffScreen) {
+    if (frame && !frame->IsVisibleConsideringAncestors(
+                     nsIFrame::VISIBILITY_CROSS_CHROME_CONTENT_BOUNDARY)) {
       return NS_OK;
     }
 
@@ -4899,18 +4966,6 @@ nsDocShell::GetVisibility(bool* aVisibility) {
   // Check with the tree owner as well to give embedders a chance to
   // expose visibility as well.
   return treeOwnerAsWin->GetVisibility(aVisibility);
-}
-
-NS_IMETHODIMP
-nsDocShell::SetIsOffScreenBrowser(bool aIsOffScreen) {
-  mIsOffScreenBrowser = aIsOffScreen;
-  return NS_OK;
-}
-
-NS_IMETHODIMP
-nsDocShell::GetIsOffScreenBrowser(bool* aIsOffScreen) {
-  *aIsOffScreen = mIsOffScreenBrowser;
-  return NS_OK;
 }
 
 void nsDocShell::ActivenessMaybeChanged() {
@@ -5278,6 +5333,7 @@ nsDocShell::ForceRefreshURI(nsIURI* aURI, nsIPrincipal* aPrincipal,
   loadState->SetResultPrincipalURI(aURI);
   loadState->SetResultPrincipalURIIsSome(true);
   loadState->SetKeepResultPrincipalURIIfSet(true);
+  loadState->SetIsMetaRefresh(aMetaRefresh);
 
   // Set the triggering pricipal to aPrincipal if available, or current
   // document's principal otherwise.
@@ -5641,8 +5697,10 @@ NS_IMETHODIMP
 nsDocShell::CancelRefreshURITimers() {
   DoCancelRefreshURITimers(mRefreshURIList);
   DoCancelRefreshURITimers(mSavedRefreshURIList);
+  DoCancelRefreshURITimers(mBFCachedRefreshURIList);
   mRefreshURIList = nullptr;
   mSavedRefreshURIList = nullptr;
+  mBFCachedRefreshURIList = nullptr;
 
   return NS_OK;
 }
@@ -5662,8 +5720,7 @@ nsDocShell::GetRefreshPending(bool* aResult) {
   return rv;
 }
 
-NS_IMETHODIMP
-nsDocShell::SuspendRefreshURIs() {
+void nsDocShell::RefreshURIToQueue() {
   if (mRefreshURIList) {
     uint32_t n = 0;
     mRefreshURIList->GetLength(&n);
@@ -5683,6 +5740,11 @@ nsDocShell::SuspendRefreshURIs() {
       mRefreshURIList->ReplaceElementAt(callback, i);
     }
   }
+}
+
+NS_IMETHODIMP
+nsDocShell::SuspendRefreshURIs() {
+  RefreshURIToQueue();
 
   // Suspend refresh URIs for our child shells as well.
   for (auto* child : mChildList.ForwardRange()) {
@@ -5884,14 +5946,15 @@ nsDocShell::OnStateChange(nsIWebProgress* aProgress, nsIRequest* aRequest,
 NS_IMETHODIMP
 nsDocShell::OnLocationChange(nsIWebProgress* aProgress, nsIRequest* aRequest,
                              nsIURI* aURI, uint32_t aFlags) {
-  if (XRE_IsParentProcess()) {
-    // Since we've now changed Documents, notify the BrowsingContext that we've
-    // changed. Ideally we'd just let the BrowsingContext do this when it
-    // changes the current window global, but that happens before this and we
-    // have a lot of tests that depend on the specific ordering of messages.
-    if (!(aFlags & nsIWebProgressListener::LOCATION_CHANGE_SAME_DOCUMENT)) {
-      GetBrowsingContext()->Canonical()->UpdateSecurityState();
-    }
+  // Since we've now changed Documents, notify the BrowsingContext that we've
+  // changed. Ideally we'd just let the BrowsingContext do this when it
+  // changes the current window global, but that happens before this and we
+  // have a lot of tests that depend on the specific ordering of messages.
+  bool isTopLevel = false;
+  if (XRE_IsParentProcess() &&
+      !(aFlags & nsIWebProgressListener::LOCATION_CHANGE_SAME_DOCUMENT) &&
+      NS_SUCCEEDED(aProgress->GetIsTopLevel(&isTopLevel)) && isTopLevel) {
+    GetBrowsingContext()->Canonical()->UpdateSecurityState();
   }
   return NS_OK;
 }
@@ -6826,7 +6889,9 @@ nsresult nsDocShell::CreateAboutBlankContentViewer(
         rv = Embed(viewer, aActor, true, false);
         NS_ENSURE_SUCCESS(rv, rv);
 
-        SetCurrentURI(blankDoc->GetDocumentURI(), nullptr, true, 0);
+        SetCurrentURI(blankDoc->GetDocumentURI(), nullptr,
+                      /* aFireLocationChange */ true,
+                      /* aIsInitialAboutBlank */ true, /* aLocationFlags */ 0);
         rv = mIsBeingDestroyed ? NS_ERROR_NOT_AVAILABLE : NS_OK;
       }
     }
@@ -6936,7 +7001,7 @@ bool nsDocShell::CanSavePresentation(uint32_t aLoadType,
 
   uint16_t bfCacheCombo = 0;
   bool canSavePresentation =
-      doc->CanSavePresentation(aNewRequest, bfCacheCombo);
+      doc->CanSavePresentation(aNewRequest, bfCacheCombo, true);
   MOZ_ASSERT_IF(canSavePresentation, bfCacheCombo == 0);
   if (canSavePresentation && doc->IsTopLevelContentDocument()) {
     auto* browsingContextGroup = mBrowsingContext->Group();
@@ -7619,7 +7684,8 @@ nsresult nsDocShell::RestoreFromHistory() {
     // origLSHE we don't have to worry about whether the entry in question
     // is still mLSHE or whether it's now mOSHE.
     nsCOMPtr<nsIURI> uri = origLSHE->GetURI();
-    SetCurrentURI(uri, document->GetChannel(), true, 0);
+    SetCurrentURI(uri, document->GetChannel(), /* aFireLocationChange */ true,
+                  /* aIsInitialAboutBlank */ false, /* aLocationFlags */ 0);
   }
 
   // This is the end of our CreateContentViewer() replacement.
@@ -7823,7 +7889,7 @@ nsresult nsDocShell::RestoreFromHistory() {
     presShell->Thaw();
   }
 
-  return privWin->FireDelayedDOMEvents();
+  return privWin->FireDelayedDOMEvents(true);
 }
 
 nsresult nsDocShell::CreateContentViewer(const nsACString& aContentType,
@@ -10377,6 +10443,7 @@ nsresult nsDocShell::DoURILoad(nsDocShellLoadState* aLoadState,
     loadInfo->SetHasValidUserGestureActivation(true);
   }
   loadInfo->SetTriggeringSandboxFlags(aLoadState->TriggeringSandboxFlags());
+  loadInfo->SetIsMetaRefresh(aLoadState->IsMetaRefresh());
 
   uint32_t cacheKey = 0;
   if (aCacheKey) {
@@ -11061,7 +11128,8 @@ bool nsDocShell::OnNewURI(nsIURI* aURI, nsIChannel* aChannel,
       aCloneSHChildren ? uint32_t(LOCATION_CHANGE_SAME_DOCUMENT) : 0;
 
   bool onLocationChangeNeeded =
-      SetCurrentURI(aURI, aChannel, aFireOnLocationChange, locationFlags);
+      SetCurrentURI(aURI, aChannel, aFireOnLocationChange,
+                    /* aIsInitialAboutBlank */ false, locationFlags);
   // Make sure to store the referrer from the channel, if any
   SetupReferrerInfoFromChannel(aChannel);
   return onLocationChangeNeeded;
@@ -11467,12 +11535,9 @@ nsresult nsDocShell::UpdateURLAndHistory(Document* aDocument, nsIURI* aNewURI,
   // can't load into a docshell that is being destroyed.
   if (!aEqualURIs && !mIsBeingDestroyed) {
     aDocument->SetDocumentURI(aNewURI);
-    // We can't trust SetCurrentURI to do always fire locationchange events
-    // when we expect it to, so we hack around that by doing it ourselves...
-    SetCurrentURI(aNewURI, nullptr, false, LOCATION_CHANGE_SAME_DOCUMENT);
-    if (mLoadType != LOAD_ERROR_PAGE) {
-      FireDummyOnLocationChange();
-    }
+    SetCurrentURI(aNewURI, nullptr, /* aFireLocationChange */ true,
+                  /* aIsInitialAboutBlank */ false,
+                  LOCATION_CHANGE_SAME_DOCUMENT);
 
     AddURIVisit(aNewURI, aCurrentURI, 0);
 
@@ -12723,6 +12788,7 @@ nsresult nsDocShell::OnLinkClick(
       aTriggeringPrincipal ? aTriggeringPrincipal : aContent->NodePrincipal());
   loadState->SetPrincipalToInherit(aContent->NodePrincipal());
   loadState->SetCsp(aCsp ? aCsp : aContent->GetCsp());
+  loadState->SetAllowFocusMove(UserActivation::IsHandlingUserInput());
 
   nsCOMPtr<nsIRunnable> ev =
       new OnLinkClickEvent(this, aContent, loadState, noOpenerImplied,
@@ -12777,7 +12843,8 @@ nsresult nsDocShell::OnLinkClickSync(nsIContent* aContent,
             extProtService->IsExposedProtocol(scheme.get(), &isExposed);
         if (NS_SUCCEEDED(rv) && !isExposed) {
           return extProtService->LoadURI(aLoadState->URI(), triggeringPrincipal,
-                                         mBrowsingContext);
+                                         mBrowsingContext,
+                                         /* aTriggeredExternally */ false);
         }
       }
     }
@@ -12886,7 +12953,6 @@ nsresult nsDocShell::OnLinkClickSync(nsIContent* aContent,
   aLoadState->SetTypeHint(NS_ConvertUTF16toUTF8(typeHint));
   aLoadState->SetLoadType(loadType);
   aLoadState->SetSourceBrowsingContext(mBrowsingContext);
-  aLoadState->SetAllowFocusMove(true);
   aLoadState->SetHasValidUserGestureActivation(
       context && context->HasValidTransientUserGestureActivation());
 

@@ -284,7 +284,7 @@ var SaveToPocket = {
     label: gStrings.formatStringFromName("readerView.savetopocket.label", [
       "Pocket",
     ]),
-    image: "chrome://global/skin/reader/pocket.svg",
+    image: "chrome://global/skin/icons/pocket.svg",
     width: 16,
     height: 16,
   },
@@ -318,6 +318,12 @@ var SaveToPocket = {
     if (enabled) {
       win.document.documentElement.removeAttribute("pocketdisabled");
     } else {
+      // Hide the context menu items to ensure separator logic works.
+      let savePageMenu = win.document.getElementById("context-pocket");
+      let saveLinkMenu = win.document.getElementById(
+        "context-savelinktopocket"
+      );
+      savePageMenu.hidden = saveLinkMenu.hidden = true;
       win.document.documentElement.setAttribute("pocketdisabled", "true");
     }
   },

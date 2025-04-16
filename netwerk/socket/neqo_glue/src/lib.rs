@@ -31,9 +31,7 @@ use xpcom::{interfaces::nsrefcnt, AtomicRefcnt, RefCounted, RefPtr};
 pub struct NeqoHttp3Conn {
     conn: Http3Client,
     local_addr: SocketAddr,
-    remote_addr: SocketAddr,
     refcnt: AtomicRefcnt,
-    packets_to_send: Vec<Datagram>,
 }
 
 impl NeqoHttp3Conn {
@@ -79,6 +77,8 @@ impl NeqoHttp3Conn {
         };
 
         let quic_version = match alpn_conv {
+            "h3-32" => QuicVersion::Draft32,
+            "h3-31" => QuicVersion::Draft31,
             "h3-30" => QuicVersion::Draft30,
             "h3-29" => QuicVersion::Draft29,
             "h3-28" => QuicVersion::Draft28,
@@ -92,9 +92,9 @@ impl NeqoHttp3Conn {
             local,
             remote,
             ConnectionParameters::default()
-                .quic_version(quic_version)
-                .disable_preferred_address(),
+                .quic_version(quic_version),
             &http3_settings,
+            Instant::now(),
         ) {
             Ok(c) => c,
             Err(_) => return Err(NS_ERROR_INVALID_ARG),
@@ -136,9 +136,7 @@ impl NeqoHttp3Conn {
         let conn = Box::into_raw(Box::new(NeqoHttp3Conn {
             conn,
             local_addr: local,
-            remote_addr: remote,
             refcnt: unsafe { AtomicRefcnt::new() },
-            packets_to_send: Vec::new(),
         }));
         unsafe { Ok(RefPtr::from_raw(conn).unwrap()) }
     }
@@ -205,59 +203,57 @@ pub extern "C" fn neqo_http3conn_new(
 #[no_mangle]
 pub extern "C" fn neqo_http3conn_process_input(
     conn: &mut NeqoHttp3Conn,
-    packet: *const u8,
-    len: u32,
-) {
-    let array = unsafe { slice::from_raw_parts(packet, len as usize) };
+    remote_addr: &nsACString,
+    packet: *const ThinVec<u8>,
+) -> nsresult {
+    let remote = match str::from_utf8(remote_addr) {
+        Ok(s) => match s.parse() {
+            Ok(addr) => addr,
+            Err(_) => return NS_ERROR_INVALID_ARG,
+        },
+        Err(_) => return NS_ERROR_INVALID_ARG,
+    };
     conn.conn.process_input(
-        Datagram::new(conn.remote_addr, conn.local_addr, array.to_vec()),
+        Datagram::new(remote, conn.local_addr, unsafe { (*packet).to_vec() }),
         Instant::now(),
     );
+    return NS_OK;
 }
 
-/* Process output and store data to be sent into conn.packets_to_send.
- * neqo_http3conn_get_data_to_send will be called to pick up this data.
+/* Process output:
+ * this may return a packet that needs to be sent or a timeout.
+ * if it returns a packet the function returns true, otherwise it returns false.
  */
 #[no_mangle]
-pub extern "C" fn neqo_http3conn_process_output(conn: &mut NeqoHttp3Conn) -> u64 {
-    loop {
-        let out = conn.conn.process_output(Instant::now());
-        match out {
-            Output::Datagram(dg) => {
-                conn.packets_to_send.push(dg);
-            }
-            Output::Callback(to) => {
-                let timeout = to.as_millis() as u64;
-                // Necko resolution is in milliseconds whereas neqo resolution
-                // is in nanoseconds. If we called process_output too soon due
-                // to this difference, we might do few unnecessary loops until
-                // we waste the remaining time. To avoid it, we return 1ms when
-                // the timeout is less than 1ms.
-                if timeout == 0 {
-                    break 1;
-                }
-                break timeout;
-            }
-            Output::None => break std::u64::MAX,
-        }
-    }
-}
-
-#[no_mangle]
-pub extern "C" fn neqo_http3conn_has_data_to_send(conn: &mut NeqoHttp3Conn) -> bool {
-    !conn.packets_to_send.is_empty()
-}
-
-#[no_mangle]
-pub extern "C" fn neqo_http3conn_get_data_to_send(
+pub extern "C" fn neqo_http3conn_process_output(
     conn: &mut NeqoHttp3Conn,
+    remote_addr: &mut nsACString,
+    remote_port: &mut u16,
     packet: &mut ThinVec<u8>,
-) -> nsresult {
-    match conn.packets_to_send.pop() {
-        None => NS_BASE_STREAM_WOULD_BLOCK,
-        Some(d) => {
-            packet.extend_from_slice(&d);
-            NS_OK
+    timeout: &mut u64,
+) -> bool {
+    match conn.conn.process_output(Instant::now()) {
+        Output::Datagram(dg) => {
+            packet.extend_from_slice(&dg);
+            remote_addr.append(&dg.destination().ip().to_string());
+            *remote_port = dg.destination().port();
+            true
+        }
+        Output::Callback(to) => {
+            *timeout = to.as_millis() as u64;
+            // Necko resolution is in milliseconds whereas neqo resolution
+            // is in nanoseconds. If we called process_output too soon due
+            // to this difference, we might do few unnecessary loops until
+            // we waste the remaining time. To avoid it, we return 1ms when
+            // the timeout is less than 1ms.
+            if *timeout == 0 {
+                *timeout = 1;
+            }
+            false
+        }
+        Output::None => {
+            *timeout = std::u64::MAX;
+            false
         }
     }
 }
@@ -517,7 +513,7 @@ pub extern "C" fn neqo_http3conn_close_stream(
 
 #[repr(C)]
 pub enum Http3Event {
-    /// A request stream has space for more data to be send.
+    /// A request stream has space for more data to be sent.
     DataWritable {
         stream_id: u64,
     },

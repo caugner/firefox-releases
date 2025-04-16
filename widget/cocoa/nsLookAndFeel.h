@@ -56,11 +56,9 @@ class nsLookAndFeel final : public nsXPLookAndFeel {
   nscolor mColorTextSelectBackground;
   nscolor mColorTextSelectBackgroundDisabled;
   nscolor mColorHighlight;
-  nscolor mColorMenuHover;
   nscolor mColorTextSelectForeground;
   nscolor mColorMenuHoverText;
   nscolor mColorButtonText;
-  bool mHasColorButtonText;
   nscolor mColorButtonHoverText;
   nscolor mColorText;
   nscolor mColorWindowText;
@@ -86,7 +84,10 @@ class nsLookAndFeel final : public nsXPLookAndFeel {
   nscolor mColorCellHighlight;
   nscolor mColorEvenTreeRow;
   nscolor mColorOddTreeRow;
-  nscolor mColorActiveSourceListSelection;
+  nscolor mColorMenuFontSmoothingBg;
+  nscolor mColorSourceListFontSmoothingBg;
+  nscolor mColorSourceListSelectionFontSmoothingBg;
+  nscolor mColorActiveSourceListSelectionFontSmoothingBg;
 
   bool mInitialized;
 

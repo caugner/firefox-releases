@@ -1033,9 +1033,7 @@ DevToolsStartup.prototype = {
   handleDevToolsFlag: async function(window) {
     const require = this.initDevTools("CommandLine");
     const { gDevTools } = require("devtools/client/framework/devtools");
-    const { TargetFactory } = require("devtools/client/framework/target");
-    const target = await TargetFactory.forTab(window.gBrowser.selectedTab);
-    gDevTools.showToolbox(target);
+    await gDevTools.showToolboxForTab(window.gBrowser.selectedTab);
   },
 
   _isRemoteDebuggingEnabled() {
@@ -1084,7 +1082,7 @@ DevToolsStartup.prototype = {
     if (pauseOnStartup) {
       // Spin the event loop until the debugger connects.
       const tm = Cc["@mozilla.org/thread-manager;1"].getService();
-      tm.spinEventLoopUntil(() => {
+      tm.spinEventLoopUntil("DevToolsStartup.jsm:handleDebuggerFlag", () => {
         return devtoolsThreadResumed;
       });
     }

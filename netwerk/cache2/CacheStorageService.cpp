@@ -890,16 +890,16 @@ nsresult CacheStorageService::ClearOriginInternal(
   mozilla::MutexAutoLock lock(mLock);
 
   if (sGlobalEntryTables) {
-    for (auto iter = sGlobalEntryTables->Iter(); !iter.Done(); iter.Next()) {
+    for (const auto& globalEntry : *sGlobalEntryTables) {
       bool matches = false;
-      rv =
-          CacheFileUtils::KeyMatchesLoadContextInfo(iter.Key(), info, &matches);
+      rv = CacheFileUtils::KeyMatchesLoadContextInfo(globalEntry.GetKey(), info,
+                                                     &matches);
       NS_ENSURE_SUCCESS(rv, rv);
       if (!matches) {
         continue;
       }
 
-      CacheEntryTable* table = iter.UserData();
+      CacheEntryTable* table = globalEntry.GetWeak();
       MOZ_ASSERT(table);
 
       nsTArray<RefPtr<CacheEntry>> entriesToDelete;
@@ -1105,7 +1105,7 @@ static bool AddExactEntry(CacheEntryTable* aEntries, nsACString const& aKey,
   }
 
   LOG(("AddExactEntry [entry=%p put]", aEntry));
-  aEntries->Put(aKey, RefPtr{aEntry});
+  aEntries->InsertOrUpdate(aKey, RefPtr{aEntry});
   return true;
 }
 
@@ -1192,11 +1192,11 @@ void CacheStorageService::RecordMemoryOnlyEntry(CacheEntry* aEntry,
       return;
     }
 
-    entries =
-        sGlobalEntryTables
-            ->Put(memoryStorageID,
-                  MakeUnique<CacheEntryTable>(CacheEntryTable::MEMORY_ONLY))
-            .get();
+    entries = sGlobalEntryTables
+                  ->InsertOrUpdate(
+                      memoryStorageID,
+                      MakeUnique<CacheEntryTable>(CacheEntryTable::MEMORY_ONLY))
+                  .get();
     LOG(("  new memory-only storage table for %s", memoryStorageID.get()));
   }
 
@@ -1251,7 +1251,7 @@ void CacheStorageService::ForceEntryValidFor(nsACString const& aContextKey,
   // This will be the timeout
   TimeStamp validUntil = now + TimeDuration::FromSeconds(aSecondsToTheFuture);
 
-  mForcedValidEntries.Put(aContextKey + aEntryKey, validUntil);
+  mForcedValidEntries.InsertOrUpdate(aContextKey + aEntryKey, validUntil);
 }
 
 void CacheStorageService::RemoveEntryForceValid(nsACString const& aContextKey,
@@ -1565,7 +1565,7 @@ nsresult CacheStorageService::AddStorageEntry(
     // Ensure storage table
     CacheEntryTable* const entries =
         sGlobalEntryTables
-            ->GetOrInsertWith(
+            ->LookupOrInsertWith(
                 aContextKey,
                 [&aContextKey] {
                   LOG(("  new storage entries table for context '%s'",
@@ -1615,7 +1615,7 @@ nsresult CacheStorageService::AddStorageEntry(
       // Entry is not in the hashtable or has just been truncated...
       entry = new CacheEntry(aContextKey, aURI, aIdExtension, aWriteToDisk,
                              aSkipSizeCheck, aPin);
-      entries->Put(entryKey, RefPtr{entry});
+      entries->InsertOrUpdate(entryKey, RefPtr{entry});
       LOG(("  new entry %p for %s", entry.get(), entryKey.get()));
     }
 
@@ -1951,9 +1951,9 @@ nsresult CacheStorageService::DoomStorageEntries(
 
     CacheEntryTable* diskEntries;
     if (memoryEntries && sGlobalEntryTables->Get(aContextKey, &diskEntries)) {
-      for (auto iter = memoryEntries->Iter(); !iter.Done(); iter.Next()) {
-        auto entry = iter.Data();
-        RemoveExactEntry(diskEntries, iter.Key(), entry, false);
+      for (const auto& memoryEntry : *memoryEntries) {
+        auto entry = memoryEntry.GetData();
+        RemoveExactEntry(diskEntries, memoryEntry.GetKey(), entry, false);
       }
     }
   }
@@ -2210,7 +2210,7 @@ void CacheStorageService::TelemetryRecordEntryRemoval(CacheEntry const* entry) {
 
   TimeStamp now = TimeStamp::NowLoRes();
   TelemetryPrune(now);
-  mPurgeTimeStamps.Put(key, now);
+  mPurgeTimeStamps.InsertOrUpdate(key, now);
 
   Telemetry::Accumulate(Telemetry::HTTP_CACHE_ENTRY_REUSE_COUNT,
                         entry->UseCount());
@@ -2275,22 +2275,22 @@ CacheStorageService::CollectReports(nsIHandleReportCallback* aHandleReport,
   //   1 CacheFileOutputStream
   //   N CacheFileInputStream
   if (sGlobalEntryTables) {
-    for (auto iter1 = sGlobalEntryTables->Iter(); !iter1.Done(); iter1.Next()) {
+    for (const auto& globalEntry : *sGlobalEntryTables) {
       CacheStorageService::Self()->Lock().AssertCurrentThreadOwns();
 
-      CacheEntryTable* table = iter1.UserData();
+      CacheEntryTable* table = globalEntry.GetWeak();
 
       size_t size = 0;
       mozilla::MallocSizeOf mallocSizeOf = CacheStorageService::MallocSizeOf;
 
       size += table->ShallowSizeOfIncludingThis(mallocSizeOf);
-      for (auto iter2 = table->Iter(); !iter2.Done(); iter2.Next()) {
-        size += iter2.Key().SizeOfExcludingThisIfUnshared(mallocSizeOf);
+      for (const auto& tableEntry : *table) {
+        size += tableEntry.GetKey().SizeOfExcludingThisIfUnshared(mallocSizeOf);
 
         // Bypass memory-only entries, those will be reported when iterating the
         // memory only table. Memory-only entries are stored in both ALL_ENTRIES
         // and MEMORY_ONLY hashtables.
-        RefPtr<mozilla::net::CacheEntry> const& entry = iter2.Data();
+        RefPtr<mozilla::net::CacheEntry> const& entry = tableEntry.GetData();
         if (table->Type() == CacheEntryTable::MEMORY_ONLY ||
             entry->IsUsingDisk()) {
           size += entry->SizeOfIncludingThis(mallocSizeOf);
@@ -2302,7 +2302,8 @@ CacheStorageService::CollectReports(nsIHandleReportCallback* aHandleReport,
           nsPrintfCString(
               "explicit/network/cache2/%s-storage(%s)",
               table->Type() == CacheEntryTable::MEMORY_ONLY ? "memory" : "disk",
-              aAnonymize ? "<anonymized>" : iter1.Key().BeginReading()),
+              aAnonymize ? "<anonymized>"
+                         : globalEntry.GetKey().BeginReading()),
           nsIMemoryReporter::KIND_HEAP, nsIMemoryReporter::UNITS_BYTES, size,
           "Memory used by the cache storage."_ns, aData);
     }

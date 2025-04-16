@@ -114,6 +114,10 @@
 #include "mozilla/layers/WebRenderMessages.h"
 #include "mozilla/layers/WebRenderScrollData.h"
 
+#ifdef MOZ_GECKO_PROFILER
+#  include "GeckoProfiler.h"
+#endif
+
 using namespace mozilla;
 using namespace mozilla::layers;
 using namespace mozilla::dom;
@@ -139,12 +143,7 @@ static bool SpammyLayoutWarningsEnabled() {
 
 #ifdef MOZ_DIAGNOSTIC_ASSERT_ENABLED
 void AssertUniqueItem(nsDisplayItem* aItem) {
-  nsIFrame::DisplayItemArray* items =
-      aItem->Frame()->GetProperty(nsIFrame::DisplayItems());
-  if (!items) {
-    return;
-  }
-  for (nsDisplayItemBase* i : *items) {
+  for (nsDisplayItemBase* i : aItem->Frame()->DisplayItems()) {
     if (i != aItem && !i->HasDeletedFrame() && i->Frame() == aItem->Frame() &&
         i->GetPerFrameKey() == aItem->GetPerFrameKey()) {
       if (i->IsPreProcessedItem()) {
@@ -159,19 +158,6 @@ void AssertUniqueItem(nsDisplayItem* aItem) {
 bool ShouldBuildItemForEvents(const DisplayItemType aType) {
   return aType == DisplayItemType::TYPE_COMPOSITOR_HITTEST_INFO ||
          (GetDisplayItemFlagsForType(aType) & TYPE_IS_CONTAINER);
-}
-
-void UpdateDisplayItemData(nsPaintedDisplayItem* aItem) {
-  for (mozilla::DisplayItemData* did : aItem->Frame()->DisplayItemData()) {
-    if (did->GetDisplayItemKey() == aItem->GetPerFrameKey() &&
-        did->GetLayer()->AsPaintedLayer()) {
-      if (!did->HasMergedFrames()) {
-        aItem->SetDisplayItemData(did, did->GetLayer()->Manager());
-      }
-
-      return;
-    }
-  }
 }
 
 static bool ItemTypeSupportsHitTesting(const DisplayItemType aType) {
@@ -667,7 +653,8 @@ static PresShell* GetFocusedPresShell() {
 void nsDisplayListBuilder::BeginFrame() {
   nsCSSRendering::BeginFrameTreesLocked();
   mCurrentAGR = mRootAGR;
-  mFrameToAnimatedGeometryRootMap.Put(mReferenceFrame, mRootAGR);
+  mFrameToAnimatedGeometryRootMap.InsertOrUpdate(mReferenceFrame,
+                                                 RefPtr{mRootAGR});
 
   mIsPaintingToWindow = false;
   mUseHighQualityScaling = false;
@@ -791,8 +778,9 @@ AnimatedGeometryRoot* nsDisplayListBuilder::WrapAGRForFrame(
   DebugOnly<bool> dummy;
   MOZ_ASSERT(IsAnimatedGeometryRoot(aAnimatedGeometryRoot, dummy) == AGR_YES);
 
-  RefPtr<AnimatedGeometryRoot> result;
-  if (!mFrameToAnimatedGeometryRootMap.Get(aAnimatedGeometryRoot, &result)) {
+  RefPtr<AnimatedGeometryRoot> result =
+      mFrameToAnimatedGeometryRootMap.Get(aAnimatedGeometryRoot);
+  if (!result) {
     MOZ_ASSERT(nsLayoutUtils::IsAncestorFrameCrossDoc(RootReferenceFrame(),
                                                       aAnimatedGeometryRoot));
     RefPtr<AnimatedGeometryRoot> parent = aParent;
@@ -808,7 +796,8 @@ AnimatedGeometryRoot* nsDisplayListBuilder::WrapAGRForFrame(
     }
     result = AnimatedGeometryRoot::CreateAGRForFrame(
         aAnimatedGeometryRoot, parent, aIsAsync, IsRetainingDisplayList());
-    mFrameToAnimatedGeometryRootMap.Put(aAnimatedGeometryRoot, result);
+    mFrameToAnimatedGeometryRootMap.InsertOrUpdate(aAnimatedGeometryRoot,
+                                                   RefPtr{result});
   }
   MOZ_ASSERT(!aParent || result->mParentAGR == aParent);
   return result;
@@ -831,15 +820,17 @@ AnimatedGeometryRoot* nsDisplayListBuilder::FindAnimatedGeometryRootFor(
   if (aFrame == mCurrentFrame) {
     return mCurrentAGR;
   }
-  RefPtr<AnimatedGeometryRoot> result;
-  if (mFrameToAnimatedGeometryRootMap.Get(aFrame, &result)) {
+
+  RefPtr<AnimatedGeometryRoot> result =
+      mFrameToAnimatedGeometryRootMap.Get(aFrame);
+  if (result) {
     return result;
   }
 
   bool isAsync;
   nsIFrame* agrFrame = FindAnimatedGeometryRootFrameFor(aFrame, isAsync);
   result = WrapAGRForFrame(agrFrame, isAsync);
-  mFrameToAnimatedGeometryRootMap.Put(aFrame, result);
+  mFrameToAnimatedGeometryRootMap.InsertOrUpdate(aFrame, RefPtr{result});
   return result;
 }
 
@@ -865,15 +856,9 @@ void nsDisplayListBuilder::SetIsRelativeToLayoutViewport() {
 }
 
 void nsDisplayListBuilder::UpdateShouldBuildAsyncZoomContainer() {
-  Document* document = mReferenceFrame->PresContext()->Document();
-  // On desktop, we want to disable zooming in fullscreen mode (bug 1650488).
-  // On mobile (and RDM), we need zooming even in fullscreen mode to respect
-  // mobile viewport sizing (bug 1659761).
-  bool disableZoomingForFullscreen =
-      document->Fullscreen() &&
-      !document->GetPresShell()->UsesMobileViewportSizing();
+  const Document* document = mReferenceFrame->PresContext()->Document();
   mBuildAsyncZoomContainer = !mIsRelativeToLayoutViewport &&
-                             !disableZoomingForFullscreen &&
+                             !document->Fullscreen() &&
                              nsLayoutUtils::AllowZoomingForDocument(document);
 }
 
@@ -1953,15 +1938,15 @@ bool nsDisplayListBuilder::AddToWillChangeBudget(nsIFrame* aFrame,
   const uint32_t cost = GetLayerizationCost(aSize);
 
   DocumentWillChangeBudget& documentBudget =
-      mDocumentWillChangeBudgets.GetOrInsert(presContext);
+      mDocumentWillChangeBudgets.LookupOrInsert(presContext);
 
   const bool onBudget =
       (documentBudget + cost) / gWillChangeAreaMultiplier < budgetLimit;
 
   if (onBudget) {
     documentBudget += cost;
-    mFrameWillChangeBudgets.Put(aFrame,
-                                FrameWillChangeBudget(presContext, cost));
+    mFrameWillChangeBudgets.InsertOrUpdate(
+        aFrame, FrameWillChangeBudget(presContext, cost));
     aFrame->SetMayHaveWillChangeBudget(true);
   }
 
@@ -2013,8 +1998,8 @@ void nsDisplayListBuilder::RemoveFromWillChangeBudgets(const nsIFrame* aFrame) {
   if (auto entry = mFrameWillChangeBudgets.Lookup(aFrame)) {
     const FrameWillChangeBudget& frameBudget = entry.Data();
 
-    DocumentWillChangeBudget* documentBudget =
-        mDocumentWillChangeBudgets.GetValue(frameBudget.mPresContext);
+    auto documentBudget =
+        mDocumentWillChangeBudgets.Lookup(frameBudget.mPresContext);
 
     if (documentBudget) {
       *documentBudget -= frameBudget.mUsage;
@@ -3294,16 +3279,18 @@ bool nsDisplaySolidColorRegion::CreateWebRenderCommands(
 static void RegisterThemeGeometry(nsDisplayListBuilder* aBuilder,
                                   nsDisplayItem* aItem, nsIFrame* aFrame,
                                   nsITheme::ThemeGeometryType aType) {
-  if (aBuilder->IsInChromeDocumentOrPopup() && !aBuilder->IsInTransform()) {
+  if (aBuilder->IsInChromeDocumentOrPopup()) {
     nsIFrame* displayRoot = nsLayoutUtils::GetDisplayRootFrame(aFrame);
-    nsPoint offset = aBuilder->IsInSubdocument()
-                         ? aBuilder->ToReferenceFrame(aFrame)
-                         : aFrame->GetOffsetTo(displayRoot);
-    nsRect borderBox = nsRect(offset, aFrame->GetSize());
-    aBuilder->RegisterThemeGeometry(
-        aType, aItem,
-        LayoutDeviceIntRect::FromUnknownRect(borderBox.ToNearestPixels(
-            aFrame->PresContext()->AppUnitsPerDevPixel())));
+    bool preservesAxisAlignedRectangles = false;
+    nsRect borderBox = nsLayoutUtils::TransformFrameRectToAncestor(
+        aFrame, aFrame->GetRectRelativeToSelf(), displayRoot,
+        &preservesAxisAlignedRectangles);
+    if (preservesAxisAlignedRectangles) {
+      aBuilder->RegisterThemeGeometry(
+          aType, aItem,
+          LayoutDeviceIntRect::FromUnknownRect(borderBox.ToNearestPixels(
+              aFrame->PresContext()->AppUnitsPerDevPixel())));
+    }
   }
 }
 
@@ -4030,13 +4017,11 @@ bool nsDisplayBackgroundImage::ComputeVisibility(nsDisplayListBuilder* aBuilder,
   return mBackgroundStyle;
 }
 
-/* static */
-nsRegion nsDisplayBackgroundImage::GetInsideClipRegion(
-    const nsDisplayItem* aItem, StyleGeometryBox aClip, const nsRect& aRect,
-    const nsRect& aBackgroundRect) {
-  nsRegion result;
+static nsRect GetInsideClipRect(const nsDisplayItem* aItem,
+                                StyleGeometryBox aClip, const nsRect& aRect,
+                                const nsRect& aBackgroundRect) {
   if (aRect.IsEmpty()) {
-    return result;
+    return {};
   }
 
   nsIFrame* frame = aItem->Frame();
@@ -4083,7 +4068,7 @@ nsRegion nsDisplayBackgroundImage::GetOpaqueRegion(
         layer.mRepeat.mXRepeat != StyleImageLayerRepeat::Space &&
         layer.mRepeat.mYRepeat != StyleImageLayerRepeat::Space &&
         layer.mClip != StyleGeometryBox::Text) {
-      result = GetInsideClipRegion(this, layer.mClip, mBounds, mBackgroundRect);
+      result = GetInsideClipRect(this, layer.mClip, mBounds, mBackgroundRect);
     }
   }
 
@@ -4744,8 +4729,8 @@ nsRegion nsDisplayBackgroundColor::GetOpaqueRegion(
   }
 
   *aSnap = true;
-  return nsDisplayBackgroundImage::GetInsideClipRegion(
-      this, mBottomLayerClip, mBackgroundRect, mBackgroundRect);
+  return GetInsideClipRect(this, mBottomLayerClip, mBackgroundRect,
+                           mBackgroundRect);
 }
 
 Maybe<nscolor> nsDisplayBackgroundColor::IsUniform(
@@ -5132,12 +5117,13 @@ bool nsDisplayBoxShadowOuter::CanBuildWebRenderDisplayItems() {
   }
 
   bool hasBorderRadius;
-  bool nativeTheme =
-      nsCSSRendering::HasBoxShadowNativeTheme(mFrame, hasBorderRadius);
-
   // We don't support native themed things yet like box shadows around
   // input buttons.
-  if (nativeTheme) {
+  //
+  // TODO(emilio): The non-native theme could provide the right rect+radius
+  // instead relatively painlessly, if we find this causes performance issues or
+  // what not.
+  if (nsCSSRendering::HasBoxShadowNativeTheme(mFrame, hasBorderRadius)) {
     return false;
   }
 
@@ -5417,32 +5403,18 @@ nsDisplayWrapList::nsDisplayWrapList(
   mListPtr->AppendToTop(aList);
   nsDisplayWrapList::UpdateBounds(aBuilder);
 
+#ifdef DEBUG
   if (!aFrame || !aFrame->IsTransformed()) {
     return;
   }
 
-  // If we're a transformed frame, then we need to find out if we're inside
-  // the nsDisplayTransform or outside of it. Frames inside the transform
-  // need mReferenceFrame == mFrame, outside needs the next ancestor
-  // reference frame.
-  // If we're inside the transform, then the nsDisplayItem constructor
-  // will have done the right thing.
-  // If we're outside the transform, then we should have only one child
-  // (since nsDisplayTransform wraps all actual content), and that child
-  // will have the correct reference frame set (since nsDisplayTransform
-  // handles this explictly).
   nsDisplayItem* i = mListPtr->GetBottom();
   if (i &&
       (!i->GetAbove() || i->GetType() == DisplayItemType::TYPE_TRANSFORM) &&
       i->Frame() == mFrame) {
-    mReferenceFrame = i->ReferenceFrame();
-    mToReferenceFrame = i->ToReferenceFrame();
+    MOZ_ASSERT(mReferenceFrame == i->ReferenceFrame());
   }
-
-  nsRect visible = aBuilder->GetVisibleRect() +
-                   aBuilder->GetCurrentFrameOffsetToReferenceFrame();
-
-  SetBuildingRect(visible);
+#endif
 }
 
 nsDisplayWrapList::nsDisplayWrapList(nsDisplayListBuilder* aBuilder,
@@ -6341,9 +6313,14 @@ bool nsDisplayOwnLayer::CreateWebRenderCommands(
   if (IsScrollThumbLayer()) {
     params.prim_flags |= wr::PrimitiveFlags::IS_SCROLLBAR_THUMB;
   }
-  if (IsZoomingLayer()) {
-    params.reference_frame_kind = wr::WrReferenceFrameKind::Zoom;
+  if (IsZoomingLayer() ||
+      ((IsFixedPositionLayer() && HasDynamicToolbar()) ||
+       (IsStickyPositionLayer() && HasDynamicToolbar()) ||
+       (IsRootScrollbarContainer() && HasDynamicToolbar()))) {
+    params.is_2d_scale_translation = true;
+    params.should_snap = true;
   }
+
   StackingContextHelper sc(aSc, GetActiveScrolledRoot(), mFrame, this, aBuilder,
                            params);
 
@@ -7353,9 +7330,24 @@ void nsDisplayTransform::SetReferenceFrameToAncestor(
   if (mFrame == aBuilder->RootReferenceFrame()) {
     return;
   }
+  // We manually recompute mToReferenceFrame without going through the
+  // builder, since this won't apply the 'additional offset'. Our
+  // children will already be painting with that applied, and we don't
+  // want to include it a second time in our transform. We don't recompute
+  // our visible/building rects, since those should still include the additional
+  // offset.
+  // TODO: Are there are things computed using our ToReferenceFrame that should
+  // have the additional offset applied? Should we instead just manually remove
+  // the offset from our transform instead of this more general value?
+  // Can we instead apply the additional offset to us and not our children, like
+  // we do for all other offsets (and how reference frames are supposed to
+  // work)?
+#ifdef DEBUG
   nsIFrame* outerFrame = nsLayoutUtils::GetCrossDocParentFrame(mFrame);
-  mReferenceFrame = aBuilder->FindReferenceFrameFor(outerFrame);
+  MOZ_ASSERT(mReferenceFrame == aBuilder->FindReferenceFrameFor(outerFrame));
+#endif
   mToReferenceFrame = mFrame->GetOffsetToCrossDoc(mReferenceFrame);
+
   if (DisplayPortUtils::IsFixedPosFrameInDisplayPort(mFrame)) {
     // This is an odd special case. If we are both IsFixedPosFrameInDisplayPort
     // and transformed that we are our own AGR parent.
@@ -7381,8 +7373,6 @@ void nsDisplayTransform::SetReferenceFrameToAncestor(
       mAnimatedGeometryRoot = mAnimatedGeometryRoot->mParentAGR;
     }
   }
-
-  SetBuildingRect(aBuilder->GetVisibleRect() + mToReferenceFrame);
 }
 
 void nsDisplayTransform::Init(nsDisplayListBuilder* aBuilder,
@@ -9180,13 +9170,16 @@ nsDisplayMasksAndClipPaths::nsDisplayMasksAndClipPaths(
       aBuilder->GetBackgroundPaintFlags() | nsCSSRendering::PAINTBG_MASK_IMAGE;
   const nsStyleSVGReset* svgReset = aFrame->StyleSVGReset();
   NS_FOR_VISIBLE_IMAGE_LAYERS_BACK_TO_FRONT(i, svgReset->mMask) {
-    if (!svgReset->mMask.mLayers[i].mImage.IsResolved()) {
+    const auto& layer = svgReset->mMask.mLayers[i];
+    if (!layer.mImage.IsResolved()) {
       continue;
     }
-    bool isTransformedFixed;
+    const nsRect& borderArea = mFrame->GetRectRelativeToSelf();
+    // NOTE(emilio): We only care about the dest rect so we don't bother
+    // computing a clip.
+    bool isTransformedFixed = false;
     nsBackgroundLayerState state = nsCSSRendering::PrepareImageLayer(
-        presContext, aFrame, flags, mFrame->GetRectRelativeToSelf(),
-        mFrame->GetRectRelativeToSelf(), svgReset->mMask.mLayers[i],
+        presContext, aFrame, flags, borderArea, borderArea, layer,
         &isTransformedFixed);
     mDestRects.AppendElement(state.mDestArea);
   }

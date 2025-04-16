@@ -104,10 +104,7 @@ bool MediaPlaybackStatus::IsAnyMediaBeingControlled() const {
 MediaPlaybackStatus::ContextMediaInfo&
 MediaPlaybackStatus::GetNotNullContextInfo(uint64_t aContextId) {
   MOZ_ASSERT(NS_IsMainThread());
-  if (!mContextInfoMap.Contains(aContextId)) {
-    mContextInfoMap.Put(aContextId, MakeUnique<ContextMediaInfo>(aContextId));
-  }
-  return *(mContextInfoMap.GetValue(aContextId)->get());
+  return *mContextInfoMap.GetOrInsertNew(aContextId, aContextId);
 }
 
 Maybe<uint64_t> MediaPlaybackStatus::GetAudioFocusOwnerContextId() const {

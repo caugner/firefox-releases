@@ -4,6 +4,7 @@
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 #include "nsMenuUtilsX.h"
+#include <unordered_set>
 
 #include "mozilla/dom/Document.h"
 #include "mozilla/dom/DocumentInlines.h"
@@ -119,7 +120,7 @@ NSMenuItem* nsMenuUtilsX::GetStandardEditMenuItem() {
                                                                  action:nil
                                                           keyEquivalent:@""] autorelease];
   NSMenu* standardEditMenu = [[NSMenu alloc] initWithTitle:@"Edit"];
-  [standardEditMenuItem setSubmenu:standardEditMenu];
+  standardEditMenuItem.submenu = standardEditMenu;
   [standardEditMenu release];
 
   // Add Undo
@@ -179,12 +180,12 @@ NSMenuItem* nsMenuUtilsX::GetStandardEditMenuItem() {
   NS_OBJC_END_TRY_ABORT_BLOCK;
 }
 
-bool nsMenuUtilsX::NodeIsHiddenOrCollapsed(nsIContent* inContent) {
-  return inContent->IsElement() &&
-         (inContent->AsElement()->AttrValueIs(kNameSpaceID_None, nsGkAtoms::hidden,
-                                              nsGkAtoms::_true, eCaseMatters) ||
-          inContent->AsElement()->AttrValueIs(kNameSpaceID_None, nsGkAtoms::collapsed,
-                                              nsGkAtoms::_true, eCaseMatters));
+bool nsMenuUtilsX::NodeIsHiddenOrCollapsed(nsIContent* aContent) {
+  return aContent->IsElement() &&
+         (aContent->AsElement()->AttrValueIs(kNameSpaceID_None, nsGkAtoms::hidden, nsGkAtoms::_true,
+                                             eCaseMatters) ||
+          aContent->AsElement()->AttrValueIs(kNameSpaceID_None, nsGkAtoms::collapsed,
+                                             nsGkAtoms::_true, eCaseMatters));
 }
 
 // Determines how many items are visible among the siblings in a menu that are
@@ -200,7 +201,7 @@ int nsMenuUtilsX::CalculateNativeInsertionPoint(nsMenuObjectX* aParent, nsMenuOb
       if (currMenu == aChild) {
         return insertionPoint;  // we found ourselves, break out
       }
-      if (currMenu && [currMenu->NativeMenuItem() menu]) {
+      if (currMenu && currMenu->NativeNSMenuItem().menu) {
         insertionPoint++;
       }
     }
@@ -222,11 +223,12 @@ int nsMenuUtilsX::CalculateNativeInsertionPoint(nsMenuObjectX* aParent, nsMenuOb
       NSMenuItem* nativeItem = nil;
       nsMenuObjectTypeX currItemType = currItem->MenuObjectType();
       if (currItemType == eSubmenuObjectType) {
-        nativeItem = static_cast<nsMenuX*>(currItem)->NativeMenuItem();
+        nativeItem = static_cast<nsMenuX*>(currItem)->NativeNSMenuItem();
       } else {
-        nativeItem = (NSMenuItem*)(currItem->NativeData());
+        MOZ_RELEASE_ASSERT(currItemType == eMenuItemObjectType);
+        nativeItem = static_cast<nsMenuItemX*>(currItem)->NativeNSMenuItem();
       }
-      if ([nativeItem menu]) {
+      if (nativeItem.menu) {
         insertionPoint++;
       }
     }
@@ -236,34 +238,98 @@ int nsMenuUtilsX::CalculateNativeInsertionPoint(nsMenuObjectX* aParent, nsMenuOb
 
 NSMenuItem* nsMenuUtilsX::NativeMenuItemWithLocation(NSMenu* aRootMenu, NSString* aLocationString,
                                                      bool aIsMenuBar) {
-  NSArray* indexes = [aLocationString componentsSeparatedByString:@"|"];
-  unsigned int pathLength = [indexes count];
+  NSArray<NSString*>* indexes = [aLocationString componentsSeparatedByString:@"|"];
+  unsigned int pathLength = indexes.count;
   if (pathLength == 0) {
     return nil;
   }
 
   NSMenu* currentSubmenu = aRootMenu;
   for (unsigned int depth = 0; depth < pathLength; depth++) {
-    NSInteger targetIndex = [[indexes objectAtIndex:depth] integerValue];
+    NSInteger targetIndex = [indexes objectAtIndex:depth].integerValue;
     if (aIsMenuBar && depth == 0) {
       // We remove the application menu from consideration for the top-level menu.
       targetIndex++;
     }
-    int itemCount = [currentSubmenu numberOfItems];
-    if (targetIndex < itemCount) {
-      NSMenuItem* menuItem = [currentSubmenu itemAtIndex:targetIndex];
-      // if this is the last index just return the menu item
-      if (depth == pathLength - 1) {
-        return menuItem;
-      }
-      // if this is not the last index find the submenu and keep going
-      if ([menuItem hasSubmenu]) {
-        currentSubmenu = [menuItem submenu];
-      } else {
-        return nil;
-      }
+    int itemCount = currentSubmenu.numberOfItems;
+    if (targetIndex >= itemCount) {
+      return nil;
+    }
+    NSMenuItem* menuItem = [currentSubmenu itemAtIndex:targetIndex];
+    // if this is the last index just return the menu item
+    if (depth == pathLength - 1) {
+      return menuItem;
+    }
+    // if this is not the last index find the submenu and keep going
+    if (menuItem.hasSubmenu) {
+      currentSubmenu = menuItem.submenu;
+    } else {
+      return nil;
     }
   }
 
   return nil;
+}
+
+static void CheckNativeMenuConsistencyImpl(NSMenu* aMenu, std::unordered_set<void*>& aSeenObjects);
+
+static void CheckNativeMenuItemConsistencyImpl(NSMenuItem* aMenuItem,
+                                               std::unordered_set<void*>& aSeenObjects) {
+  bool inserted = aSeenObjects.insert(aMenuItem).second;
+  MOZ_RELEASE_ASSERT(inserted, "Duplicate NSMenuItem object in native menu structure");
+  if (aMenuItem.hasSubmenu) {
+    CheckNativeMenuConsistencyImpl(aMenuItem.submenu, aSeenObjects);
+  }
+}
+
+static void CheckNativeMenuConsistencyImpl(NSMenu* aMenu, std::unordered_set<void*>& aSeenObjects) {
+  bool inserted = aSeenObjects.insert(aMenu).second;
+  MOZ_RELEASE_ASSERT(inserted, "Duplicate NSMenu object in native menu structure");
+  for (NSMenuItem* item in aMenu.itemArray) {
+    CheckNativeMenuItemConsistencyImpl(item, aSeenObjects);
+  }
+}
+
+void nsMenuUtilsX::CheckNativeMenuConsistency(NSMenu* aMenu) {
+  std::unordered_set<void*> seenObjects;
+  CheckNativeMenuConsistencyImpl(aMenu, seenObjects);
+}
+
+void nsMenuUtilsX::CheckNativeMenuConsistency(NSMenuItem* aMenuItem) {
+  std::unordered_set<void*> seenObjects;
+  CheckNativeMenuItemConsistencyImpl(aMenuItem, seenObjects);
+}
+
+static void DumpNativeNSMenuItemImpl(NSMenuItem* aItem, uint32_t aIndent,
+                                     const Maybe<int>& aIndexInParentMenu);
+
+static void DumpNativeNSMenuImpl(NSMenu* aMenu, uint32_t aIndent) {
+  printf("%*sNSMenu [%p] %-16s\n", aIndent * 2, "", aMenu,
+         (aMenu.title.length == 0 ? "(no title)" : aMenu.title.UTF8String));
+  int index = 0;
+  for (NSMenuItem* item in aMenu.itemArray) {
+    DumpNativeNSMenuItemImpl(item, aIndent + 1, Some(index));
+    index++;
+  }
+}
+
+static void DumpNativeNSMenuItemImpl(NSMenuItem* aItem, uint32_t aIndent,
+                                     const Maybe<int>& aIndexInParentMenu) {
+  printf("%*s", aIndent * 2, "");
+  if (aIndexInParentMenu) {
+    printf("[%d] ", *aIndexInParentMenu);
+  }
+  printf("NSMenuItem [%p] %-16s%s\n", aItem,
+         aItem.isSeparatorItem ? "----"
+                               : (aItem.title.length == 0 ? "(no title)" : aItem.title.UTF8String),
+         aItem.hasSubmenu ? " [hasSubmenu]" : "");
+  if (aItem.hasSubmenu) {
+    DumpNativeNSMenuImpl(aItem.submenu, aIndent + 1);
+  }
+}
+
+void nsMenuUtilsX::DumpNativeMenu(NSMenu* aMenu) { DumpNativeNSMenuImpl(aMenu, 0); }
+
+void nsMenuUtilsX::DumpNativeMenuItem(NSMenuItem* aMenuItem) {
+  DumpNativeNSMenuItemImpl(aMenuItem, 0, Nothing());
 }

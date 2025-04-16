@@ -48,7 +48,9 @@ const { loader, require } = ChromeUtils.import(
 );
 
 const { gDevTools } = require("devtools/client/framework/devtools");
-const { TargetFactory } = require("devtools/client/framework/target");
+const {
+  TabDescriptorFactory,
+} = require("devtools/client/framework/tab-descriptor-factory");
 const DevToolsUtils = require("devtools/shared/DevToolsUtils");
 
 // This is overridden in files that load shared-head via loadSubScript.
@@ -455,8 +457,8 @@ var refreshTab = async function(tab = gBrowser.selectedTab) {
  * @return a promise that resolves when the page has fully loaded.
  */
 async function navigateTo(uri, { isErrorPage = false } = {}) {
-  const target = await TargetFactory.forTab(gBrowser.selectedTab);
-  const toolbox = gDevTools.getToolbox(target);
+  const toolbox = await gDevTools.getToolboxForTab(gBrowser.selectedTab);
+  const target = toolbox.target;
 
   // If we're switching origins, we need to wait for the 'switched-target'
   // event to make sure everything is ready.
@@ -466,6 +468,11 @@ async function navigateTo(uri, { isErrorPage = false } = {}) {
   const onTargetSwitched = toolbox.targetList.once("switched-target");
   // Otherwise, if we don't switch target, it is safe to wait for navigate event.
   const onNavigate = target.once("navigate");
+
+  // If the current top-level target follows the window global lifecycle, a
+  // target switch will occur regardless of process changes.
+  const targetFollowsWindowLifecycle =
+    target.targetForm.followWindowGlobalLifeCycle;
 
   // Register panel-specific listeners, which would be useful to wait
   // for panel-specific events.
@@ -501,8 +508,9 @@ async function navigateTo(uri, { isErrorPage = false } = {}) {
     info(`→ panel reloaded`);
   }
 
-  // If the tab navigated to another process, expect a target switching
-  if (switchedToAnotherProcess) {
+  // If the tab navigated to another process or if the old target follows the
+  // window lifecycle, expect a target switching.
+  if (switchedToAnotherProcess || targetFollowsWindowLifecycle) {
     info(`Waiting for target switch…`);
     await onTargetSwitched;
     info(`→ switched-target emitted`);
@@ -511,6 +519,25 @@ async function navigateTo(uri, { isErrorPage = false } = {}) {
     await onNavigate;
     info(`→ 'navigate' emitted`);
   }
+}
+
+/**
+ * Create a Target for the provided tab and attach to it before resolving.
+ * This should only be used for tests which don't involve the frontend or a
+ * toolbox. Typically, retrieving the target and attaching to it should be
+ * handled at framework level when a Toolbox is used.
+ *
+ * @param {XULTab} tab
+ *        The tab for which a target should be created.
+ * @return {BrowsingContextTargetFront} The attached target front.
+ */
+async function createAndAttachTargetForTab(tab) {
+  info("Creating and attaching to a local tab target");
+
+  const descriptor = await TabDescriptorFactory.createDescriptorForTab(tab);
+  const target = await descriptor.getTarget();
+  await target.attach();
+  return target;
 }
 
 /**
@@ -567,8 +594,8 @@ var openInspectorForURL = async function(url, hostType) {
 };
 
 async function getActiveInspector() {
-  const target = await TargetFactory.forTab(gBrowser.selectedTab);
-  return gDevTools.getToolbox(target).getPanel("inspector");
+  const toolbox = await gDevTools.getToolboxForTab(gBrowser.selectedTab);
+  return toolbox.getPanel("inspector");
 }
 
 /**
@@ -810,10 +837,9 @@ var openToolboxForTab = async function(tab, toolId, hostType) {
   info("Opening the toolbox");
 
   let toolbox;
-  const target = await TargetFactory.forTab(tab);
 
   // Check if the toolbox is already loaded.
-  toolbox = gDevTools.getToolbox(target);
+  toolbox = await gDevTools.getToolboxForTab(tab);
   if (toolbox) {
     if (!toolId || (toolId && toolbox.getPanel(toolId))) {
       info("Toolbox is already opened");
@@ -822,7 +848,7 @@ var openToolboxForTab = async function(tab, toolId, hostType) {
   }
 
   // If not, load it now.
-  toolbox = await gDevTools.showToolbox(target, toolId, hostType);
+  toolbox = await gDevTools.showToolboxForTab(tab, { toolId, hostType });
 
   // Make sure that the toolbox frame is focused.
   await new Promise(resolve => waitForFocus(resolve, toolbox.win));
@@ -852,11 +878,8 @@ var openNewTabAndToolbox = async function(url, toolId, hostType) {
  * closed.
  */
 var closeTabAndToolbox = async function(tab = gBrowser.selectedTab) {
-  if (TargetFactory.isKnownTab(tab)) {
-    const target = await TargetFactory.forTab(tab);
-    if (target) {
-      await gDevTools.closeToolbox(target);
-    }
+  if (TabDescriptorFactory.isKnownTab(tab)) {
+    await gDevTools.closeToolboxForTab(tab);
   }
 
   await removeTab(tab);
@@ -874,6 +897,38 @@ var closeToolboxAndTab = async function(toolbox) {
   await toolbox.destroy();
   await removeTab(gBrowser.selectedTab);
 };
+
+/**
+ * Retrieve all tool ids compatible with a target created for the provided tab.
+ *
+ * @param {XULTab} tab
+ *        The tab for which we want to get the list of supported toolIds
+ * @return {Array<String>} array of tool ids
+ */
+async function getSupportedToolIds(tab) {
+  info("Getting the entire list of tools supported in this tab");
+
+  let shouldDestroyToolbox = false;
+
+  // Get the toolbox for this tab, or create one if needed.
+  let toolbox = await gDevTools.getToolboxForTab(tab);
+  if (!toolbox) {
+    toolbox = await gDevTools.showToolboxForTab(tab);
+    shouldDestroyToolbox = true;
+  }
+
+  const toolIds = gDevTools
+    .getToolDefinitionArray()
+    .filter(def => def.isTargetSupported(toolbox.target))
+    .map(def => def.id);
+
+  if (shouldDestroyToolbox) {
+    // Only close the toolbox if it was explicitly created here.
+    await toolbox.destroy();
+  }
+
+  return toolIds;
+}
 
 /**
  * Waits until a predicate returns true.
@@ -1003,8 +1058,7 @@ function lookupPath(obj, path) {
 }
 
 var closeToolbox = async function() {
-  const target = await TargetFactory.forTab(gBrowser.selectedTab);
-  await gDevTools.closeToolbox(target);
+  await gDevTools.closeToolboxForTab(gBrowser.selectedTab);
 };
 
 /**
@@ -1359,4 +1413,43 @@ function checkPoolChildrenSize(parentPool, typeName, expected) {
     expected,
     `${parentPool.actorID} should have ${expected} children of type ${typeName}`
   );
+}
+
+/**
+ * Wait for a specific action type to be dispatched.
+ *
+ * If the action is async and defines a `status` property, this helper will wait
+ * for the status to reach either "error" or "done".
+ *
+ * @param {Object} store
+ *        Redux store where the action should be dispatched.
+ * @param {String} actionType
+ *        The actionType to wait for.
+ * @param {Number} repeat
+ *        Optional, number of time the action is expected to be dispatched.
+ *        Defaults to 1
+ * @return {Promise}
+ */
+function waitForDispatch(store, actionType, repeat = 1) {
+  let count = 0;
+  return new Promise(resolve => {
+    store.dispatch({
+      type: "@@service/waitUntil",
+      predicate: action => {
+        const isDone =
+          !action.status ||
+          action.status === "done" ||
+          action.status === "error";
+
+        if (action.type === actionType && isDone && ++count == repeat) {
+          return true;
+        }
+
+        return false;
+      },
+      run: (dispatch, getState, action) => {
+        resolve(action);
+      },
+    });
+  });
 }

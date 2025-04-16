@@ -28,7 +28,7 @@
 #include "mozilla/ipc/ProtocolUtils.h"
 #include "nsAppRunner.h"
 #include "nsContentUtils.h"
-#include "nsDataHashtable.h"
+#include "nsTHashMap.h"
 #include "nsDebug.h"
 #include "nsExceptionHandler.h"
 #include "nsIMemoryReporter.h"
@@ -42,6 +42,10 @@
 #ifdef MOZ_TASK_TRACER
 #  include "GeckoTaskTracer.h"
 using namespace mozilla::tasktracer;
+#endif
+
+#ifdef MOZ_GECKO_PROFILER
+#  include "GeckoProfiler.h"
 #endif
 
 // Undo the damage done by mozzconf.h
@@ -492,7 +496,7 @@ class ChannelCountReporter final : public nsIMemoryReporter {
     }
   };
 
-  using CountTable = nsDataHashtable<nsDepCharHashKey, ChannelCounts>;
+  using CountTable = nsTHashMap<nsDepCharHashKey, ChannelCounts>;
 
   static StaticMutex sChannelCountMutex;
   static CountTable* sChannelCounts;
@@ -507,22 +511,22 @@ class ChannelCountReporter final : public nsIMemoryReporter {
     if (!sChannelCounts) {
       return NS_OK;
     }
-    for (auto iter = sChannelCounts->Iter(); !iter.Done(); iter.Next()) {
-      nsPrintfCString pathNow("ipc-channels/%s", iter.Key());
-      nsPrintfCString pathMax("ipc-channels-peak/%s", iter.Key());
+    for (const auto& entry : *sChannelCounts) {
+      nsPrintfCString pathNow("ipc-channels/%s", entry.GetKey());
+      nsPrintfCString pathMax("ipc-channels-peak/%s", entry.GetKey());
       nsPrintfCString descNow(
           "Number of IPC channels for"
           " top-level actor type %s",
-          iter.Key());
+          entry.GetKey());
       nsPrintfCString descMax(
           "Peak number of IPC channels for"
           " top-level actor type %s",
-          iter.Key());
+          entry.GetKey());
 
       aHandleReport->Callback(""_ns, pathNow, KIND_OTHER, UNITS_COUNT,
-                              iter.Data().mNow, descNow, aData);
+                              entry.GetData().mNow, descNow, aData);
       aHandleReport->Callback(""_ns, pathMax, KIND_OTHER, UNITS_COUNT,
-                              iter.Data().mMax, descMax, aData);
+                              entry.GetData().mMax, descMax, aData);
     }
     return NS_OK;
   }
@@ -532,13 +536,13 @@ class ChannelCountReporter final : public nsIMemoryReporter {
     if (!sChannelCounts) {
       sChannelCounts = new CountTable;
     }
-    sChannelCounts->GetOrInsert(aName).Inc();
+    sChannelCounts->LookupOrInsert(aName).Inc();
   }
 
   static void Decrement(const char* aName) {
     StaticMutexAutoLock countLock(sChannelCountMutex);
     MOZ_ASSERT(sChannelCounts);
-    sChannelCounts->GetOrInsert(aName).Dec();
+    sChannelCounts->LookupOrInsert(aName).Dec();
   }
 };
 
@@ -2788,6 +2792,7 @@ void MessageChannel::DumpInterruptStack(const char* const pfx) const {
 void MessageChannel::AddProfilerMarker(const IPC::Message& aMessage,
                                        MessageDirection aDirection) {
   mMonitor->AssertCurrentThreadOwns();
+
 #ifdef MOZ_GECKO_PROFILER
   if (profiler_feature_active(ProfilerFeature::IPCMessages)) {
     int32_t pid = mListener->OtherPidMaybeInvalid();

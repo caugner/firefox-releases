@@ -20,6 +20,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <functional>
+#include <tuple>
 #include <utility>
 #include "ErrorList.h"
 #include "Units.h"
@@ -41,6 +42,7 @@
 #include "mozilla/fallible.h"
 #include "mozilla/gfx/Point.h"
 #include "nsCOMPtr.h"
+#include "nsHashtablesFwd.h"
 #include "nsIContentPolicy.h"
 #include "nsID.h"
 #include "nsINode.h"
@@ -124,8 +126,6 @@ class nsWrapperCache;
 struct JSContext;
 struct nsPoint;
 
-template <class K, class V>
-class nsDataHashtable;
 template <class T>
 class nsRefPtrHashKey;
 
@@ -1893,9 +1893,9 @@ class nsContentUtils {
    * @param aResult the result. Out param.
    * @return false on out of memory errors, true otherwise.
    */
-  MOZ_MUST_USE
-  static bool GetNodeTextContent(nsINode* aNode, bool aDeep, nsAString& aResult,
-                                 const mozilla::fallible_t&);
+  [[nodiscard]] static bool GetNodeTextContent(nsINode* aNode, bool aDeep,
+                                               nsAString& aResult,
+                                               const mozilla::fallible_t&);
 
   static void GetNodeTextContent(nsINode* aNode, bool aDeep,
                                  nsAString& aResult);
@@ -2239,26 +2239,24 @@ class nsContentUtils {
    */
   static bool CanAccessNativeAnon();
 
-  MOZ_MUST_USE
-  static nsresult WrapNative(JSContext* cx, nsISupports* native,
-                             const nsIID* aIID, JS::MutableHandle<JS::Value> vp,
-                             bool aAllowWrapping = true) {
+  [[nodiscard]] static nsresult WrapNative(JSContext* cx, nsISupports* native,
+                                           const nsIID* aIID,
+                                           JS::MutableHandle<JS::Value> vp,
+                                           bool aAllowWrapping = true) {
     return WrapNative(cx, native, nullptr, aIID, vp, aAllowWrapping);
   }
 
   // Same as the WrapNative above, but use this one if aIID is nsISupports' IID.
-  MOZ_MUST_USE
-  static nsresult WrapNative(JSContext* cx, nsISupports* native,
-                             JS::MutableHandle<JS::Value> vp,
-                             bool aAllowWrapping = true) {
+  [[nodiscard]] static nsresult WrapNative(JSContext* cx, nsISupports* native,
+                                           JS::MutableHandle<JS::Value> vp,
+                                           bool aAllowWrapping = true) {
     return WrapNative(cx, native, nullptr, nullptr, vp, aAllowWrapping);
   }
 
-  MOZ_MUST_USE
-  static nsresult WrapNative(JSContext* cx, nsISupports* native,
-                             nsWrapperCache* cache,
-                             JS::MutableHandle<JS::Value> vp,
-                             bool aAllowWrapping = true) {
+  [[nodiscard]] static nsresult WrapNative(JSContext* cx, nsISupports* native,
+                                           nsWrapperCache* cache,
+                                           JS::MutableHandle<JS::Value> vp,
+                                           bool aAllowWrapping = true) {
     return WrapNative(cx, native, cache, nullptr, vp, aAllowWrapping);
   }
 
@@ -2281,9 +2279,8 @@ class nsContentUtils {
    * @param aString the string to convert the newlines inside [in/out]
    */
   static void PlatformToDOMLineBreaks(nsString& aString);
-  MOZ_MUST_USE
-  static bool PlatformToDOMLineBreaks(nsString& aString,
-                                      const mozilla::fallible_t&);
+  [[nodiscard]] static bool PlatformToDOMLineBreaks(nsString& aString,
+                                                    const mozilla::fallible_t&);
 
   /**
    * Populates aResultString with the contents of the string-buffer aBuf, up
@@ -2969,13 +2966,6 @@ class nsContentUtils {
   static void SetScrollbarsVisibility(nsIDocShell* aDocShell, bool aVisible);
 
   /*
-   * Return the associated presentation URL of the presented content.
-   * Will return empty string if the docshell is not in a presented content.
-   */
-  static void GetPresentationURL(nsIDocShell* aDocShell,
-                                 nsAString& aPresentationUrl);
-
-  /*
    * Try to find the docshell corresponding to the given event target.
    */
   static nsIDocShell* GetDocShellForEventTarget(
@@ -3160,6 +3150,8 @@ class nsContentUtils {
    */
   static uint64_t GenerateProcessSpecificId(uint64_t aId);
 
+  static std::tuple<uint64_t, uint64_t> SplitProcessSpecificId(uint64_t aId);
+
   /**
    * Generate a window ID which is unique across processes and will never be
    * recycled.
@@ -3180,7 +3172,7 @@ class nsContentUtils {
 
   // Alternate data MIME type used by the ScriptLoader to register and read
   // bytecode out of the nsCacheInfoChannel.
-  static MOZ_MUST_USE bool InitJSBytecodeMimeType();
+  [[nodiscard]] static bool InitJSBytecodeMimeType();
   static nsCString& JSBytecodeMimeType() {
     MOZ_ASSERT(sJSBytecodeMimeType);
     return *sJSBytecodeMimeType;
@@ -3357,9 +3349,8 @@ class nsContentUtils {
 
   static nsIConsoleService* sConsoleService;
 
-  static nsDataHashtable<nsRefPtrHashKey<nsAtom>, EventNameMapping>*
-      sAtomEventTable;
-  static nsDataHashtable<nsStringHashKey, EventNameMapping>* sStringEventTable;
+  static nsTHashMap<nsRefPtrHashKey<nsAtom>, EventNameMapping>* sAtomEventTable;
+  static nsTHashMap<nsStringHashKey, EventNameMapping>* sStringEventTable;
   static nsTArray<RefPtr<nsAtom>>* sUserDefinedEvents;
 
   static nsIStringBundleService* sStringBundleService;

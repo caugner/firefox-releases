@@ -358,23 +358,40 @@ void CompositorOGL::CleanupResources() {
 
   mBlitTextureImageHelper = nullptr;
 
-  // On the main thread the Widget will be destroyed soon and calling
-  // MakeCurrent after that could cause a crash (at least with GLX, see bug
-  // 1059793), unless context is marked as destroyed. There may be some textures
-  // still alive that will try to call MakeCurrent on the context so let's make
-  // sure it is marked destroyed now.
-  mGLContext->MarkDestroyed();
+  if (mOwnsGLContext) {
+    // On the main thread the Widget will be destroyed soon and calling
+    // MakeCurrent after that could cause a crash (at least with GLX, see bug
+    // 1059793), unless context is marked as destroyed. There may be some
+    // textures still alive that will try to call MakeCurrent on the context so
+    // let's make sure it is marked destroyed now.
+    mGLContext->MarkDestroyed();
+  }
 
   mGLContext = nullptr;
+}
+
+bool CompositorOGL::Initialize(GLContext* aGLContext,
+                               nsCString* const out_failureReason) {
+  MOZ_ASSERT(!mDestroyed);
+  MOZ_ASSERT(!mGLContext);
+
+  mGLContext = aGLContext;
+  mOwnsGLContext = false;
+
+  return Initialize(out_failureReason);
 }
 
 bool CompositorOGL::Initialize(nsCString* const out_failureReason) {
   ScopedGfxFeatureReporter reporter("GL Layers");
 
   // Do not allow double initialization
-  MOZ_ASSERT(mGLContext == nullptr, "Don't reinitialize CompositorOGL");
+  MOZ_ASSERT(mGLContext == nullptr || !mOwnsGLContext,
+             "Don't reinitialize CompositorOGL");
 
-  mGLContext = CreateContext();
+  if (!mGLContext) {
+    MOZ_ASSERT(mOwnsGLContext);
+    mGLContext = CreateContext();
+  }
 
 #ifdef MOZ_WIDGET_ANDROID
   if (!mGLContext) {
@@ -2266,14 +2283,14 @@ void CompositorOGL::TryUnlockTextures() {
       if (actor) {
         base::ProcessId pid = actor->OtherPid();
         nsTArray<uint64_t>* textureIds =
-            texturesIdsToUnlockByPid.LookupOrAdd(pid);
+            texturesIdsToUnlockByPid.GetOrInsertNew(pid);
         textureIds->AppendElement(TextureHost::GetTextureSerial(actor));
       }
     }
   }
   mMaybeUnlockBeforeNextComposition.Clear();
-  for (auto it = texturesIdsToUnlockByPid.ConstIter(); !it.Done(); it.Next()) {
-    TextureSync::SetTexturesUnlocked(it.Key(), *it.UserData());
+  for (const auto& entry : texturesIdsToUnlockByPid) {
+    TextureSync::SetTexturesUnlocked(entry.GetKey(), *entry.GetWeak());
   }
 }
 #endif

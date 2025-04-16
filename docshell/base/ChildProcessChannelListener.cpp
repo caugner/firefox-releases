@@ -16,13 +16,13 @@ static StaticRefPtr<ChildProcessChannelListener> sCPCLSingleton;
 
 void ChildProcessChannelListener::RegisterCallback(uint64_t aIdentifier,
                                                    Callback&& aCallback) {
-  if (auto args = mChannelArgs.GetAndRemove(aIdentifier)) {
+  if (auto args = mChannelArgs.Extract(aIdentifier)) {
     nsresult rv =
         aCallback(args->mLoadState, std::move(args->mStreamFilterEndpoints),
                   args->mTiming);
     args->mResolver(rv);
   } else {
-    mCallbacks.Put(aIdentifier, std::move(aCallback));
+    mCallbacks.InsertOrUpdate(aIdentifier, std::move(aCallback));
   }
 }
 
@@ -30,13 +30,13 @@ void ChildProcessChannelListener::OnChannelReady(
     nsDocShellLoadState* aLoadState, uint64_t aIdentifier,
     nsTArray<Endpoint>&& aStreamFilterEndpoints, nsDOMNavigationTiming* aTiming,
     Resolver&& aResolver) {
-  if (auto callback = mCallbacks.GetAndRemove(aIdentifier)) {
+  if (auto callback = mCallbacks.Extract(aIdentifier)) {
     nsresult rv =
         (*callback)(aLoadState, std::move(aStreamFilterEndpoints), aTiming);
     aResolver(rv);
   } else {
-    mChannelArgs.Put(aIdentifier,
-                     CallbackArgs{aLoadState, std::move(aStreamFilterEndpoints),
+    mChannelArgs.InsertOrUpdate(
+        aIdentifier, CallbackArgs{aLoadState, std::move(aStreamFilterEndpoints),
                                   aTiming, std::move(aResolver)});
   }
 }

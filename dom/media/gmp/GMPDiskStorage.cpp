@@ -119,7 +119,8 @@ class GMPDiskStorage : public GMPStorage {
         continue;
       }
 
-      mRecords.Put(recordName, MakeUnique<Record>(filename, recordName));
+      mRecords.InsertOrUpdate(recordName,
+                              MakeUnique<Record>(filename, recordName));
     }
 
     return NS_OK;
@@ -141,7 +142,7 @@ class GMPDiskStorage : public GMPStorage {
                 .get();
           }
 
-          return entry.Data().get();
+          return entry->get();
         });
     if (!record) {
       return GMPGenericErr;

@@ -29,6 +29,7 @@
 #include "nsCycleCollectionParticipant.h"
 #include "nsIContent.h"
 #include "nsJSUtils.h"
+#include "mozilla/dom/AutoEntryScript.h"
 #include "mozilla/dom/DocGroup.h"
 #include "mozilla/dom/Element.h"
 #include "mozilla/dom/JSExecutionContext.h"
@@ -457,8 +458,8 @@ void ScriptLoader::SetModuleFetchStarted(ModuleLoadRequest* aRequest) {
 
   MOZ_ASSERT(aRequest->IsLoading());
   MOZ_ASSERT(!ModuleMapContainsURL(aRequest->mURI));
-  mFetchingModules.Put(aRequest->mURI,
-                       RefPtr<GenericNonExclusivePromise::Private>{});
+  mFetchingModules.InsertOrUpdate(
+      aRequest->mURI, RefPtr<GenericNonExclusivePromise::Private>{});
 }
 
 void ScriptLoader::SetModuleFetchFinishedAndResumeWaitingRequests(
@@ -481,7 +482,7 @@ void ScriptLoader::SetModuleFetchFinishedAndResumeWaitingRequests(
   RefPtr<ModuleScript> moduleScript(aRequest->mModuleScript);
   MOZ_ASSERT(NS_FAILED(aResult) == !moduleScript);
 
-  mFetchedModules.Put(aRequest->mURI, RefPtr{moduleScript});
+  mFetchedModules.InsertOrUpdate(aRequest->mURI, RefPtr{moduleScript});
 
   if (promise) {
     if (moduleScript) {
@@ -2123,7 +2124,7 @@ namespace {
 class NotifyOffThreadScriptLoadCompletedRunnable : public Runnable {
   RefPtr<ScriptLoadRequest> mRequest;
   RefPtr<ScriptLoader> mLoader;
-  RefPtr<DocGroup> mDocGroup;
+  nsCOMPtr<nsISerialEventTarget> mEventTarget;
   JS::OffThreadToken* mToken;
 
  public:
@@ -2134,9 +2135,11 @@ class NotifyOffThreadScriptLoadCompletedRunnable : public Runnable {
       : Runnable("dom::NotifyOffThreadScriptLoadCompletedRunnable"),
         mRequest(aRequest),
         mLoader(aLoader),
-        mDocGroup(aLoader->GetDocGroup()),
         mToken(nullptr) {
     MOZ_ASSERT(NS_IsMainThread());
+    if (DocGroup* docGroup = aLoader->GetDocGroup()) {
+      mEventTarget = docGroup->EventTargetFor(TaskCategory::Other);
+    }
   }
 
   virtual ~NotifyOffThreadScriptLoadCompletedRunnable();
@@ -2149,8 +2152,8 @@ class NotifyOffThreadScriptLoadCompletedRunnable : public Runnable {
   static void Dispatch(
       already_AddRefed<NotifyOffThreadScriptLoadCompletedRunnable>&& aSelf) {
     RefPtr<NotifyOffThreadScriptLoadCompletedRunnable> self = aSelf;
-    RefPtr<DocGroup> docGroup = self->mDocGroup;
-    docGroup->Dispatch(TaskCategory::Other, self.forget());
+    nsCOMPtr<nsISerialEventTarget> eventTarget = self->mEventTarget;
+    eventTarget->Dispatch(self.forget());
   }
 
   NS_DECL_NSIRUNNABLE

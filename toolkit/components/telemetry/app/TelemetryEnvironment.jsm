@@ -19,9 +19,6 @@ const { ObjectUtils } = ChromeUtils.import(
 const { AppConstants } = ChromeUtils.import(
   "resource://gre/modules/AppConstants.jsm"
 );
-if (AppConstants.MOZ_GLEAN) {
-  Cu.importGlobalProperties(["Glean"]);
-}
 
 const Utils = TelemetryUtils;
 
@@ -309,7 +306,6 @@ const DEFAULT_ENVIRONMENT_PREFS = new Map([
   ["layers.prefer-d3d9", { what: RECORD_PREF_VALUE }],
   ["layers.prefer-opengl", { what: RECORD_PREF_VALUE }],
   ["layout.css.devPixelsPerPx", { what: RECORD_PREF_VALUE }],
-  ["marionette.enabled", { what: RECORD_PREF_VALUE }],
   ["network.proxy.autoconfig_url", { what: RECORD_PREF_STATE }],
   ["network.proxy.http", { what: RECORD_PREF_STATE }],
   ["network.proxy.ssl", { what: RECORD_PREF_STATE }],
@@ -1100,11 +1096,6 @@ EnvironmentCache.prototype = {
 
     if (AppConstants.platform == "win") {
       this._hddData = await Services.sysinfo.diskInfo;
-      if (AppConstants.MOZ_GLEAN) {
-        Glean.fogValidation.profileDiskIsSsd.set(
-          this._hddData.profile.type == "SSD"
-        );
-      }
       let osData = await Services.sysinfo.osInfo;
 
       if (!this._initTask) {
@@ -2112,7 +2103,8 @@ EnvironmentCache.prototype = {
     }
 
     if (ObjectUtils.deepEqual(this._currentEnvironment, oldEnvironment)) {
-      Services.telemetry.scalarAdd("telemetry.environment_didnt_change", 1);
+      this._log.trace("_onEnvironmentChange - Environment didn't change");
+      return;
     }
 
     for (let [name, listener] of this._changeListeners) {

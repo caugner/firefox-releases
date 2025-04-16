@@ -56,10 +56,6 @@ class BookmarksObserver extends Observer {
   }
 
   // Empty functions to make xpconnect happy
-  onBeginUpdateBatch() {}
-
-  onEndUpdateBatch() {}
-
   onItemMoved() {}
 
   // Disabled due to performance cost, see Issue 3203 /
@@ -77,7 +73,8 @@ class PlacesObserver extends Observer {
   }
 
   handlePlacesEvent(events) {
-    const removedURLs = [];
+    const removedPages = [];
+    const removedBookmarks = [];
 
     for (const {
       itemType,
@@ -96,11 +93,7 @@ class PlacesObserver extends Observer {
           break;
         case "page-removed":
           if (isRemovedFromStore) {
-            this.dispatch({ type: at.PLACES_LINKS_CHANGED });
-            this.dispatch({
-              type: at.PLACES_LINK_DELETED,
-              data: { url },
-            });
+            removedPages.push(url);
           }
           break;
         case "bookmark-added":
@@ -138,17 +131,27 @@ class PlacesObserver extends Observer {
               source !== PlacesUtils.bookmarks.SOURCES.RESTORE_ON_STARTUP &&
               source !== PlacesUtils.bookmarks.SOURCES.SYNC)
           ) {
-            removedURLs.push(url);
+            removedBookmarks.push(url);
           }
           break;
       }
     }
 
-    if (removedURLs.length) {
+    if (removedPages.length || removedBookmarks.length) {
       this.dispatch({ type: at.PLACES_LINKS_CHANGED });
+    }
+
+    if (removedPages.length) {
+      this.dispatch({
+        type: at.PLACES_LINKS_DELETED,
+        data: { urls: removedPages },
+      });
+    }
+
+    if (removedBookmarks.length) {
       this.dispatch({
         type: at.PLACES_BOOKMARKS_REMOVED,
-        data: { urls: removedURLs },
+        data: { urls: removedBookmarks },
       });
     }
   }

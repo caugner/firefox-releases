@@ -386,13 +386,17 @@ class nsChildView final : public nsBaseWidget {
                                             const nsAString& aUnmodifiedCharacters,
                                             nsIObserver* aObserver) override;
 
-  virtual nsresult SynthesizeNativeMouseEvent(LayoutDeviceIntPoint aPoint, uint32_t aNativeMessage,
-                                              uint32_t aModifierFlags,
+  virtual nsresult SynthesizeNativeMouseEvent(LayoutDeviceIntPoint aPoint,
+                                              NativeMouseMessage aNativeMessage,
+                                              mozilla::MouseButton aButton,
+                                              nsIWidget::Modifiers aModifierFlags,
                                               nsIObserver* aObserver) override;
 
   virtual nsresult SynthesizeNativeMouseMove(LayoutDeviceIntPoint aPoint,
                                              nsIObserver* aObserver) override {
-    return SynthesizeNativeMouseEvent(aPoint, NSEventTypeMouseMoved, 0, aObserver);
+    return SynthesizeNativeMouseEvent(aPoint, NativeMouseMessage::Move,
+                                      mozilla::MouseButton::eNotPressed,
+                                      nsIWidget::Modifiers::NO_MODIFIERS, aObserver);
   }
   virtual nsresult SynthesizeNativeMouseScrollEvent(LayoutDeviceIntPoint aPoint,
                                                     uint32_t aNativeMessage, double aDeltaX,
@@ -404,6 +408,9 @@ class nsChildView final : public nsBaseWidget {
                                               LayoutDeviceIntPoint aPoint, double aPointerPressure,
                                               uint32_t aPointerOrientation,
                                               nsIObserver* aObserver) override;
+
+  virtual nsresult SynthesizeNativeTouchpadDoubleTap(LayoutDeviceIntPoint aPoint,
+                                                     uint32_t aModifierFlags) override;
 
   // Mac specific methods
 
@@ -479,6 +486,10 @@ class nsChildView final : public nsBaseWidget {
 
   void DispatchAPZWheelInputEvent(mozilla::InputData& aEvent, bool aCanTriggerSwipe);
   nsEventStatus DispatchAPZInputEvent(mozilla::InputData& aEvent);
+
+  void DispatchDoubleTapGesture(mozilla::TimeStamp aEventTimeStamp,
+                                LayoutDeviceIntPoint aScreenPosition,
+                                mozilla::Modifiers aModifiers);
 
   void SwipeFinished();
 

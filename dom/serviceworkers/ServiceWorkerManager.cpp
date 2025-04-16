@@ -1589,18 +1589,13 @@ ServiceWorkerManager::GetOrCreateJobQueue(const nsACString& aKey,
   // XXX we could use WithEntryHandle here to avoid a hashtable lookup, except
   // that leads to a false positive assertion, see bug 1370674 comment 7.
   if (!mRegistrationInfos.Get(aKey, &data)) {
-    data =
-        mRegistrationInfos.Put(aKey, MakeUnique<RegistrationDataPerPrincipal>())
-            .get();
+    data = mRegistrationInfos
+               .InsertOrUpdate(aKey, MakeUnique<RegistrationDataPerPrincipal>())
+               .get();
   }
 
-  return data->mJobQueues
-      .WithEntryHandle(aScope,
-                       [](auto&& entry) {
-                         return entry.OrInsertWith(
-                             [] { return new ServiceWorkerJobQueue(); });
-                       })
-      .forget();
+  RefPtr queue = data->mJobQueues.GetOrInsertNew(aScope);
+  return queue.forget();
 }
 
 /* static */
@@ -1910,16 +1905,10 @@ void ServiceWorkerManager::AddScopeAndRegistration(
 
   MOZ_ASSERT(!scopeKey.IsEmpty());
 
-  auto* const data =
-      swm->mRegistrationInfos.WithEntryHandle(scopeKey, [](auto&& entry) {
-        return entry
-            .OrInsertWith(
-                [] { return MakeUnique<RegistrationDataPerPrincipal>(); })
-            .get();
-      });
+  auto* const data = swm->mRegistrationInfos.GetOrInsertNew(scopeKey);
 
   data->mScopeContainer.InsertScope(aScope);
-  data->mInfos.Put(aScope, RefPtr{aInfo});
+  data->mInfos.InsertOrUpdate(aScope, RefPtr{aInfo});
   swm->NotifyListenersOnRegister(aInfo);
 }
 

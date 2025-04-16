@@ -10,6 +10,7 @@
 #include "gfxFont.h"
 #include "MainThreadUtils.h"
 #include "mozilla/Assertions.h"
+#include "mozilla/ClearOnShutdown.h"
 #include "mozilla/Result.h"
 #include "mozilla/ResultExtensions.h"
 #include "mozilla/StaticPrefs_widget.h"
@@ -28,7 +29,7 @@ RemoteLookAndFeel::RemoteLookAndFeel(FullLookAndFeel&& aData)
              "Only content processes should be using a RemoteLookAndFeel");
 
 #ifdef MOZ_WIDGET_GTK
-  if (!StaticPrefs::widget_disable_native_theme_for_content()) {
+  if (!StaticPrefs::widget_non_native_theme_enabled()) {
     // Configure the theme in this content process with the Gtk theme that was
     // chosen by WithThemeConfiguredForContent in the parent process.
     nsLookAndFeel::ConfigureTheme(aData.theme());
@@ -45,7 +46,7 @@ void RemoteLookAndFeel::SetDataImpl(FullLookAndFeel&& aData) {
   mTables = std::move(aData.tables());
 
 #ifdef MOZ_WIDGET_GTK
-  if (!StaticPrefs::widget_disable_native_theme_for_content()) {
+  if (!StaticPrefs::widget_non_native_theme_enabled()) {
     // Configure the theme in this content process with the Gtk theme that was
     // chosen by WithThemeConfiguredForContent in the parent process.
     nsLookAndFeel::ConfigureTheme(aData.theme());
@@ -54,6 +55,17 @@ void RemoteLookAndFeel::SetDataImpl(FullLookAndFeel&& aData) {
 }
 
 namespace {
+
+// Some lnf values are somewhat expensive to get, and are not needed in child
+// processes, so we can avoid querying them.
+bool IsNeededInChildProcess(LookAndFeel::IntID aId) {
+  switch (aId) {
+    case LookAndFeel::IntID::AlertNotificationOrigin:
+      return false;  // see bug 1703205
+    default:
+      return true;
+  }
+}
 
 template <typename Item, typename UInt, typename ID>
 Result<const Item*, nsresult> MapLookup(const nsTArray<Item>& aItems,
@@ -104,6 +116,10 @@ nsresult RemoteLookAndFeel::NativeGetColor(ColorID aID, nscolor& aResult) {
 }
 
 nsresult RemoteLookAndFeel::NativeGetInt(IntID aID, int32_t& aResult) {
+  MOZ_DIAGNOSTIC_ASSERT(
+      IsNeededInChildProcess(aID),
+      "Querying value that we didn't bother getting from the parent process!");
+
   const int32_t* result;
   MOZ_TRY_VAR(result, MapLookup(mTables.ints(), mTables.intMap(), aID));
   aResult = *result;
@@ -187,7 +203,8 @@ const FullLookAndFeel* RemoteLookAndFeel::ExtractData() {
           rv = NS_OK;
           break;
         default:
-          rv = impl->NativeGetInt(id, theInt);
+          rv = IsNeededInChildProcess(id) ? impl->NativeGetInt(id, theInt)
+                                          : NS_ERROR_FAILURE;
           break;
       }
       AddToMap(&lf->tables().ints(), &lf->tables().intMap(),

@@ -1,21 +1,7 @@
 "use strict";
 
 let contextMenu;
-let LOGIN_FILL_ITEMS = [
-  "---",
-  null,
-  "fill-login",
-  null,
-  [
-    "fill-login-no-logins",
-    false,
-    "---",
-    null,
-    "fill-login-saved-passwords",
-    true,
-  ],
-  null,
-];
+let LOGIN_FILL_ITEMS = ["---", null, "manage-saved-logins", true];
 let hasPocket = Services.prefs.getBoolPref("extensions.pocket.enabled");
 let hasContainers =
   Services.prefs.getBoolPref("privacy.userContext.enabled") &&
@@ -43,11 +29,11 @@ function getThisFrameSubMenu(base_menu) {
 }
 
 add_task(async function init() {
-  // Ensure screenshots is really disabled (bug 1498738).
-  const addon = await AddonManager.getAddonByID("screenshots@mozilla.org");
-  await addon.disable({ allowSystemAddons: true });
   await SpecialPowers.pushPrefEnv({
-    set: [["browser.search.separatePrivateDefault.ui.enabled", true]],
+    set: [
+      ["browser.search.separatePrivateDefault.ui.enabled", true],
+      ["extensions.screenshots.disabled", false],
+    ],
   });
 });
 
@@ -82,16 +68,12 @@ add_task(async function test_xul_text_link_label() {
     ...(hasPocket ? ["context-savelinktopocket", true] : []),
     "context-copylink",
     true,
+    "---",
+    null,
     "context-searchselect",
     true,
     "context-searchselect-private",
     true,
-    "---",
-    null,
-    "context-sendlinktodevice",
-    true,
-    [],
-    null,
   ]);
 
   // Clean up so won't affect HTML element test cases.
@@ -164,26 +146,18 @@ add_task(async function test_plaintext() {
     ...(hasPocket ? ["context-pocket", true] : []),
     "---",
     null,
-    "context-sendpagetodevice",
+    "context-selectall",
     true,
-    [],
-    null,
     "---",
     null,
-    "context-viewbgimage",
-    false,
-    "context-selectall",
+    "context-take-screenshot",
     true,
     "---",
     null,
     "context-viewsource",
     true,
-    "context-viewinfo",
-    true,
   ];
-  await test_contextmenu("#test-text", plainTextItems, {
-    maybeScreenshotsPresent: true,
-  });
+  await test_contextmenu("#test-text", plainTextItems);
 });
 
 add_task(async function test_link() {
@@ -207,16 +181,12 @@ add_task(async function test_link() {
     ...(hasPocket ? ["context-savelinktopocket", true] : []),
     "context-copylink",
     true,
+    "---",
+    null,
     "context-searchselect",
     true,
     "context-searchselect-private",
     true,
-    "---",
-    null,
-    "context-sendlinktodevice",
-    true,
-    [],
-    null,
   ]);
 });
 
@@ -243,16 +213,12 @@ add_task(async function test_link_in_shadow_dom() {
       ...(hasPocket ? ["context-savelinktopocket", true] : []),
       "context-copylink",
       true,
+      "---",
+      null,
       "context-searchselect",
       true,
       "context-searchselect-private",
       true,
-      "---",
-      null,
-      "context-sendlinktodevice",
-      true,
-      [],
-      null,
     ],
     {
       offsetX: 6,
@@ -265,6 +231,8 @@ add_task(async function test_mailto() {
   await test_contextmenu("#test-mailto", [
     "context-copyemail",
     true,
+    "---",
+    null,
     "context-searchselect",
     true,
     "context-searchselect-private",
@@ -311,20 +279,20 @@ add_task(async function test_image() {
 });
 
 add_task(async function test_canvas() {
-  await test_contextmenu(
-    "#test-canvas",
-    [
-      "context-viewimage",
-      true,
-      "context-saveimage",
-      true,
-      "context-selectall",
-      true,
-    ],
-    {
-      maybeScreenshotsPresent: true,
-    }
-  );
+  await test_contextmenu("#test-canvas", [
+    "context-viewimage",
+    true,
+    "context-saveimage",
+    true,
+    "---",
+    null,
+    "context-selectall",
+    true,
+    "---",
+    null,
+    "context-take-screenshot",
+    true,
+  ]);
 });
 
 add_task(async function test_video_ok() {
@@ -354,19 +322,21 @@ add_task(async function test_video_ok() {
     null,
     "context-media-loop",
     true,
-    "context-media-hidecontrols",
-    true,
     "context-video-fullscreen",
     true,
-    "context-video-pictureinpicture",
+    "context-media-hidecontrols",
     true,
     "---",
     null,
     "context-viewvideo",
     true,
-    "context-savevideo",
+    "context-video-pictureinpicture",
     true,
+    "---",
+    null,
     "context-video-saveimage",
+    true,
+    "context-savevideo",
     true,
     "context-copyvideourl",
     true,
@@ -402,17 +372,19 @@ add_task(async function test_video_ok() {
     null,
     "context-media-loop",
     true,
-    "context-media-hidecontrols",
-    true,
     "context-video-fullscreen",
+    true,
+    "context-media-hidecontrols",
     true,
     "---",
     null,
     "context-viewvideo",
     true,
-    "context-savevideo",
-    true,
+    "---",
+    null,
     "context-video-saveimage",
+    true,
+    "context-savevideo",
     true,
     "context-copyvideourl",
     true,
@@ -486,18 +458,20 @@ add_task(async function test_video_bad() {
     null,
     "context-media-loop",
     true,
-    "context-media-hidecontrols",
-    false,
     "context-video-fullscreen",
+    false,
+    "context-media-hidecontrols",
     false,
     "---",
     null,
     "context-viewvideo",
     true,
-    "context-savevideo",
-    true,
+    "---",
+    null,
     "context-video-saveimage",
     false,
+    "context-savevideo",
+    true,
     "context-copyvideourl",
     true,
     "context-sendvideo",
@@ -532,18 +506,20 @@ add_task(async function test_video_bad() {
     null,
     "context-media-loop",
     true,
-    "context-media-hidecontrols",
-    false,
     "context-video-fullscreen",
+    false,
+    "context-media-hidecontrols",
     false,
     "---",
     null,
     "context-viewvideo",
     true,
-    "context-savevideo",
-    true,
+    "---",
+    null,
     "context-video-saveimage",
     false,
+    "context-savevideo",
+    true,
     "context-copyvideourl",
     true,
     "context-sendvideo",
@@ -580,17 +556,19 @@ add_task(async function test_video_bad2() {
     null,
     "context-media-loop",
     true,
-    "context-media-hidecontrols",
-    false,
     "context-video-fullscreen",
+    false,
+    "context-media-hidecontrols",
     false,
     "---",
     null,
     "context-viewvideo",
     false,
-    "context-savevideo",
-    false,
+    "---",
+    null,
     "context-video-saveimage",
+    false,
+    "context-savevideo",
     false,
     "context-copyvideourl",
     false,
@@ -626,17 +604,19 @@ add_task(async function test_video_bad2() {
     null,
     "context-media-loop",
     true,
-    "context-media-hidecontrols",
-    false,
     "context-video-fullscreen",
+    false,
+    "context-media-hidecontrols",
     false,
     "---",
     null,
     "context-viewvideo",
     false,
-    "context-savevideo",
-    false,
+    "---",
+    null,
     "context-video-saveimage",
+    false,
+    "context-savevideo",
     false,
     "context-copyvideourl",
     false,
@@ -669,16 +649,10 @@ add_task(async function test_iframe() {
     ...(hasPocket ? ["context-pocket", true] : []),
     "---",
     null,
-    "context-sendpagetodevice",
-    true,
-    [],
-    null,
-    "---",
-    null,
-    "context-viewbgimage",
-    false,
     "context-selectall",
     true,
+    "---",
+    null,
     "frame",
     null,
     getThisFrameSubMenu([
@@ -714,8 +688,6 @@ add_task(async function test_iframe() {
     null,
     "context-viewsource",
     true,
-    "context-viewinfo",
-    true,
   ]);
 });
 
@@ -746,24 +718,28 @@ add_task(async function test_video_in_iframe() {
     null,
     "context-media-loop",
     true,
-    "context-media-hidecontrols",
-    true,
     "context-video-fullscreen",
     true,
-    "context-video-pictureinpicture",
+    "context-media-hidecontrols",
     true,
     "---",
     null,
     "context-viewvideo",
     true,
-    "context-savevideo",
+    "context-video-pictureinpicture",
     true,
+    "---",
+    null,
     "context-video-saveimage",
+    true,
+    "context-savevideo",
     true,
     "context-copyvideourl",
     true,
     "context-sendvideo",
     true,
+    "---",
+    null,
     "frame",
     null,
     getThisFrameSubMenu([
@@ -823,22 +799,26 @@ add_task(async function test_video_in_iframe() {
     null,
     "context-media-loop",
     true,
-    "context-media-hidecontrols",
-    true,
     "context-video-fullscreen",
+    true,
+    "context-media-hidecontrols",
     true,
     "---",
     null,
     "context-viewvideo",
     true,
-    "context-savevideo",
-    true,
+    "---",
+    null,
     "context-video-saveimage",
+    true,
+    "context-savevideo",
     true,
     "context-copyvideourl",
     true,
     "context-sendvideo",
     true,
+    "---",
+    null,
     "frame",
     null,
     getThisFrameSubMenu([
@@ -904,6 +884,8 @@ add_task(async function test_audio_in_iframe() {
     true,
     "context-sendaudio",
     true,
+    "---",
+    null,
     "frame",
     null,
     getThisFrameSubMenu([
@@ -952,6 +934,8 @@ add_task(async function test_image_in_iframe() {
     null,
     "context-setDesktopBackground",
     true,
+    "---",
+    null,
     "frame",
     null,
     getThisFrameSubMenu([
@@ -1008,12 +992,10 @@ add_task(async function test_pdf_viewer_in_iframe() {
       ...(hasPocket ? ["context-pocket", true] : []),
       "---",
       null,
-      "context-sendpagetodevice",
-      true,
-      [],
-      null,
       "context-selectall",
       true,
+      "---",
+      null,
       "frame",
       null,
       getThisFrameSubMenu([
@@ -1047,10 +1029,8 @@ add_task(async function test_pdf_viewer_in_iframe() {
       null,
       "context-viewsource",
       true,
-      "context-viewinfo",
-      true,
     ],
-    { maybeScreenshotsPresent: true, shiftkey: true }
+    { shiftkey: true }
   );
 });
 
@@ -1062,6 +1042,7 @@ add_task(async function test_textarea() {
   /*
   yield test_contextmenu("#test-textarea",
     ["context-undo",                false,
+     "context-redo",                false,
      "---",                         null,
      "context-cut",                 true,
      "context-copy",                true,
@@ -1088,6 +1069,7 @@ add_task(async function test_textarea_spellcheck() {
      "spell-add-to-dictionary", true,
      "---",                 null,
      "context-undo",        false,
+     "context-redo",        false,
      "---",                 null,
      "context-cut",         true,
      "context-copy",        true,
@@ -1115,9 +1097,7 @@ add_task(async function test_textarea_spellcheck() {
 });
 
 add_task(async function test_plaintext2() {
-  await test_contextmenu("#test-text", plainTextItems, {
-    maybeScreenshotsPresent: true,
-  });
+  await test_contextmenu("#test-text", plainTextItems);
 });
 
 add_task(async function test_undo_add_to_dictionary() {
@@ -1128,12 +1108,12 @@ add_task(async function test_undo_add_to_dictionary() {
     ["spell-undo-add-to-dictionary", true,
      "---",                 null,
      "context-undo",        false,
+     "context-redo",        false,
      "---",                 null,
      "context-cut",         true,
      "context-copy",        true,
      "context-paste",       null, // ignore clipboard state
      "context-delete",      false,
-     "---",                 null,
      "context-selectall",   true,
      "---",                 null,
      "spell-check-enabled", true,
@@ -1162,12 +1142,12 @@ add_task(async function test_contenteditable() {
      "spell-add-to-dictionary", true,
      "---",                 null,
      "context-undo",        false,
+     "context-redo",        false,
      "---",                 null,
      "context-cut",         true,
      "context-copy",        true,
      "context-paste",       null, // ignore clipboard state
      "context-delete",      false,
-     "---",                 null,
      "context-selectall",   true,
      "---",                 null,
      "spell-check-enabled", true,
@@ -1207,6 +1187,9 @@ add_task(async function test_copylinkcommand() {
           "http://mozilla.com/",
           "paste for command cmd_paste"
         );
+        // Don't keep focus, because that may affect clipboard commands in
+        // subsequently-opened menus.
+        input.blur();
       });
     },
   });
@@ -1279,21 +1262,15 @@ add_task(async function test_pagemenu() {
       ...(hasPocket ? ["context-pocket", true] : []),
       "---",
       null,
-      "context-sendpagetodevice",
-      true,
-      [],
-      null,
-      "---",
-      null,
-      "context-viewbgimage",
-      false,
       "context-selectall",
       true,
       "---",
       null,
-      "context-viewsource",
+      "context-take-screenshot",
       true,
-      "context-viewinfo",
+      "---",
+      null,
+      "context-viewsource",
       true,
     ],
     {
@@ -1316,7 +1293,6 @@ add_task(async function test_pagemenu() {
           }
         );
       },
-      maybeScreenshotsPresent: true,
     }
   );
 });
@@ -1349,25 +1325,18 @@ add_task(async function test_dom_full_screen() {
       ...(hasPocket ? ["context-pocket", true] : []),
       "---",
       null,
-      "context-sendpagetodevice",
+      "context-selectall",
       true,
-      [],
-      null,
       "---",
       null,
-      "context-viewbgimage",
-      false,
-      "context-selectall",
+      "context-take-screenshot",
       true,
       "---",
       null,
       "context-viewsource",
       true,
-      "context-viewinfo",
-      true,
     ],
     {
-      maybeScreenshotsPresent: true,
       shiftkey: true,
       async preCheckContextMenuFn() {
         await SpecialPowers.pushPrefEnv({
@@ -1438,24 +1407,18 @@ add_task(async function test_pagemenu2() {
       ...(hasPocket ? ["context-pocket", true] : []),
       "---",
       null,
-      "context-sendpagetodevice",
+      "context-selectall",
       true,
-      [],
-      null,
       "---",
       null,
-      "context-viewbgimage",
-      false,
-      "context-selectall",
+      "context-take-screenshot",
       true,
       "---",
       null,
       "context-viewsource",
       true,
-      "context-viewinfo",
-      true,
     ],
-    { maybeScreenshotsPresent: true, shiftkey: true }
+    { shiftkey: true }
   );
 });
 
@@ -1467,14 +1430,20 @@ add_task(async function test_select_text() {
       true,
       "context-selectall",
       true,
+      "context-print-selection",
+      true,
       "---",
       null,
       "context-searchselect",
       true,
       "context-searchselect-private",
       true,
-      "context-print-selection",
+      "---",
+      null,
+      "context-take-screenshot",
       true,
+      "---",
+      null,
       "context-viewpartialsource-selection",
       true,
     ],
@@ -1498,10 +1467,14 @@ add_task(async function test_select_text_search_service_not_initialized() {
       true,
       "context-selectall",
       true,
-      "---",
-      null,
       "context-print-selection",
       true,
+      "---",
+      null,
+      "context-take-screenshot",
+      true,
+      "---",
+      null,
       "context-viewpartialsource-selection",
       true,
     ],
@@ -1539,9 +1512,13 @@ add_task(async function test_select_text_link() {
       true,
       "context-savelink",
       true,
+      "---",
+      null,
       "context-copy",
       true,
       "context-selectall",
+      true,
+      "context-print-selection",
       true,
       "---",
       null,
@@ -1551,12 +1528,6 @@ add_task(async function test_select_text_link() {
       true,
       "---",
       null,
-      "context-sendlinktodevice",
-      true,
-      [],
-      null,
-      "context-print-selection",
-      true,
       "context-viewpartialsource-selection",
       true,
     ],
@@ -1617,12 +1588,6 @@ add_task(async function test_imagelink() {
     null,
     "context-setDesktopBackground",
     true,
-    "---",
-    null,
-    "context-sendlinktodevice",
-    true,
-    [],
-    null,
   ]);
 });
 
@@ -1632,13 +1597,14 @@ add_task(async function test_select_input_text() {
   /*
   yield test_contextmenu("#test-select-input-text",
     ["context-undo",                 false,
+     "context-redo",                 false,
      "---",                          null,
      "context-cut",                  true,
      "context-copy",                 true,
      "context-paste",                null, // ignore clipboard state
      "context-delete",               true,
-     "---",                          null,
      "context-selectall",            true,
+     "---",                          null,
      "context-searchselect",         true,
      "context-searchselect-private", true,
      "---",                          null,
@@ -1665,12 +1631,12 @@ add_task(async function test_select_input_text_password() {
   /*
   yield test_contextmenu("#test-select-input-text-type-password",
     ["context-undo",        false,
+     "context-redo",        false,
      "---",                 null,
      "context-cut",         true,
      "context-copy",        true,
      "context-paste",       null, // ignore clipboard state
      "context-delete",      true,
-     "---",                 null,
      "context-selectall",   true,
      "---",                 null,
      "spell-check-enabled", true,
@@ -1744,16 +1710,10 @@ add_task(async function test_srcdoc() {
     ...(hasPocket ? ["context-pocket", true] : []),
     "---",
     null,
-    "context-sendpagetodevice",
-    true,
-    [],
-    null,
-    "---",
-    null,
-    "context-viewbgimage",
-    false,
     "context-selectall",
     true,
+    "---",
+    null,
     "frame",
     null,
     getThisFrameSubMenu([
@@ -1779,8 +1739,6 @@ add_task(async function test_srcdoc() {
     null,
     "context-viewsource",
     true,
-    "context-viewinfo",
-    true,
   ]);
 });
 
@@ -1790,12 +1748,12 @@ add_task(async function test_input_spell_false() {
   /*
   yield test_contextmenu("#test-contenteditable-spellcheck-false",
     ["context-undo",        false,
+     "context-redo",        false,
      "---",                 null,
      "context-cut",         true,
      "context-copy",        true,
      "context-paste",       null, // ignore clipboard state
      "context-delete",      false,
-     "---",                 null,
      "context-selectall",   true,
     ]
   );
@@ -1823,16 +1781,12 @@ add_task(async function test_svg_link() {
     ...(hasPocket ? ["context-savelinktopocket", true] : []),
     "context-copylink",
     true,
+    "---",
+    null,
     "context-searchselect",
     true,
     "context-searchselect-private",
     true,
-    "---",
-    null,
-    "context-sendlinktodevice",
-    true,
-    [],
-    null,
   ]);
 
   await test_contextmenu("#svg-with-link2 > a", [
@@ -1855,16 +1809,12 @@ add_task(async function test_svg_link() {
     ...(hasPocket ? ["context-savelinktopocket", true] : []),
     "context-copylink",
     true,
+    "---",
+    null,
     "context-searchselect",
     true,
     "context-searchselect-private",
     true,
-    "---",
-    null,
-    "context-sendlinktodevice",
-    true,
-    [],
-    null,
   ]);
 
   await test_contextmenu("#svg-with-link3 > a", [
@@ -1887,16 +1837,12 @@ add_task(async function test_svg_link() {
     ...(hasPocket ? ["context-savelinktopocket", true] : []),
     "context-copylink",
     true,
+    "---",
+    null,
     "context-searchselect",
     true,
     "context-searchselect-private",
     true,
-    "---",
-    null,
-    "context-sendlinktodevice",
-    true,
-    [],
-    null,
   ]);
 });
 
@@ -1921,16 +1867,12 @@ add_task(async function test_svg_relative_link() {
     ...(hasPocket ? ["context-savelinktopocket", true] : []),
     "context-copylink",
     true,
+    "---",
+    null,
     "context-searchselect",
     true,
     "context-searchselect-private",
     true,
-    "---",
-    null,
-    "context-sendlinktodevice",
-    true,
-    [],
-    null,
   ]);
 
   await test_contextmenu("#svg-with-relative-link2 > a", [
@@ -1953,16 +1895,12 @@ add_task(async function test_svg_relative_link() {
     ...(hasPocket ? ["context-savelinktopocket", true] : []),
     "context-copylink",
     true,
+    "---",
+    null,
     "context-searchselect",
     true,
     "context-searchselect-private",
     true,
-    "---",
-    null,
-    "context-sendlinktodevice",
-    true,
-    [],
-    null,
   ]);
 
   await test_contextmenu("#svg-with-relative-link3 > a", [
@@ -1985,17 +1923,117 @@ add_task(async function test_svg_relative_link() {
     ...(hasPocket ? ["context-savelinktopocket", true] : []),
     "context-copylink",
     true,
+    "---",
+    null,
     "context-searchselect",
     true,
     "context-searchselect-private",
     true,
+  ]);
+});
+
+add_task(async function test_background_image() {
+  await test_contextmenu("#test-background-image", [
+    "context-navigation",
+    null,
+    [
+      "context-back",
+      false,
+      "context-forward",
+      false,
+      "context-reload",
+      true,
+      "context-bookmarkpage",
+      true,
+    ],
+    null,
     "---",
     null,
-    "context-sendlinktodevice",
+    "context-viewimage",
     true,
-    [],
+    "context-copyimage",
+    true,
+    "context-sendimage",
+    true,
+    "---",
     null,
+    "context-savepage",
+    true,
+    ...(hasPocket ? ["context-pocket", true] : []),
+    "---",
+    null,
+    "context-selectall",
+    true,
+    "---",
+    null,
+    "context-take-screenshot",
+    true,
+    "---",
+    null,
+    "context-viewsource",
+    true,
   ]);
+
+  // Don't show image related context menu commands for links with background images.
+  await test_contextmenu("#test-background-image-link", [
+    "context-openlinkintab",
+    true,
+    ...(hasContainers ? ["context-openlinkinusercontext-menu", true] : []),
+    // We need a blank entry here because the containers submenu is
+    // dynamically generated with no ids.
+    ...(hasContainers ? ["", null] : []),
+    "context-openlink",
+    true,
+    "context-openlinkprivate",
+    true,
+    "---",
+    null,
+    "context-bookmarklink",
+    true,
+    "context-savelink",
+    true,
+    "context-copylink",
+    true,
+    "---",
+    null,
+    "context-searchselect",
+    true,
+    "context-searchselect-private",
+    true,
+  ]);
+
+  // Don't show image related context menu commands when there is a selection
+  // with background images.
+  await test_contextmenu(
+    "#test-background-image",
+    [
+      "context-copy",
+      true,
+      "context-selectall",
+      true,
+      "context-print-selection",
+      true,
+      "---",
+      null,
+      "context-searchselect",
+      true,
+      "context-searchselect-private",
+      true,
+      "---",
+      null,
+      "context-take-screenshot",
+      true,
+      "---",
+      null,
+      "context-viewpartialsource-selection",
+      true,
+    ],
+    {
+      async preCheckContextMenuFn() {
+        await selectText("#test-background-image");
+      },
+    }
+  );
 });
 
 add_task(async function test_cleanup_html() {

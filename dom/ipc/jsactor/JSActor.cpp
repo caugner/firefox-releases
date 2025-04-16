@@ -10,6 +10,7 @@
 #include "chrome/common/ipc_channel.h"
 #include "mozilla/Attributes.h"
 #include "mozilla/FunctionRef.h"
+#include "mozilla/dom/AutoEntryScript.h"
 #include "mozilla/dom/ClonedErrorHolder.h"
 #include "mozilla/dom/ClonedErrorHolderBinding.h"
 #include "mozilla/dom/DOMException.h"
@@ -69,7 +70,7 @@ void JSActor::AfterDestroy() {
 
   // Take our queries out, in case somehow rejecting promises can trigger
   // additions or removals.
-  nsDataHashtable<nsUint64HashKey, PendingQuery> pendingQueries;
+  nsTHashMap<nsUint64HashKey, PendingQuery> pendingQueries;
   mPendingQueries.SwapElements(pendingQueries);
   for (auto& entry : pendingQueries) {
     nsPrintfCString message(
@@ -243,8 +244,8 @@ already_AddRefed<Promise> JSActor::SendQuery(JSContext* aCx,
   meta.queryId() = mNextQueryId++;
   meta.kind() = JSActorMessageKind::Query;
 
-  mPendingQueries.Put(meta.queryId(),
-                      PendingQuery{promise, meta.messageName()});
+  mPendingQueries.InsertOrUpdate(meta.queryId(),
+                                 PendingQuery{promise, meta.messageName()});
 
   SendRawMessage(meta, std::move(data), CaptureJSStack(aCx), aRv);
   return promise.forget();
@@ -324,7 +325,7 @@ void JSActor::ReceiveQueryReply(JSContext* aCx,
     return;
   }
 
-  Maybe<PendingQuery> query = mPendingQueries.GetAndRemove(aMetadata.queryId());
+  Maybe<PendingQuery> query = mPendingQueries.Extract(aMetadata.queryId());
   if (NS_WARN_IF(!query)) {
     aRv.ThrowUnknownError("Received reply for non-pending query");
     return;

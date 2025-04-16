@@ -19,7 +19,7 @@
 #include "js/TypeDecls.h"
 
 #include "nsCycleCollectionParticipant.h"
-#include "nsDataHashtable.h"
+#include "nsTHashMap.h"
 #include "nsHashKeys.h"
 #include "nsStringFwd.h"
 #include "nsTHashtable.h"
@@ -98,7 +98,7 @@ class JSHolderMap {
 
   bool Has(void* aHolder) const;
   nsScriptObjectTracer* Get(void* aHolder) const;
-  nsScriptObjectTracer* GetAndRemove(void* aHolder);
+  nsScriptObjectTracer* Extract(void* aHolder);
   void Put(void* aHolder, nsScriptObjectTracer* aTracer, JS::Zone* aZone);
 
   size_t SizeOfExcludingThis(MallocSizeOf aMallocSizeOf) const;
@@ -373,7 +373,7 @@ class CycleCollectedJSRuntime {
 
   JSHolderMap mJSHolders;
 
-  typedef nsDataHashtable<nsFuncPtrHashKey<DeferredFinalizeFunction>, void*>
+  typedef nsTHashMap<nsFuncPtrHashKey<DeferredFinalizeFunction>, void*>
       DeferredFinalizerTable;
   DeferredFinalizerTable mDeferredFinalizerTable;
 

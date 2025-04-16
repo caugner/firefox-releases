@@ -6,10 +6,8 @@
 
 %filter substitution
 %define urlbarViewPadding 4px
-%define urlbarViewIconMarginEnd (@identityBoxPaddingInline@ + @identityBoxMarginInline@)
-%define urlbarViewMarginInline 7px
-%define urlbarViewItemInlinePadding 6px
 %define urlbarViewFaviconWidth 16px
+%define urlbarViewIconMarginEnd (var(--urlbar-icon-padding) + var(--identity-box-margin-inline))
 
 %include ../shared/urlbar/dynamicResults.inc.css
 
@@ -18,6 +16,10 @@
   --autocomplete-popup-color: var(--arrowpanel-color);
   --autocomplete-popup-highlight-background: Highlight;
   --autocomplete-popup-highlight-color: HighlightText;
+
+  --urlbar-result-hover-bgcolor: var(--arrowpanel-dimmed);
+  --urlbar-popup-url-color: hsl(210, 77%, 47%);
+  --urlbar-popup-action-color: hsl(178, 100%, 28%);
 
   /* Colors copied from in-content button styling */
   --urlbarView-button-background: rgba(12, 12, 13, 0.1);
@@ -28,15 +30,12 @@
   --urlbarView-primary-button-background-hover: #003eaa;
   --urlbarView-primary-button-background-active: #002275;
   --urlbarView-action-slide-in-distance: 200px;
+
+  --urlbarView-item-inline-padding: calc(var(--urlbar-icon-padding) / 2 + 3px);
 }
 
-:root:-moz-lwtheme {
-  --urlbar-popup-url-color: hsl(210, 77%, 47%);
-  --urlbar-popup-action-color: hsl(178, 100%, 28%);
-}
-
-:root:-moz-lwtheme[lwt-toolbar-field-focus-brighttext] {
-  --urlbar-popup-url-color: @lwtPopupBrighttextLinkColor@;
+:root[lwt-toolbar-field-focus-brighttext] {
+  --urlbar-popup-url-color: var(--lwt-popup-brighttext-url-color);
   --urlbar-popup-action-color: #30e60b;
 
   /* Colors copied from in-content button styling */
@@ -44,6 +43,25 @@
   --urlbarView-button-background-hover: rgba(249, 249, 250, 0.15);
   --urlbarView-button-background-active: rgba(249, 249, 250, 0.2);
 }
+
+@supports -moz-bool-pref("browser.proton.urlbar.enabled") {
+:root {
+  --urlbarView-item-inline-padding: var(--urlbar-icon-padding);
+}
+
+/* Fallback colours for when theme authors don't define lwtheme variables. */
+:root:-moz-lwtheme {
+  --autocomplete-popup-highlight-background: rgb(0, 99, 255);
+  --autocomplete-popup-highlight-color: white;
+}
+:root[lwt-toolbar-field-brighttext] {
+  --autocomplete-popup-highlight-background: rgb(0, 99, 225);
+}
+
+:root[lwt-toolbar-field-focus-brighttext] {
+  --urlbar-popup-action-color: #bfbfc9;
+}
+} /*** END proton ***/
 
 :root:-moz-locale-dir(rtl) {
   --urlbarView-action-slide-in-distance: -200px;
@@ -56,18 +74,23 @@
   display: block;
   text-shadow: none;
   overflow: clip;
-  margin-inline: @urlbarViewMarginInline@;
-  width: calc(100% - 2 * @urlbarViewMarginInline@);
-
+  margin-inline: calc(5px + var(--urlbar-container-padding));
+  width: calc(100% - 2 * (5px + var(--urlbar-container-padding)));
   /* Match urlbar-background's border. */
   border-inline: 1px solid transparent;
 }
 
+@supports not -moz-bool-pref("browser.proton.urlbar.enabled") {
+.urlbarView {
+  margin-inline: calc(4px + var(--identity-box-margin-inline));
+  width: calc(100% - 2 * (4px + var(--identity-box-margin-inline)));
+}
 /* If the view is open, offset the toolbar overlap so the view's top border
    aligns with the toolbar. */
 #urlbar[open] > .urlbarView {
   margin-block-start: -@urlbarBreakoutExtend@;
 }
+} /*** END !proton ***/
 
 .urlbarView-body-inner {
   width: 100%;
@@ -95,6 +118,17 @@
   padding-block: 3px;
 }
 
+:root[uidensity=compact] .urlbarView-row {
+  padding-block: 2px;
+}
+
+@supports -moz-bool-pref("browser.proton.urlbar.enabled") {
+:root:not([uidensity=compact]) .urlbarView-row:not([type=tip], [type=dynamic]) {
+  min-height: 32px;
+  padding-block: 4px;
+}
+} /*** END proton ***/
+
 .urlbarView-row-inner {
   display: flex;
   flex-wrap: nowrap;
@@ -102,9 +136,15 @@
   flex-shrink: 1;
   overflow: hidden;
   border-radius: 2px;
-  padding-inline-start: @urlbarViewItemInlinePadding@;
+  padding-inline-start: var(--urlbarView-item-inline-padding);
   padding-block: 6px;
 }
+
+@supports -moz-bool-pref("browser.proton.urlbar.enabled") {
+.urlbarView-row-inner {
+  border-radius: var(--toolbarbutton-border-radius);
+}
+} /*** END proton ***/
 
 :root[uidensity=touch] .urlbarView-row:not([type=tip], [type=dynamic]) {
   padding-block: 11px;
@@ -114,6 +154,7 @@
   padding-block-start: 18px;
   /* Compensating for the 16px bottom margin on the tip elements. */
   padding-block-end: calc(18px - 16px);
+  padding-inline-end: calc(@urlbarViewIconMarginEnd@);
 }
 
 .urlbarView-row-inner,
@@ -123,6 +164,13 @@
   align-items: end;
   justify-content: start;
 }
+
+@supports -moz-bool-pref("browser.proton.urlbar.enabled") {
+.urlbarView-row-inner,
+.urlbarView-no-wrap {
+  align-items: center;
+}
+} /*** END proton ***/
 
 .urlbarView-no-wrap {
   flex-grow: 0;
@@ -158,10 +206,10 @@
   }
   /* urlbarView-url is forced to be LTR for RTL locales, so set the padding based on the browser's directionality. */
   .urlbarView-results[wrap] > .urlbarView-row[has-url] > .urlbarView-row-inner > .urlbarView-url:-moz-locale-dir(ltr) {
-    padding-left: calc(@urlbarViewItemInlinePadding@ + @identityBoxMarginInline@ + @urlbarViewFaviconWidth@);
+    padding-left: calc(var(--urlbarView-item-inline-padding) + var(--identity-box-margin-inline) + @urlbarViewFaviconWidth@);
   }
   .urlbarView-results[wrap] > .urlbarView-row[has-url] > .urlbarView-row-inner > .urlbarView-url:-moz-locale-dir(rtl) {
-    padding-right: calc(@urlbarViewItemInlinePadding@ + @identityBoxMarginInline@ + @urlbarViewFaviconWidth@);
+    padding-right: calc(var(--urlbarView-item-inline-padding) + var(--identity-box-margin-inline) + @urlbarViewFaviconWidth@);
   }
   /* Note: switchtab entries show the url only in override mode,
      remotetab and sponsored ones only when selected or :hover. */
@@ -176,7 +224,7 @@
   }
   .urlbarView-results[wrap] > .urlbarView-row[type=tabtosearch] > .urlbarView-row-inner > .urlbarView-no-wrap > .urlbarView-action {
     flex-basis: 100%;
-    margin-inline-start: calc(@urlbarViewItemInlinePadding@ + @identityBoxMarginInline@ + @urlbarViewFaviconWidth@);
+    margin-inline-start: calc(var(--urlbarView-item-inline-padding) + var(--identity-box-margin-inline) + @urlbarViewFaviconWidth@);
   }
 }
 
@@ -211,12 +259,12 @@
 
 .urlbarView-row:not([type=tip], [type=dynamic], [has-help]):hover > .urlbarView-row-inner,
 .urlbarView-row[has-help] > .urlbarView-row-inner:not([selected]):hover {
-  background: var(--arrowpanel-dimmed);
+  background-color: var(--urlbar-result-hover-bgcolor);
 }
 
 .urlbarView-row:not([type=tip], [type=dynamic])[selected] > .urlbarView-row-inner,
 .urlbarView-row-inner[selected] {
-  background: var(--autocomplete-popup-highlight-background);
+  background-color: var(--autocomplete-popup-highlight-background);
   color: var(--autocomplete-popup-highlight-color);
   fill-opacity: 1;
 }
@@ -233,6 +281,13 @@
   flex-shrink: 0;
   -moz-context-properties: fill, fill-opacity;
 }
+
+@supports not -moz-bool-pref("browser.proton.urlbar.enabled") {
+.urlbarView-favicon {
+  /* 2px is from identity-block.inc.css */
+  margin-inline-end: calc(var(--urlbar-icon-padding) / 2 + var(--identity-box-margin-inline) + 2px);
+}
+} /*** END !proton ***/
 
 .urlbarView-row[type=tip] > .urlbarView-row-inner > .urlbarView-favicon {
   width: 24px;
@@ -273,6 +328,7 @@
   height: 12px;
   margin-bottom: -4px;
   margin-inline-start: 8px;
+  align-self: end;
   background-repeat: no-repeat;
   background-size: contain;
   -moz-context-properties: fill, stroke;
@@ -332,6 +388,12 @@
   margin-inline-end: 4px;
   -moz-context-properties: fill, fill-opacity;
 }
+
+@supports -moz-bool-pref("browser.proton.urlbar.enabled") {
+.urlbarView-help  {
+  border-radius: var(--toolbarbutton-border-radius);
+}
+} /*** END proton ***/
 
 .urlbarView-help[selected] {
   box-shadow: 0 0 0 1px #0a84ff inset, 0 0 0 1px #0a84ff, 0 0 0 4px rgba(10, 132, 255, 0.3);
@@ -394,7 +456,14 @@
   text-align: center;
   flex-basis: initial;
   flex-shrink: 0;
+  margin-inline-end: 4px;
 }
+
+@supports -moz-bool-pref("browser.proton.urlbar.enabled") {
+.urlbarView-tip-button {
+  border-radius: var(--toolbarbutton-border-radius);
+}
+} /*** END proton ***/
 
 .urlbarView-tip-button:hover {
   background-color: var(--urlbarView-button-background-hover);
@@ -568,6 +637,13 @@
   flex-wrap: wrap;
 }
 
+@supports -moz-bool-pref("browser.proton.urlbar.enabled") {
+#urlbar .search-one-offs:not([hidden]) {
+  padding-block: 10px;
+  border-top-color: var(--urlbar-separator-color);
+}
+} /*** END proton ***/
+
 .urlbarView[noresults] > .search-one-offs {
   border-top: none;
 }
@@ -596,6 +672,12 @@
   height: 32px;
   margin-inline-end: 8px;
 }
+
+@supports -moz-bool-pref("browser.proton.urlbar.enabled") {
+#urlbar .searchbar-engine-one-off-item {
+  border-radius: var(--toolbarbutton-border-radius);
+}
+} /*** END proton ***/
 
 #urlbar .searchbar-engine-one-off-item:last-child {
   /* This applies to both the last one-off and the compact settings button */
@@ -660,6 +742,14 @@
   color: var(--autocomplete-popup-color);
   border-color: var(--arrowpanel-border-color);
 }
+
+@supports -moz-bool-pref("browser.proton.urlbar.enabled") {
+#PopupSearchAutoComplete {
+  border: 1px solid var(--arrowpanel-border-color);
+  /* Remove the top border since the panel is flush with the input. */
+  border-top-width: 0;
+}
+} /*** END !proton ***/
 
 #PopupSearchAutoComplete .autocomplete-richlistitem[selected] {
   background: var(--autocomplete-popup-highlight-background);

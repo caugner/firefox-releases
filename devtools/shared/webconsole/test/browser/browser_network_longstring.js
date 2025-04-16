@@ -13,15 +13,15 @@ let ORIGINAL_LONG_STRING_LENGTH, ORIGINAL_LONG_STRING_INITIAL_LENGTH;
 add_task(async function() {
   const tab = await addTab(URL_ROOT + "network_requests_iframe.html");
 
-  const target = await getTargetForTab(tab);
+  const target = await createAndAttachTargetForTab(tab);
 
   // Avoid mocha to try to load these module and fail while doing it when running node tests
   const {
     ResourceWatcher,
   } = require("devtools/shared/resources/resource-watcher");
-  const { TargetList } = require("devtools/shared/resources/target-list");
 
-  const targetList = new TargetList(target.descriptorFront);
+  const commands = await target.descriptorFront.getCommands();
+  const targetList = commands.targetCommand;
   await targetList.startListening();
   const resourceWatcher = new ResourceWatcher(targetList);
 

@@ -142,10 +142,11 @@ const TELEMETRY_SCALAR_NODE_SELECTION_COUNT =
  *      Fired when the stylesheet source links have been updated (when switching
  *      to source-mapped files)
  */
-function Inspector(toolbox) {
+function Inspector(toolbox, commands) {
   EventEmitter.decorate(this);
 
   this._toolbox = toolbox;
+  this._commands = commands;
   this.panelDoc = window.document;
   this.panelWin = window;
   this.panelWin.inspector = this;
@@ -282,6 +283,10 @@ Inspector.prototype = {
 
   get toolbox() {
     return this._toolbox;
+  },
+
+  get commands() {
+    return this._commands;
   },
 
   /**
@@ -1297,7 +1302,11 @@ Inspector.prototype = {
   onResourceAvailable: function(resources) {
     for (const resource of resources) {
       if (
-        resource.resourceType === this.toolbox.resourceWatcher.TYPES.ROOT_NODE
+        resource.resourceType ===
+          this.toolbox.resourceWatcher.TYPES.ROOT_NODE &&
+        // It might happen that the ROOT_NODE resource (which is a Front) is already
+        // destroyed, and in such case we want to ignore it.
+        !resource.isDestroyed()
       ) {
         const rootNodeFront = resource;
         const isTopLevelTarget = !!resource.targetFront.isTopLevel;

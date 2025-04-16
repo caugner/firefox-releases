@@ -67,6 +67,7 @@
 #include "mozilla/dom/VsyncChild.h"
 #include "mozilla/dom/WindowBinding.h"
 #include "mozilla/RestyleManager.h"
+#include "mozilla/TaskController.h"
 #include "Layers.h"
 #include "imgIContainer.h"
 #include "mozilla/dom/ScriptSettings.h"
@@ -129,24 +130,6 @@ static mozilla::LazyLogModule sRefreshDriverLog("nsRefreshDriver");
 MOZ_MAKE_ENUM_CLASS_BITWISE_OPERATORS(nsRefreshDriver::TickReasons);
 
 namespace {
-// `true` if we are currently in jank-critical mode.
-//
-// In jank-critical mode, any iteration of the event loop that takes
-// more than 16ms to compute will cause an ongoing animation to miss
-// frames.
-//
-// For simplicity, the current implementation assumes that we are in
-// jank-critical mode if and only if at least one vsync driver has
-// at least one observer.
-static uint64_t sActiveVsyncTimers = 0;
-
-// The latest value of process-wide jank levels.
-//
-// For each i, sJankLevels[i] counts the number of times delivery of
-// vsync to the main thread has been delayed by at least 2^i ms. Use
-// GetJankLevels to grab a copy of this array.
-uint64_t sJankLevels[12];
-
 // The number outstanding nsRefreshDrivers (that have been created but not
 // disconnected). When this reaches zero we will call
 // nsRefreshDriver::Shutdown.
@@ -254,16 +237,21 @@ class RefreshDriverTimer {
     MOZ_ASSERT(NS_IsMainThread());
 
     TimeStamp mostRecentRefresh = MostRecentRefresh();
-    TimeDuration refreshRate = GetTimerRate();
-    TimeStamp idleEnd = mostRecentRefresh + refreshRate;
+    TimeDuration refreshPeriod = GetTimerRate();
+    TimeStamp idleEnd = mostRecentRefresh + refreshPeriod;
 
+    // If we haven't painted for some time, then guess that we won't paint
+    // again for a while, so the refresh driver is not a good way to predict
+    // idle time.
     if (idleEnd +
-            refreshRate *
+            refreshPeriod *
                 StaticPrefs::layout_idle_period_required_quiescent_frames() <
         TimeStamp::Now()) {
       return aDefault;
     }
 
+    // End the predicted idle time a little early, the amount controlled by a
+    // pref, to prevent overrunning the idle time and delaying a frame.
     idleEnd = idleEnd - TimeDuration::FromMilliseconds(
                             StaticPrefs::layout_idle_period_time_limit());
     return idleEnd < aDefault ? idleEnd : aDefault;
@@ -654,7 +642,6 @@ class VsyncRefreshDriverTimer : public RefreshDriverTimer {
             Telemetry::FX_REFRESH_DRIVER_CHROME_FRAME_DELAY_MS, sample);
         Telemetry::Accumulate(
             Telemetry::FX_REFRESH_DRIVER_SYNC_SCROLL_FRAME_DELAY_MS, sample);
-        RecordJank(sample);
       } else if (mVsyncRate != TimeDuration::Forever()) {
         TimeDuration contentDelay = (TimeStamp::Now() - mLastTick) - mVsyncRate;
         if (contentDelay.ToMilliseconds() < 0) {
@@ -668,7 +655,6 @@ class VsyncRefreshDriverTimer : public RefreshDriverTimer {
             Telemetry::FX_REFRESH_DRIVER_CONTENT_FRAME_DELAY_MS, sample);
         Telemetry::Accumulate(
             Telemetry::FX_REFRESH_DRIVER_SYNC_SCROLL_FRAME_DELAY_MS, sample);
-        RecordJank(sample);
       } else {
         // Request the vsync rate from the parent process. Might be a few vsyncs
         // until the parent responds.
@@ -677,15 +663,6 @@ class VsyncRefreshDriverTimer : public RefreshDriverTimer {
         }
       }
 #endif
-    }
-
-    void RecordJank(uint32_t aJankMS) {
-      uint32_t duration = 1 /* ms */;
-      for (size_t i = 0;
-           i < mozilla::ArrayLength(sJankLevels) && duration < aJankMS;
-           ++i, duration *= 2) {
-        sJankLevels[i]++;
-      }
     }
 
     void TickRefreshDriver(VsyncId aId, TimeStamp aVsyncTimestamp) {
@@ -761,7 +738,6 @@ class VsyncRefreshDriverTimer : public RefreshDriverTimer {
   }
 
   void StartTimer() override {
-    // Protect updates to `sActiveVsyncTimers`.
     MOZ_ASSERT(NS_IsMainThread());
 
     mLastFireTime = TimeStamp::Now();
@@ -772,12 +748,9 @@ class VsyncRefreshDriverTimer : public RefreshDriverTimer {
       mVsyncChild->AddChildRefreshTimer(mVsyncObserver);
       mVsyncObserver->OnTimerStart();
     }
-
-    ++sActiveVsyncTimers;
   }
 
   void StopTimer() override {
-    // Protect updates to `sActiveVsyncTimers`.
     MOZ_ASSERT(NS_IsMainThread());
 
     if (mVsyncDispatcher) {
@@ -785,9 +758,6 @@ class VsyncRefreshDriverTimer : public RefreshDriverTimer {
     } else if (mVsyncChild) {
       mVsyncChild->RemoveChildRefreshTimer(mVsyncObserver);
     }
-
-    MOZ_ASSERT(sActiveVsyncTimers > 0);
-    --sActiveVsyncTimers;
   }
 
   void ScheduleNextTick(TimeStamp aNowTime) override {
@@ -981,8 +951,6 @@ static StaticRefPtr<InactiveRefreshDriverTimer> sThrottledRateTimer;
 
 void nsRefreshDriver::CreateVsyncRefreshTimer() {
   MOZ_ASSERT(NS_IsMainThread());
-
-  PodArrayZero(sJankLevels);
 
   if (gfxPlatform::IsInLayoutAsapMode()) {
     return;
@@ -1354,10 +1322,7 @@ bool nsRefreshDriver::AddImageRequest(imgIRequest* aRequest) {
   if (delay == 0) {
     mRequests.PutEntry(aRequest);
   } else {
-    auto* const start = mStartTable.WithEntryHandle(delay, [](auto&& entry) {
-      return entry.OrInsertWith([] { return MakeUnique<ImageStartData>(); })
-          .get();
-    });
+    auto* const start = mStartTable.GetOrInsertNew(delay);
     start->mEntries.PutEntry(aRequest);
   }
 
@@ -1745,16 +1710,14 @@ static void GetProfileTimelineSubDocShells(nsDocShell* aRootDocShell,
   }
 
   bc->PostOrderWalk([&](BrowsingContext* aContext) {
+    if (!aContext->IsActive()) {
+      return;
+    }
+
     nsDocShell* shell = nsDocShell::Cast(aContext->GetDocShell());
     if (!shell || !shell->GetRecordProfileTimelineMarkers()) {
       // This process isn't painting OOP iframes so we ignore
       // docshells that are OOP.
-      return;
-    }
-
-    bool isVisible = false;
-    shell->GetVisibility(&isVisible);
-    if (!isVisible) {
       return;
     }
 
@@ -1926,44 +1889,30 @@ void nsRefreshDriver::RunFrameRequestCallbacks(TimeStamp aNowTime) {
   }
 }
 
-struct RunnableWithDelay {
-  nsCOMPtr<nsIRunnable> mRunnable;
-  uint32_t mDelay;
-};
+static AutoTArray<RefPtr<Task>, 8>* sPendingIdleTasks = nullptr;
 
-static AutoTArray<RunnableWithDelay, 8>* sPendingIdleRunnables = nullptr;
-
-void nsRefreshDriver::DispatchIdleRunnableAfterTickUnlessExists(
-    nsIRunnable* aRunnable, uint32_t aDelay) {
-  if (!sPendingIdleRunnables) {
-    sPendingIdleRunnables = new AutoTArray<RunnableWithDelay, 8>();
+void nsRefreshDriver::DispatchIdleTaskAfterTickUnlessExists(Task* aTask) {
+  if (!sPendingIdleTasks) {
+    sPendingIdleTasks = new AutoTArray<RefPtr<Task>, 8>();
   } else {
-    for (uint32_t i = 0; i < sPendingIdleRunnables->Length(); ++i) {
-      if ((*sPendingIdleRunnables)[i].mRunnable == aRunnable) {
-        return;
-      }
+    if (sPendingIdleTasks->Contains(aTask)) {
+      return;
     }
   }
 
-  RunnableWithDelay rwd = {aRunnable, aDelay};
-  sPendingIdleRunnables->AppendElement(rwd);
+  sPendingIdleTasks->AppendElement(aTask);
 }
 
-void nsRefreshDriver::CancelIdleRunnable(nsIRunnable* aRunnable) {
-  if (!sPendingIdleRunnables) {
+void nsRefreshDriver::CancelIdleTask(Task* aTask) {
+  if (!sPendingIdleTasks) {
     return;
   }
 
-  for (uint32_t i = 0; i < sPendingIdleRunnables->Length(); ++i) {
-    if ((*sPendingIdleRunnables)[i].mRunnable == aRunnable) {
-      sPendingIdleRunnables->RemoveElementAt(i);
-      break;
-    }
-  }
+  sPendingIdleTasks->RemoveElement(aTask);
 
-  if (sPendingIdleRunnables->IsEmpty()) {
-    delete sPendingIdleRunnables;
-    sPendingIdleRunnables = nullptr;
+  if (sPendingIdleTasks->IsEmpty()) {
+    delete sPendingIdleTasks;
+    sPendingIdleTasks = nullptr;
   }
 }
 
@@ -2270,9 +2219,9 @@ void nsRefreshDriver::Tick(VsyncId aId, TimeStamp aNowTime) {
    * for refresh events.
    */
 
-  for (auto iter = mStartTable.Iter(); !iter.Done(); iter.Next()) {
-    const uint32_t& delay = iter.Key();
-    ImageStartData* data = iter.UserData();
+  for (const auto& entry : mStartTable) {
+    const uint32_t& delay = entry.GetKey();
+    ImageStartData* data = entry.GetWeak();
 
     if (data->mStartTime) {
       TimeStamp& start = *data->mStartTime;
@@ -2306,8 +2255,8 @@ void nsRefreshDriver::Tick(VsyncId aId, TimeStamp aNowTime) {
     // images to refresh, and then we refresh each image in that array.
     nsCOMArray<imgIContainer> imagesToRefresh(mRequests.Count());
 
-    for (auto iter = mRequests.Iter(); !iter.Done(); iter.Next()) {
-      nsISupportsHashKey* entry = iter.Get();
+    for (auto iter = mRequests.ConstIter(); !iter.Done(); iter.Next()) {
+      const nsISupportsHashKey* entry = iter.Get();
       auto req = static_cast<imgIRequest*>(entry->GetKey());
       MOZ_ASSERT(req, "Unable to retrieve the image request");
       nsCOMPtr<imgIContainer> image;
@@ -2322,7 +2271,7 @@ void nsRefreshDriver::Tick(VsyncId aId, TimeStamp aNowTime) {
   }
 
   double phasePaint = 0.0;
-  bool dispatchRunnablesAfterTick = false;
+  bool dispatchTasksAfterTick = false;
   if (mViewManagerFlushIsPending) {
     AutoRecordPhase paintRecord(&phasePaint);
     nsCString transactionId;
@@ -2391,7 +2340,7 @@ void nsRefreshDriver::Tick(VsyncId aId, TimeStamp aNowTime) {
                                       MarkerTracingType::END);
     }
 
-    dispatchRunnablesAfterTick = true;
+    dispatchTasksAfterTick = true;
     mHasScheduleFlush = false;
   } else {
     // No paint happened, discard composition payloads.
@@ -2446,21 +2395,19 @@ void nsRefreshDriver::Tick(VsyncId aId, TimeStamp aNowTime) {
     ScheduleViewManagerFlush();
   }
 
-  if (dispatchRunnablesAfterTick && sPendingIdleRunnables) {
-    AutoTArray<RunnableWithDelay, 8>* runnables = sPendingIdleRunnables;
-    sPendingIdleRunnables = nullptr;
-    for (RunnableWithDelay& runnableWithDelay : *runnables) {
-      NS_DispatchToCurrentThreadQueue(runnableWithDelay.mRunnable.forget(),
-                                      runnableWithDelay.mDelay,
-                                      EventQueuePriority::Idle);
+  if (dispatchTasksAfterTick && sPendingIdleTasks) {
+    AutoTArray<RefPtr<Task>, 8>* tasks = sPendingIdleTasks;
+    sPendingIdleTasks = nullptr;
+    for (RefPtr<Task>& taskWithDelay : *tasks) {
+      TaskController::Get()->AddTask(taskWithDelay.forget());
     }
-    delete runnables;
+    delete tasks;
   }
 }
 
 void nsRefreshDriver::BeginRefreshingImages(RequestTable& aEntries,
                                             mozilla::TimeStamp aDesired) {
-  for (auto iter = aEntries.Iter(); !iter.Done(); iter.Next()) {
+  for (auto iter = aEntries.ConstIter(); !iter.Done(); iter.Next()) {
     auto req = static_cast<imgIRequest*>(iter.Get()->GetKey());
     MOZ_ASSERT(req, "Unable to retrieve the image request");
 
@@ -2795,18 +2742,6 @@ void nsRefreshDriver::Disconnect() {
       Shutdown();
     }
   }
-}
-
-/* static */
-bool nsRefreshDriver::IsJankCritical() {
-  MOZ_ASSERT(NS_IsMainThread());
-  return sActiveVsyncTimers > 0;
-}
-
-/* static */
-bool nsRefreshDriver::GetJankLevels(Vector<uint64_t>& aJank) {
-  aJank.clear();
-  return aJank.append(sJankLevels, ArrayLength(sJankLevels));
 }
 
 #undef LOG

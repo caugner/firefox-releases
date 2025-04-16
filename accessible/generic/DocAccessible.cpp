@@ -114,12 +114,9 @@ NS_IMPL_CYCLE_COLLECTION_TRAVERSE_BEGIN_INHERITED(DocAccessible,
   NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mNotificationController)
   NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mVirtualCursor)
   NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mChildDocuments)
-  for (auto hashesIter = tmp->mDependentIDsHashes.Iter(); !hashesIter.Done();
-       hashesIter.Next()) {
-    auto dependentIDsHash = hashesIter.UserData();
-    for (auto providersIter = dependentIDsHash->Iter(); !providersIter.Done();
-         providersIter.Next()) {
-      AttrRelProviders* providers = providersIter.UserData();
+  for (const auto& hashEntry : tmp->mDependentIDsHashes) {
+    for (const auto& providerEntry : *hashEntry.GetData()) {
+      AttrRelProviders* providers = providerEntry.GetData().get();
       for (int32_t provIdx = providers->Length() - 1; provIdx >= 0; provIdx--) {
         NS_CYCLE_COLLECTION_NOTE_EDGE_NAME(
             cb, "content of dependent ids hash entry of document accessible");
@@ -132,8 +129,8 @@ NS_IMPL_CYCLE_COLLECTION_TRAVERSE_BEGIN_INHERITED(DocAccessible,
   NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mAccessibleCache)
   NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mAnchorJumpElm)
   NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mInvalidationList)
-  for (auto it = tmp->mARIAOwnsHash.ConstIter(); !it.Done(); it.Next()) {
-    nsTArray<RefPtr<LocalAccessible>>* ar = it.UserData();
+  for (const auto& arEntry : tmp->mARIAOwnsHash) {
+    nsTArray<RefPtr<LocalAccessible>>* ar = arEntry.GetData().get();
     for (uint32_t i = 0; i < ar->Length(); i++) {
       NS_CYCLE_COLLECTION_NOTE_EDGE_NAME(cb, "mARIAOwnsHash entry item");
       cb.NoteXPCOMChild(ar->ElementAt(i));
@@ -593,18 +590,20 @@ void DocAccessible::ScrollTimerCallback(nsITimer* aTimer, void* aClosure) {
 
 void DocAccessible::HandleScroll(nsINode* aTarget) {
   const uint32_t kScrollEventInterval = 100;
-  TimeStamp now = TimeStamp::Now();
-  TimeStamp lastDispatch;
   // If we haven't dispatched a scrolling event for a target in at least
   // kScrollEventInterval milliseconds, dispatch one now.
-  if (!mLastScrollingDispatch.Get(aTarget, &lastDispatch) ||
-      (now - lastDispatch).ToMilliseconds() >= kScrollEventInterval) {
-    // We can't fire events on a document whose tree isn't constructed yet.
-    if (HasLoadState(eTreeConstructed)) {
-      DispatchScrollingEvent(aTarget, nsIAccessibleEvent::EVENT_SCROLLING);
+  mLastScrollingDispatch.WithEntryHandle(aTarget, [&](auto&& lastDispatch) {
+    const TimeStamp now = TimeStamp::Now();
+
+    if (!lastDispatch ||
+        (now - lastDispatch.Data()).ToMilliseconds() >= kScrollEventInterval) {
+      // We can't fire events on a document whose tree isn't constructed yet.
+      if (HasLoadState(eTreeConstructed)) {
+        DispatchScrollingEvent(aTarget, nsIAccessibleEvent::EVENT_SCROLLING);
+      }
+      lastDispatch.InsertOrUpdate(now);
     }
-    mLastScrollingDispatch.Put(aTarget, now);
-  }
+  });
 
   // If timer callback is still pending, push it 100ms into the future.
   // When scrolling ends and we don't fire this callback anymore, the
@@ -1396,11 +1395,11 @@ void DocAccessible::BindToDocument(LocalAccessible* aAccessible,
                                    const nsRoleMapEntry* aRoleMapEntry) {
   // Put into DOM node cache.
   if (aAccessible->IsNodeMapEntry()) {
-    mNodeToAccessibleMap.Put(aAccessible->GetNode(), aAccessible);
+    mNodeToAccessibleMap.InsertOrUpdate(aAccessible->GetNode(), aAccessible);
   }
 
   // Put into unique ID cache.
-  mAccessibleCache.Put(aAccessible->UniqueID(), RefPtr{aAccessible});
+  mAccessibleCache.InsertOrUpdate(aAccessible->UniqueID(), RefPtr{aAccessible});
 
   aAccessible->SetRoleMapEntry(aRoleMapEntry);
 
@@ -1584,6 +1583,18 @@ bool DocAccessible::PruneOrInsertSubtree(nsIContent* aRoot) {
     // We schedule it for reinsertion. For example, a slotted element
     // can change its slot attribute to a different slot.
     insert = true;
+
+    // If the frame is invisible, remove it.
+    // Normally, layout sends explicit a11y notifications for visibility
+    // changes (see SendA11yNotifications in RestyleManager). However, if a
+    // visibility change also reconstructs the frame, we must handle it here.
+    if (frame && !frame->StyleVisibility()->IsVisible()) {
+      ContentRemoved(aRoot);
+      // There might be visible descendants, so we want to walk the subtree.
+      // However, we know we don't want to reinsert this node, so we set insert
+      // to false.
+      insert = false;
+    }
   } else {
     // If there is no current accessible, and the node has a frame, or is
     // display:contents, schedule it for insertion.
@@ -2323,7 +2334,8 @@ void DocAccessible::DoARIAOwnsRelocation(LocalAccessible* aOwner) {
   logging::TreeInfo("aria owns relocation", logging::eVerbose, aOwner);
 #endif
 
-  nsTArray<RefPtr<LocalAccessible>>* owned = mARIAOwnsHash.LookupOrAdd(aOwner);
+  nsTArray<RefPtr<LocalAccessible>>* owned =
+      mARIAOwnsHash.GetOrInsertNew(aOwner);
 
   IDRefsIterator iter(this, aOwner->Elm(), nsGkAtoms::aria_owns);
   uint32_t idx = 0;
@@ -2420,7 +2432,7 @@ void DocAccessible::DoARIAOwnsRelocation(LocalAccessible* aOwner) {
     if (MoveChild(child, aOwner, insertIdx)) {
       child->SetRelocated(true);
       MOZ_ASSERT(owned == mARIAOwnsHash.Get(aOwner));
-      owned = mARIAOwnsHash.LookupOrAdd(aOwner);
+      owned = mARIAOwnsHash.GetOrInsertNew(aOwner);
       owned->InsertElementAt(idx, child);
       idx++;
     }

@@ -76,8 +76,8 @@ DocAccessible* DocManager::GetDocAccessible(const PresShell* aPresShell) {
 }
 
 LocalAccessible* DocManager::FindAccessibleInCache(nsINode* aNode) const {
-  for (auto iter = mDocAccessibleCache.ConstIter(); !iter.Done(); iter.Next()) {
-    DocAccessible* docAccessible = iter.UserData();
+  for (const auto& entry : mDocAccessibleCache) {
+    DocAccessible* docAccessible = entry.GetData().get();
     NS_ASSERTION(docAccessible,
                  "No doc accessible for the object in doc accessible cache!");
 
@@ -140,12 +140,7 @@ void DocManager::NotifyOfRemoteDocShutdown(DocAccessibleParent* aDoc) {
 xpcAccessibleDocument* DocManager::GetXPCDocument(DocAccessible* aDocument) {
   if (!aDocument) return nullptr;
 
-  xpcAccessibleDocument* xpcDoc = mXPCDocumentCache.GetWeak(aDocument);
-  if (!xpcDoc) {
-    xpcDoc = new xpcAccessibleDocument(aDocument);
-    mXPCDocumentCache.Put(aDocument, RefPtr{xpcDoc});
-  }
-  return xpcDoc;
+  return mXPCDocumentCache.GetOrInsertNew(aDocument, aDocument);
 }
 
 xpcAccessibleDocument* DocManager::GetXPCDocument(DocAccessibleParent* aDoc) {
@@ -162,17 +157,16 @@ xpcAccessibleDocument* DocManager::GetXPCDocument(DocAccessibleParent* aDoc) {
   }
 
   MOZ_ASSERT(!aDoc->IsShutdown(), "Adding a shutdown doc to remote XPC cache");
-  doc = new xpcAccessibleDocument(aDoc,
-                                  Interfaces::DOCUMENT | Interfaces::HYPERTEXT);
-  sRemoteXPCDocumentCache->Put(aDoc, RefPtr{doc});
+  doc = new xpcAccessibleDocument(aDoc);
+  sRemoteXPCDocumentCache->InsertOrUpdate(aDoc, RefPtr{doc});
 
   return doc;
 }
 
 #ifdef DEBUG
 bool DocManager::IsProcessingRefreshDriverNotification() const {
-  for (auto iter = mDocAccessibleCache.ConstIter(); !iter.Done(); iter.Next()) {
-    DocAccessible* docAccessible = iter.UserData();
+  for (const auto& entry : mDocAccessibleCache) {
+    DocAccessible* docAccessible = entry.GetWeak();
     NS_ASSERTION(docAccessible,
                  "No doc accessible for the object in doc accessible cache!");
 
@@ -486,7 +480,7 @@ DocAccessible* DocManager::CreateDocOrRootAccessible(Document* aDocument) {
                 : new DocAccessibleWrap(aDocument, presShell);
 
   // Cache the document accessible into document cache.
-  mDocAccessibleCache.Put(aDocument, RefPtr{docAcc});
+  mDocAccessibleCache.InsertOrUpdate(aDocument, RefPtr{docAcc});
 
   // Initialize the document accessible.
   docAcc->Init();
@@ -563,7 +557,7 @@ void DocManager::RemoteDocAdded(DocAccessibleParent* aDoc) {
   MOZ_ASSERT(!sRemoteDocuments->Contains(aDoc),
              "How did we already have the doc!");
   sRemoteDocuments->AppendElement(aDoc);
-  ProxyCreated(aDoc, Interfaces::DOCUMENT | Interfaces::HYPERTEXT);
+  ProxyCreated(aDoc);
 }
 
 DocAccessible* mozilla::a11y::GetExistingDocAccessible(

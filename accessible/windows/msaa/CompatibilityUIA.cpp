@@ -11,7 +11,7 @@
 #include "mozilla/UniquePtrExtensions.h"
 #include "mozilla/WindowsVersion.h"
 
-#include "nsDataHashtable.h"
+#include "nsTHashMap.h"
 #include "nsPrintfCString.h"
 #include "nsReadableUtils.h"
 #include "nsString.h"
@@ -225,7 +225,7 @@ Maybe<bool> Compatibility::OnUIAMessage(WPARAM aWParam, LPARAM aLParam) {
   Maybe<PVOID> kernelObject;
   static Maybe<USHORT> sectionObjTypeIndex;
   nsTHashtable<nsUint32HashKey> nonSectionObjTypes;
-  nsDataHashtable<nsVoidPtrHashKey, DWORD> objMap;
+  nsTHashMap<nsVoidPtrHashKey, DWORD> objMap;
 
   auto handleInfo =
       reinterpret_cast<SYSTEM_HANDLE_INFORMATION_EX*>(handleInfoBuf.get());
@@ -295,7 +295,7 @@ Maybe<bool> Compatibility::OnUIAMessage(WPARAM aWParam, LPARAM aLParam) {
 
       // An object that is not ours. Since we do not yet know which kernel
       // object we're interested in, we'll save the current object for later.
-      objMap.Put(curHandle.mObject, curHandle.mPid);
+      objMap.InsertOrUpdate(curHandle.mObject, curHandle.mPid);
     } else if (handle == section.get()) {
       // This is the file mapping that we opened above. We save this mObject
       // in order to compare to Section objects opened by other processes.

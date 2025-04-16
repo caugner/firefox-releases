@@ -14,9 +14,6 @@ const { Log } = ChromeUtils.import("resource://gre/modules/Log.jsm");
 const { AppConstants } = ChromeUtils.import(
   "resource://gre/modules/AppConstants.jsm"
 );
-if (AppConstants.MOZ_GLEAN) {
-  Cu.importGlobalProperties(["Glean"]);
-}
 
 const LOGGER_NAME = "Toolkit.Telemetry";
 const LOGGER_PREFIX = "ClientID::";
@@ -245,10 +242,22 @@ var ClientIDImpl = {
         }
       }
     } catch (e) {
+      Services.telemetry.scalarAdd("telemetry.state_file_read_errors", 1);
       // fall through to next option
     }
 
-    // We're missing one or both IDs from the DRS state file, generate new ones.
+    // Absent or broken state file? Check prefs as last resort.
+    if (!hasCurrentClientID) {
+      const cachedID = this.getCachedClientID();
+      // Calling `updateClientID` with `null` logs an error, which breaks tests.
+      if (cachedID) {
+        Services.telemetry.scalarAdd("telemetry.using_pref_client_id", 1);
+        hasCurrentClientID = this.updateClientID(cachedID);
+      }
+    }
+
+    // We're missing one or both IDs from the DRS state file and prefs.
+    // Generate new ones.
     if (!hasCurrentClientID) {
       Services.telemetry.scalarSet("telemetry.generated_new_client_id", true);
       this.updateClientID(CommonUtils.generateUUID());
@@ -447,6 +456,7 @@ var ClientIDImpl = {
 
   async removeClientIDs() {
     this._log.trace("removeClientIDs");
+    Services.telemetry.scalarAdd("telemetry.removed_client_ids", 1);
     let oldClientId = this._clientID;
 
     // Wait for the removal.
@@ -478,10 +488,6 @@ var ClientIDImpl = {
     }
 
     this._clientID = id;
-
-    if (AppConstants.MOZ_GLEAN) {
-      Glean.fogValidation.legacyTelemetryClientId.set(this._clientID);
-    }
 
     this._clientIDHash = null;
     Services.prefs.setStringPref(PREF_CACHED_CLIENTID, this._clientID);

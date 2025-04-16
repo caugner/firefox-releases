@@ -18,7 +18,7 @@
 #include "nsTArray.h"
 #include "nsTreeStyleCache.h"
 #include "nsTreeColumns.h"
-#include "nsDataHashtable.h"
+#include "nsTHashMap.h"
 #include "imgIRequest.h"
 #include "imgINotificationObserver.h"
 #include "nsScrollbarFrame.h"
@@ -133,6 +133,10 @@ class nsTreeBodyFrame final : public nsLeafBoxFrame,
   virtual void ScrollByLine(nsScrollbarFrame* aScrollbar, int32_t aDirection,
                             nsIScrollbarMediator::ScrollSnapMode aSnap =
                                 nsIScrollbarMediator::DISABLE_SNAP) override;
+  virtual void ScrollByUnit(nsScrollbarFrame* aScrollbar,
+                            mozilla::ScrollMode aMode, int32_t aDirection,
+                            mozilla::ScrollUnit aUnit,
+                            ScrollSnapMode aSnap = DISABLE_SNAP) override;
   virtual void RepeatButtonScroll(nsScrollbarFrame* aScrollbar) override;
   virtual void ThumbMoved(nsScrollbarFrame* aScrollbar, nscoord aOldPos,
                           nscoord aNewPos) override;
@@ -546,7 +550,7 @@ class nsTreeBodyFrame final : public nsLeafBoxFrame,
   // is provided by the view or by the ComputedStyle. The ComputedStyle
   // represents a resolved :-moz-tree-cell-image (or twisty) pseudo-element.
   // It maps directly to an imgIRequest.
-  nsDataHashtable<nsStringHashKey, nsTreeImageCacheEntry> mImageCache;
+  nsTHashMap<nsStringHashKey, nsTreeImageCacheEntry> mImageCache;
 
   // A scratch array used when looking up cached ComputedStyles.
   mozilla::AtomArray mScratchArray;

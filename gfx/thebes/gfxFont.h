@@ -26,7 +26,7 @@
 #include "mozilla/gfx/Point.h"
 #include "nsCOMPtr.h"
 #include "nsColor.h"
-#include "nsDataHashtable.h"
+#include "nsTHashMap.h"
 #include "nsExpirationTracker.h"
 #include "nsFontMetrics.h"
 #include "nsHashKeys.h"
@@ -218,8 +218,7 @@ struct gfxFontStyle {
   }
 
   bool Equals(const gfxFontStyle& other) const {
-    return (*reinterpret_cast<const uint64_t*>(&size) ==
-            *reinterpret_cast<const uint64_t*>(&other.size)) &&
+    return mozilla::NumbersAreBitwiseIdentical(size, other.size) &&
            (style == other.style) && (weight == other.weight) &&
            (stretch == other.stretch) && (variantCaps == other.variantCaps) &&
            (variantSubSuper == other.variantSubSuper) &&
@@ -229,8 +228,7 @@ struct gfxFontStyle {
            (printerFont == other.printerFont) &&
            (useGrayscaleAntialiasing == other.useGrayscaleAntialiasing) &&
            (baselineOffset == other.baselineOffset) &&
-           (*reinterpret_cast<const uint32_t*>(&sizeAdjust) ==
-            *reinterpret_cast<const uint32_t*>(&other.sizeAdjust)) &&
+           mozilla::NumbersAreBitwiseIdentical(sizeAdjust, other.sizeAdjust) &&
            (featureSettings == other.featureSettings) &&
            (variantAlternates == other.variantAlternates) &&
            (featureValueLookup == other.featureValueLookup) &&
@@ -2033,7 +2031,7 @@ class gfxFont {
   bool HasFeatureSet(uint32_t aFeature, bool& aFeatureOn);
 
   // used when analyzing whether a font has space contextual lookups
-  static nsDataHashtable<nsUint32HashKey, Script>* sScriptTagToCode;
+  static nsTHashMap<nsUint32HashKey, Script>* sScriptTagToCode;
   static nsTHashtable<nsUint32HashKey>* sDefaultFeatures;
 
   RefPtr<gfxFontEntry> mFontEntry;

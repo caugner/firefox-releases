@@ -298,6 +298,12 @@ class Browsertime(Perftest):
             ] = self.results_handler.result_dir_for_test(test)
             self._init_gecko_profiling(test)
             browsertime_options.append("--firefox.geckoProfiler")
+            browsertime_options.extend(
+                [
+                    "--firefox.geckoProfilerParams.features",
+                    "js,leaf,stackwalk,cpu,threads",
+                ]
+            )
 
             for option, browser_time_option in (
                 ("gecko_profile_interval", "--firefox.geckoProfilerParams.interval"),
@@ -406,7 +412,7 @@ class Browsertime(Perftest):
                 if self.browsertime_failure, and raise an Exception if necessary
                 to stop Raptor execution (preventing the results processing).
                 """
-                match = line_matcher.match(line)
+                match = line_matcher.match(line.decode("utf-8"))
                 if not match:
                     LOG.info(line)
                     return
@@ -415,8 +421,8 @@ class Browsertime(Perftest):
                 level = level.lower()
                 if "error" in level:
                     self.browsertime_failure = msg
-                    # Raising this kills mozprocess
-                    raise Exception("Browsertime failed to run")
+                    LOG.error("Browsertime failed to run")
+                    proc.kill()
                 elif "warning" in level:
                     LOG.warning(msg)
                 else:

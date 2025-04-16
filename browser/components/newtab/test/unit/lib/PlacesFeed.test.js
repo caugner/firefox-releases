@@ -819,7 +819,7 @@ describe("PlacesFeed", () => {
     });
 
     describe("#page-removed", () => {
-      it("should dispatch a PLACES_LINK_DELETED action with the right url", async () => {
+      it("should dispatch a PLACES_LINKS_DELETED action with the right url", async () => {
         const args = [
           {
             type: "page-removed",
@@ -829,8 +829,8 @@ describe("PlacesFeed", () => {
         ];
         await observer.handlePlacesEvent(args);
         assert.calledWith(dispatch, {
-          type: at.PLACES_LINK_DELETED,
-          data: { url: "foo.com" },
+          type: at.PLACES_LINKS_DELETED,
+          data: { urls: ["foo.com"] },
         });
       });
     });
@@ -1114,8 +1114,6 @@ describe("PlacesFeed", () => {
     });
     describe("Other empty methods (to keep code coverage happy)", () => {
       it("should have a various empty functions for xpconnect happiness", () => {
-        observer.onBeginUpdateBatch();
-        observer.onEndUpdateBatch();
         observer.onItemMoved();
         observer.onItemChanged();
       });

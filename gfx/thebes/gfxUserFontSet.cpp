@@ -1018,17 +1018,12 @@ gfxUserFontFamily* gfxUserFontSet::GetFamily(const nsACString& aFamilyName) {
   nsAutoCString key(aFamilyName);
   ToLowerCase(key);
 
-  gfxUserFontFamily* family = mFontFamilies.GetWeak(key);
-  if (!family) {
-    family = new gfxUserFontFamily(aFamilyName);
-    mFontFamilies.Put(key, RefPtr{family});
-  }
-  return family;
+  return mFontFamilies.GetOrInsertNew(key, aFamilyName);
 }
 
 void gfxUserFontSet::ForgetLocalFaces() {
-  for (auto iter = mFontFamilies.Iter(); !iter.Done(); iter.Next()) {
-    const auto fam = iter.Data();
+  for (const auto& entry : mFontFamilies) {
+    const auto fam = entry.GetData();
     const auto& fonts = fam->GetFontList();
     for (const auto& f : fonts) {
       auto ufe = static_cast<gfxUserFontEntry*>(f.get());

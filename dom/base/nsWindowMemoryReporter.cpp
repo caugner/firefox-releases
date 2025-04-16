@@ -169,7 +169,7 @@ static void AppendWindowURI(nsGlobalWindowInner* aWindow, nsACString& aStr,
 MOZ_DEFINE_MALLOC_SIZE_OF(WindowsMallocSizeOf)
 
 // The key is the window ID.
-typedef nsDataHashtable<nsUint64HashKey, nsCString> WindowPaths;
+typedef nsTHashMap<nsUint64HashKey, nsCString> WindowPaths;
 
 static void ReportAmount(const nsCString& aBasePath, const char* aPathTail,
                          size_t aAmount, const nsCString& aDescription,
@@ -232,7 +232,7 @@ static void CollectWindowReports(nsGlobalWindowInner* aWindow,
                     aAnonymize);
     windowPath.AppendPrintf(", id=%" PRIu64 ")", top->WindowID());
 
-    aTopWindowPaths->Put(aWindow->WindowID(), windowPath);
+    aTopWindowPaths->InsertOrUpdate(aWindow->WindowID(), windowPath);
 
     windowPath += aWindow->IsFrozen() ? "/cached/"_ns : "/active/"_ns;
   } else {
@@ -252,7 +252,7 @@ static void CollectWindowReports(nsGlobalWindowInner* aWindow,
   censusWindowPath.ReplaceLiteral(0, strlen("explicit"), "event-counts");
 
   // Remember the path for later.
-  aWindowPaths->Put(aWindow->WindowID(), windowPath);
+  aWindowPaths->InsertOrUpdate(aWindow->WindowID(), windowPath);
 
 // Report the size from windowSizes and add to the appropriate total in
 // aWindowTotalSizes.
@@ -498,8 +498,8 @@ nsWindowMemoryReporter::CollectReports(nsIHandleReportCallback* aHandleReport,
   // Hold on to every window in memory so that window objects can't be
   // destroyed while we're calling the memory reporter callback.
   WindowArray windows;
-  for (auto iter = windowsById->Iter(); !iter.Done(); iter.Next()) {
-    windows.AppendElement(iter.Data());
+  for (const auto& entry : *windowsById) {
+    windows.AppendElement(entry.GetData());
   }
 
   // Get the IDs of all the "ghost" windows, and call aHandleReport->Callback()
@@ -711,7 +711,7 @@ void nsWindowMemoryReporter::ObserveDOMWindowDetached(
     return;
   }
 
-  mDetachedWindows.Put(weakWindow, TimeStamp());
+  mDetachedWindows.InsertOrUpdate(weakWindow, TimeStamp());
 
   AsyncCheckForGhostWindows();
 }
@@ -802,10 +802,10 @@ void nsWindowMemoryReporter::CheckForGhostWindows(
       nonDetachedBrowsingContextGroups;
 
   // Populate nonDetachedBrowsingContextGroups.
-  for (auto iter = windowsById->Iter(); !iter.Done(); iter.Next()) {
+  for (const auto& entry : *windowsById) {
     // Null outer window implies null top, but calling GetInProcessTop() when
     // there's no outer window causes us to spew debug warnings.
-    nsGlobalWindowInner* window = iter.UserData();
+    nsGlobalWindowInner* window = entry.GetWeak();
     if (!window->GetOuterWindow() || !window->GetInProcessTopInternal() ||
         !window->GetBrowsingContextGroup()) {
       // This window is detached, so we don't care about its browsing
@@ -905,8 +905,8 @@ void nsWindowMemoryReporter::UnlinkGhostWindows() {
   // Hold on to every window in memory so that window objects can't be
   // destroyed while we're calling the UnlinkGhostWindows callback.
   WindowArray windows;
-  for (auto iter = windowsById->Iter(); !iter.Done(); iter.Next()) {
-    windows.AppendElement(iter.Data());
+  for (const auto& entry : *windowsById) {
+    windows.AppendElement(entry.GetData());
   }
 
   // Get the IDs of all the "ghost" windows, and unlink them all.

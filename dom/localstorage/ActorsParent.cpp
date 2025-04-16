@@ -92,7 +92,7 @@
 #include "nsBaseHashtable.h"
 #include "nsCOMPtr.h"
 #include "nsClassHashtable.h"
-#include "nsDataHashtable.h"
+#include "nsTHashMap.h"
 #include "nsDebug.h"
 #include "nsError.h"
 #include "nsExceptionHandler.h"
@@ -529,6 +529,8 @@ Result<nsCOMPtr<mozIStorageConnection>, nsresult> CreateStorageConnection(
 
     mozStorageTransaction transaction(
         connection, false, mozIStorageConnection::TRANSACTION_IMMEDIATE);
+
+    LS_TRY(transaction.Start())
 
     if (newDatabase) {
       LS_TRY(CreateTables(connection));
@@ -1201,6 +1203,7 @@ class Connection final : public CachingDatabaseConnection {
   nsCOMPtr<nsITimer> mFlushTimer;
   UniquePtr<ArchivedOriginScope> mArchivedOriginScope;
   ConnectionWriteOptimizer mWriteOptimizer;
+  // XXX Consider changing this to ClientMetadata.
   const OriginMetadata mOriginMetadata;
   nsString mDirectoryPath;
   /**
@@ -1442,7 +1445,7 @@ class Datastore final
    * Non-authoritative hashtable representation of mOrderedItems for efficient
    * lookup.
    */
-  nsDataHashtable<nsStringHashKey, LSValue> mValues;
+  nsTHashMap<nsStringHashKey, LSValue> mValues;
   /**
    * The authoritative ordered state of the Datastore; mValue also exists as an
    * unordered hashtable for efficient lookup.
@@ -1467,7 +1470,7 @@ class Datastore final
             RefPtr<DirectoryLock>&& aDirectoryLock,
             RefPtr<Connection>&& aConnection,
             RefPtr<QuotaObject>&& aQuotaObject,
-            nsDataHashtable<nsStringHashKey, LSValue>& aValues,
+            nsTHashMap<nsStringHashKey, LSValue>& aValues,
             nsTArray<LSItemInfo>&& aOrderedItems);
 
   Maybe<DirectoryLock&> MaybeDirectoryLockRef() const {
@@ -1842,7 +1845,7 @@ class Snapshot final : public PBackgroundLSSnapshotParent {
    * are changed/evicted from the Datastore as they happen, as reported to us by
    * SaveItem notifications.
    */
-  nsDataHashtable<nsStringHashKey, LSValue> mValues;
+  nsTHashMap<nsStringHashKey, LSValue> mValues;
   /**
    * Latched state of mDatastore's keys during a SaveItem notification with
    * aAffectsOrder=true.  The ordered keys needed to be saved off so that a
@@ -2170,7 +2173,7 @@ class PrepareDatastoreOp
   RefPtr<Datastore> mDatastore;
   UniquePtr<ArchivedOriginScope> mArchivedOriginScope;
   LoadDataOp* mLoadDataOp;
-  nsDataHashtable<nsStringHashKey, LSValue> mValues;
+  nsTHashMap<nsStringHashKey, LSValue> mValues;
   nsTArray<LSItemInfo> mOrderedItems;
   OriginMetadata mOriginMetadata;
   nsCString mMainThreadOrigin;
@@ -2767,7 +2770,7 @@ Atomic<int32_t, Relaxed> gSnapshotGradualPrefill(
     kDefaultSnapshotGradualPrefill);
 Atomic<bool> gClientValidation(kDefaultClientValidation);
 
-typedef nsDataHashtable<nsCStringHashKey, int64_t> UsageHashtable;
+typedef nsTHashMap<nsCStringHashKey, int64_t> UsageHashtable;
 
 StaticAutoPtr<ArchivedOriginHashtable> gArchivedOrigins;
 
@@ -2843,8 +2846,9 @@ nsresult LoadArchivedOrigins() {
         LS_TRY(OkIf(originAttributes.PopulateFromSuffix(originSuffix)),
                Err(NS_ERROR_FAILURE));
 
-        archivedOrigins->Put(hashKey, MakeUnique<ArchivedOriginInfo>(
-                                          originAttributes, originNoSuffix));
+        archivedOrigins->InsertOrUpdate(
+            hashKey,
+            MakeUnique<ArchivedOriginInfo>(originAttributes, originNoSuffix));
 
         return Ok{};
       }));
@@ -3227,11 +3231,7 @@ bool RecvPBackgroundLSObserverConstructor(PBackgroundLSObserverParent* aActor,
   const auto notNullObserver = WrapNotNull(observer.get());
 
   nsTArray<NotNull<Observer*>>* const array =
-      gObservers
-          ->GetOrInsertWith(
-              notNullObserver->Origin(),
-              [] { return MakeUnique<nsTArray<NotNull<Observer*>>>(); })
-          .get();
+      gObservers->GetOrInsertNew(notNullObserver->Origin());
   array->AppendElement(notNullObserver);
 
   if (RefPtr<Datastore> datastore = GetDatastore(observer->Origin())) {
@@ -3448,7 +3448,7 @@ void DatastoreWriteOptimizer::ApplyAndReset(
     LSItemInfo& item = aOrderedItems[index];
 
     if (auto entry = mWriteInfos.Lookup(item.key())) {
-      WriteInfo* writeInfo = entry.Data().get();
+      WriteInfo* writeInfo = entry->get();
 
       switch (writeInfo->GetType()) {
         case WriteInfo::DeleteItem:
@@ -3514,8 +3514,8 @@ Result<int64_t, nsresult> ConnectionWriteOptimizer::Perform(
     LS_TRY(PerformTruncate(aConnection, aShadowWrites));
   }
 
-  for (auto iter = mWriteInfos.ConstIter(); !iter.Done(); iter.Next()) {
-    const WriteInfo* const writeInfo = iter.Data().get();
+  for (const auto& entry : mWriteInfos) {
+    const WriteInfo* const writeInfo = entry.GetWeak();
 
     switch (writeInfo->GetType()) {
       case WriteInfo::InsertItem:
@@ -4224,12 +4224,12 @@ already_AddRefed<Connection> ConnectionThread::CreateConnection(
     bool aDatabaseWasNotAvailable) {
   AssertIsOnOwningThread();
   MOZ_ASSERT(!aOriginMetadata.mOrigin.IsEmpty());
-  MOZ_ASSERT(!mConnections.GetWeak(aOriginMetadata.mOrigin));
+  MOZ_ASSERT(!mConnections.Contains(aOriginMetadata.mOrigin));
 
   RefPtr<Connection> connection =
       new Connection(this, aOriginMetadata, std::move(aArchivedOriginScope),
                      aDatabaseWasNotAvailable);
-  mConnections.Put(aOriginMetadata.mOrigin, RefPtr{connection});
+  mConnections.InsertOrUpdate(aOriginMetadata.mOrigin, RefPtr{connection});
 
   return connection.forget();
 }
@@ -4251,7 +4251,7 @@ Datastore::Datastore(const OriginMetadata& aOriginMetadata,
                      RefPtr<DirectoryLock>&& aDirectoryLock,
                      RefPtr<Connection>&& aConnection,
                      RefPtr<QuotaObject>&& aQuotaObject,
-                     nsDataHashtable<nsStringHashKey, LSValue>& aValues,
+                     nsTHashMap<nsStringHashKey, LSValue>& aValues,
                      nsTArray<LSItemInfo>&& aOrderedItems)
     : mDirectoryLock(std::move(aDirectoryLock)),
       mConnection(std::move(aConnection)),
@@ -4691,7 +4691,7 @@ void Datastore::SetItem(Database* aDatabase, const nsString& aKey,
 
     NotifySnapshots(aDatabase, aKey, oldValue, /* affectsOrder */ isNewItem);
 
-    mValues.Put(aKey, aValue);
+    mValues.InsertOrUpdate(aKey, aValue);
 
     int64_t delta;
 
@@ -4761,9 +4761,9 @@ void Datastore::Clear(Database* aDatabase) {
 
   if (mValues.Count()) {
     int64_t delta = 0;
-    for (auto iter = mValues.ConstIter(); !iter.Done(); iter.Next()) {
-      const nsAString& key = iter.Key();
-      const LSValue& value = iter.Data();
+    for (const auto& entry : mValues) {
+      const nsAString& key = entry.GetKey();
+      const LSValue& value = entry.GetData();
 
       delta += -static_cast<int64_t>(key.Length()) -
                static_cast<int64_t>(value.UTF16Length());
@@ -5052,8 +5052,8 @@ void Datastore::ConnectionClosedCallback() {
     QuotaManager* quotaManager = QuotaManager::Get();
     MOZ_ASSERT(quotaManager);
 
-    quotaManager->ResetUsageForClient(PERSISTENCE_TYPE_DEFAULT, mOriginMetadata,
-                                      mozilla::dom::quota::Client::LS);
+    quotaManager->ResetUsageForClient(
+        ClientMetadata{mOriginMetadata, mozilla::dom::quota::Client::LS});
   }
 
   mConnection = nullptr;
@@ -5451,8 +5451,7 @@ void Snapshot::SaveItem(const nsAString& aKey, const LSValue& aOldValue,
   }
 
   if (!mLoadedItems.GetEntry(aKey) && !mUnknownItems.GetEntry(aKey)) {
-    mValues.WithEntryHandle(aKey,
-                            [&](auto&& entry) { entry.OrInsert(aOldValue); });
+    mValues.LookupOrInsert(aKey, aOldValue);
   }
 
   if (aAffectsOrder && !mSavedKeys) {
@@ -5808,9 +5807,10 @@ mozilla::ipc::IPCResult Snapshot::RecvLoadValueAndMoreItems(
     mLoadedItems.Clear();
     mUnknownItems.Clear();
 #ifdef DEBUG
-    for (auto iter = mValues.ConstIter(); !iter.Done(); iter.Next()) {
-      MOZ_ASSERT(iter.Data().IsVoid());
-    }
+    const bool allValuesVoid =
+        std::all_of(mValues.cbegin(), mValues.cend(),
+                    [](const auto& entry) { return entry.GetData().IsVoid(); });
+    MOZ_ASSERT(allValuesVoid);
 #endif
     mValues.Clear();
     mLoadedAllItems = true;
@@ -6478,17 +6478,22 @@ nsresult PrepareDatastoreOp::Start() {
       commonParams.storagePrincipalInfo();
 
   if (storagePrincipalInfo.type() == PrincipalInfo::TSystemPrincipalInfo) {
-    mOriginMetadata = QuotaManager::GetInfoForChrome();
+    mOriginMetadata = {QuotaManager::GetInfoForChrome(),
+                       PERSISTENCE_TYPE_DEFAULT};
   } else {
     MOZ_ASSERT(storagePrincipalInfo.type() ==
                PrincipalInfo::TContentPrincipalInfo);
 
-    OriginMetadata originMetadata =
+    PrincipalMetadata principalMetadata =
         QuotaManager::GetInfoFromValidatedPrincipalInfo(storagePrincipalInfo);
 
-    mOriginMetadata.mSuffix = std::move(originMetadata.mSuffix);
-    mOriginMetadata.mGroup = std::move(originMetadata.mGroup);
-    mMainThreadOrigin = std::move(originMetadata.mOrigin);
+    mOriginMetadata.mSuffix = std::move(principalMetadata.mSuffix);
+    mOriginMetadata.mGroup = std::move(principalMetadata.mGroup);
+    // XXX We can probably get rid of mMainThreadOrigin if we change
+    // LSRequestBase::Dispatch to synchronously run LSRequestBase::StartRequest
+    // through LSRequestBase::Run.
+    mMainThreadOrigin = std::move(principalMetadata.mOrigin);
+    mOriginMetadata.mPersistenceType = PERSISTENCE_TYPE_DEFAULT;
   }
 
   mState = State::Nesting;
@@ -6801,8 +6806,7 @@ nsresult PrepareDatastoreOp::DatabaseWork() {
                       quotaManager->GetDirectoryForOrigin(
                           PERSISTENCE_TYPE_DEFAULT, Origin()));
 
-        quotaManager->EnsureQuotaForOrigin(PERSISTENCE_TYPE_DEFAULT,
-                                           mOriginMetadata);
+        quotaManager->EnsureQuotaForOrigin(mOriginMetadata);
 
         return directoryEntry;
       }()));
@@ -6896,6 +6900,8 @@ nsresult PrepareDatastoreOp::DatabaseWork() {
 
     mozStorageTransaction transaction(
         connection, false, mozIStorageConnection::TRANSACTION_IMMEDIATE);
+
+    LS_TRY(transaction.Start())
 
     {
       nsCOMPtr<mozIStorageFunction> function = new CompressFunction();
@@ -7246,8 +7252,9 @@ void PrepareDatastoreOp::GetResponse(LSRequestResponse& aResponse) {
       gDatastores = new DatastoreHashtable();
     }
 
-    MOZ_ASSERT(!gDatastores->MaybeGet(Origin()));
-    gDatastores->Put(Origin(), WrapMovingNotNullUnchecked(mDatastore));
+    MOZ_ASSERT(!gDatastores->Contains(Origin()));
+    gDatastores->InsertOrUpdate(Origin(),
+                                WrapMovingNotNullUnchecked(mDatastore));
   }
 
   if (mPrivateBrowsingId && !mInvalidated) {
@@ -7255,14 +7262,14 @@ void PrepareDatastoreOp::GetResponse(LSRequestResponse& aResponse) {
       gPrivateDatastores = MakeUnique<PrivateDatastoreHashtable>();
     }
 
-    if (!gPrivateDatastores->Get(Origin())) {
+    gPrivateDatastores->LookupOrInsertWith(Origin(), [&] {
       auto privateDatastore =
           MakeUnique<PrivateDatastore>(WrapMovingNotNull(mDatastore));
 
-      gPrivateDatastores->Put(Origin(), std::move(privateDatastore));
-
       mPrivateDatastoreRegistered.Flip();
-    }
+
+      return privateDatastore;
+    });
   }
 
   mDatastoreId = ++gLastDatastoreId;
@@ -7270,7 +7277,7 @@ void PrepareDatastoreOp::GetResponse(LSRequestResponse& aResponse) {
   if (!gPreparedDatastores) {
     gPreparedDatastores = new PreparedDatastoreHashtable();
   }
-  const auto& preparedDatastore = gPreparedDatastores->Put(
+  const auto& preparedDatastore = gPreparedDatastores->InsertOrUpdate(
       mDatastoreId, MakeUnique<PreparedDatastore>(
                         mDatastore, mContentParentId, Origin(), mDatastoreId,
                         /* aForPreload */ mForPreload));
@@ -7465,7 +7472,7 @@ nsresult PrepareDatastoreOp::LoadDataOp::DoDatastoreWork() {
         LSValue value;
         LS_TRY(value.InitFromStatement(&stmt, 1));
 
-        mPrepareDatastoreOp->mValues.Put(key, value);
+        mPrepareDatastoreOp->mValues.InsertOrUpdate(key, value);
         mPrepareDatastoreOp->mSizeOfKeys += key.Length();
         mPrepareDatastoreOp->mSizeOfItems += key.Length() + value.Length();
 #ifdef DEBUG
@@ -7641,7 +7648,7 @@ void PrepareObserverOp::GetResponse(LSRequestResponse& aResponse) {
   if (!gPreparedObsevers) {
     gPreparedObsevers = new PreparedObserverHashtable();
   }
-  gPreparedObsevers->Put(observerId, std::move(observer));
+  gPreparedObsevers->InsertOrUpdate(observerId, std::move(observer));
 
   LSRequestPrepareObserverResponse prepareObserverResponse;
   prepareObserverResponse.observerId() = observerId;
@@ -7934,49 +7941,28 @@ bool ArchivedOriginScope::HasMatches(
   AssertIsOnIOThread();
   MOZ_ASSERT(aHashtable);
 
-  struct Matcher {
-    ArchivedOriginHashtable* mHashtable;
+  return mData.match(
+      [aHashtable](const Origin& aOrigin) {
+        const nsCString hashKey = GetArchivedOriginHashKey(
+            aOrigin.OriginSuffix(), aOrigin.OriginNoSuffix());
 
-    explicit Matcher(ArchivedOriginHashtable* aHashtable)
-        : mHashtable(aHashtable) {}
-
-    bool operator()(const Origin& aOrigin) {
-      nsCString hashKey = GetArchivedOriginHashKey(aOrigin.OriginSuffix(),
-                                                   aOrigin.OriginNoSuffix());
-
-      ArchivedOriginInfo* archivedOriginInfo;
-      return mHashtable->Get(hashKey, &archivedOriginInfo);
-    }
-
-    bool operator()(const Prefix& aPrefix) {
-      for (auto iter = mHashtable->ConstIter(); !iter.Done(); iter.Next()) {
-        const auto& archivedOriginInfo = iter.Data();
-
-        if (archivedOriginInfo->mOriginNoSuffix == aPrefix.OriginNoSuffix()) {
-          return true;
-        }
-      }
-
-      return false;
-    }
-
-    bool operator()(const Pattern& aPattern) {
-      for (auto iter = mHashtable->ConstIter(); !iter.Done(); iter.Next()) {
-        const auto& archivedOriginInfo = iter.Data();
-
-        if (aPattern.GetPattern().Matches(
-                archivedOriginInfo->mOriginAttributes)) {
-          return true;
-        }
-      }
-
-      return false;
-    }
-
-    bool operator()(const Null& aNull) { return mHashtable->Count(); }
-  };
-
-  return mData.match(Matcher(aHashtable));
+        return aHashtable->Contains(hashKey);
+      },
+      [aHashtable](const Pattern& aPattern) {
+        return std::any_of(aHashtable->cbegin(), aHashtable->cend(),
+                           [&aPattern](const auto& entry) {
+                             return aPattern.GetPattern().Matches(
+                                 entry.GetData()->mOriginAttributes);
+                           });
+      },
+      [aHashtable](const Prefix& aPrefix) {
+        return std::any_of(aHashtable->cbegin(), aHashtable->cend(),
+                           [&aPrefix](const auto& entry) {
+                             return entry.GetData()->mOriginNoSuffix ==
+                                    aPrefix.OriginNoSuffix();
+                           });
+      },
+      [aHashtable](const Null& aNull) { return !aHashtable->IsEmpty(); });
 }
 
 void ArchivedOriginScope::RemoveMatches(

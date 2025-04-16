@@ -58,7 +58,7 @@
 #include "nsCompatibility.h"
 #include "nsContentListDeclarations.h"
 #include "nsCycleCollectionParticipant.h"
-#include "nsDataHashtable.h"
+#include "nsTHashMap.h"
 #include "nsDebug.h"
 #include "nsExpirationTracker.h"
 #include "nsGkAtoms.h"
@@ -91,7 +91,6 @@
 #include "nsPropertyTable.h"
 #include "nsRefPtrHashtable.h"
 #include "nsString.h"
-#include "nsStubMutationObserver.h"
 #include "nsTArray.h"
 #include "nsTHashtable.h"
 #include "nsTLiteralString.h"
@@ -545,7 +544,6 @@ class Document : public nsINode,
                  public nsIRadioGroupContainer,
                  public nsIScriptObjectPrincipal,
                  public nsIApplicationCacheContainer,
-                 public nsStubMutationObserver,
                  public DispatcherTrait,
                  public SupportsWeakPtr {
   friend class DocumentOrShadowRoot;
@@ -651,6 +649,10 @@ class Document : public nsINode,
   // only designed to be used in very specific circumstances, such as when
   // inheriting the document/storage principal.
   nsIPrincipal* PartitionedPrincipal() final { return mPartitionedPrincipal; }
+
+  // Gets the appropriate principal to check the URI against a blocklist /
+  // allowlist.
+  nsIPrincipal* GetPrincipalForPrefBasedHacks() const;
 
   void ClearActiveStoragePrincipal() { mActiveStoragePrincipal = nullptr; }
 
@@ -1104,7 +1106,7 @@ class Document : public nsINode,
    * Return a promise which resolves to the content blocking events.
    */
   typedef MozPromise<uint32_t, bool, true> GetContentBlockingEventsPromise;
-  MOZ_MUST_USE RefPtr<GetContentBlockingEventsPromise>
+  [[nodiscard]] RefPtr<GetContentBlockingEventsPromise>
   GetContentBlockingEvents();
 
   /**
@@ -1621,7 +1623,7 @@ class Document : public nsINode,
   class SelectorCache final : public nsExpirationTracker<SelectorCacheKey, 4> {
    public:
     using SelectorList = UniquePtr<RawServoSelectorList>;
-    using Table = nsDataHashtable<nsCStringHashKey, SelectorList>;
+    using Table = nsTHashMap<nsCStringHashKey, SelectorList>;
 
     explicit SelectorCache(nsIEventTarget* aEventTarget);
     void NotifyExpired(SelectorCacheKey*) final;
@@ -1637,9 +1639,7 @@ class Document : public nsINode,
     RawServoSelectorList* GetListOrInsertFrom(const nsACString& aSelector,
                                               F&& aFrom) {
       MOZ_ASSERT(NS_IsMainThread());
-      return mTable.WithEntryHandle(aSelector, [&aFrom](auto&& entry) {
-        return entry.OrInsertWith(std::forward<F>(aFrom)).get();
-      });
+      return mTable.LookupOrInsertWith(aSelector, std::forward<F>(aFrom)).get();
     }
 
     ~SelectorCache();
@@ -2323,8 +2323,8 @@ class Document : public nsINode,
 
   /**
    * Check whether it is safe to cache the presentation of this document
-   * and all of its subdocuments. This method checks the following conditions
-   * recursively:
+   * and all of its subdocuments (depending on the 3rd param). This method
+   * checks the following conditions recursively:
    *  - Some document types, such as plugin documents, cannot be safely cached.
    *  - If there are any pending requests, we don't allow the presentation
    *    to be cached.  Ideally these requests would be suspended and resumed,
@@ -2342,7 +2342,8 @@ class Document : public nsINode,
    * combination is when we try to BFCache aNewRequest
    */
   virtual bool CanSavePresentation(nsIRequest* aNewRequest,
-                                   uint16_t& aBFCacheCombo);
+                                   uint16_t& aBFCacheCombo,
+                                   bool aIncludeSubdocuments);
 
   virtual nsresult Init();
 
@@ -3257,8 +3258,8 @@ class Document : public nsINode,
   static already_AddRefed<Document> Constructor(const GlobalObject& aGlobal,
                                                 ErrorResult& rv);
   DOMImplementation* GetImplementation(ErrorResult& rv);
-  MOZ_MUST_USE nsresult GetURL(nsString& retval) const;
-  MOZ_MUST_USE nsresult GetDocumentURI(nsString& retval) const;
+  [[nodiscard]] nsresult GetURL(nsString& retval) const;
+  [[nodiscard]] nsresult GetDocumentURI(nsString& retval) const;
   // Return the URI for the document.
   // The returned value may differ if the document is loaded via XHR, and
   // when accessed from chrome privileged script and
@@ -3398,8 +3399,8 @@ class Document : public nsINode,
 
   Element* GetTopLayerTop();
   // Return the fullscreen element in the top layer
-  Element* GetUnretargetedFullScreenElement();
-  bool Fullscreen() { return !!GetFullscreenElement(); }
+  Element* GetUnretargetedFullScreenElement() const;
+  bool Fullscreen() const { return !!GetUnretargetedFullScreenElement(); }
   already_AddRefed<Promise> ExitFullscreen(ErrorResult&);
   void ExitPointerLock() { PointerLockManager::Unlock(this); }
   void GetFgColor(nsAString& aFgColor);
@@ -3549,14 +3550,10 @@ class Document : public nsINode,
   void SetTooltipNode(nsINode* aNode) { /* do nothing */
   }
 
-  bool DontWarnAboutMutationEventsAndAllowSlowDOMMutations() {
-    return mDontWarnAboutMutationEventsAndAllowSlowDOMMutations;
+  bool DevToolsWatchingDOMMutations() const {
+    return mDevToolsWatchingDOMMutations;
   }
-  void SetDontWarnAboutMutationEventsAndAllowSlowDOMMutations(
-      bool aDontWarnAboutMutationEventsAndAllowSlowDOMMutations) {
-    mDontWarnAboutMutationEventsAndAllowSlowDOMMutations =
-        aDontWarnAboutMutationEventsAndAllowSlowDOMMutations;
-  }
+  void SetDevToolsWatchingDOMMutations(bool aValue);
 
   void MaybeWarnAboutZoom();
 
@@ -3776,6 +3773,24 @@ class Document : public nsINode,
 
   // Getter for PermissionDelegateHandler. Performs lazy initialization.
   PermissionDelegateHandler* GetPermissionDelegateHandler();
+
+  // Notify the document that a fetch or a XHR request has completed
+  // succesfully in this document. This is used by the password manager to infer
+  // whether a form is submitted.
+  void NotifyFetchOrXHRSuccess();
+
+  // Set whether NotifyFetchOrXHRSuccess should dispatch an event.
+  void SetNotifyFetchSuccess(bool aShouldNotify);
+
+  // When this is set, removing a form or a password field from DOM
+  // sends a Chrome-only event. This is now only used by the password manager.
+  void SetNotifyFormOrPasswordRemoved(bool aShouldNotify);
+
+  // This function is used by HTMLFormElement and HTMLInputElement to determin
+  // whether to send an event when it is removed from DOM.
+  bool ShouldNotifyFormOrPasswordRemoved() const {
+    return mShouldNotifyFormOrPasswordRemoved;
+  }
 
   /**
    * Localization
@@ -4223,7 +4238,7 @@ class Document : public nsINode,
   };
 
   // Mapping table from HTML command name to internal command.
-  typedef nsDataHashtable<nsStringCaseInsensitiveHashKey, InternalCommandData>
+  typedef nsTHashMap<nsStringCaseInsensitiveHashKey, InternalCommandData>
       InternalCommandDataHashtable;
   static InternalCommandDataHashtable* sInternalCommandDataHashtable;
 
@@ -4298,7 +4313,7 @@ class Document : public nsINode,
 
   typedef MozPromise<bool, bool, true>
       AutomaticStorageAccessPermissionGrantPromise;
-  MOZ_MUST_USE RefPtr<AutomaticStorageAccessPermissionGrantPromise>
+  [[nodiscard]] RefPtr<AutomaticStorageAccessPermissionGrantPromise>
   AutomaticStorageAccessPermissionCanBeGranted();
 
   static void AddToplevelLoadingDocument(Document* aDoc);
@@ -4325,13 +4340,6 @@ class Document : public nsINode,
   nsCOMPtr<nsIReferrerInfo> mCachedReferrerInfo;
 
   nsWeakPtr mDocumentLoadGroup;
-
-  bool mBlockAllMixedContent;
-  bool mBlockAllMixedContentPreloads;
-  bool mUpgradeInsecureRequests;
-  bool mUpgradeInsecurePreloads;
-
-  bool mDontWarnAboutMutationEventsAndAllowSlowDOMMutations;
 
   WeakPtr<nsDocShell> mDocumentContainer;
 
@@ -4429,6 +4437,12 @@ class Document : public nsINode,
   // Permission Delegate Handler, lazily-initialized in
   // GetPermissionDelegateHandler
   RefPtr<PermissionDelegateHandler> mPermissionDelegateHandler;
+
+  bool mBlockAllMixedContent : 1;
+  bool mBlockAllMixedContentPreloads : 1;
+  bool mUpgradeInsecureRequests : 1;
+  bool mUpgradeInsecurePreloads : 1;
+  bool mDevToolsWatchingDOMMutations : 1;
 
   // True if BIDI is enabled.
   bool mBidiEnabled : 1;
@@ -4843,7 +4857,7 @@ class Document : public nsINode,
   // A list of preconnects initiated by the preloader. This prevents
   // the same uri from being used more than once, and allows the dom
   // builder to not repeat the work of the preloader.
-  nsDataHashtable<nsURIHashKey, bool> mPreloadedPreconnects;
+  nsTHashMap<nsURIHashKey, bool> mPreloadedPreconnects;
 
   // Current depth of picture elements from parser
   uint32_t mPreloadPictureDepth;
@@ -5193,6 +5207,12 @@ class Document : public nsINode,
 
   // Scope preloads per document.  This is used by speculative loading as well.
   PreloadService mPreloadService;
+
+  // See NotifyFetchOrXHRSuccess and SetNotifyFetchSuccess.
+  bool mShouldNotifyFetchSuccess;
+
+  // See SetNotifyFormOrPasswordRemoved and ShouldNotifyFormOrPasswordRemoved.
+  bool mShouldNotifyFormOrPasswordRemoved;
 
   // Accumulate JS telemetry collected
   void AccumulateJSTelemetry();

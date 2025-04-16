@@ -1330,10 +1330,6 @@ certs-devices =
     .label = Security Devices…
     .accesskey = D
 
-space-alert-learn-more-button =
-    .label = Learn More
-    .accesskey = L
-
 space-alert-over-5gb-pref-button =
     .label =
         { PLATFORM() ->
@@ -1351,10 +1347,6 @@ space-alert-over-5gb-message =
         [windows] { -brand-short-name } is running out of disk space. Website contents may not display properly. You can clear stored data in Options > Privacy & Security > Cookies and Site Data.
        *[other] { -brand-short-name } is running out of disk space. Website contents may not display properly. You can clear stored data in Preferences > Privacy & Security > Cookies and Site Data.
     }
-
-space-alert-under-5gb-ok-button =
-    .label = OK, Got it
-    .accesskey = K
 
 space-alert-under-5gb-message = { -brand-short-name } is running out of disk space. Website contents may not display properly. Visit “Learn More” to optimize your disk usage for better browsing experience.
 

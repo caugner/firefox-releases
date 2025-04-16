@@ -67,7 +67,7 @@ nsHashPropertyBagBase::SetProperty(const nsAString& aName, nsIVariant* aValue) {
     return NS_ERROR_INVALID_ARG;
   }
 
-  mPropertyHash.Put(aName, aValue);
+  mPropertyHash.InsertOrUpdate(aName, aValue);
 
   return NS_OK;
 }
@@ -236,9 +236,8 @@ nsHashPropertyBagBase::SetPropertyAsInterface(const nsAString& aProp,
 }
 
 void nsHashPropertyBagBase::CopyFrom(const nsHashPropertyBagBase* aOther) {
-  for (auto iter = aOther->mPropertyHash.ConstIter(); !iter.Done();
-       iter.Next()) {
-    SetProperty(iter.Key(), iter.UserData());
+  for (const auto& entry : aOther->mPropertyHash) {
+    SetProperty(entry.GetKey(), entry.GetWeak());
   }
 }
 

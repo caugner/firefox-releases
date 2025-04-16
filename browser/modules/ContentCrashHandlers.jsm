@@ -409,11 +409,9 @@ var TabCrashHandler = {
 
     let buttons = [
       {
-        "l10n-id": "crashed-subframe-learnmore",
+        "l10n-id": "crashed-subframe-learnmore-link",
         popup: null,
-        callback: async () => {
-          doc.defaultView.openTrustedLinkIn(SUBFRAMECRASH_LEARNMORE_URI, "tab");
-        },
+        link: SUBFRAMECRASH_LEARNMORE_URI,
       },
       {
         "l10n-id": "crashed-subframe-submit",
@@ -612,11 +610,6 @@ var TabCrashHandler = {
    *        URL (String)
    *          The URL that the user was on in the crashed tab
    *          before the crash occurred.
-   *        emailMe (bool):
-   *          Whether or not to include the user's email address
-   *          in the crash report.
-   *        email (String):
-   *          The email address of the user.
    *        comments (String):
    *          Any additional comments from the user.
    *
@@ -653,11 +646,10 @@ var TabCrashHandler = {
       return;
     }
 
-    let { includeURL, comments, email, emailMe, URL } = message.data;
+    let { includeURL, comments, URL } = message.data;
 
     let extraExtraKeyVals = {
       Comments: comments,
-      Email: email,
       URL,
     };
 
@@ -684,12 +676,6 @@ var TabCrashHandler = {
 
     this.prefs.setBoolPref("sendReport", true);
     this.prefs.setBoolPref("includeURL", includeURL);
-    this.prefs.setBoolPref("emailMe", emailMe);
-    if (emailMe) {
-      this.prefs.setCharPref("email", email);
-    } else {
-      this.prefs.setCharPref("email", "");
-    }
 
     this.childMap.set(childID, null); // Avoid resubmission.
     this.removeSubmitCheckboxesForSameCrash(childID);
@@ -758,23 +744,15 @@ var TabCrashHandler = {
     }
 
     let requestAutoSubmit = !UnsubmittedCrashHandler.autoSubmit;
-    let requestEmail = this.prefs.getBoolPref("requestEmail");
     let sendReport = this.prefs.getBoolPref("sendReport");
     let includeURL = this.prefs.getBoolPref("includeURL");
-    let emailMe = this.prefs.getBoolPref("emailMe");
 
     let data = {
       hasReport: true,
       sendReport,
       includeURL,
-      emailMe,
       requestAutoSubmit,
-      requestEmail,
     };
-
-    if (emailMe) {
-      data.email = this.prefs.getCharPref("email");
-    }
 
     return data;
   },

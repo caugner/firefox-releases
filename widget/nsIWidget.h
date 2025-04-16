@@ -18,7 +18,6 @@
 #include "mozilla/RefPtr.h"
 #include "mozilla/TimeStamp.h"
 #include "mozilla/UniquePtr.h"
-#include "mozilla/dom/BindingDeclarations.h"
 #include "mozilla/gfx/Matrix.h"
 #include "mozilla/gfx/Rect.h"
 #include "mozilla/layers/LayersTypes.h"
@@ -27,7 +26,6 @@
 #include "mozilla/widget/IMEData.h"
 #include "nsCOMPtr.h"
 #include "nsColor.h"
-#include "nsDataHashtable.h"
 #include "nsDebug.h"
 #include "nsID.h"
 #include "nsIObserver.h"
@@ -39,6 +37,7 @@
 #include "nsSize.h"
 #include "nsStringFwd.h"
 #include "nsTArray.h"
+#include "nsTHashMap.h"
 #include "nsWidgetInitData.h"
 #include "nsXULAppAPI.h"
 
@@ -72,6 +71,7 @@ class Shmem;
 #endif  // defined(MOZ_WIDGET_ANDROID)
 namespace dom {
 class BrowserChild;
+enum class CallerType : uint32_t;
 }  // namespace dom
 namespace plugins {
 class PluginWidgetChild;
@@ -321,7 +321,7 @@ struct AutoObserverNotifier {
       return 0;
     }
     uint64_t observerId = ++sObserverId;
-    sSavedObservers.Put(observerId, mObserver);
+    sSavedObservers.InsertOrUpdate(observerId, mObserver);
     SkipNotification();
     return observerId;
   }
@@ -351,8 +351,7 @@ struct AutoObserverNotifier {
 
  private:
   static uint64_t sObserverId;
-  static nsDataHashtable<nsUint64HashKey, nsCOMPtr<nsIObserver>>
-      sSavedObservers;
+  static nsTHashMap<uint64_t, nsCOMPtr<nsIObserver>> sSavedObservers;
 };
 
 }  // namespace widget
@@ -1515,7 +1514,10 @@ class nsIWidget : public nsISupports {
       mozilla::WidgetGUIEvent* aEvent, int32_t aHorizontal,
       int32_t aVertical) = 0;
 
-  enum Modifiers {
+  // TODO: Make this an enum class with MOZ_MAKE_ENUM_CLASS_BITWISE_OPERATORS or
+  //       EnumSet class.
+  enum Modifiers : uint32_t {
+    NO_MODIFIERS = 0x00000000,
     CAPS_LOCK = 0x00000001,  // when CapsLock is active
     NUM_LOCK = 0x00000002,   // when NumLock is active
     SHIFT_L = 0x00000100,
@@ -1573,18 +1575,25 @@ class nsIWidget : public nsISupports {
    * z-order.
    * @param aPoint screen location of the mouse, in device
    * pixels, with origin at the top left
-   * @param aNativeMessage *platform-specific* event type (e.g. on Mac,
-   * NSEventTypeMouseMoved; on Windows, MOUSEEVENTF_MOVE, MOUSEEVENTF_LEFTDOWN
-   * etc)
-   * @param aModifierFlags *platform-specific* modifier flags (ignored
-   * on Windows)
+   * @param aNativeMessage abstract native message.
+   * @param aButton Mouse button defined by DOM UI Events.
+   * @param aModifierFlags Some values of nsIWidget::Modifiers.
+   *                       FYI: On Windows, Android and Headless widget on all
+   *                       platroms, this hasn't been handled yet.
    * @param aObserver the observer that will get notified once the events
    * have been dispatched.
    */
-  virtual nsresult SynthesizeNativeMouseEvent(LayoutDeviceIntPoint aPoint,
-                                              uint32_t aNativeMessage,
-                                              uint32_t aModifierFlags,
-                                              nsIObserver* aObserver) = 0;
+  enum class NativeMouseMessage : uint32_t {
+    ButtonDown,   // button down
+    ButtonUp,     // button up
+    Move,         // mouse cursor move
+    EnterWindow,  // mouse cursor comes into a window
+    LeaveWindow,  // mouse cursor leaves from a window
+  };
+  virtual nsresult SynthesizeNativeMouseEvent(
+      LayoutDeviceIntPoint aPoint, NativeMouseMessage aNativeMessage,
+      mozilla::MouseButton aButton, nsIWidget::Modifiers aModifierFlags,
+      nsIObserver* aObserver) = 0;
 
   /**
    * A shortcut to SynthesizeNativeMouseEvent, abstracting away the native
@@ -1690,6 +1699,11 @@ class nsIWidget : public nsISupports {
                                             bool aLongTap,
                                             nsIObserver* aObserver);
 
+  virtual nsresult SynthesizeNativePenInput(
+      uint32_t aPointerId, TouchPointerState aPointerState,
+      LayoutDeviceIntPoint aPoint, double aPressure, uint32_t aRotation,
+      int32_t aTiltX, int32_t aTiltY, nsIObserver* aObserver) = 0;
+
   /*
    * Cancels all active simulated touch input points and pending long taps.
    * Native widgets should track existing points such that they can clear the
@@ -1698,6 +1712,13 @@ class nsIWidget : public nsISupports {
    * sequence has been cleared.
    */
   virtual nsresult ClearNativeTouchSequence(nsIObserver* aObserver);
+
+  /*
+   * Send a native event as if the user double tapped the touchpad with two
+   * fingers.
+   */
+  virtual nsresult SynthesizeNativeTouchpadDoubleTap(
+      LayoutDeviceIntPoint aPoint, uint32_t aModifierFlags) = 0;
 
   virtual void StartAsyncScrollbarDrag(
       const AsyncDragMetrics& aDragMetrics) = 0;

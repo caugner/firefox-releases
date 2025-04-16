@@ -23,7 +23,7 @@ uint8_t GeckoModifiersForNodeAttribute(const nsString& modifiersAttribute);
 unsigned int MacModifiersForGeckoModifiers(uint8_t geckoModifiers);
 nsMenuBarX* GetHiddenWindowMenuBar();   // returned object is not retained
 NSMenuItem* GetStandardEditMenuItem();  // returned object is not retained
-bool NodeIsHiddenOrCollapsed(nsIContent* inContent);
+bool NodeIsHiddenOrCollapsed(nsIContent* aContent);
 int CalculateNativeInsertionPoint(nsMenuObjectX* aParent, nsMenuObjectX* aChild);
 
 // Find the menu item by following the path aLocationString from aRootMenu.
@@ -33,6 +33,15 @@ int CalculateNativeInsertionPoint(nsMenuObjectX* aParent, nsMenuObjectX* aChild)
 // app menu can be skipped during the search.
 NSMenuItem* NativeMenuItemWithLocation(NSMenu* aRootMenu, NSString* aLocationString,
                                        bool aIsMenuBar);
+
+// Traverse the menu tree and check that there are no cycles or NSMenu(Item) objects that are used
+// more than once. If inconsistencies are found, these functions crash the process.
+void CheckNativeMenuConsistency(NSMenu* aMenu);
+void CheckNativeMenuConsistency(NSMenuItem* aMenuItem);
+
+// Print out debugging information about the native menu tree structure.
+void DumpNativeMenu(NSMenu* aMenu);
+void DumpNativeMenuItem(NSMenuItem* aMenuItem);
 
 }  // namespace nsMenuUtilsX
 

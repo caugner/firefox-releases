@@ -32,6 +32,7 @@
 #include "xpc_make_class.h"
 #include "XPCWrapper.h"
 #include "Crypto.h"
+#include "mozilla/dom/AutoEntryScript.h"
 #include "mozilla/dom/BindingCallContext.h"
 #include "mozilla/dom/BindingUtils.h"
 #include "mozilla/dom/BlobBinding.h"
@@ -76,10 +77,8 @@
 #include "mozilla/dom/XMLSerializerBinding.h"
 #include "mozilla/dom/FormDataBinding.h"
 #include "mozilla/dom/nsCSPContext.h"
-#ifdef MOZ_GLEAN
-#  include "mozilla/glean/bindings/Glean.h"
-#  include "mozilla/glean/bindings/GleanPings.h"
-#endif
+#include "mozilla/glean/bindings/Glean.h"
+#include "mozilla/glean/bindings/GleanPings.h"
 #include "mozilla/BasePrincipal.h"
 #include "mozilla/DeferredFinalize.h"
 #include "mozilla/ExtensionPolicyService.h"
@@ -177,10 +176,11 @@ static bool SandboxDump(JSContext* cx, unsigned argc, Value* vp) {
     c++;
   }
 #endif
+  MOZ_LOG(nsContentUtils::DOMDumpLog(), mozilla::LogLevel::Debug,
+          ("[Sandbox.Dump] %s", cstr));
 #ifdef ANDROID
   __android_log_write(ANDROID_LOG_INFO, "GeckoDump", cstr);
 #endif
-
   fputs(cstr, stdout);
   fflush(stdout);
   args.rval().setBoolean(true);
@@ -914,12 +914,10 @@ bool xpc::GlobalProperties::Parse(JSContext* cx, JS::HandleObject obj) {
       indexedDB = true;
     } else if (JS_LinearStringEqualsLiteral(nameStr, "isSecureContext")) {
       isSecureContext = true;
-#ifdef MOZ_GLEAN
     } else if (JS_LinearStringEqualsLiteral(nameStr, "Glean")) {
       glean = true;
     } else if (JS_LinearStringEqualsLiteral(nameStr, "GleanPings")) {
       gleanPings = true;
-#endif
 #ifdef MOZ_WEBRTC
     } else if (JS_LinearStringEqualsLiteral(nameStr, "rtcIdentityProvider")) {
       rtcIdentityProvider = true;
@@ -1085,12 +1083,10 @@ bool xpc::GlobalProperties::DefineInXPCComponents(JSContext* cx,
   if (indexedDB && !IndexedDatabaseManager::DefineIndexedDB(cx, obj))
     return false;
 
-#ifdef MOZ_GLEAN
   if (glean && !mozilla::glean::Glean::DefineGlean(cx, obj)) return false;
   if (gleanPings && !mozilla::glean::GleanPings::DefineGleanPings(cx, obj)) {
     return false;
   }
-#endif
 
   return Define(cx, obj);
 }
@@ -1330,7 +1326,7 @@ nsresult xpc::CreateSandboxObject(JSContext* cx, MutableHandleValue vp,
         }
       }
 
-      ok = JS_SplicePrototype(cx, sandbox, options.proto);
+      ok = JS_SetPrototype(cx, sandbox, options.proto);
       if (!ok) {
         return NS_ERROR_XPC_UNEXPECTED;
       }

@@ -50,8 +50,8 @@ Object.defineProperty(exports, "initSandbox", ({
 
 var _initialization = __w_pdfjs_require__(1);
 
-const pdfjsVersion = '2.8.117';
-const pdfjsBuild = '3d80c21a8';
+const pdfjsVersion = '2.8.243';
+const pdfjsBuild = 'a16494135';
 
 /***/ }),
 /* 1 */
@@ -171,6 +171,10 @@ function initSandbox(params) {
   globalThis.style = _constants.Style;
   globalThis.trans = _constants.Trans;
   globalThis.zoomtype = _constants.ZoomType;
+  globalThis.ADBE = {
+    Reader_Value_Asked: true,
+    Viewer_Value_Asked: true
+  };
   const aform = new _aform.AForm(doc, app, util, color);
 
   for (const name of Object.getOwnPropertyNames(_aform.AForm.prototype)) {
@@ -517,6 +521,14 @@ class Field extends _pdf_object.PDFObject {
     }
   }
 
+  get bgColor() {
+    return this.fillColor;
+  }
+
+  set bgColor(color) {
+    this.fillColor = color;
+  }
+
   get numItems() {
     if (!this._isChoice) {
       throw new Error("Not a choice widget");
@@ -539,6 +551,14 @@ class Field extends _pdf_object.PDFObject {
     }
   }
 
+  get borderColor() {
+    return this.strokeColor;
+  }
+
+  set borderColor(color) {
+    this.strokeColor = color;
+  }
+
   get textColor() {
     return this._textColor;
   }
@@ -547,6 +567,14 @@ class Field extends _pdf_object.PDFObject {
     if (_color.Color._isValidColor(color)) {
       this._textColor = color;
     }
+  }
+
+  get fgColor() {
+    return this.textColor;
+  }
+
+  set fgColor(color) {
+    this.textColor = color;
   }
 
   get value() {
@@ -887,6 +915,10 @@ class RadioButtonField extends Field {
   }
 
   set value(value) {
+    if (value === null) {
+      this._value = "";
+    }
+
     const i = this.exportValues.indexOf(value);
 
     if (0 <= i && i < this._radioIds.length) {
@@ -1745,7 +1777,7 @@ class AForm {
         return;
       }
 
-      event.value += cMask.subString(value.length);
+      event.value += cMask.substring(value.length);
       return;
     }
 

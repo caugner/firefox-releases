@@ -48,6 +48,7 @@ extensions = [
     "recommonmark",
     "sphinx_copybutton",
     "sphinx_markdown_tables",
+    "sphinx_panels",
     "glean",
 ]
 
@@ -74,7 +75,6 @@ html_logo = os.path.join(
     topsrcdir, "browser/branding/nightly/content/firefox-wordmark.svg"
 )
 html_favicon = os.path.join(topsrcdir, "browser/branding/nightly/firefox.ico")
-html_js_files = ["https://cdnjs.cloudflare.com/ajax/libs/mermaid/8.9.1/mermaid.js"]
 
 exclude_patterns = ["_build", "_staging", "_venv"]
 pygments_style = "sphinx"

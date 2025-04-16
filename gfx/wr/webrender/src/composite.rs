@@ -5,7 +5,7 @@
 use api::{ColorF, YuvColorSpace, YuvFormat, ImageRendering, ExternalImageId, ImageBufferKind};
 use api::units::*;
 use api::ColorDepth;
-use crate::batch::{resolve_image};
+use crate::image_source::resolve_image;
 use euclid::Transform3D;
 use crate::gpu_cache::GpuCache;
 use crate::gpu_types::{ZBufferId, ZBufferIdGenerator};
@@ -85,6 +85,19 @@ pub enum CompositeSurfaceFormat {
     Yuv,
 }
 
+bitflags! {
+    /// Optional features that can be opted-out of when compositing,
+    /// possibly allowing a fast path to be selected.
+    pub struct CompositeFeatures: u8 {
+        // UV coordinates do not require clamping, for example because the
+        // entire texture is being composited.
+        const NO_UV_CLAMP = 1 << 0;
+        // The texture sample should not be modulated by a specified color.
+        const NO_COLOR_MODULATION = 1 << 1;
+    }
+}
+
+
 /// Describes the geometry and surface of a tile to be composited
 #[cfg_attr(feature = "capture", derive(Serialize))]
 #[cfg_attr(feature = "replay", derive(Deserialize))]
@@ -142,7 +155,6 @@ pub struct ExternalSurfaceDescriptor {
 #[derive(Debug, Copy, Clone)]
 pub struct ExternalPlaneDescriptor {
     pub texture: TextureSource,
-    pub texture_layer: i32,
     pub uv_rect: TexelRect,
 }
 
@@ -150,7 +162,6 @@ impl ExternalPlaneDescriptor {
     fn invalid() -> Self {
         ExternalPlaneDescriptor {
             texture: TextureSource::Invalid,
-            texture_layer: 0,
             uv_rect: TexelRect::invalid(),
         }
     }
@@ -767,7 +778,6 @@ impl CompositeState {
                 let plane = &mut planes[i];
                 *plane = ExternalPlaneDescriptor {
                     texture: cache_item.texture_id,
-                    texture_layer: cache_item.texture_layer,
                     uv_rect: cache_item.uv_rect.into(),
                 };
             }

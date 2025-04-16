@@ -259,9 +259,9 @@ mozilla::ipc::IPCResult SocketProcessChild::RecvInitSocketProcessBridgeParent(
     const ProcessId& aContentProcessId,
     Endpoint<mozilla::net::PSocketProcessBridgeParent>&& aEndpoint) {
   MOZ_ASSERT(NS_IsMainThread());
-  MOZ_ASSERT(!mSocketProcessBridgeParentMap.Get(aContentProcessId, nullptr));
+  MOZ_ASSERT(!mSocketProcessBridgeParentMap.Contains(aContentProcessId));
 
-  mSocketProcessBridgeParentMap.Put(
+  mSocketProcessBridgeParentMap.InsertOrUpdate(
       aContentProcessId, MakeRefPtr<SocketProcessBridgeParent>(
                              aContentProcessId, std::move(aEndpoint)));
   return IPC_OK();
@@ -429,7 +429,7 @@ void SocketProcessChild::AddDataBridgeToMap(
     uint64_t aChannelId, BackgroundDataBridgeParent* aActor) {
   ipc::AssertIsOnBackgroundThread();
   MutexAutoLock lock(mMutex);
-  mBackgroundDataBridgeMap.Put(aChannelId, aActor);
+  mBackgroundDataBridgeMap.InsertOrUpdate(aChannelId, RefPtr{aActor});
 }
 
 void SocketProcessChild::RemoveDataBridgeFromMap(uint64_t aChannelId) {
@@ -441,7 +441,7 @@ void SocketProcessChild::RemoveDataBridgeFromMap(uint64_t aChannelId) {
 Maybe<RefPtr<BackgroundDataBridgeParent>>
 SocketProcessChild::GetAndRemoveDataBridge(uint64_t aChannelId) {
   MutexAutoLock lock(mMutex);
-  return mBackgroundDataBridgeMap.GetAndRemove(aChannelId);
+  return mBackgroundDataBridgeMap.Extract(aChannelId);
 }
 
 mozilla::ipc::IPCResult SocketProcessChild::RecvClearSessionCache() {

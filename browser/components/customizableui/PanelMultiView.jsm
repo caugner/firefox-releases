@@ -120,7 +120,7 @@ XPCOMUtils.defineLazyGetter(this, "gBundle", function() {
 XPCOMUtils.defineLazyPreferenceGetter(
   this,
   "gProtonAppMenuEnabled",
-  "browser.proton.appmenu.enabled",
+  "browser.proton.enabled",
   false
 );
 
@@ -1382,10 +1382,14 @@ var PanelView = class extends AssociatedToNode {
       if (value) {
         // The back button has a label in it - we want to select
         // the label that's a direct child of the header.
-        header.querySelector(
-          ".panel-header > label > span"
-        ).textContent = value;
+        header.querySelector(".panel-header > h1 > span").textContent = value;
       } else {
+        if (
+          gProtonAppMenuEnabled &&
+          header.nextSibling.tagName == "toolbarseparator"
+        ) {
+          header.nextSibling.remove();
+        }
         header.remove();
       }
       return;
@@ -1414,15 +1418,18 @@ var PanelView = class extends AssociatedToNode {
       backButton.blur();
     });
 
-    let label = this.document.createXULElement("label");
+    let h1 = this.document.createElement("h1");
     let span = this.document.createElement("span");
     span.textContent = value;
-    label.appendChild(span);
+    h1.appendChild(span);
 
-    header.append(backButton, label);
+    header.append(backButton, h1);
     this.node.prepend(header);
 
-    if (gProtonAppMenuEnabled) {
+    if (
+      gProtonAppMenuEnabled &&
+      header.nextSibling.tagName != "toolbarseparator"
+    ) {
       let separator = this.document.createXULElement("toolbarseparator");
       this.node.insertBefore(separator, header.nextSibling);
     }

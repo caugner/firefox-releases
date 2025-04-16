@@ -1335,7 +1335,7 @@ void StorageDBThread::PendingOperations::Add(
     case DBOperation::opUpdateItem:
     case DBOperation::opRemoveItem:
       // Override any existing operation for the target (=scope+key).
-      mUpdates.Put(aOperation->Target(), std::move(aOperation));
+      mUpdates.InsertOrUpdate(aOperation->Target(), std::move(aOperation));
       break;
 
       // Clear operations
@@ -1372,14 +1372,14 @@ void StorageDBThread::PendingOperations::Add(
         iter.Remove();
       }
 
-      mClears.Put(aOperation->Target(), std::move(aOperation));
+      mClears.InsertOrUpdate(aOperation->Target(), std::move(aOperation));
       break;
 
     case DBOperation::opClearAll:
       // Drop simply everything, this is a super-operation.
       mUpdates.Clear();
       mClears.Clear();
-      mClears.Put(aOperation->Target(), std::move(aOperation));
+      mClears.InsertOrUpdate(aOperation->Target(), std::move(aOperation));
       break;
 
     default:
@@ -1414,7 +1414,10 @@ nsresult StorageDBThread::PendingOperations::Execute(StorageDBThread* aThread) {
 
   mozStorageTransaction transaction(aThread->mWorkerConnection, false);
 
-  nsresult rv;
+  nsresult rv = transaction.Start();
+  if (NS_FAILED(rv)) {
+    return rv;
+  }
 
   for (uint32_t i = 0; i < mExecList.Length(); ++i) {
     const auto& task = mExecList[i];

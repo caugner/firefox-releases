@@ -613,7 +613,7 @@ double PinchGestureInput::ComputeDeltaY(nsIWidget* aWidget) const {
   return (mPreviousSpan - 100.0) *
          (aWidget ? aWidget->GetDefaultScaleInternal() : 1.f);
 #else
-  // This calculation is based on what the Windows widget code does.
+  // This calculation is based on what the Windows and Linux widget code does.
   // Specifically, it creates a PinchGestureInput with |mCurrentSpan == 100.0 *
   // currentScale| and |mPreviousSpan == 100.0 * lastScale| where currentScale
   // is the scale from the current OS event and lastScale is the scale when the
@@ -625,12 +625,35 @@ double PinchGestureInput::ComputeDeltaY(nsIWidget* aWidget) const {
   // same formula as the macOS code
   // (|-100.0 * M * GetDefaultScaleInternal()|).
 
-  // XXX When we write the code for other platforms to do the same we'll need to
-  // make sure this calculation is reasonable.
-
   return (mPreviousSpan - mCurrentSpan) *
          (aWidget ? aWidget->GetDefaultScaleInternal() : 1.f);
 #endif
+}
+
+bool PinchGestureInput::SetLineOrPageDeltaY(nsIWidget* aWidget) {
+  double deltaY = ComputeDeltaY(aWidget);
+  if (deltaY == 0 && mType != PINCHGESTURE_END) {
+    return false;
+  }
+  gfx::IntPoint lineOrPageDelta = PinchGestureInput::GetIntegerDeltaForEvent(
+      (mType == PINCHGESTURE_START), 0, deltaY);
+  mLineOrPageDeltaY = lineOrPageDelta.y;
+  if (mLineOrPageDeltaY == 0) {
+    // For PINCHGESTURE_SCALE events, don't dispatch them. Note that the delta
+    // isn't lost; it remains in the accumulator in GetIntegerDeltaForEvent().
+    if (mType == PINCHGESTURE_SCALE) {
+      return false;
+    }
+    // We can't drop PINCHGESTURE_START, so instead set the event's
+    // mLineOrPageDeltaY to the smallest nonzero amount in the relevant
+    // direction.
+    if (mType == PINCHGESTURE_START) {
+      mLineOrPageDeltaY = (deltaY >= 0) ? 1 : -1;
+    }
+    // For PINCHGESTURE_END events, not dispatching a DOMMouseScroll for them is
+    // fine.
+  }
+  return true;
 }
 
 /* static */ gfx::IntPoint PinchGestureInput::GetIntegerDeltaForEvent(
@@ -672,6 +695,23 @@ bool TapGestureInput::TransformToLocal(
   }
   mLocalPoint = *point;
   return true;
+}
+
+WidgetSimpleGestureEvent TapGestureInput::ToWidgetEvent(
+    nsIWidget* aWidget) const {
+  WidgetSimpleGestureEvent event(true, eTapGesture, aWidget);
+
+  event.mTime = mTime;
+  event.mTimeStamp = mTimeStamp;
+  event.mLayersId = mLayersId;
+  event.mRefPoint = ViewAs<LayoutDevicePixel>(
+      mPoint,
+      PixelCastJustification::LayoutDeviceIsScreenForUntransformedEvent);
+  event.mButtons = 0;
+  event.mClickCount = 1;
+  event.mModifiers = modifiers;
+
+  return event;
 }
 
 ScrollWheelInput::ScrollWheelInput()

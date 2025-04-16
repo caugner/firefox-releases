@@ -45,7 +45,7 @@ class PendingFullscreenEvent;
 class PresShell;
 class RefreshDriverTimer;
 class Runnable;
-
+class Task;
 }  // namespace mozilla
 
 class nsRefreshDriver final : public mozilla::layers::TransactionIdAllocator,
@@ -321,20 +321,6 @@ class nsRefreshDriver final : public mozilla::layers::TransactionIdAllocator,
   void SetIsResizeSuppressed() { mResizeSuppressed = true; }
   bool IsResizeSuppressed() const { return mResizeSuppressed; }
 
-  /**
-   * The latest value of process-wide jank levels.
-   *
-   * For each i, sJankLevels[i] counts the number of times delivery of
-   * vsync to the main thread has been delayed by at least 2^i
-   * ms. This data structure has been designed to make it easy to
-   * determine how much jank has taken place between two instants in
-   * time.
-   *
-   * Return `false` if `aJank` needs to be grown to accomodate the
-   * data but we didn't have enough memory.
-   */
-  static bool GetJankLevels(mozilla::Vector<uint64_t>& aJank);
-
   // mozilla::layers::TransactionIdAllocator
   TransactionId GetTransactionId(bool aThrottle) override;
   TransactionId LastTransactionId() const override;
@@ -376,9 +362,8 @@ class nsRefreshDriver final : public mozilla::layers::TransactionIdAllocator,
    */
   static mozilla::Maybe<mozilla::TimeStamp> GetNextTickHint();
 
-  static void DispatchIdleRunnableAfterTickUnlessExists(nsIRunnable* aRunnable,
-                                                        uint32_t aDelay);
-  static void CancelIdleRunnable(nsIRunnable* aRunnable);
+  static void DispatchIdleTaskAfterTickUnlessExists(mozilla::Task* aTask);
+  static void CancelIdleTask(mozilla::Task* aTask);
 
   void NotifyDOMContentLoaded();
 
@@ -617,17 +602,6 @@ class nsRefreshDriver final : public mozilla::layers::TransactionIdAllocator,
   friend class mozilla::RefreshDriverTimer;
 
   static void Shutdown();
-
-  // `true` if we are currently in jank-critical mode.
-  //
-  // In jank-critical mode, any iteration of the event loop that takes
-  // more than 16ms to compute will cause an ongoing animation to miss
-  // frames.
-  //
-  // For simplicity, the current implementation assumes that we are
-  // in jank-critical mode if and only if the vsync driver has at least
-  // one observer.
-  static bool IsJankCritical();
 };
 
 #endif /* !defined(nsRefreshDriver_h_) */
