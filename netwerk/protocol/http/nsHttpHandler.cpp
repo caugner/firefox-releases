@@ -57,7 +57,6 @@
 #include "nsSocketTransportService2.h"
 #include "nsIOService.h"
 #include "nsISupportsPrimitives.h"
-#include "nsIX509CertDB.h"
 #include "nsIXULRuntime.h"
 #include "nsCharSeparatedTokenizer.h"
 #include "nsRFPService.h"
@@ -70,6 +69,7 @@
 #include "mozilla/net/SocketProcessParent.h"
 #include "mozilla/net/SocketProcessChild.h"
 #include "mozilla/ipc/URIUtils.h"
+#include "mozilla/glean/GleanMetrics.h"
 #include "mozilla/Telemetry.h"
 #include "mozilla/Unused.h"
 #include "mozilla/AntiTrackingRedirectHeuristic.h"
@@ -189,42 +189,6 @@ static bool IsRunningUnderUbuntuSnap() {
 //-----------------------------------------------------------------------------
 
 StaticRefPtr<nsHttpHandler> gHttpHandler;
-
-// Assume we have third party roots. This will be updated after
-// CheckThirdPartyRoots() is called.
-static Atomic<bool, Relaxed> sHasThirdPartyRoots(true);
-static Atomic<bool, Relaxed> sHasThirdPartyRootsChecked(false);
-
-class HasThirdPartyRootsCallback : public nsIAsyncBoolCallback {
- public:
-  NS_DECL_THREADSAFE_ISUPPORTS
-  NS_DECL_NSIASYNCBOOLCALLBACK
-
-  HasThirdPartyRootsCallback() = default;
-
- private:
-  virtual ~HasThirdPartyRootsCallback() = default;
-};
-
-NS_IMPL_ISUPPORTS(HasThirdPartyRootsCallback, nsIAsyncBoolCallback)
-
-NS_IMETHODIMP
-HasThirdPartyRootsCallback::OnResult(bool aResult) {
-  sHasThirdPartyRoots =
-      (xpc::IsInAutomation() || PR_GetEnv("XPCSHELL_TEST_PROFILE_DIR"))
-          ? StaticPrefs::
-                network_http_http3_has_third_party_roots_found_in_automation()
-          : aResult;
-  LOG(("nsHttpHandler::sHasThirdPartyRoots:%d", (bool)sHasThirdPartyRoots));
-  if (nsIOService::UseSocketProcess() && XRE_IsParentProcess()) {
-    RefPtr<SocketProcessParent> socketParent =
-        SocketProcessParent::GetSingleton();
-    if (socketParent) {
-      Unused << socketParent->SendHasThirdPartyRoots(sHasThirdPartyRoots);
-    }
-  }
-  return NS_OK;
-}
 
 /* static */
 already_AddRefed<nsHttpHandler> nsHttpHandler::GetInstance() {
@@ -388,16 +352,22 @@ nsresult nsHttpHandler::Init() {
 
   InitUserAgentComponents();
 
-  // This perference is only used in parent process.
+  // This preference is only used in parent process.
   if (!IsNeckoChild()) {
     mActiveTabPriority =
         Preferences::GetBool(HTTP_PREF("active_tab_priority"), true);
-    std::bitset<3> usageOfHTTPSRRPrefs;
-    usageOfHTTPSRRPrefs[0] = StaticPrefs::network_dns_upgrade_with_https_rr();
-    usageOfHTTPSRRPrefs[1] = StaticPrefs::network_dns_use_https_rr_as_altsvc();
-    usageOfHTTPSRRPrefs[2] = StaticPrefs::network_dns_echconfig_enabled();
-    Telemetry::ScalarSet(Telemetry::ScalarID::NETWORKING_HTTPS_RR_PREFS_USAGE,
-                         static_cast<uint32_t>(usageOfHTTPSRRPrefs.to_ulong()));
+    if (XRE_IsParentProcess()) {
+      std::bitset<3> usageOfHTTPSRRPrefs;
+      usageOfHTTPSRRPrefs[0] = StaticPrefs::network_dns_upgrade_with_https_rr();
+      usageOfHTTPSRRPrefs[1] =
+          StaticPrefs::network_dns_use_https_rr_as_altsvc();
+      usageOfHTTPSRRPrefs[2] = StaticPrefs::network_dns_echconfig_enabled();
+      glean::networking::https_rr_prefs_usage.Set(
+          static_cast<uint32_t>(usageOfHTTPSRRPrefs.to_ulong()));
+      glean::networking::http3_enabled.Set(
+          StaticPrefs::network_http_http3_enable());
+    }
+
     mActivityDistributor = components::HttpActivityDistributor::Service();
 
     auto initQLogDir = [&]() {
@@ -446,9 +416,6 @@ nsresult nsHttpHandler::Init() {
   Preferences::RegisterPrefixCallbacks(nsHttpHandler::PrefsChanged,
                                        gCallbackPrefs, this);
   PrefsChanged(nullptr);
-
-  Telemetry::ScalarSet(Telemetry::ScalarID::NETWORKING_HTTP3_ENABLED,
-                       StaticPrefs::network_http_http3_enable());
 
   mCompatFirefox.AssignLiteral("Firefox/" MOZILLA_UAVERSION);
 
@@ -590,29 +557,6 @@ void nsHttpHandler::UpdateParentalControlsEnabled(bool waitForCompletion) {
                                std::move(getParentalControlsTask)),
         mozilla::EventQueuePriority::Idle);
   }
-}
-
-// static
-void nsHttpHandler::CheckThirdPartyRoots() {
-  if (!StaticPrefs::network_http_http3_disable_when_third_party_roots_found() ||
-      sHasThirdPartyRootsChecked) {
-    return;
-  }
-
-  sHasThirdPartyRootsChecked = true;
-  nsCOMPtr<nsIX509CertDB> certDB = do_GetService(NS_X509CERTDB_CONTRACTID);
-  if (certDB) {
-    Unused << certDB->AsyncHasThirdPartyRoots(new HasThirdPartyRootsCallback());
-  }
-}
-
-// static
-void nsHttpHandler::SetHasThirdPartyRoots(bool aResult) {
-  LOG(("nsHttpHandler::SetHasThirdPartyRoots result=%d", aResult));
-  MOZ_ASSERT(XRE_IsSocketProcess());
-
-  sHasThirdPartyRootsChecked = true;
-  sHasThirdPartyRoots = aResult;
 }
 
 const nsCString& nsHttpHandler::Http3QlogDir() {
@@ -1940,8 +1884,8 @@ void nsHttpHandler::PrefsChanged(const char* pref) {
     nsCOMPtr<nsIFile> qlogDir;
     if (Preferences::GetBool(HTTP_PREF("http3.enable_qlog")) &&
         !mHttp3QlogDir.IsEmpty() &&
-        NS_SUCCEEDED(NS_NewNativeLocalFile(mHttp3QlogDir, false,
-                                           getter_AddRefs(qlogDir)))) {
+        NS_SUCCEEDED(
+            NS_NewNativeLocalFile(mHttp3QlogDir, getter_AddRefs(qlogDir)))) {
       // Here we do main thread IO, but since this only happens
       // when enabling a developer feature it's not a problem for users.
       rv = qlogDir->Create(nsIFile::DIRECTORY_TYPE, 0755);
@@ -2355,10 +2299,6 @@ nsHttpHandler::Observe(nsISupports* subject, const char* topic,
     ShutdownConnectionManager();
     mConnMgr = nullptr;
     Unused << InitConnectionMgr();
-  } else if (!strcmp(topic, "network:reset_third_party_roots_check")) {
-    sHasThirdPartyRoots = true;
-    sHasThirdPartyRootsChecked = false;
-    CheckThirdPartyRoots();
   }
 
   return NS_OK;
@@ -2766,10 +2706,7 @@ bool nsHttpHandler::IsHttp3Enabled() {
   static const uint32_t TLS3_PREF_VALUE = 4;
 
   return StaticPrefs::network_http_http3_enable() &&
-         (StaticPrefs::security_tls_version_max() >= TLS3_PREF_VALUE) &&
-         (StaticPrefs::network_http_http3_disable_when_third_party_roots_found()
-              ? !sHasThirdPartyRoots
-              : true);
+         (StaticPrefs::security_tls_version_max() >= TLS3_PREF_VALUE);
 }
 
 bool nsHttpHandler::IsHttp3VersionSupported(const nsACString& version) {
