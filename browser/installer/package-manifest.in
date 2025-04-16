@@ -212,6 +212,11 @@
 @BINPATH@/libGLESv2.dll
 #endif # MOZ_ANGLE_RENDERER
 
+#ifdef MOZ_DXCOMPILER
+@BINPATH@/@MOZ_DXC_DLL_NAME@
+@BINPATH@/@MOZ_DXIL_DLL_NAME@
+#endif
+
 ; [Browser Chrome Files]
 @RESPATH@/browser/chrome.manifest
 @RESPATH@/browser/chrome/browser@JAREXT@
@@ -282,6 +287,7 @@
 ; Style Sheets, Graphics and other Resources used by the layout engine.
 @RESPATH@/res/EditorOverride.css
 @RESPATH@/res/contenteditable.css
+@RESPATH@/res/designmode.css
 @RESPATH@/res/table-add-column-after-active.gif
 @RESPATH@/res/table-add-column-after-hover.gif
 @RESPATH@/res/table-add-column-after.gif
