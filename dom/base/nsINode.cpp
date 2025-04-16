@@ -420,7 +420,7 @@ Element* nsINode::GetAnonymousRootElementOfTextEditor(
   RefPtr<TextControlElement> textControlElement;
   if (IsInNativeAnonymousSubtree()) {
     textControlElement = TextControlElement::FromNodeOrNull(
-        GetClosestNativeAnonymousSubtreeRootParent());
+        GetClosestNativeAnonymousSubtreeRootParentOrHost());
   } else {
     textControlElement = TextControlElement::FromNode(this);
   }
@@ -472,15 +472,6 @@ nsIContent* nsINode::GetFirstChildOfTemplateOrNode() {
   }
 
   return GetFirstChild();
-}
-
-nsINode* nsINode::GetParentOrShadowHostNode() const {
-  if (mParent) {
-    return mParent;
-  }
-
-  const ShadowRoot* shadowRoot = ShadowRoot::FromNode(this);
-  return shadowRoot ? shadowRoot->GetHost() : nullptr;
 }
 
 nsINode* nsINode::SubtreeRoot() const {
@@ -648,6 +639,18 @@ void nsINode::GetTextContentInternal(nsAString& aTextContent,
   SetDOMStringToNull(aTextContent);
 }
 
+DocumentOrShadowRoot* nsINode::GetContainingDocumentOrShadowRoot() const {
+  if (IsInUncomposedDoc()) {
+    return OwnerDoc();
+  }
+
+  if (IsInShadowTree()) {
+    return AsContent()->GetContainingShadow();
+  }
+
+  return nullptr;
+}
+
 DocumentOrShadowRoot* nsINode::GetUncomposedDocOrConnectedShadowRoot() const {
   if (IsInUncomposedDoc()) {
     return OwnerDoc();
@@ -783,6 +786,11 @@ std::ostream& operator<<(std::ostream& aStream, const nsINode& aNode) {
 
   NS_ConvertUTF16toUTF8 str(elemDesc);
   return aStream << str.get();
+}
+
+nsIContent* nsINode::DoGetShadowHost() const {
+  MOZ_ASSERT(IsShadowRoot());
+  return static_cast<const ShadowRoot*>(this)->GetHost();
 }
 
 ShadowRoot* nsINode::GetContainingShadow() const {
@@ -3171,6 +3179,57 @@ Element* nsINode::GetParentFlexElement() {
   return nullptr;
 }
 
+Element* nsINode::GetNearestInclusiveOpenPopover() const {
+  for (auto* el : InclusiveFlatTreeAncestorsOfType<Element>()) {
+    if (el->IsAutoPopover() && el->IsPopoverOpen()) {
+      return el;
+    }
+  }
+  return nullptr;
+}
+
+Element* nsINode::GetNearestInclusiveTargetPopoverForInvoker() const {
+  for (auto* el : InclusiveFlatTreeAncestorsOfType<Element>()) {
+    if (auto* popover = el->GetEffectivePopoverTargetElement()) {
+      if (popover->IsAutoPopover() && popover->IsPopoverOpen()) {
+        return popover;
+      }
+    }
+  }
+  return nullptr;
+}
+
+Element* nsINode::GetEffectivePopoverTargetElement() const {
+  const auto* formControl =
+      nsGenericHTMLFormControlElementWithState::FromNode(this);
+  if (!formControl || !formControl->IsConceptButton() ||
+      formControl->IsDisabled() ||
+      (formControl->GetForm() && formControl->IsSubmitControl())) {
+    return nullptr;
+  }
+  if (auto* popover = nsGenericHTMLElement::FromNode(
+          formControl->GetPopoverTargetElement())) {
+    if (popover->GetPopoverState() != PopoverState::None) {
+      return popover;
+    }
+  }
+  return nullptr;
+}
+
+Element* nsINode::GetTopmostClickedPopover() const {
+  Element* clickedPopover = GetNearestInclusiveOpenPopover();
+  Element* invokedPopover = GetNearestInclusiveTargetPopoverForInvoker();
+  if (!clickedPopover) {
+    return invokedPopover;
+  }
+  for (Element* el : Reversed(clickedPopover->OwnerDoc()->AutoPopoverList())) {
+    if (el == clickedPopover || el == invokedPopover) {
+      return el;
+    }
+  }
+  return nullptr;
+}
+
 void nsINode::AddAnimationObserver(nsIAnimationObserver* aAnimationObserver) {
   AddMutationObserver(aAnimationObserver);
   OwnerDoc()->SetMayHaveAnimationObservers();
@@ -3328,6 +3387,9 @@ already_AddRefed<nsINode> nsINode::CloneAndAdopt(
         }
         if (elm->MayHaveFormSelectEventListener()) {
           window->SetHasFormSelectEventListeners();
+        }
+        if (elm->MayHaveTransitionEventListener()) {
+          window->SetHasTransitionEventListeners();
         }
       }
     }
@@ -3551,12 +3613,12 @@ nsINode* nsINode::GetFlattenedTreeParentNodeNonInline() const {
 
 ParentObject nsINode::GetParentObject() const {
   ParentObject p(OwnerDoc());
-  // Note that mReflectionScope is a no-op for chrome, and other places
-  // where we don't check this value.
-  if (ShouldUseNACScope(this)) {
-    p.mReflectionScope = ReflectionScope::NAC;
-  } else if (ShouldUseUAWidgetScope(this)) {
+  // Note that mReflectionScope is a no-op for chrome, and other places where we
+  // don't check this value.
+  if (ShouldUseUAWidgetScope(this)) {
     p.mReflectionScope = ReflectionScope::UAWidget;
+  } else if (ShouldUseNACScope(this)) {
+    p.mReflectionScope = ReflectionScope::NAC;
   }
   return p;
 }

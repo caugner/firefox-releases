@@ -130,6 +130,11 @@ void js::BaseScript::finalize(JS::GCContext* gcx) {
   // the script itself will not be marked as having bytecode.
   if (hasBytecode()) {
     JSScript* script = this->asJSScript();
+    JSRuntime* rt = gcx->runtime();
+
+    if (rt->hasJitRuntime() && rt->jitRuntime()->hasInterpreterEntryMap()) {
+      rt->jitRuntime()->getInterpreterEntryMap()->remove(script);
+    }
 
     if (coverage::IsLCovEnabled()) {
       coverage::CollectScriptCoverage(script, true);
@@ -1967,17 +1972,7 @@ bool ScriptSource::setDisplayURL(FrontendContext* fc, const char16_t* url) {
 
 bool ScriptSource::setDisplayURL(FrontendContext* fc,
                                  UniqueTwoByteChars&& url) {
-  if (hasDisplayURL()) {
-    // FIXME: filename() should be UTF-8 (bug 987069).
-    JSContext* maybeCx = fc->maybeCurrentJSContext();
-    if (maybeCx && !maybeCx->isHelperThreadContext()) {
-      if (!!WarnNumberLatin1(maybeCx, JSMSG_ALREADY_HAS_PRAGMA, filename(),
-                             "//# sourceURL")) {
-        return false;
-      }
-    }
-  }
-
+  MOZ_ASSERT(!hasDisplayURL());
   MOZ_ASSERT(url);
   if (url[0] == '\0') {
     return true;
@@ -2775,7 +2770,7 @@ void js::maybeUpdateWarmUpCount(JSScript* script) {
     ScriptFinalWarmUpCountMap::Ptr p = map->lookup(script);
     MOZ_ASSERT(p);
 
-    mozilla::Get<0>(p->value()) += script->jitScript()->warmUpCount();
+    std::get<0>(p->value()) += script->jitScript()->warmUpCount();
   }
 }
 
@@ -2789,8 +2784,8 @@ void js::maybeSpewScriptFinalWarmUpCount(JSScript* script) {
     ScriptFinalWarmUpCountMap::Ptr p = map->lookup(script);
     MOZ_ASSERT(p);
     auto& tuple = p->value();
-    uint32_t warmUpCount = mozilla::Get<0>(tuple);
-    SharedImmutableString& scriptName = mozilla::Get<1>(tuple);
+    uint32_t warmUpCount = std::get<0>(tuple);
+    SharedImmutableString& scriptName = std::get<1>(tuple);
 
     JSContext* cx = TlsContext.get();
     cx->spewer().enableSpewing();
@@ -2876,8 +2871,8 @@ void CopySpan(const SourceSpan& source, TargetSpan target) {
 js::UniquePtr<ImmutableScriptData> ImmutableScriptData::new_(
     FrontendContext* fc, uint32_t mainOffset, uint32_t nfixed, uint32_t nslots,
     GCThingIndex bodyScopeIndex, uint32_t numICEntries, bool isFunction,
-    uint16_t funLength, mozilla::Span<const jsbytecode> code,
-    mozilla::Span<const SrcNote> notes,
+    uint16_t funLength, uint16_t propertyCountEstimate,
+    mozilla::Span<const jsbytecode> code, mozilla::Span<const SrcNote> notes,
     mozilla::Span<const uint32_t> resumeOffsets,
     mozilla::Span<const ScopeNote> scopeNotes,
     mozilla::Span<const TryNote> tryNotes) {
@@ -2906,6 +2901,7 @@ js::UniquePtr<ImmutableScriptData> ImmutableScriptData::new_(
   data->nslots = nslots;
   data->bodyScopeIndex = bodyScopeIndex;
   data->numICEntries = numICEntries;
+  data->propertyCountEstimate = propertyCountEstimate;
 
   if (isFunction) {
     data->funLength = funLength;
@@ -3197,7 +3193,17 @@ void JSScript::updateJitCodeRaw(JSRuntime* rt) {
   } else if (hasBaselineScript()) {
     setJitCodeRaw(baselineScript()->method()->raw());
   } else if (hasJitScript() && js::jit::IsBaselineInterpreterEnabled()) {
-    setJitCodeRaw(rt->jitRuntime()->baselineInterpreter().codeRaw());
+    bool usingEntryTrampoline = false;
+    if (js::jit::JitOptions.emitInterpreterEntryTrampoline) {
+      auto p = rt->jitRuntime()->getInterpreterEntryMap()->lookup(this);
+      if (p) {
+        setJitCodeRaw(p->value().raw());
+        usingEntryTrampoline = true;
+      }
+    }
+    if (!usingEntryTrampoline) {
+      setJitCodeRaw(rt->jitRuntime()->baselineInterpreter().codeRaw());
+    }
   } else {
     setJitCodeRaw(rt->jitRuntime()->interpreterStub().value);
   }
@@ -3214,7 +3220,7 @@ bool JSScript::hasLoops() {
 }
 
 bool JSScript::mayReadFrameArgsDirectly() {
-  return needsArgsObj() || hasRest();
+  return needsArgsObj() || usesArgumentsIntrinsics() || hasRest();
 }
 
 void JSScript::resetWarmUpCounterToDelayIonCompilation() {

@@ -464,10 +464,6 @@ class JSString : public js::gc::CellWithLengthAndFlags {
 
   inline JSLinearString* ensureLinear(JSContext* cx);
 
-  static bool ensureLinear(JSContext* cx, JSString* str) {
-    return str->ensureLinear(cx) != nullptr;
-  }
-
   /* Type query and debug-checked casts */
 
   MOZ_ALWAYS_INLINE
@@ -613,7 +609,7 @@ class JSString : public js::gc::CellWithLengthAndFlags {
    *
    * Returns mozilla::Nothing on OOM.
    */
-  mozilla::Maybe<mozilla::Tuple<size_t, size_t>> encodeUTF8Partial(
+  mozilla::Maybe<std::tuple<size_t, size_t>> encodeUTF8Partial(
       const JS::AutoRequireNoGC& nogc, mozilla::Span<char> buffer) const;
 
  private:
@@ -846,6 +842,11 @@ class JSLinearString : public JSString {
   static inline JSLinearString* newValidLength(
       JSContext* cx, js::UniquePtr<CharT[], JS::FreePolicy> chars,
       size_t length, js::gc::InitialHeap heap);
+
+  // Convert a plain linear string to an extensible string. For testing. The
+  // caller must ensure that it is a plain or extensible string already, and
+  // that `capacity` is adequate.
+  JSExtensibleString& makeExtensible(size_t capacity);
 
   template <typename CharT>
   MOZ_ALWAYS_INLINE const CharT* nonInlineChars(

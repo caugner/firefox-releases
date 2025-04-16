@@ -1310,7 +1310,6 @@ void nsGlobalWindowInner::FreeInnerObjects() {
   if (mWindowGlobalChild && !mWindowGlobalChild->IsClosed()) {
     mWindowGlobalChild->Destroy();
   }
-  mWindowGlobalChild = nullptr;
 
   mIntlUtils = nullptr;
 
@@ -1628,20 +1627,22 @@ bool nsGlobalWindowInner::IsBlackForCC(bool aTracingNeeded) {
 // nsGlobalWindowInner::nsIScriptGlobalObject
 //*****************************************************************************
 
-bool nsGlobalWindowInner::ShouldResistFingerprinting() const {
+bool nsGlobalWindowInner::ShouldResistFingerprinting(
+    RFPTarget aTarget /* = RFPTarget::Unknown */) const {
   if (mDoc) {
-    return mDoc->ShouldResistFingerprinting();
+    return mDoc->ShouldResistFingerprinting(aTarget);
   }
   return nsContentUtils::ShouldResistFingerprinting(
       "If we do not have a document then we do not have any context"
-      "to make an informed RFP choice, so we fall back to the global pref");
+      "to make an informed RFP choice, so we fall back to the global pref",
+      aTarget);
 }
 
 OriginTrials nsGlobalWindowInner::Trials() const {
   return OriginTrials::FromWindow(this);
 }
 
-FontFaceSet* nsGlobalWindowInner::Fonts() {
+FontFaceSet* nsGlobalWindowInner::GetFonts() {
   if (mDoc) {
     return mDoc->Fonts();
   }
@@ -7615,7 +7616,7 @@ void nsGlobalWindowInner::FireOnNewGlobalObject() {
 
 #if defined(_WINDOWS_) && !defined(MOZ_WRAPPED_WINDOWS_H)
 #  pragma message( \
-      "wrapper failure reason: " MOZ_WINDOWS_WRAPPER_DISABLED_REASON)
+          "wrapper failure reason: " MOZ_WINDOWS_WRAPPER_DISABLED_REASON)
 #  error "Never include unwrapped windows.h in this file!"
 #endif
 
@@ -7930,6 +7931,7 @@ nsPIDOMWindowInner::nsPIDOMWindowInner(nsPIDOMWindowOuter* aOuterWindow,
       mMayHaveFormSelectEventListener(false),
       mMayHaveMouseEnterLeaveEventListener(false),
       mMayHavePointerEnterLeaveEventListener(false),
+      mMayHaveTransitionEventListener(false),
       mMayHaveBeforeInputEventListenerForTelemetry(false),
       mMutationObserverHasObservedNodeForTelemetry(false),
       mOuterWindow(aOuterWindow),

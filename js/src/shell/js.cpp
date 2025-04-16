@@ -4361,7 +4361,7 @@ static bool Sleep_fn(JSContext* cx, unsigned argc, Value* vp) {
     if (!ToNumber(cx, args[0], &t_secs)) {
       return false;
     }
-    if (mozilla::IsNaN(t_secs)) {
+    if (std::isnan(t_secs)) {
       JS_ReportErrorASCII(cx, "sleep interval is not a number");
       return false;
     }
@@ -4519,7 +4519,7 @@ static void CancelExecution(JSContext* cx) {
 }
 
 static bool SetTimeoutValue(JSContext* cx, double t) {
-  if (mozilla::IsNaN(t)) {
+  if (std::isnan(t)) {
     JS_ReportErrorASCII(cx, "timeout is not a number");
     return false;
   }
@@ -5436,7 +5436,7 @@ static bool DumpAST(JSContext* cx, const JS::ReadOnlyCompileOptions& options,
   if (goal == frontend::ParseGoal::Script) {
     pn = parser.parse();
   } else {
-    ModuleBuilder builder(cx, &fc, &parser);
+    ModuleBuilder builder(&fc, &parser);
 
     SourceExtent extent = SourceExtent::makeGlobalExtent(length);
     ModuleSharedContext modulesc(&fc, options, builder, extent);
@@ -5477,8 +5477,8 @@ template <typename Unit>
         srcBuf, ScopeKind::Global);
   } else {
     stencil = frontend::ParseModuleToExtensibleStencil(
-        cx, &fc, cx->stackLimitForCurrentPrincipal(), input.get(), &scopeCache,
-        srcBuf);
+        cx, &fc, cx->stackLimitForCurrentPrincipal(), cx->tempLifoAlloc(),
+        input.get(), &scopeCache, srcBuf);
   }
 
   if (!stencil) {
@@ -6706,6 +6706,13 @@ static bool NewGlobal(JSContext* cx, unsigned argc, Value* vp) {
     }
     if (v.isBoolean()) {
       creationOptions.setDefineSharedArrayBufferConstructor(v.toBoolean());
+    }
+
+    if (!JS_GetProperty(cx, opts, "shouldResistFingerprinting", &v)) {
+      return false;
+    }
+    if (v.isBoolean()) {
+      behaviors.setShouldResistFingerprinting(v.toBoolean());
     }
   }
 
@@ -9628,11 +9635,18 @@ static bool PrintEnumeratedHelp(JSContext* cx, HandleObject obj,
         }
       }
 
-      size_t ignored = 0;
-      if (!JSString::ensureLinear(cx, v.toString())) {
+      Rooted<JSString*> inputStr(cx, v.toString());
+      if (!inputStr->ensureLinear(cx)) {
         return false;
       }
-      Rooted<JSLinearString*> input(cx, &v.toString()->asLinear());
+
+      // Execute the regular expression in |regex|'s compartment.
+      AutoRealm ar(cx, regex);
+      if (!cx->compartment()->wrap(cx, &inputStr)) {
+        return false;
+      }
+      Rooted<JSLinearString*> input(cx, &inputStr->asLinear());
+      size_t ignored = 0;
       if (!ExecuteRegExpLegacy(cx, nullptr, regex, input, &ignored, true, &v)) {
         return false;
       }
@@ -11445,6 +11459,9 @@ bool InitOptionParser(OptionParser& op) {
       !op.addStringOption(
           '\0', "ion-optimize-shapeguards", "on/off",
           "Eliminate redundant shape guards (default: on, off to disable)") ||
+      !op.addStringOption(
+          '\0', "ion-optimize-gcbarriers", "on/off",
+          "Eliminate redundant GC barriers (default: on, off to disable)") ||
       !op.addStringOption('\0', "ion-iterator-indices", "on/off",
                           "Optimize property access in for-in loops "
                           "(default: on, off to disable)") ||
@@ -11464,6 +11481,8 @@ bool InitOptionParser(OptionParser& op) {
                         "Enable Watchtower optimizations") ||
       !op.addBoolOption('\0', "disable-watchtower",
                         "Disable Watchtower optimizations") ||
+      !op.addBoolOption('\0', "enable-ic-frame-pointers",
+                        "Use frame pointers in all IC stubs") ||
       !op.addBoolOption('\0', "scalar-replace-arguments",
                         "Use scalar replacement to optimize ArgumentsObject") ||
       !op.addStringOption(
@@ -11505,6 +11524,12 @@ bool InitOptionParser(OptionParser& op) {
       !op.addBoolOption('\0', "blinterp",
                         "Enable Baseline Interpreter (default)") ||
       !op.addBoolOption('\0', "no-blinterp", "Disable Baseline Interpreter") ||
+      !op.addBoolOption(
+          '\0', "emit-interpreter-entry",
+          "Emit Interpreter entry trampolines (default under --enable-perf)") ||
+      !op.addBoolOption(
+          '\0', "no-emit-interpreter-entry",
+          "Do not emit Interpreter entry trampolines (default).") ||
       !op.addBoolOption('\0', "blinterp-eager",
                         "Always Baseline-interpret scripts") ||
       !op.addIntOption(
@@ -12203,6 +12228,16 @@ bool SetContextJITOptions(JSContext* cx, const OptionParser& op) {
     }
   }
 
+  if (const char* str = op.getStringOption("ion-optimize-gcbarriers")) {
+    if (strcmp(str, "on") == 0) {
+      jit::JitOptions.disableRedundantGCBarriers = false;
+    } else if (strcmp(str, "off") == 0) {
+      jit::JitOptions.disableRedundantGCBarriers = true;
+    } else {
+      return OptionFailure("ion-optimize-gcbarriers", str);
+    }
+  }
+
   if (const char* str = op.getStringOption("ion-instruction-reordering")) {
     if (strcmp(str, "on") == 0) {
       jit::JitOptions.disableInstructionReordering = false;
@@ -12281,6 +12316,14 @@ bool SetContextJITOptions(JSContext* cx, const OptionParser& op) {
 
   if (op.getBoolOption("no-blinterp")) {
     jit::JitOptions.baselineInterpreter = false;
+  }
+
+  if (op.getBoolOption("emit-interpreter-entry")) {
+    jit::JitOptions.emitInterpreterEntryTrampoline = true;
+  }
+
+  if (op.getBoolOption("no-emit-interpreter-entry")) {
+    jit::JitOptions.emitInterpreterEntryTrampoline = false;
   }
 
   warmUpThreshold = op.getIntOption("blinterp-warmup-threshold");
@@ -12371,6 +12414,10 @@ bool SetContextJITOptions(JSContext* cx, const OptionParser& op) {
   }
   if (op.getBoolOption("only-inline-selfhosted")) {
     jit::JitOptions.onlyInlineSelfHosted = true;
+  }
+
+  if (op.getBoolOption("enable-ic-frame-pointers")) {
+    jit::JitOptions.enableICFramePointers = true;
   }
 
   if (const char* str = op.getStringOption("ion-iterator-indices")) {
