@@ -440,13 +440,20 @@ var ensureKnownRegion = async function(ss) {
 // Store the result of the geoip request as well as any other values and
 // telemetry which depend on it.
 function storeRegion(region) {
-  Services.prefs.setCharPref("browser.search.region", region);
-  // and telemetry...
   let isTimezoneUS = isUSTimezone();
+  // If it's a US region, but not a US timezone, we don't store the value.
+  // This works because no region defaults to ZZ (unknown) in nsURLFormatter
+  if (region != "US" || isTimezoneUS) {
+    Services.prefs.setCharPref("browser.search.region", region);
+  }
+
+  // and telemetry...
   if (region == "US" && !isTimezoneUS) {
+    LOG("storeRegion mismatch - US Region, non-US timezone");
     Services.telemetry.getHistogramById("SEARCH_SERVICE_US_COUNTRY_MISMATCHED_TIMEZONE").add(1);
   }
   if (region != "US" && isTimezoneUS) {
+    LOG("storeRegion mismatch - non-US Region, US timezone");
     Services.telemetry.getHistogramById("SEARCH_SERVICE_US_TIMEZONE_MISMATCHED_COUNTRY").add(1);
   }
   // telemetry to compare our geoip response with platform-specific country data.
@@ -3173,10 +3180,12 @@ SearchService.prototype = {
   _submissionURLIgnoreList: [
     "ignore=true",
     "hspart=lvs",
-    "form=CONBDF",
+    "pc=COSP",
     "clid=2308146",
-    "fr=mcafee",
+    "fr=mca",
     "PC=MC0",
+    "lavasoft.gosearchresults",
+    "securedsearch.lavasoft",
   ],
 
   _loadPathIgnoreList: [
@@ -3504,6 +3513,8 @@ SearchService.prototype = {
       return;
     }
 
+    let searchRegion = Services.prefs.getCharPref("browser.search.region", null);
+
     let searchSettings;
     let locale = Services.locale.appLocaleAsBCP47;
     if ("locales" in json &&
@@ -3536,6 +3547,12 @@ SearchService.prototype = {
         for (let engine of searchSettings[region].visibleDefaultEngines) {
           jarNames.add(engine);
         }
+        if ("regionOverrides" in json &&
+            searchRegion in json.regionOverrides) {
+          for (let engine in json.regionOverrides[searchRegion]) {
+            jarNames.add(json.regionOverrides[searchRegion][engine]);
+          }
+        }
       }
 
       engineNames = visibleDefaultEngines.split(",");
@@ -3557,11 +3574,6 @@ SearchService.prototype = {
           break;
         }
       }
-    }
-
-    let searchRegion;
-    if (Services.prefs.prefHasUserValue("browser.search.region")) {
-      searchRegion = Services.prefs.getCharPref("browser.search.region");
     }
 
     // Fallback to building a list based on the regions in the JSON
