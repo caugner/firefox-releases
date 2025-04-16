@@ -23,7 +23,6 @@
 #include "mozilla/BasePrincipal.h"
 #include "mozilla/StaticPrefs_network.h"
 #include "mozilla/Telemetry.h"
-#include "nsAlgorithm.h"
 #include "nsHttp.h"
 #include "nsHttpHandler.h"
 #include "nsHttpRequestHead.h"
@@ -1023,6 +1022,10 @@ void Http2StreamBase::UpdatePriority(Http2Session* session) {
          this));
 
     nsHttp::NotifyActiveTabLoadOptimization();
+  }
+
+  if (!StaticPrefs::network_http_http2_priority_updates()) {
+    return;
   }
 
   nsHttpTransaction* trans = HttpTransaction();

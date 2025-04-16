@@ -9,6 +9,7 @@ import android.hardware.camera2.CameraManager
 import androidx.compose.ui.test.junit4.AndroidComposeTestRule
 import androidx.core.net.toUri
 import androidx.test.espresso.Espresso
+import androidx.test.filters.SdkSuppress
 import mozilla.components.feature.sitepermissions.SitePermissionsRules
 import okhttp3.mockwebserver.MockWebServer
 import org.junit.After
@@ -34,6 +35,7 @@ import org.mozilla.fenix.helpers.MockBrowserDataHelper.setCustomSearchEngine
 import org.mozilla.fenix.helpers.SearchDispatcher
 import org.mozilla.fenix.helpers.TestAssetHelper
 import org.mozilla.fenix.helpers.TestHelper
+import org.mozilla.fenix.helpers.TestHelper.clickSnackbarButton
 import org.mozilla.fenix.helpers.TestHelper.exitMenu
 import org.mozilla.fenix.helpers.TestHelper.verifySnackBarText
 import org.mozilla.fenix.helpers.TestHelper.waitForAppWindowToBeUpdated
@@ -93,6 +95,7 @@ class SearchTest : TestSetup() {
     }
 
     // TestRail link: https://mozilla.testrail.io/index.php?/cases/view/2154189
+    @SdkSuppress(minSdkVersion = 34)
     @Test
     fun verifySearchBarItemsTest() {
         navigationToolbar {
@@ -285,6 +288,8 @@ class SearchTest : TestSetup() {
     @SmokeTest
     @Test
     fun searchResultsOpenedInNewTabsGenerateSearchGroupsTest() {
+        val firstPageUrl = TestAssetHelper.getGenericAsset(searchMockServer, 1).url
+        val secondPageUrl = TestAssetHelper.getGenericAsset(searchMockServer, 2).url
         val searchEngineName = "TestSearchEngine"
         // setting our custom mockWebServer search URL
         setCustomSearchEngine(searchMockServer, searchEngineName)
@@ -295,13 +300,13 @@ class SearchTest : TestSetup() {
         }.submitQuery(queryString) {
             longClickPageObject(MatcherHelper.itemWithText("Link 1"))
             clickContextMenuItem("Open link in new tab")
-            TestHelper.clickSnackbarButton("SWITCH")
-            waitForPageToLoad()
+            clickSnackbarButton(activityTestRule, "SWITCH")
+            verifyUrl(firstPageUrl.toString())
             Espresso.pressBack()
             longClickPageObject(MatcherHelper.itemWithText("Link 2"))
             clickContextMenuItem("Open link in new tab")
-            TestHelper.clickSnackbarButton("SWITCH")
-            waitForPageToLoad()
+            clickSnackbarButton(activityTestRule, "SWITCH")
+            verifyUrl(secondPageUrl.toString())
         }.openTabDrawer(activityTestRule) {
         }.openThreeDotMenu {
         }.closeAllTabs {
@@ -326,23 +331,23 @@ class SearchTest : TestSetup() {
         }.submitQuery(queryString) {
             longClickPageObject(MatcherHelper.itemWithText("Link 1"))
             clickContextMenuItem("Open link in new tab")
-            TestHelper.clickSnackbarButton("SWITCH")
-            waitForPageToLoad()
+            clickSnackbarButton(activityTestRule, "SWITCH")
+            verifyUrl(firstPageUrl.toString())
             Espresso.pressBack()
             longClickPageObject(MatcherHelper.itemWithText("Link 1"))
             clickContextMenuItem("Open link in new tab")
-            TestHelper.clickSnackbarButton("SWITCH")
-            waitForPageToLoad()
+            clickSnackbarButton(activityTestRule, "SWITCH")
+            verifyUrl(firstPageUrl.toString())
             Espresso.pressBack()
             longClickPageObject(MatcherHelper.itemWithText("Link 2"))
             clickContextMenuItem("Open link in new tab")
-            TestHelper.clickSnackbarButton("SWITCH")
-            waitForPageToLoad()
+            clickSnackbarButton(activityTestRule, "SWITCH")
+            verifyUrl(secondPageUrl.toString())
             Espresso.pressBack()
             longClickPageObject(MatcherHelper.itemWithText("Link 1"))
             clickContextMenuItem("Open link in new tab")
-            TestHelper.clickSnackbarButton("SWITCH")
-            waitForPageToLoad()
+            clickSnackbarButton(activityTestRule, "SWITCH")
+            verifyUrl(firstPageUrl.toString())
         }.openTabDrawer(activityTestRule) {
         }.openThreeDotMenu {
         }.closeAllTabs {
@@ -426,13 +431,13 @@ class SearchTest : TestSetup() {
         }.submitQuery(queryString) {
             longClickPageObject(MatcherHelper.itemWithText("Link 1"))
             clickContextMenuItem("Open link in new tab")
-            TestHelper.clickSnackbarButton("SWITCH")
-            waitForPageToLoad()
+            clickSnackbarButton(activityTestRule, "SWITCH")
+            verifyUrl(firstPageUrl.toString())
             TestHelper.mDevice.pressBack()
             longClickPageObject(MatcherHelper.itemWithText("Link 2"))
             clickContextMenuItem("Open link in new tab")
-            TestHelper.clickSnackbarButton("SWITCH")
-            waitForPageToLoad()
+            clickSnackbarButton(activityTestRule, "SWITCH")
+            verifyUrl(secondPageUrl.toString())
         }.openTabDrawer(activityTestRule) {
         }.openThreeDotMenu {
         }.closeAllTabs {
@@ -457,6 +462,7 @@ class SearchTest : TestSetup() {
     @Test
     fun deleteSearchGroupFromHomeScreenTest() {
         val firstPageUrl = TestAssetHelper.getGenericAsset(searchMockServer, 1).url
+        val secondPageUrl = TestAssetHelper.getGenericAsset(searchMockServer, 2).url
         // setting our custom mockWebServer search URL
         val searchEngineName = "TestSearchEngine"
         setCustomSearchEngine(searchMockServer, searchEngineName)
@@ -467,13 +473,13 @@ class SearchTest : TestSetup() {
         }.submitQuery(queryString) {
             longClickPageObject(MatcherHelper.itemWithText("Link 1"))
             clickContextMenuItem("Open link in new tab")
-            TestHelper.clickSnackbarButton("SWITCH")
-            waitForPageToLoad()
+            clickSnackbarButton(activityTestRule, "SWITCH")
+            verifyUrl(firstPageUrl.toString())
             TestHelper.mDevice.pressBack()
             longClickPageObject(MatcherHelper.itemWithText("Link 2"))
             clickContextMenuItem("Open link in new tab")
-            TestHelper.clickSnackbarButton("SWITCH")
-            waitForPageToLoad()
+            clickSnackbarButton(activityTestRule, "SWITCH")
+            verifyUrl(secondPageUrl.toString())
         }.openTabDrawer(activityTestRule) {
         }.openThreeDotMenu {
         }.closeAllTabs {
@@ -509,12 +515,13 @@ class SearchTest : TestSetup() {
         }.submitQuery(queryString) {
             longClickPageObject(MatcherHelper.itemWithText("Link 1"))
             clickContextMenuItem("Open link in new tab")
-            TestHelper.clickSnackbarButton("SWITCH")
-            waitForPageToLoad()
+            clickSnackbarButton(activityTestRule, "SWITCH")
+            verifyUrl(firstPageUrl.toString())
             TestHelper.mDevice.pressBack()
             longClickPageObject(MatcherHelper.itemWithText("Link 2"))
             clickContextMenuItem("Open link in new tab")
-            TestHelper.clickSnackbarButton("SWITCH")
+            clickSnackbarButton(activityTestRule, "SWITCH")
+            verifyUrl(secondPageUrl.toString())
             waitForPageToLoad()
         }.openTabDrawer(activityTestRule) {
         }.openThreeDotMenu {
@@ -545,6 +552,7 @@ class SearchTest : TestSetup() {
     @Test
     fun shareAPageFromHomeScreenSearchGroupTest() {
         val firstPageUrl = TestAssetHelper.getGenericAsset(searchMockServer, 1).url
+        val secondPageUrl = TestAssetHelper.getGenericAsset(searchMockServer, 2).url
         // setting our custom mockWebServer search URL
         val searchEngineName = "TestSearchEngine"
         setCustomSearchEngine(searchMockServer, searchEngineName)
@@ -555,13 +563,13 @@ class SearchTest : TestSetup() {
         }.submitQuery(queryString) {
             longClickPageObject(MatcherHelper.itemWithText("Link 1"))
             clickContextMenuItem("Open link in new tab")
-            TestHelper.clickSnackbarButton("SWITCH")
-            waitForPageToLoad()
+            clickSnackbarButton(activityTestRule, "SWITCH")
+            verifyUrl(firstPageUrl.toString())
             TestHelper.mDevice.pressBack()
             longClickPageObject(MatcherHelper.itemWithText("Link 2"))
             clickContextMenuItem("Open link in new tab")
-            TestHelper.clickSnackbarButton("SWITCH")
-            waitForPageToLoad()
+            clickSnackbarButton(activityTestRule, "SWITCH")
+            verifyUrl(secondPageUrl.toString())
         }.openTabDrawer(activityTestRule) {
         }.openThreeDotMenu {
         }.closeAllTabs {
@@ -716,6 +724,7 @@ class SearchTest : TestSetup() {
     }
 
     // TestRail link: https://mozilla.testrail.io/index.php?/cases/view/2154197
+    @SdkSuppress(minSdkVersion = 34)
     @Test
     fun verifyTabsSearchItemsTest() {
         navigationToolbar {
@@ -780,6 +789,7 @@ class SearchTest : TestSetup() {
     }
 
     // TestRail link: https://mozilla.testrail.io/index.php?/cases/view/2154203
+    @SdkSuppress(minSdkVersion = 34)
     @Test
     fun verifyBookmarksSearchItemsTest() {
         navigationToolbar {
@@ -832,6 +842,7 @@ class SearchTest : TestSetup() {
     }
 
     // TestRail link: https://mozilla.testrail.io/index.php?/cases/view/2154212
+    @SdkSuppress(minSdkVersion = 34)
     @Test
     fun verifyHistorySearchItemsTest() {
         navigationToolbar {

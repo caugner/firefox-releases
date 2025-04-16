@@ -73,6 +73,7 @@
 
 #ifdef XP_WIN
 #  include "mozilla/PreXULSkeletonUI.h"
+#  include "mozilla/WindowsVersion.h"
 #  include "nsIWindowsUIUtils.h"
 #endif
 
@@ -743,7 +744,9 @@ NS_IMETHODIMP AppWindow::Center(nsIAppWindow* aRelative, bool aScreen,
     return NS_OK;
   }
 
-  if (!aScreen && !aRelative) return NS_ERROR_INVALID_ARG;
+  if (!aScreen && !aRelative) {
+    return NS_ERROR_INVALID_ARG;
+  }
 
   nsCOMPtr<nsIScreenManager> screenmgr =
       do_GetService("@mozilla.org/gfx/screenmanager;1", &result);
@@ -1148,11 +1151,14 @@ static Maybe<int32_t> ReadIntAttribute(const Element& aElement,
 // to fit to the screen when staggering windows; if they're negative,
 // we use the window's current size instead.
 bool AppWindow::LoadPositionFromXUL(int32_t aSpecWidth, int32_t aSpecHeight) {
-  bool gotPosition = false;
-
   // if we're the hidden window, don't try to validate our size/position. We're
   // special.
   if (mIsHiddenWindow) {
+    return false;
+  }
+
+  // If we're not in the normal sizemode, don't move the window around.
+  if (mWindow->SizeMode() != nsSizeMode_Normal) {
     return false;
   }
 
@@ -1181,6 +1187,7 @@ bool AppWindow::LoadPositionFromXUL(int32_t aSpecWidth, int32_t aSpecHeight) {
 
   // Obtain the position information from the <xul:window> element.
   DesktopIntPoint specPoint = curPoint;
+  bool gotPosition = false;
 
   // Also read lowercase screenx/y because the front-end sometimes sets these
   // via setAttribute on HTML documents like about:blank, and stuff gets
@@ -1216,7 +1223,6 @@ bool AppWindow::LoadPositionFromXUL(int32_t aSpecWidth, int32_t aSpecHeight) {
   if (specPoint != curPoint) {
     SetPositionDesktopPix(specPoint.x, specPoint.y);
   }
-
   return gotPosition;
 }
 
@@ -1232,7 +1238,7 @@ static Maybe<int32_t> ReadSize(const Element& aElement, nsAtom* aAttr,
   int32_t max = ReadIntAttribute(aElement, aMaxAttr)
                     .valueOr(std::numeric_limits<int32_t>::max());
 
-  return Some(std::min(max, std::max(*attr, min)));
+  return Some(std::clamp(*attr, min, max));
 }
 
 bool AppWindow::LoadSizeFromXUL(int32_t& aSpecWidth, int32_t& aSpecHeight) {
@@ -1812,13 +1818,19 @@ nsresult AppWindow::MaybeSaveEarlyWindowPersistentValues(
   settings.rtlEnabled = intl::LocaleService::GetInstance()->IsAppLocaleRTL();
 
   bool isInTabletMode = false;
-  bool autoTouchModePref =
+  bool const autoTouchModePref =
       Preferences::GetBool("browser.touchmode.auto", false);
   if (autoTouchModePref) {
     nsCOMPtr<nsIWindowsUIUtils> uiUtils(
         do_GetService("@mozilla.org/windows-ui-utils;1"));
     if (!NS_WARN_IF(!uiUtils)) {
-      uiUtils->GetInTabletMode(&isInTabletMode);
+      // We switch to the touch-optimized layout in both Win10 and Win11 tablet-
+      // modes, since only the input mechanism is relevant. (See bug 1819421.)
+      if (IsWin11OrLater()) {
+        uiUtils->GetInWin11TabletMode(&isInTabletMode);
+      } else {
+        uiUtils->GetInWin10TabletMode(&isInTabletMode);
+      }
     }
   }
 
@@ -2870,7 +2882,7 @@ static bool sWaitingForHiddenWindowToLoadNativeMenus =
 #  endif
     ;
 
-static nsTArray<LoadNativeMenusListener> sLoadNativeMenusListeners;
+MOZ_RUNINIT static nsTArray<LoadNativeMenusListener> sLoadNativeMenusListeners;
 
 static void BeginLoadNativeMenus(Document* aDoc, nsIWidget* aParentWindow);
 
