@@ -440,9 +440,16 @@ void nsImageLoadingContent::MaybeResolveDecodePromises() {
   // before LOAD_COMPLETE because we want to start as soon as possible.
   uint32_t flags = imgIContainer::FLAG_HIGH_QUALITY_SCALING |
                    imgIContainer::FLAG_AVOID_REDECODE_FOR_SIZE;
-  if (!mCurrentRequest->RequestDecodeWithResult(flags)) {
+  imgIContainer::DecodeResult decodeResult =
+      mCurrentRequest->RequestDecodeWithResult(flags);
+  if (decodeResult == imgIContainer::DECODE_REQUESTED) {
     return;
   }
+  if (decodeResult == imgIContainer::DECODE_REQUEST_FAILED) {
+    RejectDecodePromises(NS_ERROR_DOM_IMAGE_BROKEN);
+    return;
+  }
+  MOZ_ASSERT(decodeResult == imgIContainer::DECODE_SURFACE_AVAILABLE);
 
   // We can only fulfill the promises once we have all the data.
   if (!(status & imgIRequest::STATUS_LOAD_COMPLETE)) {
@@ -970,8 +977,8 @@ nsImageLoadingContent::LoadImageWithChannel(nsIChannel* aChannel,
 
   // Do the load.
   RefPtr<imgRequestProxy>& req = PrepareNextRequest(eImageLoadType_Normal);
-  nsresult rv = loader->LoadImageWithChannel(aChannel, this, ToSupports(doc),
-                                             aListener, getter_AddRefs(req));
+  nsresult rv = loader->LoadImageWithChannel(aChannel, this, doc, aListener,
+                                             getter_AddRefs(req));
   if (NS_SUCCEEDED(rv)) {
     CloneScriptedRequests(req);
     TrackImage(req);
@@ -1230,12 +1237,17 @@ uint32_t nsImageLoadingContent::NaturalWidth() {
     mCurrentRequest->GetImage(getter_AddRefs(image));
   }
 
-  int32_t width;
-  if (image && NS_SUCCEEDED(image->GetWidth(&width))) {
-    return width;
+  int32_t size = 0;
+  if (image) {
+    if (image->GetOrientation().SwapsWidthAndHeight() &&
+        !image->HandledOrientation() &&
+        StaticPrefs::image_honor_orientation_metadata_natural_size()) {
+      Unused << image->GetHeight(&size);
+    } else {
+      Unused << image->GetWidth(&size);
+    }
   }
-
-  return 0;
+  return size;
 }
 
 uint32_t nsImageLoadingContent::NaturalHeight() {
@@ -1244,12 +1256,17 @@ uint32_t nsImageLoadingContent::NaturalHeight() {
     mCurrentRequest->GetImage(getter_AddRefs(image));
   }
 
-  int32_t height;
-  if (image && NS_SUCCEEDED(image->GetHeight(&height))) {
-    return height;
+  int32_t size = 0;
+  if (image) {
+    if (image->GetOrientation().SwapsWidthAndHeight() &&
+        !image->HandledOrientation() &&
+        StaticPrefs::image_honor_orientation_metadata_natural_size()) {
+      Unused << image->GetWidth(&size);
+    } else {
+      Unused << image->GetHeight(&size);
+    }
   }
-
-  return 0;
+  return size;
 }
 
 EventStates nsImageLoadingContent::ImageState() const {

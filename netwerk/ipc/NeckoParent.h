@@ -33,8 +33,7 @@ class NeckoParent : public PNeckoParent {
   NeckoParent();
   virtual ~NeckoParent() = default;
 
-  MOZ_MUST_USE
-  static const char* GetValidatedOriginAttributes(
+  [[nodiscard]] static const char* GetValidatedOriginAttributes(
       const SerializedLoadContext& aSerialized, PContentParent* aBrowser,
       nsIPrincipal* aRequestingPrincipal, mozilla::OriginAttributes& aAttrs);
 
@@ -45,8 +44,7 @@ class NeckoParent : public PNeckoParent {
    *
    * Returns null if successful, or an error string if failed.
    */
-  MOZ_MUST_USE
-  static const char* CreateChannelLoadContext(
+  [[nodiscard]] static const char* CreateChannelLoadContext(
       const PBrowserOrId& aBrowser, PContentParent* aContent,
       const SerializedLoadContext& aSerialized,
       nsIPrincipal* aRequestingPrincipal, nsCOMPtr<nsILoadContext>& aResult);
@@ -128,14 +126,11 @@ class NeckoParent : public PNeckoParent {
                                           const uint16_t& port);
 
   already_AddRefed<PDocumentChannelParent> AllocPDocumentChannelParent(
-      PBrowserParent* aBrowser,
       const dom::MaybeDiscarded<dom::BrowsingContext>& aContext,
-      const SerializedLoadContext& aSerialized,
       const DocumentChannelCreationArgs& args);
   virtual mozilla::ipc::IPCResult RecvPDocumentChannelConstructor(
-      PDocumentChannelParent* aActor, PBrowserParent* aBrowser,
+      PDocumentChannelParent* aActor,
       const dom::MaybeDiscarded<dom::BrowsingContext>& aContext,
-      const SerializedLoadContext& aSerialized,
       const DocumentChannelCreationArgs& aArgs) override;
   bool DeallocPDocumentChannelParent(PDocumentChannelParent* channel);
 
@@ -233,6 +228,10 @@ class NeckoParent : public PNeckoParent {
 
   mozilla::ipc::IPCResult RecvGetExtensionFD(nsIURI* aURI,
                                              GetExtensionFDResolver&& aResolve);
+
+  /* Page thumbnails remote resource loading */
+  mozilla::ipc::IPCResult RecvGetPageThumbStream(
+      nsIURI* aURI, GetPageThumbStreamResolver&& aResolve);
 
   PClassifierDummyChannelParent* AllocPClassifierDummyChannelParent(
       nsIURI* aURI, nsIURI* aTopWindowURI, const nsresult& aTopWindowURIResult,

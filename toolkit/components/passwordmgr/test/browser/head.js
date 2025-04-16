@@ -499,27 +499,12 @@ async function updateDoorhangerInputValues(
 
 // End popup notification (doorhanger) functions //
 
-async function waitForPasswordManagerDialog(openingFunc) {
-  let win;
-  await openingFunc();
-  await TestUtils.waitForCondition(() => {
-    win = Services.wm.getMostRecentWindow("Toolkit:PasswordManager");
-    return win && win.document.getElementById("filter");
-  }, "Waiting for the password manager dialog to open");
-
-  return {
-    filterValue: win.document.getElementById("filter").value,
-    async close() {
-      await BrowserTestUtils.closeWindow(win);
-    },
-  };
-}
-
-async function waitForPasswordManagerTab(openingFunc, waitForFilter) {
+async function openPasswordManager(openingFunc, waitForFilter) {
   info("waiting for new tab to open");
   let tabPromise = BrowserTestUtils.waitForNewTab(
     gBrowser,
-    url => url.includes("about:logins") && !url.includes("entryPoint=")
+    url => url.includes("about:logins") && !url.includes("entryPoint="),
+    true
   );
   await openingFunc();
   let tab = await tabPromise;
@@ -543,12 +528,6 @@ async function waitForPasswordManagerTab(openingFunc, waitForFilter) {
       BrowserTestUtils.removeTab(tab);
     },
   };
-}
-
-function openPasswordManager(openingFunc, waitForFilter) {
-  return Services.prefs.getCharPref("signon.management.overrideURI")
-    ? waitForPasswordManagerTab(openingFunc, waitForFilter)
-    : waitForPasswordManagerDialog(openingFunc);
 }
 
 // Autocomplete popup related functions //
@@ -771,15 +750,35 @@ async function changeContentInputValue(browser, selector, str) {
   }) {
     const EventUtils = ContentTaskUtils.getEventUtils(content);
     let input = content.document.querySelector(selector);
+
     input.focus();
-    input.select();
-    await EventUtils.synthesizeKey("KEY_Backspace", {}, content);
-    let changedPromise = ContentTaskUtils.waitForEvent(input, "change");
-    if (str) {
+    if (!str) {
+      input.select();
+      await EventUtils.synthesizeKey("KEY_Backspace", {}, content);
+    } else if (input.value.startsWith(str)) {
+      info(
+        `New string is substring of value: ${str.length}, ${input.value.length}`
+      );
+      input.setSelectionRange(str.length, input.value.length);
+      await EventUtils.synthesizeKey("KEY_Backspace", {}, content);
+    } else if (str.startsWith(input.value)) {
+      info(
+        `New string appends to value: ${input.value}, ${str.substring(
+          input.value.length
+        )}`
+      );
+      input.setSelectionRange(input.value.length, input.value.length);
+      await EventUtils.sendString(str.substring(input.value.length), content);
+    } else {
+      input.select();
       await EventUtils.sendString(str, content);
     }
+
+    let changedPromise = ContentTaskUtils.waitForEvent(input, "change");
     input.blur();
     await changedPromise;
+
+    is(str, input.value, `Expected value '${str}' is set on input`);
   });
   info("Input value changed");
   await TestUtils.waitForTick();

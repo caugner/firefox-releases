@@ -71,7 +71,7 @@ namespace {
 LazyLogModule gCubebLog("cubeb");
 
 void CubebLogCallback(const char* aFmt, ...) {
-  char buffer[256];
+  char buffer[1024];
 
   va_list arglist;
   va_start(arglist, aFmt);
@@ -338,6 +338,9 @@ uint32_t PreferredSampleRate() {
   if (sCubebForcedSampleRate) {
     return sCubebForcedSampleRate;
   }
+  if (StaticPrefs::privacy_resistFingerprinting()) {
+    return 44100;
+  }
   if (!InitPreferredSampleRate()) {
     return 44100;
   }
@@ -601,7 +604,7 @@ void InitLibrary() {
   }
 
 #ifndef MOZ_WIDGET_ANDROID
-  AbstractThread::MainThread()->Dispatch(
+  NS_DispatchToMainThread(
       NS_NewRunnableFunction("CubebUtils::InitLibrary", &InitBrandName));
 #endif
 #ifdef MOZ_CUBEB_REMOTING

@@ -3,10 +3,6 @@
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 const { Services } = ChromeUtils.import("resource://gre/modules/Services.jsm");
-const { Localization } = ChromeUtils.import(
-  "resource://gre/modules/Localization.jsm",
-  null
-);
 
 const mozIntlHelper = Cc["@mozilla.org/mozintlhelper;1"].getService(
   Ci.mozIMozIntlHelper
@@ -719,7 +715,7 @@ class MozIntl {
       let lcLangCode = langCode.toLowerCase();
       if (availableLocaleDisplayNames.language.has(lcLangCode)) {
         const value = loc.formatValueSync(`language-name-${lcLangCode}`);
-        if (value !== undefined) {
+        if (value !== null) {
           return value;
         }
       }
@@ -746,7 +742,7 @@ class MozIntl {
       let lcRegionCode = regionCode.toLowerCase();
       if (availableLocaleDisplayNames.region.has(lcRegionCode)) {
         const value = loc.formatValueSync(`region-name-${lcRegionCode}`);
-        if (value !== undefined) {
+        if (value !== null) {
           return value;
         }
       }

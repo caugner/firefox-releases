@@ -176,7 +176,7 @@ already_AddRefed<nsIContentSecurityPolicy> CSPInfoToCSP(
   nsresult stackResult;
   nsresult& rv = aOptionalResult ? *aOptionalResult : stackResult;
 
-  nsCOMPtr<nsIContentSecurityPolicy> csp = new nsCSPContext();
+  RefPtr<nsCSPContext> csp = new nsCSPContext();
 
   if (aRequestingDoc) {
     rv = csp->SetRequestContextWithDocument(aRequestingDoc);
@@ -207,13 +207,7 @@ already_AddRefed<nsIContentSecurityPolicy> CSPInfoToCSP(
   csp->SetSkipAllowInlineStyleCheck(aCSPInfo.skipAllowInlineStyleCheck());
 
   for (uint32_t i = 0; i < aCSPInfo.policyInfos().Length(); i++) {
-    const PolicyInfo& policyInfo = aCSPInfo.policyInfos()[i];
-    rv = csp->AppendPolicy(NS_ConvertUTF8toUTF16(policyInfo.policy()),
-                           policyInfo.reportOnly(),
-                           policyInfo.deliveredViaMetaTag());
-    if (NS_WARN_IF(NS_FAILED(rv))) {
-      return nullptr;
-    }
+    csp->AddIPCPolicy(aCSPInfo.policyInfos()[i]);
   }
   return csp.forget();
 }
@@ -227,16 +221,11 @@ nsresult CSPToCSPInfo(nsIContentSecurityPolicy* aCSP, CSPInfo* aCSPInfo) {
     return NS_ERROR_FAILURE;
   }
 
-  uint32_t count = 0;
-  nsresult rv = aCSP->GetPolicyCount(&count);
-  if (NS_WARN_IF(NS_FAILED(rv))) {
-    return rv;
-  }
-
   nsCOMPtr<nsIPrincipal> requestPrincipal = aCSP->GetRequestPrincipal();
 
   PrincipalInfo requestingPrincipalInfo;
-  rv = PrincipalToPrincipalInfo(requestPrincipal, &requestingPrincipalInfo);
+  nsresult rv =
+      PrincipalToPrincipalInfo(requestPrincipal, &requestingPrincipalInfo);
   if (NS_WARN_IF(NS_FAILED(rv))) {
     return rv;
   }
@@ -253,20 +242,11 @@ nsresult CSPToCSPInfo(nsIContentSecurityPolicy* aCSP, CSPInfo* aCSPInfo) {
   uint64_t windowID = aCSP->GetInnerWindowID();
   bool skipAllowInlineStyleCheck = aCSP->GetSkipAllowInlineStyleCheck();
 
-  nsTArray<PolicyInfo> policyInfos;
-  for (uint32_t i = 0; i < count; ++i) {
-    const nsCSPPolicy* policy = aCSP->GetPolicy(i);
-    MOZ_ASSERT(policy);
+  nsTArray<ContentSecurityPolicy> policies;
+  static_cast<nsCSPContext*>(aCSP)->SerializePolicies(policies);
 
-    nsAutoString policyString;
-    policy->toString(policyString);
-    policyInfos.AppendElement(PolicyInfo(NS_ConvertUTF16toUTF8(policyString),
-                                         policy->getReportOnlyFlag(),
-                                         policy->getDeliveredViaMetaTagFlag()));
-  }
-  *aCSPInfo =
-      CSPInfo(std::move(policyInfos), requestingPrincipalInfo, selfURISpec,
-              referrer, windowID, skipAllowInlineStyleCheck);
+  *aCSPInfo = CSPInfo(std::move(policies), requestingPrincipalInfo, selfURISpec,
+                      referrer, windowID, skipAllowInlineStyleCheck);
   return NS_OK;
 }
 
@@ -350,7 +330,7 @@ nsresult PrincipalToPrincipalInfo(nsIPrincipal* aPrincipal,
     baseDomain.SetIsVoid(true);
   } else {
     if (NS_FAILED(aPrincipal->GetBaseDomain(baseDomain))) {
-      NS_WARNING("Failed to get base domain!");
+      // No warning here. Some principal URLs do not have a base-domain.
       baseDomain.SetIsVoid(true);
     }
   }
@@ -361,7 +341,7 @@ nsresult PrincipalToPrincipalInfo(nsIPrincipal* aPrincipal,
   return NS_OK;
 }
 
-bool IsPincipalInfoPrivate(const PrincipalInfo& aPrincipalInfo) {
+bool IsPrincipalInfoPrivate(const PrincipalInfo& aPrincipalInfo) {
   if (aPrincipalInfo.type() != ipc::PrincipalInfo::TContentPrincipalInfo) {
     return false;
   }
@@ -411,12 +391,10 @@ nsresult LoadInfoToLoadInfoArgs(nsILoadInfo* aLoadInfo,
                                 Maybe<LoadInfoArgs>* aOptionalLoadInfoArgs) {
   nsresult rv = NS_OK;
   Maybe<PrincipalInfo> loadingPrincipalInfo;
-  if (aLoadInfo->LoadingPrincipal()) {
-    PrincipalInfo loadingPrincipalInfoTemp;
-    rv = PrincipalToPrincipalInfo(aLoadInfo->LoadingPrincipal(),
-                                  &loadingPrincipalInfoTemp);
+  if (nsIPrincipal* loadingPrin = aLoadInfo->GetLoadingPrincipal()) {
+    loadingPrincipalInfo.emplace();
+    rv = PrincipalToPrincipalInfo(loadingPrin, loadingPrincipalInfo.ptr());
     NS_ENSURE_SUCCESS(rv, rv);
-    loadingPrincipalInfo = Some(loadingPrincipalInfoTemp);
   }
 
   PrincipalInfo triggeringPrincipalInfo;
@@ -425,40 +403,33 @@ nsresult LoadInfoToLoadInfoArgs(nsILoadInfo* aLoadInfo,
   NS_ENSURE_SUCCESS(rv, rv);
 
   Maybe<PrincipalInfo> principalToInheritInfo;
-  if (aLoadInfo->PrincipalToInherit()) {
-    PrincipalInfo principalToInheritInfoTemp;
-    rv = PrincipalToPrincipalInfo(aLoadInfo->PrincipalToInherit(),
-                                  &principalToInheritInfoTemp);
+  if (nsIPrincipal* principalToInherit = aLoadInfo->PrincipalToInherit()) {
+    principalToInheritInfo.emplace();
+    rv = PrincipalToPrincipalInfo(principalToInherit,
+                                  principalToInheritInfo.ptr());
     NS_ENSURE_SUCCESS(rv, rv);
-    principalToInheritInfo = Some(principalToInheritInfoTemp);
   }
 
   Maybe<PrincipalInfo> sandboxedLoadingPrincipalInfo;
   if (aLoadInfo->GetLoadingSandboxed()) {
-    PrincipalInfo sandboxedLoadingPrincipalInfoTemp;
+    sandboxedLoadingPrincipalInfo.emplace();
     rv = PrincipalToPrincipalInfo(aLoadInfo->GetSandboxedLoadingPrincipal(),
-                                  &sandboxedLoadingPrincipalInfoTemp);
+                                  sandboxedLoadingPrincipalInfo.ptr());
     NS_ENSURE_SUCCESS(rv, rv);
-    sandboxedLoadingPrincipalInfo = Some(sandboxedLoadingPrincipalInfoTemp);
   }
 
   Maybe<PrincipalInfo> topLevelPrincipalInfo;
-  if (aLoadInfo->GetTopLevelPrincipal()) {
-    PrincipalInfo topLevelPrincipalInfoTemp;
-    rv = PrincipalToPrincipalInfo(aLoadInfo->GetTopLevelPrincipal(),
-                                  &topLevelPrincipalInfoTemp);
+  if (nsIPrincipal* topLevenPrin = aLoadInfo->GetTopLevelPrincipal()) {
+    topLevelPrincipalInfo.emplace();
+    rv = PrincipalToPrincipalInfo(topLevenPrin, topLevelPrincipalInfo.ptr());
     NS_ENSURE_SUCCESS(rv, rv);
-    topLevelPrincipalInfo = Some(topLevelPrincipalInfoTemp);
   }
 
   Maybe<PrincipalInfo> topLevelStorageAreaPrincipalInfo;
-  if (aLoadInfo->GetTopLevelStorageAreaPrincipal()) {
-    PrincipalInfo topLevelStorageAreaPrincipalInfoTemp;
-    rv = PrincipalToPrincipalInfo(aLoadInfo->GetTopLevelStorageAreaPrincipal(),
-                                  &topLevelStorageAreaPrincipalInfoTemp);
+  if (nsIPrincipal* prin = aLoadInfo->GetTopLevelStorageAreaPrincipal()) {
+    topLevelStorageAreaPrincipalInfo.emplace();
+    rv = PrincipalToPrincipalInfo(prin, topLevelStorageAreaPrincipalInfo.ptr());
     NS_ENSURE_SUCCESS(rv, rv);
-    topLevelStorageAreaPrincipalInfo =
-        Some(topLevelStorageAreaPrincipalInfoTemp);
   }
 
   Maybe<URIParams> optionalResultPrincipalURI;
@@ -575,6 +546,9 @@ nsresult LoadInfoToLoadInfoArgs(nsILoadInfo* aLoadInfo,
       aLoadInfo->GetAllowListFutureDocumentsCreatedFromThisRedirectChain(),
       cspNonce, aLoadInfo->GetSkipContentSniffing(),
       aLoadInfo->GetHttpsOnlyStatus(),
+      aLoadInfo->GetHasValidUserGestureActivation(),
+      aLoadInfo->GetAllowDeprecatedSystemRequests(),
+      aLoadInfo->GetParserCreatedScript(),
       aLoadInfo->GetIsFromProcessingFrameAttributes(), cookieJarSettingsArgs,
       aLoadInfo->GetRequestBlockingReason(), maybeCspToInheritInfo,
       aLoadInfo->GetHasStoragePermission()));
@@ -773,7 +747,10 @@ nsresult LoadInfoArgsToLoadInfo(
       loadInfoArgs.documentHasLoaded(),
       loadInfoArgs.allowListFutureDocumentsCreatedFromThisRedirectChain(),
       loadInfoArgs.cspNonce(), loadInfoArgs.skipContentSniffing(),
-      loadInfoArgs.httpsOnlyStatus(), loadInfoArgs.hasStoragePermission(),
+      loadInfoArgs.httpsOnlyStatus(),
+      loadInfoArgs.hasValidUserGestureActivation(),
+      loadInfoArgs.allowDeprecatedSystemRequests(),
+      loadInfoArgs.parserCreatedScript(), loadInfoArgs.hasStoragePermission(),
       loadInfoArgs.requestBlockingReason(), loadingContext);
 
   if (loadInfoArgs.isFromProcessingFrameAttributes()) {
@@ -812,6 +789,9 @@ void LoadInfoToParentLoadInfoForwarder(
       aLoadInfo->GetAllowInsecureRedirectToDataURI(),
       aLoadInfo->GetBypassCORSChecks(), ipcController, tainting,
       aLoadInfo->GetSkipContentSniffing(), aLoadInfo->GetHttpsOnlyStatus(),
+      aLoadInfo->GetHasValidUserGestureActivation(),
+      aLoadInfo->GetAllowDeprecatedSystemRequests(),
+      aLoadInfo->GetParserCreatedScript(),
       aLoadInfo->GetServiceWorkerTaintingSynthesized(),
       aLoadInfo->GetDocumentHasUserInteracted(),
       aLoadInfo->GetDocumentHasLoaded(),
@@ -848,6 +828,17 @@ nsresult MergeParentLoadInfoForwarder(
   NS_ENSURE_SUCCESS(rv, rv);
 
   rv = aLoadInfo->SetHttpsOnlyStatus(aForwarderArgs.httpsOnlyStatus());
+  NS_ENSURE_SUCCESS(rv, rv);
+
+  rv = aLoadInfo->SetHasValidUserGestureActivation(
+      aForwarderArgs.hasValidUserGestureActivation());
+  NS_ENSURE_SUCCESS(rv, rv);
+
+  rv = aLoadInfo->SetAllowDeprecatedSystemRequests(
+      aForwarderArgs.allowDeprecatedSystemRequests());
+  NS_ENSURE_SUCCESS(rv, rv);
+
+  rv = aLoadInfo->SetParserCreatedScript(aForwarderArgs.parserCreatedScript());
   NS_ENSURE_SUCCESS(rv, rv);
 
   MOZ_ALWAYS_SUCCEEDS(aLoadInfo->SetDocumentHasUserInteracted(

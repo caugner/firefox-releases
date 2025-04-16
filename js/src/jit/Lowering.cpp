@@ -1119,22 +1119,25 @@ void LIRGenerator::visitSameValue(MSameValue* ins) {
 void LIRGenerator::lowerBitOp(JSOp op, MBinaryBitwiseInstruction* ins) {
   MDefinition* lhs = ins->getOperand(0);
   MDefinition* rhs = ins->getOperand(1);
+  MOZ_ASSERT(IsIntType(ins->type()));
 
-  if (lhs->type() == MIRType::Int32) {
+  if (ins->type() == MIRType::Int32) {
+    MOZ_ASSERT(lhs->type() == MIRType::Int32);
     MOZ_ASSERT(rhs->type() == MIRType::Int32);
     ReorderCommutative(&lhs, &rhs, ins);
     lowerForALU(new (alloc()) LBitOpI(op), ins, lhs, rhs);
     return;
   }
 
-  if (lhs->type() == MIRType::Int64) {
+  if (ins->type() == MIRType::Int64) {
+    MOZ_ASSERT(lhs->type() == MIRType::Int64);
     MOZ_ASSERT(rhs->type() == MIRType::Int64);
     ReorderCommutative(&lhs, &rhs, ins);
     lowerForALUInt64(new (alloc()) LBitOpI64(op), ins, lhs, rhs);
     return;
   }
 
-  lowerBinaryV(op, ins);
+  MOZ_CRASH("Unhandled integer specialization");
 }
 
 void LIRGenerator::visitTypeOf(MTypeOf* ins) {
@@ -1162,14 +1165,13 @@ void LIRGenerator::visitToId(MToId* ins) {
 void LIRGenerator::visitBitNot(MBitNot* ins) {
   MDefinition* input = ins->getOperand(0);
 
-  if (input->type() == MIRType::Int32) {
+  if (ins->type() == MIRType::Int32) {
+    MOZ_ASSERT(input->type() == MIRType::Int32);
     lowerForALU(new (alloc()) LBitNotI(), ins, input);
     return;
   }
 
-  LBitNotV* lir = new (alloc()) LBitNotV(useBoxAtStart(input));
-  defineReturn(lir, ins);
-  assignSafepoint(lir, ins);
+  MOZ_CRASH("Unhandled integer specialization");
 }
 
 static bool CanEmitBitAndAtUses(MInstruction* ins) {
@@ -1221,14 +1223,18 @@ void LIRGenerator::lowerShiftOp(JSOp op, MShiftInstruction* ins) {
   MDefinition* lhs = ins->getOperand(0);
   MDefinition* rhs = ins->getOperand(1);
 
-  if (lhs->type() == MIRType::Int32) {
+  if (op == JSOp::Ursh && ins->type() == MIRType::Double) {
+    MOZ_ASSERT(lhs->type() == MIRType::Int32);
     MOZ_ASSERT(rhs->type() == MIRType::Int32);
+    lowerUrshD(ins->toUrsh());
+    return;
+  }
 
-    if (ins->type() == MIRType::Double) {
-      MOZ_ASSERT(op == JSOp::Ursh);
-      lowerUrshD(ins->toUrsh());
-      return;
-    }
+  MOZ_ASSERT(IsIntType(ins->type()));
+
+  if (ins->type() == MIRType::Int32) {
+    MOZ_ASSERT(lhs->type() == MIRType::Int32);
+    MOZ_ASSERT(rhs->type() == MIRType::Int32);
 
     LShiftI* lir = new (alloc()) LShiftI(op);
     if (op == JSOp::Ursh) {
@@ -1240,14 +1246,14 @@ void LIRGenerator::lowerShiftOp(JSOp op, MShiftInstruction* ins) {
     return;
   }
 
-  if (lhs->type() == MIRType::Int64) {
+  if (ins->type() == MIRType::Int64) {
+    MOZ_ASSERT(lhs->type() == MIRType::Int64);
     MOZ_ASSERT(rhs->type() == MIRType::Int64);
     lowerForShiftInt64(new (alloc()) LShiftI64(op), ins, lhs, rhs);
     return;
   }
 
-  MOZ_ASSERT(ins->specialization() == MIRType::None);
-  lowerBinaryV(op, ins);
+  MOZ_CRASH("Unhandled integer specialization");
 }
 
 void LIRGenerator::visitLsh(MLsh* ins) { lowerShiftOp(JSOp::Lsh, ins); }
@@ -1367,7 +1373,7 @@ void LIRGenerator::visitMinMax(MMinMax* ins) {
   ReorderCommutative(&first, &second, ins);
 
   LMinMaxBase* lir;
-  switch (ins->specialization()) {
+  switch (ins->type()) {
     case MIRType::Int32:
       lir = new (alloc())
           LMinMaxI(useRegisterAtStart(first), useRegisterOrConstant(second));
@@ -1519,22 +1525,12 @@ void LIRGenerator::visitHypot(MHypot* ins) {
 void LIRGenerator::visitPow(MPow* ins) {
   MDefinition* input = ins->input();
   MDefinition* power = ins->power();
-  LInstruction* lir;
-
-  if (ins->specialization() == MIRType::None) {
-    MOZ_ASSERT(input->type() == MIRType::Value);
-    MOZ_ASSERT(power->type() == MIRType::Value);
-
-    lir = new (alloc()) LPowV(useBoxAtStart(input), useBoxAtStart(power));
-    defineReturn(lir, ins);
-    assignSafepoint(lir, ins);
-    return;
-  }
 
   MOZ_ASSERT(input->type() == MIRType::Double);
   MOZ_ASSERT(power->type() == MIRType::Int32 ||
              power->type() == MIRType::Double);
 
+  LInstruction* lir;
   if (power->type() == MIRType::Int32) {
     // Note: useRegisterAtStart here is safe, the temp is a GP register so
     // it will never get the same register.
@@ -1622,8 +1618,9 @@ void LIRGenerator::visitAdd(MAdd* ins) {
   MDefinition* rhs = ins->getOperand(1);
 
   MOZ_ASSERT(lhs->type() == rhs->type());
+  MOZ_ASSERT(IsNumberType(ins->type()));
 
-  if (ins->specialization() == MIRType::Int32) {
+  if (ins->type() == MIRType::Int32) {
     MOZ_ASSERT(lhs->type() == MIRType::Int32);
     ReorderCommutative(&lhs, &rhs, ins);
     LAddI* lir = new (alloc()) LAddI;
@@ -1637,7 +1634,7 @@ void LIRGenerator::visitAdd(MAdd* ins) {
     return;
   }
 
-  if (ins->specialization() == MIRType::Int64) {
+  if (ins->type() == MIRType::Int64) {
     MOZ_ASSERT(lhs->type() == MIRType::Int64);
     ReorderCommutative(&lhs, &rhs, ins);
     LAddI64* lir = new (alloc()) LAddI64;
@@ -1645,21 +1642,21 @@ void LIRGenerator::visitAdd(MAdd* ins) {
     return;
   }
 
-  if (ins->specialization() == MIRType::Double) {
+  if (ins->type() == MIRType::Double) {
     MOZ_ASSERT(lhs->type() == MIRType::Double);
     ReorderCommutative(&lhs, &rhs, ins);
     lowerForFPU(new (alloc()) LMathD(JSOp::Add), ins, lhs, rhs);
     return;
   }
 
-  if (ins->specialization() == MIRType::Float32) {
+  if (ins->type() == MIRType::Float32) {
     MOZ_ASSERT(lhs->type() == MIRType::Float32);
     ReorderCommutative(&lhs, &rhs, ins);
     lowerForFPU(new (alloc()) LMathF(JSOp::Add), ins, lhs, rhs);
     return;
   }
 
-  lowerBinaryV(JSOp::Add, ins);
+  MOZ_CRASH("Unhandled number specialization");
 }
 
 void LIRGenerator::visitSub(MSub* ins) {
@@ -1667,8 +1664,9 @@ void LIRGenerator::visitSub(MSub* ins) {
   MDefinition* rhs = ins->rhs();
 
   MOZ_ASSERT(lhs->type() == rhs->type());
+  MOZ_ASSERT(IsNumberType(ins->type()));
 
-  if (ins->specialization() == MIRType::Int32) {
+  if (ins->type() == MIRType::Int32) {
     MOZ_ASSERT(lhs->type() == MIRType::Int32);
 
     LSubI* lir = new (alloc()) LSubI;
@@ -1681,34 +1679,35 @@ void LIRGenerator::visitSub(MSub* ins) {
     return;
   }
 
-  if (ins->specialization() == MIRType::Int64) {
+  if (ins->type() == MIRType::Int64) {
     MOZ_ASSERT(lhs->type() == MIRType::Int64);
     LSubI64* lir = new (alloc()) LSubI64;
     lowerForALUInt64(lir, ins, lhs, rhs);
     return;
   }
 
-  if (ins->specialization() == MIRType::Double) {
+  if (ins->type() == MIRType::Double) {
     MOZ_ASSERT(lhs->type() == MIRType::Double);
     lowerForFPU(new (alloc()) LMathD(JSOp::Sub), ins, lhs, rhs);
     return;
   }
 
-  if (ins->specialization() == MIRType::Float32) {
+  if (ins->type() == MIRType::Float32) {
     MOZ_ASSERT(lhs->type() == MIRType::Float32);
     lowerForFPU(new (alloc()) LMathF(JSOp::Sub), ins, lhs, rhs);
     return;
   }
 
-  lowerBinaryV(JSOp::Sub, ins);
+  MOZ_CRASH("Unhandled number specialization");
 }
 
 void LIRGenerator::visitMul(MMul* ins) {
   MDefinition* lhs = ins->lhs();
   MDefinition* rhs = ins->rhs();
   MOZ_ASSERT(lhs->type() == rhs->type());
+  MOZ_ASSERT(IsNumberType(ins->type()));
 
-  if (ins->specialization() == MIRType::Int32) {
+  if (ins->type() == MIRType::Int32) {
     MOZ_ASSERT(lhs->type() == MIRType::Int32);
     ReorderCommutative(&lhs, &rhs, ins);
 
@@ -1723,7 +1722,7 @@ void LIRGenerator::visitMul(MMul* ins) {
     return;
   }
 
-  if (ins->specialization() == MIRType::Int64) {
+  if (ins->type() == MIRType::Int64) {
     MOZ_ASSERT(lhs->type() == MIRType::Int64);
     ReorderCommutative(&lhs, &rhs, ins);
     LMulI64* lir = new (alloc()) LMulI64;
@@ -1731,7 +1730,7 @@ void LIRGenerator::visitMul(MMul* ins) {
     return;
   }
 
-  if (ins->specialization() == MIRType::Double) {
+  if (ins->type() == MIRType::Double) {
     MOZ_ASSERT(lhs->type() == MIRType::Double);
     ReorderCommutative(&lhs, &rhs, ins);
 
@@ -1745,7 +1744,7 @@ void LIRGenerator::visitMul(MMul* ins) {
     return;
   }
 
-  if (ins->specialization() == MIRType::Float32) {
+  if (ins->type() == MIRType::Float32) {
     MOZ_ASSERT(lhs->type() == MIRType::Float32);
     ReorderCommutative(&lhs, &rhs, ins);
 
@@ -1759,59 +1758,61 @@ void LIRGenerator::visitMul(MMul* ins) {
     return;
   }
 
-  lowerBinaryV(JSOp::Mul, ins);
+  MOZ_CRASH("Unhandled number specialization");
 }
 
 void LIRGenerator::visitDiv(MDiv* ins) {
   MDefinition* lhs = ins->lhs();
   MDefinition* rhs = ins->rhs();
   MOZ_ASSERT(lhs->type() == rhs->type());
+  MOZ_ASSERT(IsNumberType(ins->type()));
 
-  if (ins->specialization() == MIRType::Int32) {
+  if (ins->type() == MIRType::Int32) {
     MOZ_ASSERT(lhs->type() == MIRType::Int32);
     lowerDivI(ins);
     return;
   }
 
-  if (ins->specialization() == MIRType::Int64) {
+  if (ins->type() == MIRType::Int64) {
     MOZ_ASSERT(lhs->type() == MIRType::Int64);
     lowerDivI64(ins);
     return;
   }
 
-  if (ins->specialization() == MIRType::Double) {
+  if (ins->type() == MIRType::Double) {
     MOZ_ASSERT(lhs->type() == MIRType::Double);
     lowerForFPU(new (alloc()) LMathD(JSOp::Div), ins, lhs, rhs);
     return;
   }
 
-  if (ins->specialization() == MIRType::Float32) {
+  if (ins->type() == MIRType::Float32) {
     MOZ_ASSERT(lhs->type() == MIRType::Float32);
     lowerForFPU(new (alloc()) LMathF(JSOp::Div), ins, lhs, rhs);
     return;
   }
 
-  lowerBinaryV(JSOp::Div, ins);
+  MOZ_CRASH("Unhandled number specialization");
 }
 
 void LIRGenerator::visitMod(MMod* ins) {
   MOZ_ASSERT(ins->lhs()->type() == ins->rhs()->type());
+  MOZ_ASSERT(IsNumberType(ins->type()));
 
-  if (ins->specialization() == MIRType::Int32) {
+  if (ins->type() == MIRType::Int32) {
     MOZ_ASSERT(ins->type() == MIRType::Int32);
     MOZ_ASSERT(ins->lhs()->type() == MIRType::Int32);
     lowerModI(ins);
     return;
   }
 
-  if (ins->specialization() == MIRType::Int64) {
+  if (ins->type() == MIRType::Int64) {
     MOZ_ASSERT(ins->type() == MIRType::Int64);
     MOZ_ASSERT(ins->lhs()->type() == MIRType::Int64);
     lowerModI64(ins);
     return;
   }
 
-  if (ins->specialization() == MIRType::Double) {
+  if (ins->type() == MIRType::Double) {
     MOZ_ASSERT(ins->type() == MIRType::Double);
     MOZ_ASSERT(ins->lhs()->type() == MIRType::Double);
     MOZ_ASSERT(ins->rhs()->type() == MIRType::Double);
@@ -1828,20 +1829,7 @@ void LIRGenerator::visitMod(MMod* ins) {
     return;
   }
 
-  lowerBinaryV(JSOp::Mod, ins);
-}
-
-void LIRGenerator::lowerBinaryV(JSOp op, MBinaryInstruction* ins) {
-  MDefinition* lhs = ins->getOperand(0);
-  MDefinition* rhs = ins->getOperand(1);
-
-  MOZ_ASSERT(lhs->type() == MIRType::Value);
-  MOZ_ASSERT(rhs->type() == MIRType::Value);
-
-  LBinaryV* lir =
-      new (alloc()) LBinaryV(op, useBoxAtStart(lhs), useBoxAtStart(rhs));
-  defineReturn(lir, ins);
-  assignSafepoint(lir, ins);
+  MOZ_CRASH("Unhandled number specialization");
 }
 
 void LIRGenerator::visitConcat(MConcat* ins) {
@@ -2161,20 +2149,6 @@ void LIRGenerator::visitToIntegerInt32(MToIntegerInt32* convert) {
     default:
       MOZ_CRASH("unexpected type");
   }
-}
-
-void LIRGenerator::visitToNumeric(MToNumeric* ins) {
-  MOZ_ASSERT(ins->input()->type() == MIRType::Value);
-  LToNumeric* lir = new (alloc()) LToNumeric(useBoxAtStart(ins->input()));
-  defineBox(lir, ins);
-  assignSafepoint(lir, ins);
-}
-
-void LIRGenerator::visitToNumber(MToNumber* ins) {
-  MOZ_ASSERT(ins->input()->type() == MIRType::Value);
-  LToNumber* lir = new (alloc()) LToNumber(useBoxAtStart(ins->input()));
-  defineBox(lir, ins);
-  assignSafepoint(lir, ins);
 }
 
 void LIRGenerator::visitTruncateToInt32(MTruncateToInt32* truncate) {
@@ -3118,7 +3092,7 @@ void LIRGenerator::visitInArray(MInArray* ins) {
 }
 
 void LIRGenerator::visitLoadElement(MLoadElement* ins) {
-  MOZ_ASSERT(IsValidElementsType(ins->elements(), ins->offsetAdjustment()));
+  MOZ_ASSERT(ins->elements()->type() == MIRType::Elements);
   MOZ_ASSERT(ins->index()->type() == MIRType::Int32);
 
   switch (ins->type()) {
@@ -3236,7 +3210,7 @@ void LIRGenerator::visitLoadElementFromState(MLoadElementFromState* ins) {
 }
 
 void LIRGenerator::visitStoreElement(MStoreElement* ins) {
-  MOZ_ASSERT(IsValidElementsType(ins->elements(), ins->offsetAdjustment()));
+  MOZ_ASSERT(ins->elements()->type() == MIRType::Elements);
   MOZ_ASSERT(ins->index()->type() == MIRType::Int32);
 
   const LUse elements = useRegister(ins->elements());
@@ -3436,7 +3410,7 @@ void LIRGenerator::visitStringSplit(MStringSplit* ins) {
 }
 
 void LIRGenerator::visitLoadUnboxedScalar(MLoadUnboxedScalar* ins) {
-  MOZ_ASSERT(IsValidElementsType(ins->elements(), ins->offsetAdjustment()));
+  MOZ_ASSERT(ins->elements()->type() == MIRType::Elements);
   MOZ_ASSERT(ins->index()->type() == MIRType::Int32);
 
   const LUse elements = useRegister(ins->elements());
@@ -3446,7 +3420,8 @@ void LIRGenerator::visitLoadUnboxedScalar(MLoadUnboxedScalar* ins) {
 
   // We need a temp register for Uint32Array with known double result.
   LDefinition tempDef = LDefinition::BogusTemp();
-  if (ins->readType() == Scalar::Uint32 && IsFloatingPointType(ins->type())) {
+  if (ins->storageType() == Scalar::Uint32 &&
+      IsFloatingPointType(ins->type())) {
     tempDef = temp();
   }
 
@@ -3522,7 +3497,7 @@ void LIRGenerator::visitLoadTypedArrayElementHole(
 }
 
 void LIRGenerator::visitStoreUnboxedScalar(MStoreUnboxedScalar* ins) {
-  MOZ_ASSERT(IsValidElementsType(ins->elements(), ins->offsetAdjustment()));
+  MOZ_ASSERT(ins->elements()->type() == MIRType::Elements);
   MOZ_ASSERT(ins->index()->type() == MIRType::Int32);
 
   if (ins->isFloatWrite()) {
@@ -3854,6 +3829,13 @@ void LIRGenerator::visitGuardReceiverPolymorphic(
     add(lir, ins);
     redefine(ins, ins->object());
   }
+}
+
+void LIRGenerator::visitGuardValue(MGuardValue* ins) {
+  MOZ_ASSERT(ins->value()->type() == MIRType::Value);
+  auto* lir = new (alloc()) LGuardValue(useBox(ins->value()));
+  assignSnapshot(lir, Bailout_ValueGuard);
+  add(lir, ins);
 }
 
 void LIRGenerator::visitAssertRange(MAssertRange* ins) {
@@ -5237,5 +5219,5 @@ void LIRGenerator::visitWasmFence(MWasmFence* ins) {
   add(new (alloc()) LWasmFence, ins);
 }
 
-static_assert(!std::is_polymorphic<LIRGenerator>::value,
+static_assert(!std::is_polymorphic_v<LIRGenerator>,
               "LIRGenerator should not have any virtual methods");

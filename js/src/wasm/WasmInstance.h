@@ -74,12 +74,12 @@ class Instance {
   Instance(JSContext* cx, HandleWasmInstanceObject object, SharedCode code,
            UniqueTlsData tlsData, HandleWasmMemoryObject memory,
            SharedTableVector&& tables, StructTypeDescrVector&& structTypeDescrs,
-           const JSFunctionVector& funcImports,
-           const ValVector& globalImportValues,
-           const WasmGlobalObjectVector& globalObjs,
            UniqueDebugState maybeDebug);
   ~Instance();
-  bool init(JSContext* cx, const DataSegmentVector& dataSegments,
+  bool init(JSContext* cx, const JSFunctionVector& funcImports,
+            const ValVector& globalImportValues,
+            const WasmGlobalObjectVector& globalObjs,
+            const DataSegmentVector& dataSegments,
             const ElemSegmentVector& elemSegments);
   void trace(JSTracer* trc);
 
@@ -227,7 +227,7 @@ class Instance {
   static int32_t tableInit(Instance* instance, uint32_t dstOffset,
                            uint32_t srcOffset, uint32_t len, uint32_t segIndex,
                            uint32_t tableIndex);
-  static void* funcRef(Instance* instance, uint32_t funcIndex);
+  static void* refFunc(Instance* instance, uint32_t funcIndex);
   static void preBarrierFiltering(Instance* instance, gc::Cell** location);
   static void postBarrier(Instance* instance, gc::Cell** location);
   static void postBarrierFiltering(Instance* instance, gc::Cell** location);
@@ -237,6 +237,9 @@ class Instance {
 };
 
 using UniqueInstance = UniquePtr<Instance>;
+
+bool ResultsToJSValue(JSContext* cx, ResultType type, void* registerResultLoc,
+                      Maybe<char*> stackResultsLoc, MutableHandleValue rval);
 
 }  // namespace wasm
 }  // namespace js

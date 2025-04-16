@@ -71,23 +71,25 @@
   </menupopup>
 </panel>
 
-<panel id="panic-button-success-notification"
-       type="arrow"
-       position="bottomcenter topright"
-       hidden="true"
-       role="alert"
-       orient="vertical">
-  <hbox id="panic-button-success-header">
-    <image id="panic-button-success-icon" alt=""/>
-    <vbox>
-      <description>&panicButton.thankyou.msg1;</description>
-      <description>&panicButton.thankyou.msg2;</description>
-    </vbox>
-  </hbox>
-  <button label="&panicButton.thankyou.buttonlabel;"
-          id="panic-button-success-closebutton"
-          oncommand="PanicButtonNotifier.close()"/>
-</panel>
+<html:template id="panicButtonNotificationTemplate">
+  <panel id="panic-button-success-notification"
+         type="arrow"
+         position="bottomcenter topright"
+         hidden="true"
+         role="alert"
+         orient="vertical">
+    <hbox id="panic-button-success-header">
+      <image id="panic-button-success-icon" alt=""/>
+      <vbox>
+        <description>&panicButton.thankyou.msg1;</description>
+        <description>&panicButton.thankyou.msg2;</description>
+      </vbox>
+    </hbox>
+    <button label="&panicButton.thankyou.buttonlabel;"
+            id="panic-button-success-closebutton"
+            oncommand="PanicButtonNotifier.close()"/>
+  </panel>
+</html:template>
 
 <panel id="appMenu-notification-popup"
        class="popup-notification-panel panel-no-padding"
@@ -340,7 +342,7 @@
                        />
         <toolbarbutton id="appMenu-ssb-button"
                        class="subviewbutton subviewbutton-iconic subviewbutton-nav"
-                       label="Installed Websites"
+                       label="Sites in App Mode"
                        closemenu="none"
                        oncommand="PanelUI.showSubView('appMenu-SSBView', this)"
                        hidden="true" persist="hidden"/>
@@ -498,7 +500,7 @@
                            oncommand="gSync.doSync();"
                            onmouseover="gSync.refreshSyncButtonsTooltip();"
                            closemenu="none"/>
-            <menuseparator id="PanelUI-remotetabs-separator"/>
+            <toolbarseparator id="PanelUI-remotetabs-separator"/>
           </vbox>
           <deck id="PanelUI-remotetabs-deck">
             <!-- Sync is ready to Sync and the "tabs" engine is enabled -->
@@ -815,7 +817,7 @@
 
     <panelview id="PanelUI-fxa" title="&fxa.menu.account.label;" class="PanelUI-subView" descriptionheightworkaround="true">
       <vbox id="PanelUI-fxa-menu" class="panel-subview-body">
-        <toolbarbutton id="fxa-manage-account-button" flex="1"
+        <toolbarbutton id="fxa-manage-account-button"
                        align="center"
                        class="fxa-menu-header subviewbutton"
                        oncommand="gSync.clickFxAMenuHeaderButton(this);">
@@ -992,11 +994,8 @@
                      class="extension-controlled-notification"
                      popupid="extension-new-tab"
                      hidden="true"
-                     label="&newTabControlled.header.message;"
-                     buttonlabel="&newTabControlled.keepButton.label;"
-                     buttonaccesskey="&newTabControlled.keepButton.accesskey;"
-                     secondarybuttonlabel="&newTabControlled.disableButton.label;"
-                     secondarybuttonaccesskey="&newTabControlled.disableButton.accesskey;"
+                     data-lazy-l10n-id="appmenu-new-tab-controlled"
+                     data-l10n-attrs="buttonlabel, buttonaccesskey, secondarybuttonlabel, secondarybuttonaccesskey"
                      closebuttonhidden="true"
                      dropmarkerhidden="true"
                      checkboxhidden="true">
@@ -1008,11 +1007,8 @@
                      class="extension-controlled-notification"
                      popupid="extension-homepage"
                      hidden="true"
-                     label="&homepageControlled.header.message;"
-                     buttonlabel="&homepageControlled.keepButton.label;"
-                     buttonaccesskey="&homepageControlled.keepButton.accesskey;"
-                     secondarybuttonlabel="&homepageControlled.disableButton.label;"
-                     secondarybuttonaccesskey="&homepageControlled.disableButton.accesskey;"
+                     data-lazy-l10n-id="appmenu-homepage-controlled"
+                     data-l10n-attrs="buttonlabel, buttonaccesskey, secondarybuttonlabel, secondarybuttonaccesskey"
                      closebuttonhidden="true"
                      dropmarkerhidden="true"
                      checkboxhidden="true">
@@ -1024,11 +1020,8 @@
                      class="extension-controlled-notification"
                      popupid="extension-tab-hide"
                      hidden="true"
-                     label="&tabHideControlled.header.message;"
-                     buttonlabel="&tabHideControlled.keepButton.label;"
-                     buttonaccesskey="&tabHideControlled.keepButton.accesskey;"
-                     secondarybuttonlabel="&tabHideControlled.disableButton.label;"
-                     secondarybuttonaccesskey="&tabHideControlled.disableButton.accesskey;"
+                     data-lazy-l10n-id="appmenu-tab-hide-controlled"
+                     data-l10n-attrs="buttonlabel, buttonaccesskey, secondarybuttonlabel, secondarybuttonaccesskey"
                      closebuttonhidden="true"
                      dropmarkerhidden="true"
                      checkboxhidden="true">

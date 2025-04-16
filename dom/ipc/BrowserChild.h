@@ -75,6 +75,7 @@ struct AutoCacheNativeKeyCommands;
 namespace dom {
 
 class BrowserChild;
+class BrowsingContext;
 class TabGroup;
 class ClonedMessageData;
 class CoalescedMouseData;
@@ -183,18 +184,19 @@ class BrowserChild final : public nsMessageManagerScriptExecutor,
   /**
    * Create a new BrowserChild object.
    */
-  BrowserChild(ContentChild* aManager, const TabId& aTabId, TabGroup* aTabGroup,
-               const TabContext& aContext, BrowsingContext* aBrowsingContext,
-               uint32_t aChromeFlags, bool aIsTopLevel);
+  BrowserChild(ContentChild* aManager, const TabId& aTabId,
+               const TabContext& aContext,
+               dom::BrowsingContext* aBrowsingContext, uint32_t aChromeFlags,
+               bool aIsTopLevel);
 
   nsresult Init(mozIDOMWindowProxy* aParent,
                 WindowGlobalChild* aInitialWindowChild);
 
   /** Return a BrowserChild with the given attributes. */
   static already_AddRefed<BrowserChild> Create(
-      ContentChild* aManager, const TabId& aTabId, const TabId& aSameTabGroupAs,
-      const TabContext& aContext, BrowsingContext* aBrowsingContext,
-      uint32_t aChromeFlags, bool aIsTopLevel);
+      ContentChild* aManager, const TabId& aTabId, const TabContext& aContext,
+      BrowsingContext* aBrowsingContext, uint32_t aChromeFlags,
+      bool aIsTopLevel);
 
   // Let managees query if it is safe to send messages.
   bool IsDestroyed() const { return mDestroyed; }
@@ -225,7 +227,6 @@ class BrowserChild final : public nsMessageManagerScriptExecutor,
     return mBrowserChildMessageManager->WrapObject(aCx, aGivenProto);
   }
 
-  nsIPrincipal* GetPrincipal() { return mPrincipal; }
   // Get the Document for the top-level window in this tab.
   already_AddRefed<Document> GetTopLevelDocument() const;
 
@@ -241,17 +242,12 @@ class BrowserChild final : public nsMessageManagerScriptExecutor,
   /**
    * MessageManagerCallback methods that we override.
    */
-  virtual bool DoSendBlockingMessage(JSContext* aCx, const nsAString& aMessage,
-                                     StructuredCloneData& aData,
-                                     JS::Handle<JSObject*> aCpows,
-                                     nsIPrincipal* aPrincipal,
-                                     nsTArray<StructuredCloneData>* aRetVal,
-                                     bool aIsSync) override;
+  virtual bool DoSendBlockingMessage(
+      const nsAString& aMessage, StructuredCloneData& aData,
+      nsTArray<StructuredCloneData>* aRetVal) override;
 
-  virtual nsresult DoSendAsyncMessage(JSContext* aCx, const nsAString& aMessage,
-                                      StructuredCloneData& aData,
-                                      JS::Handle<JSObject*> aCpows,
-                                      nsIPrincipal* aPrincipal) override;
+  virtual nsresult DoSendAsyncMessage(const nsAString& aMessage,
+                                      StructuredCloneData& aData) override;
 
   bool DoUpdateZoomConstraints(const uint32_t& aPresShellId,
                                const ViewID& aViewId,
@@ -414,8 +410,6 @@ class BrowserChild final : public nsMessageManagerScriptExecutor,
                                                const bool& aRunInGlobalScope);
 
   mozilla::ipc::IPCResult RecvAsyncMessage(const nsString& aMessage,
-                                           nsTArray<CpowEntry>&& aCpows,
-                                           nsIPrincipal* aPrincipal,
                                            const ClonedMessageData& aData);
   mozilla::ipc::IPCResult RecvSwappedWithOtherRemoteLoader(
       const IPCTabContext& aContext);
@@ -630,7 +624,7 @@ class BrowserChild final : public nsMessageManagerScriptExecutor,
   bool StopAwaitingLargeAlloc();
   bool IsAwaitingLargeAlloc();
 
-  mozilla::dom::TabGroup* TabGroup();
+  BrowsingContext* GetBrowsingContext() const { return mBrowsingContext; }
 
 #if defined(ACCESSIBILITY)
   void SetTopLevelDocAccessibleChild(PDocAccessibleChild* aTopLevelChild) {
@@ -723,6 +717,9 @@ class BrowserChild final : public nsMessageManagerScriptExecutor,
 
   mozilla::ipc::IPCResult RecvSetDocShellIsActive(const bool& aIsActive);
 
+  mozilla::ipc::IPCResult RecvSetSuspendMediaWhenInactive(
+      const bool& aSuspendMediaWhenInactive);
+
   MOZ_CAN_RUN_SCRIPT_BOUNDARY
   mozilla::ipc::IPCResult RecvRenderLayers(
       const bool& aEnabled, const layers::LayersObserverEpoch& aEpoch);
@@ -747,9 +744,6 @@ class BrowserChild final : public nsMessageManagerScriptExecutor,
 
   mozilla::ipc::IPCResult RecvAllowScriptsToClose();
 
-  mozilla::ipc::IPCResult RecvSetOriginAttributes(
-      const OriginAttributes& aOriginAttributes);
-
   mozilla::ipc::IPCResult RecvSetWidgetNativeData(
       const WindowsHandle& aWidgetNativeData);
 
@@ -773,12 +767,7 @@ class BrowserChild final : public nsMessageManagerScriptExecutor,
   //
   // You should call this after calling TabContext::SetTabContext().  We also
   // call this during Init().
-  //
-  // @param aIsPreallocated  true if this is called for Preallocated Tab.
-  void NotifyTabContextUpdated(bool aIsPreallocated);
-
-  // Update the frameType on our docshell.
-  void UpdateFrameType();
+  void NotifyTabContextUpdated();
 
   void ActorDestroy(ActorDestroyReason why) override;
 
@@ -826,6 +815,8 @@ class BrowserChild final : public nsMessageManagerScriptExecutor,
 
   void InternalSetDocShellIsActive(bool aIsActive);
 
+  void InternalSetSuspendMediaWhenInactive(bool aSuspendMediaWhenInactive);
+
   bool CreateRemoteLayerManager(
       mozilla::layers::PCompositorBridgeChild* aCompositorChild);
 
@@ -842,7 +833,6 @@ class BrowserChild final : public nsMessageManagerScriptExecutor,
   TextureFactoryIdentifier mTextureFactoryIdentifier;
   RefPtr<nsWebBrowser> mWebBrowser;
   nsCOMPtr<nsIWebNavigation> mWebNav;
-  RefPtr<mozilla::dom::TabGroup> mTabGroup;
   RefPtr<PuppetWidget> mPuppetWidget;
   nsCOMPtr<nsIURI> mLastURI;
   RefPtr<ContentChild> mManager;
@@ -946,6 +936,7 @@ class BrowserChild final : public nsMessageManagerScriptExecutor,
   // states temporarily as "pending", and only apply them once the DocShell
   // is no longer blocked.
   bool mPendingDocShellIsActive;
+  bool mPendingSuspendMediaWhenInactive;
   bool mPendingDocShellReceivedMessage;
   bool mPendingRenderLayers;
   bool mPendingRenderLayersReceivedMessage;

@@ -465,6 +465,7 @@ class LoginManagerPrompter {
           eventCallback(topic) {
             switch (topic) {
               case "showing":
+                log.debug("showing");
                 currentNotification = this;
 
                 // Record the first time this instance of the doorhanger is shown.
@@ -525,6 +526,7 @@ class LoginManagerPrompter {
                 }
                 break;
               case "shown": {
+                log.debug("shown");
                 writeDataToUI();
                 let anchorIcon = this.anchorElement;
                 if (anchorIcon && this.options.extraAttr == "attention") {
@@ -534,27 +536,31 @@ class LoginManagerPrompter {
                 break;
               }
               case "dismissed":
+                // Note that this can run after `showing` but before `shown` upon tab switch.
                 this.wasDismissed = true;
-                readDataFromUI();
               // Fall through.
-              case "removed":
+              case "removed": {
+                // Note that this can run after `showing` and `shown` for the
+                // notification it's replacing.
+                log.debug(topic);
                 currentNotification = null;
-                chromeDoc
-                  .getElementById("password-notification-username")
-                  .removeEventListener("input", onInput);
-                chromeDoc
-                  .getElementById("password-notification-username")
-                  .removeEventListener("keyup", onKeyUp);
-                chromeDoc
-                  .getElementById("password-notification-password")
-                  .removeEventListener("input", onInput);
-                chromeDoc
-                  .getElementById("password-notification-password")
-                  .removeEventListener("keyup", onKeyUp);
-                chromeDoc
-                  .getElementById("password-notification-visibilityToggle")
-                  .removeEventListener("command", onVisibilityToggle);
+
+                let usernameField = chromeDoc.getElementById(
+                  "password-notification-username"
+                );
+                usernameField.removeEventListener("input", onInput);
+                usernameField.removeEventListener("keyup", onKeyUp);
+                let passwordField = chromeDoc.getElementById(
+                  "password-notification-password"
+                );
+                passwordField.removeEventListener("input", onInput);
+                passwordField.removeEventListener("keyup", onKeyUp);
+                passwordField.removeEventListener(
+                  "command",
+                  onVisibilityToggle
+                );
                 break;
+              }
             }
             return false;
           },

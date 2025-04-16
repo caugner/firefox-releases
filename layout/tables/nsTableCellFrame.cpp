@@ -61,7 +61,7 @@ class nsDisplayTableCellSelection final : public nsPaintedDisplayItem {
       nsDisplayListBuilder* aDisplayListBuilder) override {
     RefPtr<nsFrameSelection> frameSelection =
         mFrame->PresShell()->FrameSelection();
-    if (frameSelection->GetTableCellSelection()) {
+    if (frameSelection->IsInTableSelectionMode()) {
       return false;
     }
 
@@ -272,7 +272,7 @@ void nsTableCellFrame::DecorateForSelection(DrawTarget* aDrawTarget,
     RefPtr<nsFrameSelection> frameSelection =
         presContext->PresShell()->FrameSelection();
 
-    if (frameSelection->GetTableCellSelection()) {
+    if (frameSelection->IsInTableSelectionMode()) {
       nscolor bordercolor;
       if (displaySelection == nsISelectionController::SELECTION_DISABLED) {
         bordercolor = NS_RGB(176, 176, 176);  // disabled color
@@ -524,12 +524,12 @@ void nsTableCellFrame::BuildDisplayList(nsDisplayListBuilder* aBuilder,
 
 nsIFrame::LogicalSides nsTableCellFrame::GetLogicalSkipSides(
     const ReflowInput* aReflowInput) const {
+  LogicalSides skip(mWritingMode);
   if (MOZ_UNLIKELY(StyleBorder()->mBoxDecorationBreak ==
                    StyleBoxDecorationBreak::Clone)) {
-    return LogicalSides();
+    return skip;
   }
 
-  LogicalSides skip;
   if (nullptr != GetPrevInFlow()) {
     skip |= eLogicalSideBitsBStart;
   }

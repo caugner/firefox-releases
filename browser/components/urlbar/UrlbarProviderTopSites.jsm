@@ -76,7 +76,6 @@ class ProviderTopSites extends UrlbarProvider {
     // the most frecent URLs in the user's history from the UnifiedComplete
     // provider.
     return (
-      UrlbarPrefs.get("update1") &&
       UrlbarPrefs.get("openViewOnFocus") &&
       !queryContext.searchString &&
       Services.prefs.getBoolPref(
@@ -118,6 +117,7 @@ class ProviderTopSites extends UrlbarProvider {
     sites = sites.map(link => ({
       type: link.searchTopSite ? "search" : "url",
       url: link.url,
+      isPinned: link.isPinned,
       // The newtab page allows the user to set custom site titles, which
       // are stored in `label`, so prefer it.  Search top sites currently
       // don't have titles but `hostname` instead.
@@ -135,17 +135,21 @@ class ProviderTopSites extends UrlbarProvider {
               title: site.title,
               url: site.url,
               icon: site.favicon,
+              isPinned: site.isPinned,
             })
           );
 
-          let tabs = UrlbarProviderOpenTabs.openTabs.get(
-            queryContext.userContextId || 0
-          );
+          let tabs;
+          if (UrlbarPrefs.get("suggest.openpage")) {
+            tabs = UrlbarProviderOpenTabs.openTabs.get(
+              queryContext.userContextId || 0
+            );
+          }
 
           if (tabs && tabs.includes(site.url.replace(/#.*$/, ""))) {
             result.type = UrlbarUtils.RESULT_TYPE.TAB_SWITCH;
             result.source = UrlbarUtils.RESULT_SOURCE.TABS;
-          } else {
+          } else if (UrlbarPrefs.get("suggest.bookmark")) {
             let bookmark = await PlacesUtils.bookmarks.fetch({
               url: new URL(result.payload.url),
             });
@@ -199,6 +203,7 @@ class ProviderTopSites extends UrlbarProvider {
               engine: engine.name,
               query: "",
               icon: site.favicon,
+              isPinned: site.isPinned,
             })
           );
           addCallback(this, result);

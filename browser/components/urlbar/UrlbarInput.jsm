@@ -81,15 +81,9 @@ class UrlbarInput {
     );
     this.panel = this.textbox.querySelector(".urlbarView");
 
-    // "Megabar" is the internal codename for the update1 design refresh.
-    this.megabar = UrlbarPrefs.get("update1");
-    if (this.megabar) {
-      this.textbox.classList.add("megabar");
-      this.textbox.parentNode.classList.add("megabar");
-      this.searchButton = UrlbarPrefs.get("update2.searchButton");
-      if (this.searchButton) {
-        this.textbox.classList.add("searchButton");
-      }
+    this.searchButton = UrlbarPrefs.get("update2.searchButton");
+    if (this.searchButton) {
+      this.textbox.classList.add("searchButton");
     }
 
     this.controller = new UrlbarController({
@@ -154,8 +148,6 @@ class UrlbarInput {
     }
 
     this.inputField = this.querySelector("#urlbar-input");
-    this.dropmarker = this.querySelector(".urlbar-history-dropmarker");
-    this.dropmarker.hidden = this.megabar;
     this._inputContainer = this.querySelector("#urlbar-input-container");
     this._identityBox = this.querySelector("#identity-box");
     this._toolbar = this.textbox.closest("toolbar");
@@ -200,7 +192,6 @@ class UrlbarInput {
       this.addEventListener(name, this);
     }
 
-    this.dropmarker.addEventListener("mousedown", this);
     this.window.addEventListener("mousedown", this);
     this.textbox.addEventListener("mousedown", this);
     this._inputContainer.addEventListener("click", this);
@@ -792,10 +783,12 @@ class UrlbarInput {
     this.setPageProxyState("invalid", true);
 
     if (!result) {
-      // This usually happens when there's no selected results (the user cycles
-      // through results and there was no heuristic), and we reset the input
-      // value to the previous text value.
-      this.value = this._valueOnLastSearch;
+      // This happens when there's no selection, for example when moving to the
+      // one-offs search settings button, or to the input field when Top Sites
+      // are shown; then we must reset the input value.
+      // Note that for Top Sites the last search string would be empty, thus we
+      // must restore the last text value.
+      this.value = this._lastSearchString || this._valueOnLastSearch;
     } else {
       // For autofilled results, the value that should be canonized is not the
       // autofilled value but the value that the user typed.
@@ -949,6 +942,11 @@ class UrlbarInput {
           "usercontextid"
         ),
         currentPage: this.window.gBrowser.currentURI.spec,
+        allowSearchSuggestions:
+          !event ||
+          !UrlbarUtils.isPasteEvent(event) ||
+          !event.data ||
+          event.data.length <= UrlbarPrefs.get("maxCharsForSearchSuggestions"),
       })
     );
   }
@@ -1047,11 +1045,20 @@ class UrlbarInput {
   }
 
   async updateLayoutBreakout() {
-    if (!this.megabar) {
-      return;
-    }
     if (!this._toolbar) {
       // Expanding requires a parent toolbar.
+      return;
+    }
+    if (this.document.fullscreenElement) {
+      // Toolbars are hidden in DOM fullscreen mode, so we can't get proper
+      // layout information and need to retry after leaving that mode.
+      this.window.addEventListener(
+        "fullscreen",
+        () => {
+          this.updateLayoutBreakout();
+        },
+        { once: true }
+      );
       return;
     }
     await this._updateLayoutBreakoutDimensions();
@@ -1220,14 +1227,16 @@ class UrlbarInput {
   }
 
   _setValue(val, allowTrim) {
-    this._untrimmedValue = val;
-
+    // Don't expose internal about:reader URLs to the user.
     let originalUrl = ReaderMode.getOriginalUrlObjectForDisplay(val);
     if (originalUrl) {
       val = originalUrl.displaySpec;
     }
+    this._untrimmedValue = val;
 
-    val = allowTrim ? this._trimValue(val) : val;
+    if (allowTrim) {
+      val = this._trimValue(val);
+    }
 
     this.valueIsTyped = false;
     this._resultForCurrentValue = null;
@@ -1319,28 +1328,50 @@ class UrlbarInput {
   _checkForRtlText(value) {
     let directionality = this.window.windowUtils.getDirectionFromText(value);
     if (directionality == this.window.windowUtils.DIRECTION_RTL) {
-      this.setAttribute("rtltext", "true");
       return true;
     }
-    this.removeAttribute("rtltext");
     return false;
   }
 
+  /**
+   * Invoked on overflow/underflow/scrollend events to update attributes
+   * related to the input text directionality. Overflow fade masks use these
+   * attributes to appear at the proper side of the urlbar.
+   */
   _updateTextOverflow() {
     if (!this._overflowing) {
       this.removeAttribute("textoverflow");
       return;
     }
 
-    let isRTL = this._checkForRtlText(this.value);
+    let isRTL =
+      this.getAttribute("domaindir") != "ltr" &&
+      this._checkForRtlText(this.value);
 
     this.window.promiseDocumentFlushed(() => {
-      // Check overflow again to ensure it didn't change in the meantime.
+      // Check overflow again to ensure it didn't change in the meanwhile.
       let input = this.inputField;
       if (input && this._overflowing) {
-        let side = isRTL ? "left" : "right";
-        if (input.scrollLeft == input.scrollLeftMax) {
-          side = isRTL == !input.scrollLeft ? "left" : "right";
+        // Normally we would overflow at the final side of text direction,
+        // though RTL domains may cause us to overflow at the opposite side.
+        // This happens dynamically as a consequence of the input field contents
+        // and the call to _ensureFormattedHostVisible, this code only reports
+        // the final state of all that scrolling into an attribute, because
+        // there's no other way to capture this in css.
+        // Note it's also possible to scroll an unfocused input field using
+        // SHIFT + mousewheel on Windows, or with just the mousewheel / touchpad
+        // scroll (without modifiers) on Mac.
+        let side = "both";
+        if (isRTL) {
+          if (input.scrollLeft == 0) {
+            side = "left";
+          } else if (input.scrollLeft == input.scrollLeftMin) {
+            side = "right";
+          }
+        } else if (input.scrollLeft == 0) {
+          side = "right";
+        } else if (input.scrollLeft == input.scrollLeftMax) {
+          side = "left";
         }
 
         this.window.requestAnimationFrame(() => {
@@ -1850,9 +1881,14 @@ class UrlbarInput {
     this.endLayoutExtend();
 
     if (this._autofillPlaceholder && this.window.gBrowser.userTypedValue) {
-      // Restore value to the last typed one, removing any autofilled portion.
+      // If we were autofilling, remove the autofilled portion, by restoring
+      // the value to the last typed one.
       this.value = this.window.gBrowser.userTypedValue;
+    } else if (this.value == this._focusUntrimmedValue) {
+      // If the value was untrimmed by _on_focus and didn't change, trim it.
+      this.value = this._focusUntrimmedValue;
     }
+    this._focusUntrimmedValue = null;
 
     this.formatValue();
     this._resetSearchState();
@@ -1912,6 +1948,31 @@ class UrlbarInput {
   _on_focus(event) {
     if (!this._hideFocus) {
       this.setAttribute("focused", "true");
+    }
+
+    // If the value was trimmed, check whether we should untrim it.
+    // This is necessary when a protocol was typed, but the whole url has
+    // invalid parts, like the origin, then editing and confirming the trimmed
+    // value would execute a search instead of visiting the typed url.
+    if (this.value != this._untrimmedValue) {
+      // It doesn't really matter which search engine is used here, thus it's ok
+      // to ignore whether we are in a private context. The keyword lookup will
+      // also distinguish between whitelisted and not whitelisted hosts.
+      let untrim = false;
+      try {
+        let fixedSpec = Services.uriFixup.createFixupURI(
+          this.value,
+          Services.uriFixup.FIXUP_FLAG_ALLOW_KEYWORD_LOOKUP |
+            Services.uriFixup.FIXUP_FLAG_FIX_SCHEME_TYPOS
+        ).displaySpec;
+        let expectedSpec = Services.io.newURI(this._untrimmedValue).displaySpec;
+        untrim = fixedSpec != expectedSpec;
+      } catch (ex) {
+        untrim = true;
+      }
+      if (untrim) {
+        this.inputField.value = this._focusUntrimmedValue = this._untrimmedValue;
+      }
     }
 
     this.startLayoutExtend();
@@ -1978,22 +2039,6 @@ class UrlbarInput {
           this.view.autoOpen({ event });
         }
         break;
-      case this.dropmarker:
-        if (event.button != 0) {
-          break;
-        }
-
-        if (this.view.isOpen) {
-          this.view.close();
-        } else {
-          this.focus();
-          this.startQuery({
-            allowAutofill: false,
-            event,
-          });
-          this._maybeSelectAll();
-        }
-        break;
       case this.window:
         if (this._mousedownOnUrlbarDescendant) {
           this._mousedownOnUrlbarDescendant = false;
@@ -2036,7 +2081,6 @@ class UrlbarInput {
 
     if (value) {
       this.setAttribute("usertyping", "true");
-      this._checkForRtlText(value);
     } else {
       this.removeAttribute("usertyping");
     }
@@ -2407,40 +2451,61 @@ function losslessDecodeURI(aURI) {
     } else {
       try {
         value = decodeURI(value)
-          // 1. decodeURI decodes %25 to %, which creates unintended
-          //    encoding sequences. Re-encode it, unless it's part of
-          //    a sequence that survived decodeURI, i.e. one for:
-          //    ';', '/', '?', ':', '@', '&', '=', '+', '$', ',', '#'
-          //    (RFC 3987 section 3.2)
-          // 2. Re-encode select whitespace so that it doesn't get eaten
-          //    away by the location bar (bug 410726). Re-encode all
-          //    adjacent whitespace, to prevent spoofing attempts where
-          //    invisible characters would push part of the URL to
-          //    overflow the location bar (bug 1395508).
+          // decodeURI decodes %25 to %, which creates unintended encoding
+          // sequences. Re-encode it, unless it's part of a sequence that
+          // survived decodeURI, i.e. one for:
+          // ';', '/', '?', ':', '@', '&', '=', '+', '$', ',', '#'
+          // (RFC 3987 section 3.2)
           .replace(
-            /%(?!3B|2F|3F|3A|40|26|3D|2B|24|2C|23)|[\r\n\t]|\s(?=\s)|\s$/gi,
+            /%(?!3B|2F|3F|3A|40|26|3D|2B|24|2C|23)/gi,
             encodeURIComponent
           );
       } catch (e) {}
     }
   }
 
-  // Encode invisible characters (C0/C1 control characters, U+007F [DEL],
-  // U+00A0 [no-break space], line and paragraph separator,
-  // object replacement character) (bug 452979, bug 909264)
+  // Encode potentially invisible characters:
+  //   U+0000-001F: C0/C1 control characters
+  //   U+007F-009F: commands
+  //   U+00A0, U+1680, U+2000-200A, U+202F, U+205F, U+3000: other spaces
+  //   U+2028-2029: line and paragraph separators
+  //   U+2800: braille empty pattern
+  //   U+FFFC: object replacement character
+  // Encode any trailing whitespace that may be part of a pasted URL, so that it
+  // doesn't get eaten away by the location bar (bug 410726).
+  // Encode all adjacent space chars (U+0020), to prevent spoofing attempts
+  // where they would push part of the URL to overflow the location bar
+  // (bug 1395508). A single space, or the last space if the are many, is
+  // preserved to maintain readability of certain urls. We only do this for the
+  // common space, because others may be eaten when copied to the clipboard, so
+  // it's safer to preserve them encoded.
   value = value.replace(
     // eslint-disable-next-line no-control-regex
-    /[\u0000-\u001f\u007f-\u00a0\u2028\u2029\ufffc]/g,
+    /[\u0000-\u001f\u007f-\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u2800\u3000\ufffc]|[\r\n\t]|\u0020(?=\u0020)|\s$/g,
     encodeURIComponent
   );
 
-  // Encode default ignorable characters (bug 546013)
-  // except ZWNJ (U+200C) and ZWJ (U+200D) (bug 582186).
-  // This includes all bidirectional formatting characters.
-  // (RFC 3987 sections 3.2 and 4.1 paragraph 6)
+  // Encode characters that are ignorable, can't be rendered usefully, or may
+  // confuse users.
+  //
+  // Default ignorable characters; ZWNJ (U+200C) and ZWJ (U+200D) are excluded
+  // per bug 582186:
+  //   U+00AD, U+034F, U+06DD, U+070F, U+115F-1160, U+17B4, U+17B5, U+180B-180E,
+  //   U+2060, U+FEFF, U+200B, U+2060-206F, U+3164, U+FE00-FE0F, U+FFA0,
+  //   U+FFF0-FFFB, U+1D173-1D17A (U+D834 + DD73-DD7A),
+  //   U+E0000-E0FFF (U+DB40-DB43 + U+DC00-DFFF)
+  // Bidi control characters (RFC 3987 sections 3.2 and 4.1 paragraph 6):
+  //   U+061C, U+200E, U+200F, U+202A-202E, U+2066-2069
+  // Other format characters in the Cf category that are unlikely to be rendered
+  // usefully:
+  //   U+0600-0605, U+08E2, U+110BD (U+D804 + U+DCBD),
+  //   U+110CD (U+D804 + U+DCCD), U+13430-13438 (U+D80D + U+DC30-DC38),
+  //   U+1BCA0-1BCA3 (U+D82F + U+DCA0-DCA3)
+  // Mimicking UI parts:
+  //   U+1F50F-1F513 (U+D83D + U+DD0F-DD13), U+1F6E1 (U+D83D + U+DEE1)
   value = value.replace(
     // eslint-disable-next-line no-misleading-character-class
-    /[\u00ad\u034f\u061c\u115f-\u1160\u17b4-\u17b5\u180b-\u180d\u200b\u200e-\u200f\u202a-\u202e\u2060-\u206f\u3164\ufe00-\ufe0f\ufeff\uffa0\ufff0-\ufff8]|\ud834[\udd73-\udd7a]|[\udb40-\udb43][\udc00-\udfff]/g,
+    /[\u00ad\u034f\u061c\u06dd\u070f\u115f\u1160\u17b4\u17b5\u180b-\u180e\u200b\u200e\u200f\u202a-\u202e\u2060-\u206f\u3164\u0600-\u0605\u08e2\ufe00-\ufe0f\ufeff\uffa0\ufff0-\ufffb]|\ud804[\udcbd\udccd]|\ud80d[\udc30-\udc38]|\ud82f[\udca0-\udca3]|\ud834[\udd73-\udd7a]|[\udb40-\udb43][\udc00-\udfff]|\ud83d[\udd0f-\udd13\udee1]/g,
     encodeURIComponent
   );
   return value;

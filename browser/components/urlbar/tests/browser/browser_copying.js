@@ -22,11 +22,19 @@ function test() {
     Services.prefs.clearUserPref(trimPref);
     Services.prefs.clearUserPref(phishyUserPassPref);
     Services.prefs.clearUserPref(decodeURLpref);
+    Services.prefs.clearUserPref(
+      "browser.fixup.domainwhitelist.sub2.xn--lt-uia.mochi.test"
+    );
+
     gURLBar.setURI();
   });
 
   Services.prefs.setBoolPref(trimPref, true);
   Services.prefs.setIntPref(phishyUserPassPref, 32); // avoid prompting about phishing
+  Services.prefs.setBoolPref(
+    "browser.fixup.domainwhitelist.sub2.xn--lt-uia.mochi.test",
+    true
+  );
 
   waitForExplicitFinish();
 
@@ -181,12 +189,12 @@ var tests = [
   },
   {
     loadURL: "http://example.com/a%E3%80%80test",
-    expectedURL: "example.com/a\u{3000}test",
+    expectedURL: "example.com/a%E3%80%80test",
     copyExpected: "http://example.com/a%E3%80%80test",
   },
   {
     loadURL: "http://example.com/a%20%C2%A0test",
-    expectedURL: "example.com/a%20%C2%A0test",
+    expectedURL: "example.com/a %C2%A0test",
     copyExpected: "http://example.com/a%20%C2%A0test",
   },
   {

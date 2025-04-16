@@ -482,8 +482,7 @@ nsresult DecodedStream::Start(const TimeUnit& aStartTime,
   nsCOMPtr<nsIRunnable> r = new R(
       std::move(init), nsTArray<RefPtr<ProcessedMediaTrack>>(mOutputTracks),
       std::move(audioEndedHolder), std::move(videoEndedHolder));
-  SyncRunnable::DispatchToThread(
-      SystemGroup::EventTargetFor(TaskCategory::Other), r);
+  SyncRunnable::DispatchToThread(GetMainThreadSerialEventTarget(), r);
   mData = static_cast<R*>(r.get())->ReleaseData();
 
   if (mData) {
@@ -655,6 +654,7 @@ void DecodedStream::SendAudio(double aVolume,
     LOG_DS(LogLevel::Verbose, "Queueing audio [%" PRId64 ",%" PRId64 "]",
            audio[i]->mTime.ToMicroseconds(),
            audio[i]->GetEndTime().ToMicroseconds());
+    CheckIsDataAudible(audio[i]);
     SendStreamAudio(mData.get(), mStartTime.ref(), audio[i], &output, rate,
                     aPrincipalHandle);
   }
@@ -668,6 +668,16 @@ void DecodedStream::SendAudio(double aVolume,
   if (mAudioQueue.IsFinished() && !mData->mHaveSentFinishAudio) {
     mData->mListener->EndTrackAt(mData->mAudioTrack, mData->mAudioTrackWritten);
     mData->mHaveSentFinishAudio = true;
+  }
+}
+
+void DecodedStream::CheckIsDataAudible(const AudioData* aData) {
+  MOZ_ASSERT(aData);
+
+  bool isAudible = aData->IsAudible();
+  if (isAudible != mIsAudioDataAudible) {
+    mIsAudioDataAudible = isAudible;
+    mAudibleEvent.Notify(mIsAudioDataAudible);
   }
 }
 

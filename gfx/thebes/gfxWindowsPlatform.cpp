@@ -579,8 +579,11 @@ already_AddRefed<gfxASurface> gfxWindowsPlatform::CreateOffscreenSurface(
   RefPtr<gfxASurface> surf = nullptr;
 
 #ifdef CAIRO_HAS_WIN32_SURFACE
-  if (mRenderMode == RENDER_GDI || mRenderMode == RENDER_DIRECT2D)
-    surf = new gfxWindowsSurface(aSize, aFormat);
+  if (!XRE_IsContentProcess()) {
+    if (mRenderMode == RENDER_GDI || mRenderMode == RENDER_DIRECT2D) {
+      surf = new gfxWindowsSurface(aSize, aFormat);
+    }
+  }
 #endif
 
   if (!surf || surf->CairoStatus()) {
@@ -897,36 +900,66 @@ void gfxWindowsPlatform::CheckForContentOnlyDeviceReset() {
 }
 
 nsTArray<uint8_t> gfxWindowsPlatform::GetPlatformCMSOutputProfileData() {
-  HDC dc = ::GetDC(nullptr);
-  if (!dc) {
-    return nsTArray<uint8_t>();
+  if (XRE_IsContentProcess()) {
+    // This will be passed in during InitChild so we can avoid sending a
+    // sync message back to the parent during init.
+    const mozilla::gfx::ContentDeviceData* contentDeviceData =
+        GetInitContentDeviceData();
+    if (contentDeviceData) {
+      MOZ_ASSERT(!contentDeviceData->cmsOutputProfileData().IsEmpty());
+      return contentDeviceData->cmsOutputProfileData();
+    }
+
+    // Otherwise we need to ask the parent for the updated color profile
+    mozilla::dom::ContentChild* cc = mozilla::dom::ContentChild::GetSingleton();
+    nsTArray<uint8_t> result;
+    Unused << cc->SendGetOutputColorProfileData(&result);
+    return result;
   }
 
-  WCHAR profilePath[MAX_PATH];
-  DWORD profilePathLen = MAX_PATH;
-
-  bool getProfileResult = ::GetICMProfileW(dc, &profilePathLen, profilePath);
-
-  ::ReleaseDC(nullptr, dc);
-
-  if (!getProfileResult) {
-    return nsTArray<uint8_t>();
+  if (!mCachedOutputColorProfile.IsEmpty()) {
+    return nsTArray<uint8_t>(mCachedOutputColorProfile);
   }
 
-  void* mem = nullptr;
-  size_t size = 0;
+  mCachedOutputColorProfile = [&] {
+    nsTArray<uint8_t> prefProfileData = GetPrefCMSOutputProfileData();
+    if (!prefProfileData.IsEmpty()) {
+      return prefProfileData;
+    }
 
-  qcms_data_from_unicode_path(profilePath, &mem, &size);
-  if (!mem) {
-    return nsTArray<uint8_t>();
-  }
+    HDC dc = ::GetDC(nullptr);
+    if (!dc) {
+      return nsTArray<uint8_t>();
+    }
 
-  nsTArray<uint8_t> result;
-  result.AppendElements(static_cast<uint8_t*>(mem), size);
+    WCHAR profilePath[MAX_PATH];
+    DWORD profilePathLen = MAX_PATH;
 
-  free(mem);
+    bool getProfileResult = ::GetICMProfileW(dc, &profilePathLen, profilePath);
 
-  return result;
+    ::ReleaseDC(nullptr, dc);
+
+    if (!getProfileResult) {
+      return nsTArray<uint8_t>();
+    }
+
+    void* mem = nullptr;
+    size_t size = 0;
+
+    qcms_data_from_unicode_path(profilePath, &mem, &size);
+    if (!mem) {
+      return nsTArray<uint8_t>();
+    }
+
+    nsTArray<uint8_t> result;
+    result.AppendElements(static_cast<uint8_t*>(mem), size);
+
+    free(mem);
+
+    return result;
+  }();
+
+  return nsTArray<uint8_t>(mCachedOutputColorProfile);
 }
 
 void gfxWindowsPlatform::GetDLLVersion(char16ptr_t aDLLPath,
@@ -937,10 +970,13 @@ void gfxWindowsPlatform::GetDLLVersion(char16ptr_t aDLLPath,
   versInfoSize = GetFileVersionInfoSizeW(aDLLPath, nullptr);
   AutoTArray<BYTE, 512> versionInfo;
 
-  if (versInfoSize == 0 ||
-      !versionInfo.AppendElements(uint32_t(versInfoSize))) {
+  if (versInfoSize == 0) {
     return;
   }
+
+  // XXX(Bug 1631371) Check if this should use a fallible operation as it
+  // pretended earlier.
+  versionInfo.AppendElements(uint32_t(versInfoSize));
 
   if (!GetFileVersionInfoW(aDLLPath, 0, versInfoSize,
                            LPBYTE(versionInfo.Elements()))) {
@@ -1592,11 +1628,14 @@ class D3DVsyncSource final : public VsyncSource {
         : mPrevVsync(TimeStamp::Now()),
           mVsyncEnabledLock("D3DVsyncEnabledLock"),
           mVsyncEnabled(false),
-          mWaitVBlankMonitor(NULL) {
+          mWaitVBlankMonitor(NULL),
+          mIsWindows10OrLater(false) {
       mVsyncThread = new base::Thread("WindowsVsyncThread");
       MOZ_RELEASE_ASSERT(mVsyncThread->Start(),
                          "GFX: Could not start Windows vsync thread");
       SetVsyncRate();
+
+      mIsWindows10OrLater = IsWin10OrLater();
     }
 
     void SetVsyncRate() {
@@ -1768,10 +1807,22 @@ class D3DVsyncSource final : public VsyncSource {
         }
 
         HRESULT hr = E_FAIL;
-        if (StaticPrefs::gfx_vsync_use_waitforvblank()) {
+        if (mIsWindows10OrLater &&
+            !StaticPrefs::gfx_vsync_force_disable_waitforvblank()) {
           UpdateVBlankOutput();
           if (mWaitVBlankOutput) {
+            const TimeStamp vblank_begin_wait = TimeStamp::Now();
             hr = mWaitVBlankOutput->WaitForVBlank();
+            if (SUCCEEDED(hr)) {
+              // vblank might return instantly when running headless,
+              // monitor powering off, etc.  Since we're on a dedicated
+              // thread, instant-return should not happen in the normal
+              // case, so catch any odd behavior with a time cutoff:
+              TimeDuration vblank_wait = TimeStamp::Now() - vblank_begin_wait;
+              if (vblank_wait.ToMilliseconds() < 1.0) {
+                hr = E_FAIL;  // fall back on old behavior
+              }
+            }
           }
         }
         if (!SUCCEEDED(hr)) {
@@ -1853,6 +1904,7 @@ class D3DVsyncSource final : public VsyncSource {
 
     HMONITOR mWaitVBlankMonitor;
     RefPtr<IDXGIOutput> mWaitVBlankOutput;
+    bool mIsWindows10OrLater;
   };  // end d3dvsyncdisplay
 
   D3DVsyncSource() { mPrimaryDisplay = new D3DVsyncDisplay(); }
@@ -1939,6 +1991,9 @@ void gfxWindowsPlatform::ImportContentDeviceData(
     DeviceManagerDx* dm = DeviceManagerDx::Get();
     dm->ImportDeviceInfo(aData.d3d11());
   }
+
+  // aData->cmsOutputProfileData() will be read during color profile init,
+  // not as part of this import function
 }
 
 void gfxWindowsPlatform::BuildContentDeviceData(ContentDeviceData* aOut) {
@@ -1955,6 +2010,9 @@ void gfxWindowsPlatform::BuildContentDeviceData(ContentDeviceData* aOut) {
     DeviceManagerDx* dm = DeviceManagerDx::Get();
     dm->ExportDeviceInfo(&aOut->d3d11());
   }
+
+  aOut->cmsOutputProfileData() =
+      gfxPlatform::GetPlatform()->GetPlatformCMSOutputProfileData();
 }
 
 bool gfxWindowsPlatform::CheckVariationFontSupport() {

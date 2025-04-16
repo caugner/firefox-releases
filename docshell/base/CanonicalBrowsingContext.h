@@ -19,6 +19,10 @@
 #include "nsISHEntry.h"
 
 namespace mozilla {
+namespace net {
+class DocumentLoadListener;
+}
+
 namespace dom {
 
 class WindowGlobalParent;
@@ -65,12 +69,20 @@ class CanonicalBrowsingContext final : public BrowsingContext {
 
   already_AddRefed<WindowGlobalParent> GetEmbedderWindowGlobal() const;
 
+  // Same as GetEmbedderWindowGlobal but within the same browsing context group
+  already_AddRefed<WindowGlobalParent> GetParentWindowGlobal() const;
+
+  already_AddRefed<CanonicalBrowsingContext> GetParentCrossChromeBoundary();
+
   nsISHistory* GetSessionHistory();
   void SetSessionHistory(nsISHistory* aSHistory) {
     mSessionHistory = aSHistory;
   }
   JSObject* WrapObject(JSContext* aCx,
                        JS::Handle<JSObject*> aGivenProto) override;
+
+  // Dispatches a wheel zoom change to the embedder element.
+  void DispatchWheelZoomChange(bool aIncrease);
 
   // This function is used to start the autoplay media which are delayed to
   // start. If needed, it would also notify the content browsing context which
@@ -102,16 +114,13 @@ class CanonicalBrowsingContext final : public BrowsingContext {
   RefPtr<RemotenessPromise> ChangeFrameRemoteness(const nsAString& aRemoteType,
                                                   uint64_t aPendingSwitchId);
 
-  // Helper version for WebIDL - resolves to the PID where the load is being
-  // resumed.
-  already_AddRefed<Promise> ChangeFrameRemoteness(const nsAString& aRemoteType,
-                                                  uint64_t aPendingSwitchId,
-                                                  ErrorResult& aRv);
-
   // Return a media controller from the top-level browsing context that can
   // control all media belonging to this browsing context tree. Return nullptr
   // if the top-level browsing context has been discarded.
   MediaController* GetMediaController();
+
+  bool AttemptLoadURIInParent(nsDocShellLoadState* aLoadState,
+                              uint32_t* aLoadIdentifier);
 
   bool HasHistoryEntry(nsISHEntry* aEntry) const {
     return aEntry && (aEntry == mOSHE || aEntry == mLSHE);
@@ -137,7 +146,7 @@ class CanonicalBrowsingContext final : public BrowsingContext {
   void CanonicalDiscard();
 
   using Type = BrowsingContext::Type;
-  CanonicalBrowsingContext(BrowsingContext* aParent,
+  CanonicalBrowsingContext(WindowContext* aParentWindow,
                            BrowsingContextGroup* aGroup,
                            uint64_t aBrowsingContextId,
                            uint64_t aOwnerProcessId,
@@ -173,6 +182,15 @@ class CanonicalBrowsingContext final : public BrowsingContext {
     uint64_t mPendingSwitchId;
   };
 
+  friend class net::DocumentLoadListener;
+  // Called when a DocumentLoadListener is created to start a load for
+  // this browsing context.
+  void StartDocumentLoad(net::DocumentLoadListener* aLoad);
+  // Called once DocumentLoadListener completes handling a load, and it
+  // is either complete, or handed off to the final channel to deliver
+  // data to the destination docshell.
+  void EndDocumentLoad(net::DocumentLoadListener* aLoad);
+
   // XXX(farre): Store a ContentParent pointer here rather than mProcessId?
   // Indicates which process owns the docshell.
   uint64_t mProcessId;
@@ -193,6 +211,8 @@ class CanonicalBrowsingContext final : public BrowsingContext {
   // browsing context tree, so it would only exist in the top level browsing
   // context.
   RefPtr<MediaController> mTabMediaController;
+
+  RefPtr<net::DocumentLoadListener> mCurrentLoad;
 
   // These are being mirrored from docshell
   nsCOMPtr<nsISHEntry> mOSHE;

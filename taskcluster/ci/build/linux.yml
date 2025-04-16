@@ -79,6 +79,9 @@ linux64-plain/opt:
             - linux64-cbindgen
             - linux64-lucetc
             - wasi-sysroot
+    optimization:
+        push-interval-10:
+            - linux
 
 linux64-fuzzing/debug:
     description: "Linux64 Fuzzing Debug"
@@ -96,7 +99,6 @@ linux64-fuzzing/debug:
         env:
             MOZ_LOW_PARALLELISM_BUILD: '1'
             PERFHERDER_EXTRA_OPTIONS: fuzzing
-            FORCE_GCC: '1'
     run:
         using: mozharness
         actions: [get-secrets, build]
@@ -111,8 +113,8 @@ linux64-fuzzing/debug:
         need-xvfb: true
     fetches:
         toolchain:
+            - linux64-binutils
             - linux64-clang
-            - linux64-gcc-8
             - linux64-cbindgen
             - linux64-sccache
             - linux64-rust
@@ -126,7 +128,7 @@ linux64-fuzzing/debug:
             # this dependency can be removed.
             - linux64-fix-stacks
     optimization:
-        fuzzing-builds:
+        build-fuzzing:
             - linux
 
 linux64/debug:
@@ -210,6 +212,9 @@ linux64-plain/debug:
             - linux64-cbindgen
             - linux64-lucetc
             - wasi-sysroot
+    optimization:
+        push-interval-10:
+            - linux
 
 linux64-devedition/opt:
     description: "Linux64 devedition (shippable)"
@@ -838,7 +843,7 @@ linux64-tsan-fuzzing/opt:
             - linux64-lucetc
             - wasi-sysroot
     optimization:
-        fuzzing-builds:
+        build-fuzzing:
             - linux
 
 linux64-asan-fuzzing/opt:
@@ -884,7 +889,7 @@ linux64-asan-fuzzing/opt:
             - linux64-lucetc
             - wasi-sysroot
     optimization:
-        fuzzing-builds:
+        build-fuzzing:
             - linux
 
 linux64-asan-fuzzing-ccov/opt:
@@ -972,7 +977,7 @@ linux64-fuzzing-ccov/opt:
             - linux64-lucetc
             - wasi-sysroot
     optimization:
-        fuzzing-builds:
+        build-fuzzing:
             - linux
 
 linux64-asan-reporter-nightly/opt:
@@ -1401,6 +1406,9 @@ linux64-aarch64/opt:
             - linux64-node
             - linux64-lucetc
             - wasi-sysroot
+    optimization:
+        push-interval-10:
+            - linux
 
 linux-gcp/debug:
     description: "Linux32 Debug - built on GCP"
@@ -1444,6 +1452,10 @@ linux-gcp/debug:
             - linux64-node
             - linux64-lucetc
             - wasi-sysroot
+            # `fix-stacks` is needed because xpcshell self tests run as part of
+            # the build step. Once bug 1614626 moves them to the xpcshell task,
+            # this dependency can be removed.
+            - linux64-fix-stacks
 
 linux-gcp/opt:
     description: "Linux32 Opt - built on GCP"
@@ -1526,6 +1538,10 @@ linux64-gcp/debug:
             - linux64-node
             - linux64-lucetc
             - wasi-sysroot
+            # `fix-stacks` is needed because xpcshell self tests run as part of
+            # the build step. Once bug 1614626 moves them to the xpcshell task,
+            # this dependency can be removed.
+            - linux64-fix-stacks
 
 linux64-gcp/opt:
     description: "Linux64 Opt - built on GCP"

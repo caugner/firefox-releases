@@ -14,7 +14,6 @@
 #  include "mozilla/a11y/ProxyAccessibleBase.h"
 #  include "nsAccessibilityService.h"
 #endif
-#include "mozilla/BrowserElementParent.h"
 #include "mozilla/dom/CancelContentJSOptionsBinding.h"
 #include "mozilla/dom/ChromeMessageSender.h"
 #include "mozilla/dom/ContentParent.h"
@@ -36,7 +35,6 @@
 #include "mozilla/gfx/GPUProcessManager.h"
 #include "mozilla/Hal.h"
 #include "mozilla/IMEStateManager.h"
-#include "mozilla/jsipc/CrossProcessObjectWrappers.h"
 #include "mozilla/layers/AsyncDragMetrics.h"
 #include "mozilla/layers/InputAPZContext.h"
 #include "mozilla/layout/RemoteLayerTreeOwner.h"
@@ -139,7 +137,6 @@ using namespace mozilla::layers;
 using namespace mozilla::layout;
 using namespace mozilla::services;
 using namespace mozilla::widget;
-using namespace mozilla::jsipc;
 using namespace mozilla::gfx;
 
 using mozilla::LazyLogModule;
@@ -224,7 +221,8 @@ BrowserParent::BrowserParent(ContentParent* aManager, const TabId& aTabId,
       mHasPresented(false),
       mIsReadyToHandleInputEvents(false),
       mIsMouseEnterIntoWidgetEventSuppressed(false),
-      mSuspendedProgressEvents(false) {
+      mSuspendedProgressEvents(false),
+      mSuspendMediaWhenInactive(false) {
   MOZ_ASSERT(aManager);
   // When the input event queue is disabled, we don't need to handle the case
   // that some input events are dispatched before PBrowserConstructor.
@@ -476,17 +474,15 @@ ParentShowInfo BrowserParent::GetShowInfo() {
         mFrameElement->HasAttr(kNameSpaceID_None, nsGkAtoms::allowfullscreen) ||
         mFrameElement->HasAttr(kNameSpaceID_None,
                                nsGkAtoms::mozallowfullscreen);
-    bool isPrivate = mFrameElement->HasAttr(kNameSpaceID_None,
-                                            nsGkAtoms::mozprivatebrowsing);
     bool isTransparent =
         nsContentUtils::IsChromeDoc(mFrameElement->OwnerDoc()) &&
         mFrameElement->HasAttr(kNameSpaceID_None, nsGkAtoms::transparent);
-    return ParentShowInfo(name, allowFullscreen, isPrivate, false,
-                          isTransparent, mDPI, mRounding, mDefaultScale.scale);
+    return ParentShowInfo(name, allowFullscreen, false, isTransparent, mDPI,
+                          mRounding, mDefaultScale.scale);
   }
 
-  return ParentShowInfo(EmptyString(), false, false, false, false, mDPI,
-                        mRounding, mDefaultScale.scale);
+  return ParentShowInfo(EmptyString(), false, false, false, mDPI, mRounding,
+                        mDefaultScale.scale);
 }
 
 already_AddRefed<nsIPrincipal> BrowserParent::GetContentPrincipal() const {
@@ -741,10 +737,9 @@ void BrowserParent::ActorDestroy(ActorDestroyReason why) {
   // out-of-process iframe.
   RefPtr<nsFrameLoader> frameLoader = GetFrameLoader(true);
   if (frameLoader) {
-    ReceiveMessage(CHILD_PROCESS_SHUTDOWN_MESSAGE, false, nullptr, nullptr,
-                   nullptr);
+    ReceiveMessage(CHILD_PROCESS_SHUTDOWN_MESSAGE, false, nullptr);
 
-    if (!mBrowsingContext->GetParent()) {
+    if (mBrowsingContext->IsTop()) {
       // If this is a top-level BrowsingContext, tell the frameloader it's time
       // to go away. Otherwise, this is a subframe crash, and we can keep the
       // frameloader around.
@@ -755,8 +750,19 @@ void BrowserParent::ActorDestroy(ActorDestroyReason why) {
     if (why == AbnormalShutdown) {
       frameLoader->MaybeNotifyCrashed(mBrowsingContext, GetIPCChannel());
 
-      if (!mBrowsingContext->IsTopContent()) {
-        OnSubFrameCrashed();
+      auto* bridge = GetBrowserBridgeParent();
+      if (bridge && bridge->CanSend() && !mBrowsingContext->IsDiscarded()) {
+        MOZ_ASSERT(!mBrowsingContext->IsTop());
+
+        // Set the owner process of the root context belonging to a crashed
+        // process to the embedding process, since we'll be showing the crashed
+        // page in that process.
+        mBrowsingContext->SetOwnerProcessId(
+            bridge->Manager()->Manager()->ChildID());
+        mBrowsingContext->SetCurrentInnerWindowId(0);
+
+        // Tell the browser bridge to show the subframe crashed page.
+        Unused << bridge->SendSubFrameCrashed();
       }
     }
   }
@@ -1657,7 +1663,7 @@ mozilla::ipc::IPCResult BrowserParent::RecvRequestNativeKeyBindings(
   }
 
   if (localEvent.InitEditCommandsFor(keyBindingsType)) {
-    *aCommands = localEvent.EditCommandsConstRef(keyBindingsType);
+    *aCommands = localEvent.EditCommandsConstRef(keyBindingsType).Clone();
   }
 
   return IPC_OK();
@@ -2037,7 +2043,6 @@ bool BrowserParent::SendHandleTap(TapType aType,
 
 mozilla::ipc::IPCResult BrowserParent::RecvSyncMessage(
     const nsString& aMessage, const ClonedMessageData& aData,
-    nsTArray<CpowEntry>&& aCpows, nsIPrincipal* aPrincipal,
     nsTArray<StructuredCloneData>* aRetVal) {
   AUTO_PROFILER_LABEL_DYNAMIC_LOSSY_NSSTRING("BrowserParent::RecvSyncMessage",
                                              OTHER, aMessage);
@@ -2046,34 +2051,14 @@ mozilla::ipc::IPCResult BrowserParent::RecvSyncMessage(
   StructuredCloneData data;
   ipc::UnpackClonedMessageDataForParent(aData, data);
 
-  CrossProcessCpowHolder cpows(Manager(), aCpows);
-  if (!ReceiveMessage(aMessage, true, &data, &cpows, aPrincipal, aRetVal)) {
-    return IPC_FAIL_NO_REASON(this);
-  }
-  return IPC_OK();
-}
-
-mozilla::ipc::IPCResult BrowserParent::RecvRpcMessage(
-    const nsString& aMessage, const ClonedMessageData& aData,
-    nsTArray<CpowEntry>&& aCpows, nsIPrincipal* aPrincipal,
-    nsTArray<StructuredCloneData>* aRetVal) {
-  AUTO_PROFILER_LABEL_DYNAMIC_LOSSY_NSSTRING("BrowserParent::RecvRpcMessage",
-                                             OTHER, aMessage);
-  MMPrinter::Print("BrowserParent::RecvRpcMessage", aMessage, aData);
-
-  StructuredCloneData data;
-  ipc::UnpackClonedMessageDataForParent(aData, data);
-
-  CrossProcessCpowHolder cpows(Manager(), aCpows);
-  if (!ReceiveMessage(aMessage, true, &data, &cpows, aPrincipal, aRetVal)) {
+  if (!ReceiveMessage(aMessage, true, &data, aRetVal)) {
     return IPC_FAIL_NO_REASON(this);
   }
   return IPC_OK();
 }
 
 mozilla::ipc::IPCResult BrowserParent::RecvAsyncMessage(
-    const nsString& aMessage, nsTArray<CpowEntry>&& aCpows,
-    nsIPrincipal* aPrincipal, const ClonedMessageData& aData) {
+    const nsString& aMessage, const ClonedMessageData& aData) {
   AUTO_PROFILER_LABEL_DYNAMIC_LOSSY_NSSTRING("BrowserParent::RecvAsyncMessage",
                                              OTHER, aMessage);
   MMPrinter::Print("BrowserParent::RecvAsyncMessage", aMessage, aData);
@@ -2081,8 +2066,7 @@ mozilla::ipc::IPCResult BrowserParent::RecvAsyncMessage(
   StructuredCloneData data;
   ipc::UnpackClonedMessageDataForParent(aData, data);
 
-  CrossProcessCpowHolder cpows(Manager(), aCpows);
-  if (!ReceiveMessage(aMessage, false, &data, &cpows, aPrincipal, nullptr)) {
+  if (!ReceiveMessage(aMessage, false, &data, nullptr)) {
     return IPC_FAIL_NO_REASON(this);
   }
   return IPC_OK();
@@ -2340,6 +2324,16 @@ mozilla::ipc::IPCResult BrowserParent::RecvRequestFocus(
   return IPC_OK();
 }
 
+mozilla::ipc::IPCResult BrowserParent::RecvWheelZoomChange(bool aIncrease) {
+  RefPtr<BrowsingContext> bc = GetBrowsingContext();
+  if (!bc) {
+    return IPC_OK();
+  }
+
+  bc->Canonical()->DispatchWheelZoomChange(aIncrease);
+  return IPC_OK();
+}
+
 mozilla::ipc::IPCResult BrowserParent::RecvEnableDisableCommands(
     const MaybeDiscarded<BrowsingContext>& aContext, const nsString& aAction,
     nsTArray<nsCString>&& aEnabledCommands,
@@ -2349,7 +2343,7 @@ mozilla::ipc::IPCResult BrowserParent::RecvEnableDisableCommands(
   }
 
   nsCOMPtr<nsIBrowserController> browserController =
-      do_QueryActor(u"Controllers", aContext.get_canonical());
+      do_QueryActor("Controllers", aContext.get_canonical());
   if (browserController) {
     browserController->EnableDisableCommands(aAction, aEnabledCommands,
                                              aDisabledCommands);
@@ -2840,6 +2834,18 @@ mozilla::ipc::IPCResult BrowserParent::RecvNotifyContentBlockingEvent(
   return IPC_OK();
 }
 
+mozilla::ipc::IPCResult
+BrowserParent::RecvReportBlockedEmbedderNodeByClassifier() {
+  BrowserBridgeParent* bridge = GetBrowserBridgeParent();
+
+  if (!bridge) {
+    return IPC_OK();
+  }
+
+  Unused << bridge->SendAddBlockedNodeByClassifier();
+  return IPC_OK();
+}
+
 bool BrowserParent::GetWebProgressListener(
     nsIBrowser** aOutBrowser, nsIWebProgress** aOutManager,
     nsIWebProgressListener** aOutListener) {
@@ -3269,7 +3275,6 @@ mozilla::ipc::IPCResult BrowserParent::RecvDispatchFocusToTopLevelWindow() {
 
 bool BrowserParent::ReceiveMessage(const nsString& aMessage, bool aSync,
                                    StructuredCloneData* aData,
-                                   CpowHolder* aCpows, nsIPrincipal* aPrincipal,
                                    nsTArray<StructuredCloneData>* aRetVal) {
   // If we're for an oop iframe, don't deliver messages to the wrong place.
   if (mBrowserBridgeParent) {
@@ -3282,7 +3287,7 @@ bool BrowserParent::ReceiveMessage(const nsString& aMessage, bool aSync,
         frameLoader->GetFrameMessageManager();
 
     manager->ReceiveMessage(mFrameElement, frameLoader, aMessage, aSync, aData,
-                            aCpows, aPrincipal, aRetVal, IgnoreErrors());
+                            aRetVal, IgnoreErrors());
   }
   return true;
 }
@@ -3400,35 +3405,6 @@ void BrowserParent::ApzAwareEventRoutingToChild(
   }
 }
 
-mozilla::ipc::IPCResult BrowserParent::RecvBrowserFrameOpenWindow(
-    PBrowserParent* aOpener, const nsString& aURL, const nsString& aName,
-    bool aForceNoReferrer, const nsString& aFeatures,
-    BrowserFrameOpenWindowResolver&& aResolve) {
-  CreatedWindowInfo cwi;
-  cwi.rv() = NS_OK;
-  cwi.maxTouchPoints() = 0;
-
-  BrowserElementParent::OpenWindowResult opened =
-      BrowserElementParent::OpenWindowOOP(BrowserParent::GetFrom(aOpener), this,
-                                          aURL, aName, aForceNoReferrer,
-                                          aFeatures);
-  cwi.windowOpened() = (opened == BrowserElementParent::OPEN_WINDOW_ADDED);
-  cwi.maxTouchPoints() = GetMaxTouchPoints();
-
-  nsCOMPtr<nsIWidget> widget = GetWidget();
-  if (widget) {
-    cwi.dimensions() = GetDimensionInfo();
-  }
-
-  // Resolve the request with the information we collected.
-  aResolve(cwi);
-
-  if (!cwi.windowOpened()) {
-    Destroy();
-  }
-  return IPC_OK();
-}
-
 mozilla::ipc::IPCResult BrowserParent::RecvRespondStartSwipeEvent(
     const uint64_t& aInputBlockId, const bool& aStartSwipe) {
   if (nsCOMPtr<nsIWidget> widget = GetWidget()) {
@@ -3460,6 +3436,16 @@ void BrowserParent::SetDocShellIsActive(bool isActive) {
     }
   }
 #endif
+}
+
+bool BrowserParent::GetSuspendMediaWhenInactive() const {
+  return mSuspendMediaWhenInactive;
+}
+
+void BrowserParent::SetSuspendMediaWhenInactive(
+    bool aSuspendMediaWhenInactive) {
+  mSuspendMediaWhenInactive = aSuspendMediaWhenInactive;
+  Unused << SendSetSuspendMediaWhenInactive(aSuspendMediaWhenInactive);
 }
 
 bool BrowserParent::GetHasPresented() { return mHasPresented; }
@@ -3830,7 +3816,6 @@ class FakeChannel final : public nsIChannel,
     elem.forget(aElement);
     return NS_OK;
   }
-  NS_IMETHOD GetNestedFrameId(uint64_t*) NO_IMPL;
   NS_IMETHOD GetIsContent(bool*) NO_IMPL;
   NS_IMETHOD GetUsePrivateBrowsing(bool*) NO_IMPL;
   NS_IMETHOD SetUsePrivateBrowsing(bool) NO_IMPL;
@@ -3931,12 +3916,12 @@ bool BrowserParent::AsyncPanZoomEnabled() const {
 }
 
 void BrowserParent::StartPersistence(
-    uint64_t aOuterWindowID, nsIWebBrowserPersistDocumentReceiver* aRecv,
-    ErrorResult& aRv) {
+    CanonicalBrowsingContext* aContext,
+    nsIWebBrowserPersistDocumentReceiver* aRecv, ErrorResult& aRv) {
   auto* actor = new WebBrowserPersistDocumentParent();
   actor->SetOnReady(aRecv);
-  bool ok = Manager()->SendPWebBrowserPersistDocumentConstructor(
-      actor, this, aOuterWindowID);
+  bool ok = Manager()->SendPWebBrowserPersistDocumentConstructor(actor, this,
+                                                                 aContext);
   if (!ok) {
     aRv.Throw(NS_ERROR_FAILURE);
   }
@@ -4062,7 +4047,7 @@ mozilla::ipc::IPCResult BrowserParent::RecvGetSystemFont(nsCString* aFontName) {
 }
 
 mozilla::ipc::IPCResult BrowserParent::RecvMaybeFireEmbedderLoadEvents(
-    bool aFireLoadAtEmbeddingElement) {
+    EmbedderElementEventType aFireEventAtEmbeddingElement) {
   BrowserBridgeParent* bridge = GetBrowserBridgeParent();
   if (!bridge) {
     NS_WARNING("Received `load` event on unbridged BrowserParent!");
@@ -4070,7 +4055,7 @@ mozilla::ipc::IPCResult BrowserParent::RecvMaybeFireEmbedderLoadEvents(
   }
 
   Unused << bridge->SendMaybeFireEmbedderLoadEvents(
-      aFireLoadAtEmbeddingElement);
+      aFireEventAtEmbeddingElement);
   return IPC_OK();
 }
 
@@ -4107,62 +4092,6 @@ FakeChannel::OnAuthCancelled(nsISupports* aContext, bool userCancel) {
     return NS_ERROR_FAILURE;
   }
   return NS_OK;
-}
-
-void BrowserParent::OnSubFrameCrashed() {
-  if (mBrowsingContext->IsDiscarded()) {
-    return;
-  }
-
-  auto processId = Manager()->ChildID();
-  BrowsingContext* parent = mBrowsingContext->GetParent();
-  ContentParent* embedderProcess = parent->Canonical()->GetContentParent();
-  if (!embedderProcess) {
-    return;
-  }
-
-  ContentParent* manager = Manager();
-  // Set the owner process of a browsing context belonging to a
-  // crashed process to the parent context's process, since
-  // we'll be showing the crashed page in that process.
-  mBrowsingContext->SetOwnerProcessId(embedderProcess->ChildID());
-
-  // Find all same process sub tree nodes and detach them, cache all
-  // other nodes in the sub tree.
-  mBrowsingContext->PostOrderWalk([&](auto* aContext) {
-    // By iterating in reverse we can deal with detach removing the child that
-    // we're currently on
-    for (auto it = aContext->GetChildren().rbegin();
-         it != aContext->GetChildren().rend(); it++) {
-      RefPtr<BrowsingContext> context = *it;
-      if (context->Canonical()->IsOwnedByProcess(processId)) {
-        // Hold a reference to `context` until the response comes back to
-        // ensure it doesn't die while messages relating to this context are
-        // in-flight.
-        auto resolve = [context](bool) {};
-        auto reject = [context](ResponseRejectReason) {};
-        context->Group()->EachOtherParent(manager, [&](auto* aParent) {
-          aParent->SendDetachBrowsingContext(context->Id(), resolve, reject);
-        });
-
-        context->Detach(/* aFromIPC */ true);
-      }
-    }
-
-    // Cache all the children not owned by crashing process. Note that
-    // all remaining children are out of process, which makes it ok to
-    // just cache.
-    aContext->Group()->EachOtherParent(manager, [&](auto* aParent) {
-      Unused << aParent->SendCacheBrowsingContextChildren(aContext);
-    });
-    aContext->CacheChildren(/* aFromIPC */ true);
-  });
-
-  MOZ_DIAGNOSTIC_ASSERT(!mBrowsingContext->GetChildren().Length());
-  // Tell the browser bridge to show the subframe crashed page.
-  if (GetBrowserBridgeParent()) {
-    Unused << GetBrowserBridgeParent()->SendSubFrameCrashed(mBrowsingContext);
-  }
 }
 
 mozilla::ipc::IPCResult BrowserParent::RecvIsWindowSupportingProtectedMedia(

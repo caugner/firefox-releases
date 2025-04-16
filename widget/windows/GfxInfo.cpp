@@ -78,6 +78,14 @@ GfxInfo::GetHasBattery(bool* aHasBattery) {
   return NS_OK;
 }
 
+int32_t GfxInfo::GetMaxRefreshRate() {
+  int32_t refreshRate = -1;
+  for (auto displayInfo : mDisplayInfo) {
+    refreshRate = std::max(refreshRate, int32_t(displayInfo.mRefreshRate));
+  }
+  return refreshRate;
+}
+
 #define PIXEL_STRUCT_RGB 1
 #define PIXEL_STRUCT_BGR 2
 
@@ -1795,7 +1803,7 @@ const nsTArray<GfxDriverInfo>& GfxInfo::GetGfxDriverInfo() {
     // FEATURE_WEBRENDER - ALLOWLIST
 
     APPEND_TO_DRIVER_BLOCKLIST2_EXT(
-        OperatingSystem::RecentWindows10, ScreenSizeStatus::Small,
+        OperatingSystem::RecentWindows10, ScreenSizeStatus::All,
         BatteryStatus::Present, DesktopEnvironment::All, WindowProtocol::All,
         DriverVendor::All, DeviceFamily::NvidiaRolloutWebRender,
         nsIGfxInfo::FEATURE_WEBRENDER, nsIGfxInfo::FEATURE_ALLOW_ALWAYS,
@@ -1887,15 +1895,8 @@ const nsTArray<GfxDriverInfo>& GfxInfo::GetGfxDriverInfo() {
     APPEND_TO_DRIVER_BLOCKLIST2(OperatingSystem::Windows, DeviceFamily::AtiAll,
                                 nsIGfxInfo::FEATURE_WEBRENDER_COMPOSITOR,
                                 nsIGfxInfo::FEATURE_BLOCKED_DEVICE,
-                                DRIVER_EQUAL, V(8, 17, 10, 1129),
+                                DRIVER_LESS_THAN_OR_EQUAL, V(8, 17, 10, 1129),
                                 "FEATURE_FAILURE_CHROME_BUG_800950");
-
-    // Block all AMD for now
-    APPEND_TO_DRIVER_BLOCKLIST2(OperatingSystem::Windows, DeviceFamily::AtiAll,
-                                nsIGfxInfo::FEATURE_WEBRENDER_COMPOSITOR,
-                                nsIGfxInfo::FEATURE_BLOCKED_DEVICE,
-                                DRIVER_COMPARISON_IGNORED, V(0, 0, 0, 0),
-                                "FEATURE_FAILURE_ALL_AMD");
 
     // Block all non-recent Win10
     APPEND_TO_DRIVER_BLOCKLIST2(
@@ -2016,11 +2017,11 @@ void GfxInfo::DescribeFeatures(JSContext* aCx, JS::Handle<JSObject*> aObj) {
 
   JS::Rooted<JSObject*> obj(aCx);
 
-  gfx::FeatureStatus d3d11 = gfxConfig::GetValue(Feature::D3D11_COMPOSITING);
+  gfx::FeatureState& d3d11 = gfxConfig::GetFeature(Feature::D3D11_COMPOSITING);
   if (!InitFeatureObject(aCx, aObj, "d3d11", d3d11, &obj)) {
     return;
   }
-  if (d3d11 == gfx::FeatureStatus::Available) {
+  if (d3d11.GetValue() == gfx::FeatureStatus::Available) {
     DeviceManagerDx* dm = DeviceManagerDx::Get();
     JS::Rooted<JS::Value> val(aCx,
                               JS::Int32Value(dm->GetCompositorFeatureLevel()));
@@ -2047,7 +2048,7 @@ void GfxInfo::DescribeFeatures(JSContext* aCx, JS::Handle<JSObject*> aObj) {
     JS_SetProperty(aCx, obj, "blacklisted", val);
   }
 
-  gfx::FeatureStatus d2d = gfxConfig::GetValue(Feature::DIRECT2D);
+  gfx::FeatureState& d2d = gfxConfig::GetFeature(Feature::DIRECT2D);
   if (!InitFeatureObject(aCx, aObj, "d2d", d2d, &obj)) {
     return;
   }

@@ -15,8 +15,8 @@ Services.scriptloader.loadSubScript(
 );
 
 var { Toolbox } = require("devtools/client/framework/toolbox");
-var { Task } = require("devtools/shared/task");
-var asyncStorage = require("devtools/shared/async-storage");
+const { Task } = require("devtools/shared/task");
+const asyncStorage = require("devtools/shared/async-storage");
 
 const {
   getSelectedLocation,
@@ -319,6 +319,10 @@ function getVisibleSelectedFrameLine(dbg) {
   return frame && frame.location.line;
 }
 
+function waitForPausedLine(dbg, line) {
+  return waitForState(dbg, () => getVisibleSelectedFrameLine(dbg) == line);
+}
+
 /**
  * Assert that the debugger is paused at the correct location.
  *
@@ -390,6 +394,7 @@ function assertDebugLine(dbg, line, column) {
 
     ok(classMatch, "expression is highlighted as paused");
   }
+  info(`Paused on line ${line}`);
 }
 
 /**
@@ -580,7 +585,9 @@ async function clearDebuggerPreferences(prefs = []) {
   Services.prefs.clearUserPref("devtools.debugger.scopes-visible");
   Services.prefs.clearUserPref("devtools.debugger.skip-pausing");
   Services.prefs.clearUserPref("devtools.debugger.map-scopes-enabled");
+  Services.prefs.clearUserPref("javascript.enabled");
   await pushPref("devtools.debugger.log-actions", true);
+
   for (const pref of prefs) {
     await pushPref(...pref);
   }
@@ -1128,8 +1135,8 @@ const startKey = isMac
 
 const keyMappings = {
   close: { code: "w", modifiers: cmdOrCtrl },
-  commandKeyDown: {code: "VK_META", modifiers: {type: "keydown"}},
-  commandKeyUp: {code: "VK_META", modifiers: {type: "keyup"}},
+  commandKeyDown: { code: "VK_META", modifiers: { type: "keydown" } },
+  commandKeyUp: { code: "VK_META", modifiers: { type: "keyup" } },
   debugger: { code: "s", modifiers: shiftOrAlt },
   // test conditional panel shortcut
   toggleCondPanel: { code: "b", modifiers: cmdShift },
@@ -1444,8 +1451,8 @@ function clickElementWithSelector(dbg, selector) {
   clickDOMElement(dbg, findElementWithSelector(dbg, selector));
 }
 
-function clickDOMElement(dbg, element) {
-  EventUtils.synthesizeMouseAtCenter(element, {}, dbg.win);
+function clickDOMElement(dbg, element, options = {}) {
+  EventUtils.synthesizeMouseAtCenter(element, options, dbg.win);
 }
 
 function dblClickElement(dbg, elementName, ...args) {
@@ -1489,6 +1496,11 @@ function rightClickEl(dbg, el) {
 async function clickGutter(dbg, line) {
   const el = await codeMirrorGutterElement(dbg, line);
   clickDOMElement(dbg, el);
+}
+
+async function cmdClickGutter(dbg, line) {
+  const el = await codeMirrorGutterElement(dbg, line);
+  clickDOMElement(dbg, el, cmdOrCtrl);
 }
 
 function findContextMenu(dbg, selector) {

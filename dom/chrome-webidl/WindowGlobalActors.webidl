@@ -8,6 +8,7 @@ interface URI;
 interface nsIDocShell;
 interface RemoteTab;
 interface nsITransportSecurityInfo;
+interface nsIContentParent;
 
 [Exposed=Window, ChromeOnly]
 interface WindowContext {
@@ -68,7 +69,7 @@ interface WindowGlobalParent : WindowContext {
    * customize actor creation.
    */
   [Throws]
-  JSWindowActorParent getActor(DOMString name);
+  JSWindowActorParent getActor(UTF8String name);
 
   /**
    * Renders a region of the frame into an image bitmap.
@@ -130,5 +131,5 @@ interface WindowGlobalChild {
    * customize actor creation.
    */
   [Throws]
-  JSWindowActorChild getActor(DOMString name);
+  JSWindowActorChild getActor(UTF8String name);
 };

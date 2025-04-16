@@ -243,7 +243,7 @@ static void SkipBinaryGuards(CacheIRReader& reader) {
         reader.matchOp(CacheOp::TruncateDoubleToUInt32) ||
         reader.matchOp(CacheOp::GuardToBoolean) ||
         reader.matchOp(CacheOp::GuardAndGetNumberFromString) ||
-        reader.matchOp(CacheOp::GuardAndGetInt32FromNumber)) {
+        reader.matchOp(CacheOp::GuardAndGetInt32FromString)) {
       reader.skip();  // Skip over operandId
       reader.skip();  // Skip over result/type.
       continue;
@@ -277,20 +277,24 @@ static MIRType ParseCacheIRStub(ICStub* stub) {
     case CacheOp::BooleanToString:
     case CacheOp::CallNumberToString:
       return MIRType::String;
+    case CacheOp::LoadDoubleResult:
     case CacheOp::DoubleAddResult:
     case CacheOp::DoubleSubResult:
     case CacheOp::DoubleMulResult:
     case CacheOp::DoubleDivResult:
     case CacheOp::DoubleModResult:
+    case CacheOp::DoublePowResult:
     case CacheOp::DoubleNegationResult:
     case CacheOp::DoubleIncResult:
     case CacheOp::DoubleDecResult:
       return MIRType::Double;
+    case CacheOp::LoadInt32Result:
     case CacheOp::Int32AddResult:
     case CacheOp::Int32SubResult:
     case CacheOp::Int32MulResult:
     case CacheOp::Int32DivResult:
     case CacheOp::Int32ModResult:
+    case CacheOp::Int32PowResult:
     case CacheOp::Int32BitOrResult:
     case CacheOp::Int32BitXorResult:
     case CacheOp::Int32BitAndResult:
@@ -584,8 +588,6 @@ MIRType BaselineInspector::expectedBinaryArithSpecialization(jsbytecode* pc) {
   MIRType result;
   ICStub* stubs[2];
 
-  MOZ_ASSERT(JSOp(*pc) != JSOp::Pos);
-
   const ICEntry& entry = icEntryFromPC(pc);
   ICFallbackStub* stub = entry.fallbackStub();
   if (stub->state().hasFailures()) {
@@ -674,7 +676,7 @@ static bool MaybeArgumentReader(ICStub* stub, CacheOp targetOp,
   CacheIRReader stubReader(GetCacheIRStubInfo(stub));
   while (stubReader.more()) {
     CacheOp op = stubReader.readOp();
-    uint32_t argLength = CacheIROpFormat::ArgLengths[uint8_t(op)];
+    uint32_t argLength = CacheIROpArgLengths[size_t(op)];
 
     if (op == targetOp) {
       MOZ_ASSERT(argReader.isNothing(),

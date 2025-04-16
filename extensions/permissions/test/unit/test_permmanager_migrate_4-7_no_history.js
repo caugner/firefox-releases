@@ -46,9 +46,9 @@ function GetPermissionsFile(profile) {
  */
 
 add_task(function test() {
-  /* Create and set up the permissions database */
-  let profile = do_get_profile();
+  // Create and set up the permissions database.
   Services.prefs.setCharPref("permissions.manager.defaultsUrl", "");
+  let profile = do_get_profile();
 
   // Make sure that we can't resolve the nsINavHistoryService
   try {
@@ -212,7 +212,7 @@ add_task(function test() {
   // This will force the permission-manager to reload the data.
   Services.obs.notifyObservers(null, "testonly-reload-permissions-from-disk");
 
-  // Force initialization of the nsPermissionManager
+  // Force initialization of the PermissionManager
   for (let permission of Services.perms.all) {
     let isExpected = false;
 

@@ -594,7 +594,7 @@ def get_vc_paths(topsrcdir):
     for install in vswhere(['-products', '*', '-requires', 'Microsoft.VisualStudio.Component.VC.Tools.x86.x64']):
         path = install['installationPath']
         tools_version = open(os.path.join(
-            path, r'VC\Auxiliary\Build\Microsoft.VCToolsVersion.default.txt'), 'rb').read().strip()
+            path, r'VC\Auxiliary\Build\Microsoft.VCToolsVersion.default.txt'), 'r').read().strip()
         tools_path = os.path.join(
             path, r'VC\Tools\MSVC', tools_version)
         yield (Version(install['installationVersion']), tools_path)
@@ -1809,8 +1809,8 @@ set_config('MOZ_CODE_COVERAGE', code_coverage)
 set_define('MOZ_CODE_COVERAGE', code_coverage)
 
 @depends(target, c_compiler, vc_path, check_build_environment, when=code_coverage)
+@imports('os')
 @imports('re')
-@imports('mozpack.path')
 @imports(_from='__builtin__', _import='open')
 def coverage_cflags(target, c_compiler, vc_path, build_env):
     cflags = ['--coverage']
@@ -1826,10 +1826,7 @@ def coverage_cflags(target, c_compiler, vc_path, build_env):
 
         # We need to get the real path of Visual Studio, which can be in a
         # symlinked directory (for example, on automation).
-        vs_path = mozpack.path.readlink(vs_path)
-        # Since the -fprofile-exclude-files option in LLVM is a regex, we need to
-        # have the same path separators.
-        vs_path = vs_path.replace('/', '\\')
+        vs_path = os.path.realpath(vs_path)
 
         cflags += [
             '-fprofile-exclude-files=^{}.*$'.format(re.escape(vs_path)),
@@ -1973,8 +1970,22 @@ set_config('CARGO_INCREMENTAL', cargo_incremental)
 
 # Linker detection
 # ==============================================================
-
-
+# The policy is as follows:
+# For Windows:
+# - the linker is picked via the LINKER environment variable per windows.configure,
+#   but ought to be llvm-lld in any case.
+# For macOS:
+# - the linker is ld64, either from XCode on macOS, or from cctools-ports when
+#   cross-compiling. lld can be enabled manually, but as of writing, mach-o support
+#   for lld is incomplete.
+# For other OSes:
+# - on local developer builds: lld is used if present. Otherwise gold is used if present
+#   otherwise, BFD ld is used.
+# - on release/official builds: whatever "ld" resolves to is used, except on Android x86_64
+#   where BFD ld is used. Usually, "ld" resolves to BFD ld, except with the Android NDK,
+#   where it resolves to gold. lld is not used by default on Linux and Android because
+#   it introduces layout changes that prevent elfhack from working. See e.g.
+#   https://bugzilla.mozilla.org/show_bug.cgi?id=1563654#c2.
 @depends(target)
 def is_linker_option_enabled(target):
     if target.kernel not in ('WINNT', 'SunOS'):

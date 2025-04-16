@@ -30,10 +30,6 @@
 #include "mozilla/UniquePtr.h"               // for UniquePtr
 #include "nsCOMPtr.h"                        // for already_AddRefed
 
-#if defined(MOZ_WIDGET_ANDROID)
-#  include "mozilla/layers/AndroidDynamicToolbarAnimator.h"
-#endif  // defined(MOZ_WIDGET_ANDROID)
-
 namespace mozilla {
 class MultiTouchInput;
 
@@ -273,14 +269,6 @@ class APZCTreeManager : public IAPZCTreeManager, public APZInputBridge {
       const Maybe<ZoomConstraints>& aConstraints) override;
 
   /**
-   * Adjusts the root APZC to compensate for a shift in the surface. See the
-   * documentation on AsyncPanZoomController::AdjustScrollForSurfaceShift for
-   * some more details. This is only currently needed due to surface shifts
-   * caused by the dynamic toolbar on Android.
-   */
-  void AdjustScrollForSurfaceShift(const ScreenPoint& aShift);
-
-  /**
    * Calls Destroy() on all APZC instances attached to the tree, and resets the
    * tree back to empty. This function must be called exactly once during the
    * lifetime of this APZCTreeManager, when this APZCTreeManager is no longer
@@ -328,10 +316,10 @@ class APZCTreeManager : public IAPZCTreeManager, public APZInputBridge {
    * overscroll to the next APZC. Note that because of scroll grabbing, the
    * first APZC to scroll may not be the one that is receiving the touch events.
    *
-   * |aAPZC| is the APZC that received the touch events triggering the scroll
+   * |aPrev| is the APZC that received the touch events triggering the scroll
    *   (in the case of an initial scroll), or the last APZC to scroll (in the
    *   case of overscroll)
-   * |aStartPoint| and |aEndPoint| are in |aAPZC|'s transformed screen
+   * |aStartPoint| and |aEndPoint| are in |aPrev|'s transformed screen
    *   coordinates (i.e. the same coordinates in which touch points are given to
    *   APZCs). The amount of (over)scroll is represented by two points rather
    *   than a displacement because with certain 3D transforms, the same
@@ -347,6 +335,12 @@ class APZCTreeManager : public IAPZCTreeManager, public APZInputBridge {
    * scroll each APZC consumes. This is to allow the sending APZC to go into
    * an overscrolled state if no APZC further up in the handoff chain accepted
    * the entire scroll.
+   *
+   * The function will return true if the entire scroll was consumed, and
+   * false otherwise. As this function also modifies aStartPoint and aEndPoint,
+   * when scroll is consumed, it should always the case that this function
+   * returns true if and only if IsZero(aStartPoint - aEndPoint), using the
+   * modified aStartPoint and aEndPoint after the function returns.
    *
    * The way this method works is best illustrated with an example.
    * Consider three nested APZCs, A, B, and C, with C being the innermost one.
@@ -376,7 +370,7 @@ class APZCTreeManager : public IAPZCTreeManager, public APZInputBridge {
    * Note: this should be used for panning only. For handing off overscroll for
    *       a fling, use DispatchFling().
    */
-  void DispatchScroll(AsyncPanZoomController* aApzc,
+  bool DispatchScroll(AsyncPanZoomController* aPrev,
                       ParentLayerPoint& aStartPoint,
                       ParentLayerPoint& aEndPoint,
                       OverscrollHandoffState& aOverscrollHandoffState);
@@ -606,19 +600,6 @@ class APZCTreeManager : public IAPZCTreeManager, public APZInputBridge {
                                        AsyncPanZoomController* aApzc);
 
   /**
-   * Process a movement of the dynamic toolbar by |aDeltaY| over the time
-   * period from |aStartTimestampMs| to |aEndTimestampMs|.
-   * This is used to track velocities accurately in the presence of movement
-   * of the dynamic toolbar, since in such cases the finger can be moving
-   * relative to the screen even though no scrolling is occurring.
-   * Note that this function expects "spatial coordinates" (i.e. toolbar
-   * moves up --> negative delta).
-   */
-  void ProcessDynamicToolbarMovement(uint32_t aStartTimestampMs,
-                                     uint32_t aEndTimestampMs,
-                                     ScreenCoord aDeltaY);
-
-  /**
    * Find the zoomable APZC in the same layer subtree (i.e. with the same
    * layers id) as the given APZC.
    */
@@ -652,17 +633,35 @@ class APZCTreeManager : public IAPZCTreeManager, public APZInputBridge {
   HitTestResult GetAPZCAtPointWR(
       const ScreenPoint& aHitTestPoint,
       const RecursiveMutexAutoLock& aProofOfTreeLock);
+  HitTestingTreeNode* FindRootNodeForLayersId(LayersId aLayersId) const;
   AsyncPanZoomController* FindRootApzcForLayersId(LayersId aLayersId) const;
   AsyncPanZoomController* FindRootContentApzcForLayersId(
       LayersId aLayersId) const;
-  AsyncPanZoomController* FindRootContentOrRootApzc() const;
   already_AddRefed<AsyncPanZoomController> GetZoomableTarget(
       AsyncPanZoomController* aApzc1, AsyncPanZoomController* aApzc2) const;
   already_AddRefed<AsyncPanZoomController> CommonAncestor(
       AsyncPanZoomController* aApzc1, AsyncPanZoomController* aApzc2) const;
+
+  struct FixedPositionInfo;
+  struct StickyPositionInfo;
+
+  // Returns true if |aNode| is a fixed layer that is fixed to the root content
+  // APZC.
+  // The map lock is required within these functions; if the map lock is already
+  // being held by the caller, the second overload should be used. If the map
+  // lock is not being held at the call site, the first overload should be used.
   bool IsFixedToRootContent(const HitTestingTreeNode* aNode) const;
-  // Returns true that |aNode| is stuck to the root content at bottom.
-  bool IsStuckToRootContentAtBottom(const HitTestingTreeNode* aNode) const;
+  bool IsFixedToRootContent(const FixedPositionInfo& aFixedInfo,
+                            const MutexAutoLock& aProofOfMapLock) const;
+
+  // Returns the vertical sides of |aNode| that are stuck to the root content.
+  // The map lock is required within these functions; if the map lock is already
+  // being held by the caller, the second overload should be used. If the map
+  // lock is not being held at the call site, the first overload should be used.
+  SideBits SidesStuckToRootContent(const HitTestingTreeNode* aNode) const;
+  SideBits SidesStuckToRootContent(const StickyPositionInfo& aStickyInfo,
+                                   const MutexAutoLock& aProofOfMapLock) const;
+
   /**
    * Perform hit testing for a touch-start event.
    *
@@ -766,6 +765,9 @@ class APZCTreeManager : public IAPZCTreeManager, public APZInputBridge {
       const MutexAutoLock& aProofOfMapLock,
       ClippedCompositionBoundsMap& aDestMap, ScrollableLayerGuid aGuid);
 
+  ScreenMargin GetCompositorFixedLayerMargins(
+      const MutexAutoLock& aProofOfMapLock) const;
+
  protected:
   /* The input queue where input events are held until we know enough to
    * figure out where they're going. Protected so gtests can access it.
@@ -816,8 +818,8 @@ class APZCTreeManager : public IAPZCTreeManager, public APZInputBridge {
    */
   bool mUsingAsyncZoomContainer;
 
-  /** A lock that protects mApzcMap, mScrollThumbInfo, mRootScrollbarInfo, and
-   * mFixedPositionInfo.
+  /** A lock that protects mApzcMap, mScrollThumbInfo, mRootScrollbarInfo,
+   * mFixedPositionInfo, and mStickyPositionInfo.
    */
   mutable mozilla::Mutex mMapLock;
 
@@ -912,13 +914,12 @@ class APZCTreeManager : public IAPZCTreeManager, public APZInputBridge {
    * async transform for a fixed position element on the sampler thread.
    */
   struct FixedPositionInfo {
-    uint64_t mFixedPositionAnimationId;
+    Maybe<uint64_t> mFixedPositionAnimationId;
     SideBits mFixedPosSides;
+    ScrollableLayerGuid::ViewID mFixedPosTarget;
+    LayersId mLayersId;
 
-    FixedPositionInfo(const uint64_t& aFixedPositionAnimationId,
-                      const SideBits aFixedPosSides)
-        : mFixedPositionAnimationId(aFixedPositionAnimationId),
-          mFixedPosSides(aFixedPosSides) {}
+    explicit FixedPositionInfo(const HitTestingTreeNode* aNode);
   };
   /**
    * If this APZCTreeManager is being used with WebRender, this vector gets
@@ -932,6 +933,33 @@ class APZCTreeManager : public IAPZCTreeManager, public APZInputBridge {
    * modifying mFixedPositionInfo.
    */
   std::vector<FixedPositionInfo> mFixedPositionInfo;
+
+  /**
+   * A helper structure to store all the information needed to compute the
+   * async transform for a sticky position element on the sampler thread.
+   */
+  struct StickyPositionInfo {
+    Maybe<uint64_t> mStickyPositionAnimationId;
+    SideBits mFixedPosSides;
+    ScrollableLayerGuid::ViewID mStickyPosTarget;
+    LayersId mLayersId;
+    LayerRectAbsolute mStickyScrollRangeInner;
+    LayerRectAbsolute mStickyScrollRangeOuter;
+
+    explicit StickyPositionInfo(const HitTestingTreeNode* aNode);
+  };
+  /**
+   * If this APZCTreeManager is being used with WebRender, this vector gets
+   * populated during a layers update. It holds a package of information needed
+   * to compute and set the async transforms on sticky position content. This
+   * information is extracted from the HitTestingTreeNodes for the WebRender
+   * case because accessing the HitTestingTreeNodes requires holding the tree
+   * lock which we cannot do on the WR sampler thread. mStickyPositionInfo,
+   * however, can be accessed while just holding the mMapLock which is safe to
+   * do on the sampler thread. mMapLock must be acquired while accessing or
+   * modifying mStickyPositionInfo.
+   */
+  std::vector<StickyPositionInfo> mStickyPositionInfo;
 
   /* Holds the zoom constraints for scrollable layers, as determined by the
    * the main-thread gecko code. This can only be accessed on the updater
@@ -1013,12 +1041,7 @@ class APZCTreeManager : public IAPZCTreeManager, public APZInputBridge {
   float mDPI;
 
 #if defined(MOZ_WIDGET_ANDROID)
- public:
-  AndroidDynamicToolbarAnimator* GetAndroidDynamicToolbarAnimator();
-
  private:
-  RefPtr<AndroidDynamicToolbarAnimator> mToolbarAnimator;
-
   // Last Frame metrics sent to java through UIController.
   FrameMetrics mLastRootMetrics;
 #endif  // defined(MOZ_WIDGET_ANDROID)

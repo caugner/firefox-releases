@@ -58,8 +58,10 @@ EXPORTS.mozilla.dom += [
     'ImageBitmapSource.h',
     'ImageData.h',
     'ImageUtils.h',
+    'IpdlQueue.h',
     'OffscreenCanvas.h',
     'ProducerConsumerQueue.h',
+    'QueueParamTraits.h',
     'TextMetrics.h',
     'WebGLChild.h',
     'WebGLCommandQueue.h',
@@ -67,7 +69,9 @@ EXPORTS.mozilla.dom += [
     'WebGLIpdl.h',
     'WebGLParent.h',
     'WebGLTypes.h',
+    'XRWebGLLayer.h',
 ]
+# XRWebGLLayer.h must be exported for use by the generated WebXRBinding.h
 
 # Canvas 2D and common sources
 UNIFIED_SOURCES += [
@@ -79,6 +83,7 @@ UNIFIED_SOURCES += [
     'ImageBitmapRenderingContext.cpp',
     'ImageData.cpp',
     'OffscreenCanvas.cpp',
+    'XRWebGLLayer.cpp',
 ]
 
 SOURCES += [
@@ -91,7 +96,7 @@ UNIFIED_SOURCES += [
     'ClientWebGLContext.cpp',
     'ClientWebGLExtensions.cpp',
     'HostWebGLContext.cpp',
-    'ProducerConsumerQueue.cpp',
+    'Queue.cpp',
     'TexUnpackBlob.cpp',
     'WebGL2Context.cpp',
     'WebGL2ContextBuffers.cpp',

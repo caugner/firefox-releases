@@ -52,6 +52,8 @@ class MediaController final
 
   explicit MediaController(uint64_t aContextId);
 
+  // Focus the window currently playing media.
+  void Focus();
   void Play();
   void Pause();
   void Stop();
@@ -81,8 +83,8 @@ class MediaController final
 
   // These methods are only being used to notify the state changes of controlled
   // media in ContentParent or MediaControlUtils.
-  void NotifyMediaStateChanged(ControlledMediaState aState);
-  void NotifyMediaAudibleChanged(bool aAudible);
+  void NotifyMediaPlaybackChanged(MediaPlaybackState aState);
+  void NotifyMediaAudibleChanged(MediaAudibleState aState);
 
  private:
   ~MediaController();
@@ -104,7 +106,7 @@ class MediaController final
   // to know if we need to update the virtual control interface.
   void UpdateActualPlaybackState();
 
-  bool mAudible = false;
+  MediaAudibleState mAudibleState = MediaAudibleState::eInaudible;
   bool mIsRegisteredToService = false;
   int64_t mControlledMediaNum = 0;
   int64_t mPlayingControlledMediaNum = 0;

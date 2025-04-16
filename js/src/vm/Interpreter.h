@@ -21,6 +21,7 @@
 namespace js {
 
 class EnvironmentIter;
+class PlainObject;
 
 /*
  * Convert null/undefined |thisv| into the current global object for the
@@ -547,8 +548,37 @@ bool ModValues(JSContext* cx, MutableHandleValue lhs, MutableHandleValue rhs,
 bool PowValues(JSContext* cx, MutableHandleValue lhs, MutableHandleValue rhs,
                MutableHandleValue res);
 
+bool BitNot(JSContext* cx, MutableHandleValue in, MutableHandleValue res);
+
+bool BitXor(JSContext* cx, MutableHandleValue lhs, MutableHandleValue rhs,
+            MutableHandleValue res);
+
+bool BitOr(JSContext* cx, MutableHandleValue lhs, MutableHandleValue rhs,
+           MutableHandleValue res);
+
+bool BitAnd(JSContext* cx, MutableHandleValue lhs, MutableHandleValue rhs,
+            MutableHandleValue res);
+
+bool BitLsh(JSContext* cx, MutableHandleValue lhs, MutableHandleValue rhs,
+            MutableHandleValue res);
+
+bool BitRsh(JSContext* cx, MutableHandleValue lhs, MutableHandleValue rhs,
+            MutableHandleValue res);
+
 bool UrshValues(JSContext* cx, MutableHandleValue lhs, MutableHandleValue rhs,
                 MutableHandleValue res);
+
+bool LessThan(JSContext* cx, MutableHandleValue lhs, MutableHandleValue rhs,
+              bool* res);
+
+bool LessThanOrEqual(JSContext* cx, MutableHandleValue lhs,
+                     MutableHandleValue rhs, bool* res);
+
+bool GreaterThan(JSContext* cx, MutableHandleValue lhs, MutableHandleValue rhs,
+                 bool* res);
+
+bool GreaterThanOrEqual(JSContext* cx, MutableHandleValue lhs,
+                        MutableHandleValue rhs, bool* res);
 
 bool AtomicIsLockFree(JSContext* cx, HandleValue in, int* out);
 
@@ -667,7 +697,7 @@ bool Debug_CheckSelfHosted(JSContext* cx, HandleValue v);
 
 bool CheckClassHeritageOperation(JSContext* cx, HandleValue heritage);
 
-JSObject* ObjectWithProtoOperation(JSContext* cx, HandleValue proto);
+PlainObject* ObjectWithProtoOperation(JSContext* cx, HandleValue proto);
 
 JSObject* FunWithProtoOperation(JSContext* cx, HandleFunction fun,
                                 HandleObject parent, HandleObject proto);

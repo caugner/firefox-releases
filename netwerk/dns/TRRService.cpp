@@ -22,6 +22,7 @@ static const char kPurge[] = "browser:purge-session-history";
 static const char kDisableIpv6Pref[] = "network.dns.disableIPv6";
 static const char kPrefSkipTRRParentalControl[] =
     "network.dns.skipTRR-when-parental-control-enabled";
+static const char kRolloutURIPref[] = "doh-rollout.uri";
 
 #define TRR_PREF_PREFIX "network.trr."
 #define TRR_PREF(x) TRR_PREF_PREFIX x
@@ -84,6 +85,7 @@ nsresult TRRService::Init() {
     prefBranch->AddObserver(TRR_PREF_PREFIX, this, true);
     prefBranch->AddObserver(kDisableIpv6Pref, this, true);
     prefBranch->AddObserver(kPrefSkipTRRParentalControl, this, true);
+    prefBranch->AddObserver(kRolloutURIPref, this, true);
   }
   nsCOMPtr<nsICaptivePortalService> captivePortalService =
       do_GetService(NS_CAPTIVEPORTAL_CID);
@@ -131,6 +133,15 @@ void TRRService::GetParentalControlEnabledInternal() {
   }
 }
 
+void TRRService::SetDetectedTrrURI(const nsACString& aURI) {
+  // If the user has set a custom URI then we don't want to override that.
+  if (mURIPrefHasUserValue) {
+    return;
+  }
+
+  mURISetByDetection = MaybeSetPrivateURI(aURI);
+}
+
 bool TRRService::Enabled(nsIRequest::TRRMode aMode) {
   if (mMode == MODE_TRROFF) {
     return false;
@@ -161,6 +172,105 @@ void TRRService::GetPrefBranch(nsIPrefBranch** result) {
   CallGetService(NS_PREFSERVICE_CONTRACTID, result);
 }
 
+void TRRService::ProcessURITemplate(nsACString& aURI) {
+  // URI Template, RFC 6570.
+  if (aURI.IsEmpty()) {
+    return;
+  }
+  nsAutoCString scheme;
+  nsCOMPtr<nsIIOService> ios(do_GetIOService());
+  if (ios) {
+    ios->ExtractScheme(aURI, scheme);
+  }
+  if (!scheme.Equals("https")) {
+    LOG(("TRRService TRR URI %s is not https. Not used.\n",
+         PromiseFlatCString(aURI).get()));
+    aURI.Truncate();
+    return;
+  }
+
+  // cut off everything from "{" to "}" sequences (potentially multiple),
+  // as a crude conversion from template into URI.
+  nsAutoCString uri(aURI);
+
+  do {
+    nsCCharSeparatedTokenizer openBrace(uri, '{');
+    if (openBrace.hasMoreTokens()) {
+      // the 'nextToken' is the left side of the open brace (or full uri)
+      nsAutoCString prefix(openBrace.nextToken());
+
+      // if there is an open brace, there's another token
+      const nsACString& endBrace = openBrace.nextToken();
+      nsCCharSeparatedTokenizer closeBrace(endBrace, '}');
+      if (closeBrace.hasMoreTokens()) {
+        // there is a close brace as well, make a URI out of the prefix
+        // and the suffix
+        closeBrace.nextToken();
+        nsAutoCString suffix(closeBrace.nextToken());
+        uri = prefix + suffix;
+      } else {
+        // no (more) close brace
+        break;
+      }
+    } else {
+      // no (more) open brace
+      break;
+    }
+  } while (true);
+
+  aURI = uri;
+}
+
+bool TRRService::MaybeSetPrivateURI(const nsACString& aURI) {
+  bool clearCache = false;
+  nsAutoCString newURI(aURI);
+  ProcessURITemplate(newURI);
+
+  {
+    MutexAutoLock lock(mLock);
+    if (mPrivateURI.Equals(newURI)) {
+      return false;
+    }
+
+    if (!mPrivateURI.IsEmpty()) {
+      mClearTRRBLStorage = true;
+      LOG(("TRRService clearing blacklist because of change in uri service\n"));
+      clearCache = true;
+    }
+    mPrivateURI = newURI;
+  }
+
+  // Clear the cache because we changed the URI
+  if (clearCache) {
+    ClearEntireCache();
+  }
+
+  nsCOMPtr<nsIObserverService> obs = mozilla::services::GetObserverService();
+  if (obs) {
+    obs->NotifyObservers(nullptr, NS_NETWORK_TRR_URI_CHANGED_TOPIC, nullptr);
+  }
+  return true;
+}
+
+void TRRService::CheckURIPrefs() {
+  mURISetByDetection = false;
+
+  // The user has set a custom URI so it takes precedence.
+  if (mURIPrefHasUserValue) {
+    MaybeSetPrivateURI(mURIPref);
+    return;
+  }
+
+  // Check if the rollout addon has set a pref.
+  if (!mRolloutURIPref.IsEmpty()) {
+    MaybeSetPrivateURI(mRolloutURIPref);
+    return;
+  }
+
+  // Otherwise just use the default value.
+  MaybeSetPrivateURI(mURIPref);
+}
+
 nsresult TRRService::ReadPrefs(const char* name) {
   MOZ_ASSERT(NS_IsMainThread(), "wrong thread");
 
@@ -185,59 +295,14 @@ nsresult TRRService::ReadPrefs(const char* name) {
       mMode = tmp;
     }
   }
-  if (!name || !strcmp(name, TRR_PREF("uri"))) {
-    // URI Template, RFC 6570.
-    MutexAutoLock lock(mLock);
-    nsAutoCString old(mPrivateURI);
-    Preferences::GetCString(TRR_PREF("uri"), mPrivateURI);
-    nsAutoCString scheme;
-    if (!mPrivateURI.IsEmpty()) {
-      nsCOMPtr<nsIIOService> ios(do_GetIOService());
-      if (ios) {
-        ios->ExtractScheme(mPrivateURI, scheme);
-      }
-    }
-    if (!mPrivateURI.IsEmpty() && !scheme.Equals("https")) {
-      LOG(("TRRService TRR URI %s is not https. Not used.\n",
-           mPrivateURI.get()));
-      mPrivateURI.Truncate();
-    }
-    if (!mPrivateURI.IsEmpty()) {
-      // cut off everything from "{" to "}" sequences (potentially multiple),
-      // as a crude conversion from template into URI.
-      nsAutoCString uri(mPrivateURI);
+  if (!name || !strcmp(name, TRR_PREF("uri")) ||
+      !strcmp(name, kRolloutURIPref)) {
 
-      do {
-        nsCCharSeparatedTokenizer openBrace(uri, '{');
-        if (openBrace.hasMoreTokens()) {
-          // the 'nextToken' is the left side of the open brace (or full uri)
-          nsAutoCString prefix(openBrace.nextToken());
+    mURIPrefHasUserValue = Preferences::HasUserValue(TRR_PREF("uri"));
+    Preferences::GetCString(TRR_PREF("uri"), mURIPref);
+    Preferences::GetCString(kRolloutURIPref, mRolloutURIPref);
 
-          // if there is an open brace, there's another token
-          const nsACString& endBrace = openBrace.nextToken();
-          nsCCharSeparatedTokenizer closeBrace(endBrace, '}');
-          if (closeBrace.hasMoreTokens()) {
-            // there is a close brace as well, make a URI out of the prefix
-            // and the suffix
-            closeBrace.nextToken();
-            nsAutoCString suffix(closeBrace.nextToken());
-            uri = prefix + suffix;
-          } else {
-            // no (more) close brace
-            break;
-          }
-        } else {
-          // no (more) open brace
-          break;
-        }
-      } while (true);
-      mPrivateURI = uri;
-    }
-    if (!old.IsEmpty() && !mPrivateURI.Equals(old)) {
-      mClearTRRBLStorage = true;
-      LOG(("TRRService clearing blacklist because of change is uri service\n"));
-      clearEntireCache = true;
-    }
+    CheckURIPrefs();
   }
   if (!name || !strcmp(name, TRR_PREF("credentials"))) {
     MutexAutoLock lock(mLock);
@@ -360,21 +425,30 @@ nsresult TRRService::ReadPrefs(const char* name) {
   // if name is null, then we're just now initializing. In that case we don't
   // need to clear the cache.
   if (name && clearEntireCache) {
-    bool tmp;
-    if (NS_SUCCEEDED(Preferences::GetBool(
-            TRR_PREF("clear-cache-on-pref-change"), &tmp)) &&
-        tmp) {
-      nsCOMPtr<nsIDNSService> dns = do_GetService(NS_DNSSERVICE_CONTRACTID);
-      if (dns) {
-        dns->ClearCache(true);
-      }
-    }
+    ClearEntireCache();
   }
 
   return NS_OK;
 }
 
-nsresult TRRService::GetURI(nsCString& result) {
+void TRRService::ClearEntireCache() {
+  bool tmp;
+  nsresult rv =
+      Preferences::GetBool(TRR_PREF("clear-cache-on-pref-change"), &tmp);
+  if (NS_FAILED(rv)) {
+    return;
+  }
+  if (!tmp) {
+    return;
+  }
+  nsCOMPtr<nsIDNSService> dns = do_GetService(NS_DNSSERVICE_CONTRACTID);
+  if (!dns) {
+    return;
+  }
+  dns->ClearCache(true);
+}
+
+nsresult TRRService::GetURI(nsACString& result) {
   MutexAutoLock lock(mLock);
   result = mPrivateURI;
   return NS_OK;
@@ -516,6 +590,12 @@ TRRService::Observe(nsISupports* aSubject, const char* aTopic,
     nsCOMPtr<nsINetworkLinkService> link = do_QueryInterface(aSubject);
     RebuildSuffixList(link);
     CheckPlatformDNSStatus(link);
+
+    if (!strcmp(aTopic, NS_NETWORK_LINK_TOPIC) && mURISetByDetection) {
+      // If the URI was set via SetDetectedTrrURI we need to restore it to the
+      // default pref when a network link change occurs.
+      CheckURIPrefs();
+    }
   } else if (!strcmp(aTopic, "xpcom-shutdown-threads")) {
     if (sTRRBackgroundThread) {
       nsCOMPtr<nsIThread> thread;

@@ -13,6 +13,14 @@ exclude: true
 
 ⚠️  breaking change
 
+## v77
+- Added [`GeckoRuntime.appendAppNotesToCrashReport`][77.1] For adding app notes to the crash report.
+  ([bug 1626979]({{bugzilla}}1626979))
+- ⚠️ Remove the `DynamicToolbarAnimator` API along with accesors on `GeckoView` and `GeckoSession`.
+  ([bug 1627716]({{bugzilla}}1627716))
+
+[77.1]: {{javadoc_uri}}/GeckoRuntime.html#appendAppNotesToCrashReport-java.lang.String-
+
 ## v76
 - Added [`GeckoSession.PermissionDelegate.PERMISSION_MEDIA_KEY_SYSTEM_ACCESS`][76.1] to control EME media key access.
 - [`RuntimeTelemetry#getSnapshots`][68.10] is deprecated and will be removed
@@ -667,4 +675,4 @@ exclude: true
 [65.24]: {{javadoc_uri}}/CrashReporter.html#sendCrashReport-android.content.Context-android.os.Bundle-java.lang.String-
 [65.25]: {{javadoc_uri}}/GeckoResult.html
 
-[api-version]: d1e459d9f40b32fed4859a0bc3a848e2908b50c1
+[api-version]: 562c75192093098207d596f83a159dcb9df2d3e6

@@ -43,6 +43,7 @@ enum CheckboxValue {
                         NSAccessibilityFocusedAttribute,  // required
                         NSAccessibilityTitleAttribute,    // required
                         NSAccessibilityChildrenAttribute, NSAccessibilityDescriptionAttribute,
+                        NSAccessibilityRequiredAttribute,
 #if DEBUG
                         @"AXMozDescription",
 #endif
@@ -162,7 +163,7 @@ enum CheckboxValue {
 
 @end
 
-@implementation mozSliderAccessible
+@implementation mozIncrementableAccessible
 
 - (NSArray*)accessibilityActionNames {
   NS_OBJC_BEGIN_TRY_ABORT_BLOCK_NIL;
@@ -207,12 +208,20 @@ enum CheckboxValue {
 
   if (AccessibleWrap* accWrap = [self getGeckoAccessible]) {
     double newVal = accWrap->CurValue() + (accWrap->Step() * factor);
-    if (newVal >= accWrap->MinValue() && newVal <= accWrap->MaxValue()) {
+    double min = accWrap->MinValue();
+    double max = accWrap->MaxValue();
+    if ((IsNaN(min) || newVal >= min) && (IsNaN(max) || newVal <= max)) {
       accWrap->SetCurValue(newVal);
     }
   } else if (ProxyAccessible* proxy = [self getProxyAccessible]) {
     double newVal = proxy->CurValue() + (proxy->Step() * factor);
-    if (newVal >= proxy->MinValue() && newVal <= proxy->MaxValue()) {
+    double min = proxy->MinValue();
+    double max = proxy->MaxValue();
+    // Because min and max are not required attributes, we first check
+    // if the value is undefined. If this check fails,
+    // the value is defined, and we we verify our new value falls
+    // within the bound (inclusive).
+    if ((IsNaN(min) || newVal >= min) && (IsNaN(max) || newVal <= max)) {
       proxy->SetCurValue(newVal);
     }
   }
@@ -220,13 +229,14 @@ enum CheckboxValue {
   NS_OBJC_END_TRY_ABORT_BLOCK;
 }
 
-- (void)firePlatformEvent:(uint32_t)eventType {
+- (void)handleAccessibleEvent:(uint32_t)eventType {
   switch (eventType) {
+    case nsIAccessibleEvent::EVENT_TEXT_VALUE_CHANGE:
     case nsIAccessibleEvent::EVENT_VALUE_CHANGE:
       [self postNotification:NSAccessibilityValueChangedNotification];
       break;
     default:
-      [super firePlatformEvent:eventType];
+      [super handleAccessibleEvent:eventType];
       break;
   }
 }

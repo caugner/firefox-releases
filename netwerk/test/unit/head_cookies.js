@@ -2,6 +2,10 @@
  * http://creativecommons.org/publicdomain/zero/1.0/
  */
 
+/* import-globals-from head_cache.js */
+
+"use strict";
+
 const { NetUtil } = ChromeUtils.import("resource://gre/modules/NetUtil.jsm");
 
 XPCOMUtils.defineLazyServiceGetter(
@@ -105,7 +109,7 @@ function do_load_profile(generator) {
 // Set a single session cookie using http and test the cookie count
 // against 'expected'
 function do_set_single_http_cookie(uri, channel, expected) {
-  Services.cookies.setCookieStringFromHttp(uri, null, "foo=bar", null, channel);
+  Services.cookies.setCookieStringFromHttp(uri, "foo=bar", channel);
   Assert.equal(Services.cookiemgr.countCookiesFromHost(uri.host), expected);
 }
 
@@ -120,24 +124,9 @@ function do_set_cookies(uri, channel, session, expected) {
   // with channel
   Services.cookies.setCookieString(uri, "can=has" + suffix, channel);
   Assert.equal(Services.cookiemgr.countCookiesFromHost(uri.host), expected[1]);
-  // without channel, from http
-  Services.cookies.setCookieStringFromHttp(
-    uri,
-    null,
-    "cheez=burger" + suffix,
-    null,
-    null
-  );
-  Assert.equal(Services.cookiemgr.countCookiesFromHost(uri.host), expected[2]);
   // with channel, from http
-  Services.cookies.setCookieStringFromHttp(
-    uri,
-    null,
-    "hot=dog" + suffix,
-    null,
-    channel
-  );
-  Assert.equal(Services.cookiemgr.countCookiesFromHost(uri.host), expected[3]);
+  Services.cookies.setCookieStringFromHttp(uri, "hot=dog" + suffix, channel);
+  Assert.equal(Services.cookiemgr.countCookiesFromHost(uri.host), expected[2]);
 }
 
 function do_count_cookies() {

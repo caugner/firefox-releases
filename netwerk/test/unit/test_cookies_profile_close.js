@@ -3,6 +3,8 @@
 
 // Test that the cookie APIs behave sanely after 'profile-before-change'.
 
+"use strict";
+
 var test_generator = do_run_test();
 
 function run_test() {
@@ -23,12 +25,27 @@ function* do_run_test() {
 
   // Allow all cookies.
   Services.prefs.setIntPref("network.cookie.cookieBehavior", 0);
+  Services.prefs.setBoolPref(
+    "network.cookieJarSettings.unblocked_for_testing",
+    true
+  );
 
   // Start the cookieservice.
   Services.cookies;
 
   // Set a cookie.
   let uri = NetUtil.newURI("http://foo.com");
+  let channel = NetUtil.newChannel({
+    uri,
+    loadUsingSystemPrincipal: true,
+    contentPolicyType: Ci.nsIContentPolicy.TYPE_DOCUMENT,
+  });
+
+  let principal = Services.scriptSecurityManager.createContentPrincipal(
+    uri,
+    {}
+  );
+
   Services.cookies.setCookieString(uri, "oh=hai; max-age=1000", null);
   let cookies = Services.cookiemgr.cookies;
   Assert.ok(cookies.length == 1);
@@ -38,11 +55,11 @@ function* do_run_test() {
   do_close_profile();
 
   // Check that the APIs behave appropriately.
-  Assert.equal(Services.cookies.getCookieString(uri, null), "");
-  Assert.equal(Services.cookies.getCookieStringFromHttp(uri, null, null), "");
+  Assert.equal(Services.cookies.getCookieStringForPrincipal(principal), "");
+  Assert.equal(Services.cookies.getCookieStringFromHttp(uri, channel), "");
   Services.cookies.setCookieString(uri, "oh2=hai", null);
-  Services.cookies.setCookieStringFromHttp(uri, null, "oh3=hai", null, null);
-  Assert.equal(Services.cookies.getCookieString(uri, null), "");
+  Services.cookies.setCookieStringFromHttp(uri, "oh3=hai", channel);
+  Assert.equal(Services.cookies.getCookieStringForPrincipal(principal), "");
 
   do_check_throws(function() {
     Services.cookiemgr.removeAll();
@@ -69,12 +86,6 @@ function* do_run_test() {
 
   do_check_throws(function() {
     Services.cookiemgr.remove("foo.com", "", "oh4", {});
-  }, Cr.NS_ERROR_NOT_AVAILABLE);
-
-  do_check_throws(function() {
-    let file = profile.clone();
-    file.append("cookies.txt");
-    Services.cookiemgr.importCookies(file);
   }, Cr.NS_ERROR_NOT_AVAILABLE);
 
   do_check_throws(function() {

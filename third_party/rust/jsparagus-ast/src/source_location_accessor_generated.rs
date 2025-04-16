@@ -9,7 +9,6 @@ pub trait SourceLocationAccessor {
     fn set_loc(&mut self, start: SourceLocation, end: SourceLocation);
     fn get_loc(&self) -> SourceLocation;
 }
-
 impl<'alloc> SourceLocationAccessor for Argument<'alloc> {
     fn set_loc(&mut self, start: SourceLocation, end: SourceLocation) {
         match self {
@@ -1601,7 +1600,7 @@ impl<'alloc> SourceLocationAccessor for Statement<'alloc> {
                 loc.end = end.end;
             }
             Statement::IfStatement(content) => { content.set_loc(start, end) }
-            Statement::LabeledStatement { mut loc, .. } => {
+            Statement::LabelledStatement { mut loc, .. } => {
                 loc.start = start.start;
                 loc.end = end.end;
             }
@@ -1674,7 +1673,7 @@ impl<'alloc> SourceLocationAccessor for Statement<'alloc> {
                 *loc
             }
             Statement::IfStatement(content) => { content.get_loc() }
-            Statement::LabeledStatement { loc, .. } => {
+            Statement::LabelledStatement { loc, .. } => {
                 *loc
             }
             Statement::ReturnStatement { loc, .. } => {

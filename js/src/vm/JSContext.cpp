@@ -40,11 +40,17 @@
 #include "js/CharacterEncoding.h"
 #include "js/ContextOptions.h"  // JS::ContextOptions
 #include "js/Printf.h"
+#ifdef JS_SIMULATOR_ARM
+#  include "jit/arm/Simulator-arm.h"
+#endif
 #ifdef JS_SIMULATOR_ARM64
 #  include "jit/arm64/vixl/Simulator-vixl.h"
 #endif
-#ifdef JS_SIMULATOR_ARM
-#  include "jit/arm/Simulator-arm.h"
+#ifdef JS_SIMULATOR_MIPS32
+#  include "jit/mips32/Simulator-mips32.h"
+#endif
+#ifdef JS_SIMULATOR_MIPS64
+#  include "jit/mips64/Simulator-mips64.h"
 #endif
 #ifdef ENABLE_NEW_REGEXP
 #  include "new-regexp/RegExpAPI.h"
@@ -62,6 +68,7 @@
 #include "vm/JSFunction.h"
 #include "vm/JSObject.h"
 #include "vm/JSScript.h"
+#include "vm/PlainObject.h"  // js::PlainObject
 #include "vm/Realm.h"
 #include "vm/Shape.h"
 #include "vm/StringType.h"  // StringToNewUTF8CharsZ
@@ -115,12 +122,7 @@ bool JSContext::init(ContextKind kind) {
     TlsContext.set(this);
     currentThread_ = ThreadId::ThisThreadId();
 
-#ifdef ENABLE_NEW_REGEXP
-    isolate = irregexp::CreateIsolate(this);
-    if (!isolate) {
-      return false;
-    }
-#else
+#ifndef ENABLE_NEW_REGEXP
     if (!regexpStack.ref().init()) {
       return false;
     }
@@ -143,6 +145,13 @@ bool JSContext::init(ContextKind kind) {
       return false;
     }
   }
+
+#ifdef ENABLE_NEW_REGEXP
+  isolate = irregexp::CreateIsolate(this);
+  if (!isolate) {
+    return false;
+  }
+#endif
 
   // Set the ContextKind last, so that ProtectedData checks will allow us to
   // initialize this context before it becomes the runtime's active context.

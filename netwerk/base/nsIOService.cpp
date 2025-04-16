@@ -244,6 +244,8 @@ static const char* gCallbackSecurityPrefs[] = {
     "security.ssl.enable_ocsp_stapling",
     "security.ssl.enable_ocsp_must_staple",
     "security.pki.certificate_transparency.mode",
+    "security.cert_pinning.enforcement_level",
+    "security.pki.name_matching_mode",
     nullptr,
 };
 
@@ -325,7 +327,9 @@ void nsIOService::OnTLSPrefChange(const char* aPref, void* aSelf) {
     LOG(("HandleTLSPrefChange done"));
   } else if (pref.EqualsLiteral("security.ssl.enable_ocsp_stapling") ||
              pref.EqualsLiteral("security.ssl.enable_ocsp_must_staple") ||
-             pref.EqualsLiteral("security.pki.certificate_transparency.mode")) {
+             pref.EqualsLiteral("security.pki.certificate_transparency.mode") ||
+             pref.EqualsLiteral("security.cert_pinning.enforcement_level") ||
+             pref.EqualsLiteral("security.pki.name_matching_mode")) {
     SetValidationOptionsCommon();
   }
   nsNSSComponent::ClearSSLExternalAndInternalSessionCacheNative();
@@ -525,6 +529,10 @@ void nsIOService::NotifySocketProcessPrefsChanged(const char* aName) {
     return;
   }
 
+  if (!StaticPrefs::network_process_enabled()) {
+    return;
+  }
+
   dom::Pref pref(nsCString(aName), /* isLocked */ false, Nothing(), Nothing());
   Preferences::GetPreference(&pref);
   auto sendPrefUpdate = [pref]() {
@@ -562,6 +570,7 @@ void nsIOService::CallOrWaitForSocketProcess(
     aFunc();
   } else {
     mPendingEvents.AppendElement(aFunc);  // infallible
+    LaunchSocketProcess();
   }
 }
 
@@ -766,6 +775,14 @@ static bool UsesExternalProtocolHandler(const char* aScheme) {
     // nsExternalProtocolHandler, since internally we rely on being able to
     // use and read from these URIs.
     return false;
+  }
+
+  // When ftp protocol is disabled, return true if external protocol handler was
+  // not explicitly disabled by the prererence.
+  if (NS_LITERAL_CSTRING("ftp").Equals(aScheme) &&
+      !Preferences::GetBool("network.ftp.enabled", true) &&
+      Preferences::GetBool("network.protocol-handler.external.ftp", true)) {
+    return true;
   }
 
   for (const auto& forcedExternalScheme : gForcedExternalSchemes) {
@@ -1853,7 +1870,7 @@ IOServiceProxyCallback::OnProxyAvailable(nsICancelable* request,
   if (!speculativeHandler) return NS_OK;
 
   nsCOMPtr<nsILoadInfo> loadInfo = channel->LoadInfo();
-  nsCOMPtr<nsIPrincipal> principal = loadInfo->LoadingPrincipal();
+  nsCOMPtr<nsIPrincipal> principal = loadInfo->GetLoadingPrincipal();
 
   nsLoadFlags loadFlags = 0;
   channel->GetLoadFlags(&loadFlags);
@@ -1951,6 +1968,14 @@ bool nsIOService::BlockToplevelDataUriNavigations() {
 
 NS_IMETHODIMP
 nsIOService::NotImplemented() { return NS_ERROR_NOT_IMPLEMENTED; }
+
+NS_IMETHODIMP
+nsIOService::GetSocketProcessLaunched(bool* aResult) {
+  NS_ENSURE_ARG_POINTER(aResult);
+
+  *aResult = SocketProcessReady();
+  return NS_OK;
+}
 
 }  // namespace net
 }  // namespace mozilla

@@ -149,6 +149,11 @@ class Repository(object):
         """Hash of revision the current topic branch is based on."""
 
     @abc.abstractmethod
+    def get_commit_time(self):
+        """Return the Unix time of the HEAD revision.
+        """
+
+    @abc.abstractmethod
     def sparse_checkout_present(self):
         """Whether the working directory is using a sparse checkout.
 
@@ -194,13 +199,13 @@ class Repository(object):
         """
 
     @abc.abstractmethod
-    def add_remove_files(self, path):
-        '''Add and remove files under `path` in this repository's working copy.
+    def add_remove_files(self, *paths):
+        '''Add and remove files under `paths` in this repository's working copy.
         '''
 
     @abc.abstractmethod
-    def forget_add_remove_files(self, path):
-        '''Undo the effects of a previous add_remove_files call for `path`.
+    def forget_add_remove_files(self, *paths):
+        '''Undo the effects of a previous add_remove_files call for `paths`.
         '''
 
     @abc.abstractmethod
@@ -316,6 +321,10 @@ class HgRepository(Repository):
         args = [a.encode('utf-8') if not isinstance(a, bytes) else a for a in args]
         return self._client.rawcommand(args).decode('utf-8')
 
+    def get_commit_time(self):
+        return int(self._run(
+            'parent', '--template', '{word(0, date|hgdate)}').strip())
+
     def sparse_checkout_present(self):
         # We assume a sparse checkout is enabled if the .hg/sparse file
         # has data. Strictly speaking, we should look for a requirement in
@@ -370,16 +379,20 @@ class HgRepository(Repository):
         return self._run('outgoing', '-r', '.', '--quiet',
                          '--template', template, upstream, return_codes=(1,)).split()
 
-    def add_remove_files(self, path):
-        args = ['addremove', path]
+    def add_remove_files(self, *paths):
+        if not paths:
+            return
+        args = ['addremove'] + list(paths)
         m = re.search(r'\d+\.\d+', self.tool_version)
         simplified_version = float(m.group(0)) if m else 0
         if simplified_version >= 3.9:
             args = ['--config', 'extensions.automv='] + args
         self._run(*args)
 
-    def forget_add_remove_files(self, path):
-        self._run('forget', path)
+    def forget_add_remove_files(self, *paths):
+        if not paths:
+            return
+        self._run('forget', *paths)
 
     def get_files_in_working_directory(self):
         # Can return backslashes on Windows. Normalize to forward slashes.
@@ -452,6 +465,9 @@ class GitRepository(Repository):
             return False
         return True
 
+    def get_commit_time(self):
+        return int(self._run('log', '-1', '--format=%ct').strip())
+
     def sparse_checkout_present(self):
         # Not yet implemented.
         return False
@@ -485,19 +501,23 @@ class GitRepository(Repository):
     def get_outgoing_files(self, diff_filter='ADM', upstream='default'):
         assert all(f.lower() in self._valid_diff_filter for f in diff_filter)
 
-        if upstream == 'default':
-            upstream = self.base_ref
+        not_condition = '--remotes' if upstream == 'default' else upstream
 
-        compare = '{}..HEAD'.format(upstream)
-        files = self._run('log', '--name-only', '--diff-filter={}'.format(diff_filter.upper()),
-                          '--oneline', '--pretty=format:', compare).splitlines()
+        files = self._run(
+                    'log', '--name-only', '--diff-filter={}'.format(diff_filter.upper()),
+                    '--oneline', '--pretty=format:', 'HEAD', '--not', not_condition
+                ).splitlines()
         return [f for f in files if f]
 
-    def add_remove_files(self, path):
-        self._run('add', path)
+    def add_remove_files(self, *paths):
+        if not paths:
+            return
+        self._run('add', *paths)
 
-    def forget_add_remove_files(self, path):
-        self._run('reset', path)
+    def forget_add_remove_files(self, *paths):
+        if not paths:
+            return
+        self._run('reset', *paths)
 
     def get_files_in_working_directory(self):
         return self._run('ls-files', '-z').split(b'\0')

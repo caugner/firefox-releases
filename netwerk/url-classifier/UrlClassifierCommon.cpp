@@ -46,7 +46,7 @@ bool UrlClassifierCommon::AddonMayLoad(nsIChannel* aChannel, nsIURI* aURI) {
   // loadingPrincipal is used here to ensure we are loading into an
   // addon principal.  This allows an addon, with explicit permission, to
   // call out to API endpoints that may otherwise get blocked.
-  nsIPrincipal* loadingPrincipal = channelLoadInfo->LoadingPrincipal();
+  nsIPrincipal* loadingPrincipal = channelLoadInfo->GetLoadingPrincipal();
   if (!loadingPrincipal) {
     return false;
   }
@@ -340,31 +340,6 @@ nsresult UrlClassifierCommon::CreatePairwiseWhiteListURI(nsIChannel* aChannel,
 
 namespace {
 
-void SetClassificationFlagsHelper(nsIChannel* aChannel,
-                                  uint32_t aClassificationFlags,
-                                  bool aIsThirdParty) {
-  MOZ_ASSERT(aChannel);
-
-  nsCOMPtr<nsIParentChannel> parentChannel;
-  NS_QueryNotificationCallbacks(aChannel, parentChannel);
-  if (parentChannel) {
-    // This channel is a parent-process proxy for a child process
-    // request. We should notify the child process as well.
-    parentChannel->NotifyClassificationFlags(aClassificationFlags,
-                                             aIsThirdParty);
-  }
-
-  RefPtr<HttpBaseChannel> httpChannel = do_QueryObject(aChannel);
-  if (httpChannel) {
-    httpChannel->AddClassificationFlags(aClassificationFlags, aIsThirdParty);
-  }
-
-  RefPtr<ClassifierDummyChannel> dummyChannel = do_QueryObject(aChannel);
-  if (dummyChannel) {
-    dummyChannel->AddClassificationFlags(aClassificationFlags, aIsThirdParty);
-  }
-}
-
 void LowerPriorityHelper(nsIChannel* aChannel) {
   MOZ_ASSERT(aChannel);
 
@@ -412,6 +387,31 @@ void LowerPriorityHelper(nsIChannel* aChannel) {
 }
 
 }  // namespace
+
+// static
+void UrlClassifierCommon::SetClassificationFlagsHelper(
+    nsIChannel* aChannel, uint32_t aClassificationFlags, bool aIsThirdParty) {
+  MOZ_ASSERT(aChannel);
+
+  nsCOMPtr<nsIParentChannel> parentChannel;
+  NS_QueryNotificationCallbacks(aChannel, parentChannel);
+  if (parentChannel) {
+    // This channel is a parent-process proxy for a child process
+    // request. We should notify the child process as well.
+    parentChannel->NotifyClassificationFlags(aClassificationFlags,
+                                             aIsThirdParty);
+  }
+
+  RefPtr<HttpBaseChannel> httpChannel = do_QueryObject(aChannel);
+  if (httpChannel) {
+    httpChannel->AddClassificationFlags(aClassificationFlags, aIsThirdParty);
+  }
+
+  RefPtr<ClassifierDummyChannel> dummyChannel = do_QueryObject(aChannel);
+  if (dummyChannel) {
+    dummyChannel->AddClassificationFlags(aClassificationFlags, aIsThirdParty);
+  }
+}
 
 // static
 void UrlClassifierCommon::AnnotateChannel(nsIChannel* aChannel,

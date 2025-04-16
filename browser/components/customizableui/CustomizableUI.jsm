@@ -2854,8 +2854,6 @@ var CustomizableUIInternal = {
       return;
     }
     aWidget[aEventName] = function(...aArgs) {
-      // Wrap inside a try...catch to properly log errors, until bug 862627 is
-      // fixed, which in turn might help bug 503244.
       try {
         // Don't copy the function to the normalized widget object, instead
         // keep it on the original object provided to the API so that
@@ -4369,11 +4367,11 @@ var CustomizableUI = {
         // menus (which we don't copy) above the separator.
         if (
           !fragment.lastElementChild ||
-          fragment.lastElementChild.localName == "menuseparator"
+          fragment.lastElementChild.localName == "toolbarseparator"
         ) {
           continue;
         }
-        subviewItem = doc.createXULElement("menuseparator");
+        subviewItem = doc.createXULElement("toolbarseparator");
       } else if (menuChild.localName == "menuitem") {
         subviewItem = doc.createXULElement("toolbarbutton");
         CustomizableUI.addShortcut(menuChild, subviewItem);

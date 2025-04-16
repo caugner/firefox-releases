@@ -119,7 +119,7 @@ class Browsertime(Perftest):
             self.driver_paths.extend(
                 ["--firefox.geckodriverPath", self.browsertime_geckodriver]
             )
-        if self.browsertime_chromedriver:
+        if self.browsertime_chromedriver and self.config["app"] in ["chrome", "chrome-m"]:
             if (
                 not self.config.get("run_local", None)
                 or "{}" in self.browsertime_chromedriver
@@ -133,6 +133,12 @@ class Browsertime(Perftest):
                 self.browsertime_chromedriver = self.browsertime_chromedriver.format(
                     chromedriver_version
                 )
+
+                if not os.path.exists(self.browsertime_chromedriver):
+                    raise Exception(
+                        "Cannot find the chromedriver for the chrome version "
+                        "being tested: %s" % self.browsertime_chromedriver
+                    )
 
             self.driver_paths.extend(
                 ["--chrome.chromedriverPath", self.browsertime_chromedriver]
@@ -199,9 +205,11 @@ class Browsertime(Perftest):
             "--timeouts.pageLoad", str(timeout),
             # running browser scripts timeout (milliseconds)
             "--timeouts.script", str(timeout * int(test.get("page_cycles", 1))),
-            "-vvv",
             "--resultDir", self.results_handler.result_dir_for_test(test),
         ]
+
+        if self.verbose:
+            browsertime_options.append("-vvv")
 
         if self.browsertime_video:
             # For now, capturing video with Firefox always uses the window recorder/composition
@@ -217,7 +225,7 @@ class Browsertime(Perftest):
             ])
 
         # have browsertime use our newly-created conditioned-profile path
-        if not self.no_condprof:
+        if self.using_condprof:
             self.profile.profile = self.conditioned_profile_dir
 
         if self.config["gecko_profile"]:

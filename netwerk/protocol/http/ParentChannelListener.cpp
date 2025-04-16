@@ -13,6 +13,7 @@
 #include "mozilla/dom/ServiceWorkerUtils.h"
 #include "mozilla/net/HttpChannelParent.h"
 #include "mozilla/net/RedirectChannelRegistrar.h"
+#include "mozilla/SchedulerGroup.h"
 #include "mozilla/Unused.h"
 #include "nsIHttpHeaderVisitor.h"
 #include "nsIPrompt.h"
@@ -69,6 +70,7 @@ NS_INTERFACE_MAP_BEGIN(ParentChannelListener)
   NS_INTERFACE_MAP_ENTRY(nsIRequestObserver)
   NS_INTERFACE_MAP_ENTRY(nsIMultiPartChannelListener)
   NS_INTERFACE_MAP_ENTRY(nsINetworkInterceptController)
+  NS_INTERFACE_MAP_ENTRY(nsIThreadRetargetableStreamListener)
   NS_INTERFACE_MAP_ENTRY_CONDITIONAL(nsIAuthPromptProvider, mBrowsingContext)
   NS_INTERFACE_MAP_ENTRY_CONDITIONAL(nsIRemoteWindowContext, mBrowsingContext)
   NS_INTERFACE_MAP_ENTRY_AMBIGUOUS(nsISupports, nsIInterfaceRequestor)
@@ -286,7 +288,8 @@ ParentChannelListener::ChannelIntercepted(nsIInterceptedChannel* aChannel) {
     nsCOMPtr<nsIRunnable> r = NewRunnableMethod<nsresult>(
         "ParentChannelListener::CancelInterception", aChannel,
         &nsIInterceptedChannel::CancelInterception, NS_BINDING_ABORTED);
-    MOZ_ALWAYS_SUCCEEDS(SystemGroup::Dispatch(TaskCategory::Other, r.forget()));
+    MOZ_ALWAYS_SUCCEEDS(
+        SchedulerGroup::Dispatch(TaskCategory::Other, r.forget()));
     return NS_OK;
   }
 
@@ -427,21 +430,44 @@ ParentChannelListener::OpenURI(nsIURI* aURI) {
   nsCString spec;
   aURI->GetSpec(spec);
 
-  dom::LoadURIOptions loadURIOptions;
-  loadURIOptions.mTriggeringPrincipal = nsContentUtils::GetSystemPrincipal();
-  loadURIOptions.mLoadFlags =
-      nsIWebNavigation::LOAD_FLAGS_ALLOW_THIRD_PARTY_FIXUP |
-      nsIWebNavigation::LOAD_FLAGS_DISALLOW_INHERIT_PRINCIPAL;
+  RefPtr<dom::CanonicalBrowsingContext> bc = mBrowsingContext;
 
-  ErrorResult rv;
-  mBrowsingContext->LoadURI(NS_ConvertUTF8toUTF16(spec), loadURIOptions, rv);
-  return rv.StealNSResult();
+  NS_DispatchToMainThread(
+      NS_NewRunnableFunction("ParentChannelListener::OpenURI", [spec, bc]() {
+        dom::LoadURIOptions loadURIOptions;
+        loadURIOptions.mTriggeringPrincipal =
+            nsContentUtils::GetSystemPrincipal();
+        loadURIOptions.mLoadFlags =
+            nsIWebNavigation::LOAD_FLAGS_ALLOW_THIRD_PARTY_FIXUP |
+            nsIWebNavigation::LOAD_FLAGS_DISALLOW_INHERIT_PRINCIPAL;
+
+        ErrorResult rv;
+        bc->LoadURI(NS_ConvertUTF8toUTF16(spec), loadURIOptions, rv);
+      }));
+  return NS_OK;
 }
 
 NS_IMETHODIMP
 ParentChannelListener::GetUsePrivateBrowsing(bool* aUsePrivateBrowsing) {
   *aUsePrivateBrowsing = mUsePrivateBrowsing;
   return NS_OK;
+}
+
+//-----------------------------------------------------------------------------
+// ParentChannelListener::nsIThreadRetargetableStreamListener
+//
+
+NS_IMETHODIMP
+ParentChannelListener::CheckListenerChain() {
+  MOZ_ASSERT(NS_IsMainThread());
+
+  nsCOMPtr<nsIThreadRetargetableStreamListener> listener =
+      do_QueryInterface(mNextListener);
+  if (!listener) {
+    return NS_ERROR_NO_INTERFACE;
+  }
+
+  return listener->CheckListenerChain();
 }
 
 }  // namespace net

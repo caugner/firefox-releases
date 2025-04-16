@@ -22,8 +22,6 @@ use crate::properties;
 use crate::properties::{ComputedValues, LonghandId, StyleBuilder};
 use crate::rule_cache::RuleCacheConditions;
 use crate::{ArcSlice, Atom};
-#[cfg(feature = "servo")]
-use crate::Prefix;
 use euclid::default::Size2D;
 use servo_arc::Arc;
 use std::cell::RefCell;
@@ -31,7 +29,7 @@ use std::cmp;
 use std::f32;
 
 #[cfg(feature = "gecko")]
-pub use self::align::{AlignContent, AlignItems, JustifyContent, JustifyItems, SelfAlignment};
+pub use self::align::{AlignContent, AlignItems, AlignTracks, JustifyContent, JustifyItems, JustifyTracks, SelfAlignment};
 #[cfg(feature = "gecko")]
 pub use self::align::{AlignSelf, JustifySelf};
 pub use self::angle::Angle;
@@ -70,7 +68,7 @@ pub use self::list::Quotes;
 pub use self::motion::{OffsetPath, OffsetRotate};
 pub use self::outline::OutlineStyle;
 pub use self::percentage::{NonNegativePercentage, Percentage};
-pub use self::position::{GridAutoFlow, GridTemplateAreas, Position, PositionOrAuto, ZIndex};
+pub use self::position::{GridAutoFlow, GridTemplateAreas, MasonryAutoFlow, Position, PositionOrAuto, ZIndex};
 pub use self::rect::NonNegativeLengthOrNumberRect;
 pub use self::resolution::Resolution;
 pub use self::svg::MozContextProperties;
@@ -501,7 +499,9 @@ trivial_to_computed_value!(u32);
 trivial_to_computed_value!(usize);
 trivial_to_computed_value!(Atom);
 #[cfg(feature = "servo")]
-trivial_to_computed_value!(Prefix);
+trivial_to_computed_value!(html5ever::Namespace);
+#[cfg(feature = "servo")]
+trivial_to_computed_value!(html5ever::Prefix);
 trivial_to_computed_value!(String);
 trivial_to_computed_value!(Box<str>);
 trivial_to_computed_value!(crate::OwnedStr);

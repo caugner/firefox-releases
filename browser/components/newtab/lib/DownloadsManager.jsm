@@ -36,6 +36,9 @@ this.DownloadsManager = class DownloadsManager {
   }
 
   formatDownload(download) {
+    let { referrerInfo } = download.source;
+    let referrer = (referrerInfo && referrerInfo.originalReferrer) || null;
+    referrer = (referrer && referrer.spec) || null;
     return {
       hostname: new URL(download.source.url).hostname,
       url: download.source.url,
@@ -44,9 +47,7 @@ this.DownloadsManager = class DownloadsManager {
       description:
         DownloadsViewUI.getSizeWithUnits(download) ||
         DownloadsCommon.strings.sizeUnknown,
-      referrer: download.source.referrerInfo
-        ? download.source.referrerInfo.originalReferrer.spec
-        : null,
+      referrer,
       date_added: download.endTime,
     };
   }

@@ -374,12 +374,6 @@ const ResponsiveActor = protocol.ActorClassWithSpec(responsiveSpec, {
     return this.screenshotActor.capture({});
   },
 
-  async setDocumentInRDMPane(inRDMPane) {
-    if (this.docShell && this.docShell.document) {
-      this.docShell.browsingContext.inRDMPane = inRDMPane;
-    }
-  },
-
   /**
    * Applies a mobile scrollbar overlay to the content document.
    *
@@ -407,6 +401,11 @@ const ResponsiveActor = protocol.ActorClassWithSpec(responsiveSpec, {
     }
 
     this.flushStyle();
+  },
+
+  async setMaxTouchPoints(touchSimulationEnabled) {
+    const maxTouchPoints = touchSimulationEnabled ? 1 : 0;
+    this.docShell.browsingContext.setRDMPaneMaxTouchPoints(maxTouchPoints);
   },
 
   flushStyle() {

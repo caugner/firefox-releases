@@ -11,7 +11,7 @@ use crate::gpu_cache::GpuCache;
 use crate::intern;
 use crate::internal_types::LayoutPrimitiveInfo;
 use crate::picture::{SubpixelMode, SurfaceInfo};
-use crate::prim_store::{PrimitiveOpacity, PrimitiveSceneData,  PrimitiveScratchBuffer};
+use crate::prim_store::{PrimitiveOpacity,  PrimitiveScratchBuffer};
 use crate::prim_store::{PrimitiveStore, PrimKeyCommonData, PrimTemplateCommonData};
 use crate::render_task_graph::RenderTaskGraph;
 use crate::renderer::{MAX_VERTEX_TEXTURE_WIDTH};
@@ -41,9 +41,7 @@ impl TextRunKey {
         text_run: TextRun,
     ) -> Self {
         TextRunKey {
-            common: PrimKeyCommonData::with_info(
-                info,
-            ),
+            common: info.into(),
             font: text_run.font,
             glyphs: PrimaryArc(text_run.glyphs),
             shadow: text_run.shadow,
@@ -151,7 +149,7 @@ pub struct TextRun {
 impl intern::Internable for TextRun {
     type Key = TextRunKey;
     type StoreData = TextRunTemplate;
-    type InternData = PrimitiveSceneData;
+    type InternData = ();
 }
 
 impl InternablePrimitive for TextRun {
@@ -421,7 +419,7 @@ fn test_struct_sizes() {
     // (b) You made a structure larger. This is not necessarily a problem, but should only
     //     be done with care, and after checking if talos performance regresses badly.
     assert_eq!(mem::size_of::<TextRun>(), 56, "TextRun size changed");
-    assert_eq!(mem::size_of::<TextRunTemplate>(), 72, "TextRunTemplate size changed");
-    assert_eq!(mem::size_of::<TextRunKey>(), 64, "TextRunKey size changed");
+    assert_eq!(mem::size_of::<TextRunTemplate>(), 80, "TextRunTemplate size changed");
+    assert_eq!(mem::size_of::<TextRunKey>(), 72, "TextRunKey size changed");
     assert_eq!(mem::size_of::<TextRunPrimitive>(), 80, "TextRunPrimitive size changed");
 }

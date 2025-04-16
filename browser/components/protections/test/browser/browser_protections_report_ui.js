@@ -6,8 +6,8 @@
 
 const { OS } = ChromeUtils.import("resource://gre/modules/osfile.jsm");
 const { Sqlite } = ChromeUtils.import("resource://gre/modules/Sqlite.jsm");
-const { AboutProtectionsHandler } = ChromeUtils.import(
-  "resource:///modules/aboutpages/AboutProtectionsHandler.jsm"
+const { AboutProtectionsParent } = ChromeUtils.import(
+  "resource:///actors/AboutProtectionsParent.jsm"
 );
 
 XPCOMUtils.defineLazyServiceGetter(
@@ -728,15 +728,35 @@ add_task(async function test_etp_custom_protections_off() {
       "Button to manage protections is displayed"
     );
   });
+  let db = await Sqlite.openConnection({ path: DB_PATH });
+  let date = new Date().toISOString();
+  await db.execute(SQL.insertCustomTimeEvent, {
+    type: TrackingDBService.TRACKERS_ID,
+    count: 1,
+    timestamp: date,
+  });
+  await reloadTab(tab);
+  await SpecialPowers.spawn(tab.linkedBrowser, [], async function() {
+    await ContentTaskUtils.waitForCondition(() => {
+      let etpCard = content.document.querySelector(".etp-card");
+      return !etpCard.classList.contains("custom-not-blocking");
+    }, "The regular ETP card is showing");
+  });
+
   Services.prefs.setStringPref("browser.contentblocking.category", "standard");
+  // Use the TrackingDBService API to delete the data.
+  await TrackingDBService.clearAll();
+  // Make sure the data was deleted.
+  let rows = await db.execute(SQL.selectAll);
+  is(rows.length, 0, "length is 0");
+  await db.close();
   BrowserTestUtils.removeTab(tab);
 });
 
 // Ensure that the ETP mobile promotion card is shown when the pref is on and
 // there are no mobile devices connected.
 add_task(async function test_etp_mobile_promotion_pref_on() {
-  const { getLoginData } = AboutProtectionsHandler;
-  AboutProtectionsHandler.onLoginData = mockGetLoginDataWithSyncedDevices(0);
+  AboutProtectionsParent.setTestOverride(mockGetLoginDataWithSyncedDevices(0));
   await SpecialPowers.pushPrefEnv({
     set: [["browser.contentblocking.report.show_mobile_app", true]],
   });
@@ -762,9 +782,8 @@ add_task(async function test_etp_mobile_promotion_pref_on() {
   BrowserTestUtils.removeTab(tab);
 
   // Add a mock mobile device. The promotion should now be hidden.
-  AboutProtectionsHandler.onLoginData = mockGetLoginDataWithSyncedDevices(
-    2,
-    true
+  AboutProtectionsParent.setTestOverride(
+    mockGetLoginDataWithSyncedDevices(2, true)
   );
   tab = await BrowserTestUtils.openNewForegroundTab({
     url: "about:protections",
@@ -779,14 +798,13 @@ add_task(async function test_etp_mobile_promotion_pref_on() {
   });
 
   BrowserTestUtils.removeTab(tab);
-  AboutProtectionsHandler.getLoginData = getLoginData;
+  AboutProtectionsParent.setTestOverride(null);
 });
 
 // Test that ETP mobile promotion is not shown when the pref is off,
 // even if no mobile devices are synced.
 add_task(async function test_etp_mobile_promotion_pref_on() {
-  const { getLoginData } = AboutProtectionsHandler;
-  AboutProtectionsHandler.onLoginData = mockGetLoginDataWithSyncedDevices(0);
+  AboutProtectionsParent.setTestOverride(mockGetLoginDataWithSyncedDevices(0));
   await SpecialPowers.pushPrefEnv({
     set: [["browser.contentblocking.report.show_mobile_app", false]],
   });
@@ -805,9 +823,8 @@ add_task(async function test_etp_mobile_promotion_pref_on() {
 
   BrowserTestUtils.removeTab(tab);
 
-  AboutProtectionsHandler.onLoginData = mockGetLoginDataWithSyncedDevices(
-    2,
-    true
+  AboutProtectionsParent.setTestOverride(
+    mockGetLoginDataWithSyncedDevices(2, true)
   );
   tab = await BrowserTestUtils.openNewForegroundTab({
     url: "about:protections",
@@ -822,5 +839,5 @@ add_task(async function test_etp_mobile_promotion_pref_on() {
     );
   });
   BrowserTestUtils.removeTab(tab);
-  AboutProtectionsHandler.getLoginData = getLoginData;
+  AboutProtectionsParent.setTestOverride(null);
 });

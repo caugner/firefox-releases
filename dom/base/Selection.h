@@ -152,8 +152,6 @@ class Selection final : public nsSupportsWeakReference,
   MOZ_CAN_RUN_SCRIPT nsresult
   ScrollIntoView(SelectionRegion aRegion, ScrollAxis aVertical = ScrollAxis(),
                  ScrollAxis aHorizontal = ScrollAxis(), int32_t aFlags = 0);
-  static nsresult SubtractRange(StyledRange& aRange, nsRange& aSubtract,
-                                nsTArray<StyledRange>* aOutput);
 
  private:
   static bool AreUserSelectedRangesNonEmpty(
@@ -169,9 +167,7 @@ class Selection final : public nsSupportsWeakReference,
   /**
    * See `AddRangesForSelectableNodes`.
    */
-  // TODO: annotate with `MOZ_CAN_RUN_SCRIPT` instead.
-  [[nodiscard]] MOZ_CAN_RUN_SCRIPT_BOUNDARY nsresult
-  AddRangesForUserSelectableNodes(
+  [[nodiscard]] MOZ_CAN_RUN_SCRIPT nsresult AddRangesForUserSelectableNodes(
       nsRange* aRange, int32_t* aOutIndex,
       const DispatchSelectstartEvent aDispatchSelectstartEvent);
 
@@ -222,8 +218,11 @@ class Selection final : public nsSupportsWeakReference,
   nsDirection GetDirection() const { return mDirection; }
 
   void SetDirection(nsDirection aDir) { mDirection = aDir; }
-  nsresult SetAnchorFocusToRange(nsRange* aRange);
-  void ReplaceAnchorFocusRange(nsRange* aRange);
+  MOZ_CAN_RUN_SCRIPT nsresult SetAnchorFocusToRange(nsRange* aRange);
+
+  // TODO: annotate with `MOZ_CAN_RUN_SCRIPT` instead.
+  MOZ_CAN_RUN_SCRIPT_BOUNDARY void ReplaceAnchorFocusRange(nsRange* aRange);
+
   void AdjustAnchorFocusForMultiRange(nsDirection aDirection);
 
   nsresult GetPrimaryFrameForAnchorNode(nsIFrame** aReturnFrame);
@@ -438,7 +437,9 @@ class Selection final : public nsSupportsWeakReference,
    */
   // TODO: mark as `MOZ_CAN_RUN_SCRIPT`
   // (https://bugzilla.mozilla.org/show_bug.cgi?id=1615296).
-  void Collapse(nsINode& aContainer, uint32_t aOffset, ErrorResult& aRv) {
+  MOZ_CAN_RUN_SCRIPT_BOUNDARY void Collapse(nsINode& aContainer,
+                                            uint32_t aOffset,
+                                            ErrorResult& aRv) {
     Collapse(RawRangeBoundary(&aContainer, aOffset), aRv);
   }
 
@@ -836,6 +837,9 @@ class Selection final : public nsSupportsWeakReference,
     Element* GetCommonEditingHost() const;
 
     void MaybeFocusCommonEditingHost(PresShell* aPresShell) const;
+
+    static nsresult SubtractRange(StyledRange& aRange, nsRange& aSubtract,
+                                  nsTArray<StyledRange>* aOutput);
 
     // These are the ranges inside this selection. They are kept sorted in order
     // of DOM start position.

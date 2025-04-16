@@ -22,6 +22,7 @@
 #include "nsIContentParent.h"
 #include "mozilla/dom/WindowGlobalActor.h"
 #include "mozilla/dom/CanonicalBrowsingContext.h"
+#include "mozilla/net/CookieJarSettings.h"
 
 class nsIPrincipal;
 class nsIURI;
@@ -37,7 +38,7 @@ namespace dom {
 
 class WindowGlobalChild;
 class JSWindowActorParent;
-class JSWindowActorMessageMeta;
+class JSActorMessageMeta;
 
 /**
  * A handle in the parent process to a specific nsGlobalWindowInner object.
@@ -73,14 +74,14 @@ class WindowGlobalParent final : public WindowContext,
   already_AddRefed<WindowGlobalChild> GetChildActor();
 
   // Get a JS actor object by name.
-  already_AddRefed<JSWindowActorParent> GetActor(const nsAString& aName,
+  already_AddRefed<JSWindowActorParent> GetActor(const nsACString& aName,
                                                  ErrorResult& aRv);
 
   // Get this actor's manager if it is not an in-process actor. Returns
   // |nullptr| if the actor has been torn down, or is in-process.
   already_AddRefed<BrowserParent> GetBrowserParent();
 
-  void ReceiveRawMessage(const JSWindowActorMessageMeta& aMeta,
+  void ReceiveRawMessage(const JSActorMessageMeta& aMeta,
                          ipc::StructuredCloneData&& aData,
                          ipc::StructuredCloneData&& aStack);
 
@@ -162,9 +163,21 @@ class WindowGlobalParent final : public WindowContext,
 
   nsIContentParent* GetContentParent();
 
+  nsICookieJarSettings* CookieJarSettings() { return mCookieJarSettings; }
+
+  bool DocumentHasLoaded() { return mDocumentHasLoaded; }
+
+  bool DocumentHasUserInteracted() { return mDocumentHasUserInteracted; }
+
+  uint32_t SandboxFlags() { return mSandboxFlags; }
+
+  bool GetDocumentBlockAllMixedContent() { return mBlockAllMixedContent; }
+
+  bool GetDocumentUpgradeInsecureRequests() { return mUpgradeInsecureRequests; }
+
  protected:
   const nsAString& GetRemoteType() override;
-  JSWindowActor::Type GetSide() override { return JSWindowActor::Type::Parent; }
+  JSActor::Type GetSide() override { return JSActor::Type::Parent; }
 
   // IPC messages
   mozilla::ipc::IPCResult RecvLoadURI(
@@ -174,6 +187,14 @@ class WindowGlobalParent final : public WindowContext,
       const MaybeDiscarded<dom::BrowsingContext>& aTargetBC,
       nsDocShellLoadState* aLoadState);
   mozilla::ipc::IPCResult RecvUpdateDocumentURI(nsIURI* aURI);
+  mozilla::ipc::IPCResult RecvUpdateDocumentPrincipal(
+      nsIPrincipal* aNewDocumentPrincipal);
+  mozilla::ipc::IPCResult RecvUpdateDocumentHasLoaded(bool aDocumentHasLoaded);
+  mozilla::ipc::IPCResult RecvUpdateDocumentHasUserInteracted(
+      bool aDocumentHasUserInteracted);
+  mozilla::ipc::IPCResult RecvUpdateSandboxFlags(uint32_t aSandboxFlags);
+  mozilla::ipc::IPCResult RecvUpdateDocumentCspSettings(
+      bool aBlockAllMixedContent, bool aUpgradeInsecureRequests);
   mozilla::ipc::IPCResult RecvUpdateDocumentTitle(const nsString& aTitle);
   mozilla::ipc::IPCResult RecvSetIsInitialDocument(bool aIsInitialDocument) {
     mIsInitialDocument = aIsInitialDocument;
@@ -183,12 +204,14 @@ class WindowGlobalParent final : public WindowContext,
   mozilla::ipc::IPCResult RecvSetClientInfo(
       const IPCClientInfo& aIPCClientInfo);
   mozilla::ipc::IPCResult RecvDestroy();
-  mozilla::ipc::IPCResult RecvRawMessage(const JSWindowActorMessageMeta& aMeta,
+  mozilla::ipc::IPCResult RecvRawMessage(const JSActorMessageMeta& aMeta,
                                          const ClonedMessageData& aData,
                                          const ClonedMessageData& aStack);
 
   mozilla::ipc::IPCResult RecvGetContentBlockingEvents(
       GetContentBlockingEventsResolver&& aResolver);
+  mozilla::ipc::IPCResult RecvUpdateCookieJarSettings(
+      const CookieJarSettingsArgs& aCookieJarSettingsArgs);
 
   void ActorDestroy(ActorDestroyReason aWhy) override;
 
@@ -210,7 +233,7 @@ class WindowGlobalParent final : public WindowContext,
   nsCOMPtr<nsIURI> mDocumentURI;
   nsString mDocumentTitle;
 
-  nsRefPtrHashtable<nsStringHashKey, JSWindowActorParent> mWindowActors;
+  nsRefPtrHashtable<nsCStringHashKey, JSWindowActorParent> mWindowActors;
   bool mInProcess;
   bool mIsInitialDocument;
 
@@ -223,6 +246,13 @@ class WindowGlobalParent final : public WindowContext,
   ContentBlockingLog mContentBlockingLog;
 
   Maybe<ClientInfo> mClientInfo;
+  // Fields being mirrored from the corresponding document
+  nsCOMPtr<nsICookieJarSettings> mCookieJarSettings;
+  uint32_t mSandboxFlags;
+  bool mDocumentHasLoaded;
+  bool mDocumentHasUserInteracted;
+  bool mBlockAllMixedContent;
+  bool mUpgradeInsecureRequests;
 };
 
 }  // namespace dom

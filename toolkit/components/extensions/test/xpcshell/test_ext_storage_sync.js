@@ -601,6 +601,7 @@ const assertExtensionRecord = async function(fxaService, post, extension, key) {
   );
   const transformer = new CollectionKeyEncryptionRemoteTransformer(
     cryptoCollection,
+    await cryptoCollection.getKeyRing(),
     extensionId
   );
   equal(
@@ -645,6 +646,47 @@ function uuid() {
 
 add_task(async function test_setup() {
   await promiseStartupManager();
+});
+
+add_task(async function test_single_initialization() {
+  // Grab access to this via the backstage pass to check if we're calling openConnection too often.
+  const { FirefoxAdapter } = ChromeUtils.import(
+    "resource://gre/modules/ExtensionStorageSync.jsm",
+    null
+  );
+  const origOpenConnection = FirefoxAdapter.openConnection;
+  let callCount = 0;
+  FirefoxAdapter.openConnection = function(...args) {
+    ++callCount;
+    return origOpenConnection.apply(this, args);
+  };
+  function background() {
+    let promises = ["foo", "bar", "baz", "quux"].map(key =>
+      browser.storage.sync.get(key)
+    );
+    Promise.all(promises).then(() =>
+      browser.test.notifyPass("initialize once")
+    );
+  }
+  try {
+    let extension = ExtensionTestUtils.loadExtension({
+      manifest: {
+        permissions: ["storage"],
+      },
+      background: `(${background})()`,
+    });
+
+    await extension.startup();
+    await extension.awaitFinish("initialize once");
+    await extension.unload();
+    equal(
+      callCount,
+      1,
+      "Initialized FirefoxAdapter connection and Kinto exactly once"
+    );
+  } finally {
+    FirefoxAdapter.openConnection = origOpenConnection;
+  }
 });
 
 add_task(async function test_key_to_id() {
@@ -1586,10 +1628,6 @@ add_task(async function test_storage_sync_pulls_changes() {
       fxaService
     ) {
       const cryptoCollection = new CryptoCollection(fxaService);
-      let transformer = new CollectionKeyEncryptionRemoteTransformer(
-        cryptoCollection,
-        extensionId
-      );
       server.installCollection("storage-sync-crypto");
 
       let calls = [];
@@ -1603,6 +1641,11 @@ add_task(async function test_storage_sync_pulls_changes() {
 
       await extensionStorageSync.ensureCanSync([extensionId]);
       const collectionId = await cryptoCollection.extensionIdToCollectionId(
+        extensionId
+      );
+      let transformer = new CollectionKeyEncryptionRemoteTransformer(
+        cryptoCollection,
+        await cryptoCollection.getKeyRing(),
         extensionId
       );
       await server.encryptAndAddRecord(transformer, {
@@ -1708,14 +1751,15 @@ add_task(async function test_storage_sync_on_no_active_context() {
       fxaService
     ) {
       const cryptoCollection = new CryptoCollection(fxaService);
-      let transformer = new CollectionKeyEncryptionRemoteTransformer(
-        cryptoCollection,
-        extensionId
-      );
       server.installCollection("storage-sync-crypto");
 
       await extensionStorageSync.ensureCanSync([extensionId]);
       const collectionId = await cryptoCollection.extensionIdToCollectionId(
+        extensionId
+      );
+      let transformer = new CollectionKeyEncryptionRemoteTransformer(
+        cryptoCollection,
+        await cryptoCollection.getKeyRing(),
         extensionId
       );
       await server.encryptAndAddRecord(transformer, {
@@ -1884,15 +1928,16 @@ add_task(async function test_storage_sync_retries_failed_auth() {
       fxaService
     ) {
       const cryptoCollection = new CryptoCollection(fxaService);
-      let transformer = new CollectionKeyEncryptionRemoteTransformer(
-        cryptoCollection,
-        extensionId
-      );
       server.installCollection("storage-sync-crypto");
 
       await extensionStorageSync.ensureCanSync([extensionId]);
       await extensionStorageSync.set(extension, { "my-key": 5 }, context);
       const collectionId = await cryptoCollection.extensionIdToCollectionId(
+        extensionId
+      );
+      let transformer = new CollectionKeyEncryptionRemoteTransformer(
+        cryptoCollection,
+        await cryptoCollection.getKeyRing(),
         extensionId
       );
       // Put a remote record just to verify that eventually we succeeded
@@ -1967,14 +2012,15 @@ add_task(async function test_storage_sync_pulls_conflicts() {
       fxaService
     ) {
       const cryptoCollection = new CryptoCollection(fxaService);
-      let transformer = new CollectionKeyEncryptionRemoteTransformer(
-        cryptoCollection,
-        extensionId
-      );
       server.installCollection("storage-sync-crypto");
 
       await extensionStorageSync.ensureCanSync([extensionId]);
       const collectionId = await cryptoCollection.extensionIdToCollectionId(
+        extensionId
+      );
+      let transformer = new CollectionKeyEncryptionRemoteTransformer(
+        cryptoCollection,
+        await cryptoCollection.getKeyRing(),
         extensionId
       );
       await server.encryptAndAddRecord(transformer, {
@@ -2075,6 +2121,7 @@ add_task(async function test_storage_sync_pulls_deletes() {
 
       const transformer = new CollectionKeyEncryptionRemoteTransformer(
         new CryptoCollection(fxaService),
+        await cryptoCollection.getKeyRing(),
         extension.id
       );
       await server.encryptAndAddRecord(transformer, {
@@ -2197,6 +2244,7 @@ add_task(async function test_storage_sync_pushes_deletes() {
       );
       const decoded = await new CollectionKeyEncryptionRemoteTransformer(
         cryptoCollection,
+        await cryptoCollection.getKeyRing(),
         extensionId
       ).decode(post.body.data);
       equal(decoded._status, "deleted");

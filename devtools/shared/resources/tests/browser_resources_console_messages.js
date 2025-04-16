@@ -7,7 +7,6 @@
 //
 // Reproduces assertions from: devtools/shared/webconsole/test/chrome/test_cached_messages.html
 
-const { TargetList } = require("devtools/shared/resources/target-list");
 const {
   ResourceWatcher,
 } = require("devtools/shared/resources/resource-watcher");
@@ -17,18 +16,15 @@ add_task(async function() {
   gBrowser.selectedTab = BrowserTestUtils.addTab(gBrowser);
   const tab = await addTab("data:text/html,Console Messages");
 
-  // Create a TargetList for the test tab
-  const client = await createLocalClient();
-  const target = await client.mainRoot.getTab({ tab });
-  const targetList = new TargetList(client.mainRoot, target);
-  await targetList.startListening();
-
-  // Now create a ResourceWatcher
-  const resourceWatcher = new ResourceWatcher(targetList);
+  const {
+    client,
+    resourceWatcher,
+    targetList,
+  } = await initResourceWatcherAndTarget(tab);
 
   await testMessages(tab.linkedBrowser, resourceWatcher);
 
-  await targetList.stopListening();
+  targetList.stopListening();
   await client.close();
 });
 
@@ -299,43 +295,11 @@ function logRuntimeMessages(browser) {
 
 // Copied from devtools/shared/webconsole/test/chrome/common.js
 function checkConsoleAPICall(call, expected) {
-  is(call.arguments.length, expected.arguments.length, "number of arguments");
+  is(
+    call.arguments?.length || 0,
+    expected.arguments?.length || 0,
+    "number of arguments"
+  );
 
   checkObject(call, expected);
-}
-
-function checkObject(object, expected) {
-  if (object && object.getGrip) {
-    object = object.getGrip();
-  }
-
-  for (const name of Object.keys(expected)) {
-    const expectedValue = expected[name];
-    const value = object[name];
-    checkValue(name, value, expectedValue);
-  }
-}
-
-function checkValue(name, value, expected) {
-  if (expected === null) {
-    ok(!value, "'" + name + "' is null");
-  } else if (value === undefined) {
-    ok(false, "'" + name + "' is undefined");
-  } else if (value === null) {
-    ok(false, "'" + name + "' is null");
-  } else if (
-    typeof expected == "string" ||
-    typeof expected == "number" ||
-    typeof expected == "boolean"
-  ) {
-    is(value, expected, "property '" + name + "'");
-  } else if (expected instanceof RegExp) {
-    ok(expected.test(value), name + ": " + expected + " matched " + value);
-  } else if (Array.isArray(expected)) {
-    info("checking array for property '" + name + "'");
-    checkObject(value, expected);
-  } else if (typeof expected == "object") {
-    info("checking object for property '" + name + "'");
-    checkObject(value, expected);
-  }
 }

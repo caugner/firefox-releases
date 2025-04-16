@@ -55,7 +55,6 @@ namespace mozilla {
 class CancelableRunnable;
 
 namespace dom {
-class HostWebGLCommandSink;
 class WebGLParent;
 }  // namespace dom
 
@@ -303,8 +302,7 @@ class CompositorBridgeParentBase : public PCompositorBridgeParent,
     return IPC_FAIL_NO_REASON(this);
   }
 
-  virtual already_AddRefed<PWebGLParent> AllocPWebGLParent(
-      const webgl::InitContextDesc&, webgl::InitContextResult* out) = 0;
+  virtual already_AddRefed<PWebGLParent> AllocPWebGLParent() = 0;
 
   bool mCanSend;
 
@@ -658,9 +656,6 @@ class CompositorBridgeParent final : public CompositorBridgeParentBase,
   PAPZParent* AllocPAPZParent(const LayersId& aLayersId) override;
   bool DeallocPAPZParent(PAPZParent* aActor) override;
 
-#if defined(MOZ_WIDGET_ANDROID)
-  AndroidDynamicToolbarAnimator* GetAndroidDynamicToolbarAnimator();
-#endif
   RefPtr<APZSampler> GetAPZSampler();
   RefPtr<APZUpdater> GetAPZUpdater();
 
@@ -694,15 +689,10 @@ class CompositorBridgeParent final : public CompositorBridgeParentBase,
   static already_AddRefed<IAPZCTreeManager> GetAPZCTreeManager(
       LayersId aLayersId);
 
-#if defined(MOZ_WIDGET_ANDROID)
-  gfx::IntSize GetEGLSurfaceSize() { return mEGLSurfaceSize; }
-#endif  // defined(MOZ_WIDGET_ANDROID)
-
   WebRenderBridgeParent* GetWrBridge() { return mWrBridge; }
   webgpu::WebGPUParent* GetWebGPUBridge() { return mWebGPUBridge; }
 
-  already_AddRefed<PWebGLParent> AllocPWebGLParent(
-      const webgl::InitContextDesc&, webgl::InitContextResult*) override {
+  already_AddRefed<PWebGLParent> AllocPWebGLParent() override {
     MOZ_ASSERT_UNREACHABLE(
         "This message is CrossProcessCompositorBridgeParent only");
     return nullptr;

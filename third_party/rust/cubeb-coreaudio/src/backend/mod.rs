@@ -701,6 +701,7 @@ extern "C" fn audiounit_output_callback(
     status
 }
 
+#[allow(clippy::cognitive_complexity)]
 extern "C" fn audiounit_property_listener_callback(
     id: AudioObjectID,
     address_count: u32,
@@ -1374,6 +1375,96 @@ fn get_presentation_latency(devid: AudioObjectID, devtype: DeviceType) -> u32 {
     device_latency + stream_latency
 }
 
+fn get_device_group_id(
+    id: AudioDeviceID,
+    devtype: DeviceType,
+) -> std::result::Result<CString, OSStatus> {
+    const BLTN: u32 = 0x626C_746E; // "bltn" (builtin)
+
+    match get_device_transport_type(id, devtype) {
+        Ok(BLTN) => {
+            cubeb_log!(
+                "The transport type is {:?}",
+                convert_uint32_into_string(BLTN)
+            );
+            match get_custom_group_id(id, devtype) {
+                Some(id) => return Ok(id),
+                None => {
+                    cubeb_log!("Get model uid instead.");
+                }
+            };
+        }
+        Ok(trans_type) => {
+            cubeb_log!(
+                "The transport type is {:?}. Get model uid instead.",
+                convert_uint32_into_string(trans_type)
+            );
+        }
+        Err(e) => {
+            cubeb_log!(
+                "Error: {} when getting transport type. Get model uid instead.",
+                e
+            );
+        }
+    }
+
+    // Some devices (e.g. AirPods) might only set the model-uid in the global scope.
+    // The query might fail if the scope is input-only or output-only.
+    get_device_model_uid(id, devtype)
+        .or_else(|_| get_device_model_uid(id, DeviceType::INPUT | DeviceType::OUTPUT))
+        .map(|uid| uid.into_cstring())
+}
+
+fn get_custom_group_id(id: AudioDeviceID, devtype: DeviceType) -> Option<CString> {
+    const IMIC: u32 = 0x696D_6963; // "imic" (internal microphone)
+    const ISPK: u32 = 0x6973_706B; // "ispk" (internal speaker)
+    const EMIC: u32 = 0x656D_6963; // "emic" (external microphone)
+    const HDPN: u32 = 0x6864_706E; // "hdpn" (headphone)
+
+    match get_device_source(id, devtype) {
+        s @ Ok(IMIC) | s @ Ok(ISPK) => {
+            const GROUP_ID: &str = "builtin-internal-mic|spk";
+            cubeb_log!(
+                "Use hardcode group id: {} when source is: {:?}.",
+                GROUP_ID,
+                convert_uint32_into_string(s.unwrap())
+            );
+            return Some(CString::new(GROUP_ID).unwrap());
+        }
+        s @ Ok(EMIC) | s @ Ok(HDPN) => {
+            const GROUP_ID: &str = "builtin-external-mic|hdpn";
+            cubeb_log!(
+                "Use hardcode group id: {} when source is: {:?}.",
+                GROUP_ID,
+                convert_uint32_into_string(s.unwrap())
+            );
+            return Some(CString::new(GROUP_ID).unwrap());
+        }
+        Ok(s) => {
+            cubeb_log!(
+                "No custom group id when source is: {:?}.",
+                convert_uint32_into_string(s)
+            );
+        }
+        Err(e) => {
+            cubeb_log!("Error: {} when getting device source. ", e);
+        }
+    }
+    None
+}
+
+fn get_device_label(
+    id: AudioDeviceID,
+    devtype: DeviceType,
+) -> std::result::Result<StringRef, OSStatus> {
+    get_device_source_name(id, devtype).or_else(|_| get_device_name(id, devtype))
+}
+
+fn get_device_global_uid(id: AudioDeviceID) -> std::result::Result<StringRef, OSStatus> {
+    get_device_uid(id, DeviceType::INPUT | DeviceType::OUTPUT)
+}
+
+#[allow(clippy::cognitive_complexity)]
 fn create_cubeb_device_info(
     devid: AudioObjectID,
     devtype: DeviceType,
@@ -1408,10 +1499,9 @@ fn create_cubeb_device_info(
         }
     }
 
-    match get_device_model_uid(devid, devtype) {
-        Ok(uid) => {
-            let c_string = uid.into_cstring();
-            dev_info.group_id = c_string.into_raw();
+    match get_device_group_id(devid, devtype) {
+        Ok(group_id) => {
+            dev_info.group_id = group_id.into_raw();
         }
         Err(e) => {
             cubeb_log!(

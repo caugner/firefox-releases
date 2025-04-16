@@ -31,6 +31,7 @@
 #include "vm/ArgumentsObject.h"
 #include "vm/ArrayBufferObject.h"
 #include "vm/JSObject.h"
+#include "vm/PlainObject.h"  // js::PlainObject
 #include "vm/ProxyObject.h"
 #include "vm/SelfHosting.h"
 #include "vm/SharedArrayObject.h"
@@ -619,8 +620,7 @@ IonBuilder::InliningResult IonBuilder::inlineNativeGetter(CallInfo& callInfo,
     flags->setResultType(MIRType::Int32);
     MConstant* maskConst = MConstant::New(alloc(), Int32Value(mask.value()));
     current->add(maskConst);
-    MBitAnd* maskedFlag = MBitAnd::New(alloc(), flags, maskConst);
-    maskedFlag->setInt32Specialization();
+    auto* maskedFlag = MBitAnd::New(alloc(), flags, maskConst, MIRType::Int32);
     current->add(maskedFlag);
 
     MDefinition* result = convertToBoolean(maskedFlag);
@@ -2819,8 +2819,7 @@ IonBuilder::InliningResult IonBuilder::inlineHasClass(CallInfo& callInfo,
         MHasClass* hasClass =
             MHasClass::New(alloc(), callInfo.getArg(0), remaining[i]);
         current->add(hasClass);
-        MBitOr* either = MBitOr::New(alloc(), last, hasClass);
-        either->infer(inspector, pc);
+        MBitOr* either = MBitOr::New(alloc(), last, hasClass, MIRType::Int32);
         current->add(either);
         last = either;
       }
@@ -4032,6 +4031,12 @@ IonBuilder::InliningResult IonBuilder::inlineWasmCall(CallInfo& callInfo,
   static_assert(MaxNumInlinedArgs <= MaxNumLInstructionOperands,
                 "inlined arguments can all be LIR operands");
   if (sig.args().length() > MaxNumInlinedArgs) {
+    return InliningStatus_NotInlined;
+  }
+
+  // If there are too many results, don't inline as we don't currently
+  // add MWasmStackResults.
+  if (sig.results().length() > wasm::MaxResultsForJitInlineCall) {
     return InliningStatus_NotInlined;
   }
 

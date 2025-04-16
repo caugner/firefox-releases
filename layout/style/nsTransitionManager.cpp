@@ -7,6 +7,8 @@
 /* Code to start and animate CSS transitions. */
 
 #include "nsTransitionManager.h"
+#include "mozilla/dom/Document.h"
+#include "mozilla/dom/KeyframeEffectBinding.h"
 #include "nsAnimationManager.h"
 #include "mozilla/dom/CSSTransitionBinding.h"
 
@@ -40,6 +42,8 @@ using mozilla::TimeStamp;
 using mozilla::dom::Animation;
 using mozilla::dom::AnimationPlayState;
 using mozilla::dom::CSSTransition;
+using mozilla::dom::DocumentTimeline;
+using mozilla::dom::KeyframeEffect;
 using mozilla::dom::Nullable;
 
 using namespace mozilla;
@@ -148,8 +152,8 @@ void CSSTransition::QueueEvents(const StickyTimeDuration& aActiveTime) {
       // That is to say, whenever elapsedTime goes negative (because an
       // animation restarts, something rewinds the animation, or otherwise)
       // a new random value for the mix-in must be generated.
-      elapsedTime = nsRFPService::ReduceTimePrecisionAsSecs(
-          elapsedTime, 0, TimerPrecisionType::RFPOnly);
+      elapsedTime =
+          nsRFPService::ReduceTimePrecisionAsSecsRFPOnly(elapsedTime, 0);
     }
     events.AppendElement(AnimationEventInfo(
         TransitionProperty(), mOwningElement.Target(), aMessage, elapsedTime,
@@ -845,10 +849,9 @@ bool nsTransitionManager::ConsiderInitiatingTransition(
     oldTransition = nullptr;  // Clear pointer so it doesn't dangle
     animations[currentIndex] = animation;
   } else {
-    if (!animations.AppendElement(animation)) {
-      NS_WARNING("out of memory");
-      return false;
-    }
+    // XXX(Bug 1631371) Check if this should use a fallible operation as it
+    // pretended earlier.
+    animations.AppendElement(animation);
   }
 
   EffectSet* effectSet = EffectSet::GetEffectSet(aElement, aPseudoType);

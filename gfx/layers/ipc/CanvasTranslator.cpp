@@ -151,7 +151,7 @@ ipc::IPCResult CanvasTranslator::RecvResumeTranslation() {
 }
 
 void CanvasTranslator::StartTranslation() {
-  if (!TranslateRecording() && !GetIPCChannel()->Unsound_IsClosed()) {
+  if (!TranslateRecording() && GetIPCChannel()->CanSend()) {
     MOZ_ALWAYS_SUCCEEDS(mTranslationTaskQueue->Dispatch(
         NewRunnableMethod("CanvasTranslator::StartTranslation", this,
                           &CanvasTranslator::StartTranslation)));
@@ -168,8 +168,20 @@ void CanvasTranslator::FinishShutdown() {
   // mTranslationTaskQueue has shutdown we can safely drop the ring buffer to
   // break the cycle caused by RingBufferReaderServices.
   mStream = nullptr;
+
+  // CanvasTranslators has a MOZ_ASSERT(CanvasThreadHolder::IsInCanvasThread())
+  // to ensure it is only called on the Canvas Thread. This takes a lock on
+  // CanvasThreadHolder::sCanvasThreadHolder, which is also locked in
+  // CanvasThreadHolder::StaticRelease on the compositor thread from
+  // ReleaseOnCompositorThread below. If that lock wins the race with the one in
+  // IsInCanvasThread and it is the last CanvasThreadHolder reference then it
+  // shuts down the canvas thread waiting for it to finish. However
+  // IsInCanvasThread is waiting for the lock on the canvas thread and we
+  // deadlock. So, we need to call CanvasTranslators before
+  // ReleaseOnCompositorThread.
+  CanvasTranslatorSet& canvasTranslators = CanvasTranslators();
   CanvasThreadHolder::ReleaseOnCompositorThread(mCanvasThreadHolder.forget());
-  CanvasTranslators().RemoveEntry(this);
+  canvasTranslators.RemoveEntry(this);
 }
 
 bool CanvasTranslator::TranslateRecording() {
@@ -182,7 +194,7 @@ bool CanvasTranslator::TranslateRecording() {
         [&](RecordedEvent* recordedEvent) -> bool {
           // Make sure that the whole event was read from the stream.
           if (!mStream->good()) {
-            if (GetIPCChannel()->Unsound_IsClosed()) {
+            if (!GetIPCChannel()->CanSend()) {
               // The other side has closed only warn about read failure.
               gfxWarning() << "Failed to read event type: "
                            << recordedEvent->GetType();
@@ -233,7 +245,7 @@ bool CanvasTranslator::TranslateRecording() {
   case _typeenum: {                                                    \
     auto e = _class(*mStream);                                         \
     if (!mStream->good()) {                                            \
-      if (GetIPCChannel()->Unsound_IsClosed()) {                       \
+      if (!GetIPCChannel()->CanSend()) {                               \
         /* The other side has closed only warn about read failure. */  \
         gfxWarning() << "Failed to read event type: " << _typeenum;    \
       } else {                                                         \

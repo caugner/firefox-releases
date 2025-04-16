@@ -51,29 +51,32 @@
   // if we're expired, we don't support any attributes.
   if (![self getGeckoAccessible] && ![self getProxyAccessible]) return [NSArray array];
 
+  if (![self stateWithMask:states::LINKED]) {
+    // Only expose link semantics if this accessible has a LINKED state.
+    return [super accessibilityAttributeNames];
+  }
+
   static NSMutableArray* attributes = nil;
 
   if (!attributes) {
     attributes = [[super accessibilityAttributeNames] mutableCopy];
     [attributes addObject:NSAccessibilityURLAttribute];
+    [attributes addObject:@"AXVisited"];
   }
 
   return attributes;
 }
 
 - (id)accessibilityAttributeValue:(NSString*)attribute {
-  if ([attribute isEqualToString:NSAccessibilityURLAttribute]) return [self url];
+  if ([self stateWithMask:states::LINKED]) {
+    // Only expose link semantics if this accessible has a LINKED state.
+    if ([attribute isEqualToString:NSAccessibilityURLAttribute]) return [self url];
+    if ([attribute isEqualToString:@"AXVisited"]) {
+      return [NSNumber numberWithBool:[self stateWithMask:states::TRAVERSED] != 0];
+    }
+  }
 
   return [super accessibilityAttributeValue:attribute];
-}
-
-- (NSArray*)accessibilityActionNames {
-  // if we're expired, we don't support any actions.
-  if (![self getGeckoAccessible] && ![self getProxyAccessible]) return [NSArray array];
-
-  // Always advertise press action first.
-  return [@[ NSAccessibilityPressAction ]
-      arrayByAddingObjectsFromArray:[super accessibilityActionNames]];
 }
 
 - (NSString*)customDescription {
@@ -96,6 +99,17 @@
   if (!urlString) return nil;
 
   return [NSURL URLWithString:urlString];
+}
+
+- (NSString*)role {
+  // If this is not LINKED, just expose this as a generic group accessible.
+  // Chrome and Safari expose this as a childless AXStaticText, but
+  // the HTML Accessibility API Mappings spec says this should be an AXGroup.
+  if (![self stateWithMask:states::LINKED]) {
+    return NSAccessibilityGroupRole;
+  }
+
+  return [super role];
 }
 
 @end

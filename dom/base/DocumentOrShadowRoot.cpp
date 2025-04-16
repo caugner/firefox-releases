@@ -73,21 +73,24 @@ StyleSheetList* DocumentOrShadowRoot::StyleSheets() {
 }
 
 void DocumentOrShadowRoot::InsertSheetAt(size_t aIndex, StyleSheet& aSheet) {
-  aSheet.SetAssociatedDocumentOrShadowRoot(
-      this, StyleSheet::OwnedByDocumentOrShadowRoot);
+  aSheet.SetAssociatedDocumentOrShadowRoot(this);
   mStyleSheets.InsertElementAt(aIndex, &aSheet);
 }
 
-already_AddRefed<StyleSheet> DocumentOrShadowRoot::RemoveSheet(
-    StyleSheet& aSheet) {
+void DocumentOrShadowRoot::RemoveStyleSheet(StyleSheet& aSheet) {
   auto index = mStyleSheets.IndexOf(&aSheet);
   if (index == mStyleSheets.NoIndex) {
-    return nullptr;
+    // We should only hit this case if we are unlinking
+    // in which case mStyleSheets should be cleared.
+    MOZ_ASSERT(mKind != Kind::Document ||
+               AsNode().AsDocument()->InUnlinkOrDeletion());
+    MOZ_ASSERT(mStyleSheets.IsEmpty());
+    return;
   }
   RefPtr<StyleSheet> sheet = std::move(mStyleSheets[index]);
   mStyleSheets.RemoveElementAt(index);
+  RemoveSheetFromStylesIfApplicable(*sheet);
   sheet->ClearAssociatedDocumentOrShadowRoot();
-  return sheet.forget();
 }
 
 void DocumentOrShadowRoot::RemoveSheetFromStylesIfApplicable(
@@ -148,7 +151,7 @@ void DocumentOrShadowRoot::SetAdoptedStyleSheets(
   if (commonPrefix != mAdoptedStyleSheets.Length()) {
     StyleSheetSet removedSet(mAdoptedStyleSheets.Length() - commonPrefix);
     for (size_t i = mAdoptedStyleSheets.Length(); i != commonPrefix; --i) {
-      RefPtr<StyleSheet> sheetToRemove = mAdoptedStyleSheets.PopLastElement();
+      StyleSheet* sheetToRemove = mAdoptedStyleSheets.ElementAt(i - 1);
       if (MOZ_UNLIKELY(set.Contains(sheetToRemove))) {
         // Fixing duplicate sheets would require insertions/removals from the
         // style set. We may as well just rebuild the whole thing from scratch.
@@ -315,7 +318,7 @@ Element* DocumentOrShadowRoot::GetFullscreenElement() {
     return nullptr;
   }
 
-  Element* element = AsNode().OwnerDoc()->FullscreenStackTop();
+  Element* element = AsNode().OwnerDoc()->GetUnretargetedFullScreenElement();
   NS_ASSERTION(!element || element->State().HasState(NS_EVENT_STATE_FULLSCREEN),
                "Fullscreen element should have fullscreen styles applied");
 
@@ -763,33 +766,42 @@ void DocumentOrShadowRoot::GetAdoptedStyleSheets(
   aAdoptedStyleSheets = mAdoptedStyleSheets;
 }
 
+void DocumentOrShadowRoot::TraverseSheetRefInStylesIfApplicable(
+    StyleSheet& aSheet, nsCycleCollectionTraversalCallback& cb) {
+  if (!aSheet.IsApplicable()) {
+    return;
+  }
+  if (mKind == Kind::ShadowRoot) {
+    NS_CYCLE_COLLECTION_NOTE_EDGE_NAME(cb, "mServoStyles->sheets[i]");
+    cb.NoteXPCOMChild(&aSheet);
+  } else if (AsNode().AsDocument()->StyleSetFilled()) {
+    NS_CYCLE_COLLECTION_NOTE_EDGE_NAME(
+        cb, "mStyleSet->mRawSet.stylist.stylesheets.<origin>[i]");
+    cb.NoteXPCOMChild(&aSheet);
+  }
+}
+
+void DocumentOrShadowRoot::TraverseStyleSheets(
+    nsTArray<RefPtr<StyleSheet>>& aSheets, const char* aEdgeName,
+    nsCycleCollectionTraversalCallback& cb) {
+  MOZ_ASSERT(aEdgeName);
+  MOZ_ASSERT(&aSheets != &mAdoptedStyleSheets);
+  for (StyleSheet* sheet : aSheets) {
+    NS_CYCLE_COLLECTION_NOTE_EDGE_NAME(cb, aEdgeName);
+    cb.NoteXPCOMChild(sheet);
+    TraverseSheetRefInStylesIfApplicable(*sheet, cb);
+  }
+}
+
 void DocumentOrShadowRoot::Traverse(DocumentOrShadowRoot* tmp,
                                     nsCycleCollectionTraversalCallback& cb) {
-  NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mStyleSheets)
   NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mDOMStyleSheets)
-  NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mAdoptedStyleSheets)
+  tmp->TraverseStyleSheets(tmp->mStyleSheets, "mStyleSheets[i]", cb);
 
-  auto NoteSheetIfApplicable = [&](StyleSheet& aSheet) {
-    if (!aSheet.IsApplicable()) {
-      return;
-    }
-    // The style set or mServoStyles keep more references to it if the sheet
-    // is applicable.
-    if (tmp->mKind == Kind::ShadowRoot) {
-      NS_CYCLE_COLLECTION_NOTE_EDGE_NAME(cb, "mServoStyles->sheets[i]");
-      cb.NoteXPCOMChild(&aSheet);
-    } else if (tmp->AsNode().AsDocument()->StyleSetFilled()) {
-      NS_CYCLE_COLLECTION_NOTE_EDGE_NAME(
-          cb, "mStyleSet->mRawSet.stylist.stylesheets.author[i]");
-      cb.NoteXPCOMChild(&aSheet);
-    }
-  };
-
-  for (auto& sheet : tmp->mStyleSheets) {
-    NoteSheetIfApplicable(*sheet);
-  }
-
-  tmp->EnumerateUniqueAdoptedStyleSheetsBackToFront(NoteSheetIfApplicable);
+  tmp->EnumerateUniqueAdoptedStyleSheetsBackToFront([&](StyleSheet& aSheet) {
+    tmp->TraverseSheetRefInStylesIfApplicable(aSheet, cb);
+  });
+  NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mAdoptedStyleSheets);
 
   for (auto iter = tmp->mIdentifierMap.ConstIter(); !iter.Done(); iter.Next()) {
     iter.Get()->Traverse(&cb);
@@ -810,11 +822,23 @@ void DocumentOrShadowRoot::Traverse(DocumentOrShadowRoot* tmp,
   }
 }
 
+void DocumentOrShadowRoot::UnlinkStyleSheets(
+    nsTArray<RefPtr<StyleSheet>>& aSheets) {
+  MOZ_ASSERT(&aSheets != &mAdoptedStyleSheets);
+  for (StyleSheet* sheet : aSheets) {
+    sheet->ClearAssociatedDocumentOrShadowRoot();
+    RemoveSheetFromStylesIfApplicable(*sheet);
+  }
+  aSheets.Clear();
+}
+
 void DocumentOrShadowRoot::Unlink(DocumentOrShadowRoot* tmp) {
   NS_IMPL_CYCLE_COLLECTION_UNLINK(mDOMStyleSheets);
-  for (RefPtr<StyleSheet>& sheet : tmp->mAdoptedStyleSheets) {
-    sheet->RemoveAdopter(*tmp);
-  }
+  tmp->UnlinkStyleSheets(tmp->mStyleSheets);
+  tmp->EnumerateUniqueAdoptedStyleSheetsBackToFront([&](StyleSheet& aSheet) {
+    aSheet.RemoveAdopter(*tmp);
+    tmp->RemoveSheetFromStylesIfApplicable(aSheet);
+  });
   NS_IMPL_CYCLE_COLLECTION_UNLINK(mAdoptedStyleSheets);
   tmp->mIdentifierMap.Clear();
   tmp->mRadioGroups.Clear();

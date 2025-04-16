@@ -502,10 +502,7 @@ partial interface Window {
                                                optional DOMString options = "",
                                                any... extraArguments);
 
-  [
-#ifdef NIGHTLY_BUILD
-   ChromeOnly,
-#endif
+  [Func="nsGlobalWindowInner::ContentPropertyEnabled",
    NonEnumerable, Replaceable, Throws, NeedsCallerType]
   readonly attribute object? content;
 
@@ -537,9 +534,6 @@ partial interface Window {
    */
   [Constant, Throws, ChromeOnly]
   readonly attribute nsIDOMWindowUtils windowUtils;
-
-  [ChromeOnly]
-  readonly attribute boolean hasOpenerForInitialContentBrowser;
 
   [Pure, ChromeOnly]
   readonly attribute WindowGlobalChild? windowGlobalChild;
@@ -611,9 +605,9 @@ partial interface Window {
   [Func="nsGlobalWindowInner::IsPrivilegedChromeWindow"]
   void                      restore();
   [Func="nsGlobalWindowInner::IsPrivilegedChromeWindow"]
-  long                      getWorkspaceID();
+  DOMString                 getWorkspaceID();
   [Func="nsGlobalWindowInner::IsPrivilegedChromeWindow"]
-  void                      moveToWorkspace(long workspaceID);
+  void                      moveToWorkspace(DOMString workspaceID);
 
   /**
    * Notify a default button is loaded on a dialog or a wizard.

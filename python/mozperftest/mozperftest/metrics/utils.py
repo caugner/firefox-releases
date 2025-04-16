@@ -15,6 +15,7 @@ def open_file(path):
     :return dict/str: Returns a dict for JSON data, and
         a str for any other type.
     """
+    print("Reading %s" % path)
     with open(path) as f:
         if os.path.splitext(path)[-1] == ".json":
             return json.load(f)
@@ -27,8 +28,7 @@ def write_json(data, path, file):
     :param data dict: Data to write.
     :param path str: Directory of where the data will be stored.
     :param file str: Name of the JSON file.
-
-    Returns the path of the file.
+    :return str: Path to the output.
     """
     path = os.path.join(path, file)
     with open(path, "w+") as f:

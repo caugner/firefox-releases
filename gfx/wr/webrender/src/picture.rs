@@ -116,13 +116,13 @@ use crate::frame_builder::{FrameBuildingContext, FrameBuildingState, PictureStat
 use crate::gpu_cache::{GpuCache, GpuCacheAddress, GpuCacheHandle};
 use crate::gpu_types::{UvRectKind, ZBufferId};
 use plane_split::{Clipper, Polygon, Splitter};
-use crate::prim_store::{SpaceMapper, PrimitiveVisibilityMask, PointKey, PrimitiveTemplateKind};
+use crate::prim_store::{SpaceMapper, PrimitiveVisibilityMask, PrimitiveTemplateKind};
 use crate::prim_store::{SpaceSnapper, PictureIndex, PrimitiveInstance, PrimitiveInstanceKind};
 use crate::prim_store::{get_raster_rects, PrimitiveScratchBuffer, RectangleKey};
 use crate::prim_store::{OpacityBindingStorage, ImageInstanceStorage, OpacityBindingIndex};
 use crate::prim_store::{ColorBindingStorage, ColorBindingIndex, PrimitiveVisibilityFlags};
 use crate::print_tree::{PrintTree, PrintTreePrinter};
-use crate::render_backend::DataStores;
+use crate::render_backend::{DataStores, FrameId};
 use crate::render_task_graph::RenderTaskId;
 use crate::render_target::RenderTargetKind;
 use crate::render_task::{RenderTask, RenderTaskLocation, BlurTaskCache, ClearMode};
@@ -132,6 +132,7 @@ use crate::spatial_tree::CoordinateSystemId;
 use smallvec::SmallVec;
 use std::{mem, u8, marker, u32};
 use std::sync::atomic::{AtomicUsize, Ordering};
+use std::collections::hash_map::Entry;
 use crate::texture_cache::TextureCacheHandle;
 use crate::util::{MaxRect, VecHelper, RectHelpers, MatrixHelpers};
 use crate::filterdata::{FilterDataHandle};
@@ -264,7 +265,7 @@ pub struct PictureCacheState {
     /// The tiles retained by this picture cache.
     pub tiles: FastHashMap<TileOffset, Box<Tile>>,
     /// State of the spatial nodes from previous frame
-    spatial_nodes: FastHashMap<SpatialNodeIndex, SpatialNodeDependency>,
+    spatial_node_comparer: SpatialNodeComparer,
     /// State of opacity bindings from previous frame
     opacity_bindings: FastHashMap<PropertyBindingId, OpacityBindingInfo>,
     /// State of color bindings from previous frame
@@ -281,6 +282,8 @@ pub struct PictureCacheState {
     pub external_native_surface_cache: FastHashMap<ExternalNativeSurfaceKey, ExternalNativeSurface>,
     /// The retained virtual offset for this slice between display lists.
     virtual_offset: DeviceIntPoint,
+    /// Current frame ID of this picture cache
+    frame_id: FrameId,
 }
 
 pub struct PictureCacheRecycledAllocations {
@@ -456,13 +459,104 @@ pub type OpacityBindingInfo = BindingInfo<f32>;
 pub type ColorBinding = Binding<ColorU>;
 pub type ColorBindingInfo = BindingInfo<ColorU>;
 
-/// Information about the state of a spatial node value
-#[derive(Debug)]
-pub struct SpatialNodeDependency {
-    /// The current value retrieved from the spatial tree.
-    value: TransformKey,
-    /// True if it was changed (or is new) since the last frame build.
-    changed: bool,
+/// A dependency for a transform is defined by the spatial node index + frame it was used
+#[derive(Copy, Clone, Debug, Eq, PartialEq, Hash)]
+#[cfg_attr(feature = "capture", derive(Serialize))]
+#[cfg_attr(feature = "replay", derive(Deserialize))]
+pub struct SpatialNodeKey {
+    spatial_node_index: SpatialNodeIndex,
+    frame_id: FrameId,
+}
+
+/// A helper for comparing spatial nodes between frames. The comparisons
+/// are done by-value, so that if the shape of the spatial node tree
+/// changes, invalidations aren't done simply due to the spatial node
+/// index changing between display lists.
+struct SpatialNodeComparer {
+    /// The root spatial node index of the tile cache
+    ref_spatial_node_index: SpatialNodeIndex,
+    /// Maintains a map of currently active transform keys
+    spatial_nodes: FastHashMap<SpatialNodeKey, TransformKey>,
+    /// A cache of recent comparisons between prev and current spatial nodes
+    compare_cache: FastHashMap<(SpatialNodeKey, SpatialNodeKey), bool>,
+    /// A set of frames that we need to retain spatial node entries for
+    referenced_frames: FastHashSet<FrameId>,
+}
+
+impl SpatialNodeComparer {
+    /// Construct a new comparer
+    fn new() -> Self {
+        SpatialNodeComparer {
+            ref_spatial_node_index: ROOT_SPATIAL_NODE_INDEX,
+            spatial_nodes: FastHashMap::default(),
+            compare_cache: FastHashMap::default(),
+            referenced_frames: FastHashSet::default(),
+        }
+    }
+
+    /// Advance to the next frame
+    fn next_frame(
+        &mut self,
+        ref_spatial_node_index: SpatialNodeIndex,
+    ) {
+        // Drop any node information for unreferenced frames, to ensure that the
+        // hashmap doesn't grow indefinitely!
+        let referenced_frames = &self.referenced_frames;
+        self.spatial_nodes.retain(|key, _| {
+            referenced_frames.contains(&key.frame_id)
+        });
+
+        // Update the root spatial node for this comparer
+        self.ref_spatial_node_index = ref_spatial_node_index;
+        self.compare_cache.clear();
+        self.referenced_frames.clear();
+    }
+
+    /// Register a transform that is used, and build the transform key for it if new.
+    fn register_used_transform(
+        &mut self,
+        spatial_node_index: SpatialNodeIndex,
+        frame_id: FrameId,
+        spatial_tree: &SpatialTree,
+    ) {
+        let key = SpatialNodeKey {
+            spatial_node_index,
+            frame_id,
+        };
+
+        if let Entry::Vacant(entry) = self.spatial_nodes.entry(key) {
+            entry.insert(
+                get_transform_key(
+                    spatial_node_index,
+                    self.ref_spatial_node_index,
+                    spatial_tree,
+                )
+            );
+        }
+    }
+
+    /// Return true if the transforms for two given spatial nodes are considered equivalent
+    fn are_transforms_equivalent(
+        &mut self,
+        prev_spatial_node_key: &SpatialNodeKey,
+        curr_spatial_node_key: &SpatialNodeKey,
+    ) -> bool {
+        let key = (*prev_spatial_node_key, *curr_spatial_node_key);
+        let spatial_nodes = &self.spatial_nodes;
+
+        *self.compare_cache
+            .entry(key)
+            .or_insert_with(|| {
+                let prev = &spatial_nodes[&prev_spatial_node_key];
+                let curr = &spatial_nodes[&curr_spatial_node_key];
+                curr == prev
+            })
+    }
+
+    /// Ensure that the comparer won't GC any nodes for a given frame id
+    fn retain_for_frame(&mut self, frame_id: FrameId) {
+        self.referenced_frames.insert(frame_id);
+    }
 }
 
 // Immutable context passed to picture cache tiles during pre_update
@@ -482,6 +576,9 @@ struct TilePreUpdateContext {
 
     /// Current size of tiles in picture units.
     tile_size: PictureSize,
+
+    /// The current frame id for this picture cache
+    frame_id: FrameId,
 }
 
 // Immutable context passed to picture cache tiles during post_update
@@ -497,9 +594,6 @@ struct TilePostUpdateContext<'a> {
 
     /// The calculated backdrop information for this cache instance.
     backdrop: BackdropInfo,
-
-    /// Information about transform node differences from last frame.
-    spatial_nodes: &'a FastHashMap<SpatialNodeIndex, SpatialNodeDependency>,
 
     /// Information about opacity bindings from the picture cache.
     opacity_bindings: &'a FastHashMap<PropertyBindingId, OpacityBindingInfo>,
@@ -537,6 +631,9 @@ struct TilePostUpdateState<'a> {
 
     /// A cache of comparison results to avoid re-computation during invalidation.
     compare_cache: &'a mut FastHashMap<PrimitiveComparisonKey, PrimitiveCompareResult>,
+
+    /// Information about transform node differences from last frame.
+    spatial_node_comparer: &'a mut SpatialNodeComparer,
 }
 
 /// Information about the dependencies of a single primitive instance.
@@ -546,9 +643,6 @@ struct PrimitiveDependencyInfo {
 
     /// Unique content identifier of the primitive.
     prim_uid: ItemUid,
-
-    /// The picture space origin of this primitive.
-    prim_origin: PicturePoint,
 
     /// The (conservative) clipped area in picture space this primitive occupies.
     prim_clip_rect: PictureRect,
@@ -576,12 +670,10 @@ impl PrimitiveDependencyInfo {
     /// Construct dependency info for a new primitive.
     fn new(
         prim_uid: ItemUid,
-        prim_origin: PicturePoint,
         prim_clip_rect: PictureRect,
     ) -> Self {
         PrimitiveDependencyInfo {
             prim_uid,
-            prim_origin,
             images: SmallVec::new(),
             opacity_bindings: SmallVec::new(),
             color_binding: None,
@@ -596,7 +688,7 @@ impl PrimitiveDependencyInfo {
 
 /// A stable ID for a given tile, to help debugging. These are also used
 /// as unique identifiers for tile surfaces when using a native compositor.
-#[derive(Debug, Copy, Clone, PartialEq)]
+#[derive(Debug, Copy, Clone, PartialEq, PartialOrd, Ord, Eq)]
 #[cfg_attr(feature = "capture", derive(Serialize))]
 #[cfg_attr(feature = "replay", derive(Deserialize))]
 pub struct TileId(pub usize);
@@ -759,7 +851,7 @@ pub enum PrimitiveCompareResultDetail {
     },
     /// The value of the transform changed
     Transform {
-        detail: CompareHelperResult<SpatialNodeIndex>,
+        detail: CompareHelperResult<SpatialNodeKey>,
     },
     /// An image dependency was dirty
     Image {
@@ -894,6 +986,9 @@ pub struct Tile {
     fg_local_valid_rect: PictureRect,
     /// z-buffer id for this tile, which is one of z_id_opaque or z_id_alpha, depending on tile opacity
     pub z_id: ZBufferId,
+    /// The last frame this tile had its dependencies updated (dependency updating is
+    /// skipped if a tile is off-screen).
+    pub last_updated_frame_id: FrameId,
 }
 
 impl Tile {
@@ -923,6 +1018,7 @@ impl Tile {
             bg_local_valid_rect: PictureRect::zero(),
             fg_local_valid_rect: PictureRect::zero(),
             z_id: ZBufferId::invalid(),
+            last_updated_frame_id: FrameId::INVALID,
         }
     }
 
@@ -949,7 +1045,7 @@ impl Tile {
             &self.prev_descriptor,
             &self.current_descriptor,
             state.resource_cache,
-            ctx.spatial_nodes,
+            state.spatial_node_comparer,
             ctx.opacity_bindings,
             ctx.color_bindings,
         );
@@ -1086,6 +1182,10 @@ impl Tile {
         );
         self.current_descriptor.clear();
         self.root.clear(self.local_tile_rect);
+
+        // Since this tile is determined to be visible, it will get updated
+        // dependencies, so update the frame id we are storing dependencies for.
+        self.last_updated_frame_id = ctx.frame_id;
     }
 
     /// Add dependencies for a given primitive to this tile.
@@ -1130,7 +1230,14 @@ impl Tile {
         self.current_descriptor.clips.extend_from_slice(&info.clips);
 
         // Include any transforms that this primitive depends on.
-        self.current_descriptor.transforms.extend_from_slice(&info.spatial_nodes);
+        for spatial_node_index in &info.spatial_nodes {
+            self.current_descriptor.transforms.push(
+                SpatialNodeKey {
+                    spatial_node_index: *spatial_node_index,
+                    frame_id: self.last_updated_frame_id,
+                }
+            );
+        }
 
         // Include any color bindings this primitive depends on.
         if info.color_binding.is_some() {
@@ -1138,10 +1245,10 @@ impl Tile {
                 self.current_descriptor.color_bindings.len(), info.color_binding.unwrap());
         }
 
-        // TODO(gw): The origin of background rects produced by APZ changes
+        // TODO(gw): The clip rect of background rects produced by APZ changes
         //           in Gecko during scrolling. Consider investigating this so the
         //           hack / workaround below is not required.
-        let (prim_origin, prim_clip_rect) = if info.clip_by_tile {
+        let prim_clip_rect = if info.clip_by_tile {
             let tile_p0 = self.local_tile_rect.origin;
             let tile_p1 = self.local_tile_rect.bottom_right();
 
@@ -1155,21 +1262,15 @@ impl Tile {
                 clampf(info.prim_clip_rect.origin.y + info.prim_clip_rect.size.height, tile_p0.y, tile_p1.y),
             );
 
-            (
-                PicturePoint::new(
-                    clampf(info.prim_origin.x, tile_p0.x, tile_p1.x),
-                    clampf(info.prim_origin.y, tile_p0.y, tile_p1.y),
-                ),
-                PictureRect::new(
-                    clip_p0,
-                    PictureSize::new(
-                        clip_p1.x - clip_p0.x,
-                        clip_p1.y - clip_p0.y,
-                    ),
+            PictureRect::new(
+                clip_p0,
+                PictureSize::new(
+                    clip_p1.x - clip_p0.x,
+                    clip_p1.y - clip_p0.y,
                 ),
             )
         } else {
-            (info.prim_origin, info.prim_clip_rect)
+            info.prim_clip_rect
         };
 
         // Update the tile descriptor, used for tile comparison during scene swaps.
@@ -1184,7 +1285,6 @@ impl Tile {
 
         self.current_descriptor.prims.push(PrimitiveDescriptor {
             prim_uid: info.prim_uid,
-            origin: prim_origin.into(),
             prim_clip_rect: prim_clip_rect.into(),
             transform_dep_count: info.spatial_nodes.len()  as u8,
             clip_dep_count: info.clips.len() as u8,
@@ -1205,6 +1305,12 @@ impl Tile {
         state: &mut TilePostUpdateState,
         frame_context: &FrameVisibilityContext,
     ) -> bool {
+        // Register the frame id of this tile with the spatial node comparer, to ensure
+        // that it doesn't GC any spatial nodes from the comparer that are referenced
+        // by this tile. Must be done before we early exit below, so that we retain
+        // spatial node info even for tiles that are currently not visible.
+        state.spatial_node_comparer.retain_for_frame(self.last_updated_frame_id);
+
         // If tile is not visible, just early out from here - we don't update dependencies
         // so don't want to invalidate, merge, split etc. The tile won't need to be drawn
         // (and thus updated / invalidated) until it is on screen again.
@@ -1439,8 +1545,6 @@ impl Tile {
 pub struct PrimitiveDescriptor {
     /// Uniquely identifies the content of the primitive template.
     pub prim_uid: ItemUid,
-    /// The origin in world space of this primitive.
-    pub origin: PointKey,
     /// The clip rect for this primitive. Included here in
     /// dependencies since there is no entry in the clip chain
     /// dependencies for the local clip rect.
@@ -1458,13 +1562,6 @@ impl PartialEq for PrimitiveDescriptor {
         const EPSILON: f32 = 0.001;
 
         if self.prim_uid != other.prim_uid {
-            return false;
-        }
-
-        if !self.origin.x.approx_eq_eps(&other.origin.x, &EPSILON) {
-            return false;
-        }
-        if !self.origin.y.approx_eq_eps(&other.origin.y, &EPSILON) {
             return false;
         }
 
@@ -1519,9 +1616,9 @@ impl<'a, T> CompareHelper<'a, T> where T: Copy + PartialEq {
         &self,
         prev_count: u8,
         curr_count: u8,
-        f: F,
+        mut f: F,
         opt_detail: Option<&mut CompareHelperResult<T>>,
-    ) -> bool where F: Fn(&T) -> bool {
+    ) -> bool where F: FnMut(&T, &T) -> bool {
         // If the number of items is different, trivial reject.
         if prev_count != curr_count {
             if let Some(detail) = opt_detail { *detail = CompareHelperResult::Count{ prev_count, curr_count }; }
@@ -1546,14 +1643,7 @@ impl<'a, T> CompareHelper<'a, T> where T: Copy + PartialEq {
         let prev_items = &self.prev_items[self.offset_prev .. end_prev];
 
         for (curr, prev) in curr_items.iter().zip(prev_items.iter()) {
-            if prev != curr {
-                if let Some(detail) = opt_detail {
-                    *detail = CompareHelperResult::NotEqual{ prev: *prev, curr: *curr };
-                }
-                return false;
-            }
-
-            if f(curr) {
+            if !f(prev, curr) {
                 if let Some(detail) = opt_detail { *detail = CompareHelperResult::PredicateTrue{ curr: *curr }; }
                 return false;
             }
@@ -1597,7 +1687,7 @@ pub struct TileDescriptor {
 
     /// List of the effects of transforms that we care about
     /// tracking for this tile.
-    transforms: Vec<SpatialNodeIndex>,
+    transforms: Vec<SpatialNodeKey>,
 
     /// Picture space rect that contains valid pixels region of this tile.
     local_valid_rect: PictureRect,
@@ -1627,7 +1717,6 @@ impl TileDescriptor {
         pt.new_level("prims".to_string());
         for prim in &self.prims {
             pt.new_level(format!("prim uid={}", prim.prim_uid.get_uid()));
-            pt.add_item(format!("origin: {},{}", prim.origin.x, prim.origin.y));
             pt.add_item(format!("clip: origin={},{} size={}x{}",
                 prim.prim_clip_rect.x,
                 prim.prim_clip_rect.y,
@@ -2186,16 +2275,8 @@ pub struct TileCacheInstance {
     opacity_bindings: FastHashMap<PropertyBindingId, OpacityBindingInfo>,
     /// Switch back and forth between old and new bindings hashmaps to avoid re-allocating.
     old_opacity_bindings: FastHashMap<PropertyBindingId, OpacityBindingInfo>,
-    /// List of spatial nodes, with some extra information
-    /// about whether they changed since last frame.
-    spatial_nodes: FastHashMap<SpatialNodeIndex, SpatialNodeDependency>,
-    /// Switch back and forth between old and new spatial nodes hashmaps to avoid re-allocating.
-    old_spatial_nodes: FastHashMap<SpatialNodeIndex, SpatialNodeDependency>,
-    /// A set of spatial nodes that primitives / clips depend on found
-    /// during dependency creation. This is used to avoid trying to
-    /// calculate invalid relative transforms when building the spatial
-    /// nodes hash above.
-    used_spatial_nodes: FastHashSet<SpatialNodeIndex>,
+    /// A helper to compare transforms between previous and current frame.
+    spatial_node_comparer: SpatialNodeComparer,
     /// List of color bindings, with some extra information
     /// about whether they changed since last frame.
     color_bindings: FastHashMap<PropertyBindingId, ColorBindingInfo>,
@@ -2269,6 +2350,8 @@ pub struct TileCacheInstance {
     pub z_id_opaque: ZBufferId,
     /// A cache of compositor surfaces that are retained between frames
     pub external_native_surface_cache: FastHashMap<ExternalNativeSurfaceKey, ExternalNativeSurface>,
+    /// Current frame ID of this tile cache instance. Used for book-keeping / garbage collecting
+    frame_id: FrameId,
 }
 
 impl TileCacheInstance {
@@ -2298,9 +2381,7 @@ impl TileCacheInstance {
             ),
             opacity_bindings: FastHashMap::default(),
             old_opacity_bindings: FastHashMap::default(),
-            spatial_nodes: FastHashMap::default(),
-            old_spatial_nodes: FastHashMap::default(),
-            used_spatial_nodes: FastHashSet::default(),
+            spatial_node_comparer: SpatialNodeComparer::new(),
             color_bindings: FastHashMap::default(),
             old_color_bindings: FastHashMap::default(),
             dirty_region: DirtyRegion::new(),
@@ -2332,6 +2413,7 @@ impl TileCacheInstance {
             external_surfaces: Vec::new(),
             z_id_opaque: ZBufferId::invalid(),
             external_native_surface_cache: FastHashMap::default(),
+            frame_id: FrameId::INVALID,
         }
     }
 
@@ -2455,13 +2537,14 @@ impl TileCacheInstance {
         if let Some(prev_state) = frame_state.retained_tiles.caches.remove(&self.slice) {
             self.tiles.extend(prev_state.tiles);
             self.root_transform = prev_state.root_transform;
-            self.spatial_nodes = prev_state.spatial_nodes;
+            self.spatial_node_comparer = prev_state.spatial_node_comparer;
             self.opacity_bindings = prev_state.opacity_bindings;
             self.color_bindings = prev_state.color_bindings;
             self.current_tile_size = prev_state.current_tile_size;
             self.native_surface = prev_state.native_surface;
             self.external_native_surface_cache = prev_state.external_native_surface_cache;
             self.virtual_offset = prev_state.virtual_offset;
+            self.frame_id = prev_state.frame_id;
 
             fn recycle_map<K: std::cmp::Eq + std::hash::Hash, V>(
                 ideal_len: usize,
@@ -2493,6 +2576,14 @@ impl TileCacheInstance {
                 prev_state.allocations.compare_cache,
             );
         }
+
+        // Advance the current frame ID counter for this picture cache (must be done
+        // after any retained prev state is taken above).
+        self.frame_id.advance();
+
+        // Notify the spatial node comparer that a new frame has started, and the
+        // current reference spatial node for this tile cache.
+        self.spatial_node_comparer.next_frame(self.spatial_node_index);
 
         // At the start of the frame, step through each current compositor surface
         // and mark it as unused. Later, this is used to free old compositor surfaces.
@@ -2757,6 +2848,7 @@ impl TileCacheInstance {
             background_color: self.background_color,
             global_screen_world_rect: frame_context.global_screen_world_rect,
             tile_size: self.tile_size,
+            frame_id: self.frame_id,
         };
 
         // Pre-update each tile
@@ -2922,7 +3014,6 @@ impl TileCacheInstance {
         // Build the list of resources that this primitive has dependencies on.
         let mut prim_info = PrimitiveDependencyInfo::new(
             prim_instance.uid(),
-            prim_rect.origin,
             pic_clip_rect,
         );
 
@@ -3326,7 +3417,13 @@ impl TileCacheInstance {
         }
 
         // Record any new spatial nodes in the used list.
-        self.used_spatial_nodes.extend(&prim_info.spatial_nodes);
+        for spatial_node_index in &prim_info.spatial_nodes {
+            self.spatial_node_comparer.register_used_transform(
+                *spatial_node_index,
+                self.frame_id,
+                frame_context.spatial_tree,
+            );
+        }
 
         // Truncate the lengths of dependency arrays to the max size we can handle.
         // Any arrays this size or longer will invalidate every frame.
@@ -3485,40 +3582,6 @@ impl TileCacheInstance {
             frame_state.composite_state.dirty_rects_are_valid = false;
         }
 
-        // Diff the state of the spatial nodes between last frame build and now.
-        mem::swap(&mut self.spatial_nodes, &mut self.old_spatial_nodes);
-
-        // TODO(gw): Maybe remove the used_spatial_nodes set and just mutate / create these
-        //           diffs inside add_prim_dependency?
-        self.spatial_nodes.clear();
-        for spatial_node_index in self.used_spatial_nodes.drain() {
-            // Get the current relative transform.
-            let mut value = get_transform_key(
-                spatial_node_index,
-                self.spatial_node_index,
-                frame_context.spatial_tree,
-            );
-
-            // Check if the transform has changed from last frame
-            let mut changed = true;
-            if let Some(old_info) = self.old_spatial_nodes.remove(&spatial_node_index) {
-                if old_info.value == value {
-                    // Since the transform key equality check applies epsilon, if we
-                    // consider the value to be the same, store that old value to avoid
-                    // missing very slow drifts in the value over time.
-                    // TODO(gw): We should change ComparableVec to use a trait for comparison
-                    //           rather than PartialEq.
-                    value = old_info.value;
-                    changed = false;
-                }
-            }
-
-            self.spatial_nodes.insert(spatial_node_index, SpatialNodeDependency {
-                changed,
-                value,
-            });
-        }
-
         let pic_to_world_mapper = SpaceMapper::new_with_target(
             ROOT_SPATIAL_NODE_INDEX,
             self.spatial_node_index,
@@ -3534,7 +3597,6 @@ impl TileCacheInstance {
             global_device_pixel_scale: frame_context.global_device_pixel_scale,
             local_clip_rect: self.local_clip_rect,
             backdrop: self.backdrop,
-            spatial_nodes: &self.spatial_nodes,
             opacity_bindings: &self.opacity_bindings,
             color_bindings: &self.color_bindings,
             current_tile_size: self.current_tile_size,
@@ -3548,6 +3610,7 @@ impl TileCacheInstance {
             resource_cache: frame_state.resource_cache,
             composite_state: frame_state.composite_state,
             compare_cache: &mut self.compare_cache,
+            spatial_node_comparer: &mut self.spatial_node_comparer,
         };
 
         // Step through each tile and invalidate if the dependencies have changed. Determine
@@ -3585,6 +3648,7 @@ impl<'a> PictureUpdateState<'a> {
         data_stores: &mut DataStores,
         composite_state: &CompositeState,
     ) {
+        profile_scope!("UpdatePictures");
         profile_marker!("UpdatePictures");
 
         let mut state = PictureUpdateState {
@@ -4069,12 +4133,8 @@ impl PrimitiveCluster {
     fn push(
         &mut self,
         prim_instance: PrimitiveInstance,
-        prim_size: LayoutSize,
+        prim_rect: LayoutRect,
     ) {
-        let prim_rect = LayoutRect::new(
-            prim_instance.prim_origin,
-            prim_size,
-        );
         let culling_rect = prim_instance.local_clip_rect
             .intersection(&prim_rect)
             .unwrap_or_else(LayoutRect::zero);
@@ -4109,7 +4169,7 @@ impl PrimitiveList {
     fn push(
         &mut self,
         prim_instance: PrimitiveInstance,
-        prim_size: LayoutSize,
+        prim_rect: LayoutRect,
         spatial_node_index: SpatialNodeIndex,
         prim_flags: PrimitiveFlags,
         insert_position: PrimitiveListPosition,
@@ -4150,13 +4210,13 @@ impl PrimitiveList {
                     spatial_node_index,
                     flags,
                 );
-                cluster.push(prim_instance, prim_size);
+                cluster.push(prim_instance, prim_rect);
                 self.clusters.insert(0, cluster);
             }
             PrimitiveListPosition::End => {
                 if let Some(cluster) = self.clusters.last_mut() {
                     if cluster.is_compatible(spatial_node_index, flags) {
-                        cluster.push(prim_instance, prim_size);
+                        cluster.push(prim_instance, prim_rect);
                         return;
                     }
                 }
@@ -4165,7 +4225,7 @@ impl PrimitiveList {
                     spatial_node_index,
                     flags,
                 );
-                cluster.push(prim_instance, prim_size);
+                cluster.push(prim_instance, prim_rect);
                 self.clusters.push(cluster);
             }
         }
@@ -4175,13 +4235,13 @@ impl PrimitiveList {
     pub fn add_prim_to_start(
         &mut self,
         prim_instance: PrimitiveInstance,
-        prim_size: LayoutSize,
+        prim_rect: LayoutRect,
         spatial_node_index: SpatialNodeIndex,
         flags: PrimitiveFlags,
     ) {
         self.push(
             prim_instance,
-            prim_size,
+            prim_rect,
             spatial_node_index,
             flags,
             PrimitiveListPosition::Begin,
@@ -4192,13 +4252,13 @@ impl PrimitiveList {
     pub fn add_prim(
         &mut self,
         prim_instance: PrimitiveInstance,
-        prim_size: LayoutSize,
+        prim_rect: LayoutRect,
         spatial_node_index: SpatialNodeIndex,
         flags: PrimitiveFlags,
     ) {
         self.push(
             prim_instance,
-            prim_size,
+            prim_rect,
             spatial_node_index,
             flags,
             PrimitiveListPosition::End,
@@ -4403,7 +4463,7 @@ impl PicturePrimitive {
                     tile_cache.slice,
                     PictureCacheState {
                         tiles: tile_cache.tiles,
-                        spatial_nodes: tile_cache.spatial_nodes,
+                        spatial_node_comparer: tile_cache.spatial_node_comparer,
                         opacity_bindings: tile_cache.opacity_bindings,
                         color_bindings: tile_cache.color_bindings,
                         root_transform: tile_cache.root_transform,
@@ -4411,6 +4471,7 @@ impl PicturePrimitive {
                         native_surface: tile_cache.native_surface,
                         external_native_surface_cache: tile_cache.external_native_surface_cache,
                         virtual_offset: tile_cache.virtual_offset,
+                        frame_id: tile_cache.frame_id,
                         allocations: PictureCacheRecycledAllocations {
                             old_opacity_bindings: tile_cache.old_opacity_bindings,
                             old_color_bindings: tile_cache.old_color_bindings,
@@ -4972,37 +5033,57 @@ impl PicturePrimitive {
                         let device_clip_rect = (world_clip_rect * frame_context.global_device_pixel_scale).round();
 
                         for tile in tile_cache.tiles.values_mut() {
-                            if !tile.is_visible {
-                                continue;
-                            }
 
-                            // Get the world space rect that this tile will actually occupy on screem
-                            let device_draw_rect = match device_clip_rect.intersection(&tile.device_valid_rect) {
-                                Some(rect) => rect,
-                                None => {
-                                    tile.is_visible = false;
-                                    continue;
-                                }
-                            };
+                            if tile.is_visible {
+                                // Get the world space rect that this tile will actually occupy on screem
+                                let device_draw_rect = device_clip_rect.intersection(&tile.device_valid_rect);
 
-                            // If that draw rect is occluded by some set of tiles in front of it,
-                            // then mark it as not visible and skip drawing. When it's not occluded
-                            // it will fail this test, and get rasterized by the render task setup
-                            // code below.
-                            if frame_state.composite_state.is_tile_occluded(tile.z_id, device_draw_rect) {
-                                // If this tile has an allocated native surface, free it, since it's completely
-                                // occluded. We will need to re-allocate this surface if it becomes visible,
-                                // but that's likely to be rare (e.g. when there is no content display list
-                                // for a frame or two during a tab switch).
-                                let surface = tile.surface.as_mut().expect("no tile surface set!");
+                                // If that draw rect is occluded by some set of tiles in front of it,
+                                // then mark it as not visible and skip drawing. When it's not occluded
+                                // it will fail this test, and get rasterized by the render task setup
+                                // code below.
+                                match device_draw_rect {
+                                    Some(device_draw_rect) => {
+                                        // Only check for occlusion on visible tiles that are fixed position.
+                                        if tile_cache.spatial_node_index == ROOT_SPATIAL_NODE_INDEX &&
+                                           frame_state.composite_state.is_tile_occluded(tile.z_id, device_draw_rect) {
+                                            // If this tile has an allocated native surface, free it, since it's completely
+                                            // occluded. We will need to re-allocate this surface if it becomes visible,
+                                            // but that's likely to be rare (e.g. when there is no content display list
+                                            // for a frame or two during a tab switch).
+                                            let surface = tile.surface.as_mut().expect("no tile surface set!");
 
-                                if let TileSurface::Texture { descriptor: SurfaceTextureDescriptor::Native { id, .. }, .. } = surface {
-                                    if let Some(id) = id.take() {
-                                        frame_state.resource_cache.destroy_compositor_tile(id);
+                                            if let TileSurface::Texture { descriptor: SurfaceTextureDescriptor::Native { id, .. }, .. } = surface {
+                                                if let Some(id) = id.take() {
+                                                    frame_state.resource_cache.destroy_compositor_tile(id);
+                                                }
+                                            }
+
+                                            tile.is_visible = false;
+                                            continue;
+                                        }
+                                    }
+                                    None => {
+                                        tile.is_visible = false;
                                     }
                                 }
+                            }
 
-                                tile.is_visible = false;
+                            // If we get here, we want to ensure that the surface remains valid in the texture
+                            // cache, _even if_ it's not visible due to clipping or being scrolled off-screen.
+                            // This ensures that we retain valid tiles that are off-screen, but still in the
+                            // display port of this tile cache instance.
+                            if let Some(TileSurface::Texture { descriptor, .. }) = tile.surface.as_ref() {
+                                if let SurfaceTextureDescriptor::TextureCache { ref handle, .. } = descriptor {
+                                    frame_state.resource_cache.texture_cache.request(
+                                        handle,
+                                        frame_state.gpu_cache,
+                                    );
+                                }
+                            }
+
+                            // If the tile has been found to be off-screen / clipped, skip any further processing.
+                            if !tile.is_visible {
                                 continue;
                             }
 
@@ -5709,6 +5790,20 @@ impl PicturePrimitive {
                         }
                         inflation_factor = clamp_blur_radius(max, scale_factors) * BLUR_SAMPLE_SCALE;
                     }
+                    PictureCompositeMode::Filter(Filter::DropShadows(ref shadows)) => {
+                        // TODO(gw): This is incorrect, since we don't consider the drop shadow
+                        //           offset. However, fixing that is a larger task, so this is
+                        //           an improvement on the current case (this at least works where
+                        //           the offset of the drop-shadow is ~0, which is often true).
+
+                        // Can't use max_by_key here since f32 isn't Ord
+                        let mut max_blur_radius: f32 = 0.0;
+                        for shadow in shadows {
+                            max_blur_radius = max_blur_radius.max(shadow.blur_radius);
+                        }
+
+                        inflation_factor = clamp_blur_radius(max_blur_radius, scale_factors) * BLUR_SAMPLE_SCALE;
+                    }
                     _ => {}
                 }
             }
@@ -5814,8 +5909,7 @@ impl PicturePrimitive {
                             // TODO(aosmond): Is this safe? Updating the primitive size during
                             // frame building is usually problematic since scene building will cache
                             // the primitive information in the GPU already.
-                            prim_instance.prim_origin = prim_rect.origin;
-                            prim_data.common.prim_size = prim_rect.size;
+                            prim_data.common.prim_rect = prim_rect;
                             prim_instance.local_clip_rect = prim_rect;
 
                             // Update the cluster bounding rect now that we have the backdrop rect.
@@ -6152,12 +6246,12 @@ impl ImageDependency {
 /// A helper struct to compare a primitive and all its sub-dependencies.
 struct PrimitiveComparer<'a> {
     clip_comparer: CompareHelper<'a, ItemUid>,
-    transform_comparer: CompareHelper<'a, SpatialNodeIndex>,
+    transform_comparer: CompareHelper<'a, SpatialNodeKey>,
     image_comparer: CompareHelper<'a, ImageDependency>,
     opacity_comparer: CompareHelper<'a, OpacityBinding>,
     color_comparer: CompareHelper<'a, ColorBinding>,
     resource_cache: &'a ResourceCache,
-    spatial_nodes: &'a FastHashMap<SpatialNodeIndex, SpatialNodeDependency>,
+    spatial_node_comparer: &'a mut SpatialNodeComparer,
     opacity_bindings: &'a FastHashMap<PropertyBindingId, OpacityBindingInfo>,
     color_bindings: &'a FastHashMap<PropertyBindingId, ColorBindingInfo>,
 }
@@ -6167,7 +6261,7 @@ impl<'a> PrimitiveComparer<'a> {
         prev: &'a TileDescriptor,
         curr: &'a TileDescriptor,
         resource_cache: &'a ResourceCache,
-        spatial_nodes: &'a FastHashMap<SpatialNodeIndex, SpatialNodeDependency>,
+        spatial_node_comparer: &'a mut SpatialNodeComparer,
         opacity_bindings: &'a FastHashMap<PropertyBindingId, OpacityBindingInfo>,
         color_bindings: &'a FastHashMap<PropertyBindingId, ColorBindingInfo>,
     ) -> Self {
@@ -6203,7 +6297,7 @@ impl<'a> PrimitiveComparer<'a> {
             opacity_comparer,
             color_comparer,
             resource_cache,
-            spatial_nodes,
+            spatial_node_comparer,
             opacity_bindings,
             color_bindings,
         }
@@ -6241,7 +6335,7 @@ impl<'a> PrimitiveComparer<'a> {
         opt_detail: Option<&mut PrimitiveCompareResultDetail>,
     ) -> PrimitiveCompareResult {
         let resource_cache = self.resource_cache;
-        let spatial_nodes = self.spatial_nodes;
+        let spatial_node_comparer = &mut self.spatial_node_comparer;
         let opacity_bindings = self.opacity_bindings;
         let color_bindings = self.color_bindings;
 
@@ -6258,8 +6352,8 @@ impl<'a> PrimitiveComparer<'a> {
         if !self.clip_comparer.is_same(
             prev.clip_dep_count,
             curr.clip_dep_count,
-            |_| {
-                false
+            |prev, curr| {
+                prev == curr
             },
             if opt_detail.is_some() { Some(&mut clip_result) } else { None }
         ) {
@@ -6272,8 +6366,8 @@ impl<'a> PrimitiveComparer<'a> {
         if !self.transform_comparer.is_same(
             prev.transform_dep_count,
             curr.transform_dep_count,
-            |curr| {
-                spatial_nodes[curr].changed
+            |prev, curr| {
+                spatial_node_comparer.are_transforms_equivalent(prev, curr)
             },
             if opt_detail.is_some() { Some(&mut transform_result) } else { None },
         ) {
@@ -6288,8 +6382,9 @@ impl<'a> PrimitiveComparer<'a> {
         if !self.image_comparer.is_same(
             prev.image_dep_count,
             curr.image_dep_count,
-            |curr| {
-                resource_cache.get_image_generation(curr.key) != curr.generation
+            |prev, curr| {
+                prev == curr &&
+                resource_cache.get_image_generation(curr.key) == curr.generation
             },
             if opt_detail.is_some() { Some(&mut image_result) } else { None },
         ) {
@@ -6304,16 +6399,20 @@ impl<'a> PrimitiveComparer<'a> {
         if !self.opacity_comparer.is_same(
             prev.opacity_binding_dep_count,
             curr.opacity_binding_dep_count,
-            |curr| {
+            |prev, curr| {
+                if prev != curr {
+                    return false;
+                }
+
                 if let OpacityBinding::Binding(id) = curr {
                     if opacity_bindings
                         .get(id)
                         .map_or(true, |info| info.changed) {
-                        return true;
+                        return false;
                     }
                 }
 
-                false
+                true
             },
             if opt_detail.is_some() { Some(&mut bind_result) } else { None },
         ) {
@@ -6328,12 +6427,16 @@ impl<'a> PrimitiveComparer<'a> {
         if !self.color_comparer.is_same(
             prev.color_binding_dep_count,
             curr.color_binding_dep_count,
-            |curr| {
+            |prev, curr| {
+                if prev != curr {
+                    return false;
+                }
+
                 if let ColorBinding::Binding(id) = curr {
                     if color_bindings
                         .get(id)
                         .map_or(true, |info| info.changed) {
-                        return true;
+                        return false;
                     }
                 }
 

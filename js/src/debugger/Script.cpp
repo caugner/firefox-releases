@@ -36,8 +36,8 @@
 #include "vm/JSContext.h"      // for JSContext, ReportValueError
 #include "vm/JSFunction.h"     // for JSFunction
 #include "vm/JSObject.h"       // for RequireObject, JSObject
-#include "vm/ObjectGroup.h"    // for TenuredObject
 #include "vm/ObjectOperations.h"  // for DefineDataProperty, HasOwnProperty
+#include "vm/PlainObject.h"       // for js::PlainObject
 #include "vm/Realm.h"             // for AutoRealm
 #include "vm/Runtime.h"           // for JSAtomState, JSRuntime
 #include "vm/StringType.h"        // for NameToId, PropertyName, JSAtom
@@ -45,9 +45,9 @@
 #include "wasm/WasmInstance.h"    // for Instance
 #include "wasm/WasmTypes.h"       // for Bytes
 
-#include "vm/BytecodeUtil-inl.h"      // for BytecodeRangeWithPosition
-#include "vm/JSAtom-inl.h"            // for ValueToId
-#include "vm/JSObject-inl.h"          // for NewBuiltinClassInstance
+#include "vm/BytecodeUtil-inl.h"  // for BytecodeRangeWithPosition
+#include "vm/JSAtom-inl.h"        // for ValueToId
+#include "vm/JSObject-inl.h"  // for NewBuiltinClassInstance, NewObjectWithGivenProto, NewTenuredObjectWithGivenProto
 #include "vm/ObjectOperations-inl.h"  // for GetProperty
 #include "vm/Realm-inl.h"             // for AutoRealm::AutoRealm
 
@@ -107,7 +107,7 @@ DebuggerScript* DebuggerScript::create(JSContext* cx, HandleObject proto,
                                        Handle<DebuggerScriptReferent> referent,
                                        HandleNativeObject debugger) {
   DebuggerScript* scriptobj =
-      NewObjectWithGivenProto<DebuggerScript>(cx, proto, TenuredObject);
+      NewTenuredObjectWithGivenProto<DebuggerScript>(cx, proto);
   if (!scriptobj) {
     return nullptr;
   }

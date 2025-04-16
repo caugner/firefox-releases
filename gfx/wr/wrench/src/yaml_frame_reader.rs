@@ -111,7 +111,16 @@ impl LocalExternalImageHandler {
             ImageData::Raw(ref data) => {
                 let gl = device.gl();
                 let texture_ids = gl.gen_textures(1);
-                let format_desc = device.gl_describe_format(desc.format);
+                let format_desc = if desc.format == ImageFormat::BGRA8 {
+                    // Force BGRA8 data to RGBA8 layout to avoid potential
+                    // need for usage of texture-swizzle.
+                    webrender::FormatDesc {
+                        external: gl::BGRA,
+                        .. device.gl_describe_format(ImageFormat::RGBA8)
+                    }
+                } else {
+                    device.gl_describe_format(desc.format)
+                };
 
                 LocalExternalImageHandler::init_gl_texture(
                     texture_ids[0],
@@ -1696,11 +1705,9 @@ impl YamlFrameReader {
                 match item_type {
                     "clip" | "clip-chain" | "scroll-frame" => {},
                     _ => {
-                        let id = dl.define_clip(
+                        let id = dl.define_clip_rounded_rect(
                             &self.top_space_and_clip(),
-                            clip_rect,
-                            vec![complex_clip],
-                            None,
+                            complex_clip,
                         );
                         self.clip_id_stack.push(id);
                         pushed_clip = true;
@@ -1795,9 +1802,6 @@ impl YamlFrameReader {
 
         let numeric_id = yaml["id"].as_i64().map(|id| id as u64);
 
-        let complex_clips = self.to_complex_clip_regions(&yaml["complex"]);
-        let image_mask = self.to_image_mask(&yaml["image-mask"], wrench);
-
         let external_id =  yaml["scroll-offset"].as_point().map(|size| {
             let id = ExternalScrollId((self.scroll_offsets.len() + 1) as u64, dl.pipeline_id);
             self.scroll_offsets.insert(id, LayoutPoint::new(size.x, size.y));
@@ -1809,8 +1813,6 @@ impl YamlFrameReader {
             external_id,
             content_rect,
             clip_rect,
-            complex_clips,
-            image_mask,
             ScrollSensitivity::ScriptAndInputEvents,
             external_scroll_offset,
         );
@@ -1955,25 +1957,38 @@ impl YamlFrameReader {
     }
 
     fn handle_clip(&mut self, dl: &mut DisplayListBuilder, wrench: &mut Wrench, yaml: &Yaml) {
-        let clip_rect = yaml["bounds"].as_rect().expect("clip must have a bounds");
         let numeric_id = yaml["id"].as_i64();
         let complex_clips = self.to_complex_clip_regions(&yaml["complex"]);
-        let image_mask = self.to_image_mask(&yaml["image-mask"], wrench);
+        let mut space_and_clip = self.top_space_and_clip();
 
-        let space_and_clip = self.top_space_and_clip();
-        let real_id = dl.define_clip(
-            &space_and_clip,
-            clip_rect,
-            complex_clips,
-            image_mask,
-        );
+        if let Some(clip_rect) = yaml["bounds"].as_rect() {
+            space_and_clip.clip_id = dl.define_clip_rect(
+                &space_and_clip,
+                clip_rect,
+            );
+        }
+
+        if let Some(image_mask) = self.to_image_mask(&yaml["image-mask"], wrench) {
+            space_and_clip.clip_id = dl.define_clip_image_mask(
+                &space_and_clip,
+                image_mask,
+            );
+        }
+
+        for complex_clip in complex_clips {
+            space_and_clip.clip_id = dl.define_clip_rounded_rect(
+                &space_and_clip,
+                complex_clip,
+            );
+        }
+
         if let Some(numeric_id) = numeric_id {
-            self.add_clip_id_mapping(numeric_id as u64, real_id);
+            self.add_clip_id_mapping(numeric_id as u64, space_and_clip.clip_id);
             self.add_spatial_id_mapping(numeric_id as u64, space_and_clip.spatial_id);
         }
 
         if !yaml["items"].is_badvalue() {
-            self.clip_id_stack.push(real_id);
+            self.clip_id_stack.push(space_and_clip.clip_id);
             self.add_display_list_items_from_yaml(dl, wrench, &yaml["items"]);
             self.clip_id_stack.pop().unwrap();
         }

@@ -68,10 +68,6 @@ let registrar = Components.manager.QueryInterface(Ci.nsIComponentRegistrar);
 let selectorFactory = XPCOMUtils._getFactory(NewProcessSelector);
 registrar.registerFactory(OUR_PROCESSSELECTOR_CID, "", null, selectorFactory);
 
-// For now, we'll allow tests to use CPOWs in this module for
-// some cases.
-Cu.permitCPOWsInScope(this);
-
 const kAboutPageRegistrationContentScript =
   "chrome://mochikit/content/tests/BrowserTestUtils/content-about-page-utils.js";
 
@@ -895,6 +891,24 @@ var BrowserTestUtils = {
 
   /**
    * @param win (optional)
+   *        The window we should wait to have "domwindowopened" sent through
+   *        the observer service for. If this is not supplied, we'll just
+   *        resolve when the first "domwindowopened" notification is seen.
+   *        The promise will be resolved once the new window's document has been
+   *        loaded.
+   * @return {Promise}
+   *         A Promise which resolves when a "domwindowopened" notification
+   *         has been fired by the window watcher.
+   */
+  domWindowOpenedAndLoaded(win) {
+    return this.domWindowOpened(win, async win => {
+      await this.waitForEvent(win, "load");
+      return true;
+    });
+  },
+
+  /**
+   * @param win (optional)
    *        The window we should wait to have "domwindowclosed" sent through
    *        the observer service for. If this is not supplied, we'll just
    *        resolve when the first "domwindowclosed" notification is seen.
@@ -1390,7 +1404,7 @@ var BrowserTestUtils = {
               null
             ),
 
-            applyFilter(service, channel, defaultProxyInfo, callback) {
+            applyFilter(channel, defaultProxyInfo, callback) {
               callback.onProxyFilterResult(
                 isHttp(channel.URI.spec) ? defaultProxyInfo : this.proxyInfo
               );
@@ -1632,6 +1646,8 @@ var BrowserTestUtils = {
    *        An object with any of the following fields:
    *          crashType: "CRASH_INVALID_POINTER_DEREF" | "CRASH_OOM"
    *            The type of crash. If unspecified, default to "CRASH_INVALID_POINTER_DEREF"
+   *          asyncCrash: bool
+   *            If specified and `true`, cause the crash asynchronously.
    *
    * @returns (Promise)
    * @resolves An Object with key-value pairs representing the data from the
@@ -1779,6 +1795,7 @@ var BrowserTestUtils = {
       "BrowserTestUtils:CrashFrame",
       {
         crashType: options.crashType || "",
+        asyncCrash: options.asyncCrash || false,
       }
     );
 

@@ -6,6 +6,7 @@
 
 #include "mozilla/dom/WindowGlobalChild.h"
 
+#include "mozilla/AntiTrackingUtils.h"
 #include "mozilla/ClearOnShutdown.h"
 #include "mozilla/dom/WindowGlobalParent.h"
 #include "mozilla/dom/BrowsingContext.h"
@@ -15,6 +16,7 @@
 #include "mozilla/dom/BrowserChild.h"
 #include "mozilla/dom/BrowserBridgeChild.h"
 #include "mozilla/dom/ContentParent.h"
+#include "mozilla/dom/SecurityPolicyViolationEvent.h"
 #include "mozilla/dom/WindowGlobalActorsBinding.h"
 #include "mozilla/dom/WindowGlobalParent.h"
 #include "mozilla/dom/WindowContext.h"
@@ -32,7 +34,7 @@
 
 #include "mozilla/dom/JSWindowActorBinding.h"
 #include "mozilla/dom/JSWindowActorChild.h"
-#include "mozilla/dom/JSWindowActorService.h"
+#include "mozilla/dom/JSActorService.h"
 #include "nsIHttpChannelInternal.h"
 #include "nsIURIMutator.h"
 
@@ -391,8 +393,54 @@ mozilla::ipc::IPCResult WindowGlobalChild::RecvGetSecurityInfo(
   return IPC_OK();
 }
 
+mozilla::ipc::IPCResult WindowGlobalChild::RecvSaveStorageAccessGranted(
+    const nsCString& aPermissionKey) {
+  nsCOMPtr<nsPIDOMWindowInner> window = GetWindowGlobal();
+  if (!window) {
+    return IPC_OK();
+  }
+
+#ifdef DEBUG
+  nsAutoCString trackingOrigin;
+  nsCOMPtr<nsIPrincipal> principal = DocumentPrincipal();
+  if (principal && NS_SUCCEEDED(principal->GetOriginNoSuffix(trackingOrigin))) {
+    nsAutoCString permissionKey;
+    AntiTrackingUtils::CreateStoragePermissionKey(trackingOrigin,
+                                                  permissionKey);
+    MOZ_ASSERT(permissionKey == aPermissionKey);
+  }
+#endif
+
+  window->SaveStorageAccessGranted(aPermissionKey);
+  return IPC_OK();
+}
+
+mozilla::ipc::IPCResult WindowGlobalChild::RecvDispatchSecurityPolicyViolation(
+    const nsString& aViolationEventJSON) {
+  nsGlobalWindowInner* window = GetWindowGlobal();
+  if (!window) {
+    return IPC_OK();
+  }
+
+  Document* doc = window->GetDocument();
+  if (!doc) {
+    return IPC_OK();
+  }
+
+  SecurityPolicyViolationEventInit violationEvent;
+  if (!violationEvent.Init(aViolationEventJSON)) {
+    return IPC_OK();
+  }
+
+  RefPtr<Event> event = SecurityPolicyViolationEvent::Constructor(
+      doc, NS_LITERAL_STRING("securitypolicyviolation"), violationEvent);
+  event->SetTrusted(true);
+  doc->DispatchEvent(*event, IgnoreErrors());
+  return IPC_OK();
+}
+
 IPCResult WindowGlobalChild::RecvRawMessage(
-    const JSWindowActorMessageMeta& aMeta, const ClonedMessageData& aData,
+    const JSActorMessageMeta& aMeta, const ClonedMessageData& aData,
     const ClonedMessageData& aStack) {
   StructuredCloneData data;
   data.BorrowFromClonedMessageDataForChild(aData);
@@ -402,7 +450,7 @@ IPCResult WindowGlobalChild::RecvRawMessage(
   return IPC_OK();
 }
 
-void WindowGlobalChild::ReceiveRawMessage(const JSWindowActorMessageMeta& aMeta,
+void WindowGlobalChild::ReceiveRawMessage(const JSActorMessageMeta& aMeta,
                                           StructuredCloneData&& aData,
                                           StructuredCloneData&& aStack) {
   RefPtr<JSWindowActorChild> actor =
@@ -430,6 +478,13 @@ void WindowGlobalChild::SetDocumentURI(nsIURI* aDocumentURI) {
   SendUpdateDocumentURI(aDocumentURI);
 }
 
+void WindowGlobalChild::SetDocumentPrincipal(
+    nsIPrincipal* aNewDocumentPrincipal) {
+  MOZ_ASSERT(mDocumentPrincipal->Equals(aNewDocumentPrincipal));
+  mDocumentPrincipal = aNewDocumentPrincipal;
+  SendUpdateDocumentPrincipal(aNewDocumentPrincipal);
+}
+
 const nsAString& WindowGlobalChild::GetRemoteType() {
   if (XRE_IsContentProcess()) {
     return ContentChild::GetSingleton()->GetRemoteType();
@@ -439,7 +494,7 @@ const nsAString& WindowGlobalChild::GetRemoteType() {
 }
 
 already_AddRefed<JSWindowActorChild> WindowGlobalChild::GetActor(
-    const nsAString& aName, ErrorResult& aRv) {
+    const nsACString& aName, ErrorResult& aRv) {
   if (!CanSend()) {
     aRv.Throw(NS_ERROR_DOM_INVALID_STATE_ERR);
     return nullptr;
@@ -480,8 +535,8 @@ void WindowGlobalChild::ActorDestroy(ActorDestroyReason aWhy) {
   profiler_unregister_page(mInnerWindowId);
 #endif
 
-  // Destroy our JSWindowActors, and reject any pending queries.
-  nsRefPtrHashtable<nsStringHashKey, JSWindowActorChild> windowActors;
+  // Destroy our JSActors, and reject any pending queries.
+  nsRefPtrHashtable<nsCStringHashKey, JSWindowActorChild> windowActors;
   mWindowActors.SwapElements(windowActors);
   for (auto iter = windowActors.Iter(); !iter.Done(); iter.Next()) {
     iter.Data()->RejectPendingQueries();

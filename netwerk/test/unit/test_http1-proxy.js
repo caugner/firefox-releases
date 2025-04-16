@@ -15,6 +15,8 @@
  *   response header sent
  */
 
+"use strict";
+
 const { HttpServer } = ChromeUtils.import("resource://testing-common/httpd.js");
 
 const pps = Cc["@mozilla.org/network/protocol-proxy-service;1"].getService();
@@ -30,7 +32,7 @@ class ProxyFilter {
     this._flags = flags;
     this.QueryInterface = ChromeUtils.generateQI([Ci.nsIProtocolProxyFilter]);
   }
-  applyFilter(pps, uri, pi, cb) {
+  applyFilter(uri, pi, cb) {
     if (uri.spec.match(/(\/proxy-session-counter)/)) {
       cb.onProxyFilterResult(pi);
       return;

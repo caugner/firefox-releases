@@ -311,6 +311,8 @@ static bool EvalKernel(JSContext* cx, HandleValue v, EvalType evalType,
       options.setFileAndLine("eval", 1);
       options.setIntroductionType("eval");
     }
+    options.setNonSyntacticScope(
+        enclosing->hasOnChain(ScopeKind::NonSyntactic));
 
     AutoStableStringChars linearChars(cx);
     if (!linearChars.initTwoByte(cx, linearStr)) {
@@ -332,9 +334,10 @@ static bool EvalKernel(JSContext* cx, HandleValue v, EvalType evalType,
     if (!compilationInfo.init(cx)) {
       return false;
     }
-
+    uint32_t len = srcBuf.length();
+    SourceExtent extent = SourceExtent::makeGlobalExtent(len);
     frontend::EvalSharedContext evalsc(cx, env, compilationInfo, enclosing,
-                                       compilationInfo.directives);
+                                       compilationInfo.directives, extent);
     RootedScript compiled(
         cx, frontend::CompileEvalScript(compilationInfo, evalsc, env, srcBuf));
     if (!compiled) {
@@ -410,6 +413,8 @@ bool js::DirectEvalStringFromIon(JSContext* cx, HandleObject env,
       options.setFileAndLine("eval", 1);
       options.setIntroductionType("eval");
     }
+    options.setNonSyntacticScope(
+        enclosing->hasOnChain(ScopeKind::NonSyntactic));
 
     AutoStableStringChars linearChars(cx);
     if (!linearChars.initTwoByte(cx, linearStr)) {
@@ -432,8 +437,10 @@ bool js::DirectEvalStringFromIon(JSContext* cx, HandleObject env,
       return false;
     }
 
+    uint32_t len = srcBuf.length();
+    SourceExtent extent = SourceExtent::makeGlobalExtent(len);
     frontend::EvalSharedContext evalsc(cx, env, compilationInfo, enclosing,
-                                       compilationInfo.directives);
+                                       compilationInfo.directives, extent);
     JSScript* compiled =
         frontend::CompileEvalScript(compilationInfo, evalsc, env, srcBuf);
     if (!compiled) {

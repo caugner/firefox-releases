@@ -9,6 +9,7 @@
 #include <base/process.h>
 #include <stdint.h>
 #include "mozilla/dom/ipc/IdType.h"
+#include "mozilla/MozPromise.h"
 
 namespace mozilla {
 
@@ -72,7 +73,7 @@ struct ProcInfo {
   // System time in ns.
   uint64_t cpuKernel = 0;
   // Threads owned by this process.
-  nsTArray<ThreadInfo> threads;
+  CopyableTArray<ThreadInfo> threads;
 };
 
 typedef MozPromise<ProcInfo, nsresult, true> ProcInfoPromise;

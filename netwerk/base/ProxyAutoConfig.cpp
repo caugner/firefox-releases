@@ -327,12 +327,6 @@ class PACResolver final : public nsIDNSListener,
     return NS_OK;
   }
 
-  NS_IMETHOD OnLookupByTypeComplete(nsICancelable* request,
-                                    nsIDNSByTypeRecord* res,
-                                    nsresult status) override {
-    return NS_OK;
-  }
-
   // nsITimerCallback
   NS_IMETHOD Notify(nsITimer* timer) override {
     nsCOMPtr<nsICancelable> request;
@@ -640,6 +634,7 @@ class JSContextWrapper {
 
     JS::RealmOptions options;
     options.creationOptions().setNewCompartmentInSystemZone();
+    options.behaviors().setClampAndJitterTime(false);
     mGlobal = JS_NewGlobalObject(mContext, &sGlobalClass, nullptr,
                                  JS::DontFireOnNewGlobalHook, options);
     if (!mGlobal) {

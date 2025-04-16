@@ -101,8 +101,8 @@ export type SourcePayload = {
   actor: ActorId,
   url: URL | null,
   isBlackBoxed: boolean,
+  sourceMapBaseURL: URL | null,
   sourceMapURL: URL | null,
-  introductionUrl: URL | null,
   introductionType: string | null,
   extensionName: string | null,
 };
@@ -204,9 +204,9 @@ export type Target = {
   isContentProcess: boolean,
   isWorkerTarget: boolean,
   traits: Object,
-  chrome: Boolean,
+  chrome: boolean,
   url: URL,
-  isParentProcess: Boolean,
+  isParentProcess: boolean,
   isServiceWorker: boolean,
   targetForm: Object,
 
@@ -419,6 +419,7 @@ export type ThreadFront = {
   detach: () => Promise<void>,
   fetchAncestorFramePositions: Function => Promise<*>,
   get: string => FrameFront,
+  dumpThread: Function => void,
 };
 
 export type Panel = {|
@@ -430,4 +431,5 @@ export type Panel = {|
   highlightDomElement: (grip: Object) => void,
   unHighlightDomElement: (grip: Object) => void,
   getToolboxStore: () => any,
+  panelWin: Object,
 |};

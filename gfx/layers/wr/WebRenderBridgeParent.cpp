@@ -115,14 +115,16 @@ bool is_glcontext_angle(void* glcontext_ptr) {
   return glcontext->IsANGLE();
 }
 
-bool gfx_use_wrench() { return gfxEnv::EnableWebRenderRecording(); }
-
 const char* gfx_wr_resource_path_override() {
   const char* resourcePath = PR_GetEnv("WR_RESOURCE_PATH");
   if (!resourcePath || resourcePath[0] == '\0') {
     return nullptr;
   }
   return resourcePath;
+}
+
+bool gfx_wr_use_optimized_shaders() {
+  return mozilla::gfx::gfxVars::UseWebRenderOptimizedShaders();
 }
 
 void gfx_critical_note(const char* msg) { gfxCriticalNote << msg; }
@@ -668,9 +670,17 @@ bool WebRenderBridgeParent::UpdateResources(
                                          wr::ToDeviceIntRect(op.area()));
         break;
       }
-      case OpUpdateResource::TOpAddExternalImage: {
-        const auto& op = cmd.get_OpAddExternalImage();
-        if (!AddExternalImage(op.externalImageId(), op.key(), aUpdates)) {
+      case OpUpdateResource::TOpAddPrivateExternalImage: {
+        const auto& op = cmd.get_OpAddPrivateExternalImage();
+        if (!AddPrivateExternalImage(op.externalImageId(), op.key(),
+                                     op.descriptor(), aUpdates)) {
+          return false;
+        }
+        break;
+      }
+      case OpUpdateResource::TOpAddSharedExternalImage: {
+        const auto& op = cmd.get_OpAddSharedExternalImage();
+        if (!AddSharedExternalImage(op.externalImageId(), op.key(), aUpdates)) {
           return false;
         }
         break;
@@ -685,10 +695,20 @@ bool WebRenderBridgeParent::UpdateResources(
         }
         break;
       }
-      case OpUpdateResource::TOpUpdateExternalImage: {
-        const auto& op = cmd.get_OpUpdateExternalImage();
-        if (!UpdateExternalImage(op.externalImageId(), op.key(), op.dirtyRect(),
-                                 aUpdates, scheduleRelease)) {
+      case OpUpdateResource::TOpUpdatePrivateExternalImage: {
+        const auto& op = cmd.get_OpUpdatePrivateExternalImage();
+        if (!UpdatePrivateExternalImage(op.externalImageId(), op.key(),
+                                        op.descriptor(), op.dirtyRect(),
+                                        aUpdates)) {
+          return false;
+        }
+        break;
+      }
+      case OpUpdateResource::TOpUpdateSharedExternalImage: {
+        const auto& op = cmd.get_OpUpdateSharedExternalImage();
+        if (!UpdateSharedExternalImage(op.externalImageId(), op.key(),
+                                       op.dirtyRect(), aUpdates,
+                                       scheduleRelease)) {
           return false;
         }
         break;
@@ -755,7 +775,39 @@ bool WebRenderBridgeParent::UpdateResources(
   return true;
 }
 
-bool WebRenderBridgeParent::AddExternalImage(
+bool WebRenderBridgeParent::AddPrivateExternalImage(
+    wr::ExternalImageId aExtId, wr::ImageKey aKey, wr::ImageDescriptor aDesc,
+    wr::TransactionBuilder& aResources) {
+  Range<wr::ImageKey> keys(&aKey, 1);
+  // Check if key is obsoleted.
+  if (keys[0].mNamespace != mIdNamespace) {
+    return true;
+  }
+
+  aResources.AddExternalImage(aKey, aDesc, aExtId,
+                              wr::ExternalImageType::Buffer(), 0);
+
+  return true;
+}
+
+bool WebRenderBridgeParent::UpdatePrivateExternalImage(
+    wr::ExternalImageId aExtId, wr::ImageKey aKey,
+    const wr::ImageDescriptor& aDesc, const ImageIntRect& aDirtyRect,
+    wr::TransactionBuilder& aResources) {
+  Range<wr::ImageKey> keys(&aKey, 1);
+  // Check if key is obsoleted.
+  if (keys[0].mNamespace != mIdNamespace) {
+    return true;
+  }
+
+  aResources.UpdateExternalImageWithDirtyRect(
+      aKey, aDesc, aExtId, wr::ExternalImageType::Buffer(),
+      wr::ToDeviceIntRect(aDirtyRect), 0);
+
+  return true;
+}
+
+bool WebRenderBridgeParent::AddSharedExternalImage(
     wr::ExternalImageId aExtId, wr::ImageKey aKey,
     wr::TransactionBuilder& aResources) {
   Range<wr::ImageKey> keys(&aKey, 1);
@@ -781,28 +833,10 @@ bool WebRenderBridgeParent::AddExternalImage(
 
   mSharedSurfaceIds.insert(std::make_pair(key, aExtId));
 
-  if (!gfxEnv::EnableWebRenderRecording()) {
-    wr::ImageDescriptor descriptor(dSurf->GetSize(), dSurf->Stride(),
-                                   dSurf->GetFormat());
-    aResources.AddExternalImage(aKey, descriptor, aExtId,
-                                wr::ExternalImageType::Buffer(), 0);
-    return true;
-  }
-
-  DataSourceSurface::MappedSurface map;
-  if (!dSurf->Map(gfx::DataSourceSurface::MapType::READ, &map)) {
-    gfxCriticalNote << "DataSourceSurface failed to map for Image for extId:"
-                    << wr::AsUint64(aExtId);
-    return false;
-  }
-
-  IntSize size = dSurf->GetSize();
-  wr::ImageDescriptor descriptor(size, map.mStride, dSurf->GetFormat());
-  wr::Vec<uint8_t> data;
-  data.PushBytes(Range<uint8_t>(map.mData, size.height * map.mStride));
-  aResources.AddImage(keys[0], descriptor, data);
-  dSurf->Unmap();
-
+  wr::ImageDescriptor descriptor(dSurf->GetSize(), dSurf->Stride(),
+                                 dSurf->GetFormat());
+  aResources.AddExternalImage(aKey, descriptor, aExtId,
+                              wr::ExternalImageType::Buffer(), 0);
   return true;
 }
 
@@ -822,23 +856,22 @@ bool WebRenderBridgeParent::PushExternalImageForTexture(
     return false;
   }
 
-  if (!gfxEnv::EnableWebRenderRecording()) {
-    WebRenderTextureHost* wrTexture = aTexture->AsWebRenderTextureHost();
-    if (wrTexture) {
-      wrTexture->PushResourceUpdates(aResources, op, keys,
-                                     wrTexture->GetExternalImageKey());
-      auto it = mTextureHosts.find(wr::AsUint64(aKey));
-      MOZ_ASSERT((it == mTextureHosts.end() && !aIsUpdate) ||
-                 (it != mTextureHosts.end() && aIsUpdate));
-      if (it != mTextureHosts.end()) {
-        // Release Texture if it exists.
-        ReleaseTextureOfImage(aKey);
-      }
-      mTextureHosts.emplace(wr::AsUint64(aKey),
-                            CompositableTextureHostRef(aTexture));
-      return true;
+  WebRenderTextureHost* wrTexture = aTexture->AsWebRenderTextureHost();
+  if (wrTexture) {
+    wrTexture->PushResourceUpdates(aResources, op, keys,
+                                   wrTexture->GetExternalImageKey());
+    auto it = mTextureHosts.find(wr::AsUint64(aKey));
+    MOZ_ASSERT((it == mTextureHosts.end() && !aIsUpdate) ||
+               (it != mTextureHosts.end() && aIsUpdate));
+    if (it != mTextureHosts.end()) {
+      // Release Texture if it exists.
+      ReleaseTextureOfImage(aKey);
     }
+    mTextureHosts.emplace(wr::AsUint64(aKey),
+                          CompositableTextureHostRef(aTexture));
+    return true;
   }
+
   RefPtr<DataSourceSurface> dSurf = aTexture->GetAsSurface();
   if (!dSurf) {
     gfxCriticalNote
@@ -870,7 +903,7 @@ bool WebRenderBridgeParent::PushExternalImageForTexture(
   return true;
 }
 
-bool WebRenderBridgeParent::UpdateExternalImage(
+bool WebRenderBridgeParent::UpdateSharedExternalImage(
     wr::ExternalImageId aExtId, wr::ImageKey aKey,
     const ImageIntRect& aDirtyRect, wr::TransactionBuilder& aResources,
     UniquePtr<ScheduleSharedSurfaceRelease>& aScheduleRelease) {
@@ -911,27 +944,12 @@ bool WebRenderBridgeParent::UpdateExternalImage(
     it->second = aExtId;
   }
 
-  if (!gfxEnv::EnableWebRenderRecording()) {
-    wr::ImageDescriptor descriptor(dSurf->GetSize(), dSurf->Stride(),
-                                   dSurf->GetFormat());
-    aResources.UpdateExternalImageWithDirtyRect(
-        aKey, descriptor, aExtId, wr::ExternalImageType::Buffer(),
-        wr::ToDeviceIntRect(aDirtyRect), 0);
-    return true;
-  }
+  wr::ImageDescriptor descriptor(dSurf->GetSize(), dSurf->Stride(),
+                                 dSurf->GetFormat());
+  aResources.UpdateExternalImageWithDirtyRect(
+      aKey, descriptor, aExtId, wr::ExternalImageType::Buffer(),
+      wr::ToDeviceIntRect(aDirtyRect), 0);
 
-  DataSourceSurface::ScopedMap map(dSurf, DataSourceSurface::READ);
-  if (!map.IsMapped()) {
-    gfxCriticalNote << "DataSourceSurface failed to map for Image for extId:"
-                    << wr::AsUint64(aExtId);
-    return false;
-  }
-
-  IntSize size = dSurf->GetSize();
-  wr::ImageDescriptor descriptor(size, map.GetStride(), dSurf->GetFormat());
-  wr::Vec<uint8_t> data;
-  data.PushBytes(Range<uint8_t>(map.GetData(), size.height * map.GetStride()));
-  aResources.UpdateImageBuffer(keys[0], descriptor, data);
   return true;
 }
 
@@ -1955,7 +1973,6 @@ void WebRenderBridgeParent::RemovePipelineIdForCompositable(
   mAsyncImageManager->RemoveAsyncImagePipeline(aPipelineId, aTxn);
   aTxn.RemovePipeline(aPipelineId);
   asyncCompositables.erase(wr::AsUint64(aPipelineId));
-  return;
 }
 
 void WebRenderBridgeParent::DeleteImage(const ImageKey& aKey,
@@ -2088,6 +2105,14 @@ wr::Epoch WebRenderBridgeParent::UpdateWebRender(
   return GetNextWrEpoch();  // Update webrender epoch
 }
 
+mozilla::ipc::IPCResult WebRenderBridgeParent::RecvInvalidateRenderedFrame() {
+  // This function should only get called in the root WRBP
+  MOZ_ASSERT(IsRootWebRenderBridgeParent());
+
+  InvalidateRenderedFrame();
+  return IPC_OK();
+}
+
 mozilla::ipc::IPCResult WebRenderBridgeParent::RecvScheduleComposite() {
   // Caller of LayerManager::ScheduleComposite() expects that it trigger
   // composite. Then we do not want to skip generate frame.
@@ -2095,7 +2120,7 @@ mozilla::ipc::IPCResult WebRenderBridgeParent::RecvScheduleComposite() {
   return IPC_OK();
 }
 
-void WebRenderBridgeParent::ScheduleForcedGenerateFrame() {
+void WebRenderBridgeParent::InvalidateRenderedFrame() {
   if (mDestroyed) {
     return;
   }
@@ -2107,13 +2132,27 @@ void WebRenderBridgeParent::ScheduleForcedGenerateFrame() {
       Api(renderRoot)->SendTransaction(fastTxn);
     }
   }
+}
 
+void WebRenderBridgeParent::ScheduleForcedGenerateFrame() {
+  if (mDestroyed) {
+    return;
+  }
+
+  InvalidateRenderedFrame();
   ScheduleGenerateFrameAllRenderRoots();
 }
 
 mozilla::ipc::IPCResult WebRenderBridgeParent::RecvCapture() {
   if (!mDestroyed) {
     mApis[wr::RenderRoot::Default]->Capture();
+  }
+  return IPC_OK();
+}
+
+mozilla::ipc::IPCResult WebRenderBridgeParent::RecvToggleCaptureSequence() {
+  if (!mDestroyed) {
+    mApis[wr::RenderRoot::Default]->ToggleCaptureSequence();
   }
   return IPC_OK();
 }

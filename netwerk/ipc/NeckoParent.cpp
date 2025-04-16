@@ -10,6 +10,7 @@
 #include "mozilla/ContentPrincipal.h"
 #include "mozilla/ipc/IPCStreamUtils.h"
 #include "mozilla/net/ExtensionProtocolHandler.h"
+#include "mozilla/net/PageThumbProtocolHandler.h"
 #include "mozilla/net/NeckoParent.h"
 #include "mozilla/net/HttpChannelParent.h"
 #include "mozilla/net/CookieServiceParent.h"
@@ -81,15 +82,6 @@ NeckoParent::NeckoParent() : mSocketProcessBridgeInited(false) {
   // normal init (during 1st Http channel request) isn't early enough.
   nsCOMPtr<nsIProtocolHandler> proto =
       do_GetService("@mozilla.org/network/protocol;1?name=http");
-
-  // only register once--we will have multiple NeckoParents if there are
-  // multiple child processes.
-  static bool registeredBool = false;
-  if (!registeredBool) {
-    Preferences::AddBoolVarCache(&NeckoCommonInternal::gSecurityDisabled,
-                                 "network.disable.ipc.security");
-    registeredBool = true;
-  }
 }
 
 static PBOverrideStatus PBOverrideStatusFromLoadContext(
@@ -141,88 +133,17 @@ static already_AddRefed<nsIPrincipal> GetRequestingPrincipal(
   return GetRequestingPrincipal(args.loadInfo());
 }
 
-// Bug 1289001 - If GetValidatedOriginAttributes returns an error string, that
-// usually leads to a content crash with very little info about the cause.
-// We prefer to crash on the parent, so we get the reason in the crash report.
-static MOZ_COLD void CrashWithReason(const char* reason) {
-#ifndef RELEASE_OR_BETA
-  MOZ_CRASH_UNSAFE(reason);
-#endif
-}
-
 const char* NeckoParent::GetValidatedOriginAttributes(
     const SerializedLoadContext& aSerialized, PContentParent* aContent,
     nsIPrincipal* aRequestingPrincipal, OriginAttributes& aAttrs) {
-  if (!UsingNeckoIPCSecurity()) {
-    if (!aSerialized.IsNotNull()) {
-      // If serialized is null, we cannot validate anything. We have to assume
-      // that this requests comes from a SystemPrincipal.
-      aAttrs = OriginAttributes(false);
-    } else {
-      aAttrs = aSerialized.mOriginAttributes;
-    }
-    return nullptr;
-  }
-
   if (!aSerialized.IsNotNull()) {
-    CrashWithReason(
-        "GetValidatedOriginAttributes | SerializedLoadContext from child is "
-        "null");
-    return "SerializedLoadContext from child is null";
-  }
-
-  nsAutoCString serializedSuffix;
-  aSerialized.mOriginAttributes.CreateAnonymizedSuffix(serializedSuffix);
-
-  nsAutoCString debugString;
-  const auto& browsers = aContent->ManagedPBrowserParent();
-  for (auto iter = browsers.ConstIter(); !iter.Done(); iter.Next()) {
-    auto* browserParent = BrowserParent::GetFrom(iter.Get()->GetKey());
-
-    if (!ChromeUtils::IsOriginAttributesEqual(
-            aSerialized.mOriginAttributes,
-            browserParent->OriginAttributesRef())) {
-      debugString.AppendLiteral("(");
-      debugString.Append(serializedSuffix);
-      debugString.AppendLiteral(",");
-
-      nsAutoCString tabSuffix;
-      browserParent->OriginAttributesRef().CreateAnonymizedSuffix(tabSuffix);
-      debugString.Append(tabSuffix);
-
-      debugString.AppendLiteral(")");
-      continue;
-    }
-
+    // If serialized is null, we cannot validate anything. We have to assume
+    // that this requests comes from a SystemPrincipal.
+    aAttrs = OriginAttributes(false);
+  } else {
     aAttrs = aSerialized.mOriginAttributes;
-    return nullptr;
   }
-
-  // This may be a ServiceWorker: when a push notification is received, FF wakes
-  // up the corrisponding service worker so that it can manage the PushEvent. At
-  // that time we probably don't have any valid tabcontext, but still, we want
-  // to support http channel requests coming from that ServiceWorker.
-  if (aRequestingPrincipal) {
-    RefPtr<ServiceWorkerManager> swm = ServiceWorkerManager::GetInstance();
-    if (swm &&
-        swm->MayHaveActiveServiceWorkerInstance(
-            static_cast<ContentParent*>(aContent), aRequestingPrincipal)) {
-      aAttrs = aSerialized.mOriginAttributes;
-      return nullptr;
-    }
-  }
-
-  nsAutoCString errorString;
-  errorString.AppendLiteral(
-      "GetValidatedOriginAttributes | App does not have permission -");
-  errorString.Append(debugString);
-
-  // Leak the buffer on the heap to make sure that it lives long enough, as
-  // MOZ_CRASH_ANNOTATE expects the pointer passed to it to live to the end of
-  // the program.
-  char* error = strdup(errorString.BeginReading());
-  CrashWithReason(error);
-  return "App does not have permission";
+  return nullptr;
 }
 
 const char* NeckoParent::CreateChannelLoadContext(
@@ -253,7 +174,7 @@ const char* NeckoParent::CreateChannelLoadContext(
         break;
       }
       case PBrowserOrId::TTabId: {
-        aResult = new LoadContext(aSerialized, aBrowser.get_TabId(), attrs);
+        aResult = new LoadContext(aSerialized, nullptr, attrs);
         break;
       }
       default:
@@ -408,35 +329,15 @@ mozilla::ipc::IPCResult NeckoParent::RecvPFTPChannelConstructor(
 
 already_AddRefed<PDocumentChannelParent>
 NeckoParent::AllocPDocumentChannelParent(
-    PBrowserParent* aBrowser, const MaybeDiscarded<BrowsingContext>& aContext,
-    const SerializedLoadContext& aSerialized,
+    const MaybeDiscarded<BrowsingContext>& aContext,
     const DocumentChannelCreationArgs& args) {
-  // We still create the actor even if the BrowsingContext isn't available,
-  // so that we can send the reject message using it from
-  // RecvPDocumentChannelConstructor
-  CanonicalBrowsingContext* context = nullptr;
-  if (!aContext.IsNullOrDiscarded()) {
-    context = aContext.get_canonical();
-  }
-
-  nsCOMPtr<nsIPrincipal> requestingPrincipal =
-      GetRequestingPrincipal(Some(args.loadInfo()));
-
-  nsCOMPtr<nsILoadContext> loadContext;
-  const char* error = CreateChannelLoadContext(
-      aBrowser, Manager(), aSerialized, requestingPrincipal, loadContext);
-  if (error) {
-    return nullptr;
-  }
-  RefPtr<DocumentChannelParent> p =
-      new DocumentChannelParent(context, loadContext);
+  RefPtr<DocumentChannelParent> p = new DocumentChannelParent();
   return p.forget();
 }
 
 mozilla::ipc::IPCResult NeckoParent::RecvPDocumentChannelConstructor(
-    PDocumentChannelParent* aActor, PBrowserParent* aBrowser,
+    PDocumentChannelParent* aActor,
     const MaybeDiscarded<BrowsingContext>& aContext,
-    const SerializedLoadContext& aSerialized,
     const DocumentChannelCreationArgs& aArgs) {
   DocumentChannelParent* p = static_cast<DocumentChannelParent*>(aActor);
 
@@ -445,7 +346,7 @@ mozilla::ipc::IPCResult NeckoParent::RecvPDocumentChannelConstructor(
     return IPC_OK();
   }
 
-  if (!p->Init(aArgs)) {
+  if (!p->Init(aContext.get_canonical(), aArgs)) {
     return IPC_FAIL_NO_REASON(this);
   }
   return IPC_OK();
@@ -614,7 +515,8 @@ bool NeckoParent::DeallocPUDPSocketParent(PUDPSocketParent* actor) {
 already_AddRefed<PDNSRequestParent> NeckoParent::AllocPDNSRequestParent(
     const nsCString& aHost, const nsCString& aTrrServer, const uint16_t& aType,
     const OriginAttributes& aOriginAttributes, const uint32_t& aFlags) {
-  RefPtr<DNSRequestParent> actor = new DNSRequestParent();
+  RefPtr<DNSRequestHandler> handler = new DNSRequestHandler();
+  RefPtr<DNSRequestParent> actor = new DNSRequestParent(handler);
   return actor.forget();
 }
 
@@ -622,8 +524,10 @@ mozilla::ipc::IPCResult NeckoParent::RecvPDNSRequestConstructor(
     PDNSRequestParent* aActor, const nsCString& aHost,
     const nsCString& aTrrServer, const uint16_t& aType,
     const OriginAttributes& aOriginAttributes, const uint32_t& aFlags) {
-  static_cast<DNSRequestParent*>(aActor)->DoAsyncResolve(
-      aHost, aTrrServer, aType, aOriginAttributes, aFlags);
+  RefPtr<DNSRequestParent> actor = static_cast<DNSRequestParent*>(aActor);
+  RefPtr<DNSRequestHandler> handler =
+      actor->GetDNSRequest()->AsDNSRequestHandler();
+  handler->DoAsyncResolve(aHost, aTrrServer, aType, aOriginAttributes, aFlags);
   return IPC_OK();
 }
 
@@ -998,6 +902,52 @@ mozilla::ipc::IPCResult NeckoParent::RecvEnsureHSTSData(
   RefPtr<HSTSDataCallbackWrapper> wrapper =
       new HSTSDataCallbackWrapper(std::move(callback));
   gHttpHandler->EnsureHSTSDataReadyNative(wrapper);
+  return IPC_OK();
+}
+
+mozilla::ipc::IPCResult NeckoParent::RecvGetPageThumbStream(
+    nsIURI* aURI, GetPageThumbStreamResolver&& aResolver) {
+  // Only the privileged about content process is allowed to access
+  // things over the moz-page-thumb protocol. Any other content process
+  // that tries to send this should have been blocked via the
+  // ScriptSecurityManager, but if somehow the process has been tricked into
+  // sending this message, we send IPC_FAIL in order to crash that
+  // likely-compromised content process.
+  if (!static_cast<ContentParent*>(Manager())->GetRemoteType().EqualsLiteral(
+          PRIVILEGEDABOUT_REMOTE_TYPE)) {
+    return IPC_FAIL(this, "Wrong process type");
+  }
+
+  RefPtr<PageThumbProtocolHandler> ph(PageThumbProtocolHandler::GetSingleton());
+  MOZ_ASSERT(ph);
+
+  // Ask the PageThumbProtocolHandler to give us a new input stream for
+  // this URI. The request comes from a PageThumbProtocolHandler in the
+  // child process, but is not guaranteed to be a valid moz-page-thumb URI,
+  // and not guaranteed to represent a resource that the child should be
+  // allowed to access. The PageThumbProtocolHandler is responsible for
+  // validating the request.
+  nsCOMPtr<nsIInputStream> inputStream;
+  bool terminateSender = true;
+  auto inputStreamPromise = ph->NewStream(aURI, &terminateSender);
+
+  if (terminateSender) {
+    return IPC_FAIL(this, "Malformed moz-page-thumb request");
+  }
+
+  inputStreamPromise->Then(
+      GetMainThreadSerialEventTarget(), __func__,
+      [aResolver](const nsCOMPtr<nsIInputStream>& aStream) {
+        aResolver(aStream);
+      },
+      [aResolver](nsresult aRv) {
+        // If NewStream failed, we send back an invalid stream to the child so
+        // it can handle the error. MozPromise rejection is reserved for channel
+        // errors/disconnects.
+        Unused << NS_WARN_IF(NS_FAILED(aRv));
+        aResolver(nullptr);
+      });
+
   return IPC_OK();
 }
 

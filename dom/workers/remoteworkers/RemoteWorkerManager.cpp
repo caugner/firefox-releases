@@ -8,8 +8,8 @@
 
 #include <utility>
 
+#include "mozilla/SchedulerGroup.h"
 #include "mozilla/ScopeExit.h"
-#include "mozilla/SystemGroup.h"
 #include "mozilla/dom/RemoteWorkerParent.h"
 #include "mozilla/ipc/BackgroundParent.h"
 #include "mozilla/ipc/BackgroundUtils.h"
@@ -109,8 +109,8 @@ void RemoteWorkerManager::RegisterActor(RemoteWorkerServiceParent* aActor) {
 
   RefPtr<ContentParent> contentParent =
       BackgroundParent::GetContentParent(aActor->Manager());
-  auto scopeExit = MakeScopeExit(
-      [&] { NS_ReleaseOnMainThreadSystemGroup(contentParent.forget()); });
+  auto scopeExit =
+      MakeScopeExit([&] { NS_ReleaseOnMainThread(contentParent.forget()); });
   const auto& remoteType = contentParent->GetRemoteType();
 
   if (!mPendings.IsEmpty()) {
@@ -251,7 +251,8 @@ void RemoteWorkerManager::ForEachActor(Callback&& aCallback) const {
   nsCOMPtr<nsIRunnable> r = NS_NewRunnableFunction(
       __func__, [proxyReleaseArray = std::move(proxyReleaseArray)] {});
 
-  MOZ_ALWAYS_SUCCEEDS(SystemGroup::Dispatch(TaskCategory::Other, r.forget()));
+  MOZ_ALWAYS_SUCCEEDS(
+      SchedulerGroup::Dispatch(TaskCategory::Other, r.forget()));
 }
 
 /**
@@ -304,7 +305,7 @@ RemoteWorkerManager::SelectTargetActorForServiceWorker(
             });
 
         MOZ_ALWAYS_SUCCEEDS(
-            SystemGroup::Dispatch(TaskCategory::Other, r.forget()));
+            SchedulerGroup::Dispatch(TaskCategory::Other, r.forget()));
 
         actor = aActor;
         return false;
@@ -431,9 +432,7 @@ void RemoteWorkerManager::LaunchNewContentProcess(
                    });
       });
 
-  nsCOMPtr<nsIEventTarget> target =
-      SystemGroup::EventTargetFor(TaskCategory::Other);
-  target->Dispatch(r.forget(), NS_DISPATCH_NORMAL);
+  SchedulerGroup::Dispatch(TaskCategory::Other, r.forget());
 }
 
 }  // namespace dom

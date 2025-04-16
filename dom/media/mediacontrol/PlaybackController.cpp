@@ -7,6 +7,7 @@
 #include "MediaControlUtils.h"
 #include "mozilla/dom/MediaSession.h"
 #include "mozilla/dom/Navigator.h"
+#include "nsFocusManager.h"
 
 // avoid redefined macro in unified build
 #undef LOG
@@ -33,6 +34,14 @@ MediaSession* PlaybackController::GetMediaSession() {
                                              : nullptr;
 }
 
+void PlaybackController::Focus() {
+  // Focus is not part of the MediaSession standard, so always use the
+  // default behavior and focus the window currently playing media.
+  if (RefPtr<nsPIDOMWindowOuter> win = mBC->GetDOMWindow()) {
+    nsFocusManager::FocusWindow(win, CallerType::System);
+  }
+}
+
 void PlaybackController::Play() {
   const MediaSessionAction action = MediaSessionAction::Play;
   RefPtr<MediaSession> session = GetMediaSession();
@@ -42,7 +51,7 @@ void PlaybackController::Play() {
     LOG("Handle 'play' in default behavior");
     if (RefPtr<ContentControlKeyEventReceiver> receiver =
             ContentControlKeyEventReceiver::Get(mBC)) {
-      receiver->OnKeyPressed(MediaControlKeysEvent::ePlay);
+      receiver->HandleEvent(MediaControlKeysEvent::ePlay);
     }
   } else {
     session->NotifyHandler(action);
@@ -58,7 +67,7 @@ void PlaybackController::Pause() {
     LOG("Handle 'pause' in default behavior");
     if (RefPtr<ContentControlKeyEventReceiver> receiver =
             ContentControlKeyEventReceiver::Get(mBC)) {
-      receiver->OnKeyPressed(MediaControlKeysEvent::ePause);
+      receiver->HandleEvent(MediaControlKeysEvent::ePause);
     }
   } else {
     session->NotifyHandler(action);
@@ -109,7 +118,7 @@ void PlaybackController::Stop() {
     RefPtr<ContentControlKeyEventReceiver> receiver =
         ContentControlKeyEventReceiver::Get(mBC);
     if (receiver) {
-      receiver->OnKeyPressed(MediaControlKeysEvent::eStop);
+      receiver->HandleEvent(MediaControlKeysEvent::eStop);
     }
   } else {
     session->NotifyHandler(action);
@@ -126,6 +135,9 @@ void MediaActionHandler::HandleMediaControlKeysEvent(
     BrowsingContext* aContext, MediaControlKeysEvent aEvent) {
   PlaybackController controller(aContext);
   switch (aEvent) {
+    case MediaControlKeysEvent::eFocus:
+      controller.Focus();
+      return;
     case MediaControlKeysEvent::ePlay:
       controller.Play();
       return;

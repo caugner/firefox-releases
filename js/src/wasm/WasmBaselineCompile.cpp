@@ -2343,7 +2343,7 @@ class MachineStackTracker {
 
 // StackMapGenerator, which carries all state needed to create stack maps.
 
-enum class HasRefTypedDebugFrame { No, Yes };
+enum class HasDebugFrame { No, Yes };
 
 struct StackMapGenerator {
  private:
@@ -2439,13 +2439,13 @@ struct StackMapGenerator {
   MOZ_MUST_USE bool createStackMap(const char* who,
                                    const ExitStubMapVector& extras,
                                    uint32_t assemblerOffset,
-                                   HasRefTypedDebugFrame refDebugFrame,
+                                   HasDebugFrame debugFrame,
                                    const StkVector& stk) {
     size_t countedPointers = machineStackTracker.numPtrs() + memRefsOnStk;
 #ifndef DEBUG
     // An important optimization.  If there are obviously no pointers, as
     // we expect in the majority of cases, exit quickly.
-    if (countedPointers == 0 && refDebugFrame == HasRefTypedDebugFrame::No) {
+    if (countedPointers == 0 && debugFrame == HasDebugFrame::No) {
       // We can skip creating the map if there are no |true| elements in
       // |extras|.
       bool extrasHasRef = false;
@@ -2646,8 +2646,8 @@ struct StackMapGenerator {
 #endif
 
     // Note the presence of a ref-typed DebugFrame, if any.
-    if (refDebugFrame == HasRefTypedDebugFrame::Yes) {
-      stackMap->setHasRefTypedDebugFrame();
+    if (debugFrame == HasDebugFrame::Yes) {
+      stackMap->setHasDebugFrame();
     }
 
     // Add the completed map to the running collection thereof.
@@ -3602,35 +3602,24 @@ class BaseCompiler final : public BaseCompilerInterface {
   // Create a vanilla stack map.
   MOZ_MUST_USE bool createStackMap(const char* who) {
     const ExitStubMapVector noExtras;
-    return stackMapGenerator_.createStackMap(
-        who, noExtras, masm.currentOffset(), HasRefTypedDebugFrame::No, stk_);
+    return createStackMap(who, noExtras, masm.currentOffset());
   }
 
   // Create a stack map as vanilla, but for a custom assembler offset.
   MOZ_MUST_USE bool createStackMap(const char* who,
                                    CodeOffset assemblerOffset) {
     const ExitStubMapVector noExtras;
-    return stackMapGenerator_.createStackMap(who, noExtras,
-                                             assemblerOffset.offset(),
-                                             HasRefTypedDebugFrame::No, stk_);
-  }
-
-  // Create a stack map as vanilla, and note the presence of a ref-typed
-  // DebugFrame on the stack.
-  MOZ_MUST_USE bool createStackMap(const char* who,
-                                   HasRefTypedDebugFrame refDebugFrame) {
-    const ExitStubMapVector noExtras;
-    return stackMapGenerator_.createStackMap(
-        who, noExtras, masm.currentOffset(), refDebugFrame, stk_);
+    return createStackMap(who, noExtras, assemblerOffset.offset());
   }
 
   // The most general stack map construction.
   MOZ_MUST_USE bool createStackMap(const char* who,
                                    const ExitStubMapVector& extras,
-                                   uint32_t assemblerOffset,
-                                   HasRefTypedDebugFrame refDebugFrame) {
+                                   uint32_t assemblerOffset) {
+    auto debugFrame =
+        env_.debugEnabled() ? HasDebugFrame::Yes : HasDebugFrame::No;
     return stackMapGenerator_.createStackMap(who, extras, assemblerOffset,
-                                             refDebugFrame, stk_);
+                                             debugFrame, stk_);
   }
 
   // This is an optimization used to avoid calling sync() for
@@ -4282,14 +4271,14 @@ class BaseCompiler final : public BaseCompilerInterface {
     }
   }
 
-  Stk captureStackResult(const ABIResult& result, uint32_t stackResultBytes) {
+  Stk captureStackResult(const ABIResult& result, StackHeight resultsBase,
+                         uint32_t stackResultBytes) {
     MOZ_ASSERT(result.onStack());
-    uint32_t offs = fr.locateStackResult(result, controlItem().stackHeight,
-                                         stackResultBytes);
+    uint32_t offs = fr.locateStackResult(result, resultsBase, stackResultBytes);
     return Stk::StackResult(result.type(), offs);
   }
 
-  void pushBlockResults(ResultType type) {
+  void pushResults(ResultType type, StackHeight resultsBase) {
     if (type.empty()) {
       return;
     }
@@ -4301,13 +4290,12 @@ class BaseCompiler final : public BaseCompilerInterface {
       iter.next();
     }
     uint32_t stackResultBytes = iter.stackBytesConsumedSoFar();
-
     for (iter.switchToPrev(); !iter.done(); iter.prev()) {
       const ABIResult& result = iter.cur();
       if (!result.onStack()) {
         break;
       }
-      Stk v = captureStackResult(result, stackResultBytes);
+      Stk v = captureStackResult(result, resultsBase, stackResultBytes);
       push(v);
       if (v.kind() == Stk::MemRef) {
         stackMapGenerator_.memRefsOnStk++;
@@ -4337,19 +4325,51 @@ class BaseCompiler final : public BaseCompilerInterface {
     }
   }
 
-  // A combination of popBlockResults + pushBlockResults, to shuffle the top
-  // stack values into the expected block result locations for the given type.
-  StackHeight topBlockResults(ResultType type) {
+  void pushBlockResults(ResultType type) {
+    pushResults(type, controlItem().stackHeight);
+  }
+
+  void pushCallResults(ResultType type, const StackResultsLoc& loc) {
+    pushResults(type, fr.stackResultsBase(loc.bytes()));
+  }
+
+  // A combination of popBlockResults + pushBlockResults, used when entering a
+  // block with a control-flow join (loops) or split (if) to shuffle the
+  // fallthrough block parameters into the locations expected by the
+  // continuation.
+  void topBlockParams(ResultType type) {
+    // This function should only be called when entering a block with a
+    // control-flow join at the entry, where there are no live temporaries in
+    // the current block.
+    StackHeight base = controlItem().stackHeight;
+    MOZ_ASSERT(fr.stackResultsBase(stackConsumed(type.length())) == base);
+    popBlockResults(type, base, ContinuationKind::Fallthrough);
+    pushBlockResults(type);
+  }
+
+  // A combination of popBlockResults + pushBlockResults, used before branches
+  // where we don't know the target (br_if / br_table).  If and when the branch
+  // is taken, the stack results will be shuffled down into place.  For br_if
+  // that has fallthrough, the parameters for the untaken branch flow through to
+  // the continuation.
+  StackHeight topBranchParams(ResultType type) {
     if (type.empty()) {
       return fr.stackHeight();
     }
-    StackHeight base = fr.stackResultsBase(stackConsumed(type.length()));
-    popBlockResults(type, base, ContinuationKind::Fallthrough);
-    pushBlockResults(type);
+    // There may be temporary values that need spilling; delay computation of
+    // the stack results base until after the popRegisterResults(), which spills
+    // if needed.
+    ABIResultIter iter(type);
+    popRegisterResults(iter);
+    StackHeight base = fr.stackResultsBase(stackConsumed(iter.remaining()));
+    if (!iter.done()) {
+      popStackResults(iter, base);
+    }
+    pushResults(type, base);
     return base;
   }
 
-  // Conditional branches with fallthrough are preceded by a topBlockResults, so
+  // Conditional branches with fallthrough are preceded by a topBranchParams, so
   // we know that there are no stack results that need to be materialized.  In
   // that case, we can just shuffle the whole block down before popping the
   // stack.
@@ -4361,18 +4381,20 @@ class BaseCompiler final : public BaseCompilerInterface {
     if (ABIResultIter::HasStackResults(type)) {
       MOZ_ASSERT(stk_.length() >= type.length());
       ABIResultIter iter(type);
-      for (ABIResultIter iter(type); !iter.done(); iter.next()) {
+      for (; !iter.done(); iter.next()) {
 #ifdef DEBUG
         const ABIResult& result = iter.cur();
         const Stk& v = stk_[stk_.length() - iter.index() - 1];
         MOZ_ASSERT(v.isMem() == result.onStack());
 #endif
       }
-      stackResultBytes = iter.stackBytesConsumedSoFar();
 
-      if (stackResultBytes) {
-        // Find a free GPR to use when shuffling stack values.  If none is
-        // available, push ReturnReg and restore it after we're done.
+      stackResultBytes = iter.stackBytesConsumedSoFar();
+      MOZ_ASSERT(stackResultBytes > 0);
+
+      if (srcHeight != destHeight) {
+        // Find a free GPR to use when shuffling stack values.  If none
+        // is available, push ReturnReg and restore it after we're done.
         bool saved = false;
         RegPtr temp = ra.needTempPtr(RegPtr(ReturnReg), &saved);
         fr.shuffleStackResultsTowardFP(srcHeight, destHeight, stackResultBytes,
@@ -4632,22 +4654,12 @@ class BaseCompiler final : public BaseCompilerInterface {
       masm.store32(
           Imm32(func_.index),
           Address(masm.getStackPointer(), DebugFrame::offsetOfFuncIndex()));
-      masm.storePtr(ImmWord(0), Address(masm.getStackPointer(),
-                                        DebugFrame::offsetOfFlagsWord()));
-      // Zero out pointer values for safety, since it's not easy to establish
-      // whether they will always be defined before a GC.
+      masm.store32(Imm32(0), Address(masm.getStackPointer(),
+                                     DebugFrame::offsetOfFlags()));
 
-      // DebugFrame::resultRef_ and ::resultAnyRef_
-      masm.storePtr(ImmWord(0), Address(masm.getStackPointer(),
-                                        DebugFrame::offsetOfResults()));
-
-      // DebugFrame::cachedReturnJSValue_
-      for (size_t i = 0; i < sizeof(js::Value) / sizeof(void*); i++) {
-        masm.storePtr(ImmWord(0),
-                      Address(masm.getStackPointer(),
-                              DebugFrame::offsetOfCachedReturnJSValue() +
-                                  i * sizeof(void*)));
-      }
+      // No need to initialize cachedReturnJSValue_ or any ref-typed spilled
+      // register results, as they are traced if and only if a corresponding
+      // flag (hasCachedReturnJSValue or hasSpilledRefRegisterResult) is set.
     }
 
     // Generate a stack-overflow check and its associated stack map.
@@ -4658,8 +4670,7 @@ class BaseCompiler final : public BaseCompilerInterface {
     if (!stackMapGenerator_.generateStackmapEntriesForTrapExit(args, &extras)) {
       return false;
     }
-    if (!createStackMap("stack check", extras, masm.currentOffset(),
-                        HasRefTypedDebugFrame::No)) {
+    if (!createStackMap("stack check", extras, masm.currentOffset())) {
       return false;
     }
 
@@ -4686,13 +4697,27 @@ class BaseCompiler final : public BaseCompilerInterface {
 
     // Copy arguments from registers to stack.
     for (ABIArgIter i(args); !i.done(); i++) {
-      if (!i->argInRegister()) {
+      if (args.isSyntheticStackResultPointerArg(i.index())) {
+        // If there are stack results and the pointer to stack results
+        // was passed in a register, store it to the stack.
+        if (i->argInRegister()) {
+          fr.storeIncomingStackResultAreaPtr(RegPtr(i->gpr()));
+        }
+        // If we're in a debug frame, copy the stack result pointer arg
+        // to a well-known place.
+        if (env_.debugEnabled()) {
+          Register target = ABINonArgReturnReg0;
+          fr.loadIncomingStackResultAreaPtr(RegPtr(target));
+          size_t debugFrameOffset =
+              masm.framePushed() - DebugFrame::offsetOfFrame();
+          size_t debugStackResultsPointerOffset =
+              debugFrameOffset + DebugFrame::offsetOfStackResultsPointer();
+          masm.storePtr(target, Address(masm.getStackPointer(),
+                                        debugStackResultsPointerOffset));
+        }
         continue;
       }
-      if (args.isSyntheticStackResultPointerArg(i.index())) {
-        // The synthetic stack result area parameter was passed in a register.
-        // Store it to the stack.
-        fr.storeIncomingStackResultAreaPtr(RegPtr(i->gpr()));
+      if (!i->argInRegister()) {
         continue;
       }
       Local& l = localInfo_[args.naturalIndex(i.index())];
@@ -4755,9 +4780,7 @@ class BaseCompiler final : public BaseCompilerInterface {
   void saveRegisterReturnValues(const ResultType& resultType) {
     MOZ_ASSERT(env_.debugEnabled());
     size_t debugFrameOffset = masm.framePushed() - DebugFrame::offsetOfFrame();
-    Address resultsAddress(masm.getStackPointer(),
-                           debugFrameOffset + DebugFrame::offsetOfResults());
-
+    size_t registerResultIdx = 0;
     for (ABIResultIter i(resultType); !i.done(); i.next()) {
       const ABIResult result = i.cur();
       if (!result.inRegister()) {
@@ -4768,34 +4791,42 @@ class BaseCompiler final : public BaseCompilerInterface {
 #endif
         break;
       }
-      MOZ_ASSERT(i.index() == 0,
-                 "debug frame only has space for one stored register result");
+
+      size_t resultOffset =
+          DebugFrame::offsetOfRegisterResult(registerResultIdx);
+      Address dest(masm.getStackPointer(), debugFrameOffset + resultOffset);
       switch (result.type().kind()) {
         case ValType::I32:
-          masm.store32(RegI32(result.gpr()), resultsAddress);
+          masm.store32(RegI32(result.gpr()), dest);
           break;
         case ValType::I64:
-          masm.store64(RegI64(result.gpr64()), resultsAddress);
+          masm.store64(RegI64(result.gpr64()), dest);
           break;
         case ValType::F64:
-          masm.storeDouble(RegF64(result.fpr()), resultsAddress);
+          masm.storeDouble(RegF64(result.fpr()), dest);
           break;
         case ValType::F32:
-          masm.storeFloat32(RegF32(result.fpr()), resultsAddress);
+          masm.storeFloat32(RegF32(result.fpr()), dest);
           break;
-        case ValType::Ref:
-          masm.storePtr(RegPtr(result.gpr()), resultsAddress);
+        case ValType::Ref: {
+          uint32_t flag =
+              DebugFrame::hasSpilledRegisterRefResultBitMask(registerResultIdx);
+          // Tell Instance::traceFrame that we have a pointer to trace.
+          masm.or32(Imm32(flag),
+                    Address(masm.getStackPointer(),
+                            debugFrameOffset + DebugFrame::offsetOfFlags()));
+          masm.storePtr(RegPtr(result.gpr()), dest);
           break;
+        }
       }
+      registerResultIdx++;
     }
   }
 
   void restoreRegisterReturnValues(const ResultType& resultType) {
     MOZ_ASSERT(env_.debugEnabled());
     size_t debugFrameOffset = masm.framePushed() - DebugFrame::offsetOfFrame();
-    Address resultsAddress(masm.getStackPointer(),
-                           debugFrameOffset + DebugFrame::offsetOfResults());
-
+    size_t registerResultIdx = 0;
     for (ABIResultIter i(resultType); !i.done(); i.next()) {
       const ABIResult result = i.cur();
       if (!result.inRegister()) {
@@ -4806,23 +4837,24 @@ class BaseCompiler final : public BaseCompilerInterface {
 #endif
         break;
       }
-      MOZ_ASSERT(i.index() == 0,
-                 "debug frame only has space for one stored register result");
+      size_t resultOffset =
+          DebugFrame::offsetOfRegisterResult(registerResultIdx++);
+      Address src(masm.getStackPointer(), debugFrameOffset + resultOffset);
       switch (result.type().kind()) {
         case ValType::I32:
-          masm.load32(resultsAddress, RegI32(result.gpr()));
+          masm.load32(src, RegI32(result.gpr()));
           break;
         case ValType::I64:
-          masm.load64(resultsAddress, RegI64(result.gpr64()));
+          masm.load64(src, RegI64(result.gpr64()));
           break;
         case ValType::F64:
-          masm.loadDouble(resultsAddress, RegF64(result.fpr()));
+          masm.loadDouble(src, RegF64(result.fpr()));
           break;
         case ValType::F32:
-          masm.loadFloat32(resultsAddress, RegF32(result.fpr()));
+          masm.loadFloat32(src, RegF32(result.fpr()));
           break;
         case ValType::Ref:
-          masm.loadPtr(resultsAddress, RegPtr(result.gpr()));
+          masm.loadPtr(src, RegPtr(result.gpr()));
           break;
       }
     }
@@ -4852,27 +4884,15 @@ class BaseCompiler final : public BaseCompilerInterface {
     popStackReturnValues(resultType);
 
     if (env_.debugEnabled()) {
-      // If a return type is a ref, we need to note that in the stack maps
-      // generated here.  Note that this assumes that DebugFrame::result* and
-      // DebugFrame::cachedReturnJSValue_ are either both ref-typed or they are
-      // both not ref-typed.  It can't represent the situation where one is and
-      // the other isn't.
-      HasRefTypedDebugFrame refDebugFrame = HasRefTypedDebugFrame::No;
-      for (ValType result : funcType().results()) {
-        if (result.isReference()) {
-          refDebugFrame = HasRefTypedDebugFrame::Yes;
-          break;
-        }
-      }
       // Store and reload the return value from DebugFrame::return so that
       // it can be clobbered, and/or modified by the debug trap.
       saveRegisterReturnValues(resultType);
       insertBreakablePoint(CallSiteDesc::Breakpoint);
-      if (!createStackMap("debug: breakpoint", refDebugFrame)) {
+      if (!createStackMap("debug: breakpoint")) {
         return false;
       }
       insertBreakablePoint(CallSiteDesc::LeaveFrame);
-      if (!createStackMap("debug: leave frame", refDebugFrame)) {
+      if (!createStackMap("debug: leave frame")) {
         return false;
       }
       restoreRegisterReturnValues(resultType);
@@ -7184,7 +7204,7 @@ class BaseCompiler final : public BaseCompilerInterface {
   template <typename Cond, typename Lhs, typename Rhs>
   void jumpConditionalWithResults(BranchState* b, Cond cond, Lhs lhs, Rhs rhs) {
     if (b->hasBlockResults()) {
-      StackHeight resultsBase = topBlockResults(b->resultType);
+      StackHeight resultsBase = topBranchParams(b->resultType);
       if (b->stackHeight != resultsBase) {
         Label notTaken;
         branchTo(b->invertBranch ? cond : Assembler::InvertCondition(cond), lhs,
@@ -8745,7 +8765,7 @@ bool BaseCompiler::emitLoop() {
   if (!deadCode_) {
     // Loop entry is a control join, so shuffle the entry parameters into the
     // well-known locations.
-    topBlockResults(params);
+    topBlockParams(params);
     masm.nopAlign(CodeAlignment);
     masm.bind(&controlItem(0).label);
     // The interrupt check barfs if there are live registers.
@@ -8795,7 +8815,7 @@ bool BaseCompiler::emitIf() {
     // Because params can flow immediately to results in the case of an empty
     // "then" or "else" block, and the result of an if/then is a join in
     // general, we shuffle params eagerly to the result allocations.
-    topBlockResults(params);
+    topBlockParams(params);
     emitBranchPerform(&b);
   }
 
@@ -9065,7 +9085,7 @@ bool BaseCompiler::emitBrTable() {
 
   freeIntegerResultRegisters(branchParams);
 
-  StackHeight resultsBase = topBlockResults(branchParams);
+  StackHeight resultsBase = topBranchParams(branchParams);
 
   Label dispatchCode;
   masm.branch32(Assembler::Below, rc, Imm32(depths.length()), &dispatchCode);
@@ -9167,7 +9187,7 @@ bool BaseCompiler::emitCallArgs(const ValTypeVector& argTypes,
 
   ArgTypeVector args(argTypes, results.stackResults());
   uint32_t naturalArgCount = argTypes.length();
-  uint32_t abiArgCount = args.length();
+  uint32_t abiArgCount = args.lengthWithStackResults();
   startCallArgs(StackArgAreaSizeUnaligned(args), baselineCall);
 
   // Args are deeper on the stack than the stack result area, if any.
@@ -9259,13 +9279,14 @@ bool BaseCompiler::pushStackResultsForCall(const ResultType& type, RegPtr temp,
   uint32_t bytes = i.stackBytesConsumedSoFar();
 
   // Reserve space for the stack results.
-  uint32_t height = fr.prepareStackResultArea(fr.stackHeight(), bytes);
+  StackHeight resultsBase = fr.stackHeight();
+  uint32_t height = fr.prepareStackResultArea(resultsBase, bytes);
 
   // Push Stk values onto the value stack, and zero out Ref values.
   for (i.switchToPrev(); !i.done(); i.prev()) {
     const ABIResult& result = i.cur();
     if (result.onStack()) {
-      Stk v = captureStackResult(result, bytes);
+      Stk v = captureStackResult(result, resultsBase, bytes);
       push(v);
       if (v.kind() == Stk::MemRef) {
         stackMapGenerator_.memRefsOnStk++;
@@ -9370,7 +9391,7 @@ bool BaseCompiler::emitCall() {
   popValueStackBy(numArgs);
 
   captureResultRegisters(resultType);
-  pushBlockResults(resultType);
+  pushCallResults(resultType, results);
 
   return true;
 }
@@ -9427,7 +9448,7 @@ bool BaseCompiler::emitCallIndirect() {
   popValueStackBy(numArgs);
 
   captureResultRegisters(resultType);
-  pushBlockResults(resultType);
+  pushCallResults(resultType, results);
 
   return true;
 }
@@ -10525,7 +10546,7 @@ bool BaseCompiler::emitRefFunc() {
   }
 
   pushI32(funcIndex);
-  return emitInstanceCall(lineOrBytecode, SASigFuncRef);
+  return emitInstanceCall(lineOrBytecode, SASigRefFunc);
 }
 
 bool BaseCompiler::emitRefNull() {
@@ -13032,11 +13053,7 @@ bool js::wasm::IsValidStackMapKey(bool debugEnabled, const uint8_t* nextPC) {
           (debugEnabled && insn[-1] == 0xe320f000));  // "as_nop"
 
 #  elif defined(JS_CODEGEN_ARM64)
-#    ifdef JS_SIMULATOR_ARM64
-  const uint32_t hltInsn = 0xd45bd600;
-#    else
   const uint32_t hltInsn = 0xd4a00000;
-#    endif
   const uint32_t* insn = (const uint32_t*)nextPC;
   return ((uintptr_t(insn) & 3) == 0) &&
          (insn[-1] == hltInsn ||                      // hlt

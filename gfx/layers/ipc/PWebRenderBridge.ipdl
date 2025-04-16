@@ -68,10 +68,14 @@ parent:
   sync GetSnapshot(PTexture texture);
   async SetLayersObserverEpoch(LayersObserverEpoch childEpoch);
   async ClearCachedResources();
+  // Invalidate rendered frame
+  async InvalidateRenderedFrame();
   // Schedule a composite if one isn't already scheduled.
   async ScheduleComposite();
   // Save the frame capture to disk
   async Capture();
+  // Start capturing each frame and save to disk, and if already started, stop.
+  async ToggleCaptureSequence();
 
   // Enable/Disable transaction logging
   async SetTransactionLogging(bool aValue);

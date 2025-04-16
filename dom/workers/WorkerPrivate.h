@@ -8,30 +8,36 @@
 #ifndef mozilla_dom_workers_workerprivate_h__
 #define mozilla_dom_workers_workerprivate_h__
 
-#include "mozilla/dom/WorkerCommon.h"
-#include "mozilla/dom/WorkerStatus.h"
+#include "MainThreadUtils.h"
+#include "ScriptLoader.h"
+#include "js/ContextOptions.h"
 #include "mozilla/Attributes.h"
 #include "mozilla/CondVar.h"
 #include "mozilla/DOMEventTargetHelper.h"
+#include "mozilla/Maybe.h"
 #include "mozilla/MozPromise.h"
+#include "mozilla/PerformanceCounter.h"
 #include "mozilla/RelativeTimeline.h"
+#include "mozilla/Result.h"
 #include "mozilla/StorageAccess.h"
+#include "mozilla/ThreadBound.h"
 #include "mozilla/ThreadSafeWeakPtr.h"
 #include "mozilla/UniquePtr.h"
 #include "mozilla/UseCounter.h"
+#include "mozilla/dom/ClientSource.h"
+#include "mozilla/dom/RemoteWorkerChild.h"
+#include "mozilla/dom/Worker.h"
+#include "mozilla/dom/WorkerCommon.h"
+#include "mozilla/dom/WorkerLoadInfo.h"
+#include "mozilla/dom/WorkerScope.h"
+#include "mozilla/dom/WorkerStatus.h"
+#include "mozilla/dom/workerinternals/JSSettings.h"
+#include "mozilla/dom/workerinternals/Queue.h"
 #include "nsContentUtils.h"
 #include "nsIContentSecurityPolicy.h"
 #include "nsIEventTarget.h"
+#include "nsILoadInfo.h"
 #include "nsTObserverArray.h"
-
-#include "js/ContextOptions.h"
-#include "mozilla/dom/RemoteWorkerChild.h"
-#include "mozilla/dom/Worker.h"
-#include "mozilla/dom/WorkerLoadInfo.h"
-#include "mozilla/dom/workerinternals/JSSettings.h"
-#include "mozilla/dom/workerinternals/Queue.h"
-#include "mozilla/PerformanceCounter.h"
-#include "mozilla/ThreadBound.h"
 
 class nsIThreadInternal;
 
@@ -278,7 +284,7 @@ class WorkerPrivate : public RelativeTimeline {
   void UpdateLanguagesInternal(const nsTArray<nsString>& aLanguages);
 
   void UpdateJSWorkerMemoryParameterInternal(JSContext* aCx, JSGCParamKey key,
-                                             uint32_t aValue);
+                                             Maybe<uint32_t> aValue);
 
   enum WorkerRanOrNot { WorkerNeverRan = 0, WorkerRan };
 
@@ -450,17 +456,13 @@ class WorkerPrivate : public RelativeTimeline {
 
   void DumpCrashInformation(nsACString& aString);
 
-  bool EnsureClientSource();
+  ClientType GetClientType() const;
 
   bool EnsureCSPEventListener();
 
   void EnsurePerformanceStorage();
 
   void EnsurePerformanceCounter();
-
-  Maybe<ClientInfo> GetClientInfo() const;
-
-  const ClientState GetClientState() const;
 
   bool GetExecutionGranted() const;
   void SetExecutionGranted(bool aGranted);
@@ -470,10 +472,6 @@ class WorkerPrivate : public RelativeTimeline {
 
   JSExecutionManager* GetExecutionManager() const;
   void SetExecutionManager(JSExecutionManager* aManager);
-
-  const Maybe<ServiceWorkerDescriptor> GetController();
-
-  void Control(const ServiceWorkerDescriptor& aServiceWorker);
 
   void ExecutionReady();
 
@@ -621,17 +619,13 @@ class WorkerPrivate : public RelativeTimeline {
     return GetServiceWorkerDescriptor().Scope();
   }
 
-  nsIURI* GetBaseURI() const {
-    AssertIsOnMainThread();
-    return mLoadInfo.mBaseURI;
-  }
+  // This value should never change after the script load completes. Before
+  // then, it may only be called on the main thread.
+  nsIURI* GetBaseURI() const { return mLoadInfo.mBaseURI; }
 
   void SetBaseURI(nsIURI* aBaseURI);
 
-  nsIURI* GetResolvedScriptURI() const {
-    AssertIsOnMainThread();
-    return mLoadInfo.mResolvedScriptURI;
-  }
+  nsIURI* GetResolvedScriptURI() const { return mLoadInfo.mResolvedScriptURI; }
 
   const nsString& ServiceWorkerCacheName() const {
     MOZ_DIAGNOSTIC_ASSERT(IsServiceWorker());
@@ -720,7 +714,7 @@ class WorkerPrivate : public RelativeTimeline {
     return mLoadInfo.mChannel.forget();
   }
 
-  nsPIDOMWindowInner* GetWindow() {
+  nsPIDOMWindowInner* GetWindow() const {
     AssertIsOnMainThread();
     return mLoadInfo.mWindow;
   }
@@ -867,7 +861,7 @@ class WorkerPrivate : public RelativeTimeline {
 
   void UpdateLanguages(const nsTArray<nsString>& aLanguages);
 
-  void UpdateJSWorkerMemoryParameter(JSGCParamKey key, uint32_t value);
+  void UpdateJSWorkerMemoryParameter(JSGCParamKey key, Maybe<uint32_t> value);
 
 #ifdef JS_GC_ZEAL
   void UpdateGCZeal(uint8_t aGCZeal, uint32_t aFrequency);
@@ -915,6 +909,34 @@ class WorkerPrivate : public RelativeTimeline {
     AssertIsOnWorkerThread();
     mUseCounters[static_cast<size_t>(aUseCounter)] = true;
   }
+
+  /**
+   * COEP Methods
+   *
+   * If browser.tabs.remote.useCrossOriginEmbedderPolicy=false, these methods
+   * will, depending on the return type, return a value that will avoid
+   * assertion failures or a value that won't block loads.
+   */
+
+  Maybe<nsILoadInfo::CrossOriginEmbedderPolicy> GetEmbedderPolicy() const;
+
+  // Fails if a policy has already been set or if `aPolicy` violates the owner's
+  // policy, if an owner exists.
+  mozilla::Result<Ok, nsresult> SetEmbedderPolicy(
+      nsILoadInfo::CrossOriginEmbedderPolicy aPolicy);
+
+  // `aRequest` is the request loading the worker and must be QI-able to
+  // `nsIChannel*`. It's used to verify that the worker can indeed inherit its
+  // owner's COEP (when an owner exists).
+  //
+  // TODO: remove `aRequest`; currently, it's required because instances may not
+  // always know its final, resolved script URL or have access internally to
+  // `aRequest`.
+  void InheritOwnerEmbedderPolicyOrNull(nsIRequest* aRequest);
+
+  // Requires a policy to already have been set.
+  bool MatchEmbedderPolicy(
+      nsILoadInfo::CrossOriginEmbedderPolicy aPolicy) const;
 
  private:
   WorkerPrivate(
@@ -1019,6 +1041,10 @@ class WorkerPrivate : public RelativeTimeline {
 
   void ReportUseCounters();
 
+  UniquePtr<ClientSource> CreateClientSource();
+
+  Maybe<nsILoadInfo::CrossOriginEmbedderPolicy> GetOwnerEmbedderPolicy() const;
+
   class EventTarget;
   friend class EventTarget;
   friend class AutoSyncLoopHolder;
@@ -1033,14 +1059,14 @@ class WorkerPrivate : public RelativeTimeline {
   SharedMutex mMutex;
   mozilla::CondVar mCondVar;
 
-  WorkerPrivate* mParent;
+  WorkerPrivate* const mParent;
 
-  nsString mScriptURL;
+  const nsString mScriptURL;
 
   // This is the worker name for shared workers and dedicated workers.
   nsString mWorkerName;
 
-  WorkerType mWorkerType;
+  const WorkerType mWorkerType;
 
   // The worker is owned by its thread, which is represented here.  This is set
   // in Constructor() and emptied by WorkerFinishedRunnable, and conditionally
@@ -1164,8 +1190,6 @@ class WorkerPrivate : public RelativeTimeline {
 
     RefPtr<MemoryReporter> mMemoryReporter;
 
-    UniquePtr<ClientSource> mClientSource;
-
     // While running a nested event loop, whether a sync loop or a debugger
     // event loop we want to keep track of which global is running it, if any,
     // so runnables that run off that event loop can get at that information. In
@@ -1260,6 +1284,14 @@ class WorkerPrivate : public RelativeTimeline {
   // This is used to check if it's allowed to share the memory across the agent
   // cluster.
   const nsILoadInfo::CrossOriginOpenerPolicy mAgentClusterOpenerPolicy;
+
+  // Member variable of this class rather than the worker global scope because
+  // it's received on the main thread, but the global scope is thread-bound
+  // to the worker thread, so storing the value in the global scope would
+  // involve sacrificing the thread-bound-ness or using a WorkerRunnable, and
+  // there isn't a strong reason to store it on the global scope other than
+  // better consistency with the COEP spec.
+  Maybe<nsILoadInfo::CrossOriginEmbedderPolicy> mEmbedderPolicy;
 };
 
 class AutoSyncLoopHolder {

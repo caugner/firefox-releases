@@ -9,7 +9,6 @@
 #include "ClientInfo.h"
 #include "ClientManager.h"
 #include "ClientState.h"
-#include "mozilla/SystemGroup.h"
 #include "mozilla/ResultExtensions.h"
 #include "nsContentUtils.h"
 #include "nsDocShell.h"
@@ -323,7 +322,7 @@ void WaitForLoad(const ClientOpenWindowArgs& aArgs,
 
   // Hold the listener alive until the promise settles.
   promise->Then(
-      SystemGroup::EventTargetFor(TaskCategory::Other), __func__,
+      GetMainThreadSerialEventTarget(), __func__,
       [listener](const ClientOpResult& aResult) {},
       [listener](const CopyableErrorResult& aResult) {});
 }
@@ -346,7 +345,7 @@ void GeckoViewOpenWindow(const ClientOpenWindowArgs& aArgs,
           typedResult);
 
   promiseResult->Then(
-      SystemGroup::EventTargetFor(TaskCategory::Other), __func__,
+      GetMainThreadSerialEventTarget(), __func__,
       [aArgs, promise](nsString sessionId) {
         nsresult rv;
         nsCOMPtr<nsIWindowWatcher> wwatch =

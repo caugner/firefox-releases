@@ -11,6 +11,8 @@ const { MockRegistrar } = ChromeUtils.import(
 );
 const mainThread = Services.tm.currentThread;
 
+const gDefaultPref = Services.prefs.getDefaultBranch("");
+
 const defaultOriginAttributes = {};
 let h2Port = null;
 
@@ -152,7 +154,6 @@ class DNSListener {
       } catch (e) {
         Assert.ok(expectEarlyFail);
         this.resolve([e]);
-        return;
       }
     }
   }
@@ -1731,6 +1732,12 @@ add_task(async function test_resolve_not_confirmed() {
   // Check that the confirmation eventually completes.
   let count = 100;
   while (count > 0) {
+    if (count == 50 || count == 10) {
+      // At these two points we do a longer timeout to account for a slow
+      // response on the server side. This is usually a problem on the Android
+      // because of the increased delay between the emulator and host.
+      await new Promise(resolve => do_timeout(100 * (100 / count), resolve));
+    }
     let [inRequest, inRecord, inStatus] = await new DNSListener(
       `ip${count}.example.org`,
       undefined,
@@ -1770,4 +1777,172 @@ add_task(async function test_fqdn_get() {
   await new DNSListener("fqdn_get.example.org.", "9.8.7.6");
 
   Services.prefs.setBoolPref("network.trr.useGET", false);
+});
+
+add_task(async function test_detected_uri() {
+  dns.clearCache(true);
+  Services.prefs.setIntPref("network.trr.mode", 3);
+  Services.prefs.clearUserPref("network.trr.uri");
+  let defaultURI = gDefaultPref.getCharPref("network.trr.uri");
+  gDefaultPref.setCharPref(
+    "network.trr.uri",
+    `https://foo.example.com:${h2Port}/doh?responseIP=3.4.5.6`
+  );
+  await new DNSListener("domainA.example.org.", "3.4.5.6");
+  dns.setDetectedTrrURI(
+    `https://foo.example.com:${h2Port}/doh?responseIP=1.2.3.4`
+  );
+  await new DNSListener("domainB.example.org.", "1.2.3.4");
+  gDefaultPref.setCharPref("network.trr.uri", defaultURI);
+});
+
+add_task(async function test_detected_uri_userSet() {
+  dns.clearCache(true);
+  Services.prefs.setIntPref("network.trr.mode", 3);
+  Services.prefs.setCharPref(
+    "network.trr.uri",
+    `https://foo.example.com:${h2Port}/doh?responseIP=4.5.6.7`
+  );
+  await new DNSListener("domainA.example.org.", "4.5.6.7");
+  // This should be a no-op, since we have a user-set URI
+  dns.setDetectedTrrURI(
+    `https://foo.example.com:${h2Port}/doh?responseIP=1.2.3.4`
+  );
+  await new DNSListener("domainB.example.org.", "4.5.6.7");
+});
+
+add_task(async function test_detected_uri_link_change() {
+  dns.clearCache(true);
+  Services.prefs.setIntPref("network.trr.mode", 3);
+  Services.prefs.clearUserPref("network.trr.uri");
+  let defaultURI = gDefaultPref.getCharPref("network.trr.uri");
+  gDefaultPref.setCharPref(
+    "network.trr.uri",
+    `https://foo.example.com:${h2Port}/doh?responseIP=3.4.5.6`
+  );
+  await new DNSListener("domainA.example.org.", "3.4.5.6");
+  dns.setDetectedTrrURI(
+    `https://foo.example.com:${h2Port}/doh?responseIP=1.2.3.4`
+  );
+  await new DNSListener("domainB.example.org.", "1.2.3.4");
+
+  let networkLinkService = {
+    platformDNSIndications: 0,
+    QueryInterface: ChromeUtils.generateQI([Ci.nsINetworkLinkService]),
+  };
+
+  Services.obs.notifyObservers(
+    networkLinkService,
+    "network:link-status-changed",
+    "changed"
+  );
+
+  await new DNSListener("domainC.example.org.", "3.4.5.6");
+
+  gDefaultPref.setCharPref("network.trr.uri", defaultURI);
+});
+
+add_task(async function test_pref_changes() {
+  Services.prefs.clearUserPref("network.trr.uri");
+  let defaultURI = gDefaultPref.getCharPref("network.trr.uri");
+
+  async function doThenCheckURI(closure, expectedURI, expectChange = false) {
+    let uriChanged;
+    if (expectChange) {
+      uriChanged = observerPromise("network:trr-uri-changed");
+    }
+    closure();
+    if (expectChange) {
+      await uriChanged;
+    }
+    equal(dns.currentTrrURI, expectedURI);
+  }
+
+  // setting the default value of the pref should be reflected in the URI
+  await doThenCheckURI(() => {
+    gDefaultPref.setCharPref(
+      "network.trr.uri",
+      `https://foo.example.com:${h2Port}/doh?default`
+    );
+  }, `https://foo.example.com:${h2Port}/doh?default`);
+
+  // the user set value should be reflected in the URI
+  await doThenCheckURI(() => {
+    Services.prefs.setCharPref(
+      "network.trr.uri",
+      `https://foo.example.com:${h2Port}/doh?user`
+    );
+  }, `https://foo.example.com:${h2Port}/doh?user`);
+
+  // A user set pref is selected, so it should be chosen instead of the rollout
+  await doThenCheckURI(
+    () => {
+      Services.prefs.setCharPref(
+        "doh-rollout.uri",
+        `https://foo.example.com:${h2Port}/doh?rollout`
+      );
+    },
+    `https://foo.example.com:${h2Port}/doh?user`,
+    false
+  );
+
+  // There is no user set pref, so we go to the rollout pref
+  await doThenCheckURI(() => {
+    Services.prefs.clearUserPref("network.trr.uri");
+  }, `https://foo.example.com:${h2Port}/doh?rollout`);
+
+  // When the URI is set by the rollout addon, detection is allowed
+  await doThenCheckURI(() => {
+    dns.setDetectedTrrURI(`https://foo.example.com:${h2Port}/doh?detected`);
+  }, `https://foo.example.com:${h2Port}/doh?detected`);
+
+  // Should switch back to the default provided by the rollout addon
+  await doThenCheckURI(() => {
+    let networkLinkService = {
+      platformDNSIndications: 0,
+      QueryInterface: ChromeUtils.generateQI([Ci.nsINetworkLinkService]),
+    };
+    Services.obs.notifyObservers(
+      networkLinkService,
+      "network:link-status-changed",
+      "changed"
+    );
+  }, `https://foo.example.com:${h2Port}/doh?rollout`);
+
+  // Again the user set pref should be chosen
+  await doThenCheckURI(() => {
+    Services.prefs.setCharPref(
+      "network.trr.uri",
+      `https://foo.example.com:${h2Port}/doh?user`
+    );
+  }, `https://foo.example.com:${h2Port}/doh?user`);
+
+  // Detection should not work with a user set pref
+  await doThenCheckURI(
+    () => {
+      dns.setDetectedTrrURI(`https://foo.example.com:${h2Port}/doh?detected`);
+    },
+    `https://foo.example.com:${h2Port}/doh?user`,
+    false
+  );
+
+  // Should stay the same on network changes
+  await doThenCheckURI(
+    () => {
+      let networkLinkService = {
+        platformDNSIndications: 0,
+        QueryInterface: ChromeUtils.generateQI([Ci.nsINetworkLinkService]),
+      };
+      Services.obs.notifyObservers(
+        networkLinkService,
+        "network:link-status-changed",
+        "changed"
+      );
+    },
+    `https://foo.example.com:${h2Port}/doh?user`,
+    false
+  );
+
+  // Restore the pref
+  gDefaultPref.setCharPref("network.trr.uri", defaultURI);
 });

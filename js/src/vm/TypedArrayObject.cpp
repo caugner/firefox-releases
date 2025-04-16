@@ -37,6 +37,7 @@
 #include "util/Text.h"
 #include "util/Windows.h"
 #include "vm/ArrayBufferObject.h"
+#include "vm/FunctionFlags.h"  // js::FunctionFlags
 #include "vm/GlobalObject.h"
 #include "vm/Interpreter.h"
 #include "vm/JSContext.h"
@@ -206,7 +207,7 @@ size_t TypedArrayObject::objectMoved(JSObject* obj, JSObject* old) {
 
   Nursery& nursery = obj->runtimeFromMainThread()->gc.nursery();
   if (!nursery.isInside(buf)) {
-    nursery.removeMallocedBuffer(buf);
+    nursery.removeMallocedBufferDuringMinorGC(buf);
     size_t nbytes = RoundUp(newObj->byteLength(), sizeof(Value));
     AddCellMemory(newObj, nbytes, MemoryUse::TypedArrayElements);
     return 0;

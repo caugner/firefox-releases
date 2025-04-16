@@ -171,18 +171,21 @@ BrowserBridgeChild::RecvSetEmbeddedDocAccessibleCOMProxy(
 }
 
 mozilla::ipc::IPCResult BrowserBridgeChild::RecvMaybeFireEmbedderLoadEvents(
-    bool aFireLoadAtEmbeddingElement) {
+    EmbedderElementEventType aFireEventAtEmbeddingElement) {
   RefPtr<Element> owner = mFrameLoader->GetOwnerContent();
   if (!owner) {
     return IPC_OK();
   }
 
-  if (aFireLoadAtEmbeddingElement) {
+  if (aFireEventAtEmbeddingElement == EmbedderElementEventType::LoadEvent) {
     nsEventStatus status = nsEventStatus_eIgnore;
     WidgetEvent event(/* aIsTrusted = */ true, eLoad);
     event.mFlags.mBubbles = false;
     event.mFlags.mCancelable = false;
     EventDispatcher::Dispatch(owner, nullptr, &event, nullptr, &status);
+  } else if (aFireEventAtEmbeddingElement ==
+             EmbedderElementEventType::ErrorEvent) {
+    mFrameLoader->FireErrorEvent();
   }
 
   UnblockOwnerDocsLoadEvent();
@@ -222,27 +225,26 @@ mozilla::ipc::IPCResult BrowserBridgeChild::RecvScrollRectIntoView(
   return IPC_OK();
 }
 
-mozilla::ipc::IPCResult BrowserBridgeChild::RecvSubFrameCrashed(
-    const MaybeDiscarded<BrowsingContext>& aContext) {
-  if (aContext.IsNullOrDiscarded()) {
+mozilla::ipc::IPCResult BrowserBridgeChild::RecvSubFrameCrashed() {
+  if (RefPtr<nsFrameLoaderOwner> frameLoaderOwner =
+          do_QueryObject(mFrameLoader->GetOwnerContent())) {
+    frameLoaderOwner->SubframeCrashed();
+  }
+  return IPC_OK();
+}
+
+mozilla::ipc::IPCResult BrowserBridgeChild::RecvAddBlockedNodeByClassifier() {
+  RefPtr<Element> owner = mFrameLoader->GetOwnerContent();
+  if (!owner) {
     return IPC_OK();
   }
 
-  RefPtr<nsFrameLoaderOwner> frameLoaderOwner =
-      do_QueryObject(aContext.get()->GetEmbedderElement());
-  if (!frameLoaderOwner) {
+  RefPtr<Document> doc = mFrameLoader->GetOwnerDoc();
+  if (!doc) {
     return IPC_OK();
   }
 
-  IgnoredErrorResult rv;
-  RemotenessOptions options;
-  options.mError.Construct(static_cast<uint32_t>(NS_ERROR_FRAME_CRASHED));
-  frameLoaderOwner->ChangeRemoteness(options, rv);
-
-  if (NS_WARN_IF(rv.Failed())) {
-    return IPC_FAIL(this, "Remoteness change failed");
-  }
-
+  doc->AddBlockedNodeByClassifier(owner);
   return IPC_OK();
 }
 

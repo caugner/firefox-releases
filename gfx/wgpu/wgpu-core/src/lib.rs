@@ -2,6 +2,13 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
+#![warn(
+    trivial_casts,
+    trivial_numeric_casts,
+    unused_extern_crates,
+    unused_qualifications
+)]
+
 pub mod backend {
     #[cfg(windows)]
     pub use gfx_backend_dx11::Backend as Dx11;
@@ -19,7 +26,7 @@ pub mod backend {
 
 pub mod binding_model;
 pub mod command;
-pub mod conv;
+mod conv;
 pub mod device;
 pub mod hub;
 pub mod id;
@@ -28,7 +35,7 @@ pub mod pipeline;
 pub mod power;
 pub mod resource;
 pub mod swap_chain;
-pub mod track;
+mod track;
 
 pub use hal::pso::read_spirv;
 
@@ -96,8 +103,7 @@ impl LifeGuard {
 
     /// Returns `true` if the resource is still needed by the user.
     fn use_at(&self, submit_index: SubmissionIndex) -> bool {
-        self.submission_index
-            .store(submit_index, Ordering::Release);
+        self.submission_index.store(submit_index, Ordering::Release);
         self.ref_count.is_some()
     }
 }
@@ -106,36 +112,6 @@ impl LifeGuard {
 struct Stored<T> {
     value: T,
     ref_count: RefCount,
-}
-
-#[repr(C)]
-#[derive(Clone, Copy, Debug)]
-pub struct Origin3d {
-    pub x: u32,
-    pub y: u32,
-    pub z: u32,
-}
-
-impl Origin3d {
-    pub const ZERO: Self = Origin3d {
-        x: 0,
-        y: 0,
-        z: 0,
-    };
-}
-
-impl Default for Origin3d {
-    fn default() -> Self {
-        Origin3d::ZERO
-    }
-}
-
-#[repr(C)]
-#[derive(Clone, Copy, Debug)]
-pub struct Extent3d {
-    pub width: u32,
-    pub height: u32,
-    pub depth: u32,
 }
 
 #[repr(C)]

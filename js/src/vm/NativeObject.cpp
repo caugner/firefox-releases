@@ -23,6 +23,7 @@
 #include "js/Value.h"
 #include "util/Memory.h"
 #include "vm/EqualityOperations.h"  // js::SameValue
+#include "vm/PlainObject.h"         // js::PlainObject
 #include "vm/TypedArrayObject.h"
 
 #include "gc/Nursery-inl.h"
@@ -424,15 +425,15 @@ bool NativeObject::addDenseElementPure(JSContext* cx, NativeObject* obj) {
   return true;
 }
 
-static inline void FreeSlots(JSContext* cx, NativeObject* obj,
-                             HeapSlot* slots) {
+static inline void FreeSlots(JSContext* cx, NativeObject* obj, HeapSlot* slots,
+                             size_t nbytes) {
   if (cx->isHelperThreadContext()) {
     js_free(slots);
   } else if (obj->isTenured()) {
     MOZ_ASSERT(!cx->nursery().isInside(slots));
     js_free(slots);
   } else {
-    cx->nursery().freeBuffer(slots);
+    cx->nursery().freeBuffer(slots, nbytes);
   }
 }
 
@@ -441,9 +442,9 @@ void NativeObject::shrinkSlots(JSContext* cx, uint32_t oldCount,
   MOZ_ASSERT(newCount < oldCount);
 
   if (newCount == 0) {
-    RemoveCellMemory(this, numDynamicSlots() * sizeof(HeapSlot),
-                     MemoryUse::ObjectSlots);
-    FreeSlots(cx, this, slots_);
+    size_t nbytes = numDynamicSlots() * sizeof(HeapSlot);
+    RemoveCellMemory(this, nbytes, MemoryUse::ObjectSlots);
+    FreeSlots(cx, this, slots_, nbytes);
     slots_ = nullptr;
     return;
   }
@@ -2945,7 +2946,7 @@ bool js::NativeDeleteProperty(JSContext* cx, HandleNativeObject obj,
 
 bool js::CopyDataPropertiesNative(JSContext* cx, HandlePlainObject target,
                                   HandleNativeObject from,
-                                  HandlePlainObject excludedItems,
+                                  Handle<PlainObject*> excludedItems,
                                   bool* optimized) {
   MOZ_ASSERT(
       !target->isDelegate(),

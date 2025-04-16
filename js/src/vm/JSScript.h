@@ -31,16 +31,18 @@
 #include "frontend/SourceNotes.h"  // SrcNote
 #include "gc/Barrier.h"
 #include "gc/Rooting.h"
-#include "jit/IonCode.h"
+#include "jit/JitCode.h"
 #include "js/CompileOptions.h"
 #include "js/UbiNode.h"
 #include "js/UniquePtr.h"
 #include "js/Utility.h"
 #include "util/StructuredSpewer.h"
+#include "util/TrailingArray.h"
 #include "vm/BigIntType.h"
 #include "vm/BytecodeIterator.h"
 #include "vm/BytecodeLocation.h"
 #include "vm/BytecodeUtil.h"
+#include "vm/GeneratorAndAsyncKind.h"  // GeneratorKind, FunctionAsyncKind
 #include "vm/JSAtom.h"
 #include "vm/NativeObject.h"
 #include "vm/Scope.h"
@@ -63,7 +65,7 @@ class LCovSource;
 
 namespace jit {
 class AutoKeepJitScripts;
-struct BaselineScript;
+class BaselineScript;
 struct IonScriptCounts;
 class JitScript;
 }  // namespace jit
@@ -221,8 +223,8 @@ using SourceData = mozilla::UniquePtr<void, JS::FreePolicy>;
 
 template <typename Unit>
 inline SourceData ToSourceData(EntryUnits<Unit> chars) {
-  static_assert(std::is_same<SourceData::DeleterType,
-                             typename EntryUnits<Unit>::DeleterType>::value,
+  static_assert(std::is_same_v<SourceData::DeleterType,
+                               typename EntryUnits<Unit>::DeleterType>,
                 "EntryUnits and SourceData must share the same deleter "
                 "type, that need not know the type of the data being freed, "
                 "for the upcast below to be safe");
@@ -1266,9 +1268,6 @@ class ScriptSourceObject : public NativeObject {
   };
 };
 
-enum class GeneratorKind : bool { NotGenerator, Generator };
-enum class FunctionAsyncKind : bool { SyncFunction, AsyncFunction };
-
 // ScriptWarmUpData represents a pointer-sized field in BaseScript that stores
 // one of the following using low-bit tags:
 //
@@ -1411,31 +1410,27 @@ struct FieldInitializers {
 // [SMDOC] - JSScript data layout (unshared)
 //
 // PrivateScriptData stores variable-length data associated with a script.
-// Abstractly a PrivateScriptData consists of all these arrays:
+// Abstractly a PrivateScriptData consists of the following:
 //
 //   * A non-empty array of GCCellPtr in gcthings()
 //
 // Accessing this array just requires calling the appropriate public
 // Span-computing function.
-class alignas(uintptr_t) PrivateScriptData final {
+class alignas(uintptr_t) PrivateScriptData final : public TrailingArray {
+ private:
   uint32_t ngcthings = 0;
 
   js::FieldInitializers fieldInitializers_ = js::FieldInitializers::Invalid();
 
-  // Translate an offset into a concrete pointer.
-  template <typename T>
-  T* offsetToPointer(size_t offset) {
-    uintptr_t base = reinterpret_cast<uintptr_t>(this);
-    uintptr_t elem = base + offset;
-    return reinterpret_cast<T*>(elem);
+  // End of fields.
+
+ private:
+  // Layout helpers
+  Offset gcThingsOffset() { return offsetOfGCThings(); }
+  Offset endOffset() const {
+    uintptr_t size = ngcthings * sizeof(JS::GCCellPtr);
+    return offsetOfGCThings() + size;
   }
-
-  // Helpers for creating initializing trailing data
-  template <typename T>
-  void initElements(size_t offset, size_t length);
-
-  // Size to allocate
-  static size_t AllocationSize(uint32_t ngcthings);
 
   // Initialize header and PackedSpans
   explicit PrivateScriptData(uint32_t ngcthings);
@@ -1447,7 +1442,7 @@ class alignas(uintptr_t) PrivateScriptData final {
 
   // Accessors for typed array spans.
   mozilla::Span<JS::GCCellPtr> gcthings() {
-    size_t offset = offsetOfGCThings();
+    Offset offset = offsetOfGCThings();
     return mozilla::MakeSpan(offsetToPointer<JS::GCCellPtr>(offset), ngcthings);
   }
 
@@ -1483,7 +1478,7 @@ class alignas(uintptr_t) PrivateScriptData final {
 };
 
 // Script data that is shareable across a JSRuntime.
-class RuntimeScriptData final {
+class alignas(uintptr_t) RuntimeScriptData final : public TrailingArray {
   // This class is reference counted as follows: each pointer from a JSScript
   // counts as one reference plus there may be one reference from the shared
   // script data table.
@@ -1499,14 +1494,12 @@ class RuntimeScriptData final {
   friend class ::JSScript;
 
  private:
-  // Layout of trailing arrays.
-  size_t atomOffset() const { return offsetOfAtoms(); }
-
-  // Size to allocate.
-  static size_t AllocationSize(uint32_t natoms);
-
-  template <typename T>
-  void initElements(size_t offset, size_t length);
+  // Layout helpers
+  Offset atomsOffset() { return offsetOfAtoms(); }
+  Offset endOffset() const {
+    uintptr_t size = natoms_ * sizeof(GCPtrAtom);
+    return offsetOfAtoms() + size;
+  }
 
   // Initialize to GC-safe state.
   explicit RuntimeScriptData(uint32_t natoms);
@@ -1530,15 +1523,13 @@ class RuntimeScriptData final {
 
   uint32_t natoms() const { return natoms_; }
   GCPtrAtom* atoms() {
-    uintptr_t base = reinterpret_cast<uintptr_t>(this);
-    return reinterpret_cast<GCPtrAtom*>(base + atomOffset());
+    Offset offset = offsetOfAtoms();
+    return offsetToPointer<GCPtrAtom>(offset);
   }
 
   mozilla::Span<const GCPtrAtom> atomsSpan() const {
-    uintptr_t base = reinterpret_cast<uintptr_t>(this);
-    const GCPtrAtom* p =
-        reinterpret_cast<const GCPtrAtom*>(base + atomOffset());
-    return mozilla::MakeSpan(p, natoms_);
+    Offset offset = offsetOfAtoms();
+    return mozilla::MakeSpan(offsetToPointer<GCPtrAtom>(offset), natoms_);
   }
 
   static constexpr size_t offsetOfAtoms() { return sizeof(RuntimeScriptData); }
@@ -1626,13 +1617,22 @@ struct SourceExtent {
         lineno(lineno),
         column(column) {}
 
+  static SourceExtent makeGlobalExtent(uint32_t len) {
+    return SourceExtent(0, len, 0, len, 1, 0);
+  }
+
+  static SourceExtent makeGlobalExtent(
+      uint32_t len, const JS::ReadOnlyCompileOptions& options) {
+    return SourceExtent(0, len, 0, len, options.lineno, options.column);
+  }
+
   uint32_t sourceStart = 0;
   uint32_t sourceEnd = 0;
   uint32_t toStringStart = 0;
   uint32_t toStringEnd = 0;
 
   // Line and column of |sourceStart_| position.
-  uint32_t lineno = 0;
+  uint32_t lineno = 1;
   uint32_t column = 0;  // Count of Code Points
 };
 
@@ -1722,7 +1722,8 @@ class BaseScript : public gc::TenuredCell {
   // Pointer to baseline->method()->raw(), ion->method()->raw(), a wasm jit
   // entry, the JIT's EnterInterpreter stub, or the lazy link stub. Must be
   // non-null (except on no-jit builds).
-  uint8_t* jitCodeRaw_ = nullptr;
+  using HeaderWithCodePtr = gc::CellHeaderWithNonGCPointer<uint8_t>;
+  HeaderWithCodePtr headerAndJitCodeRaw_;
 
   // Object that determines what Realm this script is compiled for. For function
   // scripts this is the canonical function, otherwise it is the GlobalObject of
@@ -1770,7 +1771,7 @@ class BaseScript : public gc::TenuredCell {
   BaseScript(uint8_t* stubEntry, JSObject* functionOrGlobal,
              ScriptSourceObject* sourceObject, SourceExtent extent,
              uint32_t immutableFlags)
-      : jitCodeRaw_(stubEntry),
+      : headerAndJitCodeRaw_(stubEntry),
         functionOrGlobal_(functionOrGlobal),
         sourceObject_(sourceObject),
         extent_(extent),
@@ -1780,6 +1781,8 @@ class BaseScript : public gc::TenuredCell {
     MOZ_ASSERT(extent_.sourceStart <= extent_.sourceEnd);
     MOZ_ASSERT(extent_.sourceEnd <= extent_.toStringEnd);
   }
+
+  void setJitCodeRaw(uint8_t* code) { headerAndJitCodeRaw_.setPtr(code); }
 
  public:
   static BaseScript* New(JSContext* cx, js::HandleObject functionOrGlobal,
@@ -1803,7 +1806,7 @@ class BaseScript : public gc::TenuredCell {
       const Vector<frontend::FunctionIndex>& innerFunctionIndexes,
       const SourceExtent& extent, uint32_t immutableFlags);
 
-  uint8_t* jitCodeRaw() const { return jitCodeRaw_; }
+  uint8_t* jitCodeRaw() const { return headerAndJitCodeRaw_.ptr(); }
   bool isUsingInterpreterTrampoline(JSRuntime* rt) const;
 
   // Canonical function for the script, if it has a function. For top-level
@@ -1929,38 +1932,35 @@ setterLevel:                                                                  \
   IMMUTABLE_FLAG_GETTER(noScriptRval, NoScriptRval)
   IMMUTABLE_FLAG_GETTER(selfHosted, SelfHosted)
   IMMUTABLE_FLAG_GETTER_SETTER_PUBLIC(treatAsRunOnce, TreatAsRunOnce)
-  IMMUTABLE_FLAG_GETTER_SETTER_PUBLIC(forceStrict, ForceStrict)
-  IMMUTABLE_FLAG_GETTER_SETTER_PUBLIC(strict, Strict)
-  IMMUTABLE_FLAG_GETTER(hasNonSyntacticScope, HasNonSyntacticScope)
-  IMMUTABLE_FLAG_GETTER_SETTER_PUBLIC(bindingsAccessedDynamically,
-                                      BindingsAccessedDynamically)
-  IMMUTABLE_FLAG_GETTER_SETTER_PUBLIC(funHasExtensibleScope,
-                                      FunHasExtensibleScope)
-  IMMUTABLE_FLAG_GETTER_SETTER_PUBLIC(hasCallSiteObj, HasCallSiteObj)
-  IMMUTABLE_FLAG_GETTER_SETTER_PUBLIC(hasModuleGoal, HasModuleGoal)
+  IMMUTABLE_FLAG_GETTER(forceStrict, ForceStrict)
+  IMMUTABLE_FLAG_GETTER(strict, Strict)
+  IMMUTABLE_FLAG_GETTER(bindingsAccessedDynamically,
+                        BindingsAccessedDynamically)
+  IMMUTABLE_FLAG_GETTER(funHasExtensibleScope, FunHasExtensibleScope)
+  IMMUTABLE_FLAG_GETTER(hasCallSiteObj, HasCallSiteObj)
+  IMMUTABLE_FLAG_GETTER(hasModuleGoal, HasModuleGoal)
   IMMUTABLE_FLAG_GETTER_SETTER_PUBLIC(functionHasThisBinding,
                                       FunctionHasThisBinding)
-  // FunctionHasExtraBodyVarScope: custom logic below.
-  IMMUTABLE_FLAG_GETTER_SETTER_PUBLIC(hasMappedArgsObj, HasMappedArgsObj)
+  IMMUTABLE_FLAG_GETTER(hasMappedArgsObj, HasMappedArgsObj)
   IMMUTABLE_FLAG_GETTER(hasInnerFunctions, HasInnerFunctions)
-  IMMUTABLE_FLAG_GETTER_SETTER_PUBLIC(needsHomeObject, NeedsHomeObject)
-  IMMUTABLE_FLAG_GETTER_SETTER_PUBLIC(isDerivedClassConstructor,
-                                      IsDerivedClassConstructor)
+  IMMUTABLE_FLAG_GETTER(needsHomeObject, NeedsHomeObject)
+  IMMUTABLE_FLAG_GETTER(isDerivedClassConstructor, IsDerivedClassConstructor)
   IMMUTABLE_FLAG_GETTER_SETTER_PUBLIC(isLikelyConstructorWrapper,
                                       IsLikelyConstructorWrapper)
   IMMUTABLE_FLAG_GETTER(isGenerator, IsGenerator)
   IMMUTABLE_FLAG_GETTER(isAsync, IsAsync)
-  IMMUTABLE_FLAG_GETTER_SETTER_PUBLIC(hasRest, HasRest)
+  IMMUTABLE_FLAG_GETTER(hasRest, HasRest)
   IMMUTABLE_FLAG_GETTER(argumentsHasVarBinding, ArgumentsHasVarBinding)
+  IMMUTABLE_FLAG_GETTER(alwaysNeedsArgsObj, AlwaysNeedsArgsObj)
+  IMMUTABLE_FLAG_GETTER(shouldDeclareArguments, ShouldDeclareArguments)
   IMMUTABLE_FLAG_GETTER(isForEval, IsForEval)
   IMMUTABLE_FLAG_GETTER(isModule, IsModule)
+  IMMUTABLE_FLAG_GETTER(isFunction, IsFunction)
+  IMMUTABLE_FLAG_GETTER(hasDirectEval, HasDirectEval)
+  IMMUTABLE_FLAG_GETTER(hasNonSyntacticScope, HasNonSyntacticScope)
+  // FunctionHasExtraBodyVarScope: custom logic below.
   IMMUTABLE_FLAG_GETTER(needsFunctionEnvironmentObjects,
                         NeedsFunctionEnvironmentObjects)
-  IMMUTABLE_FLAG_GETTER_SETTER_PUBLIC(shouldDeclareArguments,
-                                      ShouldDeclareArguments)
-  IMMUTABLE_FLAG_GETTER(isFunction, IsFunction)
-  IMMUTABLE_FLAG_GETTER_SETTER_PUBLIC(hasDirectEval, HasDirectEval)
-  IMMUTABLE_FLAG_GETTER(alwaysNeedsArgsObj, AlwaysNeedsArgsObj)
 
   MUTABLE_FLAG_GETTER_SETTER(hasRunOnce, HasRunOnce)
   MUTABLE_FLAG_GETTER_SETTER(hasBeenCloned, HasBeenCloned)
@@ -2097,6 +2097,7 @@ setterLevel:                                                                  \
 
  public:
   static const JS::TraceKind TraceKind = JS::TraceKind::Script;
+  const gc::CellHeader& cellHeader() const { return headerAndJitCodeRaw_; }
 
   void traceChildren(JSTracer* trc);
   void finalize(JSFreeOp* fop);
@@ -2115,7 +2116,8 @@ setterLevel:                                                                  \
 
   // JIT accessors
   static constexpr size_t offsetOfJitCodeRaw() {
-    return offsetof(BaseScript, jitCodeRaw_);
+    return offsetof(BaseScript, headerAndJitCodeRaw_) +
+           HeaderWithCodePtr::offsetOfPtr();
   }
   static constexpr size_t offsetOfPrivateData() {
     return offsetof(BaseScript, data_);
@@ -2124,11 +2126,11 @@ setterLevel:                                                                  \
     return offsetof(BaseScript, sharedData_);
   }
   static size_t offsetOfImmutableFlags() {
-    static_assert(offsetof(ImmutableScriptFlags, flags_) == 0,
-                  "Required for JIT flag access");
+    static_assert(sizeof(ImmutableScriptFlags) == sizeof(uint32_t));
     return offsetof(BaseScript, immutableFlags_);
   }
   static constexpr size_t offsetOfMutableFlags() {
+    static_assert(sizeof(MutableScriptFlags) == sizeof(uint32_t));
     return offsetof(BaseScript, mutableFlags_);
   }
   static constexpr size_t offsetOfWarmUpData() {

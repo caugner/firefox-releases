@@ -19,10 +19,10 @@ XPCOMUtils.defineLazyModuleGetters(this, {
 });
 
 XPCOMUtils.defineLazyGetter(this, "log", () => {
-  const { AboutWelcomeLog } = ChromeUtils.import(
-    "resource://activity-stream/aboutwelcome/lib/AboutWelcomeLog.jsm"
+  const { Logger } = ChromeUtils.import(
+    "resource://messaging-system/lib/Logger.jsm"
   );
-  return new AboutWelcomeLog("AboutWelcomeParent.jsm");
+  return new Logger("AboutWelcomeParent");
 });
 
 XPCOMUtils.defineLazyGetter(
@@ -105,7 +105,7 @@ class AboutWelcomeParent extends JSWindowActorParent {
         reason: this.AboutWelcomeObserver.terminateReason,
         page: "about:welcome",
       },
-      message_id: "ABOUT_WELCOME_SESSION_END",
+      message_id: this.AWMesssageId,
       id: "ABOUT_WELCOME",
     });
   }
@@ -122,6 +122,7 @@ class AboutWelcomeParent extends JSWindowActorParent {
     log.debug(`Received content event: ${type}`);
     switch (type) {
       case "AWPage:SET_WELCOME_MESSAGE_SEEN":
+        this.AWMesssageId = data;
         try {
           Services.prefs.setBoolPref(DID_SEE_ABOUT_WELCOME_PREF, true);
         } catch (e) {

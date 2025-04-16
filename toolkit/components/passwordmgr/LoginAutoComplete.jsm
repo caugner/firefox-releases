@@ -227,6 +227,18 @@ class GeneratedPasswordAutocompleteItem extends AutocompleteItem {
   }
 }
 
+class ImportableLoginsAutocompleteItem extends AutocompleteItem {
+  constructor(browserId, hostname) {
+    super("importableLogins");
+    this.label = browserId;
+    this.comment = hostname;
+  }
+
+  removeFromStorage() {
+    Services.telemetry.recordEvent("exp_import", "event", "delete", this.label);
+  }
+}
+
 class LoginsFooterAutocompleteItem extends AutocompleteItem {
   constructor(formHostname, telemetryEventData) {
     super("loginsFooter");
@@ -255,6 +267,7 @@ function LoginAutoCompleteResult(
   {
     generatedPassword,
     willAutoSaveGeneratedPassword,
+    importable,
     isSecure,
     actor,
     hasBeenTypePassword,
@@ -263,6 +276,8 @@ function LoginAutoCompleteResult(
   }
 ) {
   let hidingFooterOnPWFieldAutoOpened = false;
+  const importableBrowsers =
+    importable?.state === "import" && importable?.browsers;
   function isFooterEnabled() {
     // We need to check LoginHelper.enabled here since the insecure warning should
     // appear even if pwmgr is disabled but the footer should never appear in that case.
@@ -278,6 +293,7 @@ function LoginAutoCompleteResult(
     }
 
     if (
+      !importableBrowsers &&
       !matchingLogins.length &&
       !generatedPassword &&
       hasBeenTypePassword &&
@@ -331,6 +347,16 @@ function LoginAutoCompleteResult(
         )
       );
     }
+
+    // Suggest importing logins if there are none found.
+    if (!logins.length && importableBrowsers) {
+      this._rows.push(
+        ...importableBrowsers.map(
+          browserId => new ImportableLoginsAutocompleteItem(browserId, hostname)
+        )
+      );
+    }
+
     this._rows.push(
       new LoginsFooterAutocompleteItem(hostname, telemetryEventData)
     );
@@ -340,6 +366,18 @@ function LoginAutoCompleteResult(
   if (this.matchCount > 0) {
     this.searchResult = Ci.nsIAutoCompleteResult.RESULT_SUCCESS;
     this.defaultIndex = 0;
+    // For experiment telemetry, record how many importable logins were
+    // available when showing the popup and some extra data.
+    Services.telemetry.recordEvent(
+      "exp_import",
+      "impression",
+      "popup",
+      (importable?.browsers?.length ?? 0) + "",
+      {
+        loginsCount: logins.length + "",
+        searchLength: aSearchString.length + "",
+      }
+    );
   } else if (hidingFooterOnPWFieldAutoOpened) {
     // We use a failure result so that the empty results aren't re-used for when
     // the user tries to manually open the popup (we want the footer in that case).
@@ -414,7 +452,7 @@ LoginAutoCompleteResult.prototype = {
     return this.getValueAt(index);
   },
 
-  removeValueAt(index, removeFromDB) {
+  removeValueAt(index) {
     if (index < 0 || index >= this.matchCount) {
       throw new Error("Index out of range.");
     }
@@ -425,9 +463,7 @@ LoginAutoCompleteResult.prototype = {
       this.defaultIndex--;
     }
 
-    if (removeFromDB) {
-      removedItem.removeFromStorage();
-    }
+    removedItem.removeFromStorage();
   },
 };
 
@@ -497,6 +533,7 @@ LoginAutoComplete.prototype = {
 
       let {
         generatedPassword,
+        importable,
         logins,
         willAutoSaveGeneratedPassword,
       } = await autoCompleteLookupPromise;
@@ -527,6 +564,7 @@ LoginAutoComplete.prototype = {
         {
           generatedPassword,
           willAutoSaveGeneratedPassword,
+          importable,
           actor: loginManagerActor,
           isSecure,
           hasBeenTypePassword,
@@ -646,6 +684,7 @@ LoginAutoComplete.prototype = {
 
     return {
       generatedPassword: result.generatedPassword,
+      importable: result.importable,
       logins: LoginHelper.vanillaObjectsToLogins(result.logins),
       willAutoSaveGeneratedPassword: result.willAutoSaveGeneratedPassword,
     };
@@ -693,7 +732,7 @@ let gAutoCompleteListener = {
       }
 
       case "FormAutoComplete:PopupClosed": {
-        this.onPopupClosed(data.selectedRowStyle, target);
+        this.onPopupClosed(data, target);
         let { chromeEventHandler } = target.docShell;
         chromeEventHandler.removeEventListener("keydown", this, true);
         break;
@@ -717,23 +756,39 @@ let gAutoCompleteListener = {
     this.keyDownEnterForInput = focusedElement;
   },
 
-  onPopupClosed(selectedRowStyle, window) {
+  onPopupClosed({ selectedRowComment, selectedRowStyle }, window) {
     let focusedElement = formFillController.focusedInput;
     let eventTarget = this.keyDownEnterForInput;
-    if (
-      !eventTarget ||
-      eventTarget !== focusedElement ||
-      selectedRowStyle != "loginsFooter"
-    ) {
-      this.keyDownEnterForInput = null;
+    this.keyDownEnterForInput = null;
+    if (!eventTarget || eventTarget !== focusedElement) {
       return;
     }
 
     let loginManager = window.windowGlobalChild.getActor("LoginManager");
-    let hostname = eventTarget.ownerDocument.documentURIObject.host;
-    loginManager.sendAsyncMessage("PasswordManager:OpenPreferences", {
-      hostname,
-      entryPoint: "autocomplete",
-    });
+    switch (selectedRowStyle) {
+      case "importableLogins":
+        loginManager.sendAsyncMessage(
+          "PasswordManager:OpenMigrationWizard",
+          selectedRowComment
+        );
+        Services.telemetry.recordEvent(
+          "exp_import",
+          "event",
+          "enter",
+          selectedRowComment
+        );
+        break;
+      case "loginsFooter":
+        loginManager.sendAsyncMessage("PasswordManager:OpenPreferences", {
+          entryPoint: "autocomplete",
+        });
+        Services.telemetry.recordEvent(
+          "exp_import",
+          "event",
+          "enter",
+          "loginsFooter"
+        );
+        break;
+    }
   },
 };

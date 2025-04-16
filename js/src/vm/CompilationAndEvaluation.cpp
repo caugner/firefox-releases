@@ -31,6 +31,7 @@
 #include "util/CompleteFile.h"     // js::FileContents, js::ReadCompleteFile
 #include "util/StringBuffer.h"     // js::StringBuffer
 #include "vm/EnvironmentObject.h"  // js::CreateNonSyntacticEnvironmentChain
+#include "vm/FunctionFlags.h"      // js::FunctionFlags
 #include "vm/Interpreter.h"        // js::Execute
 #include "vm/JSContext.h"          // JSContext
 
@@ -72,8 +73,10 @@ static JSScript* CompileSourceBuffer(JSContext* cx,
     return nullptr;
   }
 
+  SourceExtent extent =
+      SourceExtent::makeGlobalExtent(srcBuf.length(), options);
   frontend::GlobalSharedContext globalsc(cx, scopeKind, compilationInfo,
-                                         compilationInfo.directives);
+                                         compilationInfo.directives, extent);
   return frontend::CompileGlobalScript(compilationInfo, globalsc, srcBuf);
 }
 
@@ -259,7 +262,7 @@ class FunctionCompiler {
   }
 
   JSFunction* finish(HandleObjectVector envChain,
-                     const ReadOnlyCompileOptions& options) {
+                     const ReadOnlyCompileOptions& optionsArg) {
     if (!funStr_.append(FunctionConstructorFinalBrace)) {
       return nullptr;
     }
@@ -298,6 +301,10 @@ class FunctionCompiler {
     // non-syntactic scope.
     MOZ_ASSERT_IF(!IsGlobalLexicalEnvironment(enclosingEnv),
                   enclosingScope->hasOnChain(ScopeKind::NonSyntactic));
+
+    CompileOptions options(cx_, optionsArg);
+    options.setNonSyntacticScope(
+        enclosingScope->hasOnChain(ScopeKind::NonSyntactic));
 
     if (!js::frontend::CompileStandaloneFunction(
             cx_, &fun, options, newSrcBuf, mozilla::Some(parameterListEnd_),
@@ -472,6 +479,7 @@ static bool EvaluateSourceBuffer(JSContext* cx, ScopeKind scopeKind,
   MOZ_ASSERT_IF(!IsGlobalLexicalEnvironment(env),
                 scopeKind == ScopeKind::NonSyntactic);
 
+  options.setNonSyntacticScope(scopeKind == ScopeKind::NonSyntactic);
   options.setIsRunOnce(true);
 
   RootedScript script(cx);
@@ -482,8 +490,10 @@ static bool EvaluateSourceBuffer(JSContext* cx, ScopeKind scopeKind,
       return false;
     }
 
+    SourceExtent extent =
+        SourceExtent::makeGlobalExtent(srcBuf.length(), options);
     frontend::GlobalSharedContext globalsc(cx, scopeKind, compilationInfo,
-                                           compilationInfo.directives);
+                                           compilationInfo.directives, extent);
     script = frontend::CompileGlobalScript(compilationInfo, globalsc, srcBuf);
     if (!script) {
       return false;

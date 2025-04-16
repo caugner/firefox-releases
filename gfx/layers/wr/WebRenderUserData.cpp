@@ -14,6 +14,7 @@
 #include "mozilla/layers/WebRenderMessages.h"
 #include "mozilla/layers/IpcResourceUpdateQueue.h"
 #include "mozilla/layers/SharedSurfacesChild.h"
+#include "mozilla/webgpu/WebGPUChild.h"
 #include "nsDisplayListInvalidation.h"
 #include "nsIFrame.h"
 #include "WebRenderCanvasRenderer.h"
@@ -390,6 +391,30 @@ ImageContainer* WebRenderCanvasData::GetImageContainer() {
 }
 
 void WebRenderCanvasData::ClearImageContainer() { mContainer = nullptr; }
+
+WebRenderLocalCanvasData::WebRenderLocalCanvasData(
+    RenderRootStateManager* aManager, nsDisplayItem* aItem)
+    : WebRenderUserData(aManager, aItem) {}
+
+WebRenderLocalCanvasData::~WebRenderLocalCanvasData() = default;
+
+void WebRenderLocalCanvasData::RequestFrameReadback() {
+  if (mGpuBridge) {
+    mGpuBridge->SwapChainPresent(mExternalImageId, mGpuTextureId);
+  }
+}
+
+void WebRenderLocalCanvasData::RefreshExternalImage() {
+  if (!mDirty) {
+    return;
+  }
+
+  const ImageIntRect dirtyRect(0, 0, mDescriptor.width, mDescriptor.height);
+  // Update the WR external image, forcing the composition of a new frame.
+  mManager->AsyncResourceUpdates().UpdatePrivateExternalImage(
+      mExternalImageId, mImageKey, mDescriptor, dirtyRect);
+  mDirty = false;
+}
 
 WebRenderRemoteData::WebRenderRemoteData(RenderRootStateManager* aManager,
                                          nsDisplayItem* aItem)

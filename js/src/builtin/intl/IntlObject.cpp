@@ -41,6 +41,7 @@
 #include "vm/JSAtom.h"
 #include "vm/JSContext.h"
 #include "vm/JSObject.h"
+#include "vm/PlainObject.h"  // js::PlainObject
 #include "vm/StringType.h"
 
 #include "vm/JSObject-inl.h"
@@ -800,7 +801,7 @@ static JSObject* CreateIntlObject(JSContext* cx, JSProtoKey key) {
 
   // The |Intl| object is just a plain object with some "static" function
   // properties and some constructor properties.
-  return NewObjectWithGivenProto(cx, &IntlClass, proto, SingletonObject);
+  return NewSingletonObjectWithGivenProto(cx, &IntlClass, proto);
 }
 
 /**

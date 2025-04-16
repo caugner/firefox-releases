@@ -1432,7 +1432,7 @@ with only_when(compile_environment):
            help='Use system libvpx (located with pkgconfig)')
 
     with only_when('--with-system-libvpx'):
-        vpx = pkg_check_modules('MOZ_LIBVPX', 'vpx >= 1.7.0')
+        vpx = pkg_check_modules('MOZ_LIBVPX', 'vpx >= 1.8.0')
 
         check_header('vpx/vpx_decoder.h', flags=vpx.cflags, onerror=lambda: die(
             "Couldn't find vpx/vpx_decoder.h, which is required to build "
@@ -1788,7 +1788,7 @@ set_define('MOZ_HAS_REMOTE', has_remote)
 # ==============================================================
 
 def wasm_sandboxing_libraries():
-    return ('graphite',)
+    return ('graphite', 'ogg',)
 
 option('--with-wasm-sandboxed-libraries',
        env='WASM_SANDBOXED_LIBRARIES',
@@ -1988,6 +1988,19 @@ def glean(milestone):
 
 set_config('MOZ_GLEAN', True, when=glean)
 set_define('MOZ_GLEAN', True, when=glean)
+
+
+# New WebExtension `storage.sync` implementation in Rust
+# ==============================================================
+
+@depends(milestone)
+def new_webext_storage(milestone):
+    if milestone.is_nightly:
+        return True
+
+set_config('MOZ_NEW_WEBEXT_STORAGE', True, when=new_webext_storage)
+set_define('MOZ_NEW_WEBEXT_STORAGE', True, when=new_webext_storage)
+
 
 # dump_syms
 # ==============================================================

@@ -72,6 +72,9 @@
         },
         "Locked": {
           "type": "boolean"
+        },
+        "PrivateBrowsing": {
+          "type": "boolean"
         }
       }
     },
@@ -376,6 +379,18 @@
       }
     },
 
+    "EncryptedMediaExtensions": {
+      "type": "object",
+      "properties": {
+        "Enabled": {
+          "type": "boolean"
+        },
+        "Locked": {
+          "type": "boolean"
+        }
+      }
+    },
+
     "Extensions": {
       "type": "object",
       "properties": {
@@ -600,6 +615,18 @@
 
     "PasswordManagerEnabled": {
       "type": "boolean"
+    },
+
+    "PDFjs": {
+      "type": "object",
+      "properties": {
+        "Enabled": {
+          "type": "boolean"
+        },
+        "EnablePermissions": {
+          "type": "boolean"
+        }
+      }
     },
 
     "Permissions": {

@@ -39,6 +39,10 @@ var localProviderModules = {
   UrlbarProviderPrivateSearch:
     "resource:///modules/UrlbarProviderPrivateSearch.jsm",
   UrlbarProviderSearchTips: "resource:///modules/UrlbarProviderSearchTips.jsm",
+  UrlbarProviderSearchSuggestions:
+    "resource:///modules/UrlbarProviderSearchSuggestions.jsm",
+  UrlbarProviderTokenAliasEngines:
+    "resource:///modules/UrlbarProviderTokenAliasEngines.jsm",
   UrlbarProviderTopSites: "resource:///modules/UrlbarProviderTopSites.jsm",
 };
 
@@ -292,7 +296,7 @@ class Query {
     let providers = [];
     let maxPriority = -1;
     for (let provider of this.providers) {
-      if (provider.tryMethod("isActive", this.context)) {
+      if (await provider.tryMethod("isActive", this.context)) {
         let priority = provider.tryMethod("getPriority", this.context);
         if (priority >= maxPriority) {
           // The provider's priority is at least as high as the max.

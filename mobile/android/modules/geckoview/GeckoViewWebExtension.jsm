@@ -237,7 +237,21 @@ class GeckoViewConnection {
   }
 }
 
-function exportExtension(aAddon, aPermissions, aSourceURI) {
+async function filterPromptPermissions(aPermissions) {
+  if (!aPermissions) {
+    return [];
+  }
+  const promptPermissions = [];
+  for (const permission of aPermissions) {
+    if (!(await Extension.shouldPromptFor(permission))) {
+      continue;
+    }
+    promptPermissions.push(permission);
+  }
+  return promptPermissions;
+}
+
+async function exportExtension(aAddon, aPermissions, aSourceURI) {
   const {
     creator,
     description,
@@ -281,13 +295,16 @@ function exportExtension(aAddon, aPermissions, aSourceURI) {
     baseURL = policy.getURL();
     privateBrowsingAllowed = policy.privateBrowsingAllowed;
   }
+  const promptPermissions = aPermissions
+    ? await filterPromptPermissions(aPermissions.permissions)
+    : [];
   return {
     webExtensionId: id,
     locationURI: aSourceURI != null ? aSourceURI.spec : "",
     isBuiltIn: isBuiltin,
     metaData: {
-      permissions: aPermissions ? aPermissions.permissions : [],
       origins: aPermissions ? aPermissions.origins : [],
+      promptPermissions,
       description,
       enabled: isActive,
       disabledFlags,
@@ -383,15 +400,26 @@ class ExtensionInstallListener {
     this.resolve({ installError, state });
   }
 
-  onInstallEnded(aInstall, aAddon) {
+  async onInstallEnded(aInstall, aAddon) {
     const addonId = aAddon.id;
     const { sourceURI } = aInstall;
-    const onReady = (name, { id }) => {
+
+    if (aAddon.userDisabled || aAddon.embedderDisabled) {
+      const extension = await exportExtension(
+        aAddon,
+        aAddon.userPermissions,
+        sourceURI
+      );
+      this.resolve({ extension });
+      return; // we don't want to wait until extension is enabled, so return early.
+    }
+
+    const onReady = async (name, { id }) => {
       if (id != addonId) {
         return;
       }
       Management.off("ready", onReady);
-      const extension = exportExtension(
+      const extension = await exportExtension(
         aAddon,
         aAddon.userPermissions,
         sourceURI
@@ -410,7 +438,7 @@ class ExtensionPromptObserver {
   async permissionPrompt(aInstall, aAddon, aInfo) {
     const { sourceURI } = aInstall;
     const { permissions } = aInfo;
-    const extension = exportExtension(aAddon, permissions, sourceURI);
+    const extension = await exportExtension(aAddon, permissions, sourceURI);
     const response = await EventDispatcher.instance.sendRequestForResult({
       type: "GeckoView:WebExtension:InstallPrompt",
       extension,
@@ -461,8 +489,7 @@ class MobileWindowTracker extends EventEmitter {
   }
 
   setTabActive(aWindow, aActive) {
-    const { browser, BrowserApp, windowUtils } = aWindow;
-    const tab = BrowserApp.selectedTab;
+    const { browser, tab, windowUtils } = aWindow;
     tab.active = aActive;
 
     if (aActive) {
@@ -493,19 +520,26 @@ async function updatePromptHandler(aInfo) {
 
   const difference = Extension.comparePermissions(oldPerms, newPerms);
 
+  // We only care about permissions that we can prompt the user for
+  const newPermissions = await filterPromptPermissions(difference.permissions);
+  const { origins: newOrigins } = difference;
+
   // If there are no new permissions, just proceed
-  if (!difference.origins.length && !difference.permissions.length) {
+  if (!newOrigins.length && !newPermissions.length) {
     return;
   }
 
-  const currentlyInstalled = exportExtension(aInfo.existingAddon, oldPerms);
-  const updatedExtension = exportExtension(aInfo.addon, newPerms);
+  const currentlyInstalled = await exportExtension(
+    aInfo.existingAddon,
+    oldPerms
+  );
+  const updatedExtension = await exportExtension(aInfo.addon, newPerms);
   const response = await EventDispatcher.instance.sendRequestForResult({
     type: "GeckoView:WebExtension:UpdatePrompt",
     currentlyInstalled,
     updatedExtension,
-    newPermissions: difference.permissions,
-    newOrigins: difference.origins,
+    newPermissions,
+    newOrigins,
   });
 
   if (!response.allow) {
@@ -828,7 +862,7 @@ var GeckoViewWebExtension = {
         }
 
         aCallback.onSuccess({
-          extension: exportExtension(
+          extension: await exportExtension(
             extension,
             extension.userPermissions,
             /* aSourceURI */ null
@@ -932,9 +966,12 @@ var GeckoViewWebExtension = {
       case "GeckoView:WebExtension:List": {
         try {
           const addons = await AddonManager.getAddonsByTypes(["extension"]);
-          const extensions = addons.map(addon =>
-            exportExtension(addon, addon.userPermissions, null)
+          const extensions = await Promise.all(
+            addons.map(addon =>
+              exportExtension(addon, addon.userPermissions, null)
+            )
           );
+
           aCallback.onSuccess({ extensions });
         } catch (ex) {
           debug`Failed list ${ex}`;

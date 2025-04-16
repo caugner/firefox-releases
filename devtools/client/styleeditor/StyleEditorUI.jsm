@@ -119,6 +119,10 @@ function StyleEditorUI(toolbox, panelDoc, cssProperties) {
 }
 
 StyleEditorUI.prototype = {
+  get cssProperties() {
+    return this._cssProperties;
+  },
+
   get currentTarget() {
     return this._toolbox.targetList.targetFront;
   },
@@ -340,11 +344,17 @@ StyleEditorUI.prototype = {
           return editor;
         }
 
-        const { href, nodeHref, actorID: id, sourceMapURL } = styleSheet;
-        const url = href || nodeHref;
+        const {
+          href,
+          nodeHref,
+          actorID: id,
+          sourceMapURL,
+          sourceMapBaseURL,
+        } = styleSheet;
         const sources = await sourceMapService.getOriginalURLs({
           id,
-          url,
+          url: href || nodeHref,
+          sourceMapBaseURL,
           sourceMapURL,
         });
         // A single generated sheet might map to multiple original

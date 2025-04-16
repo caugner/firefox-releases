@@ -7,6 +7,7 @@
 
 #include "nsIGfxInfo.h"
 #include "nsTArray.h"
+#include "nsUnicharUtils.h"
 
 using namespace mozilla::widget;
 
@@ -474,7 +475,7 @@ const GfxDeviceFamily* GfxDriverInfo::GetDeviceFamily(DeviceFamily id) {
       APPEND_DEVICE(0x163d);
       APPEND_DEVICE(0x163e);
 
-#ifdef MOZ_WIDGET_GTK
+#if defined(MOZ_WIDGET_GTK) || defined(NIGHTLY_BUILD)
       // Gen7.5 not allowed until bug 1576637 is resolved.
       APPEND_DEVICE(0x0412);
       APPEND_DEVICE(0x0416);
@@ -486,9 +487,20 @@ const GfxDeviceFamily* GfxDriverInfo::GetDeviceFamily(DeviceFamily id) {
       APPEND_DEVICE(0x0a1a);
       APPEND_DEVICE(0x0a1b);
       APPEND_DEVICE(0x0a1e);
+
+      // Gen7 gt2
+      APPEND_DEVICE(0x0162);
+      APPEND_DEVICE(0x0166);
+      APPEND_DEVICE(0x016a);
 #endif
       [[fallthrough]];
     case DeviceFamily::IntelModernRolloutWebRender:
+      // skylake gt1
+      APPEND_DEVICE(0x1902);
+      APPEND_DEVICE(0x1906);
+      APPEND_DEVICE(0x190a);
+      APPEND_DEVICE(0x190e);
+
       // skylake gt2+
       APPEND_DEVICE(0x1912);
       APPEND_DEVICE(0x1913);
@@ -508,10 +520,22 @@ const GfxDeviceFamily* GfxDriverInfo::GetDeviceFamily(DeviceFamily id) {
       APPEND_DEVICE(0x193b);
       APPEND_DEVICE(0x193d);
 
-      // kabylake gt2+
+      // kabylake gt1
+      APPEND_DEVICE(0x5902);
+      APPEND_DEVICE(0x5906);
+      APPEND_DEVICE(0x5908);
+      APPEND_DEVICE(0x590a);
+      APPEND_DEVICE(0x590b);
+      APPEND_DEVICE(0x590e);
+
+      // kabylake gt1.5
+      APPEND_DEVICE(0x5913);
+      APPEND_DEVICE(0x5915);
+      APPEND_DEVICE(0x5917);
+
+      // kabylake gt2
       APPEND_DEVICE(0x5912);
       APPEND_DEVICE(0x5916);
-      APPEND_DEVICE(0x5917);
       APPEND_DEVICE(0x591a);
       APPEND_DEVICE(0x591b);
       APPEND_DEVICE(0x591c);
@@ -522,6 +546,23 @@ const GfxDeviceFamily* GfxDriverInfo::GetDeviceFamily(DeviceFamily id) {
       APPEND_DEVICE(0x5923);
       APPEND_DEVICE(0x5927);
       APPEND_DEVICE(0x593b);
+
+      // coffeelake gt1
+      APPEND_DEVICE(0x3e90);
+      APPEND_DEVICE(0x3e93);
+      APPEND_DEVICE(0x3e99);
+      APPEND_DEVICE(0x3e9c);
+      APPEND_DEVICE(0x3ea1);
+      APPEND_DEVICE(0x3ea4);
+      APPEND_DEVICE(0x9b21);
+      APPEND_DEVICE(0x9ba0);
+      APPEND_DEVICE(0x9ba2);
+      APPEND_DEVICE(0x9ba4);
+      APPEND_DEVICE(0x9ba5);
+      APPEND_DEVICE(0x9ba8);
+      APPEND_DEVICE(0x9baa);
+      APPEND_DEVICE(0x9bab);
+      APPEND_DEVICE(0x9bac);
 
       // coffeelake gt2+
       APPEND_RANGE(0x3e91, 0x3e92);
@@ -540,6 +581,8 @@ const GfxDeviceFamily* GfxDriverInfo::GetDeviceFamily(DeviceFamily id) {
       APPEND_DEVICE(0x9bc8);
       APPEND_RANGE(0x9bca, 0x9bcc);
 
+      // icelake gt1,gt1.5,gt2
+      APPEND_RANGE(0x8a50, 0x8a5d);
       break;
     case DeviceFamily::AtiRolloutWebRender:
       APPEND_RANGE(0x6600, 0x66af);
@@ -551,6 +594,20 @@ const GfxDeviceFamily* GfxDriverInfo::GetDeviceFamily(DeviceFamily id) {
       APPEND_RANGE(0x7310, 0x731f);
       APPEND_RANGE(0x9830, 0x986f);
       APPEND_RANGE(0x9900, 0x99ff);
+      // Raven
+      APPEND_DEVICE(0x15dd);
+      APPEND_DEVICE(0x15d8);
+
+#if defined(NIGHTLY_BUILD)
+      // Evergreen
+      APPEND_RANGE(0x6840, 0x684b);
+      APPEND_RANGE(0x6850, 0x685f);
+      APPEND_RANGE(0x6880, 0x68ff);
+      APPEND_RANGE(0x9800, 0x980a);
+      APPEND_RANGE(0x9640, 0x964f);
+      APPEND_RANGE(0x6720, 0x677f);
+#endif
+
       break;
     // This should never happen, but we get a warning if we don't handle this.
     case DeviceFamily::Max:

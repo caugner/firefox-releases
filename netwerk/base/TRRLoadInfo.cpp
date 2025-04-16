@@ -32,7 +32,7 @@ TRRLoadInfo::GetLoadingPrincipal(nsIPrincipal** aLoadingPrincipal) {
   return NS_ERROR_NOT_IMPLEMENTED;
 }
 
-nsIPrincipal* TRRLoadInfo::LoadingPrincipal() { return nullptr; }
+nsIPrincipal* TRRLoadInfo::VirtualGetLoadingPrincipal() { return nullptr; }
 
 NS_IMETHODIMP
 TRRLoadInfo::GetTriggeringPrincipal(nsIPrincipal** aTriggeringPrincipal) {
@@ -607,9 +607,43 @@ TRRLoadInfo::SetHttpsOnlyStatus(uint32_t aHttpsOnlyStatus) {
 }
 
 NS_IMETHODIMP
+TRRLoadInfo::GetHasValidUserGestureActivation(
+    bool* aHasValidUserGestureActivation) {
+  return NS_ERROR_NOT_IMPLEMENTED;
+}
+
+NS_IMETHODIMP
+TRRLoadInfo::SetHasValidUserGestureActivation(
+    bool aHasValidUserGestureActivation) {
+  return NS_ERROR_NOT_IMPLEMENTED;
+}
+
+NS_IMETHODIMP
 TRRLoadInfo::GetInternalContentPolicyType(nsContentPolicyType* aResult) {
   *aResult = mInternalContentPolicyType;
   return NS_OK;
+}
+
+NS_IMETHODIMP
+TRRLoadInfo::GetAllowDeprecatedSystemRequests(
+    bool* aAllowDeprecatedSystemRequests) {
+  return NS_ERROR_NOT_IMPLEMENTED;
+}
+
+NS_IMETHODIMP
+TRRLoadInfo::SetAllowDeprecatedSystemRequests(
+    bool aAllowDeprecatedSystemRequests) {
+  return NS_ERROR_NOT_IMPLEMENTED;
+}
+
+NS_IMETHODIMP
+TRRLoadInfo::GetParserCreatedScript(bool* aParserCreatedScript) {
+  return NS_ERROR_NOT_IMPLEMENTED;
+}
+
+NS_IMETHODIMP
+TRRLoadInfo::SetParserCreatedScript(bool aParserCreatedScript) {
+  return NS_ERROR_NOT_IMPLEMENTED;
 }
 
 }  // namespace net

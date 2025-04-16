@@ -146,6 +146,9 @@ struct LoadInfoArgs
   nsString                    cspNonce;
   bool                        skipContentSniffing;
   uint32_t                    httpsOnlyStatus;
+  bool                        hasValidUserGestureActivation;
+  bool                        allowDeprecatedSystemRequests;
+  bool                        parserCreatedScript;
   bool                        isFromProcessingFrameAttributes;
   CookieJarSettingsArgs       cookieJarSettings;
   uint32_t                    requestBlockingReason;
@@ -185,8 +188,22 @@ struct ParentLoadInfoForwarderArgs
   // that flag is set to true so we skip content sniffing for that browsing
   bool skipContentSniffing;
 
-  // Upgrade state of HTTPS-Only Mode
   uint32_t httpsOnlyStatus;
+
+  // Returns true if at the time of the loadinfo construction the document
+  // that triggered this load has the bit hasValidTransientUserGestureActivation
+  // set or the load was triggered from External. (Mostly this bool is used
+  // in the context of Sec-Fetch-User.)
+  bool hasValidUserGestureActivation;
+
+  // The SystemPrincipal is disallowed to make requests to the public web
+  // and all requests will be cancelled. Setting this flag to true prevents
+  // the request from being cancelled.
+  bool allowDeprecatedSystemRequests;
+
+  // Only ever returns true if the loadinfo is of TYPE_SCRIPT and
+  // the script was created by the HTML parser.
+  bool parserCreatedScript;
 
   // We must also note that the tainting value was explicitly set
   // by the service worker.
@@ -415,15 +432,16 @@ struct CookieStruct
 
 struct DocumentChannelCreationArgs {
   DocShellLoadStateInit loadState;
-  LoadInfoArgs loadInfo;
   TimeStamp asyncOpenTime;
   uint64_t channelId;
-  uint32_t loadFlags;
   uint32_t cacheKey;
   bool pluginsAllowed;
   nsDOMNavigationTiming? timing;
   IPCClientInfo? initialClientInfo;
   uint64_t outerWindowId;
+  bool hasValidTransientUserAction;
+  bool uriModified;
+  bool isXFOError;
 };
 
 struct DocumentChannelRedirect {

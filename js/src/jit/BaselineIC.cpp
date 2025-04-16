@@ -272,9 +272,11 @@ bool JitScript::initICEntriesAndBytecodeTypeMap(JSContext* cx,
         break;
       }
       case JSOp::BitNot:
+      case JSOp::Pos:
       case JSOp::Neg:
       case JSOp::Inc:
-      case JSOp::Dec: {
+      case JSOp::Dec:
+      case JSOp::ToNumeric: {
         ICStub* stub = alloc.newStub<ICUnaryArith_Fallback>(Kind::UnaryArith);
         if (!addIC(loc, stub)) {
           return false;
@@ -694,6 +696,68 @@ void ICStub::trace(JSTracer* trc) {
     }
     default:
       break;
+  }
+}
+
+bool ICStub::stubDataHasNurseryPointers(const CacheIRStubInfo* stubInfo) {
+  MOZ_ASSERT(IsCacheIRKind(kind()));
+
+  uint32_t field = 0;
+  size_t offset = 0;
+  while (true) {
+    StubField::Type fieldType = stubInfo->fieldType(field);
+    switch (fieldType) {
+      case StubField::Type::RawWord:
+      case StubField::Type::RawInt64:
+      case StubField::Type::DOMExpandoGeneration:
+        break;
+      case StubField::Type::Shape:
+        static_assert(std::is_convertible_v<Shape*, gc::TenuredCell*>,
+                      "Code assumes shapes are tenured");
+        break;
+      case StubField::Type::ObjectGroup:
+        static_assert(std::is_convertible_v<ObjectGroup*, gc::TenuredCell*>,
+                      "Code assumes groups are tenured");
+        break;
+      case StubField::Type::Symbol:
+        static_assert(std::is_convertible_v<JS::Symbol*, gc::TenuredCell*>,
+                      "Code assumes symbols are tenured");
+        break;
+      case StubField::Type::JSObject: {
+        JSObject* obj = stubInfo->getStubField<ICStub, JSObject*>(this, offset);
+        if (IsInsideNursery(obj)) {
+          return true;
+        }
+        break;
+      }
+      case StubField::Type::String: {
+        JSString* str = stubInfo->getStubField<ICStub, JSString*>(this, offset);
+        if (IsInsideNursery(str)) {
+          return true;
+        }
+        break;
+      }
+      case StubField::Type::Id: {
+#ifdef DEBUG
+        // jsid never contains nursery-allocated things.
+        jsid id = stubInfo->getStubField<ICStub, jsid>(this, offset);
+        MOZ_ASSERT_IF(id.isGCThing(),
+                      !IsInsideNursery(id.toGCCellPtr().asCell()));
+#endif
+        break;
+      }
+      case StubField::Type::Value: {
+        Value v = stubInfo->getStubField<ICStub, JS::Value>(this, offset);
+        if (v.isGCThing() && IsInsideNursery(v.toGCThing())) {
+          return true;
+        }
+        break;
+      }
+      case StubField::Type::Limit:
+        return false;  // Done. Didn't find any nursery pointers.
+    }
+    field++;
+    offset += StubField::sizeInBytes(fieldType);
   }
 }
 
@@ -3423,30 +3487,43 @@ bool DoUnaryArithFallback(JSContext* cx, BaselineFrame* frame,
   JSOp op = JSOp(*pc);
   FallbackICSpew(cx, stub, "UnaryArith(%s)", CodeName(op));
 
-  // The unary operations take a copied val because the original value is needed
-  // below.
-  RootedValue valCopy(cx, val);
   switch (op) {
     case JSOp::BitNot: {
-      if (!BitNot(cx, &valCopy, res)) {
+      res.set(val);
+      if (!BitNot(cx, res, res)) {
+        return false;
+      }
+      break;
+    }
+    case JSOp::Pos: {
+      res.set(val);
+      if (!ToNumber(cx, res)) {
         return false;
       }
       break;
     }
     case JSOp::Neg: {
-      if (!NegOperation(cx, &valCopy, res)) {
+      res.set(val);
+      if (!NegOperation(cx, res, res)) {
         return false;
       }
       break;
     }
     case JSOp::Inc: {
-      if (!IncOperation(cx, &valCopy, res)) {
+      if (!IncOperation(cx, val, res)) {
         return false;
       }
       break;
     }
     case JSOp::Dec: {
-      if (!DecOperation(cx, &valCopy, res)) {
+      if (!DecOperation(cx, val, res)) {
+        return false;
+      }
+      break;
+    }
+    case JSOp::ToNumeric: {
+      res.set(val);
+      if (!ToNumeric(cx, res)) {
         return false;
       }
       break;
@@ -3454,12 +3531,13 @@ bool DoUnaryArithFallback(JSContext* cx, BaselineFrame* frame,
     default:
       MOZ_CRASH("Unexpected op");
   }
+  MOZ_ASSERT(res.isNumeric());
 
   if (res.isDouble()) {
     stub->setSawDoubleResult();
   }
 
-  TryAttachStub<UnaryArithIRGenerator>("UniryArith", cx, frame, stub,
+  TryAttachStub<UnaryArithIRGenerator>("UnaryArith", cx, frame, stub,
                                        BaselineCacheIRStubKind::Regular, op,
                                        val, res);
   return true;
@@ -3570,7 +3648,7 @@ bool DoBinaryArithFallback(JSContext* cx, BaselineFrame* frame,
       break;
     }
     case JSOp::Ursh: {
-      if (!UrshOperation(cx, &lhsCopy, &rhsCopy, ret)) {
+      if (!UrshValues(cx, &lhsCopy, &rhsCopy, ret)) {
         return false;
       }
       break;

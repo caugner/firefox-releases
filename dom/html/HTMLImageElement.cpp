@@ -139,9 +139,9 @@ NS_IMPL_ISUPPORTS_CYCLE_COLLECTION_INHERITED(HTMLImageElement,
 
 NS_IMPL_ELEMENT_CLONE(HTMLImageElement)
 
-bool HTMLImageElement::IsInteractiveHTMLContent(bool aIgnoreTabindex) const {
+bool HTMLImageElement::IsInteractiveHTMLContent() const {
   return HasAttr(kNameSpaceID_None, nsGkAtoms::usemap) ||
-         nsGenericHTMLElement::IsInteractiveHTMLContent(aIgnoreTabindex);
+         nsGenericHTMLElement::IsInteractiveHTMLContent();
 }
 
 void HTMLImageElement::AsyncEventRunning(AsyncEventDispatcher* aEvent) {
@@ -535,7 +535,7 @@ bool HTMLImageElement::IsHTMLFocusable(bool aWithMouse, bool* aIsFocusable,
 #ifdef XP_MACOSX
       (!aWithMouse || nsFocusManager::sMouseFocusesFormControl) &&
 #endif
-      (tabIndex >= 0 || HasAttr(kNameSpaceID_None, nsGkAtoms::tabindex));
+      (tabIndex >= 0 || GetTabIndexAttrValue().isSome());
 
   return false;
 }

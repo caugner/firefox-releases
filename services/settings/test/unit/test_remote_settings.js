@@ -69,11 +69,7 @@ function run_test() {
     handleResponse
   );
   server.registerPathHandler(
-    "/v1/buckets/main/collections/password-fields",
-    handleResponse
-  );
-  server.registerPathHandler(
-    "/v1/buckets/main/collections/password-fields/records",
+    "/v1/buckets/main/collections/password-fields/changeset",
     handleResponse
   );
   server.registerPathHandler(
@@ -81,15 +77,11 @@ function run_test() {
     handleResponse
   );
   server.registerPathHandler(
-    "/v1/buckets/main/collections/language-dictionaries/records",
+    "/v1/buckets/main/collections/language-dictionaries/changeset",
     handleResponse
   );
   server.registerPathHandler(
-    "/v1/buckets/main/collections/with-local-fields",
-    handleResponse
-  );
-  server.registerPathHandler(
-    "/v1/buckets/main/collections/with-local-fields/records",
+    "/v1/buckets/main/collections/with-local-fields/changeset",
     handleResponse
   );
   server.registerPathHandler("/fake-x5u", handleResponse);
@@ -186,13 +178,18 @@ add_task(async function test_sync_event_is_sent_even_if_up_to_date() {
     // Skip test: we don't ship remote settings dumps on Android (see package-manifest).
     return;
   }
+  // First, determine what is the dump timestamp. Sync will load it.
+  // Use a timestamp inferior to latest record in dump.
+  await clientWithDump._importJSONDump();
+  const uptodateTimestamp = await clientWithDump.db.getLastModified();
+  await clear_state();
+
+  // Now, simulate that server data wasn't changed since dump was released.
   const startHistogram = getUptakeTelemetrySnapshot(clientWithDump.identifier);
   let received;
   clientWithDump.on("sync", ({ data }) => (received = data));
-  // Use a timestamp inferior to latest record in dump.
-  const timestamp = 1000000000000; // Sun Sep 09 2001
 
-  await clientWithDump.maybeSync(timestamp);
+  await clientWithDump.maybeSync(uptodateTimestamp);
 
   ok(received.current.length > 0, "Dump records are listed as created");
   equal(received.current.length, received.created.length);
@@ -249,6 +246,16 @@ add_task(
     // No synchronization happened (responses are not mocked).
   }
 );
+add_task(clear_state);
+
+add_task(async function test_get_does_not_load_dump_when_pref_is_false() {
+  Services.prefs.setBoolPref("services.settings.load_dump", false);
+
+  const data = await clientWithDump.get();
+
+  equal(data.map(r => r.id).join(", "), "pt-BR, xx"); // No dump, 2 pulled from test server.
+  Services.prefs.clearUserPref("services.settings.load_dump");
+});
 add_task(clear_state);
 
 add_task(async function test_get_does_not_sync_if_empty_dump_is_provided() {
@@ -410,10 +417,11 @@ add_task(
     ok(records.length > 0, "dump is loaded");
     ok(!called, "signature is missing but not verified");
 
-    // Synchronize the collection (local data is up-to-date, collection last modified > 42)
+    // Synchronize the collection (local data is up-to-date).
     // Signature verification is disabled (see `clear_state()`), so we don't bother with
     // fetching metadata.
-    await clientWithDump.maybeSync(42);
+    const uptodateTimestamp = await clientWithDump.db.getLastModified();
+    await clientWithDump.maybeSync(uptodateTimestamp);
     let metadata = await clientWithDump.db.getMetadata();
     ok(!metadata, "metadata was not fetched");
 
@@ -910,26 +918,6 @@ function getSampleResponse(req, port) {
         ],
       },
     },
-    "GET:/v1/buckets/main/collections/password-fields": {
-      sampleHeaders: [
-        "Access-Control-Allow-Origin: *",
-        "Access-Control-Expose-Headers: Retry-After, Content-Length, Alert, Backoff",
-        "Content-Type: application/json; charset=UTF-8",
-        "Server: waitress",
-        'Etag: "1234"',
-      ],
-      status: { status: 200, statusText: "OK" },
-      responseBody: JSON.stringify({
-        data: {
-          id: "password-fields",
-          last_modified: 1234,
-          signature: {
-            signature: "abcdef",
-            x5u: `http://localhost:${port}/fake-x5u`,
-          },
-        },
-      }),
-    },
     "GET:/fake-x5u": {
       sampleHeaders: ["Content-Type: application/octet-stream"],
       status: { status: 200, statusText: "OK" },
@@ -940,7 +928,7 @@ ZARKjbu1TuYQHf0fs+GwID8zeLc2zJL7UzcHFwwQ6Nda9OJN4uPAuC/BKaIpxCLL
 wNuvFqc=
 -----END CERTIFICATE-----`,
     },
-    "GET:/v1/buckets/main/collections/password-fields/records?_expected=2000&_sort=-last_modified": {
+    "GET:/v1/buckets/main/collections/password-fields/changeset?_expected=2000": {
       sampleHeaders: [
         "Access-Control-Allow-Origin: *",
         "Access-Control-Expose-Headers: Retry-After, Content-Length, Alert, Backoff",
@@ -950,7 +938,16 @@ wNuvFqc=
       ],
       status: { status: 200, statusText: "OK" },
       responseBody: {
-        data: [
+        timestamp: 3000,
+        metadata: {
+          id: "password-fields",
+          last_modified: 1234,
+          signature: {
+            signature: "abcdef",
+            x5u: `http://localhost:${port}/fake-x5u`,
+          },
+        },
+        changes: [
           {
             id: "9d500963-d80e-3a91-6e74-66f3811b99cc",
             last_modified: 3000,
@@ -960,7 +957,7 @@ wNuvFqc=
         ],
       },
     },
-    "GET:/v1/buckets/main/collections/password-fields/records?_expected=3001&_sort=-last_modified&_since=3000": {
+    "GET:/v1/buckets/main/collections/password-fields/changeset?_expected=3001&_since=%223000%22": {
       sampleHeaders: [
         "Access-Control-Allow-Origin: *",
         "Access-Control-Expose-Headers: Retry-After, Content-Length, Alert, Backoff",
@@ -970,7 +967,9 @@ wNuvFqc=
       ],
       status: { status: 200, statusText: "OK" },
       responseBody: {
-        data: [
+        metadata: {},
+        timestamp: 4000,
+        changes: [
           {
             id: "aabad965-e556-ffe7-4191-074f5dee3df3",
             last_modified: 4000,
@@ -986,7 +985,7 @@ wNuvFqc=
         ],
       },
     },
-    "GET:/v1/buckets/main/collections/password-fields/records?_expected=4001&_sort=-last_modified&_since=4000": {
+    "GET:/v1/buckets/main/collections/password-fields/changeset?_expected=4001&_since=%224000%22": {
       sampleHeaders: [
         "Access-Control-Allow-Origin: *",
         "Access-Control-Expose-Headers: Retry-After, Content-Length, Alert, Backoff",
@@ -996,7 +995,9 @@ wNuvFqc=
       ],
       status: { status: 200, statusText: "OK" },
       responseBody: {
-        data: [
+        metadata: {},
+        timestamp: 5000,
+        changes: [
           {
             id: "aabad965-e556-ffe7-4191-074f5dee3df3",
             deleted: true,
@@ -1004,7 +1005,7 @@ wNuvFqc=
         ],
       },
     },
-    "GET:/v1/buckets/main/collections/password-fields/records?_expected=10000&_sort=-last_modified&_since=9999": {
+    "GET:/v1/buckets/main/collections/password-fields/changeset?_expected=10000&_since=%229999%22": {
       sampleHeaders: [
         "Access-Control-Allow-Origin: *",
         "Access-Control-Expose-Headers: Retry-After, Content-Length, Alert, Backoff",
@@ -1018,7 +1019,7 @@ wNuvFqc=
         error: "Service Unavailable",
       },
     },
-    "GET:/v1/buckets/main/collections/password-fields/records?_expected=10001&_sort=-last_modified&_since=10000": {
+    "GET:/v1/buckets/main/collections/password-fields/changeset?_expected=10001&_since=%2210000%22": {
       sampleHeaders: [
         "Access-Control-Allow-Origin: *",
         "Access-Control-Expose-Headers: Retry-After, Content-Length, Alert, Backoff",
@@ -1029,7 +1030,7 @@ wNuvFqc=
       status: { status: 200, statusText: "OK" },
       responseBody: "<invalid json",
     },
-    "GET:/v1/buckets/main/collections/password-fields/records?_expected=11001&_sort=-last_modified&_since=11000": {
+    "GET:/v1/buckets/main/collections/password-fields/changeset?_expected=11001&_since=%2211000%22": {
       sampleHeaders: [
         "Access-Control-Allow-Origin: *",
         "Access-Control-Expose-Headers: Retry-After, Content-Length, Alert, Backoff",
@@ -1038,7 +1039,7 @@ wNuvFqc=
       ],
       status: { status: 503, statusText: "Service Unavailable" },
       responseBody: {
-        data: [
+        changes: [
           {
             id: "c4f021e3-f68c-4269-ad2a-d4ba87762b35",
             last_modified: 4000,
@@ -1083,7 +1084,7 @@ wNuvFqc=
         ],
       },
     },
-    "GET:/v1/buckets/main/collections/password-fields/records?_expected=1337&_sort=-last_modified": {
+    "GET:/v1/buckets/main/collections/password-fields/changeset?_expected=1337": {
       sampleHeaders: [
         "Access-Control-Allow-Origin: *",
         "Access-Control-Expose-Headers: Retry-After, Content-Length, Alert, Backoff",
@@ -1093,7 +1094,9 @@ wNuvFqc=
       ],
       status: { status: 200, statusText: "OK" },
       responseBody: {
-        data: [
+        metadata: {},
+        timestamp: 3000,
+        changes: [
           {
             id: "312cc78d-9c1f-4291-a4fa-a1be56f6cc69",
             last_modified: 3000,
@@ -1123,7 +1126,7 @@ wNuvFqc=
         },
       }),
     },
-    "GET:/v1/buckets/main/collections/language-dictionaries/records": {
+    "GET:/v1/buckets/main/collections/language-dictionaries/changeset": {
       sampleHeaders: [
         "Access-Control-Allow-Origin: *",
         "Access-Control-Expose-Headers: Retry-After, Content-Length, Alert, Backoff",
@@ -1133,7 +1136,16 @@ wNuvFqc=
       ],
       status: { status: 200, statusText: "OK" },
       responseBody: {
-        data: [
+        timestamp: 5000000000000,
+        metadata: {
+          id: "language-dictionaries",
+          last_modified: 1234,
+          signature: {
+            signature: "xyz",
+            x5u: `http://localhost:${port}/fake-x5u`,
+          },
+        },
+        changes: [
           {
             id: "xx",
             last_modified: 5000000000000,
@@ -1152,27 +1164,7 @@ wNuvFqc=
         ],
       },
     },
-    "GET:/v1/buckets/main/collections/with-local-fields": {
-      sampleHeaders: [
-        "Access-Control-Allow-Origin: *",
-        "Access-Control-Expose-Headers: Retry-After, Content-Length, Alert, Backoff",
-        "Content-Type: application/json; charset=UTF-8",
-        "Server: waitress",
-        'Etag: "1234"',
-      ],
-      status: { status: 200, statusText: "OK" },
-      responseBody: JSON.stringify({
-        data: {
-          id: "with-local-fields",
-          last_modified: 1234,
-          signature: {
-            signature: "xyz",
-            x5u: `http://localhost:${port}/fake-x5u`,
-          },
-        },
-      }),
-    },
-    "GET:/v1/buckets/main/collections/with-local-fields/records?_expected=2000&_sort=-last_modified": {
+    "GET:/v1/buckets/main/collections/with-local-fields/changeset?_expected=2000": {
       sampleHeaders: [
         "Access-Control-Allow-Origin: *",
         "Access-Control-Expose-Headers: Retry-After, Content-Length, Alert, Backoff",
@@ -1182,7 +1174,16 @@ wNuvFqc=
       ],
       status: { status: 200, statusText: "OK" },
       responseBody: {
-        data: [
+        timestamp: 2000,
+        metadata: {
+          id: "with-local-fields",
+          last_modified: 1234,
+          signature: {
+            signature: "xyz",
+            x5u: `http://localhost:${port}/fake-x5u`,
+          },
+        },
+        changes: [
           {
             id: "c74279ce-fb0a-42a6-ae11-386b567a6119",
             last_modified: 2000,
@@ -1190,7 +1191,7 @@ wNuvFqc=
         ],
       },
     },
-    "GET:/v1/buckets/main/collections/with-local-fields/records?_expected=3000&_sort=-last_modified&_since=2000": {
+    "GET:/v1/buckets/main/collections/with-local-fields/changeset?_expected=3000&_since=%222000%22": {
       sampleHeaders: [
         "Access-Control-Allow-Origin: *",
         "Access-Control-Expose-Headers: Retry-After, Content-Length, Alert, Backoff",
@@ -1200,7 +1201,9 @@ wNuvFqc=
       ],
       status: { status: 200, statusText: "OK" },
       responseBody: {
-        data: [
+        timestamp: 3000,
+        metadata: {},
+        changes: [
           {
             id: "1f5c98b9-6d93-4c13-aa26-978b38695096",
             last_modified: 3000,

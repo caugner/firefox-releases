@@ -20,9 +20,12 @@ XPCOMUtils.defineLazyModuleGetters(this, {
 
 const USER_LOCALE = "$USER_LOCALE";
 
-function log(str) {
-  SearchUtils.log("SearchEngineSelector " + str + "\n");
-}
+XPCOMUtils.defineLazyGetter(this, "logConsole", () => {
+  return console.createInstance({
+    prefix: "SearchEngineSelector",
+    maxLogLevel: SearchUtils.loggingEnabled ? "Debug" : "Warn",
+  });
+});
 
 function getAppInfo(key) {
   let value = null;
@@ -154,7 +157,7 @@ class SearchEngineSelector {
    */
   _onConfigurationUpdated({ data: { current } }) {
     this._configuration = current;
-
+    logConsole.debug("Search configuration updated remotely");
     if (this._changeListener) {
       this._changeListener();
     }
@@ -177,8 +180,8 @@ class SearchEngineSelector {
     let cohort = Services.prefs.getCharPref("browser.search.cohort", null);
     let name = getAppInfo("name");
     let version = getAppInfo("version");
-    log(
-      `fetchEngineConfiguration ${region}:${locale}:${channel}:${distroID}:${cohort}:${name}:${version}`
+    logConsole.debug(
+      `fetchEngineConfiguration ${locale}:${region}:${channel}:${distroID}:${cohort}:${name}:${version}`
     );
     let engines = [];
     const lcLocale = locale.toLowerCase();
@@ -189,12 +192,19 @@ class SearchEngineSelector {
         if ("cohort" in section && cohort != section.cohort) {
           return false;
         }
+        const distroExcluded =
+          (distroID &&
+            sectionIncludes(section, "excludedDistributions", distroID)) ||
+          isDistroExcluded(section, "distributions", distroID);
+
+        if (distroID && !distroExcluded && section.override) {
+          return true;
+        }
+
         if (
           sectionExcludes(section, "channel", channel) ||
           sectionExcludes(section, "name", name) ||
-          (distroID &&
-            sectionIncludes(section, "excludedDistributions", distroID)) ||
-          isDistroExcluded(section, "distributions", distroID) ||
+          distroExcluded ||
           belowMinVersion(section, version) ||
           aboveMaxVersion(section, version)
         ) {
@@ -211,9 +221,13 @@ class SearchEngineSelector {
 
       let baseConfig = this._copyObject({}, config);
 
+      // Don't include any engines if every section is an override
+      // entry, these are only supposed to override otherwise
+      // included engine configurations.
+      let allOverrides = applies.every(e => "override" in e && e.override);
       // Loop through all the appliedTo sections that apply to
-      // this configuration
-      if (applies.length) {
+      // this configuration.
+      if (applies.length && !allOverrides) {
         for (let section of applies) {
           this._copyObject(baseConfig, section);
         }
@@ -238,8 +252,6 @@ class SearchEngineSelector {
         }
       }
     }
-
-    engines = this._filterEngines(engines);
 
     let defaultEngine;
     let privateEngine;
@@ -286,7 +298,7 @@ class SearchEngineSelector {
     }
 
     if (SearchUtils.loggingEnabled) {
-      log(
+      logConsole.debug(
         "fetchEngineConfiguration: " +
           result.engines.map(e => e.webExtension.id)
       );
@@ -321,35 +333,6 @@ class SearchEngineSelector {
       return Number.MAX_SAFE_INTEGER - 1;
     }
     return obj.orderHint || 0;
-  }
-
-  /**
-   * Filter any search engines that are preffed to be ignored,
-   * the pref is only allowed in partner distributions.
-   * @param {Array} engines - The list of engines to be filtered.
-   * @returns {Array} - The engine list with filtered removed.
-   */
-  _filterEngines(engines) {
-    let branch = Services.prefs.getDefaultBranch(
-      SearchUtils.BROWSER_SEARCH_PREF
-    );
-    if (
-      SearchUtils.isPartnerBuild() &&
-      branch.getPrefType("ignoredJAREngines") == branch.PREF_STRING
-    ) {
-      let ignoredJAREngines = branch
-        .getCharPref("ignoredJAREngines")
-        .split(",");
-      let filteredEngines = engines.filter(engine => {
-        let name = engine.webExtension.id.split("@")[0];
-        return !ignoredJAREngines.includes(name);
-      });
-      // Don't allow all engines to be hidden
-      if (filteredEngines.length) {
-        engines = filteredEngines;
-      }
-    }
-    return engines;
   }
 
   /**

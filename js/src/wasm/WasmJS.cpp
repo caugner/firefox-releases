@@ -35,7 +35,9 @@
 #include "util/StringBuffer.h"
 #include "util/Text.h"
 #include "vm/ErrorObject.h"
+#include "vm/FunctionFlags.h"  // js::FunctionFlags
 #include "vm/Interpreter.h"
+#include "vm/PlainObject.h"    // js::PlainObject
 #include "vm/PromiseObject.h"  // js::PromiseObject
 #include "vm/StringType.h"
 #include "vm/Warnings.h"  // js::WarnNumberASCII
@@ -144,13 +146,19 @@ bool wasm::CraneliftAvailable(JSContext* cx) {
 bool wasm::CraneliftDisabledByFeatures(JSContext* cx, bool* isDisabled,
                                        JSStringBuilder* reason) {
   // Cranelift has no debugging support, no gc support, no multi-value support,
-  // no threads.
+  // no threads, and on ARM64, no reference types.
   bool debug = cx->realm() && cx->realm()->debuggerObservesAsmJS();
   bool gc = cx->options().wasmGc();
   bool multiValue = WasmMultiValueFlag(cx);
   bool threads =
       cx->realm() &&
       cx->realm()->creationOptions().getSharedMemoryAndAtomicsEnabled();
+#if defined(JS_CODEGEN_ARM64)
+  bool reftypesOnArm64 = cx->options().wasmReftypes();
+#else
+  // On other platforms, assume reftypes has been implemented.
+  bool reftypesOnArm64 = false;
+#endif
   if (reason) {
     char sep = 0;
     if (debug && !Append(reason, "debug", &sep)) {
@@ -165,8 +173,11 @@ bool wasm::CraneliftDisabledByFeatures(JSContext* cx, bool* isDisabled,
     if (threads && !Append(reason, "threads", &sep)) {
       return false;
     }
+    if (reftypesOnArm64 && !Append(reason, "reftypes", &sep)) {
+      return false;
+    }
   }
-  *isDisabled = debug || gc || multiValue || threads;
+  *isDisabled = debug || gc || multiValue || threads || reftypesOnArm64;
   return true;
 }
 
@@ -179,9 +190,10 @@ bool wasm::CraneliftDisabledByFeatures(JSContext* cx, bool* isDisabled,
 // ensure that only compilers that actually support the feature are used.
 
 bool wasm::ReftypesAvailable(JSContext* cx) {
-  // All compilers support reference types.
+  // All compilers support reference types, except Cranelift on ARM64.
 #ifdef ENABLE_WASM_REFTYPES
-  return true;
+  return cx->options().wasmReftypes() &&
+         (BaselineAvailable(cx) || IonAvailable(cx) || CraneliftAvailable(cx));
 #else
   return false;
 #endif
@@ -1565,45 +1577,52 @@ WasmInstanceObject* WasmInstanceObject::create(
     }
   }
 
-  AutoSetNewObjectMetadata metadata(cx);
-  RootedWasmInstanceObject obj(
-      cx, NewObjectWithGivenProto<WasmInstanceObject>(cx, proto));
-  if (!obj) {
-    return nullptr;
+  Instance* instance = nullptr;
+  RootedWasmInstanceObject obj(cx);
+
+  {
+    // We must delay creating metadata for this object until after all its
+    // slots have been initialized. We must also create the metadata before
+    // calling Instance::init as that may allocate new objects.
+    AutoSetNewObjectMetadata metadata(cx);
+    obj = NewObjectWithGivenProto<WasmInstanceObject>(cx, proto);
+    if (!obj) {
+      return nullptr;
+    }
+
+    MOZ_ASSERT(obj->isTenured(), "assumed by WasmTableObject write barriers");
+
+    // Finalization assumes these slots are always initialized:
+    InitReservedSlot(obj, EXPORTS_SLOT, exports.release(),
+                     MemoryUse::WasmInstanceExports);
+
+    InitReservedSlot(obj, SCOPES_SLOT, scopes.release(),
+                     MemoryUse::WasmInstanceScopes);
+
+    InitReservedSlot(obj, GLOBALS_SLOT, indirectGlobalObjs.release(),
+                     MemoryUse::WasmInstanceGlobals);
+
+    obj->initReservedSlot(INSTANCE_SCOPE_SLOT, UndefinedValue());
+
+    // The INSTANCE_SLOT may not be initialized if Instance allocation fails,
+    // leading to an observable "newborn" state in tracing/finalization.
+    MOZ_ASSERT(obj->isNewborn());
+
+    // Root the Instance via WasmInstanceObject before any possible GC.
+    instance = cx->new_<Instance>(
+        cx, obj, code, std::move(tlsData), memory, std::move(tables),
+        std::move(structTypeDescrs), std::move(maybeDebug));
+    if (!instance) {
+      return nullptr;
+    }
+
+    InitReservedSlot(obj, INSTANCE_SLOT, instance,
+                     MemoryUse::WasmInstanceInstance);
+    MOZ_ASSERT(!obj->isNewborn());
   }
 
-  MOZ_ASSERT(obj->isTenured(), "assumed by WasmTableObject write barriers");
-
-  // Finalization assumes these slots are always initialized:
-  InitReservedSlot(obj, EXPORTS_SLOT, exports.release(),
-                   MemoryUse::WasmInstanceExports);
-
-  InitReservedSlot(obj, SCOPES_SLOT, scopes.release(),
-                   MemoryUse::WasmInstanceScopes);
-
-  InitReservedSlot(obj, GLOBALS_SLOT, indirectGlobalObjs.release(),
-                   MemoryUse::WasmInstanceGlobals);
-
-  obj->initReservedSlot(INSTANCE_SCOPE_SLOT, UndefinedValue());
-
-  // The INSTANCE_SLOT may not be initialized if Instance allocation fails,
-  // leading to an observable "newborn" state in tracing/finalization.
-  MOZ_ASSERT(obj->isNewborn());
-
-  // Root the Instance via WasmInstanceObject before any possible GC.
-  auto* instance = cx->new_<Instance>(
-      cx, obj, code, std::move(tlsData), memory, std::move(tables),
-      std::move(structTypeDescrs), funcImports, globalImportValues, globalObjs,
-      std::move(maybeDebug));
-  if (!instance) {
-    return nullptr;
-  }
-
-  InitReservedSlot(obj, INSTANCE_SLOT, instance,
-                   MemoryUse::WasmInstanceInstance);
-  MOZ_ASSERT(!obj->isNewborn());
-
-  if (!instance->init(cx, dataSegments, elemSegments)) {
+  if (!instance->init(cx, funcImports, globalImportValues, globalObjs,
+                      dataSegments, elemSegments)) {
     return nullptr;
   }
 
@@ -2769,7 +2788,6 @@ WasmGlobalObject* WasmGlobalObject::create(JSContext* cx, HandleVal hval,
       }
       break;
   }
-
   obj->initReservedSlot(TYPE_SLOT,
                         Int32Value(int32_t(val.type().bitsUnsafe())));
   obj->initReservedSlot(MUTABLE_SLOT, JS::BooleanValue(isMutable));
@@ -2975,51 +2993,7 @@ bool WasmGlobalObject::valueSetterImpl(JSContext* cx, const CallArgs& args) {
   if (!ToWebAssemblyValue(cx, global->type(), args.get(0), &val)) {
     return false;
   }
-
-  Cell* cell = global->cell();
-  switch (global->type().kind()) {
-    case ValType::I32:
-      cell->i32 = val.get().i32();
-      break;
-    case ValType::F32:
-      cell->f32 = val.get().f32();
-      break;
-    case ValType::F64:
-      cell->f64 = val.get().f64();
-      break;
-    case ValType::I64:
-#ifdef ENABLE_WASM_BIGINT
-      MOZ_ASSERT(I64BigIntConversionAvailable(cx),
-                 "expected BigInt support for setting I64 global");
-      cell->i64 = val.get().i64();
-#endif
-      break;
-    case ValType::Ref:
-      switch (global->type().refTypeKind()) {
-        case RefType::Func:
-        case RefType::Any: {
-          AnyRef prevPtr = cell->ref;
-          // TODO/AnyRef-boxing: With boxed immediates and strings, the write
-          // barrier is going to have to be more complicated.
-          ASSERT_ANYREF_IS_JSOBJECT;
-          JSObject::writeBarrierPre(prevPtr.asJSObject());
-          cell->ref = val.get().ref();
-          if (!cell->ref.isNull()) {
-            JSObject::writeBarrierPost(cell->ref.asJSObjectAddress(),
-                                       prevPtr.asJSObject(),
-                                       cell->ref.asJSObject());
-          }
-          break;
-        }
-        case RefType::Null: {
-          break;
-        }
-        case RefType::TypeIndex: {
-          MOZ_CRASH("Ref NYI");
-        }
-      }
-      break;
-  }
+  global->setVal(cx, val);
 
   args.rval().setUndefined();
   return true;
@@ -3049,6 +3023,55 @@ ValType WasmGlobalObject::type() const {
 
 bool WasmGlobalObject::isMutable() const {
   return getReservedSlot(MUTABLE_SLOT).toBoolean();
+}
+
+void WasmGlobalObject::setVal(JSContext* cx, wasm::HandleVal hval) {
+  const Val& val = hval.get();
+  Cell* cell = this->cell();
+  MOZ_ASSERT(type() == val.type());
+  switch (type().kind()) {
+    case ValType::I32:
+      cell->i32 = val.i32();
+      break;
+    case ValType::F32:
+      cell->f32 = val.f32();
+      break;
+    case ValType::F64:
+      cell->f64 = val.f64();
+      break;
+    case ValType::I64:
+#ifdef ENABLE_WASM_BIGINT
+      MOZ_ASSERT(I64BigIntConversionAvailable(cx),
+                 "expected BigInt support for setting I64 global");
+      cell->i64 = val.i64();
+#endif
+      break;
+    case ValType::Ref:
+      switch (this->type().refTypeKind()) {
+        case RefType::Func:
+        case RefType::Any: {
+          AnyRef prevPtr = cell->ref;
+          // TODO/AnyRef-boxing: With boxed immediates and strings, the write
+          // barrier is going to have to be more complicated.
+          ASSERT_ANYREF_IS_JSOBJECT;
+          JSObject::writeBarrierPre(prevPtr.asJSObject());
+          cell->ref = val.ref();
+          if (!cell->ref.isNull()) {
+            JSObject::writeBarrierPost(cell->ref.asJSObjectAddress(),
+                                       prevPtr.asJSObject(),
+                                       cell->ref.asJSObject());
+          }
+          break;
+        }
+        case RefType::Null: {
+          break;
+        }
+        case RefType::TypeIndex: {
+          MOZ_CRASH("Ref NYI");
+        }
+      }
+      break;
+  }
 }
 
 void WasmGlobalObject::val(MutableHandleVal outval) const {
@@ -4044,7 +4067,7 @@ static JSObject* CreateWebAssemblyObject(JSContext* cx, JSProtoKey key) {
   if (!proto) {
     return nullptr;
   }
-  return NewObjectWithGivenProto(cx, &WebAssemblyClass, proto, SingletonObject);
+  return NewSingletonObjectWithGivenProto(cx, &WebAssemblyClass, proto);
 }
 
 static bool WebAssemblyClassFinish(JSContext* cx, HandleObject wasm,

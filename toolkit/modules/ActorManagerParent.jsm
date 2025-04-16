@@ -21,6 +21,9 @@ const { ExtensionUtils } = ChromeUtils.import(
   "resource://gre/modules/ExtensionUtils.jsm"
 );
 const { Services } = ChromeUtils.import("resource://gre/modules/Services.jsm");
+const { XPCOMUtils } = ChromeUtils.import(
+  "resource://gre/modules/XPCOMUtils.jsm"
+);
 
 const { DefaultMap } = ExtensionUtils;
 
@@ -402,34 +405,6 @@ let ACTORS = {
       moduleURI: "resource://gre/actors/WebNavigationChild.jsm",
     },
   },
-
-  Zoom: {
-    parent: {
-      moduleURI: "resource://gre/actors/ZoomParent.jsm",
-    },
-    child: {
-      moduleURI: "resource://gre/actors/ZoomChild.jsm",
-      events: {
-        PreFullZoomChange: {},
-        FullZoomChange: {},
-        TextZoomChange: {},
-        DoZoomEnlargeBy10: {
-          capture: true,
-          mozSystemGroup: true,
-        },
-        DoZoomReduceBy10: {
-          capture: true,
-          mozSystemGroup: true,
-        },
-        mozupdatedremoteframedimensions: {
-          capture: true,
-          mozSystemGroup: true,
-        },
-      },
-    },
-
-    allFrames: true,
-  },
 };
 
 /*
@@ -596,6 +571,28 @@ var ActorManagerParent = {
 
   addActors(actors) {
     for (let [actorName, actor] of Object.entries(actors)) {
+      // If enablePreference is set, only register the actor while the
+      // preference is set to true.
+      if (actor.enablePreference) {
+        let actorNameProp = actorName + "_Preference";
+        XPCOMUtils.defineLazyPreferenceGetter(
+          this,
+          actorNameProp,
+          actor.enablePreference,
+          false,
+          (prefName, prevValue, isEnabled) => {
+            if (isEnabled) {
+              ChromeUtils.registerWindowActor(actorName, actor);
+            } else {
+              ChromeUtils.unregisterWindowActor(actorName, actor);
+            }
+          }
+        );
+        if (!this[actorNameProp]) {
+          continue;
+        }
+      }
+
       ChromeUtils.registerWindowActor(actorName, actor);
     }
   },

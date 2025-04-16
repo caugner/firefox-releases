@@ -477,14 +477,6 @@ void ShadowRoot::RemoveSheetFromStyles(StyleSheet& aSheet) {
   ApplicableRulesChanged();
 }
 
-void ShadowRoot::RemoveSheet(StyleSheet& aSheet) {
-  RefPtr<StyleSheet> sheet = DocumentOrShadowRoot::RemoveSheet(aSheet);
-  MOZ_ASSERT(sheet);
-  if (sheet->IsApplicable()) {
-    RemoveSheetFromStyles(*sheet);
-  }
-}
-
 void ShadowRoot::AddToIdTable(Element* aElement, nsAtom* aId) {
   IdentifierMapEntry* entry = mIdentifierMap.PutEntry(aId);
   if (entry) {

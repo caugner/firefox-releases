@@ -878,7 +878,8 @@ nsresult PeerConnectionImpl::GetDatachannelParameters(
   transportId->clear();
 
   RefPtr<JsepTransceiver> datachannelTransceiver;
-  for (const auto& transceiver : mJsepSession->GetTransceivers()) {
+  for (const auto& [id, transceiver] : mJsepSession->GetTransceivers()) {
+    (void)id;  // Lame, but no better way to do this right now.
     if ((transceiver->GetMediaType() == SdpMediaSection::kApplication) &&
         transceiver->mSendTrack.GetNegotiatedDetails()) {
       datachannelTransceiver = transceiver;
@@ -895,7 +896,8 @@ nsresult PeerConnectionImpl::GetDatachannelParameters(
     transportTransceiver = datachannelTransceiver;
   } else if (datachannelTransceiver->HasBundleLevel()) {
     // Find the actual transport.
-    for (const auto& transceiver : mJsepSession->GetTransceivers()) {
+    for (const auto& [id, transceiver] : mJsepSession->GetTransceivers()) {
+      (void)id;  // Lame, but no better way to do this right now.
       if (transceiver->HasLevel() &&
           transceiver->GetLevel() == datachannelTransceiver->BundleLevel() &&
           transceiver->HasOwnTransport()) {
@@ -1118,7 +1120,8 @@ PeerConnectionImpl::CreateDataChannel(
   CSFLogDebug(LOGTAG, "%s: making DOMDataChannel", __FUNCTION__);
 
   RefPtr<JsepTransceiver> dcTransceiver;
-  for (auto& transceiver : mJsepSession->GetTransceivers()) {
+  for (auto& [id, transceiver] : mJsepSession->GetTransceivers()) {
+    (void)id;  // Lame, but no better way to do this right now.
     if (transceiver->GetMediaType() == SdpMediaSection::kApplication) {
       dcTransceiver = transceiver;
       break;
@@ -1403,7 +1406,7 @@ PeerConnectionImpl::SetRemoteDescription(int32_t action, const char* aSDP) {
       return NS_ERROR_FAILURE;
   }
 
-  size_t originalTransceiverCount = mJsepSession->GetTransceivers().size();
+  auto originalTransceivers = mJsepSession->GetTransceivers();
   JsepSession::Result result =
       mJsepSession->SetRemoteDescription(sdpType, mRemoteRequestedSDP);
   if (result.mError.isSome()) {
@@ -1413,18 +1416,17 @@ PeerConnectionImpl::SetRemoteDescription(int32_t action, const char* aSDP) {
     mPCObserver->OnSetDescriptionError(*buildJSErrorData(result, errorString),
                                        jrv);
   } else {
-    // Iterate over the JSEP transceivers that were just created
-    for (size_t i = originalTransceiverCount;
-         i < mJsepSession->GetTransceivers().size(); ++i) {
-      RefPtr<JsepTransceiver> jsepTransceiver =
-          mJsepSession->GetTransceivers()[i];
-
+    for (const auto& [id, jsepTransceiver] : mJsepSession->GetTransceivers()) {
       if (jsepTransceiver->GetMediaType() ==
           SdpMediaSection::MediaType::kApplication) {
         continue;
       }
 
-      // Audio or video transceiver, need to tell JS about it.
+      if (originalTransceivers.count(id)) {
+        continue;
+      }
+
+      // New audio or video transceiver, need to tell JS about it.
       RefPtr<TransceiverImpl> transceiverImpl =
           CreateTransceiverImpl(jsepTransceiver, nullptr, jrv);
       if (jrv.Failed()) {
@@ -2151,7 +2153,13 @@ void PeerConnectionImpl::OnSetDescriptionSuccess(bool rollback, bool remote) {
                 MOZ_ASSERT(false);
                 continue;
               }
-              streams.AppendElement(*stream, fallible);
+              if (!streams.AppendElement(*stream, fallible)) {
+                // XXX(Bug 1632090) Instead of extending the array 1-by-1 (which
+                // might involve multiple reallocations) and potentially
+                // crashing here, SetCapacity could be called outside the loop
+                // once.
+                mozalloc_handle_oom(0);
+              }
             }
             mPCObserver->FireTrackEvent(*trackEvent.mReceiver, streams, jrv);
           }
@@ -2167,8 +2175,9 @@ void PeerConnectionImpl::OnSetDescriptionSuccess(bool rollback, bool remote) {
 
   // We do this after queueing the above task, to ensure that ICE state
   // changes don't start happening before sRD finishes.
-  if (!rollback && (newSignalingState == RTCSignalingState::Have_local_offer ||
-                    mSignalingState == RTCSignalingState::Have_remote_offer)) {
+
+  // Did we just apply a local description?
+  if (!remote) {
     // We'd like to handle this in PeerConnectionMedia::UpdateNetworkState.
     // Unfortunately, if the WiFi switch happens quickly, we never see
     // that state change.  We need to detect the ice restart here and
@@ -2492,7 +2501,9 @@ static UniquePtr<dom::RTCStatsCollection> GetSenderStats_s(
       s.mBytesReceived.Construct(bytesReceived);
       s.mPacketsLost.Construct(packetsLost);
       rtt.apply([&s](auto r) { s.mRoundTripTime.Construct(r); });
-      report->mRemoteInboundRtpStreamStats.AppendElement(s, fallible);
+      if (!report->mRemoteInboundRtpStreamStats.AppendElement(s, fallible)) {
+        mozalloc_handle_oom(0);
+      }
     }
   }
   // Then, fill in local side (with cross-link to remote only if present)
@@ -2541,7 +2552,9 @@ static UniquePtr<dom::RTCStatsCollection> GetSenderStats_s(
       qpSum.apply([&s](uint64_t aQp) { s.mQpSum.Construct(aQp); });
     }
   });
-  report->mOutboundRtpStreamStats.AppendElement(s, fallible);
+  if (!report->mOutboundRtpStreamStats.AppendElement(s, fallible)) {
+    mozalloc_handle_oom(0);
+  }
   return report;
 }
 
@@ -2582,7 +2595,9 @@ void AssignWithOpaqueIds(dom::Sequence<T>& aSource, dom::Sequence<T>& aDest,
   for (auto& stat : aSource) {
     stat.mId.Value() = aGenerator->Id(stat.mId.Value());
   }
-  aDest.AppendElements(aSource, fallible);
+  if (!aDest.AppendElements(aSource, fallible)) {
+    mozalloc_handle_oom(0);
+  }
 }
 
 template <class T>
@@ -2665,8 +2680,13 @@ RefPtr<dom::RTCStatsReportPromise> PeerConnectionImpl::GetStats(
 
   if (aInternalStats && mJsepSession) {
     for (const auto& candidate : mRawTrickledCandidates) {
-      report->mRawRemoteCandidates.AppendElement(
-          NS_ConvertASCIItoUTF16(candidate.c_str()), fallible);
+      if (!report->mRawRemoteCandidates.AppendElement(
+              NS_ConvertASCIItoUTF16(candidate.c_str()), fallible)) {
+        // XXX(Bug 1632090) Instead of extending the array 1-by-1 (which might
+        // involve multiple reallocations) and potentially crashing here,
+        // SetCapacity could be called outside the loop once.
+        mozalloc_handle_oom(0);
+      }
     }
 
     if (mJsepSession) {
@@ -2738,10 +2758,16 @@ RefPtr<dom::RTCStatsReportPromise> PeerConnectionImpl::GetStats(
                                   report->mRtpContributingSourceStats, idGen);
               AssignWithOpaqueIds(stats->mTrickledIceCandidateStats,
                                   report->mTrickledIceCandidateStats, idGen);
-              report->mRawLocalCandidates.AppendElements(
-                  stats->mRawLocalCandidates, fallible);
-              report->mRawRemoteCandidates.AppendElements(
-                  stats->mRawRemoteCandidates, fallible);
+              if (!report->mRawLocalCandidates.AppendElements(
+                      stats->mRawLocalCandidates, fallible) ||
+                  !report->mRawRemoteCandidates.AppendElements(
+                      stats->mRawRemoteCandidates, fallible)) {
+                // XXX(Bug 1632090) Instead of extending the array 1-by-1 (which
+                // might involve multiple reallocations) and potentially
+                // crashing here, SetCapacity could be called outside the loop
+                // once.
+                mozalloc_handle_oom(0);
+              }
             }
             return dom::RTCStatsReportPromise::CreateAndResolve(
                 std::move(report), __func__);

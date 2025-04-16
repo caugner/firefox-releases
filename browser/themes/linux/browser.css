@@ -90,12 +90,11 @@ menuitem.bookmark-item {
 }
 
 .bookmark-item:not(.subviewbutton) > .menu-iconic-left {
-  margin-top: 0;
-  margin-bottom: 0;
+  margin-block: 0;
 }
 
 .bookmark-item > .menu-iconic-left > .menu-iconic-icon {
-  padding-inline-start: 0px;
+  padding-inline-start: 0;
 }
 
 /* Bookmark drag and drop styles */
@@ -175,13 +174,12 @@ menuitem.bookmark-item {
 
 %include ../shared/urlbar-searchbar.inc.css
 
-#urlbar:not(.megabar):not(:-moz-lwtheme):not([focused="true"]),
-#urlbar.megabar:not(:-moz-lwtheme):not([focused="true"]) > #urlbar-background,
+#urlbar:not(:-moz-lwtheme):not([focused="true"]) > #urlbar-background,
 #searchbar:not(:-moz-lwtheme):not(:focus-within) {
   border-color: ThreeDShadow;
 }
 
-/* identity box */
+/* Identity box */
 
 %include ../shared/identity-block/identity-block.inc.css
 
@@ -224,7 +222,7 @@ notification[value="translation"] button {
 
 notification[value="translation"] button,
 notification[value="translation"] menulist,
-notification[value="translation"] menulist > .menulist-label-box {
+notification[value="translation"] menulist::part(label-box) {
   margin-inline: 1ch;
 }
 
@@ -257,7 +255,7 @@ notification[value="translation"] button:not([type="menu"]) > .button-box {
   margin-inline-end: 3ch;
 }
 
-notification[value="translation"] menulist > .menulist-dropmarker {
+notification[value="translation"] menulist::part(dropmarker) {
   display: block;
 }
 
@@ -453,7 +451,7 @@ notification[value="translation"] menulist > .menulist-dropmarker {
  * to the sides and bottom of the panel.
  */
 #UITourTooltipButtons {
-  margin-left: -10px;
+  margin-inline-start: -10px;
   margin-bottom: -10px;
 }
 
@@ -547,11 +545,12 @@ notification[value="translation"] menulist > .menulist-dropmarker {
     .titlebar-max {
       -moz-appearance: -moz-window-button-maximize;
     }
-    :root[sizemode="maximized"] .titlebar-max {
+    .titlebar-restore {
       -moz-appearance: -moz-window-button-restore;
     }
   }
   @media (-moz-gtk-csd-maximize-button: 0) {
+    .titlebar-restore,
     .titlebar-max {
       display: none;
     }

@@ -71,7 +71,6 @@
 #include "mozilla/Services.h"
 #include "mozilla/Omnijar.h"
 #include "mozilla/ScriptPreloader.h"
-#include "mozilla/SystemGroup.h"
 #include "mozilla/Telemetry.h"
 #include "mozilla/BackgroundHangMonitor.h"
 
@@ -149,6 +148,7 @@ nsresult nsLocalFileConstructor(nsISupports* aOuter, const nsIID& aIID,
 nsComponentManagerImpl* nsComponentManagerImpl::gComponentManager = nullptr;
 bool gXPCOMShuttingDown = false;
 bool gXPCOMThreadsShutDown = false;
+bool gXPCOMMainThreadEventsAreDoomed = false;
 char16_t* gGREBinPath = nullptr;
 
 static NS_DEFINE_CID(kINIParserFactoryCID, NS_INIPARSERFACTORY_CID);
@@ -327,9 +327,6 @@ NS_InitXPCOM(nsIServiceManager** aResult, nsIFile* aBinDirectory,
     return rv;
   }
   AUTO_PROFILER_INIT2;
-
-  // Init the mozilla::SystemGroup for dispatching main thread runnables.
-  mozilla::SystemGroup::InitStatic();
 
   // Set up the timer globals/timer thread
   rv = nsTimerImpl::Startup();
@@ -515,9 +512,6 @@ NS_InitMinimalXPCOM() {
     return rv;
   }
 
-  // Init the mozilla::SystemGroup for dispatching main thread runnables.
-  mozilla::SystemGroup::InitStatic();
-
   // Set up the timer globals/timer thread.
   rv = nsTimerImpl::Startup();
   if (NS_WARN_IF(NS_FAILED(rv))) {
@@ -659,7 +653,10 @@ nsresult ShutdownXPCOM(nsIServiceManager* aServMgr) {
     // the main thread) have exited.
     nsThreadManager::get().Shutdown();
 
+    // Process our last round of events, and then mark that we've finished main
+    // thread event processing.
     NS_ProcessPendingEvents(thread);
+    gXPCOMMainThreadEventsAreDoomed = true;
 
     BackgroundHangMonitor().NotifyActivity();
 
@@ -780,9 +777,6 @@ nsresult ShutdownXPCOM(nsIServiceManager* aServMgr) {
   }
   nsComponentManagerImpl::gComponentManager = nullptr;
   nsCategoryManager::Destroy();
-
-  // Shut down SystemGroup for main thread dispatching.
-  SystemGroup::Shutdown();
 
   GkRust_Shutdown();
 

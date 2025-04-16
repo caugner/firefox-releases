@@ -354,6 +354,10 @@ class nsWindow::GeckoViewSupport final
                            jni::Object::Param aSessionAccessibility);
 
   void OnReady(jni::Object::Param aQueue = nullptr);
+
+  auto OnLoadRequest(mozilla::jni::String::Param aUri, int32_t aWindowType,
+                     int32_t aFlags, mozilla::jni::String::Param aTriggeringUri,
+                     bool aHasUserGesture) const -> java::GeckoResult::LocalRef;
 };
 
 /**
@@ -535,7 +539,8 @@ class nsWindow::NPZCSupport final
       case nsEventStatus_eIgnore:
         return INPUT_RESULT_UNHANDLED;
       case nsEventStatus_eConsumeDoDefault:
-        return INPUT_RESULT_HANDLED;
+        return result.mTargetIsRoot ? INPUT_RESULT_HANDLED
+                                    : INPUT_RESULT_HANDLED_CONTENT;
       default:
         MOZ_ASSERT_UNREACHABLE("Unexpected nsEventStatus");
         return INPUT_RESULT_UNHANDLED;
@@ -659,7 +664,8 @@ class nsWindow::NPZCSupport final
       case nsEventStatus_eIgnore:
         return INPUT_RESULT_UNHANDLED;
       case nsEventStatus_eConsumeDoDefault:
-        return INPUT_RESULT_HANDLED;
+        return result.mTargetIsRoot ? INPUT_RESULT_HANDLED
+                                    : INPUT_RESULT_HANDLED_CONTENT;
       default:
         MOZ_ASSERT_UNREACHABLE("Unexpected nsEventStatus");
         return INPUT_RESULT_UNHANDLED;
@@ -788,7 +794,8 @@ class nsWindow::NPZCSupport final
       case nsEventStatus_eIgnore:
         return INPUT_RESULT_UNHANDLED;
       case nsEventStatus_eConsumeDoDefault:
-        return INPUT_RESULT_HANDLED;
+        return result.mTargetIsRoot ? INPUT_RESULT_HANDLED
+                                    : INPUT_RESULT_HANDLED_CONTENT;
       default:
         MOZ_ASSERT_UNREACHABLE("Unexpected nsEventStatus");
         return INPUT_RESULT_UNHANDLED;
@@ -1131,27 +1138,6 @@ class nsWindow::LayerViewSupport final
     }
   }
 
-  void SetPinned(bool aPinned, int32_t aReason) {
-    RefPtr<UiCompositorControllerChild> child =
-        GetUiCompositorControllerChild();
-    if (!child) {
-      return;
-    }
-
-    if (AndroidBridge::IsJavaUiThread()) {
-      child->SetPinned(aPinned, aReason);
-      return;
-    }
-
-    if (RefPtr<nsThread> uiThread = GetAndroidUiThread()) {
-      uiThread->Dispatch(
-          NewRunnableMethod<bool, int32_t>(
-              "LayerViewSupport::SetPinned", child,
-              &UiCompositorControllerChild::SetPinned, aPinned, aReason),
-          nsIThread::DISPATCH_NORMAL);
-    }
-  }
-
   void SendToolbarAnimatorMessage(int32_t aMessage) {
     RefPtr<UiCompositorControllerChild> child =
         GetUiCompositorControllerChild();
@@ -1250,22 +1236,6 @@ class nsWindow::LayerViewSupport final
     if (RefPtr<UiCompositorControllerChild> child =
             GetUiCompositorControllerChild()) {
       child->EnableLayerUpdateNotifications(aEnable);
-    }
-  }
-
-  void SendToolbarPixelsToCompositor(int32_t aWidth, int32_t aHeight,
-                                     jni::IntArray::Param aPixels) {
-    MOZ_ASSERT(AndroidBridge::IsJavaUiThread());
-
-    if (RefPtr<UiCompositorControllerChild> child =
-            GetUiCompositorControllerChild()) {
-      Shmem mem;
-      child->AllocPixelBuffer(aPixels->Length() * sizeof(int32_t), &mem);
-      aPixels->CopyTo(mem.get<int32_t>(), mem.Size<int32_t>());
-      if (!child->ToolbarPixelsToCompositor(mem,
-                                            ScreenIntSize(aWidth, aHeight))) {
-        child->DeallocPixelBuffer(mem);
-      }
     }
   }
 
@@ -1688,6 +1658,38 @@ void nsWindow::SetParent(nsIWidget* aNewParent) {
 }
 
 nsIWidget* nsWindow::GetParent() { return mParent; }
+
+RefPtr<MozPromise<bool, bool, false>> nsWindow::OnLoadRequest(
+    nsIURI* aUri, int32_t aWindowType, int32_t aFlags,
+    nsIPrincipal* aTriggeringPrincipal, bool aHasUserGesture) {
+  if (!mGeckoViewSupport) {
+    return MozPromise<bool, bool, false>::CreateAndResolve(false, __func__);
+  }
+  nsAutoCString spec, triggeringSpec;
+  if (aUri) {
+    aUri->GetDisplaySpec(spec);
+  }
+
+  bool isNullPrincipal = false;
+  if (aTriggeringPrincipal) {
+    aTriggeringPrincipal->GetIsNullPrincipal(&isNullPrincipal);
+
+    if (!isNullPrincipal) {
+      nsCOMPtr<nsIURI> triggeringUri;
+      aTriggeringPrincipal->GetURI(getter_AddRefs(triggeringUri));
+      if (triggeringUri) {
+        triggeringUri->GetDisplaySpec(triggeringSpec);
+      }
+    }
+  }
+
+  auto geckoResult = mGeckoViewSupport->OnLoadRequest(
+      spec.get(), aWindowType, aFlags,
+      isNullPrincipal ? nullptr : triggeringSpec.get(), aHasUserGesture);
+  return geckoResult
+             ? MozPromise<bool, bool, false>::FromGeckoResult(geckoResult)
+             : nullptr;
+}
 
 float nsWindow::GetDPI() {
   float dpi = 160.0f;
@@ -2405,6 +2407,18 @@ void nsWindow::UpdateSafeAreaInsets(const ScreenIntMargin& aSafeAreaInsets) {
   if (mAttachedWidgetListener) {
     mAttachedWidgetListener->SafeAreaInsetsChanged(aSafeAreaInsets);
   }
+}
+
+auto nsWindow::GeckoViewSupport::OnLoadRequest(
+    mozilla::jni::String::Param aUri, int32_t aWindowType, int32_t aFlags,
+    mozilla::jni::String::Param aTriggeringUri, bool aHasUserGesture) const
+    -> java::GeckoResult::LocalRef {
+  GeckoSession::Window::LocalRef window(mGeckoViewWindow);
+  if (!window) {
+    return nullptr;
+  }
+  return window->OnLoadRequest(aUri, aWindowType, aFlags, aTriggeringUri,
+                               aHasUserGesture);
 }
 
 already_AddRefed<nsIWidget> nsIWidget::CreateTopLevelWindow() {

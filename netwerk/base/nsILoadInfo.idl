@@ -254,10 +254,19 @@ interface nsILoadInfo : nsISupports
   readonly attribute nsIPrincipal loadingPrincipal;
 
   /**
-   * A C++-friendly version of loadingPrincipal.
+   * A C++-friendly version of triggeringPrincipal.
+   *
+   * This is a bit awkward because we can't use
+   * binaryname(GetLoadingPrincipal).
    */
-  [noscript, notxpcom, nostdcall, binaryname(LoadingPrincipal)]
-  nsIPrincipal binaryLoadingPrincipal();
+  [noscript, notxpcom, nostdcall]
+  nsIPrincipal virtualGetLoadingPrincipal();
+
+%{C++
+  nsIPrincipal* GetLoadingPrincipal() {
+    return VirtualGetLoadingPrincipal();
+  }
+%}
 
   /**
    * This is the principal which caused the network load to start. I.e.
@@ -447,6 +456,26 @@ interface nsILoadInfo : nsISupports
    * set on requests that should be excempt from an upgrade.
    */
   [infallible] attribute unsigned long httpsOnlyStatus;
+
+  /**
+   * Returns true if at the time of the loadinfo construction the document
+   * that triggered this load has the bit hasValidTransientUserGestureActivation
+   * set or the load was triggered from External. (Mostly this bool is used
+   * in the context of Sec-Fetch-User.)
+   */
+  [infallible] attribute boolean hasValidUserGestureActivation;
+
+  /**
+   * We disallow the SystemPrincipal to initiate requests to
+   * the public web. This flag is to allow exceptions.
+   */
+  [infallible] attribute boolean allowDeprecatedSystemRequests;
+
+  /**
+   * Only ever returns true if the loadinfo is of TYPE_SCRIPT and
+   * the script was created by the HTML parser.
+   */
+  [infallible] attribute boolean parserCreatedScript;
 
   /**
    * True if this request is embedded in a context that can't be third-party

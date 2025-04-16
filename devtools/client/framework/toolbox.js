@@ -49,6 +49,12 @@ const L10N = new LocalizationHelper(
 
 loader.lazyRequireGetter(
   this,
+  "registerStoreObserver",
+  "devtools/client/shared/redux/subscriber",
+  true
+);
+loader.lazyRequireGetter(
+  this,
   "createToolboxStore",
   "devtools/client/framework/store",
   true
@@ -206,6 +212,15 @@ loader.lazyRequireGetter(
   "devtools/shared/picker-constants"
 );
 
+loader.lazyRequireGetter(
+  this,
+  "getF12SessionId",
+  "devtools/client/framework/enable-devtools-popup",
+  true
+);
+
+const DEVTOOLS_F12_DISABLED_PREF = "devtools.experiment.f12.shortcut_disabled";
+
 /**
  * A "Toolbox" is the component that holds all the tools for one specific
  * target. Visually, it's a document that includes the tools tabs and all
@@ -246,6 +261,25 @@ function Toolbox(
   // toolbox session. Because we use Amplitude to analyse the telemetry data we
   // must use the time since the system wide epoch as the session ID.
   this.sessionId = msSinceProcessStart;
+
+  // If the user opened the toolbox, we can now enable the F12 shortcut.
+  if (Services.prefs.getBoolPref(DEVTOOLS_F12_DISABLED_PREF, false)) {
+    // If the toolbox is opening while F12 was disabled, the user might have
+    // pressed F12 and seen the "enable devtools" notification.
+    // A telemetry session_id was generated for the f12_popup_displayed event.
+    // Reuse it here in order to link the toolbox session to the
+    // f12_popup_displayed events.
+    // getF12SessionId() might return null if the popup was never displayed.
+    // In this case, fallback on the provided `msSinceProcessStart`.
+    this.sessionId = getF12SessionId() || msSinceProcessStart;
+
+    this.telemetry.recordEvent("f12_enabled", "tools", null, {
+      session_id: this.sessionId,
+    });
+
+    // Flip the preference.
+    Services.prefs.setBoolPref(DEVTOOLS_F12_DISABLED_PREF, false);
+  }
 
   // Map of the available DevTools WebExtensions:
   //   Map<extensionUUID, extensionName>
@@ -402,6 +436,7 @@ Toolbox.prototype = {
   get store() {
     if (!this._store) {
       this._store = createToolboxStore();
+      registerStoreObserver(this._store, this._onToolboxStateChange.bind(this));
     }
     return this._store;
   },
@@ -617,7 +652,9 @@ Toolbox.prototype = {
    * @param {String} targetActorID: The actorID of the target we want to select.
    */
   selectTarget(targetActorID) {
-    this.store.dispatch(selectTarget(targetActorID));
+    if (this.getSelectedTargetFront()?.actorID !== targetActorID) {
+      this.store.dispatch(selectTarget(targetActorID));
+    }
   },
 
   /**
@@ -628,7 +665,17 @@ Toolbox.prototype = {
     if (!selectedTarget) {
       return null;
     }
+
     return this.target.client.getFrontByID(selectedTarget.actorID);
+  },
+
+  _onToolboxStateChange(state, oldState) {
+    if (getSelectedTarget(state) !== getSelectedTarget(oldState)) {
+      const dbg = this.getPanel("jsdebugger");
+      dbg?.selectThread(
+        getSelectedTarget(state)?._targetFront.threadFront.actorID
+      );
+    }
   },
 
   _onPausedState: function(packet, threadFront) {
@@ -684,7 +731,7 @@ Toolbox.prototype = {
     await this._attachTarget({ type, targetFront, isTopLevel });
 
     if (this.hostType !== Toolbox.HostType.PAGE) {
-      await this.store.dispatch(registerTarget(targetFront));
+      await this.store.dispatch(registerTarget(targetFront, this.targetList));
     }
 
     if (isTopLevel) {

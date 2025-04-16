@@ -6,6 +6,7 @@
 #ifndef WSRunObject_h
 #define WSRunObject_h
 
+#include "HTMLEditUtils.h"
 #include "mozilla/Assertions.h"
 #include "mozilla/EditAction.h"
 #include "mozilla/EditorBase.h"
@@ -103,9 +104,9 @@ class MOZ_STACK_CLASS WSScanResult final {
         mReason == WSType::SpecialContent,
         mContent && ((mContent->IsText() && !mContent->IsEditable()) ||
                      (!mContent->IsHTMLElement(nsGkAtoms::br) &&
-                      !HTMLEditor::NodeIsBlockStatic(*mContent))));
+                      !HTMLEditUtils::IsBlockElement(*mContent))));
     MOZ_ASSERT_IF(mReason == WSType::OtherBlockBoundary,
-                  mContent && HTMLEditor::NodeIsBlockStatic(*mContent));
+                  mContent && HTMLEditUtils::IsBlockElement(*mContent));
     // If mReason is WSType::CurrentBlockBoundary, mContent can be any content.
     // In most cases, it's current block element which is editable.  However, if
     // there is no editable block parent, this is topmost editable inline
@@ -114,8 +115,8 @@ class MOZ_STACK_CLASS WSScanResult final {
     MOZ_ASSERT_IF(
         mReason == WSType::CurrentBlockBoundary,
         !mContent || !mContent->GetParentElement() ||
-            HTMLEditor::NodeIsBlockStatic(*mContent) ||
-            HTMLEditor::NodeIsBlockStatic(*mContent->GetParentElement()) ||
+            HTMLEditUtils::IsBlockElement(*mContent) ||
+            HTMLEditUtils::IsBlockElement(*mContent->GetParentElement()) ||
             !mContent->GetParentElement()->IsEditable());
 #endif  // #ifdef DEBUG
   }
@@ -408,9 +409,11 @@ class MOZ_STACK_CLASS WSRunScanner {
   /**
    * Active editing host when this instance is created.
    */
-  Element* GetEditingHost() const { return mEditingHost; }
+  dom::Element* GetEditingHost() const { return mEditingHost; }
 
  protected:
+  using EditorType = EditorBase::EditorType;
+
   // WSFragment represents a single run of ws (all leadingws, or all normalws,
   // or all trailingws, or all leading+trailingws).  Note that this single run
   // may still span multiple nodes.
@@ -572,10 +575,6 @@ class MOZ_STACK_CLASS WSRunScanner {
   nsIContent* GetEditableBlockParentOrTopmotEditableInlineContent(
       nsIContent* aContent) const;
 
-  static bool IsBlockNode(nsINode* aNode) {
-    return aNode && aNode->IsElement() && HTMLEditor::NodeIsBlockStatic(*aNode);
-  }
-
   nsIContent* GetPreviousWSNodeInner(nsINode* aStartNode,
                                      nsINode* aBlockParent) const;
   nsIContent* GetPreviousWSNode(const EditorDOMPoint& aPoint,
@@ -615,7 +614,7 @@ class MOZ_STACK_CLASS WSRunScanner {
   // info.
 
   // The editing host when the instance is created.
-  RefPtr<Element> mEditingHost;
+  RefPtr<dom::Element> mEditingHost;
 
   // true if we are in preformatted whitespace context.
   bool mPRE;
@@ -763,7 +762,7 @@ class MOZ_STACK_CLASS WSRunObject final : public WSRunScanner {
    *                        node, returns nullptr.
    */
   MOZ_CAN_RUN_SCRIPT already_AddRefed<dom::Element> InsertBreak(
-      Selection& aSelection, const EditorDOMPoint& aPointToInsert,
+      dom::Selection& aSelection, const EditorDOMPoint& aPointToInsert,
       nsIEditor::EDirection aSelect);
 
   /**

@@ -4,7 +4,7 @@
 from argparse import ArgumentParser, SUPPRESS
 import os
 import mozlog
-
+import copy
 
 here = os.path.abspath(os.path.dirname(__file__))
 try:
@@ -15,56 +15,62 @@ except ImportError:
     build_obj = None
     conditions = None
 
-SUPPORTED_APPS = ("generic", "android")
+from mozperftest.system import get_layers as system_layers
+from mozperftest.browser import get_layers as browser_layers
+from mozperftest.metrics import get_layers as metrics_layers
+
+FLAVORS = ["script", "doc"]
 
 
-class GenericGroup:
-    """ Generic options
-    """
+class Options:
 
-    name = "Generic"
+    general_args = {
+        "--flavor": {
+            "choices": FLAVORS,
+            "metavar": "{{{}}}".format(", ".join(FLAVORS)),
+            "default": "script",
+            "help": "Only run tests of this flavor.",
+        },
+        "tests": {
+            "nargs": "*",
+            "metavar": "TEST",
+            "default": [],
+            "help": "Test to run. Can be a single test file or a directory of tests "
+            "(to run recursively). If omitted, the entire suite is run.",
+        },
+        "--output": {
+            "type": str,
+            "default": "artifacts",
+            "help": "Path to where data will be stored, defaults to a top-level "
+            "`artifacts` folder.",
+        },
+        "--hooks": {"type": str, "default": "", "help": "Python hooks"},
+        "--verbose": {"action": "store_true", "default": False, "help": "Verbose mode"},
+    }
 
-    args = [
-        [
-            ["tests"],
-            {
-                "nargs": "*",
-                "metavar": "TEST",
-                "default": [],
-                "help": "Test to run. Can be a single test file or a directory of tests "
-                "(to run recursively). If omitted, the entire suite is run.",
-            },
-        ],
-        [
-            # XXX this should live in mozperftest.metrics
-            ["--perfherder"],
-            {
-                "action": "store_true",
-                "default": False,
-                "help": "Output data in the perfherder format.",
-            },
-        ],
-        [
-            # XXX this should live in mozperftest.metrics
-            ["--output"],
-            {
-                "type": str,
-                "default": "artifacts",
-                "help": "Path to where data will be stored, defaults to a top-level "
-                "`artifacts` folder.",
-            },
-        ],
-        [
-            # XXX this should live in mozperftest.metrics
-            ["--prefix"],
-            {
-                "type": str,
-                "default": "",
-                "help": "Prefix the output files with this string.",
-            },
-        ],
-    ]
-    defaults = {}
+    args = copy.deepcopy(general_args)
+
+
+for layer in system_layers() + browser_layers() + metrics_layers():
+    if layer.activated:
+        # add an option to deactivate it
+        option_name = "--no-%s" % layer.name
+        option_help = "Deactivates the %s layer" % layer.name
+    else:
+        option_name = "--%s" % layer.name
+        option_help = "Activates the %s layer" % layer.name
+
+    Options.args[option_name] = {
+        "action": "store_true",
+        "default": False,
+        "help": option_help,
+    }
+
+    for option, value in layer.arguments.items():
+        option = "--%s-%s" % (layer.name, option.replace("_", "-"))
+        if option in Options.args:
+            raise KeyError("%s option already defined!" % option)
+        Options.args[option] = value
 
 
 class PerftestArgumentParser(ArgumentParser):
@@ -75,7 +81,6 @@ class PerftestArgumentParser(ArgumentParser):
             self, usage=self.__doc__, conflict_handler="resolve", **kwargs
         )
         # XXX see if this list will vary depending on the flavor & app
-        self.groups = [GenericGroup]
         self.oldcwd = os.getcwd()
         self.app = app
         if not self.app and build_obj:
@@ -83,28 +88,14 @@ class PerftestArgumentParser(ArgumentParser):
                 self.app = "android"
         if not self.app:
             self.app = "generic"
+        for name, options in Options.args.items():
+            if "default" in options and isinstance(options["default"], list):
+                options["default"] = []
+            if "suppress" in options:
+                if options["suppress"]:
+                    options["help"] = SUPPRESS
+                del options["suppress"]
 
-        if self.app not in SUPPORTED_APPS:
-            self.error(
-                "Unrecognized app '{}'! Must be one of: {}".format(
-                    self.app, ", ".join(SUPPORTED_APPS)
-                )
-            )
+            self.add_argument(name, **options)
 
-        defaults = {}
-        for klass in self.groups:
-            defaults.update(klass.defaults)
-            group = self.add_argument_group(klass.name, klass.__doc__)
-
-            for cli, kwargs in klass.args:
-                if "default" in kwargs and isinstance(kwargs["default"], list):
-                    kwargs["default"] = []
-
-                if "suppress" in kwargs:
-                    if kwargs["suppress"]:
-                        kwargs["help"] = SUPPRESS
-                    del kwargs["suppress"]
-                group.add_argument(*cli, **kwargs)
-
-        self.set_defaults(**defaults)
         mozlog.commandline.add_logging_group(self)

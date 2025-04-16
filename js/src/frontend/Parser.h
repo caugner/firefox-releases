@@ -184,6 +184,7 @@
 #include "frontend/CompilationInfo.h"
 #include "frontend/ErrorReporter.h"
 #include "frontend/FullParseHandler.h"
+#include "frontend/FunctionSyntaxKind.h"  // FunctionSyntaxKind
 #include "frontend/FunctionTree.h"
 #include "frontend/NameAnalysisTypes.h"
 #include "frontend/NameCollections.h"
@@ -193,6 +194,7 @@
 #include "frontend/TokenStream.h"
 #include "js/Vector.h"
 #include "vm/ErrorReporting.h"
+#include "vm/GeneratorAndAsyncKind.h"  // js::GeneratorKind, js::FunctionAsyncKind
 
 namespace js {
 
@@ -242,7 +244,7 @@ class AutoAwaitIsKeyword;
 template <class ParseHandler, typename Unit>
 class AutoInParametersOfAsyncFunction;
 
-class MOZ_STACK_CLASS ParserSharedBase : private JS::AutoGCRooter {
+class MOZ_STACK_CLASS ParserSharedBase : public JS::AutoGCRooter {
  public:
   enum class Kind { Parser, BinASTParser };
 
@@ -268,16 +270,6 @@ class MOZ_STACK_CLASS ParserSharedBase : private JS::AutoGCRooter {
   UsedNameTracker& usedNames_;
 
   RootedScriptSourceObject sourceObject_;
-
- private:
-  // This is needed to cast a parser to JS::AutoGCRooter.
-  friend void js::frontend::TraceParser(JSTracer* trc,
-                                        JS::AutoGCRooter* parser);
-
-#if defined(JS_BUILD_BINAST)
-  friend void js::frontend::TraceBinASTParser(JSTracer* trc,
-                                              JS::AutoGCRooter* parser);
-#endif  // JS_BUILD_BINAST
 
  public:
   CompilationInfo& getCompilationInfo() { return compilationInfo_; }
@@ -1784,9 +1776,8 @@ ParserAnyCharsAccess<Parser>::anyChars(const GeneralTokenStreamChars* ts) {
   // then translate that to the enclosing Parser*, then return the |anyChars|
   // member within.
 
-  static_assert(
-      std::is_base_of<GeneralTokenStreamChars, TokenStreamSpecific>::value,
-      "the static_cast<> below assumes a base-class relationship");
+  static_assert(std::is_base_of_v<GeneralTokenStreamChars, TokenStreamSpecific>,
+                "the static_cast<> below assumes a base-class relationship");
   const auto* tss = static_cast<const TokenStreamSpecific*>(ts);
 
   auto tssAddr = reinterpret_cast<uintptr_t>(tss);
@@ -1875,6 +1866,10 @@ mozilla::Maybe<VarScope::Data*> NewVarScopeData(JSContext* context,
 mozilla::Maybe<LexicalScope::Data*> NewLexicalScopeData(
     JSContext* context, ParseContext::Scope& scope, LifoAlloc& alloc,
     ParseContext* pc);
+
+bool FunctionScopeHasClosedOverBindings(ParseContext* pc);
+bool LexicalScopeHasClosedOverBindings(ParseContext* pc,
+                                       ParseContext::Scope& scope);
 
 JSFunction* AllocNewFunction(JSContext* cx,
                              Handle<FunctionCreationData> dataHandle);

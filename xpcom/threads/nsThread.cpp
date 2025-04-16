@@ -31,9 +31,9 @@
 #include "mozilla/Preferences.h"
 #include "mozilla/SchedulerGroup.h"
 #include "mozilla/Services.h"
-#include "mozilla/SystemGroup.h"
 #include "nsXPCOMPrivate.h"
 #include "mozilla/ChaosMode.h"
+#include "mozilla/SchedulerGroup.h"
 #include "mozilla/Telemetry.h"
 #include "mozilla/TimeStamp.h"
 #include "mozilla/Unused.h"
@@ -108,6 +108,8 @@ using namespace mozilla::tasktracer;
 #endif
 
 using namespace mozilla;
+
+extern void InitThreadLocalVariables();
 
 static LazyLogModule sThreadLog("nsThread");
 #ifdef LOG
@@ -235,28 +237,6 @@ class nsThreadStartupEvent final : public Runnable {
   bool mInitialized;
 };
 //-----------------------------------------------------------------------------
-
-struct nsThreadShutdownContext {
-  nsThreadShutdownContext(NotNull<nsThread*> aTerminatingThread,
-                          NotNull<nsThread*> aJoiningThread,
-                          bool aAwaitingShutdownAck)
-      : mTerminatingThread(aTerminatingThread),
-        mTerminatingPRThread(aTerminatingThread->GetPRThread()),
-        mJoiningThread(aJoiningThread),
-        mAwaitingShutdownAck(aAwaitingShutdownAck),
-        mIsMainThreadJoining(NS_IsMainThread()) {
-    MOZ_COUNT_CTOR(nsThreadShutdownContext);
-  }
-  MOZ_COUNTED_DTOR(nsThreadShutdownContext)
-
-  // NB: This will be the last reference.
-  NotNull<RefPtr<nsThread>> mTerminatingThread;
-  PRThread* const mTerminatingPRThread;
-  NotNull<nsThread*> MOZ_UNSAFE_REF(
-      "Thread manager is holding reference to joining thread") mJoiningThread;
-  bool mAwaitingShutdownAck;
-  bool mIsMainThreadJoining;
-};
 
 bool nsThread::ShutdownContextsComp::Equals(
     const ShutdownContexts::elem_type& a,
@@ -498,7 +478,7 @@ void nsThread::ThreadFunc(void* aArg) {
   MOZ_ASSERT(context->mTerminatingThread == self);
   event = do_QueryObject(new nsThreadShutdownAckEvent(context));
   if (context->mIsMainThreadJoining) {
-    SystemGroup::Dispatch(TaskCategory::Other, event.forget());
+    SchedulerGroup::Dispatch(TaskCategory::Other, event.forget());
   } else {
     context->mJoiningThread->Dispatch(event, NS_DISPATCH_NORMAL);
   }

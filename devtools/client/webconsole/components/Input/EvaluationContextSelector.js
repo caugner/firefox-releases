@@ -18,7 +18,10 @@ const webconsoleActions = require("devtools/client/webconsole/actions/index");
 
 const { l10n } = require("devtools/client/webconsole/utils/messages");
 const targetSelectors = require("devtools/client/framework/reducers/targets");
-const { TARGET_TYPES } = frameworkActions;
+
+loader.lazyGetter(this, "TARGET_TYPES", function() {
+  return require("devtools/shared/resources/target-list").TargetList.TYPES;
+});
 
 // Additional Components
 const MenuButton = createFactory(
@@ -55,23 +58,37 @@ class EvaluationContextSelector extends Component {
     }
   }
 
+  getIcon(target) {
+    if (target.type === TARGET_TYPES.FRAME) {
+      return "resource://devtools/client/debugger/images/globe-small.svg";
+    }
+
+    if (target.type === TARGET_TYPES.WORKER) {
+      return "resource://devtools/client/debugger/images/worker.svg";
+    }
+
+    if (target.type === TARGET_TYPES.PROCESS) {
+      return "resource://devtools/client/debugger/images/window.svg";
+    }
+
+    return null;
+  }
+
   renderMenuItem(target) {
     const { selectTarget, selectedTarget } = this.props;
 
-    const label =
-      target.type == TARGET_TYPES.MAIN_TARGET
-        ? l10n.getStr("webconsole.input.selector.top")
-        : target.name;
+    const label = target.isMainTarget
+      ? l10n.getStr("webconsole.input.selector.top")
+      : target.name;
 
     return MenuItem({
       key: `webconsole-evaluation-selector-item-${target.actorID}`,
       className: "menu-item webconsole-evaluation-selector-item",
       type: "checkbox",
-      checked: selectedTarget
-        ? selectedTarget == target
-        : target.type == TARGET_TYPES.MAIN_TARGET,
+      checked: selectedTarget ? selectedTarget == target : target.isMainTarget,
       label,
       tooltip: target.url,
+      icon: this.getIcon(target),
       onClick: () => selectTarget(target.actorID),
     });
   }
@@ -79,23 +96,39 @@ class EvaluationContextSelector extends Component {
   renderMenuItems() {
     const { targets } = this.props;
 
+    // Let's sort the targets (using "numeric" so Content processes are ordered by PID).
+    const collator = new Intl.Collator("en", { numeric: true });
+    targets.sort((a, b) => collator.compare(a.name, b.name));
+
     let mainTarget;
+    const frames = [];
     const contentProcesses = [];
     const workers = [];
+
+    const dict = {
+      [TARGET_TYPES.FRAME]: frames,
+      [TARGET_TYPES.PROCESS]: contentProcesses,
+      [TARGET_TYPES.WORKER]: workers,
+    };
 
     for (const target of targets) {
       const menuItem = this.renderMenuItem(target);
 
-      if (target.type == TARGET_TYPES.MAIN_TARGET) {
+      if (target.isMainTarget) {
         mainTarget = menuItem;
-      } else if (target.type == TARGET_TYPES.CONTENT_PROCESS) {
-        contentProcesses.push(menuItem);
-      } else if (target.type == TARGET_TYPES.WORKER) {
-        workers.push(menuItem);
+      } else {
+        dict[target.type].push(menuItem);
       }
     }
 
     const items = [mainTarget];
+
+    if (frames.length > 0) {
+      items.push(
+        MenuItem({ role: "menuseparator", key: "frames-separator" }),
+        ...frames
+      );
+    }
 
     if (contentProcesses.length > 0) {
       items.push(
@@ -111,13 +144,16 @@ class EvaluationContextSelector extends Component {
       );
     }
 
-    return MenuList({ id: "webconsole-console-settings-menu-list" }, items);
+    return MenuList(
+      { id: "webconsole-console-evaluation-context-selector-menu-list" },
+      items
+    );
   }
 
   getLabel() {
     const { selectedTarget } = this.props;
 
-    if (!selectedTarget || selectedTarget.type == TARGET_TYPES.MAIN_TARGET) {
+    if (!selectedTarget || selectedTarget.isMainTarget) {
       return l10n.getStr("webconsole.input.selector.top");
     }
 
@@ -140,7 +176,7 @@ class EvaluationContextSelector extends Component {
         label: this.getLabel(),
         className:
           "webconsole-evaluation-selector-button devtools-button devtools-dropdown-button" +
-          (selectedTarget && selectedTarget.type !== TARGET_TYPES.MAIN_TARGET
+          (selectedTarget && !selectedTarget.isMainTarget
             ? " webconsole-evaluation-selector-button-non-top"
             : ""),
         title: l10n.getStr("webconsole.input.selector.tooltip"),

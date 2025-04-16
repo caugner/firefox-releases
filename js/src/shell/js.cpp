@@ -83,7 +83,15 @@
 #include "frontend/Parser.h"
 #include "frontend/SourceNotes.h"  // SrcNote, SrcNoteType, SrcNoteIterator
 #include "gc/PublicIterators.h"
-#include "jit/arm/Simulator-arm.h"
+#ifdef JS_SIMULATOR_ARM
+#  include "jit/arm/Simulator-arm.h"
+#endif
+#ifdef JS_SIMULATOR_MIPS32
+#  include "jit/mips32/Simulator-mips32.h"
+#endif
+#ifdef JS_SIMULATOR_MIPS64
+#  include "jit/mips64/Simulator-mips64.h"
+#endif
 #include "jit/InlinableNatives.h"
 #include "jit/Ion.h"
 #include "jit/JitcodeMap.h"
@@ -98,6 +106,7 @@
 #include "js/ContextOptions.h"  // JS::ContextOptions{,Ref}
 #include "js/Debug.h"
 #include "js/Equality.h"                 // JS::SameValue
+#include "js/Exception.h"                // JS::StealPendingExceptionStack
 #include "js/experimental/SourceHook.h"  // js::{Set,Forget,}SourceHook
 #include "js/GCVector.h"
 #include "js/Initialization.h"
@@ -493,6 +502,7 @@ bool shell::enableSharedMemory = SHARED_MEMORY_DEFAULT;
 bool shell::enableWasmBaseline = false;
 bool shell::enableWasmIon = false;
 bool shell::enableWasmCranelift = false;
+bool shell::enableWasmReftypes = true;
 #ifdef ENABLE_WASM_GC
 bool shell::enableWasmGc = false;
 #endif
@@ -561,11 +571,10 @@ JSObject* NewShellWindowProxy(JSContext* cx, JS::HandleObject global) {
 
   js::WrapperOptions options;
   options.setClass(&ShellWindowProxyClass);
-  options.setSingleton(true);
 
   JSAutoRealm ar(cx, global);
   JSObject* obj =
-      js::Wrapper::New(cx, global, &js::Wrapper::singleton, options);
+      js::Wrapper::NewSingleton(cx, global, &js::Wrapper::singleton, options);
   MOZ_ASSERT_IF(obj, js::IsWindowProxy(obj));
   return obj;
 }
@@ -3816,8 +3825,10 @@ static bool CopyErrorReportToObject(JSContext* cx, JSErrorReport* report,
 static bool CreateErrorReport(JSContext* cx, unsigned argc, Value* vp) {
   CallArgs args = CallArgsFromVp(argc, vp);
 
+  // We don't have a stack here, so just initialize with null.
+  JS::ExceptionStack exnStack(cx, args.get(0), nullptr);
   js::ErrorReport report(cx);
-  if (!report.init(cx, args.get(0), js::ErrorReport::WithSideEffects)) {
+  if (!report.init(cx, exnStack, js::ErrorReport::WithSideEffects)) {
     return false;
   }
 
@@ -4987,7 +4998,8 @@ class XDRBufferObject : public NativeObject {
 
 XDRBufferObject* XDRBufferObject::create(JSContext* cx,
                                          JS::TranscodeBuffer* buf) {
-  XDRBufferObject* bufObj = NewObjectWithNullTaggedProto<XDRBufferObject>(cx);
+  XDRBufferObject* bufObj =
+      NewObjectWithGivenProto<XDRBufferObject>(cx, nullptr);
   if (!bufObj) {
     return nullptr;
   }
@@ -5443,9 +5455,10 @@ static bool BinParse(JSContext* cx, unsigned argc, Value* vp) {
     return false;
   }
 
+  js::SourceExtent extent = js::SourceExtent::makeGlobalExtent(0, options);
   js::frontend::Directives directives(false);
-  js::frontend::GlobalSharedContext globalsc(cx, ScopeKind::Global,
-                                             compilationInfo, directives);
+  js::frontend::GlobalSharedContext globalsc(
+      cx, ScopeKind::Global, compilationInfo, directives, extent);
 
   auto parseFunc = mode == Multipart
                        ? ParseBinASTData<frontend::BinASTTokenReaderMultipart>
@@ -5492,7 +5505,9 @@ static bool FullParseTest(JSContext* cx,
 
     ModuleBuilder builder(cx, &parser);
 
-    ModuleSharedContext modulesc(cx, module, compilationInfo, nullptr, builder);
+    SourceExtent extent = SourceExtent::makeGlobalExtent(length);
+    ModuleSharedContext modulesc(cx, module, compilationInfo, nullptr, builder,
+                                 extent);
     pn = parser.moduleBody(&modulesc);
   }
   if (!pn) {
@@ -6630,6 +6645,17 @@ static bool NewGlobal(JSContext* cx, unsigned argc, Value* vp) {
     }
     if (v.isBoolean()) {
       creationOptions.setCoopAndCoepEnabled(v.toBoolean());
+    }
+
+    // On the web, the SharedArrayBuffer constructor is not installed as a
+    // global property in pages that aren't isolated in a separate process (and
+    // thus can't allow the structured cloning of shared memory).  Specify false
+    // for this option to reproduce this behavior.
+    if (!JS_GetProperty(cx, opts, "defineSharedArrayBufferConstructor", &v)) {
+      return false;
+    }
+    if (v.isBoolean()) {
+      creationOptions.setDefineSharedArrayBufferConstructor(v.toBoolean());
     }
   }
 
@@ -7842,7 +7868,7 @@ static bool EnsureGrayRoot(JSContext* cx, unsigned argc, Value* vp) {
   }
 
   if (!priv->grayRoot) {
-    if (!(priv->grayRoot = NewDenseEmptyArray(cx, nullptr, TenuredObject))) {
+    if (!(priv->grayRoot = NewTenuredDenseEmptyArray(cx, nullptr))) {
       return false;
     }
   }
@@ -9673,15 +9699,17 @@ js::shell::AutoReportException::~AutoReportException() {
   }
 
   // Get exception object and stack before printing and clearing exception.
-  RootedValue exn(cx);
-  (void)JS_GetPendingException(cx, &exn);
-  RootedObject stack(cx, GetPendingExceptionStack(cx));
-
-  JS_ClearPendingException(cx);
+  JS::ExceptionStack exnStack(cx);
+  if (!JS::StealPendingExceptionStack(cx, &exnStack)) {
+    fprintf(stderr, "out of memory while stealing exception\n");
+    fflush(stderr);
+    JS_ClearPendingException(cx);
+    return;
+  }
 
   ShellContext* sc = GetShellContext(cx);
   js::ErrorReport report(cx);
-  if (!report.init(cx, exn, js::ErrorReport::WithSideEffects, stack)) {
+  if (!report.init(cx, exnStack, js::ErrorReport::WithSideEffects)) {
     fprintf(stderr, "out of memory initializing ErrorReport\n");
     fflush(stderr);
     JS_ClearPendingException(cx);
@@ -9694,7 +9722,7 @@ js::shell::AutoReportException::~AutoReportException() {
   PrintError(cx, fp, report.toStringResult(), report.report(), reportWarnings);
   JS_ClearPendingException(cx);
 
-  if (!PrintStackTrace(cx, stack)) {
+  if (!PrintStackTrace(cx, exnStack.stack())) {
     fputs("(Unable to print stack trace)\n", fp);
     JS_ClearPendingException(cx);
   }
@@ -10210,6 +10238,10 @@ static JSObject* NewGlobalObject(JSContext* cx, JS::RealmOptions& options,
     /* Initialize FakeDOMObject.prototype */
     InitDOMObject(domProto);
 
+    if (!DefineToStringTag(cx, glob, cx->names().global)) {
+      return nullptr;
+    }
+
     JS_FireOnNewGlobalObject(cx, glob);
   }
 
@@ -10466,6 +10498,7 @@ static bool SetContextOptions(JSContext* cx, const OptionParser& op) {
     }
   }
 
+  enableWasmReftypes = !op.getBoolOption("no-wasm-reftypes");
 #ifdef ENABLE_WASM_GC
   enableWasmGc = op.getBoolOption("wasm-gc");
 #endif
@@ -10494,6 +10527,7 @@ static bool SetContextOptions(JSContext* cx, const OptionParser& op) {
       .setWasmForTrustedPrinciples(enableWasm)
       .setWasmBaseline(enableWasmBaseline)
       .setWasmIon(enableWasmIon)
+      .setWasmReftypes(enableWasmReftypes)
 #ifdef ENABLE_WASM_CRANELIFT
       .setWasmCranelift(enableWasmCranelift)
 #endif
@@ -10692,6 +10726,13 @@ static bool SetContextOptions(JSContext* cx, const OptionParser& op) {
     jit::JitOptions.baselineJitWarmUpThreshold = warmUpThreshold;
   }
 
+#ifdef ENABLE_NEW_REGEXP
+  warmUpThreshold = op.getIntOption("regexp-warmup-threshold");
+  if (warmUpThreshold >= 0) {
+    jit::JitOptions.regexpWarmUpThreshold = warmUpThreshold;
+  }
+#endif
+
   if (op.getBoolOption("baseline-eager")) {
     jit::JitOptions.setEagerBaselineCompilation();
   }
@@ -10724,6 +10765,21 @@ static bool SetContextOptions(JSContext* cx, const OptionParser& op) {
   if (op.getBoolOption("no-native-regexp")) {
     jit::JitOptions.nativeRegExp = false;
   }
+
+#ifdef ENABLE_NEW_REGEXP
+  if (op.getBoolOption("trace-regexp-parser")) {
+    jit::JitOptions.traceRegExpParser = true;
+  }
+  if (op.getBoolOption("trace-regexp-assembler")) {
+    jit::JitOptions.traceRegExpAssembler = true;
+  }
+  if (op.getBoolOption("trace-regexp-interpreter")) {
+    jit::JitOptions.traceRegExpInterpreter = true;
+  }
+  if (op.getBoolOption("trace-regexp-peephole")) {
+    jit::JitOptions.traceRegExpPeephole = true;
+  }
+#endif
 
 #ifdef NIGHTLY_BUILD
   if (op.getBoolOption("no-ti")) {
@@ -11280,6 +11336,8 @@ int main(int argc, char** argv, char** envp) {
       !op.addBoolOption('\0', "test-wasm-await-tier2",
                         "Forcibly activate tiering and block "
                         "instantiation on completion of tier2") ||
+      !op.addBoolOption('\0', "no-wasm-reftypes",
+                        "Disable wasm reference types features") ||
 #ifdef ENABLE_WASM_GC
       !op.addBoolOption('\0', "wasm-gc",
                         "Enable experimental wasm GC features") ||
@@ -11295,6 +11353,20 @@ int main(int argc, char** argv, char** envp) {
 
       !op.addBoolOption('\0', "no-native-regexp",
                         "Disable native regexp compilation") ||
+#ifdef ENABLE_NEW_REGEXP
+      !op.addIntOption(
+          '\0', "regexp-warmup-threshold", "COUNT",
+          "Wait for COUNT invocations before compiling regexps to native code "
+          "(default 10)",
+          -1) ||
+      !op.addBoolOption('\0', "trace-regexp-parser", "Trace regexp parsing") ||
+      !op.addBoolOption('\0', "trace-regexp-assembler",
+                        "Trace regexp assembler") ||
+      !op.addBoolOption('\0', "trace-regexp-interpreter",
+                        "Trace regexp interpreter") ||
+      !op.addBoolOption('\0', "trace-regexp-peephole",
+                        "Trace regexp peephole optimization") ||
+#endif
       !op.addBoolOption('\0', "no-unboxed-objects",
                         "Disable creating unboxed plain objects") ||
       !op.addBoolOption('\0', "enable-streams",
@@ -11723,20 +11795,12 @@ int main(int argc, char** argv, char** envp) {
 
   EnvironmentPreparer environmentPreparer(cx);
 
-  JS_SetGCParameter(cx, JSGC_MODE, JSGC_MODE_ZONE_INCREMENTAL);
-
-  JS::SetProcessLargeAllocationFailureCallback(my_LargeAllocFailCallback);
-
-  // Set some parameters to allow incremental GC in low memory conditions,
-  // as is done for the browser, except in more-deterministic builds or when
-  // disabled by command line options.
-#ifndef JS_MORE_DETERMINISTIC
   if (!op.getBoolOption("no-incremental-gc")) {
-    JS_SetGCParameter(cx, JSGC_DYNAMIC_HEAP_GROWTH, 1);
-    JS_SetGCParameter(cx, JSGC_DYNAMIC_MARK_SLICE, 1);
+    JS_SetGCParameter(cx, JSGC_MODE, JSGC_MODE_ZONE_INCREMENTAL);
     JS_SetGCParameter(cx, JSGC_SLICE_TIME_BUDGET_MS, 10);
   }
-#endif
+
+  JS::SetProcessLargeAllocationFailureCallback(my_LargeAllocFailCallback);
 
   js::SetPreserveWrapperCallback(cx, DummyPreserveWrapperCallback);
 

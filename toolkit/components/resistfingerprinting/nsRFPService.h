@@ -134,7 +134,12 @@ class KeyboardHashKey : public PLDHashEntryHdr {
   nsString mKey;
 };
 
-enum TimerPrecisionType { All = 1, RFPOnly = 2 };
+enum TimerPrecisionType {
+  DangerouslyNone = 1,
+  UnconditionalAKAHighRes = 2,
+  Normal = 3,
+  RFP = 4,
+};
 
 class nsRFPService final : public nsIObserver {
  public:
@@ -142,25 +147,27 @@ class nsRFPService final : public nsIObserver {
   NS_DECL_NSIOBSERVER
 
   static nsRFPService* GetOrCreate();
-  static bool IsResistFingerprintingEnabled();
-  static bool IsTimerPrecisionReductionEnabled(TimerPrecisionType aType);
   static double TimerResolution();
 
   enum TimeScale { Seconds = 1, MilliSeconds = 1000, MicroSeconds = 1000000 };
 
   // The following Reduce methods can be called off main thread.
-  static double ReduceTimePrecisionAsUSecs(
-      double aTime, int64_t aContextMixin,
-      TimerPrecisionType aType = TimerPrecisionType::All);
-  static double ReduceTimePrecisionAsMSecs(
-      double aTime, int64_t aContextMixin,
-      TimerPrecisionType aType = TimerPrecisionType::All);
-  static double ReduceTimePrecisionAsSecs(
-      double aTime, int64_t aContextMixin,
-      TimerPrecisionType aType = TimerPrecisionType::All);
+  static double ReduceTimePrecisionAsUSecs(double aTime, int64_t aContextMixin,
+                                           bool aIsSystemPrincipal,
+                                           bool aCrossOriginIsolated);
+  static double ReduceTimePrecisionAsMSecs(double aTime, int64_t aContextMixin,
+                                           bool aIsSystemPrincipal,
+                                           bool aCrossOriginIsolated);
+  static double ReduceTimePrecisionAsMSecsRFPOnly(double aTime,
+                                                  int64_t aContextMixin);
+  static double ReduceTimePrecisionAsSecs(double aTime, int64_t aContextMixin,
+                                          bool aIsSystemPrincipal,
+                                          bool aCrossOriginIsolated);
+  static double ReduceTimePrecisionAsSecsRFPOnly(double aTime,
+                                                 int64_t aContextMixin);
 
   // Used by the JS Engine, as it doesn't know about the TimerPrecisionType enum
-  static double ReduceTimePrecisionAsUSecsWrapper(double aTime);
+  static double ReduceTimePrecisionAsUSecsWrapper(double aTime, JSContext* aCx);
 
   // Public only for testing purposes
   static double ReduceTimePrecisionImpl(double aTime, TimeScale aTimeScale,
@@ -258,6 +265,13 @@ class nsRFPService final : public nsIObserver {
 
   static nsDataHashtable<KeyboardHashKey, const SpoofingKeyboardCode*>*
       sSpoofingKeyboardCodes;
+
+  static TimerPrecisionType GetTimerPrecisionType(bool aIsSystemPrincipal,
+                                                  bool aCrossOriginIsolated);
+
+  static TimerPrecisionType GetTimerPrecisionTypeRFPOnly();
+
+  static void TypeToText(TimerPrecisionType aType, nsACString& aText);
 
   nsCString mInitialTZValue;
 };

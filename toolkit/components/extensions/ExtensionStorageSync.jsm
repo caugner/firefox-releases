@@ -663,23 +663,22 @@ this.CryptoCollection = CryptoCollection;
  * @param {string} extensionId The extension ID for which to find a key.
  */
 let CollectionKeyEncryptionRemoteTransformer = class extends EncryptionRemoteTransformer {
-  constructor(cryptoCollection, extensionId) {
+  constructor(cryptoCollection, keyring, extensionId) {
     super();
     this.cryptoCollection = cryptoCollection;
+    this.keyring = keyring;
     this.extensionId = extensionId;
   }
 
   async getKeys() {
-    // FIXME: cache the crypto record for the duration of a sync cycle?
-    const collectionKeys = await this.cryptoCollection.getKeyRing();
-    if (!collectionKeys.hasKeysFor([this.extensionId])) {
+    if (!this.keyring.hasKeysFor([this.extensionId])) {
       // This should never happen. Keys should be created (and
       // synced) at the beginning of the sync cycle.
       throw new Error(
         `tried to encrypt records for ${this.extensionId}, but key is not present`
       );
     }
-    return collectionKeys.keyForCollection(this.extensionId);
+    return this.keyring.keyForCollection(this.extensionId);
   }
 
   getEncodedRecordId(record) {
@@ -718,28 +717,19 @@ function cleanUpForContext(extension, context) {
 /**
  * Generate a promise that produces the Collection for an extension.
  *
- * @param {CryptoCollection} cryptoCollection
  * @param {Extension} extension
  *                    The extension whose collection needs to
  *                    be opened.
- * @param {Context} context
- *                  The context for this extension. The Collection
- *                  will shut down automatically when all contexts
- *                  close.
+ * @param {Object} options
+ *                 Options to be passed to the call to `.collection()`.
  * @returns {Promise<Collection>}
  */
-const openCollection = async function(cryptoCollection, extension, context) {
+const openCollection = async function(extension, options = {}) {
   let collectionId = extension.id;
   const { kinto } = await storageSyncInit();
-  const remoteTransformers = [
-    new CollectionKeyEncryptionRemoteTransformer(
-      cryptoCollection,
-      extension.id
-    ),
-  ];
   const coll = kinto.collection(collectionId, {
+    ...options,
     idSchema: storageSyncIdSchema,
-    remoteTransformers,
   });
   return coll;
 };
@@ -798,8 +788,16 @@ class ExtensionStorageSync {
     }
     await this.ensureCanSync(extIds);
     await this.checkSyncKeyRing();
+    const keyring = await this.cryptoCollection.getKeyRing();
     const promises = Array.from(extensions, extension => {
-      return openCollection(this.cryptoCollection, extension).then(coll => {
+      const remoteTransformers = [
+        new CollectionKeyEncryptionRemoteTransformer(
+          this.cryptoCollection,
+          keyring,
+          extension.id
+        ),
+      ];
+      return openCollection(extension, { remoteTransformers }).then(coll => {
         return this.sync(extension, coll);
       });
     });
@@ -1215,7 +1213,7 @@ class ExtensionStorageSync {
       });
     }
     this.registerInUse(extension, context);
-    return openCollection(this.cryptoCollection, extension, context);
+    return openCollection(extension);
   }
 
   async set(extension, items, context) {
@@ -1281,7 +1279,7 @@ class ExtensionStorageSync {
     log.debug(`Clearing extension data for ${JSON.stringify(extIds)}`);
     if (extIds.length) {
       const promises = Array.from(extensions, extension => {
-        return openCollection(this.cryptoCollection, extension).then(coll => {
+        return openCollection(extension).then(coll => {
           return coll.clear();
         });
       });

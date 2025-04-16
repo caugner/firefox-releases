@@ -5165,8 +5165,16 @@ void nsCSSFrameConstructor::AddFrameConstructionItems(
 static bool ShouldSuppressFrameInSelect(const nsIContent* aParent,
                                         const nsIContent& aChild) {
   if (!aParent ||
-      !aParent->IsAnyOfHTMLElements(nsGkAtoms::select, nsGkAtoms::optgroup)) {
+      !aParent->IsAnyOfHTMLElements(nsGkAtoms::select, nsGkAtoms::optgroup,
+                                    nsGkAtoms::option)) {
     return false;
+  }
+
+  // Options with labels have their label text added in ::before by forms.css.
+  // Suppress frames for their child text.
+  if (aParent->IsHTMLElement(nsGkAtoms::option) &&
+      !aChild.IsRootOfAnonymousSubtree()) {
+    return aParent->AsElement()->HasNonEmptyAttr(nsGkAtoms::label);
   }
 
   // If we're in any display: contents subtree, just suppress the frame.
@@ -8236,17 +8244,6 @@ bool nsCSSFrameConstructor::MaybeRecreateContainerForFrameRemoval(
   MOZ_ASSERT(inFlowFrame == inFlowFrame->FirstContinuation(),
              "placeholder for primary frame has previous continuations?");
   nsIFrame* parent = inFlowFrame->GetParent();
-
-  if (aFrame->GetContent() == mDocument->GetBodyElement()) {
-    // If the frame of the canonical body element is removed (either because of
-    // removing of the element, or removing for frame construction like
-    // writing-mode changed), we need to reframe the root element so that the
-    // root element's frames has the correct writing-mode propagated from body
-    // element. (See nsCSSFrameConstructor::ConstructDocElementFrame.)
-    TRACE("Root");
-    RecreateFramesForContent(mDocument->GetRootElement(), InsertionKind::Async);
-    return true;
-  }
 
   if (inFlowFrame->HasAnyStateBits(NS_FRAME_HAS_MULTI_COLUMN_ANCESTOR)) {
     nsIFrame* grandparent = parent->GetParent();

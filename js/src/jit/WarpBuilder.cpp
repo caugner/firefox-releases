@@ -9,7 +9,8 @@
 #include "jit/MIR.h"
 #include "jit/MIRGenerator.h"
 #include "jit/MIRGraph.h"
-#include "jit/WarpOracle.h"
+#include "jit/WarpCacheIRTranspiler.h"
+#include "jit/WarpSnapshot.h"
 #include "vm/Opcodes.h"
 
 #include "jit/JitScript-inl.h"
@@ -237,12 +238,11 @@ bool WarpBuilder::startNewOsrPreHeaderBlock(BytecodeLocation loopHead) {
     current->initSlot(slot, osrv);
   }
 
-  current->add(MStart::New(alloc()));
+  MStart* start = MStart::New(alloc());
+  current->add(start);
 
-  // TODO: IonBuilder has code to add type barriers to the OSR block and
-  // therefore needs some complicated resume point logic (see linkOsrValues,
-  // maybeAddOsrTypeBarriers). Our OSR block is infallible and values are boxed.
-  // If this becomes a performance issue we should consider changing it somehow.
+  // Note: phi specialization can add type guard instructions to the OSR entry
+  // block if needed. See ShouldSpecializeOsrPhis.
 
   // Create the preheader block, with the predecessor block and OSR block as
   // predecessors.
@@ -391,29 +391,34 @@ MInstruction* WarpBuilder::buildCallObject(MDefinition* callee,
 bool WarpBuilder::buildEnvironmentChain() {
   const WarpEnvironment& env = snapshot_.script()->environment();
 
-  MInstruction* envDef = nullptr;
-  switch (env.kind()) {
-    case WarpEnvironment::Kind::None:
-      // Leave the slot |undefined|, nothing to do.
-      return true;
-    case WarpEnvironment::Kind::ConstantObject:
-      envDef = constant(ObjectValue(*env.constantObject()));
-      break;
-    case WarpEnvironment::Kind::Function: {
-      MDefinition* callee = getCallee();
-      envDef = MFunctionEnvironment::New(alloc(), callee);
-      current->add(envDef);
-      if (LexicalEnvironmentObject* obj = env.maybeNamedLambdaTemplate()) {
-        envDef = buildNamedLambdaEnv(callee, envDef, obj);
-      }
-      if (CallObject* obj = env.maybeCallObjectTemplate()) {
-        envDef = buildCallObject(callee, envDef, obj);
-        if (!envDef) {
-          return false;
+  if (env.is<NoEnvironment>()) {
+    return true;
+  }
+
+  MInstruction* envDef = env.match(
+      [](const NoEnvironment&) -> MInstruction* {
+        MOZ_CRASH("Already handled");
+      },
+      [this](JSObject* obj) -> MInstruction* {
+        return constant(ObjectValue(*obj));
+      },
+      [this](const FunctionEnvironment& env) -> MInstruction* {
+        MDefinition* callee = getCallee();
+        MInstruction* envDef = MFunctionEnvironment::New(alloc(), callee);
+        current->add(envDef);
+        if (LexicalEnvironmentObject* obj = env.namedLambdaTemplate) {
+          envDef = buildNamedLambdaEnv(callee, envDef, obj);
         }
-      }
-      break;
-    }
+        if (CallObject* obj = env.callObjectTemplate) {
+          envDef = buildCallObject(callee, envDef, obj);
+          if (!envDef) {
+            return nullptr;
+          }
+        }
+        return envDef;
+      });
+  if (!envDef) {
+    return false;
   }
 
   // Update the environment slot from UndefinedValue only after the initial
@@ -539,7 +544,13 @@ bool WarpBuilder::build_Nop(BytecodeLocation) { return true; }
 
 bool WarpBuilder::build_NopDestructuring(BytecodeLocation) { return true; }
 
-bool WarpBuilder::build_TryDestructuring(BytecodeLocation) { return true; }
+bool WarpBuilder::build_TryDestructuring(BytecodeLocation) {
+  // Set the hasTryBlock flag to turn off optimizations that eliminate dead
+  // resume points operands because the exception handler code for
+  // TryNoteKind::Destructuring is effectively a (specialized) catch-block.
+  graph().setHasTryBlock();
+  return true;
+}
 
 bool WarpBuilder::build_Lineno(BytecodeLocation) { return true; }
 
@@ -817,25 +828,22 @@ bool WarpBuilder::build_SetArg(BytecodeLocation loc) {
 }
 
 bool WarpBuilder::build_ToNumeric(BytecodeLocation loc) {
-  MDefinition* value = current->pop();
-  MToNumeric* ins = MToNumeric::New(alloc(), value, /* types = */ nullptr);
-  current->add(ins);
-  current->push(ins);
-  return resumeAfter(ins, loc);
+  return buildUnaryOp(loc);
 }
 
 bool WarpBuilder::build_Pos(BytecodeLocation loc) {
-  // TODO: MToNumber is the most basic implementation. Optimize it for known
+  // TODO: MUnaryCache is the most basic implementation. Optimize it for known
   // numbers at least.
-  MDefinition* value = current->pop();
-  MToNumber* ins = MToNumber::New(alloc(), value);
-  current->add(ins);
-  current->push(ins);
-  return resumeAfter(ins, loc);
+  return buildUnaryOp(loc);
 }
 
 bool WarpBuilder::buildUnaryOp(BytecodeLocation loc) {
   MDefinition* value = current->pop();
+
+  if (auto* snapshot = getOpSnapshot<WarpCacheIR>(loc)) {
+    return buildCacheIR(loc, snapshot, {value});
+  }
+
   MInstruction* ins = MUnaryCache::New(alloc(), value);
   current->add(ins);
   current->push(ins);
@@ -855,6 +863,11 @@ bool WarpBuilder::build_BitNot(BytecodeLocation loc) {
 bool WarpBuilder::buildBinaryOp(BytecodeLocation loc) {
   MDefinition* right = current->pop();
   MDefinition* left = current->pop();
+
+  if (auto* snapshot = getOpSnapshot<WarpCacheIR>(loc)) {
+    return buildCacheIR(loc, snapshot, {left, right});
+  }
+
   MInstruction* ins = MBinaryCache::New(alloc(), left, right, MIRType::Value);
   current->add(ins);
   current->push(ins);
@@ -896,6 +909,11 @@ bool WarpBuilder::build_Ursh(BytecodeLocation loc) {
 bool WarpBuilder::buildCompareOp(BytecodeLocation loc) {
   MDefinition* right = current->pop();
   MDefinition* left = current->pop();
+
+  if (auto* snapshot = getOpSnapshot<WarpCacheIR>(loc)) {
+    return buildCacheIR(loc, snapshot, {left, right});
+  }
+
   MInstruction* ins = MBinaryCache::New(alloc(), left, right, MIRType::Boolean);
   current->add(ins);
   current->push(ins);
@@ -1746,6 +1764,10 @@ MConstant* WarpBuilder::globalLexicalEnvConstant() {
 }
 
 bool WarpBuilder::buildGetNameOp(BytecodeLocation loc, MDefinition* env) {
+  if (auto* snapshot = getOpSnapshot<WarpCacheIR>(loc)) {
+    return buildCacheIR(loc, snapshot, {env});
+  }
+
   MGetNameCache* ins = MGetNameCache::New(alloc(), env);
   current->add(ins);
   current->push(ins);
@@ -1782,6 +1804,10 @@ bool WarpBuilder::build_GetGName(BytecodeLocation loc) {
 }
 
 bool WarpBuilder::buildBindNameOp(BytecodeLocation loc, MDefinition* env) {
+  if (auto* snapshot = getOpSnapshot<WarpCacheIR>(loc)) {
+    return buildCacheIR(loc, snapshot, {env});
+  }
+
   MBindNameCache* ins = MBindNameCache::New(alloc(), env);
   current->add(ins);
   current->push(ins);
@@ -1815,6 +1841,11 @@ bool WarpBuilder::buildGetPropOp(BytecodeLocation loc, MDefinition* val,
 bool WarpBuilder::build_GetProp(BytecodeLocation loc) {
   PropertyName* name = loc.getPropertyName(script_);
   MDefinition* val = current->pop();
+
+  if (auto* snapshot = getOpSnapshot<WarpCacheIR>(loc)) {
+    return buildCacheIR(loc, snapshot, {val});
+  }
+
   MConstant* id = constant(StringValue(name));
   return buildGetPropOp(loc, val, id);
 }
@@ -1830,6 +1861,11 @@ bool WarpBuilder::build_Length(BytecodeLocation loc) {
 bool WarpBuilder::build_GetElem(BytecodeLocation loc) {
   MDefinition* id = current->pop();
   MDefinition* val = current->pop();
+
+  if (auto* snapshot = getOpSnapshot<WarpCacheIR>(loc)) {
+    return buildCacheIR(loc, snapshot, {val, id});
+  }
+
   return buildGetPropOp(loc, val, id);
 }
 
@@ -2478,7 +2514,7 @@ bool WarpBuilder::build_InitElemInc(BytecodeLocation loc) {
 
   // Push index + 1.
   MConstant* constOne = constant(Int32Value(1));
-  MAdd* nextIndex = MAdd::New(alloc(), index, constOne, MIRType::Int32);
+  MAdd* nextIndex = MAdd::New(alloc(), index, constOne, MDefinition::Truncate);
   current->add(nextIndex);
   current->push(nextIndex);
 
@@ -2776,5 +2812,25 @@ bool WarpBuilder::build_ThrowSetConst(BytecodeLocation loc) {
   // Terminate the block.
   current->end(MUnreachable::New(alloc()));
   setTerminatedBlock();
+  return true;
+}
+
+bool WarpBuilder::buildCacheIR(BytecodeLocation loc,
+                               const WarpCacheIR* snapshot,
+                               std::initializer_list<MDefinition*> inputs) {
+  MDefinitionStackVector inputs_;
+  if (!inputs_.append(inputs.begin(), inputs.end())) {
+    return false;
+  }
+
+  TranspilerOutput output;
+  if (!TranspileCacheIRToMIR(mirGen_, current, snapshot, inputs_, output)) {
+    return false;
+  }
+
+  if (output.result) {
+    current->push(output.result);
+  }
+
   return true;
 }

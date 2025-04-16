@@ -51,6 +51,8 @@ static FeatureMap sExperimentalFeatures[] = {
     // TODO: not supported yet!!!
     {"speaker", FeaturePolicyUtils::FeaturePolicyValue::eSelf},
     {"vr", FeaturePolicyUtils::FeaturePolicyValue::eAll},
+    // https://immersive-web.github.io/webxr/#feature-policy
+    {"xr-spatial-tracking", FeaturePolicyUtils::FeaturePolicyValue::eSelf},
 };
 
 /* static */
@@ -237,11 +239,11 @@ void FeaturePolicyUtils::ReportViolation(Document* aDocument,
   }
 
   RefPtr<FeaturePolicyViolationReportBody> body =
-      new FeaturePolicyViolationReportBody(window, aFeatureName, fileName,
-                                           lineNumber, columnNumber,
+      new FeaturePolicyViolationReportBody(window->AsGlobal(), aFeatureName,
+                                           fileName, lineNumber, columnNumber,
                                            NS_LITERAL_STRING("enforce"));
 
-  ReportingUtils::Report(window, nsGkAtoms::featurePolicyViolation,
+  ReportingUtils::Report(window->AsGlobal(), nsGkAtoms::featurePolicyViolation,
                          NS_LITERAL_STRING("default"),
                          NS_ConvertUTF8toUTF16(spec), body);
 }

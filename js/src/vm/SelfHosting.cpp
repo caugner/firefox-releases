@@ -49,6 +49,7 @@
 #include "js/CharacterEncoding.h"
 #include "js/CompilationAndEvaluation.h"
 #include "js/Date.h"
+#include "js/Exception.h"
 #include "js/Modules.h"  // JS::GetModulePrivate
 #include "js/PropertySpec.h"
 #include "js/SourceText.h"  // JS::SourceText
@@ -64,7 +65,8 @@
 #include "vm/BytecodeLocation.h"
 #include "vm/Compression.h"
 #include "vm/DateObject.h"
-#include "vm/FrameIter.h"  // js::ScriptFrameIter
+#include "vm/FrameIter.h"      // js::ScriptFrameIter
+#include "vm/FunctionFlags.h"  // js::FunctionFlags
 #include "vm/GeneratorObject.h"
 #include "vm/Interpreter.h"
 #include "vm/Iteration.h"
@@ -72,6 +74,7 @@
 #include "vm/JSFunction.h"
 #include "vm/JSObject.h"
 #include "vm/PIC.h"
+#include "vm/PlainObject.h"  // js::PlainObject
 #include "vm/Printer.h"
 #include "vm/Realm.h"
 #include "vm/RegExpObject.h"
@@ -799,7 +802,7 @@ bool js::intrinsic_NewArrayIterator(JSContext* cx, unsigned argc, Value* vp) {
   CallArgs args = CallArgsFromVp(argc, vp);
   MOZ_ASSERT(args.length() == 0);
 
-  JSObject* obj = NewArrayIteratorObject(cx);
+  JSObject* obj = NewArrayIterator(cx);
   if (!obj) {
     return false;
   }
@@ -889,7 +892,7 @@ bool js::intrinsic_NewStringIterator(JSContext* cx, unsigned argc, Value* vp) {
   CallArgs args = CallArgsFromVp(argc, vp);
   MOZ_ASSERT(args.length() == 0);
 
-  JSObject* obj = NewStringIteratorObject(cx);
+  JSObject* obj = NewStringIterator(cx);
   if (!obj) {
     return false;
   }
@@ -903,7 +906,7 @@ bool js::intrinsic_NewRegExpStringIterator(JSContext* cx, unsigned argc,
   CallArgs args = CallArgsFromVp(argc, vp);
   MOZ_ASSERT(args.length() == 0);
 
-  JSObject* obj = NewRegExpStringIteratorObject(cx);
+  JSObject* obj = NewRegExpStringIterator(cx);
   if (!obj) {
     return false;
   }
@@ -2052,16 +2055,6 @@ static bool intrinsic_ToBigInt(JSContext* cx, unsigned argc, Value* vp) {
   return true;
 }
 
-static bool intrinsic_ToNumeric(JSContext* cx, unsigned argc, Value* vp) {
-  CallArgs args = CallArgsFromVp(argc, vp);
-  MOZ_ASSERT(args.length() == 1);
-  if (!ToNumeric(cx, args[0])) {
-    return false;
-  }
-  args.rval().set(args[0]);
-  return true;
-}
-
 // The self-hosting global isn't initialized with the normal set of builtins.
 // Instead, individual C++-implemented functions that're required by
 // self-hosted code are defined as global functions. Accessing these
@@ -2098,6 +2091,7 @@ static const JSFunctionSpec intrinsic_functions[] = {
     JS_INLINABLE_FN("std_Object_create", obj_create, 2, 0, ObjectCreate),
     JS_FN("std_Object_propertyIsEnumerable", obj_propertyIsEnumerable, 1, 0),
     JS_FN("std_Object_toString", obj_toString, 0, 0),
+    JS_FN("std_Object_setProto", obj_setProto, 1, 0),
 
     JS_INLINABLE_FN("std_Reflect_getPrototypeOf", Reflect_getPrototypeOf, 1, 0,
                     ReflectGetPrototypeOf),
@@ -2509,7 +2503,6 @@ static const JSFunctionSpec intrinsic_functions[] = {
     JS_FN("PromiseResolve", intrinsic_PromiseResolve, 2, 0),
 
     JS_FN("ToBigInt", intrinsic_ToBigInt, 1, 0),
-    JS_FN("ToNumeric", intrinsic_ToNumeric, 1, 0),
 
     JS_FS_END};
 
@@ -2595,15 +2588,14 @@ static void MaybePrintAndClearPendingException(JSContext* cx, FILE* file) {
 
   AutoClearPendingException acpe(cx);
 
-  RootedValue exn(cx);
-  if (!cx->getPendingException(&exn)) {
+  JS::ExceptionStack exnStack(cx);
+  if (!JS::StealPendingExceptionStack(cx, &exnStack)) {
     fprintf(file, "error getting pending exception\n");
     return;
   }
-  cx->clearPendingException();
 
   ErrorReport report(cx);
-  if (!report.init(cx, exn, js::ErrorReport::WithSideEffects)) {
+  if (!report.init(cx, exnStack, js::ErrorReport::WithSideEffects)) {
     fprintf(file, "out of memory initializing ErrorReport\n");
     return;
   }
@@ -2965,7 +2957,7 @@ static JSObject* CloneObject(JSContext* cx,
     }
     clone = StringObject::create(cx, str);
   } else if (selfHostedObject->is<ArrayObject>()) {
-    clone = NewDenseEmptyArray(cx, nullptr, TenuredObject);
+    clone = NewTenuredDenseEmptyArray(cx, nullptr);
   } else {
     MOZ_ASSERT(selfHostedObject->isNative());
     clone = NewObjectWithGivenProto(

@@ -173,6 +173,13 @@ class nsGenericHTMLElement : public nsGenericHTMLElementBase {
                     mozilla::ErrorResult& aError);
   void SetInnerText(const nsAString& aValue);
 
+  void GetInputMode(nsAString& aValue) {
+    GetEnumAttr(nsGkAtoms::inputmode, nullptr, aValue);
+  }
+  void SetInputMode(const nsAString& aValue, ErrorResult& aRv) {
+    SetHTMLAttr(nsGkAtoms::inputmode, aValue, aRv);
+  }
+
   /**
    * Determine whether an attribute is an event (onclick, etc.)
    * @param aName the attribute
@@ -634,8 +641,6 @@ class nsGenericHTMLElement : public nsGenericHTMLElementBase {
                                  nsAtom* aAtom, void* aData);
 
   already_AddRefed<nsINodeList> Labels();
-
-  virtual bool IsInteractiveHTMLContent(bool aIgnoreTabindex) const override;
 
   static bool LegacyTouchAPIEnabled(JSContext* aCx, JSObject* aObj);
 

@@ -17,39 +17,21 @@
  * @typedef {import("./@types/perf").RestartBrowserWithEnvironmentVariable} RestartBrowserWithEnvironmentVariable
  * @typedef {import("./@types/perf").GetEnvironmentVariable} GetEnvironmentVariable
  * @typedef {import("./@types/perf").GetActiveBrowsingContextID} GetActiveBrowsingContextID
+ * @typedef {import("./@types/perf").MinimallyTypedGeckoProfile} MinimallyTypedGeckoProfile
  */
 
-/**
- * TS-TODO
- *
- * This function replaces lazyRequireGetter, and TypeScript can understand it. It's
- * currently duplicated until we have consensus that TypeScript is a good idea.
- *
- * @template T
- * @type {(callback: () => T) => () => T}
- */
-function requireLazy(callback) {
-  /** @type {T | undefined} */
-  let cache;
-  return () => {
-    if (cache === undefined) {
-      cache = callback();
-    }
-    return cache;
-  };
-}
-
-const lazyServices = requireLazy(() =>
-  require("resource://gre/modules/Services.jsm")
+const ChromeUtils = require("ChromeUtils");
+const { createLazyLoaders } = ChromeUtils.import(
+  "resource://devtools/client/performance-new/typescript-lazy-load.jsm.js"
 );
 
-const lazyChrome = requireLazy(() => require("chrome"));
-
-const lazyOS = requireLazy(() => require("resource://gre/modules/osfile.jsm"));
-
-const lazyProfilerGetSymbols = requireLazy(() =>
-  require("resource://gre/modules/ProfilerGetSymbols.jsm")
-);
+const lazy = createLazyLoaders({
+  Chrome: () => require("chrome"),
+  Services: () => require("Services"),
+  OS: () => ChromeUtils.import("resource://gre/modules/osfile.jsm"),
+  ProfilerGetSymbols: () =>
+    ChromeUtils.import("resource://gre/modules/ProfilerGetSymbols.jsm"),
+});
 
 const TRANSFER_EVENT = "devtools:perf-html-transfer-profile";
 const SYMBOL_TABLE_REQUEST_EVENT = "devtools:perf-html-request-symbol-table";
@@ -75,7 +57,7 @@ const UI_BASE_URL_PATH_DEFAULT = "/from-addon";
  * profiler.firefox.com to be analyzed. This function opens up profiler.firefox.com
  * into a new browser tab, and injects the profile via a frame script.
  *
- * @param {object} profile - The Gecko profile.
+ * @param {MinimallyTypedGeckoProfile} profile - The Gecko profile.
  * @param {GetSymbolTableCallback} getSymbolTableCallback - A callback function with the signature
  *   (debugName, breakpadId) => Promise<SymbolTableAsTuple>, which will be invoked
  *   when profiler.firefox.com sends SYMBOL_TABLE_REQUEST_EVENT messages to us. This
@@ -83,7 +65,7 @@ const UI_BASE_URL_PATH_DEFAULT = "/from-addon";
  *   returned promise with it.
  */
 function receiveProfile(profile, getSymbolTableCallback) {
-  const { Services } = lazyServices();
+  const Services = lazy.Services();
   // Find the most recently used window, as the DevTools client could be in a variety
   // of hosts.
   const win = Services.wm.getMostRecentWindow("navigator:browser");
@@ -168,14 +150,14 @@ function receiveProfile(profile, getSymbolTableCallback) {
  *    retains it on the returned closure so that it can be consulted after the
  *    profile has been passed to the UI.
  *
- * @param {object} profile - The profile JSON object
+ * @param {MinimallyTypedGeckoProfile} profile - The profile JSON object
  * @returns {(debugName: string, breakpadId: string) => Library | undefined}
  */
 function createLibraryMap(profile) {
   const map = new Map();
 
   /**
-   * @param {object} processProfile
+   * @param {MinimallyTypedGeckoProfile} processProfile
    */
   function fillMapForProcessRecursive(processProfile) {
     for (const lib of processProfile.libs) {
@@ -220,7 +202,7 @@ async function getSymbolTableFromDebuggee(perfFront, path, breakpadId) {
  * @returns {Promise<boolean>}
  */
 async function doesFileExistAtPath(path) {
-  const { OS } = lazyOS();
+  const { OS } = lazy.OS();
   try {
     const result = await OS.File.stat(path);
     return !result.isDir;
@@ -253,7 +235,7 @@ async function doesFileExistAtPath(path) {
  *   promise is rejected) if nothing was found.
  */
 async function getSymbolTableFromLocalBinary(objdirs, filename, breakpadId) {
-  const { OS } = lazyOS();
+  const { OS } = lazy.OS();
   const candidatePaths = [];
   for (const objdirPath of objdirs) {
     // Binaries are usually expected to exist at objdir/dist/bin/filename.
@@ -267,7 +249,7 @@ async function getSymbolTableFromLocalBinary(objdirs, filename, breakpadId) {
 
   for (const path of candidatePaths) {
     if (await doesFileExistAtPath(path)) {
-      const { ProfilerGetSymbols } = lazyProfilerGetSymbols();
+      const { ProfilerGetSymbols } = lazy.ProfilerGetSymbols();
       try {
         return await ProfilerGetSymbols.getSymbolTable(path, path, breakpadId);
       } catch (e) {
@@ -293,7 +275,7 @@ async function getSymbolTableFromLocalBinary(objdirs, filename, breakpadId) {
  * The profiler popup uses a more simplified version of this function as
  * it's dealing with a simpler situation.
  *
- * @param {object} profile - The raw profie (not gzipped).
+ * @param {MinimallyTypedGeckoProfile} profile - The raw profie (not gzipped).
  * @param {() => string[]} getObjdirs - A function that returns an array of objdir paths
  *   on the host machine that should be searched for relevant build artifacts.
  * @param {PerfFront} perfFront
@@ -311,7 +293,7 @@ function createMultiModalGetSymbolTableFn(profile, getObjdirs, perfFront) {
     }
     const { name, path, debugPath } = result;
     if (await doesFileExistAtPath(path)) {
-      const { ProfilerGetSymbols } = lazyProfilerGetSymbols();
+      const { ProfilerGetSymbols } = lazy.ProfilerGetSymbols();
       // This profile was obtained from this machine, and not from a
       // different device (e.g. an Android phone). Dump symbols from the file
       // on this machine directly.
@@ -354,8 +336,8 @@ function createMultiModalGetSymbolTableFn(profile, getObjdirs, perfFront) {
  * @type {RestartBrowserWithEnvironmentVariable}
  */
 function restartBrowserWithEnvironmentVariable(envName, value) {
-  const { Services } = lazyServices();
-  const { Cc, Ci } = lazyChrome();
+  const Services = lazy.Services();
+  const { Cc, Ci } = lazy.Chrome();
   const env = Cc["@mozilla.org/process/environment;1"].getService(
     Ci.nsIEnvironment
   );
@@ -372,7 +354,7 @@ function restartBrowserWithEnvironmentVariable(envName, value) {
  * @type {GetEnvironmentVariable}
  */
 function getEnvironmentVariable(envName) {
-  const { Cc, Ci } = lazyChrome();
+  const { Cc, Ci } = lazy.Chrome();
   const env = Cc["@mozilla.org/process/environment;1"].getService(
     Ci.nsIEnvironment
   );
@@ -385,7 +367,7 @@ function getEnvironmentVariable(envName) {
  * @param {(objdirs: string[]) => unknown} changeObjdirs
  */
 function openFilePickerForObjdir(window, objdirs, changeObjdirs) {
-  const { Cc, Ci } = lazyChrome();
+  const { Cc, Ci } = lazy.Chrome();
   const FilePicker = Cc["@mozilla.org/filepicker;1"].createInstance(
     Ci.nsIFilePicker
   );

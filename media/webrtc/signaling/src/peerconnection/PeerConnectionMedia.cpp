@@ -165,7 +165,8 @@ nsresult PeerConnectionMedia::Init() {
 }
 
 void PeerConnectionMedia::EnsureTransports(const JsepSession& aSession) {
-  for (const auto& transceiver : aSession.GetTransceivers()) {
+  for (const auto& [id, transceiver] : aSession.GetTransceivers()) {
+    (void)id;  // Lame, but no better way to do this right now.
     if (transceiver->HasOwnTransport()) {
       mTransportHandler->EnsureProvisionalTransport(
           transceiver->mTransport.mTransportId,
@@ -181,7 +182,8 @@ void PeerConnectionMedia::EnsureTransports(const JsepSession& aSession) {
 nsresult PeerConnectionMedia::UpdateTransports(const JsepSession& aSession,
                                                const bool forceIceTcp) {
   std::set<std::string> finalTransports;
-  for (const auto& transceiver : aSession.GetTransceivers()) {
+  for (const auto& [id, transceiver] : aSession.GetTransceivers()) {
+    (void)id;  // Lame, but no better way to do this right now.
     if (transceiver->HasOwnTransport()) {
       finalTransports.insert(transceiver->mTransport.mTransportId);
       UpdateTransport(*transceiver, forceIceTcp);
@@ -470,7 +472,7 @@ void PeerConnectionMedia::AddIceCandidate(const std::string& aCandidate,
                   self->mStunAddrsRequest->SendQueryMDNSHostname(
                       nsCString(nsAutoCString(addr.c_str())));
                 }
-                NS_ReleaseOnMainThreadSystemGroup(
+                NS_ReleaseOnMainThread(
                     "PeerConnectionMedia::SendQueryMDNSHostname",
                     self.forget());
               }));

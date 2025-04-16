@@ -816,14 +816,6 @@
     "description": "Reason for cancelling an ongoing GC (see js::gc::AbortReason)",
     "bug_numbers": [1308116]
   },
-  "GC_INCREMENTAL_DISABLED": {
-    "record_in_processes": ["main", "content"],
-    "products": ["firefox", "fennec", "geckoview"],
-    "alert_emails": ["dev-telemetry-gc-alerts@mozilla.org"],
-    "expires_in_version": "never",
-    "kind": "boolean",
-    "description": "Is incremental GC permanently disabled?"
-  },
   "GC_NON_INCREMENTAL": {
     "record_in_processes": ["main", "content"],
     "products": ["firefox", "fennec", "geckoview"],
@@ -889,17 +881,6 @@
     "high": 1000000,
     "n_buckets": 100,
     "description": "Time spent running JS minor GC (us)"
-  },
-  "GC_NURSERY_BYTES": {
-    "record_in_processes": ["main", "content"],
-    "products": ["firefox", "fennec", "geckoview"],
-    "alert_emails": ["dev-telemetry-gc-alerts@mozilla.org"],
-    "expires_in_version": "72",
-    "kind": "linear",
-    "high": 16777216,
-    "n_buckets": 16,
-    "bug_numbers": [1259347],
-    "description": "Size of the GC nursery (bytes)"
   },
   "GC_NURSERY_BYTES_2": {
     "record_in_processes": ["main", "content"],
@@ -4050,6 +4031,16 @@
     "releaseChannelCollection": "opt-out",
     "alert_emails": ["necko@mozilla.com"]
   },
+  "DNS_TRR_REDIRECTED": {
+    "record_in_processes": ["main"],
+    "products": ["firefox", "fennec", "geckoview"],
+    "expires_in_version": "81",
+    "kind": "categorical",
+    "labels": ["Redirected", "None"],
+    "description": "How often TRR (Trusted Recursive Resolver) requests are redirected",
+    "bug_numbers": [1624996],
+    "alert_emails": ["necko@mozilla.com", "kershaw@mozilla.com"]
+  },
   "DNS_LOOKUP_ALGORITHM": {
     "record_in_processes": ["main"],
     "products": ["firefox", "fennec", "geckoview"],
@@ -4484,15 +4475,6 @@
     "n_buckets": 1000,
     "description": "The duraion of a socketThread cycle, including polls and pending events. (ms)"
   },
-  "STS_NUMBER_OF_PENDING_EVENTS": {
-    "record_in_processes": ["main", "content"],
-    "products": ["firefox", "fennec", "geckoview"],
-    "expires_in_version": "never",
-    "kind": "exponential",
-    "high": 2000,
-    "n_buckets": 100,
-    "description": "Number of pending events per SocketThread cycle."
-  },
   "STS_POLL_CYCLE": {
     "record_in_processes": ["main", "content"],
     "products": ["firefox", "fennec", "geckoview"],
@@ -4510,24 +4492,6 @@
     "high": 60000,
     "n_buckets": 1000,
     "description": "The duraion of the socketThread cycle during shutdown, including polls and pending events. (ms)"
-  },
-  "STS_NUMBER_OF_PENDING_EVENTS_IN_THE_LAST_CYCLE": {
-    "record_in_processes": ["main", "content"],
-    "products": ["firefox", "fennec", "geckoview"],
-    "expires_in_version": "never",
-    "kind": "exponential",
-    "high": 2000,
-    "n_buckets": 100,
-    "description": "Number of pending events per SocketThread cycle during shutdown."
-  },
-  "STS_NUMBER_OF_ONSOCKETREADY_CALLS": {
-    "record_in_processes": ["main", "content"],
-    "products": ["firefox", "fennec", "geckoview"],
-    "expires_in_version": "never",
-    "kind": "exponential",
-    "high": 2000,
-    "n_buckets": 100,
-    "description": "Number of OnSocketReady calls during a single poll."
   },
   "STS_POLL_BLOCK_TIME": {
     "record_in_processes": ["main", "content"],
@@ -5724,6 +5688,41 @@
     "expires_in_version": "65",
     "kind": "count",
     "description": "Number of unique pages that contain an unsafe-eval CSP directive"
+  },
+  "HTTPS_ONLY_MODE_UPGRADE_TIME_MS": {
+    "record_in_processes": ["main"],
+    "products": ["firefox", "geckoview"],
+    "alert_emails": ["julianwels@mozilla.com", "seceng-telemetry@mozilla.com"],
+    "bug_numbers": [1627206],
+    "expires_in_version": "never",
+    "kind": "exponential",
+    "low": 50,
+    "high": 300000,
+    "n_buckets": 30,
+    "keyed": true,
+    "keys": [
+      "top_successful",
+      "sub_successful",
+      "top_f_redirectloop",
+      "sub_f_redirectloop",
+      "top_f_timeout",
+      "sub_f_timeout",
+      "top_f_aborted",
+      "sub_f_aborted",
+      "top_f_cxnrefused",
+      "sub_f_cxnrefused",
+      "top_f_ssl_selfsignd",
+      "sub_f_ssl_selfsignd",
+      "top_f_ssl_badcertdm",
+      "sub_f_ssl_badcertdm",
+      "top_f_ssl_unkwnissr",
+      "sub_f_ssl_unkwnissr",
+      "top_f_ssl_other",
+      "sub_f_ssl_other",
+      "top_f_other",
+      "sub_f_other"
+    ],
+    "description": "Time it takes for a request that has been upgraded with HTTPS-Only Mode to complete, broken down by top-level (top) / sub-resource (sub) and status"
   },
   "PLACES_DATABASE_CORRUPTION_HANDLING_STAGE": {
     "record_in_processes": ["main"],
@@ -7265,10 +7264,10 @@
   },
   "FX_PICTURE_IN_PICTURE_WINDOW_OPEN_DURATION": {
     "record_in_processes": ["main"],
-    "products": ["firefox", "fennec", "geckoview"],
+    "products": ["firefox"],
     "alert_emails": ["mconley@mozilla.com", "astevenson@mozilla.com"],
     "bug_numbers": [1560590],
-    "expires_in_version": "78",
+    "expires_in_version": "82",
     "kind": "exponential",
     "high": 10000,
     "n_buckets": 100,
@@ -12275,65 +12274,6 @@
     "description": "The safety of a page where we see a password field. (0: safe page & safe submit; 1: safe page & unsafe submit; 2: safe page & unknown submit; 3: unsafe page & safe submit; 4: unsafe page & unsafe submit; 5: unsafe page & unknown submit)",
     "record_into_store": ["main", "pre-account"]
   },
-  "PWMGR_MANAGE_COPIED_PASSWORD": {
-    "record_in_processes": ["main", "content"],
-    "products": ["firefox", "fennec", "geckoview"],
-    "expires_in_version": "never",
-    "kind": "count",
-    "description": "Count of passwords copied from the password management interface",
-    "alert_emails": ["loines@mozilla.com"],
-    "bug_numbers": [1454733, 1545172],
-    "releaseChannelCollection": "opt-out",
-    "record_into_store": ["main", "pre-account"]
-  },
-  "PWMGR_MANAGE_COPIED_USERNAME": {
-    "record_in_processes": ["main", "content"],
-    "products": ["firefox", "fennec", "geckoview"],
-    "expires_in_version": "never",
-    "kind": "count",
-    "description": "Count of usernames copied from the password management interface",
-    "alert_emails": ["loines@mozilla.com"],
-    "bug_numbers": [1454733, 1545172],
-    "releaseChannelCollection": "opt-out",
-    "record_into_store": ["main", "pre-account"]
-  },
-  "PWMGR_MANAGE_DELETED": {
-    "record_in_processes": ["main", "content"],
-    "products": ["firefox", "fennec", "geckoview"],
-    "expires_in_version": "never",
-    "kind": "count",
-    "description": "Count of passwords deleted from the password management interface (including via Remove All)",
-    "alert_emails": ["loines@mozilla.com"],
-    "bug_numbers": [1454733, 1545172],
-    "releaseChannelCollection": "opt-out",
-    "record_into_store": ["main", "pre-account"]
-  },
-  "PWMGR_MANAGE_DELETED_ALL": {
-    "record_in_processes": ["main", "content"],
-    "products": ["firefox", "fennec", "geckoview"],
-    "expires_in_version": "never",
-    "kind": "count",
-    "description": "Count of times that Remove All was used from the password management interface"
-  },
-  "PWMGR_MANAGE_SORTED": {
-    "record_in_processes": ["main", "content"],
-    "products": ["firefox", "fennec", "geckoview"],
-    "expires_in_version": "never",
-    "keyed": true,
-    "kind": "count",
-    "description": "Reports the column that logins are sorted by"
-  },
-  "PWMGR_MANAGE_VISIBILITY_TOGGLED": {
-    "record_in_processes": ["main"],
-    "products": ["firefox", "fennec", "geckoview"],
-    "expires_in_version": "never",
-    "kind": "boolean",
-    "description": "Whether the visibility of passwords was toggled (0=Hide, 1=Show)",
-    "alert_emails": ["loines@mozilla.com"],
-    "bug_numbers": [1454733, 1545172],
-    "releaseChannelCollection": "opt-out",
-    "record_into_store": ["main", "pre-account"]
-  },
   "PWMGR_NUM_PASSWORDS_PER_HOSTNAME": {
     "record_in_processes": ["main"],
     "products": ["firefox", "fennec", "geckoview"],
@@ -14276,24 +14216,24 @@
     "record_in_processes": ["main"],
     "products": ["firefox", "fennec", "geckoview"],
     "alert_emails": ["seceng-telemetry@mozilla.com", "jjones@mozilla.com"],
-    "expires_in_version": "78",
+    "expires_in_version": "88",
     "releaseChannelCollection": "opt-out",
     "kind": "exponential",
     "high": 120000,
     "n_buckets": 100,
-    "bug_numbers": [1265472, 1558870],
+    "bug_numbers": [1265472, 1558870, 1630155],
     "description": "Time in milliseconds to complete a WebAuthn create credential."
   },
   "WEBAUTHN_GET_ASSERTION_MS": {
     "record_in_processes": ["main"],
     "products": ["firefox", "fennec", "geckoview"],
     "alert_emails": ["seceng-telemetry@mozilla.com", "jjones@mozilla.com"],
-    "expires_in_version": "78",
+    "expires_in_version": "88",
     "releaseChannelCollection": "opt-out",
     "kind": "exponential",
     "high": 120000,
     "n_buckets": 100,
-    "bug_numbers": [1265472, 1558870],
+    "bug_numbers": [1265472, 1558870, 1630155],
     "description": "Time in milliseconds to complete a WebAuthn get assertion."
   },
   "VIDEO_UNBLACKINGLISTING_DXVA_DRIVER_RUNTIME_STATUS": {
@@ -14526,17 +14466,6 @@
     "high": 1000,
     "n_buckets": 50,
     "description": "WebRender render time in milliseconds"
-  },
-  "TOUCHBAR_BUTTON_PRESSES": {
-    "record_in_processes": ["main"],
-    "products": ["firefox"],
-    "alert_emails": ["htwyford@mozilla.com"],
-    "bug_numbers": [1313429, 1593726],
-    "expires_in_version": "77",
-    "kind": "categorical",
-    "labels": ["Back", "Forward", "Reload", "Home",  "Fullscreen", "Find", "NewTab", "ReaderView", "AddBookmark", "OpenLocation", "Focus", "Share", "Sidebar"],
-    "releaseChannelCollection": "opt-out",
-    "description": "What buttons are pressed most often on the Mac Touch Bar?"
   },
   "AUDIO_TRACK_SILENCE_PROPORTION": {
     "record_in_processes": ["content"],
@@ -15027,6 +14956,16 @@
     "n_buckets": 100,
     "bug_numbers": [1597956, 1614905],
     "description": "milliseconds to complete a TLS session resumption with external cache"
+  },
+  "WINDOW_OPEN_OUTER_SIZE": {
+    "record_in_processes": ["main", "content"],
+    "products": ["firefox"],
+    "alert_emails": ["tfujisawa.birchill@mozilla.com"],
+    "expires_in_version": "80",
+    "kind": "boolean",
+    "bug_numbers": [1624150],
+    "releaseChannelCollection": "opt-out",
+    "description": "Flag indicating consumer of non-standard outerWidth/outerHeight features in window.open"
   },
   "WINDOW_REMOTE_SUBFRAMES_ENABLED_STATUS": {
     "record_in_processes": ["main"],

@@ -24,6 +24,7 @@
 #include "frontend/BinASTTokenReaderContext.h"
 #include "frontend/BinASTTokenReaderMultipart.h"
 #include "frontend/FullParseHandler.h"
+#include "frontend/FunctionSyntaxKind.h"  // FunctionSyntaxKind
 #include "frontend/ParseNode.h"
 #include "frontend/Parser.h"
 #include "frontend/SharedContext.h"
@@ -31,6 +32,10 @@
 #  include "irregexp/RegExpParser.h"
 #endif
 #include "js/RegExpFlags.h"  //  JS::RegExpFlag, JS::RegExpFlags
+#ifdef ENABLE_NEW_REGEXP
+#  include "new-regexp/RegExpAPI.h"
+#endif
+#include "vm/GeneratorAndAsyncKind.h"  // js::GeneratorKind, js::FunctionAsyncKind
 #include "vm/RegExpObject.h"
 
 #include "frontend/ParseContext-inl.h"
@@ -3566,12 +3571,12 @@ JS::Result<ParseNode*> BinASTParser<Tok>::parseInterfaceLiteralRegExpExpression(
   // Validate the RegExp pattern is valid.
   {
     JS::CompileOptions dummyOptions(cx_);
-    TokenStream dummyTokenStream(cx_, dummyOptions, nullptr, 0, nullptr);
+    DummyTokenStream dummyTokenStream(cx_, dummyOptions);
 
     LifoAllocScope allocScope(&cx_->tempLifoAlloc());
 #ifdef ENABLE_NEW_REGEXP
-    BINJS_TRY(irregexp::CheckPatternSyntax(cx_, dummyTokenStream, pattern,
-					   reflags);
+    BINJS_TRY(
+        irregexp::CheckPatternSyntax(cx_, dummyTokenStream, pattern, reflags));
 #else
     BINJS_TRY(irregexp::ParsePatternSyntax(dummyTokenStream, allocScope.alloc(),
                                            pattern, reflags.unicode()));

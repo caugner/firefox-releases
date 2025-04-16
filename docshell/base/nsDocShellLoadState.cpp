@@ -13,14 +13,59 @@
 #include "nsIChannel.h"
 #include "ReferrerInfo.h"
 #include "mozilla/BasePrincipal.h"
+#include "mozilla/ClearOnShutdown.h"
 #include "mozilla/dom/BrowsingContext.h"
 #include "mozilla/dom/LoadURIOptionsBinding.h"
 #include "mozilla/StaticPrefs_fission.h"
 
 #include "mozilla/OriginAttributes.h"
 #include "mozilla/NullPrincipal.h"
+#include "mozilla/StaticPtr.h"
 
 #include "mozilla/dom/PContent.h"
+
+// Global reference to the URI fixup service.
+static mozilla::StaticRefPtr<nsIURIFixup> sURIFixup;
+
+namespace {
+already_AddRefed<nsIURIFixupInfo> GetFixupURIInfo(const nsACString& aStringURI,
+                                                  uint32_t aFixupFlags,
+                                                  nsIInputStream** aPostData) {
+  nsCOMPtr<nsIURIFixupInfo> info;
+  if (XRE_IsContentProcess()) {
+    dom::ContentChild* contentChild = dom::ContentChild::GetSingleton();
+    if (!contentChild) {
+      return nullptr;
+    }
+
+    RefPtr<nsIInputStream> postData;
+    RefPtr<nsIURI> fixedURI, preferredURI;
+    nsAutoString providerName;
+    nsAutoCString stringURI(aStringURI);
+    // TODO (Bug 1375244): This synchronous IPC messaging should be changed.
+    if (contentChild->SendGetFixupURIInfo(stringURI, aFixupFlags, &providerName,
+                                          &postData, &fixedURI,
+                                          &preferredURI)) {
+      if (preferredURI) {
+        info = do_CreateInstance("@mozilla.org/docshell/uri-fixup-info;1");
+        if (NS_WARN_IF(!info)) {
+          return nullptr;
+        }
+        info->SetKeywordProviderName(providerName);
+        if (aPostData) {
+          postData.forget(aPostData);
+        }
+        info->SetFixedURI(fixedURI);
+        info->SetPreferredURI(preferredURI);
+      }
+    }
+  } else {
+    sURIFixup->GetFixupURIInfo(aStringURI, aFixupFlags, aPostData,
+                               getter_AddRefs(info));
+  }
+  return info.forget();
+}
+}  // anonymous namespace
 
 nsDocShellLoadState::nsDocShellLoadState(nsIURI* aURI)
     : mURI(aURI),
@@ -37,9 +82,11 @@ nsDocShellLoadState::nsDocShellLoadState(nsIURI* aURI)
       mSrcdocData(VoidString()),
       mLoadFlags(0),
       mFirstParty(false),
+      mHasValidUserGestureActivation(false),
       mTypeHint(VoidCString()),
       mFileName(VoidString()),
-      mIsFromProcessingFrameAttributes(false) {
+      mIsFromProcessingFrameAttributes(false),
+      mLoadIdentifier(0) {
   MOZ_ASSERT(aURI, "Cannot create a LoadState with a null URI!");
 }
 
@@ -59,6 +106,7 @@ nsDocShellLoadState::nsDocShellLoadState(
   mTarget = aLoadState.Target();
   mLoadFlags = aLoadState.LoadFlags();
   mFirstParty = aLoadState.FirstParty();
+  mHasValidUserGestureActivation = aLoadState.HasValidUserGestureActivation();
   mTypeHint = aLoadState.TypeHint();
   mFileName = aLoadState.FileName();
   mIsFromProcessingFrameAttributes =
@@ -66,6 +114,7 @@ nsDocShellLoadState::nsDocShellLoadState(
   mReferrerInfo = aLoadState.ReferrerInfo();
   mURI = aLoadState.URI();
   mOriginalURI = aLoadState.OriginalURI();
+  mSourceBrowsingContext = aLoadState.SourceBrowsingContext();
   mBaseURI = aLoadState.BaseURI();
   mTriggeringPrincipal = aLoadState.TriggeringPrincipal();
   mPrincipalToInherit = aLoadState.PrincipalToInherit();
@@ -76,7 +125,7 @@ nsDocShellLoadState::nsDocShellLoadState(
   mPostDataStream = aLoadState.PostDataStream();
   mHeadersStream = aLoadState.HeadersStream();
   mSrcdocData = aLoadState.SrcdocData();
-  mResultPrincipalURI = aLoadState.ResultPrincipalURI();
+  mLoadIdentifier = aLoadState.LoadIdentifier();
   if (!aLoadState.SHEntry() || !StaticPrefs::fission_sessionHistoryInParent()) {
     return;
   }
@@ -86,6 +135,42 @@ nsDocShellLoadState::nsDocShellLoadState(
     mSHEntry = static_cast<SHEntryChild*>(aLoadState.SHEntry());
   }
 }
+
+nsDocShellLoadState::nsDocShellLoadState(const nsDocShellLoadState& aOther)
+    : mReferrerInfo(aOther.mReferrerInfo),
+      mURI(aOther.mURI),
+      mOriginalURI(aOther.mOriginalURI),
+      mResultPrincipalURI(aOther.mResultPrincipalURI),
+      mResultPrincipalURIIsSome(aOther.mResultPrincipalURIIsSome),
+      mTriggeringPrincipal(aOther.mTriggeringPrincipal),
+      mCsp(aOther.mCsp),
+      mKeepResultPrincipalURIIfSet(aOther.mKeepResultPrincipalURIIfSet),
+      mLoadReplace(aOther.mLoadReplace),
+      mInheritPrincipal(aOther.mInheritPrincipal),
+      mPrincipalIsExplicit(aOther.mPrincipalIsExplicit),
+      mPrincipalToInherit(aOther.mPrincipalToInherit),
+      mStoragePrincipalToInherit(aOther.mStoragePrincipalToInherit),
+      mForceAllowDataURI(aOther.mForceAllowDataURI),
+      mOriginalFrameSrc(aOther.mOriginalFrameSrc),
+      mIsFormSubmission(aOther.mIsFormSubmission),
+      mLoadType(aOther.mLoadType),
+      mSHEntry(aOther.mSHEntry),
+      mTarget(aOther.mTarget),
+      mPostDataStream(aOther.mPostDataStream),
+      mHeadersStream(aOther.mHeadersStream),
+      mSrcdocData(aOther.mSrcdocData),
+      mSourceBrowsingContext(aOther.mSourceBrowsingContext),
+      mBaseURI(aOther.mBaseURI),
+      mLoadFlags(aOther.mLoadFlags),
+      mFirstParty(aOther.mFirstParty),
+      mHasValidUserGestureActivation(aOther.mHasValidUserGestureActivation),
+      mTypeHint(aOther.mTypeHint),
+      mFileName(aOther.mFileName),
+      mIsFromProcessingFrameAttributes(aOther.mIsFromProcessingFrameAttributes),
+      mPendingRedirectedChannel(aOther.mPendingRedirectedChannel),
+      mOriginalURIString(aOther.mOriginalURIString),
+      mCancelContentJSEpoch(aOther.mCancelContentJSEpoch),
+      mLoadIdentifier(aOther.mLoadIdentifier) {}
 
 nsDocShellLoadState::~nsDocShellLoadState() {}
 
@@ -120,7 +205,7 @@ nsresult nsDocShellLoadState::CreateFromPendingChannel(
 }
 
 nsresult nsDocShellLoadState::CreateFromLoadURIOptions(
-    nsISupports* aConsumer, nsIURIFixup* aURIFixup, const nsAString& aURI,
+    nsISupports* aConsumer, const nsAString& aURI,
     const LoadURIOptions& aLoadURIOptions, nsDocShellLoadState** aResult) {
   uint32_t loadFlags = aLoadURIOptions.mLoadFlags;
 
@@ -139,12 +224,31 @@ nsresult nsDocShellLoadState::CreateFromLoadURIOptions(
   uriString.StripCRLF();
   NS_ENSURE_TRUE(!uriString.IsEmpty(), NS_ERROR_FAILURE);
 
+  // Just create a URI and see what happens...
+  rv = NS_NewURI(getter_AddRefs(uri), uriString);
+  bool fixup = true;
+  if (NS_SUCCEEDED(rv) && uri &&
+      (uri->SchemeIs("about") || uri->SchemeIs("chrome"))) {
+    // Avoid third party fixup as a performance optimization.
+    loadFlags &= ~nsIWebNavigation::LOAD_FLAGS_ALLOW_THIRD_PARTY_FIXUP;
+    fixup = false;
+  } else if (!sURIFixup) {
+    nsCOMPtr<nsIURIFixup> uriFixup = components::URIFixup::Service();
+    if (uriFixup) {
+      sURIFixup = uriFixup;
+      ClearOnShutdown(&sURIFixup);
+    } else {
+      fixup = false;
+    }
+  }
+
   nsCOMPtr<nsIURIFixupInfo> fixupInfo;
-  if (aURIFixup) {
+  if (fixup) {
     uint32_t fixupFlags;
-    rv = aURIFixup->WebNavigationFlagsToFixupFlags(uriString, loadFlags,
-                                                   &fixupFlags);
-    NS_ENSURE_SUCCESS(rv, NS_ERROR_FAILURE);
+    if (NS_FAILED(sURIFixup->WebNavigationFlagsToFixupFlags(
+            uriString, loadFlags, &fixupFlags))) {
+      return NS_ERROR_FAILURE;
+    }
 
     // If we don't allow keyword lookups for this URL string, make sure to
     // update loadFlags to indicate this as well.
@@ -163,12 +267,13 @@ nsresult nsDocShellLoadState::CreateFromLoadURIOptions(
     if (loadContext && loadContext->UsePrivateBrowsing()) {
       fixupFlags |= nsIURIFixup::FIXUP_FLAG_PRIVATE_CONTEXT;
     }
-    nsCOMPtr<nsIInputStream> fixupStream;
-    rv = aURIFixup->GetFixupURIInfo(uriString, fixupFlags,
-                                    getter_AddRefs(fixupStream),
-                                    getter_AddRefs(fixupInfo));
 
-    if (NS_SUCCEEDED(rv)) {
+    nsCOMPtr<nsIInputStream> fixupStream;
+    fixupInfo =
+        GetFixupURIInfo(uriString, fixupFlags, getter_AddRefs(fixupStream));
+    if (fixupInfo) {
+      // We could fix the uri, clear NS_ERROR_MALFORMED_URI.
+      rv = NS_OK;
       fixupInfo->GetPreferredURI(getter_AddRefs(uri));
       fixupInfo->SetConsumer(aConsumer);
     }
@@ -180,17 +285,14 @@ nsresult nsDocShellLoadState::CreateFromLoadURIOptions(
       postData = fixupStream;
     }
 
-    if (loadFlags & nsIWebNavigation::LOAD_FLAGS_ALLOW_THIRD_PARTY_FIXUP) {
+    if (fixupInfo &&
+        loadFlags & nsIWebNavigation::LOAD_FLAGS_ALLOW_THIRD_PARTY_FIXUP) {
       nsCOMPtr<nsIObserverService> serv = services::GetObserverService();
       if (serv) {
         serv->NotifyObservers(fixupInfo, "keyword-uri-fixup",
                               PromiseFlatString(aURI).get());
       }
     }
-  } else {
-    // No fixup service so just create a URI and see what happens...
-    rv = NS_NewURI(getter_AddRefs(uri), uriString);
-    loadFlags &= ~nsIWebNavigation::LOAD_FLAGS_ALLOW_THIRD_PARTY_FIXUP;
   }
 
   if (rv == NS_ERROR_MALFORMED_URI) {
@@ -244,6 +346,8 @@ nsresult nsDocShellLoadState::CreateFromLoadURIOptions(
 
   loadState->SetLoadFlags(extraFlags);
   loadState->SetFirstParty(true);
+  loadState->SetHasValidUserGestureActivation(
+      aLoadURIOptions.mHasValidUserGestureActivation);
   loadState->SetPostDataStream(postData);
   loadState->SetHeadersStream(aLoadURIOptions.mHeaders);
   loadState->SetBaseURI(aLoadURIOptions.mBaseURI);
@@ -421,12 +525,9 @@ void nsDocShellLoadState::SetSrcdocData(const nsAString& aSrcdocData) {
   mSrcdocData = aSrcdocData;
 }
 
-nsIDocShell* nsDocShellLoadState::SourceDocShell() const {
-  return mSourceDocShell;
-}
-
-void nsDocShellLoadState::SetSourceDocShell(nsIDocShell* aSourceDocShell) {
-  mSourceDocShell = aSourceDocShell;
+void nsDocShellLoadState::SetSourceBrowsingContext(
+    BrowsingContext* aSourceBrowsingContext) {
+  mSourceBrowsingContext = aSourceBrowsingContext;
 }
 
 nsIURI* nsDocShellLoadState::BaseURI() const { return mBaseURI; }
@@ -472,6 +573,15 @@ bool nsDocShellLoadState::FirstParty() const { return mFirstParty; }
 
 void nsDocShellLoadState::SetFirstParty(bool aFirstParty) {
   mFirstParty = aFirstParty;
+}
+
+bool nsDocShellLoadState::HasValidUserGestureActivation() const {
+  return mHasValidUserGestureActivation;
+}
+
+void nsDocShellLoadState::SetHasValidUserGestureActivation(
+    bool aHasValidUserGestureActivation) {
+  mHasValidUserGestureActivation = aHasValidUserGestureActivation;
 }
 
 const nsCString& nsDocShellLoadState::TypeHint() const { return mTypeHint; }
@@ -629,6 +739,107 @@ void nsDocShellLoadState::CalculateLoadURIFlags() {
   }
 }
 
+nsLoadFlags nsDocShellLoadState::CalculateChannelLoadFlags(
+    BrowsingContext* aBrowsingContext, Maybe<bool> aUriModified,
+    Maybe<bool> aIsXFOError) {
+  MOZ_ASSERT(aBrowsingContext);
+
+  nsLoadFlags loadFlags = aBrowsingContext->GetDefaultLoadFlags();
+
+  if (FirstParty()) {
+    // tag first party URL loads
+    loadFlags |= nsIChannel::LOAD_INITIAL_DOCUMENT_URI;
+  }
+
+  const uint32_t loadType = LoadType();
+
+  // These values aren't available for loads initiated in the Parent process.
+  MOZ_ASSERT_IF(loadType == LOAD_HISTORY, aUriModified.isSome());
+  MOZ_ASSERT_IF(loadType == LOAD_ERROR_PAGE, aIsXFOError.isSome());
+
+  if (loadType == LOAD_ERROR_PAGE) {
+    // Error pages are LOAD_BACKGROUND, unless it's an
+    // XFO error for which we want an error page to load
+    // but additionally want the onload() event to fire.
+    if (!*aIsXFOError) {
+      loadFlags |= nsIChannel::LOAD_BACKGROUND;
+    }
+  }
+
+  // Mark the channel as being a document URI and allow content sniffing...
+  loadFlags |=
+      nsIChannel::LOAD_DOCUMENT_URI | nsIChannel::LOAD_CALL_CONTENT_SNIFFERS;
+
+  if (nsDocShell::SandboxFlagsImplyCookies(
+          aBrowsingContext->GetSandboxFlags())) {
+    loadFlags |= nsIRequest::LOAD_DOCUMENT_NEEDS_COOKIE;
+  }
+
+  // Load attributes depend on load type...
+  switch (loadType) {
+    case LOAD_HISTORY: {
+      // Only send VALIDATE_NEVER if mLSHE's URI was never changed via
+      // push/replaceState (bug 669671).
+      if (!*aUriModified) {
+        loadFlags |= nsIRequest::VALIDATE_NEVER;
+      }
+      break;
+    }
+
+    case LOAD_RELOAD_CHARSET_CHANGE_BYPASS_PROXY_AND_CACHE:
+    case LOAD_RELOAD_CHARSET_CHANGE_BYPASS_CACHE:
+      loadFlags |=
+          nsIRequest::LOAD_BYPASS_CACHE | nsIRequest::LOAD_FRESH_CONNECTION;
+      [[fallthrough]];
+
+    case LOAD_RELOAD_NORMAL:
+    case LOAD_REFRESH:
+      loadFlags |= nsIRequest::VALIDATE_ALWAYS;
+      break;
+
+    case LOAD_NORMAL_BYPASS_CACHE:
+    case LOAD_NORMAL_BYPASS_PROXY:
+    case LOAD_NORMAL_BYPASS_PROXY_AND_CACHE:
+    case LOAD_NORMAL_ALLOW_MIXED_CONTENT:
+    case LOAD_RELOAD_BYPASS_CACHE:
+    case LOAD_RELOAD_BYPASS_PROXY:
+    case LOAD_RELOAD_BYPASS_PROXY_AND_CACHE:
+    case LOAD_RELOAD_ALLOW_MIXED_CONTENT:
+    case LOAD_REPLACE_BYPASS_CACHE:
+      loadFlags |=
+          nsIRequest::LOAD_BYPASS_CACHE | nsIRequest::LOAD_FRESH_CONNECTION;
+      break;
+
+    case LOAD_NORMAL:
+    case LOAD_LINK:
+      // Set cache checking flags
+      switch (StaticPrefs::browser_cache_check_doc_frequency()) {
+        case 0:
+          loadFlags |= nsIRequest::VALIDATE_ONCE_PER_SESSION;
+          break;
+        case 1:
+          loadFlags |= nsIRequest::VALIDATE_ALWAYS;
+          break;
+        case 2:
+          loadFlags |= nsIRequest::VALIDATE_NEVER;
+          break;
+      }
+      break;
+  }
+
+  if (HasLoadFlags(nsDocShell::INTERNAL_LOAD_FLAGS_BYPASS_CLASSIFIER)) {
+    loadFlags |= nsIChannel::LOAD_BYPASS_URL_CLASSIFIER;
+  }
+
+  // If the user pressed shift-reload, then do not allow ServiceWorker
+  // interception to occur. See step 12.1 of the SW HandleFetch algorithm.
+  if (IsForceReloadType(loadType)) {
+    loadFlags |= nsIChannel::LOAD_BYPASS_SERVICE_WORKER;
+  }
+
+  return loadFlags;
+}
+
 DocShellLoadStateInit nsDocShellLoadState::Serialize() {
   DocShellLoadStateInit loadState;
   loadState.ResultPrincipalURI() = mResultPrincipalURI;
@@ -644,12 +855,14 @@ DocShellLoadStateInit nsDocShellLoadState::Serialize() {
   loadState.Target() = mTarget;
   loadState.LoadFlags() = mLoadFlags;
   loadState.FirstParty() = mFirstParty;
+  loadState.HasValidUserGestureActivation() = mHasValidUserGestureActivation;
   loadState.TypeHint() = mTypeHint;
   loadState.FileName() = mFileName;
   loadState.IsFromProcessingFrameAttributes() =
       mIsFromProcessingFrameAttributes;
   loadState.URI() = mURI;
   loadState.OriginalURI() = mOriginalURI;
+  loadState.SourceBrowsingContext() = mSourceBrowsingContext;
   loadState.BaseURI() = mBaseURI;
   loadState.TriggeringPrincipal() = mTriggeringPrincipal;
   loadState.PrincipalToInherit() = mPrincipalToInherit;
@@ -662,6 +875,7 @@ DocShellLoadStateInit nsDocShellLoadState::Serialize() {
   loadState.HeadersStream() = mHeadersStream;
   loadState.SrcdocData() = mSrcdocData;
   loadState.ResultPrincipalURI() = mResultPrincipalURI;
+  loadState.LoadIdentifier() = mLoadIdentifier;
   if (!mSHEntry || !StaticPrefs::fission_sessionHistoryInParent()) {
     // Without the pref, we don't have an actor for shentry and thus
     // we can't serialize it. We could write custom (de)serializers,

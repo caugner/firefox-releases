@@ -36,15 +36,11 @@ use crate::{
     conv,
     hub::{GfxBackend, Global, GlobalIdentityHandlerFactory, Input, Token},
     id::{DeviceId, SwapChainId, TextureViewId},
-    resource,
-    Features,
-    LifeGuard,
-    Stored,
+    resource, Features, LifeGuard, Stored,
 };
 
-use wgt::SwapChainDescriptor;
 use hal::{self, device::Device as _, queue::CommandQueue as _, window::PresentationSurface as _};
-
+use wgt::SwapChainDescriptor;
 
 const FRAME_TIMEOUT_MS: u64 = 1000;
 pub const DESIRED_NUM_FRAMES: u32 = 3;
@@ -85,7 +81,7 @@ pub(crate) fn swap_chain_descriptor_to_hal(
 #[repr(C)]
 #[derive(Debug)]
 pub struct SwapChainOutput {
-    pub view_id: TextureViewId,
+    pub view_id: Option<TextureViewId>,
 }
 
 #[derive(Debug)]
@@ -118,7 +114,8 @@ impl<G: GlobalIdentityHandlerFactory> Global<G> {
                 }
                 Err(e) => {
                     log::warn!("acquire_image() failed ({:?}), reconfiguring swapchain", e);
-                    let desc = swap_chain_descriptor_to_hal(&sc.desc, sc.num_frames, device.features);
+                    let desc =
+                        swap_chain_descriptor_to_hal(&sc.desc, sc.num_frames, device.features);
                     unsafe {
                         suf.configure_swapchain(&device.raw, desc).unwrap();
                         suf.acquire_image(FRAME_TIMEOUT_MS * 1_000_000).unwrap()
@@ -144,13 +141,13 @@ impl<G: GlobalIdentityHandlerFactory> Global<G> {
             samples: 1,
             range: hal::image::SubresourceRange {
                 aspects: hal::format::Aspects::COLOR,
-                layers: 0 .. 1,
-                levels: 0 .. 1,
+                layers: 0..1,
+                levels: 0..1,
             },
             life_guard: LifeGuard::new(),
         };
         let ref_count = view.life_guard.add_ref();
-        let view_id = hub
+        let id = hub
             .texture_views
             .register_identity(view_id_in, view, &mut token);
 
@@ -159,11 +156,11 @@ impl<G: GlobalIdentityHandlerFactory> Global<G> {
             "Swap chain image is already acquired"
         );
         sc.acquired_view_id = Some(Stored {
-            value: view_id,
+            value: id,
             ref_count,
         });
 
-        Ok(SwapChainOutput { view_id })
+        Ok(SwapChainOutput { view_id: Some(id) })
     }
 
     pub fn swap_chain_present<B: GfxBackend>(&self, swap_chain_id: SwapChainId) {

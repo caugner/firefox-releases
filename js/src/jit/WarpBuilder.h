@@ -7,10 +7,12 @@
 #ifndef jit_WarpBuilder_h
 #define jit_WarpBuilder_h
 
+#include <initializer_list>
+
 #include "jit/JitContext.h"
 #include "jit/MIR.h"
 #include "jit/MIRBuilderShared.h"
-#include "jit/WarpOracle.h"
+#include "jit/WarpSnapshot.h"
 #include "vm/Opcodes.h"
 
 namespace js {
@@ -139,6 +141,10 @@ class MOZ_STACK_CLASS WarpBuilder {
   MOZ_MUST_USE bool buildPrologue();
   MOZ_MUST_USE bool buildBody();
   MOZ_MUST_USE bool buildEpilogue();
+
+  MOZ_MUST_USE bool buildCacheIR(BytecodeLocation loc,
+                                 const WarpCacheIR* snapshot,
+                                 std::initializer_list<MDefinition*> inputs);
 
   MOZ_MUST_USE bool buildEnvironmentChain();
   MInstruction* buildNamedLambdaEnv(MDefinition* callee, MDefinition* env,

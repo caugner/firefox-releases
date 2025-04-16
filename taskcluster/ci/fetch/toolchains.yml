@@ -269,23 +269,23 @@ upx-3.95-win:
         sha256: 5c076f87ba64d82f11513f4af0ceb07246a3540aa3c72ca3ffc2d53971fa56e3
         size: 462820
 
-wine-3.0.3:
-    description: wine-3.0.3.tar.xz
+wine-5.0:
+    description: wine-5.0.tar.xz
     fetch:
         type: static-url
-        url: http://dl.winehq.org/wine/source/3.0/wine-3.0.3.tar.xz
-        sha256: eb645999ea6f6455a5275bf267e19a32497c8f5aac818ea40afe7c8c396a4da1
-        size: 19735412
+        url: https://dl.winehq.org/wine/source/5.0/wine-5.0.tar.xz
+        sha256: 181550ba69a80b00c631f80c28ff7642264613bbecdb0c0fc04d6534866713b4
+        size: 22469428
         gpg-signature:
             sig-url: "{url}.sign"
             key-path: build/unix/build-gcc/DA23579A74D4AD9AF9D3F945CEFAC8EAAF17519D.key
 
-cbindgen-0.13.1:
+cbindgen-0.14.1:
     description: cbindgen source code
     fetch:
         type: git
         repo: https://github.com/eqrion/cbindgen
-        revision: 3b97f4ff6b0558cab300c010222caee84245dd5d
+        revision: 0761b9bbe48d01ded1bbec45bbeea5544b3b1002
 
 cctools-port:
     description: cctools-port source code
@@ -357,8 +357,8 @@ sccache:
     fetch:
         type: git
         repo: https://github.com/mozilla/sccache
-        # 0.2.13 release + fix for clang-cl on Linux
-        revision: 2aadef2c5a07a59658c0cc3da4a90b153293f543
+        # 0.2.13 release + various changes
+        revision: 27bf3e61c4a82541f794275884a3fb1a3b1fc4f3
 
 fxc2:
     description: fxc2 source code
@@ -392,8 +392,8 @@ android-rs-glue:
     description: android-rs-glue source code
     fetch:
         type: git
-        repo: https://github.com/rust-windowing/android-rs-glue
-        revision: e3ac6edea5814e1faca0c31ea8fac6877cb929ea
+        repo: https://github.com/jamienicol/android-rs-glue
+        revision: 7a57ad320de79c74a57a8ce02b1dc69b1ea7332a
 
 clang-5.0:
     description: clang 5.0.2 source code
@@ -422,6 +422,13 @@ clang-9:
         type: git
         repo: https://github.com/llvm/llvm-project
         revision: c1a0a213378a458fbea1a5c77b315c7dce08fd05
+
+clang-10:
+    description: clang 10.0.0 source code
+    fetch:
+        type: git
+        repo: https://github.com/llvm/llvm-project
+        revision: d32170dbd5b0d54436537b6b75beaf44324e0c28
 
 wasi-sdk:
     description: wasi-sdk source code
@@ -456,7 +463,7 @@ lucetc-source:
     fetch:
         type: git
         repo: https://github.com/PLSysSec/lucet_sandbox_compiler/
-        revision: 5e870faf6f95d79d11efc813e56370ad124bbed5
+        revision: a0a1ce981638109f1f76cd1eecf17a0436a20055
 
 dump-syms:
     description: dump_syms source code
@@ -471,7 +478,7 @@ fix-stacks:
     fetch:
         type: git
         repo: https://github.com/mozilla/fix-stacks/
-        revision: 22bd8d55956d5403e1e2d2c14fd07d8ab74b5807
+        revision: b8b127d27cdcd64a5e66a7fb0a06c6c818445a61
 
 winchecksec:
     description: winchecksec source code

@@ -122,6 +122,7 @@ def main(args=sys.argv[1:]):
             power_test=args.power_test,
             cpu_test=args.cpu_test,
             memory_test=args.memory_test,
+            live_sites=args.live_sites,
             is_release_build=args.is_release_build,
             debug_mode=args.debug_mode,
             post_startup_delay=args.post_startup_delay,
@@ -133,6 +134,9 @@ def main(args=sys.argv[1:]):
             device_name=args.device_name,
             no_conditioned_profile=args.no_conditioned_profile,
             disable_perf_tuning=args.disable_perf_tuning,
+            conditioned_profile_scenario=args.conditioned_profile_scenario,
+            project=args.project,
+            verbose=args.verbose
         )
     except Exception:
         traceback.print_exc()
@@ -152,10 +156,13 @@ def main(args=sys.argv[1:]):
             for _page in pages_that_timed_out:
                 message = [
                     ("TEST-UNEXPECTED-FAIL", "test '%s'" % _page["test_name"]),
-                    ("timed out loading test page", _page["url"]),
+                    ("timed out loading test page", "waiting for pending metrics"),
                 ]
                 if _page.get("pending_metrics") is not None:
-                    message.append(("pending metrics", _page["pending_metrics"]))
+                    LOG.warning("page cycle {} has pending metrics: {}".format(
+                        _page["page_cycle"],
+                        _page["pending_metrics"])
+                    )
 
                 LOG.critical(
                     " ".join("%s: %s" % (subject, msg) for subject, msg in message)

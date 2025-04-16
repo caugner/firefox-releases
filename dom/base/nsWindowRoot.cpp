@@ -24,12 +24,13 @@
 #include "nsIContent.h"
 #include "nsIControllers.h"
 #include "nsIController.h"
+#include "nsQueryObject.h"
 #include "xpcpublic.h"
 #include "nsCycleCollectionParticipant.h"
 #include "mozilla/dom/BrowserParent.h"
 #include "mozilla/dom/HTMLTextAreaElement.h"
 #include "mozilla/dom/HTMLInputElement.h"
-#include "mozilla/dom/JSWindowActorService.h"
+#include "mozilla/dom/JSActorService.h"
 
 #ifdef MOZ_XUL
 #  include "nsXULElement.h"
@@ -49,7 +50,7 @@ nsWindowRoot::~nsWindowRoot() {
   }
 
   if (XRE_IsContentProcess()) {
-    JSWindowActorService::UnregisterChromeEventTarget(this);
+    JSActorService::UnregisterChromeEventTarget(this);
   }
 }
 
@@ -205,7 +206,7 @@ nsresult nsWindowRoot::GetControllerForCommand(const char* aCommand,
           // At this point, it is known that a child process is focused, so ask
           // its Controllers actor if the command is supported.
           nsCOMPtr<nsIController> controller =
-              do_QueryActor(u"Controllers", canonicalFocusedBC);
+              do_QueryActor("Controllers", canonicalFocusedBC);
           if (controller) {
             bool supported;
             controller->SupportsCommand(aCommand, &supported);
@@ -378,7 +379,7 @@ already_AddRefed<EventTarget> NS_NewWindowRoot(nsPIDOMWindowOuter* aWindow) {
   nsCOMPtr<EventTarget> result = new nsWindowRoot(aWindow);
 
   if (XRE_IsContentProcess()) {
-    RefPtr<JSWindowActorService> wasvc = JSWindowActorService::GetSingleton();
+    RefPtr<JSActorService> wasvc = JSActorService::GetSingleton();
     wasvc->RegisterChromeEventTarget(result);
   }
 

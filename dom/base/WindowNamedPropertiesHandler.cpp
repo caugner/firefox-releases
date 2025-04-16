@@ -169,7 +169,7 @@ bool WindowNamedPropertiesHandler::ownPropNames(
   nsGlobalWindowOuter* outer = win->GetOuterWindowInternal();
   if (outer) {
     if (BrowsingContext* bc = outer->GetBrowsingContext()) {
-      for (const auto& child : bc->GetChildren()) {
+      for (const auto& child : bc->Children()) {
         const nsString& name = child->Name();
         if (!name.IsEmpty() && !names.Contains(name)) {
           // Make sure we really would expose it from getOwnPropDescriptor.
@@ -225,16 +225,16 @@ static const DOMIfaceAndProtoJSClass WindowNamedPropertiesClass = {
 // static
 JSObject* WindowNamedPropertiesHandler::Create(JSContext* aCx,
                                                JS::Handle<JSObject*> aProto) {
+  js::ProxyOptions options;
+  options.setClass(&WindowNamedPropertiesClass.mBase);
+
   // Note: since the scope polluter proxy lives on the window's prototype
   // chain, it needs a singleton type to avoid polluting type information
   // for properties on the window.
-  js::ProxyOptions options;
-  options.setSingleton(true);
-  options.setClass(&WindowNamedPropertiesClass.mBase);
-
-  JS::Rooted<JSObject*> gsp(aCx);
-  gsp = js::NewProxyObject(aCx, WindowNamedPropertiesHandler::getInstance(),
-                           JS::NullHandleValue, aProto, options);
+  JS::Rooted<JSObject*> gsp(
+      aCx, js::NewSingletonProxyObject(
+               aCx, WindowNamedPropertiesHandler::getInstance(),
+               JS::NullHandleValue, aProto, options));
   if (!gsp) {
     return nullptr;
   }

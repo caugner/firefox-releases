@@ -32,6 +32,7 @@
 #ifdef MOZ_WIDGET_ANDROID
 #  include "GLLibraryEGL.h"
 #  include "GeneratedJNIWrappers.h"
+#  include "mozilla/webrender/RenderAndroidSurfaceTextureHostOGL.h"
 #endif
 
 #ifdef MOZ_WIDGET_GTK
@@ -719,6 +720,20 @@ void RenderThread::UnregisterExternalImageDuringShutdown(
   mRenderTextures.erase(aExternalImageId);
 }
 
+void RenderThread::NotifyAllAndroidSurfaceTexturesDetatched() {
+  MOZ_ASSERT(IsInRenderThread());
+#ifdef MOZ_WIDGET_ANDROID
+  MutexAutoLock lock(mRenderTextureMapLock);
+  for (const auto& entry : mRenderTextures) {
+    RenderAndroidSurfaceTextureHostOGL* host =
+        entry.second->AsRenderAndroidSurfaceTextureHostOGL();
+    if (host) {
+      host->DetachedFromGLContext();
+    }
+  }
+#endif
+}
+
 void RenderThread::HandlePrepareForUse() {
   MOZ_ASSERT(IsInRenderThread());
   MutexAutoLock lock(mRenderTextureMapLock);
@@ -869,6 +884,50 @@ RefPtr<layers::SurfacePool> RenderThread::SharedSurfacePool() {
 
 void RenderThread::ClearSharedSurfacePool() { mSurfacePool = nullptr; }
 
+static void GLAPIENTRY DebugMessageCallback(GLenum aSource, GLenum aType,
+                                            GLuint aId, GLenum aSeverity,
+                                            GLsizei aLength,
+                                            const GLchar* aMessage,
+                                            const GLvoid* aUserParam) {
+  constexpr const char* kContextLost = "Context has been lost.";
+
+  if (StaticPrefs::gfx_webrender_gl_debug_message_critical_note_AtStartup() &&
+      aSeverity == LOCAL_GL_DEBUG_SEVERITY_HIGH) {
+    auto message = std::string(aMessage, aLength);
+    // When content lost happned, error messages are flooded by its message.
+    if (message != kContextLost) {
+      gfxCriticalNote << message;
+    } else {
+      gfxCriticalNoteOnce << message;
+    }
+  }
+
+  if (StaticPrefs::gfx_webrender_gl_debug_message_print_AtStartup()) {
+    gl::GLContext* gl = (gl::GLContext*)aUserParam;
+    gl->DebugCallback(aSource, aType, aId, aSeverity, aLength, aMessage);
+  }
+}
+
+// static
+void RenderThread::MaybeEnableGLDebugMessage(gl::GLContext* aGLContext) {
+  if (!aGLContext) {
+    return;
+  }
+
+  bool enableDebugMessage =
+      StaticPrefs::gfx_webrender_gl_debug_message_critical_note_AtStartup() ||
+      StaticPrefs::gfx_webrender_gl_debug_message_print_AtStartup();
+
+  if (enableDebugMessage &&
+      aGLContext->IsExtensionSupported(gl::GLContext::KHR_debug)) {
+    aGLContext->fEnable(LOCAL_GL_DEBUG_OUTPUT);
+    aGLContext->fDisable(LOCAL_GL_DEBUG_OUTPUT_SYNCHRONOUS);
+    aGLContext->fDebugMessageCallback(&DebugMessageCallback, (void*)aGLContext);
+    aGLContext->fDebugMessageControl(LOCAL_GL_DONT_CARE, LOCAL_GL_DONT_CARE,
+                                     LOCAL_GL_DONT_CARE, 0, nullptr, true);
+  }
+}
+
 WebRenderShaders::WebRenderShaders(gl::GLContext* gl,
                                    WebRenderProgramCache* programCache) {
   mGL = gl;
@@ -982,26 +1041,26 @@ static already_AddRefed<gl::GLContext> CreateGLContextCGL() {
 #endif
 
 static already_AddRefed<gl::GLContext> CreateGLContext() {
+  RefPtr<gl::GLContext> gl;
+
 #ifdef XP_WIN
   if (gfx::gfxVars::UseWebRenderANGLE()) {
-    return CreateGLContextANGLE();
+    gl = CreateGLContextANGLE();
   }
-#endif
-
-#if defined(MOZ_WIDGET_ANDROID)
-  return CreateGLContextEGL();
+#elif defined(MOZ_WIDGET_ANDROID)
+  gl = CreateGLContextEGL();
 #elif defined(MOZ_WAYLAND)
   if (gdk_display_get_default() &&
       !GDK_IS_X11_DISPLAY(gdk_display_get_default())) {
-    return CreateGLContextEGL();
+    gl = CreateGLContextEGL();
   }
+#elif XP_MACOSX
+  gl = CreateGLContextCGL();
 #endif
 
-#ifdef XP_MACOSX
-  return CreateGLContextCGL();
-#endif
+  wr::RenderThread::MaybeEnableGLDebugMessage(gl);
 
-  return nullptr;
+  return gl.forget();
 }
 
 extern "C" {

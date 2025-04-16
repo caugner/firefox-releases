@@ -7,6 +7,7 @@
 from __future__ import absolute_import, unicode_literals, print_function
 
 import errno
+import logging
 import os
 import sys
 
@@ -16,6 +17,7 @@ from mozbuild.base import (
     MachCommandBase,
     MozbuildObject,
     MachCommandConditions as conditions,
+    BinaryNotFoundException,
 )
 
 from mach.decorators import (
@@ -80,7 +82,16 @@ class XPCShellRunner(MozbuildObject):
             kwargs["verbose"] = True
 
         if kwargs["xpcshell"] is None:
-            kwargs["xpcshell"] = self.get_binary_path('xpcshell')
+            try:
+                kwargs["xpcshell"] = self.get_binary_path('xpcshell')
+            except BinaryNotFoundException as e:
+                self.log(logging.ERROR, 'xpcshell-test',
+                         {'error': str(e)},
+                         'ERROR: {error}')
+                self.log(logging.INFO, 'xpcshell-test',
+                         {'help': e.help()},
+                         '{help}')
+                return 1
 
         if kwargs["mozInfo"] is None:
             kwargs["mozInfo"] = os.path.join(self.topobjdir, 'mozinfo.json')
@@ -227,7 +238,7 @@ class MachCommands(MachCommandBase):
             params['manifest'] = m
 
         driver = self._spawn(BuildDriver)
-        driver.install_tests(test_objects)
+        driver.install_tests()
 
         # We should probably have a utility function to ensure the tree is
         # ready to run tests. Until then, we just create the state dir (in

@@ -198,10 +198,19 @@ ReferrerPolicy ReferrerInfo::GetDefaultReferrerPolicy(nsIHttpChannel* aChannel,
     if (!cjs) {
       cjs = net::CookieJarSettings::Create();
     }
-    if (cjs->GetRejectThirdPartyContexts()) {
+
+    // We only check if the channel is isolated if it's in the parent process
+    // with the rejection of third party contexts is enabled. We don't need to
+    // check this in content processes since the tracking state of the channel
+    // is unknown here and the referrer policy would be updated when the channel
+    // starts connecting in the parent process.
+    if (XRE_IsParentProcess() && cjs->GetRejectThirdPartyContexts()) {
       uint32_t rejectedReason = 0;
-      thirdPartyTrackerIsolated = !ContentBlocking::ShouldAllowAccessFor(
-          aChannel, aURI, &rejectedReason);
+      thirdPartyTrackerIsolated =
+          !ContentBlocking::ShouldAllowAccessFor(aChannel, aURI,
+                                                 &rejectedReason) &&
+          rejectedReason !=
+              nsIWebProgressListener::STATE_COOKIES_PARTITIONED_FOREIGN;
       // Here we intentionally do not notify about the rejection reason, if any
       // in order to avoid this check to have any visible side-effects (e.g. a
       // web console report.)

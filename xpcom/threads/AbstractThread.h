@@ -52,11 +52,6 @@ class AbstractThread : public nsISerialEventTarget {
   static already_AddRefed<AbstractThread> CreateXPCOMThreadWrapper(
       nsIThread* aThread, bool aRequireTailDispatch);
 
-  // Returns an AbstractThread wrapper of a non-nsIThread EventTarget on the
-  // main thread.
-  static already_AddRefed<AbstractThread> CreateEventTargetWrapper(
-      nsIEventTarget* aEventTarget, bool aRequireTailDispatch);
-
   NS_DECL_THREADSAFE_ISUPPORTS
 
   // We don't use NS_DECL_NSIEVENTTARGET so that we can remove the default
@@ -87,6 +82,10 @@ class AbstractThread : public nsISerialEventTarget {
   // Returns false if we definitely don't have any tail tasks.
   virtual bool MightHaveTailTasks() { return true; }
 
+  // Returns true if the tail dispatcher is available. In certain edge cases
+  // like shutdown, it might not be.
+  virtual bool IsTailDispatcherAvailable() { return true; }
+
   // Helper functions for methods on the tail TasklDispatcher. These check
   // HasTailTasks to avoid allocating a TailDispatcher if it isn't
   // needed.
@@ -116,19 +115,6 @@ class AbstractThread : public nsISerialEventTarget {
   void DispatchStateChange(already_AddRefed<nsIRunnable> aRunnable);
 
   static void DispatchDirectTask(already_AddRefed<nsIRunnable> aRunnable);
-
-  struct AutoEnter {
-    explicit AutoEnter(AbstractThread* aThread) {
-      MOZ_ASSERT(aThread);
-      mLastCurrentThread = sCurrentThreadTLS.get();
-      sCurrentThreadTLS.set(aThread);
-    }
-
-    ~AutoEnter() { sCurrentThreadTLS.set(mLastCurrentThread); }
-
-   private:
-    AbstractThread* mLastCurrentThread = nullptr;
-  };
 
  protected:
   virtual ~AbstractThread() = default;

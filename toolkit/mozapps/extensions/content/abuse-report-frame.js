@@ -19,6 +19,17 @@
   );
 
   class AddonAbuseReportsXULFrame extends MozXULElement {
+    static get markup() {
+      return `
+      <browser id="abuse-report-xulframe-overlay-inner"
+        type="content"
+        disablehistory="true"
+        transparent="true"
+        flex="1">
+      </browser>
+      `;
+    }
+
     constructor() {
       super();
       this.report = null;
@@ -30,16 +41,7 @@
     connectedCallback() {
       this.textContent = "";
 
-      const content = MozXULElement.parseXULToFragment(`
-        <browser id="abuse-report-xulframe-overlay-inner"
-          type="content"
-          disablehistory="true"
-          transparent="true"
-          flex="1">
-        </browser>
-      `);
-
-      this.appendChild(content);
+      this.appendChild(this.constructor.fragment);
 
       const browser = this.querySelector("browser");
       this.promiseBrowserLoaded = new Promise(resolve => {
@@ -269,7 +271,7 @@
   // If the html about:addons and the abuse report are both enabled, register
   // the custom XUL WebComponent and append it to the XUL stack element
   // (if not registered the element will be just a dummy hidden box)
-  if (ABUSE_REPORT_ENABLED) {
+  if (ABUSE_REPORT_ENABLED && AbuseReporter.openDialogDisabled) {
     customElements.define(
       "addon-abuse-report-xulframe",
       AddonAbuseReportsXULFrame

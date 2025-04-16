@@ -30,6 +30,7 @@ from mach.decorators import (
 from mozbuild.base import (
     MachCommandBase,
     MozbuildObject,
+    BinaryNotFoundException,
 )
 from mozbuild import nodeutil
 import mozlog
@@ -193,9 +194,12 @@ class MochaOutputHandler(object):
 
         self.has_unexpected = False
         self.logger.suite_start([], name="puppeteer-tests")
-        self.status_map = {"OK": "PASS",
-                           "TIME": "TIMEOUT",
-                           "TERMINATED": "CRASH"}
+        self.status_map = {
+            "CRASHED": "CRASH",
+            "OK": "PASS",
+            "TERMINATED": "CRASH",
+            "TIME": "TIMEOUT",
+        }
 
     @property
     def pid(self):
@@ -493,6 +497,10 @@ class PuppeteerTest(MachCommandBase):
         puppeteer = self._spawn(PuppeteerRunner)
         try:
             return puppeteer.run_test(logger, *tests, **params)
+        except BinaryNotFoundException as e:
+            logger.error(e)
+            logger.info(e.help())
+            exit(1)
         except Exception as e:
             exit(EX_SOFTWARE, e)
 

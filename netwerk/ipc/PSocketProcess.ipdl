@@ -21,6 +21,7 @@ include MemoryReportTypes;
 include NeckoChannelParams;
 include PBrowserOrId;
 include PrefsTypes;
+include PSMIPCTypes;
 
 using mozilla::dom::NativeThreadId from "mozilla/dom/TabMessageUtils.h";
 using mozilla::Telemetry::HistogramAccumulation from "mozilla/TelemetryComms.h";
@@ -36,7 +37,7 @@ using PRTime from "prtime.h";
 namespace mozilla {
 namespace net {
 
-protocol PSocketProcess
+sync protocol PSocketProcess
 {
   manages PDNSRequest;
   manages PWebrtcTCPSocket;
@@ -50,7 +51,7 @@ protocol PSocketProcess
   manages PAltSvcTransaction;
 
 parent:
-  async InitCrashReporter(Shmem shmem, NativeThreadId threadId);
+  async InitCrashReporter(NativeThreadId threadId);
   async AddMemoryReport(MemoryReport aReport);
   async FinishMemoryReport(uint32_t aGeneration);
   // Messages for sending telemetry to parent process.
@@ -63,8 +64,6 @@ parent:
 
   /* tabId is only required for web-proxy support, which isn't always needed */
   async PWebrtcTCPSocket(TabId? tabId);
-  async PDNSRequest(nsCString hostName, nsCString trrServer, uint16_t type,
-                    OriginAttributes originAttributes, uint32_t flags);
   async PChildToParentStream();
   async ObserveHttpActivity(HttpActivityArgs aActivityArgs,
                             uint32_t aActivityType,
@@ -74,6 +73,15 @@ parent:
                             nsCString aExtraStringData);
   async InitBackground(Endpoint<PBackgroundParent> aEndpoint);
   async PAltService();
+  sync GetTLSClientCert(nsCString aHostName,
+                        OriginAttributes aOriginAttributes,
+                        int32_t aPort,
+                        uint32_t aProviderFlags,
+                        uint32_t aProviderTlsFlags,
+                        ByteArray aServerCert,
+                        ByteArray? aClientCert,
+                        ByteArray[] aCollectedCANames)
+    returns (bool aSucceeded, ByteArray aOutCert, ByteArray aOutKey, ByteArray[] aBuiltChain);
 
 child:
   async PreferenceUpdate(Pref pref);
@@ -100,6 +108,8 @@ child:
 
 both:
   async PFileDescriptorSet(FileDescriptor fd);
+  async PDNSRequest(nsCString hostName, nsCString trrServer, uint16_t type,
+                    OriginAttributes originAttributes, uint32_t flags);
 };
 
 } // namespace net

@@ -35,6 +35,7 @@
 
 #include "mozilla/OriginAttributes.h"
 #include "mozilla/Preferences.h"
+#include "mozilla/SchedulerGroup.h"
 #include "mozilla/StaticPrefs_network.h"
 #include "mozilla/Telemetry.h"
 
@@ -124,13 +125,6 @@ NS_IMPL_ISUPPORTS(Predictor::DNSListener, nsIDNSListener);
 NS_IMETHODIMP
 Predictor::DNSListener::OnLookupComplete(nsICancelable* request,
                                          nsIDNSRecord* rec, nsresult status) {
-  return NS_OK;
-}
-
-NS_IMETHODIMP
-Predictor::DNSListener::OnLookupByTypeComplete(nsICancelable* request,
-                                               nsIDNSByTypeRecord* res,
-                                               nsresult status) {
   return NS_OK;
 }
 
@@ -1268,7 +1262,7 @@ Predictor::LearnNative(nsIURI* targetURI, nsIURI* sourceURI,
 
     RefPtr<PredictorLearnRunnable> runnable = new PredictorLearnRunnable(
         targetURI, sourceURI, reason, originAttributes);
-    SystemGroup::Dispatch(TaskCategory::Other, runnable.forget());
+    SchedulerGroup::Dispatch(TaskCategory::Other, runnable.forget());
 
     return NS_OK;
   }

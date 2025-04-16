@@ -7,13 +7,54 @@
 #include "frontend/SharedContext.h"
 
 #include "frontend/AbstractScopePtr.h"
+#include "frontend/FunctionSyntaxKind.h"  // FunctionSyntaxKind
 #include "frontend/ModuleSharedContext.h"
+#include "vm/FunctionFlags.h"          // js::FunctionFlags
+#include "vm/GeneratorAndAsyncKind.h"  // js::GeneratorKind, js::FunctionAsyncKind
+#include "wasm/AsmJS.h"
 
 #include "frontend/ParseContext-inl.h"
 #include "vm/EnvironmentObject-inl.h"
 
 namespace js {
 namespace frontend {
+
+SharedContext::SharedContext(JSContext* cx, Kind kind,
+                             CompilationInfo& compilationInfo,
+                             Directives directives, SourceExtent extent,
+                             ImmutableScriptFlags immutableFlags)
+    : cx_(cx),
+      compilationInfo_(compilationInfo),
+      thisBinding_(ThisBinding::Global),
+      extent(extent),
+      allowNewTarget_(false),
+      allowSuperProperty_(false),
+      allowSuperCall_(false),
+      allowArguments_(true),
+      inWith_(false),
+      needsThisTDZChecks_(false),
+      localStrict(false),
+      hasExplicitUseStrict_(false),
+      immutableFlags_(immutableFlags) {
+  if (kind == Kind::FunctionBox) {
+    immutableFlags_.setFlag(ImmutableFlags::IsFunction);
+  } else if (kind == Kind::Module) {
+    MOZ_ASSERT(!compilationInfo.options.nonSyntacticScope);
+    immutableFlags_.setFlag(ImmutableFlags::IsModule);
+  } else if (kind == Kind::Eval) {
+    immutableFlags_.setFlag(ImmutableFlags::IsForEval);
+  } else {
+    MOZ_ASSERT(kind == Kind::Global);
+  }
+
+  immutableFlags_.setFlag(ImmutableFlags::Strict, directives.strict());
+
+  immutableFlags_.setFlag(ImmutableFlags::ForceStrict,
+                          compilationInfo.options.forceStrictMode());
+
+  immutableFlags_.setFlag(ImmutableFlags::HasNonSyntacticScope,
+                          compilationInfo.options.nonSyntacticScope);
+}
 
 void SharedContext::computeAllowSyntax(Scope* scope) {
   for (ScopeIter si(scope); si; si++) {
@@ -76,8 +117,8 @@ void SharedContext::computeInWith(Scope* scope) {
 EvalSharedContext::EvalSharedContext(JSContext* cx, JSObject* enclosingEnv,
                                      CompilationInfo& compilationInfo,
                                      Scope* enclosingScope,
-                                     Directives directives)
-    : SharedContext(cx, Kind::Eval, compilationInfo, directives),
+                                     Directives directives, SourceExtent extent)
+    : SharedContext(cx, Kind::Eval, compilationInfo, directives, extent),
       enclosingScope_(cx, enclosingScope),
       bindings(cx) {
   computeAllowSyntax(enclosingScope);
@@ -117,12 +158,11 @@ bool FunctionBox::atomsAreKept() { return cx_->zone()->hasKeptAtoms(); }
 #endif
 
 FunctionBox::FunctionBox(JSContext* cx, FunctionBox* traceListHead,
-                         uint32_t toStringStart,
-                         CompilationInfo& compilationInfo,
+                         SourceExtent extent, CompilationInfo& compilationInfo,
                          Directives directives, GeneratorKind generatorKind,
                          FunctionAsyncKind asyncKind, JSAtom* explicitName,
                          FunctionFlags flags, size_t index)
-    : SharedContext(cx, Kind::FunctionBox, compilationInfo, directives),
+    : SharedContext(cx, Kind::FunctionBox, compilationInfo, directives, extent),
       traceLink_(traceListHead),
       emitLink_(nullptr),
       enclosingScope_(),
@@ -131,7 +171,6 @@ FunctionBox::FunctionBox(JSContext* cx, FunctionBox* traceListHead,
       extraVarScopeBindings_(nullptr),
       funcDataIndex_(index),
       functionNode(nullptr),
-      extent{0, 0, toStringStart, 0, 1, 0},
       length(0),
       hasDestructuringArgs(false),
       hasParameterExprs(false),
@@ -145,6 +184,7 @@ FunctionBox::FunctionBox(JSContext* cx, FunctionBox* traceListHead,
       usesThis(false),
       usesReturn(false),
       hasExprBody_(false),
+      isAsmJSModule_(false),
       nargs_(0),
       explicitName_(explicitName),
       flags_(flags) {
@@ -152,7 +192,6 @@ FunctionBox::FunctionBox(JSContext* cx, FunctionBox* traceListHead,
                           generatorKind == GeneratorKind::Generator);
   immutableFlags_.setFlag(ImmutableFlags::IsAsync,
                           asyncKind == FunctionAsyncKind::AsyncFunction);
-  immutableFlags_.setFlag(ImmutableFlags::IsFunction);
 }
 
 bool FunctionBox::hasFunctionCreationData() const {
@@ -167,23 +206,12 @@ bool FunctionBox::hasFunction() const {
 
 void FunctionBox::initFromLazyFunction(JSFunction* fun) {
   BaseScript* lazy = fun->baseScript();
-  if (lazy->isDerivedClassConstructor()) {
-    setDerivedClassConstructor();
-  }
-  if (lazy->needsHomeObject()) {
-    setNeedsHomeObject();
-  }
-  if (lazy->bindingsAccessedDynamically()) {
-    setBindingsAccessedDynamically();
-  }
-  if (lazy->hasDirectEval()) {
-    setHasDirectEval();
-  }
-  if (lazy->hasModuleGoal()) {
-    setHasModuleGoal();
-  }
-
+  immutableFlags_ = lazy->immutableFlags();
   extent = lazy->extent();
+
+  if (fun->isClassConstructor()) {
+    fieldInitializers = mozilla::Some(lazy->getFieldInitializers());
+  }
 }
 
 void FunctionBox::initStandaloneFunction(Scope* enclosingScope) {
@@ -286,11 +314,21 @@ void FunctionBox::setEnclosingScopeForInnerLazyFunction(
   enclosingScope_ = enclosingScope;
 }
 
+void FunctionBox::setAsmJSModule(JSFunction* function) {
+  MOZ_ASSERT(IsAsmJSModule(function));
+  isAsmJSModule_ = true;
+  clobberFunction(function);
+}
+
 void FunctionBox::finish() {
   if (!emitBytecode) {
-    // Lazy inner functions need to record their enclosing scope for when they
-    // eventually are compiled.
+    // Apply updates from FunctionEmitter::emitLazy().
     function()->setEnclosingScope(enclosingScope_.getExistingScope());
+    function()->baseScript()->setTreatAsRunOnce(treatAsRunOnce());
+
+    if (fieldInitializers) {
+      function()->baseScript()->setFieldInitializers(*fieldInitializers);
+    }
   } else {
     // Non-lazy inner functions don't use the enclosingScope_ field.
     MOZ_ASSERT(!enclosingScope_);
@@ -326,8 +364,10 @@ void FunctionBox::clobberFunction(JSFunction* function) {
 ModuleSharedContext::ModuleSharedContext(JSContext* cx, ModuleObject* module,
                                          CompilationInfo& compilationInfo,
                                          Scope* enclosingScope,
-                                         ModuleBuilder& builder)
-    : SharedContext(cx, Kind::Module, compilationInfo, Directives(true)),
+                                         ModuleBuilder& builder,
+                                         SourceExtent extent)
+    : SharedContext(cx, Kind::Module, compilationInfo, Directives(true),
+                    extent),
       module_(cx, module),
       enclosingScope_(cx, enclosingScope),
       bindings(cx),

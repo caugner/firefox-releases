@@ -13,6 +13,7 @@
 #include "jspubtd.h"
 
 #include "jit/CompileInfo.h"
+#include "jit/IonScript.h"
 #include "jit/JitFrames.h"
 #include "vm/Interpreter.h"
 
@@ -24,6 +25,7 @@ class WithScope;
 class InlineTypedObject;
 class AbstractGeneratorObject;
 class AsyncFunctionGeneratorObject;
+class PlainObject;
 class RegExpObject;
 class TypedArrayObject;
 
@@ -878,15 +880,6 @@ template <EqualityKind Kind>
 bool StrictlyEqual(JSContext* cx, MutableHandleValue lhs,
                    MutableHandleValue rhs, bool* res);
 
-bool LessThan(JSContext* cx, MutableHandleValue lhs, MutableHandleValue rhs,
-              bool* res);
-bool LessThanOrEqual(JSContext* cx, MutableHandleValue lhs,
-                     MutableHandleValue rhs, bool* res);
-bool GreaterThan(JSContext* cx, MutableHandleValue lhs, MutableHandleValue rhs,
-                 bool* res);
-bool GreaterThanOrEqual(JSContext* cx, MutableHandleValue lhs,
-                        MutableHandleValue rhs, bool* res);
-
 template <EqualityKind Kind>
 bool StringsEqual(JSContext* cx, HandleString lhs, HandleString rhs, bool* res);
 
@@ -944,6 +937,10 @@ enum class IndexInBounds { Yes, Maybe };
 
 template <IndexInBounds InBounds>
 void PostWriteElementBarrier(JSRuntime* rt, JSObject* obj, int32_t index);
+
+// If |str| represents an int32, assign it to |result| and return true.
+// Otherwise return false.
+bool GetInt32FromStringPure(JSContext* cx, JSString* str, int32_t* result);
 
 // If |str| is an index in the range [0, INT32_MAX], return it. If the string
 // is not an index in this range, return -1.
@@ -1128,9 +1125,6 @@ MOZ_MUST_USE bool TrySkipAwait(JSContext* cx, HandleValue val,
                                MutableHandleValue resolved);
 
 bool IsPossiblyWrappedTypedArray(JSContext* cx, JSObject* obj, bool* result);
-
-bool DoToNumber(JSContext* cx, HandleValue arg, MutableHandleValue ret);
-bool DoToNumeric(JSContext* cx, HandleValue arg, MutableHandleValue ret);
 
 void* AllocateBigIntNoGC(JSContext* cx, bool requestMinorGC);
 

@@ -18,6 +18,7 @@ EXPORTS.mozilla.net += [
     'NeckoMessageUtils.h',
     'NeckoParent.h',
     'NeckoTargetHolder.h',
+    'ParentProcessDocumentChannel.h',
     'SocketProcessBridgeChild.h',
     'SocketProcessBridgeParent.h',
     'SocketProcessChild.h',
@@ -35,9 +36,9 @@ UNIFIED_SOURCES += [
     'InputChannelThrottleQueueChild.cpp',
     'InputChannelThrottleQueueParent.cpp',
     'NeckoChild.cpp',
-    'NeckoCommon.cpp',
     'NeckoParent.cpp',
     'NeckoTargetHolder.cpp',
+    'ParentProcessDocumentChannel.cpp',
     'SocketProcessBridgeChild.cpp',
     'SocketProcessBridgeParent.cpp',
     'SocketProcessChild.cpp',
@@ -83,6 +84,7 @@ LOCAL_INCLUDES += [
     '/modules/libjar',
     '/netwerk/base',
     '/netwerk/protocol/http',
+    '/security/manager/ssl',
     '/xpcom/threads'
 ]
 

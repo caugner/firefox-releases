@@ -621,8 +621,6 @@ class PaintedLayerData {
    * Record that an item has been added to the PaintedLayer, so we
    * need to update our regions.
    * @param aVisibleRect the area of the item that's visible
-   * @param aSolidColor if non-null, the visible area of the item is
-   * a constant color given by *aSolidColor
    */
   void Accumulate(ContainerState* aState, nsPaintedDisplayItem* aItem,
                   const nsIntRect& aVisibleRect, const nsRect& aContentRect,
@@ -854,7 +852,6 @@ struct NewLayerEntry {
         mLayerState(LayerState::LAYER_INACTIVE),
         mHideAllLayersBelow(false),
         mOpaqueForAnimatedGeometryRootParent(false),
-        mPropagateComponentAlphaFlattening(true),
         mUntransformedVisibleRegion(false),
         mIsFixedToRootScrollFrame(false) {}
   // mLayer is null if the previous entry is for a PaintedLayer that hasn't
@@ -887,9 +884,6 @@ struct NewLayerEntry {
   // mAnimatedGeometryRoot->GetParent().
   bool mOpaqueForAnimatedGeometryRootParent;
 
-  // If true, then the content flags for this layer should contribute
-  // to our decision to flatten component alpha layers, false otherwise.
-  bool mPropagateComponentAlphaFlattening;
   // mVisibleRegion is relative to the associated frame before
   // transform.
   bool mUntransformedVisibleRegion;
@@ -1761,7 +1755,6 @@ class PaintedDisplayItemLayerUserData : public LayerUserData {
         mAnimatedGeometryRootPosition(0, 0),
         mLastItemCount(0),
         mContainerLayerFrame(nullptr),
-        mHasExplicitLastPaintOffset(false),
         mDisabledAlpha(false) {}
 
   NS_INLINE_DECL_REFCOUNTING(PaintedDisplayItemLayerUserData);
@@ -1827,17 +1820,16 @@ class PaintedDisplayItemLayerUserData : public LayerUserData {
   // The number of items assigned to this layer on the previous paint.
   size_t mLastItemCount;
 
-  // The translation set on this PaintedLayer before we started updating the
-  // layer tree.
-  nsIntPoint mLastPaintOffset;
+  // The translation set on this PaintedLayer during the previous paint. This
+  // is needed when invalidating based on a display item's geometry information
+  // from the previous paint.
+  Maybe<nsIntPoint> mLastPaintOffset;
 
   // Temporary state only valid during the FrameLayerBuilder's lifetime.
   // FLB's mPaintedLayerItems is responsible for cleaning these up when
   // we finish painting to avoid dangling pointers.
   std::vector<AssignedDisplayItem> mItems;
   nsIFrame* mContainerLayerFrame;
-
-  bool mHasExplicitLastPaintOffset;
 
   /**
    * This is set when the painted layer has no component alpha.
@@ -1862,6 +1854,7 @@ FrameLayerBuilder::FrameLayerBuilder()
 FrameLayerBuilder::~FrameLayerBuilder() {
   GetMaskLayerImageCache()->Sweep();
   for (PaintedDisplayItemLayerUserData* userData : mPaintedLayerItems) {
+    userData->mLastPaintOffset = Some(userData->mTranslation);
     userData->mItems.clear();
     userData->mContainerLayerFrame = nullptr;
   }
@@ -2055,12 +2048,6 @@ class MaskImageData {
   RefPtr<TextureClient> mTextureClient;
 };
 
-static PaintedDisplayItemLayerUserData* GetPaintedDisplayItemLayerUserData(
-    Layer* aLayer) {
-  return static_cast<PaintedDisplayItemLayerUserData*>(
-      aLayer->GetUserData(&gPaintedDisplayItemLayerUserData));
-}
-
 /* static */
 void FrameLayerBuilder::Shutdown() {
   if (gMaskLayerImageCache) {
@@ -2151,14 +2138,37 @@ static void InvalidatePostTransformRegion(PaintedLayer* aLayer,
 #endif
 }
 
+static PaintedDisplayItemLayerUserData* GetPaintedDisplayItemLayerUserData(
+    Layer* aLayer) {
+  return static_cast<PaintedDisplayItemLayerUserData*>(
+      aLayer->GetUserData(&gPaintedDisplayItemLayerUserData));
+}
+
+static nsIntPoint GetTranslationForPaintedLayer(PaintedLayer* aLayer) {
+  PaintedDisplayItemLayerUserData* layerData =
+      GetPaintedDisplayItemLayerUserData(aLayer);
+  NS_ASSERTION(layerData, "Must be a tracked painted layer!");
+
+  return layerData->mTranslation;
+}
+
+/**
+ * Get the translation transform that was in aLayer when we last painted. It's
+ * either the transform saved by ~FrameLayerBuilder(), or else the transform
+ * that's currently in the layer (which must be an integer translation).
+ */
+static nsIntPoint GetLastPaintOffset(PaintedLayer* aLayer) {
+  auto* layerData = GetPaintedDisplayItemLayerUserData(aLayer);
+  MOZ_ASSERT(layerData);
+  return layerData->mLastPaintOffset.valueOr(layerData->mTranslation);
+}
+
 static void InvalidatePreTransformRect(PaintedLayer* aLayer,
                                        const nsRect& aRect,
                                        const DisplayItemClip& aClip,
                                        const nsIntPoint& aTranslation,
                                        TransformClipNode* aTransform) {
-  PaintedDisplayItemLayerUserData* data =
-      static_cast<PaintedDisplayItemLayerUserData*>(
-          aLayer->GetUserData(&gPaintedDisplayItemLayerUserData));
+  auto* data = GetPaintedDisplayItemLayerUserData(aLayer);
 
   nsRect rect = aClip.ApplyNonRoundedIntersection(aRect);
 
@@ -2170,15 +2180,6 @@ static void InvalidatePreTransformRect(PaintedLayer* aLayer,
                                                   data->mAppUnitsPerDevPixel);
 
   InvalidatePostTransformRegion(aLayer, pixelRect, aTranslation);
-}
-
-static nsIntPoint GetTranslationForPaintedLayer(PaintedLayer* aLayer) {
-  PaintedDisplayItemLayerUserData* data =
-      static_cast<PaintedDisplayItemLayerUserData*>(
-          aLayer->GetUserData(&gPaintedDisplayItemLayerUserData));
-  NS_ASSERTION(data, "Must be a tracked painted layer!");
-
-  return data->mTranslation;
 }
 
 /**
@@ -2224,9 +2225,7 @@ void FrameLayerBuilder::RemoveFrameFromLayerManager(
   for (DisplayItemData* data : aArray) {
     PaintedLayer* t = data->mLayer ? data->mLayer->AsPaintedLayer() : nullptr;
     if (t) {
-      PaintedDisplayItemLayerUserData* paintedData =
-          static_cast<PaintedDisplayItemLayerUserData*>(
-              t->GetUserData(&gPaintedDisplayItemLayerUserData));
+      auto* paintedData = GetPaintedDisplayItemLayerUserData(t);
       if (paintedData && data->mGeometry) {
         const int32_t appUnitsPerDevPixel = paintedData->mAppUnitsPerDevPixel;
         nsRegion rgn = data->mGeometry->ComputeInvalidationRegion();
@@ -2443,9 +2442,7 @@ static void ResetLayerStateForRecycling(Layer* aLayer) {
 
 already_AddRefed<ColorLayer> ContainerState::CreateOrRecycleColorLayer(
     PaintedLayer* aPainted) {
-  PaintedDisplayItemLayerUserData* data =
-      static_cast<PaintedDisplayItemLayerUserData*>(
-          aPainted->GetUserData(&gPaintedDisplayItemLayerUserData));
+  auto* data = GetPaintedDisplayItemLayerUserData(aPainted);
   RefPtr<ColorLayer> layer = data->mColorLayer;
   if (layer) {
     ResetLayerStateForRecycling(layer);
@@ -2468,9 +2465,7 @@ already_AddRefed<ColorLayer> ContainerState::CreateOrRecycleColorLayer(
 
 already_AddRefed<ImageLayer> ContainerState::CreateOrRecycleImageLayer(
     PaintedLayer* aPainted) {
-  PaintedDisplayItemLayerUserData* data =
-      static_cast<PaintedDisplayItemLayerUserData*>(
-          aPainted->GetUserData(&gPaintedDisplayItemLayerUserData));
+  auto* data = GetPaintedDisplayItemLayerUserData(aPainted);
   RefPtr<ImageLayer> layer = data->mImageLayer;
   if (layer) {
     ResetLayerStateForRecycling(layer);
@@ -2666,9 +2661,7 @@ PaintedDisplayItemLayerUserData* ContainerState::RecyclePaintedLayer(
   ResetLayerStateForRecycling(aLayer);
   aLayer->ClearExtraDumpInfo();
 
-  PaintedDisplayItemLayerUserData* data =
-      static_cast<PaintedDisplayItemLayerUserData*>(
-          aLayer->GetUserData(&gPaintedDisplayItemLayerUserData));
+  auto* data = GetPaintedDisplayItemLayerUserData(aLayer);
   NS_ASSERTION(data, "Recycled PaintedLayers must have user data");
 
   // This gets called on recycled PaintedLayers that are going to be in the
@@ -2722,9 +2715,6 @@ void ContainerState::PreparePaintedLayerForUse(
   aData->mAnimatedGeometryRootOrigin = aTopLeft;
   aData->mAppUnitsPerDevPixel = mAppUnitsPerDevPixel;
   aLayer->SetAllowResidualTranslation(mParameters.AllowResidualTranslation());
-
-  aData->mLastPaintOffset = GetTranslationForPaintedLayer(aLayer);
-  aData->mHasExplicitLastPaintOffset = true;
 
   // Set up transform so that 0,0 in the PaintedLayer corresponds to the
   // (pixel-snapped) top-left of the aAnimatedGeometryRoot.
@@ -3441,8 +3431,7 @@ void ContainerState::FinishPaintedLayerData(
         std::move(paintedLayer);
   }
 
-  PaintedDisplayItemLayerUserData* userData =
-      GetPaintedDisplayItemLayerUserData(data->mLayer);
+  auto* userData = GetPaintedDisplayItemLayerUserData(data->mLayer);
   NS_ASSERTION(userData, "where did our user data go?");
   userData->mLastItemCount = data->mAssignedDisplayItems.size();
 
@@ -4755,10 +4744,14 @@ void ContainerState::ProcessDisplayItems(nsDisplayList* aList) {
         clipPtr = &clipRectUntyped;
       }
 
+      bool isStickyNotClippedToDisplayPort =
+          itemType == DisplayItemType::TYPE_STICKY_POSITION &&
+          !static_cast<nsDisplayStickyPosition*>(item)
+               ->IsClippedToDisplayPort();
       bool hasScrolledClip =
           layerClipChain && layerClipChain->mClip.HasClip() &&
           (!ActiveScrolledRoot::IsAncestor(layerClipChain->mASR, itemASR) ||
-           itemType == DisplayItemType::TYPE_STICKY_POSITION);
+           isStickyNotClippedToDisplayPort);
 
       if (hasScrolledClip) {
         // If the clip is scrolled, reserve just the area of the clip for
@@ -5005,13 +4998,6 @@ void ContainerState::ProcessDisplayItems(nsDisplayList* aList) {
             nsLayoutUtils::IsReallyFixedPos(item->Frame());
       }
 
-      // Don't attempt to flatten compnent alpha layers that are within
-      // a forced active layer, or an active transform;
-      if (itemType == DisplayItemType::TYPE_TRANSFORM ||
-          layerState == LayerState::LAYER_ACTIVE_FORCE) {
-        newLayerEntry->mPropagateComponentAlphaFlattening = false;
-      }
-
       float contentXScale = 1.0f;
       float contentYScale = 1.0f;
       if (ContainerLayer* ownContainer = ownLayer->AsContainerLayer()) {
@@ -5120,8 +5106,7 @@ void ContainerState::ProcessDisplayItems(nsDisplayList* aList) {
           if (layer) {
             paintedLayerData->mLayer = layer;
 
-            PaintedDisplayItemLayerUserData* userData =
-                GetPaintedDisplayItemLayerUserData(layer);
+            auto* userData = GetPaintedDisplayItemLayerUserData(layer);
             paintedLayerData->mAssignedDisplayItems.reserve(
                 userData->mLastItemCount);
 
@@ -5201,7 +5186,7 @@ void ContainerState::InvalidateForLayerChange(nsDisplayItem* aItem,
 #endif
       InvalidatePreTransformRect(
           t, aData->mGeometry->ComputeInvalidationRegion(), aData->mClip,
-          mLayerBuilder->GetLastPaintOffset(t), aData->mTransform);
+          GetLastPaintOffset(t), aData->mTransform);
     }
     // Clear the old geometry so that invalidation thinks the item has been
     // added this paint.
@@ -5243,9 +5228,7 @@ void FrameLayerBuilder::ComputeGeometryChangeForItem(DisplayItemData* aData) {
     return;
   }
 
-  PaintedDisplayItemLayerUserData* layerData =
-      static_cast<PaintedDisplayItemLayerUserData*>(
-          aData->mLayer->GetUserData(&gPaintedDisplayItemLayerUserData));
+  auto* layerData = GetPaintedDisplayItemLayerUserData(aData->mLayer);
   nsPoint shift = layerData->mAnimatedGeometryRootOrigin -
                   layerData->mLastAnimatedGeometryRootOrigin;
 
@@ -5376,9 +5359,7 @@ void FrameLayerBuilder::AddPaintedDisplayItem(PaintedLayerData* aLayerData,
                                               AssignedDisplayItem& aItem,
                                               Layer* aLayer) {
   PaintedLayer* layer = aLayerData->mLayer;
-  PaintedDisplayItemLayerUserData* paintedData =
-      static_cast<PaintedDisplayItemLayerUserData*>(
-          layer->GetUserData(&gPaintedDisplayItemLayerUserData));
+  auto* paintedData = GetPaintedDisplayItemLayerUserData(layer);
 
   if (layer->Manager() == mRetainingManager) {
     DisplayItemData* data = aItem.mDisplayItemData;
@@ -5576,16 +5557,6 @@ InactiveLayerData::~InactiveLayerData() {
   if (mLayerManager) {
     mLayerManager->SetUserData(&gLayerManagerLayerBuilder, nullptr);
   }
-}
-
-nsIntPoint FrameLayerBuilder::GetLastPaintOffset(PaintedLayer* aLayer) {
-  PaintedDisplayItemLayerUserData* layerData =
-      GetPaintedDisplayItemLayerUserData(aLayer);
-  MOZ_ASSERT(layerData);
-  if (layerData->mHasExplicitLastPaintOffset) {
-    return layerData->mLastPaintOffset;
-  }
-  return GetTranslationForPaintedLayer(aLayer);
 }
 
 bool FrameLayerBuilder::CheckInLayerTreeCompressionMode() {
@@ -7202,9 +7173,7 @@ void FrameLayerBuilder::DrawPaintedLayer(PaintedLayer* aLayer,
   FrameLayerBuilder* layerBuilder = aLayer->Manager()->GetLayerBuilder();
   NS_ASSERTION(layerBuilder, "Unexpectedly null layer builder!");
 
-  PaintedDisplayItemLayerUserData* userData =
-      static_cast<PaintedDisplayItemLayerUserData*>(
-          aLayer->GetUserData(&gPaintedDisplayItemLayerUserData));
+  auto* userData = GetPaintedDisplayItemLayerUserData(aLayer);
   NS_ASSERTION(userData, "where did our user data go?");
   if (!userData->mContainerLayerFrame) {
     return;

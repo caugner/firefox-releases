@@ -243,7 +243,11 @@ def split_browsertime_page_load_by_url(config, tests):
 @transforms.add
 def add_extra_options(config, tests):
     for test in tests:
-        extra_options = test.setdefault('mozharness', {}).setdefault('extra-options', [])
+        mozharness = test.setdefault('mozharness', {})
+        if test.get('app', '') == 'chrome-m':
+            mozharness['tooltool-downloads'] = 'internal'
+
+        extra_options = mozharness.setdefault('extra-options', [])
 
         # Adding device name if we're on android
         test_platform = test['test-platform']
@@ -276,6 +280,8 @@ def add_extra_options(config, tests):
         if test['require-signed-extensions']:
             extra_options.append('--is-release-build')
 
+        extra_options.append("--project={}".format(config.params.get('project')))
+
         # add urlparams based on platform, test names and projects
         testurlparams_by_platform_and_project = {
             "android-hw-g5": [
@@ -283,10 +289,8 @@ def add_extra_options(config, tests):
                     "branches": [],  # For all branches
                     "testnames": ["youtube-playback"],
                     "urlparams": [
-                        # param used for excluding youtube-playback tests from executing
-                        # it excludes the tests with videos >1080p
-                        "exclude=1,2,9,10,17,18,21,22,26,28,30,32,39,40,47,"
-                        "48,55,56,63,64,71,72,79,80,83,84,89,90,95,96",
+                        # it excludes all VP9 tests
+                        "exclude=1-34"
                     ]
                 },
             ]

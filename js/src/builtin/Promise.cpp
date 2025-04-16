@@ -25,6 +25,7 @@
 #include "vm/Iteration.h"
 #include "vm/JSContext.h"
 #include "vm/JSObject.h"
+#include "vm/PlainObject.h"    // js::PlainObject
 #include "vm/PromiseLookup.h"  // js::PromiseLookup
 #include "vm/PromiseObject.h"  // js::PromiseObject, js::PromiseSlot_*
 #include "vm/SelfHosting.h"
@@ -1674,14 +1675,12 @@ static MOZ_MUST_USE bool AsyncGeneratorPromiseReactionJob(
     JSContext* cx, Handle<PromiseReactionRecord*> reaction) {
   MOZ_ASSERT(reaction->isAsyncGenerator());
 
-  int32_t handler = reaction->handler().toInt32();
   RootedValue argument(cx, reaction->handlerArg());
   Rooted<AsyncGeneratorObject*> asyncGenObj(cx, reaction->asyncGenerator());
 
   // Await's handlers don't return a value, nor throw any exceptions.
   // They fail only on OOM.
-
-  switch (handler) {
+  switch (int32_t handler = reaction->handler().toInt32(); handler) {
     // ES2020 draft rev a09fc232c137800dbf51b6204f37fdede4ba1646
     // 6.2.3.1.1 Await Fulfilled Functions
     case PromiseHandlerAsyncGeneratorAwaitedFulfilled: {
@@ -4617,9 +4616,17 @@ bool js::AsyncFromSyncIteratorMethod(JSContext* cx, CallArgs& args,
   // return/throw() steps 8-9.
   //     Step 8: Let result be Call(throw, syncIterator, « value »).
   //     Step 9: IfAbruptRejectPromise(result, promiseCapability).
+  //
+  // Including the changes from: https://github.com/tc39/ecma262/pull/1776
   RootedValue iterVal(cx, ObjectValue(*iter));
   RootedValue resultVal(cx);
-  if (!Call(cx, func, iterVal, args.get(0), &resultVal)) {
+  bool ok;
+  if (args.length() == 0) {
+    ok = Call(cx, func, iterVal, &resultVal);
+  } else {
+    ok = Call(cx, func, iterVal, args[0], &resultVal);
+  }
+  if (!ok) {
     return AbruptRejectPromise(cx, args, resultPromise, nullptr);
   }
 

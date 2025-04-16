@@ -36,7 +36,8 @@ rawPackets.set(`new Date(0)`, {
     },
     "actorID": "server0.conn0.child1/obj23"
   },
-  "timestamp": 1573832025019
+  "startTime": 1572867483805,
+  "timestamp": 1572867483805
 });
 
 rawPackets.set(`asdf()`, {
@@ -83,7 +84,8 @@ rawPackets.set(`asdf()`, {
   "result": {
     "type": "undefined"
   },
-  "timestamp": 1573832025112
+  "startTime": 1572867483805,
+  "timestamp": 1572867483805
 });
 
 rawPackets.set(`1 + @`, {
@@ -121,7 +123,8 @@ rawPackets.set(`1 + @`, {
   "result": {
     "type": "undefined"
   },
-  "timestamp": 1573832025117
+  "startTime": 1572867483805,
+  "timestamp": 1572867483805
 });
 
 rawPackets.set(`inspect({a: 1})`, {
@@ -162,7 +165,8 @@ rawPackets.set(`inspect({a: 1})`, {
   "result": {
     "type": "undefined"
   },
-  "timestamp": 1573832025123
+  "startTime": 1572867483805,
+  "timestamp": 1572867483805
 });
 
 rawPackets.set(`cd(document)`, {
@@ -175,7 +179,8 @@ rawPackets.set(`cd(document)`, {
   "result": {
     "type": "undefined"
   },
-  "timestamp": 1573832025126
+  "startTime": 1572867483805,
+  "timestamp": 1572867483805
 });
 
 rawPackets.set(`undefined`, {
@@ -184,7 +189,8 @@ rawPackets.set(`undefined`, {
   "result": {
     "type": "undefined"
   },
-  "timestamp": 1573832025128
+  "startTime": 1572867483805,
+  "timestamp": 1572867483805
 });
 
 rawPackets.set(`longString message Error`, {
@@ -246,7 +252,8 @@ rawPackets.set(`longString message Error`, {
   "result": {
     "type": "undefined"
   },
-  "timestamp": 1573832025130
+  "startTime": 1572867483805,
+  "timestamp": 1572867483805
 });
 
 rawPackets.set(`eval throw ""`, {
@@ -272,7 +279,8 @@ rawPackets.set(`eval throw ""`, {
   "result": {
     "type": "undefined"
   },
-  "timestamp": 1573832025134
+  "startTime": 1572867483805,
+  "timestamp": 1572867483805
 });
 
 rawPackets.set(`eval throw "tomato"`, {
@@ -298,7 +306,8 @@ rawPackets.set(`eval throw "tomato"`, {
   "result": {
     "type": "undefined"
   },
-  "timestamp": 1573832025138
+  "startTime": 1572867483805,
+  "timestamp": 1572867483805
 });
 
 

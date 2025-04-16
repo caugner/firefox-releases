@@ -63,9 +63,10 @@ class nsContainerFrame : public nsSplittableFrame {
 
 #ifdef DEBUG_FRAME_DUMP
   void List(FILE* out = stderr, const char* aPrefix = "",
-            uint32_t aFlags = 0) const override;
+            ListFlags aFlags = ListFlags()) const override;
   void ListWithMatchedRules(FILE* out = stderr,
                             const char* aPrefix = "") const override;
+  virtual void ExtraContainerFrameInfo(nsACString& aTo) const;
 #endif
 
   // nsContainerFrame methods
@@ -157,6 +158,24 @@ class nsContainerFrame : public nsSplittableFrame {
   static void ReparentFrameViewList(const nsFrameList& aChildFrameList,
                                     nsIFrame* aOldParentFrame,
                                     nsIFrame* aNewParentFrame);
+
+  /**
+   * Reparent aFrame from aOldParent to aNewParent.
+   */
+  static void ReparentFrame(nsIFrame* aFrame, nsContainerFrame* aOldParent,
+                            nsContainerFrame* aNewParent);
+
+  /**
+   * Reparent all the frames in aFrameList from aOldParent to aNewParent.
+   *
+   * Note: Reparenting a large frame list can be have huge performance impact.
+   * For example, instead of using this method, nsInlineFrame uses a "lazy
+   * reparenting" technique that it reparents a child frame just before
+   * reflowing the child. (See InlineReflowInput::mSetParentPointer.)
+   */
+  static void ReparentFrames(nsFrameList& aFrameList,
+                             nsContainerFrame* aOldParent,
+                             nsContainerFrame* aNewParent);
 
   // Set the view's size and position after its frame has been reflowed.
   static void SyncFrameViewAfterReflow(
@@ -548,6 +567,39 @@ class nsContainerFrame : public nsSplittableFrame {
   bool MoveOverflowToChildList();
 
   /**
+   * Merge a sorted frame list into our overflow list. aList becomes empty after
+   * this call.
+   */
+  void MergeSortedOverflow(nsFrameList& aList);
+
+  /**
+   * Merge a sorted frame list into our excess overflow containers list. aList
+   * becomes empty after this call.
+   */
+  void MergeSortedExcessOverflowContainers(nsFrameList& aList);
+
+  /**
+   * Moves all frames from aSrc into aDest such that the resulting aDest
+   * is still sorted in document content order and continuation order. aSrc
+   * becomes empty after this call.
+   *
+   * Precondition: both |aSrc| and |aDest| must be sorted to begin with.
+   * @param aCommonAncestor a hint for nsLayoutUtils::CompareTreePosition
+   */
+  static void MergeSortedFrameLists(nsFrameList& aDest, nsFrameList& aSrc,
+                                    nsIContent* aCommonAncestor);
+
+  /**
+   * This is intended to be used as a ChildFrameMerger argument for
+   * ReflowOverflowContainerChildren().
+   */
+  static inline void MergeSortedFrameListsFor(nsFrameList& aDest,
+                                              nsFrameList& aSrc,
+                                              nsContainerFrame* aParent) {
+    MergeSortedFrameLists(aDest, aSrc, aParent->GetContent());
+  }
+
+  /**
    * Basically same as MoveOverflowToChildList, except that this is for
    * handling inline children where children of prev-in-flow can be
    * pushed to overflow list even if a next-in-flow exists.
@@ -577,6 +629,24 @@ class nsContainerFrame : public nsSplittableFrame {
    * pusher's child count.
    */
   void PushChildren(nsIFrame* aFromChild, nsIFrame* aPrevSibling);
+
+  /**
+   * Iterate our children in our principal child list in the normal document
+   * order, and append them (or their next-in-flows) to either our overflow list
+   * or excess overflow container list according to their presence in
+   * aPushedItems, aIncompleteItems, or aOverflowIncompleteItems.
+   *
+   * Note: This method is only intended for Grid / Flex containers.
+   * aPushedItems, aIncompleteItems, and aOverflowIncompleteItems are expected
+   * to contain only Grid / Flex items. That is, they should contain only
+   * in-flow children.
+   *
+   * @return true if any items are moved; false otherwise.
+   */
+  using FrameHashtable = nsTHashtable<nsPtrHashKey<nsIFrame>>;
+  bool PushIncompleteChildren(const FrameHashtable& aPushedItems,
+                              const FrameHashtable& aIncompleteItems,
+                              const FrameHashtable& aOverflowIncompleteItems);
 
   /**
    * Reparent floats whose placeholders are inline descendants of aFrame from

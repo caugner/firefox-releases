@@ -10,16 +10,17 @@
 #include "mozilla/dom/BrowsingContext.h"
 #include "mozilla/net/CookieJarSettings.h"
 #include "mozilla/net/NeckoChannelParams.h"
+#include "mozilla/Permission.h"
+#include "mozilla/PermissionManager.h"
+#include "mozilla/SchedulerGroup.h"
 #include "mozilla/StaticPrefs_network.h"
-#include "mozilla/SystemGroup.h"
 #include "mozilla/Unused.h"
 #include "nsGlobalWindowInner.h"
 #if defined(MOZ_THUNDERBIRD) || defined(MOZ_SUITE)
 #  include "nsIProtocolHandler.h"
 #endif
-#include "nsPermission.h"
-#include "nsPermissionManager.h"
 #include "nsICookieService.h"
+#include "nsNetUtil.h"
 
 namespace mozilla {
 namespace net {
@@ -30,7 +31,7 @@ namespace {
 
 class PermissionComparator {
  public:
-  bool Equals(nsIPermission* aA, nsIPermission* aB) const {
+  static bool Equals(nsIPermission* aA, nsIPermission* aB) {
     nsCOMPtr<nsIPrincipal> principalA;
     nsresult rv = aA->GetPrincipal(getter_AddRefs(principalA));
     if (NS_WARN_IF(NS_FAILED(rv))) {
@@ -116,14 +117,10 @@ CookieJarSettings::CookieJarSettings(uint32_t aCookieBehavior, State aState)
 
 CookieJarSettings::~CookieJarSettings() {
   if (!NS_IsMainThread() && !mCookiePermissions.IsEmpty()) {
-    nsCOMPtr<nsIEventTarget> systemGroupEventTarget =
-        mozilla::SystemGroup::EventTargetFor(mozilla::TaskCategory::Other);
-    MOZ_ASSERT(systemGroupEventTarget);
-
     RefPtr<Runnable> r = new ReleaseCookiePermissions(mCookiePermissions);
     MOZ_ASSERT(mCookiePermissions.IsEmpty());
 
-    systemGroupEventTarget->Dispatch(r.forget());
+    SchedulerGroup::Dispatch(TaskCategory::Other, r.forget());
   }
 }
 
@@ -189,7 +186,7 @@ CookieJarSettings::CookiePermission(nsIPrincipal* aPrincipal,
   // Let's see if we know this permission.
   if (!mCookiePermissions.IsEmpty()) {
     nsCOMPtr<nsIPrincipal> principal =
-        nsPermission::ClonePrincipalForPermission(aPrincipal);
+        Permission::ClonePrincipalForPermission(aPrincipal);
     if (NS_WARN_IF(!principal)) {
       return NS_ERROR_FAILURE;
     }
@@ -211,7 +208,7 @@ CookieJarSettings::CookiePermission(nsIPrincipal* aPrincipal,
   }
 
   // Let's ask the permission manager.
-  nsPermissionManager* pm = nsPermissionManager::GetInstance();
+  PermissionManager* pm = PermissionManager::GetInstance();
   if (NS_WARN_IF(!pm)) {
     return NS_ERROR_FAILURE;
   }
@@ -224,7 +221,7 @@ CookieJarSettings::CookiePermission(nsIPrincipal* aPrincipal,
   rv = NS_URIChainHasFlags(uri, nsIProtocolHandler::URI_FORBIDS_COOKIE_ACCESS,
                            &hasFlags);
   if (NS_FAILED(rv) || hasFlags) {
-    *aCookiePermission = nsPermissionManager::DENY_ACTION;
+    *aCookiePermission = PermissionManager::DENY_ACTION;
     rv = NS_OK;  // Reset, so it's not caught as a bad status after the `else`.
   } else         // Note the tricky `else` which controls the call below.
 #endif
@@ -238,7 +235,7 @@ CookieJarSettings::CookiePermission(nsIPrincipal* aPrincipal,
   // Let's store the permission, also if the result is UNKNOWN in order to avoid
   // race conditions.
 
-  nsCOMPtr<nsIPermission> permission = nsPermission::Create(
+  nsCOMPtr<nsIPermission> permission = Permission::Create(
       aPrincipal, NS_LITERAL_CSTRING("cookie"), *aCookiePermission, 0, 0, 0);
   if (permission) {
     mCookiePermissions.AppendElement(permission);
@@ -296,8 +293,8 @@ void CookieJarSettings::Serialize(CookieJarSettingsArgs& aData) {
     }
 
     nsCOMPtr<nsIPermission> permission =
-        nsPermission::Create(principal, NS_LITERAL_CSTRING("cookie"),
-                             data.cookiePermission(), 0, 0, 0);
+        Permission::Create(principal, NS_LITERAL_CSTRING("cookie"),
+                           data.cookiePermission(), 0, 0, 0);
     if (NS_WARN_IF(!permission)) {
       continue;
     }
@@ -357,8 +354,8 @@ void CookieJarSettings::Merge(const CookieJarSettingsArgs& aData) {
     }
 
     nsCOMPtr<nsIPermission> permission =
-        nsPermission::Create(principal, NS_LITERAL_CSTRING("cookie"),
-                             data.cookiePermission(), 0, 0, 0);
+        Permission::Create(principal, NS_LITERAL_CSTRING("cookie"),
+                           data.cookiePermission(), 0, 0, 0);
     if (NS_WARN_IF(!permission)) {
       continue;
     }

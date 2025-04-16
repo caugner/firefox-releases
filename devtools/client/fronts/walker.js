@@ -149,13 +149,6 @@ class WalkerFront extends FrontClassWithSpec(walkerSpec) {
   }
 
   async getNodeActorFromContentDomReference(contentDomReference) {
-    if (!this.traits.retrieveNodeFromContentDomReference) {
-      console.error(
-        "The server is too old to retrieve a node from a contentDomReference"
-      );
-      return null;
-    }
-
     const response = await super.getNodeActorFromContentDomReference(
       contentDomReference
     );
@@ -460,14 +453,10 @@ class WalkerFront extends FrontClassWithSpec(walkerSpec) {
    * two documents.
    */
   async reparentRemoteFrame() {
-    // Get the parent target, which most likely runs in another process
-    const descriptorFront = this.targetFront.descriptorFront;
-    // If we are on the top target, descriptorFront will be the RootFront
-    // and won't have the getParentTarget method.
-    if (!descriptorFront.getParentTarget) {
+    const parentTarget = await this.targetFront.getParentTarget();
+    if (!parentTarget) {
       return;
     }
-    const parentTarget = await descriptorFront.getParentTarget();
     // Don't reparent if we are on the top target
     if (parentTarget == this.targetFront) {
       return;
@@ -478,7 +467,7 @@ class WalkerFront extends FrontClassWithSpec(walkerSpec) {
     // As this <iframe> most likely runs in another process, we have to get it through the parent
     // target's WalkerFront.
     const parentNode = (
-      await parentWalker.getEmbedderElement(descriptorFront.id)
+      await parentWalker.getEmbedderElement(this.targetFront.browsingContextID)
     ).node;
 
     // Finally, set this embedder element's node front as the

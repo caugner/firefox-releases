@@ -216,7 +216,7 @@ class MultiTouchInput : public InputData {
   // Warning, this class is serialized and sent over IPC. Any change to its
   // fields must be reflected in its ParamTraits<>, in nsGUIEventIPC.h
   MultiTouchType mType;
-  nsTArray<SingleTouchData> mTouches;
+  CopyableTArray<SingleTouchData> mTouches;
   // The screen offset of the root widget. This can be changing along with
   // the touch interaction, so we sstore it in the event.
   ExternalPoint mScreenOffset;
@@ -452,6 +452,8 @@ class PinchGestureInput : public InputData {
 
   bool TransformToLocal(const ScreenToParentLayerMatrix4x4& aTransform);
 
+  WidgetWheelEvent ToWidgetWheelEvent(nsIWidget* aWidget) const;
+
   // Warning, this class is serialized and sent over IPC. Any change to its
   // fields must be reflected in its ParamTraits<>, in nsGUIEventIPC.h
   PinchGestureType mType;
@@ -481,6 +483,8 @@ class PinchGestureInput : public InputData {
   // This is only really relevant during a PINCHGESTURE_SCALE because when it is
   // of this type then there must have been a history of spans.
   ScreenCoord mPreviousSpan;
+
+  bool mHandledByAPZ;
 
   // A special value for mFocusPoint used in PINCHGESTURE_END events to
   // indicate that both fingers have been lifted. If only one finger has
@@ -693,7 +697,7 @@ class KeyboardInput : public InputData {
   KeyboardEventType mType;
   uint32_t mKeyCode;
   uint32_t mCharCode;
-  nsTArray<ShortcutKeyCandidate> mShortcutCandidates;
+  CopyableTArray<ShortcutKeyCandidate> mShortcutCandidates;
 
   bool mHandledByAPZ;
 

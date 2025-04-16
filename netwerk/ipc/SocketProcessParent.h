@@ -19,10 +19,6 @@ class MemoryReport;
 class MemoryReportRequestHost;
 }  // namespace dom
 
-namespace ipc {
-class CrashReporterHost;
-}  // namespace ipc
-
 namespace net {
 
 class SocketProcessHost;
@@ -98,6 +94,14 @@ class SocketProcessParent final
       Endpoint<PBackgroundParent>&& aEndpoint);
 
   already_AddRefed<PAltServiceParent> AllocPAltServiceParent();
+
+  mozilla::ipc::IPCResult RecvGetTLSClientCert(
+      const nsCString& aHostName, const OriginAttributes& aOriginAttributes,
+      const int32_t& aPort, const uint32_t& aProviderFlags,
+      const uint32_t& aProviderTlsFlags, const ByteArray& aServerCert,
+      Maybe<ByteArray>&& aClientCert, nsTArray<ByteArray>&& aCollectedCANames,
+      bool* aSucceeded, ByteArray* aOutCert, ByteArray* aOutKey,
+      nsTArray<ByteArray>* aBuiltChain);
 
  private:
   SocketProcessHost* mHost;

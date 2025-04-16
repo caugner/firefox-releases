@@ -40,6 +40,7 @@
 #include "frontend/BytecodeCompiler.h"
 #include "frontend/BytecodeSection.h"
 #include "frontend/FoldConstants.h"
+#include "frontend/FunctionSyntaxKind.h"  // FunctionSyntaxKind
 #include "frontend/ModuleSharedContext.h"
 #include "frontend/ParseNode.h"
 #include "frontend/ParseNodeVerify.h"
@@ -53,6 +54,8 @@
 #endif
 #include "vm/BigIntType.h"
 #include "vm/BytecodeUtil.h"
+#include "vm/FunctionFlags.h"          // js::FunctionFlags
+#include "vm/GeneratorAndAsyncKind.h"  // js::GeneratorKind, js::FunctionAsyncKind
 #include "vm/JSAtom.h"
 #include "vm/JSContext.h"
 #include "vm/JSFunction.h"
@@ -110,7 +113,7 @@ template <class ParseHandler, typename Unit>
 inline typename GeneralParser<ParseHandler, Unit>::FinalParser*
 GeneralParser<ParseHandler, Unit>::asFinalParser() {
   static_assert(
-      std::is_base_of<GeneralParser<ParseHandler, Unit>, FinalParser>::value,
+      std::is_base_of_v<GeneralParser<ParseHandler, Unit>, FinalParser>,
       "inheritance relationship required by the static_cast<> below");
 
   return static_cast<FinalParser*>(this);
@@ -120,7 +123,7 @@ template <class ParseHandler, typename Unit>
 inline const typename GeneralParser<ParseHandler, Unit>::FinalParser*
 GeneralParser<ParseHandler, Unit>::asFinalParser() const {
   static_assert(
-      std::is_base_of<GeneralParser<ParseHandler, Unit>, FinalParser>::value,
+      std::is_base_of_v<GeneralParser<ParseHandler, Unit>, FinalParser>,
       "inheritance relationship required by the static_cast<> below");
 
   return static_cast<const FinalParser*>(this);
@@ -151,10 +154,10 @@ ParserSharedBase::ParserSharedBase(JSContext* cx,
     : JS::AutoGCRooter(
           cx,
 #ifdef JS_BUILD_BINAST
-          kind == Kind::Parser ? JS::AutoGCRooter::Tag::Parser
-                               : JS::AutoGCRooter::Tag::BinASTParser
+          kind == Kind::Parser ? JS::AutoGCRooter::Kind::Parser
+                               : JS::AutoGCRooter::Kind::BinASTParser
 #else
-          JS::AutoGCRooter::Tag::Parser
+          JS::AutoGCRooter::Kind::Parser
 #endif
           ),
       cx_(cx),
@@ -215,7 +218,7 @@ GeneralParser<ParseHandler, Unit>::GeneralParser(
     ScriptSourceObject* sourceObject)
     : Base(cx, options, foldConstants, compilationInfo, syntaxParser,
            lazyOuterFunction, sourceObject),
-      tokenStream(cx, options, units, length) {}
+      tokenStream(cx, &compilationInfo, options, units, length) {}
 
 template <typename Unit>
 void Parser<SyntaxParseHandler, Unit>::setAwaitHandling(
@@ -273,6 +276,10 @@ FunctionBox* PerHandlerParser<ParseHandler>::newFunctionBox(
     return nullptr;
   }
 
+  // This source extent will be further filled in during the remainder of parse.
+  SourceExtent extent;
+  extent.toStringStart = toStringStart;
+
   /*
    * We use JSContext.tempLifoAlloc to allocate parsed objects and place them
    * on a list in this Parser to ensure GC safety. Thus the tempLifoAlloc
@@ -281,8 +288,8 @@ FunctionBox* PerHandlerParser<ParseHandler>::newFunctionBox(
    * function.
    */
   FunctionBox* funbox = alloc_.new_<FunctionBox>(
-      cx_, traceListHead_, toStringStart, this->getCompilationInfo(),
-      inheritedDirectives, generatorKind, asyncKind, fun->displayAtom(),
+      cx_, traceListHead_, extent, this->getCompilationInfo(),
+      inheritedDirectives, generatorKind, asyncKind, fun->explicitName(),
       fun->flags(), index);
   if (!funbox) {
     ReportOutOfMemory(cx_);
@@ -308,6 +315,10 @@ FunctionBox* PerHandlerParser<ParseHandler>::newFunctionBox(
     return nullptr;
   }
 
+  // This source extent will be further filled in during the remainder of parse.
+  SourceExtent extent;
+  extent.toStringStart = toStringStart;
+
   /*
    * We use JSContext.tempLifoAlloc to allocate parsed objects and place them
    * on a list in this Parser to ensure GC safety. Thus the tempLifoAlloc
@@ -316,8 +327,8 @@ FunctionBox* PerHandlerParser<ParseHandler>::newFunctionBox(
    * function.
    */
   FunctionBox* funbox = alloc_.new_<FunctionBox>(
-      cx_, traceListHead_, toStringStart, this->getCompilationInfo(),
-      inheritedDirectives, generatorKind, asyncKind, fcd.get().atom,
+      cx_, traceListHead_, extent, this->getCompilationInfo(),
+      inheritedDirectives, generatorKind, asyncKind, fcd.get().explicitName,
       fcd.get().flags, index);
 
   if (!funbox) {
@@ -333,10 +344,6 @@ FunctionBox* PerHandlerParser<ParseHandler>::newFunctionBox(
 
 void ParserBase::trace(JSTracer* trc) {
   FunctionBox::TraceList(trc, traceListHead_);
-}
-
-void TraceParser(JSTracer* trc, AutoGCRooter* parser) {
-  static_cast<ParserBase*>(parser)->trace(trc);
 }
 
 bool ParserBase::setSourceMapInfo() {
@@ -387,9 +394,11 @@ template <class ParseHandler, typename Unit>
 typename ParseHandler::ListNodeType GeneralParser<ParseHandler, Unit>::parse() {
   MOZ_ASSERT(checkOptionsCalled_);
 
+  SourceExtent extent =
+      SourceExtent::makeGlobalExtent(/* len = */ 0, options());
   Directives directives(options().forceStrictMode());
   GlobalSharedContext globalsc(cx_, ScopeKind::Global,
-                               this->getCompilationInfo(), directives);
+                               this->getCompilationInfo(), directives, extent);
   SourceParseContext globalpc(this, &globalsc, /* newDirectives = */ nullptr);
   if (!globalpc.init()) {
     return null();
@@ -1201,6 +1210,29 @@ Maybe<FunctionScope::Data*> NewFunctionScopeData(
   return Some(bindings);
 }
 
+// Compute if `NewFunctionScopeData` would return any binding list with any
+// entry marked as closed-over. This is done without the need to allocate the
+// binding list. If true, an EnvironmentObject will be needed at runtime.
+bool FunctionScopeHasClosedOverBindings(ParseContext* pc) {
+  bool allBindingsClosedOver = pc->sc()->allBindingsClosedOver();
+
+  for (BindingIter bi = pc->functionScope().bindings(pc); bi; bi++) {
+    switch (bi.kind()) {
+      case BindingKind::FormalParameter:
+      case BindingKind::Var:
+        if (allBindingsClosedOver || bi.closedOver()) {
+          return true;
+        }
+        break;
+
+      default:
+        break;
+    }
+  }
+
+  return false;
+}
+
 Maybe<FunctionScope::Data*> ParserBase::newFunctionScopeData(
     ParseContext::Scope& scope, bool hasParameterExprs,
     IsFieldInitializer isFieldInitializer) {
@@ -1239,6 +1271,18 @@ Maybe<VarScope::Data*> NewVarScopeData(JSContext* cx,
   return Some(bindings);
 }
 
+// Compute if `NewVarScopeData` would return any binding list. This is done
+// without allocate the binding list.
+static bool VarScopeHasBindings(ParseContext* pc) {
+  for (BindingIter bi = pc->varScope().bindings(pc); bi; bi++) {
+    if (bi.kind() == BindingKind::Var) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
 Maybe<VarScope::Data*> ParserBase::newVarScopeData(ParseContext::Scope& scope) {
   return NewVarScopeData(cx_, scope, alloc_, pc_);
 }
@@ -1250,14 +1294,10 @@ Maybe<LexicalScope::Data*> NewLexicalScopeData(JSContext* cx,
   BindingNameVector lets(cx);
   BindingNameVector consts(cx);
 
-  // Unlike other scopes with bindings which are body-level, it is unknown
-  // if pc->sc()->allBindingsClosedOver() is correct at the time of
-  // finishing parsing a lexical scope.
-  //
-  // Instead, pc->sc()->allBindingsClosedOver() is checked in
-  // EmitterScope::enterLexical. Also see comment there.
+  bool allBindingsClosedOver = pc->sc()->allBindingsClosedOver();
+
   for (BindingIter bi = scope.bindings(pc); bi; bi++) {
-    BindingName binding(bi.name(), bi.closedOver());
+    BindingName binding(bi.name(), allBindingsClosedOver || bi.closedOver());
     switch (bi.kind()) {
       case BindingKind::Let:
         if (!lets.append(binding)) {
@@ -1289,6 +1329,30 @@ Maybe<LexicalScope::Data*> NewLexicalScopeData(JSContext* cx,
   }
 
   return Some(bindings);
+}
+
+// Compute if `NewLexicalScopeData` would return any binding list with any entry
+// marked as closed-over. This is done without the need to allocate the binding
+// list. If true, an EnvironmentObject will be needed at runtime.
+bool LexicalScopeHasClosedOverBindings(ParseContext* pc,
+                                       ParseContext::Scope& scope) {
+  bool allBindingsClosedOver = pc->sc()->allBindingsClosedOver();
+
+  for (BindingIter bi = scope.bindings(pc); bi; bi++) {
+    switch (bi.kind()) {
+      case BindingKind::Let:
+      case BindingKind::Const:
+        if (allBindingsClosedOver || bi.closedOver()) {
+          return true;
+        }
+        break;
+
+      default:
+        break;
+    }
+  }
+
+  return false;
 }
 
 Maybe<LexicalScope::Data*> ParserBase::newLexicalScopeData(
@@ -1607,11 +1671,32 @@ bool PerHandlerParser<ParseHandler>::finishFunctionScopes(
     if (!propagateFreeNamesAndMarkClosedOverBindings(pc_->functionScope())) {
       return false;
     }
+
+    // Functions with parameter expressions utilize the FunctionScope for vars
+    // generated by sloppy-direct-evals, as well as arguments (which are
+    // lexicals bindings). If the function body has var bindings (or has a
+    // sloppy-direct-eval that might), then an extra VarScope must be created
+    // for them.
+    if (VarScopeHasBindings(pc_) ||
+        funbox->needsExtraBodyVarEnvironmentRegardlessOfBindings()) {
+      funbox->setFunctionHasExtraBodyVarScope();
+    }
+  }
+
+  // See: JSFunction::needsCallObject()
+  if (FunctionScopeHasClosedOverBindings(pc_) ||
+      funbox->needsCallObjectRegardlessOfBindings()) {
+    funbox->setNeedsFunctionEnvironmentObjects();
   }
 
   if (funbox->isNamedLambda() && !isStandaloneFunction) {
     if (!propagateFreeNamesAndMarkClosedOverBindings(pc_->namedLambdaScope())) {
       return false;
+    }
+
+    // See: JSFunction::needsNamedLambdaEnvironment()
+    if (LexicalScopeHasClosedOverBindings(pc_, pc_->namedLambdaScope())) {
+      funbox->setNeedsFunctionEnvironmentObjects();
     }
   }
 
@@ -1640,6 +1725,10 @@ bool PerHandlerParser<FullParseHandler>::finishFunction(
       return false;
     }
     funbox->extraVarScopeBindings().set(*bindings);
+
+    MOZ_ASSERT(bool(*bindings) == VarScopeHasBindings(pc_));
+    MOZ_ASSERT_IF(!funbox->needsExtraBodyVarEnvironmentRegardlessOfBindings(),
+                  bool(*bindings) == funbox->functionHasExtraBodyVarScope());
   }
 
   {
@@ -1690,8 +1779,7 @@ bool PerHandlerParser<SyntaxParseHandler>::finishFunction(
 
   LazyScriptCreationData data(cx_);
   if (!data.init(cx_, pc_->closedOverBindingsForLazy(),
-                 std::move(pc_->innerFunctionIndexesForLazy),
-                 options().forceStrictMode(), pc_->sc()->strict())) {
+                 std::move(pc_->innerFunctionIndexesForLazy))) {
     return false;
   }
 
@@ -1745,32 +1833,24 @@ bool LazyScriptCreationData::create(JSContext* cx,
                                     FunctionBox* funbox,
                                     HandleScriptSourceObject sourceObject) {
   MOZ_ASSERT(function);
+
+  using ImmutableFlags = ImmutableScriptFlagsEnum;
+  ImmutableScriptFlags immutableFlags = funbox->immutableFlags();
+
+  // Compute the flags that frontend doesn't directly compute.
+  immutableFlags.setFlag(ImmutableFlags::HasMappedArgsObj,
+                         funbox->hasMappedArgsObj());
+  immutableFlags.setFlag(ImmutableFlags::IsLikelyConstructorWrapper,
+                         funbox->isLikelyConstructorWrapper());
+
   BaseScript* lazy = BaseScript::CreateLazy(
       cx, compilationInfo, function, sourceObject, closedOverBindings,
-      innerFunctionIndexes, funbox->extent, funbox->immutableFlags());
+      innerFunctionIndexes, funbox->extent, immutableFlags);
   if (!lazy) {
     return false;
   }
 
-  // Flags that need to be copied into the JSScript when we do the full
-  // parse.
-  if (forceStrict) {
-    lazy->setForceStrict();
-  }
-  if (strict) {
-    lazy->setStrict();
-  }
-
-  // Flags which are computed at this point.
-  if (funbox->hasMappedArgsObj()) {
-    lazy->setHasMappedArgsObj();
-  }
-
   function->initLazyScript(lazy);
-
-  if (fieldInitializers) {
-    lazy->setFieldInitializers(*fieldInitializers);
-  }
 
   return true;
 }
@@ -1996,20 +2076,19 @@ GeneralParser<ParseHandler, Unit>::functionBody(InHandling inHandling,
   return finishLexicalScope(pc_->varScope(), body, ScopeKind::FunctionLexical);
 }
 
-FunctionCreationData::FunctionCreationData(HandleAtom atom,
+FunctionCreationData::FunctionCreationData(HandleAtom explicitName,
                                            FunctionSyntaxKind kind,
                                            GeneratorKind generatorKind,
                                            FunctionAsyncKind asyncKind,
                                            bool isSelfHosting /* = false */,
                                            bool inFunctionBox /* = false */)
-    : atom(atom),
-      kind(kind),
-      generatorKind(generatorKind),
-      asyncKind(asyncKind),
-      isSelfHosting(isSelfHosting) {
+    : explicitName(explicitName) {
   bool isExtendedUnclonedSelfHostedFunctionName =
-      isSelfHosting && atom && IsExtendedUnclonedSelfHostedFunctionName(atom);
+      isSelfHosting && explicitName &&
+      IsExtendedUnclonedSelfHostedFunctionName(explicitName);
   MOZ_ASSERT_IF(isExtendedUnclonedSelfHostedFunctionName, !inFunctionBox);
+
+  gc::AllocKind allocKind = gc::AllocKind::FUNCTION;
 
   switch (kind) {
     case FunctionSyntaxKind::Expression:
@@ -2049,12 +2128,28 @@ FunctionCreationData::FunctionCreationData(HandleAtom atom,
                    ? FunctionFlags::INTERPRETED_NORMAL
                    : FunctionFlags::INTERPRETED_GENERATOR_OR_ASYNC);
   }
+
+  if (isSelfHosting) {
+    flags.setIsSelfHostedBuiltin();
+  }
+
+  if (allocKind == gc::AllocKind::FUNCTION_EXTENDED) {
+    flags.setIsExtended();
+  }
+
+  if (generatorKind == GeneratorKind::Generator) {
+    immutableFlags.setFlag(ImmutableScriptFlagsEnum::IsGenerator);
+  }
+
+  if (asyncKind == FunctionAsyncKind::AsyncFunction) {
+    immutableFlags.setFlag(ImmutableScriptFlagsEnum::IsAsync);
+  }
 }
 
-HandleAtom FunctionCreationData::getAtom(JSContext* cx) const {
+HandleAtom FunctionCreationData::getExplicitName(JSContext* cx) const {
   // We can create a handle here because atoms are traced
   // by FunctionCreationData.
-  return HandleAtom::fromMarkedLocation(&atom);
+  return HandleAtom::fromMarkedLocation(&explicitName);
 }
 
 JSFunction* AllocNewFunction(JSContext* cx,
@@ -2064,26 +2159,27 @@ JSFunction* AllocNewFunction(JSContext* cx,
   const FunctionCreationData& data = dataHandle.get();
 
   RootedObject proto(cx);
-  if (!GetFunctionPrototype(cx, data.generatorKind, data.asyncKind, &proto)) {
+  GeneratorKind generatorKind =
+      data.immutableFlags.hasFlag(ImmutableScriptFlagsEnum::IsGenerator)
+          ? GeneratorKind::Generator
+          : GeneratorKind::NotGenerator;
+  FunctionAsyncKind asyncKind =
+      data.immutableFlags.hasFlag(ImmutableScriptFlagsEnum::IsAsync)
+          ? FunctionAsyncKind::AsyncFunction
+          : FunctionAsyncKind::SyncFunction;
+  if (!GetFunctionPrototype(cx, generatorKind, asyncKind, &proto)) {
     return nullptr;
   }
+  gc::AllocKind allocKind = data.flags.isExtended()
+                                ? gc::AllocKind::FUNCTION_EXTENDED
+                                : gc::AllocKind::FUNCTION;
   RootedFunction fun(cx, NewFunctionWithProto(cx, nullptr, 0, data.flags,
-                                              nullptr, data.getAtom(cx), proto,
-                                              data.allocKind, TenuredObject));
+                                              nullptr, data.getExplicitName(cx),
+                                              proto, allocKind, TenuredObject));
   if (!fun) {
     return nullptr;
   }
 
-  if (data.isSelfHosting) {
-    fun->setIsSelfHostedBuiltin();
-  }
-
-  if (data.typeForScriptedFunction) {
-    if (!JSFunction::setTypeForScriptedFunction(
-            cx, fun, *data.typeForScriptedFunction)) {
-      return nullptr;
-    }
-  }
   return fun;
 }
 
@@ -2513,9 +2609,14 @@ bool Parser<FullParseHandler, Unit>::skipLazyInnerFunction(
   }
 
   funbox->initFromLazyFunction(fun);
-  MOZ_ASSERT(fun->baseScript()->hasEnclosingScript(),
-             "Inner lazy function should not have a scope until we finish our "
-             "own compile");
+
+  // Info derived from parent compilation should not be set yet for our inner
+  // lazy functions. Instead that info will be updated when we finish our
+  // compilation.
+  MOZ_ASSERT(fun->baseScript()->hasEnclosingScript());
+  MOZ_ASSERT(fun->baseScript()->treatAsRunOnce() == false);
+  MOZ_ASSERT_IF(fun->isClassConstructor(),
+                !fun->baseScript()->getFieldInitializers().valid);
 
   PropagateTransitiveParseFlags(funbox, pc_->sc());
 
@@ -3516,7 +3617,7 @@ bool GeneralParser<ParseHandler, Unit>::maybeParseDirective(
           error(JSMSG_DEPRECATED_OCTAL);
           return false;
         }
-        pc_->sc()->strictScript = true;
+        pc_->sc()->setStrictScript();
       }
     } else if (directive == cx_->names().useAsm) {
       if (pc_->isFunctionBox()) {
@@ -6862,13 +6963,9 @@ bool GeneralParser<ParseHandler, Unit>::classMember(
     if (!tokenStream.peekToken(&tt)) {
       return false;
     }
-    if (tt == TokenKind::RightCurly) {
-      tokenStream.consumeKnownToken(tt);
-      error(JSMSG_UNEXPECTED_TOKEN, "property name", TokenKindToDesc(tt));
-      return false;
-    }
 
-    if (tt != TokenKind::LeftParen) {
+    if (tt != TokenKind::LeftParen && tt != TokenKind::Assign &&
+        tt != TokenKind::Semi && tt != TokenKind::RightCurly) {
       isStatic = true;
     } else {
       anyChars.ungetToken();
@@ -7097,6 +7194,10 @@ bool GeneralParser<ParseHandler, Unit>::finishClassConstructor(
   }
 
   if (FunctionBox* ctorbox = classStmt.constructorBox) {
+    // The ctorbox must not have emitted a JSFunction yet since we are still
+    // updating it.
+    MOZ_ASSERT(!ctorbox->hasFunction());
+
     // Amend the toStringEnd offset for the constructor now that we've
     // finished parsing the class.
     ctorbox->extent.toStringEnd = classEndOffset;
@@ -7104,20 +7205,6 @@ bool GeneralParser<ParseHandler, Unit>::finishClassConstructor(
     if (numFields > 0) {
       // Field initialization need access to `this`.
       ctorbox->setHasThisBinding();
-    }
-
-    // Set the same information, but on the lazyScript.
-    if (ctorbox->hasFunction()) {
-      if (!ctorbox->emitBytecode) {
-        ctorbox->function()->baseScript()->setToStringEnd(classEndOffset);
-
-        if (numFields > 0) {
-          ctorbox->function()->baseScript()->setFunctionHasThisBinding();
-        }
-      } else {
-        // There should not be any non-lazy script yet.
-        MOZ_ASSERT(ctorbox->function()->isIncomplete());
-      }
     }
   }
 
@@ -8645,6 +8732,15 @@ typename ParseHandler::Node GeneralParser<ParseHandler, Unit>::assignExpr(
     case TokenKind::SubAssign:
       kind = ParseNodeKind::SubAssignExpr;
       break;
+    case TokenKind::CoalesceAssign:
+      kind = ParseNodeKind::CoalesceAssignExpr;
+      break;
+    case TokenKind::OrAssign:
+      kind = ParseNodeKind::OrAssignExpr;
+      break;
+    case TokenKind::AndAssign:
+      kind = ParseNodeKind::AndAssignExpr;
+      break;
     case TokenKind::BitOrAssign:
       kind = ParseNodeKind::BitOrAssignExpr;
       break;
@@ -8710,6 +8806,17 @@ typename ParseHandler::Node GeneralParser<ParseHandler, Unit>::assignExpr(
   } else if (handler_.isPropertyAccess(lhs)) {
     // Permitted: no additional testing/fixup needed.
   } else if (handler_.isFunctionCall(lhs)) {
+    // We don't have to worry about backward compatibility issues with the new
+    // compound assignment operators, so we always throw here. Also that way we
+    // don't have to worry if |f() &&= expr| should always throw an error or
+    // only if |f()| returns true.
+    if (kind == ParseNodeKind::CoalesceAssignExpr ||
+        kind == ParseNodeKind::OrAssignExpr ||
+        kind == ParseNodeKind::AndAssignExpr) {
+      errorAt(exprPos.begin, JSMSG_BAD_LEFTSIDE_OF_ASS);
+      return null();
+    }
+
     if (!strictModeErrorAt(exprPos.begin, JSMSG_BAD_LEFTSIDE_OF_ASS)) {
       return null();
     }

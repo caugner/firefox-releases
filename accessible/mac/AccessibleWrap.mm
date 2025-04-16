@@ -107,6 +107,7 @@ nsresult AccessibleWrap::HandleAccEvent(AccEvent* aEvent) {
     case nsIAccessibleEvent::EVENT_DOCUMENT_LOAD_COMPLETE:
     case nsIAccessibleEvent::EVENT_MENUPOPUP_START:
     case nsIAccessibleEvent::EVENT_MENUPOPUP_END:
+    case nsIAccessibleEvent::EVENT_REORDER:
       if (Accessible* accessible = aEvent->GetAccessible()) {
         accessible->GetNativeInterface((void**)&nativeAcc);
         if (!nativeAcc) {
@@ -145,27 +146,12 @@ nsresult AccessibleWrap::HandleAccEvent(AccEvent* aEvent) {
   }
 
   if (nativeAcc) {
-    [nativeAcc firePlatformEvent:eventType];
+    [nativeAcc handleAccessibleEvent:eventType];
   }
 
   return NS_OK;
 
   NS_OBJC_END_TRY_ABORT_BLOCK_NSRESULT;
-}
-
-bool AccessibleWrap::InsertChildAt(uint32_t aIdx, Accessible* aAccessible) {
-  bool inserted = Accessible::InsertChildAt(aIdx, aAccessible);
-  if (inserted && mNativeObject) [mNativeObject appendChild:aAccessible];
-
-  return inserted;
-}
-
-bool AccessibleWrap::RemoveChild(Accessible* aAccessible) {
-  bool removed = Accessible::RemoveChild(aAccessible);
-
-  if (removed && mNativeObject) [mNativeObject invalidateChildren];
-
-  return removed;
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -196,9 +182,7 @@ Class a11y::GetTypeFromRole(roles::Role aRole) {
   switch (aRole) {
     case roles::COMBOBOX:
     case roles::PUSHBUTTON:
-    case roles::SPLITBUTTON: {
       return [mozButtonAccessible class];
-    }
 
     case roles::PAGETAB:
       return [mozTabAccessible class];
@@ -208,8 +192,9 @@ Class a11y::GetTypeFromRole(roles::Role aRole) {
     case roles::RADIOBUTTON:
       return [mozCheckboxAccessible class];
 
+    case roles::SPINBUTTON:
     case roles::SLIDER:
-      return [mozSliderAccessible class];
+      return [mozIncrementableAccessible class];
 
     case roles::HEADING:
       return [mozHeadingAccessible class];
@@ -218,7 +203,6 @@ Class a11y::GetTypeFromRole(roles::Role aRole) {
       return [mozTabGroupAccessible class];
 
     case roles::ENTRY:
-    case roles::STATICTEXT:
     case roles::CAPTION:
     case roles::ACCEL_LABEL:
     case roles::PASSWORD_TEXT:
@@ -226,6 +210,7 @@ Class a11y::GetTypeFromRole(roles::Role aRole) {
       return [mozTextAccessible class];
 
     case roles::TEXT_LEAF:
+    case roles::STATICTEXT:
       return [mozTextLeafAccessible class];
 
     case roles::LINK:

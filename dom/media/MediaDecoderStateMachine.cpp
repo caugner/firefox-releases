@@ -2734,6 +2734,15 @@ void MediaDecoderStateMachine::AudioAudibleChanged(bool aAudible) {
 }
 
 MediaSink* MediaDecoderStateMachine::CreateAudioSink() {
+  if (mOutputCaptured) {
+    DecodedStream* stream =
+        new DecodedStream(this, mOutputTracks, mVolume, mPlaybackRate,
+                          mPreservesPitch, mAudioQueue, mVideoQueue);
+    mAudibleListener = stream->AudibleEvent().Connect(
+        OwnerThread(), this, &MediaDecoderStateMachine::AudioAudibleChanged);
+    return stream;
+  }
+
   RefPtr<MediaDecoderStateMachine> self = this;
   auto audioSinkCreator = [self]() {
     MOZ_ASSERT(self->OnTaskQueue());
@@ -2752,12 +2761,7 @@ MediaSink* MediaDecoderStateMachine::CreateAudioSink() {
 
 already_AddRefed<MediaSink> MediaDecoderStateMachine::CreateMediaSink() {
   MOZ_ASSERT(OnTaskQueue());
-  RefPtr<MediaSink> audioSink =
-      mOutputCaptured
-          ? new DecodedStream(this, mOutputTracks, mVolume, mPlaybackRate,
-                              mPreservesPitch, mAudioQueue, mVideoQueue)
-          : CreateAudioSink();
-
+  RefPtr<MediaSink> audioSink = CreateAudioSink();
   RefPtr<MediaSink> mediaSink =
       new VideoSink(mTaskQueue, audioSink, mVideoQueue, mVideoFrameContainer,
                     *mFrameStats, sVideoQueueSendToCompositorSize);
@@ -3113,12 +3117,11 @@ void MediaDecoderStateMachine::StopMediaSink() {
   MOZ_ASSERT(OnTaskQueue());
   if (mMediaSink->IsStarted()) {
     LOG("Stop MediaSink");
-    mAudibleListener.DisconnectIfExists();
-
     mMediaSink->Stop();
     mMediaSinkAudioEndedPromise.DisconnectIfExists();
     mMediaSinkVideoEndedPromise.DisconnectIfExists();
   }
+  mAudibleListener.DisconnectIfExists();
 }
 
 void MediaDecoderStateMachine::RequestAudioData() {
@@ -3582,12 +3585,15 @@ void MediaDecoderStateMachine::UpdateOutputCaptured() {
   mAudioCompleted = false;
   mVideoCompleted = false;
 
-  // Stop and shut down the existing sink.
-  StopMediaSink();
-  mMediaSink->Shutdown();
+  // Don't create a new media sink if we're still suspending media sink.
+  if (!mIsMediaSinkSuspended) {
+    // Stop and shut down the existing sink.
+    StopMediaSink();
+    mMediaSink->Shutdown();
 
-  // Create a new sink according to whether output is captured.
-  mMediaSink = CreateMediaSink();
+    // Create a new sink according to whether output is captured.
+    mMediaSink = CreateMediaSink();
+  }
 
   // Don't buffer as much when audio is captured because we don't need to worry
   // about high latency audio devices.

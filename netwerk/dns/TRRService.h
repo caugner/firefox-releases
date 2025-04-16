@@ -45,7 +45,7 @@ class TRRService : public nsIObserver,
   bool SkipTRRWhenParentalControlEnabled() {
     return mSkipTRRWhenParentalControlEnabled;
   }
-  nsresult GetURI(nsCString& result);
+  nsresult GetURI(nsACString& result);
   nsresult GetCredentials(nsCString& result);
   uint32_t GetRequestTimeout();
 
@@ -79,6 +79,7 @@ class TRRService : public nsIObserver,
   void MaybeConfirm_locked();
   friend class ::nsDNSService;
   void GetParentalControlEnabledInternal();
+  void SetDetectedTrrURI(const nsACString& aURI);
 
   bool IsDomainBlacklisted(const nsACString& aHost,
                            const nsACString& aOriginSuffix,
@@ -91,9 +92,29 @@ class TRRService : public nsIObserver,
   nsresult DispatchTRRRequestInternal(TRR* aTrrRequest, bool aWithLock);
   already_AddRefed<nsIThread> TRRThread_locked();
 
+  // This method will process the URI and try to set mPrivateURI to that value.
+  // Will return true if performed the change (if the value was different)
+  // or false if mPrivateURI already had that value.
+  bool MaybeSetPrivateURI(const nsACString& aURI);
+  // Checks the network.trr.uri or the doh-rollout.uri prefs and sets the URI
+  // in order of preference:
+  // 1. The value of network.trr.uri if it is not the default one, meaning
+  //    is was set by an explicit user action
+  // 2. The value of doh-rollout.uri if it exists
+  //    this is set by the rollout addon
+  // 3. The default value of network.trr.uri
+  void CheckURIPrefs();
+  void ProcessURITemplate(nsACString& aURI);
+  void ClearEntireCache();
+
   bool mInitialized;
   Atomic<uint32_t, Relaxed> mMode;
   Atomic<uint32_t, Relaxed> mTRRBlacklistExpireTime;
+
+  // Pref caches should only be used on the main thread.
+  nsCString mURIPref;
+  bool mURIPrefHasUserValue = false;
+  nsCString mRolloutURIPref;
 
   Mutex mLock;
 
@@ -101,6 +122,7 @@ class TRRService : public nsIObserver,
   nsCString mPrivateCred;  // main thread only
   nsCString mConfirmationNS;
   nsCString mBootstrapAddr;
+  bool mURISetByDetection = false;
 
   Atomic<bool, Relaxed> mWaitForCaptive;  // wait for the captive portal to say
                                           // OK before using TRR

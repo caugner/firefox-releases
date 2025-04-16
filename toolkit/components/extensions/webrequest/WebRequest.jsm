@@ -131,7 +131,10 @@ class HeaderChanger {
     // and an extension also added the header
     // "Set-Cookie: examplename=examplevalue") then the header value is not
     // re-set, but subsequent headers of the same type will be merged in.
-    let headersAlreadySet = new Set();
+    //
+    // Multiple addons will be able to provide modifications to any headers
+    // listed in the default set.
+    let headersAlreadySet = new Set(["content-security-policy"]);
     for (let { name, value, binaryValue } of headers) {
       if (binaryValue) {
         value = String.fromCharCode(...binaryValue);
@@ -261,96 +264,6 @@ function serializeRequestData(eventName) {
 }
 
 var HttpObserverManager;
-
-var nextFakeRequestId = 1;
-
-var ContentPolicyManager = {
-  policyData: new Map(),
-  idMap: new Map(),
-  nextId: 0,
-
-  init() {
-    Services.ppmm.initialProcessData.webRequestContentPolicies = this.policyData;
-
-    Services.ppmm.addMessageListener("WebRequest:ShouldLoad", this);
-    Services.mm.addMessageListener("WebRequest:ShouldLoad", this);
-  },
-
-  receiveMessage(msg) {
-    let browser =
-      ChromeUtils.getClassName(msg.target) == "XULFrameElement"
-        ? msg.target
-        : null;
-
-    let requestId = `fakeRequest-${++nextFakeRequestId}`;
-    let data = Object.assign(
-      { requestId, browser, serialize: serializeRequestData },
-      msg.data
-    );
-
-    this.runChannelListener("onBeforeRequest", data);
-    runLater(() => this.runChannelListener("onCompleted", data));
-  },
-
-  shouldRunListener(policyType, url, opts) {
-    let { filter } = opts;
-
-    if (filter.types && !filter.types.includes(policyType)) {
-      return false;
-    }
-
-    if (filter.urls && !filter.urls.matches(url)) {
-      return false;
-    }
-
-    let { policy } = opts;
-    if (policy && !policy.allowedOrigins.matches(url)) {
-      return false;
-    }
-
-    return true;
-  },
-
-  runChannelListener(kind, data) {
-    let listeners = HttpObserverManager.listeners[kind];
-    for (let [callback, opts] of listeners.entries()) {
-      if (this.shouldRunListener(data.type, data.url, opts)) {
-        try {
-          callback(data);
-        } catch (e) {
-          Cu.reportError(e);
-        }
-      }
-    }
-  },
-
-  addListener(callback, opts) {
-    // Clone opts, since we're going to modify them for IPC.
-    opts = Object.assign({}, opts);
-    let id = this.nextId++;
-    opts.id = id;
-    if (opts.filter.urls) {
-      opts.filter = Object.assign({}, opts.filter);
-      opts.filter.urls = opts.filter.urls.patterns.map(url => url.pattern);
-    }
-    Services.ppmm.broadcastAsyncMessage("WebRequest:AddContentPolicy", opts);
-
-    this.policyData.set(id, opts);
-
-    this.idMap.set(callback, id);
-  },
-
-  removeListener(callback) {
-    let id = this.idMap.get(callback);
-    Services.ppmm.broadcastAsyncMessage("WebRequest:RemoveContentPolicy", {
-      id,
-    });
-
-    this.policyData.delete(id);
-    this.idMap.delete(callback);
-  },
-};
-ContentPolicyManager.init();
 
 var ChannelEventSink = {
   _classDescription: "WebRequest channel event sink",
@@ -569,8 +482,7 @@ AuthRequestor.prototype.QueryInterface = ChromeUtils.generateQI([
 //     handler can serve multiple webRequest listeners.
 HttpObserverManager = {
   listeners: {
-    // onBeforeRequest uses http-on-modify observer for HTTP(S),
-    // and content policy for the other protocols (notably, data:)
+    // onBeforeRequest uses http-on-modify observer for HTTP(S).
     onBeforeRequest: new Map(),
 
     // onBeforeSendHeaders and onSendHeaders correspond to the
@@ -1141,24 +1053,6 @@ HttpObserverManager = {
   },
 };
 
-var onBeforeRequest = {
-  allowedOptions: ["blocking", "requestBody"],
-
-  addListener(callback, filter = null, options = null, optionsObject = null) {
-    let opts = parseExtra(options, this.allowedOptions);
-    opts.filter = parseFilter(filter);
-    ContentPolicyManager.addListener(callback, opts);
-
-    opts = Object.assign({}, opts, optionsObject);
-    HttpObserverManager.addListener("onBeforeRequest", callback, opts);
-  },
-
-  removeListener(callback) {
-    HttpObserverManager.removeListener("onBeforeRequest", callback);
-    ContentPolicyManager.removeListener(callback);
-  },
-};
-
 function HttpEvent(internalEvent, options) {
   this.internalEvent = internalEvent;
   this.options = options;
@@ -1176,6 +1070,10 @@ HttpEvent.prototype = {
   },
 };
 
+var onBeforeRequest = new HttpEvent("onBeforeRequest", [
+  "blocking",
+  "requestBody",
+]);
 var onBeforeSendHeaders = new HttpEvent("onBeforeSendHeaders", [
   "requestHeaders",
   "blocking",
@@ -1216,8 +1114,3 @@ var WebRequest = {
     }
   },
 };
-
-Services.ppmm.loadProcessScript(
-  "resource://gre/modules/WebRequestContent.js",
-  true
-);

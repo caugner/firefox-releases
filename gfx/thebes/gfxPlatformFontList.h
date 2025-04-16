@@ -27,6 +27,8 @@
 #include "mozilla/RangedArray.h"
 #include "nsLanguageAtomService.h"
 
+#include "base/shared_memory.h"
+
 namespace mozilla {
 namespace fontlist {
 struct AliasData;
@@ -261,9 +263,9 @@ class gfxPlatformFontList : public gfxFontInfoLoader {
   // because (on Windows) we cannot include the proper headers, as they
   // result in build failure due to (indirect) inclusion of windows.h
   // in generated bindings code.
-  void ShareFontListShmBlockToProcess(
-      uint32_t aGeneration, uint32_t aIndex, /*base::ProcessId*/ uint32_t aPid,
-      /*mozilla::ipc::SharedMemoryBasic::Handle*/ void* aOut);
+  void ShareFontListShmBlockToProcess(uint32_t aGeneration, uint32_t aIndex,
+                                      base::ProcessId aPid,
+                                      base::SharedMemoryHandle* aOut);
 
   void SetCharacterMap(uint32_t aGeneration,
                        const mozilla::fontlist::Pointer& aFacePtr,

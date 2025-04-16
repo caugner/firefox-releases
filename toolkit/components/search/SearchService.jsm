@@ -215,13 +215,13 @@ async function storeRegion(region) {
   let platformCC = await Services.sysinfo.countryCode;
   if (platformCC) {
     let probeUSMismatched, probeNonUSMismatched;
-    switch (Services.appinfo.OS) {
-      case "Darwin":
+    switch (AppConstants.platform) {
+      case "macosx":
         probeUSMismatched = "SEARCH_SERVICE_US_COUNTRY_MISMATCHED_PLATFORM_OSX";
         probeNonUSMismatched =
           "SEARCH_SERVICE_NONUS_COUNTRY_MISMATCHED_PLATFORM_OSX";
         break;
-      case "WINNT":
+      case "win":
         probeUSMismatched = "SEARCH_SERVICE_US_COUNTRY_MISMATCHED_PLATFORM_WIN";
         probeNonUSMismatched =
           "SEARCH_SERVICE_NONUS_COUNTRY_MISMATCHED_PLATFORM_WIN";
@@ -481,9 +481,16 @@ var gInitialized = false;
 var gReinitializing = false;
 
 // nsISearchParseSubmissionResult
-function ParseSubmissionResult(engine, terms, termsOffset, termsLength) {
+function ParseSubmissionResult(
+  engine,
+  terms,
+  termsParameterName,
+  termsOffset,
+  termsLength
+) {
   this._engine = engine;
   this._terms = terms;
+  this._termsParameterName = termsParameterName;
   this._termsOffset = termsOffset;
   this._termsLength = termsLength;
 }
@@ -493,6 +500,9 @@ ParseSubmissionResult.prototype = {
   },
   get terms() {
     return this._terms;
+  },
+  get termsParameterName() {
+    return this._termsParameterName;
   },
   get termsOffset() {
     return this._termsOffset;
@@ -504,7 +514,7 @@ ParseSubmissionResult.prototype = {
 };
 
 const gEmptyParseSubmissionResult = Object.freeze(
-  new ParseSubmissionResult(null, "", -1, 0)
+  new ParseSubmissionResult(null, "", "", -1, 0)
 );
 
 /**
@@ -929,32 +939,6 @@ SearchService.prototype = {
     // cache as we can calculate it all on startup anyway from the engines
     // configuration.
     if (gModernConfig) {
-      // We only allow the old defaultenginename pref for distributions.
-      // We can't use `isPartnerBuild` because we need to allow reading
-      // of the defaultenginename pref for funnelcakes.
-      if (SearchUtils.distroID && !privateMode) {
-        let defaultPrefB = Services.prefs.getDefaultBranch(
-          SearchUtils.BROWSER_SEARCH_PREF
-        );
-        try {
-          let defaultEngineName = defaultPrefB.getComplexValue(
-            "defaultenginename",
-            Ci.nsIPrefLocalizedString
-          ).data;
-
-          let defaultEngine = this.getEngineByName(defaultEngineName);
-          if (defaultEngine) {
-            return defaultEngine;
-          }
-        } catch (ex) {
-          // If the default pref is invalid (e.g. an add-on set it to a bogus value)
-          // we'll fallback and use the default engine from the configuration.
-          // Worst case, getEngineByName will just return null, which is the best we can do.
-        }
-      }
-
-      // If we got this far, the distro hasn't set the default engine, so
-      // get it from the configuration.
       let defaultEngine = this._getEngineByWebExtensionDetails(
         privateMode && this._searchPrivateDefault
           ? this._searchPrivateDefault
@@ -1137,47 +1121,6 @@ SearchService.prototype = {
     SearchUtils.log("_loadEngines: start");
     let engines = await this._findEngines();
 
-    // Get the non-empty distribution directories into distDirs...
-    let distDirs = [];
-    let locations;
-    try {
-      locations = Services.dirsvc.get(
-        NS_APP_DISTRIBUTION_SEARCH_DIR_LIST,
-        Ci.nsISimpleEnumerator
-      );
-    } catch (e) {
-      // NS_APP_DISTRIBUTION_SEARCH_DIR_LIST is defined by each app
-      // so this throws during unit tests (but not xpcshell tests).
-      locations = [];
-    }
-    for (let dir of locations) {
-      let iterator = new OS.File.DirectoryIterator(dir.path, {
-        winPattern: "*.xml",
-      });
-      try {
-        // Add dir to distDirs if it contains any files.
-        let { done } = await iterator.next();
-        if (!done) {
-          distDirs.push(dir);
-        }
-      } catch (ex) {
-        if (!(ex instanceof OS.File.Error)) {
-          throw ex;
-        }
-        if (ex.becauseAccessDenied) {
-          Cu.reportError(
-            "Not loading distribution files because access was denied."
-          );
-        } else if (!ex.becauseNoSuchFile) {
-          throw ex;
-        }
-      } finally {
-        // If there's an issue on close, we can't do anything about it. It could
-        // be that reading the iterator never fully opened.
-        iterator.close().catch(Cu.reportError);
-      }
-    }
-
     let buildID = Services.appinfo.platformBuildID;
     let rebuildCache =
       gEnvironment.get("RELOAD_ENGINES") ||
@@ -1203,13 +1146,8 @@ SearchService.prototype = {
           cache.builtInEngineList.length != engines.length ||
           engines.some(notInCacheEngines);
 
-        // We don't do a built-in list comparison with distributions because they
-        // have a different set of built-ins to that given from the configuration.
-        // Once distributions are incorporated into the modern config, we could
-        // probably move the distroID check to be legacy config only.
         if (
           !rebuildCache &&
-          SearchUtils.distroID == "" &&
           cache.engines.filter(e => e._isBuiltin).length !=
             cache.builtInEngineList.length
         ) {
@@ -1248,14 +1186,6 @@ SearchService.prototype = {
     if (!rebuildCache) {
       SearchUtils.log("_loadEngines: loading from cache directories");
       if (gModernConfig) {
-        // This isn't ideal, as it means re-processing the xml files on each
-        // startup, however the switch to in-tree distributions (bug 1622978)
-        // should be done before we release modern config, so we can get away
-        // with it for now.
-        for (let loadDir of distDirs) {
-          let enginesFromDir = await this._loadEnginesFromDir(loadDir);
-          enginesFromDir.forEach(this._addEngineToStore, this);
-        }
         const newEngines = await this._loadEnginesFromConfig(engines, isReload);
         for (let engine of newEngines) {
           this._addEngineToStore(engine);
@@ -1279,14 +1209,16 @@ SearchService.prototype = {
     SearchUtils.log(
       "_loadEngines: Absent or outdated cache. Loading engines from disk."
     );
-    for (let loadDir of distDirs) {
-      let enginesFromDir = await this._loadEnginesFromDir(loadDir);
-      enginesFromDir.forEach(this._addEngineToStore, this);
-    }
     if (gModernConfig) {
       let newEngines = await this._loadEnginesFromConfig(engines, isReload);
       newEngines.forEach(this._addEngineToStore, this);
     } else {
+      let distDirs = await this._getDistibutionEngineDirectories();
+      for (let loadDir of distDirs) {
+        let enginesFromDir = await this._loadEnginesFromDir(loadDir);
+        enginesFromDir.forEach(this._addEngineToStore, this);
+      }
+
       let engineList = this._enginesToLocales(engines);
       for (let [id, locales] of engineList) {
         await this.ensureBuiltinExtension(id, locales, isReload);
@@ -1343,6 +1275,59 @@ SearchService.prototype = {
       }
     }
     return engines;
+  },
+
+  /**
+   * Get the directories that contain distribution engines.
+   *
+   * @returns {array}
+   *   Returns an array of directories that contain distribution engines.
+   */
+  async _getDistibutionEngineDirectories() {
+    if (gModernConfig) {
+      return [];
+    }
+    // Get the non-empty distribution directories into distDirs...
+    let distDirs = [];
+    let locations;
+    try {
+      locations = Services.dirsvc.get(
+        NS_APP_DISTRIBUTION_SEARCH_DIR_LIST,
+        Ci.nsISimpleEnumerator
+      );
+    } catch (e) {
+      // NS_APP_DISTRIBUTION_SEARCH_DIR_LIST is defined by each app
+      // so this throws during unit tests (but not xpcshell tests).
+      locations = [];
+    }
+    for (let dir of locations) {
+      let iterator = new OS.File.DirectoryIterator(dir.path, {
+        winPattern: "*.xml",
+      });
+      try {
+        // Add dir to distDirs if it contains any files.
+        let { done } = await iterator.next();
+        if (!done) {
+          distDirs.push(dir);
+        }
+      } catch (ex) {
+        if (!(ex instanceof OS.File.Error)) {
+          throw ex;
+        }
+        if (ex.becauseAccessDenied) {
+          Cu.reportError(
+            "Not loading distribution files because access was denied."
+          );
+        } else if (!ex.becauseNoSuchFile) {
+          throw ex;
+        }
+      } finally {
+        // If there's an issue on close, we can't do anything about it. It could
+        // be that reading the iterator never fully opened.
+        iterator.close().catch(Cu.reportError);
+      }
+    }
+    return distDirs;
   },
 
   /**
@@ -1676,6 +1661,7 @@ SearchService.prototype = {
       }
       // Reset search default expiration on major releases
       if (
+        !gModernConfig &&
         json.appVersion != Services.appinfo.version &&
         gGeoSpecificDefaultsEnabled &&
         json.metaData
@@ -1778,7 +1764,14 @@ SearchService.prototype = {
         SearchUtils.log(
           "_loadEnginesMetadataFromCache, transfering metadata for " + name
         );
-        this._engines.get(name)._metaData = engine._metaData || {};
+        let eng = this._engines.get(name);
+        // We used to store the alias in metadata.alias, in 1621892 that was
+        // changed to only store the user set alias in metadata.alias, remove
+        // it from metadata if it was previously set to the internal value.
+        if (eng._alias === engine?._metaData?.alias) {
+          delete engine._metaData.alias;
+        }
+        eng._metaData = engine._metaData || {};
       }
     }
   },
@@ -2271,7 +2264,7 @@ SearchService.prototype = {
       addedEngines.add(engine.name);
     }
 
-    if (SearchUtils.distroID) {
+    if (!gModernConfig && SearchUtils.distroID) {
       try {
         var extras = Services.prefs.getChildList(
           SearchUtils.BROWSER_SEARCH_PREF + "order.extra."
@@ -2513,7 +2506,10 @@ SearchService.prototype = {
       SearchUtils.fail("Invalid template passed to addEngineWithDetails!");
     }
     let existingEngine = this._engines.get(name);
+    // In the modern configuration, distributions are app-provided engines,
+    // so we don't need this separate check.
     if (
+      !gModernConfig &&
       existingEngine &&
       existingEngine._loadPath.startsWith("[distribution]")
     ) {
@@ -2571,6 +2567,19 @@ SearchService.prototype = {
     if (!gInitialized) {
       this._startupExtensions.add(extension);
       return [];
+    }
+    if (extension.startupReason == "ADDON_UPGRADE") {
+      let engines = await this.getEnginesByExtensionID(extension.id);
+      for (let engine of engines) {
+        let manifest = extension.manifest;
+        let locale = engine._locale || SearchUtils.DEFAULT_TAG;
+        if (locale != SearchUtils.DEFAULT_TAG) {
+          manifest = await extension.getLocalizedManifest(locale);
+        }
+        let params = await this.getEngineParams(extension, manifest, locale);
+        engine._updateFromMetadata(params);
+      }
+      return engines;
     }
     return this._installExtensionEngine(extension, [SearchUtils.DEFAULT_TAG]);
   },
@@ -2631,7 +2640,7 @@ SearchService.prototype = {
         : SearchUtils.DEFAULT_TAG;
 
     let manifest = policy.extension.manifest;
-    if (locale != "default") {
+    if (locale != SearchUtils.DEFAULT_TAG) {
       manifest = await policy.extension.getLocalizedManifest(locale);
     }
 
@@ -3546,7 +3555,14 @@ SearchService.prototype = {
       return gEmptyParseSubmissionResult;
     }
 
-    return new ParseSubmissionResult(mapEntry.engine, terms, offset, length);
+    let submission = new ParseSubmissionResult(
+      mapEntry.engine,
+      terms,
+      mapEntry.termsParameterName,
+      offset,
+      length
+    );
+    return submission;
   },
 
   // nsIObserver
@@ -3583,6 +3599,9 @@ SearchService.prototype = {
       case "idle": {
         this.idleService.removeIdleObserver(this, REINIT_IDLE_TIME_SEC);
         this._queuedIdle = false;
+        SearchUtils.log(
+          "Reloading engines after idle due to configuration change"
+        );
         this._maybeReloadEngines().catch(Cu.reportError);
         break;
       }

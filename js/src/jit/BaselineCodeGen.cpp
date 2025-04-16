@@ -24,6 +24,7 @@
 #include "vm/AsyncFunction.h"
 #include "vm/AsyncIteration.h"
 #include "vm/EnvironmentObject.h"
+#include "vm/FunctionFlags.h"  // js::FunctionFlags
 #include "vm/Interpreter.h"
 #include "vm/JSFunction.h"
 #include "vm/TraceLogging.h"
@@ -50,6 +51,9 @@ using mozilla::AssertedCast;
 using mozilla::Maybe;
 
 namespace js {
+
+class PlainObject;
+
 namespace jit {
 
 BaselineCompilerHandler::BaselineCompilerHandler(JSContext* cx,
@@ -244,7 +248,7 @@ MethodStatus BaselineCompiler::compile() {
 
   UniquePtr<BaselineScript> baselineScript(
       BaselineScript::New(
-          script, warmUpCheckPrologueOffset_.offset(),
+          cx, warmUpCheckPrologueOffset_.offset(),
           profilerEnterFrameToggleOffset_.offset(),
           profilerExitFrameToggleOffset_.offset(),
           handler.retAddrEntries().length(), handler.osrEntries().length(),
@@ -2154,46 +2158,12 @@ bool BaselineCodeGen<Handler>::emit_Not() {
 
 template <typename Handler>
 bool BaselineCodeGen<Handler>::emit_Pos() {
-  // Keep top stack value in R0.
-  frame.popRegsAndSync(1);
-
-  // Inline path for int32 and double; otherwise call VM.
-  Label done;
-  masm.branchTestNumber(Assembler::Equal, R0, &done);
-
-  prepareVMCall();
-  pushArg(R0);
-
-  using Fn = bool (*)(JSContext*, HandleValue, MutableHandleValue);
-  if (!callVM<Fn, DoToNumber>()) {
-    return false;
-  }
-
-  masm.bind(&done);
-  frame.push(R0);
-  return true;
+  return emitUnaryArith();
 }
 
 template <typename Handler>
 bool BaselineCodeGen<Handler>::emit_ToNumeric() {
-  // Keep top stack value in R0.
-  frame.popRegsAndSync(1);
-
-  // Inline path for int32 and double; otherwise call VM.
-  Label done;
-  masm.branchTestNumber(Assembler::Equal, R0, &done);
-
-  prepareVMCall();
-  pushArg(R0);
-
-  using Fn = bool (*)(JSContext*, HandleValue, MutableHandleValue);
-  if (!callVM<Fn, DoToNumeric>()) {
-    return false;
-  }
-
-  masm.bind(&done);
-  frame.push(R0);
-  return true;
+  return emitUnaryArith();
 }
 
 template <typename Handler>
@@ -6407,7 +6377,7 @@ bool BaselineCodeGen<Handler>::emit_ObjWithProto() {
   prepareVMCall();
   pushArg(R0);
 
-  using Fn = JSObject* (*)(JSContext*, HandleValue);
+  using Fn = PlainObject* (*)(JSContext*, HandleValue);
   if (!callVM<Fn, js::ObjectWithProtoOperation>()) {
     return false;
   }

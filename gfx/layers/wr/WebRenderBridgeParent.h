@@ -190,8 +190,10 @@ class WebRenderBridgeParent final
       const LayersObserverEpoch& aChildEpoch) override;
 
   mozilla::ipc::IPCResult RecvClearCachedResources() override;
+  mozilla::ipc::IPCResult RecvInvalidateRenderedFrame() override;
   mozilla::ipc::IPCResult RecvScheduleComposite() override;
   mozilla::ipc::IPCResult RecvCapture() override;
+  mozilla::ipc::IPCResult RecvToggleCaptureSequence() override;
   mozilla::ipc::IPCResult RecvSetTransactionLogging(const bool&) override;
   mozilla::ipc::IPCResult RecvSyncWithCompositor() override;
 
@@ -283,10 +285,18 @@ class WebRenderBridgeParent final
   void ScheduleGenerateFrameAllRenderRoots();
 
   /**
+   * Invalidate rendered frame.
+   *
+   * WebRender could skip frame rendering if there is no update.
+   * This function is used to force invalidating even when there is no update.
+   */
+  void InvalidateRenderedFrame();
+
+  /**
    * Schedule forced frame rendering at next composite timing.
    *
    * WebRender could skip frame rendering if there is no update.
-   * This function is used to force rendering even when there is not update.
+   * This function is used to force rendering even when there is no update.
    */
   void ScheduleForcedGenerateFrame();
 
@@ -431,9 +441,16 @@ class WebRenderBridgeParent final
                        const nsTArray<RefCountedShmem>& aSmallShmems,
                        const nsTArray<ipc::Shmem>& aLargeShmems,
                        wr::TransactionBuilder& aUpdates);
-  bool AddExternalImage(wr::ExternalImageId aExtId, wr::ImageKey aKey,
-                        wr::TransactionBuilder& aResources);
-  bool UpdateExternalImage(
+  bool AddPrivateExternalImage(wr::ExternalImageId aExtId, wr::ImageKey aKey,
+                               wr::ImageDescriptor aDesc,
+                               wr::TransactionBuilder& aResources);
+  bool UpdatePrivateExternalImage(wr::ExternalImageId aExtId, wr::ImageKey aKey,
+                                  const wr::ImageDescriptor& aDesc,
+                                  const ImageIntRect& aDirtyRect,
+                                  wr::TransactionBuilder& aResources);
+  bool AddSharedExternalImage(wr::ExternalImageId aExtId, wr::ImageKey aKey,
+                              wr::TransactionBuilder& aResources);
+  bool UpdateSharedExternalImage(
       wr::ExternalImageId aExtId, wr::ImageKey aKey,
       const ImageIntRect& aDirtyRect, wr::TransactionBuilder& aResources,
       UniquePtr<ScheduleSharedSurfaceRelease>& aScheduleRelease);

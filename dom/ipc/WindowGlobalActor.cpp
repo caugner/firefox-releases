@@ -10,7 +10,7 @@
 #include "mozJSComponentLoader.h"
 #include "mozilla/ContentBlockingAllowList.h"
 #include "mozilla/Logging.h"
-#include "mozilla/dom/JSWindowActorService.h"
+#include "mozilla/dom/JSActorService.h"
 #include "mozilla/dom/JSWindowActorParent.h"
 #include "mozilla/dom/JSWindowActorChild.h"
 
@@ -37,14 +37,13 @@ WindowGlobalInit WindowGlobalActor::AboutBlankInitializer(
                           outerWindowId);
 }
 
-void WindowGlobalActor::ConstructActor(const nsAString& aName,
+void WindowGlobalActor::ConstructActor(const nsACString& aName,
                                        JS::MutableHandleObject aActor,
                                        ErrorResult& aRv) {
   MOZ_ASSERT(nsContentUtils::IsSafeToRunScript());
 
-  JSWindowActor::Type actorType = GetSide();
-  MOZ_ASSERT_IF(actorType == JSWindowActor::Type::Parent,
-                XRE_IsParentProcess());
+  JSActor::Type actorType = GetSide();
+  MOZ_ASSERT_IF(actorType == JSActor::Type::Parent, XRE_IsParentProcess());
 
   // Constructing an actor requires a running script, so push an AutoEntryScript
   // onto the stack.
@@ -52,15 +51,18 @@ void WindowGlobalActor::ConstructActor(const nsAString& aName,
                       "WindowGlobalActor construction");
   JSContext* cx = aes.cx();
 
-  RefPtr<JSWindowActorService> actorSvc = JSWindowActorService::GetSingleton();
+  RefPtr<JSActorService> actorSvc = JSActorService::GetSingleton();
   if (!actorSvc) {
-    aRv.Throw(NS_ERROR_DOM_NOT_SUPPORTED_ERR);
+    aRv.ThrowNotSupportedError("Could not acquire actor service");
     return;
   }
 
-  RefPtr<JSWindowActorProtocol> proto = actorSvc->GetProtocol(aName);
+  RefPtr<JSWindowActorProtocol> proto =
+      actorSvc->GetJSWindowActorProtocol(aName);
   if (!proto) {
-    aRv.Throw(NS_ERROR_DOM_NOT_SUPPORTED_ERR);
+    aRv.ThrowNotSupportedError(nsPrintfCString(
+        "Could not get JSWindowActorProtocol: %s is not registered",
+        PromiseFlatCString(aName).get()));
     return;
   }
 
@@ -77,7 +79,7 @@ void WindowGlobalActor::ConstructActor(const nsAString& aName,
   JS::RootedObject exports(cx);
 
   const JSWindowActorProtocol::Sided* side;
-  if (actorType == JSWindowActor::Type::Parent) {
+  if (actorType == JSActor::Type::Parent) {
     side = &proto->Parent();
   } else {
     side = &proto->Child();
@@ -86,8 +88,8 @@ void WindowGlobalActor::ConstructActor(const nsAString& aName,
   // Support basic functionally such as SendAsyncMessage and SendQuery for
   // unspecified moduleURI.
   if (!side->mModuleURI) {
-    RefPtr<JSWindowActor> actor;
-    if (actorType == JSWindowActor::Type::Parent) {
+    RefPtr<JSActor> actor;
+    if (actorType == JSActor::Type::Parent) {
       actor = new JSWindowActorParent();
     } else {
       actor = new JSWindowActorChild();
@@ -113,19 +115,18 @@ void WindowGlobalActor::ConstructActor(const nsAString& aName,
 
   // Load the specific property from our module.
   JS::RootedValue ctor(cx);
-  nsAutoString ctorName(aName);
-  ctorName.Append(actorType == JSWindowActor::Type::Parent
-                      ? NS_LITERAL_STRING("Parent")
-                      : NS_LITERAL_STRING("Child"));
-  if (!JS_GetUCProperty(cx, exports, ctorName.get(), ctorName.Length(),
-                        &ctor)) {
+  nsAutoCString ctorName(aName);
+  ctorName.Append(actorType == JSActor::Type::Parent
+                      ? NS_LITERAL_CSTRING("Parent")
+                      : NS_LITERAL_CSTRING("Child"));
+  if (!JS_GetProperty(cx, exports, ctorName.get(), &ctor)) {
     aRv.NoteJSContextException(cx);
     return;
   }
 
   if (NS_WARN_IF(!ctor.isObject())) {
     nsPrintfCString message("Could not find actor constructor '%s'",
-                            NS_ConvertUTF16toUTF8(ctorName).get());
+                            ctorName.get());
     aRv.ThrowNotFoundError(message);
     return;
   }

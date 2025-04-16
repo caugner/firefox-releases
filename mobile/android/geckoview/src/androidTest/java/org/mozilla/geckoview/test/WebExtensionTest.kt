@@ -12,6 +12,7 @@ import org.hamcrest.core.IsEqual.equalTo
 import org.json.JSONObject
 import org.junit.Assert.*
 import org.junit.Before
+import org.junit.Ignore
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.mozilla.geckoview.*
@@ -1508,4 +1509,57 @@ class WebExtensionTest : BaseSessionTest() {
 
         sessionRule.waitForResult(controller.uninstall(update1))
     }
+
+    /*
+     This function installs a web extension, disables it, updates it and uninstalls it
+
+     @param source: Int - represents a logical type; can be EnableSource.APP or EnableSource.USER
+     */
+    private fun testUpdatingExtensionDisabledBy(source: Int) {
+        sessionRule.setPrefsUntilTestEnd(mapOf(
+                "xpinstall.signatures.required" to false,
+                "extensions.install.requireBuiltInCerts" to false,
+                "extensions.update.requireBuiltInCerts" to false
+        ))
+        mainSession.loadUri("example.com")
+        sessionRule.waitForPageStop()
+
+        sessionRule.delegateDuringNextWait(object : WebExtensionController.PromptDelegate {
+            @AssertCalled
+            override fun onInstallPrompt(extension: WebExtension): GeckoResult<AllowOrDeny> {
+                return GeckoResult.fromValue(AllowOrDeny.ALLOW)
+            }
+        })
+
+        val webExtension = sessionRule.waitForResult(
+                controller.install("https://example.org/tests/junit/update-1.xpi"))
+
+        mainSession.reload()
+        sessionRule.waitForPageStop()
+
+        val disabledWebExtension = sessionRule.waitForResult(controller.disable(webExtension, source))
+
+        when (source) {
+            EnableSource.APP -> checkDisabledState(disabledWebExtension, appDisabled=true)
+            EnableSource.USER -> checkDisabledState(disabledWebExtension, userDisabled=true)
+        }
+
+        val updatedWebExtension = sessionRule.waitForResult(controller.update(disabledWebExtension))
+
+        mainSession.reload()
+        sessionRule.waitForPageStop()
+
+        sessionRule.waitForResult(controller.uninstall(updatedWebExtension))
+    }
+
+    @Test
+    fun updateDisabledByUser() {
+        testUpdatingExtensionDisabledBy(EnableSource.USER)
+    }
+
+    @Test
+    fun updateDisabledByApp() {
+        testUpdatingExtensionDisabledBy(EnableSource.APP)
+    }
+
 }

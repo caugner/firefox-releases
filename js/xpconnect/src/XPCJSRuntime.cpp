@@ -197,7 +197,6 @@ CompartmentPrivate::CompartmentPrivate(
       wantXrays(false),
       allowWaivers(true),
       isWebExtensionContentScript(false),
-      allowCPOWs(false),
       isUAWidgetCompartment(false),
       hasExclusiveExpandos(false),
       wasShutdown(false),
@@ -391,6 +390,11 @@ static bool PrincipalImmuneToScriptPolicy(nsIPrincipal* aPrincipal) {
 
   // WebExtension principals get a free pass.
   if (principal->AddonPolicy()) {
+    return true;
+  }
+
+  // pdf.js is a special-case too.
+  if (nsContentUtils::IsPDFJS(principal)) {
     return true;
   }
 
@@ -1060,8 +1064,9 @@ StaticAutoPtr<HelperThreadPool> gHelperThreads;
 
 void InitializeHelperThreadPool() { gHelperThreads = new HelperThreadPool(); }
 
-void DispatchOffThreadTask(RunnableTask* task) {
-  gHelperThreads->Dispatch(MakeAndAddRef<HelperThreadTaskHandler>(task));
+void DispatchOffThreadTask(js::UniquePtr<RunnableTask> task) {
+  gHelperThreads->Dispatch(
+      MakeAndAddRef<HelperThreadTaskHandler>(std::move(task)));
 }
 
 void XPCJSRuntime::Shutdown(JSContext* cx) {
@@ -2635,9 +2640,6 @@ static void AccumulateTelemetryCallback(int id, uint32_t sample,
     case JS_TELEMETRY_GC_RESET_REASON:
       Telemetry::Accumulate(Telemetry::GC_RESET_REASON, sample);
       break;
-    case JS_TELEMETRY_GC_INCREMENTAL_DISABLED:
-      Telemetry::Accumulate(Telemetry::GC_INCREMENTAL_DISABLED, sample);
-      break;
     case JS_TELEMETRY_GC_NON_INCREMENTAL:
       Telemetry::Accumulate(Telemetry::GC_NON_INCREMENTAL, sample);
       break;
@@ -2660,7 +2662,6 @@ static void AccumulateTelemetryCallback(int id, uint32_t sample,
       Telemetry::Accumulate(Telemetry::GC_MINOR_US, sample);
       break;
     case JS_TELEMETRY_GC_NURSERY_BYTES:
-      Telemetry::Accumulate(Telemetry::GC_NURSERY_BYTES, sample);
       Telemetry::Accumulate(Telemetry::GC_NURSERY_BYTES_2, sample);
       break;
     case JS_TELEMETRY_GC_PRETENURE_COUNT:
@@ -3067,7 +3068,7 @@ bool XPCJSRuntime::InitializeStrings(JSContext* cx) {
         mStrIDs[0] = JSID_VOID;
         return false;
       }
-      mStrIDs[i] = INTERNED_STRING_TO_JSID(cx, str);
+      mStrIDs[i] = PropertyKey::fromPinnedString(str);
       mStrJSVals[i].setString(str);
     }
 

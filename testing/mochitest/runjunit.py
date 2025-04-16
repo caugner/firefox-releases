@@ -135,7 +135,7 @@ class JUnitTestRunner(MochitestDesktop):
             self.stopServers()
             self.log.debug("Servers stopped")
             self.device.stop_application(self.options.app)
-            self.device.rm(self.remote_profile, force=True, recursive=True)
+            self.device.rm(self.remote_profile, force=True, recursive=True, root=True)
             if hasattr(self, 'profile'):
                 del self.profile
         except Exception:
@@ -171,7 +171,6 @@ class JUnitTestRunner(MochitestDesktop):
         env["MOZ_CRASHREPORTER"] = "1"
         env["MOZ_CRASHREPORTER_SHUTDOWN"] = "1"
         env["XPCOM_DEBUG_BREAK"] = "stack"
-        env["DISABLE_UNSAFE_CPOW_WARNINGS"] = "1"
         env["MOZ_DISABLE_NONLOCAL_CONNECTIONS"] = "1"
         env["MOZ_IN_AUTOMATION"] = "1"
         env["R_LOG_VERBOSE"] = "1"

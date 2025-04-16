@@ -6,11 +6,37 @@
 
 from __future__ import absolute_import, print_function, unicode_literals
 
+from re import search
+
 from taskgraph import try_option_syntax
 from taskgraph.parameters import Parameters
 from taskgraph.util.attributes import match_run_on_projects, match_run_on_hg_branches
 
 _target_task_methods = {}
+
+# Some tasks show up in the target task set, but are possibly special cases,
+# uncommon tasks, or tasks running against limited hardware set that they
+# should only be selectable with --full.
+TARGET_TASK_BLACKLIST = [
+    # Platforms and/or Build types
+    r'build-.*-gcp',  # Bug 1631990
+    r'build-.*-aarch64',  # Bug 1631990
+    r'mingwclang',  # Bug 1631990
+    r'valgrind',  # Bug 1631990
+    # Android tasks
+    r'android-geckoview-docs',
+    r'android-hw',
+    # Windows tasks
+    r'windows10-64-ref-hw',
+    r'windows10-aarch64',
+    # Linux tasks
+    r'linux-',  # hide all linux32 tasks by default - bug 1599197
+    r'linux1804-32',  # hide linux32 tests - bug 1599197
+    r'linux.*web-platform-tests.*-fis-',  # hide wpt linux fission tests - bug 1610879
+    # Test tasks
+    r'web-platform-tests.*backlog',  # hide wpt jobs that are not implemented yet - bug 1572820
+    r'-ccov/',
+]
 
 
 def _target_task(name):
@@ -56,6 +82,25 @@ def filter_on_platforms(task, platforms):
     """Filter tasks on the given platform"""
     platform = task.attributes.get('build_platform')
     return (platform in platforms)
+
+
+def filter_tasks_by_blacklist(task, optional_filters=None):
+    """Filters tasks based on blacklist rules.
+
+    Args:
+        task (str): String representing the task name.
+        optional_filters (list, optional):
+            Additional filters to apply to task filtering.
+
+    Returns:
+        (Boolean): True if task does not match any known filters.
+            False otherwise.
+    """
+    if optional_filters:
+        for item in optional_filters:
+            TARGET_TASK_BLACKLIST.append(item)
+
+    return not any(search(pattern, task) for pattern in TARGET_TASK_BLACKLIST)
 
 
 def filter_release_tasks(task, parameters):
@@ -111,7 +156,7 @@ def _try_option_syntax(full_task_graph, parameters, graph_config):
     parameters['message'] and, for context, the full task graph."""
     options = try_option_syntax.TryOptionSyntax(parameters, full_task_graph, graph_config)
     target_tasks_labels = [t.label for t in full_task_graph.tasks.itervalues()
-                           if options.task_matches(t)]
+                           if options.task_matches(t) and filter_tasks_by_blacklist(t.label)]
 
     attributes = {
         k: getattr(options, k) for k in [
@@ -180,7 +225,8 @@ def target_tasks_try_auto(full_task_graph, parameters, graph_config):
     parameters = Parameters(**params)
     return [l for l, t in full_task_graph.tasks.iteritems()
             if standard_filter(t, parameters)
-            and filter_out_nightly(t, parameters)]
+            and filter_out_nightly(t, parameters)
+            and filter_tasks_by_blacklist(t.label)]
 
 
 @_target_task('default')
@@ -489,7 +535,15 @@ def target_tasks_general_perf_testing(full_task_graph, parameters, graph_config)
 
         # Run chrome and chromium on all platforms available
         if '-chrome' in try_name:
-            return True
+            if 'android' in platform:
+                # Run only on pgo android builds
+                if 'pgo' in platform:
+                    return True
+                else:
+                    return False
+            else:
+                # Run on all desktop builds
+                return True
         if '-chromium' in try_name:
             return True
 
@@ -501,6 +555,12 @@ def target_tasks_general_perf_testing(full_task_graph, parameters, graph_config)
         if 'raptor-speedometer' in try_name \
                 and 'pgo' in platform \
                 and ('-fenix' in try_name or '-fennec68' in try_name):
+            return True
+
+        # Run the live site tests
+        if 'browsertime' in try_name \
+                and 'pgo' in platform \
+                and '-live' in try_name:
             return True
 
         # Run the following tests on android geckoview

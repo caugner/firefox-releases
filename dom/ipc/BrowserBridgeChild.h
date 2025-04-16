@@ -87,7 +87,7 @@ class BrowserBridgeChild : public PBrowserBridgeChild {
       const IDispatchHolder& aCOMProxy);
 
   mozilla::ipc::IPCResult RecvMaybeFireEmbedderLoadEvents(
-      bool aFireLoadAtEmbeddingElement);
+      EmbedderElementEventType aFireEventAtEmbeddingElement);
 
   MOZ_CAN_RUN_SCRIPT_BOUNDARY
   mozilla::ipc::IPCResult RecvScrollRectIntoView(
@@ -95,8 +95,9 @@ class BrowserBridgeChild : public PBrowserBridgeChild {
       const ScrollAxis& aHorizontal, const ScrollFlags& aScrollFlags,
       const int32_t& aAppUnitsPerDevPixel);
 
-  mozilla::ipc::IPCResult RecvSubFrameCrashed(
-      const MaybeDiscarded<BrowsingContext>& aContext);
+  mozilla::ipc::IPCResult RecvSubFrameCrashed();
+
+  mozilla::ipc::IPCResult RecvAddBlockedNodeByClassifier();
 
   void ActorDestroy(ActorDestroyReason aWhy) override;
 

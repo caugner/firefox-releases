@@ -28,7 +28,6 @@
 #include "mozilla/ScopeExit.h"
 #include "mozilla/Services.h"
 #include "mozilla/StaticPrefs_dom.h"
-#include "mozilla/SystemGroup.h"
 #include "mozilla/Unused.h"
 #include "mozilla/dom/ClientIPCTypes.h"
 #include "mozilla/dom/DOMTypes.h"
@@ -99,7 +98,8 @@ nsresult ServiceWorkerPrivateImpl::Initialize() {
   nsCOMPtr<nsIPrincipal> principal = mOuter->mInfo->Principal();
 
   nsCOMPtr<nsIURI> uri;
-  nsresult rv = principal->GetURI(getter_AddRefs(uri));
+  auto* basePrin = BasePrincipal::Cast(principal);
+  nsresult rv = basePrin->GetURI(getter_AddRefs(uri));
 
   if (NS_WARN_IF(NS_FAILED(rv))) {
     return rv;

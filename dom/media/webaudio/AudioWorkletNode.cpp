@@ -8,6 +8,7 @@
 
 #include "AudioParamMap.h"
 #include "js/Array.h"  // JS::{Get,Set}ArrayLength, JS::NewArrayLength
+#include "js/Exception.h"
 #include "mozilla/dom/AudioWorkletNodeBinding.h"
 #include "mozilla/dom/AudioParamMapBinding.h"
 #include "mozilla/dom/RootedDictionary.h"
@@ -197,26 +198,23 @@ void WorkletNodeEngine::SendProcessorError(AudioNodeTrack* aTrack,
   ReleaseJSResources();
   // The processor errored out while getting a context, try to tell the node
   // anyways.
-  if (!aCx) {
+  if (!aCx || !JS_IsExceptionPending(aCx)) {
     ProcessorErrorDetails details;
     details.mMessage.Assign(u"Unknown processor error");
     SendErrorToMainThread(aTrack, details);
     return;
   }
 
-  js::ErrorReport jsReport(aCx);
-  JS::Rooted<JS::Value> exn(aCx);
-  JS::Rooted<JSObject*> exnStack(aCx);
-  if (JS_GetPendingException(aCx, &exn)) {
-    exnStack.set(JS::GetPendingExceptionStack(aCx));
-    JS_ClearPendingException(aCx);
-    if (!jsReport.init(aCx, exn, js::ErrorReport::WithSideEffects)) {
+  JS::ExceptionStack exnStack(aCx);
+  if (JS::StealPendingExceptionStack(aCx, &exnStack)) {
+    js::ErrorReport jsReport(aCx);
+    if (!jsReport.init(aCx, exnStack, js::ErrorReport::WithSideEffects)) {
       ProcessorErrorDetails details;
       details.mMessage.Assign(u"Unknown processor error");
       SendErrorToMainThread(aTrack, details);
       // Set the exception and stack back to have it in the console with a stack
       // trace.
-      JS::SetPendingExceptionAndStack(aCx, exn, exnStack);
+      JS::SetPendingExceptionStack(aCx, exnStack);
       return;
     }
 
@@ -235,7 +233,7 @@ void WorkletNodeEngine::SendProcessorError(AudioNodeTrack* aTrack,
 
     // Set the exception and stack back to have it in the console with a stack
     // trace.
-    JS::SetPendingExceptionAndStack(aCx, exn, exnStack);
+    JS::SetPendingExceptionStack(aCx, exnStack);
   } else {
     NS_WARNING("No exception, but processor errored out?");
   }
@@ -408,7 +406,7 @@ static bool PrepareBufferArrays(JSContext* aCx, Span<const AudioBlock> aBlocks,
 // do not run until after ProcessBlocksOnPorts() has returned.
 bool WorkletNodeEngine::CallProcess(AudioNodeTrack* aTrack, JSContext* aCx,
                                     JS::Handle<JS::Value> aCallable) {
-  TRACE_AUDIO_CALLBACK();
+  TRACE();
 
   JS::RootedVector<JS::Value> argv(aCx);
   if (NS_WARN_IF(!argv.resize(3))) {
@@ -458,7 +456,7 @@ void WorkletNodeEngine::ProcessBlocksOnPorts(AudioNodeTrack* aTrack,
                                              bool* aFinished) {
   MOZ_ASSERT(aInput.Length() == InputCount());
   MOZ_ASSERT(aOutput.Length() == OutputCount());
-  TRACE_AUDIO_CALLBACK();
+  TRACE();
 
   bool isSilent = true;
   if (mProcessor) {
@@ -807,17 +805,28 @@ already_AddRefed<AudioWorkletNode> AudioWorkletNode::Constructor(
   auto workletImpl = static_cast<AudioWorkletImpl*>(worklet->Impl());
   audioWorkletNode->mTrack->SendRunnable(NS_NewRunnableFunction(
       "WorkletNodeEngine::ConstructProcessor",
-      // MOZ_CAN_RUN_SCRIPT_BOUNDARY until Runnable::Run is MOZ_CAN_RUN_SCRIPT.
-      // See bug 1535398.
+  // MOZ_CAN_RUN_SCRIPT_BOUNDARY until Runnable::Run is MOZ_CAN_RUN_SCRIPT.
+  // See bug 1535398.
+  //
+  // Note that clang and gcc have mutually incompatible rules about whether
+  // attributes should come before or after the `mutable` keyword here, so
+  // use a compatibility hack until we can switch to the standardized
+  // [[attr]] syntax (bug 1627007).
+#ifdef __clang__
+#  define AND_MUTABLE(macro) macro mutable
+#else
+#  define AND_MUTABLE(macro) mutable macro
+#endif
       [track = audioWorkletNode->mTrack,
        workletImpl = RefPtr<AudioWorkletImpl>(workletImpl),
        name = nsString(aName), options = std::move(serializedOptions),
        portId = std::move(processorPortId)]()
-          MOZ_CAN_RUN_SCRIPT_BOUNDARY mutable {
+          AND_MUTABLE(MOZ_CAN_RUN_SCRIPT_BOUNDARY) {
             auto engine = static_cast<WorkletNodeEngine*>(track->Engine());
             engine->ConstructProcessor(
                 workletImpl, name, WrapNotNull(options.get()), portId, track);
           }));
+#undef AND_MUTABLE
 
   // [[active source]] is initially true and so at least the first process()
   // call will not be skipped when there are no active inputs.

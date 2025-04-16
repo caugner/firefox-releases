@@ -33,6 +33,7 @@
 
 #include "jsmath.h"
 
+#include "frontend/FunctionSyntaxKind.h"  // FunctionSyntaxKind
 #include "frontend/ParseNode.h"
 #include "frontend/Parser.h"
 #include "gc/Policy.h"
@@ -45,6 +46,8 @@
 #include "util/StringBuffer.h"
 #include "util/Text.h"
 #include "vm/ErrorReporting.h"
+#include "vm/FunctionFlags.h"          // js::FunctionFlags
+#include "vm/GeneratorAndAsyncKind.h"  // js::GeneratorKind, js::FunctionAsyncKind
 #include "vm/SelfHosting.h"
 #include "vm/Time.h"
 #include "vm/TypedArrayObject.h"
@@ -170,7 +173,7 @@ struct LitValPOD {
   }
 };
 
-static_assert(std::is_pod<LitValPOD>::value,
+static_assert(std::is_pod_v<LitValPOD>,
               "must be POD to be simply serialized/deserialized");
 
 // An AsmJSGlobal represents a JS global variable in the asm.js module function.
@@ -1725,7 +1728,7 @@ class MOZ_STACK_CLASS JS_HAZ_ROOTED ModuleValidatorShared {
       return false;
     }
     seg->tableIndex = tableIndex;
-    seg->offsetIfActive = Some(InitExpr(LitVal(uint32_t(0))));
+    seg->offsetIfActive = Some(InitExpr::fromConstant(LitVal(uint32_t(0))));
     seg->elemFuncIndices = std::move(elems);
     return env_.elemSegments.append(std::move(seg));
   }
@@ -7116,7 +7119,7 @@ static bool DoCompileAsmJS(JSContext* cx, AsmJSParser<Unit>& parser,
   // generating bytecode for asm.js functions, allowing this asm.js module
   // function to be the finished result.
   MOZ_ASSERT(funbox->isInterpreted());
-  funbox->clobberFunction(moduleFun);
+  funbox->setAsmJSModule(moduleFun);
 
   // Success! Write to the console with a "warning" message indicating
   // total compilation time.

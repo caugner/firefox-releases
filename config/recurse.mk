@@ -183,6 +183,10 @@ dom/bindings/export: layout/style/export
 # Various telemetry histogram files need ServoCSSPropList.py from layout/style
 toolkit/components/telemetry/export: layout/style/export
 
+# The update agent needs to link to the updatecommon library, but the build system does not
+# currently have a good way of expressing this dependency.
+toolkit/components/updateagent/target: toolkit/mozapps/update/common/target
+
 ifdef ENABLE_CLANG_PLUGIN
 # Only target rules use the clang plugin.
 $(filter %/target %/target-objects,$(filter-out config/export config/host build/unix/stdc++compat/% build/clang-plugin/%,$(compile_targets))): build/clang-plugin/host build/clang-plugin/tests/target-objects
@@ -207,9 +211,16 @@ toolkit/library/target: widget/gtk/mozgtk/gtk3/target
 endif
 
 ifeq (,$(filter WINNT Darwin Android,$(OS_TARGET)))
-netwerk/test/http3server/target: security/nss/lib/nss/nss_nss3/target security/nss/lib/ssl/ssl_ssl3/target config/external/nspr/pr/target
+ifndef MOZ_SYSTEM_NSS
+netwerk/test/http3server/target: security/nss/lib/nss/nss_nss3/target security/nss/lib/ssl/ssl_ssl3/target
+endif
+ifndef MOZ_SYSTEM_NSPR
+netwerk/test/http3server/target: config/external/nspr/pr/target
+endif
 else
+ifndef MOZ_SYSTEM_NSS
 netwerk/test/http3server/target: security/target
+endif
 endif
 
 # Most things are built during compile (target/host), but some things happen during export

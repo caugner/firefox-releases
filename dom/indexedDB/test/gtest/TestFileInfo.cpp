@@ -7,6 +7,7 @@
 
 #include "gtest/gtest.h"
 
+#include "mozilla/ArrayAlgorithm.h"
 #include "mozilla/StaticMutex.h"
 #include "nsTArray.h"
 
@@ -30,7 +31,7 @@ class TestFileManager final : public FileManagerBase<TestFileManager> {
 
   NS_INLINE_DECL_THREADSAFE_REFCOUNTING(TestFileManager)
 
-  MOZ_MUST_USE nsresult AsyncDeleteFile(const int64_t aFileId) {
+  [[nodiscard]] nsresult AsyncDeleteFile(const int64_t aFileId) {
     MOZ_RELEASE_ASSERT(!mFileInfos.Contains(aFileId));
 
     if (mStats) {
@@ -40,7 +41,7 @@ class TestFileManager final : public FileManagerBase<TestFileManager> {
     return NS_OK;
   }
 
-  MOZ_MUST_USE nsresult SyncDeleteFile(const int64_t aFileId) {
+  [[nodiscard]] nsresult SyncDeleteFile(const int64_t aFileId) {
     MOZ_RELEASE_ASSERT(!mFileInfos.Contains(aFileId));
 
     if (mStats) {
@@ -153,10 +154,9 @@ TEST(DOM_IndexedDB_FileInfo, CreateWithInitialDBRefCnt_Invalidate)
     const auto fileManager = MakeRefPtr<TestFileManager>(&stats);
     fileManager->CreateDBOnlyFileInfos();
 
-    auto fileInfos = nsTArray<SafeRefPtr<TestFileInfo>>{};
-    for (const auto id : TestFileManager::kDBOnlyFileInfoIds) {
-      fileInfos.EmplaceBack(fileManager->GetFileInfo(id));
-    }
+    const auto fileInfos = TransformIntoNewArray(
+        TestFileManager::kDBOnlyFileInfoIds,
+        [&fileManager](const auto id) { return fileManager->GetFileInfo(id); });
 
     fileManager->Invalidate();
 

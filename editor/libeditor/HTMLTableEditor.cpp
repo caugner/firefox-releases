@@ -305,12 +305,12 @@ Element* HTMLEditor::GetFirstTableRowElement(Element& aTableOrElementInTable,
                                              ErrorResult& aRv) const {
   MOZ_ASSERT(!aRv.Failed());
 
-  Element* tableElement = GetElementOrParentByTagNameInternal(
+  Element* tableElement = GetInclusiveAncestorByTagNameInternal(
       *nsGkAtoms::table, aTableOrElementInTable);
   // If the element is not in <table>, return error.
   if (!tableElement) {
     NS_WARNING(
-        "HTMLEditor::GetElementOrParentByTagNameInternal(nsGkAtoms::table) "
+        "HTMLEditor::GetInclusiveAncestorByTagNameInternal(nsGkAtoms::table) "
         "failed");
     aRv.Throw(NS_ERROR_FAILURE);
     return nullptr;
@@ -841,10 +841,10 @@ nsresult HTMLEditor::InsertTableRowsWithTransaction(
     return NS_ERROR_FAILURE;
   }
   Element* parentRow =
-      GetElementOrParentByTagNameInternal(*nsGkAtoms::tr, *cellForRowParent);
+      GetInclusiveAncestorByTagNameInternal(*nsGkAtoms::tr, *cellForRowParent);
   if (!parentRow) {
     NS_WARNING(
-        "HTMLEditor::GetElementOrParentByTagNameInternal(nsGkAtoms::tr) "
+        "HTMLEditor::GetInclusiveAncestorByTagNameInternal(nsGkAtoms::tr) "
         "failed");
     return NS_ERROR_FAILURE;
   }
@@ -948,7 +948,7 @@ nsresult HTMLEditor::DeleteTableElementAndChildrenWithTransaction(
   nsresult rv = DeleteSelectionAsSubAction(eNext, eStrip);
   NS_WARNING_ASSERTION(
       NS_SUCCEEDED(rv),
-      "TextEditor::DeleteSelectionAsSubAction(eNext, eStrip) failed");
+      "EditorBase::DeleteSelectionAsSubAction(eNext, eStrip) failed");
   return rv;
 }
 
@@ -1595,11 +1595,11 @@ nsresult HTMLEditor::DeleteTableColumnWithTransaction(Element& aTableElement,
     }
 
     // When the cell is the last cell in the row, remove the row instead.
-    Element* parentRow =
-        GetElementOrParentByTagNameInternal(*nsGkAtoms::tr, *cellData.mElement);
+    Element* parentRow = GetInclusiveAncestorByTagNameInternal(
+        *nsGkAtoms::tr, *cellData.mElement);
     if (!parentRow) {
       NS_WARNING(
-          "HTMLEditor::GetElementOrParentByTagNameInternal(nsGkAtoms::tr) "
+          "HTMLEditor::GetInclusiveAncestorByTagNameInternal(nsGkAtoms::tr) "
           "failed");
       return NS_ERROR_FAILURE;
     }
@@ -1901,12 +1901,12 @@ nsresult HTMLEditor::DeleteTableRowWithTransaction(Element& aTableElement,
 
   // Delete the entire row.
   RefPtr<Element> parentRow =
-      GetElementOrParentByTagNameInternal(*nsGkAtoms::tr, *cellInDeleteRow);
+      GetInclusiveAncestorByTagNameInternal(*nsGkAtoms::tr, *cellInDeleteRow);
   if (parentRow) {
     nsresult rv = DeleteNodeWithTransaction(*parentRow);
     if (NS_FAILED(rv)) {
       NS_WARNING(
-          "HTMLEditor::GetElementOrParentByTagNameInternal(nsGkAtoms::tr) "
+          "HTMLEditor::GetInclusiveAncestorByTagNameInternal(nsGkAtoms::tr) "
           "failed");
       return rv;
     }
@@ -1933,17 +1933,12 @@ NS_IMETHODIMP HTMLEditor::SelectTable() {
     return NS_ERROR_NOT_INITIALIZED;
   }
 
-  if (IsSelectionRangeContainerNotContent()) {
-    NS_WARNING("Some selection containers were not content nodes");
-    return NS_OK;  // Don't fail if we didn't find a table.
-  }
-
   RefPtr<Element> table =
-      GetElementOrParentByTagNameAtSelection(*nsGkAtoms::table);
+      GetInclusiveAncestorByTagNameAtSelection(*nsGkAtoms::table);
   if (!table) {
     NS_WARNING(
-        "HTMLEditor::GetElementOrParentByTagNameAtSelection(nsGkAtoms::table) "
-        "failed");
+        "HTMLEditor::GetInclusiveAncestorByTagNameAtSelection(nsGkAtoms::table)"
+        " failed");
     return NS_OK;  // Don't fail if we didn't find a table.
   }
 
@@ -1964,16 +1959,11 @@ NS_IMETHODIMP HTMLEditor::SelectTableCell() {
     return NS_ERROR_NOT_INITIALIZED;
   }
 
-  if (IsSelectionRangeContainerNotContent()) {
-    NS_WARNING("Some selection containers were not content nodes");
-    // Don't fail if we didn't find a cell.
-    return NS_SUCCESS_EDITOR_ELEMENT_NOT_FOUND;
-  }
-
-  RefPtr<Element> cell = GetElementOrParentByTagNameAtSelection(*nsGkAtoms::td);
+  RefPtr<Element> cell =
+      GetInclusiveAncestorByTagNameAtSelection(*nsGkAtoms::td);
   if (!cell) {
     NS_WARNING(
-        "HTMLEditor::GetElementOrParentByTagNameAtSelection(nsGkAtoms::td) "
+        "HTMLEditor::GetInclusiveAncestorByTagNameAtSelection(nsGkAtoms::td) "
         "failed");
     // Don't fail if we didn't find a cell.
     return NS_SUCCESS_EDITOR_ELEMENT_NOT_FOUND;
@@ -1996,16 +1986,11 @@ NS_IMETHODIMP HTMLEditor::SelectAllTableCells() {
     return NS_ERROR_NOT_INITIALIZED;
   }
 
-  if (IsSelectionRangeContainerNotContent()) {
-    NS_WARNING("Some selection containers were not content nodes");
-    // Don't fail if we didn't find a cell.
-    return NS_SUCCESS_EDITOR_ELEMENT_NOT_FOUND;
-  }
-
-  RefPtr<Element> cell = GetElementOrParentByTagNameAtSelection(*nsGkAtoms::td);
+  RefPtr<Element> cell =
+      GetInclusiveAncestorByTagNameAtSelection(*nsGkAtoms::td);
   if (!cell) {
     NS_WARNING(
-        "HTMLEditor::GetElementOrParentByTagNameAtSelection(nsGkAtoms::td) "
+        "HTMLEditor::GetInclusiveAncestorByTagNameAtSelection(nsGkAtoms::td) "
         "failed");
     // Don't fail if we didn't find a cell.
     return NS_SUCCESS_EDITOR_ELEMENT_NOT_FOUND;
@@ -2015,10 +2000,10 @@ NS_IMETHODIMP HTMLEditor::SelectAllTableCells() {
 
   // Get parent table
   RefPtr<Element> table =
-      GetElementOrParentByTagNameInternal(*nsGkAtoms::table, *cell);
+      GetInclusiveAncestorByTagNameInternal(*nsGkAtoms::table, *cell);
   if (!table) {
     NS_WARNING(
-        "HTMLEditor::GetElementOrParentByTagNameAtSelection(nsGkAtoms::table) "
+        "HTMLEditor::GetInclusiveAncestorByTagNameInternal(nsGkAtoms::table) "
         "failed");
     return NS_ERROR_FAILURE;
   }
@@ -2095,16 +2080,11 @@ NS_IMETHODIMP HTMLEditor::SelectTableRow() {
     return NS_ERROR_NOT_INITIALIZED;
   }
 
-  if (IsSelectionRangeContainerNotContent()) {
-    NS_WARNING("Some selection containers were not content nodes");
-    // Don't fail if we didn't find a cell.
-    return NS_SUCCESS_EDITOR_ELEMENT_NOT_FOUND;
-  }
-
-  RefPtr<Element> cell = GetElementOrParentByTagNameAtSelection(*nsGkAtoms::td);
+  RefPtr<Element> cell =
+      GetInclusiveAncestorByTagNameAtSelection(*nsGkAtoms::td);
   if (!cell) {
     NS_WARNING(
-        "HTMLEditor::GetElementOrParentByTagNameAtSelection(nsGkAtoms::td) "
+        "HTMLEditor::GetInclusiveAncestorByTagNameAtSelection(nsGkAtoms::td) "
         "failed");
     // Don't fail if we didn't find a cell.
     return NS_SUCCESS_EDITOR_ELEMENT_NOT_FOUND;
@@ -2201,16 +2181,11 @@ NS_IMETHODIMP HTMLEditor::SelectTableColumn() {
     return NS_ERROR_NOT_INITIALIZED;
   }
 
-  if (IsSelectionRangeContainerNotContent()) {
-    NS_WARNING("Some selection containers were not content nodes");
-    // Don't fail if we didn't find a cell.
-    return NS_SUCCESS_EDITOR_ELEMENT_NOT_FOUND;
-  }
-
-  RefPtr<Element> cell = GetElementOrParentByTagNameAtSelection(*nsGkAtoms::td);
+  RefPtr<Element> cell =
+      GetInclusiveAncestorByTagNameAtSelection(*nsGkAtoms::td);
   if (!cell) {
     NS_WARNING(
-        "HTMLEditor::GetElementOrParentByTagNameAtSelection(nsGkAtoms::td) "
+        "HTMLEditor::GetInclusiveAncestorByTagNameAtSelection(nsGkAtoms::td) "
         "failed");
     // Don't fail if we didn't find a cell.
     return NS_SUCCESS_EDITOR_ELEMENT_NOT_FOUND;
@@ -2930,12 +2905,8 @@ NS_IMETHODIMP HTMLEditor::JoinTableCells(bool aMergeNonContiguousContents) {
         return NS_ERROR_FAILURE;
       }
 
-      RefPtr<Element> deletedCell;
-      DebugOnly<nsresult> rvIgnored =
-          HTMLEditor::GetCellFromRange(range, getter_AddRefs(deletedCell));
-      NS_WARNING_ASSERTION(
-          NS_SUCCEEDED(rvIgnored),
-          "HTMLEditor::GetCellFromRange() failed, but ignored");
+      Element* deletedCell =
+          HTMLEditUtils::GetTableCellElementIfOnlyOneSelected(*range);
       if (!deletedCell) {
         MOZ_KnownLive(SelectionRefPtr())
             ->RemoveRangeAndUnselectFramesAndNotifyListeners(*range,
@@ -3310,17 +3281,12 @@ NS_IMETHODIMP HTMLEditor::NormalizeTable(Element* aTableOrElementInTable) {
   }
 
   if (!aTableOrElementInTable) {
-    if (IsSelectionRangeContainerNotContent()) {
-      NS_WARNING("Some selection containers were not content nodes");
-      return NS_OK;  // Don't throw error even if the element is not in <table>.
-    }
-
     aTableOrElementInTable =
-        GetElementOrParentByTagNameAtSelection(*nsGkAtoms::table);
+        GetInclusiveAncestorByTagNameAtSelection(*nsGkAtoms::table);
     if (!aTableOrElementInTable) {
       NS_WARNING(
-          "HTMLEditor::GetElementOrParentByTagNameAtSelection(nsGkAtoms::table)"
-          " failed");
+          "HTMLEditor::GetInclusiveAncestorByTagNameAtSelection(nsGkAtoms::"
+          "table) failed");
       return NS_OK;  // Don't throw error even if the element is not in <table>.
     }
   }
@@ -3337,11 +3303,11 @@ nsresult HTMLEditor::NormalizeTableInternal(Element& aTableOrElementInTable) {
   if (aTableOrElementInTable.NodeInfo()->NameAtom() == nsGkAtoms::table) {
     tableElement = &aTableOrElementInTable;
   } else {
-    tableElement = GetElementOrParentByTagNameInternal(*nsGkAtoms::table,
-                                                       aTableOrElementInTable);
+    tableElement = GetInclusiveAncestorByTagNameInternal(
+        *nsGkAtoms::table, aTableOrElementInTable);
     if (!tableElement) {
       NS_WARNING(
-          "HTMLEditor::GetElementOrParentByTagNameInternal(nsGkAtoms::table) "
+          "HTMLEditor::GetInclusiveAncestorByTagNameInternal(nsGkAtoms::table) "
           "failed");
       return NS_OK;  // Don't throw error even if the element is not in <table>.
     }
@@ -3479,19 +3445,13 @@ void HTMLEditor::CellIndexes::Update(HTMLEditor& aHTMLEditor,
                                      Selection& aSelection, ErrorResult& aRv) {
   MOZ_ASSERT(!aRv.Failed());
 
-  if (aHTMLEditor.IsSelectionRangeContainerNotContent()) {
-    NS_WARNING("Some selection containers were not content nodes");
-    aRv.Throw(NS_ERROR_FAILURE);
-    return;
-  }
-
   // Guarantee the life time of the cell element since Init() will access
   // layout methods.
   RefPtr<Element> cellElement =
-      aHTMLEditor.GetElementOrParentByTagNameAtSelection(*nsGkAtoms::td);
+      aHTMLEditor.GetInclusiveAncestorByTagNameAtSelection(*nsGkAtoms::td);
   if (!cellElement) {
     NS_WARNING(
-        "HTMLEditor::GetElementOrParentByTagNameAtSelection(nsGkAtoms::td) "
+        "HTMLEditor::GetInclusiveAncestorByTagNameAtSelection(nsGkAtoms::td) "
         "failed");
     aRv.Throw(NS_ERROR_FAILURE);
     return;
@@ -3583,16 +3543,12 @@ NS_IMETHODIMP HTMLEditor::GetTableSize(Element* aTableOrElementInTable,
 
   Element* tableOrElementInTable = aTableOrElementInTable;
   if (!tableOrElementInTable) {
-    if (IsSelectionRangeContainerNotContent()) {
-      NS_WARNING("Some selection containers were not content nodes");
-      return NS_ERROR_FAILURE;
-    }
     tableOrElementInTable =
-        GetElementOrParentByTagNameAtSelection(*nsGkAtoms::table);
+        GetInclusiveAncestorByTagNameAtSelection(*nsGkAtoms::table);
     if (!tableOrElementInTable) {
       NS_WARNING(
-          "HTMLEditor::GetElementOrParentByTagNameAtSelection(nsGkAtoms::table)"
-          " failed");
+          "HTMLEditor::GetInclusiveAncestorByTagNameAtSelection(nsGkAtoms::"
+          "table) failed");
       return NS_ERROR_FAILURE;
     }
   }
@@ -3618,11 +3574,11 @@ void HTMLEditor::TableSize::Update(HTMLEditor& aHTMLEditor,
   // <table> element.  However, editor developers may not watch layout API
   // changes.  So, for keeping us safer, we should use RefPtr here.
   RefPtr<Element> tableElement =
-      aHTMLEditor.GetElementOrParentByTagNameInternal(*nsGkAtoms::table,
-                                                      aTableOrElementInTable);
+      aHTMLEditor.GetInclusiveAncestorByTagNameInternal(*nsGkAtoms::table,
+                                                        aTableOrElementInTable);
   if (!tableElement) {
     NS_WARNING(
-        "HTMLEditor::GetElementOrParentByTagNameInternal(nsGkAtoms::table) "
+        "HTMLEditor::GetInclusiveAncestorByTagNameInternal(nsGkAtoms::table) "
         "failed");
     aRv.Throw(NS_ERROR_FAILURE);
     return;
@@ -3669,16 +3625,12 @@ NS_IMETHODIMP HTMLEditor::GetCellDataAt(
   // them.
   RefPtr<Element> table = aTableElement;
   if (!table) {
-    if (IsSelectionRangeContainerNotContent()) {
-      NS_WARNING("Some selection containers were not content nodes");
-      return NS_ERROR_FAILURE;
-    }
     // Get the selected table or the table enclosing the selection anchor.
-    table = GetElementOrParentByTagNameAtSelection(*nsGkAtoms::table);
+    table = GetInclusiveAncestorByTagNameAtSelection(*nsGkAtoms::table);
     if (!table) {
       NS_WARNING(
-          "HTMLEditor::GetElementOrParentByTagNameAtSelection(nsGkAtoms::table)"
-          " failed");
+          "HTMLEditor::GetInclusiveAncestorByTagNameAtSelection(nsGkAtoms::"
+          "table) failed");
       return NS_ERROR_FAILURE;
     }
   }
@@ -3762,16 +3714,12 @@ NS_IMETHODIMP HTMLEditor::GetCellAt(Element* aTableElement, int32_t aRowIndex,
 
   Element* tableElement = aTableElement;
   if (!tableElement) {
-    if (IsSelectionRangeContainerNotContent()) {
-      NS_WARNING("Some selection containers were not content nodes");
-      return NS_ERROR_FAILURE;
-    }
     // Get the selected table or the table enclosing the selection anchor.
-    tableElement = GetElementOrParentByTagNameAtSelection(*nsGkAtoms::table);
+    tableElement = GetInclusiveAncestorByTagNameAtSelection(*nsGkAtoms::table);
     if (!tableElement) {
       NS_WARNING(
-          "HTMLEditor::GetElementOrParentByTagNameAtSelection(nsGkAtoms::table)"
-          " failed");
+          "HTMLEditor::GetInclusiveAncestorByTagNameAtSelection(nsGkAtoms::"
+          "table) failed");
       return NS_ERROR_FAILURE;
     }
   }
@@ -3882,10 +3830,10 @@ nsresult HTMLEditor::GetCellContext(Element** aTable, Element** aCell,
   }
 
   // Get containing table
-  table = GetElementOrParentByTagNameInternal(*nsGkAtoms::table, *cell);
+  table = GetInclusiveAncestorByTagNameInternal(*nsGkAtoms::table, *cell);
   if (!table) {
     NS_WARNING(
-        "HTMLEditor::GetElementOrParentByTagNameInternal(nsGkAtoms::table) "
+        "HTMLEditor::GetInclusiveAncestorByTagNameInternal(nsGkAtoms::table) "
         "failed");
     // Cell must be in a table, so fail if not found
     return NS_ERROR_FAILURE;
@@ -3911,66 +3859,21 @@ nsresult HTMLEditor::GetCellContext(Element** aTable, Element** aCell,
   }
   if (aCellParent) {
     // Get the immediate parent of the cell
-    nsCOMPtr<nsINode> cellParent = cell->GetParentNode();
-    // Cell has to have a parent, so fail if not found
-    if (NS_WARN_IF(!cellParent)) {
+    EditorRawDOMPoint atCellElement(cell);
+    if (NS_WARN_IF(!atCellElement.IsSet())) {
       return NS_ERROR_FAILURE;
     }
 
     if (aCellOffset) {
-      *aCellOffset = GetChildOffset(cell, cellParent);
+      *aCellOffset = atCellElement.Offset();
     }
 
     // Now it's safe to hand over the reference to cellParent, since
     // we don't need it anymore.
-    cellParent.forget(aCellParent);
+    *aCellParent = do_AddRef(atCellElement.GetContainer()).take();
   }
 
   return NS_OK;
-}
-
-// static
-nsresult HTMLEditor::GetCellFromRange(nsRange* aRange, Element** aCell) {
-  // Note: this might return a node that is outside of the range.
-  // Use carefully.
-  if (NS_WARN_IF(!aRange) || NS_WARN_IF(!aCell)) {
-    return NS_ERROR_INVALID_ARG;
-  }
-
-  *aCell = nullptr;
-
-  nsCOMPtr<nsINode> startContainer = aRange->GetStartContainer();
-  if (NS_WARN_IF(!startContainer)) {
-    return NS_ERROR_FAILURE;
-  }
-
-  uint32_t startOffset = aRange->StartOffset();
-
-  nsCOMPtr<nsINode> childNode = aRange->GetChildAtStartOffset();
-  // This means selection is probably at a text node (or end of doc?)
-  if (!childNode) {
-    NS_WARNING("First selection range does not starts from a node");
-    return NS_ERROR_FAILURE;
-  }
-
-  nsCOMPtr<nsINode> endContainer = aRange->GetEndContainer();
-  if (NS_WARN_IF(!endContainer)) {
-    return NS_ERROR_FAILURE;
-  }
-
-  // If a cell is deleted, the range is collapse
-  //   (startOffset == aRange->EndOffset())
-  //   so tell caller the cell wasn't found
-  if (startContainer == endContainer &&
-      aRange->EndOffset() == startOffset + 1 &&
-      HTMLEditUtils::IsTableCell(childNode)) {
-    // Should we also test if frame is selected? (Use CellData)
-    // (Let's not for now -- more efficient)
-    RefPtr<Element> cellElement = childNode->AsElement();
-    cellElement.forget(aCell);
-    return NS_OK;
-  }
-  return NS_SUCCESS_EDITOR_ELEMENT_NOT_FOUND;
 }
 
 NS_IMETHODIMP HTMLEditor::GetFirstSelectedCell(
@@ -4029,17 +3932,12 @@ already_AddRefed<Element> HTMLEditor::GetFirstSelectedTableCellElement(
   // XXX It must be unclear when this is reset...
   mSelectedCellIndex = 0;
 
-  RefPtr<Element> selectedCell;
-  nsresult rv =
-      HTMLEditor::GetCellFromRange(firstRange, getter_AddRefs(selectedCell));
-  if (NS_FAILED(rv)) {
-    // This case occurs only when Selection is in a text node in normal cases.
-    return nullptr;
-  }
+  RefPtr<Element> selectedCell =
+      HTMLEditUtils::GetTableCellElementIfOnlyOneSelected(*firstRange);
   if (!selectedCell) {
-    // This case means that the range does not select only a cell.
-    // E.g., selects non-table cell element, selects two or more cells, or
-    //       does not select any cell element.
+    // This case means that Selection is in a text node in normal cases or
+    // the range does not select only a cell.  E.g., selects non-table cell
+    // element, selects two or more cells, or does not select any cell element.
     return nullptr;
   }
 
@@ -4109,18 +4007,17 @@ already_AddRefed<Element> HTMLEditor::GetNextSelectedTableCellElement(
       return nullptr;
     }
 
-    RefPtr<Element> nextSelectedCellElement;
-    nsresult rv = HTMLEditor::GetCellFromRange(
-        range, getter_AddRefs(nextSelectedCellElement));
-    if (NS_FAILED(rv)) {
-      // Failure means that the range is in non-element node, e.g., a text node.
-      // Returns nullptr without error if not found.
+    if (!range->GetStartContainer() || !range->GetChildAtStartOffset() ||
+        !range->GetEndContainer()) {
+      // This means that the range is not positioned or in non-element node,
+      // e.g., a text node.  Returns nullptr without error if not found.
       // XXX Why don't we just skip such range or incrementing
       //     mSelectedCellIndex for next call?
       return nullptr;
     }
 
-    if (nextSelectedCellElement) {
+    if (RefPtr<Element> nextSelectedCellElement =
+            HTMLEditUtils::GetTableCellElementIfOnlyOneSelected(*range)) {
       mSelectedCellIndex++;
       return nextSelectedCellElement.forget();
     }
@@ -4376,10 +4273,14 @@ already_AddRefed<Element> HTMLEditor::GetSelectedOrParentTableElement(
     }
   }
 
+  if (NS_WARN_IF(!anchorRef.Container()->IsContent())) {
+    return nullptr;
+  }
+
   // Then, look for a cell element (either <td> or <th>) which contains
   // the anchor container.
-  cellElement = GetElementOrParentByTagNameInternal(*nsGkAtoms::td,
-                                                    *anchorRef.Container());
+  cellElement = GetInclusiveAncestorByTagNameInternal(
+      *nsGkAtoms::td, *anchorRef.Container()->AsContent());
   if (!cellElement) {
     return nullptr;  // Not in table.
   }
@@ -4404,23 +4305,19 @@ NS_IMETHODIMP HTMLEditor::GetSelectedCellsType(Element* aElement,
   //  (if aElement is null, this uses selection's anchor node)
   RefPtr<Element> table;
   if (aElement) {
-    table = GetElementOrParentByTagNameInternal(*nsGkAtoms::table, *aElement);
+    table = GetInclusiveAncestorByTagNameInternal(*nsGkAtoms::table, *aElement);
     if (!table) {
       NS_WARNING(
-          "HTMLEditor::GetElementOrParentByTagNameInternal(nsGkAtoms::table) "
+          "HTMLEditor::GetInclusiveAncestorByTagNameInternal(nsGkAtoms::table) "
           "failed");
       return NS_ERROR_FAILURE;
     }
   } else {
-    if (IsSelectionRangeContainerNotContent()) {
-      NS_WARNING("Some selection containers were not content nodes");
-      return NS_ERROR_FAILURE;
-    }
-    table = GetElementOrParentByTagNameAtSelection(*nsGkAtoms::table);
+    table = GetInclusiveAncestorByTagNameAtSelection(*nsGkAtoms::table);
     if (!table) {
       NS_WARNING(
-          "HTMLEditor::GetElementOrParentByTagNameAtSelection(nsGkAtoms::table)"
-          " failed");
+          "HTMLEditor::GetInclusiveAncestorByTagNameAtSelection(nsGkAtoms::"
+          "table) failed");
       return NS_ERROR_FAILURE;
     }
   }

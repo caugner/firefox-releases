@@ -35,6 +35,7 @@ XPCOMUtils.defineLazyModuleGetters(this, {
   Downloader: "resource://services-settings/Attachments.jsm",
   RemoteL10n: "resource://activity-stream/lib/RemoteL10n.jsm",
   MigrationUtils: "resource:///modules/MigrationUtils.jsm",
+  ExperimentAPI: "resource://messaging-system/experiments/ExperimentAPI.jsm",
 });
 XPCOMUtils.defineLazyServiceGetters(this, {
   BrowserHandler: ["@mozilla.org/browser/clh;1", "nsIBrowserHandler"],
@@ -336,6 +337,31 @@ const MessageLoaderUtils = {
     return RemoteSettings(bucket).get();
   },
 
+  async _experimentsAPILoader(provider, options) {
+    try {
+      await ExperimentAPI.ready();
+    } catch (e) {
+      MessageLoaderUtils.reportError(e);
+      return [];
+    }
+    return provider.messageGroups
+      .map(group => {
+        let experimentData;
+        try {
+          experimentData = ExperimentAPI.getExperiment({ group });
+        } catch (e) {
+          MessageLoaderUtils.reportError(e);
+          return [];
+        }
+        if (experimentData && experimentData.branch) {
+          return experimentData.branch.value;
+        }
+
+        return [];
+      })
+      .flat();
+  },
+
   _handleRemoteSettingsUndesiredEvent(event, providerId, dispatchToAS) {
     if (dispatchToAS) {
       dispatchToAS(
@@ -363,6 +389,8 @@ const MessageLoaderUtils = {
         return this._remoteSettingsLoader;
       case "json":
         return this._localJsonLoader;
+      case "remote-experiments":
+        return this._experimentsAPILoader;
       case "local":
       default:
         return this._localLoader;
@@ -742,13 +770,19 @@ class _ASRouter {
       p =>
         p.id === "message-groups" && MessageLoaderUtils.shouldProviderUpdate(p)
     );
-    if (!provider) {
-      return;
+    let remoteMessages = [];
+    if (provider) {
+      const { messages } = await MessageLoaderUtils._loadDataForProvider(
+        provider,
+        {
+          storage: this._storage,
+          dispatchToAS: this.dispatchToAS,
+        }
+      );
+      if (messages && messages.length) {
+        remoteMessages = messages;
+      }
     }
-    let { messages } = await MessageLoaderUtils._loadDataForProvider(provider, {
-      storage: this._storage,
-      dispatchToAS: this.dispatchToAS,
-    });
     const providerGroups = this.state.providers.map(
       ({ id, frequency = null, enabled }) => {
         const defaultGroup = { id, enabled, type: "default" };
@@ -757,11 +791,11 @@ class _ASRouter {
         }
         const localGroup =
           LOCAL_GROUP_CONFIGURATIONS.find(g => g.id === id) || {};
-        const remoteGroup = messages.find(g => g.id === id) || {};
+        const remoteGroup = remoteMessages.find(g => g.id === id) || {};
         return { ...defaultGroup, ...localGroup, ...remoteGroup };
       }
     );
-    const messageGroups = messages
+    const messageGroups = remoteMessages
       .filter(m => !providerGroups.find(g => g.id === m.id))
       .map(remoteGroup => {
         const localGroup =
@@ -1618,6 +1652,10 @@ class _ASRouter {
     });
   }
 
+  async modifyMessageJson(content, target, force = true, action = {}) {
+    await this._sendMessageToTarget(content, target, action.data, force);
+  }
+
   async setMessageById(id, target, force = true, action = {}) {
     const newMessage = this.getMessageById(id);
 
@@ -1819,6 +1857,7 @@ class _ASRouter {
       providers.push({
         id: "preview",
         type: "remote",
+        enabled: true,
         url,
         updateCycleInMs: 0,
       });
@@ -1911,14 +1950,18 @@ class _ASRouter {
         );
         break;
       case ra.OPEN_ABOUT_PAGE:
+        let aboutPageURL = new URL(`about:${action.data.args}`);
+        if (action.data.entrypoint) {
+          aboutPageURL.search = action.data.entrypoint;
+        }
         target.browser.ownerGlobal.openTrustedLinkIn(
-          `about:${action.data.args}`,
+          aboutPageURL.toString(),
           "tab"
         );
         break;
       case ra.OPEN_PREFERENCES_PAGE:
         target.browser.ownerGlobal.openPreferences(
-          action.data.category,
+          action.data.category || action.data.args,
           action.data.entrypoint && {
             urlParams: { entrypoint: action.data.entrypoint },
           }
@@ -2149,6 +2192,9 @@ class _ASRouter {
             outgoingMessage
           );
         }
+        break;
+      case "MODIFY_MESSAGE_JSON":
+        await this.modifyMessageJson(action.data.content, target, true, action);
         break;
       case "DISMISS_MESSAGE_BY_ID":
         this.messageChannel.sendAsyncMessage(OUTGOING_MESSAGE_NAME, {

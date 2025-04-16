@@ -51,10 +51,13 @@
 #include "mozilla/ExtensionPolicyService.h"
 #include "mozilla/extensions/WebExtensionPolicy.h"
 #include "mozilla/Printf.h"
+#include "mozilla/ProfileBufferChunkManagerSingle.h"
+#include "mozilla/ProfileBufferChunkManagerWithLocalLimit.h"
+#include "mozilla/ProfileChunkedBuffer.h"
+#include "mozilla/SchedulerGroup.h"
 #include "mozilla/Services.h"
 #include "mozilla/StackWalk.h"
 #include "mozilla/StaticPtr.h"
-#include "mozilla/SystemGroup.h"
 #include "mozilla/ThreadLocal.h"
 #include "mozilla/TimeStamp.h"
 #include "mozilla/Tuple.h"
@@ -73,6 +76,7 @@
 #include "nsMemoryReporterManager.h"
 #include "nsProfilerStartParams.h"
 #include "nsScriptSecurityManager.h"
+#include "nsSystemInfo.h"
 #include "nsThreadUtils.h"
 #include "nsXULAppAPI.h"
 #include "prdtoa.h"
@@ -217,6 +221,7 @@ static uint32_t AvailableFeatures() {
 #endif
 #if defined(MOZ_REPLACE_MALLOC) && defined(MOZ_PROFILER_MEMORY)
   if (getenv("XPCOM_MEM_BLOAT_LOG")) {
+    NS_WARNING("XPCOM_MEM_BLOAT_LOG is set, disabling native allocations.");
     // The memory hooks are available, but the bloat log is enabled, which is
     // not compatible with the native allocations tracking. See the comment in
     // enable_native_allocations() (tools/profiler/core/memory_hooks.cpp) for
@@ -381,7 +386,7 @@ class CorePS {
         // functions guarded by gPSMutex as well as others without safety (e.g.,
         // profiler_add_marker). It is *not* used inside the critical section of
         // the sampler, because mutexes cannot be used there.
-        mCoreBlocksRingBuffer(BlocksRingBuffer::ThreadSafety::WithMutex)
+        mCoreBuffer(ProfileChunkedBuffer::ThreadSafety::WithMutex)
 #ifdef USE_LUL_STACKWALK
         ,
         mLul(nullptr)
@@ -441,7 +446,7 @@ class CorePS {
   PS_GET_LOCKLESS(TimeStamp, ProcessStartTime)
 
   // No PSLockRef is needed for this field because it's thread-safe.
-  PS_GET_LOCKLESS(BlocksRingBuffer&, CoreBlocksRingBuffer)
+  PS_GET_LOCKLESS(ProfileChunkedBuffer&, CoreBuffer)
 
   PS_GET(const Vector<UniquePtr<RegisteredThread>>&, RegisteredThreads)
 
@@ -550,16 +555,16 @@ class CorePS {
   // The time that the process started.
   const TimeStamp mProcessStartTime;
 
-  // The thread-safe blocks-oriented ring buffer into which all profiling data
-  // is recorded.
+  // The thread-safe blocks-oriented buffer into which all profiling data is
+  // recorded.
   // ActivePS controls the lifetime of the underlying contents buffer: When
-  // ActivePS does not exist, mCoreBlocksRingBuffer is empty and rejects all
-  // reads&writes; see ActivePS for further details.
+  // ActivePS does not exist, mCoreBuffer is empty and rejects all reads&writes;
+  // see ActivePS for further details.
   // Note: This needs to live here outside of ActivePS, because some producers
   // are indirectly controlled (e.g., by atomic flags) and therefore may still
   // attempt to write some data shortly after ActivePS has shutdown and deleted
   // the underlying buffer in memory.
-  BlocksRingBuffer mCoreBlocksRingBuffer;
+  ProfileChunkedBuffer mCoreBuffer;
 
   // Info on all the registered threads.
   // ThreadIds in mRegisteredThreads are unique.
@@ -623,6 +628,26 @@ class ActivePS {
     return aFeatures;
   }
 
+  constexpr static uint32_t bytesPerEntry = 8;
+
+  // We need to decide how many chunks of what size we want to fit in the given
+  // total maximum capacity for this process, in the (likely) context of
+  // multiple processes doing the same choice and having an inter-process
+  // mechanism to control the overal memory limit.
+
+  // Ideally we want at least 2 unreleased chunks to work with (1 current and 1
+  // next), and 2 released chunks (so that one can be recycled when old, leaving
+  // one with some data).
+  constexpr static uint32_t minimumNumberOfChunks = 4;
+
+  // And we want to limit chunks to a maximum size, which is a compromise
+  // between:
+  // - A big size, which helps with reducing the rate of allocations and IPCs.
+  // - A small size, which helps with equalizing the duration of recorded data
+  //   (as the inter-process controller will discard the oldest chunks in all
+  //   Firefox processes).
+  constexpr static uint32_t maximumChunkSize = 1024 * 1024;
+
   ActivePS(PSLockRef aLock, PowerOfTwo32 aCapacity, double aInterval,
            uint32_t aFeatures, const char** aFilters, uint32_t aFilterCount,
            uint64_t aActiveBrowsingContextID, const Maybe<double>& aDuration)
@@ -632,9 +657,14 @@ class ActivePS {
         mInterval(aInterval),
         mFeatures(AdjustFeatures(aFeatures, aFilterCount)),
         mActiveBrowsingContextID(aActiveBrowsingContextID),
-        // 8 bytes per entry.
-        mProfileBuffer(CorePS::CoreBlocksRingBuffer(),
-                       PowerOfTwo32(aCapacity.Value() * 8)),
+        mProfileBufferChunkManager(
+            aCapacity.Value() * bytesPerEntry,
+            std::min(aCapacity.Value() * bytesPerEntry / minimumNumberOfChunks,
+                     maximumChunkSize)),
+        mProfileBuffer([this]() -> ProfileChunkedBuffer& {
+          CorePS::CoreBuffer().SetChunkManager(mProfileBufferChunkManager);
+          return CorePS::CoreBuffer();
+        }()),
         // The new sampler thread doesn't start sampling immediately because the
         // main loop within Run() is blocked until this function's caller
         // unlocks gPSMutex.
@@ -692,6 +722,7 @@ class ActivePS {
       }
     }
 #endif
+    CorePS::CoreBuffer().ResetChunkManager();
   }
 
   bool ThreadSelected(const char* aThreadName) {
@@ -738,7 +769,7 @@ class ActivePS {
                              aFilterCount, aActiveBrowsingContextID, aDuration);
   }
 
-  static MOZ_MUST_USE SamplerThread* Destroy(PSLockRef aLock) {
+  [[nodiscard]] static SamplerThread* Destroy(PSLockRef aLock) {
     MOZ_ASSERT(sInstance);
     auto samplerThread = sInstance->mSamplerThread;
     delete sInstance;
@@ -793,7 +824,7 @@ class ActivePS {
             sInstance->ThreadSelected(aInfo->Name()));
   }
 
-  static MOZ_MUST_USE bool AppendPostSamplingCallback(
+  [[nodiscard]] static bool AppendPostSamplingCallback(
       PSLockRef, PostSamplingCallback&& aCallback);
 
   // Writes out the current active configuration of the profile.
@@ -890,6 +921,11 @@ class ActivePS {
   }
 
   PS_GET(const Vector<std::string>&, Filters)
+
+  static void FulfillChunkRequests(PSLockRef) {
+    MOZ_ASSERT(sInstance);
+    sInstance->mProfileBufferChunkManager.FulfillChunkRequests();
+  }
 
   static ProfileBuffer& Buffer(PSLockRef) {
     MOZ_ASSERT(sInstance);
@@ -1079,8 +1115,9 @@ class ActivePS {
     //       |============|       <-- Buffer range full and sliding.
     // ^ mGeckoIndexWhenBaseProfileAdded < Start TRUE! -> Discard it
     if (sInstance->mBaseProfileThreads &&
-        sInstance->mGeckoIndexWhenBaseProfileAdded <
-            CorePS::CoreBlocksRingBuffer().GetState().mRangeStart) {
+        sInstance->mGeckoIndexWhenBaseProfileAdded
+                .ConvertToProfileBufferIndex() <
+            CorePS::CoreBuffer().GetState().mRangeStart) {
       DEBUG_LOG("ClearExpiredExitProfiles() - Discarding base profile %p",
                 sInstance->mBaseProfileThreads.get());
       sInstance->mBaseProfileThreads.reset();
@@ -1099,7 +1136,8 @@ class ActivePS {
     DEBUG_LOG("AddBaseProfileThreads(%p)", aBaseProfileThreads.get());
     sInstance->mBaseProfileThreads = std::move(aBaseProfileThreads);
     sInstance->mGeckoIndexWhenBaseProfileAdded =
-        CorePS::CoreBlocksRingBuffer().GetState().mRangeEnd;
+        ProfileBufferBlockIndex::CreateFromProfileBufferIndex(
+            CorePS::CoreBuffer().GetState().mRangeEnd);
   }
 
   static UniquePtr<char[]> MoveBaseProfileThreads(PSLockRef aLock) {
@@ -1180,6 +1218,9 @@ class ActivePS {
   // It's being used to determine the profiled tab. It's "0" if we failed to
   // get the ID.
   const uint64_t mActiveBrowsingContextID;
+
+  // The chunk manager used by `mProfileBuffer` below.
+  ProfileBufferChunkManagerWithLocalLimit mProfileBufferChunkManager;
 
   // The buffer into which all samples are recorded.
   ProfileBuffer mProfileBuffer;
@@ -2264,17 +2305,15 @@ static void StreamMetaJSCustomObject(PSLockRef aLock,
     if (!NS_FAILED(res)) aWriter.StringProperty("sourceURL", string.Data());
   }
 
-  nsCOMPtr<nsIPropertyBag2> systemInfo =
-      do_GetService("@mozilla.org/system-info;1");
-  if (systemInfo) {
-    int32_t cpus;
-    res = systemInfo->GetPropertyAsInt32(NS_LITERAL_STRING("cpucores"), &cpus);
-    if (!NS_FAILED(res)) {
-      aWriter.IntProperty("physicalCPUs", cpus);
+  ProcessInfo processInfo;
+  processInfo.cpuCount = 0;
+  processInfo.cpuCores = 0;
+  if (NS_SUCCEEDED(CollectProcessInfo(processInfo))) {
+    if (processInfo.cpuCores > 0) {
+      aWriter.IntProperty("physicalCPUs", processInfo.cpuCores);
     }
-    res = systemInfo->GetPropertyAsInt32(NS_LITERAL_STRING("cpucount"), &cpus);
-    if (!NS_FAILED(res)) {
-      aWriter.IntProperty("logicalCPUs", cpus);
+    if (processInfo.cpuCount > 0) {
+      aWriter.IntProperty("logicalCPUs", processInfo.cpuCount);
     }
   }
 
@@ -2327,14 +2366,44 @@ static void StreamPages(PSLockRef aLock, SpliceableJSONWriter& aWriter) {
 }
 
 #if defined(GP_OS_android)
-static UniquePtr<ProfileBuffer> CollectJavaThreadProfileData(
-    BlocksRingBuffer& bufferManager) {
+template <int N>
+static bool StartsWith(const nsACString& string, const char (&prefix)[N]) {
+  if (N - 1 > string.Length()) {
+    return false;
+  }
+  return memcmp(string.Data(), prefix, N - 1) == 0;
+}
+
+static JS::ProfilingCategoryPair InferJavaCategory(nsACString& aName) {
+  if (aName.EqualsLiteral("android.os.MessageQueue.nativePollOnce()")) {
+    return JS::ProfilingCategoryPair::IDLE;
+  }
+  if (aName.EqualsLiteral("java.lang.Object.wait()")) {
+    return JS::ProfilingCategoryPair::JAVA_BLOCKED;
+  }
+  if (StartsWith(aName, "android.") || StartsWith(aName, "com.android.")) {
+    return JS::ProfilingCategoryPair::JAVA_ANDROID;
+  }
+  if (StartsWith(aName, "mozilla.") || StartsWith(aName, "org.mozilla.")) {
+    return JS::ProfilingCategoryPair::JAVA_MOZILLA;
+  }
+  if (StartsWith(aName, "java.") || StartsWith(aName, "sun.") ||
+      StartsWith(aName, "com.sun.")) {
+    return JS::ProfilingCategoryPair::JAVA_LANGUAGE;
+  }
+  if (StartsWith(aName, "kotlin.") || StartsWith(aName, "kotlinx.")) {
+    return JS::ProfilingCategoryPair::JAVA_KOTLIN;
+  }
+  if (StartsWith(aName, "androidx.")) {
+    return JS::ProfilingCategoryPair::JAVA_ANDROIDX;
+  }
+  return JS::ProfilingCategoryPair::OTHER;
+}
+
+static void CollectJavaThreadProfileData(ProfileBuffer& aProfileBuffer) {
   // locked_profiler_start uses sample count is 1000 for Java thread.
   // This entry size is enough now, but we might have to estimate it
   // if we can customize it
-  auto buffer = MakeUnique<ProfileBuffer>(bufferManager,
-                                          MakePowerOfTwo32<8 * 1024 * 1024>());
-
   int sampleId = 0;
   while (true) {
     // Gets the data from the java main thread only.
@@ -2343,9 +2412,8 @@ static UniquePtr<ProfileBuffer> CollectJavaThreadProfileData(
       break;
     }
 
-    buffer->AddThreadIdEntry(0);
-    buffer->AddEntry(ProfileBufferEntry::Time(sampleTime));
-    bool parentFrameWasIdleFrame = false;
+    aProfileBuffer.AddThreadIdEntry(0);
+    aProfileBuffer.AddEntry(ProfileBufferEntry::Time(sampleTime));
     int frameId = 0;
     while (true) {
       jni::String::LocalRef frameName =
@@ -2355,26 +2423,13 @@ static UniquePtr<ProfileBuffer> CollectJavaThreadProfileData(
       }
       nsCString frameNameString = frameName->ToCString();
 
-      // Compute a category pair for the frame:
-      //  - IDLE for the wait function android.os.MessageQueue.nativePollOnce()
-      //  - OTHER for any function that's directly called by that wait function
-      //  - no category on everything else
-      Maybe<JS::ProfilingCategoryPair> categoryPair;
-      if (frameNameString.EqualsLiteral(
-              "android.os.MessageQueue.nativePollOnce()")) {
-        categoryPair = Some(JS::ProfilingCategoryPair::IDLE);
-        parentFrameWasIdleFrame = true;
-      } else if (parentFrameWasIdleFrame) {
-        categoryPair = Some(JS::ProfilingCategoryPair::OTHER);
-        parentFrameWasIdleFrame = false;
-      }
-
-      buffer->CollectCodeLocation("", frameNameString.get(), 0, 0, Nothing(),
-                                  Nothing(), categoryPair);
+      auto categoryPair = InferJavaCategory(frameNameString);
+      aProfileBuffer.CollectCodeLocation("", frameNameString.get(), 0, 0,
+                                         Nothing(), Nothing(),
+                                         Some(categoryPair));
     }
     sampleId++;
   }
-  return buffer;
 }
 #endif
 
@@ -2454,17 +2509,22 @@ static void locked_profiler_stream_json_for_this_process(
     if (ActivePS::FeatureJava(aLock)) {
       java::GeckoJavaSampler::Pause();
 
-      BlocksRingBuffer bufferManager(
-          BlocksRingBuffer::ThreadSafety::WithoutMutex);
-      UniquePtr<ProfileBuffer> javaBuffer =
-          CollectJavaThreadProfileData(bufferManager);
+      // locked_profiler_start uses sample count is 1000 for Java thread.
+      // This entry size is enough now, but we might have to estimate it
+      // if we can customize it
+      mozilla::ProfileBufferChunkManagerWithLocalLimit chunkManager(
+          8 * 1024 * 1024, 1024 * 1024);
+      ProfileChunkedBuffer bufferManager(
+          ProfileChunkedBuffer::ThreadSafety::WithoutMutex, chunkManager);
+      ProfileBuffer javaBuffer(bufferManager);
+      CollectJavaThreadProfileData(javaBuffer);
 
       // Thread id of java Main thread is 0, if we support profiling of other
       // java thread, we have to get thread id and name via JNI.
       RefPtr<ThreadInfo> threadInfo = new ThreadInfo(
           "Java Main Thread", 0, false, CorePS::ProcessStartTime());
       ProfiledThreadData profiledThreadData(threadInfo, nullptr);
-      profiledThreadData.StreamJSON(*javaBuffer.get(), nullptr, aWriter,
+      profiledThreadData.StreamJSON(javaBuffer, nullptr, aWriter,
                                     CorePS::ProcessName(aLock),
                                     CorePS::ProcessStartTime(), aSinceTime,
                                     ActivePS::FeatureJSTracer(aLock), nullptr);
@@ -2767,7 +2827,7 @@ class SamplerThread {
         : mPrev(std::move(aPrev)), mCallback(std::move(aCallback)) {}
   };
 
-  MOZ_MUST_USE UniquePtr<PostSamplingCallbackListItem>
+  [[nodiscard]] UniquePtr<PostSamplingCallbackListItem>
   TakePostSamplingCallbacks(PSLockRef) {
     return std::move(mPostSamplingCallbackList);
   }
@@ -2823,7 +2883,7 @@ class SamplerThread {
   void operator=(const SamplerThread&) = delete;
 };
 
-// static MOZ_MUST_USE
+// [[nodiscard]] static
 bool ActivePS::AppendPostSamplingCallback(PSLockRef aLock,
                                           PostSamplingCallback&& aCallback) {
   if (!sInstance || !sInstance->mSamplerThread) {
@@ -2859,17 +2919,17 @@ void SamplerThread::Run() {
     return ActivePS::FeatureNoStackSampling(lock);
   }();
 
-  // Use local BlocksRingBuffer&ProfileBuffer to capture the stack.
-  // (This is to avoid touching the CorePS::BlocksRingBuffer lock while
-  // a thread is suspended, because that thread could be working with
-  // the CorePS::BlocksRingBuffer as well.)
-  BlocksRingBuffer localBlocksRingBuffer(
-      BlocksRingBuffer::ThreadSafety::WithoutMutex);
-  ProfileBuffer localProfileBuffer(localBlocksRingBuffer,
-                                   MakePowerOfTwo32<65536>());
+  // Use local ProfileBuffer and underlying buffer to capture the stack.
+  // (This is to avoid touching the CorePS::CoreBuffer lock while a thread is
+  // suspended, because that thread could be working with the CorePS::CoreBuffer
+  // as well.)
+  mozilla::ProfileBufferChunkManagerSingle localChunkManager(65536);
+  ProfileChunkedBuffer localBuffer(
+      ProfileChunkedBuffer::ThreadSafety::WithoutMutex, localChunkManager);
+  ProfileBuffer localProfileBuffer(localBuffer);
 
   // Will be kept between collections, to know what each collection does.
-  auto previousState = localBlocksRingBuffer.GetState();
+  auto previousState = localBuffer.GetState();
 
   // This will be positive if we are running behind schedule (sampling less
   // frequently than desired) and negative if we are ahead of schedule.
@@ -3186,7 +3246,7 @@ void SamplerThread::Run() {
             // Note: It is not stored inside the CompactStack so that it doesn't
             // get incorrectly duplicated when the thread is sleeping.
             if (unresponsiveDuration_ms.isSome()) {
-              CorePS::CoreBlocksRingBuffer().PutObjects(
+              CorePS::CoreBuffer().PutObjects(
                   ProfileBufferEntry::Kind::UnresponsiveDurationMs,
                   *unresponsiveDuration_ms);
             }
@@ -3197,40 +3257,33 @@ void SamplerThread::Run() {
             // sample from `DoPeriodicSample` is complete, copy it into the
             // global buffer, otherwise add an empty one to satisfy the parser
             // that expects one.
-            auto state = localBlocksRingBuffer.GetState();
+            auto state = localBuffer.GetState();
             if (NS_WARN_IF(state.mClearedBlockCount !=
                            previousState.mClearedBlockCount)) {
               LOG("Stack sample too big for local storage, needed %u bytes",
-                  unsigned(
-                      state.mRangeEnd.ConvertToProfileBufferIndex() -
-                      previousState.mRangeEnd.ConvertToProfileBufferIndex()));
+                  unsigned(state.mRangeEnd - previousState.mRangeEnd));
               // There *must* be a CompactStack after a TimeBeforeCompactStack,
               // even an empty one.
-              CorePS::CoreBlocksRingBuffer().PutObjects(
+              CorePS::CoreBuffer().PutObjects(
                   ProfileBufferEntry::Kind::CompactStack,
-                  UniquePtr<BlocksRingBuffer>(nullptr));
-            } else if (state.mRangeEnd.ConvertToProfileBufferIndex() -
-                           previousState.mRangeEnd
-                               .ConvertToProfileBufferIndex() >=
-                       CorePS::CoreBlocksRingBuffer().BufferLength()->Value()) {
+                  UniquePtr<ProfileChunkedBuffer>(nullptr));
+            } else if (state.mRangeEnd - previousState.mRangeEnd >=
+                       *CorePS::CoreBuffer().BufferLength()) {
               LOG("Stack sample too big for profiler storage, needed %u bytes",
-                  unsigned(
-                      state.mRangeEnd.ConvertToProfileBufferIndex() -
-                      previousState.mRangeEnd.ConvertToProfileBufferIndex()));
+                  unsigned(state.mRangeEnd - previousState.mRangeEnd));
               // There *must* be a CompactStack after a TimeBeforeCompactStack,
               // even an empty one.
-              CorePS::CoreBlocksRingBuffer().PutObjects(
+              CorePS::CoreBuffer().PutObjects(
                   ProfileBufferEntry::Kind::CompactStack,
-                  UniquePtr<BlocksRingBuffer>(nullptr));
+                  UniquePtr<ProfileChunkedBuffer>(nullptr));
             } else {
-              CorePS::CoreBlocksRingBuffer().PutObjects(
-                  ProfileBufferEntry::Kind::CompactStack,
-                  localBlocksRingBuffer);
+              CorePS::CoreBuffer().PutObjects(
+                  ProfileBufferEntry::Kind::CompactStack, localBuffer);
             }
 
             // Clean up for the next run.
-            localBlocksRingBuffer.Clear();
-            previousState = localBlocksRingBuffer.GetState();
+            localBuffer.Clear();
+            previousState = localBuffer.GetState();
           }
         } else {
           samplingState = SamplingState::NoStackSamplingCompleted;
@@ -3245,6 +3298,11 @@ void SamplerThread::Run() {
         CorePS::Lul(lock)->MaybeShowStats();
 #endif
         TimeStamp threadsSampled = TimeStamp::NowUnfuzzed();
+
+        {
+          AUTO_PROFILER_STATS(Sampler_FulfillChunkRequests);
+          ActivePS::FulfillChunkRequests(lock);
+        }
 
         buffer.CollectOverheadStats(delta, lockAcquired - sampleStart,
                                     expiredMarkersCleaned - lockAcquired,
@@ -4035,7 +4093,7 @@ static void TriggerPollJSSamplingOnMainThread() {
     nsCOMPtr<nsIRunnable> task =
         NS_NewRunnableFunction("TriggerPollJSSamplingOnMainThread",
                                []() { PollJSSamplingForCurrentThread(); });
-    SystemGroup::Dispatch(TaskCategory::Other, task.forget());
+    SchedulerGroup::Dispatch(TaskCategory::Other, task.forget());
   }
 }
 
@@ -4312,7 +4370,7 @@ void profiler_ensure_started(PowerOfTwo32 aCapacity, double aInterval,
   }
 }
 
-static MOZ_MUST_USE SamplerThread* locked_profiler_stop(PSLockRef aLock) {
+[[nodiscard]] static SamplerThread* locked_profiler_stop(PSLockRef aLock) {
   LOG("locked_profiler_stop");
 
   MOZ_RELEASE_ASSERT(CorePS::Exists() && ActivePS::Exists(aLock));
@@ -4427,7 +4485,7 @@ bool profiler_is_paused() {
   return ActivePS::IsPaused(lock);
 }
 
-/* MOZ_MUST_USE */ bool profiler_callback_after_sampling(
+/* [[nodiscard]] */ bool profiler_callback_after_sampling(
     PostSamplingCallback&& aCallback) {
   LOG("profiler_callback_after_sampling");
 
@@ -4753,10 +4811,10 @@ UniqueProfilerBacktrace profiler_get_backtrace() {
 #endif
 
   // 65536 bytes should be plenty for a single backtrace.
-  auto bufferManager = MakeUnique<BlocksRingBuffer>(
-      BlocksRingBuffer::ThreadSafety::WithoutMutex);
-  auto buffer =
-      MakeUnique<ProfileBuffer>(*bufferManager, MakePowerOfTwo32<65536>());
+  auto bufferManager = MakeUnique<ProfileChunkedBuffer>(
+      ProfileChunkedBuffer::ThreadSafety::WithoutMutex,
+      MakeUnique<ProfileBufferChunkManagerSingle>(65536));
+  auto buffer = MakeUnique<ProfileBuffer>(*bufferManager);
 
   DoSyncSample(lock, *registeredThread, now, regs, *buffer.get());
 
@@ -4792,7 +4850,7 @@ static void racy_profiler_add_marker(const char* aMarkerName,
                          ? aPayload->GetStartTime()
                          : TimeStamp::NowUnfuzzed();
   TimeDuration delta = origin - CorePS::ProcessStartTime();
-  CorePS::CoreBlocksRingBuffer().PutObjects(
+  CorePS::CoreBuffer().PutObjects(
       ProfileBufferEntry::Kind::MarkerData, racyRegisteredThread->ThreadId(),
       WrapProfileBufferUnownedCString(aMarkerName),
       static_cast<uint32_t>(aCategoryPair), aPayload, delta.ToMilliseconds());
@@ -4913,7 +4971,7 @@ void profiler_add_marker_for_thread(int aThreadId,
                          ? aPayload->GetStartTime()
                          : TimeStamp::NowUnfuzzed();
   TimeDuration delta = origin - CorePS::ProcessStartTime();
-  CorePS::CoreBlocksRingBuffer().PutObjects(
+  CorePS::CoreBuffer().PutObjects(
       ProfileBufferEntry::Kind::MarkerData, aThreadId,
       WrapProfileBufferUnownedCString(aMarkerName),
       static_cast<uint32_t>(aCategoryPair), aPayload, delta.ToMilliseconds());

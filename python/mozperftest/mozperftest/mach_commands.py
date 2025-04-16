@@ -2,15 +2,14 @@
 # License, v. 2.0. If a copy of the MPL was not distributed with this
 # file, You can obtain one at http://mozilla.org/MPL/2.0/.
 from functools import partial
-
 from mach.decorators import CommandProvider, Command
 from mozbuild.base import MachCommandBase, MachCommandConditions as conditions
 
 
 def get_perftest_parser():
-    from mozperftest import get_parser
+    from mozperftest import PerftestArgumentParser
 
-    return get_parser
+    return PerftestArgumentParser
 
 
 @CommandProvider
@@ -22,13 +21,9 @@ class Perftest(MachCommandBase):
         description="Run any flavor of perftest",
         parser=get_perftest_parser,
     )
-    def run_perftest(
-        self, flavor="script", test_objects=None, resolve_tests=True, **kwargs
-    ):
-        from mozperftest import get_env, get_metadata
+    def run_perftest(self, **kwargs):
+        MachCommandBase._activate_virtualenv(self)
 
-        system, browser, metrics = get_env(self, flavor, test_objects, resolve_tests)
-        metadata = get_metadata(self, flavor, **kwargs)
+        from mozperftest.runner import run_tests
 
-        with system, browser, metrics:
-            metrics(browser(system(metadata)))
+        run_tests(mach_cmd=self, **kwargs)

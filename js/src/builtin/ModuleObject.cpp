@@ -23,6 +23,7 @@
 #include "vm/AsyncIteration.h"
 #include "vm/EqualityOperations.h"  // js::SameValue
 #include "vm/ModuleBuilder.h"       // js::ModuleBuilder
+#include "vm/PlainObject.h"         // js::PlainObject
 #include "vm/PromiseObject.h"       // js::PromiseObject
 #include "vm/SelfHosting.h"
 
@@ -385,10 +386,9 @@ ModuleNamespaceObject* ModuleNamespaceObject::create(
   RootedValue priv(cx, ObjectValue(*module));
   ProxyOptions options;
   options.setLazyProto(true);
-  options.setSingleton(true);
   Rooted<UniquePtr<IndirectBindingMap>> rootedBindings(cx, std::move(bindings));
   RootedObject object(
-      cx, NewProxyObject(cx, &proxyHandler, priv, nullptr, options));
+      cx, NewSingletonProxyObject(cx, &proxyHandler, priv, nullptr, options));
   if (!object) {
     return nullptr;
   }

@@ -694,7 +694,14 @@ class nsLayoutUtils {
      * frames that are in the root document (in the current process) return the
      * root scrollable frame for that document.
      */
-    SCROLLABLE_FIXEDPOS_FINDS_ROOT = 0x10
+    SCROLLABLE_FIXEDPOS_FINDS_ROOT = 0x10,
+    /**
+     * If the SCROLLABLE_STOP_AT_PAGE flag is set, then we stop searching
+     * for scrollable ancestors when seeing a nsPageFrame.  This can be used
+     * to avoid finding the viewport scroll frame in Print Preview (which
+     * would be undesirable as a 'position:sticky' container for content).
+     */
+    SCROLLABLE_STOP_AT_PAGE = 0x20,
   };
   /**
    * GetNearestScrollableFrame locates the first ancestor of aFrame
@@ -881,7 +888,7 @@ class nsLayoutUtils {
    * @param aPt the point, relative to the frame origin
    * @param aFlags some combination of FrameForPointOption.
    */
-  static nsIFrame* GetFrameForPoint(nsIFrame* aFrame, nsPoint aPt,
+  static nsIFrame* GetFrameForPoint(const nsIFrame* aFrame, nsPoint aPt,
                                     mozilla::EnumSet<FrameForPointOption> = {});
 
   /**
@@ -892,7 +899,7 @@ class nsLayoutUtils {
    * @param aOutFrames an array to add all the frames found
    * @param aFlags some combination of FrameForPointOption.
    */
-  static nsresult GetFramesForArea(nsIFrame* aFrame, const nsRect& aRect,
+  static nsresult GetFramesForArea(const nsIFrame* aFrame, const nsRect& aRect,
                                    nsTArray<nsIFrame*>& aOutFrames,
                                    mozilla::EnumSet<FrameForPointOption> = {});
 

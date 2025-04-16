@@ -79,6 +79,13 @@ class NotificationHandler {
   virtual ~NotificationHandler() = default;
 };
 
+struct WrHitResult {
+  layers::LayersId mLayersId;
+  layers::ScrollableLayerGuid::ViewID mScrollId;
+  gfx::CompositorHitTestInfo mHitInfo;
+  SideBits mSideBits;
+};
+
 class TransactionBuilder final {
  public:
   explicit TransactionBuilder(bool aUseSceneBuilderThread = true);
@@ -235,14 +242,9 @@ class WebRenderAPI final {
 
   wr::WindowId GetId() const { return mId; }
 
-  /// Do a non-blocking hit-testing query on a shared hit-testing information.
-  bool HitTest(const wr::WorldPoint& aPoint, wr::WrPipelineId& aOutPipelineId,
-               layers::ScrollableLayerGuid::ViewID& aOutScrollId,
-               gfx::CompositorHitTestInfo& aOutHitInfo, SideBits& aOutSideBits);
-
-  /// Do a non-blocking hit-testing query on a shared version of the hit testing
-  /// information.
-  ///
+  /// Do a non-blocking hit-testing query on a shared version of the hit
+  /// testing information.
+  std::vector<WrHitResult> HitTest(const wr::WorldPoint& aPoint);
 
   void SendTransaction(TransactionBuilder& aTxn);
 
@@ -277,6 +279,9 @@ class WebRenderAPI final {
   layers::SyncHandle GetSyncHandle() const { return mSyncHandle; }
 
   void Capture();
+
+  void ToggleCaptureSequence();
+
   void SetTransactionLogging(bool aValue);
 
   void SetCompositionRecorder(
@@ -320,6 +325,7 @@ class WebRenderAPI final {
   bool mUseANGLE;
   bool mUseDComp;
   bool mUseTripleBuffering;
+  bool mCaptureSequence;
   layers::SyncHandle mSyncHandle;
   wr::RenderRoot mRenderRoot;
 
@@ -421,14 +427,6 @@ class DisplayListBuilder final {
   void Finalize(layers::RenderRootDisplayListData& aOutTransaction);
 
   RenderRoot GetRenderRoot() const { return mRenderRoot; }
-  bool HasSubBuilder(RenderRoot aRenderRoot);
-  DisplayListBuilder& CreateSubBuilder(const wr::LayoutSize& aContentSize,
-                                       size_t aCapacity,
-                                       layers::DisplayItemCache* aCache,
-                                       RenderRoot aRenderRoot);
-  DisplayListBuilder& SubBuilder(RenderRoot aRenderRoot);
-
-  bool GetSendSubBuilderDisplayList(RenderRoot aRenderRoot) { return true; }
 
   Maybe<wr::WrSpatialId> PushStackingContext(
       const StackingContextParams& aParams, const wr::LayoutRect& aBounds,
@@ -440,8 +438,11 @@ class DisplayListBuilder final {
 
   wr::WrClipId DefineClip(
       const Maybe<wr::WrSpaceAndClip>& aParent, const wr::LayoutRect& aClipRect,
-      const nsTArray<wr::ComplexClipRegion>* aComplex = nullptr,
-      const wr::ImageMask* aMask = nullptr);
+      const nsTArray<wr::ComplexClipRegion>* aComplex = nullptr);
+
+  wr::WrClipId DefineImageMaskClip(const wr::ImageMask& aMask);
+  wr::WrClipId DefineRoundedRectClip(const wr::ComplexClipRegion& aComplex);
+  wr::WrClipId DefineRectClip(wr::LayoutRect aClipRect);
 
   wr::WrSpatialId DefineStickyFrame(const wr::LayoutRect& aContentRect,
                                     const float* aTopMargin,

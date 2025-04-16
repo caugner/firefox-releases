@@ -34,11 +34,10 @@ use rayon;
 use swgl_bindings::SwCompositor;
 use tracy_rs::register_thread_with_profiler;
 use webrender::{
-    api::units::*, api::*, set_profiler_hooks, ApiRecordingReceiver, AsyncPropertySampler, AsyncScreenshotHandle,
-    BinaryRecorder, Compositor, CompositorCapabilities, CompositorConfig, DebugFlags, Device, FastHashMap,
-    NativeSurfaceId, NativeSurfaceInfo, NativeTileId, PipelineInfo, ProfilerHooks, RecordedFrameHandle, Renderer,
-    RendererOptions, RendererStats, SceneBuilderHooks, ShaderPrecacheFlags, Shaders, ThreadListener, UploadMethod,
-    VertexUsageHint, WrShaders,
+    api::units::*, api::*, set_profiler_hooks, AsyncPropertySampler, AsyncScreenshotHandle, Compositor,
+    CompositorCapabilities, CompositorConfig, DebugFlags, Device, FastHashMap, NativeSurfaceId, NativeSurfaceInfo,
+    NativeTileId, PipelineInfo, ProfilerHooks, RecordedFrameHandle, Renderer, RendererOptions, RendererStats,
+    SceneBuilderHooks, ShaderPrecacheFlags, Shaders, ThreadListener, UploadMethod, VertexUsageHint, WrShaders,
 };
 
 #[cfg(target_os = "macos")]
@@ -503,13 +502,8 @@ extern "C" {
     fn is_in_main_thread() -> bool;
     fn is_glcontext_gles(glcontext_ptr: *mut c_void) -> bool;
     fn is_glcontext_angle(glcontext_ptr: *mut c_void) -> bool;
-    // Enables binary recording that can be used with `wrench replay`
-    // Outputs a wr-record-*.bin file for each window that is shown
-    // Note: wrench will panic if external images are used, they can
-    // be disabled in WebRenderBridgeParent::ProcessWebRenderCommands
-    // by commenting out the path that adds an external image ID
-    fn gfx_use_wrench() -> bool;
     fn gfx_wr_resource_path_override() -> *const c_char;
+    fn gfx_wr_use_optimized_shaders() -> bool;
     // TODO: make gfx_critical_error() work.
     // We still have problem to pass the error message from render/render_backend
     // thread to main thread now.
@@ -1142,6 +1136,8 @@ fn wr_device_new(gl_context: *mut c_void, pc: Option<&mut WrProgramCache>) -> De
         }
     };
 
+    let use_optimized_shaders = unsafe { gfx_wr_use_optimized_shaders() };
+
     let cached_programs = match pc {
         Some(cached_programs) => Some(Rc::clone(cached_programs.rc_get())),
         None => None,
@@ -1150,6 +1146,7 @@ fn wr_device_new(gl_context: *mut c_void, pc: Option<&mut WrProgramCache>) -> De
     Device::new(
         gl,
         resource_override_path,
+        use_optimized_shaders,
         upload_method,
         cached_programs,
         false,
@@ -1320,13 +1317,6 @@ pub extern "C" fn wr_window_new(
 ) -> bool {
     assert!(unsafe { is_in_render_thread() });
 
-    let recorder: Option<Box<dyn ApiRecordingReceiver>> = if unsafe { gfx_use_wrench() } {
-        let name = format!("wr-record-{}.bin", window_id.0);
-        Some(Box::new(BinaryRecorder::new(&PathBuf::from(name))))
-    } else {
-        None
-    };
-
     let native_gl = if unsafe { is_glcontext_gles(gl_context) } {
         unsafe { gl::GlesFns::load_with(|symbol| get_proc_address(gl_context, symbol)) }
     } else {
@@ -1406,7 +1396,6 @@ pub extern "C" fn wr_window_new(
         enable_subpixel_aa: cfg!(not(target_os = "android")),
         support_low_priority_transactions,
         allow_texture_swizzling,
-        recorder: recorder,
         blob_image_handler: Some(Box::new(Moz2dBlobImageHandler::new(
             workers.clone(),
             workers_low_priority.clone(),
@@ -1427,6 +1416,7 @@ pub extern "C" fn wr_window_new(
                 }
             }
         },
+        use_optimized_shaders: unsafe { gfx_wr_use_optimized_shaders() },
         renderer_id: Some(window_id.0),
         upload_method,
         scene_builder_hooks: Some(Box::new(APZCallbacks::new(window_id))),
@@ -2003,8 +1993,7 @@ pub extern "C" fn wr_resource_updates_add_raw_font(
     txn.add_raw_font(key, bytes.flush_into_vec(), index);
 }
 
-#[no_mangle]
-pub extern "C" fn wr_api_capture(dh: &mut DocumentHandle, path: *const c_char, bits_raw: u32) {
+fn generate_capture_path(path: *const c_char) -> Option<PathBuf> {
     use std::fs::{create_dir_all, File};
     use std::io::Write;
 
@@ -2053,12 +2042,34 @@ pub extern "C" fn wr_api_capture(dh: &mut DocumentHandle, path: *const c_char, b
         }
         Err(e) => {
             warn!("Unable to create path '{:?}' for capture: {:?}", path, e);
-            return;
+            return None;
         }
     }
 
-    let bits = CaptureBits::from_bits(bits_raw as _).unwrap();
-    dh.api.save_capture(path, bits);
+    Some(path)
+}
+
+#[no_mangle]
+pub extern "C" fn wr_api_capture(dh: &mut DocumentHandle, path: *const c_char, bits_raw: u32) {
+    if let Some(path) = generate_capture_path(path) {
+        let bits = CaptureBits::from_bits(bits_raw as _).unwrap();
+        dh.api.save_capture(path, bits);
+    }
+}
+
+#[no_mangle]
+pub extern "C" fn wr_api_start_capture_sequence(dh: &mut DocumentHandle, path: *const c_char, bits_raw: u32) {
+    if let Some(path) = generate_capture_path(path) {
+        let bits = CaptureBits::from_bits(bits_raw as _).unwrap();
+        dh.api.start_capture_sequence(path, bits);
+    }
+}
+
+#[no_mangle]
+pub extern "C" fn wr_api_stop_capture_sequence(dh: &mut DocumentHandle) {
+    let border = "--------------------------\n";
+    warn!("{} Stop capturing WR state\n{}", &border, &border);
+    dh.api.stop_capture_sequence();
 }
 
 #[no_mangle]
@@ -2421,14 +2432,12 @@ pub extern "C" fn wr_dp_define_clip_with_parent_clip(
     clip_rect: LayoutRect,
     complex: *const ComplexClipRegion,
     complex_count: usize,
-    mask: *const ImageMask,
 ) -> WrClipId {
     wr_dp_define_clip_impl(
         &mut state.frame_builder,
         parent.to_webrender(state.pipeline_id),
         clip_rect,
         unsafe { make_slice(complex, complex_count) },
-        unsafe { mask.as_ref() }.map(|m| *m),
     )
 }
 
@@ -2439,14 +2448,12 @@ pub extern "C" fn wr_dp_define_clip_with_parent_clip_chain(
     clip_rect: LayoutRect,
     complex: *const ComplexClipRegion,
     complex_count: usize,
-    mask: *const ImageMask,
 ) -> WrClipId {
     wr_dp_define_clip_impl(
         &mut state.frame_builder,
         parent.to_webrender(state.pipeline_id),
         clip_rect,
         unsafe { make_slice(complex, complex_count) },
-        unsafe { mask.as_ref() }.map(|m| *m),
     )
 }
 
@@ -2455,12 +2462,62 @@ fn wr_dp_define_clip_impl(
     parent: SpaceAndClipInfo,
     clip_rect: LayoutRect,
     complex_regions: &[ComplexClipRegion],
-    mask: Option<ImageMask>,
 ) -> WrClipId {
     debug_assert!(unsafe { is_in_main_thread() });
     let clip_id = frame_builder
         .dl_builder
-        .define_clip(&parent, clip_rect, complex_regions.iter().cloned(), mask);
+        .define_clip(&parent, clip_rect, complex_regions.iter().cloned());
+    WrClipId::from_webrender(clip_id)
+}
+
+#[no_mangle]
+pub extern "C" fn wr_dp_define_image_mask_clip_with_parent_clip_chain(
+    state: &mut WrState,
+    parent: &WrSpaceAndClipChain,
+    mask: ImageMask,
+) -> WrClipId {
+    debug_assert!(unsafe { is_in_main_thread() });
+
+    let clip_id = state
+        .frame_builder
+        .dl_builder
+        .define_clip_image_mask(&parent.to_webrender(state.pipeline_id), mask);
+    WrClipId::from_webrender(clip_id)
+}
+
+#[no_mangle]
+pub extern "C" fn wr_dp_define_rounded_rect_clip_with_parent_clip_chain(
+    state: &mut WrState,
+    parent: &WrSpaceAndClipChain,
+    complex: ComplexClipRegion,
+) -> WrClipId {
+    debug_assert!(unsafe { is_in_main_thread() });
+
+    let clip_id = state
+        .frame_builder
+        .dl_builder
+        .define_clip_rounded_rect(
+            &parent.to_webrender(state.pipeline_id),
+            complex,
+        );
+    WrClipId::from_webrender(clip_id)
+}
+
+#[no_mangle]
+pub extern "C" fn wr_dp_define_rect_clip_with_parent_clip_chain(
+    state: &mut WrState,
+    parent: &WrSpaceAndClipChain,
+    clip_rect: LayoutRect,
+) -> WrClipId {
+    debug_assert!(unsafe { is_in_main_thread() });
+
+    let clip_id = state
+        .frame_builder
+        .dl_builder
+        .define_clip_rect(
+            &parent.to_webrender(state.pipeline_id),
+            clip_rect,
+        );
     WrClipId::from_webrender(clip_id)
 }
 
@@ -2511,8 +2568,6 @@ pub extern "C" fn wr_dp_define_scroll_layer(
         Some(ExternalScrollId(external_scroll_id, state.pipeline_id)),
         content_rect,
         clip_rect,
-        vec![],
-        None,
         ScrollSensitivity::Script,
         // TODO(gw): We should also update the Gecko-side APIs to provide
         //           this as a vector rather than a point.
@@ -3590,34 +3645,30 @@ pub extern "C" fn wr_clear_item_tag(state: &mut WrState) {
     state.current_tag = None;
 }
 
+#[repr(C)]
+pub struct HitResult {
+    pipeline_id: WrPipelineId,
+    scroll_id: u64,
+    hit_info: u16,
+}
+
 #[no_mangle]
-pub extern "C" fn wr_api_hit_test(
-    dh: &mut DocumentHandle,
-    point: WorldPoint,
-    out_pipeline_id: &mut WrPipelineId,
-    out_scroll_id: &mut u64,
-    out_hit_info: &mut u16,
-) -> bool {
+pub extern "C" fn wr_api_hit_test(dh: &mut DocumentHandle, point: WorldPoint, out_results: &mut ThinVec<HitResult>) {
     dh.ensure_hit_tester();
 
     let result = dh
         .hit_tester
         .as_ref()
         .unwrap()
-        .hit_test(None, point, HitTestFlags::empty());
+        .hit_test(None, point, HitTestFlags::FIND_ALL);
 
     for item in &result.items {
-        // For now we should never be getting results back for which the tag is
-        // 0 (== CompositorHitTestInvisibleToHit). In the future if we allow this,
-        // we'll want to |continue| on the loop in this scenario.
-        debug_assert!(item.tag.1 != 0);
-        *out_pipeline_id = item.pipeline;
-        *out_scroll_id = item.tag.0;
-        *out_hit_info = item.tag.1;
-        return true;
+        out_results.push(HitResult {
+            pipeline_id: item.pipeline,
+            scroll_id: item.tag.0,
+            hit_info: item.tag.1,
+        });
     }
-
-    false
 }
 
 pub type VecU8 = Vec<u8>;
@@ -3643,8 +3694,8 @@ extern "C" {
         format: ImageFormat,
         render_rect: &LayoutIntRect,
         visible_rect: &DeviceIntRect,
-        tile_size: Option<&u16>,
-        tile_offset: Option<&TileOffset>,
+        tile_size: u16,
+        tile_offset: &TileOffset,
         dirty_rect: Option<&LayoutIntRect>,
         output: MutByteSlice,
     ) -> bool;

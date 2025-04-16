@@ -460,6 +460,7 @@ const JSON_FIELDS = Object.freeze([
   "rootURI",
   "runInSafeMode",
   "signedState",
+  "signedDate",
   "startupData",
   "telemetryKey",
   "type",
@@ -551,6 +552,7 @@ class XPIState {
       rootURI: this.rootURI,
       runInSafeMode: this.runInSafeMode,
       signedState: this.signedState,
+      signedDate: this.signedDate,
       telemetryKey: this.telemetryKey,
       version: this.version,
     };
@@ -639,6 +641,7 @@ class XPIState {
     this.dependencies = aDBAddon.dependencies;
     this.runInSafeMode = canRunInSafeMode(aDBAddon);
     this.signedState = aDBAddon.signedState;
+    this.signedDate = aDBAddon.signedDate;
     this.file = aDBAddon._sourceBundle;
     this.rootURI = aDBAddon.rootURI;
 
@@ -697,6 +700,11 @@ class XPIStateLocation extends Map {
     }
 
     this._installler = undefined;
+  }
+
+  hasPrecedence(otherLocation) {
+    let locations = Array.from(XPIStates.locations());
+    return locations.indexOf(this) <= locations.indexOf(otherLocation);
   }
 
   get installer() {
@@ -2045,7 +2053,14 @@ class BootstrapScope {
     // from the manifest.
     let existingAddon = this.addon;
 
-    if (callUpdate) {
+    let extraArgs = {
+      oldVersion: existingAddon.version,
+      newVersion: newAddon.version,
+    };
+
+    // If we're updating an extension, we may need to read data to
+    // calculate permission changes.
+    if (callUpdate && existingAddon.type === "extension") {
       if (this.addon instanceof XPIState) {
         // The existing addon will be cached in the database.
         existingAddon = await XPIDatabase.getAddonByID(this.addon.id);
@@ -2057,16 +2072,14 @@ class BootstrapScope {
           newAddon.location
         );
       }
-    }
 
-    let extraArgs = {
-      oldVersion: existingAddon.version,
-      newVersion: newAddon.version,
-      userPermissions: newAddon.userPermissions,
-      optionalPermissions: newAddon.optionalPermissions,
-      oldPermissions: existingAddon.userPermissions,
-      oldOptionalPermissions: existingAddon.optionalPermissions,
-    };
+      Object.assign(extraArgs, {
+        userPermissions: newAddon.userPermissions,
+        optionalPermissions: newAddon.optionalPermissions,
+        oldPermissions: existingAddon.userPermissions,
+        oldOptionalPermissions: existingAddon.optionalPermissions,
+      });
+    }
 
     await this._uninstall(reason, callUpdate, extraArgs);
 
@@ -2394,7 +2407,9 @@ var XPIProvider = {
         let data = Cu.readUTF8URI(url);
         this.builtInAddons = JSON.parse(data);
       } catch (e) {
-        logger.debug("List of valid built-in add-ons could not be parsed.", e);
+        if (AppConstants.DEBUG) {
+          logger.debug("List of built-in add-ons is missing or invalid.", e);
+        }
       }
 
       this.registerBuiltinDictionaries();

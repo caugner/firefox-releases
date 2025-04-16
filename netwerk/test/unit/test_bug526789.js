@@ -1,6 +1,8 @@
 /* Any copyright is dedicated to the Public Domain.
    http://creativecommons.org/publicdomain/zero/1.0/ */
 
+"use strict";
+
 function run_test() {
   var cs = Cc["@mozilla.org/cookieService;1"].getService(Ci.nsICookieService);
   var cm = Cc["@mozilla.org/cookiemanager;1"].getService(Ci.nsICookieManager);
@@ -135,9 +137,14 @@ function run_test() {
   cm.removeAll();
 
   var uri = NetUtil.newURI("http://baz.com/");
+  const principal = Services.scriptSecurityManager.createContentPrincipal(
+    uri,
+    {}
+  );
+
   Assert.equal(uri.asciiHost, "baz.com");
   cs.setCookieString(uri, "foo=bar", null);
-  Assert.equal(cs.getCookieString(uri, null), "foo=bar");
+  Assert.equal(cs.getCookieStringForPrincipal(principal), "foo=bar");
 
   Assert.equal(cm.countCookiesFromHost(""), 0);
   do_check_throws(function() {
@@ -171,7 +178,12 @@ function run_test() {
   cm.removeAll();
 
   // test that an empty file:// host works
-  emptyuri = NetUtil.newURI("file:///");
+  let emptyuri = NetUtil.newURI("file:///");
+  const emptyprincipal = Services.scriptSecurityManager.createContentPrincipal(
+    emptyuri,
+    {}
+  );
+
   Assert.equal(emptyuri.asciiHost, "");
   Assert.equal(NetUtil.newURI("file://./").asciiHost, "");
   Assert.equal(NetUtil.newURI("file://foo.bar/").asciiHost, "");
@@ -184,7 +196,10 @@ function run_test() {
   cs.setCookieString(emptyuri, "foo5=bar; domain=bar.com", null);
   Assert.equal(getCookieCount(), 2);
 
-  Assert.equal(cs.getCookieString(emptyuri, null), "foo2=bar; foo3=bar");
+  Assert.equal(
+    cs.getCookieStringForPrincipal(emptyprincipal),
+    "foo2=bar; foo3=bar"
+  );
 
   Assert.equal(cm.countCookiesFromHost("baz.com"), 0);
   Assert.equal(cm.countCookiesFromHost(""), 2);

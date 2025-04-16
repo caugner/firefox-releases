@@ -7,6 +7,7 @@
 #ifndef mozilla_dom_WindowContext_h
 #define mozilla_dom_WindowContext_h
 
+#include "mozilla/Span.h"
 #include "mozilla/dom/MaybeDiscarded.h"
 #include "mozilla/dom/SyncedContext.h"
 #include "mozilla/net/NeckoChannelParams.h"
@@ -14,10 +15,17 @@
 namespace mozilla {
 namespace dom {
 
+class WindowGlobalParent;
+
 #define MOZ_EACH_WC_FIELD(FIELD)                                       \
   FIELD(OuterWindowId, uint64_t)                                       \
   FIELD(CookieJarSettings, Maybe<mozilla::net::CookieJarSettingsArgs>) \
-  FIELD(HasStoragePermission, bool)
+  /* Whether the given window hierarchy is third party. See            \
+   * ThirdPartyUtil::IsThirdPartyWindow for details */                 \
+  FIELD(IsThirdPartyWindow, bool)                                      \
+  /* Whether this window's channel has been marked as a third-party    \
+   * tracking resource */                                              \
+  FIELD(IsThirdPartyTrackingResourceWindow, bool)
 
 class WindowContext : public nsISupports, public nsWrapperCache {
   MOZ_DECL_SYNCED_CONTEXT(WindowContext, MOZ_EACH_WC_FIELD)
@@ -36,6 +44,10 @@ class WindowContext : public nsISupports, public nsWrapperCache {
   uint64_t OuterWindowId() const { return GetOuterWindowId(); }
   bool IsDiscarded() const { return mIsDiscarded; }
 
+  bool IsCached() const;
+
+  Span<RefPtr<BrowsingContext>> Children() { return mChildren; }
+
   // Cast this object to it's parent-process canonical form.
   WindowGlobalParent* Canonical();
 
@@ -50,6 +62,12 @@ class WindowContext : public nsISupports, public nsWrapperCache {
     uint64_t mBrowsingContextId;
 
     FieldTuple mFields;
+
+    bool operator==(const IPCInitializer& aOther) const {
+      return mInnerWindowId == aOther.mInnerWindowId &&
+             mBrowsingContextId == aOther.mBrowsingContextId &&
+             mFields == aOther.mFields;
+    }
   };
   IPCInitializer GetIPCInitializer() {
     return {mInnerWindowId, mBrowsingContext->Id(), mFields.Fields()};
@@ -66,6 +84,11 @@ class WindowContext : public nsISupports, public nsWrapperCache {
   void Init();
 
  private:
+  friend class BrowsingContext;
+
+  void AppendChildBrowsingContext(BrowsingContext* aBrowsingContext);
+  void RemoveChildBrowsingContext(BrowsingContext* aBrowsingContext);
+
   // Send a given `BaseTransaction` object to the correct remote.
   void SendCommitTransaction(ContentParent* aParent,
                              const BaseTransaction& aTxn, uint64_t aEpoch);
@@ -84,17 +107,28 @@ class WindowContext : public nsISupports, public nsWrapperCache {
     return true;
   }
 
-  bool CanSet(FieldIndex<IDX_HasStoragePermission>, const bool& aValue,
-              ContentParent* aSource) {
-    return true;
-  }
+  bool CanSet(FieldIndex<IDX_IsThirdPartyWindow>,
+              const bool& IsThirdPartyWindow, ContentParent* aSource);
+  bool CanSet(FieldIndex<IDX_IsThirdPartyTrackingResourceWindow>,
+              const bool& aIsThirdPartyTrackingResourceWindow,
+              ContentParent* aSource);
 
   // Overload `DidSet` to get notifications for a particular field being set.
+  //
+  // You can also overload the variant that gets the old value if you need it.
   template <size_t I>
   void DidSet(FieldIndex<I>) {}
+  template <size_t I, typename T>
+  void DidSet(FieldIndex<I>, T&& aOldValue) {}
 
   uint64_t mInnerWindowId;
   RefPtr<BrowsingContext> mBrowsingContext;
+
+  // --- NEVER CHANGE `mChildren` DIRECTLY! ---
+  // Changes to this list need to be synchronized to the list within our
+  // `mBrowsingContext`, and should only be performed through the
+  // `AppendChildBrowsingContext` and `RemoveChildBrowsingContext` methods.
+  nsTArray<RefPtr<BrowsingContext>> mChildren;
 
   bool mIsDiscarded = false;
 };

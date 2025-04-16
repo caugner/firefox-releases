@@ -17,8 +17,10 @@
 
 web-platform-tests:
     - web-platform-tests
+    - web-platform-tests-backlog
     - web-platform-tests-crashtest
     - web-platform-tests-reftest
+    - web-platform-tests-reftest-backlog
     - web-platform-tests-wdspec
 
 web-platform-tests-wdspec-headless:
@@ -81,6 +83,7 @@ raptor-firefox:
     - raptor-tp6-8-firefox
     - raptor-tp6-9-firefox
     - raptor-tp6-10-firefox
+    - raptor-tp6-11-firefox
     - raptor-tp6-binast-1-firefox
     - raptor-speedometer-firefox
     - raptor-stylebench-firefox
@@ -90,6 +93,12 @@ raptor-firefox:
     - raptor-sunspider-firefox
     - raptor-wasm-godot-firefox
     - raptor-youtube-playback-firefox
+    - raptor-youtube-playback-av1-sfr-firefox
+    - raptor-youtube-playback-h264-sfr-firefox
+    - raptor-youtube-playback-vp9-sfr-firefox
+    - raptor-youtube-playback-widevine-hfr-firefox
+    - raptor-youtube-playback-widevine-h264-sfr-firefox
+    - raptor-youtube-playback-widevine-vp9-sfr-firefox
     - raptor-tp6-1-firefox-cold
     - raptor-tp6-2-firefox-cold
     - raptor-tp6-3-firefox-cold
@@ -120,6 +129,7 @@ raptor-firefox:
     - raptor-tp6-28-firefox-cold
     - raptor-tp6-29-firefox-cold
     - raptor-tp6-30-firefox-cold
+    - raptor-tp6-31-firefox-cold
     - raptor-ares6-firefox
     - raptor-jetstream2-firefox
 
@@ -134,6 +144,7 @@ raptor-chrome:
     - raptor-tp6-8-chrome
     - raptor-tp6-9-chrome
     - raptor-tp6-10-chrome
+    - raptor-tp6-11-chrome
     - raptor-speedometer-chrome
     - raptor-stylebench-chrome
     - raptor-motionmark-htmlsuite-chrome
@@ -171,9 +182,16 @@ raptor-chrome:
     - raptor-tp6-28-chrome-cold
     - raptor-tp6-29-chrome-cold
     - raptor-tp6-30-chrome-cold
+    - raptor-tp6-31-chrome-cold
     - raptor-ares6-chrome
     - raptor-jetstream2-chrome
     - raptor-youtube-playback-chrome
+    - raptor-youtube-playback-av1-sfr-chrome
+    - raptor-youtube-playback-h264-sfr-chrome
+    - raptor-youtube-playback-vp9-sfr-chrome
+    - raptor-youtube-playback-widevine-hfr-chrome
+    - raptor-youtube-playback-widevine-h264-sfr-chrome
+    - raptor-youtube-playback-widevine-vp9-sfr-chrome
 
 raptor-profiling:
     - raptor-tp6-1-firefox-profiling
@@ -186,6 +204,7 @@ raptor-profiling:
     - raptor-tp6-8-firefox-profiling
     - raptor-tp6-9-firefox-profiling
     - raptor-tp6-10-firefox-profiling
+    - raptor-tp6-11-firefox-profiling
     - raptor-speedometer-firefox-profiling
     - raptor-stylebench-firefox-profiling
     - raptor-motionmark-htmlsuite-firefox-profiling
@@ -208,6 +227,7 @@ raptor-chromium:
     - raptor-tp6-8-chromium
     - raptor-tp6-9-chromium
     - raptor-tp6-10-chromium
+    - raptor-tp6-11-chromium
     - raptor-speedometer-chromium
     - raptor-stylebench-chromium
     - raptor-motionmark-htmlsuite-chromium
@@ -245,6 +265,7 @@ raptor-chromium:
     - raptor-tp6-28-chromium-cold
     - raptor-tp6-29-chromium-cold
     - raptor-tp6-30-chromium-cold
+    - raptor-tp6-31-chromium-cold
     - raptor-ares6-chromium
     - raptor-jetstream2-chromium
 
@@ -510,8 +531,10 @@ macosx1014-64-tests:
     - test-verify-gpu
     - test-verify-wpt
     - web-platform-tests
+    - web-platform-tests-backlog
     - web-platform-tests-crashtest
     - web-platform-tests-reftest
+    - web-platform-tests-reftest-backlog
     - web-platform-tests-wdspec
     - xpcshell
 
@@ -545,7 +568,6 @@ android-x86_64-tests:
     - crashtest
     - geckoview-junit
     - gtest
-    - mochitest-chrome-gpu
     - mochitest-media
     - mochitest-plain
     - mochitest-plain-gpu
@@ -556,8 +578,10 @@ android-x86_64-tests:
     - reftest
     - test-verify
     - web-platform-tests
+    - web-platform-tests-backlog
     - web-platform-tests-crashtest
     - web-platform-tests-reftest
+    - web-platform-tests-reftest-backlog
     - xpcshell
 
 android-x86_64-qr-tests:
@@ -590,8 +614,8 @@ android-hw-aarch64-debug-unittests:
     - mochitest-webgl2-core
 
 android-hw-aarch64-qr:
-    - crashtest
-    - reftest
+    - crashtest-qr
+    - reftest-qr
 
 android-hw-arm7-raptor:
     - raptor-speedometer-geckoview
@@ -599,8 +623,26 @@ android-hw-arm7-raptor:
     - raptor-speedometer-fenix
     - raptor-speedometer-fennec68
     - raptor-youtube-playback-fenix
+    - raptor-youtube-playback-av1-sfr-fenix
+    - raptor-youtube-playback-h264-sfr-fenix
+    - raptor-youtube-playback-vp9-sfr-fenix
+    - raptor-youtube-playback-widevine-hfr-fenix
+    - raptor-youtube-playback-widevine-h264-sfr-fenix
+    - raptor-youtube-playback-widevine-vp9-sfr-fenix
     - raptor-youtube-playback-geckoview
+    - raptor-youtube-playback-av1-sfr-geckoview
+    - raptor-youtube-playback-h264-sfr-geckoview
+    - raptor-youtube-playback-vp9-sfr-geckoview
+    - raptor-youtube-playback-widevine-hfr-geckoview
+    - raptor-youtube-playback-widevine-h264-sfr-geckoview
+    - raptor-youtube-playback-widevine-vp9-sfr-geckoview
     - raptor-youtube-playback-fennec68
+    - raptor-youtube-playback-av1-sfr-fennec68
+    - raptor-youtube-playback-h264-sfr-fennec68
+    - raptor-youtube-playback-vp9-sfr-fennec68
+    - raptor-youtube-playback-widevine-hfr-fennec68
+    - raptor-youtube-playback-widevine-h264-sfr-fennec68
+    - raptor-youtube-playback-widevine-vp9-sfr-fennec68
     - raptor-tp6m-1-geckoview
     - raptor-tp6m-2-geckoview
     - raptor-tp6m-3-geckoview
@@ -739,8 +781,26 @@ android-hw-aarch64-raptor:
     - raptor-speedometer-fenix
     - raptor-speedometer-fennec68
     - raptor-youtube-playback-fenix
+    - raptor-youtube-playback-av1-sfr-fenix
+    - raptor-youtube-playback-h264-sfr-fenix
+    - raptor-youtube-playback-vp9-sfr-fenix
+    - raptor-youtube-playback-widevine-hfr-fenix
+    - raptor-youtube-playback-widevine-h264-sfr-fenix
+    - raptor-youtube-playback-widevine-vp9-sfr-fenix
     - raptor-youtube-playback-geckoview
+    - raptor-youtube-playback-av1-sfr-geckoview
+    - raptor-youtube-playback-h264-sfr-geckoview
+    - raptor-youtube-playback-vp9-sfr-geckoview
+    - raptor-youtube-playback-widevine-hfr-geckoview
+    - raptor-youtube-playback-widevine-h264-sfr-geckoview
+    - raptor-youtube-playback-widevine-vp9-sfr-geckoview
     - raptor-youtube-playback-fennec68
+    - raptor-youtube-playback-av1-sfr-fennec68
+    - raptor-youtube-playback-h264-sfr-fennec68
+    - raptor-youtube-playback-vp9-sfr-fennec68
+    - raptor-youtube-playback-widevine-hfr-fennec68
+    - raptor-youtube-playback-widevine-h264-sfr-fennec68
+    - raptor-youtube-playback-widevine-vp9-sfr-fennec68
     - raptor-tp6m-1-geckoview
     - raptor-tp6m-2-geckoview
     - raptor-tp6m-3-geckoview
@@ -937,13 +997,15 @@ android-hw-aarch64-raptor-cpu-memory-power:
 
 android-hw-aarch64-browsertime:
     - browsertime-tp6m
+    - browsertime-tp6m-live
     - browsertime-tp6m-profiling
-    - browsertime-benchmark-speedometer
+    - browsertime-speedometer-mobile
 
 android-hw-arm7-browsertime:
     - browsertime-tp6m
+    - browsertime-tp6m-live
     - browsertime-tp6m-profiling
-    - browsertime-benchmark-speedometer
+    - browsertime-speedometer-mobile
 
 linux-tsan-tests:
     - mochitest-plain

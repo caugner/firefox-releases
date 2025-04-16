@@ -67,6 +67,13 @@ Once all the dependencies have been installed, run:
 which will check for dependencies and start the build.
 This will take a while; a few minutes to a few hours depending on your hardware.
 
+.. note::
+
+    The default build is a compiled build with optimizations. Check out the
+    `mozconfig file documentation <https://developer.mozilla.org/en-US/docs/Mozilla/Developer_guide/Build_Instructions/Configuring_Build_Options>`__
+    to see other build options. If you don't plan to change C++ or Rust code,
+    an :ref:`artifact build <Artifact builds>` will be faster.
+
 To run it:
 
 .. code-block:: shell
@@ -241,6 +248,11 @@ The landing procedure will automatically close the review and the bug.
 
 `More
 information <https://developer.mozilla.org/docs/Mozilla/Developer_guide/How_to_Submit_a_Patch#Submitting_the_patch>`__
+
+Contributing to GeckoView
+-------------------------
+
+GeckoView information and contribution docs live in `geckoview.dev <https://geckoview.dev>`__.
 
 More documentation about contribution
 -------------------------------------

@@ -1,11 +1,15 @@
+use crate::context_stack::{
+    BindingInfo, BindingKind, BindingsIndex, BreakOrContinueIndex, ContextMetadata, ControlInfo,
+};
 use crate::declaration_kind::DeclarationKind;
 use crate::early_errors::*;
 use crate::error::{ParseError, Result};
 use crate::Token;
 use ast::{
     arena,
-    source_atom_set::{CommonSourceAtomSetIndices, SourceAtomSet, SourceAtomSetIndex},
+    source_atom_set::{CommonSourceAtomSetIndices, SourceAtomSet},
     source_location_accessor::SourceLocationAccessor,
+    source_slice_list::SourceSliceList,
     types::*,
     SourceLocation,
 };
@@ -13,85 +17,14 @@ use bumpalo::{vec, Bump};
 use std::cell::RefCell;
 use std::rc::Rc;
 
-// The kind of BindingIdentifier found while parsing.
-//
-// Given we don't yet have the context stack, at the point of finding
-// a BindingIdentifier, we don't know what kind of binding it is.
-// So it's marked as `Unknown`.
-//
-// Once the parser reaches the end of a declaration, bindings found in the
-// range are marked as corresponding kind.
-//
-// This is a separate enum than `DeclarationKind` for the following reason:
-//   * `DeclarationKind` is determined only when the parser reaches the end of
-//     the entire context (also because we don't have context stack), not each
-//     declaration
-//   * As long as `BindingKind` is known for each binding, we can map it to
-//     `DeclarationKind`
-//   * `DeclarationKind::CatchParameter` and some others don't to be marked
-//     this way, because `AstBuilder` knows where they are in the `bindings`
-//     vector.
-#[derive(Debug, PartialEq, Clone, Copy)]
-enum BindingKind {
-    // The initial state.
-    // BindingIdentifier is found, and haven't yet marked as any kind.
-    Unknown,
-
-    // BindingIdentifier is inside VariableDeclaration.
-    Var,
-
-    // BindingIdentifier is the name of FunctionDeclaration.
-    Function,
-
-    // BindingIdentifier is the name of GeneratorDeclaration,
-    // AsyncFunctionDeclaration, or AsyncGeneratorDeclaration.
-    AsyncOrGenerator,
-
-    // BindingIdentifier is inside LexicalDeclaration with let.
-    Let,
-
-    // BindingIdentifier is inside LexicalDeclaration with const.
-    Const,
-
-    // BindingIdentifier is the name of ClassDeclaration.
-    Class,
-}
-
-#[derive(Debug, PartialEq, Clone, Copy)]
-struct BindingInfo {
-    name: SourceAtomSetIndex,
-    // The offset of the BindingIdentifier in the source.
-    offset: usize,
-    kind: BindingKind,
-}
-
 pub struct AstBuilder<'alloc> {
     pub allocator: &'alloc Bump,
 
-    // The stack of information about BindingIdentifier.
-    //
-    // When the parser found BindingIdentifier, the information (`name` and
-    // `offset`) are noted to this vector, and when the parser determined what
-    // kind of binding it is, `kind` is updated.
-    //
-    // The bindings are sorted by offset.
-    //
-    // When the parser reaches the end of a scope, all bindings declared within
-    // that scope (not including nested scopes) are fed to an
-    // EarlyErrorsContext to detect Early Errors.
-    //
-    // When leaving a context that is not one of script/module/function,
-    // lexical items (`kind != BindingKind::Var`) in the corresponding range
-    // are removed, while non-lexical items (`kind == BindingKind::Var`) are
-    // left there, so that VariableDeclarations are propagated to the enclosing
-    // context.
-    //
-    // FIXME: Once the context stack gets implemented, this structure and
-    //        related methods should be removed and each declaration should be
-    //        fed directly to EarlyErrorsContext.
-    bindings: Vec<BindingInfo>,
+    context_metadata: ContextMetadata,
 
     atoms: Rc<RefCell<SourceAtomSet<'alloc>>>,
+
+    slices: Rc<RefCell<SourceSliceList<'alloc>>>,
 }
 
 pub trait AstBuilderDelegate<'alloc> {
@@ -99,16 +32,28 @@ pub trait AstBuilderDelegate<'alloc> {
 }
 
 impl<'alloc> AstBuilder<'alloc> {
-    pub fn new(allocator: &'alloc Bump, atoms: Rc<RefCell<SourceAtomSet<'alloc>>>) -> Self {
+    pub fn new(
+        allocator: &'alloc Bump,
+        atoms: Rc<RefCell<SourceAtomSet<'alloc>>>,
+        slices: Rc<RefCell<SourceSliceList<'alloc>>>,
+    ) -> Self {
         Self {
             allocator,
-            bindings: Vec::new(),
+            context_metadata: ContextMetadata::new(),
             atoms,
+            slices,
         }
     }
 
     pub fn alloc<T>(&self, value: T) -> arena::Box<'alloc, T> {
         arena::alloc(self.allocator, value)
+    }
+
+    pub fn alloc_with<F, T>(&self, gen: F) -> arena::Box<'alloc, T>
+    where
+        F: FnOnce() -> T,
+    {
+        arena::alloc_with(self.allocator, gen)
     }
 
     pub fn alloc_str(&self, s: &str) -> &'alloc str {
@@ -148,7 +93,7 @@ impl<'alloc> AstBuilder<'alloc> {
         token: arena::Box<'alloc, Token>,
     ) -> Result<'alloc, arena::Box<'alloc, Identifier>> {
         self.on_identifier_reference(&token)?;
-        Ok(self.alloc(self.identifier(token)))
+        Ok(self.alloc_with(|| self.identifier(token)))
     }
 
     // BindingIdentifier : Identifier
@@ -158,7 +103,7 @@ impl<'alloc> AstBuilder<'alloc> {
     ) -> Result<'alloc, arena::Box<'alloc, BindingIdentifier>> {
         self.on_binding_identifier(&token)?;
         let loc = token.loc;
-        Ok(self.alloc(BindingIdentifier {
+        Ok(self.alloc_with(|| BindingIdentifier {
             name: self.identifier(token),
             loc,
         }))
@@ -171,7 +116,7 @@ impl<'alloc> AstBuilder<'alloc> {
     ) -> Result<'alloc, arena::Box<'alloc, BindingIdentifier>> {
         self.on_binding_identifier(&token)?;
         let loc = token.loc;
-        Ok(self.alloc(BindingIdentifier {
+        Ok(self.alloc_with(|| BindingIdentifier {
             name: Identifier {
                 value: CommonSourceAtomSetIndices::yield_(),
                 loc,
@@ -187,7 +132,7 @@ impl<'alloc> AstBuilder<'alloc> {
     ) -> Result<'alloc, arena::Box<'alloc, BindingIdentifier>> {
         self.on_binding_identifier(&token)?;
         let loc = token.loc;
-        Ok(self.alloc(BindingIdentifier {
+        Ok(self.alloc_with(|| BindingIdentifier {
             name: Identifier {
                 value: CommonSourceAtomSetIndices::await_(),
                 loc,
@@ -198,12 +143,12 @@ impl<'alloc> AstBuilder<'alloc> {
 
     // LabelIdentifier : Identifier
     pub fn label_identifier(
-        &self,
+        &mut self,
         token: arena::Box<'alloc, Token>,
     ) -> Result<'alloc, arena::Box<'alloc, Label>> {
         self.on_label_identifier(&token)?;
         let loc = token.loc;
-        Ok(self.alloc(Label {
+        Ok(self.alloc_with(|| Label {
             value: token.value.as_atom(),
             loc,
         }))
@@ -215,7 +160,7 @@ impl<'alloc> AstBuilder<'alloc> {
         token: arena::Box<'alloc, Token>,
     ) -> arena::Box<'alloc, Expression<'alloc>> {
         let loc = token.loc;
-        self.alloc(Expression::ThisExpression { loc })
+        self.alloc_with(|| Expression::ThisExpression { loc })
     }
 
     // PrimaryExpression : IdentifierReference
@@ -224,10 +169,12 @@ impl<'alloc> AstBuilder<'alloc> {
         name: arena::Box<'alloc, Identifier>,
     ) -> arena::Box<'alloc, Expression<'alloc>> {
         let loc = name.loc;
-        self.alloc(Expression::IdentifierExpression(IdentifierExpression {
-            name: name.unbox(),
-            loc,
-        }))
+        self.alloc_with(|| {
+            Expression::IdentifierExpression(IdentifierExpression {
+                name: name.unbox(),
+                loc,
+            })
+        })
     }
 
     // PrimaryExpression : RegularExpressionLiteral
@@ -235,18 +182,49 @@ impl<'alloc> AstBuilder<'alloc> {
         &self,
         token: arena::Box<'alloc, Token>,
     ) -> arena::Box<'alloc, Expression<'alloc>> {
-        let pattern = token.value.as_atom();
-        let global: bool = false;
-        let ignore_case: bool = false;
-        let multi_line: bool = false;
-        let sticky: bool = false;
-        let unicode: bool = false;
+        let source = self.slices.borrow().get(token.value.as_slice());
+
+        debug_assert!(source.chars().nth(0).unwrap() == '/');
+
+        let end = source.rfind('/').unwrap();
+
+        let pattern = self.slices.borrow_mut().push(&source[1..end]);
+        let flags = &source[end + 1..];
+
+        let mut global: bool = false;
+        let mut ignore_case: bool = false;
+        let mut multi_line: bool = false;
+        let mut dot_all: bool = false;
+        let mut unicode: bool = false;
+        let mut sticky: bool = false;
+        for c in flags.chars() {
+            if c == 'g' {
+                global = true;
+            }
+            if c == 'i' {
+                ignore_case = true;
+            }
+            if c == 'm' {
+                multi_line = true;
+            }
+            if c == 's' {
+                dot_all = true;
+            }
+            if c == 'u' {
+                unicode = true;
+            }
+            if c == 'y' {
+                sticky = true;
+            }
+        }
+
         let loc = token.loc;
-        self.alloc(Expression::LiteralRegExpExpression {
+        self.alloc_with(|| Expression::LiteralRegExpExpression {
             pattern,
             global,
             ignore_case,
             multi_line,
+            dot_all,
             sticky,
             unicode,
             loc,
@@ -258,7 +236,7 @@ impl<'alloc> AstBuilder<'alloc> {
         &self,
         template_literal: arena::Box<'alloc, TemplateExpression<'alloc>>,
     ) -> arena::Box<'alloc, Expression<'alloc>> {
-        self.alloc(Expression::TemplateExpression(template_literal.unbox()))
+        self.alloc_with(|| Expression::TemplateExpression(template_literal.unbox()))
     }
 
     // PrimaryExpression : CoverParenthesizedExpressionAndArrowParameterList
@@ -285,7 +263,7 @@ impl<'alloc> AstBuilder<'alloc> {
         expression: arena::Box<'alloc, Expression<'alloc>>,
         close_token: arena::Box<'alloc, Token>,
     ) -> arena::Box<'alloc, CoverParenthesized<'alloc>> {
-        self.alloc(CoverParenthesized::Expression {
+        self.alloc_with(|| CoverParenthesized::Expression {
             expression,
             loc: SourceLocation::from_parts(open_token.loc, close_token.loc),
         })
@@ -356,7 +334,7 @@ impl<'alloc> AstBuilder<'alloc> {
                     name,
                     loc,
                 }),
-            ) => Ok(self.alloc(BindingIdentifier { name, loc })),
+            ) => Ok(self.alloc_with(|| BindingIdentifier { name, loc })),
 
             // ({...x.y} = dv) => {}
             _ => Err(ParseError::ObjectBindingPatternWithInvalidRest),
@@ -510,7 +488,7 @@ impl<'alloc> AstBuilder<'alloc> {
     ) -> Result<'alloc, arena::Box<'alloc, BindingIdentifier>> {
         Ok(match expression.unbox() {
             Expression::IdentifierExpression(IdentifierExpression { name, loc }) => {
-                self.alloc(BindingIdentifier { name, loc })
+                self.alloc_with(|| BindingIdentifier { name, loc })
             }
             _ => {
                 return Err(ParseError::ObjectBindingPatternWithInvalidRest);
@@ -601,7 +579,7 @@ impl<'alloc> AstBuilder<'alloc> {
                 let elements = self.array_elements_to_parameters(elements)?;
                 let rest = rest
                     .map(|expr| match self.expression_to_parameter(expr.unbox())? {
-                        Parameter::Binding(b) => Ok(self.alloc(b)),
+                        Parameter::Binding(b) => Ok(self.alloc_with(|| b)),
                         Parameter::BindingWithDefault(_) => {
                             Err(ParseError::ArrayBindingPatternWithInvalidRest)
                         }
@@ -700,7 +678,7 @@ impl<'alloc> AstBuilder<'alloc> {
                 }
             }
         }
-        Ok(self.alloc(FormalParameters { items, rest, loc }))
+        Ok(self.alloc_with(|| FormalParameters { items, rest, loc }))
     }
 
     // CoverParenthesizedExpressionAndArrowParameterList : `(` `)`
@@ -715,13 +693,13 @@ impl<'alloc> AstBuilder<'alloc> {
         rest: Option<arena::Box<'alloc, Binding<'alloc>>>,
         close_token: arena::Box<'alloc, Token>,
     ) -> arena::Box<'alloc, CoverParenthesized<'alloc>> {
-        self.alloc(CoverParenthesized::Parameters(self.alloc(
-            FormalParameters {
+        self.alloc_with(|| {
+            CoverParenthesized::Parameters(self.alloc_with(|| FormalParameters {
                 items: parameters,
                 rest: rest.map(|boxed| boxed.unbox()),
                 loc: SourceLocation::from_parts(open_token.loc, close_token.loc),
-            },
-        )))
+            }))
+        })
     }
 
     // Literal : NullLiteral
@@ -730,7 +708,7 @@ impl<'alloc> AstBuilder<'alloc> {
         token: arena::Box<'alloc, Token>,
     ) -> arena::Box<'alloc, Expression<'alloc>> {
         let loc = token.loc;
-        self.alloc(Expression::LiteralNullExpression { loc })
+        self.alloc_with(|| Expression::LiteralNullExpression { loc })
     }
 
     // Literal : BooleanLiteral
@@ -744,7 +722,7 @@ impl<'alloc> AstBuilder<'alloc> {
             s == CommonSourceAtomSetIndices::true_() || s == CommonSourceAtomSetIndices::false_()
         );
 
-        self.alloc(Expression::LiteralBooleanExpression {
+        self.alloc_with(|| Expression::LiteralBooleanExpression {
             value: s == CommonSourceAtomSetIndices::true_(),
             loc,
         })
@@ -760,12 +738,12 @@ impl<'alloc> AstBuilder<'alloc> {
         token: arena::Box<'alloc, Token>,
     ) -> Result<'alloc, arena::Box<'alloc, Expression<'alloc>>> {
         let loc = token.loc;
-        Ok(
-            self.alloc(Expression::LiteralNumericExpression(NumericLiteral {
+        Ok(self.alloc_with(|| {
+            Expression::LiteralNumericExpression(NumericLiteral {
                 value: Self::numeric_literal_value(token),
                 loc,
-            })),
-        )
+            })
+        }))
     }
 
     // Literal : NumericLiteral
@@ -793,7 +771,7 @@ impl<'alloc> AstBuilder<'alloc> {
             return Err(ParseError::NotImplemented("use strict directive"));
         }
 
-        Ok(self.alloc(Expression::LiteralStringExpression { value, loc }))
+        Ok(self.alloc_with(|| Expression::LiteralStringExpression { value, loc }))
     }
 
     // ArrayLiteral : `[` Elision? `]`
@@ -803,16 +781,18 @@ impl<'alloc> AstBuilder<'alloc> {
         elision: Option<arena::Box<'alloc, ArrayExpression<'alloc>>>,
         close_token: arena::Box<'alloc, Token>,
     ) -> arena::Box<'alloc, Expression<'alloc>> {
-        self.alloc(Expression::ArrayExpression(match elision {
-            None => ArrayExpression {
-                elements: self.new_vec(),
-                loc: SourceLocation::from_parts(open_token.loc, close_token.loc),
-            },
-            Some(mut array) => {
-                array.loc.set_range(open_token.loc, close_token.loc);
-                array.unbox()
-            }
-        }))
+        self.alloc_with(|| {
+            Expression::ArrayExpression(match elision {
+                None => ArrayExpression {
+                    elements: self.new_vec(),
+                    loc: SourceLocation::from_parts(open_token.loc, close_token.loc),
+                },
+                Some(mut array) => {
+                    array.loc.set_range(open_token.loc, close_token.loc);
+                    array.unbox()
+                }
+            })
+        })
     }
 
     // ArrayLiteral : `[` ElementList `]`
@@ -823,7 +803,7 @@ impl<'alloc> AstBuilder<'alloc> {
         close_token: arena::Box<'alloc, Token>,
     ) -> arena::Box<'alloc, Expression<'alloc>> {
         array.loc.set_range(open_token.loc, close_token.loc);
-        self.alloc(Expression::ArrayExpression(array.unbox()))
+        self.alloc_with(|| Expression::ArrayExpression(array.unbox()))
     }
 
     // ArrayLiteral : `[` ElementList `,` Elision? `]`
@@ -838,7 +818,7 @@ impl<'alloc> AstBuilder<'alloc> {
             self.append(&mut array.elements, &mut more.elements);
         }
         array.loc.set_range(open_token.loc, close_token.loc);
-        self.alloc(Expression::ArrayExpression(array.unbox()))
+        self.alloc_with(|| Expression::ArrayExpression(array.unbox()))
     }
 
     // ElementList : Elision? AssignmentExpression
@@ -848,7 +828,7 @@ impl<'alloc> AstBuilder<'alloc> {
         element: arena::Box<'alloc, Expression<'alloc>>,
     ) -> arena::Box<'alloc, ArrayExpression<'alloc>> {
         let mut array = elision.unwrap_or_else(|| {
-            self.alloc(ArrayExpression {
+            self.alloc_with(|| ArrayExpression {
                 elements: self.new_vec(),
                 // This will be overwritten once the enclosing array gets
                 // parsed.
@@ -869,7 +849,7 @@ impl<'alloc> AstBuilder<'alloc> {
         spread_element: arena::Box<'alloc, Expression<'alloc>>,
     ) -> arena::Box<'alloc, ArrayExpression<'alloc>> {
         let mut array = elision.unwrap_or_else(|| {
-            self.alloc(ArrayExpression {
+            self.alloc_with(|| ArrayExpression {
                 elements: self.new_vec(),
                 // This will be overwritten once the enclosing array gets
                 // parsed.
@@ -923,7 +903,7 @@ impl<'alloc> AstBuilder<'alloc> {
         token: arena::Box<'alloc, Token>,
     ) -> arena::Box<'alloc, ArrayExpression<'alloc>> {
         let loc = token.loc;
-        self.alloc(ArrayExpression {
+        self.alloc_with(|| ArrayExpression {
             elements: self.new_vec_single(ArrayExpressionElement::Elision { loc }),
             // This will be overwritten once the enclosing array gets parsed.
             loc: SourceLocation::default(),
@@ -955,10 +935,12 @@ impl<'alloc> AstBuilder<'alloc> {
         open_token: arena::Box<'alloc, Token>,
         close_token: arena::Box<'alloc, Token>,
     ) -> arena::Box<'alloc, Expression<'alloc>> {
-        self.alloc(Expression::ObjectExpression(ObjectExpression {
-            properties: self.new_vec(),
-            loc: SourceLocation::from_parts(open_token.loc, close_token.loc),
-        }))
+        self.alloc_with(|| {
+            Expression::ObjectExpression(ObjectExpression {
+                properties: self.new_vec(),
+                loc: SourceLocation::from_parts(open_token.loc, close_token.loc),
+            })
+        })
     }
 
     // ObjectLiteral : `{` PropertyDefinitionList `}`
@@ -970,7 +952,7 @@ impl<'alloc> AstBuilder<'alloc> {
         close_token: arena::Box<'alloc, Token>,
     ) -> arena::Box<'alloc, Expression<'alloc>> {
         object.loc.set_range(open_token.loc, close_token.loc);
-        self.alloc(Expression::ObjectExpression(object.unbox()))
+        self.alloc_with(|| Expression::ObjectExpression(object.unbox()))
     }
 
     // PropertyDefinitionList : PropertyDefinition
@@ -978,7 +960,7 @@ impl<'alloc> AstBuilder<'alloc> {
         &self,
         property: arena::Box<'alloc, ObjectProperty<'alloc>>,
     ) -> arena::Box<'alloc, ObjectExpression<'alloc>> {
-        self.alloc(ObjectExpression {
+        self.alloc_with(|| ObjectExpression {
             properties: self.new_vec_single(property),
             // This will be overwritten once the enclosing object gets parsed.
             loc: SourceLocation::default(),
@@ -1001,13 +983,15 @@ impl<'alloc> AstBuilder<'alloc> {
         name: arena::Box<'alloc, Identifier>,
     ) -> arena::Box<'alloc, ObjectProperty<'alloc>> {
         let loc = name.loc;
-        self.alloc(ObjectProperty::ShorthandProperty(ShorthandProperty {
-            name: IdentifierExpression {
-                name: name.unbox(),
+        self.alloc_with(|| {
+            ObjectProperty::ShorthandProperty(ShorthandProperty {
+                name: IdentifierExpression {
+                    name: name.unbox(),
+                    loc,
+                },
                 loc,
-            },
-            loc,
-        }))
+            })
+        })
     }
 
     // PropertyDefinition : PropertyName `:` AssignmentExpression
@@ -1018,13 +1002,13 @@ impl<'alloc> AstBuilder<'alloc> {
     ) -> arena::Box<'alloc, ObjectProperty<'alloc>> {
         let name_loc = name.get_loc();
         let expression_loc = expression.get_loc();
-        self.alloc(ObjectProperty::NamedObjectProperty(
-            NamedObjectProperty::DataProperty(DataProperty {
+        self.alloc_with(|| {
+            ObjectProperty::NamedObjectProperty(NamedObjectProperty::DataProperty(DataProperty {
                 property_name: name.unbox(),
                 expression,
                 loc: SourceLocation::from_parts(name_loc, expression_loc),
-            }),
-        ))
+            }))
+        })
     }
 
     // PropertyDefinition : MethodDefinition
@@ -1032,9 +1016,11 @@ impl<'alloc> AstBuilder<'alloc> {
         &self,
         method: arena::Box<'alloc, MethodDefinition<'alloc>>,
     ) -> arena::Box<'alloc, ObjectProperty<'alloc>> {
-        self.alloc(ObjectProperty::NamedObjectProperty(
-            NamedObjectProperty::MethodDefinition(method.unbox()),
-        ))
+        self.alloc_with(|| {
+            ObjectProperty::NamedObjectProperty(NamedObjectProperty::MethodDefinition(
+                method.unbox(),
+            ))
+        })
     }
 
     // PropertyDefinition : `...` AssignmentExpression
@@ -1042,7 +1028,7 @@ impl<'alloc> AstBuilder<'alloc> {
         &self,
         spread: arena::Box<'alloc, Expression<'alloc>>,
     ) -> arena::Box<'alloc, ObjectProperty<'alloc>> {
-        self.alloc(ObjectProperty::SpreadProperty(spread))
+        self.alloc_with(|| ObjectProperty::SpreadProperty(spread))
     }
 
     // LiteralPropertyName : IdentifierName
@@ -1056,12 +1042,7 @@ impl<'alloc> AstBuilder<'alloc> {
         }
 
         let loc = token.loc;
-        Ok(
-            self.alloc(PropertyName::StaticPropertyName(StaticPropertyName {
-                value,
-                loc,
-            })),
-        )
+        Ok(self.alloc_with(|| PropertyName::StaticPropertyName(StaticPropertyName { value, loc })))
     }
 
     // LiteralPropertyName : StringLiteral
@@ -1075,12 +1056,7 @@ impl<'alloc> AstBuilder<'alloc> {
         }
 
         let loc = token.loc;
-        Ok(
-            self.alloc(PropertyName::StaticPropertyName(StaticPropertyName {
-                value,
-                loc,
-            })),
-        )
+        Ok(self.alloc_with(|| PropertyName::StaticPropertyName(StaticPropertyName { value, loc })))
     }
 
     // LiteralPropertyName : NumericLiteral
@@ -1090,12 +1066,8 @@ impl<'alloc> AstBuilder<'alloc> {
     ) -> Result<'alloc, arena::Box<'alloc, PropertyName<'alloc>>> {
         let loc = token.loc;
         let value = Self::numeric_literal_value(token);
-        Ok(
-            self.alloc(PropertyName::StaticNumericPropertyName(NumericLiteral {
-                value,
-                loc,
-            })),
-        )
+        Ok(self
+            .alloc_with(|| PropertyName::StaticNumericPropertyName(NumericLiteral { value, loc })))
     }
 
     // LiteralPropertyName : NumericLiteral
@@ -1117,10 +1089,12 @@ impl<'alloc> AstBuilder<'alloc> {
         expression: arena::Box<'alloc, Expression<'alloc>>,
         close_token: arena::Box<'alloc, Token>,
     ) -> arena::Box<'alloc, PropertyName<'alloc>> {
-        self.alloc(PropertyName::ComputedPropertyName(ComputedPropertyName {
-            expression,
-            loc: SourceLocation::from_parts(open_token.loc, close_token.loc),
-        }))
+        self.alloc_with(|| {
+            PropertyName::ComputedPropertyName(ComputedPropertyName {
+                expression,
+                loc: SourceLocation::from_parts(open_token.loc, close_token.loc),
+            })
+        })
     }
 
     // CoverInitializedName : IdentifierReference Initializer
@@ -1143,7 +1117,7 @@ impl<'alloc> AstBuilder<'alloc> {
         token: arena::Box<'alloc, Token>,
     ) -> arena::Box<'alloc, TemplateExpression<'alloc>> {
         let loc = token.loc;
-        self.alloc(TemplateExpression {
+        self.alloc_with(|| TemplateExpression {
             tag: None,
             elements: self.new_vec_single(TemplateExpressionElement::TemplateElement(
                 TemplateElement {
@@ -1203,13 +1177,15 @@ impl<'alloc> AstBuilder<'alloc> {
         close_token: arena::Box<'alloc, Token>,
     ) -> arena::Box<'alloc, Expression<'alloc>> {
         let object_loc = object.get_loc();
-        self.alloc(Expression::MemberExpression(
-            MemberExpression::ComputedMemberExpression(ComputedMemberExpression {
-                object: ExpressionOrSuper::Expression(object),
-                expression,
-                loc: SourceLocation::from_parts(object_loc, close_token.loc),
-            }),
-        ))
+        self.alloc_with(|| {
+            Expression::MemberExpression(MemberExpression::ComputedMemberExpression(
+                ComputedMemberExpression {
+                    object: ExpressionOrSuper::Expression(object),
+                    expression,
+                    loc: SourceLocation::from_parts(object_loc, close_token.loc),
+                },
+            ))
+        })
     }
 
     // OptionalExpression : MemberExpression OptionalChain
@@ -1222,7 +1198,7 @@ impl<'alloc> AstBuilder<'alloc> {
     ) -> arena::Box<'alloc, Expression<'alloc>> {
         let object_loc = object.get_loc();
         let expression_loc = tail.get_loc();
-        self.alloc(Expression::OptionalExpression {
+        self.alloc_with(|| Expression::OptionalExpression {
             object: ExpressionOrSuper::Expression(object),
             tail,
             loc: SourceLocation::from_parts(object_loc, expression_loc),
@@ -1236,12 +1212,12 @@ impl<'alloc> AstBuilder<'alloc> {
         expression: arena::Box<'alloc, Expression<'alloc>>,
         close_token: arena::Box<'alloc, Token>,
     ) -> arena::Box<'alloc, Expression<'alloc>> {
-        self.alloc(Expression::OptionalChain(
-            OptionalChain::ComputedMemberExpressionTail {
+        self.alloc_with(|| {
+            Expression::OptionalChain(OptionalChain::ComputedMemberExpressionTail {
                 expression,
                 loc: SourceLocation::from_parts(start_token.loc, close_token.loc),
-            },
-        ))
+            })
+        })
     }
 
     // OptionalChain : `?.` Expression
@@ -1251,12 +1227,12 @@ impl<'alloc> AstBuilder<'alloc> {
         identifier_token: arena::Box<'alloc, Token>,
     ) -> arena::Box<'alloc, Expression<'alloc>> {
         let identifier_token_loc = identifier_token.loc;
-        self.alloc(Expression::OptionalChain(
-            OptionalChain::StaticMemberExpressionTail {
+        self.alloc_with(|| {
+            Expression::OptionalChain(OptionalChain::StaticMemberExpressionTail {
                 property: self.identifier_name(identifier_token),
                 loc: SourceLocation::from_parts(start_token.loc, identifier_token_loc),
-            },
-        ))
+            })
+        })
     }
 
     // OptionalChain : `?.` Arguments
@@ -1266,12 +1242,12 @@ impl<'alloc> AstBuilder<'alloc> {
         arguments: arena::Box<'alloc, Arguments<'alloc>>,
     ) -> arena::Box<'alloc, Expression<'alloc>> {
         let arguments_loc = arguments.loc;
-        self.alloc(Expression::OptionalChain(
-            OptionalChain::CallExpressionTail {
+        self.alloc_with(|| {
+            Expression::OptionalChain(OptionalChain::CallExpressionTail {
                 arguments: arguments.unbox(),
                 loc: SourceLocation::from_parts(start_token.loc, arguments_loc),
-            },
-        ))
+            })
+        })
     }
 
     // OptionalChain : `?.` TemplateLiteral
@@ -1289,13 +1265,15 @@ impl<'alloc> AstBuilder<'alloc> {
         close_token: arena::Box<'alloc, Token>,
     ) -> arena::Box<'alloc, Expression<'alloc>> {
         let object_loc = object.get_loc();
-        self.alloc(Expression::OptionalChain(
-            OptionalChain::ComputedMemberExpression(ComputedMemberExpression {
-                object: ExpressionOrSuper::Expression(object),
-                expression,
-                loc: SourceLocation::from_parts(object_loc, close_token.loc),
-            }),
-        ))
+        self.alloc_with(|| {
+            Expression::OptionalChain(OptionalChain::ComputedMemberExpression(
+                ComputedMemberExpression {
+                    object: ExpressionOrSuper::Expression(object),
+                    expression,
+                    loc: SourceLocation::from_parts(object_loc, close_token.loc),
+                },
+            ))
+        })
     }
 
     // OptionalChain : OptionalChain `.` Expression
@@ -1306,13 +1284,15 @@ impl<'alloc> AstBuilder<'alloc> {
     ) -> arena::Box<'alloc, Expression<'alloc>> {
         let object_loc = object.get_loc();
         let identifier_token_loc = identifier_token.loc;
-        self.alloc(Expression::OptionalChain(
-            OptionalChain::StaticMemberExpression(StaticMemberExpression {
-                object: ExpressionOrSuper::Expression(object),
-                property: self.identifier_name(identifier_token),
-                loc: SourceLocation::from_parts(object_loc, identifier_token_loc),
-            }),
-        ))
+        self.alloc_with(|| {
+            Expression::OptionalChain(OptionalChain::StaticMemberExpression(
+                StaticMemberExpression {
+                    object: ExpressionOrSuper::Expression(object),
+                    property: self.identifier_name(identifier_token),
+                    loc: SourceLocation::from_parts(object_loc, identifier_token_loc),
+                },
+            ))
+        })
     }
 
     // OptionalChain : OptionalChain Arguments
@@ -1323,13 +1303,13 @@ impl<'alloc> AstBuilder<'alloc> {
     ) -> arena::Box<'alloc, Expression<'alloc>> {
         let callee_loc = callee.get_loc();
         let arguments_loc = arguments.loc;
-        self.alloc(Expression::OptionalChain(OptionalChain::CallExpression(
-            CallExpression {
+        self.alloc_with(|| {
+            Expression::OptionalChain(OptionalChain::CallExpression(CallExpression {
                 callee: ExpressionOrSuper::Expression(callee),
                 arguments: arguments.unbox(),
                 loc: SourceLocation::from_parts(callee_loc, arguments_loc),
-            },
-        )))
+            }))
+        })
     }
 
     fn identifier(&self, token: arena::Box<'alloc, Token>) -> Identifier {
@@ -1362,13 +1342,15 @@ impl<'alloc> AstBuilder<'alloc> {
     ) -> arena::Box<'alloc, Expression<'alloc>> {
         let object_loc = object.get_loc();
         let identifier_token_loc = identifier_token.loc;
-        self.alloc(Expression::MemberExpression(
-            MemberExpression::StaticMemberExpression(StaticMemberExpression {
-                object: ExpressionOrSuper::Expression(object),
-                property: self.identifier_name(identifier_token),
-                loc: SourceLocation::from_parts(object_loc, identifier_token_loc),
-            }),
-        ))
+        self.alloc_with(|| {
+            Expression::MemberExpression(MemberExpression::StaticMemberExpression(
+                StaticMemberExpression {
+                    object: ExpressionOrSuper::Expression(object),
+                    property: self.identifier_name(identifier_token),
+                    loc: SourceLocation::from_parts(object_loc, identifier_token_loc),
+                },
+            ))
+        })
     }
 
     // MemberExpression : MemberExpression TemplateLiteral
@@ -1379,7 +1361,7 @@ impl<'alloc> AstBuilder<'alloc> {
         mut template_literal: arena::Box<'alloc, TemplateExpression<'alloc>>,
     ) -> arena::Box<'alloc, Expression<'alloc>> {
         template_literal.tag = Some(tag);
-        self.alloc(Expression::TemplateExpression(template_literal.unbox()))
+        self.alloc_with(|| Expression::TemplateExpression(template_literal.unbox()))
     }
 
     // MemberExpression : `new` MemberExpression Arguments
@@ -1390,7 +1372,7 @@ impl<'alloc> AstBuilder<'alloc> {
         arguments: arena::Box<'alloc, Arguments<'alloc>>,
     ) -> arena::Box<'alloc, Expression<'alloc>> {
         let arguments_loc = arguments.loc;
-        self.alloc(Expression::NewExpression {
+        self.alloc_with(|| Expression::NewExpression {
             callee,
             arguments: arguments.unbox(),
             loc: SourceLocation::from_parts(new_token.loc, arguments_loc),
@@ -1405,13 +1387,15 @@ impl<'alloc> AstBuilder<'alloc> {
     ) -> arena::Box<'alloc, Expression<'alloc>> {
         let object_loc = object.get_loc();
         let field_loc = private_identifier.loc;
-        self.alloc(Expression::MemberExpression(
-            MemberExpression::PrivateFieldExpression(PrivateFieldExpression {
-                object,
-                field: self.private_identifier(private_identifier),
-                loc: SourceLocation::from_parts(object_loc, field_loc),
-            }),
-        ))
+        self.alloc_with(|| {
+            Expression::MemberExpression(MemberExpression::PrivateFieldExpression(
+                PrivateFieldExpression {
+                    object,
+                    field: self.private_identifier(private_identifier),
+                    loc: SourceLocation::from_parts(object_loc, field_loc),
+                },
+            ))
+        })
     }
 
     // SuperProperty : `super` `[` Expression `]`
@@ -1422,13 +1406,15 @@ impl<'alloc> AstBuilder<'alloc> {
         close_token: arena::Box<'alloc, Token>,
     ) -> arena::Box<'alloc, Expression<'alloc>> {
         let super_loc = super_token.loc;
-        self.alloc(Expression::MemberExpression(
-            MemberExpression::ComputedMemberExpression(ComputedMemberExpression {
-                object: ExpressionOrSuper::Super { loc: super_loc },
-                expression: expression,
-                loc: SourceLocation::from_parts(super_loc, close_token.loc),
-            }),
-        ))
+        self.alloc_with(|| {
+            Expression::MemberExpression(MemberExpression::ComputedMemberExpression(
+                ComputedMemberExpression {
+                    object: ExpressionOrSuper::Super { loc: super_loc },
+                    expression: expression,
+                    loc: SourceLocation::from_parts(super_loc, close_token.loc),
+                },
+            ))
+        })
     }
 
     // SuperProperty : `super` `.` IdentifierName
@@ -1439,13 +1425,15 @@ impl<'alloc> AstBuilder<'alloc> {
     ) -> arena::Box<'alloc, Expression<'alloc>> {
         let super_loc = super_token.loc;
         let identifier_loc = identifier_token.loc;
-        self.alloc(Expression::MemberExpression(
-            MemberExpression::StaticMemberExpression(StaticMemberExpression {
-                object: ExpressionOrSuper::Super { loc: super_loc },
-                property: self.identifier_name(identifier_token),
-                loc: SourceLocation::from_parts(super_loc, identifier_loc),
-            }),
-        ))
+        self.alloc_with(|| {
+            Expression::MemberExpression(MemberExpression::StaticMemberExpression(
+                StaticMemberExpression {
+                    object: ExpressionOrSuper::Super { loc: super_loc },
+                    property: self.identifier_name(identifier_token),
+                    loc: SourceLocation::from_parts(super_loc, identifier_loc),
+                },
+            ))
+        })
     }
 
     // NewTarget : `new` `.` `target`
@@ -1454,7 +1442,7 @@ impl<'alloc> AstBuilder<'alloc> {
         new_token: arena::Box<'alloc, Token>,
         target_token: arena::Box<'alloc, Token>,
     ) -> arena::Box<'alloc, Expression<'alloc>> {
-        return self.alloc(Expression::NewTargetExpression {
+        return self.alloc_with(|| Expression::NewTargetExpression {
             loc: SourceLocation::from_parts(new_token.loc, target_token.loc),
         });
     }
@@ -1466,7 +1454,7 @@ impl<'alloc> AstBuilder<'alloc> {
         callee: arena::Box<'alloc, Expression<'alloc>>,
     ) -> arena::Box<'alloc, Expression<'alloc>> {
         let callee_loc = callee.get_loc();
-        self.alloc(Expression::NewExpression {
+        self.alloc_with(|| Expression::NewExpression {
             callee,
             arguments: Arguments {
                 args: self.new_vec(),
@@ -1486,11 +1474,13 @@ impl<'alloc> AstBuilder<'alloc> {
     ) -> arena::Box<'alloc, Expression<'alloc>> {
         let callee_loc = callee.get_loc();
         let arguments_loc = arguments.loc;
-        self.alloc(Expression::CallExpression(CallExpression {
-            callee: ExpressionOrSuper::Expression(callee),
-            arguments: arguments.unbox(),
-            loc: SourceLocation::from_parts(callee_loc, arguments_loc),
-        }))
+        self.alloc_with(|| {
+            Expression::CallExpression(CallExpression {
+                callee: ExpressionOrSuper::Expression(callee),
+                arguments: arguments.unbox(),
+                loc: SourceLocation::from_parts(callee_loc, arguments_loc),
+            })
+        })
     }
 
     // SuperCall : `super` Arguments
@@ -1501,11 +1491,13 @@ impl<'alloc> AstBuilder<'alloc> {
     ) -> arena::Box<'alloc, Expression<'alloc>> {
         let super_loc = super_token.loc;
         let arguments_loc = arguments.loc;
-        self.alloc(Expression::CallExpression(CallExpression {
-            callee: ExpressionOrSuper::Super { loc: super_loc },
-            arguments: arguments.unbox(),
-            loc: SourceLocation::from_parts(super_loc, arguments_loc),
-        }))
+        self.alloc_with(|| {
+            Expression::CallExpression(CallExpression {
+                callee: ExpressionOrSuper::Super { loc: super_loc },
+                arguments: arguments.unbox(),
+                loc: SourceLocation::from_parts(super_loc, arguments_loc),
+            })
+        })
     }
 
     // ImportCall : `import` `(` AssignmentExpression `)`
@@ -1515,7 +1507,7 @@ impl<'alloc> AstBuilder<'alloc> {
         argument: arena::Box<'alloc, Expression<'alloc>>,
         close_token: arena::Box<'alloc, Token>,
     ) -> arena::Box<'alloc, Expression<'alloc>> {
-        self.alloc(Expression::ImportCallExpression {
+        self.alloc_with(|| Expression::ImportCallExpression {
             argument,
             loc: SourceLocation::from_parts(import_token.loc, close_token.loc),
         })
@@ -1527,7 +1519,7 @@ impl<'alloc> AstBuilder<'alloc> {
         open_token: arena::Box<'alloc, Token>,
         close_token: arena::Box<'alloc, Token>,
     ) -> arena::Box<'alloc, Arguments<'alloc>> {
-        self.alloc(Arguments {
+        self.alloc_with(|| Arguments {
             args: self.new_vec(),
             loc: SourceLocation::from_parts(open_token.loc, close_token.loc),
         })
@@ -1537,7 +1529,7 @@ impl<'alloc> AstBuilder<'alloc> {
         &self,
         expression: arena::Box<'alloc, Expression<'alloc>>,
     ) -> arena::Box<'alloc, Arguments<'alloc>> {
-        self.alloc(Arguments {
+        self.alloc_with(|| Arguments {
             args: self.new_vec_single(Argument::Expression(expression)),
             // This will be overwritten once the enclosing arguments gets
             // parsed.
@@ -1549,7 +1541,7 @@ impl<'alloc> AstBuilder<'alloc> {
         &self,
         expression: arena::Box<'alloc, Expression<'alloc>>,
     ) -> arena::Box<'alloc, Arguments<'alloc>> {
-        self.alloc(Arguments {
+        self.alloc_with(|| Arguments {
             args: self.new_vec_single(Argument::SpreadElement(expression)),
             // This will be overwritten once the enclosing arguments gets
             // parsed.
@@ -1597,7 +1589,7 @@ impl<'alloc> AstBuilder<'alloc> {
     ) -> Result<'alloc, arena::Box<'alloc, Expression<'alloc>>> {
         let operand = self.expression_to_simple_assignment_target(operand)?;
         let operand_loc = operand.get_loc();
-        Ok(self.alloc(Expression::UpdateExpression {
+        Ok(self.alloc_with(|| Expression::UpdateExpression {
             is_prefix: false,
             operator: UpdateOperator::Increment {
                 loc: operator_token.loc,
@@ -1615,7 +1607,7 @@ impl<'alloc> AstBuilder<'alloc> {
     ) -> Result<'alloc, arena::Box<'alloc, Expression<'alloc>>> {
         let operand = self.expression_to_simple_assignment_target(operand)?;
         let operand_loc = operand.get_loc();
-        Ok(self.alloc(Expression::UpdateExpression {
+        Ok(self.alloc_with(|| Expression::UpdateExpression {
             is_prefix: false,
             operator: UpdateOperator::Decrement {
                 loc: operator_token.loc,
@@ -1633,7 +1625,7 @@ impl<'alloc> AstBuilder<'alloc> {
     ) -> Result<'alloc, arena::Box<'alloc, Expression<'alloc>>> {
         let operand = self.expression_to_simple_assignment_target(operand)?;
         let operand_loc = operand.get_loc();
-        Ok(self.alloc(Expression::UpdateExpression {
+        Ok(self.alloc_with(|| Expression::UpdateExpression {
             is_prefix: true,
             operator: UpdateOperator::Increment {
                 loc: operator_token.loc,
@@ -1651,7 +1643,7 @@ impl<'alloc> AstBuilder<'alloc> {
     ) -> Result<'alloc, arena::Box<'alloc, Expression<'alloc>>> {
         let operand = self.expression_to_simple_assignment_target(operand)?;
         let operand_loc = operand.get_loc();
-        Ok(self.alloc(Expression::UpdateExpression {
+        Ok(self.alloc_with(|| Expression::UpdateExpression {
             is_prefix: true,
             operator: UpdateOperator::Decrement {
                 loc: operator_token.loc,
@@ -1668,7 +1660,7 @@ impl<'alloc> AstBuilder<'alloc> {
         operand: arena::Box<'alloc, Expression<'alloc>>,
     ) -> arena::Box<'alloc, Expression<'alloc>> {
         let operand_loc = operand.get_loc();
-        self.alloc(Expression::UnaryExpression {
+        self.alloc_with(|| Expression::UnaryExpression {
             operator: UnaryOperator::Delete {
                 loc: operator_token.loc,
             },
@@ -1684,7 +1676,7 @@ impl<'alloc> AstBuilder<'alloc> {
         operand: arena::Box<'alloc, Expression<'alloc>>,
     ) -> arena::Box<'alloc, Expression<'alloc>> {
         let operand_loc = operand.get_loc();
-        self.alloc(Expression::UnaryExpression {
+        self.alloc_with(|| Expression::UnaryExpression {
             operator: UnaryOperator::Void {
                 loc: operator_token.loc,
             },
@@ -1700,7 +1692,7 @@ impl<'alloc> AstBuilder<'alloc> {
         operand: arena::Box<'alloc, Expression<'alloc>>,
     ) -> arena::Box<'alloc, Expression<'alloc>> {
         let operand_loc = operand.get_loc();
-        self.alloc(Expression::UnaryExpression {
+        self.alloc_with(|| Expression::UnaryExpression {
             operator: UnaryOperator::Typeof {
                 loc: operator_token.loc,
             },
@@ -1716,7 +1708,7 @@ impl<'alloc> AstBuilder<'alloc> {
         operand: arena::Box<'alloc, Expression<'alloc>>,
     ) -> arena::Box<'alloc, Expression<'alloc>> {
         let operand_loc = operand.get_loc();
-        self.alloc(Expression::UnaryExpression {
+        self.alloc_with(|| Expression::UnaryExpression {
             operator: UnaryOperator::Plus {
                 loc: operator_token.loc,
             },
@@ -1732,7 +1724,7 @@ impl<'alloc> AstBuilder<'alloc> {
         operand: arena::Box<'alloc, Expression<'alloc>>,
     ) -> arena::Box<'alloc, Expression<'alloc>> {
         let operand_loc = operand.get_loc();
-        self.alloc(Expression::UnaryExpression {
+        self.alloc_with(|| Expression::UnaryExpression {
             operator: UnaryOperator::Minus {
                 loc: operator_token.loc,
             },
@@ -1748,7 +1740,7 @@ impl<'alloc> AstBuilder<'alloc> {
         operand: arena::Box<'alloc, Expression<'alloc>>,
     ) -> arena::Box<'alloc, Expression<'alloc>> {
         let operand_loc = operand.get_loc();
-        self.alloc(Expression::UnaryExpression {
+        self.alloc_with(|| Expression::UnaryExpression {
             operator: UnaryOperator::BitwiseNot {
                 loc: operator_token.loc,
             },
@@ -1764,7 +1756,7 @@ impl<'alloc> AstBuilder<'alloc> {
         operand: arena::Box<'alloc, Expression<'alloc>>,
     ) -> arena::Box<'alloc, Expression<'alloc>> {
         let operand_loc = operand.get_loc();
-        self.alloc(Expression::UnaryExpression {
+        self.alloc_with(|| Expression::UnaryExpression {
             operator: UnaryOperator::LogicalNot {
                 loc: operator_token.loc,
             },
@@ -1856,7 +1848,7 @@ impl<'alloc> AstBuilder<'alloc> {
     // MultiplicativeOperators and CompoundAssignmentOperators currently get
     // boxed.
     pub fn box_op(&self, op: BinaryOperator) -> arena::Box<'alloc, BinaryOperator> {
-        self.alloc(op)
+        self.alloc_with(|| op)
     }
 
     // MultiplicativeExpression : MultiplicativeExpression MultiplicativeOperator ExponentiationExpression
@@ -1898,7 +1890,7 @@ impl<'alloc> AstBuilder<'alloc> {
     ) -> arena::Box<'alloc, Expression<'alloc>> {
         let left_loc = left.get_loc();
         let right_loc = right.get_loc();
-        self.alloc(Expression::BinaryExpression {
+        self.alloc_with(|| Expression::BinaryExpression {
             operator,
             left,
             right,
@@ -1915,7 +1907,7 @@ impl<'alloc> AstBuilder<'alloc> {
     ) -> arena::Box<'alloc, Expression<'alloc>> {
         let test_loc = test.get_loc();
         let alternate_loc = alternate.get_loc();
-        self.alloc(Expression::ConditionalExpression {
+        self.alloc_with(|| Expression::ConditionalExpression {
             test,
             consequent,
             alternate,
@@ -2033,7 +2025,7 @@ impl<'alloc> AstBuilder<'alloc> {
             ),
 
             other => AssignmentTargetMaybeDefault::AssignmentTarget(
-                self.expression_to_assignment_target(self.alloc(other))?,
+                self.expression_to_assignment_target(self.alloc_with(|| other))?,
             ),
         })
     }
@@ -2060,7 +2052,7 @@ impl<'alloc> AstBuilder<'alloc> {
             }
 
             other => AssignmentTarget::SimpleAssignmentTarget(
-                self.expression_to_simple_assignment_target(self.alloc(other))?,
+                self.expression_to_simple_assignment_target(self.alloc_with(|| other))?,
             ),
         })
     }
@@ -2170,7 +2162,7 @@ impl<'alloc> AstBuilder<'alloc> {
         let target = self.expression_to_assignment_target(left_hand_side)?;
         let target_loc = target.get_loc();
         let value_loc = value.get_loc();
-        Ok(self.alloc(Expression::AssignmentExpression {
+        Ok(self.alloc_with(|| Expression::AssignmentExpression {
             binding: target,
             expression: value,
             loc: SourceLocation::from_parts(target_loc, value_loc),
@@ -2236,7 +2228,7 @@ impl<'alloc> AstBuilder<'alloc> {
         &self,
         op: CompoundAssignmentOperator,
     ) -> arena::Box<'alloc, CompoundAssignmentOperator> {
-        self.alloc(op)
+        self.alloc_with(|| op)
     }
 
     // AssignmentExpression : LeftHandSideExpression AssignmentOperator AssignmentExpression
@@ -2249,12 +2241,14 @@ impl<'alloc> AstBuilder<'alloc> {
         let target = self.expression_to_simple_assignment_target(left_hand_side)?;
         let target_loc = target.get_loc();
         let value_loc = value.get_loc();
-        Ok(self.alloc(Expression::CompoundAssignmentExpression {
-            operator: operator.unbox(),
-            binding: target,
-            expression: value,
-            loc: SourceLocation::from_parts(target_loc, value_loc),
-        }))
+        Ok(
+            self.alloc_with(|| Expression::CompoundAssignmentExpression {
+                operator: operator.unbox(),
+                binding: target,
+                expression: value,
+                loc: SourceLocation::from_parts(target_loc, value_loc),
+            }),
+        )
     }
 
     // BlockStatement : Block
@@ -2263,7 +2257,7 @@ impl<'alloc> AstBuilder<'alloc> {
         block: arena::Box<'alloc, Block<'alloc>>,
     ) -> arena::Box<'alloc, Statement<'alloc>> {
         let loc = block.loc;
-        self.alloc(Statement::BlockStatement {
+        self.alloc_with(|| Statement::BlockStatement {
             block: block.unbox(),
             loc,
         })
@@ -2278,7 +2272,7 @@ impl<'alloc> AstBuilder<'alloc> {
     ) -> Result<'alloc, arena::Box<'alloc, Block<'alloc>>> {
         self.check_block_bindings(open_token.loc.start)?;
 
-        Ok(self.alloc(Block {
+        Ok(self.alloc_with(|| Block {
             statements: match statements {
                 Some(statements) => statements.unbox(),
                 None => self.new_vec(),
@@ -2298,7 +2292,7 @@ impl<'alloc> AstBuilder<'alloc> {
     ) -> arena::Box<'alloc, Block<'alloc>> {
         // Early Error handling is done in Catch.
 
-        self.alloc(Block {
+        self.alloc_with(|| Block {
             statements: match statements {
                 Some(statements) => statements.unbox(),
                 None => self.new_vec(),
@@ -2313,7 +2307,7 @@ impl<'alloc> AstBuilder<'alloc> {
         &self,
         statement: arena::Box<'alloc, Statement<'alloc>>,
     ) -> arena::Box<'alloc, arena::Vec<'alloc, Statement<'alloc>>> {
-        self.alloc(self.new_vec_single(statement.unbox()))
+        self.alloc_with(|| self.new_vec_single(statement.unbox()))
     }
 
     // StatementList : StatementList StatementListItem
@@ -2338,7 +2332,8 @@ impl<'alloc> AstBuilder<'alloc> {
             _ => panic!("unexpected VariableDeclarationKind"),
         };
 
-        self.mark_binding_kind(kind.get_loc().start, None, binding_kind);
+        self.context_metadata
+            .mark_binding_kind(kind.get_loc().start, None, binding_kind);
 
         // 13.3.1.1 Static Semantics: Early Errors
         if let VariableDeclarationKind::Const { .. } = *kind {
@@ -2356,13 +2351,13 @@ impl<'alloc> AstBuilder<'alloc> {
             .last()
             .expect("There should be at least one declarator")
             .get_loc();
-        Ok(self.alloc(Statement::VariableDeclarationStatement(
-            VariableDeclaration {
+        Ok(self.alloc_with(|| {
+            Statement::VariableDeclarationStatement(VariableDeclaration {
                 kind: kind.unbox(),
                 declarators: declarators.unbox(),
                 loc: SourceLocation::from_parts(kind_loc, declarator_loc),
-            },
-        )))
+            })
+        }))
     }
 
     // ForLexicalDeclaration : LetOrConst BindingList `;`
@@ -2376,7 +2371,8 @@ impl<'alloc> AstBuilder<'alloc> {
             VariableDeclarationKind::Const { .. } => BindingKind::Const,
             _ => panic!("unexpected VariableDeclarationKind"),
         };
-        self.mark_binding_kind(kind.get_loc().start, None, binding_kind);
+        self.context_metadata
+            .mark_binding_kind(kind.get_loc().start, None, binding_kind);
 
         // 13.3.1.1 Static Semantics: Early Errors
         if let VariableDeclarationKind::Const { .. } = *kind {
@@ -2394,15 +2390,13 @@ impl<'alloc> AstBuilder<'alloc> {
             .last()
             .expect("There should be at least one declarator")
             .get_loc();
-        Ok(
-            self.alloc(VariableDeclarationOrExpression::VariableDeclaration(
-                VariableDeclaration {
-                    kind: kind.unbox(),
-                    declarators: declarators.unbox(),
-                    loc: SourceLocation::from_parts(kind_loc, declarator_loc),
-                },
-            )),
-        )
+        Ok(self.alloc_with(|| {
+            VariableDeclarationOrExpression::VariableDeclaration(VariableDeclaration {
+                kind: kind.unbox(),
+                declarators: declarators.unbox(),
+                loc: SourceLocation::from_parts(kind_loc, declarator_loc),
+            })
+        }))
     }
 
     // LetOrConst : `let`
@@ -2410,7 +2404,7 @@ impl<'alloc> AstBuilder<'alloc> {
         &self,
         token: arena::Box<'alloc, Token>,
     ) -> arena::Box<'alloc, VariableDeclarationKind> {
-        self.alloc(VariableDeclarationKind::Let { loc: token.loc })
+        self.alloc_with(|| VariableDeclarationKind::Let { loc: token.loc })
     }
 
     // LetOrConst : `const`
@@ -2418,7 +2412,7 @@ impl<'alloc> AstBuilder<'alloc> {
         &self,
         token: arena::Box<'alloc, Token>,
     ) -> arena::Box<'alloc, VariableDeclarationKind> {
-        self.alloc(VariableDeclarationKind::Const { loc: token.loc })
+        self.alloc_with(|| VariableDeclarationKind::Const { loc: token.loc })
     }
 
     // VariableStatement : `var` VariableDeclarationList `;`
@@ -2433,15 +2427,16 @@ impl<'alloc> AstBuilder<'alloc> {
             .expect("There should be at least one declarator")
             .get_loc();
 
-        self.mark_binding_kind(var_loc.start, None, BindingKind::Var);
+        self.context_metadata
+            .mark_binding_kind(var_loc.start, None, BindingKind::Var);
 
-        self.alloc(Statement::VariableDeclarationStatement(
-            VariableDeclaration {
+        self.alloc_with(|| {
+            Statement::VariableDeclarationStatement(VariableDeclaration {
                 kind: VariableDeclarationKind::Var { loc: var_loc },
                 declarators: declarators.unbox(),
                 loc: SourceLocation::from_parts(var_loc, declarator_loc),
-            },
-        ))
+            })
+        })
     }
 
     // VariableDeclarationList : VariableDeclaration
@@ -2450,7 +2445,7 @@ impl<'alloc> AstBuilder<'alloc> {
         &self,
         decl: arena::Box<'alloc, VariableDeclarator<'alloc>>,
     ) -> arena::Box<'alloc, arena::Vec<'alloc, VariableDeclarator<'alloc>>> {
-        self.alloc(self.new_vec_single(decl.unbox()))
+        self.alloc_with(|| self.new_vec_single(decl.unbox()))
     }
 
     // VariableDeclarationList : VariableDeclarationList `,` VariableDeclaration
@@ -2476,7 +2471,7 @@ impl<'alloc> AstBuilder<'alloc> {
             Some(ref init) => SourceLocation::from_parts(binding_loc, init.get_loc()),
             None => binding_loc,
         };
-        self.alloc(VariableDeclarator {
+        self.alloc_with(|| VariableDeclarator {
             binding: binding.unbox(),
             init,
             loc,
@@ -2494,19 +2489,19 @@ impl<'alloc> AstBuilder<'alloc> {
         rest: Option<arena::Box<'alloc, BindingIdentifier>>,
         close_token: arena::Box<'alloc, Token>,
     ) -> arena::Box<'alloc, Binding<'alloc>> {
-        self.alloc(Binding::BindingPattern(BindingPattern::ObjectBinding(
-            ObjectBinding {
+        self.alloc_with(|| {
+            Binding::BindingPattern(BindingPattern::ObjectBinding(ObjectBinding {
                 properties: properties.unbox(),
                 rest,
                 loc: SourceLocation::from_parts(open_token.loc, close_token.loc),
-            },
-        )))
+            }))
+        })
     }
 
     pub fn binding_element_list_empty(
         &self,
     ) -> arena::Box<'alloc, arena::Vec<'alloc, Option<Parameter<'alloc>>>> {
-        self.alloc(self.new_vec())
+        self.alloc_with(|| self.new_vec())
     }
 
     // ArrayBindingPattern : `[` Elision? BindingRestElement? `]`
@@ -2526,19 +2521,19 @@ impl<'alloc> AstBuilder<'alloc> {
             }
         }
 
-        self.alloc(Binding::BindingPattern(BindingPattern::ArrayBinding(
-            ArrayBinding {
+        self.alloc_with(|| {
+            Binding::BindingPattern(BindingPattern::ArrayBinding(ArrayBinding {
                 elements: elements.unbox(),
                 rest,
                 loc: SourceLocation::from_parts(open_token.loc, close_token.loc),
-            },
-        )))
+            }))
+        })
     }
 
     pub fn binding_property_list_empty(
         &self,
     ) -> arena::Box<'alloc, arena::Vec<'alloc, BindingProperty<'alloc>>> {
-        self.alloc(self.new_vec())
+        self.alloc_with(|| self.new_vec())
     }
 
     // BindingPropertyList : BindingProperty
@@ -2546,7 +2541,7 @@ impl<'alloc> AstBuilder<'alloc> {
         &self,
         property: arena::Box<'alloc, BindingProperty<'alloc>>,
     ) -> arena::Box<'alloc, arena::Vec<'alloc, BindingProperty<'alloc>>> {
-        self.alloc(self.new_vec_single(property.unbox()))
+        self.alloc_with(|| self.new_vec_single(property.unbox()))
     }
 
     // BindingPropertyList : BindingPropertyList `,` BindingProperty
@@ -2576,7 +2571,7 @@ impl<'alloc> AstBuilder<'alloc> {
         element: arena::Box<'alloc, Parameter<'alloc>>,
     ) -> arena::Box<'alloc, arena::Vec<'alloc, Option<Parameter<'alloc>>>> {
         let elision_count = elision.map(|v| v.elements.len()).unwrap_or(0);
-        let mut result = self.alloc(self.new_vec());
+        let mut result = self.alloc_with(|| self.new_vec());
         for _ in 0..elision_count {
             self.push(&mut result, None);
         }
@@ -2609,13 +2604,13 @@ impl<'alloc> AstBuilder<'alloc> {
 
         let loc = binding.loc;
 
-        self.alloc(BindingProperty::BindingPropertyIdentifier(
-            BindingPropertyIdentifier {
+        self.alloc_with(|| {
+            BindingProperty::BindingPropertyIdentifier(BindingPropertyIdentifier {
                 binding,
-                init: init.map(|x| self.alloc(x)),
+                init: init.map(|x| self.alloc_with(|| x)),
                 loc,
-            },
-        ))
+            })
+        })
     }
 
     // BindingProperty : PropertyName `:` BindingElement
@@ -2626,13 +2621,13 @@ impl<'alloc> AstBuilder<'alloc> {
     ) -> arena::Box<'alloc, BindingProperty<'alloc>> {
         let name_loc = name.get_loc();
         let binding_loc = binding.get_loc();
-        self.alloc(BindingProperty::BindingPropertyProperty(
-            BindingPropertyProperty {
+        self.alloc_with(|| {
+            BindingProperty::BindingPropertyProperty(BindingPropertyProperty {
                 name: name.unbox(),
                 binding: binding.unbox(),
                 loc: SourceLocation::from_parts(name_loc, binding_loc),
-            },
-        ))
+            })
+        })
     }
 
     // BindingElement : BindingPattern Initializer?
@@ -2641,7 +2636,7 @@ impl<'alloc> AstBuilder<'alloc> {
         binding: arena::Box<'alloc, Binding<'alloc>>,
         init: Option<arena::Box<'alloc, Expression<'alloc>>>,
     ) -> arena::Box<'alloc, Parameter<'alloc>> {
-        self.alloc(match init {
+        self.alloc_with(|| match init {
             None => Parameter::Binding(binding.unbox()),
             Some(init) => {
                 let binding_loc = binding.get_loc();
@@ -2662,7 +2657,7 @@ impl<'alloc> AstBuilder<'alloc> {
         init: Option<arena::Box<'alloc, Expression<'alloc>>>,
     ) -> arena::Box<'alloc, Parameter<'alloc>> {
         let binding = Binding::BindingIdentifier(name.unbox());
-        self.alloc(match init {
+        self.alloc_with(|| match init {
             None => Parameter::Binding(binding),
             Some(init) => {
                 let binding_loc = binding.get_loc();
@@ -2681,7 +2676,7 @@ impl<'alloc> AstBuilder<'alloc> {
         &self,
         name: arena::Box<'alloc, BindingIdentifier>,
     ) -> arena::Box<'alloc, Binding<'alloc>> {
-        self.alloc(Binding::BindingIdentifier(name.unbox()))
+        self.alloc_with(|| Binding::BindingIdentifier(name.unbox()))
     }
 
     // EmptyStatement : `;`
@@ -2689,7 +2684,7 @@ impl<'alloc> AstBuilder<'alloc> {
         &self,
         token: arena::Box<'alloc, Token>,
     ) -> arena::Box<'alloc, Statement<'alloc>> {
-        self.alloc(Statement::EmptyStatement { loc: token.loc })
+        self.alloc_with(|| Statement::EmptyStatement { loc: token.loc })
     }
 
     // ExpressionStatement : [lookahead not in {'{', 'function', 'async', 'class', 'let'}] Expression `;`
@@ -2697,7 +2692,7 @@ impl<'alloc> AstBuilder<'alloc> {
         &self,
         expression: arena::Box<'alloc, Expression<'alloc>>,
     ) -> arena::Box<'alloc, Statement<'alloc>> {
-        self.alloc(Statement::ExpressionStatement(expression))
+        self.alloc_with(|| Statement::ExpressionStatement(expression))
     }
 
     // IfStatement : `if` `(` Expression `)` Statement `else` Statement
@@ -2719,12 +2714,14 @@ impl<'alloc> AstBuilder<'alloc> {
             Some(ref alternate) => SourceLocation::from_parts(if_loc, alternate.get_loc()),
             None => SourceLocation::from_parts(if_loc, consequent.get_loc()),
         };
-        Ok(self.alloc(Statement::IfStatement(IfStatement {
-            test,
-            consequent,
-            alternate,
-            loc,
-        })))
+        Ok(self.alloc_with(|| {
+            Statement::IfStatement(IfStatement {
+                test,
+                consequent,
+                alternate,
+                loc,
+            })
+        }))
     }
 
     // Create BlockStatement from FunctionDeclaration, for the following:
@@ -2754,7 +2751,7 @@ impl<'alloc> AstBuilder<'alloc> {
         // includes the web legacy compatibility semantics specified in B.3.3.
         self.check_block_bindings(fun_loc.start)?;
 
-        Ok(self.alloc(Statement::BlockStatement {
+        Ok(self.alloc_with(|| Statement::BlockStatement {
             block: Block {
                 statements: self.new_vec_single(fun.unbox()),
                 declarations: None,
@@ -2772,7 +2769,7 @@ impl<'alloc> AstBuilder<'alloc> {
 
     // IterationStatement : `do` Statement `while` `(` Expression `)` `;`
     pub fn do_while_statement(
-        &self,
+        &mut self,
         do_token: arena::Box<'alloc, Token>,
         stmt: arena::Box<'alloc, Statement<'alloc>>,
         test: arena::Box<'alloc, Expression<'alloc>>,
@@ -2780,7 +2777,9 @@ impl<'alloc> AstBuilder<'alloc> {
     ) -> Result<'alloc, arena::Box<'alloc, Statement<'alloc>>> {
         self.check_single_statement(&stmt)?;
 
-        Ok(self.alloc(Statement::DoWhileStatement {
+        self.context_metadata
+            .pop_unlabelled_breaks_and_continues_from(do_token.loc.start);
+        Ok(self.alloc_with(|| Statement::DoWhileStatement {
             block: stmt,
             test,
             loc: SourceLocation::from_parts(do_token.loc, close_token.loc),
@@ -2789,7 +2788,7 @@ impl<'alloc> AstBuilder<'alloc> {
 
     // IterationStatement : `while` `(` Expression `)` Statement
     pub fn while_statement(
-        &self,
+        &mut self,
         while_token: arena::Box<'alloc, Token>,
         test: arena::Box<'alloc, Expression<'alloc>>,
         stmt: arena::Box<'alloc, Statement<'alloc>>,
@@ -2797,7 +2796,9 @@ impl<'alloc> AstBuilder<'alloc> {
         self.check_single_statement(&stmt)?;
 
         let stmt_loc = stmt.get_loc();
-        Ok(self.alloc(Statement::WhileStatement {
+        self.context_metadata
+            .pop_unlabelled_breaks_and_continues_from(stmt_loc.start);
+        Ok(self.alloc_with(|| Statement::WhileStatement {
             test,
             block: stmt,
             loc: SourceLocation::from_parts(while_token.loc, stmt_loc),
@@ -2807,7 +2808,7 @@ impl<'alloc> AstBuilder<'alloc> {
     // IterationStatement : `for` `(` [lookahead != 'let'] Expression? `;` Expression? `;` Expression? `)` Statement
     // IterationStatement : `for` `(` `var` VariableDeclarationList `;` Expression? `;` Expression? `)` Statement
     pub fn for_statement(
-        &self,
+        &mut self,
         for_token: arena::Box<'alloc, Token>,
         init: Option<VariableDeclarationOrExpression<'alloc>>,
         test: Option<arena::Box<'alloc, Expression<'alloc>>>,
@@ -2833,7 +2834,7 @@ impl<'alloc> AstBuilder<'alloc> {
     }
 
     pub fn for_statement_common(
-        &self,
+        &mut self,
         for_token: arena::Box<'alloc, Token>,
         init: Option<VariableDeclarationOrExpression<'alloc>>,
         test: Option<arena::Box<'alloc, Expression<'alloc>>>,
@@ -2841,7 +2842,9 @@ impl<'alloc> AstBuilder<'alloc> {
         stmt: arena::Box<'alloc, Statement<'alloc>>,
     ) -> Result<'alloc, arena::Box<'alloc, Statement<'alloc>>> {
         let stmt_loc = stmt.get_loc();
-        Ok(self.alloc(Statement::ForStatement {
+        self.context_metadata
+            .pop_unlabelled_breaks_and_continues_from(stmt_loc.start);
+        Ok(self.alloc_with(|| Statement::ForStatement {
             init,
             test,
             update,
@@ -2868,7 +2871,11 @@ impl<'alloc> AstBuilder<'alloc> {
             .expect("There should be at least one declarator")
             .get_loc();
 
-        self.mark_binding_kind(var_loc.start, Some(declarator_loc.end), BindingKind::Var);
+        self.context_metadata.mark_binding_kind(
+            var_loc.start,
+            Some(declarator_loc.end),
+            BindingKind::Var,
+        );
 
         VariableDeclarationOrExpression::VariableDeclaration(VariableDeclaration {
             kind: VariableDeclarationKind::Var { loc: var_loc },
@@ -2892,7 +2899,7 @@ impl<'alloc> AstBuilder<'alloc> {
     //
     // IterationStatement :  `for` `(` `var` BindingIdentifier Initializer `in` Expression `)` Statement
     pub fn for_in_statement(
-        &self,
+        &mut self,
         for_token: arena::Box<'alloc, Token>,
         left: VariableDeclarationOrAssignmentTarget<'alloc>,
         right: arena::Box<'alloc, Expression<'alloc>>,
@@ -2916,14 +2923,16 @@ impl<'alloc> AstBuilder<'alloc> {
     }
 
     pub fn for_in_statement_common(
-        &self,
+        &mut self,
         for_token: arena::Box<'alloc, Token>,
         left: VariableDeclarationOrAssignmentTarget<'alloc>,
         right: arena::Box<'alloc, Expression<'alloc>>,
         stmt: arena::Box<'alloc, Statement<'alloc>>,
     ) -> Result<'alloc, arena::Box<'alloc, Statement<'alloc>>> {
         let stmt_loc = stmt.get_loc();
-        Ok(self.alloc(Statement::ForInStatement {
+        self.context_metadata
+            .pop_unlabelled_breaks_and_continues_from(stmt_loc.start);
+        Ok(self.alloc_with(|| Statement::ForInStatement {
             left,
             right,
             block: stmt,
@@ -2944,7 +2953,11 @@ impl<'alloc> AstBuilder<'alloc> {
             None => binding_loc,
         };
 
-        self.mark_binding_kind(binding_loc.start, Some(binding_loc.end), BindingKind::Var);
+        self.context_metadata.mark_binding_kind(
+            binding_loc.start,
+            Some(binding_loc.end),
+            BindingKind::Var,
+        );
 
         VariableDeclarationOrAssignmentTarget::VariableDeclaration(VariableDeclaration {
             kind: VariableDeclarationKind::Var { loc: var_loc },
@@ -2976,7 +2989,7 @@ impl<'alloc> AstBuilder<'alloc> {
     // IterationStatement : `for` `(` [lookahead != 'let'] LeftHandSideExpression `of` AssignmentExpression `)` Statement
     // IterationStatement : `for` `(` `var` ForBinding `of` AssignmentExpression `)` Statement
     pub fn for_of_statement(
-        &self,
+        &mut self,
         for_token: arena::Box<'alloc, Token>,
         left: VariableDeclarationOrAssignmentTarget<'alloc>,
         right: arena::Box<'alloc, Expression<'alloc>>,
@@ -3000,14 +3013,16 @@ impl<'alloc> AstBuilder<'alloc> {
     }
 
     pub fn for_of_statement_common(
-        &self,
+        &mut self,
         for_token: arena::Box<'alloc, Token>,
         left: VariableDeclarationOrAssignmentTarget<'alloc>,
         right: arena::Box<'alloc, Expression<'alloc>>,
         stmt: arena::Box<'alloc, Statement<'alloc>>,
     ) -> Result<'alloc, arena::Box<'alloc, Statement<'alloc>>> {
         let stmt_loc = stmt.get_loc();
-        Ok(self.alloc(Statement::ForOfStatement {
+        self.context_metadata
+            .pop_unlabelled_breaks_and_continues_from(stmt_loc.start);
+        Ok(self.alloc_with(|| Statement::ForOfStatement {
             left,
             right,
             block: stmt,
@@ -3065,12 +3080,13 @@ impl<'alloc> AstBuilder<'alloc> {
             _ => panic!("unexpected VariableDeclarationKind"),
         };
 
-        self.mark_binding_kind(kind.get_loc().start, None, binding_kind);
+        self.context_metadata
+            .mark_binding_kind(kind.get_loc().start, None, binding_kind);
 
         let kind_loc = kind.get_loc();
         let binding_loc = binding.get_loc();
-        self.alloc(VariableDeclarationOrAssignmentTarget::VariableDeclaration(
-            VariableDeclaration {
+        self.alloc_with(|| {
+            VariableDeclarationOrAssignmentTarget::VariableDeclaration(VariableDeclaration {
                 kind: kind.unbox(),
                 declarators: self.new_vec_single(VariableDeclarator {
                     binding: binding.unbox(),
@@ -3078,8 +3094,8 @@ impl<'alloc> AstBuilder<'alloc> {
                     loc: binding_loc,
                 }),
                 loc: SourceLocation::from_parts(kind_loc, binding_loc),
-            },
-        ))
+            })
+        })
     }
 
     // CatchParameter : BindingIdentifier
@@ -3090,43 +3106,78 @@ impl<'alloc> AstBuilder<'alloc> {
         &self,
         identifier: arena::Box<'alloc, BindingIdentifier>,
     ) -> arena::Box<'alloc, Binding<'alloc>> {
-        self.alloc(Binding::BindingIdentifier(identifier.unbox()))
+        self.alloc_with(|| Binding::BindingIdentifier(identifier.unbox()))
     }
 
     // ContinueStatement : `continue` `;`
     // ContinueStatement : `continue` LabelIdentifier `;`
     pub fn continue_statement(
-        &self,
+        &mut self,
         continue_token: arena::Box<'alloc, Token>,
         label: Option<arena::Box<'alloc, Label>>,
-    ) -> arena::Box<'alloc, Statement<'alloc>> {
+    ) -> Result<'alloc, arena::Box<'alloc, Statement<'alloc>>> {
+        let info = match label {
+            Some(ref label) => {
+                // Label is used both for LabelledStatement and for labelled
+                // ContinueStatements. A label will be noted in bindings whenever we hit
+                // a label, as is the case for ContinueStatements. These bindings are
+                // not necessary, and are at the end of the bindings stack. To keep things
+                // clean, we will pop the last element (the label we just added) off the stack.
+                let index = self
+                    .context_metadata
+                    .find_first_binding(continue_token.loc.start);
+                self.context_metadata.pop_bindings_from(index);
+
+                ControlInfo::new_continue(continue_token.loc.start, Some(label.value))
+            }
+            None => ControlInfo::new_continue(continue_token.loc.start, None),
+        };
+
+        self.context_metadata.push_break_or_continue(info);
+
         let continue_loc = continue_token.loc;
         let loc = match label {
             Some(ref label) => SourceLocation::from_parts(continue_loc, label.loc),
             None => continue_loc,
         };
-        self.alloc(Statement::ContinueStatement {
+        Ok(self.alloc_with(|| Statement::ContinueStatement {
             label: label.map(|boxed| boxed.unbox()),
             loc,
-        })
+        }))
     }
 
     // BreakStatement : `break` `;`
     // BreakStatement : `break` LabelIdentifier `;`
     pub fn break_statement(
-        &self,
+        &mut self,
         break_token: arena::Box<'alloc, Token>,
         label: Option<arena::Box<'alloc, Label>>,
-    ) -> arena::Box<'alloc, Statement<'alloc>> {
+    ) -> Result<'alloc, arena::Box<'alloc, Statement<'alloc>>> {
+        let info = match label {
+            Some(ref label) => {
+                // Label is used both for LabelledStatement and for labelled
+                // BreakStatements. A label will be noted in bindings whenever we hit
+                // a label, as is the case for BreakStatements. These bindings are
+                // not necessary, and are at the end of the bindings stack. To keep things
+                // clean, we will pop the last element (the label we just added) off the stack.
+                let index = self.context_metadata.find_first_binding(label.loc.start);
+                self.context_metadata.pop_bindings_from(index);
+
+                ControlInfo::new_break(break_token.loc.start, Some(label.value))
+            }
+            None => ControlInfo::new_break(break_token.loc.start, None),
+        };
+
+        self.context_metadata.push_break_or_continue(info);
         let break_loc = break_token.loc;
         let loc = match label {
             Some(ref label) => SourceLocation::from_parts(break_loc, label.loc),
             None => break_loc,
         };
-        self.alloc(Statement::BreakStatement {
+        Ok(self.alloc_with(|| Statement::BreakStatement {
             label: label.map(|boxed| boxed.unbox()),
             loc,
-        })
+        }))
     }
 
     // ReturnStatement : `return` `;`
@@ -3141,7 +3192,7 @@ impl<'alloc> AstBuilder<'alloc> {
             Some(ref expression) => SourceLocation::from_parts(return_loc, expression.get_loc()),
             None => return_loc,
         };
-        self.alloc(Statement::ReturnStatement { expression, loc })
+        self.alloc_with(|| Statement::ReturnStatement { expression, loc })
     }
 
     // WithStatement : `with` `(` Expression `)` Statement
@@ -3152,7 +3203,7 @@ impl<'alloc> AstBuilder<'alloc> {
         body: arena::Box<'alloc, Statement<'alloc>>,
     ) -> arena::Box<'alloc, Statement<'alloc>> {
         let body_loc = body.get_loc();
-        self.alloc(Statement::WithStatement {
+        self.alloc_with(|| Statement::WithStatement {
             object,
             body,
             loc: SourceLocation::from_parts(with_token.loc, body_loc),
@@ -3197,10 +3248,10 @@ impl<'alloc> AstBuilder<'alloc> {
     ) -> Result<'alloc, arena::Box<'alloc, Statement<'alloc>>> {
         self.check_case_block_binding(open_token.loc.start)?;
 
-        Ok(self.alloc(Statement::SwitchStatement {
+        Ok(self.alloc_with(|| Statement::SwitchStatement {
             // This will be overwritten once the enclosing switch statement
             // gets parsed.
-            discriminant: self.alloc(Expression::LiteralNullExpression {
+            discriminant: self.alloc_with(|| Expression::LiteralNullExpression {
                 loc: SourceLocation::default(),
             }),
             cases: match cases {
@@ -3224,10 +3275,10 @@ impl<'alloc> AstBuilder<'alloc> {
     ) -> Result<'alloc, arena::Box<'alloc, Statement<'alloc>>> {
         self.check_case_block_binding(open_token.loc.start)?;
 
-        Ok(self.alloc(Statement::SwitchStatementWithDefault {
+        Ok(self.alloc_with(|| Statement::SwitchStatementWithDefault {
             // This will be overwritten once the enclosing switch statement
             // gets parsed.
-            discriminant: self.alloc(Expression::LiteralNullExpression {
+            discriminant: self.alloc_with(|| Expression::LiteralNullExpression {
                 loc: SourceLocation::default(),
             }),
             pre_default_cases: match pre_default_cases {
@@ -3250,7 +3301,7 @@ impl<'alloc> AstBuilder<'alloc> {
         &self,
         case: arena::Box<'alloc, SwitchCase<'alloc>>,
     ) -> arena::Box<'alloc, arena::Vec<'alloc, SwitchCase<'alloc>>> {
-        self.alloc(self.new_vec_single(case.unbox()))
+        self.alloc_with(|| self.new_vec_single(case.unbox()))
     }
 
     // CaseClauses : CaseClauses CaseClause
@@ -3278,13 +3329,13 @@ impl<'alloc> AstBuilder<'alloc> {
                 .expect("There should be at least one statement")
                 .get_loc();
 
-            self.alloc(SwitchCase {
+            self.alloc_with(|| SwitchCase {
                 test: expression,
                 consequent: statements.unbox(),
                 loc: SourceLocation::from_parts(case_loc, statement_loc),
             })
         } else {
-            self.alloc(SwitchCase {
+            self.alloc_with(|| SwitchCase {
                 test: expression,
                 consequent: self.new_vec(),
                 loc: SourceLocation::from_parts(case_loc, colon_token.loc),
@@ -3306,12 +3357,12 @@ impl<'alloc> AstBuilder<'alloc> {
                 .expect("There should be at least one statement")
                 .get_loc();
 
-            self.alloc(SwitchDefault {
+            self.alloc_with(|| SwitchDefault {
                 consequent: statements.unbox(),
                 loc: SourceLocation::from_parts(default_loc, statement_loc),
             })
         } else {
-            self.alloc(SwitchDefault {
+            self.alloc_with(|| SwitchDefault {
                 consequent: self.new_vec(),
                 loc: SourceLocation::from_parts(default_loc, colon_token.loc),
             })
@@ -3320,17 +3371,18 @@ impl<'alloc> AstBuilder<'alloc> {
 
     // LabelledStatement : LabelIdentifier `:` LabelledItem
     pub fn labelled_statement(
-        &self,
+        &mut self,
         label: arena::Box<'alloc, Label>,
         body: arena::Box<'alloc, Statement<'alloc>>,
-    ) -> arena::Box<'alloc, Statement<'alloc>> {
+    ) -> Result<'alloc, arena::Box<'alloc, Statement<'alloc>>> {
         let label_loc = label.loc;
         let body_loc = body.get_loc();
-        self.alloc(Statement::LabeledStatement {
+        self.check_labelled_statement(&label, &body)?;
+        Ok(self.alloc_with(|| Statement::LabelledStatement {
             label: label.unbox(),
             body,
             loc: SourceLocation::from_parts(label_loc, body_loc),
-        })
+        }))
     }
 
     // ThrowStatement : `throw` Expression `;`
@@ -3340,7 +3392,7 @@ impl<'alloc> AstBuilder<'alloc> {
         expression: arena::Box<'alloc, Expression<'alloc>>,
     ) -> arena::Box<'alloc, Statement<'alloc>> {
         let expression_loc = expression.get_loc();
-        self.alloc(Statement::ThrowStatement {
+        self.alloc_with(|| Statement::ThrowStatement {
             expression,
             loc: SourceLocation::from_parts(throw_token.loc, expression_loc),
         })
@@ -3360,7 +3412,7 @@ impl<'alloc> AstBuilder<'alloc> {
         match (catch_clause, finally_block) {
             (Some(catch_clause), None) => {
                 let catch_clause_loc = catch_clause.loc;
-                self.alloc(Statement::TryCatchStatement {
+                self.alloc_with(|| Statement::TryCatchStatement {
                     body: body.unbox(),
                     catch_clause: catch_clause.unbox(),
                     loc: SourceLocation::from_parts(try_loc, catch_clause_loc),
@@ -3368,7 +3420,7 @@ impl<'alloc> AstBuilder<'alloc> {
             }
             (catch_clause, Some(finally_block)) => {
                 let finally_block_loc = finally_block.loc;
-                self.alloc(Statement::TryFinallyStatement {
+                self.alloc_with(|| Statement::TryFinallyStatement {
                     body: body.unbox(),
                     catch_clause: catch_clause.map(|boxed| boxed.unbox()),
                     finalizer: finally_block.unbox(),
@@ -3400,7 +3452,7 @@ impl<'alloc> AstBuilder<'alloc> {
 
         self.check_catch_bindings(is_simple, &binding.get_loc())?;
 
-        Ok(self.alloc(CatchClause {
+        Ok(self.alloc_with(|| CatchClause {
             binding: Some(binding),
             body: body.unbox(),
             loc: SourceLocation::from_parts(catch_loc, body_loc),
@@ -3418,7 +3470,7 @@ impl<'alloc> AstBuilder<'alloc> {
 
         self.check_catch_no_param_bindings(catch_loc.start)?;
 
-        Ok(self.alloc(CatchClause {
+        Ok(self.alloc_with(|| CatchClause {
             binding: None,
             body: body.unbox(),
             loc: SourceLocation::from_parts(catch_loc, body_loc),
@@ -3430,29 +3482,31 @@ impl<'alloc> AstBuilder<'alloc> {
         &self,
         token: arena::Box<'alloc, Token>,
     ) -> arena::Box<'alloc, Statement<'alloc>> {
-        self.alloc(Statement::DebuggerStatement { loc: token.loc })
+        self.alloc_with(|| Statement::DebuggerStatement { loc: token.loc })
     }
 
     pub fn function_decl(&mut self, f: Function<'alloc>) -> arena::Box<'alloc, Statement<'alloc>> {
-        self.mark_binding_kind(f.loc.start, None, BindingKind::Function);
+        self.context_metadata
+            .mark_binding_kind(f.loc.start, None, BindingKind::Function);
 
-        self.alloc(Statement::FunctionDeclaration(f))
+        self.alloc_with(|| Statement::FunctionDeclaration(f))
     }
 
     pub fn async_or_generator_decl(
         &mut self,
         f: Function<'alloc>,
     ) -> arena::Box<'alloc, Statement<'alloc>> {
-        self.mark_binding_kind(f.loc.start, None, BindingKind::AsyncOrGenerator);
+        self.context_metadata
+            .mark_binding_kind(f.loc.start, None, BindingKind::AsyncOrGenerator);
 
-        self.alloc(Statement::FunctionDeclaration(f))
+        self.alloc_with(|| Statement::FunctionDeclaration(f))
     }
 
     pub fn function_expr(&mut self, f: Function<'alloc>) -> arena::Box<'alloc, Expression<'alloc>> {
-        let index = self.find_first_binding(f.loc.start);
-        self.pop_bindings_from(index);
+        let index = self.context_metadata.find_first_binding(f.loc.start);
+        self.context_metadata.pop_bindings_from(index);
 
-        self.alloc(Expression::FunctionExpression(f))
+        self.alloc_with(|| Expression::FunctionExpression(f))
     }
 
     // FunctionDeclaration : `function` BindingIdentifier `(` FormalParameters `)` `{` FunctionBody `}`
@@ -3601,7 +3655,7 @@ impl<'alloc> AstBuilder<'alloc> {
 
     // FormalParameters : [empty]
     pub fn empty_formal_parameters(&self) -> arena::Box<'alloc, FormalParameters<'alloc>> {
-        self.alloc(FormalParameters {
+        self.alloc_with(|| FormalParameters {
             items: self.new_vec(),
             rest: None,
             // This will be overwritten once the enclosing function gets parsed.
@@ -3625,7 +3679,7 @@ impl<'alloc> AstBuilder<'alloc> {
         &self,
         parameter: arena::Box<'alloc, Parameter<'alloc>>,
     ) -> arena::Box<'alloc, FormalParameters<'alloc>> {
-        self.alloc(FormalParameters {
+        self.alloc_with(|| FormalParameters {
             items: self.new_vec_single(parameter.unbox()),
             rest: None,
             // This will be overwritten once the enclosing function gets parsed.
@@ -3649,7 +3703,7 @@ impl<'alloc> AstBuilder<'alloc> {
         statements: arena::Box<'alloc, arena::Vec<'alloc, Statement<'alloc>>>,
     ) -> arena::Box<'alloc, FunctionBody<'alloc>> {
         // TODO: Directives
-        self.alloc(FunctionBody {
+        self.alloc_with(|| FunctionBody {
             directives: self.new_vec(),
             statements: statements.unbox(),
             // This will be overwritten once the enclosing function gets parsed.
@@ -3664,7 +3718,7 @@ impl<'alloc> AstBuilder<'alloc> {
     ) -> arena::Box<'alloc, arena::Vec<'alloc, Statement<'alloc>>> {
         match statements {
             Some(statements) => statements,
-            None => self.alloc(self.new_vec()),
+            None => self.alloc_with(|| self.new_vec()),
         }
     }
 
@@ -3679,7 +3733,7 @@ impl<'alloc> AstBuilder<'alloc> {
         let params_loc = params.loc;
         let body_loc = body.get_loc();
 
-        Ok(self.alloc(Expression::ArrowExpression {
+        Ok(self.alloc_with(|| Expression::ArrowExpression {
             is_async: false,
             params: params.unbox(),
             body: body.unbox(),
@@ -3693,7 +3747,7 @@ impl<'alloc> AstBuilder<'alloc> {
         identifier: arena::Box<'alloc, BindingIdentifier>,
     ) -> arena::Box<'alloc, FormalParameters<'alloc>> {
         let loc = identifier.loc;
-        self.alloc(FormalParameters {
+        self.alloc_with(|| FormalParameters {
             items: self.new_vec_single(Parameter::Binding(Binding::BindingIdentifier(
                 identifier.unbox(),
             ))),
@@ -3722,7 +3776,7 @@ impl<'alloc> AstBuilder<'alloc> {
         &self,
         expression: arena::Box<'alloc, Expression<'alloc>>,
     ) -> arena::Box<'alloc, ArrowExpressionBody<'alloc>> {
-        self.alloc(ArrowExpressionBody::Expression(expression))
+        self.alloc_with(|| ArrowExpressionBody::Expression(expression))
     }
 
     // ConciseBody : `{` FunctionBody `}`
@@ -3734,7 +3788,7 @@ impl<'alloc> AstBuilder<'alloc> {
     ) -> arena::Box<'alloc, ArrowExpressionBody<'alloc>> {
         body.loc
             .set_range(body_open_token.loc, body_close_token.loc);
-        self.alloc(ArrowExpressionBody::FunctionBody(body.unbox()))
+        self.alloc_with(|| ArrowExpressionBody::FunctionBody(body.unbox()))
     }
 
     // MethodDefinition : PropertyName `(` UniqueFormalParameters `)` `{` FunctionBody `}`
@@ -3758,14 +3812,16 @@ impl<'alloc> AstBuilder<'alloc> {
         params.loc.set_range(param_open_loc, param_close_loc);
         body.loc.set_range(body_open_token.loc, body_close_loc);
 
-        Ok(self.alloc(MethodDefinition::Method(Method {
-            name: name.unbox(),
-            is_async: false,
-            is_generator: false,
-            params: params.unbox(),
-            body: body.unbox(),
-            loc: SourceLocation::from_parts(name_loc, body_close_loc),
-        })))
+        Ok(self.alloc_with(|| {
+            MethodDefinition::Method(Method {
+                name: name.unbox(),
+                is_async: false,
+                is_generator: false,
+                params: params.unbox(),
+                body: body.unbox(),
+                loc: SourceLocation::from_parts(name_loc, body_close_loc),
+            })
+        }))
     }
 
     // MethodDefinition : `get` PropertyName `(` `)` `{` FunctionBody `}`
@@ -3779,11 +3835,13 @@ impl<'alloc> AstBuilder<'alloc> {
     ) -> arena::Box<'alloc, MethodDefinition<'alloc>> {
         let body_close_loc = body_close_token.loc;
         body.loc.set_range(body_open_token.loc, body_close_loc);
-        self.alloc(MethodDefinition::Getter(Getter {
-            property_name: name.unbox(),
-            body: body.unbox(),
-            loc: SourceLocation::from_parts(get_token.loc, body_close_loc),
-        }))
+        self.alloc_with(|| {
+            MethodDefinition::Getter(Getter {
+                property_name: name.unbox(),
+                body: body.unbox(),
+                loc: SourceLocation::from_parts(get_token.loc, body_close_loc),
+            })
+        })
     }
 
     // MethodDefinition : `set` PropertyName `(` PropertySetParameterList `)` `{` FunctionBody `}`
@@ -3808,12 +3866,14 @@ impl<'alloc> AstBuilder<'alloc> {
 
         parameter.set_loc(param_open_loc, param_close_loc);
         body.loc.set_range(body_open_token.loc, body_close_loc);
-        Ok(self.alloc(MethodDefinition::Setter(Setter {
-            property_name: name.unbox(),
-            param: parameter.unbox(),
-            body: body.unbox(),
-            loc: SourceLocation::from_parts(set_token.loc, body_close_loc),
-        })))
+        Ok(self.alloc_with(|| {
+            MethodDefinition::Setter(Setter {
+                property_name: name.unbox(),
+                param: parameter.unbox(),
+                body: body.unbox(),
+                loc: SourceLocation::from_parts(set_token.loc, body_close_loc),
+            })
+        }))
     }
 
     // GeneratorMethod : `*` PropertyName `(` UniqueFormalParameters `)` `{` GeneratorBody `}`
@@ -3837,14 +3897,16 @@ impl<'alloc> AstBuilder<'alloc> {
         params.loc.set_range(param_open_loc, param_close_loc);
         body.loc.set_range(body_open_token.loc, body_close_loc);
 
-        Ok(self.alloc(MethodDefinition::Method(Method {
-            name: name.unbox(),
-            is_async: false,
-            is_generator: true,
-            params: params.unbox(),
-            body: body.unbox(),
-            loc: SourceLocation::from_parts(generator_token.loc, body_close_loc),
-        })))
+        Ok(self.alloc_with(|| {
+            MethodDefinition::Method(Method {
+                name: name.unbox(),
+                is_async: false,
+                is_generator: true,
+                params: params.unbox(),
+                body: body.unbox(),
+                loc: SourceLocation::from_parts(generator_token.loc, body_close_loc),
+            })
+        }))
     }
 
     // YieldExpression : `yield`
@@ -3860,7 +3922,7 @@ impl<'alloc> AstBuilder<'alloc> {
             None => yield_loc,
         };
 
-        self.alloc(Expression::YieldExpression {
+        self.alloc_with(|| Expression::YieldExpression {
             expression: operand,
             loc,
         })
@@ -3874,7 +3936,7 @@ impl<'alloc> AstBuilder<'alloc> {
     ) -> arena::Box<'alloc, Expression<'alloc>> {
         let yield_loc = yield_token.loc;
         let operand_loc = operand.get_loc();
-        self.alloc(Expression::YieldGeneratorExpression {
+        self.alloc_with(|| Expression::YieldGeneratorExpression {
             expression: operand,
             loc: SourceLocation::from_parts(yield_loc, operand_loc),
         })
@@ -3901,14 +3963,16 @@ impl<'alloc> AstBuilder<'alloc> {
         params.loc.set_range(param_open_loc, param_close_loc);
         body.loc.set_range(body_open_token.loc, body_close_loc);
 
-        Ok(self.alloc(MethodDefinition::Method(Method {
-            name: name.unbox(),
-            is_async: true,
-            is_generator: true,
-            params: params.unbox(),
-            body: body.unbox(),
-            loc: SourceLocation::from_parts(async_token.loc, body_close_loc),
-        })))
+        Ok(self.alloc_with(|| {
+            MethodDefinition::Method(Method {
+                name: name.unbox(),
+                is_async: true,
+                is_generator: true,
+                params: params.unbox(),
+                body: body.unbox(),
+                loc: SourceLocation::from_parts(async_token.loc, body_close_loc),
+            })
+        }))
     }
 
     // ClassDeclaration : `class` BindingIdentifier ClassTail
@@ -3921,28 +3985,31 @@ impl<'alloc> AstBuilder<'alloc> {
     ) -> arena::Box<'alloc, Statement<'alloc>> {
         let class_loc = class_token.loc;
 
-        self.mark_binding_kind(class_loc.start, None, BindingKind::Class);
+        self.context_metadata
+            .mark_binding_kind(class_loc.start, None, BindingKind::Class);
 
         let tail = tail.unbox();
         let tail_loc = tail.loc;
-        self.alloc(Statement::ClassDeclaration(ClassDeclaration {
-            name: match name {
-                None => {
-                    let loc = SourceLocation::new(class_loc.end, class_loc.end);
-                    BindingIdentifier {
-                        name: Identifier {
-                            value: CommonSourceAtomSetIndices::default(),
+        self.alloc_with(|| {
+            Statement::ClassDeclaration(ClassDeclaration {
+                name: match name {
+                    None => {
+                        let loc = SourceLocation::new(class_loc.end, class_loc.end);
+                        BindingIdentifier {
+                            name: Identifier {
+                                value: CommonSourceAtomSetIndices::default(),
+                                loc,
+                            },
                             loc,
-                        },
-                        loc,
+                        }
                     }
-                }
-                Some(bi) => bi.unbox(),
-            },
-            super_: tail.super_,
-            elements: tail.elements,
-            loc: SourceLocation::from_parts(class_loc, tail_loc),
-        }))
+                    Some(bi) => bi.unbox(),
+                },
+                super_: tail.super_,
+                elements: tail.elements,
+                loc: SourceLocation::from_parts(class_loc, tail_loc),
+            })
+        })
     }
 
     // ClassExpression : `class` BindingIdentifier? ClassTail
@@ -3952,12 +4019,14 @@ impl<'alloc> AstBuilder<'alloc> {
         name: Option<arena::Box<'alloc, BindingIdentifier>>,
         mut tail: arena::Box<'alloc, ClassExpression<'alloc>>,
     ) -> arena::Box<'alloc, Expression<'alloc>> {
-        let index = self.find_first_binding(class_token.loc.start);
-        self.pop_bindings_from(index);
+        let index = self
+            .context_metadata
+            .find_first_binding(class_token.loc.start);
+        self.context_metadata.pop_bindings_from(index);
 
         tail.name = name.map(|boxed| boxed.unbox());
         tail.loc.start = class_token.loc.start;
-        self.alloc(Expression::ClassExpression(tail.unbox()))
+        self.alloc_with(|| Expression::ClassExpression(tail.unbox()))
     }
 
     // ClassTail : ClassHeritage? `{` ClassBody? `}`
@@ -3969,7 +4038,7 @@ impl<'alloc> AstBuilder<'alloc> {
         >,
         body_close_token: arena::Box<'alloc, Token>,
     ) -> arena::Box<'alloc, ClassExpression<'alloc>> {
-        self.alloc(ClassExpression {
+        self.alloc_with(|| ClassExpression {
             name: None,
             super_: heritage,
             elements: match body {
@@ -4006,7 +4075,7 @@ impl<'alloc> AstBuilder<'alloc> {
             None => name_loc,
             Some(expr) => SourceLocation::from_parts(name_loc, expr.get_loc()),
         };
-        self.alloc(ClassElement::FieldDefinition {
+        self.alloc_with(|| ClassElement::FieldDefinition {
             name: name.unbox(),
             init,
             loc,
@@ -4018,7 +4087,7 @@ impl<'alloc> AstBuilder<'alloc> {
         &self,
         name: arena::Box<'alloc, PropertyName<'alloc>>,
     ) -> arena::Box<'alloc, ClassElementName<'alloc>> {
-        self.alloc(match name.unbox() {
+        self.alloc_with(|| match name.unbox() {
             PropertyName::ComputedPropertyName(cpn) => ClassElementName::ComputedPropertyName(cpn),
             PropertyName::StaticPropertyName(spn) => ClassElementName::StaticPropertyName(spn),
             PropertyName::StaticNumericPropertyName(snpn) => {
@@ -4032,9 +4101,9 @@ impl<'alloc> AstBuilder<'alloc> {
         &self,
         private_identifier: arena::Box<'alloc, Token>,
     ) -> arena::Box<'alloc, ClassElementName<'alloc>> {
-        self.alloc(ClassElementName::PrivateFieldName(
-            self.private_identifier(private_identifier),
-        ))
+        self.alloc_with(|| {
+            ClassElementName::PrivateFieldName(self.private_identifier(private_identifier))
+        })
     }
 
     // ClassElement : MethodDefinition
@@ -4043,7 +4112,7 @@ impl<'alloc> AstBuilder<'alloc> {
         method: arena::Box<'alloc, MethodDefinition<'alloc>>,
     ) -> arena::Box<'alloc, arena::Vec<'alloc, arena::Box<'alloc, ClassElement<'alloc>>>> {
         let loc = method.get_loc();
-        self.class_element_to_vec(self.alloc(ClassElement::MethodDefinition {
+        self.class_element_to_vec(self.alloc_with(|| ClassElement::MethodDefinition {
             is_static: false,
             method: method.unbox(),
             loc,
@@ -4055,7 +4124,7 @@ impl<'alloc> AstBuilder<'alloc> {
         &self,
         element: arena::Box<'alloc, ClassElement<'alloc>>,
     ) -> arena::Box<'alloc, arena::Vec<'alloc, arena::Box<'alloc, ClassElement<'alloc>>>> {
-        self.alloc(self.new_vec_single(element))
+        self.alloc_with(|| self.new_vec_single(element))
     }
 
     // ClassElement : `static` MethodDefinition
@@ -4065,13 +4134,13 @@ impl<'alloc> AstBuilder<'alloc> {
         method: arena::Box<'alloc, MethodDefinition<'alloc>>,
     ) -> arena::Box<'alloc, arena::Vec<'alloc, arena::Box<'alloc, ClassElement<'alloc>>>> {
         let method_loc = method.get_loc();
-        self.alloc(
-            self.new_vec_single(self.alloc(ClassElement::MethodDefinition {
+        self.alloc_with(|| {
+            self.new_vec_single(self.alloc_with(|| ClassElement::MethodDefinition {
                 is_static: true,
                 method: method.unbox(),
                 loc: SourceLocation::from_parts(static_token.loc, method_loc),
-            })),
-        )
+            }))
+        })
     }
 
     // ClassElement : `static` MethodDefinition
@@ -4087,7 +4156,7 @@ impl<'alloc> AstBuilder<'alloc> {
     pub fn class_element_empty(
         &self,
     ) -> arena::Box<'alloc, arena::Vec<'alloc, arena::Box<'alloc, ClassElement<'alloc>>>> {
-        self.alloc(self.new_vec())
+        self.alloc_with(|| self.new_vec())
     }
 
     // AsyncMethod : `async` PropertyName `(` UniqueFormalParameters `)` `{` AsyncFunctionBody `}`
@@ -4111,14 +4180,16 @@ impl<'alloc> AstBuilder<'alloc> {
         params.loc.set_range(param_open_loc, param_close_loc);
         body.loc.set_range(body_open_token.loc, body_close_loc);
 
-        Ok(self.alloc(MethodDefinition::Method(Method {
-            name: name.unbox(),
-            is_async: true,
-            is_generator: false,
-            params: params.unbox(),
-            body: body.unbox(),
-            loc: SourceLocation::from_parts(async_token.loc, body_close_loc),
-        })))
+        Ok(self.alloc_with(|| {
+            MethodDefinition::Method(Method {
+                name: name.unbox(),
+                is_async: true,
+                is_generator: false,
+                params: params.unbox(),
+                body: body.unbox(),
+                loc: SourceLocation::from_parts(async_token.loc, body_close_loc),
+            })
+        }))
     }
 
     // AwaitExpression : `await` UnaryExpression
@@ -4128,7 +4199,7 @@ impl<'alloc> AstBuilder<'alloc> {
         operand: arena::Box<'alloc, Expression<'alloc>>,
     ) -> arena::Box<'alloc, Expression<'alloc>> {
         let operand_loc = operand.get_loc();
-        self.alloc(Expression::AwaitExpression {
+        self.alloc_with(|| Expression::AwaitExpression {
             expression: operand,
             loc: SourceLocation::from_parts(await_token.loc, operand_loc),
         })
@@ -4147,7 +4218,7 @@ impl<'alloc> AstBuilder<'alloc> {
         self.check_unique_function_bindings(params.loc.start, params.loc.end)?;
 
         let body_loc = body.get_loc();
-        Ok(self.alloc(Expression::ArrowExpression {
+        Ok(self.alloc_with(|| Expression::ArrowExpression {
             is_async: true,
             params: params.unbox(),
             body: body.unbox(),
@@ -4165,7 +4236,7 @@ impl<'alloc> AstBuilder<'alloc> {
         self.check_unique_function_bindings(params.loc.start, params.loc.end)?;
 
         let body_loc = body.get_loc();
-        Ok(self.alloc(Expression::ArrowExpression {
+        Ok(self.alloc_with(|| Expression::ArrowExpression {
             is_async: true,
             params: params.unbox(),
             body: body.unbox(),
@@ -4227,7 +4298,7 @@ impl<'alloc> AstBuilder<'alloc> {
 
         Ok(match script {
             Some(script) => script,
-            None => self.alloc(Script {
+            None => self.alloc_with(|| Script {
                 directives: self.new_vec(),
                 statements: self.new_vec(),
                 loc: SourceLocation::default(),
@@ -4250,7 +4321,7 @@ impl<'alloc> AstBuilder<'alloc> {
         };
 
         // TODO: directives
-        self.alloc(Script {
+        self.alloc_with(|| Script {
             directives: self.new_vec(),
             statements: statements.unbox(),
             loc,
@@ -4264,7 +4335,7 @@ impl<'alloc> AstBuilder<'alloc> {
     ) -> Result<'alloc, arena::Box<'alloc, arena::Vec<'alloc, Statement<'alloc>>>> {
         self.check_module_bindings()?;
 
-        Ok(body.unwrap_or_else(|| self.alloc(self.new_vec())))
+        Ok(body.unwrap_or_else(|| self.alloc_with(|| self.new_vec())))
     }
 
     // ModuleItemList : ModuleItem
@@ -4272,7 +4343,7 @@ impl<'alloc> AstBuilder<'alloc> {
         &self,
         item: arena::Box<'alloc, Statement<'alloc>>,
     ) -> arena::Box<'alloc, arena::Vec<'alloc, Statement<'alloc>>> {
-        self.alloc(self.new_vec_single(item.unbox()))
+        self.alloc_with(|| self.new_vec_single(item.unbox()))
     }
 
     // ModuleItemList : ModuleItemList ModuleItem
@@ -4463,11 +4534,11 @@ impl<'alloc> AstBuilder<'alloc> {
         let name = token.value.as_atom();
         let offset = token.loc.start;
 
-        if let Some(info) = self.bindings.last() {
+        if let Some(info) = self.context_metadata.last_binding() {
             debug_assert!(info.offset < offset);
         }
 
-        self.bindings.push(BindingInfo {
+        self.context_metadata.push_binding(BindingInfo {
             name,
             offset,
             kind: BindingKind::Unknown,
@@ -4482,84 +4553,41 @@ impl<'alloc> AstBuilder<'alloc> {
         context.check_identifier_reference(token, &self.atoms.borrow())
     }
 
-    // Check Early Error for LabelIdentifier.
-    fn on_label_identifier(&self, token: &arena::Box<'alloc, Token>) -> Result<'alloc, ()> {
+    // Check Early Error for LabelIdentifier and note binding info to the
+    // stack
+    fn on_label_identifier(&mut self, token: &arena::Box<'alloc, Token>) -> Result<'alloc, ()> {
         let context = IdentifierEarlyErrorsContext::new();
+
+        let name = token.value.as_atom();
+        let offset = token.loc.start;
+
+        if let Some(info) = self.context_metadata.last_binding() {
+            debug_assert!(info.offset < offset);
+        }
+
+        // Labels are not usually considered bindings, but we are using bindings
+        // in order to track duplicate label information. See `check_labelled_statement` for
+        // more information about how this is used.
+        //
+        // If the label is attached to a continue or break statement, its binding info
+        // is popped from the stack. See `continue_statement` and `break_statement` for more
+        // information.
+        self.context_metadata.push_binding(BindingInfo {
+            name,
+            offset,
+            kind: BindingKind::Label,
+        });
+
         context.check_label_identifier(token, &self.atoms.borrow())
-    }
-
-    // Update the binding kind of all names declared in a specific range of the
-    // source (and not in any nested scope). This is used e.g. when the parser
-    // reaches the end of a VariableStatement to mark all the variables as Var
-    // bindings.
-    //
-    // It's necessary because the current parser only calls AstBuilder methods
-    // at the end of each production, not at the beginning.
-    //
-    // Bindings inside `StatementList` must be marked using this method before
-    // we reach the end of its scope.
-    fn mark_binding_kind(&mut self, from: usize, to: Option<usize>, kind: BindingKind) {
-        for info in self.bindings.iter_mut().rev() {
-            if info.offset < from {
-                break;
-            }
-
-            if to.is_none() || info.offset < to.unwrap() {
-                info.kind = kind;
-            }
-        }
-    }
-
-    // Returns the index of the first binding at/after `offset` source position.
-    fn find_first_binding(&mut self, offset: usize) -> usize {
-        let mut i = self.bindings.len();
-        for info in self.bindings.iter_mut().rev() {
-            if info.offset < offset {
-                break;
-            }
-            i -= 1;
-        }
-        i
-    }
-
-    // Remove all bindings after `index`-th item.
-    //
-    // This should be called when leaving function/script/module.
-    fn pop_bindings_from(&mut self, index: usize) {
-        self.bindings.truncate(index)
-    }
-
-    // Remove lexical bindings after `index`-th item,
-    // while keeping var bindings.
-    //
-    // This should be called when leaving block.
-    fn pop_lexical_bindings_from(&mut self, index: usize) {
-        let len = self.bindings.len();
-        let mut i = index;
-
-        while i < len && self.bindings[i].kind == BindingKind::Var {
-            i += 1;
-        }
-
-        let mut j = i;
-        while j < len {
-            if self.bindings[j].kind == BindingKind::Var {
-                self.bindings[i] = self.bindings[j];
-                i += 1;
-            }
-            j += 1;
-        }
-
-        self.bindings.truncate(i)
     }
 
     // Declare bindings to Block-like context, where function declarations
     // are lexical.
-    fn declare_block<T>(&self, context: &mut T, index: usize) -> Result<'alloc, ()>
+    fn declare_block<T>(&self, context: &mut T, index: BindingsIndex) -> Result<'alloc, ()>
     where
         T: LexicalEarlyErrorsContext + VarEarlyErrorsContext,
     {
-        for info in self.bindings.iter().skip(index) {
+        for info in self.context_metadata.bindings_from(index) {
             match info.kind {
                 BindingKind::Var => {
                     context.declare_var(
@@ -4609,6 +4637,16 @@ impl<'alloc> AstBuilder<'alloc> {
                         &self.atoms.borrow(),
                     )?;
                 }
+                // Do nothing for Labels, as they have to be nested for
+                // a syntax error to occur.
+                //
+                // We do not have the nesting information at the
+                // script/block/function level so we cannot reuse the mechanism
+                // used for checking duplicate bindings in those error contexts.
+                // We only know that the label occurred somewhere in the block,
+                // and that it might occur more than once, not how it occurs.
+                // This is handled in check_labelled_statement.
+                BindingKind::Label => {}
                 _ => {
                     panic!("Unexpected binding found {:?}", info);
                 }
@@ -4621,9 +4659,11 @@ impl<'alloc> AstBuilder<'alloc> {
     // Check bindings in Block.
     fn check_block_bindings(&mut self, start_of_block_offset: usize) -> Result<'alloc, ()> {
         let mut context = BlockEarlyErrorsContext::new();
-        let index = self.find_first_binding(start_of_block_offset);
+        let index = self
+            .context_metadata
+            .find_first_binding(start_of_block_offset);
         self.declare_block(&mut context, index)?;
-        self.pop_lexical_bindings_from(index);
+        self.context_metadata.pop_lexical_bindings_from(index);
 
         Ok(())
     }
@@ -4632,10 +4672,10 @@ impl<'alloc> AstBuilder<'alloc> {
     fn declare_lexical_for_head(
         &self,
         context: &mut LexicalForHeadEarlyErrorsContext,
-        from: usize,
-        to: usize,
+        from: BindingsIndex,
+        to: BindingsIndex,
     ) -> Result<'alloc, ()> {
-        for info in self.bindings.iter().skip(from).take(to - from) {
+        for info in self.context_metadata.bindings_from_to(from, to) {
             match info.kind {
                 BindingKind::Let => {
                     context.declare_lex(
@@ -4666,9 +4706,9 @@ impl<'alloc> AstBuilder<'alloc> {
     fn declare_lexical_for_body(
         &self,
         context: &mut LexicalForBodyEarlyErrorsContext,
-        index: usize,
+        index: BindingsIndex,
     ) -> Result<'alloc, ()> {
-        for info in self.bindings.iter().skip(index) {
+        for info in self.context_metadata.bindings_from(index) {
             match info.kind {
                 BindingKind::Var => {
                     context.declare_var(
@@ -4678,6 +4718,16 @@ impl<'alloc> AstBuilder<'alloc> {
                         &self.atoms.borrow(),
                     )?;
                 }
+                // Do nothing for Labels, as they have to be nested for
+                // a syntax error to occur
+                //
+                // We do not have the nesting information at the
+                // script/block/function level so we cannot reuse the mechanism
+                // used for checking duplicate bindings in those error contexts.
+                // We only know that the label occurred somewhere in the block,
+                // and that it might occur more than once, not how it occurs.
+                // This is handled in check_labelled_statement.
+                BindingKind::Label => {}
                 _ => {
                     panic!("Unexpected binding found {:?}", info);
                 }
@@ -4691,13 +4741,13 @@ impl<'alloc> AstBuilder<'alloc> {
     fn check_lexical_for_bindings(&mut self, bindings_loc: &SourceLocation) -> Result<'alloc, ()> {
         let mut head_context = LexicalForHeadEarlyErrorsContext::new();
 
-        let head_index = self.find_first_binding(bindings_loc.start);
-        let body_index = self.find_first_binding(bindings_loc.end);
+        let head_index = self.context_metadata.find_first_binding(bindings_loc.start);
+        let body_index = self.context_metadata.find_first_binding(bindings_loc.end);
         self.declare_lexical_for_head(&mut head_context, head_index, body_index)?;
 
         let mut body_context = LexicalForBodyEarlyErrorsContext::new(head_context);
         self.declare_lexical_for_body(&mut body_context, body_index)?;
-        self.pop_lexical_bindings_from(head_index);
+        self.context_metadata.pop_lexical_bindings_from(head_index);
 
         Ok(())
     }
@@ -4706,19 +4756,30 @@ impl<'alloc> AstBuilder<'alloc> {
     fn check_case_block_binding(&mut self, start_of_block_offset: usize) -> Result<'alloc, ()> {
         let mut context = CaseBlockEarlyErrorsContext::new();
 
-        let index = self.find_first_binding(start_of_block_offset);
+        let index = self
+            .context_metadata
+            .find_first_binding(start_of_block_offset);
+        // Check bindings in CaseBlock of switch-statement.
         self.declare_block(&mut context, index)?;
-        self.pop_lexical_bindings_from(index);
+        self.context_metadata.pop_lexical_bindings_from(index);
+
+        self.context_metadata
+            .pop_unlabelled_breaks_from(start_of_block_offset);
 
         Ok(())
     }
 
     // Declare bindings to the parameter of function or catch.
-    fn declare_param<T>(&self, context: &mut T, from: usize, to: usize) -> Result<'alloc, ()>
+    fn declare_param<T>(
+        &self,
+        context: &mut T,
+        from: BindingsIndex,
+        to: BindingsIndex,
+    ) -> Result<'alloc, ()>
     where
         T: ParameterEarlyErrorsContext,
     {
-        for info in self.bindings.iter().skip(from).take(to - from) {
+        for info in self.context_metadata.bindings_from_to(from, to) {
             context.declare(info.name, info.offset, &self.atoms.borrow())?;
         }
 
@@ -4737,36 +4798,68 @@ impl<'alloc> AstBuilder<'alloc> {
             CatchParameterEarlyErrorsContext::new_with_binding_pattern()
         };
 
-        let param_index = self.find_first_binding(bindings_loc.start);
-        let body_index = self.find_first_binding(bindings_loc.end);
+        let param_index = self.context_metadata.find_first_binding(bindings_loc.start);
+        let body_index = self.context_metadata.find_first_binding(bindings_loc.end);
         self.declare_param(&mut param_context, param_index, body_index)?;
 
         let mut block_context = CatchBlockEarlyErrorsContext::new(param_context);
         self.declare_block(&mut block_context, body_index)?;
-        self.pop_lexical_bindings_from(param_index);
+        self.context_metadata.pop_lexical_bindings_from(param_index);
 
         Ok(())
     }
 
     // Check bindings in Catch with no parameter and Block.
     fn check_catch_no_param_bindings(&mut self, catch_offset: usize) -> Result<'alloc, ()> {
-        let body_index = self.find_first_binding(catch_offset);
+        let body_index = self.context_metadata.find_first_binding(catch_offset);
 
         let param_context = CatchParameterEarlyErrorsContext::new_with_binding_identifier();
         let mut block_context = CatchBlockEarlyErrorsContext::new(param_context);
         self.declare_block(&mut block_context, body_index)?;
-        self.pop_lexical_bindings_from(body_index);
+        self.context_metadata.pop_lexical_bindings_from(body_index);
+
+        Ok(())
+    }
+
+    fn check_unhandled_break_or_continue<T>(
+        &mut self,
+        context: T,
+        offset: usize,
+    ) -> Result<'alloc, ()>
+    where
+        T: ControlEarlyErrorsContext,
+    {
+        let index = self.context_metadata.find_first_break_or_continue(offset);
+        if let Some(info) = self.context_metadata.find_break_or_continue_at(index) {
+            context.on_unhandled_break_or_continue(info)?;
+        }
+
+        Ok(())
+    }
+
+    fn check_unhandled_continue(
+        &mut self,
+        context: LabelledStatementEarlyErrorsContext,
+        index: BreakOrContinueIndex,
+    ) -> Result<'alloc, ()> {
+        for info in self.context_metadata.breaks_and_continues_from(index) {
+            context.check_labelled_continue_to_non_loop(info)?;
+        }
 
         Ok(())
     }
 
     // Declare bindings to script-or-function-like context, where function
     // declarations are body-level.
-    fn declare_script_or_function<T>(&self, context: &mut T, index: usize) -> Result<'alloc, ()>
+    fn declare_script_or_function<T>(
+        &self,
+        context: &mut T,
+        index: BindingsIndex,
+    ) -> Result<'alloc, ()>
     where
         T: LexicalEarlyErrorsContext + VarEarlyErrorsContext,
     {
-        for info in self.bindings.iter().skip(index) {
+        for info in self.context_metadata.bindings_from(index) {
             match info.kind {
                 BindingKind::Var => {
                     context.declare_var(
@@ -4808,6 +4901,16 @@ impl<'alloc> AstBuilder<'alloc> {
                         &self.atoms.borrow(),
                     )?;
                 }
+                // Do nothing for Labels, as they have to be nested for
+                // a syntax error to occur
+                //
+                // We do not have the nesting information at the
+                // script/block/function level so we cannot reuse the mechanism
+                // used for checking duplicate bindings in those error contexts.
+                // We only know that the label occurred somewhere in the block,
+                // and that it might occur more than once, not how it occurs.
+                // This is handled in check_labelled_statement.
+                BindingKind::Label => {}
                 _ => {
                     panic!("Unexpected binding found {:?}", info);
                 }
@@ -4830,13 +4933,20 @@ impl<'alloc> AstBuilder<'alloc> {
             FormalParametersEarlyErrorsContext::new_non_simple()
         };
 
-        let param_index = self.find_first_binding(start_of_param_offset);
-        let body_index = self.find_first_binding(end_of_param_offset);
+        let param_index = self
+            .context_metadata
+            .find_first_binding(start_of_param_offset);
+        let body_index = self
+            .context_metadata
+            .find_first_binding(end_of_param_offset);
         self.declare_param(&mut param_context, param_index, body_index)?;
 
         let mut body_context = FunctionBodyEarlyErrorsContext::new(param_context);
         self.declare_script_or_function(&mut body_context, body_index)?;
-        self.pop_bindings_from(param_index);
+
+        self.check_unhandled_break_or_continue(body_context, end_of_param_offset)?;
+
+        self.context_metadata.pop_bindings_from(param_index);
 
         Ok(())
     }
@@ -4849,13 +4959,19 @@ impl<'alloc> AstBuilder<'alloc> {
     ) -> Result<'alloc, ()> {
         let mut param_context = UniqueFormalParametersEarlyErrorsContext::new();
 
-        let param_index = self.find_first_binding(start_of_param_offset);
-        let body_index = self.find_first_binding(end_of_param_offset);
+        let param_index = self
+            .context_metadata
+            .find_first_binding(start_of_param_offset);
+        let body_index = self
+            .context_metadata
+            .find_first_binding(end_of_param_offset);
         self.declare_param(&mut param_context, param_index, body_index)?;
 
         let mut body_context = UniqueFunctionBodyEarlyErrorsContext::new(param_context);
         self.declare_script_or_function(&mut body_context, body_index)?;
-        self.pop_bindings_from(param_index);
+        self.context_metadata.pop_bindings_from(param_index);
+
+        self.check_unhandled_break_or_continue(body_context, end_of_param_offset)?;
 
         Ok(())
     }
@@ -4863,8 +4979,11 @@ impl<'alloc> AstBuilder<'alloc> {
     // Check bindings in Script.
     fn check_script_bindings(&mut self) -> Result<'alloc, ()> {
         let mut context = ScriptEarlyErrorsContext::new();
-        self.declare_script_or_function(&mut context, 0)?;
-        self.pop_bindings_from(0);
+        let index = BindingsIndex { index: 0 };
+        self.declare_script_or_function(&mut context, index)?;
+        self.context_metadata.pop_bindings_from(index);
+
+        self.check_unhandled_break_or_continue(context, 0)?;
 
         Ok(())
     }
@@ -4872,8 +4991,11 @@ impl<'alloc> AstBuilder<'alloc> {
     // Check bindings in Module.
     fn check_module_bindings(&mut self) -> Result<'alloc, ()> {
         let mut context = ModuleEarlyErrorsContext::new();
-        self.declare_script_or_function(&mut context, 0)?;
-        self.pop_bindings_from(0);
+        let index = BindingsIndex { index: 0 };
+        self.declare_script_or_function(&mut context, index)?;
+        self.context_metadata.pop_bindings_from(index);
+
+        self.check_unhandled_break_or_continue(context, 0)?;
 
         Ok(())
     }
@@ -4923,7 +5045,7 @@ impl<'alloc> AstBuilder<'alloc> {
     //       should contain this information.
     fn is_labelled_function(&self, mut stmt: &Statement<'alloc>) -> bool {
         // Step 1. If stmt is not a LabelledStatement , return false.
-        while let Statement::LabeledStatement { ref body, .. } = stmt {
+        while let Statement::LabelledStatement { ref body, .. } = stmt {
             // Step 2. Let item be the LabelledItem of stmt.
             let item: &Statement<'alloc> = body;
 
@@ -4939,5 +5061,41 @@ impl<'alloc> AstBuilder<'alloc> {
         }
 
         false
+    }
+
+    fn check_labelled_statement(
+        &mut self,
+        label: &arena::Box<'alloc, Label>,
+        body: &Statement<'alloc>,
+    ) -> Result<'alloc, ()> {
+        let start_label_offset = label.loc.start;
+        let end_label_offset = label.loc.end;
+        let name = label.value;
+        let is_loop = match body {
+            Statement::ForStatement { .. }
+            | Statement::ForOfStatement { .. }
+            | Statement::ForInStatement { .. }
+            | Statement::WhileStatement { .. }
+            | Statement::DoWhileStatement { .. } => true,
+            _ => false,
+        };
+
+        let context = LabelledStatementEarlyErrorsContext::new(name, is_loop);
+
+        let binding_index = self.context_metadata.find_first_binding(end_label_offset);
+        for info in self.context_metadata.bindings_from(binding_index) {
+            if info.kind == BindingKind::Label {
+                context.check_duplicate_label(info.name)?;
+            }
+        }
+
+        let label_index = self
+            .context_metadata
+            .find_first_break_or_continue(start_label_offset);
+        self.check_unhandled_continue(context, label_index)?;
+
+        self.context_metadata
+            .pop_labelled_breaks_and_continues_from_index(label_index, name);
+        Ok(())
     }
 }

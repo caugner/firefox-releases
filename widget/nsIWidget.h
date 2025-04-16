@@ -131,6 +131,7 @@ typedef void* nsNativeWidget;
 // IME context.  Note that the result is only valid in the process.  So,
 // XP code should use nsIWidget::GetNativeIMEContext() instead of using this.
 #define NS_RAW_NATIVE_IME_CONTEXT 14
+#define NS_NATIVE_WINDOW_WEBRTC_DEVICE_ID 15
 #ifdef XP_MACOSX
 #  define NS_NATIVE_PLUGIN_PORT_QD 100
 #  define NS_NATIVE_PLUGIN_PORT_CG 101
@@ -824,9 +825,9 @@ class nsIWidget : public nsISupports {
    */
   virtual void SetSizeMode(nsSizeMode aMode) = 0;
 
-  virtual int32_t GetWorkspaceID() = 0;
+  virtual void GetWorkspaceID(nsAString& workspaceID) = 0;
 
-  virtual void MoveToWorkspace(int32_t workspaceID) = 0;
+  virtual void MoveToWorkspace(const nsAString& workspaceID) = 0;
 
   /**
    * Suppress animations that are applied to a window by OS.
@@ -1030,7 +1031,7 @@ class nsIWidget : public nsISupports {
     uintptr_t mWindowID;  // e10s specific, the unique plugin port id
     bool mVisible;        // e10s specific, widget visibility
     LayoutDeviceIntRect mBounds;
-    nsTArray<LayoutDeviceIntRect> mClipRegion;
+    CopyableTArray<LayoutDeviceIntRect> mClipRegion;
   };
 
   /**
@@ -1730,6 +1731,15 @@ class nsIWidget : public nsISupports {
   virtual nsresult GetScreenRect(LayoutDeviceIntRect* aRect) {
     return NS_ERROR_NOT_IMPLEMENTED;
   }
+  virtual nsRect GetPreferredPopupRect() {
+    NS_WARNING("GetPreferredPopupRect implemented only for wayland");
+    return nsRect(0, 0, 0, 0);
+  }
+  virtual void FlushPreferredPopupRect() {
+    NS_WARNING("FlushPreferredPopupRect implemented only for wayland");
+    return;
+  }
+
 #endif
 
   /*
@@ -2146,13 +2156,13 @@ class nsIWidget : public nsISupports {
 
   static already_AddRefed<nsIBidiKeyboard> CreateBidiKeyboard();
 
- protected:
   /**
    * Like GetDefaultScale, but taking into account only the system settings
    * and ignoring Gecko preferences.
    */
   virtual double GetDefaultScaleInternal() { return 1.0; }
 
+ protected:
   // keep the list of children.  We also keep track of our siblings.
   // The ownership model is as follows: parent holds a strong ref to
   // the first element of the list, and each element holds a strong

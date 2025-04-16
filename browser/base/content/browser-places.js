@@ -303,6 +303,7 @@ var StarUI = {
   _createPanelIfNeeded() {
     // Lazy load the editBookmarkPanel the first time we need to display it.
     if (!this._element("editBookmarkPanel")) {
+      MozXULElement.insertFTLIfNeeded("browser/editBookmarkOverlay.ftl");
       let template = this._element("editBookmarkPanelTemplate");
       let clone = template.content.cloneNode(true);
       template.replaceWith(clone);
@@ -582,27 +583,6 @@ var PlacesCommandHook = {
    */
   get uniqueSelectedPages() {
     return this.getUniquePages(gBrowser.selectedTabs);
-  },
-
-  /**
-   * Adds a folder with bookmarks to URIList given in param.
-   */
-  bookmarkPages(URIList) {
-    if (!URIList.length) {
-      return;
-    }
-
-    let bookmarkDialogInfo = { action: "add" };
-    if (URIList.length > 1) {
-      bookmarkDialogInfo.type = "folder";
-      bookmarkDialogInfo.URIList = URIList;
-    } else {
-      bookmarkDialogInfo.type = "bookmark";
-      bookmarkDialogInfo.title = URIList[0].title;
-      bookmarkDialogInfo.uri = URIList[0].uri;
-    }
-
-    PlacesUIUtils.showBookmarkDialog(bookmarkDialogInfo, window);
   },
 
   /**
@@ -1569,11 +1549,7 @@ var BookmarkingUI = {
   init() {
     CustomizableUI.addListener(this);
 
-    if (Services.prefs.getBoolPref("toolkit.cosmeticAnimations.enabled")) {
-      let starButtonBox = document.getElementById("star-button-box");
-      starButtonBox.setAttribute("animationsenabled", "true");
-      this.star.addEventListener("mouseover", this, { once: true });
-    }
+    this.star.addEventListener("mouseover", this, { once: true });
   },
 
   _hasBookmarksObserver: false,

@@ -31,12 +31,6 @@ XPCOMUtils.defineLazyPreferenceGetter(
 );
 XPCOMUtils.defineLazyPreferenceGetter(
   this,
-  "allowLinkedWebInFileUriProcess",
-  "browser.tabs.remote.allowLinkedWebInFileUriProcess",
-  false
-);
-XPCOMUtils.defineLazyPreferenceGetter(
-  this,
   "useSeparatePrivilegedAboutContentProcess",
   "browser.tabs.remote.separatePrivilegedContentProcess",
   false
@@ -264,36 +258,31 @@ function validatedWebRemoteType(
     return aPreferredRemoteType;
   }
 
-  if (
-    allowLinkedWebInFileUriProcess &&
-    // This is not supported with documentchannel and will go away in
-    // Bug 1603007
-    !documentChannel &&
-    aPreferredRemoteType == FILE_REMOTE_TYPE
-  ) {
+  if (aPreferredRemoteType == FILE_REMOTE_TYPE && !aRemoteSubframes) {
     E10SUtils.log().debug("checking allowLinkedWebInFileUriProcess");
+    if (!aCurrentUri) {
+      E10SUtils.log().debug("No aCurrentUri");
+      return FILE_REMOTE_TYPE;
+    }
+
     // If aCurrentUri is passed then we should only allow FILE_REMOTE_TYPE
     // when it is same origin as target or the current URI is already a
     // file:// URI.
-    if (aCurrentUri) {
-      if (aCurrentUri.scheme == "file" || aCurrentUri.spec == "about:blank") {
-        return FILE_REMOTE_TYPE;
-      }
-      try {
-        // checkSameOriginURI throws when not same origin.
-        // todo: if you intend to update CheckSameOriginURI to log the error to the
-        // console you also need to update the 'aFromPrivateWindow' argument.
-        sm.checkSameOriginURI(aCurrentUri, aTargetUri, false, false);
-        E10SUtils.log().debug("Next URL is same origin");
-        return FILE_REMOTE_TYPE;
-      } catch (e) {
-        E10SUtils.log().debug("Leaving same origin");
-        return WEB_REMOTE_TYPE;
-      }
+    if (aCurrentUri.scheme == "file" || aCurrentUri.spec == "about:blank") {
+      return FILE_REMOTE_TYPE;
     }
 
-    E10SUtils.log().debug("No aCurrentUri");
-    return FILE_REMOTE_TYPE;
+    try {
+      // checkSameOriginURI throws when not same origin.
+      // todo: if you intend to update CheckSameOriginURI to log the error to the
+      // console you also need to update the 'aFromPrivateWindow' argument.
+      sm.checkSameOriginURI(aCurrentUri, aTargetUri, false, false);
+      E10SUtils.log().debug("Next URL is same origin");
+      return FILE_REMOTE_TYPE;
+    } catch (e) {
+      E10SUtils.log().debug("Leaving same origin");
+      return WEB_REMOTE_TYPE;
+    }
   }
 
   return WEB_REMOTE_TYPE;
@@ -808,6 +797,17 @@ var E10SUtils = {
 
     let mustChangeProcess = requiredRemoteType != currentRemoteType;
 
+    let newFrameloader = false;
+    if (
+      browser.getAttribute("preloadedState") === "consumed" &&
+      uri != "about:newtab"
+    ) {
+      // Leaving about:newtab from a used to be preloaded browser should run the process
+      // selecting algorithm again.
+      mustChangeProcess = true;
+      newFrameloader = true;
+    }
+
     // If we already have a content process, and the load will be
     // handled using DocumentChannel, then we can skip switching
     // for now, and let DocumentChannel do it during the response.
@@ -819,16 +819,7 @@ var E10SUtils = {
       documentChannelPermittedForURI(uriObject)
     ) {
       mustChangeProcess = false;
-    }
-    let newFrameloader = false;
-    if (
-      browser.getAttribute("preloadedState") === "consumed" &&
-      uri != "about:newtab"
-    ) {
-      // Leaving about:newtab from a used to be preloaded browser should run the process
-      // selecting algorithm again.
-      mustChangeProcess = true;
-      newFrameloader = true;
+      newFrameloader = false;
     }
 
     return {
@@ -879,20 +870,6 @@ var E10SUtils = {
 
     let webNav = aDocShell.QueryInterface(Ci.nsIWebNavigation);
     let sessionHistory = webNav.sessionHistory;
-    if (
-      !aHasPostData &&
-      remoteType == WEB_REMOTE_TYPE &&
-      sessionHistory.count == 1 &&
-      webNav.currentURI.spec == "about:newtab"
-    ) {
-      // This is possibly a preloaded browser and we're about to navigate away for
-      // the first time. On the child side there is no way to tell for sure if that
-      // is the case, so let's redirect this request to the parent to decide if a new
-      // process is needed. But we don't currently properly handle POST data in
-      // redirects (bug 1457520), so if there is POST data, don't return false here.
-      return false;
-    }
-
     let wantRemoteType = this.getRemoteTypeForURIObject(
       aURI,
       true,
@@ -911,6 +888,20 @@ var E10SUtils = {
       documentChannelPermittedForURI(aURI)
     ) {
       return true;
+    }
+
+    if (
+      !aHasPostData &&
+      remoteType == WEB_REMOTE_TYPE &&
+      sessionHistory.count == 1 &&
+      webNav.currentURI.spec == "about:newtab"
+    ) {
+      // This is possibly a preloaded browser and we're about to navigate away for
+      // the first time. On the child side there is no way to tell for sure if that
+      // is the case, so let's redirect this request to the parent to decide if a new
+      // process is needed. But we don't currently properly handle POST data in
+      // redirects (bug 1457520), so if there is POST data, don't return false here.
+      return false;
     }
 
     // If we are in a Large-Allocation process, and it wouldn't be content visible

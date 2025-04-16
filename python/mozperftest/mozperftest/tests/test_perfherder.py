@@ -3,30 +3,36 @@ import os
 import mozunit
 import json
 
-from mozperftest.metrics import pick_metrics
-from mozperftest.tests.support import get_running_env
+from mozperftest.tests.support import get_running_env, temp_file, EXAMPLE_TEST
+from mozperftest.environment import METRICS
+from mozperftest.utils import silence
+
 
 HERE = os.path.dirname(__file__)
 
 
 def test_metrics():
-    mach_cmd, metadata = get_running_env()
+    options = {"perfherder": True, "perfherder-prefix": ""}
+
+    mach_cmd, metadata, env = get_running_env(**options)
     runs = []
 
     def _run_process(*args, **kw):
         runs.append((args, kw))
 
     mach_cmd.run_process = _run_process
-    metadata["mach_args"] = {"tests": [os.path.join(HERE, "example.js")]}
-    metadata["results"] = os.path.join(HERE, "browsertime-results")
+    metrics = env.layers[METRICS]
+    env.set_arg("tests", [EXAMPLE_TEST])
+    metadata.set_result(os.path.join(HERE, "browsertime-results"))
 
-    with pick_metrics("script", mach_cmd) as env:
-        env(metadata)
+    with temp_file() as output:
+        env.set_arg("output", output)
+        with metrics as m, silence():
+            m(metadata)
+        output_file = metadata.get_output()
+        with open(output_file) as f:
+            output = json.loads(f.read())
 
-    with open(metadata["output"]) as f:
-        output = json.loads(f.read())
-
-    os.remove(metadata["output"])
     # XXX more checks
     assert output["suites"][0]["value"] > 0
 

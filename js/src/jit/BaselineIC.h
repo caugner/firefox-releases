@@ -420,6 +420,8 @@ class ICStub {
   void updateCode(JitCode* stubCode);
   void trace(JSTracer* trc);
 
+  bool stubDataHasNurseryPointers(const CacheIRStubInfo* stubInfo);
+
   static const uint16_t EXPECTED_TRACE_MAGIC = 0b1100011;
 
   template <typename T, typename... Args>
@@ -1717,9 +1719,11 @@ class ICRest_Fallback : public ICFallbackStub {
 
 // UnaryArith
 //     JSOp::BitNot
+//     JSOp::Pos
 //     JSOp::Neg
 //     JSOp::Inc
 //     JSOp::Dec
+//     JSOp::ToNumeric
 
 class ICUnaryArith_Fallback : public ICFallbackStub {
   friend class ICStubSpace;
@@ -1750,7 +1754,7 @@ class ICCompare_Fallback : public ICFallbackStub {
 };
 
 // BinaryArith
-//      JSOp::Add, JSOp::Sub, JSOp::Mul, JOP_DIV, JSOp::Mod
+//      JSOp::Add, JSOp::Sub, JSOp::Mul, JSOp::Div, JSOp::Mod, JSOp::Pow,
 //      JSOp::BitAnd, JSOp::BitXor, JSOp::BitOr
 //      JSOp::Lsh, JSOp::Rsh, JSOp::Ursh
 

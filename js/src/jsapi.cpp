@@ -87,6 +87,7 @@
 #include "vm/JSFunction.h"
 #include "vm/JSObject.h"
 #include "vm/JSScript.h"
+#include "vm/PlainObject.h"    // js::PlainObject
 #include "vm/PromiseObject.h"  // js::PromiseObject
 #include "vm/Runtime.h"
 #include "vm/SavedStacks.h"
@@ -904,15 +905,31 @@ static const JSStdName builtin_property_names[] = {
 
     {0, JSProto_LIMIT}};
 
-static bool SkipUneval(JSContext* cx, jsid id) {
+static bool SkipUneval(jsid id, JSContext* cx) {
   return !cx->realm()->creationOptions().getToSourceEnabled() &&
          id == NameToId(cx->names().uneval);
 }
 
+static bool SkipSharedArrayBufferConstructor(JSProtoKey key,
+                                             GlobalObject* global) {
+  if (key != JSProto_SharedArrayBuffer) {
+    return false;
+  }
+
+  const JS::RealmCreationOptions& options = global->realm()->creationOptions();
+  MOZ_ASSERT(options.getSharedMemoryAndAtomicsEnabled(),
+             "shouldn't contemplate defining SharedArrayBuffer if shared "
+             "memory is disabled");
+
+  // On the web, it isn't presently possible to expose the global
+  // "SharedArrayBuffer" property unless the page is cross-site-isolated.  Only
+  // define this constructor if an option on the realm indicates that it should
+  // be defined.
+  return !options.defineSharedArrayBufferConstructor();
+}
+
 JS_PUBLIC_API bool JS_ResolveStandardClass(JSContext* cx, HandleObject obj,
                                            HandleId id, bool* resolved) {
-  const JSStdName* stdnm;
-
   AssertHeapIsIdle();
   CHECK_THREAD(cx);
   cx->check(obj, id);
@@ -938,35 +955,39 @@ JS_PUBLIC_API bool JS_ResolveStandardClass(JSContext* cx, HandleObject obj,
     return GlobalObject::maybeResolveGlobalThis(cx, global, resolved);
   }
 
-  /* Try for class constructors/prototypes named by well-known atoms. */
-  stdnm = LookupStdName(cx->names(), idAtom, standard_class_names);
-
-  /* Try less frequently used top-level functions and constants. */
-  if (!stdnm) {
-    stdnm = LookupStdName(cx->names(), idAtom, builtin_property_names);
-  }
-
-  if (stdnm && GlobalObject::skipDeselectedConstructor(cx, stdnm->key)) {
-    stdnm = nullptr;
-  }
-  if (stdnm && SkipUneval(cx, id)) {
-    stdnm = nullptr;
-  }
-
-  // If this class is anonymous, then it doesn't exist as a global
-  // property, so we won't resolve anything.
-  JSProtoKey key = stdnm ? stdnm->key : JSProto_Null;
-  if (key != JSProto_Null) {
-    const JSClass* clasp = ProtoKeyToClass(key);
-    if (!clasp || clasp->specShouldDefineConstructor()) {
-      if (!GlobalObject::ensureConstructor(cx, global, key)) {
-        return false;
+  do {
+    // Try for class constructors/prototypes named by well-known atoms.
+    const JSStdName* stdnm =
+        LookupStdName(cx->names(), idAtom, standard_class_names);
+    if (!stdnm) {
+      // Try less frequently used top-level functions and constants.
+      stdnm = LookupStdName(cx->names(), idAtom, builtin_property_names);
+      if (!stdnm) {
+        break;
       }
-
-      *resolved = true;
-      return true;
     }
-  }
+
+    if (GlobalObject::skipDeselectedConstructor(cx, stdnm->key) ||
+        SkipUneval(id, cx)) {
+      break;
+    }
+
+    if (JSProtoKey key = stdnm->key; key != JSProto_Null) {
+      // If this class is anonymous (or it's "SharedArrayBuffer" but that global
+      // constructor isn't supposed to be defined), then it doesn't exist as a
+      // global property, so we won't resolve anything.
+      const JSClass* clasp = ProtoKeyToClass(key);
+      if ((!clasp || clasp->specShouldDefineConstructor()) &&
+          !SkipSharedArrayBufferConstructor(key, global)) {
+        if (!GlobalObject::ensureConstructor(cx, global, key)) {
+          return false;
+        }
+
+        *resolved = true;
+        return true;
+      }
+    }
+  } while (false);
 
   // There is no such property to resolve. An ordinary resolve hook would
   // just return true at this point. But the global object is special in one
@@ -1033,14 +1054,15 @@ static bool EnumerateStandardClassesInTable(JSContext* cx,
     }
 
     if (const JSClass* clasp = ProtoKeyToClass(key)) {
-      if (!clasp->specShouldDefineConstructor()) {
+      if (!clasp->specShouldDefineConstructor() ||
+          SkipSharedArrayBufferConstructor(key, global)) {
         continue;
       }
     }
 
     jsid id = NameToId(AtomStateOffsetToName(cx->names(), table[i].atomOffset));
 
-    if (SkipUneval(cx, id)) {
+    if (SkipUneval(id, cx)) {
       continue;
     }
 
@@ -1157,7 +1179,12 @@ JS_PUBLIC_API JSProtoKey JS_IdToProtoKey(JSContext* cx, HandleId id) {
     return JSProto_Null;
   }
 
-  if (SkipUneval(cx, id)) {
+  if (SkipSharedArrayBufferConstructor(stdnm->key, cx->global())) {
+    MOZ_ASSERT(id == NameToId(cx->names().SharedArrayBuffer));
+    return JSProto_Null;
+  }
+
+  if (SkipUneval(id, cx)) {
     return JSProto_Null;
   }
 
@@ -1373,6 +1400,10 @@ JS_PUBLIC_API void JS::ClearKeptObjects(JSContext* cx) {
   }
 }
 
+JS_PUBLIC_API bool JS::ZoneIsCollecting(JS::Zone* zone) {
+  return zone->wasGCStarted();
+}
+
 JS_PUBLIC_API bool JS_AddWeakPointerZonesCallback(JSContext* cx,
                                                   JSWeakPointerZonesCallback cb,
                                                   void* data) {
@@ -1429,10 +1460,10 @@ JS_PUBLIC_API void JS_SetGCParametersBasedOnAvailableMemory(JSContext* cx,
   static const JSGCConfig minimal[] = {
       {JSGC_SLICE_TIME_BUDGET_MS, 30},
       {JSGC_HIGH_FREQUENCY_TIME_LIMIT, 1500},
-      {JSGC_HIGH_FREQUENCY_HIGH_LIMIT, 40},
-      {JSGC_HIGH_FREQUENCY_LOW_LIMIT, 0},
-      {JSGC_HIGH_FREQUENCY_HEAP_GROWTH_MAX, 300},
-      {JSGC_HIGH_FREQUENCY_HEAP_GROWTH_MIN, 120},
+      {JSGC_LARGE_HEAP_SIZE_MIN, 40},
+      {JSGC_SMALL_HEAP_SIZE_MAX, 0},
+      {JSGC_HIGH_FREQUENCY_SMALL_HEAP_GROWTH, 300},
+      {JSGC_HIGH_FREQUENCY_LARGE_HEAP_GROWTH, 120},
       {JSGC_LOW_FREQUENCY_HEAP_GROWTH, 120},
       {JSGC_HIGH_FREQUENCY_TIME_LIMIT, 1500},
       {JSGC_HIGH_FREQUENCY_TIME_LIMIT, 1500},
@@ -1443,10 +1474,10 @@ JS_PUBLIC_API void JS_SetGCParametersBasedOnAvailableMemory(JSContext* cx,
   static const JSGCConfig nominal[] = {
       {JSGC_SLICE_TIME_BUDGET_MS, 30},
       {JSGC_HIGH_FREQUENCY_TIME_LIMIT, 1000},
-      {JSGC_HIGH_FREQUENCY_HIGH_LIMIT, 500},
-      {JSGC_HIGH_FREQUENCY_LOW_LIMIT, 100},
-      {JSGC_HIGH_FREQUENCY_HEAP_GROWTH_MAX, 300},
-      {JSGC_HIGH_FREQUENCY_HEAP_GROWTH_MIN, 150},
+      {JSGC_LARGE_HEAP_SIZE_MIN, 500},
+      {JSGC_SMALL_HEAP_SIZE_MAX, 100},
+      {JSGC_HIGH_FREQUENCY_SMALL_HEAP_GROWTH, 300},
+      {JSGC_HIGH_FREQUENCY_LARGE_HEAP_GROWTH, 150},
       {JSGC_LOW_FREQUENCY_HEAP_GROWTH, 150},
       {JSGC_HIGH_FREQUENCY_TIME_LIMIT, 1500},
       {JSGC_HIGH_FREQUENCY_TIME_LIMIT, 1500},
@@ -1907,8 +1938,12 @@ JS_PUBLIC_API void JS::AssertObjectBelongsToCurrentThread(JSObject* obj) {
   MOZ_RELEASE_ASSERT(CurrentThreadCanAccessRuntime(rt));
 }
 
-JS_PUBLIC_API void SetHelperThreadTaskCallback(
-    void (*callback)(js::RunnableTask*)) {
+// TODO:
+// Bug 1630189: Windows PGO build will have a linking error for
+// HelperThreadTaskCallback, use MOZ_NEVER_INLINE to prevent this. See
+// https://bugzilla.mozilla.org/show_bug.cgi?id=1630189#c4
+JS_PUBLIC_API MOZ_NEVER_INLINE void SetHelperThreadTaskCallback(
+    void (*callback)(js::UniquePtr<js::RunnableTask>)) {
   HelperThreadTaskCallback = callback;
 }
 
@@ -2985,7 +3020,7 @@ static bool DefineSelfHostedProperty(JSContext* cx, HandleObject obj,
 
     RootedValue setterValue(cx);
     if (!GlobalObject::getSelfHostedFunction(cx, cx->global(), setterNameName,
-                                             name, 0, &setterValue)) {
+                                             name, 1, &setterValue)) {
       return false;
     }
     MOZ_ASSERT(setterValue.isObject() &&
@@ -3020,33 +3055,6 @@ JS_PUBLIC_API JSObject* JS_DefineObject(JSContext* cx, HandleObject obj,
   return nobj;
 }
 
-static inline Value ValueFromScalar(double x) { return DoubleValue(x); }
-static inline Value ValueFromScalar(int32_t x) { return Int32Value(x); }
-
-template <typename T>
-static bool DefineConstScalar(JSContext* cx, HandleObject obj,
-                              const JSConstScalarSpec<T>* cds) {
-  AssertHeapIsIdle();
-  CHECK_THREAD(cx);
-  unsigned attrs = JSPROP_READONLY | JSPROP_PERMANENT;
-  for (; cds->name; cds++) {
-    RootedValue value(cx, ValueFromScalar(cds->val));
-    if (!DefineDataProperty(cx, obj, cds->name, value, attrs)) {
-      return false;
-    }
-  }
-  return true;
-}
-
-JS_PUBLIC_API bool JS_DefineConstDoubles(JSContext* cx, HandleObject obj,
-                                         const JSConstDoubleSpec* cds) {
-  return DefineConstScalar(cx, obj, cds);
-}
-JS_PUBLIC_API bool JS_DefineConstIntegers(JSContext* cx, HandleObject obj,
-                                          const JSConstIntegerSpec* cis) {
-  return DefineConstScalar(cx, obj, cis);
-}
-
 JS_PUBLIC_API bool JSPropertySpec::getValue(JSContext* cx,
                                             MutableHandleValue vp) const {
   MOZ_ASSERT(!isAccessor());
@@ -3057,6 +3065,8 @@ JS_PUBLIC_API bool JSPropertySpec::getValue(JSContext* cx,
       return false;
     }
     vp.setString(atom);
+  } else if (u.value.type == JSVAL_TYPE_DOUBLE) {
+    vp.setDouble(u.value.double_);
   } else {
     MOZ_ASSERT(u.value.type == JSVAL_TYPE_INT32);
     vp.setInt32(u.value.int32);
@@ -3104,13 +3114,13 @@ JS_PUBLIC_API bool JS_DefineProperties(JSContext* cx, HandleObject obj,
       if (ps->isSelfHosted()) {
         if (!DefineSelfHostedProperty(
                 cx, obj, id, ps->u.accessors.getter.selfHosted.funname,
-                ps->u.accessors.setter.selfHosted.funname, ps->flags)) {
+                ps->u.accessors.setter.selfHosted.funname, ps->attributes())) {
           return false;
         }
       } else {
         if (!DefineAccessorPropertyById(
                 cx, obj, id, ps->u.accessors.getter.native,
-                ps->u.accessors.setter.native, ps->flags)) {
+                ps->u.accessors.setter.native, ps->attributes())) {
           return false;
         }
       }
@@ -3120,8 +3130,7 @@ JS_PUBLIC_API bool JS_DefineProperties(JSContext* cx, HandleObject obj,
         return false;
       }
 
-      if (!DefineDataPropertyById(cx, obj, id, v,
-                                  ps->flags & ~JSPROP_INTERNAL_USE_BIT)) {
+      if (!DefineDataPropertyById(cx, obj, id, v, ps->attributes())) {
         return false;
       }
     }
@@ -4170,13 +4179,6 @@ JS_PUBLIC_API bool JS_StringHasBeenPinned(JSContext* cx, JSString* str) {
   return str->asAtom().isPinned();
 }
 
-JS_PUBLIC_API jsid INTERNED_STRING_TO_JSID(JSContext* cx, JSString* str) {
-  MOZ_ASSERT(str);
-  MOZ_ASSERT(((size_t)str & JSID_TYPE_MASK) == 0);
-  MOZ_ASSERT_IF(cx, JS_StringHasBeenPinned(cx, str));
-  return AtomToId(&str->asAtom());
-}
-
 JS_PUBLIC_API JSString* JS_AtomizeAndPinJSString(JSContext* cx,
                                                  HandleString str) {
   AssertHeapIsIdle();
@@ -4625,11 +4627,7 @@ static bool PropertySpecNameIsDigits(JSPropertySpec::Name name) {
 JS_PUBLIC_API bool JS::PropertySpecNameEqualsId(JSPropertySpec::Name name,
                                                 HandleId id) {
   if (name.isSymbol()) {
-    if (!JSID_IS_SYMBOL(id)) {
-      return false;
-    }
-    Symbol* sym = JSID_TO_SYMBOL(id);
-    return sym->isWellKnownSymbol() && sym->code() == name.symbol();
+    return id.isWellKnownSymbol(name.symbol());
   }
 
   MOZ_ASSERT(!PropertySpecNameIsDigits(name));
@@ -4936,30 +4934,6 @@ JS_PUBLIC_API void JS_SetPendingException(JSContext* cx, HandleValue value,
 JS_PUBLIC_API void JS_ClearPendingException(JSContext* cx) {
   AssertHeapIsIdle();
   cx->clearPendingException();
-}
-
-JS_PUBLIC_API void JS::SetPendingExceptionAndStack(JSContext* cx,
-                                                   HandleValue value,
-                                                   HandleObject stack) {
-  AssertHeapIsIdle();
-  CHECK_THREAD(cx);
-  // We don't check the compartments of `value` and `stack` here,
-  // because we're not doing anything with them other than storing
-  // them, and stored exception values can be in an abitrary
-  // compartment while stored stack values are always the unwrapped
-  // object anyway.
-
-  RootedSavedFrame nstack(cx);
-  if (stack) {
-    nstack = &UncheckedUnwrap(stack)->as<SavedFrame>();
-  }
-  cx->setPendingException(value, nstack);
-}
-
-JS_PUBLIC_API JSObject* JS::GetPendingExceptionStack(JSContext* cx) {
-  AssertHeapIsIdle();
-  CHECK_THREAD(cx);
-  return cx->getPendingExceptionStack();
 }
 
 JS::AutoSaveExceptionState::AutoSaveExceptionState(JSContext* cx)
@@ -5893,6 +5867,23 @@ JS_PUBLIC_API bool JS::CopyAsyncStack(JSContext* cx,
 }
 
 JS_PUBLIC_API Zone* JS::GetObjectZone(JSObject* obj) { return obj->zone(); }
+
+JS_PUBLIC_API Zone* JS::GetNurseryGCThingZone(GCCellPtr thing) {
+  MOZ_ASSERT(!thing.asCell()->isTenured());
+  if (thing.is<JSObject>()) {
+    return thing.as<JSObject>().zone();
+  }
+
+  if (thing.is<JSString>()) {
+    return Nursery::getStringZone(&thing.as<JSString>());
+  }
+
+  if (thing.is<BigInt>()) {
+    return Nursery::getBigIntZone(&thing.as<BigInt>());
+  }
+
+  MOZ_CRASH("Unexpected GC thing kind");
+}
 
 JS_PUBLIC_API Zone* JS::GetNurseryStringZone(JSString* str) {
   MOZ_ASSERT(!str->isTenured());

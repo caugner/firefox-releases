@@ -43,6 +43,7 @@
 #include <algorithm>
 
 using namespace mozilla;
+using dom::Element;
 
 #define NS_MENU_POPUP_LIST_INDEX 0
 
@@ -383,6 +384,11 @@ nsresult nsMenuFrame::HandleEvent(nsPresContext* aPresContext,
 #endif
   } else if (aEvent->mMessage == eMouseDown &&
              aEvent->AsMouseEvent()->mButton == MouseButton::eLeft &&
+#ifdef XP_MACOSX
+             // On mac, ctrl-click will send a context menu event from the
+             // widget, so we don't want to bring up the menu.
+             !aEvent->AsMouseEvent()->IsControl() &&
+#endif
              !IsDisabled() && IsMenu()) {
     // The menu item was selected. Bring up the menu.
     // We have children.
@@ -901,7 +907,7 @@ void nsMenuFrame::BuildAcceleratorText(bool aNotify) {
   if (keyValue.IsEmpty()) return;
 
   // Turn the document into a DOM document so we can use getElementById
-  Document* document = mContent->GetUncomposedDoc();
+  dom::Document* document = mContent->GetUncomposedDoc();
   if (!document) return;
 
   // XXXsmaug If mContent is in shadow dom, should we use
@@ -1111,7 +1117,7 @@ void nsMenuFrame::CreateMenuCommandEvent(WidgetGUIEvent* aEvent,
   // Because the command event is firing asynchronously, a flag is needed to
   // indicate whether user input is being handled. This ensures that a popup
   // window won't get blocked.
-  bool userinput = UserActivation::IsHandlingUserInput();
+  bool userinput = dom::UserActivation::IsHandlingUserInput();
 
   mDelayedMenuCommandEvent =
       new nsXULMenuCommandEvent(mContent->AsElement(), isTrusted, shift,
@@ -1223,7 +1229,7 @@ nsSize nsMenuFrame::GetXULPrefSize(nsBoxLayoutState& aState) {
     // We now need to ensure that size is within the min - max range.
     nsSize minSize = nsBoxFrame::GetXULMinSize(aState);
     nsSize maxSize = GetXULMaxSize(aState);
-    size = BoundsCheck(minSize, size, maxSize);
+    size = XULBoundsCheck(minSize, size, maxSize);
   }
 
   return size;

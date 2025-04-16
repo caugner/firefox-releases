@@ -77,6 +77,8 @@
 #include "nsStreamUtils.h"
 #include "nsThreadUtils.h"
 #include "nsURLHelper.h"
+#include "mozilla/dom/IPCBlobUtils.h"
+#include "mozilla/dom/IPCBlobInputStreamChild.h"
 
 namespace mozilla {
 namespace net {
@@ -230,6 +232,7 @@ HttpBaseChannel::HttpBaseChannel()
       mAfterOnStartRequestBegun(false),
       mRequireCORSPreflight(false),
       mAltDataForChild(false),
+      mDisableAltDataCache(false),
       mForceMainDocumentChannel(false),
       mPendingInputStreamLengthOperation(false) {
   this->mSelfAddr.inet = {};
@@ -2127,11 +2130,7 @@ HttpBaseChannel::SetCookie(const nsACString& aCookieHeader) {
   nsICookieService* cs = gHttpHandler->GetCookieService();
   NS_ENSURE_TRUE(cs, NS_ERROR_FAILURE);
 
-  nsAutoCString date;
-  // empty date is not an error
-  Unused << mResponseHead->GetHeader(nsHttp::Date, date);
-  nsresult rv =
-      cs->SetCookieStringFromHttp(mURI, nullptr, aCookieHeader, date, this);
+  nsresult rv = cs->SetCookieStringFromHttp(mURI, aCookieHeader, this);
   if (NS_SUCCEEDED(rv)) {
     NotifySetCookie(aCookieHeader);
   }
@@ -2850,8 +2849,8 @@ void HttpBaseChannel::AssertPrivateBrowsingId() {
   // We skip testing of favicon loading here since it could be triggered by XUL
   // image which uses SystemPrincipal. The SystemPrincpal doesn't have
   // mPrivateBrowsingId.
-  if (mLoadInfo->LoadingPrincipal() &&
-      mLoadInfo->LoadingPrincipal()->IsSystemPrincipal() &&
+  if (mLoadInfo->GetLoadingPrincipal() &&
+      mLoadInfo->GetLoadingPrincipal()->IsSystemPrincipal() &&
       mLoadInfo->InternalContentPolicyType() ==
           nsIContentPolicy::TYPE_INTERNAL_IMAGE_FAVICON) {
     return;
@@ -3041,7 +3040,7 @@ void HttpBaseChannel::AddCookiesToRequest() {
   if (useCookieService) {
     nsICookieService* cs = gHttpHandler->GetCookieService();
     if (cs) {
-      cs->GetCookieStringFromHttp(mURI, nullptr, this, cookie);
+      cs->GetCookieStringFromHttp(mURI, this, cookie);
     }
 
     if (cookie.IsEmpty()) {
@@ -3157,7 +3156,7 @@ HttpBaseChannel::CloneReplacementChannelConfig(bool aPreserveMethod,
     // AllRedirectsPassTimingAllowCheck on them.
     if (loadInfo->GetExternalContentPolicyType() !=
         nsIContentPolicy::TYPE_DOCUMENT) {
-      nsCOMPtr<nsIPrincipal> principal = loadInfo->LoadingPrincipal();
+      nsCOMPtr<nsIPrincipal> principal = loadInfo->GetLoadingPrincipal();
       config.timedChannel->timingAllowCheckForPrincipal() =
           Some(oldTimedChannel->TimingAllowCheck(principal));
     }
@@ -3184,7 +3183,15 @@ HttpBaseChannel::CloneReplacementChannelConfig(bool aPreserveMethod,
     mRequestHead.Method(method);
     config.method = Some(method);
 
-    config.uploadStream = mUploadStream;
+    if (mUploadStream) {
+      // rewind upload stream
+      nsCOMPtr<nsISeekableStream> seekable = do_QueryInterface(mUploadStream);
+      if (seekable) {
+        seekable->Seek(nsISeekableStream::NS_SEEK_SET, 0);
+      }
+      config.uploadStream = mUploadStream;
+    }
+    config.uploadStreamLength = mReqContentLength;
     config.uploadStreamHasHeaders = mUploadStreamHasHeaders;
 
     nsAutoCString contentType;
@@ -3315,13 +3322,6 @@ HttpBaseChannel::CloneReplacementChannelConfig(bool aPreserveMethod,
     nsCOMPtr<nsIUploadChannel> uploadChannel = do_QueryInterface(httpChannel);
     nsCOMPtr<nsIUploadChannel2> uploadChannel2 = do_QueryInterface(httpChannel);
     if (uploadChannel2 || uploadChannel) {
-      // rewind upload stream
-      nsCOMPtr<nsISeekableStream> seekable =
-          do_QueryInterface(config.uploadStream);
-      if (seekable) {
-        seekable->Seek(nsISeekableStream::NS_SEEK_SET, 0);
-      }
-
       // replicate original call to SetUploadStream...
       if (uploadChannel2) {
         const nsACString& ctype =
@@ -3334,16 +3334,13 @@ HttpBaseChannel::CloneReplacementChannelConfig(bool aPreserveMethod,
         const nsACString& method =
             config.method ? *config.method : VoidCString();
 
-        int64_t len = (!config.contentLength || config.contentLength->IsEmpty())
-                          ? -1
-                          : nsCRT::atoll(config.contentLength->get());
-        uploadChannel2->ExplicitSetUploadStream(config.uploadStream, ctype, len,
-                                                method,
-                                                config.uploadStreamHasHeaders);
+        uploadChannel2->ExplicitSetUploadStream(
+            config.uploadStream, ctype, config.uploadStreamLength, method,
+            config.uploadStreamHasHeaders);
       } else {
         if (config.uploadStreamHasHeaders) {
           uploadChannel->SetUploadStream(config.uploadStream, EmptyCString(),
-                                         -1);
+                                         config.uploadStreamLength);
         } else {
           nsAutoCString ctype;
           if (config.contentType) {
@@ -3381,14 +3378,24 @@ HttpBaseChannel::ReplacementChannelConfig::ReplacementChannelConfig(
   method = aInit.method();
   referrerInfo = aInit.referrerInfo();
   timedChannel = aInit.timedChannel();
-  uploadStream = aInit.uploadStream();
+  if (dom::IPCBlobInputStreamChild* actor =
+          static_cast<dom::IPCBlobInputStreamChild*>(
+              aInit.uploadStreamChild())) {
+    uploadStreamLength = actor->Size();
+    uploadStream = actor->CreateStream();
+    // actor can be deleted by CreateStream, so don't touch it
+    // after this.
+  } else {
+    uploadStreamLength = 0;
+  }
   uploadStreamHasHeaders = aInit.uploadStreamHasHeaders();
   contentType = aInit.contentType();
   contentLength = aInit.contentLength();
 }
 
 dom::ReplacementChannelConfigInit
-HttpBaseChannel::ReplacementChannelConfig::Serialize() {
+HttpBaseChannel::ReplacementChannelConfig::Serialize(
+    dom::ContentParent* aParent) {
   dom::ReplacementChannelConfigInit config;
   config.redirectFlags() = redirectFlags;
   config.classOfService() = classOfService;
@@ -3396,7 +3403,10 @@ HttpBaseChannel::ReplacementChannelConfig::Serialize() {
   config.method() = method;
   config.referrerInfo() = referrerInfo;
   config.timedChannel() = timedChannel;
-  config.uploadStream() = uploadStream;
+  if (uploadStream) {
+    dom::IPCBlobUtils::SerializeInputStream(
+        uploadStream, uploadStreamLength, config.uploadStreamParent(), aParent);
+  }
   config.uploadStreamHasHeaders() = uploadStreamHasHeaders;
   config.contentType() = contentType;
   config.contentLength() = contentLength;
@@ -3594,6 +3604,9 @@ nsresult HttpBaseChannel::SetupReplacementChannel(nsIURI* newURI,
     MOZ_ASSERT(NS_SUCCEEDED(rv));
 
     httpInternal->SetAltDataForChild(mAltDataForChild);
+    if (mDisableAltDataCache) {
+      httpInternal->DisableAltDataCache();
+    }
   }
 
   // transfer application cache information
@@ -4407,24 +4420,17 @@ void HttpBaseChannel::SetIPv4Disabled() { mCaps |= NS_HTTP_DISABLE_IPV4; }
 
 void HttpBaseChannel::SetIPv6Disabled() { mCaps |= NS_HTTP_DISABLE_IPV6; }
 
-nsresult HttpBaseChannel::GetResponseEmbedderPolicy(
-    nsILoadInfo::CrossOriginEmbedderPolicy* aResponseEmbedderPolicy) {
+NS_IMETHODIMP HttpBaseChannel::GetResponseEmbedderPolicy(
+    nsILoadInfo::CrossOriginEmbedderPolicy* aOutPolicy) {
   if (!mResponseHead) {
     return NS_ERROR_NOT_AVAILABLE;
   }
-
-  nsILoadInfo::CrossOriginEmbedderPolicy policy =
-      nsILoadInfo::EMBEDDER_POLICY_NULL;
 
   nsAutoCString content;
   Unused << mResponseHead->GetHeader(nsHttp::Cross_Origin_Embedder_Policy,
                                      content);
 
-  if (content.EqualsLiteral("require-corp")) {
-    policy = nsILoadInfo::EMBEDDER_POLICY_REQUIRE_CORP;
-  }
-
-  *aResponseEmbedderPolicy = policy;
+  *aOutPolicy = NS_GetCrossOriginEmbedderPolicyFromHeader(content);
   return NS_OK;
 }
 
@@ -4503,6 +4509,8 @@ void HttpBaseChannel::MaybeFlushConsoleReports() {
     FlushConsoleReports(loadGroup);
   }
 }
+
+void HttpBaseChannel::DoDiagnosticAssertWhenOnStopNotCalledOnDestroy() {}
 
 }  // namespace net
 }  // namespace mozilla

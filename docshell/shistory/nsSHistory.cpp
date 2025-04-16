@@ -31,7 +31,6 @@
 #include "mozilla/Preferences.h"
 #include "mozilla/Services.h"
 #include "mozilla/StaticPtr.h"
-#include "mozilla/dom/TabGroup.h"
 #include "nsIWebNavigation.h"
 #include "nsDocShellLoadTypes.h"
 #include "base/process.h"
@@ -387,7 +386,7 @@ nsresult nsSHistory::WalkHistoryEntries(nsISHEntry* aRootEntry,
 
     BrowsingContext* childBC = nullptr;
     if (aBC) {
-      for (BrowsingContext* child : aBC->GetChildren()) {
+      for (BrowsingContext* child : aBC->Children()) {
         // If the SH pref is on, or we are in the parent process, update
         // canonical BC directly
         if (StaticPrefs::fission_sessionHistoryInParent() ||
@@ -1029,7 +1028,7 @@ nsSHistory::EvictAllContentViewers() {
 
 static void LoadURIs(nsTArray<nsSHistory::LoadEntryResult>& aLoadResults) {
   for (nsSHistory::LoadEntryResult& loadEntry : aLoadResults) {
-    loadEntry.mBrowsingContext->LoadURI(nullptr, loadEntry.mLoadState, false);
+    loadEntry.mBrowsingContext->LoadURI(loadEntry.mLoadState, false);
   }
 }
 

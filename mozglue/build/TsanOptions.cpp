@@ -122,8 +122,8 @@ extern "C" const char* __tsan_default_suppressions() {
          "race:nsThread::SizeOfEventQueues\n"
 
          // Bug 1600895
-         "race:js::gc::MovingTracer::onBaseShapeEdge\n"
-         "race:js::gc::MovingTracer::onScopeEdge\n"
+         "race:UpdateCellPointers<js::Shape>\n"
+         "race:UpdateCellPointers<js::Scope>\n"
          "race:js::gc::MovingTracer::onShapeEdge\n"
          "race:fixupShapeTreeAfterMovingGC\n"
 
@@ -135,6 +135,9 @@ extern "C" const char* __tsan_default_suppressions() {
          "race:XDRInnerObject<js::XDR_DECODE>\n"
          "race:ScriptStencil::finishGCThings\n"
          "race:XDRScriptGCThing<js::XDR_DECODE>\n"
+
+         // Bug 1619162
+         "race:currentNameHasEscapes\n"
 
          // Bug 1601600
          "race:SkARGB32_Blitter\n"
@@ -253,8 +256,8 @@ extern "C" const char* __tsan_default_suppressions() {
          "race:GCHeapThreshold::updateAfterGC\n"
 
          // Bug 1614646
-         "race:nsCookieService::CountCookiesFromHostInternal\n"
-         "race:nsCookieService::InitDBStates\n"
+         "race:CookieService::CountCookiesFromHostInternal\n"
+         "race:CookieService::InitDBStates\n"
 
          // Bug 1614706
          "race:CacheFileInputStream::Release\n"
@@ -274,6 +277,9 @@ extern "C" const char* __tsan_default_suppressions() {
 
          // Bug 1615265
          "race:ScriptPreloader::OffThreadDecodeCallback\n"
+
+         // Bug 1615569
+         "race:mp_exptmod.max_window_bits\n"
 
          // ~GLContextGLX unlocks a libGL mutex that cannot be seen
          // by TSan because libGL is not instrumented.

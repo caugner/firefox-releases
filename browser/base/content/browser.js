@@ -76,7 +76,7 @@ XPCOMUtils.defineLazyModuleGetters(this, {
   TabModalPrompt: "chrome://global/content/tabprompts.jsm",
   TabCrashHandler: "resource:///modules/ContentCrashHandlers.jsm",
   TelemetryEnvironment: "resource://gre/modules/TelemetryEnvironment.jsm",
-  Translation: "resource:///modules/translation/Translation.jsm",
+  Translation: "resource:///modules/translation/TranslationParent.jsm",
   UITour: "resource:///modules/UITour.jsm",
   UpdateUtils: "resource://gre/modules/UpdateUtils.jsm",
   UrlbarInput: "resource:///modules/UrlbarInput.jsm",
@@ -142,7 +142,7 @@ XPCOMUtils.defineLazyScriptGetter(
 );
 XPCOMUtils.defineLazyScriptGetter(
   this,
-  ["gExtensionsNotifications", "gXPInstallObserver"],
+  ["BrowserAddonUI", "gExtensionsNotifications", "gXPInstallObserver"],
   "chrome://browser/content/browser-addons.js"
 );
 XPCOMUtils.defineLazyScriptGetter(
@@ -244,6 +244,11 @@ XPCOMUtils.defineLazyScriptGetter(
   this,
   "A11yUtils",
   "chrome://browser/content/browser-a11yUtils.js"
+);
+XPCOMUtils.defineLazyScriptGetter(
+  this,
+  "gSharedTabWarning",
+  "chrome://browser/content/browser-webrtc.js"
 );
 
 // lazy service getters
@@ -416,10 +421,15 @@ XPCOMUtils.defineLazyGetter(this, "PopupNotifications", () => {
     // We also have to hide notifications explicitly when the window is
     // minimized because of the effects of the "noautohide" attribute on Linux.
     // This can be removed once bug 545265 and bug 1320361 are fixed.
+    // Hide popup notifications when system tab prompts are shown so they
+    // don't cover up the prompt.
     let shouldSuppress = () => {
       return (
         window.windowState == window.STATE_MINIMIZED ||
-        (gURLBar.getAttribute("pageproxystate") != "valid" && gURLBar.focused)
+        (gURLBar.getAttribute("pageproxystate") != "valid" &&
+          gURLBar.focused) ||
+        (gBrowser &&
+          gBrowser?.selectedBrowser.hasAttribute("tabmodalChromePromptShowing"))
       );
     };
     return new PopupNotifications(
@@ -554,6 +564,19 @@ var gBrowserAllowScriptsToCloseInitialTabs = false;
 if (AppConstants.platform != "macosx") {
   var gEditUIVisible = true;
 }
+
+Object.defineProperty(this, "gReduceMotion", {
+  enumerable: true,
+  get() {
+    return typeof gReduceMotionOverride == "boolean"
+      ? gReduceMotionOverride
+      : gReduceMotionSetting;
+  },
+});
+// Reduce motion during startup. The setting will be reset later.
+var gReduceMotionSetting = true;
+// This is for tests to set.
+var gReduceMotionOverride;
 
 // Smart getter for the findbar.  If you don't wish to force the creation of
 // the findbar, check gFindBarInitialized first.
@@ -1324,13 +1347,14 @@ var gKeywordURIFixup = {
           return;
         }
 
+        let displayHostName = "http://" + hostName + "/";
         let message = gNavigatorBundle.getFormattedString(
           "keywordURIFixup.message",
-          [hostName]
+          [displayHostName]
         );
         let yesMessage = gNavigatorBundle.getFormattedString(
           "keywordURIFixup.goTo",
-          [hostName]
+          [displayHostName]
         );
 
         let buttons = [
@@ -1403,7 +1427,7 @@ var gKeywordURIFixup = {
     // As fixupInfo comes from a serialized message, its URI properties are
     // strings that we need to recreate nsIURIs from.
     this.check(browser, {
-      fixedURI: makeURI(fixupInfo.fixedURI),
+      fixedURI: fixupInfo.fixedURI ? makeURI(fixupInfo.fixedURI) : null,
       keywordProviderName: fixupInfo.keywordProviderName,
       preferredURI: makeURI(fixupInfo.preferredURI),
     });
@@ -1484,9 +1508,15 @@ function _loadURI(browser, uri, params = {}) {
     params || {};
   let loadFlags =
     params.loadFlags || params.flags || Ci.nsIWebNavigation.LOAD_FLAGS_NONE;
+  let hasValidUserGestureActivation =
+    document.hasValidTransientUserGestureActivation;
 
   if (!triggeringPrincipal) {
     throw new Error("Must load with a triggering Principal");
+  }
+
+  if (userContextId && userContextId != browser.getAttribute("usercontextid")) {
+    throw new Error("Cannot load with mismatched userContextId");
   }
 
   let {
@@ -1521,17 +1551,10 @@ function _loadURI(browser, uri, params = {}) {
     loadFlags,
     referrerInfo,
     postData,
+    hasValidUserGestureActivation,
   };
   try {
     if (!mustChangeProcess) {
-      if (userContextId) {
-        browser.webNavigation.setOriginAttributesBeforeLoading({
-          userContextId,
-          privateBrowsingId: PrivateBrowsingUtils.isBrowserPrivate(browser)
-            ? 1
-            : 0,
-        });
-      }
       browser.webNavigation.loadURI(uri, loadURIOptions);
     } else {
       // Check if the current browser is allowed to unload.
@@ -1580,14 +1603,6 @@ function _loadURI(browser, uri, params = {}) {
       Cu.reportError(e);
       gBrowser.updateBrowserRemotenessByURL(browser, uri);
 
-      if (userContextId) {
-        browser.webNavigation.setOriginAttributesBeforeLoading({
-          userContextId,
-          privateBrowsingId: PrivateBrowsingUtils.isBrowserPrivate(browser)
-            ? 1
-            : 0,
-        });
-      }
       browser.webNavigation.loadURI(uri, loadURIOptions);
     } else {
       throw e;
@@ -1814,7 +1829,6 @@ var gBrowserInit = {
     // loading the frame script to ensure that we don't miss any
     // message sent between when the frame script is loaded and when
     // the listener is registered.
-    LanguageDetectionListener.init();
     CaptivePortalWatcher.init();
     ZoomUI.init(window);
 
@@ -2111,11 +2125,14 @@ var gBrowserInit = {
       this._firstBrowserPaintDeferred.resolve = resolve;
     });
 
-    // To prevent flickering of the urlbar-history-dropmarker in the general
-    // case, the urlbar has the 'focused' attribute set by default.
-    // If we are not fully sure the urlbar will be focused in this window,
-    // we should remove the attribute before first paint.
+    // To prevent startup flicker, the urlbar has the 'focused' attribute set
+    // by default. If we are not sure the urlbar will be focused in this
+    // window, we need to remove the attribute before first paint.
+    // TODO (bug 1629956): The urlbar having the 'focused' attribute by default
+    // isn't a useful optimization anymore since UrlbarInput needs layout
+    // information to focus the urlbar properly.
     let shouldRemoveFocusedAttribute = true;
+
     this._callWithURIToLoad(uriToLoad => {
       if (isBlankPageURL(uriToLoad) || uriToLoad == "about:privatebrowsing") {
         gURLBar.select();
@@ -2141,6 +2158,7 @@ var gBrowserInit = {
         gBrowser.selectedBrowser.focus();
       }
     });
+
     // Delay removing the attribute using requestAnimationFrame to avoid
     // invalidating styles multiple times in a row if uriToLoadPromise
     // resolves before first paint.
@@ -2260,7 +2278,15 @@ var gBrowserInit = {
     });
 
     scheduleIdleTask(() => {
-      CombinedStopReload.startAnimationPrefMonitoring();
+      // Read prefers-reduced-motion setting
+      let reduceMotionQuery = window.matchMedia(
+        "(prefers-reduced-motion: reduce)"
+      );
+      function readSetting() {
+        gReduceMotionSetting = reduceMotionQuery.matches;
+      }
+      reduceMotionQuery.addListener(readSetting);
+      readSetting();
     });
 
     scheduleIdleTask(() => {
@@ -3151,13 +3177,8 @@ function readFromClipboard() {
 /**
  * Open the View Source dialog.
  *
- * @param aArgsOrDocument
- *        Either an object or a Document. Passing a Document is deprecated,
- *        and is not supported with e10s. This function will throw if
- *        aArgsOrDocument is a CPOW.
- *
- *        If aArgsOrDocument is an object, that object can take the
- *        following properties:
+ * @param args
+ *        An object with the following properties:
  *
  *        URL (required):
  *          A string URL for the page we'd like to view the source of.
@@ -3172,27 +3193,7 @@ function readFromClipboard() {
  *        lineNumber (optional):
  *          The line number to focus on once the source is loaded.
  */
-async function BrowserViewSourceOfDocument(aArgsOrDocument) {
-  let args;
-
-  if (aArgsOrDocument instanceof Document) {
-    let doc = aArgsOrDocument;
-    // Deprecated API - callers should pass args object instead.
-    if (Cu.isCrossProcessWrapper(doc)) {
-      throw new Error(
-        "BrowserViewSourceOfDocument cannot accept a CPOW as a document."
-      );
-    }
-
-    let win = doc.defaultView;
-    let browser = win.docShell.chromeEventHandler;
-    let outerWindowID = win.windowUtils.outerWindowID;
-    let URL = browser.currentURI.spec;
-    args = { browser, outerWindowID, URL };
-  } else {
-    args = aArgsOrDocument;
-  }
-
+async function BrowserViewSourceOfDocument(args) {
   // Check if external view source is enabled.  If so, try it.  If it fails,
   // fallback to internal view source.
   if (Services.prefs.getBoolPref("view_source.editor.external")) {
@@ -3367,28 +3368,6 @@ function UpdateUrlbarSearchSplitterState() {
     urlbar.parentNode.insertBefore(splitter, ibefore);
   } else if (splitter) {
     splitter.remove();
-  }
-
-  if (!ibefore && urlbar.hasAttribute("width")) {
-    urlbar.parentNode
-      .querySelectorAll("toolbarspring")
-      .forEach(n => n.removeAttribute("width"));
-    urlbar.removeAttribute("width");
-    Services.xulStore.removeValue(
-      document.documentURI,
-      "urlbar-container",
-      "width"
-    );
-    let searchbarNode =
-      searchbar || gNavToolbox.palette.querySelector("#search-container");
-    if (searchbarNode) {
-      searchbarNode.removeAttribute("width");
-    }
-    Services.xulStore.removeValue(
-      document.documentURI,
-      "search-container",
-      "width"
-    );
   }
 }
 
@@ -5006,13 +4985,6 @@ var XULBrowserWindow = {
     ]);
   },
 
-  forceInitialBrowserNonRemote(aOpener) {
-    gBrowser.updateBrowserRemoteness(gBrowser.selectedBrowser, {
-      opener: aOpener,
-      remoteType: E10SUtils.NOT_REMOTE,
-    });
-  },
-
   setDefaultStatus(status) {
     this.defaultStatus = status;
     StatusPanel.update();
@@ -5644,9 +5616,9 @@ var CombinedStopReload = {
     this.stopReloadContainer = this.reload.parentNode;
     this.timeWhenSwitchedToStop = 0;
 
-    if (this._shouldStartPrefMonitoring) {
-      this.startAnimationPrefMonitoring();
-    }
+    this.stopReloadContainer.addEventListener("animationend", this);
+    this.stopReloadContainer.addEventListener("animationcancel", this);
+
     return true;
   },
 
@@ -5657,7 +5629,6 @@ var CombinedStopReload = {
       return;
     }
 
-    Services.prefs.removeObserver("toolkit.cosmeticAnimations.enabled", this);
     this._cancelTransition();
     this.stop.removeEventListener("click", this);
     this.stopReloadContainer.removeEventListener("animationend", this);
@@ -5689,31 +5660,6 @@ var CombinedStopReload = {
     }
   },
 
-  observe(subject, topic, data) {
-    if (topic == "nsPref:changed") {
-      this.animate = Services.prefs.getBoolPref(
-        "toolkit.cosmeticAnimations.enabled"
-      );
-    }
-  },
-
-  startAnimationPrefMonitoring() {
-    // CombinedStopReload may have been uninitialized before the idleCallback is executed.
-    if (this._destroyed) {
-      return;
-    }
-    if (!this.ensureInitialized()) {
-      this._shouldStartPrefMonitoring = true;
-      return;
-    }
-    this.animate =
-      Services.prefs.getBoolPref("toolkit.cosmeticAnimations.enabled") &&
-      Services.prefs.getBoolPref("browser.stopReloadAnimation.enabled");
-    Services.prefs.addObserver("toolkit.cosmeticAnimations.enabled", this);
-    this.stopReloadContainer.addEventListener("animationend", this);
-    this.stopReloadContainer.addEventListener("animationcancel", this);
-  },
-
   onTabSwitch() {
     // Reset the time in the event of a tabswitch since the stored time
     // would have been associated with the previous tab, so the animation will
@@ -5741,8 +5687,8 @@ var CombinedStopReload = {
       aWebProgress.isTopLevel &&
       aWebProgress.isLoadingDocument &&
       !gBrowser.tabAnimationsInProgress &&
-      this.stopReloadContainer.closest("#nav-bar-customization-target") &&
-      this.animate;
+      !gReduceMotion &&
+      this.stopReloadContainer.closest("#nav-bar-customization-target");
 
     this._cancelTransition();
     if (shouldAnimate) {
@@ -5764,9 +5710,9 @@ var CombinedStopReload = {
       aWebProgress.isTopLevel &&
       !aWebProgress.isLoadingDocument &&
       !gBrowser.tabAnimationsInProgress &&
+      !gReduceMotion &&
       this._loadTimeExceedsMinimumForAnimation() &&
-      this.stopReloadContainer.closest("#nav-bar-customization-target") &&
-      this.animate;
+      this.stopReloadContainer.closest("#nav-bar-customization-target");
 
     if (shouldAnimate) {
       BrowserUtils.setToolbarButtonHeightProperty(this.stopReloadContainer);
@@ -5998,10 +5944,9 @@ nsBrowserAccess.prototype = {
     aIsExternal,
     aForceNotRemote = false,
     aUserContextId = Ci.nsIScriptSecurityManager.DEFAULT_USER_CONTEXT_ID,
-    aOpenerWindow = null,
+    aOpenWindowInfo = null,
     aOpenerBrowser = null,
     aTriggeringPrincipal = null,
-    aNextRemoteTabId = 0,
     aName = "",
     aCsp = null,
     aSkipLoad = false
@@ -6038,9 +5983,8 @@ nsBrowserAccess.prototype = {
       fromExternal: aIsExternal,
       inBackground: loadInBackground,
       forceNotRemote: aForceNotRemote,
-      opener: aOpenerWindow,
+      openWindowInfo: aOpenWindowInfo,
       openerBrowser: aOpenerBrowser,
-      nextRemoteTabId: aNextRemoteTabId,
       name: aName,
       csp: aCsp,
       skipLoad: aSkipLoad,
@@ -6056,7 +6000,7 @@ nsBrowserAccess.prototype = {
 
   createContentWindow(
     aURI,
-    aOpener,
+    aOpenWindowInfo,
     aWhere,
     aFlags,
     aTriggeringPrincipal,
@@ -6064,7 +6008,7 @@ nsBrowserAccess.prototype = {
   ) {
     return this.getContentWindowOrOpenURI(
       null,
-      aOpener,
+      aOpenWindowInfo,
       aWhere,
       aFlags,
       aTriggeringPrincipal,
@@ -6073,14 +6017,14 @@ nsBrowserAccess.prototype = {
     );
   },
 
-  openURI(aURI, aOpener, aWhere, aFlags, aTriggeringPrincipal, aCsp) {
+  openURI(aURI, aOpenWindowInfo, aWhere, aFlags, aTriggeringPrincipal, aCsp) {
     if (!aURI) {
       Cu.reportError("openURI should only be called with a valid URI");
       throw Cr.NS_ERROR_FAILURE;
     }
     return this.getContentWindowOrOpenURI(
       aURI,
-      aOpener,
+      aOpenWindowInfo,
       aWhere,
       aFlags,
       aTriggeringPrincipal,
@@ -6091,29 +6035,19 @@ nsBrowserAccess.prototype = {
 
   getContentWindowOrOpenURI(
     aURI,
-    aOpener,
+    aOpenWindowInfo,
     aWhere,
     aFlags,
     aTriggeringPrincipal,
     aCsp,
     aSkipLoad
   ) {
-    // This function should only ever be called if we're opening a URI
-    // from a non-remote browser window (via nsContentTreeOwner).
-    if (aOpener && Cu.isCrossProcessWrapper(aOpener)) {
-      Cu.reportError(
-        "nsBrowserAccess.openURI was passed a CPOW for aOpener. " +
-          "openURI should only ever be called from non-remote browsers."
-      );
-      throw Cr.NS_ERROR_FAILURE;
-    }
-
     var browsingContext = null;
     var isExternal = !!(aFlags & Ci.nsIBrowserDOMWindow.OPEN_EXTERNAL);
 
-    if (aOpener && isExternal) {
+    if (aOpenWindowInfo && isExternal) {
       Cu.reportError(
-        "nsBrowserAccess.openURI did not expect an opener to be " +
+        "nsBrowserAccess.openURI did not expect aOpenWindowInfo to be " +
           "passed if the context is OPEN_EXTERNAL."
       );
       throw Cr.NS_ERROR_FAILURE;
@@ -6142,18 +6076,22 @@ nsBrowserAccess.prototype = {
     let referrerInfo;
     if (aFlags & Ci.nsIBrowserDOMWindow.OPEN_NO_REFERRER) {
       referrerInfo = new ReferrerInfo(Ci.nsIReferrerInfo.EMPTY, false, null);
-    } else {
+    } else if (
+      aOpenWindowInfo &&
+      aOpenWindowInfo.parent &&
+      aOpenWindowInfo.parent.window
+    ) {
       referrerInfo = new ReferrerInfo(
-        aOpener && aOpener.document
-          ? aOpener.document.referrerInfo.referrerPolicy
-          : Ci.nsIReferrerInfo.EMPTY,
+        aOpenWindowInfo.parent.window.document.referrerInfo.referrerPolicy,
         true,
-        aOpener ? makeURI(aOpener.location.href) : null
+        makeURI(aOpenWindowInfo.parent.window.location.href)
       );
+    } else {
+      referrerInfo = new ReferrerInfo(Ci.nsIReferrerInfo.EMPTY, true, null);
     }
 
-    let isPrivate = aOpener
-      ? PrivateBrowsingUtils.isContentWindowPrivate(aOpener)
+    let isPrivate = aOpenWindowInfo
+      ? aOpenWindowInfo.originAttributes.privateBrowsingId != 0
       : PrivateBrowsingUtils.isWindowPrivate(window);
 
     switch (aWhere) {
@@ -6207,13 +6145,10 @@ nsBrowserAccess.prototype = {
         // we can hand back the nsIDOMWindow. The XULBrowserWindow.shouldLoadURI
         // will do the job of shuttling off the newly opened browser to run in
         // the right process once it starts loading a URI.
-        let forceNotRemote = !!aOpener;
-        let userContextId =
-          aOpener && aOpener.document
-            ? aOpener.document.nodePrincipal.originAttributes.userContextId
-            : Ci.nsIScriptSecurityManager.DEFAULT_USER_CONTEXT_ID;
-        let openerWindow =
-          aFlags & Ci.nsIBrowserDOMWindow.OPEN_NO_OPENER ? null : aOpener;
+        let forceNotRemote = aOpenWindowInfo && !aOpenWindowInfo.remote;
+        let userContextId = aOpenWindowInfo
+          ? aOpenWindowInfo.originAttributes.userContextId
+          : Ci.nsIScriptSecurityManager.DEFAULT_USER_CONTEXT_ID;
         let browser = this._openURIInNewTab(
           aURI,
           referrerInfo,
@@ -6221,10 +6156,9 @@ nsBrowserAccess.prototype = {
           isExternal,
           forceNotRemote,
           userContextId,
-          openerWindow,
+          aOpenWindowInfo,
           null,
           aTriggeringPrincipal,
-          0,
           "",
           aCsp,
           aSkipLoad
@@ -6267,7 +6201,6 @@ nsBrowserAccess.prototype = {
     aParams,
     aWhere,
     aFlags,
-    aNextRemoteTabId,
     aName
   ) {
     // Passing a null-URI to only create the content window,
@@ -6278,7 +6211,6 @@ nsBrowserAccess.prototype = {
       aParams,
       aWhere,
       aFlags,
-      aNextRemoteTabId,
       aName,
       true
     );
@@ -6289,7 +6221,6 @@ nsBrowserAccess.prototype = {
     aParams,
     aWhere,
     aFlags,
-    aNextRemoteTabId,
     aName
   ) {
     return this.getContentWindowOrOpenURIInFrame(
@@ -6297,7 +6228,6 @@ nsBrowserAccess.prototype = {
       aParams,
       aWhere,
       aFlags,
-      aNextRemoteTabId,
       aName,
       false
     );
@@ -6308,7 +6238,6 @@ nsBrowserAccess.prototype = {
     aParams,
     aWhere,
     aFlags,
-    aNextRemoteTabId,
     aName,
     aSkipLoad
   ) {
@@ -6332,10 +6261,9 @@ nsBrowserAccess.prototype = {
       isExternal,
       false,
       userContextId,
-      null,
+      aParams.openWindowInfo,
       aParams.openerBrowser,
       aParams.triggeringPrincipal,
-      aNextRemoteTabId,
       aName,
       aParams.csp,
       aSkipLoad
@@ -7159,52 +7087,6 @@ function UpdateCurrentCharset(target) {
   }
 }
 
-function promptRemoveExtension(addon) {
-  let { name } = addon;
-  let brand = document
-    .getElementById("bundle_brand")
-    .getString("brandShorterName");
-  let { getFormattedString, getString } = gNavigatorBundle;
-  let title = getFormattedString("webext.remove.confirmation.title", [name]);
-  let message = getFormattedString("webext.remove.confirmation.message", [
-    name,
-    brand,
-  ]);
-  let btnTitle = getString("webext.remove.confirmation.button");
-  let {
-    BUTTON_TITLE_IS_STRING: titleString,
-    BUTTON_TITLE_CANCEL: titleCancel,
-    BUTTON_POS_0,
-    BUTTON_POS_1,
-    confirmEx,
-  } = Services.prompt;
-  let btnFlags = BUTTON_POS_0 * titleString + BUTTON_POS_1 * titleCancel;
-  let checkboxState = { value: false };
-  let checkboxMessage = null;
-
-  // Enable abuse report checkbox in the remove extension dialog,
-  // if enabled by the about:config prefs and the addon type
-  // is currently supported.
-  if (gAddonAbuseReportEnabled && ["extension", "theme"].includes(addon.type)) {
-    checkboxMessage = getFormattedString(
-      "webext.remove.abuseReportCheckbox.message",
-      [document.getElementById("bundle_brand").getString("vendorShortName")]
-    );
-  }
-  const result = confirmEx(
-    null,
-    title,
-    message,
-    btnFlags,
-    btnTitle,
-    null,
-    null,
-    checkboxMessage,
-    checkboxState
-  );
-  return { remove: result === 0, report: checkboxState.value };
-}
-
 var ToolbarContextMenu = {
   updateDownloadsAutoHide(popup) {
     let checkbox = document.getElementById(
@@ -7271,25 +7153,8 @@ var ToolbarContextMenu = {
 
   async removeExtensionForContextAction(popup) {
     let id = this._getExtensionId(popup);
-    let addon = id && (await AddonManager.getAddonByID(id));
-    if (!addon || !(addon.permissions & AddonManager.PERM_CAN_UNINSTALL)) {
-      return;
-    }
-    let { remove, report } = promptRemoveExtension(addon);
-    AMTelemetry.recordActionEvent({
-      object: "browserAction",
-      action: "uninstall",
-      value: remove ? "accepted" : "cancelled",
-      extra: { addonId: addon.id },
-    });
-    if (remove) {
-      // Leave the extension in pending uninstall if we are also
-      // reporting the add-on.
-      await addon.uninstall(report);
-      if (report) {
-        this.reportExtensionForContextAction(popup, "uninstall");
-      }
-    }
+
+    await BrowserAddonUI.removeAddon(id, "browserAction");
   },
 
   async reportExtensionForContextAction(popup, reportEntryPoint) {
@@ -7298,11 +7163,8 @@ var ToolbarContextMenu = {
     if (!addon) {
       return;
     }
-    const win = await BrowserOpenAddonsMgr("addons://list/extension");
-    win.openAbuseReport({
-      addonId: addon.id,
-      reportEntryPoint,
-    });
+
+    await BrowserAddonUI.reportAddon(addon.id, reportEntryPoint);
   },
 
   openAboutAddonsForContextAction(popup) {
@@ -7517,17 +7379,6 @@ var gPageStyleMenu = {
       sheetData.authorStyleDisabled = true;
     }
     this._sendMessageToAll("PageStyle:Disable", {});
-  },
-};
-
-var LanguageDetectionListener = {
-  init() {
-    window.messageManager.addMessageListener(
-      "Translation:DocumentState",
-      msg => {
-        Translation.documentStateReceived(msg.target, msg.data);
-      }
-    );
   },
 };
 
@@ -8155,9 +8006,7 @@ function BrowserOpenAddonsMgr(aView) {
 
     // This must be a new load, else the ping/pong would have
     // found the window above.
-    let whereToOpen =
-      window.gBrowser && gBrowser.selectedTab.isEmpty ? "current" : "tab";
-    openTrustedLinkIn("about:addons", whereToOpen);
+    switchToTabHavingURI("about:addons", true);
 
     Services.obs.addObserver(function observer(aSubject, aTopic, aData) {
       Services.obs.removeObserver(observer, aTopic);
@@ -8896,6 +8745,13 @@ var PanicButtonNotifier = {
       this.notify();
     }
   },
+  createPanelIfNeeded() {
+    // Lazy load the panic-button-success-notification panel the first time we need to display it.
+    if (!document.getElementById("panic-button-success-notification")) {
+      let template = document.getElementById("panicButtonNotificationTemplate");
+      template.replaceWith(template.content);
+    }
+  },
   notify() {
     if (!this._initialized) {
       window.PanicButtonNotifierShouldNotify = true;
@@ -8903,6 +8759,7 @@ var PanicButtonNotifier = {
     }
     // Display notification panel here...
     try {
+      this.createPanelIfNeeded();
       let popup = document.getElementById("panic-button-success-notification");
       popup.hidden = false;
       // To close the popup in 3 seconds after the popup is shown but left uninteracted.
@@ -8993,13 +8850,14 @@ const SafeBrowsingNotificationBox = {
 function TabModalPromptBox(browser) {
   this._weakBrowserRef = Cu.getWeakReference(browser);
   /*
-   * This WeakMap holds the TabModalPrompt instances, key to the <tabmodalprompt> prompt
+   * These WeakMaps holds the TabModalPrompt instances, key to the <tabmodalprompt> prompt
    * in the DOM. We don't want to hold the instances directly to avoid leaking.
    *
    * WeakMap also prevents us from reading back its insertion order.
    * Order of the elements in the DOM should be the only order to consider.
    */
-  this.prompts = new WeakMap();
+  this._contentPrompts = new WeakMap();
+  this._tabPrompts = new WeakMap();
 }
 
 TabModalPromptBox.prototype = {
@@ -9023,10 +8881,24 @@ TabModalPromptBox.prototype = {
     onCloseCallback.apply(this, args);
   },
 
+  getPrompt(promptEl) {
+    if (promptEl.classList.contains("tab-prompt")) {
+      return this._tabPrompts.get(promptEl);
+    }
+    return this._contentPrompts.get(promptEl);
+  },
+
   appendPrompt(args, onCloseCallback) {
     let browser = this.browser;
     let newPrompt = new TabModalPrompt(browser.ownerGlobal);
-    this.prompts.set(newPrompt.element, newPrompt);
+
+    if (args.modalType === Ci.nsIPrompt.MODAL_TYPE_TAB) {
+      newPrompt.element.classList.add("tab-prompt");
+      this._tabPrompts.set(newPrompt.element, newPrompt);
+    } else {
+      newPrompt.element.classList.add("content-prompt");
+      this._contentPrompts.set(newPrompt.element, newPrompt);
+    }
 
     browser.parentNode.insertBefore(
       newPrompt.element,
@@ -9034,7 +8906,19 @@ TabModalPromptBox.prototype = {
     );
     browser.setAttribute("tabmodalPromptShowing", true);
 
-    let prompts = this.listPrompts();
+    // Indicate if a tab modal chrome prompt is being shown so that
+    // PopupNotifications are suppressed.
+    if (
+      args.modalType === Ci.nsIPrompt.MODAL_TYPE_TAB &&
+      !browser.hasAttribute("tabmodalChromePromptShowing")
+    ) {
+      browser.setAttribute("tabmodalChromePromptShowing", true);
+      // Notify PopupNotifications of the UI change so it hides the notification
+      // panel.
+      PopupNotifications.anchorVisibilityChange();
+    }
+
+    let prompts = this.listPrompts(args.modalType);
     if (prompts.length > 1) {
       // Let's hide ourself behind the current prompt.
       newPrompt.element.hidden = true;
@@ -9076,31 +8960,90 @@ TabModalPromptBox.prototype = {
   },
 
   removePrompt(aPrompt) {
-    this.prompts.delete(aPrompt.element);
+    let { modalType } = aPrompt.args;
+    if (modalType === Ci.nsIPrompt.MODAL_TYPE_TAB) {
+      this._tabPrompts.delete(aPrompt.element);
+    } else {
+      this._contentPrompts.delete(aPrompt.element);
+    }
+
     let browser = this.browser;
     aPrompt.element.remove();
 
-    let prompts = this.listPrompts();
+    let prompts = this.listPrompts(modalType);
     if (prompts.length) {
       let prompt = prompts[prompts.length - 1];
       prompt.element.hidden = false;
       // Because we were hidden before, this won't have been possible, so do it now:
       prompt.Dialog.setDefaultFocus();
-    } else {
+    } else if (modalType === Ci.nsIPrompt.MODAL_TYPE_TAB) {
+      // If we remove the last tab chrome prompt, also remove the browser
+      // attribute.
+      browser.removeAttribute("tabmodalChromePromptShowing");
+      // Notify PopupNotifications of the UI change so it shows the notification
+      // panel again.
+      PopupNotifications.anchorVisibilityChange();
+    }
+    // Check if all prompts are closed
+    if (!this._hasPrompts()) {
       browser.removeAttribute("tabmodalPromptShowing");
       browser.focus();
     }
   },
 
-  listPrompts(aPrompt) {
+  /**
+   * Checks if the prompt box has prompt elements.
+   * @returns {Boolean} - true if there are prompt elements.
+   */
+  _hasPrompts() {
+    return !!this._getPromptElements().length;
+  },
+
+  /**
+   * Get list of current prompt elements.
+   * @param {Number} [aModalType] - Optionally filter by
+   * Ci.nsIPrompt.MODAL_TYPE_.
+   * @returns {NodeList} - A list of tabmodalprompt elements.
+   */
+  _getPromptElements(aModalType = null) {
+    let selector = "tabmodalprompt";
+
+    if (aModalType != null) {
+      if (aModalType === Ci.nsIPrompt.MODAL_TYPE_TAB) {
+        selector += ".tab-prompt";
+      } else {
+        selector += ".content-prompt";
+      }
+    }
+    return this.browser.parentNode.querySelectorAll(selector);
+  },
+
+  /**
+   * Get a list of all TabModalPrompt objects associated with the prompt box.
+   * @param {Number} [aModalType] - Optionally filter by
+   * Ci.nsIPrompt.MODAL_TYPE_.
+   * @returns {TabModalPrompt[]} - An array of TabModalPrompt objects.
+   */
+  listPrompts(aModalType = null) {
     // Get the nodelist, then return the TabModalPrompt instances as an array
-    const XUL_NS =
-      "http://www.mozilla.org/keymaster/gatekeeper/there.is.only.xul";
-    let els = this.browser.parentNode.getElementsByTagNameNS(
-      XUL_NS,
-      "tabmodalprompt"
+    let promptMap;
+
+    if (aModalType) {
+      if (aModalType === Ci.nsIPrompt.MODAL_TYPE_TAB) {
+        promptMap = this._tabPrompts;
+      } else {
+        promptMap = this._contentPrompts;
+      }
+    }
+
+    let elements = this._getPromptElements(aModalType);
+
+    if (promptMap) {
+      return [...elements].map(el => promptMap.get(el));
+    }
+    return [...elements].map(
+      el => this._contentPrompts.get(el) || this._tabPrompts.get(el)
     );
-    return Array.from(els).map(el => this.prompts.get(el));
   },
 
   onNextPromptShowAllowFocusCheckboxFor(principal) {

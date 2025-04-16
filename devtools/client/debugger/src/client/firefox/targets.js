@@ -19,7 +19,7 @@ type Args = {
   targetList: TargetList,
 };
 
-async function attachTargets(targetLists, args) {
+async function attachTargets(targetLists, args): Promise<*> {
   const { targets } = args;
 
   targetLists = targetLists.filter(target => !!target);
@@ -65,7 +65,7 @@ async function attachTargets(targetLists, args) {
   }
 }
 
-async function listWorkerTargets(args: Args) {
+async function listWorkerTargets(args: Args): Promise<*> {
   const { targetList, devToolsClient } = args;
   const currentTarget = targetList.targetFront;
   if (!currentTarget.isBrowsingContext || currentTarget.isContentProcess) {
@@ -115,7 +115,7 @@ async function listWorkerTargets(args: Args) {
     await maybeMarkServiceWorker(evaluatingWorker);
   }
 
-  async function maybeMarkServiceWorker(info) {
+  async function maybeMarkServiceWorker(info): Promise<*> {
     if (!info) {
       return;
     }
@@ -134,7 +134,7 @@ async function listWorkerTargets(args: Args) {
   return workers;
 }
 
-async function getAllProcessTargets(args) {
+async function getAllProcessTargets(args): Promise<*> {
   const { devToolsClient } = args;
   const processes = await devToolsClient.mainRoot.listProcesses();
   return Promise.all(
@@ -144,21 +144,22 @@ async function getAllProcessTargets(args) {
   );
 }
 
-async function listProcessTargets(args: Args) {
+async function listProcessTargets(args: Args): Promise<*> {
   const { targetList } = args;
   const currentTarget = targetList.targetFront;
   if (!attachAllTargets(currentTarget)) {
     if (currentTarget.url && features.windowlessServiceWorkers) {
       // Service workers associated with our target's origin need to pause until
       // we attach, regardless of which process they are running in.
-      const origin = new URL(currentTarget.url).origin;
-      const targets = await getAllProcessTargets(args);
       try {
+        const origin = new URL(currentTarget.url).origin;
+        const targets = await getAllProcessTargets(args);
         await Promise.all(
           targets.map(t => t.pauseMatchingServiceWorkers({ origin }))
         );
       } catch (e) {
-        // Old servers without pauseMatchingServiceWorkers will throw.
+        // currentTarget.url might not be a full URL, and old servers without
+        // pauseMatchingServiceWorkers will throw.
         // @backward-compatibility: remove in Firefox 75
       }
     }
@@ -168,7 +169,7 @@ async function listProcessTargets(args: Args) {
   return getAllProcessTargets(args);
 }
 
-export async function updateTargets(args: Args) {
+export async function updateTargets(args: Args): Promise<*> {
   const workers = await listWorkerTargets(args);
   const processes = await listProcessTargets(args);
   await attachTargets([...workers, ...processes], args);

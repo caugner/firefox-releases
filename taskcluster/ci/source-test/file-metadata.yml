@@ -7,7 +7,7 @@ job-defaults:
     treeherder:
         kind: other
         tier: 1
-    worker-type: t-linux-xlarge
+    worker-type: t-linux-xlarge-source
     worker:
         artifacts:
             - type: directory
@@ -29,6 +29,7 @@ bugzilla-components:
         mach: file-info bugzilla-automation /builds/worker/artifacts
     worker:
         max-run-time: 2700
+    run-on-projects: ['mozilla-central']
     when:
         files-changed:
             - "**"

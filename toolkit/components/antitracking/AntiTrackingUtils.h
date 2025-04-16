@@ -18,9 +18,15 @@ class nsIPrincipal;
 class nsIURI;
 
 namespace mozilla {
+namespace dom {
+class BrowsingContext;
+}  // namespace dom
 
 class AntiTrackingUtils final {
  public:
+  static already_AddRefed<nsPIDOMWindowInner> GetInnerWindow(
+      dom::BrowsingContext* aBrowsingContext);
+
   static already_AddRefed<nsPIDOMWindowOuter> GetTopWindow(
       nsPIDOMWindowInner* aWindow);
 
@@ -28,7 +34,7 @@ class AntiTrackingUtils final {
   static already_AddRefed<nsIURI> MaybeGetDocumentURIBeingLoaded(
       nsIChannel* aChannel);
 
-  static void CreateStoragePermissionKey(const nsCString& aTrackingOrigin,
+  static void CreateStoragePermissionKey(const nsACString& aTrackingOrigin,
                                          nsACString& aPermissionKey);
 
   // Given a principal, returns the storage permission key that will be used for
@@ -52,6 +58,38 @@ class AntiTrackingUtils final {
   // Returns true if the storage permission is granted for the given channel.
   // And this is meant to be called in the parent process.
   static bool HasStoragePermissionInParent(nsIChannel* aChannel);
+
+  // Returns the toplevel inner window id, returns 0 if this is a toplevel
+  // window.
+  static uint64_t GetTopLevelAntiTrackingWindowId(
+      dom::BrowsingContext* aBrowsingContext);
+
+  // Returns the parent inner window id, returns 0 if this or the parent are not
+  // a toplevel window. This is mainly used to determine the anti-tracking
+  // storage area.
+  static uint64_t GetTopLevelStorageAreaWindowId(
+      dom::BrowsingContext* aBrowsingContext);
+
+  // Returns the principal of the given browsing context.
+  // This API should only be used either in child processes with an in-process
+  // browsing context or in the parent process.
+  static already_AddRefed<nsIPrincipal> GetPrincipal(
+      dom::BrowsingContext* aBrowsingContext);
+
+  // Returns the principal of the given browsing context and tracking origin.
+  // This API should only be used either in child processes with an in-process
+  // browsing context or in the parent process.
+  static bool GetPrincipalAndTrackingOrigin(
+      dom::BrowsingContext* aBrowsingContext, nsIPrincipal** aPrincipal,
+      nsACString& aTrackingOrigin);
+
+  // Retruns true if the given browsingContext is a first-level sub context,
+  // i.e. a first-level iframe.
+  static bool IsFirstLevelSubContext(dom::BrowsingContext* aBrowsingContext);
+
+  // Retruns the cookie behavior of the given browsingContext,
+  // return BEHAVIOR_REJECT when fail.
+  static uint32_t GetCookieBehavior(dom::BrowsingContext* aBrowsingContext);
 };
 
 }  // namespace mozilla

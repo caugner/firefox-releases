@@ -9,39 +9,32 @@
 
 #include "mozilla/Span.h"  // mozilla::Span
 
-#include <stdint.h>  // int32_t
-
 #include "frontend/Stencil.h"  // ScriptStencil
 #include "gc/Barrier.h"        // GCPtrAtom
 #include "js/HeapAPI.h"        // JS::GCCellPtr
-#include "vm/JSScript.h"       // JSTryNote, ScopeNote
+#include "js/TypeDecls.h"      // JSContext
+#include "js/UniquePtr.h"      // js::UniquePtr
+#include "vm/SharedStencil.h"  // js::ImmutableScriptData
 
-struct JSContext;
-
-namespace js {
-
-namespace frontend {
+namespace js::frontend {
 
 struct BytecodeEmitter;
 
 class BCEScriptStencil : public ScriptStencil {
   BytecodeEmitter& bce_;
 
-  bool getNeedsFunctionEnvironmentObjects() const;
-
-  void init();
+  void init(BytecodeEmitter& bce, UniquePtr<ImmutableScriptData> immutableData);
 
  public:
   BCEScriptStencil(BytecodeEmitter& bce,
-                   UniquePtr<ImmutableScriptData> immutableScriptData);
+                   UniquePtr<ImmutableScriptData> immutableData);
 
-  virtual bool finishGCThings(JSContext* cx,
-                              mozilla::Span<JS::GCCellPtr> output) const;
-  virtual void initAtomMap(GCPtrAtom* atoms) const;
-  virtual void finishInnerFunctions() const;
+  virtual bool finishGCThings(
+      JSContext* cx, mozilla::Span<JS::GCCellPtr> output) const override;
+  virtual void initAtomMap(GCPtrAtom* atoms) const override;
+  virtual void finishInnerFunctions() const override;
 };
 
-} /* namespace frontend */
-} /* namespace js */
+} /* namespace js::frontend */
 
 #endif /* frontend_BCEScriptStencil_h */

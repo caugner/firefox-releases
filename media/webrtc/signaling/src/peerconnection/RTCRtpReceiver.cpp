@@ -191,7 +191,9 @@ static UniquePtr<dom::RTCStatsCollection> GetReceiverStats_s(
     s.mLocalId.Construct(localId);
     s.mPacketsSent.Construct(packetsSent);
     s.mBytesSent.Construct(bytesSent);
-    report->mRemoteOutboundRtpStreamStats.AppendElement(s, fallible);
+    if (!report->mRemoteOutboundRtpStreamStats.AppendElement(s, fallible)) {
+      mozalloc_handle_oom(0);
+    }
   }
 
   // Then, fill in local side (with cross-link to remote only if present)
@@ -244,7 +246,9 @@ static UniquePtr<dom::RTCStatsCollection> GetReceiverStats_s(
       s.mFramesDecoded.Construct(framesDecoded);
     }
   });
-  report->mInboundRtpStreamStats.AppendElement(s, fallible);
+  if (!report->mInboundRtpStreamStats.AppendElement(s, fallible)) {
+    mozalloc_handle_oom(0);
+  }
 
   // Fill in Contributing Source statistics
   aPipeline->GetContributingSourceStats(localId,
@@ -322,17 +326,25 @@ void RTCRtpReceiver::UpdateTransport() {
 
   UniquePtr<MediaPipelineFilter> filter;
 
-  if (mJsepTransceiver->HasBundleLevel() &&
-      mJsepTransceiver->mRecvTrack.GetNegotiatedDetails()) {
-    filter = MakeUnique<MediaPipelineFilter>();
+  auto const& details = mJsepTransceiver->mRecvTrack.GetNegotiatedDetails();
+  if (mJsepTransceiver->HasBundleLevel() && details) {
+    std::vector<webrtc::RtpExtension> extmaps;
+    details->ForEachRTPHeaderExtension(
+        [&extmaps](const SdpExtmapAttributeList::Extmap& extmap) {
+          extmaps.emplace_back(extmap.extensionname, extmap.entry);
+        });
+    filter = MakeUnique<MediaPipelineFilter>(extmaps);
 
     // Add remote SSRCs so we can distinguish which RTP packets actually
     // belong to this pipeline (also RTCP sender reports).
     for (unsigned int ssrc : mJsepTransceiver->mRecvTrack.GetSsrcs()) {
       filter->AddRemoteSSRC(ssrc);
     }
-
-    // TODO(bug 1105005): Tell the filter about the mid for this track
+    auto mid = Maybe<std::string>();
+    if (GetMid() != "") {
+      mid = Some(GetMid());
+    }
+    filter->SetRemoteMediaStreamId(mid);
 
     // Add unique payload types as a last-ditch fallback
     auto uniquePts = mJsepTransceiver->mRecvTrack.GetNegotiatedDetails()

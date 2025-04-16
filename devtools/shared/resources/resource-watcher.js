@@ -35,6 +35,16 @@ class ResourceWatcher {
     this._listenerCount = new Map();
   }
 
+  get contentToolboxFissionPrefValue() {
+    if (!this._contentToolboxFissionPrefValue) {
+      this._contentToolboxFissionPrefValue = Services.prefs.getBoolPref(
+        "devtools.contenttoolbox.fission",
+        false
+      );
+    }
+    return this._contentToolboxFissionPrefValue;
+  }
+
   /**
    * Request to start retrieving all already existing instances of given
    * type of resources and also start watching for the one to be created after.
@@ -252,6 +262,7 @@ class ResourceWatcher {
       targetType,
       targetFront,
       isTopLevel,
+      isFissionEnabledOnContentToolbox: this.contentToolboxFissionPrefValue,
       onAvailable,
     });
   }
@@ -301,6 +312,9 @@ class ResourceWatcher {
 
 ResourceWatcher.TYPES = ResourceWatcher.prototype.TYPES = {
   CONSOLE_MESSAGES: "console-messages",
+  ERROR_MESSAGES: "error-messages",
+  PLATFORM_MESSAGES: "platform-messages",
+  DOCUMENT_EVENTS: "document-events",
 };
 module.exports = { ResourceWatcher };
 
@@ -308,47 +322,26 @@ module.exports = { ResourceWatcher };
 // Each section added here should eventually be removed once the equivalent server
 // code is implement in Firefox, in its release channel.
 const LegacyListeners = {
-  // Bug 1620243 aims at implementing this from the actor and will eventually replace
-  // this client side code.
-  async [ResourceWatcher.TYPES.CONSOLE_MESSAGES]({
+  [ResourceWatcher.TYPES
+    .CONSOLE_MESSAGES]: require("devtools/shared/resources/legacy-listeners/console-messages"),
+  [ResourceWatcher.TYPES
+    .ERROR_MESSAGES]: require("devtools/shared/resources/legacy-listeners/error-messages"),
+  [ResourceWatcher.TYPES
+    .PLATFORM_MESSAGES]: require("devtools/shared/resources/legacy-listeners/platform-messages"),
+  async [ResourceWatcher.TYPES.DOCUMENT_EVENTS]({
     targetList,
     targetType,
     targetFront,
     isTopLevel,
     onAvailable,
   }) {
-    // Allow the top level target unconditionnally.
-    // Also allow frame, but only in content toolbox, when the fission/content toolbox pref is
-    // set. i.e. still ignore them in the content of the browser toolbox as we inspect
-    // messages via the process targets
-    // Also ignore workers as they are not supported yet. (see bug 1592584)
-    const isContentToolbox = targetList.targetFront.isLocalTab;
-    const listenForFrames =
-      isContentToolbox &&
-      Services.prefs.getBoolPref("devtools.contenttoolbox.fission");
-    const isAllowed =
-      isTopLevel ||
-      targetType === targetList.TYPES.PROCESS ||
-      (targetType === targetList.TYPES.FRAME && listenForFrames);
-
-    if (!isAllowed) {
+    // DocumentEventsListener of webconsole handles only top level document.
+    if (!isTopLevel) {
       return;
     }
 
     const webConsoleFront = await targetFront.getFront("console");
-
-    // Request notifying about new messages
-    await webConsoleFront.startListeners(["ConsoleAPI"]);
-
-    // Fetch already existing messages
-    // /!\ The actor implementation requires to call startListeners(ConsoleAPI) first /!\
-    const { messages } = await webConsoleFront.getCachedMessages([
-      "ConsoleAPI",
-    ]);
-    // Wrap the message into a `message` attribute, to match `consoleAPICall` behavior
-    messages.map(message => ({ message })).forEach(onAvailable);
-
-    // Forward new message events
-    webConsoleFront.on("consoleAPICall", onAvailable);
+    webConsoleFront.on("documentEvent", onAvailable);
+    await webConsoleFront.startListeners(["DocumentEvents"]);
   },
 };

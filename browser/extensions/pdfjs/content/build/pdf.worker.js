@@ -123,8 +123,8 @@ return /******/ (function(modules) { // webpackBootstrap
 "use strict";
 
 
-const pdfjsVersion = '2.5.49';
-const pdfjsBuild = '7ed71a0d7';
+const pdfjsVersion = '2.5.95';
+const pdfjsBuild = 'c218e94f6';
 
 const pdfjsCoreWorker = __w_pdfjs_require__(1);
 
@@ -223,7 +223,7 @@ var WorkerMessageHandler = {
     var WorkerTasks = [];
     const verbosity = (0, _util.getVerbosityLevel)();
     const apiVersion = docParams.apiVersion;
-    const workerVersion = '2.5.49';
+    const workerVersion = '2.5.95';
 
     if (apiVersion !== workerVersion) {
       throw new Error(`The API version "${apiVersion}" does not match ` + `the Worker version "${workerVersion}".`);
@@ -446,7 +446,8 @@ var WorkerMessageHandler = {
         disableFontFace: data.disableFontFace,
         nativeImageDecoderSupport: data.nativeImageDecoderSupport,
         ignoreErrors: data.ignoreErrors,
-        isEvalSupported: data.isEvalSupported
+        isEvalSupported: data.isEvalSupported,
+        fontExtraProperties: data.fontExtraProperties
       };
       getPdfManager(data, evaluatorOptions).then(function (newPdfManager) {
         if (terminated) {
@@ -3977,7 +3978,7 @@ class Catalog {
       NumCopies: Number.isInteger
     };
     const obj = this.catDict.get("ViewerPreferences");
-    const prefs = Object.create(null);
+    let prefs = null;
 
     if ((0, _primitives.isDict)(obj)) {
       for (const key in ViewerPreferencesValidators) {
@@ -4099,6 +4100,10 @@ class Catalog {
         }
 
         if (prefValue !== undefined) {
+          if (!prefs) {
+            prefs = Object.create(null);
+          }
+
           prefs[key] = prefValue;
         } else {
           (0, _util.info)(`Bad value in ViewerPreferences for "${key}".`);
@@ -12406,37 +12411,39 @@ var JpegImage = function JpegImageClosure() {
 
     var h, v;
 
-    while (mcu < mcuExpected) {
+    while (mcu <= mcuExpected) {
       var mcuToRead = resetInterval ? Math.min(mcuExpected - mcu, resetInterval) : mcuExpected;
 
-      for (i = 0; i < componentsLength; i++) {
-        components[i].pred = 0;
-      }
-
-      eobrun = 0;
-
-      if (componentsLength === 1) {
-        component = components[0];
-
-        for (n = 0; n < mcuToRead; n++) {
-          decodeBlock(component, decodeFn, mcu);
-          mcu++;
+      if (mcuToRead > 0) {
+        for (i = 0; i < componentsLength; i++) {
+          components[i].pred = 0;
         }
-      } else {
-        for (n = 0; n < mcuToRead; n++) {
-          for (i = 0; i < componentsLength; i++) {
-            component = components[i];
-            h = component.h;
-            v = component.v;
 
-            for (j = 0; j < v; j++) {
-              for (k = 0; k < h; k++) {
-                decodeMcu(component, decodeFn, mcu, j, k);
+        eobrun = 0;
+
+        if (componentsLength === 1) {
+          component = components[0];
+
+          for (n = 0; n < mcuToRead; n++) {
+            decodeBlock(component, decodeFn, mcu);
+            mcu++;
+          }
+        } else {
+          for (n = 0; n < mcuToRead; n++) {
+            for (i = 0; i < componentsLength; i++) {
+              component = components[i];
+              h = component.h;
+              v = component.v;
+
+              for (j = 0; j < v; j++) {
+                for (k = 0; k < h; k++) {
+                  decodeMcu(component, decodeFn, mcu, j, k);
+                }
               }
             }
-          }
 
-          mcu++;
+            mcu++;
+          }
         }
       }
 
@@ -12445,18 +12452,15 @@ var JpegImage = function JpegImageClosure() {
 
       if (!fileMarker) {
         break;
-      } else if (fileMarker.invalid) {
-        (0, _util.warn)("decodeScan - unexpected MCU data, current marker is: " + fileMarker.invalid);
+      }
+
+      if (fileMarker.invalid) {
+        const partialMsg = mcuToRead > 0 ? "unexpected" : "excessive";
+        (0, _util.warn)(`decodeScan - ${partialMsg} MCU data, current marker is: ${fileMarker.invalid}`);
         offset = fileMarker.offset;
       }
 
-      var marker = fileMarker && fileMarker.marker;
-
-      if (!marker || marker <= 0xff00) {
-        throw new JpegError("decodeScan - a valid marker was not found.");
-      }
-
-      if (marker >= 0xffd0 && marker <= 0xffd7) {
+      if (fileMarker.marker >= 0xffd0 && fileMarker.marker <= 0xffd7) {
         offset += 2;
       } else {
         break;
@@ -12466,7 +12470,7 @@ var JpegImage = function JpegImageClosure() {
     fileMarker = findNextFileMarker(data, offset);
 
     if (fileMarker && fileMarker.invalid) {
-      (0, _util.warn)("decodeScan - unexpected Scan data, current marker is: " + fileMarker.invalid);
+      (0, _util.warn)(`decodeScan - unexpected Scan data, current marker is: ${fileMarker.invalid}`);
       offset = fileMarker.offset;
     }
 
@@ -20117,7 +20121,8 @@ var PartialEvaluator = function PartialEvaluatorClosure() {
     disableFontFace: false,
     nativeImageDecoderSupport: _util.NativeImageDecoding.DECODE,
     ignoreErrors: false,
-    isEvalSupported: true
+    isEvalSupported: true,
+    fontExtraProperties: false
   };
 
   function PartialEvaluator({
@@ -20741,7 +20746,12 @@ var PartialEvaluator = function PartialEvaluatorClosure() {
           this.handler.send("UnsupportedFeature", {
             featureId: _util.UNSUPPORTED_FEATURES.font
           });
-          return new TranslatedFont("g_font_error", new _fonts.ErrorFont("Type3 font load error: " + reason), translated.font);
+          return new TranslatedFont({
+            loadedName: "g_font_error",
+            font: new _fonts.ErrorFont(`Type3 font load error: ${reason}`),
+            dict: translated.font,
+            extraProperties: this.options.fontExtraProperties
+          });
         });
       }).then(translated => {
         state.font = translated.font;
@@ -20868,9 +20878,14 @@ var PartialEvaluator = function PartialEvaluatorClosure() {
       });
     },
     loadFont: function PartialEvaluator_loadFont(fontName, font, resources) {
-      function errorFont() {
-        return Promise.resolve(new TranslatedFont("g_font_error", new _fonts.ErrorFont("Font " + fontName + " is not available"), font));
-      }
+      const errorFont = () => {
+        return Promise.resolve(new TranslatedFont({
+          loadedName: "g_font_error",
+          font: new _fonts.ErrorFont(`Font "${fontName}" is not available.`),
+          dict: font,
+          extraProperties: this.options.fontExtraProperties
+        }));
+      };
 
       var fontRef,
           xref = this.xref;
@@ -20979,13 +20994,18 @@ var PartialEvaluator = function PartialEvaluatorClosure() {
         translatedPromise = Promise.reject(e);
       }
 
-      translatedPromise.then(function (translatedFont) {
+      translatedPromise.then(translatedFont => {
         if (translatedFont.fontType !== undefined) {
           var xrefFontStats = xref.stats.fontTypes;
           xrefFontStats[translatedFont.fontType] = true;
         }
 
-        fontCapability.resolve(new TranslatedFont(font.loadedName, translatedFont, font));
+        fontCapability.resolve(new TranslatedFont({
+          loadedName: font.loadedName,
+          font: translatedFont,
+          dict: font,
+          extraProperties: this.options.fontExtraProperties
+        }));
       }).catch(reason => {
         this.handler.send("UnsupportedFeature", {
           featureId: _util.UNSUPPORTED_FEATURES.font
@@ -20999,7 +21019,12 @@ var PartialEvaluator = function PartialEvaluatorClosure() {
           xrefFontStats[fontType] = true;
         } catch (ex) {}
 
-        fontCapability.resolve(new TranslatedFont(font.loadedName, new _fonts.ErrorFont(reason instanceof Error ? reason.message : reason), font));
+        fontCapability.resolve(new TranslatedFont({
+          loadedName: font.loadedName,
+          font: new _fonts.ErrorFont(reason instanceof Error ? reason.message : reason),
+          dict: font,
+          extraProperties: this.options.fontExtraProperties
+        }));
       });
       return fontCapability.promise;
     },
@@ -21557,7 +21582,7 @@ var PartialEvaluator = function PartialEvaluatorClosure() {
             fontFamily: font.fallbackName,
             ascent: font.ascent,
             descent: font.descent,
-            vertical: !!font.vertical
+            vertical: font.vertical
           };
         }
 
@@ -22286,7 +22311,7 @@ var PartialEvaluator = function PartialEvaluatorClosure() {
 
           }
 
-          if (code > 0 && Number.isInteger(code)) {
+          if (code > 0 && code <= 0x10ffff && Number.isInteger(code)) {
             if (baseEncodingName && code === +charcode) {
               const baseEncoding = (0, _encodings.getEncoding)(baseEncodingName);
 
@@ -22892,86 +22917,89 @@ var PartialEvaluator = function PartialEvaluatorClosure() {
 
 exports.PartialEvaluator = PartialEvaluator;
 
-var TranslatedFont = function TranslatedFontClosure() {
-  function TranslatedFont(loadedName, font, dict) {
+class TranslatedFont {
+  constructor({
+    loadedName,
+    font,
+    dict,
+    extraProperties = false
+  }) {
     this.loadedName = loadedName;
     this.font = font;
     this.dict = dict;
+    this._extraProperties = extraProperties;
     this.type3Loaded = null;
     this.sent = false;
   }
 
-  TranslatedFont.prototype = {
-    send(handler) {
-      if (this.sent) {
-        return;
-      }
+  send(handler) {
+    if (this.sent) {
+      return;
+    }
 
-      this.sent = true;
-      handler.send("commonobj", [this.loadedName, "Font", this.font.exportData()]);
-    },
+    this.sent = true;
+    handler.send("commonobj", [this.loadedName, "Font", this.font.exportData(this._extraProperties)]);
+  }
 
-    fallback(handler) {
-      if (!this.font.data) {
-        return;
-      }
+  fallback(handler) {
+    if (!this.font.data) {
+      return;
+    }
 
-      this.font.disableFontFace = true;
-      const glyphs = this.font.glyphCacheValues;
-      PartialEvaluator.buildFontPaths(this.font, glyphs, handler);
-    },
+    this.font.disableFontFace = true;
+    const glyphs = this.font.glyphCacheValues;
+    PartialEvaluator.buildFontPaths(this.font, glyphs, handler);
+  }
 
-    loadType3Data(evaluator, resources, parentOperatorList, task) {
-      if (!this.font.isType3Font) {
-        throw new Error("Must be a Type3 font.");
-      }
+  loadType3Data(evaluator, resources, parentOperatorList, task) {
+    if (!this.font.isType3Font) {
+      throw new Error("Must be a Type3 font.");
+    }
 
-      if (this.type3Loaded) {
-        return this.type3Loaded;
-      }
-
-      var type3Options = Object.create(evaluator.options);
-      type3Options.ignoreErrors = false;
-      type3Options.nativeImageDecoderSupport = _util.NativeImageDecoding.NONE;
-      var type3Evaluator = evaluator.clone(type3Options);
-      type3Evaluator.parsingType3Font = true;
-      var translatedFont = this.font;
-      var loadCharProcsPromise = Promise.resolve();
-      var charProcs = this.dict.get("CharProcs");
-      var fontResources = this.dict.get("Resources") || resources;
-      var charProcKeys = charProcs.getKeys();
-      var charProcOperatorList = Object.create(null);
-
-      for (var i = 0, n = charProcKeys.length; i < n; ++i) {
-        const key = charProcKeys[i];
-        loadCharProcsPromise = loadCharProcsPromise.then(function () {
-          var glyphStream = charProcs.get(key);
-          var operatorList = new _operator_list.OperatorList();
-          return type3Evaluator.getOperatorList({
-            stream: glyphStream,
-            task,
-            resources: fontResources,
-            operatorList
-          }).then(function () {
-            charProcOperatorList[key] = operatorList.getIR();
-            parentOperatorList.addDependencies(operatorList.dependencies);
-          }).catch(function (reason) {
-            (0, _util.warn)(`Type3 font resource "${key}" is not available.`);
-            const dummyOperatorList = new _operator_list.OperatorList();
-            charProcOperatorList[key] = dummyOperatorList.getIR();
-          });
-        });
-      }
-
-      this.type3Loaded = loadCharProcsPromise.then(function () {
-        translatedFont.charProcOperatorList = charProcOperatorList;
-      });
+    if (this.type3Loaded) {
       return this.type3Loaded;
     }
 
-  };
-  return TranslatedFont;
-}();
+    var type3Options = Object.create(evaluator.options);
+    type3Options.ignoreErrors = false;
+    type3Options.nativeImageDecoderSupport = _util.NativeImageDecoding.NONE;
+    var type3Evaluator = evaluator.clone(type3Options);
+    type3Evaluator.parsingType3Font = true;
+    var translatedFont = this.font;
+    var loadCharProcsPromise = Promise.resolve();
+    var charProcs = this.dict.get("CharProcs");
+    var fontResources = this.dict.get("Resources") || resources;
+    var charProcKeys = charProcs.getKeys();
+    var charProcOperatorList = Object.create(null);
+
+    for (var i = 0, n = charProcKeys.length; i < n; ++i) {
+      const key = charProcKeys[i];
+      loadCharProcsPromise = loadCharProcsPromise.then(function () {
+        var glyphStream = charProcs.get(key);
+        var operatorList = new _operator_list.OperatorList();
+        return type3Evaluator.getOperatorList({
+          stream: glyphStream,
+          task,
+          resources: fontResources,
+          operatorList
+        }).then(function () {
+          charProcOperatorList[key] = operatorList.getIR();
+          parentOperatorList.addDependencies(operatorList.dependencies);
+        }).catch(function (reason) {
+          (0, _util.warn)(`Type3 font resource "${key}" is not available.`);
+          const dummyOperatorList = new _operator_list.OperatorList();
+          charProcOperatorList[key] = dummyOperatorList.getIR();
+        });
+      });
+    }
+
+    this.type3Loaded = loadCharProcsPromise.then(function () {
+      translatedFont.charProcOperatorList = charProcOperatorList;
+    });
+    return this.type3Loaded;
+  }
+
+}
 
 var StateManager = function StateManagerClosure() {
   function StateManager(initialState) {
@@ -24552,6 +24580,8 @@ const PRIVATE_USE_AREAS = [[0xe000, 0xf8ff], [0x100000, 0x10fffd]];
 var PDF_GLYPH_SPACE_UNITS = 1000;
 var SEAC_ANALYSIS_ENABLED = true;
 exports.SEAC_ANALYSIS_ENABLED = SEAC_ANALYSIS_ENABLED;
+const EXPORT_DATA_PROPERTIES = ["ascent", "bbox", "black", "bold", "charProcOperatorList", "composite", "data", "defaultVMetrics", "defaultWidth", "descent", "fallbackName", "fontMatrix", "fontType", "isMonospace", "isSerifFont", "isType3Font", "italic", "loadedName", "mimetype", "missingFile", "name", "remeasure", "subtype", "type", "vertical"];
+const EXPORT_DATA_EXTRA_PROPERTIES = ["cMap", "defaultEncoding", "differences", "isSymbolicFont", "seacMap", "toFontChar", "toUnicode", "vmetrics", "widths"];
 var FontFlags = {
   FixedPitch: 1,
   Serif: 2,
@@ -24951,7 +24981,7 @@ var Font = function FontClosure() {
     }
 
     this.cidEncoding = properties.cidEncoding;
-    this.vertical = properties.vertical;
+    this.vertical = !!properties.vertical;
 
     if (this.vertical) {
       this.vmetrics = properties.vmetrics;
@@ -25508,17 +25538,22 @@ var Font = function FontClosure() {
       return (0, _util.shadow)(this, "renderer", renderer);
     },
 
-    exportData: function Font_exportData() {
-      var data = {};
+    exportData(extraProperties = false) {
+      const exportDataProperties = extraProperties ? [...EXPORT_DATA_PROPERTIES, ...EXPORT_DATA_EXTRA_PROPERTIES] : EXPORT_DATA_PROPERTIES;
+      const data = Object.create(null);
+      let property, value;
 
-      for (var i in this) {
-        if (this.hasOwnProperty(i)) {
-          data[i] = this[i];
+      for (property of exportDataProperties) {
+        value = this[property];
+
+        if (value !== undefined) {
+          data[property] = value;
         }
       }
 
       return data;
     },
+
     fallbackToSystemFont: function Font_fallbackToSystemFont() {
       this.missingFile = true;
       var name = this.name;
@@ -27095,10 +27130,6 @@ var Font = function FontClosure() {
     },
 
     get spaceWidth() {
-      if ("_shadowWidth" in this) {
-        return this._shadowWidth;
-      }
-
       var possibleSpaceReplacements = ["space", "minus", "one", "i", "I"];
       var width;
 
@@ -27114,10 +27145,8 @@ var Font = function FontClosure() {
         var glyphUnicode = glyphsUnicodeMap[glyphName];
         var charcode = 0;
 
-        if (this.composite) {
-          if (this.cMap.contains(glyphUnicode)) {
-            charcode = this.cMap.lookup(glyphUnicode);
-          }
+        if (this.composite && this.cMap.contains(glyphUnicode)) {
+          charcode = this.cMap.lookup(glyphUnicode);
         }
 
         if (!charcode && this.toUnicode) {
@@ -27136,8 +27165,7 @@ var Font = function FontClosure() {
       }
 
       width = width || this.defaultWidth;
-      this._shadowWidth = width;
-      return width;
+      return (0, _util.shadow)(this, "spaceWidth", width);
     },
 
     charToGlyph: function Font_charToGlyph(charcode, isSpace) {
@@ -27157,7 +27185,7 @@ var Font = function FontClosure() {
         unicode = String.fromCharCode(unicode);
       }
 
-      var isInFont = charcode in this.toFontChar;
+      var isInFont = (charcode in this.toFontChar);
       fontCharCode = this.toFontChar[charcode] || charcode;
 
       if (this.missingFile) {
@@ -27186,7 +27214,16 @@ var Font = function FontClosure() {
         };
       }
 
-      var fontChar = typeof fontCharCode === "number" ? String.fromCodePoint(fontCharCode) : "";
+      let fontChar = "";
+
+      if (typeof fontCharCode === "number") {
+        if (fontCharCode <= 0x10ffff) {
+          fontChar = String.fromCodePoint(fontCharCode);
+        } else {
+          (0, _util.warn)(`charToGlyph - invalid fontCharCode: ${fontCharCode}`);
+        }
+      }
+
       var glyph = this.glyphCache[charcode];
 
       if (!glyph || !glyph.matchesForCache(fontChar, unicode, accent, width, vmetric, operatorListId, isSpace, isInFont)) {
@@ -27261,11 +27298,13 @@ var ErrorFont = function ErrorFontClosure() {
     charsToGlyphs: function ErrorFont_charsToGlyphs() {
       return [];
     },
-    exportData: function ErrorFont_exportData() {
+
+    exportData(extraProperties = false) {
       return {
         error: this.error
       };
     }
+
   };
   return ErrorFont;
 }();
@@ -27498,6 +27537,18 @@ var Type1Font = function Type1FontClosure() {
     },
     getGlyphMapping: function Type1Font_getGlyphMapping(properties) {
       var charstrings = this.charstrings;
+
+      if (properties.composite) {
+        const charCodeToGlyphId = Object.create(null);
+
+        for (let glyphId = 0, charstringsLen = charstrings.length; glyphId < charstringsLen; glyphId++) {
+          const charCode = properties.cMap.charCodeOf(glyphId);
+          charCodeToGlyphId[charCode] = glyphId + 1;
+        }
+
+        return charCodeToGlyphId;
+      }
+
       var glyphNames = [".notdef"],
           glyphId;
 
@@ -38222,7 +38273,7 @@ var Type1Parser = function Type1ParserClosure() {
       }
     }
 
-    return Array.prototype.slice.call(decrypted, discardNumber, j);
+    return decrypted.slice(discardNumber, j);
   }
 
   function isSpecial(c) {
@@ -38232,7 +38283,7 @@ var Type1Parser = function Type1ParserClosure() {
   function Type1Parser(stream, encrypted, seacAnalysisEnabled) {
     if (encrypted) {
       var data = stream.getBytes();
-      var isBinary = !(isHexDigit(data[0]) && isHexDigit(data[1]) && isHexDigit(data[2]) && isHexDigit(data[3]));
+      var isBinary = !((isHexDigit(data[0]) || (0, _core_utils.isWhiteSpace)(data[0])) && isHexDigit(data[1]) && isHexDigit(data[2]) && isHexDigit(data[3]) && isHexDigit(data[4]) && isHexDigit(data[5]) && isHexDigit(data[6]) && isHexDigit(data[7]));
       stream = new _stream.Stream(isBinary ? decrypt(data, EEXEC_ENCRYPT_KEY, 4) : decryptAscii(data, EEXEC_ENCRYPT_KEY, 4));
     }
 

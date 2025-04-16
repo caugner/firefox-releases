@@ -965,11 +965,8 @@ struct JS_PUBLIC_API JSContext : public JS::RootingContext,
   void removeUnhandledRejectedPromise(JSContext* cx, js::HandleObject promise);
 
  private:
-  // Base case for the recursive function below.
-  inline void checkImpl(int argIndex) {}
-
-  template <class Head, class... Tail>
-  inline void checkImpl(int argIndex, const Head& head, const Tail&... tail);
+  template <class... Args>
+  inline void checkImpl(const Args&... args);
 
   bool contextChecksEnabled() const {
     // Don't perform these checks when called from a finalizer. The checking
@@ -1102,11 +1099,11 @@ namespace js {
 /************************************************************************/
 
 /* AutoArrayRooter roots an external array of Values. */
-class MOZ_RAII AutoArrayRooter : private JS::AutoGCRooter {
+class MOZ_RAII AutoArrayRooter : public JS::AutoGCRooter {
  public:
   AutoArrayRooter(JSContext* cx, size_t len,
                   Value* vec MOZ_GUARD_OBJECT_NOTIFIER_PARAM)
-      : JS::AutoGCRooter(cx, JS::AutoGCRooter::Tag::Array),
+      : JS::AutoGCRooter(cx, JS::AutoGCRooter::Kind::Array),
         array_(vec),
         length_(len) {
     MOZ_GUARD_OBJECT_NOTIFIER_INIT;
@@ -1116,7 +1113,7 @@ class MOZ_RAII AutoArrayRooter : private JS::AutoGCRooter {
 
   size_t length() { return length_; }
 
-  friend void JS::AutoGCRooter::trace(JSTracer* trc);
+  void trace(JSTracer* trc);
 
  private:
   Value* array_;

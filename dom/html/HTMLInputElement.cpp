@@ -169,26 +169,6 @@ static const nsAttrValue::EnumTable kInputTypeTable[] = {
 static const nsAttrValue::EnumTable* kInputDefaultType =
     &kInputTypeTable[ArrayLength(kInputTypeTable) - 2];
 
-static const uint8_t NS_INPUT_INPUTMODE_NONE = 1;
-static const uint8_t NS_INPUT_INPUTMODE_TEXT = 2;
-static const uint8_t NS_INPUT_INPUTMODE_TEL = 3;
-static const uint8_t NS_INPUT_INPUTMODE_URL = 4;
-static const uint8_t NS_INPUT_INPUTMODE_EMAIL = 5;
-static const uint8_t NS_INPUT_INPUTMODE_NUMERIC = 6;
-static const uint8_t NS_INPUT_INPUTMODE_DECIMAL = 7;
-static const uint8_t NS_INPUT_INPUTMODE_SEARCH = 8;
-
-static const nsAttrValue::EnumTable kInputInputmodeTable[] = {
-    {"none", NS_INPUT_INPUTMODE_NONE},
-    {"text", NS_INPUT_INPUTMODE_TEXT},
-    {"tel", NS_INPUT_INPUTMODE_TEL},
-    {"url", NS_INPUT_INPUTMODE_URL},
-    {"email", NS_INPUT_INPUTMODE_EMAIL},
-    {"numeric", NS_INPUT_INPUTMODE_NUMERIC},
-    {"decimal", NS_INPUT_INPUTMODE_DECIMAL},
-    {"search", NS_INPUT_INPUTMODE_SEARCH},
-    {nullptr, 0}};
-
 static const nsAttrValue::EnumTable kCaptureTable[] = {
     {"user", static_cast<int16_t>(nsIFilePicker::captureUser)},
     {"environment", static_cast<int16_t>(nsIFilePicker::captureEnv)},
@@ -1387,10 +1367,6 @@ void HTMLInputElement::GetFormMethod(nsAString& aValue) {
   GetEnumAttr(nsGkAtoms::formmethod, "", kFormDefaultMethod->tag, aValue);
 }
 
-void HTMLInputElement::GetInputMode(nsAString& aValue) {
-  GetEnumAttr(nsGkAtoms::inputmode, nullptr, aValue);
-}
-
 void HTMLInputElement::GetType(nsAString& aValue) {
   GetEnumAttr(nsGkAtoms::type, kInputDefaultType->tag, aValue);
 }
@@ -1565,9 +1541,8 @@ void HTMLInputElement::SetValue(const nsAString& aValue, CallerType aCallerType,
 
       MozSetFileNameArray(list, aRv);
       return;
-    } else {
-      ClearFiles(true);
     }
+    ClearFiles(true);
   } else {
     if (MayFireChangeOnBlur()) {
       // If the value has been set by a script, we basically want to keep the
@@ -2987,10 +2962,9 @@ bool HTMLInputElement::IsNodeApzAwareInternal() const {
 }
 #endif
 
-bool HTMLInputElement::IsInteractiveHTMLContent(bool aIgnoreTabindex) const {
+bool HTMLInputElement::IsInteractiveHTMLContent() const {
   return mType != NS_FORM_INPUT_HIDDEN ||
-         nsGenericHTMLFormElementWithState::IsInteractiveHTMLContent(
-             aIgnoreTabindex);
+         nsGenericHTMLFormElementWithState::IsInteractiveHTMLContent();
 }
 
 void HTMLInputElement::AsyncEventRunning(AsyncEventDispatcher* aEvent) {
@@ -5150,9 +5124,6 @@ bool HTMLInputElement::ParseAttribute(int32_t aNamespaceID, nsAtom* aAttribute,
       aResult.ParseAtomArray(aValue);
       return true;
     }
-    if (aAttribute == nsGkAtoms::inputmode) {
-      return aResult.ParseEnumValue(aValue, kInputInputmodeTable, false);
-    }
     if (aAttribute == nsGkAtoms::capture) {
       return aResult.ParseEnumValue(aValue, kCaptureTable, false,
                                     kCaptureDefault);
@@ -5806,7 +5777,8 @@ HTMLInputElement::SaveState() {
         }
       }
 
-      state->contentData() = std::move(value);
+      state->contentData() =
+          TextContentData(value, mLastValueChangeWasInteractive);
       break;
   }
 
@@ -6023,12 +5995,16 @@ bool HTMLInputElement::RestoreState(PresState* aState) {
         break;
       }
 
-      if (inputState.type() == PresContentData::TnsString) {
+      if (inputState.type() == PresContentData::TTextContentData) {
         // TODO: What should we do if SetValueInternal fails?  (The allocation
         // may potentially be big, but most likely we've failed to allocate
         // before the type change.)
-        SetValueInternal(inputState.get_nsString(),
+        SetValueInternal(inputState.get_TextContentData().value(),
                          TextControlState::eSetValue_Notify);
+        if (inputState.get_TextContentData().lastValueChangeWasInteractive()) {
+          mLastValueChangeWasInteractive = true;
+          UpdateState(true);
+        }
       }
       break;
   }

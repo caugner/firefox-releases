@@ -285,7 +285,7 @@ class UrlbarController {
 
     if (this.view.isOpen && executeAction && this._lastQueryContextWrapper) {
       let { queryContext } = this._lastQueryContextWrapper;
-      let handled = this.view.oneOffSearchButtons.handleKeyPress(
+      let handled = this.view.oneOffSearchButtons.handleKeyDown(
         event,
         this.view.visibleElementCount,
         this.view.allowEmptySelection,
@@ -319,7 +319,6 @@ class UrlbarController {
         // When there's no search string, we want to focus the next toolbar item
         // instead, for accessibility reasons.
         let allowTabbingThroughResults =
-          !UrlbarPrefs.get("update1") ||
           this.input.focusedViaMousedown ||
           (this.input.value &&
             this.input.getAttribute("pageproxystate") != "valid");

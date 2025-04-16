@@ -6,41 +6,26 @@ use crate::{
     backend,
     binding_model::{BindGroup, BindGroupLayout, PipelineLayout},
     command::CommandBuffer,
-    device::{Device, ShaderModule},
+    device::Device,
     id::{
-        AdapterId,
-        BindGroupId,
-        BindGroupLayoutId,
-        BufferId,
-        CommandBufferId,
-        ComputePipelineId,
-        DeviceId,
-        PipelineLayoutId,
-        RenderPipelineId,
-        SamplerId,
-        ShaderModuleId,
-        SurfaceId,
-        SwapChainId,
-        TextureId,
-        TextureViewId,
-        TypedId,
+        AdapterId, BindGroupId, BindGroupLayoutId, BufferId, CommandBufferId, ComputePipelineId,
+        DeviceId, PipelineLayoutId, RenderPipelineId, SamplerId, ShaderModuleId, SurfaceId,
+        SwapChainId, TextureId, TextureViewId, TypedId,
     },
     instance::{Adapter, Instance, Surface},
-    pipeline::{ComputePipeline, RenderPipeline},
+    pipeline::{ComputePipeline, RenderPipeline, ShaderModule},
     resource::{Buffer, Sampler, Texture, TextureView},
     swap_chain::SwapChain,
-    Epoch,
-    Index,
+    Epoch, Index,
 };
 
-use wgt::Backend;
 use parking_lot::{Mutex, RwLock, RwLockReadGuard, RwLockWriteGuard};
 use vec_map::VecMap;
+use wgt::Backend;
 
 #[cfg(debug_assertions)]
 use std::cell::Cell;
-use std::{fmt::Debug, marker::PhantomData, ops};
-
+use std::{fmt::Debug, iter, marker::PhantomData, ops};
 
 /// A simple structure to manage identities of objects.
 #[derive(Debug)]
@@ -136,11 +121,9 @@ impl<T, I: TypedId> Storage<T, I> {
     }
 
     pub fn iter(&self, backend: Backend) -> impl Iterator<Item = (I, &T)> {
-        self.map
-            .iter()
-            .map(move |(index, (value, storage_epoch))| {
-                (I::zip(index as Index, *storage_epoch, backend), value)
-            })
+        self.map.iter().map(move |(index, (value, storage_epoch))| {
+            (I::zip(index as Index, *storage_epoch, backend), value)
+        })
     }
 }
 
@@ -180,11 +163,12 @@ impl<B: hal::Backend> Access<BindGroup<B>> for CommandBuffer<B> {}
 impl<B: hal::Backend> Access<CommandBuffer<B>> for Root {}
 impl<B: hal::Backend> Access<CommandBuffer<B>> for Device<B> {}
 impl<B: hal::Backend> Access<CommandBuffer<B>> for SwapChain<B> {}
-impl<B: hal::Backend> Access<ComputePipeline<B>> for Root {}
+impl<B: hal::Backend> Access<ComputePipeline<B>> for Device<B> {}
 impl<B: hal::Backend> Access<ComputePipeline<B>> for BindGroup<B> {}
-impl<B: hal::Backend> Access<RenderPipeline<B>> for Root {}
+impl<B: hal::Backend> Access<RenderPipeline<B>> for Device<B> {}
 impl<B: hal::Backend> Access<RenderPipeline<B>> for BindGroup<B> {}
-impl<B: hal::Backend> Access<ShaderModule<B>> for Root {}
+impl<B: hal::Backend> Access<RenderPipeline<B>> for ComputePipeline<B> {}
+impl<B: hal::Backend> Access<ShaderModule<B>> for Device<B> {}
 impl<B: hal::Backend> Access<ShaderModule<B>> for PipelineLayout<B> {}
 impl<B: hal::Backend> Access<Buffer<B>> for Root {}
 impl<B: hal::Backend> Access<Buffer<B>> for Device<B> {}
@@ -251,7 +235,6 @@ impl<'a, T> Drop for Token<'a, T> {
     }
 }
 
-
 pub trait IdentityHandler<I>: Debug {
     type Input: Clone + Debug;
     fn process(&self, id: Self::Input, backend: Backend) -> I;
@@ -270,7 +253,7 @@ impl<I: TypedId + Debug> IdentityHandler<I> for Mutex<IdentityManager> {
 
 pub trait IdentityHandlerFactory<I> {
     type Filter: IdentityHandler<I>;
-    fn spawn(&self) -> Self::Filter;
+    fn spawn(&self, min_index: Index) -> Self::Filter;
 }
 
 #[derive(Debug)]
@@ -278,33 +261,36 @@ pub struct IdentityManagerFactory;
 
 impl<I: TypedId + Debug> IdentityHandlerFactory<I> for IdentityManagerFactory {
     type Filter = Mutex<IdentityManager>;
-    fn spawn(&self) -> Self::Filter {
-        Mutex::new(IdentityManager::default())
+    fn spawn(&self, min_index: Index) -> Self::Filter {
+        let mut man = IdentityManager::default();
+        man.free.extend(0..min_index);
+        man.epochs.extend(iter::repeat(1).take(min_index as usize));
+        Mutex::new(man)
     }
 }
 
 pub trait GlobalIdentityHandlerFactory:
-    IdentityHandlerFactory<AdapterId> +
-    IdentityHandlerFactory<DeviceId> +
-    IdentityHandlerFactory<SwapChainId> +
-    IdentityHandlerFactory<PipelineLayoutId> +
-    IdentityHandlerFactory<ShaderModuleId> +
-    IdentityHandlerFactory<BindGroupLayoutId> +
-    IdentityHandlerFactory<BindGroupId> +
-    IdentityHandlerFactory<CommandBufferId> +
-    IdentityHandlerFactory<RenderPipelineId> +
-    IdentityHandlerFactory<ComputePipelineId> +
-    IdentityHandlerFactory<BufferId> +
-    IdentityHandlerFactory<TextureId> +
-    IdentityHandlerFactory<TextureViewId> +
-    IdentityHandlerFactory<SamplerId> +
-    IdentityHandlerFactory<SurfaceId>
-{}
+    IdentityHandlerFactory<AdapterId>
+    + IdentityHandlerFactory<DeviceId>
+    + IdentityHandlerFactory<SwapChainId>
+    + IdentityHandlerFactory<PipelineLayoutId>
+    + IdentityHandlerFactory<ShaderModuleId>
+    + IdentityHandlerFactory<BindGroupLayoutId>
+    + IdentityHandlerFactory<BindGroupId>
+    + IdentityHandlerFactory<CommandBufferId>
+    + IdentityHandlerFactory<RenderPipelineId>
+    + IdentityHandlerFactory<ComputePipelineId>
+    + IdentityHandlerFactory<BufferId>
+    + IdentityHandlerFactory<TextureId>
+    + IdentityHandlerFactory<TextureViewId>
+    + IdentityHandlerFactory<SamplerId>
+    + IdentityHandlerFactory<SurfaceId>
+{
+}
 
 impl GlobalIdentityHandlerFactory for IdentityManagerFactory {}
 
 pub type Input<G, I> = <<G as IdentityHandlerFactory<I>>::Filter as IdentityHandler<I>>::Input;
-
 
 #[derive(Debug)]
 pub struct Registry<T, I: TypedId, F: IdentityHandlerFactory<I>> {
@@ -316,12 +302,23 @@ pub struct Registry<T, I: TypedId, F: IdentityHandlerFactory<I>> {
 impl<T, I: TypedId, F: IdentityHandlerFactory<I>> Registry<T, I, F> {
     fn new(backend: Backend, factory: &F) -> Self {
         Registry {
-            identity: factory.spawn(),
+            identity: factory.spawn(0),
             data: RwLock::new(Storage {
                 map: VecMap::new(),
                 _phantom: PhantomData,
             }),
             backend,
+        }
+    }
+
+    fn without_backend(factory: &F) -> Self {
+        Registry {
+            identity: factory.spawn(1),
+            data: RwLock::new(Storage {
+                map: VecMap::new(),
+                _phantom: PhantomData,
+            }),
+            backend: Backend::Empty,
         }
     }
 }
@@ -443,6 +440,7 @@ impl<B: hal::Backend, F: GlobalIdentityHandlerFactory> Drop for Hub<B, F> {
                 }
             }
         }
+
         for (_, (texture, _)) in self.textures.data.write().map.drain() {
             devices[texture.device_id.value].destroy_texture(texture);
         }
@@ -460,14 +458,38 @@ impl<B: hal::Backend, F: GlobalIdentityHandlerFactory> Drop for Hub<B, F> {
             device.destroy_bind_group(bind_group);
         }
 
-        //TODO:
-        // self.compute_pipelines
-        // self.render_pipelines
-        // self.bind_group_layouts
-        // self.pipeline_layouts
-        // self.shader_modules
-        // self.swap_chains
-        // self.adapters
+        for (_, (module, _)) in self.shader_modules.data.write().map.drain() {
+            let device = &devices[module.device_id.value];
+            unsafe {
+                device.raw.destroy_shader_module(module.raw);
+            }
+        }
+        for (_, (bgl, _)) in self.bind_group_layouts.data.write().map.drain() {
+            let device = &devices[bgl.device_id.value];
+            unsafe {
+                device.raw.destroy_descriptor_set_layout(bgl.raw);
+            }
+        }
+        for (_, (pipeline_layout, _)) in self.pipeline_layouts.data.write().map.drain() {
+            let device = &devices[pipeline_layout.device_id.value];
+            unsafe {
+                device.raw.destroy_pipeline_layout(pipeline_layout.raw);
+            }
+        }
+        for (_, (pipeline, _)) in self.compute_pipelines.data.write().map.drain() {
+            let device = &devices[pipeline.device_id.value];
+            unsafe {
+                device.raw.destroy_compute_pipeline(pipeline.raw);
+            }
+        }
+        for (_, (pipeline, _)) in self.render_pipelines.data.write().map.drain() {
+            let device = &devices[pipeline.device_id.value];
+            unsafe {
+                device.raw.destroy_graphics_pipeline(pipeline.raw);
+            }
+        }
+
+        //TODO: self.swap_chains
 
         for (_, (device, _)) in devices.map.drain() {
             device.dispose();
@@ -519,7 +541,7 @@ impl<G: GlobalIdentityHandlerFactory> Global<G> {
     pub fn new(name: &str, factory: G) -> Self {
         Global {
             instance: Instance::new(name, 1),
-            surfaces: Registry::new(Backend::Empty, &factory),
+            surfaces: Registry::without_backend(&factory),
             hubs: Hubs::new(&factory),
         }
     }

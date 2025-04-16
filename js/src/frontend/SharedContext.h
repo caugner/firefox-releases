@@ -14,8 +14,11 @@
 #include "jstypes.h"
 
 #include "frontend/AbstractScopePtr.h"
+#include "frontend/FunctionSyntaxKind.h"  // FunctionSyntaxKind
 #include "frontend/ParseNode.h"
 #include "frontend/Stencil.h"
+#include "vm/FunctionFlags.h"          // js::FunctionFlags
+#include "vm/GeneratorAndAsyncKind.h"  // js::GeneratorKind, js::FunctionAsyncKind
 #include "vm/JSFunction.h"
 #include "vm/JSScript.h"
 #include "vm/Scope.h"
@@ -107,15 +110,17 @@ class SharedContext {
  protected:
   enum class Kind : uint8_t { FunctionBox, Global, Eval, Module };
 
-  Kind kind_;
-
   CompilationInfo& compilationInfo_;
 
   ThisBinding thisBinding_;
 
  public:
-  bool strictScript : 1;
-  bool localStrict : 1;
+  SourceExtent extent;
+
+  // If defined, this is used to allocate a JSScript instead of the
+  // parser determined extent (above). This is used for certain top
+  // level contexts.
+  mozilla::Maybe<SourceExtent> scriptExtent;
 
  protected:
   bool allowNewTarget_ : 1;
@@ -124,6 +129,9 @@ class SharedContext {
   bool allowArguments_ : 1;
   bool inWith_ : 1;
   bool needsThisTDZChecks_ : 1;
+
+  // See `strict()` below.
+  bool localStrict : 1;
 
   // True if "use strict"; appears in the body instead of being inherited.
   bool hasExplicitUseStrict_ : 1;
@@ -139,54 +147,36 @@ class SharedContext {
 
  public:
   SharedContext(JSContext* cx, Kind kind, CompilationInfo& compilationInfo,
-                Directives directives)
-      : cx_(cx),
-        kind_(kind),
-        compilationInfo_(compilationInfo),
-        thisBinding_(ThisBinding::Global),
-        strictScript(directives.strict()),
-        localStrict(false),
-        allowNewTarget_(false),
-        allowSuperProperty_(false),
-        allowSuperCall_(false),
-        allowArguments_(true),
-        inWith_(false),
-        needsThisTDZChecks_(false),
-        hasExplicitUseStrict_(false) {
-    if (kind_ == Kind::FunctionBox) {
-      immutableFlags_.setFlag(ImmutableScriptFlagsEnum::IsFunction);
-    } else if (kind_ == Kind::Module) {
-      immutableFlags_.setFlag(ImmutableScriptFlagsEnum::IsModule);
-    } else if (kind_ == Kind::Eval) {
-      immutableFlags_.setFlag(ImmutableScriptFlagsEnum::IsForEval);
-    } else {
-      MOZ_ASSERT(kind_ == Kind::Global);
-    }
-  }
+                Directives directives, SourceExtent extent,
+                ImmutableScriptFlags immutableFlags = {});
 
   // If this is the outermost SharedContext, the Scope that encloses
   // it. Otherwise nullptr.
   virtual Scope* compilationEnclosingScope() const = 0;
 
-  bool isFunctionBox() const { return kind_ == Kind::FunctionBox; }
+  bool isFunctionBox() const {
+    return immutableFlags_.hasFlag(ImmutableFlags::IsFunction);
+  }
   inline FunctionBox* asFunctionBox();
-  bool isModuleContext() const { return kind_ == Kind::Module; }
+  bool isModuleContext() const {
+    return immutableFlags_.hasFlag(ImmutableFlags::IsModule);
+  }
   inline ModuleSharedContext* asModuleContext();
-  bool isGlobalContext() const { return kind_ == Kind::Global; }
+  bool isGlobalContext() const {
+    return !(isFunctionBox() || isModuleContext() || isEvalContext());
+  }
   inline GlobalSharedContext* asGlobalContext();
-  bool isEvalContext() const { return kind_ == Kind::Eval; }
+  bool isEvalContext() const {
+    return immutableFlags_.hasFlag(ImmutableFlags::IsForEval);
+  }
   inline EvalSharedContext* asEvalContext();
 
   bool isTopLevelContext() const {
-    switch (kind_) {
-      case Kind::Module:
-      case Kind::Global:
-      case Kind::Eval:
-        return true;
-      case Kind::FunctionBox:
-        break;
+    if (isModuleContext() || isEvalContext() || isGlobalContext()) {
+      return true;
     }
-    MOZ_ASSERT(kind_ == Kind::FunctionBox);
+
+    MOZ_ASSERT(isFunctionBox());
     return false;
   }
 
@@ -217,6 +207,9 @@ class SharedContext {
   bool hasCallSiteObj() const {
     return immutableFlags_.hasFlag(ImmutableFlags::HasCallSiteObj);
   }
+  bool treatAsRunOnce() const {
+    return immutableFlags_.hasFlag(ImmutableFlags::TreatAsRunOnce);
+  }
 
   void setExplicitUseStrict() { hasExplicitUseStrict_ = true; }
   void setBindingsAccessedDynamically() {
@@ -228,23 +221,38 @@ class SharedContext {
   void setHasCallSiteObj() {
     immutableFlags_.setFlag(ImmutableFlags::HasCallSiteObj);
   }
-  void setHasModuleGoal(bool hasModuleGoal = true) {
-    immutableFlags_.setFlag(ImmutableFlags::HasModuleGoal, hasModuleGoal);
+  void setHasModuleGoal(bool flag = true) {
+    immutableFlags_.setFlag(ImmutableFlags::HasModuleGoal, flag);
   }
   void setHasInnerFunctions() {
     immutableFlags_.setFlag(ImmutableFlags::HasInnerFunctions);
   }
+  void setTreatAsRunOnce(bool flag = true) {
+    immutableFlags_.setFlag(ImmutableFlags::TreatAsRunOnce, flag);
+  }
 
   ImmutableScriptFlags immutableFlags() { return immutableFlags_; }
+  void addToImmutableFlags(ImmutableScriptFlags flags) {
+    immutableFlags_ |= flags;
+  }
 
   inline bool allBindingsClosedOver();
 
-  bool strict() const { return strictScript || localStrict; }
+  // The ImmutableFlag tracks if the entire script is strict, while the
+  // localStrict flag indicates the current region (such as class body) should
+  // be treated as strict. The localStrict flag will always be reset to false
+  // before the end of the script.
+  bool strict() const {
+    return immutableFlags_.hasFlag(ImmutableFlags::Strict) || localStrict;
+  }
+  void setStrictScript() { immutableFlags_.setFlag(ImmutableFlags::Strict); }
   bool setLocalStrictMode(bool strict) {
     bool retVal = localStrict;
     localStrict = strict;
     return retVal;
   }
+
+  SourceExtent getScriptExtent() { return scriptExtent.refOr(extent); }
 };
 
 class MOZ_STACK_CLASS GlobalSharedContext : public SharedContext {
@@ -254,8 +262,11 @@ class MOZ_STACK_CLASS GlobalSharedContext : public SharedContext {
   Rooted<GlobalScope::Data*> bindings;
 
   GlobalSharedContext(JSContext* cx, ScopeKind scopeKind,
-                      CompilationInfo& compilationInfo, Directives directives)
-      : SharedContext(cx, Kind::Global, compilationInfo, directives),
+                      CompilationInfo& compilationInfo, Directives directives,
+                      SourceExtent extent,
+                      ImmutableScriptFlags immutableFlags = {})
+      : SharedContext(cx, Kind::Global, compilationInfo, directives, extent,
+                      immutableFlags),
         scopeKind_(scopeKind),
         bindings(cx) {
     MOZ_ASSERT(scopeKind == ScopeKind::Global ||
@@ -281,7 +292,7 @@ class MOZ_STACK_CLASS EvalSharedContext : public SharedContext {
 
   EvalSharedContext(JSContext* cx, JSObject* enclosingEnv,
                     CompilationInfo& compilationInfo, Scope* enclosingScope,
-                    Directives directives);
+                    Directives directives, SourceExtent extent);
 
   Scope* compilationEnclosingScope() const override { return enclosingScope_; }
 };
@@ -333,7 +344,7 @@ class FunctionBox : public SharedContext {
                                      bool allowSuperProperty);
 
  public:
-  FunctionBox(JSContext* cx, FunctionBox* traceListHead, uint32_t toStringStart,
+  FunctionBox(JSContext* cx, FunctionBox* traceListHead, SourceExtent extent,
               CompilationInfo& compilationInfo, Directives directives,
               GeneratorKind generatorKind, FunctionAsyncKind asyncKind,
               JSAtom* explicitName, FunctionFlags flags, size_t index);
@@ -341,7 +352,7 @@ class FunctionBox : public SharedContext {
   // Back pointer used by asm.js for error messages.
   FunctionNode* functionNode;
 
-  SourceExtent extent;
+  mozilla::Maybe<FieldInitializers> fieldInitializers;
 
   uint16_t length;
 
@@ -355,14 +366,14 @@ class FunctionBox : public SharedContext {
   bool emitBytecode : 1; /* need to generate bytecode for this function. */
 
   // Fields for use in heuristics.
-  bool usesArguments : 1; /* contains a free use of 'arguments' */
-  bool usesApply : 1;     /* contains an f.apply() call */
-  bool usesThis : 1;      /* contains 'this' */
-  bool usesReturn : 1;    /* contains a 'return' statement */
-  bool hasExprBody_ : 1;  /* arrow function with expression
-                           * body like: () => 1
-                           * Only used by Reflect.parse */
-
+  bool usesArguments : 1;  /* contains a free use of 'arguments' */
+  bool usesApply : 1;      /* contains an f.apply() call */
+  bool usesThis : 1;       /* contains 'this' */
+  bool usesReturn : 1;     /* contains a 'return' statement */
+  bool hasExprBody_ : 1;   /* arrow function with expression
+                            * body like: () => 1
+                            * Only used by Reflect.parse */
+  bool isAsmJSModule_ : 1; /* Represents an AsmJS module */
   uint16_t nargs_;
 
   JSAtom* explicitName_;
@@ -403,7 +414,6 @@ class FunctionBox : public SharedContext {
   void initWithEnclosingParseContext(ParseContext* enclosing,
                                      Handle<FunctionCreationData> fun,
                                      FunctionSyntaxKind kind) {
-    MOZ_ASSERT(fun.get().kind == kind);
     initWithEnclosingParseContext(enclosing, kind, fun.get().flags.isArrow(),
                                   fun.get().flags.allowSuperProperty());
   }
@@ -429,6 +439,9 @@ class FunctionBox : public SharedContext {
     synchronizeArgCount();
   }
 
+  void setAsmJSModule(JSFunction* function);
+  bool isAsmJSModule() { return isAsmJSModule_; }
+
   void clobberFunction(JSFunction* function);
 
   Scope* compilationEnclosingScope() const override {
@@ -446,12 +459,6 @@ class FunctionBox : public SharedContext {
     //   generator object directly from the frame.)
 
     return hasExtensibleScope() || isGenerator() || isAsync();
-  }
-
-  bool hasExtraBodyVarScope() const {
-    return hasParameterExprs &&
-           (extraVarScopeBindings_ ||
-            needsExtraBodyVarEnvironmentRegardlessOfBindings());
   }
 
   bool needsExtraBodyVarEnvironmentRegardlessOfBindings() const {
@@ -485,12 +492,7 @@ class FunctionBox : public SharedContext {
   bool needsPromiseResult() const { return isAsync() && !isGenerator(); }
 
   bool isArrow() const { return flags_.isArrow(); }
-  bool isLambda() const {
-    if (hasFunction()) {
-      return function()->isLambda();
-    }
-    return functionCreationData().get().flags.isLambda();
-  }
+  bool isLambda() const { return flags_.isLambda(); }
 
   void setDeclaredArguments() {
     immutableFlags_.setFlag(ImmutableFlags::ShouldDeclareArguments);
@@ -510,6 +512,10 @@ class FunctionBox : public SharedContext {
     hasExprBody_ = true;
   }
 
+  bool functionHasExtraBodyVarScope() {
+    return immutableFlags_.hasFlag(
+        ImmutableFlags::FunctionHasExtraBodyVarScope);
+  }
   bool hasExtensibleScope() const {
     return immutableFlags_.hasFlag(ImmutableFlags::FunHasExtensibleScope);
   }
@@ -561,16 +567,18 @@ class FunctionBox : public SharedContext {
     immutableFlags_.setFlag(ImmutableFlags::AlwaysNeedsArgsObj);
   }
   void setNeedsHomeObject() {
-    MOZ_ASSERT_IF(hasFunction(), function()->allowSuperProperty());
-    MOZ_ASSERT_IF(!hasFunction(),
-                  functionCreationData().get().flags.allowSuperProperty());
+    MOZ_ASSERT(flags_.allowSuperProperty());
     immutableFlags_.setFlag(ImmutableFlags::NeedsHomeObject);
   }
   void setDerivedClassConstructor() {
-    MOZ_ASSERT_IF(hasFunction(), function()->isClassConstructor());
-    MOZ_ASSERT_IF(!hasFunction(),
-                  functionCreationData().get().flags.isClassConstructor());
+    MOZ_ASSERT(flags_.isClassConstructor());
     immutableFlags_.setFlag(ImmutableFlags::IsDerivedClassConstructor);
+  }
+  void setFunctionHasExtraBodyVarScope() {
+    immutableFlags_.setFlag(ImmutableFlags::FunctionHasExtraBodyVarScope);
+  }
+  void setNeedsFunctionEnvironmentObjects() {
+    immutableFlags_.setFlag(ImmutableFlags::NeedsFunctionEnvironmentObjects);
   }
 
   bool hasSimpleParameterList() const {
@@ -622,48 +630,16 @@ class FunctionBox : public SharedContext {
     }
   }
 
-  void setFieldInitializers(FieldInitializers fi) {
-    if (hasFunction()) {
-      MOZ_ASSERT(function()->baseScript());
-      function()->baseScript()->setFieldInitializers(fi);
-      return;
-    }
-    MOZ_ASSERT(functionCreationData().get().lazyScriptData);
-    functionCreationData().get().lazyScriptData->fieldInitializers.emplace(fi);
-  }
-
   bool setTypeForScriptedFunction(JSContext* cx, bool singleton) {
-    if (hasFunction()) {
-      RootedFunction fun(cx, function());
-      return JSFunction::setTypeForScriptedFunction(cx, fun, singleton);
-    }
-    functionCreationData().get().typeForScriptedFunction.emplace(singleton);
-    return true;
+    RootedFunction fun(cx, function());
+    return JSFunction::setTypeForScriptedFunction(cx, fun, singleton);
   }
 
-  void setTreatAsRunOnce() { function()->baseScript()->setTreatAsRunOnce(); }
+  void setInferredName(JSAtom* atom) { function()->setInferredName(atom); }
 
-  void setInferredName(JSAtom* atom) {
-    if (hasFunction()) {
-      function()->setInferredName(atom);
-      return;
-    }
-    functionCreationData().get().setInferredName(atom);
-  }
+  JSAtom* inferredName() const { return function()->inferredName(); }
 
-  JSAtom* inferredName() const {
-    if (hasFunction()) {
-      return function()->inferredName();
-    }
-    return functionCreationData().get().inferredName();
-  }
-
-  bool hasInferredName() const {
-    if (hasFunction()) {
-      return function()->hasInferredName();
-    }
-    return functionCreationData().get().hasInferredName();
-  }
+  bool hasInferredName() const { return function()->hasInferredName(); }
 
   size_t index() { return funcDataIndex_; }
 

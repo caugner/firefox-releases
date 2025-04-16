@@ -12,6 +12,7 @@
 
 #include "gc/Zone.h"
 #include "vm/GlobalObject.h"
+#include "vm/PlainObject.h"  // js::PlainObject
 
 #include "vm/JSObject-inl.h"
 #include "vm/NativeObject-inl.h"
@@ -45,7 +46,7 @@ FinalizationRecordObject* FinalizationRecordObject::create(
     HandleValue heldValue) {
   MOZ_ASSERT(registry);
 
-  auto record = NewObjectWithNullTaggedProto<FinalizationRecordObject>(cx);
+  auto record = NewObjectWithGivenProto<FinalizationRecordObject>(cx, nullptr);
   if (!record) {
     return nullptr;
   }
@@ -133,29 +134,29 @@ void FinalizationRecordObject::trace(JSTracer* trc, JSObject* obj) {
 }
 
 ///////////////////////////////////////////////////////////////////////////
-// FinalizationRecordVectorObject
+// FinalizationRegistrationsObject
 
-const JSClass FinalizationRecordVectorObject::class_ = {
-    "FinalizationRecordVector",
+const JSClass FinalizationRegistrationsObject::class_ = {
+    "FinalizationRegistrations",
     JSCLASS_HAS_RESERVED_SLOTS(SlotCount) | JSCLASS_BACKGROUND_FINALIZE,
     &classOps_, JS_NULL_CLASS_SPEC};
 
-const JSClassOps FinalizationRecordVectorObject::classOps_ = {
-    nullptr,                                   // addProperty
-    nullptr,                                   // delProperty
-    nullptr,                                   // enumerate
-    nullptr,                                   // newEnumerate
-    nullptr,                                   // resolve
-    nullptr,                                   // mayResolve
-    FinalizationRecordVectorObject::finalize,  // finalize
-    nullptr,                                   // call
-    nullptr,                                   // hasInstance
-    nullptr,                                   // construct
-    nullptr,                                   // trace
+const JSClassOps FinalizationRegistrationsObject::classOps_ = {
+    nullptr,                                    // addProperty
+    nullptr,                                    // delProperty
+    nullptr,                                    // enumerate
+    nullptr,                                    // newEnumerate
+    nullptr,                                    // resolve
+    nullptr,                                    // mayResolve
+    FinalizationRegistrationsObject::finalize,  // finalize
+    nullptr,                                    // call
+    nullptr,                                    // hasInstance
+    nullptr,                                    // construct
+    nullptr,                                    // trace
 };
 
 /* static */
-FinalizationRecordVectorObject* FinalizationRecordVectorObject::create(
+FinalizationRegistrationsObject* FinalizationRegistrationsObject::create(
     JSContext* cx) {
   auto records = cx->make_unique<FinalizationRecordVector>(cx->zone());
   if (!records) {
@@ -163,7 +164,7 @@ FinalizationRecordVectorObject* FinalizationRecordVectorObject::create(
   }
 
   auto object =
-      NewObjectWithNullTaggedProto<FinalizationRecordVectorObject>(cx);
+      NewObjectWithGivenProto<FinalizationRegistrationsObject>(cx, nullptr);
   if (!object) {
     return nullptr;
   }
@@ -175,21 +176,22 @@ FinalizationRecordVectorObject* FinalizationRecordVectorObject::create(
 }
 
 /* static */
-void FinalizationRecordVectorObject::finalize(JSFreeOp* fop, JSObject* obj) {
-  auto rv = &obj->as<FinalizationRecordVectorObject>();
+void FinalizationRegistrationsObject::finalize(JSFreeOp* fop, JSObject* obj) {
+  auto rv = &obj->as<FinalizationRegistrationsObject>();
   fop->delete_(obj, rv->records(), MemoryUse::FinalizationRecordVector);
 }
 
-inline FinalizationRecordVector* FinalizationRecordVectorObject::records() {
-  return static_cast<FinalizationRecordVector*>(privatePtr());
+inline WeakFinalizationRecordVector*
+FinalizationRegistrationsObject::records() {
+  return static_cast<WeakFinalizationRecordVector*>(privatePtr());
 }
 
-inline const FinalizationRecordVector* FinalizationRecordVectorObject::records()
-    const {
-  return static_cast<const FinalizationRecordVector*>(privatePtr());
+inline const WeakFinalizationRecordVector*
+FinalizationRegistrationsObject::records() const {
+  return static_cast<const WeakFinalizationRecordVector*>(privatePtr());
 }
 
-inline void* FinalizationRecordVectorObject::privatePtr() const {
+inline void* FinalizationRegistrationsObject::privatePtr() const {
   Value value = getReservedSlot(RecordsSlot);
   if (value.isUndefined()) {
     return nullptr;
@@ -199,24 +201,24 @@ inline void* FinalizationRecordVectorObject::privatePtr() const {
   return ptr;
 }
 
-inline bool FinalizationRecordVectorObject::isEmpty() const {
+inline bool FinalizationRegistrationsObject::isEmpty() const {
   MOZ_ASSERT(records());
   return records()->empty();
 }
 
-inline bool FinalizationRecordVectorObject::append(
+inline bool FinalizationRegistrationsObject::append(
     HandleFinalizationRecordObject record) {
   MOZ_ASSERT(records());
   return records()->append(record);
 }
 
-inline void FinalizationRecordVectorObject::remove(
+inline void FinalizationRegistrationsObject::remove(
     HandleFinalizationRecordObject record) {
   MOZ_ASSERT(records());
   records()->eraseIfEqual(record);
 }
 
-inline void FinalizationRecordVectorObject::sweep() {
+inline void FinalizationRegistrationsObject::sweep() {
   MOZ_ASSERT(records());
   return records()->sweep();
 }
@@ -339,7 +341,7 @@ void FinalizationRegistryObject::trace(JSTracer* trc, JSObject* obj) {
   auto registry = &obj->as<FinalizationRegistryObject>();
 
   // Trace the registrations weak map. At most this traces the
-  // FinalizationRecordVectorObject values of the map; the contents of those
+  // FinalizationRegistrationsObject values of the map; the contents of those
   // objects are weakly held and are not traced.
   if (ObjectWeakMap* registrations = registry->registrations()) {
     registrations->trace(trc);
@@ -363,7 +365,7 @@ void FinalizationRegistryObject::sweep() {
   for (ObjectValueWeakMap::Enum e(registrations()->valueMap()); !e.empty();
        e.popFront()) {
     auto registrations =
-        &e.front().value().toObject().as<FinalizationRecordVectorObject>();
+        &e.front().value().toObject().as<FinalizationRegistrationsObject>();
     registrations->sweep();
     if (registrations->isEmpty()) {
       e.removeFront();
@@ -588,12 +590,12 @@ bool FinalizationRegistryObject::addRegistration(
   MOZ_ASSERT(registry->registrations());
 
   auto& map = *registry->registrations();
-  Rooted<FinalizationRecordVectorObject*> recordsObject(cx);
+  Rooted<FinalizationRegistrationsObject*> recordsObject(cx);
   JSObject* obj = map.lookup(unregisterToken);
   if (obj) {
-    recordsObject = &obj->as<FinalizationRecordVectorObject>();
+    recordsObject = &obj->as<FinalizationRegistrationsObject>();
   } else {
-    recordsObject = FinalizationRecordVectorObject::create(cx);
+    recordsObject = FinalizationRegistrationsObject::create(cx);
     if (!recordsObject || !map.add(cx, unregisterToken, recordsObject)) {
       return false;
     }
@@ -621,7 +623,7 @@ bool FinalizationRegistryObject::addRegistration(
   auto& map = *registry->registrations();
   JSObject* obj = map.lookup(unregisterToken);
   MOZ_ASSERT(obj);
-  auto records = &obj->as<FinalizationRecordVectorObject>();
+  auto records = &obj->as<FinalizationRegistrationsObject>();
   records->remove(record);
 
   if (records->empty()) {
@@ -674,7 +676,7 @@ bool FinalizationRegistryObject::unregister(JSContext* cx, unsigned argc,
   FinalizationRecordSet* activeRecords = registry->activeRecords();
   RootedObject obj(cx, registry->registrations()->lookup(unregisterToken));
   if (obj) {
-    auto* records = obj->as<FinalizationRecordVectorObject>().records();
+    auto* records = obj->as<FinalizationRegistrationsObject>().records();
     MOZ_ASSERT(records);
     MOZ_ASSERT(!records->empty());
     for (FinalizationRecordObject* record : *records) {
@@ -850,7 +852,8 @@ bool GlobalObject::initFinalizationIteratorProto(JSContext* cx,
   if (!base) {
     return false;
   }
-  RootedPlainObject proto(cx, NewObjectWithGivenProto<PlainObject>(cx, base));
+  RootedPlainObject proto(
+      cx, GlobalObject::createBlankPrototypeInheriting<PlainObject>(cx, base));
   if (!proto) {
     return false;
   }

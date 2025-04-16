@@ -302,6 +302,7 @@ struct DIGroup {
   int32_t mAppUnitsPerDevPixel;
   gfx::Size mScale;
   ScrollableLayerGuid::ViewID mScrollId;
+  CompositorHitTestInfo mHitInfo;
   LayerPoint mResidualOffset;
   LayerIntRect mLayerBounds;  // mGroupBounds converted to Layer space
   // mLayerBounds clipped to the container/parent of the
@@ -313,7 +314,8 @@ struct DIGroup {
 
   DIGroup()
       : mAppUnitsPerDevPixel(0),
-        mScrollId(ScrollableLayerGuid::NULL_SCROLL_ID) {}
+        mScrollId(ScrollableLayerGuid::NULL_SCROLL_ID),
+        mHitInfo(CompositorHitTestInvisibleToHit) {}
 
   void InvalidateRect(const IntRect& aRect) {
     auto r = aRect.Intersect(mPreservedRect);
@@ -667,6 +669,9 @@ struct DIGroup {
       return;
     }
 
+    // Reset mHitInfo, it will get updated inside PaintItemRange
+    mHitInfo = CompositorHitTestInvisibleToHit;
+
     PaintItemRange(aGrouper, aStartItem, aEndItem, context, recorder,
                    rootManager, aResources);
 
@@ -741,9 +746,12 @@ struct DIGroup {
     bool backfaceHidden = false;
 
     // We don't really know the exact shape of this blob because it may contain
-    // SVG shapes so generate an irregular-area hit-test region for it.
-    CompositorHitTestInfo hitInfo(CompositorHitTestFlags::eVisibleToHitTest,
-                                  CompositorHitTestFlags::eIrregularArea);
+    // SVG shapes. Also mHitInfo may be a combination of hit info flags from
+    // different shapes so generate an irregular-area hit-test region for it.
+    CompositorHitTestInfo hitInfo = mHitInfo;
+    if (hitInfo.contains(CompositorHitTestFlags::eVisibleToHitTest)) {
+      hitInfo += CompositorHitTestFlags::eIrregularArea;
+    }
 
     // XXX - clipping the item against the paint rect breaks some content.
     // cf. Bug 1455422.
@@ -771,6 +779,19 @@ struct DIGroup {
       GP("Trying %s %p-%d %d %d %d %d\n", item->Name(), item->Frame(),
          item->GetPerFrameKey(), bounds.x, bounds.y, bounds.XMost(),
          bounds.YMost());
+
+      if (item->GetType() == DisplayItemType::TYPE_COMPOSITOR_HITTEST_INFO) {
+        // Accumulate the hit-test info flags. In cases where there are multiple
+        // hittest-info display items with different flags, mHitInfo will have
+        // the union of all those flags. If that is the case, we will
+        // additionally set eIrregularArea (at the site that we use mHitInfo)
+        // so that downstream consumers of this (primarily APZ) will know that
+        // the exact shape of what gets hit with what is unknown.
+        mHitInfo +=
+            static_cast<nsDisplayCompositorHitTestInfo*>(item)->HitTestFlags();
+        continue;
+      }
+
       GP("paint check invalid %d %d - %d %d\n", bottomRight.x, bottomRight.y,
          size.width, size.height);
       // skip empty items
@@ -798,41 +819,39 @@ struct DIGroup {
         aGrouper->PaintContainerItem(this, item, data, bounds, children,
                                      aContext, aRecorder, aRootManager,
                                      aResources);
-      } else {
-        nsPaintedDisplayItem* paintedItem = item->AsPaintedDisplayItem();
-        if (paintedItem &&
-            // Hit test items don't have anything to paint so skip them.
-            // Ideally we would drop these items earlier...
-            item->GetType() != DisplayItemType::TYPE_COMPOSITOR_HITTEST_INFO) {
-          if (dirty) {
-            // What should the clip settting strategy be? We can set the full
-            // clip everytime. this is probably easiest for now. An alternative
-            // would be to put the push and the pop into separate items and let
-            // invalidation handle it that way.
-            DisplayItemClip currentClip = paintedItem->GetClip();
+        continue;
+      }
+      nsPaintedDisplayItem* paintedItem = item->AsPaintedDisplayItem();
+      if (!paintedItem) {
+        continue;
+      }
+      if (dirty) {
+        // What should the clip settting strategy be? We can set the full
+        // clip everytime. this is probably easiest for now. An alternative
+        // would be to put the push and the pop into separate items and let
+        // invalidation handle it that way.
+        DisplayItemClip currentClip = paintedItem->GetClip();
 
-            if (currentClip.HasClip()) {
-              aContext->Save();
-              currentClip.ApplyTo(aContext, aGrouper->mAppUnitsPerDevPixel);
-            }
-            aContext->NewPath();
-            GP("painting %s %p-%d\n", paintedItem->Name(), paintedItem->Frame(),
-               paintedItem->GetPerFrameKey());
-            if (aGrouper->mDisplayListBuilder->IsPaintingToWindow()) {
-              paintedItem->Frame()->AddStateBits(NS_FRAME_PAINTED_THEBES);
-            }
+        if (currentClip.HasClip()) {
+          aContext->Save();
+          currentClip.ApplyTo(aContext, aGrouper->mAppUnitsPerDevPixel);
+        }
+        aContext->NewPath();
+        GP("painting %s %p-%d\n", paintedItem->Name(), paintedItem->Frame(),
+           paintedItem->GetPerFrameKey());
+        if (aGrouper->mDisplayListBuilder->IsPaintingToWindow()) {
+          paintedItem->Frame()->AddStateBits(NS_FRAME_PAINTED_THEBES);
+        }
 
-            paintedItem->Paint(aGrouper->mDisplayListBuilder, aContext);
-            TakeExternalSurfaces(aRecorder, data->mExternalSurfaces,
-                                 aRootManager, aResources);
+        paintedItem->Paint(aGrouper->mDisplayListBuilder, aContext);
+        TakeExternalSurfaces(aRecorder, data->mExternalSurfaces, aRootManager,
+                             aResources);
 
-            if (currentClip.HasClip()) {
-              aContext->Restore();
-            }
-          }
-          aContext->GetDrawTarget()->FlushItem(bounds);
+        if (currentClip.HasClip()) {
+          aContext->Restore();
         }
       }
+      aContext->GetDrawTarget()->FlushItem(bounds);
     }
   }
 
@@ -1017,60 +1036,6 @@ void Grouper::PaintContainerItem(DIGroup* aGroup, nsDisplayItem* aItem,
                              aRecorder, aRootManager, aResources);
       break;
   }
-}
-
-size_t WebRenderScrollDataCollection::GetLayerCount(
-    wr::RenderRoot aRoot) const {
-  return mInternalScrollDatas[aRoot].size();
-}
-
-void WebRenderScrollDataCollection::AppendRoot(
-    Maybe<ScrollMetadata>& aRootMetadata,
-    wr::RenderRootArray<WebRenderScrollData>& aScrollDatas) {
-  mSeenRenderRoot[wr::RenderRoot::Default] = true;
-
-  for (auto renderRoot : wr::kRenderRoots) {
-    if (mSeenRenderRoot[renderRoot]) {
-      auto& layerScrollData = mInternalScrollDatas[renderRoot];
-      layerScrollData.emplace_back();
-      layerScrollData.back().InitializeRoot(layerScrollData.size() - 1);
-
-      if (aRootMetadata) {
-        // Put the fallback root metadata on the rootmost layer that is
-        // a matching async zoom container, or the root layer that we just
-        // created above.
-        size_t rootMetadataTarget = layerScrollData.size() - 1;
-        for (size_t i = rootMetadataTarget; i > 0; i--) {
-          if (auto zoomContainerId =
-                  layerScrollData[i - 1].GetAsyncZoomContainerId()) {
-            if (*zoomContainerId == aRootMetadata->GetMetrics().GetScrollId()) {
-              rootMetadataTarget = i - 1;
-              break;
-            }
-          }
-        }
-        layerScrollData[rootMetadataTarget].AppendScrollMetadata(
-            aScrollDatas[renderRoot], aRootMetadata.ref());
-      }
-    }
-  }
-}
-
-void WebRenderScrollDataCollection::AppendScrollData(
-    const wr::DisplayListBuilder& aBuilder, WebRenderLayerManager* aManager,
-    nsDisplayItem* aItem, size_t aLayerCountBeforeRecursing,
-    const ActiveScrolledRoot* aStopAtAsr,
-    const Maybe<gfx::Matrix4x4>& aAncestorTransform) {
-  wr::RenderRoot renderRoot = aBuilder.GetRenderRoot();
-  mSeenRenderRoot[renderRoot] = true;
-
-  int descendants =
-      mInternalScrollDatas[renderRoot].size() - aLayerCountBeforeRecursing;
-
-  mInternalScrollDatas[renderRoot].emplace_back();
-  mInternalScrollDatas[renderRoot].back().Initialize(
-      aManager->GetScrollData(renderRoot), aItem, descendants, aStopAtAsr,
-      aAncestorTransform, renderRoot);
 }
 
 class WebRenderGroupData : public WebRenderUserData {
@@ -1416,8 +1381,8 @@ void WebRenderCommandBuilder::DoGroupingForDisplayList(
 
   GP("DoGroupingForDisplayList\n");
 
-  mCurrentClipManager->BeginList(aSc);
-  Grouper g(*mCurrentClipManager);
+  mClipManager.BeginList(aSc);
+  Grouper g(mClipManager);
 
   int32_t appUnitsPerDevPixel =
       aWrappingItem->Frame()->PresContext()->AppUnitsPerDevPixel();
@@ -1525,21 +1490,21 @@ void WebRenderCommandBuilder::DoGroupingForDisplayList(
   group.mScrollId = scrollId;
   g.ConstructGroups(aDisplayListBuilder, this, aBuilder, aResources, &group,
                     aList, aSc);
-  mCurrentClipManager->EndList(aSc);
+  mClipManager.EndList(aSc);
 }
 
 WebRenderCommandBuilder::WebRenderCommandBuilder(
     WebRenderLayerManager* aManager)
     : mManager(aManager),
-      mRootStackingContexts(nullptr),
-      mCurrentClipManager(nullptr),
       mLastAsr(nullptr),
+      mBuilderDumpIndex(0),
       mDumpIndent(0),
       mDoGrouping(false),
       mContainsSVGGroup(false) {}
 
 void WebRenderCommandBuilder::Destroy() {
   mLastCanvasDatas.Clear();
+  mLastLocalCanvasDatas.Clear();
   ClearCachedResources();
 }
 
@@ -1552,32 +1517,32 @@ void WebRenderCommandBuilder::EmptyTransaction() {
       canvas->UpdateCompositableClientForEmptyTransaction();
     }
   }
+  for (auto iter = mLastLocalCanvasDatas.Iter(); !iter.Done(); iter.Next()) {
+    RefPtr<WebRenderLocalCanvasData> canvasData = iter.Get()->GetKey();
+    canvasData->RefreshExternalImage();
+    canvasData->RequestFrameReadback();
+  }
 }
 
 bool WebRenderCommandBuilder::NeedsEmptyTransaction() {
-  return !mLastCanvasDatas.IsEmpty();
+  return !mLastCanvasDatas.IsEmpty() || !mLastLocalCanvasDatas.IsEmpty();
 }
 
 void WebRenderCommandBuilder::BuildWebRenderCommands(
     wr::DisplayListBuilder& aBuilder,
     wr::IpcResourceUpdateQueue& aResourceUpdates, nsDisplayList* aDisplayList,
-    nsDisplayListBuilder* aDisplayListBuilder,
-    wr::RenderRootArray<WebRenderScrollData>& aScrollDatas,
+    nsDisplayListBuilder* aDisplayListBuilder, WebRenderScrollData& aScrollData,
     WrFiltersHolder&& aFilters) {
   AUTO_PROFILER_LABEL_CATEGORY_PAIR(GRAPHICS_WRDisplayList);
   wr::RenderRootArray<StackingContextHelper> rootScs;
   MOZ_ASSERT(aBuilder.GetRenderRoot() == wr::RenderRoot::Default);
 
-  for (auto renderRoot : wr::kRenderRoots) {
-    aScrollDatas[renderRoot] = WebRenderScrollData(mManager);
-    if (aBuilder.HasSubBuilder(renderRoot)) {
-      mClipManagers[renderRoot].BeginBuild(mManager,
-                                           aBuilder.SubBuilder(renderRoot));
-    }
-    mBuilderDumpIndex[renderRoot] = 0;
-  }
-  MOZ_ASSERT(mLayerScrollDatas.IsEmpty());
+  aScrollData = WebRenderScrollData(mManager);
+  MOZ_ASSERT(mLayerScrollData.empty());
+  mClipManager.BeginBuild(mManager, aBuilder);
+  mBuilderDumpIndex = 0;
   mLastCanvasDatas.Clear();
+  mLastLocalCanvasDatas.Clear();
   mLastAsr = nullptr;
   mContainsSVGGroup = false;
   MOZ_ASSERT(mDumpIndent == 0);
@@ -1588,65 +1553,60 @@ void WebRenderCommandBuilder::BuildWebRenderCommands(
     bool isTopLevelContent =
         presContext->Document()->IsTopLevelContentDocument();
 
-    wr::RenderRootArray<Maybe<StackingContextHelper>> pageRootScs;
-    for (auto renderRoot : wr::kRenderRoots) {
-      if (aBuilder.HasSubBuilder(renderRoot)) {
-        wr::StackingContextParams params;
-        // Just making this explicit - we assume that we do not want any
-        // filters traversing a RenderRoot boundary
-        if (renderRoot == wr::RenderRoot::Default) {
-          params.mFilters = std::move(aFilters.filters);
-          params.mFilterDatas = std::move(aFilters.filter_datas);
-        }
-        params.cache_tiles = isTopLevelContent;
-        params.clip = wr::WrStackingContextClip::ClipChain(
-            aBuilder.SubBuilder(renderRoot).CurrentClipChainId());
-        pageRootScs[renderRoot].emplace(
-            rootScs[renderRoot], nullptr, nullptr, nullptr,
-            aBuilder.SubBuilder(renderRoot), params);
-      }
-    }
+    wr::StackingContextParams params;
+    params.mFilters = std::move(aFilters.filters);
+    params.mFilterDatas = std::move(aFilters.filter_datas);
+    params.cache_tiles = isTopLevelContent;
+    params.clip =
+        wr::WrStackingContextClip::ClipChain(aBuilder.CurrentClipChainId());
+
+    StackingContextHelper pageRootSc(rootScs[wr::RenderRoot::Default], nullptr,
+                                     nullptr, nullptr, aBuilder, params);
     if (ShouldDumpDisplayList(aDisplayListBuilder)) {
-      mBuilderDumpIndex[aBuilder.GetRenderRoot()] = aBuilder.Dump(
-          mDumpIndent + 1, Some(mBuilderDumpIndex[aBuilder.GetRenderRoot()]),
-          Nothing());
+      mBuilderDumpIndex =
+          aBuilder.Dump(mDumpIndent + 1, Some(mBuilderDumpIndex), Nothing());
     }
-    MOZ_ASSERT(mRootStackingContexts == nullptr);
-    AutoRestore<wr::RenderRootArray<Maybe<StackingContextHelper>>*> rootScs(
-        mRootStackingContexts);
-    mRootStackingContexts = &pageRootScs;
-    CreateWebRenderCommandsFromDisplayList(
-        aDisplayList, nullptr, aDisplayListBuilder,
-        *pageRootScs[wr::RenderRoot::Default], aBuilder, aResourceUpdates);
+    CreateWebRenderCommandsFromDisplayList(aDisplayList, nullptr,
+                                           aDisplayListBuilder, pageRootSc,
+                                           aBuilder, aResourceUpdates);
   }
 
+  // Make a "root" layer data that has everything else as descendants
+  mLayerScrollData.emplace_back();
+  mLayerScrollData.back().InitializeRoot(mLayerScrollData.size() - 1);
   auto callback =
-      [&aScrollDatas](ScrollableLayerGuid::ViewID aScrollId) -> bool {
-    for (auto renderRoot : wr::kRenderRoots) {
-      if (aScrollDatas[renderRoot].HasMetadataFor(aScrollId).isSome()) {
-        return true;
-      }
-    }
-    return false;
+      [&aScrollData](ScrollableLayerGuid::ViewID aScrollId) -> bool {
+    return aScrollData.HasMetadataFor(aScrollId).isSome();
   };
   Maybe<ScrollMetadata> rootMetadata = nsLayoutUtils::GetRootMetadata(
       aDisplayListBuilder, mManager, ContainerLayerParameters(), callback);
-
-  mLayerScrollDatas.AppendRoot(rootMetadata, aScrollDatas);
-
-  for (auto renderRoot : wr::kRenderRoots) {
-    // Append the WebRenderLayerScrollData items into WebRenderScrollData
-    // in reverse order, from topmost to bottommost. This is in keeping with
-    // the semantics of WebRenderScrollData.
-    for (auto it = mLayerScrollDatas[renderRoot].crbegin();
-         it != mLayerScrollDatas[renderRoot].crend(); it++) {
-      aScrollDatas[renderRoot].AddLayerData(*it);
+  if (rootMetadata) {
+    // Put the fallback root metadata on the rootmost layer that is
+    // a matching async zoom container, or the root layer that we just
+    // created above.
+    size_t rootMetadataTarget = mLayerScrollData.size() - 1;
+    for (size_t i = rootMetadataTarget; i > 0; i--) {
+      if (auto zoomContainerId =
+              mLayerScrollData[i - 1].GetAsyncZoomContainerId()) {
+        if (*zoomContainerId == rootMetadata->GetMetrics().GetScrollId()) {
+          rootMetadataTarget = i - 1;
+          break;
+        }
+      }
     }
-    if (aBuilder.HasSubBuilder(renderRoot)) {
-      mClipManagers[renderRoot].EndBuild();
-    }
+    mLayerScrollData[rootMetadataTarget].AppendScrollMetadata(
+        aScrollData, rootMetadata.ref());
   }
-  mLayerScrollDatas.Clear();
+
+  // Append the WebRenderLayerScrollData items into WebRenderScrollData
+  // in reverse order, from topmost to bottommost. This is in keeping with
+  // the semantics of WebRenderScrollData.
+  for (auto it = mLayerScrollData.crbegin(); it != mLayerScrollData.crend();
+       it++) {
+    aScrollData.AddLayerData(*it);
+  }
+  mLayerScrollData.clear();
+  mClipManager.EndBuild();
 
   // Remove the user data those are not displayed on the screen and
   // also reset the data to unused for next transaction.
@@ -1693,8 +1653,6 @@ void WebRenderCommandBuilder::CreateWebRenderCommandsFromDisplayList(
     nsDisplayList* aDisplayList, nsDisplayItem* aWrappingItem,
     nsDisplayListBuilder* aDisplayListBuilder, const StackingContextHelper& aSc,
     wr::DisplayListBuilder& aBuilder, wr::IpcResourceUpdateQueue& aResources) {
-  AutoRestore<ClipManager*> prevClipManager(mCurrentClipManager);
-  mCurrentClipManager = &mClipManagers[aBuilder.GetRenderRoot()];
   if (mDoGrouping) {
     MOZ_RELEASE_ASSERT(
         aWrappingItem,
@@ -1710,13 +1668,12 @@ void WebRenderCommandBuilder::CreateWebRenderCommandsFromDisplayList(
   if (dumpEnabled) {
     // If we're inside a nested display list, print the WR DL items from the
     // wrapper item before we start processing the nested items.
-    mBuilderDumpIndex[aBuilder.GetRenderRoot()] = aBuilder.Dump(
-        mDumpIndent + 1, Some(mBuilderDumpIndex[aBuilder.GetRenderRoot()]),
-        Nothing());
+    mBuilderDumpIndex =
+        aBuilder.Dump(mDumpIndent + 1, Some(mBuilderDumpIndex), Nothing());
   }
 
   mDumpIndent++;
-  mCurrentClipManager->BeginList(aSc);
+  mClipManager.BeginList(aSc);
 
   bool apzEnabled = mManager->AsyncPanZoomEnabled();
 
@@ -1727,8 +1684,7 @@ void WebRenderCommandBuilder::CreateWebRenderCommandsFromDisplayList(
     DisplayItemType itemType = item->GetType();
 
     bool forceNewLayerData = false;
-    size_t layerCountBeforeRecursing =
-        mLayerScrollDatas.GetLayerCount(aBuilder.GetRenderRoot());
+    size_t layerCountBeforeRecursing = mLayerScrollData.size();
     if (apzEnabled) {
       // For some types of display items we want to force a new
       // WebRenderLayerScrollData object, to ensure we preserve the APZ-relevant
@@ -1769,7 +1725,7 @@ void WebRenderCommandBuilder::CreateWebRenderCommandsFromDisplayList(
 
     // This is where we emulate the clip/scroll stack that was previously
     // implemented on the WR display list side.
-    auto spaceAndClipChain = mCurrentClipManager->SwitchItem(item);
+    auto spaceAndClipChain = mClipManager.SwitchItem(item);
     wr::SpaceAndClipChainHelper saccHelper(aBuilder, spaceAndClipChain);
 
     {  // scope restoreDoGrouping
@@ -1794,9 +1750,8 @@ void WebRenderCommandBuilder::CreateWebRenderCommandsFromDisplayList(
                               aDisplayListBuilder);
 
       if (dumpEnabled) {
-        mBuilderDumpIndex[aBuilder.GetRenderRoot()] = aBuilder.Dump(
-            mDumpIndent + 1, Some(mBuilderDumpIndex[aBuilder.GetRenderRoot()]),
-            Nothing());
+        mBuilderDumpIndex =
+            aBuilder.Dump(mDumpIndent + 1, Some(mBuilderDumpIndex), Nothing());
       }
     }
 
@@ -1807,6 +1762,9 @@ void WebRenderCommandBuilder::CreateWebRenderCommandsFromDisplayList(
         mAsrStack.pop_back();
         const ActiveScrolledRoot* stopAtAsr =
             mAsrStack.empty() ? nullptr : mAsrStack.back();
+
+        int32_t descendants =
+            mLayerScrollData.size() - layerCountBeforeRecursing;
 
         // See the comments on StackingContextHelper::mDeferredTransformItem
         // for an overview of what deferred transforms are.
@@ -1827,45 +1785,52 @@ void WebRenderCommandBuilder::CreateWebRenderCommandsFromDisplayList(
                             item->GetActiveScrolledRoot()) {
           // This creates the child WebRenderLayerScrollData for |item|, but
           // omits the transform (hence the Nothing() as the last argument to
-          // AppendScrollData(...)). We also need to make sure that the ASR from
+          // Initialize(...)). We also need to make sure that the ASR from
           // the deferred transform item is not on this node, so we use that
           // ASR as the "stop at" ASR for this WebRenderLayerScrollData.
-          mLayerScrollDatas.AppendScrollData(
-              aBuilder, mManager, item, layerCountBeforeRecursing,
+          mLayerScrollData.emplace_back();
+          mLayerScrollData.back().Initialize(
+              mManager->GetScrollData(), item, descendants,
               (*deferred)->GetActiveScrolledRoot(), Nothing());
+
+          // The above WebRenderLayerScrollData will also be a descendant of
+          // the transform-holding WebRenderLayerScrollData we create below.
+          descendants++;
 
           // This creates the WebRenderLayerScrollData for the deferred
           // transform item. This holds the transform matrix and the remaining
           // ASRs needed to complete the ASR chain (i.e. the ones from the
           // stopAtAsr down to the deferred transform item's ASR, which must be
           // "between" stopAtAsr and |item|'s ASR in the ASR tree).
-          mLayerScrollDatas.AppendScrollData(
-              aBuilder, mManager, *deferred, layerCountBeforeRecursing,
-              stopAtAsr, aSc.GetDeferredTransformMatrix());
+          mLayerScrollData.emplace_back();
+          mLayerScrollData.back().Initialize(mManager->GetScrollData(),
+                                             *deferred, descendants, stopAtAsr,
+                                             aSc.GetDeferredTransformMatrix());
         } else {
           // This is the "simple" case where we don't need to create two
           // WebRenderLayerScrollData items; we can just create one that also
           // holds the deferred transform matrix, if any.
-          mLayerScrollDatas.AppendScrollData(
-              aBuilder, mManager, item, layerCountBeforeRecursing, stopAtAsr,
-              aSc.GetDeferredTransformMatrix());
+          mLayerScrollData.emplace_back();
+          mLayerScrollData.back().Initialize(mManager->GetScrollData(), item,
+                                             descendants, stopAtAsr,
+                                             aSc.GetDeferredTransformMatrix());
         }
       }
     }
   }
 
   mDumpIndent--;
-  mCurrentClipManager->EndList(aSc);
+  mClipManager.EndList(aSc);
 }
 
 void WebRenderCommandBuilder::PushOverrideForASR(
     const ActiveScrolledRoot* aASR, const wr::WrSpatialId& aSpatialId) {
-  mCurrentClipManager->PushOverrideForASR(aASR, aSpatialId);
+  mClipManager.PushOverrideForASR(aASR, aSpatialId);
 }
 
 void WebRenderCommandBuilder::PopOverrideForASR(
     const ActiveScrolledRoot* aASR) {
-  mCurrentClipManager->PopOverrideForASR(aASR);
+  mClipManager.PopOverrideForASR(aASR);
 }
 
 Maybe<wr::ImageKey> WebRenderCommandBuilder::CreateImageKey(
@@ -2436,7 +2401,8 @@ class WebRenderMaskData : public WebRenderUserData {
   explicit WebRenderMaskData(RenderRootStateManager* aManager,
                              nsDisplayItem* aItem)
       : WebRenderUserData(aManager, aItem),
-        mMaskStyle(nsStyleImageLayers::LayerType::Mask) {
+        mMaskStyle(nsStyleImageLayers::LayerType::Mask),
+        mShouldHandleOpacity(false) {
     MOZ_COUNT_CTOR(WebRenderMaskData);
   }
   virtual ~WebRenderMaskData() {
@@ -2461,6 +2427,7 @@ class WebRenderMaskData : public WebRenderUserData {
   nsPoint mMaskOffset;
   nsStyleImageLayers mMaskStyle;
   gfx::Size mScale;
+  bool mShouldHandleOpacity;
 };
 
 Maybe<wr::ImageMask> WebRenderCommandBuilder::BuildWrMaskImage(
@@ -2505,10 +2472,13 @@ Maybe<wr::ImageMask> WebRenderCommandBuilder::BuildWrMaskImage(
   nsPoint maskOffset = aMaskItem->ToReferenceFrame() - bounds.TopLeft();
 
   nsRect dirtyRect;
+  // If this mask item is being painted for the first time, some members of
+  // WebRenderMaskData are still default initialized. This is intentional.
   if (aMaskItem->IsInvalid(dirtyRect) ||
       !itemRect.IsEqualInterior(maskData->mItemRect) ||
       !(aMaskItem->Frame()->StyleSVGReset()->mMask == maskData->mMaskStyle) ||
-      maskOffset != maskData->mMaskOffset || !sameScale) {
+      maskOffset != maskData->mMaskOffset || !sameScale ||
+      aMaskItem->ShouldHandleOpacity() != maskData->mShouldHandleOpacity) {
     IntSize size = itemRect.Size().ToUnknownSize();
 
     std::vector<RefPtr<ScaledFont>> fonts;
@@ -2548,9 +2518,27 @@ Maybe<wr::ImageMask> WebRenderCommandBuilder::BuildWrMaskImage(
                            .PreScale(scale.width, scale.height));
 
     bool maskPainted = false;
-    bool paintFinished =
+    bool maskIsComplete =
         aMaskItem->PaintMask(aDisplayListBuilder, context, &maskPainted);
     if (!maskPainted) {
+      return Nothing();
+    }
+
+    // If a mask is incomplete or missing (e.g. it's display: none) the proper
+    // behaviour depends on the masked frame being html or svg.
+    //
+    // For an HTML frame:
+    //   According to css-masking spec, always create a mask surface when
+    //   we have any item in maskFrame even if all of those items are
+    //   non-resolvable <mask-sources> or <images> so continue with the
+    //   painting code. Note that in a common case of no layer of the mask being
+    //   complete or even partially complete then the mask surface will be
+    //   transparent black so this results in hiding the frame.
+    // For an SVG frame:
+    //   SVG 1.1 say that if we fail to resolve a mask, we should draw the
+    //   object unmasked so return Nothing().
+    if (!maskIsComplete &&
+        (aMaskItem->Frame()->GetStateBits() & NS_FRAME_SVG_LAYOUT)) {
       return Nothing();
     }
 
@@ -2579,11 +2567,12 @@ Maybe<wr::ImageMask> WebRenderCommandBuilder::BuildWrMaskImage(
         recorder, maskData->mExternalSurfaces,
         mManager->GetRenderRootStateManager(aBuilder.GetRenderRoot()),
         aResources);
-    if (paintFinished) {
+    if (maskIsComplete) {
       maskData->mItemRect = itemRect;
       maskData->mMaskOffset = maskOffset;
       maskData->mScale = scale;
       maskData->mMaskStyle = aMaskItem->Frame()->StyleSVGReset()->mMask;
+      maskData->mShouldHandleOpacity = aMaskItem->ShouldHandleOpacity();
     }
   }
 
@@ -2635,8 +2624,15 @@ void WebRenderCommandBuilder::RemoveUnusedAndResetWebRenderUserData() {
         userDataTable = nullptr;
       }
 
-      if (data->GetType() == WebRenderUserData::UserDataType::eCanvas) {
-        mLastCanvasDatas.RemoveEntry(data->AsCanvasData());
+      switch (data->GetType()) {
+        case WebRenderUserData::UserDataType::eCanvas:
+          mLastCanvasDatas.RemoveEntry(data->AsCanvasData());
+          break;
+        case WebRenderUserData::UserDataType::eLocalCanvas:
+          mLastLocalCanvasDatas.RemoveEntry(data->AsLocalCanvasData());
+          break;
+        default:
+          break;
       }
 
       iter.Remove();

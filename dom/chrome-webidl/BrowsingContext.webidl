@@ -5,6 +5,29 @@
 
 interface nsIDocShell;
 
+interface mixin LoadContextMixin {
+  readonly attribute WindowProxy? associatedWindow;
+
+  readonly attribute WindowProxy? topWindow;
+
+  readonly attribute Element? topFrameElement;
+
+  readonly attribute boolean isContent;
+ 
+  [SetterThrows] 
+  attribute boolean usePrivateBrowsing;
+
+  readonly attribute boolean useRemoteTabs;
+
+  readonly attribute boolean useRemoteSubframes;
+
+  [BinaryName="useTrackingProtectionWebIDL"]
+  attribute boolean useTrackingProtection;
+
+  [NewObject, Throws]
+  readonly attribute any originAttributes;
+};
+
 [Exposed=Window, ChromeOnly]
 interface BrowsingContext {
   static BrowsingContext? get(unsigned long long aId);
@@ -57,10 +80,20 @@ interface BrowsingContext {
   // active for the browsing context.
   attribute boolean inRDMPane;
 
+  attribute float fullZoom;
+
+  attribute float textZoom;
+
   // Extension to give chrome JS the ability to set the window screen
   // orientation while in RDM.
   void setRDMPaneOrientation(OrientationType type, float rotationAngle);
+
+  // Extension to give chrome JS the ability to set a maxTouchPoints override
+  // while in RDM.
+  void setRDMPaneMaxTouchPoints(octet maxTouchPoints);
 };
+
+BrowsingContext includes LoadContextMixin;
 
 [Exposed=Window, ChromeOnly]
 interface CanonicalBrowsingContext : BrowsingContext {
@@ -97,10 +130,6 @@ interface CanonicalBrowsingContext : BrowsingContext {
    */
   [Throws]
   void loadURI(DOMString aURI, optional LoadURIOptions aOptions = {});
-
-  [Throws]
-  Promise<unsigned long long> changeFrameRemoteness(
-      DOMString remoteType, unsigned long long pendingSwitchId);
 
   readonly attribute nsISHistory? sessionHistory;
 };

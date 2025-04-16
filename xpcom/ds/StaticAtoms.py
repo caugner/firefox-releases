@@ -748,6 +748,7 @@ STATIC_ATOMS = [
     Atom("onblocked", "onblocked"),
     Atom("onblur", "onblur"),
     Atom("onbounce", "onbounce"),
+    Atom("onboundschange", "onboundschange"),
     Atom("onbroadcast", "onbroadcast"),
     Atom("onbufferedamountlow", "onbufferedamountlow"),
     Atom("oncached", "oncached"),
@@ -806,6 +807,7 @@ STATIC_ATOMS = [
     Atom("onget", "onget"),
     Atom("onhashchange", "onhashchange"),
     Atom("oninput", "oninput"),
+    Atom("oninputsourceschange","oninputsourceschange"),
     Atom("oninstall", "oninstall"),
     Atom("oninvalid", "oninvalid"),
     Atom("onkeydown", "onkeydown"),
@@ -879,11 +881,15 @@ STATIC_ATOMS = [
     Atom("onscroll", "onscroll"),
     Atom("onselect", "onselect"),
     Atom("onselectionchange", "onselectionchange"),
+    Atom("onselectend", "onselectend"),
     Atom("onselectstart", "onselectstart"),
     Atom("onset", "onset"),
     Atom("onshippingaddresschange", "onshippingaddresschange"),
     Atom("onshippingoptionchange", "onshippingoptionchange"),
     Atom("onshow", "onshow"),
+    Atom("onsqueeze", "onsqueeze"),
+    Atom("onsqueezeend", "onsqueezeend"),
+    Atom("onsqueezestart", "onsqueezestart"),
     Atom("onstatechange", "onstatechange"),
     Atom("onstorage", "onstorage"),
     Atom("onsubmit", "onsubmit"),
@@ -990,6 +996,7 @@ STATIC_ATOMS = [
     Atom("previewDiv", "preview-div"),
     Atom("primary", "primary"),
     Atom("print", "print"),
+    Atom("printselectionranges", "printselectionranges"),
     Atom("priority", "priority"),
     Atom("processingInstruction", "processing-instruction"),
     Atom("profile", "profile"),
@@ -1535,6 +1542,7 @@ STATIC_ATOMS = [
     Atom("text_rendering", "text-rendering"),
     Atom("textLength", "textLength"),
     Atom("textPath", "textPath"),
+    Atom("transform_origin", "transform-origin"),
     Atom("tref", "tref"),
     Atom("tspan", "tspan"),
     Atom("turbulence", "turbulence"),
@@ -1943,7 +1951,6 @@ STATIC_ATOMS = [
     Atom("onUAWidgetTeardown", "onUAWidgetTeardown"),
     Atom("onUnselectedTabHover_Disable", "onUnselectedTabHover:Disable"),
     Atom("onUnselectedTabHover_Enable", "onUnselectedTabHover:Enable"),
-    Atom("onZoomChangeUsingMouseWheel", "onZoomChangeUsingMouseWheel"),
     Atom("onmozshowdropdown", "onmozshowdropdown"),
     Atom("onmozshowdropdown_sourcetouch", "onmozshowdropdown-sourcetouch"),
     Atom("onprintPreviewUpdate", "onprintPreviewUpdate"),
@@ -2289,14 +2296,21 @@ STATIC_ATOMS = [
     Atom("application", "application"),
     Atom("aria_colcount", "aria-colcount"),
     Atom("aria_colindex", "aria-colindex"),
+    Atom("aria_colindextext", "aria-colindextext"),
+    Atom("aria_colspan", "aria-colspan"),
     Atom("aria_details", "aria-details"),
     Atom("aria_errormessage", "aria-errormessage"),
     Atom("aria_grabbed", "aria-grabbed"),
+    Atom("aria_keyshortcuts", "aria-keyshortcuts"),
     Atom("aria_label", "aria-label"),
     Atom("aria_modal", "aria-modal"),
     Atom("aria_orientation", "aria-orientation"),
+    Atom("aria_placeholder", "aria-placeholder"),
+    Atom("aria_roledescription", "aria-roledescription"),
     Atom("aria_rowcount", "aria-rowcount"),
     Atom("aria_rowindex", "aria-rowindex"),
+    Atom("aria_rowindextext", "aria-rowindextext"),
+    Atom("aria_rowspan", "aria-rowspan"),
     Atom("aria_valuetext", "aria-valuetext"),
     Atom("auto_generated", "auto-generated"),
     Atom("banner", "banner"),
@@ -2383,6 +2397,7 @@ STATIC_ATOMS = [
 
     # Contextual Identity / Containers
     Atom("usercontextid", "usercontextid"),
+    Atom("geckoViewSessionContextId", "geckoViewSessionContextId"),
 
     # Namespaces
     Atom("nsuri_xmlns", "http://www.w3.org/2000/xmlns/"),
@@ -2575,11 +2590,11 @@ def generate_nsgkatomconsts_h(output, *ignore):
     pseudo_count = 0
     anon_box_count = 0
     for i, atom in enumerate(STATIC_ATOMS):
-        if atom.atom_type is "PseudoElementAtom":
+        if atom.atom_type == "PseudoElementAtom":
             if pseudo_index is None:
                 pseudo_index = i
             pseudo_count += 1
-        elif atom.atom_type is "NonInheritingAnonBoxAtom" or atom.atom_type is "InheritingAnonBoxAtom":
+        elif atom.atom_type == "NonInheritingAnonBoxAtom" or atom.atom_type == "InheritingAnonBoxAtom":
             if anon_box_index is None:
                 anon_box_index = i
             anon_box_count += 1

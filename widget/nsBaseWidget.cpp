@@ -642,9 +642,11 @@ void nsBaseWidget::SetSizeMode(nsSizeMode aMode) {
   mSizeMode = aMode;
 }
 
-int32_t nsBaseWidget::GetWorkspaceID() { return 0; }
+void nsBaseWidget::GetWorkspaceID(nsAString& workspaceID) {
+  workspaceID.Truncate();
+}
 
-void nsBaseWidget::MoveToWorkspace(int32_t workspaceID) {
+void nsBaseWidget::MoveToWorkspace(const nsAString& workspaceID) {
   // Noop.
 }
 
@@ -890,17 +892,18 @@ void nsBaseWidget::ConfigureAPZCTreeManager() {
       });
   mAPZEventState = new APZEventState(this, std::move(callback));
 
-  mSetAllowedTouchBehaviorCallback =
-      [treeManager](uint64_t aInputBlockId,
-                    const nsTArray<TouchBehaviorFlags>& aFlags) {
-        MOZ_ASSERT(NS_IsMainThread());
-        APZThreadUtils::RunOnControllerThread(
-            NewRunnableMethod<
-                uint64_t, StoreCopyPassByLRef<nsTArray<TouchBehaviorFlags>>>(
-                "layers::IAPZCTreeManager::SetAllowedTouchBehavior",
-                treeManager, &IAPZCTreeManager::SetAllowedTouchBehavior,
-                aInputBlockId, aFlags));
-      };
+  mSetAllowedTouchBehaviorCallback = [treeManager](
+                                         uint64_t aInputBlockId,
+                                         const nsTArray<TouchBehaviorFlags>&
+                                             aFlags) {
+    MOZ_ASSERT(NS_IsMainThread());
+    APZThreadUtils::RunOnControllerThread(
+        NewRunnableMethod<
+            uint64_t, StoreCopyPassByLRef<CopyableTArray<TouchBehaviorFlags>>>(
+            "layers::IAPZCTreeManager::SetAllowedTouchBehavior", treeManager,
+            &IAPZCTreeManager::SetAllowedTouchBehavior, aInputBlockId,
+            aFlags.Clone()));
+  };
 
   mRootContentController = CreateRootContentController();
   if (mRootContentController) {
@@ -928,7 +931,7 @@ void nsBaseWidget::SetConfirmedTargetAPZC(
       NewRunnableMethod<uint64_t,
                         StoreCopyPassByRRef<nsTArray<ScrollableLayerGuid>>>(
           "layers::IAPZCTreeManager::SetTargetAPZC", mAPZC,
-          &IAPZCTreeManager::SetTargetAPZC, aInputBlockId, aTargets));
+          &IAPZCTreeManager::SetTargetAPZC, aInputBlockId, aTargets.Clone()));
 }
 
 void nsBaseWidget::UpdateZoomConstraints(

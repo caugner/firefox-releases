@@ -775,18 +775,12 @@ void Accessible::XULElmName(DocAccessible* aDocument, nsIContent* aElm,
    */
 
   // CASE #1 (via label attribute) -- great majority of the cases
-  nsCOMPtr<nsIDOMXULSelectControlItemElement> itemEl =
-      aElm->AsElement()->AsXULSelectControlItem();
-  if (itemEl) {
-    itemEl->GetLabel(aName);
-  } else {
-    // Use @label if this is not a select control element, which uses label
-    // attribute to indicate, which option is selected.
-    nsCOMPtr<nsIDOMXULSelectControlElement> select =
-        aElm->AsElement()->AsXULSelectControl();
-    if (!select) {
-      aElm->AsElement()->GetAttr(kNameSpaceID_None, nsGkAtoms::label, aName);
-    }
+  // Only do this if this is not a select control element, which uses label
+  // attribute to indicate, which option is selected.
+  nsCOMPtr<nsIDOMXULSelectControlElement> select =
+      aElm->AsElement()->AsXULSelectControl();
+  if (!select) {
+    aElm->AsElement()->GetAttr(kNameSpaceID_None, nsGkAtoms::label, aName);
   }
 
   // CASES #2 and #3 ------ label as a child or <label control="id" ... >
@@ -1662,6 +1656,20 @@ Relation Accessible::RelationByType(RelationType aType) const {
         rel.AppendTarget(GetGroupInfo()->ConceptualParent());
       }
 
+      // If this is an OOP iframe document, we can't support NODE_CHILD_OF
+      // here, since the iframe resides in a different process. This is fine
+      // because the client will then request the parent instead, which will be
+      // correctly handled by platform/AccessibleOrProxy code.
+      if (XRE_IsContentProcess() && IsRoot()) {
+        dom::Document* doc =
+            const_cast<Accessible*>(this)->AsDoc()->DocumentNode();
+        dom::BrowsingContext* bc = doc->GetBrowsingContext();
+        MOZ_ASSERT(bc);
+        if (!bc->Top()->IsInProcess()) {
+          return rel;
+        }
+      }
+
       // If accessible is in its own Window, or is the root of a document,
       // then we should provide NODE_CHILD_OF relation so that MSAA clients
       // can easily get to true parent instead of getting to oleacc's
@@ -2116,10 +2124,13 @@ bool Accessible::InsertChildAt(uint32_t aIndex, Accessible* aChild) {
   if (!aChild) return false;
 
   if (aIndex == mChildren.Length()) {
-    if (!mChildren.AppendElement(aChild)) return false;
-
+    // XXX(Bug 1631371) Check if this should use a fallible operation as it
+    // pretended earlier.
+    mChildren.AppendElement(aChild);
   } else {
-    if (!mChildren.InsertElementAt(aIndex, aChild)) return false;
+    // XXX(Bug 1631371) Check if this should use a fallible operation as it
+    // pretended earlier.
+    mChildren.InsertElementAt(aIndex, aChild);
 
     MOZ_ASSERT(mStateFlags & eKidsMutating, "Illicit children change");
 
@@ -2590,7 +2601,17 @@ AccGroupInfo* Accessible::GetGroupInfo() const {
   }
 
   mBits.groupInfo = AccGroupInfo::CreateGroupInfo(this);
+  mStateFlags &= ~eGroupInfoDirty;
   return mBits.groupInfo;
+}
+
+void Accessible::MaybeFireFocusableStateChange(bool aPreviouslyFocusable) {
+  bool isFocusable = (State() & states::FOCUSABLE);
+  if (isFocusable != aPreviouslyFocusable) {
+    RefPtr<AccEvent> focusableChangeEvent =
+        new AccStateChangeEvent(this, states::FOCUSABLE, isFocusable);
+    mDoc->FireDelayedEvent(focusableChangeEvent);
+  }
 }
 
 void Accessible::GetPositionAndSizeInternal(int32_t* aPosInSet,

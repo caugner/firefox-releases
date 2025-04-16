@@ -16,8 +16,8 @@
 #include "mozilla/LoadInfo.h"
 #include "mozilla/Logging.h"
 #include "mozilla/MemoryReporting.h"
-#include "mozilla/SystemGroup.h"
 #include "mozilla/ResultExtensions.h"
+#include "mozilla/SchedulerGroup.h"
 #include "mozilla/URLPreloader.h"
 #include "nsIRunnable.h"
 #include "nsITimedChannel.h"
@@ -434,6 +434,10 @@ void SheetLoadData::ScheduleLoadEventIfNeeded() {
  * Style sheet reuse *
  *********************/
 
+static RefPtr<StyleSheet> CloneSheet(StyleSheet& aSheet) {
+  return aSheet.Clone(nullptr, nullptr, nullptr, nullptr);
+}
+
 bool LoaderReusableStyleSheets::FindReusableStyleSheet(
     nsIURI* aURL, RefPtr<StyleSheet>& aResult) {
   MOZ_ASSERT(aURL);
@@ -511,10 +515,6 @@ static void AssertIncompleteSheetMatches(const SheetLoadData& aData,
 
 auto Loader::Sheets::Lookup(SheetLoadDataHashKey& aKey, bool aSyncLoad)
     -> CacheResult {
-  auto CloneSheet = [](StyleSheet& aSheet) -> RefPtr<StyleSheet> {
-    return aSheet.Clone(nullptr, nullptr, nullptr, nullptr);
-  };
-
   nsIURI* uri = aKey.GetURI();
   // Try to find first in the XUL prototype cache.
 #ifdef MOZ_XUL
@@ -1636,6 +1636,12 @@ nsresult Loader::LoadSheet(SheetLoadData& aLoadData, SheetState aSheetState,
     return rv;
   }
 
+#ifdef MOZ_DIAGNOSTIC_ASSERT_ENABLED
+  if (nsCOMPtr<nsIHttpChannelInternal> hci = do_QueryInterface(channel)) {
+    hci->DoDiagnosticAssertWhenOnStopNotCalledOnDestroy();
+  }
+#endif
+
   mSheets->mLoadingDatas.Put(&key, &aLoadData);
   aLoadData.mIsLoading = true;
 
@@ -1847,7 +1853,10 @@ void Loader::DoSheetComplete(SheetLoadData& aLoadData,
           LOG(("  Putting sheet in XUL prototype cache"));
           NS_ASSERTION(sheet->IsComplete(),
                        "Should only be caching complete sheets");
-          cache->PutStyleSheet(sheet);
+          // We need to clone the sheet on insertion to the cache because
+          // if the original sheet has a cyclic reference this can cause
+          // leaks until shutdown since the global cache is not cycle-collected
+          cache->PutStyleSheet(CloneSheet(*sheet));
         }
       }
     } else {
@@ -2359,7 +2368,7 @@ nsresult Loader::PostLoadEvent(nsIURI* aURI, StyleSheet* aSheet,
   } else if (mDocGroup) {
     rv = mDocGroup->Dispatch(TaskCategory::Other, runnable.forget());
   } else {
-    rv = SystemGroup::Dispatch(TaskCategory::Other, runnable.forget());
+    rv = SchedulerGroup::Dispatch(TaskCategory::Other, runnable.forget());
   }
 
   if (NS_FAILED(rv)) {
@@ -2543,7 +2552,7 @@ already_AddRefed<nsISerialEventTarget> Loader::DispatchTarget() {
   } else if (mDocGroup) {
     target = mDocGroup->EventTargetFor(TaskCategory::Other);
   } else {
-    target = SystemGroup::EventTargetFor(TaskCategory::Other);
+    target = GetMainThreadSerialEventTarget();
   }
 
   return target.forget();

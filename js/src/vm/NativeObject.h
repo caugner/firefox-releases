@@ -478,9 +478,8 @@ class NativeObject : public JSObject {
     static_assert(sizeof(NativeObject) % sizeof(Value) == 0,
                   "fixed slots after an object must be aligned");
 
-    static_assert(
-        offsetof(NativeObject, group_) == offsetof(shadow::Object, group),
-        "shadow type must match actual type");
+    static_assert(offsetOfGroup() == offsetof(shadow::Object, group),
+                  "shadow type must match actual type");
     static_assert(
         offsetof(NativeObject, slots_) == offsetof(shadow::Object, slots),
         "shadow slots must match actual slots");
@@ -1479,20 +1478,18 @@ class NativeObject : public JSObject {
   static constexpr size_t getPrivateDataOffset(size_t nfixed) {
     return getFixedSlotOffset(nfixed);
   }
+  static constexpr size_t getFixedSlotIndexFromOffset(size_t offset) {
+    MOZ_ASSERT(offset >= sizeof(NativeObject));
+    offset -= sizeof(NativeObject);
+    MOZ_ASSERT(offset % sizeof(Value) == 0);
+    MOZ_ASSERT(offset / sizeof(Value) < MAX_FIXED_SLOTS);
+    return offset / sizeof(Value);
+  }
+  static constexpr size_t getDynamicSlotIndexFromOffset(size_t offset) {
+    MOZ_ASSERT(offset % sizeof(Value) == 0);
+    return offset / sizeof(Value);
+  }
   static size_t offsetOfSlots() { return offsetof(NativeObject, slots_); }
-};
-
-// Object class for plain native objects created using '{}' object literals,
-// 'new Object()', 'Object.create', etc.
-class PlainObject : public NativeObject {
- public:
-  static const JSClass class_;
-
-  static inline JS::Result<PlainObject*, JS::OOM&> createWithTemplate(
-      JSContext* cx, Handle<PlainObject*> templateObject);
-
-  /* Return the allocKind we would use if we were to tenure this object. */
-  inline js::gc::AllocKind allocKindForTenure() const;
 };
 
 inline void NativeObject::privateWriteBarrierPre(void** oldval) {
@@ -1641,12 +1638,6 @@ bool IsPackedArray(JSObject* obj);
 
 extern void AddPropertyTypesAfterProtoChange(JSContext* cx, NativeObject* obj,
                                              ObjectGroup* oldGroup);
-
-// Specializations of 7.3.23 CopyDataProperties(...) for NativeObjects.
-extern bool CopyDataPropertiesNative(JSContext* cx, HandlePlainObject target,
-                                     HandleNativeObject from,
-                                     HandlePlainObject excludedItems,
-                                     bool* optimized);
 
 // Initialize an object's reserved slot with a private value pointing to
 // malloc-allocated memory and associate the memory with the object.

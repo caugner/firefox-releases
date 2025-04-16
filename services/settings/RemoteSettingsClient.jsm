@@ -16,6 +16,7 @@ XPCOMUtils.defineLazyModuleGetters(this, {
     "resource://gre/modules/components-utils/ClientEnvironment.jsm",
   Database: "resource://services-settings/Database.jsm",
   Downloader: "resource://services-settings/Attachments.jsm",
+  IDBHelpers: "resource://services-settings/IDBHelpers.jsm",
   KintoHttpClient: "resource://services-common/kinto-http-client.js",
   ObjectUtils: "resource://gre/modules/ObjectUtils.jsm",
   PerformanceCounters: "resource://gre/modules/PerformanceCounters.jsm",
@@ -35,6 +36,13 @@ XPCOMUtils.defineLazyPreferenceGetter(
   "gTimingEnabled",
   "services.settings.enablePerformanceCounters",
   false
+);
+
+XPCOMUtils.defineLazyPreferenceGetter(
+  this,
+  "gLoadDump",
+  "services.settings.load_dump",
+  true
 );
 
 /**
@@ -143,6 +151,22 @@ class AttachmentDownloader extends Downloader {
   constructor(client) {
     super(client.bucketName, client.collectionName);
     this._client = client;
+  }
+
+  get cacheImpl() {
+    const cacheImpl = {
+      get: async attachmentId => {
+        return this._client.db.getAttachment(attachmentId);
+      },
+      set: async (attachmentId, attachment) => {
+        return this._client.db.saveAttachment(attachmentId, attachment);
+      },
+      delete: async attachmentId => {
+        return this._client.db.saveAttachment(attachmentId, null);
+      },
+    };
+    Object.defineProperty(this, "cacheImpl", { value: cacheImpl });
+    return cacheImpl;
   }
 
   /**
@@ -262,6 +286,8 @@ class RemoteSettingsClient extends EventEmitter {
 
   /**
    * Retrieve the collection timestamp for the last synchronization.
+   * This is an opaque and comparable value assigned automatically by
+   * the server.
    *
    * @returns {number}
    *          The timestamp in milliseconds, returns -1 if retrieving
@@ -273,7 +299,7 @@ class RemoteSettingsClient extends EventEmitter {
       timestamp = await this.db.getLastModified();
     } catch (err) {
       console.warn(
-        `Error retrieving the getLastModified timestamp from ${this.identifier} RemoteSettingClient`,
+        `Error retrieving the getLastModified timestamp from ${this.identifier} RemoteSettingsClient`,
         err
       );
     }
@@ -303,7 +329,10 @@ class RemoteSettingsClient extends EventEmitter {
       try {
         // .get() was called before we had the chance to synchronize the local database.
         // We'll try to avoid returning an empty list.
-        if (await Utils.hasLocalDump(this.bucketName, this.collectionName)) {
+        if (
+          gLoadDump &&
+          (await Utils.hasLocalDump(this.bucketName, this.collectionName))
+        ) {
           // Since there is a JSON dump, load it as default data.
           console.debug(`${this.identifier} Local DB is empty, load JSON dump`);
           await this._importJSONDump();
@@ -385,12 +414,14 @@ class RemoteSettingsClient extends EventEmitter {
    *                                   This will be compared to the local timestamp, and will be used for
    *                                   cache busting if local data is out of date.
    * @param {Object} options           additional advanced options.
-   * @param {bool}   options.loadDump  load initial dump from disk on first sync (default: true)
+   * @param {bool}   options.loadDump  load initial dump from disk on first sync (default: true, unless
+   *                                   `services.settings.load_dump` says otherwise).
    * @param {string} options.trigger   label to identify what triggered this sync (eg. ``"timer"``, default: `"manual"`)
    * @return {Promise}                 which rejects on sync or process failure.
    */
   async maybeSync(expectedTimestamp, options = {}) {
-    const { loadDump = true, trigger = "manual" } = options;
+    // Should the clients try to load JSON dump? (mainly disabled in tests)
+    const { loadDump = gLoadDump, trigger = "manual" } = options;
 
     // Make sure we don't run several synchronizations in parallel, mainly
     // in order to avoid race conditions in "sync" events listeners.
@@ -448,11 +479,10 @@ class RemoteSettingsClient extends EventEmitter {
           Cu.reportError(e);
         }
       }
-
       let syncResult;
       try {
         // Is local timestamp up to date with the server?
-        if (expectedTimestamp <= collectionLastModified) {
+        if (expectedTimestamp == collectionLastModified) {
           console.debug(`${this.identifier} local data is up-to-date`);
           reportStatus = UptakeTelemetry.STATUS.UP_TO_DATE;
 
@@ -490,8 +520,9 @@ class RemoteSettingsClient extends EventEmitter {
             deleted: [],
           };
         } else {
-          // Local data is outdated.
-          // Fetch changes from server, and make sure we overwrite local data.
+          // Local data is either outdated or tampered.
+          // In both cases we will fetch changes from server,
+          // and make sure we overwrite local data.
           const startSyncDB = Cu.now() * 1000;
           syncResult = await this._importChanges(
             localRecords,
@@ -644,7 +675,7 @@ class RemoteSettingsClient extends EventEmitter {
     } else if (e instanceof RemoteSettingsClient.MissingSignatureError) {
       // Collection metadata has no signature info, no need to retry.
       reportStatus = UptakeTelemetry.STATUS.SIGNATURE_ERROR;
-    } else if (e instanceof Database.ShutdownError) {
+    } else if (e instanceof IDBHelpers.ShutdownError) {
       reportStatus = UptakeTelemetry.STATUS.SHUTDOWN_ERROR;
     } else if (/unparseable/.test(e.message)) {
       reportStatus = UptakeTelemetry.STATUS.PARSE_ERROR;
@@ -658,7 +689,7 @@ class RemoteSettingsClient extends EventEmitter {
       reportStatus = UptakeTelemetry.STATUS.BACKOFF;
     } else if (
       // Errors from kinto.js IDB adapter.
-      e instanceof Database.IDBError ||
+      e instanceof IDBHelpers.IndexedDBError ||
       // Other IndexedDB errors (eg. RemoteSettingsWorker).
       /IndexedDB/.test(e.message)
     ) {
@@ -765,24 +796,17 @@ class RemoteSettingsClient extends EventEmitter {
     options = {}
   ) {
     const { retry = false } = options;
+    const since = retry || !localTimestamp ? undefined : `"${localTimestamp}"`;
 
-    // Fetch collection metadata and list of changes from server
-    // (or all records on retry).
-    const client = this.httpClient();
-    const [
+    // Fetch collection metadata and list of changes from server.
+    console.debug(
+      `Fetch changes from server (expected=${expectedTimestamp}, since=${since})`
+    );
+    const {
       metadata,
-      { data: remoteRecords, last_modified: remoteTimestamp },
-    ] = await Promise.all([
-      client.getData({
-        query: { _expected: expectedTimestamp },
-      }),
-      client.listRecords({
-        filters: {
-          _expected: expectedTimestamp,
-        },
-        since: retry || !localTimestamp ? undefined : `${localTimestamp}`,
-      }),
-    ]);
+      remoteTimestamp,
+      remoteRecords,
+    } = await this._fetchChangeset(expectedTimestamp, since);
 
     // We build a sync result, based on remote changes.
     const syncResult = {
@@ -891,6 +915,36 @@ class RemoteSettingsClient extends EventEmitter {
     );
 
     return syncResult;
+  }
+
+  /**
+   * Fetch information from changeset endpoint.
+   *
+   * @param expectedTimestamp cache busting value
+   * @param since timestamp of last sync (optional)
+   */
+  async _fetchChangeset(expectedTimestamp, since) {
+    const client = this.httpClient();
+    const {
+      metadata,
+      timestamp: remoteTimestamp,
+      changes: remoteRecords,
+    } = await client.execute(
+      {
+        path: `/buckets/${this.bucketName}/collections/${this.collectionName}/changeset`,
+      },
+      {
+        query: {
+          _expected: expectedTimestamp,
+          _since: since,
+        },
+      }
+    );
+    return {
+      remoteTimestamp,
+      metadata,
+      remoteRecords,
+    };
   }
 
   /**

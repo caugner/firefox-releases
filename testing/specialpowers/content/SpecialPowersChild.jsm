@@ -1314,19 +1314,20 @@ class SpecialPowersChild extends JSWindowActorChild {
   }
 
   getFullZoom(window) {
-    return this._getMUDV(window).fullZoom;
+    return BrowsingContext.getFromWindow(window).fullZoom;
   }
+
   getDeviceFullZoom(window) {
-    return this._getMUDV(window).deviceFullZoom;
+    return this._getMUDV(window).deviceFullZoomForTest;
   }
   setFullZoom(window, zoom) {
-    this._getMUDV(window).fullZoom = zoom;
+    BrowsingContext.getFromWindow(window).fullZoom = zoom;
   }
   getTextZoom(window) {
-    return this._getMUDV(window).textZoom;
+    return BrowsingContext.getFromWindow(window).textZoom;
   }
   setTextZoom(window, zoom) {
-    this._getMUDV(window).textZoom = zoom;
+    BrowsingContext.getFromWindow(window).textZoom = zoom;
   }
 
   getOverrideDPPX(window) {
@@ -1862,13 +1863,6 @@ class SpecialPowersChild extends JSWindowActorChild {
   assertionCount() {
     var debugsvc = Cc["@mozilla.org/xpcom/debug;1"].getService(Ci.nsIDebug2);
     return debugsvc.assertionCount;
-  }
-
-  /**
-   * Get the message manager associated with an <iframe mozbrowser>.
-   */
-  getBrowserFrameMessageManager(aFrameElement) {
-    return this.wrap(aFrameElement.frameLoader.messageManager);
   }
 
   _getPrincipalFromArg(arg) {

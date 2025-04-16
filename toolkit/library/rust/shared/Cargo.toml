@@ -19,8 +19,8 @@ static_prefs = { path = "../../../../modules/libpref/init/static_prefs" }
 profiler_helper = { path = "../../../../tools/profiler/rust-helper", optional = true }
 mozurl = { path = "../../../../netwerk/base/mozurl" }
 webrender_bindings = { path = "../../../../gfx/webrender_bindings", optional = true }
-cubeb-coreaudio = { git = "https://github.com/ChunMinChang/cubeb-coreaudio-rs", branch="backports-76", optional = true }
-cubeb-pulse = { git = "https://github.com/djg/cubeb-pulse-rs", rev="72f813a03cefbdf8e2c58c7410f3556c79429a06", optional = true, features=["pulse-dlopen"] }
+cubeb-coreaudio = { git = "https://github.com/ChunMinChang/cubeb-coreaudio-rs", rev = "6156e941e5f46a641d2da10ca53a9ad318c10722", optional = true }
+cubeb-pulse = { git = "https://github.com/djg/cubeb-pulse-rs", rev="5eb38163103b0dae86de81cdaf46070bdeedc0d1", optional = true, features=["pulse-dlopen"] }
 cubeb-sys = { version = "0.6", optional = true, features=["gecko-in-tree"] }
 encoding_glue = { path = "../../../../intl/encoding_glue" }
 audioipc-client = { path = "../../../../media/audioipc/client", optional = true }
@@ -34,30 +34,38 @@ log = {version = "0.4", features = ["release_max_level_info"]}
 env_logger = {version = "0.6", default-features = false} # disable `regex` to reduce code size
 cose-c = { version = "0.1.5" }
 jsrust_shared = { path = "../../../../js/src/rust/shared" }
+cascade_bloom_filter = { path = "../../../components/cascade_bloom_filter" }
 cert_storage = { path = "../../../../security/manager/ssl/cert_storage", optional = true }
 bitsdownload = { path = "../../../components/bitsdownload", optional = true }
 storage = { path = "../../../../storage/rust" }
 bookmark_sync = { path = "../../../components/places/bookmark_sync", optional = true }
 shift_or_euc_c = "0.1.0"
 chardetng_c = "0.1.1"
-audio_thread_priority = "0.22"
+audio_thread_priority = "0.22.1"
 mdns_service = { path="../../../../media/mtransport/mdns_service", optional = true }
 neqo_glue = { path = "../../../../netwerk/socket/neqo_glue" }
 rlbox_lucet_sandbox = { version = "0.1.0", optional = true }
-wgpu-remote = { path = "../../../../gfx/wgpu/wgpu-remote", optional = true }
+wgpu_bindings = { path = "../../../../gfx/wgpu_bindings", optional = true }
 mapped_hyph = { git = "https://github.com/jfkthame/mapped_hyph.git", tag = "v0.3.0" }
 remote = { path = "../../../../remote", optional = true }
 fog = { path = "../../../components/glean", optional = true }
+webext_storage_bridge = { path = "../../../components/extensions/storage/webext_storage_bridge", optional = true }
 
 unic-langid = { version = "0.8", features = ["likelysubtags"] }
 unic-langid-ffi = { path = "../../../../intl/locale/rust/unic-langid-ffi" }
 fluent-langneg = { version = "0.12.1", features = ["cldr"] }
 fluent-langneg-ffi = { path = "../../../../intl/locale/rust/fluent-langneg-ffi" }
+webext-storage = { git = "https://github.com/mozilla/application-services", rev = "d8a50bb0b010ab7289fe2d2864cc3eb9687a52e7", optional = true }
+golden_gate = { path = "../../../../services/sync/golden_gate", optional = true }
+
+# Note: `modern_sqlite` means rusqlite's bindings file be for a sqlite with
+# version less than or equal to what we link to. This isn't a problem because we
+# tend to keep this up to date, but it needs to be taken into consideration when
+# changing this version.
+rusqlite = { version = "0.23.1", features = ["modern_sqlite", "in_gecko"] }
 
 fluent = { version = "0.11" , features = ["fluent-pseudo"] }
 fluent-ffi = { path = "../../../../intl/l10n/rust/fluent-ffi" }
-
-sync15-traits = { git = "https://github.com/mozilla/application-services", rev = "120e51dd5f2aab4194cf0f7e93b2a8923f4504bb" }
 
 [build-dependencies]
 rustc_version = "0.2"
@@ -87,9 +95,11 @@ new_cert_storage = ["cert_storage"]
 fuzzing_interfaces = []
 webrtc = ["mdns_service"]
 wasm_library_sandboxing = ["rlbox_lucet_sandbox"]
-webgpu = ["wgpu-remote"]
+webgpu = ["wgpu_bindings"]
 remote_agent = ["remote"]
 glean = ["fog"]
+new_webext_storage = ["webext_storage_bridge"]
+services_sync = ["golden_gate"]
 
 [lib]
 path = "lib.rs"

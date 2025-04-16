@@ -9,8 +9,10 @@
 
 #include "mozilla/Attributes.h"
 #include "mozilla/DebugOnly.h"
+#include "mozilla/EnumeratedArray.h"
 #include "mozilla/GuardObjects.h"
 #include "mozilla/LinkedList.h"
+#include "mozilla/Maybe.h"
 
 #include <type_traits>
 #include <utility>
@@ -230,15 +232,15 @@ inline T SafelyInitialized() {
 
   // That presumption holds for pointers, where value initialization produces
   // a null pointer.
-  constexpr bool IsPointer = std::is_pointer<T>::value;
+  constexpr bool IsPointer = std::is_pointer_v<T>;
 
   // For classes and unions we *assume* that if |T|'s default constructor is
   // non-trivial it'll initialize correctly. (This is unideal, but C++
   // doesn't offer a type trait indicating whether a class's constructor is
   // user-defined, which better approximates our desired semantics.)
   constexpr bool IsNonTriviallyDefaultConstructibleClassOrUnion =
-      (std::is_class<T>::value || std::is_union<T>::value) &&
-      !std::is_trivially_default_constructible<T>::value;
+      (std::is_class_v<T> ||
+       std::is_union_v<T>)&&!std::is_trivially_default_constructible_v<T>;
 
   static_assert(IsPointer || IsNonTriviallyDefaultConstructibleClassOrUnion,
                 "T() must evaluate to a safely-initialized T");
@@ -915,6 +917,19 @@ namespace JS {
 
 class JS_PUBLIC_API AutoGCRooter;
 
+enum class AutoGCRooterKind : uint8_t {
+  Array,         /* js::AutoArrayRooter */
+  ValueArray,    /* js::AutoValueArray */
+  Parser,        /* js::frontend::Parser */
+  BinASTParser,  /* js::frontend::BinASTParser; only used if built with
+                  * JS_BUILD_BINAST support */
+  WrapperVector, /* js::AutoWrapperVector */
+  Wrapper,       /* js::AutoWrapperRooter */
+  Custom,        /* js::CustomAutoRooter */
+
+  Limit
+};
+
 // Our instantiations of Rooted<void*> and PersistentRooted<void*> require an
 // instantiation of MapTypeToRootKind.
 template <>
@@ -925,17 +940,21 @@ struct MapTypeToRootKind<void*> {
 using RootedListHeads =
     mozilla::EnumeratedArray<RootKind, RootKind::Limit, Rooted<void*>*>;
 
+using AutoRooterListHeads =
+    mozilla::EnumeratedArray<AutoGCRooterKind, AutoGCRooterKind::Limit,
+                             AutoGCRooter*>;
+
 // Superclass of JSContext which can be used for rooting data in use by the
 // current thread but that does not provide all the functions of a JSContext.
 class RootingContext {
   // Stack GC roots for Rooted GC heap pointers.
   RootedListHeads stackRoots_;
   template <typename T>
-  friend class JS::Rooted;
+  friend class Rooted;
 
   // Stack GC roots for AutoFooRooter classes.
-  JS::AutoGCRooter* autoGCRooters_;
-  friend class JS::AutoGCRooter;
+  AutoRooterListHeads autoGCRooters_;
+  friend class AutoGCRooter;
 
   // Gecko profiling metadata.
   // This isn't really rooting related. It's only here because we want
@@ -947,6 +966,12 @@ class RootingContext {
   RootingContext();
 
   void traceStackRoots(JSTracer* trc);
+
+  /* Implemented in gc/RootMarking.cpp. */
+  void traceAllGCRooters(JSTracer* trc);
+  void traceWrapperGCRooters(JSTracer* trc);
+  static void traceGCRooterList(JSTracer* trc, AutoGCRooter* head);
+
   void checkNoGCRooters();
 
   js::GeckoProfilerThread& geckoProfiler() { return geckoProfiler_; }
@@ -957,10 +982,10 @@ class RootingContext {
   // that inlined API functions can directly access the data.
 
   /* The current realm. */
-  JS::Realm* realm_;
+  Realm* realm_;
 
   /* The current zone. */
-  JS::Zone* zone_;
+  Zone* zone_;
 
  public:
   /* Limit pointer for checking native stack consumption. */
@@ -979,23 +1004,15 @@ class RootingContext {
 };
 
 class JS_PUBLIC_API AutoGCRooter {
- protected:
-  enum class Tag : uint8_t {
-    Array,         /* js::AutoArrayRooter */
-    ValueArray,    /* js::AutoValueArray */
-    Parser,        /* js::frontend::Parser */
-    BinASTParser,  /* js::frontend::BinASTParser; only used if built with
-                    * JS_BUILD_BINAST support */
-    WrapperVector, /* js::AutoWrapperVector */
-    Wrapper,       /* js::AutoWrapperRooter */
-    Custom         /* js::CustomAutoRooter */
-  };
-
  public:
-  AutoGCRooter(JSContext* cx, Tag tag)
-      : AutoGCRooter(JS::RootingContext::get(cx), tag) {}
-  AutoGCRooter(JS::RootingContext* cx, Tag tag)
-      : down(cx->autoGCRooters_), stackTop(&cx->autoGCRooters_), tag_(tag) {
+  using Kind = AutoGCRooterKind;
+
+  AutoGCRooter(JSContext* cx, Kind kind)
+      : AutoGCRooter(JS::RootingContext::get(cx), kind) {}
+  AutoGCRooter(RootingContext* cx, Kind kind)
+      : down(cx->autoGCRooters_[kind]),
+        stackTop(&cx->autoGCRooters_[kind]),
+        kind_(kind) {
     MOZ_ASSERT(this != *stackTop);
     *stackTop = this;
   }
@@ -1005,20 +1022,19 @@ class JS_PUBLIC_API AutoGCRooter {
     *stackTop = down;
   }
 
-  /* Implemented in gc/RootMarking.cpp. */
-  inline void trace(JSTracer* trc);
-  static void traceAll(JSContext* cx, JSTracer* trc);
-  static void traceAllWrappers(JSContext* cx, JSTracer* trc);
+  void trace(JSTracer* trc);
 
  private:
+  friend class RootingContext;
+
   AutoGCRooter* const down;
   AutoGCRooter** const stackTop;
 
   /*
    * Discriminates actual subclass of this being used. The meaning is
-   * indicated by the corresponding value in the Tag enum.
+   * indicated by the corresponding value in the Kind enum.
    */
-  Tag tag_;
+  Kind kind_;
 
   /* No copy or assignment semantics. */
   AutoGCRooter(AutoGCRooter& ida) = delete;
@@ -1087,9 +1103,9 @@ class MOZ_RAII Rooted : public js::RootedBase<T, Rooted<T>> {
 
   // If T can be constructed with a cx, then define another constructor for it
   // that will be preferred.
-  template <typename RootingContext,
-            typename = typename std::enable_if<
-                std::is_constructible<T, RootingContext>::value>::type>
+  template <
+      typename RootingContext,
+      typename = std::enable_if_t<std::is_constructible_v<T, RootingContext>>>
   Rooted(const RootingContext& cx, CtorDispatcher, detail::PreferredOverload)
       : Rooted(cx, T(cx)) {}
 
@@ -1464,6 +1480,33 @@ class MutableWrappedPtrOperations<UniquePtr<T, D>, Container>
     return uniquePtr().release();
   }
   void reset(T* ptr = T()) { uniquePtr().reset(ptr); }
+};
+
+template <typename T, typename Container>
+class WrappedPtrOperations<mozilla::Maybe<T>, Container> {
+  const mozilla::Maybe<T>& maybe() const {
+    return static_cast<const Container*>(this)->get();
+  }
+
+ public:
+  // This only supports a subset of Maybe's interface.
+  bool isSome() const { return maybe().isSome(); }
+  bool isNothing() const { return maybe().isNothing(); }
+  const T value() const { return maybe().value(); }
+  const T* operator->() const { return maybe().ptr(); }
+  const T& operator*() const { return maybe().ref(); }
+};
+
+template <typename T, typename Container>
+class MutableWrappedPtrOperations<mozilla::Maybe<T>, Container>
+    : public WrappedPtrOperations<mozilla::Maybe<T>, Container> {
+  mozilla::Maybe<T>& maybe() { return static_cast<Container*>(this)->get(); }
+
+ public:
+  // This only supports a subset of Maybe's interface.
+  T* operator->() { return maybe().ptr(); }
+  T& operator*() { return maybe().ref(); }
+  void reset() { return maybe().reset(); }
 };
 
 namespace gc {

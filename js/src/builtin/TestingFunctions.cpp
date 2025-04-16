@@ -79,6 +79,7 @@
 #include "vm/Iteration.h"
 #include "vm/JSContext.h"
 #include "vm/JSObject.h"
+#include "vm/PlainObject.h"    // js::PlainObject
 #include "vm/PromiseObject.h"  // js::PromiseObject, js::PromiseSlot_*
 #include "vm/ProxyObject.h"
 #include "vm/SavedStacks.h"
@@ -547,41 +548,41 @@ static bool MinorGC(JSContext* cx, unsigned argc, Value* vp) {
   return true;
 }
 
-#define FOR_EACH_GC_PARAM(_)                                                 \
-  _("maxBytes", JSGC_MAX_BYTES, true)                                        \
-  _("minNurseryBytes", JSGC_MIN_NURSERY_BYTES, true)                         \
-  _("maxNurseryBytes", JSGC_MAX_NURSERY_BYTES, true)                         \
-  _("gcBytes", JSGC_BYTES, false)                                            \
-  _("nurseryBytes", JSGC_NURSERY_BYTES, false)                               \
-  _("gcNumber", JSGC_NUMBER, false)                                          \
-  _("mode", JSGC_MODE, true)                                                 \
-  _("unusedChunks", JSGC_UNUSED_CHUNKS, false)                               \
-  _("totalChunks", JSGC_TOTAL_CHUNKS, false)                                 \
-  _("sliceTimeBudgetMS", JSGC_SLICE_TIME_BUDGET_MS, true)                    \
-  _("markStackLimit", JSGC_MARK_STACK_LIMIT, true)                           \
-  _("highFrequencyTimeLimit", JSGC_HIGH_FREQUENCY_TIME_LIMIT, true)          \
-  _("highFrequencyLowLimit", JSGC_HIGH_FREQUENCY_LOW_LIMIT, true)            \
-  _("highFrequencyHighLimit", JSGC_HIGH_FREQUENCY_HIGH_LIMIT, true)          \
-  _("highFrequencyHeapGrowthMax", JSGC_HIGH_FREQUENCY_HEAP_GROWTH_MAX, true) \
-  _("highFrequencyHeapGrowthMin", JSGC_HIGH_FREQUENCY_HEAP_GROWTH_MIN, true) \
-  _("lowFrequencyHeapGrowth", JSGC_LOW_FREQUENCY_HEAP_GROWTH, true)          \
-  _("dynamicHeapGrowth", JSGC_DYNAMIC_HEAP_GROWTH, true)                     \
-  _("dynamicMarkSlice", JSGC_DYNAMIC_MARK_SLICE, true)                       \
-  _("allocationThreshold", JSGC_ALLOCATION_THRESHOLD, true)                  \
-  _("nonIncrementalFactor", JSGC_NON_INCREMENTAL_FACTOR, true)               \
-  _("avoidInterruptFactor", JSGC_AVOID_INTERRUPT_FACTOR, true)               \
-  _("minEmptyChunkCount", JSGC_MIN_EMPTY_CHUNK_COUNT, true)                  \
-  _("maxEmptyChunkCount", JSGC_MAX_EMPTY_CHUNK_COUNT, true)                  \
-  _("compactingEnabled", JSGC_COMPACTING_ENABLED, true)                      \
-  _("minLastDitchGCPeriod", JSGC_MIN_LAST_DITCH_GC_PERIOD, true)             \
-  _("nurseryFreeThresholdForIdleCollection",                                 \
-    JSGC_NURSERY_FREE_THRESHOLD_FOR_IDLE_COLLECTION, true)                   \
-  _("nurseryFreeThresholdForIdleCollectionPercent",                          \
-    JSGC_NURSERY_FREE_THRESHOLD_FOR_IDLE_COLLECTION_PERCENT, true)           \
-  _("pretenureThreshold", JSGC_PRETENURE_THRESHOLD, true)                    \
-  _("pretenureGroupThreshold", JSGC_PRETENURE_GROUP_THRESHOLD, true)         \
-  _("zoneAllocDelayKB", JSGC_ZONE_ALLOC_DELAY_KB, true)                      \
-  _("mallocThresholdBase", JSGC_MALLOC_THRESHOLD_BASE, true)                 \
+#define FOR_EACH_GC_PARAM(_)                                               \
+  _("maxBytes", JSGC_MAX_BYTES, true)                                      \
+  _("minNurseryBytes", JSGC_MIN_NURSERY_BYTES, true)                       \
+  _("maxNurseryBytes", JSGC_MAX_NURSERY_BYTES, true)                       \
+  _("gcBytes", JSGC_BYTES, false)                                          \
+  _("nurseryBytes", JSGC_NURSERY_BYTES, false)                             \
+  _("gcNumber", JSGC_NUMBER, false)                                        \
+  _("mode", JSGC_MODE, true)                                               \
+  _("unusedChunks", JSGC_UNUSED_CHUNKS, false)                             \
+  _("totalChunks", JSGC_TOTAL_CHUNKS, false)                               \
+  _("sliceTimeBudgetMS", JSGC_SLICE_TIME_BUDGET_MS, true)                  \
+  _("markStackLimit", JSGC_MARK_STACK_LIMIT, true)                         \
+  _("highFrequencyTimeLimit", JSGC_HIGH_FREQUENCY_TIME_LIMIT, true)        \
+  _("smallHeapSizeMax", JSGC_SMALL_HEAP_SIZE_MAX, true)                    \
+  _("largeHeapSizeMin", JSGC_LARGE_HEAP_SIZE_MIN, true)                    \
+  _("highFrequencySmallHeapGrowth", JSGC_HIGH_FREQUENCY_SMALL_HEAP_GROWTH, \
+    true)                                                                  \
+  _("highFrequencyLargeHeapGrowth", JSGC_HIGH_FREQUENCY_LARGE_HEAP_GROWTH, \
+    true)                                                                  \
+  _("lowFrequencyHeapGrowth", JSGC_LOW_FREQUENCY_HEAP_GROWTH, true)        \
+  _("allocationThreshold", JSGC_ALLOCATION_THRESHOLD, true)                \
+  _("smallHeapIncrementalLimit", JSGC_SMALL_HEAP_INCREMENTAL_LIMIT, true)  \
+  _("largeHeapIncrementalLimit", JSGC_LARGE_HEAP_INCREMENTAL_LIMIT, true)  \
+  _("minEmptyChunkCount", JSGC_MIN_EMPTY_CHUNK_COUNT, true)                \
+  _("maxEmptyChunkCount", JSGC_MAX_EMPTY_CHUNK_COUNT, true)                \
+  _("compactingEnabled", JSGC_COMPACTING_ENABLED, true)                    \
+  _("minLastDitchGCPeriod", JSGC_MIN_LAST_DITCH_GC_PERIOD, true)           \
+  _("nurseryFreeThresholdForIdleCollection",                               \
+    JSGC_NURSERY_FREE_THRESHOLD_FOR_IDLE_COLLECTION, true)                 \
+  _("nurseryFreeThresholdForIdleCollectionPercent",                        \
+    JSGC_NURSERY_FREE_THRESHOLD_FOR_IDLE_COLLECTION_PERCENT, true)         \
+  _("pretenureThreshold", JSGC_PRETENURE_THRESHOLD, true)                  \
+  _("pretenureGroupThreshold", JSGC_PRETENURE_GROUP_THRESHOLD, true)       \
+  _("zoneAllocDelayKB", JSGC_ZONE_ALLOC_DELAY_KB, true)                    \
+  _("mallocThresholdBase", JSGC_MALLOC_THRESHOLD_BASE, true)               \
   _("mallocGrowthFactor", JSGC_MALLOC_GROWTH_FACTOR, true)
 
 static const struct ParamInfo {
@@ -2942,7 +2943,14 @@ static bool testingFunc_bailAfter(JSContext* cx, unsigned argc, Value* vp) {
 
 #ifdef DEBUG
   if (auto* jitRuntime = cx->runtime()->jitRuntime()) {
-    jitRuntime->setIonBailAfter(args[0].toInt32());
+    uint32_t bailAfter = args[0].toInt32();
+    bool enableBailAfter = bailAfter > 0;
+    if (jitRuntime->ionBailAfterEnabled() != enableBailAfter) {
+      // Force JIT code to be recompiled with (or without) instrumentation.
+      ReleaseAllJITCode(cx->defaultFreeOp());
+      jitRuntime->setIonBailAfterEnabled(enableBailAfter);
+    }
+    jitRuntime->setIonBailAfterCounter(bailAfter);
   }
 #endif
 
@@ -4524,6 +4532,13 @@ static bool GetConstructorName(JSContext* cx, unsigned argc, Value* vp) {
   return true;
 }
 
+class AllocationMarkerObject : public NativeObject {
+ public:
+  static const JSClass class_;
+};
+
+const JSClass AllocationMarkerObject::class_ = {"AllocationMarker"};
+
 static bool AllocationMarker(JSContext* cx, unsigned argc, Value* vp) {
   CallArgs args = CallArgsFromVp(argc, vp);
 
@@ -4538,10 +4553,10 @@ static bool AllocationMarker(JSContext* cx, unsigned argc, Value* vp) {
     allocateInsideNursery = ToBoolean(nurseryVal);
   }
 
-  static const JSClass cls = {"AllocationMarker"};
-
-  auto newKind = allocateInsideNursery ? GenericObject : TenuredObject;
-  RootedObject obj(cx, NewObjectWithGivenProto(cx, &cls, nullptr, newKind));
+  JSObject* obj =
+      allocateInsideNursery
+          ? NewObjectWithGivenProto<AllocationMarkerObject>(cx, nullptr)
+          : NewTenuredObjectWithGivenProto<AllocationMarkerObject>(cx, nullptr);
   if (!obj) {
     return false;
   }
@@ -5281,7 +5296,7 @@ static bool ParseRegExp(JSContext* cx, unsigned argc, Value* vp) {
   }
 
   CompileOptions options(cx);
-  frontend::TokenStream dummyTokenStream(cx, options, nullptr, 0, nullptr);
+  frontend::DummyTokenStream dummyTokenStream(cx, options);
 
   // Data lifetime is controlled by LifoAllocScope.
   LifoAllocScope allocScope(&cx->tempLifoAlloc());
@@ -5317,31 +5332,21 @@ static bool DisRegExp(JSContext* cx, unsigned argc, Value* vp) {
 
   Rooted<RegExpObject*> reobj(cx, &args[0].toObject().as<RegExpObject>());
 
-  bool match_only = false;
-  if (!args.get(1).isUndefined()) {
-    if (!args.get(1).isBoolean()) {
-      ReportUsageErrorASCII(cx, callee,
-                            "Second argument, if present, must be a Boolean");
-      return false;
-    }
-    match_only = args[1].toBoolean();
-  }
-
   RootedLinearString input(cx, cx->runtime()->emptyString);
-  if (!args.get(2).isUndefined()) {
-    if (!args.get(2).isString()) {
+  if (!args.get(1).isUndefined()) {
+    if (!args.get(1).isString()) {
       ReportUsageErrorASCII(cx, callee,
-                            "Third argument, if present, must be a String");
+                            "Second argument, if present, must be a String");
       return false;
     }
-    RootedString inputStr(cx, args[2].toString());
+    RootedString inputStr(cx, args[1].toString());
     input = inputStr->ensureLinear(cx);
     if (!input) {
       return false;
     }
   }
 
-  if (!RegExpObject::dumpBytecode(cx, reobj, match_only, input)) {
+  if (!RegExpObject::dumpBytecode(cx, reobj, input)) {
     return false;
   }
 
@@ -7067,7 +7072,7 @@ static const JSFunctionSpecWithHelp FuzzingUnsafeTestingFunctions[] = {
 "  Parses a RegExp pattern and returns a tree, potentially throwing."),
 
     JS_FN_HELP("disRegExp", DisRegExp, 3, 0,
-"disRegExp(regexp[, match_only[, input]])",
+"disRegExp(regexp[, input])",
 "  Dumps RegExp bytecode."),
 #endif
 

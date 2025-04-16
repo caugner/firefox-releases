@@ -65,9 +65,9 @@ uint32_t ABIResult::size() const { return ResultStackSize(type()); }
 
 void ABIResultIter::settleRegister(ValType type) {
   MOZ_ASSERT(!done());
-  MOZ_ASSERT_IF(direction_ == Next, index() < RegisterResultCount);
-  MOZ_ASSERT_IF(direction_ == Prev, index() >= count_ - RegisterResultCount);
-  static_assert(RegisterResultCount == 1, "expected a single register result");
+  MOZ_ASSERT_IF(direction_ == Next, index() < MaxRegisterResults);
+  MOZ_ASSERT_IF(direction_ == Prev, index() >= count_ - MaxRegisterResults);
+  static_assert(MaxRegisterResults == 1, "expected a single register result");
 
   switch (type.kind()) {
     case ValType::I32:
@@ -97,7 +97,7 @@ void ABIResultIter::settleNext() {
   uint32_t typeIndex = count_ - index_ - 1;
   ValType type = type_[typeIndex];
 
-  if (index_ < RegisterResultCount) {
+  if (index_ < MaxRegisterResults) {
     settleRegister(type);
     return;
   }
@@ -112,7 +112,7 @@ void ABIResultIter::settlePrev() {
   uint32_t typeIndex = index_;
   ValType type = type_[typeIndex];
 
-  if (count_ - index_ - 1 < RegisterResultCount) {
+  if (count_ - index_ - 1 < MaxRegisterResults) {
     settleRegister(type);
     return;
   }
@@ -1888,7 +1888,7 @@ static bool GenerateImportInterpExit(MacroAssembler& masm, const FuncImport& fi,
   unsigned argOffset =
       AlignBytes(StackArgBytes(invokeArgTypes), sizeof(double));
   // The abiArgCount includes a stack result pointer argument if needed.
-  unsigned abiArgCount = ArgTypeVector(fi.funcType()).length();
+  unsigned abiArgCount = ArgTypeVector(fi.funcType()).lengthWithStackResults();
   unsigned argBytes = std::max<size_t>(1, abiArgCount) * sizeof(Value);
   unsigned framePushed =
       StackDecrementForCall(ABIStackAlignment,

@@ -63,11 +63,7 @@ bool BoxInputsPolicy::staticAdjustInputs(TempAllocator& alloc,
 }
 
 bool ArithPolicy::adjustInputs(TempAllocator& alloc, MInstruction* ins) const {
-  MIRType specialization = ins->typePolicySpecialization();
-  if (specialization == MIRType::None) {
-    return BoxInputsPolicy::staticAdjustInputs(alloc, ins);
-  }
-
+  MOZ_ASSERT(IsNumberType(ins->type()));
   MOZ_ASSERT(ins->type() == MIRType::Double || ins->type() == MIRType::Int32 ||
              ins->type() == MIRType::Float32);
 
@@ -404,14 +400,7 @@ bool TestPolicy::adjustInputs(TempAllocator& alloc, MInstruction* ins) const {
 
 bool BitwisePolicy::adjustInputs(TempAllocator& alloc,
                                  MInstruction* ins) const {
-  MIRType specialization = ins->typePolicySpecialization();
-  if (specialization == MIRType::None) {
-    return BoxInputsPolicy::staticAdjustInputs(alloc, ins);
-  }
-
-  MOZ_ASSERT(ins->type() == MIRType::Value || ins->type() == specialization);
-  MOZ_ASSERT(specialization == MIRType::Int32 ||
-             specialization == MIRType::Double);
+  MOZ_ASSERT(ins->type() == MIRType::Int32 || ins->type() == MIRType::Double);
 
   // This policy works for both unary and binary bitwise operations.
   for (size_t i = 0, e = ins->numOperands(); i < e; i++) {
@@ -517,24 +506,6 @@ template bool ConvertToStringPolicy<1>::staticAdjustInputs(TempAllocator& alloc,
                                                            MInstruction* ins);
 template bool ConvertToStringPolicy<2>::staticAdjustInputs(TempAllocator& alloc,
                                                            MInstruction* ins);
-
-template <unsigned Op>
-bool BooleanPolicy<Op>::staticAdjustInputs(TempAllocator& alloc,
-                                           MInstruction* def) {
-  MDefinition* in = def->getOperand(Op);
-  if (in->type() == MIRType::Boolean) {
-    return true;
-  }
-
-  MUnbox* replace = MUnbox::New(alloc, in, MIRType::Boolean, MUnbox::Fallible);
-  def->block()->insertBefore(def, replace);
-  def->replaceOperand(Op, replace);
-
-  return replace->typePolicy()->adjustInputs(alloc, replace);
-}
-
-template bool BooleanPolicy<3>::staticAdjustInputs(TempAllocator& alloc,
-                                                   MInstruction* def);
 
 template <unsigned Op>
 bool UnboxedInt32Policy<Op>::staticAdjustInputs(TempAllocator& alloc,
@@ -1030,7 +1001,7 @@ bool StoreUnboxedScalarPolicy::adjustInputs(TempAllocator& alloc,
   }
 
   MStoreUnboxedScalar* store = ins->toStoreUnboxedScalar();
-  MOZ_ASSERT(IsValidElementsType(store->elements(), store->offsetAdjustment()));
+  MOZ_ASSERT(store->elements()->type() == MIRType::Elements);
   MOZ_ASSERT(store->index()->type() == MIRType::Int32);
 
   return adjustValueInput(alloc, store, store->writeType(), store->value(), 2);

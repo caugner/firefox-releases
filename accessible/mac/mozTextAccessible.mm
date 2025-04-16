@@ -524,7 +524,7 @@ inline NSString* ToNSString(id aValue) {
       valueWithRange:NSMakeRange(0, textAcc ? textAcc->CharacterCount() : proxy->CharacterCount())];
 }
 
-- (void)firePlatformEvent:(uint32_t)eventType {
+- (void)handleAccessibleEvent:(uint32_t)eventType {
   switch (eventType) {
     case nsIAccessibleEvent::EVENT_VALUE_CHANGE:
     case nsIAccessibleEvent::EVENT_TEXT_VALUE_CHANGE:
@@ -535,7 +535,7 @@ inline NSString* ToNSString(id aValue) {
       [self postNotification:NSAccessibilitySelectedTextChangedNotification];
       break;
     default:
-      [super firePlatformEvent:eventType];
+      [super handleAccessibleEvent:eventType];
       break;
   }
 }
@@ -576,39 +576,11 @@ inline NSString* ToNSString(id aValue) {
 }
 
 - (id)accessibilityAttributeValue:(NSString*)attribute {
-  if ([attribute isEqualToString:NSAccessibilityTitleAttribute]) return @"";
+  if ([attribute isEqualToString:NSAccessibilityTitleAttribute]) return nil;
 
-  if ([attribute isEqualToString:NSAccessibilityValueAttribute]) return [self text];
+  if ([attribute isEqualToString:NSAccessibilityValueAttribute]) return [self title];
 
   return [super accessibilityAttributeValue:attribute];
-}
-
-- (NSString*)text {
-  if (AccessibleWrap* accWrap = [self getGeckoAccessible]) {
-    return nsCocoaUtils::ToNSString(accWrap->AsTextLeaf()->Text());
-  }
-
-  if (ProxyAccessible* proxy = [self getProxyAccessible]) {
-    nsString text;
-    proxy->Text(&text);
-    return nsCocoaUtils::ToNSString(text);
-  }
-
-  return nil;
-}
-
-- (long)textLength {
-  if (AccessibleWrap* accWrap = [self getGeckoAccessible]) {
-    return accWrap->AsTextLeaf()->Text().Length();
-  }
-
-  if (ProxyAccessible* proxy = [self getProxyAccessible]) {
-    nsString text;
-    proxy->Text(&text);
-    return text.Length();
-  }
-
-  return 0;
 }
 
 - (NSString*)accessibilityLabel {

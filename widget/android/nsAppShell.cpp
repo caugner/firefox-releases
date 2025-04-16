@@ -9,6 +9,7 @@
 #include "base/message_loop.h"
 #include "base/task.h"
 #include "mozilla/Hal.h"
+#include "nsExceptionHandler.h"
 #include "nsIScreen.h"
 #include "nsWindow.h"
 #include "nsThreadUtils.h"
@@ -258,6 +259,12 @@ class GeckoAppShellSupport final
                              aData ? aData->ToString().get() : nullptr);
   }
 
+  static void AppendAppNotesToCrashReport(jni::String::Param aNotes) {
+    MOZ_ASSERT(NS_IsMainThread());
+    MOZ_ASSERT(aNotes);
+    CrashReporter::AppendAppNotesToCrashReport(aNotes->ToCString());
+  }
+
   static void OnSensorChanged(int32_t aType, float aX, float aY, float aZ,
                               float aW, int64_t aTime) {
     AutoTArray<float, 4> values;
@@ -500,9 +507,6 @@ void nsAppShell::RecordLatencies() {
   }
 }
 
-#define PREFNAME_COALESCE_TOUCHES "dom.event.touch.coalescing.enabled"
-static const char* kObservedPrefs[] = {PREFNAME_COALESCE_TOUCHES, nullptr};
-
 nsresult nsAppShell::Init() {
   nsresult rv = nsBaseAppShell::Init();
   nsCOMPtr<nsIObserverService> obsServ =
@@ -526,9 +530,6 @@ nsresult nsAppShell::Init() {
   if (sPowerManagerService)
     sPowerManagerService->AddWakeLockListener(sWakeLockListener);
 
-  Preferences::AddStrongObservers(this, kObservedPrefs);
-  mAllowCoalescingTouches =
-      Preferences::GetBool(PREFNAME_COALESCE_TOUCHES, true);
   return rv;
 }
 
@@ -548,13 +549,6 @@ nsAppShell::Observe(nsISupports* aSubject, const char* aTopic,
     // or we'll see crashes, as the app shell outlives XPConnect.
     mObserversHash.Clear();
     return nsBaseAppShell::Observe(aSubject, aTopic, aData);
-
-  } else if (!strcmp(aTopic, NS_PREFBRANCH_PREFCHANGE_TOPIC_ID) && aData &&
-             nsDependentString(aData).Equals(
-                 NS_LITERAL_STRING(PREFNAME_COALESCE_TOUCHES))) {
-    mAllowCoalescingTouches =
-        Preferences::GetBool(PREFNAME_COALESCE_TOUCHES, true);
-    return NS_OK;
 
   } else if (!strcmp(aTopic, "browser-delayed-startup-finished")) {
     NS_CreateServicesFromCategory("browser-delayed-startup-finished", nullptr,
@@ -672,7 +666,6 @@ bool nsAppShell::ProcessNextNativeEvent(bool mayWait) {
       AUTO_PROFILER_LABEL("nsAppShell::ProcessNextNativeEvent:Wait", IDLE);
       mozilla::BackgroundHangMonitor().NotifyWait();
 
-      AUTO_PROFILER_THREAD_SLEEP;
       curEvent = mEventQueue.Pop(/* mayWait */ true);
     }
   }

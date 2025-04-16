@@ -1270,20 +1270,22 @@ void IMEStateManager::SetIMEState(const IMEState& aState,
       aPresContext &&
       nsContentUtils::IsInPrivateBrowsing(aPresContext->Document());
 
-  if (aContent &&
-      aContent->IsAnyOfHTMLElements(nsGkAtoms::input, nsGkAtoms::textarea)) {
-    if (!aContent->IsHTMLElement(nsGkAtoms::textarea)) {
-      aContent->AsElement()->GetAttr(kNameSpaceID_None, nsGkAtoms::type,
-                                     context.mHTMLInputType);
-    } else {
+  if (aContent) {
+    if (aContent->IsHTMLElement(nsGkAtoms::input)) {
+      HTMLInputElement::FromNode(aContent)->GetType(context.mHTMLInputType);
+      GetActionHint(*aContent, context.mActionHint);
+    } else if (aContent->IsHTMLElement(nsGkAtoms::textarea)) {
       context.mHTMLInputType.Assign(nsGkAtoms::textarea->GetUTF16String());
+      GetActionHint(*aContent, context.mActionHint);
     }
 
-    if (StaticPrefs::dom_forms_inputmode() ||
-        nsContentUtils::IsChromeDoc(aContent->OwnerDoc())) {
+    if (aContent->IsHTMLElement() && aState.IsEditable() &&
+        (StaticPrefs::dom_forms_inputmode() ||
+         nsContentUtils::IsChromeDoc(aContent->OwnerDoc()))) {
       aContent->AsElement()->GetAttr(kNameSpaceID_None, nsGkAtoms::inputmode,
                                      context.mHTMLInputInputmode);
-      if (context.mHTMLInputInputmode.EqualsLiteral("mozAwesomebar")) {
+      if (aContent->IsHTMLElement(nsGkAtoms::input) &&
+          context.mHTMLInputInputmode.EqualsLiteral("mozAwesomebar")) {
         if (!nsContentUtils::IsChromeDoc(aContent->OwnerDoc())) {
           // mozAwesomebar should be allowed only in chrome
           context.mHTMLInputInputmode.Truncate();
@@ -1293,8 +1295,6 @@ void IMEStateManager::SetIMEState(const IMEState& aState,
         ToLowerCase(context.mHTMLInputInputmode);
       }
     }
-
-    GetActionHint(*aContent, context.mActionHint);
   }
 
   if (aAction.mCause == InputContextAction::CAUSE_UNKNOWN &&

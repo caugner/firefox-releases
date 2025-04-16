@@ -15,6 +15,7 @@ extern crate authenticator;
 extern crate bitsdownload;
 #[cfg(feature = "moz_places")]
 extern crate bookmark_sync;
+extern crate cascade_bloom_filter;
 #[cfg(feature = "new_cert_storage")]
 extern crate cert_storage;
 extern crate chardetng_c;
@@ -52,11 +53,14 @@ extern crate xulstore;
 
 extern crate audio_thread_priority;
 
+#[cfg(feature = "new_webext_storage")]
+extern crate webext_storage_bridge;
+
 #[cfg(feature = "webrtc")]
 extern crate mdns_service;
 extern crate neqo_glue;
 #[cfg(feature = "webgpu")]
-extern crate wgpu_remote;
+extern crate wgpu_bindings;
 
 #[cfg(feature = "wasm_library_sandboxing")]
 extern crate rlbox_lucet_sandbox;
@@ -70,7 +74,10 @@ extern crate fluent_langneg_ffi;
 extern crate fluent;
 extern crate fluent_ffi;
 
-extern crate sync15_traits;
+extern crate rusqlite;
+
+#[cfg(feature = "services_sync")]
+extern crate golden_gate;
 
 #[cfg(feature = "remote")]
 extern crate remote;
