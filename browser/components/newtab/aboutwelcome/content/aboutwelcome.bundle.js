@@ -31,10 +31,10 @@ __webpack_require__.r(__webpack_exports__);
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this file,
  * You can obtain one at http://mozilla.org/MPL/2.0/. */
-// If we're in a subdialog, then this is a spotlight modal.
-// Otherwise, this is about:welcome or a Feature Callout
-// in another "about" page and we should return the current page.
-const page = document.querySelector(":root[dialogroot=true]") ? "spotlight" : document.location.href;
+// If the container has a "page" data attribute, then this is
+// a Spotlight modal or Feature Callout. Otherwise, this is
+// about:welcome and we should return the current page.
+const page = document.querySelector("#root.onboardingContainer[data-page]") ? document.querySelector("#root[data-page]").dataset.page : document.location.href;
 const AboutWelcomeUtils = {
   handleUserAction(action) {
     window.AWSendToParent("SPECIAL_ACTION", action);
@@ -560,6 +560,10 @@ class WelcomeScreen extends (react__WEBPACK_IMPORTED_MODULE_0___default().PureCo
     if (action.navigate) {
       props.navigate();
     }
+
+    if (action.dismiss) {
+      window.AWFinish();
+    }
   }
 
   render() {
@@ -1010,7 +1014,7 @@ class ProtonScreen extends (react__WEBPACK_IMPORTED_MODULE_0___default().PureCom
       style: content.background && isCenterPosition ? {
         background: content.background
       } : {}
-    }, content.dismiss_button ? this.renderDismissButton() : null, content.logo ? this.renderLogo(content.logo) : null, isRtamo ? /*#__PURE__*/react__WEBPACK_IMPORTED_MODULE_0___default().createElement("div", {
+    }, content.logo ? this.renderLogo(content.logo) : null, isRtamo ? /*#__PURE__*/react__WEBPACK_IMPORTED_MODULE_0___default().createElement("div", {
       className: "rtamo-icon"
     }, /*#__PURE__*/react__WEBPACK_IMPORTED_MODULE_0___default().createElement("img", {
       className: `${isTheme ? "rtamo-theme-icon" : "brand-logo"}`,
@@ -1043,7 +1047,7 @@ class ProtonScreen extends (react__WEBPACK_IMPORTED_MODULE_0___default().PureCom
       content: content,
       addonName: this.props.addonName,
       handleAction: this.props.handleAction
-    })), hideStepsIndicator ? null : this.renderStepsIndicator())));
+    })), !hideStepsIndicator ? this.renderStepsIndicator() : null), content.dismiss_button ? this.renderDismissButton() : null));
   }
 
 }

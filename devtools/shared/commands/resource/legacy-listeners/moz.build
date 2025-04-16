@@ -7,7 +7,6 @@ DevToolsModules(
     "console-messages.js",
     "cookie.js",
     "css-changes.js",
-    "css-messages.js",
     "error-messages.js",
     "extension-storage.js",
     "indexed-db.js",
@@ -20,7 +19,6 @@ DevToolsModules(
     "session-storage.js",
     "source.js",
     "storage-utils.js",
-    "stylesheet.js",
     "thread-states.js",
     "websocket.js",
 )

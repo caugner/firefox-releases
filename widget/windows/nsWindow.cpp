@@ -147,6 +147,7 @@
 #include "mozilla/TextEventDispatcherListener.h"
 #include "mozilla/widget/nsAutoRollup.h"
 #include "mozilla/widget/PlatformWidgetTypes.h"
+#include "mozilla/widget/Screen.h"
 #include "nsStyleConsts.h"
 #include "nsBidiKeyboard.h"
 #include "nsStyleConsts.h"
@@ -363,7 +364,7 @@ static NS_DEFINE_CID(kCClipboardCID, NS_CLIPBOARD_CID);
 // General purpose user32.dll hook object
 static WindowsDllInterceptor sUser32Intercept;
 
-// 2 pixel offset for eTransparencyBorderlessGlass which equals the size of
+// 2 pixel offset for TransparencyMode::BorderlessGlass which equals the size of
 // the default window border Windows paints. Glass will be extended inward
 // this distance to remove the border.
 static const int32_t kGlassMarginAdjustment = 2;
@@ -733,7 +734,7 @@ static bool IsCloaked(HWND hwnd) {
  **************************************************************/
 
 nsWindow::nsWindow(bool aIsChildWindow)
-    : nsBaseWidget(eBorderStyle_default),
+    : nsBaseWidget(BorderStyle::Default),
       mBrush(::CreateSolidBrush(NSRGB_2_COLOREF(::GetSysColor(COLOR_BTNFACE)))),
       mFrameState(std::in_place, this),
       mIsChildWindow(aIsChildWindow),
@@ -741,7 +742,7 @@ nsWindow::nsWindow(bool aIsChildWindow)
       mCachedHitTestTime(TimeStamp::Now()),
       mSizeConstraintsScale(GetDefaultScale().scale),
       mDesktopId("DesktopIdMutex") {
-  MOZ_ASSERT(mWindowType == eWindowType_child);
+  MOZ_ASSERT(mWindowType == WindowType::Child);
 
   if (!gInitializedVirtualDesktopManager) {
     TaskController::Get()->AddTask(
@@ -825,11 +826,11 @@ nsWindow::~nsWindow() {
 // when the window is created or resized.
 int32_t nsWindow::GetHeight(int32_t aProposedHeight) { return aProposedHeight; }
 
-static bool ShouldCacheTitleBarInfo(nsWindowType aWindowType,
-                                    nsBorderStyle aBorderStyle) {
-  return (aWindowType == eWindowType_toplevel) &&
-         (aBorderStyle == eBorderStyle_default ||
-          aBorderStyle == eBorderStyle_all) &&
+static bool ShouldCacheTitleBarInfo(WindowType aWindowType,
+                                    BorderStyle aBorderStyle) {
+  return (aWindowType == WindowType::TopLevel) &&
+         (aBorderStyle == BorderStyle::Default ||
+          aBorderStyle == BorderStyle::All) &&
          (!nsUXThemeData::sTitlebarInfoPopulatedThemed ||
           !nsUXThemeData::sTitlebarInfoPopulatedAero);
 }
@@ -887,7 +888,7 @@ void nsWindow::SendAnAPZEvent(InputData& aEvent) {
 void nsWindow::RecreateDirectManipulationIfNeeded() {
   DestroyDirectManipulation();
 
-  if (mWindowType != eWindowType_toplevel && mWindowType != eWindowType_popup) {
+  if (mWindowType != WindowType::TopLevel && mWindowType != WindowType::Popup) {
     return;
   }
 
@@ -929,19 +930,19 @@ void nsWindow::DestroyDirectManipulation() {
 // Create the proper widget
 nsresult nsWindow::Create(nsIWidget* aParent, nsNativeWidget aNativeParent,
                           const LayoutDeviceIntRect& aRect,
-                          nsWidgetInitData* aInitData) {
+                          widget::InitData* aInitData) {
   // Historical note: there was once some belief and/or intent that nsWindows
   // could be created on arbitrary threads, and this may still be reflected in
   // some comments.
   MOZ_ASSERT(NS_IsMainThread());
 
-  nsWidgetInitData defaultInitData;
+  widget::InitData defaultInitData;
   if (!aInitData) aInitData = &defaultInitData;
 
   nsIWidget* baseParent =
-      aInitData->mWindowType == eWindowType_dialog ||
-              aInitData->mWindowType == eWindowType_toplevel ||
-              aInitData->mWindowType == eWindowType_invisible
+      aInitData->mWindowType == WindowType::Dialog ||
+              aInitData->mWindowType == WindowType::TopLevel ||
+              aInitData->mWindowType == WindowType::Invisible
           ? nullptr
           : aParent;
 
@@ -981,7 +982,7 @@ nsresult nsWindow::Create(nsIWidget* aParent, nsNativeWidget aNativeParent,
     extendedStyle |= WS_EX_COMPOSITED;
   }
 
-  if (mWindowType == eWindowType_popup) {
+  if (mWindowType == WindowType::Popup) {
     if (!aParent) {
       parent = nullptr;
     }
@@ -990,7 +991,7 @@ nsresult nsWindow::Create(nsIWidget* aParent, nsNativeWidget aNativeParent,
         ShouldUseOffMainThreadCompositing()) {
       extendedStyle |= WS_EX_COMPOSITED;
     }
-  } else if (mWindowType == eWindowType_invisible) {
+  } else if (mWindowType == WindowType::Invisible) {
     // Make sure CreateWindowEx succeeds at creating a toplevel window
     style &= ~0x40000000;  // WS_CHILDWINDOW
   } else {
@@ -1009,7 +1010,7 @@ nsresult nsWindow::Create(nsIWidget* aParent, nsNativeWidget aNativeParent,
 
   // Take specific actions when creating the first top-level window
   static bool sFirstTopLevelWindowCreated = false;
-  if (aInitData->mWindowType == eWindowType_toplevel && !aParent &&
+  if (aInitData->mWindowType == WindowType::TopLevel && !aParent &&
       !sFirstTopLevelWindowCreated) {
     sFirstTopLevelWindowCreated = true;
     mWnd = ConsumePreXULSkeletonUIHandle();
@@ -1043,8 +1044,7 @@ nsresult nsWindow::Create(nsIWidget* aParent, nsNativeWidget aNativeParent,
       // These match the margins set in browser-tabsintitlebar.js with
       // default prefs on Windows. Bug 1673092 tracks lining this up with
       // that more correctly instead of hard-coding it.
-      LayoutDeviceIntMargin margins(0, 2, 2, 2);
-      SetNonClientMargins(margins);
+      SetNonClientMargins(LayoutDeviceIntMargin(0, 2, 2, 2));
 
       // Reset the WNDPROC for this window and its whole class, as we had
       // to use our own WNDPROC when creating the the skeleton UI window.
@@ -1159,7 +1159,7 @@ nsresult nsWindow::Create(nsIWidget* aParent, nsNativeWidget aNativeParent,
                    SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
   }
 
-  if (mWindowType != eWindowType_invisible &&
+  if (mWindowType != WindowType::Invisible &&
       MouseScrollHandler::Device::IsFakeScrollableWindowNeeded()) {
     // Ugly Thinkpad Driver Hack (Bugs 507222 and 594977)
     //
@@ -1226,7 +1226,7 @@ nsresult nsWindow::Create(nsIWidget* aParent, nsNativeWidget aNativeParent,
   }
 
   static bool a11yPrimed = false;
-  if (!a11yPrimed && mWindowType == eWindowType_toplevel) {
+  if (!a11yPrimed && mWindowType == WindowType::TopLevel) {
     a11yPrimed = true;
     if (Preferences::GetInt("accessibility.force_disabled", 0) == -1) {
       ::PostMessage(mWnd, MOZ_WM_STARTA11Y, 0, 0);
@@ -1337,15 +1337,15 @@ const wchar_t* nsWindow::RegisterWindowClass(const wchar_t* aClassName,
 static LPWSTR const gStockApplicationIcon = MAKEINTRESOURCEW(32512);
 
 /* static */
-const wchar_t* nsWindow::ChooseWindowClass(nsWindowType aWindowType,
+const wchar_t* nsWindow::ChooseWindowClass(WindowType aWindowType,
                                            bool aForMenupopupFrame) {
-  MOZ_ASSERT_IF(aForMenupopupFrame, aWindowType == eWindowType_popup);
+  MOZ_ASSERT_IF(aForMenupopupFrame, aWindowType == WindowType::Popup);
   switch (aWindowType) {
-    case eWindowType_invisible:
+    case WindowType::Invisible:
       return RegisterWindowClass(kClassNameHidden, 0, gStockApplicationIcon);
-    case eWindowType_dialog:
+    case WindowType::Dialog:
       return RegisterWindowClass(kClassNameDialog, 0, 0);
-    case eWindowType_popup:
+    case WindowType::Popup:
       if (aForMenupopupFrame) {
         return RegisterWindowClass(kClassNameDropShadow, CS_DROPSHADOW,
                                    gStockApplicationIcon);
@@ -1370,18 +1370,18 @@ DWORD nsWindow::WindowStyle() {
   DWORD style;
 
   switch (mWindowType) {
-    case eWindowType_child:
+    case WindowType::Child:
       style = WS_OVERLAPPED;
       break;
 
-    case eWindowType_dialog:
+    case WindowType::Dialog:
       style = WS_OVERLAPPED | WS_BORDER | WS_DLGFRAME | WS_SYSMENU | DS_3DLOOK |
               DS_MODALFRAME | WS_CLIPCHILDREN;
-      if (mBorderStyle != eBorderStyle_default)
+      if (mBorderStyle != BorderStyle::Default)
         style |= WS_THICKFRAME | WS_MINIMIZEBOX | WS_MAXIMIZEBOX;
       break;
 
-    case eWindowType_popup:
+    case WindowType::Popup:
       style = WS_POPUP;
       if (!HasGlass()) {
         style |= WS_OVERLAPPED;
@@ -1392,55 +1392,55 @@ DWORD nsWindow::WindowStyle() {
       NS_ERROR("unknown border style");
       [[fallthrough]];
 
-    case eWindowType_toplevel:
-    case eWindowType_invisible:
+    case WindowType::TopLevel:
+    case WindowType::Invisible:
       style = WS_OVERLAPPED | WS_BORDER | WS_DLGFRAME | WS_SYSMENU |
               WS_THICKFRAME | WS_MINIMIZEBOX | WS_MAXIMIZEBOX | WS_CLIPCHILDREN;
       break;
   }
 
-  if (mBorderStyle != eBorderStyle_default &&
-      mBorderStyle != eBorderStyle_all) {
-    if (mBorderStyle == eBorderStyle_none ||
-        !(mBorderStyle & eBorderStyle_border))
+  if (mBorderStyle != BorderStyle::Default &&
+      mBorderStyle != BorderStyle::All) {
+    if (mBorderStyle == BorderStyle::None ||
+        !(mBorderStyle & BorderStyle::Border))
       style &= ~WS_BORDER;
 
-    if (mBorderStyle == eBorderStyle_none ||
-        !(mBorderStyle & eBorderStyle_title)) {
+    if (mBorderStyle == BorderStyle::None ||
+        !(mBorderStyle & BorderStyle::Title)) {
       style &= ~WS_DLGFRAME;
       style |= WS_POPUP;
       style &= ~WS_CHILD;
     }
 
-    if (mBorderStyle == eBorderStyle_none ||
-        !(mBorderStyle & eBorderStyle_close))
+    if (mBorderStyle == BorderStyle::None ||
+        !(mBorderStyle & BorderStyle::Close))
       style &= ~0;
     // XXX The close box can only be removed by changing the window class,
     // as far as I know   --- roc+moz@cs.cmu.edu
 
-    if (mBorderStyle == eBorderStyle_none ||
-        !(mBorderStyle & (eBorderStyle_menu | eBorderStyle_close)))
+    if (mBorderStyle == BorderStyle::None ||
+        !(mBorderStyle & (BorderStyle::Menu | BorderStyle::Close)))
       style &= ~WS_SYSMENU;
     // Looks like getting rid of the system menu also does away with the
     // close box. So, we only get rid of the system menu if you want neither it
     // nor the close box. How does the Windows "Dialog" window class get just
     // closebox and no sysmenu? Who knows.
 
-    if (mBorderStyle == eBorderStyle_none ||
-        !(mBorderStyle & eBorderStyle_resizeh))
+    if (mBorderStyle == BorderStyle::None ||
+        !(mBorderStyle & BorderStyle::ResizeH))
       style &= ~WS_THICKFRAME;
 
-    if (mBorderStyle == eBorderStyle_none ||
-        !(mBorderStyle & eBorderStyle_minimize))
+    if (mBorderStyle == BorderStyle::None ||
+        !(mBorderStyle & BorderStyle::Minimize))
       style &= ~WS_MINIMIZEBOX;
 
-    if (mBorderStyle == eBorderStyle_none ||
-        !(mBorderStyle & eBorderStyle_maximize))
+    if (mBorderStyle == BorderStyle::None ||
+        !(mBorderStyle & BorderStyle::Maximize))
       style &= ~WS_MAXIMIZEBOX;
 
     if (IsPopupWithTitleBar()) {
       style |= WS_CAPTION;
-      if (mBorderStyle & eBorderStyle_close) {
+      if (mBorderStyle & BorderStyle::Close) {
         style |= WS_SYSMENU;
       }
     }
@@ -1460,23 +1460,23 @@ DWORD nsWindow::WindowStyle() {
 // Return nsWindow extended styles
 DWORD nsWindow::WindowExStyle() {
   switch (mWindowType) {
-    case eWindowType_child:
+    case WindowType::Child:
       return 0;
 
-    case eWindowType_dialog:
+    case WindowType::Dialog:
       return WS_EX_WINDOWEDGE | WS_EX_DLGMODALFRAME;
 
-    case eWindowType_popup: {
+    case WindowType::Popup: {
       DWORD extendedStyle = WS_EX_TOOLWINDOW;
-      if (mPopupLevel == ePopupLevelTop) extendedStyle |= WS_EX_TOPMOST;
+      if (mPopupLevel == PopupLevel::Top) extendedStyle |= WS_EX_TOPMOST;
       return extendedStyle;
     }
     default:
       NS_ERROR("unknown border style");
       [[fallthrough]];
 
-    case eWindowType_toplevel:
-    case eWindowType_invisible:
+    case WindowType::TopLevel:
+    case WindowType::Invisible:
       return WS_EX_WINDOWEDGE;
   }
 }
@@ -1579,7 +1579,7 @@ void nsWindow::ReparentNativeWidget(nsIWidget* aNewParent) {
   MOZ_ASSERT(aNewParent, "null widget");
 
   mParent = aNewParent;
-  if (mWindowType == eWindowType_popup) {
+  if (mWindowType == WindowType::Popup) {
     return;
   }
   HWND newParent = (HWND)aNewParent->GetNativeData(NS_NATIVE_WINDOW);
@@ -1701,7 +1701,7 @@ void nsWindow::Show(bool bState) {
     MOZ_ASSERT(ChooseWindowClass(mWindowType, mForMenupopupFrame) ==
                kClassNameDropShadow);
     const bool shouldUseDropShadow = [&] {
-      if (mTransparencyMode == eTransparencyTransparent) {
+      if (mTransparencyMode == TransparencyMode::Transparent) {
         return false;
       }
       if (HasBogusPopupsDropShadowOnMultiMonitor() &&
@@ -1747,7 +1747,7 @@ void nsWindow::Show(bool bState) {
 
   if (mWnd) {
     if (bState) {
-      if (!wasVisible && mWindowType == eWindowType_toplevel) {
+      if (!wasVisible && mWindowType == WindowType::TopLevel) {
         // speed up the initial paint after show for
         // top level windows:
         syncInvalidate = true;
@@ -1783,7 +1783,7 @@ void nsWindow::Show(bool bState) {
         if (wasVisible) flags |= SWP_NOZORDER;
         if (mAlwaysOnTop) flags |= SWP_NOACTIVATE;
 
-        if (mWindowType == eWindowType_popup) {
+        if (mWindowType == WindowType::Popup) {
           // ensure popups are the topmost of the TOPMOST
           // layer. Remember not to set the SWP_NOZORDER
           // flag as that might allow the taskbar to overlap
@@ -1791,10 +1791,10 @@ void nsWindow::Show(bool bState) {
           flags |= SWP_NOACTIVATE;
           HWND owner = ::GetWindow(mWnd, GW_OWNER);
           if (owner) {
-            // ePopupLevelTop popups should be above all else.  All other
+            // PopupLevel::Top popups should be above all else.  All other
             // types should be placed in front of their owner, without
             // changing the owner's z-level relative to other windows.
-            if (PopupLevel() != ePopupLevelTop) {
+            if (mPopupLevel != PopupLevel::Top) {
               ::SetWindowPos(mWnd, owner, 0, 0, 0, 0, flags);
               ::SetWindowPos(owner, mWnd, 0, 0, 0, 0,
                              SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
@@ -1805,7 +1805,7 @@ void nsWindow::Show(bool bState) {
             ::SetWindowPos(mWnd, HWND_TOPMOST, 0, 0, 0, 0, flags);
           }
         } else {
-          if (mWindowType == eWindowType_dialog && !CanTakeFocus())
+          if (mWindowType == WindowType::Dialog && !CanTakeFocus())
             flags |= SWP_NOACTIVATE;
 
           ::SetWindowPos(mWnd, HWND_TOP, 0, 0, 0, 0, flags);
@@ -1814,12 +1814,12 @@ void nsWindow::Show(bool bState) {
     } else {
       // Clear contents to avoid ghosting of old content if we display
       // this window again.
-      if (wasVisible && mTransparencyMode == eTransparencyTransparent) {
+      if (wasVisible && mTransparencyMode == TransparencyMode::Transparent) {
         if (mCompositorWidgetDelegate) {
           mCompositorWidgetDelegate->ClearTransparentWindow();
         }
       }
-      if (mWindowType != eWindowType_dialog) {
+      if (mWindowType != WindowType::Dialog) {
         ::ShowWindow(mWnd, SW_HIDE);
       } else {
         ::SetWindowPos(mWnd, 0, 0, 0, 0, 0,
@@ -1869,8 +1869,8 @@ bool nsWindow::IsVisible() const { return mIsVisible; }
 // XXX this is apparently still needed in Windows 7 and later
 void nsWindow::ClearThemeRegion() {
   if (!HasGlass() &&
-      (mWindowType == eWindowType_popup && !IsPopupWithTitleBar() &&
-       (mPopupType == ePopupTypeTooltip || mPopupType == ePopupTypePanel))) {
+      (mWindowType == WindowType::Popup && !IsPopupWithTitleBar() &&
+       (mPopupType == PopupType::Tooltip || mPopupType == PopupType::Panel))) {
     SetWindowRgn(mWnd, nullptr, false);
   }
 }
@@ -1935,7 +1935,7 @@ void nsWindow::SetInputRegion(const InputRegion& aInputRegion) {
 void nsWindow::SetSizeConstraints(const SizeConstraints& aConstraints) {
   SizeConstraints c = aConstraints;
 
-  if (mWindowType != eWindowType_popup && mResizable) {
+  if (mWindowType != WindowType::Popup && mResizable) {
     c.mMinSize.width =
         std::max(int32_t(::GetSystemMetrics(SM_CXMINTRACK)), c.mMinSize.width);
     c.mMinSize.height =
@@ -1979,8 +1979,8 @@ const SizeConstraints nsWindow::GetSizeConstraints() {
 
 // Move this component
 void nsWindow::Move(double aX, double aY) {
-  if (mWindowType == eWindowType_toplevel ||
-      mWindowType == eWindowType_dialog) {
+  if (mWindowType == WindowType::TopLevel ||
+      mWindowType == WindowType::Dialog) {
     SetSizeMode(nsSizeMode_Normal);
   }
 
@@ -1999,7 +1999,7 @@ void nsWindow::Move(double aX, double aY) {
   // Only perform this check for non-popup windows, since the positioning can
   // in fact change even when the x/y do not.  We always need to perform the
   // check. See bug #97805 for details.
-  if (mWindowType != eWindowType_popup && mBounds.IsEqualXY(x, y)) {
+  if (mWindowType != WindowType::Popup && mBounds.IsEqualXY(x, y)) {
     // Nothing to do, since it is already positioned correctly.
     return;
   }
@@ -2536,7 +2536,7 @@ LayoutDeviceIntRect nsWindow::GetBounds() {
 
   // popup window bounds' are in screen coordinates, not relative to parent
   // window
-  if (mWindowType == eWindowType_popup) {
+  if (mWindowType == WindowType::Popup) {
     rect.MoveTo(r.left, r.top);
     return rect;
   }
@@ -2670,14 +2670,9 @@ void nsWindow::SetDrawsInTitlebar(bool aState) {
     return window->SetDrawsInTitlebar(aState);
   }
 
-  if (aState) {
-    // top, right, bottom, left for nsIntMargin
-    LayoutDeviceIntMargin margins(0, -1, -1, -1);
-    SetNonClientMargins(margins);
-  } else {
-    LayoutDeviceIntMargin margins(-1, -1, -1, -1);
-    SetNonClientMargins(margins);
-  }
+  // top, right, bottom, left
+  SetNonClientMargins(aState ? LayoutDeviceIntMargin(0, -1, -1, -1)
+                             : LayoutDeviceIntMargin(-1, -1, -1, -1));
 }
 
 void nsWindow::ResetLayout() {
@@ -2756,6 +2751,54 @@ void nsWindow::UpdateDarkModeToolbar() {
                         sizeof dark);
 }
 
+LayoutDeviceIntMargin nsWindow::NormalWindowNonClientOffset() const {
+  bool glass = gfxWindowsPlatform::GetPlatform()->DwmCompositionEnabled();
+
+  LayoutDeviceIntMargin nonClientOffset;
+
+  // We're dealing with a "normal" window (not maximized, minimized, or
+  // fullscreen), so process `mNonClientMargins` and set `mNonClientOffset`
+  // accordingly.
+  //
+  // Setting `mNonClientOffset` to 0 has the effect of leaving the default
+  // frame intact.  Setting it to a value greater than 0 reduces the frame
+  // size by that amount.
+
+  if (mNonClientMargins.top > 0 && glass) {
+    nonClientOffset.top = std::min(mCaptionHeight, mNonClientMargins.top);
+  } else if (mNonClientMargins.top == 0) {
+    nonClientOffset.top = mCaptionHeight;
+  } else {
+    nonClientOffset.top = 0;
+  }
+
+  if (mNonClientMargins.bottom > 0 && glass) {
+    nonClientOffset.bottom =
+        std::min(mVertResizeMargin, mNonClientMargins.bottom);
+  } else if (mNonClientMargins.bottom == 0) {
+    nonClientOffset.bottom = mVertResizeMargin;
+  } else {
+    nonClientOffset.bottom = 0;
+  }
+
+  if (mNonClientMargins.left > 0 && glass) {
+    nonClientOffset.left = std::min(mHorResizeMargin, mNonClientMargins.left);
+  } else if (mNonClientMargins.left == 0) {
+    nonClientOffset.left = mHorResizeMargin;
+  } else {
+    nonClientOffset.left = 0;
+  }
+
+  if (mNonClientMargins.right > 0 && glass) {
+    nonClientOffset.right = std::min(mHorResizeMargin, mNonClientMargins.right);
+  } else if (mNonClientMargins.right == 0) {
+    nonClientOffset.right = mHorResizeMargin;
+  } else {
+    nonClientOffset.right = 0;
+  }
+  return nonClientOffset;
+}
+
 /**
  * Called when the window layout changes: full screen mode transitions,
  * theme changes, and composition changes. Calculates the new non-client
@@ -2788,8 +2831,9 @@ bool nsWindow::UpdateNonClientMargins(bool aReflowWindow) {
 
   const nsSizeMode sizeMode = mFrameState->GetSizeMode();
 
-  bool hasCaption = (mBorderStyle & (eBorderStyle_all | eBorderStyle_title |
-                                     eBorderStyle_menu | eBorderStyle_default));
+  bool hasCaption =
+      bool(mBorderStyle & (BorderStyle::All | BorderStyle::Title |
+                           BorderStyle::Menu | BorderStyle::Default));
 
   float dpi = GetDPI();
 
@@ -2906,50 +2950,7 @@ bool nsWindow::UpdateNonClientMargins(bool aReflowWindow) {
       }
     }
   } else {
-    bool glass = gfxWindowsPlatform::GetPlatform()->DwmCompositionEnabled();
-
-    // We're dealing with a "normal" window (not maximized, minimized, or
-    // fullscreen), so process `mNonClientMargins` and set `mNonClientOffset`
-    // accordingly.
-    //
-    // Setting `mNonClientOffset` to 0 has the effect of leaving the default
-    // frame intact.  Setting it to a value greater than 0 reduces the frame
-    // size by that amount.
-
-    if (mNonClientMargins.top > 0 && glass) {
-      mNonClientOffset.top = std::min(mCaptionHeight, mNonClientMargins.top);
-    } else if (mNonClientMargins.top == 0) {
-      mNonClientOffset.top = mCaptionHeight;
-    } else {
-      mNonClientOffset.top = 0;
-    }
-
-    if (mNonClientMargins.bottom > 0 && glass) {
-      mNonClientOffset.bottom =
-          std::min(mVertResizeMargin, mNonClientMargins.bottom);
-    } else if (mNonClientMargins.bottom == 0) {
-      mNonClientOffset.bottom = mVertResizeMargin;
-    } else {
-      mNonClientOffset.bottom = 0;
-    }
-
-    if (mNonClientMargins.left > 0 && glass) {
-      mNonClientOffset.left =
-          std::min(mHorResizeMargin, mNonClientMargins.left);
-    } else if (mNonClientMargins.left == 0) {
-      mNonClientOffset.left = mHorResizeMargin;
-    } else {
-      mNonClientOffset.left = 0;
-    }
-
-    if (mNonClientMargins.right > 0 && glass) {
-      mNonClientOffset.right =
-          std::min(mHorResizeMargin, mNonClientMargins.right);
-    } else if (mNonClientMargins.right == 0) {
-      mNonClientOffset.right = mHorResizeMargin;
-    } else {
-      mNonClientOffset.right = 0;
-    }
+    mNonClientOffset = NormalWindowNonClientOffset();
   }
 
   if (aReflowWindow) {
@@ -2961,8 +2962,8 @@ bool nsWindow::UpdateNonClientMargins(bool aReflowWindow) {
   return true;
 }
 
-nsresult nsWindow::SetNonClientMargins(LayoutDeviceIntMargin& margins) {
-  if (!mIsTopWidgetWindow || mBorderStyle == eBorderStyle_none)
+nsresult nsWindow::SetNonClientMargins(const LayoutDeviceIntMargin& margins) {
+  if (!mIsTopWidgetWindow || mBorderStyle == BorderStyle::None)
     return NS_ERROR_INVALID_ARG;
 
   if (mHideChrome) {
@@ -3274,11 +3275,11 @@ void nsWindow::SetCursor(const Cursor& aCursor) {
  *
  **************************************************************/
 
-nsTransparencyMode nsWindow::GetTransparencyMode() {
+TransparencyMode nsWindow::GetTransparencyMode() {
   return GetTopLevelWindow(true)->GetWindowTranslucencyInner();
 }
 
-void nsWindow::SetTransparencyMode(nsTransparencyMode aMode) {
+void nsWindow::SetTransparencyMode(TransparencyMode aMode) {
   nsWindow* window = GetTopLevelWindow(true);
   MOZ_ASSERT(window);
 
@@ -3286,7 +3287,7 @@ void nsWindow::SetTransparencyMode(nsTransparencyMode aMode) {
     return;
   }
 
-  if (nsWindowType::eWindowType_toplevel == window->mWindowType &&
+  if (WindowType::TopLevel == window->mWindowType &&
       mTransparencyMode != aMode &&
       !gfxWindowsPlatform::GetPlatform()->DwmCompositionEnabled()) {
     NS_WARNING("Cannot set transparency mode on top-level windows.");
@@ -3351,7 +3352,7 @@ void nsWindow::UpdateGlass() {
   //                          enabled; the window style is ignored.
   DWMNCRENDERINGPOLICY policy = DWMNCRP_USEWINDOWSTYLE;
   switch (mTransparencyMode) {
-    case eTransparencyBorderlessGlass:
+    case TransparencyMode::BorderlessGlass:
       // Only adjust if there is some opaque rectangle
       if (margins.cxLeftWidth >= 0) {
         margins.cxLeftWidth += kGlassMarginAdjustment;
@@ -3660,10 +3661,6 @@ void nsWindow::OnFullscreenWillChange(bool aFullScreen) {
 }
 
 void nsWindow::OnFullscreenChanged(nsSizeMode aOldSizeMode, bool aFullScreen) {
-  // If we are going fullscreen, the window size continues to change
-  // and the window will be reflow again then.
-  UpdateNonClientMargins(/* Reflow */ !aFullScreen);
-
   // Hide chrome and reposition window. Note this will also cache dimensions for
   // restoration, so it should only be called once per fullscreen request.
   //
@@ -3675,15 +3672,6 @@ void nsWindow::OnFullscreenChanged(nsSizeMode aOldSizeMode, bool aFullScreen) {
   if (!toOrFromMinimized) {
     InfallibleMakeFullScreen(aFullScreen);
   }
-
-  if (mIsVisible && !aFullScreen &&
-      mFrameState->GetSizeMode() == nsSizeMode_Normal) {
-    // Ensure the window exiting fullscreen get activated. Window
-    // activation might be bypassed in SetSizeMode.
-    DispatchFocusToTopLevelWindow(true);
-  }
-
-  OnSizeModeChange();
 
   if (mWidgetListener) {
     mWidgetListener->FullscreenChanged(aFullScreen);
@@ -3879,20 +3867,31 @@ LayoutDeviceIntPoint nsWindow::WidgetToScreenOffset() {
   return LayoutDeviceIntPoint(point.x, point.y);
 }
 
-LayoutDeviceIntSize nsWindow::ClientToWindowSize(
-    const LayoutDeviceIntSize& aClientSize) {
-  if (mWindowType == eWindowType_popup && !IsPopupWithTitleBar())
-    return aClientSize;
+LayoutDeviceIntMargin nsWindow::ClientToWindowMargin() {
+  if (mWindowType == WindowType::Popup && !IsPopupWithTitleBar()) {
+    return {};
+  }
 
-  // just use (200, 200) as the position
-  RECT r;
-  r.left = 200;
-  r.top = 200;
-  r.right = 200 + aClientSize.width;
-  r.bottom = 200 + aClientSize.height;
-  ::AdjustWindowRectEx(&r, WindowStyle(), false, WindowExStyle());
+  if (mCustomNonClient) {
+    return NonClientSizeMargin(NormalWindowNonClientOffset());
+  }
 
-  return LayoutDeviceIntSize(r.right - r.left, r.bottom - r.top);
+  // Just use a dummy 200x200 at (200, 200) client rect as the rect.
+  RECT clientRect;
+  clientRect.left = 200;
+  clientRect.top = 200;
+  clientRect.right = 400;
+  clientRect.bottom = 400;
+
+  auto ToRect = [](const RECT& aRect) -> LayoutDeviceIntRect {
+    return {aRect.left, aRect.top, aRect.right - aRect.left,
+            aRect.bottom - aRect.top};
+  };
+
+  RECT windowRect = clientRect;
+  ::AdjustWindowRectEx(&windowRect, WindowStyle(), false, WindowExStyle());
+
+  return ToRect(windowRect) - ToRect(clientRect);
 }
 
 /**************************************************************
@@ -4473,7 +4472,7 @@ bool nsWindow::DispatchMouseEvent(EventMessage aEventMessage, WPARAM wParam,
   // Postpone initialization until first PEN message will be found.
   if (MouseEvent_Binding::MOZ_SOURCE_PEN == aInputSource
       // Messages should be only at topLevel window.
-      && nsWindowType::eWindowType_toplevel == mWindowType
+      && WindowType::TopLevel == mWindowType
       // Currently this scheme is used only when pointer events is enabled.
       && InkCollector::sInkCollector) {
     InkCollector::sInkCollector->SetTarget(mWnd);
@@ -4664,8 +4663,8 @@ HWND nsWindow::GetTopLevelForFocus(HWND aCurWnd) {
     toplevelWnd = aCurWnd;
     nsWindow* win = WinUtils::GetNSWindowPtr(aCurWnd);
     if (win) {
-      if (win->mWindowType == eWindowType_toplevel ||
-          win->mWindowType == eWindowType_dialog) {
+      if (win->mWindowType == WindowType::TopLevel ||
+          win->mWindowType == WindowType::Dialog) {
         break;
       }
     }
@@ -5256,7 +5255,7 @@ bool nsWindow::ProcessMessageInternal(UINT msg, WPARAM& wParam, LPARAM& lParam,
       // We only handle this message for the hidden window,
       // as we only need to update the (global) font list once
       // for any given change, not once per window!
-      if (mWindowType != eWindowType_invisible) {
+      if (mWindowType != WindowType::Invisible) {
         break;
       }
 
@@ -5276,7 +5275,7 @@ bool nsWindow::ProcessMessageInternal(UINT msg, WPARAM& wParam, LPARAM& lParam,
 
     case WM_SETTINGCHANGE: {
       if (wParam == SPI_SETCLIENTAREAANIMATION ||
-          wParam == SPI_SETKEYBOARDCUES || wParam == SPI_SETKEYBOARDDELAY) {
+          wParam == SPI_SETKEYBOARDDELAY) {
         // These need to update LookAndFeel cached values.
         // They affect reduced motion settings / caret blink count / and
         // keyboard cues, so no need to invalidate style / layout.
@@ -5310,7 +5309,7 @@ bool nsWindow::ProcessMessageInternal(UINT msg, WPARAM& wParam, LPARAM& lParam,
         //  only respond to the hidden top-level window to avoid hammering
         //  layout with a bunch of NotifyThemeChanged() calls)
         //
-        if (mWindowType == eWindowType_invisible) {
+        if (mWindowType == WindowType::Invisible) {
           if (!wcscmp(lParamString, L"UserInteractionMode") ||
               !wcscmp(lParamString, L"ConvertibleSlateMode") ||
               !wcscmp(lParamString, L"SystemDockMode")) {
@@ -5365,10 +5364,11 @@ bool nsWindow::ProcessMessageInternal(UINT msg, WPARAM& wParam, LPARAM& lParam,
         RECT* clientRect =
             wParam ? &(reinterpret_cast<NCCALCSIZE_PARAMS*>(lParam))->rgrc[0]
                    : (reinterpret_cast<RECT*>(lParam));
-        clientRect->top += mCaptionHeight - mNonClientOffset.top;
-        clientRect->left += mHorResizeMargin - mNonClientOffset.left;
-        clientRect->right -= mHorResizeMargin - mNonClientOffset.right;
-        clientRect->bottom -= mVertResizeMargin - mNonClientOffset.bottom;
+        auto margin = NonClientSizeMargin();
+        clientRect->top += margin.top;
+        clientRect->left += margin.left;
+        clientRect->right -= margin.right;
+        clientRect->bottom -= margin.bottom;
         // Make client rect's width and height more than 0 to
         // avoid problems of webrender and angle.
         clientRect->right = std::max(clientRect->right, clientRect->left + 1);
@@ -6295,7 +6295,7 @@ bool nsWindow::ProcessMessageInternal(UINT msg, WPARAM& wParam, LPARAM& lParam,
       break;
 
     case WM_GESTURENOTIFY: {
-      if (mWindowType != eWindowType_invisible) {
+      if (mWindowType != WindowType::Invisible) {
         // A GestureNotify event is dispatched to decide which single-finger
         // panning direction should be active (including none) and if pan
         // feedback should be displayed. Java and plugin windows can make their
@@ -6453,6 +6453,14 @@ BOOL CALLBACK nsWindow::BroadcastMsg(HWND aTopWindow, LPARAM aMsg) {
  *
  **************************************************************/
 
+LayoutDeviceIntMargin nsWindow::NonClientSizeMargin(
+    const LayoutDeviceIntMargin& aNonClientOffset) const {
+  return LayoutDeviceIntMargin(mCaptionHeight - aNonClientOffset.top,
+                               mHorResizeMargin - aNonClientOffset.right,
+                               mVertResizeMargin - aNonClientOffset.bottom,
+                               mHorResizeMargin - aNonClientOffset.left);
+}
+
 int32_t nsWindow::ClientMarginHitTestPoint(int32_t aX, int32_t aY) {
   const nsSizeMode sizeMode = mFrameState->GetSizeMode();
   if (sizeMode == nsSizeMode_Minimized || sizeMode == nsSizeMode_Fullscreen) {
@@ -6478,18 +6486,15 @@ int32_t nsWindow::ClientMarginHitTestPoint(int32_t aX, int32_t aY) {
   const bool isResizable =
       sizeMode != nsSizeMode_Maximized &&
       (mBorderStyle &
-       (eBorderStyle_all | eBorderStyle_resizeh | eBorderStyle_default));
+       (BorderStyle::All | BorderStyle::ResizeH | BorderStyle::Default));
+
+  LayoutDeviceIntMargin nonClientSizeMargin = NonClientSizeMargin();
 
   // Ensure being accessible to borders of window.  Even if contents are in
   // this area, the area must behave as border.
-  const LayoutDeviceIntMargin nonClientSizeMargin(
-      std::max(mCaptionHeight - mNonClientOffset.top, kResizableBorderMinSize),
-      std::max(mHorResizeMargin - mNonClientOffset.right,
-               kResizableBorderMinSize),
-      std::max(mVertResizeMargin - mNonClientOffset.bottom,
-               kResizableBorderMinSize),
-      std::max(mHorResizeMargin - mNonClientOffset.left,
-               kResizableBorderMinSize));
+  nonClientSizeMargin.EnsureAtLeast(
+      LayoutDeviceIntMargin(kResizableBorderMinSize, kResizableBorderMinSize,
+                            kResizableBorderMinSize, kResizableBorderMinSize));
 
   LayoutDeviceIntRect clientRect = winRect;
   clientRect.Deflate(nonClientSizeMargin);
@@ -6804,28 +6809,6 @@ nsresult nsWindow::SynthesizeNativeTouchpadPan(TouchpadGesturePhase aEventPhase,
   return NS_OK;
 }
 
-static void MaybeLogSizeMode(nsSizeMode aMode) {
-#ifdef WINSTATE_DEBUG_OUTPUT
-  switch (aMode) {
-    case nsSizeMode_Normal:
-      MOZ_LOG(gWindowsLog, LogLevel::Info,
-              ("*** SizeMode: nsSizeMode_Normal\n"));
-      break;
-    case nsSizeMode_Minimized:
-      MOZ_LOG(gWindowsLog, LogLevel::Info,
-              ("*** SizeMode: nsSizeMode_Minimized\n"));
-      break;
-    case nsSizeMode_Maximized:
-      MOZ_LOG(gWindowsLog, LogLevel::Info,
-              ("*** SizeMode: nsSizeMode_Maximized\n"));
-      break;
-    default:
-      MOZ_LOG(gWindowsLog, LogLevel::Info, ("*** SizeMode: ??????\n"));
-      break;
-  }
-#endif
-}
-
 static void MaybeLogPosChanged(HWND aWnd, WINDOWPOS* wp) {
 #ifdef WINSTATE_DEBUG_OUTPUT
   if (aWnd == WinUtils::GetTopLevelHWND(aWnd)) {
@@ -7068,14 +7051,14 @@ void nsWindow::OnWindowPosChanging(WINDOWPOS* info) {
     }
   }
   // prevent rude external programs from making hidden window visible
-  if (mWindowType == eWindowType_invisible) info->flags &= ~SWP_SHOWWINDOW;
+  if (mWindowType == WindowType::Invisible) info->flags &= ~SWP_SHOWWINDOW;
 
   // When waking from sleep or switching out of tablet mode, Windows 10
   // Version 1809 will reopen popup windows that should be hidden. Detect
   // this case and refuse to show the window.
   static bool sDWMUnhidesPopups = IsWin10Sep2018UpdateOrLater();
   if (sDWMUnhidesPopups && (info->flags & SWP_SHOWWINDOW) &&
-      mWindowType == eWindowType_popup && mWidgetListener &&
+      mWindowType == WindowType::Popup && mWidgetListener &&
       mWidgetListener->ShouldNotBeVisible()) {
     info->flags &= ~SWP_SHOWWINDOW;
   }
@@ -7449,7 +7432,7 @@ void nsWindow::OnDestroy() {
     rollupWidget = rollupListener->GetRollupWidget();
   }
   if (this == rollupWidget) {
-    if (rollupListener) rollupListener->Rollup(0, false, nullptr, nullptr);
+    rollupListener->Rollup({});
     CaptureRollupEvents(false);
   }
 
@@ -7506,6 +7489,8 @@ void nsWindow::OnSizeModeChange() {
   MOZ_LOG(gWindowsLog, LogLevel::Info,
           ("nsWindow::OnSizeModeChange() sizeMode %d", mode));
 
+  UpdateNonClientMargins(false);
+
   if (NeedsToTrackWindowOcclusionState()) {
     WinWindowOcclusionTracker::Get()->OnWindowVisibilityChanged(
         this, mode != nsSizeMode_Minimized);
@@ -7533,16 +7518,16 @@ bool nsWindow::OnHotKey(WPARAM wParam, LPARAM lParam) { return true; }
 // Can be overriden. Controls auto-erase of background.
 bool nsWindow::AutoErase(HDC dc) { return false; }
 
-bool nsWindow::IsPopup() { return mWindowType == eWindowType_popup; }
+bool nsWindow::IsPopup() { return mWindowType == WindowType::Popup; }
 
 bool nsWindow::ShouldUseOffMainThreadCompositing() {
-  if (mWindowType == eWindowType_popup && mPopupType == ePopupTypeTooltip) {
+  if (mWindowType == WindowType::Popup && mPopupType == PopupType::Tooltip) {
     return false;
   }
 
   // Content rendering of popup is always done by child window.
   // See nsDocumentViewer::ShouldAttachToTopLevel().
-  if (mWindowType == eWindowType_popup && !mIsChildWindow) {
+  if (mWindowType == WindowType::Popup && !mIsChildWindow) {
     MOZ_ASSERT(!mParent);
     return false;
   }
@@ -7596,7 +7581,7 @@ void nsWindow::OnDPIChanged(int32_t x, int32_t y, int32_t width,
                             int32_t height) {
   // Don't try to handle WM_DPICHANGED for popup windows (see bug 1239353);
   // they remain tied to their original parent's resolution.
-  if (mWindowType == eWindowType_popup) {
+  if (mWindowType == WindowType::Popup) {
     return;
   }
   if (StaticPrefs::layout_css_devPixelsPerPx() > 0.0) {
@@ -7755,7 +7740,7 @@ a11y::LocalAccessible* nsWindow::GetAccessible() {
   if (a11y::PlatformDisabledState() == a11y::ePlatformIsDisabled)
     return nullptr;
 
-  if (mInDtor || mOnDestroyCalled || mWindowType == eWindowType_invisible) {
+  if (mInDtor || mOnDestroyCalled || mWindowType == WindowType::Invisible) {
     return nullptr;
   }
 
@@ -7794,7 +7779,7 @@ a11y::LocalAccessible* nsWindow::GetAccessible() {
  **************************************************************
  **************************************************************/
 
-void nsWindow::SetWindowTranslucencyInner(nsTransparencyMode aMode) {
+void nsWindow::SetWindowTranslucencyInner(TransparencyMode aMode) {
   if (aMode == mTransparencyMode) return;
 
   // stop on dialogs and popups!
@@ -7811,11 +7796,12 @@ void nsWindow::SetWindowTranslucencyInner(nsTransparencyMode aMode) {
         "Setting SetWindowTranslucencyInner on a parent this is not us!");
   }
 
-  if (aMode == eTransparencyTransparent) {
+  if (aMode == TransparencyMode::Transparent) {
     // If we're switching to the use of a transparent window, hide the chrome
     // on our parent.
     HideWindowChrome(true);
-  } else if (mHideChrome && mTransparencyMode == eTransparencyTransparent) {
+  } else if (mHideChrome &&
+             mTransparencyMode == TransparencyMode::Transparent) {
     // if we're switching out of transparent, re-enable our parent's chrome.
     HideWindowChrome(false);
   }
@@ -7832,7 +7818,7 @@ void nsWindow::SetWindowTranslucencyInner(nsTransparencyMode aMode) {
     }
   }
 
-  if (aMode == eTransparencyTransparent)
+  if (aMode == TransparencyMode::Transparent)
     exStyle |= WS_EX_LAYERED;
   else
     exStyle &= ~WS_EX_LAYERED;
@@ -8441,6 +8427,11 @@ bool nsWindow::DealWithPopups(HWND aWnd, UINT aMessage, WPARAM aWParam,
   // Only need to deal with the last rollup for left mouse down events.
   NS_ASSERTION(!nsAutoRollup::GetLastRollup(), "last rollup is null");
 
+  nsIRollupListener::RollupOptions rollupOptions{
+      popupsToRollup,
+      nsIRollupListener::FlushViews::Yes,
+  };
+
   if (nativeMessage == WM_TOUCH || nativeMessage == WM_LBUTTONDOWN ||
       nativeMessage == WM_POINTERDOWN) {
     LayoutDeviceIntPoint pos;
@@ -8458,13 +8449,12 @@ bool nsWindow::DealWithPopups(HWND aWnd, UINT aMessage, WPARAM aWParam,
       pos = LayoutDeviceIntPoint(pt.x, pt.y);
     }
 
-    nsIContent* lastRollup;
-    consumeRollupEvent =
-        rollupListener->Rollup(popupsToRollup, true, &pos, &lastRollup);
+    rollupOptions.mPoint = &pos;
+    nsIContent* lastRollup = nullptr;
+    consumeRollupEvent = rollupListener->Rollup(rollupOptions, &lastRollup);
     nsAutoRollup::SetLastRollup(lastRollup);
   } else {
-    consumeRollupEvent =
-        rollupListener->Rollup(popupsToRollup, true, nullptr, nullptr);
+    consumeRollupEvent = rollupListener->Rollup(rollupOptions);
   }
 
   // Tell hook to stop processing messages
@@ -8501,8 +8491,8 @@ nsWindow* nsWindow::GetTopLevelWindow(bool aStopOnDialogOrPopup) {
   while (true) {
     if (aStopOnDialogOrPopup) {
       switch (curWindow->mWindowType) {
-        case eWindowType_dialog:
-        case eWindowType_popup:
+        case WindowType::Dialog:
+        case WindowType::Popup:
           return curWindow;
         default:
           break;
@@ -8670,7 +8660,7 @@ bool nsWindow::WidgetTypeSupportsAcceleration() {
   // Also see bug 1150376, D3D11 composition can cause issues on some devices
   // on Windows 7 where presentation fails randomly for windows with drop
   // shadows.
-  return mTransparencyMode != eTransparencyTransparent &&
+  return mTransparencyMode != TransparencyMode::Transparent &&
          !(IsPopup() && DeviceManagerDx::Get()->IsWARP());
 }
 
@@ -9292,26 +9282,28 @@ void nsWindow::FrameState::ConsumePreXULSkeletonState(bool aWasMaximized) {
   mSizeMode = aWasMaximized ? nsSizeMode_Maximized : nsSizeMode_Normal;
 }
 
-void nsWindow::FrameState::EnsureSizeMode(nsSizeMode aMode) {
+void nsWindow::FrameState::EnsureSizeMode(nsSizeMode aMode,
+                                          DoShowWindow aDoShowWindow) {
   if (mSizeMode == aMode) {
     return;
   }
 
   if (aMode == nsSizeMode_Fullscreen) {
-    EnsureFullscreenMode(true);
+    EnsureFullscreenMode(true, aDoShowWindow);
     MOZ_ASSERT(mSizeMode == nsSizeMode_Fullscreen);
   } else if (mSizeMode == nsSizeMode_Fullscreen && aMode == nsSizeMode_Normal) {
     // If we are in fullscreen mode, minimize should work like normal and
     // return us to fullscreen mode when unminimized. Maximize isn't really
     // available and won't do anything. "Restore" should do the same thing as
     // requesting to end fullscreen.
-    EnsureFullscreenMode(false);
+    EnsureFullscreenMode(false, aDoShowWindow);
   } else {
-    SetSizeModeInternal(aMode);
+    SetSizeModeInternal(aMode, aDoShowWindow);
   }
 }
 
-void nsWindow::FrameState::EnsureFullscreenMode(bool aFullScreen) {
+void nsWindow::FrameState::EnsureFullscreenMode(bool aFullScreen,
+                                                DoShowWindow aDoShowWindow) {
   const bool changed = aFullScreen != mFullscreenMode;
   if (changed && aFullScreen) {
     // Save the size mode from before fullscreen.
@@ -9324,60 +9316,50 @@ void nsWindow::FrameState::EnsureFullscreenMode(bool aFullScreen) {
     // make sure to call SetSizeModeInternal even if mFullscreenMode didn't
     // change, to ensure we actually end up with a fullscreen sizemode when
     // restoring a window from that state.
-    SetSizeModeInternal(aFullScreen ? nsSizeMode_Fullscreen
-                                    : mPreFullscreenSizeMode);
+    SetSizeModeInternal(
+        aFullScreen ? nsSizeMode_Fullscreen : mPreFullscreenSizeMode,
+        aDoShowWindow);
   }
 }
 
 void nsWindow::FrameState::OnFrameChanging() {
-  if (mSizeMode == nsSizeMode_Fullscreen) {
-    return;
-  }
-
   const nsSizeMode newSizeMode =
       GetSizeModeForWindowFrame(mWindow->mWnd, mFullscreenMode);
   EnsureSizeMode(newSizeMode);
-  mWindow->OnSizeModeChange();
   mWindow->UpdateNonClientMargins(false);
 }
 
 void nsWindow::FrameState::OnFrameChanged() {
-  if (mSizeMode == nsSizeMode_Fullscreen) {
-    return;
+  // We don't want to perform the ShowWindow ourselves if we're on the frame
+  // changed message. Windows has done the frame change for us, and we take care
+  // of activating as needed. We also don't want to potentially trigger
+  // more focus / restore. Among other things, this addresses a bug on Win7
+  // related to window docking. (bug 489258)
+  const auto newSizeMode =
+      GetSizeModeForWindowFrame(mWindow->mWnd, mFullscreenMode);
+  EnsureSizeMode(newSizeMode, DoShowWindow::No);
+
+  // If window was restored, activate the window now to get correct attributes.
+  if (mWindow->mIsVisible && mLastSizeMode != mSizeMode &&
+      mSizeMode != nsSizeMode_Minimized) {
+    mWindow->DispatchFocusToTopLevelWindow(true);
   }
-
-  const nsSizeMode previousSizeMode = mSizeMode;
-
-  // Windows has just changed the size mode of this window. We don't want to go
-  // through EnsureSizeMode because there we would set the min/max window state
-  // again or for nsSizeMode_Normal, call SetWindow with a parameter of
-  // SW_RESTORE.
-  // There's no need as this window's mode has already changed.
-  // This addresses a bug on Win7 related to window docking. (bug 489258)
-  mSizeMode = GetSizeModeForWindowFrame(mWindow->mWnd, mFullscreenMode);
-
-  MaybeLogSizeMode(mSizeMode);
-
-  if (mSizeMode != previousSizeMode) {
-    mWindow->OnSizeModeChange();
-  }
-
-  // If window was restored, window activation was bypassed during the
-  // SetSizeMode call originating from OnWindowPosChanging to avoid saving
-  // pre-restore attributes. Force activation now to get correct attributes.
-  if (mLastSizeMode != mSizeMode) {
-    if (mSizeMode == nsSizeMode_Normal) {
-      mWindow->DispatchFocusToTopLevelWindow(true);
-    }
-    mLastSizeMode = mSizeMode;
-  }
+  mLastSizeMode = mSizeMode;
 }
 
-void nsWindow::FrameState::SetSizeModeInternal(nsSizeMode aMode) {
+static void MaybeLogSizeMode(nsSizeMode aMode) {
+#ifdef WINSTATE_DEBUG_OUTPUT
+  MOZ_LOG(gWindowsLog, LogLevel::Info, ("*** SizeMode: %d\n", int(aMode)));
+#endif
+}
+
+void nsWindow::FrameState::SetSizeModeInternal(nsSizeMode aMode,
+                                               DoShowWindow aDoShowWindow) {
   if (mSizeMode == aMode) {
     return;
   }
 
+  const auto oldSizeMode = mSizeMode;
   const bool fullscreenChange =
       mSizeMode == nsSizeMode_Fullscreen || aMode == nsSizeMode_Fullscreen;
   const bool fullscreen = aMode == nsSizeMode_Fullscreen;
@@ -9386,19 +9368,16 @@ void nsWindow::FrameState::SetSizeModeInternal(nsSizeMode aMode) {
     mWindow->OnFullscreenWillChange(fullscreen);
   }
 
-  const auto oldSizeMode = mSizeMode;
-  mLastSizeMode = oldSizeMode;
+  mLastSizeMode = mSizeMode;
   mSizeMode = aMode;
 
-  if (mWindow->mIsVisible) {
+  MaybeLogSizeMode(mSizeMode);
+
+  if (bool(aDoShowWindow) && mWindow->mIsVisible) {
     ShowWindowWithMode(mWindow->mWnd, aMode);
   }
 
-  // we activate here to ensure that the right child window is focused
-  if (mWindow->mIsVisible &&
-      (aMode == nsSizeMode_Maximized || aMode == nsSizeMode_Fullscreen)) {
-    mWindow->DispatchFocusToTopLevelWindow(true);
-  }
+  mWindow->OnSizeModeChange();
 
   if (fullscreenChange) {
     mWindow->OnFullscreenChanged(oldSizeMode, fullscreen);

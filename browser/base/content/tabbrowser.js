@@ -94,10 +94,6 @@
       MULTI_SELECTED: 4,
     },
 
-    _visibleTabs: null,
-
-    _tabs: null,
-
     _lastRelatedTabMap: new WeakMap(),
 
     mProgressListeners: [],
@@ -259,10 +255,7 @@
     },
 
     get tabs() {
-      if (!this._tabs) {
-        this._tabs = this.tabContainer.allTabs;
-      }
-      return this._tabs;
+      return this.tabContainer.allTabs;
     },
 
     get tabbox() {
@@ -288,13 +281,7 @@
     },
 
     get visibleTabs() {
-      if (!this._visibleTabs) {
-        this._visibleTabs = Array.prototype.filter.call(
-          this.tabs,
-          tab => !tab.hidden && !tab.closing
-        );
-      }
-      return this._visibleTabs;
+      return this.tabContainer._getVisibleTabs();
     },
 
     get _numPinnedTabs() {
@@ -342,7 +329,7 @@
       return this._featureCalloutPanelId;
     },
 
-    _instantiateFeatureCalloutTour(location, panelId) {
+    _instantiateFeatureCalloutTour(browser, panelId) {
       this._featureCalloutPanelId = panelId;
       const { FeatureCallout } = ChromeUtils.importESModule(
         "resource:///modules/FeatureCallout.sys.mjs"
@@ -351,8 +338,9 @@
       // only use PDF.js pref value when navigating to PDF viewer
       this._featureCallout = new FeatureCallout({
         win: window,
+        browser,
         prefName: "browser.pdfjs.feature-tour",
-        source: location.spec,
+        page: "chrome",
       });
     },
     _setupInitialBrowserAndTab() {
@@ -604,15 +592,6 @@
 
     get userTypedValue() {
       return this.selectedBrowser.userTypedValue;
-    },
-
-    _invalidateCachedTabs() {
-      this._tabs = null;
-      this._visibleTabs = null;
-    },
-
-    _invalidateCachedVisibleTabs() {
-      this._visibleTabs = null;
     },
 
     _setFindbarData() {
@@ -1101,7 +1080,7 @@
         this._featureCallout &&
         this._featureCalloutPanelId !== newTab.linkedPanel
       ) {
-        this._featureCallout._endTour(true);
+        this._featureCallout.endTour(true);
         this._featureCallout = null;
       }
 
@@ -1110,12 +1089,9 @@
       // for callout messages on every change of tab location.
       if (
         !this._featureCallout &&
-        newBrowser.currentURI.spec.endsWith(".pdf")
+        newBrowser.contentPrincipal.originNoSuffix === "resource://pdf.js"
       ) {
-        this._instantiateFeatureCalloutTour(
-          newBrowser.currentURI,
-          newTab.linkedPanel
-        );
+        this._instantiateFeatureCalloutTour(newBrowser, newTab.linkedPanel);
         window.gBrowser.featureCallout.showFeatureCallout();
       }
 
@@ -1673,6 +1649,14 @@
       }
 
       return this._setTabLabel(aTab, title, { isContentTitle, isURL });
+    },
+
+    // While an auth prompt from a base domain different than the current sites is open, we do not want to show the tab title of the current site,
+    // but of the origin that is requesting authentication.
+    // This is to prevent possible auth spoofing scenarios.
+    // See bug 791594 for reference.
+    setTabLabelForAuthPrompts(aTab, aLabel) {
+      return this._setTabLabel(aTab, aLabel);
     },
 
     _setTabLabel(aTab, aLabel, { beforeTabOpen, isContentTitle, isURL } = {}) {
@@ -3038,7 +3022,7 @@
             tab._tPos = this._numPinnedTabs;
             this.tabContainer.insertBefore(tab, this.tabs[this._numPinnedTabs]);
             tab.setAttribute("pinned", "true");
-            this._invalidateCachedTabs();
+            this.tabContainer._invalidateCachedTabs();
             // Then ensure all the tab open/pinning information is sent.
             this._fireTabOpen(tab, {});
             this._notifyPinnedStatus(tab);
@@ -3054,7 +3038,7 @@
 
           tabsFragment.appendChild(tab);
           if (tabWasReused) {
-            this._invalidateCachedTabs();
+            this.tabContainer._invalidateCachedTabs();
           }
         }
 
@@ -3073,7 +3057,7 @@
         }
       }
 
-      this._invalidateCachedTabs();
+      this.tabContainer._invalidateCachedTabs();
       if (shouldUpdateForPinnedTabs) {
         this._updateTabBarForPinnedTabs();
       }
@@ -3303,7 +3287,7 @@
       }
 
       let tabAfter = this.tabs[index] || null;
-      this._invalidateCachedTabs();
+      this.tabContainer._invalidateCachedTabs();
       // Prevent a flash of unstyled content by setting up the tab content
       // and inherited attributes before appending it (see Bug 1592054):
       tab.initialize();
@@ -3979,7 +3963,7 @@
 
       aTab.closing = true;
       this._removingTabs.add(aTab);
-      this._invalidateCachedTabs();
+      this.tabContainer._invalidateCachedTabs();
 
       // Invalidate hovered tab state tracking for this closing tab.
       aTab._mouseleave();
@@ -4124,7 +4108,7 @@
 
       // Remove the tab ...
       aTab.remove();
-      this._invalidateCachedTabs();
+      this.tabContainer._invalidateCachedTabs();
 
       // Update hashiddentabs if this tab was hidden.
       if (aTab.hidden) {
@@ -4664,7 +4648,7 @@
         return;
       }
       aTab.removeAttribute("hidden");
-      this._invalidateCachedVisibleTabs();
+      this.tabContainer._invalidateCachedVisibleTabs();
 
       this.tabContainer._updateCloseButtons();
       this.tabContainer._updateHiddenTabsStatus();
@@ -4689,7 +4673,7 @@
         return;
       }
       aTab.setAttribute("hidden", "true");
-      this._invalidateCachedVisibleTabs();
+      this.tabContainer._invalidateCachedVisibleTabs();
 
       this.tabContainer._updateCloseButtons();
       this.tabContainer._updateHiddenTabsStatus();
@@ -4886,7 +4870,7 @@
       aIndex = aIndex < aTab._tPos ? aIndex : aIndex + 1;
 
       let neighbor = this.tabs[aIndex] || null;
-      this._invalidateCachedTabs();
+      this.tabContainer._invalidateCachedTabs();
       this.tabContainer.insertBefore(aTab, neighbor);
       this._updateTabsAfterInsert();
 
@@ -5063,8 +5047,8 @@
 
       const [lowerIndex, higherIndex] =
         indexOfTab1 < indexOfTab2
-          ? [indexOfTab1, indexOfTab2]
-          : [indexOfTab2, indexOfTab1];
+          ? [Math.max(0, indexOfTab1), indexOfTab2]
+          : [Math.max(0, indexOfTab2), indexOfTab1];
 
       for (let i = lowerIndex; i <= higherIndex; i++) {
         this.addToMultiSelectedTabs(tabs[i]);
@@ -6770,18 +6754,21 @@
             gBrowser.featureCallout &&
             (gBrowser.featureCalloutPanelId !==
               gBrowser.selectedTab.linkedPanel ||
-              !aLocation.spec.endsWith(".pdf"))
+              gBrowser.contentPrincipal.originNoSuffix !== "resource://pdf.js")
           ) {
-            gBrowser.featureCallout._endTour(true);
+            gBrowser.featureCallout.endTour(true);
             gBrowser.featureCallout = null;
           }
 
           // For now, only check for Feature Callout messages
           // when viewing PDFs. Later, we can expand this to check
           // for callout messages on every change of tab location.
-          if (!gBrowser.featureCallout && aLocation.spec.endsWith(".pdf")) {
+          if (
+            !gBrowser.featureCallout &&
+            gBrowser.contentPrincipal.originNoSuffix === "resource://pdf.js"
+          ) {
             gBrowser.instantiateFeatureCalloutTour(
-              aLocation,
+              gBrowser.selectedBrowser,
               gBrowser.selectedTab.linkedPanel
             );
             gBrowser.featureCallout.showFeatureCallout();

@@ -53,14 +53,14 @@ whereas subesource range specified start {subresource_base_mip_level} and count 
     InvalidTextureLevelRange {
         texture_level_range: Range<u32>,
         subresource_base_mip_level: u32,
-        subresource_mip_level_count: Option<NonZeroU32>,
+        subresource_mip_level_count: Option<u32>,
     },
     #[error("image subresource layer range is outside of the texture's layer range. texture range is {texture_layer_range:?},  \
 whereas subesource range specified start {subresource_base_array_layer} and count {subresource_array_layer_count:?}")]
     InvalidTextureLayerRange {
         texture_layer_range: Range<u32>,
         subresource_base_array_layer: u32,
-        subresource_array_layer_count: Option<NonZeroU32>,
+        subresource_array_layer_count: Option<u32>,
     },
 }
 
@@ -165,7 +165,7 @@ impl<G: GlobalIdentityHandlerFactory> Global<G> {
         if let Some(ref mut list) = cmd_buf.commands {
             list.push(TraceCommand::ClearTexture {
                 dst,
-                subresource_range: subresource_range.clone(),
+                subresource_range: *subresource_range,
             });
         }
 
@@ -188,12 +188,9 @@ impl<G: GlobalIdentityHandlerFactory> Global<G> {
         };
 
         // Check if subresource level range is valid
-        let subresource_level_end = match subresource_range.mip_level_count {
-            Some(count) => subresource_range.base_mip_level + count.get(),
-            None => dst_texture.full_range.mips.end,
-        };
-        if dst_texture.full_range.mips.start > subresource_range.base_mip_level
-            || dst_texture.full_range.mips.end < subresource_level_end
+        let subresource_mip_range = subresource_range.mip_range(dst_texture.full_range.mips.end);
+        if dst_texture.full_range.mips.start > subresource_mip_range.start
+            || dst_texture.full_range.mips.end < subresource_mip_range.end
         {
             return Err(ClearError::InvalidTextureLevelRange {
                 texture_level_range: dst_texture.full_range.mips.clone(),
@@ -202,12 +199,10 @@ impl<G: GlobalIdentityHandlerFactory> Global<G> {
             });
         }
         // Check if subresource layer range is valid
-        let subresource_layer_end = match subresource_range.array_layer_count {
-            Some(count) => subresource_range.base_array_layer + count.get(),
-            None => dst_texture.full_range.layers.end,
-        };
-        if dst_texture.full_range.layers.start > subresource_range.base_array_layer
-            || dst_texture.full_range.layers.end < subresource_layer_end
+        let subresource_layer_range =
+            subresource_range.layer_range(dst_texture.full_range.layers.end);
+        if dst_texture.full_range.layers.start > subresource_layer_range.start
+            || dst_texture.full_range.layers.end < subresource_layer_range.end
         {
             return Err(ClearError::InvalidTextureLayerRange {
                 texture_layer_range: dst_texture.full_range.layers.clone(),
@@ -222,8 +217,8 @@ impl<G: GlobalIdentityHandlerFactory> Global<G> {
             &*texture_guard,
             Valid(dst),
             TextureInitRange {
-                mip_range: subresource_range.base_mip_level..subresource_level_end,
-                layer_range: subresource_range.base_array_layer..subresource_layer_end,
+                mip_range: subresource_mip_range,
+                layer_range: subresource_layer_range,
             },
             cmd_buf.encoder.open(),
             &mut cmd_buf.trackers.textures,
@@ -308,7 +303,7 @@ pub(crate) fn clear_texture<A: HalApi>(
 }
 
 fn clear_texture_via_buffer_copies<A: hal::Api>(
-    texture_desc: &wgt::TextureDescriptor<()>,
+    texture_desc: &wgt::TextureDescriptor<(), Vec<wgt::TextureFormat>>,
     alignments: &hal::Alignments,
     zero_buffer: &A::Buffer, // Buffer of size device::ZERO_BUFFER_SIZE
     range: TextureInitRange,
@@ -408,9 +403,8 @@ fn clear_texture_via_render_passes<A: hal::Api>(
     };
 
     let sample_count = dst_texture.desc.sample_count;
-    let is_3d_texture = dst_texture.desc.dimension == wgt::TextureDimension::D3;
     for mip_level in range.mip_range {
-        let extent = extent_base.mip_level_size(mip_level, is_3d_texture);
+        let extent = extent_base.mip_level_size(mip_level, dst_texture.desc.dimension);
         let layer_or_depth_range = if dst_texture.desc.dimension == wgt::TextureDimension::D3 {
             // TODO: We assume that we're allowed to do clear operations on
             // volume texture slices, this is not properly specified.

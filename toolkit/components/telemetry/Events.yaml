@@ -124,12 +124,12 @@ aboutprivatebrowsing:
     record_in_processes: ["content"]
     description: >
       This is recorded when a user clicks a link on the private browsing newtab.
-    bug_numbers: [1709344, 1754635]
+    bug_numbers: [1709344, 1754635, 1781973, 1811146]
     notification_emails:
       - "dmosedale@mozilla.com"
       - "barret@mozilla.com"
       - "omc@mozilla.com"
-    expiry_version: "112"
+    expiry_version: "118"
     products:
       - "firefox"
 
@@ -474,11 +474,11 @@ blocklist:
         This field is documented in more detail in the definition of the blocklist.mlbf_source scalar.
         Possible values are "dump_match", "cache_match", "remote_match", "dump_fallback", "cache_fallback", "unknown".
     notification_emails: ["addons-dev-internal@mozilla.com", "rwu@mozilla.com"]
-    expiry_version: "112"
+    expiry_version: "122"
     products:
       - "firefox"
     record_in_processes: ["main"]
-    bug_numbers: [1662857, 1730037, 1763529]
+    bug_numbers: [1662857, 1730037, 1763529, 1811159]
     release_channel_collection: opt-out
 
 downloads:
@@ -573,7 +573,7 @@ address:
                   `filled`, `not_filled`, `user_filled` or `unavailable`
         'filled_modified': Recorded when a field is autofilled and then modified by the user.
                            Using field_name to record the field that triggers this event.
-        'submitted': Recorded when a form is submitted. Possible values are `autofilled`, `user_filled` or `unavailable`
+        'submitted': Recorded when a form is submitted. Possible values are `autofilled`, `not_filled`, `user_filled` or `unavailable`
         'cleared' Recorded when a form is cleared . Using field_name to record the field that triggers this event
     objects: ["address_form"]
     methods: ["detected", "popup_shown", "filled", "filled_modified", "submitted", "cleared"]
@@ -755,9 +755,9 @@ extensions.data:
       the value of this event is the addon id.
   storageLocalError:
     objects: ["get", "set", "remove", "clear"]
-    bug_numbers: [1606903, 1649948, 1689255, 1730038, 1763523]
+    bug_numbers: [1606903, 1649948, 1689255, 1730038, 1763523, 1811148]
     notification_emails: ["addons-dev-internal@mozilla.com"]
-    expiry_version: "112"
+    expiry_version: "122"
     products:
       - "firefox"
     record_in_processes: ["main", "content"]
@@ -1297,7 +1297,7 @@ pwmgr:
       not impact the sent object.
     objects: ["save", "update"]
     bug_numbers: [1650929, 1650941, 1678200, 1714252, 1754637]
-    expiry_version: "112"
+    expiry_version: "120"
     release_channel_collection: opt-out
     products: ["firefox"]
     record_in_processes: [main]
@@ -2533,54 +2533,6 @@ network.dns:
         One of [unknown, not_captive, unlocked, locked]
       time: >
         Time from first confirmation attempt to event being recorded
-
-networking.captive_portal:
-  login_infobar_shown:
-    objects: ["infobar"]
-    bug_numbers:
-      - 1722834
-      - 1777396
-    description: >
-      An event fired when the captive portal login infobar is displayed.
-    notification_emails:
-      - omc@mozilla.com
-      - dmose@mozilla.com
-    release_channel_collection: opt-out
-    products: ["firefox"]
-    record_in_processes: ["main"]
-    expiry_version: "112"
-
-  login_button_pressed:
-    objects: ["login_button"]
-    bug_numbers:
-      - 1722834
-      - 1777396
-    description: >
-      An event fired when the login button on the captive portal login infobar
-      is clicked.
-    notification_emails:
-      - omc@mozilla.com
-      - dmose@mozilla.com
-    release_channel_collection: opt-out
-    products: ["firefox"]
-    record_in_processes: ["main"]
-    expiry_version: "112"
-
-  login_successful:
-    objects: ["detector"]
-    bug_numbers:
-      - 1722834
-      - 1777396
-    description: >
-      An event fired when the captive portal detector detects that the user has
-      successfully logged in to a captive portal.
-    notification_emails:
-      - omc@mozilla.com
-      - dmose@mozilla.com
-    release_channel_collection: opt-out
-    products: ["firefox"]
-    record_in_processes: ["main"]
-    expiry_version: "112"
 
 security:
   prefUsage:

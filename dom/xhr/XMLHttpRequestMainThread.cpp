@@ -187,7 +187,6 @@ XMLHttpRequestMainThread::XMLHttpRequestMainThread(
     : XMLHttpRequest(aGlobalObject),
       mResponseBodyDecodedPos(0),
       mResponseType(XMLHttpRequestResponseType::_empty),
-      mRequestObserver(nullptr),
       mState(XMLHttpRequest_Binding::UNSENT),
       mFlagSynchronous(false),
       mFlagAborted(false),
@@ -215,7 +214,6 @@ XMLHttpRequestMainThread::XMLHttpRequestMainThread(
       mLoadTransferred(0),
       mIsSystem(false),
       mIsAnon(false),
-      mFirstStartRequestSeen(false),
       mInLoadProgressEvent(false),
       mResultJSON(JS::UndefinedValue()),
       mArrayBufferBuilder(new ArrayBufferBuilder()),
@@ -327,11 +325,6 @@ void XMLHttpRequestMainThread::ResetResponse() {
   mLoadTransferred = 0;
   mResponseBodyDecodedPos = 0;
   mEofDecoded = false;
-}
-
-void XMLHttpRequestMainThread::SetRequestObserver(
-    nsIRequestObserver* aObserver) {
-  mRequestObserver = aObserver;
 }
 
 NS_IMPL_CYCLE_COLLECTION_CLASS(XMLHttpRequestMainThread)
@@ -1820,10 +1813,6 @@ XMLHttpRequestMainThread::OnStartRequest(nsIRequest* request) {
   AUTO_PROFILER_LABEL("XMLHttpRequestMainThread::OnStartRequest", NETWORK);
 
   nsresult rv = NS_OK;
-  if (!mFirstStartRequestSeen && mRequestObserver) {
-    mFirstStartRequestSeen = true;
-    mRequestObserver->OnStartRequest(request);
-  }
 
   if (request != mChannel) {
     // Can this still happen?
@@ -2102,12 +2091,6 @@ XMLHttpRequestMainThread::OnStopRequest(nsIRequest* request, nsresult status) {
   }
 
   mWaitingForOnStopRequest = false;
-
-  if (mRequestObserver) {
-    NS_ASSERTION(mFirstStartRequestSeen, "Inconsistent state!");
-    mFirstStartRequestSeen = false;
-    mRequestObserver->OnStopRequest(request, status);
-  }
 
   // make sure to notify the listener if we were aborted
   // XXX in fact, why don't we do the cleanup below in this case??
@@ -2567,7 +2550,7 @@ nsresult XMLHttpRequestMainThread::InitiateFetch(
       mAuthorRequestHeaders.Set("accept", "*/*"_ns);
     }
 
-    mAuthorRequestHeaders.ApplyToChannel(httpChannel, false);
+    mAuthorRequestHeaders.ApplyToChannel(httpChannel, false, false);
 
     if (!IsSystemXHR()) {
       nsCOMPtr<nsPIDOMWindowInner> owner = GetOwner();
@@ -3374,9 +3357,30 @@ nsresult XMLHttpRequestMainThread::OnRedirectVerifyCallback(nsresult result) {
 
     nsCOMPtr<nsIHttpChannel> newHttpChannel(do_QueryInterface(mChannel));
     if (newHttpChannel) {
+      // we need to strip Authentication headers for cross-origin requests
+      // Ref: https://fetch.spec.whatwg.org/#http-redirect-fetch
+      bool skipAuthHeader = false;
+      if (StaticPrefs::network_fetch_redirect_stripAuthHeader()) {
+        nsCOMPtr<nsIURI> oldUri;
+        MOZ_ALWAYS_SUCCEEDS(
+            NS_GetFinalChannelURI(oldHttpChannel, getter_AddRefs(oldUri)));
+
+        nsCOMPtr<nsIURI> newUri;
+        MOZ_ALWAYS_SUCCEEDS(
+            NS_GetFinalChannelURI(newHttpChannel, getter_AddRefs(newUri)));
+
+        nsresult rv = nsContentUtils::GetSecurityManager()->CheckSameOriginURI(
+            newUri, oldUri, false, false);
+
+        if (NS_FAILED(rv)) {
+          skipAuthHeader = true;
+        }
+      }
+
       // Ensure all original headers are duplicated for the new channel (bug
       // #553888)
-      mAuthorRequestHeaders.ApplyToChannel(newHttpChannel, rewriteToGET);
+      mAuthorRequestHeaders.ApplyToChannel(newHttpChannel, rewriteToGET,
+                                           skipAuthHeader);
     }
   } else {
     mErrorLoad = ErrorType::eRedirect;
@@ -4069,7 +4073,8 @@ void RequestHeaders::MergeOrSet(const nsACString& aName,
 void RequestHeaders::Clear() { mHeaders.Clear(); }
 
 void RequestHeaders::ApplyToChannel(nsIHttpChannel* aChannel,
-                                    bool aStripRequestBodyHeader) const {
+                                    bool aStripRequestBodyHeader,
+                                    bool aStripAuthHeader) const {
   for (const RequestHeader& header : mHeaders) {
     if (aStripRequestBodyHeader &&
         (header.mName.LowerCaseEqualsASCII("content-type") ||
@@ -4078,6 +4083,12 @@ void RequestHeaders::ApplyToChannel(nsIHttpChannel* aChannel,
          header.mName.LowerCaseEqualsASCII("content-location"))) {
       continue;
     }
+
+    if (aStripAuthHeader &&
+        header.mName.LowerCaseEqualsASCII("authorization")) {
+      continue;
+    }
+
     // Update referrerInfo to override referrer header in system privileged.
     if (header.mName.LowerCaseEqualsASCII("referer")) {
       DebugOnly<nsresult> rv = aChannel->SetNewReferrerInfo(

@@ -13,6 +13,23 @@ exclude: true
 
 ⚠️  breaking change and deprecation notices
 
+## v111
+- Added [`GeckoSession.ContentDelegate.cookieBannerHandlingDetectOnlyMode`][111.2] see ([bug 1810742]({{bugzilla}}1810742))
+- ⚠️ Deprecated [`CookieBannerMode.COOKIE_BANNER_MODE_DETECT_ONLY`][111.1]
+- Added [`GeckoView.ActivityContextDelegate`][111.3], `setActivityContextDelegate`, and `getActivityContextDelegate` to `GeckoView`
+- Added [`GeckoSession.PrintDelegate`][111.4], a [`PrintDocumentAdapter`][111.5], getters and setters for the `PrintDelegate`, and [`printPageContent`] to print [`session content`][111.6]
+- Added [`GeckoSession.PdfSaveResult`][111.7], a [`SessionPdfFileSaver`][111.8] and [`isPdfJs`][111.9], see ([bug 1810761]({{bugzilla}}1810761))
+
+[111.1]: {{javadoc_uri}}/ContentBlocking.CookieBannerMode.html#COOKIE_BANNER_MODE_DETECT_ONLY
+[111.2]: {{javadoc_uri}}/ContentBlocking.Settings.Builder.html#cookieBannerHandlingDetectOnlyMode(boolean)
+[111.3]: {{javadoc_uri}}/GeckoView.ActivityContextDelegate.html
+[111.4]: {{javadoc_uri}}/GeckoSession.PrintDelegate.html
+[111.5]: {{javadoc_uri}}/GeckoViewPrintDocumentAdapter.html
+[111.6]: {{javadoc_uri}}/GeckoSession.html#printPageContent--
+[111.7]: {{javadoc_uri}}/GeckoSession.PdfSaveResult.html
+[111.8]: {{javadoc_uri}}/SessionPdfFileSaver.html
+[111.9]: {{javadoc_uri}}/GeckoSession.html#isPdfJs--
+
 ## v110
 - Added [`GeckoSession.ContentDelegate.onCookieBannerDetected`][110.1] and [`GeckoSession.ContentDelegate.onCookieBannerHandled`][110.2]
 - Added [`CookieBannerMode.COOKIE_BANNER_MODE_DETECT_ONLY`][110.3], for detecting cookie banners but not handle them, see ([bug 1797581]({{bugzilla}}1806188))
@@ -1296,4 +1313,4 @@ to allow adding gecko profiler markers.
 [65.24]: {{javadoc_uri}}/CrashReporter.html#sendCrashReport(android.content.Context,android.os.Bundle,java.lang.String)
 [65.25]: {{javadoc_uri}}/GeckoResult.html
 
-[api-version]: a08a53cd6a57e5b698d1b74d82a7be789926754c
+[api-version]: 3fdeffc1d5ce3a27e27dbbcfdc77ee1aa901ebdb

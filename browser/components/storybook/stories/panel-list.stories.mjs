@@ -4,8 +4,7 @@
 
 // eslint-disable-next-line import/no-unassigned-import
 import "toolkit-widgets/panel-list.js";
-import { html } from "lit";
-import { ifDefined } from "lit/directives/if-defined.js";
+import { html, ifDefined } from "lit.all.mjs";
 
 export default {
   title: "Design System/Components/Panel Menu",
@@ -16,7 +15,12 @@ export default {
   },
 };
 
-const openMenu = e => document.querySelector("panel-list").toggle(e);
+const openMenu = e => {
+  e.target
+    .getRootNode()
+    .querySelector("panel-list")
+    .toggle(e);
+};
 
 const Template = ({ open, items }) =>
   html`

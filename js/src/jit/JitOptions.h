@@ -53,6 +53,7 @@ struct DefaultJitOptions {
   bool disableLicm;
   bool disablePruning;
   bool disableInstructionReordering;
+  bool disableIteratorIndices;
   bool disableRangeAnalysis;
   bool disableRecoverIns;
   bool disableScalarReplacement;
@@ -155,6 +156,10 @@ inline bool HasJitBackend() {
 
 inline bool IsBaselineInterpreterEnabled() {
   return HasJitBackend() && JitOptions.baselineInterpreter;
+}
+
+inline bool TooManyActualArguments(size_t nargs) {
+  return nargs > JitOptions.maxStackArgs;
 }
 
 }  // namespace jit

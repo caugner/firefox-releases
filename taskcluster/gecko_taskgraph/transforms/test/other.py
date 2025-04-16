@@ -329,54 +329,29 @@ def setup_browsertime(config, tasks):
                 "linux64-chromedriver-87",
             ],
             "linux.*": [
-                "linux64-chromedriver-102",
-                "linux64-chromedriver-103",
-                "linux64-chromedriver-104",
-                "linux64-chromedriver-105",
-                "linux64-chromedriver-106",
-                "linux64-chromedriver-107",
                 "linux64-chromedriver-108",
                 "linux64-chromedriver-109",
+                "linux64-chromedriver-110",
             ],
             "macosx.*": [
-                "mac64-chromedriver-102",
-                "mac64-chromedriver-103",
-                "mac64-chromedriver-104",
-                "mac64-chromedriver-105",
-                "mac64-chromedriver-106",
-                "mac64-chromedriver-107",
                 "mac64-chromedriver-108",
                 "mac64-chromedriver-109",
+                "mac64-chromedriver-110",
             ],
             "windows.*aarch64.*": [
-                "win32-chromedriver-102",
-                "win32-chromedriver-103",
-                "win32-chromedriver-104",
-                "win32-chromedriver-105",
-                "win32-chromedriver-106",
-                "win32-chromedriver-107",
                 "win32-chromedriver-108",
                 "win32-chromedriver-109",
+                "win32-chromedriver-110",
             ],
             "windows.*-32.*": [
-                "win32-chromedriver-102",
-                "win32-chromedriver-103",
-                "win32-chromedriver-104",
-                "win32-chromedriver-105",
-                "win32-chromedriver-106",
-                "win32-chromedriver-107",
                 "win32-chromedriver-108",
                 "win32-chromedriver-109",
+                "win32-chromedriver-110",
             ],
             "windows.*-64.*": [
-                "win32-chromedriver-102",
-                "win32-chromedriver-103",
-                "win32-chromedriver-104",
-                "win32-chromedriver-105",
-                "win32-chromedriver-106",
-                "win32-chromedriver-107",
                 "win32-chromedriver-108",
                 "win32-chromedriver-109",
+                "win32-chromedriver-110",
             ],
         }
 
@@ -708,6 +683,11 @@ def handle_tier(config, tasks):
 def apply_raptor_tier_optimization(config, tasks):
     for task in tasks:
         if task["suite"] != "raptor":
+            yield task
+            continue
+
+        if "regression-tests" in task["test-name"]:
+            # Don't optimize the regression tests
             yield task
             continue
 

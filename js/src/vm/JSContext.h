@@ -34,7 +34,6 @@
 #include "vm/Activation.h"  // js::Activation
 #include "vm/MallocProvider.h"
 #include "vm/Runtime.h"
-#include "vm/SharedStencil.h"  // js::SharedImmutableScriptDataTable
 #include "wasm/WasmContext.h"
 
 struct JS_PUBLIC_API JSContext;
@@ -364,12 +363,6 @@ struct JS_PUBLIC_API JSContext : public JS::RootingContext,
 
   js::SymbolRegistry& symbolRegistry() { return runtime_->symbolRegistry(); }
 
-  // Methods to access runtime data that must be protected by locks.
-  js::SharedImmutableScriptDataTable& scriptDataTable(
-      js::AutoLockScriptData& lock) {
-    return runtime_->scriptDataTable(lock);
-  }
-
   // Methods to access other runtime data that checks locking internally.
   js::gc::AtomMarkingRuntime& atomMarking() { return runtime_->gc.atomMarking; }
   void markAtom(JSAtom* atom) { atomMarking().markAtom(this, atom); }
@@ -582,6 +575,18 @@ struct JS_PUBLIC_API JSContext : public JS::RootingContext,
   void verifyIsSafeToGC() {
     MOZ_DIAGNOSTIC_ASSERT(!inUnsafeRegion,
                           "[AutoAssertNoGC] possible GC in GC-unsafe region");
+  }
+
+  bool isInUnsafeRegion() const { return bool(inUnsafeRegion); }
+
+  // For JIT use.
+  void resetInUnsafeRegion() {
+    MOZ_ASSERT(inUnsafeRegion >= 0);
+    inUnsafeRegion = 0;
+  }
+
+  static constexpr size_t offsetOfInUnsafeRegion() {
+    return offsetof(JSContext, inUnsafeRegion);
   }
 
   /* Whether sampling should be enabled or not. */
@@ -1077,35 +1082,6 @@ class AutoAssertNoPendingException {
  public:
   explicit AutoAssertNoPendingException(JSContext* cxArg) {}
 #endif
-};
-
-class MOZ_RAII AutoLockScriptData {
-  JSRuntime* runtime;
-
- public:
-  explicit AutoLockScriptData(JSRuntime* rt) {
-    MOZ_ASSERT(CurrentThreadCanAccessRuntime(rt) ||
-               CurrentThreadIsParseThread());
-    runtime = rt;
-    if (runtime->hasParseTasks()) {
-      runtime->scriptDataLock.lock();
-    } else {
-      MOZ_ASSERT(!runtime->activeThreadHasScriptDataAccess);
-#ifdef DEBUG
-      runtime->activeThreadHasScriptDataAccess = true;
-#endif
-    }
-  }
-  ~AutoLockScriptData() {
-    if (runtime->hasParseTasks()) {
-      runtime->scriptDataLock.unlock();
-    } else {
-      MOZ_ASSERT(runtime->activeThreadHasScriptDataAccess);
-#ifdef DEBUG
-      runtime->activeThreadHasScriptDataAccess = false;
-#endif
-    }
-  }
 };
 
 class MOZ_RAII AutoNoteDebuggerEvaluationWithOnNativeCallHook {

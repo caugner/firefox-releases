@@ -576,8 +576,18 @@ class ScriptLoader final : public JS::loader::ScriptLoaderInterface {
 
   void ReportPreloadErrorsToConsole(ScriptLoadRequest* aRequest);
 
-  nsresult AttemptAsyncScriptCompile(ScriptLoadRequest* aRequest,
-                                     bool* aCouldCompileOut);
+  nsresult AttemptOffThreadScriptCompile(ScriptLoadRequest* aRequest,
+                                         bool* aCouldCompileOut);
+
+  nsresult StartOffThreadCompilation(JSContext* aCx,
+                                     ScriptLoadRequest* aRequest,
+                                     JS::CompileOptions& aOptions,
+                                     Runnable* aRunnable,
+                                     JS::OffThreadToken** aTokenOut);
+
+  static void OffThreadCompilationCompleteCallback(JS::OffThreadToken* aToken,
+                                                   void* aCallbackData);
+
   nsresult ProcessRequest(ScriptLoadRequest* aRequest);
   nsresult CompileOffThreadOrProcessRequest(ScriptLoadRequest* aRequest);
   void FireScriptAvailable(nsresult aResult, ScriptLoadRequest* aRequest);
@@ -688,10 +698,10 @@ class ScriptLoader final : public JS::loader::ScriptLoaderInterface {
   void RunScriptWhenSafe(ScriptLoadRequest* aRequest);
 
   /**
-   *  Wait for any unused off thread compilations to finish and then
-   *  cancel them.
+   * Cancel and remove all outstanding load requests, including waiting for any
+   * off thread compilations to finish.
    */
-  void CancelScriptLoadRequests();
+  void CancelAndClearScriptLoadRequests();
 
   Document* mDocument;  // [WEAK]
   nsCOMArray<nsIScriptLoaderObserver> mObservers;

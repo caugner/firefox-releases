@@ -81,7 +81,7 @@ const SpecialMessageActions = {
         install
       );
     } catch (e) {
-      Cu.reportError(e);
+      console.error(e);
     }
   },
 
@@ -190,6 +190,9 @@ const SpecialMessageActions = {
       "browser.privateWindowSeparation.enabled",
       "browser.firefox-view.feature-tour",
       "browser.pdfjs.feature-tour",
+      "cookiebanners.service.mode",
+      "cookiebanners.service.mode.privateBrowsing",
+      "cookiebanners.service.detectOnly",
     ];
 
     if (!allowedPrefs.includes(pref.name)) {
@@ -398,6 +401,9 @@ const SpecialMessageActions = {
         lazy.ColorwayClosetOpener.openModal({
           source: "firefoxview",
         });
+        break;
+      case "ENABLE_CBH":
+        window.gCookieBannerHandlingExperiment.onActivate();
         break;
     }
   },

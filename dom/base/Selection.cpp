@@ -1697,6 +1697,7 @@ UniquePtr<SelectionDetails> Selection::LookUpSelection(
     newHead->mStart = AssertedCast<int32_t>(*start);
     newHead->mEnd = AssertedCast<int32_t>(*end);
     newHead->mSelectionType = aSelectionType;
+    newHead->mHighlightName = mHighlightName;
     StyledRange* rd = mStyledRanges.FindRangeData(range);
     if (rd) {
       newHead->mTextRangeStyle = rd->mTextRangeStyle;
@@ -1948,7 +1949,11 @@ void Selection::AddRangeAndSelectFramesAndNotifyListeners(nsRange& aRange,
   // If the given range is part of another Selection, we need to clone the
   // range first.
   RefPtr<nsRange> range;
-  if (aRange.IsInSelection() && aRange.GetSelection() != this) {
+  if (aRange.IsInSelection()) {
+    // If we already have the range, we don't need to handle this.
+    if (aRange.GetSelection() == this) {
+      return;
+    }
     // Because of performance reason, when there is a cached range, let's use
     // it.  Otherwise, clone the range.
     range = aRange.CloneRange();
@@ -3192,14 +3197,14 @@ void Selection::NotifySelectionListeners() {
     frameSelection->SetChangesDuringBatchingFlag();
     return;
   }
-  if (mSelectionListeners.IsEmpty()) {
+  if (mSelectionListeners.IsEmpty() && !mNotifyAutoCopy &&
+      !mAccessibleCaretEventHub && !mSelectionChangeEventDispatcher) {
     // If there are no selection listeners, we're done!
     return;
   }
 
   nsCOMPtr<Document> doc;
-  PresShell* presShell = GetPresShell();
-  if (presShell) {
+  if (PresShell* presShell = GetPresShell()) {
     doc = presShell->GetDocument();
     presShell->ScheduleContentRelevancyUpdate(ContentRelevancyReason::Selected);
   }
@@ -3231,6 +3236,7 @@ void Selection::NotifySelectionListeners() {
         mSelectionChangeEventDispatcher);
     dispatcher->OnSelectionChange(doc, this, reason);
   }
+
   for (const auto& listener : selectionListeners) {
     // MOZ_KnownLive because 'selectionListeners' is guaranteed to
     // keep it alive.
@@ -3700,6 +3706,11 @@ void Selection::SetColors(const nsAString& aForegroundColor,
 }
 
 void Selection::ResetColors(ErrorResult& aRv) { mCustomColors = nullptr; }
+
+void Selection::SetHighlightName(const nsAtom* aHighlightName) {
+  MOZ_ASSERT(mSelectionType == SelectionType::eHighlight);
+  mHighlightName = aHighlightName;
+}
 
 JSObject* Selection::WrapObject(JSContext* aCx,
                                 JS::Handle<JSObject*> aGivenProto) {

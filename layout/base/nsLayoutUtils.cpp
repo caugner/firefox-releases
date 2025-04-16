@@ -2511,43 +2511,6 @@ nsRect nsLayoutUtils::ClampRectToScrollFrames(nsIFrame* aFrame,
   return resultRect;
 }
 
-bool nsLayoutUtils::GetLayerTransformForFrame(nsIFrame* aFrame,
-                                              Matrix4x4Flagged* aTransform) {
-  // FIXME/bug 796690: we can sometimes compute a transform in these
-  // cases, it just increases complexity considerably.  Punt for now.
-  if (aFrame->Extend3DContext() || aFrame->GetTransformGetter()) {
-    return false;
-  }
-
-  nsIFrame* root = nsLayoutUtils::GetDisplayRootFrame(aFrame);
-  if (root->HasAnyStateBits(NS_FRAME_UPDATE_LAYER_TREE)) {
-    // Content may have been invalidated, so we can't reliably compute
-    // the "layer transform" in general.
-    return false;
-  }
-  // If the caller doesn't care about the value, early-return to skip
-  // overhead below.
-  if (!aTransform) {
-    return true;
-  }
-
-  nsDisplayListBuilder builder(root,
-                               nsDisplayListBuilderMode::TransformComputation,
-                               false /*don't build caret*/);
-  builder.BeginFrame();
-  nsDisplayList list(&builder);
-  nsDisplayTransform* item =
-      MakeDisplayItem<nsDisplayTransform>(&builder, aFrame, &list, nsRect());
-  MOZ_ASSERT(item);
-
-  *aTransform = item->GetTransform();
-  item->Destroy(&builder);
-
-  builder.EndFrame();
-
-  return true;
-}
-
 nsPoint nsLayoutUtils::TransformAncestorPointToFrame(RelativeTo aFrame,
                                                      const nsPoint& aPoint,
                                                      RelativeTo aAncestor) {
@@ -2595,7 +2558,7 @@ nsRect nsLayoutUtils::TransformFrameRectToAncestor(
 static LayoutDeviceIntPoint GetWidgetOffset(nsIWidget* aWidget,
                                             nsIWidget*& aRootWidget) {
   LayoutDeviceIntPoint offset(0, 0);
-  while (aWidget->WindowType() == eWindowType_child) {
+  while (aWidget->GetWindowType() == widget::WindowType::Child) {
     nsIWidget* parent = aWidget->GetParent();
     if (!parent) {
       break;
@@ -6869,25 +6832,26 @@ bool nsLayoutUtils::HasNonZeroCornerOnSide(const BorderRadius& aCorners,
 }
 
 /* static */
-nsTransparencyMode nsLayoutUtils::GetFrameTransparency(
+widget::TransparencyMode nsLayoutUtils::GetFrameTransparency(
     nsIFrame* aBackgroundFrame, nsIFrame* aCSSRootFrame) {
   if (aCSSRootFrame->StyleEffects()->mOpacity < 1.0f)
-    return eTransparencyTransparent;
+    return TransparencyMode::Transparent;
 
   if (HasNonZeroCorner(aCSSRootFrame->StyleBorder()->mBorderRadius))
-    return eTransparencyTransparent;
+    return TransparencyMode::Transparent;
 
   StyleAppearance appearance =
       aCSSRootFrame->StyleDisplay()->EffectiveAppearance();
 
   if (appearance == StyleAppearance::MozWinBorderlessGlass) {
-    return eTransparencyBorderlessGlass;
+    return TransparencyMode::BorderlessGlass;
   }
 
   nsITheme::Transparency transparency;
   if (aCSSRootFrame->IsThemed(&transparency)) {
-    return transparency == nsITheme::eTransparent ? eTransparencyTransparent
-                                                  : eTransparencyOpaque;
+    return transparency == nsITheme::eTransparent
+               ? TransparencyMode::Transparent
+               : TransparencyMode::Opaque;
   }
 
   // We need an uninitialized window to be treated as opaque because doing
@@ -6895,20 +6859,20 @@ nsTransparencyMode nsLayoutUtils::GetFrameTransparency(
   // Vista. (bug 450322)
   if (aBackgroundFrame->IsViewportFrame() &&
       !aBackgroundFrame->PrincipalChildList().FirstChild()) {
-    return eTransparencyOpaque;
+    return TransparencyMode::Opaque;
   }
 
   const ComputedStyle* bgSC = nsCSSRendering::FindBackground(aBackgroundFrame);
   if (!bgSC) {
-    return eTransparencyTransparent;
+    return TransparencyMode::Transparent;
   }
   const nsStyleBackground* bg = bgSC->StyleBackground();
   if (NS_GET_A(bg->BackgroundColor(bgSC)) < 255 ||
       // bottom layer's clip is used for the color
       bg->BottomLayer().mClip != StyleGeometryBox::BorderBox) {
-    return eTransparencyTransparent;
+    return TransparencyMode::Transparent;
   }
-  return eTransparencyOpaque;
+  return TransparencyMode::Opaque;
 }
 
 /* static */
@@ -7255,7 +7219,8 @@ SurfaceFromElementResult nsLayoutUtils::SurfaceFromElement(
   // Ensure that the image is oriented the same way as it's displayed
   // if the image request is of the same origin.
   auto orientation =
-      content->GetPrimaryFrame()
+      content->GetPrimaryFrame() &&
+              !(aSurfaceFlags & SFE_ORIENTATION_FROM_IMAGE)
           ? content->GetPrimaryFrame()->StyleVisibility()->UsedImageOrientation(
                 imgRequest)
           : nsStyleVisibility::UsedImageOrientation(

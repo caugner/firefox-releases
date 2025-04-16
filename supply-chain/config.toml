@@ -4,16 +4,11 @@
 [imports.bytecodealliance]
 url = "https://raw.githubusercontent.com/bytecodealliance/wasmtime/main/supply-chain/audits.toml"
 
+[imports.chromeos]
+url = "https://chromium.googlesource.com/chromiumos/third_party/rust_crates/+/main/cargo-vet/audits.toml?format=TEXT"
+
 [imports.embark]
 url = "https://raw.githubusercontent.com/EmbarkStudios/rust-ecosystem/main/audits.toml"
-
-[policy.alsa]
-audit-as-crates-io = true
-notes = "This is a third-party crate, with an extra patch."
-
-[policy.async-task]
-audit-as-crates-io = true
-notes = "This is the upstream code plus an extra fix that hasn't been released yet, see bug 1746533."
 
 [policy.audioipc-client]
 criteria = []
@@ -39,9 +34,17 @@ notes = "This is a crate Henri wrote which is also published. We should probably
 audit-as-crates-io = true
 notes = "This is a pinned version of the upstream code, presumably to get a fix that hadn't been released yet. We should consider switching to the latest official release."
 
+[policy.cssparser-macros]
+audit-as-crates-io = true
+notes = "Using non-crates.io revision because the color-4 changes has not been published yet."
+
 [policy.d3d12]
 audit-as-crates-io = true
-notes = "wgpu-hal pins this crate."
+notes = "Unpublished wgpu revisions point to unpublished d3d12 revisions."
+
+[policy.firefox-on-glean]
+audit-as-crates-io = false
+notes = "The crates.io version of this is just a placeholder to allow public crates to depend on firefox-on-glean."
 
 [policy.geckodriver]
 audit-as-crates-io = false
@@ -57,14 +60,6 @@ dependency-criteria = { tokio-reactor = [], tokio-threadpool = [] }
 
 [policy.gkrust_shared]
 notes = "The dependencies on tokio-reactor and tokio-threadpools are just a hack to pin the version used by audioipc-{client,server}. Suppress vetting on those for the same reasons behind the policy entries."
-
-[policy.glean]
-audit-as-crates-io = true
-notes = "Temporarily patched in-tree"
-
-[policy.glean-core]
-audit-as-crates-io = true
-notes = "Temporarily patched in-tree"
 
 [policy.gluesmith]
 criteria = "safe-to-run"
@@ -85,10 +80,6 @@ notes = "This override is an api-compatible fork with an orthogonal implementati
 [policy.marionette]
 audit-as-crates-io = true
 notes = "This is a first-party crate which is also published to crates.io, but we should publish audits for it for the benefit of the ecosystem."
-
-[policy.metal]
-audit-as-crates-io = true
-notes = "wgpu-hal pins this crate."
 
 [policy.midir]
 audit-as-crates-io = true
@@ -146,10 +137,6 @@ notes = "This is a first-party crate which is entirely unrelated to the crates.i
 audit-as-crates-io = true
 notes = "This is a first-party crate which is also published to crates.io, but we should publish audits for it for the benefit of the ecosystem."
 
-[policy.rkv]
-audit-as-crates-io = true
-notes = "Temporarily patched in-tree"
-
 [policy.rure]
 audit-as-crates-io = true
 notes = "Identical to upstream, but with cdylib and staticlib targets disabled to avoid unnecessary build artifacts and linker errors."
@@ -174,10 +161,6 @@ notes = "This is a first-party crate which is entirely unrelated to the crates.i
 audit-as-crates-io = false
 notes = "This is a first-party crate, maintained by the appservices team, which is entirely unrelated to the crates.io package of the same name."
 
-[policy.uniffi_bindgen]
-audit-as-crates-io = false
-notes = "This is a first-party crate, normally vendored, but currently patched in-tree until next update."
-
 [policy.viaduct]
 audit-as-crates-io = false
 notes = "This is a first-party crate, maintained by the appservices team, which is entirely unrelated to the crates.io package of the same name."
@@ -190,10 +173,6 @@ notes = "This is a third-party crate, with an extra patch."
 audit-as-crates-io = false
 criteria = "safe-to-run"
 notes = "This is a first-party crate which is also published to crates.io. We certify audits for this crate as part of the documented release process, but that step happens after the version bump lands on central so we don't enforce it here. It's also used only for automation, so its subtree can be safe-to-run."
-
-[policy.wgpu]
-audit-as-crates-io = true
-notes = "Upstream project which we pin."
 
 [policy.wgpu-core]
 audit-as-crates-io = true
@@ -229,10 +208,6 @@ criteria = "safe-to-deploy"
 
 [[exemptions.android_log-sys]]
 version = "0.2.0"
-criteria = "safe-to-deploy"
-
-[[exemptions.arrayref]]
-version = "0.3.6"
 criteria = "safe-to-deploy"
 
 [[exemptions.ash]]
@@ -315,10 +290,6 @@ criteria = "safe-to-deploy"
 version = "0.1.2"
 criteria = "safe-to-deploy"
 
-[[exemptions.cargo_metadata]]
-version = "0.14.2"
-criteria = "safe-to-deploy"
-
 [[exemptions.cexpr]]
 version = "0.6.0"
 criteria = "safe-to-deploy"
@@ -376,7 +347,7 @@ version = "0.2.10"
 criteria = "safe-to-deploy"
 
 [[exemptions.coremidi]]
-version = "0.6.0"
+version = "0.6.0@git:fc68464b5445caf111e41f643a2e69ccce0b4f83"
 criteria = "safe-to-deploy"
 
 [[exemptions.coremidi-sys]]
@@ -647,10 +618,6 @@ criteria = "safe-to-deploy"
 version = "0.1.1"
 criteria = "safe-to-deploy"
 
-[[exemptions.h2]]
-version = "0.3.13"
-criteria = "safe-to-run"
-
 [[exemptions.hashlink]]
 version = "0.7.0"
 criteria = "safe-to-deploy"
@@ -671,28 +638,8 @@ criteria = "safe-to-deploy"
 version = "0.2.1"
 criteria = "safe-to-deploy"
 
-[[exemptions.http]]
-version = "0.2.8"
-criteria = "safe-to-run"
-
-[[exemptions.http-body]]
-version = "0.4.5"
-criteria = "safe-to-run"
-
 [[exemptions.httparse]]
 version = "1.7.1"
-criteria = "safe-to-run"
-
-[[exemptions.httpdate]]
-version = "1.0.2"
-criteria = "safe-to-run"
-
-[[exemptions.humantime]]
-version = "2.1.0"
-criteria = "safe-to-deploy"
-
-[[exemptions.hyper]]
-version = "0.14.19"
 criteria = "safe-to-run"
 
 [[exemptions.ident_case]]
@@ -797,10 +744,6 @@ criteria = "safe-to-deploy"
 version = "0.0.6"
 criteria = "safe-to-deploy"
 
-[[exemptions.marionette]]
-version = "0.2.0"
-criteria = "safe-to-run"
-
 [[exemptions.memalloc]]
 version = "0.1.0"
 criteria = "safe-to-deploy"
@@ -860,10 +803,6 @@ criteria = "safe-to-deploy"
 [[exemptions.moz_cbor]]
 version = "0.1.2"
 criteria = "safe-to-deploy"
-
-[[exemptions.mozdevice]]
-version = "0.5.0"
-criteria = "safe-to-run"
 
 [[exemptions.murmurhash3]]
 version = "0.0.5"
@@ -960,14 +899,6 @@ criteria = "safe-to-deploy"
 [[exemptions.phf_shared]]
 version = "0.10.0"
 criteria = "safe-to-deploy"
-
-[[exemptions.pin-project]]
-version = "1.0.10"
-criteria = "safe-to-run"
-
-[[exemptions.pin-project-internal]]
-version = "1.0.10"
-criteria = "safe-to-run"
 
 [[exemptions.pin-project-lite]]
 version = "0.2.9"
@@ -1149,10 +1080,6 @@ criteria = "safe-to-deploy"
 version = "0.1.8"
 criteria = "safe-to-run"
 
-[[exemptions.serde_urlencoded]]
-version = "0.7.1"
-criteria = "safe-to-run"
-
 [[exemptions.serde_with]]
 version = "1.14.0"
 criteria = "safe-to-deploy"
@@ -1281,29 +1208,9 @@ criteria = "safe-to-run"
 version = "0.5.9"
 criteria = "safe-to-deploy"
 
-[[exemptions.tower-service]]
-version = "0.3.1"
-criteria = "safe-to-run"
-
-[[exemptions.tracing]]
-version = "0.1.35"
-criteria = "safe-to-run"
-
-[[exemptions.tracing-attributes]]
-version = "0.1.21"
-criteria = "safe-to-run"
-
-[[exemptions.tracing-core]]
-version = "0.1.27"
-criteria = "safe-to-run"
-
 [[exemptions.triple_buffer]]
 version = "5.0.6"
 criteria = "safe-to-deploy"
-
-[[exemptions.try-lock]]
-version = "0.2.3"
-criteria = "safe-to-run"
 
 [[exemptions.type-map]]
 version = "0.4.0"
@@ -1352,10 +1259,6 @@ criteria = "safe-to-deploy"
 [[exemptions.walkdir]]
 version = "2.3.2"
 criteria = "safe-to-deploy"
-
-[[exemptions.want]]
-version = "0.3.0"
-criteria = "safe-to-run"
 
 [[exemptions.warp]]
 version = "0.3.2"

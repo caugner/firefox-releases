@@ -1558,6 +1558,12 @@ static WindowRenderer* WindowRendererFromCanvasElement(
 bool CanvasRenderingContext2D::TryAcceleratedTarget(
     RefPtr<gfx::DrawTarget>& aOutDT,
     RefPtr<layers::PersistentBufferProvider>& aOutProvider) {
+  if (!XRE_IsContentProcess()) {
+    // Only allow accelerated contexts to be created in a content process to
+    // ensure it is remoted appropriately and run on the correct parent or
+    // GPU process threads.
+    return false;
+  }
   if (mBufferProvider && mBufferProvider->IsAccelerated() &&
       mBufferProvider->RequiresRefresh()) {
     // If there is already a provider and we got here, then the provider needs
@@ -3473,8 +3479,11 @@ bool CanvasRenderingContext2D::SetFontInternalDisconnected(
     } else {
       language = mCanvasElement->OwnerDoc()->GetLanguageForStyle();
     }
+  } else {
+    // Pass the OS default language, to behave similarly to HTML or canvas-
+    // element content with no language tag.
+    language = nsLanguageAtomService::GetService()->GetLocaleLanguage();
   }
-  // TODO: For workers, should we be passing a language? Where from?
 
   // TODO: Cache fontGroups in the Worker (use an nsFontCache?)
   gfxFontGroup* fontGroup =

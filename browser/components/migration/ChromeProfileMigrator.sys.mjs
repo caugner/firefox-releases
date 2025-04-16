@@ -61,7 +61,7 @@ function convertBookmarks(items, errorAccumulator) {
         itemsToInsert.push(folderItem);
       }
     } catch (ex) {
-      Cu.reportError(ex);
+      console.error(ex);
       errorAccumulator(ex);
     }
   }
@@ -75,6 +75,10 @@ function convertBookmarks(items, errorAccumulator) {
 export class ChromeProfileMigrator extends MigratorBase {
   static get key() {
     return "chrome";
+  }
+
+  static get displayNameL10nID() {
+    return "migration-wizard-migrator-display-name-chrome";
   }
 
   get _chromeUserDataPathSuffix() {
@@ -112,7 +116,6 @@ export class ChromeProfileMigrator extends MigratorBase {
         let possibleResourcePromises = [
           GetBookmarksResource(profileFolder, this.constructor.key),
           GetHistoryResource(profileFolder),
-          GetCookiesResource(profileFolder),
         ];
         if (lazy.ChromeMigrationUtils.supportsLoginsForPlatform) {
           possibleResourcePromises.push(
@@ -175,7 +178,7 @@ export class ChromeProfileMigrator extends MigratorBase {
     } catch (e) {
       // Avoid reporting NotFoundErrors from trying to get local state.
       if (localState || e.name != "NotFoundError") {
-        Cu.reportError("Error detecting Chrome profiles: " + e);
+        console.error("Error detecting Chrome profiles: ", e);
       }
       // If we weren't able to detect any profiles above, fallback to the Default profile.
       let defaultProfilePath = PathUtils.join(chromeUserDataPath, "Default");
@@ -229,7 +232,7 @@ export class ChromeProfileMigrator extends MigratorBase {
           password_element, password_value, signon_realm, scheme, date_created,
           times_used FROM logins WHERE blacklisted_by_user = 0`
         ).catch(ex => {
-          Cu.reportError(ex);
+          console.error(ex);
           aCallback(false);
         });
         // If the promise was rejected we will have already called aCallback,
@@ -267,7 +270,7 @@ export class ChromeProfileMigrator extends MigratorBase {
           }
         } catch (ex) {
           // Handle the user canceling Keychain access or other OSCrypto errors.
-          Cu.reportError(ex);
+          console.error(ex);
           aCallback(false);
           return;
         }
@@ -333,7 +336,7 @@ export class ChromeProfileMigrator extends MigratorBase {
             }
             logins.push(loginInfo);
           } catch (e) {
-            Cu.reportError(e);
+            console.error(e);
           }
         }
         try {
@@ -341,7 +344,7 @@ export class ChromeProfileMigrator extends MigratorBase {
             await MigrationUtils.insertLoginsWrapper(logins);
           }
         } catch (e) {
-          Cu.reportError(e);
+          console.error(e);
         }
         if (crypto.finalize) {
           crypto.finalize();
@@ -360,7 +363,7 @@ async function GetBookmarksResource(aProfileFolder, aBrowserKey) {
     try {
       localState = await lazy.ChromeMigrationUtils.getLocalState("360 SE");
     } catch (ex) {
-      Cu.reportError(ex);
+      console.error(ex);
     }
 
     let alternativeBookmarks = await lazy.Qihoo360seMigrationUtils.getAlternativeBookmarks(
@@ -484,7 +487,7 @@ async function GetHistoryResource(aProfileFolder) {
               ],
             });
           } catch (e) {
-            Cu.reportError(e);
+            console.error(e);
           }
         }
 
@@ -496,113 +499,10 @@ async function GetHistoryResource(aProfileFolder) {
           aCallback(true);
         },
         ex => {
-          Cu.reportError(ex);
+          console.error(ex);
           aCallback(false);
         }
       );
-    },
-  };
-}
-
-async function GetCookiesResource(aProfileFolder) {
-  let cookiesPath = PathUtils.join(aProfileFolder, "Cookies");
-  if (!(await IOUtils.exists(cookiesPath))) {
-    return null;
-  }
-
-  return {
-    type: MigrationUtils.resourceTypes.COOKIES,
-
-    async migrate(aCallback) {
-      // Get columns names and set is_sceure, is_httponly fields accordingly.
-      let columns = await MigrationUtils.getRowsFromDBWithoutLocks(
-        cookiesPath,
-        "Chrome cookies",
-        `PRAGMA table_info(cookies)`
-      ).catch(ex => {
-        Cu.reportError(ex);
-        aCallback(false);
-      });
-      // If the promise was rejected we will have already called aCallback,
-      // so we can just return here.
-      if (!columns) {
-        return;
-      }
-      columns = columns.map(c => c.getResultByName("name"));
-      let isHttponly = columns.includes("is_httponly")
-        ? "is_httponly"
-        : "httponly";
-      let isSecure = columns.includes("is_secure") ? "is_secure" : "secure";
-
-      let source_scheme = columns.includes("source_scheme")
-        ? "source_scheme"
-        : `"${Ci.nsICookie.SCHEME_UNSET}" as source_scheme`;
-
-      // We don't support decrypting cookies yet so only import plaintext ones.
-      let rows = await MigrationUtils.getRowsFromDBWithoutLocks(
-        cookiesPath,
-        "Chrome cookies",
-        `SELECT host_key, name, value, path, expires_utc, ${isSecure}, ${isHttponly}, encrypted_value, ${source_scheme}
-        FROM cookies
-        WHERE length(encrypted_value) = 0`
-      ).catch(ex => {
-        Cu.reportError(ex);
-        aCallback(false);
-      });
-
-      // If the promise was rejected we will have already called aCallback,
-      // so we can just return here.
-      if (!rows) {
-        return;
-      }
-
-      let fallbackExpiryDate = 0;
-      for (let row of rows) {
-        let host_key = row.getResultByName("host_key");
-        if (host_key.match(/^\./)) {
-          // 1st character of host_key may be ".", so we have to remove it
-          host_key = host_key.substr(1);
-        }
-
-        let schemeType = Ci.nsICookie.SCHEME_UNSET;
-        switch (row.getResultByName("source_scheme")) {
-          case 1:
-            schemeType = Ci.nsICookie.SCHEME_HTTP;
-            break;
-          case 2:
-            schemeType = Ci.nsICookie.SCHEME_HTTPS;
-            break;
-        }
-
-        try {
-          let expiresUtc =
-            lazy.ChromeMigrationUtils.chromeTimeToDate(
-              row.getResultByName("expires_utc"),
-              fallbackExpiryDate
-            ) / 1000;
-          // No point adding cookies that don't have a valid expiry.
-          if (!expiresUtc) {
-            continue;
-          }
-
-          Services.cookies.add(
-            host_key,
-            row.getResultByName("path"),
-            row.getResultByName("name"),
-            row.getResultByName("value"),
-            row.getResultByName(isSecure),
-            row.getResultByName(isHttponly),
-            false,
-            parseInt(expiresUtc),
-            {},
-            Ci.nsICookie.SAMESITE_NONE,
-            schemeType
-          );
-        } catch (e) {
-          Cu.reportError(e);
-        }
-      }
-      aCallback(true);
     },
   };
 }
@@ -613,6 +513,10 @@ async function GetCookiesResource(aProfileFolder) {
 export class ChromiumProfileMigrator extends ChromeProfileMigrator {
   static get key() {
     return "chromium";
+  }
+
+  static get displayNameL10nID() {
+    return "migration-wizard-migrator-display-name-chromium";
   }
 
   _chromeUserDataPathSuffix = "Chromium";
@@ -627,6 +531,10 @@ export class ChromiumProfileMigrator extends ChromeProfileMigrator {
 export class CanaryProfileMigrator extends ChromeProfileMigrator {
   static get key() {
     return "canary";
+  }
+
+  static get displayNameL10nID() {
+    return "migration-wizard-migrator-display-name-canary";
   }
 
   get _chromeUserDataPathSuffix() {
@@ -650,6 +558,10 @@ export class ChromeDevMigrator extends ChromeProfileMigrator {
     return "chrome-dev";
   }
 
+  static get displayNameL10nID() {
+    return "migration-wizard-migrator-display-name-chrome-dev";
+  }
+
   _chromeUserDataPathSuffix = "Chrome Dev";
   _keychainServiceName = "Chromium Safe Storage";
   _keychainAccountName = "Chromium";
@@ -661,6 +573,10 @@ export class ChromeDevMigrator extends ChromeProfileMigrator {
 export class ChromeBetaMigrator extends ChromeProfileMigrator {
   static get key() {
     return "chrome-beta";
+  }
+
+  static get displayNameL10nID() {
+    return "migration-wizard-migrator-display-name-chrome-beta";
   }
 
   _chromeUserDataPathSuffix = "Chrome Beta";
@@ -676,6 +592,10 @@ export class BraveProfileMigrator extends ChromeProfileMigrator {
     return "brave";
   }
 
+  static get displayNameL10nID() {
+    return "migration-wizard-migrator-display-name-brave";
+  }
+
   _chromeUserDataPathSuffix = "Brave";
   _keychainServiceName = "Brave Browser Safe Storage";
   _keychainAccountName = "Brave Browser";
@@ -687,6 +607,10 @@ export class BraveProfileMigrator extends ChromeProfileMigrator {
 export class ChromiumEdgeMigrator extends ChromeProfileMigrator {
   static get key() {
     return "chromium-edge";
+  }
+
+  static get displayNameL10nID() {
+    return "migration-wizard-migrator-display-name-chromium-edge";
   }
 
   _chromeUserDataPathSuffix = "Edge";
@@ -702,6 +626,10 @@ export class ChromiumEdgeBetaMigrator extends ChromeProfileMigrator {
     return "chromium-edge-beta";
   }
 
+  static get displayNameL10nID() {
+    return "migration-wizard-migrator-display-name-chromium-edge-beta";
+  }
+
   _chromeUserDataPathSuffix = "Edge Beta";
   _keychainServiceName = "Microsoft Edge Safe Storage";
   _keychainAccountName = "Microsoft Edge";
@@ -715,6 +643,10 @@ export class Chromium360seMigrator extends ChromeProfileMigrator {
     return "chromium-360se";
   }
 
+  static get displayNameL10nID() {
+    return "migration-wizard-migrator-display-name-chromium-360se";
+  }
+
   _chromeUserDataPathSuffix = "360 SE";
   _keychainServiceName = "Microsoft Edge Safe Storage";
   _keychainAccountName = "Microsoft Edge";
@@ -726,6 +658,10 @@ export class Chromium360seMigrator extends ChromeProfileMigrator {
 export class OperaProfileMigrator extends ChromeProfileMigrator {
   static get key() {
     return "opera";
+  }
+
+  static get displayNameL10nID() {
+    return "migration-wizard-migrator-display-name-opera";
   }
 
   _chromeUserDataPathSuffix = "Opera";
@@ -745,6 +681,10 @@ export class OperaGXProfileMigrator extends ChromeProfileMigrator {
     return "opera-gx";
   }
 
+  static get displayNameL10nID() {
+    return "migration-wizard-migrator-display-name-opera-gx";
+  }
+
   _chromeUserDataPathSuffix = "Opera GX";
   _keychainServiceName = "Opera Safe Storage";
   _keychainAccountName = "Opera";
@@ -760,6 +700,10 @@ export class OperaGXProfileMigrator extends ChromeProfileMigrator {
 export class VivaldiProfileMigrator extends ChromeProfileMigrator {
   static get key() {
     return "vivaldi";
+  }
+
+  static get displayNameL10nID() {
+    return "migration-wizard-migrator-display-name-vivaldi";
   }
 
   _chromeUserDataPathSuffix = "Vivaldi";

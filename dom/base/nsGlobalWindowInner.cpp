@@ -3657,7 +3657,7 @@ double nsGlobalWindowInner::GetDevicePixelRatio(CallerType aCallerType,
     return 1.0;
   }
 
-  if (nsContentUtils::ResistFingerprinting(aCallerType)) {
+  if (nsIGlobalObject::ShouldResistFingerprinting(aCallerType)) {
     // Spoofing the DevicePixelRatio causes blurriness in some situations
     // on HiDPI displays. pdf.js is a non-system caller; but it can't
     // expose the fingerprintable information, so we can safely disable
@@ -4615,13 +4615,7 @@ bool nsGlobalWindowInner::ShouldShowFocusRing() {
       StaticPrefs::browser_display_always_show_rings_after_key_focus()) {
     return true;
   }
-  if (StaticPrefs::browser_display_show_focus_rings()) {
-    return true;
-  }
-  if (LookAndFeel::GetInt(LookAndFeel::IntID::ShowKeyboardCues)) {
-    return true;
-  }
-  return false;
+  return StaticPrefs::browser_display_show_focus_rings();
 }
 
 bool nsGlobalWindowInner::TakeFocus(bool aFocus, uint32_t aFocusMethod) {
@@ -7489,7 +7483,7 @@ void nsGlobalWindowInner::InitWasOffline() { mWasOffline = NS_IsOffline(); }
 int16_t nsGlobalWindowInner::Orientation(CallerType aCallerType) {
   // GetOrientationAngle() returns 0, 90, 180 or 270.
   // window.orientation returns -90, 0, 90 or 180.
-  if (nsContentUtils::ResistFingerprinting(aCallerType)) {
+  if (nsIGlobalObject::ShouldResistFingerprinting(aCallerType)) {
     return 0;
   }
   nsScreen* s = GetScreen(IgnoreErrors());

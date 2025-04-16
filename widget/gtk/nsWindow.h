@@ -110,6 +110,10 @@ class TimeStamp;
 #ifdef MOZ_X11
 class CurrentX11TimeGetter;
 #endif
+
+namespace widget {
+class Screen;
+}  // namespace widget
 }  // namespace mozilla
 
 class nsWindow final : public nsBaseWidget {
@@ -140,7 +144,7 @@ class nsWindow final : public nsBaseWidget {
   [[nodiscard]] nsresult Create(nsIWidget* aParent,
                                 nsNativeWidget aNativeParent,
                                 const LayoutDeviceIntRect& aRect,
-                                nsWidgetInitData* aInitData) override;
+                                InitData* aInitData) override;
   void Destroy() override;
   nsIWidget* GetParent() override;
   float GetDPI() override;
@@ -197,7 +201,7 @@ class nsWindow final : public nsBaseWidget {
   void PerformFullscreenTransition(FullscreenTransitionStage aStage,
                                    uint16_t aDuration, nsISupports* aData,
                                    nsIRunnable* aCallback) override;
-  already_AddRefed<nsIScreen> GetWidgetScreen() override;
+  already_AddRefed<Screen> GetWidgetScreen() override;
   nsresult MakeFullScreen(bool aFullScreen) override;
   void HideWindowChrome(bool aShouldHide) override;
 
@@ -209,7 +213,7 @@ class nsWindow final : public nsBaseWidget {
 
   // utility method, -1 if no change should be made, otherwise returns a
   // value that can be passed to gdk_window_set_decorations
-  gint ConvertBorderStyles(nsBorderStyle aStyle);
+  gint ConvertBorderStyles(BorderStyle aStyle);
 
   mozilla::widget::IMContextWrapper* GetIMContext() const { return mIMContext; }
 
@@ -311,8 +315,8 @@ class nsWindow final : public nsBaseWidget {
   void ApplyTransparencyBitmap();
   void ClearTransparencyBitmap();
 
-  void SetTransparencyMode(nsTransparencyMode aMode) override;
-  nsTransparencyMode GetTransparencyMode() override;
+  void SetTransparencyMode(TransparencyMode aMode) override;
+  TransparencyMode GetTransparencyMode() override;
   void SetInputRegion(const InputRegion&) override;
   nsresult UpdateTranslucentWindowAlphaInternal(const nsIntRect& aRect,
                                                 uint8_t* aAlphas,
@@ -360,7 +364,7 @@ class nsWindow final : public nsBaseWidget {
   void GetCompositorWidgetInitData(
       mozilla::widget::CompositorWidgetInitData* aInitData) override;
 
-  nsresult SetNonClientMargins(LayoutDeviceIntMargin& aMargins) override;
+  nsresult SetNonClientMargins(const LayoutDeviceIntMargin&) override;
   void SetDrawsInTitlebar(bool aState) override;
   mozilla::LayoutDeviceIntCoord GetTitlebarRadius();
   LayoutDeviceIntRect GetTitlebarRect();
@@ -470,7 +474,7 @@ class nsWindow final : public nsBaseWidget {
   void RegisterTouchWindow() override;
 
   nsCOMPtr<nsIWidget> mParent;
-  nsPopupType mPopupHint{};
+  PopupType mPopupHint{};
   int mWindowScaleFactor = 1;
 
   void UpdateAlpha(mozilla::gfx::SourceSurface* aSourceSurface,
@@ -498,13 +502,14 @@ class nsWindow final : public nsBaseWidget {
   void EnsureGdkWindow();
   void SetUrgencyHint(GtkWidget* top_window, bool state);
   void SetDefaultIcon(void);
-  void SetWindowDecoration(nsBorderStyle aStyle);
+  void SetWindowDecoration(BorderStyle aStyle);
   void InitButtonEvent(mozilla::WidgetMouseEvent& aEvent,
                        GdkEventButton* aGdkEvent,
                        const mozilla::LayoutDeviceIntPoint& aRefPoint);
   bool CheckForRollup(gdouble aMouseX, gdouble aMouseY, bool aIsWheel,
                       bool aAlwaysRollup);
-  void CheckForRollupDuringGrab() { CheckForRollup(0, 0, false, true); }
+  void RollupAllMenus() { CheckForRollup(0, 0, false, true); }
+  void CheckForRollupDuringGrab() { RollupAllMenus(); }
 
   bool GetDragInfo(mozilla::WidgetMouseEvent* aMouseEvent, GdkWindow** aWindow,
                    gint* aButton, gint* aRootX, gint* aRootY);
@@ -517,9 +522,10 @@ class nsWindow final : public nsBaseWidget {
                  LayoutDeviceIntSize aSize);
   void NativeMoveResizeWaylandPopup(bool aMove, bool aResize);
 
-  // Returns true if the given point (in device pixels) is within a resizer
-  // region of the window. Only used when drawing decorations client side.
-  bool CheckResizerEdge(LayoutDeviceIntPoint aPoint, GdkWindowEdge& aOutEdge);
+  // Returns a window edge if the given point (in device pixels) is within a
+  // resizer region of the window.
+  // Only used when drawing decorations client side.
+  mozilla::Maybe<GdkWindowEdge> CheckResizerEdge(const LayoutDeviceIntPoint&);
 
   GtkTextDirection GetTextDirection();
 

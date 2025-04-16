@@ -38,6 +38,7 @@
 #include "vm/JSContext.h"
 #include "vm/TypedArrayObject.h"
 #include "wasm/WasmBuiltins.h"
+#include "wasm/WasmCodegenConstants.h"
 #include "wasm/WasmCodegenTypes.h"
 #include "wasm/WasmInstanceData.h"
 #include "wasm/WasmMemory.h"
@@ -2132,6 +2133,9 @@ void MacroAssembler::setIsDefinitelyTypedArrayConstructor(Register obj,
 void MacroAssembler::loadMegamorphicCache(Register dest) {
   movePtr(ImmPtr(runtime()->addressOfMegamorphicCache()), dest);
 }
+void MacroAssembler::loadMegamorphicSetPropCache(Register dest) {
+  movePtr(ImmPtr(runtime()->addressOfMegamorphicSetPropCache()), dest);
+}
 
 void MacroAssembler::loadStringToAtomCacheLastLookups(Register dest) {
   uintptr_t cachePtr = uintptr_t(runtime()->addressOfStringToAtomCache());
@@ -2439,6 +2443,133 @@ void MacroAssembler::emitMegamorphicCacheLookupExists(
   bind(&cacheMiss);
 }
 
+void MacroAssembler::emitMegamorphicCachedSetSlot(
+    ValueOperand id, Register obj, Register scratch1,
+#ifndef JS_CODEGEN_X86  // See MegamorphicSetElement in LIROps.yaml
+    Register scratch2, Register scratch3,
+#endif
+    ValueOperand value, Label* cacheHit,
+    void (*emitPreBarrier)(MacroAssembler&, const Address&, MIRType)) {
+  Label cacheMiss, dynamicSlot, doAdd, doSet;
+
+#ifdef JS_CODEGEN_X86
+  pushValue(value);
+  Register scratch2 = value.typeReg();
+  Register scratch3 = value.payloadReg();
+#endif
+
+  // outEntryPtr = obj->shape()
+  loadPtr(Address(obj, JSObject::offsetOfShape()), scratch3);
+
+  movePtr(scratch3, scratch2);
+
+  // scratch3 = (scratch3 >> 3) ^ (scratch3 >> 13) + idHash
+  rshiftPtr(Imm32(MegamorphicSetPropCache::ShapeHashShift1), scratch3);
+  rshiftPtr(Imm32(MegamorphicSetPropCache::ShapeHashShift2), scratch2);
+  xorPtr(scratch2, scratch3);
+
+  loadAtomOrSymbolAndHash(id, scratch1, scratch2, &cacheMiss);
+  addPtr(scratch2, scratch3);
+
+  // scratch3 %= MegamorphicSetPropCache::NumEntries
+  constexpr size_t cacheSize = MegamorphicSetPropCache::NumEntries;
+  static_assert(mozilla::IsPowerOfTwo(cacheSize));
+  size_t cacheMask = cacheSize - 1;
+  and32(Imm32(cacheMask), scratch3);
+
+  loadMegamorphicSetPropCache(scratch2);
+  // scratch3 = &scratch2->entries_[scratch3]
+  constexpr size_t entrySize = sizeof(MegamorphicSetPropCache::Entry);
+  mul32(Imm32(entrySize), scratch3);
+  computeEffectiveAddress(BaseIndex(scratch2, scratch3, TimesOne,
+                                    MegamorphicSetPropCache::offsetOfEntries()),
+                          scratch3);
+
+  // if (scratch3->key_ != scratch1) goto cacheMiss
+  branchPtr(Assembler::NotEqual,
+            Address(scratch3, MegamorphicSetPropCache::Entry::offsetOfKey()),
+            scratch1, &cacheMiss);
+
+  loadPtr(Address(obj, JSObject::offsetOfShape()), scratch1);
+  // if (scratch3->shape_ != scratch1) goto cacheMiss
+  branchPtr(Assembler::NotEqual,
+            Address(scratch3, MegamorphicSetPropCache::Entry::offsetOfShape()),
+            scratch1, &cacheMiss);
+
+  // scratch2 = scratch2->generation_
+  load16ZeroExtend(
+      Address(scratch2, MegamorphicSetPropCache::offsetOfGeneration()),
+      scratch2);
+  load16ZeroExtend(
+      Address(scratch3, MegamorphicSetPropCache::Entry::offsetOfGeneration()),
+      scratch1);
+  // if (scratch3->generation_ != scratch2) goto cacheMiss
+  branch32(Assembler::NotEqual, scratch1, scratch2, &cacheMiss);
+
+  // scratch2 = obj->numFixedSlots()
+  loadPtr(Address(obj, JSObject::offsetOfShape()), scratch2);
+  load32(Address(scratch2, Shape::offsetOfImmutableFlags()), scratch2);
+  and32(Imm32(NativeShape::fixedSlotsMask()), scratch2);
+  rshift32(Imm32(NativeShape::fixedSlotsShift()), scratch2);
+
+  // scratch1 = scratch3->slot()
+  load16ZeroExtend(
+      Address(scratch3, MegamorphicSetPropCache::Entry::offsetOfSlot()),
+      scratch1);
+
+  // scratch3 = scratch3->afterShape()
+  loadPtr(
+      Address(scratch3, MegamorphicSetPropCache::Entry::offsetOfAfterShape()),
+      scratch3);
+
+  // if (scratch1 >= scratch2) goto dynamicSlot
+  branch32(Assembler::AboveOrEqual, scratch1, scratch2, &dynamicSlot);
+
+  static_assert(sizeof(HeapSlot) == 8);
+  // output = obj->fixedSlots()[scratch1]
+
+  computeEffectiveAddress(BaseValueIndex(obj, scratch1, sizeof(NativeObject)),
+                          scratch1);
+  branchTestPtr(Assembler::Zero, scratch3, scratch3, &doSet);
+  jump(&doAdd);
+
+  bind(&dynamicSlot);
+  // scratch1 -= scratch2
+  sub32(scratch2, scratch1);
+  // output = outputScratch->slots_[scratch1]
+  loadPtr(Address(obj, NativeObject::offsetOfSlots()), scratch2);
+  computeEffectiveAddress(BaseValueIndex(scratch2, scratch1, 0), scratch1);
+  branchTestPtr(Assembler::Zero, scratch3, scratch3, &doSet);
+
+  Address slotAddr(scratch1, 0);
+
+  bind(&doAdd);
+  storeObjShape(scratch3, obj,
+                [emitPreBarrier](MacroAssembler& masm, const Address& addr) {
+                  emitPreBarrier(masm, addr, MIRType::Shape);
+                });
+#ifdef JS_CODEGEN_X86
+  popValue(value);
+#endif
+  storeValue(value, slotAddr);
+  jump(cacheHit);
+
+  bind(&doSet);
+
+  guardedCallPreBarrier(slotAddr, MIRType::Value);
+
+#ifdef JS_CODEGEN_X86
+  popValue(value);
+#endif
+  storeValue(value, slotAddr);
+  jump(cacheHit);
+
+  bind(&cacheMiss);
+#ifdef JS_CODEGEN_X86
+  popValue(value);
+#endif
+}
+
 void MacroAssembler::guardNonNegativeIntPtrToInt32(Register reg, Label* fail) {
 #ifdef DEBUG
   Label ok;
@@ -2687,6 +2818,10 @@ void MacroAssembler::loadJitCodeRaw(Register func, Register dest) {
                     SelfHostedLazyScript::offsetOfJitCodeRaw(),
                 "SelfHostedLazyScript and BaseScript must use same layout for "
                 "jitCodeRaw_");
+  static_assert(
+      BaseScript::offsetOfJitCodeRaw() == wasm::JumpTableJitEntryOffset,
+      "Wasm exported functions jit entries must use same layout for "
+      "jitCodeRaw_");
   loadPrivate(Address(func, JSFunction::offsetOfJitInfoOrScript()), dest);
   loadPtr(Address(dest, BaseScript::offsetOfJitCodeRaw()), dest);
 }
@@ -2870,7 +3005,7 @@ void MacroAssembler::outOfLineTruncateSlow(FloatRegister src, Register dest,
 
 #if defined(JS_CODEGEN_ARM) || defined(JS_CODEGEN_ARM64) ||     \
     defined(JS_CODEGEN_MIPS32) || defined(JS_CODEGEN_MIPS64) || \
-    defined(JS_CODEGEN_LOONG64)
+    defined(JS_CODEGEN_LOONG64) || defined(JS_CODEGEN_RISCV64)
   ScratchDoubleScope fpscratch(*this);
   if (widenFloatToDouble) {
     convertFloat32ToDouble(src, fpscratch);
@@ -2909,7 +3044,7 @@ void MacroAssembler::outOfLineTruncateSlow(FloatRegister src, Register dest,
 
 #if defined(JS_CODEGEN_ARM) || defined(JS_CODEGEN_ARM64) ||     \
     defined(JS_CODEGEN_MIPS32) || defined(JS_CODEGEN_MIPS64) || \
-    defined(JS_CODEGEN_LOONG64)
+    defined(JS_CODEGEN_LOONG64) || defined(JS_CODEGEN_RISCV64)
   // Nothing
 #elif defined(JS_CODEGEN_X86) || defined(JS_CODEGEN_X64)
   if (widenFloatToDouble) {
@@ -4750,6 +4885,8 @@ void MacroAssembler::emitPreBarrierFastPath(JSRuntime* rt, MIRType type,
   ma_dsll(temp1, temp1, temp3);
 #elif JS_CODEGEN_LOONG64
   as_sll_d(temp1, temp1, temp3);
+#elif JS_CODEGEN_RISCV64
+  sll(temp1, temp1, temp3);
 #elif JS_CODEGEN_WASM32
   MOZ_CRASH();
 #elif JS_CODEGEN_NONE
@@ -5293,6 +5430,17 @@ void MacroAssembler::branchIfNativeIteratorNotReusable(Register ni,
 
   branchTest32(Assembler::NonZero, flagsAddr,
                Imm32(NativeIterator::Flags::NotReusable), notReusable);
+}
+
+void MacroAssembler::branchNativeIteratorIndices(Condition cond, Register ni,
+                                                 Register temp,
+                                                 NativeIteratorIndices kind,
+                                                 Label* label) {
+  Address iterFlagsAddr(ni, NativeIterator::offsetOfFlagsAndCount());
+  load32(iterFlagsAddr, temp);
+  and32(Imm32(NativeIterator::IndicesMask), temp);
+  uint32_t shiftedKind = uint32_t(kind) << NativeIterator::IndicesShift;
+  branch32(cond, temp, Imm32(shiftedKind), label);
 }
 
 static void LoadNativeIterator(MacroAssembler& masm, Register obj,

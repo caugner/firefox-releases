@@ -440,7 +440,7 @@ class BookmarkState {
         tag: this._newState.title,
       })
         .transact()
-        .catch(Cu.reportError);
+        .catch(console.error);
       return this._guid;
     }
 
@@ -640,7 +640,7 @@ export var PlacesUIUtils = {
         !bookmarkGuid &&
         topUndoEntry != lazy.PlacesTransactions.topUndoEntry
       ) {
-        await lazy.PlacesTransactions.undo().catch(Cu.reportError);
+        await lazy.PlacesTransactions.undo().catch(console.error);
       }
 
       this.lastBookmarkDialogDeferred.resolve(bookmarkGuid);
@@ -1113,8 +1113,10 @@ export var PlacesUIUtils = {
    * @param {object} view
    *          The current view that contains the node or nodes selected for
    *          opening
+   * @param {Function=} updateTelemetryFn
+   *          Optional function to call if telemetry needs to be updated
    */
-  openMultipleLinksInTabs(nodeOrNodes, event, view) {
+  openMultipleLinksInTabs(nodeOrNodes, event, view, updateTelemetryFn = null) {
     let window = view.ownerWindow;
     let urlsToOpen = [];
 
@@ -1132,6 +1134,9 @@ export var PlacesUIUtils = {
       }
     }
     if (lazy.OpenInTabsUtils.confirmOpenInTabs(urlsToOpen.length, window)) {
+      if (updateTelemetryFn) {
+        updateTelemetryFn(urlsToOpen);
+      }
       this.openTabset(urlsToOpen, event, window);
     }
   },
@@ -1452,7 +1457,7 @@ export var PlacesUIUtils = {
     return guidsToSelect;
   },
 
-  onSidebarTreeClick(event) {
+  onSidebarTreeClick(event, updateTelemetryFn = null) {
     // right-clicks are not handled here
     if (event.button == 2) {
       return;
@@ -1491,7 +1496,12 @@ export var PlacesUIUtils = {
       event.originalTarget.localName == "treechildren"
     ) {
       tree.view.selection.select(cell.row);
-      this.openMultipleLinksInTabs(tree.selectedNode, event, tree);
+      this.openMultipleLinksInTabs(
+        tree.selectedNode,
+        event,
+        tree,
+        updateTelemetryFn
+      );
     } else if (
       !mouseInGutter &&
       !isContainer &&
@@ -1501,15 +1511,21 @@ export var PlacesUIUtils = {
       // do this *before* attempting to load the link since openURL uses
       // selection as an indication of which link to load.
       tree.view.selection.select(cell.row);
+      if (updateTelemetryFn) {
+        updateTelemetryFn([tree.selectedNode]);
+      }
       this.openNodeWithEvent(tree.selectedNode, event);
     }
   },
 
-  onSidebarTreeKeyPress(event) {
+  onSidebarTreeKeyPress(event, updateTelemetryFn = null) {
     let node = event.target.selectedNode;
     if (node) {
       if (event.keyCode == event.DOM_VK_RETURN) {
-        this.openNodeWithEvent(node, event);
+        PlacesUIUtils.openNodeWithEvent(node, event);
+        if (updateTelemetryFn) {
+          updateTelemetryFn([node]);
+        }
       }
     }
   },
@@ -1793,7 +1809,7 @@ export var PlacesUIUtils = {
           let contents = [
             { type: lazy.PlacesUtils.TYPE_X_MOZ_URL, entries: [] },
             { type: lazy.PlacesUtils.TYPE_HTML, entries: [] },
-            { type: lazy.PlacesUtils.TYPE_UNICODE, entries: [] },
+            { type: lazy.PlacesUtils.TYPE_PLAINTEXT, entries: [] },
           ];
 
           contents.forEach(function(content) {
@@ -2034,7 +2050,7 @@ XPCOMUtils.defineLazyGetter(PlacesUIUtils, "URI_FLAVORS", () => {
   return [
     lazy.PlacesUtils.TYPE_X_MOZ_URL,
     TAB_DROP_TYPE,
-    lazy.PlacesUtils.TYPE_UNICODE,
+    lazy.PlacesUtils.TYPE_PLAINTEXT,
   ];
 });
 XPCOMUtils.defineLazyGetter(PlacesUIUtils, "SUPPORTED_FLAVORS", () => {
@@ -2271,7 +2287,7 @@ function getTransactionsForCopy(items, insertionIndex, insertionParentGuid) {
       });
     } else {
       let title =
-        item.type != lazy.PlacesUtils.TYPE_UNICODE ? item.title : item.uri;
+        item.type != lazy.PlacesUtils.TYPE_PLAINTEXT ? item.title : item.uri;
       transaction = lazy.PlacesTransactions.NewBookmark({
         index,
         parentGuid: insertionParentGuid,

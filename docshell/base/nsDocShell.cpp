@@ -3956,7 +3956,9 @@ nsresult nsDocShell::LoadErrorPage(nsIURI* aURI, const char16_t* aURL,
                                    const char16_t* aDescription,
                                    const char* aCSSClass,
                                    nsIChannel* aFailedChannel) {
-  MOZ_ASSERT(!mIsBeingDestroyed);
+  if (mIsBeingDestroyed) {
+    return NS_ERROR_NOT_AVAILABLE;
+  }
 
 #if defined(DEBUG)
   if (MOZ_LOG_TEST(gDocShellLog, LogLevel::Debug)) {
@@ -4850,7 +4852,7 @@ nsDocShell::GetVisibility(bool* aVisibility) {
   NS_ENSURE_TRUE(view, NS_ERROR_FAILURE);
 
   // if our root view is hidden, we are not visible
-  if (view->GetVisibility() == nsViewVisibility_kHide) {
+  if (view->GetVisibility() == ViewVisibility::Hide) {
     return NS_OK;
   }
 
@@ -8033,8 +8035,9 @@ nsresult nsDocShell::CreateContentViewer(const nsACString& aContentType,
         if (profiler_thread_is_being_profiled_for_markers()) {
           nsCOMPtr<nsIURI> prinURI;
           BasePrincipal::Cast(thisPrincipal)->GetURI(getter_AddRefs(prinURI));
-          nsPrintfCString marker("Iframe loaded in background: %s",
-                                 prinURI->GetSpecOrDefault().get());
+          nsPrintfCString marker(
+              "Iframe loaded in background: %s",
+              nsContentUtils::TruncatedURLForDisplay(prinURI).get());
           PROFILER_MARKER_TEXT("Background Iframe", DOM, {}, marker);
         }
         SetBackgroundLoadIframe();
@@ -12958,10 +12961,12 @@ bool nsDocShell::ShouldOpenInBlankTarget(const nsAString& aOriginalTarget,
              : !linkHost.Equals("www."_ns + docHost);
 }
 
-static bool IsElementAnchorOrArea(nsIContent* aContent) {
-  // Make sure we are dealing with either an <A> or <AREA> element in the HTML
-  // or XHTML namespace.
-  return aContent->IsAnyOfHTMLElements(nsGkAtoms::a, nsGkAtoms::area);
+static bool ElementCanHaveNoopener(nsIContent* aContent) {
+  // Make sure we are dealing with either an <A>, <AREA>, or <FORM> element in
+  // the HTML, XHTML, or SVG namespace.
+  return aContent->IsAnyOfHTMLElements(nsGkAtoms::a, nsGkAtoms::area,
+                                       nsGkAtoms::form) ||
+         aContent->IsSVGElement(nsGkAtoms::a);
 }
 
 nsresult nsDocShell::OnLinkClickSync(nsIContent* aContent,
@@ -13020,11 +13025,11 @@ nsresult nsDocShell::OnLinkClickSync(nsIContent* aContent,
   }
 
   uint32_t flags = INTERNAL_LOAD_FLAGS_NONE;
-  bool isElementAnchorOrArea = IsElementAnchorOrArea(aContent);
+  bool elementCanHaveNoopener = ElementCanHaveNoopener(aContent);
   bool triggeringPrincipalIsSystemPrincipal =
       aLoadState->TriggeringPrincipal()->IsSystemPrincipal();
-  if (isElementAnchorOrArea) {
-    MOZ_ASSERT(aContent->IsHTMLElement());
+  if (elementCanHaveNoopener) {
+    MOZ_ASSERT(aContent->IsHTMLElement() || aContent->IsSVGElement());
     nsAutoString relString;
     aContent->AsElement()->GetAttr(kNameSpaceID_None, nsGkAtoms::rel,
                                    relString);
@@ -13107,8 +13112,8 @@ nsresult nsDocShell::OnLinkClickSync(nsIContent* aContent,
   uint32_t loadType = inOnLoadHandler ? LOAD_NORMAL_REPLACE : LOAD_LINK;
 
   nsCOMPtr<nsIReferrerInfo> referrerInfo =
-      isElementAnchorOrArea ? new ReferrerInfo(*aContent->AsElement())
-                            : new ReferrerInfo(*referrerDoc);
+      elementCanHaveNoopener ? new ReferrerInfo(*aContent->AsElement())
+                             : new ReferrerInfo(*referrerDoc);
   RefPtr<WindowContext> context = mBrowsingContext->GetCurrentWindowContext();
 
   aLoadState->SetTriggeringSandboxFlags(triggeringSandboxFlags);

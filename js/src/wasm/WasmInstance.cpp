@@ -59,6 +59,7 @@
 #include "gc/StoreBuffer-inl.h"
 #include "vm/ArrayBufferObject-inl.h"
 #include "vm/JSObject-inl.h"
+#include "wasm/WasmGcObject-inl.h"
 
 using namespace js;
 using namespace js::jit;
@@ -93,8 +94,10 @@ static_assert(Instance::offsetOfLastCommonJitField() < 128);
 //
 // Functions and invocation.
 
-const void** Instance::addressOfTypeId(uint32_t typeIndex) const {
-  return (const void**)(globalData() + typeIndex * sizeof(void*));
+TypeDefInstanceData* Instance::typeDefInstanceData(uint32_t typeIndex) const {
+  TypeDefInstanceData* instanceData =
+      (TypeDefInstanceData*)(globalData() + metadata().typeIdsOffsetStart);
+  return &instanceData[typeIndex];
 }
 
 const void* Instance::addressOfGlobalCell(const GlobalDesc& global) const {
@@ -234,10 +237,10 @@ bool Instance::callImport(JSContext* cx, uint32_t funcImportIndex,
   }
 
   FuncImportInstanceData& import = funcImportInstanceData(fi);
-  RootedFunction importFun(cx, import.fun);
-  MOZ_ASSERT(cx->realm() == importFun->realm());
+  Rooted<JSObject*> importCallable(cx, import.callable);
+  MOZ_ASSERT(cx->realm() == importCallable->nonCCWRealm());
 
-  RootedValue fval(cx, ObjectValue(*importFun));
+  RootedValue fval(cx, ObjectValue(*importCallable));
   RootedValue thisv(cx, UndefinedValue());
   RootedValue rval(cx);
   if (!Call(cx, fval, thisv, args, &rval)) {
@@ -262,12 +265,16 @@ bool Instance::callImport(JSContext* cx, uint32_t funcImportIndex,
 
   void* jitExitCode = codeBase(tier) + fi.jitExitCodeOffset();
 
-  // Test if the function is JIT compiled.
-  if (!importFun->hasBytecode()) {
+  if (!importCallable->is<JSFunction>()) {
     return true;
   }
 
-  JSScript* script = importFun->nonLazyScript();
+  // Test if the function is JIT compiled.
+  if (!importCallable->as<JSFunction>().hasBytecode()) {
+    return true;
+  }
+
+  JSScript* script = importCallable->as<JSFunction>().nonLazyScript();
   if (!script->hasJitScript()) {
     return true;
   }
@@ -829,24 +836,28 @@ bool Instance::initElems(uint32_t tableIndex, const ElemSegment& seg,
       if (funcIndex < metadataTier.funcImports.length()) {
         FuncImportInstanceData& import =
             funcImportInstanceData(funcImports[funcIndex]);
-        JSFunction* fun = import.fun;
-        if (IsWasmExportedFunction(fun)) {
-          // This element is a wasm function imported from another
-          // instance. To preserve the === function identity required by
-          // the JS embedding spec, we must set the element to the
-          // imported function's underlying CodeRange.funcCheckedCallEntry and
-          // Instance so that future Table.get()s produce the same
-          // function object as was imported.
-          WasmInstanceObject* calleeInstanceObj =
-              ExportedFunctionToInstanceObject(fun);
-          Instance& calleeInstance = calleeInstanceObj->instance();
-          Tier calleeTier = calleeInstance.code().bestTier();
-          const CodeRange& calleeCodeRange =
-              calleeInstanceObj->getExportedFunctionCodeRange(fun, calleeTier);
-          void* code = calleeInstance.codeBase(calleeTier) +
-                       calleeCodeRange.funcCheckedCallEntry();
-          table.setFuncRef(dstOffset + i, code, &calleeInstance);
-          continue;
+        MOZ_ASSERT(import.callable->isCallable());
+        if (import.callable->is<JSFunction>()) {
+          JSFunction* fun = &import.callable->as<JSFunction>();
+          if (IsWasmExportedFunction(fun)) {
+            // This element is a wasm function imported from another
+            // instance. To preserve the === function identity required by
+            // the JS embedding spec, we must set the element to the
+            // imported function's underlying CodeRange.funcCheckedCallEntry and
+            // Instance so that future Table.get()s produce the same
+            // function object as was imported.
+            WasmInstanceObject* calleeInstanceObj =
+                ExportedFunctionToInstanceObject(fun);
+            Instance& calleeInstance = calleeInstanceObj->instance();
+            Tier calleeTier = calleeInstance.code().bestTier();
+            const CodeRange& calleeCodeRange =
+                calleeInstanceObj->getExportedFunctionCodeRange(fun,
+                                                                calleeTier);
+            void* code = calleeInstance.codeBase(calleeTier) +
+                         calleeCodeRange.funcCheckedCallEntry();
+            table.setFuncRef(dstOffset + i, code, &calleeInstance);
+            continue;
+          }
         }
       }
       void* code =
@@ -1037,8 +1048,11 @@ bool Instance::initElems(uint32_t tableIndex, const ElemSegment& seg,
   if (funcIndex < funcImports.length()) {
     FuncImportInstanceData& import =
         instance->funcImportInstanceData(funcImports[funcIndex]);
-    if (IsWasmExportedFunction(import.fun)) {
-      return FuncRef::fromJSFunction(import.fun).forCompiledCode();
+    if (import.callable->is<JSFunction>()) {
+      JSFunction* fun = &import.callable->as<JSFunction>();
+      if (IsWasmExportedFunction(fun)) {
+        return FuncRef::fromJSFunction(fun).forCompiledCode();
+      }
     }
   }
 
@@ -1119,7 +1133,17 @@ bool Instance::initElems(uint32_t tableIndex, const ElemSegment& seg,
                                                JSObject** location,
                                                JSObject* prev) {
   MOZ_ASSERT(SASigPostBarrierPrecise.failureMode == FailureMode::Infallible);
-  MOZ_ASSERT(location);
+  postBarrierPreciseWithOffset(instance, location, /*offset=*/0, prev);
+}
+
+/* static */ void Instance::postBarrierPreciseWithOffset(Instance* instance,
+                                                         JSObject** base,
+                                                         uint32_t offset,
+                                                         JSObject* prev) {
+  MOZ_ASSERT(SASigPostBarrierPreciseWithOffset.failureMode ==
+             FailureMode::Infallible);
+  MOZ_ASSERT(base);
+  JSObject** location = (JSObject**)(uintptr_t(base) + size_t(offset));
   JSObject* next = *location;
   JSObject::postWriteBarrier(location, prev, next);
 }
@@ -1141,17 +1165,23 @@ bool Instance::initElems(uint32_t tableIndex, const ElemSegment& seg,
 // GC and exception handling support.
 
 /* static */ void* Instance::structNew(Instance* instance,
-                                       const wasm::TypeDef* typeDef) {
+                                       TypeDefInstanceData* typeDefData) {
   MOZ_ASSERT(SASigStructNew.failureMode == FailureMode::FailOnNullPtr);
   JSContext* cx = instance->cx();
-  return WasmStructObject::createStruct(cx, typeDef);
+
+  const TypeDef* typeDef = typeDefData->typeDef;
+  WasmGcObject::AllocArgs args(cx, typeDefData);
+  return WasmStructObject::createStruct(cx, typeDef, args);
 }
 
 /* static */ void* Instance::arrayNew(Instance* instance, uint32_t numElements,
-                                      const wasm::TypeDef* typeDef) {
+                                      TypeDefInstanceData* typeDefData) {
   MOZ_ASSERT(SASigArrayNew.failureMode == FailureMode::FailOnNullPtr);
   JSContext* cx = instance->cx();
-  return WasmArrayObject::createArray(cx, typeDef, numElements);
+
+  const TypeDef* typeDef = typeDefData->typeDef;
+  WasmGcObject::AllocArgs args(cx, typeDefData);
+  return WasmArrayObject::createArray(cx, typeDef, numElements, args);
 }
 
 // Creates an array (WasmArrayObject) containing `numElements` of type
@@ -1162,7 +1192,7 @@ bool Instance::initElems(uint32_t tableIndex, const ElemSegment& seg,
 /* static */ void* Instance::arrayNewData(Instance* instance,
                                           uint32_t segByteOffset,
                                           uint32_t numElements,
-                                          const wasm::TypeDef* typeDef,
+                                          TypeDefInstanceData* typeDefData,
                                           uint32_t segIndex) {
   MOZ_ASSERT(SASigArrayNewData.failureMode == FailureMode::FailOnNullPtr);
   JSContext* cx = instance->cx();
@@ -1183,8 +1213,10 @@ bool Instance::initElems(uint32_t tableIndex, const ElemSegment& seg,
   // At this point, if `seg` is null then `numElements` and `segByteOffset`
   // are both zero.
 
+  const TypeDef* typeDef = typeDefData->typeDef;
+  WasmGcObject::AllocArgs args(cx, typeDefData);
   Rooted<WasmArrayObject*> arrayObj(
-      cx, WasmArrayObject::createArray(cx, typeDef, numElements));
+      cx, WasmArrayObject::createArray(cx, typeDef, numElements, args));
   if (!arrayObj) {
     // WasmArrayObject::createArray will have reported OOM.
     return nullptr;
@@ -1238,7 +1270,7 @@ bool Instance::initElems(uint32_t tableIndex, const ElemSegment& seg,
 /* static */ void* Instance::arrayNewElem(Instance* instance,
                                           uint32_t segElemIndex,
                                           uint32_t numElements,
-                                          const wasm::TypeDef* typeDef,
+                                          TypeDefInstanceData* typeDefData,
                                           uint32_t segIndex) {
   MOZ_ASSERT(SASigArrayNewElem.failureMode == FailureMode::FailOnNullPtr);
   JSContext* cx = instance->cx();
@@ -1257,14 +1289,17 @@ bool Instance::initElems(uint32_t tableIndex, const ElemSegment& seg,
   // At this point, if `seg` is null then `numElements` and `segElemIndex`
   // are both zero.
 
+  const TypeDef* typeDef = typeDefData->typeDef;
+
   // The element segment is an array of uint32_t indicating function indices,
   // which we'll have to dereference (to produce real function pointers)
   // before parking them in the array.  Hence each array element must be a
   // machine word.
   MOZ_RELEASE_ASSERT(typeDef->arrayType().elementType_.size() == sizeof(void*));
 
+  WasmGcObject::AllocArgs args(cx, typeDefData);
   Rooted<WasmArrayObject*> arrayObj(
-      cx, WasmArrayObject::createArray(cx, typeDef, numElements));
+      cx, WasmArrayObject::createArray(cx, typeDef, numElements, args));
   if (!arrayObj) {
     // WasmArrayObject::createArray will have reported OOM.
     return nullptr;
@@ -1547,7 +1582,7 @@ void Instance::destroy(Instance* instance) {
   js_free(instance->allocatedBase_);
 }
 
-bool Instance::init(JSContext* cx, const JSFunctionVector& funcImports,
+bool Instance::init(JSContext* cx, const JSObjectVector& funcImports,
                     const ValVector& globalImportValues,
                     const WasmGlobalObjectVector& globalObjs,
                     const WasmTagObjectVector& tagObjs,
@@ -1581,29 +1616,38 @@ bool Instance::init(JSContext* cx, const JSFunctionVector& funcImports,
   // Initialize function imports in the instance data
   Tier callerTier = code_->bestTier();
   for (size_t i = 0; i < metadata(callerTier).funcImports.length(); i++) {
-    JSFunction* f = funcImports[i];
+    JSObject* f = funcImports[i];
+    MOZ_ASSERT(f->isCallable());
     const FuncImport& fi = metadata(callerTier).funcImports[i];
     const FuncType& funcType = metadata().getFuncImportType(fi);
     FuncImportInstanceData& import = funcImportInstanceData(fi);
-    import.fun = f;
-    if (!isAsmJS() && IsWasmExportedFunction(f)) {
-      WasmInstanceObject* calleeInstanceObj =
-          ExportedFunctionToInstanceObject(f);
-      Instance& calleeInstance = calleeInstanceObj->instance();
-      Tier calleeTier = calleeInstance.code().bestTier();
-      const CodeRange& codeRange =
-          calleeInstanceObj->getExportedFunctionCodeRange(f, calleeTier);
-      import.instance = &calleeInstance;
-      import.realm = f->realm();
-      import.code = calleeInstance.codeBase(calleeTier) +
-                    codeRange.funcUncheckedCallEntry();
-    } else if (void* thunk = MaybeGetBuiltinThunk(f, funcType)) {
-      import.instance = this;
-      import.realm = f->realm();
-      import.code = thunk;
+    import.callable = f;
+    if (f->is<JSFunction>()) {
+      JSFunction* fun = &f->as<JSFunction>();
+      if (!isAsmJS() && IsWasmExportedFunction(fun)) {
+        WasmInstanceObject* calleeInstanceObj =
+            ExportedFunctionToInstanceObject(fun);
+        Instance& calleeInstance = calleeInstanceObj->instance();
+        Tier calleeTier = calleeInstance.code().bestTier();
+        const CodeRange& codeRange =
+            calleeInstanceObj->getExportedFunctionCodeRange(
+                &f->as<JSFunction>(), calleeTier);
+        import.instance = &calleeInstance;
+        import.realm = fun->realm();
+        import.code = calleeInstance.codeBase(calleeTier) +
+                      codeRange.funcUncheckedCallEntry();
+      } else if (void* thunk = MaybeGetBuiltinThunk(fun, funcType)) {
+        import.instance = this;
+        import.realm = fun->realm();
+        import.code = thunk;
+      } else {
+        import.instance = this;
+        import.realm = fun->realm();
+        import.code = codeBase(callerTier) + fi.interpExitCodeOffset();
+      }
     } else {
       import.instance = this;
-      import.realm = f->realm();
+      import.realm = f->nonCCWRealm();
       import.code = codeBase(callerTier) + fi.interpExitCodeOffset();
     }
   }
@@ -1649,21 +1693,30 @@ bool Instance::init(JSContext* cx, const JSFunctionVector& funcImports,
     }
   }
 
-  // Allocate in the global type sets for structural type checks
+  // Initialize type definitions in the instance data.
   const SharedTypeContext& types = metadata().types;
-  if (!types->empty()) {
-    for (uint32_t typeIndex = 0; typeIndex < types->length(); typeIndex++) {
-      const TypeDef& typeDef = types->type(typeIndex);
-      switch (typeDef.kind()) {
-        case TypeDefKind::Func:
-        case TypeDefKind::Struct:
-        case TypeDefKind::Array: {
-          *addressOfTypeId(typeIndex) = &typeDef;
-          break;
-        }
-        default:
-          MOZ_CRASH();
+  WasmGcObject::AllocArgs allocArgs(cx);
+  for (uint32_t typeIndex = 0; typeIndex < types->length(); typeIndex++) {
+    const TypeDef& typeDef = types->type(typeIndex);
+    TypeDefInstanceData* typeDefData = typeDefInstanceData(typeIndex);
+    // Store the runtime type for this type index
+    typeDefData->typeDef = &typeDef;
+
+    if (typeDef.kind() == TypeDefKind::Func) {
+      // Functions do not use these fields
+      typeDefData->shape = nullptr;
+      typeDefData->clasp = nullptr;
+      typeDefData->allocKind = gc::AllocKind::LIMIT;
+      typeDefData->initialHeap = gc::DefaultHeap;
+    } else {
+      // Compute the parameters that allocation will use
+      if (!WasmGcObject::AllocArgs::compute(cx, &typeDef, &allocArgs)) {
+        return false;
       }
+      typeDefData->shape = allocArgs.shape;
+      typeDefData->clasp = allocArgs.clasp;
+      typeDefData->allocKind = allocArgs.allocKind;
+      typeDefData->initialHeap = allocArgs.initialHeap;
     }
   }
 
@@ -1819,7 +1872,7 @@ void Instance::tracePrivate(JSTracer* trc) {
   // OK to just do one tier here; though the tiers have different funcImports
   // tables, they share the instance object.
   for (const FuncImport& fi : metadata(code().stableTier()).funcImports) {
-    TraceNullableEdge(trc, &funcImportInstanceData(fi).fun, "wasm import");
+    TraceNullableEdge(trc, &funcImportInstanceData(fi).callable, "wasm import");
   }
 
   for (const SharedTable& table : tables_) {
@@ -1838,6 +1891,12 @@ void Instance::tracePrivate(JSTracer* trc) {
 
   for (const TagDesc& tag : code().metadata().tags) {
     TraceNullableEdge(trc, &tagInstanceData(tag), "wasm tag");
+  }
+
+  const SharedTypeContext& types = metadata().types;
+  for (uint32_t typeIndex = 0; typeIndex < types->length(); typeIndex++) {
+    TypeDefInstanceData* typeDefData = typeDefInstanceData(typeIndex);
+    TraceNullableEdge(trc, &typeDefData->shape, "wasm shape");
   }
 
   TraceNullableEdge(trc, &memory_, "wasm buffer");
@@ -2389,6 +2448,23 @@ bool Instance::constantRefFunc(uint32_t funcIndex,
   }
   result.set(FuncRef::fromCompiledCode(fnref));
   return true;
+}
+
+WasmStructObject* Instance::constantStructNewDefault(JSContext* cx,
+                                                     uint32_t typeIndex) {
+  TypeDefInstanceData* typeDefData = typeDefInstanceData(typeIndex);
+  const TypeDef* typeDef = typeDefData->typeDef;
+  WasmGcObject::AllocArgs args(cx, typeDefData);
+  return WasmStructObject::createStruct(cx, typeDef, args);
+}
+
+WasmArrayObject* Instance::constantArrayNewDefault(JSContext* cx,
+                                                   uint32_t typeIndex,
+                                                   uint32_t numElements) {
+  TypeDefInstanceData* typeDefData = typeDefInstanceData(typeIndex);
+  const TypeDef* typeDef = typeDefData->typeDef;
+  WasmGcObject::AllocArgs args(cx, typeDefData);
+  return WasmArrayObject::createArray(cx, typeDef, numElements, args);
 }
 
 JSAtom* Instance::getFuncDisplayAtom(JSContext* cx, uint32_t funcIndex) const {

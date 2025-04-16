@@ -89,6 +89,7 @@ class nsIFrame;
 class nsIHTMLCollection;
 class nsIMozBrowserFrame;
 class nsIPrincipal;
+class nsIScreen;
 class nsIScrollableFrame;
 class nsIURI;
 class nsMappedAttributes;
@@ -2041,6 +2042,8 @@ class Element : public FragmentOrElement {
    * (e.g. _blank).
    */
   virtual void GetLinkTarget(nsAString& aTarget);
+
+  virtual bool Translate() const;
 
  protected:
   enum class ReparseAttributes { No, Yes };

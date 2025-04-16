@@ -201,9 +201,9 @@ this.DateTimeBoxWidget = class {
       false
     );
     // This is to open the picker when input element is tapped on Android
-    // (this includes padding area).
+    // or for type=time inputs (this includes padding area).
     this.isAndroid = this.window.navigator.appVersion.includes("Android");
-    if (this.isAndroid) {
+    if (this.isAndroid || this.type == "time") {
       this.mInputElement.addEventListener(
         "click",
         this,
@@ -233,10 +233,6 @@ this.DateTimeBoxWidget = class {
   }
 
   generateContent() {
-    /*
-     * Pass the markup through XML parser purely for the reason of loading the localization DTD.
-     * Remove it when migrate to Fluent (bug 1504363).
-     */
     const parser = new this.window.DOMParser();
     let parserDoc = parser.parseFromString(
       `<div class="datetimebox" xmlns="http://www.w3.org/1999/xhtml" role="none">
@@ -277,6 +273,10 @@ this.DateTimeBoxWidget = class {
       "MozPickerValueChanged",
       "MozSetDateTimePickerState",
     ];
+  }
+
+  get showPickerOnClick() {
+    return this.isAndroid || this.type == "time";
   }
 
   addEventListenersToField(aElement) {
@@ -760,12 +760,15 @@ this.DateTimeBoxWidget = class {
       return;
     }
 
-    // Toggle the picker on click on the Calendar button on any platform,
-    // and, while on Android, on anywhere within an input field, but a Calendar
-    // is excluded to avoid interfering with the default Calendar behavior
+    // We toggle the picker on click on the Calendar button on any platform.
+    // For Android and for type=time inputs, we also toggle the picker when
+    // clicking on the input field.
+    //
+    // We do not toggle the picker when clicking the input field for Calendar
+    // on desktop to avoid interfering with the default Calendar behavior.
     if (
       aEvent.originalTarget == this.mCalendarButton ||
-      (this.isAndroid && aEvent.target != this.mCalendarButton)
+      this.showPickerOnClick
     ) {
       if (
         !this.mIsPickerOpen &&

@@ -127,6 +127,8 @@
 
 #include <cstring>
 #include <cerrno>
+#include <optional>
+#include <type_traits>
 #ifdef XP_WIN
 #  include <io.h>
 #  include <windows.h>
@@ -150,7 +152,6 @@
 #include "mozilla/Likely.h"
 #include "mozilla/MathAlgorithms.h"
 #include "mozilla/RandomNum.h"
-#include "mozilla/Sprintf.h"
 // Note: MozTaggedAnonymousMmap() could call an LD_PRELOADed mmap
 // instead of the one defined here; use only MozTagAnonymousMemory().
 #include "mozilla/TaggedAnonymousMemory.h"
@@ -162,6 +163,10 @@
 #include "rb.h"
 #include "Mutex.h"
 #include "Utils.h"
+
+#if defined(XP_WIN)
+#  include "mozmemory_utils.h"
+#endif
 
 // For GetGeckoProcessType(), when it's used.
 #if defined(XP_WIN) && !defined(JS_STANDALONE)
@@ -198,12 +203,20 @@ using namespace mozilla;
 #  define MALLOC_DECOMMIT
 #endif
 
+// Define MALLOC_RUNTIME_CONFIG depending on MOZ_DEBUG. Overriding this as
+// a build option allows us to build mozjemalloc/firefox without runtime asserts
+// but with runtime configuration. Making some testing easier.
+
+#ifdef MOZ_DEBUG
+#  define MALLOC_RUNTIME_CONFIG
+#endif
+
 // When MALLOC_STATIC_PAGESIZE is defined, the page size is fixed at
 // compile-time for better performance, as opposed to determined at
 // runtime. Some platforms can have different page sizes at runtime
 // depending on kernel configuration, so they are opted out by default.
 // Debug builds are opted out too, for test coverage.
-#ifndef MOZ_DEBUG
+#ifndef MALLOC_RUNTIME_CONFIG
 #  if !defined(__ia64__) && !defined(__sparc__) && !defined(__mips__) &&       \
       !defined(__aarch64__) && !defined(__powerpc__) && !defined(XP_MACOSX) && \
       !defined(__loongarch__)
@@ -1372,15 +1385,20 @@ static detail::ThreadLocal<arena_t*, detail::ThreadLocalKeyStorage>
 
 // *****************************
 // Runtime configuration options.
+//
+// Junk - write "junk" to freshly allocated cells.
+// Poison - write "poison" to cells upon deallocation.
 
 const uint8_t kAllocJunk = 0xe4;
 const uint8_t kAllocPoison = 0xe5;
 
-#ifdef MOZ_DEBUG
+#ifdef MALLOC_RUNTIME_CONFIG
 static bool opt_junk = true;
+static bool opt_poison = true;
 static bool opt_zero = false;
 #else
 static const bool opt_junk = false;
+static const bool opt_poison = true;
 static const bool opt_zero = false;
 #endif
 static bool opt_randomize_small = true;
@@ -1459,9 +1477,14 @@ static inline size_t GetChunkOffsetForPtr(const void* aPtr) {
 
 static inline const char* _getprogname(void) { return "<jemalloc>"; }
 
+static inline void MaybePoison(void* aPtr, size_t aSize) {
+  if (opt_poison) {
+    memset(aPtr, kAllocPoison, aSize);
+  }
+}
+
 // Fill the given range of memory with zeroes or junk depending on opt_junk and
-// opt_zero. Callers can force filling with zeroes through the aForceZero
-// argument.
+// opt_zero.
 static inline void ApplyZeroOrJunk(void* aPtr, size_t aSize) {
   if (opt_junk) {
     memset(aPtr, kAllocJunk, aSize);
@@ -1482,10 +1505,7 @@ constexpr size_t kMaxAttempts = 10;
 // Microsoft's documentation for ::Sleep() for details.)
 constexpr size_t kDelayMs = 50;
 
-struct StallSpecs {
-  size_t maxAttempts;
-  size_t delayMs;
-};
+using StallSpecs = ::mozilla::StallSpecs;
 
 static constexpr StallSpecs maxStall = {.maxAttempts = kMaxAttempts,
                                         .delayMs = kDelayMs};
@@ -1505,7 +1525,8 @@ static inline StallSpecs GetStallSpecs() {
 
     // For all other process types, stall for at most half as long.
     default:
-      return {.maxAttempts = kMaxAttempts / 2, .delayMs = kDelayMs};
+      return {.maxAttempts = maxStall.maxAttempts / 2,
+              .delayMs = maxStall.delayMs};
   }
 #  endif
 }
@@ -1517,6 +1538,8 @@ static inline StallSpecs GetStallSpecs() {
 // Ref: https://docs.microsoft.com/en-us/troubleshoot/windows-client/performance/slow-page-file-growth-memory-allocation-errors
 [[nodiscard]] void* MozVirtualAlloc(LPVOID lpAddress, SIZE_T dwSize,
                                     DWORD flAllocationType, DWORD flProtect) {
+  DWORD const lastError = ::GetLastError();
+
   constexpr auto IsOOMError = [] {
     switch (::GetLastError()) {
       // This is the usual error result from VirtualAlloc for OOM.
@@ -1545,31 +1568,40 @@ static inline StallSpecs GetStallSpecs() {
   // Retry as many times as desired (possibly zero).
   const StallSpecs stallSpecs = GetStallSpecs();
 
-  for (size_t i = 0; i < stallSpecs.maxAttempts; ++i) {
-    ::Sleep(stallSpecs.delayMs);
-    void* ptr = ::VirtualAlloc(lpAddress, dwSize, flAllocationType, flProtect);
+  const auto ret =
+      stallSpecs.StallAndRetry(&::Sleep, [&]() -> std::optional<void*> {
+        void* ptr =
+            ::VirtualAlloc(lpAddress, dwSize, flAllocationType, flProtect);
 
-    if (ptr) {
-      // The OOM status has been handled, and should not be reported to
-      // telemetry.
-      if (IsOOMError()) {
-        ::SetLastError(0);
-      }
-      return ptr;
-    }
+        if (ptr) {
+          // The OOM status has been handled, and should not be reported to
+          // telemetry.
+          if (IsOOMError()) {
+            ::SetLastError(lastError);
+          }
+          return ptr;
+        }
 
-    // Failure for some reason other than OOM.
-    if (!IsOOMError()) {
-      return nullptr;
-    }
-  }
+        // Failure for some reason other than OOM.
+        if (!IsOOMError()) {
+          return nullptr;
+        }
 
-  // Ah, well. We tried.
-  return nullptr;
+        return std::nullopt;
+      });
+
+  return ret.value_or(nullptr);
 }
 }  // namespace MozAllocRetries
 
 using MozAllocRetries::MozVirtualAlloc;
+
+namespace mozilla {
+MOZ_JEMALLOC_API StallSpecs GetAllocatorStallSpecs() {
+  return ::MozAllocRetries::GetStallSpecs();
+}
+}  // namespace mozilla
+
 #endif  // XP_WIN
 
 // ***************************************************************************
@@ -3567,7 +3599,7 @@ void arena_t::DallocSmall(arena_chunk_t* aChunk, void* aPtr,
   MOZ_DIAGNOSTIC_ASSERT(uintptr_t(aPtr) >=
                         uintptr_t(run) + bin->mRunFirstRegionOffset);
 
-  memset(aPtr, kAllocPoison, size);
+  MaybePoison(aPtr, size);
 
   arena_run_reg_dalloc(run, bin, aPtr, size);
   run->mNumFree++;
@@ -3628,7 +3660,7 @@ void arena_t::DallocLarge(arena_chunk_t* aChunk, void* aPtr) {
   size_t pageind = (uintptr_t(aPtr) - uintptr_t(aChunk)) >> gPageSize2Pow;
   size_t size = aChunk->map[pageind].bits & ~gPageSizeMask;
 
-  memset(aPtr, kAllocPoison, size);
+  MaybePoison(aPtr, size);
   mStats.allocated_large -= size;
 
   DallocRun((arena_run_t*)aPtr, true);
@@ -3727,7 +3759,7 @@ void* arena_t::RallocSmallOrLarge(void* aPtr, size_t aSize, size_t aOldSize) {
   // Try to avoid moving the allocation.
   if (aOldSize <= gMaxLargeClass && sizeClass.Size() == aOldSize) {
     if (aSize < aOldSize) {
-      memset((void*)(uintptr_t(aPtr) + aSize), kAllocPoison, aOldSize - aSize);
+      MaybePoison((void*)(uintptr_t(aPtr) + aSize), aOldSize - aSize);
     }
     return aPtr;
   }
@@ -3736,7 +3768,7 @@ void* arena_t::RallocSmallOrLarge(void* aPtr, size_t aSize, size_t aOldSize) {
     arena_chunk_t* chunk = GetChunkForPtr(aPtr);
     if (sizeClass.Size() < aOldSize) {
       // Fill before shrinking in order to avoid a race.
-      memset((void*)((uintptr_t)aPtr + aSize), kAllocPoison, aOldSize - aSize);
+      MaybePoison((void*)((uintptr_t)aPtr + aSize), aOldSize - aSize);
       RallocShrinkLarge(chunk, aPtr, sizeClass.Size(), aOldSize);
       return aPtr;
     }
@@ -4018,7 +4050,7 @@ void* arena_t::RallocHuge(void* aPtr, size_t aSize, size_t aOldSize) {
       CHUNK_CEILING(aSize + gPageSize) == CHUNK_CEILING(aOldSize + gPageSize)) {
     size_t psize = PAGE_CEILING(aSize);
     if (aSize < aOldSize) {
-      memset((void*)((uintptr_t)aPtr + aSize), kAllocPoison, aOldSize - aSize);
+      MaybePoison((void*)((uintptr_t)aPtr + aSize), aOldSize - aSize);
     }
     if (psize < aOldSize) {
       extent_node_t key;
@@ -4202,12 +4234,18 @@ static bool malloc_init_hard() {
               opt_dirty_max <<= 1;
             }
             break;
-#ifdef MOZ_DEBUG
+#ifdef MALLOC_RUNTIME_CONFIG
           case 'j':
             opt_junk = false;
             break;
           case 'J':
             opt_junk = true;
+            break;
+          case 'q':
+            opt_poison = false;
+            break;
+          case 'Q':
+            opt_poison = true;
             break;
           case 'z':
             opt_zero = false;

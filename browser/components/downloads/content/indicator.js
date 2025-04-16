@@ -359,10 +359,6 @@ const DownloadsIndicatorView = {
       return;
     }
 
-    if (!DownloadsCommon.animateNotifications) {
-      return;
-    }
-
     // enqueue this notification while the current one is being displayed
     if (this._currentNotificationType) {
       // only queue up the notification if it is different to the current one
@@ -385,6 +381,11 @@ const DownloadsIndicatorView = {
     let anchor = DownloadsButton._placeholder;
     if (!anchor || !isElementVisible(anchor.parentNode)) {
       // Our container isn't visible, so can't show the animation:
+      return;
+    }
+
+    if (anchor.ownerGlobal.matchMedia("(prefers-reduced-motion)").matches) {
+      // User has prefers-reduced-motion enabled, so we shouldn't show the animation.
       return;
     }
 
@@ -479,13 +480,16 @@ const DownloadsIndicatorView = {
           }
           // For arrow type only: Set the % complete on the pie-chart.
           // We use a minimum of 10% to ensure something is always visible
-          this.indicator.style.setProperty(
+          this._progressIcon.style.setProperty(
             "--download-progress-pcent",
             `${Math.max(10, this._percentComplete)}%`
           );
         } else {
           this.indicator.removeAttribute("progress");
-          this.indicator.style.setProperty("--download-progress-pcent", "0%");
+          this._progressIcon.style.setProperty(
+            "--download-progress-pcent",
+            "0%"
+          );
         }
         this._progressRaf = null;
       });

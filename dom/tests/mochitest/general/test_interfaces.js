@@ -401,12 +401,6 @@ let interfaceNamesInGlobalScope = [
   // IMPORTANT: Do not change this list without review from a DOM peer!
   { name: "EventTarget", insecureContext: true },
   // IMPORTANT: Do not change this list without review from a DOM peer!
-  {
-    name: "FeaturePolicyViolationReportBody",
-    insecureContext: true,
-    nightly: true,
-  },
-  // IMPORTANT: Do not change this list without review from a DOM peer!
   { name: "File", insecureContext: true },
   // IMPORTANT: Do not change this list without review from a DOM peer!
   { name: "FileList", insecureContext: true },
@@ -417,7 +411,7 @@ let interfaceNamesInGlobalScope = [
   // IMPORTANT: Do not change this list without review from a DOM peer!
   { name: "FileSystemDirectoryEntry", insecureContext: true },
   // IMPORTANT: Do not change this list without review from a DOM peer!
-  { name: "FileSystemDirectoryHandle", nightly: true },
+  { name: "FileSystemDirectoryHandle" },
   // IMPORTANT: Do not change this list without review from a DOM peer!
   { name: "FileSystemDirectoryReader", insecureContext: true },
   // IMPORTANT: Do not change this list without review from a DOM peer!
@@ -425,11 +419,11 @@ let interfaceNamesInGlobalScope = [
   // IMPORTANT: Do not change this list without review from a DOM peer!
   { name: "FileSystemFileEntry", insecureContext: true },
   // IMPORTANT: Do not change this list without review from a DOM peer!
-  { name: "FileSystemFileHandle", nightly: true },
+  { name: "FileSystemFileHandle" },
   // IMPORTANT: Do not change this list without review from a DOM peer!
-  { name: "FileSystemHandle", nightly: true },
+  { name: "FileSystemHandle" },
   // IMPORTANT: Do not change this list without review from a DOM peer!
-  { name: "FileSystemWritableFileStream", nightly: true },
+  { name: "FileSystemWritableFileStream" },
   // IMPORTANT: Do not change this list without review from a DOM peer!
   { name: "FocusEvent", insecureContext: true },
   // IMPORTANT: Do not change this list without review from a DOM peer!

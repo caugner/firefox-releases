@@ -728,12 +728,15 @@ struct MOZ_NEEDS_MEMMOVABLE_MEMBERS nsStyleList {
 };
 
 struct MOZ_NEEDS_MEMMOVABLE_MEMBERS nsStylePage {
+  using StylePageOrientation = mozilla::StylePageOrientation;
   using StylePageSize = mozilla::StylePageSize;
   using StylePageName = mozilla::StylePageName;
   nsStylePage(const nsStylePage& aOther) = default;
   nsStylePage& operator=(const nsStylePage& aOther) = default;
   explicit nsStylePage(const mozilla::dom::Document&)
-      : mSize(StylePageSize::Auto()), mPage(StylePageName::Auto()) {}
+      : mSize(StylePageSize::Auto()),
+        mPage(StylePageName::Auto()),
+        mPageOrientation(StylePageOrientation::Upright) {}
 
   static constexpr bool kHasTriggerImageLoads = false;
   nsChangeHint CalcDifference(const nsStylePage& aNewData) const;
@@ -742,6 +745,8 @@ struct MOZ_NEEDS_MEMMOVABLE_MEMBERS nsStylePage {
   StylePageSize mSize;
   // page-name property.
   StylePageName mPage;
+  // page-orientation property.
+  StylePageOrientation mPageOrientation;
 };
 
 struct MOZ_NEEDS_MEMMOVABLE_MEMBERS nsStylePosition {
@@ -1191,8 +1196,7 @@ inline bool StyleTextUnderlinePosition::IsRight() const {
 }
 
 struct StyleTransition {
-  StyleTransition() { /* leaves uninitialized; see also SetInitialValues */
-  }
+  StyleTransition() = default;
   explicit StyleTransition(const StyleTransition& aCopy);
 
   void SetInitialValues();
@@ -1202,8 +1206,8 @@ struct StyleTransition {
   const StyleComputedTimingFunction& GetTimingFunction() const {
     return mTimingFunction;
   }
-  float GetDelay() const { return mDelay; }
-  float GetDuration() const { return mDuration; }
+  const mozilla::StyleTime& GetDelay() const { return mDelay; }
+  const mozilla::StyleTime& GetDuration() const { return mDuration; }
   nsCSSPropertyID GetProperty() const { return mProperty; }
   nsAtom* GetUnknownProperty() const { return mUnknownProperty; }
 
@@ -1213,9 +1217,10 @@ struct StyleTransition {
   }
 
  private:
-  StyleComputedTimingFunction mTimingFunction;
-  float mDuration;
-  float mDelay;
+  StyleComputedTimingFunction mTimingFunction{
+      StyleComputedTimingFunction::LinearKeyword()};
+  mozilla::StyleTime mDuration{0.0};
+  mozilla::StyleTime mDelay{0.0};
   nsCSSPropertyID mProperty;
   RefPtr<nsAtom> mUnknownProperty;  // used when mProperty is
                                     // eCSSProperty_UNKNOWN or
@@ -1223,8 +1228,7 @@ struct StyleTransition {
 };
 
 struct StyleAnimation {
-  StyleAnimation() { /* leaves uninitialized; see also SetInitialValues */
-  }
+  StyleAnimation() = default;
   explicit StyleAnimation(const StyleAnimation& aCopy);
 
   void SetInitialValues();
@@ -1234,13 +1238,13 @@ struct StyleAnimation {
   const StyleComputedTimingFunction& GetTimingFunction() const {
     return mTimingFunction;
   }
-  float GetDelay() const { return mDelay; }
-  float GetDuration() const { return mDuration; }
+  const mozilla::StyleTime& GetDelay() const { return mDelay; }
+  const mozilla::StyleTime& GetDuration() const { return mDuration; }
   nsAtom* GetName() const { return mName; }
   dom::PlaybackDirection GetDirection() const { return mDirection; }
   dom::FillMode GetFillMode() const { return mFillMode; }
   StyleAnimationPlayState GetPlayState() const { return mPlayState; }
-  float GetIterationCount() const { return mIterationCount; }
+  float GetIterationCount() const { return mIterationCount._0; }
   dom::CompositeOperation GetComposition() const { return mComposition; }
   const StyleAnimationTimeline& GetTimeline() const { return mTimeline; }
 
@@ -1253,16 +1257,64 @@ struct StyleAnimation {
   }
 
  private:
-  StyleComputedTimingFunction mTimingFunction;
-  float mDuration;
-  float mDelay;
+  StyleComputedTimingFunction mTimingFunction{
+      StyleComputedTimingFunction::LinearKeyword()};
+  StyleTime mDuration{0.0f};
+  StyleTime mDelay{0.0f};
   RefPtr<nsAtom> mName;  // nsGkAtoms::_empty for 'none'
   dom::PlaybackDirection mDirection;
   dom::FillMode mFillMode;
   StyleAnimationPlayState mPlayState;
-  float mIterationCount;  // mozilla::PositiveInfinity<float>() means infinite
+  StyleAnimationIterationCount mIterationCount;
   dom::CompositeOperation mComposition;
-  StyleAnimationTimeline mTimeline;
+  StyleAnimationTimeline mTimeline{StyleAnimationTimeline::Auto()};
+};
+
+struct StyleScrollTimeline {
+  StyleScrollTimeline() = default;
+  explicit StyleScrollTimeline(const StyleScrollTimeline& aCopy) = default;
+
+  // SetInitialValues() are called when ensuring the array length. So basically
+  // we can rely on the default constructor to handle the new constructed
+  // elements.
+  void SetInitialValues() {}
+
+  const nsAtom* GetName() const { return mName._0.AsAtom(); }
+  StyleScrollAxis GetAxis() const { return mAxis; }
+
+  bool operator==(const StyleScrollTimeline& aOther) const {
+    return mName == aOther.mName && mAxis == aOther.mAxis;
+  }
+  bool operator!=(const StyleScrollTimeline& aOther) const {
+    return !(*this == aOther);
+  }
+
+ private:
+  StyleScrollTimelineName mName;
+  StyleScrollAxis mAxis = StyleScrollAxis::Block;
+};
+
+struct StyleViewTimeline {
+  StyleViewTimeline() = default;
+  explicit StyleViewTimeline(const StyleViewTimeline& aCopy) = default;
+
+  // SetInitialValues() are called when ensuring the array length. So basically
+  // we can rely on the default constructor to handle the new constructed
+  // elements.
+  void SetInitialValues() {}
+
+  bool operator==(const StyleViewTimeline& aOther) const {
+    return mName == aOther.mName && mAxis == aOther.mAxis &&
+           mInset == aOther.mInset;
+  }
+  bool operator!=(const StyleViewTimeline& aOther) const {
+    return !(*this == aOther);
+  }
+
+ private:
+  StyleScrollTimelineName mName;
+  StyleScrollAxis mAxis = StyleScrollAxis::Block;
+  StyleViewTimelineInset mInset;
 };
 
 }  // namespace mozilla
@@ -1794,10 +1846,10 @@ struct MOZ_NEEDS_MEMMOVABLE_MEMBERS nsStyleUIReset {
   nsCSSPropertyID GetTransitionProperty(uint32_t aIndex) const {
     return mTransitions[aIndex % mTransitionPropertyCount].GetProperty();
   }
-  float GetTransitionDelay(uint32_t aIndex) const {
+  const mozilla::StyleTime& GetTransitionDelay(uint32_t aIndex) const {
     return mTransitions[aIndex % mTransitionDelayCount].GetDelay();
   }
-  float GetTransitionDuration(uint32_t aIndex) const {
+  const mozilla::StyleTime& GetTransitionDuration(uint32_t aIndex) const {
     return mTransitions[aIndex % mTransitionDurationCount].GetDuration();
   }
   const mozilla::StyleComputedTimingFunction& GetTransitionTimingFunction(
@@ -1805,21 +1857,19 @@ struct MOZ_NEEDS_MEMMOVABLE_MEMBERS nsStyleUIReset {
     return mTransitions[aIndex % mTransitionTimingFunctionCount]
         .GetTimingFunction();
   }
-  float GetTransitionCombinedDuration(uint32_t aIndex) const {
+  mozilla::StyleTime GetTransitionCombinedDuration(uint32_t aIndex) const {
     // https://drafts.csswg.org/css-transitions/#transition-combined-duration
-    return std::max(
-               mTransitions[aIndex % mTransitionDurationCount].GetDuration(),
-               0.0f) +
-           mTransitions[aIndex % mTransitionDelayCount].GetDelay();
+    return {std::max(GetTransitionDuration(aIndex).seconds, 0.0f) +
+            GetTransitionDelay(aIndex).seconds};
   }
 
   nsAtom* GetAnimationName(uint32_t aIndex) const {
     return mAnimations[aIndex % mAnimationNameCount].GetName();
   }
-  float GetAnimationDelay(uint32_t aIndex) const {
+  const mozilla::StyleTime& GetAnimationDelay(uint32_t aIndex) const {
     return mAnimations[aIndex % mAnimationDelayCount].GetDelay();
   }
-  float GetAnimationDuration(uint32_t aIndex) const {
+  const mozilla::StyleTime& GetAnimationDuration(uint32_t aIndex) const {
     return mAnimations[aIndex % mAnimationDurationCount].GetDuration();
   }
   mozilla::dom::PlaybackDirection GetAnimationDirection(uint32_t aIndex) const {
@@ -1881,8 +1931,14 @@ struct MOZ_NEEDS_MEMMOVABLE_MEMBERS nsStyleUIReset {
   uint32_t mAnimationCompositionCount;
   uint32_t mAnimationTimelineCount;
 
-  mozilla::StyleScrollTimelineName mScrollTimelineName;
-  mozilla::StyleScrollAxis mScrollTimelineAxis;
+  nsStyleAutoArray<mozilla::StyleScrollTimeline> mScrollTimelines;
+  uint32_t mScrollTimelineNameCount;
+  uint32_t mScrollTimelineAxisCount;
+
+  nsStyleAutoArray<mozilla::StyleViewTimeline> mViewTimelines;
+  uint32_t mViewTimelineNameCount;
+  uint32_t mViewTimelineAxisCount;
+  uint32_t mViewTimelineInsetCount;
 };
 
 struct MOZ_NEEDS_MEMMOVABLE_MEMBERS nsStyleUI {
@@ -2255,5 +2311,7 @@ STATIC_ASSERT_TYPE_LAYOUTS_MATCH(nsTArray<mozilla::StyleTransition>,
                                  nsTArray_Simple<mozilla::StyleTransition>);
 STATIC_ASSERT_TYPE_LAYOUTS_MATCH(nsTArray<mozilla::StyleAnimation>,
                                  nsTArray_Simple<mozilla::StyleAnimation>);
+STATIC_ASSERT_TYPE_LAYOUTS_MATCH(nsTArray<mozilla::StyleViewTimeline>,
+                                 nsTArray_Simple<mozilla::StyleViewTimeline>);
 
 #endif /* nsStyleStruct_h___ */

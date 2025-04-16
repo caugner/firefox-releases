@@ -35,10 +35,9 @@ macosx64-cargo-vet:
         toolchain-alias: macosx64-aarch64-cargo-vet
     fetches:
         toolchain:
-            - linux64-cctools-port
             - linux64-clang-toolchain
             - linux64-rust-macos-toolchain
-            - macosx64-sdk
+            - macosx64-sdk-toolchain
 
 macosx64-aarch64-cargo-vet:
     treeherder:
@@ -47,10 +46,9 @@ macosx64-aarch64-cargo-vet:
         arguments: ['aarch64-apple-darwin']
     fetches:
         toolchain:
-            - linux64-cctools-port
             - linux64-clang-toolchain
             - linux64-rust-macos-toolchain
-            - macosx64-sdk
+            - macosx64-sdk-toolchain
 
 win64-cargo-vet:
     treeherder:

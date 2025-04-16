@@ -92,6 +92,7 @@ browsertime:
     - browsertime-first-install
     - browsertime-grandprix
     - browsertime-responsiveness
+    - browsertime-regression-tests
 
 browsertime-profiling:
     - browsertime-tp6-profiling
@@ -176,11 +177,11 @@ linux-talos-flex:
 # Windows
 
 windows-7-tests:
+    - cppunit
     - mochitest-browser-a11y
     - mochitest-browser-chrome
     - mochitest-browser-media
     - mochitest-webgpu
-    - reftest
     - xpcshell
 
 windows32-2004-tests:
@@ -197,6 +198,7 @@ windows32-2004-tests:
     - mochitest-plain
     - mochitest-plain-gpu
     - mochitest-remote
+    - reftest
     - telemetry-tests-client
     - test-verify
     - test-verify-gpu
@@ -276,9 +278,6 @@ mingwclang-tests-opt:
     - cppunit
     - mochitest-chrome-gpu
     - mochitest-plain-gpu
-
-windows-aarch64-tests:
-    - mochitest-media
 
 windows-talos:
     - talos-bcv

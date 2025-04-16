@@ -228,20 +228,34 @@ impl super::CommandEncoder {
 
 impl crate::CommandEncoder<super::Api> for super::CommandEncoder {
     unsafe fn begin_encoding(&mut self, label: crate::Label) -> Result<(), crate::DeviceError> {
-        let list = match self.free_lists.pop() {
-            Some(list) => {
-                list.reset(self.allocator, native::PipelineState::null());
-                list
+        let list = loop {
+            if let Some(list) = self.free_lists.pop() {
+                let reset_result = list
+                    .reset(self.allocator, native::PipelineState::null())
+                    .into_result();
+                if reset_result.is_ok() {
+                    break Some(list);
+                } else {
+                    unsafe {
+                        list.destroy();
+                    }
+                }
+            } else {
+                break None;
             }
-            None => self
-                .device
+        };
+
+        let list = if let Some(list) = list {
+            list
+        } else {
+            self.device
                 .create_graphics_command_list(
                     native::CmdListType::Direct,
                     self.allocator,
                     native::PipelineState::null(),
                     0,
                 )
-                .into_device_result("Create command list")?,
+                .into_device_result("Create command list")?
         };
 
         if let Some(label) = label {
@@ -256,18 +270,29 @@ impl crate::CommandEncoder<super::Api> for super::CommandEncoder {
     }
     unsafe fn discard_encoding(&mut self) {
         if let Some(list) = self.list.take() {
-            list.close();
-            self.free_lists.push(list);
+            if list.close().into_result().is_ok() {
+                self.free_lists.push(list);
+            } else {
+                unsafe {
+                    list.destroy();
+                }
+            }
         }
     }
     unsafe fn end_encoding(&mut self) -> Result<super::CommandBuffer, crate::DeviceError> {
         let raw = self.list.take().unwrap();
-        raw.close();
-        Ok(super::CommandBuffer { raw })
+        let closed = raw.close().into_result().is_ok();
+        Ok(super::CommandBuffer { raw, closed })
     }
     unsafe fn reset_all<I: Iterator<Item = super::CommandBuffer>>(&mut self, command_buffers: I) {
         for cmd_buf in command_buffers {
-            self.free_lists.push(cmd_buf.raw);
+            if cmd_buf.closed {
+                self.free_lists.push(cmd_buf.raw);
+            } else {
+                unsafe {
+                    cmd_buf.raw.destroy();
+                }
+            }
         }
         self.allocator.reset();
     }
@@ -359,20 +384,12 @@ impl crate::CommandEncoder<super::Api> for super::CommandEncoder {
                     }
                 };
 
-                let mip_level_count = match barrier.range.mip_level_count {
-                    Some(count) => count.get(),
-                    None => barrier.texture.mip_level_count - barrier.range.base_mip_level,
-                };
-                let array_layer_count = match barrier.range.array_layer_count {
-                    Some(count) => count.get(),
-                    None => barrier.texture.array_layer_count() - barrier.range.base_array_layer,
-                };
+                let tex_mip_level_count = barrier.texture.mip_level_count;
+                let tex_array_layer_count = barrier.texture.array_layer_count();
 
-                if barrier.range.aspect == wgt::TextureAspect::All
-                    && barrier.range.base_mip_level == 0
-                    && mip_level_count == barrier.texture.mip_level_count
-                    && barrier.range.base_array_layer == 0
-                    && array_layer_count == barrier.texture.array_layer_count()
+                if barrier
+                    .range
+                    .is_full_resource(tex_mip_level_count, tex_array_layer_count)
                 {
                     // Only one barrier if it affects the whole image.
                     self.temp.barriers.push(raw);
@@ -390,16 +407,13 @@ impl crate::CommandEncoder<super::Api> for super::CommandEncoder {
                         0..1
                     };
 
-                    for rel_mip_level in 0..mip_level_count {
-                        for rel_array_layer in 0..array_layer_count {
+                    for mip_level in barrier.range.mip_range(tex_mip_level_count) {
+                        for array_layer in barrier.range.layer_range(tex_array_layer_count) {
                             for plane in planes.clone() {
                                 unsafe {
-                                    raw.u.Transition_mut().Subresource =
-                                        barrier.texture.calc_subresource(
-                                            barrier.range.base_mip_level + rel_mip_level,
-                                            barrier.range.base_array_layer + rel_array_layer,
-                                            plane,
-                                        );
+                                    raw.u.Transition_mut().Subresource = barrier
+                                        .texture
+                                        .calc_subresource(mip_level, array_layer, plane);
                                 };
                                 self.temp.barriers.push(raw);
                             }

@@ -340,7 +340,7 @@ var gEditItemOverlay = {
     }
 
     if (showOrCollapse("keywordRow", isBookmark, "keyword")) {
-      await this._initKeywordField().catch(Cu.reportError);
+      await this._initKeywordField().catch(console.error);
       // paneInfo can be null if paneInfo is uninitialized while
       // the process above is awaiting initialization
       if (instance != this._instance || this._paneInfo == null) {
@@ -353,7 +353,7 @@ var gEditItemOverlay = {
     if (showOrCollapse("tagsRow", isURI || bulkTagging, "tags")) {
       this._initTagsField();
     } else if (!this._element("tagsSelectorRow").hidden) {
-      this.toggleTagsSelector().catch(Cu.reportError);
+      this.toggleTagsSelector().catch(console.error);
     }
 
     // Folder picker.
@@ -361,7 +361,7 @@ var gEditItemOverlay = {
     // not cheap (we don't always have the parent), and there's no use case for
     // this (it's only the Star UI that shows the folderPicker)
     if (showOrCollapse("folderRow", isItem, "folderPicker")) {
-      await this._initFolderMenuList(parentGuid).catch(Cu.reportError);
+      await this._initFolderMenuList(parentGuid).catch(console.error);
       if (instance != this._instance || this._paneInfo == null) {
         return;
       }
@@ -580,7 +580,7 @@ var gEditItemOverlay = {
       // Hide the tag selector if it was previously visible.
       var tagsSelectorRow = this._element("tagsSelectorRow");
       if (!tagsSelectorRow.hidden) {
-        this.toggleTagsSelector().catch(Cu.reportError);
+        this.toggleTagsSelector().catch(console.error);
       }
     }
 
@@ -647,7 +647,7 @@ var gEditItemOverlay = {
         if (this._paneInfo) {
           this._mayUpdateFirstEditField("tagsField");
         }
-      }, Cu.reportError);
+      }, console.error);
     }
   },
 
@@ -658,9 +658,13 @@ var gEditItemOverlay = {
     this._tagsUpdatePromise = (async () => {
       const inputTags = this._getTagsArrayFromTagsInputField();
       await this._bookmarkState._tagsChanged(inputTags);
+      delete this._paneInfo._cachedCommonTags;
 
       // Ensure the tagsField is in sync, clean it up from empty tags
-      this._initTextField(this._tagsField, inputTags.sort().join(", "), false);
+      const currentTags = this._paneInfo.bulkTagging
+        ? this._getCommonTags()
+        : PlacesUtils.tagging.getTagsForURI(this._paneInfo.uri);
+      this._initTextField(this._tagsField, currentTags.join(", "), false);
 
       await this._initAllTags();
       await this._rebuildTagsSelectorList();
@@ -1026,7 +1030,7 @@ var gEditItemOverlay = {
       title,
       index: await ip.getIndex(),
     }).transact();
-    this.transactionPromises.push(promise.catch(Cu.reportError));
+    this.transactionPromises.push(promise.catch(console.error));
     let guid = await promise;
 
     this._folderTree.focus();
@@ -1112,6 +1116,15 @@ var gEditItemOverlay = {
    */
   get delayedApplyEnabled() {
     return true;
+  },
+
+  /**
+   * State object for the bookmark(s) currently being edited.
+   *
+   * @returns {BookmarkState} The bookmark state.
+   */
+  get bookmarkState() {
+    return this._bookmarkState;
   },
 };
 

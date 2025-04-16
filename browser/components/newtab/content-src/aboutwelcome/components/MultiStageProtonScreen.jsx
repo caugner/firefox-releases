@@ -400,8 +400,6 @@ export class ProtonScreen extends React.PureComponent {
                 : {}
             }
           >
-            {content.dismiss_button ? this.renderDismissButton() : null}
-
             {content.logo ? this.renderLogo(content.logo) : null}
 
             {isRtamo ? (
@@ -454,8 +452,9 @@ export class ProtonScreen extends React.PureComponent {
                 handleAction={this.props.handleAction}
               />
             </div>
-            {hideStepsIndicator ? null : this.renderStepsIndicator()}
+            {!hideStepsIndicator ? this.renderStepsIndicator() : null}
           </div>
+          {content.dismiss_button ? this.renderDismissButton() : null}
         </div>
       </main>
     );

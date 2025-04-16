@@ -2211,17 +2211,16 @@ bool Element::ShouldBlur(nsIContent* aContent) {
     return false;
   }
 
-  if (contentToBlur == aContent) return true;
+  if (contentToBlur == aContent) {
+    return true;
+  }
 
   ShadowRoot* root = aContent->GetShadowRoot();
   if (root && root->DelegatesFocus() &&
       contentToBlur->IsShadowIncludingInclusiveDescendantOf(root)) {
     return true;
   }
-  // if focus on this element would get redirected, then check the redirected
-  // content as well when blurring.
-  return (contentToBlur &&
-          nsFocusManager::GetRedirectedFocus(aContent) == contentToBlur);
+  return false;
 }
 
 bool Element::IsNodeOfType(uint32_t aFlags) const { return false; }
@@ -3533,7 +3532,7 @@ already_AddRefed<Promise> Element::RequestFullscreen(CallerType aCallerType,
   if (const char* error = GetFullscreenError(aCallerType, OwnerDoc())) {
     request->Reject(error);
   } else {
-    OwnerDoc()->AsyncRequestFullscreen(std::move(request));
+    OwnerDoc()->RequestFullscreen(std::move(request));
   }
   return promise.forget();
 }
@@ -4818,7 +4817,10 @@ void Element::SetHTML(const nsAString& aInnerHTML,
         aError.ThrowInvalidStateError("Missing owner global.");
         return;
       }
-      sanitizer = new Sanitizer(global, {});
+      sanitizer = Sanitizer::New(global, {}, aError);
+      if (aError.Failed()) {
+        return;
+      }
     } else {
       sanitizer = &aOptions.mSanitizer.Value();
     }
@@ -4837,6 +4839,13 @@ void Element::SetHTML(const nsAString& aInnerHTML,
     nsContentUtils::FireMutationEventsForDirectParsing(doc, target,
                                                        oldChildCount);
   }
+}
+
+bool Element::Translate() const {
+  if (const auto* parent = Element::FromNodeOrNull(mParent)) {
+    return parent->Translate();
+  }
+  return true;
 }
 
 }  // namespace mozilla::dom

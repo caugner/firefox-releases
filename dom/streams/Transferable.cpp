@@ -30,6 +30,8 @@
 
 namespace mozilla::dom {
 
+using namespace streams_abstract;
+
 static void PackAndPostMessage(JSContext* aCx, MessagePort* aPort,
                                const nsAString& aType,
                                JS::Handle<JS::Value> aValue, ErrorResult& aRv) {
@@ -177,8 +179,9 @@ class SetUpTransformWritableMessageEventListener final
   // Note: This promise field is shared with the sink algorithms.
   Promise* BackpressurePromise() { return mBackpressurePromise; }
 
-  void CreateBackpressurePromise(ErrorResult& aRv) {
-    mBackpressurePromise = Promise::Create(mController->GetParentObject(), aRv);
+  void CreateBackpressurePromise() {
+    mBackpressurePromise =
+        Promise::CreateInfallible(mController->GetParentObject());
   }
 
  private:
@@ -316,10 +319,7 @@ class CrossRealmWritableUnderlyingSinkAlgorithms final
     // promise resolved with undefined.
     // Note: This promise field is shared with the message event listener.
     if (!mListener->BackpressurePromise()) {
-      mListener->CreateBackpressurePromise(aRv);
-      if (aRv.Failed()) {
-        return nullptr;
-      }
+      mListener->CreateBackpressurePromise();
       mListener->BackpressurePromise()->MaybeResolveWithUndefined();
     }
 
@@ -332,11 +332,7 @@ class CrossRealmWritableUnderlyingSinkAlgorithms final
                MessagePort* aPort,
                JS::Handle<JS::Value> aChunk) -> already_AddRefed<Promise> {
               // Step 2.1: Set backpressurePromise to a new promise.
-              aListener->CreateBackpressurePromise(aRv);
-              if (aRv.Failed()) {
-                aPort->Close();
-                return nullptr;
-              }
+              aListener->CreateBackpressurePromise();
 
               // Step 2.2: Let result be PackAndPostMessageHandlingError(port,
               // "chunk", chunk).
@@ -449,10 +445,7 @@ MOZ_CAN_RUN_SCRIPT static void SetUpCrossRealmTransformWritable(
 
   // Step 3: Let backpressurePromise be a new promise.
   RefPtr<Promise> backpressurePromise =
-      Promise::Create(aWritable->GetParentObject(), aRv);
-  if (aRv.Failed()) {
-    return;
-  }
+      Promise::CreateInfallible(aWritable->GetParentObject());
 
   // Step 4: Add a handler for port’s message event with the following steps:
   auto listener = MakeRefPtr<SetUpTransformWritableMessageEventListener>(

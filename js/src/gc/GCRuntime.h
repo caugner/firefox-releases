@@ -379,6 +379,10 @@ class GCRuntime {
     return stats().addressOfAllocsSinceMinorGCNursery();
   }
 
+  const void* addressOfLastBufferedWholeCell() {
+    return storeBuffer_.refNoCheck().addressOfLastBufferedWholeCell();
+  }
+
 #ifdef JS_GC_ZEAL
   const uint32_t* addressOfZealModeBits() { return &zealModeBits.refNoCheck(); }
   void getZealBits(uint32_t* zealBits, uint32_t* frequency,
@@ -662,6 +666,9 @@ class GCRuntime {
                                   AutoLockGC& lock);
   void resetParameter(JSGCParamKey key, AutoLockGC& lock);
   uint32_t getParameter(JSGCParamKey key, const AutoLockGC& lock);
+  bool setThreadParameter(JSGCParamKey key, uint32_t value, AutoLockGC& lock);
+  void resetThreadParameter(JSGCParamKey key, AutoLockGC& lock);
+  void updateThreadDataStructures(AutoLockGC& lock);
 
   JS::GCOptions gcOptions() const { return maybeGcOptions.ref().ref(); }
 
@@ -792,6 +799,7 @@ class GCRuntime {
       SliceBudget& sliceBudget,
       ParallelMarking allowParallelMarking = SingleThreadedMarking,
       ShouldReportMarkTime reportTime = ReportMarkTime);
+  bool canMarkInParallel() const;
 
   bool hasMarkingWork(MarkColor color) const;
 
@@ -1013,6 +1021,7 @@ class GCRuntime {
   MainThreadData<double> helperThreadRatio;
   MainThreadData<size_t> maxHelperThreads;
   MainThreadOrGCTaskData<size_t> helperThreadCount;
+  MainThreadData<size_t> markingThreadCount;
 
   // State used for managing atom mark bitmaps in each zone.
   AtomMarkingRuntime atomMarking;

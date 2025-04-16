@@ -51,7 +51,18 @@ except ImportError:
 HARNESS_TIMEOUT = 5 * 60
 
 # benchmarking on tbpl revealed that this works best for now
+# TODO: This has been evaluated/set many years ago and we might want to
+# benchmark this again.
+# These days with e10s/fission the number of real processes/threads running
+# can be significantly higher, with both consequences on runtime and memory
+# consumption. So be aware that NUM_THREADS is just saying how many tests will
+# be started maximum in parallel and that depending on the tests there is
+# only a weak correlation to the effective number of processes or threads.
+# Be also aware that we can override this value with the threadCount option
+# on the command line to tweak it for a concrete CPU/memory combination.
 NUM_THREADS = int(cpu_count() * 4)
+if sys.platform == "win32":
+    NUM_THREADS = NUM_THREADS / 2
 
 EXPECTED_LOG_ACTIONS = set(
     [
@@ -788,6 +799,10 @@ class XPCShellTestThread(Thread):
         if self.test_object.get("dmd") == "true":
             self.env["PYTHON"] = sys.executable
             self.env["BREAKPAD_SYMBOLS_PATH"] = self.symbolsPath
+
+        if self.test_object.get("snap") == "true":
+            self.env["SNAP_NAME"] = "firefox"
+            self.env["SNAP_INSTANCE_NAME"] = "firefox"
 
         if self.test_object.get("subprocess") == "true":
             self.env["PYTHON"] = sys.executable
@@ -1794,14 +1809,14 @@ class XPCShellTests(object):
                 return False
 
         if (
-            "tsan" in self.mozInfo
-            and self.mozInfo["tsan"]
-            and not options.get("threadCount")
-        ):
-            # TSan requires significantly more memory, so reduce the amount of parallel
-            # tests we run to avoid OOMs and timeouts.
+            ("tsan" in self.mozInfo and self.mozInfo["tsan"])
+            or ("asan" in self.mozInfo and self.mozInfo["asan"])
+        ) and not options.get("threadCount"):
+            # TSan/ASan require significantly more memory, so reduce the amount of parallel
+            # tests we run to avoid OOMs and timeouts. We always keep a minimum of 2 for
+            # non-sequential execution.
             # pylint --py3k W1619
-            self.threadCount = self.threadCount / 2
+            self.threadCount = max(self.threadCount / 2, 2)
 
         self.stack_fixer_function = None
         if self.utility_path and os.path.exists(self.utility_path):

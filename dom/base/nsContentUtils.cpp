@@ -168,7 +168,6 @@
 #include "mozilla/dom/FileBlobImpl.h"
 #include "mozilla/dom/FileSystemSecurity.h"
 #include "mozilla/dom/FilteredNodeIterator.h"
-#include "mozilla/dom/FontTableURIProtocolHandler.h"
 #include "mozilla/dom/FragmentOrElement.h"
 #include "mozilla/dom/FromParser.h"
 #include "mozilla/dom/HTMLFormElement.h"
@@ -330,6 +329,7 @@
 #if defined(MOZ_THUNDERBIRD) || defined(MOZ_SUITE)
 #  include "nsIURIWithSpecialOrigin.h"
 #endif
+#include "nsIUserIdleServiceInternal.h"
 #include "nsIWeakReferenceUtils.h"
 #include "nsIWebNavigation.h"
 #include "nsIWebNavigationInfo.h"
@@ -2147,7 +2147,7 @@ bool nsContentUtils::IsCallerChromeOrElementTransformGettersEnabled(
 
 /* static */
 bool nsContentUtils::ShouldResistFingerprinting() {
-  return StaticPrefs::privacy_resistFingerprinting();
+  return StaticPrefs::privacy_resistFingerprinting_DoNotUseDirectly();
 }
 
 /* static */
@@ -2195,14 +2195,21 @@ const unsigned int sSpecificDomainsExemptMask = 0x04;
 const char* kExemptedDomainsPrefName =
     "privacy.resistFingerprinting.exemptedDomains";
 
-// --------------------------------------------------------------------------
 /* static */
 bool nsContentUtils::ShouldResistFingerprinting(const char* aJustification) {
   // See comment in header file for information about usage
   return ShouldResistFingerprinting();
 }
 
-// ----------------------------------------------------------------------
+/* static */
+bool nsContentUtils::ShouldResistFingerprinting(
+    CallerType aCallerType, nsIGlobalObject* aGlobalObject) {
+  if (aCallerType == CallerType::System) {
+    return false;
+  }
+  return ShouldResistFingerprinting(aGlobalObject);
+}
+
 bool nsContentUtils::ShouldResistFingerprinting(nsIDocShell* aDocShell) {
   if (!aDocShell) {
     MOZ_LOG(nsContentUtils::ResistFingerprintingLog(), LogLevel::Info,
@@ -2220,7 +2227,6 @@ bool nsContentUtils::ShouldResistFingerprinting(nsIDocShell* aDocShell) {
   return doc->ShouldResistFingerprinting();
 }
 
-// ----------------------------------------------------------------------
 /* static */
 bool nsContentUtils::ShouldResistFingerprinting(nsIChannel* aChannel) {
   if (!ShouldResistFingerprinting("Legacy quick-check")) {
@@ -2299,7 +2305,6 @@ bool nsContentUtils::ShouldResistFingerprinting(nsIChannel* aChannel) {
   return ShouldResistFingerprinting(loadInfo);
 }
 
-// ----------------------------------------------------------------------
 /* static */
 bool nsContentUtils::ShouldResistFingerprinting_dangerous(
     nsIURI* aURI, const mozilla::OriginAttributes& aOriginAttributes,
@@ -2325,7 +2330,7 @@ bool nsContentUtils::ShouldResistFingerprinting_dangerous(
 
   if (StaticPrefs::privacy_resistFingerprinting_testGranularityMask() &
       sWebExtensionExemptMask) {
-    if (aURI->SchemeIs("web-extension")) {
+    if (aURI->SchemeIs("moz-extension")) {
       return false;
     }
   }
@@ -2348,7 +2353,6 @@ bool nsContentUtils::ShouldResistFingerprinting_dangerous(
   return !isExemptDomain;
 }
 
-// ----------------------------------------------------------------------
 /* static */
 bool nsContentUtils::ShouldResistFingerprinting(nsILoadInfo* aLoadInfo) {
   MOZ_ASSERT(aLoadInfo->GetExternalContentPolicyType() !=
@@ -2377,7 +2381,6 @@ bool nsContentUtils::ShouldResistFingerprinting(nsILoadInfo* aLoadInfo) {
   return ShouldResistFingerprinting_dangerous(principal, "Internal Call");
 }
 
-// ----------------------------------------------------------------------
 /* static */
 bool nsContentUtils::ShouldResistFingerprinting_dangerous(
     nsIPrincipal* aPrincipal, const char* aJustification) {
@@ -2462,7 +2465,6 @@ bool nsContentUtils::ShouldResistFingerprinting_dangerous(
   return !isExemptDomain;
 }
 
-// ------------------------------------------------------------------
 /* static */
 void nsContentUtils::CalcRoundedWindowSizeForResistingFingerprinting(
     int32_t aChromeWidth, int32_t aChromeHeight, int32_t aScreenWidth,
@@ -3823,7 +3825,7 @@ nsresult nsContentUtils::LoadImage(
 
   nsIURI* documentURI = aLoadingDocument->GetDocumentURI();
 
-  NS_ASSERTION(loadGroup || IsFontTableURI(documentURI),
+  NS_ASSERTION(loadGroup || aLoadingDocument->IsSVGGlyphsDocument(),
                "Could not get loadgroup; onload may fire too early");
 
   // XXXbz using "documentURI" for the initialDocumentURI is not quite
@@ -7783,9 +7785,7 @@ void nsContentUtils::CallOnAllRemoteChildren(
 bool nsContentUtils::IPCDataTransferItemHasKnownFlavor(
     const IPCDataTransferItem& aItem) {
   // Unknown types are converted to kCustomTypesMime.
-  // FIXME(bug 1776879) text/plain is converted to text/unicode still.
-  if (aItem.flavor().EqualsASCII(kCustomTypesMime) ||
-      aItem.flavor().EqualsASCII(kUnicodeMime)) {
+  if (aItem.flavor().EqualsASCII(kCustomTypesMime)) {
     return true;
   }
 
@@ -10382,7 +10382,14 @@ nsContentUtils::UserInteractionObserver::Observe(nsISupports* aSubject,
   } else if (!strcmp(aTopic, kUserInteractionActive)) {
     if (!sUserActive && XRE_IsParentProcess()) {
       glean::RecordPowerMetrics();
+
+      nsCOMPtr<nsIUserIdleServiceInternal> idleService =
+          do_GetService("@mozilla.org/widget/useridleservice;1");
+      if (idleService) {
+        idleService->ResetIdleTimeOut(0);
+      }
     }
+
     sUserActive = true;
   } else {
     NS_WARNING("Unexpected observer notification");

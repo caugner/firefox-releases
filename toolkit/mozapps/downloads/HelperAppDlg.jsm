@@ -13,11 +13,9 @@ const { BrowserUtils } = ChromeUtils.importESModule(
 );
 
 const lazy = {};
-ChromeUtils.defineModuleGetter(
-  lazy,
-  "EnableDelayHelper",
-  "resource://gre/modules/SharedPromptUtils.jsm"
-);
+ChromeUtils.defineESModuleGetters(lazy, {
+  EnableDelayHelper: "resource://gre/modules/PromptUtils.sys.mjs",
+});
 
 XPCOMUtils.defineLazyServiceGetter(
   lazy,
@@ -419,7 +417,7 @@ nsUnknownContentTypeDialog.prototype = {
           aLauncher.saveDestinationAvailable(result, true);
         });
       });
-    })().catch(Cu.reportError);
+    })().catch(console.error);
   },
 
   getFinalLeafName(aLeafName, aFileExt) {

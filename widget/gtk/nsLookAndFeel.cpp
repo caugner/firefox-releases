@@ -996,7 +996,7 @@ nsresult nsLookAndFeel::NativeGetInt(IntID aID, int32_t& aResult) {
           return false;
         }
         if (IsKdeDesktopEnvironment()) {
-          // Disabled on KDE, see bug 1810797.
+          // Disabled on KDE, see bug 1813070.
           return false;
         }
         return true;
@@ -2079,25 +2079,7 @@ char16_t nsLookAndFeel::GetPasswordCharacterImpl() {
 
 bool nsLookAndFeel::GetEchoPasswordImpl() { return false; }
 
-bool nsLookAndFeel::GetDefaultDrawInTitlebar() {
-  static bool drawInTitlebar = []() {
-    // When user defined widget.default-hidden-titlebar don't do any
-    // heuristics and just follow it.
-    if (Preferences::HasUserValue("widget.default-hidden-titlebar")) {
-      return Preferences::GetBool("widget.default-hidden-titlebar", false);
-    }
-
-    // Don't hide titlebar when it's disabled on current desktop.
-    if (!sCSDAvailable) {
-      return false;
-    }
-
-    // We hide system titlebar on Gnome/ElementaryOS without any restriction.
-    return IsGnomeDesktopEnvironment() ||
-           FindInReadable("pantheon"_ns, GetDesktopEnvironmentIdentifier());
-  }();
-  return drawInTitlebar;
-}
+bool nsLookAndFeel::GetDefaultDrawInTitlebar() { return sCSDAvailable; }
 
 void nsLookAndFeel::GetThemeInfo(nsACString& aInfo) {
   aInfo.Append(mSystemTheme.mName);

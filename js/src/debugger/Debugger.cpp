@@ -970,19 +970,22 @@ NativeResumeMode DebugAPI::slowPathOnNativeCall(JSContext* cx,
   // The onNativeCall hook is fired when self hosted functions are called,
   // and any other self hosted function or C++ native that is directly called
   // by the self hosted function is considered to be part of the same
-  // native call, except for the following 2 cases:
+  // native call, except for the following 4 cases:
   //
   //  * callContentFunction and constructContentFunction,
   //    which uses CallReason::CallContent
   //  * Function.prototype.call and Function.prototype.apply,
   //    which uses CallReason::FunCall
+  //  * Getter call which uses CallReason::Getter
+  //  * Setter call which uses CallReason::Setter
   //
   // We check this only after checking that debuggerList has items in order
   // to avoid unnecessary calls to cx->currentScript(), which can be expensive
   // when the top frame is in jitcode.
   JSScript* script = cx->currentScript();
   if (script && script->selfHosted() && reason != CallReason::CallContent &&
-      reason != CallReason::FunCall) {
+      reason != CallReason::FunCall && reason != CallReason::Getter &&
+      reason != CallReason::Setter) {
     return NativeResumeMode::Continue;
   }
 
@@ -6111,20 +6114,20 @@ bool Debugger::isCompilableUnit(JSContext* cx, unsigned argc, Value* vp) {
   CompileOptions options(cx);
   Rooted<frontend::CompilationInput> input(cx,
                                            frontend::CompilationInput(options));
-  if (!input.get().initForGlobal(cx, &fc)) {
+  if (!input.get().initForGlobal(&fc)) {
     return false;
   }
 
   LifoAllocScope allocScope(&cx->tempLifoAlloc());
   frontend::NoScopeBindingCache scopeCache;
-  frontend::CompilationState compilationState(cx, &fc, allocScope, input.get());
-  if (!compilationState.init(cx, &fc, &scopeCache)) {
+  frontend::CompilationState compilationState(&fc, allocScope, input.get());
+  if (!compilationState.init(&fc, &scopeCache)) {
     return false;
   }
 
   frontend::Parser<frontend::FullParseHandler, char16_t> parser(
-      cx, &fc, cx->stackLimitForCurrentPrincipal(), options,
-      chars.twoByteChars(), length,
+      &fc, cx->stackLimitForCurrentPrincipal(), options, chars.twoByteChars(),
+      length,
       /* foldConstants = */ true, compilationState,
       /* syntaxParser = */ nullptr);
   if (!parser.checkOptions() || !parser.parse()) {

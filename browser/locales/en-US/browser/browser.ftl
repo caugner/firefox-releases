@@ -114,9 +114,15 @@ urlbar-tip-icon-description =
 
 urlbar-result-menu-button =
     .title = Open menu
+urlbar-result-menu-learn-more =
+    .label = Learn more
+    .accesskey = L
 urlbar-result-menu-remove-from-history =
     .label = Remove from history
     .accesskey = R
+urlbar-result-menu-tip-get-help =
+    .label = Get help
+    .accesskey = h
 
 ## Prompts users to use the Urlbar when they open a new tab or visit the
 ## homepage of their default search engine.
@@ -693,6 +699,11 @@ bookmarks-other-bookmarks-menu =
   .label = Other bookmarks
 bookmarks-mobile-bookmarks-menu =
   .label = Mobile bookmarks
+
+## Variables:
+##   $isVisible (boolean): if the specific element (e.g. bookmarks sidebar,
+##                         bookmarks toolbar, etc.) is visible or not.
+
 bookmarks-tools-sidebar-visibility =
   .label = { $isVisible ->
      [true] Hide bookmarks sidebar
@@ -713,6 +724,9 @@ bookmarks-tools-menu-button-visibility =
      [true] Remove bookmarks menu from toolbar
     *[other] Add bookmarks menu to toolbar
   }
+
+##
+
 bookmarks-search =
   .label = Search bookmarks
 bookmarks-tools =
@@ -758,12 +772,6 @@ repair-text-encoding-button =
   .tooltiptext = Guess correct text encoding from page content
 
 ## Customize Toolbar Buttons
-
-# Variables:
-#  $shortcut (String): keyboard shortcut to open the add-ons manager
-toolbar-addons-themes-button =
-  .label = Add-ons and themes
-  .tooltiptext = Manage your add-ons and themes ({ $shortcut })
 
 # Variables:
 #  $shortcut (String): keyboard shortcut to open settings (only on macOS)

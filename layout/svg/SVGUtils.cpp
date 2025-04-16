@@ -61,14 +61,6 @@ using namespace mozilla::dom::SVGUnitTypes_Binding;
 using namespace mozilla::gfx;
 using namespace mozilla::image;
 
-bool NS_SVGDisplayListHitTestingEnabled() {
-  return mozilla::StaticPrefs::svg_display_lists_hit_testing_enabled();
-}
-
-bool NS_SVGDisplayListPaintingEnabled() {
-  return mozilla::StaticPrefs::svg_display_lists_painting_enabled();
-}
-
 bool NS_SVGNewGetBBoxEnabled() {
   return mozilla::StaticPrefs::svg_new_getBBox_enabled();
 }
@@ -107,6 +99,13 @@ bool SVGAutoRenderState::IsPaintingToWindow(DrawTarget* aDrawTarget) {
     return static_cast<SVGAutoRenderState*>(state)->mPaintingToWindow;
   }
   return false;
+}
+
+// Unlike containers, leaf frames do not include GetPosition() in
+// GetCanvasTM().
+static bool FrameDoesNotIncludePositionInTM(const nsIFrame* aFrame) {
+  return aFrame->IsSVGGeometryFrame() || aFrame->IsSVGImageFrame() ||
+         SVGUtils::IsInSVGTextSubtree(aFrame);
 }
 
 nsRect SVGUtils::GetPostFilterInkOverflowRect(nsIFrame* aFrame,
@@ -515,10 +514,7 @@ class MixModeBlender {
       gfxContextMatrixAutoSaveRestore matrixAutoSaveRestore(mSourceCtx);
       mSourceCtx->Multiply(aTransform);
       nsRect overflowRect = mFrame->InkOverflowRectRelativeToSelf();
-      if (mFrame->IsSVGGeometryFrameOrSubclass() ||
-          SVGUtils::IsInSVGTextSubtree(mFrame)) {
-        // Unlike containers, leaf frames do not include GetPosition() in
-        // GetCanvasTM().
+      if (FrameDoesNotIncludePositionInTM(mFrame)) {
         overflowRect = overflowRect + mFrame->GetPosition();
       }
       mSourceCtx->Clip(NSRectToSnappedRect(
@@ -547,11 +543,9 @@ void SVGUtils::PaintFrameWithEffects(nsIFrame* aFrame, gfxContext& aContext,
                                      const gfxMatrix& aTransform,
                                      imgDrawingParams& aImgParams,
                                      const nsIntRect* aDirtyRect) {
-  NS_ASSERTION(!NS_SVGDisplayListPaintingEnabled() ||
-                   aFrame->HasAnyStateBits(NS_FRAME_IS_NONDISPLAY) ||
+  NS_ASSERTION(aFrame->HasAnyStateBits(NS_FRAME_IS_NONDISPLAY) ||
                    aFrame->PresContext()->Document()->IsSVGGlyphsDocument(),
-               "If display lists are enabled, only painting of non-display "
-               "SVG should take this code path");
+               "Only painting of non-display SVG should take this code path");
 
   ISVGDisplayableFrame* svgFrame = do_QueryFrame(aFrame);
   if (!svgFrame) {
@@ -576,10 +570,7 @@ void SVGUtils::PaintFrameWithEffects(nsIFrame* aFrame, gfxContext& aContext,
     // We don't do this optimization for nondisplay SVG since nondisplay
     // SVG doesn't maintain bounds/overflow rects.
     nsRect overflowRect = aFrame->InkOverflowRectRelativeToSelf();
-    if (aFrame->IsSVGGeometryFrameOrSubclass() ||
-        SVGUtils::IsInSVGTextSubtree(aFrame)) {
-      // Unlike containers, leaf frames do not include GetPosition() in
-      // GetCanvasTM().
+    if (FrameDoesNotIncludePositionInTM(aFrame)) {
       overflowRect = overflowRect + aFrame->GetPosition();
     }
     int32_t appUnitsPerDevPx = aFrame->PresContext()->AppUnitsPerDevPixel();
@@ -1114,8 +1105,7 @@ gfxPoint SVGUtils::FrameSpaceInCSSPxToUserSpaceOffset(nsIFrame* aFrame) {
   }
 
   // Leaf frames apply their own offset inside their user space.
-  if (aFrame->IsSVGGeometryFrameOrSubclass() ||
-      SVGUtils::IsInSVGTextSubtree(aFrame)) {
+  if (FrameDoesNotIncludePositionInTM(aFrame)) {
     return nsLayoutUtils::RectToGfxRect(aFrame->GetRect(),
                                         AppUnitsPerCSSPixel())
         .TopLeft();

@@ -36,13 +36,7 @@ loader.lazyRequireGetter(
 
 loader.lazyRequireGetter(
   this,
-  "customFormatterHeader",
-  "resource://devtools/server/actors/utils/custom-formatters.js",
-  true
-);
-loader.lazyRequireGetter(
-  this,
-  "customFormatterBody",
+  ["customFormatterHeader", "customFormatterBody"],
   "resource://devtools/server/actors/utils/custom-formatters.js",
   true
 );
@@ -50,9 +44,19 @@ loader.lazyRequireGetter(
 // ContentDOMReference requires ChromeUtils, which isn't available in worker context.
 const lazy = {};
 if (!isWorker) {
-  ChromeUtils.defineESModuleGetters(lazy, {
-    ContentDOMReference: "resource://gre/modules/ContentDOMReference.sys.mjs",
-  });
+  loader.lazyGetter(
+    lazy,
+    "ContentDOMReference",
+    () =>
+      ChromeUtils.importESModule(
+        "resource://gre/modules/ContentDOMReference.sys.mjs",
+        {
+          // ContentDOMReference needs to be retrieved from the shared global
+          // since it is a shared singleton.
+          loadInDevToolsLoader: false,
+        }
+      ).ContentDOMReference
+  );
 }
 
 const {
@@ -94,6 +98,8 @@ const proto = {
       getGripDepth,
       incrementGripDepth,
       decrementGripDepth,
+      customFormatterObjectTagDepth,
+      customFormatterConfigDbgObj,
     },
     conn
   ) {
@@ -112,6 +118,8 @@ const proto = {
       getGripDepth,
       incrementGripDepth,
       decrementGripDepth,
+      customFormatterObjectTagDepth,
+      customFormatterConfigDbgObj,
     };
   },
 
@@ -160,8 +168,11 @@ const proto = {
 
     // Only process custom formatters if the feature is enabled.
     if (this.thread?._parent?.customFormatters) {
-      const header = customFormatterHeader(this.rawValue());
-      if (header) {
+      const result = customFormatterHeader(this);
+      if (result) {
+        const { formatter, ...header } = result;
+        this._customFormatterItem = formatter;
+
         return {
           ...g,
           ...header,
@@ -209,8 +220,8 @@ const proto = {
     return g;
   },
 
-  customFormatterBody(customFormatterIndex) {
-    return customFormatterBody(this.rawValue(), customFormatterIndex);
+  customFormatterBody() {
+    return customFormatterBody(this, this._customFormatterItem);
   },
 
   _getOwnPropertyLength() {
@@ -300,28 +311,28 @@ const proto = {
    * @param options object
    */
   enumProperties(options) {
-    return PropertyIteratorActor(this, options, this.conn);
+    return new PropertyIteratorActor(this, options, this.conn);
   },
 
   /**
    * Creates an actor to iterate over entries of a Map/Set-like object.
    */
   enumEntries() {
-    return PropertyIteratorActor(this, { enumEntries: true }, this.conn);
+    return new PropertyIteratorActor(this, { enumEntries: true }, this.conn);
   },
 
   /**
    * Creates an actor to iterate over an object symbols properties.
    */
   enumSymbols() {
-    return SymbolIteratorActor(this, this.conn);
+    return new SymbolIteratorActor(this, this.conn);
   },
 
   /**
    * Creates an actor to iterate over an object private properties.
    */
   enumPrivateProperties() {
-    return PrivatePropertiesIteratorActor(this, this.conn);
+    return new PrivatePropertiesIteratorActor(this, this.conn);
   },
 
   /**
@@ -782,7 +793,12 @@ const proto = {
    * Release the actor, when it isn't needed anymore.
    * Protocol.js uses this release method to call the destroy method.
    */
-  release() {},
+  release() {
+    if (this.hooks) {
+      this.hooks.customFormatterConfigDbgObj = null;
+    }
+    this._customFormatterItem = null;
+  },
 };
 
 exports.ObjectActor = protocol.ActorClassWithSpec(objectSpec, proto);

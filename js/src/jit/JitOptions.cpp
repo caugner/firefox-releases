@@ -96,6 +96,9 @@ DefaultJitOptions::DefaultJitOptions() {
   // Toggle whether branch pruning is globally disabled.
   SET_DEFAULT(disablePruning, false);
 
+  // Toggles whether the iterator indices optimization is globally disabled.
+  SET_DEFAULT(disableIteratorIndices, false);
+
   // Toggles whether instruction reordering is globally disabled.
   SET_DEFAULT(disableInstructionReordering, false);
 
@@ -202,7 +205,7 @@ DefaultJitOptions::DefaultJitOptions() {
   SET_DEFAULT(fullDebugChecks, true);
 
   // How many actual arguments are accepted on the C stack.
-  SET_DEFAULT(maxStackArgs, 4096);
+  SET_DEFAULT(maxStackArgs, 20'000);
 
   // How many times we will try to enter a script via OSR before
   // invalidating the script.
@@ -248,7 +251,7 @@ DefaultJitOptions::DefaultJitOptions() {
   }
 
 #if defined(JS_CODEGEN_MIPS32) || defined(JS_CODEGEN_MIPS64) || \
-    defined(JS_CODEGEN_LOONG64)
+    defined(JS_CODEGEN_LOONG64) || defined(JS_CODEGEN_RISCV64)
   SET_DEFAULT(spectreIndexMasking, false);
   SET_DEFAULT(spectreObjectMitigations, false);
   SET_DEFAULT(spectreStringMitigations, false);

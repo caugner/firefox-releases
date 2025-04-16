@@ -179,11 +179,6 @@ windows10-64-qr/opt:
         - windows-talos
         - browsertime
 
-windows10-aarch64-qr/opt:
-    build-platform: win64-aarch64-shippable/opt
-    test-sets:
-        - windows-aarch64-tests
-
 windows10-64-ref-hw-2017-qr/opt:
     build-platform: win64-shippable/opt
     test-sets:
@@ -375,18 +370,6 @@ android-hw-a51-11-0-aarch64-shippable-qr/opt:
     test-sets:
         - android-hw-browsertime
 #        - android-hw-browsertime-power
-
-# android-hw-p2-8-0 Google Pixel 2 Android 8.0
-
-android-hw-p2-8-0-arm7-qr/opt:
-    build-platform: android-arm/opt
-    test-sets:
-        - android-hw-browsertime
-
-android-hw-p2-8-0-arm7-shippable-qr/opt:
-    build-platform: android-arm-shippable/opt
-    test-sets:
-        - android-hw-browsertime
 
 # android-hw-p5-13-0 Google Pixel 5 Android 13.0
 

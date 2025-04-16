@@ -1021,6 +1021,11 @@ bool GCRuntime::setParameter(JSContext* cx, JSGCParamKey key, uint32_t value) {
   return setParameter(key, value, lock);
 }
 
+static bool IsGCThreadParameter(JSGCParamKey key) {
+  return key == JSGC_HELPER_THREAD_RATIO || key == JSGC_MAX_HELPER_THREADS ||
+         key == JSGC_MARKING_THREAD_COUNT;
+}
+
 bool GCRuntime::setParameter(JSGCParamKey key, uint32_t value,
                              AutoLockGC& lock) {
   switch (key) {
@@ -1045,30 +1050,6 @@ bool GCRuntime::setParameter(JSGCParamKey key, uint32_t value,
         marker->incrementalWeakMapMarkingEnabled = value != 0;
       }
       break;
-    case JSGC_HELPER_THREAD_RATIO:
-      if (rt->parentRuntime) {
-        // Don't allow this to be set for worker runtimes.
-        return false;
-      }
-      if (value == 0) {
-        return false;
-      }
-      helperThreadRatio = double(value) / 100.0;
-      updateHelperThreadCount();
-      updateMarkersVector();
-      break;
-    case JSGC_MAX_HELPER_THREADS:
-      if (rt->parentRuntime) {
-        // Don't allow this to be set for worker runtimes.
-        return false;
-      }
-      if (value == 0) {
-        return false;
-      }
-      maxHelperThreads = value;
-      updateHelperThreadCount();
-      updateMarkersVector();
-      break;
     case JSGC_MIN_EMPTY_CHUNK_COUNT:
       setMinEmptyChunkCount(value, lock);
       break;
@@ -1076,11 +1057,48 @@ bool GCRuntime::setParameter(JSGCParamKey key, uint32_t value,
       setMaxEmptyChunkCount(value, lock);
       break;
     default:
+      if (IsGCThreadParameter(key)) {
+        return setThreadParameter(key, value, lock);
+      }
+
       if (!tunables.setParameter(key, value)) {
         return false;
       }
       updateAllGCStartThresholds();
   }
+
+  return true;
+}
+
+bool GCRuntime::setThreadParameter(JSGCParamKey key, uint32_t value,
+                                   AutoLockGC& lock) {
+  if (rt->parentRuntime) {
+    // Don't allow these to be set for worker runtimes.
+    return false;
+  }
+
+  switch (key) {
+    case JSGC_HELPER_THREAD_RATIO:
+      if (value == 0) {
+        return false;
+      }
+      helperThreadRatio = double(value) / 100.0;
+      break;
+    case JSGC_MAX_HELPER_THREADS:
+      if (value == 0) {
+        return false;
+      }
+      maxHelperThreads = value;
+      break;
+    case JSGC_MARKING_THREAD_COUNT:
+      markingThreadCount = std::min(size_t(value), MaxParallelWorkers);
+      break;
+    default:
+      MOZ_CRASH("Unexpected parameter key");
+  }
+
+  updateHelperThreadCount();
+  updateMarkersVector();
 
   return true;
 }
@@ -1120,22 +1138,6 @@ void GCRuntime::resetParameter(JSGCParamKey key, AutoLockGC& lock) {
             TuningDefaults::IncrementalWeakMapMarkingEnabled;
       }
       break;
-    case JSGC_HELPER_THREAD_RATIO:
-      if (rt->parentRuntime) {
-        return;
-      }
-      helperThreadRatio = TuningDefaults::HelperThreadRatio;
-      updateHelperThreadCount();
-      updateMarkersVector();
-      break;
-    case JSGC_MAX_HELPER_THREADS:
-      if (rt->parentRuntime) {
-        return;
-      }
-      maxHelperThreads = TuningDefaults::MaxHelperThreads;
-      updateHelperThreadCount();
-      updateMarkersVector();
-      break;
     case JSGC_MIN_EMPTY_CHUNK_COUNT:
       setMinEmptyChunkCount(TuningDefaults::MinEmptyChunkCount, lock);
       break;
@@ -1143,9 +1145,37 @@ void GCRuntime::resetParameter(JSGCParamKey key, AutoLockGC& lock) {
       setMaxEmptyChunkCount(TuningDefaults::MaxEmptyChunkCount, lock);
       break;
     default:
+      if (IsGCThreadParameter(key)) {
+        resetThreadParameter(key, lock);
+        return;
+      }
+
       tunables.resetParameter(key);
       updateAllGCStartThresholds();
   }
+}
+
+void GCRuntime::resetThreadParameter(JSGCParamKey key, AutoLockGC& lock) {
+  if (rt->parentRuntime) {
+    return;
+  }
+
+  switch (key) {
+    case JSGC_HELPER_THREAD_RATIO:
+      helperThreadRatio = TuningDefaults::HelperThreadRatio;
+      break;
+    case JSGC_MAX_HELPER_THREADS:
+      maxHelperThreads = TuningDefaults::MaxHelperThreads;
+      break;
+    case JSGC_MARKING_THREAD_COUNT:
+      markingThreadCount = 0;
+      break;
+    default:
+      MOZ_CRASH("Unexpected parameter key");
+  }
+
+  updateHelperThreadCount();
+  updateMarkersVector();
 }
 
 uint32_t GCRuntime::getParameter(JSGCParamKey key) {
@@ -1252,6 +1282,8 @@ uint32_t GCRuntime::getParameter(JSGCParamKey key, const AutoLockGC& lock) {
       return maxHelperThreads;
     case JSGC_HELPER_THREAD_COUNT:
       return helperThreadCount;
+    case JSGC_MARKING_THREAD_COUNT:
+      return markingThreadCount;
     case JSGC_SYSTEM_PAGE_SIZE_KB:
       return SystemPageSize() / 1024;
     default:
@@ -1291,18 +1323,30 @@ void GCRuntime::updateHelperThreadCount() {
     return;
   }
 
+  // Calculate the target thread count for GC parallel tasks.
   double cpuCount = GetHelperThreadCPUCount();
-  size_t target = size_t(cpuCount * helperThreadRatio.ref());
-  target = std::clamp(target, size_t(1), maxHelperThreads.ref());
+  helperThreadCount = std::clamp(size_t(cpuCount * helperThreadRatio.ref()),
+                                 size_t(1), maxHelperThreads.ref());
 
-  AutoLockHelperThreadState lock;
+  // Calculate the overall target thread count taking into account the separate
+  // parameter for parallel marking threads.
+  size_t targetCount =
+      std::max(helperThreadCount.ref(), markingThreadCount.ref());
 
   // Attempt to create extra threads if possible. This is not supported when
   // using an external thread pool.
-  (void)HelperThreadState().ensureThreadCount(target, lock);
+  AutoLockHelperThreadState lock;
+  (void)HelperThreadState().ensureThreadCount(targetCount, lock);
 
-  helperThreadCount = std::min(target, GetHelperThreadCount());
-  HelperThreadState().setGCParallelThreadCount(helperThreadCount, lock);
+  // Limit all thread counts based on the number of threads available, which may
+  // be fewer than requested.
+  size_t availableThreadCount = GetHelperThreadCount();
+  targetCount = std::min(targetCount, availableThreadCount);
+  helperThreadCount = std::min(helperThreadCount.ref(), availableThreadCount);
+  markingThreadCount = std::min(markingThreadCount.ref(), availableThreadCount);
+
+  // Update the maximum number of threads that will be used for GC work.
+  HelperThreadState().setGCParallelThreadCount(targetCount, lock);
 }
 
 size_t GCRuntime::markingWorkerCount() const {
@@ -1310,8 +1354,12 @@ size_t GCRuntime::markingWorkerCount() const {
     return 1;
   }
 
+  if (markingThreadCount) {
+    return markingThreadCount;
+  }
+
   // Limit parallel marking to use at most two threads initially.
-  return std::min(GetHelperThreadCount(), size_t(2));
+  return 2;
 }
 
 #ifdef DEBUG
@@ -1329,7 +1377,10 @@ bool GCRuntime::updateMarkersVector() {
   MOZ_ASSERT(CurrentThreadCanAccessRuntime(rt));
   assertNoMarkingWork();
 
-  size_t targetCount = markingWorkerCount();
+  // Limit worker count to number of GC parallel tasks that can run
+  // concurrently, otherwise one thread can deadlock waiting on another.
+  size_t targetCount = std::min(markingWorkerCount(),
+                                HelperThreadState().getGCParallelThreadCount());
 
   if (markers.length() > targetCount) {
     return markers.resize(targetCount);
@@ -2918,6 +2969,17 @@ void GCRuntime::updateSchedulingStateOnGCStart() {
   }
 }
 
+inline bool GCRuntime::canMarkInParallel() const {
+#if defined(DEBUG) || defined(JS_OOM_BREAKPOINT)
+  // OOM testing limits the engine to using a single helper thread.
+  if (oom::simulator.targetThread() == THREAD_TYPE_GCPARALLEL) {
+    return false;
+  }
+#endif
+
+  return markers.length() > 1;
+}
+
 IncrementalProgress GCRuntime::markUntilBudgetExhausted(
     SliceBudget& sliceBudget, ParallelMarking allowParallelMarking,
     ShouldReportMarkTime reportTime) {
@@ -2929,7 +2991,8 @@ IncrementalProgress GCRuntime::markUntilBudgetExhausted(
     return NotFinished;
   }
 
-  if (allowParallelMarking && parallelMarkingEnabled) {
+  if (allowParallelMarking && canMarkInParallel()) {
+    MOZ_ASSERT(parallelMarkingEnabled);
     MOZ_ASSERT(reportTime);
     MOZ_ASSERT(!isBackgroundMarking());
 
@@ -3496,9 +3559,11 @@ void GCRuntime::incrementalSlice(SliceBudget& budget, JS::GCReason reason,
 #endif
 
 #ifdef DEBUG
-  stats().log("Incremental: %d, lastMarkSlice: %d, useZeal: %d, budget: %s",
-              bool(isIncremental), bool(lastMarkSlice), bool(useZeal),
-              DescribeBudget(budget));
+  stats().log(
+      "Incremental: %d, lastMarkSlice: %d, useZeal: %d, budget: %s, "
+      "budgetWasIncreased: %d",
+      bool(isIncremental), bool(lastMarkSlice), bool(useZeal),
+      DescribeBudget(budget), budgetWasIncreased);
 #endif
 
   if (useZeal && hasIncrementalTwoSliceZealMode()) {
@@ -3895,11 +3960,18 @@ bool GCRuntime::maybeIncreaseSliceBudget(SliceBudget& budget) {
   return wasIncreasedForLongCollections || wasIncreasedForUgentCollections;
 }
 
-static void ExtendBudget(SliceBudget& budget, double newDuration) {
+// Return true if the budget is actually extended after rounding.
+static bool ExtendBudget(SliceBudget& budget, double newDuration) {
+  long newDurationMS = lround(newDuration);
+  if (newDurationMS <= budget.timeBudget()) {
+    return false;
+  }
+
   bool idleTriggered = budget.idle;
   budget = SliceBudget(TimeBudget(newDuration), nullptr);  // Uninterruptible.
   budget.idle = idleTriggered;
   budget.extended = true;
+  return true;
 }
 
 bool GCRuntime::maybeIncreaseSliceBudgetForLongCollections(
@@ -3921,12 +3993,7 @@ bool GCRuntime::maybeIncreaseSliceBudgetForLongCollections(
       LinearInterpolate(totalTime, MinBudgetStart.time, MinBudgetStart.budget,
                         MinBudgetEnd.time, MinBudgetEnd.budget);
 
-  if (budget.timeBudget() >= minBudget) {
-    return false;
-  }
-
-  ExtendBudget(budget, minBudget);
-  return true;
+  return ExtendBudget(budget, minBudget);
 }
 
 bool GCRuntime::maybeIncreaseSliceBudgetForUrgentCollections(
@@ -3954,10 +4021,7 @@ bool GCRuntime::maybeIncreaseSliceBudgetForUrgentCollections(
     double fractionRemaining =
         double(minBytesRemaining) / double(tunables.urgentThresholdBytes());
     double minBudget = double(defaultSliceBudgetMS()) / fractionRemaining;
-    if (budget.timeBudget() < minBudget) {
-      ExtendBudget(budget, minBudget);
-      return true;
-    }
+    return ExtendBudget(budget, minBudget);
   }
 
   return false;

@@ -80,7 +80,6 @@ using EmptyCheckOption = HTMLEditUtils::EmptyCheckOption;
 using EmptyCheckOptions = HTMLEditUtils::EmptyCheckOptions;
 using LeafNodeType = HTMLEditUtils::LeafNodeType;
 using LeafNodeTypes = HTMLEditUtils::LeafNodeTypes;
-using StyleDifference = HTMLEditUtils::StyleDifference;
 using WalkTextOption = HTMLEditUtils::WalkTextOption;
 using WalkTreeDirection = HTMLEditUtils::WalkTreeDirection;
 using WalkTreeOption = HTMLEditUtils::WalkTreeOption;
@@ -1094,7 +1093,7 @@ Result<EditActionResult, nsresult> HTMLEditor::HandleInsertText(
 
   // for every property that is set, insert a new inline style node
   Result<EditorDOMPoint, nsresult> setStyleResult =
-      CreateStyleForInsertText(pointToInsert);
+      CreateStyleForInsertText(pointToInsert, *editingHost);
   if (MOZ_UNLIKELY(setStyleResult.isErr())) {
     NS_WARNING("HTMLEditor::CreateStyleForInsertText() failed");
     return setStyleResult.propagateErr();
@@ -2258,7 +2257,7 @@ Result<EditorDOMPoint, nsresult> HTMLEditor::HandleInsertLinefeed(
   //       should be merged when we fix bug 92921.
 
   Result<EditorDOMPoint, nsresult> setStyleResult =
-      CreateStyleForInsertText(aPointToBreak);
+      CreateStyleForInsertText(aPointToBreak, aEditingHost);
   if (MOZ_UNLIKELY(setStyleResult.isErr())) {
     NS_WARNING("HTMLEditor::CreateStyleForInsertText() failed");
     return setStyleResult.propagateErr();
@@ -3306,12 +3305,12 @@ Result<EditActionResult, nsresult> HTMLEditor::ConvertContentAroundRangesToList(
         EditSubAction::eCreateOrChangeList, aEditingHost);
     Result<EditorDOMPoint, nsresult> splitResult =
         extendedRanges
-            .SplitTextNodesAtEndBoundariesAndParentInlineElementsAtBoundaries(
-                *this);
+            .SplitTextAtEndBoundariesAndInlineAncestorsAtBothBoundaries(
+                *this, aEditingHost);
     if (MOZ_UNLIKELY(splitResult.isErr())) {
       NS_WARNING(
           "AutoRangeArray::"
-          "SplitTextNodesAtEndBoundariesAndParentInlineElementsAtBoundaries() "
+          "SplitTextAtEndBoundariesAndInlineAncestorsAtBothBoundaries() "
           "failed");
       return splitResult.propagateErr();
     }
@@ -3939,13 +3938,13 @@ nsresult HTMLEditor::RemoveListAtSelectionAsSubAction(
               EditSubAction::eCreateOrChangeList, aEditingHost);
       Result<EditorDOMPoint, nsresult> splitResult =
           extendedSelectionRanges
-              .SplitTextNodesAtEndBoundariesAndParentInlineElementsAtBoundaries(
-                  *this);
+              .SplitTextAtEndBoundariesAndInlineAncestorsAtBothBoundaries(
+                  *this, aEditingHost);
       if (MOZ_UNLIKELY(splitResult.isErr())) {
         NS_WARNING(
             "AutoRangeArray::"
-            "SplitTextNodesAtEndBoundariesAndParentInlineElementsAtBoundaries()"
-            " failed");
+            "SplitTextAtEndBoundariesAndInlineAncestorsAtBothBoundaries() "
+            "failed");
         return splitResult.unwrapErr();
       }
       nsresult rv = extendedSelectionRanges.CollectEditTargetNodes(
@@ -4050,13 +4049,12 @@ HTMLEditor::FormatBlockContainerWithTransaction(
       EditSubAction::eCreateOrRemoveBlock, aEditingHost);
   Result<EditorDOMPoint, nsresult> splitResult =
       aSelectionRanges
-          .SplitTextNodesAtEndBoundariesAndParentInlineElementsAtBoundaries(
-              *this);
+          .SplitTextAtEndBoundariesAndInlineAncestorsAtBothBoundaries(
+              *this, aEditingHost);
   if (MOZ_UNLIKELY(splitResult.isErr())) {
     NS_WARNING(
         "AutoRangeArray::"
-        "SplitTextNodesAtEndBoundariesAndParentInlineElementsAtBoundaries() "
-        "failed");
+        "SplitTextAtEndBoundariesAndInlineAncestorsAtBothBoundaries() failed");
     return splitResult.propagateErr();
   }
   nsresult rv = aSelectionRanges.CollectEditTargetNodes(
@@ -4576,13 +4574,13 @@ nsresult HTMLEditor::HandleCSSIndentAroundRanges(AutoRangeArray& aRanges,
           EditSubAction::eIndent, aEditingHost);
       Result<EditorDOMPoint, nsresult> splitResult =
           extendedRanges
-              .SplitTextNodesAtEndBoundariesAndParentInlineElementsAtBoundaries(
-                  *this);
+              .SplitTextAtEndBoundariesAndInlineAncestorsAtBothBoundaries(
+                  *this, aEditingHost);
       if (MOZ_UNLIKELY(splitResult.isErr())) {
         NS_WARNING(
             "AutoRangeArray::"
-            "SplitTextNodesAtEndBoundariesAndParentInlineElementsAtBoundaries()"
-            " failed");
+            "SplitTextAtEndBoundariesAndInlineAncestorsAtBothBoundaries() "
+            "failed");
         return splitResult.unwrapErr();
       }
       if (splitResult.inspect().IsSet()) {
@@ -4880,12 +4878,12 @@ nsresult HTMLEditor::HandleHTMLIndentAroundRanges(AutoRangeArray& aRanges,
         EditSubAction::eIndent, aEditingHost);
     Result<EditorDOMPoint, nsresult> splitResult =
         extendedRanges
-            .SplitTextNodesAtEndBoundariesAndParentInlineElementsAtBoundaries(
-                *this);
+            .SplitTextAtEndBoundariesAndInlineAncestorsAtBothBoundaries(
+                *this, aEditingHost);
     if (MOZ_UNLIKELY(splitResult.isErr())) {
       NS_WARNING(
           "AutoRangeArray::"
-          "SplitTextNodesAtEndBoundariesAndParentInlineElementsAtBoundaries() "
+          "SplitTextAtEndBoundariesAndInlineAncestorsAtBothBoundaries() "
           "failed");
       return splitResult.unwrapErr();
     }
@@ -6078,7 +6076,7 @@ Result<CreateElementResult, nsresult> HTMLEditor::ChangeListElementType(
 }
 
 Result<EditorDOMPoint, nsresult> HTMLEditor::CreateStyleForInsertText(
-    const EditorDOMPoint& aPointToInsertText) {
+    const EditorDOMPoint& aPointToInsertText, const Element& aEditingHost) {
   MOZ_ASSERT(IsEditActionDataAvailable());
   MOZ_ASSERT(aPointToInsertText.IsSetAndValid());
   MOZ_ASSERT(mPendingStylesToApplyToNewContent);
@@ -6109,6 +6107,7 @@ Result<EditorDOMPoint, nsresult> HTMLEditor::CreateStyleForInsertText(
         return pointToPutCaretOrError;
       }
       pointToPutCaret = pointToPutCaretOrError.unwrap();
+      MOZ_ASSERT(pointToPutCaret.IsSet());
       pendingStyle = mPendingStylesToApplyToNewContent->TakeClearingStyle();
     }
   }
@@ -6116,9 +6115,17 @@ Result<EditorDOMPoint, nsresult> HTMLEditor::CreateStyleForInsertText(
   // then process setting any styles
   const int32_t relFontSize =
       mPendingStylesToApplyToNewContent->TakeRelativeFontSize();
-  pendingStyle = mPendingStylesToApplyToNewContent->TakePreservedStyle();
+  AutoTArray<EditorInlineStyleAndValue, 32> stylesToSet;
+  mPendingStylesToApplyToNewContent->TakeAllPreservedStyles(stylesToSet);
+  if (stylesToSet.IsEmpty() && !relFontSize) {
+    return pointToPutCaret;
+  }
 
-  if (pendingStyle || relFontSize) {
+  // We're in chrome, e.g., the email composer of Thunderbird, and there is
+  // relative font size changes, we need to keep using legacy path until we port
+  // IncrementOrDecrementFontSizeAsSubAction() to work with
+  // AutoInlineStyleSetter.
+  if (relFontSize) {
     // we have at least one style to add; make a new text node to insert style
     // nodes above.
     EditorDOMPoint pointToInsertTextNode(pointToPutCaret);
@@ -6164,34 +6171,29 @@ Result<EditorDOMPoint, nsresult> HTMLEditor::CreateStyleForInsertText(
     insertNewTextNodeResult.inspect().IgnoreCaretPointSuggestion();
     pointToPutCaret.Set(newEmptyTextNode, 0u);
 
-    if (relFontSize) {
-      HTMLEditor::FontSize incrementOrDecrement =
-          relFontSize > 0 ? HTMLEditor::FontSize::incr
-                          : HTMLEditor::FontSize::decr;
-      for ([[maybe_unused]] uint32_t j : IntegerRange(Abs(relFontSize))) {
-        Result<CreateElementResult, nsresult>
-            wrapTextInBigOrSmallElementResult = SetFontSizeOnTextNode(
-                *newEmptyTextNode, 0, UINT32_MAX, incrementOrDecrement);
-        if (MOZ_UNLIKELY(wrapTextInBigOrSmallElementResult.isErr())) {
-          NS_WARNING("HTMLEditor::SetFontSizeOnTextNode() failed");
-          return wrapTextInBigOrSmallElementResult.propagateErr();
-        }
-        // We don't need to update here because we'll suggest caret position
-        // which is computed above.
-        MOZ_ASSERT(pointToPutCaret.IsSet());
-        wrapTextInBigOrSmallElementResult.inspect()
-            .IgnoreCaretPointSuggestion();
+    // FIXME: If the stylesToSet have background-color style, it may
+    // be applied shorter because outer <span> element height is not
+    // computed with inner element's height.
+    HTMLEditor::FontSize incrementOrDecrement =
+        relFontSize > 0 ? HTMLEditor::FontSize::incr
+                        : HTMLEditor::FontSize::decr;
+    for ([[maybe_unused]] uint32_t j : IntegerRange(Abs(relFontSize))) {
+      Result<CreateElementResult, nsresult> wrapTextInBigOrSmallElementResult =
+          SetFontSizeOnTextNode(*newEmptyTextNode, 0, UINT32_MAX,
+                                incrementOrDecrement);
+      if (MOZ_UNLIKELY(wrapTextInBigOrSmallElementResult.isErr())) {
+        NS_WARNING("HTMLEditor::SetFontSizeOnTextNode() failed");
+        return wrapTextInBigOrSmallElementResult.propagateErr();
       }
+      // We don't need to update here because we'll suggest caret position
+      // which is computed above.
+      MOZ_ASSERT(pointToPutCaret.IsSet());
+      wrapTextInBigOrSmallElementResult.inspect().IgnoreCaretPointSuggestion();
     }
 
-    while (pendingStyle) {
-      AutoInlineStyleSetter inlineStyleSetter(
-          pendingStyle->GetAttribute()
-              ? EditorInlineStyleAndValue(
-                    *pendingStyle->GetTag(), *pendingStyle->GetAttribute(),
-                    pendingStyle->AttributeValueOrCSSValueRef())
-              : EditorInlineStyleAndValue(*pendingStyle->GetTag()));
-      // MOZ_KnownLive(...ContainerAs<nsIContent>()) because pointToPutCaret()
+    for (const EditorInlineStyleAndValue& styleToSet : stylesToSet) {
+      AutoInlineStyleSetter inlineStyleSetter(styleToSet);
+      // MOZ_KnownLive(...ContainerAs<nsIContent>()) because pointToPutCaret
       // grabs the result.
       Result<CaretPoint, nsresult> setStyleResult =
           inlineStyleSetter.ApplyStyleToNodeOrChildrenAndRemoveNestedSameStyle(
@@ -6204,10 +6206,43 @@ Result<EditorDOMPoint, nsresult> HTMLEditor::CreateStyleForInsertText(
       // is computed above.
       MOZ_ASSERT(pointToPutCaret.IsSet());
       setStyleResult.unwrap().IgnoreCaretPointSuggestion();
-      pendingStyle = mPendingStylesToApplyToNewContent->TakePreservedStyle();
     }
+    return pointToPutCaret;
   }
 
+  // If we have preserved commands except relative font style changes, we can
+  // use inline style setting code which reuse ancestors better.
+  AutoRangeArray ranges(pointToPutCaret);
+  if (MOZ_UNLIKELY(ranges.Ranges().IsEmpty())) {
+    NS_WARNING("AutoRangeArray::AutoRangeArray() failed");
+    return Err(NS_ERROR_FAILURE);
+  }
+  nsresult rv =
+      SetInlinePropertiesAroundRanges(ranges, stylesToSet, aEditingHost);
+  if (NS_FAILED(rv)) {
+    NS_WARNING("HTMLEditor::SetInlinePropertiesAroundRanges() failed");
+    return Err(rv);
+  }
+  if (NS_WARN_IF(ranges.Ranges().IsEmpty())) {
+    return Err(NS_ERROR_FAILURE);
+  }
+  // Now `ranges` selects new styled contents and the range may not be
+  // collapsed.  We should use the deepest editable start point of the range
+  // to insert text.
+  nsINode* container = ranges.FirstRangeRef()->GetStartContainer();
+  if (MOZ_UNLIKELY(!container->IsContent())) {
+    container = ranges.FirstRangeRef()->GetChildAtStartOffset();
+    if (MOZ_UNLIKELY(!container)) {
+      NS_WARNING("How did we get lost insertion point?");
+      return Err(NS_ERROR_FAILURE);
+    }
+  }
+  pointToPutCaret =
+      HTMLEditUtils::GetDeepestEditableStartPointOf<EditorDOMPoint>(
+          *container->AsContent());
+  if (NS_WARN_IF(!pointToPutCaret.IsSet())) {
+    return Err(NS_ERROR_FAILURE);
+  }
   return pointToPutCaret;
 }
 
@@ -6350,12 +6385,12 @@ nsresult HTMLEditor::AlignContentsAtRanges(AutoRangeArray& aRanges,
         EditSubAction::eSetOrClearAlignment, aEditingHost);
     Result<EditorDOMPoint, nsresult> splitResult =
         extendedRanges
-            .SplitTextNodesAtEndBoundariesAndParentInlineElementsAtBoundaries(
-                *this);
+            .SplitTextAtEndBoundariesAndInlineAncestorsAtBothBoundaries(
+                *this, aEditingHost);
     if (MOZ_UNLIKELY(splitResult.isErr())) {
       NS_WARNING(
           "AutoRangeArray::"
-          "SplitTextNodesAtEndBoundariesAndParentInlineElementsAtBoundaries() "
+          "SplitTextAtEndBoundariesAndInlineAncestorsAtBothBoundaries() "
           "failed");
       return splitResult.unwrapErr();
     }
@@ -6659,7 +6694,7 @@ Result<CreateElementResult, nsresult> HTMLEditor::AlignNodesAndDescendants(
         nsStyledElement* styledListOrListItemElement =
             nsStyledElement::FromNode(listOrListItemElement);
         if (styledListOrListItemElement &&
-            EditorElementStyle::Align().IsCSSEditable(
+            EditorElementStyle::Align().IsCSSSettable(
                 *styledListOrListItemElement)) {
           // MOZ_KnownLive(*styledListOrListItemElement): An element of
           // aArrayOfContents which is array of OwningNonNull.
@@ -7171,20 +7206,18 @@ Result<EditorDOMPoint, nsresult> HTMLEditor::MaybeSplitElementsAtEveryBRElement(
 }
 
 Result<EditorDOMPoint, nsresult>
-HTMLEditor::SplitParentInlineElementsAtRangeEdges(RangeItem& aRangeItem) {
+HTMLEditor::SplitParentInlineElementsAtRangeBoundaries(
+    RangeItem& aRangeItem, const Element& aEditingHost,
+    const nsIContent* aAncestorLimiter /* = nullptr */) {
   MOZ_ASSERT(IsEditActionDataAvailable());
-
-  RefPtr<Element> editingHost = ComputeEditingHost();
-  if (NS_WARN_IF(!editingHost)) {
-    return EditorDOMPoint();  // XXX Why not an error?
-  }
 
   EditorDOMPoint pointToPutCaret;
   if (!aRangeItem.Collapsed() && aRangeItem.mEndContainer &&
       aRangeItem.mEndContainer->IsContent()) {
     nsCOMPtr<nsIContent> mostAncestorInlineContentAtEnd =
         HTMLEditUtils::GetMostDistantAncestorInlineElement(
-            *aRangeItem.mEndContainer->AsContent(), editingHost);
+            *aRangeItem.mEndContainer->AsContent(), &aEditingHost,
+            aAncestorLimiter);
 
     if (mostAncestorInlineContentAtEnd) {
       Result<SplitNodeResult, nsresult> splitEndInlineResult =
@@ -7203,7 +7236,7 @@ HTMLEditor::SplitParentInlineElementsAtRangeEdges(RangeItem& aRangeItem) {
           pointToPutCaret, {SuggestCaret::OnlyIfHasSuggestion});
       if (pointToPutCaret.IsInContentNode() &&
           MOZ_UNLIKELY(
-              editingHost !=
+              &aEditingHost !=
               ComputeEditingHost(*pointToPutCaret.ContainerAs<nsIContent>()))) {
         NS_WARNING(
             "HTMLEditor::SplitNodeDeepWithTransaction(SplitAtEdges::"
@@ -7229,7 +7262,8 @@ HTMLEditor::SplitParentInlineElementsAtRangeEdges(RangeItem& aRangeItem) {
 
   nsCOMPtr<nsIContent> mostAncestorInlineContentAtStart =
       HTMLEditUtils::GetMostDistantAncestorInlineElement(
-          *aRangeItem.mStartContainer->AsContent(), editingHost);
+          *aRangeItem.mStartContainer->AsContent(), &aEditingHost,
+          aAncestorLimiter);
 
   if (mostAncestorInlineContentAtStart) {
     Result<SplitNodeResult, nsresult> splitStartInlineResult =
@@ -9014,8 +9048,7 @@ nsresult HTMLEditor::JoinNearestEditableNodesWithTransaction(
   if ((lastEditableChildOfLeftContent->IsText() ||
        lastEditableChildOfLeftContent->IsElement()) &&
       HTMLEditUtils::CanContentsBeJoined(*lastEditableChildOfLeftContent,
-                                         *firstEditableChildOfRightContent,
-                                         StyleDifference::CompareIfElements)) {
+                                         *firstEditableChildOfRightContent)) {
     nsresult rv = JoinNearestEditableNodesWithTransaction(
         *lastEditableChildOfLeftContent, *firstEditableChildOfRightContent,
         aNewFirstChildOfRightNode);
@@ -9183,7 +9216,7 @@ nsresult HTMLEditor::GetInlineStyles(
     if (property == nsGkAtoms::size) {
       isSet = HTMLEditUtils::IsInlineStyleSetByElement(aElement, style, nullptr,
                                                        &value);
-    } else if (style.IsCSSEditable(aElement)) {
+    } else if (style.IsCSSSettable(aElement)) {
       Result<bool, nsresult> isComputedCSSEquivalentToStyleOrError =
           CSSEditUtils::IsComputedCSSEquivalentTo(*this, aElement, style,
                                                   value);
@@ -9239,11 +9272,11 @@ nsresult HTMLEditor::ReapplyCachedStyles() {
   }
 
   for (PendingStyleCache& styleCacheBeforeEdit :
-       *TopLevelEditSubActionDataRef().mCachedPendingStyles) {
+       Reversed(*TopLevelEditSubActionDataRef().mCachedPendingStyles)) {
     bool isFirst = false, isAny = false, isAll = false;
     nsAutoString currentValue;
     const EditorInlineStyle inlineStyle = styleCacheBeforeEdit.ToInlineStyle();
-    if (useCSS && inlineStyle.IsCSSEditable(*startContainerElement)) {
+    if (useCSS && inlineStyle.IsCSSSettable(*startContainerElement)) {
       // check computed style first in css case
       // MOZ_KnownLive(styleCacheBeforeEdit.*) because they are nsStaticAtom
       // and its instances are alive until shutting down.
@@ -10753,12 +10786,12 @@ nsresult HTMLEditor::MoveSelectedContentsToDivElementToMakeItAbsolutePosition(
         EditSubAction::eSetPositionToAbsolute, aEditingHost);
     Result<EditorDOMPoint, nsresult> splitResult =
         extendedSelectionRanges
-            .SplitTextNodesAtEndBoundariesAndParentInlineElementsAtBoundaries(
-                *this);
+            .SplitTextAtEndBoundariesAndInlineAncestorsAtBothBoundaries(
+                *this, aEditingHost);
     if (MOZ_UNLIKELY(splitResult.isErr())) {
       NS_WARNING(
           "AutoRangeArray::"
-          "SplitTextNodesAtEndBoundariesAndParentInlineElementsAtBoundaries() "
+          "SplitTextAtEndBoundariesAndInlineAncestorsAtBothBoundaries() "
           "failed");
       return splitResult.unwrapErr();
     }

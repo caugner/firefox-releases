@@ -210,6 +210,7 @@ class ServoStyleSet;
 enum class StyleOrigin : uint8_t;
 class SMILAnimationController;
 enum class StyleCursorKind : uint8_t;
+class SVGContextPaint;
 enum class ColorScheme : uint8_t;
 enum class StyleRuleChangeKind : uint32_t;
 template <typename>
@@ -248,6 +249,7 @@ class FeaturePolicy;
 class FontFaceSet;
 class FrameRequestCallback;
 class ImageTracker;
+class HighlightRegistry;
 class HTMLAllCollection;
 class HTMLBodyElement;
 class HTMLInputElement;
@@ -1180,8 +1182,8 @@ class Document : public nsINode,
    * method is responsible for calling BeginObservingDocument() on the
    * presshell if the presshell should observe document mutations.
    */
-  already_AddRefed<PresShell> CreatePresShell(nsPresContext* aContext,
-                                              nsViewManager* aViewManager);
+  MOZ_CAN_RUN_SCRIPT already_AddRefed<PresShell> CreatePresShell(
+      nsPresContext* aContext, nsViewManager* aViewManager);
   void DeletePresShell();
 
   PresShell* GetPresShell() const {
@@ -1230,6 +1232,14 @@ class Document : public nsINode,
         mIsDevToolsDocument = mParentDocument->IsDevToolsDocument();
       }
     }
+  }
+
+  void SetCurrentContextPaint(const SVGContextPaint* aContextPaint) {
+    mCurrentContextPaint = aContextPaint;
+  }
+
+  const SVGContextPaint* GetCurrentContextPaint() const {
+    return mCurrentContextPaint;
   }
 
   /**
@@ -1884,26 +1894,24 @@ class Document : public nsINode,
    */
   nsTArray<Element*> GetTopLayer() const;
 
+  // Do the "fullscreen element ready check" from the fullscreen spec.
+  // It returns true if the given element is allowed to go into fullscreen.
+  // It is responsive to dispatch "fullscreenerror" event when necessary.
+  bool FullscreenElementReadyCheck(FullscreenRequest&);
+
   /**
-   * Asynchronously requests that the document make aElement the fullscreen
-   * element, and move into fullscreen mode. The current fullscreen element
-   * (if any) is pushed onto the top layer, and it can be
-   * returned to fullscreen status by calling RestorePreviousFullscreenState().
+   * When this is called on content process, this asynchronously requests that
+   * the document make aElement the fullscreen element, and move into fullscreen
+   * mode. The current fullscreen element (if any) is pushed onto the top layer,
+   * and it can be returned to fullscreen status by calling
+   * RestorePreviousFullscreenState().
+   * If on chrome process, this is synchronously.
    *
    * Note that requesting fullscreen in a document also makes the element which
    * contains this document in this document's parent document fullscreen. i.e.
    * the <iframe> or <browser> that contains this document is also mode
    * fullscreen. This happens recursively in all ancestor documents.
    */
-  void AsyncRequestFullscreen(UniquePtr<FullscreenRequest>);
-
-  // Do the "fullscreen element ready check" from the fullscreen spec.
-  // It returns true if the given element is allowed to go into fullscreen.
-  // It is responsive to dispatch "fullscreenerror" event when necessary.
-  bool FullscreenElementReadyCheck(FullscreenRequest&);
-
-  // This is called asynchronously by Document::AsyncRequestFullscreen()
-  // to move this document into fullscreen mode if allowed.
   void RequestFullscreen(UniquePtr<FullscreenRequest> aRequest,
                          bool aApplyFullscreenDirectly = false);
 
@@ -1933,6 +1941,9 @@ class Document : public nsINode,
   // Pushes the given element into the top of top layer and set fullscreen
   // flag.
   void SetFullscreenElement(Element&);
+
+  // Whether we has pending fullscreen request.
+  bool HasPendingFullscreenRequests();
 
   // Cancel the dialog element if the document is blocked by the dialog
   void TryCancelDialog();
@@ -3684,10 +3695,6 @@ class Document : public nsINode,
   bool UserHasInteracted() { return mUserHasInteracted; }
   void ResetUserInteractionTimer();
 
-  // This method would return current autoplay policy, it would be "allowed"
-  // , "allowed-muted" or "disallowed".
-  DocumentAutoplayPolicy AutoplayPolicy() const;
-
   // This should be called when this document receives events which are likely
   // to be user interaction with the document, rather than the byproduct of
   // interaction with the browser (i.e. a keypress to scroll the view port,
@@ -3779,6 +3786,9 @@ class Document : public nsINode,
   }
   DOMIntersectionObserver& EnsureLazyLoadImageObserver();
 
+  DOMIntersectionObserver* GetContentVisibilityObserver() const {
+    return mContentVisibilityObserver;
+  }
   DOMIntersectionObserver& EnsureContentVisibilityObserver();
   void ObserveForContentVisibility(Element&);
   void UnobserveForContentVisibility(Element&);
@@ -4101,6 +4111,12 @@ class Document : public nsINode,
   void SetDidHitCompleteSheetCache() { mDidHitCompleteSheetCache = true; }
 
   bool DidHitCompleteSheetCache() const { return mDidHitCompleteSheetCache; }
+
+  /**
+   * Get the `HighlightRegistry` which contains all highlights associated
+   * with this document.
+   */
+  class HighlightRegistry& HighlightRegistry();
 
   bool ShouldResistFingerprinting() const {
     return mShouldResistFingerprinting;
@@ -4464,6 +4480,9 @@ class Document : public nsINode,
 
   // A reference to the element last returned from GetRootElement().
   Element* mCachedRootElement;
+
+  // This is maintained by AutoSetRestoreSVGContextPaint.
+  const SVGContextPaint* mCurrentContextPaint = nullptr;
 
   // This is a weak reference, but we hold a strong reference to mNodeInfo,
   // which in turn holds a strong reference to this mNodeInfoManager.
@@ -4871,8 +4890,6 @@ class Document : public nsINode,
 
   // Whether we should resist fingerprinting.
   bool mShouldResistFingerprinting : 1;
-
-  uint8_t mPendingFullscreenRequests;
 
   uint8_t mXMLDeclarationBits;
 
@@ -5349,6 +5366,9 @@ class Document : public nsINode,
   // The OOP counterpart to nsDocLoader::mChildrenInOnload.
   // Not holding strong refs here since we don't actually use the BBCs.
   nsTArray<const BrowserBridgeChild*> mOOPChildrenLoading;
+
+  // Registry of custom highlight definitions associated with this document.
+  RefPtr<class HighlightRegistry> mHighlightRegistry;
 
  public:
   // Needs to be public because the bindings code pokes at it.

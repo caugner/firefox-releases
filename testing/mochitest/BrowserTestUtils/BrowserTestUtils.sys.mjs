@@ -933,7 +933,7 @@ export var BrowserTestUtils = {
    * @param {string} uri
    *        The URI to load.
    */
-  loadURI(browser, uri) {
+  loadURIString(browser, uri) {
     browser.loadURI(uri, {
       triggeringPrincipal: Services.scriptSecurityManager.getSystemPrincipal(),
     });

@@ -30,6 +30,7 @@ XPCOMUtils.defineLazyGetter(lazy, "logger", () => lazy.Log.get());
  **/
 export const SessionDataCategory = {
   Event: "event",
+  PreloadScript: "preload-script",
 };
 
 /**
@@ -170,7 +171,7 @@ export class SessionData {
    */
   applySessionData(sessionDataItemUpdates = []) {
     // The subset of session data item updates, which are cleaned up from
-    // dublicates and unknown items.
+    // duplicates and unknown items.
     let updates = [];
     for (const sessionDataItemUpdate of sessionDataItemUpdates) {
       const {

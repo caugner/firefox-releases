@@ -142,20 +142,10 @@ class HTMLEditUtils final {
 
   /**
    * CanContentsBeJoined() returns true if aLeftContent and aRightContent can be
-   * joined.  At least, Node.nodeName must be same when this returns true.
+   * joined.
    */
-  enum class StyleDifference {
-    // Ignore style information so that callers may join different styled
-    // contents.
-    Ignore,
-    // Compare style information when the contents are any elements.
-    CompareIfElements,
-    // Compare style information only when the contents are <span> elements.
-    CompareIfSpanElements,
-  };
   static bool CanContentsBeJoined(const nsIContent& aLeftContent,
-                                  const nsIContent& aRightContent,
-                                  StyleDifference aStyleDifference);
+                                  const nsIContent& aRightContent);
 
   /**
    * IsBlockElement() returns true if aContent is an element and it should
@@ -1496,16 +1486,20 @@ class HTMLEditUtils final {
    * GetMostDistantAncestorInlineElement() returns the most distant ancestor
    * inline element between aContent and the aEditingHost.  Even if aEditingHost
    * is an inline element, this method never returns aEditingHost as the result.
+   * Optionally, you can specify ancestor limiter content node.  This guarantees
+   * that the result is a descendant of aAncestorLimiter if aContent is a
+   * descendant of aAncestorLimiter.
    */
   static nsIContent* GetMostDistantAncestorInlineElement(
-      const nsIContent& aContent, const Element* aEditingHost = nullptr) {
+      const nsIContent& aContent, const Element* aEditingHost = nullptr,
+      const nsIContent* aAncestorLimiter = nullptr) {
     if (HTMLEditUtils::IsBlockElement(aContent)) {
       return nullptr;
     }
 
     // If aNode is the editing host itself, there is no modifiable inline
     // parent.
-    if (&aContent == aEditingHost) {
+    if (&aContent == aEditingHost || &aContent == aAncestorLimiter) {
       return nullptr;
     }
 
@@ -1523,12 +1517,12 @@ class HTMLEditUtils final {
 
     // Looks for the highest inline parent in the editing host.
     nsIContent* topMostInlineContent = const_cast<nsIContent*>(&aContent);
-    for (nsIContent* content : aContent.AncestorsOfType<nsIContent>()) {
-      if (content == aEditingHost ||
-          !HTMLEditUtils::IsInlineElement(*content)) {
+    for (Element* element : aContent.AncestorsOfType<Element>()) {
+      if (element == aEditingHost || element == aAncestorLimiter ||
+          !HTMLEditUtils::IsInlineElement(*element)) {
         break;
       }
-      topMostInlineContent = content;
+      topMostInlineContent = element;
     }
     return topMostInlineContent;
   }
@@ -1539,13 +1533,20 @@ class HTMLEditUtils final {
    * inline element.
    */
   static Element* GetMostDistantAncestorEditableEmptyInlineElement(
-      const nsIContent& aEmptyContent, const Element* aEditingHost = nullptr) {
+      const nsIContent& aEmptyContent, const Element* aEditingHost = nullptr,
+      const nsIContent* aAncestorLimiter = nullptr) {
+    if (&aEmptyContent == aEditingHost || &aEmptyContent == aAncestorLimiter) {
+      return nullptr;
+    }
     nsIContent* lastEmptyContent = const_cast<nsIContent*>(&aEmptyContent);
-    for (Element* element = aEmptyContent.GetParentElement();
-         element && element != aEditingHost &&
-         HTMLEditUtils::IsInlineElement(*element) &&
-         HTMLEditUtils::IsSimplyEditableNode(*element);
-         element = element->GetParentElement()) {
+    for (Element* element : aEmptyContent.AncestorsOfType<Element>()) {
+      if (element == aEditingHost || element == aAncestorLimiter) {
+        break;
+      }
+      if (!HTMLEditUtils::IsInlineElement(*element) ||
+          !HTMLEditUtils::IsSimplyEditableNode(*element)) {
+        break;
+      }
       if (element->GetChildCount() > 1) {
         for (const nsIContent* child = element->GetFirstChild(); child;
              child = child->GetNextSibling()) {
@@ -1943,16 +1944,7 @@ class HTMLEditUtils final {
   template <typename EditorDOMPointType>
   static EditorDOMPointType GetGoodCaretPointFor(
       nsIContent& aContent, nsIEditor::EDirection aDirectionAndAmount) {
-    MOZ_ASSERT(aDirectionAndAmount == nsIEditor::eNext ||
-               aDirectionAndAmount == nsIEditor::eNextWord ||
-               aDirectionAndAmount == nsIEditor::ePrevious ||
-               aDirectionAndAmount == nsIEditor::ePreviousWord ||
-               aDirectionAndAmount == nsIEditor::eToBeginningOfLine ||
-               aDirectionAndAmount == nsIEditor::eToEndOfLine);
-
-    const bool goingForward = (aDirectionAndAmount == nsIEditor::eNext ||
-                               aDirectionAndAmount == nsIEditor::eNextWord ||
-                               aDirectionAndAmount == nsIEditor::eToEndOfLine);
+    MOZ_ASSERT(nsIEditor::EDirectionIsValidExceptNone(aDirectionAndAmount));
 
     // XXX Why don't we check whether the candidate position is enable or not?
     //     When the result is not editable point, caret will be enclosed in
@@ -1961,12 +1953,14 @@ class HTMLEditUtils final {
     // If we can put caret in aContent, return start or end in it.
     if (aContent.IsText() || HTMLEditUtils::IsContainerNode(aContent) ||
         NS_WARN_IF(!aContent.GetParentNode())) {
-      return EditorDOMPointType(&aContent,
-                                goingForward ? 0 : aContent.Length());
+      return EditorDOMPointType(
+          &aContent, nsIEditor::DirectionIsDelete(aDirectionAndAmount)
+                         ? 0
+                         : aContent.Length());
     }
 
     // If we are going forward, put caret at aContent itself.
-    if (goingForward) {
+    if (nsIEditor::DirectionIsDelete(aDirectionAndAmount)) {
       return EditorDOMPointType(&aContent);
     }
 
@@ -2000,6 +1994,14 @@ class HTMLEditUtils final {
       const nsIContent& aContentToInsert,
       const EditorDOMPointTypeInput& aPointToInsert,
       const Element& aEditingHost);
+
+  /**
+   * GetBetterCaretPositionToInsertText() returns better point to put caret
+   * if aPoint is near a text node or in non-container node.
+   */
+  template <typename EditorDOMPointType, typename EditorDOMPointTypeInput>
+  static EditorDOMPointType GetBetterCaretPositionToInsertText(
+      const EditorDOMPointTypeInput& aPoint, const Element& aEditingHost);
 
   /**
    * ComputePointToPutCaretInElementIfOutside() returns a good point in aElement
@@ -2160,6 +2162,79 @@ class HTMLEditUtils final {
     }
     return result;
   }
+
+  /**
+   * Get `#[0-9a-f]{6}` style HTML color value if aColorValue is valid value
+   * for color-specifying attribute. The result is useful to set attributes
+   * of HTML elements which take a color value.
+   *
+   * @param aColorValue         [in] Should be one of `#[0-9a-fA-Z]{3}`,
+   *                            `#[0-9a-fA-Z]{3}` or a color name.
+   * @param aNormalizedValue    [out] Set to `#[0-9a-f]{6}` style color code
+   *                            if this returns true.  Otherwise, returns
+   *                            aColorValue as-is.
+   * @return                    true if aColorValue is valid.  Otherwise, false.
+   */
+  static bool GetNormalizedHTMLColorValue(const nsAString& aColorValue,
+                                          nsAString& aNormalizedValue);
+
+  /**
+   * Return true if aColorValue may be a CSS specific color value or general
+   * keywords of CSS.
+   */
+  [[nodiscard]] static bool MaybeCSSSpecificColorValue(
+      const nsAString& aColorValue);
+
+  /**
+   * Return true if aColorValue can be specified to `color` value of <font>.
+   */
+  [[nodiscard]] static bool CanConvertToHTMLColorValue(
+      const nsAString& aColorValue);
+
+  /**
+   * Convert aColorValue to `#[0-9a-f]{6}` style HTML color value.
+   */
+  static bool ConvertToNormalizedHTMLColorValue(const nsAString& aColorValue,
+                                                nsAString& aNormalizedValue);
+
+  /**
+   * Get serialized color value (`rgb(...)` or `rgba(...)`) or "currentcolor"
+   * if aColorValue is valid. The result is useful to set CSS color property.
+   *
+   * @param aColorValue         [in] Should be valid CSS color value.
+   * @param aZeroAlphaColor     [in] If TransparentKeyword, aNormalizedValue is
+   *                            set to "transparent" if the alpha value is 0.
+   *                            Otherwise, `rgba(...)` value is set.
+   * @param aNormalizedValue    [out] Serialized color value or "currentcolor".
+   * @return                    true if aColorValue is valid.  Otherwise, false.
+   */
+  enum class ZeroAlphaColor { RGBAValue, TransparentKeyword };
+  static bool GetNormalizedCSSColorValue(const nsAString& aColorValue,
+                                         ZeroAlphaColor aZeroAlphaColor,
+                                         nsAString& aNormalizedValue);
+
+  /**
+   * Check whether aColorA and aColorB are same color.
+   *
+   * @param aTransparentKeyword Whether allow to treat "transparent" keyword
+   *                            as a valid value or an invalid value.
+   * @return                    If aColorA and aColorB are valid values and
+   *                            mean same color, returns true.
+   */
+  enum class TransparentKeyword { Invalid, Allowed };
+  static bool IsSameHTMLColorValue(const nsAString& aColorA,
+                                   const nsAString& aColorB,
+                                   TransparentKeyword aTransparentKeyword);
+
+  /**
+   * Check whether aColorA and aColorB are same color.
+   *
+   * @return                    If aColorA and aColorB are valid values and
+   *                            mean same color, returns true.
+   */
+  template <typename CharType>
+  static bool IsSameCSSColorValue(const nsTSubstring<CharType>& aColorA,
+                                  const nsTSubstring<CharType>& aColorB);
 
  private:
   static bool CanNodeContain(nsHTMLTag aParentTagId, nsHTMLTag aChildTagId);

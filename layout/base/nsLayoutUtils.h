@@ -116,8 +116,10 @@ class Image;
 class StackingContextHelper;
 class Layer;
 class WebRenderLayerManager;
-
 }  // namespace layers
+namespace widget {
+enum class TransparencyMode : uint8_t;
+}
 }  // namespace mozilla
 
 // Flags to customize the behavior of nsLayoutUtils::DrawString.
@@ -1060,15 +1062,6 @@ class nsLayoutUtils {
    * aFrame.
    */
   static nsRect ClampRectToScrollFrames(nsIFrame* aFrame, const nsRect& aRect);
-
-  /**
-   * Return true if a "layer transform" could be computed for aFrame,
-   * and optionally return the computed transform.  The returned
-   * transform is what would be set on the layer currently if a layers
-   * transaction were opened at the time this helper is called.
-   */
-  static bool GetLayerTransformForFrame(nsIFrame* aFrame,
-                                        Matrix4x4Flagged* aTransform);
 
   /**
    * Given a point in the global coordinate space, returns that point expressed
@@ -2075,8 +2068,9 @@ class nsLayoutUtils {
    *                           same.
    *   @return a value suitable for passing to SetWindowTranslucency.
    */
-  static nsTransparencyMode GetFrameTransparency(nsIFrame* aBackgroundFrame,
-                                                 nsIFrame* aCSSRootFrame);
+  using TransparencyMode = mozilla::widget::TransparencyMode;
+  static TransparencyMode GetFrameTransparency(nsIFrame* aBackgroundFrame,
+                                               nsIFrame* aCSSRootFrame);
 
   /**
    * A frame is a popup if it has its own floating window. Menus, panels
@@ -2200,6 +2194,8 @@ class nsLayoutUtils {
      * The surface might be different for, e.g., a EXIF-scaled raster image, if
      * we don't rescale during decode. */
     SFE_EXACT_SIZE_SURFACE = 1 << 6,
+    /* Use orientation from image */
+    SFE_ORIENTATION_FROM_IMAGE = 1 << 7
   };
 
   // This function can be called on any thread.

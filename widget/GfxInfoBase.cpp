@@ -978,14 +978,8 @@ int32_t GfxInfoBase::FindBlocklistedDeviceInList(
   int32_t status = nsIGfxInfo::FEATURE_STATUS_UNKNOWN;
 
   // Some properties are not available on all platforms.
-  nsAutoString desktopEnvironment;
-  nsresult rv = GetDesktopEnvironment(desktopEnvironment);
-  if (NS_FAILED(rv) && rv != NS_ERROR_NOT_IMPLEMENTED) {
-    return 0;
-  }
-
   nsAutoString windowProtocol;
-  rv = GetWindowProtocol(windowProtocol);
+  nsresult rv = GetWindowProtocol(windowProtocol);
   if (NS_FAILED(rv) && rv != NS_ERROR_NOT_IMPLEMENTED) {
     return 0;
   }
@@ -1254,7 +1248,8 @@ bool GfxInfoBase::DoesDriverVendorMatch(const nsAString& aBlocklistVendor,
 }
 
 bool GfxInfoBase::IsFeatureAllowlisted(int32_t aFeature) const {
-  return aFeature == nsIGfxInfo::FEATURE_HW_DECODED_VIDEO_ZERO_COPY;
+  return aFeature == nsIGfxInfo::FEATURE_VIDEO_OVERLAY ||
+         aFeature == nsIGfxInfo::FEATURE_HW_DECODED_VIDEO_ZERO_COPY;
 }
 
 nsresult GfxInfoBase::GetFeatureStatusImpl(

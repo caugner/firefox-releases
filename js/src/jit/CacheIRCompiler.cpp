@@ -4613,40 +4613,6 @@ void CacheIRCompiler::emitActivateIterator(Register objBeingIterated,
   masm.registerIterator(scratch, nativeIter, scratch2);
 }
 
-bool CacheIRCompiler::emitGuardAndGetIterator(ObjOperandId objId,
-                                              uint32_t iterOffset,
-                                              uint32_t enumeratorsAddrOffset,
-                                              ObjOperandId resultId) {
-  JitSpew(JitSpew_Codegen, "%s", __FUNCTION__);
-  Register obj = allocator.useRegister(masm, objId);
-
-  AutoScratchRegister scratch1(allocator, masm);
-  AutoScratchRegister scratch2(allocator, masm);
-  AutoScratchRegister niScratch(allocator, masm);
-
-  StubFieldOffset iterField(iterOffset, StubField::Type::JSObject);
-
-  Register output = allocator.defineRegister(masm, resultId);
-
-  FailurePath* failure;
-  if (!addFailurePath(&failure)) {
-    return false;
-  }
-
-  // Load our PropertyIteratorObject* and its NativeIterator.
-  emitLoadStubField(iterField, output);
-
-  Address slotAddr(output, PropertyIteratorObject::offsetOfIteratorSlot());
-  masm.loadPrivate(slotAddr, niScratch);
-
-  // Ensure the iterator is reusable: see NativeIterator::isReusable.
-  masm.branchIfNativeIteratorNotReusable(niScratch, failure->label());
-
-  emitActivateIterator(obj, output, niScratch, scratch1, scratch2,
-                       enumeratorsAddrOffset);
-  return true;
-}
-
 bool CacheIRCompiler::emitObjectToIteratorResult(
     ObjOperandId objId, uint32_t enumeratorsAddrOffset) {
   JitSpew(JitSpew_Codegen, "%s", __FUNCTION__);
@@ -4674,7 +4640,7 @@ bool CacheIRCompiler::emitObjectToIteratorResult(
   masm.bind(&callVM);
   callvm.prepare();
   masm.Push(obj);
-  using Fn = JSObject* (*)(JSContext*, HandleObject);
+  using Fn = PropertyIteratorObject* (*)(JSContext*, HandleObject);
   callvm.call<Fn, GetIterator>();
   masm.storeCallPointerResult(iterObj);
 
@@ -4694,7 +4660,7 @@ bool CacheIRCompiler::emitValueToIteratorResult(ValOperandId valId) {
 
   masm.Push(val);
 
-  using Fn = JSObject* (*)(JSContext*, HandleValue);
+  using Fn = PropertyIteratorObject* (*)(JSContext*, HandleValue);
   callvm.call<Fn, ValueToIterator>();
   return true;
 }
@@ -7752,7 +7718,7 @@ bool CacheIRCompiler::emitCallInt32ToString(Int32OperandId inputId,
   masm.storeCallPointerResult(result);
   masm.PopRegsInMask(volatileRegs);
 
-  masm.branchPtr(Assembler::Equal, result, ImmPtr(0), failure->label());
+  masm.branchPtr(Assembler::Equal, result, ImmPtr(nullptr), failure->label());
   return true;
 }
 
@@ -7785,7 +7751,7 @@ bool CacheIRCompiler::emitCallNumberToString(NumberOperandId inputId,
   masm.storeCallPointerResult(result);
   masm.PopRegsInMask(volatileRegs);
 
-  masm.branchPtr(Assembler::Equal, result, ImmPtr(0), failure->label());
+  masm.branchPtr(Assembler::Equal, result, ImmPtr(nullptr), failure->label());
   return true;
 }
 
@@ -7870,7 +7836,7 @@ bool CacheIRCompiler::emitObjectToStringResult(ObjOperandId objId) {
 
   masm.PopRegsInMask(volatileRegs);
 
-  masm.branchPtr(Assembler::Equal, scratch, ImmPtr(0), failure->label());
+  masm.branchPtr(Assembler::Equal, scratch, ImmPtr(nullptr), failure->label());
   masm.tagValue(JSVAL_TYPE_STRING, scratch, output.valueReg());
 
   return true;
@@ -9494,6 +9460,10 @@ struct ReturnTypeToJSValueType<BigInt*> {
 };
 template <>
 struct ReturnTypeToJSValueType<JSObject*> {
+  static constexpr JSValueType result = JSVAL_TYPE_OBJECT;
+};
+template <>
+struct ReturnTypeToJSValueType<PropertyIteratorObject*> {
   static constexpr JSValueType result = JSVAL_TYPE_OBJECT;
 };
 template <>

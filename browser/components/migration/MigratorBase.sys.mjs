@@ -51,10 +51,20 @@ export class MigratorBase {
    * migrator, for example "firefox", "chrome", "opera-gx". This key is what
    * is used as an identifier when calling MigrationUtils.getMigrator.
    *
-   * @type {boolean}
+   * @type {string}
    */
   static get key() {
-    throw new Error("MigratorBase must be overridden.");
+    throw new Error("MigratorBase.key must be overridden.");
+  }
+
+  /**
+   * This must be overridden to return a Fluent string ID mapping to the display
+   * name for this migrator. These strings should be defined in migrationWizard.ftl.
+   *
+   * @type {string}
+   */
+  static get displayNameL10nID() {
+    throw new Error("MigratorBase.displayNameL10nID must be overridden.");
   }
 
   /**
@@ -275,7 +285,7 @@ export class MigratorBase {
               .getKeyedHistogramById(histogramId)
               .add(browserKey, accumulatedDelay);
           } catch (ex) {
-            Cu.reportError(histogramId + ": " + ex);
+            console.error(histogramId, ": ", ex);
           }
         }
       }
@@ -295,7 +305,7 @@ export class MigratorBase {
               lazy.MigrationUtils._importQuantities[resourceType]
             );
         } catch (ex) {
-          Cu.reportError(histogramId + ": " + ex);
+          console.error(histogramId, ": ", ex);
         }
       }
     };
@@ -374,7 +384,7 @@ export class MigratorBase {
           try {
             res.migrate(resourceDone);
           } catch (ex) {
-            Cu.reportError(ex);
+            console.error(ex);
             resourceDone(false);
           }
 
@@ -408,7 +418,7 @@ export class MigratorBase {
             replace: true,
             source: lazy.PlacesUtils.bookmarks.SOURCES.RESTORE_ON_STARTUP,
           }
-        ).catch(Cu.reportError);
+        ).catch(console.error);
 
         // We'll tell nsBrowserGlue we've imported bookmarks, but before that
         // we need to make sure we're going to know when it's finished
@@ -463,7 +473,7 @@ export class MigratorBase {
         exists = !!profiles.length;
       }
     } catch (ex) {
-      Cu.reportError(ex);
+      console.error(ex);
     }
     return exists;
   }

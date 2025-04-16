@@ -13,6 +13,7 @@
 #include "mozilla/CORSMode.h"
 #include "mozilla/dom/Element.h"
 #include "mozilla/dom/nsCSPContext.h"
+#include "mozilla/dom/nsMixedContentBlocker.h"
 #include "mozilla/dom/ReferrerInfo.h"
 #include "mozilla/glean/GleanMetrics.h"
 #include "mozilla/ipc/BackgroundUtils.h"
@@ -209,7 +210,8 @@ void EarlyHintPreloader::MaybeCreateAndInsertPreload(
   ASDestination destination = static_cast<ASDestination>(as.GetEnumValue());
   CollectResourcesTypeTelemetry(destination);
 
-  if (!StaticPrefs::network_early_hints_enabled()) {
+  if (!StaticPrefs::network_early_hints_enabled() ||
+      !StaticPrefs::network_preload()) {
     return;
   }
 
@@ -231,7 +233,7 @@ void EarlyHintPreloader::MaybeCreateAndInsertPreload(
   }
 
   // only preload secure context urls
-  if (!uri->SchemeIs("https")) {
+  if (!nsMixedContentBlocker::IsPotentiallyTrustworthyOrigin(uri)) {
     return;
   }
 

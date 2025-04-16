@@ -137,6 +137,7 @@ public class GeckoSession {
   private final SessionTextInput mTextInput = new SessionTextInput(this, mNativeQueue);
   private SessionAccessibility mAccessibility;
   private SessionFinder mFinder;
+  private SessionPdfFileSaver mPdfFileSaver;
 
   /** {@code SessionMagnifier} handles magnifying glass. */
   /* package */ interface SessionMagnifier {
@@ -722,6 +723,23 @@ public class GeckoSession {
         }
       };
 
+  private final GeckoSessionHandler<PrintDelegate> mPrintHandler =
+      new GeckoSessionHandler<PrintDelegate>(
+          "GeckoViewPrint", this, new String[] {"GeckoView:DotPrintRequest"}) {
+        @Override
+        public void handleMessage(
+            final PrintDelegate delegate,
+            final String event,
+            final GeckoBundle message,
+            final EventCallback callback) {
+
+          if ("GeckoView:DotPrintRequest".equals(event)) {
+            // Event and JS Module will be implemented in Bug 1659818 for window.print() support
+            Log.w(LOGTAG, "Event GeckoView:DotPrintRequest is not implemented.");
+          }
+        }
+      };
+
   private final GeckoSessionHandler<ContentDelegate> mProcessHangHandler =
       new GeckoSessionHandler<ContentDelegate>(
           "GeckoViewProcessHangMonitor", this, new String[] {"GeckoView:HangReport"}) {
@@ -1018,10 +1036,18 @@ public class GeckoSession {
 
   private final GeckoSessionHandler<?>[] mSessionHandlers =
       new GeckoSessionHandler<?>[] {
-        mContentHandler, mHistoryHandler, mMediaHandler,
-        mNavigationHandler, mPermissionHandler, mProcessHangHandler,
-        mProgressHandler, mScrollHandler, mSelectionActionDelegate,
-        mContentBlockingHandler, mMediaSessionHandler
+        mContentHandler,
+        mHistoryHandler,
+        mMediaHandler,
+        mNavigationHandler,
+        mPermissionHandler,
+        mPrintHandler,
+        mProcessHangHandler,
+        mProgressHandler,
+        mScrollHandler,
+        mSelectionActionDelegate,
+        mContentBlockingHandler,
+        mMediaSessionHandler
       };
 
   private static class PermissionCallback
@@ -2300,6 +2326,54 @@ public class GeckoSession {
       mFinder = new SessionFinder(getEventDispatcher());
     }
     return mFinder;
+  }
+
+  /**
+   * Get the SessionPdfFileSaver instance for this session, to save a pdf document.
+   *
+   * @return SessionPdfFileSaver instance.
+   */
+  @AnyThread
+  public @NonNull SessionPdfFileSaver getPdfFileSaver() {
+    if (mPdfFileSaver == null) {
+      mPdfFileSaver = new SessionPdfFileSaver(getEventDispatcher());
+    }
+    return mPdfFileSaver;
+  }
+
+  /** Represent the result of a save-pdf operation. */
+  @AnyThread
+  public static class PdfSaveResult {
+    /** Binary data representing a PDF. */
+    @NonNull public final byte[] bytes;
+
+    /** PDF file name. */
+    @NonNull public final String filename;
+
+    public final boolean isPrivate;
+
+    /* package */ PdfSaveResult(@NonNull final GeckoBundle bundle) {
+      filename = bundle.getString("filename");
+      isPrivate = bundle.getBoolean("isPrivate");
+      bytes = bundle.getByteArray("bytes");
+    }
+
+    /** Empty constructor for tests */
+    protected PdfSaveResult() {
+      filename = "";
+      isPrivate = false;
+      bytes = new byte[0];
+    }
+  }
+
+  /**
+   * Check if the document being viewed is a pdf.
+   *
+   * @return Result of the check operation as a {@link GeckoResult} object.
+   */
+  @AnyThread
+  public @NonNull GeckoResult<Boolean> isPdfJs() {
+    return mEventDispatcher.queryBoolean("GeckoView:IsPdfJs");
   }
 
   /**
@@ -6678,8 +6752,36 @@ public class GeckoSession {
   @AnyThread
   public @NonNull GeckoResult<InputStream> saveAsPdf() {
     final GeckoResult<InputStream> geckoResult = new GeckoResult<>();
-    this.mWindow.printToPdf(geckoResult);
+    final GeckoSession self = this;
+    this.isPdfJs()
+        .then(
+            new GeckoResult.OnValueListener<Boolean, Void>() {
+              @Override
+              public GeckoResult<Void> onValue(final Boolean isPdfJs) {
+                if (!isPdfJs) {
+                  self.mWindow.printToPdf(geckoResult);
+                } else {
+                  geckoResult.completeFrom(
+                      self.getPdfFileSaver()
+                          .save()
+                          .map(result -> new ByteArrayInputStream(result.bytes)));
+                }
+                return null;
+              }
+            });
+
     return geckoResult;
+  }
+
+  /** Prints the currently displayed page. */
+  @AnyThread
+  public void printPageContent() {
+    final PrintDelegate delegate = getPrintDelegate();
+    if (delegate != null) {
+      delegate.onPrint(this);
+    } else {
+      Log.w(LOGTAG, "Print delegate required for printing.");
+    }
   }
 
   private static String rgbaToArgb(final String color) {
@@ -6719,6 +6821,48 @@ public class GeckoSession {
     }
 
     return request.mUri.length() <= DATA_URI_MAX_LENGTH;
+  }
+
+  /**
+   * Used for printing page content.
+   *
+   * <p>The provided implementation is in {@link GeckoView}. It uses a PDF of the content and the
+   * Android print API to print the page.
+   */
+  @AnyThread
+  public interface PrintDelegate {
+    /**
+     * Print the current page content.
+     *
+     * @param session to print
+     */
+    default void onPrint(@NonNull final GeckoSession session) {}
+    /**
+     * Print any provided PDF InputStream.
+     *
+     * @param pdfInputStream an InputStream containing a PDF
+     */
+    default void onPrint(@NonNull final InputStream pdfInputStream) {}
+  }
+
+  /**
+   * Gets the print delegate for this session.
+   *
+   * @return The current {@link PrintDelegate} for this session, if any.
+   */
+  @AnyThread
+  public @Nullable PrintDelegate getPrintDelegate() {
+    return mPrintHandler.getDelegate();
+  }
+
+  /**
+   * Sets the print delegate for this session.
+   *
+   * @param delegate An instance of {@link PrintDelegate}.
+   */
+  @AnyThread
+  public void setPrintDelegate(final @Nullable PrintDelegate delegate) {
+    mPrintHandler.setDelegate(delegate, this);
   }
 
   /** Thrown when failure occurs when printing from a website. */

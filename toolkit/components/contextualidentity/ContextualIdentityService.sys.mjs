@@ -205,7 +205,7 @@ _ContextualIdentityService.prototype = {
   loadError(error) {
     if (error != null && error.name != "NotFoundError") {
       // Let's report the error.
-      Cu.reportError(error);
+      console.error(error);
     }
 
     // If synchronous loading happened in the meantime, exit now.
@@ -265,6 +265,12 @@ _ContextualIdentityService.prototype = {
       );
     }
 
+    if (!name.trim()) {
+      throw new Error(
+        "Contextual identity names cannot contain only whitespace."
+      );
+    }
+
     let identity = {
       userContextId,
       public: true,
@@ -289,6 +295,13 @@ _ContextualIdentityService.prototype = {
     let identity = this._identities.find(
       identity => identity.userContextId == userContextId && identity.public
     );
+
+    if (!name.trim()) {
+      throw new Error(
+        "Contextual identity names cannot contain only whitespace."
+      );
+    }
+
     if (identity && name) {
       identity.name = name;
       identity.color = color;
@@ -408,6 +421,12 @@ _ContextualIdentityService.prototype = {
     } catch (error) {
       this.loadError(error);
     }
+  },
+
+  getPublicUserContextIds() {
+    return this._identities
+      .filter(identity => identity.public)
+      .map(identity => identity.userContextId);
   },
 
   getPrivateUserContextIds() {

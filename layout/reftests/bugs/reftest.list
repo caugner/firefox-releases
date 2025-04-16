@@ -1513,7 +1513,7 @@ random-if(!winWidget) == 574907-2.html 574907-2-ref.html
 random-if(!winWidget) != 574907-3.html 574907-3-notref.html
 == 577838-1.html 577838-1-ref.html
 == 577838-2.html 577838-2-ref.html
-== chrome://reftest/content/bugs/579323-1.html chrome://reftest/content/bugs/579323-1-ref.html
+pref(layout.css.moz-box-flexbox-emulation.enabled,true) == chrome://reftest/content/bugs/579323-1.html chrome://reftest/content/bugs/579323-1-ref.html
 == 579349-1.html 579349-1-ref.html
 == 579655-1.html 579655-1-ref.html
 fails-if(Android) random-if(layersGPUAccelerated) fuzzy(0-1,0-10000) == 579985-1.html 579985-1-ref.html # this bug was only for a regression in BasicLayers anyway
@@ -1602,7 +1602,7 @@ random-if(winWidget) == 632781-verybig.html 632781-ref.html
 == 632781-normalsize.html 632781-ref.html
 fuzzy-if(!isDebugBuild&&gtkWidget&&/^Linux\x20i686/.test(http.oscpu),0-102,0-140) == 633344-1.html 633344-1-ref.html # bug 1103623, Linux32 from GCC update
 fuzzy(0-1,0-500) == 634232-1.html 634232-1-ref.html
-fuzzy(0-3,0-120000) == 635302-1.html 635302-1-ref.html
+skip-if(Android&&emulator) fuzzy(0-3,0-120000) == 635302-1.html 635302-1-ref.html
 fuzzy(0-1,0-68) fuzzy-if(gtkWidget,0-1,0-70) fuzzy-if(!Android,0-2,0-300) == 635373-1.html 635373-1-ref.html
 random-if(d2d) fuzzy-if(winWidget&&!d2d,0-20,0-118) fuzzy-if(!Android,0-2,0-550) == 635373-2.html 635373-2-ref.html
 random-if(d2d) fuzzy-if(winWidget&&!d2d,0-20,0-116) fuzzy-if(!Android,0-2,0-650) == 635373-3.html 635373-3-ref.html
@@ -1629,7 +1629,7 @@ HTTP == 652991-3.html 652991-3-ref.html
 HTTP == 652991-4.html 652991-4-ref.html
 fuzzy(0-1,0-5) == 653930-1.html 653930-1-ref.html
 == 654057-1.html 654057-1-ref.html
-fuzzy(0-1,0-65536) == 654950-1.html 654950-1-ref.html # Quartz alpha blending doesn't match GL alpha blending
+skip-if(Android&&emulator) fuzzy(0-1,0-65536) == 654950-1.html 654950-1-ref.html # Quartz alpha blending doesn't match GL alpha blending
 == 655549-1.html 655549-1-ref.html
 == 655836-1.html 655836-1-ref.html
 != 656875.html about:blank
@@ -1641,7 +1641,7 @@ skip-if(Android) fuzzy(0-1,0-68000) == chrome://reftest/content/bugs/664127-1.xh
 == 667079-1.html 667079-1-ref.html
 skip-if(Android) == chrome://reftest/content/bugs/668319-1.xhtml about:blank
 != chrome://reftest/content/bugs/669015-1.xhtml chrome://reftest/content/bugs/669015-1-notref.xhtml
-skip-if(azureSkiaGL) == 670442-1.html 670442-1-ref.html
+skip-if(azureSkiaGL) fuzzy-if(Android&&device,0-55,0-3742) == 670442-1.html 670442-1-ref.html
 == 670467-1.html 670467-1-ref.html
 == 670467-2.html 670467-2-ref.html
 == 690164-1.html 690164-1-ref.html
@@ -1663,7 +1663,7 @@ fuzzy(0-1,0-3) needs-focus == 712130-2.html 712130-2-ref.html
 == 714519-1-q.html 714519-1-ref.html
 == 714519-2-as.html 714519-2-ref.html
 == 714519-2-q.html 714519-2-ref.html
-fuzzy(0-1,0-21) fuzzy-if(d2d,0-77,0-173) fuzzy-if(cocoaWidget,0-1,0-170) fuzzy-if(useDrawSnapshot,1-1,163-163) == 718521.html 718521-ref.html # bug 773482
+skip-if(Android&&emulator) fuzzy(0-1,0-21) fuzzy-if(d2d,0-77,0-173) fuzzy-if(cocoaWidget,0-1,0-170) fuzzy-if(useDrawSnapshot,1-1,163-163) == 718521.html 718521-ref.html # bug 773482
 == 720987.html 720987-ref.html
 == 722888-1.html 722888-1-ref.html
 fuzzy(0-2,0-40000) == 722923-1.html 722923-1-ref.html
@@ -1792,7 +1792,7 @@ pref(layout.css.overflow-clip-box.enabled,true) fuzzy(0-2,0-845) == 992447.html 
 == 1021564-4.html 1021564-ref.html
 pref(browser.display.use_document_fonts,0) == 1022481-1.html 1022481-1-ref.html
 fuzzy(0-1,0-126000) == 1022612-1.html 1022612-1-ref.html
-== 1024473-1.html 1024473-1-ref.html
+skip-if(Android&&emulator) == 1024473-1.html 1024473-1-ref.html
 fuzzy(0-1,0-24000) == 1025914-1.html 1025914-1-ref.html
 pref(layout.css.moz-document.content.enabled,true) == 1035091.html 1035091-ref.html
 pref(layout.css.moz-document.content.enabled,false) == 1035091-2.html 1035091-ref.html
@@ -2132,3 +2132,5 @@ skip-if(!/^Windows\x20NT\x2010\.0/.test(http.oscpu)) != 1798297-1.html 1798297-1
 == 1799425-1.html 1799425-1-ref.html
 == 1800437-1.html 1800437-1-ref.html
 == 1803999-1.html 1803999-1-ref.html
+== 1814628-1.html 1814628-1-ref.html
+== 1814047.html 1814047-ref.html

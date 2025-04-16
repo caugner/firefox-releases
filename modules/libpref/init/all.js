@@ -205,8 +205,6 @@ pref("browser.helperApps.neverAsk.saveToDisk", "");
 pref("browser.helperApps.neverAsk.openFile", "");
 pref("browser.helperApps.deleteTempFileOnExit", false);
 
-// xxxbsmedberg: where should prefs for the toolkit go?
-pref("browser.chrome.toolbar_tips",         true);
 // max image size for which it is placed in the tab icon for tabbrowser.
 // if 0, no images are used for tab icons for image documents.
 pref("browser.chrome.image_icons.max_size", 1024);
@@ -291,7 +289,11 @@ pref("media.videocontrols.picture-in-picture.video-toggle.position", "right");
 pref("media.videocontrols.picture-in-picture.video-toggle.has-used", false);
 pref("media.videocontrols.picture-in-picture.display-text-tracks.toggle.enabled", true);
 pref("media.videocontrols.picture-in-picture.display-text-tracks.size", "medium");
+#ifdef NIGHTLY_BUILD
+pref("media.videocontrols.picture-in-picture.improved-video-controls.enabled", true);
+#else
 pref("media.videocontrols.picture-in-picture.improved-video-controls.enabled", false);
+#endif
 pref("media.videocontrols.keyboard-tab-to-all-controls", true);
 
 #ifdef MOZ_WEBRTC
@@ -1955,9 +1957,6 @@ pref("extensions.eventPages.enabled", true);
 pref("extensions.manifestV2.actionsPopupURLRestricted", false);
 // Whether "manifest_version: 3" extensions should be allowed to install successfully.
 pref("extensions.manifestV3.enabled", true);
-// Whether to enable the unified extensions feature. Note that this pref is
-// enabled for Firefox Desktop in `browser/app/profile/firefox.js`.
-pref("extensions.unifiedExtensions.enabled", false);
 // Whether to enable the updated openPopup API.
 #ifdef NIGHTLY_BUILD
   pref("extensions.openPopupWithoutUserGesture.enabled", true);
@@ -1966,12 +1965,6 @@ pref("extensions.unifiedExtensions.enabled", false);
 #endif
 // Install origins restriction.
 pref("extensions.install_origins.enabled", false);
-
-// Modifier key prefs: default to Windows settings,
-// menu access key = alt, accelerator key = control.
-// Use 17 for Ctrl, 18 for Alt, 224 for Meta, 91 for Win, 0 for none. Mac settings in macprefs.js
-pref("ui.key.accelKey", 17);
-pref("ui.key.menuAccessKey", 18);
 
 // Middle-mouse handling
 pref("middlemouse.paste", false);
@@ -2806,11 +2799,6 @@ pref("font.size.monospace.x-math", 13);
   pref("font.weight-override.HelveticaNeue-LightItalic", 300);
   pref("font.weight-override.HelveticaNeue-MediumItalic", 500); // Harmonize MediumItalic with Medium
 
-  // Override the Windows settings: no menu key, meta accelerator key. ctrl for general access key in HTML/XUL
-  // Use 17 for Ctrl, 18 for Option, 224 for Cmd, 0 for none
-  pref("ui.key.menuAccessKey", 0);
-  pref("ui.key.accelKey", 224);
-
   // See bug 404131, topmost <panel> element wins to Dashboard on MacOSX.
   pref("ui.panel.default_level_parent", false);
 
@@ -3221,7 +3209,9 @@ pref("signon.includeOtherSubdomainsInLookup",     true);
 pref("signon.masterPasswordReprompt.timeout_ms", 900000); // 15 Minutes
 pref("signon.showAutoCompleteFooter",             false);
 pref("signon.firefoxRelay.base_url", "https://relay.firefox.com/api/v1/");
-pref("signon.firefoxRelay.learn_more_url", "https://relay.firefox.com/");
+pref("signon.firefoxRelay.learn_more_url", "https://support.mozilla.org/1/firefox/%VERSION%/%OS%/%LOCALE%/firefox-relay-integration");
+pref("signon.signupDetection.confidenceThreshold",     "0.75");
+pref("signon.signupDetection.enabled",                 false);
 
 // Satchel (Form Manager) prefs
 pref("browser.formfill.debug",            false);
@@ -3805,6 +3795,16 @@ pref("browser.storageManager.pressureNotification.usageThresholdGB", 5);
 
 pref("browser.sanitizer.loglevel", "Warn");
 
+// Enable Firefox translations based on Bergamot[1]. This project is in-development and
+// an effort to integrate the Firefox Translations[2] project direcly into Gecko.
+// See Bug 971044.
+//
+// [1]: https://browser.mt/
+// [2]: https://github.com/mozilla/firefox-translations
+pref("browser.translations.enable", false);
+// Set to "All" to see all logs, which are useful for debugging.
+pref("browser.translations.logLevel", "Error");
+
 // When a user cancels this number of authentication dialogs coming from
 // a single web page in a row, all following authentication dialogs will
 // be blocked (automatically canceled) for that page. The counter resets
@@ -3851,11 +3851,7 @@ pref("toolkit.aboutProcesses.showAllSubframes", false);
   pref("toolkit.aboutProcesses.showThreads", false);
 #endif
 // If `true`, about:processes will offer to profile processes.
-#ifdef NIGHTLY_BUILD
-  pref("toolkit.aboutProcesses.showProfilerIcons", true);
-#else
-  pref("toolkit.aboutProcesses.showProfilerIcons", false);
-#endif
+pref("toolkit.aboutProcesses.showProfilerIcons", true);
 // Time in seconds between when the profiler is started and when the
 // profile is captured.
 pref("toolkit.aboutProcesses.profileDuration", 5);

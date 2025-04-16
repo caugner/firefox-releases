@@ -29,6 +29,13 @@ XPCOMUtils.defineLazyPreferenceGetter(
   "media.videocontrols.picture-in-picture.display-text-tracks.enabled",
   false
 );
+XPCOMUtils.defineLazyPreferenceGetter(
+  lazy,
+  "IMPROVED_CONTROLS_ENABLED_PREF",
+  "media.videocontrols.picture-in-picture.improved-video-controls.enabled",
+  false
+);
+
 const TOGGLE_ENABLED_PREF =
   "media.videocontrols.picture-in-picture.video-toggle.enabled";
 const PIP_ENABLED_PREF = "media.videocontrols.picture-in-picture.enabled";
@@ -162,13 +169,23 @@ export class PictureInPictureLauncherChild extends JSWindowActorChild {
       );
     }
 
-    let scrubberPosition =
-      video.currentTime === 0 ? 0 : video.currentTime / video.duration;
+    let timestamp = undefined;
+    let scrubberPosition = undefined;
 
-    let timestamp = PictureInPictureChild.videoWrapper.formatTimestamp(
-      video.currentTime,
-      video.duration
-    );
+    if (lazy.IMPROVED_CONTROLS_ENABLED_PREF) {
+      timestamp = PictureInPictureChild.videoWrapper.formatTimestamp(
+        PictureInPictureChild.videoWrapper.getCurrentTime(video),
+        PictureInPictureChild.videoWrapper.getDuration(video)
+      );
+
+      // Scrubber is hidden if undefined, so only set it to something else
+      // if the timestamp is not undefined.
+      scrubberPosition =
+        timestamp === undefined
+          ? undefined
+          : PictureInPictureChild.videoWrapper.getCurrentTime(video) /
+            PictureInPictureChild.videoWrapper.getDuration(video);
+    }
 
     // All other requests to toggle PiP should open a new PiP
     // window
@@ -1496,7 +1513,7 @@ export class PictureInPictureChild extends JSWindowActorChild {
 
     if (!this.isSubtitlesEnabled) {
       this.isSubtitlesEnabled = true;
-      this.sendAsyncMessage("PictureInPicture:ShowSubtitlesButton");
+      this.sendAsyncMessage("PictureInPicture:EnableSubtitlesButton");
     }
 
     let allCuesArray = [...textTrackCues];
@@ -1719,16 +1736,25 @@ export class PictureInPictureChild extends JSWindowActorChild {
       }
       case "timeupdate":
       case "durationchange": {
-        let currentTime = event.target.currentTime;
-        let duration = event.target.duration;
+        let video = this.getWeakVideo();
+        let currentTime = this.videoWrapper.getCurrentTime(video);
+        let duration = this.videoWrapper.getDuration(video);
         let scrubberPosition = currentTime === 0 ? 0 : currentTime / duration;
-        this.sendAsyncMessage(
-          "PictureInPicture:SetTimestampAndScrubberPosition",
-          {
-            scrubberPosition,
-            timestamp: this.videoWrapper.formatTimestamp(currentTime, duration),
-          }
+        let timestamp = this.videoWrapper.formatTimestamp(
+          currentTime,
+          duration
         );
+        // There's no point in sending this message unless we have a
+        // reasonable timestamp.
+        if (timestamp !== undefined && lazy.IMPROVED_CONTROLS_ENABLED_PREF) {
+          this.sendAsyncMessage(
+            "PictureInPicture:SetTimestampAndScrubberPosition",
+            {
+              scrubberPosition,
+              timestamp,
+            }
+          );
+        }
         break;
       }
     }
@@ -2213,7 +2239,7 @@ export class PictureInPictureChild extends JSWindowActorChild {
         break;
     }
 
-    const isVideoStreaming = this.videoWrapper.getDuration(video) == +Infinity;
+    const isVideoStreaming = this.videoWrapper.isLive(video);
     var oldval, newval;
 
     try {
@@ -2270,10 +2296,7 @@ export class PictureInPictureChild extends JSWindowActorChild {
           break;
         case "leftArrow": /* Seek back 5 seconds */
         case "accel-leftArrow" /* Seek back 10% */:
-          if (
-            isVideoStreaming ||
-            !this.isKeyEnabled(lazy.KEYBOARD_CONTROLS.SEEK)
-          ) {
+          if (!this.isKeyEnabled(lazy.KEYBOARD_CONTROLS.SEEK)) {
             return;
           }
 
@@ -2287,10 +2310,7 @@ export class PictureInPictureChild extends JSWindowActorChild {
           break;
         case "rightArrow": /* Seek forward 5 seconds */
         case "accel-rightArrow" /* Seek forward 10% */:
-          if (
-            isVideoStreaming ||
-            !this.isKeyEnabled(lazy.KEYBOARD_CONTROLS.SEEK)
-          ) {
+          if (!this.isKeyEnabled(lazy.KEYBOARD_CONTROLS.SEEK)) {
             return;
           }
 
@@ -2349,7 +2369,7 @@ export class PictureInPictureChild extends JSWindowActorChild {
         }
       );
     } else {
-      this.sendAsyncMessage("PictureInPicture:HideSubtitlesButton");
+      this.sendAsyncMessage("PictureInPicture:DisableSubtitlesButton");
     }
     this.#subtitlesEnabled = val;
   }
@@ -2522,7 +2542,7 @@ class PictureInPictureChildVideoWrapper {
     if (!this.#PictureInPictureChild.isSubtitlesEnabled && text) {
       this.#PictureInPictureChild.isSubtitlesEnabled = true;
       this.#PictureInPictureChild.sendAsyncMessage(
-        "PictureInPicture:ShowSubtitlesButton"
+        "PictureInPicture:EnableSubtitlesButton"
       );
     }
     let pipWindowTracksContainer = this.#PictureInPictureChild.document.getElementById(
@@ -2683,6 +2703,11 @@ class PictureInPictureChildVideoWrapper {
    * @returns {String} Formatted timestamp
    **/
   formatTimestamp(aCurrentTime, aDuration) {
+    // We can't format numbers that can't be represented as decimal digits.
+    if (!Number.isFinite(aCurrentTime) || !Number.isFinite(aDuration)) {
+      return undefined;
+    }
+
     return `${this.timeFromSeconds(aCurrentTime)} / ${this.timeFromSeconds(
       aDuration
     )}`;
@@ -2800,6 +2825,22 @@ class PictureInPictureChildVideoWrapper {
       name: "shouldHideToggle",
       args: [video],
       fallback: () => false,
+      validateRetVal: retVal => this.#isBoolean(retVal),
+    });
+  }
+
+  /**
+   * OVERRIDABLE - calls the isLive() method defined in the site wrapper script. Runs a fallback implementation
+   * if the method does not exist or if an error is thrown while calling it. This method is meant to get if the
+   * video is a live stream.
+   * @param {HTMLVideoElement} video
+   *  The originating video source element
+   */
+  isLive(video) {
+    return this.#callWrapperMethod({
+      name: "isLive",
+      args: [video],
+      fallback: () => video.duration === Infinity,
       validateRetVal: retVal => this.#isBoolean(retVal),
     });
   }

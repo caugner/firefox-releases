@@ -38,6 +38,8 @@
     clippy::non_send_fields_in_send_ty,
     // TODO!
     clippy::missing_safety_doc,
+    // Clashes with clippy::pattern_type_mismatch
+    clippy::needless_borrowed_reference,
 )]
 #![warn(
     trivial_casts,
@@ -63,17 +65,23 @@ compile_error!("Metal API enabled on non-Apple OS. If your project is not using 
 #[cfg(all(feature = "dx12", not(windows)))]
 compile_error!("DX12 API enabled on non-Windows OS. If your project is not using resolver=\"2\" in Cargo.toml, it should.");
 
+/// DirectX11 API internals.
 #[cfg(all(feature = "dx11", windows))]
-mod dx11;
+pub mod dx11;
+/// DirectX12 API internals.
 #[cfg(all(feature = "dx12", windows))]
-mod dx12;
-mod empty;
+pub mod dx12;
+/// A dummy API implementation.
+pub mod empty;
+/// GLES API internals.
 #[cfg(all(feature = "gles"))]
-mod gles;
+pub mod gles;
+/// Metal API internals.
 #[cfg(all(feature = "metal"))]
-mod metal;
+pub mod metal;
+/// Vulkan API internals.
 #[cfg(feature = "vulkan")]
-mod vulkan;
+pub mod vulkan;
 
 pub mod auxil;
 pub mod api {
@@ -89,9 +97,6 @@ pub mod api {
     #[cfg(feature = "vulkan")]
     pub use super::vulkan::Api as Vulkan;
 }
-
-#[cfg(feature = "vulkan")]
-pub use vulkan::UpdateAfterBindTypes;
 
 use std::{
     borrow::{Borrow, Cow},
@@ -397,6 +402,20 @@ pub trait CommandEncoder<A: Api>: Send + Sync + fmt::Debug {
     unsafe fn copy_buffer_to_buffer<T>(&mut self, src: &A::Buffer, dst: &A::Buffer, regions: T)
     where
         T: Iterator<Item = BufferCopy>;
+
+    /// Copy from an external image to an internal texture.
+    /// Works with a single array layer.
+    /// Note: `dst` current usage has to be `TextureUses::COPY_DST`.
+    /// Note: the copy extent is in physical size (rounded to the block size)
+    #[cfg(all(target_arch = "wasm32", not(feature = "emscripten")))]
+    unsafe fn copy_external_image_to_texture<T>(
+        &mut self,
+        src: &wgt::ImageCopyExternalImage,
+        dst: &A::Texture,
+        dst_premultiplication: bool,
+        regions: T,
+    ) where
+        T: Iterator<Item = TextureCopy>;
 
     /// Copy from one texture to another.
     /// Works with a single array layer.
@@ -743,6 +762,7 @@ bitflags::bitflags! {
 pub struct InstanceDescriptor<'a> {
     pub name: &'a str,
     pub flags: InstanceFlags,
+    pub dx12_shader_compiler: wgt::Dx12Compiler,
 }
 
 #[derive(Clone, Debug)]
@@ -847,6 +867,29 @@ pub struct TextureDescriptor<'a> {
     pub format: wgt::TextureFormat,
     pub usage: TextureUses,
     pub memory_flags: MemoryFlags,
+    /// Allows views of this texture to have a different format
+    /// than the texture does.
+    pub view_formats: Vec<wgt::TextureFormat>,
+}
+
+impl TextureDescriptor<'_> {
+    pub fn copy_extent(&self) -> CopyExtent {
+        CopyExtent::map_extent_to_copy_size(&self.size, self.dimension)
+    }
+
+    pub fn is_cube_compatible(&self) -> bool {
+        self.dimension == wgt::TextureDimension::D2
+            && self.size.depth_or_array_layers % 6 == 0
+            && self.sample_count == 1
+            && self.size.width == self.size.height
+    }
+
+    pub fn array_layer_count(&self) -> u32 {
+        match self.dimension {
+            wgt::TextureDimension::D1 | wgt::TextureDimension::D3 => 1,
+            wgt::TextureDimension::D2 => self.size.depth_or_array_layers,
+        }
+    }
 }
 
 /// TextureView descriptor.
@@ -1092,6 +1135,9 @@ pub struct SurfaceConfiguration {
     pub extent: wgt::Extent3d,
     /// Allowed usage of surface textures,
     pub usage: TextureUses,
+    /// Allows views of swapchain texture to have a different format
+    /// than the texture does.
+    pub view_formats: Vec<wgt::TextureFormat>,
 }
 
 #[derive(Debug, Clone)]
