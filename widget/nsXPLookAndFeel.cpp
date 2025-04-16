@@ -39,6 +39,7 @@
 #include "mozilla/RelativeLuminanceUtils.h"
 #include "mozilla/Telemetry.h"
 #include "mozilla/TelemetryScalarEnums.h"
+#include "mozilla/Try.h"
 
 #include "gfxPlatform.h"
 #include "gfxFont.h"
@@ -489,8 +490,6 @@ static constexpr struct {
      widget::ThemeChangeKind::Style},
     {"widget.windows.uwp-system-colors.highlight-accent"_ns,
      widget::ThemeChangeKind::Style},
-    {"widget.windows.titlebar-accent.enabled"_ns,
-     widget::ThemeChangeKind::Style},
     // Affects env().
     {"layout.css.prefers-color-scheme.content-override"_ns,
      widget::ThemeChangeKind::Style},
@@ -504,8 +503,6 @@ static constexpr struct {
     // need to re-layout.
     {"browser.theme.toolbar-theme"_ns, widget::ThemeChangeKind::AllBits},
     {"browser.theme.content-theme"_ns},
-    {"dom.element.popover.enabled"_ns},
-    {"mathml.legacy_mathvariant_attribute.disabled"_ns},
 };
 
 // Read values from the user's preferences.
@@ -533,7 +530,7 @@ void nsXPLookAndFeel::Init() {
   // that start with that string.
   Preferences::RegisterCallback(OnPrefChanged, "accessibility.tabfocus");
 
-  for (auto& pref : kMediaQueryPrefs) {
+  for (const auto& pref : kMediaQueryPrefs) {
     Preferences::RegisterCallback(
         [](const char*, void* aChangeKind) {
           auto changeKind =
@@ -750,6 +747,8 @@ Maybe<nscolor> nsXPLookAndFeel::GenericDarkColor(ColorID aID) {
     case ColorID::MozComboboxtext:
     case ColorID::MozButtonhovertext:
     case ColorID::MozButtonactivetext:
+    case ColorID::MozHeaderbartext:
+    case ColorID::MozHeaderbarinactivetext:
     case ColorID::Captiontext:
     case ColorID::Inactivecaptiontext:  // TODO(emilio): Maybe make
                                         // Inactivecaptiontext Graytext?
@@ -819,6 +818,8 @@ Maybe<nscolor> nsXPLookAndFeel::GenericDarkColor(ColorID aID) {
     case ColorID::Inactiveborder:
       color = NS_RGB(57, 57, 57);
       break;
+    case ColorID::MozHeaderbar:
+    case ColorID::MozHeaderbarinactive:
     case ColorID::Activecaption:
     case ColorID::Inactivecaption:
       color = NS_RGB(28, 27, 34);
@@ -1374,7 +1375,7 @@ ColorScheme LookAndFeel::ColorSchemeForStyle(
 
   StyleColorSchemeFlags style(aFlags);
   if (!style) {
-    style.bits = aDoc.GetColorSchemeBits();
+    style._0 = aDoc.GetColorSchemeBits();
   }
   const bool supportsDark = bool(style & StyleColorSchemeFlags::DARK);
   const bool supportsLight = bool(style & StyleColorSchemeFlags::LIGHT);

@@ -20,6 +20,7 @@
 #include "nsQueryObject.h"
 #include "mozilla/ProfilerLabels.h"
 #include "mozilla/Sprintf.h"
+#include "mozilla/Try.h"
 
 // Interfaces needed to be included
 #include "nsGlobalWindowOuter.h"
@@ -467,7 +468,10 @@ AppWindow::GetLiveResizeListeners() {
   nsTArray<RefPtr<mozilla::LiveResizeListener>> listeners;
   if (mPrimaryBrowserParent) {
     BrowserHost* host = BrowserHost::GetFrom(mPrimaryBrowserParent.get());
-    listeners.AppendElement(host->GetActor());
+    RefPtr<mozilla::LiveResizeListener> actor = host->GetActor();
+    if (actor) {
+      listeners.AppendElement(actor);
+    }
   }
   return listeners;
 }

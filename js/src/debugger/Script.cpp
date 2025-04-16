@@ -747,12 +747,7 @@ class DebuggerScript::GetPossibleBreakpointsMatcher {
  public:
   explicit GetPossibleBreakpointsMatcher(JSContext* cx,
                                          MutableHandleObject result)
-      : cx_(cx),
-        result_(result),
-        minOffset(),
-        maxOffset(),
-        minLine(),
-        maxLine() {}
+      : cx_(cx), result_(result) {}
 
   bool parseQuery(HandleObject query) {
     RootedValue lineValue(cx_);
@@ -1605,6 +1600,7 @@ static bool BytecodeIsEffectful(JSScript* script, size_t offset) {
     case JSOp::IsNoIter:
     case JSOp::EndIter:
     case JSOp::CloseIter:
+    case JSOp::OptimizeGetIterator:
     case JSOp::IsNullOrUndefined:
     case JSOp::In:
     case JSOp::HasOwn:

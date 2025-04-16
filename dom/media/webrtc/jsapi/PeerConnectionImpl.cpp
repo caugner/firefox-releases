@@ -331,7 +331,6 @@ bool IsPrivateBrowsing(nsPIDOMWindowInner* aWindow) {
 PeerConnectionImpl::PeerConnectionImpl(const GlobalObject* aGlobal)
     : mTimeCard(MOZ_LOG_TEST(logModuleInfo, LogLevel::Error) ? create_timecard()
                                                              : nullptr),
-      mJsConfiguration(),
       mSignalingState(RTCSignalingState::Stable),
       mIceConnectionState(RTCIceConnectionState::New),
       mIceGatheringState(RTCIceGatheringState::New),
@@ -818,8 +817,7 @@ PeerConnectionImpl::EnsureDataConnection(uint16_t aLocalPort,
     return NS_OK;
   }
 
-  nsCOMPtr<nsISerialEventTarget> target =
-      mWindow ? mWindow->EventTargetFor(TaskCategory::Other) : nullptr;
+  nsCOMPtr<nsISerialEventTarget> target = GetMainThreadSerialEventTarget();
   Maybe<uint64_t> mms = aMMSSet ? Some(aMaxMessageSize) : Nothing();
   if (auto res = DataChannelConnection::Create(this, target, mTransportHandler,
                                                aLocalPort, aNumstreams, mms)) {
@@ -2364,7 +2362,7 @@ void PeerConnectionImpl::SetupPreferredRtpExtensions(
 }
 
 nsresult PeerConnectionImpl::CalculateFingerprint(
-    const std::string& algorithm, std::vector<uint8_t>* fingerprint) const {
+    const nsACString& algorithm, std::vector<uint8_t>* fingerprint) const {
   DtlsDigest digest(algorithm);
 
   MOZ_ASSERT(fingerprint);
@@ -4074,9 +4072,8 @@ void PeerConnectionImpl::UpdateTransport(const JsepTransceiver& aTransceiver,
   DtlsDigestList digests;
   for (const auto& fingerprint :
        transport.mDtls->GetFingerprints().mFingerprints) {
-    std::ostringstream ss;
-    ss << fingerprint.hashFunc;
-    digests.emplace_back(ss.str(), fingerprint.fingerprint);
+    digests.emplace_back(ToString(fingerprint.hashFunc),
+                         fingerprint.fingerprint);
   }
 
   mTransportHandler->ActivateTransport(

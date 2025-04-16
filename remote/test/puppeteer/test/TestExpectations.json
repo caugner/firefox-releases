@@ -2082,12 +2082,6 @@
     "expectations": ["FAIL"]
   },
   {
-    "testIdPattern": "[jshandle.spec] JSHandle JSHandle.toString should work with different subtypes",
-    "platforms": ["darwin", "linux", "win32"],
-    "parameters": ["firefox", "webDriverBiDi"],
-    "expectations": ["FAIL"]
-  },
-  {
     "testIdPattern": "[keyboard.spec] Keyboard ElementHandle.press should not support |text| option",
     "platforms": ["darwin", "linux", "win32"],
     "parameters": ["cdp", "chrome"],
@@ -3975,7 +3969,7 @@
     "testIdPattern": "[oopif.spec] OOPIF-debug OOPIF should support lazy OOP frames",
     "platforms": ["darwin", "linux", "win32"],
     "parameters": ["firefox", "headless", "webDriverBiDi"],
-    "expectations": ["PASS"]
+    "expectations": ["FAIL"]
   },
   {
     "testIdPattern": "[prerender.spec] Prerender can navigate to a prerendered page via Puppeteer",

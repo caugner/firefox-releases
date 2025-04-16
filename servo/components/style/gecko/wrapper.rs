@@ -714,7 +714,7 @@ impl<'le> GeckoElement<'le> {
 
     #[inline]
     fn document_state(&self) -> DocumentState {
-        DocumentState::from_bits_truncate(self.as_node().owner_doc().0.mDocumentState.bits)
+        DocumentState::from_bits_retain(self.as_node().owner_doc().0.mState.bits)
     }
 
     #[inline]
@@ -897,6 +897,9 @@ fn selector_flags_to_node_flags(flags: ElementSelectorFlags) -> u32 {
     }
     if flags.contains(ElementSelectorFlags::HAS_SLOW_SELECTOR_LATER_SIBLINGS) {
         gecko_flags |= NodeSelectorFlags::HasSlowSelectorLaterSiblings.0;
+    }
+    if flags.contains(ElementSelectorFlags::HAS_SLOW_SELECTOR_NTH) {
+        gecko_flags |= NodeSelectorFlags::HasSlowSelectorNth.0;
     }
     if flags.contains(ElementSelectorFlags::HAS_SLOW_SELECTOR_NTH_OF) {
         gecko_flags |= NodeSelectorFlags::HasSlowSelectorNthOf.0;
@@ -1205,7 +1208,7 @@ impl<'le> TElement for GeckoElement<'le> {
 
     #[inline]
     fn state(&self) -> ElementState {
-        ElementState::from_bits_truncate(self.state_internal())
+        ElementState::from_bits_retain(self.state_internal())
     }
 
     #[inline]

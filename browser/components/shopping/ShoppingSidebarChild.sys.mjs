@@ -39,6 +39,12 @@ XPCOMUtils.defineLazyPreferenceGetter(
     }
   }
 );
+XPCOMUtils.defineLazyPreferenceGetter(
+  lazy,
+  "adsExposure",
+  "browser.shopping.experience2023.ads.exposure",
+  false
+);
 
 export class ShoppingSidebarChild extends RemotePageChild {
   constructor() {
@@ -110,6 +116,7 @@ export class ShoppingSidebarChild extends RemotePageChild {
   }
 
   handleEvent(event) {
+    let aid;
     switch (event.type) {
       case "ContentReady":
         this.updateContent();
@@ -120,10 +127,33 @@ export class ShoppingSidebarChild extends RemotePageChild {
       case "ReportProductAvailable":
         this.reportProductAvailable();
         break;
-      case "ShoppingTelemetryEvent":
-        this.submitShoppingEvent(event.detail);
+      case "AdClicked":
+        aid = event.detail.aid;
+        this.#product.sendAttributionEvent("click", aid);
+        Glean.shopping.surfaceAdsClicked.record();
+        break;
+      case "AdImpression":
+        aid = event.detail.aid;
+        this.#product.sendAttributionEvent("impression", aid);
+        Glean.shopping.surfaceAdsImpression.record();
         break;
     }
+  }
+
+  // Exposed for testing. Assumes uri is a nsURI.
+  set productURI(uri) {
+    if (!(uri instanceof Ci.nsIURI)) {
+      throw new Error("productURI setter expects an nsIURI");
+    }
+    this.#productURI = uri;
+  }
+
+  // Exposed for testing. Assumes product is a ShoppingProduct.
+  set product(product) {
+    if (!(product instanceof ShoppingProduct)) {
+      throw new Error("product setter expects an instance of ShoppingProduct");
+    }
+    this.#product = product;
   }
 
   get canFetchAndShowData() {
@@ -149,6 +179,8 @@ export class ShoppingSidebarChild extends RemotePageChild {
     this.sendToContent("adsEnabledByUserChanged", {
       adsEnabledByUser: this.userHasAdsEnabled,
     });
+
+    this.requestRecommendations(this.#productURI);
   }
 
   getProductURI() {
@@ -269,6 +301,8 @@ export class ShoppingSidebarChild extends RemotePageChild {
       }
 
       this.sendToContent("Update", {
+        adsEnabled: this.canFetchAndShowAd,
+        adsEnabledByUser: this.userHasAdsEnabled,
         showOnboarding: false,
         data,
         productUrl: this.#productURI.spec,
@@ -280,40 +314,10 @@ export class ShoppingSidebarChild extends RemotePageChild {
       }
 
       if (!isPolledRequest && !data.grade) {
-        this.contentWindow.document.dispatchEvent(
-          new CustomEvent("ShoppingTelemetryEvent", {
-            bubbles: true,
-            composed: true,
-            detail: "noReviewReliabilityAvailable",
-          })
-        );
+        Glean.shopping.surfaceNoReviewReliabilityAvailable.record();
       }
 
-      if (!this.canFetchAndShowAd || !this.userHasAdsEnabled) {
-        return;
-      }
-
-      this.#product.requestRecommendations().then(recommendationData => {
-        // Check if the product URI or opt in changed while we waited.
-        if (
-          uri != this.#productURI ||
-          !this.canFetchAndShowData ||
-          !this.canFetchAndShowAd ||
-          !this.userHasAdsEnabled
-        ) {
-          return;
-        }
-
-        this.sendToContent("Update", {
-          adsEnabled: this.canFetchAndShowAd,
-          adsEnabledByUser: this.userHasAdsEnabled,
-          showOnboarding: false,
-          data,
-          productUrl: this.#productURI.spec,
-          recommendationData,
-          isAnalysisInProgress,
-        });
-      });
+      this.requestRecommendations(uri);
     } else {
       // Don't bother continuing if the user has opted out.
       if (lazy.optedIn == 2) {
@@ -338,6 +342,67 @@ export class ShoppingSidebarChild extends RemotePageChild {
     }
   }
 
+  /**
+   * Utility function to determine if we should request ads.
+   */
+  canFetchAds(uri) {
+    return (
+      uri.equalsExceptRef(this.#productURI) &&
+      this.canFetchAndShowData &&
+      (lazy.adsExposure || (this.canFetchAndShowAd && this.userHasAdsEnabled))
+    );
+  }
+
+  /**
+   * Utility function to determine if we should display ads. This is different
+   * from fetching ads, because of ads exposure telemetry (bug 1858470).
+   */
+  canShowAds(uri) {
+    return (
+      uri.equalsExceptRef(this.#productURI) &&
+      this.canFetchAndShowData &&
+      this.canFetchAndShowAd &&
+      this.userHasAdsEnabled
+    );
+  }
+
+  /**
+   * Request recommended products for a given uri and send the recommendations
+   * to the content if recommendations are enabled.
+   *
+   * @param {nsIURI} uri The uri of the current product page
+   */
+  async requestRecommendations(uri) {
+    if (!this.canFetchAds(uri)) {
+      return;
+    }
+
+    let recommendationData = await this.#product.requestRecommendations();
+
+    // Note: this needs to be separate from the inverse conditional check below
+    // because here we want to know if an ad exists for the product, regardless
+    // of whether ads are enabled, while for the surfaceNoAdsAvailable Glean
+    // probe, we want to know if ads would have been shown, but one wasn't
+    // available.
+    if (recommendationData.length) {
+      Glean.shopping.adsExposure.record();
+    }
+
+    // Check if the product URI or opt in changed while we waited.
+    if (!this.canShowAds(uri)) {
+      return;
+    }
+
+    if (!recommendationData.length) {
+      // We tried to fetch an ad, but didn't get one.
+      Glean.shopping.surfaceNoAdsAvailable.record();
+    }
+
+    this.sendToContent("UpdateRecommendations", {
+      recommendationData,
+    });
+  }
+
   sendToContent(eventName, detail) {
     if (this._destroyed) {
       return;
@@ -352,65 +417,5 @@ export class ShoppingSidebarChild extends RemotePageChild {
 
   async reportProductAvailable() {
     await this.#product.sendReport();
-  }
-
-  /**
-   * Helper to handle telemetry events.
-   *
-   * @param {string | Array} message
-   *        Which Glean event to record too. If an array is used, the first
-   *        element should be the message and the second the additional detail
-   *        to record.
-   */
-  submitShoppingEvent(message) {
-    // We are currently working through an actor to record Glean events and
-    // this function is where we will direct a custom actor event into the
-    // correct Glean event. However, this is an unpleasant solution and one
-    // that should not be replicated. Please reference bug 1848708 for more
-    // detail about why.
-    let details;
-    if (Array.isArray(message)) {
-      details = message[1];
-      message = message[0];
-    }
-    switch (message) {
-      case "shopping-settings-label":
-        Glean.shopping.surfaceSettingsExpandClicked.record({ action: details });
-        break;
-      case "shopping-analysis-explainer-label":
-        Glean.shopping.surfaceShowQualityExplainerClicked.record({
-          action: details,
-        });
-        break;
-      case "reanalyzeClicked":
-        Glean.shopping.surfaceReanalyzeClicked.record();
-        break;
-      case "surfaceClosed":
-        Glean.shopping.surfaceClosed.record({ source: details });
-        break;
-      case "surfaceShowMoreReviewsButtonClicked":
-        Glean.shopping.surfaceShowMoreReviewsButtonClicked.record({
-          action: details,
-        });
-        break;
-      case "analyzeReviewsNoneAvailableClicked":
-        Glean.shopping.surfaceAnalyzeReviewsNoneAvailableClicked.record();
-        break;
-      case "surfaceReactivatedButtonClicked":
-        Glean.shopping.surfaceReactivatedButtonClicked.record();
-        break;
-      case "surfaceReviewQualityExplainerURLClicked":
-        Glean.shopping.surfaceShowQualityExplainerUrlClicked.record();
-        break;
-      case "noReviewReliabilityAvailable":
-        Glean.shopping.surfaceNoReviewReliabilityAvailable.record();
-        break;
-      case "surfacePoweredByFakespotLinkClicked":
-        Glean.shopping.surfacePoweredByFakespotLinkClicked.record();
-        break;
-      case "staleAnalysisShown":
-        Glean.shopping.surfaceStaleAnalysisShown.record();
-        break;
-    }
   }
 }

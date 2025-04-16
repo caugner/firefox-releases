@@ -273,7 +273,7 @@ export default class FxviewTabList extends MozLitElement {
               .secondaryL10nArgs=${ifDefined(tabItem.secondaryL10nArgs)}
               .closedId=${ifDefined(tabItem.closedId || tabItem.closedId)}
               .sourceClosedId=${ifDefined(tabItem.sourceClosedId)}
-              .sourceWindowId==${ifDefined(tabItem.sourceWindowId)}
+              .sourceWindowId=${ifDefined(tabItem.sourceWindowId)}
               .tabElement=${ifDefined(tabItem.tabElement)}
               .time=${ifDefined(time)}
               .timeMsPref=${ifDefined(this.timeMsPref)}
@@ -515,11 +515,15 @@ export class FxviewTabRow extends MozLitElement {
             backgroundImage: `url(${this.getImageUrl(this.favicon, this.url)})`,
           })}
         ></span>
-        <span class="fxview-tab-row-title" id="fxview-tab-row-title">
+        <span
+          class="fxview-tab-row-title text-truncated-ellipsis"
+          id="fxview-tab-row-title"
+          dir="auto"
+        >
           ${title}
         </span>
         <span
-          class="fxview-tab-row-url"
+          class="fxview-tab-row-url text-truncated-ellipsis"
           id="fxview-tab-row-url"
           ?hidden=${this.compact}
         >

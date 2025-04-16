@@ -42,6 +42,7 @@
 #include "mozilla/SVGIntegrationUtils.h"
 #include "mozilla/SVGUtils.h"
 #include "mozilla/ToString.h"
+#include "mozilla/Try.h"
 #include "mozilla/ViewportUtils.h"
 
 #include "nsCOMPtr.h"
@@ -715,7 +716,7 @@ void nsIFrame::Init(nsIContent* aContent, nsContainerFrame* aParent,
         "root frame should always be a container");
   }
 
-  if (PresShell()->AssumeAllFramesVisible() && TrackingVisibility()) {
+  if (TrackingVisibility() && PresShell()->AssumeAllFramesVisible()) {
     IncApproximateVisibleCount();
   }
 
@@ -954,6 +955,11 @@ static void AddAndRemoveImageAssociations(
 void nsIFrame::AddDisplayItem(nsDisplayItem* aItem) {
   MOZ_DIAGNOSTIC_ASSERT(!mDisplayItems.Contains(aItem));
   mDisplayItems.AppendElement(aItem);
+#ifdef ACCESSIBILITY
+  if (nsAccessibilityService* accService = GetAccService()) {
+    accService->NotifyOfPossibleBoundsChange(PresShell(), mContent);
+  }
+#endif
 }
 
 bool nsIFrame::RemoveDisplayItem(nsDisplayItem* aItem) {
@@ -1180,38 +1186,15 @@ void nsIFrame::DidSetComputedStyle(ComputedStyle* aOldComputedStyle) {
     // https://drafts.csswg.org/css-scroll-anchoring/#suppression-triggers
     bool needAnchorSuppression = false;
 
-    // If we detect a change on margin, padding or border, we store the old
-    // values on the frame itself between now and reflow, so if someone
-    // calls GetUsed(Margin|Border|Padding)() before the next reflow, we
-    // can give an accurate answer.
-    // We don't want to set the property if one already exists.
-    nsMargin oldValue(0, 0, 0, 0);
-    nsMargin newValue(0, 0, 0, 0);
     const nsStyleMargin* oldMargin = aOldComputedStyle->StyleMargin();
-    if (oldMargin->GetMargin(oldValue)) {
-      if (!StyleMargin()->GetMargin(newValue) || oldValue != newValue) {
-        if (!HasProperty(UsedMarginProperty())) {
-          AddProperty(UsedMarginProperty(), new nsMargin(oldValue));
-        }
-        needAnchorSuppression = true;
-      }
+    if (oldMargin->mMargin != StyleMargin()->mMargin) {
+      needAnchorSuppression = true;
     }
 
     const nsStylePadding* oldPadding = aOldComputedStyle->StylePadding();
-    if (oldPadding->GetPadding(oldValue)) {
-      if (!StylePadding()->GetPadding(newValue) || oldValue != newValue) {
-        if (!HasProperty(UsedPaddingProperty())) {
-          AddProperty(UsedPaddingProperty(), new nsMargin(oldValue));
-        }
-        needAnchorSuppression = true;
-      }
-    }
-
-    const nsStyleBorder* oldBorder = aOldComputedStyle->StyleBorder();
-    oldValue = oldBorder->GetComputedBorder();
-    newValue = StyleBorder()->GetComputedBorder();
-    if (oldValue != newValue && !HasProperty(UsedBorderProperty())) {
-      AddProperty(UsedBorderProperty(), new nsMargin(oldValue));
+    if (oldPadding->mPadding != StylePadding()->mPadding) {
+      SetHasPaddingChange(true);
+      needAnchorSuppression = true;
     }
 
     const nsStyleDisplay* oldDisp = aOldComputedStyle->StyleDisplay();
@@ -1536,66 +1519,56 @@ void nsIFrame::CreateView() {
 
 /* virtual */
 nsMargin nsIFrame::GetUsedMargin() const {
-  nsMargin margin(0, 0, 0, 0);
+  nsMargin margin;
   if (((mState & NS_FRAME_FIRST_REFLOW) && !(mState & NS_FRAME_IN_REFLOW)) ||
-      IsInSVGTextSubtree())
+      IsInSVGTextSubtree()) {
     return margin;
+  }
 
-  nsMargin* m = GetProperty(UsedMarginProperty());
-  if (m) {
+  if (nsMargin* m = GetProperty(UsedMarginProperty())) {
     margin = *m;
-  } else {
-    if (!StyleMargin()->GetMargin(margin)) {
-      // If we get here, our caller probably shouldn't be calling us...
-      NS_ERROR(
-          "Returning bogus 0-sized margin, because this margin "
-          "depends on layout & isn't cached!");
-    }
+  } else if (!StyleMargin()->GetMargin(margin)) {
+    // If we get here, our caller probably shouldn't be calling us...
+    NS_ERROR(
+        "Returning bogus 0-sized margin, because this margin "
+        "depends on layout & isn't cached!");
   }
   return margin;
 }
 
 /* virtual */
 nsMargin nsIFrame::GetUsedBorder() const {
-  nsMargin border(0, 0, 0, 0);
   if (((mState & NS_FRAME_FIRST_REFLOW) && !(mState & NS_FRAME_IN_REFLOW)) ||
-      IsInSVGTextSubtree())
-    return border;
-
-  // Theme methods don't use const-ness.
-  nsIFrame* mutable_this = const_cast<nsIFrame*>(this);
+      IsInSVGTextSubtree()) {
+    return {};
+  }
 
   const nsStyleDisplay* disp = StyleDisplay();
-  if (mutable_this->IsThemed(disp)) {
+  if (IsThemed(disp)) {
+    // Theme methods don't use const-ness.
+    auto* mutable_this = const_cast<nsIFrame*>(this);
     nsPresContext* pc = PresContext();
     LayoutDeviceIntMargin widgetBorder = pc->Theme()->GetWidgetBorder(
         pc->DeviceContext(), mutable_this, disp->EffectiveAppearance());
-    border =
-        LayoutDevicePixel::ToAppUnits(widgetBorder, pc->AppUnitsPerDevPixel());
-    return border;
+    return LayoutDevicePixel::ToAppUnits(widgetBorder,
+                                         pc->AppUnitsPerDevPixel());
   }
 
-  nsMargin* b = GetProperty(UsedBorderProperty());
-  if (b) {
-    border = *b;
-  } else {
-    border = StyleBorder()->GetComputedBorder();
-  }
-  return border;
+  return StyleBorder()->GetComputedBorder();
 }
 
 /* virtual */
 nsMargin nsIFrame::GetUsedPadding() const {
-  nsMargin padding(0, 0, 0, 0);
+  nsMargin padding;
   if (((mState & NS_FRAME_FIRST_REFLOW) && !(mState & NS_FRAME_IN_REFLOW)) ||
-      IsInSVGTextSubtree())
+      IsInSVGTextSubtree()) {
     return padding;
-
-  // Theme methods don't use const-ness.
-  nsIFrame* mutable_this = const_cast<nsIFrame*>(this);
+  }
 
   const nsStyleDisplay* disp = StyleDisplay();
-  if (mutable_this->IsThemed(disp)) {
+  if (IsThemed(disp)) {
+    // Theme methods don't use const-ness.
+    nsIFrame* mutable_this = const_cast<nsIFrame*>(this);
     nsPresContext* pc = PresContext();
     LayoutDeviceIntMargin widgetPadding;
     if (pc->Theme()->GetWidgetPadding(pc->DeviceContext(), mutable_this,
@@ -1606,16 +1579,13 @@ nsMargin nsIFrame::GetUsedPadding() const {
     }
   }
 
-  nsMargin* p = GetProperty(UsedPaddingProperty());
-  if (p) {
+  if (nsMargin* p = GetProperty(UsedPaddingProperty())) {
     padding = *p;
-  } else {
-    if (!StylePadding()->GetPadding(padding)) {
-      // If we get here, our caller probably shouldn't be calling us...
-      NS_ERROR(
-          "Returning bogus 0-sized padding, because this padding "
-          "depends on layout & isn't cached!");
-    }
+  } else if (!StylePadding()->GetPadding(padding)) {
+    // If we get here, our caller probably shouldn't be calling us...
+    NS_ERROR(
+        "Returning bogus 0-sized padding, because this padding "
+        "depends on layout & isn't cached!");
   }
   return padding;
 }
@@ -2135,12 +2105,17 @@ nsIFrame::CaretBlockAxisMetrics nsIFrame::GetCaretBlockAxisMetrics(
 const nsAtom* nsIFrame::ComputePageValue() const {
   const nsAtom* value = nsGkAtoms::_empty;
   const nsIFrame* frame = this;
+  // Find what CSS page name value this frame's subtree has, if any.
+  // Starting with this frame, check if a page name other than auto is present,
+  // and record it if so. Then, if the current frame is a container frame, find
+  // the first non-placeholder child and repeat.
+  // This will find the most deeply nested first in-flow child of this frame's
+  // subtree, and return its page name (with auto resolved if applicable, and
+  // subtrees with no page-names returning the empty atom rather than null).
   do {
-    // If this has a non-auto start value, track that instead.
-    if (const nsAtom* const startValue = frame->GetStartPageValue()) {
-      value = startValue;
+    if (const nsAtom* maybePageName = frame->GetStylePageName()) {
+      value = maybePageName;
     }
-    MOZ_ASSERT(value, "Should not have a NULL page value.");
     // Get the next frame to read from.
     const nsIFrame* firstNonPlaceholderFrame = nullptr;
     // If this is a container frame, inspect its in-flow children.
@@ -7033,7 +7008,7 @@ void nsIFrame::UpdateIsRelevantContent(
   // "This event is dispatched by posting a task at the time when the state
   // change occurs."
   RefPtr<AsyncEventDispatcher> asyncDispatcher =
-      new AsyncEventDispatcher(element, event.get());
+      new AsyncEventDispatcher(element, event.forget());
   DebugOnly<nsresult> rv = asyncDispatcher->PostDOMEvent();
   NS_ASSERTION(NS_SUCCEEDED(rv), "AsyncEventDispatcher failed to dispatch");
 }
@@ -8235,6 +8210,23 @@ void nsIFrame::ListGeneric(nsACString& aTo, const char* aPrefix,
     aTo += ToString(pseudoType).c_str();
   }
   aTo += "]";
+
+  auto contentVisibility = StyleDisplay()->ContentVisibility(*this);
+  if (contentVisibility != StyleContentVisibility::Visible) {
+    aTo += nsPrintfCString(" [content-visibility=");
+    if (contentVisibility == StyleContentVisibility::Auto) {
+      aTo += "auto, "_ns;
+    } else if (contentVisibility == StyleContentVisibility::Hidden) {
+      aTo += "hiden, "_ns;
+    }
+
+    if (HidesContent()) {
+      aTo += "HidesContent=hidden"_ns;
+    } else {
+      aTo += "HidesContent=visibile"_ns;
+    }
+    aTo += "]";
+  }
 
   if (IsFrameModified()) {
     aTo += nsPrintfCString(" modified");

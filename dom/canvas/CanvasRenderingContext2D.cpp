@@ -1934,8 +1934,8 @@ UniquePtr<uint8_t[]> CanvasRenderingContext2D::GetImageBuffer(
 
   if (ret && ShouldResistFingerprinting(RFPTarget::CanvasRandomization)) {
     nsRFPService::RandomizePixels(
-        GetCookieJarSettings(), ret.get(),
-        out_imageSize->width * out_imageSize->height * 4,
+        GetCookieJarSettings(), ret.get(), out_imageSize->width,
+        out_imageSize->height, out_imageSize->width * out_imageSize->height * 4,
         SurfaceFormat::A8R8G8B8_UINT32);
   }
 
@@ -2672,7 +2672,7 @@ void CanvasRenderingContext2D::SetFilter(const nsACString& aFilter,
           SVGObserverUtils::ObserveFiltersForCanvasContext(
               this, mCanvasElement, CurrentState().filterChain.AsSpan());
     }
-    UpdateFilter();
+    UpdateFilter(/* aFlushIfNeeded = */ true);
   }
 }
 
@@ -2875,7 +2875,7 @@ static bool FiltersNeedFrameFlush(Span<const StyleFilter> aFilters) {
   return false;
 }
 
-void CanvasRenderingContext2D::UpdateFilter() {
+void CanvasRenderingContext2D::UpdateFilter(bool aFlushIfNeeded) {
   const bool writeOnly = IsWriteOnly() ||
                          (mCanvasElement && mCanvasElement->IsWriteOnly()) ||
                          (mOffscreenCanvas && mOffscreenCanvas->IsWriteOnly());
@@ -2889,18 +2889,13 @@ void CanvasRenderingContext2D::UpdateFilter() {
     return;
   }
 
-  RefPtr<const ComputedStyle> canvasStyle;
-
   // The PresContext is only used with URL filters and we don't allow those to
   // be used on worker threads.
   nsPresContext* presContext = nullptr;
   if (presShell) {
-    if (FiltersNeedFrameFlush(CurrentState().filterChain.AsSpan())) {
+    if (aFlushIfNeeded &&
+        FiltersNeedFrameFlush(CurrentState().filterChain.AsSpan())) {
       presShell->FlushPendingNotifications(FlushType::Frames);
-      if (mCanvasElement) {
-        canvasStyle =
-            nsComputedDOMStyle::GetComputedStyleNoFlush(mCanvasElement);
-      }
     }
 
     if (MOZ_UNLIKELY(presShell->IsDestroying())) {
@@ -2909,11 +2904,16 @@ void CanvasRenderingContext2D::UpdateFilter() {
 
     presContext = presShell->GetPresContext();
   }
+  RefPtr<const ComputedStyle> canvasStyle;
+  if (mCanvasElement) {
+    canvasStyle = nsComputedDOMStyle::GetComputedStyleNoFlush(mCanvasElement);
+  }
 
   MOZ_RELEASE_ASSERT(!mStyleStack.IsEmpty());
 
   CurrentState().filter = FilterInstance::GetFilterDescription(
-      mCanvasElement, CurrentState().filterChain.AsSpan(), writeOnly,
+      mCanvasElement, CurrentState().filterChain.AsSpan(),
+      CurrentState().autoSVGFiltersObserver, writeOnly,
       CanvasUserSpaceMetrics(GetSize(), CurrentState().fontFont, canvasStyle,
                              presContext),
       gfxRect(0, 0, mWidth, mHeight), CurrentState().filterAdditionalImages);
@@ -5995,9 +5995,9 @@ nsresult CanvasRenderingContext2D::GetImageDataArray(
       // holder.
 
       const IntSize size = readback->GetSize();
-      nsRFPService::RandomizePixels(GetCookieJarSettings(), rawData.mData,
-                                    size.height * size.width * 4,
-                                    SurfaceFormat::A8R8G8B8_UINT32);
+      nsRFPService::RandomizePixels(
+          GetCookieJarSettings(), rawData.mData, size.width, size.height,
+          size.height * size.width * 4, SurfaceFormat::A8R8G8B8_UINT32);
     }
 
     JS::AutoCheckCannotGC nogc;

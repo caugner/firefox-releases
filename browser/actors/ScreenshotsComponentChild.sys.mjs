@@ -251,14 +251,21 @@ export class ScreenshotsComponentChild extends JSWindowActorChild {
    *        The scroll height of the content window.
    */
   getFullPageBounds() {
-    let { scrollMinX, scrollMinY, scrollWidth, scrollHeight } =
-      this.#overlay.windowDimensions.dimensions;
+    let {
+      scrollMinX,
+      scrollMinY,
+      scrollWidth,
+      scrollHeight,
+      devicePixelRatio,
+    } = this.#overlay.windowDimensions.dimensions;
     let rect = {
       left: scrollMinX,
       top: scrollMinY,
+      right: scrollWidth,
+      bottom: scrollHeight,
       width: scrollWidth,
       height: scrollHeight,
-      devicePixelRatio: this.contentWindow.devicePixelRatio,
+      devicePixelRatio,
     };
     return rect;
   }
@@ -287,14 +294,16 @@ export class ScreenshotsComponentChild extends JSWindowActorChild {
    *        The height of the content window.
    */
   getVisibleBounds() {
-    let { scrollX, scrollY, clientWidth, clientHeight } =
+    let { scrollX, scrollY, clientWidth, clientHeight, devicePixelRatio } =
       this.#overlay.windowDimensions.dimensions;
     let rect = {
       left: scrollX,
       top: scrollY,
+      right: scrollX + clientWidth,
+      bottom: scrollY + clientHeight,
       width: clientWidth,
       height: clientHeight,
-      devicePixelRatio: this.contentWindow.devicePixelRatio,
+      devicePixelRatio,
     };
     return rect;
   }

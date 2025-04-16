@@ -205,10 +205,13 @@ enum class OpKind {
   ArrayNewDefault,
   ArrayNewData,
   ArrayNewElem,
+  ArrayInitData,
+  ArrayInitElem,
   ArrayGet,
   ArraySet,
   ArrayLen,
   ArrayCopy,
+  ArrayFill,
   RefTest,
   RefCast,
   BrOnCast,
@@ -421,8 +424,8 @@ class MOZ_STACK_CLASS OpIter : private Policy {
   UnsetLocalsState unsetLocals_;
   // The exclusive max index of a global that can be accessed by global.get in
   // this expression. When GC is enabled, this is any previously defined
-  // global. Otherwise this is always set to zero, and only imported immutable
-  // globals are allowed.
+  // immutable global. Otherwise this is always set to zero, and only imported
+  // immutable globals are allowed.
   uint32_t maxInitializedGlobalsIndexPlus1_;
 
 #ifdef DEBUG
@@ -595,8 +598,7 @@ class MOZ_STACK_CLASS OpIter : private Policy {
                                    const ValTypeVector& locals);
   [[nodiscard]] bool endFunction(const uint8_t* bodyEnd);
 
-  [[nodiscard]] bool startInitExpr(ValType expected,
-                                   uint32_t maxInitializedGlobalsIndexPlus1);
+  [[nodiscard]] bool startInitExpr(ValType expected);
   [[nodiscard]] bool endInitExpr();
 
   // Value and reference types
@@ -761,6 +763,12 @@ class MOZ_STACK_CLASS OpIter : private Policy {
                                       Value* offset, Value* numElements);
   [[nodiscard]] bool readArrayNewElem(uint32_t* typeIndex, uint32_t* segIndex,
                                       Value* offset, Value* numElements);
+  [[nodiscard]] bool readArrayInitData(uint32_t* typeIndex, uint32_t* segIndex,
+                                       Value* array, Value* arrayIndex,
+                                       Value* segOffset, Value* length);
+  [[nodiscard]] bool readArrayInitElem(uint32_t* typeIndex, uint32_t* segIndex,
+                                       Value* array, Value* arrayIndex,
+                                       Value* segOffset, Value* length);
   [[nodiscard]] bool readArrayGet(uint32_t* typeIndex,
                                   FieldWideningOp wideningOp, Value* index,
                                   Value* ptr);
@@ -771,6 +779,8 @@ class MOZ_STACK_CLASS OpIter : private Policy {
                                    Value* dstArray, Value* dstIndex,
                                    Value* srcArray, Value* srcIndex,
                                    Value* numElements);
+  [[nodiscard]] bool readArrayFill(uint32_t* typeIndex, Value* array,
+                                   Value* index, Value* val, Value* length);
   [[nodiscard]] bool readRefTest(bool nullable, RefType* sourceType,
                                  RefType* destType, Value* ref);
   [[nodiscard]] bool readRefCast(bool nullable, RefType* sourceType,
@@ -1278,19 +1288,19 @@ inline bool OpIter<Policy>::endFunction(const uint8_t* bodyEnd) {
 }
 
 template <typename Policy>
-inline bool OpIter<Policy>::startInitExpr(
-    ValType expected, uint32_t maxInitializedGlobalsIndexPlus1) {
+inline bool OpIter<Policy>::startInitExpr(ValType expected) {
   MOZ_ASSERT(kind_ == OpIter::InitExpr);
   MOZ_ASSERT(elseParamStack_.empty());
   MOZ_ASSERT(valueStack_.empty());
   MOZ_ASSERT(controlStack_.empty());
-  MOZ_ASSERT(maxInitializedGlobalsIndexPlus1_ == 0);
   MOZ_ASSERT(op_.b0 == uint16_t(Op::Limit));
 
   // GC allows accessing any previously defined global, not just those that are
   // imported and immutable.
   if (env_.features.gc) {
-    maxInitializedGlobalsIndexPlus1_ = maxInitializedGlobalsIndexPlus1;
+    maxInitializedGlobalsIndexPlus1_ = env_.globals.length();
+  } else {
+    maxInitializedGlobalsIndexPlus1_ = env_.numGlobalImports;
   }
 
   BlockType type = BlockType::VoidToSingle(expected);
@@ -2136,9 +2146,9 @@ inline bool OpIter<Policy>::readGetGlobal(uint32_t* id) {
   }
 
   // Initializer expressions can access immutable imported globals, or any
-  // previously defined global with GC enabled.
-  if (kind_ == OpIter::InitExpr && *id >= maxInitializedGlobalsIndexPlus1_ &&
-      (!env_.globals[*id].isImport() || env_.globals[*id].isMutable())) {
+  // previously defined immutable global with GC enabled.
+  if (kind_ == OpIter::InitExpr && (env_.globals[*id].isMutable() ||
+                                    *id >= maxInitializedGlobalsIndexPlus1_)) {
     return fail(
         "global.get in initializer expression must reference a global "
         "immutable import");
@@ -3437,7 +3447,7 @@ template <typename Policy>
 inline bool OpIter<Policy>::readArrayNewElem(uint32_t* typeIndex,
                                              uint32_t* segIndex, Value* offset,
                                              Value* numElements) {
-  MOZ_ASSERT(Classify(op_) == OpKind::ArrayNewData);
+  MOZ_ASSERT(Classify(op_) == OpKind::ArrayNewElem);
 
   if (!readArrayTypeIndex(typeIndex)) {
     return false;
@@ -3472,6 +3482,104 @@ inline bool OpIter<Policy>::readArrayNewElem(uint32_t* typeIndex,
   }
 
   return push(RefType::fromTypeDef(&typeDef, false));
+}
+
+template <typename Policy>
+inline bool OpIter<Policy>::readArrayInitData(uint32_t* typeIndex,
+                                              uint32_t* segIndex, Value* array,
+                                              Value* arrayIndex,
+                                              Value* segOffset, Value* length) {
+  MOZ_ASSERT(Classify(op_) == OpKind::ArrayInitData);
+
+  if (!readArrayTypeIndex(typeIndex)) {
+    return false;
+  }
+
+  if (!readVarU32(segIndex)) {
+    return fail("unable to read segment index");
+  }
+
+  const TypeDef& typeDef = env_.types->type(*typeIndex);
+  const ArrayType& arrayType = typeDef.arrayType();
+  FieldType elemType = arrayType.elementType_;
+  if (!elemType.isNumber() && !elemType.isPacked() && !elemType.isVector()) {
+    return fail("element type must be i8/i16/i32/i64/f32/f64/v128");
+  }
+  if (!arrayType.isMutable_) {
+    return fail("destination array is not mutable");
+  }
+  if (env_.dataCount.isNothing()) {
+    return fail("datacount section missing");
+  }
+  if (*segIndex >= *env_.dataCount) {
+    return fail("segment index is out of range");
+  }
+
+  if (!popWithType(ValType::I32, length)) {
+    return false;
+  }
+  if (!popWithType(ValType::I32, segOffset)) {
+    return false;
+  }
+  if (!popWithType(ValType::I32, arrayIndex)) {
+    return false;
+  }
+  if (!popWithType(RefType::fromTypeDef(&typeDef, true), array)) {
+    return false;
+  }
+
+  return true;
+}
+
+template <typename Policy>
+inline bool OpIter<Policy>::readArrayInitElem(uint32_t* typeIndex,
+                                              uint32_t* segIndex, Value* array,
+                                              Value* arrayIndex,
+                                              Value* segOffset, Value* length) {
+  MOZ_ASSERT(Classify(op_) == OpKind::ArrayInitElem);
+
+  if (!readArrayTypeIndex(typeIndex)) {
+    return false;
+  }
+
+  if (!readVarU32(segIndex)) {
+    return fail("unable to read segment index");
+  }
+
+  const TypeDef& typeDef = env_.types->type(*typeIndex);
+  const ArrayType& arrayType = typeDef.arrayType();
+  FieldType dstElemType = arrayType.elementType_;
+  if (!arrayType.isMutable_) {
+    return fail("destination array is not mutable");
+  }
+  if (!dstElemType.isRefType()) {
+    return fail("element type is not a reftype");
+  }
+  if (*segIndex >= env_.elemSegments.length()) {
+    return fail("segment index is out of range");
+  }
+
+  const ModuleElemSegment& elemSeg = env_.elemSegments[*segIndex];
+  RefType srcElemType = elemSeg.elemType;
+  // srcElemType needs to be a subtype (child) of dstElemType
+  if (!checkIsSubtypeOf(srcElemType, dstElemType.refType())) {
+    return fail("incompatible element types");
+  }
+
+  if (!popWithType(ValType::I32, length)) {
+    return false;
+  }
+  if (!popWithType(ValType::I32, segOffset)) {
+    return false;
+  }
+  if (!popWithType(ValType::I32, arrayIndex)) {
+    return false;
+  }
+  if (!popWithType(RefType::fromTypeDef(&typeDef, true), array)) {
+    return false;
+  }
+
+  return true;
 }
 
 template <typename Policy>
@@ -3606,6 +3714,38 @@ inline bool OpIter<Policy>::readArrayCopy(int32_t* elemSize,
     return false;
   }
   if (!popWithType(RefType::fromTypeDef(&dstTypeDef, true), dstArray)) {
+    return false;
+  }
+
+  return true;
+}
+
+template <typename Policy>
+inline bool OpIter<Policy>::readArrayFill(uint32_t* typeIndex, Value* array,
+                                          Value* index, Value* val,
+                                          Value* length) {
+  MOZ_ASSERT(Classify(op_) == OpKind::ArrayFill);
+
+  if (!readArrayTypeIndex(typeIndex)) {
+    return false;
+  }
+
+  const TypeDef& typeDef = env_.types->type(*typeIndex);
+  const ArrayType& arrayType = typeDef.arrayType();
+  if (!arrayType.isMutable_) {
+    return fail("destination array is not mutable");
+  }
+
+  if (!popWithType(ValType::I32, length)) {
+    return false;
+  }
+  if (!popWithType(arrayType.elementType_.widenToValType(), val)) {
+    return false;
+  }
+  if (!popWithType(ValType::I32, index)) {
+    return false;
+  }
+  if (!popWithType(RefType::fromTypeDef(&typeDef, true), array)) {
     return false;
   }
 

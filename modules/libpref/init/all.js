@@ -6,7 +6,7 @@
 // The prefs in this file are shipped with the GRE and should apply to all
 // embedding situations. Application-specific preferences belong somewhere
 // else, such as browser/app/profile/firefox.js or
-// mobile/android/app/mobile.js.
+// mobile/android/app/geckoview-prefs.js.
 //
 // NOTE: Not all prefs should be defined in this (or any other) data file.
 // Static prefs are defined in StaticPrefList.yaml. Those prefs should *not*
@@ -186,12 +186,7 @@ pref("pdfjs.enableScripting", true);
 pref("pdfjs.enableXfa", true);
 
 // Enable adding an image in a pdf.
-#ifdef RELEASE_OR_BETA
-  // It'll be enabled through Nimbus.
-  pref("pdfjs.enableStampEditor", false);
-#else
-  pref("pdfjs.enableStampEditor", true);
-#endif
+pref("pdfjs.enableStampEditor", true);
 
 // Disable support for MathML
 pref("mathml.disabled",    false);
@@ -261,17 +256,18 @@ pref("media.videocontrols.keyboard-tab-to-all-controls", true);
   pref("media.peerconnection.video.use_rtx.blocklist", "doxy.me,*.doxy.me");
   pref("media.navigator.video.use_tmmbr", false);
   pref("media.navigator.audio.use_fec", true);
-  pref("media.navigator.video.red_ulpfec_enabled", false);
   pref("media.navigator.video.offer_rtcp_rsize", true);
 
   #ifdef NIGHTLY_BUILD
     pref("media.peerconnection.sdp.parser", "sipcc");
     pref("media.peerconnection.sdp.alternate_parse_mode", "parallel");
     pref("media.peerconnection.sdp.strict_success", false);
+    pref("media.navigator.video.red_ulpfec_enabled", true);
   #else
     pref("media.peerconnection.sdp.parser", "sipcc");
     pref("media.peerconnection.sdp.alternate_parse_mode", "never");
     pref("media.peerconnection.sdp.strict_success", false);
+    pref("media.navigator.video.red_ulpfec_enabled", false);
   #endif
 
   pref("media.peerconnection.sdp.disable_stereo_fmtp", false);
@@ -383,9 +379,6 @@ pref("media.video-queue.default-size", 10);
 pref("media.video-queue.send-to-compositor-size", 9999);
 
 pref("media.cubeb.output_voice_routing", true);
-
-// GraphRunner (fixed MediaTrackGraph thread) control
-pref("media.audiograph.single_thread.enabled", true);
 
 // APZ preferences. For documentation/details on what these prefs do, check
 // gfx/layers/apz/src/AsyncPanZoomController.cpp.
@@ -587,6 +580,7 @@ pref("toolkit.scrollbox.clickToScroll.scrollDelay", 150);
 
 pref("toolkit.shopping.ohttpConfigURL", "https://prod.ohttp-gateway.prod.webservices.mozgcp.net/ohttp-configs");
 pref("toolkit.shopping.ohttpRelayURL", "https://mozilla-ohttp-fakespot.fastly-edge.com/");
+pref("toolkit.shopping.environment", "prod");
 
 // Controls logging for Sqlite.sys.mjs.
 pref("toolkit.sqlitejsm.loglevel", "Error");
@@ -703,8 +697,8 @@ pref("devtools.performance.recording.duration.remote", 0);
 // explanations. Remote profiling also includes the java feature by default.
 // If the remote debuggee isn't an Android phone, then this feature will
 // be ignored.
-pref("devtools.performance.recording.features", "[\"js\",\"leaf\",\"stackwalk\",\"cpu\",\"screenshots\"]");
-pref("devtools.performance.recording.features.remote", "[\"js\",\"leaf\",\"stackwalk\",\"cpu\",\"screenshots\",\"java\"]");
+pref("devtools.performance.recording.features", "[\"js\",\"stackwalk\",\"cpu\",\"screenshots\"]");
+pref("devtools.performance.recording.features.remote", "[\"js\",\"stackwalk\",\"cpu\",\"screenshots\",\"java\"]");
 // Threads to be captured by the profiler.
 pref("devtools.performance.recording.threads", "[\"GeckoMain\",\"Compositor\",\"Renderer\"]");
 pref("devtools.performance.recording.threads.remote", "[\"GeckoMain\",\"Compositor\",\"Renderer\"]");
@@ -852,6 +846,10 @@ pref("privacy.resistFingerprinting.exemptedDomains", "*.example.invalid");
 // If privacy.fingerprintingProtection is enabled, this pref can be used to add
 // or remove features from its effects
 pref("privacy.fingerprintingProtection.overrides", "");
+
+// If privacy.fingerprintingProtection is enabled, this pref can be used to add
+// or remove features on a domain granular level.
+pref("privacy.fingerprintingProtection.granularOverrides", "");
 
 // Fix cookie blocking breakage by providing ephemeral Paritioned LocalStorage
 // for a list of hosts when detected as trackers.
@@ -1308,9 +1306,6 @@ pref("network.sts.pollable_event_timeout", 6);
 
 // 2147483647 == PR_INT32_MAX == ~2 GB
 pref("network.websocket.max-message-size", 2147483647);
-
-// Should we automatically follow http 3xx redirects during handshake
-pref("network.websocket.auto-follow-http-redirects", false);
 
 // the number of seconds to wait for websocket connection to be opened
 pref("network.websocket.timeout.open", 20);
@@ -3464,6 +3459,11 @@ pref("browser.search.separatePrivateDefault", true);
 pref("browser.search.separatePrivateDefault.ui.enabled", false);
 pref("browser.search.removeEngineInfobar.enabled", true);
 
+// Enables a new search configuration style with no functional changes for the
+// user. This is solely intended as a rollout button - it will go away once the
+// new configuration has been rolled out.
+pref("browser.search.newSearchConfig.enabled", false);
+
 // GMPInstallManager prefs
 
 // User-settable override to media.gmp-manager.url for testing purposes.
@@ -3681,6 +3681,10 @@ pref("toolkit.aboutProcesses.profileDuration", 5);
 #else
   pref("toolkit.crashreporter.include_context_heap", true);
 #endif
+
+// Don't create the hidden window during startup on
+// platforms that don't always need it.
+pref("toolkit.lazyHiddenWindow", true);
 
 // Support for legacy customizations that rely on checking the
 // user profile directory for these stylesheets:
@@ -3977,8 +3981,10 @@ pref("extensions.formautofill.creditCards.heuristics.fathom.highConfidenceThresh
 // This is Only for testing! Set the confidence value (> 0 && <= 1) after a field is identified by fathom
 pref("extensions.formautofill.creditCards.heuristics.fathom.testConfidence", "0");
 
-pref("extensions.formautofill.firstTimeUse", true);
 pref("extensions.formautofill.loglevel", "Warn");
+// The interactivityCheckMode pref is only temporary.
+// It will be removed when we decide to only support the `focusability` mode
+pref("extensions.formautofill.heuristics.interactivityCheckMode", "focusability");
 
 pref("toolkit.osKeyStore.loglevel", "Warn");
 
@@ -3987,8 +3993,27 @@ pref("extensions.formautofill.supportRTL", false);
 // Controls the log level for CookieBannerListService.jsm.
 pref("cookiebanners.listService.logLevel", "Error");
 
-// Contorls the log level for Cookie Banner Auto Clicking.
+// Controls the log level for Cookie Banner Auto Clicking.
 pref("cookiebanners.bannerClicking.logLevel", "Error");
+
+// Enables the cookie banner auto clicking. The cookie banner auto clicking
+// depends on the `cookiebanners.service.mode` pref.
+pref("cookiebanners.bannerClicking.enabled", true);
+
+// Whether or not banner auto clicking test mode is enabled.
+pref("cookiebanners.bannerClicking.testing", false);
+
+// The maximum time (ms) after load for detecting banner and button elements for
+// cookie banner auto clicking.
+pref("cookiebanners.bannerClicking.timeoutAfterLoad", 5000);
+
+// Maximum time (ms) after DOMContentLoaded for detecting banners. This is a
+// catchall for cases where a load even never occurs.
+pref("cookiebanners.bannerClicking.timeoutAfterDOMContentLoaded", 20000);
+
+// How often (milliseconds) to run the banner detection query selectors to detect
+// the banner element and/or buttons.
+pref("cookiebanners.bannerClicking.pollingInterval", 500);
 
 // Array of test rules for cookie banner handling as a JSON string. They will be
 // inserted in addition to regular rules and may override them when setting the
@@ -4010,3 +4035,8 @@ pref("privacy.query_stripping.listService.logLevel", "Error");
 // scripting.registerContentScripts API instead of the older MV2
 // contentScripts.register API.
 pref("extensions.webcompat.useScriptingAPI", true);
+
+// Controls the log level for Fingerprinting Remote Overrides.
+pref("privacy.fingerprintingProtection.WebCompatService.logLevel", "Error");
+// To test strip on share site specific parameters by enabling a different list to be used
+pref("privacy.query_stripping.strip_on_share.enableTestMode", false);

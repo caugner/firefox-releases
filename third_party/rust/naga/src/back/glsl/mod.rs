@@ -189,6 +189,10 @@ impl Version {
         *self >= Version::Desktop(400) || *self >= Version::new_gles(310)
     }
 
+    fn supports_frexp_function(&self) -> bool {
+        *self >= Version::Desktop(400) || *self >= Version::new_gles(310)
+    }
+
     fn supports_derivative_control(&self) -> bool {
         *self >= Version::Desktop(450)
     }
@@ -667,15 +671,27 @@ impl<'a, W: Write> Writer<'a, W> {
                     let struct_name = &self.names[&NameKey::Type(*struct_ty)];
 
                     writeln!(self.out)?;
-                    writeln!(
-                        self.out,
-                        "{} {defined_func_name}({arg_type_name} arg) {{
+                    if !self.options.version.supports_frexp_function()
+                        && matches!(type_key, &crate::PredeclaredType::FrexpResult { .. })
+                    {
+                        writeln!(
+                            self.out,
+                            "{struct_name} {defined_func_name}({arg_type_name} arg) {{
+    {other_type_name} other = arg == {arg_type_name}(0) ? {other_type_name}(0) : {other_type_name}({arg_type_name}(1) + log2(arg));
+    {arg_type_name} fract = arg * exp2({arg_type_name}(-other));
+    return {struct_name}(fract, other);
+}}",
+                        )?;
+                    } else {
+                        writeln!(
+                            self.out,
+                            "{struct_name} {defined_func_name}({arg_type_name} arg) {{
     {other_type_name} other;
     {arg_type_name} fract = {called_func_name}(arg, other);
-    return {}(fract, other);
+    return {struct_name}(fract, other);
 }}",
-                        struct_name, struct_name
-                    )?;
+                        )?;
+                    }
                 }
                 &crate::PredeclaredType::AtomicCompareExchangeWeakResult { .. } => {}
             }
@@ -750,7 +766,7 @@ impl<'a, W: Write> Writer<'a, W> {
                             write!(self.out, "binding = {binding}")?;
                         }
                         if let Some((format, _)) = storage_format_access {
-                            let format_str = glsl_storage_format(format);
+                            let format_str = glsl_storage_format(format)?;
                             let separator = match layout_binding {
                                 Some(_) => ",",
                                 None => "",
@@ -1113,7 +1129,8 @@ impl<'a, W: Write> Writer<'a, W> {
         let ty_name = &self.names[&NameKey::Type(global.ty)];
         let block_name = format!(
             "{}_block_{}{:?}",
-            ty_name,
+            // avoid double underscores as they are reserved in GLSL
+            ty_name.trim_end_matches('_'),
             self.block_id.generate(),
             self.entry_point.stage,
         );
@@ -1474,7 +1491,7 @@ impl<'a, W: Write> Writer<'a, W> {
                         ..
                     } = this.module.types[arg.ty].inner
                     {
-                        write!(this.out, "layout({}) ", glsl_storage_format(format))?;
+                        write!(this.out, "layout({}) ", glsl_storage_format(format)?)?;
                     }
 
                     // write the type
@@ -4196,10 +4213,10 @@ const fn glsl_dimension(dim: crate::ImageDimension) -> &'static str {
 }
 
 /// Helper function that returns the glsl storage format string of [`StorageFormat`](crate::StorageFormat)
-const fn glsl_storage_format(format: crate::StorageFormat) -> &'static str {
+fn glsl_storage_format(format: crate::StorageFormat) -> Result<&'static str, Error> {
     use crate::StorageFormat as Sf;
 
-    match format {
+    Ok(match format {
         Sf::R8Unorm => "r8",
         Sf::R8Snorm => "r8_snorm",
         Sf::R8Uint => "r8ui",
@@ -4221,7 +4238,8 @@ const fn glsl_storage_format(format: crate::StorageFormat) -> &'static str {
         Sf::Rgba8Snorm => "rgba8_snorm",
         Sf::Rgba8Uint => "rgba8ui",
         Sf::Rgba8Sint => "rgba8i",
-        Sf::Rgb10a2Unorm => "rgb10_a2ui",
+        Sf::Rgb10a2Uint => "rgb10_a2ui",
+        Sf::Rgb10a2Unorm => "rgb10_a2",
         Sf::Rg11b10Float => "r11f_g11f_b10f",
         Sf::Rg32Uint => "rg32ui",
         Sf::Rg32Sint => "rg32i",
@@ -4238,7 +4256,13 @@ const fn glsl_storage_format(format: crate::StorageFormat) -> &'static str {
         Sf::Rg16Snorm => "rg16_snorm",
         Sf::Rgba16Unorm => "rgba16",
         Sf::Rgba16Snorm => "rgba16_snorm",
-    }
+
+        Sf::Bgra8Unorm => {
+            return Err(Error::Custom(
+                "Support format BGRA8 is not implemented".into(),
+            ))
+        }
+    })
 }
 
 fn is_value_init_supported(module: &crate::Module, ty: Handle<crate::Type>) -> bool {

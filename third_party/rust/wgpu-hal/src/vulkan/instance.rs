@@ -157,6 +157,12 @@ impl super::Swapchain {
     /// - The device must have been made idle before calling this function.
     unsafe fn release_resources(self, device: &ash::Device) -> Self {
         profiling::scope!("Swapchain::release_resources");
+        {
+            profiling::scope!("vkDeviceWaitIdle");
+            // We need to also wait until all presentation work is done. Because there is no way to portably wait until
+            // the presentation work is done, we are forced to wait until the device is idle.
+            let _ = unsafe { device.device_wait_idle() };
+        };
         unsafe { device.destroy_fence(self.fence, None) };
         self
     }
@@ -201,7 +207,7 @@ impl super::Instance {
     pub fn desired_extensions(
         entry: &ash::Entry,
         _driver_api_version: u32,
-        flags: crate::InstanceFlags,
+        flags: wgt::InstanceFlags,
     ) -> Result<Vec<&'static CStr>, crate::InstanceError> {
         let instance_extensions = entry
             .enumerate_instance_extension_properties(None)
@@ -245,7 +251,7 @@ impl super::Instance {
             extensions.push(ash::vk::KhrPortabilityEnumerationFn::name());
         }
 
-        if flags.contains(crate::InstanceFlags::DEBUG) {
+        if flags.contains(wgt::InstanceFlags::DEBUG) {
             // VK_EXT_debug_utils
             extensions.push(ext::DebugUtils::name());
         }
@@ -291,7 +297,7 @@ impl super::Instance {
         android_sdk_version: u32,
         debug_utils_user_data: Option<super::DebugUtilsMessengerUserData>,
         extensions: Vec<&'static CStr>,
-        flags: crate::InstanceFlags,
+        flags: wgt::InstanceFlags,
         has_nv_optimus: bool,
         drop_guard: Option<crate::DropGuard>,
     ) -> Result<Self, crate::InstanceError> {
@@ -633,7 +639,7 @@ impl crate::Instance<super::Api> for super::Instance {
 
         // Request validation layer if asked.
         let mut debug_callback_user_data = None;
-        if desc.flags.contains(crate::InstanceFlags::VALIDATION) {
+        if desc.flags.contains(wgt::InstanceFlags::VALIDATION) {
             let validation_layer_name =
                 CStr::from_bytes_with_nul(b"VK_LAYER_KHRONOS_validation\0").unwrap();
             if let Some(layer_properties) = find_layer(&instance_layers, validation_layer_name) {

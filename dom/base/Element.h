@@ -1289,6 +1289,15 @@ class Element : public FragmentOrElement {
   MOZ_CAN_RUN_SCRIPT already_AddRefed<DOMRectList> GetClientRects();
   MOZ_CAN_RUN_SCRIPT already_AddRefed<DOMRect> GetBoundingClientRect();
 
+  enum class Loading : uint8_t {
+    Eager,
+    Lazy,
+  };
+
+  Loading LoadingState() const;
+  void GetLoading(nsAString& aValue) const;
+  bool ParseLoadingAttribute(const nsAString& aValue, nsAttrValue& aResult);
+
   // Shadow DOM v1
   already_AddRefed<ShadowRoot> AttachShadow(const ShadowRootInit& aInit,
                                             ErrorResult& aError);
@@ -2127,6 +2136,8 @@ inline bool Element::AttrValueIs(int32_t aNameSpaceID, const nsAtom* aName,
 
 }  // namespace dom
 }  // namespace mozilla
+
+NON_VIRTUAL_ADDREF_RELEASE(mozilla::dom::Element)
 
 inline mozilla::dom::Element* nsINode::AsElement() {
   MOZ_ASSERT(IsElement());

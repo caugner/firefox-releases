@@ -1726,6 +1726,7 @@ export var Policies = {
         "network.",
         "pdfjs.",
         "places.",
+        "pref.",
         "print.",
         "signon.",
         "spellchecker.",
@@ -1874,6 +1875,12 @@ export var Policies = {
       } else {
         manager.disallowFeature("createMasterPassword");
       }
+    },
+  },
+
+  PrintingEnabled: {
+    onBeforeUIStartup(manager, param) {
+      setAndLockPref("print.enabled", param);
     },
   },
 

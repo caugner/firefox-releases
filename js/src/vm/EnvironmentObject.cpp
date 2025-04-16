@@ -90,12 +90,7 @@ static T* CreateEnvironmentObject(JSContext* cx, Handle<SharedShape*> shape,
   MOZ_ASSERT(CanChangeToBackgroundAllocKind(allocKind, &T::class_));
   allocKind = gc::ForegroundToBackgroundAllocKind(allocKind);
 
-  JSObject* obj = NativeObject::create(cx, allocKind, heap, shape);
-  if (!obj) {
-    return nullptr;
-  }
-
-  return &obj->as<T>();
+  return NativeObject::create<T>(cx, allocKind, heap, shape);
 }
 
 // Helper function for simple environment objects that don't need the overloads
@@ -4163,7 +4158,7 @@ static bool AnalyzeEntrainedVariablesInScript(JSContext* cx,
     buf.printf("Script ");
 
     if (JSAtom* name = script->function()->displayAtom()) {
-      buf.putString(name);
+      buf.putString(cx, name);
       buf.printf(" ");
     }
 
@@ -4171,7 +4166,7 @@ static bool AnalyzeEntrainedVariablesInScript(JSContext* cx,
                script->lineno());
 
     if (JSAtom* name = innerScript->function()->displayAtom()) {
-      buf.putString(name);
+      buf.putString(cx, name);
       buf.printf(" ");
     }
 
@@ -4180,10 +4175,14 @@ static bool AnalyzeEntrainedVariablesInScript(JSContext* cx,
     for (PropertyNameSet::Range r = remainingNames.all(); !r.empty();
          r.popFront()) {
       buf.printf(" ");
-      buf.putString(r.front());
+      buf.putString(cx, r.front());
     }
 
-    printf("%s\n", buf.string());
+    JS::UniqueChars str = buf.release();
+    if (!str) {
+      return false;
+    }
+    printf("%s\n", str.get());
   }
 
   RootedFunction fun(cx);

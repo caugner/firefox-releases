@@ -17,6 +17,7 @@
 #include "mozilla/MouseEvents.h"
 #include "mozilla/PresShell.h"
 #include "mozilla/ResultExtensions.h"
+#include "mozilla/Try.h"
 #include "mozilla/intl/Segmenter.h"
 
 #include "gfxUtils.h"
@@ -235,7 +236,6 @@ NS_QUERYFRAME_TAIL_INHERITING(SimpleXULLeafFrame)
 nsTreeBodyFrame::nsTreeBodyFrame(ComputedStyle* aStyle,
                                  nsPresContext* aPresContext)
     : SimpleXULLeafFrame(aStyle, aPresContext, kClassID),
-      mImageCache(),
       mTopRowIndex(0),
       mPageLength(0),
       mHorzPosition(0),
@@ -1599,9 +1599,8 @@ nsresult nsTreeBodyFrame::CreateTimer(const LookAndFeel::IntID aID,
   // Zero value means that this feature is completely disabled.
   if (delay > 0) {
     MOZ_TRY_VAR(timer,
-                NS_NewTimerWithFuncCallback(
-                    aFunc, this, delay, aType, aName,
-                    mContent->OwnerDoc()->EventTargetFor(TaskCategory::Other)));
+                NS_NewTimerWithFuncCallback(aFunc, this, delay, aType, aName,
+                                            GetMainThreadSerialEventTarget()));
   }
 
   timer.forget(aTimer);
@@ -2485,9 +2484,7 @@ class nsDisplayTreeBody final : public nsPaintedDisplayItem {
   }
 
   bool IsWindowActive() const {
-    DocumentState docState =
-        mFrame->PresContext()->Document()->GetDocumentState();
-    return !docState.HasState(DocumentState::WINDOW_INACTIVE);
+    return !mFrame->PresContext()->Document()->IsTopLevelWindowInactive();
   }
 
   void ComputeInvalidationRegion(nsDisplayListBuilder* aBuilder,
@@ -4180,8 +4177,7 @@ void nsTreeBodyFrame::PostScrollEvent() {
   if (mScrollEvent.IsPending()) return;
 
   RefPtr<ScrollEvent> event = new ScrollEvent(this);
-  nsresult rv =
-      mContent->OwnerDoc()->Dispatch(TaskCategory::Other, do_AddRef(event));
+  nsresult rv = mContent->OwnerDoc()->Dispatch(do_AddRef(event));
   if (NS_FAILED(rv)) {
     NS_WARNING("failed to dispatch ScrollEvent");
   } else {
@@ -4260,7 +4256,7 @@ void nsTreeBodyFrame::FireRowCountChangedEvent(int32_t aIndex, int32_t aCount) {
   event->SetTrusted(true);
 
   RefPtr<AsyncEventDispatcher> asyncDispatcher =
-      new AsyncEventDispatcher(tree, event);
+      new AsyncEventDispatcher(tree, event.forget());
   asyncDispatcher->PostDOMEvent();
 }
 
@@ -4311,7 +4307,7 @@ void nsTreeBodyFrame::FireInvalidateEvent(int32_t aStartRowIdx,
   event->SetTrusted(true);
 
   RefPtr<AsyncEventDispatcher> asyncDispatcher =
-      new AsyncEventDispatcher(tree, event);
+      new AsyncEventDispatcher(tree, event.forget());
   asyncDispatcher->PostDOMEvent();
 }
 #endif
@@ -4353,7 +4349,7 @@ bool nsTreeBodyFrame::FullScrollbarsUpdate(bool aNeedsFullInvalidation) {
   if (!mCheckingOverflow) {
     nsContentUtils::AddScriptRunner(checker);
   } else {
-    mContent->OwnerDoc()->Dispatch(TaskCategory::Other, checker.forget());
+    mContent->OwnerDoc()->Dispatch(checker.forget());
   }
   return weakFrame.IsAlive();
 }

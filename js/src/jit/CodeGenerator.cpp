@@ -542,6 +542,15 @@ void CodeGenerator::visitOutOfLineCallVM(
     OutOfLineCallVM<Fn, fn, ArgSeq, StoreOutputTo>* ool) {
   LInstruction* lir = ool->lir();
 
+#ifdef JS_JITSPEW
+  JitSpewStart(JitSpew_Codegen, "                                # LIR=%s",
+               lir->opName());
+  if (const char* extra = lir->getExtraName()) {
+    JitSpewCont(JitSpew_Codegen, ":%s", extra);
+  }
+  JitSpewFin(JitSpew_Codegen);
+#endif
+  perfSpewer_.recordInstruction(masm, lir);
   saveLive(lir);
   ool->args().generate(this);
   callVM<Fn, fn>(lir);
@@ -935,6 +944,26 @@ void CodeGenerator::visitOutOfLineICFallback(OutOfLineICFallback* ool) {
       callVM<Fn, IonCloseIterIC::update>(lir);
 
       restoreLive(lir);
+
+      masm.jump(ool->rejoin());
+      return;
+    }
+    case CacheKind::OptimizeGetIterator: {
+      auto* optimizeGetIteratorIC = ic->asOptimizeGetIteratorIC();
+
+      saveLive(lir);
+
+      pushArg(optimizeGetIteratorIC->value());
+      icInfo_[cacheInfoIndex].icOffsetForPush = pushArgWithPatch(ImmWord(-1));
+      pushArg(ImmGCPtr(gen->outerInfo().script()));
+
+      using Fn = bool (*)(JSContext*, HandleScript, IonOptimizeGetIteratorIC*,
+                          HandleValue, bool* res);
+      callVM<Fn, IonOptimizeGetIteratorIC::update>(lir);
+
+      StoreRegisterTo(optimizeGetIteratorIC->output()).generate(this);
+      restoreLiveIgnore(
+          lir, StoreRegisterTo(optimizeGetIteratorIC->output()).clobbered());
 
       masm.jump(ool->rejoin());
       return;
@@ -7041,8 +7070,8 @@ struct ScriptCountBlockState {
   ~ScriptCountBlockState() {
     masm.setPrinter(nullptr);
 
-    if (!printer.hadOutOfMemory()) {
-      block.setCode(printer.string());
+    if (JS::UniqueChars str = printer.release()) {
+      block.setCode(str.get());
     }
   }
 };
@@ -9078,13 +9107,15 @@ void CodeGenerator::visitWasmCallIndirectAdjunctSafepoint(
 
 template <typename InstructionWithMaybeTrapSite>
 void EmitSignalNullCheckTrapSite(MacroAssembler& masm,
-                                 InstructionWithMaybeTrapSite* ins) {
+                                 InstructionWithMaybeTrapSite* ins,
+                                 FaultingCodeOffset fco,
+                                 wasm::TrapMachineInsn tmi) {
   if (!ins->maybeTrap()) {
     return;
   }
   wasm::BytecodeOffset trapOffset(ins->maybeTrap()->offset);
   masm.append(wasm::Trap::NullPointerDereference,
-              wasm::TrapSite(masm.currentOffset(), trapOffset));
+              wasm::TrapSite(tmi, fco, trapOffset));
 }
 
 void CodeGenerator::visitWasmLoadSlot(LWasmLoadSlot* ins) {
@@ -9094,24 +9125,34 @@ void CodeGenerator::visitWasmLoadSlot(LWasmLoadSlot* ins) {
   Address addr(container, ins->offset());
   AnyRegister dst = ToAnyRegister(ins->output());
 
-  EmitSignalNullCheckTrapSite(masm, ins);
+  FaultingCodeOffset fco;
   switch (type) {
     case MIRType::Int32:
       switch (wideningOp) {
         case MWideningOp::None:
-          masm.load32(addr, dst.gpr());
+          fco = masm.load32(addr, dst.gpr());
+          EmitSignalNullCheckTrapSite(masm, ins, fco,
+                                      wasm::TrapMachineInsn::Load32);
           break;
         case MWideningOp::FromU16:
-          masm.load16ZeroExtend(addr, dst.gpr());
+          fco = masm.load16ZeroExtend(addr, dst.gpr());
+          EmitSignalNullCheckTrapSite(masm, ins, fco,
+                                      wasm::TrapMachineInsn::Load16);
           break;
         case MWideningOp::FromS16:
-          masm.load16SignExtend(addr, dst.gpr());
+          fco = masm.load16SignExtend(addr, dst.gpr());
+          EmitSignalNullCheckTrapSite(masm, ins, fco,
+                                      wasm::TrapMachineInsn::Load16);
           break;
         case MWideningOp::FromU8:
-          masm.load8ZeroExtend(addr, dst.gpr());
+          fco = masm.load8ZeroExtend(addr, dst.gpr());
+          EmitSignalNullCheckTrapSite(masm, ins, fco,
+                                      wasm::TrapMachineInsn::Load8);
           break;
         case MWideningOp::FromS8:
-          masm.load8SignExtend(addr, dst.gpr());
+          fco = masm.load8SignExtend(addr, dst.gpr());
+          EmitSignalNullCheckTrapSite(masm, ins, fco,
+                                      wasm::TrapMachineInsn::Load8);
           break;
         default:
           MOZ_CRASH("unexpected widening op in ::visitWasmLoadSlot");
@@ -9119,21 +9160,29 @@ void CodeGenerator::visitWasmLoadSlot(LWasmLoadSlot* ins) {
       break;
     case MIRType::Float32:
       MOZ_ASSERT(wideningOp == MWideningOp::None);
-      masm.loadFloat32(addr, dst.fpu());
+      fco = masm.loadFloat32(addr, dst.fpu());
+      EmitSignalNullCheckTrapSite(masm, ins, fco,
+                                  wasm::TrapMachineInsn::Load32);
       break;
     case MIRType::Double:
       MOZ_ASSERT(wideningOp == MWideningOp::None);
-      masm.loadDouble(addr, dst.fpu());
+      fco = masm.loadDouble(addr, dst.fpu());
+      EmitSignalNullCheckTrapSite(masm, ins, fco,
+                                  wasm::TrapMachineInsn::Load64);
       break;
     case MIRType::Pointer:
     case MIRType::WasmAnyRef:
       MOZ_ASSERT(wideningOp == MWideningOp::None);
-      masm.loadPtr(addr, dst.gpr());
+      fco = masm.loadPtr(addr, dst.gpr());
+      EmitSignalNullCheckTrapSite(masm, ins, fco,
+                                  wasm::TrapMachineInsnForLoadWord());
       break;
 #ifdef ENABLE_WASM_SIMD
     case MIRType::Simd128:
       MOZ_ASSERT(wideningOp == MWideningOp::None);
-      masm.loadUnalignedSimd128(addr, dst.fpu());
+      fco = masm.loadUnalignedSimd128(addr, dst.fpu());
+      EmitSignalNullCheckTrapSite(masm, ins, fco,
+                                  wasm::TrapMachineInsn::Load128);
       break;
 #endif
     default:
@@ -9151,28 +9200,38 @@ void CodeGenerator::visitWasmStoreSlot(LWasmStoreSlot* ins) {
     MOZ_RELEASE_ASSERT(narrowingOp == MNarrowingOp::None);
   }
 
-  EmitSignalNullCheckTrapSite(masm, ins);
+  FaultingCodeOffset fco;
   switch (type) {
     case MIRType::Int32:
       switch (narrowingOp) {
         case MNarrowingOp::None:
-          masm.store32(src.gpr(), addr);
+          fco = masm.store32(src.gpr(), addr);
+          EmitSignalNullCheckTrapSite(masm, ins, fco,
+                                      wasm::TrapMachineInsn::Store32);
           break;
         case MNarrowingOp::To16:
-          masm.store16(src.gpr(), addr);
+          fco = masm.store16(src.gpr(), addr);
+          EmitSignalNullCheckTrapSite(masm, ins, fco,
+                                      wasm::TrapMachineInsn::Store16);
           break;
         case MNarrowingOp::To8:
-          masm.store8(src.gpr(), addr);
+          fco = masm.store8(src.gpr(), addr);
+          EmitSignalNullCheckTrapSite(masm, ins, fco,
+                                      wasm::TrapMachineInsn::Store8);
           break;
         default:
           MOZ_CRASH();
       }
       break;
     case MIRType::Float32:
-      masm.storeFloat32(src.fpu(), addr);
+      fco = masm.storeFloat32(src.fpu(), addr);
+      EmitSignalNullCheckTrapSite(masm, ins, fco,
+                                  wasm::TrapMachineInsn::Store32);
       break;
     case MIRType::Double:
-      masm.storeDouble(src.fpu(), addr);
+      fco = masm.storeDouble(src.fpu(), addr);
+      EmitSignalNullCheckTrapSite(masm, ins, fco,
+                                  wasm::TrapMachineInsn::Store64);
       break;
     case MIRType::Pointer:
       // This could be correct, but it would be a new usage, so check carefully.
@@ -9181,7 +9240,9 @@ void CodeGenerator::visitWasmStoreSlot(LWasmStoreSlot* ins) {
       MOZ_CRASH("Bad type in visitWasmStoreSlot. Use LWasmStoreRef.");
 #ifdef ENABLE_WASM_SIMD
     case MIRType::Simd128:
-      masm.storeUnalignedSimd128(src.fpu(), addr);
+      fco = masm.storeUnalignedSimd128(src.fpu(), addr);
+      EmitSignalNullCheckTrapSite(masm, ins, fco,
+                                  wasm::TrapMachineInsn::Store128);
       break;
 #endif
     default:
@@ -9225,8 +9286,9 @@ void CodeGenerator::visitWasmStoreRef(LWasmStoreRef* ins) {
     masm.bind(&skipPreBarrier);
   }
 
-  EmitSignalNullCheckTrapSite(masm, ins);
-  masm.storePtr(value, Address(valueBase, offset));
+  FaultingCodeOffset fco = masm.storePtr(value, Address(valueBase, offset));
+  EmitSignalNullCheckTrapSite(masm, ins, fco,
+                              wasm::TrapMachineInsnForStoreWord());
   // The postbarrier is handled separately.
 }
 
@@ -9301,16 +9363,37 @@ void CodeGenerator::visitWasmLoadSlotI64(LWasmLoadSlotI64* ins) {
   Register container = ToRegister(ins->containerRef());
   Address addr(container, ins->offset());
   Register64 output = ToOutRegister64(ins);
-  EmitSignalNullCheckTrapSite(masm, ins);
-  masm.load64(addr, output);
+  // Either 1 or 2 words.  On a 32-bit target, it is hard to argue that one
+  // transaction will always trap before the other, so it seems safest to
+  // register both of them as potentially trapping.
+#ifdef JS_64BIT
+  FaultingCodeOffset fco = masm.load64(addr, output);
+  EmitSignalNullCheckTrapSite(masm, ins, fco, wasm::TrapMachineInsn::Load64);
+#else
+  FaultingCodeOffsetPair fcop = masm.load64(addr, output);
+  EmitSignalNullCheckTrapSite(masm, ins, fcop.first,
+                              wasm::TrapMachineInsn::Load32);
+  EmitSignalNullCheckTrapSite(masm, ins, fcop.second,
+                              wasm::TrapMachineInsn::Load32);
+#endif
 }
 
 void CodeGenerator::visitWasmStoreSlotI64(LWasmStoreSlotI64* ins) {
   Register container = ToRegister(ins->containerRef());
   Address addr(container, ins->offset());
   Register64 value = ToRegister64(ins->value());
-  EmitSignalNullCheckTrapSite(masm, ins);
-  masm.store64(value, addr);
+  // Either 1 or 2 words.  As above we register both transactions in the
+  // 2-word case.
+#ifdef JS_64BIT
+  FaultingCodeOffset fco = masm.store64(value, addr);
+  EmitSignalNullCheckTrapSite(masm, ins, fco, wasm::TrapMachineInsn::Store64);
+#else
+  FaultingCodeOffsetPair fcop = masm.store64(value, addr);
+  EmitSignalNullCheckTrapSite(masm, ins, fcop.first,
+                              wasm::TrapMachineInsn::Store32);
+  EmitSignalNullCheckTrapSite(masm, ins, fcop.second,
+                              wasm::TrapMachineInsn::Store32);
+#endif
 }
 
 void CodeGenerator::visitArrayBufferByteLength(LArrayBufferByteLength* lir) {
@@ -10689,195 +10772,6 @@ void CodeGenerator::visitCompareS(LCompareS* lir) {
   masm.bind(ool->rejoin());
 }
 
-template <typename T, typename CharT>
-static inline T CopyCharacters(const CharT* chars) {
-  T value = 0;
-  std::memcpy(&value, chars, sizeof(T));
-  return value;
-}
-
-template <typename T>
-static inline T CopyCharacters(const JSLinearString* str, size_t index) {
-  JS::AutoCheckCannotGC nogc;
-
-  if (str->hasLatin1Chars()) {
-    MOZ_ASSERT(index + sizeof(T) / sizeof(JS::Latin1Char) <= str->length());
-    return CopyCharacters<T>(str->latin1Chars(nogc) + index);
-  }
-
-  MOZ_ASSERT(sizeof(T) >= sizeof(char16_t));
-  MOZ_ASSERT(index + sizeof(T) / sizeof(char16_t) <= str->length());
-  return CopyCharacters<T>(str->twoByteChars(nogc) + index);
-}
-
-enum class CompareDirection { Forward, Backward };
-
-// NOTE: Clobbers the input when CompareDirection is backward.
-static void CompareCharacters(MacroAssembler& masm, Register input,
-                              const JSLinearString* str, Register output,
-                              JSOp op, CompareDirection direction, Label* done,
-                              Label* oolEntry) {
-  MOZ_ASSERT(input != output);
-
-  size_t length = str->length();
-  MOZ_ASSERT(length > 0);
-
-  CharEncoding encoding =
-      str->hasLatin1Chars() ? CharEncoding::Latin1 : CharEncoding::TwoByte;
-  size_t encodingSize = encoding == CharEncoding::Latin1
-                            ? sizeof(JS::Latin1Char)
-                            : sizeof(char16_t);
-  size_t byteLength = length * encodingSize;
-
-  // Take the OOL path when the string is a rope or has a different character
-  // representation.
-  masm.branchIfRope(input, oolEntry);
-  if (encoding == CharEncoding::Latin1) {
-    masm.branchTwoByteString(input, oolEntry);
-  } else {
-    JS::AutoCheckCannotGC nogc;
-    if (mozilla::IsUtf16Latin1(str->twoByteRange(nogc))) {
-      masm.branchLatin1String(input, oolEntry);
-    } else {
-      // This case was already handled in the caller.
-#ifdef DEBUG
-      Label ok;
-      masm.branchTwoByteString(input, &ok);
-      masm.assumeUnreachable("Unexpected Latin-1 string");
-      masm.bind(&ok);
-#endif
-    }
-  }
-
-#ifdef DEBUG
-  {
-    Label ok;
-    masm.branch32(Assembler::AboveOrEqual,
-                  Address(input, JSString::offsetOfLength()), Imm32(length),
-                  &ok);
-    masm.assumeUnreachable("Input mustn't be smaller than search string");
-    masm.bind(&ok);
-  }
-#endif
-
-  // Load the input string's characters.
-  Register stringChars = output;
-  masm.loadStringChars(input, stringChars, encoding);
-
-  if (direction == CompareDirection::Backward) {
-    masm.loadStringLength(input, input);
-    masm.sub32(Imm32(length), input);
-
-    masm.addToCharPtr(stringChars, input, encoding);
-  }
-
-  // Prefer a single compare-and-set instruction if possible.
-  if (byteLength == 1 || byteLength == 2 || byteLength == 4 ||
-      byteLength == 8) {
-    auto cond = JSOpToCondition(op, /* isSigned = */ false);
-
-    Address addr(stringChars, 0);
-    switch (byteLength) {
-      case 8: {
-        auto x = CopyCharacters<uint64_t>(str, 0);
-        masm.cmp64Set(cond, addr, Imm64(x), output);
-        break;
-      }
-      case 4: {
-        auto x = CopyCharacters<uint32_t>(str, 0);
-        masm.cmp32Set(cond, addr, Imm32(x), output);
-        break;
-      }
-      case 2: {
-        auto x = CopyCharacters<uint16_t>(str, 0);
-        masm.cmp16Set(cond, addr, Imm32(x), output);
-        break;
-      }
-      case 1: {
-        auto x = CopyCharacters<uint8_t>(str, 0);
-        masm.cmp8Set(cond, addr, Imm32(x), output);
-        break;
-      }
-    }
-  } else {
-    Label setNotEqualResult;
-
-    size_t pos = 0;
-    for (size_t stride : {8, 4, 2, 1}) {
-      while (byteLength >= stride) {
-        Address addr(stringChars, pos * encodingSize);
-        switch (stride) {
-          case 8: {
-            auto x = CopyCharacters<uint64_t>(str, pos);
-            masm.branch64(Assembler::NotEqual, addr, Imm64(x),
-                          &setNotEqualResult);
-            break;
-          }
-          case 4: {
-            auto x = CopyCharacters<uint32_t>(str, pos);
-            masm.branch32(Assembler::NotEqual, addr, Imm32(x),
-                          &setNotEqualResult);
-            break;
-          }
-          case 2: {
-            auto x = CopyCharacters<uint16_t>(str, pos);
-            masm.branch16(Assembler::NotEqual, addr, Imm32(x),
-                          &setNotEqualResult);
-            break;
-          }
-          case 1: {
-            auto x = CopyCharacters<uint8_t>(str, pos);
-            masm.branch8(Assembler::NotEqual, addr, Imm32(x),
-                         &setNotEqualResult);
-            break;
-          }
-        }
-
-        byteLength -= stride;
-        pos += stride / encodingSize;
-      }
-
-      // Prefer a single comparison for trailing bytes instead of doing
-      // multiple consecutive comparisons.
-      //
-      // For example when comparing against the string "example", emit two
-      // four-byte comparisons against "exam" and "mple" instead of doing
-      // three comparisons against "exam", "pl", and finally "e".
-      if (pos > 0 && byteLength > stride / 2) {
-        MOZ_ASSERT(stride == 8 || stride == 4);
-
-        size_t prev = pos - (stride - byteLength) / encodingSize;
-        Address addr(stringChars, prev * encodingSize);
-        switch (stride) {
-          case 8: {
-            auto x = CopyCharacters<uint64_t>(str, prev);
-            masm.branch64(Assembler::NotEqual, addr, Imm64(x),
-                          &setNotEqualResult);
-            break;
-          }
-          case 4: {
-            auto x = CopyCharacters<uint32_t>(str, prev);
-            masm.branch32(Assembler::NotEqual, addr, Imm32(x),
-                          &setNotEqualResult);
-            break;
-          }
-        }
-
-        // Break from the loop, because we've finished the complete string.
-        break;
-      }
-    }
-
-    // Falls through if both strings are equal.
-
-    masm.move32(Imm32(op == JSOp::Eq || op == JSOp::StrictEq), output);
-    masm.jump(done);
-
-    masm.bind(&setNotEqualResult);
-    masm.move32(Imm32(op == JSOp::Ne || op == JSOp::StrictNe), output);
-  }
-}
-
 void CodeGenerator::visitCompareSInline(LCompareSInline* lir) {
   JSOp op = lir->mir()->jsop();
   MOZ_ASSERT(IsEqualityOp(op));
@@ -10939,8 +10833,12 @@ void CodeGenerator::visitCompareSInline(LCompareSInline* lir) {
 
   masm.bind(&compareChars);
 
-  CompareCharacters(masm, input, str, output, op, CompareDirection::Forward,
-                    ool->rejoin(), ool->entry());
+  // Load the input string's characters.
+  Register stringChars = output;
+  masm.loadStringCharsForCompare(input, str, stringChars, ool->entry());
+
+  // Start comparing character by character.
+  masm.compareStringChars(op, stringChars, str, output);
 
   masm.bind(ool->rejoin());
 }
@@ -12263,9 +12161,12 @@ void CodeGenerator::visitStringStartsWithInline(LStringStartsWithInline* lir) {
     }
   }
 
-  // Otherwise start comparing character by character.
-  CompareCharacters(masm, temp, searchString, output, JSOp::Eq,
-                    CompareDirection::Forward, ool->rejoin(), ool->entry());
+  // Load the input string's characters.
+  Register stringChars = output;
+  masm.loadStringCharsForCompare(temp, searchString, stringChars, ool->entry());
+
+  // Start comparing character by character.
+  masm.compareStringChars(JSOp::Eq, stringChars, searchString, output);
 
   masm.bind(ool->rejoin());
 }
@@ -12326,7 +12227,10 @@ void CodeGenerator::visitStringEndsWithInline(LStringEndsWithInline* lir) {
   masm.jump(ool->rejoin());
   masm.bind(&notPointerEqual);
 
-  if (searchString->hasTwoByteChars()) {
+  CharEncoding encoding = searchString->hasLatin1Chars()
+                              ? CharEncoding::Latin1
+                              : CharEncoding::TwoByte;
+  if (encoding == CharEncoding::TwoByte) {
     // Pure two-byte strings can't be a suffix of Latin-1 strings.
     JS::AutoCheckCannotGC nogc;
     if (!mozilla::IsUtf16Latin1(searchString->twoByteRange(nogc))) {
@@ -12338,9 +12242,17 @@ void CodeGenerator::visitStringEndsWithInline(LStringEndsWithInline* lir) {
     }
   }
 
-  // Otherwise start comparing character by character.
-  CompareCharacters(masm, temp, searchString, output, JSOp::Eq,
-                    CompareDirection::Backward, ool->rejoin(), ool->entry());
+  // Load the input string's characters.
+  Register stringChars = output;
+  masm.loadStringCharsForCompare(temp, searchString, stringChars, ool->entry());
+
+  // Move string-char pointer to the suffix string.
+  masm.loadStringLength(temp, temp);
+  masm.sub32(Imm32(length), temp);
+  masm.addToCharPtr(stringChars, temp, encoding);
+
+  // Start comparing character by character.
+  masm.compareStringChars(JSOp::Eq, stringChars, searchString, output);
 
   masm.bind(ool->rejoin());
 }
@@ -13680,6 +13592,17 @@ void CodeGenerator::visitCloseIterCache(LCloseIterCache* lir) {
   CompletionKind kind = CompletionKind(lir->mir()->completionKind());
 
   IonCloseIterIC ic(liveRegs, iter, temp, kind);
+  addIC(lir, allocateIC(ic));
+}
+
+void CodeGenerator::visitOptimizeGetIteratorCache(
+    LOptimizeGetIteratorCache* lir) {
+  LiveRegisterSet liveRegs = lir->safepoint()->liveRegs();
+  ValueOperand val = ToValue(lir, LOptimizeGetIteratorCache::ValueIndex);
+  Register output = ToRegister(lir->output());
+  Register temp = ToRegister(lir->temp0());
+
+  IonOptimizeGetIteratorIC ic(liveRegs, val, output, temp);
   addIC(lir, allocateIC(ic));
 }
 
@@ -17591,6 +17514,16 @@ void CodeGenerator::visitWasmBoundsCheck64(LWasmBoundsCheck64* ins) {
     masm.wasmBoundsCheck64(Assembler::AboveOrEqual, ptr, boundsCheckLimit,
                            ool->entry());
   }
+}
+
+void CodeGenerator::visitWasmBoundsCheckRange32(LWasmBoundsCheckRange32* ins) {
+  const MWasmBoundsCheckRange32* mir = ins->mir();
+  Register index = ToRegister(ins->index());
+  Register length = ToRegister(ins->length());
+  Register limit = ToRegister(ins->limit());
+  Register tmp = ToRegister(ins->temp0());
+
+  masm.wasmBoundsCheckRange32(index, length, limit, tmp, mir->bytecodeOffset());
 }
 
 void CodeGenerator::visitWasmAlignmentCheck(LWasmAlignmentCheck* ins) {

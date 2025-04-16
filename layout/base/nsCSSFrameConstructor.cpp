@@ -117,8 +117,6 @@
 #undef NOISY_FIRST_LETTER
 
 #include "nsMathMLParts.h"
-#include "mozilla/dom/SVGFilters.h"
-#include "mozilla/dom/SVGTests.h"
 #include "mozilla/SVGGradientFrame.h"
 
 #include "nsRefreshDriver.h"
@@ -1075,10 +1073,11 @@ void nsFrameConstructorState::ConstructBackdropFrameFor(nsIContent* aContent,
     return;
   }
 
+  ComputedStyle* parentStyle = nsLayoutUtils::GetStyleFrame(aFrame)->Style();
   RefPtr<ComputedStyle> style =
       mPresShell->StyleSet()->ResolvePseudoElementStyle(
           *aContent->AsElement(), PseudoStyleType::backdrop, nullptr,
-          /* aParentStyle */ nullptr);
+          parentStyle);
   MOZ_ASSERT(style->StyleDisplay()->mTopLayer == StyleTopLayer::Top);
   nsContainerFrame* parentFrame =
       GetGeometricParent(*style->StyleDisplay(), nullptr);
@@ -1350,16 +1349,6 @@ static void MoveChildrenTo(nsIFrame* aOldParent, nsContainerFrame* aNewParent,
   }
 }
 
-static bool MaybeApplyPageName(nsFrameConstructorState& aState,
-                               const StylePageName& aPageName) {
-  if (aPageName.IsPageName()) {
-    aState.mAutoPageNameValue = aPageName.AsPageName().AsAtom();
-    return true;
-  }
-  MOZ_ASSERT(aPageName.IsAuto(), "Impossible page name");
-  return false;
-}
-
 static void EnsureAutoPageName(nsFrameConstructorState& aState,
                                const nsContainerFrame* const aFrame) {
   // Check if we need to figure out our used page name.
@@ -1372,8 +1361,8 @@ static void EnsureAutoPageName(nsFrameConstructorState& aState,
 
   for (const nsContainerFrame* frame = aFrame; frame;
        frame = frame->GetParent()) {
-    const StylePageName& pageName = frame->StylePage()->mPage;
-    if (MaybeApplyPageName(aState, pageName)) {
+    if (const nsAtom* maybePageName = frame->GetStylePageName()) {
+      aState.mAutoPageNameValue = maybePageName;
       return;
     }
   }
@@ -1402,7 +1391,9 @@ nsCSSFrameConstructor::AutoFrameConstructionPageName::
 
   MOZ_ASSERT(mNameToRestore,
              "Page name should have been found by EnsureAutoPageName");
-  MaybeApplyPageName(aState, aFrame->StylePage()->mPage);
+  if (const nsAtom* maybePageName = aFrame->GetStylePageName()) {
+    aState.mAutoPageNameValue = maybePageName;
+  }
   aFrame->SetAutoPageValue(aState.mAutoPageNameValue);
 }
 
@@ -2607,8 +2598,8 @@ nsIFrame* nsCSSFrameConstructor::ConstructDocElementFrame(
 }
 
 nsIFrame* nsCSSFrameConstructor::ConstructRootFrame() {
-  AUTO_PROFILER_LABEL("nsCSSFrameConstructor::ConstructRootFrame",
-                      LAYOUT_FrameConstruction);
+  AUTO_PROFILER_LABEL_HOT("nsCSSFrameConstructor::ConstructRootFrame",
+                          LAYOUT_FrameConstruction);
   AUTO_LAYOUT_PHASE_ENTRY_POINT(mPresShell->GetPresContext(), FrameC);
 
   ServoStyleSet* styleSet = mPresShell->StyleSet();
@@ -2911,12 +2902,11 @@ nsContainerFrame* nsCSSFrameConstructor::ConstructPageFrame(
   nsContainerFrame* pageContentFrame = NS_NewPageContentFrame(
       aPresShell, pageContentPseudoStyle, pageName.forget());
 
-  // Initialize the page content frame and force it to have a view. Also make it
-  // the containing block for fixed elements which are repeated on every page.
-  nsIFrame* prevPageContentFrame = nullptr;
+  nsPageContentFrame* prevPageContentFrame = nullptr;
   if (aPrevPageFrame) {
-    prevPageContentFrame = aPrevPageFrame->PrincipalChildList().FirstChild();
-    NS_ASSERTION(prevPageContentFrame, "missing page content frame");
+    MOZ_ASSERT(aPrevPageFrame->IsPageFrame());
+    prevPageContentFrame =
+        static_cast<nsPageFrame*>(aPrevPageFrame)->PageContentFrame();
   }
   pageContentFrame->Init(nullptr, pageFrame, prevPageContentFrame);
   if (!prevPageContentFrame) {
@@ -3249,18 +3239,17 @@ nsIFrame* nsCSSFrameConstructor::ConstructFieldSetFrame(
   return fieldsetFrame;
 }
 
-nsIFrame* nsCSSFrameConstructor::ConstructDetails(
-    nsFrameConstructorState& aState, FrameConstructionItem& aItem,
-    nsContainerFrame* aParentFrame, const nsStyleDisplay* aStyleDisplay,
-    nsFrameList& aFrameList) {
-  if (!aStyleDisplay->IsScrollableOverflow()) {
-    return ConstructNonScrollableBlock(aState, aItem, aParentFrame,
-                                       aStyleDisplay, aFrameList);
+const nsCSSFrameConstructor::FrameConstructionData*
+nsCSSFrameConstructor::FindDetailsData(const Element& aElement,
+                                       ComputedStyle& aStyle) {
+  if (!StaticPrefs::layout_details_force_block_layout()) {
+    return nullptr;
   }
-
-  // Build a scroll frame if necessary.
-  return ConstructScrollableBlock(aState, aItem, aParentFrame, aStyleDisplay,
-                                  aFrameList);
+  static constexpr FrameConstructionData sBlockData[2] = {
+      {&nsCSSFrameConstructor::ConstructNonScrollableBlock},
+      {&nsCSSFrameConstructor::ConstructScrollableBlock},
+  };
+  return &sBlockData[aStyle.StyleDisplay()->IsScrollableOverflow()];
 }
 
 nsIFrame* nsCSSFrameConstructor::ConstructBlockRubyFrame(
@@ -3506,7 +3495,8 @@ nsCSSFrameConstructor::FindHTMLData(const Element& aElement,
       SIMPLE_TAG_CREATE(audio, NS_NewHTMLVideoFrame),
       SIMPLE_TAG_CREATE(progress, NS_NewProgressFrame),
       SIMPLE_TAG_CREATE(meter, NS_NewMeterFrame),
-      COMPLEX_TAG_CREATE(details, &nsCSSFrameConstructor::ConstructDetails)};
+      SIMPLE_TAG_CHAIN(details, nsCSSFrameConstructor::FindDetailsData),
+  };
 
   return FindDataByTag(aElement, aStyle, sHTMLData, ArrayLength(sHTMLData));
 }
@@ -4853,13 +4843,6 @@ nsIFrame* nsCSSFrameConstructor::ConstructMarker(
 #define SIMPLE_SVG_CREATE(_tag, _func) \
   { nsGkAtoms::_tag, SIMPLE_SVG_FCDATA(_func) }
 
-static bool IsFilterPrimitiveChildTag(const nsAtom* aTag) {
-  return aTag == nsGkAtoms::feDistantLight || aTag == nsGkAtoms::fePointLight ||
-         aTag == nsGkAtoms::feSpotLight || aTag == nsGkAtoms::feFuncR ||
-         aTag == nsGkAtoms::feFuncG || aTag == nsGkAtoms::feFuncB ||
-         aTag == nsGkAtoms::feFuncA || aTag == nsGkAtoms::feMergeNode;
-}
-
 /* static */
 const nsCSSFrameConstructor::FrameConstructionData*
 nsCSSFrameConstructor::FindSVGData(const Element& aElement,
@@ -4932,8 +4915,7 @@ nsCSSFrameConstructor::FindSVGData(const Element& aElement,
     return &sMarkerSVGData;
   }
 
-  nsCOMPtr<SVGTests> tests = do_QueryInterface(const_cast<Element*>(&aElement));
-  if (tests && !tests->PassesConditionalProcessingTests()) {
+  if (!aElement.PassesConditionalProcessingTests()) {
     // Elements with failing conditional processing attributes never get
     // rendered.  Note that this is not where we select which frame in a
     // <switch> to render!  That happens in SVGSwitchFrame::PaintSVG.
@@ -4964,10 +4946,8 @@ nsCSSFrameConstructor::FindSVGData(const Element& aElement,
   // primitives.  If aParentFrame is null, we know that the frame that will
   // be created will be an nsInlineFrame, so it can never be a filter.
   bool parentIsFilter = aParentFrame && aParentFrame->IsSVGFilterFrame();
-  nsCOMPtr<SVGFE> filterPrimitive =
-      do_QueryInterface(const_cast<Element*>(&aElement));
-  if ((parentIsFilter && !filterPrimitive) ||
-      (!parentIsFilter && filterPrimitive)) {
+  if ((parentIsFilter && !aElement.IsSVGFilterPrimitiveElement()) ||
+      (!parentIsFilter && aElement.IsSVGFilterPrimitiveElement())) {
     return &sSuppressData;
   }
 
@@ -4977,8 +4957,10 @@ nsCSSFrameConstructor::FindSVGData(const Element& aElement,
   // primitive.
   bool parentIsFEContainerFrame =
       aParentFrame && aParentFrame->IsSVGFEContainerFrame();
-  if ((parentIsFEContainerFrame && !IsFilterPrimitiveChildTag(tag)) ||
-      (!parentIsFEContainerFrame && IsFilterPrimitiveChildTag(tag))) {
+  if ((parentIsFEContainerFrame &&
+       !aElement.IsSVGFilterPrimitiveChildElement()) ||
+      (!parentIsFEContainerFrame &&
+       aElement.IsSVGFilterPrimitiveChildElement())) {
     return &sSuppressData;
   }
 
@@ -6491,8 +6473,8 @@ void nsCSSFrameConstructor::ContentAppended(nsIContent* aFirstNewContent,
   MOZ_ASSERT(aInsertionKind == InsertionKind::Sync ||
              !RestyleManager()->IsInStyleRefresh());
 
-  AUTO_PROFILER_LABEL("nsCSSFrameConstructor::ContentAppended",
-                      LAYOUT_FrameConstruction);
+  AUTO_PROFILER_LABEL_HOT("nsCSSFrameConstructor::ContentAppended",
+                          LAYOUT_FrameConstruction);
   AUTO_LAYOUT_PHASE_ENTRY_POINT(mPresShell->GetPresContext(), FrameC);
 
 #ifdef DEBUG
@@ -6803,8 +6785,8 @@ void nsCSSFrameConstructor::ContentRangeInserted(nsIContent* aStartChild,
   MOZ_ASSERT(aInsertionKind == InsertionKind::Sync ||
              !RestyleManager()->IsInStyleRefresh());
 
-  AUTO_PROFILER_LABEL("nsCSSFrameConstructor::ContentRangeInserted",
-                      LAYOUT_FrameConstruction);
+  AUTO_PROFILER_LABEL_HOT("nsCSSFrameConstructor::ContentRangeInserted",
+                          LAYOUT_FrameConstruction);
   AUTO_LAYOUT_PHASE_ENTRY_POINT(mPresShell->GetPresContext(), FrameC);
 
   MOZ_ASSERT(aStartChild, "must always pass a child");
@@ -7301,8 +7283,8 @@ bool nsCSSFrameConstructor::ContentRemoved(nsIContent* aChild,
   MOZ_ASSERT(aChild);
   MOZ_ASSERT(!aChild->IsRootOfNativeAnonymousSubtree() || !aOldNextSibling,
              "Anonymous roots don't have siblings");
-  AUTO_PROFILER_LABEL("nsCSSFrameConstructor::ContentRemoved",
-                      LAYOUT_FrameConstruction);
+  AUTO_PROFILER_LABEL_HOT("nsCSSFrameConstructor::ContentRemoved",
+                          LAYOUT_FrameConstruction);
   AUTO_LAYOUT_PHASE_ENTRY_POINT(mPresShell->GetPresContext(), FrameC);
   nsPresContext* presContext = mPresShell->GetPresContext();
   MOZ_ASSERT(presContext, "Our presShell should have a valid presContext");
@@ -7679,8 +7661,8 @@ bool nsCSSFrameConstructor::EnsureFrameForTextNodeIsCreatedAfterFlush(
 
 void nsCSSFrameConstructor::CharacterDataChanged(
     nsIContent* aContent, const CharacterDataChangeInfo& aInfo) {
-  AUTO_PROFILER_LABEL("nsCSSFrameConstructor::CharacterDataChanged",
-                      LAYOUT_FrameConstruction);
+  AUTO_PROFILER_LABEL_HOT("nsCSSFrameConstructor::CharacterDataChanged",
+                          LAYOUT_FrameConstruction);
   AUTO_LAYOUT_PHASE_ENTRY_POINT(mPresShell->GetPresContext(), FrameC);
 
   if ((aContent->HasFlag(NS_CREATE_FRAME_IF_NON_WHITESPACE) &&

@@ -65,7 +65,8 @@ class nsIContent : public nsINode {
 
   NS_DECLARE_STATIC_IID_ACCESSOR(NS_ICONTENT_IID)
 
-  NS_DECL_CYCLE_COLLECTING_ISUPPORTS_FINAL_DELETECYCLECOLLECTABLE
+  NS_DECL_ISUPPORTS_INHERITED
+  NS_IMETHOD_(void) DeleteCycleCollectable(void) final;
 
   NS_DECL_CYCLE_COLLECTION_CLASS(nsIContent)
 
@@ -660,7 +661,7 @@ class nsIContent : public nsINode {
 
   class nsContentSlots : public nsINode::nsSlots {
    public:
-    nsContentSlots() : nsINode::nsSlots(), mExtendedSlots(0) {}
+    nsContentSlots() : mExtendedSlots(0) {}
 
     ~nsContentSlots() {
       if (!(mExtendedSlots & sNonOwningExtendedSlotsFlag)) {
@@ -793,6 +794,8 @@ class nsIContent : public nsINode {
   // the tabfocus bit field applies to xul elements.
   static bool sTabFocusModelAppliesToXUL;
 };
+
+NON_VIRTUAL_ADDREF_RELEASE(nsIContent)
 
 NS_DEFINE_STATIC_IID_ACCESSOR(nsIContent, NS_ICONTENT_IID)
 

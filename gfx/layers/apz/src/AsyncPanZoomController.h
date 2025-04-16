@@ -430,7 +430,7 @@ class AsyncPanZoomController {
    */
   bool HasTreeManager(const APZCTreeManager* aTreeManager) const;
 
-  void StartAnimation(AsyncPanZoomAnimation* aAnimation);
+  void StartAnimation(already_AddRefed<AsyncPanZoomAnimation> aAnimation);
 
   /**
    * Cancels any currently running animation.
@@ -1123,6 +1123,7 @@ class AsyncPanZoomController {
   // notification.
   CSSToParentLayerScale mLastNotifiedZoom;
 
+  // Accessing mAnimation needs to be protected by mRecursiveMutex
   RefPtr<AsyncPanZoomAnimation> mAnimation;
 
   UniquePtr<OverscrollEffectBase> mOverscrollEffect;

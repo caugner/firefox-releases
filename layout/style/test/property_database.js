@@ -240,10 +240,6 @@ var validNonUrlImageValues = [
   // When that happens this should be moved to the `invalid` list.
   "repeating-radial-gradient(circle closest-side at left 0px bottom 7in, hsl(2,2%,5%), rgb(1,6,0))",
 
-  "-moz-image-rect(url(data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAACAAAAAgCAIAAAD8GO2jAAAAKElEQVR42u3NQQ0AAAgEoNP+nTWFDzcoQE1udQQCgUAgEAgEAsGTYAGjxAE/G/Q2tQAAAABJRU5ErkJggg==), 2, 10, 10, 2)",
-  "-moz-image-rect(url(data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAACAAAAAgCAIAAAD8GO2jAAAAKElEQVR42u3NQQ0AAAgEoNP+nTWFDzcoQE1udQQCgUAgEAgEAsGTYAGjxAE/G/Q2tQAAAABJRU5ErkJggg==), 10%, 50%, 30%, 0%)",
-  "-moz-image-rect(url(data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAACAAAAAgCAIAAAD8GO2jAAAAKElEQVR42u3NQQ0AAAgEoNP+nTWFDzcoQE1udQQCgUAgEAgEAsGTYAGjxAE/G/Q2tQAAAABJRU5ErkJggg==), 10, 50%, 30%, 0)",
-
   "radial-gradient(at calc(25%) top, red, blue)",
   "radial-gradient(at left calc(25%), red, blue)",
   "radial-gradient(at calc(25px) top, red, blue)",
@@ -525,7 +521,7 @@ var invalidNonUrlImageValues = [
   "linear-gradient(30deg red, blue)",
   "linear-gradient(to top left red, blue)",
   "linear-gradient(to right red, blue)",
-  /* Invalid color, calc() or -moz-image-rect() function */
+  /* Invalid color or calc() function */
   "linear-gradient(red, rgb(0, rubbish, 0) 50%, red)",
   "linear-gradient(red, red calc(50% + rubbish), red)",
   "linear-gradient(to top calc(50% + rubbish), red, blue)",
@@ -4079,7 +4075,6 @@ var gCSSProperties = {
       "url(404.png) rgba(0, 0, 0, 0) rgb(255, 0, 0), url(404.png) rgba(0, 0, 0, 0) rgb(255, 0, 0)",
       "url(404.png) rgb(255, 0, 0), url(404.png) rgb(255, 0, 0)",
       /* error inside functions */
-      "-moz-image-rect(url(data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAACAAAAAgCAIAAAD8GO2jAAAAKElEQVR42u3NQQ0AAAgEoNP+nTWFDzcoQE1udQQCgUAgEAgEAsGTYAGjxAE/G/Q2tQAAAABJRU5ErkJggg==), rubbish, 50%, 30%, 0) transparent",
       "-moz-element(#a rubbish) black",
       "content-box text text",
       "padding-box text url(404.png) text",
@@ -10099,48 +10094,6 @@ var gCSSProperties = {
     alias_for: "tab-size",
     subproperties: ["tab-size"],
   },
-  "-moz-transform": {
-    domProp: "MozTransform",
-    inherited: false,
-    type: CSS_TYPE_SHORTHAND_AND_LONGHAND,
-    alias_for: "transform",
-    subproperties: ["transform"],
-  },
-  "-moz-transform-origin": {
-    domProp: "MozTransformOrigin",
-    inherited: false,
-    type: CSS_TYPE_SHORTHAND_AND_LONGHAND,
-    alias_for: "transform-origin",
-    subproperties: ["transform-origin"],
-  },
-  "-moz-perspective-origin": {
-    domProp: "MozPerspectiveOrigin",
-    inherited: false,
-    type: CSS_TYPE_SHORTHAND_AND_LONGHAND,
-    alias_for: "perspective-origin",
-    subproperties: ["perspective-origin"],
-  },
-  "-moz-perspective": {
-    domProp: "MozPerspective",
-    inherited: false,
-    type: CSS_TYPE_SHORTHAND_AND_LONGHAND,
-    alias_for: "perspective",
-    subproperties: ["perspective"],
-  },
-  "-moz-backface-visibility": {
-    domProp: "MozBackfaceVisibility",
-    inherited: false,
-    type: CSS_TYPE_SHORTHAND_AND_LONGHAND,
-    alias_for: "backface-visibility",
-    subproperties: ["backface-visibility"],
-  },
-  "-moz-transform-style": {
-    domProp: "MozTransformStyle",
-    inherited: false,
-    type: CSS_TYPE_SHORTHAND_AND_LONGHAND,
-    alias_for: "transform-style",
-    subproperties: ["transform-style"],
-  },
   "-moz-border-image": {
     domProp: "MozBorderImage",
     inherited: false,
@@ -13995,6 +13948,80 @@ gCSSProperties["scrollbar-gutter"] = {
     "match-parent",
   ],
 };
+
+if (IsCSSPropertyPrefEnabled("layout.css.text-wrap-balance.enabled")) {
+  gCSSProperties["text-wrap"] = {
+    domProp: "textWrap",
+    inherited: true,
+    type: CSS_TYPE_LONGHAND,
+    applies_to_placeholder: true,
+    applies_to_cue: true,
+    applies_to_marker: true,
+    initial_values: ["auto"],
+    other_values: ["stable", "balance"],
+    invalid_values: ["wrap", "nowrap", "normal"],
+  };
+}
+
+if (IsCSSPropertyPrefEnabled("layout.css.prefixes.transforms")) {
+  Object.assign(gCSSProperties, {
+    "-moz-transform": {
+      domProp: "MozTransform",
+      inherited: false,
+      type: CSS_TYPE_SHORTHAND_AND_LONGHAND,
+      alias_for: "transform",
+      subproperties: ["transform"],
+    },
+    "-moz-transform-origin": {
+      domProp: "MozTransformOrigin",
+      inherited: false,
+      type: CSS_TYPE_SHORTHAND_AND_LONGHAND,
+      alias_for: "transform-origin",
+      subproperties: ["transform-origin"],
+    },
+    "-moz-perspective-origin": {
+      domProp: "MozPerspectiveOrigin",
+      inherited: false,
+      type: CSS_TYPE_SHORTHAND_AND_LONGHAND,
+      alias_for: "perspective-origin",
+      subproperties: ["perspective-origin"],
+    },
+    "-moz-perspective": {
+      domProp: "MozPerspective",
+      inherited: false,
+      type: CSS_TYPE_SHORTHAND_AND_LONGHAND,
+      alias_for: "perspective",
+      subproperties: ["perspective"],
+    },
+    "-moz-backface-visibility": {
+      domProp: "MozBackfaceVisibility",
+      inherited: false,
+      type: CSS_TYPE_SHORTHAND_AND_LONGHAND,
+      alias_for: "backface-visibility",
+      subproperties: ["backface-visibility"],
+    },
+    "-moz-transform-style": {
+      domProp: "MozTransformStyle",
+      inherited: false,
+      type: CSS_TYPE_SHORTHAND_AND_LONGHAND,
+      alias_for: "transform-style",
+      subproperties: ["transform-style"],
+    },
+  });
+}
+
+if (IsCSSPropertyPrefEnabled("layout.css.zoom.enabled")) {
+  Object.assign(gCSSProperties, {
+    zoom: {
+      domProp: "zoom",
+      inherited: false,
+      type: CSS_TYPE_LONGHAND,
+      initial_values: ["normal", "1", "100%", "0", "0%"],
+      other_values: ["1.5", "2", "150%", "200%"],
+      invalid_values: ["-1", "-40%"],
+    },
+  });
+}
 
 // Copy aliased properties' fields from their alias targets. Keep this logic
 // at the bottom of this file to ensure all the aliased properties are

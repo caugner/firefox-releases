@@ -12,7 +12,6 @@ author: Jordan Lund
 
 import copy
 import glob
-import imp
 import json
 import multiprocessing
 import os
@@ -25,6 +24,7 @@ from datetime import datetime, timedelta
 here = os.path.abspath(os.path.dirname(__file__))
 sys.path.insert(1, os.path.dirname(here))
 
+from mozfile import load_source
 from mozharness.base.errors import BaseErrorList
 from mozharness.base.log import INFO, WARNING
 from mozharness.base.script import PreScriptAction
@@ -524,6 +524,24 @@ class DesktopUnittest(TestingMixin, MercurialScript, MozbaseMixin, CodeCoverageM
                     dirs["abs_mochitest_dir"],
                     "websocketprocessbridge",
                     "websocketprocessbridge_requirements_3.txt",
+                )
+            )
+
+        if (
+            self._query_specified_suites("mochitest", "mochitest-browser-a11y")
+            is not None
+            and sys.platform == "win32"
+        ):
+            # Only Windows a11y browser tests need this.
+            requirements_files.append(
+                os.path.join(
+                    dirs["abs_mochitest_dir"],
+                    "browser",
+                    "accessible",
+                    "tests",
+                    "browser",
+                    "windows",
+                    "a11y_setup_requirements.txt",
                 )
             )
 
@@ -1180,7 +1198,7 @@ class DesktopUnittest(TestingMixin, MercurialScript, MozbaseMixin, CodeCoverageM
                 )
 
                 if suite_category == "reftest":
-                    ref_formatter = imp.load_source(
+                    ref_formatter = load_source(
                         "ReftestFormatter",
                         os.path.abspath(
                             os.path.join(dirs["abs_reftest_dir"], "output.py")

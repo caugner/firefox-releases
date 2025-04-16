@@ -164,8 +164,6 @@ class DOMIntersectionObserver final : public nsISupports,
 
   static already_AddRefed<DOMIntersectionObserver> CreateLazyLoadObserver(
       Document&);
-  static already_AddRefed<DOMIntersectionObserver>
-  CreateLazyLoadObserverViewport(Document&);
 
   static already_AddRefed<DOMIntersectionObserver>
   CreateContentVisibilityObserver(Document&);
@@ -185,7 +183,7 @@ class DOMIntersectionObserver final : public nsISupports,
   Variant<RefPtr<dom::IntersectionCallback>, NativeCallback> mCallback;
   RefPtr<nsINode> mRoot;
   StyleRect<LengthPercentage> mRootMargin;
-  nsTArray<double> mThresholds;
+  AutoTArray<double, 1> mThresholds;
 
   // These hold raw pointers which are explicitly cleared by UnlinkTarget().
   //
@@ -195,7 +193,7 @@ class DOMIntersectionObserver final : public nsISupports,
   nsTHashSet<Element*> mObservationTargetSet;
 
   nsTArray<RefPtr<DOMIntersectionObserverEntry>> mQueuedEntries;
-  bool mConnected;
+  bool mConnected = false;
 };
 
 NS_DEFINE_STATIC_IID_ACCESSOR(DOMIntersectionObserver,

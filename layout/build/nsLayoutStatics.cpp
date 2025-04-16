@@ -47,7 +47,6 @@
 #include "mozilla/dom/HTMLDNSPrefetch.h"
 #include "mozilla/dom/HTMLInputElement.h"
 #include "mozilla/dom/SVGElementFactory.h"
-#include "nsLanguageAtomService.h"
 #include "nsMathMLAtoms.h"
 #include "nsMathMLOperators.h"
 #include "Navigator.h"
@@ -104,10 +103,6 @@
 #include "mozilla/dom/AbstractRange.h"
 #include "mozilla/dom/Document.h"
 #include "mozilla/dom/WebIDLGlobalNameHash.h"
-#ifdef MOZ_WIDGET_ANDROID
-#  include "mozilla/dom/U2FTokenManager.h"
-#endif
-#include "mozilla/dom/WebAuthnController.h"
 #ifdef XP_WIN
 #  include "mozilla/dom/WinWebAuthnManager.h"
 #endif
@@ -261,12 +256,6 @@ nsresult nsLayoutStatics::Initialize() {
   // This must be initialized on the main-thread.
   mozilla::RemoteLazyInputStreamStorage::Initialize();
 
-#ifdef MOZ_WIDGET_ANDROID
-  mozilla::dom::U2FTokenManager::Initialize();
-#endif
-
-  mozilla::dom::WebAuthnController::Initialize();
-
 #ifdef XP_WIN
   mozilla::dom::WinWebAuthnManager::Initialize();
 #endif
@@ -336,7 +325,6 @@ void nsLayoutStatics::Shutdown() {
   HTMLDNSPrefetch::Shutdown();
   nsCSSRendering::Shutdown();
   StaticPresData::Shutdown();
-  nsLanguageAtomService::Shutdown();
 #ifdef DEBUG
   nsIFrame::DisplayReflowShutdown();
 #endif
