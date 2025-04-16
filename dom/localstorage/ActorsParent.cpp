@@ -273,10 +273,10 @@ const uint32_t kFlushTimeoutMs = 5000;
 
 const char kPrivateBrowsingObserverTopic[] = "last-pb-context-exited";
 
-const uint32_t kDefaultShadowWrites = true;
+const bool kDefaultShadowWrites = false;
 const uint32_t kDefaultSnapshotPrefill = 16384;
 const uint32_t kDefaultSnapshotGradualPrefill = 4096;
-const uint32_t kDefaultClientValidation = true;
+const bool kDefaultClientValidation = true;
 /**
  * Should all mutations also be reflected in the "shadow" database, which is
  * the legacy webappsstore.sqlite database.  When this is enabled, users can
@@ -8532,6 +8532,15 @@ nsresult QuotaClient::AboutToClearOrigins(
 
   if (!aPersistenceType.IsNull() &&
       aPersistenceType.Value() != PERSISTENCE_TYPE_DEFAULT) {
+    return NS_OK;
+  }
+
+  // There can be no data for the system principal in the archive or the shadow
+  // database. This early return silences potential warnings caused by failed
+  // `CreateAerchivedOriginScope` because it calls `GenerateOriginKey2` which
+  // doesn't support the system principal.
+  if (aOriginScope.IsOrigin() &&
+      aOriginScope.GetOrigin() == QuotaManager::GetOriginForChrome()) {
     return NS_OK;
   }
 

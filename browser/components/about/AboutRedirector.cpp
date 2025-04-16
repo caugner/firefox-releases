@@ -70,7 +70,7 @@ static const RedirEntry kRedirMap[] = {
          nsIAboutModule::URI_CAN_LOAD_IN_PRIVILEGEDABOUT_PROCESS |
          nsIAboutModule::URI_SAFE_FOR_UNTRUSTED_CONTENT |
          nsIAboutModule::IS_SECURE_CHROME_UI},
-    {"myfirefox", "chrome://browser/content/myfirefox.html",
+    {"firefoxview", "chrome://browser/content/firefoxview.html",
      nsIAboutModule::ALLOW_SCRIPT | nsIAboutModule::IS_SECURE_CHROME_UI |
          nsIAboutModule::HIDE_FROM_ABOUTABOUT},
     {"policies", "chrome://browser/content/policies/aboutPolicies.html",
@@ -277,8 +277,7 @@ AboutRedirector::GetChromeURI(nsIURI* aURI, nsIURI** chromeURI) {
   return NS_ERROR_ILLEGAL_VALUE;
 }
 
-nsresult AboutRedirector::Create(nsISupports* aOuter, REFNSIID aIID,
-                                 void** result) {
+nsresult AboutRedirector::Create(REFNSIID aIID, void** result) {
   AboutRedirector* about = new AboutRedirector();
   if (about == nullptr) return NS_ERROR_OUT_OF_MEMORY;
   NS_ADDREF(about);

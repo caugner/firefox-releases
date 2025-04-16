@@ -1080,6 +1080,10 @@ nsDOMWindowUtils::SendNativeTouchPoint(uint32_t aPointerId,
                                        int32_t aScreenY, double aPressure,
                                        uint32_t aOrientation,
                                        nsIObserver* aObserver) {
+  // FYI: This was designed for automated tests, but currently, this is used by
+  //      DevTools to emulate touch events from mouse events in the responsive
+  //      design mode.
+
   nsCOMPtr<nsIWidget> widget = GetWidget();
   if (!widget) {
     return NS_ERROR_FAILURE;
@@ -3194,7 +3198,7 @@ nsDOMWindowUtils::GetUnanimatedComputedStyle(Element* aElement,
   if (!pseudo) {
     return NS_ERROR_FAILURE;
   }
-  RefPtr<ComputedStyle> computedStyle =
+  RefPtr<const ComputedStyle> computedStyle =
       nsComputedDOMStyle::GetUnanimatedComputedStyleNoFlush(aElement, *pseudo);
   if (!computedStyle) {
     return NS_ERROR_FAILURE;

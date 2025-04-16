@@ -147,7 +147,7 @@
 #endif
 
 #ifdef NS_PRINTING
-#  include "nsIPrintSession.h"
+#  include "mozilla/layout/RemotePrintJobChild.h"
 #  include "nsIPrintSettings.h"
 #  include "nsIPrintSettingsService.h"
 #  include "nsIWebBrowserPrint.h"
@@ -1028,7 +1028,7 @@ nsresult BrowserChild::CloneDocumentTreeIntoSelf(
 
   nsCOMPtr<nsIPrintSettings> printSettings;
   nsresult rv =
-      printSettingsSvc->GetNewPrintSettings(getter_AddRefs(printSettings));
+      printSettingsSvc->CreateNewPrintSettings(getter_AddRefs(printSettings));
   if (NS_WARN_IF(NS_FAILED(rv))) {
     return rv;
   }
@@ -1096,7 +1096,7 @@ nsresult BrowserChild::UpdateRemotePrintSettings(
 
   nsCOMPtr<nsIPrintSettings> printSettings;
   nsresult rv =
-      printSettingsSvc->GetNewPrintSettings(getter_AddRefs(printSettings));
+      printSettingsSvc->CreateNewPrintSettings(getter_AddRefs(printSettings));
   if (NS_WARN_IF(NS_FAILED(rv))) {
     return rv;
   }
@@ -1116,7 +1116,9 @@ nsresult BrowserChild::UpdateRemotePrintSettings(
       // BC tree, and our code above is simple enough and keeps strong refs to
       // everything.
       ([&]() MOZ_CAN_RUN_SCRIPT_BOUNDARY {
-        cv->SetPrintSettingsForSubdocument(printSettings);
+        RefPtr<RemotePrintJobChild> printJob =
+            static_cast<RemotePrintJobChild*>(aPrintData.remotePrintJobChild());
+        cv->SetPrintSettingsForSubdocument(printSettings, printJob);
       }());
     } else if (RefPtr<BrowserBridgeChild> remoteChild =
                    BrowserBridgeChild::GetFrom(aBc->GetEmbedderElement())) {
@@ -1204,6 +1206,7 @@ mozilla::ipc::IPCResult BrowserChild::RecvInitRendering(
     const layers::LayersId& aLayersId,
     const CompositorOptions& aCompositorOptions, const bool& aLayersConnected) {
   mLayersConnected = Some(aLayersConnected);
+  mLayersConnectRequested = Some(aLayersConnected);
   InitRenderingState(aTextureFactoryIdentifier, aLayersId, aCompositorOptions);
   return IPC_OK();
 }
@@ -2095,68 +2098,78 @@ void BrowserChild::UpdateRepeatedKeyEventEndTime(
 }
 
 mozilla::ipc::IPCResult BrowserChild::RecvRealKeyEvent(
-    const WidgetKeyboardEvent& aEvent) {
-  if (SkipRepeatedKeyEvent(aEvent)) {
-    return IPC_OK();
-  }
-
-  MOZ_ASSERT(
-      aEvent.mMessage != eKeyPress || aEvent.AreAllEditCommandsInitialized(),
-      "eKeyPress event should have native key binding information");
+    const WidgetKeyboardEvent& aEvent, const nsID& aUUID) {
+  MOZ_ASSERT_IF(aEvent.mMessage == eKeyPress,
+                aEvent.AreAllEditCommandsInitialized());
 
   // If content code called preventDefault() on a keydown event, then we don't
   // want to process any following keypress events.
-  if (aEvent.mMessage == eKeyPress && mIgnoreKeyPressEvent) {
-    return IPC_OK();
-  }
+  const bool isPrecedingKeyDownEventConsumed =
+      aEvent.mMessage == eKeyPress && mIgnoreKeyPressEvent;
 
   WidgetKeyboardEvent localEvent(aEvent);
   localEvent.mWidget = mPuppetWidget;
   localEvent.mUniqueId = aEvent.mUniqueId;
-  nsEventStatus status = DispatchWidgetEventViaAPZ(localEvent);
 
-  // Update the end time of the possible repeated event so that we can skip
-  // some incoming events in case event handling took long time.
-  UpdateRepeatedKeyEventEndTime(localEvent);
+  if (!SkipRepeatedKeyEvent(aEvent) && !isPrecedingKeyDownEventConsumed) {
+    nsEventStatus status = DispatchWidgetEventViaAPZ(localEvent);
 
-  if (aEvent.mMessage == eKeyDown) {
-    mIgnoreKeyPressEvent = status == nsEventStatus_eConsumeNoDefault;
-  }
+    // Update the end time of the possible repeated event so that we can skip
+    // some incoming events in case event handling took long time.
+    UpdateRepeatedKeyEventEndTime(localEvent);
 
-  if (localEvent.mFlags.mIsSuppressedOrDelayed) {
-    localEvent.PreventDefault();
-  }
+    if (aEvent.mMessage == eKeyDown) {
+      mIgnoreKeyPressEvent = status == nsEventStatus_eConsumeNoDefault;
+    }
 
-  // If a response is desired from the content process, resend the key event.
-  if (aEvent.WantReplyFromContentProcess()) {
+    if (localEvent.mFlags.mIsSuppressedOrDelayed) {
+      localEvent.PreventDefault();
+    }
+
     // If the event's default isn't prevented but the status is no default,
     // That means that the event was consumed by EventStateManager or something
     // which is not a usual event handler.  In such case, prevent its default
     // as a default handler.  For example, when an eKeyPress event matches
-    // with a content accesskey, and it's executed, peventDefault() of the
+    // with a content accesskey, and it's executed, preventDefault() of the
     // event won't be called but the status is set to "no default".  Then,
     // the event shouldn't be handled by nsMenuBarListener in the main process.
     if (!localEvent.DefaultPrevented() &&
         status == nsEventStatus_eConsumeNoDefault) {
       localEvent.PreventDefault();
     }
-    // This is an ugly hack, mNoRemoteProcessDispatch is set to true when the
-    // event's PreventDefault() or StopScrollProcessForwarding() is called.
-    // And then, it'll be checked by ParamTraits<mozilla::WidgetEvent>::Write()
-    // whether the event is being sent to remote process unexpectedly.
-    // However, unfortunately, it cannot check the destination.  Therefore,
-    // we need to clear the flag explicitly here because ParamTraits should
-    // keep checking the flag for avoiding regression.
-    localEvent.mFlags.mNoRemoteProcessDispatch = false;
-    SendReplyKeyEvent(localEvent);
+
+    MOZ_DIAGNOSTIC_ASSERT(!localEvent.PropagationStopped());
   }
+  // The keyboard event which we ignore should not be handled in the main
+  // process for shortcut key handling.  For notifying if we skipped it, we can
+  // use "stop propagation" flag here because it must be cleared by
+  // `EventTargetChainItem` if we've dispatched it.
+  else {
+    localEvent.StopPropagation();
+  }
+
+  // If we don't need to send a rely for the given keyboard event, we do nothing
+  // anymore here.
+  if (!aEvent.WantReplyFromContentProcess()) {
+    return IPC_OK();
+  }
+
+  // This is an ugly hack, mNoRemoteProcessDispatch is set to true when the
+  // event's PreventDefault() or StopScrollProcessForwarding() is called.
+  // And then, it'll be checked by ParamTraits<mozilla::WidgetEvent>::Write()
+  // whether the event is being sent to remote process unexpectedly.
+  // However, unfortunately, it cannot check the destination.  Therefore,
+  // we need to clear the flag explicitly here because ParamTraits should
+  // keep checking the flag for avoiding regression.
+  localEvent.mFlags.mNoRemoteProcessDispatch = false;
+  SendReplyKeyEvent(localEvent, aUUID);
 
   return IPC_OK();
 }
 
 mozilla::ipc::IPCResult BrowserChild::RecvNormalPriorityRealKeyEvent(
-    const WidgetKeyboardEvent& aEvent) {
-  return RecvRealKeyEvent(aEvent);
+    const WidgetKeyboardEvent& aEvent, const nsID& aUUID) {
+  return RecvRealKeyEvent(aEvent, aUUID);
 }
 
 mozilla::ipc::IPCResult BrowserChild::RecvCompositionEvent(
@@ -2214,7 +2227,7 @@ mozilla::ipc::IPCResult BrowserChild::RecvPasteTransferable(
 
   rv = nsContentUtils::IPCTransferableToTransferable(
       aDataTransfer, aIsPrivateData, aRequestingPrincipal, aContentPolicyType,
-      trans, nullptr, this);
+      true /* aAddDataFlavor */, trans, this);
   NS_ENSURE_SUCCESS(rv, IPC_OK());
 
   nsCOMPtr<nsIDocShell> ourDocShell = do_GetInterface(WebNavigation());
@@ -2453,7 +2466,7 @@ mozilla::ipc::IPCResult BrowserChild::RecvPrintPreview(
   if (NS_WARN_IF(!printSettingsSvc)) {
     return IPC_OK();
   }
-  printSettingsSvc->GetNewPrintSettings(getter_AddRefs(printSettings));
+  printSettingsSvc->CreateNewPrintSettings(getter_AddRefs(printSettings));
   if (NS_WARN_IF(!printSettings)) {
     return IPC_OK();
   }
@@ -2468,6 +2481,7 @@ mozilla::ipc::IPCResult BrowserChild::RecvPrintPreview(
   }
 
   sourceWindow->Print(printSettings,
+                      /* aRemotePrintJob = */ nullptr,
                       /* aListener = */ nullptr, docShellToCloneInto,
                       nsGlobalWindowOuter::IsPreview::Yes,
                       nsGlobalWindowOuter::IsForWindowDotPrint::No,
@@ -2508,27 +2522,21 @@ mozilla::ipc::IPCResult BrowserChild::RecvPrint(
 
   nsCOMPtr<nsIPrintSettings> printSettings;
   nsresult rv =
-      printSettingsSvc->GetNewPrintSettings(getter_AddRefs(printSettings));
+      printSettingsSvc->CreateNewPrintSettings(getter_AddRefs(printSettings));
   if (NS_WARN_IF(NS_FAILED(rv))) {
     return IPC_OK();
   }
 
-  nsCOMPtr<nsIPrintSession> printSession =
-      do_CreateInstance("@mozilla.org/gfx/printsession;1", &rv);
-  if (NS_WARN_IF(NS_FAILED(rv))) {
-    return IPC_OK();
-  }
-
-  printSettings->SetPrintSession(printSession);
   printSettingsSvc->DeserializeToPrintSettings(aPrintData, printSettings);
   {
     IgnoredErrorResult rv;
-    outerWindow->Print(printSettings,
-                       /* aListener = */ nullptr,
-                       /* aWindowToCloneInto = */ nullptr,
-                       nsGlobalWindowOuter::IsPreview::No,
-                       nsGlobalWindowOuter::IsForWindowDotPrint::No,
-                       /* aPrintPreviewCallback = */ nullptr, rv);
+    outerWindow->Print(
+        printSettings,
+        static_cast<RemotePrintJobChild*>(aPrintData.remotePrintJobChild()),
+        /* aListener = */ nullptr,
+        /* aWindowToCloneInto = */ nullptr, nsGlobalWindowOuter::IsPreview::No,
+        nsGlobalWindowOuter::IsForWindowDotPrint::No,
+        /* aPrintPreviewCallback = */ nullptr, rv);
     if (NS_WARN_IF(rv.Failed())) {
       return IPC_OK();
     }
@@ -3134,7 +3142,8 @@ void BrowserChild::ReinitRendering() {
 
   // In some cases, like when we create a windowless browser,
   // RemoteLayerTreeOwner/BrowserChild is not connected to a compositor.
-  if (mLayersConnected.isNothing() || !*mLayersConnected) {
+  if (mLayersConnectRequested.isNothing() ||
+      mLayersConnectRequested == Some(false)) {
     return;
   }
 

@@ -472,7 +472,7 @@ void nsBlockFrame::AddSizeOfExcludingThisForTree(
 
 void nsBlockFrame::DestroyFrom(nsIFrame* aDestructRoot,
                                PostDestroyData& aPostDestroyData) {
-  ClearLineCursor();
+  ClearLineCursors();
   DestroyAbsoluteFrames(aDestructRoot, aPostDestroyData);
   mFloats.DestroyFramesFrom(aDestructRoot, aPostDestroyData);
   nsPresContext* presContext = PresContext();
@@ -1338,7 +1338,7 @@ void nsBlockFrame::Reflow(nsPresContext* aPresContext, ReflowOutput& aMetrics,
   // because we may invalidate the nondecreasing
   // overflowArea.InkOverflow().y/yMost invariant, and we may even
   // delete the line with the line cursor.
-  ClearLineCursor();
+  ClearLineCursors();
 
   if (IsFrameTreeTooDeep(*reflowInput, aMetrics, aStatus)) {
     return;
@@ -1655,9 +1655,8 @@ void nsBlockFrame::Reflow(nsPresContext* aPresContext, ReflowOutput& aMetrics,
       }
       // Setup the line cursor here to optimize line searching for
       // calculating hypothetical position of absolutely-positioned
-      // frames. The line cursor is immediately cleared afterward to
-      // avoid affecting the display list generation.
-      AutoLineCursorSetup autoLineCursor(this);
+      // frames.
+      SetupLineCursorForQuery();
       absoluteContainer->Reflow(this, aPresContext, *reflowInput,
                                 state.mReflowStatus, containingBlock, flags,
                                 &aMetrics.mOverflowAreas);
@@ -1836,19 +1835,6 @@ static nscoord ApplyLineClamp(const ReflowInput& aReflowInput,
   return edge;
 }
 
-static bool ShouldApplyAutomaticMinimumOnBlockAxis(
-    WritingMode aWM, const nsStyleDisplay* aDisplay,
-    const nsStylePosition* aPosition) {
-  // The automatic minimum size in the ratio-dependent axis of a box with a
-  // preferred aspect ratio that is neither a replaced element nor a scroll
-  // container is its min-content size clamped from above by its maximum size.
-  //
-  // https://drafts.csswg.org/css-sizing-4/#aspect-ratio-minimum
-  // Note: we only need to check scroll container because replaced element
-  // doesn't go into nsBlockFrame::Reflow().
-  return !aDisplay->IsScrollableOverflow() && aPosition->MinBSize(aWM).IsAuto();
-}
-
 void nsBlockFrame::ComputeFinalSize(const ReflowInput& aReflowInput,
                                     BlockReflowState& aState,
                                     ReflowOutput& aMetrics,
@@ -1930,9 +1916,7 @@ void nsBlockFrame::ComputeFinalSize(const ReflowInput& aReflowInput,
     // If the content block-size is larger than the effective computed
     // block-size, we extend the block-size to contain all the content.
     // https://drafts.csswg.org/css-sizing-4/#aspect-ratio-minimum
-    if (aReflowInput.mFlags.mIsBSizeSetByAspectRatio &&
-        ShouldApplyAutomaticMinimumOnBlockAxis(wm, aReflowInput.mStyleDisplay,
-                                               aReflowInput.mStylePosition)) {
+    if (aReflowInput.ShouldApplyAutomaticMinimumOnBlockAxis()) {
       // Note: finalSize.BSize(wm) is the border-box size, so we compare it with
       // the content's block-size plus our border and padding..
       finalSize.BSize(wm) =
@@ -2154,35 +2138,46 @@ void nsBlockFrame::ComputeOverflowAreas(OverflowAreas& aOverflowAreas,
                                         const nsStyleDisplay* aDisplay) const {
   // XXX_perf: This can be done incrementally.  It is currently one of
   // the things that makes incremental reflow O(N^2).
-  if (ShouldApplyOverflowClipping(aDisplay) != PhysicalAxes::Both) {
-    for (const auto& line : Lines()) {
-      if (aDisplay->IsContainLayout()) {
-        // If we have layout containment, we should only consider our child's
-        // ink overflow, leaving the scrollable regions of the parent
-        // unaffected.
-        // Note: scrollable overflow is a subset of ink overflow,
-        // so this has the same affect as unioning the child's visual and
-        // scrollable overflow with its parent's ink overflow.
-        nsRect childVisualRect = line.InkOverflowRect();
-        OverflowAreas childVisualArea =
-            OverflowAreas(childVisualRect, nsRect());
-        aOverflowAreas.UnionWith(childVisualArea);
-      } else {
-        aOverflowAreas.UnionWith(line.GetOverflowAreas());
-      }
-    }
+  auto overflowClipAxes = ShouldApplyOverflowClipping(aDisplay);
+  auto overflowClipMargin = OverflowClipMargin(overflowClipAxes);
+  if (overflowClipAxes == PhysicalAxes::Both &&
+      overflowClipMargin == nsSize()) {
+    return;
+  }
 
-    // Factor an outside ::marker in; normally the ::marker will be factored
-    // into the line-box's overflow areas. However, if the line is a block
-    // line then it won't; if there are no lines, it won't. So just
-    // factor it in anyway (it can't hurt if it was already done).
-    // XXXldb Can we just fix GetOverflowArea instead?
-    if (nsIFrame* outsideMarker = GetOutsideMarker()) {
-      aOverflowAreas.UnionAllWith(outsideMarker->GetRect());
-    }
+  // We rely here on our caller having called SetOverflowAreasToDesiredBounds().
+  nsRect frameBounds = aOverflowAreas.ScrollableOverflow();
 
-    ConsiderBlockEndEdgeOfChildren(aOverflowAreas, aBEndEdgeOfChildren,
-                                   aDisplay);
+  for (const auto& line : Lines()) {
+    if (aDisplay->IsContainLayout()) {
+      // If we have layout containment, we should only consider our child's
+      // ink overflow, leaving the scrollable regions of the parent
+      // unaffected.
+      // Note: scrollable overflow is a subset of ink overflow,
+      // so this has the same affect as unioning the child's visual and
+      // scrollable overflow with its parent's ink overflow.
+      nsRect childVisualRect = line.InkOverflowRect();
+      OverflowAreas childVisualArea = OverflowAreas(childVisualRect, nsRect());
+      aOverflowAreas.UnionWith(childVisualArea);
+    } else {
+      aOverflowAreas.UnionWith(line.GetOverflowAreas());
+    }
+  }
+
+  // Factor an outside ::marker in; normally the ::marker will be factored
+  // into the line-box's overflow areas. However, if the line is a block
+  // line then it won't; if there are no lines, it won't. So just
+  // factor it in anyway (it can't hurt if it was already done).
+  // XXXldb Can we just fix GetOverflowArea instead?
+  if (nsIFrame* outsideMarker = GetOutsideMarker()) {
+    aOverflowAreas.UnionAllWith(outsideMarker->GetRect());
+  }
+
+  ConsiderBlockEndEdgeOfChildren(aOverflowAreas, aBEndEdgeOfChildren, aDisplay);
+
+  if (overflowClipAxes != PhysicalAxes::None) {
+    aOverflowAreas.ApplyClipping(frameBounds, overflowClipAxes,
+                                 overflowClipMargin);
   }
 
 #ifdef NOISY_OVERFLOW_AREAS
@@ -2235,7 +2230,7 @@ bool nsBlockFrame::ComputeCustomOverflow(OverflowAreas& aOverflowAreas) {
 
   // Line cursor invariants depend on the overflow areas of the lines, so
   // we must clear the line cursor since those areas may have changed.
-  ClearLineCursor();
+  ClearLineCursors();
   return nsContainerFrame::ComputeCustomOverflow(aOverflowAreas);
 }
 
@@ -2596,16 +2591,16 @@ void nsBlockFrame::ReflowDirtyLines(BlockReflowState& aState) {
       line->MarkDirty();
     }
 
-    nsIFrame* replacedBlock = nullptr;
+    nsIFrame* floatAvoidingBlock = nullptr;
     if (line->IsBlock() &&
         !nsBlockFrame::BlockCanIntersectFloats(line->mFirstChild)) {
-      replacedBlock = line->mFirstChild;
+      floatAvoidingBlock = line->mFirstChild;
     }
 
     // We have to reflow the line if it's a block whose clearance
     // might have changed, so detect that.
-    if (!line->IsDirty() &&
-        (line->GetBreakTypeBefore() != StyleClear::None || replacedBlock)) {
+    if (!line->IsDirty() && (line->GetBreakTypeBefore() != StyleClear::None ||
+                             floatAvoidingBlock)) {
       nscoord curBCoord = aState.mBCoord;
       // See where we would be after applying any clearance due to
       // BRs.
@@ -2615,7 +2610,7 @@ void nsBlockFrame::ReflowDirtyLines(BlockReflowState& aState) {
       }
 
       auto [newBCoord, result] = aState.ClearFloats(
-          curBCoord, line->GetBreakTypeBefore(), replacedBlock);
+          curBCoord, line->GetBreakTypeBefore(), floatAvoidingBlock);
 
       if (line->HasClearance()) {
         // Reflow the line if it might not have clearance anymore.
@@ -3035,8 +3030,13 @@ void nsBlockFrame::ReflowDirtyLines(BlockReflowState& aState) {
         continue;
       }
 
-      if (pulledLine == nextInFlow->GetLineCursor()) {
-        nextInFlow->ClearLineCursor();
+      if (nextInFlow->MaybeHasLineCursor()) {
+        if (pulledLine == nextInFlow->GetLineCursorForDisplay()) {
+          nextInFlow->ClearLineCursorForDisplay();
+        }
+        if (pulledLine == nextInFlow->GetLineCursorForQuery()) {
+          nextInFlow->ClearLineCursorForQuery();
+        }
       }
       ReparentFrames(pulledFrames, nextInFlow, this);
       pulledLine->SetMovedFragments();
@@ -3601,10 +3601,10 @@ void nsBlockFrame::ReflowBlockFrame(BlockReflowState& aState,
   bool treatWithClearance = aLine->HasClearance();
 
   bool mightClearFloats = breakType != StyleClear::None;
-  nsIFrame* replacedBlock = nullptr;
+  nsIFrame* floatAvoidingBlock = nullptr;
   if (!nsBlockFrame::BlockCanIntersectFloats(frame)) {
     mightClearFloats = true;
-    replacedBlock = frame;
+    floatAvoidingBlock = frame;
   }
 
   // If our block-start margin was counted as part of some parent's block-start
@@ -3615,7 +3615,7 @@ void nsBlockFrame::ReflowBlockFrame(BlockReflowState& aState,
       aState.mReflowInput.mDiscoveredClearance) {
     nscoord curBCoord = aState.mBCoord + aState.mPrevBEndMargin.get();
     if (auto [clearBCoord, result] =
-            aState.ClearFloats(curBCoord, breakType, replacedBlock);
+            aState.ClearFloats(curBCoord, breakType, floatAvoidingBlock);
         result != ClearFloatsResult::BCoordNoChange) {
       Unused << clearBCoord;
 
@@ -3695,7 +3695,7 @@ void nsBlockFrame::ReflowBlockFrame(BlockReflowState& aState,
         // first pass.
         nscoord curBCoord = aState.mBCoord + aState.mPrevBEndMargin.get();
         if (auto [clearBCoord, result] =
-                aState.ClearFloats(curBCoord, breakType, replacedBlock);
+                aState.ClearFloats(curBCoord, breakType, floatAvoidingBlock);
             result != ClearFloatsResult::BCoordNoChange) {
           Unused << clearBCoord;
 
@@ -3726,7 +3726,7 @@ void nsBlockFrame::ReflowBlockFrame(BlockReflowState& aState,
         nscoord currentBCoord = aState.mBCoord;
         // advance mBCoord to the clear position.
         auto [clearBCoord, result] =
-            aState.ClearFloats(aState.mBCoord, breakType, replacedBlock);
+            aState.ClearFloats(aState.mBCoord, breakType, floatAvoidingBlock);
         aState.mBCoord = clearBCoord;
 
         clearedFloats = result != ClearFloatsResult::BCoordNoChange;
@@ -3761,7 +3761,7 @@ void nsBlockFrame::ReflowBlockFrame(BlockReflowState& aState,
     nsFlowAreaRect floatAvailableSpace = aState.GetFloatAvailableSpace();
     WritingMode wm = aState.mReflowInput.GetWritingMode();
     LogicalRect availSpace = aState.ComputeBlockAvailSpace(
-        frame, floatAvailableSpace, (replacedBlock));
+        frame, floatAvailableSpace, (floatAvoidingBlock));
 
     // The check for
     //   (!aState.mReflowInput.mFlags.mIsTopOfPage || clearedFloats)
@@ -3886,7 +3886,7 @@ void nsBlockFrame::ReflowBlockFrame(BlockReflowState& aState,
           !*aState.mReflowInput.mDiscoveredClearance;
 
       // Reflow the block into the available space
-      if (mayNeedRetry || replacedBlock) {
+      if (mayNeedRetry || floatAvoidingBlock) {
         aState.FloatManager()->PushState(&floatManagerState);
       }
 
@@ -3906,7 +3906,7 @@ void nsBlockFrame::ReflowBlockFrame(BlockReflowState& aState,
       // available space again and call ComputeBlockAvailSpace again.
       // If ComputeBlockAvailSpace gives a different result, we need to
       // reflow again.
-      if (!replacedBlock) {
+      if (!floatAvoidingBlock) {
         break;
       }
 
@@ -3936,8 +3936,8 @@ void nsBlockFrame::ReflowBlockFrame(BlockReflowState& aState,
       }
 
       bool advanced = false;
-      if (!aState.ReplacedBlockFitsInAvailSpace(replacedBlock,
-                                                floatAvailableSpace)) {
+      if (!aState.FloatAvoidingBlockFitsInAvailSpace(floatAvoidingBlock,
+                                                     floatAvailableSpace)) {
         // Advance to the next band.
         nscoord newBCoord = aState.mBCoord;
         if (aState.AdvanceToNextBand(floatAvailableSpace.mRect, &newBCoord)) {
@@ -3945,7 +3945,7 @@ void nsBlockFrame::ReflowBlockFrame(BlockReflowState& aState,
         }
         // ClearFloats might be able to advance us further once we're there.
         std::tie(aState.mBCoord, std::ignore) =
-            aState.ClearFloats(newBCoord, StyleClear::None, replacedBlock);
+            aState.ClearFloats(newBCoord, StyleClear::None, floatAvoidingBlock);
 
         // Start over with a new available space rect at the new height.
         floatAvailableSpace = aState.GetFloatAvailableSpaceWithState(
@@ -3954,7 +3954,7 @@ void nsBlockFrame::ReflowBlockFrame(BlockReflowState& aState,
 
       const LogicalRect oldAvailSpace = availSpace;
       availSpace = aState.ComputeBlockAvailSpace(frame, floatAvailableSpace,
-                                                 (replacedBlock));
+                                                 (floatAvoidingBlock));
 
       if (!advanced && availSpace.IsEqualEdges(oldAvailSpace)) {
         break;
@@ -5216,7 +5216,7 @@ bool nsBlockFrame::DrainOverflowLines() {
   bool didFindOverflow = false;
   nsBlockFrame* prevBlock = static_cast<nsBlockFrame*>(GetPrevInFlow());
   if (prevBlock) {
-    prevBlock->ClearLineCursor();
+    prevBlock->ClearLineCursors();
     FrameLines* overflowLines = prevBlock->RemoveOverflowLines();
     if (overflowLines) {
       // Make all the frames on the overflow line list mine.
@@ -5717,7 +5717,7 @@ static bool ShouldPutNextSiblingOnNewLine(nsIFrame* aLastFrame) {
 void nsBlockFrame::AddFrames(nsFrameList& aFrameList, nsIFrame* aPrevSibling,
                              const nsLineList::iterator* aPrevSiblingLine) {
   // Clear our line cursor, since our lines may change.
-  ClearLineCursor();
+  ClearLineCursors();
 
   if (aFrameList.IsEmpty()) {
     return;
@@ -6097,7 +6097,7 @@ nsBlockInFlowLineIterator::nsBlockInFlowLineIterator(nsBlockFrame* aFrame,
   }
 
   // Try to use the cursor if it exists, otherwise fall back to the first line
-  if (nsLineBox* const cursor = aFrame->GetLineCursor()) {
+  if (nsLineBox* const cursor = aFrame->GetLineCursorForQuery()) {
     mLine = line_end;
     // Perform a simultaneous forward and reverse search starting from the
     // line cursor.
@@ -6127,7 +6127,7 @@ nsBlockInFlowLineIterator::nsBlockInFlowLineIterator(nsBlockFrame* aFrame,
     if (mLine != line_end) {
       *aFoundValidLine = true;
       if (mLine != cursor) {
-        aFrame->SetProperty(nsBlockFrame::LineCursorProperty(), mLine);
+        aFrame->SetProperty(nsBlockFrame::LineCursorPropertyQuery(), mLine);
       }
       return;
     }
@@ -6248,7 +6248,7 @@ void nsBlockFrame::DoRemoveFrameInternal(nsIFrame* aDeletedFrame,
                                          uint32_t aFlags,
                                          PostDestroyData& aPostDestroyData) {
   // Clear our line cursor, since our lines may change.
-  ClearLineCursor();
+  ClearLineCursors();
 
   if (aDeletedFrame->HasAnyStateBits(NS_FRAME_OUT_OF_FLOW |
                                      NS_FRAME_IS_OVERFLOW_CONTAINER)) {
@@ -7172,7 +7172,7 @@ void nsBlockFrame::BuildDisplayList(nsDisplayListBuilder* aBuilder,
     }
 
     if (nonDecreasingYs && lineCount >= MIN_LINES_NEEDING_CURSOR) {
-      SetupLineCursor();
+      SetupLineCursorForDisplay();
     }
 
     if (!curBackplateArea.IsEmpty()) {
@@ -7247,30 +7247,31 @@ a11y::AccType nsBlockFrame::AccessibleType() {
 }
 #endif
 
-void nsBlockFrame::ClearLineCursor() {
-  if (!HasAnyStateBits(NS_BLOCK_HAS_LINE_CURSOR)) {
+void nsBlockFrame::SetupLineCursorForDisplay() {
+  if (mLines.empty() || HasProperty(LineCursorPropertyDisplay())) {
     return;
   }
 
-  RemoveProperty(LineCursorProperty());
-  RemoveStateBits(NS_BLOCK_HAS_LINE_CURSOR);
+  SetProperty(LineCursorPropertyDisplay(), mLines.front());
+  AddStateBits(NS_BLOCK_HAS_LINE_CURSOR);
 }
 
-void nsBlockFrame::SetupLineCursor() {
-  if (HasAnyStateBits(NS_BLOCK_HAS_LINE_CURSOR) || mLines.empty()) {
+void nsBlockFrame::SetupLineCursorForQuery() {
+  if (mLines.empty() || HasProperty(LineCursorPropertyQuery())) {
     return;
   }
 
-  SetProperty(LineCursorProperty(), mLines.front());
+  SetProperty(LineCursorPropertyQuery(), mLines.front());
   AddStateBits(NS_BLOCK_HAS_LINE_CURSOR);
 }
 
 nsLineBox* nsBlockFrame::GetFirstLineContaining(nscoord y) {
-  if (!HasAnyStateBits(NS_BLOCK_HAS_LINE_CURSOR)) {
+  // Although this looks like a "querying" method, it is used by the
+  // display-list building code, so uses the Display cursor.
+  nsLineBox* property = GetLineCursorForDisplay();
+  if (!property) {
     return nullptr;
   }
-
-  nsLineBox* property = GetProperty(LineCursorProperty());
   LineIterator cursor = mLines.begin(property);
   nsRect cursorArea = cursor->InkOverflowRect();
 
@@ -7286,7 +7287,7 @@ nsLineBox* nsBlockFrame::GetFirstLineContaining(nscoord y) {
   }
 
   if (cursor.get() != property) {
-    SetProperty(LineCursorProperty(), cursor.get());
+    SetProperty(LineCursorPropertyDisplay(), cursor.get());
   }
 
   return cursor.get();
@@ -7697,18 +7698,15 @@ bool nsBlockFrame::BlockCanIntersectFloats(nsIFrame* aFrame) {
 // in the available space given, which means that variation shouldn't
 // matter.
 /* static */
-nsBlockFrame::ReplacedElementISizeToClear nsBlockFrame::ISizeToClearPastFloats(
+nsBlockFrame::FloatAvoidingISizeToClear nsBlockFrame::ISizeToClearPastFloats(
     const BlockReflowState& aState, const LogicalRect& aFloatAvailableSpace,
-    nsIFrame* aFrame) {
+    nsIFrame* aFloatAvoidingBlock) {
   nscoord inlineStartOffset, inlineEndOffset;
   WritingMode wm = aState.mReflowInput.GetWritingMode();
-  SizeComputationInput offsetState(aFrame,
-                                   aState.mReflowInput.mRenderingContext, wm,
-                                   aState.mContentArea.ISize(wm));
 
-  ReplacedElementISizeToClear result;
-  aState.ComputeReplacedBlockOffsetsForFloats(
-      aFrame, aFloatAvailableSpace, inlineStartOffset, inlineEndOffset);
+  FloatAvoidingISizeToClear result;
+  aState.ComputeFloatAvoidingOffsets(aFloatAvoidingBlock, aFloatAvailableSpace,
+                                     inlineStartOffset, inlineEndOffset);
   nscoord availISize =
       aState.mContentArea.ISize(wm) - inlineStartOffset - inlineEndOffset;
 
@@ -7718,16 +7716,60 @@ nsBlockFrame::ReplacedElementISizeToClear nsBlockFrame::ISizeToClearPastFloats(
   // All we really need here is the result of ComputeSize, and we
   // could *almost* get that from an SizeComputationInput, except for the
   // last argument.
-  WritingMode frWM = aFrame->GetWritingMode();
+  WritingMode frWM = aFloatAvoidingBlock->GetWritingMode();
   LogicalSize availSpace =
       LogicalSize(wm, availISize, NS_UNCONSTRAINEDSIZE).ConvertTo(frWM, wm);
-  ReflowInput reflowInput(aState.mPresContext, aState.mReflowInput, aFrame,
-                          availSpace);
+  ReflowInput reflowInput(aState.mPresContext, aState.mReflowInput,
+                          aFloatAvoidingBlock, availSpace);
   result.borderBoxISize =
       reflowInput.ComputedSizeWithBorderPadding(wm).ISize(wm);
-  // Use the margins from offsetState rather than reflowInput so that
+
+  // Use the margins from sizingInput rather than reflowInput so that
   // they aren't reduced by ignoring margins in overconstrained cases.
-  LogicalMargin computedMargin = offsetState.ComputedLogicalMargin(wm);
+  SizeComputationInput sizingInput(aFloatAvoidingBlock,
+                                   aState.mReflowInput.mRenderingContext, wm,
+                                   aState.mContentArea.ISize(wm));
+  const LogicalMargin computedMargin = sizingInput.ComputedLogicalMargin(wm);
+
+  nscoord marginISize = computedMargin.IStartEnd(wm);
+  const auto& iSize = reflowInput.mStylePosition->ISize(wm);
+  if (marginISize < 0 && (iSize.IsAuto() || iSize.IsMozAvailable())) {
+    // If we get here, floatAvoidingBlock has a negative amount of inline-axis
+    // margin and an 'auto' (or ~equivalently, -moz-available) inline
+    // size. Under these circumstances, we use the margin to establish a
+    // (positive) minimum size for the border-box, in order to satisfy the
+    // equation in CSS2 10.3.3.  That equation essentially simplifies to the
+    // following:
+    //
+    //   iSize of margins + iSize of borderBox = iSize of containingBlock
+    //
+    // ...where "iSize of borderBox" is the sum of floatAvoidingBlock's
+    // inline-axis components of border, padding, and {width,height}.
+    //
+    // Right now, in the above equation, "iSize of margins" is the only term
+    // that we know for sure. (And we also know that it's negative, since we
+    // got here.) The other terms are as-yet unresolved, since the frame has an
+    // 'auto' iSize, and since we aren't yet sure if we'll clear this frame
+    // beyond floats or place it alongside them.
+    //
+    // However: we *do* know that the equation's "iSize of containingBlock"
+    // term *must* be non-negative, since boxes' widths and heights generally
+    // can't be negative in CSS.  To satisfy that requirement, we can then
+    // infer that the equation's "iSize of borderBox" term *must* be large
+    // enough to cancel out the (known-to-be-negative) "iSize of margins"
+    // term. Therefore, marginISize value (negated to make it positive)
+    // establishes a lower-bound for how much inline-axis space our border-box
+    // will really require in order to fit alongside any floats.
+    //
+    // XXXdholbert This explanation is admittedly a bit hand-wavy and may not
+    // precisely match what any particular spec requires. It's the best
+    // reasoning I could come up with to explain engines' behavior.  Also, our
+    // behavior with -moz-available doesn't seem particularly correct here, per
+    // bug 1767217, though that's probably due to a bug elsewhere in our float
+    // handling code...
+    result.borderBoxISize = std::max(result.borderBoxISize, -marginISize);
+  }
+
   result.marginIStart = computedMargin.IStart(wm);
   return result;
 }
@@ -7982,7 +8024,7 @@ void nsBlockFrame::VerifyLines(bool aFinalCheckOK) {
     return;
   }
 
-  nsLineBox* cursor = GetLineCursor();
+  nsLineBox* cursor = GetLineCursorForQuery();
 
   // Add up the counts on each line. Also validate that IsFirstLine is
   // set properly.
@@ -8097,8 +8139,10 @@ void nsBlockFrame::VerifyOverflowSituation() {
                        overflowLines->mFrames.FirstChild(),
                    "bad overflow frames / lines");
     }
-    nsLineBox* cursor = flow->GetLineCursor();
-    if (cursor) {
+    auto checkCursor = [&](nsLineBox* cursor) -> bool {
+      if (!cursor) {
+        return true;
+      }
       LineIterator line = flow->LinesBegin();
       LineIterator line_end = flow->LinesEnd();
       for (; line != line_end && line != cursor; ++line)
@@ -8109,8 +8153,12 @@ void nsBlockFrame::VerifyOverflowSituation() {
         for (; line != line_end && line != cursor; ++line)
           ;
       }
-      MOZ_ASSERT(line != line_end, "stale LineCursorProperty");
-    }
+      return line != line_end;
+    };
+    MOZ_ASSERT(checkCursor(flow->GetLineCursorForDisplay()),
+               "stale LineCursorPropertyDisplay");
+    MOZ_ASSERT(checkCursor(flow->GetLineCursorForQuery()),
+               "stale LineCursorPropertyQuery");
     flow = static_cast<nsBlockFrame*>(flow->GetNextInFlow());
   }
 }

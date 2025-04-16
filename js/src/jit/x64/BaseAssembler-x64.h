@@ -1115,6 +1115,10 @@ class BaseAssemblerX64 : public BaseAssembler {
     return twoByteRipOpImmSimd("vcmpps", VEX_PS, OP2_CMPPS_VpsWps,
                                X86Encoding::ConditionCmp_LE, src, dst);
   }
+  [[nodiscard]] JmpSrc vcmpgeps_ripr(XMMRegisterID src, XMMRegisterID dst) {
+    return twoByteRipOpImmSimd("vcmpps", VEX_PS, OP2_CMPPS_VpsWps,
+                               X86Encoding::ConditionCmp_GE, src, dst);
+  }
   [[nodiscard]] JmpSrc vcmpeqpd_ripr(XMMRegisterID src, XMMRegisterID dst) {
     return twoByteRipOpImmSimd("vcmppd", VEX_PD, OP2_CMPPD_VpdWpd,
                                X86Encoding::ConditionCmp_EQ, src, dst);
@@ -1134,6 +1138,9 @@ class BaseAssemblerX64 : public BaseAssembler {
   [[nodiscard]] JmpSrc vpmaddubsw_ripr(XMMRegisterID src, XMMRegisterID dst) {
     return threeByteRipOpSimd("vpmaddubsw", VEX_PD, OP3_PMADDUBSW_VdqWdq,
                               ESCAPE_38, src, dst);
+  }
+  [[nodiscard]] JmpSrc vpmuludq_ripr(XMMRegisterID src, XMMRegisterID dst) {
+    return twoByteRipOpSimd("vpmuludq", VEX_PD, OP2_PMULUDQ_VdqWdq, src, dst);
   }
 
   // BMI instructions:

@@ -377,22 +377,41 @@ class UrlbarInput {
     const previousSelectionStart = this.selectionStart;
     const previousSelectionEnd = this.selectionEnd;
 
-    let isDifferentValidValue = valid && value != this.untrimmedValue;
     this.value = value;
     this.valueIsTyped = !valid;
     this.removeAttribute("usertyping");
-    if (isDifferentValidValue) {
-      // If the caret is at the end of the input or its position is beyond the
-      // end of the new value, keep it at the end. Otherwise keep its current
-      // position.
-      const isCaretPositionEnd =
-        previousUntrimmedValue.length === previousSelectionEnd ||
-        value.length <= previousSelectionEnd;
-      if (isCaretPositionEnd) {
-        this.selectionStart = this.selectionEnd = value.length;
+
+    if (this.focused && value != previousUntrimmedValue) {
+      if (
+        previousSelectionStart != previousSelectionEnd &&
+        value.substring(previousSelectionStart, previousSelectionEnd) ===
+          previousUntrimmedValue.substring(
+            previousSelectionStart,
+            previousSelectionEnd
+          )
+      ) {
+        // If the same text is in the same place as the previously selected text,
+        // the selection is kept.
+        this.inputField.setSelectionRange(
+          previousSelectionStart,
+          previousSelectionEnd
+        );
+      } else if (
+        previousSelectionEnd &&
+        (previousUntrimmedValue.length === previousSelectionEnd ||
+          value.length <= previousSelectionEnd)
+      ) {
+        // If the previous end caret is not 0 and the caret is at the end of the
+        // input or its position is beyond the end of the new value, keep the
+        // position at the end.
+        this.inputField.setSelectionRange(value.length, value.length);
       } else {
-        this.selectionStart = previousSelectionStart;
-        this.selectionEnd = previousSelectionEnd;
+        // Otherwise clear selection and set the caret position to the previous
+        // caret end position.
+        this.inputField.setSelectionRange(
+          previousSelectionEnd,
+          previousSelectionEnd
+        );
       }
     }
 
@@ -1037,12 +1056,20 @@ class UrlbarInput {
       throw new Error(`Invalid url for result ${JSON.stringify(result)}`);
     }
 
-    if (!this.isPrivate && !result.heuristic) {
-      // We don't await for this, because a rejection should not interrupt
-      // the load. Just reportError it.
-      UrlbarUtils.addToInputHistory(url, this._lastSearchString).catch(
-        Cu.reportError
-      );
+    // Record input history but only in non-private windows.
+    if (!this.isPrivate) {
+      let input;
+      if (!result.heuristic) {
+        input = this._lastSearchString;
+      } else if (result.autofill?.type == "adaptive") {
+        input = result.autofill.adaptiveHistoryInput;
+      }
+      // `input` may be an empty string, so do a strict comparison here.
+      if (input !== undefined) {
+        // We don't await for this, because a rejection should not interrupt
+        // the load. Just reportError it.
+        UrlbarUtils.addToInputHistory(url, input).catch(Cu.reportError);
+      }
     }
 
     this.controller.engagementEvent.record(event, {

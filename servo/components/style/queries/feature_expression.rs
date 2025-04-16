@@ -6,7 +6,7 @@
 //! `(width >= 400px)`.
 
 use super::feature::{Evaluator, QueryFeatureDescription};
-use super::feature::{KeywordDiscriminant, ParsingRequirements};
+use super::feature::{KeywordDiscriminant, FeatureFlags};
 use crate::parser::{Parse, ParserContext};
 use crate::str::{starts_with_ignore_ascii_case, string_as_ascii_lowercase};
 use crate::values::computed::{self, Ratio, ToComputedValue};
@@ -47,10 +47,9 @@ impl FeatureType {
     }
 }
 
-
 /// The kind of matching that should be performed on a feature value.
 #[derive(Clone, Copy, Debug, Eq, MallocSizeOf, PartialEq, ToShmem)]
-pub enum Range {
+enum LegacyRange {
     /// At least the specified value.
     Min,
     /// At most the specified value.
@@ -59,7 +58,7 @@ pub enum Range {
 
 /// The operator that was specified in this feature.
 #[derive(Clone, Copy, Debug, Eq, MallocSizeOf, PartialEq, ToShmem)]
-pub enum Operator {
+enum Operator {
     /// =
     Equal,
     /// >
@@ -78,69 +77,165 @@ impl ToCss for Operator {
         W: fmt::Write,
     {
         dest.write_str(match *self {
-            Operator::Equal => "=",
-            Operator::LessThan => "<",
-            Operator::LessThanEqual => "<=",
-            Operator::GreaterThan => ">",
-            Operator::GreaterThanEqual => ">=",
+            Self::Equal => "=",
+            Self::LessThan => "<",
+            Self::LessThanEqual => "<=",
+            Self::GreaterThan => ">",
+            Self::GreaterThanEqual => ">=",
         })
     }
 }
 
-/// Either a `Range` or an `Operator`.
-///
-/// Ranged features are not allowed with operations (that'd make no sense).
-#[derive(Clone, Copy, Debug, Eq, MallocSizeOf, PartialEq, ToShmem)]
-pub enum RangeOrOperator {
-    /// A `Range`.
-    Range(Range),
-    /// An `Operator`.
-    Operator(Operator),
-}
-
-impl RangeOrOperator {
-    /// Evaluate a given range given an optional query value and a value from
-    /// the browser.
-    fn evaluate<T>(range_or_op: Option<Self>, query_value: Option<T>, value: T) -> bool
-    where
-        T: PartialOrd + Zero,
-    {
-        match query_value {
-            Some(v) => Self::evaluate_with_query_value(range_or_op, v, value),
-            None => !value.is_zero(),
+impl Operator {
+    fn is_compatible_with(self, right_op: Self) -> bool {
+        // Some operators are not compatible with each other in multi-range
+        // context.
+        match self {
+            Self::Equal => false,
+            Self::GreaterThan | Self::GreaterThanEqual => matches!(right_op, Self::GreaterThan | Self::GreaterThanEqual),
+            Self::LessThan | Self::LessThanEqual => matches!(right_op, Self::LessThan | Self::LessThanEqual),
         }
     }
 
-    /// Evaluate a given range given a non-optional query value and a value from
+    fn evaluate(&self, cmp: Ordering) -> bool {
+        match *self {
+            Self::Equal => cmp == Ordering::Equal,
+            Self::GreaterThan => cmp == Ordering::Greater,
+            Self::GreaterThanEqual => cmp == Ordering::Equal || cmp == Ordering::Greater,
+            Self::LessThan => cmp == Ordering::Less,
+            Self::LessThanEqual => cmp == Ordering::Equal || cmp == Ordering::Less,
+        }
+    }
+
+    fn parse<'i>(input: &mut Parser<'i, '_>) -> Result<Self, ParseError<'i>> {
+        let location = input.current_source_location();
+        let operator = match *input.next()? {
+            Token::Delim('=') => return Ok(Operator::Equal),
+            Token::Delim('>') => Operator::GreaterThan,
+            Token::Delim('<') => Operator::LessThan,
+            ref t => return Err(location.new_unexpected_token_error(t.clone())),
+        };
+
+        // https://drafts.csswg.org/mediaqueries-4/#mq-syntax:
+        //
+        //     No whitespace is allowed between the “<” or “>”
+        //     <delim-token>s and the following “=” <delim-token>, if it’s
+        //     present.
+        //
+        // TODO(emilio): Maybe we should ignore comments as well?
+        // https://github.com/w3c/csswg-drafts/issues/6248
+        let parsed_equal = input
+            .try_parse(|i| {
+                let t = i.next_including_whitespace().map_err(|_| ())?;
+                if !matches!(t, Token::Delim('=')) {
+                    return Err(());
+                }
+                Ok(())
+            })
+            .is_ok();
+
+        if !parsed_equal {
+            return Ok(operator);
+        }
+
+        Ok(match operator {
+            Operator::GreaterThan => Operator::GreaterThanEqual,
+            Operator::LessThan => Operator::LessThanEqual,
+            _ => unreachable!(),
+        })
+    }
+}
+
+#[derive(Clone, Debug, MallocSizeOf, ToShmem, PartialEq)]
+enum QueryFeatureExpressionKind {
+    /// Just the media feature name.
+    Empty,
+
+    /// A single value.
+    Single(QueryExpressionValue),
+
+    /// Legacy range syntax (min-*: value) or so.
+    LegacyRange(LegacyRange, QueryExpressionValue),
+
+    /// Modern range context syntax:
+    /// https://drafts.csswg.org/mediaqueries-5/#mq-range-context
+    Range {
+        left: Option<(Operator, QueryExpressionValue)>,
+        right: Option<(Operator, QueryExpressionValue)>,
+    },
+}
+
+impl QueryFeatureExpressionKind {
+    /// Evaluate a given range given an optional query value and a value from
     /// the browser.
-    fn evaluate_with_query_value<T>(range_or_op: Option<Self>, query_value: T, value: T) -> bool
+    fn evaluate<T>(
+        &self,
+        context_value: T,
+        mut compute: impl FnMut(&QueryExpressionValue) -> T,
+    ) -> bool
     where
-        T: PartialOrd,
+        T: PartialOrd + Zero,
     {
-        let cmp = match value.partial_cmp(&query_value) {
-            Some(c) => c,
-            None => return false,
-        };
-
-        let range_or_op = match range_or_op {
-            Some(r) => r,
-            None => return cmp == Ordering::Equal,
-        };
-
-        match range_or_op {
-            RangeOrOperator::Range(range) => {
+        match *self {
+            Self::Empty => return !context_value.is_zero(),
+            Self::Single(ref value) => {
+                let value = compute(value);
+                let cmp = match context_value.partial_cmp(&value) {
+                    Some(c) => c,
+                    None => return false,
+                };
+                cmp == Ordering::Equal
+            },
+            Self::LegacyRange(ref range, ref value) => {
+                let value = compute(value);
+                let cmp = match context_value.partial_cmp(&value) {
+                    Some(c) => c,
+                    None => return false,
+                };
                 cmp == Ordering::Equal ||
                     match range {
-                        Range::Min => cmp == Ordering::Greater,
-                        Range::Max => cmp == Ordering::Less,
+                        LegacyRange::Min => cmp == Ordering::Greater,
+                        LegacyRange::Max => cmp == Ordering::Less,
                     }
             },
-            RangeOrOperator::Operator(op) => match op {
-                Operator::Equal => cmp == Ordering::Equal,
-                Operator::GreaterThan => cmp == Ordering::Greater,
-                Operator::GreaterThanEqual => cmp == Ordering::Equal || cmp == Ordering::Greater,
-                Operator::LessThan => cmp == Ordering::Less,
-                Operator::LessThanEqual => cmp == Ordering::Equal || cmp == Ordering::Less,
+            Self::Range {
+                ref left,
+                ref right,
+            } => {
+                debug_assert!(left.is_some() || right.is_some());
+                if let Some((ref op, ref value)) = left {
+                    let value = compute(value);
+                    let cmp = match value.partial_cmp(&context_value) {
+                        Some(c) => c,
+                        None => return false,
+                    };
+                    if !op.evaluate(cmp) {
+                        return false;
+                    }
+                }
+                if let Some((ref op, ref value)) = right {
+                    let value = compute(value);
+                    let cmp = match context_value.partial_cmp(&value) {
+                        Some(c) => c,
+                        None => return false,
+                    };
+                    if !op.evaluate(cmp) {
+                        return false;
+                    }
+                }
+                true
+            },
+        }
+    }
+
+    /// Non-ranged features only need to compare to one value at most.
+    fn non_ranged_value(&self) -> Option<&QueryExpressionValue> {
+        match *self {
+            Self::Empty => None,
+            Self::Single(ref v) => Some(v),
+            Self::LegacyRange(..) | Self::Range { .. } => {
+                debug_assert!(false, "Unexpected ranged value in non-ranged feature!");
+                None
             },
         }
     }
@@ -152,8 +247,7 @@ impl RangeOrOperator {
 pub struct QueryFeatureExpression {
     feature_type: FeatureType,
     feature_index: usize,
-    value: Option<QueryExpressionValue>,
-    range_or_operator: Option<RangeOrOperator>,
+    kind: QueryFeatureExpressionKind,
 }
 
 impl ToCss for QueryFeatureExpression {
@@ -163,89 +257,44 @@ impl ToCss for QueryFeatureExpression {
     {
         dest.write_str("(")?;
 
-        let feature = self.feature();
-
-        if feature
-            .requirements
-            .contains(ParsingRequirements::WEBKIT_PREFIX)
-        {
-            dest.write_str("-webkit-")?;
+        match self.kind {
+            QueryFeatureExpressionKind::Empty => self.write_name(dest)?,
+            QueryFeatureExpressionKind::Single(ref v) |
+            QueryFeatureExpressionKind::LegacyRange(_, ref v) => {
+                self.write_name(dest)?;
+                dest.write_str(": ")?;
+                v.to_css(dest, self)?;
+            },
+            QueryFeatureExpressionKind::Range {
+                ref left,
+                ref right,
+            } => {
+                if let Some((ref op, ref val)) = left {
+                    val.to_css(dest, self)?;
+                    dest.write_char(' ')?;
+                    op.to_css(dest)?;
+                    dest.write_char(' ')?;
+                }
+                self.write_name(dest)?;
+                if let Some((ref op, ref val)) = right {
+                    dest.write_char(' ')?;
+                    op.to_css(dest)?;
+                    dest.write_char(' ')?;
+                    val.to_css(dest, self)?;
+                }
+            },
         }
-
-        if let Some(RangeOrOperator::Range(range)) = self.range_or_operator {
-            match range {
-                Range::Min => dest.write_str("min-")?,
-                Range::Max => dest.write_str("max-")?,
-            }
-        }
-
-        // NB: CssStringWriter not needed, feature names are under control.
-        write!(dest, "{}", feature.name)?;
-
-        if let Some(RangeOrOperator::Operator(op)) = self.range_or_operator {
-            dest.write_char(' ')?;
-            op.to_css(dest)?;
-            dest.write_char(' ')?;
-        } else if self.value.is_some() {
-            dest.write_str(": ")?;
-        }
-
-        if let Some(ref val) = self.value {
-            val.to_css(dest, self)?;
-        }
-
-        dest.write_str(")")
+        dest.write_char(')')
     }
 }
 
-/// Consumes an operation or a colon, or returns an error.
-fn consume_operation_or_colon(input: &mut Parser) -> Result<Option<Operator>, ()> {
-    let first_delim = {
-        let next_token = match input.next() {
-            Ok(t) => t,
-            Err(..) => return Err(()),
-        };
-
-        match *next_token {
-            Token::Colon => return Ok(None),
-            Token::Delim(oper) => oper,
-            _ => return Err(()),
-        }
-    };
-    let operator = match first_delim {
-        '=' => return Ok(Some(Operator::Equal)),
-        '>' => Operator::GreaterThan,
-        '<' => Operator::LessThan,
-        _ => return Err(()),
-    };
-
-    // https://drafts.csswg.org/mediaqueries-4/#mq-syntax:
-    //
-    //     No whitespace is allowed between the “<” or “>”
-    //     <delim-token>s and the following “=” <delim-token>, if it’s
-    //     present.
-    //
-    // TODO(emilio): Maybe we should ignore comments as well?
-    // https://github.com/w3c/csswg-drafts/issues/6248
-    let parsed_equal = input
-        .try_parse(|i| {
-            let t = i.next_including_whitespace().map_err(|_| ())?;
-            if !matches!(t, Token::Delim('=')) {
-                return Err(());
-            }
-            Ok(())
-        })
-        .is_ok();
-
-    if !parsed_equal {
-        return Ok(Some(operator));
+fn consume_operation_or_colon<'i>(
+    input: &mut Parser<'i, '_>,
+) -> Result<Option<Operator>, ParseError<'i>> {
+    if input.try_parse(|input| input.expect_colon()).is_ok() {
+        return Ok(None);
     }
-
-    Ok(Some(match operator {
-        Operator::GreaterThan => Operator::GreaterThanEqual,
-        Operator::LessThan => Operator::LessThanEqual,
-        _ => unreachable!(),
-    }))
+    Operator::parse(input).map(|op| Some(op))
 }
 
 #[allow(unused_variables)]
@@ -273,20 +322,45 @@ impl QueryFeatureExpression {
     fn new(
         feature_type: FeatureType,
         feature_index: usize,
-        value: Option<QueryExpressionValue>,
-        range_or_operator: Option<RangeOrOperator>,
+        kind: QueryFeatureExpressionKind,
     ) -> Self {
         debug_assert!(feature_index < feature_type.features().len());
         Self {
             feature_type,
             feature_index,
-            value,
-            range_or_operator,
+            kind,
         }
+    }
+
+    fn write_name<W>(&self, dest: &mut CssWriter<W>) -> fmt::Result
+    where
+        W: fmt::Write,
+    {
+        let feature = self.feature();
+        if feature.flags.contains(FeatureFlags::WEBKIT_PREFIX) {
+            dest.write_str("-webkit-")?;
+        }
+
+        if let QueryFeatureExpressionKind::LegacyRange(range, _) = self.kind {
+            match range {
+                LegacyRange::Min => dest.write_str("min-")?,
+                LegacyRange::Max => dest.write_str("max-")?,
+            }
+        }
+
+        // NB: CssStringWriter not needed, feature names are under control.
+        write!(dest, "{}", feature.name)?;
+
+        Ok(())
     }
 
     fn feature(&self) -> &'static QueryFeatureDescription {
         &self.feature_type.features()[self.feature_index]
+    }
+
+    /// Returns the feature flags for our feature.
+    pub fn feature_flags(&self) -> FeatureFlags {
+        self.feature().flags
     }
 
     /// Parse a feature expression of the form:
@@ -300,42 +374,41 @@ impl QueryFeatureExpression {
         feature_type: FeatureType,
     ) -> Result<Self, ParseError<'i>> {
         input.expect_parenthesis_block()?;
-        input.parse_nested_block(|input| Self::parse_in_parenthesis_block(context, input, feature_type))
+        input.parse_nested_block(|input| {
+            Self::parse_in_parenthesis_block(context, input, feature_type)
+        })
     }
 
-    /// Parse a feature expression where we've already consumed the parenthesis.
-    pub fn parse_in_parenthesis_block<'i, 't>(
+    fn parse_feature_name<'i, 't>(
         context: &ParserContext,
         input: &mut Parser<'i, 't>,
         feature_type: FeatureType,
-    ) -> Result<Self, ParseError<'i>> {
-        let mut requirements = ParsingRequirements::empty();
+    ) -> Result<(usize, Option<LegacyRange>), ParseError<'i>> {
+        let mut flags = FeatureFlags::empty();
         let location = input.current_source_location();
         let ident = input.expect_ident()?;
 
         if context.in_ua_or_chrome_sheet() {
-            requirements.insert(ParsingRequirements::CHROME_AND_UA_ONLY);
+            flags.insert(FeatureFlags::CHROME_AND_UA_ONLY);
         }
 
         let mut feature_name = &**ident;
-
         if starts_with_ignore_ascii_case(feature_name, "-webkit-") {
             feature_name = &feature_name[8..];
-            requirements.insert(ParsingRequirements::WEBKIT_PREFIX);
+            flags.insert(FeatureFlags::WEBKIT_PREFIX);
         }
 
         let range = if starts_with_ignore_ascii_case(feature_name, "min-") {
             feature_name = &feature_name[4..];
-            Some(Range::Min)
+            Some(LegacyRange::Min)
         } else if starts_with_ignore_ascii_case(feature_name, "max-") {
             feature_name = &feature_name[4..];
-            Some(Range::Max)
+            Some(LegacyRange::Max)
         } else {
             None
         };
 
         let atom = Atom::from(string_as_ascii_lowercase(feature_name));
-
         let (feature_index, feature) = match feature_type.find_feature(&atom) {
             Some((i, f)) => (i, f),
             None => {
@@ -346,7 +419,7 @@ impl QueryFeatureExpression {
         };
 
         if disabled_by_pref(&feature.name, context) ||
-            !requirements.contains(feature.requirements) ||
+            !flags.contains(feature.flags.parsing_requirements()) ||
             (range.is_some() && !feature.allows_ranges())
         {
             return Err(location.new_custom_error(
@@ -354,6 +427,91 @@ impl QueryFeatureExpression {
             ));
         }
 
+        Ok((feature_index, range))
+    }
+
+    /// Parses the following range syntax:
+    ///
+    ///   (feature-value <operator> feature-name)
+    ///   (feature-value <operator> feature-name <operator> feature-value)
+    fn parse_multi_range_syntax<'i, 't>(
+        context: &ParserContext,
+        input: &mut Parser<'i, 't>,
+        feature_type: FeatureType,
+    ) -> Result<Self, ParseError<'i>> {
+        let start = input.state();
+
+        // To parse the values, we first need to find the feature name. We rely
+        // on feature values for ranged features not being able to be top-level
+        // <ident>s, which holds.
+        let feature_index = loop {
+            // NOTE: parse_feature_name advances the input.
+            if let Ok((index, range)) = Self::parse_feature_name(context, input, feature_type) {
+                if range.is_some() {
+                    // Ranged names are not allowed here.
+                    return Err(input.new_custom_error(StyleParseErrorKind::UnspecifiedError));
+                }
+                break index;
+            }
+            if input.is_exhausted() {
+                return Err(start
+                    .source_location()
+                    .new_custom_error(StyleParseErrorKind::UnspecifiedError));
+            }
+        };
+
+        input.reset(&start);
+
+        let feature = &feature_type.features()[feature_index];
+        let left_val = QueryExpressionValue::parse(feature, context, input)?;
+        let left_op = Operator::parse(input)?;
+
+        {
+            let (parsed_index, _) = Self::parse_feature_name(context, input, feature_type)?;
+            debug_assert_eq!(
+                parsed_index, feature_index,
+                "How did we find a different feature?"
+            );
+        }
+
+        let right_op = input.try_parse(Operator::parse).ok();
+        let right = match right_op {
+            Some(op) => {
+                if !left_op.is_compatible_with(op) {
+                    return Err(
+                        input.new_custom_error(StyleParseErrorKind::UnspecifiedError)
+                    );
+                }
+                Some((op, QueryExpressionValue::parse(feature, context, input)?))
+            },
+            None => None,
+        };
+        Ok(Self::new(
+            feature_type,
+            feature_index,
+            QueryFeatureExpressionKind::Range {
+                left: Some((left_op, left_val)),
+                right,
+            },
+        ))
+    }
+
+    /// Parse a feature expression where we've already consumed the parenthesis.
+    pub fn parse_in_parenthesis_block<'i, 't>(
+        context: &ParserContext,
+        input: &mut Parser<'i, 't>,
+        feature_type: FeatureType,
+    ) -> Result<Self, ParseError<'i>> {
+        let (feature_index, range) =
+            match input.try_parse(|input| Self::parse_feature_name(context, input, feature_type)) {
+                Ok(v) => v,
+                Err(e) => {
+                    if let Ok(expr) = Self::parse_multi_range_syntax(context, input, feature_type) {
+                        return Ok(expr);
+                    }
+                    return Err(e);
+                },
+            };
         let operator = input.try_parse(consume_operation_or_colon);
         let operator = match operator {
             Err(..) => {
@@ -368,19 +526,30 @@ impl QueryFeatureExpression {
                     );
                 }
 
-                return Ok(Self::new(feature_type, feature_index, None, None));
+                return Ok(Self::new(
+                    feature_type,
+                    feature_index,
+                    QueryFeatureExpressionKind::Empty,
+                ));
             },
             Ok(operator) => operator,
         };
 
-        let range_or_operator = match range {
+        let feature = &feature_type.features()[feature_index];
+
+        let value = QueryExpressionValue::parse(feature, context, input).map_err(|err| {
+            err.location
+                .new_custom_error(StyleParseErrorKind::MediaQueryExpectedFeatureValue)
+        })?;
+
+        let kind = match range {
             Some(range) => {
                 if operator.is_some() {
                     return Err(
                         input.new_custom_error(StyleParseErrorKind::MediaQueryUnexpectedOperator)
                     );
                 }
-                Some(RangeOrOperator::Range(range))
+                QueryFeatureExpressionKind::LegacyRange(range, value)
             },
             None => match operator {
                 Some(operator) => {
@@ -388,77 +557,64 @@ impl QueryFeatureExpression {
                         return Err(input
                             .new_custom_error(StyleParseErrorKind::MediaQueryUnexpectedOperator));
                     }
-                    Some(RangeOrOperator::Operator(operator))
+                    QueryFeatureExpressionKind::Range {
+                        left: None,
+                        right: Some((operator, value)),
+                    }
                 },
-                None => None,
+                None => QueryFeatureExpressionKind::Single(value),
             },
         };
 
-        let value = QueryExpressionValue::parse(feature, context, input).map_err(|err| {
-            err.location
-                .new_custom_error(StyleParseErrorKind::MediaQueryExpectedFeatureValue)
-        })?;
-
-        Ok(Self::new(feature_type, feature_index, Some(value), range_or_operator))
+        Ok(Self::new(feature_type, feature_index, kind))
     }
 
     /// Returns whether this query evaluates to true for the given device.
     pub fn matches(&self, context: &computed::Context) -> bool {
-        let value = self.value.as_ref();
-
         macro_rules! expect {
-            ($variant:ident) => {
-                value.map(|value| match *value {
+            ($variant:ident, $v:expr) => {
+                match *$v {
                     QueryExpressionValue::$variant(ref v) => v,
                     _ => unreachable!("Unexpected QueryExpressionValue"),
-                })
+                }
             };
         }
 
         match self.feature().evaluator {
             Evaluator::Length(eval) => {
-                let computed = expect!(Length).map(|specified| {
-                    specified.to_computed_value(context)
-                });
-                let length = eval(context);
-                RangeOrOperator::evaluate(self.range_or_operator, computed, length)
+                let v = eval(context);
+                self.kind.evaluate(v, |v| {
+                    expect!(Length, v).to_computed_value(context)
+                })
             },
             Evaluator::Integer(eval) => {
-                let computed = expect!(Integer).cloned();
-                let integer = eval(context);
-                RangeOrOperator::evaluate(self.range_or_operator, computed, integer)
+                let v = eval(context);
+                self.kind.evaluate(v, |v| *expect!(Integer, v))
             },
             Evaluator::Float(eval) => {
-                let computed = expect!(Float).cloned();
-                let float = eval(context);
-                RangeOrOperator::evaluate(self.range_or_operator, computed, float)
+                let v = eval(context);
+                self.kind.evaluate(v, |v| *expect!(Float, v))
             }
             Evaluator::NumberRatio(eval) => {
+                let ratio = eval(context);
                 // A ratio of 0/0 behaves as the ratio 1/0, so we need to call used_value()
                 // to convert it if necessary.
                 // FIXME: we may need to update here once
                 // https://github.com/w3c/csswg-drafts/issues/4954 got resolved.
-                let computed = match expect!(NumberRatio).cloned() {
-                    Some(ratio) => ratio.used_value(),
-                    None => return true,
-                };
-                let ratio = eval(context);
-                RangeOrOperator::evaluate_with_query_value(self.range_or_operator, computed, ratio)
+                self.kind.evaluate(ratio, |v| expect!(NumberRatio, v).used_value())
             },
             Evaluator::Resolution(eval) => {
-                let computed = expect!(Resolution).map(|specified| {
-                    specified.to_computed_value(context).dppx()
-                });
-                let resolution = eval(context).dppx();
-                RangeOrOperator::evaluate(self.range_or_operator, computed, resolution)
+                let v = eval(context).dppx();
+                self.kind.evaluate(v, |v| {
+                    expect!(Resolution, v).to_computed_value(context).dppx()
+                })
             },
             Evaluator::Enumerated { evaluator, .. } => {
-                debug_assert!(self.range_or_operator.is_none(), "Ranges with keywords?");
-                evaluator(context, expect!(Enumerated).cloned())
+                let computed = self.kind.non_ranged_value().map(|v| *expect!(Enumerated, v));
+                evaluator(context, computed)
             },
             Evaluator::BoolInteger(eval) => {
-                debug_assert!(self.range_or_operator.is_none(), "Ranges with bools?");
-                let computed = expect!(BoolInteger).cloned();
+                let computed = self.kind.non_ranged_value().map(|v| *expect!(BoolInteger, v));
                 let boolean = eval(context);
                 computed.map_or(boolean, |v| v == boolean)
             },

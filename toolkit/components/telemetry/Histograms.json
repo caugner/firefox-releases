@@ -188,6 +188,17 @@
     "bug_numbers": [1172689, 1531034],
     "description": "Recorded when application reputation remote lookup is performed, `true` is recorded if the lookup times out."
   },
+  "ADDON_SIGNATURE_VERIFICATION_STATUS": {
+    "record_in_processes": ["main", "content"],
+    "products": ["firefox", "fennec"],
+    "alert_emails": ["seceng-telemetry@mozilla.com"],
+    "expires_in_version": "never",
+    "releaseChannelCollection": "opt-out",
+    "kind": "enumerated",
+    "n_values": 32,
+    "bug_numbers": [1771523],
+    "description": "Records the result of App Signature Verification. See the comments in OpenSignedAppFile. "
+  },
   "BACKGROUNDFILESAVER_THREAD_COUNT": {
     "record_in_processes": ["main", "content"],
     "products": ["firefox", "fennec"],
@@ -2567,7 +2578,7 @@
     "record_in_processes": ["content"],
     "products": ["firefox"],
     "alert_emails": ["necko@mozilla.com", "ddamjanovic@mozilla.com"],
-    "expires_in_version": "103",
+    "expires_in_version": "109",
     "releaseChannelCollection": "opt-out",
     "kind": "exponential",
     "high": 50000,
@@ -2580,7 +2591,7 @@
     "record_in_processes": ["content"],
     "products": ["firefox"],
     "alert_emails": ["necko@mozilla.com", "ddamjanovic@mozilla.com"],
-    "expires_in_version": "103",
+    "expires_in_version": "109",
     "releaseChannelCollection": "opt-out",
     "kind": "exponential",
     "high": 50000,
@@ -8569,8 +8580,8 @@
     "alert_emails": ["session-restore-telemetry-alerts@mozilla.com"],
     "expires_in_version": "default",
     "kind": "exponential",
-    "high": 3000,
-    "n_buckets": 10,
+    "high": 9000,
+    "n_buckets": 20,
     "description": "Session restore: Time to write the session data to the file on disk (ms)"
   },
   "FX_SESSION_RESTORE_FILE_SIZE_BYTES": {
@@ -9755,6 +9766,19 @@
     "releaseChannelCollection": "opt-out",
     "description": "a testing histogram; not meant to be touched"
   },
+  "TELEMETRY_TEST_MIRROR_FOR_TIMING": {
+    "record_in_processes": ["main", "content"],
+    "products": ["firefox"],
+    "alert_emails": ["chutten@mozilla.com"],
+    "expires_in_version": "never",
+    "kind": "linear",
+    "low": 1,
+    "high": 2147483646,
+    "n_buckets": 10,
+    "bug_numbers": [1768636],
+    "releaseChannelCollection": "opt-out",
+    "description": "a testing histogram; not meant to be touched"
+  },
   "TELEMETRY_TEST_BOOLEAN": {
     "record_in_processes": ["main", "content"],
     "products": ["firefox", "fennec", "thunderbird"],
@@ -10071,6 +10095,16 @@
     "kind": "categorical",
     "labels": ["unknown","javaScript","image", "audio", "video","text_plain","text_csv","text_xml","app_octet_stream","app_xml","app_json","text_json","text_html","empty","serviceworker_load","worker_load","importScript_load","script_load","same_origin","CORS_origin","cross_origin", "worklet_load"],
     "description": "Whether the script load has a MIME type of ...?  (unknown, javaScript, image, audio, video, text_plain, text_csv, text_xml, app_octet_stream, app_xml, app_json, text_json, text_html, empty). Whether the script load is from ...?  (serviceworker_load, worker_load, importSript_load, script_load). Whether the script load is of ...?  (same_origin, CORS_origin, cross_origin)"
+  },
+  "SCRIPT_FILE_PROTOCOL_CORRECT_MIME": {
+    "record_in_processes": ["main", "content"],
+    "products": ["firefox"],
+    "alert_emails": ["seceng-telemetry@mozilla.com"],
+    "bug_numbers": [1770395],
+    "expires_in_version": "107",
+    "releaseChannelCollection": "opt-out",
+    "kind": "boolean",
+    "description": "Script loaded from file:// has a correct MIME type."
   },
   "NEWTAB_PAGE_ENABLED": {
     "record_in_processes": ["main", "content"],
@@ -10652,6 +10686,16 @@
     ],
     "description": "Reports if a Firefox succeeded or failed in fetching the GMP update.xml from balrog, and which method was used to verify the download.",
     "bug_numbers": [1714621]
+  },
+  "MEDIA_GMP_UPDATE_CONTENT_PROCESS_HAS_H264": {
+    "record_in_processes": ["main"],
+    "products": ["firefox"],
+    "alert_emails": ["webrtc-telemetry-alerts@mozilla.com"],
+    "expires_in_version": "105",
+    "kind": "enumerated",
+    "n_values": 5,
+    "bug_numbers": [1767334, 1768033],
+    "description": "Whether H264 encoding is an available capability for being sent to the content processes. 0=no h264, 1=h264 avaiable, 2=no h264 1 directory added, 3=no h264 >1 directories added, 4=directory adds in prorgress"
   },
   "MEDIA_MKV_CANPLAY_REQUESTED": {
     "record_in_processes": ["content"],
@@ -11311,6 +11355,16 @@
     "releaseChannelCollection": "opt-out",
     "description": "Whether any kind of H264 is enabled"
   },
+  "WEBRTC_GMP_INIT_SUCCESS": {
+    "record_in_processes": ["main", "content"],
+    "products": ["firefox", "fennec"],
+    "alert_emails": ["webrtc-telemetry-alerts@mozilla.com"],
+    "expires_in_version": "never",
+    "kind": "boolean",
+    "bug_numbers": [1774222],
+    "releaseChannelCollection": "opt-out",
+    "description": "Counts of GMP codec initialization success and failure"
+  },
   "MEDIA_RECORDER_RECORDING_DURATION": {
     "record_in_processes": ["main", "content"],
     "products": ["firefox", "fennec"],
@@ -11966,61 +12020,6 @@
     "high": 10000000,
     "n_buckets": 10000,
     "description": "The number of edges serialized into a heap snapshot."
-  },
-  "DEVTOOLS_PERFTOOLS_RECORDING_COUNT": {
-    "record_in_processes": ["main", "content"],
-    "products": ["firefox", "fennec"],
-    "expires_in_version": "never",
-    "kind": "count",
-    "description": "Incremented whenever a performance tool recording is completed."
-  },
-  "DEVTOOLS_PERFTOOLS_CONSOLE_RECORDING_COUNT": {
-    "record_in_processes": ["main", "content"],
-    "products": ["firefox", "fennec"],
-    "expires_in_version": "never",
-    "kind": "count",
-    "description": "Incremented whenever a performance tool recording is completed that was initiated via console.profile."
-  },
-  "DEVTOOLS_PERFTOOLS_RECORDING_IMPORT_FLAG": {
-    "record_in_processes": ["main", "content"],
-    "products": ["firefox", "fennec"],
-    "expires_in_version": "never",
-    "kind": "flag",
-    "description": "When a user imports a recording in the performance tool."
-  },
-  "DEVTOOLS_PERFTOOLS_RECORDING_EXPORT_FLAG": {
-    "record_in_processes": ["main", "content"],
-    "products": ["firefox", "fennec"],
-    "expires_in_version": "never",
-    "kind": "flag",
-    "description": "When a user imports a recording in the performance tool."
-  },
-  "DEVTOOLS_PERFTOOLS_RECORDING_FEATURES_USED": {
-    "record_in_processes": ["main", "content"],
-    "products": ["firefox", "fennec"],
-    "expires_in_version": "never",
-    "kind": "boolean",
-    "keyed": true,
-    "description": "When a user starts a recording with specific recording options, keyed by feature name (withMarkers, withAllocations, etc.)."
-  },
-  "DEVTOOLS_PERFTOOLS_RECORDING_DURATION_MS": {
-    "record_in_processes": ["main", "content"],
-    "products": ["firefox", "fennec"],
-    "expires_in_version": "never",
-    "kind": "exponential",
-    "high": 600000,
-    "n_buckets": 20,
-    "description": "The length of a duration in MS of a performance tool recording."
-  },
-  "DEVTOOLS_PERFTOOLS_SELECTED_VIEW_MS": {
-    "record_in_processes": ["main", "content"],
-    "products": ["firefox", "fennec"],
-    "expires_in_version": "never",
-    "kind": "exponential",
-    "keyed": true,
-    "high": 600000,
-    "n_buckets": 20,
-    "description": "The amount of time spent in a specific performance tool view, keyed by view name (waterfall, js-calltree, js-flamegraph, etc)."
   },
   "DEVTOOLS_JAVASCRIPT_ERROR_DISPLAYED": {
     "alert_emails": ["nicolas.b.pierron@mozilla.com"],
@@ -13300,8 +13299,41 @@
       "StripForRedirect"
     ],
     "description": "A count of the query stripping. ('Navigation' = There was a top-level loading via navigation, 'Redirect' = There was a top-level loading via redirect, 'StripForNavigation' = There was a stripping happened for a top-level navigation, 'StripForRedirect' = There was a stripping happened for a top-level redirect.",
-    "alert_emails": ["tihuang@mozilla.com", "aedelstein@mozilla.com", "jhofmann@mozilla.com", "pbz@mozilla.com", "seceng-telemetry@mozilla.com"],
+    "alert_emails": ["tihuang@mozilla.com", "pbz@mozilla.com", "seceng-telemetry@mozilla.com"],
     "bug_numbers": [1706616]
+  },
+  "QUERY_STRIPPING_PARAM_COUNT": {
+    "record_in_processes": ["main", "content"],
+    "products": ["firefox", "fennec"],
+    "expires_in_version": "never",
+    "releaseChannelCollection": "opt-out",
+    "kind": "exponential",
+    "low": 1,
+    "high": 100,
+    "n_buckets": 25,
+    "description": "If query params get stripped, how many per navigation/redirect.",
+    "alert_emails": ["tihuang@mozilla.com", "pbz@mozilla.com", "seceng-telemetry@mozilla.com"],
+    "bug_numbers": [1762374]
+  },
+  "QUERY_STRIPPING_COUNT_BY_PARAM": {
+    "record_in_processes": ["main", "content"],
+    "products": ["firefox", "fennec"],
+    "expires_in_version": "never",
+    "releaseChannelCollection": "opt-out",
+    "kind": "categorical",
+    "labels": [
+      "param_mc_eid",
+      "param_oly_anon_id",
+      "param_oly_enc_id",
+      "param___s",
+      "param_vero_id",
+      "param__hsenc",
+      "param_mkt_tok",
+      "param_fbclid"
+    ],
+    "description": "Counts how often specific query parameters are stripped.",
+    "alert_emails": ["tihuang@mozilla.com", "pbz@mozilla.com", "seceng-telemetry@mozilla.com"],
+    "bug_numbers": [1762374]
   },
   "SERVICE_WORKER_LAUNCH_TIME_2": {
     "record_in_processes": ["main", "content"],
@@ -16500,6 +16532,17 @@
     "n_buckets": 56,
     "description": "How much time (in hours) passed between the current cookie purging activity and the one before that (cookie purging is run on 'daily idle')"
   },
+  "COOKIE_RETRIEVAL_SAMESITE_PROBLEM": {
+    "record_in_processes": ["main", "content"],
+    "products": ["firefox"],
+    "alert_emails": ["fbraun@mozilla.com", "tschuster@mozilla.com", "seceng-telemetry@mozilla.com"],
+    "bug_numbers": [1763367],
+    "expires_in_version": "106",
+    "kind" : "enumerated",
+    "n_values": 32,
+    "description": "Whether a cookie was skipped in GetCookiesForURI because of a same-site issue. This is a bit field.",
+    "releaseChannelCollection": "opt-out"
+  },
   "REFERRER_POLICY_COUNT" : {
     "products": ["firefox"],
     "record_in_processes": ["main"],
@@ -16878,7 +16921,7 @@
   "HTTP_PRELOAD_IMAGE_STARTREQUEST_DELAY": {
     "record_in_processes": ["content"],
     "products": ["firefox"],
-    "expires_in_version": "103",
+    "expires_in_version": "109",
     "kind": "exponential",
     "high": 5000,
     "n_buckets": 50,
@@ -16889,7 +16932,7 @@
   "DOCUMENT_PRELOAD_IMAGE_ASYNCOPEN_DELAY": {
     "record_in_processes": ["content"],
     "products": ["firefox"],
-    "expires_in_version": "103",
+    "expires_in_version": "109",
     "kind": "exponential",
     "high": 5000,
     "n_buckets": 50,
@@ -16914,7 +16957,7 @@
     "products": ["firefox"],
     "alert_emails": ["necko@mozilla.com", "ddamjanovic@mozilla.com"],
     "bug_numbers": [1743630],
-    "expires_in_version": "103",
+    "expires_in_version": "109",
     "releaseChannelCollection": "opt-out",
     "kind": "exponential",
     "high": 30,
@@ -16926,7 +16969,7 @@
     "products": ["firefox"],
     "alert_emails": ["necko@mozilla.com", "ddamjanovic@mozilla.com"],
     "bug_numbers": [1743630],
-    "expires_in_version": "103",
+    "expires_in_version": "109",
     "releaseChannelCollection": "opt-out",
     "kind": "categorical",
     "labels": ["R2xx", "R3xx", "R4xx", "Other", "Cancel"],
@@ -16937,7 +16980,7 @@
     "products": ["firefox"],
     "alert_emails": ["necko@mozilla.com", "ddamjanovic@mozilla.com"],
     "bug_numbers": [1743630],
-    "expires_in_version": "103",
+    "expires_in_version": "109",
     "releaseChannelCollection": "opt-out",
     "kind": "exponential",
     "high": 3000,

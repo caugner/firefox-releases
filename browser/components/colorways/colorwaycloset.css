@@ -14,7 +14,7 @@ body > header {
   margin: 2em;
 }
 
-body > header > h1 {
+#collection-title {
   display: inline-block;
   margin: 0;
   padding: 0;
@@ -40,6 +40,94 @@ body > header > h1 {
   padding: .2em 1em;
 }
 
+#use-fx-home-controls:not(.success) > .success-prompt,
+#use-fx-home-controls.success > .reset-prompt {
+  display: none;
+}
+
+#use-fx-home-controls > .success-prompt::before {
+  display: inline-block;
+  content: "";
+  background: var(--green-50) url('chrome://global/skin/icons/check.svg') center center no-repeat;
+  -moz-context-properties: fill;
+  fill: white;
+  width: 22px;
+  height: 22px;
+  border-radius: 15px;
+  vertical-align: middle;
+  margin-inline-end: 0.5em;
+}
+
 body > section {
   grid-area: main;
+}
+
+fieldset {
+  border: none;
+  display: flex;
+  flex-direction: row;
+  padding: 0;
+}
+
+input[type="radio"] {
+  --colorway-icon: none;
+  appearance: none;
+  background-color: unset;
+  border-radius: 50%;
+  border: unset;
+  display: grid;
+  height: 32px;
+  place-content: center;
+  width: 32px;
+}
+
+input[type="radio"]::before {
+  background-image: var(--colorway-icon);
+  background-position: center;
+  background-repeat: no-repeat;
+  background-size: 24px;
+  border-radius: 50%;
+  content: "";
+  fill: #15141A;
+  height: 24px;
+  margin: 4px 8px;
+  width: 24px;
+}
+
+input[type="radio"].active::before {
+  background-image: url(chrome://global/skin/icons/check.svg), var(--colorway-icon);
+  background-size: 14px, 24px;
+}
+
+input[type="radio"]:enabled:checked,
+input[type="radio"]:enabled:checked:hover {
+  border: 2px solid;
+  border-color: #0060DF;
+}
+
+/* override common-shared.css */
+input[type="radio"]:enabled:hover,
+input[type="radio"]:enabled:hover:active,
+input[type="radio"]:checked,
+input[type="radio"]:enabled:checked:hover,
+input[type="radio"]:enabled:checked:hover:active {
+  background-color: unset;
+}
+
+#colorway-customization-panel {
+  padding-inline: 24px;
+}
+
+#colorway-details {
+  margin-top: 50px;
+}
+
+#colorway-name {
+  font-size: 2em;
+  margin-block: 0 37px;
+}
+
+#colorway-description {
+  font-size: 1.1em;
+  margin-block: 0 24px;
 }

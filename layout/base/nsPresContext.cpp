@@ -91,6 +91,9 @@
 #include "mozilla/layers/APZThreadUtils.h"
 #include "MobileViewportManager.h"
 #include "mozilla/dom/ImageTracker.h"
+#ifdef ACCESSIBILITY
+#  include "mozilla/a11y/DocAccessible.h"
+#endif
 
 // Needed for Start/Stop of Image Animation
 #include "imgIContainer.h"
@@ -304,7 +307,7 @@ nsPresContext::nsPresContext(dom::Document* aDocument, nsPresContextType aType)
     mTextPerf = MakeUnique<gfxTextPerfMetrics>();
   }
 
-  if (Preferences::GetBool(GFX_MISSING_FONTS_NOTIFY_PREF)) {
+  if (StaticPrefs::gfx_missing_fonts_notify()) {
     mMissingFonts = MakeUnique<gfxMissingFontRecorder>();
   }
 
@@ -492,6 +495,15 @@ void nsPresContext::AppUnitsPerDevPixelChanged() {
 
   mCurAppUnitsPerDevPixel = mDeviceContext->AppUnitsPerDevPixel();
 
+#ifdef ACCESSIBILITY
+  if (mCurAppUnitsPerDevPixel != oldAppUnitsPerDevPixel) {
+    if (nsAccessibilityService* accService = GetAccService()) {
+      accService->NotifyOfDevPixelRatioChange(mPresShell,
+                                              mCurAppUnitsPerDevPixel);
+    }
+  }
+#endif
+
   // Recompute the size for vh units since it's changed by the dynamic toolbar
   // max height which is stored in screen coord.
   if (IsRootContentDocumentCrossProcess()) {
@@ -580,7 +592,7 @@ void nsPresContext::PreferenceChanged(const char* aPrefName) {
                               MediaFeatureChangePropagation::JustThisDocument);
   }
   if (prefName.EqualsLiteral(GFX_MISSING_FONTS_NOTIFY_PREF)) {
-    if (Preferences::GetBool(GFX_MISSING_FONTS_NOTIFY_PREF)) {
+    if (StaticPrefs::gfx_missing_fonts_notify()) {
       if (!mMissingFonts) {
         mMissingFonts = MakeUnique<gfxMissingFontRecorder>();
         // trigger reflow to detect missing fonts on the current page
@@ -927,13 +939,10 @@ void nsPresContext::RecomputeBrowsingContextDependentData() {
     if (overriden != PrefersColorSchemeOverride::None) {
       return overriden;
     }
-    for (auto* cur = browsingContext; cur; cur = cur->GetParent()) {
-      auto embedder = cur->GetEmbedderColorScheme();
-      if (embedder != PrefersColorSchemeOverride::None) {
-        return embedder;
-      }
-    }
-    return PrefersColorSchemeOverride::None;
+    // We only use the top embedder color-scheme for now, see
+    // https://github.com/w3c/csswg-drafts/issues/7213 for a more general
+    // proposal.
+    return top->GetEmbedderColorScheme();
   }());
 
   if (doc == mDocument) {

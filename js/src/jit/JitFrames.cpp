@@ -25,6 +25,7 @@
 #include "jit/ScriptFromCalleeToken.h"
 #include "jit/Snapshots.h"
 #include "jit/VMFunctions.h"
+#include "js/Exception.h"
 #include "js/friend/DumpFunctions.h"  // js::DumpObject, js::DumpValue
 #include "vm/Interpreter.h"
 #include "vm/JSContext.h"
@@ -93,6 +94,10 @@ static void CloseLiveIteratorIon(JSContext* cx,
   MOZ_ASSERT_IF(!isDestructuring, tn->stackDepth > 0);
   MOZ_ASSERT_IF(isDestructuring, tn->stackDepth > 1);
 
+  // Save any pending exception, because some recover operations call into
+  // AutoUnsafeCallWithABI functions, which don't allow pending exceptions.
+  JS::AutoSaveExceptionState savedExc(cx);
+
   SnapshotIterator si = frame.snapshotIterator();
 
   // Skip stack slots until we reach the iterator object on the stack. For
@@ -121,6 +126,9 @@ static void CloseLiveIteratorIon(JSContext* cx,
       return;
     }
   }
+
+  // Restore any pending exception before the closing the iterator.
+  savedExc.restore();
 
   if (cx->isExceptionPending()) {
     if (tn->kind() == TryNoteKind::ForIn) {
@@ -1773,6 +1781,15 @@ Value SnapshotIterator::maybeRead(const RValueAllocation& a,
   return UndefinedValue();
 }
 
+bool SnapshotIterator::tryRead(Value* result) {
+  RValueAllocation a = readAllocation();
+  if (allocationReadable(a)) {
+    *result = allocationValue(a);
+    return true;
+  }
+  return false;
+}
+
 void SnapshotIterator::writeAllocationValuePayload(
     const RValueAllocation& alloc, const Value& v) {
   MOZ_ASSERT(v.isGCThing());
@@ -2217,7 +2234,7 @@ JSObject* InlineFrameIterator::computeEnvironmentChain(
 
 bool InlineFrameIterator::isFunctionFrame() const { return !!calleeTemplate_; }
 
-bool InlineFrameIterator::isModuleFrame() const { return script()->module(); }
+bool InlineFrameIterator::isModuleFrame() const { return script()->isModule(); }
 
 uintptr_t* MachineState::SafepointState::addressOfRegister(Register reg) const {
   size_t offset = regs.offsetOfPushedRegister(reg);

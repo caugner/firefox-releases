@@ -448,17 +448,20 @@ bool InterruptCallback(JSContext* aCx) {
 }
 
 class LogViolationDetailsRunnable final : public WorkerMainThreadRunnable {
+  uint16_t mViolationType;
   nsString mFileName;
   uint32_t mLineNum;
   uint32_t mColumnNum;
   nsString mScriptSample;
 
  public:
-  LogViolationDetailsRunnable(WorkerPrivate* aWorker, const nsString& aFileName,
-                              uint32_t aLineNum, uint32_t aColumnNum,
+  LogViolationDetailsRunnable(WorkerPrivate* aWorker, uint16_t aViolationType,
+                              const nsString& aFileName, uint32_t aLineNum,
+                              uint32_t aColumnNum,
                               const nsAString& aScriptSample)
       : WorkerMainThreadRunnable(aWorker,
                                  "RuntimeService :: LogViolationDetails"_ns),
+        mViolationType(aViolationType),
         mFileName(aFileName),
         mLineNum(aLineNum),
         mColumnNum(aColumnNum),
@@ -472,22 +475,36 @@ class LogViolationDetailsRunnable final : public WorkerMainThreadRunnable {
   ~LogViolationDetailsRunnable() = default;
 };
 
-bool ContentSecurityPolicyAllows(JSContext* aCx, JS::HandleString aCode) {
+bool ContentSecurityPolicyAllows(JSContext* aCx, JS::RuntimeCode aKind,
+                                 JS::Handle<JSString*> aCode) {
   WorkerPrivate* worker = GetWorkerPrivateFromContext(aCx);
   worker->AssertIsOnWorkerThread();
 
+  bool evalOK;
+  bool reportViolation;
+  uint16_t violationType;
   nsAutoJSString scriptSample;
-  if (NS_WARN_IF(!scriptSample.init(aCx, aCode))) {
-    JS_ClearPendingException(aCx);
-    return false;
+  if (aKind == JS::RuntimeCode::JS) {
+    if (NS_WARN_IF(!scriptSample.init(aCx, aCode))) {
+      JS_ClearPendingException(aCx);
+      return false;
+    }
+
+    if (!nsContentSecurityUtils::IsEvalAllowed(
+            aCx, worker->UsesSystemPrincipal(), scriptSample)) {
+      return false;
+    }
+
+    evalOK = worker->IsEvalAllowed();
+    reportViolation = worker->GetReportEvalCSPViolations();
+    violationType = nsIContentSecurityPolicy::VIOLATION_TYPE_EVAL;
+  } else {
+    evalOK = worker->IsWasmEvalAllowed();
+    reportViolation = worker->GetReportWasmEvalCSPViolations();
+    violationType = nsIContentSecurityPolicy::VIOLATION_TYPE_WASM_EVAL;
   }
 
-  if (!nsContentSecurityUtils::IsEvalAllowed(aCx, worker->UsesSystemPrincipal(),
-                                             scriptSample)) {
-    return false;
-  }
-
-  if (worker->GetReportCSPViolations()) {
+  if (reportViolation) {
     nsString fileName;
     uint32_t lineNum = 0;
     uint32_t columnNum = 0;
@@ -501,8 +518,8 @@ bool ContentSecurityPolicyAllows(JSContext* aCx, JS::HandleString aCode) {
     }
 
     RefPtr<LogViolationDetailsRunnable> runnable =
-        new LogViolationDetailsRunnable(worker, fileName, lineNum, columnNum,
-                                        scriptSample);
+        new LogViolationDetailsRunnable(worker, violationType, fileName,
+                                        lineNum, columnNum, scriptSample);
 
     ErrorResult rv;
     runnable->Dispatch(Killing, rv);
@@ -511,7 +528,7 @@ bool ContentSecurityPolicyAllows(JSContext* aCx, JS::HandleString aCode) {
     }
   }
 
-  return worker->IsEvalAllowed();
+  return evalOK;
 }
 
 void CTypesActivityCallback(JSContext* aCx, JS::CTypesActivityType aType) {
@@ -627,7 +644,7 @@ static bool DispatchToEventLoop(void* aClosure,
   return r->Dispatch();
 }
 
-static bool ConsumeStream(JSContext* aCx, JS::HandleObject aObj,
+static bool ConsumeStream(JSContext* aCx, JS::Handle<JSObject*> aObj,
                           JS::MimeType aMimeType,
                           JS::StreamConsumer* aConsumer) {
   WorkerPrivate* worker = GetWorkerPrivateFromContext(aCx);
@@ -695,7 +712,7 @@ bool InitJSContextForWorker(WorkerPrivate* aWorkerPrivate,
   return true;
 }
 
-static bool PreserveWrapper(JSContext* cx, JS::HandleObject obj) {
+static bool PreserveWrapper(JSContext* cx, JS::Handle<JSObject*> obj) {
   MOZ_ASSERT(cx);
   MOZ_ASSERT(obj);
   MOZ_ASSERT(mozilla::dom::IsDOMObject(obj));
@@ -703,15 +720,16 @@ static bool PreserveWrapper(JSContext* cx, JS::HandleObject obj) {
   return mozilla::dom::TryPreserveWrapper(obj);
 }
 
-static bool IsWorkerDebuggerGlobalOrSandbox(JS::HandleObject aGlobal) {
+static bool IsWorkerDebuggerGlobalOrSandbox(JS::Handle<JSObject*> aGlobal) {
   return IsWorkerDebuggerGlobal(aGlobal) || IsWorkerDebuggerSandbox(aGlobal);
 }
 
-JSObject* Wrap(JSContext* cx, JS::HandleObject existing, JS::HandleObject obj) {
-  JS::RootedObject targetGlobal(cx, JS::CurrentGlobalOrNull(cx));
+JSObject* Wrap(JSContext* cx, JS::Handle<JSObject*> existing,
+               JS::Handle<JSObject*> obj) {
+  JS::Rooted<JSObject*> targetGlobal(cx, JS::CurrentGlobalOrNull(cx));
 
   // Note: the JS engine unwraps CCWs before calling this callback.
-  JS::RootedObject originGlobal(cx, JS::GetNonCCWObjectGlobal(obj));
+  JS::Rooted<JSObject*> originGlobal(cx, JS::GetNonCCWObjectGlobal(obj));
 
   const js::Wrapper* wrapper = nullptr;
   if (IsWorkerDebuggerGlobalOrSandbox(targetGlobal) &&
@@ -1549,6 +1567,11 @@ struct ActiveWorkerStats {
 void RuntimeService::CrashIfHanging() {
   MutexAutoLock lock(mMutex);
 
+  // If we never wanted to shut down we cannot hang.
+  if (!mShuttingDown) {
+    return;
+  }
+
   ActiveWorkerStats activeStats;
   uint32_t inactiveWorkers = 0;
 
@@ -1847,11 +1870,12 @@ void RuntimeService::MemoryPressureAllWorkers() {
   BroadcastAllWorkers([](auto& worker) { worker.MemoryPressure(); });
 }
 
-uint32_t RuntimeService::ClampedHardwareConcurrency() const {
+uint32_t RuntimeService::ClampedHardwareConcurrency(
+    bool aShouldResistFingerprinting) const {
   // The Firefox Hardware Report says 70% of Firefox users have exactly 2 cores.
   // When the resistFingerprinting pref is set, we want to blend into the crowd
   // so spoof navigator.hardwareConcurrency = 2 to reduce user uniqueness.
-  if (MOZ_UNLIKELY(nsContentUtils::ShouldResistFingerprinting())) {
+  if (MOZ_UNLIKELY(aShouldResistFingerprinting)) {
     return 2;
   }
 
@@ -1942,13 +1966,11 @@ bool LogViolationDetailsRunnable::MainThreadRun() {
 
   nsIContentSecurityPolicy* csp = mWorkerPrivate->GetCSP();
   if (csp) {
-    if (mWorkerPrivate->GetReportCSPViolations()) {
-      csp->LogViolationDetails(nsIContentSecurityPolicy::VIOLATION_TYPE_EVAL,
-                               nullptr,  // triggering element
-                               mWorkerPrivate->CSPEventListener(), mFileName,
-                               mScriptSample, mLineNum, mColumnNum, u""_ns,
-                               u""_ns);
-    }
+    csp->LogViolationDetails(mViolationType,
+                             nullptr,  // triggering element
+                             mWorkerPrivate->CSPEventListener(), mFileName,
+                             mScriptSample, mLineNum, mColumnNum, u""_ns,
+                             u""_ns);
   }
 
   return true;

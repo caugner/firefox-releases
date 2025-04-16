@@ -543,6 +543,18 @@ SampleTime AsyncPanZoomController::GetFrameTime() const {
                           : SampleTime::FromNow();
 }
 
+bool AsyncPanZoomController::IsZero(const ParentLayerPoint& aPoint) const {
+  RecursiveMutexAutoLock lock(mRecursiveMutex);
+
+  const auto zoom = Metrics().GetZoom();
+
+  if (zoom == CSSToParentLayerScale(0)) {
+    return true;
+  }
+
+  return layers::IsZero(aPoint / zoom);
+}
+
 class MOZ_STACK_CLASS StateChangeNotificationBlocker final {
  public:
   explicit StateChangeNotificationBlocker(AsyncPanZoomController* aApzc)
@@ -715,8 +727,6 @@ AsyncPanZoomController::AsyncPanZoomController(
       mTreeManager(aTreeManager),
       mRecursiveMutex("AsyncPanZoomController"),
       mLastContentPaintMetrics(mLastContentPaintMetadata.GetMetrics()),
-      mX(this),
-      mY(this),
       mPanDirRestricted(false),
       mPinchLocked(false),
       mPinchEventBuffer(TimeDuration::FromMilliseconds(
@@ -730,6 +740,8 @@ AsyncPanZoomController::AsyncPanZoomController(
       mLastCheckerboardReport(GetFrameTime()),
       mOverscrollEffect(MakeUnique<OverscrollEffect>(*this)),
       mState(NOTHING),
+      mX(this),
+      mY(this),
       mNotificationBlockers(0),
       mInputQueue(aInputQueue),
       mPinchPaintTimerSet(false),
@@ -1417,7 +1429,7 @@ nsEventStatus AsyncPanZoomController::OnTouchEnd(
     case PANNING_LOCKED_Y:
     case PAN_MOMENTUM: {
       MOZ_ASSERT(GetCurrentTouchBlock());
-      EndTouch(aEvent.mTimeStamp);
+      EndTouch(aEvent.mTimeStamp, Axis::ClearAxisLock::Yes);
       return HandleEndOfPan();
     }
     case PINCHING:
@@ -1761,10 +1773,10 @@ nsEventStatus AsyncPanZoomController::OnScaleEnd(
       }
       // Along with clearing the overscroll, we also want to snap to the nearest
       // snap point as appropriate.
-      ScrollSnap();
+      ScrollSnap(ScrollSnapFlags::IntendedEndPosition);
     } else {
       // when zoom is not allowed
-      EndTouch(aEvent.mTimeStamp);
+      EndTouch(aEvent.mTimeStamp, Axis::ClearAxisLock::Yes);
       if (stateWasPinching) {
         // still pinching
         if (HasReadyTouchBlock()) {
@@ -1963,8 +1975,8 @@ nsEventStatus AsyncPanZoomController::OnKeyboard(const KeyboardInput& aEvent) {
   CSSPoint destination = GetKeyboardDestination(aEvent.mAction);
   ScrollOrigin scrollOrigin =
       SmoothScrollAnimation::GetScrollOriginForAction(aEvent.mAction.mType);
-  bool scrollSnapped =
-      MaybeAdjustDestinationForScrollSnapping(aEvent, destination);
+  bool scrollSnapped = MaybeAdjustDestinationForScrollSnapping(
+      aEvent, destination, GetScrollSnapFlagsForKeyboardAction(aEvent.mAction));
   ScrollMode scrollMode = apz::GetScrollModeForOrigin(scrollOrigin);
 
   RecordScrollPayload(aEvent.mTimeStamp);
@@ -2113,6 +2125,21 @@ CSSPoint AsyncPanZoomController::GetKeyboardDestination(
   }
 
   return scrollDestination;
+}
+
+ScrollSnapFlags AsyncPanZoomController::GetScrollSnapFlagsForKeyboardAction(
+    const KeyboardScrollAction& aAction) const {
+  switch (aAction.mType) {
+    case KeyboardScrollAction::eScrollCharacter:
+    case KeyboardScrollAction::eScrollLine:
+      return ScrollSnapFlags::IntendedDirection;
+    case KeyboardScrollAction::eScrollPage:
+      return ScrollSnapFlags::IntendedDirection |
+             ScrollSnapFlags::IntendedEndPosition;
+    case KeyboardScrollAction::eScrollComplete:
+      return ScrollSnapFlags::IntendedEndPosition;
+  }
+  return ScrollSnapFlags::Disabled;
 }
 
 ParentLayerPoint AsyncPanZoomController::GetDeltaForEvent(
@@ -2741,7 +2768,9 @@ nsEventStatus AsyncPanZoomController::OnPanEnd(const PanGestureInput& aEvent) {
     OnPan(aEvent, FingersOnTouchpad::Yes);
   }
 
-  EndTouch(aEvent.mTimeStamp);
+  // Do not unlock the axis lock at the end of a pan gesture. The axis lock
+  // should extend into the momentum scroll.
+  EndTouch(aEvent.mTimeStamp, Axis::ClearAxisLock::No);
 
   // Use HandleEndOfPan for fling on platforms that don't
   // emit momentum events (Gtk).
@@ -3210,8 +3239,8 @@ void AsyncPanZoomController::HandlePanningUpdate(
     ParentLayerPoint vector =
         ToParentLayerCoordinates(aPanDistance, mStartTouch);
 
-    double angle = atan2(vector.y, vector.x);  // range [-pi, pi]
-    angle = fabs(angle);                       // range [0, pi]
+    float angle = atan2f(vector.y, vector.x);  // range [-pi, pi]
+    angle = fabsf(angle);                      // range [0, pi]
 
     float breakThreshold =
         StaticPrefs::apz_axis_lock_breakout_threshold() * GetDPI();
@@ -3222,13 +3251,29 @@ void AsyncPanZoomController::HandlePanningUpdate(
         if (!apz::IsCloseToHorizontal(
                 angle, StaticPrefs::apz_axis_lock_breakout_angle())) {
           mY.SetAxisLocked(false);
-          SetState(PANNING);
+          // If we are within the lock angle from the Y axis, lock
+          // onto the Y axis.
+          if (apz::IsCloseToVertical(angle,
+                                     StaticPrefs::apz_axis_lock_lock_angle())) {
+            mX.SetAxisLocked(true);
+            SetState(PANNING_LOCKED_Y);
+          } else {
+            SetState(PANNING);
+          }
         }
       } else if (mState == PANNING_LOCKED_Y) {
         if (!apz::IsCloseToVertical(
                 angle, StaticPrefs::apz_axis_lock_breakout_angle())) {
           mX.SetAxisLocked(false);
-          SetState(PANNING);
+          // If we are within the lock angle from the X axis, lock
+          // onto the X axis.
+          if (apz::IsCloseToHorizontal(
+                  angle, StaticPrefs::apz_axis_lock_lock_angle())) {
+            mY.SetAxisLocked(true);
+            SetState(PANNING_LOCKED_X);
+          } else {
+            SetState(PANNING);
+          }
         }
       }
     }
@@ -3822,10 +3867,11 @@ void AsyncPanZoomController::StartTouch(const ParentLayerPoint& aPoint,
   mY.StartTouch(aPoint.y, aTimestamp);
 }
 
-void AsyncPanZoomController::EndTouch(TimeStamp aTimestamp) {
+void AsyncPanZoomController::EndTouch(TimeStamp aTimestamp,
+                                      Axis::ClearAxisLock aClearAxisLock) {
   RecursiveMutexAutoLock lock(mRecursiveMutex);
-  mX.EndTouch(aTimestamp);
-  mY.EndTouch(aTimestamp);
+  mX.EndTouch(aTimestamp, aClearAxisLock);
+  mY.EndTouch(aTimestamp, aClearAxisLock);
 }
 
 void AsyncPanZoomController::TrackTouch(const MultiTouchInput& aEvent) {
@@ -3933,7 +3979,7 @@ void AsyncPanZoomController::CancelAnimation(CancelAnimationFlags aFlags) {
   // Similar to relieving overscroll, we also need to snap to any snap points
   // if appropriate.
   if (aFlags & CancelAnimationFlags::ScrollSnap) {
-    ScrollSnap();
+    ScrollSnap(ScrollSnapFlags::IntendedEndPosition);
   }
   if (repaint) {
     RequestContentRepaint();
@@ -4218,7 +4264,8 @@ bool AsyncPanZoomController::SnapBackIfOverscrolled() {
   // main thread to snap to any nearby snap points, assuming we haven't already
   // done so when we started this fling
   if (mState != FLING) {
-    ScrollSnap();
+    ScrollSnap(ScrollSnapFlags::IntendedEndPosition |
+               ScrollSnapFlags::IntendedDirection);
   }
   return false;
 }
@@ -5144,6 +5191,8 @@ void AsyncPanZoomController::NotifyLayersUpdated(
         aScrollMetadata.ForceMousewheelAutodir());
     mScrollMetadata.SetForceMousewheelAutodirHonourRoot(
         aScrollMetadata.ForceMousewheelAutodirHonourRoot());
+    mScrollMetadata.SetIsPaginatedPresentation(
+        aScrollMetadata.IsPaginatedPresentation());
     mScrollMetadata.SetDisregardedDirection(
         aScrollMetadata.GetDisregardedDirection());
     mScrollMetadata.SetOverscrollBehavior(
@@ -5981,13 +6030,14 @@ void AsyncPanZoomController::SetTestAsyncZoom(
 }
 
 Maybe<CSSPoint> AsyncPanZoomController::FindSnapPointNear(
-    const CSSPoint& aDestination, ScrollUnit aUnit) {
+    const CSSPoint& aDestination, ScrollUnit aUnit,
+    ScrollSnapFlags aSnapFlags) {
   mRecursiveMutex.AssertCurrentThreadIn();
   APZC_LOG("%p scroll snapping near %s\n", this,
            ToString(aDestination).c_str());
   CSSRect scrollRange = Metrics().CalculateScrollRange();
   if (Maybe<nsPoint> snapPoint = ScrollSnapUtils::GetSnapPointForDestination(
-          mScrollMetadata.GetSnapInfo(), aUnit,
+          mScrollMetadata.GetSnapInfo(), aUnit, aSnapFlags,
           CSSRect::ToAppUnits(scrollRange),
           CSSPoint::ToAppUnits(Metrics().GetVisualScrollOffset()),
           CSSPoint::ToAppUnits(aDestination))) {
@@ -6001,9 +6051,10 @@ Maybe<CSSPoint> AsyncPanZoomController::FindSnapPointNear(
   return Nothing();
 }
 
-void AsyncPanZoomController::ScrollSnapNear(const CSSPoint& aDestination) {
-  if (Maybe<CSSPoint> snapPoint =
-          FindSnapPointNear(aDestination, ScrollUnit::DEVICE_PIXELS)) {
+void AsyncPanZoomController::ScrollSnapNear(const CSSPoint& aDestination,
+                                            ScrollSnapFlags aSnapFlags) {
+  if (Maybe<CSSPoint> snapPoint = FindSnapPointNear(
+          aDestination, ScrollUnit::DEVICE_PIXELS, aSnapFlags)) {
     if (*snapPoint != Metrics().GetVisualScrollOffset()) {
       APZC_LOG("%p smooth scrolling to snap point %s\n", this,
                ToString(*snapPoint).c_str());
@@ -6012,9 +6063,9 @@ void AsyncPanZoomController::ScrollSnapNear(const CSSPoint& aDestination) {
   }
 }
 
-void AsyncPanZoomController::ScrollSnap() {
+void AsyncPanZoomController::ScrollSnap(ScrollSnapFlags aSnapFlags) {
   RecursiveMutexAutoLock lock(mRecursiveMutex);
-  ScrollSnapNear(Metrics().GetVisualScrollOffset());
+  ScrollSnapNear(Metrics().GetVisualScrollOffset(), aSnapFlags);
 }
 
 void AsyncPanZoomController::ScrollSnapToDestination() {
@@ -6042,7 +6093,11 @@ void AsyncPanZoomController::ScrollSnapToDestination() {
   }
 
   CSSPoint startPosition = Metrics().GetVisualScrollOffset();
-  if (MaybeAdjustDeltaForScrollSnapping(ScrollUnit::DEVICE_PIXELS,
+  ScrollSnapFlags snapFlags = ScrollSnapFlags::IntendedEndPosition;
+  if (predictedDelta != ParentLayerPoint()) {
+    snapFlags |= ScrollSnapFlags::IntendedDirection;
+  }
+  if (MaybeAdjustDeltaForScrollSnapping(ScrollUnit::DEVICE_PIXELS, snapFlags,
                                         predictedDelta, startPosition)) {
     APZC_LOG(
         "%p fling snapping.  friction: %f velocity: %f, %f "
@@ -6058,7 +6113,8 @@ void AsyncPanZoomController::ScrollSnapToDestination() {
 }
 
 bool AsyncPanZoomController::MaybeAdjustDeltaForScrollSnapping(
-    ScrollUnit aUnit, ParentLayerPoint& aDelta, CSSPoint& aStartPosition) {
+    ScrollUnit aUnit, ScrollSnapFlags aSnapFlags, ParentLayerPoint& aDelta,
+    CSSPoint& aStartPosition) {
   RecursiveMutexAutoLock lock(mRecursiveMutex);
   CSSToParentLayerScale zoom = Metrics().GetZoom();
   if (zoom == CSSToParentLayerScale(0)) {
@@ -6067,7 +6123,8 @@ bool AsyncPanZoomController::MaybeAdjustDeltaForScrollSnapping(
   CSSPoint destination = Metrics().CalculateScrollRange().ClampPoint(
       aStartPosition + (aDelta / zoom));
 
-  if (Maybe<CSSPoint> snapPoint = FindSnapPointNear(destination, aUnit)) {
+  if (Maybe<CSSPoint> snapPoint =
+          FindSnapPointNear(destination, aUnit, aSnapFlags)) {
     aDelta = (*snapPoint - aStartPosition) * zoom;
     aStartPosition = *snapPoint;
     return true;
@@ -6084,17 +6141,32 @@ bool AsyncPanZoomController::MaybeAdjustDeltaForScrollSnappingOnWheelInput(
     return false;
   }
 
+  // Note that this MaybeAdjustDeltaForScrollSnappingOnWheelInput also gets
+  // called for pan gestures at least on older Mac and Windows. In such cases
+  // `aEvent.mDeltaType` is `SCROLLDELTA_PIXEL` which should be filtered out by
+  // the above `if` block, so we assume all incoming `aEvent` are purely wheel
+  // events, thus we basically use `IntendedDirection` here.
+  // If we want to change the behavior, i.e. we want to do scroll snap for
+  // such cases as well, we need to use `IntendedEndPoint`.
+  ScrollSnapFlags snapFlags = ScrollSnapFlags::IntendedDirection;
+  if (aEvent.mDeltaType == ScrollWheelInput::SCROLLDELTA_PAGE) {
+    // On Windows there are a couple of cases where scroll events happen with
+    // SCROLLDELTA_PAGE, in such case we consider it's a page scroll.
+    snapFlags |= ScrollSnapFlags::IntendedEndPosition;
+  }
   return MaybeAdjustDeltaForScrollSnapping(
-      ScrollWheelInput::ScrollUnitForDeltaType(aEvent.mDeltaType), aDelta,
-      aStartPosition);
+      ScrollWheelInput::ScrollUnitForDeltaType(aEvent.mDeltaType),
+      ScrollSnapFlags::IntendedDirection, aDelta, aStartPosition);
 }
 
 bool AsyncPanZoomController::MaybeAdjustDestinationForScrollSnapping(
-    const KeyboardInput& aEvent, CSSPoint& aDestination) {
+    const KeyboardInput& aEvent, CSSPoint& aDestination,
+    ScrollSnapFlags aSnapFlags) {
   RecursiveMutexAutoLock lock(mRecursiveMutex);
   ScrollUnit unit = KeyboardScrollAction::GetScrollUnit(aEvent.mAction.mType);
 
-  if (Maybe<CSSPoint> snapPoint = FindSnapPointNear(aDestination, unit)) {
+  if (Maybe<CSSPoint> snapPoint =
+          FindSnapPointNear(aDestination, unit, aSnapFlags)) {
     aDestination = *snapPoint;
     return true;
   }

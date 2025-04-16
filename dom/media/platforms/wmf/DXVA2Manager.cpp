@@ -361,8 +361,8 @@ D3D9DXVA2Manager::Init(layers::KnowsCompositor* aKnowsCompositor,
       D3DADAPTER_DEFAULT, D3DDEVTYPE_HAL,
       (D3DFORMAT)MAKEFOURCC('N', 'V', '1', '2'), D3DFMT_X8R8G8B8);
   if (!SUCCEEDED(hr)) {
-    aFailureReason =
-        nsPrintfCString("CheckDeviceFormatConversion failed with error %X", hr);
+    aFailureReason = nsPrintfCString(
+        "CheckDeviceFormatConversion failed with error %lX", hr);
     return hr;
   }
 
@@ -385,7 +385,8 @@ D3D9DXVA2Manager::Init(layers::KnowsCompositor* aKnowsCompositor,
                                   D3DCREATE_MIXED_VERTEXPROCESSING,
                               &params, nullptr, getter_AddRefs(device));
   if (!SUCCEEDED(hr)) {
-    aFailureReason = nsPrintfCString("CreateDeviceEx failed with error %X", hr);
+    aFailureReason =
+        nsPrintfCString("CreateDeviceEx failed with error %lX", hr);
     return hr;
   }
 
@@ -397,7 +398,7 @@ D3D9DXVA2Manager::Init(layers::KnowsCompositor* aKnowsCompositor,
 
   hr = device->CreateQuery(D3DQUERYTYPE_EVENT, getter_AddRefs(query));
   if (!SUCCEEDED(hr)) {
-    aFailureReason = nsPrintfCString("CreateQuery failed with error %X", hr);
+    aFailureReason = nsPrintfCString("CreateQuery failed with error %lX", hr);
     return hr;
   }
 
@@ -409,13 +410,13 @@ D3D9DXVA2Manager::Init(layers::KnowsCompositor* aKnowsCompositor,
                                               getter_AddRefs(deviceManager));
   if (!SUCCEEDED(hr)) {
     aFailureReason = nsPrintfCString(
-        "DXVA2CreateDirect3DDeviceManager9 failed with error %X", hr);
+        "DXVA2CreateDirect3DDeviceManager9 failed with error %lX", hr);
     return hr;
   }
   hr = deviceManager->ResetDevice(device, resetToken);
   if (!SUCCEEDED(hr)) {
     aFailureReason = nsPrintfCString(
-        "IDirect3DDeviceManager9::ResetDevice failed with error %X", hr);
+        "IDirect3DDeviceManager9::ResetDevice failed with error %lX", hr);
     return hr;
   }
 
@@ -424,7 +425,7 @@ D3D9DXVA2Manager::Init(layers::KnowsCompositor* aKnowsCompositor,
   hr = deviceManager->OpenDeviceHandle(&deviceHandle);
   if (!SUCCEEDED(hr)) {
     aFailureReason = nsPrintfCString(
-        "IDirect3DDeviceManager9::OpenDeviceHandle failed with error %X", hr);
+        "IDirect3DDeviceManager9::OpenDeviceHandle failed with error %lX", hr);
     return hr;
   }
 
@@ -433,7 +434,8 @@ D3D9DXVA2Manager::Init(layers::KnowsCompositor* aKnowsCompositor,
   deviceManager->CloseDeviceHandle(deviceHandle);
   if (!SUCCEEDED(hr)) {
     aFailureReason = nsPrintfCString(
-        "IDirectXVideoDecoderServer::GetVideoService failed with error %X", hr);
+        "IDirectXVideoDecoderServer::GetVideoService failed with error %lX",
+        hr);
     return hr;
   }
 
@@ -443,7 +445,7 @@ D3D9DXVA2Manager::Init(layers::KnowsCompositor* aKnowsCompositor,
   if (!SUCCEEDED(hr)) {
     aFailureReason = nsPrintfCString(
         "IDirectXVideoDecoderServer::GetDecoderDeviceGuids failed with error "
-        "%X",
+        "%lX",
         hr);
     return hr;
   }
@@ -468,7 +470,7 @@ D3D9DXVA2Manager::Init(layers::KnowsCompositor* aKnowsCompositor,
   hr = d3d9Ex->GetAdapterIdentifier(D3DADAPTER_DEFAULT, 0, &adapter);
   if (!SUCCEEDED(hr)) {
     aFailureReason = nsPrintfCString(
-        "IDirect3D9Ex::GetAdapterIdentifier failed with error %X", hr);
+        "IDirect3D9Ex::GetAdapterIdentifier failed with error %lX", hr);
     return hr;
   }
 
@@ -624,6 +626,7 @@ already_AddRefed<IDirectXVideoDecoder> D3D9DXVA2Manager::CreateDecoder(
 
 class D3D11DXVA2Manager : public DXVA2Manager {
  public:
+  D3D11DXVA2Manager();
   virtual ~D3D11DXVA2Manager();
 
   HRESULT Init(layers::KnowsCompositor* aKnowsCompositor,
@@ -655,6 +658,16 @@ class D3D11DXVA2Manager : public DXVA2Manager {
   bool SupportsConfig(const VideoInfo& aInfo, IMFMediaType* aInputType,
                       IMFMediaType* aOutputType) override;
 
+  void BeforeShutdownVideoMFTDecoder() override;
+
+  bool SupportsZeroCopyNV12Texture() override {
+    if (mIMFSampleUsageInfo->SupportsZeroCopyNV12Texture() &&
+        (mDevice != DeviceManagerDx::Get()->GetCompositorDevice())) {
+      mIMFSampleUsageInfo->DisableZeroCopyNV12Texture();
+    }
+    return mIMFSampleUsageInfo->SupportsZeroCopyNV12Texture();
+  }
+
  private:
   HRESULT CreateOutputSample(RefPtr<IMFSample>& aSample,
                              ID3D11Texture2D* aTexture);
@@ -663,6 +676,8 @@ class D3D11DXVA2Manager : public DXVA2Manager {
 
   already_AddRefed<ID3D11VideoDecoder> CreateDecoder(
       const D3D11_VIDEO_DECODER_DESC& aDesc) const;
+  void RefreshIMFSampleWrappers();
+  void ReleaseAllIMFSamples();
 
   RefPtr<ID3D11Device> mDevice;
   RefPtr<ID3D11DeviceContext> mContext;
@@ -679,6 +694,8 @@ class D3D11DXVA2Manager : public DXVA2Manager {
   GUID mInputSubType;
   gfx::YUVColorSpace mYUVColorSpace;
   gfx::ColorRange mColorRange = gfx::ColorRange::LIMITED;
+  std::list<ThreadSafeWeakPtr<layers::IMFSampleWrapper>> mIMFSampleWrappers;
+  RefPtr<layers::IMFSampleUsageInfo> mIMFSampleUsageInfo;
 };
 
 bool D3D11DXVA2Manager::SupportsConfig(const VideoInfo& aInfo,
@@ -821,6 +838,9 @@ bool D3D11DXVA2Manager::SupportsConfig(const VideoInfo& aInfo,
   return CanCreateDecoder(desc);
 }
 
+D3D11DXVA2Manager::D3D11DXVA2Manager()
+    : mIMFSampleUsageInfo(new layers::IMFSampleUsageInfo) {}
+
 D3D11DXVA2Manager::~D3D11DXVA2Manager() {}
 
 IUnknown* D3D11DXVA2Manager::GetDXVADeviceManager() {
@@ -892,7 +912,10 @@ D3D11DXVA2Manager::InitInternal(layers::KnowsCompositor* aKnowsCompositor,
   mDevice = aDevice;
 
   if (!mDevice) {
-    mDevice = gfx::DeviceManagerDx::Get()->CreateDecoderDevice();
+    bool useHardwareWebRender =
+        aKnowsCompositor && aKnowsCompositor->UsingHardwareWebRender();
+    mDevice =
+        gfx::DeviceManagerDx::Get()->CreateDecoderDevice(useHardwareWebRender);
     if (!mDevice) {
       aFailureReason.AssignLiteral("Failed to create D3D11 device for decoder");
       return E_FAIL;
@@ -910,14 +933,14 @@ D3D11DXVA2Manager::InitInternal(layers::KnowsCompositor* aKnowsCompositor,
                                       getter_AddRefs(mDXGIDeviceManager));
   if (!SUCCEEDED(hr)) {
     aFailureReason =
-        nsPrintfCString("MFCreateDXGIDeviceManager failed with code %X", hr);
+        nsPrintfCString("MFCreateDXGIDeviceManager failed with code %lX", hr);
     return hr;
   }
 
   hr = mDXGIDeviceManager->ResetDevice(mDevice, mDeviceManagerToken);
   if (!SUCCEEDED(hr)) {
     aFailureReason = nsPrintfCString(
-        "IMFDXGIDeviceManager::ResetDevice failed with code %X", hr);
+        "IMFDXGIDeviceManager::ResetDevice failed with code %lX", hr);
     return hr;
   }
 
@@ -934,7 +957,7 @@ D3D11DXVA2Manager::InitInternal(layers::KnowsCompositor* aKnowsCompositor,
     if (!SUCCEEDED(hr)) {
       aFailureReason = nsPrintfCString(
           "MFTDecoder::Create of Video Processor MFT for color conversion "
-          "failed with code %X",
+          "failed with code %lX",
           hr);
       return;
     }
@@ -944,7 +967,7 @@ D3D11DXVA2Manager::InitInternal(layers::KnowsCompositor* aKnowsCompositor,
     if (!SUCCEEDED(hr)) {
       aFailureReason = nsPrintfCString(
           "MFTDecoder::SendMFTMessage(MFT_MESSAGE_"
-          "SET_D3D_MANAGER) failed with code %X",
+          "SET_D3D_MANAGER) failed with code %lX",
           hr);
       return;
     }
@@ -960,7 +983,7 @@ D3D11DXVA2Manager::InitInternal(layers::KnowsCompositor* aKnowsCompositor,
       static_cast<IDXGIDevice**>(getter_AddRefs(dxgiDevice)));
   if (!SUCCEEDED(hr)) {
     aFailureReason =
-        nsPrintfCString("QI to IDXGIDevice failed with code %X", hr);
+        nsPrintfCString("QI to IDXGIDevice failed with code %lX", hr);
     return hr;
   }
 
@@ -968,7 +991,7 @@ D3D11DXVA2Manager::InitInternal(layers::KnowsCompositor* aKnowsCompositor,
   hr = dxgiDevice->GetAdapter(adapter.StartAssignment());
   if (!SUCCEEDED(hr)) {
     aFailureReason =
-        nsPrintfCString("IDXGIDevice::GetAdapter failed with code %X", hr);
+        nsPrintfCString("IDXGIDevice::GetAdapter failed with code %lX", hr);
     return hr;
   }
 
@@ -976,7 +999,7 @@ D3D11DXVA2Manager::InitInternal(layers::KnowsCompositor* aKnowsCompositor,
   hr = adapter->GetDesc(&adapterDesc);
   if (!SUCCEEDED(hr)) {
     aFailureReason =
-        nsPrintfCString("IDXGIAdapter::GetDesc failed with code %X", hr);
+        nsPrintfCString("IDXGIAdapter::GetDesc failed with code %lX", hr);
     return hr;
   }
 
@@ -988,6 +1011,11 @@ D3D11DXVA2Manager::InitInternal(layers::KnowsCompositor* aKnowsCompositor,
         break;
       }
     }
+  }
+
+  if (!IsD3D11() || !XRE_IsGPUProcess() ||
+      (mDevice != DeviceManagerDx::Get()->GetCompositorDevice())) {
+    mIMFSampleUsageInfo->DisableZeroCopyNV12Texture();
   }
 
   return S_OK;
@@ -1141,14 +1169,46 @@ HRESULT D3D11DXVA2Manager::WrapTextureWithImage(IMFSample* aVideoSample,
   UINT arrayIndex;
   dxgiBuf->GetSubresourceIndex(&arrayIndex);
 
+  RefreshIMFSampleWrappers();
+
   RefPtr<D3D11TextureIMFSampleImage> image = new D3D11TextureIMFSampleImage(
       aVideoSample, texture, arrayIndex, gfx::IntSize(mWidth, mHeight), aRegion,
       mYUVColorSpace, mColorRange);
-  image->AllocateTextureClient(mKnowsCompositor);
+  image->AllocateTextureClient(mKnowsCompositor, mIMFSampleUsageInfo);
+
+  RefPtr<IMFSampleWrapper> wrapper = image->GetIMFSampleWrapper();
+  ThreadSafeWeakPtr<IMFSampleWrapper> weak(wrapper);
+  mIMFSampleWrappers.push_back(weak);
 
   image.forget(aOutImage);
 
   return S_OK;
+}
+
+void D3D11DXVA2Manager::RefreshIMFSampleWrappers() {
+  for (auto it = mIMFSampleWrappers.begin(); it != mIMFSampleWrappers.end();) {
+    auto wrapper = RefPtr<IMFSampleWrapper>(*it);
+    if (!wrapper) {
+      // wrapper is already destroyed.
+      it = mIMFSampleWrappers.erase(it);
+      continue;
+    }
+    it++;
+  }
+}
+
+void D3D11DXVA2Manager::ReleaseAllIMFSamples() {
+  for (auto it = mIMFSampleWrappers.begin(); it != mIMFSampleWrappers.end();
+       it++) {
+    RefPtr<IMFSampleWrapper> wrapper = RefPtr<IMFSampleWrapper>(*it);
+    if (wrapper) {
+      wrapper->ClearVideoSample();
+    }
+  }
+}
+
+void D3D11DXVA2Manager::BeforeShutdownVideoMFTDecoder() {
+  ReleaseAllIMFSamples();
 }
 
 HRESULT

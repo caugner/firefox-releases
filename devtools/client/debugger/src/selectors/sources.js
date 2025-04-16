@@ -31,6 +31,10 @@ import {
 import { getSourceTextContent } from "./sources-content";
 import { getAllThreads } from "./threads";
 
+export function hasSource(state, id) {
+  return state.sources.sources.has(id);
+}
+
 export function getSource(state, id) {
   return state.sources.sources.get(id);
 }
@@ -41,6 +45,10 @@ export function getSourceFromId(state, id) {
     console.warn(`source ${id} does not exist`);
   }
   return source;
+}
+
+export function getLocationSource(state, location) {
+  return getSource(state, location.sourceId);
 }
 
 export function getSourceByActorId(state, actorId) {
@@ -132,7 +140,7 @@ export function getHasSiblingOfSameName(state, source) {
   return getSourcesUrlsInSources(state, source.url).length > 1;
 }
 
-// This is only used externaly by tabs selectors
+// This is only used externaly by tabs and breakpointSources selectors
 export function getSourcesMap(state) {
   return state.sources.sources;
 }
@@ -369,7 +377,7 @@ export function getBreakableLines(state, sourceId) {
 
   // We pull generated file breakable lines directly from the source actors
   // so that breakable lines can be added as new source actors on HTML loads.
-  return getBreakableLinesForSourceActors(state, sourceActorIDs);
+  return getBreakableLinesForSourceActors(state, sourceActorIDs, source.isHTML);
 }
 
 export const getSelectedBreakableLines = createSelector(

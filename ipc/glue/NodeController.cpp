@@ -270,6 +270,10 @@ already_AddRefed<NodeChannel> NodeController::GetNodeChannel(
 void NodeController::DropPeer(NodeName aNodeName) {
   AssertIOThread();
 
+#ifdef FUZZING_SNAPSHOT
+  MOZ_FUZZING_IPC_DROP_PEER("NodeController::DropPeer");
+#endif
+
   Invite invite;
   RefPtr<NodeChannel> channel;
   nsTArray<PortRef> pendingMerges;
@@ -281,7 +285,7 @@ void NodeController::DropPeer(NodeName aNodeName) {
     state->mPendingMerges.Remove(aNodeName, &pendingMerges);
   }
 
-  NODECONTROLLER_LOG(LogLevel::Info, "Dropping Peer %s (pid: %d)",
+  NODECONTROLLER_LOG(LogLevel::Info, "Dropping Peer %s (pid: %" PRIPID ")",
                      ToString(aNodeName).c_str(),
                      channel ? channel->OtherPid() : base::kInvalidProcessId);
 

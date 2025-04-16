@@ -47,7 +47,7 @@ EditActionResult& EditActionResult::operator|=(
     const MoveNodeResult& aMoveNodeResult) {
   mHandled |= aMoveNodeResult.Handled();
   // When both result are same, keep the result.
-  if (mRv == aMoveNodeResult.Rv()) {
+  if (mRv == aMoveNodeResult.inspectErr()) {
     return *this;
   }
   // If one of the result is NS_ERROR_EDITOR_DESTROYED, use it since it's
@@ -58,11 +58,11 @@ EditActionResult& EditActionResult::operator|=(
   }
   // If aMoveNodeResult hasn't been set explicit nsresult value, keep current
   // result.
-  if (aMoveNodeResult.Rv() == NS_ERROR_NOT_INITIALIZED) {
+  if (aMoveNodeResult.NotInitialized()) {
     return *this;
   }
   // If one of the results is error, use NS_ERROR_FAILURE.
-  if (Failed() || aMoveNodeResult.Failed()) {
+  if (Failed() || aMoveNodeResult.isErr()) {
     mRv = NS_ERROR_FAILURE;
     return *this;
   }
@@ -542,7 +542,7 @@ bool EditorUtils::IsWhiteSpacePreformatted(const nsIContent& aContent) {
     return false;
   }
 
-  RefPtr<ComputedStyle> elementStyle =
+  RefPtr<const ComputedStyle> elementStyle =
       nsComputedDOMStyle::GetComputedStyleNoFlush(element);
   if (!elementStyle) {
     // Consider nodes without a ComputedStyle to be NOT preformatted:
@@ -563,7 +563,7 @@ bool EditorUtils::IsNewLinePreformatted(const nsIContent& aContent) {
     return false;
   }
 
-  RefPtr<ComputedStyle> elementStyle =
+  RefPtr<const ComputedStyle> elementStyle =
       nsComputedDOMStyle::GetComputedStyleNoFlush(element);
   if (!elementStyle) {
     // Consider nodes without a ComputedStyle to be NOT preformatted:
@@ -584,7 +584,7 @@ bool EditorUtils::IsOnlyNewLinePreformatted(const nsIContent& aContent) {
     return false;
   }
 
-  RefPtr<ComputedStyle> elementStyle =
+  RefPtr<const ComputedStyle> elementStyle =
       nsComputedDOMStyle::GetComputedStyleNoFlush(element);
   if (!elementStyle) {
     // Consider nodes without a ComputedStyle to be NOT preformatted:
@@ -818,6 +818,63 @@ bool EditorDOMPointBase<
     PT, CT>::IsNextCharPreformattedNewLineCollapsedWithWhiteSpaces() const {
   return IsNextCharNewLine() &&
          EditorUtils::IsOnlyNewLinePreformatted(*ContainerAsText());
+}
+
+/******************************************************************************
+ * mozilla::CreateNodeResultBase
+ *****************************************************************************/
+
+NS_INSTANTIATE_CREATE_NODE_RESULT_CONST_METHOD(
+    nsresult, SuggestCaretPointTo, const EditorBase& aEditorBase,
+    const SuggestCaretOptions& aOptions)
+
+template <typename NodeType>
+nsresult CreateNodeResultBase<NodeType>::SuggestCaretPointTo(
+    const EditorBase& aEditorBase, const SuggestCaretOptions& aOptions) const {
+  mHandledCaretPoint = true;
+  if (!mCaretPoint.IsSet()) {
+    if (aOptions.contains(SuggestCaret::OnlyIfHasSuggestion)) {
+      return NS_OK;
+    }
+    NS_WARNING("There was no suggestion to put caret");
+    return NS_ERROR_FAILURE;
+  }
+  if (aOptions.contains(SuggestCaret::OnlyIfTransactionsAllowedToDoIt) &&
+      !aEditorBase.AllowsTransactionsToChangeSelection()) {
+    return NS_OK;
+  }
+  nsresult rv = aEditorBase.CollapseSelectionTo(mCaretPoint);
+  if (MOZ_UNLIKELY(rv == NS_ERROR_EDITOR_DESTROYED)) {
+    NS_WARNING(
+        "EditorBase::CollapseSelectionTo() caused destroying the editor");
+    return NS_ERROR_EDITOR_DESTROYED;
+  }
+  return aOptions.contains(SuggestCaret::AndIgnoreTrivialError) && NS_FAILED(rv)
+             ? NS_SUCCESS_EDITOR_BUT_IGNORED_TRIVIAL_ERROR
+             : rv;
+}
+
+NS_INSTANTIATE_CREATE_NODE_RESULT_METHOD(bool, MoveCaretPointTo,
+                                         EditorDOMPoint& aPointToPutCaret,
+                                         const EditorBase& aEditorBase,
+                                         const SuggestCaretOptions& aOptions)
+
+template <typename NodeType>
+bool CreateNodeResultBase<NodeType>::MoveCaretPointTo(
+    EditorDOMPoint& aPointToPutCaret, const EditorBase& aEditorBase,
+    const SuggestCaretOptions& aOptions) {
+  MOZ_ASSERT(!aOptions.contains(SuggestCaret::AndIgnoreTrivialError));
+  mHandledCaretPoint = true;
+  if (aOptions.contains(SuggestCaret::OnlyIfHasSuggestion) &&
+      !mCaretPoint.IsSet()) {
+    return false;
+  }
+  if (aOptions.contains(SuggestCaret::OnlyIfTransactionsAllowedToDoIt) &&
+      !aEditorBase.AllowsTransactionsToChangeSelection()) {
+    return false;
+  }
+  aPointToPutCaret = UnwrapCaretPoint();
+  return true;
 }
 
 }  // namespace mozilla

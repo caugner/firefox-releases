@@ -32,6 +32,12 @@ Services.scriptloader.loadSubScript(
   this
 );
 
+/* import-globals-from ../../../webconsole/test/browser/shared-head.js */
+Services.scriptloader.loadSubScript(
+  "chrome://mochitests/content/browser/devtools/client/webconsole/test/browser/shared-head.js",
+  this
+);
+
 /**
  * Helper function for `_loadAllIntegrationTests`.
  *
@@ -115,6 +121,7 @@ async function installAndStartContentScriptExtension() {
 
   const extension = ExtensionTestUtils.loadExtension({
     manifest: {
+      name: "Test content script extension",
       content_scripts: [
         {
           js: ["content_script.js"],

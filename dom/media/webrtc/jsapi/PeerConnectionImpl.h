@@ -51,7 +51,7 @@
 #include "MediaTransportHandler.h"
 #include "nsIHttpChannelInternal.h"
 #include "RTCDtlsTransport.h"
-#include "TransceiverImpl.h"
+#include "RTCRtpTransceiver.h"
 
 namespace test {
 #ifdef USE_FAKE_PCOBSERVER
@@ -276,9 +276,9 @@ class PeerConnectionImpl final
 
   void CloseStreams(ErrorResult& rv) { rv = CloseStreams(); }
 
-  already_AddRefed<TransceiverImpl> CreateTransceiverImpl(
-      const nsAString& aKind, dom::MediaStreamTrack* aSendTrack,
-      ErrorResult& rv);
+  already_AddRefed<dom::RTCRtpTransceiver> AddTransceiver(
+      const dom::RTCRtpTransceiverInit& aInit, const nsAString& aKind,
+      dom::MediaStreamTrack* aSendTrack, ErrorResult& aRv);
 
   bool CheckNegotiationNeeded();
   bool CreatedSender(const dom::RTCRtpSender& aSender) const;
@@ -403,9 +403,9 @@ class PeerConnectionImpl final
    public:
     NS_DECL_CYCLE_COLLECTING_ISUPPORTS
     NS_DECL_CYCLE_COLLECTION_CLASS(Operation)
-    explicit Operation(PeerConnectionImpl* aPc);
+    Operation(PeerConnectionImpl* aPc, ErrorResult& aError);
     MOZ_CAN_RUN_SCRIPT
-    void Call();
+    void Call(ErrorResult& aError);
     dom::Promise* GetPromise() { return mPromise; }
     MOZ_CAN_RUN_SCRIPT
     void ResolvedCallback(JSContext* aCx, JS::Handle<JS::Value> aValue,
@@ -417,7 +417,7 @@ class PeerConnectionImpl final
 
    protected:
     MOZ_CAN_RUN_SCRIPT
-    virtual RefPtr<dom::Promise> CallImpl() = 0;
+    virtual RefPtr<dom::Promise> CallImpl(ErrorResult& aError) = 0;
     virtual ~Operation();
     // This is the promise p from https://w3c.github.io/webrtc-pc/#dfn-chain
     // This will be a content promise, since we return this to the caller of
@@ -428,24 +428,32 @@ class PeerConnectionImpl final
 
   class JSOperation final : public Operation {
    public:
-    explicit JSOperation(PeerConnectionImpl* aPc, dom::ChainedOperation& aOp);
+    JSOperation(PeerConnectionImpl* aPc, dom::ChainedOperation& aOp,
+                ErrorResult& aError);
     NS_DECL_ISUPPORTS_INHERITED
     NS_DECL_CYCLE_COLLECTION_CLASS_INHERITED(JSOperation, Operation)
 
    private:
     MOZ_CAN_RUN_SCRIPT
-    RefPtr<dom::Promise> CallImpl() override;
+    RefPtr<dom::Promise> CallImpl(ErrorResult& aError) override;
     ~JSOperation() = default;
     RefPtr<dom::ChainedOperation> mOperation;
   };
 
   MOZ_CAN_RUN_SCRIPT
-  already_AddRefed<dom::Promise> Chain(dom::ChainedOperation& aOperation);
+  already_AddRefed<dom::Promise> Chain(dom::ChainedOperation& aOperation,
+                                       ErrorResult& aError);
   MOZ_CAN_RUN_SCRIPT
-  already_AddRefed<dom::Promise> Chain(const RefPtr<Operation>& aOperation);
-  already_AddRefed<dom::Promise> MakePromise() const;
+  already_AddRefed<dom::Promise> Chain(const RefPtr<Operation>& aOperation,
+                                       ErrorResult& aError);
+  already_AddRefed<dom::Promise> MakePromise(ErrorResult& aError) const;
 
   void UpdateNegotiationNeeded();
+
+  void GetTransceivers(
+      nsTArray<RefPtr<dom::RTCRtpTransceiver>>& aTransceiversOut) {
+    aTransceiversOut = mTransceivers.Clone();
+  }
 
   // Gets the RTC Signaling State of the JSEP session
   dom::RTCSignalingState GetSignalingState() const;
@@ -533,9 +541,6 @@ class PeerConnectionImpl final
                                     bool* client) const;
 
   nsresult AddRtpTransceiverToJsepSession(RefPtr<JsepTransceiver>& transceiver);
-  already_AddRefed<TransceiverImpl> CreateTransceiverImpl(
-      JsepTransceiver* aJsepTransceiver, dom::MediaStreamTrack* aSendTrack,
-      ErrorResult& aRv);
 
   void RecordIceRestartStatistics(JsepSdpType type);
 
@@ -545,7 +550,7 @@ class PeerConnectionImpl final
       const;
 
   MOZ_CAN_RUN_SCRIPT
-  void RunNextOperation();
+  void RunNextOperation(ErrorResult& aError);
 
   // Timecard used to measure processing time. This should be the first class
   // attribute so that we accurately measure the time required to instantiate
@@ -719,11 +724,10 @@ class PeerConnectionImpl final
   // any time, not just when an offer/answer exchange completes.
   nsresult UpdateMediaPipelines();
 
-  nsresult AddTransceiver(JsepTransceiver* aJsepTransceiver,
-                          dom::MediaStreamTrack* aSendTrack,
-                          SharedWebrtcState* aSharedWebrtcState,
-                          RTCStatsIdGenerator* aIdGenerator,
-                          RefPtr<TransceiverImpl>* aTransceiverImpl);
+  already_AddRefed<dom::RTCRtpTransceiver> CreateTransceiver(
+      JsepTransceiver* aJsepTransceiver,
+      const dom::RTCRtpTransceiverInit& aInit,
+      dom::MediaStreamTrack* aSendTrack, ErrorResult& aRv);
 
   std::string GetTransportIdMatchingSendTrack(
       const dom::MediaStreamTrack& aTrack) const;
@@ -746,7 +750,7 @@ class PeerConnectionImpl final
   bool mNegotiationNeeded = false;
   std::set<std::pair<std::string, std::string>> mLocalIceCredentialsToReplace;
 
-  nsTArray<RefPtr<TransceiverImpl>> mTransceivers;
+  nsTArray<RefPtr<dom::RTCRtpTransceiver>> mTransceivers;
   std::map<std::string, RefPtr<dom::RTCDtlsTransport>>
       mTransportIdToRTCDtlsTransport;
 

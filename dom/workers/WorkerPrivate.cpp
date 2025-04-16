@@ -1419,15 +1419,25 @@ nsresult WorkerPrivate::SetCSPFromHeaderValues(
     NS_ENSURE_SUCCESS(rv, rv);
   }
 
+  mLoadInfo.mCSP = csp;
+
   // Set evalAllowed, default value is set in GetAllowsEval
   bool evalAllowed = false;
   bool reportEvalViolations = false;
   rv = csp->GetAllowsEval(&reportEvalViolations, &evalAllowed);
   NS_ENSURE_SUCCESS(rv, rv);
 
-  mLoadInfo.mCSP = csp;
   mLoadInfo.mEvalAllowed = evalAllowed;
-  mLoadInfo.mReportCSPViolations = reportEvalViolations;
+  mLoadInfo.mReportEvalCSPViolations = reportEvalViolations;
+
+  // Set wasmEvalAllowed
+  bool wasmEvalAllowed = false;
+  bool reportWasmEvalViolations = false;
+  rv = csp->GetAllowsWasmEval(&reportWasmEvalViolations, &wasmEvalAllowed);
+  NS_ENSURE_SUCCESS(rv, rv);
+
+  mLoadInfo.mWasmEvalAllowed = wasmEvalAllowed;
+  mLoadInfo.mReportWasmEvalCSPViolations = reportWasmEvalViolations;
 
   mLoadInfo.mCSPInfo = MakeUnique<CSPInfo>();
   rv = CSPToCSPInfo(csp, mLoadInfo.mCSPInfo.get());
@@ -4643,7 +4653,7 @@ void WorkerPrivate::ReportError(JSContext* aCx,
       return;
     }
 
-    JS::RootedObject stack(aCx), stackGlobal(aCx);
+    JS::Rooted<JSObject*> stack(aCx), stackGlobal(aCx);
     xpc::FindExceptionStackForConsoleReport(
         nullptr, exnStack.exception(), exnStack.stack(), &stack, &stackGlobal);
 

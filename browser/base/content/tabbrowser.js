@@ -1108,7 +1108,9 @@
 
       this._selectedBrowser = newBrowser;
       this._selectedTab = newTab;
-      this.showTab(newTab);
+      if (newTab != gFirefoxViewTab) {
+        this.showTab(newTab);
+      }
 
       this._appendStatusPanel();
 
@@ -3765,7 +3767,7 @@
         return;
       }
 
-      var isLastTab = this.tabs.length - this._removingTabs.length == 1;
+      let isLastTab = !aTab.hidden && this.visibleTabs.length == 1;
       let windowUtils = window.windowUtils;
       // We have to sample the tab width now, since _beginRemoveTab might
       // end up modifying the DOM in such a way that aTab gets a new
@@ -3911,7 +3913,7 @@
 
       var closeWindow = false;
       var newTab = false;
-      if (this.tabs.length - this._removingTabs.length == 1) {
+      if (!aTab.hidden && this.visibleTabs.length == 1) {
         closeWindow =
           closeWindowWithLastTab != null
             ? closeWindowWithLastTab
@@ -5559,7 +5561,6 @@
           .replace("#1", pluralCount);
       };
 
-      let alignToTab = true;
       let label;
       const selectedTabs = this.selectedTabs;
       const contextTabInSelection = selectedTabs.includes(tab);
@@ -5567,7 +5568,6 @@
         ? selectedTabs.length
         : 1;
       if (tab.mOverCloseButton) {
-        alignToTab = false;
         label = tab.selected
           ? stringWithShortcut(
               "tabs.closeTabs.tooltip",
@@ -5603,30 +5603,11 @@
             gTabBrowserBundle.GetStringFromName(stringID)
           ).replace("#1", affectedTabsLength);
         }
-        alignToTab = false;
       } else {
         label = this.getTabTooltip(tab);
       }
 
-      if (!gProtonPlacesTooltip) {
-        event.target.setAttribute("label", label);
-        return;
-      }
-
-      if (alignToTab) {
-        event.target.setAttribute("position", "after_start");
-        event.target.moveToAnchor(tab, "after_start");
-      }
-
-      let title = event.target.querySelector(".places-tooltip-title");
-      title.textContent = label;
-      let url = event.target.querySelector(".places-tooltip-uri");
-      url.value = tab.linkedBrowser?.currentURI?.spec.replace(
-        /^https:\/\//,
-        ""
-      );
-      let icon = event.target.querySelector("#places-tooltip-insecure-icon");
-      icon.hidden = !url.value.startsWith("http://");
+      event.target.setAttribute("label", label);
     },
 
     handleEvent(aEvent) {
@@ -7002,7 +6983,7 @@ var TabBarVisibility = {
     let collapse = false;
     if (
       !gBrowser /* gBrowser isn't initialized yet */ ||
-      gBrowser.tabs.length - gBrowser._removingTabs.length == 1
+      gBrowser.visibleTabs.length == 1
     ) {
       collapse = !window.toolbar.visible;
     }

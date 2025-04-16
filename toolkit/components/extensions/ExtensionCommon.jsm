@@ -59,6 +59,8 @@ function getConsole() {
 
 XPCOMUtils.defineLazyGetter(this, "console", getConsole);
 
+const BACKGROUND_SCRIPTS_VIEW_TYPES = ["background", "background_worker"];
+
 var ExtensionCommon;
 
 // Run a function and report exceptions.
@@ -186,6 +188,10 @@ function makeWidgetId(id) {
 
 function isDeadOrRemote(obj) {
   return Cu.isDeadWrapper(obj) || Cu.isRemoteProxy(obj);
+}
+
+function isInBFCache(window) {
+  return !!window?.windowGlobalChild?.windowContext?.isInBFCache;
 }
 
 /**
@@ -461,6 +467,7 @@ class InnerWindowReference {
     if (
       !this.needWindowIDCheck ||
       (!isDeadOrRemote(this.contentWindow) &&
+        !isInBFCache(this.contentWindow) &&
         getInnerWindowID(this.contentWindow) === this.innerWindowID)
     ) {
       return this.contentWindow;
@@ -545,6 +552,10 @@ class BaseContext {
 
   get privateBrowsingAllowed() {
     return this.extension.privateBrowsingAllowed;
+  }
+
+  get isBackgroundContext() {
+    return BACKGROUND_SCRIPTS_VIEW_TYPES.includes(this.viewType);
   }
 
   /**
@@ -2754,6 +2765,55 @@ const stylesheetMap = new DefaultMap(url => {
   return styleSheetService.preloadSheet(uri, styleSheetService.AGENT_SHEET);
 });
 
+/**
+ * Updates the in-memory representation of extension host permissions, i.e.
+ * policy.allowedOrigins.
+ *
+ * @param {WebExtensionPolicy} policy
+ *        A policy. All MatchPattern instances in policy.allowedOrigins are
+ *        expected to have been constructed with ignorePath: true.
+ * @param {string[]} origins
+ *        A list of already-normalized origins, equivalent to using the
+ *        MatchPattern constructor with ignorePath: true.
+ * @param {boolean} isAdd
+ *        Whether to add instead of removing the host permissions.
+ */
+function updateAllowedOrigins(policy, origins, isAdd) {
+  if (!origins.length) {
+    // Nothing to modify.
+    return;
+  }
+  let patternMap = new Map();
+  for (let pattern of policy.allowedOrigins.patterns) {
+    patternMap.set(pattern.pattern, pattern);
+  }
+  if (!isAdd) {
+    for (let origin of origins) {
+      patternMap.delete(origin);
+    }
+  } else {
+    // In the parent process, policy.extension.restrictSchemes is available.
+    // In the content process, we need to check the mozillaAddons permission,
+    // which is only available if approved by the parent.
+    const restrictSchemes =
+      policy.extension?.restrictSchemes ??
+      policy.hasPermission("mozillaAddons");
+    for (let origin of origins) {
+      if (patternMap.has(origin)) {
+        continue;
+      }
+      patternMap.set(
+        origin,
+        new MatchPattern(origin, { restrictSchemes, ignorePath: true })
+      );
+    }
+  }
+  // patternMap contains only MatchPattern instances, so we don't need to set
+  // the options parameter (with restrictSchemes, etc.) since that is only used
+  // if the input is a string.
+  policy.allowedOrigins = new MatchPatternSet(Array.from(patternMap.values()));
+}
+
 ExtensionCommon = {
   BaseContext,
   CanOfAPIs,
@@ -2775,6 +2835,7 @@ ExtensionCommon = {
   normalizeTime,
   runSafeSyncWithoutClone,
   stylesheetMap,
+  updateAllowedOrigins,
   withHandlingUserInput,
 
   MultiAPIManager,

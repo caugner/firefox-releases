@@ -9,8 +9,7 @@
 
 #include "js/StructuredClone.h"
 
-namespace mozilla {
-namespace dom {
+namespace mozilla::dom {
 
 // CHANGING THE ORDER/PLACEMENT OF EXISTING ENUM VALUES MAY BREAK INDEXEDDB.
 // PROCEED WITH EXTREME CAUTION.
@@ -141,11 +140,16 @@ enum StructuredCloneTags : uint32_t {
 
   SCTAG_DOM_CLONED_ERROR_OBJECT,
 
+  SCTAG_DOM_READABLESTREAM,
+
+  SCTAG_DOM_WRITABLESTREAM,
+
+  SCTAG_DOM_TRANSFORMSTREAM,
+
   // IMPORTANT: If you plan to add an new IDB tag, it _must_ be add before the
   // "less stable" tags!
 };
 
-}  // namespace dom
-}  // namespace mozilla
+}  // namespace mozilla::dom
 
 #endif  // StructuredCloneTags_h__

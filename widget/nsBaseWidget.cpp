@@ -142,7 +142,6 @@ nsBaseWidget::nsBaseWidget(nsBorderStyle aBorderStyle)
       mBorderStyle(aBorderStyle),
       mBounds(0, 0, 0, 0),
       mOriginalBounds(nullptr),
-      mSizeMode(nsSizeMode_Normal),
       mIsTiled(false),
       mPopupLevel(ePopupLevelTop),
       mPopupType(ePopupTypeAny),
@@ -235,9 +234,6 @@ void WidgetShutdownObserver::Unregister() {
 }
 
 #define INTL_APP_LOCALES_CHANGED "intl:app-locales-changed"
-#define L10N_PSEUDO_PREF "intl.l10n.pseudo"
-
-static const char* kObservedPrefs[] = {L10N_PSEUDO_PREF, nullptr};
 
 NS_IMPL_ISUPPORTS(LocalesChangedObserver, nsIObserver)
 
@@ -261,13 +257,6 @@ LocalesChangedObserver::Observe(nsISupports* aSubject, const char* aTopic,
   if (!strcmp(aTopic, INTL_APP_LOCALES_CHANGED)) {
     RefPtr<nsBaseWidget> widget(mWidget);
     widget->LocalesChanged();
-  } else {
-    MOZ_ASSERT(!strcmp("nsPref:changed", aTopic));
-    nsDependentString pref(aData);
-    if (pref.EqualsLiteral(L10N_PSEUDO_PREF)) {
-      RefPtr<nsBaseWidget> widget(mWidget);
-      widget->LocalesChanged();
-    }
   }
   return NS_OK;
 }
@@ -276,10 +265,6 @@ void LocalesChangedObserver::Register() {
   if (mRegistered) {
     return;
   }
-
-  DebugOnly<nsresult> rv =
-      Preferences::AddStrongObservers(this, kObservedPrefs);
-  MOZ_ASSERT(NS_SUCCEEDED(rv), "Adding observers failed.");
 
   nsCOMPtr<nsIObserverService> obs = mozilla::services::GetObserverService();
   if (obs) {
@@ -302,7 +287,6 @@ void LocalesChangedObserver::Unregister() {
   if (obs) {
     obs->RemoveObserver(this, INTL_APP_LOCALES_CHANGED);
   }
-  Preferences::RemoveObservers(this, kObservedPrefs);
 
   mWidget = nullptr;
   mRegistered = false;
@@ -586,6 +570,10 @@ nsIntSize nsIWidget::CustomCursorSize(const Cursor& aCursor) {
   return {width, height};
 }
 
+RefPtr<mozilla::VsyncDispatcher> nsIWidget::GetVsyncDispatcher() {
+  return nullptr;
+}
+
 //-------------------------------------------------------------------------
 //
 // Add a child to the list of children
@@ -689,18 +677,6 @@ void nsBaseWidget::SetZIndex(int32_t aZIndex) {
       parent->AddChild(this);
     }
   }
-}
-
-//-------------------------------------------------------------------------
-//
-// Maximize, minimize or restore the window. The BaseWidget implementation
-// merely stores the state.
-//
-//-------------------------------------------------------------------------
-void nsBaseWidget::SetSizeMode(nsSizeMode aMode) {
-  MOZ_ASSERT(aMode == nsSizeMode_Normal || aMode == nsSizeMode_Minimized ||
-             aMode == nsSizeMode_Maximized || aMode == nsSizeMode_Fullscreen);
-  mSizeMode = aMode;
 }
 
 void nsBaseWidget::GetWorkspaceID(nsAString& workspaceID) {
@@ -1160,7 +1136,10 @@ void nsBaseWidget::CreateCompositorVsyncDispatcher() {
     }
     MutexAutoLock lock(*mCompositorVsyncDispatcherLock.get());
     if (!mCompositorVsyncDispatcher) {
-      mCompositorVsyncDispatcher = new CompositorVsyncDispatcher();
+      RefPtr<VsyncDispatcher> vsyncDispatcher =
+          gfxPlatform::GetPlatform()->GetGlobalVsyncDispatcher();
+      mCompositorVsyncDispatcher =
+          new CompositorVsyncDispatcher(std::move(vsyncDispatcher));
     }
   }
 }
@@ -1945,6 +1924,9 @@ void nsIWidget::OnLongTapTimerCallback(nsITimer* aTimer, void* aClosure) {
 nsresult nsIWidget::ClearNativeTouchSequence(nsIObserver* aObserver) {
   AutoObserverNotifier notifier(aObserver, "cleartouch");
 
+  // XXX This is odd.  This is called by the constructor of nsIWidget.  However,
+  //     at that point, nsIWidget::mLongTapTimer must be nullptr.  Therefore,
+  //     this must do nothing at initializing the instance.
   if (!mLongTapTimer) {
     return NS_OK;
   }

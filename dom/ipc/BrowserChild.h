@@ -351,10 +351,10 @@ class BrowserChild final : public nsMessageManagerScriptExecutor,
                                             nsIContentSecurityPolicy* aCsp);
 
   mozilla::ipc::IPCResult RecvRealKeyEvent(
-      const mozilla::WidgetKeyboardEvent& aEvent);
+      const mozilla::WidgetKeyboardEvent& aEvent, const nsID& aUUID);
 
   mozilla::ipc::IPCResult RecvNormalPriorityRealKeyEvent(
-      const mozilla::WidgetKeyboardEvent& aEvent);
+      const mozilla::WidgetKeyboardEvent& aEvent, const nsID& aUUID);
 
   mozilla::ipc::IPCResult RecvMouseWheelEvent(
       const mozilla::WidgetWheelEvent& aEvent, const ScrollableLayerGuid& aGuid,
@@ -801,6 +801,7 @@ class BrowserChild final : public nsMessageManagerScriptExecutor,
   layers::LayersId mLayersId;
   CSSRect mUnscaledOuterRect;
   Maybe<bool> mLayersConnected;
+  Maybe<bool> mLayersConnectRequested;
   EffectsInfo mEffectsInfo;
 
   RefPtr<VsyncMainChild> mVsyncChild;

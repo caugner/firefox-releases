@@ -109,6 +109,7 @@
 #  include <intrin.h>
 #  include <math.h>
 #  include "cairo/cairo-features.h"
+#  include "detect_win32k_conflicts.h"
 #  include "mozilla/PreXULSkeletonUI.h"
 #  include "mozilla/DllPrefetchExperimentRegistryInfo.h"
 #  include "mozilla/WindowsDllBlocklist.h"
@@ -718,6 +719,20 @@ nsIXULRuntime::ContentWin32kLockdownState GetLiveWin32kLockdownState() {
   if (!IsWin10FallCreatorsUpdateOrLater()) {
     return nsIXULRuntime::ContentWin32kLockdownState::
         OperatingSystemNotSupported;
+  }
+
+  {
+    ConflictingMitigationStatus conflictingMitigationStatus = {};
+    if (!detect_win32k_conflicting_mitigations(&conflictingMitigationStatus)) {
+      return nsIXULRuntime::ContentWin32kLockdownState::
+          IncompatibleMitigationPolicy;
+    }
+    if (conflictingMitigationStatus.caller_check ||
+        conflictingMitigationStatus.sim_exec ||
+        conflictingMitigationStatus.stack_pivot) {
+      return nsIXULRuntime::ContentWin32kLockdownState::
+          IncompatibleMitigationPolicy;
+    }
   }
 
   // Win32k Lockdown requires WebRender, but WR is not currently guaranteed
@@ -1887,15 +1902,15 @@ nsXULAppInfo::RemoveCrashReportAnnotation(const nsACString& key) {
 }
 
 NS_IMETHODIMP
-nsXULAppInfo::IsAnnotationWhitelistedForPing(const nsACString& aValue,
-                                             bool* aIsWhitelisted) {
+nsXULAppInfo::IsAnnotationAllowlistedForPing(const nsACString& aValue,
+                                             bool* aIsAllowlisted) {
   CrashReporter::Annotation annotation;
 
   if (!AnnotationFromString(annotation, PromiseFlatCString(aValue).get())) {
     return NS_ERROR_INVALID_ARG;
   }
 
-  *aIsWhitelisted = CrashReporter::IsAnnotationWhitelistedForPing(annotation);
+  *aIsAllowlisted = CrashReporter::IsAnnotationAllowlistedForPing(annotation);
 
   return NS_OK;
 }
@@ -1985,10 +2000,7 @@ nsXULAppInfo::Callback(nsISupports* aData) {
 
 static const nsXULAppInfo kAppInfo;
 namespace mozilla {
-nsresult AppInfoConstructor(nsISupports* aOuter, REFNSIID aIID,
-                            void** aResult) {
-  NS_ENSURE_NO_AGGREGATION(aOuter);
-
+nsresult AppInfoConstructor(REFNSIID aIID, void** aResult) {
   return const_cast<nsXULAppInfo*>(&kAppInfo)->QueryInterface(aIID, aResult);
 }
 }  // namespace mozilla
@@ -2119,15 +2131,9 @@ nsSingletonFactory::nsSingletonFactory(nsISupports* aSingleton)
 NS_IMPL_ISUPPORTS(nsSingletonFactory, nsIFactory)
 
 NS_IMETHODIMP
-nsSingletonFactory::CreateInstance(nsISupports* aOuter, const nsIID& aIID,
-                                   void** aResult) {
-  NS_ENSURE_NO_AGGREGATION(aOuter);
-
+nsSingletonFactory::CreateInstance(const nsIID& aIID, void** aResult) {
   return mSingleton->QueryInterface(aIID, aResult);
 }
-
-NS_IMETHODIMP
-nsSingletonFactory::LockFactory(bool) { return NS_OK; }
 
 /**
  * Set our windowcreator on the WindowWatcher service.
@@ -5490,7 +5496,7 @@ nsresult XREMain::XRE_mainRun() {
 
     // As FilePreferences need the profile directory, we must initialize right
     // here.
-    mozilla::FilePreferences::InitDirectoriesWhitelist();
+    mozilla::FilePreferences::InitDirectoriesAllowlist();
     mozilla::FilePreferences::InitPrefs();
 
     OverrideDefaultLocaleIfNeeded();
@@ -5885,6 +5891,15 @@ int XREMain::XRE_main(int argc, char* argv[], const BootstrapConfig& aConfig) {
   mAppData->sandboxPermissionsService = aConfig.sandboxPermissionsService;
 #endif
 
+  // Once we unset the exception handler, we lose the ability to properly
+  // detect hangs -- they show up as crashes.  We do this as late as possible.
+  // In particular, after ProcessRuntime is destroyed on Windows.
+  auto unsetExceptionHandler = MakeScopeExit([&] {
+    if (mAppData->flags & NS_XRE_ENABLE_CRASH_REPORTER)
+      return CrashReporter::UnsetExceptionHandler();
+    return NS_OK;
+  });
+
   mozilla::IOInterposerInit ioInterposerGuard;
 
 #if defined(XP_WIN)
@@ -5972,9 +5987,6 @@ int XREMain::XRE_main(int argc, char* argv[], const BootstrapConfig& aConfig) {
 #  endif
   }
 #endif
-
-  if (mAppData->flags & NS_XRE_ENABLE_CRASH_REPORTER)
-    CrashReporter::UnsetExceptionHandler();
 
   XRE_DeinitCommandLine();
 

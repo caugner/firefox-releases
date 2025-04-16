@@ -3,6 +3,8 @@
 
 "use strict";
 
+requestLongerTimeout(2);
+
 const { Downloads } = ChromeUtils.import(
   "resource://gre/modules/Downloads.jsm"
 );
@@ -23,6 +25,9 @@ const MimeSvc = Cc["@mozilla.org/mime;1"].getService(Ci.nsIMIMEService);
 const HandlerSvc = Cc["@mozilla.org/uriloader/handler-service;1"].getService(
   Ci.nsIHandlerService
 );
+
+let MockFilePicker = SpecialPowers.MockFilePicker;
+MockFilePicker.init(window);
 
 function waitForAcceptButtonToGetEnabled(doc) {
   let dialog = doc.querySelector("#unknownContentType");
@@ -233,6 +238,15 @@ add_task(async function test_check_open_with_internal_handler() {
     // Cancel dialog
     subDoc.querySelector("#unknownContentType").cancelDialog();
 
+    let filepickerPromise = new Promise(resolve => {
+      MockFilePicker.showCallback = function(fp) {
+        setTimeout(() => {
+          resolve(fp.defaultString);
+        }, 0);
+        return Ci.nsIFilePicker.returnCancel;
+      };
+    });
+
     subdialogPromise = BrowserTestUtils.domWindowOpenedAndLoaded();
     await SpecialPowers.spawn(newTab.linkedBrowser, [], async () => {
       let downloadButton;
@@ -246,54 +260,8 @@ add_task(async function test_check_open_with_internal_handler() {
     info(
       "Waiting for unknown content type dialog to appear from pdf.js download button click"
     );
-    subDialogWindow = await subdialogPromise;
-    subDoc = subDialogWindow.document;
-
-    // There is no content type here, so the type will be 'other'.
-    checkTelemetry(
-      "open " + file + " internal from download button",
-      "ask",
-      "other",
-      "attachment"
-    );
-
-    // Prevent racing with initialization of the dialog and make sure that
-    // the final state of the dialog has the correct visibility of the internal-handler option.
-    await waitForAcceptButtonToGetEnabled(subDoc);
-    subInternalHandlerRadio = subDoc.querySelector("#handleInternally");
-    ok(
-      subInternalHandlerRadio.hidden,
-      "The option should be hidden when the dialog is opened from pdf.js"
-    );
-    subDoc.querySelector("#open").click();
-
-    let tabOpenListener = () => {
-      ok(
-        false,
-        "A new tab should not be opened when accepting the dialog with 'open-with-external-app' chosen"
-      );
-    };
-    gBrowser.tabContainer.addEventListener("TabOpen", tabOpenListener);
-
-    let openingPromise = TestUtils.topicObserved(
-      "test-only-opening-downloaded-file",
-      (subject, data) => {
-        subject.QueryInterface(Ci.nsISupportsPRBool);
-        // Block opening the file:
-        subject.data = false;
-        return true;
-      }
-    );
-
-    info("Accepting the dialog");
-    subDoc.querySelector("#unknownContentType").acceptDialog();
-    info("Waiting until we try to open the file with an external app");
-    let [, downloadPath] = await openingPromise;
-    is(
-      downloadPath,
-      download.target.path,
-      "Path opened with external app should be the same."
-    );
+    let filename = await filepickerPromise;
+    is(filename, file, "filename was set in filepicker");
 
     // Remove the first file (can't do this sooner or the second load fails):
     if (download?.target.exists) {
@@ -305,7 +273,6 @@ add_task(async function test_check_open_with_internal_handler() {
       }
     }
 
-    gBrowser.tabContainer.removeEventListener("TabOpen", tabOpenListener);
     BrowserTestUtils.removeTab(loadingTab);
     BrowserTestUtils.removeTab(newTab);
     BrowserTestUtils.removeTab(extraTab);
@@ -927,4 +894,8 @@ add_task(async function test_check_open_with_internal_handler_noask() {
   for (let mimeInfo of mimeInfosToRestore) {
     HandlerSvc.remove(mimeInfo);
   }
+});
+
+add_task(async () => {
+  MockFilePicker.cleanup();
 });

@@ -147,13 +147,8 @@
 #include "mozilla/ipc/ByteBuf.h"
 #include "mozilla/ipc/CrashReporterHost.h"
 #include "mozilla/ipc/Endpoint.h"
-#include "mozilla/ipc/FileDescriptorSetParent.h"
 #include "mozilla/ipc/FileDescriptorUtils.h"
-#include "mozilla/ipc/IPCStreamAlloc.h"
-#include "mozilla/ipc/IPCStreamDestination.h"
-#include "mozilla/ipc/IPCStreamSource.h"
 #include "mozilla/ipc/IPCStreamUtils.h"
-#include "mozilla/ipc/PChildToParentStreamParent.h"
 #include "mozilla/ipc/TestShellParent.h"
 #include "mozilla/layers/CompositorThread.h"
 #include "mozilla/layers/ImageBridgeParent.h"
@@ -323,6 +318,10 @@
 
 #ifdef MOZ_CODE_COVERAGE
 #  include "mozilla/CodeCoverageHandler.h"
+#endif
+
+#ifdef FUZZING_SNAPSHOT
+#  include "mozilla/fuzzing/IPCFuzzController.h"
 #endif
 
 // For VP9Benchmark::sBenchmarkFpsPref
@@ -3002,8 +3001,11 @@ bool ContentParent::InitInternal(ProcessPriority aInitialPriority) {
   }
 
 #ifdef MOZ_WIDGET_ANDROID
-  Unused << SendDecoderSupportedMimeTypes(
-      AndroidDecoderModule::GetSupportedMimeTypes());
+  if (!(StaticPrefs::media_utility_process_enabled() &&
+        StaticPrefs::media_utility_android_media_codec_enabled())) {
+    Unused << SendDecoderSupportedMimeTypes(
+        AndroidDecoderModule::GetSupportedMimeTypes());
+  }
 #endif
 
   // Must send screen info before send initialData
@@ -3348,7 +3350,7 @@ mozilla::ipc::IPCResult ContentParent::RecvSetClipboard(
 
   rv = nsContentUtils::IPCTransferableToTransferable(
       aDataTransfer, aIsPrivateData, aRequestingPrincipal, aContentPolicyType,
-      trans, this, nullptr);
+      true /* aAddDataFlavor */, trans, this);
   NS_ENSURE_SUCCESS(rv, IPC_OK());
 
   clipboard->SetData(trans, nullptr, aWhichClipboard);
@@ -4142,8 +4144,8 @@ void ContentParent::HandleOrphanedMinidump(nsString* aDumpId) {
     CrashReporterHost::RecordCrash(GeckoProcessType_Content,
                                    nsICrashService::CRASH_TYPE_CRASH, *aDumpId);
   } else {
-    NS_WARNING(nsPrintfCString("content process pid = %d crashed without "
-                               "leaving a minidump behind",
+    NS_WARNING(nsPrintfCString("content process pid = %" PRIPID
+                               " crashed without leaving a minidump behind",
                                OtherPid())
                    .get());
   }
@@ -4331,27 +4333,6 @@ mozilla::ipc::IPCResult ContentParent::RecvInitStreamFilter(
           });
 
   return IPC_OK();
-}
-
-PChildToParentStreamParent* ContentParent::AllocPChildToParentStreamParent() {
-  return mozilla::ipc::AllocPChildToParentStreamParent();
-}
-
-bool ContentParent::DeallocPChildToParentStreamParent(
-    PChildToParentStreamParent* aActor) {
-  delete aActor;
-  return true;
-}
-
-PParentToChildStreamParent* ContentParent::AllocPParentToChildStreamParent() {
-  MOZ_CRASH(
-      "PParentToChildStreamParent actors should be manually constructed!");
-}
-
-bool ContentParent::DeallocPParentToChildStreamParent(
-    PParentToChildStreamParent* aActor) {
-  delete aActor;
-  return true;
 }
 
 mozilla::ipc::IPCResult ContentParent::RecvAddSecurityState(
@@ -5031,17 +5012,6 @@ mozilla::ipc::IPCResult ContentParent::RecvCreateAudioIPCConnection(
 already_AddRefed<extensions::PExtensionsParent>
 ContentParent::AllocPExtensionsParent() {
   return MakeAndAddRef<extensions::ExtensionsParent>();
-}
-
-PFileDescriptorSetParent* ContentParent::AllocPFileDescriptorSetParent(
-    const FileDescriptor& aFD) {
-  return new FileDescriptorSetParent(aFD);
-}
-
-bool ContentParent::DeallocPFileDescriptorSetParent(
-    PFileDescriptorSetParent* aActor) {
-  delete static_cast<FileDescriptorSetParent*>(aActor);
-  return true;
 }
 
 void ContentParent::NotifyUpdatedDictionaries() {
@@ -7265,18 +7235,6 @@ mozilla::ipc::IPCResult ContentParent::RecvCommitBrowsingContextTransaction(
   return aTransaction.CommitFromIPC(aContext, this);
 }
 
-PParentToChildStreamParent* ContentParent::SendPParentToChildStreamConstructor(
-    PParentToChildStreamParent* aActor) {
-  MOZ_ASSERT(NS_IsMainThread());
-  return PContentParent::SendPParentToChildStreamConstructor(aActor);
-}
-
-PFileDescriptorSetParent* ContentParent::SendPFileDescriptorSetConstructor(
-    const FileDescriptor& aFD) {
-  MOZ_ASSERT(NS_IsMainThread());
-  return PContentParent::SendPFileDescriptorSetConstructor(aFD);
-}
-
 mozilla::ipc::IPCResult ContentParent::RecvBlobURLDataRequest(
     const nsCString& aBlobURL, nsIPrincipal* aTriggeringPrincipal,
     nsIPrincipal* aLoadingPrincipal, const OriginAttributes& aOriginAttributes,
@@ -7752,6 +7710,14 @@ IPCResult ContentParent::RecvGetSystemIcon(nsIURI* aURI,
       "platforms");
 #endif
 }
+
+#ifdef FUZZING_SNAPSHOT
+IPCResult ContentParent::RecvSignalFuzzingReady() {
+  // No action needed here, we already observe this message directly
+  // on the channel and act accordingly.
+  return IPC_OK();
+}
+#endif
 
 }  // namespace dom
 }  // namespace mozilla

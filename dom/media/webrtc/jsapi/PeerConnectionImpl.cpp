@@ -249,13 +249,13 @@ NS_IMPL_CYCLE_COLLECTION_UNLINK_BEGIN(PeerConnectionImpl)
   tmp->Close();
   NS_IMPL_CYCLE_COLLECTION_UNLINK(mPCObserver, mWindow, mCertificate,
                                   mSTSThread, mReceiveStreams, mOperations,
-                                  mKungFuDeathGrip)
+                                  mTransceivers, mKungFuDeathGrip)
   NS_IMPL_CYCLE_COLLECTION_UNLINK_PRESERVED_WRAPPER
 NS_IMPL_CYCLE_COLLECTION_UNLINK_END
 NS_IMPL_CYCLE_COLLECTION_TRAVERSE_BEGIN(PeerConnectionImpl)
   NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mPCObserver, mWindow, mCertificate,
                                     mSTSThread, mReceiveStreams, mOperations,
-                                    mKungFuDeathGrip)
+                                    mTransceivers, mKungFuDeathGrip)
 NS_IMPL_CYCLE_COLLECTION_TRAVERSE_END
 NS_IMPL_CYCLE_COLLECTION_TRACE_WRAPPERCACHE(PeerConnectionImpl)
 
@@ -597,8 +597,7 @@ class ConfigureCodec {
                           mSoftwareH264Enabled);
     Telemetry::Accumulate(Telemetry::WEBRTC_HARDWARE_H264_ENABLED,
                           mHardwareH264Enabled);
-    Telemetry::Accumulate(Telemetry::WEBRTC_H264_ENABLED,
-                          mH264Enabled);
+    Telemetry::Accumulate(Telemetry::WEBRTC_H264_ENABLED, mH264Enabled);
 
     branch->GetIntPref("media.navigator.video.h264.level", &mH264Level);
     mH264Level &= 0xFF;
@@ -939,38 +938,32 @@ nsresult PeerConnectionImpl::AddRtpTransceiverToJsepSession(
   return NS_OK;
 }
 
-already_AddRefed<TransceiverImpl> PeerConnectionImpl::CreateTransceiverImpl(
-    JsepTransceiver* aJsepTransceiver, dom::MediaStreamTrack* aSendTrack,
-    ErrorResult& aRv) {
-  PeerConnectionCtx* ctx = PeerConnectionCtx::GetInstance();
-  RefPtr<TransceiverImpl> transceiverImpl;
-  aRv =
-      AddTransceiver(aJsepTransceiver, aSendTrack, ctx->GetSharedWebrtcState(),
-                     mIdGenerator, &transceiverImpl);
-
-  return transceiverImpl.forget();
+static Maybe<SdpMediaSection::MediaType> ToSdpMediaType(
+    const nsAString& aKind) {
+  if (aKind.EqualsASCII("audio")) {
+    return Some(SdpMediaSection::MediaType::kAudio);
+  } else if (aKind.EqualsASCII("video")) {
+    return Some(SdpMediaSection::MediaType::kVideo);
+  }
+  return Nothing();
 }
 
-already_AddRefed<TransceiverImpl> PeerConnectionImpl::CreateTransceiverImpl(
-    const nsAString& aKind, dom::MediaStreamTrack* aSendTrack,
-    ErrorResult& jrv) {
-  SdpMediaSection::MediaType type;
-  if (aKind.EqualsASCII("audio")) {
-    type = SdpMediaSection::MediaType::kAudio;
-  } else if (aKind.EqualsASCII("video")) {
-    type = SdpMediaSection::MediaType::kVideo;
-  } else {
-    MOZ_ASSERT(false);
-    jrv = NS_ERROR_INVALID_ARG;
+already_AddRefed<RTCRtpTransceiver> PeerConnectionImpl::AddTransceiver(
+    const dom::RTCRtpTransceiverInit& aInit, const nsAString& aKind,
+    dom::MediaStreamTrack* aSendTrack, ErrorResult& aRv) {
+  Maybe<SdpMediaSection::MediaType> type = ToSdpMediaType(aKind);
+  if (NS_WARN_IF(!type.isSome())) {
+    MOZ_ASSERT(false, "Invalid media kind");
+    aRv = NS_ERROR_INVALID_ARG;
     return nullptr;
   }
 
-  RefPtr<JsepTransceiver> jsepTransceiver = new JsepTransceiver(type);
+  RefPtr<JsepTransceiver> jsepTransceiver = new JsepTransceiver(*type);
 
-  RefPtr<TransceiverImpl> transceiverImpl =
-      CreateTransceiverImpl(jsepTransceiver, aSendTrack, jrv);
+  RefPtr<RTCRtpTransceiver> transceiver =
+      CreateTransceiver(jsepTransceiver, aInit, aSendTrack, aRv);
 
-  if (jrv.Failed()) {
+  if (aRv.Failed()) {
     // Would be nice if we could peek at the rv without stealing it, so we
     // could log...
     CSFLogError(LOGTAG, "%s: failed", __FUNCTION__);
@@ -984,11 +977,12 @@ already_AddRefed<TransceiverImpl> PeerConnectionImpl::CreateTransceiverImpl(
   if (NS_FAILED(rv)) {
     CSFLogError(LOGTAG, "%s: AddRtpTransceiverToJsepSession failed, res=%u",
                 __FUNCTION__, static_cast<unsigned>(rv));
-    jrv = rv;
+    aRv = rv;
     return nullptr;
   }
 
-  return transceiverImpl.forget();
+  mTransceivers.AppendElement(transceiver);
+  return transceiver.forget();
 }
 
 bool PeerConnectionImpl::CheckNegotiationNeeded() {
@@ -1112,13 +1106,17 @@ NS_INTERFACE_MAP_END
 NS_IMPL_CYCLE_COLLECTING_ADDREF(PeerConnectionImpl::Operation)
 NS_IMPL_CYCLE_COLLECTING_RELEASE(PeerConnectionImpl::Operation)
 
-PeerConnectionImpl::Operation::Operation(PeerConnectionImpl* aPc)
-    : mPromise(aPc->MakePromise()), mPc(aPc) {}
+PeerConnectionImpl::Operation::Operation(PeerConnectionImpl* aPc,
+                                         ErrorResult& aError)
+    : mPromise(aPc->MakePromise(aError)), mPc(aPc) {}
 
 PeerConnectionImpl::Operation::~Operation() = default;
 
-void PeerConnectionImpl::Operation::Call() {
-  RefPtr<dom::Promise> opPromise = CallImpl();
+void PeerConnectionImpl::Operation::Call(ErrorResult& aError) {
+  RefPtr<dom::Promise> opPromise = CallImpl(aError);
+  if (aError.Failed()) {
+    return;
+  }
   // Upon fulfillment or rejection of the promise returned by the operation,
   // run the following steps:
   // (NOTE: mPromise is p from https://w3c.github.io/webrtc-pc/#dfn-chain,
@@ -1138,7 +1136,7 @@ void PeerConnectionImpl::Operation::ResolvedCallback(
     // steps:
     // (Static analysis forces us to use a temporary)
     RefPtr<PeerConnectionImpl> pc = mPc;
-    pc->RunNextOperation();
+    pc->RunNextOperation(aRv);
   }
 }
 
@@ -1154,7 +1152,7 @@ void PeerConnectionImpl::Operation::RejectedCallback(
     // steps:
     // (Static analysis forces us to use a temporary)
     RefPtr<PeerConnectionImpl> pc = mPc;
-    pc->RunNextOperation();
+    pc->RunNextOperation(aRv);
   }
 }
 
@@ -1170,21 +1168,29 @@ NS_INTERFACE_MAP_BEGIN_CYCLE_COLLECTION(PeerConnectionImpl::JSOperation)
 NS_INTERFACE_MAP_END_INHERITING(PeerConnectionImpl::Operation)
 
 PeerConnectionImpl::JSOperation::JSOperation(PeerConnectionImpl* aPc,
-                                             dom::ChainedOperation& aOp)
-    : Operation(aPc), mOperation(&aOp) {}
+                                             dom::ChainedOperation& aOp,
+                                             ErrorResult& aError)
+    : Operation(aPc, aError), mOperation(&aOp) {}
 
-RefPtr<dom::Promise> PeerConnectionImpl::JSOperation::CallImpl() {
+RefPtr<dom::Promise> PeerConnectionImpl::JSOperation::CallImpl(
+    ErrorResult& aError) {
   // Static analysis will not let us call this without a temporary :(
   RefPtr<dom::ChainedOperation> op = mOperation;
-  return op->Call();
+  return op->Call(aError);
 }
 
 already_AddRefed<dom::Promise> PeerConnectionImpl::Chain(
-    dom::ChainedOperation& aOperation) {
+    dom::ChainedOperation& aOperation, ErrorResult& aError) {
   MOZ_RELEASE_ASSERT(!mChainingOperation);
   mChainingOperation = true;
-  RefPtr<Operation> operation = new JSOperation(this, aOperation);
-  RefPtr<Promise> promise = Chain(operation);
+  RefPtr<Operation> operation = new JSOperation(this, aOperation, aError);
+  if (aError.Failed()) {
+    return nullptr;
+  }
+  RefPtr<Promise> promise = Chain(operation, aError);
+  if (aError.Failed()) {
+    return nullptr;
+  }
   mChainingOperation = false;
   return promise.forget();
 }
@@ -1194,12 +1200,15 @@ already_AddRefed<dom::Promise> PeerConnectionImpl::Chain(
 // run _immediately_ (without any Promise.Then!) if the operations chain is
 // empty.
 already_AddRefed<dom::Promise> PeerConnectionImpl::Chain(
-    const RefPtr<Operation>& aOperation) {
+    const RefPtr<Operation>& aOperation, ErrorResult& aError) {
   // If connection.[[IsClosed]] is true, return a promise rejected with a newly
   // created InvalidStateError.
   if (IsClosed()) {
     CSFLogDebug(LOGTAG, "%s:%d: Peer connection is closed", __FILE__, __LINE__);
-    RefPtr<dom::Promise> error = MakePromise();
+    RefPtr<dom::Promise> error = MakePromise(aError);
+    if (aError.Failed()) {
+      return nullptr;
+    }
     error->MaybeRejectWithInvalidStateError("Peer connection is closed");
     return error.forget();
   }
@@ -1209,14 +1218,17 @@ already_AddRefed<dom::Promise> PeerConnectionImpl::Chain(
 
   // If the length of [[Operations]] is exactly 1, execute operation.
   if (mOperations.Length() == 1) {
-    aOperation->Call();
+    aOperation->Call(aError);
+    if (aError.Failed()) {
+      return nullptr;
+    }
   }
 
   // This is the promise p from https://w3c.github.io/webrtc-pc/#dfn-chain
   return do_AddRef(aOperation->GetPromise());
 }
 
-void PeerConnectionImpl::RunNextOperation() {
+void PeerConnectionImpl::RunNextOperation(ErrorResult& aError) {
   // If connection.[[IsClosed]] is true, abort these steps.
   if (IsClosed()) {
     return;
@@ -1230,7 +1242,7 @@ void PeerConnectionImpl::RunNextOperation() {
   if (mOperations.Length()) {
     // Cannot call without a temporary :(
     RefPtr<Operation> op = mOperations[0];
-    op->Call();
+    op->Call(aError);
     return;
   }
 
@@ -1246,14 +1258,10 @@ void PeerConnectionImpl::RunNextOperation() {
   UpdateNegotiationNeeded();
 }
 
-already_AddRefed<dom::Promise> PeerConnectionImpl::MakePromise() const {
+already_AddRefed<dom::Promise> PeerConnectionImpl::MakePromise(
+    ErrorResult& aError) const {
   nsCOMPtr<nsIGlobalObject> global = do_QueryInterface(mWindow);
-  ErrorResult rv;
-  RefPtr<dom::Promise> result = dom::Promise::Create(global, rv);
-  if (NS_WARN_IF(rv.Failed())) {
-    rv.StealNSResult();
-  }
-  return result.forget();
+  return dom::Promise::Create(global, aError);
 }
 
 void PeerConnectionImpl::UpdateNegotiationNeeded() {
@@ -1611,39 +1619,15 @@ PeerConnectionImpl::SetRemoteDescription(int32_t action, const char* aSDP) {
         continue;
       }
 
-      // New audio or video transceiver, need to tell JS about it.
-      RefPtr<TransceiverImpl> transceiverImpl =
-          CreateTransceiverImpl(jsepTransceiver, nullptr, jrv);
+      dom::RTCRtpTransceiverInit init;
+      init.mDirection = RTCRtpTransceiverDirection::Recvonly;
+      RefPtr<RTCRtpTransceiver> transceiver =
+          CreateTransceiver(jsepTransceiver, init, nullptr, jrv);
       if (jrv.Failed()) {
         appendHistory();
         return NS_ERROR_FAILURE;
       }
-
-      const JsepTrack& receiving(jsepTransceiver->mRecvTrack);
-      CSFLogInfo(LOGTAG, "%s: pc = %s, asking JS to create transceiver",
-                 __FUNCTION__, mHandle.c_str());
-      switch (receiving.GetMediaType()) {
-        case SdpMediaSection::MediaType::kAudio:
-          mPCObserver->OnTransceiverNeeded(NS_ConvertASCIItoUTF16("audio"),
-                                           *transceiverImpl, jrv);
-          break;
-        case SdpMediaSection::MediaType::kVideo:
-          mPCObserver->OnTransceiverNeeded(NS_ConvertASCIItoUTF16("video"),
-                                           *transceiverImpl, jrv);
-          break;
-        default:
-          MOZ_RELEASE_ASSERT(false);
-      }
-
-      if (jrv.Failed()) {
-        nsresult rv = jrv.StealNSResult();
-        CSFLogError(LOGTAG,
-                    "%s: pc = %s, OnTransceiverNeeded failed. "
-                    "This should never happen. rv = %d",
-                    __FUNCTION__, mHandle.c_str(), static_cast<int>(rv));
-        MOZ_CRASH();
-        return NS_ERROR_FAILURE;
-      }
+      mTransceivers.AppendElement(transceiver);
     }
 
     if (wasRestartingIce) {
@@ -1684,6 +1668,8 @@ already_AddRefed<dom::Promise> PeerConnectionImpl::GetStats(
               RefPtr<RTCStatsReport> report(new RTCStatsReport(window));
               promise->MaybeResolve(std::move(report));
             });
+  } else {
+    promise->MaybeReject(NS_ERROR_DOM_INVALID_STATE_ERR);
   }
 
   return promise.forget();
@@ -2040,7 +2026,6 @@ PeerConnectionImpl::Close() {
   }
 
   STAMP_TIMECARD(mTimeCard, "Close");
-  mSignalingState = RTCSignalingState::Closed;
 
   // When ICE completes, we record a bunch of statistics that outlive the
   // PeerConnection. This includes a call to GetStats, as well as some
@@ -2085,8 +2070,6 @@ PeerConnectionImpl::Close() {
     transceiver->Shutdown_m();
   }
 
-  mTransceivers.Clear();
-
   mQueuedIceCtxOperations.clear();
 
   mOperations.Clear();
@@ -2096,6 +2079,8 @@ PeerConnectionImpl::Close() {
     mWindow->RemovePeerConnection();
     mActiveOnWindow = false;
   }
+
+  mSignalingState = RTCSignalingState::Closed;
 
   if (!mTransportHandler) {
     // We were never initialized, apparently.
@@ -2348,11 +2333,10 @@ void PeerConnectionImpl::OnSetDescriptionSuccess(JsepSdpType sdpType,
           UpdateRTCDtlsTransports(markAsStable);
         }
 
-        JSErrorResult jrv;
-        mPCObserver->SyncTransceivers(jrv);
-        if (NS_WARN_IF(jrv.Failed())) {
-          return;
+        for (auto& transceiver : mTransceivers) {
+          transceiver->SyncWithJsep();
         }
+
         mPendingRemoteDescription =
             mJsepSession->GetRemoteDescription(kJsepDescriptionPending);
         mCurrentRemoteDescription =
@@ -2384,6 +2368,7 @@ void PeerConnectionImpl::OnSetDescriptionSuccess(JsepSdpType sdpType,
           UpdateNegotiationNeeded();
         }
 
+        JSErrorResult jrv;
         if (newSignalingState != mSignalingState) {
           mSignalingState = newSignalingState;
           mPCObserver->OnStateChange(PCObserverStateType::SignalingState, jrv);
@@ -2421,6 +2406,19 @@ void PeerConnectionImpl::OnSetDescriptionSuccess(JsepSdpType sdpType,
 
             if (!stream->HasTrack(*association.mTrack)) {
               stream->AddTrackInternal(association.mTrack);
+            }
+          }
+
+          // Make sure to wait until after we've calculated track changes before
+          // doing this.
+          for (size_t i = 0; i < mTransceivers.Length();) {
+            auto& transceiver = mTransceivers[i];
+            if (transceiver->ShouldRemove()) {
+              // TODO: Can we make Shutdown_m and StopImpl the same thing?
+              mTransceivers[i]->Shutdown_m();
+              mTransceivers.RemoveElementAt(i);
+            } else {
+              ++i;
             }
           }
 
@@ -2899,7 +2897,7 @@ RefPtr<dom::RTCStatsReportPromise> PeerConnectionImpl::GetStats(
   nsTArray<dom::RTCCodecStats> codecStats = GetCodecStats(now);
 
   nsTArray<
-      std::tuple<TransceiverImpl*, RefPtr<RTCStatsPromise::AllPromiseType>>>
+      std::tuple<RTCRtpTransceiver*, RefPtr<RTCStatsPromise::AllPromiseType>>>
       transceiverStatsPromises;
   for (const auto& transceiver : mTransceivers) {
     const bool sendSelected = transceiver->Sender()->HasTrack(aSelector);
@@ -2927,7 +2925,7 @@ RefPtr<dom::RTCStatsReportPromise> PeerConnectionImpl::GetStats(
                                              rtpStreamPromises)));
   }
 
-  promises.AppendElement(TransceiverImpl::ApplyCodecStats(
+  promises.AppendElement(RTCRtpTransceiver::ApplyCodecStats(
       std::move(codecStats), std::move(transceiverStatsPromises)));
 
   // TODO(bug 1616937): We need to move this is RTCRtpSender, to make
@@ -3343,11 +3341,11 @@ void PeerConnectionImpl::UpdateTransport(const JsepTransceiver& aTransceiver,
 }
 
 nsresult PeerConnectionImpl::UpdateMediaPipelines() {
-  for (RefPtr<TransceiverImpl>& transceiver : mTransceivers) {
+  for (RefPtr<RTCRtpTransceiver>& transceiver : mTransceivers) {
     transceiver->ResetSync();
   }
 
-  for (RefPtr<TransceiverImpl>& transceiver : mTransceivers) {
+  for (RefPtr<RTCRtpTransceiver>& transceiver : mTransceivers) {
     if (!transceiver->IsVideo()) {
       nsresult rv = transceiver->SyncWithMatchingVideoConduits(mTransceivers);
       if (NS_FAILED(rv)) {
@@ -3637,25 +3635,26 @@ void PeerConnectionImpl::EnsureIceGathering(bool aDefaultRouteOnly,
                                        aObfuscateHostAddresses, mStunAddrs);
 }
 
-nsresult PeerConnectionImpl::AddTransceiver(
-    JsepTransceiver* aJsepTransceiver, dom::MediaStreamTrack* aSendTrack,
-    SharedWebrtcState* aSharedWebrtcState, RTCStatsIdGenerator* aIdGenerator,
-    RefPtr<TransceiverImpl>* aTransceiverImpl) {
+already_AddRefed<dom::RTCRtpTransceiver> PeerConnectionImpl::CreateTransceiver(
+    JsepTransceiver* aJsepTransceiver, const RTCRtpTransceiverInit& aInit,
+    dom::MediaStreamTrack* aSendTrack, ErrorResult& aRv) {
+  PeerConnectionCtx* ctx = PeerConnectionCtx::GetInstance();
   if (!mCall) {
     mCall = WebrtcCallWrapper::Create(
         GetTimestampMaker(),
         media::ShutdownBlockingTicket::Create(
             u"WebrtcCallWrapper shutdown blocker"_ns,
             NS_LITERAL_STRING_FROM_CSTRING(__FILE__), __LINE__),
-        aSharedWebrtcState);
+        ctx->GetSharedWebrtcState());
   }
 
-  RefPtr<TransceiverImpl> transceiver = new TransceiverImpl(
+  RefPtr<RTCRtpTransceiver> transceiver = new RTCRtpTransceiver(
       mWindow, PrivacyNeeded(), this, mTransportHandler, aJsepTransceiver,
-      mSTSThread.get(), aSendTrack, mCall.get(), aIdGenerator);
+      mSTSThread.get(), aSendTrack, mCall.get(), mIdGenerator);
 
-  if (!transceiver->IsValid()) {
-    return NS_ERROR_FAILURE;
+  transceiver->Init(aInit, aRv);
+  if (aRv.Failed()) {
+    return nullptr;
   }
 
   if (aSendTrack) {
@@ -3666,19 +3665,17 @@ nsresult PeerConnectionImpl::AddTransceiver(
           doc->NodePrincipal(), GetPeerIdentity());
     } else {
       MOZ_CRASH();
-      return NS_ERROR_FAILURE;  // Don't remove this till we know it's safe.
+      aRv = NS_ERROR_FAILURE;
+      return nullptr;  // Don't remove this till we know it's safe.
     }
   }
 
-  mTransceivers.AppendElement(transceiver);
-  *aTransceiverImpl = transceiver;
-
-  return NS_OK;
+  return transceiver.forget();
 }
 
 std::string PeerConnectionImpl::GetTransportIdMatchingSendTrack(
     const dom::MediaStreamTrack& aTrack) const {
-  for (const RefPtr<TransceiverImpl>& transceiver : mTransceivers) {
+  for (const RefPtr<RTCRtpTransceiver>& transceiver : mTransceivers) {
     if (transceiver->Sender()->HasTrack(&aTrack)) {
       return transceiver->GetTransportId();
     }
@@ -3764,7 +3761,7 @@ void PeerConnectionImpl::SignalHandler::AlpnNegotiated_s(
 bool PeerConnectionImpl::AnyLocalTrackHasPeerIdentity() const {
   MOZ_ASSERT(NS_IsMainThread());
 
-  for (const RefPtr<TransceiverImpl>& transceiver : mTransceivers) {
+  for (const RefPtr<RTCRtpTransceiver>& transceiver : mTransceivers) {
     if (transceiver->Sender()->GetTrack() &&
         transceiver->Sender()->GetTrack()->GetPeerIdentity()) {
       return true;
@@ -3774,7 +3771,7 @@ bool PeerConnectionImpl::AnyLocalTrackHasPeerIdentity() const {
 }
 
 bool PeerConnectionImpl::AnyCodecHasPluginID(uint64_t aPluginID) {
-  for (RefPtr<TransceiverImpl>& transceiver : mTransceivers) {
+  for (RefPtr<RTCRtpTransceiver>& transceiver : mTransceivers) {
     if (transceiver->ConduitHasPluginID(aPluginID)) {
       return true;
     }

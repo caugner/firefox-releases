@@ -433,7 +433,7 @@ class ScriptLoader final : public JS::loader::ScriptLoaderInterface {
   nsIURI* GetBaseURI() const override;
 
  private:
-  virtual ~ScriptLoader();
+  ~ScriptLoader();
 
   already_AddRefed<ScriptLoadRequest> CreateLoadRequest(
       ScriptKind aKind, nsIURI* aURI, nsIScriptElement* aElement,
@@ -551,6 +551,11 @@ class ScriptLoader final : public JS::loader::ScriptLoaderInterface {
 
   void ReportErrorToConsole(ScriptLoadRequest* aRequest,
                             nsresult aResult) const override;
+
+  void ReportWarningToConsole(
+      ScriptLoadRequest* aRequest, const char* aMessageName,
+      const nsTArray<nsString>& aParams = nsTArray<nsString>()) const override;
+
   void ReportPreloadErrorsToConsole(ScriptLoadRequest* aRequest);
 
   nsresult AttemptAsyncScriptCompile(ScriptLoadRequest* aRequest,

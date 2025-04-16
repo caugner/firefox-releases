@@ -114,12 +114,23 @@ class AndroidEmulatorTest(
                 },
             ],
             [
-                ["--enable-fission"],
+                ["--disable-fission"],
                 {
                     "action": "store_true",
-                    "dest": "enable_fission",
+                    "dest": "disable_fission",
                     "default": False,
-                    "help": "Run with Fission enabled.",
+                    "help": "Run without Fission enabled.",
+                },
+            ],
+            [
+                ["--web-content-isolation-strategy"],
+                {
+                    "action": "store",
+                    "type": "int",
+                    "dest": "web_content_isolation_strategy",
+                    "help": "Strategy used to determine whether or not a particular site should"
+                    "load into a webIsolated content process, see "
+                    "fission.webContentIsolationStrategy.",
                 },
             ],
             [
@@ -187,7 +198,8 @@ class AndroidEmulatorTest(
         # GLES3 if we're running WebRender (default)
         self.use_gles3 = True
         self.disable_e10s = c.get("disable_e10s")
-        self.enable_fission = c.get("enable_fission")
+        self.disable_fission = c.get("disable_fission")
+        self.web_content_isolation_strategy = c.get("web_content_isolation_strategy")
         self.extra_prefs = c.get("extra_prefs")
 
     def query_abs_dirs(self):
@@ -311,6 +323,15 @@ class AndroidEmulatorTest(
             else:
                 self.log("--repeat not supported in {}".format(category), level=WARNING)
 
+        # do not add --disable fission if we don't have --disable-e10s
+        if c["disable_fission"] and category not in ["gtest", "cppunittest"]:
+            cmd.append("--disable-fission")
+
+        if "web_content_isolation_strategy" in c:
+            cmd.append(
+                "--web-content-isolation-strategy=%s"
+                % c["web_content_isolation_strategy"]
+            )
         cmd.extend(["--setpref={}".format(p) for p in self.extra_prefs])
 
         if not (self.verify_enabled or self.per_test_coverage):
@@ -328,8 +349,6 @@ class AndroidEmulatorTest(
             elif category not in SUITE_DEFAULT_E10S and c["e10s"]:
                 cmd.append("--e10s")
 
-        if self.enable_fission:
-            cmd.extend(["--enable-fission"])
         if c.get("enable_xorigin_tests"):
             cmd.extend(["--enable-xorigin-tests"])
 

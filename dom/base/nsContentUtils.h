@@ -109,6 +109,7 @@ class nsISupports;
 class nsITransferable;
 class nsIURI;
 class nsIWidget;
+class nsIWritableVariant;
 class nsIXPConnect;
 class nsNodeInfoManager;
 class nsParser;
@@ -193,8 +194,9 @@ enum class ReferrerPolicy : uint8_t;
 }  // namespace dom
 
 namespace ipc {
-class Shmem;
+class IProtocol;
 class IShmemAllocator;
+class Shmem;
 }  // namespace ipc
 
 namespace gfx {
@@ -1970,7 +1972,8 @@ class nsContentUtils {
    * closed. At opening, aInstalling should be TRUE, otherwise, it should be
    * FALSE.
    */
-  static void NotifyInstalledMenuKeyboardListener(bool aInstalling);
+  MOZ_CAN_RUN_SCRIPT static void NotifyInstalledMenuKeyboardListener(
+      bool aInstalling);
 
   /**
    * Check whether the nsIURI uses the given scheme.
@@ -2457,7 +2460,11 @@ class nsContentUtils {
    * Returns the in-process subtree root document in a document hierarchy.
    * This could be a chrome document.
    */
-  static Document* GetInProcessSubtreeRootDocument(Document* aDoc);
+  static Document* GetInProcessSubtreeRootDocument(Document* aDoc) {
+    return const_cast<Document*>(
+        GetInProcessSubtreeRootDocument(const_cast<const Document*>(aDoc)));
+  }
+  static const Document* GetInProcessSubtreeRootDocument(const Document* aDoc);
 
   static void GetShiftText(nsAString& text);
   static void GetControlText(nsAString& text);
@@ -2869,12 +2876,20 @@ class nsContentUtils {
   static bool IsFlavorImage(const nsACString& aFlavor);
 
   static nsresult IPCTransferableToTransferable(
+      const mozilla::dom::IPCDataTransfer& aDataTransfer, bool aAddDataFlavor,
+      nsITransferable* aTransferable,
+      mozilla::ipc::IShmemAllocator* aAllocator);
+
+  static nsresult IPCTransferableToTransferable(
       const mozilla::dom::IPCDataTransfer& aDataTransfer,
       const bool& aIsPrivateData, nsIPrincipal* aRequestingPrincipal,
-      const nsContentPolicyType& aContentPolicyType,
+      const nsContentPolicyType& aContentPolicyType, bool aAddDataFlavor,
       nsITransferable* aTransferable,
-      mozilla::dom::ContentParent* aContentParent,
-      mozilla::dom::BrowserChild* aBrowserChild);
+      mozilla::ipc::IShmemAllocator* aAllocator);
+
+  static nsresult IPCTransferableItemToVariant(
+      const mozilla::dom::IPCDataTransferItem& aDataTransferItem,
+      nsIWritableVariant* aVariant, mozilla::ipc::IProtocol* aActor);
 
   static void TransferablesToIPCTransferables(
       nsIArray* aTransferables, nsTArray<mozilla::dom::IPCDataTransfer>& aIPC,
@@ -3536,8 +3551,7 @@ class MOZ_STACK_CLASS nsAutoScriptBlockerSuppressNodeRemoved
   }
 };
 
-namespace mozilla {
-namespace dom {
+namespace mozilla::dom {
 
 class TreeOrderComparator {
  public:
@@ -3549,8 +3563,7 @@ class TreeOrderComparator {
   }
 };
 
-}  // namespace dom
-}  // namespace mozilla
+}  // namespace mozilla::dom
 
 #define NS_INTERFACE_MAP_ENTRY_TEAROFF(_interface, _allocator) \
   if (aIID.Equals(NS_GET_IID(_interface))) {                   \

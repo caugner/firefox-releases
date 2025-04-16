@@ -33,10 +33,12 @@
 class nsICacheInfoChannel;
 
 namespace mozilla::dom {
-
 class ScriptLoadContext;
-
 }  // namespace mozilla::dom
+
+namespace mozilla::loader {
+class ComponentLoadContext;
+}  // namespace mozilla::loader
 
 namespace JS {
 class OffThreadToken;
@@ -181,6 +183,7 @@ class ScriptLoadRequest
       mozilla::MaybeOneOf<JS::SourceText<char16_t>, JS::SourceText<Utf8Unit>>;
 
   bool IsModuleRequest() const { return mKind == ScriptKind::eModule; }
+  bool IsImportMapRequest() const { return mKind == ScriptKind::eImportMap; }
 
   ModuleLoadRequest* AsModuleRequest();
   const ModuleLoadRequest* AsModuleRequest() const;
@@ -293,9 +296,12 @@ class ScriptLoadRequest
 
   void DropBytecodeCacheReferences();
 
-  bool HasLoadContext() { return mLoadContext; }
+  bool HasLoadContext() const { return mLoadContext; }
 
+  bool HasScriptLoadContext() const;
   mozilla::dom::ScriptLoadContext* GetScriptLoadContext();
+
+  mozilla::loader::ComponentLoadContext* GetComponentLoadContext();
 
   const ScriptKind mKind;  // Whether this is a classic script or a module
                            // script.
@@ -319,7 +325,8 @@ class ScriptLoadRequest
   size_t mScriptTextLength;
 
   // Holds the SRI serialized hash and the script bytecode for non-inline
-  // scripts.
+  // scripts. The data is laid out according to ScriptBytecodeDataLayout
+  // or, if compression is enabled, ScriptBytecodeCompressedDataLayout.
   mozilla::Vector<uint8_t> mScriptBytecode;
   uint32_t mBytecodeOffset;  // Offset of the bytecode in mScriptBytecode
 

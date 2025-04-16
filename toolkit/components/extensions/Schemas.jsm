@@ -5,8 +5,6 @@
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 "use strict";
 
-const global = this;
-
 const { AppConstants } = ChromeUtils.import(
   "resource://gre/modules/AppConstants.jsm"
 );
@@ -1143,13 +1141,14 @@ const FORMATS = {
   },
 
   contentSecurityPolicy(string, context) {
-    // Manifest V3 extension_pages allows localhost.  When sandbox is
+    // Manifest V3 extension_pages allows localhost and WASM.  When sandbox is
     // implemented, or any other V3 or later directive, the flags
     // logic will need to be updated.
     let flags =
       context.manifestVersion < 3
         ? Ci.nsIAddonContentPolicy.CSP_ALLOW_ANY
-        : Ci.nsIAddonContentPolicy.CSP_ALLOW_LOCALHOST;
+        : Ci.nsIAddonContentPolicy.CSP_ALLOW_LOCALHOST |
+          Ci.nsIAddonContentPolicy.CSP_ALLOW_WASM;
     let error = contentPolicyService.validateAddonCSP(string, flags);
     if (error != null) {
       // The CSP validation error is not reported as part of the "choices" error message,
@@ -1373,6 +1372,7 @@ class Type extends Entry {
       "deprecated",
       "preprocess",
       "postprocess",
+      "privileged",
       "allowedContexts",
       "min_manifest_version",
       "max_manifest_version",
@@ -2689,7 +2689,7 @@ class CallEntry extends Entry {
         // For Chrome compatibility, use the default value if null or undefined
         // is explicitly passed but is not a valid argument in this position.
         if (parameter.optional && (arg === null || arg === undefined)) {
-          fixedArgs[parameterIndex] = Cu.cloneInto(parameter.default, global);
+          fixedArgs[parameterIndex] = Cu.cloneInto(parameter.default, {});
         } else {
           return false;
         }
@@ -3510,7 +3510,7 @@ class SchemaRoot extends Namespace {
     for (let [key, schema] of this.schemaJSON.entries()) {
       try {
         if (typeof schema.deserialize === "function") {
-          schema = schema.deserialize(global, isParentProcess);
+          schema = schema.deserialize(globalThis, isParentProcess);
 
           // If we're in the parent process, we need to keep the
           // StructuredCloneHolder blob around in order to send to future child
@@ -3765,6 +3765,7 @@ this.Schemas = {
       "OptionalPermission",
       "PermissionNoPrompt",
       "OptionalPermissionNoPrompt",
+      "PermissionPrivileged",
     ]
   ) {
     const ns = this.getNamespace("manifest");

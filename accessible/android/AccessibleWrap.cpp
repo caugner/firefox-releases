@@ -28,6 +28,7 @@
 #include "mozilla/a11y/PDocAccessibleChild.h"
 #include "mozilla/jni/GeckoBundleUtils.h"
 #include "mozilla/StaticPrefs_accessibility.h"
+#include "mozilla/a11y/DocAccessibleParent.h"
 
 // icu TRUE conflicting with java::sdk::Boolean::TRUE()
 // https://searchfox.org/mozilla-central/rev/ce02064d8afc8673cef83c92896ee873bd35e7ae/intl/icu/source/common/unicode/umachine.h#265
@@ -43,7 +44,10 @@ using namespace mozilla::a11y;
 //-----------------------------------------------------
 AccessibleWrap::AccessibleWrap(nsIContent* aContent, DocAccessible* aDoc)
     : LocalAccessible(aContent, aDoc), mID(SessionAccessibility::kUnsetID) {
-  SessionAccessibility::RegisterAccessible(this);
+  if (!IPCAccessibilityActive()) {
+    MonitorAutoLock mal(nsAccessibilityService::GetAndroidMonitor());
+    SessionAccessibility::RegisterAccessible(this);
+  }
 }
 
 //-----------------------------------------------------
@@ -206,9 +210,6 @@ nsresult AccessibleWrap::HandleAccEvent(AccEvent* aEvent) {
 
       if (state & states::BUSY) {
         sessionAcc->SendWindowStateChangedEvent(accessible);
-        if (StaticPrefs::accessibility_cache_enabled_AtStartup()) {
-          sessionAcc->SendWindowContentChangedEvent();
-        }
       }
       break;
     }
@@ -239,7 +240,10 @@ nsresult AccessibleWrap::HandleAccEvent(AccEvent* aEvent) {
 }
 
 void AccessibleWrap::Shutdown() {
-  SessionAccessibility::UnregisterAccessible(this);
+  if (!IPCAccessibilityActive()) {
+    MonitorAutoLock mal(nsAccessibilityService::GetAndroidMonitor());
+    SessionAccessibility::UnregisterAccessible(this);
+  }
   LocalAccessible::Shutdown();
 }
 
@@ -525,11 +529,13 @@ void AccessibleWrap::GetRoleDescription(role aRole, AccAttributes* aAttributes,
                                         nsAString& aRoleDescription) {
   if (aRole == roles::HEADING && aAttributes) {
     // The heading level is an attribute, so we need that.
-    AutoTArray<nsString, 1> formatString;
-    if (aAttributes->GetAttribute(nsGkAtoms::level,
-                                  *formatString.AppendElement()) &&
-        LocalizeString("headingLevel", aRoleDescription, formatString)) {
-      return;
+    nsAutoString headingLevel;
+    if (aAttributes->GetAttribute(nsGkAtoms::level, headingLevel)) {
+      nsAutoString token(u"heading-");
+      token.Append(headingLevel);
+      if (LocalizeString(token, aRoleDescription)) {
+        return;
+      }
     }
   }
 
@@ -538,8 +544,7 @@ void AccessibleWrap::GetRoleDescription(role aRole, AccAttributes* aAttributes,
     if (aAttributes->GetAttribute(nsGkAtoms::xmlroles, xmlRoles)) {
       nsWhitespaceTokenizer tokenizer(xmlRoles);
       while (tokenizer.hasMoreTokens()) {
-        if (LocalizeString(NS_ConvertUTF16toUTF8(tokenizer.nextToken()).get(),
-                           aRoleDescription)) {
+        if (LocalizeString(tokenizer.nextToken(), aRoleDescription)) {
           return;
         }
       }
@@ -547,7 +552,7 @@ void AccessibleWrap::GetRoleDescription(role aRole, AccAttributes* aAttributes,
   }
 
   GetAccService()->GetStringRole(aRole, aGeckoRole);
-  LocalizeString(NS_ConvertUTF16toUTF8(aGeckoRole).get(), aRoleDescription);
+  LocalizeString(aGeckoRole, aRoleDescription);
 }
 
 int32_t AccessibleWrap::AndroidClass(Accessible* aAccessible) {

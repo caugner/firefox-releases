@@ -43,8 +43,11 @@ interface PeerConnectionImpl  {
 
   /* Adds the tracks created by GetUserMedia */
   [Throws]
-  TransceiverImpl createTransceiverImpl(DOMString kind,
-                                        MediaStreamTrack? track);
+  RTCRtpTransceiver addTransceiver(RTCRtpTransceiverInit init,
+                                   DOMString kind,
+                                   MediaStreamTrack? sendTrack);
+  sequence<RTCRtpTransceiver> getTransceivers();
+
   [Throws]
   void closeStreams();
 
@@ -113,6 +116,7 @@ interface PeerConnectionImpl  {
     unsigned short maxTime, unsigned short maxNum,
     boolean externalNegotiated, unsigned short stream);
 
+  [Throws]
   Promise<any> chain(ChainedOperation op);
   void updateNegotiationNeeded(); 
 

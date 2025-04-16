@@ -326,6 +326,11 @@ bool gfxFontEntry::TryGetSVGData(const gfxFont* aFont) {
     return false;
   }
 
+  // We don't support SVG-in-OT glyphs in offscreen-canvas worker threads.
+  if (!NS_IsMainThread()) {
+    return false;
+  }
+
   if (!mSVGInitialized) {
     // If UnitsPerEm is not known/valid, we can't use SVG glyphs
     if (UnitsPerEm() == kInvalidUPEM) {
@@ -2164,13 +2169,14 @@ void gfxFontFamily::ReadFaceNames(gfxPlatformFontList* aPlatformFontList,
   mOtherFamilyNamesInitialized = true;
 }
 
-gfxFontEntry* gfxFontFamily::FindFont(const nsACString& aPostscriptName) {
+gfxFontEntry* gfxFontFamily::FindFont(const nsACString& aFontName,
+                                      const nsCStringComparator& aCmp) const {
   // find the font using a simple linear search
   AutoReadLock lock(mLock);
   uint32_t numFonts = mAvailableFonts.Length();
   for (uint32_t i = 0; i < numFonts; i++) {
     gfxFontEntry* fe = mAvailableFonts[i].get();
-    if (fe && fe->Name() == aPostscriptName) {
+    if (fe && fe->Name().Equals(aFontName, aCmp)) {
       return fe;
     }
   }

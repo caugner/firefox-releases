@@ -486,6 +486,7 @@ class ExtensionInstallListener {
 class ExtensionPromptObserver {
   constructor() {
     Services.obs.addObserver(this, "webextension-permission-prompt");
+    Services.obs.addObserver(this, "webextension-optional-permission-prompt");
   }
 
   async permissionPrompt(aInstall, aAddon, aInfo) {
@@ -504,6 +505,15 @@ class ExtensionPromptObserver {
     }
   }
 
+  async optionalPermissionPrompt(aExtensionId, aPermissions, resolve) {
+    const response = await EventDispatcher.instance.sendRequestForResult({
+      type: "GeckoView:WebExtension:OptionalPrompt",
+      extensionId: aExtensionId,
+      permissions: aPermissions,
+    });
+    resolve(response.allow);
+  }
+
   observe(aSubject, aTopic, aData) {
     debug`observe ${aTopic}`;
 
@@ -512,6 +522,11 @@ class ExtensionPromptObserver {
         const { info } = aSubject.wrappedJSObject;
         const { addon, install } = info;
         this.permissionPrompt(install, addon, info);
+        break;
+      }
+      case "webextension-optional-permission-prompt": {
+        const { id, permissions, resolve } = aSubject.wrappedJSObject;
+        this.optionalPermissionPrompt(id, permissions, resolve);
         break;
       }
     }
@@ -544,10 +559,6 @@ class MobileWindowTracker extends EventEmitter {
   setTabActive(aWindow, aActive) {
     const { browser, tab, docShell } = aWindow;
     tab.active = aActive;
-    const { frameLoader } = browser;
-    if (frameLoader?.remoteTab) {
-      frameLoader.remoteTab.priorityHint = aActive;
-    }
 
     if (aActive) {
       this._topWindow = Cu.getWeakReference(aWindow);

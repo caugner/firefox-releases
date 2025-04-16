@@ -357,6 +357,13 @@ pref("browser.urlbar.accessibility.tabToSearch.announceResults", true);
 // Control autoFill behavior
 pref("browser.urlbar.autoFill", true);
 
+// Whether enabling adaptive history autofill.
+pref("browser.urlbar.autoFill.adaptiveHistory.enabled", false);
+
+// Minimum char length of the user's search string to enable adaptive history
+// autofill.
+pref("browser.urlbar.autoFill.adaptiveHistory.minCharsThreshold", 0);
+
 // Whether to warm up network connections for autofill or search results.
 pref("browser.urlbar.speculativeConnect.enabled", true);
 
@@ -744,6 +751,8 @@ pref("browser.tabs.tooltipsShowPidAndActiveness", true);
 #else
 pref("browser.tabs.tooltipsShowPidAndActiveness", false);
 #endif
+
+pref("browser.tabs.firefox-view", false);
 
 // allow_eval_* is enabled on Firefox Desktop only at this
 // point in time
@@ -1422,7 +1431,8 @@ pref("services.sync.prefs.sync.privacy.trackingprotection.enabled", true);
 pref("services.sync.prefs.sync.privacy.trackingprotection.cryptomining.enabled", true);
 pref("services.sync.prefs.sync.privacy.trackingprotection.fingerprinting.enabled", true);
 pref("services.sync.prefs.sync.privacy.trackingprotection.pbmode.enabled", true);
-pref("services.sync.prefs.sync.privacy.resistFingerprinting", true);
+// We do not sync `privacy.resistFingerprinting` by default as it's an undocumented,
+// not-recommended footgun - see bug 1763278 for more.
 pref("services.sync.prefs.sync.privacy.reduceTimerPrecision", true);
 pref("services.sync.prefs.sync.privacy.resistFingerprinting.reduceTimerPrecision.microseconds", true);
 pref("services.sync.prefs.sync.privacy.resistFingerprinting.reduceTimerPrecision.jitter", true);
@@ -1542,10 +1552,13 @@ pref("browser.newtabpage.activity-stream.discoverystream.newSponsoredLabel.enabl
 pref("browser.newtabpage.activity-stream.discoverystream.essentialReadsHeader.enabled", false);
 pref("browser.newtabpage.activity-stream.discoverystream.editorsPicksHeader.enabled", false);
 pref("browser.newtabpage.activity-stream.discoverystream.spoc-positions", "1,5,7,11,18,20");
+pref("browser.newtabpage.activity-stream.discoverystream.widget-positions", "");
 
 pref("browser.newtabpage.activity-stream.discoverystream.spocs-endpoint", "");
 pref("browser.newtabpage.activity-stream.discoverystream.spocs-endpoint-query", "");
 pref("browser.newtabpage.activity-stream.discoverystream.sponsored-collections.enabled", false);
+
+pref("browser.newtabpage.activity-stream.discoverystream.sendToPocket.enabled", false);
 
 // List of regions that do not get stories, regardless of locale-list-config.
 pref("browser.newtabpage.activity-stream.discoverystream.region-stories-block", "FR");
@@ -1578,9 +1591,6 @@ pref("browser.newtabpage.activity-stream.feeds.section.topstories", true);
 
 // The pref controls if search hand-off is enabled for Activity Stream.
 pref("browser.newtabpage.activity-stream.improvesearch.handoffToAwesomebar", true);
-
-// This pref controls the visibility of Colorway Closet settings in the customize panel
-pref("browser.newtabpage.activity-stream.colorway-closet.enabled", false);
 
 pref("browser.newtabpage.activity-stream.logowordmark.alwaysVisible", true);
 
@@ -1856,6 +1866,9 @@ pref("browser.contentblocking.reject-and-isolate-cookies.preferences.ui.enabled"
 //   OCSP cache partitioning:
 //     "ocsp": OCSP cache partitioning enabled
 //     "-ocsp": OCSP cache partitioning disabled
+//   Query parameter stripping:
+//     "qps": Query parameter stripping enabled
+//     "-qps": Query parameter stripping disabled
 //   Cookie behavior:
 //     "cookieBehavior0": cookie behaviour BEHAVIOR_ACCEPT
 //     "cookieBehavior1": cookie behaviour BEHAVIOR_REJECT_FOREIGN
@@ -1871,7 +1884,7 @@ pref("browser.contentblocking.reject-and-isolate-cookies.preferences.ui.enabled"
 //     "cookieBehaviorPBM4": cookie behaviour BEHAVIOR_REJECT_TRACKER
 //     "cookieBehaviorPBM5": cookie behaviour BEHAVIOR_REJECT_TRACKER_AND_PARTITION_FOREIGN
 // One value from each section must be included in the browser.contentblocking.features.strict pref.
-pref("browser.contentblocking.features.strict", "tp,tpPrivate,cookieBehavior5,cookieBehaviorPBM5,cm,fp,stp,lvl2,rp,rpTop,ocsp");
+pref("browser.contentblocking.features.strict", "tp,tpPrivate,cookieBehavior5,cookieBehaviorPBM5,cm,fp,stp,lvl2,rp,rpTop,ocsp,qps");
 
 // Hide the "Change Block List" link for trackers/tracking content in the custom
 // Content Blocking/ETP panel. By default, it will not be visible. There is also
@@ -2059,7 +2072,11 @@ pref("browser.esedbreader.loglevel", "Error");
 
 pref("browser.laterrun.enabled", false);
 
+#ifdef FUZZING_SNAPSHOT
+pref("dom.ipc.processPrelaunch.enabled", false);
+#else
 pref("dom.ipc.processPrelaunch.enabled", true);
+#endif
 
 // See comments in bug 1340115 on how we got to these numbers.
 pref("browser.migrate.chrome.history.limit", 2000);
@@ -2081,11 +2098,7 @@ pref("extensions.pocket.showHome", true);
 pref("extensions.pocket.loggedOutVariant", "control");
 
 // Enable the new Pocket panels.
-#ifdef NIGHTLY_BUILD
-  pref("extensions.pocket.refresh.layout.enabled", true);
-#else
-  pref("extensions.pocket.refresh.layout.enabled", false);
-#endif
+pref("extensions.pocket.refresh.layout.enabled", true);
 
 // Just for the new Pocket panels, enables the email signup button.
 pref("extensions.pocket.refresh.emailButton.enabled", false);
@@ -2389,38 +2402,6 @@ pref("devtools.memory.max-retaining-paths", 10);
 // Enable the Performance tools
 pref("devtools.performance.enabled", true);
 
-// The default Performance UI settings
-pref("devtools.performance.memory.sample-probability", "0.05");
-// Can't go higher than this without causing internal allocation overflows while
-// serializing the allocations data over the RDP.
-pref("devtools.performance.memory.max-log-length", 125000);
-pref("devtools.performance.timeline.hidden-markers",
-  "[\"Composite\",\"CompositeForwardTransaction\"]");
-pref("devtools.performance.profiler.buffer-size", 10000000);
-pref("devtools.performance.profiler.sample-frequency-hz", 1000);
-pref("devtools.performance.ui.invert-call-tree", true);
-pref("devtools.performance.ui.invert-flame-graph", false);
-pref("devtools.performance.ui.flatten-tree-recursion", true);
-pref("devtools.performance.ui.show-platform-data", false);
-pref("devtools.performance.ui.show-idle-blocks", true);
-pref("devtools.performance.ui.enable-memory", false);
-pref("devtools.performance.ui.enable-allocations", false);
-pref("devtools.performance.ui.enable-framerate", true);
-pref("devtools.performance.ui.show-jit-optimizations", false);
-pref("devtools.performance.ui.show-triggers-for-gc-types",
-  "TOO_MUCH_MALLOC ALLOC_TRIGGER LAST_DITCH EAGER_ALLOC_TRIGGER");
-
-// Temporary pref disabling memory flame views
-// TODO remove once we have flame charts via bug 1148663
-pref("devtools.performance.ui.enable-memory-flame", false);
-
-// Enable experimental options in the UI only in Nightly
-#if defined(NIGHTLY_BUILD)
-  pref("devtools.performance.ui.experimental", true);
-#else
-  pref("devtools.performance.ui.experimental", false);
-#endif
-
 // The default cache UI setting
 pref("devtools.cache.disabled", false);
 
@@ -2484,12 +2465,8 @@ pref("devtools.netmonitor.audits.slow", 500);
 // Enable the EventSource Inspector
 pref("devtools.netmonitor.features.serverSentEvents", true);
 
-#if defined(NIGHTLY_BUILD)
 // Enable the new Edit and Resend panel
   pref("devtools.netmonitor.features.newEditAndResend", true);
-#else
-  pref("devtools.netmonitor.features.newEditAndResend", false);
-#endif
 
 pref("devtools.netmonitor.customRequest", '{}');
 
@@ -2575,9 +2552,6 @@ pref("devtools.browserconsole.input.editorWidth", 0);
 
 // Display an onboarding UI for the Editor mode.
 pref("devtools.webconsole.input.editorOnboarding", true);
-
-// Enable the new performance panel in all channels of Firefox.
-pref("devtools.performance.new-panel-enabled", true);
 
 // Enable message grouping in the console, true by default
 pref("devtools.webconsole.groupWarningMessages", true);
@@ -2721,6 +2695,10 @@ pref("browser.snapshots.score.IsUsedRemoved", -10);
 // the last decimal map to the keys of `Snapshots.recommendationSources`.
 pref("browser.snapshots.source.CommonReferrer", 3);
 pref("browser.snapshots.source.Overlapping", 3);
+pref("browser.snapshots.source.TimeOfDay", 3);
+
+// Other preferences affecting snapshots scoring.
+pref("browser.snapshots.relevancy.timeOfDayIntervalSeconds", 3600);
 
 // Expiration days for snapshots.
 pref("browser.places.snapshots.expiration.days", 210);

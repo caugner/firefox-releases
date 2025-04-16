@@ -1245,6 +1245,8 @@ void CodeGenerator::visitInt32ToIntPtr(LInt32ToIntPtr* lir) {
     masm.branchPtr(Assembler::BelowOrEqual, output, ImmWord(INT32_MAX), &ok);
     masm.assumeUnreachable("LInt32ToIntPtr: unexpected range for value");
     masm.bind(&ok);
+#  else
+    MOZ_CRASH("Not used in non-debug mode");
 #  endif
     return;
   }
@@ -2528,7 +2530,11 @@ JitCode* JitRealm::generateRegExpMatcherStub(JSContext* cx) {
   Register temp1 = regs.takeAny();
   Register temp2 = regs.takeAny();
   Register temp3 = regs.takeAny();
-  Register temp4 = regs.takeAny();
+  Register maybeTemp4 = InvalidReg;
+  if (!regs.empty()) {
+    // There are not enough registers on x86.
+    maybeTemp4 = regs.takeAny();
+  }
   Register maybeTemp5 = InvalidReg;
   if (!regs.empty()) {
     // There are not enough registers on x86.
@@ -2652,9 +2658,6 @@ JitCode* JitRealm::generateRegExpMatcherStub(JSContext* cx) {
 
   size_t pairsVectorStartOffset =
       RegExpPairsVectorStartOffset(inputOutputDataStartOffset);
-  Address firstMatchPairStartAddress(
-      masm.getStackPointer(),
-      pairsVectorStartOffset + offsetof(MatchPair, start));
 
   // Incremented by one below for each match pair.
   Register matchIndex = temp2;
@@ -2670,22 +2673,66 @@ JitCode* JitRealm::generateRegExpMatcherStub(JSContext* cx) {
   BaseIndex matchPairLimit(masm.getStackPointer(), matchIndex, TimesEight,
                            pairsVectorStartOffset + offsetof(MatchPair, limit));
 
+  Label* depStrFailure = &oolEntry;
+  Label restoreRegExpAndLastIndex;
+
+  Register temp4;
+  if (maybeTemp4 == InvalidReg) {
+    depStrFailure = &restoreRegExpAndLastIndex;
+
+    // We don't have enough registers for a fourth temporary. Reuse |regexp|
+    // as a temporary. We restore its value at |restoreRegExpAndLastIndex|.
+    masm.push(regexp);
+    temp4 = regexp;
+
+    // Adjust offsets for the push.
+    MOZ_ASSERT(pairCountAddress.base == masm.getStackPointer());
+    MOZ_ASSERT(matchPairStart.base == masm.getStackPointer());
+    MOZ_ASSERT(matchPairLimit.base == masm.getStackPointer());
+    pairCountAddress.offset += sizeof(void*);
+    matchPairStart.offset += sizeof(void*);
+    matchPairLimit.offset += sizeof(void*);
+  } else {
+    temp4 = maybeTemp4;
+  }
+
   Register temp5;
   if (maybeTemp5 == InvalidReg) {
-    // We don't have enough registers for a fifth temporary. Reuse
-    // |lastIndex| as a temporary. We don't need to restore its value,
-    // because |lastIndex| is no longer used after a successful match.
-    // (Neither here nor in the OOL path, cf. js::RegExpMatcherRaw.)
+    depStrFailure = &restoreRegExpAndLastIndex;
+
+    // We don't have enough registers for a fifth temporary. Reuse |lastIndex|
+    // as a temporary. We restore its value at |restoreRegExpAndLastIndex|.
+    masm.push(lastIndex);
     temp5 = lastIndex;
+
+    // Adjust offsets for the push.
+    MOZ_ASSERT(pairCountAddress.base == masm.getStackPointer());
+    MOZ_ASSERT(matchPairStart.base == masm.getStackPointer());
+    MOZ_ASSERT(matchPairLimit.base == masm.getStackPointer());
+    pairCountAddress.offset += sizeof(void*);
+    matchPairStart.offset += sizeof(void*);
+    matchPairLimit.offset += sizeof(void*);
   } else {
     temp5 = maybeTemp5;
   }
 
+  auto maybeRestoreRegExpAndLastIndex = [&]() {
+    // NOTE: pairCountAddress, matchPairStart, and matchPairLimit offsets
+    // aren't restored, because we don't read them after the loop.
+
+    if (maybeTemp5 == InvalidReg) {
+      masm.pop(lastIndex);
+    }
+    if (maybeTemp4 == InvalidReg) {
+      masm.pop(regexp);
+    }
+  };
+
   // Loop to construct the match strings. There are two different loops,
   // depending on whether the input is a Two-Byte or a Latin-1 string.
   CreateDependentString depStrs[]{
-      {CharEncoding::TwoByte, temp3, temp4, temp5, &oolEntry},
-      {CharEncoding::Latin1, temp3, temp4, temp5, &oolEntry},
+      {CharEncoding::TwoByte, temp3, temp4, temp5, depStrFailure},
+      {CharEncoding::Latin1, temp3, temp4, temp5, depStrFailure},
   };
 
   {
@@ -2733,6 +2780,8 @@ JitCode* JitRealm::generateRegExpMatcherStub(JSContext* cx) {
     masm.bind(&done);
   }
 
+  maybeRestoreRegExpAndLastIndex();
+
   // Fill in the rest of the output object.
   masm.store32(
       matchIndex,
@@ -2741,6 +2790,10 @@ JitCode* JitRealm::generateRegExpMatcherStub(JSContext* cx) {
   masm.store32(
       matchIndex,
       Address(object, elementsOffset + ObjectElements::offsetOfLength()));
+
+  Address firstMatchPairStartAddress(
+      masm.getStackPointer(),
+      pairsVectorStartOffset + offsetof(MatchPair, start));
 
   masm.loadPtr(Address(object, NativeObject::offsetOfSlots()), temp2);
 
@@ -2767,6 +2820,10 @@ JitCode* JitRealm::generateRegExpMatcherStub(JSContext* cx) {
   masm.bind(&matchResultFallback);
   CreateMatchResultFallback(masm, object, temp2, temp3, templateObj, &oolEntry);
   masm.jump(&matchResultJoin);
+
+  // Fall-through to the ool entry after restoring the registers.
+  masm.bind(&restoreRegExpAndLastIndex);
+  maybeRestoreRegExpAndLastIndex();
 
   // Use an undefined value to signal to the caller that the OOL stub needs to
   // be called.
@@ -3970,6 +4027,15 @@ void CodeGenerator::visitNewClassBodyEnvironmentObject(
                                              Handle<ClassBodyScope*>,
                                              HandleObject, gc::InitialHeap);
   callVM<Fn, ClassBodyLexicalEnvironmentObject::create>(lir);
+}
+
+void CodeGenerator::visitNewVarEnvironmentObject(
+    LNewVarEnvironmentObject* lir) {
+  pushArg(ToRegister(lir->enclosing()));
+  pushArg(ImmGCPtr(lir->mir()->scope()));
+
+  using Fn = VarEnvironmentObject* (*)(JSContext*, HandleScope, HandleObject);
+  callVM<Fn, VarEnvironmentObject::create>(lir);
 }
 
 void CodeGenerator::visitCopyLexicalEnvironmentObject(
@@ -7347,7 +7413,8 @@ void CodeGenerator::visitCreateInlinedArgumentsObject(
     LCreateInlinedArgumentsObject* lir) {
   Register callObj = ToRegister(lir->getCallObject());
   Register callee = ToRegister(lir->getCallee());
-  Register argsAddress = ToRegister(lir->temp());
+  Register argsAddress = ToRegister(lir->temp1());
+  Register argsObj = ToRegister(lir->temp2());
 
   // TODO: Do we have to worry about alignment here?
 
@@ -7363,6 +7430,63 @@ void CodeGenerator::visitCreateInlinedArgumentsObject(
   }
   masm.moveStackPtrTo(argsAddress);
 
+  Label done;
+  if (ArgumentsObject* templateObj = lir->mir()->templateObject()) {
+    LiveRegisterSet liveRegs;
+    liveRegs.add(callObj);
+    liveRegs.add(callee);
+
+    masm.PushRegsInMask(liveRegs);
+
+    // We are free to clobber all registers, as LCreateInlinedArgumentsObject is
+    // a call instruction.
+    AllocatableGeneralRegisterSet allRegs(GeneralRegisterSet::All());
+    allRegs.take(callObj);
+    allRegs.take(callee);
+    allRegs.take(argsObj);
+    allRegs.take(argsAddress);
+
+    Register temp3 = allRegs.takeAny();
+    Register temp4 = allRegs.takeAny();
+
+    // Try to allocate an arguments object. This will leave the reserved slots
+    // uninitialized, so it's important we don't GC until we initialize these
+    // slots in ArgumentsObject::finishForIonPure.
+    Label failure;
+    TemplateObject templateObject(templateObj);
+    masm.createGCObject(argsObj, temp3, templateObject, gc::DefaultHeap,
+                        &failure,
+                        /* initContents = */ false);
+
+    Register numActuals = temp3;
+    masm.move32(Imm32(argc), numActuals);
+
+    using Fn = ArgumentsObject* (*)(JSContext*, JSObject*, JSFunction*, Value*,
+                                    uint32_t, ArgumentsObject*);
+    masm.setupAlignedABICall();
+    masm.loadJSContext(temp4);
+    masm.passABIArg(temp4);
+    masm.passABIArg(callObj);
+    masm.passABIArg(callee);
+    masm.passABIArg(argsAddress);
+    masm.passABIArg(numActuals);
+    masm.passABIArg(argsObj);
+
+    masm.callWithABI<Fn, ArgumentsObject::finishInlineForIonPure>();
+    masm.branchTestPtr(Assembler::Zero, ReturnReg, ReturnReg, &failure);
+
+    // Discard saved callObj, callee, and values array on the stack.
+    masm.addToStackPtr(
+        Imm32(masm.PushRegsInMaskSizeInBytes(liveRegs) + argc * sizeof(Value)));
+    masm.jump(&done);
+
+    masm.bind(&failure);
+    masm.PopRegsInMask(liveRegs);
+
+    // Reload argsAddress because it may have been overridden.
+    masm.moveStackPtrTo(argsAddress);
+  }
+
   pushArg(Imm32(argc));
   pushArg(callObj);
   pushArg(callee);
@@ -7374,6 +7498,8 @@ void CodeGenerator::visitCreateInlinedArgumentsObject(
 
   // Discard the array of values.
   masm.freeStack(argc * sizeof(Value));
+
+  masm.bind(&done);
 }
 
 template <class GetInlinedArgument>
@@ -7945,7 +8071,6 @@ void CodeGenerator::visitWasmRegisterResult(LWasmRegisterResult* lir) {
 void CodeGenerator::visitWasmCall(LWasmCall* lir) {
   const MWasmCallBase* callBase = lir->callBase();
 
-#ifdef ENABLE_WASM_EXCEPTIONS
   // If this call is in Wasm try code block, initialise a WasmTryNote for this
   // call.
   bool inTry = callBase->inTry();
@@ -7953,9 +8078,8 @@ void CodeGenerator::visitWasmCall(LWasmCall* lir) {
     size_t tryNoteIndex = callBase->tryNoteIndex();
     wasm::WasmTryNoteVector& tryNotes = masm.tryNotes();
     wasm::WasmTryNote& tryNote = tryNotes[tryNoteIndex];
-    tryNote.begin = masm.currentOffset();
+    tryNote.setTryBodyBegin(masm.currentOffset());
   }
-#endif
 
   MOZ_ASSERT((sizeof(wasm::Frame) + masm.framePushed()) % WasmStackAlignment ==
              0);
@@ -7972,8 +8096,8 @@ void CodeGenerator::visitWasmCall(LWasmCall* lir) {
 #endif
 
   // LWasmCallBase::isCallPreserved() assumes that all MWasmCalls preserve the
-  // TLS and pinned regs. The only case where where we don't have to reload
-  // the TLS and pinned regs is when the callee preserves them.
+  // instance and pinned regs. The only case where where we don't have to
+  // reload the instance and pinned regs is when the callee preserves them.
   bool reloadRegs = true;
   bool switchRealm = true;
 
@@ -8073,14 +8197,12 @@ void CodeGenerator::visitWasmCall(LWasmCall* lir) {
     MOZ_ASSERT(!switchRealm);
   }
 
-#ifdef ENABLE_WASM_EXCEPTIONS
   if (inTry) {
     // Set the end of the try note range
     size_t tryNoteIndex = callBase->tryNoteIndex();
     wasm::WasmTryNoteVector& tryNotes = masm.tryNotes();
     wasm::WasmTryNote& tryNote = tryNotes[tryNoteIndex];
-    tryNote.end = masm.currentOffset();
-    MOZ_ASSERT(tryNote.end > tryNote.begin);
+    tryNote.setTryBodyEnd(masm.currentOffset());
 
     // This instruction or the adjunct safepoint must be the last instruction
     // in the block. No other instructions may be inserted.
@@ -8093,7 +8215,6 @@ void CodeGenerator::visitWasmCall(LWasmCall* lir) {
     jumpToBlock(lir->mirCatchable()->getSuccessor(
         MWasmCallCatchable::FallthroughBranchIndex));
   }
-#endif
 }
 
 void CodeGenerator::visitWasmCallLandingPrePad(LWasmCallLandingPrePad* lir) {
@@ -8117,8 +8238,7 @@ void CodeGenerator::visitWasmCallLandingPrePad(LWasmCallLandingPrePad* lir) {
   // Set the entry point for the call try note to be the beginning of this
   // block. The above assertions (and assertions in visitWasmCall) guarantee
   // that we are not skipping over instructions that should be executed.
-  tryNote.entryPoint = block->label()->offset();
-  tryNote.framePushed = masm.framePushed();
+  tryNote.setLandingPad(block->label()->offset(), masm.framePushed());
 }
 
 void CodeGenerator::visitWasmCallIndirectAdjunctSafepoint(
@@ -8210,14 +8330,15 @@ void CodeGenerator::visitWasmDerivedIndexPointer(
 }
 
 void CodeGenerator::visitWasmStoreRef(LWasmStoreRef* ins) {
-  Register tls = ToRegister(ins->tls());
+  Register instance = ToRegister(ins->instance());
   Register valueAddr = ToRegister(ins->valueAddr());
   Register value = ToRegister(ins->value());
   Register temp = ToRegister(ins->temp0());
 
   Label skipPreBarrier;
-  wasm::EmitWasmPreBarrierGuard(masm, tls, temp, valueAddr, &skipPreBarrier);
-  wasm::EmitWasmPreBarrierCall(masm, tls, temp, valueAddr);
+  wasm::EmitWasmPreBarrierGuard(masm, instance, temp, valueAddr,
+                                &skipPreBarrier);
+  wasm::EmitWasmPreBarrierCall(masm, instance, temp, valueAddr);
   masm.bind(&skipPreBarrier);
 
   masm.storePtr(value, Address(valueAddr, 0));
@@ -8629,7 +8750,7 @@ void CodeGenerator::visitModPowTwoD(LModPowTwoD* ins) {
 
 void CodeGenerator::visitWasmBuiltinModD(LWasmBuiltinModD* ins) {
   masm.Push(InstanceReg);
-  int32_t framePushedAfterTls = masm.framePushed();
+  int32_t framePushedAfterInstance = masm.framePushed();
 
   FloatRegister lhs = ToFloatRegister(ins->lhs());
   FloatRegister rhs = ToFloatRegister(ins->rhs());
@@ -8640,9 +8761,9 @@ void CodeGenerator::visitWasmBuiltinModD(LWasmBuiltinModD* ins) {
   masm.passABIArg(lhs, MoveOp::DOUBLE);
   masm.passABIArg(rhs, MoveOp::DOUBLE);
 
-  int32_t tlsOffset = masm.framePushed() - framePushedAfterTls;
+  int32_t instanceOffset = masm.framePushed() - framePushedAfterInstance;
   masm.callWithABI(ins->mir()->bytecodeOffset(), wasm::SymbolicAddress::ModD,
-                   mozilla::Some(tlsOffset), MoveOp::DOUBLE);
+                   mozilla::Some(instanceOffset), MoveOp::DOUBLE);
 
   masm.Pop(InstanceReg);
 }
@@ -12306,8 +12427,8 @@ static bool CreateStackMapFromLSafepoint(LSafepoint& safepoint,
                                   sizeof(void*));
 #ifdef DEBUG
   for (uint32_t i = 0; i < nFrameBytes / sizeof(void*); i++) {
-    MOZ_ASSERT(stackMap->getBit(stackMap->numMappedWords -
-                                stackMap->frameOffsetFromTop + i) == 0);
+    MOZ_ASSERT(stackMap->getBit(stackMap->header.numMappedWords -
+                                stackMap->header.frameOffsetFromTop + i) == 0);
   }
 #endif
 
@@ -15498,7 +15619,7 @@ void CodeGenerator::visitWasmInterruptCheck(LWasmInterruptCheck* lir) {
   addOutOfLineCode(ool, lir->mir());
   masm.branch32(
       Assembler::NotEqual,
-      Address(ToRegister(lir->tlsPtr()), wasm::Instance::offsetOfInterrupt()),
+      Address(ToRegister(lir->instance()), wasm::Instance::offsetOfInterrupt()),
       Imm32(0), ool->entry());
   masm.bind(ool->rejoin());
 }
@@ -15575,25 +15696,25 @@ void CodeGenerator::visitWasmAlignmentCheck64(LWasmAlignmentCheck64* ins) {
                      ool->entry());
 }
 
-void CodeGenerator::visitWasmLoadTls(LWasmLoadTls* ins) {
+void CodeGenerator::visitWasmLoadInstance(LWasmLoadInstance* ins) {
   switch (ins->mir()->type()) {
     case MIRType::RefOrNull:
     case MIRType::Pointer:
-      masm.loadPtr(Address(ToRegister(ins->tlsPtr()), ins->mir()->offset()),
+      masm.loadPtr(Address(ToRegister(ins->instance()), ins->mir()->offset()),
                    ToRegister(ins->output()));
       break;
     case MIRType::Int32:
-      masm.load32(Address(ToRegister(ins->tlsPtr()), ins->mir()->offset()),
+      masm.load32(Address(ToRegister(ins->instance()), ins->mir()->offset()),
                   ToRegister(ins->output()));
       break;
     default:
-      MOZ_CRASH("MIRType not supported in WasmLoadTls");
+      MOZ_CRASH("MIRType not supported in WasmLoadInstance");
   }
 }
 
-void CodeGenerator::visitWasmLoadTls64(LWasmLoadTls64* ins) {
+void CodeGenerator::visitWasmLoadInstance64(LWasmLoadInstance64* ins) {
   MOZ_ASSERT(ins->mir()->type() == MIRType::Int64);
-  masm.load64(Address(ToRegister(ins->tlsPtr()), ins->mir()->offset()),
+  masm.load64(Address(ToRegister(ins->instance()), ins->mir()->offset()),
               ToOutRegister64(ins));
 }
 
@@ -16937,14 +17058,13 @@ void CodeGenerator::emitIonToWasmCallBase(LIonToWasmCallBase<NumDefs>* lir) {
     }
   }
 
-  bool profilingEnabled = isProfilerInstrumentationEnabled();
   WasmInstanceObject* instObj = lir->mir()->instanceObject();
 
   Register scratch = ToRegister(lir->temp());
 
   uint32_t callOffset;
   GenerateDirectCallFromJit(masm, funcExport, instObj->instance(), stackArgs,
-                            profilingEnabled, scratch, &callOffset);
+                            scratch, &callOffset);
 
   // Add the instance object to the constant pool, so it is transferred to
   // the owning IonScript and so that it gets traced as long as the IonScript

@@ -58,29 +58,33 @@ gcc-8.5.0:
         strip-components: 1
         add-prefix: gcc-source/
 
-gcc-9.3.0:
-    description: GCC 9.3.0 source code
+gcc-9.4.0:
+    description: GCC 9.4.0 source code
     fetch:
         type: static-url
-        url: ftp://ftp.gnu.org/gnu/gcc/gcc-9.3.0/gcc-9.3.0.tar.xz
-        sha256: 71e197867611f6054aa1119b13a0c0abac12834765fe2d81f35ac57f84f742d1
-        size: 70533868
+        url: ftp://ftp.gnu.org/gnu/gcc/gcc-9.4.0/gcc-9.4.0.tar.xz
+        sha256: c95da32f440378d7751dd95533186f7fc05ceb4fb65eb5b85234e6299eb9838e
+        size: 72411232
         gpg-signature:
             sig-url: "{url}.sig"
-            key-path: build/unix/build-gcc/33C235A34C46AA3FFB293709A328C3A2C3C45C06.key
+            key-path: build/unix/build-gcc/7F74F97C103468EE5D750B583AB00996FC26A641.key
         artifact-name: gcc-source.tar.zst
         strip-components: 1
         add-prefix: gcc-source/
 
-gcc-11.1.0:
-    description: GCC 11.1.0+ source code
+gcc-11.3.0:
+    description: GCC 11.3.0 source code
     fetch:
-        type: git
-        repo: https://gcc.gnu.org/git/gcc.git
-        # Tip of the releases/gcc-11 as of 2021-06-02.
-        revision: 22e424002217e182dee2fcc7d2df6d0fc601300d
+        type: static-url
+        url: ftp://ftp.gnu.org/gnu/gcc/gcc-11.3.0/gcc-11.3.0.tar.xz
+        sha256: b47cf2818691f5b1e21df2bb38c795fac2cfbd640ede2d0a5e1c89e338a3ac39
+        size: 81141364
+        gpg-signature:
+            sig-url: "{url}.sig"
+            key-path: build/unix/build-gcc/7F74F97C103468EE5D750B583AB00996FC26A641.key
         artifact-name: gcc-source.tar.zst
-        path-prefix: gcc-source/
+        strip-components: 1
+        add-prefix: gcc-source/
 
 gmp-6.1.0:
     description: GMP 6.1.0 source code
@@ -297,7 +301,7 @@ gn:
     fetch:
         type: git
         repo: https://gn.googlesource.com/gn
-        revision: d69a9c3765dee2e650bcccebbadf72c5d42d92b1
+        revision: 7e05276308f3d49f8514ef02afe4f94487b1efb2
 
 grcov:
     description: grcov source code
@@ -311,8 +315,8 @@ sccache:
     fetch:
         type: git
         repo: https://github.com/mozilla/sccache
-        # 0.2.15 release
-        revision: 6b6d2f7d2dceefeb4f583712aa4c221db62be0bd
+        # 0.3.0 release
+        revision: f6e36e68c6cb1e17127273956df9ebf2127dff1a
 
 fxc2:
     description: fxc2 source code
@@ -327,13 +331,6 @@ mingw-w64:
         type: git
         repo: https://git.code.sf.net/p/mingw-w64/mingw-w64
         revision: 09def642bf5e8a78195791257ff53fd920c549d1
-
-libunwind:
-    description: libunwind source code
-    fetch:
-        type: git
-        repo: https://github.com/llvm-mirror/libunwind
-        revision: efd17a11b0fae29d3414e11e99307e082d4ee949
 
 llvm-mingw:
     description: llvm-mingw source code
@@ -357,11 +354,11 @@ clang-5.0:
         revision: 6a075b6de4cafebec9ca1ff9eec7229a617c93f6
 
 clang-14:
-    description: clang 14.0.1 source code
+    description: clang 14.0.4 source code
     fetch:
         type: git
         repo: https://github.com/llvm/llvm-project
-        revision: c62053979489ccb002efe411c3af059addcb5d7d
+        revision: 29f1039a7285a5c3a9c353d054140bf2556d4c4d
 
 clang-trunk:
     description: clang main branch source code
@@ -390,11 +387,11 @@ rust-1.61.0-dev:
         revision: 3b348d932aa5c9884310d025cf7c516023fd0d9a
 
 wasi-sdk:
-    description: wasi-sdk source code
+    description: wasi-sdk-15 source code + LLVM-15 fix
     fetch:
         type: git
         repo: https://github.com/WebAssembly/wasi-sdk
-        revision: f0d40b6491efc1e2332f55eb22e6292abdce4335
+        revision: 37ae6af88201884c8b98a65adcd6d8cd1284f95e
 
 ninja:
     description: ninja 1.9.0
@@ -422,7 +419,7 @@ dump-syms:
     fetch:
         type: git
         repo: https://github.com/mozilla/dump_syms/
-        revision: c558ad1824b247e147dcc45ec105588883e379fb
+        revision: 29c131802494c52e9e89597f1d763f79e797b348
 
 rust-minidump:
     description: rust-minidump 0.10.4-prerelease source code (for minidump-stackwalk)
@@ -654,3 +651,10 @@ pkgconf:
         artifact-name: pkgconf.tar.zst
         strip-components: 1
         add-prefix: pkgconf/
+
+aflplusplus-4.0:
+    description: AFL++ 4.00 source
+    fetch:
+        type: git
+        repo: https://github.com/AFLplusplus/AFLplusplus
+        revision: ba3c7bfe40f9b17a691958e3525828385127ad25

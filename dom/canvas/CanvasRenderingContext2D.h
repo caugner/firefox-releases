@@ -93,6 +93,7 @@ class CanvasRenderingContext2D : public nsICanvasRenderingContextInternal,
     return mCanvasElement->GetOriginalCanvas();
   }
 
+  void OnMemoryPressure() override;
   void OnBeforePaintTransaction() override;
   void OnDidPaintTransaction() override;
   layers::PersistentBufferProvider* GetBufferProvider() override {
@@ -591,7 +592,8 @@ class CanvasRenderingContext2D : public nsICanvasRenderingContextInternal,
                    ErrorResult& aError);
 
   // Returns whether the font was successfully updated.
-  bool SetFontInternal(const nsACString& aFont, mozilla::ErrorResult& aError);
+  virtual bool SetFontInternal(const nsACString& aFont,
+                               mozilla::ErrorResult& aError);
 
   // Clears the target and updates mOpaque based on mOpaqueAttrValue and
   // mContextAttributesHasAlpha.

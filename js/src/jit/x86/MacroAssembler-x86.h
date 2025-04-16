@@ -1062,6 +1062,8 @@ class MacroAssemblerX86 : public MacroAssemblerX86Shared {
                        FloatRegister dest);
   void vcmplepsSimd128(const SimdConstant& v, FloatRegister lhs,
                        FloatRegister dest);
+  void vcmpgepsSimd128(const SimdConstant& v, FloatRegister lhs,
+                       FloatRegister dest);
   void vcmpeqpdSimd128(const SimdConstant& v, FloatRegister lhs,
                        FloatRegister dest);
   void vcmpneqpdSimd128(const SimdConstant& v, FloatRegister lhs,
@@ -1072,6 +1074,8 @@ class MacroAssemblerX86 : public MacroAssemblerX86Shared {
                        FloatRegister dest);
   void vpmaddubswSimd128(const SimdConstant& v, FloatRegister lhs,
                          FloatRegister dest);
+  void vpmuludqSimd128(const SimdConstant& v, FloatRegister lhs,
+                       FloatRegister dest);
 
   Condition testInt32Truthy(bool truthy, const ValueOperand& operand) {
     test32(operand.payloadReg(), operand.payloadReg());

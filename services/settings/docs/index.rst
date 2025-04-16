@@ -383,6 +383,17 @@ Remote Settings Dev Tools
 
 The Remote Settings Dev Tools extension provides some tooling to inspect synchronization statuses, to change the remote server or to switch to *preview* mode in order to sign-off pending changes. `More information on the dedicated repository <https://github.com/mozilla/remote-settings-devtools>`_.
 
+Preview Mode
+------------
+
+Enable the preview mode in order to preview changes to be reviewed on the server. This can be achieved using the *Remote Settings Dev Tools*, or programmatically with:
+
+.. code-block:: javascript
+
+    RemoteSettings.enablePreviewMode(true);
+
+In order to pull preview data **on startup**, or in order to persist it across restarts, set ``services.settings.preview_enabled`` to ``true`` in the profile preferences (ie. ``user.js``).
+For release and ESR, for security reasons, you would have to run the application with the ``MOZ_REMOTE_SETTINGS_DEVTOOLS=1`` environment variable for the preference to be taken into account. Note that toggling the preference won't have any effect until restart.
 
 Trigger a synchronization manually
 ----------------------------------
@@ -460,7 +471,7 @@ A handle on the underlying database can be obtained through the ``.db`` attribut
 
 .. code-block:: js
 
-    const db = await RemoteSettings("a-key").db;
+    const db = RemoteSettings("a-key").db;
 
 And records can be created manually (as if they were synchronized from the server):
 
@@ -473,11 +484,11 @@ And records can be created manually (as if they were synchronized from the serve
       passwordSelector: "#pass-signin",
     });
 
-If no timestamp is set, any call to ``.get()`` will trigger the load of initial data (JSON dump) if any, or a synchronization will be triggered. To avoid that, store a fake timestamp:
+If no timestamp is set, any call to ``.get()`` will trigger the load of initial data (JSON dump) if any, or a synchronization will be triggered. To avoid that, store a fake timestamp. We use ``Date.now()`` instead of an arbitrary number, to make sure it's higher than the dump's, and thus prevent its load from the test.
 
 .. code-block:: js
 
-    await db.importChanges({}, 42);
+    await db.importChanges({}, Date.now());
 
 In order to bypass the potential target filtering of ``RemoteSettings("key").get()``, the low-level listing of records can be obtained with ``collection.list()``:
 

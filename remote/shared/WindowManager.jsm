@@ -17,7 +17,7 @@ XPCOMUtils.defineLazyModuleGetters(this, {
   error: "chrome://remote/content/shared/webdriver/Errors.jsm",
   TabManager: "chrome://remote/content/shared/TabManager.jsm",
   TimedPromise: "chrome://remote/content/marionette/sync.js",
-  waitForEvent: "chrome://remote/content/marionette/sync.js",
+  EventPromise: "chrome://remote/content/shared/Sync.jsm",
   waitForObserverTopic: "chrome://remote/content/marionette/sync.js",
 });
 
@@ -164,8 +164,8 @@ class WindowManager {
    */
   async focusWindow(win) {
     if (Services.focus.activeWindow != win) {
-      let activated = waitForEvent(win, "activate");
-      let focused = waitForEvent(win, "focus", { capture: true });
+      let activated = new EventPromise(win, "activate");
+      let focused = new EventPromise(win, "focus", { capture: true });
 
       win.focus();
 
@@ -208,8 +208,8 @@ class WindowManager {
         // race condition when promptly focusing to the original window again.
         const win = openerWindow.OpenBrowserWindow({ private: isPrivate });
 
-        const activated = waitForEvent(win, "activate");
-        const focused = waitForEvent(win, "focus", { capture: true });
+        const activated = new EventPromise(win, "activate");
+        const focused = new EventPromise(win, "focus", { capture: true });
         const startup = waitForObserverTopic(
           "browser-delayed-startup-finished",
           {
@@ -245,58 +245,32 @@ class WindowManager {
    * @return {Promise<WindowProxy>}
    *     A promise that resolved to the application window.
    */
-  waitForInitialApplicationWindow() {
+  waitForInitialApplicationWindowLoaded() {
     return new TimedPromise(
-      resolve => {
-        const waitForWindow = () => {
-          let windowTypes;
-          if (AppInfo.isThunderbird) {
-            windowTypes = ["mail:3pane"];
-          } else {
-            // We assume that an app either has GeckoView windows, or
-            // Firefox/Fennec windows, but not both.
-            windowTypes = ["navigator:browser", "navigator:geckoview"];
-          }
+      async resolve => {
+        const windowReadyTopic = AppInfo.isThunderbird
+          ? "mail-delayed-startup-finished"
+          : "browser-delayed-startup-finished";
 
-          let win;
-          for (const windowType of windowTypes) {
-            win = Services.wm.getMostRecentWindow(windowType);
-            if (win) {
-              break;
-            }
-          }
+        // This call includes a fallback to "mail3:pane" as well.
+        const win = Services.wm.getMostRecentBrowserWindow();
 
-          if (!win) {
-            // if the window isn't even created, just poll wait for it
-            let checkTimer = Cc["@mozilla.org/timer;1"].createInstance(
-              Ci.nsITimer
-            );
-            checkTimer.initWithCallback(
-              waitForWindow,
-              100,
-              Ci.nsITimer.TYPE_ONE_SHOT
-            );
-          } else if (win.document.readyState != "complete") {
-            // otherwise, wait for it to be fully loaded before proceeding
-            let listener = ev => {
-              // ensure that we proceed, on the top level document load event
-              // (not an iframe one...)
-              if (ev.target != win.document) {
-                return;
-              }
-              win.removeEventListener("load", listener);
-              waitForWindow();
-            };
-            win.addEventListener("load", listener, true);
-          } else {
-            resolve(win);
-          }
-        };
+        const windowLoaded = waitForObserverTopic(windowReadyTopic, {
+          checkFn: subject => (win !== null ? subject == win : true),
+        });
 
-        waitForWindow();
+        // The current window has already been finished loading.
+        if (win && win.document.readyState == "complete") {
+          resolve(win);
+          return;
+        }
+
+        // Wait for the next browser/mail window to open and finished loading.
+        const { subject } = await windowLoaded;
+        resolve(subject);
       },
       {
-        errorMessage: "No applicable application windows found",
+        errorMessage: "No applicable application window found",
       }
     );
   }

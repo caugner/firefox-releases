@@ -6,8 +6,6 @@
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 include protocol PHttpChannel;
-include protocol PChildToParentStream;
-include BlobTypes;
 include ClientIPCTypes;
 include URIParams;
 include IPCServiceWorkerDescriptor;
@@ -110,7 +108,7 @@ struct LoadInfoArgs
   uint64_t                    frameBrowsingContextID;
   bool                        initialSecurityCheckDone;
   bool                        isInThirdPartyContext;
-  bool                        isThirdPartyContextToTopWindow;
+  bool?                       isThirdPartyContextToTopWindow;
   bool                        isFormSubmission;
   bool                        sendCSPViolationEvents;
   OriginAttributes            originAttributes;
@@ -232,7 +230,7 @@ struct ParentLoadInfoForwarderArgs
 
   bool isMetaRefresh;
 
-  bool isThirdPartyContextToTopWindow;
+  bool? isThirdPartyContextToTopWindow;
 
   bool isInThirdPartyContext;
 

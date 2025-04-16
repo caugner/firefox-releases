@@ -135,10 +135,9 @@ exports.shortSource = function(sheet) {
   }
 
   if (!sheet.href) {
-    if (sheet.constructed) {
-      return "constructed";
-    }
-    return exports.l10n("rule.sourceInline");
+    return exports.l10n(
+      sheet.constructed ? "rule.sourceConstructed" : "rule.sourceInline"
+    );
   }
 
   // If the sheet is a data URL, return a trimmed version of it.

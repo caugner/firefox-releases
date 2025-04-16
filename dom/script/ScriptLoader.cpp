@@ -9,6 +9,8 @@
 #include "ScriptTrace.h"
 #include "ModuleLoader.h"
 
+#include "zlib.h"
+
 #include "prsystem.h"
 #include "jsapi.h"
 #include "jsfriendapi.h"
@@ -17,6 +19,7 @@
 #include "js/ContextOptions.h"        // JS::ContextOptionsRef
 #include "js/friend/ErrorMessages.h"  // js::GetErrorMessage, JSMSG_*
 #include "js/loader/ScriptLoadRequest.h"
+#include "ScriptCompression.h"
 #include "js/loader/LoadedScript.h"
 #include "js/loader/ModuleLoadRequest.h"
 #include "js/MemoryFunctions.h"
@@ -822,7 +825,7 @@ already_AddRefed<ScriptLoadRequest> ScriptLoader::CreateLoadRequest(
       aCORSMode, aReferrerPolicy, aTriggeringPrincipal, domElement);
   RefPtr<ScriptLoadContext> context = new ScriptLoadContext();
 
-  if (aKind == ScriptKind::eClassic) {
+  if (aKind == ScriptKind::eClassic || aKind == ScriptKind::eImportMap) {
     RefPtr<ScriptLoadRequest> aRequest = new ScriptLoadRequest(
         aKind, aURI, fetchOptions, aIntegrity, referrer, context);
 
@@ -851,8 +854,14 @@ bool ScriptLoader::ProcessScriptElement(nsIScriptElement* aElement) {
   nsAutoString type;
   bool hasType = aElement->GetScriptType(type);
 
-  ScriptKind scriptKind = aElement->GetScriptIsModule() ? ScriptKind::eModule
-                                                        : ScriptKind::eClassic;
+  ScriptKind scriptKind;
+  if (aElement->GetScriptIsModule()) {
+    scriptKind = ScriptKind::eModule;
+  } else if (aElement->GetScriptIsImportMap()) {
+    scriptKind = ScriptKind::eImportMap;
+  } else {
+    scriptKind = ScriptKind::eClassic;
+  }
 
   // Step 13. Check that the script is not an eventhandler
   if (IsScriptEventHandler(scriptKind, scriptContent)) {
@@ -907,6 +916,14 @@ bool ScriptLoader::ProcessExternalScript(nsIScriptElement* aElement,
   LOG(("ScriptLoader (%p): Process external script for element %p", this,
        aElement));
 
+  // Bug 1765745: Support external import maps.
+  if (aScriptKind == ScriptKind::eImportMap) {
+    NS_DispatchToCurrentThread(
+        NewRunnableMethod("nsIScriptElement::FireErrorEvent", aElement,
+                          &nsIScriptElement::FireErrorEvent));
+    return false;
+  }
+
   nsCOMPtr<nsIURI> scriptURI = aElement->GetScriptURI();
   if (!scriptURI) {
     // Asynchronously report the failure to create a URI object
@@ -942,6 +959,15 @@ bool ScriptLoader::ProcessExternalScript(nsIScriptElement* aElement,
     // Use the preload request.
 
     LOG(("ScriptLoadRequest (%p): Using preload request", request.get()));
+
+    // https://wicg.github.io/import-maps/#document-acquiring-import-maps
+    // If this preload request is for a module load, set acquiring import maps
+    // to false.
+    if (request->IsModuleRequest()) {
+      LOG(("ScriptLoadRequest (%p): Set acquiring import maps to false",
+           request.get()));
+      mModuleLoader->SetAcquiringImportMaps(false);
+    }
 
     // It's possible these attributes changed since we started the preload so
     // update them here.
@@ -1160,6 +1186,46 @@ bool ScriptLoader::ProcessInlineScript(nsIScriptElement* aElement,
 
     return false;
   }
+
+  if (request->IsImportMapRequest()) {
+    // https://wicg.github.io/import-maps/#integration-prepare-a-script
+    // If the script's type is "importmap":
+    //
+    // Step 1: If the element's node document's acquiring import maps is false,
+    // then queue a task to fire an event named error at the element, and
+    // return.
+    if (!mModuleLoader->GetAcquiringImportMaps()) {
+      NS_WARNING("ScriptLoader: acquiring import maps is false.");
+      NS_DispatchToCurrentThread(
+          NewRunnableMethod("nsIScriptElement::FireErrorEvent", aElement,
+                            &nsIScriptElement::FireErrorEvent));
+      return false;
+    }
+
+    // Step 2: Set the element's node document's acquiring import maps to false.
+    mModuleLoader->SetAcquiringImportMaps(false);
+
+    UniquePtr<ImportMap> importMap = mModuleLoader->ParseImportMap(request);
+
+    // https://wicg.github.io/import-maps/#register-an-import-map
+    //
+    // Step 1. If element’s the script’s result is null, then fire an event
+    // named error at element, and return.
+    if (!importMap) {
+      NS_DispatchToCurrentThread(
+          NewRunnableMethod("nsIScriptElement::FireErrorEvent", aElement,
+                            &nsIScriptElement::FireErrorEvent));
+      return false;
+    }
+
+    // Step 3. Assert: element’s the script’s type is "importmap".
+    MOZ_ASSERT(aElement->GetScriptIsImportMap());
+
+    // Step 4 to step 9 is done in RegisterImportMap.
+    mModuleLoader->RegisterImportMap(std::move(importMap));
+    return false;
+  }
+
   request->mState = ScriptLoadRequest::State::Ready;
   if (aElement->GetParserCreated() == FROM_PARSER_XSLT &&
       (!ReadyToExecuteParserBlockingScripts() || !mXSLTRequests.isEmpty())) {
@@ -1630,6 +1696,7 @@ nsresult ScriptLoader::AttemptAsyncScriptCompile(ScriptLoadRequest* aRequest,
           TRACE_FOR_TEST(aRequest->GetScriptLoadContext()->GetScriptElement(),
                          "delazification_on_demand_only");
           break;
+        case JS::DelazificationOption::CheckConcurrentWithOnDemand:
         case JS::DelazificationOption::ConcurrentDepthFirst:
           TRACE_FOR_TEST(aRequest->GetScriptLoadContext()->GetScriptElement(),
                          "delazification_concurrent_depth_first");
@@ -2118,6 +2185,12 @@ nsresult ScriptLoader::EvaluateScriptElement(ScriptLoadRequest* aRequest) {
     setProcessingScriptTag.emplace(context);
   }
 
+  // https://wicg.github.io/import-maps/#integration-script-type
+  // Switch on the script's type for scriptElement:
+  // "importmap"
+  //    Assert: Never reached.
+  MOZ_ASSERT(!aRequest->IsImportMapRequest());
+
   if (aRequest->IsModuleRequest()) {
     return aRequest->AsModuleRequest()->EvaluateModule();
   }
@@ -2482,7 +2555,14 @@ void ScriptLoader::EncodeRequestBytecode(JSContext* aCx,
     return;
   }
 
-  if (aRequest->mScriptBytecode.length() >= UINT32_MAX) {
+  Vector<uint8_t> compressedBytecode;
+  // TODO probably need to move this to a helper thread
+  if (!ScriptBytecodeCompress(aRequest->mScriptBytecode,
+                              aRequest->mBytecodeOffset, compressedBytecode)) {
+    return;
+  }
+
+  if (compressedBytecode.length() >= UINT32_MAX) {
     LOG(
         ("ScriptLoadRequest (%p): Bytecode cache is too large to be decoded "
          "correctly.",
@@ -2495,7 +2575,8 @@ void ScriptLoader::EncodeRequestBytecode(JSContext* aCx,
   // case, we just ignore the current one.
   nsCOMPtr<nsIAsyncOutputStream> output;
   rv = aRequest->mCacheInfo->OpenAlternativeOutputStream(
-      BytecodeMimeTypeFor(aRequest), aRequest->mScriptBytecode.length(),
+      BytecodeMimeTypeFor(aRequest),
+      static_cast<int64_t>(compressedBytecode.length()),
       getter_AddRefs(output));
   if (NS_FAILED(rv)) {
     LOG(
@@ -2512,17 +2593,17 @@ void ScriptLoader::EncodeRequestBytecode(JSContext* aCx,
   });
 
   uint32_t n;
-  rv = output->Write(reinterpret_cast<char*>(aRequest->mScriptBytecode.begin()),
-                     aRequest->mScriptBytecode.length(), &n);
-  LOG((
-      "ScriptLoadRequest (%p): Write bytecode cache (rv = %X, length = %u, "
-      "written = %u)",
-      aRequest, unsigned(rv), unsigned(aRequest->mScriptBytecode.length()), n));
+  rv = output->Write(reinterpret_cast<char*>(compressedBytecode.begin()),
+                     compressedBytecode.length(), &n);
+  LOG(
+      ("ScriptLoadRequest (%p): Write bytecode cache (rv = %X, length = %u, "
+       "written = %u)",
+       aRequest, unsigned(rv), unsigned(compressedBytecode.length()), n));
   if (NS_FAILED(rv)) {
     return;
   }
 
-  MOZ_RELEASE_ASSERT(aRequest->mScriptBytecode.length() == n);
+  MOZ_RELEASE_ASSERT(compressedBytecode.length() == n);
 
   bytecodeFailed.release();
   TRACE_FOR_TEST_NONE(aRequest->GetScriptLoadContext()->GetScriptElement(),
@@ -2986,6 +3067,19 @@ void ScriptLoader::ReportErrorToConsole(ScriptLoadRequest* aRequest,
                                   "Script Loader"_ns, mDocument,
                                   nsContentUtils::eDOM_PROPERTIES, message,
                                   params, nullptr, u""_ns, lineNo, columnNo);
+}
+
+void ScriptLoader::ReportWarningToConsole(
+    ScriptLoadRequest* aRequest, const char* aMessageName,
+    const nsTArray<nsString>& aParams) const {
+  nsIScriptElement* element =
+      aRequest->GetScriptLoadContext()->GetScriptElement();
+  uint32_t lineNo = element ? element->GetScriptLineNumber() : 0;
+  uint32_t columnNo = element ? element->GetScriptColumnNumber() : 0;
+  nsContentUtils::ReportToConsole(nsIScriptError::warningFlag,
+                                  "Script Loader"_ns, mDocument,
+                                  nsContentUtils::eDOM_PROPERTIES, aMessageName,
+                                  aParams, nullptr, u""_ns, lineNo, columnNo);
 }
 
 void ScriptLoader::ReportPreloadErrorsToConsole(ScriptLoadRequest* aRequest) {

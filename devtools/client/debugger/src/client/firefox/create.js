@@ -4,7 +4,12 @@
 
 // This module converts Firefox specific types to the generic types
 
-import { hasSourceActor, getSourceActor } from "../../selectors";
+import {
+  hasSource,
+  hasSourceActor,
+  getSourceActor,
+  getSourcesMap,
+} from "../../selectors";
 import { features } from "../../utils/prefs";
 import { isUrlExtension } from "../../utils/source";
 
@@ -55,9 +60,9 @@ export async function createFrame(thread, frame, index = 0) {
 }
 
 /**
- * This method wait for the given source to be registered in Redux store.
+ * This method wait for the given source actor to be registered in Redux store.
  *
- * @param {String} sourceActor
+ * @param {String} sourceActorId
  *                 Actor ID of the source to be waiting for.
  */
 async function waitForSourceActorToBeRegisteredInStore(sourceActorId) {
@@ -80,6 +85,35 @@ async function waitForSourceActorToBeRegisteredInStore(sourceActorId) {
     });
   }
   return getSourceActor(store.getState(), sourceActorId);
+}
+
+/**
+ * This method wait for the given source to be registered in Redux store.
+ *
+ * @param {String} sourceId
+ *                 The id of the source to be waiting for.
+ */
+export async function waitForSourceToBeRegisteredInStore(sourceId) {
+  return new Promise(resolve => {
+    if (hasSource(store.getState(), sourceId)) {
+      resolve();
+      return;
+    }
+    const unsubscribe = store.subscribe(check);
+    let currentSize = null;
+    function check() {
+      const previousSize = currentSize;
+      currentSize = getSourcesMap(store.getState()).size;
+      // For perf reason, avoid any extra computation if sources did not change
+      if (previousSize == currentSize) {
+        return;
+      }
+      if (hasSource(store.getState(), sourceId)) {
+        unsubscribe();
+        resolve();
+      }
+    }
+  });
 }
 
 // Compute the reducer's source ID for a given source front/resource.
@@ -158,6 +192,7 @@ export function createGeneratedSource(sourceResource) {
     isWasm: !!features.wasm && sourceResource.introductionType === "wasm",
     isExtension:
       (sourceResource.url && isUrlExtension(sourceResource.url)) || false,
+    isHTML: !!sourceResource.isInlineSource,
   });
 }
 
@@ -176,6 +211,7 @@ function createSourceObject({
   isExtension = false,
   isPrettyPrinted = false,
   isOriginal = false,
+  isHTML = false,
 }) {
   return {
     // The ID, computed by:
@@ -207,6 +243,10 @@ function createSourceObject({
 
     // True if WASM is enabled *and* the generated source is a WASM source
     isWasm,
+
+    // True is this source is an HTML and relates to many sources actors,
+    // one for each of its inline <script>
+    isHTML,
 
     // True, if this is an original pretty printed source
     isPrettyPrinted,
@@ -328,7 +368,6 @@ export function createBreakpoint({
   disabled = false,
   options = {},
   location,
-  astLocation,
   generatedLocation,
   text,
   originalText,
@@ -353,9 +392,6 @@ export function createBreakpoint({
 
     // The location (object) information for the original source, for details on its format and structure See `makeBreakpointLocation`
     location,
-
-    // The source map location (object) infomation, for details see `getASTLocation`
-    astLocation,
 
     // The location (object) information for the generated source, for details on its format and structure See `makeBreakpointLocation`
     generatedLocation,

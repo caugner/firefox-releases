@@ -227,7 +227,8 @@ void gfxDWriteFontFamily::FindStyleVariationsLocked(
            fe->Name().get(), Name().get(),
            (fe->IsItalic()) ? "italic"
                             : (fe->IsOblique() ? "oblique" : "normal"),
-           weightString.get(), fe->Stretch(), psname.get(), fullname.get()));
+           weightString.get(), fe->Stretch().AsScalar(), psname.get(),
+           fullname.get()));
     }
   }
 
@@ -570,7 +571,7 @@ nsresult gfxDWriteFontEntry::ReadCMAP(FontInfoData* aFontInfoData) {
     }
   }
 
-  LOG_FONTLIST(("(fontlist-cmap) name: %s, size: %d hash: %8.8x%s\n",
+  LOG_FONTLIST(("(fontlist-cmap) name: %s, size: %zu hash: %8.8x%s\n",
                 mName.get(), charmap->SizeOfIncludingThis(moz_malloc_size_of),
                 charmap->mHash, mCharacterMap == charmap ? " new" : ""));
   if (LOG_CMAPDATA_ENABLED()) {
@@ -1686,13 +1687,14 @@ nsresult gfxDWriteFontList::InitFontListForPlatform() {
 
   if (gillSansFamily && gillSansMTFamily) {
     gillSansFamily->FindStyleVariations();
-    nsTArray<RefPtr<gfxFontEntry> >& faces = gillSansFamily->GetFontList();
-    uint32_t i;
+
+    gillSansFamily->ReadLock();
+    const auto& faces = gillSansFamily->GetFontList();
 
     bool allUltraBold = true;
-    for (i = 0; i < faces.Length(); i++) {
+    for (const auto& face : faces) {
       // does the face have 'Ultra Bold' in the name?
-      if (faces[i]->Name().Find("Ultra Bold"_ns) == -1) {
+      if (face->Name().Find("Ultra Bold"_ns) == -1) {
         allUltraBold = false;
         break;
       }
@@ -1702,27 +1704,29 @@ nsresult gfxDWriteFontList::InitFontListForPlatform() {
     // for Gill Sans into Gill Sans MT family
     if (allUltraBold) {
       // add faces to Gill Sans MT
-      for (i = 0; i < faces.Length(); i++) {
+      for (const auto& face : faces) {
         // change the entry's family name to match its adoptive family
-        faces[i]->mFamilyName = gillSansMTFamily->Name();
-        gillSansMTFamily->AddFontEntry(faces[i]);
+        face->mFamilyName = gillSansMTFamily->Name();
+        gillSansMTFamily->AddFontEntry(face);
 
         if (LOG_FONTLIST_ENABLED()) {
-          gfxFontEntry* fe = faces[i];
           nsAutoCString weightString;
-          fe->Weight().ToString(weightString);
+          face->Weight().ToString(weightString);
           LOG_FONTLIST(
               ("(fontlist) moved (%s) to family (%s)"
                " with style: %s weight: %s stretch: %d",
-               fe->Name().get(), gillSansMTFamily->Name().get(),
-               (fe->IsItalic()) ? "italic"
-                                : (fe->IsOblique() ? "oblique" : "normal"),
-               weightString.get(), fe->Stretch()));
+               face->Name().get(), gillSansMTFamily->Name().get(),
+               (face->IsItalic()) ? "italic"
+                                  : (face->IsOblique() ? "oblique" : "normal"),
+               weightString.get(), face->Stretch().AsScalar()));
         }
       }
+      gillSansFamily->ReadUnlock();
 
-      // remove Gills Sans
+      // remove Gill Sans
       mFontFamilies.Remove(nameGillSans);
+    } else {
+      gillSansFamily->ReadUnlock();
     }
   }
 

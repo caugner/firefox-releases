@@ -172,10 +172,7 @@ class DocAccessibleParent : public RemoteAccessible,
 
   virtual mozilla::ipc::IPCResult RecvShutdown() override;
   void Destroy();
-  virtual void ActorDestroy(ActorDestroyReason aWhy) override {
-    MOZ_ASSERT(CheckDocTree());
-    if (!mShutdown) Destroy();
-  }
+  virtual void ActorDestroy(ActorDestroyReason aWhy) override;
 
   /*
    * Return the main processes representation of the parent document (if any)
@@ -359,6 +356,8 @@ class DocAccessibleParent : public RemoteAccessible,
                       uint32_t aIdxInParent);
   [[nodiscard]] bool CheckDocTree() const;
   xpcAccessibleGeneric* GetXPCAccessible(RemoteAccessible* aProxy);
+
+  void FireEvent(RemoteAccessible* aAcc, const uint32_t& aType);
 
   /**
    * If this Accessible is being moved, prepare it for reuse. Otherwise, it is

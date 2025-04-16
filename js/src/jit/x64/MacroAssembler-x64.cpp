@@ -410,6 +410,11 @@ void MacroAssemblerX64::vcmplepsSimd128(const SimdConstant& v,
   vpRiprOpSimd128(v, lhs, dest, &X86Encoding::BaseAssemblerX64::vcmpleps_ripr);
 }
 
+void MacroAssemblerX64::vcmpgepsSimd128(const SimdConstant& v,
+                                        FloatRegister lhs, FloatRegister dest) {
+  vpRiprOpSimd128(v, lhs, dest, &X86Encoding::BaseAssemblerX64::vcmpgeps_ripr);
+}
+
 void MacroAssemblerX64::vcmpeqpdSimd128(const SimdConstant& v,
                                         FloatRegister lhs, FloatRegister dest) {
   vpRiprOpSimd128(v, lhs, dest, &X86Encoding::BaseAssemblerX64::vcmpeqpd_ripr);
@@ -436,6 +441,11 @@ void MacroAssemblerX64::vpmaddubswSimd128(const SimdConstant& v,
                                           FloatRegister dest) {
   vpRiprOpSimd128(v, lhs, dest,
                   &X86Encoding::BaseAssemblerX64::vpmaddubsw_ripr);
+}
+
+void MacroAssemblerX64::vpmuludqSimd128(const SimdConstant& v,
+                                        FloatRegister lhs, FloatRegister dest) {
+  vpRiprOpSimd128(v, lhs, dest, &X86Encoding::BaseAssemblerX64::vpmuludq_ripr);
 }
 
 void MacroAssemblerX64::bindOffsets(
@@ -553,7 +563,7 @@ void MacroAssemblerX64::handleFailureWithHandlerTail(Label* profilerExitTail) {
   jmp(Operand(rax));
 
   // If we found a finally block, this must be a baseline frame. Push two
-  // values expected by JSOp::Retsub: the exception and BooleanValue(true).
+  // values expected by the finally block: the exception and BooleanValue(true).
   bind(&finally);
   ValueOperand exception = ValueOperand(rcx);
   loadValue(Address(esp, ResumeFromException::offsetOfException()), exception);

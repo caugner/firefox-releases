@@ -673,6 +673,19 @@ static bool IsMouseVanishKey(WPARAM aVirtKey) {
  * Hide/unhide the cursor if the correct Windows and Firefox settings are set.
  */
 static void MaybeHideCursor(bool aShouldHide) {
+  static bool sMouseExists =
+      []{
+        // Before the first call to ShowCursor, the visibility count is 0
+        // if there is a mouse installed and -1 if not.
+        int count = ::ShowCursor(FALSE);
+        ::ShowCursor(TRUE);
+        return count == -1;
+      }();
+
+  if (!sMouseExists) {
+    return;
+  }
+
   static bool sIsHidden = false;
   bool shouldHide = aShouldHide &&
                     StaticPrefs::widget_windows_hide_cursor_when_typing() &&
@@ -1798,51 +1811,15 @@ bool nsWindow::IsVisible() const { return mIsVisible; }
  *
  **************************************************************/
 
-static bool ShouldHaveRoundedMenuDropShadow(nsWindow* aWindow) {
-  nsView* view = nsView::GetViewFor(aWindow);
-  return view && view->GetFrame() &&
-         view->GetFrame()->StyleUIReset()->mWindowShadow ==
-             StyleWindowShadow::Cliprounded;
-}
-
 // XP and Vista visual styles sometimes require window clipping regions to be
 // applied for proper transparency. These routines are called on size and move
 // operations.
 // XXX this is apparently still needed in Windows 7 and later
 void nsWindow::ClearThemeRegion() {
-  if (mWindowType == eWindowType_popup &&
-      (mPopupType == ePopupTypeTooltip || mPopupType == ePopupTypeMenu ||
-       mPopupType == ePopupTypePanel) &&
-      ShouldHaveRoundedMenuDropShadow(this)) {
+  if (!HasGlass() &&
+      (mWindowType == eWindowType_popup && !IsPopupWithTitleBar() &&
+       (mPopupType == ePopupTypeTooltip || mPopupType == ePopupTypePanel))) {
     SetWindowRgn(mWnd, nullptr, false);
-  } else if (!HasGlass() &&
-             (mWindowType == eWindowType_popup && !IsPopupWithTitleBar() &&
-              (mPopupType == ePopupTypeTooltip ||
-               mPopupType == ePopupTypePanel))) {
-    SetWindowRgn(mWnd, nullptr, false);
-  }
-}
-
-void nsWindow::SetThemeRegion() {
-  // Clip the window to the rounded rect area of the popup if needed.
-  if (mWindowType == eWindowType_popup &&
-      (mPopupType == ePopupTypeTooltip || mPopupType == ePopupTypeMenu ||
-       mPopupType == ePopupTypePanel)) {
-    if (nsView* view = nsView::GetViewFor(this)) {
-      LayoutDeviceIntSize size =
-          nsLayoutUtils::GetBorderRadiusForMenuDropShadow(view->GetFrame());
-      if (size.width || size.height) {
-        int32_t width =
-            NSToIntRound(size.width * GetDesktopToDeviceScale().scale);
-        int32_t height =
-            NSToIntRound(size.height * GetDesktopToDeviceScale().scale);
-        HRGN region = CreateRoundRectRgn(0, 0, mBounds.Width() + 1,
-                                         mBounds.Height() + 1, width, height);
-        if (!SetWindowRgn(mWnd, region, false)) {
-          DeleteObject(region);  // region setting failed so delete the region.
-        }
-      }
-    }
   }
 }
 
@@ -2039,13 +2016,10 @@ void nsWindow::Move(double aX, double aY) {
       if (WinUtils::LogToPhysFactor(mWnd) != oldScale) {
         ChangedDPI();
       }
-
-      SetThemeRegion();
     }
 
     ResizeDirectManipulationViewport();
   }
-  NotifyRollupGeometryChange();
 }
 
 // Resize this component
@@ -2108,15 +2082,12 @@ void nsWindow::Resize(double aWidth, double aHeight, bool aRepaint) {
       if (WinUtils::LogToPhysFactor(mWnd) != oldScale) {
         ChangedDPI();
       }
-      SetThemeRegion();
     }
 
     ResizeDirectManipulationViewport();
   }
 
   if (aRepaint) Invalidate();
-
-  NotifyRollupGeometryChange();
 }
 
 // Resize this component
@@ -2198,15 +2169,12 @@ void nsWindow::Resize(double aX, double aY, double aWidth, double aHeight,
         ::SetWindowPos(mTransitionWnd, HWND_TOPMOST, 0, 0, 0, 0,
                        SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
       }
-      SetThemeRegion();
     }
 
     ResizeDirectManipulationViewport();
   }
 
   if (aRepaint) Invalidate();
-
-  NotifyRollupGeometryChange();
 }
 
 mozilla::Maybe<bool> nsWindow::IsResizingNativeWidget() {
@@ -2617,6 +2585,12 @@ LayoutDeviceIntRect nsWindow::GetBounds() {
     }
   }
   rect.MoveTo(r.left, r.top);
+  if (mCompositorSession &&
+      !wr::WindowSizeSanityCheck(rect.width, rect.height)) {
+    gfxCriticalNoteOnce << "Invalid size" << rect << " size mode "
+                        << mFrameState->GetSizeMode();
+  }
+
   return rect;
 }
 
@@ -5211,6 +5185,13 @@ bool nsWindow::ProcessMessageInternal(UINT msg, WPARAM& wParam, LPARAM& lParam,
         gfxDWriteFont::UpdateSystemTextVars();
         break;
       }
+      if (wParam == SPI_SETWORKAREA) {
+        // NB: We also refresh screens on WM_DISPLAYCHANGE but the rcWork
+        // values are sometimes wrong at that point.  This message then
+        // arrives soon afterward, when we can get the right rcWork values.
+        ScreenHelperWin::RefreshScreens();
+        break;
+      }
       if (auto lParamString = reinterpret_cast<const wchar_t*>(lParam)) {
         if (!wcscmp(lParamString, L"ImmersiveColorSet")) {
           // This affects system colors (-moz-win-accentcolor), so gotta pass
@@ -5930,10 +5911,6 @@ bool nsWindow::ProcessMessageInternal(UINT msg, WPARAM& wParam, LPARAM& lParam,
 
     case WM_DISPLAYCHANGE: {
       ScreenHelperWin::RefreshScreens();
-      nsCOMPtr<nsIGfxInfo> gfxInfo = components::GfxInfo::Service();
-      if (gfxInfo) {
-        gfxInfo->RefreshMonitors();
-      }
       if (mWidgetListener) {
         mWidgetListener->UIResolutionChanged();
       }

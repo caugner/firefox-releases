@@ -61,13 +61,12 @@ dictionary InteractionData {
   unsigned long scrollingDistanceInPixels = 0;
 };
 
+/**
+ * Confidence value of credit card fields. This is used by the native
+ * Fathom Credit Card model to return the score to JS.
+ */
 dictionary FormAutofillConfidences {
   double ccNumber = 0;
-  double ccName = 0;
-  double ccType = 0;
-  double ccExp = 0;
-  double ccExpMonth = 0;
-  double ccExpYear = 0;
 };
 
 /**
@@ -481,7 +480,7 @@ partial namespace ChromeUtils {
   /**
    * Request performance metrics to the current process & all content processes.
    */
-  [Throws]
+  [NewObject]
   Promise<sequence<PerformanceInfoDictionary>> requestPerformanceMetrics();
 
   /**
@@ -498,19 +497,19 @@ partial namespace ChromeUtils {
    * Collect results of detailed performance timing information.
    * The output is a JSON string containing performance timings.
    */
-  [Throws]
+  [NewObject]
   Promise<DOMString> collectPerfStats();
 
   /**
   * Returns a Promise containing a sequence of I/O activities
   */
-  [Throws]
+  [NewObject]
   Promise<sequence<IOActivityDataDictionary>> requestIOActivity();
 
   /**
   * Returns a Promise containing all processes info
   */
-  [Throws]
+  [NewObject]
   Promise<ParentProcInfoDictionary> requestProcInfo();
 
   /**
@@ -602,7 +601,7 @@ partial namespace ChromeUtils {
    *
    * Valid keys: "Scrolling"
    */
-  [Throws]
+  [NewObject]
   Promise<InteractionData> collectScrollingData();
 
   [Throws]

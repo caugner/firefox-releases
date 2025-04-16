@@ -1081,6 +1081,7 @@ var SessionStoreInternal = {
           // Non-SHIP code calls this when the frame script is unloaded.
           this.onFinalTabStateUpdateComplete(aSubject);
         }
+        this._notifyOfClosedObjectsChange();
         break;
     }
   },
@@ -2532,6 +2533,9 @@ var SessionStoreInternal = {
     // Don't save private tabs
     let isPrivateWindow = PrivateBrowsingUtils.isWindowPrivate(aWindow);
     if (!isPrivateWindow && tabState.isPrivate) {
+      return;
+    }
+    if (aTab == aWindow.gFirefoxViewTab) {
       return;
     }
 
@@ -4114,6 +4118,9 @@ var SessionStoreInternal = {
 
     // update the internal state data for this window
     for (let tab of tabs) {
+      if (tab == aWindow.gFirefoxViewTab) {
+        continue;
+      }
       let tabData = TabState.collect(tab, TAB_CUSTOM_VALUES.get(tab));
       tabMap.set(tab, tabData);
       tabsData.push(tabData);
@@ -6288,27 +6295,6 @@ var SessionStoreInternal = {
 
     // Notify the tabbrowser that the tab chrome has been restored.
     let tabData = TabState.collect(tab, TAB_CUSTOM_VALUES.get(tab));
-
-    // wall-paper fix for bug 439675: make sure that the URL to be loaded
-    // is always visible in the address bar if no other value is present
-    let activePageData = tabData.entries[tabData.index - 1] || null;
-    let uri = activePageData ? activePageData.url || null : null;
-    // NB: we won't set initial URIs (about:home, about:newtab, etc.) here
-    // because their load will not normally trigger a location bar clearing
-    // when they finish loading (to avoid race conditions where we then
-    // clear user input instead), so we shouldn't set them here either.
-    // They also don't fall under the issues in bug 439675 where user input
-    // needs to be preserved if the load doesn't succeed.
-    // We also don't do this for remoteness updates, where it should not
-    // be necessary.
-    if (
-      !browser.userTypedValue &&
-      uri &&
-      !data.isRemotenessUpdate &&
-      !win.gInitialPages.includes(uri)
-    ) {
-      browser.userTypedValue = uri;
-    }
 
     // Update tab label and icon again after the tab history was updated.
     this.updateTabLabelAndIcon(tab, tabData);

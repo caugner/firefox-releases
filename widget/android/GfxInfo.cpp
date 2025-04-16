@@ -227,12 +227,6 @@ void GfxInfo::EnsureInitialized() {
       mGLStrings->Renderer().get(), mGLStrings->Version().get());
 
   AddCrashReportAnnotations();
-
-  java::sdk::Rect::LocalRef screenrect = java::GeckoAppShell::GetScreenSize();
-  mScreenInfo.mScreenDimensions =
-      gfx::Rect(screenrect->Left(), screenrect->Top(), screenrect->Width(),
-                screenrect->Height());
-
   mInitialized = true;
 }
 
@@ -356,29 +350,6 @@ NS_IMETHODIMP
 GfxInfo::GetIsGPU2Active(bool* aIsGPU2Active) {
   EnsureInitialized();
   return NS_ERROR_FAILURE;
-}
-
-NS_IMETHODIMP
-GfxInfo::GetDisplayInfo(nsTArray<nsString>& aDisplayInfo) {
-  EnsureInitialized();
-  nsString displayInfo;
-  displayInfo.AppendPrintf("%dx%d",
-                           (int32_t)mScreenInfo.mScreenDimensions.width,
-                           (int32_t)mScreenInfo.mScreenDimensions.height);
-  aDisplayInfo.AppendElement(displayInfo);
-  return NS_OK;
-}
-
-NS_IMETHODIMP
-GfxInfo::GetDisplayWidth(nsTArray<uint32_t>& aDisplayWidth) {
-  aDisplayWidth.AppendElement((uint32_t)mScreenInfo.mScreenDimensions.width);
-  return NS_OK;
-}
-
-NS_IMETHODIMP
-GfxInfo::GetDisplayHeight(nsTArray<uint32_t>& aDisplayHeight) {
-  aDisplayHeight.AppendElement((uint32_t)mScreenInfo.mScreenDimensions.height);
-  return NS_OK;
 }
 
 NS_IMETHODIMP
@@ -599,6 +570,18 @@ nsresult GfxInfo::GetFeatureStatusImpl(
           mGLStrings->Renderer().Find("Vivante GC7000UL",
                                       /* ignoreCase */ true) >= 0;
 
+      const bool isPowerVrFenceSyncCrash =
+          (mGLStrings->Renderer().Find("PowerVR Rogue G6200",
+                                       /* ignoreCase */ true) >= 0 ||
+           mGLStrings->Renderer().Find("PowerVR Rogue G6430",
+                                       /* ignoreCase */ true) >= 0 ||
+           mGLStrings->Renderer().Find("PowerVR Rogue GX6250",
+                                       /* ignoreCase */ true) >= 0) &&
+          (mGLStrings->Version().Find("3283119", /* ignoreCase */ true) >= 0 ||
+           mGLStrings->Version().Find("3443629", /* ignoreCase */ true) >= 0 ||
+           mGLStrings->Version().Find("3573678", /* ignoreCase */ true) >= 0 ||
+           mGLStrings->Version().Find("3830101", /* ignoreCase */ true) >= 0);
+
       if (isMali4xx) {
         // Mali 4xx does not support GLES 3.
         *aStatus = nsIGfxInfo::FEATURE_BLOCKED_DEVICE;
@@ -611,6 +594,10 @@ nsresult GfxInfo::GetFeatureStatusImpl(
         // Blocked on Vivante GC7000UL due to bug 1719327.
         *aStatus = nsIGfxInfo::FEATURE_BLOCKED_DEVICE;
         aFailureId = "FEATURE_FAILURE_VIVANTE_GC7000UL";
+      } else if (isPowerVrFenceSyncCrash) {
+        // Blocked on various PowerVR GPUs due to bug 1773128.
+        *aStatus = nsIGfxInfo::FEATURE_BLOCKED_DEVICE;
+        aFailureId = "FEATURE_FAILURE_POWERVR_FENCE_SYNC_CRASH";
       } else {
         *aStatus = nsIGfxInfo::FEATURE_ALLOW_QUALIFIED;
       }

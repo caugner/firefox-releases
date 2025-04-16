@@ -299,12 +299,15 @@ static StyleRect<T> StyleRectWithAllSides(const T& aSide) {
 nsStyleMargin::nsStyleMargin(const Document& aDocument)
     : mMargin(StyleRectWithAllSides(
           LengthPercentageOrAuto::LengthPercentage(LengthPercentage::Zero()))),
-      mScrollMargin(StyleRectWithAllSides(StyleLength{0.})) {
+      mScrollMargin(StyleRectWithAllSides(StyleLength{0.})),
+      mOverflowClipMargin(StyleLength::Zero()) {
   MOZ_COUNT_CTOR(nsStyleMargin);
 }
 
 nsStyleMargin::nsStyleMargin(const nsStyleMargin& aSrc)
-    : mMargin(aSrc.mMargin), mScrollMargin(aSrc.mScrollMargin) {
+    : mMargin(aSrc.mMargin),
+      mScrollMargin(aSrc.mScrollMargin),
+      mOverflowClipMargin(aSrc.mOverflowClipMargin) {
   MOZ_COUNT_CTOR(nsStyleMargin);
 }
 
@@ -322,6 +325,10 @@ nsChangeHint nsStyleMargin::CalcDifference(
   if (mScrollMargin != aNewData.mScrollMargin) {
     // FIXME: Bug 1530253 Support re-snapping when scroll-margin changes.
     hint |= nsChangeHint_NeutralChange;
+  }
+
+  if (mOverflowClipMargin != aNewData.mOverflowClipMargin) {
+    hint |= nsChangeHint_UpdateOverflow | nsChangeHint_RepaintFrame;
   }
 
   return hint;
@@ -2351,6 +2358,24 @@ static bool ScrollbarGenerationChanged(const nsStyleDisplay& aOld,
          changed(aOld.mOverflowY, aNew.mOverflowY);
 }
 
+static bool AppearanceValueAffectsFrames(StyleAppearance aDefaultAppearance,
+                                         StyleAppearance aAppearance) {
+  switch (aAppearance) {
+    case StyleAppearance::Textfield:
+      // This is for <input type=number> where we allow authors to specify a
+      // |-moz-appearance:textfield| to get a control without a spinner. (The
+      // spinner is present for |-moz-appearance:number-input| but also other
+      // values such as 'none'.) We need to reframe since this affects the
+      // spinbox creation in nsNumberControlFrame::CreateAnonymousContent.
+      return aDefaultAppearance == StyleAppearance::NumberInput;
+    case StyleAppearance::Menulist:
+      // This affects the menulist button creation.
+      return aDefaultAppearance == StyleAppearance::Menulist;
+    default:
+      return false;
+  }
+}
+
 nsChangeHint nsStyleDisplay::CalcDifference(
     const nsStyleDisplay& aNewData, const nsStylePosition& aOldPosition) const {
   if (mDisplay != aNewData.mDisplay || mContain != aNewData.mContain ||
@@ -2368,20 +2393,14 @@ nsChangeHint nsStyleDisplay::CalcDifference(
 
   auto oldAppearance = EffectiveAppearance();
   auto newAppearance = aNewData.EffectiveAppearance();
-
-  if ((oldAppearance == StyleAppearance::Textfield &&
-       newAppearance != StyleAppearance::Textfield) ||
-      (oldAppearance != StyleAppearance::Textfield &&
-       newAppearance == StyleAppearance::Textfield)) {
-    // This is for <input type=number> where we allow authors to specify a
-    // |-moz-appearance:textfield| to get a control without a spinner. (The
-    // spinner is present for |-moz-appearance:number-input| but also other
-    // values such as 'none'.) We need to reframe since we want to use
-    // nsTextControlFrame instead of nsNumberControlFrame if the author
-    // specifies 'textfield'.
-    // TODO: Now that we have -moz-default appearance we should do this only if
-    // `mDefaultAppearance` is or was `number-input`.
-    return nsChangeHint_ReconstructFrame;
+  if (oldAppearance != newAppearance) {
+    // Changes to the relevant default appearance changes in
+    // AppearanceValueRequiresFrameReconstruction require reconstruction on
+    // their own, so we can just pick either the new or the old.
+    if (AppearanceValueAffectsFrames(oldAppearance, mDefaultAppearance) ||
+        AppearanceValueAffectsFrames(newAppearance, mDefaultAppearance)) {
+      return nsChangeHint_ReconstructFrame;
+    }
   }
 
   auto hint = nsChangeHint(0);

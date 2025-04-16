@@ -1817,20 +1817,20 @@ void MacroAssemblerMIPSCompat::handleFailureWithHandlerTail(
   bind(&catch_);
   loadPtr(Address(StackPointer, ResumeFromException::offsetOfTarget()), a0);
   loadPtr(Address(StackPointer, ResumeFromException::offsetOfFramePointer()),
-          BaselineFrameReg);
+          FramePointer);
   loadPtr(Address(StackPointer, ResumeFromException::offsetOfStackPointer()),
           StackPointer);
   jump(a0);
 
   // If we found a finally block, this must be a baseline frame. Push two
-  // values expected by JSOp::Retsub: the exception and BooleanValue(true).
+  // values expected by the finally block: the exception and BooleanValue(true).
   bind(&finally);
   ValueOperand exception = ValueOperand(a1, a2);
   loadValue(Address(sp, ResumeFromException::offsetOfException()), exception);
 
   loadPtr(Address(sp, ResumeFromException::offsetOfTarget()), a0);
   loadPtr(Address(sp, ResumeFromException::offsetOfFramePointer()),
-          BaselineFrameReg);
+          FramePointer);
   loadPtr(Address(sp, ResumeFromException::offsetOfStackPointer()), sp);
 
   pushValue(exception);
@@ -1842,14 +1842,13 @@ void MacroAssemblerMIPSCompat::handleFailureWithHandlerTail(
   Label profilingInstrumentation;
   bind(&returnBaseline);
   loadPtr(Address(StackPointer, ResumeFromException::offsetOfFramePointer()),
-          BaselineFrameReg);
+          FramePointer);
   loadPtr(Address(StackPointer, ResumeFromException::offsetOfStackPointer()),
           StackPointer);
-  loadValue(
-      Address(BaselineFrameReg, BaselineFrame::reverseOffsetOfReturnValue()),
-      JSReturnOperand);
-  ma_move(StackPointer, BaselineFrameReg);
-  pop(BaselineFrameReg);
+  loadValue(Address(FramePointer, BaselineFrame::reverseOffsetOfReturnValue()),
+            JSReturnOperand);
+  ma_move(StackPointer, FramePointer);
+  pop(FramePointer);
   jump(&profilingInstrumentation);
 
   // Return the given value to the caller.

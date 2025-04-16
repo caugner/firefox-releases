@@ -15,8 +15,7 @@
 #include "mozilla/Telemetry.h"
 #include "mozilla/dom/GeolocationPositionErrorBinding.h"
 
-namespace mozilla {
-namespace dom {
+namespace mozilla::dom {
 
 LazyLogModule gWindowsLocationProviderLog("WindowsLocationProvider");
 #define LOG(...) \
@@ -295,5 +294,4 @@ void WindowsLocationProvider::CancelMLSProvider() {
 
 #undef LOG
 
-}  // namespace dom
-}  // namespace mozilla
+}  // namespace mozilla::dom

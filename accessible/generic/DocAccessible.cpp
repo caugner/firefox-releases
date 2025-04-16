@@ -399,6 +399,10 @@ void DocAccessible::Init() {
     // harm even if it isn't necessary. We set mLoadEventType here and it will
     // be fired in ProcessLoad as usual.
     mLoadEventType = nsIAccessibleEvent::EVENT_DOCUMENT_LOAD_COMPLETE;
+  } else if (mDocumentNode->IsInitialDocument()) {
+    // The initial about:blank document will never finish loading, so we can
+    // immediately mark it loaded to avoid waiting for its load.
+    mLoadState |= eDOMLoaded;
   }
 
   AddEventListeners();
@@ -1424,7 +1428,7 @@ void DocAccessible::ProcessQueuedCacheUpdates() {
   for (auto iter = mQueuedCacheUpdates.Iter(); !iter.Done(); iter.Next()) {
     LocalAccessible* acc = iter.Key();
     uint64_t domain = iter.UserData();
-    if (!acc->IsDefunct()) {
+    if (acc->IsInDocument() && !acc->IsDefunct()) {
       RefPtr<AccAttributes> fields =
           acc->BundleFieldsForCache(domain, CacheUpdateType::Update);
 
@@ -2615,4 +2619,27 @@ void DocAccessible::SetRoleMapEntryForDoc(dom::Element* aElement) {
 LocalAccessible* DocAccessible::GetAccessible(nsINode* aNode) const {
   return aNode == mDocumentNode ? const_cast<DocAccessible*>(this)
                                 : mNodeToAccessibleMap.Get(aNode);
+}
+
+bool DocAccessible::HasPrimaryAction() const {
+  if (HyperTextAccessible::HasPrimaryAction()) {
+    return true;
+  }
+  // mContent is normally the body, but there might be a click listener on the
+  // root.
+  dom::Element* root = mDocumentNode->GetRootElement();
+  if (mContent != root) {
+    return nsCoreUtils::HasClickListener(root);
+  }
+  return false;
+}
+
+void DocAccessible::ActionNameAt(uint8_t aIndex, nsAString& aName) {
+  aName.Truncate();
+  if (aIndex != 0) {
+    return;
+  }
+  if (HasPrimaryAction()) {
+    aName.AssignLiteral("click");
+  }
 }

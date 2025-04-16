@@ -9,7 +9,6 @@ use cssparser::ToCss as ParserToCss;
 use cssparser::{ParseErrorKind, Parser, ParserInput, SourceLocation, UnicodeRange};
 use malloc_size_of::MallocSizeOfOps;
 use nsstring::{nsCString, nsString};
-use selectors::matching::{matches_selector, MatchingContext, MatchingMode, VisitedHandlingMode};
 use selectors::{NthIndexCache, SelectorList};
 use servo_arc::{Arc, ArcBorrow, RawOffsetArc};
 use smallvec::SmallVec;
@@ -2449,6 +2448,7 @@ pub extern "C" fn Servo_StyleRule_SelectorMatchesElement(
     pseudo_type: PseudoStyleType,
     relevant_link_visited: bool,
 ) -> bool {
+    use selectors::matching::{matches_selector, MatchingContext, MatchingMode, VisitedHandlingMode, NeedsSelectorFlags};
     read_locked_arc(rule, |rule: &StyleRule| {
         let index = index as usize;
         if index >= rule.selectors.0.len() {
@@ -2485,9 +2485,15 @@ pub extern "C" fn Servo_StyleRule_SelectorMatchesElement(
         } else {
             VisitedHandlingMode::AllLinksUnvisited
         };
-        let mut ctx =
-            MatchingContext::new_for_visited(matching_mode, None, None, visited_mode, quirks_mode);
-        matches_selector(selector, 0, None, &element, &mut ctx, &mut |_, _| {})
+        let mut ctx = MatchingContext::new_for_visited(
+            matching_mode,
+            None,
+            None,
+            visited_mode,
+            quirks_mode,
+            NeedsSelectorFlags::No,
+        );
+        matches_selector(selector, 0, None, &element, &mut ctx)
     })
 }
 
@@ -2953,7 +2959,7 @@ pub extern "C" fn Servo_ContainerRule_GetConditionText(
     result: &mut nsACString,
 ) {
     read_locked_arc(rule, |rule: &ContainerRule| {
-        rule.condition.to_css(&mut CssWriter::new(result)).unwrap();
+        rule.query_condition().to_css(&mut CssWriter::new(result)).unwrap();
     })
 }
 
@@ -5842,6 +5848,7 @@ fn create_context_for_animation<'a>(
         quirks_mode: per_doc_data.stylist.quirks_mode(),
         for_smil_animation,
         for_non_inherited_property: None,
+        container_info: None,
         rule_cache_conditions: RefCell::new(rule_cache_conditions),
     }
 }
@@ -6964,12 +6971,13 @@ pub unsafe extern "C" fn Servo_ParseFontShorthandForMatching(
     style: &mut ComputedFontStyleDescriptor,
     stretch: &mut f32,
     weight: &mut f32,
+    size: Option<&mut f32>,
 ) -> bool {
     use style::properties::shorthands::font;
     use style::values::computed::font::FontWeight as ComputedFontWeight;
     use style::values::generics::font::FontStyle as GenericFontStyle;
     use style::values::specified::font::{
-        FontFamily, FontStretch, FontStyle, FontWeight, SpecifiedFontStyle,
+        FontFamily, FontSize, FontStretch, FontStyle, FontWeight, SpecifiedFontStyle,
     };
 
     let string = value.as_str_unchecked();
@@ -7025,6 +7033,33 @@ pub unsafe extern "C" fn Servo_ParseFontShorthandForMatching(
         FontWeight::Lighter => ComputedFontWeight::normal().lighter().0,
         FontWeight::System(_) => return false,
     };
+
+    // XXX This is unfinished; see values::specified::FontSize::ToComputedValue
+    // for a more complete implementation (but we can't use it as-is).
+    if let Some(size) = size {
+        *size = match font.font_size {
+            FontSize::Length(lp) => {
+                use style::values::generics::transform::ToAbsoluteLength;
+                match lp.to_pixel_length(None) {
+                    Ok(len) => len,
+                    Err(..) => return false,
+                }
+            },
+            // Map absolute-size keywords to sizes.
+            FontSize::Keyword(info) => {
+                let metrics = get_metrics_provider_for_product();
+                // TODO: Maybe get a meaningful language / quirks-mode from the
+                // caller?
+                let language = atom!("x-western");
+                let quirks_mode = QuirksMode::NoQuirks;
+                info.kw.to_length_without_context(quirks_mode, &metrics, &language, family).0.px()
+            }
+            // smaller, larger not currently supported
+            FontSize::Smaller | FontSize::Larger | FontSize::System(_) => {
+                return false;
+            }
+        };
+    }
 
     true
 }

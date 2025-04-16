@@ -161,8 +161,8 @@ bool wasm::CreateStackMapForFunctionEntryTrap(
                                   numStackArgWords);
 #ifdef DEBUG
   for (uint32_t i = 0; i < nFrameBytes / sizeof(void*); i++) {
-    MOZ_ASSERT(stackMap->getBit(stackMap->numMappedWords -
-                                stackMap->frameOffsetFromTop + i) == 0);
+    MOZ_ASSERT(stackMap->getBit(stackMap->header.numMappedWords -
+                                stackMap->header.frameOffsetFromTop + i) == 0);
   }
 #endif
 
@@ -202,12 +202,12 @@ bool wasm::GenerateStackmapEntriesForTrapExit(
   return true;
 }
 
-void wasm::EmitWasmPreBarrierGuard(MacroAssembler& masm, Register tls,
+void wasm::EmitWasmPreBarrierGuard(MacroAssembler& masm, Register instance,
                                    Register scratch, Register valueAddr,
                                    Label* skipBarrier) {
   // If no incremental GC has started, we don't need the barrier.
   masm.loadPtr(
-      Address(tls, Instance::offsetOfAddressOfNeedsIncrementalBarrier()),
+      Address(instance, Instance::offsetOfAddressOfNeedsIncrementalBarrier()),
       scratch);
   masm.branchTest32(Assembler::Zero, Address(scratch, 0), Imm32(0x1),
                     skipBarrier);
@@ -217,11 +217,11 @@ void wasm::EmitWasmPreBarrierGuard(MacroAssembler& masm, Register tls,
   masm.branchTestPtr(Assembler::Zero, scratch, scratch, skipBarrier);
 }
 
-void wasm::EmitWasmPreBarrierCall(MacroAssembler& masm, Register tls,
+void wasm::EmitWasmPreBarrierCall(MacroAssembler& masm, Register instance,
                                   Register scratch, Register valueAddr) {
   MOZ_ASSERT(valueAddr == PreBarrierReg);
 
-  masm.loadPtr(Address(tls, Instance::offsetOfPreBarrierCode()), scratch);
+  masm.loadPtr(Address(instance, Instance::offsetOfPreBarrierCode()), scratch);
 #if defined(DEBUG) && defined(JS_CODEGEN_ARM64)
   // The prebarrier assumes that x28 == sp.
   Label ok;

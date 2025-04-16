@@ -35,6 +35,9 @@ class RemoteAccessibleBase : public Accessible, public HyperTextAccessibleBase {
 
   void AddChildAt(uint32_t aIdx, Derived* aChild) {
     mChildren.InsertElementAt(aIdx, aChild);
+    if (IsHyperText()) {
+      InvalidateCachedHyperTextOffsets();
+    }
   }
 
   virtual uint32_t ChildCount() const override { return mChildren.Length(); }
@@ -114,7 +117,12 @@ class RemoteAccessibleBase : public Accessible, public HyperTextAccessibleBase {
   /**
    * Remove The given child.
    */
-  void RemoveChild(Derived* aChild) { mChildren.RemoveElement(aChild); }
+  void RemoveChild(Derived* aChild) {
+    mChildren.RemoveElement(aChild);
+    if (IsHyperText()) {
+      InvalidateCachedHyperTextOffsets();
+    }
+  }
 
   /**
    * Return the proxy for the parent of the wrapped accessible.
@@ -168,6 +176,8 @@ class RemoteAccessibleBase : public Accessible, public HyperTextAccessibleBase {
   virtual double Step() const override;
 
   virtual LayoutDeviceIntRect Bounds() const override;
+
+  nsRect GetBoundsInAppUnits() const;
 
   virtual uint64_t State() override;
 
@@ -243,6 +253,12 @@ class RemoteAccessibleBase : public Accessible, public HyperTextAccessibleBase {
         mCachedFields = new AccAttributes();
       }
       mCachedFields->Update(aFields);
+      if (IsTextLeaf()) {
+        Derived* parent = RemoteParent();
+        if (parent && parent->IsHyperText()) {
+          parent->InvalidateCachedHyperTextOffsets();
+        }
+      }
     }
   }
 
@@ -276,6 +292,7 @@ class RemoteAccessibleBase : public Accessible, public HyperTextAccessibleBase {
 
   uint32_t GetCachedTextLength();
   Maybe<const nsTArray<int32_t>&> GetCachedTextLines();
+  Maybe<nsTArray<nsRect>> GetCachedCharData();
   RefPtr<const AccAttributes> GetCachedTextAttributes();
 
   virtual HyperTextAccessibleBase* AsHyperTextBase() override {
@@ -290,6 +307,12 @@ class RemoteAccessibleBase : public Accessible, public HyperTextAccessibleBase {
 
   // HyperTextAccessibleBase
   virtual already_AddRefed<AccAttributes> DefaultTextAttributes() override;
+
+  virtual void InvalidateCachedHyperTextOffsets() override {
+    if (mCachedFields) {
+      mCachedFields->Remove(nsGkAtoms::offset);
+    }
+  }
 
  protected:
   RemoteAccessibleBase(uint64_t aID, Derived* aParent,
@@ -319,6 +342,7 @@ class RemoteAccessibleBase : public Accessible, public HyperTextAccessibleBase {
   Maybe<nsRect> RetrieveCachedBounds() const;
   bool ApplyTransform(nsRect& aBounds) const;
   void ApplyScrollOffset(nsRect& aBounds) const;
+  LayoutDeviceIntRect BoundsWithOffset(Maybe<nsRect> aOffset) const;
 
   virtual void ARIAGroupPosition(int32_t* aLevel, int32_t* aSetSize,
                                  int32_t* aPosInSet) const override;
@@ -331,12 +355,16 @@ class RemoteAccessibleBase : public Accessible, public HyperTextAccessibleBase {
 
   nsAtom* GetPrimaryAction() const;
 
+  virtual const nsTArray<int32_t>& GetCachedHyperTextOffsets() const override;
+
  private:
   uintptr_t mParent;
   static const uintptr_t kNoParent = UINTPTR_MAX;
 
   friend Derived;
   friend DocAccessibleParent;
+  friend TextLeafPoint;
+  friend HyperTextAccessibleBase;
   friend class xpcAccessible;
   friend class CachedTableCellAccessible;
 

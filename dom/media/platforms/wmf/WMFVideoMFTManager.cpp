@@ -139,7 +139,7 @@ WMFVideoMFTManager::WMFVideoMFTManager(
       mDXVAEnabled(aDXVAEnabled &&
                    !aOptions.contains(
                        CreateDecoderParams::Option::HardwareDecoderNotAllowed)),
-      mNoCopyNV12Texture(false),
+      mZeroCopyNV12Texture(false),
       mFramerate(aFramerate),
       mLowLatency(aOptions.contains(CreateDecoderParams::Option::LowLatency))
 // mVideoStride, mVideoWidth, mVideoHeight, mUseHwAccel are initialized in
@@ -335,10 +335,10 @@ MediaResult WMFVideoMFTManager::InitInternal() {
       }
     }
 
-    if (gfxVars::HwDecodedVideoNoCopy() && mKnowsCompositor &&
+    if (gfxVars::HwDecodedVideoZeroCopy() && mKnowsCompositor &&
         mKnowsCompositor->UsingHardwareWebRender() && mDXVA2Manager &&
-        mDXVA2Manager->IsD3D11() && XRE_IsGPUProcess()) {
-      mNoCopyNV12Texture = true;
+        mDXVA2Manager->SupportsZeroCopyNV12Texture()) {
+      mZeroCopyNV12Texture = true;
       const int kOutputBufferSize = 10;
 
       // Each picture buffer can store a sample, plus one in
@@ -364,7 +364,7 @@ MediaResult WMFVideoMFTManager::InitInternal() {
         mUseHwAccel = true;
       } else {
         mDXVAFailureReason = nsPrintfCString(
-            "MFT_MESSAGE_SET_D3D_MANAGER failed with code %X", hr);
+            "MFT_MESSAGE_SET_D3D_MANAGER failed with code %lX", hr);
       }
     } else {
       mDXVAFailureReason.AssignLiteral(
@@ -375,7 +375,7 @@ MediaResult WMFVideoMFTManager::InitInternal() {
   if (!mDXVAFailureReason.IsEmpty()) {
     // DXVA failure reason being set can mean that D3D11 failed, or that DXVA is
     // entirely disabled.
-    LOG(nsPrintfCString("DXVA failure: %s", mDXVAFailureReason.get()).get());
+    LOG("DXVA failure: %s", mDXVAFailureReason.get());
   }
 
   if (!mUseHwAccel) {
@@ -522,7 +522,7 @@ WMFVideoMFTManager::SetDecoderMediaTypes() {
   hr = outputType->SetGUID(MF_MT_SUBTYPE, outputSubType);
   NS_ENSURE_TRUE(SUCCEEDED(hr), hr);
 
-  if (mNoCopyNV12Texture) {
+  if (mZeroCopyNV12Texture) {
     RefPtr<IMFAttributes> attr(mDecoder->GetOutputStreamAttributes());
     if (attr) {
       hr = attr->SetUINT32(MF_SA_D3D11_SHARED_WITHOUT_MUTEX, TRUE);
@@ -770,7 +770,7 @@ WMFVideoMFTManager::CreateD3DVideoFrame(IMFSample* aSample,
   gfx::IntRect pictureRegion =
       mVideoInfo.ScaledImageRect(mImageSize.width, mImageSize.height);
   RefPtr<Image> image;
-  if (mNoCopyNV12Texture) {
+  if (mZeroCopyNV12Texture && mDXVA2Manager->SupportsZeroCopyNV12Texture()) {
     hr = mDXVA2Manager->WrapTextureWithImage(aSample, pictureRegion,
                                              getter_AddRefs(image));
   } else {
@@ -941,6 +941,9 @@ WMFVideoMFTManager::Output(int64_t aStreamOffset, RefPtr<MediaData>& aOutData) {
 }
 
 void WMFVideoMFTManager::Shutdown() {
+  if (mDXVA2Manager) {
+    mDXVA2Manager->BeforeShutdownVideoMFTDecoder();
+  }
   mDecoder = nullptr;
   mDXVA2Manager.reset();
 }

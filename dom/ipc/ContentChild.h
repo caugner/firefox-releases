@@ -45,11 +45,6 @@ class RemoteSpellcheckEngineChild;
 class ChildProfilerController;
 class BenchmarkStorageChild;
 
-namespace ipc {
-class PChildToParentStreamChild;
-class PFileDescriptorSetChild;
-}  // namespace ipc
-
 namespace loader {
 class PScriptCacheChild;
 }
@@ -73,11 +68,9 @@ enum class CallerType : uint32_t;
 class ContentChild final : public PContentChild,
                            public nsIDOMProcessChild,
                            public mozilla::ipc::IShmemAllocator,
-                           public mozilla::ipc::ChildToParentStreamActorManager,
                            public ProcessActor {
   using ClonedMessageData = mozilla::dom::ClonedMessageData;
   using FileDescriptor = mozilla::ipc::FileDescriptor;
-  using PFileDescriptorSetChild = mozilla::ipc::PFileDescriptorSetChild;
 
   friend class PContentChild;
 
@@ -183,9 +176,6 @@ class ContentChild final : public PContentChild,
   mozilla::ipc::IPCResult RecvSetProcessSandbox(
       const Maybe<FileDescriptor>& aBroker);
 
-  already_AddRefed<PRemoteLazyInputStreamChild>
-  AllocPRemoteLazyInputStreamChild(const nsID& aID, const uint64_t& aSize);
-
   PHalChild* AllocPHalChild();
   bool DeallocPHalChild(PHalChild*);
 
@@ -231,12 +221,6 @@ class ContentChild final : public PContentChild,
       const bool& wantCacheData) override;
 
   PRemotePrintJobChild* AllocPRemotePrintJobChild();
-
-  PChildToParentStreamChild* AllocPChildToParentStreamChild();
-  bool DeallocPChildToParentStreamChild(PChildToParentStreamChild*);
-
-  PParentToChildStreamChild* AllocPParentToChildStreamChild();
-  bool DeallocPParentToChildStreamChild(PParentToChildStreamChild*);
 
   PMediaChild* AllocPMediaChild();
 
@@ -473,10 +457,6 @@ class ContentChild final : public PContentChild,
 
   bool IsForBrowser() const { return mIsForBrowser; }
 
-  PFileDescriptorSetChild* AllocPFileDescriptorSetChild(const FileDescriptor&);
-
-  bool DeallocPFileDescriptorSetChild(PFileDescriptorSetChild*);
-
   MOZ_CAN_RUN_SCRIPT_BOUNDARY mozilla::ipc::IPCResult RecvConstructBrowser(
       ManagedEndpoint<PBrowserChild>&& aBrowserEp,
       ManagedEndpoint<PWindowGlobalChild>&& aWindowEp, const TabId& aTabId,
@@ -654,11 +634,6 @@ class ContentChild final : public PContentChild,
       Endpoint<PSandboxTestingChild>&& aEndpoint);
 #endif
 
-  PChildToParentStreamChild* SendPChildToParentStreamConstructor(
-      PChildToParentStreamChild* aActor) override;
-  PFileDescriptorSetChild* SendPFileDescriptorSetConstructor(
-      const FileDescriptor& aFD) override;
-
  private:
   static void ForceKillTimerCallback(nsITimer* aTimer, void* aClosure);
   void StartForceKillTimer();
@@ -671,8 +646,6 @@ class ContentChild final : public PContentChild,
   virtual void ActorDestroy(ActorDestroyReason why) override;
 
   virtual void ProcessingError(Result aCode, const char* aReason) override;
-
-  virtual void OnChannelReceivedMessage(const Message& aMsg) override;
 
   mozilla::ipc::IPCResult RecvCreateBrowsingContext(
       uint64_t aGroupId, BrowsingContext::IPCInitializer&& aInit);
@@ -692,13 +665,13 @@ class ContentChild final : public PContentChild,
       uint64_t aActionId);
   mozilla::ipc::IPCResult RecvWindowBlur(
       const MaybeDiscarded<BrowsingContext>& aContext, CallerType aCallerType);
-  mozilla::ipc::IPCResult RecvRaiseWindow(
+  MOZ_CAN_RUN_SCRIPT_BOUNDARY mozilla::ipc::IPCResult RecvRaiseWindow(
       const MaybeDiscarded<BrowsingContext>& aContext, CallerType aCallerType,
       uint64_t aActionId);
-  mozilla::ipc::IPCResult RecvAdjustWindowFocus(
+  MOZ_CAN_RUN_SCRIPT_BOUNDARY mozilla::ipc::IPCResult RecvAdjustWindowFocus(
       const MaybeDiscarded<BrowsingContext>& aContext, bool aIsVisible,
       uint64_t aActionId);
-  mozilla::ipc::IPCResult RecvClearFocus(
+  MOZ_CAN_RUN_SCRIPT_BOUNDARY mozilla::ipc::IPCResult RecvClearFocus(
       const MaybeDiscarded<BrowsingContext>& aContext);
   mozilla::ipc::IPCResult RecvSetFocusedBrowsingContext(
       const MaybeDiscarded<BrowsingContext>& aContext, uint64_t aActionId);
@@ -713,7 +686,7 @@ class ContentChild final : public PContentChild,
   mozilla::ipc::IPCResult RecvFinalizeFocusOuter(
       const MaybeDiscarded<BrowsingContext>& aContext, bool aCanFocus,
       CallerType aCallerType);
-  mozilla::ipc::IPCResult RecvBlurToChild(
+  MOZ_CAN_RUN_SCRIPT_BOUNDARY mozilla::ipc::IPCResult RecvBlurToChild(
       const MaybeDiscarded<BrowsingContext>& aFocusedBrowsingContext,
       const MaybeDiscarded<BrowsingContext>& aBrowsingContextToClear,
       const MaybeDiscarded<BrowsingContext>& aAncestorBrowsingContextToFocus,
@@ -794,7 +767,7 @@ class ContentChild final : public PContentChild,
       const JSActorMessageMeta& aMeta, const Maybe<ClonedMessageData>& aData,
       const Maybe<ClonedMessageData>& aStack);
 
-  already_AddRefed<JSActor> InitJSActor(JS::HandleObject aMaybeActor,
+  already_AddRefed<JSActor> InitJSActor(JS::Handle<JSObject*> aMaybeActor,
                                         const nsACString& aName,
                                         ErrorResult& aRv) override;
   mozilla::ipc::IProtocol* AsNativeActor() override { return this; }
@@ -835,13 +808,13 @@ class ContentChild final : public PContentChild,
       const PDMFactory::MediaCodecsSupported& aSupported);
 
 #ifdef NIGHTLY_BUILD
-  virtual PContentChild::Result OnMessageReceived(const Message& aMsg) override;
-#else
-  using PContentChild::OnMessageReceived;
-#endif
+  virtual void OnChannelReceivedMessage(const Message& aMsg) override;
 
-  virtual PContentChild::Result OnMessageReceived(const Message& aMsg,
-                                                  Message*& aReply) override;
+  virtual PContentChild::Result OnMessageReceived(const Message& aMsg) override;
+
+  virtual PContentChild::Result OnMessageReceived(
+      const Message& aMsg, UniquePtr<Message>& aReply) override;
+#endif
 
   nsTArray<mozilla::UniquePtr<AlertObserver>> mAlertObservers;
   RefPtr<ConsoleListener> mConsoleListener;

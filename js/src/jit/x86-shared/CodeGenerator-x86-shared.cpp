@@ -2297,6 +2297,11 @@ void CodeGenerator::visitWasmTernarySimd128(LWasmTernarySimd128* ins) {
       masm.laneSelectSimd128(mask, lhs, rhs, dest);
       break;
     }
+    case wasm::SimdOp::I32x4DotI8x16I7x16AddS:
+      masm.dotInt8x16Int7x16ThenAdd(ToFloatRegister(ins->v0()),
+                                    ToFloatRegister(ins->v1()),
+                                    ToFloatRegister(ins->v2()));
+      break;
     default:
       MOZ_CRASH("NYI");
   }
@@ -2690,6 +2695,9 @@ void CodeGenerator::visitWasmBinarySimd128(LWasmBinarySimd128* ins) {
     case wasm::SimdOp::I16x8RelaxedQ15MulrS:
       masm.q15MulrInt16x8Relaxed(lhs, rhs, dest);
       break;
+    case wasm::SimdOp::I16x8DotI8x16I7x16S:
+      masm.dotInt8x16Int7x16(lhs, rhs, dest);
+      break;
 #  ifdef ENABLE_WASM_SIMD_WORMHOLE
     case wasm::SimdOp::MozWHSELFTEST:
       masm.loadConstantSimd128(wasm::WormholeSignature(), dest);
@@ -2715,6 +2723,7 @@ void CodeGenerator::visitWasmBinarySimd128WithConstant(
   FloatRegister lhs = ToFloatRegister(ins->lhsDest());
   const SimdConstant& rhs = ins->rhs();
   FloatRegister dest = ToFloatRegister(ins->output());
+  FloatRegister temp = ToTempFloatRegisterOrInvalid(ins->getTemp(0));
 
   switch (ins->simdOp()) {
     case wasm::SimdOp::I8x16Add:
@@ -2851,6 +2860,9 @@ void CodeGenerator::visitWasmBinarySimd128WithConstant(
       break;
     case wasm::SimdOp::I32x4LeS:
       masm.compareInt32x4(Assembler::LessThanOrEqual, lhs, rhs, dest);
+      break;
+    case wasm::SimdOp::I64x2Mul:
+      masm.mulInt64x2(lhs, rhs, dest, temp);
       break;
     case wasm::SimdOp::F32x4Eq:
       masm.compareFloat32x4(Assembler::Equal, lhs, rhs, dest);

@@ -190,6 +190,13 @@ class PictureInPictureLauncherChild extends JSWindowActorChild {
       return;
     }
 
+    if (!PictureInPictureChild.videoWrapper) {
+      PictureInPictureChild.videoWrapper = applyWrapper(
+        PictureInPictureChild,
+        video
+      );
+    }
+
     // All other requests to toggle PiP should open a new PiP
     // window
     const videoRef = ContentDOMReference.get(video);
@@ -1289,6 +1296,7 @@ class PictureInPictureToggleChild extends JSWindowActorChild {
 }
 
 class PictureInPictureChild extends JSWindowActorChild {
+  #subtitlesEnabled = false;
   // A weak reference to this PiP window's video element
   weakVideo = null;
 
@@ -1470,6 +1478,10 @@ class PictureInPictureChild extends JSWindowActorChild {
       return;
     }
 
+    if (!this.isSubtitlesEnabled) {
+      this.isSubtitlesEnabled = true;
+    }
+
     let allCuesArray = [...textTrackCues];
     // Re-order cues
     this.getOrderedWebVTTCues(allCuesArray);
@@ -1580,7 +1592,7 @@ class PictureInPictureChild extends JSWindowActorChild {
   }
 
   static videoIsMuted(video) {
-    return video.muted;
+    return this.videoWrapper.isMuted(video);
   }
 
   handleEvent(event) {
@@ -1623,7 +1635,7 @@ class PictureInPictureChild extends JSWindowActorChild {
           return;
         }
 
-        if (video.muted) {
+        if (this.constructor.videoIsMuted(video)) {
           this.sendAsyncMessage("PictureInPicture:Muting");
         } else {
           this.sendAsyncMessage("PictureInPicture:Unmuting");
@@ -2237,6 +2249,26 @@ class PictureInPictureChild extends JSWindowActorChild {
       /* ignore any exception from setting video.currentTime */
     }
   }
+
+  get isSubtitlesEnabled() {
+    return this.#subtitlesEnabled;
+  }
+
+  set isSubtitlesEnabled(val) {
+    if (val) {
+      Services.telemetry.recordEvent(
+        "pictureinpicture",
+        "subtitles_shown",
+        "subtitles",
+        null,
+        {
+          webVTTSubtitles: (!!this.getWeakVideo().textTracks
+            ?.length).toString(),
+        }
+      );
+    }
+    this.#subtitlesEnabled = val;
+  }
 }
 
 /**
@@ -2373,7 +2405,9 @@ class PictureInPictureChildVideoWrapper {
     // video control operations otherwise we fallback to a default implementation.
     // Because of this, we need to "waive Xray vision" by adding `.wrappedObject` to the
     // end.
-    this.#siteWrapper = new sandbox.PictureInPictureVideoWrapper().wrappedJSObject;
+    this.#siteWrapper = new sandbox.PictureInPictureVideoWrapper(
+      video
+    ).wrappedJSObject;
 
     return sandbox;
   }
@@ -2400,6 +2434,9 @@ class PictureInPictureChildVideoWrapper {
    * @param text The captions to be shown on the PiP window
    */
   updatePiPTextTracks(text) {
+    if (!this.#PictureInPictureChild.isSubtitlesEnabled && text) {
+      this.#PictureInPictureChild.isSubtitlesEnabled = true;
+    }
     let pipWindowTracksContainer = this.#PictureInPictureChild.document.getElementById(
       "texttracks"
     );
@@ -2562,6 +2599,24 @@ class PictureInPictureChildVideoWrapper {
         video.volume = volume;
       },
       validateRetVal: retVal => retVal == null,
+    });
+  }
+
+  /**
+   * OVERRIDABLE - calls the isMuted() method defined in the site wrapper script. Runs a fallback implementation
+   * if the method does not exist or if an error is thrown while calling it. This method is meant to get the mute
+   * state a video.
+   * @param {HTMLVideoElement} video
+   *  The originating video source element
+   * @param {Boolean} shouldMute
+   *  Boolean value true to mute the video, or false to unmute the video
+   */
+  isMuted(video) {
+    return this.#callWrapperMethod({
+      name: "isMuted",
+      args: [video],
+      fallback: () => video.muted,
+      validateRetVal: retVal => this.#isBoolean(retVal),
     });
   }
 

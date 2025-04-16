@@ -610,8 +610,8 @@ bool ExtractAV1CodecDetails(const nsAString& aCodec, uint8_t& aProfile,
   }
 
   // Valid profiles are: Main (0), High (1), Professional (2).
-  // Levels range from 0 to 23.
-  if (aProfile > 2 || aLevel > 23) {
+  // Levels range from 0 to 23, or 31 to remove level restrictions.
+  if (aProfile > 2 || (aLevel > 23 && aLevel != 31)) {
     return false;
   }
 
@@ -778,7 +778,7 @@ nsresult GenerateRandomPathName(nsCString& aOutSalt, uint32_t aLength) {
 }
 
 already_AddRefed<TaskQueue> CreateMediaDecodeTaskQueue(const char* aName) {
-  RefPtr<TaskQueue> queue = new TaskQueue(
+  RefPtr<TaskQueue> queue = TaskQueue::Create(
       GetMediaThreadPool(MediaThreadType::PLATFORM_DECODER), aName);
   return queue.forget();
 }

@@ -102,7 +102,6 @@ bool UtilityProcessChild::Init(base::ProcessId aParentPid,
 
   mSandbox = (SandboxingKind)aSandboxingKind;
 
-  mozilla::ipc::SetThisProcessName("Utility Process");
   profiler_set_process_name(nsCString("Utility Process"));
 
   // Notify the parent process that we have finished our init and that it can
@@ -121,6 +120,10 @@ void CGSShutdownServerConnections();
 mozilla::ipc::IPCResult UtilityProcessChild::RecvInit(
     const Maybe<FileDescriptor>& aBrokerFd,
     const bool& aCanRecordReleaseTelemetry) {
+  // Do this now (before closing WindowServer on macOS) to avoid risking
+  // blocking in GetCurrentProcess() called on that platform
+  mozilla::ipc::SetThisProcessName("Utility Process");
+
 #if defined(MOZ_SANDBOX)
 #  if defined(XP_MACOSX)
   // Close all current connections to the WindowServer. This ensures that the
@@ -164,7 +167,8 @@ mozilla::ipc::IPCResult UtilityProcessChild::RecvRequestMemoryReport(
     const uint32_t& aGeneration, const bool& aAnonymize,
     const bool& aMinimizeMemoryUsage, const Maybe<FileDescriptor>& aDMDFile,
     const RequestMemoryReportResolver& aResolver) {
-  nsPrintfCString processName("Utility (pid: %u, sandboxingKind: %" PRIu64 ")",
+  nsPrintfCString processName("Utility (pid: %" PRIPID
+                              ", sandboxingKind: %" PRIu64 ")",
                               base::GetCurrentProcId(), mSandbox);
 
   mozilla::dom::MemoryReportRequestClient::Start(

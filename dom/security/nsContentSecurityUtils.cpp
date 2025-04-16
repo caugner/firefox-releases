@@ -1367,7 +1367,7 @@ bool nsContentSecurityUtils::ValidateScriptFilename(JSContext* cx,
 
   auto kAllowedFilenamesExact = {
       // Allow through the injection provided by about:sync addon
-      u"data:,new function() {\n  Components.utils.import(\"chrome://aboutsync/content/AboutSyncRedirector.js\");\n  AboutSyncRedirector.register();\n}"_ns,
+      u"data:,new function() {\n  const { AboutSyncRedirector } = ChromeUtils.import(\"chrome://aboutsync/content/AboutSyncRedirector.js\");\n  AboutSyncRedirector.register();\n}"_ns,
   };
 
   for (auto allowedFilename : kAllowedFilenamesExact) {
@@ -1381,7 +1381,11 @@ bool nsContentSecurityUtils::ValidateScriptFilename(JSContext* cx,
       // and this is the most reasonable. See 1727770
       u"about:downloads"_ns,
       // We think this is the same problem as about:downloads
-      u"about:preferences"_ns};
+      u"about:preferences"_ns,
+      // Browser console will give a filename of 'debugger' See 1763943
+      // Sometimes it's 'debugger eager eval code', other times just 'debugger
+      // eval code'
+      u"debugger"_ns};
 
   for (auto allowedFilenamePrefix : kAllowedFilenamesPrefix) {
     if (StringBeginsWith(filenameU, allowedFilenamePrefix)) {

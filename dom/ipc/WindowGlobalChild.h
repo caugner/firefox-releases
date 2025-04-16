@@ -18,8 +18,7 @@
 class nsGlobalWindowInner;
 class nsDocShell;
 
-namespace mozilla {
-namespace dom {
+namespace mozilla::dom {
 
 class BrowsingContext;
 class FeaturePolicy;
@@ -138,7 +137,7 @@ class WindowGlobalChild final : public WindowGlobalActor,
  protected:
   const nsACString& GetRemoteType() override;
 
-  already_AddRefed<JSActor> InitJSActor(JS::HandleObject aMaybeActor,
+  already_AddRefed<JSActor> InitJSActor(JS::Handle<JSObject*> aMaybeActor,
                                         const nsACString& aName,
                                         ErrorResult& aRv) override;
   mozilla::ipc::IProtocol* AsNativeActor() override { return this; }
@@ -204,7 +203,6 @@ class WindowGlobalChild final : public WindowGlobalActor,
   int64_t mBeforeUnloadListeners = 0;
 };
 
-}  // namespace dom
-}  // namespace mozilla
+}  // namespace mozilla::dom
 
 #endif  // !defined(mozilla_dom_WindowGlobalChild_h)

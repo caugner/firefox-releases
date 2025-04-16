@@ -28,6 +28,7 @@
             },
             "data": {
               "type": "object",
+              "description": "Additional data provided as argument when executing the action",
               "properties": {
                 "url": {
                   "type": "string",
@@ -38,15 +39,14 @@
                   "description": "Expiration timestamp to be used as argument to the action"
                 }
               }
-            },
-            "description": "Additional data provided as argument when executing the action"
+            }
           },
-          "additionalProperties": false,
+          "additionalProperties": true,
           "description": "Optional action to take in addition to showing the notification",
           "required": ["id", "data"]
         }
       },
-      "additionalProperties": false,
+      "additionalProperties": true,
       "required": ["action"]
     },
     "targeting": {

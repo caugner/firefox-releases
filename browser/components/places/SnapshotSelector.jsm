@@ -12,6 +12,7 @@ XPCOMUtils.defineLazyModuleGetters(this, {
   DeferredTask: "resource://gre/modules/DeferredTask.jsm",
   FilterAdult: "resource://activity-stream/lib/FilterAdult.jsm",
   Services: "resource://gre/modules/Services.jsm",
+  PlacesUIUtils: "resource:///modules/PlacesUIUtils.jsm",
   Snapshots: "resource:///modules/Snapshots.jsm",
   SnapshotScorer: "resource:///modules/SnapshotScorer.jsm",
 });
@@ -46,6 +47,15 @@ XPCOMUtils.defineLazyGetter(this, "logConsole", function() {
  *   The type of snapshots desired.
  * @property {function} getCurrentSessionUrls
  *   A function that returns a Set containing the urls for the current session.
+ */
+
+/**
+ * @typedef {object} Recommendation
+ *   The details of a specific recommendation for a snapshot.
+ * @property {Snapshot} snapshot
+ *   The snapshot this recommendation relates to.
+ * @property {number} score
+ *   The score for the snapshot.
  */
 
 /**
@@ -89,6 +99,7 @@ class SnapshotSelector extends EventEmitter {
     filterAdult: false,
     sourceWeights: null,
     url: undefined,
+    time: Date.now(),
     type: undefined,
     getCurrentSessionUrls: undefined,
   };
@@ -204,23 +215,31 @@ class SnapshotSelector extends EventEmitter {
     let context = { ...this.#context };
     logConsole.debug("Building snapshots", context);
 
-    // Generally, we query for one more than we need in case the current url is
-    // returned. In the case of filtering out adult sites, we query for a few
-    // more entries than requested, in case the most recent snapshots are all adult.
-    // This may not catch all cases, but saves the complexity of repeated queries.
+    // We query for more snapshots than we need so that we can account for
+    // deduplicating and filtering out adult sites. This may not catch all
+    // cases, but saves the complexity of repeated queries.
     let snapshots = await Snapshots.query({
-      limit: context.filterAdult ? context.count * 4 : context.count + 1,
+      limit: context.count * 4,
       type: context.type,
     });
 
-    snapshots = snapshots
-      .filter(snapshot => {
-        if (snapshot.url == context.url) {
-          return false;
-        }
-        return !context.filterAdult || !FilterAdult.isAdultUrl(snapshot.url);
-      })
-      .slice(0, context.count);
+    snapshots = snapshots.filter(snapshot => {
+      if (snapshot.url == context.url) {
+        return false;
+      }
+      return !context.filterAdult || !FilterAdult.isAdultUrl(snapshot.url);
+    });
+
+    snapshots = SnapshotScorer.dedupeSnapshots(
+      snapshots.map(s => ({
+        snapshot: s,
+      }))
+    )
+      .slice(0, context.count)
+      .map(s => s.snapshot)
+      .slice();
+
+    PlacesUIUtils.insertTitleStartDiffs(snapshots);
 
     this.#snapshotsGenerated(snapshots);
   }
@@ -270,59 +289,48 @@ class SnapshotSelector extends EventEmitter {
       .slice(0, context.count)
       .map(r => r.snapshot);
 
-    logConsole.debug(
-      "Reduced final candidates:",
-      snapshots.map(s => s.url)
-    );
+    PlacesUIUtils.insertTitleStartDiffs(snapshots);
 
     this.#snapshotsGenerated(snapshots);
   }
 
   /**
-   * Sets the current context's url for this selector.
-   *
-   * @param {string} url
-   *  The url of the context
+   * Update context details and start a rebuild.
+   * Undefined properties are ignored, thus pass null to nullify a property.
+   * @param {string} [url]
+   *  The url of the current context.
+   * @param {number} [time]
+   *  The time, in milliseconds from the Unix epoch.
+   * @param {PageDataSchema.DATA_TYPE} [type]
+   *  The type of snapshots for this selector.
+   * @param {string} [rebuildImmediately] (default: false)
+   *  Whether to rebuild immediately instead of waiting some delay. Useful on
+   *  startup.
    */
-  setUrl(url) {
-    url = Snapshots.stripFragments(url);
-    if (this.#context.url == url) {
-      return;
+  updateDetailsAndRebuild({ url, time, type, rebuildImmediately = false }) {
+    let rebuild = false;
+    if (url !== undefined) {
+      url = Snapshots.stripFragments(url);
+      if (url != this.#context.url) {
+        this.#context.url = url;
+        rebuild = true;
+      }
     }
-
-    this.#context.url = url;
-    this.rebuild();
-  }
-
-  /**
-   * Like setUrl, but rebuilds immediately instead of after a delay. Useful for
-   * startup.
-   *
-   * @param {string} url
-   *  The url of the context
-   */
-  setUrlAndRebuildNow(url) {
-    url = Snapshots.stripFragments(url);
-    if (this.#context.url == url) {
-      return;
+    if (time !== undefined && time != this.#context.time) {
+      this.#context.time = time;
+      rebuild = true;
     }
-
-    this.#context.url = url;
-    this.#buildSnapshots();
-  }
-
-  /**
-   * Sets the type of snapshots for this selector.
-   *
-   * @param {PageDataCollector.DATA_TYPE | undefined} type
-   */
-  async setType(type) {
-    if (this.#context.type === type) {
-      return;
+    if (type !== undefined && type != this.#context.type) {
+      this.#context.type = type;
+      rebuild = true;
     }
-
-    this.#context.type = type;
-    this.rebuild();
+    if (rebuild) {
+      if (rebuildImmediately) {
+        this.#buildSnapshots();
+      } else {
+        this.rebuild();
+      }
+    }
   }
 }
 

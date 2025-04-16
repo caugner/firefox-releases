@@ -132,7 +132,7 @@ var {
 
 const { getUniqueId, promiseTimeout } = ExtensionUtils;
 
-const { EventEmitter } = ExtensionCommon;
+const { EventEmitter, updateAllowedOrigins } = ExtensionCommon;
 
 XPCOMUtils.defineLazyGetter(this, "console", ExtensionCommon.getConsole);
 
@@ -149,6 +149,7 @@ XPCOMUtils.defineLazyGetter(this, "LAZY_NO_PROMPT_PERMISSIONS", async () => {
     Schemas.getPermissionNames([
       "PermissionNoPrompt",
       "OptionalPermissionNoPrompt",
+      "PermissionPrivileged",
     ])
   );
 });
@@ -2082,8 +2083,8 @@ class ExtensionData {
 
 const PROXIED_EVENTS = new Set([
   "test-harness-message",
-  "add-permissions",
-  "remove-permissions",
+  "background-script-suspend",
+  "background-script-suspend-canceled",
   "background-script-suspend-ignored",
 ]);
 
@@ -2318,25 +2319,20 @@ class Extension extends ExtensionData {
       for (let perm of permissions.permissions) {
         this.permissions.add(perm);
       }
-
-      if (permissions.origins.length) {
-        let patterns = this.allowedOrigins.patterns.map(host => host.pattern);
-
-        this.allowedOrigins = new MatchPatternSet(
-          new Set([...patterns, ...permissions.origins]),
-          {
-            restrictSchemes: this.restrictSchemes,
-            ignorePath: true,
-          }
-        );
-      }
-
       this.policy.permissions = Array.from(this.permissions);
-      this.policy.allowedOrigins = this.allowedOrigins;
+
+      updateAllowedOrigins(this.policy, permissions.origins, /* isAdd */ true);
+      this.allowedOrigins = this.policy.allowedOrigins;
 
       if (this.policy.active) {
         this.setSharedData("", this.serialize());
         Services.ppmm.sharedData.flush();
+        this.broadcast("Extension:UpdatePermissions", {
+          id: this.id,
+          origins: permissions.origins,
+          permissions: permissions.permissions,
+          add: true,
+        });
       }
 
       this.cachePermissions();
@@ -2347,23 +2343,20 @@ class Extension extends ExtensionData {
       for (let perm of permissions.permissions) {
         this.permissions.delete(perm);
       }
-
-      let origins = permissions.origins.map(
-        origin => new MatchPattern(origin, { ignorePath: true }).pattern
-      );
-
-      this.allowedOrigins = new MatchPatternSet(
-        this.allowedOrigins.patterns.filter(
-          host => !origins.includes(host.pattern)
-        )
-      );
-
       this.policy.permissions = Array.from(this.permissions);
-      this.policy.allowedOrigins = this.allowedOrigins;
+
+      updateAllowedOrigins(this.policy, permissions.origins, /* isAdd */ false);
+      this.allowedOrigins = this.policy.allowedOrigins;
 
       if (this.policy.active) {
         this.setSharedData("", this.serialize());
         Services.ppmm.sharedData.flush();
+        this.broadcast("Extension:UpdatePermissions", {
+          id: this.id,
+          origins: permissions.origins,
+          permissions: permissions.permissions,
+          add: false,
+        });
       }
 
       this.cachePermissions();
@@ -2411,6 +2404,18 @@ class Extension extends ExtensionData {
       }
     }
     return frameLoader || ExtensionParent.DebugUtils.getFrameLoader(this.id);
+  }
+
+  get backgroundContext() {
+    for (let view of this.views) {
+      if (
+        view.viewType === "background" ||
+        view.viewType === "background_worker"
+      ) {
+        return view;
+      }
+    }
+    return undefined;
   }
 
   on(hook, f) {

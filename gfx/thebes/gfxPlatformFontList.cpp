@@ -304,6 +304,12 @@ gfxPlatformFontList::gfxPlatformFontList(bool aNeedFullnamePostscriptNames)
 }
 
 gfxPlatformFontList::~gfxPlatformFontList() {
+  // We take the lock here because it's possible the InitFontList thread is
+  // still running, in which case we need to wait for it to finish; this will
+  // block until the lock becomes available, ensuring we don't destroy things
+  // the initialization thread is using.
+  AutoLock lock(mLock);
+
   mSharedCmaps.Clear();
   ClearLangGroupPrefFontsLocked();
 
@@ -1440,7 +1446,7 @@ gfxFontFamily* gfxPlatformFontList::CheckFamily(gfxFontFamily* aFamily) {
     aFamily->FindStyleVariations();
   }
 
-  if (aFamily && aFamily->GetFontList().Length() == 0) {
+  if (aFamily && aFamily->FontListLength() == 0) {
     // Failed to load any faces for this family, so discard it.
     nsAutoCString key;
     GenerateFontListKey(aFamily->Name(), key);

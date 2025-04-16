@@ -19,6 +19,10 @@
 #include "mozilla/DataMutex.h"
 #include "mozilla/UniquePtr.h"
 
+#ifdef FUZZING_SNAPSHOT
+#  include "mozilla/fuzzing/IPCFuzzController.h"
+#endif
+
 namespace mozilla::ipc {
 
 class NodeController;
@@ -30,6 +34,11 @@ class NodeController;
 class NodeChannel final : public IPC::Channel::Listener {
   using NodeName = mojo::core::ports::NodeName;
   using PortName = mojo::core::ports::PortName;
+
+#ifdef FUZZING_SNAPSHOT
+  // Required because IPCFuzzController calls OnMessageReceived.
+  friend class mozilla::fuzzing::IPCFuzzController;
+#endif
 
  public:
   NS_INLINE_DECL_THREADSAFE_REFCOUNTING_WITH_DESTROY(NodeChannel, Destroy())
@@ -63,7 +72,8 @@ class NodeChannel final : public IPC::Channel::Listener {
   };
 
   NodeChannel(const NodeName& aName, UniquePtr<IPC::Channel> aChannel,
-              Listener* aListener, base::ProcessId aPid = base::kInvalidProcessId);
+              Listener* aListener,
+              base::ProcessId aPid = base::kInvalidProcessId);
 
   // Send the given message over this peer channel link. May be called from any
   // thread.
@@ -97,6 +107,10 @@ class NodeChannel final : public IPC::Channel::Listener {
   // completed. MUST BE CALLED FROM THE IO THREAD.
   void SetName(const NodeName& aNewName) { mName = aNewName; }
 
+#ifdef FUZZING_SNAPSHOT
+  const NodeName& GetName() { return mName; }
+#endif
+
 #ifdef XP_MACOSX
   // Called by the GeckoChildProcessHost to provide the task_t for the peer
   // process. MUST BE CALLED FROM THE IO THREAD.
@@ -116,7 +130,7 @@ class NodeChannel final : public IPC::Channel::Listener {
   void DoSendMessage(UniquePtr<IPC::Message> aMessage);
 
   // IPC::Channel::Listener implementation
-  void OnMessageReceived(IPC::Message&& aMessage) override;
+  void OnMessageReceived(UniquePtr<IPC::Message> aMessage) override;
   void OnChannelConnected(base::ProcessId aPeerPid) override;
   void OnChannelError() override;
 
@@ -141,6 +155,11 @@ class NodeChannel final : public IPC::Channel::Listener {
 
   // WARNING: This must only be accessed on the IO thread.
   bool mClosed = false;
+
+#ifdef FUZZING_SNAPSHOT
+  // WARNING: This must only be accessed on the IO thread.
+  bool mBlockSendRecv = false;
+#endif
 
   // WARNING: Must only be accessed on the IO thread.
   WeakPtr<IPC::Channel::Listener> mExistingListener;

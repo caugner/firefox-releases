@@ -262,7 +262,7 @@ void MacroAssemblerCompat::handleFailureWithHandlerTail(
           r0);
   loadPtr(
       Address(PseudoStackPointer, ResumeFromException::offsetOfFramePointer()),
-      BaselineFrameReg);
+      FramePointer);
   loadPtr(
       Address(PseudoStackPointer, ResumeFromException::offsetOfStackPointer()),
       PseudoStackPointer);
@@ -270,14 +270,14 @@ void MacroAssemblerCompat::handleFailureWithHandlerTail(
   Br(x0);
 
   // If we found a finally block, this must be a baseline frame. Push two
-  // values expected by JSOp::Retsub: the exception and BooleanValue(true).
+  // values expected by the finally block: the exception and BooleanValue(true).
   bind(&finally);
   ARMRegister exception = x1;
   Ldr(exception, MemOperand(PseudoStackPointer64,
                             ResumeFromException::offsetOfException()));
   Ldr(x0,
       MemOperand(PseudoStackPointer64, ResumeFromException::offsetOfTarget()));
-  Ldr(ARMRegister(BaselineFrameReg, 64),
+  Ldr(ARMRegister(FramePointer, 64),
       MemOperand(PseudoStackPointer64,
                  ResumeFromException::offsetOfFramePointer()));
   Ldr(PseudoStackPointer64,
@@ -294,19 +294,18 @@ void MacroAssemblerCompat::handleFailureWithHandlerTail(
   bind(&returnBaseline);
   loadPtr(
       Address(PseudoStackPointer, ResumeFromException::offsetOfFramePointer()),
-      BaselineFrameReg);
+      FramePointer);
   loadPtr(
       Address(PseudoStackPointer, ResumeFromException::offsetOfStackPointer()),
       PseudoStackPointer);
   // See comment further up beginning "`retn` does indeed sync the stack
   // pointer".  That comment applies here too.
   syncStackPtr();
-  loadValue(
-      Address(BaselineFrameReg, BaselineFrame::reverseOffsetOfReturnValue()),
-      JSReturnOperand);
-  movePtr(BaselineFrameReg, PseudoStackPointer);
+  loadValue(Address(FramePointer, BaselineFrame::reverseOffsetOfReturnValue()),
+            JSReturnOperand);
+  movePtr(FramePointer, PseudoStackPointer);
   syncStackPtr();
-  vixl::MacroAssembler::Pop(ARMRegister(BaselineFrameReg, 64));
+  vixl::MacroAssembler::Pop(ARMRegister(FramePointer, 64));
   jump(&profilingInstrumentation);
 
   // Return the given value to the caller.

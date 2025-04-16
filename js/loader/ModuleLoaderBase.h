@@ -10,18 +10,22 @@
 #include "LoadedScript.h"
 #include "ScriptLoadRequest.h"
 
+#include "ImportMap.h"
 #include "js/TypeDecls.h"  // JS::MutableHandle, JS::Handle, JS::Root
 #include "js/Modules.h"
 #include "nsRefPtrHashtable.h"
 #include "nsCOMArray.h"
 #include "nsCOMPtr.h"
-#include "nsILoadInfo.h"  // nsSecurityFlags
-#include "nsINode.h"      // nsIURI
+#include "nsILoadInfo.h"    // nsSecurityFlags
+#include "nsINode.h"        // nsIURI
+#include "nsThreadUtils.h"  // GetMainThreadSerialEventTarget
 #include "nsURIHashKey.h"
 #include "mozilla/CORSMode.h"
 #include "mozilla/dom/JSExecutionContext.h"
 #include "mozilla/MaybeOneOf.h"
 #include "mozilla/MozPromise.h"
+#include "mozilla/UniquePtr.h"
+#include "ResolveResult.h"
 
 class nsIURI;
 
@@ -54,11 +58,17 @@ class ScriptLoaderInterface : public nsISupports {
   using ScriptLoadRequestList = JS::loader::ScriptLoadRequestList;
   using ModuleLoadRequest = JS::loader::ModuleLoadRequest;
 
+  virtual ~ScriptLoaderInterface() = default;
+
   // In some environments, we will need to default to a base URI
   virtual nsIURI* GetBaseURI() const = 0;
 
   virtual void ReportErrorToConsole(ScriptLoadRequest* aRequest,
                                     nsresult aResult) const = 0;
+
+  virtual void ReportWarningToConsole(
+      ScriptLoadRequest* aRequest, const char* aMessageName,
+      const nsTArray<nsString>& aParams = nsTArray<nsString>()) const = 0;
 
   // Fill in CompileOptions, as well as produce the introducer script for
   // subsequent calls to UpdateDebuggerMetadata
@@ -67,12 +77,14 @@ class ScriptLoaderInterface : public nsISupports {
       JS::MutableHandle<JSScript*> aIntroductionScript) = 0;
 
   virtual void MaybePrepareModuleForBytecodeEncodingBeforeExecute(
-      JSContext* aCx, ModuleLoadRequest* aRequest) = 0;
+      JSContext* aCx, ModuleLoadRequest* aRequest) {}
 
   virtual nsresult MaybePrepareModuleForBytecodeEncodingAfterExecute(
-      ModuleLoadRequest* aRequest, nsresult aRv) = 0;
+      ModuleLoadRequest* aRequest, nsresult aRv) {
+    return NS_OK;
+  }
 
-  virtual void MaybeTriggerBytecodeEncoding() = 0;
+  virtual void MaybeTriggerBytecodeEncoding() {}
 };
 
 /*
@@ -144,8 +156,19 @@ class ModuleLoaderBase : public nsISupports {
 
   nsCOMPtr<nsIGlobalObject> mGlobalObject;
 
+  // Event handler used to process MozPromise actions, used internally to wait
+  // for fetches to finish and for imports to become avilable.
+  nsCOMPtr<nsISerialEventTarget> mEventTarget;
+
+  // https://wicg.github.io/import-maps/#document-acquiring-import-maps
+  //
+  // Each Document has an acquiring import maps boolean. It is initially true.
+  bool mAcquiringImportMaps = true;
+
  protected:
   RefPtr<ScriptLoaderInterface> mLoader;
+
+  mozilla::UniquePtr<ImportMap> mImportMap;
 
   virtual ~ModuleLoaderBase();
 
@@ -153,7 +176,12 @@ class ModuleLoaderBase : public nsISupports {
   NS_DECL_CYCLE_COLLECTING_ISUPPORTS
   NS_DECL_CYCLE_COLLECTION_CLASS(ModuleLoaderBase)
   explicit ModuleLoaderBase(ScriptLoaderInterface* aLoader,
-                            nsIGlobalObject* aGlobalObject);
+                            nsIGlobalObject* aGlobalObject,
+                            nsISerialEventTarget* aEventTarget =
+                                mozilla::GetMainThreadSerialEventTarget());
+
+  // Called to break cycles during shutdown to prevent memory leaks.
+  void Shutdown();
 
   using LoadedScript = JS::loader::LoadedScript;
   using ScriptFetchOptions = JS::loader::ScriptFetchOptions;
@@ -223,9 +251,33 @@ class ModuleLoaderBase : public nsISupports {
   // Implements https://html.spec.whatwg.org/#run-a-module-script
   nsresult EvaluateModule(ModuleLoadRequest* aRequest);
 
+  // Evaluate a module in the given context. Does not push an entry to the
+  // execution stack.
+  nsresult EvaluateModuleInContext(JSContext* aCx, ModuleLoadRequest* aRequest,
+                                   JS::ModuleErrorBehaviour errorBehaviour);
+
   void StartDynamicImport(ModuleLoadRequest* aRequest);
   void ProcessDynamicImport(ModuleLoadRequest* aRequest);
   void CancelAndClearDynamicImports();
+
+  // Process <script type="importmap">
+  mozilla::UniquePtr<ImportMap> ParseImportMap(ScriptLoadRequest* aRequest);
+
+  // Implements https://wicg.github.io/import-maps/#register-an-import-map
+  void RegisterImportMap(mozilla::UniquePtr<ImportMap> aImportMap);
+
+  /**
+   * Getter and Setter for mAcquiringImportMaps.
+   */
+  bool GetAcquiringImportMaps() const { return mAcquiringImportMaps; }
+  void SetAcquiringImportMaps(bool acquiring) {
+    mAcquiringImportMaps = acquiring;
+  }
+
+  // Returns true if the module for given URL is already fetched.
+  bool IsModuleFetched(nsIURI* aURL) const;
+
+  nsresult GetFetchedModuleURLs(nsTArray<nsCString>& aURLs);
 
   // Internal methods.
 
@@ -253,14 +305,15 @@ class ModuleLoaderBase : public nsISupports {
   static bool HostGetSupportedImportAssertions(
       JSContext* aCx, JS::ImportAssertionVector& aValues);
 
-  already_AddRefed<nsIURI> ResolveModuleSpecifier(LoadedScript* aScript,
-                                                  const nsAString& aSpecifier);
+  ResolveResult ResolveModuleSpecifier(LoadedScript* aScript,
+                                       const nsAString& aSpecifier);
 
   static nsresult HandleResolveFailure(JSContext* aCx, LoadedScript* aScript,
                                        const nsAString& aSpecifier,
+                                       ResolveError aError,
                                        uint32_t aLineNumber,
                                        uint32_t aColumnNumber,
-                                       JS::MutableHandle<JS::Value> errorOut);
+                                       JS::MutableHandle<JS::Value> aErrorOut);
 
   enum class RestartRequest { No, Yes };
   nsresult StartOrRestartModuleLoad(ModuleLoadRequest* aRequest,

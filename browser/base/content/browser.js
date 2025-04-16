@@ -533,15 +533,11 @@ XPCOMUtils.defineLazyPreferenceGetter(
   false
 );
 
-/* Temporary pref while the dust settles around the updated tooltip design
-   for tabs and bookmarks toolbar. This is a bit of an orphan from the
-   proton project. We should figure out what happens with this in
-   bug 1746909. */
 XPCOMUtils.defineLazyPreferenceGetter(
   this,
-  "gProtonPlacesTooltip",
-  "browser.proton.places-tooltip.enabled",
-  false
+  "gAlwaysOpenPanel",
+  "browser.download.alwaysOpenPanel",
+  true
 );
 
 customElements.setElementCreationCallback("translation-notification", () => {
@@ -564,6 +560,7 @@ var gMultiProcessBrowser = window.docShell.QueryInterface(Ci.nsILoadContext)
   .useRemoteTabs;
 var gFissionBrowser = window.docShell.QueryInterface(Ci.nsILoadContext)
   .useRemoteSubframes;
+var gFirefoxViewTab;
 
 var gBrowserAllowScriptsToCloseInitialTabs = false;
 
@@ -632,7 +629,6 @@ async function gLazyFindCommand(cmd, ...args) {
 
 var gPageIcons = {
   "about:home": "chrome://branding/content/icon32.png",
-  "about:myfirefox": "chrome://branding/content/icon32.png",
   "about:newtab": "chrome://branding/content/icon32.png",
   "about:welcome": "chrome://branding/content/icon32.png",
   "about:privatebrowsing": "chrome://browser/skin/privatebrowsing/favicon.svg",
@@ -641,7 +637,7 @@ var gPageIcons = {
 var gInitialPages = [
   "about:blank",
   "about:home",
-  ...(AppConstants.NIGHTLY_BUILD ? ["about:myfirefox"] : []),
+  ...(AppConstants.NIGHTLY_BUILD ? ["about:firefoxview"] : []),
   "about:newtab",
   "about:privatebrowsing",
   "about:sessionrestore",
@@ -1916,7 +1912,7 @@ var gBrowserInit = {
     );
     Services.obs.addObserver(
       gXPInstallObserver,
-      "addon-install-webapi-blocked-policy"
+      "addon-install-policy-blocked"
     );
     Services.obs.addObserver(
       gXPInstallObserver,
@@ -2545,7 +2541,7 @@ var gBrowserInit = {
       );
       Services.obs.removeObserver(
         gXPInstallObserver,
-        "addon-install-webapi-blocked-policy"
+        "addon-install-policy-blocked"
       );
       Services.obs.removeObserver(
         gXPInstallObserver,
@@ -7328,6 +7324,29 @@ var ToolbarContextMenu = {
     Services.prefs.setBoolPref("browser.download.autohideButton", autoHide);
   },
 
+  updateDownloadsAlwaysOpenPanel(popup) {
+    let separator = document.getElementById(
+      "toolbarDownloadsAnchorMenuSeparator"
+    );
+    let checkbox = document.getElementById(
+      "toolbar-context-always-open-downloads-panel"
+    );
+    let isDownloads =
+      popup.triggerNode &&
+      ["downloads-button", "wrapper-downloads-button"].includes(
+        popup.triggerNode.id
+      );
+    separator.hidden = checkbox.hidden = !isDownloads;
+    gAlwaysOpenPanel
+      ? checkbox.setAttribute("checked", "true")
+      : checkbox.removeAttribute("checked");
+  },
+
+  onDownloadsAlwaysOpenPanelChange(event) {
+    let alwaysOpen = event.target.getAttribute("checked") == "true";
+    Services.prefs.setBoolPref("browser.download.alwaysOpenPanel", alwaysOpen);
+  },
+
   _getUnwrappedTriggerNode(popup) {
     // Toolbar buttons are wrapped in customize mode. Unwrap if necessary.
     let { triggerNode } = popup;
@@ -8385,6 +8404,16 @@ const gRemoteControl = {
   },
 
   updateVisualCue() {
+    // Disable updating the remote control cue for performance tests,
+    // because these could fail due to an early initialization of Marionette.
+    const disableRemoteControlCue = Services.prefs.getBoolPref(
+      "browser.chrome.disableRemoteControlCueForTests",
+      false
+    );
+    if (disableRemoteControlCue && Cu.isInAutomation) {
+      return;
+    }
+
     const mainWindow = document.documentElement;
     const remoteControlComponent = this.getRemoteControlComponent();
     if (remoteControlComponent) {

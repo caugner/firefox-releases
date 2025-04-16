@@ -261,7 +261,13 @@ var interfaceNamesInGlobalScope = [
     insecureContext: true,
   },
   // IMPORTANT: Do not change this list without review from a DOM peer!
+  { name: "ReadableByteStreamController", insecureContext: true },
+  // IMPORTANT: Do not change this list without review from a DOM peer!
   { name: "ReadableStream", insecureContext: true },
+  // IMPORTANT: Do not change this list without review from a DOM peer!
+  { name: "ReadableStreamBYOBReader", insecureContext: true },
+  // IMPORTANT: Do not change this list without review from a DOM peer!
+  { name: "ReadableStreamBYOBRequest", insecureContext: true },
   // IMPORTANT: Do not change this list without review from a DOM peer!
   { name: "ReadableStreamDefaultController", insecureContext: true },
   // IMPORTANT: Do not change this list without review from a DOM peer!
@@ -295,12 +301,11 @@ var interfaceNamesInGlobalScope = [
   // IMPORTANT: Do not change this list without review from a DOM peer!
   { name: "TextEncoder", insecureContext: true },
   // IMPORTANT: Do not change this list without review from a DOM peer!
-  { name: "TransformStream", insecureContext: true, nightly: true },
+  { name: "TransformStream", insecureContext: true },
   // IMPORTANT: Do not change this list without review from a DOM peer!
   {
     name: "TransformStreamDefaultController",
     insecureContext: true,
-    nightly: true,
   },
   // IMPORTANT: Do not change this list without review from a DOM peer!
   { name: "XMLHttpRequest", insecureContext: true },

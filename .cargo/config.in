@@ -7,10 +7,10 @@ git = "https://github.com/smol-rs/async-task"
 replace-with = "vendored-sources"
 rev = "f6488e35beccb26eb6e85847b02aa78a42cd3d0e"
 
-[source."https://github.com/msirringhaus/minidump_writer_linux.git"]
-git = "https://github.com/msirringhaus/minidump_writer_linux.git"
+[source."https://github.com/rust-minidump/minidump-writer.git"]
+git = "https://github.com/rust-minidump/minidump-writer.git"
 replace-with = "vendored-sources"
-rev = "029ac0d54b237f27dc7d8d4e51bc0fb076e5e852"
+rev = "75ada456c92a429704691a85e1cb42fef8cafc0d"
 
 [source."https://github.com/mozilla/neqo"]
 git = "https://github.com/mozilla/neqo"
@@ -50,7 +50,7 @@ rev = "c51b63595a27a6ef45161012323e0261475c10c9"
 [source."https://github.com/mozilla-spidermonkey/jsparagus"]
 git = "https://github.com/mozilla-spidermonkey/jsparagus"
 replace-with = "vendored-sources"
-rev = "ac4a33d7b9ba2fd921cd59977fc49b8350901b36"
+rev = "8e3bb9d83bf0d503279a1ffde104337d1ef18703"
 
 [source."https://github.com/kinetiknz/mio-named-pipes"]
 git = "https://github.com/kinetiknz/mio-named-pipes"
@@ -85,12 +85,12 @@ rev = "3484d3e3ebdc8931493aa5df4d7ee9360a90e76b"
 [source."https://github.com/gfx-rs/wgpu"]
 git = "https://github.com/gfx-rs/wgpu"
 replace-with = "vendored-sources"
-rev = "0b61a191"
+rev = "b51fd851"
 
 [source."https://github.com/gfx-rs/naga"]
 git = "https://github.com/gfx-rs/naga"
 replace-with = "vendored-sources"
-rev = "85056524"
+rev = "1aa91549"
 
 [source."https://github.com/gfx-rs/metal-rs"]
 git = "https://github.com/gfx-rs/metal-rs"

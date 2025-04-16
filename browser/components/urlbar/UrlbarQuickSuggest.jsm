@@ -58,10 +58,14 @@ const ONBOARDING_URI =
   "chrome://browser/content/urlbar/quicksuggestOnboarding.html";
 
 // This is a score in the range [0, 1] used by the provider to compare
-// suggestions from remote settings to suggestions from Merino. Remote settings
-// suggestions don't have a natural score so we hardcode a value, and we choose
-// a low value to allow Merino to experiment with a broad range of scores.
-const SUGGESTION_SCORE = 0.2;
+// suggestions. All suggestions require a score, so if a remote settings
+// suggestion does not have one, it's assigned this value. We choose a low value
+// to allow Merino to experiment with a broad range of scores server side.
+const DEFAULT_SUGGESTION_SCORE = 0.2;
+
+// Entries are added to the `_resultsByKeyword` map in chunks, and each chunk
+// will add at most this many entries.
+const ADD_RESULTS_CHUNK_SIZE = 1000;
 
 /**
  * Fetches the suggestions data from RemoteSettings and builds the structures
@@ -84,12 +88,12 @@ class QuickSuggest extends EventEmitter {
 
   /**
    * @returns {number}
-   *   A score in the range [0, 1] that can be used to compare suggestions from
-   *   remote settings to suggestions from Merino. Remote settings suggestions
-   *   don't have a natural score so we hardcode a value.
+   *   A score in the range [0, 1] that can be used to compare suggestions. All
+   *   suggestions require a score, so if a remote settings suggestion does not
+   *   have one, it's assigned this value.
    */
-  get SUGGESTION_SCORE() {
-    return SUGGESTION_SCORE;
+  get DEFAULT_SUGGESTION_SCORE() {
+    return DEFAULT_SUGGESTION_SCORE;
   }
 
   /**
@@ -134,17 +138,28 @@ class QuickSuggest extends EventEmitter {
    *
    * @param {string} phrase
    *   The search string.
-   * @returns {object}
-   *   The matched suggestion object or null if none.
+   * @returns {array}
+   *   The matched suggestion objects. If there are no matches, an empty array
+   *   is returned.
    */
   async query(phrase) {
     log.info("Handling query for", phrase);
     phrase = phrase.toLowerCase();
-    let result = this._resultsByKeyword.get(phrase);
-    if (!result) {
-      return null;
+    let object = this._resultsByKeyword.get(phrase);
+    if (!object) {
+      return [];
     }
-    return {
+
+    // `object` will be a single result object if there's only one match or an
+    // array of result objects if there's more than one match.
+    let results = [object].flat();
+
+    // Start each icon fetch at the same time and wait for them all to finish.
+    let icons = await Promise.all(
+      results.map(({ icon }) => this._fetchIcon(icon))
+    );
+
+    return results.map(result => ({
       full_keyword: this.getFullKeyword(phrase, result.keywords),
       title: result.title,
       url: result.url,
@@ -154,12 +169,15 @@ class QuickSuggest extends EventEmitter {
       advertiser: result.advertiser,
       iab_category: result.iab_category,
       is_sponsored: !NONSPONSORED_IAB_CATEGORIES.has(result.iab_category),
-      score: SUGGESTION_SCORE,
+      score:
+        typeof result.score == "number"
+          ? result.score
+          : DEFAULT_SUGGESTION_SCORE,
       source: QUICK_SUGGEST_SOURCE.REMOTE_SETTINGS,
-      icon: await this._fetchIcon(result.icon),
+      icon: icons.shift(),
       position: result.position,
       _test_is_best_match: result._test_is_best_match,
-    };
+    }));
   }
 
   /**
@@ -369,9 +387,17 @@ class QuickSuggest extends EventEmitter {
   // Configuration data synced from remote settings. See the `config` getter.
   _config = {};
 
-  // Maps from keywords to their corresponding results. Keywords are unique in
-  // the underlying data, so a keyword will only ever map to one result.
+  // Maps each keyword in the dataset to one or more results for the keyword. If
+  // only one result uses a keyword, the keyword's value in the map will be the
+  // result object. If more than one result uses the keyword, the value will be
+  // an array of the results. The reason for not always using an array is that
+  // we expect the vast majority of keywords to be used by only one result, and
+  // since there are potentially very many keywords and results and we keep them
+  // in memory all the time, we want to save as much memory as possible.
   _resultsByKeyword = new Map();
+
+  // This is only defined as a property so that tests can override it.
+  _addResultsChunkSize = ADD_RESULTS_CHUNK_SIZE;
 
   /**
    * Queues a task to ensure our remote settings client is initialized or torn
@@ -443,7 +469,7 @@ class QuickSuggest extends EventEmitter {
         let { buffer } = await this._rs.attachments.download(record);
         let results = JSON.parse(new TextDecoder("utf-8").decode(buffer));
         log.debug(`Adding ${results.length} results`);
-        this._addResults(results);
+        await this._addResults(results);
       }
     });
   }
@@ -465,11 +491,51 @@ class QuickSuggest extends EventEmitter {
    * @param {array} results
    *   Array of result objects.
    */
-  _addResults(results) {
-    for (let result of results) {
-      for (let keyword of result.keywords) {
-        this._resultsByKeyword.set(keyword, result);
-      }
+  async _addResults(results) {
+    // There can be many results, and each result can have many keywords. To
+    // avoid blocking the main thread for too long, update the map in chunks,
+    // and to avoid blocking the UI and other higher priority work, do each
+    // chunk only when the main thread is idle. During each chunk, we'll add at
+    // most `_addResultsChunkSize` entries to the map.
+    let resultIndex = 0;
+    let keywordIndex = 0;
+
+    // Keep adding chunks until all results have been fully added.
+    while (resultIndex < results.length) {
+      await new Promise(resolve => {
+        Services.tm.idleDispatchToMainThread(() => {
+          // Keep updating the map until the current chunk is done.
+          let indexInChunk = 0;
+          while (
+            indexInChunk < this._addResultsChunkSize &&
+            resultIndex < results.length
+          ) {
+            let result = results[resultIndex];
+            if (keywordIndex == result.keywords.length) {
+              resultIndex++;
+              keywordIndex = 0;
+              continue;
+            }
+            // If the keyword's only result is `result`, store it directly as
+            // the value. Otherwise store an array of results. For details, see
+            // the `_resultsByKeyword` comment.
+            let keyword = result.keywords[keywordIndex];
+            let object = this._resultsByKeyword.get(keyword);
+            if (!object) {
+              this._resultsByKeyword.set(keyword, result);
+            } else if (!Array.isArray(object)) {
+              this._resultsByKeyword.set(keyword, [object, result]);
+            } else {
+              object.push(result);
+            }
+            keywordIndex++;
+            indexInChunk++;
+          }
+
+          // The current chunk is done.
+          resolve();
+        });
+      });
     }
   }
 

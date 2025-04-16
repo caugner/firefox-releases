@@ -3,6 +3,9 @@
 
 "use strict";
 
+const LARGE_DATA_URL =
+  "data:text/plain," + [...Array(1000)].map(() => "0123456789").join("");
+
 // Tests for the caret position after gURLBar.setURI().
 add_task(async function setURI() {
   const testData = [
@@ -66,9 +69,17 @@ add_task(async function setURI() {
       firstURL: "https://example.com/test",
       secondURL: "https://example.org/test",
       initialSelectionStart: 1,
-      initialSelectionEnd: 20,
+      initialSelectionEnd: 10,
       expectedSelectionStart: 1,
-      expectedSelectionEnd: 20,
+      expectedSelectionEnd: 10,
+    },
+    {
+      firstURL: "https://example.com/test",
+      secondURL: "https://example.org/test",
+      initialSelectionStart: "https://example.".length,
+      initialSelectionEnd: "https://example.c".length,
+      expectedSelectionStart: "https://example.c".length,
+      expectedSelectionEnd: "https://example.c".length,
     },
     {
       firstURL: "https://example.com/test",
@@ -134,64 +145,149 @@ add_task(async function setURI() {
       expectedSelectionStart: "https://example.com/test".length,
       expectedSelectionEnd: "https://example.com/test".length,
     },
+    {
+      firstURL: "https://example.com/test",
+      secondURL: "about:blank",
+      initialSelectionStart: 0,
+      initialSelectionEnd: 0,
+      expectedSelectionStart: 0,
+      expectedSelectionEnd: 0,
+    },
+    {
+      firstURL: "https://example.com/test",
+      secondURL: "about:blank",
+      initialSelectionStart: 0,
+      initialSelectionEnd: "https://example.com/test".length,
+      expectedSelectionStart: 0,
+      expectedSelectionEnd: 0,
+    },
+    {
+      firstURL: "https://example.com/test",
+      secondURL: "about:blank",
+      initialSelectionStart: 3,
+      initialSelectionEnd: 4,
+      expectedSelectionStart: 0,
+      expectedSelectionEnd: 0,
+    },
+    {
+      firstURL: "https://example.com/test",
+      secondURL: "about:blank",
+      initialSelectionStart: "https://example.com/test".length,
+      initialSelectionEnd: "https://example.com/test".length,
+      expectedSelectionStart: 0,
+      expectedSelectionEnd: 0,
+    },
+    {
+      firstURL: "about:blank",
+      secondURL: "https://example.com/test",
+      initialSelectionStart: 0,
+      initialSelectionEnd: 0,
+      expectedSelectionStart: 0,
+      expectedSelectionEnd: 0,
+    },
+    {
+      firstURL: "about:blank",
+      secondURL: LARGE_DATA_URL,
+      initialSelectionStart: 0,
+      initialSelectionEnd: 0,
+      expectedSelectionStart: 0,
+      expectedSelectionEnd: 0,
+    },
+    {
+      firstURL: "about:telemetry",
+      secondURL: LARGE_DATA_URL,
+      initialSelectionStart: "about:telemetry".length,
+      initialSelectionEnd: "about:telemetry".length,
+      expectedSelectionStart: LARGE_DATA_URL.length,
+      expectedSelectionEnd: LARGE_DATA_URL.length,
+    },
   ];
 
   for (const data of testData) {
     info(
       `Test for ${data.firstURL} -> ${data.secondURL} with initial selection: ${data.initialSelectionStart}, ${data.initialSelectionEnd}`
     );
-
+    info("Check the caret position after setting second URL");
     gURLBar.setURI(makeURI(data.firstURL));
-
     gURLBar.selectionStart = data.initialSelectionStart;
     gURLBar.selectionEnd = data.initialSelectionEnd;
 
+    // The change of the scroll amount dependent on the selection change will be
+    // ignored if the previous processing is unfinished yet. Therefore, make the
+    // processing finalize explicitly here.
+    await flushScrollStyle();
+
+    gURLBar.focus();
     gURLBar.setURI(makeURI(data.secondURL));
+    await flushScrollStyle();
 
     Assert.equal(gURLBar.selectionStart, data.expectedSelectionStart);
     Assert.equal(gURLBar.selectionEnd, data.expectedSelectionEnd);
+    if (data.secondURL.length === data.expectedSelectionStart) {
+      // If the caret is at the end of url, the input field shows the end of
+      // text.
+      Assert.equal(
+        gURLBar.inputField.scrollLeft,
+        gURLBar.inputField.scrollLeftMax
+      );
+    }
+
+    info("Check the caret position while the input is not focused");
+    gURLBar.setURI(makeURI(data.firstURL));
+    gURLBar.selectionStart = data.initialSelectionStart;
+    gURLBar.selectionEnd = data.initialSelectionEnd;
+
+    await flushScrollStyle();
+
+    gURLBar.blur();
+    gURLBar.setURI(makeURI(data.secondURL));
+    await flushScrollStyle();
+
+    if (data.firstURL === data.secondURL) {
+      Assert.equal(gURLBar.selectionStart, data.initialSelectionStart);
+      Assert.equal(gURLBar.selectionEnd, data.initialSelectionEnd);
+    } else {
+      Assert.equal(gURLBar.selectionStart, gURLBar.value.length);
+      Assert.equal(gURLBar.selectionEnd, gURLBar.value.length);
+    }
+    Assert.equal(gURLBar.inputField.scrollLeft, 0);
   }
 });
 
 // Tests that up and down keys move the caret on certain platforms, and that
 // opening the popup doesn't change the caret position.
 add_task(async function navigation() {
-  // Use new window to avoid timeout failure for autocomplete popup happens on Linux TV.
-  const win = await BrowserTestUtils.openNewBrowserWindow();
-
   await UrlbarTestUtils.promiseAutocompleteResultPopup({
-    window: win,
+    window,
     value: "This is a generic sentence",
   });
-  await UrlbarTestUtils.promisePopupClose(win);
+  await UrlbarTestUtils.promisePopupClose(window);
 
   const INITIAL_SELECTION_START = 3;
   const INITIAL_SELECTION_END = 10;
-  win.gURLBar.selectionStart = INITIAL_SELECTION_START;
-  win.gURLBar.selectionEnd = INITIAL_SELECTION_END;
+  gURLBar.selectionStart = INITIAL_SELECTION_START;
+  gURLBar.selectionEnd = INITIAL_SELECTION_END;
 
   if (AppConstants.platform == "macosx" || AppConstants.platform == "linux") {
     await checkCaretMoves(
       "KEY_ArrowDown",
-      win.gURLBar.value.length,
+      gURLBar.value.length,
       "Caret should have moved to the end",
-      win
+      window
     );
-    await checkPopupOpens("KEY_ArrowDown", win);
+    await checkPopupOpens("KEY_ArrowDown", window);
 
     await checkCaretMoves(
       "KEY_ArrowUp",
       0,
       "Caret should have moved to the start",
-      win
+      window
     );
-    await checkPopupOpens("KEY_ArrowUp", win);
+    await checkPopupOpens("KEY_ArrowUp", window);
   } else {
-    await checkPopupOpens("KEY_ArrowDown", win);
-    await checkPopupOpens("KEY_ArrowUp", win);
+    await checkPopupOpens("KEY_ArrowDown", window);
+    await checkPopupOpens("KEY_ArrowUp", window);
   }
-
-  await BrowserTestUtils.closeWindow(win);
 });
 
 async function checkCaretMoves(key, pos, msg, win) {
@@ -249,5 +345,15 @@ function checkIfKeyStartsQuery(key, shouldStartQuery, win) {
     queryStarted,
     shouldStartQuery,
     `${key}: Should${shouldStartQuery ? "" : "n't"} have started a query`
+  );
+}
+
+async function flushScrollStyle() {
+  // Flush pending notifications for the style.
+  /* eslint-disable no-unused-expressions */
+  gURLBar.inputField.scrollLeft;
+  // Ensure to apply the style.
+  await new Promise(resolve =>
+    gURLBar.inputField.ownerGlobal.requestAnimationFrame(resolve)
   );
 }

@@ -276,7 +276,7 @@ var StarUI = {
         { capture: true, once: true }
       );
     };
-    gEditItemOverlay.initPanel({
+    await gEditItemOverlay.initPanel({
       node: aNode,
       onPanelReady,
       hiddenRows: ["location", "keyword"],
@@ -929,15 +929,6 @@ var BookmarksEventHandler = {
     // Show tooltip for containers only if their title is cropped.
     if (!cropped && !url) {
       return false;
-    }
-
-    if (
-      gProtonPlacesTooltip &&
-      tooltipNode &&
-      !tooltipNode.closest("menupopup")
-    ) {
-      aEvent.target.setAttribute("position", "after_start");
-      aEvent.target.moveToAnchor(tooltipNode, "after_start");
     }
 
     let tooltipTitle = aEvent.target.querySelector(".places-tooltip-title");

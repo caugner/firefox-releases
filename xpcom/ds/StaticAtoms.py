@@ -1020,6 +1020,7 @@ STATIC_ATOMS = [
     Atom("previewDiv", "preview-div"),
     Atom("primary", "primary"),
     Atom("print", "print"),
+    Atom("printisfocuseddoc", "printisfocuseddoc"),
     Atom("printselectionranges", "printselectionranges"),
     Atom("priority", "priority"),
     Atom("processingInstruction", "processing-instruction"),
@@ -1259,6 +1260,7 @@ STATIC_ATOMS = [
     Atom("ul", "ul"),
     Atom("unparsedEntityUri", "unparsed-entity-uri"),
     Atom("up", "up"),
+    Atom("update", "update"),
     Atom("upperFirst", "upper-first"),
     Atom("use", "use"),
     Atom("useAttributeSets", "use-attribute-sets"),
@@ -2199,6 +2201,7 @@ STATIC_ATOMS = [
     Atom("fantasy", "fantasy"),
     Atom("monospace", "monospace"),
     Atom("mozfixed", "-moz-fixed"),
+    Atom("moz_fixed_pos_containing_block", "-moz-fixed-pos-containing-block"),
     # IPC stuff
     # Atom("Remote", "remote"),  # "remote" is present above
     Atom("RemoteId", "_remote_id"),
@@ -2250,7 +2253,6 @@ STATIC_ATOMS = [
     Atom("_moz_gtk_csd_menu_radius", "-moz-gtk-csd-menu-radius"),
     Atom("_moz_content_prefers_color_scheme", "-moz-content-prefers-color-scheme"),
     Atom("_moz_content_preferred_color_scheme", "-moz-content-preferred-color-scheme"),
-    Atom("_moz_proton_places_tooltip", "-moz-proton-places-tooltip"),
     Atom("_moz_system_dark_theme", "-moz-system-dark-theme"),
     # application commands
     Atom("Back", "Back"),

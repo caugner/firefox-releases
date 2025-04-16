@@ -13,6 +13,7 @@
 #include "QuotaCommon.h"
 #include "QuotaManager.h"
 #include "QuotaObject.h"
+#include "ScopedLogExtraInfo.h"
 #include "UsageInfo.h"
 
 // Global includes
@@ -594,14 +595,15 @@ Result<nsCOMPtr<mozIStorageConnection>, nsresult> CreateWebAppsStoreConnection(
   return connection;
 }
 
-Result<nsCOMPtr<nsIFile>, nsresult> GetLocalStorageArchiveFile(
+Result<nsCOMPtr<nsIFile>, QMResult> GetLocalStorageArchiveFile(
     const nsAString& aDirectoryPath) {
   AssertIsOnIOThread();
   MOZ_ASSERT(!aDirectoryPath.IsEmpty());
 
-  QM_TRY_UNWRAP(auto lsArchiveFile, QM_NewLocalFile(aDirectoryPath));
+  QM_TRY_UNWRAP(auto lsArchiveFile,
+                QM_TO_RESULT_TRANSFORM(QM_NewLocalFile(aDirectoryPath)));
 
-  QM_TRY(MOZ_TO_RESULT(
+  QM_TRY(QM_TO_RESULT(
       lsArchiveFile->Append(nsLiteralString(LS_ARCHIVE_FILE_NAME))));
 
   return lsArchiveFile;
@@ -2914,8 +2916,6 @@ QuotaManager::Observer::Observe(nsISupports* aSubject, const char* aTopic,
       return rv;
     }
 
-    MaybeEnableNextGenLocalStorage();
-
     return NS_OK;
   }
 
@@ -3981,6 +3981,8 @@ void QuotaManager::Shutdown() {
   };
 
   // Body of the function
+  ScopedLogExtraInfo scope{ScopedLogExtraInfo::kTagContext,
+                           "dom::quota::QuotaManager::Shutdown"_ns};
 
   flagShutdownStarted();
 
@@ -7457,7 +7459,7 @@ nsresult ClientUsageArray::Deserialize(const nsACString& aText) {
            NS_ERROR_FAILURE);
 
     nsresult rv;
-    const uint64_t usage = Substring(token, 1).ToInteger(&rv);
+    const uint64_t usage = Substring(token, 1).ToInteger64(&rv);
     QM_TRY(MOZ_TO_RESULT(rv));
 
     ElementAt(clientType) = Some(usage);
@@ -9135,7 +9137,7 @@ nsresult InitTemporaryStorageOp::DoDirectoryWork(QuotaManager& aQuotaManager) {
 
   AUTO_PROFILER_LABEL("InitTemporaryStorageOp::DoDirectoryWork", OTHER);
 
-  QM_TRY(OkIf(aQuotaManager.IsStorageInitialized()), NS_ERROR_FAILURE;);
+  QM_TRY(OkIf(aQuotaManager.IsStorageInitialized()), NS_ERROR_FAILURE);
 
   QM_TRY(MOZ_TO_RESULT(aQuotaManager.EnsureTemporaryStorageIsInitialized()));
 

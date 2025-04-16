@@ -4950,7 +4950,7 @@ bool MWasmLoadGlobalVar::congruentTo(const MDefinition* ins) const {
   MOZ_ASSERT_IF(sameOffsets, isConstant_ == other->isConstant_);
 
   // We omit checking congruence of the operands.  There is only one
-  // operand, the TLS pointer, and it only ever has one value within the
+  // operand, the instance pointer, and it only ever has one value within the
   // domain of optimization.  If that should ever change then operand
   // congruence checking should be reinstated.
   return sameOffsets /* && congruentIfOperandsEqual(other) */;
@@ -6547,9 +6547,9 @@ bool MIonToWasmCall::isConsistentFloat32Use(MUse* use) const {
 
 MCreateInlinedArgumentsObject* MCreateInlinedArgumentsObject::New(
     TempAllocator& alloc, MDefinition* callObj, MDefinition* callee,
-    MDefinitionVector& args) {
+    MDefinitionVector& args, ArgumentsObject* templateObj) {
   MCreateInlinedArgumentsObject* ins =
-      new (alloc) MCreateInlinedArgumentsObject();
+      new (alloc) MCreateInlinedArgumentsObject(templateObj);
 
   uint32_t argc = args.length();
   MOZ_ASSERT(argc <= ArgumentsObject::MaxInlinedArgs);
@@ -6755,8 +6755,7 @@ bool MWasmShiftSimd128::congruentTo(const MDefinition* ins) const {
 }
 
 bool MWasmShuffleSimd128::congruentTo(const MDefinition* ins) const {
-  return ins->toWasmShuffleSimd128()->shuffle().control.bitwiseEqual(
-             shuffle_.control) &&
+  return ins->toWasmShuffleSimd128()->shuffle().equals(&shuffle_) &&
          congruentIfOperandsEqual(ins);
 }
 

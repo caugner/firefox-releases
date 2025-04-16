@@ -557,7 +557,7 @@ void nsLayoutUtils::UnionChildOverflow(nsIFrame* aFrame,
                                        FrameChildListIDs aSkipChildLists) {
   // Iterate over all children except pop-ups.
   FrameChildListIDs skip(aSkipChildLists);
-  skip += {nsIFrame::kSelectPopupList, nsIFrame::kPopupList};
+  skip += nsIFrame::kPopupList;
 
   for (const auto& [list, listID] : aFrame->ChildLists()) {
     if (skip.contains(listID)) {
@@ -1119,10 +1119,10 @@ int32_t nsLayoutUtils::DoCompareTreePosition(
   MOZ_ASSERT(aContent1, "aContent1 must not be null");
   MOZ_ASSERT(aContent2, "aContent2 must not be null");
 
-  AutoTArray<nsINode*, 32> content1Ancestors;
-  nsINode* c1;
+  AutoTArray<nsIContent*, 32> content1Ancestors;
+  nsIContent* c1;
   for (c1 = aContent1; c1 && c1 != aCommonAncestor;
-       c1 = c1->GetParentOrShadowHostNode()) {
+       c1 = c1->GetFlattenedTreeParent()) {
     content1Ancestors.AppendElement(c1);
   }
   if (!c1 && aCommonAncestor) {
@@ -1131,10 +1131,10 @@ int32_t nsLayoutUtils::DoCompareTreePosition(
     aCommonAncestor = nullptr;
   }
 
-  AutoTArray<nsINode*, 32> content2Ancestors;
-  nsINode* c2;
+  AutoTArray<nsIContent*, 32> content2Ancestors;
+  nsIContent* c2;
   for (c2 = aContent2; c2 && c2 != aCommonAncestor;
-       c2 = c2->GetParentOrShadowHostNode()) {
+       c2 = c2->GetFlattenedTreeParent()) {
     content2Ancestors.AppendElement(c2);
   }
   if (!c2 && aCommonAncestor) {
@@ -1146,8 +1146,8 @@ int32_t nsLayoutUtils::DoCompareTreePosition(
 
   int last1 = content1Ancestors.Length() - 1;
   int last2 = content2Ancestors.Length() - 1;
-  nsINode* content1Ancestor = nullptr;
-  nsINode* content2Ancestor = nullptr;
+  nsIContent* content1Ancestor = nullptr;
+  nsIContent* content2Ancestor = nullptr;
   while (last1 >= 0 && last2 >= 0 &&
          ((content1Ancestor = content1Ancestors.ElementAt(last1)) ==
           (content2Ancestor = content2Ancestors.ElementAt(last2)))) {
@@ -1171,7 +1171,7 @@ int32_t nsLayoutUtils::DoCompareTreePosition(
 
   // content1Ancestor != content2Ancestor, so they must be siblings with the
   // same parent
-  nsINode* parent = content1Ancestor->GetParentOrShadowHostNode();
+  nsIContent* parent = content1Ancestor->GetFlattenedTreeParent();
 #ifdef DEBUG
   // TODO: remove the uglyness, see bug 598468.
   NS_ASSERTION(gPreventAssertInCompareTreePosition || parent,
@@ -1181,8 +1181,10 @@ int32_t nsLayoutUtils::DoCompareTreePosition(
     return 0;
   }
 
-  const Maybe<uint32_t> index1 = parent->ComputeIndexOf(content1Ancestor);
-  const Maybe<uint32_t> index2 = parent->ComputeIndexOf(content2Ancestor);
+  const Maybe<uint32_t> index1 =
+      parent->ComputeFlatTreeIndexOf(content1Ancestor);
+  const Maybe<uint32_t> index2 =
+      parent->ComputeFlatTreeIndexOf(content2Ancestor);
 
   // None of the nodes are anonymous, just do a regular comparison.
   if (index1.isSome() && index2.isSome()) {
@@ -2105,15 +2107,16 @@ Matrix4x4Flagged nsLayoutUtils::GetTransformToAncestor(
   return ctm;
 }
 
-gfxSize nsLayoutUtils::GetTransformToAncestorScale(const nsIFrame* aFrame) {
+MatrixScalesDouble nsLayoutUtils::GetTransformToAncestorScale(
+    const nsIFrame* aFrame) {
   Matrix4x4Flagged transform = GetTransformToAncestor(
       RelativeTo{aFrame},
       RelativeTo{nsLayoutUtils::GetDisplayRootFrame(aFrame)});
   Matrix transform2D;
   if (transform.CanDraw2D(&transform2D)) {
-    return ThebesMatrix(transform2D).ScaleFactors().ToSize();
+    return ThebesMatrix(transform2D).ScaleFactors();
   }
-  return gfxSize(1, 1);
+  return MatrixScalesDouble();
 }
 
 static Matrix4x4Flagged GetTransformToAncestorExcludingAnimated(
@@ -2141,15 +2144,15 @@ static Matrix4x4Flagged GetTransformToAncestorExcludingAnimated(
   return ctm;
 }
 
-gfxSize nsLayoutUtils::GetTransformToAncestorScaleExcludingAnimated(
+MatrixScalesDouble nsLayoutUtils::GetTransformToAncestorScaleExcludingAnimated(
     nsIFrame* aFrame) {
   Matrix4x4Flagged transform = GetTransformToAncestorExcludingAnimated(
       aFrame, nsLayoutUtils::GetDisplayRootFrame(aFrame));
   Matrix transform2D;
   if (transform.Is2D(&transform2D)) {
-    return ThebesMatrix(transform2D).ScaleFactors().ToSize();
+    return ThebesMatrix(transform2D).ScaleFactors();
   }
-  return gfxSize(1, 1);
+  return MatrixScalesDouble();
 }
 
 const nsIFrame* nsLayoutUtils::FindNearestCommonAncestorFrame(
@@ -2776,8 +2779,9 @@ nsresult nsLayoutUtils::GetFramesForArea(RelativeTo aRelativeTo,
 mozilla::ParentLayerToScreenScale2D
 nsLayoutUtils::GetTransformToAncestorScaleCrossProcessForFrameMetrics(
     const nsIFrame* aFrame) {
-  ParentLayerToScreenScale2D transformToAncestorScale(
-      nsLayoutUtils::GetTransformToAncestorScale(aFrame));
+  MatrixScalesDouble scale = nsLayoutUtils::GetTransformToAncestorScale(aFrame);
+  ParentLayerToScreenScale2D transformToAncestorScale =
+      ViewAs<ParentLayerToScreenScale2D>(scale.ConvertTo<float>());
 
   if (BrowserChild* browserChild = BrowserChild::GetFrom(aFrame->PresShell())) {
     transformToAncestorScale =
@@ -4059,7 +4063,7 @@ already_AddRefed<nsFontMetrics> nsLayoutUtils::GetFontMetricsForFrame(
 }
 
 already_AddRefed<nsFontMetrics> nsLayoutUtils::GetFontMetricsForComputedStyle(
-    ComputedStyle* aComputedStyle, nsPresContext* aPresContext,
+    const ComputedStyle* aComputedStyle, nsPresContext* aPresContext,
     float aInflation, uint8_t aVariantWidth) {
   WritingMode wm(aComputedStyle);
   const nsStyleFont* styleFont = aComputedStyle->StyleFont();
@@ -6242,7 +6246,7 @@ static SnappedImageDrawingParameters ComputeSnappedImageDrawingParameters(
     // follow the pattern that we take |currentMatrix| into account only if
     // |didSnap| is true.
     gfxSize unsnappedDestSize =
-        didSnap ? devPixelDest.Size() * currentMatrix.ScaleFactors().ToSize()
+        didSnap ? devPixelDest.Size() * currentMatrix.ScaleFactors()
                 : devPixelDest.Size();
 
     gfxRect anchoredDestRect(anchorPoint, unsnappedDestSize);
@@ -6507,9 +6511,9 @@ CSSIntSize nsLayoutUtils::ComputeSizeForDrawingWithFallback(
   return imageSize;
 }
 
-/* static */ LayerIntRect SnapRectForImage(const gfx::Matrix& aTransform,
-                                           const gfx::Size& aScaleFactors,
-                                           const LayoutDeviceRect& aRect) {
+/* static */ LayerIntRect SnapRectForImage(
+    const gfx::Matrix& aTransform, const gfx::MatrixScales& aScaleFactors,
+    const LayoutDeviceRect& aRect) {
   // Attempt to snap pixels, the same as ComputeSnappedImageDrawingParameters.
   // Any changes to the algorithm here will need to be reflected there.
   bool snapped = false;
@@ -6543,10 +6547,8 @@ CSSIntSize nsLayoutUtils::ComputeSizeForDrawingWithFallback(
   if (!snapped) {
     // If we couldn't snap directly with the transform, we need to go best
     // effort in layer pixels.
-    snapRect = RoundedToInt(LayerRect(aRect.X() * aScaleFactors.width,
-                                      aRect.Y() * aScaleFactors.height,
-                                      aRect.Width() * aScaleFactors.width,
-                                      aRect.Height() * aScaleFactors.height));
+    snapRect = RoundedToInt(
+        aRect * LayoutDeviceToLayerScale2D::FromUnknownScale(aScaleFactors));
   }
 
   // An empty size is unacceptable so we ensure our suggested size is at least
@@ -6569,14 +6571,14 @@ IntSize nsLayoutUtils::ComputeImageContainerDrawingParameters(
   MOZ_ASSERT(aImage);
   MOZ_ASSERT(aForFrame);
 
-  gfx::Size scaleFactors = aSc.GetInheritedScale();
+  MatrixScales scaleFactors = aSc.GetInheritedScale();
   SamplingFilter samplingFilter =
       nsLayoutUtils::GetSamplingFilterForFrame(aForFrame);
 
   // Compute our SVG context parameters, if any. Don't replace the viewport
   // size if it was already set, prefer what the caller gave.
   SVGImageContext::MaybeStoreContextPaint(aSVGContext, aForFrame, aImage);
-  if ((scaleFactors.width != 1.0 || scaleFactors.height != 1.0) &&
+  if ((scaleFactors.xScale != 1.0 || scaleFactors.yScale != 1.0) &&
       aImage->GetType() == imgIContainer::TYPE_VECTOR &&
       (!aSVGContext || !aSVGContext->GetViewportSize())) {
     gfxSize gfxDestSize(aDestRect.Width(), aDestRect.Height());
@@ -6808,27 +6810,6 @@ bool nsLayoutUtils::HasNonZeroCornerOnSide(const BorderRadius& aCorners,
 }
 
 /* static */
-LayoutDeviceIntSize nsLayoutUtils::GetBorderRadiusForMenuDropShadow(
-    const nsIFrame* aFrame) {
-  if (aFrame->StyleUIReset()->mWindowShadow == StyleWindowShadow::Cliprounded) {
-    const auto& corners = aFrame->StyleBorder()->mBorderRadius;
-
-    // Get the width and height of the top-left corner.
-    const LengthPercentage& cornerX = corners.Get(eCornerTopLeftX);
-    const LengthPercentage& cornerY = corners.Get(eCornerTopLeftY);
-    nscoord lengthX = (cornerX.IsLength() ? cornerX.ToLength() : 0);
-    nscoord lengthY = (cornerY.IsLength() ? cornerY.ToLength() : 0);
-    if (lengthX || lengthY) {
-      const nsPresContext* presContext = aFrame->PresContext();
-      return LayoutDeviceIntSize(presContext->AppUnitsToDevPixels(lengthX),
-                                 presContext->AppUnitsToDevPixels(lengthY));
-    }
-  }
-
-  return LayoutDeviceIntSize();
-}
-
-/* static */
 nsTransparencyMode nsLayoutUtils::GetFrameTransparency(
     nsIFrame* aBackgroundFrame, nsIFrame* aCSSRootFrame) {
   if (aCSSRootFrame->StyleEffects()->mOpacity < 1.0f)
@@ -6922,7 +6903,7 @@ nsIFrame* nsLayoutUtils::GetReferenceFrame(nsIFrame* aFrame) {
 }
 
 /* static */ gfx::ShapedTextFlags nsLayoutUtils::GetTextRunFlagsForStyle(
-    ComputedStyle* aComputedStyle, nsPresContext* aPresContext,
+    const ComputedStyle* aComputedStyle, nsPresContext* aPresContext,
     const nsStyleFont* aStyleFont, const nsStyleText* aStyleText,
     nscoord aLetterSpacing) {
   gfx::ShapedTextFlags result = gfx::ShapedTextFlags();
@@ -6951,7 +6932,7 @@ nsIFrame* nsLayoutUtils::GetReferenceFrame(nsIFrame* aFrame) {
 }
 
 /* static */ gfx::ShapedTextFlags nsLayoutUtils::GetTextRunOrientFlagsForStyle(
-    ComputedStyle* aComputedStyle) {
+    const ComputedStyle* aComputedStyle) {
   auto writingMode = aComputedStyle->StyleVisibility()->mWritingMode;
   switch (writingMode) {
     case StyleWritingModeProperty::HorizontalTb:
@@ -8915,6 +8896,9 @@ ScrollMetadata nsLayoutUtils::ComputeScrollMetadata(
 
   metadata.SetPrefersReducedMotion(
       Gecko_MediaFeatures_PrefersReducedMotion(document));
+
+  metadata.SetIsPaginatedPresentation(presContext->Type() !=
+                                      nsPresContext::eContext_Galley);
 
   return metadata;
 }

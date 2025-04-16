@@ -261,7 +261,13 @@ var interfaceNamesInGlobalScope = [
   // IMPORTANT: Do not change this list without review from a DOM peer!
   { name: "PushSubscriptionOptions" },
   // IMPORTANT: Do not change this list without review from a DOM peer!
+  "ReadableByteStreamController",
+  // IMPORTANT: Do not change this list without review from a DOM peer!
   "ReadableStream",
+  // IMPORTANT: Do not change this list without review from a DOM peer!
+  "ReadableStreamBYOBReader",
+  // IMPORTANT: Do not change this list without review from a DOM peer!
+  "ReadableStreamBYOBRequest",
   // IMPORTANT: Do not change this list without review from a DOM peer!
   "ReadableStreamDefaultController",
   // IMPORTANT: Do not change this list without review from a DOM peer!
@@ -299,9 +305,9 @@ var interfaceNamesInGlobalScope = [
   // IMPORTANT: Do not change this list without review from a DOM peer!
   "TextEncoder",
   // IMPORTANT: Do not change this list without review from a DOM peer!
-  { name: "TransformStream", nightly: true },
+  "TransformStream",
   // IMPORTANT: Do not change this list without review from a DOM peer!
-  { name: "TransformStreamDefaultController", nightly: true },
+  "TransformStreamDefaultController",
   // IMPORTANT: Do not change this list without review from a DOM peer!
   "URL",
   // IMPORTANT: Do not change this list without review from a DOM peer!

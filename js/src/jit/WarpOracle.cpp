@@ -58,7 +58,7 @@ class MOZ_STACK_CLASS WarpScriptOracle {
     return oracle_->abort(script_, args...);
   }
 
-  AbortReasonOr<WarpEnvironment> createEnvironment();
+  WarpEnvironment createEnvironment();
   AbortReasonOr<Ok> maybeInlineIC(WarpOpSnapshotList& snapshots,
                                   BytecodeLocation loc);
   AbortReasonOr<bool> maybeInlineCall(WarpOpSnapshotList& snapshots,
@@ -245,7 +245,7 @@ ICEntry& WarpScriptOracle::getICEntryAndFallback(BytecodeLocation loc,
   return icScript_->icEntry(icEntryIndex_ - 1);
 }
 
-AbortReasonOr<WarpEnvironment> WarpScriptOracle::createEnvironment() {
+WarpEnvironment WarpScriptOracle::createEnvironment() {
   // Don't do anything if the script doesn't use the environment chain.
   // Always make an environment chain if the script needs an arguments object
   // because ArgumentsObject construction requires the environment chain to be
@@ -255,7 +255,8 @@ AbortReasonOr<WarpEnvironment> WarpScriptOracle::createEnvironment() {
     return WarpEnvironment(NoEnvironment());
   }
 
-  if (ModuleObject* module = script_->module()) {
+  if (script_->isModule()) {
+    ModuleObject* module = script_->module();
     JSObject* obj = &module->initialEnvironment();
     return WarpEnvironment(ConstantObjectEnvironment(obj));
   }
@@ -268,11 +269,6 @@ AbortReasonOr<WarpEnvironment> WarpScriptOracle::createEnvironment() {
     MOZ_ASSERT(!script_->hasNonSyntacticScope());
     JSObject* obj = &script_->global().lexicalEnvironment();
     return WarpEnvironment(ConstantObjectEnvironment(obj));
-  }
-
-  // Parameter expression-induced extra var environment not yet handled.
-  if (fun->needsExtraBodyVarEnvironment()) {
-    return abort(AbortReason::Disable, "Extra var environment unsupported");
   }
 
   JSObject* templateEnv = script_->jitScript()->templateEnvironment();
@@ -308,8 +304,7 @@ AbortReasonOr<WarpScriptSnapshot*> WarpScriptOracle::createScriptSnapshot() {
     oracle_->bailoutInfo().setFailedLexicalCheck();
   }
 
-  WarpEnvironment environment{NoEnvironment()};
-  MOZ_TRY_VAR(environment, createEnvironment());
+  WarpEnvironment environment = createEnvironment();
 
   // Unfortunately LinkedList<> asserts the list is empty in its destructor.
   // Clear the list if we abort compilation.
@@ -423,14 +418,13 @@ AbortReasonOr<WarpScriptSnapshot*> WarpScriptOracle::createScriptSnapshot() {
 
       case JSOp::GetElemSuper: {
 #if defined(JS_CODEGEN_X86)
-        // x86 does not have enough registers if profiling is enabled.
-        if (mirGen_.instrumentedProfiling()) {
-          return abort(AbortReason::Disable,
-                       "GetElemSuper with profiling is not supported on x86");
-        }
-#endif
+        // x86 does not have enough registers.
+        return abort(AbortReason::Disable,
+                     "GetElemSuper is not supported on x86");
+#else
         MOZ_TRY(maybeInlineIC(opSnapshots, loc));
         break;
+#endif
       }
 
       case JSOp::Rest: {
@@ -553,7 +547,6 @@ AbortReasonOr<WarpScriptSnapshot*> WarpScriptOracle::createScriptSnapshot() {
       case JSOp::Uint24:
       case JSOp::Int32:
       case JSOp::Double:
-      case JSOp::ResumeIndex:
       case JSOp::BigInt:
       case JSOp::String:
       case JSOp::Symbol:
@@ -602,6 +595,7 @@ AbortReasonOr<WarpScriptSnapshot*> WarpScriptOracle::createScriptSnapshot() {
       case JSOp::PopLexicalEnv:
       case JSOp::FreshenLexicalEnv:
       case JSOp::RecreateLexicalEnv:
+      case JSOp::PushVarEnv:
       case JSOp::PushClassBodyEnv:
       case JSOp::ImplicitThis:
       case JSOp::CheckClassHeritage:

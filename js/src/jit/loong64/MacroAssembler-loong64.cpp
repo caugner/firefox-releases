@@ -5282,20 +5282,20 @@ void MacroAssemblerLOONG64Compat::handleFailureWithHandlerTail(
   bind(&catch_);
   loadPtr(Address(StackPointer, ResumeFromException::offsetOfTarget()), a0);
   loadPtr(Address(StackPointer, ResumeFromException::offsetOfFramePointer()),
-          BaselineFrameReg);
+          FramePointer);
   loadPtr(Address(StackPointer, ResumeFromException::offsetOfStackPointer()),
           StackPointer);
   jump(a0);
 
-  // If we found a finally block, this must be a baseline frame. Push
-  // two values expected by JSOp::Retsub: the exception and BooleanValue(true).
+  // If we found a finally block, this must be a baseline frame. Push two
+  // values expected by the finally block: the exception and BooleanValue(true).
   bind(&finally);
   ValueOperand exception = ValueOperand(a1);
   loadValue(Address(sp, ResumeFromException::offsetOfException()), exception);
 
   loadPtr(Address(sp, ResumeFromException::offsetOfTarget()), a0);
   loadPtr(Address(sp, ResumeFromException::offsetOfFramePointer()),
-          BaselineFrameReg);
+          FramePointer);
   loadPtr(Address(sp, ResumeFromException::offsetOfStackPointer()), sp);
 
   pushValue(exception);
@@ -5307,14 +5307,13 @@ void MacroAssemblerLOONG64Compat::handleFailureWithHandlerTail(
   Label profilingInstrumentation;
   bind(&returnBaseline);
   loadPtr(Address(StackPointer, ResumeFromException::offsetOfFramePointer()),
-          BaselineFrameReg);
+          FramePointer);
   loadPtr(Address(StackPointer, ResumeFromException::offsetOfStackPointer()),
           StackPointer);
-  loadValue(
-      Address(BaselineFrameReg, BaselineFrame::reverseOffsetOfReturnValue()),
-      JSReturnOperand);
-  as_or(StackPointer, BaselineFrameReg, zero);
-  pop(BaselineFrameReg);
+  loadValue(Address(FramePointer, BaselineFrame::reverseOffsetOfReturnValue()),
+            JSReturnOperand);
+  as_or(StackPointer, FramePointer, zero);
+  pop(FramePointer);
   jump(&profilingInstrumentation);
 
   // Return the given value to the caller.

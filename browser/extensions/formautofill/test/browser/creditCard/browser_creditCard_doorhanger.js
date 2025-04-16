@@ -11,7 +11,7 @@ add_task(async function test_submit_creditCard_cancel_saving() {
   await BrowserTestUtils.withNewTab(
     { gBrowser, url: CREDITCARD_FORM_URL },
     async function(browser) {
-      let promiseShown = promiseNotificationShown();
+      let onPopupShown = waitForPopupShown();
       await focusUpdateSubmitForm(browser, {
         focusSelector: "#cc-name",
         newValues: {
@@ -24,7 +24,7 @@ add_task(async function test_submit_creditCard_cancel_saving() {
         !SpecialPowers.Services.prefs.prefHasUserValue(SYNC_USERNAME_PREF),
         "Sync account should not exist by default"
       );
-      await promiseShown;
+      await onPopupShown;
       let cb = getDoorhangerCheckbox();
       ok(cb.hidden, "Sync checkbox should be hidden");
       await clickDoorhangerButton(SECONDARY_BUTTON);
@@ -51,7 +51,7 @@ add_task(async function test_submit_creditCard_saved() {
   await BrowserTestUtils.withNewTab(
     { gBrowser, url: CREDITCARD_FORM_URL },
     async function(browser) {
-      let promiseShown = promiseNotificationShown();
+      let onPopupShown = waitForPopupShown();
 
       await focusUpdateSubmitForm(browser, {
         focusSelector: "#cc-name",
@@ -64,7 +64,7 @@ add_task(async function test_submit_creditCard_saved() {
         },
       });
 
-      await promiseShown;
+      await onPopupShown;
       await clickDoorhangerButton(MAIN_BUTTON);
     }
   );
@@ -95,7 +95,7 @@ add_task(async function test_submit_untouched_creditCard_form() {
   await SpecialPowers.pushPrefEnv({
     set: [[CREDITCARDS_USED_STATUS_PREF, 0]],
   });
-  await saveCreditCard(TEST_CREDIT_CARD_1);
+  await setStorage(TEST_CREDIT_CARD_1);
   let creditCards = await getCreditCards();
   is(creditCards.length, 1, "1 credit card in storage");
 
@@ -147,7 +147,7 @@ add_task(async function test_submit_untouched_creditCard_form_iframe() {
   await SpecialPowers.pushPrefEnv({
     set: [[CREDITCARDS_USED_STATUS_PREF, 0]],
   });
-  await saveCreditCard(TEST_CREDIT_CARD_1);
+  await setStorage(TEST_CREDIT_CARD_1);
   let creditCards = await getCreditCards();
   is(creditCards.length, 1, "1 credit card in storage");
 
@@ -172,7 +172,7 @@ add_task(async function test_submit_untouched_creditCard_form_iframe() {
         true
       );
       let iframeBC = browser.browsingContext.children[0];
-      await openPopupForSubframe(browser, iframeBC, "form #cc-name");
+      await openPopupOnSubframe(browser, iframeBC, "form #cc-name");
 
       EventUtils.synthesizeKey("VK_DOWN", {});
       EventUtils.synthesizeKey("VK_RETURN", {});
@@ -214,7 +214,7 @@ add_task(async function test_iframe_unload_save_card() {
   await BrowserTestUtils.withNewTab(
     { gBrowser, url: CREDITCARD_FORM_IFRAME_URL },
     async function(browser) {
-      let promiseShown = promiseNotificationShown();
+      let onPopupShown = waitForPopupShown();
       let iframeBC = browser.browsingContext.children[0];
       await focusUpdateSubmitForm(
         iframeBC,
@@ -237,7 +237,7 @@ add_task(async function test_iframe_unload_save_card() {
         frame.remove();
       });
 
-      await promiseShown;
+      await onPopupShown;
       await clickDoorhangerButton(MAIN_BUTTON);
     }
   );
@@ -260,7 +260,7 @@ add_task(async function test_submit_changed_subset_creditCard_form() {
   await SpecialPowers.pushPrefEnv({
     set: [[CREDITCARDS_USED_STATUS_PREF, 0]],
   });
-  await saveCreditCard(TEST_CREDIT_CARD_1);
+  await setStorage(TEST_CREDIT_CARD_1);
   let creditCards = await getCreditCards();
   is(creditCards.length, 1, "1 credit card in storage");
 
@@ -268,7 +268,7 @@ add_task(async function test_submit_changed_subset_creditCard_form() {
   await BrowserTestUtils.withNewTab(
     { gBrowser, url: CREDITCARD_FORM_URL },
     async function(browser) {
-      let promiseShown = promiseNotificationShown();
+      let onPopupShown = waitForPopupShown();
       await focusUpdateSubmitForm(browser, {
         focusSelector: "#cc-name",
         newValues: {
@@ -279,7 +279,7 @@ add_task(async function test_submit_changed_subset_creditCard_form() {
         },
       });
 
-      await promiseShown;
+      await onPopupShown;
       await clickDoorhangerButton(MAIN_BUTTON);
     }
   );
@@ -301,7 +301,7 @@ add_task(async function test_submit_duplicate_creditCard_form() {
   await SpecialPowers.pushPrefEnv({
     set: [[CREDITCARDS_USED_STATUS_PREF, 0]],
   });
-  await saveCreditCard(TEST_CREDIT_CARD_1);
+  await setStorage(TEST_CREDIT_CARD_1);
   let creditCards = await getCreditCards();
   is(creditCards.length, 1, "1 credit card in storage");
 
@@ -344,7 +344,7 @@ add_task(async function test_submit_duplicate_creditCard_form() {
 });
 
 add_task(async function test_submit_unnormailzed_creditCard_form() {
-  await saveCreditCard(TEST_CREDIT_CARD_1);
+  await setStorage(TEST_CREDIT_CARD_1);
   let creditCards = await getCreditCards();
   is(creditCards.length, 1, "1 credit card in storage");
 
@@ -387,7 +387,7 @@ add_task(async function test_submit_creditCard_never_save() {
   await BrowserTestUtils.withNewTab(
     { gBrowser, url: CREDITCARD_FORM_URL },
     async function(browser) {
-      let promiseShown = promiseNotificationShown();
+      let onPopupShown = waitForPopupShown();
       await focusUpdateSubmitForm(browser, {
         focusSelector: "#cc-name",
         newValues: {
@@ -396,7 +396,7 @@ add_task(async function test_submit_creditCard_never_save() {
         },
       });
 
-      await promiseShown;
+      await onPopupShown;
       await clickDoorhangerButton(MENU_BUTTON, 0);
     }
   );
@@ -429,7 +429,7 @@ add_task(async function test_submit_creditCard_with_sync_account() {
   await BrowserTestUtils.withNewTab(
     { gBrowser, url: CREDITCARD_FORM_URL },
     async function(browser) {
-      let promiseShown = promiseNotificationShown();
+      let onPopupShown = waitForPopupShown();
       await focusUpdateSubmitForm(browser, {
         focusSelector: "#cc-name",
         newValues: {
@@ -438,7 +438,7 @@ add_task(async function test_submit_creditCard_with_sync_account() {
         },
       });
 
-      await promiseShown;
+      await onPopupShown;
       let cb = getDoorhangerCheckbox();
       ok(!cb.hidden, "Sync checkbox should be visible");
       is(
@@ -516,7 +516,7 @@ add_task(async function test_submit_creditCard_with_synced_already() {
   await BrowserTestUtils.withNewTab(
     { gBrowser, url: CREDITCARD_FORM_URL },
     async function(browser) {
-      let promiseShown = promiseNotificationShown();
+      let onPopupShown = waitForPopupShown();
       await focusUpdateSubmitForm(browser, {
         focusSelector: "#cc-name",
         newValues: {
@@ -525,7 +525,7 @@ add_task(async function test_submit_creditCard_with_synced_already() {
         },
       });
 
-      await promiseShown;
+      await onPopupShown;
       let cb = getDoorhangerCheckbox();
       ok(cb.hidden, "Sync checkbox should be hidden");
       await clickDoorhangerButton(SECONDARY_BUTTON);
@@ -537,7 +537,7 @@ add_task(async function test_submit_manual_mergeable_creditCard_form() {
   await SpecialPowers.pushPrefEnv({
     set: [[CREDITCARDS_USED_STATUS_PREF, 0]],
   });
-  await saveCreditCard(TEST_CREDIT_CARD_3);
+  await setStorage(TEST_CREDIT_CARD_3);
   let creditCards = await getCreditCards();
   is(creditCards.length, 1, "1 credit card in storage");
 
@@ -545,7 +545,7 @@ add_task(async function test_submit_manual_mergeable_creditCard_form() {
   await BrowserTestUtils.withNewTab(
     { gBrowser, url: CREDITCARD_FORM_URL },
     async function(browser) {
-      let promiseShown = promiseNotificationShown();
+      let onPopupShown = waitForPopupShown();
       await focusUpdateSubmitForm(browser, {
         focusSelector: "#cc-name",
         newValues: {
@@ -556,7 +556,7 @@ add_task(async function test_submit_manual_mergeable_creditCard_form() {
         },
       });
 
-      await promiseShown;
+      await onPopupShown;
       await clickDoorhangerButton(MAIN_BUTTON);
     }
   );
@@ -586,7 +586,7 @@ add_task(async function test_update_autofill_form_name() {
   await SpecialPowers.pushPrefEnv({
     set: [[CREDITCARDS_USED_STATUS_PREF, 0]],
   });
-  await saveCreditCard(TEST_CREDIT_CARD_1);
+  await setStorage(TEST_CREDIT_CARD_1);
   let creditCards = await getCreditCards();
   is(creditCards.length, 1, "1 credit card in storage");
 
@@ -597,7 +597,7 @@ add_task(async function test_update_autofill_form_name() {
       let osKeyStoreLoginShown = OSKeyStoreTestUtils.waitForOSKeyStoreLogin(
         true
       );
-      let promiseShown = promiseNotificationShown();
+      let onPopupShown = waitForPopupShown();
 
       await openPopupOn(browser, "form #cc-name");
       await BrowserTestUtils.synthesizeKey("VK_DOWN", {}, browser);
@@ -612,7 +612,7 @@ add_task(async function test_update_autofill_form_name() {
         },
       });
 
-      await promiseShown;
+      await onPopupShown;
       await clickDoorhangerButton(MAIN_BUTTON);
     }
   );
@@ -647,7 +647,7 @@ add_task(async function test_update_autofill_form_exp_date() {
   await SpecialPowers.pushPrefEnv({
     set: [[CREDITCARDS_USED_STATUS_PREF, 0]],
   });
-  await saveCreditCard(TEST_CREDIT_CARD_1);
+  await setStorage(TEST_CREDIT_CARD_1);
   let creditCards = await getCreditCards();
   is(creditCards.length, 1, "1 credit card in storage");
   let onChanged = waitForStorageChangedEvents("update", "notifyUsed");
@@ -657,7 +657,7 @@ add_task(async function test_update_autofill_form_exp_date() {
       let osKeyStoreLoginShown = OSKeyStoreTestUtils.waitForOSKeyStoreLogin(
         true
       );
-      let promiseShown = promiseNotificationShown();
+      let onPopupShown = waitForPopupShown();
       await openPopupOn(browser, "form #cc-name");
       await BrowserTestUtils.synthesizeKey("VK_DOWN", {}, browser);
       await BrowserTestUtils.synthesizeKey("VK_RETURN", {}, browser);
@@ -671,7 +671,7 @@ add_task(async function test_update_autofill_form_exp_date() {
         },
       });
 
-      await promiseShown;
+      await onPopupShown;
       await clickDoorhangerButton(MAIN_BUTTON);
     }
   );
@@ -706,7 +706,7 @@ add_task(async function test_create_new_autofill_form() {
   await SpecialPowers.pushPrefEnv({
     set: [[CREDITCARDS_USED_STATUS_PREF, 0]],
   });
-  await saveCreditCard(TEST_CREDIT_CARD_1);
+  await setStorage(TEST_CREDIT_CARD_1);
   let creditCards = await getCreditCards();
   is(creditCards.length, 1, "1 credit card in storage");
   let onChanged = waitForStorageChangedEvents("add");
@@ -716,7 +716,7 @@ add_task(async function test_create_new_autofill_form() {
       let osKeyStoreLoginShown = OSKeyStoreTestUtils.waitForOSKeyStoreLogin(
         true
       );
-      let promiseShown = promiseNotificationShown();
+      let onPopupShown = waitForPopupShown();
       await openPopupOn(browser, "form #cc-name");
       await BrowserTestUtils.synthesizeKey("VK_DOWN", {}, browser);
       await BrowserTestUtils.synthesizeKey("VK_RETURN", {}, browser);
@@ -729,7 +729,7 @@ add_task(async function test_create_new_autofill_form() {
         },
       });
 
-      await promiseShown;
+      await onPopupShown;
       await clickDoorhangerButton(SECONDARY_BUTTON);
       await osKeyStoreLoginShown;
     }
@@ -765,12 +765,10 @@ add_task(async function test_update_duplicate_autofill_form() {
   await SpecialPowers.pushPrefEnv({
     set: [[CREDITCARDS_USED_STATUS_PREF, 0]],
   });
-  await saveCreditCard({
-    "cc-number": "6387060366272981",
-  });
-  await saveCreditCard({
-    "cc-number": "5038146897157463",
-  });
+  await setStorage(
+    { "cc-number": "6387060366272981" },
+    { "cc-number": "5038146897157463" }
+  );
   let creditCards = await getCreditCards();
   is(creditCards.length, 2, "2 credit card in storage");
   let onUsed = waitForStorageChangedEvents("notifyUsed");
@@ -816,7 +814,7 @@ add_task(async function test_submit_creditCard_with_invalid_network() {
   await BrowserTestUtils.withNewTab(
     { gBrowser, url: CREDITCARD_FORM_URL },
     async function(browser) {
-      let promiseShown = promiseNotificationShown();
+      let onPopupShown = waitForPopupShown();
       await focusUpdateSubmitForm(browser, {
         focusSelector: "#cc-name",
         newValues: {
@@ -828,7 +826,7 @@ add_task(async function test_submit_creditCard_with_invalid_network() {
         },
       });
 
-      await promiseShown;
+      await onPopupShown;
       await clickDoorhangerButton(MAIN_BUTTON);
     }
   );
@@ -852,7 +850,7 @@ add_task(async function test_submit_form_with_combined_expiry_field() {
   await BrowserTestUtils.withNewTab(
     { gBrowser, url: CREDITCARD_FORM_COMBINED_EXPIRY_URL },
     async function(browser) {
-      let promiseShown = promiseNotificationShown();
+      let onPopupShown = waitForPopupShown();
       await focusUpdateSubmitForm(browser, {
         focusSelector: "#cc-name",
         newValues: {
@@ -861,7 +859,7 @@ add_task(async function test_submit_form_with_combined_expiry_field() {
           "#cc-exp": "05/28",
         },
       });
-      await promiseShown;
+      await onPopupShown;
       await clickDoorhangerButton(MAIN_BUTTON);
     }
   );
@@ -891,7 +889,7 @@ add_task(async function test_submit_third_party_creditCard_logo() {
   await BrowserTestUtils.withNewTab(
     { gBrowser, url: CREDITCARD_FORM_URL },
     async function(browser) {
-      let promiseShown = promiseNotificationShown();
+      let onPopupShown = waitForPopupShown();
       await focusUpdateSubmitForm(browser, {
         focusSelector: "#cc-name",
         newValues: {
@@ -900,7 +898,7 @@ add_task(async function test_submit_third_party_creditCard_logo() {
         },
       });
 
-      await promiseShown;
+      await onPopupShown;
       let doorhanger = getNotification();
       let creditCardLogo = doorhanger.querySelector(".desc-message-box image");
       let creditCardLogoWithoutExtension = creditCardLogo.src.split(".", 1)[0];
@@ -924,7 +922,7 @@ add_task(async function test_update_third_party_creditCard_logo() {
     "cc-name": "John Doe",
   };
 
-  await saveCreditCard(amexCard);
+  await setStorage(amexCard);
   let creditCards = await getCreditCards();
   is(creditCards.length, 1, "1 credit card in storage");
 
@@ -932,7 +930,7 @@ add_task(async function test_update_third_party_creditCard_logo() {
   await BrowserTestUtils.withNewTab(
     { gBrowser, url: CREDITCARD_FORM_URL },
     async function(browser) {
-      let promiseShown = promiseNotificationShown();
+      let onPopupShown = waitForPopupShown();
       await focusUpdateSubmitForm(browser, {
         focusSelector: "#cc-name",
         newValues: {
@@ -943,7 +941,7 @@ add_task(async function test_update_third_party_creditCard_logo() {
         },
       });
 
-      await promiseShown;
+      await onPopupShown;
 
       let doorhanger = getNotification();
       let creditCardLogo = doorhanger.querySelector(".desc-message-box image");
@@ -968,7 +966,7 @@ add_task(async function test_submit_generic_creditCard_logo() {
   await BrowserTestUtils.withNewTab(
     { gBrowser, url: CREDITCARD_FORM_URL },
     async function(browser) {
-      let promiseShown = promiseNotificationShown();
+      let onPopupShown = waitForPopupShown();
       await focusUpdateSubmitForm(browser, {
         focusSelector: "#cc-name",
         newValues: {
@@ -977,7 +975,7 @@ add_task(async function test_submit_generic_creditCard_logo() {
         },
       });
 
-      await promiseShown;
+      await onPopupShown;
       let doorhanger = getNotification();
       let creditCardLogo = doorhanger.querySelector(".desc-message-box image");
       let creditCardLogoWithoutExtension = creditCardLogo.src.split(".", 1)[0];
@@ -1000,7 +998,7 @@ add_task(async function test_update_generic_creditCard_logo() {
     "cc-name": "John Doe",
   };
 
-  await saveCreditCard(genericCard);
+  await setStorage(genericCard);
   let creditCards = await getCreditCards();
   is(creditCards.length, 1, "1 credit card in storage");
 
@@ -1008,7 +1006,7 @@ add_task(async function test_update_generic_creditCard_logo() {
   await BrowserTestUtils.withNewTab(
     { gBrowser, url: CREDITCARD_FORM_URL },
     async function(browser) {
-      let promiseShown = promiseNotificationShown();
+      let onPopupShown = waitForPopupShown();
       await focusUpdateSubmitForm(browser, {
         focusSelector: "#cc-name",
         newValues: {
@@ -1019,7 +1017,7 @@ add_task(async function test_update_generic_creditCard_logo() {
         },
       });
 
-      await promiseShown;
+      await onPopupShown;
 
       let doorhanger = getNotification();
       let creditCardLogo = doorhanger.querySelector(".desc-message-box image");
@@ -1045,7 +1043,7 @@ add_task(async function test_save_panel_spaces_in_cc_number_logo() {
   await BrowserTestUtils.withNewTab(
     { gBrowser, url: CREDITCARD_FORM_URL },
     async function(browser) {
-      let promiseShown = promiseNotificationShown();
+      let onPopupShown = waitForPopupShown();
       await focusUpdateSubmitForm(browser, {
         focusSelector: "#cc-name",
         newValues: {
@@ -1053,7 +1051,7 @@ add_task(async function test_save_panel_spaces_in_cc_number_logo() {
         },
       });
 
-      await promiseShown;
+      await onPopupShown;
       let doorhanger = getNotification();
       let creditCardLogo = doorhanger.querySelector(".desc-message-box image");
       let creditCardLogoWithoutExtension = creditCardLogo.src.split(".", 1)[0];
@@ -1076,7 +1074,7 @@ add_task(async function test_update_panel_with_spaces_in_cc_number_logo() {
     "cc-name": "John Doe",
   };
 
-  await saveCreditCard(amexCard);
+  await setStorage(amexCard);
   let creditCards = await getCreditCards();
   is(creditCards.length, 1, "1 credit card in storage");
 
@@ -1084,7 +1082,7 @@ add_task(async function test_update_panel_with_spaces_in_cc_number_logo() {
   await BrowserTestUtils.withNewTab(
     { gBrowser, url: CREDITCARD_FORM_URL },
     async function(browser) {
-      let promiseShown = promiseNotificationShown();
+      let onPopupShown = waitForPopupShown();
       await focusUpdateSubmitForm(browser, {
         focusSelector: "#cc-name",
         newValues: {
@@ -1095,7 +1093,7 @@ add_task(async function test_update_panel_with_spaces_in_cc_number_logo() {
         },
       });
 
-      await promiseShown;
+      await onPopupShown;
 
       let doorhanger = getNotification();
       let creditCardLogo = doorhanger.querySelector(".desc-message-box image");

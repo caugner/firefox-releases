@@ -8,10 +8,10 @@
 
 #include <stdint.h>
 
+#include "AppTrustDomain.h"
 #include "CTDiversityPolicy.h"
 #include "CTKnownLogs.h"
 #include "CTLogVerifier.h"
-#include "CSTrustDomain.h"
 #include "ExtendedValidation.h"
 #include "MultiLogCTVerifier.h"
 #include "NSSCertDBTrustDomain.h"
@@ -773,8 +773,8 @@ Result CertVerifier::VerifyCert(
       // The telemetry probe CERT_CHAIN_SHA1_POLICY_STATUS gives us feedback on
       // the result of setting a specific policy. However, we don't want noise
       // from users who have manually set the policy to something other than the
-      // default, so we only collect for ImportedRoot (which is the default).
-      if (sha1ModeResult && mSHA1Mode == SHA1Mode::ImportedRoot) {
+      // default, so we only collect for Forbidden (which is the default).
+      if (sha1ModeResult && mSHA1Mode == SHA1Mode::Forbidden) {
         *sha1ModeResult = SHA1ModeResult::Failed;
       }
 
@@ -858,9 +858,10 @@ static bool CertIsSelfSigned(const BackCert& backCert, void* pinarg) {
     return false;
   }
 
-  nsTArray<nsTArray<uint8_t>> emptyCertList;
-  // CSTrustDomain is only used for the signature verification callbacks
-  mozilla::psm::CSTrustDomain trustDomain(emptyCertList);
+  nsTArray<Span<const uint8_t>> emptyCertList;
+  // AppTrustDomain is only used for its signature verification callbacks
+  // (AppTrustDomain::Verify{ECDSA,RSAPKCS1,RSAPSS}SignedData).
+  mozilla::psm::AppTrustDomain trustDomain(std::move(emptyCertList));
   Result rv = VerifySignedData(trustDomain, backCert.GetSignedData(),
                                backCert.GetSubjectPublicKeyInfo());
   return rv == Success;

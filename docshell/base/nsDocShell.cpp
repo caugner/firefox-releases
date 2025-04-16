@@ -3561,6 +3561,7 @@ nsDocShell::DisplayLoadError(nsresult aError, nsIURI* aURI,
   const char* errorDescriptionID = nullptr;
   AutoTArray<nsString, 3> formatStrs;
   bool addHostPort = false;
+  bool isBadStsCertError = false;
   nsresult rv = NS_OK;
   nsAutoString messageStr;
   nsAutoCString cssClass;
@@ -3710,6 +3711,7 @@ nsDocShell::DisplayLoadError(nsresult aError, nsIURI* aURI,
       // In the future we should differentiate between an HSTS host and a
       // pinned host and display a more informative message to the user.
       if (isStsHost || isPinnedHost) {
+        isBadStsCertError = true;
         cssClass.AssignLiteral("badStsCert");
       }
 
@@ -3870,19 +3872,21 @@ nsDocShell::DisplayLoadError(nsresult aError, nsIURI* aURI,
     }
   }
 
+  nsresult delegateErrorCode = aError;
   // If the HTTPS-Only Mode upgraded this request and the upgrade might have
   // caused this error, we replace the error-page with about:httpsonlyerror
-  bool isHttpsOnlyError =
-      nsHTTPSOnlyUtils::CouldBeHttpsOnlyError(aFailedChannel, aError);
-  if (isHttpsOnlyError) {
+  if (nsHTTPSOnlyUtils::CouldBeHttpsOnlyError(aFailedChannel, aError)) {
     errorPage.AssignLiteral("httpsonlyerror");
+    delegateErrorCode = NS_ERROR_HTTPS_ONLY;
+  } else if (isBadStsCertError) {
+    delegateErrorCode = NS_ERROR_BAD_HSTS_CERT;
   }
 
   if (nsCOMPtr<nsILoadURIDelegate> loadURIDelegate = GetLoadURIDelegate()) {
     nsCOMPtr<nsIURI> errorPageURI;
     rv = loadURIDelegate->HandleLoadError(
-        aURI, (isHttpsOnlyError ? NS_ERROR_HTTPS_ONLY : aError),
-        NS_ERROR_GET_MODULE(aError), getter_AddRefs(errorPageURI));
+        aURI, delegateErrorCode, NS_ERROR_GET_MODULE(delegateErrorCode),
+        getter_AddRefs(errorPageURI));
     // If the docshell is going away there's no point in showing an error page.
     if (NS_FAILED(rv) || mIsBeingDestroyed) {
       *aDisplayedErrorPage = false;
@@ -8800,19 +8804,6 @@ bool nsDocShell::IsSameDocumentNavigation(nsDocShellLoadState* aLoadState,
     }
   }
 
-#ifdef DEBUG
-  if (aState.mHistoryNavBetweenSameDoc) {
-    nsCOMPtr<nsIInputStream> currentPostData;
-    if (mozilla::SessionHistoryInParent()) {
-      currentPostData = mActiveEntry->GetPostData();
-    } else {
-      currentPostData = mOSHE->GetPostData();
-    }
-    NS_ASSERTION(currentPostData == aLoadState->PostDataStream(),
-                 "Different POST data for entries for the same page?");
-  }
-#endif
-
   // A same document navigation happens when we navigate between two SHEntries
   // for the same document. We do a same document navigation under two
   // circumstances. Either
@@ -10041,6 +10032,10 @@ nsIPrincipal* nsDocShell::GetInheritedPrincipal(
 
       // we really need to have a content type associated with this stream!!
       postChannel->SetUploadStream(aLoadState->PostDataStream(), ""_ns, -1);
+
+      // Ownership of the stream has transferred to the channel, clear our
+      // reference.
+      aLoadState->SetPostDataStream(nullptr);
     }
 
     /* If there is a valid postdata *and* it is a History Load,
@@ -13001,7 +12996,7 @@ nsresult nsDocShell::OnLinkClickSync(nsIContent* aContent,
   }
   uint32_t triggeringSandboxFlags = 0;
   if (mBrowsingContext) {
-    triggeringSandboxFlags = mBrowsingContext->GetSandboxFlags();
+    triggeringSandboxFlags = aContent->OwnerDoc()->GetSandboxFlags();
   }
 
   uint32_t flags = INTERNAL_LOAD_FLAGS_NONE;
