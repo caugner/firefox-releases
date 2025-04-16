@@ -92,8 +92,6 @@ const API = class extends ExtensionAPI {
 
       assertResetOnIdleOnEvent() {
         const expectResetIdleOnEventFalse =
-          this.context.envType !== "addon_parent" ||
-          !this.context.isBackgroundContext ||
           this.context.extension.persistentBackground;
         if (expectResetIdleOnEventFalse && this.resetIdleOnEvent) {
           const details = {
@@ -696,6 +694,11 @@ add_task(async function test_shutdown_before_background_loaded() {
     /Error: primed listener startupBlocking.onEvent1 not re-registered/,
     "fire.async after background load failure should be rejected"
   );
+
+  info(
+    "Expect fire.wakeup call after load failure to restart the background page"
+  );
+  await extension.awaitMessage("bg_started");
 
   await AddonTestUtils.promiseShutdownManager();
 

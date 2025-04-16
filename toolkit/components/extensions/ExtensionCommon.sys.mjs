@@ -54,8 +54,6 @@ function getConsole() {
   });
 }
 
-const BACKGROUND_SCRIPTS_VIEW_TYPES = ["background", "background_worker"];
-
 export var ExtensionCommon;
 
 // Run a function and report exceptions.
@@ -487,7 +485,14 @@ class BaseContext {
   }
 
   get isBackgroundContext() {
-    return BACKGROUND_SCRIPTS_VIEW_TYPES.includes(this.viewType);
+    if (this.viewType === "background") {
+      if (this.isProxyContextParent) {
+        return !!this.isTopContext; // Set in ExtensionPageContextParent.
+      }
+      const { contentWindow } = this;
+      return !!contentWindow && contentWindow.top === contentWindow;
+    }
+    return this.viewType === "background_worker";
   }
 
   /**
@@ -2272,8 +2277,18 @@ class EventManager {
       this.context.envType === "addon_parent" &&
       this.context.isBackgroundContext;
 
+    // TODO(Bug 1844041): ideally we should restrict resetIdleOnEvent to
+    // EventManager instances that belongs to the event page, but along
+    // with that we should consider if calling sendMessage from an event
+    // page should also reset idle timer, and so in the shorter term
+    // here we are allowing listeners from other extension pages to
+    // also reset the idle timer.
+    const isAddonContext = ["addon_parent", "addon_child"].includes(
+      this.context.envType
+    );
+
     // Avoid resetIdleOnEvent overhead by only consider it when applicable.
-    if (!isBackgroundParent || context.extension.persistentBackground) {
+    if (!isAddonContext || context.extension.persistentBackground) {
       this.resetIdleOnEvent = false;
     }
 

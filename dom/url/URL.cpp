@@ -8,6 +8,7 @@
 #include "URLMainThread.h"
 #include "URLWorker.h"
 
+#include "nsASCIIMask.h"
 #include "MainThreadUtils.h"
 #include "mozilla/RefPtr.h"
 #include "mozilla/dom/URLBinding.h"
@@ -232,14 +233,38 @@ void URL::GetProtocol(nsAString& aProtocol) const {
 }
 
 void URL::SetProtocol(const nsAString& aProtocol) {
-  nsCOMPtr<nsIURI> uri(URI());
-  if (!uri) {
+  nsAString::const_iterator start;
+  aProtocol.BeginReading(start);
+
+  nsAString::const_iterator end;
+  aProtocol.EndReading(end);
+
+  nsAString::const_iterator iter(start);
+  FindCharInReadable(':', iter, end);
+
+  // Changing the protocol of a URL, changes the "nature" of the URI
+  // implementation. In order to do this properly, we have to serialize the
+  // existing URL and reparse it in a new object.
+  nsCOMPtr<nsIURI> clone;
+  nsresult rv = NS_MutateURI(URI())
+                    .SetScheme(NS_ConvertUTF16toUTF8(Substring(start, iter)))
+                    .Finalize(clone);
+  if (NS_WARN_IF(NS_FAILED(rv))) {
     return;
   }
-  uri = net::TryChangeProtocol(uri, aProtocol);
-  if (!uri) {
+
+  nsAutoCString href;
+  rv = clone->GetSpec(href);
+  if (NS_WARN_IF(NS_FAILED(rv))) {
     return;
   }
+
+  nsCOMPtr<nsIURI> uri;
+  rv = NS_NewURI(getter_AddRefs(uri), href);
+  if (NS_WARN_IF(NS_FAILED(rv))) {
+    return;
+  }
+
   mURI = std::move(uri);
 }
 
@@ -314,7 +339,13 @@ void URL::SetPort(const nsAString& aPort) {
   int32_t port = -1;
 
   // nsIURI uses -1 as default value.
+  portStr.StripTaggedASCII(ASCIIMask::MaskCRLFTab());
   if (!portStr.IsEmpty()) {
+    // To be valid, the port must start with an ASCII digit.
+    // (nsAString::ToInteger ignores leading junk, so check before calling.)
+    if (!IsAsciiDigit(portStr[0])) {
+      return;
+    }
     port = portStr.ToInteger(&rv);
     if (NS_FAILED(rv)) {
       return;
