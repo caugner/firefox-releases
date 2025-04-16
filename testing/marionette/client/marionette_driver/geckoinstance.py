@@ -91,8 +91,6 @@ class GeckoInstance(object):
 
         "javascript.options.showInConsole": True,
 
-        # Enable Marionette component
-        "marionette.enabled": True,
         # (deprecated and can be removed when Firefox 60 ships)
         "marionette.defaultPrefs.enabled": True,
 
@@ -446,10 +444,10 @@ class FennecInstance(GeckoInstance):
             if self.connect_to_running_emulator:
                 self.runner.device.connect()
             self.runner.start()
-        except Exception as e:
-            exc, val, tb = sys.exc_info()
-            message = "Error possibly due to runner or device args: {}"
-            reraise(exc, message.format(e.message), tb)
+        except Exception:
+            exc_cls, exc, tb = sys.exc_info()
+            reraise(exc_cls, exc_cls(
+                "Error possibly due to runner or device args: {}".format(exc)), tb)
 
         # forward marionette port
         self.runner.device.device.forward(

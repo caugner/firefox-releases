@@ -91,19 +91,16 @@ async function useTestEngines(
     .QueryInterface(Ci.nsIResProtocolHandler);
   resProt.setSubstitution("search-extensions", Services.io.newURI(url));
   if (gModernConfig) {
+    const settings = await RemoteSettings(SearchUtils.SETTINGS_KEY);
     if (config) {
-      return sinon
-        .stub(SearchEngineSelector.prototype, "getEngineConfiguration")
-        .returns(config);
+      return sinon.stub(settings, "get").returns(config);
     }
     let chan = NetUtil.newChannel({
       uri: "resource://search-extensions/engines.json",
       loadUsingSystemPrincipal: true,
     });
     let json = parseJsonFromStream(chan.open());
-    return sinon
-      .stub(SearchEngineSelector.prototype, "getEngineConfiguration")
-      .returns(json.data);
+    return sinon.stub(settings, "get").returns(json.data);
   }
   return null;
 }
@@ -225,7 +222,7 @@ function getDefaultEngineName(isUS = false, privateMode = false) {
     isUS = Services.locale.requestedLocale == "en-US" && isUSTimezone();
   }
 
-  if (isUS && ("US" in searchSettings && settingName in searchSettings.US)) {
+  if (isUS && "US" in searchSettings && settingName in searchSettings.US) {
     defaultEngineName = searchSettings.US[settingName];
   }
   return defaultEngineName;
@@ -368,6 +365,7 @@ async function withGeoServer(
   testFn,
   {
     visibleDefaultEngines = null,
+    searchDefault = null,
     geoLookupData = null,
     preGeolookupPromise = Promise.resolve,
     cohort = null,
@@ -382,7 +380,7 @@ async function withGeoServer(
   srv.registerPathHandler("/lookup_defaults", (metadata, response) => {
     let data = {
       interval: intval200,
-      settings: { searchDefault: kTestEngineName },
+      settings: { searchDefault: searchDefault ?? kTestEngineName },
     };
     if (cohort) {
       data.cohort = cohort;
@@ -588,6 +586,31 @@ async function setupRemoteSettings() {
       _status: "synced",
     },
   ]);
+}
+
+/**
+ * Helper function that sets up a server and respnds to region
+ * fetch requests.
+ * @param {string} region
+ *   The region that the server will respond with.
+ * @param {Promise|null} waitToRespond
+ *   A promise that the server will await on to delay responding
+ *   to the request.
+ */
+function useCustomGeoServer(region, waitToRespond = Promise.resolve()) {
+  let srv = useHttpServer();
+  srv.registerPathHandler("/fetch_region", async (req, res) => {
+    res.processAsync();
+    await waitToRespond;
+    res.setStatusLine("1.1", 200, "OK");
+    res.write(JSON.stringify({ country_code: region }));
+    res.finish();
+  });
+
+  Services.prefs.setCharPref(
+    "geo.provider-country.network.url",
+    `http://localhost:${srv.identity.primaryPort}/fetch_region`
+  );
 }
 
 /**
