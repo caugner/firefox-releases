@@ -91,7 +91,7 @@ SafeRefPtr<WorkerThread> WorkerThread::Create(
     const WorkerThreadFriendKey& /* aKey */) {
   SafeRefPtr<WorkerThread> thread =
       MakeSafeRefPtr<WorkerThread>(ConstructorKey());
-  if (NS_FAILED(thread->Init(NS_LITERAL_CSTRING("DOM Worker")))) {
+  if (NS_FAILED(thread->Init("DOM Worker"_ns))) {
     NS_WARNING("Failed to create new thread!");
     return nullptr;
   }
@@ -148,11 +148,8 @@ void WorkerThread::SetWorker(const WorkerThreadFriendKey& /* aKey */,
 void WorkerThread::IncrementDispatchCounter() {
   MutexAutoLock lock(mLock);
   if (mWorkerPrivate) {
-    PerformanceCounter* performanceCounter =
-        mWorkerPrivate->GetPerformanceCounter();
-    if (performanceCounter) {
-      performanceCounter->IncrementDispatchCounter(DispatchCategory::Worker);
-    }
+    mWorkerPrivate->MutablePerformanceCounterRef().IncrementDispatchCounter(
+        DispatchCategory::Worker);
   }
 }
 
@@ -326,12 +323,9 @@ uint32_t WorkerThread::RecursionDepth(
   return mNestedEventLoopDepth;
 }
 
-PerformanceCounter* WorkerThread::GetPerformanceCounter(
-    nsIRunnable* aEvent) const {
-  if (mWorkerPrivate) {
-    return mWorkerPrivate->GetPerformanceCounter();
-  }
-  return nullptr;
+PerformanceCounter* WorkerThread::GetPerformanceCounter(nsIRunnable*) const {
+  return mWorkerPrivate ? &mWorkerPrivate->MutablePerformanceCounterRef()
+                        : nullptr;
 }
 
 NS_IMPL_ISUPPORTS(WorkerThread::Observer, nsIThreadObserver)

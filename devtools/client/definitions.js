@@ -82,12 +82,6 @@ loader.lazyGetter(
 // Other dependencies
 loader.lazyRequireGetter(
   this,
-  "AccessibilityStartup",
-  "devtools/client/accessibility/accessibility-startup",
-  true
-);
-loader.lazyRequireGetter(
-  this,
   "ResponsiveUIManager",
   "devtools/client/responsive/manager"
 );
@@ -449,12 +443,7 @@ Tools.accessibility = {
   },
 
   build(iframeWindow, toolbox) {
-    const startup = toolbox.getToolStartup("accessibility");
-    return new AccessibilityPanel(iframeWindow, toolbox, startup);
-  },
-
-  buildToolStartup(toolbox) {
-    return new AccessibilityStartup(toolbox);
+    return new AccessibilityPanel(iframeWindow, toolbox);
   },
 };
 
@@ -552,7 +541,7 @@ Tools.lightTheme = {
 
 exports.defaultThemes = [Tools.darkTheme, Tools.lightTheme];
 
-// White-list buttons that can be toggled to prevent adding prefs for
+// List buttons that can be toggled to prevent adding prefs for
 // addons that have manually inserted toolbarbuttons into DOM.
 // (By default, supported target is only local tab)
 exports.ToolboxButtons = [

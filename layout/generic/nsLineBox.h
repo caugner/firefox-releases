@@ -400,10 +400,9 @@ class nsLineBox final : public nsLineLink {
   void AppendFloats(nsFloatCacheFreeList& aFreeList);
   bool RemoveFloat(nsIFrame* aFrame);
 
-  // Combined area is the area of the line that should influence the
-  // overflow area of its parent block.  The combined area should be
-  // used for painting-related things, but should never be used for
-  // layout (except for handling of 'overflow').
+  // The ink overflow area should never be used for things that affect layout.
+  // The scrollable overflow area are permitted to affect layout for handling of
+  // overflow and scrollbars.
   void SetOverflowAreas(const nsOverflowAreas& aOverflowAreas);
   mozilla::LogicalRect GetOverflowArea(nsOverflowType aType,
                                        mozilla::WritingMode aWM,
@@ -420,10 +419,8 @@ class nsLineBox final : public nsLineLink {
     nsRect bounds = GetPhysicalBounds();
     return nsOverflowAreas(bounds, bounds);
   }
-  nsRect GetVisualOverflowArea() const {
-    return GetOverflowArea(eVisualOverflow);
-  }
-  nsRect GetScrollableOverflowArea() {
+  nsRect InkOverflowRect() const { return GetOverflowArea(eInkOverflow); }
+  nsRect ScrollableOverflowRect() {
     return GetOverflowArea(eScrollableOverflow);
   }
 
@@ -1647,9 +1644,9 @@ class nsLineIterator final : public nsILineIterator {
 
   virtual int32_t GetNumLines() const override;
   virtual bool GetDirection() override;
-  NS_IMETHOD GetLine(int32_t aLineNumber, nsIFrame** aFirstFrameOnLine,
-                     int32_t* aNumFramesOnLine,
-                     nsRect& aLineBounds) const override;
+
+  mozilla::Result<LineInfo, nsresult> GetLine(
+      int32_t aLineNumber) const override;
   virtual int32_t FindLineContaining(nsIFrame* aFrame,
                                      int32_t aStartLine = 0) override;
   NS_IMETHOD FindFrameAt(int32_t aLineNumber, nsPoint aPos,

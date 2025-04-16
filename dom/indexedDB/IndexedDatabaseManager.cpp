@@ -15,6 +15,7 @@
 #include "mozilla/ContentEvents.h"
 #include "mozilla/EventDispatcher.h"
 #include "mozilla/Preferences.h"
+#include "mozilla/ResultExtensions.h"
 #include "mozilla/dom/DOMException.h"
 #include "mozilla/dom/ErrorEvent.h"
 #include "mozilla/dom/ErrorEventBinding.h"
@@ -26,11 +27,13 @@
 #include "nsGlobalWindow.h"
 #include "mozilla/Logging.h"
 
+#include "ActorsChild.h"
 #include "FileManager.h"
 #include "IDBEvents.h"
 #include "IDBFactory.h"
 #include "IDBKeyRange.h"
 #include "IDBRequest.h"
+#include "IndexedDBCommon.h"
 #include "ProfilerHelpers.h"
 #include "ScriptErrorHelper.h"
 #include "nsCharSeparatedTokenizer.h"
@@ -252,8 +255,7 @@ IndexedDatabaseManager* IndexedDatabaseManager::GetOrCreate() {
 
     RefPtr<IndexedDatabaseManager> instance(new IndexedDatabaseManager());
 
-    nsresult rv = instance->Init();
-    NS_ENSURE_SUCCESS(rv, nullptr);
+    IDB_TRY(instance->Init(), nullptr);
 
     if (gInitialized.exchange(true)) {
       NS_ERROR("Initialized more than once?!");

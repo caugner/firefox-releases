@@ -392,8 +392,8 @@ void nsTableCellFrame::InvalidateFrame(uint32_t aDisplayItemKey,
                                        bool aRebuildDisplayItems) {
   nsIFrame::InvalidateFrame(aDisplayItemKey, aRebuildDisplayItems);
   if (GetTableFrame()->IsBorderCollapse()) {
-    GetParent()->InvalidateFrameWithRect(
-        GetVisualOverflowRect() + GetPosition(), aDisplayItemKey, false);
+    GetParent()->InvalidateFrameWithRect(InkOverflowRect() + GetPosition(),
+                                         aDisplayItemKey, false);
   }
 }
 
@@ -622,7 +622,7 @@ void nsTableCellFrame::BlockDirAlignChild(WritingMode aWM, nscoord aMaxAscent) {
   }
   if (HasView()) {
     nsContainerFrame::SyncFrameViewAfterReflow(PresContext(), this, GetView(),
-                                               desiredSize.VisualOverflow(),
+                                               desiredSize.InkOverflow(),
                                                ReflowChildFlags::Default);
   }
 }
@@ -904,7 +904,7 @@ void nsTableCellFrame::Reflow(nsPresContext* aPresContext,
   LogicalPoint kidOrigin(wm, borderPadding.IStart(wm),
                          borderPadding.BStart(wm));
   nsRect origRect = firstKid->GetRect();
-  nsRect origVisualOverflow = firstKid->GetVisualOverflowRect();
+  nsRect origInkOverflow = firstKid->InkOverflowRect();
   bool firstReflow = firstKid->HasAnyStateBits(NS_FRAME_FIRST_REFLOW);
 
   ReflowChild(firstKid, aPresContext, kidSize, kidReflowInput, wm, kidOrigin,
@@ -943,7 +943,7 @@ void nsTableCellFrame::Reflow(nsPresContext* aPresContext,
                     kidOrigin, containerSize, ReflowChildFlags::Default);
 
   if (tableFrame->IsBorderCollapse()) {
-    nsTableFrame::InvalidateTableFrame(firstKid, origRect, origVisualOverflow,
+    nsTableFrame::InvalidateTableFrame(firstKid, origRect, origInkOverflow,
                                        firstReflow);
   }
   // first, compute the bsize which can be set w/o being restricted by
@@ -991,7 +991,7 @@ void nsTableCellFrame::Reflow(nsPresContext* aPresContext,
   SetDesiredSize(aDesiredSize);
 
   // Any absolutely-positioned children will get reflowed in
-  // nsFrame::FixupPositionedTableParts in another pass, so propagate our
+  // nsIFrame::FixupPositionedTableParts in another pass, so propagate our
   // dirtiness to them before our parent clears our dirty bits.
   PushDirtyBitToAbsoluteFrames();
 
@@ -1045,7 +1045,7 @@ void nsTableCellFrame::AppendDirectlyOwnedAnonBoxes(
 
 #ifdef DEBUG_FRAME_DUMP
 nsresult nsTableCellFrame::GetFrameName(nsAString& aResult) const {
-  return MakeFrameName(NS_LITERAL_STRING("TableCell"), aResult);
+  return MakeFrameName(u"TableCell"_ns, aResult);
 }
 #endif
 
@@ -1067,7 +1067,7 @@ nsMargin nsBCTableCellFrame::GetUsedBorder() const {
 
 #ifdef DEBUG_FRAME_DUMP
 nsresult nsBCTableCellFrame::GetFrameName(nsAString& aResult) const {
-  return MakeFrameName(NS_LITERAL_STRING("BCTableCell"), aResult);
+  return MakeFrameName(u"BCTableCell"_ns, aResult);
 }
 #endif
 

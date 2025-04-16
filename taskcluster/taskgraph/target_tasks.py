@@ -127,7 +127,7 @@ def filter_on_platforms(task, platforms):
 
 
 def filter_by_uncommon_try_tasks(task, optional_filters=None):
-    """Filters tasks based on blacklist rules.
+    """Filters tasks that should not be commonly run on try.
 
     Args:
         task (str): String representing the task name.
@@ -171,6 +171,38 @@ def filter_release_tasks(task, parameters):
     if task.attributes.get('shipping_phase') not in (None, 'build'):
         return False
 
+    """ No debug on beta/release, keep on ESR with 4 week cycles, beta/release
+    will not be too different from central, but ESR will live for a long time.
+
+    From June 2019 -> June 2020, we found 1 unique regression on ESR debug
+    and 5 unique regressions on beta/release.  Keeping spidermonkey and linux
+    debug finds all but 1 unique regressions (windows found on try) for beta/release.
+    """
+    if parameters['release_type'].startswith('esr'):
+        return True
+
+    # code below here is intended to reduce beta/release debug tasks
+    build_type = task.attributes.get('build_type', '')
+    build_platform = task.attributes.get('build_platform', '')
+    test_platform = task.attributes.get('test_platform', '')
+    if task.kind == 'hazard' or 'toolchain' in build_platform:
+        # keep hazard and toolchain builds around
+        return True
+
+    if build_type == 'debug':
+        if 'linux' not in build_platform:
+            # filter out windows/mac/android
+            return False
+        elif task.kind not in ['spidermonkey'] and '-qr' in test_platform:
+            # filter out linux-qr tests, leave spidermonkey
+            return False
+        elif '64' not in build_platform:
+            # filter out linux32 builds
+            return False
+
+    # webrender-android-*-debug doesn't have attributes to find 'debug', using task.label.
+    if task.kind == 'webrender' and 'debug' in task.label:
+        return False
     return True
 
 
@@ -451,7 +483,7 @@ def target_tasks_push_desktop(full_task_graph, parameters, graph_config):
             return True
         # XXX: Bug 1612540 - include beetmover jobs for publishing geckoview, along
         # with the regular Firefox (not Devedition!) releases so that they are at sync
-        if is_geckoview(task, parameters):
+        if 'mozilla-esr' not in parameters['project'] and is_geckoview(task, parameters):
             return True
 
         if task.attributes.get('shipping_product') == parameters['release_product'] and \
@@ -648,18 +680,30 @@ def target_tasks_general_perf_testing(full_task_graph, parameters, graph_config)
 
         # Desktop selection
         if 'android' not in platform:
-            # Run tests on all chrome variants
-            if '-chrome' in try_name:
-                return True
-            if '-chromium' in try_name:
-                return True
             # Select some browsertime tasks as desktop smoke-tests
             if 'browsertime' in try_name:
+                if 'chrome' in try_name:
+                    return False
+                if 'chromium' in try_name:
+                    return False
+                if '-fis' in try_name:
+                    return False
+                if '-wr' in try_name:
+                    return False
                 if 'linux' in platform:
                     if 'speedometer' in try_name:
                         return True
-                    if 'tp6' in try_name:
+                    if 'tp6' in try_name and 'amazon' in try_name:
                         return True
+            else:
+                # Bug 1652451 - Perma-failing due to server issues
+                if 'youtube-playback' in try_name and 'youtube-playback-chrome' not in try_name:
+                    return False
+                # Run tests on all chrome variants
+                if '-chrome' in try_name:
+                    return True
+                if '-chromium' in try_name:
+                    return True
         # Android selection
         elif accept_raptor_android_build(platform):
             # Ignore all fennec tests here, we run those weekly
@@ -667,7 +711,7 @@ def target_tasks_general_perf_testing(full_task_graph, parameters, graph_config)
                 return False
             # Select live site tests
             if '-live' in try_name and ('fenix' in try_name or 'chrome-m' in try_name):
-                return False  # temporarily disabled, Bug 1648183
+                return _run_live_site()
             # Select fenix resource usage tests
             if 'fenix' in try_name:
                 if 'raptor-scn-power-idle' in try_name:
@@ -814,6 +858,13 @@ def target_tasks_searchfox(full_task_graph, parameters, graph_config):
             'source-test-file-metadata-bugzilla-components']
 
 
+# Run Coverity Static Analysis once daily.
+@_target_task('coverity_static_analysis_full')
+def target_tasks_coverity_full(full_task_graph, parameters, graph_config):
+    """Select tasks required to run Coverity Static Analysis"""
+    return ['source-test-coverity-coverity-full-analysis']
+
+
 @_target_task('customv8_update')
 def target_tasks_customv8_update(full_task_graph, parameters, graph_config):
     """Select tasks required for building latest d8/v8 version."""
@@ -866,6 +917,16 @@ def target_tasks_merge_automation(full_task_graph, parameters, graph_config):
     def filter(task):
         # For now any task in the repo-update kind is ok
         return task.kind in ['merge-automation']
+    return [l for l, t in six.iteritems(full_task_graph.tasks) if filter(t)]
+
+
+@_target_task('scriptworker_canary')
+def target_tasks_scriptworker_canary(full_task_graph, parameters, graph_config):
+    """Select the set of tasks required to run scriptworker canaries.
+    """
+    def filter(task):
+        # For now any task in the repo-update kind is ok
+        return task.kind in ['scriptworker-canary']
     return [l for l, t in six.iteritems(full_task_graph.tasks) if filter(t)]
 
 

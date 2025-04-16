@@ -206,7 +206,7 @@ class TreeNode extends Component {
 
   constructor(props) {
     super(props);
-    this.treeNodeRef = _react.default.createRef();
+    this.treeNodeRef = /*#__PURE__*/_react.default.createRef();
     this._onKeyDown = this._onKeyDown.bind(this);
   }
 
@@ -608,7 +608,7 @@ class Tree extends Component {
     this.state = {
       autoExpanded: new Set()
     };
-    this.treeRef = _react.default.createRef();
+    this.treeRef = /*#__PURE__*/_react.default.createRef();
 
     const opaf = fn => oncePerAnimationFrame(fn, {
       getDocument: () => this.treeRef.current && this.treeRef.current.ownerDocument
@@ -3293,21 +3293,20 @@ function parseStackString(stack) {
     }
 
     let functionName;
-    let location; // Given the input: "functionName@scriptLocation:2:100"
-    // Result: [
-    //   "functionName@scriptLocation:2:100",
-    //   "functionName",
-    //   "scriptLocation:2:100"
-    // ]
+    let location; // Retrieve the index of the first @ to split the frame string.
 
-    const result = frame.match(/^(.*)@(.*)$/);
+    const atCharIndex = frame.indexOf("@");
 
-    if (result && result.length === 3) {
-      functionName = result[1]; // If the resource was loaded by base-loader.js, the location looks like:
+    if (atCharIndex > -1) {
+      functionName = frame.slice(0, atCharIndex);
+      location = frame.slice(atCharIndex + 1);
+    }
+
+    if (location && location.includes(" -> ")) {
+      // If the resource was loaded by base-loader.js, the location looks like:
       // resource://devtools/shared/base-loader.js -> resource://path/to/file.js .
       // What's needed is only the last part after " -> ".
-
-      location = result[2].split(" -> ").pop();
+      location = location.split(" -> ").pop();
     }
 
     if (!functionName) {
@@ -4955,7 +4954,6 @@ const {
   rawCropString,
   sanitizeString,
   wrapRender,
-  isGrip,
   ELLIPSIS,
   uneatLastUrlCharsRegex,
   urlRegex
@@ -5277,11 +5275,17 @@ function isLongString(object) {
 }
 
 function supportsObject(object, noGrip = false) {
-  if (noGrip === false && isGrip(object)) {
+  // Accept the object if the grip-type (or type for noGrip objects) is "string"
+  if (getGripType(object, noGrip) == "string") {
+    return true;
+  } // Also accept longString objects if we're expecting grip
+
+
+  if (!noGrip) {
     return isLongString(object);
   }
 
-  return getGripType(object, noGrip) == "string";
+  return false;
 } // Exports from this module
 
 
@@ -5841,7 +5845,6 @@ function ObjectRep(props) {
   const {
     shouldRenderTooltip = true
   } = props;
-  const propsArray = safePropIterator(props, object);
 
   if (props.mode === MODE.TINY) {
     const tinyModeItems = [];
@@ -5851,7 +5854,7 @@ function ObjectRep(props) {
     } else {
       tinyModeItems.push(span({
         className: "objectLeftBrace"
-      }, "{"), propsArray.length > 0 ? ellipsisElement : null, span({
+      }, "{"), Object.keys(object).length > 0 ? ellipsisElement : null, span({
         className: "objectRightBrace"
       }, "}"));
     }
@@ -5862,6 +5865,7 @@ function ObjectRep(props) {
     }, ...tinyModeItems);
   }
 
+  const propsArray = safePropIterator(props, object);
   return span({
     className: "objectBox objectBox-object",
     title: shouldRenderTooltip ? getTitle(props) : null

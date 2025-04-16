@@ -4,8 +4,8 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-#ifndef mozilla_dom_SVGViewportElement_h
-#define mozilla_dom_SVGViewportElement_h
+#ifndef DOM_SVG_SVGVIEWPORTELEMENT_H_
+#define DOM_SVG_SVGVIEWPORTELEMENT_H_
 
 #include "mozilla/Attributes.h"
 #include "mozilla/SVGImageContext.h"
@@ -20,10 +20,9 @@
 #include "nsISVGPoint.h"
 #include "SVGPreserveAspectRatio.h"
 
-class nsSVGOuterSVGFrame;
-
 namespace mozilla {
 class AutoPreserveAspectRatioOverride;
+class SVGOuterSVGFrame;
 class SVGViewportFrame;
 
 namespace dom {
@@ -43,7 +42,7 @@ class svgFloatSize {
 };
 
 class SVGViewportElement : public SVGGraphicsElement {
-  friend class ::nsSVGOuterSVGFrame;
+  friend class mozilla::SVGOuterSVGFrame;
   friend class mozilla::SVGViewportFrame;
 
  protected:
@@ -206,4 +205,4 @@ class SVGViewportElement : public SVGGraphicsElement {
 
 }  // namespace mozilla
 
-#endif  // SVGViewportElement_h
+#endif  // DOM_SVG_SVGVIEWPORTELEMENT_H_

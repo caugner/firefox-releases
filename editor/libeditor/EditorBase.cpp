@@ -62,6 +62,7 @@
 #include "mozilla/TransactionManager.h"  // for TransactionManager
 #include "mozilla/Tuple.h"
 #include "mozilla/dom/AbstractRange.h"  // for AbstractRange
+#include "mozilla/dom/Attr.h"           // for Attr
 #include "mozilla/dom/CharacterData.h"  // for CharacterData
 #include "mozilla/dom/DataTransfer.h"   // for DataTransfer
 #include "mozilla/dom/Element.h"        // for Element, nsINode::AsElement
@@ -3716,8 +3717,8 @@ nsresult EditorBase::DeleteSelectionAsAction(
   // TODO: If we're an HTMLEditor instance, we need to compute delete ranges
   //       here.  However, it means that we need to pick computation codes
   //       which are in `HandleDeleteSelection()`, its helper methods and
-  //       `WSRunObject` so that we need to redesign `HandleDeleteSelection()`
-  //       in bug 1618457.
+  //       `WhiteSpaceVisibilityKeeper` so that we need to redesign
+  //       `HandleDeleteSelection()` in bug 1618457.
 
   nsresult rv = editActionData.MaybeDispatchBeforeInputEvent();
   if (NS_FAILED(rv)) {
@@ -4153,7 +4154,7 @@ nsresult EditorBase::DeleteSelectionWithTransaction(
 nsresult EditorBase::AppendNodeToSelectionAsRange(nsINode* aNode) {
   MOZ_ASSERT(IsEditActionDataAvailable());
 
-  if (NS_WARN_IF(!aNode) && NS_WARN_IF(!aNode->IsContent())) {
+  if (NS_WARN_IF(!aNode) || NS_WARN_IF(!aNode->IsContent())) {
     return NS_ERROR_INVALID_ARG;
   }
 
@@ -4552,8 +4553,7 @@ nsresult EditorBase::ToggleTextDirectionAsAction(nsIPrincipal* aPrincipal) {
   // but not canceled.
   TextDirection newDirection =
       IsRightToLeft() ? TextDirection::eLTR : TextDirection::eRTL;
-  editActionData.SetData(IsRightToLeft() ? NS_LITERAL_STRING("ltr")
-                                         : NS_LITERAL_STRING("rtl"));
+  editActionData.SetData(IsRightToLeft() ? u"ltr"_ns : u"rtl"_ns);
 
   // FYI: Oddly, Chrome does not dispatch beforeinput event in this case but
   //      dispatches input event.
@@ -4591,9 +4591,8 @@ void EditorBase::SwitchTextDirectionTo(TextDirection aTextDirection) {
     return;
   }
 
-  editActionData.SetData(aTextDirection == TextDirection::eLTR
-                             ? NS_LITERAL_STRING("ltr")
-                             : NS_LITERAL_STRING("rtl"));
+  editActionData.SetData(aTextDirection == TextDirection::eLTR ? u"ltr"_ns
+                                                               : u"rtl"_ns);
 
   // FYI: Oddly, Chrome does not dispatch beforeinput event in this case but
   //      dispatches input event.
@@ -4629,7 +4628,7 @@ nsresult EditorBase::SetTextDirectionTo(TextDirection aTextDirection) {
     mFlags &= ~nsIEditor::eEditorRightToLeft;
     mFlags |= nsIEditor::eEditorLeftToRight;
     nsresult rv = rootElement->SetAttr(kNameSpaceID_None, nsGkAtoms::dir,
-                                       NS_LITERAL_STRING("ltr"), true);
+                                       u"ltr"_ns, true);
     NS_WARNING_ASSERTION(NS_SUCCEEDED(rv),
                          "Element::SetAttr(nsGkAtoms::dir, ltr) failed");
     return rv;
@@ -4640,7 +4639,7 @@ nsresult EditorBase::SetTextDirectionTo(TextDirection aTextDirection) {
     mFlags |= nsIEditor::eEditorRightToLeft;
     mFlags &= ~nsIEditor::eEditorLeftToRight;
     nsresult rv = rootElement->SetAttr(kNameSpaceID_None, nsGkAtoms::dir,
-                                       NS_LITERAL_STRING("rtl"), true);
+                                       u"rtl"_ns, true);
     NS_WARNING_ASSERTION(NS_SUCCEEDED(rv),
                          "Element::SetAttr(nsGkAtoms::dir, rtl) failed");
     return rv;

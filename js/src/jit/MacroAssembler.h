@@ -1039,6 +1039,11 @@ class MacroAssembler : public MacroAssemblerSpecific {
   void roundDoubleToInt32(FloatRegister src, Register dest, FloatRegister temp,
                           Label* fail) PER_SHARED_ARCH;
 
+  void truncFloat32ToInt32(FloatRegister src, Register dest,
+                           Label* fail) PER_SHARED_ARCH;
+  void truncDoubleToInt32(FloatRegister src, Register dest,
+                          Label* fail) PER_SHARED_ARCH;
+
   // Returns a random double in range [0, 1) in |dest|. The |rng| register must
   // hold a pointer to a mozilla::non_crypto::XorShift128PlusRNG.
   void randomDouble(Register rng, FloatRegister dest, Register64 temp0,
@@ -1099,7 +1104,10 @@ class MacroAssembler : public MacroAssemblerSpecific {
   inline void rshift32Arithmetic(Register shift,
                                  Register srcDest) PER_SHARED_ARCH;
 
-  // These variants may use the stack, but do not have the above constraint.
+  // These variants do not have the above constraint, but may emit some extra
+  // instructions on x86_shared. They also handle shift >= 32 consistently by
+  // masking with 0x1F (either explicitly or relying on the hardware to do
+  // that).
   inline void flexibleLshift32(Register shift,
                                Register srcDest) PER_SHARED_ARCH;
   inline void flexibleRshift32(Register shift,
@@ -3340,6 +3348,9 @@ class MacroAssembler : public MacroAssemblerSpecific {
   void guardGroupHasUnanalyzedNewScript(Register group, Register scratch,
                                         Label* fail);
 
+  void guardSpecificAtom(Register str, JSAtom* atom, Register scratch,
+                         const LiveRegisterSet& volatileRegs, Label* fail);
+
   void loadWasmTlsRegFromFrame(Register dest = WasmTlsReg);
 
   template <typename T>
@@ -3488,6 +3499,9 @@ class MacroAssembler : public MacroAssemblerSpecific {
     bind(&done);
   }
 
+  void boxUint32(Register source, ValueOperand dest, bool allowDouble,
+                 Label* fail);
+
   template <typename T>
   void loadFromTypedArray(Scalar::Type arrayType, const T& src,
                           AnyRegister dest, Register temp, Label* fail);
@@ -3538,6 +3552,8 @@ class MacroAssembler : public MacroAssemblerSpecific {
 
   void debugAssertIsObject(const ValueOperand& val);
   void debugAssertObjHasFixedSlots(Register obj, Register scratch);
+
+  void setIsPackedArray(Register obj, Register output, Register temp);
 
   void branchIfNativeIteratorNotReusable(Register ni, Label* notReusable);
 

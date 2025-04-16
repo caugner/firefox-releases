@@ -18,10 +18,11 @@
 #include "nsICookieService.h"
 #include "nsIEffectiveTLDService.h"
 #include "nsIRedirectHistoryEntry.h"
+#include "nsIWebProgressListener.h"
+#include "nsNetUtil.h"
 #include "nsScriptSecurityManager.h"
 
-constexpr auto CONSOLE_SCHEMEFUL_CATEGORY =
-    NS_LITERAL_CSTRING("cookieSchemeful");
+constexpr auto CONSOLE_SCHEMEFUL_CATEGORY = "cookieSchemeful"_ns;
 
 namespace mozilla {
 
@@ -586,7 +587,7 @@ bool CookieCommons::MaybeCompareSchemeWithLogging(
   if (!StaticPrefs::network_cookie_sameSite_schemeful()) {
     CookieLogging::LogMessageToConsole(
         aCRC, aHostURI, nsIScriptError::warningFlag, CONSOLE_SCHEMEFUL_CATEGORY,
-        NS_LITERAL_CSTRING("CookieSchemefulRejectForBeta"),
+        "CookieSchemefulRejectForBeta"_ns,
         AutoTArray<nsString, 2>{NS_ConvertUTF8toUTF16(aCookie->Name()),
                                 NS_ConvertUTF8toUTF16(uri)});
     return true;
@@ -594,7 +595,7 @@ bool CookieCommons::MaybeCompareSchemeWithLogging(
 
   CookieLogging::LogMessageToConsole(
       aCRC, aHostURI, nsIScriptError::warningFlag, CONSOLE_SCHEMEFUL_CATEGORY,
-      NS_LITERAL_CSTRING("CookieSchemefulReject"),
+      "CookieSchemefulReject"_ns,
       AutoTArray<nsString, 2>{NS_ConvertUTF8toUTF16(aCookie->Name()),
                               NS_ConvertUTF8toUTF16(uri)});
   return false;

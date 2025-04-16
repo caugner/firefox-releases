@@ -553,10 +553,10 @@ static nsresult AppendDOMNode(nsITransferable* aTransferable,
   NS_ENSURE_TRUE(document->IsHTMLDocument(), NS_OK);
 
   // init encoder with document and node
-  rv =
-      docEncoder->NativeInit(document, NS_LITERAL_STRING(kHTMLMime),
-                             nsIDocumentEncoder::OutputAbsoluteLinks |
-                                 nsIDocumentEncoder::OutputEncodeBasicEntities);
+  rv = docEncoder->NativeInit(
+      document, NS_LITERAL_STRING_FROM_CSTRING(kHTMLMime),
+      nsIDocumentEncoder::OutputAbsoluteLinks |
+          nsIDocumentEncoder::OutputEncodeBasicEntities);
   NS_ENSURE_SUCCESS(rv, rv);
 
   rv = docEncoder->SetNode(aDOMNode);
@@ -918,7 +918,7 @@ bool nsCopySupport::FireClipboardEvent(EventMessage aEventMessage,
   // Now that we have copied, update the clipboard commands. This should have
   // the effect of updating the enabled state of the paste menu item.
   if (doDefault || count) {
-    piWindow->UpdateCommands(NS_LITERAL_STRING("clipboard"), nullptr, 0);
+    piWindow->UpdateCommands(u"clipboard"_ns, nullptr, 0);
   }
 
   if (aActionTaken) {

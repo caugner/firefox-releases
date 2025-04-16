@@ -97,6 +97,7 @@ rusty-enums = [
     "mozilla::StyleFloat",
     "mozilla::StyleImageOrientation",
     "mozilla::StyleImageRendering",
+    "mozilla::StyleInert",
     "mozilla::StyleUserModify",
     "mozilla::StyleUserInput",
     "mozilla::StyleBoxDirection",
@@ -164,6 +165,7 @@ rusty-enums = [
     "mozilla::StyleBlend",
     "mozilla::StyleMaskComposite",
     "mozilla::StyleControlCharacterVisibility",
+    "mozilla::StyleWritingModeProperty",
 ]
 whitelist-vars = [
     "NS_ATTRVALUE_.*",
@@ -416,6 +418,7 @@ cbindgen-types = [
     { gecko = "StyleComputedFontStyleDescriptor", servo = "crate::font_face::ComputedFontStyleDescriptor" },
     { gecko = "StyleComputedFontWeightRange", servo = "crate::font_face::ComputedFontWeightRange" },
     { gecko = "StyleComputedTimingFunction", servo = "crate::values::computed::easing::TimingFunction" },
+    { gecko = "StyleContrastPref", servo = "crate::gecko::media_features::ContrastPref" },
     { gecko = "StyleCursorKind", servo = "crate::values::computed::ui::CursorKind" },
     { gecko = "StyleDisplay", servo = "crate::values::specified::Display" },
     { gecko = "StyleDisplayMode", servo = "crate::gecko::media_features::DisplayMode" },
@@ -577,6 +580,7 @@ cbindgen-types = [
     { gecko = "StyleSVGLength", servo = "crate::values::computed::svg::SVGLength" },
     { gecko = "StyleFontSizeKeyword", servo = "crate::values::specified::font::FontSizeKeyword" },
     { gecko = "StyleDefaultFontSizes", servo = "crate::gecko::wrapper::DefaultFontSizes" },
+    { gecko = "StyleButtonAppearance", servo = "crate::values::specified::ButtonAppearance" },
 ]
 
 mapped-generic-types = [

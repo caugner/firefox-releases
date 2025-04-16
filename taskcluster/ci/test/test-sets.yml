@@ -420,6 +420,7 @@ macosx1014-64-tests:
 macosx1014-64-qr-tests:
     - crashtest
     - reftest
+    - web-platform-tests-reftest
 
 macosx64-talos:
     - talos-bcv
@@ -457,10 +458,8 @@ android-x86_64-tests:
     - reftest
     - test-verify
     - web-platform-tests
-    - web-platform-tests-backlog
     - web-platform-tests-crashtest
     - web-platform-tests-reftest
-    - web-platform-tests-reftest-backlog
     - xpcshell
 
 android-x86_64-qr-tests:
@@ -626,12 +625,14 @@ android-hw-aarch64-browsertime:
     - browsertime-tp6m-live
     - browsertime-tp6m-profiling
     - browsertime-speedometer-mobile
+    - browsertime-youtube-playback-mobile
 
 android-hw-arm7-browsertime:
     - browsertime-tp6m
     - browsertime-tp6m-live
     - browsertime-tp6m-profiling
     - browsertime-speedometer-mobile
+    - browsertime-youtube-playback-mobile
 
 linux-tsan-tests:
     - mochitest-plain

@@ -84,8 +84,9 @@ label {
 
 input {
   display: inline-block;
-  -moz-appearance: textfield;
+  appearance: auto;
   -moz-default-appearance: textfield;
+  -moz-button-appearance: disallow;
   /* The sum of border and padding on block-start and block-end
      must be the same here, for buttons, and for <select> (including its
      internal padding magic) */
@@ -107,8 +108,9 @@ input::placeholder {
 }
 
 textarea {
-  -moz-appearance: textarea;
+  appearance: auto;
   -moz-default-appearance: textarea;
+  -moz-button-appearance: disallow;
   margin-block: 1px;
   border: 2px inset ThreeDLightShadow;
   /* The 1px inline padding is for parity with Win/IE */
@@ -218,16 +220,12 @@ textarea:read-write {
 select {
   margin: 0;
   border-color: ThreeDLightShadow;
-  background-color: -moz-Combobox;
-  color: -moz-ComboboxText;
   font: -moz-list;
   white-space: nowrap !important;
   word-wrap: normal !important;
   cursor: default;
   box-sizing: border-box;
   user-select: none;
-  -moz-appearance: menulist;
-  -moz-default-appearance: menulist;
   border-width: 2px;
   border-style: inset;
   overflow: -moz-hidden-unscrollable;
@@ -235,41 +233,26 @@ select {
   display: inline-block;
   page-break-inside: avoid;
   overflow-clip-box: padding-box !important; /* bug 992447 */
-}
 
-%ifdef MOZ_WIDGET_GTK
-/* Comboboxes use button styles on Gtk so it's safe to
- * use a button style here. */
-select:active:hover {
-  color: -moz-gtk-buttonactivetext;
-}
-%endif
-
-/* Need the "select[size][multiple]" selector to override the settings on
-   'select[size="1"]', eg if one has <select size="1" multiple>, and that it
-   needs to be separate from the other :is() selector because otherwise it'd
-   increase the specificity of it, and override the rule below */
-
-select:is([size], [multiple]),
-select[size][multiple] {
-  /* Different alignment and padding for listbox vs combobox */
-  background-color: -moz-Field;
-  color: -moz-FieldText;
-  padding-block: 1px;
-  padding-inline: 0;
-  vertical-align: text-bottom;
-  -moz-appearance: listbox;
-  -moz-default-appearance: listbox;
-}
-
-select:is([size="0"], [size="1"]) {
-  /* Except this is not a listbox */
+  /* Set some styles for drop down selects. These are overridden below for
+   * list box selects. */
   background-color: -moz-Combobox;
   color: -moz-ComboboxText;
   vertical-align: baseline;
-  padding: unset;
-  -moz-appearance: menulist;
+  padding-block: 0;
+  appearance: auto;
   -moz-default-appearance: menulist;
+  -moz-button-appearance: allow;
+}
+
+select:-moz-select-list-box {
+  background-color: -moz-Field;
+  color: -moz-FieldText;
+  vertical-align: text-bottom;
+  padding-block: 1px;
+  appearance: auto;
+  -moz-default-appearance: listbox;
+  -moz-button-appearance: disallow;
 }
 
 select > button {
@@ -279,7 +262,8 @@ select > button {
   background-image: url("arrow.gif") !important;
   background-repeat: no-repeat !important;
   background-position: center !important;
-  -moz-appearance: -moz-menulist-arrow-button;
+  appearance: auto;
+  -moz-default-appearance: -moz-menulist-arrow-button;
 
   /* Make sure to size correctly if the combobox has a non-auto height. */
   block-size: 100% !important;
@@ -426,9 +410,7 @@ input:disabled,
 textarea:disabled,
 option:disabled,
 optgroup:disabled,
-select:disabled:disabled /* Need the pseudo-class twice to have the specificity
-                            be at least the same as select[size][multiple] above */
-{
+select:disabled {
   color: GrayText;
   background-color: ThreeDLightShadow;
   cursor: unset;
@@ -446,7 +428,7 @@ optgroup:disabled {
 
 /* hidden inputs */
 input[type="hidden"] {
-  -moz-appearance: none;
+  appearance: none;
   -moz-default-appearance: none;
   display: none !important;
   padding: unset;
@@ -457,7 +439,7 @@ input[type="hidden"] {
 
 /* image buttons */
 input[type="image"] {
-  -moz-appearance: none;
+  appearance: none;
   -moz-default-appearance: none;
   padding: unset;
   border: none;
@@ -485,7 +467,7 @@ input[type="image"]:disabled {
 
 /* radio buttons */
 input[type="radio"] {
-  -moz-appearance: radio;
+  appearance: auto;
   -moz-default-appearance: radio;
   margin-block: 3px 0;
   margin-inline: 5px 3px;
@@ -493,7 +475,7 @@ input[type="radio"] {
 
 /* check boxes */
 input[type="checkbox"] {
-  -moz-appearance: checkbox;
+  appearance: auto;
   -moz-default-appearance: checkbox;
   margin-block: 3px;
   margin-inline: 4px 3px;
@@ -540,7 +522,7 @@ input[type="search"] {
 button,
 ::file-chooser-button,
 input:is([type="color"], [type="reset"], [type="button"], [type="submit"]) {
-  -moz-appearance: button;
+  appearance: auto;
   -moz-default-appearance: button;
   /* The sum of border and padding on block-start and block-end
      must be the same here, for text inputs, and for <select>.
@@ -685,7 +667,7 @@ input[type="file"] {
   color: unset;
 
   /* Revert rules which apply on all inputs. */
-  -moz-appearance: none;
+  appearance: none;
   -moz-default-appearance: none;
   cursor: default;
 
@@ -769,12 +751,13 @@ output:-moz-ui-invalid {
 }
 
 progress {
-  -moz-appearance: progress-bar;
+  appearance: auto;
   -moz-default-appearance: progress-bar;
+  -moz-button-appearance: disallow;
   display: inline-block;
   vertical-align: -0.2em;
 
-  /* Default style in case of there is -moz-appearance: none; */
+  /* Default style in case of there is appearance: none; */
   border: 1px solid ThreeDShadow;
   border-right-color: ThreeDHighlight;
   border-bottom-color: ThreeDHighlight;
@@ -790,17 +773,19 @@ progress {
   overflow: visible !important;
   box-sizing: border-box !important;
 
-  -moz-appearance: progresschunk;
+  appearance: auto;
+  -moz-default-appearance: progresschunk;
   height: 100%;
   width: 100%;
 
-  /* Default style in case of there is -moz-appearance: none; */
+  /* Default style in case of there is appearance: none; */
   background-color: #0064b4; /* blue */
 }
 
 meter {
-  -moz-appearance: meter;
+  appearance: auto;
   -moz-default-appearance: meter;
+  -moz-button-appearance: disallow;
   display: inline-block;
   vertical-align: -0.2em;
   background: linear-gradient(#e6e6e6, #e6e6e6, #eeeeee 20%, #cccccc 45%, #cccccc 55%);
@@ -813,7 +798,8 @@ meter {
   position: static !important;
   overflow: visible !important;
 
-  -moz-appearance: meterchunk;
+  appearance: auto;
+  -moz-default-appearance: meterchunk;
   height: 100%;
   width: 100%;
 }
@@ -832,14 +818,14 @@ meter {
 }
 
 input[type=range] {
-  -moz-appearance: range;
+  appearance: auto;
   -moz-default-appearance: range;
   margin: 2px;
   /* Override some rules that apply on all input types: */
   cursor: default;
   padding: unset;
   border: unset;
-  /* Prevent nsFrame::HandlePress setting mouse capture to this element. */
+  /* Prevent nsIFrame::HandlePress setting mouse capture to this element. */
   user-select: none !important;
 }
 
@@ -860,7 +846,7 @@ input[type=range]::-moz-range-track {
   writing-mode: unset !important;
   direction: unset !important;
   block-size: 0.2em; /* same as inline-size below */
-  /* Prevent nsFrame::HandlePress setting mouse capture to this element. */
+  /* Prevent nsIFrame::HandlePress setting mouse capture to this element. */
   user-select: none !important;
 }
 
@@ -889,7 +875,7 @@ input[type=range]::-moz-range-progress {
    */
   width: 0.2em;
   height: 0.2em;
-  /* Prevent nsFrame::HandlePress setting mouse capture to this element. */
+  /* Prevent nsIFrame::HandlePress setting mouse capture to this element. */
   user-select: none !important;
 }
 
@@ -900,11 +886,11 @@ input[type=range]::-moz-range-progress {
  * properties are ignored.
  */
 input[type=range]::-moz-range-thumb {
-  /* Native theming is atomic for range. Set -moz-appearance on the range
-   * to get rid of it. The thumb's -moz-appearance is fixed.
+  /* Native theming is atomic for range. Set appearance on the range
+   * to get rid of it. The thumb's appearance is fixed.
    */
-  -moz-appearance: range-thumb !important;
-  -moz-default-appearance: range-thumb: !important;
+  appearance: auto !important;
+  -moz-default-appearance: range-thumb !important;
   /* Prevent styling that would change the type of frame we construct. */
   display: block !important;
   float: none !important;
@@ -917,12 +903,12 @@ input[type=range]::-moz-range-thumb {
   border: 0.1em solid #999;
   border-radius: 0.5em;
   background-color: #F0F0F0;
-  /* Prevent nsFrame::HandlePress setting mouse capture to this element. */
+  /* Prevent nsIFrame::HandlePress setting mouse capture to this element. */
   user-select: none !important;
 }
 
 input[type="number"] {
-  -moz-appearance: number-input;
+  appearance: auto;
   -moz-default-appearance: number-input;
 }
 
@@ -977,7 +963,8 @@ input[type=number]::-moz-number-spin-box {
 
 input[type=number]::-moz-number-spin-up {
   writing-mode: horizontal-tb;
-  -moz-appearance: spinner-upbutton;
+  appearance: auto;
+  -moz-default-appearance: spinner-upbutton;
   display: block; /* bug 926670 */
   flex-grow: 1;
   cursor: default;
@@ -995,7 +982,8 @@ input[type=number]::-moz-number-spin-up {
 
 input[type=number]::-moz-number-spin-down {
   writing-mode: horizontal-tb;
-  -moz-appearance: spinner-downbutton;
+  appearance: auto;
+  -moz-default-appearance: spinner-downbutton;
   display: block; /* bug 926670 */
   flex-grow: 1;
   cursor: default;

@@ -1253,7 +1253,7 @@ nsresult nsWebBrowserPersist::SaveURIInternal(
   // Open a channel to the URI
   nsCOMPtr<nsIChannel> inputChannel;
   rv = NS_NewChannel(getter_AddRefs(inputChannel), aURI, aTriggeringPrincipal,
-                     nsILoadInfo::SEC_ALLOW_CROSS_ORIGIN_DATA_IS_NULL,
+                     nsILoadInfo::SEC_ALLOW_CROSS_ORIGIN_SEC_CONTEXT_IS_NULL,
                      aContentPolicyType, cookieJarSettings,
                      nullptr,  // aPerformanceStorage
                      nullptr,  // aLoadGroup
@@ -1518,8 +1518,8 @@ nsresult nsWebBrowserPersist::SaveDocumentInternal(
         dataDirParent->GetLeafName(dirName);
 
         nsAutoCString newRelativePathToData;
-        newRelativePathToData = NS_ConvertUTF16toUTF8(dirName) +
-                                NS_LITERAL_CSTRING("/") + relativePathToData;
+        newRelativePathToData =
+            NS_ConvertUTF16toUTF8(dirName) + "/"_ns + relativePathToData;
         relativePathToData = newRelativePathToData;
 
         nsCOMPtr<nsIFile> newDataDirParent;
@@ -2490,10 +2490,10 @@ nsresult nsWebBrowserPersist::SaveSubframeContent(
     mWalkStack.AppendElement(std::move(toWalk));
   } else {
     nsContentPolicyType policyType = nsIContentPolicy::TYPE_OTHER;
-    if (StringBeginsWith(contentType, NS_LITERAL_CSTRING("image/"))) {
+    if (StringBeginsWith(contentType, "image/"_ns)) {
       policyType = nsIContentPolicy::TYPE_IMAGE;
-    } else if (StringBeginsWith(contentType, NS_LITERAL_CSTRING("audio/")) ||
-               StringBeginsWith(contentType, NS_LITERAL_CSTRING("video/"))) {
+    } else if (StringBeginsWith(contentType, "audio/"_ns) ||
+               StringBeginsWith(contentType, "video/"_ns)) {
       policyType = nsIContentPolicy::TYPE_MEDIA;
     }
     rv = StoreURI(aURISpec, aParentDocument, policyType);
@@ -2513,7 +2513,7 @@ nsresult nsWebBrowserPersist::CreateChannelFromURI(nsIURI* aURI,
   *aChannel = nullptr;
 
   rv = NS_NewChannel(aChannel, aURI, nsContentUtils::GetSystemPrincipal(),
-                     nsILoadInfo::SEC_ALLOW_CROSS_ORIGIN_DATA_IS_NULL,
+                     nsILoadInfo::SEC_ALLOW_CROSS_ORIGIN_SEC_CONTEXT_IS_NULL,
                      nsIContentPolicy::TYPE_OTHER);
   NS_ENSURE_SUCCESS(rv, rv);
   NS_ENSURE_ARG_POINTER(*aChannel);

@@ -8,9 +8,12 @@
 
 #include "MediaControlService.h"
 #include "MediaControlUtils.h"
+#include "MediaControlKeySource.h"
 #include "mozilla/AsyncEventDispatcher.h"
 #include "mozilla/dom/BrowsingContext.h"
 #include "mozilla/dom/CanonicalBrowsingContext.h"
+#include "mozilla/dom/MediaSession.h"
+#include "mozilla/dom/PositionStateEvent.h"
 
 // avoid redefined macro in unified build
 #undef LOG
@@ -67,6 +70,9 @@ MediaController::MediaController(uint64_t aBrowsingContextId)
   mSupportedActionsChangedListener = SupportedActionsChangedEvent().Connect(
       AbstractThread::MainThread(), this,
       &MediaController::HandleSupportedMediaSessionActionsChanged);
+  mPositionStateChangedListener = PositionChangedEvent().Connect(
+      AbstractThread::MainThread(), this,
+      &MediaController::HandlePositionStateChanged);
 }
 
 MediaController::~MediaController() {
@@ -78,42 +84,62 @@ MediaController::~MediaController() {
 
 void MediaController::Focus() {
   LOG("Focus");
-  UpdateMediaControlKeyToContentMediaIfNeeded(MediaControlKey::Focus);
+  UpdateMediaControlActionToContentMediaIfNeeded(
+      MediaControlAction(MediaControlKey::Focus));
 }
 
 void MediaController::Play() {
   LOG("Play");
-  UpdateMediaControlKeyToContentMediaIfNeeded(MediaControlKey::Play);
+  UpdateMediaControlActionToContentMediaIfNeeded(
+      MediaControlAction(MediaControlKey::Play));
 }
 
 void MediaController::Pause() {
   LOG("Pause");
-  UpdateMediaControlKeyToContentMediaIfNeeded(MediaControlKey::Pause);
+  UpdateMediaControlActionToContentMediaIfNeeded(
+      MediaControlAction(MediaControlKey::Pause));
 }
 
 void MediaController::PrevTrack() {
   LOG("Prev Track");
-  UpdateMediaControlKeyToContentMediaIfNeeded(MediaControlKey::Previoustrack);
+  UpdateMediaControlActionToContentMediaIfNeeded(
+      MediaControlAction(MediaControlKey::Previoustrack));
 }
 
 void MediaController::NextTrack() {
   LOG("Next Track");
-  UpdateMediaControlKeyToContentMediaIfNeeded(MediaControlKey::Nexttrack);
+  UpdateMediaControlActionToContentMediaIfNeeded(
+      MediaControlAction(MediaControlKey::Nexttrack));
 }
 
 void MediaController::SeekBackward() {
   LOG("Seek Backward");
-  UpdateMediaControlKeyToContentMediaIfNeeded(MediaControlKey::Seekbackward);
+  UpdateMediaControlActionToContentMediaIfNeeded(
+      MediaControlAction(MediaControlKey::Seekbackward));
 }
 
 void MediaController::SeekForward() {
   LOG("Seek Forward");
-  UpdateMediaControlKeyToContentMediaIfNeeded(MediaControlKey::Seekforward);
+  UpdateMediaControlActionToContentMediaIfNeeded(
+      MediaControlAction(MediaControlKey::Seekforward));
+}
+
+void MediaController::SkipAd() {
+  LOG("Skip Ad");
+  UpdateMediaControlActionToContentMediaIfNeeded(
+      MediaControlAction(MediaControlKey::Skipad));
+}
+
+void MediaController::SeekTo(double aSeekTime, bool aFastSeek) {
+  LOG("Seek To");
+  UpdateMediaControlActionToContentMediaIfNeeded(MediaControlAction(
+      MediaControlKey::Seekto, SeekDetails(aSeekTime, aFastSeek)));
 }
 
 void MediaController::Stop() {
   LOG("Stop");
-  UpdateMediaControlKeyToContentMediaIfNeeded(MediaControlKey::Stop);
+  UpdateMediaControlActionToContentMediaIfNeeded(
+      MediaControlAction(MediaControlKey::Stop));
 }
 
 uint64_t MediaController::Id() const { return mTopLevelBrowsingContextId; }
@@ -122,8 +148,8 @@ bool MediaController::IsAudible() const { return IsMediaAudible(); }
 
 bool MediaController::IsPlaying() const { return IsMediaPlaying(); }
 
-void MediaController::UpdateMediaControlKeyToContentMediaIfNeeded(
-    MediaControlKey aKey) {
+void MediaController::UpdateMediaControlActionToContentMediaIfNeeded(
+    const MediaControlAction& aAction) {
   // If the controller isn't active or it has been shutdown, we don't need to
   // update media action to the content process.
   if (!mIsActive || mShutdown) {
@@ -138,7 +164,7 @@ void MediaController::UpdateMediaControlKeyToContentMediaIfNeeded(
           ? BrowsingContext::Get(*mActiveMediaSessionContextId)
           : BrowsingContext::Get(Id());
   if (context && !context->IsDiscarded()) {
-    context->Canonical()->UpdateMediaControlKey(aKey);
+    context->Canonical()->UpdateMediaControlAction(aAction);
   }
 }
 
@@ -154,6 +180,7 @@ void MediaController::Shutdown() {
   Deactivate();
   mShutdown = true;
   mSupportedActionsChangedListener.DisconnectIfExists();
+  mPositionStateChangedListener.DisconnectIfExists();
 }
 
 void MediaController::NotifyMediaPlaybackChanged(uint64_t aBrowsingContextId,
@@ -365,9 +392,36 @@ void MediaController::HandleSupportedMediaSessionActionsChanged(
   mSupportedKeys = newSupportedKeys;
   mSupportedKeysChangedEvent.Notify(mSupportedKeys);
   RefPtr<AsyncEventDispatcher> asyncDispatcher = new AsyncEventDispatcher(
-      this, NS_LITERAL_STRING("supportedkeyschange"), CanBubble::eYes);
+      this, u"supportedkeyschange"_ns, CanBubble::eYes);
   asyncDispatcher->PostDOMEvent();
   MediaController_Binding::ClearCachedSupportedKeysValue(this);
+}
+
+void MediaController::HandlePositionStateChanged(const PositionState& aState) {
+  PositionStateEventInit init;
+  init.mDuration = aState.mDuration;
+  init.mPlaybackRate = aState.mPlaybackRate;
+  init.mPosition = aState.mLastReportedPlaybackPosition;
+  RefPtr<PositionStateEvent> event =
+      PositionStateEvent::Constructor(this, u"positionstatechange"_ns, init);
+  DispatchAsyncEvent(event);
+}
+
+void MediaController::DispatchAsyncEvent(const nsAString& aName) {
+  LOG("Dispatch event %s", NS_ConvertUTF16toUTF8(aName).get());
+  RefPtr<AsyncEventDispatcher> asyncDispatcher =
+      new AsyncEventDispatcher(this, aName, CanBubble::eYes);
+  asyncDispatcher->PostDOMEvent();
+}
+
+void MediaController::DispatchAsyncEvent(Event* aEvent) {
+  MOZ_ASSERT(aEvent);
+  nsAutoString eventType;
+  aEvent->GetType(eventType);
+  LOG("Dispatch event %s", NS_ConvertUTF16toUTF8(eventType).get());
+  RefPtr<AsyncEventDispatcher> asyncDispatcher =
+      new AsyncEventDispatcher(this, aEvent);
+  asyncDispatcher->PostDOMEvent();
 }
 
 CopyableTArray<MediaControlKey> MediaController::GetSupportedMediaKeys() const {

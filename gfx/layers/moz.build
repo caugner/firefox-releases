@@ -258,6 +258,7 @@ EXPORTS.mozilla.layers += [
     'wr/ClipManager.h',
     'wr/DisplayItemCache.h',
     'wr/IpcResourceUpdateQueue.h',
+    'wr/OMTAController.h',
     'wr/OMTASampler.h',
     'wr/RenderRootStateManager.h',
     'wr/RenderRootTypes.h',
@@ -333,7 +334,11 @@ if CONFIG['MOZ_WIDGET_TOOLKIT'] == 'cocoa':
     ]
 
 if CONFIG['MOZ_WIDGET_TOOLKIT'] == 'android':
+    EXPORTS.mozilla.layers += [
+        'AndroidHardwareBuffer.h',
+    ]
     UNIFIED_SOURCES += [
+        'AndroidHardwareBuffer.cpp',
         'apz/src/AndroidAPZ.cpp',
         'apz/src/AndroidFlingPhysics.cpp',
         'apz/src/AndroidVelocityTracker.cpp',
@@ -524,6 +529,7 @@ UNIFIED_SOURCES += [
     'wr/ClipManager.cpp',
     'wr/DisplayItemCache.cpp',
     'wr/IpcResourceUpdateQueue.cpp',
+    'wr/OMTAController.cpp',
     'wr/OMTASampler.cpp',
     'wr/RenderRootStateManager.cpp',
     'wr/RenderRootTypes.cpp',

@@ -196,6 +196,24 @@ TEST_VARIANTS = {
             },
         },
     },
+    'fission-xorigin': {
+        'description': "{description} with cross-origin and fission enabled",
+        'filterfn': fission_filter,
+        'suffix': 'fis-xorig',
+        'replace': {
+            'e10s': True,
+        },
+        'merge': {
+            # Ensures the default state is to not run anywhere.
+            'fission-run-on-projects': [],
+            'mozharness': {
+                'extra-options': ['--setpref=fission.autostart=true',
+                                  '--setpref=dom.serviceWorkers.parent_intercept=true',
+                                  '--setpref=browser.tabs.documentchannel=true',
+                                  '--enable-xorigin-tests'],
+            },
+        },
+    },
     'socketprocess': {
         'description': "{description} with socket process enabled",
         'suffix': 'spi',
@@ -226,6 +244,22 @@ TEST_VARIANTS = {
         'suffix': 'wr',
         'merge': {
             'webrender': True,
+        }
+    },
+    'webgl-ipc': {
+        # TODO: After November 1st 2020, verify this variant is still needed.
+        'description': "{description} with WebGL IPC process enabled",
+        'suffix': 'gli',
+        'replace': {
+            'run-on-projects': [],
+        },
+        'merge': {
+            'mozharness': {
+                'extra-options': [
+                    '--setpref=webgl.out-of-process=true',
+                ],
+            },
+            'tier': 2
         }
     }
 }
@@ -296,7 +330,7 @@ transforms = TransformSequence()
 # *****WARNING*****
 test_description_schema = Schema({
     # description of the suite, for the task metadata
-    'description': text_type,
+    Required('description'): text_type,
 
     # test suite category and name
     Optional('suite'): Any(
@@ -319,7 +353,7 @@ test_description_schema = Schema({
 
     # the symbol, or group(symbol), under which this task should appear in
     # treeherder.
-    'treeherder-symbol': text_type,
+    Required('treeherder-symbol'): text_type,
 
     # the value to place in task.extra.treeherder.machine.platform; ideally
     # this is the same as build-platform, and that is the default, but in
@@ -535,20 +569,20 @@ test_description_schema = Schema({
     # -- values supplied by the task-generation infrastructure
 
     # the platform of the build this task is testing
-    'build-platform': text_type,
+    Required('build-platform'): text_type,
 
     # the label of the build task generating the materials to test
-    'build-label': text_type,
+    Required('build-label'): text_type,
 
     # the label of the signing task generating the materials to test.
     # Signed builds are used in xpcshell tests on Windows, for instance.
     Optional('build-signing-label'): text_type,
 
     # the build's attributes
-    'build-attributes': {text_type: object},
+    Required('build-attributes'): {text_type: object},
 
     # the platform on which the tests will run
-    'test-platform': text_type,
+    Required('test-platform'): text_type,
 
     # limit the test-platforms (as defined in test-platforms.yml)
     # that the test will run on
@@ -558,23 +592,23 @@ test_description_schema = Schema({
     ),
 
     # the name of the test (the key in tests.yml)
-    'test-name': text_type,
+    Required('test-name'): text_type,
 
     # the product name, defaults to firefox
     Optional('product'): text_type,
 
     # conditional files to determine when these tests should be run
-    Exclusive(Optional('when'), 'optimization'): {
+    Exclusive('when', 'optimization'): {
         Optional('files-changed'): [text_type],
     },
 
     # Optimization to perform on this task during the optimization phase.
     # Optimizations are defined in taskcluster/taskgraph/optimize.py.
-    Exclusive(Optional('optimization'), 'optimization'): OptimizationSchema,
+    Exclusive('optimization', 'optimization'): OptimizationSchema,
 
     # The SCHEDULES component for this task; this defaults to the suite
     # (not including the flavor) but can be overridden here.
-    Exclusive(Optional('schedules-component'), 'optimization'): Any(
+    Exclusive('schedules-component', 'optimization'): Any(
         text_type,
         [text_type],
     ),
@@ -595,14 +629,14 @@ test_description_schema = Schema({
     # or target.zip (Windows).
     Optional('target'): optionally_keyed_by(
         'test-platform',
-        Any(text_type, None, {'index': text_type, 'name': text_type}),
+        Any(text_type, None, {Required('index'): text_type, Required('name'): text_type}),
     ),
 
     # A list of artifacts to install from 'fetch' tasks.
     Optional('fetches'): {
         text_type: optionally_keyed_by('test-platform', [text_type])
     },
-}, required=True)
+})
 
 
 @transforms.add
@@ -1220,11 +1254,11 @@ def enable_code_coverage(config, tasks):
 
             # Temporarily disable Mac tests on mozilla-central
             if 'mac' in task['build-platform']:
-                task['run-on-projects'] = ['try']
+                task['run-on-projects'] = []
 
             # Ensure we always run on the projects defined by the build, unless the test
             # is try only or shouldn't run at all.
-            if task['run-on-projects'] not in [[], ['try']]:
+            if task['run-on-projects'] not in [[]]:
                 task['run-on-projects'] = 'built-projects'
 
             # Ensure we don't optimize test suites out.
@@ -1260,8 +1294,6 @@ def enable_code_coverage(config, tasks):
                 task['mozharness']['extra-options'].append('--tptimeout,15000')
             if 'raptor' in task['test-name']:
                 task['max-run-time'] = 1800
-                if 'linux' in task['build-platform']:
-                    task['docker-image'] = {"in-tree": "desktop1604-test"}
         yield task
 
 
@@ -1330,7 +1362,8 @@ def handle_fission_attributes(config, tasks):
         for attr in ('run-on-projects', 'tier'):
             fission_attr = task.pop('fission-{}'.format(attr), None)
 
-            if task['attributes'].get('unittest_variant') != 'fission' or fission_attr is None:
+            if (task['attributes'].get('unittest_variant') != 'fission-xorigin' and
+                task['attributes'].get('unittest_variant') != 'fission') or fission_attr is None:
                 continue
 
             task[attr] = fission_attr
@@ -1809,11 +1842,7 @@ def make_job_description(config, tasks):
         elif set(schedules) & set(INCLUSIVE_COMPONENTS):
             jobdesc['optimization'] = {'test-inclusive': schedules}
         else:
-            # First arg goes to 'skip-unless-schedules', second goes to the
-            # main test strategy. Using an empty dict allows earlier
-            # substrategies (of a CompositeStrategy) to pass values by reference
-            # to later substrategies.
-            jobdesc['optimization'] = {'test': (schedules, {})}
+            jobdesc['optimization'] = {'test': schedules}
 
         run = jobdesc['run'] = {}
         run['using'] = 'mozharness-test'

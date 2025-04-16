@@ -556,7 +556,7 @@ nsresult BasePrincipal::CheckMayLoadHelper(nsIURI* aURI,
 
 NS_IMETHODIMP
 BasePrincipal::IsThirdPartyURI(nsIURI* aURI, bool* aRes) {
-  if (IsSystemPrincipal()) {
+  if (IsSystemPrincipal() || (AddonPolicy() && AddonAllowsLoad(aURI))) {
     *aRes = false;
     return NS_OK;
   }
@@ -673,7 +673,7 @@ NS_IMETHODIMP
 BasePrincipal::GetPrefLightCacheKey(nsIURI* aURI, bool aWithCredentials,
                                     nsACString& _retval) {
   _retval.Truncate();
-  NS_NAMED_LITERAL_CSTRING(space, " ");
+  constexpr auto space = " "_ns;
 
   nsCOMPtr<nsIURI> uri;
   nsresult rv = GetURI(getter_AddRefs(uri));
@@ -837,7 +837,7 @@ NS_IMETHODIMP BasePrincipal::GetIsOnion(bool* aIsOnion) {
   if (NS_FAILED(rv)) {
     return NS_OK;
   }
-  *aIsOnion = StringEndsWith(host, NS_LITERAL_CSTRING(".onion"));
+  *aIsOnion = StringEndsWith(host, ".onion"_ns);
   return NS_OK;
 }
 
@@ -1066,13 +1066,13 @@ already_AddRefed<BasePrincipal> BasePrincipal::CreateContentPrincipal(
 
 already_AddRefed<BasePrincipal> BasePrincipal::CreateContentPrincipal(
     const nsACString& aOrigin) {
-  MOZ_ASSERT(!StringBeginsWith(aOrigin, NS_LITERAL_CSTRING("[")),
+  MOZ_ASSERT(!StringBeginsWith(aOrigin, "["_ns),
              "CreateContentPrincipal does not support System and Expanded "
              "principals");
 
-  MOZ_ASSERT(!StringBeginsWith(aOrigin,
-                               NS_LITERAL_CSTRING(NS_NULLPRINCIPAL_SCHEME ":")),
-             "CreateContentPrincipal does not support NullPrincipal");
+  MOZ_ASSERT(
+      !StringBeginsWith(aOrigin, nsLiteralCString(NS_NULLPRINCIPAL_SCHEME ":")),
+      "CreateContentPrincipal does not support NullPrincipal");
 
   nsAutoCString originNoSuffix;
   OriginAttributes attrs;

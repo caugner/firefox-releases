@@ -76,7 +76,17 @@ class FxAccountsCommands {
       );
     }
     try {
-      await client.invokeCommand(sessionToken, command, device.id, payload);
+      let info = await client.invokeCommand(
+        sessionToken,
+        command,
+        device.id,
+        payload
+      );
+      if (!info.enqueued || !info.notified) {
+        log.warn("Sending was only partially successful", info);
+      } else {
+        log.info("Successfully sent", info);
+      }
     } catch (err) {
       if (err.code && err.code === 429 && err.retryAfter) {
         this._invokeRateLimitExpiry = Date.now() + err.retryAfter * 1000;
@@ -91,15 +101,15 @@ class FxAccountsCommands {
    * This method can be called either in response to a Push message,
    * or by itself as a "commands recovery" mechanism.
    *
-   * @param {Number} receivedIndex "Command received" push messages include
+   * @param {Number} notifiedIndex "Command received" push messages include
    * the index of the command that triggered the message. We use it as a
    * hint when we have no "last command index" stored.
    */
-  async pollDeviceCommands(receivedIndex = 0) {
+  async pollDeviceCommands(notifiedIndex = 0) {
     // Whether the call to `pollDeviceCommands` was initiated by a Push message from the FxA
     // servers in response to a message being received or simply scheduled in order
     // to fetch missed messages.
-    const scheduledFetch = receivedIndex == 0;
+    const scheduledFetch = notifiedIndex == 0;
     if (
       !Services.prefs.getBoolPref("identity.fxaccounts.commands.enabled", true)
     ) {
@@ -113,9 +123,9 @@ class FxAccountsCommands {
       }
       // We increment lastCommandIndex by 1 because the server response includes the current index.
       // If we don't have a `lastCommandIndex` stored, we fall back on the index from the push message we just got.
-      const lastCommandIndex = device.lastCommandIndex + 1 || receivedIndex;
+      const lastCommandIndex = device.lastCommandIndex + 1 || notifiedIndex;
       // We have already received this message before.
-      if (receivedIndex > 0 && receivedIndex < lastCommandIndex) {
+      if (notifiedIndex > 0 && notifiedIndex < lastCommandIndex) {
         return;
       }
       const { index, messages } = await this._fetchDeviceCommands(
@@ -132,7 +142,7 @@ class FxAccountsCommands {
             messages.length
           );
         }
-        await this._handleCommands(messages);
+        await this._handleCommands(messages, notifiedIndex);
       }
     });
     return true;
@@ -155,7 +165,24 @@ class FxAccountsCommands {
     return client.getCommands(sessionToken, opts);
   }
 
-  async _handleCommands(messages) {
+  _getReason(notifiedIndex, messageIndex) {
+    // The returned reason value represents an explanation for why the command associated with the
+    // message of the given `messageIndex` is being handled. If `notifiedIndex` is zero the command
+    // is a part of a fallback polling process initiated by "Sync Now" ["poll"]. If `notifiedIndex` is
+    // greater than `messageIndex` this is a push command that was previously missed ["push-missed"],
+    // otherwise we assume this is a push command with no missed messages ["push"].
+    if (notifiedIndex == 0) {
+      return "poll";
+    } else if (notifiedIndex > messageIndex) {
+      return "push-missed";
+    }
+    // Note: The returned reason might be "push" in the case where a user sends multiple tabs
+    // in quick succession. We are not attempting to distinguish this from other push cases at
+    // present.
+    return "push";
+  }
+
+  async _handleCommands(messages, notifiedIndex) {
     try {
       await this._fxai.device.refreshDeviceList();
     } catch (e) {
@@ -163,8 +190,9 @@ class FxAccountsCommands {
     }
     // We debounce multiple incoming tabs so we show a single notification.
     const tabsReceived = [];
-    for (const { data } of messages) {
+    for (const { index, data } of messages) {
       const { command, payload, sender: senderId } = data;
+      const reason = this._getReason(notifiedIndex, index);
       const sender =
         senderId && this._fxai.device.recentDeviceList
           ? this._fxai.device.recentDeviceList.find(d => d.id == senderId)
@@ -177,7 +205,11 @@ class FxAccountsCommands {
       switch (command) {
         case COMMAND_SENDTAB:
           try {
-            const { title, uri } = await this.sendTab.handle(senderId, payload);
+            const { title, uri } = await this.sendTab.handle(
+              senderId,
+              payload,
+              reason
+            );
             log.info(
               `Tab received with FxA commands: ${title} from ${
                 sender ? sender.name : "Unknown device"
@@ -233,9 +265,11 @@ class SendTab {
         const targetData = Object.assign({ flowID, streamID }, data);
         const bytes = encoder.encode(JSON.stringify(targetData));
         const encrypted = await this._encrypt(bytes, device);
-        // TODO: remove flowID from the payload.
-        const payload = { encrypted, flowID };
-        await this._commands.invoke(COMMAND_SENDTAB, device, payload); // FxA needs an object.
+        // FxA expects an object as the payload, but we only have a single encrypted string; wrap it.
+        // If you add any plaintext items to this payload, please carefully consider the privacy implications
+        // of revealing that data to the FxA server.
+        const payload = { encrypted };
+        await this._commands.invoke(COMMAND_SENDTAB, device, payload);
         this._fxai.telemetry.recordEvent(
           "command-sent",
           COMMAND_SENDTAB_TAIL,
@@ -264,7 +298,7 @@ class SendTab {
   }
 
   // Handle incoming send tab payload, called by FxAccountsCommands.
-  async handle(senderID, { encrypted, flowID: deprecatedFlowID }) {
+  async handle(senderID, { encrypted }, reason) {
     const bytes = await this._decrypt(encrypted);
     const decoder = new TextDecoder("utf8");
     const data = JSON.parse(decoder.decode(bytes));
@@ -280,7 +314,7 @@ class SendTab {
       "command-received",
       COMMAND_SENDTAB_TAIL,
       this._fxai.telemetry.sanitizeDeviceId(senderID),
-      { flowID: flowID || deprecatedFlowID, streamID }
+      { flowID, streamID, reason }
     );
 
     return {

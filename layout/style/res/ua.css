@@ -153,6 +153,11 @@
   outline: 1px dotted;
 }
 
+/* Inert subtrees */
+*|*:-moz-inert {
+  -moz-inert: inert;
+}
+
 /* Miscellaneous */
 
 *|*::-moz-cell-content {
@@ -303,7 +308,14 @@
   background: white;
   box-shadow: 5px 5px 8px #202020;
   box-decoration-break: clone;
+  /* TODO: Remove margin if viewport is small or something? */
   margin: 0.125in 0.25in;
+}
+
+@media (monochrome) {
+  *|*::-moz-page {
+    filter: grayscale(1);
+  }
 }
 
 *|*::-moz-pagecontent {

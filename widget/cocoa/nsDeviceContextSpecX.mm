@@ -20,11 +20,13 @@
 
 #include "nsCocoaUtils.h"
 #include "nsCRT.h"
+#include "nsCUPSShim.h"
 #include "nsDirectoryServiceDefs.h"
 #include "nsILocalFileMac.h"
+#include "nsPaper.h"
+#include "nsPrinter.h"
 #include "nsPrintSettingsX.h"
 #include "nsQueryObject.h"
-#include "nsStringEnumerator.h"
 #include "prenv.h"
 
 // This must be the last include:
@@ -40,66 +42,128 @@ using mozilla::gfx::PrintTargetSkPDF;
 using mozilla::gfx::SurfaceFormat;
 
 static LazyLogModule sDeviceContextSpecXLog("DeviceContextSpecX");
-// Macro to make lines shorter
-#define DO_PR_DEBUG_LOG(x) MOZ_LOG(sDeviceContextSpecXLog, mozilla::LogLevel::Debug, x)
 
-//----------------------------------------------------------------------
-// nsPrinterErnumeratorX
+static nsCUPSShim sCupsShim;
 
-NS_IMPL_ISUPPORTS(nsPrinterEnumeratorX, nsIPrinterEnumerator);
-
-NS_IMETHODIMP nsPrinterEnumeratorX::GetPrinterNameList(nsIStringEnumerator** aPrinterNameList) {
+/**
+ * Retrieves the list of available paper options for a given printer name.
+ */
+static nsresult FillPaperListForPrinter(PMPrinter aPrinter,
+                                        nsTArray<RefPtr<nsIPaper>>& aPaperList) {
   NS_OBJC_BEGIN_TRY_ABORT_BLOCK_NSRESULT;
 
-  NS_ENSURE_ARG_POINTER(aPrinterNameList);
-  *aPrinterNameList = nullptr;
-
-  NSArray<NSString*>* printerNames = [NSPrinter printerNames];
-  size_t nameCount = [printerNames count];
-  nsTArray<nsString>* printerNameList = new nsTArray<nsString>(nameCount);
-
-  for (size_t i = 0; i < nameCount; ++i) {
-    NSString* name = [printerNames objectAtIndex:i];
-    nsAutoString nsName;
-    nsCocoaUtils::GetStringForNSString(name, nsName);
-    printerNameList->AppendElement(nsName);
+  CFArrayRef pmPaperList;
+  aPaperList.ClearAndRetainStorage();
+  OSStatus status = PMPrinterGetPaperList(aPrinter, &pmPaperList);
+  if (status != noErr || !pmPaperList) {
+    return NS_ERROR_UNEXPECTED;
   }
 
-  // If there are no printers available after all checks, return an error
-  if (printerNameList->IsEmpty()) {
-    delete printerNameList;
-    return NS_ERROR_GFX_PRINTER_NO_PRINTER_AVAILABLE;
+  CFIndex paperCount = CFArrayGetCount(pmPaperList);
+  aPaperList.SetCapacity(paperCount);
+
+  for (auto i = 0; i < paperCount; ++i) {
+    PMPaper pmPaper =
+        static_cast<PMPaper>(const_cast<void*>(CFArrayGetValueAtIndex(pmPaperList, i)));
+
+    // The units for width and height are points.
+    double width = 0.0;
+    double height = 0.0;
+    CFStringRef pmPaperName;
+    if (PMPaperGetWidth(pmPaper, &width) != noErr || PMPaperGetHeight(pmPaper, &height) != noErr ||
+        PMPaperCreateLocalizedName(pmPaper, aPrinter, &pmPaperName) != noErr) {
+      return NS_ERROR_UNEXPECTED;
+    }
+
+    nsAutoString name;
+    nsCocoaUtils::GetStringForNSString(static_cast<NSString*>(pmPaperName), name);
+
+    PMPaperMargins unwriteableMargins;
+    if (PMPaperGetMargins(pmPaper, &unwriteableMargins) != noErr) {
+      // If we can't get unwriteable margins, just default to none.
+      unwriteableMargins.top = 0.0;
+      unwriteableMargins.bottom = 0.0;
+      unwriteableMargins.left = 0.0;
+      unwriteableMargins.right = 0.0;
+    }
+
+    aPaperList.AppendElement(new nsPaper(name, width, height, unwriteableMargins.top,
+                                         unwriteableMargins.bottom, unwriteableMargins.left,
+                                         unwriteableMargins.right));
   }
 
-  return NS_NewAdoptingStringEnumerator(aPrinterNameList, printerNameList);
+  return NS_OK;
 
   NS_OBJC_END_TRY_ABORT_BLOCK_NSRESULT;
 }
 
-NS_IMETHODIMP nsPrinterEnumeratorX::GetDefaultPrinterName(nsAString& aDefaultPrinterName) {
+nsresult CreatePrinter(PMPrinter aPMPrinter, nsIPrinter** aPrinter) {
+  NS_ENSURE_ARG_POINTER(aPrinter);
+  *aPrinter = nullptr;
+
+  nsAutoString printerName;
+  NSString* name = static_cast<NSString*>(PMPrinterGetName(aPMPrinter));
+  nsCocoaUtils::GetStringForNSString(name, printerName);
+
+  nsTArray<RefPtr<nsIPaper>> paperList;
+  nsresult rv = FillPaperListForPrinter(aPMPrinter, paperList);
+  NS_ENSURE_SUCCESS(rv, rv);
+
+  *aPrinter = new nsPrinter(printerName, paperList);
+  NS_ADDREF(*aPrinter);
+
+  return NS_OK;
+}
+
+//----------------------------------------------------------------------
+// nsPrinterListX
+
+NS_IMPL_ISUPPORTS(nsPrinterListX, nsIPrinterList);
+
+NS_IMETHODIMP
+nsPrinterListX::GetSystemDefaultPrinterName(nsAString& aName) {
   NS_OBJC_BEGIN_TRY_ABORT_BLOCK_NSRESULT;
 
-  DO_PR_DEBUG_LOG(("nsPrinterEnumeratorX::GetDefaultPrinterName()\n"));
-
-  aDefaultPrinterName.Truncate();
+  aName.Truncate();
   NSArray<NSString*>* printerNames = [NSPrinter printerNames];
   if ([printerNames count] > 0) {
     NSString* name = [printerNames objectAtIndex:0];
-    nsCocoaUtils::GetStringForNSString(name, aDefaultPrinterName);
+    nsCocoaUtils::GetStringForNSString(name, aName);
+    return NS_OK;
   }
 
-  DO_PR_DEBUG_LOG(("GetDefaultPrinterName(): default printer='%s'.\n",
-                   NS_ConvertUTF16toUTF8(aDefaultPrinterName).get()));
+  return NS_ERROR_GFX_PRINTER_NO_PRINTER_AVAILABLE;
+
+  NS_OBJC_END_TRY_ABORT_BLOCK_NSRESULT;
+}
+
+NS_IMETHODIMP
+nsPrinterListX::GetPrinters(nsTArray<RefPtr<nsIPrinter>>& aPrinters) {
+  NS_OBJC_BEGIN_TRY_ABORT_BLOCK_NSRESULT;
+
+  aPrinters.Clear();
+  CFArrayRef pmPrinterList;
+  OSStatus status = PMServerCreatePrinterList(kPMServerLocal, &pmPrinterList);
+  NS_ENSURE_TRUE(status == noErr && pmPrinterList, NS_ERROR_GFX_PRINTER_NO_PRINTER_AVAILABLE);
+
+  const CFIndex printerCount = CFArrayGetCount(pmPrinterList);
+  for (auto i = 0; i < printerCount; ++i) {
+    PMPrinter pmPrinter =
+        static_cast<PMPrinter>(const_cast<void*>(CFArrayGetValueAtIndex(pmPrinterList, i)));
+    RefPtr<nsIPrinter> printer;
+    nsresult rv = CreatePrinter(pmPrinter, getter_AddRefs(printer));
+    NS_ENSURE_SUCCESS(rv, rv);
+    aPrinters.AppendElement(std::move(printer));
+  }
+
   return NS_OK;
 
   NS_OBJC_END_TRY_ABORT_BLOCK_NSRESULT;
 }
 
 NS_IMETHODIMP
-nsPrinterEnumeratorX::InitPrintSettingsFromPrinter(const nsAString& aPrinterName,
-                                                   nsIPrintSettings* aPrintSettings) {
-  DO_PR_DEBUG_LOG(("nsPrinterEnumeratorX::InitPrintSettingsFromPrinter()"));
-
+nsPrinterListX::InitPrintSettingsFromPrinter(const nsAString& aPrinterName,
+                                             nsIPrintSettings* aPrintSettings) {
   NS_ENSURE_ARG_POINTER(aPrintSettings);
 
   // Set a default file name.
@@ -118,7 +182,6 @@ nsPrinterEnumeratorX::InitPrintSettingsFromPrinter(const nsAString& aPrinterName
       filename.AssignLiteral("mozilla.pdf");
     }
 
-    DO_PR_DEBUG_LOG(("Setting default filename to '%s'\n", NS_ConvertUTF16toUTF8(filename).get()));
     aPrintSettings->SetToFileName(filename);
   }
 
@@ -160,6 +223,10 @@ NS_IMETHODIMP nsDeviceContextSpecX::Init(nsIWidget* aWidget, nsIPrintSettings* a
 
   bool toFile;
   settings->GetPrintToFile(&toFile);
+
+  if (toFile) {
+    settings->SetDispositionSaveToFile();
+  }
 
   bool toPrinter = !toFile && !aIsPrintPreview;
   if (!toPrinter) {
@@ -215,20 +282,22 @@ NS_IMETHODIMP nsDeviceContextSpecX::Init(nsIWidget* aWidget, nsIPrintSettings* a
     // We don't actually currently support/use kOutputFormatPDF on mac, but
     // this is for completeness in case we add that (we probably need to in
     // order to support adding links into saved PDFs, for example).
-    Telemetry::ScalarAdd(Telemetry::ScalarID::PRINTING_TARGET_TYPE, NS_LITERAL_STRING("pdf_file"),
-                         1);
+    Telemetry::ScalarAdd(Telemetry::ScalarID::PRINTING_TARGET_TYPE, u"pdf_file"_ns, 1);
   } else {
     PMDestinationType destination;
     OSStatus status = ::PMSessionGetDestinationType(mPrintSession, mPrintSettings, &destination);
     if (status == noErr &&
         (destination == kPMDestinationFile || destination == kPMDestinationPreview ||
          destination == kPMDestinationProcessPDF)) {
-      Telemetry::ScalarAdd(Telemetry::ScalarID::PRINTING_TARGET_TYPE, NS_LITERAL_STRING("pdf_file"),
-                           1);
+      Telemetry::ScalarAdd(Telemetry::ScalarID::PRINTING_TARGET_TYPE, u"pdf_file"_ns, 1);
     } else {
-      Telemetry::ScalarAdd(Telemetry::ScalarID::PRINTING_TARGET_TYPE, NS_LITERAL_STRING("unknown"),
-                           1);
+      Telemetry::ScalarAdd(Telemetry::ScalarID::PRINTING_TARGET_TYPE, u"unknown"_ns, 1);
     }
+  }
+
+  // Initialize the CUPS shim, if it wasn't already.
+  if (!sCupsShim.IsInitialized()) {
+    sCupsShim.Init();
   }
 
   return NS_OK;

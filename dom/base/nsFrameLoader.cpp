@@ -169,7 +169,7 @@ nsFrameLoader::nsFrameLoader(Element* aOwner, BrowsingContext* aBrowsingContext,
       mDetachedSubdocFrame(nullptr),
       mPendingSwitchID(0),
       mChildID(0),
-      mRemoteType(VoidString()),
+      mRemoteType(NOT_REMOTE_TYPE),
       mDepthTooGreat(false),
       mIsTopLevelContent(false),
       mDestroyCalled(false),
@@ -266,7 +266,10 @@ static bool IsTopContent(BrowsingContext* aParent, Element* aOwner) {
 }
 
 static already_AddRefed<BrowsingContext> CreateBrowsingContext(
-    Element* aOwner, nsIOpenWindowInfo* aOpenWindowInfo) {
+    Element* aOwner, nsIOpenWindowInfo* aOpenWindowInfo,
+    BrowsingContextGroup* aSpecificGroup) {
+  MOZ_ASSERT(!aOpenWindowInfo || !aSpecificGroup);
+
   // If we've got a pending BrowserParent from the content process, use the
   // BrowsingContext which was created for it.
   if (aOpenWindowInfo && aOpenWindowInfo->GetNextRemoteBrowser()) {
@@ -305,15 +308,18 @@ static already_AddRefed<BrowsingContext> CreateBrowsingContext(
   // for the BrowsingContext, and cause no end of trouble.
   if (IsTopContent(parentBC, aOwner)) {
     // Create toplevel context without a parent & as Type::Content.
-    return BrowsingContext::CreateDetached(nullptr, opener, frameName,
+    return BrowsingContext::CreateDetached(nullptr, opener, aSpecificGroup,
+                                           frameName,
                                            BrowsingContext::Type::Content);
   }
 
   MOZ_ASSERT(!aOpenWindowInfo,
              "Can't have openWindowInfo for non-toplevel context");
 
-  return BrowsingContext::CreateDetached(parentInner, nullptr, frameName,
-                                         parentBC->GetType());
+  MOZ_ASSERT(!aSpecificGroup,
+             "Can't force BrowsingContextGroup for non-toplevel context");
+  return BrowsingContext::CreateDetached(parentInner, nullptr, nullptr,
+                                         frameName, parentBC->GetType());
 }
 
 static bool InitialLoadIsRemote(Element* aOwner) {
@@ -345,17 +351,20 @@ static bool InitialLoadIsRemote(Element* aOwner) {
 }
 
 static void GetInitialRemoteTypeAndProcess(Element* aOwner,
-                                           nsAString& aRemoteType,
+                                           nsACString& aRemoteType,
                                            uint64_t* aChildID) {
   MOZ_ASSERT(XRE_IsParentProcess());
   *aChildID = 0;
 
   // Check if there is an explicit `remoteType` attribute which we should use.
+  nsAutoString remoteType;
   bool hasRemoteType =
-      aOwner->GetAttr(kNameSpaceID_None, nsGkAtoms::RemoteType, aRemoteType);
-  if (!hasRemoteType || aRemoteType.IsEmpty()) {
+      aOwner->GetAttr(kNameSpaceID_None, nsGkAtoms::RemoteType, remoteType);
+  if (!hasRemoteType || remoteType.IsEmpty()) {
     hasRemoteType = false;
-    aRemoteType.AssignLiteral(DEFAULT_REMOTE_TYPE);
+    aRemoteType = DEFAULT_REMOTE_TYPE;
+  } else {
+    aRemoteType = NS_ConvertUTF16toUTF8(remoteType);
   }
 
   // Check if `sameProcessAsFrameLoader` was used to override the process.
@@ -414,8 +423,8 @@ already_AddRefed<nsFrameLoader> nsFrameLoader::Create(
                       doc->IsStaticDocument()),
                  nullptr);
 
-  RefPtr<BrowsingContext> context =
-      CreateBrowsingContext(aOwner, aOpenWindowInfo);
+  RefPtr<BrowsingContext> context = CreateBrowsingContext(
+      aOwner, aOpenWindowInfo, /* specificGroup */ nullptr);
   NS_ENSURE_TRUE(context, nullptr);
 
   bool isRemoteFrame = InitialLoadIsRemote(aOwner);
@@ -430,8 +439,9 @@ already_AddRefed<nsFrameLoader> nsFrameLoader::Create(
 
 /* static */
 already_AddRefed<nsFrameLoader> nsFrameLoader::Recreate(
-    mozilla::dom::Element* aOwner, BrowsingContext* aContext, bool aIsRemote,
-    bool aNetworkCreated, bool aPreserveContext) {
+    mozilla::dom::Element* aOwner, BrowsingContext* aContext,
+    BrowsingContextGroup* aSpecificGroup, bool aIsRemote, bool aNetworkCreated,
+    bool aPreserveContext) {
   NS_ENSURE_TRUE(aOwner, nullptr);
 
 #ifdef DEBUG
@@ -445,7 +455,8 @@ already_AddRefed<nsFrameLoader> nsFrameLoader::Recreate(
 
   RefPtr<BrowsingContext> context = aContext;
   if (!context || !aPreserveContext) {
-    context = CreateBrowsingContext(aOwner, /* openWindowInfo */ nullptr);
+    context = CreateBrowsingContext(aOwner, /* openWindowInfo */ nullptr,
+                                    aSpecificGroup);
     if (aContext) {
       MOZ_ASSERT(
           XRE_IsParentProcess(),
@@ -508,8 +519,7 @@ void nsFrameLoader::LoadFrame(bool aOriginalSrc) {
 
   // If the URI was malformed, try to recover by loading about:blank.
   if (rv == NS_ERROR_MALFORMED_URI) {
-    rv = NS_NewURI(getter_AddRefs(uri), NS_LITERAL_STRING("about:blank"),
-                   encoding, base_uri);
+    rv = NS_NewURI(getter_AddRefs(uri), u"about:blank"_ns, encoding, base_uri);
   }
 
   if (NS_SUCCEEDED(rv)) {
@@ -521,7 +531,7 @@ void nsFrameLoader::LoadFrame(bool aOriginalSrc) {
   }
 }
 
-void nsFrameLoader::ConfigRemoteProcess(const nsAString& aRemoteType,
+void nsFrameLoader::ConfigRemoteProcess(const nsACString& aRemoteType,
                                         ContentParent* aContentParent) {
   MOZ_DIAGNOSTIC_ASSERT(IsRemoteFrame(), "Must be a remote frame");
   MOZ_DIAGNOSTIC_ASSERT(!mRemoteBrowser, "Must not have a browser yet");
@@ -538,8 +548,7 @@ void nsFrameLoader::FireErrorEvent() {
   }
   RefPtr<AsyncEventDispatcher> loadBlockingAsyncDispatcher =
       new LoadBlockingAsyncEventDispatcher(
-          mOwnerContent, NS_LITERAL_STRING("error"), CanBubble::eNo,
-          ChromeOnlyDispatch::eNo);
+          mOwnerContent, u"error"_ns, CanBubble::eNo, ChromeOnlyDispatch::eNo);
   loadBlockingAsyncDispatcher->PostDOMEvent();
 }
 
@@ -969,10 +978,6 @@ bool nsFrameLoader::Show(nsSubDocumentFrame* frame) {
   RefPtr<nsDocShell> baseWindow = GetDocShell();
   baseWindow->InitWindow(nullptr, view->GetWidget(), 0, 0, size.width,
                          size.height);
-  // This is kinda whacky, this "Create()" call doesn't really
-  // create anything, one starts to wonder why this was named
-  // "Create"...
-  baseWindow->Create();
   baseWindow->SetVisibility(true);
   NS_ENSURE_TRUE(GetDocShell(), false);
 
@@ -994,11 +999,9 @@ bool nsFrameLoader::Show(nsSubDocumentFrame* frame) {
         // same editor object, instead of creating a new one.
         RefPtr<HTMLEditor> htmlEditor = GetDocShell()->GetHTMLEditor();
         Unused << htmlEditor;
-        htmlDoc->SetDesignMode(NS_LITERAL_STRING("off"), Nothing(),
-                               IgnoreErrors());
+        htmlDoc->SetDesignMode(u"off"_ns, Nothing(), IgnoreErrors());
 
-        htmlDoc->SetDesignMode(NS_LITERAL_STRING("on"), Nothing(),
-                               IgnoreErrors());
+        htmlDoc->SetDesignMode(u"on"_ns, Nothing(), IgnoreErrors());
       } else {
         // Re-initialize the presentation for contenteditable documents
         bool editable = false, hasEditingSession = false;
@@ -2178,10 +2181,7 @@ nsresult nsFrameLoader::MaybeCreateDocShell() {
     nsGlobalWindowOuter::Cast(newWindow)->AllowScriptsToClose();
   }
 
-  // This is kinda whacky, this call doesn't really create anything,
-  // but it must be called to make sure things are properly
-  // initialized.
-  if (NS_FAILED(docShell->Create())) {
+  if (!docShell->Initialize()) {
     // Do not call Destroy() here. See bug 472312.
     NS_WARNING("Something wrong when creating the docshell for a frameloader!");
     return NS_ERROR_FAILURE;
@@ -2215,11 +2215,6 @@ nsresult nsFrameLoader::MaybeCreateDocShell() {
 
   ReallyLoadFrameScripts();
   InitializeBrowserAPI();
-
-  nsCOMPtr<nsIObserverService> os = services::GetObserverService();
-  if (os) {
-    os->NotifyObservers(ToSupports(this), "inprocess-browser-shown", nullptr);
-  }
 
   return NS_OK;
 }
@@ -3123,49 +3118,120 @@ void nsFrameLoader::RequestSHistoryUpdate(bool aImmediately) {
   }
 }
 
-void nsFrameLoader::Print(uint64_t aOuterWindowID,
-                          nsIPrintSettings* aPrintSettings,
-                          nsIWebProgressListener* aProgressListener,
-                          ErrorResult& aRv) {
-#if defined(NS_PRINTING)
+#ifdef NS_PRINTING
+class WebProgressListenerToPromise final : public nsIWebProgressListener {
+ public:
+  explicit WebProgressListenerToPromise(Promise* aPromise)
+      : mPromise(aPromise) {}
+
+  NS_DECL_ISUPPORTS
+
+  // NS_DECL_NSIWEBPROGRESSLISTENER
+  NS_IMETHOD OnStateChange(nsIWebProgress* aWebProgress, nsIRequest* aRequest,
+                           uint32_t aStateFlags, nsresult aStatus) override {
+    if (aStateFlags & nsIWebProgressListener::STATE_STOP &&
+        aStateFlags & nsIWebProgressListener::STATE_IS_DOCUMENT) {
+      MOZ_ASSERT(mPromise);
+      if (mPromise) {
+        mPromise->MaybeResolveWithUndefined();
+        mPromise = nullptr;
+      }
+    }
+    return NS_OK;
+  }
+  NS_IMETHOD OnStatusChange(nsIWebProgress* aWebProgress, nsIRequest* aRequest,
+                            nsresult aStatus,
+                            const char16_t* aMessage) override {
+    if (aStatus != NS_OK && mPromise) {
+      mPromise->MaybeReject(ErrorResult(aStatus));
+      mPromise = nullptr;
+    }
+    return NS_OK;
+  }
+  NS_IMETHOD OnProgressChange(nsIWebProgress* aWebProgress,
+                              nsIRequest* aRequest, int32_t aCurSelfProgress,
+                              int32_t aMaxSelfProgress,
+                              int32_t aCurTotalProgress,
+                              int32_t aMaxTotalProgress) override {
+    return NS_OK;
+  }
+  NS_IMETHOD OnLocationChange(nsIWebProgress* aWebProgress,
+                              nsIRequest* aRequest, nsIURI* aLocation,
+                              uint32_t aFlags) override {
+    return NS_OK;
+  }
+  NS_IMETHOD OnSecurityChange(nsIWebProgress* aWebProgress,
+                              nsIRequest* aRequest, uint32_t aState) override {
+    return NS_OK;
+  }
+  NS_IMETHOD OnContentBlockingEvent(nsIWebProgress* aWebProgress,
+                                    nsIRequest* aRequest,
+                                    uint32_t aEvent) override {
+    return NS_OK;
+  }
+
+ private:
+  ~WebProgressListenerToPromise() = default;
+
+  RefPtr<Promise> mPromise;
+};
+
+NS_IMPL_ISUPPORTS(WebProgressListenerToPromise, nsIWebProgressListener)
+#endif
+
+already_AddRefed<Promise> nsFrameLoader::Print(uint64_t aOuterWindowID,
+                                               nsIPrintSettings* aPrintSettings,
+                                               ErrorResult& aRv) {
+  RefPtr<Promise> promise =
+      Promise::Create(GetOwnerDoc()->GetOwnerGlobal(), aRv);
+
+#ifndef NS_PRINTING
+  promise->MaybeReject(ErrorResult(NS_ERROR_NOT_AVAILABLE));
+  return promise.forget();
+#else
+
+  RefPtr<WebProgressListenerToPromise> listener(
+      new WebProgressListenerToPromise(promise));
+
   if (auto* browserParent = GetBrowserParent()) {
     RefPtr<embedding::PrintingParent> printingParent =
         browserParent->Manager()->GetPrintingParent();
 
     embedding::PrintData printData;
     nsresult rv = printingParent->SerializeAndEnsureRemotePrintJob(
-        aPrintSettings, aProgressListener, nullptr, &printData);
+        aPrintSettings, listener, nullptr, &printData);
     if (NS_WARN_IF(NS_FAILED(rv))) {
-      aRv.Throw(rv);
-      return;
+      promise->MaybeReject(ErrorResult(rv));
+      return promise.forget();
     }
 
     bool success = browserParent->SendPrint(aOuterWindowID, printData);
     if (!success) {
-      aRv.Throw(NS_ERROR_FAILURE);
+      promise->MaybeReject(ErrorResult(NS_ERROR_FAILURE));
     }
-    return;
+    return promise.forget();
   }
 
   nsGlobalWindowOuter* outerWindow =
       nsGlobalWindowOuter::GetOuterWindowWithId(aOuterWindowID);
   if (NS_WARN_IF(!outerWindow)) {
-    aRv.Throw(NS_ERROR_FAILURE);
-    return;
+    promise->MaybeReject(ErrorResult(NS_ERROR_FAILURE));
+    return promise.forget();
   }
 
   nsCOMPtr<nsIWebBrowserPrint> webBrowserPrint =
       do_GetInterface(ToSupports(outerWindow));
   if (NS_WARN_IF(!webBrowserPrint)) {
-    aRv.Throw(NS_ERROR_FAILURE);
-    return;
+    promise->MaybeReject(ErrorResult(NS_ERROR_FAILURE));
+    return promise.forget();
   }
 
-  nsresult rv = webBrowserPrint->Print(aPrintSettings, aProgressListener);
+  nsresult rv = webBrowserPrint->Print(aPrintSettings, listener);
   if (NS_FAILED(rv)) {
-    aRv.Throw(rv);
-    return;
+    promise->MaybeReject(ErrorResult(rv));
   }
+
+  return promise.forget();
 #endif
 }
 
@@ -3227,7 +3293,7 @@ void nsFrameLoader::InitializeBrowserAPI() {
     return;
   }
   mMessageManager->LoadFrameScript(
-      NS_LITERAL_STRING("chrome://global/content/BrowserElementChild.js"),
+      u"chrome://global/content/BrowserElementChild.js"_ns,
       /* allowDelayedLoad = */ true,
       /* aRunInGlobalScope */ true, IgnoreErrors());
 
@@ -3424,8 +3490,11 @@ void nsFrameLoader::SetWillChangeProcess() {
       // solution.
       MOZ_DIAGNOSTIC_ASSERT(mPendingBrowsingContext == GetBrowsingContext());
       RefPtr<CanonicalBrowsingContext> bc(mPendingBrowsingContext->Canonical());
-      bc->SetInFlightProcessId(browserParent->Manager()->ChildID());
-      auto callback = [bc](auto) { bc->SetInFlightProcessId(0); };
+      uint64_t targetProcessId = browserParent->Manager()->ChildID();
+      bc->SetInFlightProcessId(targetProcessId);
+      auto callback = [bc, targetProcessId](auto) {
+        bc->ClearInFlightProcessId(targetProcessId);
+      };
       browserParent->SendWillChangeProcess(callback, callback);
     }
     // OOP IFrame - Through Browser Bridge Parent, set on browser child
@@ -3478,9 +3547,9 @@ void nsFrameLoader::MaybeNotifyCrashed(BrowsingContext* aBrowsingContext,
   // Fire the actual crashed event.
   nsString eventName;
   if (aChannel && !aChannel->DoBuildIDsMatch()) {
-    eventName = NS_LITERAL_STRING("oop-browser-buildid-mismatch");
+    eventName = u"oop-browser-buildid-mismatch"_ns;
   } else {
-    eventName = NS_LITERAL_STRING("oop-browser-crashed");
+    eventName = u"oop-browser-crashed"_ns;
   }
 
   FrameCrashedEventInit init;

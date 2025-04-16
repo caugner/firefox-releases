@@ -323,8 +323,7 @@ nsresult GetFailedProfileLockFile(nsIFile** aFile, nsIFile* aProfileDir) {
   nsresult rv = aProfileDir->Clone(aFile);
   NS_ENSURE_SUCCESS(rv, rv);
 
-  (*aFile)->AppendNative(
-      NS_LITERAL_CSTRING("Telemetry.FailedProfileLocks.txt"));
+  (*aFile)->AppendNative("Telemetry.FailedProfileLocks.txt"_ns);
   return NS_OK;
 }
 
@@ -414,7 +413,7 @@ static PathCharPtr GetShutdownTimeFileName() {
     NS_GetSpecialDirectory(NS_APP_USER_PROFILE_50_DIR, getter_AddRefs(mozFile));
     if (!mozFile) return nullptr;
 
-    mozFile->AppendNative(NS_LITERAL_CSTRING("Telemetry.ShutdownTime.txt"));
+    mozFile->AppendNative("Telemetry.ShutdownTime.txt"_ns);
 
     gRecordedShutdownTimeFileName = NS_xstrdup(mozFile->NativePath().get());
   }
@@ -598,7 +597,7 @@ TelemetryImpl::GetSnapshotForHistograms(const nsACString& aStoreName,
                                         bool aClearStore, bool aFilterTest,
                                         JSContext* aCx,
                                         JS::MutableHandleValue aResult) {
-  NS_NAMED_LITERAL_CSTRING(defaultStore, "main");
+  constexpr auto defaultStore = "main"_ns;
   unsigned int dataset = mCanRecordExtended
                              ? nsITelemetry::DATASET_PRERELEASE_CHANNELS
                              : nsITelemetry::DATASET_ALL_CHANNELS;
@@ -612,7 +611,7 @@ TelemetryImpl::GetSnapshotForKeyedHistograms(const nsACString& aStoreName,
                                              bool aClearStore, bool aFilterTest,
                                              JSContext* aCx,
                                              JS::MutableHandleValue aResult) {
-  NS_NAMED_LITERAL_CSTRING(defaultStore, "main");
+  constexpr auto defaultStore = "main"_ns;
   unsigned int dataset = mCanRecordExtended
                              ? nsITelemetry::DATASET_PRERELEASE_CHANNELS
                              : nsITelemetry::DATASET_ALL_CHANNELS;
@@ -632,7 +631,7 @@ TelemetryImpl::GetSnapshotForScalars(const nsACString& aStoreName,
                                      bool aClearStore, bool aFilterTest,
                                      JSContext* aCx,
                                      JS::MutableHandleValue aResult) {
-  NS_NAMED_LITERAL_CSTRING(defaultStore, "main");
+  constexpr auto defaultStore = "main"_ns;
   unsigned int dataset = mCanRecordExtended
                              ? nsITelemetry::DATASET_PRERELEASE_CHANNELS
                              : nsITelemetry::DATASET_ALL_CHANNELS;
@@ -646,7 +645,7 @@ TelemetryImpl::GetSnapshotForKeyedScalars(const nsACString& aStoreName,
                                           bool aClearStore, bool aFilterTest,
                                           JSContext* aCx,
                                           JS::MutableHandleValue aResult) {
-  NS_NAMED_LITERAL_CSTRING(defaultStore, "main");
+  constexpr auto defaultStore = "main"_ns;
   unsigned int dataset = mCanRecordExtended
                              ? nsITelemetry::DATASET_PRERELEASE_CHANNELS
                              : nsITelemetry::DATASET_ALL_CHANNELS;
@@ -1029,7 +1028,7 @@ void TelemetryImpl::ReadLateWritesStacks(nsIFile* aProfileDir) {
     return;
   }
 
-  NS_NAMED_LITERAL_STRING(prefix, "Telemetry.LateWriteFinal-");
+  constexpr auto prefix = u"Telemetry.LateWriteFinal-"_ns;
   nsCOMPtr<nsIFile> file;
   while (NS_SUCCEEDED(files->GetNextFile(getter_AddRefs(file))) && file) {
     nsAutoString leafName;
@@ -1215,16 +1214,14 @@ static void internal_initGlean() {
   }
 
   nsAutoCString osVersion;
-  rv = infoService->GetPropertyAsACString(NS_LITERAL_STRING("version"),
-                                          osVersion);
+  rv = infoService->GetPropertyAsACString(u"version"_ns, osVersion);
   if (NS_FAILED(rv)) {
     NS_WARNING("Can't get OS version. FOG will not be initialized.");
     return;
   }
 
   nsAutoCString architecture;
-  rv = infoService->GetPropertyAsACString(NS_LITERAL_STRING("arch"),
-                                          architecture);
+  rv = infoService->GetPropertyAsACString(u"arch"_ns, architecture);
   if (NS_FAILED(rv)) {
     NS_WARNING("Can't get architecture. FOG will not be initialized.");
     return;
@@ -2136,7 +2133,7 @@ void SetProfileDir(nsIFile* aProfD) {
   if (NS_FAILED(rv)) {
     return;
   }
-  sTelemetryIOObserver->AddPath(profDirPath, NS_LITERAL_STRING("{profile}"));
+  sTelemetryIOObserver->AddPath(profDirPath, u"{profile}"_ns);
 }
 
 // Scalar API C++ Endpoints

@@ -7,6 +7,7 @@
 #ifndef frontend_AbstractScopePtr_h
 #define frontend_AbstractScopePtr_h
 
+#include "mozilla/Maybe.h"
 #include "mozilla/Variant.h"
 
 #include "frontend/TypedIndex.h"
@@ -25,7 +26,6 @@ class GCMarker;
 
 namespace frontend {
 struct CompilationInfo;
-class FunctionBox;
 class ScopeCreationData;
 }  // namespace frontend
 
@@ -56,16 +56,8 @@ class AbstractScopePtr {
  private:
   ScopeType scope_ = ScopeType(HeapPtrScope());
 
-  // Extract the Scope* represented by this; may be nullptr, and will
-  // forward through to the ScopeCreationData if it has a Scope*
-  //
-  // Should only be used after getOrCreate() has been used to reify this into a
-  // Scope.
-  Scope* getExistingScope() const;
-
  public:
   friend class js::Scope;
-  friend class js::frontend::FunctionBox;
 
   AbstractScopePtr() = default;
 
@@ -91,13 +83,9 @@ class AbstractScopePtr {
 
   // Note: this handle is rooted in the CompilationInfo.
   MutableHandle<frontend::ScopeCreationData> scopeCreationData() const;
+  frontend::CompilationInfo& compilationInfo() const;
 
   Scope* scope() const { return scope_.as<HeapPtrScope>(); }
-
-  // Get a Scope*, creating it from a ScopeCreationData if required.
-  // Used to allow us to ensure that Scopes are always allocated with
-  // real GC allocated Enclosing scopes.
-  bool getOrCreateScope(JSContext* cx, MutableHandleScope scope);
 
   // This allows us to check whether or not this provider wraps
   // or otherwise would reify to a particular scope type.

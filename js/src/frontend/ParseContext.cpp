@@ -44,6 +44,8 @@ const char* DeclarationKindString(DeclarationKind kind) {
     case DeclarationKind::SimpleCatchParameter:
     case DeclarationKind::CatchParameter:
       return "catch parameter";
+    case DeclarationKind::PrivateName:
+      return "private name";
   }
 
   MOZ_CRASH("Bad DeclarationKind");
@@ -60,14 +62,20 @@ bool DeclarationKindIsParameter(DeclarationKind kind) {
          kind == DeclarationKind::FormalParameter;
 }
 
-bool UsedNameTracker::noteUse(JSContext* cx, JSAtom* name, uint32_t scriptId,
-                              uint32_t scopeId) {
+bool UsedNameTracker::noteUse(JSContext* cx, JSAtom* name,
+                              NameVisibility visibility, uint32_t scriptId,
+                              uint32_t scopeId,
+                              mozilla::Maybe<TokenPos> tokenPosition) {
   if (UsedNameMap::AddPtr p = map_.lookupForAdd(name)) {
     if (!p->value().noteUsedInScope(scriptId, scopeId)) {
       return false;
     }
   } else {
-    UsedNameInfo info(cx);
+    // We need a token position precisely where we have private visibility.
+    MOZ_ASSERT(tokenPosition.isSome() ==
+               (visibility == NameVisibility::Private));
+    UsedNameInfo info(cx, visibility, tokenPosition);
+
     if (!info.noteUsedInScope(scriptId, scopeId)) {
       return false;
     }
@@ -76,6 +84,52 @@ bool UsedNameTracker::noteUse(JSContext* cx, JSAtom* name, uint32_t scriptId,
     }
   }
 
+  return true;
+}
+
+bool UsedNameTracker::getUnboundPrivateNames(
+    Vector<UnboundPrivateName, 8>& unboundPrivateNames) {
+  for (auto iter = map_.iter(); !iter.done(); iter.next()) {
+    // Don't care about public;
+    if (iter.get().value().isPublic()) {
+      continue;
+    }
+
+    // empty list means all bound
+    if (iter.get().value().empty()) {
+      continue;
+    }
+
+    if (!unboundPrivateNames.emplaceBack(iter.get().key(),
+                                         *iter.get().value().pos())) {
+      return false;
+    }
+  }
+
+  // Return a sorted list in ascendng order of position.
+  auto comparePosition = [](const auto& a, const auto& b) {
+    return a.position < b.position;
+  };
+  std::sort(unboundPrivateNames.begin(), unboundPrivateNames.end(),
+            comparePosition);
+
+  return true;
+}
+
+bool UsedNameTracker::hasUnboundPrivateNames(
+    JSContext* cx, mozilla::Maybe<UnboundPrivateName>& maybeUnboundName) {
+  Vector<UnboundPrivateName, 8> unboundPrivateNames(cx);
+  if (!getUnboundPrivateNames(unboundPrivateNames)) {
+    return false;
+  }
+
+  if (unboundPrivateNames.empty()) {
+    maybeUnboundName = mozilla::Nothing();
+    return true;
+  }
+
+  // GetUnboundPrivateNames returns the list sorted.
+  maybeUnboundName.emplace(unboundPrivateNames[0]);
   return true;
 }
 
@@ -338,7 +392,7 @@ Maybe<DeclarationKind> ParseContext::isVarRedeclaredInEval(
 
   // In the case of eval, we also need to check enclosing VM scopes to see
   // if the var declaration is allowed in the context.
-  js::Scope* enclosingScope = sc()->compilationEnclosingScope();
+  js::Scope* enclosingScope = sc()->compilationInfo().enclosingScope;
   js::Scope* varScope = EvalScope::nearestVarScopeForDirectEval(enclosingScope);
   MOZ_ASSERT(varScope);
   for (ScopeIter si(enclosingScope); si; si++) {
@@ -476,8 +530,8 @@ bool ParseContext::hasUsedName(const UsedNameTracker& usedNames,
 
 bool ParseContext::hasUsedFunctionSpecialName(const UsedNameTracker& usedNames,
                                               HandlePropertyName name) {
-  MOZ_ASSERT(name == sc()->cx_->names().arguments ||
-             name == sc()->cx_->names().dotThis);
+  MOZ_ASSERT(name == sc()->cx_->parserNames().arguments ||
+             name == sc()->cx_->parserNames().dotThis);
   return hasUsedName(usedNames, name) ||
          functionBox()->bindingsAccessedDynamically();
 }
@@ -493,7 +547,7 @@ bool ParseContext::declareFunctionThis(const UsedNameTracker& usedNames,
   // Derived class constructors emit JSOp::CheckReturn, which requires
   // '.this' to be bound.
   FunctionBox* funbox = functionBox();
-  HandlePropertyName dotThis = sc()->cx_->names().dotThis;
+  HandlePropertyName dotThis = sc()->cx_->parserNames().dotThis;
 
   bool declareThis;
   if (canSkipLazyClosedOverBindings) {
@@ -527,7 +581,7 @@ bool ParseContext::declareFunctionArgumentsObject(
   bool hasExtraBodyVarScope = &funScope != &_varScope;
 
   // Time to implement the odd semantics of 'arguments'.
-  HandlePropertyName argumentsName = sc()->cx_->names().arguments;
+  HandlePropertyName argumentsName = sc()->cx_->parserNames().arguments;
 
   bool tryDeclareArguments;
   if (canSkipLazyClosedOverBindings) {
@@ -591,7 +645,7 @@ bool ParseContext::declareDotGeneratorName() {
   // The special '.generator' binding must be on the function scope, as
   // generators expect to find it on the CallObject.
   ParseContext::Scope& funScope = functionScope();
-  HandlePropertyName dotGenerator = sc()->cx_->names().dotGenerator;
+  HandlePropertyName dotGenerator = sc()->cx_->parserNames().dotGenerator;
   AddDeclaredNamePtr p = funScope.lookupDeclaredNameForAdd(dotGenerator);
   if (!p &&
       !funScope.addDeclaredName(this, p, dotGenerator, DeclarationKind::Var,

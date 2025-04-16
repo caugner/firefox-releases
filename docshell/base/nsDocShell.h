@@ -120,7 +120,7 @@ class nsDocShell final : public nsDocLoader,
                          public nsILoadContext,
                          public nsINetworkInterceptController,
                          public nsIDeprecationWarner,
-                         public mozilla::SupportsWeakPtr<nsDocShell> {
+                         public mozilla::SupportsWeakPtr {
  public:
   enum InternalLoad : uint32_t {
     INTERNAL_LOAD_FLAGS_NONE = 0x0,
@@ -179,7 +179,6 @@ class nsDocShell final : public nsDocLoader,
     nsWeakPtr mWeakPtr;
   };
 
-  MOZ_DECLARE_WEAKREFERENCE_TYPENAME(nsDocShell)
   NS_DECL_ISUPPORTS_INHERITED
   NS_DECL_CYCLE_COLLECTION_CLASS_INHERITED(nsDocShell, nsDocLoader)
   NS_DECL_NSIDOCSHELL
@@ -194,10 +193,12 @@ class nsDocShell final : public nsDocLoader,
   NS_DECL_NSINETWORKINTERCEPTCONTROLLER
   NS_DECL_NSIDEPRECATIONWARNER
 
-  // Create a new nsDocShell object, initializing it.
+  // Create a new nsDocShell object.
   static already_AddRefed<nsDocShell> Create(
       mozilla::dom::BrowsingContext* aBrowsingContext,
       uint64_t aContentWindowID = 0);
+
+  bool Initialize();
 
   NS_IMETHOD Stop() override {
     // Need this here because otherwise nsIWebNavigation::Stop
@@ -442,6 +443,9 @@ class nsDocShell final : public nsDocLoader,
       bool aNotifyKeywordSearchLoading = false,
       nsIInputStream** aNewPostData = nullptr);
 
+  static already_AddRefed<nsIURI> MaybeFixBadCertDomainErrorURI(
+      nsIChannel* aChannel, nsIURI* aUrl);
+
   // Takes aStatus and filters out results that should not display
   // an error page.
   // If this returns a failed result, then we should display an error
@@ -601,10 +605,6 @@ class nsDocShell final : public nsDocLoader,
                                bool aCloneChildren, nsISHEntry** aNewEntry);
 
   nsresult AddChildSHEntryToParent(nsISHEntry* aNewEntry, int32_t aChildOffset,
-                                   bool aCloneChildren);
-
-  nsresult AddChildSHEntryInternal(nsISHEntry* aCloneRef, nsISHEntry* aNewEntry,
-                                   int32_t aChildOffset, uint32_t aLoadType,
                                    bool aCloneChildren);
 
   // Call this method to swap in a new history entry to m[OL]SHE, rather than
@@ -1190,7 +1190,7 @@ class nsDocShell final : public nsDocLoader,
   bool mInEnsureScriptEnv;
 #endif
 
-  bool mCreated : 1;
+  bool mInitialized : 1;
   bool mAllowSubframes : 1;
   bool mAllowJavascript : 1;
   bool mAllowMetaRedirects : 1;

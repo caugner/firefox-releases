@@ -71,7 +71,6 @@ class ExtensionGlobal {
 
     MessageChannel.addListener(global, "Extension:Capture", this);
     MessageChannel.addListener(global, "Extension:DetectLanguage", this);
-    MessageChannel.addListener(global, "Extension:Execute", this);
     MessageChannel.addListener(global, "WebNavigation:GetFrame", this);
     MessageChannel.addListener(global, "WebNavigation:GetAllFrames", this);
   }
@@ -103,11 +102,6 @@ class ExtensionGlobal {
           ExtensionPageChild.expectViewLoad(this.global, data.viewType);
         }
         return;
-    }
-    // Prevent script compilation in the parent process when we would never
-    // use them.
-    if (!isContentScriptProcess && messageName === "Extension:Execute") {
-      return;
     }
 
     // SetFrameData does not have a recipient extension, or it would be
@@ -207,6 +201,11 @@ ExtensionManager = {
         ({ backgroundScripts } = getData(extension, "extendedData") || {});
       }
 
+      let { backgroundWorkerScript } = extension;
+      if (!backgroundWorkerScript && WebExtensionPolicy.isExtensionProcess) {
+        ({ backgroundWorkerScript } = getData(extension, "extendedData") || {});
+      }
+
       policy = new WebExtensionPolicy({
         id: extension.id,
         mozExtensionHostname: extension.uuid,
@@ -224,6 +223,7 @@ ExtensionManager = {
         localizeCallback,
 
         backgroundScripts,
+        backgroundWorkerScript,
 
         contentScripts: extension.contentScripts,
       });

@@ -17,13 +17,7 @@ class ControllersParent extends JSWindowActorParent {
   }
 
   get browser() {
-    let browser = this.browsingContext.top.embedderElement;
-    if (browser) {
-      if (browser.outerBrowser) {
-        browser = browser.outerBrowser; // handle RDM
-      }
-    }
-    return browser;
+    return this.browsingContext.top.embedderElement;
   }
 
   // Update the set of enabled and disabled commands.
@@ -100,7 +94,7 @@ class ControllersParent extends JSWindowActorParent {
 }
 
 ControllersParent.prototype.QueryInterface = ChromeUtils.generateQI([
-  Ci.nsIBrowserController,
-  Ci.nsIController,
-  Ci.nsICommandController,
+  "nsIBrowserController",
+  "nsIController",
+  "nsICommandController",
 ]);

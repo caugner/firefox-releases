@@ -10,7 +10,6 @@ import java.io.ByteArrayInputStream;
 import java.lang.annotation.Retention;
 import java.lang.annotation.RetentionPolicy;
 import java.lang.ref.WeakReference;
-import java.nio.ByteBuffer;
 import java.security.cert.CertificateException;
 import java.security.cert.CertificateFactory;
 import java.security.cert.X509Certificate;
@@ -44,6 +43,7 @@ import org.mozilla.gecko.util.ThreadUtils;
 import android.content.ContentResolver;
 import android.content.Context;
 import android.database.Cursor;
+import android.graphics.Bitmap;
 import android.graphics.Matrix;
 import android.graphics.Rect;
 import android.graphics.RectF;
@@ -219,7 +219,8 @@ public class GeckoSession implements Parcelable {
         public native void setDefaultClearColor(int color);
 
         @WrapForJNI(calledFrom = "ui", dispatchTo = "current")
-        /* package */ native void requestScreenPixels(final GeckoResult<ByteBuffer> result,
+        /* package */ native void requestScreenPixels(final GeckoResult<Bitmap> result,
+                                                      final Bitmap target,
                                                       final int x, final int y,
                                                       final int srcWidth, final int srcHeight,
                                                       final int outWidth, final int outHeight);
@@ -1353,16 +1354,12 @@ public class GeckoSession implements Parcelable {
         }
     };
 
-    @Override
-    @AnyThread
-    public int hashCode() {
-        return mId.hashCode();
-    }
+    /* package */ boolean equalsId(final GeckoSession other) {
+        if (other == null) {
+            return false;
+        }
 
-    @Override
-    @AnyThread
-    public boolean equals(final Object obj) {
-        return obj instanceof GeckoSession && mId.equals(((GeckoSession) obj).mId);
+        return mId.equals(other.mId);
     }
 
     /**
@@ -3156,6 +3153,9 @@ public class GeckoSession implements Parcelable {
              */
             public final @Nullable String srcUri;
 
+            // TODO: Bug 1595822 make public
+            final List<WebExtension.Menu> extensionMenus;
+
             protected ContextElement(
                     final @Nullable String baseUri,
                     final @Nullable String linkUri,
@@ -3169,6 +3169,7 @@ public class GeckoSession implements Parcelable {
                 this.altText = altText;
                 this.type = getType(typeStr);
                 this.srcUri = srcUri;
+                this.extensionMenus = null;
             }
 
             private static int getType(final String name) {
@@ -3813,6 +3814,7 @@ public class GeckoSession implements Parcelable {
          *         - document.addCertException(isTemporary), returns Promise
          *         - document.getFailedCertSecurityInfo(), returns FailedCertSecurityInfo
          *         - document.getNetErrorInfo(), returns NetErrorInfo
+         *         - document.allowDeprecatedTls, a property indicating whether or not TLS 1.0/1.1 is allowed
          * @see <a href="https://searchfox.org/mozilla-central/source/dom/webidl/FailedCertSecurityInfo.webidl">FailedCertSecurityInfo IDL</a>
          * @see <a href="https://searchfox.org/mozilla-central/source/dom/webidl/NetErrorInfo.webidl">NetErrorInfo IDL</a>
          */

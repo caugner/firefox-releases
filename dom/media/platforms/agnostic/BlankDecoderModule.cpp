@@ -105,7 +105,6 @@ already_AddRefed<MediaData> BlankAudioDataCreator::Create(
   RefPtr<AudioData> data(new AudioData(aSample->mOffset, aSample->mTime,
                                        std::move(samples), mChannelCount,
                                        mSampleRate));
-  MOZ_DIAGNOSTIC_ASSERT(aSample->mDuration == data->mDuration, "must be equal");
   return data.forget();
 }
 
@@ -115,8 +114,7 @@ already_AddRefed<MediaDataDecoder> BlankDecoderModule::CreateVideoDecoder(
   UniquePtr<DummyDataCreator> creator = MakeUnique<BlankVideoDataCreator>(
       config.mDisplay.width, config.mDisplay.height, aParams.mImageContainer);
   RefPtr<MediaDataDecoder> decoder = new DummyMediaDataDecoder(
-      std::move(creator), NS_LITERAL_CSTRING("blank media data decoder"),
-      aParams);
+      std::move(creator), "blank media data decoder"_ns, aParams);
   return decoder.forget();
 }
 
@@ -126,8 +124,7 @@ already_AddRefed<MediaDataDecoder> BlankDecoderModule::CreateAudioDecoder(
   UniquePtr<DummyDataCreator> creator =
       MakeUnique<BlankAudioDataCreator>(config.mChannels, config.mRate);
   RefPtr<MediaDataDecoder> decoder = new DummyMediaDataDecoder(
-      std::move(creator), NS_LITERAL_CSTRING("blank media data decoder"),
-      aParams);
+      std::move(creator), "blank media data decoder"_ns, aParams);
   return decoder.forget();
 }
 

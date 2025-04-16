@@ -44,7 +44,7 @@ var SearchTestUtils = Object.freeze({
    *                    or rejected if it fails.
    */
   async promiseNewSearchEngine(url) {
-    let engine = await Services.search.addEngine(url, "", false);
+    let engine = await Services.search.addOpenSearchEngine(url, "");
     gTestGlobals.registerCleanupFunction(async () =>
       Services.search.removeEngine(engine)
     );
@@ -128,7 +128,9 @@ var SearchTestUtils = Object.freeze({
   async searchConfigToEngines(engineConfigurations) {
     let engines = [];
     for (let config of engineConfigurations) {
-      let engine = await Services.search.makeEngineFromConfig(config);
+      let engine = await Services.search.wrappedJSObject.makeEngineFromConfig(
+        config
+      );
       engines.push(engine);
     }
     return engines;
@@ -264,7 +266,7 @@ var SearchTestUtils = Object.freeze({
       }
     },
 
-    QueryInterface: ChromeUtils.generateQI([Ci.nsIIdleService]),
+    QueryInterface: ChromeUtils.generateQI(["nsIUserIdleService"]),
     idleTime: 19999,
 
     addIdleObserver(observer, time) {
@@ -283,7 +285,7 @@ var SearchTestUtils = Object.freeze({
    */
   useMockIdleService(registerCleanupFunction) {
     let fakeIdleService = MockRegistrar.register(
-      "@mozilla.org/widget/idleservice;1",
+      "@mozilla.org/widget/useridleservice;1",
       SearchTestUtils.idleService
     );
     registerCleanupFunction(() => {

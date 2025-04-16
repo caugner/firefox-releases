@@ -3,7 +3,7 @@
 "use strict";
 
 // Like most of the mochitest-browser devtools test,
-// on debug test slave, it takes about 50s to run the test.
+// on debug test machine, it takes about 50s to run the test.
 requestLongerTimeout(4);
 
 loadTestSubscript("head_devtools.js");
@@ -28,7 +28,7 @@ async function getCurrentTabId(extension) {
 async function navigateTo(uri, tab, toolbox, extension) {
   const originalTabId = await getCurrentTabId(extension);
 
-  const onSwitched = toolbox.once("switched-target");
+  const onSwitched = toolbox.targetList.once("switched-target");
   await BrowserTestUtils.loadURI(tab.linkedBrowser, uri);
   await onSwitched;
 

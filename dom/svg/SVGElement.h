@@ -4,8 +4,8 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-#ifndef __NS_SVGELEMENT_H__
-#define __NS_SVGELEMENT_H__
+#ifndef DOM_SVG_SVGELEMENT_H_
+#define DOM_SVG_SVGELEMENT_H_
 
 /*
   SVGElement is the base class for all SVG content elements.
@@ -62,7 +62,7 @@ class DOMSVGStringList;
 class SVGSVGElement;
 class SVGViewportElement;
 
-typedef nsStyledElement SVGElementBase;
+using SVGElementBase = nsStyledElement;
 
 class SVGElement : public SVGElementBase  // nsIContent
 {
@@ -165,7 +165,7 @@ class SVGElement : public SVGElementBase  // nsIContent
       SVGTransformTypes aWhich = eAllTransforms) const;
 
   // Setter for to set the current <animateMotion> transformation
-  // Only visible for nsSVGGraphicElement, so it's a no-op here, and that
+  // Only visible for SVGGraphicElement, so it's a no-op here, and that
   // subclass has the useful implementation.
   virtual void SetAnimateMotionTransform(
       const mozilla::gfx::Matrix* aMatrix) { /*no-op*/
@@ -281,7 +281,7 @@ class SVGElement : public SVGElementBase  // nsIContent
   SVGAnimatedLengthList* GetAnimatedLengthList(uint8_t aAttrEnum);
   virtual SVGAnimatedPointList* GetAnimatedPointList() { return nullptr; }
   virtual SVGAnimatedPathSegList* GetAnimPathSegList() {
-    // DOM interface 'SVGAnimatedPathData' (*inherited* by nsSVGPathElement)
+    // DOM interface 'SVGAnimatedPathData' (*inherited* by SVGPathElement)
     // has a member called 'animatedPathSegList' member, so we have a shorter
     // name so we don't get hidden by the GetAnimatedPathSegList declared by
     // NS_DECL_NSIDOMSVGANIMATEDPATHDATA.
@@ -697,4 +697,4 @@ class SVGElement : public SVGElementBase  // nsIContent
 }  // namespace dom
 }  // namespace mozilla
 
-#endif  // __NS_SVGELEMENT_H__
+#endif  // DOM_SVG_SVGELEMENT_H_

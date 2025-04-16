@@ -123,6 +123,7 @@ already_AddRefed<nsWebBrowser> nsWebBrowser::Create(
     return nullptr;
   }
   browser->SetDocShell(docShell);
+  MOZ_ASSERT(browser->mDocShell == docShell);
 
   // get the system default window background colour
   LookAndFeel::GetColor(LookAndFeel::ColorID::WindowBackground,
@@ -134,18 +135,8 @@ already_AddRefed<nsWebBrowser> nsWebBrowser::Create(
   // registration can go away, and nsDocShellTreeOwner can stop implementing
   // nsIWebProgressListener.
   RefPtr<nsDocShellTreeOwner> docShellTreeOwner = browser->mDocShellTreeOwner;
-  NS_ASSERTION(
-      browser->mWebProgress,
-      "this should only be called after we've retrieved a progress iface");
-  if (browser->mWebProgress) {
-    Unused << browser->mWebProgress->AddProgressListener(
-        docShellTreeOwner, nsIWebProgress::NOTIFY_ALL);
-  }
-
-  nsCOMPtr<nsIBaseWindow> docShellAsWin = browser->mDocShellAsWin;
-  NS_ENSURE_SUCCESS(
-      docShellAsWin->InitWindow(nullptr, docShellParentWidget, 0, 0, 0, 0),
-      nullptr);
+  Unused << docShell->AddProgressListener(docShellTreeOwner,
+                                          nsIWebProgress::NOTIFY_ALL);
 
   docShell->SetTreeOwner(docShellTreeOwner);
 
@@ -158,7 +149,10 @@ already_AddRefed<nsWebBrowser> nsWebBrowser::Create(
     aBrowsingContext->InitSessionHistory();
   }
 
-  NS_ENSURE_SUCCESS(docShellAsWin->Create(), nullptr);
+  nsresult rv = docShell->InitWindow(nullptr, docShellParentWidget, 0, 0, 0, 0);
+  if (NS_WARN_IF(NS_FAILED(rv))) {
+    return nullptr;
+  }
 
   docShellTreeOwner->AddToWatcher();  // evil twin of Remove in SetDocShell(0)
   docShellTreeOwner->AddChromeListeners();
@@ -170,8 +164,7 @@ already_AddRefed<nsWebBrowser> nsWebBrowser::Create(
   return browser.forget();
 }
 
-NS_IMETHODIMP
-nsWebBrowser::InternalDestroy() {
+void nsWebBrowser::InternalDestroy() {
   if (mInternalWidget) {
     mInternalWidget->SetWidgetListener(nullptr);
     mInternalWidget->Destroy();
@@ -184,15 +177,12 @@ nsWebBrowser::InternalDestroy() {
     mDocShellTreeOwner->WebBrowser(nullptr);
     mDocShellTreeOwner = nullptr;
   }
-
-  return NS_OK;
 }
 
 NS_IMPL_CYCLE_COLLECTING_ADDREF(nsWebBrowser)
 NS_IMPL_CYCLE_COLLECTING_RELEASE(nsWebBrowser)
 
-NS_IMPL_CYCLE_COLLECTION_WEAK(nsWebBrowser, mDocShell, mDocShellAsReq,
-                              mDocShellAsWin, mDocShellAsNav, mWebProgress)
+NS_IMPL_CYCLE_COLLECTION_WEAK(nsWebBrowser, mDocShell)
 
 NS_INTERFACE_MAP_BEGIN_CYCLE_COLLECTION(nsWebBrowser)
   NS_INTERFACE_MAP_ENTRY_AMBIGUOUS(nsISupports, nsIWebBrowser)
@@ -236,7 +226,7 @@ nsWebBrowser::GetInterface(const nsIID& aIID, void** aSink) {
       return NS_OK;
     }
 #endif
-    return mDocShellAsReq->GetInterface(aIID, aSink);
+    return mDocShell->GetInterface(aIID, aSink);
   }
 
   return NS_NOINTERFACE;
@@ -262,7 +252,7 @@ nsWebBrowser::GetContainerWindow(nsIWebBrowserChrome** aTopWindow) {
 
 NS_IMETHODIMP
 nsWebBrowser::SetContainerWindow(nsIWebBrowserChrome* aTopWindow) {
-  NS_ENSURE_SUCCESS(EnsureDocShellTreeOwner(), NS_ERROR_FAILURE);
+  EnsureDocShellTreeOwner();
   return mDocShellTreeOwner->SetWebBrowserChrome(aTopWindow);
 }
 
@@ -415,7 +405,7 @@ nsWebBrowser::GetTreeOwner(nsIDocShellTreeOwner** aTreeOwner) {
 
 NS_IMETHODIMP
 nsWebBrowser::SetTreeOwner(nsIDocShellTreeOwner* aTreeOwner) {
-  NS_ENSURE_SUCCESS(EnsureDocShellTreeOwner(), NS_ERROR_FAILURE);
+  EnsureDocShellTreeOwner();
   return mDocShellTreeOwner->SetTreeOwner(aTreeOwner);
 }
 
@@ -454,28 +444,28 @@ NS_IMETHODIMP
 nsWebBrowser::GetCanGoBack(bool* aCanGoBack) {
   NS_ENSURE_STATE(mDocShell);
 
-  return mDocShellAsNav->GetCanGoBack(aCanGoBack);
+  return mDocShell->GetCanGoBack(aCanGoBack);
 }
 
 NS_IMETHODIMP
 nsWebBrowser::GetCanGoForward(bool* aCanGoForward) {
   NS_ENSURE_STATE(mDocShell);
 
-  return mDocShellAsNav->GetCanGoForward(aCanGoForward);
+  return mDocShell->GetCanGoForward(aCanGoForward);
 }
 
 NS_IMETHODIMP
 nsWebBrowser::GoBack(bool aRequireUserInteraction) {
   NS_ENSURE_STATE(mDocShell);
 
-  return mDocShellAsNav->GoBack(aRequireUserInteraction);
+  return mDocShell->GoBack(aRequireUserInteraction);
 }
 
 NS_IMETHODIMP
 nsWebBrowser::GoForward(bool aRequireUserInteraction) {
   NS_ENSURE_STATE(mDocShell);
 
-  return mDocShellAsNav->GoForward(aRequireUserInteraction);
+  return mDocShell->GoForward(aRequireUserInteraction);
 }
 
 nsresult nsWebBrowser::LoadURI(const nsAString& aURI,
@@ -486,7 +476,7 @@ nsresult nsWebBrowser::LoadURI(const nsAString& aURI,
 #endif
   NS_ENSURE_STATE(mDocShell);
 
-  return mDocShellAsNav->LoadURI(aURI, aLoadURIOptions);
+  return mDocShell->LoadURI(aURI, aLoadURIOptions);
 }
 
 NS_IMETHODIMP
@@ -504,35 +494,37 @@ nsWebBrowser::LoadURIFromScript(const nsAString& aURI,
 NS_IMETHODIMP
 nsWebBrowser::ResumeRedirectedLoad(uint64_t aIdentifier,
                                    int32_t aHistoryIndex) {
-  return mDocShellAsNav->ResumeRedirectedLoad(aIdentifier, aHistoryIndex);
+  NS_ENSURE_STATE(mDocShell);
+
+  return mDocShell->ResumeRedirectedLoad(aIdentifier, aHistoryIndex);
 }
 
 NS_IMETHODIMP
 nsWebBrowser::Reload(uint32_t aReloadFlags) {
   NS_ENSURE_STATE(mDocShell);
 
-  return mDocShellAsNav->Reload(aReloadFlags);
+  return mDocShell->Reload(aReloadFlags);
 }
 
 NS_IMETHODIMP
 nsWebBrowser::GotoIndex(int32_t aIndex) {
   NS_ENSURE_STATE(mDocShell);
 
-  return mDocShellAsNav->GotoIndex(aIndex);
+  return mDocShell->GotoIndex(aIndex);
 }
 
 NS_IMETHODIMP
 nsWebBrowser::Stop(uint32_t aStopFlags) {
   NS_ENSURE_STATE(mDocShell);
 
-  return mDocShellAsNav->Stop(aStopFlags);
+  return mDocShell->Stop(aStopFlags);
 }
 
 NS_IMETHODIMP
 nsWebBrowser::GetCurrentURI(nsIURI** aURI) {
   NS_ENSURE_STATE(mDocShell);
 
-  return mDocShellAsNav->GetCurrentURI(aURI);
+  return mDocShell->GetCurrentURI(aURI);
 }
 
 // XXX(nika): Consider making the mozilla::dom::ChildSHistory version the
@@ -542,9 +534,7 @@ nsWebBrowser::GetSessionHistoryXPCOM(nsISupports** aSessionHistory) {
   NS_ENSURE_ARG_POINTER(aSessionHistory);
   *aSessionHistory = nullptr;
   if (mDocShell) {
-    RefPtr<mozilla::dom::ChildSHistory> shistory =
-        mDocShellAsNav->GetSessionHistory();
-    shistory.forget(aSessionHistory);
+    return mDocShell->GetSessionHistoryXPCOM(aSessionHistory);
   }
   return NS_OK;
 }
@@ -553,7 +543,7 @@ NS_IMETHODIMP
 nsWebBrowser::GetDocument(dom::Document** aDocument) {
   NS_ENSURE_STATE(mDocShell);
 
-  return mDocShellAsNav->GetDocument(aDocument);
+  return mDocShell->GetDocument(aDocument);
 }
 
 void nsWebBrowser::SetAllowDNSPrefetch(bool aAllowPrefetch) {
@@ -861,14 +851,6 @@ nsWebBrowser::InitWindow(nativeWindow aParentNativeWindow,
 }
 
 NS_IMETHODIMP
-nsWebBrowser::Create() {
-  // nsIBaseWindow::InitWindow and nsIBaseWindow::Create
-  // implementations have been merged into nsWebBrowser::Create
-  MOZ_DIAGNOSTIC_ASSERT(false);
-  return NS_ERROR_NULL_POINTER;
-}
-
-NS_IMETHODIMP
 nsWebBrowser::Destroy() {
   InternalDestroy();
 
@@ -949,7 +931,7 @@ nsWebBrowser::SetPositionAndSize(int32_t aX, int32_t aY, int32_t aCX,
   }
   // Now reposition/ resize the doc
   NS_ENSURE_SUCCESS(
-      mDocShellAsWin->SetPositionAndSize(doc_x, doc_y, aCX, aCY, aFlags),
+      mDocShell->SetPositionAndSize(doc_x, doc_y, aCX, aCY, aFlags),
       NS_ERROR_FAILURE);
 
   return NS_OK;
@@ -977,7 +959,7 @@ nsWebBrowser::GetPositionAndSize(int32_t* aX, int32_t* aY, int32_t* aCX,
   } else {
     // Can directly return this as it is the
     // same interface, thus same returns.
-    return mDocShellAsWin->GetPositionAndSize(aX, aY, aCX, aCY);
+    return mDocShell->GetPositionAndSize(aX, aY, aCX, aCY);
   }
   return NS_OK;
 }
@@ -987,7 +969,7 @@ nsWebBrowser::Repaint(bool aForce) {
   NS_ENSURE_STATE(mDocShell);
   // Can directly return this as it is the
   // same interface, thus same returns.
-  return mDocShellAsWin->Repaint(aForce);
+  return mDocShell->Repaint(aForce);
 }
 
 NS_IMETHODIMP
@@ -1044,8 +1026,7 @@ nsWebBrowser::GetVisibility(bool* aVisibility) {
   NS_ENSURE_ARG_POINTER(aVisibility);
 
   if (mDocShell) {
-    NS_ENSURE_SUCCESS(mDocShellAsWin->GetVisibility(aVisibility),
-                      NS_ERROR_FAILURE);
+    NS_ENSURE_SUCCESS(mDocShell->GetVisibility(aVisibility), NS_ERROR_FAILURE);
   }
 
   return NS_OK;
@@ -1054,8 +1035,7 @@ nsWebBrowser::GetVisibility(bool* aVisibility) {
 NS_IMETHODIMP
 nsWebBrowser::SetVisibility(bool aVisibility) {
   if (mDocShell) {
-    NS_ENSURE_SUCCESS(mDocShellAsWin->SetVisibility(aVisibility),
-                      NS_ERROR_FAILURE);
+    NS_ENSURE_SUCCESS(mDocShell->SetVisibility(aVisibility), NS_ERROR_FAILURE);
     if (mInternalWidget) {
       mInternalWidget->Show(aVisibility);
     }
@@ -1111,7 +1091,7 @@ NS_IMETHODIMP
 nsWebBrowser::GetTitle(nsAString& aTitle) {
   NS_ENSURE_STATE(mDocShell);
 
-  NS_ENSURE_SUCCESS(mDocShellAsWin->GetTitle(aTitle), NS_ERROR_FAILURE);
+  NS_ENSURE_SUCCESS(mDocShell->GetTitle(aTitle), NS_ERROR_FAILURE);
 
   return NS_OK;
 }
@@ -1120,7 +1100,7 @@ NS_IMETHODIMP
 nsWebBrowser::SetTitle(const nsAString& aTitle) {
   NS_ENSURE_STATE(mDocShell);
 
-  NS_ENSURE_SUCCESS(mDocShellAsWin->SetTitle(aTitle), NS_ERROR_FAILURE);
+  NS_ENSURE_SUCCESS(mDocShell->SetTitle(aTitle), NS_ERROR_FAILURE);
 
   return NS_OK;
 }
@@ -1129,27 +1109,16 @@ nsWebBrowser::SetTitle(const nsAString& aTitle) {
 // nsWebBrowser: Listener Helpers
 //*****************************************************************************
 
-NS_IMETHODIMP
-nsWebBrowser::SetDocShell(nsIDocShell* aDocShell) {
+void nsWebBrowser::SetDocShell(nsDocShell* aDocShell) {
   // We need to keep the docshell alive while we perform the changes, but we
   // don't need to call any methods on it.
   nsCOMPtr<nsIDocShell> kungFuDeathGrip(mDocShell);
   mozilla::Unused << kungFuDeathGrip;
 
   if (aDocShell) {
-    NS_ENSURE_TRUE(!mDocShell, NS_ERROR_FAILURE);
-
-    nsCOMPtr<nsIInterfaceRequestor> req(do_QueryInterface(aDocShell));
-    nsCOMPtr<nsIBaseWindow> baseWin(do_QueryInterface(aDocShell));
-    nsCOMPtr<nsIWebNavigation> nav(do_QueryInterface(aDocShell));
-    nsCOMPtr<nsIWebProgress> progress(do_GetInterface(aDocShell));
-    NS_ENSURE_TRUE(req && baseWin && nav && progress, NS_ERROR_FAILURE);
+    MOZ_ASSERT(!mDocShell, "Should not overwrite an existing value!");
 
     mDocShell = aDocShell;
-    mDocShellAsReq = req;
-    mDocShellAsWin = baseWin;
-    mDocShellAsNav = nav;
-    mWebProgress = progress;
 
     // By default, do not allow DNS prefetch, so we don't break our frozen
     // API.  Embeddors who decide to enable it should do so manually.
@@ -1158,33 +1127,24 @@ nsWebBrowser::SetDocShell(nsIDocShell* aDocShell) {
     if (mDocShellTreeOwner) {
       mDocShellTreeOwner->RemoveFromWatcher();  // evil twin of Add in Create()
     }
-    if (mDocShellAsWin) {
-      mDocShellAsWin->Destroy();
+    if (mDocShell) {
+      mDocShell->Destroy();
     }
     if (!mWillChangeProcess && mDocShell) {
       mDocShell->GetBrowsingContext()->Detach(/* aFromIPC */ true);
     }
 
     mDocShell = nullptr;
-    mDocShellAsReq = nullptr;
-    mDocShellAsWin = nullptr;
-    mDocShellAsNav = nullptr;
-    mWebProgress = nullptr;
   }
-
-  return NS_OK;
 }
 
-NS_IMETHODIMP
-nsWebBrowser::EnsureDocShellTreeOwner() {
+void nsWebBrowser::EnsureDocShellTreeOwner() {
   if (mDocShellTreeOwner) {
-    return NS_OK;
+    return;
   }
 
   mDocShellTreeOwner = new nsDocShellTreeOwner();
   mDocShellTreeOwner->WebBrowser(this);
-
-  return NS_OK;
 }
 
 static void DrawPaintedLayer(PaintedLayer* aLayer, gfxContext* aContext,

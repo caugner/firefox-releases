@@ -20,6 +20,7 @@ const HTML_NS = "http://www.w3.org/1999/xhtml";
 var { Ci, Cc } = require("chrome");
 var promise = require("promise");
 const { debounce } = require("devtools/shared/debounce");
+const { safeAsyncMethod } = require("devtools/shared/async-utils");
 var Services = require("Services");
 var ChromeUtils = require("ChromeUtils");
 var { gDevTools } = require("devtools/client/framework/devtools");
@@ -286,8 +287,6 @@ function Toolbox(
   this._webExtensions = new Map();
 
   this._toolPanels = new Map();
-  // Map of tool startup components for given tool id.
-  this._toolStartups = new Map();
   this._inspectorExtensionSidebars = new Map();
 
   this._netMonitorAPI = null;
@@ -551,31 +550,6 @@ Toolbox.prototype = {
   },
 
   /**
-   * Instruct the toolbox to switch to a new top-level target.
-   * It means that the currently debugged target is destroyed in favor of a new one.
-   * This typically happens when navigating to a new URL which has to be loaded
-   * in a distinct process.
-   */
-  async switchToTarget(newTarget) {
-    // Notify gDevTools that the toolbox will be hooked to another target.
-    this.emit("switch-target", newTarget);
-
-    // TargetList.switchToTarget won't wait for all target listeners, like
-    // Toolbox._onTargetAvailable to be finished before resolving.
-    // But, we do expect the target to be attached before calling listFrames
-    // and initPerformance. So wait for this via an internal event.
-    const onAttached = this.once("top-target-attached");
-    await this.targetList.switchToTarget(newTarget);
-    await onAttached;
-
-    // Attach the toolbox to this new target
-    await this._listFrames();
-    await this.initPerformance();
-
-    this.emit("switched-target", newTarget);
-  },
-
-  /**
    * Get the current top level target the toolbox is debugging.
    */
   get target() {
@@ -722,8 +696,13 @@ Toolbox.prototype = {
    * This method will be called for the top-level target, as well as any potential
    * additional targets we may care about.
    */
-  async _onTargetAvailable({ targetFront }) {
+  async _onTargetAvailable({ targetFront, isTargetSwitching }) {
     if (targetFront.isTopLevel) {
+      if (isTargetSwitching) {
+        // Notify gDevTools that the toolbox will be hooked to another target.
+        this.emit("switch-target", targetFront);
+      }
+
       // Attach to a new top-level target.
       // For now, register these event listeners only on the top level target
       targetFront.on("will-navigate", this._onWillNavigate);
@@ -742,8 +721,12 @@ Toolbox.prototype = {
       await this.store.dispatch(registerTarget(targetFront));
     }
 
-    if (targetFront.isTopLevel) {
-      this.emit("top-target-attached");
+    if (targetFront.isTopLevel && isTargetSwitching) {
+      // Attach the toolbox to this new target
+      // This is done *after* the call to _attachTarget as these methods
+      // expect the target to be attached.
+      await this._listFrames();
+      await this.initPerformance();
     }
   },
 
@@ -766,10 +749,6 @@ Toolbox.prototype = {
    */
   async _attachTarget(targetFront) {
     await targetFront.attach();
-
-    // Start tracking network activity on toolbox open for targets such as tabs.
-    const webConsoleFront = await targetFront.getFront("console");
-    await webConsoleFront.startListeners(["NetworkActivity"]);
 
     // Do not attach to the thread of additional Frame targets, as they are
     // already tracked by the content process targets. At least in the context
@@ -842,14 +821,30 @@ Toolbox.prototype = {
         );
       });
 
-      await this.targetList.startListening();
-
       // Optimization: fire up a few other things before waiting on
       // the iframe being ready (makes startup faster)
+      await this.targetList.startListening();
+
+      // The TargetList is created from Toolbox's constructor,
+      // and Toolbox.open (i.e. this function) is called soon after.
+      // It means that this call to TargetList.watchTargets is the first,
+      // and we are registering the first target listener.
+      // It is later important as we expect Toolbox._onTargetAvailable to be called first,
+      // before any other panel.
       await this.targetList.watchTargets(
         TargetList.ALL_TYPES,
         this._onTargetAvailable,
         this._onTargetDestroyed
+      );
+
+      // Start tracking network activity on toolbox open for targets such as tabs.
+      // The listeners attached here do nothing. Doing this just makes sure that
+      // there is always at least one listener existing for network events across
+      // the lifetime of the various panels, so stopping the resource watcher from
+      // clearing out its cache of network event resources.
+      await this.resourceWatcher.watchResources(
+        [this.resourceWatcher.TYPES.NETWORK_EVENT],
+        { onAvailable: () => {}, onUpdated: () => {} }
       );
 
       await domReady;
@@ -2038,10 +2033,7 @@ Toolbox.prototype = {
   tellRDMAboutPickerState: async function(state, pickerType) {
     const { localTab } = this.target;
 
-    if (
-      !ResponsiveUIManager.isActiveForTab(localTab) ||
-      (await !this.target.actorHasMethod("responsive", "setElementPickerState"))
-    ) {
+    if (!ResponsiveUIManager.isActiveForTab(localTab)) {
       return;
     }
 
@@ -2273,10 +2265,6 @@ Toolbox.prototype = {
     }
 
     deck.appendChild(panel);
-
-    if (toolDefinition.buildToolStartup && !this._toolStartups.has(id)) {
-      this._toolStartups.set(id, toolDefinition.buildToolStartup(this));
-    }
   },
 
   /**
@@ -2978,19 +2966,6 @@ Toolbox.prototype = {
   },
 
   /**
-   * Check if the tool's tab is highlighted.
-   *
-   * @param {string} id
-   *        The id of the tool to be checked
-   */
-  async isToolHighlighted(id) {
-    if (!this.component) {
-      await this.isOpen;
-    }
-    return this.component.isToolHighlighted(id);
-  },
-
-  /**
    * Highlights the tool's tab if it is not the currently selected tool.
    *
    * @param {string} id
@@ -3438,25 +3413,6 @@ Toolbox.prototype = {
   },
 
   /**
-   * Get a startup component for a given tool.
-   * @param  {string} toolId
-   *         Id of the tool to get the startup component for.
-   */
-  getToolStartup: function(toolId) {
-    return this._toolStartups.get(toolId);
-  },
-
-  _unloadToolStartup: async function(toolId) {
-    const startup = this.getToolStartup(toolId);
-    if (!startup) {
-      return;
-    }
-
-    this._toolStartups.delete(toolId);
-    await startup.destroy();
-  },
-
-  /**
    * Handler for the tool-registered event.
    * @param  {string} toolId
    *         Id of the tool that was registered
@@ -3493,7 +3449,6 @@ Toolbox.prototype = {
    */
   _toolUnregistered: function(toolId) {
     this.unloadTool(toolId);
-    this._unloadToolStartup(toolId);
 
     // Emit the event so tools can listen to it from the toolbox level
     // instead of gDevTools
@@ -3520,7 +3475,9 @@ Toolbox.prototype = {
     let currentHighlighterFront;
 
     return {
-      highlight: async (object, options) => {
+      // highlight might be triggered right before a test finishes. Wrap it
+      // with safeAsyncMethod to avoid intermittents.
+      highlight: this._safeAsyncAfterDestroy(async (object, options) => {
         pendingHighlight = (async () => {
           let nodeFront = object;
 
@@ -3538,8 +3495,8 @@ Toolbox.prototype = {
           return nodeFront.highlighterFront.highlight(nodeFront, options);
         })();
         return pendingHighlight;
-      },
-      unhighlight: async forceHide => {
+      }),
+      unhighlight: this._safeAsyncAfterDestroy(async forceHide => {
         if (pendingHighlight) {
           await pendingHighlight;
           pendingHighlight = null;
@@ -3552,8 +3509,17 @@ Toolbox.prototype = {
         const unHighlight = currentHighlighterFront.unhighlight(forceHide);
         currentHighlighterFront = null;
         return unHighlight;
-      },
+      }),
     };
+  },
+
+  /**
+   * Shortcut to avoid throwing errors when an async method fails after toolbox
+   * destroy. Should be used with methods that might be triggered by a user
+   * input, regardless of the toolbox lifecycle.
+   */
+  _safeAsyncAfterDestroy(fn) {
+    return safeAsyncMethod(fn, () => !!this._destroyer);
   },
 
   _onNewSelectedNodeFront: async function() {
@@ -3732,10 +3698,6 @@ Toolbox.prototype = {
         // We don't want to stop here if any panel fail to close.
         console.error("Panel " + id + ":", e);
       }
-    }
-
-    for (const id of this._toolStartups.keys()) {
-      outstanding.push(this._unloadToolStartup(id));
     }
 
     this.browserRequire = null;

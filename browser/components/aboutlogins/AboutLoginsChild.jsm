@@ -92,6 +92,9 @@ class AboutLoginsChild extends JSWindowActorChild {
 
             return masterPasswordPromise;
           },
+          fileImportEnabled: Services.prefs.getBoolPref(
+            "signon.management.page.fileImport.enabled"
+          ),
           // Default to enabled just in case a search is attempted before we get a response.
           masterPasswordEnabled: true,
           passwordRevealVisible: true,
@@ -103,10 +106,6 @@ class AboutLoginsChild extends JSWindowActorChild {
             cloneFunctions: true,
           }
         );
-        let aboutLoginsUtilsReadyEvent = new win.CustomEvent(
-          "AboutLoginsUtilsReady"
-        );
-        win.dispatchEvent(aboutLoginsUtilsReadyEvent);
         break;
       }
       case "AboutLoginsCopyLoginDetail": {
@@ -125,6 +124,10 @@ class AboutLoginsChild extends JSWindowActorChild {
         });
         break;
       }
+      case "AboutLoginsExportPasswords": {
+        this.sendAsyncMessage("AboutLogins:ExportPasswords");
+        break;
+      }
       case "AboutLoginsGetHelp": {
         this.sendAsyncMessage("AboutLogins:GetHelp");
         break;
@@ -133,10 +136,18 @@ class AboutLoginsChild extends JSWindowActorChild {
         this.sendAsyncMessage("AboutLogins:HideFooter");
         break;
       }
-      case "AboutLoginsImport": {
+      case "AboutLoginsImportFromBrowser": {
         this.sendAsyncMessage("AboutLogins:Import");
         recordTelemetryEvent({
           object: "import_from_browser",
+          method: "mgmt_menu_item_used",
+        });
+        break;
+      }
+      case "AboutLoginsImportFromFile": {
+        this.sendAsyncMessage("AboutLogins:ImportPasswords");
+        recordTelemetryEvent({
+          object: "import_from_csv",
           method: "mgmt_menu_item_used",
         });
         break;
@@ -201,10 +212,6 @@ class AboutLoginsChild extends JSWindowActorChild {
         this.sendAsyncMessage("AboutLogins:UpdateLogin", {
           login: event.detail,
         });
-        break;
-      }
-      case "AboutLoginsExportPasswords": {
-        this.sendAsyncMessage("AboutLogins:ExportPasswords");
         break;
       }
     }

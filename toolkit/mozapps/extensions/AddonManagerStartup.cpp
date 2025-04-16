@@ -642,7 +642,7 @@ nsresult AddonManagerStartup::EnumerateJARSubtree(nsIURI* uri,
 
   // Mangle the path into a pattern to match all child entries by escaping any
   // existing pattern matching metacharacters it contains and appending "/*".
-  NS_NAMED_LITERAL_CSTRING(metaChars, "[]()?*~|$\\");
+  constexpr auto metaChars = "[]()?*~|$\\"_ns;
 
   nsCString pattern;
   pattern.SetCapacity(entry.Length());
@@ -654,7 +654,7 @@ nsresult AddonManagerStartup::EnumerateJARSubtree(nsIURI* uri,
     }
     pattern.Append(chr);
   }
-  if (!pattern.IsEmpty() && !StringEndsWith(pattern, NS_LITERAL_CSTRING("/"))) {
+  if (!pattern.IsEmpty() && !StringEndsWith(pattern, "/"_ns)) {
     pattern.Append('/');
   }
   pattern.Append('*');

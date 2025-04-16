@@ -67,6 +67,43 @@ static LazyLogModule sSandboxBrokerLog("SandboxBroker");
 // session.
 static UniquePtr<nsTHashtable<nsCStringHashKey>> sLaunchErrors;
 
+// This helper function is our version of SandboxWin::AddWin32kLockdownPolicy
+// of Chromium, making sure the MITIGATION_WIN32K_DISABLE flag is set before
+// adding the SUBSYS_WIN32K_LOCKDOWN rule which is required by
+// PolicyBase::AddRuleInternal.
+static sandbox::ResultCode AddWin32kLockdownPolicy(
+    sandbox::TargetPolicy* aPolicy, bool aEnableOpm) {
+  // On Windows 7, where Win32k lockdown is not supported, the Chromium
+  // sandbox does something weird that breaks COM instantiation.
+  if (!IsWin8OrLater()) {
+    return sandbox::SBOX_ALL_OK;
+  }
+
+  sandbox::MitigationFlags flags = aPolicy->GetProcessMitigations();
+  MOZ_ASSERT(!(flags & sandbox::MITIGATION_WIN32K_DISABLE),
+             "Check not enabling twice.  Should not happen.");
+
+  flags |= sandbox::MITIGATION_WIN32K_DISABLE;
+  sandbox::ResultCode result = aPolicy->SetProcessMitigations(flags);
+  if (result != sandbox::SBOX_ALL_OK) {
+    return result;
+  }
+
+  result =
+      aPolicy->AddRule(sandbox::TargetPolicy::SUBSYS_WIN32K_LOCKDOWN,
+                       aEnableOpm ? sandbox::TargetPolicy::IMPLEMENT_OPM_APIS
+                                  : sandbox::TargetPolicy::FAKE_USER_GDI_INIT,
+                       nullptr);
+  if (result != sandbox::SBOX_ALL_OK) {
+    return result;
+  }
+  if (aEnableOpm) {
+    aPolicy->SetEnableOPMRedirection();
+  }
+
+  return result;
+}
+
 /* static */
 void SandboxBroker::Initialize(sandbox::BrokerServices* aBrokerServices) {
   sBrokerService = aBrokerServices;
@@ -91,7 +128,7 @@ static void CacheDirAndAutoClear(nsIProperties* aDirSvc, const char* aDirKey,
   MOZ_ALWAYS_SUCCEEDS(dirToCache->GetPath(**cacheVar));
 
   // Convert network share path to format for sandbox policy.
-  if (Substring(**cacheVar, 0, 2).Equals(NS_LITERAL_STRING("\\\\"))) {
+  if (Substring(**cacheVar, 0, 2).Equals(u"\\\\"_ns)) {
     (*cacheVar)->InsertLiteral(u"??\\UNC", 1);
   }
 }
@@ -560,21 +597,15 @@ void SandboxBroker::SetSecurityLevelForContentProcess(int32_t aSandboxLevel,
     }
   }
 
-  // On Windows 7, where Win32k lockdown is not supported, the Chromium
-  // sandbox does something weird that breaks COM instantiation.
-  if (StaticPrefs::security_sandbox_content_win32k_disable() &&
-      IsWin8OrLater()) {
-    mitigations |= sandbox::MITIGATION_WIN32K_DISABLE;
-    result =
-        mPolicy->AddRule(sandbox::TargetPolicy::SUBSYS_WIN32K_LOCKDOWN,
-                         sandbox::TargetPolicy::FAKE_USER_GDI_INIT, nullptr);
-    MOZ_RELEASE_ASSERT(sandbox::SBOX_ALL_OK == result,
-                       "Failed to set FAKE_USER_GDI_INIT policy.");
-  }
-
   result = mPolicy->SetProcessMitigations(mitigations);
   MOZ_RELEASE_ASSERT(sandbox::SBOX_ALL_OK == result,
                      "Invalid flags for SetProcessMitigations.");
+
+  if (StaticPrefs::security_sandbox_content_win32k_disable()) {
+    result = AddWin32kLockdownPolicy(mPolicy, false);
+    MOZ_RELEASE_ASSERT(result == sandbox::SBOX_ALL_OK,
+                       "Failed to add the win32k lockdown policy");
+  }
 
   mitigations = sandbox::MITIGATION_STRICT_HANDLE_CHECKS |
                 sandbox::MITIGATION_DLL_SEARCH_ORDER;
@@ -588,7 +619,7 @@ void SandboxBroker::SetSecurityLevelForContentProcess(int32_t aSandboxLevel,
   // to the normal TEMP dir. However such failures should be pretty rare and
   // without this printing will not currently work.
   AddCachedDirRule(mPolicy, sandbox::TargetPolicy::FILES_ALLOW_ANY,
-                   sContentTempDir, NS_LITERAL_STRING("\\*"));
+                   sContentTempDir, u"\\*"_ns);
 
   // We still have edge cases where the child at low integrity can't read some
   // files, so add a rule to allow read access to everything when required.
@@ -602,29 +633,28 @@ void SandboxBroker::SetSecurityLevelForContentProcess(int32_t aSandboxLevel,
   } else {
     // Add rule to allow access to user specific fonts.
     AddCachedDirRule(mPolicy, sandbox::TargetPolicy::FILES_ALLOW_READONLY,
-                     sLocalAppDataDir,
-                     NS_LITERAL_STRING("\\Microsoft\\Windows\\Fonts\\*"));
+                     sLocalAppDataDir, u"\\Microsoft\\Windows\\Fonts\\*"_ns);
 
     // Add rule to allow read access to installation directory.
     AddCachedDirRule(mPolicy, sandbox::TargetPolicy::FILES_ALLOW_READONLY,
-                     sBinDir, NS_LITERAL_STRING("\\*"));
+                     sBinDir, u"\\*"_ns);
 
     // Add rule to allow read access to the chrome directory within profile.
     AddCachedDirRule(mPolicy, sandbox::TargetPolicy::FILES_ALLOW_READONLY,
-                     sProfileDir, NS_LITERAL_STRING("\\chrome\\*"));
+                     sProfileDir, u"\\chrome\\*"_ns);
 
     // Add rule to allow read access to the extensions directory within profile.
     AddCachedDirRule(mPolicy, sandbox::TargetPolicy::FILES_ALLOW_READONLY,
-                     sProfileDir, NS_LITERAL_STRING("\\extensions\\*"));
+                     sProfileDir, u"\\extensions\\*"_ns);
 
     // Read access to a directory for system extension dev (see bug 1393805)
     AddCachedDirRule(mPolicy, sandbox::TargetPolicy::FILES_ALLOW_READONLY,
-                     sUserExtensionsDevDir, NS_LITERAL_STRING("\\*"));
+                     sUserExtensionsDevDir, u"\\*"_ns);
 
 #ifdef ENABLE_SYSTEM_EXTENSION_DIRS
     // Add rule to allow read access to the per-user extensions directory.
     AddCachedDirRule(mPolicy, sandbox::TargetPolicy::FILES_ALLOW_READONLY,
-                     sUserExtensionsDir, NS_LITERAL_STRING("\\*"));
+                     sUserExtensionsDir, u"\\*"_ns);
 #endif
   }
 
@@ -891,18 +921,13 @@ bool SandboxBroker::SetSecurityLevelForRDDProcess() {
       sandbox::MITIGATION_DEP_NO_ATL_THUNK | sandbox::MITIGATION_DEP |
       sandbox::MITIGATION_IMAGE_LOAD_PREFER_SYS32;
 
-  // On Windows 7, where Win32k lockdown is not supported, the Chromium
-  // sandbox does something weird that breaks COM instantiation.
-  if (StaticPrefs::security_sandbox_rdd_win32k_disable() && IsWin8OrLater()) {
-    mitigations |= sandbox::MITIGATION_WIN32K_DISABLE;
-    result =
-        mPolicy->AddRule(sandbox::TargetPolicy::SUBSYS_WIN32K_LOCKDOWN,
-                         sandbox::TargetPolicy::FAKE_USER_GDI_INIT, nullptr);
-    SANDBOX_ENSURE_SUCCESS(result, "Failed to set FAKE_USER_GDI_INIT policy.");
-  }
-
   result = mPolicy->SetProcessMitigations(mitigations);
   SANDBOX_ENSURE_SUCCESS(result, "Invalid flags for SetProcessMitigations.");
+
+  if (StaticPrefs::security_sandbox_rdd_win32k_disable()) {
+    result = AddWin32kLockdownPolicy(mPolicy, false);
+    SANDBOX_ENSURE_SUCCESS(result, "Failed to add the win32k lockdown policy");
+  }
 
   mitigations = sandbox::MITIGATION_STRICT_HANDLE_CHECKS |
                 sandbox::MITIGATION_DYNAMIC_CODE_DISABLE |
@@ -995,19 +1020,13 @@ bool SandboxBroker::SetSecurityLevelForSocketProcess() {
       sandbox::MITIGATION_DEP_NO_ATL_THUNK | sandbox::MITIGATION_DEP |
       sandbox::MITIGATION_IMAGE_LOAD_PREFER_SYS32;
 
-  // On Windows 7, where Win32k lockdown is not supported, the Chromium
-  // sandbox does something weird that breaks COM instantiation.
-  if (StaticPrefs::security_sandbox_socket_win32k_disable() &&
-      IsWin8OrLater()) {
-    mitigations |= sandbox::MITIGATION_WIN32K_DISABLE;
-    result =
-        mPolicy->AddRule(sandbox::TargetPolicy::SUBSYS_WIN32K_LOCKDOWN,
-                         sandbox::TargetPolicy::FAKE_USER_GDI_INIT, nullptr);
-    SANDBOX_ENSURE_SUCCESS(result, "Failed to set FAKE_USER_GDI_INIT policy.");
-  }
-
   result = mPolicy->SetProcessMitigations(mitigations);
   SANDBOX_ENSURE_SUCCESS(result, "Invalid flags for SetProcessMitigations.");
+
+  if (StaticPrefs::security_sandbox_socket_win32k_disable()) {
+    result = AddWin32kLockdownPolicy(mPolicy, false);
+    SANDBOX_ENSURE_SUCCESS(result, "Failed to add the win32k lockdown policy");
+  }
 
   mitigations = sandbox::MITIGATION_STRICT_HANDLE_CHECKS |
                 sandbox::MITIGATION_DYNAMIC_CODE_DISABLE |
@@ -1125,40 +1144,34 @@ bool SandboxBroker::SetSecurityLevelForPluginProcess(int32_t aSandboxLevel) {
 
   // Add rule to allow read / write access to a special plugin temp dir.
   AddCachedDirRule(mPolicy, sandbox::TargetPolicy::FILES_ALLOW_ANY,
-                   sPluginTempDir, NS_LITERAL_STRING("\\*"));
+                   sPluginTempDir, u"\\*"_ns);
 
   if (aSandboxLevel >= 2) {
     // Level 2 and above uses low integrity, so we need to give write access to
     // the Flash directories.
     AddCachedDirRule(mPolicy, sandbox::TargetPolicy::FILES_ALLOW_ANY,
-                     sRoamingAppDataDir,
-                     NS_LITERAL_STRING("\\Macromedia\\Flash Player\\*"));
+                     sRoamingAppDataDir, u"\\Macromedia\\Flash Player\\*"_ns);
     AddCachedDirRule(mPolicy, sandbox::TargetPolicy::FILES_ALLOW_ANY,
-                     sLocalAppDataDir,
-                     NS_LITERAL_STRING("\\Macromedia\\Flash Player\\*"));
+                     sLocalAppDataDir, u"\\Macromedia\\Flash Player\\*"_ns);
     AddCachedDirRule(mPolicy, sandbox::TargetPolicy::FILES_ALLOW_ANY,
-                     sRoamingAppDataDir,
-                     NS_LITERAL_STRING("\\Adobe\\Flash Player\\*"));
+                     sRoamingAppDataDir, u"\\Adobe\\Flash Player\\*"_ns);
 
     // Access also has to be given to create the parent directories as they may
     // not exist.
     AddCachedDirRule(mPolicy, sandbox::TargetPolicy::FILES_ALLOW_DIR_ANY,
-                     sRoamingAppDataDir, NS_LITERAL_STRING("\\Macromedia"));
+                     sRoamingAppDataDir, u"\\Macromedia"_ns);
     AddCachedDirRule(mPolicy, sandbox::TargetPolicy::FILES_ALLOW_QUERY,
-                     sRoamingAppDataDir, NS_LITERAL_STRING("\\Macromedia\\"));
+                     sRoamingAppDataDir, u"\\Macromedia\\"_ns);
     AddCachedDirRule(mPolicy, sandbox::TargetPolicy::FILES_ALLOW_DIR_ANY,
-                     sRoamingAppDataDir,
-                     NS_LITERAL_STRING("\\Macromedia\\Flash Player"));
+                     sRoamingAppDataDir, u"\\Macromedia\\Flash Player"_ns);
     AddCachedDirRule(mPolicy, sandbox::TargetPolicy::FILES_ALLOW_DIR_ANY,
-                     sLocalAppDataDir, NS_LITERAL_STRING("\\Macromedia"));
+                     sLocalAppDataDir, u"\\Macromedia"_ns);
     AddCachedDirRule(mPolicy, sandbox::TargetPolicy::FILES_ALLOW_DIR_ANY,
-                     sLocalAppDataDir,
-                     NS_LITERAL_STRING("\\Macromedia\\Flash Player"));
+                     sLocalAppDataDir, u"\\Macromedia\\Flash Player"_ns);
     AddCachedDirRule(mPolicy, sandbox::TargetPolicy::FILES_ALLOW_DIR_ANY,
-                     sRoamingAppDataDir, NS_LITERAL_STRING("\\Adobe"));
+                     sRoamingAppDataDir, u"\\Adobe"_ns);
     AddCachedDirRule(mPolicy, sandbox::TargetPolicy::FILES_ALLOW_DIR_ANY,
-                     sRoamingAppDataDir,
-                     NS_LITERAL_STRING("\\Adobe\\Flash Player"));
+                     sRoamingAppDataDir, u"\\Adobe\\Flash Player"_ns);
   }
 
   // Add the policy for the client side of a pipe. It is just a file
@@ -1262,18 +1275,15 @@ bool SandboxBroker::SetSecurityLevelForGMPlugin(SandboxLevel aLevel,
       sandbox::MITIGATION_SEHOP | sandbox::MITIGATION_EXTENSION_POINT_DISABLE |
       sandbox::MITIGATION_DEP_NO_ATL_THUNK | sandbox::MITIGATION_DEP;
 
+  result = mPolicy->SetProcessMitigations(mitigations);
+  SANDBOX_ENSURE_SUCCESS(result, "Invalid flags for SetProcessMitigations.");
+
   // Chromium only implements win32k disable for PPAPI on Win10 or later,
   // believed to be due to the interceptions required for OPM.
   if (StaticPrefs::security_sandbox_gmp_win32k_disable() && IsWin10OrLater()) {
-    mitigations |= sandbox::MITIGATION_WIN32K_DISABLE;
-    result =
-        mPolicy->AddRule(sandbox::TargetPolicy::SUBSYS_WIN32K_LOCKDOWN,
-                         sandbox::TargetPolicy::IMPLEMENT_OPM_APIS, nullptr);
-    SANDBOX_ENSURE_SUCCESS(result, "Failed to set OPM policy.");
+    result = AddWin32kLockdownPolicy(mPolicy, true);
+    SANDBOX_ENSURE_SUCCESS(result, "Failed to add the win32k lockdown policy");
   }
-
-  result = mPolicy->SetProcessMitigations(mitigations);
-  SANDBOX_ENSURE_SUCCESS(result, "Invalid flags for SetProcessMitigations.");
 
   mitigations = sandbox::MITIGATION_STRICT_HANDLE_CHECKS |
                 sandbox::MITIGATION_DLL_SEARCH_ORDER;

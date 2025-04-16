@@ -108,6 +108,19 @@ impl Args {
 
 impl ArgAssigner for Args {
     fn assign(&mut self, arg: &AbiParam) -> ArgAction {
+        if let ArgumentPurpose::StructArgument(size) = arg.purpose {
+            if self.call_conv != CallConv::SystemV {
+                panic!(
+                    "The sarg argument purpose is not yet implemented for non-systemv call conv {:?}",
+                    self.call_conv,
+                );
+            }
+            let loc = ArgumentLoc::Stack(self.offset as i32);
+            self.offset += size;
+            debug_assert!(self.offset <= i32::MAX as u32);
+            return ArgAction::AssignAndChangeType(loc, types::SARG_T);
+        }
+
         let ty = arg.value_type;
 
         if ty.bits() > u16::from(self.pointer_bits) {
@@ -1071,8 +1084,7 @@ pub fn create_unwind_info(
                 .map(|u| UnwindInfo::SystemV(u))
         }
         CallConv::WindowsFastcall => {
-            super::unwind::winx64::create_unwind_info(func, isa, Some(RU::rbp.into()))?
-                .map(|u| UnwindInfo::WindowsX64(u))
+            super::unwind::winx64::create_unwind_info(func, isa)?.map(|u| UnwindInfo::WindowsX64(u))
         }
         _ => None,
     })

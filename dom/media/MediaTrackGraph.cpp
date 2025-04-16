@@ -916,9 +916,9 @@ void MediaTrackGraphImpl::DeviceChanged() {
     return;
   }
 
+  // Reset the latency, it will get fetched again next time it's queried.
   MOZ_ASSERT(NS_IsMainThread());
-  // Have the latency re-queried next stable state.
-  mLatencyQueryCounter = LATENCY_QUERYING_INTERVAL;
+  mAudioOutputLatency = 0.0;
 
   // Dispatch to the bg thread to do the (potentially expensive) query of the
   // maximum channel count, and then dispatch back to the main thread, then to
@@ -1518,8 +1518,8 @@ void MediaTrackGraphImpl::AddShutdownBlocker() {
   blockerName.AppendPrintf("MediaTrackGraph %p shutdown", this);
   mShutdownBlocker = MakeAndAddRef<Blocker>(this, blockerName);
   nsresult rv = media::GetShutdownBarrier()->AddBlocker(
-      mShutdownBlocker, NS_LITERAL_STRING(__FILE__), __LINE__,
-      NS_LITERAL_STRING("MediaTrackGraph shutdown"));
+      mShutdownBlocker, NS_LITERAL_STRING_FROM_CSTRING(__FILE__), __LINE__,
+      u"MediaTrackGraph shutdown"_ns);
   MOZ_RELEASE_ASSERT(NS_SUCCEEDED(rv));
 }
 
@@ -1699,11 +1699,6 @@ void MediaTrackGraphImpl::RunInStableState(bool aSourceIsMTG) {
       LOG(LogLevel::Debug,
           ("%p: Running stable state callback. Current state: %s", this,
            LifecycleState_str[LifecycleStateRef()]));
-    } else {
-      if (mLatencyQueryCounter++ == LATENCY_QUERYING_INTERVAL) {
-        UpdateAudioLatencies();
-        mLatencyQueryCounter = 0;
-      }
     }
 
     runnables.SwapElements(mUpdateRunnables);
@@ -3035,7 +3030,6 @@ MediaTrackGraphImpl::MediaTrackGraphImpl(
       ,
       mMainThreadGraphTime(0, "MediaTrackGraphImpl::mMainThreadGraphTime"),
       mAudioOutputLatency(0.0),
-      mAudioInputLatency(0.0),
       mMaxOutputChannelCount(std::min(8u, CubebUtils::MaxNumberOfChannels())) {
   if (aRunTypeRequested == SINGLE_THREAD && !mGraphRunner) {
     // Failed to create thread.  Jump to the last phase of the lifecycle.
@@ -3292,7 +3286,7 @@ void MediaTrackGraphImpl::FinishCollectReports(
 
 #define REPORT(_path, _amount, _desc)                                    \
   aHandleReport->Callback(EmptyCString(), _path, KIND_HEAP, UNITS_BYTES, \
-                          _amount, NS_LITERAL_CSTRING(_desc), aData);
+                          _amount, nsLiteralCString(_desc), aData);
 
   for (size_t i = 0; i < aAudioTrackSizes.Length(); i++) {
     const AudioNodeSizes& usage = aAudioTrackSizes[i];
@@ -3312,7 +3306,7 @@ void MediaTrackGraphImpl::FinishCollectReports(
 
   size_t hrtfLoaders = WebCore::HRTFDatabaseLoader::sizeOfLoaders(MallocSizeOf);
   if (hrtfLoaders) {
-    REPORT(NS_LITERAL_CSTRING(
+    REPORT(nsLiteralCString(
                "explicit/webaudio/audio-node/PannerNode/hrtf-databases"),
            hrtfLoaders, "Memory used by PannerNode databases (Web Audio).");
   }
@@ -3610,57 +3604,26 @@ uint32_t MediaTrackGraphImpl::AudioOutputChannelCount() const {
 }
 
 double MediaTrackGraph::AudioOutputLatency() {
-  return static_cast<MediaTrackGraphImpl*>(this)->CachedAudioOutputLatency();
+  return static_cast<MediaTrackGraphImpl*>(this)->AudioOutputLatency();
 }
 
-double MediaTrackGraphImpl::CachedAudioOutputLatency() {
+double MediaTrackGraphImpl::AudioOutputLatency() {
   MOZ_ASSERT(NS_IsMainThread());
-#ifdef XP_LINUX
-  if (mAudioOutputLatency == 0.0) {
-    // periodic latency gathering is not enabled on Linux/Android, get a
-    // number like this for now.
-    MonitorAutoLock lock(mMonitor);
-    if (CurrentDriver()->AsAudioCallbackDriver()) {
-      mAudioOutputLatency = CurrentDriver()
-                                ->AsAudioCallbackDriver()
-                                ->AudioOutputLatency()
-                                .ToSeconds();
-    }
+  if (mAudioOutputLatency != 0.0) {
+    return mAudioOutputLatency;
   }
-#endif
+  MonitorAutoLock lock(mMonitor);
+  if (CurrentDriver()->AsAudioCallbackDriver()) {
+    mAudioOutputLatency = CurrentDriver()
+                              ->AsAudioCallbackDriver()
+                              ->AudioOutputLatency()
+                              .ToSeconds();
+  } else {
+    // Failure mode: return 0.0 if running on a normal thread.
+    mAudioOutputLatency = 0.0;
+  }
+
   return mAudioOutputLatency;
-}
-
-double MediaTrackGraphImpl::CachedAudioInputLatency() {
-  MOZ_ASSERT(NS_IsMainThread());
-  return mAudioInputLatency;
-}
-
-void MediaTrackGraphImpl::UpdateAudioLatencies() {
-#if defined(XP_WIN) || defined(XP_MACOSX)
-  RefPtr<MediaTrackGraphImpl> self = this;
-  NS_DispatchBackgroundTask(
-      NS_NewRunnableFunction("UpdateLatency", [self{std::move(self)}]() {
-        MonitorAutoLock lock(self->mMonitor);
-        if (self->CurrentDriver()->AsAudioCallbackDriver()) {
-          AudioCallbackDriver* driver =
-              self->CurrentDriver()->AsAudioCallbackDriver();
-          if (driver->InputChannelCount()) {
-            self->mAudioInputLatency = driver->AudioInputLatency().ToSeconds();
-          }
-          self->mAudioOutputLatency = driver->AudioOutputLatency().ToSeconds();
-        }
-      }));
-#endif
-}
-
-double MediaTrackGraphImpl::AudioOutputLatencyGraphThread() {
-  AssertOnGraphThreadOrNotRunning();
-  return mAudioOutputLatency;
-}
-double MediaTrackGraphImpl::AudioInputLatencyGraphThread() {
-  AssertOnGraphThreadOrNotRunning();
-  return mAudioInputLatency;
 }
 
 bool MediaTrackGraph::IsNonRealtime() const {

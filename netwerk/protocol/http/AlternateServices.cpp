@@ -368,7 +368,7 @@ void AltSvcMapping::GetConnectionInfo(
 
 void AltSvcMapping::Serialize(nsCString& out) {
   // Be careful, when serializing new members, add them to the end of this list.
-  out = mHttps ? NS_LITERAL_CSTRING("https:") : NS_LITERAL_CSTRING("http:");
+  out = mHttps ? "https:"_ns : "http:"_ns;
   out.Append(mOriginHost);
   out.Append(':');
   out.AppendInt(mOriginPort);
@@ -472,11 +472,9 @@ AltSvcMapping::AltSvcMapping(DataStorage* storage, int32_t epoch,
     // Add code to deserialize new members here!
 #undef _NS_NEXT_TOKEN
 
-    MakeHashKey(
-        mHashKey,
-        mHttps ? NS_LITERAL_CSTRING("https") : NS_LITERAL_CSTRING("http"),
-        mOriginHost, mOriginPort, mPrivate, mIsolated, mTopWindowOrigin,
-        mOriginAttributes);
+    MakeHashKey(mHashKey, mHttps ? "https"_ns : "http"_ns, mOriginHost,
+                mOriginPort, mPrivate, mIsolated, mTopWindowOrigin,
+                mOriginAttributes);
   } while (false);
 }
 
@@ -636,7 +634,7 @@ class WellKnownChecker {
     LOG(("WellKnownChecker::Start %p\n", this));
     nsCOMPtr<nsILoadInfo> loadInfo =
         new LoadInfo(nsContentUtils::GetSystemPrincipal(), nullptr, nullptr,
-                     nsILoadInfo::SEC_ALLOW_CROSS_ORIGIN_DATA_IS_NULL,
+                     nsILoadInfo::SEC_ALLOW_CROSS_ORIGIN_SEC_CONTEXT_IS_NULL,
                      nsIContentPolicy::TYPE_OTHER);
     loadInfo->SetOriginAttributes(mCI->GetOriginAttributes());
 
@@ -1069,7 +1067,7 @@ void AltSvcCache::UpdateAltServiceMapping(
     }
   } else {
     // for http:// resources we fetch .well-known too
-    nsAutoCString origin(NS_LITERAL_CSTRING("http://"));
+    nsAutoCString origin("http://"_ns);
 
     // Check whether origin is an ipv6 address. In that case we need to add
     // '[]'.
@@ -1184,8 +1182,8 @@ void AltSvcCache::ClearHostMapping(const nsACString& host, int32_t port,
   }
   nsAutoCString key;
   for (int secure = 0; secure < 2; ++secure) {
-    NS_NAMED_LITERAL_CSTRING(http, "http");
-    NS_NAMED_LITERAL_CSTRING(https, "https");
+    constexpr auto http = "http"_ns;
+    constexpr auto https = "https"_ns;
     const nsLiteralCString& scheme = secure ? https : http;
     for (int pb = 1; pb >= 0; --pb) {
       for (int isolate = 0; isolate < 2; ++isolate) {

@@ -15,6 +15,7 @@ use crate::translation_utils::{
 };
 use crate::{wasm_unsupported, HashMap};
 use core::convert::TryFrom;
+use core::convert::TryInto;
 use cranelift_codegen::ir::immediates::V128Imm;
 use cranelift_codegen::ir::{self, AbiParam, Signature};
 use cranelift_entity::packed_option::ReservedValue;
@@ -22,11 +23,11 @@ use cranelift_entity::EntityRef;
 use std::boxed::Box;
 use std::vec::Vec;
 use wasmparser::{
-    self, CodeSectionReader, Data, DataKind, DataSectionReader, Element, ElementItem, ElementItems,
-    ElementKind, ElementSectionReader, Export, ExportSectionReader, ExternalKind,
-    FunctionSectionReader, GlobalSectionReader, GlobalType, ImportSectionEntryType,
-    ImportSectionReader, MemorySectionReader, MemoryType, NameSectionReader, Naming, NamingReader,
-    Operator, TableSectionReader, Type, TypeSectionReader,
+    self, Data, DataKind, DataSectionReader, Element, ElementItem, ElementItems, ElementKind,
+    ElementSectionReader, Export, ExportSectionReader, ExternalKind, FunctionSectionReader,
+    GlobalSectionReader, GlobalType, ImportSectionEntryType, ImportSectionReader,
+    MemorySectionReader, MemoryType, NameSectionReader, Naming, NamingReader, Operator,
+    TableSectionReader, Type, TypeDef, TypeSectionReader,
 };
 
 /// Parses the Type section of the wasm module.
@@ -40,22 +41,26 @@ pub fn parse_type_section(
     environ.reserve_signatures(count)?;
 
     for entry in types {
-        let wasm_func_ty = entry?;
-        let mut sig = Signature::new(ModuleEnvironment::target_config(environ).default_call_conv);
-        sig.params.extend(wasm_func_ty.params.iter().map(|ty| {
-            let cret_arg: ir::Type = type_to_type(*ty, environ)
-                .expect("only numeric types are supported in function signatures");
-            AbiParam::new(cret_arg)
-        }));
-        sig.returns.extend(wasm_func_ty.returns.iter().map(|ty| {
-            let cret_arg: ir::Type = type_to_type(*ty, environ)
-                .expect("only numeric types are supported in function signatures");
-            AbiParam::new(cret_arg)
-        }));
-        environ.declare_signature(&wasm_func_ty, sig)?;
-        module_translation_state
-            .wasm_types
-            .push((wasm_func_ty.params, wasm_func_ty.returns));
+        if let Ok(TypeDef::Func(wasm_func_ty)) = entry {
+            let mut sig =
+                Signature::new(ModuleEnvironment::target_config(environ).default_call_conv);
+            sig.params.extend(wasm_func_ty.params.iter().map(|ty| {
+                let cret_arg: ir::Type = type_to_type(*ty, environ)
+                    .expect("only numeric types are supported in function signatures");
+                AbiParam::new(cret_arg)
+            }));
+            sig.returns.extend(wasm_func_ty.returns.iter().map(|ty| {
+                let cret_arg: ir::Type = type_to_type(*ty, environ)
+                    .expect("only numeric types are supported in function signatures");
+                AbiParam::new(cret_arg)
+            }));
+            environ.declare_signature(wasm_func_ty.clone().try_into()?, sig)?;
+            module_translation_state
+                .wasm_types
+                .push((wasm_func_ty.params, wasm_func_ty.returns));
+        } else {
+            unimplemented!("module linking not implemented yet")
+        }
     }
     Ok(())
 }
@@ -70,7 +75,7 @@ pub fn parse_import_section<'data>(
     for entry in imports {
         let import = entry?;
         let module_name = import.module;
-        let field_name = import.field;
+        let field_name = import.field.unwrap(); // TODO Handle error when module linking is implemented.
 
         match import.ty {
             ImportSectionEntryType::Function(sig) => {
@@ -79,6 +84,9 @@ pub fn parse_import_section<'data>(
                     module_name,
                     field_name,
                 )?;
+            }
+            ImportSectionEntryType::Module(_sig) | ImportSectionEntryType::Instance(_sig) => {
+                unimplemented!("module linking not implemented yet")
             }
             ImportSectionEntryType::Memory(MemoryType {
                 limits: ref memlimits,
@@ -97,6 +105,7 @@ pub fn parse_import_section<'data>(
             ImportSectionEntryType::Global(ref ty) => {
                 environ.declare_global_import(
                     Global {
+                        wasm_ty: ty.content_type.try_into()?,
                         ty: type_to_type(ty.content_type, environ).unwrap(),
                         mutability: ty.mutable,
                         initializer: GlobalInit::Import,
@@ -108,6 +117,7 @@ pub fn parse_import_section<'data>(
             ImportSectionEntryType::Table(ref tab) => {
                 environ.declare_table_import(
                     Table {
+                        wasm_ty: tab.element_type.try_into()?,
                         ty: match tabletype_to_type(tab.element_type, environ)? {
                             Some(t) => TableElementType::Val(t),
                             None => TableElementType::Func,
@@ -157,6 +167,7 @@ pub fn parse_table_section(
     for entry in tables {
         let table = entry?;
         environ.declare_table(Table {
+            wasm_ty: table.element_type.try_into()?,
             ty: match tabletype_to_type(table.element_type, environ)? {
                 Some(t) => TableElementType::Val(t),
                 None => TableElementType::Func,
@@ -227,6 +238,7 @@ pub fn parse_global_section(
             }
         };
         let global = Global {
+            wasm_ty: content_type.try_into()?,
             ty: type_to_type(content_type, environ).unwrap(),
             mutability: mutable,
             initializer,
@@ -263,6 +275,9 @@ pub fn parse_export_section<'data>(
             }
             ExternalKind::Global => {
                 environ.declare_global_export(GlobalIndex::new(index), field)?
+            }
+            ExternalKind::Type | ExternalKind::Module | ExternalKind::Instance => {
+                unimplemented!("module linking not implemented yet")
             }
         }
     }
@@ -335,23 +350,10 @@ pub fn parse_element_section<'data>(
                 let index = ElemIndex::from_u32(index as u32);
                 environ.declare_passive_element(index, segments)?;
             }
-            ElementKind::Declared => return Err(wasm_unsupported!("element kind declared")),
+            ElementKind::Declared => {
+                // Nothing to do here.
+            }
         }
-    }
-    Ok(())
-}
-
-/// Parses the Code section of the wasm module.
-pub fn parse_code_section<'data>(
-    code: CodeSectionReader<'data>,
-    module_translation_state: &ModuleTranslationState,
-    environ: &mut dyn ModuleEnvironment<'data>,
-) -> WasmResult<()> {
-    for body in code {
-        let mut reader = body?.get_binary_reader();
-        let size = reader.bytes_remaining();
-        let offset = reader.original_position();
-        environ.define_function_body(module_translation_state, reader.read_bytes(size)?, offset)?;
     }
     Ok(())
 }

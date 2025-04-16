@@ -86,6 +86,7 @@
       <li><a href="about:license#dagre-d3">Dagre-D3 License</a></li>
       <li><a href="about:license#diff">diff License</a></li>
       <li><a href="about:license#dtoa">dtoa License</a></li>
+      <li><a href="about:license#Fiat-Crypto">Fiat-Crypto License</a></li>
       <li><a href="about:license#fuzz-aldrin">fuzz-aldrin License</a></li>
       <li><a href="about:license#hunspell-nl">Dutch Spellchecking Dictionary License</a></li>
 #if defined(XP_WIN) || defined(XP_LINUX)
@@ -184,6 +185,9 @@
       <li><a href="about:license#void">void License</a></li>
       <li><a href="about:license#vtune">VTune License</a></li>
       <li><a href="about:license#webrtc">WebRTC License</a></li>
+#ifdef MOZ_DEFAULT_BROWSER_AGENT
+      <li><a href="about:license#wintoast">WinToast License</a></li>
+#endif
       <li><a href="about:license#x264">x264 License</a></li>
       <li><a href="about:license#xiph">Xiph.org Foundation License</a></li>
       <li><a href="about:license#zydis">Zydis License</a></li>
@@ -2243,6 +2247,7 @@ licences.
       <code>devtools/client/netmonitor/src/components/messages/parsers/signalr/JSONHubProtocol.js</code><br/>
       <code>devtools/client/netmonitor/src/components/messages/parsers/signalr/TextMessageFormat.js</code><br/>
       <code>devtools/client/netmonitor/src/components/messages/parsers/signalr/Utils.js</code><br/>
+      <code>third_party/cups/include</code><br/>
     </p>
 
 <pre>
@@ -3221,10 +3226,10 @@ DEALINGS IN THE SOFTWARE.
     <h1><a id="d3"></a>D3 License</h1>
 
     <p>This license applies to the file
-      <code>devtools/client/shared/d3.js</code>.
+      <code>third_party/js/d3/d3.js</code>.
     </p>
 <pre>
-Copyright (c) 2014, Michael Bostock
+Copyright (c) 2010-2016, Michael Bostock
 All rights reserved.
 
 Redistribution and use in source and binary forms, with or without
@@ -3336,6 +3341,40 @@ WARRANTY.  IN PARTICULAR, NEITHER THE AUTHOR NOR LUCENT MAKES ANY
 REPRESENTATION OR WARRANTY OF ANY KIND CONCERNING THE MERCHANTABILITY
 OF THIS SOFTWARE OR ITS FITNESS FOR ANY PARTICULAR PURPOSE.
 </pre>
+
+
+<hr>
+
+<h1><a id="Fiat-Crypto"></a>Fiat-Crypto License</h1>
+
+<p>This license applies to the file
+  <code>security/nss/lib/freebl/ecl/curve25519_32.c</code>
+</p>
+<pre>
+The MIT License (MIT)
+
+Copyright (c) 2015-2019 the fiat-crypto authors (see
+https://github.com/mit-plv/fiat-crypto/blob/master/AUTHORS).
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+</pre>
+
 
     <hr>
 
@@ -6436,7 +6475,7 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 <pre>
 The MIT License (MIT)
 
-Copyright (c) 2016 Michael Layzell
+Copyright (c) 2016 Nika Layzell
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal
@@ -7132,7 +7171,6 @@ THE SOFTWARE.
 
     <p>This license applies to certain files in the directories
       <code>js/src/irregexp</code>,
-      <code>js/src/new-regexp</code>,
       <code>js/src/builtin</code>,
       <code>js/src/jit/arm</code> and
       <code>js/src/jit/mips</code>.
@@ -7308,6 +7346,39 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 
     <hr>
+
+#ifdef MOZ_DEFAULT_BROWSER_AGENT
+    <h1><a id="WinToast"></a>WinToast License</h1>
+    <p>This license applies to all files in the directory
+       <code>third_party/WinToast</code>
+       unless otherwise specified.</p>
+
+<pre>
+MIT License
+
+Copyright (c) 2016 Mohammed Boujemaoui Boulaghmoudi
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+</pre>
+
+    <hr>
+#endif
 
     <h1><a id="x264"></a>x264 License</h1>
 

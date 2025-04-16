@@ -4,17 +4,16 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-#ifndef __NS_SVGMARKERFRAME_H__
-#define __NS_SVGMARKERFRAME_H__
+#ifndef LAYOUT_SVG_SVGMARKERFRAME_H_
+#define LAYOUT_SVG_SVGMARKERFRAME_H_
 
 #include "mozilla/Attributes.h"
+#include "mozilla/SVGContainerFrame.h"
 #include "gfxMatrix.h"
 #include "gfxRect.h"
-#include "nsFrame.h"
+#include "nsIFrame.h"
 #include "nsLiteralString.h"
 #include "nsQueryFrame.h"
-#include "nsSVGContainerFrame.h"
-#include "nsSVGUtils.h"
 
 class gfxContext;
 
@@ -37,8 +36,8 @@ nsContainerFrame* NS_NewSVGMarkerAnonChildFrame(mozilla::PresShell* aPresShell,
 
 namespace mozilla {
 
-class SVGMarkerFrame final : public nsSVGContainerFrame {
-  typedef image::imgDrawingParams imgDrawingParams;
+class SVGMarkerFrame final : public SVGContainerFrame {
+  using imgDrawingParams = image::imgDrawingParams;
 
   friend class SVGMarkerAnonChildFrame;
   friend nsContainerFrame* ::NS_NewSVGMarkerFrame(
@@ -46,7 +45,7 @@ class SVGMarkerFrame final : public nsSVGContainerFrame {
 
  protected:
   explicit SVGMarkerFrame(ComputedStyle* aStyle, nsPresContext* aPresContext)
-      : nsSVGContainerFrame(aStyle, aPresContext, kClassID),
+      : SVGContainerFrame(aStyle, aPresContext, kClassID),
         mMarkedFrame(nullptr),
         mInUse(false),
         mInUse2(false) {
@@ -70,7 +69,7 @@ class SVGMarkerFrame final : public nsSVGContainerFrame {
 
 #ifdef DEBUG_FRAME_DUMP
   virtual nsresult GetFrameName(nsAString& aResult) const override {
-    return MakeFrameName(NS_LITERAL_STRING("SVGMarker"), aResult);
+    return MakeFrameName(u"SVGMarker"_ns, aResult);
   }
 #endif
 
@@ -101,7 +100,7 @@ class SVGMarkerFrame final : public nsSVGContainerFrame {
   SVGGeometryFrame* mMarkedFrame;
   Matrix mMarkerTM;
 
-  // nsSVGContainerFrame methods:
+  // SVGContainerFrame methods:
   virtual gfxMatrix GetCanvasTM() override;
 
   // A helper class to allow us to paint markers safely. The helper
@@ -134,13 +133,13 @@ class SVGMarkerFrame final : public nsSVGContainerFrame {
 ////////////////////////////////////////////////////////////////////////
 // nsMarkerAnonChildFrame class
 
-class SVGMarkerAnonChildFrame final : public nsSVGDisplayContainerFrame {
+class SVGMarkerAnonChildFrame final : public SVGDisplayContainerFrame {
   friend nsContainerFrame* ::NS_NewSVGMarkerAnonChildFrame(
       mozilla::PresShell* aPresShell, ComputedStyle* aStyle);
 
   explicit SVGMarkerAnonChildFrame(ComputedStyle* aStyle,
                                    nsPresContext* aPresContext)
-      : nsSVGDisplayContainerFrame(aStyle, aPresContext, kClassID) {}
+      : SVGDisplayContainerFrame(aStyle, aPresContext, kClassID) {}
 
  public:
   NS_DECL_FRAMEARENA_HELPERS(SVGMarkerAnonChildFrame)
@@ -152,15 +151,16 @@ class SVGMarkerAnonChildFrame final : public nsSVGDisplayContainerFrame {
 
 #ifdef DEBUG_FRAME_DUMP
   virtual nsresult GetFrameName(nsAString& aResult) const override {
-    return MakeFrameName(NS_LITERAL_STRING("SVGMarkerAnonChild"), aResult);
+    return MakeFrameName(u"SVGMarkerAnonChild"_ns, aResult);
   }
 #endif
 
-  // nsSVGContainerFrame methods:
+  // SVGContainerFrame methods:
   virtual gfxMatrix GetCanvasTM() override {
     return static_cast<SVGMarkerFrame*>(GetParent())->GetCanvasTM();
   }
 };
 
 }  // namespace mozilla
-#endif
+
+#endif  // LAYOUT_SVG_SVGMARKERFRAME_H_

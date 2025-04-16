@@ -554,7 +554,10 @@ class TryOptionSyntax(object):
                 results.extend(self.handle_alias(test, all_tests))
 
         # uniquify the results over the test names
-        results = {test['test']: test for test in results}.values()
+        results = sorted(
+            {test["test"]: test for test in results}.values(),
+            key=lambda test: test["test"],
+        )
         return results
 
     def find_all_attribute_suffixes(self, graph, prefix):
@@ -569,7 +572,7 @@ class TryOptionSyntax(object):
         attr = task.attributes.get
 
         def check_run_on_projects():
-            return set(['try', 'all']) & set(attr('run_on_projects', []))
+            return {'all'} & set(attr('run_on_projects', []))
 
         # Don't schedule fission tests when try option syntax is used
         if attr('unittest_variant') == 'fission':

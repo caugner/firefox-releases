@@ -14,6 +14,7 @@
 #include "jit/CacheIR.h"
 #include "jit/CacheIRCompiler.h"
 #include "jit/CacheIROpsGenerated.h"
+#include "jit/CompileInfo.h"
 #include "jit/JitScript.h"
 #include "jit/JitSpewer.h"
 #include "jit/MIRGenerator.h"
@@ -21,6 +22,7 @@
 #include "jit/WarpCacheIRTranspiler.h"
 #include "vm/BytecodeIterator.h"
 #include "vm/BytecodeLocation.h"
+#include "vm/EnvironmentObject.h"
 #include "vm/Instrumentation.h"
 #include "vm/Opcodes.h"
 
@@ -32,6 +34,8 @@
 using namespace js;
 using namespace js::jit;
 
+using mozilla::Maybe;
+
 // WarpScriptOracle creates a WarpScriptSnapshot for a single JSScript. Note
 // that a single WarpOracle can use multiple WarpScriptOracles when scripts are
 // inlined.
@@ -41,6 +45,8 @@ class MOZ_STACK_CLASS WarpScriptOracle {
   MIRGenerator& mirGen_;
   TempAllocator& alloc_;
   HandleScript script_;
+  const CompileInfo* info_;
+  ICScript* icScript_;
 
   // Index of the next ICEntry for getICEntry. This assumes the script's
   // bytecode is processed from first to last instruction.
@@ -54,14 +60,20 @@ class MOZ_STACK_CLASS WarpScriptOracle {
   AbortReasonOr<WarpEnvironment> createEnvironment();
   AbortReasonOr<Ok> maybeInlineIC(WarpOpSnapshotList& snapshots,
                                   BytecodeLocation loc);
+  MOZ_MUST_USE bool replaceNurseryPointers(ICStub* stub,
+                                           const CacheIRStubInfo* stubInfo,
+                                           uint8_t* stubDataCopy);
 
  public:
-  WarpScriptOracle(JSContext* cx, WarpOracle* oracle, HandleScript script)
+  WarpScriptOracle(JSContext* cx, WarpOracle* oracle, HandleScript script,
+                   const CompileInfo* info, ICScript* icScript)
       : cx_(cx),
         oracle_(oracle),
         mirGen_(oracle->mirGen()),
         alloc_(mirGen_.alloc()),
-        script_(script) {}
+        script_(script),
+        info_(info),
+        icScript_(icScript) {}
 
   AbortReasonOr<WarpScriptSnapshot*> createScriptSnapshot();
 
@@ -94,6 +106,10 @@ mozilla::GenericErrorResult<AbortReason> WarpOracle::abort(HandleScript script,
   return res;
 }
 
+void WarpOracle::addScriptSnapshot(WarpScriptSnapshot* scriptSnapshot) {
+  scriptSnapshots_.insertBack(scriptSnapshot);
+}
+
 AbortReasonOr<WarpSnapshot*> WarpOracle::createSnapshot() {
   JitSpew(JitSpew_IonScripts,
           "Warp %sompiling script %s:%u:%u (%p) (warmup-counter=%" PRIu32
@@ -104,14 +120,24 @@ AbortReasonOr<WarpSnapshot*> WarpOracle::createSnapshot() {
           outerScript_->getWarmUpCount(),
           OptimizationLevelString(mirGen_.optimizationInfo().level()));
 
-  WarpScriptOracle scriptOracle(cx_, this, outerScript_);
+  MOZ_ASSERT(outerScript_->hasJitScript());
+  ICScript* icScript = outerScript_->jitScript()->icScript();
+  WarpScriptOracle scriptOracle(cx_, this, outerScript_, &mirGen_.outerInfo(),
+                                icScript);
 
   WarpScriptSnapshot* scriptSnapshot;
   MOZ_TRY_VAR(scriptSnapshot, scriptOracle.createScriptSnapshot());
 
-  auto* snapshot =
-      new (alloc_.fallible()) WarpSnapshot(cx_, scriptSnapshot, bailoutInfo_);
+  // Insert the outermost scriptSnapshot at the front of the list.
+  scriptSnapshots_.insertFront(scriptSnapshot);
+
+  auto* snapshot = new (alloc_.fallible())
+      WarpSnapshot(cx_, alloc_, std::move(scriptSnapshots_), bailoutInfo_);
   if (!snapshot) {
+    return abort(outerScript_, AbortReason::Alloc);
+  }
+
+  if (!snapshot->nurseryObjects().appendAll(nurseryObjects_)) {
     return abort(outerScript_, AbortReason::Alloc);
   }
 
@@ -167,7 +193,7 @@ const ICEntry& WarpScriptOracle::getICEntry(BytecodeLocation loc) {
 
   const ICEntry* entry;
   do {
-    entry = &script_->jitScript()->icEntry(icEntryIndex_);
+    entry = &icScript_->icEntry(icEntryIndex_);
     icEntryIndex_++;
   } while (entry->pcOffset() < offset);
 
@@ -445,8 +471,13 @@ AbortReasonOr<WarpScriptSnapshot*> WarpScriptOracle::createScriptSnapshot() {
       case JSOp::Rest: {
         const ICEntry& entry = getICEntry(loc);
         ICRest_Fallback* stub = entry.fallbackStub()->toRest_Fallback();
-        if (!AddOpSnapshot<WarpRest>(alloc_, opSnapshots, offset,
-                                     stub->templateObject())) {
+        ArrayObject* templateObj = stub->templateObject();
+        // Only inline elements supported without a VM call.
+        size_t numInlineElements =
+            gc::GetGCKindSlots(templateObj->asTenured().getAllocKind()) -
+            ObjectElements::VALUES_PER_HEADER;
+        if (!AddOpSnapshot<WarpRest>(alloc_, opSnapshots, offset, templateObj,
+                                     numInlineElements)) {
           return abort(AbortReason::Alloc);
         }
         break;
@@ -483,6 +514,20 @@ AbortReasonOr<WarpScriptSnapshot*> WarpScriptOracle::createScriptSnapshot() {
         break;
       }
 
+      case JSOp::BindGName: {
+        RootedGlobalObject global(cx_, &script_->global());
+        RootedPropertyName name(cx_, loc.getPropertyName(script_));
+        if (JSObject* env = MaybeOptimizeBindGlobalName(cx_, global, name)) {
+          MOZ_ASSERT(env->isTenured());
+          if (!AddOpSnapshot<WarpBindGName>(alloc_, opSnapshots, offset, env)) {
+            return abort(AbortReason::Alloc);
+          }
+        } else {
+          MOZ_TRY(maybeInlineIC(opSnapshots, loc));
+        }
+        break;
+      }
+
       case JSOp::GetName:
       case JSOp::GetGName:
       case JSOp::GetProp:
@@ -513,7 +558,6 @@ AbortReasonOr<WarpScriptSnapshot*> WarpScriptOracle::createScriptSnapshot() {
       case JSOp::StrictEq:
       case JSOp::StrictNe:
       case JSOp::BindName:
-      case JSOp::BindGName:
       case JSOp::Add:
       case JSOp::Sub:
       case JSOp::Mul:
@@ -697,7 +741,6 @@ AbortReasonOr<WarpScriptSnapshot*> WarpScriptOracle::createScriptSnapshot() {
   }
 
   autoClearOpSnapshots.release();
-
   return scriptSnapshot;
 }
 
@@ -713,15 +756,33 @@ static void LineNumberAndColumn(HandleScript script, BytecodeLocation loc,
 
 AbortReasonOr<Ok> WarpScriptOracle::maybeInlineIC(WarpOpSnapshotList& snapshots,
                                                   BytecodeLocation loc) {
-  // Add a WarpCacheIR snapshot if the Baseline IC has a single ICStub we can
-  // inline.
+  // Do one of the following:
+  //
+  // * If the Baseline IC has a single ICStub we can inline, add a WarpCacheIR
+  //   snapshot to transpile it to MIR.
+  //
+  // * If that single ICStub is a call IC with a known target, instead add a
+  //   WarpInline snapshot to transpile the guards to MIR and inline the target.
+  //
+  // * If the Baseline IC is cold (never executed), add a WarpBailout snapshot
+  //   so that we can collect information in Baseline.
+  //
+  // * Else, don't add a snapshot and rely on WarpBuilder adding an Ion IC.
 
   MOZ_ASSERT(loc.opHasIC());
 
   const ICEntry& entry = getICEntry(loc);
   ICStub* stub = entry.firstStub();
+  ICFallbackStub* fallbackStub = entry.fallbackStub();
 
-  if (stub->isFallback()) {
+  uint32_t offset = loc.bytecodeToOffset(script_);
+
+  // Clear the used-by-transpiler flag on the IC. It can still be set from a
+  // previous compilation because we don't clear the flag on every IC when
+  // invalidating.
+  fallbackStub->clearUsedByTranspiler();
+
+  if (stub == fallbackStub) {
     [[maybe_unused]] unsigned line, column;
     LineNumberAndColumn(script_, loc, &line, &column);
 
@@ -729,8 +790,18 @@ AbortReasonOr<Ok> WarpScriptOracle::maybeInlineIC(WarpOpSnapshotList& snapshots,
     JitSpew(JitSpew_WarpTranspiler,
             "fallback stub (entered-count: %" PRIu32
             ") for JSOp::%s @ %s:%u:%u",
-            stub->toFallbackStub()->enteredCount(), CodeName(loc.getOp()),
+            fallbackStub->enteredCount(), CodeName(loc.getOp()),
             script_->filename(), line, column);
+
+    // If the fallback stub was used but there's no optimized stub, use an IC.
+    if (fallbackStub->enteredCount() != 0) {
+      return Ok();
+    }
+
+    // Cold IC. Bailout to collect information.
+    if (!AddOpSnapshot<WarpBailout>(alloc_, snapshots, offset)) {
+      return abort(AbortReason::Alloc);
+    }
     return Ok();
   }
 
@@ -755,30 +826,8 @@ AbortReasonOr<Ok> WarpScriptOracle::maybeInlineIC(WarpOpSnapshotList& snapshots,
   // TODO: don't inline if the IC had unhandled cases => CacheIR is incomplete.
   // TOOD: have a consistent bailout => invalidate story. Set a flag on the IC?
 
-  const CacheIRStubInfo* stubInfo = nullptr;
-  const uint8_t* stubData = nullptr;
-  switch (stub->kind()) {
-    case ICStub::CacheIR_Regular:
-      stubInfo = stub->toCacheIR_Regular()->stubInfo();
-      stubData = stub->toCacheIR_Regular()->stubDataStart();
-      break;
-    case ICStub::CacheIR_Monitored:
-      stubInfo = stub->toCacheIR_Monitored()->stubInfo();
-      stubData = stub->toCacheIR_Monitored()->stubDataStart();
-      break;
-    case ICStub::CacheIR_Updated:
-      stubInfo = stub->toCacheIR_Updated()->stubInfo();
-      stubData = stub->toCacheIR_Updated()->stubDataStart();
-      break;
-    default:
-      MOZ_CRASH("Unexpected stub");
-  }
-
-  // TODO: we don't support stubs with nursery pointers for now. Handling this
-  // well requires special machinery. See bug 1631267.
-  if (stub->stubDataHasNurseryPointers(stubInfo)) {
-    return Ok();
-  }
+  const CacheIRStubInfo* stubInfo = stub->cacheIRStubInfo();
+  const uint8_t* stubData = stub->cacheIRStubData();
 
   // Only create a snapshots if all opcodes are supported by the transpiler.
   CacheIRReader reader(stubInfo);
@@ -840,17 +889,164 @@ AbortReasonOr<Ok> WarpScriptOracle::maybeInlineIC(WarpOpSnapshotList& snapshots,
     return abort(AbortReason::Alloc);
   }
 
-  // We don't need any GC barriers because the stub data does not contain
-  // nursery pointers (checked above) so we can do a bitwise copy.
+  // Note: nursery pointers are handled below so we don't need to trigger any GC
+  // barriers and can do a bitwise copy.
   std::copy_n(stubData, bytesNeeded, stubDataCopy);
+
+  if (!replaceNurseryPointers(stub, stubInfo, stubDataCopy)) {
+    return abort(AbortReason::Alloc);
+  }
 
   JitCode* jitCode = stub->jitCode();
 
-  uint32_t offset = loc.bytecodeToOffset(script_);
+  Maybe<InlinableCallData> callData;
+  if (loc.isInvokeOp()) {
+    callData = FindInlinableCallData(stub);
+  }
+  if (callData.isSome() && callData->icScript) {
+    RootedFunction targetFunction(cx_, callData->target);
+    RootedScript targetScript(cx_, targetFunction->nonLazyScript());
+    ICScript* icScript = callData->icScript;
+    MOZ_ASSERT(targetScript->jitScript() == icScript->jitScript());
+    MOZ_ASSERT(TrialInliner::canInline(targetFunction));
+
+    // Add the inlined script to the inline script tree.
+    LifoAlloc* lifoAlloc = alloc_.lifoAlloc();
+    InlineScriptTree* inlineScriptTree = info_->inlineScriptTree()->addCallee(
+        &alloc_, loc.toRawBytecode(), targetScript);
+    if (!inlineScriptTree) {
+      return abort(AbortReason::Alloc);
+    }
+
+    // Create a CompileInfo for the inlined script.
+    jsbytecode* osrPc = nullptr;
+    bool needsArgsObj = false;
+    CompileInfo* info = lifoAlloc->new_<CompileInfo>(
+        mirGen_.runtime, targetScript, targetFunction, osrPc,
+        info_->analysisMode(), needsArgsObj, inlineScriptTree);
+    if (!info) {
+      return abort(AbortReason::Alloc);
+    }
+
+    // Take a snapshot of the CacheIR.
+    WarpCacheIR* cacheIRSnapshot = new (alloc_.fallible())
+        WarpCacheIR(offset, jitCode, stubInfo, stubDataCopy);
+    if (!cacheIRSnapshot) {
+      return abort(AbortReason::Alloc);
+    }
+
+    // Take a snapshot of the inlined script (which may do more
+    // inlining recursively).
+    WarpScriptOracle scriptOracle(cx_, oracle_, targetScript, info, icScript);
+
+    WarpScriptSnapshot* scriptSnapshot;
+    MOZ_TRY_VAR(scriptSnapshot, scriptOracle.createScriptSnapshot());
+    oracle_->addScriptSnapshot(scriptSnapshot);
+
+    if (!AddOpSnapshot<WarpInlinedCall>(
+            alloc_, snapshots, offset, cacheIRSnapshot, scriptSnapshot, info)) {
+      return abort(AbortReason::Alloc);
+    }
+    fallbackStub->setUsedByTranspiler();
+    return Ok();
+  }
+
   if (!AddOpSnapshot<WarpCacheIR>(alloc_, snapshots, offset, jitCode, stubInfo,
                                   stubDataCopy)) {
     return abort(AbortReason::Alloc);
   }
 
+  fallbackStub->setUsedByTranspiler();
+
   return Ok();
+}
+
+bool WarpScriptOracle::replaceNurseryPointers(ICStub* stub,
+                                              const CacheIRStubInfo* stubInfo,
+                                              uint8_t* stubDataCopy) {
+  // If the stub data contains nursery object pointers, replace them with the
+  // corresponding nursery index. See WarpObjectField.
+  //
+  // Also asserts non-object fields don't contain nursery pointers.
+
+  uint32_t field = 0;
+  size_t offset = 0;
+  while (true) {
+    StubField::Type fieldType = stubInfo->fieldType(field);
+    switch (fieldType) {
+      case StubField::Type::RawWord:
+      case StubField::Type::RawInt64:
+      case StubField::Type::DOMExpandoGeneration:
+        break;
+      case StubField::Type::Shape:
+        static_assert(std::is_convertible_v<Shape*, gc::TenuredCell*>,
+                      "Code assumes shapes are tenured");
+        break;
+      case StubField::Type::ObjectGroup:
+        static_assert(std::is_convertible_v<ObjectGroup*, gc::TenuredCell*>,
+                      "Code assumes groups are tenured");
+        break;
+      case StubField::Type::Symbol:
+        static_assert(std::is_convertible_v<JS::Symbol*, gc::TenuredCell*>,
+                      "Code assumes symbols are tenured");
+        break;
+      case StubField::Type::JSObject: {
+        JSObject* obj = stubInfo->getStubField<ICStub, JSObject*>(stub, offset);
+        if (IsInsideNursery(obj)) {
+          uint32_t nurseryIndex;
+          if (!oracle_->registerNurseryObject(obj, &nurseryIndex)) {
+            return false;
+          }
+          uintptr_t oldWord = WarpObjectField::fromObject(obj).rawData();
+          uintptr_t newWord =
+              WarpObjectField::fromNurseryIndex(nurseryIndex).rawData();
+          stubInfo->replaceStubRawWord(stubDataCopy, offset, oldWord, newWord);
+        }
+        break;
+      }
+      case StubField::Type::String: {
+#ifdef DEBUG
+        JSString* str = stubInfo->getStubField<ICStub, JSString*>(stub, offset);
+        MOZ_ASSERT(!IsInsideNursery(str));
+#endif
+        break;
+      }
+      case StubField::Type::Id: {
+#ifdef DEBUG
+        // jsid never contains nursery-allocated things.
+        jsid id = stubInfo->getStubField<ICStub, jsid>(stub, offset);
+        MOZ_ASSERT_IF(id.isGCThing(),
+                      !IsInsideNursery(id.toGCCellPtr().asCell()));
+#endif
+        break;
+      }
+      case StubField::Type::Value: {
+#ifdef DEBUG
+        Value v = stubInfo->getStubField<ICStub, JS::Value>(stub, offset);
+        MOZ_ASSERT_IF(v.isGCThing(), !IsInsideNursery(v.toGCThing()));
+#endif
+        break;
+      }
+      case StubField::Type::Limit:
+        return true;  // Done.
+    }
+    field++;
+    offset += StubField::sizeInBytes(fieldType);
+  }
+}
+
+bool WarpOracle::registerNurseryObject(JSObject* obj, uint32_t* nurseryIndex) {
+  MOZ_ASSERT(IsInsideNursery(obj));
+
+  auto p = nurseryObjectsMap_.lookupForAdd(obj);
+  if (p) {
+    *nurseryIndex = p->value();
+    return true;
+  }
+
+  if (!nurseryObjects_.append(obj)) {
+    return false;
+  }
+  *nurseryIndex = nurseryObjects_.length() - 1;
+  return nurseryObjectsMap_.add(p, obj, *nurseryIndex);
 }

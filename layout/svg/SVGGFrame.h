@@ -4,12 +4,12 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-#ifndef NSSVGGFRAME_H
-#define NSSVGGFRAME_H
+#ifndef LAYOUT_SVG_SVGGFRAME_H_
+#define LAYOUT_SVG_SVGGFRAME_H_
 
 #include "mozilla/Attributes.h"
+#include "mozilla/SVGContainerFrame.h"
 #include "gfxMatrix.h"
-#include "nsSVGContainerFrame.h"
 
 namespace mozilla {
 class PresShell;
@@ -20,7 +20,7 @@ nsIFrame* NS_NewSVGGFrame(mozilla::PresShell* aPresShell,
 
 namespace mozilla {
 
-class SVGGFrame : public nsSVGDisplayContainerFrame {
+class SVGGFrame : public SVGDisplayContainerFrame {
   friend nsIFrame* ::NS_NewSVGGFrame(mozilla::PresShell* aPresShell,
                                      mozilla::ComputedStyle* aStyle);
   explicit SVGGFrame(ComputedStyle* aStyle, nsPresContext* aPresContext)
@@ -29,7 +29,7 @@ class SVGGFrame : public nsSVGDisplayContainerFrame {
  protected:
   SVGGFrame(ComputedStyle* aStyle, nsPresContext* aPresContext,
             nsIFrame::ClassID aID)
-      : nsSVGDisplayContainerFrame(aStyle, aPresContext, aID) {}
+      : SVGDisplayContainerFrame(aStyle, aPresContext, aID) {}
 
  public:
   NS_DECL_FRAMEARENA_HELPERS(SVGGFrame)
@@ -41,7 +41,7 @@ class SVGGFrame : public nsSVGDisplayContainerFrame {
 
 #ifdef DEBUG_FRAME_DUMP
   virtual nsresult GetFrameName(nsAString& aResult) const override {
-    return MakeFrameName(NS_LITERAL_STRING("SVGG"), aResult);
+    return MakeFrameName(u"SVGG"_ns, aResult);
   }
 #endif
 
@@ -52,4 +52,4 @@ class SVGGFrame : public nsSVGDisplayContainerFrame {
 
 }  // namespace mozilla
 
-#endif
+#endif  // LAYOUT_SVG_SVGGFRAME_H_

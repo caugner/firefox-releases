@@ -11,8 +11,14 @@
 #include "mozilla/Span.h"
 #include "mozilla/dom/MaybeDiscarded.h"
 #include "mozilla/dom/SyncedContext.h"
+#include "nsILoadInfo.h"
+#include "nsWrapperCache.h"
+
+class nsIGlobalObject;
 
 namespace mozilla {
+class LogModule;
+
 namespace dom {
 
 class WindowGlobalParent;
@@ -46,11 +52,15 @@ class BrowsingContextGroup;
    * mixed content loads to happen */                                  \
   FIELD(AllowMixedContent, bool)                                       \
   FIELD(EmbedderPolicy, nsILoadInfo::CrossOriginEmbedderPolicy)        \
+  /* True if this document tree contained an HTMLMediaElement that     \
+   * played audibly. This should only be set on top level context. */  \
+  FIELD(DocTreeHadAudibleMedia, bool)                                  \
   FIELD(AutoplayPermission, uint32_t)                                  \
   FIELD(DelegatedPermissions,                                          \
         PermissionDelegateHandler::DelegatedPermissionList)            \
   FIELD(DelegatedExactHostMatchPermissions,                            \
-        PermissionDelegateHandler::DelegatedPermissionList)
+        PermissionDelegateHandler::DelegatedPermissionList)            \
+  FIELD(HasReportedShadowDOMUsage, bool)
 
 class WindowContext : public nsISupports, public nsWrapperCache {
   MOZ_DECL_SYNCED_CONTEXT(WindowContext, MOZ_EACH_WC_FIELD)
@@ -94,14 +104,7 @@ class WindowContext : public nsISupports, public nsWrapperCache {
     uint64_t mOuterWindowId;
     uint64_t mBrowsingContextId;
 
-    FieldTuple mFields;
-
-    bool operator==(const IPCInitializer& aOther) const {
-      return mInnerWindowId == aOther.mInnerWindowId &&
-             mOuterWindowId == aOther.mOuterWindowId &&
-             mBrowsingContextId == aOther.mBrowsingContextId &&
-             mFields == aOther.mFields;
-    }
+    FieldValues mFields;
   };
   IPCInitializer GetIPCInitializer();
 
@@ -115,7 +118,8 @@ class WindowContext : public nsISupports, public nsWrapperCache {
 
  protected:
   WindowContext(BrowsingContext* aBrowsingContext, uint64_t aInnerWindowId,
-                uint64_t aOuterWindowId, bool aInProcess, FieldTuple&& aFields);
+                uint64_t aOuterWindowId, bool aInProcess,
+                FieldValues&& aFields);
   virtual ~WindowContext();
 
   virtual void Init();
@@ -160,6 +164,8 @@ class WindowContext : public nsISupports, public nsWrapperCache {
               ContentParent* aSource);
   bool CanSet(FieldIndex<IDX_IsSecureContext>, const bool& aIsSecureContext,
               ContentParent* aSource);
+  bool CanSet(FieldIndex<IDX_DocTreeHadAudibleMedia>, const bool& aValue,
+              ContentParent* aSource);
   bool CanSet(FieldIndex<IDX_AutoplayPermission>, const uint32_t& aValue,
               ContentParent* aSource);
   bool CanSet(FieldIndex<IDX_SHEntryHasUserInteraction>,
@@ -172,6 +178,12 @@ class WindowContext : public nsISupports, public nsWrapperCache {
   bool CanSet(FieldIndex<IDX_DelegatedExactHostMatchPermissions>,
               const PermissionDelegateHandler::DelegatedPermissionList& aValue,
               ContentParent* aSource);
+
+  bool CanSet(FieldIndex<IDX_HasReportedShadowDOMUsage>, const bool& aValue,
+              ContentParent* aSource) {
+    return true;
+  }
+  void DidSet(FieldIndex<IDX_HasReportedShadowDOMUsage>, bool aOldValue);
 
   // Overload `DidSet` to get notifications for a particular field being set.
   //

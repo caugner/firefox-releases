@@ -94,6 +94,9 @@ for (let searchProvider of ["amazon", "google"]) {
   );
 }
 
+const REMOTE_SETTING_DEFAULTS_PREF = "browser.topsites.useRemoteSetting";
+const REMOTE_SETTING_OVERRIDE_PREF = "browser.topsites.default";
+
 function getShortURLForCurrentSearch() {
   const url = shortURL({ url: Services.search.defaultEngine.searchForm });
   return url;
@@ -125,15 +128,15 @@ this.TopSitesFeed = class TopSitesFeed {
 
   init() {
     // If the feed was previously disabled PREFS_INITIAL_VALUES was never received
-    this.refreshDefaults(
-      this.store.getState().Prefs.values[DEFAULT_SITES_PREF]
-    );
+    this._readDefaults();
     this._storage = this.store.dbStorage.getDbTable("sectionPrefs");
-    this.refresh({ broadcast: true });
+    this.refresh({ broadcast: true, isStartup: true });
     Services.obs.addObserver(this, "browser-search-engine-modified");
     for (let [pref] of SEARCH_TILE_OVERRIDE_PREFS) {
       Services.prefs.addObserver(pref, this);
     }
+    Services.prefs.addObserver(REMOTE_SETTING_DEFAULTS_PREF, this);
+    Services.prefs.addObserver(REMOTE_SETTING_OVERRIDE_PREF, this);
   }
 
   uninit() {
@@ -142,29 +145,65 @@ this.TopSitesFeed = class TopSitesFeed {
     for (let [pref] of SEARCH_TILE_OVERRIDE_PREFS) {
       Services.prefs.removeObserver(pref, this);
     }
+    Services.prefs.removeObserver(REMOTE_SETTING_DEFAULTS_PREF, this);
+    Services.prefs.removeObserver(REMOTE_SETTING_OVERRIDE_PREF, this);
   }
 
   observe(subj, topic, data) {
-    // We should update the current top sites if the search engine has been changed since
-    // the search engine that gets filtered out of top sites has changed.
-    if (
-      topic === "browser-search-engine-modified" &&
-      data === "engine-default" &&
-      this.store.getState().Prefs.values[FILTER_DEFAULT_SEARCH_PREF]
-    ) {
-      delete this._currentSearchHostname;
-      this._currentSearchHostname = getShortURLForCurrentSearch();
-      this.refresh({ broadcast: true });
-    } else if (
-      topic === "nsPref:changed" &&
-      SEARCH_TILE_OVERRIDE_PREFS.has(data)
-    ) {
-      this.refresh({ broadcast: true });
+    switch (topic) {
+      case "browser-search-engine-modified":
+        // We should update the current top sites if the search engine has been changed since
+        // the search engine that gets filtered out of top sites has changed.
+        if (
+          data === "engine-default" &&
+          this.store.getState().Prefs.values[FILTER_DEFAULT_SEARCH_PREF]
+        ) {
+          delete this._currentSearchHostname;
+          this._currentSearchHostname = getShortURLForCurrentSearch();
+          this.refresh({ broadcast: true });
+        }
+        break;
+      case "nsPref:changed":
+        if (
+          data === REMOTE_SETTING_DEFAULTS_PREF ||
+          data === REMOTE_SETTING_OVERRIDE_PREF
+        ) {
+          this._readDefaults();
+          this.refresh({ broadcast: true });
+        } else if (SEARCH_TILE_OVERRIDE_PREFS.has(data)) {
+          this.refresh({ broadcast: true });
+        }
+        break;
     }
   }
 
   _dedupeKey(site) {
     return site && site.hostname;
+  }
+
+  /**
+   * _readDefaults - sets DEFAULT_TOP_SITES
+   */
+  _readDefaults() {
+    this._useRemoteSetting = Services.prefs.getBoolPref(
+      REMOTE_SETTING_DEFAULTS_PREF
+    );
+
+    if (!this._useRemoteSetting) {
+      this.refreshDefaults(
+        this.store.getState().Prefs.values[DEFAULT_SITES_PREF]
+      );
+      return;
+    }
+
+    let sites;
+    try {
+      sites = Services.prefs.getStringPref(REMOTE_SETTING_OVERRIDE_PREF);
+    } catch (e) {
+      // Placeholder for the actual remote setting (bug 1653937).
+      sites = "https://mozilla.org/#%YYYYMMDDHH%,https://firefox.com";
+    }
+    this.refreshDefaults(sites);
   }
 
   refreshDefaults(sites) {
@@ -293,7 +332,8 @@ this.TopSitesFeed = class TopSitesFeed {
     return false;
   }
 
-  async getLinksWithDefaults() {
+  // eslint-disable-next-line max-statements
+  async getLinksWithDefaults(isStartup = false) {
     const numItems =
       this.store.getState().Prefs.values[ROWS_PREF] *
       TOP_SITES_MAX_SITES_PER_ROW;
@@ -323,17 +363,30 @@ this.TopSitesFeed = class TopSitesFeed {
       }
     }
 
-    // Remove any defaults that have been blocked.
+    // Get defaults.
+    let date = new Date();
+    let pad = number => number.toString().padStart(2, "0");
+    let yyyymmdd =
+      String(date.getFullYear()) +
+      pad(date.getMonth() + 1) +
+      pad(date.getDate());
+    let yyyymmddhh = yyyymmdd + pad(date.getHours());
     let notBlockedDefaultSites = [];
     for (let link of DEFAULT_TOP_SITES) {
-      const searchProvider = getSearchProvider(shortURL(link));
+      if (this._useRemoteSetting) {
+        link = { ...link, url: link.url.replace("%YYYYMMDDHH%", yyyymmddhh) };
+      }
+      // Remove any defaults that have been blocked.
       if (NewTabUtils.blockedLinks.isBlocked({ url: link.url })) {
         continue;
-      } else if (this.shouldFilterSearchTile(link.hostname)) {
+      }
+      if (this.shouldFilterSearchTile(link.hostname)) {
         continue;
-        // If we've previously blocked a search shortcut, remove the default top site
-        // that matches the hostname
-      } else if (
+      }
+      // If we've previously blocked a search shortcut, remove the default top site
+      // that matches the hostname
+      const searchProvider = getSearchProvider(shortURL(link));
+      if (
         searchProvider &&
         NewTabUtils.blockedLinks.isBlocked({ url: searchProvider.url })
       ) {
@@ -420,14 +473,9 @@ this.TopSitesFeed = class TopSitesFeed {
     for (let [pref, hostname] of SEARCH_TILE_OVERRIDE_PREFS) {
       let url = Services.prefs.getStringPref(pref, "");
       if (url) {
-        let date = new Date();
-        let pad = number => number.toString().padStart(2, "0");
-        url = url.replace(
-          "%YYYYMMDD%",
-          String(date.getFullYear()) +
-            pad(date.getMonth() + 1) +
-            pad(date.getDate())
-        );
+        url = url
+          .replace("%YYYYMMDD%", yyyymmdd)
+          .replace("%YYYYMMDDHH%", yyyymmddhh);
         searchTileOverrideURLs.set(hostname, url);
       }
     }
@@ -437,11 +485,11 @@ this.TopSitesFeed = class TopSitesFeed {
       if (link) {
         // If there is a custom screenshot this is the only image we display
         if (link.customScreenshotURL) {
-          this._fetchScreenshot(link, link.customScreenshotURL);
+          this._fetchScreenshot(link, link.customScreenshotURL, isStartup);
         } else if (link.searchTopSite && !link.isDefault) {
           this._attachTippyTopIconForSearchShortcut(link, link.label);
         } else {
-          this._fetchIcon(link);
+          this._fetchIcon(link, isStartup);
         }
 
         // Remove internal properties that might be updated after dispatch
@@ -496,13 +544,16 @@ this.TopSitesFeed = class TopSitesFeed {
   /**
    * Refresh the top sites data for content.
    * @param {bool} options.broadcast Should the update be broadcasted.
+   * @param {bool} options.isStartup Being called while TopSitesFeed is initting.
    */
   async refresh(options = {}) {
     if (!this._tippyTopProvider.initialized) {
       await this._tippyTopProvider.init();
     }
 
-    const links = await this.getLinksWithDefaults();
+    const links = await this.getLinksWithDefaults({
+      isStartup: options.isStartup,
+    });
     const newAction = { type: at.TOP_SITES_UPDATED, data: { links } };
     let storedPrefs;
     try {
@@ -513,6 +564,12 @@ this.TopSitesFeed = class TopSitesFeed {
     }
     newAction.data.pref = getDefaultOptions(storedPrefs);
 
+    if (options.isStartup) {
+      newAction.meta = {
+        isStartup: true,
+      };
+    }
+
     if (options.broadcast) {
       // Broadcast an update to all open content pages
       this.store.dispatch(ac.BroadcastToContent(newAction));
@@ -522,7 +579,7 @@ this.TopSitesFeed = class TopSitesFeed {
     }
   }
 
-  async updateCustomSearchShortcuts() {
+  async updateCustomSearchShortcuts(isStartup = false) {
     if (!this.store.getState().Prefs.values[SEARCH_SHORTCUTS_EXPERIMENT]) {
       return;
     }
@@ -550,6 +607,9 @@ this.TopSitesFeed = class TopSitesFeed {
       ac.BroadcastToContent({
         type: at.UPDATE_SEARCH_SHORTCUTS,
         data: { searchShortcuts },
+        meta: {
+          isStartup,
+        },
       })
     );
   }
@@ -572,7 +632,7 @@ this.TopSitesFeed = class TopSitesFeed {
   /**
    * Get an image for the link preferring tippy top, rich favicon, screenshots.
    */
-  async _fetchIcon(link) {
+  async _fetchIcon(link, isStartup = false) {
     // Nothing to do if we already have a rich icon from the page
     if (link.favicon && link.faviconSize >= MIN_FAVICON_SIZE) {
       return;
@@ -588,15 +648,16 @@ this.TopSitesFeed = class TopSitesFeed {
     this._requestRichIcon(link.url);
 
     // Also request a screenshot if we don't have one yet
-    await this._fetchScreenshot(link, link.url);
+    await this._fetchScreenshot(link, link.url, isStartup);
   }
 
   /**
    * Fetch, cache and broadcast a screenshot for a specific topsite.
    * @param link cached topsite object
    * @param url where to fetch the image from
+   * @param isStartup Whether the screenshot is fetched while initting TopSitesFeed.
    */
-  async _fetchScreenshot(link, url) {
+  async _fetchScreenshot(link, url, isStartup = false) {
     // We shouldn't bother caching screenshots if they won't be shown.
     if (
       link.screenshot ||
@@ -613,6 +674,9 @@ this.TopSitesFeed = class TopSitesFeed {
           ac.BroadcastToContent({
             data: { screenshot, url: link.url },
             type: at.SCREENSHOT_UPDATED,
+            meta: {
+              isStartup,
+            },
           })
         )
     );
@@ -845,7 +909,7 @@ this.TopSitesFeed = class TopSitesFeed {
     switch (action.type) {
       case at.INIT:
         this.init();
-        this.updateCustomSearchShortcuts();
+        this.updateCustomSearchShortcuts(true /* isStartup */);
         break;
       case at.SYSTEM_TICK:
         this.refresh({ broadcast: false });
@@ -868,7 +932,9 @@ this.TopSitesFeed = class TopSitesFeed {
       case at.PREF_CHANGED:
         switch (action.data.name) {
           case DEFAULT_SITES_PREF:
-            this.refreshDefaults(action.data.value);
+            if (!this._useRemoteSetting) {
+              this.refreshDefaults(action.data.value);
+            }
             break;
           case ROWS_PREF:
           case FILTER_DEFAULT_SEARCH_PREF:
@@ -890,7 +956,9 @@ this.TopSitesFeed = class TopSitesFeed {
         }
         break;
       case at.PREFS_INITIAL_VALUES:
-        this.refreshDefaults(action.data[DEFAULT_SITES_PREF]);
+        if (!this._useRemoteSetting) {
+          this.refreshDefaults(action.data[DEFAULT_SITES_PREF]);
+        }
         break;
       case at.TOP_SITES_PIN:
         this.pin(action);

@@ -46,6 +46,7 @@ Project names are the repositories.  They can be:
 * `mozilla-beta`
 * `mozilla-release`
 * `mozilla-esr68`
+* `mozilla-esr78`
 * ... A partial list can be found in taskcluster/taskgraph/util/attributes.py
 
 For try, this attribute applies only if ``-p all`` is specified.  All jobs can
@@ -295,6 +296,11 @@ artifact_map
 ===============
 For beetmover jobs, this indicates which yaml file should be used to
 generate the upstream artifacts and payload instructions to the task.
+
+batch
+=====
+Used by `perftest` to indicates that a task can be run as a batch.
+
 
 enable-full-crashsymbols
 ========================

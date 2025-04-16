@@ -83,8 +83,7 @@ HttpChannelParent::HttpChannelParent(dom::BrowserParent* iframeEmbedding,
       mCacheNeedFlowControlInitialized(false),
       mNeedFlowControl(true),
       mSuspendedForFlowControl(false),
-      mAfterOnStartRequestBegun(false),
-      mIsMultiPart(false) {
+      mAfterOnStartRequestBegun(false) {
   LOG(("Creating HttpChannelParent [this=%p]\n", this));
 
   // Ensure gHttpHandler is initialized: we need the atom table up and running.
@@ -105,6 +104,12 @@ HttpChannelParent::HttpChannelParent(dom::BrowserParent* iframeEmbedding,
 HttpChannelParent::~HttpChannelParent() {
   LOG(("Destroying HttpChannelParent [this=%p]\n", this));
   CleanupBackgroundChannel();
+
+  MOZ_ASSERT(!mRedirectCallback);
+  if (NS_WARN_IF(mRedirectCallback)) {
+    mRedirectCallback->OnRedirectVerifyCallback(NS_ERROR_UNEXPECTED);
+    mRedirectCallback = nullptr;
+  }
 }
 
 void HttpChannelParent::ActorDestroy(ActorDestroyReason why) {
@@ -829,6 +834,10 @@ mozilla::ipc::IPCResult HttpChannelParent::RecvCancel(
       Unused << mChannel->Resume();
       mSuspendedForFlowControl = false;
     }
+  } else if (!mIPCClosed) {
+    // Make sure that the child correctly delivers all stream listener
+    // notifications.
+    Unused << SendFailedAsyncOpen(status);
   }
 
   // We won't need flow control anymore. Toggle the flag to avoid |Suspend|
@@ -1371,13 +1380,13 @@ HttpChannelParent::OnStartRequest(nsIRequest* aRequest) {
 
   Maybe<uint32_t> multiPartID;
   bool isLastPartOfMultiPart = false;
+  DebugOnly<bool> isMultiPart = false;
 
   RefPtr<HttpBaseChannel> chan = do_QueryObject(aRequest);
   if (!chan) {
-    nsCOMPtr<nsIMultiPartChannel> multiPartChannel =
-        do_QueryInterface(aRequest);
-    if (multiPartChannel) {
-      mIsMultiPart = true;
+    if (nsCOMPtr<nsIMultiPartChannel> multiPartChannel =
+            do_QueryInterface(aRequest)) {
+      isMultiPart = true;
       nsCOMPtr<nsIChannel> baseChannel;
       multiPartChannel->GetBaseChannel(getter_AddRefs(baseChannel));
       chan = do_QueryObject(baseChannel);
@@ -1388,7 +1397,7 @@ HttpChannelParent::OnStartRequest(nsIRequest* aRequest) {
       multiPartChannel->GetIsLastPart(&isLastPartOfMultiPart);
     }
   }
-  MOZ_ASSERT(multiPartID || !mIsMultiPart, "Changed multi-part state?");
+  MOZ_ASSERT(multiPartID || !isMultiPart, "Changed multi-part state?");
 
   if (!chan) {
     LOG(("  aRequest is not HttpBaseChannel"));
@@ -1405,18 +1414,19 @@ HttpChannelParent::OnStartRequest(nsIRequest* aRequest) {
              "HttpChannelParent getting OnStartRequest from a different "
              "HttpBaseChannel instance");*/
 
-  // Send down any permissions which are relevant to this URL if we are
+  HttpChannelOnStartRequestArgs args;
+
+  // Send down any permissions/cookies which are relevant to this URL if we are
   // performing a document load. We can't do that if mIPCClosed is set.
   if (!mIPCClosed) {
     PContentParent* pcp = Manager()->Manager();
     MOZ_ASSERT(pcp, "We should have a manager if our IPC isn't closed");
     DebugOnly<nsresult> rv =
         static_cast<ContentParent*>(pcp)->AboutToLoadHttpFtpDocumentForChild(
-            chan);
+            chan, &args.shouldWaitForOnStartRequestSent());
     MOZ_ASSERT(NS_SUCCEEDED(rv));
   }
 
-  HttpChannelOnStartRequestArgs args;
   args.multiPartID() = multiPartID;
   args.isLastPartOfMultiPart() = isLastPartOfMultiPart;
 
@@ -1487,6 +1497,7 @@ HttpChannelParent::OnStartRequest(nsIRequest* aRequest) {
   nsHttpResponseHead* responseHead = chan->GetResponseHead();
   bool useResponseHead = !!responseHead;
   nsHttpResponseHead cleanedUpResponseHead;
+
   if (responseHead &&
       (responseHead->HasHeader(nsHttp::Set_Cookie) || multiPartID)) {
     cleanedUpResponseHead = *responseHead;
@@ -1517,6 +1528,9 @@ HttpChannelParent::OnStartRequest(nsIRequest* aRequest) {
   if (mOverrideReferrerInfo) {
     args.overrideReferrerInfo() = ToRefPtr(std::move(mOverrideReferrerInfo));
   }
+  if (!mCookie.IsEmpty()) {
+    args.cookie() = std::move(mCookie);
+  }
 
   nsHttpRequestHead* requestHead = chan->GetRequestHead();
   // !!! We need to lock headers and please don't forget to unlock them !!!
@@ -1531,8 +1545,9 @@ HttpChannelParent::OnStartRequest(nsIRequest* aRequest) {
   }
 
   rv = NS_OK;
+
   if (mIPCClosed ||
-      !SendOnStartRequest(
+      !mBgParent->OnStartRequest(
           *responseHead, useResponseHead,
           cleanedUpRequest ? cleanedUpRequestHeaders : requestHead->Headers(),
           args)) {
@@ -1540,16 +1555,13 @@ HttpChannelParent::OnStartRequest(nsIRequest* aRequest) {
   }
   requestHead->Exit();
 
-  // OnStartRequest is sent to content process successfully.
-  // Notify PHttpBackgroundChannelChild that all following IPC mesasges
-  // should be run after OnStartRequest is handled.
-  // We don't send this if it's multipart, since we don't use the
-  // background channel in that case.
-  if (NS_SUCCEEDED(rv) && !multiPartID) {
-    MOZ_ASSERT(mBgParent);
-    if (!mBgParent->OnStartRequestSent()) {
-      rv = NS_ERROR_UNEXPECTED;
-    }
+  // Need to wait for the cookies/permissions to content process, which is sent
+  // via PContent in AboutToLoadHttpFtpDocumentForChild. For multipart channel,
+  // send only one time since the cookies/permissions are the same.
+  if (NS_SUCCEEDED(rv) && args.shouldWaitForOnStartRequestSent() &&
+      multiPartID.valueOr(0) == 0) {
+    LOG(("HttpChannelParent::SendOnStartRequestSent\n"));
+    Unused << SendOnStartRequestSent();
   }
 
   return rv;
@@ -1585,20 +1597,11 @@ HttpChannelParent::OnStopRequest(nsIRequest* aRequest, nsresult aStatusCode) {
 
   // If we're handling a multi-part stream, then send this directly
   // over PHttpChannel to make synchronization easier.
-  if (!mIPCClosed && mIsMultiPart) {
-    // See the child code for why we do this.
-    TimeStamp lastActTabOpt = nsHttp::GetLastActiveTabLoadOptimizationHit();
-    if (!SendOnStopRequest(
-            aStatusCode, GetTimingAttributes(mChannel), lastActTabOpt,
-            responseTrailer ? *responseTrailer : nsHttpHeaderArray(),
-            consoleReports)) {
-      return NS_ERROR_UNEXPECTED;
-    }
-  } else if (mIPCClosed || !mBgParent ||
-             !mBgParent->OnStopRequest(
-                 aStatusCode, GetTimingAttributes(mChannel),
-                 responseTrailer ? *responseTrailer : nsHttpHeaderArray(),
-                 consoleReports)) {
+  if (mIPCClosed || !mBgParent ||
+      !mBgParent->OnStopRequest(
+          aStatusCode, GetTimingAttributes(mChannel),
+          responseTrailer ? *responseTrailer : nsHttpHeaderArray(),
+          consoleReports)) {
     return NS_ERROR_UNEXPECTED;
   }
 
@@ -1650,9 +1653,22 @@ HttpChannelParent::OnStopRequest(nsIRequest* aRequest, nsresult aStatusCode) {
 
 NS_IMETHODIMP
 HttpChannelParent::OnAfterLastPart(nsresult aStatus) {
-  if (!mIPCClosed) {
-    Unused << SendOnAfterLastPart(aStatus);
+  LOG(("HttpChannelParent::OnAfterLastPart [this=%p]\n", this));
+  MOZ_ASSERT(NS_IsMainThread());
+
+  // If IPC channel is closed, there is nothing we can do. Just return NS_OK.
+  if (mIPCClosed) {
+    return NS_OK;
   }
+
+  // If IPC channel is open, background channel should be ready to send
+  // OnAfterLastPart.
+  MOZ_ASSERT(mBgParent);
+
+  if (!mBgParent || !mBgParent->OnAfterLastPart(aStatus)) {
+    return NS_ERROR_UNEXPECTED;
+  }
+
   return NS_OK;
 }
 
@@ -1706,16 +1722,9 @@ HttpChannelParent::OnDataAvailable(nsIRequest* aRequest,
     // is ready to send OnTransportAndData.
     MOZ_ASSERT(mIPCClosed || mBgParent);
 
-    // If we're handling a multi-part stream, then send this directly
-    // over PHttpChannel to make synchronization easier.
-    if (!mIPCClosed && mIsMultiPart) {
-      if (!SendOnTransportAndData(channelStatus, transportStatus, aOffset,
-                                  toRead, data)) {
-        return NS_ERROR_UNEXPECTED;
-      }
-    } else if (mIPCClosed || !mBgParent ||
-               !mBgParent->OnTransportAndData(channelStatus, transportStatus,
-                                              aOffset, toRead, data)) {
+    if (mIPCClosed || !mBgParent ||
+        !mBgParent->OnTransportAndData(channelStatus, transportStatus, aOffset,
+                                       toRead, data)) {
       return NS_ERROR_UNEXPECTED;
     }
 
@@ -1858,10 +1867,14 @@ HttpChannelParent::OnProgress(nsIRequest* aRequest, int64_t aProgress,
     return NS_OK;
   }
 
+  // If IPC channel is open, background channel should be ready to send
+  // OnProgress.
+  MOZ_ASSERT(mBgParent);
+
   // Send OnProgress events to the child for data upload progress notifications
   // (i.e. status == NS_NET_STATUS_SENDING_TO) or if the channel has
   // LOAD_BACKGROUND set.
-  if (!SendOnProgress(aProgress, aProgressMax)) {
+  if (!mBgParent || !mBgParent->OnProgress(aProgress, aProgressMax)) {
     return NS_ERROR_UNEXPECTED;
   }
 
@@ -1890,8 +1903,12 @@ HttpChannelParent::OnStatus(nsIRequest* aRequest, nsresult aStatus,
     return NS_OK;
   }
 
+  // If IPC channel is open, background channel should be ready to send
+  // OnStatus.
+  MOZ_ASSERT(mIPCClosed || mBgParent);
+
   // Otherwise, send to child now
-  if (!SendOnStatus(aStatus)) {
+  if (!mBgParent || !mBgParent->OnStatus(aStatus)) {
     return NS_ERROR_UNEXPECTED;
   }
 
@@ -1921,12 +1938,9 @@ HttpChannelParent::SetClassifierMatchedInfo(const nsACString& aList,
                                             const nsACString& aFullHash) {
   LOG(("HttpChannelParent::SetClassifierMatchedInfo [this=%p]\n", this));
   if (!mIPCClosed) {
-    ClassifierInfo info;
-    info.list() = aList;
-    info.provider() = aProvider;
-    info.fullhash() = aFullHash;
-
-    Unused << SendSetClassifierMatchedInfo(info);
+    MOZ_ASSERT(mBgParent);
+    Unused << mBgParent->OnSetClassifierMatchedInfo(aList, aProvider,
+                                                    aFullHash);
   }
   return NS_OK;
 }
@@ -1937,11 +1951,9 @@ HttpChannelParent::SetClassifierMatchedTrackingInfo(
   LOG(("HttpChannelParent::SetClassifierMatchedTrackingInfo [this=%p]\n",
        this));
   if (!mIPCClosed) {
-    ClassifierInfo info;
-    info.list() = aLists;
-    info.fullhash() = aFullHashes;
-
-    Unused << SendSetClassifierMatchedTrackingInfo(info);
+    MOZ_ASSERT(mBgParent);
+    Unused << mBgParent->OnSetClassifierMatchedTrackingInfo(aLists,
+                                                            aFullHashes);
   }
   return NS_OK;
 }
@@ -1954,8 +1966,9 @@ HttpChannelParent::NotifyClassificationFlags(uint32_t aClassificationFlags,
        "classificationFlags=%" PRIu32 ", thirdparty=%d [this=%p]\n",
        aClassificationFlags, static_cast<int>(aIsThirdParty), this));
   if (!mIPCClosed) {
-    Unused << SendNotifyClassificationFlags(aClassificationFlags,
-                                            aIsThirdParty);
+    MOZ_ASSERT(mBgParent);
+    Unused << mBgParent->OnNotifyClassificationFlags(aClassificationFlags,
+                                                     aIsThirdParty);
   }
   return NS_OK;
 }
@@ -1965,7 +1978,8 @@ HttpChannelParent::NotifyFlashPluginStateChanged(
     nsIHttpChannel::FlashPluginState aState) {
   LOG(("HttpChannelParent::NotifyFlashPluginStateChanged [this=%p]\n", this));
   if (!mIPCClosed) {
-    Unused << SendNotifyFlashPluginStateChanged(aState);
+    MOZ_ASSERT(mBgParent);
+    Unused << mBgParent->OnNotifyFlashPluginStateChanged(aState);
   }
   return NS_OK;
 }
@@ -1978,7 +1992,7 @@ HttpChannelParent::Delete() {
 }
 
 NS_IMETHODIMP
-HttpChannelParent::GetRemoteType(nsAString& aRemoteType) {
+HttpChannelParent::GetRemoteType(nsACString& aRemoteType) {
   if (!CanSend()) {
     return NS_ERROR_UNEXPECTED;
   }
@@ -2648,6 +2662,32 @@ void HttpChannelParent::OverrideReferrerInfoDuringBeginConnect(
   MOZ_ASSERT(!mAfterOnStartRequestBegun);
 
   mOverrideReferrerInfo = aReferrerInfo;
+}
+
+auto HttpChannelParent::AttachStreamFilter(
+    Endpoint<extensions::PStreamFilterParent>&& aParentEndpoint,
+    Endpoint<extensions::PStreamFilterChild>&& aChildEndpoint)
+    -> RefPtr<ChildEndpointPromise> {
+  LOG(("HttpChannelParent::AttachStreamFilter [this=%p]", this));
+  MOZ_ASSERT(!mAfterOnStartRequestBegun);
+
+  if (mIPCClosed) {
+    return ChildEndpointPromise::CreateAndReject(false, __func__);
+  }
+
+  // If IPC channel is open, background channel should be ready to send
+  // SendAttachStreamFilter.
+  MOZ_ASSERT(mBgParent);
+  return InvokeAsync(mBgParent->GetBackgroundTarget(), mBgParent.get(),
+                     __func__, &HttpBackgroundChannelParent::AttachStreamFilter,
+                     std::move(aParentEndpoint), std::move(aChildEndpoint));
+}
+
+void HttpChannelParent::SetCookie(nsCString&& aCookie) {
+  LOG(("HttpChannelParent::SetCookie [this=%p]", this));
+  MOZ_ASSERT(!mAfterOnStartRequestBegun);
+  MOZ_ASSERT(mCookie.IsEmpty());
+  mCookie = std::move(aCookie);
 }
 
 }  // namespace net

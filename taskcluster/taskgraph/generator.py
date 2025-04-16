@@ -16,6 +16,7 @@ from .taskgraph import TaskGraph
 from .task import Task
 from .optimize import optimize_task_graph
 from .morph import morph
+from .parameters import Parameters
 from .util.python_path import find_object
 from .transforms.base import TransformSequence, TransformConfig
 from .util.verify import (
@@ -49,13 +50,13 @@ class Kind(object):
             raise KeyError("{!r} does not define `loader`".format(self.path))
         return find_object(loader)
 
-    def load_tasks(self, parameters, loaded_tasks):
+    def load_tasks(self, parameters, loaded_tasks, write_artifacts):
         loader = self._get_loader()
         config = copy.deepcopy(self.config)
 
         kind_dependencies = config.get('kind-dependencies', [])
-        kind_dependencies_tasks = [task for task in loaded_tasks
-                                   if task.kind in kind_dependencies]
+        kind_dependencies_tasks = {task.label: task for task in loaded_tasks
+                                   if task.kind in kind_dependencies}
 
         inputs = loader(self.name, self.path, config, parameters, loaded_tasks)
 
@@ -66,9 +67,11 @@ class Kind(object):
 
         # perform the transformations on the loaded inputs
         trans_config = TransformConfig(self.name, self.path, config, parameters,
-                                       kind_dependencies_tasks, self.graph_config)
+                                       kind_dependencies_tasks, self.graph_config,
+                                       write_artifacts=write_artifacts)
         tasks = [Task(self.name,
                       label=task_dict['label'],
+                      description=task_dict['description'],
                       attributes=task_dict['attributes'],
                       task=task_dict['task'],
                       optimization=task_dict.get('optimization'),
@@ -108,7 +111,11 @@ class TaskGraphGenerator(object):
     # circuit generation of the entire graph by never completing the generator.
 
     def __init__(
-            self, root_dir, parameters, decision_task_id="<decision-task>", target_kind=None,
+        self,
+        root_dir,
+        parameters,
+        decision_task_id="DECISION-TASK",
+        write_artifacts=False,
     ):
         """
         @param root_dir: root directory, with subdirectories for each kind
@@ -120,8 +127,8 @@ class TaskGraphGenerator(object):
             root_dir = 'taskcluster/ci'
         self.root_dir = ensure_text(root_dir)
         self._parameters = parameters
-        self._target_kind = target_kind
         self._decision_task_id = decision_task_id
+        self._write_artifacts = write_artifacts
 
         # start the generator
         self._run = self._run()
@@ -255,11 +262,12 @@ class TaskGraphGenerator(object):
                 edges.add((kind.name, dep, 'kind-dependency'))
         kind_graph = Graph(set(kinds), edges)
 
-        if self._target_kind:
+        if parameters.get('target-kind'):
+            target_kind = parameters['target-kind']
             logger.info(
                 "Limiting kinds to {target_kind} and dependencies".format(
-                    target_kind=self._target_kind))
-            kind_graph = kind_graph.transitive_closure({self._target_kind, 'docker-image'})
+                    target_kind=target_kind))
+            kind_graph = kind_graph.transitive_closure({target_kind, 'docker-image'})
 
         logger.info("Generating full task set")
         all_tasks = {}
@@ -267,7 +275,9 @@ class TaskGraphGenerator(object):
             logger.debug("Loading tasks for kind {}".format(kind_name))
             kind = kinds[kind_name]
             try:
-                new_tasks = kind.load_tasks(parameters, list(all_tasks.values()))
+                new_tasks = kind.load_tasks(
+                    parameters, list(all_tasks.values()), self._write_artifacts,
+                )
             except Exception:
                 logger.exception("Error loading tasks for kind {}:".format(kind_name))
                 raise
@@ -321,8 +331,8 @@ class TaskGraphGenerator(object):
             always_target_tasks = set()
         logger.info('Adding %d tasks with `always_target` attribute' % (
                     len(always_target_tasks) - len(always_target_tasks & target_tasks)))
-        target_graph = full_task_graph.graph.transitive_closure(
-            target_tasks | docker_image_tasks | always_target_tasks)
+        requested_tasks = target_tasks | docker_image_tasks | always_target_tasks
+        target_graph = full_task_graph.graph.transitive_closure(requested_tasks)
         target_task_graph = TaskGraph(
             {l: all_tasks[l] for l in target_graph.nodes},
             target_graph)
@@ -342,6 +352,7 @@ class TaskGraphGenerator(object):
 
         optimized_task_graph, label_to_taskid = optimize_task_graph(
             target_task_graph,
+            requested_tasks,
             parameters,
             do_not_optimize,
             self._decision_task_id,
@@ -409,7 +420,11 @@ def load_tasks_for_kind(parameters, kind, root_dir=None):
 
     This function is designed to be called from outside of taskgraph.
     """
-    tgg = TaskGraphGenerator(root_dir=root_dir, parameters=parameters, target_kind=kind)
+    # make parameters read-write
+    parameters = dict(parameters)
+    parameters['target-kind'] = kind
+    parameters = Parameters(strict=False, **parameters)
+    tgg = TaskGraphGenerator(root_dir=root_dir, parameters=parameters)
     return {
         task.task['metadata']['name']: task
         for task in tgg.full_task_set

@@ -19,6 +19,9 @@
 #include "mozilla/ipc/MessageChannel.h"
 #include "mozilla/ipc/Transport.h"
 #include "mozilla/StaticMutex.h"
+#if defined(DEBUG) || defined(FUZZING)
+#  include "mozilla/Tokenizer.h"
+#endif
 #include "mozilla/Unused.h"
 #include "nsPrintfCString.h"
 
@@ -86,7 +89,7 @@ bool DuplicateHandle(HANDLE aSourceHandle, DWORD aTargetProcessId,
   if (!targetProcess) {
     CrashReporter::AnnotateCrashReport(
         CrashReporter::Annotation::IPCTransportFailureReason,
-        NS_LITERAL_CSTRING("Failed to open target process."));
+        "Failed to open target process."_ns);
     return false;
   }
 
@@ -115,6 +118,32 @@ void AnnotateCrashReportWithErrno(CrashReporter::Annotation tag, int error) {
   CrashReporter::AnnotateCrashReport(tag, error);
 }
 #endif  // defined(XP_MACOSX)
+
+#if defined(DEBUG) || defined(FUZZING)
+// This overload is for testability; application code should use the single-
+// argument version (defined in the ProtocolUtils.h) which takes the filter from
+// the environment.
+bool LoggingEnabledFor(const char* aTopLevelProtocol, const char* aFilter) {
+  if (!aFilter) {
+    return false;
+  }
+  if (strcmp(aFilter, "1") == 0) {
+    return true;
+  }
+
+  const char kDelimiters[] = ", ";
+  Tokenizer tokens(aFilter, kDelimiters);
+  Tokenizer::Token t;
+  while (tokens.Next(t)) {
+    if (t.Type() == Tokenizer::TOKEN_WORD &&
+        t.AsString() == aTopLevelProtocol) {
+      return true;
+    }
+  }
+
+  return false;
+}
+#endif  // defined(DEBUG) || defined(FUZZING)
 
 void LogMessageForProtocol(const char* aTopLevelProtocol,
                            base::ProcessId aOtherPid,
@@ -590,14 +619,6 @@ bool IToplevelProtocol::Open(UniquePtr<Transport> aTransport,
 }
 
 bool IToplevelProtocol::Open(MessageChannel* aChannel,
-                             MessageLoop* aMessageLoop,
-                             mozilla::ipc::Side aSide) {
-  SetOtherProcessId(base::GetCurrentProcId());
-  return GetIPCChannel()->Open(aChannel, aMessageLoop->SerialEventTarget(),
-                               aSide);
-}
-
-bool IToplevelProtocol::Open(MessageChannel* aChannel,
                              nsISerialEventTarget* aEventTarget,
                              mozilla::ipc::Side aSide) {
   SetOtherProcessId(base::GetCurrentProcId());
@@ -624,7 +645,7 @@ bool IToplevelProtocol::IsOnCxxStack() const {
 }
 
 int32_t IToplevelProtocol::NextId() {
-  // Genreate the next ID to use for a shared memory or protocol. Parent and
+  // Generate the next ID to use for a shared memory or protocol. Parent and
   // Child sides of the protocol use different pools.
   int32_t tag = 0;
   if (GetSide() == ParentSide) {

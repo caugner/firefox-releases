@@ -343,7 +343,7 @@ static void RemoveFromSuccessors(MBasicBlock* block) {
 
 static void ConvertToBailingBlock(TempAllocator& alloc, MBasicBlock* block) {
   // Add a bailout instruction.
-  MBail* bail = MBail::New(alloc, Bailout_FirstExecution);
+  MBail* bail = MBail::New(alloc, BailoutKind::FirstExecution);
   MInstruction* bailPoint = block->safeInsertTop();
   block->insertBefore(block->safeInsertTop(), bail);
 
@@ -3847,6 +3847,7 @@ static bool NeedsKeepAlive(MInstruction* slotsOrElements, MInstruction* use) {
       case MDefinition::Opcode::StoreFixedSlot:
       case MDefinition::Opcode::LoadElement:
       case MDefinition::Opcode::StoreElement:
+      case MDefinition::Opcode::StoreHoleValueElement:
       case MDefinition::Opcode::InitializedLength:
       case MDefinition::Opcode::ArrayLength:
       case MDefinition::Opcode::BoundsCheck:
@@ -5097,6 +5098,9 @@ KnownClass jit::GetObjectKnownClass(const MDefinition* def) {
     case MDefinition::Opcode::FunctionWithProto:
       return KnownClass::Function;
 
+    case MDefinition::Opcode::RegExp:
+      return KnownClass::RegExp;
+
     case MDefinition::Opcode::Phi: {
       if (def->numOperands() == 0) {
         return KnownClass::None;
@@ -5138,6 +5142,8 @@ const JSClass* jit::GetObjectKnownJSClass(const MDefinition* def) {
       return &ArrayObject::class_;
     case KnownClass::Function:
       return &JSFunction::class_;
+    case KnownClass::RegExp:
+      return &RegExpObject::class_;
     case KnownClass::None:
       break;
   }

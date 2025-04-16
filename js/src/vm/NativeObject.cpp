@@ -1748,7 +1748,10 @@ bool js::NativeDefineProperty(JSContext* cx, HandleNativeObject obj,
 
   // Step 2.
   if (!prop) {
-    if (!obj->isExtensible()) {
+    // Note: We are sharing the property definition machinery with private
+    //       fields. Private fields may be added to non-extensible objects.
+    bool isPrivate = JSID_IS_SYMBOL(id) && JSID_TO_SYMBOL(id)->isPrivateName();
+    if (!obj->isExtensible() && !isPrivate) {
       return result.fail(JSMSG_CANT_DEFINE_PROP_OBJECT_NOT_EXTENSIBLE);
     }
 
@@ -2509,7 +2512,7 @@ bool js::NativeGetElement(JSContext* cx, HandleNativeObject obj,
     }
   } else {
     RootedValue indexVal(cx, Int32Value(index));
-    if (!ValueToId<CanGC>(cx, indexVal, &id)) {
+    if (!PrimitiveValueToId<CanGC>(cx, indexVal, &id)) {
       return false;
     }
   }

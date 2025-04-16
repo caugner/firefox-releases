@@ -170,6 +170,12 @@ this bootstrap again.
 
 
 class OSXBootstrapper(BaseBootstrapper):
+
+    INSTALL_PYTHON_GUIDANCE = (
+        'See https://firefox-source-docs.mozilla.org/setup/macos_build.html'
+        '#install-via-homebrew for guidance on how to install Python on your '
+        'system.')
+
     def __init__(self, version, **kwargs):
         BaseBootstrapper.__init__(self, **kwargs)
 
@@ -228,8 +234,8 @@ class OSXBootstrapper(BaseBootstrapper):
         elif self.os_version >= StrictVersion('10.7'):
             select = self.which('xcode-select')
             try:
-                output = self.check_output([select, '--print-path'],
-                                           stderr=subprocess.STDOUT)
+                output = subprocess.check_output([select, '--print-path'],
+                                                 stderr=subprocess.STDOUT)
             except subprocess.CalledProcessError as e:
                 # This seems to appear on fresh OS X machines before any Xcode
                 # has been installed. It may only occur on OS X 10.9 and later.
@@ -251,14 +257,14 @@ class OSXBootstrapper(BaseBootstrapper):
         # Once Xcode is installed, you need to agree to the license before you can
         # use it.
         try:
-            output = self.check_output(['/usr/bin/xcrun', 'clang'],
-                                       stderr=subprocess.STDOUT)
+            output = subprocess.check_output(['/usr/bin/xcrun', 'clang'],
+                                             stderr=subprocess.STDOUT)
         except subprocess.CalledProcessError as e:
             if b'license' in e.output:
                 xcodebuild = self.which('xcodebuild')
                 try:
-                    self.check_output([xcodebuild, '-license'],
-                                      stderr=subprocess.STDOUT)
+                    subprocess.check_output([xcodebuild, '-license'],
+                                            stderr=subprocess.STDOUT)
                 except subprocess.CalledProcessError as e:
                     if b'requires admin privileges' in e.output:
                         self.run_as_root([xcodebuild, '-license'])
@@ -272,8 +278,8 @@ class OSXBootstrapper(BaseBootstrapper):
                 print(INSTALL_XCODE_COMMAND_LINE_TOOLS_STEPS)
                 sys.exit(1)
 
-            output = self.check_output(['/usr/bin/clang', '--version'],
-                                       universal_newlines=True)
+            output = subprocess.check_output(['/usr/bin/clang', '--version'],
+                                             universal_newlines=True)
             match = RE_CLANG_VERSION.search(output)
             if match is None:
                 raise Exception('Could not determine Clang version.')
@@ -302,28 +308,19 @@ class OSXBootstrapper(BaseBootstrapper):
         self._ensure_package_manager_updated()
         cmd = [self.brew] + extra_brew_args
 
-        installed = set(self.check_output(cmd + ['list'],
-                                          universal_newlines=True).split())
+        installed = set(subprocess.check_output(
+            cmd + ['list'], universal_newlines=True).split())
         to_install = set(
             package for package in packages if package not in installed)
 
         # The "--quiet" tells "brew" to only list the package names, and not the
         # comparison between current and new version.
-        outdated = set(self.check_output(cmd + ['outdated', '--quiet'],
-                                         universal_newlines=True).split())
+        outdated = set(subprocess.check_output(cmd + ['outdated', '--quiet'],
+                                               universal_newlines=True).split())
         to_upgrade = set(package for package in packages if package in outdated)
 
         if to_install or to_upgrade:
             print(PACKAGE_MANAGER_PACKAGES % ('Homebrew',))
-        if 'python@2' in to_install:
-            # Special handling for Python 2 since brew can't install it
-            # out-of-the-box any more.
-            to_install.remove('python@2')
-            subprocess.check_call(
-                cmd + ['install',
-                       'https://raw.githubusercontent.com/Homebrew/homebrew-core'
-                       '/86a44a0a552c673a05f11018459c9f5faae3becc'
-                       '/Formula/python@2.rb'])
         if to_install:
             subprocess.check_call(cmd + ['install'] + list(to_install))
         if to_upgrade:
@@ -332,34 +329,29 @@ class OSXBootstrapper(BaseBootstrapper):
     def _ensure_homebrew_casks(self, casks):
         self._ensure_homebrew_found()
 
-        known_taps = self.check_output([self.brew, 'tap'])
+        known_taps = subprocess.check_output([self.brew, 'tap'])
 
         # Ensure that we can access old versions of packages.
         if b'homebrew/cask-versions' not in known_taps:
-            self.check_output([self.brew, 'tap', 'homebrew/cask-versions'])
+            subprocess.check_output([self.brew, 'tap',
+                                     'homebrew/cask-versions'])
 
         # "caskroom/versions" has been renamed to "homebrew/cask-versions", so
         # it is safe to remove the old tap. Removing the old tap is necessary
         # to avoid the error "Cask [name of cask] exists in multiple taps".
         # See https://bugzilla.mozilla.org/show_bug.cgi?id=1544981
         if b'caskroom/versions' in known_taps:
-            self.check_output([self.brew, 'untap', 'caskroom/versions'])
+            subprocess.check_output([self.brew, 'untap', 'caskroom/versions'])
 
         # Change |brew install cask| into |brew cask install cask|.
         self._ensure_homebrew_packages(casks, extra_brew_args=['cask'])
 
     def ensure_homebrew_system_packages(self, install_mercurial):
-        # We need to install Python because Mercurial requires the
-        # Python development headers which are missing from OS X (at
-        # least on 10.8) and because the build system wants a version
-        # newer than what Apple ships.
         packages = [
             'autoconf@2.13',
             'git',
             'gnu-tar',
             'node',
-            'python',
-            'python@2',
             'terminal-notifier',
             'watchman',
         ]
@@ -415,7 +407,7 @@ class OSXBootstrapper(BaseBootstrapper):
         assert self.port is not None
 
         installed = set(
-            self.check_output(
+            subprocess.check_output(
                 [self.port, 'installed'],
                 universal_newlines=True).split())
 
@@ -426,9 +418,6 @@ class OSXBootstrapper(BaseBootstrapper):
 
     def ensure_macports_system_packages(self, install_mercurial):
         packages = [
-            'python27',
-            'python36',
-            'py27-gnureadline',
             'autoconf213',
             'gnutar',
             'watchman',
@@ -440,7 +429,7 @@ class OSXBootstrapper(BaseBootstrapper):
         self._ensure_macports_packages(packages)
 
         pythons = set(
-            self.check_output(
+            subprocess.check_output(
                 [self.port, 'select', '--list', 'python'],
                 universal_newlines=True).split('\n'))
         active = ''
@@ -579,6 +568,12 @@ class OSXBootstrapper(BaseBootstrapper):
         self.install_toolchain_artifact(state_dir, checkout_root,
                                         minidump_stackwalk.MACOS_MINIDUMP_STACKWALK)
 
+    def ensure_dump_syms_packages(self, state_dir, checkout_root):
+        from mozboot import dump_syms
+
+        self.install_toolchain_artifact(state_dir, checkout_root,
+                                        dump_syms.MACOS_DUMP_SYMS)
+
     def install_homebrew(self):
         print(PACKAGE_MANAGER_INSTALL % ('Homebrew', 'Homebrew', 'Homebrew', 'brew'))
         bootstrap = urlopen(url=HOMEBREW_BOOTSTRAP, timeout=20).read()
@@ -626,9 +621,3 @@ class OSXBootstrapper(BaseBootstrapper):
 
     def upgrade_mercurial(self, current):
         self._upgrade_package('mercurial')
-
-    def upgrade_python(self, current):
-        if self.package_manager == 'homebrew':
-            self._upgrade_package('python')
-        else:
-            self._upgrade_package('python27')

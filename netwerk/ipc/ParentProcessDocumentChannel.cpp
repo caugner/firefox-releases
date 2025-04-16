@@ -129,8 +129,14 @@ ParentProcessDocumentChannel::OnRedirectVerifyCallback(nsresult aResult) {
 NS_IMETHODIMP ParentProcessDocumentChannel::AsyncOpen(
     nsIStreamListener* aListener) {
   LOG(("ParentProcessDocumentChannel AsyncOpen [this=%p]", this));
-  mDocumentLoadListener = new DocumentLoadListener(
-      GetDocShell()->GetBrowsingContext()->Canonical());
+  auto docShell = RefPtr<nsDocShell>(GetDocShell());
+  MOZ_ASSERT(docShell);
+
+  bool isDocumentLoad = mLoadInfo->GetExternalContentPolicyType() !=
+                        nsIContentPolicy::TYPE_OBJECT;
+
+  mDocumentLoadListener = MakeRefPtr<DocumentLoadListener>(
+      docShell->GetBrowsingContext()->Canonical(), isDocumentLoad);
   LOG(("Created PPDocumentChannel with listener=%p",
        mDocumentLoadListener.get()));
 
@@ -144,18 +150,32 @@ NS_IMETHODIMP ParentProcessDocumentChannel::AsyncOpen(
 
   gHttpHandler->OnOpeningDocumentRequest(this);
 
-  GetDocShell()->GetBrowsingContext()->SetCurrentLoadIdentifier(
-      Some(mLoadState->GetLoadIdentifier()));
+  if (isDocumentLoad) {
+    GetDocShell()->GetBrowsingContext()->SetCurrentLoadIdentifier(
+        Some(mLoadState->GetLoadIdentifier()));
+  }
 
   nsresult rv = NS_OK;
   Maybe<dom::ClientInfo> initialClientInfo = mInitialClientInfo;
-  auto promise = mDocumentLoadListener->Open(
-      mLoadState, mCacheKey, Some(mChannelId), mAsyncOpenTime, mTiming,
-      std::move(initialClientInfo), GetDocShell()->GetOuterWindowID(),
-      GetDocShell()
-          ->GetBrowsingContext()
-          ->HasValidTransientUserGestureActivation(),
-      Some(mUriModified), Some(mIsXFOError), 0 /* ProcessId */, &rv);
+
+  const bool hasValidTransientUserGestureActivation =
+      docShell->GetBrowsingContext()->HasValidTransientUserGestureActivation();
+
+  RefPtr<DocumentLoadListener::OpenPromise> promise;
+  if (isDocumentLoad) {
+    promise = mDocumentLoadListener->OpenDocument(
+        mLoadState, mCacheKey, Some(mChannelId), mAsyncOpenTime, mTiming,
+        std::move(initialClientInfo), hasValidTransientUserGestureActivation,
+        Some(mUriModified), Some(mIsXFOError), 0 /* ProcessId */, &rv);
+  } else {
+    promise = mDocumentLoadListener->OpenObject(
+        mLoadState, mCacheKey, Some(mChannelId), mAsyncOpenTime, mTiming,
+        std::move(initialClientInfo), InnerWindowIDForExtantDoc(docShell),
+        mLoadFlags, mLoadInfo->InternalContentPolicyType(),
+        hasValidTransientUserGestureActivation,
+        UserActivation::IsHandlingUserInput(), 0 /* ProcessId */, &rv);
+  }
+
   if (NS_FAILED(rv)) {
     MOZ_ASSERT(!promise);
     mDocumentLoadListener = nullptr;
@@ -204,8 +224,14 @@ NS_IMETHODIMP ParentProcessDocumentChannel::AsyncOpen(
         p->ChainTo(aResolveValue.mPromise.forget(), __func__);
       },
       [self](DocumentLoadListener::OpenPromiseFailedType&& aRejectValue) {
-        self->DisconnectChildListeners(aRejectValue.mStatus,
-                                       aRejectValue.mLoadGroupStatus);
+        // If this is a normal failure, then we want to disconnect our listeners
+        // and notify them of the failure. If this is a process switch, then we
+        // can just ignore it silently, and trust that the switch will shut down
+        // our docshell and cancel us when it's ready.
+        if (!aRejectValue.mSwitchedProcess) {
+          self->DisconnectChildListeners(aRejectValue.mStatus,
+                                         aRejectValue.mLoadGroupStatus);
+        }
         self->RemoveObserver();
       });
   return NS_OK;

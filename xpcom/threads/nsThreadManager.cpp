@@ -71,15 +71,18 @@ nsresult BackgroundEventTarget::Init() {
   nsCOMPtr<nsIThreadPool> pool(new nsThreadPool());
   NS_ENSURE_TRUE(pool, NS_ERROR_FAILURE);
 
-  nsresult rv = pool->SetName(NS_LITERAL_CSTRING("BackgroundThreadPool"));
+  nsresult rv = pool->SetName("BackgroundThreadPool"_ns);
   NS_ENSURE_SUCCESS(rv, rv);
 
   // Use potentially more conservative stack size.
   rv = pool->SetThreadStackSize(nsIThreadManager::kThreadPoolStackSize);
   NS_ENSURE_SUCCESS(rv, rv);
 
-  // For now just one thread. Can increase easily later if we want.
-  rv = pool->SetThreadLimit(1);
+  // Thread limit of 2 makes deadlock during synchronous dispatch less likely.
+  rv = pool->SetThreadLimit(2);
+  NS_ENSURE_SUCCESS(rv, rv);
+
+  rv = pool->SetIdleThreadLimit(1);
   NS_ENSURE_SUCCESS(rv, rv);
 
   // Leave threads alive for up to 5 minutes
@@ -90,15 +93,18 @@ nsresult BackgroundEventTarget::Init() {
   nsCOMPtr<nsIThreadPool> ioPool(new nsThreadPool());
   NS_ENSURE_TRUE(pool, NS_ERROR_FAILURE);
 
-  rv = ioPool->SetName(NS_LITERAL_CSTRING("BgIOThreadPool"));
+  rv = ioPool->SetName("BgIOThreadPool"_ns);
   NS_ENSURE_SUCCESS(rv, rv);
 
   // Use potentially more conservative stack size.
   rv = ioPool->SetThreadStackSize(nsIThreadManager::kThreadPoolStackSize);
   NS_ENSURE_SUCCESS(rv, rv);
 
-  // For now just one thread. Can increase easily later if we want.
-  rv = ioPool->SetThreadLimit(1);
+  // Thread limit of 4 makes deadlock during synchronous dispatch less likely.
+  rv = ioPool->SetThreadLimit(4);
+  NS_ENSURE_SUCCESS(rv, rv);
+
+  rv = ioPool->SetIdleThreadLimit(1);
   NS_ENSURE_SUCCESS(rv, rv);
 
   // Leave threads alive for up to 5 minutes
@@ -602,7 +608,7 @@ bool nsThreadManager::IsNSThread() const {
 NS_IMETHODIMP
 nsThreadManager::NewThread(uint32_t aCreationFlags, uint32_t aStackSize,
                            nsIThread** aResult) {
-  return NewNamedThread(NS_LITERAL_CSTRING(""), aStackSize, aResult);
+  return NewNamedThread(""_ns, aStackSize, aResult);
 }
 
 NS_IMETHODIMP

@@ -8,6 +8,9 @@
 
 "use strict";
 
+const { ComponentUtils } = ChromeUtils.import(
+  "resource://gre/modules/ComponentUtils.jsm"
+);
 const { XPCOMUtils } = ChromeUtils.import(
   "resource://gre/modules/XPCOMUtils.jsm"
 );
@@ -43,11 +46,13 @@ class LoginManagerStorage_json {
   }
 
   get QueryInterface() {
-    return ChromeUtils.generateQI([Ci.nsILoginManagerStorage]);
+    return ChromeUtils.generateQI(["nsILoginManagerStorage"]);
   }
 
   get _xpcom_factory() {
-    return XPCOMUtils.generateSingletonFactory(this.LoginManagerStorage_json);
+    return ComponentUtils.generateSingletonFactory(
+      this.LoginManagerStorage_json
+    );
   }
 
   get _crypto() {

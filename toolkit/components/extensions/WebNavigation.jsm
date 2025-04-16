@@ -130,8 +130,8 @@ var Manager = {
    * to keep track of the urlbar user interaction.
    */
   QueryInterface: ChromeUtils.generateQI([
-    Ci.nsIObserver,
-    Ci.nsISupportsWeakReference,
+    "nsIObserver",
+    "nsISupportsWeakReference",
   ]),
 
   /**
@@ -152,7 +152,7 @@ var Manager = {
       const {
         createdTabBrowser,
         url,
-        sourceFrameOuterWindowID,
+        sourceFrameID,
         sourceTabBrowser,
       } = subject.wrappedJSObject;
 
@@ -162,7 +162,7 @@ var Manager = {
         {},
         {
           sourceTabBrowser,
-          sourceFrameId: sourceFrameOuterWindowID,
+          sourceFrameId: sourceFrameID,
           url,
         }
       );

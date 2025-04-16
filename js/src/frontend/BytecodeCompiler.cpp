@@ -23,6 +23,7 @@
 #include "frontend/ModuleSharedContext.h"
 #include "frontend/Parser.h"
 #include "js/SourceText.h"
+#include "vm/FunctionFlags.h"          // FunctionFlags
 #include "vm/GeneratorAndAsyncKind.h"  // js::GeneratorKind, js::FunctionAsyncKind
 #include "vm/GlobalObject.h"
 #include "vm/JSContext.h"
@@ -103,8 +104,7 @@ class MOZ_STACK_CLASS frontend::SourceAwareCompiler {
                                           CompilationInfo& compilationInfo);
 
   void assertSourceAndParserCreated(CompilationInfo& compilationInfo) const {
-    MOZ_ASSERT(compilationInfo.sourceObject != nullptr);
-    MOZ_ASSERT(compilationInfo.sourceObject->source() != nullptr);
+    MOZ_ASSERT(compilationInfo.source() != nullptr);
     MOZ_ASSERT(parser.isSome());
   }
 
@@ -294,7 +294,7 @@ class MOZ_STACK_CLASS frontend::StandaloneFunctionCompiler final
   using Base::createSourceAndParser;
 
   FunctionNode* parse(CompilationInfo& compilationInfo,
-                      HandleScope enclosingScope, FunctionSyntaxKind syntaxKind,
+                      FunctionSyntaxKind syntaxKind,
                       GeneratorKind generatorKind, FunctionAsyncKind asyncKind,
                       const Maybe<uint32_t>& parameterListEnd);
 
@@ -340,7 +340,7 @@ AutoFrontendTraceLog::AutoFrontendTraceLog(JSContext* cx,
   }
 
   frontendEvent_.emplace(TraceLogger_Frontend, errorReporter.getFilename(),
-                         funbox->extent.lineno, funbox->extent.column);
+                         funbox->extent().lineno, funbox->extent().column);
   frontendLog_.emplace(logger_, *frontendEvent_);
   typeLog_.emplace(logger_, id);
 }
@@ -398,7 +398,7 @@ bool frontend::SourceAwareCompiler<Unit>::createSourceAndParser(
                  sourceBuffer_.units(), sourceBuffer_.length(),
                  /* foldConstants = */ true, compilationInfo,
                  syntaxParser.ptrOr(nullptr), nullptr);
-  parser->ss = compilationInfo.sourceObject->source();
+  parser->ss = compilationInfo.source();
   return parser->checkOptions();
 }
 
@@ -498,11 +498,13 @@ JSScript* frontend::ScriptCompiler<Unit>::compileScript(
 
   // We have just finished parsing the source. Inform the source so that we
   // can compute statistics (e.g. how much time our functions remain lazy).
-  compilationInfo.sourceObject->source()->recordParseEnded();
+  compilationInfo.source()->recordParseEnded();
 
   // Enqueue an off-thread source compression task after finishing parsing.
-  if (!compilationInfo.sourceObject->source()->tryCompressOffThread(cx)) {
-    return nullptr;
+  if (!compilationInfo.cx->isHelperThreadContext()) {
+    if (!compilationInfo.source()->tryCompressOffThread(cx)) {
+      return nullptr;
+    }
   }
 
   MOZ_ASSERT_IF(!cx->isHelperThreadContext(), !cx->isExceptionPending());
@@ -518,19 +520,13 @@ ModuleObject* frontend::ModuleCompiler<Unit>::compile(
   }
   JSContext* cx = compilationInfo.cx;
 
-  Rooted<ModuleObject*> module(cx, ModuleObject::create(cx));
-  if (!module) {
-    return nullptr;
-  }
-
   ModuleBuilder builder(cx, parser.ptr());
+  StencilModuleMetadata& moduleMetadata = compilationInfo.moduleMetadata.get();
 
-  RootedScope enclosingScope(cx, &cx->global()->emptyGlobalScope());
   uint32_t len = this->sourceBuffer_.length();
   SourceExtent extent =
       SourceExtent::makeGlobalExtent(len, compilationInfo.options);
-  ModuleSharedContext modulesc(cx, module, compilationInfo, enclosingScope,
-                               builder, extent);
+  ModuleSharedContext modulesc(cx, compilationInfo, builder, extent);
 
   ParseNode* pn = parser->moduleBody(&modulesc);
   if (!pn) {
@@ -546,30 +542,24 @@ ModuleObject* frontend::ModuleCompiler<Unit>::compile(
     return nullptr;
   }
 
+  builder.finishFunctionDecls(moduleMetadata);
+
   if (!compilationInfo.instantiateStencils()) {
     return nullptr;
   }
 
   MOZ_ASSERT(compilationInfo.script);
-
-  if (!builder.initModule(module)) {
-    return nullptr;
-  }
-
-  module->initScriptSlots(compilationInfo.script);
-  module->initStatusSlot();
-
-  if (!ModuleObject::createEnvironment(cx, module)) {
-    return nullptr;
-  }
+  MOZ_ASSERT(compilationInfo.module);
 
   // Enqueue an off-thread source compression task after finishing parsing.
-  if (!compilationInfo.sourceObject->source()->tryCompressOffThread(cx)) {
-    return nullptr;
+  if (!cx->isHelperThreadContext()) {
+    if (!compilationInfo.source()->tryCompressOffThread(cx)) {
+      return nullptr;
+    }
   }
 
   MOZ_ASSERT_IF(!cx->isHelperThreadContext(), !cx->isExceptionPending());
-  return module;
+  return compilationInfo.module;
 }
 
 // Parse a standalone JS function, which might appear as the value of an
@@ -577,9 +567,9 @@ ModuleObject* frontend::ModuleCompiler<Unit>::compile(
 // constructor.
 template <typename Unit>
 FunctionNode* frontend::StandaloneFunctionCompiler<Unit>::parse(
-    CompilationInfo& compilationInfo, HandleScope enclosingScope,
-    FunctionSyntaxKind syntaxKind, GeneratorKind generatorKind,
-    FunctionAsyncKind asyncKind, const Maybe<uint32_t>& parameterListEnd) {
+    CompilationInfo& compilationInfo, FunctionSyntaxKind syntaxKind,
+    GeneratorKind generatorKind, FunctionAsyncKind asyncKind,
+    const Maybe<uint32_t>& parameterListEnd) {
   assertSourceAndParserCreated(compilationInfo);
 
   TokenStreamPosition startPosition(compilationInfo.keepAtoms,
@@ -594,9 +584,9 @@ FunctionNode* frontend::StandaloneFunctionCompiler<Unit>::parse(
   FunctionNode* fn;
   for (;;) {
     Directives newDirectives = compilationInfo.directives;
-    fn = parser->standaloneFunction(enclosingScope, parameterListEnd,
-                                    syntaxKind, generatorKind, asyncKind,
-                                    compilationInfo.directives, &newDirectives);
+    fn = parser->standaloneFunction(parameterListEnd, syntaxKind, generatorKind,
+                                    asyncKind, compilationInfo.directives,
+                                    &newDirectives);
     if (fn) {
       break;
     }
@@ -619,20 +609,6 @@ JSFunction* frontend::StandaloneFunctionCompiler<Unit>::compile(
   FunctionBox* funbox = parsedFunction->funbox();
 
   if (funbox->isInterpreted()) {
-    MOZ_ASSERT(funbox->function() == nullptr);
-
-    // The parser extent has stripped off the leading `function...` but
-    // we want the SourceExtent used in the final standalone script to
-    // start from the beginning of the buffer, and use the provided
-    // line and column.
-    compilationInfo.topLevelExtent =
-        SourceExtent{/* sourceStart = */ 0,
-                     sourceBuffer_.length(),
-                     funbox->extent.toStringStart,
-                     funbox->extent.toStringEnd,
-                     compilationInfo.options.lineno,
-                     compilationInfo.options.column};
-
     Maybe<BytecodeEmitter> emitter;
     if (!emplaceEmitter(compilationInfo, emitter, funbox)) {
       return nullptr;
@@ -641,64 +617,42 @@ JSFunction* frontend::StandaloneFunctionCompiler<Unit>::compile(
     if (!emitter->emitFunctionScript(parsedFunction, TopLevelFunction::Yes)) {
       return nullptr;
     }
+
+    // The parser extent has stripped off the leading `function...` but
+    // we want the SourceExtent used in the final standalone script to
+    // start from the beginning of the buffer, and use the provided
+    // line and column.
+    compilationInfo.topLevel.get().extent =
+        SourceExtent{/* sourceStart = */ 0,
+                     sourceBuffer_.length(),
+                     funbox->extent().toStringStart,
+                     funbox->extent().toStringEnd,
+                     compilationInfo.options.lineno,
+                     compilationInfo.options.column};
   } else {
     // The asm.js module was created by parser. Instantiation below will
     // allocate the JSFunction that wraps it.
     MOZ_ASSERT(funbox->isAsmJSModule());
-    MOZ_ASSERT(compilationInfo.asmJS.has(FunctionIndex(funbox->index())));
-
-    compilationInfo.topLevelAsmJS = true;
+    MOZ_ASSERT(compilationInfo.asmJS.has(funbox->index()));
+    MOZ_ASSERT(compilationInfo.topLevel.get().functionFlags.isAsmJSNative());
   }
 
   if (!compilationInfo.instantiateStencils()) {
     return nullptr;
   }
 
-  MOZ_ASSERT(funbox->function()->hasBytecode() ||
-             IsAsmJSModule(funbox->function()));
+  JSFunction* fun =
+      compilationInfo.functions[CompilationInfo::TopLevelFunctionIndex];
+  MOZ_ASSERT(fun->hasBytecode() || IsAsmJSModule(fun));
 
   // Enqueue an off-thread source compression task after finishing parsing.
-  if (!compilationInfo.sourceObject->source()->tryCompressOffThread(
-          compilationInfo.cx)) {
-    return nullptr;
-  }
-
-  return funbox->function();
-}
-
-ScriptSourceObject* frontend::CreateScriptSourceObject(
-    JSContext* cx, const ReadOnlyCompileOptions& options) {
-  ScriptSource* ss = cx->new_<ScriptSource>();
-  if (!ss) {
-    return nullptr;
-  }
-  ScriptSourceHolder ssHolder(ss);
-
-  if (!ss->initFromOptions(cx, options)) {
-    return nullptr;
-  }
-
-  RootedScriptSourceObject sso(cx, ScriptSourceObject::create(cx, ss));
-  if (!sso) {
-    return nullptr;
-  }
-
-  // Off-thread compilations do all their GC heap allocation, including the
-  // SSO, in a temporary compartment. Hence, for the SSO to refer to the
-  // gc-heap-allocated values in |options|, it would need cross-compartment
-  // wrappers from the temporary compartment to the real compartment --- which
-  // would then be inappropriate once we merged the temporary and real
-  // compartments.
-  //
-  // Instead, we put off populating those SSO slots in off-thread compilations
-  // until after we've merged compartments.
-  if (!cx->isHelperThreadContext()) {
-    if (!ScriptSourceObject::initFromOptions(cx, sso, options)) {
+  if (!compilationInfo.cx->isHelperThreadContext()) {
+    if (!compilationInfo.source()->tryCompressOffThread(compilationInfo.cx)) {
       return nullptr;
     }
   }
 
-  return sso;
+  return fun;
 }
 
 template <typename Unit>
@@ -721,13 +675,17 @@ static ModuleObject* InternalParseModule(
   if (!compilationInfo.init(cx)) {
     return nullptr;
   }
+  compilationInfo.setEnclosingScope(&cx->global()->emptyGlobalScope());
 
+  ModuleCompiler<Unit> compiler(srcBuf);
+  Rooted<ModuleObject*> module(cx, compiler.compile(compilationInfo));
+
+  // Even if compile fails, we may have generated some of the scripts so expose
+  // the ScriptSourceObject to the caller.
   if (sourceObjectOut) {
     *sourceObjectOut = compilationInfo.sourceObject;
   }
 
-  ModuleCompiler<Unit> compiler(srcBuf);
-  Rooted<ModuleObject*> module(cx, compiler.compile(compilationInfo));
   if (!module) {
     return nullptr;
   }
@@ -896,9 +854,14 @@ static JSFunction* CompileStandaloneFunction(
     FunctionAsyncKind asyncKind, HandleScope enclosingScope = nullptr) {
   AutoAssertReportedException assertException(cx);
 
+  RootedScope scope(cx, enclosingScope);
+  if (!scope) {
+    scope = &cx->global()->emptyGlobalScope();
+  }
+
   LifoAllocScope allocScope(&cx->tempLifoAlloc());
   CompilationInfo compilationInfo(cx, allocScope, options, enclosingScope);
-  if (!compilationInfo.init(cx)) {
+  if (!compilationInfo.initForStandaloneFunction(cx, scope)) {
     return nullptr;
   }
 
@@ -907,14 +870,8 @@ static JSFunction* CompileStandaloneFunction(
     return nullptr;
   }
 
-  RootedScope scope(cx, enclosingScope);
-  if (!scope) {
-    scope = &cx->global()->emptyGlobalScope();
-  }
-
-  FunctionNode* parsedFunction =
-      compiler.parse(compilationInfo, scope, syntaxKind, generatorKind,
-                     asyncKind, parameterListEnd);
+  FunctionNode* parsedFunction = compiler.parse(
+      compilationInfo, syntaxKind, generatorKind, asyncKind, parameterListEnd);
   if (!parsedFunction) {
     return nullptr;
   }
@@ -929,8 +886,7 @@ static JSFunction* CompileStandaloneFunction(
   // interpreted script.
   if (compilationInfo.script) {
     if (parameterListEnd) {
-      compilationInfo.sourceObject->source()->setParameterListEnd(
-          *parameterListEnd);
+      compilationInfo.source()->setParameterListEnd(*parameterListEnd);
     }
     tellDebuggerAboutCompiledScript(cx, options.hideScriptFromDebugger,
                                     compilationInfo.script);
@@ -978,6 +934,11 @@ JSFunction* frontend::CompileStandaloneAsyncGenerator(
 }
 
 bool frontend::CompilationInfo::init(JSContext* cx) {
-  sourceObject = CreateScriptSourceObject(cx, options);
-  return !!sourceObject;
+  ScriptSource* ss = cx->new_<ScriptSource>();
+  if (!ss) {
+    return false;
+  }
+  setSource(ss);
+
+  return ss->initFromOptions(cx, options);
 }

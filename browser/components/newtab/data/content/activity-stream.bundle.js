@@ -742,9 +742,9 @@ class BaseContent extends react__WEBPACK_IMPORTED_MODULE_7___default.a.PureCompo
     } = App;
     const prefs = props.Prefs.values;
     const isDiscoveryStream = props.DiscoveryStream.config && props.DiscoveryStream.config.enabled;
-    let filteredSections = props.Sections;
+    let filteredSections = props.Sections.filter(section => section.id !== "topstories");
     const pocketEnabled = prefs["feeds.section.topstories"] && prefs["feeds.system.topstories"];
-    const noSectionsEnabled = !prefs["feeds.topsites"] && filteredSections.filter(section => section.enabled).length === 0;
+    const noSectionsEnabled = !prefs["feeds.topsites"] && !pocketEnabled && filteredSections.filter(section => section.enabled).length === 0;
     const searchHandoffEnabled = prefs["improvesearch.handoffToAwesomebar"];
     const outerClassName = ["outer-wrapper", isDiscoveryStream && pocketEnabled && "ds-outer-wrapper-search-alignment", isDiscoveryStream && "ds-outer-wrapper-breakpoint-override", prefs.showSearch && this.state.fixedSearch && !noSectionsEnabled && "fixed-search", prefs.showSearch && noSectionsEnabled && "only-search"].filter(v => v).join(" ");
     return react__WEBPACK_IMPORTED_MODULE_7___default.a.createElement("div", null, react__WEBPACK_IMPORTED_MODULE_7___default.a.createElement("div", {
@@ -1189,6 +1189,7 @@ class ASRouterAdminInner extends react__WEBPACK_IMPORTED_MODULE_4___default.a.Pu
       messageFilter: "all",
       WNMessages: [],
       collapsedMessages: [],
+      modifiedMessages: [],
       evaluationStatus: {},
       trailhead: {},
       stringTargetingParameters: null,
@@ -1264,6 +1265,16 @@ class ASRouterAdminInner extends react__WEBPACK_IMPORTED_MODULE_4___default.a.Pu
     }
 
     return () => _asrouter_asrouter_content__WEBPACK_IMPORTED_MODULE_1__["ASRouterUtils"].unblockById(msg.id);
+  }
+
+  resetJSON(msg) {
+    // reset the displayed JSON for the given message
+    document.getElementById(`${msg.id}-textarea`).value = JSON.stringify(msg, null, 2); // remove the message from the list of modified IDs
+
+    let index = this.state.modifiedMessages.indexOf(msg.id);
+    this.setState(prevState => ({
+      modifiedMessages: [...prevState.modifiedMessages.slice(0, index), ...prevState.modifiedMessages.slice(index + 1)]
+    }));
   }
 
   handleOverride(id) {
@@ -1510,6 +1521,18 @@ class ASRouterAdminInner extends react__WEBPACK_IMPORTED_MODULE_4___default.a.Pu
     }
   }
 
+  modifyJson(msg) {
+    _asrouter_asrouter_content__WEBPACK_IMPORTED_MODULE_1__["ASRouterUtils"].modifyMessageJson(JSON.parse(document.getElementById(`${msg.id}-textarea`).value));
+  }
+
+  handleChange(msgId) {
+    if (!this.state.modifiedMessages.includes(msgId)) {
+      this.setState(prevState => ({
+        modifiedMessages: prevState.modifiedMessages.concat(msgId)
+      }));
+    }
+  }
+
   renderMessageItem(msg) {
     const isBlockedByGroup = this.state.groups.filter(group => msg.groups.includes(group.id)).some(group => !group.enabled);
     const msgProvider = this.state.providers.find(provider => provider.id === msg.provider) || {};
@@ -1518,6 +1541,7 @@ class ASRouterAdminInner extends react__WEBPACK_IMPORTED_MODULE_4___default.a.Pu
     const isBlocked = isMessageBlocked || isBlockedByGroup || isProviderExcluded;
     const impressions = this.state.messageImpressions[msg.id] ? this.state.messageImpressions[msg.id].length : 0;
     const isCollapsed = this.state.collapsedMessages.includes(msg.id);
+    const isModified = this.state.modifiedMessages.includes(msg.id);
     let itemClassName = "message-item";
 
     if (isBlocked) {
@@ -1538,14 +1562,30 @@ class ASRouterAdminInner extends react__WEBPACK_IMPORTED_MODULE_4___default.a.Pu
     }, react__WEBPACK_IMPORTED_MODULE_4___default.a.createElement("button", {
       className: `button ${isBlocked ? "" : " primary"}`,
       onClick: isBlocked ? this.handleUnblock(msg) : this.handleBlock(msg)
-    }, isBlocked ? "Unblock" : "Block"), isBlocked ? null : react__WEBPACK_IMPORTED_MODULE_4___default.a.createElement("button", {
-      className: "button",
+    }, isBlocked ? "Unblock" : "Block"), // eslint-disable-next-line no-nested-ternary
+    isBlocked ? null : isModified ? react__WEBPACK_IMPORTED_MODULE_4___default.a.createElement("button", {
+      className: "button restore" // eslint-disable-next-line react/jsx-no-bind
+      ,
+      onClick: e => this.resetJSON(msg)
+    }, "Reset") : react__WEBPACK_IMPORTED_MODULE_4___default.a.createElement("button", {
+      className: "button show",
       onClick: this.handleOverride(msg.id)
-    }, "Show"), react__WEBPACK_IMPORTED_MODULE_4___default.a.createElement("br", null), "(", impressions, " impressions)"), react__WEBPACK_IMPORTED_MODULE_4___default.a.createElement("td", {
+    }, "Show"), isBlocked ? null : react__WEBPACK_IMPORTED_MODULE_4___default.a.createElement("button", {
+      className: "button modify" // eslint-disable-next-line react/jsx-no-bind
+      ,
+      onClick: e => this.modifyJson(msg)
+    }, "Modify"), react__WEBPACK_IMPORTED_MODULE_4___default.a.createElement("br", null), "(", impressions, " impressions)"), react__WEBPACK_IMPORTED_MODULE_4___default.a.createElement("td", {
       className: "message-summary"
     }, isBlocked && react__WEBPACK_IMPORTED_MODULE_4___default.a.createElement("tr", null, "Block reason:", isBlockedByGroup && " Blocked by group", isProviderExcluded && " Excluded by provider", isMessageBlocked && " Message blocked"), react__WEBPACK_IMPORTED_MODULE_4___default.a.createElement("tr", null, react__WEBPACK_IMPORTED_MODULE_4___default.a.createElement("pre", {
       className: isCollapsed ? "collapsed" : "expanded"
-    }, JSON.stringify(msg, null, 2)))));
+    }, react__WEBPACK_IMPORTED_MODULE_4___default.a.createElement("textarea", {
+      id: `${msg.id}-textarea`,
+      name: msg.id,
+      className: "general-textarea",
+      disabled: isBlocked // eslint-disable-next-line react/jsx-no-bind
+      ,
+      onChange: e => this.handleChange(msg.id)
+    }, JSON.stringify(msg, null, 2))))));
   }
 
   restoreWNMessageState() {
@@ -1622,10 +1662,14 @@ class ASRouterAdminInner extends react__WEBPACK_IMPORTED_MODULE_4___default.a.Pu
 
     const messagesToShow = this.state.messageFilter === "all" ? this.state.messages : this.state.messages.filter(message => message.provider === this.state.messageFilter);
     return react__WEBPACK_IMPORTED_MODULE_4___default.a.createElement("div", null, react__WEBPACK_IMPORTED_MODULE_4___default.a.createElement("button", {
-      className: "ASRouterButton slim button" // eslint-disable-next-line react/jsx-no-bind
+      className: "ASRouterButton slim" // eslint-disable-next-line react/jsx-no-bind
       ,
       onClick: e => this.toggleAllMessages(messagesToShow)
-    }, "Collapse/Expand All"), react__WEBPACK_IMPORTED_MODULE_4___default.a.createElement("table", null, react__WEBPACK_IMPORTED_MODULE_4___default.a.createElement("tbody", null, messagesToShow.map(msg => this.renderMessageItem(msg)))));
+    }, "Collapse/Expand All"), react__WEBPACK_IMPORTED_MODULE_4___default.a.createElement("p", {
+      className: "helpLink"
+    }, react__WEBPACK_IMPORTED_MODULE_4___default.a.createElement("span", {
+      className: "icon icon-small-spacer icon-info"
+    }), " ", react__WEBPACK_IMPORTED_MODULE_4___default.a.createElement("span", null, "To modify a message, change the JSON and click 'Modify' to see your changes. Click 'Reset' to restore the JSON to the original.")), react__WEBPACK_IMPORTED_MODULE_4___default.a.createElement("table", null, react__WEBPACK_IMPORTED_MODULE_4___default.a.createElement("tbody", null, messagesToShow.map(msg => this.renderMessageItem(msg)))));
   }
 
   renderWNMessages() {
@@ -2763,6 +2807,12 @@ const rehydrationMiddleware = ({
   getState.didRequestInitialState = false;
   return next => action => {
     if (getState.didRehydrate || window.__FROM_STARTUP_CACHE__) {
+      // Startup messages can be safely ignored by the about:home document
+      // stored in the startup cache.
+      if (window.__FROM_STARTUP_CACHE__ && action.meta && action.meta.isStartup) {
+        return null;
+      }
+
       return next(action);
     }
 
@@ -2837,7 +2887,7 @@ const queueEarlyMessageMiddleware = ({
  */
 
 function initStore(reducers, initialState) {
-  const store = Object(redux__WEBPACK_IMPORTED_MODULE_1__["createStore"])(mergeStateReducer(Object(redux__WEBPACK_IMPORTED_MODULE_1__["combineReducers"])(reducers)), initialState, global.RPMAddMessageListener && Object(redux__WEBPACK_IMPORTED_MODULE_1__["applyMiddleware"])(rehydrationMiddleware, queueEarlyMessageMiddleware, messageMiddleware));
+  const store = Object(redux__WEBPACK_IMPORTED_MODULE_1__["createStore"])(mergeStateReducer(Object(redux__WEBPACK_IMPORTED_MODULE_1__["combineReducers"])(reducers)), initialState, global.RPMAddMessageListener && Object(redux__WEBPACK_IMPORTED_MODULE_1__["applyMiddleware"])(queueEarlyMessageMiddleware, rehydrationMiddleware, messageMiddleware));
 
   if (global.RPMAddMessageListener) {
     global.RPMAddMessageListener(INCOMING_MESSAGE_NAME, msg => {
@@ -4608,7 +4658,8 @@ class CardGrid extends react__WEBPACK_IMPORTED_MODULE_3___default.a.PureComponen
         display_engagement_labels: this.props.display_engagement_labels,
         cta: rec.cta,
         cta_variant: this.props.cta_variant,
-        is_video: this.props.enable_video_playheads && rec.is_video
+        is_video: this.props.enable_video_playheads && rec.is_video,
+        is_collection: this.props.is_collection
       }));
     } // Used for CSS overrides to default styling (eg: "hero")
 
@@ -4947,7 +4998,8 @@ class _DSCard extends react__WEBPACK_IMPORTED_MODULE_4___default.a.PureComponent
       pocket_id: this.props.pocket_id,
       shim: this.props.shim,
       bookmarkGuid: this.props.bookmarkGuid,
-      flightId: this.props.flightId
+      flightId: !this.props.is_collection ? this.props.flightId : undefined,
+      showPrivacyInfo: !!this.props.flightId
     }));
   }
 
@@ -5168,7 +5220,7 @@ class DSLinkMenu extends react__WEBPACK_IMPORTED_MODULE_2___default.a.PureCompon
       index,
       dispatch
     } = this.props;
-    const TOP_STORIES_CONTEXT_MENU_OPTIONS = ["CheckBookmarkOrArchive", "CheckSavedToPocket", "Separator", "OpenInNewWindow", "OpenInPrivateWindow", "Separator", "BlockUrl", ...(this.props.flightId ? ["ShowPrivacyInfo"] : [])];
+    const TOP_STORIES_CONTEXT_MENU_OPTIONS = ["CheckBookmarkOrArchive", "CheckSavedToPocket", "Separator", "OpenInNewWindow", "OpenInPrivateWindow", "Separator", "BlockUrl", ...(this.props.showPrivacyInfo ? ["ShowPrivacyInfo"] : [])];
     const type = this.props.type || "DISCOVERY_STREAM";
     const title = this.props.title || this.props.source;
     return react__WEBPACK_IMPORTED_MODULE_2___default.a.createElement("div", null, react__WEBPACK_IMPORTED_MODULE_2___default.a.createElement(content_src_components_ContextMenu_ContextMenuButton__WEBPACK_IMPORTED_MODULE_1__["ContextMenuButton"], {
@@ -6557,7 +6609,8 @@ class CollectionCardGrid extends react__WEBPACK_IMPORTED_MODULE_4___default.a.Pu
       const spocsData = data.spocs.map(item => ({
         url: item.url,
         guid: item.id,
-        shim: item.shim
+        shim: item.shim,
+        flight_id: item.flightId
       }));
       const blockUrlOption = content_src_lib_link_menu_options__WEBPACK_IMPORTED_MODULE_3__["LinkMenuOptions"].BlockUrls(spocsData, pos, source);
       const {
@@ -6650,6 +6703,7 @@ class CollectionCardGrid extends react__WEBPACK_IMPORTED_MODULE_4___default.a.Pu
       feed: feed,
       border: this.props.border,
       type: type,
+      is_collection: true,
       dispatch: this.props.dispatch,
       items: this.props.items
     }));
@@ -10272,8 +10326,7 @@ class TopSite extends react__WEBPACK_IMPORTED_MODULE_4___default.a.PureComponent
         this.props.dispatch(common_Actions_jsm__WEBPACK_IMPORTED_MODULE_0__["actionCreators"].OnlyToMain({
           type: common_Actions_jsm__WEBPACK_IMPORTED_MODULE_0__["actionTypes"].TOP_SITES_ATTRIBUTION,
           data: {
-            searchProvider: this.props.link.hostname,
-            siteURL: this.props.link.url,
+            targetURL: this.props.link.url,
             source: "newtab"
           }
         }));
@@ -10625,9 +10678,10 @@ class Topic extends react__WEBPACK_IMPORTED_MODULE_1___default.a.PureComponent {
 
   onLinkClick(event) {
     if (this.props.dispatch) {
-      this.props.dispatch(common_Actions_jsm__WEBPACK_IMPORTED_MODULE_0__["actionCreators"].ImpressionStats({
+      this.props.dispatch(common_Actions_jsm__WEBPACK_IMPORTED_MODULE_0__["actionCreators"].UserEvent({
         event: "CLICK",
         source: "POPULAR_TOPICS",
+        action_position: 0,
         value: {
           topic: event.target.text.toLowerCase().replace(` `, `-`)
         }
@@ -12282,7 +12336,7 @@ const ConditionalWrapper = ({
   condition,
   wrap,
   children
-}) => condition ? wrap(children) : children;
+}) => condition && wrap ? wrap(children) : children;
 
 /* harmony default export */ var ConditionalWrapper_ConditionalWrapper = (ConditionalWrapper);
 // EXTERNAL MODULE: ./content-src/asrouter/components/RichText/RichText.jsx
@@ -12766,6 +12820,7 @@ function SubmitFormSnippet_extends() { SubmitFormSnippet_extends = Object.assign
 
 
 
+
  // Alt text placeholder in case the prop from the server isn't available
 
 const SubmitFormSnippet_ICON_ALT_TEXT = "";
@@ -12986,6 +13041,14 @@ class SubmitFormSnippet_SubmitFormSnippet extends external_React_default.a.PureC
     event.target.setCustomValidity(hasError);
   }
 
+  wrapSectionHeader(url) {
+    return function (children) {
+      return external_React_default.a.createElement("a", {
+        href: url
+      }, children);
+    };
+  }
+
   renderInput() {
     const placholder = this.props.content.scene2_email_placeholder_text || this.props.content.scene2_input_placeholder;
     return external_React_default.a.createElement("input", {
@@ -12999,32 +13062,8 @@ class SubmitFormSnippet_SubmitFormSnippet extends external_React_default.a.PureC
     });
   }
 
-  renderSignupView() {
-    const {
-      content
-    } = this.props;
-    const containerClass = `SubmitFormSnippet ${this.props.className}`;
-    return external_React_default.a.createElement(SnippetBase_SnippetBase, SubmitFormSnippet_extends({}, this.props, {
-      className: containerClass,
-      footerDismiss: true
-    }), content.scene2_icon ? external_React_default.a.createElement("div", {
-      className: "scene2Icon"
-    }, external_React_default.a.createElement("img", {
-      src: Object(template_utils["safeURI"])(content.scene2_icon),
-      className: "icon-light-theme",
-      alt: content.scene2_icon_alt_text || SubmitFormSnippet_ICON_ALT_TEXT
-    }), external_React_default.a.createElement("img", {
-      src: Object(template_utils["safeURI"])(content.scene2_icon_dark_theme || content.scene2_icon),
-      className: "icon-dark-theme",
-      alt: content.scene2_icon_alt_text || SubmitFormSnippet_ICON_ALT_TEXT
-    })) : null, external_React_default.a.createElement("div", {
-      className: "message"
-    }, external_React_default.a.createElement("p", null, content.scene2_title && external_React_default.a.createElement("h3", {
-      className: "scene2Title"
-    }, content.scene2_title), " ", content.scene2_text && external_React_default.a.createElement(RichText["RichText"], {
-      scene2_text: content.scene2_text,
-      localization_id: "scene2_text"
-    }))), external_React_default.a.createElement("form", {
+  renderForm() {
+    return external_React_default.a.createElement("form", {
       action: this.props.form_action,
       method: this.props.form_method,
       onSubmit: this.handleSubmit,
@@ -13034,7 +13073,98 @@ class SubmitFormSnippet_SubmitFormSnippet extends external_React_default.a.PureC
       className: "ASRouterButton primary",
       onClick: this.handleSubmitAttempt,
       ref: "formSubmitBtn"
-    }, content.scene2_button_label)), this.renderFormPrivacyNotice() || this.renderDisclaimer()));
+    }, this.props.content.scene2_button_label)), this.renderFormPrivacyNotice() || this.renderDisclaimer());
+  }
+
+  renderScene2Icon() {
+    const {
+      content
+    } = this.props;
+
+    if (!content.scene2_icon) {
+      return null;
+    }
+
+    return external_React_default.a.createElement("div", {
+      className: "scene2Icon"
+    }, external_React_default.a.createElement("img", {
+      src: Object(template_utils["safeURI"])(content.scene2_icon),
+      className: "icon-light-theme",
+      alt: content.scene2_icon_alt_text || SubmitFormSnippet_ICON_ALT_TEXT
+    }), external_React_default.a.createElement("img", {
+      src: Object(template_utils["safeURI"])(content.scene2_icon_dark_theme || content.scene2_icon),
+      className: "icon-dark-theme",
+      alt: content.scene2_icon_alt_text || SubmitFormSnippet_ICON_ALT_TEXT
+    }));
+  }
+
+  renderSignupView() {
+    const {
+      content
+    } = this.props;
+    const containerClass = `SubmitFormSnippet ${this.props.className}`;
+    return external_React_default.a.createElement(SnippetBase_SnippetBase, SubmitFormSnippet_extends({}, this.props, {
+      className: containerClass,
+      footerDismiss: true
+    }), this.renderScene2Icon(), external_React_default.a.createElement("div", {
+      className: "message"
+    }, external_React_default.a.createElement("p", null, content.scene2_title && external_React_default.a.createElement("h3", {
+      className: "scene2Title"
+    }, content.scene2_title), " ", content.scene2_text && external_React_default.a.createElement(RichText["RichText"], {
+      scene2_text: content.scene2_text,
+      localization_id: "scene2_text"
+    }))), this.renderForm());
+  }
+
+  renderSectionHeader() {
+    const {
+      props
+    } = this; // an icon and text must be specified to render the section header
+
+    if (props.content.section_title_icon && props.content.section_title_text) {
+      const sectionTitleIconLight = Object(template_utils["safeURI"])(props.content.section_title_icon);
+      const sectionTitleIconDark = Object(template_utils["safeURI"])(props.content.section_title_icon_dark_theme || props.content.section_title_icon);
+      const sectionTitleURL = props.content.section_title_url;
+      return external_React_default.a.createElement("div", {
+        className: "section-header"
+      }, external_React_default.a.createElement("h3", {
+        className: "section-title"
+      }, external_React_default.a.createElement(ConditionalWrapper_ConditionalWrapper, {
+        wrap: this.wrapSectionHeader(sectionTitleURL),
+        condition: sectionTitleURL
+      }, external_React_default.a.createElement("span", {
+        className: "icon icon-small-spacer icon-light-theme",
+        style: {
+          backgroundImage: `url("${sectionTitleIconLight}")`
+        }
+      }), external_React_default.a.createElement("span", {
+        className: "icon icon-small-spacer icon-dark-theme",
+        style: {
+          backgroundImage: `url("${sectionTitleIconDark}")`
+        }
+      }), external_React_default.a.createElement("span", {
+        className: "section-title-text"
+      }, props.content.section_title_text))));
+    }
+
+    return null;
+  }
+
+  renderSignupViewAlt() {
+    const {
+      content
+    } = this.props;
+    const containerClass = `SubmitFormSnippet ${this.props.className} scene2Alt`;
+    return external_React_default.a.createElement(SnippetBase_SnippetBase, SubmitFormSnippet_extends({}, this.props, {
+      className: containerClass // Don't show bottom dismiss button
+      ,
+      footerDismiss: false
+    }), this.renderSectionHeader(), this.renderScene2Icon(), external_React_default.a.createElement("div", {
+      className: "message"
+    }, external_React_default.a.createElement("p", null, content.scene2_text && external_React_default.a.createElement(RichText["RichText"], {
+      scene2_text: content.scene2_text,
+      localization_id: "scene2_text"
+    })), this.renderForm()));
   }
 
   getFirstSceneContent() {
@@ -13051,6 +13181,13 @@ class SubmitFormSnippet_SubmitFormSnippet extends external_React_default.a.PureC
 
     if (this.state.signupSubmitted) {
       return this.renderSignupSubmitted();
+    } // Render only scene 2 (signup view). Must check before `renderSignupView`
+    // to catch the Failure/Try again scenario where we want to return and render
+    // the scene again.
+
+
+    if (this.props.expandedAlt) {
+      return this.renderSignupViewAlt();
     }
 
     if (this.state.expanded) {
@@ -13245,6 +13382,11 @@ const SendToDeviceSnippet = props => {
     processFormData: processFormData
   }));
 };
+const SendToDeviceScene2Snippet = props => {
+  return external_React_default.a.createElement(SendToDeviceSnippet, SendToDeviceSnippet_extends({
+    expandedAlt: true
+  }, props));
+};
 // CONCATENATED MODULE: ./content-src/asrouter/templates/SimpleBelowSearchSnippet/SimpleBelowSearchSnippet.jsx
 function SimpleBelowSearchSnippet_extends() { SimpleBelowSearchSnippet_extends = Object.assign || function (target) { for (var i = 1; i < arguments.length; i++) { var source = arguments[i]; for (var key in source) { if (Object.prototype.hasOwnProperty.call(source, key)) { target[key] = source[key]; } } } return target; }; return SimpleBelowSearchSnippet_extends.apply(this, arguments); }
 
@@ -13390,6 +13532,7 @@ const SnippetsTemplates = {
   newsletter_snippet: NewsletterSnippet,
   fxa_signup_snippet: FXASignupSnippet,
   send_to_device_snippet: SendToDeviceSnippet,
+  send_to_device_scene2_snippet: SendToDeviceScene2Snippet,
   eoy_snippet: EOYSnippet,
   simple_below_search_snippet: SimpleBelowSearchSnippet_SimpleBelowSearchSnippet
 };
@@ -14941,7 +15084,6 @@ const INITIAL_STATE = {
     },
     spocs: {
       spocs_endpoint: "",
-      spocs_per_domain: 1,
       lastUpdated: null,
       data: {// "spocs": {title: "", context: "", items: []},
         // "placement1": {title: "", context: "", items: []},
@@ -15640,8 +15782,7 @@ function DiscoveryStream(prevState = INITIAL_STATE.DiscoveryStream, action) {
     case Actions["actionTypes"].DISCOVERY_STREAM_SPOCS_ENDPOINT:
       return { ...prevState,
         spocs: { ...INITIAL_STATE.DiscoveryStream.spocs,
-          spocs_endpoint: action.data.url || INITIAL_STATE.DiscoveryStream.spocs.spocs_endpoint,
-          spocs_per_domain: action.data.spocs_per_domain || INITIAL_STATE.DiscoveryStream.spocs.spocs_per_domain
+          spocs_endpoint: action.data.url || INITIAL_STATE.DiscoveryStream.spocs.spocs_endpoint
         }
       };
 

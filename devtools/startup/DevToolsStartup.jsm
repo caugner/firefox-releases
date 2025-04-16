@@ -71,6 +71,11 @@ ChromeUtils.defineModuleGetter(
   "WebChannel",
   "resource://gre/modules/WebChannel.jsm"
 );
+ChromeUtils.defineModuleGetter(
+  this,
+  "PanelMultiView",
+  "resource:///modules/PanelMultiView.jsm"
+);
 
 // We don't want to spend time initializing the full loader here so we create
 // our own lazy require.
@@ -277,8 +282,9 @@ function validateProfilerWebChannelUrl(targetUrl) {
       // Allows the following:
       //   "https://deploy-preview-1234--perf-html.netlify.com"
       //   "https://deploy-preview-1234--perf-html.netlify.com/"
-      //   "https://deploy-preview-1234567--perf-html.netlify.com"
-      /^https:\/\/deploy-preview-\d+--perf-html\.netlify\.com\/?$/.test(
+      //   "https://deploy-preview-1234567--perf-html.netlify.app"
+      //   "https://main--perf-html.netlify.app"
+      /^https:\/\/(?:deploy-preview-\d+|main)--perf-html\.netlify\.(?:com|app)\/?$/.test(
         targetUrl
       )
     ) {
@@ -575,7 +581,10 @@ DevToolsStartup.prototype = {
         });
         itemsToDisplay.push(doc.getElementById("goOfflineMenuitem"));
 
-        const developerItems = doc.getElementById("PanelUI-developerItems");
+        const developerItems = PanelMultiView.getViewNode(
+          doc,
+          "PanelUI-developerItems"
+        );
         CustomizableUI.clearSubview(developerItems);
         CustomizableUI.fillSubviewFromMenuItems(itemsToDisplay, developerItems);
       },
@@ -590,8 +599,7 @@ DevToolsStartup.prototype = {
         // not called yet when CustomizableUI creates the widget.
         this.hookKeyShortcuts(doc.defaultView);
 
-        // Bug 1223127, CUI should make this easier to do.
-        if (doc.getElementById("PanelUI-developerItems")) {
+        if (PanelMultiView.getViewNode(doc, "PanelUI-developerItems")) {
           return;
         }
         const view = doc.createXULElement("panelview");
@@ -1244,7 +1252,7 @@ DevToolsStartup.prototype = {
   /* eslint-disable max-len */
 
   classID: Components.ID("{9e9a9283-0ce9-4e4a-8f1c-ba129a032c32}"),
-  QueryInterface: ChromeUtils.generateQI([Ci.nsICommandLineHandler]),
+  QueryInterface: ChromeUtils.generateQI(["nsICommandLineHandler"]),
 };
 
 /**

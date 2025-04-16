@@ -424,8 +424,8 @@ void nsTableColGroupFrame::InvalidateFrame(uint32_t aDisplayItemKey,
                                            bool aRebuildDisplayItems) {
   nsIFrame::InvalidateFrame(aDisplayItemKey, aRebuildDisplayItems);
   if (GetTableFrame()->IsBorderCollapse()) {
-    GetParent()->InvalidateFrameWithRect(
-        GetVisualOverflowRect() + GetPosition(), aDisplayItemKey, false);
+    GetParent()->InvalidateFrameWithRect(InkOverflowRect() + GetPosition(),
+                                         aDisplayItemKey, false);
   }
 }
 
@@ -443,7 +443,7 @@ void nsTableColGroupFrame::InvalidateFrameWithRect(const nsRect& aRect,
 
 #ifdef DEBUG_FRAME_DUMP
 nsresult nsTableColGroupFrame::GetFrameName(nsAString& aResult) const {
-  return MakeFrameName(NS_LITERAL_STRING("TableColGroup"), aResult);
+  return MakeFrameName(u"TableColGroup"_ns, aResult);
 }
 
 void nsTableColGroupFrame::Dump(int32_t aIndent) {

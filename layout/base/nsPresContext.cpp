@@ -499,6 +499,15 @@ void nsPresContext::PreferenceChanged(const char* aPrefName) {
     }
     return;
   }
+  // Changing any of these potentially changes the value of @media
+  // (prefers-contrast).
+  if (prefName.EqualsLiteral("layout.css.prefers-contrast.enabled") ||
+      prefName.EqualsLiteral("browser.display.document_color_use") ||
+      prefName.EqualsLiteral("privacy.resistFingerprinting") ||
+      prefName.EqualsLiteral("browser.display.foreground_color") ||
+      prefName.EqualsLiteral("browser.display.background_color")) {
+    MediaFeatureValuesChanged({MediaFeatureChangeReason::PreferenceChange});
+  }
   if (prefName.EqualsLiteral(GFX_MISSING_FONTS_NOTIFY_PREF)) {
     if (Preferences::GetBool(GFX_MISSING_FONTS_NOTIFY_PREF)) {
       if (!mMissingFonts) {
@@ -513,7 +522,7 @@ void nsPresContext::PreferenceChanged(const char* aPrefName) {
       mMissingFonts = nullptr;
     }
   }
-  if (StringBeginsWith(prefName, NS_LITERAL_CSTRING("font.")) ||
+  if (StringBeginsWith(prefName, "font."_ns) ||
       prefName.EqualsLiteral("intl.accept_languages")) {
     // Changes to font family preferences don't change anything in the
     // computed style data, so the style system won't generate a reflow
@@ -525,14 +534,14 @@ void nsPresContext::PreferenceChanged(const char* aPrefName) {
     // bother (yet, anyway).
     mPrefChangePendingNeedsReflow = true;
   }
-  if (StringBeginsWith(prefName, NS_LITERAL_CSTRING("bidi."))) {
+  if (StringBeginsWith(prefName, "bidi."_ns)) {
     // Changes to bidi prefs need to trigger a reflow (see bug 443629)
     mPrefChangePendingNeedsReflow = true;
 
     // Changes to bidi.numeral also needs to empty the text run cache.
     // This is handled in gfxTextRunWordCache.cpp.
   }
-  if (StringBeginsWith(prefName, NS_LITERAL_CSTRING("gfx.font_rendering."))) {
+  if (StringBeginsWith(prefName, "gfx.font_rendering."_ns)) {
     // Changes to font_rendering prefs need to trigger a reflow
     mPrefChangePendingNeedsReflow = true;
   }
@@ -854,7 +863,7 @@ nsPresContext* nsPresContext::GetParentPresContext() const {
   return nullptr;
 }
 
-nsPresContext* nsPresContext::GetToplevelContentDocumentPresContext() {
+nsPresContext* nsPresContext::GetInProcessRootContentDocumentPresContext() {
   if (IsChrome()) return nullptr;
   nsPresContext* pc = this;
   for (;;) {
@@ -1260,19 +1269,21 @@ void nsPresContext::RecordInteractionTime(InteractionType aType,
 
   // Record the interaction time if it occurs after the first paint
   // of the top level content document.
-  nsPresContext* topContentPresContext =
-      GetToplevelContentDocumentPresContext();
+  nsPresContext* inProcessRootPresContext =
+      GetInProcessRootContentDocumentPresContext();
 
-  if (!topContentPresContext) {
-    // There is no top content pres context so we don't care
-    // about the interaction time. Record a value anyways to avoid
-    // trying to find the top content pres context in future interactions.
+  if (!inProcessRootPresContext ||
+      !inProcessRootPresContext->IsRootContentDocumentCrossProcess()) {
+    // There is no top content pres context, or we are in a cross process
+    // document so we don't care about the interaction time. Record a value
+    // anyways to avoid trying to find the top content pres context in future
+    // interactions.
     interactionTime = TimeStamp::Now();
     return;
   }
 
-  if (topContentPresContext->mFirstNonBlankPaintTime.IsNull() ||
-      topContentPresContext->mFirstNonBlankPaintTime > aTimeStamp) {
+  if (inProcessRootPresContext->mFirstNonBlankPaintTime.IsNull() ||
+      inProcessRootPresContext->mFirstNonBlankPaintTime > aTimeStamp) {
     // Top content pres context has not had a non-blank paint yet
     // or the event timestamp is before the first non-blank paint,
     // so don't record interaction time.
@@ -1292,7 +1303,7 @@ void nsPresContext::RecordInteractionTime(InteractionType aType,
   interactionTime = TimeStamp::Now();
   // Only the top level content pres context reports first interaction
   // time to telemetry (if it hasn't already done so).
-  if (this == topContentPresContext) {
+  if (this == inProcessRootPresContext) {
     if (Telemetry::CanRecordExtended()) {
       double millis =
           (interactionTime - mFirstNonBlankPaintTime).ToMilliseconds();
@@ -1303,7 +1314,7 @@ void nsPresContext::RecordInteractionTime(InteractionType aType,
       }
     }
   } else {
-    topContentPresContext->RecordInteractionTime(aType, aTimeStamp);
+    inProcessRootPresContext->RecordInteractionTime(aType, aTimeStamp);
   }
 }
 
@@ -1545,10 +1556,6 @@ void nsPresContext::FlushPendingMediaFeatureValuesChanged() {
     RebuildAllStyleData(change.mChangeHint, change.mRestyleHint);
   }
 
-  if (!mPresShell || !mPresShell->DidInitialize()) {
-    return;
-  }
-
   if (mDocument->IsBeingUsedAsImage()) {
     MOZ_ASSERT(mDocument->MediaQueryLists().isEmpty());
     return;
@@ -1556,11 +1563,14 @@ void nsPresContext::FlushPendingMediaFeatureValuesChanged() {
 
   mDocument->NotifyMediaFeatureValuesChanged();
 
-  MOZ_DIAGNOSTIC_ASSERT(nsContentUtils::IsSafeToRunScript());
-
+  // https://drafts.csswg.org/cssom-view/#evaluate-media-queries-and-report-changes
+  //
   // Media query list listeners should be notified from a queued task
   // (in HTML5 terms), although we also want to notify them on certain
   // flushes.  (We're already running off an event.)
+  //
+  // TODO: This should be better integrated into the "update the rendering"
+  // steps: https://html.spec.whatwg.org/#update-the-rendering
   //
   // Note that we do this after the new style from media queries in
   // style sheets has been computed.
@@ -1571,20 +1581,22 @@ void nsPresContext::FlushPendingMediaFeatureValuesChanged() {
 
   // We build a list of all the notifications we're going to send
   // before we send any of them.
-
-  // Copy pointers to all the lists into a new array, in case one of our
-  // notifications modifies the list.
-  nsTArray<RefPtr<mozilla::dom::MediaQueryList>> localMediaQueryLists;
+  nsTArray<RefPtr<mozilla::dom::MediaQueryList>> listsToNotify;
   for (MediaQueryList* mql = mDocument->MediaQueryLists().getFirst(); mql;
        mql = static_cast<LinkedListElement<MediaQueryList>*>(mql)->getNext()) {
-    localMediaQueryLists.AppendElement(mql);
+    if (mql->MediaFeatureValuesChanged()) {
+      listsToNotify.AppendElement(mql);
+    }
   }
 
-  // Now iterate our local array of the lists.
-  for (const auto& mql : localMediaQueryLists) {
-    nsAutoMicroTask mt;
-    mql->MaybeNotify();
-  }
+  nsContentUtils::AddScriptRunner(NS_NewRunnableFunction(
+      "nsPresContext::FlushPendingMediaFeatureValuesChanged",
+      [list = std::move(listsToNotify)] {
+        for (const auto& mql : list) {
+          nsAutoMicroTask mt;
+          mql->FireChangeEvent();
+        }
+      }));
 }
 
 void nsPresContext::SizeModeChanged(nsSizeMode aSizeMode) {
@@ -2343,8 +2355,7 @@ void nsPresContext::NotifyNonBlankPaint() {
 void nsPresContext::NotifyContentfulPaint() {
   if (!mHadContentfulPaint) {
 #if defined(MOZ_WIDGET_ANDROID)
-    (new AsyncEventDispatcher(mDocument,
-                              NS_LITERAL_STRING("MozFirstContentfulPaint"),
+    (new AsyncEventDispatcher(mDocument, u"MozFirstContentfulPaint"_ns,
                               CanBubble::eYes, ChromeOnlyDispatch::eYes))
         ->PostDOMEvent();
 #endif
@@ -2456,6 +2467,7 @@ void nsPresContext::SetDynamicToolbarMaxHeight(ScreenIntCoord aHeight) {
     return;
   }
   mDynamicToolbarMaxHeight = aHeight;
+  mDynamicToolbarHeight = aHeight;
 
   AdjustSizeForViewportUnits();
 
@@ -2613,7 +2625,7 @@ void nsRootPresContext::ComputePluginGeometryUpdates(
       // again. nsDisplayScroll(Info)Layer doesn't support trying to flatten
       // again.
       aBuilder->SetAllowMergingAndFlattening(false);
-      nsRegion region = rootFrame->GetVisualOverflowRectRelativeToSelf();
+      nsRegion region = rootFrame->InkOverflowRectRelativeToSelf();
       // nsDisplayPlugin::ComputeVisibility will automatically set a non-hidden
       // widget configuration for the plugin, if it's visible.
       aList->ComputeVisibilityForRoot(aBuilder, &region);

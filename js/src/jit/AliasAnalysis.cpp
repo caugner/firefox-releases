@@ -111,6 +111,7 @@ static inline const MDefinition* GetObject(const MDefinition* ins) {
     case MDefinition::Opcode::LoadUnboxedScalar:
     case MDefinition::Opcode::LoadDataViewElement:
     case MDefinition::Opcode::StoreElement:
+    case MDefinition::Opcode::StoreHoleValueElement:
     case MDefinition::Opcode::StoreUnboxedScalar:
     case MDefinition::Opcode::StoreDataViewElement:
     case MDefinition::Opcode::SetInitializedLength:
@@ -135,6 +136,8 @@ static inline const MDefinition* GetObject(const MDefinition* ins) {
     case MDefinition::Opcode::GuardReceiverPolymorphic:
     case MDefinition::Opcode::GuardObjectGroup:
     case MDefinition::Opcode::GuardObjectIdentity:
+    case MDefinition::Opcode::GuardProto:
+    case MDefinition::Opcode::GuardNullProto:
     case MDefinition::Opcode::LoadDynamicSlot:
     case MDefinition::Opcode::StoreDynamicSlot:
     case MDefinition::Opcode::InArray:

@@ -97,6 +97,7 @@ either Raptor or browsertime."""
         device_name=None,
         disable_perf_tuning=False,
         conditioned_profile_scenario='settled',
+        chimera=False,
         extra_prefs={},
         project="mozilla-central",
         verbose=False,
@@ -135,6 +136,7 @@ either Raptor or browsertime."""
             "enable_fission": extra_prefs.get("fission.autostart", False),
             "disable_perf_tuning": disable_perf_tuning,
             "conditioned_profile_scenario": conditioned_profile_scenario,
+            "chimera": chimera,
             "extra_prefs": extra_prefs,
             "project": project,
             "verbose": verbose
@@ -577,8 +579,8 @@ class PerftestAndroid(Perftest):
             # We absolutely need to determine the chrome
             # version here so that we can select the correct
             # chromedriver for browsertime
-            from mozdevice import ADBDevice
-            device = ADBDevice(verbose=True)
+            from mozdevice import ADBDeviceFactory
+            device = ADBDeviceFactory(verbose=True)
             binary = "com.android.chrome"
 
             pkg_info = device.shell_output("dumpsys package %s" % binary)
@@ -656,12 +658,9 @@ class PerftestAndroid(Perftest):
 
         try:
             LOG.info("copying profile to device: %s" % self.remote_profile)
-            # We must use root=True since the remote profile has been
-            # modified by gecko and has content which is only
-            # accessible to the gecko user.
-            self.device.rm(self.remote_profile, force=True, recursive=True, root=True)
+            self.device.rm(self.remote_profile, force=True, recursive=True)
             self.device.push(self.profile.profile, self.remote_profile)
-            self.device.chmod(self.remote_profile, recursive=True, root=True)
+            self.device.chmod(self.remote_profile, recursive=True)
 
         except Exception:
             LOG.error("Unable to copy profile to device.")

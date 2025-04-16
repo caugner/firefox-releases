@@ -195,7 +195,13 @@ void MediaControlService::GenerateTestMediaControlKey(MediaControlKey aKey) {
   if (!StaticPrefs::media_mediacontrol_testingevents_enabled()) {
     return;
   }
-  mMediaKeysHandler->OnKeyPressed(aKey);
+  // Generate a seek details for `seekto`
+  if (aKey == MediaControlKey::Seekto) {
+    mMediaKeysHandler->OnActionPerformed(
+        MediaControlAction(aKey, SeekDetails()));
+  } else {
+    mMediaKeysHandler->OnActionPerformed(MediaControlAction(aKey));
+  }
 }
 
 MediaMetadataBase MediaControlService::GetMainControllerMediaMetadata() const {
@@ -332,6 +338,7 @@ void MediaControlService::ControllerManager::UpdateMainControllerInternal(
 
   if (!mMainController) {
     LOG_MAINCONTROLLER_INFO("Clear main controller");
+    mSource->SetControlledTabBrowsingContextId(Nothing());
     mSource->SetPlaybackState(MediaSessionPlaybackState::None);
     mSource->SetMediaMetadata(MediaMetadataBase::EmptyData());
     mSource->SetSupportedMediaKeys(MediaKeysArray());
@@ -339,6 +346,7 @@ void MediaControlService::ControllerManager::UpdateMainControllerInternal(
   } else {
     LOG_MAINCONTROLLER_INFO("Set controller %" PRId64 " as main controller",
                             mMainController->Id());
+    mSource->SetControlledTabBrowsingContextId(Some(mMainController->Id()));
     mSource->SetPlaybackState(mMainController->GetState());
     mSource->SetMediaMetadata(mMainController->GetCurrentMediaMetadata());
     mSource->SetSupportedMediaKeys(mMainController->GetSupportedMediaKeys());
@@ -377,6 +385,10 @@ void MediaControlService::ControllerManager::ConnectMainControllerEvents() {
           AbstractThread::MainThread(), [this](bool aIsEnabled) {
             mSource->SetEnablePictureInPictureMode(aIsEnabled);
           });
+  mPositionChangedListener = mMainController->PositionChangedEvent().Connect(
+      AbstractThread::MainThread(), [this](const PositionState& aState) {
+        mSource->SetPositionState(aState);
+      });
 }
 
 void MediaControlService::ControllerManager::DisconnectMainControllerEvents() {
@@ -384,6 +396,7 @@ void MediaControlService::ControllerManager::DisconnectMainControllerEvents() {
   mSupportedKeysChangedListener.DisconnectIfExists();
   mFullScreenChangedListener.DisconnectIfExists();
   mPictureInPictureModeChangedListener.DisconnectIfExists();
+  mPositionChangedListener.DisconnectIfExists();
 }
 
 MediaController* MediaControlService::ControllerManager::GetMainController()

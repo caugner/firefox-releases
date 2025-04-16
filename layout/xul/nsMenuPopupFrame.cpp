@@ -342,6 +342,8 @@ nsresult nsMenuPopupFrame::CreateWidgetForView(nsView* aView) {
   nsIWidget* widget = aView->GetWidget();
   widget->SetTransparencyMode(mode);
   widget->SetWindowShadowStyle(GetShadowStyle());
+  widget->SetWindowOpacity(StyleUIReset()->mWindowOpacity);
+  widget->SetWindowTransform(ComputeWidgetTransform());
 
   // most popups don't have a title so avoid setting the title if there isn't
   // one
@@ -356,7 +358,7 @@ StyleWindowShadow nsMenuPopupFrame::GetShadowStyle() {
   StyleWindowShadow shadow = StyleUIReset()->mWindowShadow;
   if (shadow != StyleWindowShadow::Default) return shadow;
 
-  switch (StyleDisplay()->mAppearance) {
+  switch (StyleDisplay()->EffectiveAppearance()) {
     case StyleAppearance::Tooltip:
       return StyleWindowShadow::Tooltip;
     case StyleAppearance::Menupopup:
@@ -401,8 +403,7 @@ NS_IMETHODIMP nsXULPopupShownEvent::HandleEvent(Event* aEvent) {
 }
 
 void nsXULPopupShownEvent::CancelListener() {
-  mPopup->RemoveSystemEventListener(NS_LITERAL_STRING("transitionend"), this,
-                                    false);
+  mPopup->RemoveSystemEventListener(u"transitionend"_ns, this, false);
 }
 
 NS_IMPL_ISUPPORTS_INHERITED(nsXULPopupShownEvent, Runnable,
@@ -624,7 +625,7 @@ void nsMenuPopupFrame::LayoutPopup(nsBoxLayoutState& aState,
         AnimationUtils::HasCurrentTransitions(mContent->AsElement(),
                                               PseudoStyleType::NotPseudo)) {
       mPopupShownDispatcher = new nsXULPopupShownEvent(mContent, pc);
-      mContent->AddSystemEventListener(NS_LITERAL_STRING("transitionend"),
+      mContent->AddSystemEventListener(u"transitionend"_ns,
                                        mPopupShownDispatcher, false, false);
       return;
     }
@@ -719,7 +720,9 @@ void nsMenuPopupFrame::InitializePopup(nsIContent* aAnchorContent,
                                        int32_t aXPos, int32_t aYPos,
                                        MenuPopupAnchorType aAnchorType,
                                        bool aAttributesOverride) {
-  EnsureWidget();
+  auto* widget = GetWidget();
+  bool recreateWidget = widget && widget->NeedsRecreateToReshow();
+  EnsureWidget(recreateWidget);
 
   mPopupState = ePopupShowing;
   mAnchorContent = aAnchorContent;
@@ -974,7 +977,7 @@ void nsMenuPopupFrame::HidePopup(bool aDeselectMenu, nsPopupState aNewState) {
   nsViewManager* viewManager = view->GetViewManager();
   viewManager->SetViewVisibility(view, nsViewVisibility_kHide);
 
-  FireDOMEvent(NS_LITERAL_STRING("DOMMenuInactive"), mContent);
+  FireDOMEvent(u"DOMMenuInactive"_ns, mContent);
 
   // XXX, bug 137033, In Windows, if mouse is outside the window when the
   // menupopup closes, no mouse_enter/mouse_exit event will be fired to clear
@@ -2408,7 +2411,7 @@ int8_t nsMenuPopupFrame::GetAlignmentPosition() const {
 }
 
 /**
- * KEEP THIS IN SYNC WITH nsFrame::CreateView
+ * KEEP THIS IN SYNC WITH nsIFrame::CreateView
  * as much as possible. Until we get rid of views finally...
  */
 void nsMenuPopupFrame::CreatePopupView() {

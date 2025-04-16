@@ -63,7 +63,22 @@ class Module::Tier2GeneratorTaskImpl : public Tier2GeneratorTask {
 
   void cancel() override { cancelled_ = true; }
 
-  void runTask() override {
+  void runTaskLocked(AutoLockHelperThreadState& locked) override {
+    {
+      AutoUnlockHelperThreadState unlock(locked);
+      runTask();
+    }
+
+    // During shutdown the main thread will wait for any ongoing (cancelled)
+    // tier-2 generation to shut down normally.  To do so, it waits on the
+    // CONSUMER condition for the count of finished generators to rise.
+    HelperThreadState().incWasmTier2GeneratorsFinished(locked);
+
+    // The task is finished, release it.
+    js_delete(this);
+  }
+
+  void runTask() {
     CompileTier2(*compileArgs_, bytecode_->bytes, *module_, &cancelled_);
   }
   ThreadType threadType() override {

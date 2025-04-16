@@ -54,12 +54,6 @@ class VoidBootstrapper(
         self.browser_packages = self.BROWSER_PACKAGES
         self.mobile_android_packages = self.MOBILE_ANDROID_PACKAGES
 
-        # Check if we need Python2 or Python3 pip.
-        if sys.version_info[0] == 3:
-            self.packages.append('python3-pip')
-        else:
-            self.packages.append('python-pip')
-
     def run_as_root(self, command):
         # VoidLinux doesn't support users sudo'ing most commands by default because of the group
         # configuration.
@@ -86,8 +80,6 @@ class VoidBootstrapper(
         self.run_as_root(command)
 
     def install_system_packages(self):
-        # Python 3 may not be present on all distros. Search for it and
-        # install if found.
         self.xbps_install(*self.packages)
 
     def install_browser_packages(self):

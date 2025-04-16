@@ -1111,8 +1111,6 @@ mozilla::ipc::IPCResult WebRenderBridgeParent::RecvSetDisplayList(
 
   wr::Epoch wrEpoch = GetNextWrEpoch();
 
-  mAsyncImageManager->SetCompositionTime(TimeStamp::Now());
-
   mReceivedDisplayList = true;
 
   if (aDisplayList.mScrollData && aDisplayList.mScrollData->IsFirstPaint()) {
@@ -1181,7 +1179,6 @@ bool WebRenderBridgeParent::ProcessEmptyTransactionUpdates(
   }
 
   if (!aData.mCommands.IsEmpty()) {
-    mAsyncImageManager->SetCompositionTime(TimeStamp::Now());
     if (!ProcessWebRenderParentCommands(aData.mCommands, txn)) {
       return false;
     }
@@ -1387,7 +1384,7 @@ bool WebRenderBridgeParent::ProcessWebRenderParentCommands(
         }
         if (data.animations().Length()) {
           if (RefPtr<OMTASampler> sampler = GetOMTASampler()) {
-            sampler->SetAnimations(data.id(), data.animations());
+            sampler->SetAnimations(data.id(), GetLayersId(), data.animations());
             const auto activeAnim = mActiveAnimations.find(data.id());
             if (activeAnim == mActiveAnimations.end()) {
               mActiveAnimations.emplace(data.id(), mWrEpoch);
@@ -1963,6 +1960,11 @@ void WebRenderBridgeParent::CompositeToTarget(VsyncId aId,
   AUTO_PROFILER_TRACING_MARKER("Paint", "CompositeToTarget", GRAPHICS);
   if (mPaused || !mReceivedDisplayList) {
     ResetPreviousSampleTime();
+    mCompositionOpportunityId = mCompositionOpportunityId.Next();
+    TimeStamp now = TimeStamp::Now();
+    PROFILER_ADD_TEXT_MARKER("SkippedComposite",
+                             mPaused ? "Paused"_ns : "No display list"_ns,
+                             JS::ProfilingCategoryPair::GRAPHICS, now, now);
     return;
   }
 
@@ -1980,8 +1982,14 @@ void WebRenderBridgeParent::CompositeToTarget(VsyncId aId,
         id.mSkippedComposites++;
       }
     }
+
+    TimeStamp now = TimeStamp::Now();
+    PROFILER_ADD_TEXT_MARKER("SkippedComposite", "Too many pending frames"_ns,
+                             JS::ProfilingCategoryPair::GRAPHICS, now, now);
     return;
   }
+
+  mCompositionOpportunityId = mCompositionOpportunityId.Next();
   MaybeGenerateFrame(aId, /* aForceGenerateFrame */ false);
 }
 
@@ -2003,6 +2011,9 @@ void WebRenderBridgeParent::MaybeGenerateFrame(VsyncId aId,
     // Skip WR render during paused state.
     if (cbp->IsPaused()) {
       TimeStamp now = TimeStamp::Now();
+      PROFILER_ADD_TEXT_MARKER("SkippedComposite",
+                               "CompositorBridgeParent is paused"_ns,
+                               JS::ProfilingCategoryPair::GRAPHICS, now, now);
       cbp->NotifyPipelineRendered(mPipelineId, mWrEpoch, VsyncId(), now, now,
                                   now);
       return;
@@ -2010,7 +2021,6 @@ void WebRenderBridgeParent::MaybeGenerateFrame(VsyncId aId,
   }
 
   TimeStamp start = TimeStamp::Now();
-  mAsyncImageManager->SetCompositionTime(start);
 
   // Ensure GenerateFrame is handled on the render backend thread rather
   // than going through the scene builder thread. That way we continue
@@ -2020,10 +2030,10 @@ void WebRenderBridgeParent::MaybeGenerateFrame(VsyncId aId,
   wr::TransactionBuilder sceneBuilderTxn;
   wr::AutoTransactionSender sender(mApi, &sceneBuilderTxn);
 
-  // Adding and updating wr::ImageKeys of ImageHosts that uses ImageBridge are
-  // done without using transaction of scene builder thread. With it, updating
-  // of video frame becomes faster.
+  mAsyncImageManager->SetCompositionInfo(start, mCompositionOpportunityId);
   mAsyncImageManager->ApplyAsyncImagesOfImageBridge(sceneBuilderTxn, fastTxn);
+  mAsyncImageManager->SetCompositionInfo(TimeStamp(),
+                                         CompositionOpportunityId{});
 
   if (!mAsyncImageManager->GetCompositeUntilTime().IsNull()) {
     // Trigger another CompositeToTarget() call because there might be another
@@ -2037,6 +2047,9 @@ void WebRenderBridgeParent::MaybeGenerateFrame(VsyncId aId,
 
   if (!generateFrame) {
     // Could skip generating frame now.
+    PROFILER_ADD_TEXT_MARKER("SkippedComposite",
+                             "No reason to generate frame"_ns,
+                             JS::ProfilingCategoryPair::GRAPHICS, start, start);
     ResetPreviousSampleTime();
     return;
   }

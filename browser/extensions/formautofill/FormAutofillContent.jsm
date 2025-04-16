@@ -26,6 +26,11 @@ ChromeUtils.defineModuleGetter(
 );
 ChromeUtils.defineModuleGetter(
   this,
+  "ComponentUtils",
+  "resource://gre/modules/ComponentUtils.jsm"
+);
+ChromeUtils.defineModuleGetter(
+  this,
   "CreditCardResult",
   "resource://formautofill/ProfileAutoCompleteResult.jsm"
 );
@@ -101,7 +106,7 @@ AutocompleteFactory.prototype = {
     let proto = targetConstructor.prototype;
     this._classID = proto.classID;
 
-    let factory = XPCOMUtils._getFactory(targetConstructor);
+    let factory = ComponentUtils._getFactory(targetConstructor);
     this._factory = factory;
 
     let registrar = Cm.QueryInterface(Ci.nsIComponentRegistrar);
@@ -145,7 +150,7 @@ AutofillProfileAutoCompleteSearch.prototype = {
   classID: Components.ID("4f9f1e4c-7f2c-439e-9c9e-566b68bc187d"),
   contractID: "@mozilla.org/autocomplete/search;1?name=autofill-profiles",
   classDescription: "AutofillProfileAutoCompleteSearch",
-  QueryInterface: ChromeUtils.generateQI([Ci.nsIAutoCompleteSearch]),
+  QueryInterface: ChromeUtils.generateQI(["nsIAutoCompleteSearch"]),
 
   // Begin nsIAutoCompleteSearch implementation
 
@@ -172,12 +177,19 @@ AutofillProfileAutoCompleteSearch.prototype = {
     let isAddressField = FormAutofillUtils.isAddressField(
       activeFieldDetail.fieldName
     );
+    const isCreditCardField = FormAutofillUtils.isCreditCardField(
+      activeFieldDetail.fieldName
+    );
     let isInputAutofilled = activeFieldDetail.state == FIELD_STATES.AUTO_FILLED;
     let allFieldNames = activeSection.allFieldNames;
     let filledRecordGUID = activeSection.filledRecordGUID;
+
+    let creditCardsEnabledAndVisible =
+      FormAutofill.isAutofillCreditCardsEnabled &&
+      !FormAutofill.isAutofillCreditCardsHideUI;
     let searchPermitted = isAddressField
       ? FormAutofill.isAutofillAddressesEnabled
-      : FormAutofill.isAutofillCreditCardsEnabled;
+      : creditCardsEnabledAndVisible;
     let AutocompleteResult = isAddressField ? AddressResult : CreditCardResult;
     let isFormAutofillSearch = true;
     let pendingSearchResult = null;
@@ -186,12 +198,15 @@ AutofillProfileAutoCompleteSearch.prototype = {
     // Fallback to form-history if ...
     //   - specified autofill feature is pref off.
     //   - no profile can fill the currently-focused input.
-    //   - the current form has already been populated.
+    //   - the current form has already been populated and the field is not
+    //     an empty credit card field.
     //   - (address only) less than 3 inputs are covered by all saved fields in the storage.
     if (
       !searchPermitted ||
       !savedFieldNames.has(activeFieldDetail.fieldName) ||
-      (!isInputAutofilled && filledRecordGUID) ||
+      (!isInputAutofilled &&
+        filledRecordGUID &&
+        !(isCreditCardField && activeInput.value === "")) ||
       (isAddressField &&
         allFieldNames.filter(field => savedFieldNames.has(field)).length <
           FormAutofillUtils.AUTOFILL_FIELDS_THRESHOLD)
@@ -304,7 +319,7 @@ AutofillProfileAutoCompleteSearch.prototype = {
 };
 
 let ProfileAutocomplete = {
-  QueryInterface: ChromeUtils.generateQI([Ci.nsIObserver]),
+  QueryInterface: ChromeUtils.generateQI(["nsIObserver"]),
 
   lastProfileAutoCompleteResult: null,
   lastProfileAutoCompleteFocusedInput: null,
@@ -508,9 +523,15 @@ var FormAutofillContent = {
    * 3. Number of filled fields is less than autofill threshold
    *
    * @param {HTMLElement} formElement Root element which receives submit event.
-   * @param {Window} domWin Content window only passed for unit tests
+   * @param {Window} domWin Content window; passed for unit tests and when
+   *                 invoked by the FormAutofillSection
+   * @param {Object} handler FormAutofillHander, if known by caller
    */
-  formSubmitted(formElement, domWin = formElement.ownerGlobal) {
+  formSubmitted(
+    formElement,
+    domWin = formElement.ownerGlobal,
+    handler = undefined
+  ) {
     this.debug("Handling form submission");
 
     if (!FormAutofill.isAutofillEnabled) {
@@ -524,7 +545,7 @@ var FormAutofillContent = {
       return;
     }
 
-    let handler = this._formsDetails.get(formElement);
+    handler = handler ?? this._formsDetails.get(formElement);
     if (!handler) {
       this.debug("Form element could not map to an existing handler");
       return;
@@ -533,6 +554,50 @@ var FormAutofillContent = {
     let records = handler.createRecords();
     if (!Object.values(records).some(typeRecords => typeRecords.length)) {
       return;
+    }
+
+    records.creditCard.forEach(record => {
+      let extra = {
+        // Fields which have been filled manually.
+        fields_not_auto: "0",
+        // Fields which have been autofilled.
+        fields_auto: "0",
+        // Fields which have been autofilled and then modified.
+        fields_modified: "0",
+      };
+
+      if (record.guid !== null) {
+        // If the `guid` is not null, it means we're editing an existing record.
+        // In that case, all fields in the record are autofilled, and fields in
+        // `untouchedFields` are unmodified.
+        let totalCount = handler.form.elements.length;
+        let autofilledCount = Object.keys(record.record).length;
+        let unmodifiedCount = record.untouchedFields.length;
+
+        extra.fields_not_auto = (totalCount - autofilledCount).toString();
+        extra.fields_auto = autofilledCount.toString();
+        extra.fields_modified = (autofilledCount - unmodifiedCount).toString();
+      } else {
+        // If the `guid` is null, we're filling a new form.
+        // In that case, all not-null fields are manually filled.
+        extra.fields_not_auto = Array.from(handler.form.elements)
+          .filter(element => !!element.value.trim().length)
+          .length.toString();
+      }
+
+      Services.telemetry.recordEvent(
+        "creditcard",
+        "submitted",
+        "cc_form",
+        record.flowId,
+        extra
+      );
+    });
+    if (records.creditCard.length) {
+      Services.telemetry.scalarAdd(
+        "formautofill.creditCards.submitted_sections_count",
+        records.creditCard.length
+      );
     }
 
     this._onFormSubmit(records, domWin, handler.timeStartedFillingMS);
@@ -713,7 +778,10 @@ var FormAutofillContent = {
     let formHandler = this._getFormHandler(element);
     if (!formHandler) {
       let formLike = FormLikeFactory.createFromField(element);
-      formHandler = new FormAutofillHandler(formLike);
+      formHandler = new FormAutofillHandler(
+        formLike,
+        this.formSubmitted.bind(this)
+      );
     } else if (!formHandler.updateFormIfNeeded(element)) {
       this.debug("No control is removed or inserted since last collection.");
       return;
@@ -807,6 +875,13 @@ var FormAutofillContent = {
     this.debug(
       "Popup has opened, automatic =",
       formFillController.passwordPopupAutomaticallyOpened
+    );
+
+    Services.telemetry.recordEvent(
+      "creditcard",
+      "popup_shown",
+      "cc_form",
+      this.activeSection.flowId
     );
   },
 

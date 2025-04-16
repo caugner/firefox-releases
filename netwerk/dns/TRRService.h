@@ -6,7 +6,7 @@
 #ifndef TRRService_h_
 #define TRRService_h_
 
-#include "mozilla/DataStorage.h"
+#include "mozilla/DataMutex.h"
 #include "nsHostResolver.h"
 #include "nsIObserver.h"
 #include "nsWeakReference.h"
@@ -54,16 +54,16 @@ class TRRService : public TRRServiceBase,
   uint32_t GetRequestTimeout();
 
   LookupStatus CompleteLookup(nsHostRecord*, nsresult, mozilla::net::AddrInfo*,
-                              bool pb,
-                              const nsACString& aOriginSuffix) override;
+                              bool pb, const nsACString& aOriginSuffix,
+                              nsHostRecord::TRRSkippedReason aReason) override;
   LookupStatus CompleteLookupByType(nsHostRecord*, nsresult,
                                     mozilla::net::TypeRecordResultType&,
                                     uint32_t, bool pb) override;
-  void TRRBlacklist(const nsACString& host, const nsACString& originSuffix,
-                    bool privateBrowsing, bool aParentsToo);
-  bool IsTRRBlacklisted(const nsACString& aHost,
-                        const nsACString& aOriginSuffix, bool aPrivateBrowsing,
-                        bool aParentsToo);
+  void AddToBlocklist(const nsACString& host, const nsACString& originSuffix,
+                      bool privateBrowsing, bool aParentsToo);
+  bool IsTemporarilyBlocked(const nsACString& aHost,
+                            const nsACString& aOriginSuffix,
+                            bool aPrivateBrowsing, bool aParentsToo);
   bool IsExcludedFromTRR(const nsACString& aHost);
 
   bool MaybeBootstrap(const nsACString& possible, nsACString& result);
@@ -96,9 +96,8 @@ class TRRService : public TRRServiceBase,
   friend class ::nsDNSService;
   void SetDetectedTrrURI(const nsACString& aURI);
 
-  bool IsDomainBlacklisted(const nsACString& aHost,
-                           const nsACString& aOriginSuffix,
-                           bool aPrivateBrowsing);
+  bool IsDomainBlocked(const nsACString& aHost, const nsACString& aOriginSuffix,
+                       bool aPrivateBrowsing);
   bool IsExcludedFromTRR_unlocked(const nsACString& aHost);
 
   void RebuildSuffixList(nsTArray<nsCString>&& aSuffixList);
@@ -111,10 +110,9 @@ class TRRService : public TRRServiceBase,
   // or false if mPrivateURI already had that value.
   bool MaybeSetPrivateURI(const nsACString& aURI) override;
   void ClearEntireCache();
-  void InitTRRBLStorage(DataStorage* aInitedStorage);
 
   bool mInitialized;
-  Atomic<uint32_t, Relaxed> mTRRBlacklistExpireTime;
+  Atomic<uint32_t, Relaxed> mBlocklistDurationSeconds;
 
   Mutex mLock;
 
@@ -139,12 +137,11 @@ class TRRService : public TRRServiceBase,
       mDisableAfterFails;  // this many fails in a row means failed TRR service
   Atomic<bool, Relaxed> mPlatformDisabledTRR;
 
-  // TRR Blacklist storage
+  // TRR Blocklist storage
   // mTRRBLStorage is only modified on the main thread, but we query whether it
   // is initialized or not off the main thread as well. Therefore we need to
   // lock while creating it and while accessing it off the main thread.
-  RefPtr<DataStorage> mTRRBLStorage;
-  Atomic<bool, Relaxed> mClearTRRBLStorage;
+  DataMutex<nsDataHashtable<nsCStringHashKey, int32_t>> mTRRBLStorage;
 
   // A set of domains that we should not use TRR for.
   nsTHashtable<nsCStringHashKey> mExcludedDomains;

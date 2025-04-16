@@ -19,6 +19,8 @@ import tempfile
 import xml.etree.ElementTree as ET
 import yaml
 
+import six
+
 from mach.decorators import (
     CommandArgument,
     CommandProvider,
@@ -272,7 +274,7 @@ class StaticAnalysis(MachCommandBase):
         import re
         chunk_size = 50
         for offset in range(0, len(source), chunk_size):
-            source_chunks = source[offset:offset + chunk_size]
+            source_chunks = [re.escape(f) for f in source[offset:offset + chunk_size].copy()]
             name_re = re.compile('(' + ')|('.join(source_chunks) + ')')
             for f in compile_db:
                 if name_re.search(f['file']):
@@ -286,6 +288,9 @@ class StaticAnalysis(MachCommandBase):
                      "There are no files eligible for analysis. Please note that 'header' files "
                      "cannot be used for analysis since they do not consist compilation units.")
             return 0
+
+        # Escape the files from source
+        source = [re.escape(f) for f in source]
 
         cwd = self.topobjdir
         self._compilation_commands_path = self.topobjdir
@@ -1945,9 +1950,14 @@ class StaticAnalysis(MachCommandBase):
 
         # Then build the rest of the build dependencies by running the full
         # export target, because we can't do anything better.
-        return builder._run_make(directory=self.topobjdir, target='export',
-                                 line_handler=None, silent=not verbose,
-                                 num_jobs=jobs)
+        for target in ('export', 'pre-compile'):
+            rc = builder._run_make(directory=self.topobjdir, target=target,
+                                   line_handler=None, silent=not verbose,
+                                   num_jobs=jobs)
+            if rc != 0:
+                return rc
+
+        return 0
 
     def _set_clang_tools_paths(self):
         rc, config, _ = self._get_config_environment()
@@ -2078,7 +2088,7 @@ class StaticAnalysis(MachCommandBase):
             # https://git-scm.com/docs/gitglossary#gitglossary-aiddefpathspecapathspec
             with open(self._format_ignore_file, 'rb') as exclude_pattern_file:
                 for pattern in exclude_pattern_file.readlines():
-                    pattern = pattern.rstrip()
+                    pattern = six.ensure_str(pattern.rstrip())
                     pattern = pattern.replace('.*', '**')
                     if not pattern or pattern.startswith('#'):
                         continue  # empty or comment
@@ -2332,6 +2342,7 @@ class StaticAnalysis(MachCommandBase):
                             # `diff` format.
                             original_path_diff = os.path.join("a", relative_path)
                             target_path_diff = os.path.join("b", relative_path)
+                            e.output = e.output.decode('utf-8')
                             patch = e.output.replace("+++ {}".format(target_file),
                                                      "+++ {}".format(target_path_diff)).replace(
                                                          "-- {}".format(original_path),
@@ -2395,7 +2406,7 @@ class StaticAnalysis(MachCommandBase):
         list of patches, and calculates line level informations from the
         character level provided changes.
         '''
-        content = open(path, 'r').read().decode('utf-8')
+        content = six.ensure_str(open(path, 'r').read())
 
         def _nb_of_lines(start, end):
             return len(content[start:end].splitlines())

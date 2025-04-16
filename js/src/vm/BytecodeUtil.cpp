@@ -1415,16 +1415,8 @@ static unsigned Disassemble1(JSContext* cx, HandleScript script, jsbytecode* pc,
       break;
     }
 
-    case JOF_CODE_OFFSET: {
-      ptrdiff_t off = GET_CODE_OFFSET(pc);
-      if (!sp->jsprintf(" %u (%+d)", unsigned(loc + int(off)), int(off))) {
-        return 0;
-      }
-      break;
-    }
-
     case JOF_SCOPE: {
-      RootedScope scope(cx, script->getScope(GET_UINT32_INDEX(pc)));
+      RootedScope scope(cx, script->getScope(pc));
       UniqueChars bytes;
       if (!ToDisassemblySource(cx, scope, &bytes)) {
         return 0;
@@ -1450,7 +1442,7 @@ static unsigned Disassemble1(JSContext* cx, HandleScript script, jsbytecode* pc,
     }
 
     case JOF_ATOM: {
-      RootedValue v(cx, StringValue(script->getAtom(GET_UINT32_INDEX(pc))));
+      RootedValue v(cx, StringValue(script->getAtom(pc)));
       UniqueChars bytes = ToDisassemblySource(cx, v);
       if (!bytes) {
         return 0;
@@ -1490,7 +1482,7 @@ static unsigned Disassemble1(JSContext* cx, HandleScript script, jsbytecode* pc,
         break;
       }
 
-      JSObject* obj = script->getObject(GET_UINT32_INDEX(pc));
+      JSObject* obj = script->getObject(pc);
       {
         RootedValue v(cx, ObjectValue(*obj));
         UniqueChars bytes = ToDisassemblySource(cx, v);
@@ -1578,7 +1570,7 @@ static unsigned Disassemble1(JSContext* cx, HandleScript script, jsbytecode* pc,
       break;
 
     case JOF_CLASS_CTOR: {
-      uint32_t atomIndex = 0;
+      GCThingIndex atomIndex;
       uint32_t classStartOffset = 0, classEndOffset = 0;
       GetClassConstructorOperands(pc, &atomIndex, &classStartOffset,
                                   &classEndOffset);
@@ -1891,7 +1883,7 @@ bool ExpressionDecompiler::decompilePC(jsbytecode* pc, uint8_t defIndex) {
     case JSOp::NewArray:
       return write("[]");
     case JSOp::RegExp: {
-      RootedObject obj(cx, script->getObject(GET_UINT32_INDEX(pc)));
+      RootedObject obj(cx, script->getObject(pc));
       JSString* str = obj->as<RegExpObject>().toString(cx);
       if (!str) {
         return false;
@@ -1899,7 +1891,7 @@ bool ExpressionDecompiler::decompilePC(jsbytecode* pc, uint8_t defIndex) {
       return write(str);
     }
     case JSOp::NewArrayCopyOnWrite: {
-      RootedObject obj(cx, script->getObject(GET_UINT32_INDEX(pc)));
+      RootedObject obj(cx, script->getObject(pc));
       Handle<ArrayObject*> aobj = obj.as<ArrayObject>();
       if (!write("[")) {
         return false;
@@ -1920,7 +1912,7 @@ bool ExpressionDecompiler::decompilePC(jsbytecode* pc, uint8_t defIndex) {
       return write("]");
     }
     case JSOp::Object: {
-      JSObject* obj = script->getObject(GET_UINT32_INDEX(pc));
+      JSObject* obj = script->getObject(pc);
       RootedValue objv(cx, ObjectValue(*obj));
       JSString* str = ValueToSource(cx, objv);
       if (!str) {
@@ -3030,61 +3022,4 @@ JS_FRIEND_API UniqueChars js::GetCodeCoverageSummary(JSContext* cx,
 
   *length = out.getOffset();
   return js::DuplicateString(cx, out.string(), *length);
-}
-
-bool js::GetSuccessorBytecodes(JSScript* script, jsbytecode* pc,
-                               PcVector& successors) {
-  MOZ_ASSERT(script->containsPC(pc));
-
-  JSOp op = (JSOp)*pc;
-  if (BytecodeFallsThrough(op)) {
-    if (!successors.append(GetNextPc(pc))) {
-      return false;
-    }
-  }
-
-  if (CodeSpec(op).type() == JOF_JUMP) {
-    if (!successors.append(pc + GET_JUMP_OFFSET(pc))) {
-      return false;
-    }
-  } else if (op == JSOp::TableSwitch) {
-    if (!successors.append(pc + GET_JUMP_OFFSET(pc))) {
-      return false;
-    }
-    jsbytecode* npc = pc + JUMP_OFFSET_LEN;
-
-    int32_t low = GET_JUMP_OFFSET(npc);
-    npc += JUMP_OFFSET_LEN;
-    int ncases = GET_JUMP_OFFSET(npc) - low + 1;
-    npc += JUMP_OFFSET_LEN;
-
-    for (int i = 0; i < ncases; i++) {
-      if (!successors.append(script->tableSwitchCasePC(pc, i))) {
-        return false;
-      }
-    }
-  }
-
-  return true;
-}
-
-bool js::GetPredecessorBytecodes(JSScript* script, jsbytecode* pc,
-                                 PcVector& predecessors) {
-  MOZ_ASSERT(js::BytecodeLocation(script, pc).isInBounds(script));
-
-  for (const BytecodeLocation& loc : js::AllBytecodesIterable(script)) {
-    PcVector successors;
-    if (!GetSuccessorBytecodes(script, loc.toRawBytecode(), successors)) {
-      return false;
-    }
-    for (size_t i = 0; i < successors.length(); i++) {
-      if (successors[i] == pc) {
-        if (!predecessors.append(loc.toRawBytecode())) {
-          return false;
-        }
-        break;
-      }
-    }
-  }
-  return true;
 }

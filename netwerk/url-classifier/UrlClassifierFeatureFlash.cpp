@@ -16,8 +16,8 @@ namespace net {
 
 struct UrlClassifierFeatureFlash::FlashFeature {
   const char* mName;
-  const char* mBlacklistPrefTables;
-  const char* mWhitelistPrefTables;
+  const char* mBlocklistPrefTables;
+  const char* mEntitylistPrefTables;
   bool mSubdocumentOnly;
   nsIHttpChannel::FlashPluginState mFlashPluginState;
   RefPtr<UrlClassifierFeatureFlash> mFeature;
@@ -44,13 +44,13 @@ UrlClassifierFeatureFlash::UrlClassifierFeatureFlash(
     const UrlClassifierFeatureFlash::FlashFeature& aFlashFeature)
     : UrlClassifierFeatureBase(
           nsDependentCString(aFlashFeature.mName),
-          nsDependentCString(aFlashFeature.mBlacklistPrefTables),
-          nsDependentCString(aFlashFeature.mWhitelistPrefTables),
-          EmptyCString(),  // aPrefBlacklistHosts
-          EmptyCString(),  // aPrefWhitelistHosts
-          EmptyCString(),  // aPrefBlacklistTableName
-          EmptyCString(),  // aPrefWhitelistTableName
-          EmptyCString())  // aPrefSkipHosts
+          nsDependentCString(aFlashFeature.mBlocklistPrefTables),
+          nsDependentCString(aFlashFeature.mEntitylistPrefTables),
+          EmptyCString(),  // aPrefBlocklistHosts
+          EmptyCString(),  // aPrefEntitylistHosts
+          EmptyCString(),  // aPrefBlocklistTableName
+          EmptyCString(),  // aPrefEntitylistTableName
+          EmptyCString())  // aPrefExceptionHosts
       ,
       mFlashPluginState(aFlashFeature.mFlashPluginState) {
   static_assert(nsIHttpChannel::FlashPluginDeniedInSubdocuments ==
@@ -162,7 +162,7 @@ UrlClassifierFeatureFlash::ProcessChannel(nsIChannel* aChannel,
   // This is not a blocking feature.
   *aShouldContinue = true;
 
-  UC_LOG(("UrlClassifierFeatureFlash::ProcessChannel, annotating channel[%p]",
+  UC_LOG(("UrlClassifierFeatureFlash::ProcessChannel - annotating channel %p",
           aChannel));
 
   nsCOMPtr<nsIParentChannel> parentChannel;
@@ -190,9 +190,9 @@ UrlClassifierFeatureFlash::GetURIByListType(
   NS_ENSURE_ARG_POINTER(aURI);
 
   // Here we return the channel's URI always.
-  *aURIType = aListType == nsIUrlClassifierFeature::blacklist
-                  ? nsIUrlClassifierFeature::URIType::blacklistURI
-                  : nsIUrlClassifierFeature::URIType::whitelistURI;
+  *aURIType = aListType == nsIUrlClassifierFeature::blocklist
+                  ? nsIUrlClassifierFeature::URIType::blocklistURI
+                  : nsIUrlClassifierFeature::URIType::entitylistURI;
   return aChannel->GetURI(aURI);
 }
 

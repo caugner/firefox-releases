@@ -63,6 +63,11 @@ ifndef MOZ_DEBUG_RUST
 ifeq (,$(findstring gkrust_gtest,$(RUST_LIBRARY_FILE)))
 cargo_rustc_flags += -Clto
 endif
+# Versions of rust >= 1.45 need -Cembed-bitcode=yes for all crates when
+# using -Clto.
+ifeq (,$(filter 1.38.% 1.39.% 1.40.% 1.41.% 1.42.% 1.43.% 1.44.%,$(RUSTC_VERSION)))
+RUSTFLAGS += -Cembed-bitcode=yes
+endif
 endif
 endif
 
@@ -168,6 +173,7 @@ export PKG_CONFIG
 export PKG_CONFIG_ALLOW_CROSS=1
 export RUST_BACKTRACE=full
 export MOZ_TOPOBJDIR=$(topobjdir)
+export PYTHON3
 
 # Set COREAUDIO_SDK_PATH for third_party/rust/coreaudio-sys/build.rs
 ifeq ($(OS_ARCH), Darwin)
@@ -188,17 +194,17 @@ $(target_rust_nonltoable): RUSTFLAGS:=$(rustflags_override) $(rustflags_sancov) 
 
 TARGET_RECIPES := $(target_rust_ltoable) $(target_rust_nonltoable)
 
-# If this is a release build we want rustc to generate one codegen unit per
-# crate. This results in better optimization and less code duplication at the
-# cost of longer compile times.
-ifndef DEVELOPER_OPTIONS
-$(TARGET_RECIPES): RUSTFLAGS += -C codegen-units=1
-endif
-
 HOST_RECIPES := \
   $(foreach a,library program,$(foreach b,build check,force-cargo-host-$(a)-$(b)))
 
 $(HOST_RECIPES): RUSTFLAGS:=$(rustflags_override)
+
+# If this is a release build we want rustc to generate one codegen unit per
+# crate. This results in better optimization and less code duplication at the
+# cost of longer compile times.
+ifndef DEVELOPER_OPTIONS
+$(TARGET_RECIPES) $(HOST_RECIPES): RUSTFLAGS += -C codegen-units=1
+endif
 
 cargo_env = $(subst -,_,$(subst a,A,$(subst b,B,$(subst c,C,$(subst d,D,$(subst e,E,$(subst f,F,$(subst g,G,$(subst h,H,$(subst i,I,$(subst j,J,$(subst k,K,$(subst l,L,$(subst m,M,$(subst n,N,$(subst o,O,$(subst p,P,$(subst q,Q,$(subst r,R,$(subst s,S,$(subst t,T,$(subst u,U,$(subst v,V,$(subst w,W,$(subst x,X,$(subst y,Y,$(subst z,Z,$1)))))))))))))))))))))))))))
 
@@ -297,13 +303,15 @@ $(RUST_LIBRARY_FILE): force-cargo-library-build
 # When we are building in --enable-release mode; we add an additional check to confirm
 # that we are not importing any networking-related functions in rust code. This reduces
 # the chance of proxy bypasses originating from rust code.
-# The check only works when rust code is built with -Clto.
+# The check only works when rust code is built with -Clto but without MOZ_LTO_RUST.
 # Sanitizers and sancov also fail because compiler-rt hooks network functions.
 ifndef MOZ_PROFILE_GENERATE
 ifeq ($(OS_ARCH), Linux)
 ifeq (,$(rustflags_sancov)$(MOZ_ASAN)$(MOZ_TSAN)$(MOZ_UBSAN))
+ifndef MOZ_LTO_RUST
 ifneq (,$(filter -Clto,$(cargo_rustc_flags)))
 	$(call py_action,check_binary,--target --networking $@)
+endif
 endif
 endif
 endif
@@ -342,7 +350,7 @@ force-cargo-host-library-build:
 	$(REPORT_BUILD)
 	$(call CARGO_BUILD) --lib $(cargo_host_flag) $(host_rust_features_flag)
 
-$(HOST_RUST_LIBRARY_FILE): force-cargo-host-library-build
+$(HOST_RUST_LIBRARY_FILE): force-cargo-host-library-build ;
 
 force-cargo-host-library-check:
 	$(call CARGO_CHECK) --lib $(cargo_host_flag) $(host_rust_features_flag)
@@ -359,7 +367,7 @@ force-cargo-program-build: $(RESFILE)
 	$(REPORT_BUILD)
 	$(call CARGO_BUILD) $(addprefix --bin ,$(RUST_CARGO_PROGRAMS)) $(cargo_target_flag) -- $(if $(RESFILE),-C link-arg=$(CURDIR)/$(RESFILE))
 
-$(RUST_PROGRAMS): force-cargo-program-build
+$(RUST_PROGRAMS): force-cargo-program-build ;
 
 force-cargo-program-check:
 	$(call CARGO_CHECK) $(addprefix --bin ,$(RUST_CARGO_PROGRAMS)) $(cargo_target_flag)
@@ -375,7 +383,7 @@ force-cargo-host-program-build:
 	$(REPORT_BUILD)
 	$(call CARGO_BUILD) $(addprefix --bin ,$(HOST_RUST_CARGO_PROGRAMS)) $(cargo_host_flag)
 
-$(HOST_RUST_PROGRAMS): force-cargo-host-program-build
+$(HOST_RUST_PROGRAMS): force-cargo-host-program-build ;
 
 force-cargo-host-program-check:
 	$(REPORT_BUILD)

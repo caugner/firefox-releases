@@ -45,6 +45,7 @@ class WellKnownParserAtoms;
 }  // namespace frontend
 
 namespace jit {
+class ICScript;
 class JitActivation;
 class JitContext;
 class DebugModeOSRVolatileJitFrameIter;
@@ -269,9 +270,13 @@ struct JS_PUBLIC_API JSContext : public JS::RootingContext,
 
   // Accessors for immutable runtime data.
   JSAtomState& names() { return *runtime_->commonNames; }
+#ifdef JS_PARSER_ATOMS
   js::frontend::WellKnownParserAtoms& parserNames() {
     return *runtime_->commonParserNames;
   }
+#else
+  JSAtomState& parserNames() { return *runtime_->commonNames; }
+#endif  // JS_PARSER_ATOMS
   js::StaticStrings& staticStrings() { return *runtime_->staticStrings; }
   js::SharedImmutableStringsCache& sharedImmutableStrings() {
     return runtime_->sharedImmutableStrings();
@@ -465,6 +470,10 @@ struct JS_PUBLIC_API JSContext : public JS::RootingContext,
     return offsetof(JSContext, inUnsafeCallWithABI);
   }
 #endif
+
+  static size_t offsetOfInlinedICScript() {
+    return offsetof(JSContext, inlinedICScript_);
+  }
 
  public:
   js::InterpreterStack& interpreterStack() {
@@ -865,6 +874,12 @@ struct JS_PUBLIC_API JSContext : public JS::RootingContext,
     return interruptBits_ & uint32_t(reason);
   }
 
+  // For JIT use. Points to the inlined ICScript for a baseline script
+  // being invoked as part of a trial inlining.  Contains nullptr at
+  // all times except for the brief moment between being set in the
+  // caller and read in the callee's prologue.
+  js::ContextData<js::jit::ICScript*> inlinedICScript_;
+
  public:
   void* addressOfInterruptBits() { return &interruptBits_; }
   void* addressOfJitStackLimit() { return &jitStackLimit; }
@@ -874,6 +889,8 @@ struct JS_PUBLIC_API JSContext : public JS::RootingContext,
   void* addressOfZone() { return &zone_; }
 
   const void* addressOfRealm() const { return &realm_; }
+
+  void* addressOfInlinedICScript() { return &inlinedICScript_; }
 
   // Futex state, used by Atomics.wait() and Atomics.wake() on the Atomics
   // object.

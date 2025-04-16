@@ -4,7 +4,7 @@
 
 "use strict";
 
-const { Cc, Ci, Cu } = require("chrome");
+const { Ci, Cu } = require("chrome");
 
 const Services = require("Services");
 const protocol = require("devtools/shared/protocol");
@@ -154,6 +154,12 @@ loader.lazyRequireGetter(
 );
 loader.lazyRequireGetter(
   this,
+  "NodePicker",
+  "devtools/server/actors/inspector/node-picker",
+  true
+);
+loader.lazyRequireGetter(
+  this,
   "LayoutActor",
   "devtools/server/actors/layout",
   true
@@ -197,15 +203,7 @@ loader.lazyServiceGetter(
 // Minimum delay between two "new-mutations" events.
 const MUTATIONS_THROTTLING_DELAY = 100;
 // List of mutation types that should -not- be throttled.
-const IMMEDIATE_MUTATIONS = [
-  "documentUnload",
-  "frameLoad",
-  "pseudoClassLock",
-
-  // These should be delivered right away in order to be sure that the
-  // fronts have not been removed due to other non-throttled mutations.
-  "mutationBreakpoints",
-];
+const IMMEDIATE_MUTATIONS = ["documentUnload", "frameLoad", "pseudoClassLock"];
 
 const HIDDEN_CLASS = "__fx-devtools-hide-shortcut__";
 
@@ -369,6 +367,14 @@ var WalkerActor = protocol.ActorClassWithSpec(walkerSpec, {
     eventListenerService.addListenerChangeListener(this._onEventListenerChange);
   },
 
+  get nodePicker() {
+    if (!this._nodePicker) {
+      this._nodePicker = new NodePicker(this, this.targetActor);
+    }
+
+    return this._nodePicker;
+  },
+
   watchRootNode() {
     if (this._isWatchingRootNode) {
       throw new Error("WalkerActor::watchRootNode should only be called once");
@@ -438,8 +444,8 @@ var WalkerActor = protocol.ActorClassWithSpec(walkerSpec, {
       actor: this.actorID,
       root: this.rootNode.form(),
       traits: {
-        // watch/unwatchRootNode are available starting with Fx77
-        watchRootNode: true,
+        // Walker implements node picker starting with Firefox 80
+        supportsNodePicker: true,
       },
     };
   },
@@ -523,6 +529,11 @@ var WalkerActor = protocol.ActorClassWithSpec(walkerSpec, {
       this.customElementWatcher = null;
 
       this.walkerSearch.destroy();
+
+      if (this._nodePicker) {
+        this._nodePicker.destroy();
+        this._nodePicker = null;
+      }
 
       this.layoutChangeObserver.off("reflows", this._onReflows);
       this.layoutChangeObserver.off("resize", this._onResize);
@@ -2654,6 +2665,12 @@ var WalkerActor = protocol.ActorClassWithSpec(walkerSpec, {
         this.emit("root-destroyed", this.rootNode);
       }
       this.rootNode = null;
+      this.releaseNode(documentActor, { force: true });
+      // XXX: Only top-level "roots" trigger root-available/root-destroyed
+      // events. When a frame living in the same process as the parent frame
+      // navigates, we rely on legacy mutations to communicate the update to the
+      // markup view.
+      return;
     }
 
     this.queueMutation({
@@ -2892,31 +2909,6 @@ var WalkerActor = protocol.ActorClassWithSpec(walkerSpec, {
     return this._ref(offsetParent);
   },
 
-  /**
-   * Returns true if accessibility service is running and the node has a
-   * corresponding valid accessible object.
-   */
-  hasAccessibilityProperties: async function(node) {
-    if (isNodeDead(node) || !Services.appinfo.accessibilityEnabled) {
-      return false;
-    }
-
-    const accService = Cc["@mozilla.org/accessibilityService;1"].getService(
-      Ci.nsIAccessibilityService
-    );
-    let acc = accService.getAccessibleFor(node.rawNode);
-    // If node does not have an accessible object, but has an inline text child,
-    // try to retrieve an accessible object for the child instead.
-    if (!acc || acc.indexInParent < 0) {
-      const inlineTextChild = this.inlineTextChild(node);
-      if (inlineTextChild) {
-        acc = accService.getAccessibleFor(inlineTextChild.rawNode);
-      }
-    }
-
-    return acc && acc.indexInParent > -1;
-  },
-
   getEmbedderElement(browsingContextID) {
     const browsingContext = BrowsingContext.get(browsingContextID);
     let rawNode = browsingContext.embedderElement;
@@ -2931,6 +2923,14 @@ var WalkerActor = protocol.ActorClassWithSpec(walkerSpec, {
     }
 
     return this.attachElement(rawNode);
+  },
+
+  pick(doFocus) {
+    this.nodePicker.pick(doFocus);
+  },
+
+  cancelPick() {
+    this.nodePicker.cancelPick();
   },
 });
 

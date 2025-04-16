@@ -147,6 +147,7 @@ const mozilla::PreferenceSheet::Prefs* Gecko_GetPrefSheetPrefs(
 
 bool Gecko_IsTableBorderNonzero(const mozilla::dom::Element* element);
 bool Gecko_IsBrowserFrame(const mozilla::dom::Element* element);
+bool Gecko_IsSelectListBox(const mozilla::dom::Element* element);
 
 // Attributes.
 #define SERVO_DECLARE_ELEMENT_ATTR_MATCHING_FUNCTIONS(prefix_, implementor_)   \
@@ -610,12 +611,16 @@ mozilla::StyleDisplayMode Gecko_MediaFeatures_GetDisplayMode(
     const mozilla::dom::Document*);
 
 uint32_t Gecko_MediaFeatures_GetColorDepth(const mozilla::dom::Document*);
+uint32_t Gecko_MediaFeatures_GetMonochromeBitsPerPixel(
+    const mozilla::dom::Document*);
 
 void Gecko_MediaFeatures_GetDeviceSize(const mozilla::dom::Document*,
                                        nscoord* width, nscoord* height);
 
 float Gecko_MediaFeatures_GetResolution(const mozilla::dom::Document*);
 bool Gecko_MediaFeatures_PrefersReducedMotion(const mozilla::dom::Document*);
+mozilla::StyleContrastPref Gecko_MediaFeatures_PrefersContrast(
+    const mozilla::dom::Document*, const bool aForcedColors);
 mozilla::StylePrefersColorScheme Gecko_MediaFeatures_PrefersColorScheme(
     const mozilla::dom::Document*);
 

@@ -136,7 +136,7 @@ interface CanonicalBrowsingContext : BrowsingContext {
   // synchronously create WindowGlobalParent. It can throw if somehow the
   // content process has died.
   [Throws]
-  readonly attribute DOMString? currentRemoteType;
+  readonly attribute UTF8String? currentRemoteType;
 
   readonly attribute WindowGlobalParent? embedderWindowGlobal;
 
@@ -173,6 +173,15 @@ interface CanonicalBrowsingContext : BrowsingContext {
   [Throws]
   void loadURI(DOMString aURI, optional LoadURIOptions aOptions = {});
 
+  /**
+   * These methods implement the nsIWebNavigation methods of the same names
+   */
+  void goBack(optional long aCancelContentJSEpoch, optional boolean aRequireUserInteraction = false);
+  void goForward(optional long aCancelContentJSEpoch, optional boolean aRequireUserInteraction  = false);
+  void goToIndex(long aIndex, optional long aCancelContentJSEpoch);
+  void reload(unsigned long aReloadFlags);
+  void stop(unsigned long aStopFlags);
+
   readonly attribute nsISHistory? sessionHistory;
 
   readonly attribute MediaController? mediaController;
@@ -181,4 +190,6 @@ interface CanonicalBrowsingContext : BrowsingContext {
 [Exposed=Window, ChromeOnly]
 interface BrowsingContextGroup {
   sequence<BrowsingContext> getToplevels();
+
+  readonly attribute unsigned long long id;
 };

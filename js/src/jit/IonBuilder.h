@@ -23,6 +23,7 @@
 #include "jit/MIRGenerator.h"
 #include "jit/MIRGraph.h"
 #include "jit/TIOracle.h"
+#include "vm/SharedStencil.h"  // GCThingIndex
 
 namespace js {
 
@@ -93,9 +94,9 @@ using CallTargets = Vector<JSFunction*, 6, JitAllocPolicy>;
 // whenever we need to execute the catch-block.
 //
 // Because we don't compile the catch-block and the code after the try-catch may
-// only be reachable via the catch-block, MGotoWithFake is used to ensure the
-// code after the try-catch is always compiled and is part of the graph.
-// See IonBuilder::visitTry for more information.
+// only be reachable via the catch-block, Baseline's BytecodeAnalysis ensures
+// Baseline does not attempt OSR into Ion/Warp when loops are only reachable via
+// catch/finally blocks.
 //
 // Finally-blocks are currently not supported by Ion.
 
@@ -636,7 +637,7 @@ class MOZ_STACK_CLASS IonBuilder {
   AbortReasonOr<Ok> jsop_lambda_arrow(JSFunction* fun);
   AbortReasonOr<Ok> jsop_funwithproto(JSFunction* fun);
   AbortReasonOr<Ok> jsop_setfunname(uint8_t prefixKind);
-  AbortReasonOr<Ok> jsop_pushlexicalenv(uint32_t index);
+  AbortReasonOr<Ok> jsop_pushlexicalenv(GCThingIndex index);
   AbortReasonOr<Ok> jsop_copylexicalenv(bool copySlots);
   AbortReasonOr<Ok> jsop_functionthis();
   AbortReasonOr<Ok> jsop_globalthis();

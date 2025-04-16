@@ -55,6 +55,7 @@ class nsDisplayListBuilder;
 enum class nsDisplayListBuilderMode : uint8_t;
 enum nsChangeHint : uint32_t;
 class nsDisplayItem;
+class nsDisplayList;
 class nsFontMetrics;
 class nsFontFaceList;
 class nsIImageLoadingContent;
@@ -2185,6 +2186,11 @@ class nsLayoutUtils {
    * ::first-line reparenting and rule changes at the same time).
    */
   static bool MayBeReallyFixedPos(const nsIFrame* aFrame);
+
+  /**
+   * Returns true if |aFrame| is inside position:fixed subtree.
+   */
+  static bool IsInPositionFixedSubtree(const nsIFrame* aFrame);
 
   /**
    * Obtain a SourceSurface from the given DOM element, if possible.

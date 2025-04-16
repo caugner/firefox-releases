@@ -29,7 +29,8 @@ exports[`calls updateTree.js adds one source 1`] = `
                 \\"isWasm\\": false,
                 \\"extensionName\\": null,
                 \\"isExtension\\": false,
-                \\"isOriginal\\": false
+                \\"isOriginal\\": false,
+                \\"displayURL\\": \\"https://davidwalsh.name/\\"
               }
             },
             {
@@ -45,7 +46,8 @@ exports[`calls updateTree.js adds one source 1`] = `
                 \\"isWasm\\": false,
                 \\"extensionName\\": null,
                 \\"isExtension\\": false,
-                \\"isOriginal\\": false
+                \\"isOriginal\\": false,
+                \\"displayURL\\": \\"https://davidwalsh.name/source1.js\\"
               }
             }
           ]
@@ -85,7 +87,8 @@ exports[`calls updateTree.js adds two sources 1`] = `
                 \\"isWasm\\": false,
                 \\"extensionName\\": null,
                 \\"isExtension\\": false,
-                \\"isOriginal\\": false
+                \\"isOriginal\\": false,
+                \\"displayURL\\": \\"https://davidwalsh.name/\\"
               }
             },
             {
@@ -101,7 +104,8 @@ exports[`calls updateTree.js adds two sources 1`] = `
                 \\"isWasm\\": false,
                 \\"extensionName\\": null,
                 \\"isExtension\\": false,
-                \\"isOriginal\\": false
+                \\"isOriginal\\": false,
+                \\"displayURL\\": \\"https://davidwalsh.name/source1.js\\"
               }
             },
             {
@@ -117,7 +121,8 @@ exports[`calls updateTree.js adds two sources 1`] = `
                 \\"isWasm\\": false,
                 \\"extensionName\\": null,
                 \\"isExtension\\": false,
-                \\"isOriginal\\": false
+                \\"isOriginal\\": false,
+                \\"displayURL\\": \\"https://davidwalsh.name/source2.js\\"
               }
             }
           ]
@@ -157,7 +162,8 @@ exports[`calls updateTree.js shows all the sources 1`] = `
                 \\"isWasm\\": false,
                 \\"extensionName\\": null,
                 \\"isExtension\\": false,
-                \\"isOriginal\\": false
+                \\"isOriginal\\": false,
+                \\"displayURL\\": \\"https://davidwalsh.name/\\"
               }
             },
             {
@@ -173,7 +179,49 @@ exports[`calls updateTree.js shows all the sources 1`] = `
                 \\"isWasm\\": false,
                 \\"extensionName\\": null,
                 \\"isExtension\\": false,
-                \\"isOriginal\\": false
+                \\"isOriginal\\": false,
+                \\"displayURL\\": \\"https://davidwalsh.name/source1.js\\"
+              }
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}"
+`;
+
+exports[`calls updateTree.js update sources that change their display URL 1`] = `
+"{
+  \\"type\\": \\"directory\\",
+  \\"name\\": \\"root\\",
+  \\"path\\": \\"\\",
+  \\"contents\\": [
+    {
+      \\"type\\": \\"directory\\",
+      \\"name\\": \\"FakeThread\\",
+      \\"path\\": \\"FakeThread\\",
+      \\"contents\\": [
+        {
+          \\"type\\": \\"directory\\",
+          \\"name\\": \\"davidwalsh.name\\",
+          \\"path\\": \\"FakeThread/davidwalsh.name\\",
+          \\"contents\\": [
+            {
+              \\"type\\": \\"source\\",
+              \\"name\\": \\"?param\\",
+              \\"path\\": \\"FakeThread/davidwalsh.name/?param\\",
+              \\"contents\\": {
+                \\"id\\": \\"server1.conn13.child1/39\\",
+                \\"url\\": \\"https://davidwalsh.name/?param\\",
+                \\"isBlackBoxed\\": false,
+                \\"isPrettyPrinted\\": false,
+                \\"relativeUrl\\": \\"https://davidwalsh.name/?param\\",
+                \\"isWasm\\": false,
+                \\"extensionName\\": null,
+                \\"isExtension\\": false,
+                \\"isOriginal\\": false,
+                \\"displayURL\\": \\"https://davidwalsh.name/?param\\"
               }
             }
           ]

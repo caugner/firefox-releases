@@ -9,8 +9,10 @@
 #include "mozilla/extensions/WebExtensionPolicy.h"
 
 #include "mozilla/AddonManagerWebAPI.h"
+#include "mozilla/dom/WindowGlobalChild.h"
 #include "mozilla/ResultExtensions.h"
 #include "mozilla/StaticPrefs_extensions.h"
+#include "nsContentUtils.h"
 #include "nsEscape.h"
 #include "nsIObserver.h"
 #include "nsISubstitutingProtocolHandler.h"
@@ -159,6 +161,10 @@ WebExtensionPolicy::WebExtensionPolicy(GlobalObject& aGlobal,
         aInit.mBackgroundScripts.Value());
   }
 
+  if (!aInit.mBackgroundWorkerScript.IsEmpty()) {
+    mBackgroundWorkerScript.Assign(aInit.mBackgroundWorkerScript);
+  }
+
   if (mExtensionPageCSP.IsVoid()) {
     EPS().GetDefaultCSP(mExtensionPageCSP);
   }
@@ -248,6 +254,11 @@ bool WebExtensionPolicy::Enable() {
     return false;
   }
 
+  if (XRE_IsParentProcess()) {
+    // Reserve a BrowsingContextGroup ID for use by this WebExtensionPolicy.
+    mBrowsingContextGroupId = nsContentUtils::GenerateBrowsingContextId();
+  }
+
   Unused << Proto()->SetSubstitution(MozExtensionHostname(), mBaseURI);
 
   mActive = true;
@@ -334,6 +345,11 @@ bool WebExtensionPolicy::UseRemoteWebExtensions(GlobalObject& aGlobal) {
 /* static */
 bool WebExtensionPolicy::IsExtensionProcess(GlobalObject& aGlobal) {
   return EPS().IsExtensionProcess();
+}
+
+/* static */
+bool WebExtensionPolicy::BackgroundServiceWorkerEnabled(GlobalObject& aGlobal) {
+  return StaticPrefs::extensions_backgroundServiceWorker_enabled_AtStartup();
 }
 
 namespace {
@@ -483,6 +499,11 @@ void WebExtensionPolicy::GetReadyPromise(
   } else {
     aResult.set(nullptr);
   }
+}
+
+uint64_t WebExtensionPolicy::GetBrowsingContextGroupId() const {
+  MOZ_ASSERT(XRE_IsParentProcess() && mActive);
+  return mBrowsingContextGroupId;
 }
 
 NS_IMPL_CYCLE_COLLECTION_WRAPPERCACHE_WEAK_PTR(WebExtensionPolicy, mParent,
@@ -650,6 +671,17 @@ bool MozDocumentMatcher::MatchesURI(const URLInfo& aURL) const {
   return true;
 }
 
+bool MozDocumentMatcher::MatchesWindowGlobal(WindowGlobalChild& aWindow) const {
+  if (aWindow.IsClosed() || !aWindow.IsCurrentGlobal()) {
+    return false;
+  }
+  nsGlobalWindowInner* inner = aWindow.GetWindowGlobal();
+  if (!inner || !inner->GetDocShell()) {
+    return false;
+  }
+  return Matches(inner->GetOuterWindow());
+}
+
 JSObject* MozDocumentMatcher::WrapObject(JSContext* aCx,
                                          JS::HandleObject aGivenProto) {
   return MozDocumentMatcher_Binding::Wrap(aCx, this, aGivenProto);
@@ -746,7 +778,9 @@ DocInfo::DocInfo(nsPIDOMWindowOuter* aWindow)
 bool DocInfo::IsTopLevel() const {
   if (mIsTopLevel.isNothing()) {
     struct Matcher {
-      bool operator()(Window aWin) { return aWin->GetBrowsingContext()->IsTop(); }
+      bool operator()(Window aWin) {
+        return aWin->GetBrowsingContext()->IsTop();
+      }
       bool operator()(LoadInfo aLoadInfo) {
         return aLoadInfo->GetIsTopLevelLoad();
       }
@@ -800,9 +834,11 @@ uint64_t DocInfo::FrameID() const {
       mFrameID.emplace(0);
     } else {
       struct Matcher {
-        uint64_t operator()(Window aWin) { return aWin->WindowID(); }
+        uint64_t operator()(Window aWin) {
+          return aWin->GetBrowsingContext()->Id();
+        }
         uint64_t operator()(LoadInfo aLoadInfo) {
-          return aLoadInfo->GetOuterWindowID();
+          return aLoadInfo->GetBrowsingContextID();
         }
       };
       mFrameID.emplace(mObj.match(Matcher()));

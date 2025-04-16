@@ -1,7 +1,6 @@
 # Definitions for jobs that run periodically.  For details on the format, see
-# `taskcluster/taskgraph/cron/schema.py`.  For documentation, see
-# `taskcluster/docs/cron.rst`.
-
+# `https://hg.mozilla.org/ci/ci-admin/file/default/build-decision/src/build_decision/cron/schema.yml`.
+# For documentation, see `taskcluster/docs/cron.rst`.
 ---
 
 jobs:
@@ -115,7 +114,8 @@ jobs:
           include-push-tasks: true
       run-on-projects:
           - mozilla-central
-      when: []  # temporarily disabled, Bug 1648183
+      when:
+          - {weekday: 'Sunday', hour: 5, minute: 0}
 
     - name: general-perf-testing
       job:
@@ -141,6 +141,16 @@ jobs:
           - mozilla-release
           - mozilla-esr68
           - mozilla-esr78
+      when:
+          - {hour: 10, minute: 0}
+
+    - name: coverity-tree-analysis
+      job:
+          type: decision-task
+          treeherder-symbol: CoverityTA
+          target-tasks-method: coverity_static_analysis_full
+      run-on-projects:
+          - mozilla-central
       when:
           - {hour: 10, minute: 0}
 
@@ -287,3 +297,10 @@ jobs:
           - mozilla-central
       when:
           - {hour: 4, minute: 00}
+
+    - name: scriptworker-canary
+      job:
+          type: trigger-action
+          action-name: scriptworker-canary
+          include-cron-input: true
+      when: []  # never (hook only)

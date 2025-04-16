@@ -212,6 +212,10 @@ class ObjectElements {
     // frozen elements. The ObjectElements flag is convenient for JIT code and
     // ObjectElements assertions.
     FROZEN = 0x20,
+
+    // If this flag is not set, the elements are guaranteed to contain no hole
+    // values (the JS_ELEMENTS_HOLE MagicValue) in [0, initializedLength).
+    NON_PACKED = 0x40,
   };
 
   // The flags word stores both the flags and the number of shifted elements.
@@ -309,6 +313,8 @@ class ObjectElements {
     MOZ_ASSERT(numShiftedElements() == 0);
   }
 
+  void markNonPacked() { flags |= NON_PACKED; }
+
   void seal() {
     MOZ_ASSERT(!isSealed());
     MOZ_ASSERT(!isFrozen());
@@ -380,6 +386,8 @@ class ObjectElements {
                                         IntegrityLevel level);
 
   bool isSealed() const { return flags & SEALED; }
+
+  bool isPacked() const { return !(flags & NON_PACKED); }
 
   uint8_t elementAttributes() const {
     if (isFrozen()) {
@@ -1006,6 +1014,8 @@ class NativeObject : public JSObject {
   MOZ_ALWAYS_INLINE void checkStoredValue(const Value& v) {
     MOZ_ASSERT(IsObjectValueInCompartment(v, compartment()));
     MOZ_ASSERT(AtomIsMarked(zoneFromAnyThread(), v));
+    MOZ_ASSERT_IF(v.isMagic() && v.whyMagic() == JS_ELEMENTS_HOLE,
+                  !denseElementsArePacked());
   }
 
   MOZ_ALWAYS_INLINE void setSlot(uint32_t slot, const Value& value) {
@@ -1208,9 +1218,6 @@ class NativeObject : public JSObject {
   }
 
  private:
-  inline void ensureDenseInitializedLengthNoPackedCheck(uint32_t index,
-                                                        uint32_t extra);
-
   // Run a post write barrier that encompasses multiple contiguous elements in a
   // single step.
   inline void elementsRangeWriteBarrierPost(uint32_t start, uint32_t count);
@@ -1246,14 +1253,14 @@ class NativeObject : public JSObject {
                                            uint32_t extra);
 
   void setDenseElement(uint32_t index, const Value& val) {
-    MOZ_ASSERT(index < getDenseInitializedLength());
-    MOZ_ASSERT(!denseElementsAreCopyOnWrite());
-    MOZ_ASSERT(!denseElementsAreFrozen());
-    checkStoredValue(val);
-    elements_[index].set(this, HeapSlot::Element, unshiftedIndex(index), val);
+    // Note: Streams code can call this for the internal ListObject type with
+    // MagicValue(JS_WRITABLESTREAM_CLOSE_RECORD).
+    MOZ_ASSERT_IF(val.isMagic(), val.whyMagic() != JS_ELEMENTS_HOLE);
+    setDenseElementUnchecked(index, val);
   }
 
   void initDenseElement(uint32_t index, const Value& val) {
+    MOZ_ASSERT(!val.isMagic(JS_ELEMENTS_HOLE));
     MOZ_ASSERT(index < getDenseInitializedLength());
     MOZ_ASSERT(!denseElementsAreCopyOnWrite());
     MOZ_ASSERT(isExtensible());
@@ -1261,17 +1268,22 @@ class NativeObject : public JSObject {
     elements_[index].init(this, HeapSlot::Element, unshiftedIndex(index), val);
   }
 
-  void setDenseElementMaybeConvertDouble(uint32_t index, const Value& val) {
-    if (val.isInt32() && shouldConvertDoubleElements()) {
-      setDenseElement(index, DoubleValue(val.toInt32()));
-    } else {
-      setDenseElement(index, val);
-    }
+ private:
+  // Note: 'Unchecked' here means we don't assert |val| isn't the hole
+  // MagicValue.
+  void setDenseElementUnchecked(uint32_t index, const Value& val) {
+    MOZ_ASSERT(index < getDenseInitializedLength());
+    MOZ_ASSERT(!denseElementsAreCopyOnWrite());
+    MOZ_ASSERT(!denseElementsAreFrozen());
+    checkStoredValue(val);
+    elements_[index].set(this, HeapSlot::Element, unshiftedIndex(index), val);
   }
 
- private:
   inline void addDenseElementType(JSContext* cx, uint32_t index,
                                   const Value& val);
+
+  // Mark the dense elements as possibly containing holes.
+  inline void markDenseElementsNotPacked(JSContext* cx);
 
  public:
   inline void setDenseElementWithType(JSContext* cx, uint32_t index,
@@ -1289,8 +1301,8 @@ class NativeObject : public JSObject {
   inline void copyDenseElements(uint32_t dstStart, const Value* src,
                                 uint32_t count);
   inline void initDenseElements(const Value* src, uint32_t count);
-  inline void initDenseElements(NativeObject* src, uint32_t srcStart,
-                                uint32_t count);
+  inline void initDenseElements(JSContext* cx, NativeObject* src,
+                                uint32_t srcStart, uint32_t count);
   inline void moveDenseElements(uint32_t dstStart, uint32_t srcStart,
                                 uint32_t count);
   inline void moveDenseElementsNoPreBarrier(uint32_t dstStart,
@@ -1308,7 +1320,7 @@ class NativeObject : public JSObject {
   inline void setShouldConvertDoubleElements();
   inline void clearShouldConvertDoubleElements();
 
-  bool denseElementsAreCopyOnWrite() {
+  bool denseElementsAreCopyOnWrite() const {
     return getElementsHeader()->isCopyOnWrite();
   }
 
@@ -1319,9 +1331,9 @@ class NativeObject : public JSObject {
     return hasAllFlags(js::BaseShape::FROZEN_ELEMENTS);
   }
 
-  /* Packed information for this object's elements. */
-  inline bool writeToIndexWouldMarkNotPacked(uint32_t index);
-  inline void markDenseElementsNotPacked(JSContext* cx);
+  bool denseElementsArePacked() const {
+    return getElementsHeader()->isPacked();
+  }
 
   // Ensures that the object can hold at least index + extra elements. This
   // returns DenseElement_Success on success, DenseElement_Failed on failure

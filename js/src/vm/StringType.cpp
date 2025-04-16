@@ -1309,7 +1309,7 @@ bool StaticStrings::init(JSContext* cx) {
 }
 
 inline void TraceStaticString(JSTracer* trc, JSAtom* atom, const char* name) {
-  MOZ_ASSERT(atom->isPinned());
+  MOZ_ASSERT(atom->isPermanentAtom());
   TraceProcessGlobalRoot(trc, atom, name);
 }
 
@@ -1617,7 +1617,7 @@ static JSLinearString* NewStringDeflatedFromLittleEndianNoGC(
   return JSLinearString::new_<NoGC>(cx, std::move(news), length, heap);
 }
 
-template <typename CharT>
+template <AllowGC allowGC, typename CharT>
 JSLinearString* js::NewStringDontDeflate(
     JSContext* cx, UniquePtr<CharT[], JS::FreePolicy> chars, size_t length,
     gc::InitialHeap heap) {
@@ -1628,53 +1628,6 @@ JSLinearString* js::NewStringDontDeflate(
   if (JSInlineString::lengthFits<CharT>(length)) {
     // |chars.get()| is safe because 1) |NewInlineString| necessarily *copies*,
     // and 2) |chars| frees its contents only when this function returns.
-    return NewInlineString<CanGC>(
-        cx, mozilla::Range<const CharT>(chars.get(), length));
-  }
-
-  return JSLinearString::new_<CanGC>(cx, std::move(chars), length, heap);
-}
-
-template JSLinearString* js::NewStringDontDeflate(JSContext* cx,
-                                                  UniqueTwoByteChars chars,
-                                                  size_t length,
-                                                  gc::InitialHeap heap);
-
-template JSLinearString* js::NewStringDontDeflate(JSContext* cx,
-                                                  UniqueLatin1Chars chars,
-                                                  size_t length,
-                                                  gc::InitialHeap heap);
-
-template <typename CharT>
-JSLinearString* js::NewString(JSContext* cx,
-                              UniquePtr<CharT[], JS::FreePolicy> chars,
-                              size_t length, gc::InitialHeap heap) {
-  if constexpr (std::is_same_v<CharT, char16_t>) {
-    if (CanStoreCharsAsLatin1(chars.get(), length)) {
-      // Deflating copies from |chars.get()| and lets |chars| be freed on
-      // return.
-      return NewStringDeflated<CanGC>(cx, chars.get(), length, heap);
-    }
-  }
-
-  return NewStringDontDeflate(cx, std::move(chars), length, heap);
-}
-
-template JSLinearString* js::NewString(JSContext* cx, UniqueTwoByteChars chars,
-                                       size_t length, gc::InitialHeap heap);
-
-template JSLinearString* js::NewString(JSContext* cx, UniqueLatin1Chars chars,
-                                       size_t length, gc::InitialHeap heap);
-
-template <AllowGC allowGC, typename CharT>
-JSLinearString* js::NewStringDontDeflate(
-    JSContext* cx, UniquePtr<CharT[], JS::FreePolicy> chars, size_t length,
-    gc::InitialHeap heap) {
-  if (JSLinearString* str = TryEmptyOrStaticString(cx, chars.get(), length)) {
-    return str;
-  }
-
-  if (JSInlineString::lengthFits<CharT>(length)) {
     return NewInlineString<allowGC>(
         cx, mozilla::Range<const CharT>(chars.get(), length), heap);
   }
@@ -1705,6 +1658,8 @@ JSLinearString* js::NewString(JSContext* cx,
                               size_t length, gc::InitialHeap heap) {
   if constexpr (std::is_same_v<CharT, char16_t>) {
     if (CanStoreCharsAsLatin1(chars.get(), length)) {
+      // Deflating copies from |chars.get()| and lets |chars| be freed on
+      // return.
       return NewStringDeflated<allowGC>(cx, chars.get(), length, heap);
     }
   }

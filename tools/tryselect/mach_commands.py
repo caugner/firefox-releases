@@ -57,7 +57,7 @@ class TryConfig(object):
         choices = Registrar.command_handlers['try'].subcommand_handlers.keys()
 
         return [
-            ('try.default', 'string', desc, 'syntax', {'choices': choices}),
+            ('try.default', 'string', desc, 'auto', {'choices': choices}),
             ('try.maxhistory', 'int', "Maximum number of pushes to save in history.", 10),
         ]
 
@@ -196,9 +196,9 @@ class TrySelect(MachCommandBase):
         that provides its own set of command line arguments and are
         listed below.
 
-        If no subcommand is specified, the `syntax` selector is run by
-        default. Run |mach try syntax --help| for more information on
-        scheduling with the `syntax` selector.
+        If no subcommand is specified, the `auto` selector is run by
+        default. Run |mach try auto --help| for more information on
+        scheduling with the `auto` selector.
         """
         # We do special handling of presets here so that `./mach try --preset foo`
         # works no matter what subcommand 'foo' was saved with.

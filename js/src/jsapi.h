@@ -312,7 +312,7 @@ JS_PUBLIC_API void SetFilenameValidationCallback(FilenameValidationCallback cb);
  * Set callback to send tasks to XPCOM thread pools
  */
 JS_PUBLIC_API void SetHelperThreadTaskCallback(
-    void (*callback)(js::UniquePtr<js::RunnableTask>));
+    bool (*callback)(js::UniquePtr<js::RunnableTask>));
 
 extern JS_PUBLIC_API const char* JS_GetImplementationVersion(void);
 
@@ -452,8 +452,8 @@ extern JS_PUBLIC_API JS::Realm* EnterRealm(JSContext* cx, JSObject* target);
 
 extern JS_PUBLIC_API void LeaveRealm(JSContext* cx, JS::Realm* oldRealm);
 
-using IterateRealmCallback = void (*)(JSContext* cx, void* data,
-                                      Handle<Realm*> realm);
+using IterateRealmCallback = void (*)(JSContext* cx, void* data, Realm* realm,
+                                      const AutoRequireNoGC& nogc);
 
 /**
  * This function calls |realmCallback| on every realm. Beware that there is no
@@ -3068,13 +3068,6 @@ extern JS_PUBLIC_API bool IsMaybeWrappedSavedFrame(JSObject* obj);
  * SavedFrame.prototype object.
  */
 extern JS_PUBLIC_API bool IsUnwrappedSavedFrame(JSObject* obj);
-
-/**
- * Clean up a finalization registry in response to the engine calling the
- * HostCleanupFinalizationRegistry callback.
- */
-extern JS_PUBLIC_API bool CleanupQueuedFinalizationRegistry(
-    JSContext* cx, HandleObject registry);
 
 } /* namespace JS */
 

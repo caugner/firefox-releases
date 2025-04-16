@@ -19,6 +19,7 @@
 #  include "jit/PerfSpewer.h"
 #endif
 #include "jit/SharedICHelpers.h"
+#include "jit/TrialInlining.h"
 #include "jit/VMFunctions.h"
 #include "js/UniquePtr.h"
 #include "vm/AsyncFunction.h"
@@ -538,16 +539,28 @@ bool BaselineCompilerCodeGen::emitNextIC() {
   // We don't use every ICEntry and we can skip unreachable ops, so we have
   // to loop until we find an ICEntry for the current pc.
   const ICEntry* entry;
+  uint32_t entryIndex;
   do {
     entry = &script->jitScript()->icEntry(handler.icEntryIndex());
+    entryIndex = handler.icEntryIndex();
     handler.moveToNextICEntry();
   } while (entry->pcOffset() < pcOffset);
 
   MOZ_RELEASE_ASSERT(entry->pcOffset() == pcOffset);
   MOZ_ASSERT_IF(!entry->isForPrologue(), BytecodeOpHasIC(JSOp(*handler.pc())));
 
+  // Load stub pointer into ICStubReg.
+  if (JitOptions.warpBuilder) {
+    masm.loadPtr(frame.addressOfICScript(), ICStubReg);
+    size_t firstStubOffset = ICScript::offsetOfFirstStub(entryIndex);
+    masm.loadPtr(Address(ICStubReg, firstStubOffset), ICStubReg);
+  } else {
+    masm.loadPtr(AbsoluteAddress(entry).offset(ICEntry::offsetOfFirstStub()),
+                 ICStubReg);
+  }
+
   CodeOffset returnOffset;
-  EmitCallIC(masm, entry, &returnOffset);
+  EmitCallIC(masm, &returnOffset);
 
   RetAddrEntry::Kind kind = entry->isForPrologue()
                                 ? RetAddrEntry::Kind::PrologueIC
@@ -1070,15 +1083,41 @@ bool BaselineCodeGen<Handler>::emitDebugPrologue() {
 
 template <>
 void BaselineCompilerCodeGen::emitInitFrameFields(Register nonFunctionEnv) {
+  Register scratch = R0.scratchReg();
+  Register scratch2 = R2.scratchReg();
+  MOZ_ASSERT(nonFunctionEnv != scratch && nonFunctionEnv != scratch2);
+
   masm.store32(Imm32(0), frame.addressOfFlags());
   if (handler.function()) {
-    Register scratch = R0.scratchReg();
     masm.loadFunctionFromCalleeToken(frame.addressOfCalleeToken(), scratch);
     masm.loadPtr(Address(scratch, JSFunction::offsetOfEnvironment()), scratch);
     masm.storePtr(scratch, frame.addressOfEnvironmentChain());
   } else {
     masm.storePtr(nonFunctionEnv, frame.addressOfEnvironmentChain());
   }
+
+  if (!JitOptions.warpBuilder) {
+    // Trial inlining only supported in Warp.
+    return;
+  }
+
+  // If cx->inlinedICScript contains an inlined ICScript (passed from
+  // the caller), take that ICScript and store it in the frame, then
+  // overwrite cx->inlinedICScript with nullptr.
+  Label notInlined, done;
+  masm.movePtr(ImmPtr(cx->addressOfInlinedICScript()), scratch);
+  Address inlinedAddr(scratch, 0);
+  masm.branchPtr(Assembler::Equal, inlinedAddr, ImmWord(0), &notInlined);
+  masm.loadPtr(inlinedAddr, scratch2);
+  masm.storePtr(scratch2, frame.addressOfICScript());
+  masm.storePtr(ImmPtr(nullptr), inlinedAddr);
+  masm.jump(&done);
+
+  // Otherwise, store this script's default ICSCript in the frame.
+  masm.bind(&notInlined);
+  masm.storePtr(ImmPtr(handler.script()->jitScript()->icScript()),
+                frame.addressOfICScript());
+  masm.bind(&done);
 }
 
 template <>
@@ -1118,11 +1157,22 @@ void BaselineInterpreterCodeGen::emitInitFrameFields(Register nonFunctionEnv) {
   masm.bind(&done);
   masm.storePtr(scratch1, frame.addressOfInterpreterScript());
 
-  // Initialize interpreterICEntry.
-  masm.loadJitScript(scratch1, scratch2);
-  masm.computeEffectiveAddress(
-      Address(scratch2, JitScript::offsetOfICEntries()), scratch2);
-  masm.storePtr(scratch2, frame.addressOfInterpreterICEntry());
+  if (JitOptions.warpBuilder) {
+    // Initialize icScript and interpreterICEntry
+    masm.loadJitScript(scratch1, scratch2);
+    masm.computeEffectiveAddress(
+        Address(scratch2, JitScript::offsetOfICScript()), scratch2);
+    masm.storePtr(scratch2, frame.addressOfICScript());
+    masm.computeEffectiveAddress(
+        Address(scratch2, ICScript::offsetOfICEntries()), scratch2);
+    masm.storePtr(scratch2, frame.addressOfInterpreterICEntry());
+  } else {
+    // Initialize interpreterICEntry
+    masm.loadJitScript(scratch1, scratch2);
+    masm.computeEffectiveAddress(
+        Address(scratch2, JitScript::offsetOfICEntries()), scratch2);
+    masm.storePtr(scratch2, frame.addressOfInterpreterICEntry());
+  }
 
   // Initialize interpreter pc.
   masm.loadPtr(Address(scratch1, JSScript::offsetOfSharedData()), scratch1);
@@ -1241,19 +1291,48 @@ bool BaselineCompilerCodeGen::emitWarmUpCounterIncrement() {
   Register scriptReg = R2.scratchReg();
   Register countReg = R0.scratchReg();
 
-  // Load the JitScript* in scriptReg.
-  masm.movePtr(ImmPtr(script->jitScript()), scriptReg);
+  uint32_t warmUpCountOffset;
+  if (JitOptions.warpBuilder) {
+    // Load the ICScript* in scriptReg.
+    masm.loadPtr(frame.addressOfICScript(), scriptReg);
+    warmUpCountOffset = ICScript::offsetOfWarmUpCount();
+  } else {
+    // Load the JitScript* in scriptReg.
+    masm.movePtr(ImmPtr(script->jitScript()), scriptReg);
+    warmUpCountOffset = JitScript::offsetOfWarmUpCount();
+  }
 
   // Bump warm-up counter.
-  Address warmUpCounterAddr(scriptReg, JitScript::offsetOfWarmUpCount());
+  Address warmUpCounterAddr(scriptReg, warmUpCountOffset);
   masm.load32(warmUpCounterAddr, countReg);
   masm.add32(Imm32(1), countReg);
   masm.store32(countReg, warmUpCounterAddr);
 
+  if (JitOptions.warpBuilder && JitOptions.warpTrialInlining) {
+    // Consider trial inlining.
+    // Note: unlike other warmup thresholds, where we try to enter a
+    // higher tier whenever we are higher than a given warmup count,
+    // trial inlining triggers once when reaching the threshold.
+    Label noTrialInlining;
+    masm.branch32(Assembler::NotEqual, countReg,
+                  Imm32(JitOptions.trialInliningWarmUpThreshold),
+                  &noTrialInlining);
+    prepareVMCall();
+
+    masm.PushBaselineFramePtr(BaselineFrameReg, R0.scratchReg());
+
+    using Fn = bool (*)(JSContext*, BaselineFrame*);
+    if (!callVMNonOp<Fn, DoTrialInlining>()) {
+      return false;
+    }
+    masm.bind(&noTrialInlining);
+  }
+
   if (JSOp(*pc) == JSOp::LoopHead) {
-    // If this is a loop inside a catch or finally block, increment the warmup
-    // counter but don't attempt OSR (Ion only compiles the try block).
-    if (handler.analysis().info(pc).loopHeadInCatchOrFinally) {
+    // If this is a loop where we can't OSR (for example because it's inside a
+    // catch or finally block), increment the warmup counter but don't attempt
+    // OSR (Ion/Warp only compiles the try block).
+    if (!handler.analysis().info(pc).loopHeadCanOsr) {
       return true;
     }
   }
@@ -1264,6 +1343,11 @@ bool BaselineCompilerCodeGen::emitWarmUpCounterIncrement() {
       IonOptimizations.get(IonOptimizations.firstLevel());
   uint32_t warmUpThreshold = info->compilerWarmUpThreshold(script, pc);
   masm.branch32(Assembler::LessThan, countReg, Imm32(warmUpThreshold), &done);
+
+  if (JitOptions.warpBuilder) {
+    // Load the JitScript* in scriptReg.
+    masm.movePtr(ImmPtr(script->jitScript()), scriptReg);
+  }
 
   // Do nothing if Ion is already compiling this script off-thread or if Ion has
   // been disabled for this script.
@@ -1355,10 +1439,8 @@ bool BaselineCompilerCodeGen::emitWarmUpCounterIncrement() {
 
     masm.PushBaselineFramePtr(BaselineFrameReg, R0.scratchReg());
 
-    const RetAddrEntry::Kind kind = RetAddrEntry::Kind::WarmupCounter;
-
     using Fn = bool (*)(JSContext*, BaselineFrame*);
-    if (!callVM<Fn, IonCompileScriptForBaselineAtEntry>(kind)) {
+    if (!callVMNonOp<Fn, IonCompileScriptForBaselineAtEntry>()) {
       return false;
     }
   }
@@ -2977,6 +3059,11 @@ bool BaselineCodeGen<Handler>::emit_InitElem() {
 }
 
 template <typename Handler>
+bool BaselineCodeGen<Handler>::emit_InitPrivateElem() {
+  return emit_InitElem();
+}
+
+template <typename Handler>
 bool BaselineCodeGen<Handler>::emit_InitHiddenElem() {
   return emit_InitElem();
 }
@@ -3046,6 +3133,11 @@ bool BaselineCodeGen<Handler>::emit_GetElem() {
 }
 
 template <typename Handler>
+bool BaselineCodeGen<Handler>::emit_GetPrivateElem() {
+  return emit_GetElem();
+}
+
+template <typename Handler>
 bool BaselineCodeGen<Handler>::emit_GetElemSuper() {
   // Store obj in the scratch slot.
   frame.storeStackValue(-1, frame.addressOfScratchValue(), R2);
@@ -3093,6 +3185,11 @@ bool BaselineCodeGen<Handler>::emit_SetElem() {
 
 template <typename Handler>
 bool BaselineCodeGen<Handler>::emit_StrictSetElem() {
+  return emit_SetElem();
+}
+
+template <typename Handler>
+bool BaselineCodeGen<Handler>::emit_SetPrivateElem() {
   return emit_SetElem();
 }
 
@@ -3259,32 +3356,12 @@ bool BaselineCompilerCodeGen::tryOptimizeBindGlobalName() {
     return false;
   }
 
-  // We can bind name to the global lexical scope if the binding already
-  // exists, is initialized, and is writable (i.e., an initialized
-  // 'let') at compile time.
+  RootedGlobalObject global(cx, &script->global());
   RootedPropertyName name(cx, script->getName(handler.pc()));
-  Rooted<LexicalEnvironmentObject*> env(cx,
-                                        &script->global().lexicalEnvironment());
-  if (Shape* shape = env->lookup(cx, name)) {
-    if (shape->writable() &&
-        !env->getSlot(shape->slot()).isMagic(JS_UNINITIALIZED_LEXICAL)) {
-      frame.push(ObjectValue(*env));
-      return true;
-    }
-    return false;
+  if (JSObject* binding = MaybeOptimizeBindGlobalName(cx, global, name)) {
+    frame.push(ObjectValue(*binding));
+    return true;
   }
-
-  if (Shape* shape = script->global().lookup(cx, name)) {
-    // If the property does not currently exist on the global lexical
-    // scope, we can bind name to the global object if the property
-    // exists on the global and is non-configurable, as then it cannot
-    // be shadowed.
-    if (!shape->configurable()) {
-      frame.push(ObjectValue(script->global()));
-      return true;
-    }
-  }
-
   return false;
 }
 
@@ -5880,11 +5957,22 @@ bool BaselineCodeGen<Handler>::emitEnterGeneratorCode(Register script,
   static_assert(BaselineDisabledScript == 0x1,
                 "Comparison below requires specific sentinel encoding");
 
+  if (JitOptions.warpBuilder) {
+    // Initialize the icScript slot in the baseline frame.
+    masm.loadJitScript(script, scratch);
+    masm.computeEffectiveAddress(
+        Address(scratch, JitScript::offsetOfICScript()), scratch);
+    Address icScriptAddr(BaselineFrameReg,
+                         BaselineFrame::reverseOffsetOfICScript());
+    masm.storePtr(scratch, icScriptAddr);
+  }
+
   Label noBaselineScript;
   masm.loadJitScript(script, scratch);
   masm.loadPtr(Address(scratch, JitScript::offsetOfBaselineScript()), scratch);
   masm.branchPtr(Assembler::BelowOrEqual, scratch,
                  ImmPtr(BaselineDisabledScriptPtr), &noBaselineScript);
+
   masm.load32(Address(scratch, BaselineScript::offsetOfResumeEntriesOffset()),
               script);
   masm.addPtr(scratch, script);
@@ -6243,11 +6331,18 @@ bool BaselineInterpreterCodeGen::emit_JumpTarget() {
   masm.lshiftPtr(Imm32(shift), scratch1);
 
   // Compute ICEntry* and store to frame->interpreterICEntry.
-  loadScript(scratch2);
-  masm.loadJitScript(scratch2, scratch2);
-  masm.computeEffectiveAddress(
-      BaseIndex(scratch2, scratch1, TimesOne, JitScript::offsetOfICEntries()),
-      scratch2);
+  if (JitOptions.warpBuilder) {
+    masm.loadPtr(frame.addressOfICScript(), scratch2);
+    masm.computeEffectiveAddress(
+        BaseIndex(scratch2, scratch1, TimesOne, ICScript::offsetOfICEntries()),
+        scratch2);
+  } else {
+    loadScript(scratch2);
+    masm.loadJitScript(scratch2, scratch2);
+    masm.computeEffectiveAddress(
+        BaseIndex(scratch2, scratch1, TimesOne, JitScript::offsetOfICEntries()),
+        scratch2);
+  }
   masm.storePtr(scratch2, frame.addressOfInterpreterICEntry());
   return true;
 }

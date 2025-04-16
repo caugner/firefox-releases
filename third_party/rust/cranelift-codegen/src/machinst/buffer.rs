@@ -12,13 +12,13 @@
 //!   from the branch itself.
 //!
 //! - The lowering of control flow from the CFG-with-edges produced by
-//!   [BlockLoweringOrder], combined with many empty edge blocks when the register
-//!   allocator does not need to insert any spills/reloads/moves in edge blocks,
-//!   results in many suboptimal branch patterns. The lowering also pays no
-//!   attention to block order, and so two-target conditional forms (cond-br
-//!   followed by uncond-br) can often by avoided because one of the targets is
-//!   the fallthrough. There are several cases here where we can simplify to use
-//!   fewer branches.
+//!   [BlockLoweringOrder](super::BlockLoweringOrder), combined with many empty
+//!   edge blocks when the register allocator does not need to insert any
+//!   spills/reloads/moves in edge blocks, results in many suboptimal branch
+//!   patterns. The lowering also pays no attention to block order, and so
+//!   two-target conditional forms (cond-br followed by uncond-br) can often by
+//!   avoided because one of the targets is the fallthrough. There are several
+//!   cases here where we can simplify to use fewer branches.
 //!
 //! This "buffer" implements a single-pass code emission strategy (with a later
 //! "fixup" pass, but only through recorded fixups, not all instructions). The
@@ -41,7 +41,7 @@
 //!   by the emitter (e.g., vcode iterating over instruction structs). The emitter
 //!   has some awareness of this: it either asks for an island between blocks, so
 //!   it is not accidentally executed, or else it emits a branch around the island
-//!   when all other options fail (see [Inst::EmitIsland] meta-instruction).
+//!   when all other options fail (see `Inst::EmitIsland` meta-instruction).
 //!
 //! - A "veneer" is an instruction (or sequence of instructions) in an "island"
 //!   that implements a longer-range reference to a label. The idea is that, for
@@ -140,7 +140,7 @@
 //! Given these invariants, we argue why each optimization preserves execution
 //! semantics below (grep for "Preserves execution semantics").
 
-use crate::binemit::{Addend, CodeOffset, CodeSink, Reloc};
+use crate::binemit::{Addend, CodeOffset, CodeSink, Reloc, Stackmap};
 use crate::ir::{ExternalName, Opcode, SourceLoc, TrapCode};
 use crate::machinst::{BlockIndex, MachInstLabelUse, VCodeInst};
 
@@ -168,6 +168,8 @@ pub struct MachBuffer<I: VCodeInst> {
     call_sites: SmallVec<[MachCallSite; 16]>,
     /// Any source location mappings referring to this code.
     srclocs: SmallVec<[MachSrcLoc; 64]>,
+    /// Any stackmaps referring to this code.
+    stackmaps: SmallVec<[MachStackMap; 8]>,
     /// The current source location in progress (after `start_srcloc()` and
     /// before `end_srcloc()`).  This is a (start_offset, src_loc) tuple.
     cur_srcloc: Option<(CodeOffset, SourceLoc)>,
@@ -228,6 +230,8 @@ pub struct MachBufferFinalized {
     call_sites: SmallVec<[MachCallSite; 16]>,
     /// Any source location mappings referring to this code.
     srclocs: SmallVec<[MachSrcLoc; 64]>,
+    /// Any stackmaps referring to this code.
+    stackmaps: SmallVec<[MachStackMap; 8]>,
 }
 
 static UNKNOWN_LABEL_OFFSET: CodeOffset = 0xffff_ffff;
@@ -262,6 +266,7 @@ impl<I: VCodeInst> MachBuffer<I> {
             traps: SmallVec::new(),
             call_sites: SmallVec::new(),
             srclocs: SmallVec::new(),
+            stackmaps: SmallVec::new(),
             cur_srcloc: None,
             label_offsets: SmallVec::new(),
             label_aliases: SmallVec::new(),
@@ -1024,7 +1029,7 @@ impl<I: VCodeInst> MachBuffer<I> {
                 let veneer_offset = self.cur_offset();
                 trace!("making a veneer at {}", veneer_offset);
                 let slice = &mut self.data[start..end];
-                // Patch the original label use to refer to teh veneer.
+                // Patch the original label use to refer to the veneer.
                 trace!(
                     "patching original at offset {} to veneer offset {}",
                     offset,
@@ -1090,6 +1095,7 @@ impl<I: VCodeInst> MachBuffer<I> {
             traps: self.traps,
             call_sites: self.call_sites,
             srclocs: self.srclocs,
+            stackmaps: self.stackmaps,
         }
     }
 
@@ -1149,6 +1155,22 @@ impl<I: VCodeInst> MachBuffer<I> {
             self.srclocs.push(MachSrcLoc { start, end, loc });
         }
     }
+
+    /// Add stackmap metadata for this program point: a set of stack offsets
+    /// (from SP upward) that contain live references.
+    ///
+    /// The `offset_to_fp` value is the offset from the nominal SP (at which the
+    /// `stack_offsets` are based) and the FP value. By subtracting
+    /// `offset_to_fp` from each `stack_offsets` element, one can obtain
+    /// live-reference offsets from FP instead.
+    pub fn add_stackmap(&mut self, insn_len: CodeOffset, stackmap: Stackmap) {
+        let offset = self.cur_offset();
+        self.stackmaps.push(MachStackMap {
+            offset,
+            offset_end: offset + insn_len,
+            stackmap,
+        });
+    }
 }
 
 impl MachBufferFinalized {
@@ -1206,6 +1228,11 @@ impl MachBufferFinalized {
         sink.begin_jumptables();
         sink.begin_rodata();
         sink.end_codegen();
+    }
+
+    /// Get the stackmap metadata for this code.
+    pub fn stackmaps(&self) -> &[MachStackMap] {
+        &self.stackmaps[..]
     }
 }
 
@@ -1284,6 +1311,19 @@ pub struct MachSrcLoc {
     pub end: CodeOffset,
     /// The source location.
     pub loc: SourceLoc,
+}
+
+/// Record of stackmap metadata: stack offsets containing references.
+#[derive(Clone, Debug)]
+pub struct MachStackMap {
+    /// The code offset at which this stackmap applies.
+    pub offset: CodeOffset,
+    /// The code offset just past the "end" of the instruction: that is, the
+    /// offset of the first byte of the following instruction, or equivalently,
+    /// the start offset plus the instruction length.
+    pub offset_end: CodeOffset,
+    /// The Stackmap itself.
+    pub stackmap: Stackmap,
 }
 
 /// Record of branch instruction in the buffer, to facilitate editing.
@@ -1390,7 +1430,9 @@ mod test {
         inst.emit(&mut buf, &flags, &mut state);
 
         buf.bind_label(label(1));
-        let inst = Inst::Nop4;
+        let inst = Inst::Udf {
+            trap_info: (SourceLoc::default(), TrapCode::Interrupt),
+        };
         inst.emit(&mut buf, &flags, &mut state);
 
         buf.bind_label(label(2));
@@ -1403,13 +1445,12 @@ mod test {
 
         let mut buf2 = MachBuffer::new();
         let mut state = Default::default();
-        let inst = Inst::OneWayCondBr {
-            kind: CondBrKind::Zero(xreg(0)),
-            target: BranchTarget::ResolvedOffset(8),
+        let inst = Inst::TrapIf {
+            kind: CondBrKind::NotZero(xreg(0)),
+            trap_info: (SourceLoc::default(), TrapCode::Interrupt),
         };
         inst.emit(&mut buf2, &flags, &mut state);
         let inst = Inst::Nop4;
-        inst.emit(&mut buf2, &flags, &mut state);
         inst.emit(&mut buf2, &flags, &mut state);
 
         let buf2 = buf2.finish();

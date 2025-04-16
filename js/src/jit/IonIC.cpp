@@ -261,13 +261,20 @@ bool IonGetPropSuperIC::update(JSContext* cx, HandleScript outerScript,
       cx, ic, ionScript, ic->kind(), val, idVal, receiver,
       GetPropertyResultFlags::All);
 
-  RootedId id(cx);
-  if (!ValueToId<CanGC>(cx, idVal, &id)) {
-    return false;
-  }
+  if (ic->kind() == CacheKind::GetPropSuper) {
+    RootedPropertyName name(cx, idVal.toString()->asAtom().asPropertyName());
+    if (!GetProperty(cx, obj, receiver, name, res)) {
+      return false;
+    }
+  } else {
+    MOZ_ASSERT(ic->kind() == CacheKind::GetElemSuper);
 
-  if (!GetProperty(cx, obj, receiver, id, res)) {
-    return false;
+    JSOp op = JSOp(*ic->pc());
+    MOZ_ASSERT(op == JSOp::GetElemSuper);
+
+    if (!GetObjectElementOperation(cx, op, obj, receiver, idVal, res)) {
+      return false;
+    }
   }
 
   // Monitor changes to cache entry.
@@ -325,7 +332,8 @@ bool IonSetPropertyIC::update(JSContext* cx, HandleScript outerScript,
   jsbytecode* pc = ic->pc();
   if (ic->kind() == CacheKind::SetElem) {
     if (JSOp(*pc) == JSOp::InitElemInc || JSOp(*pc) == JSOp::InitElemArray) {
-      if (!InitArrayElemOperation(cx, pc, obj, idVal.toInt32(), rhs)) {
+      if (!InitArrayElemOperation(cx, pc, obj.as<ArrayObject>(),
+                                  idVal.toInt32(), rhs)) {
         return false;
       }
     } else if (IsPropertyInitOp(JSOp(*pc))) {

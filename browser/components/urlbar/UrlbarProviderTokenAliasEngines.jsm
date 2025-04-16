@@ -14,16 +14,12 @@ const { XPCOMUtils } = ChromeUtils.import(
   "resource://gre/modules/XPCOMUtils.jsm"
 );
 XPCOMUtils.defineLazyModuleGetters(this, {
-  Log: "resource://gre/modules/Log.jsm",
+  UrlbarPrefs: "resource:///modules/UrlbarPrefs.jsm",
   UrlbarProvider: "resource:///modules/UrlbarUtils.jsm",
   UrlbarResult: "resource:///modules/UrlbarResult.jsm",
   UrlbarSearchUtils: "resource:///modules/UrlbarSearchUtils.jsm",
   UrlbarUtils: "resource:///modules/UrlbarUtils.jsm",
 });
-
-XPCOMUtils.defineLazyGetter(this, "logger", () =>
-  Log.repository.getLogger("Urlbar.Provider.TokenAliasEngines")
-);
 
 /**
  * Class used to create the provider.
@@ -31,8 +27,6 @@ XPCOMUtils.defineLazyGetter(this, "logger", () =>
 class ProviderTokenAliasEngines extends UrlbarProvider {
   constructor() {
     super();
-    // Maps the running queries by queryContext.
-    this.queries = new Map();
     this._engines = [];
   }
 
@@ -49,7 +43,7 @@ class ProviderTokenAliasEngines extends UrlbarProvider {
    * @returns {integer} one of the types from UrlbarUtils.PROVIDER_TYPE.*
    */
   get type() {
-    return UrlbarUtils.PROVIDER_TYPE.PROFILE;
+    return UrlbarUtils.PROVIDER_TYPE.HEURISTIC;
   }
 
   get PRIORITY() {
@@ -65,12 +59,47 @@ class ProviderTokenAliasEngines extends UrlbarProvider {
    * @returns {boolean} Whether this provider should be invoked for the search.
    */
   async isActive(queryContext) {
-    this._engines = [];
-    if (queryContext.searchString.trim() == "@") {
-      this._engines = await UrlbarSearchUtils.tokenAliasEngines();
+    let instance = this.queryInstance;
+
+    // This is usually reset on canceling or completing the query, but since we
+    // query in isActive, it may not have been canceled by the previous call.
+    // It is an object with values { result: UrlbarResult, instance: Query }.
+    this._autofillData = null;
+
+    // Once the user starts typing a search string after the token, we hand off
+    // suggestions to UrlbarProviderSearchSuggestions.
+    if (
+      !queryContext.searchString.startsWith("@") ||
+      queryContext.tokens.length != 1
+    ) {
+      return false;
     }
 
-    return this._engines.length;
+    this._engines = await UrlbarSearchUtils.tokenAliasEngines();
+    if (!this._engines.length) {
+      return false;
+    }
+
+    // Check the query was not canceled while this executed.
+    if (instance != this.queryInstance) {
+      return false;
+    }
+
+    if (queryContext.searchString.trim() == "@") {
+      return true;
+    }
+
+    // If there's no engine associated with the searchString, then we don't want
+    // to block other kinds of results.
+    if (UrlbarPrefs.get("autoFill") && queryContext.allowAutofill) {
+      let result = this._getAutofillResult(queryContext);
+      if (result) {
+        this._autofillData = { result, instance };
+        return true;
+      }
+    }
+
+    return false;
   }
 
   /**
@@ -80,37 +109,32 @@ class ProviderTokenAliasEngines extends UrlbarProvider {
    *        result.
    */
   async startQuery(queryContext, addCallback) {
-    logger.info(`Starting query for ${queryContext.searchString}`);
-    let instance = {};
-    this.queries.set(queryContext, instance);
-
-    // Even though startQuery doesn't wait on any Promises, we check
-    // this.queries.has(queryContext) because isActive waits but we can't check
-    // the same condition there.
-    if (
-      !this._engines ||
-      !this._engines.length ||
-      !this.queries.has(queryContext)
-    ) {
+    if (!this._engines || !this._engines.length) {
       return;
     }
 
-    for (let { engine, tokenAliases } of this._engines) {
-      let result = new UrlbarResult(
-        UrlbarUtils.RESULT_TYPE.SEARCH,
-        UrlbarUtils.RESULT_SOURCE.SEARCH,
-        ...UrlbarResult.payloadAndSimpleHighlights(queryContext.tokens, {
-          engine: [engine.name, UrlbarUtils.HIGHLIGHT.TYPED],
-          keyword: [tokenAliases[0], UrlbarUtils.HIGHLIGHT.TYPED],
-          query: ["", UrlbarUtils.HIGHLIGHT.TYPED],
-          icon: engine.iconURI ? engine.iconURI.spec : null,
-          keywordOffer: UrlbarUtils.KEYWORD_OFFER.SHOW,
-        })
-      );
-      addCallback(this, result);
+    if (queryContext.searchString.trim() == "@") {
+      for (let { engine, tokenAliases } of this._engines) {
+        let result = new UrlbarResult(
+          UrlbarUtils.RESULT_TYPE.SEARCH,
+          UrlbarUtils.RESULT_SOURCE.SEARCH,
+          ...UrlbarResult.payloadAndSimpleHighlights(queryContext.tokens, {
+            engine: [engine.name, UrlbarUtils.HIGHLIGHT.TYPED],
+            keyword: [tokenAliases[0], UrlbarUtils.HIGHLIGHT.TYPED],
+            query: ["", UrlbarUtils.HIGHLIGHT.TYPED],
+            icon: engine.iconURI ? engine.iconURI.spec : "",
+            keywordOffer: UrlbarUtils.KEYWORD_OFFER.SHOW,
+          })
+        );
+        addCallback(this, result);
+      }
+    } else if (
+      this._autofillData &&
+      this._autofillData.instance == this.queryInstance
+    ) {
+      addCallback(this, this._autofillData.result);
+      this._autofillData = null;
     }
-
-    this.queries.delete(queryContext);
   }
 
   /**
@@ -127,8 +151,49 @@ class ProviderTokenAliasEngines extends UrlbarProvider {
    * @param {object} queryContext The query context object
    */
   cancelQuery(queryContext) {
-    logger.info(`Canceling query for ${queryContext.searchString}`);
-    this.queries.delete(queryContext);
+    if (this._autofillData?.instance == this.queryInstance) {
+      this._autofillData = null;
+    }
+  }
+
+  _getAutofillResult(queryContext) {
+    let token = queryContext.tokens[0];
+    // The user is typing a specific engine. We should show a heuristic result.
+    for (let { engine, tokenAliases } of this._engines) {
+      for (let alias of tokenAliases) {
+        if (alias.startsWith(token.lowerCaseValue)) {
+          // We found a specific engine. We will add an autofill result.
+          let aliasPreservingUserCase =
+            token.value + alias.substr(token.value.length);
+          let value = aliasPreservingUserCase + " ";
+          let result = new UrlbarResult(
+            UrlbarUtils.RESULT_TYPE.SEARCH,
+            UrlbarUtils.RESULT_SOURCE.SEARCH,
+            ...UrlbarResult.payloadAndSimpleHighlights(queryContext.tokens, {
+              engine: [engine.name, UrlbarUtils.HIGHLIGHT.TYPED],
+              keyword: [aliasPreservingUserCase, UrlbarUtils.HIGHLIGHT.TYPED],
+              query: ["", UrlbarUtils.HIGHLIGHT.TYPED],
+              icon: engine.iconURI ? engine.iconURI.spec : "",
+              keywordOffer: UrlbarUtils.KEYWORD_OFFER.HIDE,
+              // For test interoperabilty with UrlbarProviderSearchSuggestions.
+              suggestion: undefined,
+              tailPrefix: undefined,
+              tail: undefined,
+              tailOffsetIndex: -1,
+              isSearchHistory: false,
+            })
+          );
+          result.heuristic = true;
+          result.autofill = {
+            value,
+            selectionStart: queryContext.searchString.length,
+            selectionEnd: value.length,
+          };
+          return result;
+        }
+      }
+    }
+    return null;
   }
 }
 

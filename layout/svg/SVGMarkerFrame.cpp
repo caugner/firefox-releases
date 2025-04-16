@@ -10,10 +10,11 @@
 // Keep others in (case-insensitive) order:
 #include "gfxContext.h"
 #include "mozilla/PresShell.h"
+#include "mozilla/SVGGeometryFrame.h"
+#include "mozilla/SVGObserverUtils.h"
+#include "mozilla/SVGUtils.h"
+#include "mozilla/dom/SVGGeometryElement.h"
 #include "mozilla/dom/SVGMarkerElement.h"
-#include "SVGGeometryElement.h"
-#include "SVGGeometryFrame.h"
-#include "SVGObserverUtils.h"
 
 using namespace mozilla::dom;
 using namespace mozilla::gfx;
@@ -45,8 +46,8 @@ nsresult SVGMarkerFrame::AttributeChanged(int32_t aNameSpaceID,
     SVGObserverUtils::InvalidateDirectRenderingObservers(this);
   }
 
-  return nsSVGContainerFrame::AttributeChanged(aNameSpaceID, aAttribute,
-                                               aModType);
+  return SVGContainerFrame::AttributeChanged(aNameSpaceID, aAttribute,
+                                             aModType);
 }
 
 #ifdef DEBUG
@@ -55,12 +56,12 @@ void SVGMarkerFrame::Init(nsIContent* aContent, nsContainerFrame* aParent,
   NS_ASSERTION(aContent->IsSVGElement(nsGkAtoms::marker),
                "Content is not an SVG marker");
 
-  nsSVGContainerFrame::Init(aContent, aParent, aPrevInFlow);
+  SVGContainerFrame::Init(aContent, aParent, aPrevInFlow);
 }
 #endif /* DEBUG */
 
 //----------------------------------------------------------------------
-// nsSVGContainerFrame methods:
+// SVGContainerFrame methods:
 
 gfxMatrix SVGMarkerFrame::GetCanvasTM() {
   NS_ASSERTION(mMarkedFrame, "null SVGGeometry frame");
@@ -123,16 +124,16 @@ void SVGMarkerFrame::PaintMark(gfxContext& aContext,
 
   if (StyleDisplay()->IsScrollableOverflow()) {
     aContext.Save();
-    gfxRect clipRect = nsSVGUtils::GetClipRectForFrame(
+    gfxRect clipRect = SVGUtils::GetClipRectForFrame(
         this, viewBox.x, viewBox.y, viewBox.width, viewBox.height);
-    nsSVGUtils::SetClipRect(&aContext, markTM, clipRect);
+    SVGUtils::SetClipRect(&aContext, markTM, clipRect);
   }
 
   nsIFrame* kid = GetAnonymousChildFrame(this);
-  nsSVGDisplayableFrame* SVGFrame = do_QueryFrame(kid);
+  ISVGDisplayableFrame* SVGFrame = do_QueryFrame(kid);
   // The CTM of each frame referencing us may be different.
-  SVGFrame->NotifySVGChanged(nsSVGDisplayableFrame::TRANSFORM_CHANGED);
-  nsSVGUtils::PaintFrameWithEffects(kid, aContext, markTM, aImgParams);
+  SVGFrame->NotifySVGChanged(ISVGDisplayableFrame::TRANSFORM_CHANGED);
+  SVGUtils::PaintFrameWithEffects(kid, aContext, markTM, aImgParams);
 
   if (StyleDisplay()->IsScrollableOverflow()) aContext.Restore();
 }
@@ -169,7 +170,7 @@ SVGBBox SVGMarkerFrame::GetMarkBBoxContribution(const Matrix& aToBBoxUserspace,
 
   Matrix tm = viewBoxTM * mMarkerTM * aToBBoxUserspace;
 
-  nsSVGDisplayableFrame* child = do_QueryFrame(GetAnonymousChildFrame(this));
+  ISVGDisplayableFrame* child = do_QueryFrame(GetAnonymousChildFrame(this));
   // When we're being called to obtain the invalidation area, we need to
   // pass down all the flags so that stroke is included. However, once DOM
   // getBBox() accepts flags, maybe we should strip some of those here?
@@ -234,7 +235,7 @@ void SVGMarkerAnonChildFrame::Init(nsIContent* aContent,
                                    nsContainerFrame* aParent,
                                    nsIFrame* aPrevInFlow) {
   MOZ_ASSERT(aParent->IsSVGMarkerFrame(), "Unexpected parent");
-  nsSVGDisplayContainerFrame::Init(aContent, aParent, aPrevInFlow);
+  SVGDisplayContainerFrame::Init(aContent, aParent, aPrevInFlow);
 }
 #endif
 

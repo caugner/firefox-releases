@@ -47,7 +47,7 @@ class SVGFEContainerFrame final : public nsContainerFrame {
 
 #ifdef DEBUG_FRAME_DUMP
   virtual nsresult GetFrameName(nsAString& aResult) const override {
-    return MakeFrameName(NS_LITERAL_STRING("SVGFEContainer"), aResult);
+    return MakeFrameName(u"SVGFEContainer"_ns, aResult);
   }
 #endif
 
@@ -60,7 +60,7 @@ class SVGFEContainerFrame final : public nsContainerFrame {
                                     int32_t aModType) override;
 
   virtual bool ComputeCustomOverflow(nsOverflowAreas& aOverflowAreas) override {
-    // We don't maintain a visual overflow rect
+    // We don't maintain a ink overflow rect
     return false;
   }
 };

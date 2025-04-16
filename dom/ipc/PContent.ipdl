@@ -16,7 +16,7 @@ include protocol PHal;
 include protocol PHeapSnapshotTempFileHelper;
 include protocol PProcessHangMonitor;
 include protocol PImageBridge;
-include protocol PIPCBlobInputStream;
+include protocol PRemoteLazyInputStream;
 include protocol PLoginReputation;
 include protocol PMedia;
 include protocol PNecko;
@@ -78,7 +78,7 @@ using base::ProcessId from "base/process.h";
 using struct IPC::Permission from "mozilla/net/NeckoMessageUtils.h";
 using class IPC::Principal from "mozilla/dom/PermissionMessageUtils.h";
 using mozilla::a11y::IHandlerControlHolder from "mozilla/a11y/IPCTypes.h";
-using mozilla::dom::NativeThreadId from "mozilla/dom/TabMessageUtils.h";
+using mozilla::dom::NativeThreadId from "mozilla/dom/NativeThreadId.h";
 using mozilla::hal::ProcessPriority from "mozilla/HalTypes.h";
 using mozilla::gfx::IntSize from "mozilla/gfx/2D.h";
 using mozilla::dom::TabId from "mozilla/dom/ipc/IdType.h";
@@ -112,12 +112,13 @@ using mozilla::ipc::SharedMemoryBasic::Handle from "mozilla/ipc/SharedMemoryBasi
 using mozilla::fontlist::Pointer from "SharedFontList.h";
 using gfxSparseBitSet from "gfxFontUtils.h";
 using FontVisibility from "gfxFontEntry.h";
-using mozilla::dom::MediaControlKey from "ipc/MediaControlIPC.h";
+using mozilla::dom::MediaControlAction from "ipc/MediaControlIPC.h";
 using mozilla::dom::MediaPlaybackState from "ipc/MediaControlIPC.h";
 using mozilla::dom::MediaAudibleState from "ipc/MediaControlIPC.h";
 using mozilla::dom::MaybeMediaMetadataBase from "mozilla/dom/MediaSessionIPCUtils.h";
 using mozilla::dom::MediaSessionAction from "mozilla/dom/MediaSessionIPCUtils.h";
 using mozilla::dom::MediaSessionPlaybackState from "mozilla/dom/MediaSessionIPCUtils.h";
+using mozilla::dom::PositionState from "mozilla/dom/MediaSessionIPCUtils.h";
 using refcounted class nsDocShellLoadState from "nsDocShellLoadState.h";
 using mozilla::dom::ServiceWorkerShutdownState::Progress from "mozilla/dom/ServiceWorkerShutdownState.h";
 using mozilla::ContentBlockingNotifier::StorageAccessPermissionGrantedReason from "mozilla/ContentBlockingNotifier.h";
@@ -126,6 +127,7 @@ using mozilla::ContentBlocking::StorageAccessPromptChoices from "mozilla/Content
 using JSActorMessageKind from "mozilla/dom/JSActor.h";
 using JSActorMessageMeta from "mozilla/dom/PWindowGlobal.h";
 using mozilla::PermissionDelegateHandler::DelegatedPermissionList from "mozilla/PermissionDelegateIPCUtils.h";
+using refcounted class nsILayoutHistoryState from "nsILayoutHistoryState.h";
 
 union ChromeRegistryItem
 {
@@ -257,7 +259,7 @@ struct JSWindowActorInfo
   // Observer notifications this actor listens to.
   nsCString[] observers;
   nsString[] matches;
-  nsString[] remoteTypes;
+  nsCString[] remoteTypes;
   nsString[] messageManagerGroups;
 };
 
@@ -270,7 +272,7 @@ struct JSProcessActorInfo
 
     // Observer notifications this actor listens to.
     nsCString[] observers;
-    nsString[] remoteTypes;
+    nsCString[] remoteTypes;
 };
 
 struct GMPAPITags
@@ -331,7 +333,7 @@ struct IPCURLClassifierFeature
 {
     nsCString featureName;
     nsCString[] tables;
-    nsCString skipHostList;
+    nsCString exceptionHostList;
 };
 
 // Transport structure for Notifications API notifications
@@ -393,7 +395,7 @@ nested(upto inside_cpow) sync protocol PContent
     manages PHal;
     manages PHandlerService;
     manages PHeapSnapshotTempFileHelper;
-    manages PIPCBlobInputStream;
+    manages PRemoteLazyInputStream;
     manages PMedia;
     manages PNecko;
     manages POfflineCacheUpdate;
@@ -631,7 +633,7 @@ child:
     /**
      * Send the remote type associated with the content process.
      */
-    async RemoteType(nsString aRemoteType);
+    async RemoteType(nsCString aRemoteType);
 
     /**
      * Send ServiceWorkerRegistrationData to child process.
@@ -757,7 +759,7 @@ child:
 
     async RefreshScreens(ScreenDetails[] aScreens);
 
-    async PIPCBlobInputStream(nsID aID, uint64_t aSize);
+    async PRemoteLazyInputStream(nsID aID, uint64_t aSize);
 
     /**
      * This call takes the set of plugins loaded in the chrome process, and
@@ -861,11 +863,11 @@ child:
     async StartDelayedAutoplayMediaComponents(MaybeDiscardedBrowsingContext aContext);
 
     /**
-     * This method is used to dispatch MediaControlKey to content process in
+     * This method is used to dispatch MediaControlAction to content process in
      * order to control media within a specific browsing context tree.
      */
-    async UpdateMediaControlKey(MaybeDiscardedBrowsingContext aContext,
-                                MediaControlKey aKey);
+    async UpdateMediaControlAction(MaybeDiscardedBrowsingContext aContext,
+                                   MediaControlAction aAction);
 
     // Begin subscribing to a new BrowsingContextGroup, sending down the current
     // value for every individual BrowsingContext.
@@ -883,6 +885,12 @@ child:
 
     async DisplayLoadError(MaybeDiscardedBrowsingContext aContext, nsString aURI);
 
+    async GoBack(MaybeDiscardedBrowsingContext aContext, int32_t? aCancelContentJSEpoch, bool aRequireUserInteraction);
+    async GoForward(MaybeDiscardedBrowsingContext aContext, int32_t? aCancelContentJSEpoch, bool aRequireUserInteraction);
+    async GoToIndex(MaybeDiscardedBrowsingContext aContext, int32_t aIndex, int32_t? aCancelContentJSEpoch);
+    async Reload(MaybeDiscardedBrowsingContext aContext, uint32_t aReloadFlags);
+    async StopLoad(MaybeDiscardedBrowsingContext aContext, uint32_t aStopFlags);
+
     async OnAllowAccessFor(MaybeDiscardedBrowsingContext aParentContext,
                            nsCString aTrackingOrigin,
                            uint32_t aCookieBehavior,
@@ -898,10 +906,21 @@ child:
      */
     async AbortOrientationPendingPromises(MaybeDiscardedBrowsingContext aContext);
 
-    async HistoryCommitLength(MaybeDiscardedBrowsingContext aContext,
-                              uint32_t aLength);
-
+    async HistoryCommitIndexAndLength(MaybeDiscardedBrowsingContext aContext,
+                                      uint32_t aIndex, uint32_t aLength,
+                                      nsID aChangeID);
 parent:
+    /**
+     * This is a temporary way to pass index and length through parent process.
+     * Used for testing.
+     */
+    async SessionHistoryUpdate(MaybeDiscardedBrowsingContext aTopContext,
+                               int32_t aIndex, int32_t aLength, nsID aChangeID);
+
+    async SynchronizeLayoutHistoryState(uint64_t aSessionHistoryEntryID,
+                                        nsILayoutHistoryState aState);
+
+
     async InitBackground(Endpoint<PBackgroundParent> aEndpoint);
 
     async CreateGMPService();
@@ -1098,8 +1117,8 @@ parent:
 
     sync KeywordToURI(nsCString keyword, bool isPrivateContext)
         returns (nsString providerName, nsIInputStream postData, nsIURI uri);
-    sync GetFixupURIInfo(nsCString uriString, uint32_t fixupflags)
-        returns (nsString providerName, nsIInputStream postData, nsIURI fixedURI, nsIURI preferredURI);
+    sync GetFixupURIInfo(nsString uriString, uint32_t fixupflags, bool aAllowThirdPartyFixup)
+        returns (nsString providerName, nsIInputStream postData, nsIURI preferredURI);
 
     sync NotifyKeywordSearchLoading(nsString providerName, nsString keyword);
 
@@ -1511,7 +1530,8 @@ parent:
                                                   MaybeDiscardedBrowsingContext aParentContext,
                                                   Principal aTrackingPrincipal,
                                                   nsCString aTrackingOrigin,
-                                                  int aAllowMode)
+                                                  int aAllowMode,
+                                                  StorageAccessPermissionGrantedReason? aReason)
           returns (bool unused);
 
     async CompleteAllowAccessFor(MaybeDiscardedBrowsingContext aParentContext,
@@ -1587,6 +1607,14 @@ parent:
         bool aIsInFullScreen);
 
     /**
+     * This method is used to update media session's position state whenever its
+     * position state is being updated.
+     */
+    async NotifyPositionStateChanged(
+        MaybeDiscardedBrowsingContext aContext,
+        PositionState aState);
+
+    /**
      * Due to sandboxing, a child process's UntrustedModulesProcessor cannot
      * obtain enough information about a DLL file to determine its
      * trustworthiness. This API asks the chrome process to perform that
@@ -1615,7 +1643,8 @@ parent:
                      bool? reloadActiveEntry);
 
     async HistoryCommit(MaybeDiscardedBrowsingContext aContext,
-                        uint64_t aSessionHistoryEntryID);
+                        uint64_t aSessionHistoryEntryID,
+                        nsID aChangeID);
 
     async HistoryGo(MaybeDiscardedBrowsingContext aContext,
                     int32_t aOffset) returns(int32_t requestedIndex);

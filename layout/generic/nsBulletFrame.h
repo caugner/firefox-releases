@@ -10,7 +10,7 @@
 #define nsBulletFrame_h___
 
 #include "mozilla/Attributes.h"
-#include "nsFrame.h"
+#include "nsIFrame.h"
 
 #include "imgIContainer.h"
 #include "imgINotificationObserver.h"
@@ -40,7 +40,7 @@ class nsBulletListener final : public imgINotificationObserver {
  * A simple class that manages the layout and rendering of html bullets.
  * This class also supports the CSS list-style properties.
  */
-class nsBulletFrame final : public nsFrame {
+class nsBulletFrame final : public nsIFrame {
   typedef mozilla::image::ImgDrawResult ImgDrawResult;
 
  public:
@@ -50,7 +50,7 @@ class nsBulletFrame final : public nsFrame {
 #endif
 
   explicit nsBulletFrame(ComputedStyle* aStyle, nsPresContext* aPresContext)
-      : nsFrame(aStyle, aPresContext, kClassID),
+      : nsIFrame(aStyle, aPresContext, kClassID),
         mPadding(GetWritingMode()),
         mIntrinsicSize(GetWritingMode()),
         mRequestRegistered(false) {}
@@ -83,7 +83,7 @@ class nsBulletFrame final : public nsFrame {
     if (aFlags & (eSupportsCSSTransforms | eSupportsContainLayoutAndPaint)) {
       return false;
     }
-    return nsFrame::IsFrameOfType(aFlags & ~nsIFrame::eLineParticipant);
+    return nsIFrame::IsFrameOfType(aFlags & ~nsIFrame::eLineParticipant);
   }
 
   // nsBulletFrame

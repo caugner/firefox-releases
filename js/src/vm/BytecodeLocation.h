@@ -96,7 +96,6 @@ class BytecodeLocation {
   inline uint32_t defCount() const;
 
   int32_t jumpOffset() const { return GET_JUMP_OFFSET(rawBytecode_); }
-  int32_t codeOffset() const { return GET_CODE_OFFSET(rawBytecode_); }
 
   inline JSAtom* getAtom(const JSScript* script) const;
   inline PropertyName* getPropertyName(const JSScript* script) const;
@@ -199,6 +198,8 @@ class BytecodeLocation {
 
   bool isSpreadOp() const { return IsSpreadOp(getOp()); }
 
+  bool isInvokeOp() const { return IsInvokeOp(getOp()); }
+
   bool resultIsPopped() const {
     MOZ_ASSERT(StackDefs(rawBytecode_) == 1);
     return BytecodeIsPopped(rawBytecode_);
@@ -211,12 +212,6 @@ class BytecodeLocation {
     MOZ_ASSERT(isJump());
     return BytecodeLocation(*this,
                             rawBytecode_ + GET_JUMP_OFFSET(rawBytecode_));
-  }
-
-  BytecodeLocation getEndOfTryLocation() const {
-    MOZ_ASSERT(is(JSOp::Try));
-    return BytecodeLocation(*this,
-                            rawBytecode_ + GET_CODE_OFFSET(rawBytecode_));
   }
 
   // Return the 'low' parameter to the tableswitch opcode

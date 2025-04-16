@@ -4,37 +4,67 @@
 
 from __future__ import absolute_import
 
-import os
+import abc
 import re
 from os.path import expanduser
 
 import sentry_sdk
 from mozboot.util import get_state_dir
+from mozbuild.telemetry import is_telemetry_enabled
+from mozversioncontrol import get_repository_object, InvalidRepoPath
 from six import string_types
-from six.moves.configparser import SafeConfigParser, NoOptionError
 
+# The following developers frequently modify mach code, and testing will commonly cause
+# exceptions to be thrown. We don't want these exceptions reported to Sentry.
+_DEVELOPER_BLOCKLIST = [
+    'ahalberstadt@mozilla.com',
+    'mhentges@mozilla.com',
+    'rstewart@mozilla.com',
+    'sledru@mozilla.com'
+]
 # https://sentry.prod.mozaws.net/operations/mach/
 _SENTRY_DSN = "https://8228c9aff64949c2ba4a2154dc515f55@sentry.prod.mozaws.net/525"
 
 
-def register_sentry(argv, topsrcdir=None):
-    cfg_file = os.path.join(get_state_dir(), 'machrc')
-    config = SafeConfigParser()
+class ErrorReporter(object):
+    @abc.abstractmethod
+    def report_exception(self, exception):
+        """Report the exception to remote error-tracking software."""
 
-    if not config.read(cfg_file):
-        return
 
-    try:
-        telemetry_enabled = config.getboolean("build", "telemetry")
-    except NoOptionError:
-        return
+class SentryErrorReporter(ErrorReporter):
+    """Reports errors using Sentry."""
+    def report_exception(self, exception):
+        sentry_sdk.capture_exception(exception)
 
-    if not telemetry_enabled:
-        return
+
+class NoopErrorReporter(ErrorReporter):
+    """Drops errors instead of reporting them.
+
+    This is useful in cases where error-reporting is specifically disabled, such as
+    when telemetry hasn't been allowed.
+    """
+    def report_exception(self, exception):
+        pass
+
+
+def register_sentry(argv, settings, topsrcdir=None):
+    if not is_telemetry_enabled(settings):
+        return NoopErrorReporter()
+
+    if topsrcdir:
+        try:
+            repo = get_repository_object(topsrcdir)
+            email = repo.get_user_email()
+            if email in _DEVELOPER_BLOCKLIST:
+                return NoopErrorReporter()
+        except InvalidRepoPath:
+            pass
 
     sentry_sdk.init(_SENTRY_DSN,
                     before_send=lambda event, _: _process_event(event, topsrcdir))
     sentry_sdk.add_breadcrumb(message="./mach {}".format(" ".join(argv)))
+    return SentryErrorReporter()
 
 
 def _process_event(sentry_event, topsrcdir):
@@ -106,8 +136,3 @@ def _patch_absolute_paths(sentry_event, topsrcdir):
 def _delete_server_name(sentry_event, _):
     sentry_event.pop("server_name")
     return sentry_event
-
-
-def report_exception(exception):
-    # sentry_sdk won't report the exception if `sentry-sdk.init(...)` hasn't been called
-    sentry_sdk.capture_exception(exception)

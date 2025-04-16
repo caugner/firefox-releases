@@ -119,7 +119,7 @@ nsImageLoadingContent::nsImageLoadingContent()
   mMostRecentRequestChange = TimeStamp::ProcessCreation();
 }
 
-void nsImageLoadingContent::DestroyImageLoadingContent() {
+void nsImageLoadingContent::Destroy() {
   // Cancel our requests so they won't hold stale refs to us
   // NB: Don't ask to discard the images here.
   RejectDecodePromises(NS_ERROR_DOM_IMAGE_INVALID_REQUEST);
@@ -128,8 +128,7 @@ void nsImageLoadingContent::DestroyImageLoadingContent() {
 }
 
 nsImageLoadingContent::~nsImageLoadingContent() {
-  MOZ_ASSERT(!mCurrentRequest && !mPendingRequest,
-             "DestroyImageLoadingContent not called");
+  MOZ_ASSERT(!mCurrentRequest && !mPendingRequest, "Destroy not called");
   MOZ_ASSERT(!mObserverList.mObserver && !mObserverList.mNext,
              "Observers still registered?");
   MOZ_ASSERT(mScriptedObservers.IsEmpty(),
@@ -255,16 +254,16 @@ void nsImageLoadingContent::OnLoadComplete(imgIRequest* aRequest,
 
   // Fire the appropriate DOM event.
   if (NS_SUCCEEDED(aStatus)) {
-    FireEvent(NS_LITERAL_STRING("load"));
+    FireEvent(u"load"_ns);
 
     // Do not fire loadend event for multipart/x-mixed-replace image streams.
     bool isMultipart;
     if (NS_FAILED(aRequest->GetMultipart(&isMultipart)) || !isMultipart) {
-      FireEvent(NS_LITERAL_STRING("loadend"));
+      FireEvent(u"loadend"_ns);
     }
   } else {
-    FireEvent(NS_LITERAL_STRING("error"));
-    FireEvent(NS_LITERAL_STRING("loadend"));
+    FireEvent(u"error"_ns);
+    FireEvent(u"loadend"_ns);
   }
 
   nsCOMPtr<nsINode> thisNode =
@@ -977,8 +976,8 @@ nsImageLoadingContent::LoadImageWithChannel(nsIChannel* aChannel,
 
   // Do the load.
   RefPtr<imgRequestProxy>& req = PrepareNextRequest(eImageLoadType_Normal);
-  nsresult rv = loader->LoadImageWithChannel(aChannel, this, doc, aListener,
-                                             getter_AddRefs(req));
+  nsresult rv = loader->LoadImageWithChannel(aChannel, this, doc,
+                                             aListener, getter_AddRefs(req));
   if (NS_SUCCEEDED(rv)) {
     CloneScriptedRequests(req);
     TrackImage(req);
@@ -991,8 +990,8 @@ nsImageLoadingContent::LoadImageWithChannel(nsIChannel* aChannel,
   // know what we tried (and failed) to load.
   if (!mCurrentRequest) aChannel->GetURI(getter_AddRefs(mCurrentURI));
 
-  FireEvent(NS_LITERAL_STRING("error"));
-  FireEvent(NS_LITERAL_STRING("loadend"));
+  FireEvent(u"error"_ns);
+  FireEvent(u"loadend"_ns);
   return rv;
 }
 
@@ -1042,12 +1041,12 @@ nsresult nsImageLoadingContent::LoadImage(const nsAString& aNewURI, bool aForce,
     CancelImageRequests(aNotify);
     // Mark error event as cancelable only for src="" case, since only this
     // error causes site compat problem (bug 1308069) for now.
-    FireEvent(NS_LITERAL_STRING("error"), true);
+    FireEvent(u"error"_ns, true);
     return NS_OK;
   }
 
   // Fire loadstart event
-  FireEvent(NS_LITERAL_STRING("loadstart"));
+  FireEvent(u"loadstart"_ns);
 
   // Parse the URI string to get image URI
   nsCOMPtr<nsIURI> imageURI;
@@ -1077,14 +1076,14 @@ nsresult nsImageLoadingContent::LoadImage(nsIURI* aNewURI, bool aForce,
 
   // Fire loadstart event if required
   if (aLoadStart) {
-    FireEvent(NS_LITERAL_STRING("loadstart"));
+    FireEvent(u"loadstart"_ns);
   }
 
   if (!mLoadingEnabled) {
     // XXX Why fire an error here? seems like the callers to SetLoadingEnabled
     // don't want/need it.
-    FireEvent(NS_LITERAL_STRING("error"));
-    FireEvent(NS_LITERAL_STRING("loadend"));
+    FireEvent(u"error"_ns);
+    FireEvent(u"loadend"_ns);
     return NS_OK;
   }
 
@@ -1104,15 +1103,20 @@ nsresult nsImageLoadingContent::LoadImage(nsIURI* aNewURI, bool aForce,
 
   // Data documents, or documents from DOMParser shouldn't perform image
   // loading.
-  if (aDocument->IsLoadedAsData()) {
+  //
+  // FIXME(emilio): Shouldn't this check be part of
+  // Document::ShouldLoadImages()? Or alternatively check ShouldLoadImages here
+  // instead? (It seems we only check ShouldLoadImages in HTMLImageElement,
+  // which seems wrong...)
+  if (aDocument->IsLoadedAsData() && !aDocument->IsStaticDocument()) {
     // This is the only codepath on which we can reach SetBlockedRequest while
     // our pending request exists.  Just clear it out here if we do have one.
     ClearPendingRequest(NS_BINDING_ABORTED, Some(OnNonvisible::DiscardImages));
 
     SetBlockedRequest(nsIContentPolicy::REJECT_REQUEST);
 
-    FireEvent(NS_LITERAL_STRING("error"));
-    FireEvent(NS_LITERAL_STRING("loadend"));
+    FireEvent(u"error"_ns);
+    FireEvent(u"loadend"_ns);
     return NS_OK;
   }
 
@@ -1209,8 +1213,8 @@ nsresult nsImageLoadingContent::LoadImage(nsIURI* aNewURI, bool aForce,
     // know what we tried (and failed) to load.
     if (!mCurrentRequest) mCurrentURI = aNewURI;
 
-    FireEvent(NS_LITERAL_STRING("error"));
-    FireEvent(NS_LITERAL_STRING("loadend"));
+    FireEvent(u"error"_ns);
+    FireEvent(u"loadend"_ns);
   }
 
   return NS_OK;
@@ -1735,26 +1739,6 @@ void nsImageLoadingContent::UntrackImage(
   }
 }
 
-void nsImageLoadingContent::CreateStaticImageClone(
-    nsImageLoadingContent* aDest) const {
-  aDest->ClearScriptedRequests(CURRENT_REQUEST, NS_BINDING_ABORTED);
-  aDest->mCurrentRequest = nsContentUtils::GetStaticRequest(
-      aDest->GetOurOwnerDoc(), mCurrentRequest);
-  if (aDest->mCurrentRequest) {
-    aDest->CloneScriptedRequests(aDest->mCurrentRequest);
-  }
-  aDest->TrackImage(aDest->mCurrentRequest);
-  aDest->mForcedImageState = mForcedImageState;
-  aDest->mImageBlockingStatus = mImageBlockingStatus;
-  aDest->mLoadingEnabled = mLoadingEnabled;
-  aDest->mStateChangerDepth = mStateChangerDepth;
-  aDest->mIsImageStateForced = mIsImageStateForced;
-  aDest->mLoading = mLoading;
-  aDest->mBroken = mBroken;
-  aDest->mUserDisabled = mUserDisabled;
-  aDest->mSuppressed = mSuppressed;
-}
-
 CORSMode nsImageLoadingContent::GetCORSMode() { return CORS_NONE; }
 
 nsImageLoadingContent::ImageObserver::ImageObserver(
@@ -1855,6 +1839,7 @@ Element* nsImageLoadingContent::FindImageMap() {
 nsLoadFlags nsImageLoadingContent::LoadFlags() {
   auto* image = HTMLImageElement::FromNode(AsContent());
   if (image && image->OwnerDoc()->IsScriptEnabled() &&
+      !image->OwnerDoc()->IsStaticDocument() &&
       image->LoadingState() == HTMLImageElement::Loading::Lazy) {
     // Note that LOAD_BACKGROUND is not about priority of the load, but about
     // whether it blocks the load event (by bypassing the loadgroup).

@@ -17,6 +17,7 @@ members = [
   "toolkit/crashreporter/rust",
   "toolkit/library/gtest/rust",
   "toolkit/library/rust/",
+  "toolkit/mozapps/defaultagent/rust",
 ]
 
 # Excluded crates may be built as dependencies, but won't be considered members
@@ -38,7 +39,6 @@ exclude = [
 
   # Excluded because they are used only as dependencies, not top-level targets,
   # so we don't need to vendor their dev-dependencies.
-  "dom/webauthn/u2f-hid-rs",
   "gfx/webrender_bindings",
   "media/mp4parse-rust/mp4parse",
   "media/mp4parse-rust/mp4parse_capi",
@@ -72,11 +72,12 @@ spirv_cross = { git = "https://github.com/kvark/spirv_cross", branch = "wgpu3", 
 # failure's backtrace feature might break our builds, see bug 1608157.
 failure = { git = "https://github.com/badboy/failure", rev = "64af847bc5fdcb6d2438bec8a6030812a80519a5" }
 failure_derive = { git = "https://github.com/badboy/failure", rev = "64af847bc5fdcb6d2438bec8a6030812a80519a5" }
+getrandom = { git = "https://github.com/froydnj/getrandom", rev = "d0302a506d320ac9691029eda41b04f5d72218bf" }
 
 [patch.crates-io.cranelift-codegen]
 git = "https://github.com/bytecodealliance/wasmtime"
-rev = "238ae3bf2111847f60089656eb97fc9345295b1f"
+rev = "1b3b2dbfd00492161032760992a8699d19b640ca"
 
 [patch.crates-io.cranelift-wasm]
 git = "https://github.com/bytecodealliance/wasmtime"
-rev = "238ae3bf2111847f60089656eb97fc9345295b1f"
+rev = "1b3b2dbfd00492161032760992a8699d19b640ca"

@@ -163,16 +163,21 @@ static const size_t UINT32_CHAR_BUFFER_LENGTH = sizeof("4294967295") - 1;
  */
 // clang-format on
 
-class JSString : public js::gc::Cell {
+class JSString : public js::gc::CellWithLengthAndFlags {
  protected:
   static const size_t NUM_INLINE_CHARS_LATIN1 =
       2 * sizeof(void*) / sizeof(JS::Latin1Char);
   static const size_t NUM_INLINE_CHARS_TWO_BYTE =
       2 * sizeof(void*) / sizeof(char16_t);
 
-  using Header = js::gc::CellHeaderWithLengthAndFlags;
-  Header header_;
+ public:
+  // String length and flags are stored in the cell header.
+  MOZ_ALWAYS_INLINE
+  size_t length() const { return headerLengthField(); }
+  MOZ_ALWAYS_INLINE
+  uint32_t flags() const { return headerFlagsField(); }
 
+ protected:
   /* Fields only apply to string types commented on the right. */
   struct Data {
     // Note: 32-bit length and flags fields are inherited from
@@ -284,7 +289,7 @@ class JSString : public js::gc::Cell {
   static const uint32_t INIT_DEPENDENT_FLAGS = LINEAR_BIT | DEPENDENT_BIT;
 
   static const uint32_t TYPE_FLAGS_MASK = js::BitMask(9) - js::BitMask(3);
-  static_assert((TYPE_FLAGS_MASK & js::gc::CellHeader::RESERVED_MASK) == 0,
+  static_assert((TYPE_FLAGS_MASK & RESERVED_MASK) == 0,
                 "GC reserved bits must not be used for Strings");
 
   static const uint32_t LATIN1_CHARS_BIT = js::Bit(9);
@@ -292,11 +297,7 @@ class JSString : public js::gc::Cell {
   static const uint32_t INDEX_VALUE_BIT = js::Bit(10);
   static const uint32_t INDEX_VALUE_SHIFT = 16;
 
-  static const uint32_t PINNED_ATOM_BIT = js::Bit(11);
-
   // NON_DEDUP_BIT is used in string deduplication during tenuring.
-  // Atoms won't be tenured, so overloading PINNED_ATOM_BIT
-  // with NON_DEDUP_BIT works correctly.
   static const uint32_t NON_DEDUP_BIT = js::Bit(11);
 
   static const uint32_t MAX_LENGTH = js::MaxStringLength;
@@ -310,19 +311,11 @@ class JSString : public js::gc::Cell {
    */
   static inline bool validateLength(JSContext* maybecx, size_t length);
 
-  static constexpr size_t offsetOfRawFlagsField() {
-    return offsetof(JSString, header_) + Header::offsetOfRawFlagsField();
-  }
-
-  static constexpr size_t offsetOfFlags() {
-    return offsetof(JSString, header_) + Header::offsetOfFlags();
-  }
-  static constexpr size_t offsetOfLength() {
-    return offsetof(JSString, header_) + Header::offsetOfLength();
-  }
+  static constexpr size_t offsetOfFlags() { return offsetOfHeaderFlags(); }
+  static constexpr size_t offsetOfLength() { return offsetOfHeaderLength(); }
 
   bool sameLengthAndFlags(const JSString& other) const {
-    return header_ == other.header_;
+    return length() == other.length() && flags() == other.flags();
   }
 
   static void staticAsserts() {
@@ -339,8 +332,9 @@ class JSString : public js::gc::Cell {
 
     /* Ensure js::shadow::String has the same layout. */
     using JS::shadow::String;
-    static_assert(JSString::offsetOfRawFlagsField() == offsetof(String, flags_),
-                  "shadow::String flags offset must match JSString");
+    static_assert(
+        JSString::offsetOfRawHeaderFlagsField() == offsetof(String, flags_),
+        "shadow::String flags offset must match JSString");
 #if JS_BITS_PER_WORD == 32
     static_assert(JSString::offsetOfLength() == offsetof(String, length_),
                   "shadow::String length offset must match JSString");
@@ -395,20 +389,11 @@ class JSString : public js::gc::Cell {
 #endif
   }
 
- public:
-  MOZ_ALWAYS_INLINE
-  size_t length() const { return header_.lengthField(); }
-
-  MOZ_ALWAYS_INLINE
-  uint32_t flags() const { return header_.flagsField(); }
-
  protected:
-  void setFlattenData(uintptr_t data) {
-    header_.setTemporaryGCUnsafeData(data);
-  }
+  void setFlattenData(uintptr_t data) { setTemporaryGCUnsafeData(data); }
 
   uintptr_t unsetFlattenData(uint32_t len, uint32_t flags) {
-    return header_.unsetTemporaryGCUnsafeData(len, flags);
+    return unsetTemporaryGCUnsafeData(len, flags);
   }
 
   // Get correct non-inline chars enum arm for given type
@@ -597,7 +582,6 @@ class JSString : public js::gc::Cell {
 
  public:
   static const JS::TraceKind TraceKind = JS::TraceKind::String;
-  const js::gc::CellHeader& cellHeader() const { return header_.cellHeader(); }
 
   JS::Zone* zone() const {
     if (isTenured()) {
@@ -611,10 +595,10 @@ class JSString : public js::gc::Cell {
   }
 
   void setLengthAndFlags(uint32_t len, uint32_t flags) {
-    header_.setLengthAndFlags(len, flags);
+    setHeaderLengthAndFlags(len, flags);
   }
-  void setFlagBit(uint32_t flag) { header_.setFlagBit(flag); }
-  void clearFlagBit(uint32_t flag) { header_.clearFlagBit(flag); }
+  void setFlagBit(uint32_t flag) { setHeaderFlagBit(flag); }
+  void clearFlagBit(uint32_t flag) { clearHeaderFlagBit(flag); }
 
   void fixupAfterMovingGC() {}
 
@@ -1169,17 +1153,7 @@ class JSAtom : public JSLinearString {
   // initialization of the runtime. Permanent atoms are always pinned.
   MOZ_ALWAYS_INLINE void morphIntoPermanentAtom() {
     MOZ_ASSERT(static_cast<JSString*>(this)->isAtom());
-    setFlagBit(PERMANENT_ATOM_MASK | PINNED_ATOM_BIT);
-  }
-
-  MOZ_ALWAYS_INLINE
-  bool isPinned() const { return flags() & PINNED_ATOM_BIT; }
-
-  // Mark the atom as pinned. For use by atomization only.
-  MOZ_ALWAYS_INLINE void setPinned() {
-    MOZ_ASSERT(static_cast<JSString*>(this)->isAtom());
-    MOZ_ASSERT(!isPinned());
-    setFlagBit(PINNED_ATOM_BIT);
+    setFlagBit(PERMANENT_ATOM_MASK);
   }
 
   inline js::HashNumber hash() const;
@@ -1254,8 +1228,7 @@ MOZ_ALWAYS_INLINE JSAtom* JSLinearString::morphAtomizedStringIntoAtom(
 MOZ_ALWAYS_INLINE JSAtom* JSLinearString::morphAtomizedStringIntoPermanentAtom(
     js::HashNumber hash) {
   MOZ_ASSERT(!isAtom());
-  setFlagBit(PERMANENT_ATOM_MASK | PINNED_ATOM_BIT);
-  setFlagBit(ATOM_BIT);
+  setFlagBit(PERMANENT_ATOM_MASK);
   JSAtom* atom = &asAtom();
   atom->initHash(hash);
   return atom;
@@ -1479,20 +1452,6 @@ static inline UniqueChars StringToNewUTF8CharsZ(JSContext* maybecx,
           : JS::CharsToNewUTF8CharsZ(maybecx, linear->twoByteRange(nogc))
                 .c_str());
 }
-
-/**
- * Allocate a string with the given contents, potentially GCing in the process.
- */
-template <typename CharT>
-extern JSLinearString* NewString(
-    JSContext* cx, UniquePtr<CharT[], JS::FreePolicy> chars, size_t length,
-    js::gc::InitialHeap heap = js::gc::DefaultHeap);
-
-/* Like NewString, but doesn't attempt to deflate to Latin1. */
-template <typename CharT>
-extern JSLinearString* NewStringDontDeflate(
-    JSContext* cx, UniquePtr<CharT[], JS::FreePolicy> chars, size_t length,
-    js::gc::InitialHeap heap = js::gc::DefaultHeap);
 
 /**
  * Allocate a string with the given contents.  If |allowGC == CanGC|, this may

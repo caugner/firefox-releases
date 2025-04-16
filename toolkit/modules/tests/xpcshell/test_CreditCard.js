@@ -475,8 +475,8 @@ add_task(async function test_getType() {
     ["4360000000000000", "cartebancaire"],
     ["4000000000000000", "visa"],
     ["4999999999999999", "visa"],
-    ["5400000000000000", "diners"],
-    ["5500000000000000", "diners"],
+    ["5400000000000000", "mastercard"],
+    ["5500000000000000", "mastercard"],
     ["5100000000000000", "mastercard"],
     ["5399999999999999", "mastercard"],
     ["6011000000000000", "discover"],
@@ -500,11 +500,13 @@ add_task(async function test_getType() {
     ["4035501428146300", "cartebancaire"],
     ["4111111111111111", "visa"],
     ["5346755600299631", "mastercard"],
-    ["5495770093313616", "diners"],
-    ["5574238524540144", "diners"],
+    ["5495770093313616", "mastercard"],
+    ["5574238524540144", "mastercard"],
     ["6011029459267962", "discover"],
     ["6278592974938779", "unionpay"],
     ["8171999927660000", "unionpay"],
+    ["30569309025904", "diners"],
+    ["38520000023237", "diners"],
   ];
   for (let [value, type] of RECOGNIZED_CARDS) {
     Assert.equal(
@@ -525,6 +527,32 @@ add_task(async function test_getType() {
       CreditCard.getType(value),
       null,
       `Expected ${value} to not match any card because: ${reason}`
+    );
+  }
+});
+
+add_task(async function test_getNetworkFromName() {
+  const RECOGNIZED_NAMES = [
+    ["amex", "amex"],
+    ["American Express", "amex"],
+    ["american express", "amex"],
+    ["mastercard", "mastercard"],
+    ["master card", "mastercard"],
+    ["MasterCard", "mastercard"],
+    ["Master Card", "mastercard"],
+    ["Union Pay", "unionpay"],
+    ["UnionPay", "unionpay"],
+    ["Unionpay", "unionpay"],
+    ["unionpay", "unionpay"],
+
+    ["Unknown", null],
+    ["", null],
+  ];
+  for (let [value, type] of RECOGNIZED_NAMES) {
+    Assert.equal(
+      CreditCard.getNetworkFromName(value),
+      type,
+      `Expected ${value} to be recognized as ${type}`
     );
   }
 });

@@ -7,6 +7,7 @@
 
 #import "MacUtils.h"
 #import "mozView.h"
+#import "GeckoTextMarker.h"
 
 #include "Accessible-inl.h"
 #include "nsAccUtils.h"
@@ -77,26 +78,7 @@ using namespace mozilla::a11y;
 
 #pragma mark -
 
-- (BOOL)isAccessibilityElement {
-  NS_OBJC_BEGIN_TRY_ABORT_BLOCK_RETURN;
-
-  if ([self isExpired]) {
-    return ![self ignoreWithParent:nil];
-  }
-
-  mozAccessible* parent = nil;
-  AccessibleOrProxy p = mGeckoAccessible.Parent();
-
-  if (!p.IsNull()) {
-    parent = GetNativeFromGeckoAccessible(p);
-  }
-
-  return ![self ignoreWithParent:parent];
-
-  NS_OBJC_END_TRY_ABORT_BLOCK_RETURN(NO);
-}
-
-- (BOOL)ignoreWithParent:(mozAccessible*)parent {
+- (BOOL)moxIgnoreWithParent:(mozAccessible*)parent {
   if (Accessible* acc = mGeckoAccessible.AsAccessible()) {
     if (acc->IsContent() && acc->GetContent()->IsXULElement()) {
       if (acc->VisibilityState() & states::INVISIBLE) {
@@ -105,10 +87,10 @@ using namespace mozilla::a11y;
     }
   }
 
-  return [parent ignoreChild:self];
+  return [parent moxIgnoreChild:self];
 }
 
-- (BOOL)ignoreChild:(mozAccessible*)child {
+- (BOOL)moxIgnoreChild:(mozAccessible*)child {
   return NO;
 }
 
@@ -185,6 +167,23 @@ static const uint64_t kCacheInitialized = ((uint64_t)0x1) << 63;
   return mGeckoAccessible;
 }
 
+- (mozilla::a11y::AccessibleOrProxy)geckoDocument {
+  MOZ_ASSERT(!mGeckoAccessible.IsNull());
+
+  if (mGeckoAccessible.IsAccessible()) {
+    if (mGeckoAccessible.AsAccessible()->IsDoc()) {
+      return mGeckoAccessible;
+    }
+    return mGeckoAccessible.AsAccessible()->Document();
+  }
+
+  if (mGeckoAccessible.AsProxy()->IsDoc()) {
+    return mGeckoAccessible;
+  }
+
+  return mGeckoAccessible.AsProxy()->Document();
+}
+
 #pragma mark - MOXAccessible protocol
 
 - (BOOL)moxBlockSelector:(SEL)selector {
@@ -240,6 +239,16 @@ static const uint64_t kCacheInitialized = ((uint64_t)0x1) << 63;
   return self;
 }
 
+- (id<MOXTextMarkerSupport>)moxTextMarkerDelegate {
+  MOZ_ASSERT(!mGeckoAccessible.IsNull());
+
+  if (mGeckoAccessible.IsAccessible()) {
+    return [MOXTextMarkerDelegate getOrCreateForDoc:mGeckoAccessible.AsAccessible()->Document()];
+  }
+
+  return [MOXTextMarkerDelegate getOrCreateForDoc:mGeckoAccessible.AsProxy()->Document()];
+}
+
 - (id)moxHitTest:(NSPoint)point {
   MOZ_ASSERT(!mGeckoAccessible.IsNull());
 
@@ -256,7 +265,7 @@ static const uint64_t kCacheInitialized = ((uint64_t)0x1) << 63;
 
   if (!child.IsNull()) {
     mozAccessible* nativeChild = GetNativeFromGeckoAccessible(child);
-    return [nativeChild isAccessibilityElement] ? nativeChild : [nativeChild moxParent];
+    return [nativeChild isAccessibilityElement] ? nativeChild : [nativeChild moxUnignoredParent];
   }
 
   // if we didn't find anything, return ourself or child view.
@@ -282,16 +291,12 @@ static const uint64_t kCacheInitialized = ((uint64_t)0x1) << 63;
     nativeParent = GetNativeFromGeckoAccessible(mGeckoAccessible.AsAccessible()->RootAccessible());
   }
 
-  if (![nativeParent isAccessibilityElement]) {
-    nativeParent = [nativeParent moxParent];
-  }
-
   return GetObjectOrRepresentedView(nativeParent);
 
   NS_OBJC_END_TRY_ABORT_BLOCK_NIL;
 }
 
-// gets our native children lazily.
+// gets all our native children lazily, including those that are ignored.
 - (NSArray*)moxChildren {
   MOZ_ASSERT(!mGeckoAccessible.IsNull());
 
@@ -305,14 +310,7 @@ static const uint64_t kCacheInitialized = ((uint64_t)0x1) << 63;
       continue;
     }
 
-    if ([nativeChild ignoreWithParent:self]) {
-      // If this child should be ignored get its unignored children.
-      // This will in turn recurse to any unignored descendants if the
-      // child is ignored.
-      [children addObjectsFromArray:[nativeChild moxChildren]];
-    } else {
-      [children addObject:nativeChild];
-    }
+    [children addObject:nativeChild];
   }
 
   return children;
@@ -462,34 +460,33 @@ struct RoleDescrMap {
   const nsString description;
 };
 
-static const RoleDescrMap sRoleDescrMap[] = {
-    {@"AXApplicationAlert", NS_LITERAL_STRING("alert")},
-    {@"AXApplicationAlertDialog", NS_LITERAL_STRING("alertDialog")},
-    {@"AXApplicationDialog", NS_LITERAL_STRING("dialog")},
-    {@"AXApplicationLog", NS_LITERAL_STRING("log")},
-    {@"AXApplicationMarquee", NS_LITERAL_STRING("marquee")},
-    {@"AXApplicationStatus", NS_LITERAL_STRING("status")},
-    {@"AXApplicationTimer", NS_LITERAL_STRING("timer")},
-    {@"AXContentSeparator", NS_LITERAL_STRING("separator")},
-    {@"AXDefinition", NS_LITERAL_STRING("definition")},
-    {@"AXDetails", NS_LITERAL_STRING("details")},
-    {@"AXDocument", NS_LITERAL_STRING("document")},
-    {@"AXDocumentArticle", NS_LITERAL_STRING("article")},
-    {@"AXDocumentMath", NS_LITERAL_STRING("math")},
-    {@"AXDocumentNote", NS_LITERAL_STRING("note")},
-    {@"AXLandmarkApplication", NS_LITERAL_STRING("application")},
-    {@"AXLandmarkBanner", NS_LITERAL_STRING("banner")},
-    {@"AXLandmarkComplementary", NS_LITERAL_STRING("complementary")},
-    {@"AXLandmarkContentInfo", NS_LITERAL_STRING("content")},
-    {@"AXLandmarkMain", NS_LITERAL_STRING("main")},
-    {@"AXLandmarkNavigation", NS_LITERAL_STRING("navigation")},
-    {@"AXLandmarkRegion", NS_LITERAL_STRING("region")},
-    {@"AXLandmarkSearch", NS_LITERAL_STRING("search")},
-    {@"AXSearchField", NS_LITERAL_STRING("searchTextField")},
-    {@"AXSummary", NS_LITERAL_STRING("summary")},
-    {@"AXTabPanel", NS_LITERAL_STRING("tabPanel")},
-    {@"AXTerm", NS_LITERAL_STRING("term")},
-    {@"AXUserInterfaceTooltip", NS_LITERAL_STRING("tooltip")}};
+static const RoleDescrMap sRoleDescrMap[] = {{@"AXApplicationAlert", u"alert"_ns},
+                                             {@"AXApplicationAlertDialog", u"alertDialog"_ns},
+                                             {@"AXApplicationDialog", u"dialog"_ns},
+                                             {@"AXApplicationLog", u"log"_ns},
+                                             {@"AXApplicationMarquee", u"marquee"_ns},
+                                             {@"AXApplicationStatus", u"status"_ns},
+                                             {@"AXApplicationTimer", u"timer"_ns},
+                                             {@"AXContentSeparator", u"separator"_ns},
+                                             {@"AXDefinition", u"definition"_ns},
+                                             {@"AXDetails", u"details"_ns},
+                                             {@"AXDocument", u"document"_ns},
+                                             {@"AXDocumentArticle", u"article"_ns},
+                                             {@"AXDocumentMath", u"math"_ns},
+                                             {@"AXDocumentNote", u"note"_ns},
+                                             {@"AXLandmarkApplication", u"application"_ns},
+                                             {@"AXLandmarkBanner", u"banner"_ns},
+                                             {@"AXLandmarkComplementary", u"complementary"_ns},
+                                             {@"AXLandmarkContentInfo", u"content"_ns},
+                                             {@"AXLandmarkMain", u"main"_ns},
+                                             {@"AXLandmarkNavigation", u"navigation"_ns},
+                                             {@"AXLandmarkRegion", u"region"_ns},
+                                             {@"AXLandmarkSearch", u"search"_ns},
+                                             {@"AXSearchField", u"searchTextField"_ns},
+                                             {@"AXSummary", u"summary"_ns},
+                                             {@"AXTabPanel", u"tabPanel"_ns},
+                                             {@"AXTerm", u"term"_ns},
+                                             {@"AXUserInterfaceTooltip", u"tooltip"_ns}};
 
 struct RoleDescrComparator {
   const NSString* mRole;
@@ -498,14 +495,14 @@ struct RoleDescrComparator {
 };
 
 - (NSString*)moxRoleDescription {
-  if (mRole == roles::DOCUMENT) return utils::LocalizedString(NS_LITERAL_STRING("htmlContent"));
+  if (mRole == roles::DOCUMENT) return utils::LocalizedString(u"htmlContent"_ns);
 
-  if (mRole == roles::FIGURE) return utils::LocalizedString(NS_LITERAL_STRING("figure"));
+  if (mRole == roles::FIGURE) return utils::LocalizedString(u"figure"_ns);
 
-  if (mRole == roles::HEADING) return utils::LocalizedString(NS_LITERAL_STRING("heading"));
+  if (mRole == roles::HEADING) return utils::LocalizedString(u"heading"_ns);
 
   if (mRole == roles::MARK) {
-    return utils::LocalizedString(NS_LITERAL_STRING("highlight"));
+    return utils::LocalizedString(u"highlight"_ns);
   }
 
   NSString* subrole = [self moxSubrole];
@@ -645,7 +642,7 @@ struct RoleDescrComparator {
   }
 
   if (![self isRoot]) {
-    mozAccessible* parent = (mozAccessible*)[self moxParent];
+    mozAccessible* parent = (mozAccessible*)[self moxUnignoredParent];
     if (![parent isRoot]) {
       return @(![parent disableChild:self]);
     }
@@ -789,6 +786,43 @@ struct RoleDescrComparator {
   return NO;
 }
 
+enum AXTextEditType {
+  AXTextEditTypeUnknown,
+  AXTextEditTypeDelete,
+  AXTextEditTypeInsert,
+  AXTextEditTypeTyping,
+  AXTextEditTypeDictation,
+  AXTextEditTypeCut,
+  AXTextEditTypePaste,
+  AXTextEditTypeAttributesChange
+};
+
+enum AXTextStateChangeType {
+  AXTextStateChangeTypeUnknown,
+  AXTextStateChangeTypeEdit,
+  AXTextStateChangeTypeSelectionMove,
+  AXTextStateChangeTypeSelectionExtend
+};
+
+- (void)handleAccessibleTextChangeEvent:(NSString*)change
+                               inserted:(BOOL)isInserted
+                                     at:(int32_t)start {
+  GeckoTextMarker startMarker(mGeckoAccessible, start);
+  NSDictionary* userInfo = @{
+    @"AXTextChangeElement" : self,
+    @"AXTextStateChangeType" : @(AXTextStateChangeTypeEdit),
+    @"AXTextChangeValues" : @[ @{
+      @"AXTextChangeValue" : (change ? change : @""),
+      @"AXTextChangeValueStartMarker" : startMarker.CreateAXTextMarker(),
+      @"AXTextEditType" : isInserted ? @(AXTextEditTypeTyping) : @(AXTextEditTypeDelete)
+    } ]
+  };
+
+  mozAccessible* webArea = GetNativeFromGeckoAccessible([self geckoDocument]);
+  [webArea moxPostNotification:NSAccessibilityValueChangedNotification withUserInfo:userInfo];
+  [self moxPostNotification:NSAccessibilityValueChangedNotification withUserInfo:userInfo];
+}
+
 - (void)handleAccessibleEvent:(uint32_t)eventType {
   switch (eventType) {
     case nsIAccessibleEvent::EVENT_FOCUS:
@@ -805,6 +839,10 @@ struct RoleDescrComparator {
     case nsIAccessibleEvent::EVENT_SELECTION_REMOVE:
     case nsIAccessibleEvent::EVENT_SELECTION_WITHIN:
       [self moxPostNotification:NSAccessibilitySelectedChildrenChangedNotification];
+      break;
+    case nsIAccessibleEvent::EVENT_TEXT_CARET_MOVED:
+    case nsIAccessibleEvent::EVENT_TEXT_SELECTION_CHANGED:
+      [self moxPostNotification:NSAccessibilitySelectedTextChangedNotification];
       break;
   }
 }

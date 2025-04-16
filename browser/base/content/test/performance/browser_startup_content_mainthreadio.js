@@ -87,12 +87,6 @@ const processes = {
     },
     {
       // bug 1357205
-      path: "XREAppFeat:webcompat@mozilla.org.xpi",
-      condition: !WIN,
-      stat: 1,
-    },
-    {
-      // bug 1357205
       path: "XREAppFeat:formautofill@mozilla.org.xpi",
       condition: !WIN,
       ignoreIfUnused: true,
@@ -117,12 +111,6 @@ const processes = {
       condition: WIN,
       stat: 1,
     },
-    {
-      // bug 1357205
-      path: "XREAppFeat:webcompat@mozilla.org.xpi",
-      condition: !WIN,
-      stat: 1,
-    },
   ],
   WebExtensions: [
     {
@@ -140,12 +128,6 @@ const processes = {
       // Exists call in ScopedXREEmbed::SetAppDir
       path: "XCurProcD:",
       condition: WIN,
-      stat: 1,
-    },
-    {
-      // bug 1357205
-      path: "XREAppFeat:webcompat@mozilla.org.xpi",
-      condition: !WIN,
       stat: 1,
     },
   ],
@@ -328,7 +310,7 @@ add_task(async function() {
         continue;
       }
 
-      // Convert to lower case before comparing because the OS X test slaves
+      // Convert to lower case before comparing because the OS X test machines
       // have the 'Firefox' folder in 'Library/Application Support' created
       // as 'firefox' for some reason.
       let filename = marker.filename.toLowerCase();

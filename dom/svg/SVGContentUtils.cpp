@@ -17,6 +17,7 @@
 #include "mozilla/PresShell.h"
 #include "mozilla/RefPtr.h"
 #include "mozilla/SVGContextPaint.h"
+#include "mozilla/SVGUtils.h"
 #include "mozilla/TextUtils.h"
 #include "nsComputedDOMStyle.h"
 #include "nsContainerFrame.h"
@@ -25,7 +26,6 @@
 #include "nsIScriptError.h"
 #include "nsLayoutUtils.h"
 #include "nsMathUtils.h"
-#include "nsSVGUtils.h"
 #include "nsWhitespaceTokenizer.h"
 #include "SVGAnimationElement.h"
 #include "SVGAnimatedPreserveAspectRatio.h"
@@ -441,9 +441,9 @@ float SVGContentUtils::GetFontXHeight(ComputedStyle* aComputedStyle,
 }
 nsresult SVGContentUtils::ReportToConsole(Document* doc, const char* aWarning,
                                           const nsTArray<nsString>& aParams) {
-  return nsContentUtils::ReportToConsole(
-      nsIScriptError::warningFlag, NS_LITERAL_CSTRING("SVG"), doc,
-      nsContentUtils::eSVG_PROPERTIES, aWarning, aParams);
+  return nsContentUtils::ReportToConsole(nsIScriptError::warningFlag, "SVG"_ns,
+                                         doc, nsContentUtils::eSVG_PROPERTIES,
+                                         aWarning, aParams);
 }
 
 bool SVGContentUtils::EstablishesViewport(nsIContent* aContent) {
@@ -481,7 +481,7 @@ static gfx::Matrix GetCTMInternal(SVGElement* aElement, bool aScreenCTM,
     gfxMatrix ret;
 
     if (auto* f = e->GetPrimaryFrame()) {
-      ret = nsSVGUtils::GetTransformMatrixInUserSpace(f);
+      ret = SVGUtils::GetTransformMatrixInUserSpace(f);
     } else {
       // FIXME: Ideally we should also return the correct matrix
       // for display:none, but currently transform related code relies
@@ -814,7 +814,7 @@ float SVGContentUtils::CoordToFloat(SVGElement* aContent,
     return CSSCoord(ctx ? ctx->GetLength(SVGContentUtils::XY) : 0.0f);
   });
   if (aLength.IsCalc()) {
-    auto& calc = aLength.AsCalc();
+    const auto& calc = aLength.AsCalc();
     if (calc.clamping_mode == StyleAllowedNumericType::NonNegative) {
       result = std::max(result, 0.0f);
     } else {

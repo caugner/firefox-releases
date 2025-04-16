@@ -214,7 +214,7 @@ task_description_schema = Schema({
     'worker-type': text_type,
 
     # Whether the job should use sccache compiler caching.
-    Required('needs-sccache'): bool,
+    Required('use-sccache'): bool,
 
     # Set of artifacts relevant to release tasks
     Optional('release-artifacts'): [text_type],
@@ -489,7 +489,7 @@ def build_docker_worker_payload(config, task, task_def):
     if worker.get('docker-in-docker'):
         features['dind'] = True
 
-    if task.get('needs-sccache'):
+    if task.get('use-sccache'):
         features['taskclusterProxy'] = True
         task_def['scopes'].append(
             'assume:project:taskcluster:{trust_domain}:level-{level}-sccache-buckets'.format(
@@ -555,12 +555,9 @@ def build_docker_worker_payload(config, task, task_def):
 
     if isinstance(worker.get('docker-image'), text_type):
         out_of_tree_image = worker['docker-image']
-        run_task = run_task or out_of_tree_image.startswith(
-            'taskcluster/image_builder')
     else:
         out_of_tree_image = None
         image = worker.get('docker-image', {}).get('in-tree')
-        run_task = run_task or image == 'image_builder'
 
     if 'caches' in worker:
         caches = {}
@@ -761,7 +758,7 @@ def build_generic_worker_payload(config, task, task_def):
 
     env = worker.get('env', {})
 
-    if task.get('needs-sccache'):
+    if task.get('use-sccache'):
         features['taskclusterProxy'] = True
         task_def['scopes'].append(
             'assume:project:taskcluster:{trust_domain}:level-{level}-sccache-buckets'.format(
@@ -900,7 +897,7 @@ def notarization_poller_payload(config, task, task_def):
 
 @payload_builder('beetmover', schema={
     # the maximum time to run, in seconds
-    Required('max-run-time', default=600): int,
+    Required('max-run-time'): int,
 
     # locale key, if this is a locale beetmover job
     Optional('locale'): text_type,
@@ -980,7 +977,7 @@ def build_beetmover_push_to_release_payload(config, task, task_def):
 
 
 @payload_builder('beetmover-maven', schema={
-    Required('max-run-time', default=600): int,
+    Required('max-run-time'): int,
     Required('release-properties'): {
         'app-name': text_type,
         'app-version': text_type,
@@ -995,7 +992,7 @@ def build_beetmover_push_to_release_payload(config, task, task_def):
         Required('taskId'): taskref_or_string,
         Required('taskType'): text_type,
         Required('paths'): [text_type],
-        Required('zipExtract', default=False): bool,
+        Optional('zipExtract'): bool,
     }],
     Optional('artifact-map'): object,
 })
@@ -1229,8 +1226,8 @@ def build_push_addons_payload(config, task, task_def):
     Optional('repo-param-prefix'): text_type,
     Optional('dontbuild'): bool,
     Optional('ignore-closed-tree'): bool,
-    Required('force-dry-run', default=True): bool,
-    Required('push', default=False): bool,
+    Optional('force-dry-run'): bool,
+    Optional('push'): bool,
     Optional('source-repo'): text_type,
     Optional('ssh-user'): text_type,
     Optional('l10n-bump-info'): {
@@ -1391,8 +1388,8 @@ def build_script_engine_autophone_payload(config, task, task_def):
     if worker.get('reboot'):
         task_def['payload'] = worker['reboot']
 
-    if task.get('needs-sccache'):
-        raise Exception('needs-sccache not supported in taskcluster-worker')
+    if task.get('use-sccache'):
+        raise Exception('use-sccache not supported in taskcluster-worker')
 
 
 transforms = TransformSequence()
@@ -1429,7 +1426,7 @@ def set_defaults(config, tasks):
         task.setdefault('shipping-product', None)
         task.setdefault('always-target', False)
         task.setdefault('optimization', None)
-        task.setdefault('needs-sccache', False)
+        task.setdefault('use-sccache', False)
 
         worker = task['worker']
         if worker['implementation'] in ('docker-worker',):
@@ -1800,10 +1797,9 @@ def build_task(config, tasks):
             branch_rev = get_branch_rev(config)
 
             routes.append(
-                '{}.v2.{}.{}.{}'.format(TREEHERDER_ROUTE_ROOT,
-                                        config.params['project'],
-                                        branch_rev,
-                                        config.params['pushlog_id'])
+                "{}.v2.{}.{}".format(
+                    TREEHERDER_ROUTE_ROOT, config.params["project"], branch_rev,
+                )
             )
 
         if 'expires-after' not in task:
@@ -1901,6 +1897,7 @@ def build_task(config, tasks):
 
         yield {
             'label': task['label'],
+            'description': task['description'],
             'task': task_def,
             'dependencies': task.get('dependencies', {}),
             'soft-dependencies': task.get('soft-dependencies', []),

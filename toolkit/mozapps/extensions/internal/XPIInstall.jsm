@@ -185,8 +185,6 @@ function flushJarCache(aJarFile) {
 const PREF_EM_UPDATE_BACKGROUND_URL = "extensions.update.background.url";
 const PREF_EM_UPDATE_URL = "extensions.update.url";
 const PREF_XPI_SIGNATURES_DEV_ROOT = "xpinstall.signatures.dev-root";
-const PREF_INSTALL_REQUIREBUILTINCERTS =
-  "extensions.install.requireBuiltInCerts";
 
 const KEY_TEMPDIR = "TmpD";
 
@@ -781,6 +779,21 @@ function getTemporaryFile() {
 }
 
 /**
+ * Returns the string representation (hex) of the SHA256 hash of `input`.
+ *
+ * @param {string} input
+ *        The value to hash.
+ * @returns {string}
+ *          The hex representation of a SHA256 hash.
+ */
+function computeSha256HashAsString(input) {
+  const data = new Uint8Array(new TextEncoder().encode(input));
+  const crypto = CryptoHash("sha256");
+  crypto.update(data, data.length);
+  return getHashStringForCrypto(crypto);
+}
+
+/**
  * Returns the signedState for a given return code and certificate by verifying
  * it against the expected ID.
  *
@@ -800,11 +813,7 @@ function getTemporaryFile() {
 function getSignedStatus(aRv, aCert, aAddonID) {
   let expectedCommonName = aAddonID;
   if (aAddonID && aAddonID.length > 64) {
-    let data = new Uint8Array(new TextEncoder().encode(aAddonID));
-
-    let crypto = CryptoHash("sha256");
-    crypto.update(data, data.length);
-    expectedCommonName = getHashStringForCrypto(crypto);
+    expectedCommonName = computeSha256HashAsString(aAddonID);
   }
 
   switch (aRv) {
@@ -1207,7 +1216,7 @@ function getHashStringForCrypto(aCrypto) {
   let toHexString = charCode => ("0" + charCode.toString(16)).slice(-2);
 
   // convert the binary hash data to a hex string.
-  let binary = aCrypto.finish(false);
+  let binary = aCrypto.finish(/* base64 */ false);
   let hash = Array.from(binary, c => toHexString(c.charCodeAt(0)));
   return hash.join("").toLowerCase();
 }
@@ -2229,16 +2238,14 @@ var DownloadAddonInstall = class extends AddonInstall {
     ].createInstance(Ci.nsIStreamListenerTee);
     listener.init(this, this.stream);
     try {
-      let requireBuiltIn = Services.prefs.getBoolPref(
-        PREF_INSTALL_REQUIREBUILTINCERTS,
-        !AppConstants.MOZ_REQUIRE_SIGNING &&
-          !AppConstants.MOZ_APP_VERSION_DISPLAY.endsWith("esr")
+      this.badCertHandler = new CertUtils.BadCertHandler(
+        !AddonSettings.INSTALL_REQUIREBUILTINCERTS
       );
-      this.badCertHandler = new CertUtils.BadCertHandler(!requireBuiltIn);
 
       this.channel = NetUtil.newChannel({
         uri: this.sourceURI,
-        securityFlags: Ci.nsILoadInfo.SEC_ALLOW_CROSS_ORIGIN_DATA_INHERITS,
+        securityFlags:
+          Ci.nsILoadInfo.SEC_ALLOW_CROSS_ORIGIN_INHERITS_SEC_CONTEXT,
         contentPolicyType: Ci.nsIContentPolicy.TYPE_SAVEAS_DOWNLOAD,
         loadingPrincipal: this.loadingPrincipal,
       });
@@ -2403,11 +2410,7 @@ var DownloadAddonInstall = class extends AddonInstall {
           try {
             CertUtils.checkCert(
               aRequest,
-              !Services.prefs.getBoolPref(
-                PREF_INSTALL_REQUIREBUILTINCERTS,
-                !AppConstants.MOZ_REQUIRE_SIGNING &&
-                  !AppConstants.MOZ_APP_VERSION_DISPLAY.endsWith("esr")
-              )
+              !AddonSettings.INSTALL_REQUIREBUILTINCERTS
             );
           } catch (e) {
             this.downloadFailed(AddonManager.ERROR_NETWORK_FAILURE, e);
@@ -2663,8 +2666,22 @@ AddonInstallWrapper.prototype = {
     return installFor(this).downloadStartedAt;
   },
 
+  get hashedAddonId() {
+    const addon = this.addon;
+
+    if (!addon) {
+      return null;
+    }
+
+    return computeSha256HashAsString(addon.id);
+  },
+
   install() {
     return installFor(this).install();
+  },
+
+  postpone(returnFn) {
+    return installFor(this).postpone(returnFn);
   },
 
   cancel() {
@@ -3701,6 +3718,80 @@ class SystemAddonInstaller extends DirectoryInstaller {
   uninstallAddon(aAddon) {}
 }
 
+var AppUpdate = {
+  findAddonUpdates(addon, reason, appVersion, platformVersion) {
+    return new Promise((resolve, reject) => {
+      let update = null;
+      addon.findUpdates(
+        {
+          onUpdateAvailable(addon2, install) {
+            update = install;
+          },
+
+          onUpdateFinished(addon2, error) {
+            if (error == AddonManager.UPDATE_STATUS_NO_ERROR) {
+              resolve(update);
+            } else {
+              reject(error);
+            }
+          },
+        },
+        reason,
+        appVersion,
+        platformVersion || appVersion
+      );
+    });
+  },
+
+  stageInstall(installer) {
+    return new Promise((resolve, reject) => {
+      let listener = {
+        onDownloadEnded: install => {
+          install.postpone();
+        },
+        onInstallFailed: install => {
+          install.removeListener(listener);
+          reject();
+        },
+        onInstallEnded: install => {
+          // We shouldn't end up here, but if we do, resolve
+          // since we've installed.
+          install.removeListener(listener);
+          resolve();
+        },
+        onInstallPostponed: install => {
+          // At this point the addon is staged for restart.
+          install.removeListener(listener);
+          resolve();
+        },
+      };
+
+      installer.addListener(listener);
+      installer.install();
+    });
+  },
+
+  async stageLangpackUpdates(nextVersion, nextPlatformVersion) {
+    let updates = [];
+    let addons = await AddonManager.getAddonsByTypes(["locale"]);
+    for (let addon of addons) {
+      updates.push(
+        this.findAddonUpdates(
+          addon,
+          AddonManager.UPDATE_WHEN_NEW_APP_DETECTED,
+          nextVersion,
+          nextPlatformVersion
+        )
+          .then(update => update && this.stageInstall(update))
+          .catch(e => {
+            logger.debug(`addon.findUpdate error: ${e}`);
+          })
+      );
+    }
+    return Promise.all(updates);
+  },
+};
+
 var XPIInstall = {
   // An array of currently active AddonInstalls
   installs: new Set(),
@@ -3712,6 +3803,10 @@ var XPIInstall = {
   syncLoadManifest,
   loadManifestFromFile,
   uninstallAddonFromLocation,
+
+  stageLangpacksForAppUpdate(nextVersion, nextPlatformVersion) {
+    return AppUpdate.stageLangpackUpdates(nextVersion, nextPlatformVersion);
+  },
 
   // Keep track of in-progress operations that support cancel()
   _inProgress: [],
@@ -3833,6 +3928,14 @@ var XPIInstall = {
 
     let addon = await loadManifestFromFile(source, location);
 
+    // Ensure a staged addon is compatible with the current running version of
+    // Firefox.  If a prior version of the addon is installed, it will remain.
+    if (!addon.isCompatible) {
+      throw new Error(
+        `Add-on ${addon.id} is not compatible with application version.`
+      );
+    }
+
     if (
       XPIDatabase.mustSign(addon.type) &&
       addon.signedState <= AddonManager.SIGNEDSTATE_MISSING
@@ -3846,22 +3949,10 @@ var XPIInstall = {
 
     logger.debug(`Processing install of ${id} in ${location.name}`);
     let existingAddon = XPIStates.findAddon(id);
-    if (existingAddon) {
-      try {
-        var file = existingAddon.file;
-        if (file.exists()) {
-          let newVersion = existingAddon.version;
-          let reason = newVersionReason(existingAddon.version, newVersion);
-
-          XPIInternal.BootstrapScope.get(existingAddon).uninstall(reason, {
-            newVersion,
-          });
-        }
-      } catch (e) {
-        Cu.reportError(e);
-      }
-    }
-
+    // This part of the startup file changes is called from
+    // processPendingFileChanges, no addons are started yet.
+    // Here we handle copying the xpi into its proper place, later
+    // processFileChanges will call update.
     try {
       addon.sourceBundle = location.installer.installAddon({
         id,
@@ -3903,17 +3994,20 @@ var XPIInstall = {
     url = await UpdateUtils.formatUpdateURL(url);
 
     logger.info(`Starting system add-on update check from ${url}.`);
-    let res = await ProductAddonChecker.getProductAddonList(url, true);
+    let res = await ProductAddonChecker.getProductAddonList(
+      url,
+      true
+    ).catch(e => logger.error(`System addon update list error ${e}`));
 
     // If there was no list then do nothing.
-    if (!res || !res.gmpAddons) {
+    if (!res || !res.addons) {
       logger.info("No system add-ons list was returned.");
       await installer.cleanDirectories();
       return;
     }
 
     let addonList = new Map(
-      res.gmpAddons.map(spec => [spec.id, { spec, path: null, addon: null }])
+      res.addons.map(spec => [spec.id, { spec, path: null, addon: null }])
     );
 
     let setMatches = (wanted, existing) => {

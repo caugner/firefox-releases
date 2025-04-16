@@ -4,18 +4,17 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-#ifndef __SVGGEOMETRYFRAME_H__
-#define __SVGGEOMETRYFRAME_H__
+#ifndef LAYOUT_SVG_SVGGEOMETRYFRAME_H_
+#define LAYOUT_SVG_SVGGEOMETRYFRAME_H_
 
 #include "mozilla/Attributes.h"
+#include "mozilla/ISVGDisplayableFrame.h"
 #include "gfxMatrix.h"
 #include "gfxRect.h"
 #include "nsDisplayList.h"
-#include "nsFrame.h"
-#include "nsSVGDisplayableFrame.h"
+#include "nsIFrame.h"
 #include "nsLiteralString.h"
 #include "nsQueryFrame.h"
-#include "nsSVGUtils.h"
 
 namespace mozilla {
 
@@ -28,12 +27,15 @@ namespace gfx {
 class DrawTarget;
 }  // namespace gfx
 
+namespace image {
+struct imgDrawingParams;
+}  // namespace image
+
 }  // namespace mozilla
 
 class gfxContext;
 class nsAtom;
 class nsIFrame;
-class nsSVGMarkerFrame;
 
 struct nsRect;
 
@@ -42,8 +44,8 @@ nsIFrame* NS_NewSVGGeometryFrame(mozilla::PresShell* aPresShell,
 
 namespace mozilla {
 
-class SVGGeometryFrame : public nsFrame, public nsSVGDisplayableFrame {
-  typedef mozilla::gfx::DrawTarget DrawTarget;
+class SVGGeometryFrame : public nsIFrame, public ISVGDisplayableFrame {
+  using DrawTarget = gfx::DrawTarget;
 
   friend nsIFrame* ::NS_NewSVGGeometryFrame(mozilla::PresShell* aPresShell,
                                             ComputedStyle* aStyle);
@@ -53,7 +55,7 @@ class SVGGeometryFrame : public nsFrame, public nsSVGDisplayableFrame {
  protected:
   SVGGeometryFrame(ComputedStyle* aStyle, nsPresContext* aPresContext,
                    nsIFrame::ClassID aID = kClassID)
-      : nsFrame(aStyle, aPresContext, aID) {
+      : nsIFrame(aStyle, aPresContext, aID) {
     AddStateBits(NS_FRAME_SVG_LAYOUT | NS_FRAME_MAY_BE_TRANSFORMED);
   }
 
@@ -70,7 +72,7 @@ class SVGGeometryFrame : public nsFrame, public nsSVGDisplayableFrame {
       return false;
     }
 
-    return nsFrame::IsFrameOfType(aFlags & ~nsIFrame::eSVG);
+    return nsIFrame::IsFrameOfType(aFlags & ~nsIFrame::eSVG);
   }
 
   virtual nsresult AttributeChanged(int32_t aNameSpaceID, nsAtom* aAttribute,
@@ -84,7 +86,7 @@ class SVGGeometryFrame : public nsFrame, public nsSVGDisplayableFrame {
 
 #ifdef DEBUG_FRAME_DUMP
   virtual nsresult GetFrameName(nsAString& aResult) const override {
-    return MakeFrameName(NS_LITERAL_STRING("SVGGeometry"), aResult);
+    return MakeFrameName(u"SVGGeometry"_ns, aResult);
   }
 #endif
 
@@ -95,7 +97,7 @@ class SVGGeometryFrame : public nsFrame, public nsSVGDisplayableFrame {
   gfxMatrix GetCanvasTM();
 
  protected:
-  // nsSVGDisplayableFrame interface:
+  // ISVGDisplayableFrame interface:
   virtual void PaintSVG(gfxContext& aContext, const gfxMatrix& aTransform,
                         imgDrawingParams& aImgParams,
                         const nsIntRect* aDirtyRect = nullptr) override;
@@ -141,7 +143,7 @@ class SVGGeometryFrame : public nsFrame, public nsSVGDisplayableFrame {
 // Display list item:
 
 class DisplaySVGGeometry final : public nsPaintedDisplayItem {
-  typedef mozilla::image::imgDrawingParams imgDrawingParams;
+  using imgDrawingParams = image::imgDrawingParams;
 
  public:
   DisplaySVGGeometry(nsDisplayListBuilder* aBuilder, SVGGeometryFrame* aFrame)
@@ -204,4 +206,4 @@ class DisplaySVGGeometry final : public nsPaintedDisplayItem {
 };
 }  // namespace mozilla
 
-#endif  // __SVGGEOMETRYFRAME_H__
+#endif  // LAYOUT_SVG_SVGGEOMETRYFRAME_H_

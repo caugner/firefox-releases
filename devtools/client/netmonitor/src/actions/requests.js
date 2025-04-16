@@ -42,12 +42,14 @@ function updateRequest(id, data, batch) {
   };
 }
 
-function setEventStreamFlag(channelId) {
+function setEventStreamFlag(id, batch) {
   return {
     type: SET_EVENT_STREAM_FLAG,
-    channelId,
+    id,
+    meta: { batch },
   };
 }
+
 /**
  * Clone request by id. Used when cloning a request
  * through the "Edit and Resend" option present in the context menu.
@@ -83,7 +85,7 @@ function cloneSelectedRequest() {
  * Send a new HTTP request using the data in the custom request form.
  */
 function sendCustomRequest(connector, requestId = null) {
-  return async (dispatch, getState) => {
+  return async ({ dispatch, getState }) => {
     let request;
     if (requestId) {
       request = getRequestById(getState(), requestId);

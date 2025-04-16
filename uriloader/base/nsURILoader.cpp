@@ -238,7 +238,7 @@ nsresult nsDocumentOpenInfo::DispatchContent(nsIRequest* request,
     return NS_ERROR_FAILURE;
   }
 
-  NS_NAMED_LITERAL_CSTRING(anyType, "*/*");
+  constexpr auto anyType = "*/*"_ns;
   if (mContentType.IsEmpty() || mContentType == anyType) {
     rv = aChannel->GetContentType(mContentType);
     if (NS_FAILED(rv)) return rv;
@@ -251,7 +251,7 @@ nsresult nsDocumentOpenInfo::DispatchContent(nsIRequest* request,
     // Reset to application/octet-stream for now; no one other than the
     // external helper app service should see APPLICATION_GUESS_FROM_EXT.
     mContentType = APPLICATION_OCTET_STREAM;
-    aChannel->SetContentType(NS_LITERAL_CSTRING(APPLICATION_OCTET_STREAM));
+    aChannel->SetContentType(nsLiteralCString(APPLICATION_OCTET_STREAM));
   }
 
   // Check whether the data should be forced to be handled externally.  This
@@ -427,7 +427,7 @@ nsresult nsDocumentOpenInfo::DispatchContent(nsIRequest* request,
 
     if (isGuessFromExt) {
       mContentType = APPLICATION_GUESS_FROM_EXT;
-      aChannel->SetContentType(NS_LITERAL_CSTRING(APPLICATION_GUESS_FROM_EXT));
+      aChannel->SetContentType(nsLiteralCString(APPLICATION_GUESS_FROM_EXT));
     }
 
     rv = TryExternalHelperApp(helperAppService, aChannel);
@@ -517,7 +517,7 @@ nsresult nsDocumentOpenInfo::ConvertData(nsIRequest* request,
 }
 
 nsresult nsDocumentOpenInfo::TryStreamConversion(nsIChannel* aChannel) {
-  NS_NAMED_LITERAL_CSTRING(anyType, "*/*");
+  constexpr auto anyType = "*/*"_ns;
   nsresult rv = ConvertData(aChannel, m_contentListener, mContentType, anyType);
   if (NS_FAILED(rv)) {
     m_targetStreamListener = nullptr;

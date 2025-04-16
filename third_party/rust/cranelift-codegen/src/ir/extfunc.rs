@@ -11,6 +11,8 @@ use crate::machinst::RelocDistance;
 use alloc::vec::Vec;
 use core::fmt;
 use core::str::FromStr;
+#[cfg(feature = "enable-serde")]
+use serde::{Deserialize, Serialize};
 
 /// Function signature.
 ///
@@ -20,6 +22,7 @@ use core::str::FromStr;
 /// A signature can optionally include ISA-specific ABI information which specifies exactly how
 /// arguments and return values are passed.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
+#[cfg_attr(feature = "enable-serde", derive(Serialize, Deserialize))]
 pub struct Signature {
     /// The arguments passed to the function.
     pub params: Vec<AbiParam>,
@@ -145,6 +148,7 @@ impl fmt::Display for Signature {
 /// This describes the value type being passed to or from a function along with flags that affect
 /// how the argument is passed.
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
+#[cfg_attr(feature = "enable-serde", derive(Serialize, Deserialize))]
 pub struct AbiParam {
     /// Type of the argument value.
     pub value_type: Type,
@@ -255,6 +259,7 @@ impl fmt::Display for AbiParam {
 /// On some architectures, small integer function arguments are extended to the width of a
 /// general-purpose register.
 #[derive(Copy, Clone, PartialEq, Eq, Debug, Hash)]
+#[cfg_attr(feature = "enable-serde", derive(Serialize, Deserialize))]
 pub enum ArgumentExtension {
     /// No extension, high bits are indeterminate.
     None,
@@ -272,9 +277,13 @@ pub enum ArgumentExtension {
 ///
 /// The argument purpose is used to indicate any special meaning of an argument or return value.
 #[derive(Copy, Clone, PartialEq, Eq, Debug, Hash)]
+#[cfg_attr(feature = "enable-serde", derive(Serialize, Deserialize))]
 pub enum ArgumentPurpose {
     /// A normal user program value passed to or from a function.
     Normal,
+
+    /// A C struct passed as argument.
+    StructArgument(u32),
 
     /// Struct return pointer.
     ///
@@ -328,21 +337,19 @@ pub enum ArgumentPurpose {
     StackLimit,
 }
 
-/// Text format names of the `ArgumentPurpose` variants.
-static PURPOSE_NAMES: [&str; 8] = [
-    "normal",
-    "sret",
-    "link",
-    "fp",
-    "csr",
-    "vmctx",
-    "sigid",
-    "stack_limit",
-];
-
 impl fmt::Display for ArgumentPurpose {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        f.write_str(PURPOSE_NAMES[*self as usize])
+        f.write_str(match self {
+            Self::Normal => "normal",
+            Self::StructArgument(size) => return write!(f, "sarg({})", size),
+            Self::StructReturn => "sret",
+            Self::Link => "link",
+            Self::FramePointer => "fp",
+            Self::CalleeSaved => "csr",
+            Self::VMContext => "vmctx",
+            Self::SignatureId => "sigid",
+            Self::StackLimit => "stack_limit",
+        })
     }
 }
 
@@ -358,6 +365,14 @@ impl FromStr for ArgumentPurpose {
             "vmctx" => Ok(Self::VMContext),
             "sigid" => Ok(Self::SignatureId),
             "stack_limit" => Ok(Self::StackLimit),
+            _ if s.starts_with("sarg(") => {
+                if !s.ends_with(")") {
+                    return Err(());
+                }
+                // Parse 'sarg(size)'
+                let size: u32 = s["sarg(".len()..s.len() - 1].parse().map_err(|_| ())?;
+                Ok(Self::StructArgument(size))
+            }
             _ => Err(()),
         }
     }
@@ -383,7 +398,7 @@ pub struct ExtFuncData {
     /// flag is best used when the target is known to be in the same unit of code generation, such
     /// as a Wasm module.
     ///
-    /// See the documentation for [`RelocDistance`](machinst::RelocDistance) for more details. A
+    /// See the documentation for [`RelocDistance`](crate::machinst::RelocDistance) for more details. A
     /// `colocated` flag value of `true` implies `RelocDistance::Near`.
     pub colocated: bool,
 }
@@ -430,16 +445,17 @@ mod tests {
     #[test]
     fn argument_purpose() {
         let all_purpose = [
-            ArgumentPurpose::Normal,
-            ArgumentPurpose::StructReturn,
-            ArgumentPurpose::Link,
-            ArgumentPurpose::FramePointer,
-            ArgumentPurpose::CalleeSaved,
-            ArgumentPurpose::VMContext,
-            ArgumentPurpose::SignatureId,
-            ArgumentPurpose::StackLimit,
+            (ArgumentPurpose::Normal, "normal"),
+            (ArgumentPurpose::StructReturn, "sret"),
+            (ArgumentPurpose::Link, "link"),
+            (ArgumentPurpose::FramePointer, "fp"),
+            (ArgumentPurpose::CalleeSaved, "csr"),
+            (ArgumentPurpose::VMContext, "vmctx"),
+            (ArgumentPurpose::SignatureId, "sigid"),
+            (ArgumentPurpose::StackLimit, "stack_limit"),
+            (ArgumentPurpose::StructArgument(42), "sarg(42)"),
         ];
-        for (&e, &n) in all_purpose.iter().zip(PURPOSE_NAMES.iter()) {
+        for &(e, n) in &all_purpose {
             assert_eq!(e.to_string(), n);
             assert_eq!(Ok(e), n.parse());
         }

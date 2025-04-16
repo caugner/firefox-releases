@@ -9,6 +9,7 @@
 #define gc_Nursery_h
 
 #include "mozilla/EnumeratedArray.h"
+#include "mozilla/Maybe.h"
 #include "mozilla/TimeStamp.h"
 
 #include "gc/GCParallelTask.h"
@@ -290,7 +291,7 @@ class Nursery {
   static const size_t MaxNurseryBufferSize = 1024;
 
   // Do a minor collection.
-  void collect(JS::GCReason reason);
+  void collect(JSGCInvocationKind kind, JS::GCReason reason);
 
   // If the thing at |*ref| in the Nursery has been forwarded, set |*ref| to
   // the new location and return true. Otherwise return false and leave
@@ -425,6 +426,10 @@ class Nursery {
 
   void joinDecommitTask() { decommitTask.join(); }
 
+  mozilla::TimeStamp collectionStartTime() {
+    return startTimes_[ProfileKey::Total];
+  }
+
   // Round a size in bytes to the nearest valid nursery size.
   static size_t roundSize(size_t size);
 
@@ -513,6 +518,11 @@ class Nursery {
     size_t tenuredCells = 0;
   };
   PreviousGC previousGC;
+
+#ifndef JS_MORE_DETERMINISTIC
+  mozilla::TimeStamp lastResizeTime;
+  double smoothedGrowthFactor;
+#endif
 
   // Calculate the promotion rate of the most recent minor GC.
   // The valid_for_tenuring parameter is used to return whether this
@@ -634,6 +644,8 @@ class Nursery {
   // the current chunk.
   void setCurrentChunk(unsigned chunkno);
 
+  bool initFirstChunk(AutoLockGCBgAlloc& lock);
+
   // extent is advisory, it will be ignored in sub-chunk and generational zeal
   // modes. It will be clamped to Min(NurseryChunkUsableSize, capacity_).
   void poisonAndInitCurrentChunk(size_t extent = NurseryChunkUsableSize);
@@ -715,8 +727,9 @@ class Nursery {
   void sweepMapAndSetObjects();
 
   // Change the allocable space provided by the nursery.
-  void maybeResizeNursery(JS::GCReason reason);
-  size_t targetSize(JS::GCReason reason);
+  void maybeResizeNursery(JSGCInvocationKind kind, JS::GCReason reason);
+  size_t targetSize(JSGCInvocationKind kind, JS::GCReason reason);
+  void clearRecentGrowthData();
   void growAllocableSpace(size_t newCapacity);
   void shrinkAllocableSpace(size_t newCapacity);
   void minimizeAllocableSpace();

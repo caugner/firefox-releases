@@ -4,7 +4,6 @@
 
 "use strict";
 
-const { Ci } = require("chrome");
 const ChromeUtils = require("ChromeUtils");
 const Services = require("Services");
 const { XPCOMUtils } = require("resource://gre/modules/XPCOMUtils.jsm");
@@ -79,10 +78,9 @@ const ServiceWorkerRegistrationActor = protocol.ActorClassWithSpec(
       const newestWorker =
         activeWorker || waitingWorker || installingWorker || evaluatingWorker;
 
-      const isParentInterceptEnabled = swm.isParentInterceptEnabled();
       const isMultiE10sWithOldImplementation =
         Services.appinfo.browserTabsRemoteAutostart &&
-        !isParentInterceptEnabled;
+        !swm.isParentInterceptEnabled();
       return {
         actor: this.actorID,
         scope: registration.scope,
@@ -96,9 +94,7 @@ const ServiceWorkerRegistrationActor = protocol.ActorClassWithSpec(
         // - In non-e10s or new implementaion: check if we have an active worker
         active: isMultiE10sWithOldImplementation ? true : !!activeWorker,
         lastUpdateTime: registration.lastUpdateTime,
-        traits: {
-          isParentInterceptEnabled,
-        },
+        traits: {},
       };
     },
 
@@ -204,7 +200,7 @@ const ServiceWorkerRegistrationActor = protocol.ActorClassWithSpec(
           console.error("Failed to unregister the service worker for " + scope);
         },
         QueryInterface: ChromeUtils.generateQI([
-          Ci.nsIServiceWorkerUnregisterCallback,
+          "nsIServiceWorkerUnregisterCallback",
         ]),
       };
       swm.propagateUnregister(principal, unregisterCallback, scope);

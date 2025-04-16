@@ -3045,6 +3045,7 @@ bool ASTSerializer::expression(ParseNode* pn, MutableHandleValue dst) {
       return builder.objectExpression(elts, &obj->pn_pos, dst);
     }
 
+    case ParseNodeKind::PrivateName:
     case ParseNodeKind::Name:
       return identifier(&pn->as<NameNode>(), dst);
 
@@ -3171,7 +3172,8 @@ bool ASTSerializer::propertyName(ParseNode* key, MutableHandleValue dst) {
   if (key->isKind(ParseNodeKind::ComputedName)) {
     return expression(key, dst);
   }
-  if (key->isKind(ParseNodeKind::ObjectPropertyName)) {
+  if (key->isKind(ParseNodeKind::ObjectPropertyName) ||
+      key->isKind(ParseNodeKind::PrivateName)) {
     return identifier(&key->as<NameNode>(), dst);
   }
 
@@ -3735,12 +3737,9 @@ static bool reflect_parse(JSContext* cx, uint32_t argc, Value* vp) {
       return false;
     }
   } else {
-    if (!GlobalObject::ensureModulePrototypesCreated(cx, cx->global())) {
-      return false;
-    }
+    compilationInfo.setEnclosingScope(&cx->global()->emptyGlobalScope());
 
-    Rooted<ModuleObject*> module(cx, ModuleObject::create(cx));
-    if (!module) {
+    if (!GlobalObject::ensureModulePrototypesCreated(cx, cx->global())) {
       return false;
     }
 
@@ -3748,9 +3747,7 @@ static bool reflect_parse(JSContext* cx, uint32_t argc, Value* vp) {
 
     uint32_t len = chars.length();
     SourceExtent extent = SourceExtent::makeGlobalExtent(len, options);
-    ModuleSharedContext modulesc(cx, module, compilationInfo,
-                                 &cx->global()->emptyGlobalScope(), builder,
-                                 extent);
+    ModuleSharedContext modulesc(cx, compilationInfo, builder, extent);
     pn = parser.moduleBody(&modulesc);
     if (!pn) {
       return false;

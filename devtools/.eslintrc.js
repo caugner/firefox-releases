@@ -105,11 +105,6 @@ module.exports = {
         "**/test/**/head.js",
         "**/test/**/shared-head.js",
         "client/debugger/test/mochitest/code_frame-script.js",
-        "client/inspector/animation-old/test/doc_frame_script.js",
-        "client/inspector/animation/test/doc_frame_script.js",
-        "client/inspector/rules/test/doc_frame_script.js",
-        "client/inspector/shared/test/doc_frame_script.js",
-        "client/jsonview/test/doc_frame_script.js",
         "client/responsive.html/browser/content.js",
         "client/shared/browser-loader.js",
         "server/actors/webconsole/content-process-forward.js",
@@ -152,13 +147,6 @@ module.exports = {
     "mozilla/no-aArgs": "error",
     // See bug 1224289.
     "mozilla/reject-importGlobalProperties": ["error", "everything"],
-    // devtools/shared/platform is special; see the README.md in that
-    // directory for details.  We reject requires using explicit
-    // subdirectories of this directory.
-    "mozilla/reject-some-requires": [
-      "error",
-      "^devtools/shared/platform/(chome|content)/",
-    ],
     "mozilla/var-only-at-top-level": "error",
     "mozilla/use-chromeutils-import": ["error", { allowCu: true }],
 

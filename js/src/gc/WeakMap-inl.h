@@ -83,6 +83,22 @@ inline JSObject* GetDelegate(gc::Cell* const&) = delete;
 } /* namespace detail */
 } /* namespace gc */
 
+// Weakmap entry -> value edges are only visible if the map is traced, which
+// only happens if the map zone is being collected. If the map and the value
+// were in different zones, then we could have a case where the map zone is not
+// collecting but the value zone is, and incorrectly free a value that is
+// reachable solely through weakmaps.
+template <class K, class V>
+void WeakMap<K, V>::assertMapIsSameZoneWithValue(const V& v) {
+#ifdef DEBUG
+  gc::Cell* cell = gc::ToMarkable(v);
+  if (cell) {
+    Zone* cellZone = cell->zoneFromAnyThread();
+    MOZ_ASSERT(zone() == cellZone || cellZone->isAtomsZone());
+  }
+#endif
+}
+
 template <class K, class V>
 WeakMap<K, V>::WeakMap(JSContext* cx, JSObject* memOf)
     : Base(cx->zone()), WeakMapBase(memOf, cx->zone()) {
@@ -308,13 +324,22 @@ bool WeakMap<K, V>::markEntries(GCMarker* marker) {
 }
 
 template <class K, class V>
-void WeakMap<K, V>::postSeverDelegate(GCMarker* marker, JSObject* key,
-                                      Compartment* comp) {
+void WeakMap<K, V>::postSeverDelegate(GCMarker* marker, JSObject* key) {
   if (mapColor) {
     // We only stored the delegate, not the key, and we're severing the
     // delegate from the key. So store the key.
     gc::WeakMarkable markable(this, key);
     addWeakEntry(marker, key, markable);
+  }
+}
+
+template <class K, class V>
+void WeakMap<K, V>::postRestoreDelegate(GCMarker* marker, JSObject* key,
+                                        JSObject* delegate) {
+  if (mapColor) {
+    // We had the key stored, but are removing it. Store the delegate instead.
+    gc::WeakMarkable markable(this, key);
+    addWeakEntry(marker, delegate, markable);
   }
 }
 

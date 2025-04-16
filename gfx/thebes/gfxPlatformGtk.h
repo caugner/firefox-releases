@@ -87,11 +87,12 @@ class gfxPlatformGtk final : public gfxPlatform {
 #endif  // MOZ_X11
 
 #ifdef MOZ_WAYLAND
-  bool UseWaylandDMABufTextures();
-  bool UseWaylandDMABufVideoTextures();
-  bool UseWaylandDMABufWebGL() override { return mUseWebGLDmabufBackend; }
-  void DisableWaylandDMABufWebGL() { mUseWebGLDmabufBackend = false; }
-  bool UseWaylandHardwareVideoDecoding();
+  bool UseDMABufTextures();
+  bool UseDMABufVideoTextures();
+  bool UseDMABufWebGL() override { return mUseWebGLDmabufBackend; }
+  void DisableDMABufWebGL() { mUseWebGLDmabufBackend = false; }
+  bool UseHardwareVideoDecoding();
+  bool UseDRMVAAPIDisplay();
 #endif
 
   bool IsX11Display() { return mIsX11Display; }
@@ -112,7 +113,9 @@ class gfxPlatformGtk final : public gfxPlatform {
 #ifdef MOZ_X11
   Display* mCompositorDisplay;
 #endif
+#ifdef MOZ_WAYLAND
   bool mUseWebGLDmabufBackend;
+#endif
 };
 
 #endif /* GFX_PLATFORM_GTK_H */

@@ -50,10 +50,12 @@ class DocAccessibleChild : public DocAccessibleChildBase {
   bool SendHideEvent(const uint64_t& aRootID, const bool& aFromUser);
   bool SendStateChangeEvent(const uint64_t& aID, const uint64_t& aState,
                             const bool& aEnabled);
-  bool SendCaretMoveEvent(const uint64_t& aID, const int32_t& aOffset);
+  bool SendCaretMoveEvent(const uint64_t& aID, const int32_t& aOffset,
+                          const bool& aIsSelectionCollapsed);
   bool SendCaretMoveEvent(const uint64_t& aID,
                           const LayoutDeviceIntRect& aCaretRect,
-                          const int32_t& aOffset);
+                          const int32_t& aOffset,
+                          const bool& aIsSelectionCollapsed);
   bool SendFocusEvent(const uint64_t& aID);
   bool SendFocusEvent(const uint64_t& aID,
                       const LayoutDeviceIntRect& aCaretRect);
@@ -89,9 +91,6 @@ class DocAccessibleChild : public DocAccessibleChildBase {
 
  private:
   void RemoveDeferredConstructor();
-
-  bool IsConstructedInParentProcess() const { return mIsRemoteConstructed; }
-  void SetConstructedInParentProcess() { mIsRemoteConstructed = true; }
 
   LayoutDeviceIntRect GetCaretRectFor(const uint64_t& aID);
 
@@ -173,19 +172,23 @@ class DocAccessibleChild : public DocAccessibleChildBase {
 
   struct SerializedCaretMove final : public DeferredEvent {
     SerializedCaretMove(DocAccessibleChild* aTarget, uint64_t aID,
-                        const LayoutDeviceIntRect& aCaretRect, int32_t aOffset)
+                        const LayoutDeviceIntRect& aCaretRect, int32_t aOffset,
+                        bool aIsSelectionCollapsed)
         : DeferredEvent(aTarget),
           mID(aID),
           mCaretRect(aCaretRect),
-          mOffset(aOffset) {}
+          mOffset(aOffset),
+          mIsSelectionCollapsed(aIsSelectionCollapsed) {}
 
     void Dispatch(DocAccessibleChild* aIPCDoc) override {
-      Unused << aIPCDoc->SendCaretMoveEvent(mID, mCaretRect, mOffset);
+      Unused << aIPCDoc->SendCaretMoveEvent(mID, mCaretRect, mOffset,
+                                            mIsSelectionCollapsed);
     }
 
     uint64_t mID;
     LayoutDeviceIntRect mCaretRect;
     int32_t mOffset;
+    bool mIsSelectionCollapsed;
   };
 
   struct SerializedFocus final : public DeferredEvent {
@@ -353,7 +356,6 @@ class DocAccessibleChild : public DocAccessibleChildBase {
     uint64_t mID;
   };
 
-  bool mIsRemoteConstructed;
   mscom::ProxyUniquePtr<IDispatch> mParentProxy;
   mscom::ProxyUniquePtr<IDispatch> mEmulatedWindowProxy;
   mscom::ProxyUniquePtr<IAccessible> mTopLevelDocProxy;

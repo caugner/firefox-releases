@@ -76,7 +76,7 @@ TEST(QuotaManager, OriginScope)
   // Sanity checks.
 
   {
-    NS_NAMED_LITERAL_CSTRING(origin, "http://www.mozilla.org");
+    constexpr auto origin = "http://www.mozilla.org"_ns;
     originScope.SetFromOrigin(origin);
     EXPECT_TRUE(originScope.IsOrigin());
     EXPECT_TRUE(originScope.GetOrigin().Equals(origin));
@@ -84,7 +84,7 @@ TEST(QuotaManager, OriginScope)
   }
 
   {
-    NS_NAMED_LITERAL_CSTRING(prefix, "http://www.mozilla.org");
+    constexpr auto prefix = "http://www.mozilla.org"_ns;
     originScope.SetFromPrefix(prefix);
     EXPECT_TRUE(originScope.IsPrefix());
     EXPECT_TRUE(originScope.GetOriginNoSuffix().Equals(prefix));
@@ -98,7 +98,7 @@ TEST(QuotaManager, OriginScope)
   // Test each origin scope type against particular origins.
 
   {
-    originScope.SetFromOrigin(NS_LITERAL_CSTRING("http://www.mozilla.org"));
+    originScope.SetFromOrigin("http://www.mozilla.org"_ns);
 
     static const OriginTest tests[] = {
         {"http://www.mozilla.org", true},
@@ -111,7 +111,7 @@ TEST(QuotaManager, OriginScope)
   }
 
   {
-    originScope.SetFromPrefix(NS_LITERAL_CSTRING("http://www.mozilla.org"));
+    originScope.SetFromPrefix("http://www.mozilla.org"_ns);
 
     static const OriginTest tests[] = {
         {"http://www.mozilla.org", true},
@@ -145,7 +145,7 @@ TEST(QuotaManager, WarnIfUnknownFile)
   nsresult rv = NS_GetSpecialDirectory(NS_OS_TEMP_DIR, getter_AddRefs(base));
   ASSERT_EQ(rv, NS_OK);
 
-  rv = base->Append(NS_LITERAL_STRING("mozquotatests"));
+  rv = base->Append(u"mozquotatests"_ns);
   ASSERT_EQ(rv, NS_OK);
 
   base->Remove(true);
@@ -153,14 +153,14 @@ TEST(QuotaManager, WarnIfUnknownFile)
   rv = base->Create(nsIFile::DIRECTORY_TYPE, 0700);
   ASSERT_EQ(rv, NS_OK);
 
-  CheckUnknownFileEntry(*base, NS_LITERAL_STRING("foo.bar"), true, true);
-  CheckUnknownFileEntry(*base, NS_LITERAL_STRING(".DS_Store"), false, true);
-  CheckUnknownFileEntry(*base, NS_LITERAL_STRING(".desktop"), false, true);
-  CheckUnknownFileEntry(*base, NS_LITERAL_STRING("desktop.ini"), false, true);
-  CheckUnknownFileEntry(*base, NS_LITERAL_STRING("DESKTOP.INI"), false, true);
-  CheckUnknownFileEntry(*base, NS_LITERAL_STRING("thumbs.db"), false, true);
-  CheckUnknownFileEntry(*base, NS_LITERAL_STRING("THUMBS.DB"), false, true);
-  CheckUnknownFileEntry(*base, NS_LITERAL_STRING(".xyz"), false, true);
+  CheckUnknownFileEntry(*base, u"foo.bar"_ns, true, true);
+  CheckUnknownFileEntry(*base, u".DS_Store"_ns, false, true);
+  CheckUnknownFileEntry(*base, u".desktop"_ns, false, true);
+  CheckUnknownFileEntry(*base, u"desktop.ini"_ns, false, true);
+  CheckUnknownFileEntry(*base, u"DESKTOP.INI"_ns, false, true);
+  CheckUnknownFileEntry(*base, u"thumbs.db"_ns, false, true);
+  CheckUnknownFileEntry(*base, u"THUMBS.DB"_ns, false, true);
+  CheckUnknownFileEntry(*base, u".xyz"_ns, false, true);
 
   rv = base->Remove(true);
   ASSERT_EQ(rv, NS_OK);

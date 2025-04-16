@@ -1157,10 +1157,18 @@ void SpdyConnectTransaction::ForcePlainText() {
   mForcePlainText = true;
 }
 
-void SpdyConnectTransaction::MapStreamToHttpConnection(
+bool SpdyConnectTransaction::MapStreamToHttpConnection(
     nsISocketTransport* aTransport, nsHttpConnectionInfo* aConnInfo,
     const nsACString& aFlat407Headers, int32_t aHttpResponseCode) {
   MOZ_ASSERT(OnSocketThread());
+
+  if (aHttpResponseCode >= 100 && aHttpResponseCode < 200) {
+    LOG(
+        ("SpdyConnectTransaction::MapStreamToHttpConnection %p skip "
+         "pre-response with response code %d",
+         this, aHttpResponseCode));
+    return false;
+  }
 
   mConnInfo = aConnInfo;
 
@@ -1225,6 +1233,8 @@ void SpdyConnectTransaction::MapStreamToHttpConnection(
         mDrivingTransaction, nsISupportsPriority::PRIORITY_HIGHEST - 60);
     mDrivingTransaction = nullptr;
   }
+
+  return true;
 }
 
 nsresult SpdyConnectTransaction::Flush(uint32_t count, uint32_t* countRead) {

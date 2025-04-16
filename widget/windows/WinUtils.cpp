@@ -673,6 +673,40 @@ int WinUtils::GetSystemMetricsForDpi(int nIndex, UINT dpi) {
   }
 }
 
+/* static */
+gfx::MarginDouble WinUtils::GetUnwriteableMarginsForDeviceInInches(HDC aHdc) {
+  if (!aHdc) {
+    return gfx::MarginDouble();
+  }
+
+  int pixelsPerInchY = ::GetDeviceCaps(aHdc, LOGPIXELSY);
+  int marginTop = ::GetDeviceCaps(aHdc, PHYSICALOFFSETY);
+  int printableAreaHeight = ::GetDeviceCaps(aHdc, VERTRES);
+  int physicalHeight = ::GetDeviceCaps(aHdc, PHYSICALHEIGHT);
+
+  double marginTopInch = double(marginTop) / pixelsPerInchY;
+
+  double printableAreaHeightInch = double(printableAreaHeight) / pixelsPerInchY;
+  double physicalHeightInch = double(physicalHeight) / pixelsPerInchY;
+  double marginBottomInch =
+      physicalHeightInch - printableAreaHeightInch - marginTopInch;
+
+  int pixelsPerInchX = ::GetDeviceCaps(aHdc, LOGPIXELSX);
+  int marginLeft = ::GetDeviceCaps(aHdc, PHYSICALOFFSETX);
+  int printableAreaWidth = ::GetDeviceCaps(aHdc, HORZRES);
+  int physicalWidth = ::GetDeviceCaps(aHdc, PHYSICALWIDTH);
+
+  double marginLeftInch = double(marginLeft) / pixelsPerInchX;
+
+  double printableAreaWidthInch = double(printableAreaWidth) / pixelsPerInchX;
+  double physicalWidthInch = double(physicalWidth) / pixelsPerInchX;
+  double marginRightInch =
+      physicalWidthInch - printableAreaWidthInch - marginLeftInch;
+
+  return gfx::MarginDouble(marginTopInch, marginRightInch, marginBottomInch,
+                           marginLeftInch);
+}
+
 #ifdef ACCESSIBILITY
 /* static */
 a11y::Accessible* WinUtils::GetRootAccessibleForHWND(HWND aHwnd) {
@@ -1157,7 +1191,7 @@ nsresult AsyncFaviconDataReady::OnFaviconDataNotAvailable(void) {
   nsCOMPtr<nsIChannel> channel;
   rv = NS_NewChannel(getter_AddRefs(channel), mozIconURI,
                      nsContentUtils::GetSystemPrincipal(),
-                     nsILoadInfo::SEC_ALLOW_CROSS_ORIGIN_DATA_IS_NULL,
+                     nsILoadInfo::SEC_ALLOW_CROSS_ORIGIN_SEC_CONTEXT_IS_NULL,
                      nsIContentPolicy::TYPE_INTERNAL_IMAGE);
 
   NS_ENSURE_SUCCESS(rv, rv);
@@ -2063,14 +2097,14 @@ bool WinUtils::UnexpandEnvVars(nsAString& aPath) {
 WinUtils::WhitelistVec WinUtils::BuildWhitelist() {
   WhitelistVec result;
 
-  Unused << result.emplaceBack(std::make_pair(
-      nsString(NS_LITERAL_STRING("%ProgramFiles%")), nsDependentString()));
+  Unused << result.emplaceBack(
+      std::make_pair(nsString(u"%ProgramFiles%"_ns), nsDependentString()));
 
   // When no substitution is required, set the void flag
   result.back().second.SetIsVoid(true);
 
-  Unused << result.emplaceBack(std::make_pair(
-      nsString(NS_LITERAL_STRING("%SystemRoot%")), nsDependentString()));
+  Unused << result.emplaceBack(
+      std::make_pair(nsString(u"%SystemRoot%"_ns), nsDependentString()));
   result.back().second.SetIsVoid(true);
 
   wchar_t tmpPath[MAX_PATH + 1] = {};
@@ -2083,7 +2117,7 @@ WinUtils::WhitelistVec WinUtils::BuildWhitelist() {
 
     nsAutoString cleanTmpPath(tmpPath);
     if (UnexpandEnvVars(cleanTmpPath)) {
-      NS_NAMED_LITERAL_STRING(tempVar, "%TEMP%");
+      constexpr auto tempVar = u"%TEMP%"_ns;
       Unused << result.emplaceBack(std::make_pair(
           nsString(cleanTmpPath), nsDependentString(tempVar, 0)));
     }

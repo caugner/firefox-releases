@@ -239,7 +239,7 @@ class Clobber(MachCommandBase):
                        '-I', 'glob:**.py[cdo]', '-I', 'glob:**/__pycache__',
                        '-I', 'path:third_party/python/']
             elif conditions.is_git(self):
-                cmd = ['git', 'clean', '-d', '-f', '-x', '*.py[cdo]', '*/__pycache__',
+                cmd = ['git', 'clean', '-d', '-f', '-x', '*.py[cdo]', '*/__pycache__/*',
                        'third_party/python/']
             else:
                 # We don't know what is tracked/untracked if we don't have VCS.
@@ -464,7 +464,7 @@ class GTestCommands(MachCommandBase):
                      dest='remote_test_root',
                      group='Android',
                      help='Remote directory to use as test root '
-                     '(eg. /mnt/sdcard/tests or /data/local/tests).')
+                     '(eg. /data/local/tmp/test_root).')
     @CommandArgument('--libxul',
                      dest='libxul_path',
                      group='Android',

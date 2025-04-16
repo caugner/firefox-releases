@@ -541,12 +541,17 @@ bool js::SetIntegrityLevel(JSContext* cx, HandleObject obj,
 
     for (Shape* shape : shapes) {
       Rooted<StackShape> child(cx, StackShape(shape));
-      child.setAttrs(child.attrs() |
-                     GetSealedOrFrozenAttributes(child.attrs(), level));
+      bool isPrivate = JSID_IS_SYMBOL(child.get().propid) &&
+                       JSID_TO_SYMBOL(child.get().propid)->isPrivateName();
+      // Private fields are not visible to SetIntegrity.
+      if (!isPrivate) {
+        child.setAttrs(child.attrs() |
+                       GetSealedOrFrozenAttributes(child.attrs(), level));
 
-      if (!JSID_IS_EMPTY(child.get().propid) &&
-          level == IntegrityLevel::Frozen) {
-        MarkTypePropertyNonWritable(cx, nobj, child.get().propid);
+        if (!JSID_IS_EMPTY(child.get().propid) &&
+            level == IntegrityLevel::Frozen) {
+          MarkTypePropertyNonWritable(cx, nobj, child.get().propid);
+        }
       }
 
       last = cx->zone()->propertyTree().getChild(cx, last, child);
@@ -1413,7 +1418,7 @@ XDRResult js::XDRObjectLiteral(XDRState<mode>* xdr, MutableHandleObject obj) {
     MOZ_TRY(XDRScriptConst(xdr, &tmpValue));
 
     if (mode == XDR_DECODE) {
-      if (!ValueToId<CanGC>(cx, tmpIdValue, &tmpId)) {
+      if (!PrimitiveValueToId<CanGC>(cx, tmpIdValue, &tmpId)) {
         return xdr->fail(JS::TranscodeResult_Throw);
       }
       properties[i].get().id = tmpId;
@@ -3069,7 +3074,7 @@ bool js::ToPropertyKeySlow(JSContext* cx, HandleValue argument,
   }
 
   // Steps 3-4.
-  return ValueToId<CanGC>(cx, key, result);
+  return PrimitiveValueToId<CanGC>(cx, key, result);
 }
 
 /* * */
@@ -3193,7 +3198,7 @@ JSObject* js::ToObjectSlowForPropertyAccess(JSContext* cx, JS::HandleValue val,
   if (val.isNullOrUndefined()) {
     RootedId key(cx);
     if (keyValue.isPrimitive()) {
-      if (!ValueToId<CanGC>(cx, keyValue, &key)) {
+      if (!PrimitiveValueToId<CanGC>(cx, keyValue, &key)) {
         return nullptr;
       }
       ReportIsNullOrUndefinedForPropertyAccess(cx, val, valIndex, key);
@@ -3534,6 +3539,15 @@ void JSObject::dump(js::GenericPrinter& out) const {
     }
     if (nobj->isIndexed()) {
       out.put(" indexed");
+    }
+    if (nobj->denseElementsAreCopyOnWrite()) {
+      out.put(" copy_on_write_elements");
+    }
+    if (!nobj->denseElementsArePacked()) {
+      out.put(" non_packed_elements");
+    }
+    if (nobj->denseElementsAreSealed()) {
+      out.put(" sealed_elements");
     }
     if (nobj->denseElementsAreFrozen()) {
       out.put(" frozen_elements");
@@ -3910,7 +3924,7 @@ JS::ubi::Node::Size JS::ubi::Concrete<JSObject>::size(
 const char16_t JS::ubi::Concrete<JSObject>::concreteTypeName[] = u"JSObject";
 
 void JSObject::traceChildren(JSTracer* trc) {
-  TraceEdge(trc, &headerAndGroup_, "group");
+  TraceCellHeaderEdge(trc, this, "group");
 
   traceShape(trc);
 

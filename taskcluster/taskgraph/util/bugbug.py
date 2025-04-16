@@ -4,6 +4,9 @@
 
 from __future__ import absolute_import, print_function, unicode_literals
 
+import os
+import json
+import sys
 import time
 
 import requests
@@ -11,13 +14,19 @@ from mozbuild.util import memoize
 
 from taskgraph.util.taskcluster import requests_retry_session
 
+try:
+    # TODO(py3): use time.monotonic()
+    from time import monotonic
+except ImportError:
+    from time import time as monotonic
+
 BUGBUG_BASE_URL = "https://bugbug.herokuapp.com"
-RETRY_TIMEOUT = 8 * 60  # seconds
-RETRY_INTERVAL = 10      # seconds
+RETRY_TIMEOUT = 9 * 60  # seconds
+RETRY_INTERVAL = 10     # seconds
 
 # Preset confidence thresholds.
-CT_LOW = 0.5
-CT_MEDIUM = 0.7
+CT_LOW = 0.7
+CT_MEDIUM = 0.8
 CT_HIGH = 0.9
 
 GROUP_TRANSLATIONS = {
@@ -45,12 +54,40 @@ def get_session():
     return requests_retry_session(retries=5, session=s)
 
 
+def _write_perfherder_data(lower_is_better):
+    if os.environ.get("MOZ_AUTOMATION", "0") == "1":
+        perfherder_data = {
+            "framework": {"name": "build_metrics"},
+            "suites": [
+                {
+                    "name": suite,
+                    "value": value,
+                    "lowerIsBetter": True,
+                    "shouldAlert": False,
+                    "subtests": [],
+                }
+                for suite, value in lower_is_better.items()
+            ],
+        }
+        print(
+            "PERFHERDER_DATA: {}".format(json.dumps(perfherder_data)), file=sys.stderr
+        )
+
+
 @memoize
 def push_schedules(branch, rev):
     url = BUGBUG_BASE_URL + '/push/{branch}/{rev}/schedules'.format(branch=branch, rev=rev)
-
+    start = monotonic()
     session = get_session()
-    attempts = RETRY_TIMEOUT / RETRY_INTERVAL
+
+    # On try there is no fallback and pulling is slower, so we allow bugbug more
+    # time to compute the results.
+    # See https://github.com/mozilla/bugbug/issues/1673.
+    timeout = RETRY_TIMEOUT
+    if branch == "try":
+        timeout += int(timeout / 3)
+
+    attempts = timeout / RETRY_INTERVAL
     i = 0
     while i < attempts:
         r = session.get(url)
@@ -61,6 +98,12 @@ def push_schedules(branch, rev):
 
         time.sleep(RETRY_INTERVAL)
         i += 1
+    end = monotonic()
+
+    _write_perfherder_data(lower_is_better={
+        'bugbug_push_schedules_time': end-start,
+        'bugbug_push_schedules_retries': i,
+    })
 
     data = r.json()
     if r.status_code == 202:

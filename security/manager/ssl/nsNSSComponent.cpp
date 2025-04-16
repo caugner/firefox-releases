@@ -15,6 +15,7 @@
 #include "cert.h"
 #include "certdb.h"
 #include "mozilla/ArrayUtils.h"
+#include "mozilla/AppShutdown.h"
 #include "mozilla/Assertions.h"
 #include "mozilla/Casting.h"
 #include "mozilla/net/SocketProcessParent.h"
@@ -369,16 +370,15 @@ static nsresult AccountHasFamilySafetyEnabled(bool& enabled) {
     return NS_ERROR_FAILURE;
   }
   uint32_t flags = nsIWindowsRegKey::ACCESS_READ | nsIWindowsRegKey::WOW64_64;
-  NS_NAMED_LITERAL_STRING(
-      familySafetyPath,
-      "SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Parental Controls");
+  constexpr auto familySafetyPath =
+      u"SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Parental Controls"_ns;
   nsresult rv = parentalControlsKey->Open(
       nsIWindowsRegKey::ROOT_KEY_LOCAL_MACHINE, familySafetyPath, flags);
   if (NS_FAILED(rv)) {
     MOZ_LOG(gPIPNSSLog, LogLevel::Debug, ("couldn't open parentalControlsKey"));
     return rv;
   }
-  NS_NAMED_LITERAL_STRING(usersString, "Users");
+  constexpr auto usersString = u"Users"_ns;
   bool hasUsers;
   rv = parentalControlsKey->HasChild(usersString, &hasUsers);
   if (NS_FAILED(rv)) {
@@ -433,8 +433,7 @@ static nsresult AccountHasFamilySafetyEnabled(bool& enabled) {
   // account for the first time, However, these sub-keys are not created
   // unless they are switched away from the default value.
   uint32_t parentalControlsOn;
-  rv = sidKey->ReadIntValue(NS_LITERAL_STRING("Parental Controls On"),
-                            &parentalControlsOn);
+  rv = sidKey->ReadIntValue(u"Parental Controls On"_ns, &parentalControlsOn);
   if (NS_FAILED(rv)) {
     MOZ_LOG(gPIPNSSLog, LogLevel::Debug,
             ("couldn't read Parental Controls On"));
@@ -1744,8 +1743,8 @@ static nsresult AttemptToRenamePKCS11ModuleDB(
 // |profilePath| is encoded in UTF-8.
 static nsresult AttemptToRenameBothPKCS11ModuleDBVersions(
     const nsACString& profilePath) {
-  NS_NAMED_LITERAL_CSTRING(legacyModuleDBFilename, "secmod.db");
-  NS_NAMED_LITERAL_CSTRING(sqlModuleDBFilename, "pkcs11.txt");
+  constexpr auto legacyModuleDBFilename = "secmod.db"_ns;
+  constexpr auto sqlModuleDBFilename = "pkcs11.txt"_ns;
   nsresult rv =
       AttemptToRenamePKCS11ModuleDB(profilePath, legacyModuleDBFilename);
   if (NS_FAILED(rv)) {
@@ -1819,7 +1818,7 @@ static void MaybeCleanUpOldNSSFiles(const nsACString& profilePath) {
   if (!hasPassword) {
     return;
   }
-  NS_NAMED_LITERAL_CSTRING(newKeyDBFilename, "key4.db");
+  constexpr auto newKeyDBFilename = "key4.db"_ns;
   nsCOMPtr<nsIFile> newDBFile;
   nsresult rv =
       GetFileIfExists(profilePath, newKeyDBFilename, getter_AddRefs(newDBFile));
@@ -1832,7 +1831,7 @@ static void MaybeCleanUpOldNSSFiles(const nsACString& profilePath) {
   if (!newDBFile) {
     return;
   }
-  NS_NAMED_LITERAL_CSTRING(oldKeyDBFilename, "key3.db");
+  constexpr auto oldKeyDBFilename = "key3.db"_ns;
   nsCOMPtr<nsIFile> oldDBFile;
   rv =
       GetFileIfExists(profilePath, oldKeyDBFilename, getter_AddRefs(oldDBFile));
@@ -2097,6 +2096,26 @@ nsresult nsNSSComponent::InitializeNSS() {
   }
 }
 
+NS_IMETHODIMP
+nsNSSComponent::DispatchTaskToSerialBackgroundQueue(nsIRunnable* task) {
+  if (!NS_IsMainThread()) {
+    nsCOMPtr<nsIRunnable> mainThreadRunnable(NS_NewRunnableFunction(
+        "DispatchTaskToSerialBackgroundQueue::mainThreadRunnable",
+        [self = RefPtr<nsNSSComponent>(this),
+         taskHandle = nsCOMPtr<nsIRunnable>(task)]() -> void {
+          nsresult rv = self->DispatchTaskToSerialBackgroundQueue(taskHandle);
+          Unused << NS_WARN_IF(NS_FAILED(rv));
+        }));
+    return NS_DispatchToMainThread(mainThreadRunnable.forget());
+  }
+
+  if (mBackgroundTaskQueue) {
+    return mBackgroundTaskQueue->Dispatch(task, NS_DISPATCH_EVENT_MAY_BLOCK);
+  }
+
+  return NS_ERROR_NOT_AVAILABLE;
+}
+
 void nsNSSComponent::ShutdownNSS() {
   MOZ_LOG(gPIPNSSLog, LogLevel::Debug, ("nsNSSComponent::ShutdownNSS\n"));
   MOZ_RELEASE_ASSERT(NS_IsMainThread());
@@ -2126,6 +2145,8 @@ void nsNSSComponent::ShutdownNSS() {
     mIntermediatePreloadingHealerTimer->Cancel();
     mIntermediatePreloadingHealerTimer = nullptr;
   }
+
+  mBackgroundTaskQueue = nullptr;
 
   // Release the default CertVerifier. This will cause any held NSS resources
   // to be released.
@@ -2176,6 +2197,13 @@ bool CertHasDefaultTrust(CERTCertificate* cert) {
 void IntermediatePreloadingHealerCallback(nsITimer*, void*) {
   MOZ_LOG(gPIPNSSLog, LogLevel::Debug,
           ("IntermediatePreloadingHealerCallback"));
+
+  if (AppShutdown::IsShuttingDown()) {
+    MOZ_LOG(gPIPNSSLog, LogLevel::Debug,
+            ("Exiting healer due to app shutdown"));
+    return;
+  }
+
   // Get the slot corresponding to the NSS certdb.
   UniquePK11SlotInfo softokenSlot(PK11_GetInternalKeySlot());
   if (!softokenSlot) {
@@ -2199,6 +2227,12 @@ void IntermediatePreloadingHealerCallback(nsITimer*, void*) {
   // is a preloaded intermediate.
   for (CERTCertListNode* n = CERT_LIST_HEAD(softokenCertificates);
        !CERT_LIST_END(n, softokenCertificates); n = CERT_LIST_NEXT(n)) {
+    if (AppShutdown::IsShuttingDown()) {
+      MOZ_LOG(gPIPNSSLog, LogLevel::Debug,
+              ("Exiting healer due to app shutdown"));
+      return;
+    }
+
     nsTArray<uint8_t> subject;
     subject.AppendElements(n->cert->derSubject.data, n->cert->derSubject.len);
     nsTArray<nsTArray<uint8_t>> certs;
@@ -2245,6 +2279,11 @@ void IntermediatePreloadingHealerCallback(nsITimer*, void*) {
     }
   }
   for (const auto& certToDelete : certsToDelete) {
+    if (AppShutdown::IsShuttingDown()) {
+      MOZ_LOG(gPIPNSSLog, LogLevel::Debug,
+              ("Exiting healer due to app shutdown"));
+      return;
+    }
     MOZ_LOG(gPIPNSSLog, LogLevel::Debug,
             ("attempting to delete preloaded intermediate '%s'",
              certToDelete->subjectName));
@@ -2296,6 +2335,14 @@ nsresult nsNSSComponent::Init() {
     return rv;
   }
 
+  rv = NS_CreateBackgroundTaskQueue("nsNSSComponent::mBackgroundTaskQueue",
+                                    getter_AddRefs(mBackgroundTaskQueue));
+  if (NS_FAILED(rv)) {
+    MOZ_LOG(gPIPNSSLog, LogLevel::Error,
+            ("NS_CreateBackgroundTaskQueue failed"));
+    return rv;
+  }
+
   rv = MaybeEnableIntermediatePreloadingHealer();
   if (NS_FAILED(rv)) {
     return rv;
@@ -2323,16 +2370,6 @@ nsresult nsNSSComponent::MaybeEnableIntermediatePreloadingHealer() {
     return NS_OK;
   }
 
-  if (!mIntermediatePreloadingHealerTaskQueue) {
-    nsresult rv = NS_CreateBackgroundTaskQueue(
-        "IntermediatePreloadingHealer",
-        getter_AddRefs(mIntermediatePreloadingHealerTaskQueue));
-    if (NS_FAILED(rv)) {
-      MOZ_LOG(gPIPNSSLog, LogLevel::Error,
-              ("NS_CreateBackgroundTaskQueue failed"));
-      return rv;
-    }
-  }
   uint32_t timerDelayMS = Preferences::GetUint(
       "security.intermediate_preloading_healer.timer_interval_ms",
       5 * 60 * 1000);
@@ -2340,7 +2377,7 @@ nsresult nsNSSComponent::MaybeEnableIntermediatePreloadingHealer() {
       getter_AddRefs(mIntermediatePreloadingHealerTimer),
       IntermediatePreloadingHealerCallback, nullptr, timerDelayMS,
       nsITimer::TYPE_REPEATING_SLACK_LOW_PRIORITY,
-      "IntermediatePreloadingHealer", mIntermediatePreloadingHealerTaskQueue);
+      "IntermediatePreloadingHealer", mBackgroundTaskQueue);
   if (NS_FAILED(rv)) {
     MOZ_LOG(gPIPNSSLog, LogLevel::Error,
             ("NS_NewTimerWithFuncCallback failed"));
@@ -2468,8 +2505,7 @@ nsresult nsNSSComponent::LogoutAuthenticatedPK11() {
   nsCOMPtr<nsICertOverrideService> icos =
       do_GetService("@mozilla.org/security/certoverride;1");
   if (icos) {
-    icos->ClearValidityOverride(
-        NS_LITERAL_CSTRING("all:temporary-certificates"), 0);
+    icos->ClearValidityOverride("all:temporary-certificates"_ns, 0);
   }
 
   nsCOMPtr<nsIClientAuthRememberService> svc =

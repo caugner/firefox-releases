@@ -119,7 +119,7 @@ bool ExtensionPolicyService::IsExtensionProcess() const {
 
   if (isRemote && XRE_IsContentProcess()) {
     auto& remoteType = dom::ContentChild::GetSingleton()->GetRemoteType();
-    return remoteType.EqualsLiteral(EXTENSION_REMOTE_TYPE);
+    return remoteType == EXTENSION_REMOTE_TYPE;
   }
   return !isRemote && XRE_IsParentProcess();
 }
@@ -201,7 +201,7 @@ ExtensionPolicyService::CollectReports(nsIHandleReportCallback* aHandleReport,
     name.ReplaceSubstring("\\", "");
 
     nsString url;
-    MOZ_TRY_VAR(url, ext->GetURL(NS_LITERAL_STRING("")));
+    MOZ_TRY_VAR(url, ext->GetURL(u""_ns));
 
     nsPrintfCString desc("Extension(id=%s, name=\"%s\", baseURL=%s)", id.get(),
                          name.get(), NS_ConvertUTF16toUTF8(url).get());
@@ -210,10 +210,9 @@ ExtensionPolicyService::CollectReports(nsIHandleReportCallback* aHandleReport,
     nsCString path("extensions/");
     path.Append(desc);
 
-    aHandleReport->Callback(
-        EmptyCString(), path, KIND_NONHEAP, UNITS_COUNT, 1,
-        NS_LITERAL_CSTRING("WebExtensions that are active in this session"),
-        aData);
+    aHandleReport->Callback(EmptyCString(), path, KIND_NONHEAP, UNITS_COUNT, 1,
+                            "WebExtensions that are active in this session"_ns,
+                            aData);
   }
 
   return NS_OK;
@@ -267,7 +266,7 @@ nsresult ExtensionPolicyService::Observe(nsISupports* aSubject,
 
     mMessageManagers.PutEntry(mm);
 
-    mm->AddSystemEventListener(NS_LITERAL_STRING("unload"), this, false, false);
+    mm->AddSystemEventListener(u"unload"_ns, this, false, false);
   } else if (!strcmp(aTopic, NS_PREFBRANCH_PREFCHANGE_TOPIC_ID)) {
     const nsCString converted = NS_ConvertUTF16toUTF8(aData);
     const char* pref = converted.get();
@@ -467,8 +466,11 @@ void ExtensionPolicyService::CheckDocument(Document* aDocument) {
     if ((!mm || !mMessageManagers.Contains(mm)) &&
         // With Fission, OOP iframes don't have a frame message manager, so we
         // use the browser's MessageManagerGroup attribute to decide if content
-        // scripts should run.  The "browsers" group includes iframes from tabs.
-        !group.EqualsLiteral("browsers")) {
+        // scripts should run.  The "browsers" group includes iframes from tabs,
+        // and the "webext-browsers" group includes custom browsers for
+        // extension popups/sidebars and xpcshell tests.
+        !group.EqualsLiteral("browsers") &&
+        !group.EqualsLiteral("webext-browsers")) {
       return;
     }
 

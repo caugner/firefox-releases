@@ -684,6 +684,8 @@ void KeyframeEffect::SetIsRunningOnCompositor(nsCSSPropertyID aProperty,
       // on the compositor we don't need a message.
       if (aIsRunning) {
         property.mPerformanceWarning.reset();
+      } else if (mAnimation && mAnimation->IsPartialPrerendered()) {
+        ResetPartialPrerendered();
       }
       return;
     }
@@ -707,11 +709,38 @@ void KeyframeEffect::SetIsRunningOnCompositor(
       }
     }
   }
+
+  if (!aIsRunning && mAnimation && mAnimation->IsPartialPrerendered()) {
+    ResetPartialPrerendered();
+  }
 }
 
 void KeyframeEffect::ResetIsRunningOnCompositor() {
   for (AnimationProperty& property : mProperties) {
     property.mIsRunningOnCompositor = false;
+  }
+
+  if (mAnimation && mAnimation->IsPartialPrerendered()) {
+    ResetPartialPrerendered();
+  }
+}
+
+void KeyframeEffect::ResetPartialPrerendered() {
+  MOZ_ASSERT(mAnimation && mAnimation->IsPartialPrerendered());
+
+  nsIFrame* frame = GetPrimaryFrame();
+  if (!frame) {
+    return;
+  }
+
+  nsIWidget* widget = frame->GetNearestWidget();
+  if (!widget) {
+    return;
+  }
+
+  if (layers::LayerManager* layerManager = widget->GetLayerManager()) {
+    layerManager->RemovePartialPrerenderedAnimation(
+        mAnimation->IdOnCompositor(), mAnimation);
   }
 }
 
@@ -843,7 +872,8 @@ nsTArray<AnimationProperty> KeyframeEffect::BuildProperties(
   auto keyframesCopy(mKeyframes.Clone());
 
   result = KeyframeUtils::GetAnimationPropertiesFromKeyframes(
-      keyframesCopy, mTarget.mElement, aStyle, mEffectOptions.mComposite);
+      keyframesCopy, mTarget.mElement, mTarget.mPseudoType, aStyle,
+      mEffectOptions.mComposite);
 
 #ifdef DEBUG
   MOZ_ASSERT(SpecifiedKeyframeArraysAreEqual(mKeyframes, keyframesCopy),
@@ -1106,7 +1136,7 @@ static void CreatePropertyValue(
     aResult.mEasing.Construct();
     aTimingFunction->AppendToString(aResult.mEasing.Value());
   } else {
-    aResult.mEasing.Construct(NS_LITERAL_STRING("linear"));
+    aResult.mEasing.Construct(u"linear"_ns);
   }
 
   aResult.mComposite = aComposite;

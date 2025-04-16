@@ -39,6 +39,7 @@ use webrender::{
     NativeTileId, PipelineInfo, ProfilerHooks, RecordedFrameHandle, Renderer, RendererOptions, RendererStats,
     SceneBuilderHooks, ShaderPrecacheFlags, Shaders, ThreadListener, UploadMethod, WrShaders, ONE_TIME_USAGE_HINT,
 };
+use wr_malloc_size_of::MallocSizeOfOps;
 
 #[cfg(target_os = "macos")]
 use core_foundation::string::CFString;
@@ -907,10 +908,7 @@ extern "C" {
     fn apz_deregister_sampler(window_id: WrWindowId);
 
     fn omta_register_sampler(window_id: WrWindowId);
-    fn omta_sample(
-        window_id: WrWindowId,
-        transaction: &mut Transaction
-    );
+    fn omta_sample(window_id: WrWindowId, transaction: &mut Transaction);
     fn omta_deregister_sampler(window_id: WrWindowId);
 }
 
@@ -1031,7 +1029,7 @@ extern "C" {
     fn wr_register_thread_local_arena();
 }
 
-struct GeckoProfilerThreadListener {}
+pub struct GeckoProfilerThreadListener {}
 
 impl GeckoProfilerThreadListener {
     pub fn new() -> GeckoProfilerThreadListener {
@@ -1424,7 +1422,13 @@ pub extern "C" fn wr_window_new(
         ctx.make_current();
         (Rc::new(ctx.clone()) as Rc<dyn gl::Gl>, Some(ctx))
     } else {
-        (native_gl.as_ref().expect("Native GL context required when not using SWGL!").clone(), None)
+        (
+            native_gl
+                .as_ref()
+                .expect("Native GL context required when not using SWGL!")
+                .clone(),
+            None,
+        )
     };
 
     let version = gl.get_string(gl::VERSION);
@@ -1440,8 +1444,7 @@ pub extern "C" fn wr_window_new(
         }
     };
 
-    let upload_method = if gl_context != ptr::null_mut() &&
-                           unsafe { is_glcontext_angle(gl_context) } {
+    let upload_method = if gl_context != ptr::null_mut() && unsafe { is_glcontext_angle(gl_context) } {
         UploadMethod::Immediate
     } else {
         UploadMethod::PixelBuffer(ONE_TIME_USAGE_HINT)
@@ -1524,7 +1527,9 @@ pub extern "C" fn wr_window_new(
         namespace_alloc_by_client: true,
         enable_picture_caching,
         allow_pixel_local_storage_support: false,
-        clear_caches_with_quads: !allow_scissored_cache_clears,
+        // SWGL doesn't support the GL_ALWAYS depth comparison function used by
+        // `clear_caches_with_quads`, but scissored clears work well.
+        clear_caches_with_quads: !software && !allow_scissored_cache_clears,
         start_debug_server,
         surface_origin_is_top_left: !software && surface_origin_is_top_left,
         compositor_config,
@@ -1564,27 +1569,6 @@ pub extern "C" fn wr_window_new(
     *out_renderer = Box::into_raw(Box::new(renderer));
 
     return true;
-}
-
-#[no_mangle]
-pub extern "C" fn wr_api_create_document(
-    root_dh: &mut DocumentHandle,
-    out_handle: &mut *mut DocumentHandle,
-    doc_size: DeviceIntSize,
-    layer: i8,
-    document_id: u32,
-) {
-    assert!(unsafe { is_in_compositor_thread() });
-
-    root_dh.ensure_hit_tester();
-
-    *out_handle = Box::into_raw(Box::new(DocumentHandle::new(
-        root_dh.api.create_sender().create_api_by_client(next_namespace_id()),
-        root_dh.hit_tester.clone(),
-        doc_size,
-        layer,
-        document_id,
-    )));
 }
 
 #[no_mangle]
@@ -1628,8 +1612,15 @@ pub extern "C" fn wr_api_set_debug_flags(dh: &mut DocumentHandle, flags: DebugFl
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn wr_api_accumulate_memory_report(dh: &mut DocumentHandle, report: &mut MemoryReport) {
-    *report += dh.api.report_memory();
+pub unsafe extern "C" fn wr_api_accumulate_memory_report(
+    dh: &mut DocumentHandle,
+    report: &mut MemoryReport,
+    // we manually expand VoidPtrToSizeFn here because cbindgen otherwise fails to fold the Option<fn()>
+    // https://github.com/eqrion/cbindgen/issues/552
+    size_of_op: unsafe extern "C" fn(ptr: *const c_void) -> usize,
+    enclosing_size_of_op: Option<unsafe extern "C" fn(ptr: *const c_void) -> usize>) {
+    let ops = MallocSizeOfOps::new(size_of_op, enclosing_size_of_op);
+    *report += dh.api.report_memory(ops);
 }
 
 #[no_mangle]
@@ -2033,30 +2024,6 @@ pub extern "C" fn wr_api_send_transaction(dh: &mut DocumentHandle, transaction: 
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn wr_api_send_transactions(
-    document_handles: *const *mut DocumentHandle,
-    transactions: *const *mut Transaction,
-    transaction_count: usize,
-    is_async: bool,
-) {
-    if transaction_count == 0 {
-        return;
-    }
-    let mut out_transactions = Vec::with_capacity(transaction_count);
-    let mut out_documents = Vec::with_capacity(transaction_count);
-    for i in 0..transaction_count {
-        let txn = &mut **transactions.offset(i as isize);
-        debug_assert!(!txn.is_empty());
-        let new_txn = make_transaction(is_async);
-        out_transactions.push(mem::replace(txn, new_txn));
-        out_documents.push((**document_handles.offset(i as isize)).document_id);
-    }
-    (**document_handles)
-        .api
-        .send_transactions(out_documents, out_transactions);
-}
-
-#[no_mangle]
 pub unsafe extern "C" fn wr_transaction_clear_display_list(
     txn: &mut Transaction,
     epoch: WrEpoch,
@@ -2102,7 +2069,11 @@ fn generate_capture_path(path: *const c_char) -> Option<PathBuf> {
     // storage so that (a) it can be written without requiring permissions
     // and (b) it can be pulled off via `adb pull`. This env var is set
     // in GeckoLoader.java.
+    // When running in Firefox CI, the MOZ_UPLOAD_DIR variable is set to a path
+    // that taskcluster will export artifacts from, so let's put it there.
     let mut path = if let Ok(storage_path) = env::var("PUBLIC_STORAGE") {
+        PathBuf::from(storage_path).join(local_dir)
+    } else if let Ok(storage_path) = env::var("MOZ_UPLOAD_DIR") {
         PathBuf::from(storage_path).join(local_dir)
     } else if let Some(storage_path) = dirs::home_dir() {
         PathBuf::from(storage_path).join(local_dir)
@@ -2176,7 +2147,18 @@ fn read_font_descriptor(bytes: &mut WrVecU8, index: u32) -> NativeFontHandle {
 fn read_font_descriptor(bytes: &mut WrVecU8, _index: u32) -> NativeFontHandle {
     let chars = bytes.flush_into_vec();
     let name = String::from_utf8(chars).unwrap();
-    let font = CGFont::from_name(&CFString::new(&*name)).unwrap();
+    let font = match CGFont::from_name(&CFString::new(&*name)) {
+        Ok(font) => font,
+        Err(_) => {
+            // If for some reason we failed to load a font descriptor, then our
+            // only options are to either abort or substitute a fallback font.
+            // It is preferable to use a fallback font instead so that rendering
+            // can at least still proceed in some fashion without erroring.
+            // Lucida Grande is the fallback font in Gecko, so use that here.
+            CGFont::from_name(&CFString::from_static_string("Lucida Grande"))
+                .expect("Failed reading font descriptor and could not load fallback font")
+        }
+    };
     NativeFontHandle(font)
 }
 

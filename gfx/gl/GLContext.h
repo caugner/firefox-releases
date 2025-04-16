@@ -189,10 +189,8 @@ enum class GLRenderer {
   Other
 };
 
-class GLContext : public GenericAtomicRefCounted,
-                  public SupportsWeakPtr<GLContext> {
+class GLContext : public GenericAtomicRefCounted, public SupportsWeakPtr {
  public:
-  MOZ_DECLARE_WEAKREFERENCE_TYPENAME(GLContext)
   static MOZ_THREAD_LOCAL(uintptr_t) sCurrentContext;
 
   const GLContextDesc mDesc;
@@ -454,6 +452,7 @@ class GLContext : public GenericAtomicRefCounted,
     IMG_texture_compression_pvrtc,
     IMG_texture_npot,
     KHR_debug,
+    KHR_parallel_shader_compile,
     KHR_robust_buffer_access_behavior,
     KHR_robustness,
     KHR_texture_compression_astc_hdr,
@@ -3354,6 +3353,25 @@ class GLContext : public GenericAtomicRefCounted,
    * contents of the new back buffer are undefined.
    */
   virtual bool SwapBuffers() { return false; }
+
+  /**
+   * If this context supports it, submit a subset of its content instead of
+   * using SwapBuffer.
+   *
+   * Check the result of HasCopySubBuffer Before calling this.
+   *
+   * Only supported by GLX contexts on MESA.
+   */
+  virtual void CopySubBuffer(int x, int y, int w, int h) {
+    MOZ_CRASH("Unsupported CopySubBuffer");
+  }
+
+  /**
+   * Returns true if this context supports CopySubBuffer.
+   *
+   * Only supported by GLX contexts on MESA.
+   */
+  virtual bool HasCopySubBuffer() const { return false; }
 
   /**
    * Stores a damage region (in origin bottom left coordinates), which

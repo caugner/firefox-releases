@@ -152,7 +152,7 @@ class ShadowRoot final : public DocumentFragment,
   void RemoveSlot(HTMLSlotElement* aSlot);
   bool HasSlots() const { return !mSlotMap.IsEmpty(); };
   HTMLSlotElement* GetDefaultSlot() const {
-    SlotArray* list = mSlotMap.Get(NS_LITERAL_STRING(""));
+    SlotArray* list = mSlotMap.Get(u""_ns);
     return list ? (*list)->ElementAt(0) : nullptr;
   }
 
@@ -183,8 +183,6 @@ class ShadowRoot final : public DocumentFragment,
   using mozilla::dom::DocumentOrShadowRoot::GetElementById;
 
   Element* GetActiveElement();
-  void GetInnerHTML(nsAString& aInnerHTML);
-  void SetInnerHTML(const nsAString& aInnerHTML, ErrorResult& aError);
 
   /**
    * These methods allow UA Widget to insert DOM elements into the Shadow ROM

@@ -170,7 +170,7 @@ class DataStorageMemoryReporter final : public nsIMemoryReporter {
                            NS_ConvertUTF16toUTF8(file).get());
       Unused << aHandleReport->Callback(
           EmptyCString(), path, KIND_HEAP, UNITS_BYTES, amount,
-          NS_LITERAL_CSTRING("Memory used by PSM data storage cache."), aData);
+          "Memory used by PSM data storage cache."_ns, aData);
     }
     return NS_OK;
   }
@@ -202,7 +202,7 @@ already_AddRefed<DataStorage> DataStorage::Get(DataStorageClass aFilename) {
   switch (aFilename) {
 #define DATA_STORAGE(_)     \
   case DataStorageClass::_: \
-    return GetFromRawFileName(NS_LITERAL_STRING(#_ ".txt"));
+    return GetFromRawFileName(NS_LITERAL_STRING_FROM_CSTRING(#_ ".txt"));
 #include "mozilla/DataStorageList.h"
 #undef DATA_STORAGE
     default:
@@ -233,7 +233,8 @@ void DataStorage::GetAllFileNames(nsTArray<nsString>& aItems) {
   if (!sDataStorages) {
     return;
   }
-#define DATA_STORAGE(_) aItems.AppendElement(NS_LITERAL_STRING(#_ ".txt"));
+#define DATA_STORAGE(_) \
+  aItems.AppendElement(NS_LITERAL_STRING_FROM_CSTRING(#_ ".txt"));
 #include "mozilla/DataStorageList.h"
 #undef DATA_STORAGE
 }
@@ -274,17 +275,17 @@ void DataStorage::SetCachedStorageEntries(
   // about updating the algorithm here to something more fancy if the list
   // of DataStorage items grows some day.
   nsTArray<psm::DataStorageEntry> entries;
-#define DATA_STORAGE(_)                              \
-  {                                                  \
-    psm::DataStorageEntry entry;                     \
-    entry.filename() = NS_LITERAL_STRING(#_ ".txt"); \
-    for (auto& e : aEntries) {                       \
-      if (entry.filename().Equals(e.filename())) {   \
-        entry.items() = e.items().Clone();           \
-        break;                                       \
-      }                                              \
-    }                                                \
-    entries.AppendElement(std::move(entry));         \
+#define DATA_STORAGE(_)                                           \
+  {                                                               \
+    psm::DataStorageEntry entry;                                  \
+    entry.filename() = NS_LITERAL_STRING_FROM_CSTRING(#_ ".txt"); \
+    for (auto& e : aEntries) {                                    \
+      if (entry.filename().Equals(e.filename())) {                \
+        entry.items() = e.items().Clone();                        \
+        break;                                                    \
+      }                                                           \
+    }                                                             \
+    entries.AppendElement(std::move(entry));                      \
   }
 #include "mozilla/DataStorageList.h"
 #undef DATA_STORAGE
@@ -998,7 +999,7 @@ DataStorage::Writer::Run() {
   }
 
   const char* ptr = mData.get();
-  int32_t remaining = mData.Length();
+  uint32_t remaining = mData.Length();
   uint32_t written = 0;
   while (remaining > 0) {
     rv = outputStream->Write(ptr, remaining, &written);

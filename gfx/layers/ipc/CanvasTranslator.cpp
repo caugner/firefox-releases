@@ -165,8 +165,9 @@ void CanvasTranslator::StartTranslation() {
                           &CanvasTranslator::StartTranslation)));
   }
 
-  // If the stream has been marked as bad deactivate remote canvas.
-  if (!mStream->good()) {
+  // If the stream has been marked as bad and the Writer hasn't failed,
+  // deactivate remote canvas.
+  if (!mStream->good() && !mStream->WriterFailed()) {
     Telemetry::ScalarAdd(
         Telemetry::ScalarID::GFX_CANVAS_REMOTE_DEACTIVATED_BAD_STREAM, 1);
     Deactivate();
@@ -174,16 +175,20 @@ void CanvasTranslator::StartTranslation() {
 }
 
 void CanvasTranslator::ActorDestroy(ActorDestroyReason why) {
+  MOZ_ASSERT(CanvasThreadHolder::IsInCanvasThread());
+
   if (!mTranslationTaskQueue) {
     return FinishShutdown();
   }
 
   mTranslationTaskQueue->BeginShutdown()->Then(
-      MessageLoop::current()->SerialEventTarget(), __func__, this,
+      GetCurrentSerialEventTarget(), __func__, this,
       &CanvasTranslator::FinishShutdown, &CanvasTranslator::FinishShutdown);
 }
 
 void CanvasTranslator::FinishShutdown() {
+  MOZ_ASSERT(CanvasThreadHolder::IsInCanvasThread());
+
   // mTranslationTaskQueue has shutdown we can safely drop the ring buffer to
   // break the cycle caused by RingBufferReaderServices.
   mStream = nullptr;

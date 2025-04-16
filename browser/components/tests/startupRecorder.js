@@ -5,8 +5,8 @@
 const Cm = Components.manager;
 Cm.QueryInterface(Ci.nsIServiceManager);
 
-const { XPCOMUtils } = ChromeUtils.import(
-  "resource://gre/modules/XPCOMUtils.jsm"
+const { ComponentUtils } = ChromeUtils.import(
+  "resource://gre/modules/ComponentUtils.jsm"
 );
 const { Services } = ChromeUtils.import("resource://gre/modules/Services.jsm");
 const { AppConstants } = ChromeUtils.import(
@@ -76,7 +76,7 @@ function startupRecorder() {
 startupRecorder.prototype = {
   classID: Components.ID("{11c095b2-e42e-4bdf-9dd0-aed87595f6a4}"),
 
-  QueryInterface: ChromeUtils.generateQI([Ci.nsIObserver]),
+  QueryInterface: ChromeUtils.generateQI(["nsIObserver"]),
 
   record(name) {
     ChromeUtils.addProfilerMarker("startupRecorder:" + name);
@@ -230,4 +230,4 @@ startupRecorder.prototype = {
   },
 };
 
-this.NSGetFactory = XPCOMUtils.generateNSGetFactory([startupRecorder]);
+this.NSGetFactory = ComponentUtils.generateNSGetFactory([startupRecorder]);

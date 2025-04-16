@@ -232,7 +232,7 @@ registerCleanupFunction(function() {
  * Watch console messages for failed propType definitions in React components.
  */
 const ConsoleObserver = {
-  QueryInterface: ChromeUtils.generateQI([Ci.nsIObserver]),
+  QueryInterface: ChromeUtils.generateQI(["nsIObserver"]),
 
   observe: function(subject) {
     const message = subject.wrappedJSObject.arguments[0];
@@ -263,9 +263,20 @@ function loadFrameScriptUtils(browser = gBrowser.selectedBrowser) {
 }
 
 Services.prefs.setBoolPref("devtools.inspector.three-pane-enabled", true);
+
 // Disable this preference to reduce exceptions related to pending `listWorkers`
 // requests occuring after a process is created/destroyed. See Bug 1620983.
 Services.prefs.setBoolPref("dom.ipc.processPrelaunch.enabled", false);
+
+// Disable this preference to capture async stacks across all locations during
+// DevTools mochitests. Async stacks provide very valuable information to debug
+// intermittents, but come with a performance overhead, which is why they are
+// only captured in Debuggees by default.
+Services.prefs.setBoolPref(
+  "javascript.options.asyncstack_capture_debuggee_only",
+  false
+);
+
 registerCleanupFunction(() => {
   Services.prefs.clearUserPref("devtools.dump.emit");
   Services.prefs.clearUserPref("devtools.inspector.three-pane-enabled");
@@ -274,6 +285,9 @@ registerCleanupFunction(() => {
   Services.prefs.clearUserPref("devtools.toolbox.previousHost");
   Services.prefs.clearUserPref("devtools.toolbox.splitconsoleEnabled");
   Services.prefs.clearUserPref("devtools.toolbox.splitconsoleHeight");
+  Services.prefs.clearUserPref(
+    "javascript.options.asyncstack_capture_debuggee_only"
+  );
 });
 
 registerCleanupFunction(async function cleanup() {
@@ -395,7 +409,7 @@ async function navigateTo(uri, { isErrorPage = false } = {}) {
   // Navigating from/to pages loaded in the parent process, like about:robots,
   // also spawn new targets.
   // (If target-switching pref is false, the toolbox will reboot)
-  const onTargetSwitched = toolbox.once("switched-target");
+  const onTargetSwitched = toolbox.targetList.once("switched-target");
   // Otherwise, if we don't switch target, it is safe to wait for navigate event.
   const onNavigate = target.once("navigate");
 
@@ -1065,4 +1079,28 @@ async function moveWindowTo(win, left, top) {
 
 function getCurrentTestFilePath() {
   return gTestPath.replace("chrome://mochitests/content/browser/", "");
+}
+
+/**
+ * Wait for a single resource of the provided resourceType.
+ *
+ * @param {ResourceWatcher} resourceWatcher
+ *        The ResourceWatcher instance that should emit the expected resource.
+ * @param {String} resourceType
+ *        One of ResourceWatcher.TYPES, type of the expected resource.
+ * @return {Object}
+ *         - resource {Object} the resource itself
+ *         - targetFront {TargetFront} the target which owns the resource
+ */
+function waitForResourceOnce(resourceWatcher, resourceType) {
+  return new Promise(resolve => {
+    const onAvailable = ({ targetFront, resource }) => {
+      resolve({ targetFront, resource });
+      resourceWatcher.unwatchResources([resourceType], { onAvailable });
+    };
+    resourceWatcher.watchResources([resourceType], {
+      ignoreExistingResources: true,
+      onAvailable,
+    });
+  });
 }

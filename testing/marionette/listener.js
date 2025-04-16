@@ -74,7 +74,7 @@ const curContainer = {
   set frame(frame) {
     this._frame = frame;
 
-    this.id = this._frame.docShell.browsingContext.id;
+    this.id = this._frame.browsingContext.id;
     this.shadowRoot = null;
   },
 };
@@ -86,16 +86,6 @@ addEventListener("dblclick", event.DoubleClickTracker.resetClick);
 addEventListener("unload", event.DoubleClickTracker.resetClick, true);
 
 const seenEls = new element.Store();
-const SUPPORTED_STRATEGIES = new Set([
-  element.Strategy.ClassName,
-  element.Strategy.Selector,
-  element.Strategy.ID,
-  element.Strategy.Name,
-  element.Strategy.LinkText,
-  element.Strategy.PartialLinkText,
-  element.Strategy.TagName,
-  element.Strategy.XPath,
-]);
 
 Object.defineProperty(this, "capabilities", {
   get() {
@@ -437,7 +427,7 @@ const loadListener = {
    * @param {string=} url
    *     Optional URL, which is used to check if a page load is expected.
    */
-  navigate(
+  async navigate(
     trigger,
     commandID,
     timeout,
@@ -454,34 +444,32 @@ const loadListener = {
       this.start(commandID, timeout, startTime, true);
     }
 
-    return (async () => {
-      await trigger();
-    })()
-      .then(() => {
-        if (!loadEventExpected) {
-          sendOk(commandID);
-          return;
-        }
+    await trigger();
 
-        // If requested setup a timer to detect a possible page load
-        if (useUnloadTimer) {
-          this.timerPageUnload = Cc["@mozilla.org/timer;1"].createInstance(
-            Ci.nsITimer
-          );
-          this.timerPageUnload.initWithCallback(
-            this,
-            200,
-            Ci.nsITimer.TYPE_ONE_SHOT
-          );
-        }
-      })
-      .catch(err => {
-        if (loadEventExpected) {
-          this.stop();
-        }
+    try {
+      if (!loadEventExpected) {
+        sendOk(commandID);
+        return;
+      }
 
-        sendError(err, commandID);
-      });
+      // If requested setup a timer to detect a possible page load
+      if (useUnloadTimer) {
+        this.timerPageUnload = Cc["@mozilla.org/timer;1"].createInstance(
+          Ci.nsITimer
+        );
+        this.timerPageUnload.initWithCallback(
+          this,
+          200,
+          Ci.nsITimer.TYPE_ONE_SHOT
+        );
+      }
+    } catch (e) {
+      if (loadEventExpected) {
+        this.stop();
+      }
+
+      sendError(e, commandID);
+    }
   },
 };
 
@@ -605,7 +593,6 @@ function startListeners() {
     "Marionette:getElementValueOfCssProperty",
     getElementValueOfCssPropertyFn
   );
-  addMessageListener("Marionette:get", get);
   addMessageListener("Marionette:getPageSource", getPageSourceFn);
   addMessageListener("Marionette:getScreenshotRect", getScreenshotRectFn);
   addMessageListener("Marionette:goBack", goBack);
@@ -614,6 +601,7 @@ function startListeners() {
   addMessageListener("Marionette:isElementEnabled", isElementEnabledFn);
   addMessageListener("Marionette:isElementSelected", isElementSelectedFn);
   addMessageListener("Marionette:multiAction", multiActionFn);
+  addMessageListener("Marionette:navigateTo", navigateTo);
   addMessageListener("Marionette:performActions", performActionsFn);
   addMessageListener("Marionette:refresh", refresh);
   addMessageListener("Marionette:reftestWait", reftestWaitFn);
@@ -657,7 +645,6 @@ function deregister() {
     "Marionette:getElementValueOfCssProperty",
     getElementValueOfCssPropertyFn
   );
-  removeMessageListener("Marionette:get", get);
   removeMessageListener("Marionette:getPageSource", getPageSourceFn);
   removeMessageListener("Marionette:getScreenshotRect", getScreenshotRectFn);
   removeMessageListener("Marionette:goBack", goBack);
@@ -666,6 +653,7 @@ function deregister() {
   removeMessageListener("Marionette:isElementEnabled", isElementEnabledFn);
   removeMessageListener("Marionette:isElementSelected", isElementSelectedFn);
   removeMessageListener("Marionette:multiAction", multiActionFn);
+  removeMessageListener("Marionette:navigateTo", navigateTo);
   removeMessageListener("Marionette:performActions", performActionsFn);
   removeMessageListener("Marionette:refresh", refresh);
   removeMessageListener("Marionette:releaseActions", releaseActionsFn);
@@ -1134,30 +1122,11 @@ function waitForPageLoaded(msg) {
  * navigate within an iframe.  All other navigation is handled by the driver
  * (in chrome space).
  */
-function get(msg) {
-  let { commandID, pageTimeout, url, loadEventExpected = null } = msg.json;
+async function navigateTo(msg) {
+  let { commandID, pageTimeout, url, loadEventExpected } = msg.json;
 
   try {
-    if (typeof url == "string") {
-      try {
-        if (loadEventExpected === null) {
-          loadEventExpected = navigate.isLoadEventExpected(
-            curContainer.frame.location,
-            url
-          );
-        }
-      } catch (e) {
-        let err = new InvalidArgumentError("Malformed URL: " + e.message);
-        sendError(err, commandID);
-        return;
-      }
-    }
-
-    // We need to move to the top frame before navigating
-    sendSyncMessage("Marionette:switchedToFrame", { frameValue: null });
-    curContainer.frame = content;
-
-    loadListener.navigate(
+    await loadListener.navigate(
       () => {
         curContainer.frame.location = url;
       },
@@ -1181,11 +1150,11 @@ function get(msg) {
  *     Timeout in milliseconds the method has to wait for the page being
  *     finished loading.
  */
-function goBack(msg) {
+async function goBack(msg) {
   let { commandID, pageTimeout } = msg.json;
 
   try {
-    loadListener.navigate(
+    await loadListener.navigate(
       () => {
         curContainer.frame.history.back();
       },
@@ -1208,11 +1177,11 @@ function goBack(msg) {
  *     Timeout in milliseconds the method has to wait for the page being
  *     finished loading.
  */
-function goForward(msg) {
+async function goForward(msg) {
   let { commandID, pageTimeout } = msg.json;
 
   try {
-    loadListener.navigate(
+    await loadListener.navigate(
       () => {
         curContainer.frame.history.forward();
       },
@@ -1235,15 +1204,18 @@ function goForward(msg) {
  *     Timeout in milliseconds the method has to wait for the page being
  *     finished loading.
  */
-function refresh(msg) {
+async function refresh(msg) {
   let { commandID, pageTimeout } = msg.json;
 
   try {
     // We need to move to the top frame before navigating
-    sendSyncMessage("Marionette:switchedToFrame", { frameValue: null });
     curContainer.frame = content;
+    sendSyncMessage("Marionette:switchedToFrame", {
+      frameValue: null,
+      browsingContextId: curContainer.id,
+    });
 
-    loadListener.navigate(
+    await loadListener.navigate(
       () => {
         curContainer.frame.location.reload(true);
       },
@@ -1267,10 +1239,6 @@ function getPageSource() {
  * given search strategy.
  */
 async function findElementContent(strategy, selector, opts = {}) {
-  if (!SUPPORTED_STRATEGIES.has(strategy)) {
-    throw new InvalidSelectorError("Strategy not supported: " + strategy);
-  }
-
   opts.all = false;
   let el = await element.find(curContainer, strategy, selector, opts);
   return seenEls.add(el);
@@ -1281,10 +1249,6 @@ async function findElementContent(strategy, selector, opts = {}) {
  * given search strategy.
  */
 async function findElementsContent(strategy, selector, opts = {}) {
-  if (!SUPPORTED_STRATEGIES.has(strategy)) {
-    throw new InvalidSelectorError("Strategy not supported: " + strategy);
-  }
-
   opts.all = true;
   let els = await element.find(curContainer, strategy, selector, opts);
   let webEls = seenEls.addAll(els);
@@ -1321,11 +1285,9 @@ function getActiveElement() {
  *     Id of the browsing context.
  */
 function getBrowsingContextId(topContext = false) {
-  if (topContext) {
-    return content.docShell.browsingContext.id;
-  }
+  const bc = curContainer.frame.docShell.browsingContext;
 
-  return curContainer.frame.docShell.browsingContext.id;
+  return topContext ? bc.top.id : bc.id;
 }
 
 /**
@@ -1340,7 +1302,7 @@ function getBrowsingContextId(topContext = false) {
  *     Timeout in milliseconds the method has to wait for the page being
  *     finished loading.
  */
-function clickElement(msg) {
+async function clickElement(msg) {
   let { commandID, webElRef, pageTimeout } = msg.json;
 
   try {
@@ -1354,7 +1316,7 @@ function clickElement(msg) {
       loadEventExpected = false;
     }
 
-    loadListener.navigate(
+    await loadListener.navigate(
       () => {
         return interaction.clickElement(
           el,
@@ -1519,20 +1481,29 @@ function switchToParentFrame(msg) {
 
   sendSyncMessage("Marionette:switchedToFrame", {
     frameValue: parentElement.uuid,
+    browsingContextId: curContainer.id,
   });
 
   sendOk(msg.json.commandID);
 }
 
 /**
- * Switch to frame given either the server-assigned element id,
- * its index in window.frames, or the iframe's name or id.
+ * Switch to the specified frame.
+ *
+ * @param {boolean=} focus
+ *     Focus the frame if set to true. Defaults to false.
+ * @param {(string|Object)=} element
+ *     A web element reference of the frame or its element id.
+ * @param {number=} id
+ *     The index of the frame to switch to.
+ *     If both element and id are not defined, switch to top-level frame.
  */
-function switchToFrame(msg) {
-  let commandID = msg.json.commandID;
+function switchToFrame({ json }) {
+  let { commandID, element, focus, id } = json;
 
   let foundFrame;
   let frameWebEl;
+  let wantedFrame = null;
 
   // check if curContainer.frame reference is dead
   let frames = [];
@@ -1540,20 +1511,19 @@ function switchToFrame(msg) {
     frames = curContainer.frame.frames;
   } catch (e) {
     // dead comparment, redirect to top frame
-    msg.json.id = null;
-    msg.json.element = null;
+    id = null;
+    element = null;
   }
 
-  if (
-    (msg.json.id === null || msg.json.id === undefined) &&
-    msg.json.element == null
-  ) {
-    // returning to root frame
-    sendSyncMessage("Marionette:switchedToFrame", { frameValue: null });
-
+  // switch to top-level frame
+  if (id == null && !element) {
     curContainer.frame = content;
+    sendSyncMessage("Marionette:switchedToFrame", {
+      frameValue: null,
+      browsingContextId: curContainer.id,
+    });
 
-    if (msg.json.focus) {
+    if (focus) {
       curContainer.frame.focus();
     }
 
@@ -1562,8 +1532,8 @@ function switchToFrame(msg) {
   }
 
   let webEl;
-  if (typeof msg.json.element != "undefined") {
-    webEl = WebElement.fromUUID(msg.json.element, "content");
+  if (typeof element != "undefined") {
+    webEl = WebElement.fromUUID(element, "content");
   }
 
   if (webEl) {
@@ -1573,7 +1543,6 @@ function switchToFrame(msg) {
       return;
     }
 
-    let wantedFrame;
     try {
       wantedFrame = seenEls.get(webEl, curContainer.frame);
     } catch (e) {
@@ -1582,48 +1551,44 @@ function switchToFrame(msg) {
     }
 
     if (frames.length > 0) {
-      for (let i = 0; i < frames.length; i++) {
-        // use XPCNativeWrapper to compare elements; see bug 834266
-        let frameEl = frames[i].frameElement;
-        let wrappedItem = new XPCNativeWrapper(frameEl);
-        let wrappedWanted = new XPCNativeWrapper(wantedFrame);
-        if (wrappedItem == wrappedWanted) {
-          foundFrame = frameEl;
-        }
-      }
+      // use XPCNativeWrapper to compare elements; see bug 834266
+      let wrappedWanted = new XPCNativeWrapper(wantedFrame);
+      foundFrame = Array.prototype.find.call(frames, frame => {
+        return new XPCNativeWrapper(frame.frameElement) === wrappedWanted;
+      });
     }
 
     if (!foundFrame) {
       // Either the frame has been removed or we have a OOP frame
       // so lets just get all the iframes and do a quick loop before
       // throwing in the towel
-      const doc = curContainer.frame.document;
-      let iframes = doc.getElementsByTagName("iframe");
-      for (let i = 0; i < iframes.length; i++) {
-        let frameEl = iframes[i];
-        let wrappedEl = new XPCNativeWrapper(frameEl);
-        let wrappedWanted = new XPCNativeWrapper(wantedFrame);
-        if (wrappedEl == wrappedWanted) {
-          foundFrame = iframes[i];
-        }
-      }
+      let iframes = curContainer.frame.document.getElementsByTagName("iframe");
+      let wrappedWanted = new XPCNativeWrapper(wantedFrame);
+      foundFrame = Array.prototype.find.call(iframes, frame => {
+        return new XPCNativeWrapper(frame) === wrappedWanted;
+      });
     }
   }
 
   if (!foundFrame) {
-    if (typeof msg.json.id === "number") {
+    if (typeof id === "number") {
       try {
-        if (msg.json.id >= 0 && msg.json.id < frames.length) {
-          foundFrame = frames[msg.json.id].frameElement;
-          if (foundFrame !== null) {
-            frameWebEl = seenEls.add(foundFrame.wrappedJSObject);
+        let frameEl;
+        if (id >= 0 && id < frames.length) {
+          frameEl = frames[id].frameElement;
+          if (frameEl !== null) {
+            foundFrame = frameEl.contentWindow;
+            frameWebEl = seenEls.add(frameEl.wrappedJSObject);
           } else {
             // If foundFrame is null at this point then we have the top
             // level browsing context so should treat it accordingly.
-            sendSyncMessage("Marionette:switchedToFrame", { frameValue: null });
             curContainer.frame = content;
+            sendSyncMessage("Marionette:switchedToFrame", {
+              frameValue: null,
+              browsingContextId: curContainer.id,
+            });
 
-            if (msg.json.focus) {
+            if (focus) {
               curContainer.frame.focus();
             }
 
@@ -1635,21 +1600,22 @@ function switchToFrame(msg) {
         // Since window.frames does not return OOP frames it will throw
         // and we land up here. Let's not give up and check if there are
         // iframes and switch to the indexed frame there
-        let doc = foundFrame.document;
-        let iframes = doc.getElementsByTagName("iframe");
-        if (msg.json.id >= 0 && msg.json.id < iframes.length) {
-          foundFrame = iframes[msg.json.id];
+        let iframes = foundFrame.document.getElementsByTagName("iframe");
+        if (id >= 0 && id < iframes.length) {
+          foundFrame = iframes[id];
         }
       }
     }
   }
 
   if (!foundFrame) {
-    let failedFrame = msg.json.id || msg.json.element;
+    let failedFrame = id || element;
     let err = new NoSuchFrameError(`Unable to locate frame: ${failedFrame}`);
     sendError(err, commandID);
     return;
   }
+
+  curContainer.frame = foundFrame;
 
   // send a synchronous message to let the server update the currently active
   // frame element (for getActiveFrame)
@@ -1658,10 +1624,10 @@ function switchToFrame(msg) {
   }
   sendSyncMessage("Marionette:switchedToFrame", {
     frameValue: frameWebEl.uuid,
+    browsingContextId: curContainer.id,
   });
 
-  curContainer.frame = foundFrame.contentWindow;
-  if (msg.json.focus) {
+  if (focus) {
     curContainer.frame.focus();
   }
 

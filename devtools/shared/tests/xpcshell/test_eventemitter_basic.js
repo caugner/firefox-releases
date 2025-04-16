@@ -28,8 +28,8 @@ const TESTS = {
       hasMethod(emitter, "on") &&
         hasMethod(emitter, "off") &&
         hasMethod(emitter, "once") &&
-        !hasMethod(emitter, "decorate") &&
-        !hasMethod(emitter, "count"),
+        hasMethod(emitter, "count") &&
+        !hasMethod(emitter, "decorate"),
       `Event Emitter ${
         isAnEmitter ? "instance" : "mixin"
       } has the expected methods.`
@@ -318,6 +318,18 @@ const TESTS = {
     // emitAsync is only resolved in the next event loop
     await new Promise(r => Services.tm.dispatchToMainThread(r));
     ok(resolved, "once we resolve all the listeners, emitAsync is resolved");
+  },
+
+  testCount() {
+    const emitter = getEventEmitter();
+
+    equal(emitter.count("foo"), 0, "no listeners for 'foo' events");
+    emitter.on("foo", () => {});
+    equal(emitter.count("foo"), 1, "listener registered");
+    emitter.on("foo", () => {});
+    equal(emitter.count("foo"), 2, "another listener registered");
+    emitter.off("foo");
+    equal(emitter.count("foo"), 0, "listeners unregistered");
   },
 };
 

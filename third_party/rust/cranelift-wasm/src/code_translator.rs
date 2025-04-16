@@ -30,6 +30,7 @@ use crate::translation_utils::{
 };
 use crate::translation_utils::{FuncIndex, GlobalIndex, MemoryIndex, SignatureIndex, TableIndex};
 use crate::wasm_unsupported;
+use core::convert::TryInto;
 use core::{i32, u32};
 use cranelift_codegen::ir::condcodes::{FloatCC, IntCC};
 use cranelift_codegen::ir::immediates::Offset32;
@@ -533,7 +534,7 @@ pub fn translate_operator<FE: FuncEnvironment + ?Sized>(
             // `index` is the index of the function's signature and `table_index` is the index of
             // the table to search the function in.
             let (sigref, num_args) = state.get_indirect_sig(builder.func, *index, environ)?;
-            let table = state.get_table(builder.func, *table_index, environ)?;
+            let table = state.get_or_create_table(builder.func, *table_index, environ)?;
             let callee = state.pop1();
 
             // Bitcast any vector arguments to their default type, I8X16, before calling.
@@ -1039,15 +1040,16 @@ pub fn translate_operator<FE: FuncEnvironment + ?Sized>(
         Operator::F32Le | Operator::F64Le => {
             translate_fcmp(FloatCC::LessThanOrEqual, builder, state)
         }
-        Operator::RefNull { ty: _ } => state.push1(builder.ins().null(environ.reference_type())),
-        Operator::RefIsNull { ty: _ } => {
-            let arg = state.pop1();
-            let val = builder.ins().is_null(arg);
-            let val_int = builder.ins().bint(I32, val);
-            state.push1(val_int);
+        Operator::RefNull { ty } => {
+            state.push1(environ.translate_ref_null(builder.cursor(), (*ty).try_into()?)?)
+        }
+        Operator::RefIsNull => {
+            let value = state.pop1();
+            state.push1(environ.translate_ref_is_null(builder.cursor(), value)?);
         }
         Operator::RefFunc { function_index } => {
-            state.push1(environ.translate_ref_func(builder.cursor(), *function_index)?);
+            let index = FuncIndex::from_u32(*function_index);
+            state.push1(environ.translate_ref_func(builder.cursor(), index)?);
         }
         Operator::AtomicNotify { .. }
         | Operator::I32AtomicWait { .. }
@@ -1163,41 +1165,45 @@ pub fn translate_operator<FE: FuncEnvironment + ?Sized>(
             environ.translate_data_drop(builder.cursor(), *segment)?;
         }
         Operator::TableSize { table: index } => {
-            let table = state.get_table(builder.func, *index, environ)?;
+            let table = state.get_or_create_table(builder.func, *index, environ)?;
             state.push1(environ.translate_table_size(
                 builder.cursor(),
                 TableIndex::from_u32(*index),
                 table,
             )?);
         }
-        Operator::TableGrow { table } => {
-            let table_index = TableIndex::from_u32(*table);
+        Operator::TableGrow { table: index } => {
+            let table_index = TableIndex::from_u32(*index);
+            let table = state.get_or_create_table(builder.func, *index, environ)?;
             let delta = state.pop1();
             let init_value = state.pop1();
             state.push1(environ.translate_table_grow(
                 builder.cursor(),
                 table_index,
+                table,
                 delta,
                 init_value,
             )?);
         }
-        Operator::TableGet { table } => {
-            let table_index = TableIndex::from_u32(*table);
+        Operator::TableGet { table: index } => {
+            let table_index = TableIndex::from_u32(*index);
+            let table = state.get_or_create_table(builder.func, *index, environ)?;
             let index = state.pop1();
-            state.push1(environ.translate_table_get(builder.cursor(), table_index, index)?);
+            state.push1(environ.translate_table_get(builder, table_index, table, index)?);
         }
-        Operator::TableSet { table } => {
-            let table_index = TableIndex::from_u32(*table);
+        Operator::TableSet { table: index } => {
+            let table_index = TableIndex::from_u32(*index);
+            let table = state.get_or_create_table(builder.func, *index, environ)?;
             let value = state.pop1();
             let index = state.pop1();
-            environ.translate_table_set(builder.cursor(), table_index, value, index)?;
+            environ.translate_table_set(builder, table_index, table, value, index)?;
         }
         Operator::TableCopy {
             dst_table: dst_table_index,
             src_table: src_table_index,
         } => {
-            let dst_table = state.get_table(builder.func, *dst_table_index, environ)?;
-            let src_table = state.get_table(builder.func, *src_table_index, environ)?;
+            let dst_table = state.get_or_create_table(builder.func, *dst_table_index, environ)?;
+            let src_table = state.get_or_create_table(builder.func, *src_table_index, environ)?;
             let len = state.pop1();
             let src = state.pop1();
             let dest = state.pop1();
@@ -1223,7 +1229,7 @@ pub fn translate_operator<FE: FuncEnvironment + ?Sized>(
             segment,
             table: table_index,
         } => {
-            let table = state.get_table(builder.func, *table_index, environ)?;
+            let table = state.get_or_create_table(builder.func, *table_index, environ)?;
             let len = state.pop1();
             let src = state.pop1();
             let dest = state.pop1();
@@ -1382,6 +1388,10 @@ pub fn translate_operator<FE: FuncEnvironment + ?Sized>(
         Operator::I8x16Neg | Operator::I16x8Neg | Operator::I32x4Neg | Operator::I64x2Neg => {
             let a = pop1_with_bitcast(state, type_of(op), builder);
             state.push1(builder.ins().ineg(a))
+        }
+        Operator::I8x16Abs | Operator::I16x8Abs | Operator::I32x4Abs => {
+            let a = pop1_with_bitcast(state, type_of(op), builder);
+            state.push1(builder.ins().iabs(a))
         }
         Operator::I16x8Mul | Operator::I32x4Mul | Operator::I64x2Mul => {
             let (a, b) = pop2_with_bitcast(state, type_of(op), builder);
@@ -1548,23 +1558,63 @@ pub fn translate_operator<FE: FuncEnvironment + ?Sized>(
             let a = pop1_with_bitcast(state, I32X4, builder);
             state.push1(builder.ins().fcvt_from_uint(F32X4, a))
         }
-        Operator::I32x4TruncSatF32x4S
-        | Operator::I32x4TruncSatF32x4U
-        | Operator::I8x16Abs
-        | Operator::I16x8Abs
-        | Operator::I32x4Abs
-        | Operator::I8x16NarrowI16x8S { .. }
-        | Operator::I8x16NarrowI16x8U { .. }
-        | Operator::I16x8NarrowI32x4S { .. }
-        | Operator::I16x8NarrowI32x4U { .. }
-        | Operator::I16x8WidenLowI8x16S { .. }
-        | Operator::I16x8WidenHighI8x16S { .. }
-        | Operator::I16x8WidenLowI8x16U { .. }
-        | Operator::I16x8WidenHighI8x16U { .. }
-        | Operator::I32x4WidenLowI16x8S { .. }
-        | Operator::I32x4WidenHighI16x8S { .. }
-        | Operator::I32x4WidenLowI16x8U { .. }
-        | Operator::I32x4WidenHighI16x8U { .. } => {
+        Operator::I32x4TruncSatF32x4S => {
+            let a = pop1_with_bitcast(state, F32X4, builder);
+            state.push1(builder.ins().fcvt_to_sint_sat(I32X4, a))
+        }
+        Operator::I32x4TruncSatF32x4U => {
+            let a = pop1_with_bitcast(state, F32X4, builder);
+            state.push1(builder.ins().fcvt_to_uint_sat(I32X4, a))
+        }
+        Operator::I8x16NarrowI16x8S => {
+            let (a, b) = pop2_with_bitcast(state, I16X8, builder);
+            state.push1(builder.ins().snarrow(a, b))
+        }
+        Operator::I16x8NarrowI32x4S => {
+            let (a, b) = pop2_with_bitcast(state, I32X4, builder);
+            state.push1(builder.ins().snarrow(a, b))
+        }
+        Operator::I8x16NarrowI16x8U => {
+            let (a, b) = pop2_with_bitcast(state, I16X8, builder);
+            state.push1(builder.ins().unarrow(a, b))
+        }
+        Operator::I16x8NarrowI32x4U => {
+            let (a, b) = pop2_with_bitcast(state, I32X4, builder);
+            state.push1(builder.ins().unarrow(a, b))
+        }
+        Operator::I16x8WidenLowI8x16S => {
+            let a = pop1_with_bitcast(state, I8X16, builder);
+            state.push1(builder.ins().swiden_low(a))
+        }
+        Operator::I16x8WidenHighI8x16S => {
+            let a = pop1_with_bitcast(state, I8X16, builder);
+            state.push1(builder.ins().swiden_high(a))
+        }
+        Operator::I16x8WidenLowI8x16U => {
+            let a = pop1_with_bitcast(state, I8X16, builder);
+            state.push1(builder.ins().uwiden_low(a))
+        }
+        Operator::I16x8WidenHighI8x16U => {
+            let a = pop1_with_bitcast(state, I8X16, builder);
+            state.push1(builder.ins().uwiden_high(a))
+        }
+        Operator::I32x4WidenLowI16x8S => {
+            let a = pop1_with_bitcast(state, I16X8, builder);
+            state.push1(builder.ins().swiden_low(a))
+        }
+        Operator::I32x4WidenHighI16x8S => {
+            let a = pop1_with_bitcast(state, I16X8, builder);
+            state.push1(builder.ins().swiden_high(a))
+        }
+        Operator::I32x4WidenLowI16x8U => {
+            let a = pop1_with_bitcast(state, I16X8, builder);
+            state.push1(builder.ins().uwiden_low(a))
+        }
+        Operator::I32x4WidenHighI16x8U => {
+            let a = pop1_with_bitcast(state, I16X8, builder);
+            state.push1(builder.ins().uwiden_high(a))
+        }
+        Operator::I8x16Bitmask | Operator::I16x8Bitmask | Operator::I32x4Bitmask => {
             return Err(wasm_unsupported!("proposed SIMD operator {:?}", op));
         }
 
@@ -1981,6 +2031,7 @@ fn type_of(operator: &Operator) -> Type {
         | Operator::I8x16GeS
         | Operator::I8x16GeU
         | Operator::I8x16Neg
+        | Operator::I8x16Abs
         | Operator::I8x16AnyTrue
         | Operator::I8x16AllTrue
         | Operator::I8x16Shl
@@ -1996,7 +2047,8 @@ fn type_of(operator: &Operator) -> Type {
         | Operator::I8x16MinU
         | Operator::I8x16MaxS
         | Operator::I8x16MaxU
-        | Operator::I8x16RoundingAverageU => I8X16,
+        | Operator::I8x16RoundingAverageU
+        | Operator::I8x16Bitmask => I8X16,
 
         Operator::I16x8Splat
         | Operator::V16x8LoadSplat { .. }
@@ -2014,6 +2066,7 @@ fn type_of(operator: &Operator) -> Type {
         | Operator::I16x8GeS
         | Operator::I16x8GeU
         | Operator::I16x8Neg
+        | Operator::I16x8Abs
         | Operator::I16x8AnyTrue
         | Operator::I16x8AllTrue
         | Operator::I16x8Shl
@@ -2030,7 +2083,8 @@ fn type_of(operator: &Operator) -> Type {
         | Operator::I16x8MaxS
         | Operator::I16x8MaxU
         | Operator::I16x8RoundingAverageU
-        | Operator::I16x8Mul => I16X8,
+        | Operator::I16x8Mul
+        | Operator::I16x8Bitmask => I16X8,
 
         Operator::I32x4Splat
         | Operator::V32x4LoadSplat { .. }
@@ -2047,6 +2101,7 @@ fn type_of(operator: &Operator) -> Type {
         | Operator::I32x4GeS
         | Operator::I32x4GeU
         | Operator::I32x4Neg
+        | Operator::I32x4Abs
         | Operator::I32x4AnyTrue
         | Operator::I32x4AllTrue
         | Operator::I32x4Shl
@@ -2060,7 +2115,8 @@ fn type_of(operator: &Operator) -> Type {
         | Operator::I32x4MaxS
         | Operator::I32x4MaxU
         | Operator::F32x4ConvertI32x4S
-        | Operator::F32x4ConvertI32x4U => I32X4,
+        | Operator::F32x4ConvertI32x4U
+        | Operator::I32x4Bitmask => I32X4,
 
         Operator::I64x2Splat
         | Operator::V64x2LoadSplat { .. }

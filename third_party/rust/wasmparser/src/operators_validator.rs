@@ -18,7 +18,7 @@ use std::cmp::min;
 use crate::primitives::{MemoryImmediate, Operator, SIMDLaneIndex, Type, TypeOrFuncType};
 use crate::{
     wasm_func_type_inputs, wasm_func_type_outputs, BinaryReaderError, WasmFuncType, WasmGlobalType,
-    WasmMemoryType, WasmModuleResources, WasmTableType, WasmType,
+    WasmModuleResources, WasmTableType, WasmType, WasmTypeDef,
 };
 
 #[derive(Debug)]
@@ -60,15 +60,21 @@ impl FuncState {
     fn last_block(&self) -> &BlockState {
         self.blocks.last().unwrap()
     }
-    fn assert_stack_type_at(&self, index: usize, expected: Type) -> bool {
+    fn stack_type_at(&self, index: usize) -> Option<Type> {
         let stack_starts_at = self.last_block().stack_starts_at;
         if self.last_block().is_stack_polymorphic()
             && stack_starts_at + index >= self.stack_types.len()
         {
-            return true;
+            return None;
         }
         assert!(stack_starts_at + index < self.stack_types.len());
-        self.stack_types[self.stack_types.len() - 1 - index] == expected
+        Some(self.stack_types[self.stack_types.len() - 1 - index])
+    }
+    fn assert_stack_type_at(&self, index: usize, expected: Type) -> bool {
+        match self.stack_type_at(index) {
+            Some(ty) => ty == expected,
+            None => true,
+        }
     }
     fn assert_block_stack_len(&self, depth: usize, minimal_len: usize) -> bool {
         assert!(depth < self.blocks.len());
@@ -113,28 +119,17 @@ impl FuncState {
         }
         Ok(())
     }
-    fn push_block<F: WasmFuncType, T: WasmTableType, M: WasmMemoryType, G: WasmGlobalType>(
+    fn push_block(
         &mut self,
         ty: TypeOrFuncType,
         block_type: BlockType,
-        resources: &dyn WasmModuleResources<
-            FuncType = F,
-            TableType = T,
-            MemoryType = M,
-            GlobalType = G,
-        >,
+        resources: impl WasmModuleResources,
     ) -> OperatorValidatorResult<()> {
         let (start_types, return_types) = match ty {
             TypeOrFuncType::Type(Type::EmptyBlockType) => (vec![], vec![]),
             TypeOrFuncType::Type(ty) => (vec![], vec![ty]),
             TypeOrFuncType::FuncType(idx) => {
-                let ty = resources
-                    .type_at(idx)
-                    // Note: This was an out-of-bounds memory access before
-                    //       the change to return `Option` at `type_at`. So
-                    //       I assumed that invalid indices at this point are
-                    //       bugs.
-                    .expect("function type index is out of bounds");
+                let ty = func_type_at(&resources, idx)?;
                 (
                     wasm_func_type_inputs(ty)
                         .map(WasmType::to_parser_type)
@@ -285,7 +280,7 @@ pub enum FunctionEnd {
 /// temporary placeholder value. This can be converted into a proper
 /// `BinaryReaderError` via the `set_offset` method, which replaces the
 /// placeholder offset with an actual offset.
-pub(crate) struct OperatorValidatorError(BinaryReaderError);
+pub(crate) struct OperatorValidatorError(pub(crate) BinaryReaderError);
 
 /// Create an `OperatorValidatorError` with a format string.
 macro_rules! format_op_err {
@@ -328,6 +323,7 @@ pub struct OperatorValidatorConfig {
     pub enable_bulk_memory: bool,
     pub enable_multi_value: bool,
     pub enable_tail_call: bool,
+    pub enable_module_linking: bool,
 
     #[cfg(feature = "deterministic")]
     pub deterministic_only: bool,
@@ -341,6 +337,7 @@ pub(crate) const DEFAULT_OPERATOR_VALIDATOR_CONFIG: OperatorValidatorConfig =
         enable_bulk_memory: false,
         enable_multi_value: true,
         enable_tail_call: false,
+        enable_module_linking: false,
 
         #[cfg(feature = "deterministic")]
         deterministic_only: true,
@@ -421,10 +418,6 @@ impl OperatorValidator {
             },
             config,
         })
-    }
-
-    pub fn is_dead_code(&self) -> bool {
-        self.func_state.last_block().is_dead_code
     }
 
     fn check_frame_size(&self, require_count: usize) -> OperatorValidatorResult<()> {
@@ -532,7 +525,7 @@ impl OperatorValidator {
         function_index: u32,
         resources: impl WasmModuleResources,
     ) -> OperatorValidatorResult<()> {
-        let type_index = match resources.func_type_id_at(function_index) {
+        let ty = match resources.func_type_at(function_index) {
             Some(i) => i,
             None => {
                 bail_op_err!(
@@ -541,9 +534,6 @@ impl OperatorValidator {
                 );
             }
         };
-        let ty = resources
-            .type_at(type_index)
-            .expect("function type index is out of bounds");
         self.check_operands(wasm_func_type_inputs(ty).map(WasmType::to_parser_type))?;
         self.func_state.change_frame_with_types(
             ty.len_inputs(),
@@ -563,26 +553,18 @@ impl OperatorValidator {
                 "unknown table: table index out of bounds",
             ));
         }
-        match resources.type_at(index) {
-            None => {
-                return Err(OperatorValidatorError::new(
-                    "unknown type: type index out of bounds",
-                ))
-            }
-            Some(ty) => {
-                let types = {
-                    let mut types = Vec::with_capacity(ty.len_inputs() + 1);
-                    types.extend(wasm_func_type_inputs(ty).map(WasmType::to_parser_type));
-                    types.push(Type::I32);
-                    types
-                };
-                self.check_operands(types.into_iter())?;
-                self.func_state.change_frame_with_types(
-                    ty.len_inputs() + 1,
-                    wasm_func_type_outputs(ty).map(WasmType::to_parser_type),
-                )?;
-            }
-        }
+        let ty = func_type_at(&resources, index)?;
+        let types = {
+            let mut types = Vec::with_capacity(ty.len_inputs() + 1);
+            types.extend(wasm_func_type_inputs(ty).map(WasmType::to_parser_type));
+            types.push(Type::I32);
+            types
+        };
+        self.check_operands(types.into_iter())?;
+        self.func_state.change_frame_with_types(
+            ty.len_inputs() + 1,
+            wasm_func_type_outputs(ty).map(WasmType::to_parser_type),
+        )?;
         Ok(())
     }
 
@@ -674,20 +656,10 @@ impl OperatorValidator {
         Ok(())
     }
 
-    fn check_memory_index<
-        F: WasmFuncType,
-        T: WasmTableType,
-        M: WasmMemoryType,
-        G: WasmGlobalType,
-    >(
+    fn check_memory_index(
         &self,
         memory_index: u32,
-        resources: &dyn WasmModuleResources<
-            FuncType = F,
-            TableType = T,
-            MemoryType = M,
-            GlobalType = G,
-        >,
+        resources: impl WasmModuleResources,
     ) -> OperatorValidatorResult<()> {
         if resources.memory_at(memory_index).is_none() {
             bail_op_err!("unknown memory {}", memory_index);
@@ -695,16 +667,11 @@ impl OperatorValidator {
         Ok(())
     }
 
-    fn check_memarg<F: WasmFuncType, T: WasmTableType, M: WasmMemoryType, G: WasmGlobalType>(
+    fn check_memarg(
         &self,
         memarg: MemoryImmediate,
         max_align: u32,
-        resources: &dyn WasmModuleResources<
-            FuncType = F,
-            TableType = T,
-            MemoryType = M,
-            GlobalType = G,
-        >,
+        resources: impl WasmModuleResources,
     ) -> OperatorValidatorResult<()> {
         self.check_memory_index(0, resources)?;
         let align = memarg.flags;
@@ -766,20 +733,10 @@ impl OperatorValidator {
         Ok(())
     }
 
-    fn check_shared_memarg_wo_align<
-        F: WasmFuncType,
-        T: WasmTableType,
-        M: WasmMemoryType,
-        G: WasmGlobalType,
-    >(
+    fn check_shared_memarg_wo_align(
         &self,
         _: MemoryImmediate,
-        resources: &dyn WasmModuleResources<
-            FuncType = F,
-            TableType = T,
-            MemoryType = M,
-            GlobalType = G,
-        >,
+        resources: impl WasmModuleResources,
     ) -> OperatorValidatorResult<()> {
         self.check_memory_index(0, resources)?;
         Ok(())
@@ -792,15 +749,10 @@ impl OperatorValidator {
         Ok(())
     }
 
-    fn check_block_type<F: WasmFuncType, T: WasmTableType, M: WasmMemoryType, G: WasmGlobalType>(
+    fn check_block_type(
         &self,
         ty: TypeOrFuncType,
-        resources: &dyn WasmModuleResources<
-            FuncType = F,
-            TableType = T,
-            MemoryType = M,
-            GlobalType = G,
-        >,
+        resources: impl WasmModuleResources,
     ) -> OperatorValidatorResult<()> {
         match ty {
             TypeOrFuncType::Type(Type::EmptyBlockType)
@@ -812,9 +764,9 @@ impl OperatorValidator {
                 self.check_reference_types_enabled()
             }
             TypeOrFuncType::Type(Type::V128) => self.check_simd_enabled(),
-            TypeOrFuncType::FuncType(idx) => match resources.type_at(idx) {
-                None => Err(OperatorValidatorError::new("type index out of bounds")),
-                Some(ty) if !self.config.enable_multi_value => {
+            TypeOrFuncType::FuncType(idx) => {
+                let ty = func_type_at(&resources, idx)?;
+                if !self.config.enable_multi_value {
                     if ty.len_outputs() > 1 {
                         return Err(OperatorValidatorError::new(
                             "blocks, loops, and ifs may only return at most one \
@@ -827,38 +779,21 @@ impl OperatorValidator {
                              when multi-value is not enabled",
                         ));
                     }
-                    Ok(())
                 }
-                Some(_) => Ok(()),
-            },
+                Ok(())
+            }
             _ => Err(OperatorValidatorError::new("invalid block return type")),
         }
     }
 
-    fn check_block_params<
-        F: WasmFuncType,
-        T: WasmTableType,
-        M: WasmMemoryType,
-        G: WasmGlobalType,
-    >(
+    fn check_block_params(
         &self,
         ty: TypeOrFuncType,
-        resources: &dyn WasmModuleResources<
-            FuncType = F,
-            TableType = T,
-            MemoryType = M,
-            GlobalType = G,
-        >,
+        resources: impl WasmModuleResources,
         skip: usize,
     ) -> OperatorValidatorResult<()> {
         if let TypeOrFuncType::FuncType(idx) = ty {
-            let func_ty = resources
-                .type_at(idx)
-                // Note: This was an out-of-bounds memory access before
-                //       the change to return `Option` at `type_at`. So
-                //       I assumed that invalid indices at this point are
-                //       bugs.
-                .expect("function type index is out of bounds");
+            let func_ty = func_type_at(&resources, idx)?;
             let len = func_ty.len_inputs();
             self.check_frame_size(len + skip)?;
             for (i, ty) in wasm_func_type_inputs(func_ty).enumerate() {
@@ -908,20 +843,10 @@ impl OperatorValidator {
         Ok(Some(ty))
     }
 
-    pub(crate) fn process_operator<
-        F: WasmFuncType,
-        T: WasmTableType,
-        M: WasmMemoryType,
-        G: WasmGlobalType,
-    >(
+    pub(crate) fn process_operator(
         &mut self,
         operator: &Operator,
-        resources: &dyn WasmModuleResources<
-            FuncType = F,
-            TableType = T,
-            MemoryType = M,
-            GlobalType = G,
-        >,
+        resources: &impl WasmModuleResources,
     ) -> OperatorValidatorResult<FunctionEnd> {
         if self.func_state.end_function {
             return Err(OperatorValidatorError::new("unexpected operator"));
@@ -1618,22 +1543,22 @@ impl OperatorValidator {
                 }
                 self.func_state.change_frame_with_type(0, ty)?;
             }
-            Operator::RefIsNull { ty } => {
+            Operator::RefIsNull => {
                 self.check_reference_types_enabled()?;
-                match ty {
-                    Type::FuncRef | Type::ExternRef => {}
+                self.check_frame_size(1)?;
+                match self.func_state.stack_type_at(0) {
+                    None | Some(Type::FuncRef) | Some(Type::ExternRef) => {}
                     _ => {
                         return Err(OperatorValidatorError::new(
-                            "invalid reference type in ref.is_null",
+                            "type mismatch: invalid reference type in ref.is_null",
                         ))
                     }
                 }
-                self.check_operands_1(ty)?;
                 self.func_state.change_frame_with_type(1, Type::I32)?;
             }
             Operator::RefFunc { function_index } => {
                 self.check_reference_types_enabled()?;
-                if resources.func_type_id_at(function_index).is_none() {
+                if resources.func_type_at(function_index).is_none() {
                     return Err(OperatorValidatorError::new(
                         "unknown function: function index out of bounds",
                     ));
@@ -1903,10 +1828,13 @@ impl OperatorValidator {
             }
             Operator::I8x16AnyTrue
             | Operator::I8x16AllTrue
+            | Operator::I8x16Bitmask
             | Operator::I16x8AnyTrue
             | Operator::I16x8AllTrue
+            | Operator::I16x8Bitmask
             | Operator::I32x4AnyTrue
-            | Operator::I32x4AllTrue => {
+            | Operator::I32x4AllTrue
+            | Operator::I32x4Bitmask => {
                 self.check_simd_enabled()?;
                 self.check_operands_1(Type::V128)?;
                 self.func_state.change_frame_with_type(1, Type::I32)?;
@@ -2088,11 +2016,20 @@ impl OperatorValidator {
         }
         Ok(FunctionEnd::No)
     }
+}
 
-    pub(crate) fn process_end_function(&self) -> OperatorValidatorResult<()> {
-        if !self.func_state.end_function {
-            return Err(OperatorValidatorError::new("expected end of function"));
+fn func_type_at<T: WasmModuleResources>(
+    resources: &T,
+    at: u32,
+) -> OperatorValidatorResult<&<T::TypeDef as WasmTypeDef>::FuncType> {
+    let ty = match resources.type_at(at) {
+        Some(ty) => ty,
+        None => {
+            return Err(OperatorValidatorError::new(
+                "unknown type: type index out of bounds",
+            ))
         }
-        Ok(())
-    }
+    };
+    ty.as_func()
+        .ok_or_else(|| OperatorValidatorError::new("type index not a function type"))
 }

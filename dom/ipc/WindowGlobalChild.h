@@ -89,10 +89,6 @@ class WindowGlobalChild final : public WindowGlobalActor,
   // |nullptr| if the actor has been torn down, or is in-process.
   already_AddRefed<BrowserChild> GetBrowserChild();
 
-  void ReceiveRawMessage(const JSActorMessageMeta& aMeta,
-                         ipc::StructuredCloneData&& aData,
-                         ipc::StructuredCloneData&& aStack);
-
   // Get a JS actor object by name.
   already_AddRefed<JSWindowActorChild> GetActor(const nsACString& aName,
                                                 ErrorResult& aRv);
@@ -115,8 +111,12 @@ class WindowGlobalChild final : public WindowGlobalActor,
                        JS::Handle<JSObject*> aGivenProto) override;
 
  protected:
-  const nsAString& GetRemoteType() override;
-  JSActor::Type GetSide() override { return JSActor::Type::Child; }
+  const nsACString& GetRemoteType() override;
+
+  already_AddRefed<JSActor> InitJSActor(JS::HandleObject aMaybeActor,
+                                        const nsACString& aName,
+                                        ErrorResult& aRv) override;
+  mozilla::ipc::IProtocol* AsNativeActor() override { return this; }
 
   // IPC messages
   mozilla::ipc::IPCResult RecvRawMessage(const JSActorMessageMeta& aMeta,
@@ -159,7 +159,6 @@ class WindowGlobalChild final : public WindowGlobalActor,
 
   RefPtr<nsGlobalWindowInner> mWindowGlobal;
   RefPtr<dom::WindowContext> mWindowContext;
-  nsRefPtrHashtable<nsCStringHashKey, JSWindowActorChild> mWindowActors;
   nsCOMPtr<nsIPrincipal> mDocumentPrincipal;
   nsCOMPtr<nsIURI> mDocumentURI;
   int64_t mBeforeUnloadListeners = 0;

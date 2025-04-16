@@ -62,13 +62,13 @@
 #include "mozilla/Preferences.h"
 #include "mozilla/ResultExtensions.h"
 #include "mozilla/StaticPrefs_full_screen_api.h"
-#include "mozilla/Telemetry.h"
 #include "mozilla/dom/Element.h"
 #include "mozilla/dom/Storage.h"
 #include "mozilla/dom/ScriptSettings.h"
 #include "mozilla/dom/BrowserParent.h"
 #include "mozilla/dom/BrowserHost.h"
 #include "mozilla/dom/DocGroup.h"
+#include "mozilla/dom/SessionStorageManager.h"
 #include "nsIAppWindow.h"
 #include "nsIXULBrowserWindow.h"
 #include "nsGlobalWindow.h"
@@ -516,7 +516,7 @@ nsWindowWatcher::OpenWindowWithRemoteTab(nsIRemoteTab* aRemoteTab,
   features.Tokenize(aFeatures);
 
   SizeSpec sizeSpec;
-  CalcSizeSpec(features, sizeSpec);
+  CalcSizeSpec(features, false, sizeSpec);
 
   uint32_t chromeFlags = CalculateChromeFlagsForContent(features, sizeSpec);
 
@@ -686,15 +686,8 @@ nsresult nsWindowWatcher::OpenWindowInternal(
 
   bool isCallerChrome = nsContentUtils::LegacyIsCallerChromeOrNativeCode();
 
-  if (!hasChromeParent) {
-    bool outerSizeUsed =
-        features.Exists("outerwidth") || features.Exists("outerheight");
-    mozilla::Telemetry::Accumulate(mozilla::Telemetry::WINDOW_OPEN_OUTER_SIZE,
-                                   outerSizeUsed);
-  }
-
   SizeSpec sizeSpec;
-  CalcSizeSpec(features, sizeSpec);
+  CalcSizeSpec(features, hasChromeParent, sizeSpec);
 
   // Make sure we calculate the chromeFlags *before* we push the
   // callee context onto the context stack so that
@@ -1217,13 +1210,11 @@ nsresult nsWindowWatcher::OpenWindowInternal(
       if (uriToLoad) {
         // The url notified in the webNavigation.onCreatedNavigationTarget
         // event.
-        props->SetPropertyAsACString(NS_LITERAL_STRING("url"),
-                                     uriToLoad->GetSpecOrDefault());
+        props->SetPropertyAsACString(u"url"_ns, uriToLoad->GetSpecOrDefault());
       }
 
-      props->SetPropertyAsInterface(NS_LITERAL_STRING("sourceTabDocShell"),
-                                    parentDocShell);
-      props->SetPropertyAsInterface(NS_LITERAL_STRING("createdTabDocShell"),
+      props->SetPropertyAsInterface(u"sourceTabDocShell"_ns, parentDocShell);
+      props->SetPropertyAsInterface(u"createdTabDocShell"_ns,
                                     ToSupports(newDocShell));
 
       obsSvc->NotifyObservers(static_cast<nsIPropertyBag2*>(props),
@@ -2019,7 +2010,7 @@ already_AddRefed<BrowsingContext> nsWindowWatcher::GetBrowsingContextByName(
 
 // static
 void nsWindowWatcher::CalcSizeSpec(const WindowFeatures& aFeatures,
-                                   SizeSpec& aResult) {
+                                   bool aHasChromeParent, SizeSpec& aResult) {
   // https://drafts.csswg.org/cssom-view/#set-up-browsing-context-features
   // To set up browsing context features for a browsing context `target` given
   // a map `tokenizedFeatures`:
@@ -2077,8 +2068,8 @@ void nsWindowWatcher::CalcSizeSpec(const WindowFeatures& aFeatures,
   }
 
   // Non-standard extension.
-  // See bug 1623826
-  if (aFeatures.Exists("outerwidth")) {
+  // Not exposed to web content.
+  if (aHasChromeParent && aFeatures.Exists("outerwidth")) {
     int32_t width = aFeatures.GetInt("outerwidth");
     if (width) {
       aResult.mOuterWidth = width;
@@ -2117,8 +2108,8 @@ void nsWindowWatcher::CalcSizeSpec(const WindowFeatures& aFeatures,
   }
 
   // Non-standard extension.
-  // See bug 1623826
-  if (aFeatures.Exists("outerheight")) {
+  // Not exposed to web content.
+  if (aHasChromeParent && aFeatures.Exists("outerheight")) {
     int32_t height = aFeatures.GetInt("outerheight");
     if (height) {
       aResult.mOuterHeight = height;

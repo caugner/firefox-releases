@@ -86,8 +86,9 @@ nsresult FetchPreloader::CreateChannel(
   nsresult rv;
 
   nsSecurityFlags securityFlags =
-      aCORSMode == CORS_NONE ? nsILoadInfo::SEC_ALLOW_CROSS_ORIGIN_DATA_IS_NULL
-                             : nsILoadInfo::SEC_REQUIRE_CORS_DATA_INHERITS;
+      aCORSMode == CORS_NONE
+          ? nsILoadInfo::SEC_ALLOW_CROSS_ORIGIN_SEC_CONTEXT_IS_NULL
+          : nsILoadInfo::SEC_REQUIRE_CORS_INHERITS_SEC_CONTEXT;
   if (aCORSMode == CORS_ANONYMOUS) {
     securityFlags |= nsILoadInfo::SEC_COOKIES_SAME_ORIGIN;
   } else if (aCORSMode == CORS_USE_CREDENTIALS) {
@@ -111,7 +112,7 @@ nsresult FetchPreloader::CreateChannel(
   }
 
   if (nsCOMPtr<nsITimedChannel> timedChannel = do_QueryInterface(channel)) {
-    timedChannel->SetInitiatorType(NS_LITERAL_STRING("link"));
+    timedChannel->SetInitiatorType(u"link"_ns);
   }
 
   channel.forget(aChannel);

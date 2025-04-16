@@ -15,6 +15,8 @@ const actionTypes = {
   // ui substate
   UPDATE_SELECTED_PAGE: "UPDATE_SELECTED_PAGE",
   // workers substate
+  START_WORKER: "START_WORKER",
+  UNREGISTER_WORKER: "UNREGISTER_WORKER",
   UPDATE_CAN_DEBUG_WORKERS: "UPDATE_CAN_DEBUG_WORKERS",
   UPDATE_WORKERS: "UPDATE_WORKERS",
 };
@@ -37,6 +39,7 @@ const MANIFEST_MEMBER_VALUE_TYPES = {
   COLOR: "color",
   ICON: "icon",
   STRING: "string",
+  URL: "url",
 };
 
 const MANIFEST_ISSUE_LEVELS = {

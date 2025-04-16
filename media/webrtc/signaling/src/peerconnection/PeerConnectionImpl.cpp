@@ -234,14 +234,6 @@ already_AddRefed<PeerConnectionImpl> PeerConnectionImpl::Constructor(
   return pc.forget();
 }
 
-PeerConnectionImpl* PeerConnectionImpl::CreatePeerConnection() {
-  PeerConnectionImpl* pc = new PeerConnectionImpl();
-
-  CSFLogDebug(LOGTAG, "Created PeerConnection: %p", pc);
-
-  return pc;
-}
-
 bool PeerConnectionImpl::WrapObject(JSContext* aCx,
                                     JS::Handle<JSObject*> aGivenProto,
                                     JS::MutableHandle<JSObject*> aReflector) {
@@ -290,6 +282,7 @@ bool IsPrivateBrowsing(nsPIDOMWindowInner* aWindow) {
 PeerConnectionImpl::PeerConnectionImpl(const GlobalObject* aGlobal)
     : mTimeCard(MOZ_LOG_TEST(logModuleInfo, LogLevel::Error) ? create_timecard()
                                                              : nullptr),
+      mJsConfiguration(),
       mSignalingState(RTCSignalingState::Stable),
       mIceConnectionState(RTCIceConnectionState::New),
       mIceGatheringState(RTCIceGatheringState::New),
@@ -388,6 +381,9 @@ nsresult PeerConnectionImpl::Initialize(PeerConnectionObserver& aObserver,
     MOZ_ASSERT(mThread);
   }
   CheckThread();
+
+  // Store the configuration for about:webrtc
+  StoreConfigurationForAboutWebrtc(aConfiguration);
 
   mPCObserver = &aObserver;
 
@@ -1315,9 +1311,11 @@ PeerConnectionImpl::SetLocalDescription(int32_t aAction, const char* aSDP) {
   sdpEntry.mIsLocal = true;
   sdpEntry.mTimestamp = mTimestampMaker.GetNow();
   sdpEntry.mSdp = NS_ConvertASCIItoUTF16(aSDP);
-  if (!mSdpHistory.AppendElement(sdpEntry, fallible)) {
-    mozalloc_handle_oom(0);
-  }
+  auto appendHistory = [&]() {
+    if (!mSdpHistory.AppendElement(sdpEntry, fallible)) {
+      mozalloc_handle_oom(0);
+    }
+  };
 
   mLocalRequestedSDP = aSDP;
 
@@ -1338,6 +1336,7 @@ PeerConnectionImpl::SetLocalDescription(int32_t aAction, const char* aSDP) {
       break;
     default:
       MOZ_ASSERT(false);
+      appendHistory();
       return NS_ERROR_FAILURE;
   }
   JsepSession::Result result =
@@ -1348,6 +1347,7 @@ PeerConnectionImpl::SetLocalDescription(int32_t aAction, const char* aSDP) {
                 mHandle.c_str(), errorString.c_str());
     mPCObserver->OnSetDescriptionError(*buildJSErrorData(result, errorString),
                                        rv);
+    sdpEntry.mErrors = GetLastSdpParsingErrors();
   } else {
     if (wasRestartingIce) {
       RecordIceRestartStatistics(sdpType);
@@ -1356,6 +1356,7 @@ PeerConnectionImpl::SetLocalDescription(int32_t aAction, const char* aSDP) {
     OnSetDescriptionSuccess(sdpType == mozilla::kJsepSdpRollback, false);
   }
 
+  appendHistory();
   return NS_OK;
 }
 
@@ -1406,9 +1407,11 @@ PeerConnectionImpl::SetRemoteDescription(int32_t action, const char* aSDP) {
   sdpEntry.mIsLocal = false;
   sdpEntry.mTimestamp = mTimestampMaker.GetNow();
   sdpEntry.mSdp = NS_ConvertASCIItoUTF16(aSDP);
-  if (!mSdpHistory.AppendElement(sdpEntry, fallible)) {
-    mozalloc_handle_oom(0);
-  }
+  auto appendHistory = [&]() {
+    if (!mSdpHistory.AppendElement(sdpEntry, fallible)) {
+      mozalloc_handle_oom(0);
+    }
+  };
 
   mRemoteRequestedSDP = aSDP;
   bool wasRestartingIce = mJsepSession->IsIceRestarting();
@@ -1436,6 +1439,7 @@ PeerConnectionImpl::SetRemoteDescription(int32_t action, const char* aSDP) {
       mJsepSession->SetRemoteDescription(sdpType, mRemoteRequestedSDP);
   if (result.mError.isSome()) {
     std::string errorString = mJsepSession->GetLastError();
+    sdpEntry.mErrors = GetLastSdpParsingErrors();
     CSFLogError(LOGTAG, "%s: pc = %s, error = %s", __FUNCTION__,
                 mHandle.c_str(), errorString.c_str());
     mPCObserver->OnSetDescriptionError(*buildJSErrorData(result, errorString),
@@ -1455,6 +1459,7 @@ PeerConnectionImpl::SetRemoteDescription(int32_t action, const char* aSDP) {
       RefPtr<TransceiverImpl> transceiverImpl =
           CreateTransceiverImpl(jsepTransceiver, nullptr, jrv);
       if (jrv.Failed()) {
+        appendHistory();
         return NS_ERROR_FAILURE;
       }
 
@@ -1494,6 +1499,7 @@ PeerConnectionImpl::SetRemoteDescription(int32_t action, const char* aSDP) {
     startCallTelem();
   }
 
+  appendHistory();
   return NS_OK;
 }
 
@@ -2030,8 +2036,8 @@ bool PeerConnectionImpl::PluginCrash(uint32_t aPluginID,
   init.mBubbles = true;
   init.mCancelable = true;
 
-  RefPtr<PluginCrashedEvent> event = PluginCrashedEvent::Constructor(
-      doc, NS_LITERAL_STRING("PluginCrashed"), init);
+  RefPtr<PluginCrashedEvent> event =
+      PluginCrashedEvent::Constructor(doc, u"PluginCrashed"_ns, init);
 
   event->SetTrusted(true);
   event->WidgetEventPtr()->mFlags.mOnlyChromeDispatch = true;
@@ -2555,15 +2561,14 @@ static UniquePtr<dom::RTCStatsCollection> GetSenderStats_s(
   UniquePtr<dom::RTCStatsCollection> report(new dom::RTCStatsCollection);
   auto asVideo = aPipeline->Conduit()->AsVideoSessionConduit();
 
-  nsString kind = asVideo.isNothing() ? NS_LITERAL_STRING("audio")
-                                      : NS_LITERAL_STRING("video");
-  nsString idstr = kind + NS_LITERAL_STRING("_");
+  nsString kind = asVideo.isNothing() ? u"audio"_ns : u"video"_ns;
+  nsString idstr = kind + u"_"_ns;
   idstr.AppendInt(static_cast<uint32_t>(aPipeline->Level()));
 
   // TODO(@@NG):ssrcs handle Conduits having multiple stats at the same level
   // This is pending spec work
   // Gather pipeline stats.
-  nsString localId = NS_LITERAL_STRING("outbound_rtp_") + idstr;
+  nsString localId = u"outbound_rtp_"_ns + idstr;
   nsString remoteId;
   Maybe<uint32_t> ssrc;
   std::vector<unsigned int> ssrcvals = aPipeline->Conduit()->GetLocalSSRCs();
@@ -2584,7 +2589,7 @@ static UniquePtr<dom::RTCStatsCollection> GetSenderStats_s(
     if (timestamp.isSome() &&
         aPipeline->Conduit()->GetRTCPReceiverReport(
             &jitterMs, &packetsReceived, &bytesReceived, &packetsLost, &rtt)) {
-      remoteId = NS_LITERAL_STRING("outbound_rtcp_") + idstr;
+      remoteId = u"outbound_rtcp_"_ns + idstr;
       RTCRemoteInboundRtpStreamStats s;
       s.mTimestamp.Construct(*timestamp);
       s.mId.Construct(remoteId);
@@ -2791,6 +2796,7 @@ RefPtr<dom::RTCStatsReportPromise> PeerConnectionImpl::GetStats(
   UniquePtr<dom::RTCStatsReportInternal> report(
       new dom::RTCStatsReportInternal);
   report->mPcid = NS_ConvertASCIItoUTF16(mName.c_str());
+  report->mConfiguration.Construct(mJsConfiguration);
   // TODO(bug 1589416): We need to do better here.
   if (!mIceStartTime.IsNull()) {
     report->mCallDurationMs.Construct(
@@ -2923,6 +2929,66 @@ void PeerConnectionImpl::RecordIceRestartStatistics(JsepSdpType type) {
       ++mIceRollbackCount;
       break;
   }
+}
+
+void PeerConnectionImpl::StoreConfigurationForAboutWebrtc(
+    const dom::RTCConfiguration& aConfig) {
+  // This will only be called once, when the PeerConnection is initially
+  // configured, at least until setConfiguration is implemented
+  // see https://bugzilla.mozilla.org/show_bug.cgi?id=1253706
+  // @TODO call this from setConfiguration
+  if (aConfig.mIceServers.WasPassed()) {
+    for (const auto& server : aConfig.mIceServers.Value()) {
+      RTCIceServerInternal internal;
+      internal.mCredentialProvided = server.mCredential.WasPassed();
+      internal.mUserNameProvided = server.mUsername.WasPassed();
+      if (server.mUrl.WasPassed()) {
+        if (!internal.mUrls.AppendElement(server.mUrl.Value(), fallible)) {
+          mozalloc_handle_oom(0);
+        }
+      }
+      if (server.mUrls.WasPassed()) {
+        for (const auto& url : server.mUrls.Value().GetAsStringSequence()) {
+          if (!internal.mUrls.AppendElement(url, fallible)) {
+            mozalloc_handle_oom(0);
+          }
+        }
+      }
+      if (!mJsConfiguration.mIceServers.AppendElement(internal, fallible)) {
+        mozalloc_handle_oom(0);
+      }
+      if (aConfig.mSdpSemantics.WasPassed()) {
+        mJsConfiguration.mSdpSemantics.Construct(aConfig.mSdpSemantics.Value());
+      }
+    }
+  }
+  mJsConfiguration.mIceTransportPolicy.Construct(aConfig.mIceTransportPolicy);
+  mJsConfiguration.mBundlePolicy.Construct(aConfig.mBundlePolicy);
+  mJsConfiguration.mPeerIdentityProvided = !aConfig.mPeerIdentity.IsEmpty();
+  mJsConfiguration.mCertificatesProvided =
+      aConfig.mCertificates.WasPassed() &&
+      !aConfig.mCertificates.Value().Length();
+}
+
+dom::Sequence<dom::RTCSdpParsingErrorInternal>
+PeerConnectionImpl::GetLastSdpParsingErrors() const {
+  const auto& sdpErrors = mJsepSession->GetLastSdpParsingErrors();
+  dom::Sequence<dom::RTCSdpParsingErrorInternal> domErrors;
+  if (!domErrors.SetCapacity(domErrors.Length(), fallible)) {
+    mozalloc_handle_oom(0);
+  }
+  for (const auto& error : sdpErrors) {
+    mozilla::dom::RTCSdpParsingErrorInternal internal;
+    internal.mLineNumber = error.first;
+    if (!AppendASCIItoUTF16(MakeStringSpan(error.second.c_str()),
+                            internal.mError, fallible)) {
+      mozalloc_handle_oom(0);
+    }
+    if (!domErrors.AppendElement(std::move(internal), fallible)) {
+      mozalloc_handle_oom(0);
+    }
+  }
+  return domErrors;
 }
 
 // Telemetry for when calls start

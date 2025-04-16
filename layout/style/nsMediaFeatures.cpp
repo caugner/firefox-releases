@@ -16,13 +16,18 @@
 #include "nsDeviceContext.h"
 #include "nsIBaseWindow.h"
 #include "nsIDocShell.h"
+#include "nsIPrintSettings.h"
 #include "mozilla/dom/Document.h"
 #include "mozilla/dom/DocumentInlines.h"
 #include "nsIWidget.h"
 #include "nsContentUtils.h"
+#include "mozilla/RelativeLuminanceUtils.h"
+#include "mozilla/StaticPrefs_browser.h"
 #include "mozilla/StyleSheet.h"
 #include "mozilla/StyleSheetInlines.h"
 #include "mozilla/GeckoBindings.h"
+#include "PreferenceSheet.h"
+#include "nsGlobalWindowOuter.h"
 
 using namespace mozilla;
 using mozilla::dom::Document;
@@ -109,14 +114,38 @@ void Gecko_MediaFeatures_GetDeviceSize(const Document* aDocument,
   *aHeight = size.height;
 }
 
+uint32_t Gecko_MediaFeatures_GetMonochromeBitsPerPixel(
+    const Document* aDocument) {
+  // The default bits per pixel for a monochrome device. We could propagate this
+  // further to nsIPrintSettings, but Gecko doesn't actually know this value
+  // from the hardware, so it seems silly to do so.
+  static constexpr uint32_t kDefaultMonochromeBpp = 8;
+
+  nsPresContext* pc = aDocument->GetPresContext();
+  if (!pc) {
+    return 0;
+  }
+  nsIPrintSettings* ps = pc->GetPrintSettings();
+  if (!ps) {
+    return 0;
+  }
+  bool color = true;
+  ps->GetPrintInColor(&color);
+  return color ? 0 : kDefaultMonochromeBpp;
+}
+
 uint32_t Gecko_MediaFeatures_GetColorDepth(const Document* aDocument) {
+  if (Gecko_MediaFeatures_GetMonochromeBitsPerPixel(aDocument) != 0) {
+    // If we're a monochrome device, then the color depth is zero.
+    return 0;
+  }
+
   // Use depth of 24 when resisting fingerprinting, or when we're not being
   // rendered.
   uint32_t depth = 24;
 
   if (!nsContentUtils::ShouldResistFingerprinting(aDocument)) {
     if (nsDeviceContext* dx = GetDeviceContextFor(aDocument)) {
-      // FIXME: On a monochrome device, return 0!
       dx->GetDepth(depth);
     }
   }
@@ -235,6 +264,26 @@ bool Gecko_MediaFeatures_PrefersReducedMotion(const Document* aDocument) {
 StylePrefersColorScheme Gecko_MediaFeatures_PrefersColorScheme(
     const Document* aDocument) {
   return aDocument->PrefersColorScheme();
+}
+
+StyleContrastPref Gecko_MediaFeatures_PrefersContrast(
+    const Document* aDocument, const bool aForcedColors) {
+  if (nsContentUtils::ShouldResistFingerprinting(aDocument)) {
+    return StyleContrastPref::NoPreference;
+  }
+  // Neither Linux, Windows, nor Mac have a way to indicate that low
+  // contrast is prefered so the presence of an accessibility theme
+  // implies that high contrast is prefered.
+  //
+  // Note that MacOS does not expose whether or not high contrast is
+  // enabled so for MacOS users this will always evaluate to
+  // false. For more information and discussion see:
+  // https://github.com/w3c/csswg-drafts/issues/3856#issuecomment-642313572
+  // https://github.com/w3c/csswg-drafts/issues/2943
+  if (!!LookAndFeel::GetInt(LookAndFeel::IntID::UseAccessibilityTheme, 0)) {
+    return StyleContrastPref::High;
+  }
+  return StyleContrastPref::NoPreference;
 }
 
 static PointerCapabilities GetPointerCapabilities(const Document* aDocument,

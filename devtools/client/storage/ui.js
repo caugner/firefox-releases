@@ -313,7 +313,7 @@ class StorageUI {
         storageTypes.indexedDB.hosts = newHosts;
       }
 
-      this.populateStorageTree(storageTypes);
+      await this.populateStorageTree(storageTypes);
     } catch (e) {
       if (!this._toolbox || this._toolbox._destroyer) {
         // The toolbox is in the process of being destroyed... in this case throwing here
@@ -779,23 +779,7 @@ class StorageUI {
           }
         }
 
-        const target = this.currentTarget;
-        this.actorSupportsAddItem = await target.actorHasMethod(
-          type,
-          "addItem"
-        );
-        this.actorSupportsRemoveItem = await target.actorHasMethod(
-          type,
-          "removeItem"
-        );
-        this.actorSupportsRemoveAll = await target.actorHasMethod(
-          type,
-          "removeAll"
-        );
-        this.actorSupportsRemoveAllSessionCookies = await target.actorHasMethod(
-          type,
-          "removeAllSessionCookies"
-        );
+        await this._readSupportsTraits(type);
 
         await this.resetColumns(type, host, subType);
       }
@@ -814,6 +798,41 @@ class StorageUI {
       this.emit("store-objects-updated");
     } catch (ex) {
       console.error(ex);
+    }
+  }
+
+  /**
+   * Read the current supports traits for the provided storage type and update
+   * the actorSupports flags on the UI instance.
+   *
+   * Note: setting actorSupportsXYZ properties on the UI instance is incorrect
+   * because the value depends on each storage type. See Bug 1654998.
+   */
+  async _readSupportsTraits(type) {
+    const { traits } = this.storageTypes[type];
+    if (traits.hasSupportsTraits) {
+      this.actorSupportsAddItem = traits.supportsAddItem;
+      this.actorSupportsRemoveItem = traits.supportsRemoveItem;
+      this.actorSupportsRemoveAll = traits.supportsRemoveAll;
+      this.actorSupportsRemoveAllSessionCookies =
+        traits.supportsRemoveAllSessionCookies;
+    } else {
+      // Backward compatibility. This branch can be removed when Firefox 80 is
+      // on the release channel.
+      const target = this.currentTarget;
+      this.actorSupportsAddItem = await target.actorHasMethod(type, "addItem");
+      this.actorSupportsRemoveItem = await target.actorHasMethod(
+        type,
+        "removeItem"
+      );
+      this.actorSupportsRemoveAll = await target.actorHasMethod(
+        type,
+        "removeAll"
+      );
+      this.actorSupportsRemoveAllSessionCookies = await target.actorHasMethod(
+        type,
+        "removeAllSessionCookies"
+      );
     }
   }
 
@@ -845,8 +864,22 @@ class StorageUI {
    *        List of storages and their corresponding hosts returned by the
    *        StorageFront.listStores call.
    */
-  populateStorageTree(storageTypes) {
+  async populateStorageTree(storageTypes) {
     this.storageTypes = {};
+
+    // When can we expect the "store-objects-updated" event?
+    //   -> TreeWidget setter `selectedItem` emits a "select" event
+    //   -> on tree "select" event, this module calls `onHostSelect`
+    //   -> finally `onHostSelect` calls `fetchStorageObjects`, which will emit
+    //      "store-objects-updated" at the end of the method.
+    // So if the selection changed, we can wait for "store-objects-updated",
+    // which is emitted at the end of `fetchStorageObjects`.
+    const onStoresObjectsUpdated = this.once("store-objects-updated");
+
+    // Save the initially selected item to check if tree.selected was updated,
+    // see comment above.
+    const initialSelectedItem = this.tree.selectedItem;
+
     for (const type in storageTypes) {
       // Ignore `from` field, which is just a protocol.js implementation
       // artifact.
@@ -882,6 +915,10 @@ class StorageUI {
           this.tree.selectedItem = [type, host];
         }
       }
+    }
+
+    if (initialSelectedItem !== this.tree.selectedItem) {
+      await onStoresObjectsUpdated;
     }
   }
 

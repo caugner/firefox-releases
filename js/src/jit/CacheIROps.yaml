@@ -114,9 +114,9 @@
   shared: true
   transpile: true
   cost_estimate: 1
+  custom_writer: true
   args:
     input: ValId
-    result: Int32Id
 
 - name: GuardToString
   shared: true
@@ -136,7 +136,7 @@
 
 - name: GuardToBigInt
   shared: true
-  transpile: false
+  transpile: true
   cost_estimate: 1
   custom_writer: true
   args:
@@ -151,6 +151,15 @@
     input: ValId
 
 - name: GuardToInt32
+  shared: true
+  transpile: true
+  cost_estimate: 1
+  custom_writer: true
+  args:
+    input: ValId
+
+# If the Value is a boolean, convert it to int32.
+- name: GuardBooleanToInt32
   shared: true
   transpile: true
   cost_estimate: 1
@@ -184,7 +193,7 @@
 
 - name: GuardToUint8Clamped
   shared: true
-  transpile: false
+  transpile: true
   cost_estimate: 2
   args:
     input: ValId
@@ -218,11 +227,18 @@
 
 - name: GuardProto
   shared: false
-  transpile: false
+  transpile: true
   cost_estimate: 1
   args:
     obj: ObjId
     proto: ObjectField
+
+- name: GuardNullProto
+  shared: true
+  transpile: true
+  cost_estimate: 1
+  args:
+    obj: ObjId
 
 # Guard per GuardClassKind.
 - name: GuardClass
@@ -439,7 +455,7 @@
   transpile: false
   cost_estimate: 1
   args:
-    boolean: Int32Id
+    boolean: BooleanId
     result: NumberId
 
 - name: GuardAndGetIterator
@@ -512,8 +528,14 @@
   cost_estimate: 2
   args:
     obj: ObjId
-    hasExpando: BoolImm
     shapeWrapper: ObjectField
+
+- name: GuardXrayNoExpando
+  shared: true
+  transpile: false
+  cost_estimate: 2
+  args:
+    obj: ObjId
 
 # Guard obj[slot] == proto.
 - name: GuardFunctionPrototype
@@ -849,6 +871,13 @@
   args:
     input: ValId
 
+- name: IsPackedArrayResult
+  shared: true
+  transpile: true
+  cost_estimate: 2
+  args:
+    obj: ObjId
+
 - name: IsCallableResult
   shared: true
   transpile: true
@@ -907,6 +936,33 @@
   args:
     rng: RawPointerField
 
+- name: MathHypot2NumberResult
+  shared: true
+  transpile: true
+  cost_estimate: 4
+  args:
+    first: NumberId
+    second: NumberId
+
+- name: MathHypot3NumberResult
+  shared: true
+  transpile: true
+  cost_estimate: 4
+  args:
+    first: NumberId
+    second: NumberId
+    third: NumberId
+
+- name: MathHypot4NumberResult
+  shared: true
+  transpile: true
+  cost_estimate: 4
+  args:
+    first: NumberId
+    second: NumberId
+    third: NumberId
+    fourth: NumberId
+
 - name: MathAtan2NumberResult
   shared: true
   transpile: true
@@ -926,6 +982,12 @@
   shared: true
   transpile: true
   cost_estimate: 1
+  args:
+    input: NumberId
+
+- name: MathTruncToInt32Result
+  shared: true
+  transpile: true
   args:
     input: NumberId
 
@@ -1065,7 +1127,7 @@
   transpile: true
   cost_estimate: 2
   args:
-    input: Int32Id
+    input: BooleanId
     result: StringId
 
 - name: CallScriptedFunction
@@ -1079,7 +1141,6 @@
 
 - name: CallNativeFunction
   shared: false
-  transpile: false
   transpile: true
   cost_estimate: 4
   custom_writer: true
@@ -1103,6 +1164,17 @@
     argc: Int32Id
     flags: CallFlagsImm
     target: RawPointerField
+
+- name: CallInlinedFunction
+  shared: false
+  transpile: true
+  cost_estimate: 4
+  args:
+    callee: ObjId
+    argc: Int32Id
+    icScript: RawPointerField
+    flags: CallFlagsImm
+
 
 # Meta ops generate no code, but contain data for BaselineInspector.
 - name: MetaTwoByte
@@ -1218,6 +1290,28 @@
     obj: ObjId
     index: Int32Id
     layout: TypedThingLayoutImm
+    elementType: ScalarTypeImm
+
+- name: LoadDataViewValueResult
+  shared: true
+  transpile: false
+  cost_estimate: 4
+  args:
+    obj: ObjId
+    offset: Int32Id
+    littleEndian: BooleanId
+    elementType: ScalarTypeImm
+    allowDoubleForUint32: BoolImm
+
+- name: StoreDataViewValueResult
+  shared: true
+  transpile: false
+  cost_estimate: 4
+  args:
+    obj: ObjId
+    offset: Int32Id
+    value: RawId
+    littleEndian: BooleanId
     elementType: ScalarTypeImm
 
 - name: LoadInt32ArrayLengthResult
@@ -1452,6 +1546,14 @@
   args:
     val: RawWordField
     result: Int32Id
+
+- name: LoadBooleanConstant
+  shared: true
+  transpile: true
+  cost_estimate: 1
+  args:
+    val: BoolImm
+    result: BooleanId
 
 - name: LoadConstantStringResult
   shared: false
@@ -1759,14 +1861,14 @@
 
 - name: DoubleIncResult
   shared: true
-  transpile: false
+  transpile: true
   cost_estimate: 1
   args:
     input: NumberId
 
 - name: DoubleDecResult
   shared: true
-  transpile: false
+  transpile: true
   cost_estimate: 1
   args:
     input: NumberId
@@ -1879,7 +1981,7 @@
 
 - name: CompareSymbolResult
   shared: true
-  transpile: false
+  transpile: true
   cost_estimate: 2
   args:
     op: JSOpImm

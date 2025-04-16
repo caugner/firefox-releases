@@ -133,9 +133,6 @@ interface nsISHEntry : nsISupports
     /** Should the layoutHistoryState be saved? */
     [infallible] attribute boolean saveLayoutStateFlag;
 
-    /** Has the page already expired in cache? */
-    [infallible] attribute boolean expirationStatus;
-
     /**
      * attribute to indicate the content-type of the document that this
      * is a session history entry for
@@ -219,7 +216,7 @@ interface nsISHEntry : nsISupports
      * Sets/gets the current scroll restoration state,
      * if true == "manual", false == "auto".
      */
-    attribute boolean scrollRestorationIsManual;
+    [infallible] attribute boolean scrollRestorationIsManual;
 
     /**
      * Flag to indicate that the history entry was originally loaded in the
@@ -230,7 +227,7 @@ interface nsISHEntry : nsISupports
     /**
      * The session history it belongs to.
      */
-    [infallible] readonly attribute nsISHistory shistory;
+    [noscript, infallible] attribute nsISHistory shistory;
 
     /**
      * A number that is assigned by the sHistory when the entry is activated
@@ -432,13 +429,6 @@ interface nsISHEntry : nsISupports
     [noscript] nsDocShellLoadStatePtr CreateLoadInfo();
 
     [infallible] readonly attribute unsigned long long bfcacheID;
-
-    /**
-     * synchronizeLayoutHistoryState() can be used to synchronize
-     * layoutHistoryState object to the parent process in case session history
-     * lives there. With in-process session history this method is no-op.
-     */
-    void synchronizeLayoutHistoryState();
 
     /**
      * Sync up the docshell and session history trees for subframe navigation.

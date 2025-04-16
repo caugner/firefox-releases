@@ -795,23 +795,29 @@ var DownloadIntegration = {
     }
 
     const PDF_CONTENT_TYPE = "application/pdf";
-    if (
-      aDownload.handleInternally ||
-      (!useSystemDefault && // No explicit instruction was passed to launch this download using the default system viewer.
-        mimeInfo &&
-        (mimeInfo.type == PDF_CONTENT_TYPE ||
-          fileExtension?.toLowerCase() == "pdf") &&
-        !mimeInfo.alwaysAskBeforeHandling &&
-        mimeInfo.preferredAction === Ci.nsIHandlerInfo.handleInternally &&
-        !aDownload.launchWhenSucceeded)
-    ) {
-      DownloadUIHelper.loadFileIn(file, {
-        browsingContextId: aDownload.source.browsingContextId,
-        isPrivate: aDownload.source.isPrivate,
-        openWhere,
-        userContextId: aDownload.source.userContextId,
-      });
-      return;
+
+    if (!useSystemDefault && mimeInfo) {
+      useSystemDefault = mimeInfo.preferredAction == mimeInfo.useSystemDefault;
+    }
+    if (!useSystemDefault) {
+      // No explicit instruction was passed to launch this download using the default system viewer.
+      if (
+        aDownload.handleInternally ||
+        (mimeInfo &&
+          (mimeInfo.type == PDF_CONTENT_TYPE ||
+            fileExtension?.toLowerCase() == "pdf") &&
+          !mimeInfo.alwaysAskBeforeHandling &&
+          mimeInfo.preferredAction === Ci.nsIHandlerInfo.handleInternally &&
+          !aDownload.launchWhenSucceeded)
+      ) {
+        DownloadUIHelper.loadFileIn(file, {
+          browsingContextId: aDownload.source.browsingContextId,
+          isPrivate: aDownload.source.isPrivate,
+          openWhere,
+          userContextId: aDownload.source.userContextId,
+        });
+        return;
+      }
     }
 
     // An attempt will now be made to launch the download, clear the
@@ -1189,7 +1195,7 @@ var DownloadObserver = {
     }
   },
 
-  QueryInterface: ChromeUtils.generateQI([Ci.nsIObserver]),
+  QueryInterface: ChromeUtils.generateQI(["nsIObserver"]),
 };
 
 /**
@@ -1213,7 +1219,7 @@ DownloadHistoryObserver.prototype = {
    */
   _list: null,
 
-  QueryInterface: ChromeUtils.generateQI([Ci.nsINavHistoryObserver]),
+  QueryInterface: ChromeUtils.generateQI(["nsINavHistoryObserver"]),
 
   // nsINavHistoryObserver
   onDeleteURI: function DL_onDeleteURI(aURI, aGUID) {

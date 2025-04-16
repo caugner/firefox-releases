@@ -5,11 +5,12 @@
 
 #include "HTMLEditUtils.h"
 
-#include "CSSEditUtils.h"        // for CSSEditUtils
-#include "mozilla/ArrayUtils.h"  // for ArrayLength
-#include "mozilla/Assertions.h"  // for MOZ_ASSERT, etc.
-#include "mozilla/EditAction.h"  // for EditAction
-#include "mozilla/EditorBase.h"  // for EditorBase
+#include "CSSEditUtils.h"         // for CSSEditUtils
+#include "mozilla/ArrayUtils.h"   // for ArrayLength
+#include "mozilla/Assertions.h"   // for MOZ_ASSERT, etc.
+#include "mozilla/EditAction.h"   // for EditAction
+#include "mozilla/EditorBase.h"   // for EditorBase, EditorType
+#include "mozilla/EditorUtils.h"  // for EditorUtils
 #include "mozilla/dom/HTMLAnchorElement.h"
 #include "mozilla/dom/Element.h"  // for Element, nsINode
 #include "nsAString.h"            // for nsAString::IsEmpty
@@ -26,6 +27,8 @@
 #include "nsString.h"            // for nsAutoString
 
 namespace mozilla {
+
+using EditorType = EditorBase::EditorType;
 
 bool HTMLEditUtils::CanContentsBeJoined(const nsIContent& aLeftContent,
                                         const nsIContent& aRightContent,
@@ -146,9 +149,9 @@ bool HTMLEditUtils::IsListItem(nsINode* aNode) {
 }
 
 /**
- * IsTableElement() returns true if aNode is an html table, td, tr, ...
+ * IsAnyTableElement() returns true if aNode is an html table, td, tr, ...
  */
-bool HTMLEditUtils::IsTableElement(nsINode* aNode) {
+bool HTMLEditUtils::IsAnyTableElement(nsINode* aNode) {
   MOZ_ASSERT(aNode);
   return aNode->IsAnyOfHTMLElements(
       nsGkAtoms::table, nsGkAtoms::tr, nsGkAtoms::td, nsGkAtoms::th,
@@ -156,10 +159,10 @@ bool HTMLEditUtils::IsTableElement(nsINode* aNode) {
 }
 
 /**
- * IsTableElementButNotTable() returns true if aNode is an html td, tr, ...
+ * IsAnyTableElementButNotTable() returns true if aNode is an html td, tr, ...
  * (doesn't include table)
  */
-bool HTMLEditUtils::IsTableElementButNotTable(nsINode* aNode) {
+bool HTMLEditUtils::IsAnyTableElementButNotTable(nsINode* aNode) {
   MOZ_ASSERT(aNode);
   return aNode->IsAnyOfHTMLElements(nsGkAtoms::tr, nsGkAtoms::td, nsGkAtoms::th,
                                     nsGkAtoms::thead, nsGkAtoms::tfoot,
@@ -197,9 +200,9 @@ bool HTMLEditUtils::IsTableCellOrCaption(nsINode& aNode) {
 }
 
 /**
- * IsList() returns true if aNode is an html list.
+ * IsAnyListElement() returns true if aNode is an html list.
  */
-bool HTMLEditUtils::IsList(nsINode* aNode) {
+bool HTMLEditUtils::IsAnyListElement(nsINode* aNode) {
   MOZ_ASSERT(aNode);
   return aNode->IsAnyOfHTMLElements(nsGkAtoms::ul, nsGkAtoms::ol,
                                     nsGkAtoms::dl);
@@ -256,8 +259,7 @@ bool HTMLEditUtils::IsMozDiv(nsINode* aNode) {
   MOZ_ASSERT(aNode);
   return aNode->IsHTMLElement(nsGkAtoms::div) &&
          aNode->AsElement()->AttrValueIs(kNameSpaceID_None, nsGkAtoms::type,
-                                         NS_LITERAL_STRING("_moz"),
-                                         eIgnoreCase);
+                                         u"_moz"_ns, eIgnoreCase);
 }
 
 /**
@@ -269,14 +271,14 @@ bool HTMLEditUtils::IsMailCite(nsINode* aNode) {
   // don't ask me why, but our html mailcites are id'd by "type=cite"...
   if (aNode->IsElement() &&
       aNode->AsElement()->AttrValueIs(kNameSpaceID_None, nsGkAtoms::type,
-                                      NS_LITERAL_STRING("cite"), eIgnoreCase)) {
+                                      u"cite"_ns, eIgnoreCase)) {
     return true;
   }
 
   // ... but our plaintext mailcites by "_moz_quote=true".  go figure.
   if (aNode->IsElement() &&
       aNode->AsElement()->AttrValueIs(kNameSpaceID_None, nsGkAtoms::mozquote,
-                                      NS_LITERAL_STRING("true"), eIgnoreCase)) {
+                                      u"true"_ns, eIgnoreCase)) {
     return true;
   }
 
@@ -653,6 +655,36 @@ bool HTMLEditUtils::IsNonListSingleLineContainer(nsINode& aNode) {
 bool HTMLEditUtils::IsSingleLineContainer(nsINode& aNode) {
   return IsNonListSingleLineContainer(aNode) ||
          aNode.IsAnyOfHTMLElements(nsGkAtoms::li, nsGkAtoms::dt, nsGkAtoms::dd);
+}
+
+// static
+Element*
+HTMLEditUtils::GetInclusiveAncestorEditableBlockElementOrInlineEditingHost(
+    nsIContent& aContent) {
+  MOZ_ASSERT(EditorUtils::IsEditableContent(aContent, EditorType::HTML));
+  Element* maybeInlineEditingHost = nullptr;
+  for (Element* element : aContent.InclusiveAncestorsOfType<Element>()) {
+    if (!EditorUtils::IsEditableContent(*element, EditorType::HTML)) {
+      return maybeInlineEditingHost;
+    }
+    if (HTMLEditUtils::IsBlockElement(*element)) {
+      return element;
+    }
+    maybeInlineEditingHost = element;
+  }
+  return maybeInlineEditingHost;
+}
+
+// static
+Element* HTMLEditUtils::GetClosestAncestorAnyListElement(
+    const nsIContent& aContent) {
+  for (Element* element : aContent.AncestorsOfType<Element>()) {
+    if (HTMLEditUtils::IsAnyListElement(element)) {
+      return element;
+    }
+  }
+
+  return nullptr;
 }
 
 EditAction HTMLEditUtils::GetEditActionForInsert(const nsAtom& aTagName) {

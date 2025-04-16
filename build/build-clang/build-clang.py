@@ -98,14 +98,18 @@ def patch(patch, srcdir):
                '-s'])
 
 
-def import_clang_tidy(source_dir, build_clang_tidy_alpha):
+def import_clang_tidy(source_dir, build_clang_tidy_alpha, build_clang_tidy_external):
     clang_plugin_path = os.path.join(os.path.dirname(sys.argv[0]),
                                      '..', 'clang-plugin')
     clang_tidy_path = os.path.join(source_dir,
                                    'clang-tools-extra/clang-tidy')
     sys.path.append(clang_plugin_path)
     from import_mozilla_checks import do_import
-    do_import(clang_plugin_path, clang_tidy_path, build_clang_tidy_alpha)
+    import_options = {
+      "alpha": build_clang_tidy_alpha,
+      "external": build_clang_tidy_external
+    }
+    do_import(clang_plugin_path, clang_tidy_path, import_options)
 
 
 def build_package(package_build_dir, cmake_args):
@@ -300,7 +304,6 @@ def build_one_stage(cc, cxx, asm, ld, ar, ranlib, libtool,
             cmake_args += [
                 "-DCMAKE_SYSTEM_NAME=Darwin",
                 "-DCMAKE_SYSTEM_VERSION=10.10",
-                "-DLLVM_ENABLE_THREADS=OFF",
                 # Xray requires a OSX 10.12 SDK (https://bugs.llvm.org/show_bug.cgi?id=38959)
                 "-DCOMPILER_RT_BUILD_XRAY=OFF",
                 "-DLIBCXXABI_LIBCXX_INCLUDES=%s" % libcxx_include_dir,
@@ -315,6 +318,13 @@ def build_one_stage(cc, cxx, asm, ld, ar, ranlib, libtool,
                 "-DDARWIN_osx_SYSROOT=%s" % slashify_path(os.getenv("CROSS_SYSROOT")),
                 "-DLLVM_DEFAULT_TARGET_TRIPLE=x86_64-apple-darwin"
             ]
+            # Starting in LLVM 11 (which requires SDK 10.12) the build tries to
+            # detect the SDK version by calling xcrun. Cross-compiles don't have
+            # an xcrun, so we have to set the version explicitly.
+            if "MacOSX10.12.sdk" in os.getenv("CROSS_SYSROOT"):
+                cmake_args += [
+                    "-DDARWIN_macosx_OVERRIDE_SDK_VERSION=10.12",
+                ]
         if pgo_phase == "gen":
             # Per https://releases.llvm.org/10.0.0/docs/HowToBuildWithPGO.html
             cmake_args += [
@@ -476,6 +486,8 @@ def get_tool(config, key):
 # This function is intended to be called on the final build directory when
 # building clang-tidy. Also clang-format binaries are included that can be used
 # in conjunction with clang-tidy.
+# As a separate binary we also ship clangd for the language server protocol that
+# can be used as a plugin in `vscode`.
 # Its job is to remove all of the files which won't be used for clang-tidy or
 # clang-format to reduce the download size.  Currently when this function
 # finishes its job, it will leave final_dir with a layout like this:
@@ -485,6 +497,7 @@ def get_tool(config, key):
 #     clang-apply-replacements
 #     clang-format
 #     clang-tidy
+#     clangd
 #   include/
 #     * (nothing will be deleted here)
 #   lib/
@@ -508,10 +521,8 @@ def prune_final_dir_for_clang_tidy(final_dir, osx_cross_compile):
         if not os.path.isdir(f):
             raise Exception("Expected %s to be a directory" % f)
 
-    # In bin/, only keep clang-tidy and clang-apply-replacements. The last one
-    # is used to auto-fix some of the issues detected by clang-tidy.
-    re_clang_tidy = re.compile(
-        r"^clang-(apply-replacements|format|tidy)(\.exe)?$", re.I)
+    kept_binaries = ['clang-apply-replacements', 'clang-format', 'clang-tidy', 'clangd']
+    re_clang_tidy = re.compile(r"^(" + "|".join(kept_binaries) + r")(\.exe)?$", re.I)
     for f in glob.glob("%s/bin/*" % final_dir):
         if re_clang_tidy.search(os.path.basename(f)) is None:
             delete(f)
@@ -594,9 +605,6 @@ if __name__ == "__main__":
     libcxx_source_dir = source_dir + "/libcxx"
     libcxxabi_source_dir = source_dir + "/libcxxabi"
 
-    if is_darwin():
-        os.environ['MACOSX_DEPLOYMENT_TARGET'] = '10.7'
-
     exe_ext = ""
     if is_windows():
         exe_ext = ".exe"
@@ -649,6 +657,12 @@ if __name__ == "__main__":
         build_clang_tidy_alpha = config["build_clang_tidy_alpha"]
         if build_clang_tidy_alpha not in (True, False):
             raise ValueError("Only boolean values are accepted for build_clang_tidy_alpha.")
+    build_clang_tidy_external = False
+    # check for build_clang_tidy_external only if build_clang_tidy is true
+    if build_clang_tidy and "build_clang_tidy_external" in config:
+        build_clang_tidy_external = config["build_clang_tidy_external"]
+        if build_clang_tidy_external not in (True, False):
+            raise ValueError("Only boolean values are accepted for build_clang_tidy_external.")
     osx_cross_compile = False
     if "osx_cross_compile" in config:
         osx_cross_compile = config["osx_cross_compile"]
@@ -686,8 +700,13 @@ if __name__ == "__main__":
             raise ValueError("extra_targets must be a list")
         if not all(isinstance(t, str) for t in extra_targets):
             raise ValueError("members of extra_targets should be strings")
+
     if is_linux() and gcc_dir is None:
         raise ValueError("Config file needs to set gcc_dir")
+
+    if is_darwin() or osx_cross_compile:
+        os.environ['MACOSX_DEPLOYMENT_TARGET'] = '10.11'
+
     cc = get_tool(config, "cc")
     cxx = get_tool(config, "cxx")
     asm = get_tool(config, "ml" if is_windows() else "as")
@@ -728,7 +747,7 @@ if __name__ == "__main__":
     package_name = "clang"
     if build_clang_tidy:
         package_name = "clang-tidy"
-        import_clang_tidy(source_dir, build_clang_tidy_alpha)
+        import_clang_tidy(source_dir, build_clang_tidy_alpha, build_clang_tidy_external)
 
     if not os.path.exists(build_dir):
         os.makedirs(build_dir)
@@ -762,6 +781,12 @@ if __name__ == "__main__":
         extra_asmflags = []
         # Avoid libLLVM internal function calls going through the PLT.
         extra_ldflags = ['-Wl,-Bsymbolic-functions']
+        # For whatever reason, LLVM's build system will set things up to turn
+        # on -ffunction-sections and -fdata-sections, but won't turn on the
+        # corresponding option to strip unused sections.  We do it explicitly
+        # here.  LLVM's build system is also picky about turning on ICF, so
+        # we do that explicitly here, too.
+        extra_ldflags += ['-fuse-ld=gold', '-Wl,--gc-sections', '-Wl,--icf=safe']
 
         if 'LD_LIBRARY_PATH' in os.environ:
             os.environ['LD_LIBRARY_PATH'] = ('%s/lib64/:%s' %

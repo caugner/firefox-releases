@@ -341,7 +341,7 @@ already_AddRefed<Promise> XRSession::RequestReferenceSpace(
   NS_ENSURE_TRUE(!aRv.Failed(), nullptr);
 
   if (!mEnabledReferenceSpaceTypes.Contains(aReferenceSpaceType)) {
-    promise->MaybeRejectWithNotSupportedError(NS_LITERAL_CSTRING(
+    promise->MaybeRejectWithNotSupportedError(nsLiteralCString(
         "Requested XRReferenceSpaceType not available for the XRSession."));
     return promise.forget();
   }
@@ -454,7 +454,7 @@ void XRSession::ExitPresentInternal() {
     init.mCancelable = false;
     init.mSession = this;
     RefPtr<XRSessionEvent> event =
-        XRSessionEvent::Constructor(this, NS_LITERAL_STRING("end"), init);
+        XRSessionEvent::Constructor(this, u"end"_ns, init);
 
     event->SetTrusted(true);
     this->DispatchEvent(*event);

@@ -268,6 +268,13 @@ ServiceWorkerRegistrationInfo::RemoveListener(
   return NS_OK;
 }
 
+NS_IMETHODIMP
+ServiceWorkerRegistrationInfo::ForceShutdown() {
+  ClearInstalling();
+  ShutdownWorkers();
+  return NS_OK;
+}
+
 already_AddRefed<ServiceWorkerInfo>
 ServiceWorkerRegistrationInfo::GetServiceWorkerInfoById(uint64_t aId) {
   MOZ_ASSERT(NS_IsMainThread());
@@ -340,8 +347,7 @@ void ServiceWorkerRegistrationInfo::Activate() {
 
   ServiceWorkerPrivate* workerPrivate = mActiveWorker->WorkerPrivate();
   MOZ_ASSERT(workerPrivate);
-  nsresult rv = workerPrivate->SendLifeCycleEvent(NS_LITERAL_STRING("activate"),
-                                                  callback);
+  nsresult rv = workerPrivate->SendLifeCycleEvent(u"activate"_ns, callback);
   if (NS_WARN_IF(NS_FAILED(rv))) {
     nsCOMPtr<nsIRunnable> failRunnable = NewRunnableMethod<bool>(
         "dom::ServiceWorkerRegistrationInfo::FinishActivate", this,

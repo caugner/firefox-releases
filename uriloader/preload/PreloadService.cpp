@@ -126,6 +126,11 @@ PreloadService::PreloadOrCoalesceResult PreloadService::PreloadOrCoalesce(
     const nsAString& aSrcset, const nsAString& aSizes,
     const nsAString& aIntegrity, const nsAString& aCORS,
     const nsAString& aReferrerPolicy) {
+  if (!aURI) {
+    MOZ_ASSERT_UNREACHABLE("Should not pass null nsIURI");
+    return {nullptr, false};
+  }
+
   bool isImgSet = false;
   PreloadHashKey preloadKey;
   nsCOMPtr<nsIURI> uri = aURI;
@@ -245,8 +250,7 @@ void PreloadService::NotifyNodeEvent(nsINode* aNode, bool aSuccess) {
   // DocGroup of one of the mSources nodes--not necessarily this one).
 
   RefPtr<AsyncEventDispatcher> dispatcher = new AsyncEventDispatcher(
-      aNode, aSuccess ? NS_LITERAL_STRING("load") : NS_LITERAL_STRING("error"),
-      CanBubble::eNo);
+      aNode, aSuccess ? u"load"_ns : u"error"_ns, CanBubble::eNo);
 
   dispatcher->RequireNodeInDocument();
   dispatcher->PostDOMEvent();

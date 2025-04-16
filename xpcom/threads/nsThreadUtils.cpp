@@ -14,6 +14,7 @@
 #include "nsComponentManagerUtils.h"
 #include "nsExceptionHandler.h"
 #include "nsITimer.h"
+#include "nsTimerImpl.h"
 #include "prsystem.h"
 
 #ifdef MOZILLA_INTERNAL_API
@@ -414,7 +415,15 @@ extern nsresult NS_DispatchToThreadQueue(already_AddRefed<nsIRunnable>&& aEvent,
   }
   idleEvent->SetTimer(aTimeout, target);
 
-  return NS_DispatchToThreadQueue(event.forget(), aThread, aQueue);
+  nsresult rv = NS_DispatchToThreadQueue(event.forget(), aThread, aQueue);
+  if (NS_SUCCEEDED(rv)) {
+    // This is intended to bind with the "DISP" log made from inside
+    // NS_DispatchToThreadQueue for the `event`. There is no possibly to inject
+    // another "DISP" for a different event on this thread.
+    LOG1(("TIMEOUT %u", aTimeout));
+  }
+
+  return rv;
 }
 
 extern nsresult NS_DispatchToCurrentThreadQueue(
@@ -663,6 +672,14 @@ LogTaskBase<IPC::Message>::Run::Run(IPC::Message* aMessage, bool aWillRunAgain)
         aMessage->name()));
 }
 
+template <>
+LogTaskBase<nsTimerImpl>::Run::Run(nsTimerImpl* aEvent, bool aWillRunAgain)
+    : mWillRunAgain(aWillRunAgain) {
+  // The name of the timer will be logged when running it on the target thread.
+  // Logging it here (on the `Timer` thread) would be redundant.
+  LOG1(("EXEC %p %p [nsTimerImpl]", aEvent, this));
+}
+
 template <typename T>
 LogTaskBase<T>::Run::~Run() {
   LOG1((mWillRunAgain ? "INTERRUPTED %p" : "DONE %p", this));
@@ -671,6 +688,8 @@ LogTaskBase<T>::Run::~Run() {
 template class LogTaskBase<nsIRunnable>;
 template class LogTaskBase<MicroTaskRunnable>;
 template class LogTaskBase<IPC::Message>;
+template class LogTaskBase<nsTimerImpl>;
+template class LogTaskBase<Task>;
 
 MOZ_THREAD_LOCAL(nsISerialEventTarget*)
 SerialEventTargetGuard::sCurrentThreadTLS;
@@ -680,6 +699,53 @@ void SerialEventTargetGuard::InitTLS() {
     MOZ_CRASH();
   }
 }
+
+DelayedRunnable::DelayedRunnable(already_AddRefed<nsIEventTarget> aTarget,
+                                 already_AddRefed<nsIRunnable> aRunnable,
+                                 uint32_t aDelay)
+    : mozilla::Runnable("DelayedRunnable"),
+      mTarget(aTarget),
+      mWrappedRunnable(aRunnable),
+      mDelayedFrom(TimeStamp::NowLoRes()),
+      mDelay(aDelay) {}
+
+nsresult DelayedRunnable::Init() {
+  return NS_NewTimerWithCallback(getter_AddRefs(mTimer), this, mDelay,
+                                 nsITimer::TYPE_ONE_SHOT, mTarget);
+}
+
+NS_IMETHODIMP DelayedRunnable::Run() {
+  MOZ_ASSERT(mTimer, "DelayedRunnable without Init?");
+
+  // Already ran?
+  if (!mWrappedRunnable) {
+    return NS_OK;
+  }
+
+  // Are we too early?
+  if ((mozilla::TimeStamp::NowLoRes() - mDelayedFrom).ToMilliseconds() <
+      mDelay) {
+    return NS_OK;  // Let the nsITimer run us.
+  }
+
+  mTimer->Cancel();
+  return DoRun();
+}
+
+NS_IMETHODIMP DelayedRunnable::Notify(nsITimer* aTimer) {
+  // If we already ran, the timer should have been canceled.
+  MOZ_ASSERT(mWrappedRunnable);
+  MOZ_ASSERT(aTimer == mTimer);
+
+  return DoRun();
+}
+
+nsresult DelayedRunnable::DoRun() {
+  nsCOMPtr<nsIRunnable> r = std::move(mWrappedRunnable);
+  return r->Run();
+}
+
+NS_IMPL_ISUPPORTS_INHERITED(DelayedRunnable, Runnable, nsITimerCallback)
 
 }  // namespace mozilla
 

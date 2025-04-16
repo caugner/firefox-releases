@@ -126,8 +126,7 @@ class nsRootPresContext;
 // An interface for presentation contexts. Presentation contexts are
 // objects that provide an outer context for a presentation shell.
 
-class nsPresContext : public nsISupports,
-                      public mozilla::SupportsWeakPtr<nsPresContext> {
+class nsPresContext : public nsISupports, public mozilla::SupportsWeakPtr {
  public:
   using Encoding = mozilla::Encoding;
   template <typename T>
@@ -140,7 +139,6 @@ class nsPresContext : public nsISupports,
 
   NS_DECL_CYCLE_COLLECTING_ISUPPORTS_FINAL
   NS_DECL_CYCLE_COLLECTION_CLASS(nsPresContext)
-  MOZ_DECLARE_WEAKREFERENCE_TYPENAME(nsPresContext)
 
   enum nsPresContextType {
     eContext_Galley,        // unpaginated screen presentation
@@ -184,10 +182,10 @@ class nsPresContext : public nsISupports,
   nsPresContext* GetParentPresContext() const;
 
   /**
-   * Returns the prescontext of the toplevel content document that contains
-   * this presentation, or null if there isn't one.
+   * Returns the prescontext of the root content document in the same process
+   * that contains this presentation, or null if there isn't one.
    */
-  nsPresContext* GetToplevelContentDocumentPresContext();
+  nsPresContext* GetInProcessRootContentDocumentPresContext();
 
   /**
    * Returns the nearest widget for the root frame or view of this.
@@ -453,14 +451,19 @@ class nsPresContext : public nsISupports,
   void SetPageScale(float aScale) { mPageScale = aScale; }
 
   /**
-   * Get/set the scaling facor to use when rendering the pages for print
+   * Get/set the scaling factor to use when rendering the pages for print
    * preview. Only safe to get after print preview set up; safe to set anytime.
    * This is a scaling factor for the display of the print preview.  It
    * does not affect layout.  It only affects the size of the onscreen pages
    * in print preview.
+   *
+   * The getter should only be used by the page sequence frame, which is the
+   * frame responsible for applying the scaling. Other callers should use
+   * nsPageSequenceFrame::GetPrintPreviewScale() if needed, instead of this API.
+   *
    * XXX Temporary: see http://wiki.mozilla.org/Gecko:PrintPreview
    */
-  float GetPrintPreviewScale() { return mPPScale; }
+  float GetPrintPreviewScaleForSequenceFrame() { return mPPScale; }
   void SetPrintPreviewScale(float aScale) { mPPScale = aScale; }
 
   nsDeviceContext* DeviceContext() const { return mDeviceContext; }

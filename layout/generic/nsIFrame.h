@@ -55,17 +55,17 @@
 #include "mozilla/layout/FrameChildList.h"
 #include "mozilla/AspectRatio.h"
 #include "mozilla/Maybe.h"
+#include "mozilla/Result.h"
 #include "mozilla/SmallPointerArray.h"
 #include "mozilla/PresShell.h"
 #include "mozilla/WritingModes.h"
 #include "nsDirection.h"
 #include "nsFrameList.h"
 #include "nsFrameState.h"
-#include "mozilla/ReflowOutput.h"
+#include "mozilla/ReflowInput.h"
 #include "nsITheme.h"
 #include "nsLayoutUtils.h"
 #include "nsQueryFrame.h"
-#include "nsString.h"
 #include "mozilla/ComputedStyle.h"
 #include "nsStyleStruct.h"
 #include "Visibility.h"
@@ -99,7 +99,6 @@
  */
 
 class nsAtom;
-class nsPresContext;
 class nsView;
 class nsFrameSelection;
 class nsIWidget;
@@ -116,7 +115,6 @@ class gfxSkipCharsIterator;
 class gfxContext;
 class nsLineList_iterator;
 class nsAbsoluteContainingBlock;
-class nsIContent;
 class nsContainerFrame;
 class nsPlaceholderFrame;
 class nsStyleChangeList;
@@ -124,10 +122,6 @@ class nsWindowSizes;
 
 struct nsBoxLayoutMetrics;
 struct nsPeekOffsetStruct;
-struct nsPoint;
-struct nsRect;
-struct nsSize;
-struct nsMargin;
 struct CharacterDataChangeInfo;
 
 namespace mozilla {
@@ -135,9 +129,6 @@ namespace mozilla {
 enum class PseudoStyleType : uint8_t;
 enum class TableSelectionMode : uint32_t;
 class EventStates;
-class PresShell;
-struct ReflowInput;
-class ReflowOutput;
 class ServoRestyleState;
 class DisplayItemData;
 class EffectSet;
@@ -151,16 +142,9 @@ namespace layout {
 class ScrollAnchorContainer;
 }  // namespace layout
 
-namespace dom {
-class Selection;
-}  // namespace dom
-
 }  // namespace mozilla
 
 //----------------------------------------------------------------------
-
-#define NS_SUBTREE_DIRTY(_frame) \
-  (_frame)->HasAnyStateBits(NS_FRAME_IS_DIRTY | NS_FRAME_HAS_DIRTY_CHILDREN)
 
 // 1 million CSS pixels less than our max app unit measure.
 // For reflowing with an "infinite" available inline space per [css-sizing].
@@ -365,7 +349,7 @@ std::ostream& operator<<(std::ostream& aStream, const nsReflowStatus& aStatus);
 //----------------------------------------------------------------------
 
 /**
- * When there is no scrollable overflow rect, the visual overflow rect
+ * When there is no scrollable overflow rect, the ink overflow rect
  * may be stored as four 1-byte deltas each strictly LESS THAN 0xff, for
  * the four edges of the rectangle, or the four bytes may be read as a
  * single 32-bit "overflow-rect type" value including at least one 0xff
@@ -535,11 +519,11 @@ static void ReleaseValue(T* aPropertyValue) {
   (int(((mozilla::LogModule*)(_lm))->Level()) & (_bit))
 
 #ifdef DEBUG
-#  define NS_FRAME_LOG(_bit, _args)                          \
-    PR_BEGIN_MACRO                                           \
-    if (NS_FRAME_LOG_TEST(nsFrame::sFrameLogModule, _bit)) { \
-      printf_stderr _args;                                   \
-    }                                                        \
+#  define NS_FRAME_LOG(_bit, _args)                           \
+    PR_BEGIN_MACRO                                            \
+    if (NS_FRAME_LOG_TEST(nsIFrame::sFrameLogModule, _bit)) { \
+      printf_stderr _args;                                    \
+    }                                                         \
     PR_END_MACRO
 #else
 #  define NS_FRAME_LOG(_bit, _args)
@@ -551,11 +535,11 @@ static void ReleaseValue(T* aPropertyValue) {
 
 #  define NS_FRAME_TRACE_OUT(_method) Trace(_method, false)
 
-#  define NS_FRAME_TRACE(_bit, _args)                        \
-    PR_BEGIN_MACRO                                           \
-    if (NS_FRAME_LOG_TEST(nsFrame::sFrameLogModule, _bit)) { \
-      TraceMsg _args;                                        \
-    }                                                        \
+#  define NS_FRAME_TRACE(_bit, _args)                         \
+    PR_BEGIN_MACRO                                            \
+    if (NS_FRAME_LOG_TEST(nsIFrame::sFrameLogModule, _bit)) { \
+      TraceMsg _args;                                         \
+    }                                                         \
     PR_END_MACRO
 
 #  define NS_FRAME_TRACE_REFLOW_IN(_method) Trace(_method, true)
@@ -628,6 +612,8 @@ class nsIFrame : public nsQueryFrame {
   using BaselineSharingGroup = mozilla::BaselineSharingGroup;
   template <typename T>
   using Maybe = mozilla::Maybe<T>;
+  template <typename T, typename E>
+  using Result = mozilla::Result<T, E>;
   using Nothing = mozilla::Nothing;
   using OnNonvisible = mozilla::OnNonvisible;
   template <typename T = void>
@@ -657,6 +643,8 @@ class nsIFrame : public nsQueryFrame {
       DisplayItemDataArray;
   typedef nsQueryFrame::ClassID ClassID;
 
+  // nsQueryFrame
+  NS_DECL_QUERYFRAME
   NS_DECL_QUERYFRAME_TARGET(nsIFrame)
 
   explicit nsIFrame(ComputedStyle* aStyle, nsPresContext* aPresContext,
@@ -694,7 +682,10 @@ class nsIFrame : public nsQueryFrame {
     MOZ_ASSERT(mComputedStyle);
     MOZ_ASSERT(mPresContext);
     mozilla::PodZero(&mOverflow);
+    MOZ_COUNT_CTOR(nsIFrame);
   }
+  explicit nsIFrame(ComputedStyle* aStyle, nsPresContext* aPresContext)
+      : nsIFrame(aStyle, aPresContext, ClassID::nsIFrame_id) {}
 
   nsPresContext* PresContext() const { return mPresContext; }
 
@@ -719,7 +710,9 @@ class nsIFrame : public nsQueryFrame {
    * @param   aPrevInFlow the prev-in-flow frame
    */
   virtual void Init(nsIContent* aContent, nsContainerFrame* aParent,
-                    nsIFrame* aPrevInFlow) = 0;
+                    nsIFrame* aPrevInFlow);
+
+  void* operator new(size_t, mozilla::PresShell*) MOZ_MUST_OVERRIDE;
 
   using PostDestroyData = mozilla::layout::PostFrameDestroyData;
   struct MOZ_RAII AutoPostDestroyData {
@@ -798,14 +791,38 @@ class nsIFrame : public nsQueryFrame {
    * @param  aDestructRoot is the root of the subtree being destroyed
    */
   virtual void DestroyFrom(nsIFrame* aDestructRoot,
-                           PostDestroyData& aPostDestroyData) = 0;
+                           PostDestroyData& aPostDestroyData);
   friend class nsFrameList;  // needed to pass aDestructRoot through to children
   friend class nsLineBox;    // needed to pass aDestructRoot through to children
   friend class nsContainerFrame;  // needed to pass aDestructRoot through to
                                   // children
-  friend class nsFrame;           // need to assign mParent
   template <class Source>
   friend class do_QueryFrameHelper;  // to read mClass
+
+  virtual ~nsIFrame();
+
+  // Overridden to prevent the global delete from being called, since
+  // the memory came out of an arena instead of the heap.
+  //
+  // Ideally this would be private and undefined, like the normal
+  // operator new.  Unfortunately, the C++ standard requires an
+  // overridden operator delete to be accessible to any subclass that
+  // defines a virtual destructor, so we can only make it protected;
+  // worse, some C++ compilers will synthesize calls to this function
+  // from the "deleting destructors" that they emit in case of
+  // delete-expressions, so it can't even be undefined.
+  void operator delete(void* aPtr, size_t sz);
+
+ private:
+  // Left undefined; nsFrame objects are never allocated from the heap.
+  void* operator new(size_t sz) noexcept(true);
+
+  // Returns true if this frame has any kind of CSS animations.
+  bool HasCSSAnimations();
+
+  // Returns true if this frame has any kind of CSS transitions.
+  bool HasCSSTransitions();
+
  public:
   /**
    * Get the content object associated with this frame. Does not add a
@@ -886,9 +903,6 @@ class nsIFrame : public nsQueryFrame {
   // and hence possibly completely bogus for GetStyle* purposes.
   // Use PeekStyleData instead.
   virtual void DidSetComputedStyle(ComputedStyle* aOldComputedStyle);
-
- private:
-  void RecordAppearanceTelemetry();
 
  public:
 /**
@@ -1000,7 +1014,7 @@ class nsIFrame : public nsQueryFrame {
    *     (@see nsCSSFrameConstructor::ConstructDocElementFrame)
    *   * the internal anonymous frames of the root element copy their value
    *     from the parent.
-   *     (@see nsFrame::Init)
+   *     (@see nsIFrame::Init)
    *   * a scrolled frame propagates its value to its ancestor scroll frame
    *     (@see nsHTMLScrollFrame::ReloadChildFrames)
    */
@@ -1028,10 +1042,10 @@ class nsIFrame : public nsQueryFrame {
    *
    * Frames that are laid out according to SVG's coordinate space based rules
    * (frames with the NS_FRAME_SVG_LAYOUT bit set, which *excludes*
-   * nsSVGOuterSVGFrame) are different.  Many frames of this type do not set or
+   * SVGOuterSVGFrame) are different.  Many frames of this type do not set or
    * use mRect, in which case the frame rect is undefined.  The exceptions are:
    *
-   *   - nsSVGInnerSVGFrame
+   *   - SVGInnerSVGFrame
    *   - SVGGeometryFrame (used for <path>, <circle>, etc.)
    *   - SVGImageFrame
    *   - SVGForeignObjectFrame
@@ -1834,12 +1848,13 @@ class nsIFrame : public nsQueryFrame {
     nsIFrame* mutable_this = const_cast<nsIFrame*>(this);
     nsPresContext* pc = PresContext();
     nsITheme* theme = pc->Theme();
-    if (!theme->ThemeSupportsWidget(pc, mutable_this, aDisp->mAppearance)) {
+    if (!theme->ThemeSupportsWidget(pc, mutable_this,
+                                    aDisp->EffectiveAppearance())) {
       return false;
     }
     if (aTransparencyState) {
-      *aTransparencyState =
-          theme->GetWidgetTransparency(mutable_this, aDisp->mAppearance);
+      *aTransparencyState = theme->GetWidgetTransparency(
+          mutable_this, aDisp->EffectiveAppearance());
     }
     return true;
   }
@@ -2062,10 +2077,10 @@ class nsIFrame : public nsQueryFrame {
   void RecomputePerspectiveChildrenOverflow(const nsIFrame* aStartFrame);
 
   /**
-   * Returns the computed z-index for this frame, returning 0 for z-index:auto
-   * and frames that don't support z-index.
+   * Returns the computed z-index for this frame, returning Nothing() for
+   * z-index: auto, and for frames that don't support z-index.
    */
-  int32_t ZIndex() const;
+  Maybe<int32_t> ZIndex() const;
 
   /**
    * Returns whether this frame is the anchor of some ancestor scroll frame. As
@@ -2741,7 +2756,7 @@ class nsIFrame : public nsQueryFrame {
 
  protected:
   /**
-   * A helper, used by |nsFrame::ComputeSize| (for frames that need to
+   * A helper, used by |nsIFrame::ComputeSize| (for frames that need to
    * override only this part of ComputeSize), that computes the size
    * that should be returned when 'width', 'height', and
    * min/max-width/height are all 'auto' or equivalent.
@@ -2777,7 +2792,7 @@ class nsIFrame : public nsQueryFrame {
    *
    * This probably only needs to include frame bounds, glyph bounds, and
    * text decorations, but today it sometimes includes other things that
-   * contribute to visual overflow.
+   * contribute to ink overflow.
    *
    * @param aDrawTarget a draw target that can be used if we need
    * to do measurement
@@ -3224,32 +3239,31 @@ class nsIFrame : public nsQueryFrame {
     eMathML = 1 << 0,
     eSVG = 1 << 1,
     eSVGContainer = 1 << 2,
-    eSVGPaintServer = 1 << 3,
-    eBidiInlineContainer = 1 << 4,
+    eBidiInlineContainer = 1 << 3,
     // the frame is for a replaced element, such as an image
-    eReplaced = 1 << 5,
+    eReplaced = 1 << 4,
     // Frame that contains a block but looks like a replaced element
     // from the outside
-    eReplacedContainsBlock = 1 << 6,
+    eReplacedContainsBlock = 1 << 5,
     // A frame that participates in inline reflow, i.e., one that
     // requires ReflowInput::mLineLayout.
-    eLineParticipant = 1 << 7,
-    eXULBox = 1 << 8,
-    eCanContainOverflowContainers = 1 << 9,
-    eTablePart = 1 << 10,
-    eSupportsCSSTransforms = 1 << 11,
+    eLineParticipant = 1 << 6,
+    eXULBox = 1 << 7,
+    eCanContainOverflowContainers = 1 << 8,
+    eTablePart = 1 << 9,
+    eSupportsCSSTransforms = 1 << 10,
 
     // A replaced element that has replaced-element sizing
     // characteristics (i.e., like images or iframes), as opposed to
     // inline-block sizing characteristics (like form controls).
-    eReplacedSizing = 1 << 12,
+    eReplacedSizing = 1 << 11,
 
     // Does this frame class support 'contain: layout' and
     // 'contain:paint' (supporting one is equivalent to supporting the
     // other).
-    eSupportsContainLayoutAndPaint = 1 << 13,
+    eSupportsContainLayoutAndPaint = 1 << 12,
 
-    // These are to allow nsFrame::Init to assert that IsFrameOfType
+    // These are to allow nsIFrame::Init to assert that IsFrameOfType
     // implementations all call the base class method.  They are only
     // meaningful in DEBUG builds.
     eDEBUGAllFrames = 1 << 30,
@@ -3284,7 +3298,7 @@ class nsIFrame : public nsQueryFrame {
   bool IsBlockFrameOrSubclass() const;
 
   /**
-   * Returns true if the frame is an instance of nsSVGGeometryFrame or one
+   * Returns true if the frame is an instance of SVGGeometryFrame or one
    * of its subclasses.
    */
   inline bool IsSVGGeometryFrameOrSubclass() const;
@@ -3512,7 +3526,7 @@ class nsIFrame : public nsQueryFrame {
    * FinishAndStoreOverflow has been called but mRect hasn't yet been
    * updated yet.  FIXME: This actually isn't true, but it should be.
    *
-   * The visual overflow rect should NEVER be used for things that
+   * The ink overflow rect should NEVER be used for things that
    * affect layout.  The scrollable overflow rect is permitted to affect
    * layout.
    *
@@ -3521,15 +3535,13 @@ class nsIFrame : public nsQueryFrame {
    * system, and may not contain the frame's border-box, e.g. if there
    * is a CSS transform scaling it down)
    */
-  nsRect GetVisualOverflowRect() const {
-    return GetOverflowRect(eVisualOverflow);
-  }
+  nsRect InkOverflowRect() const { return GetOverflowRect(eInkOverflow); }
 
   /**
    * Returns a rect that encompasses the area of this frame that the
    * user should be able to scroll to reach.  This is similar to
-   * GetVisualOverflowRect, but does not include outline or shadows, and
-   * may in the future include more margins than visual overflow does.
+   * InkOverflowRect, but does not include outline or shadows, and
+   * may in the future include more margins than ink overflow does.
    * It does not include areas clipped out by the CSS "overflow" and
    * "clip" properties.
    *
@@ -3545,7 +3557,7 @@ class nsIFrame : public nsQueryFrame {
    * system, and may not contain the frame's border-box, e.g. if there
    * is a CSS transform scaling it down)
    */
-  nsRect GetScrollableOverflowRect() const {
+  nsRect ScrollableOverflowRect() const {
     return GetOverflowRect(eScrollableOverflow);
   }
 
@@ -3563,47 +3575,47 @@ class nsIFrame : public nsQueryFrame {
   nsOverflowAreas GetOverflowAreasRelativeToSelf() const;
 
   /**
-   * Same as GetScrollableOverflowRect, except relative to the parent
+   * Same as ScrollableOverflowRect, except relative to the parent
    * frame.
    *
    * @return the rect relative to the parent frame, in the parent frame's
    * coordinate system
    */
-  nsRect GetScrollableOverflowRectRelativeToParent() const;
+  nsRect ScrollableOverflowRectRelativeToParent() const;
 
   /**
-   * Same as GetScrollableOverflowRect, except in this frame's coordinate
+   * Same as ScrollableOverflowRect, except in this frame's coordinate
    * system (before transforms are applied).
    *
    * @return the rect relative to this frame, before any CSS transforms have
    * been applied, i.e. in this frame's coordinate system
    */
-  nsRect GetScrollableOverflowRectRelativeToSelf() const;
+  nsRect ScrollableOverflowRectRelativeToSelf() const;
 
   /**
-   * Like GetVisualOverflowRect, except in this frame's
+   * Like InkOverflowRect, except in this frame's
    * coordinate system (before transforms are applied).
    *
    * @return the rect relative to this frame, before any CSS transforms have
    * been applied, i.e. in this frame's coordinate system
    */
-  nsRect GetVisualOverflowRectRelativeToSelf() const;
+  nsRect InkOverflowRectRelativeToSelf() const;
 
   /**
-   * Same as GetVisualOverflowRect, except relative to the parent
+   * Same as InkOverflowRect, except relative to the parent
    * frame.
    *
    * @return the rect relative to the parent frame, in the parent frame's
    * coordinate system
    */
-  nsRect GetVisualOverflowRectRelativeToParent() const;
+  nsRect InkOverflowRectRelativeToParent() const;
 
   /**
-   * Returns this frame's visual overflow rect as it would be before taking
+   * Returns this frame's ink overflow rect as it would be before taking
    * account of SVG effects or transforms. The rect returned is relative to
    * this frame.
    */
-  nsRect GetPreEffectsVisualOverflowRect() const;
+  nsRect PreEffectsInkOverflowRect() const;
 
   /**
    * Store the overflow area in the frame's mOverflow.mVisualDeltas
@@ -3717,14 +3729,30 @@ class nsIFrame : public nsQueryFrame {
    * Uses frame's begin selection state to start. If no selection on this frame
    * will return NS_ERROR_FAILURE.
    *
-   * @param aPOS is defined in nsFrameSelection
+   * @param aPos is defined in nsFrameSelection
    */
   virtual nsresult PeekOffset(nsPeekOffsetStruct* aPos);
 
+ private:
+  nsresult PeekOffsetForCharacter(nsPeekOffsetStruct* aPos, int32_t offset);
+  nsresult PeekOffsetForWord(nsPeekOffsetStruct* aPos, int32_t offset);
+  nsresult PeekOffsetForLine(nsPeekOffsetStruct* aPos);
+  nsresult PeekOffsetForLineEdge(nsPeekOffsetStruct* aPos);
+
+  /**
+   * Search for the first paragraph boundary before or after the given position
+   * @param  aPos See description in nsFrameSelection.h. The following fields
+   *              are used by this method:
+   *              Input: mDirection
+   *              Output: mResultContent, mContentOffset
+   */
+  nsresult PeekOffsetForParagraph(nsPeekOffsetStruct* aPos);
+
+ public:
   // given a frame five me the first/last leaf available
   // XXX Robert O'Callahan wants to move these elsewhere
-  static void GetLastLeaf(nsPresContext* aPresContext, nsIFrame** aFrame);
-  static void GetFirstLeaf(nsPresContext* aPresContext, nsIFrame** aFrame);
+  static void GetLastLeaf(nsIFrame** aFrame);
+  static void GetFirstLeaf(nsIFrame** aFrame);
 
   static nsresult GetNextPrevLineFromeBlockFrame(nsPresContext* aPresContext,
                                                  nsPeekOffsetStruct* aPos,
@@ -3767,13 +3795,22 @@ class nsIFrame : public nsQueryFrame {
                                  bool* aOutJumpedLine,
                                  bool* aOutMovedOverNonSelectableText);
 
+ private:
+  Result<bool, nsresult> IsVisuallyAtLineEdge(nsILineIterator* aLineIterator,
+                                              int32_t aLine,
+                                              nsDirection aDirection);
+  Result<bool, nsresult> IsLogicallyAtLineEdge(nsILineIterator* aLineIterator,
+                                               int32_t aLine,
+                                               nsDirection aDirection);
+
   // Return the line number of the aFrame, and (optionally) the containing block
   // frame.
   // If aScrollLock is true, don't break outside scrollframes when looking for a
   // containing block frame.
-  static int32_t GetLineNumber(nsIFrame* aFrame, bool aLockScroll,
-                               nsIFrame** aContainingBlock = nullptr);
+  Result<int32_t, nsresult> GetLineNumber(
+      bool aLockScroll, nsIFrame** aContainingBlock = nullptr);
 
+ public:
   /**
    * Called to see if the children of the frame are visible from indexstart to
    * index end. This does not change any state. Returns true only if the indexes
@@ -3970,14 +4007,8 @@ class nsIFrame : public nsQueryFrame {
 
   /**
    * Determines if this frame is a stacking context.
-   *
-   * @param aIsPositioned The precomputed result of IsAbsPosContainingBlock
-   * on the StyleDisplay().
    */
-  bool IsStackingContext(const nsStyleDisplay* aStyleDisplay,
-                         const nsStylePosition* aStylePosition,
-                         const nsStyleEffects* aStyleEffects,
-                         bool aIsPositioned);
+  bool IsStackingContext(const nsStyleDisplay*, const nsStyleEffects*);
   bool IsStackingContext();
 
   virtual bool HonorPrintBackgroundSettings() { return true; }
@@ -4526,6 +4557,13 @@ class nsIFrame : public nsQueryFrame {
    */
   bool IsContainerForFontSizeInflation() const {
     return HasAnyStateBits(NS_FRAME_FONT_INFLATION_CONTAINER);
+  }
+
+  /**
+   * Return whether this frame or any of its children is dirty.
+   */
+  bool IsSubtreeDirty() const {
+    return HasAnyStateBits(NS_FRAME_IS_DIRTY | NS_FRAME_HAS_DIRTY_CHILDREN);
   }
 
   /**
@@ -5101,9 +5139,14 @@ class nsIFrame : public nsQueryFrame {
     // true when we're still at the start of the search, i.e., we can't return
     // this point as a valid offset!
     bool mAtStart;
-    // true when we've encountered at least one character of the pre-boundary
-    // type (whitespace if aWordSelectEatSpace is true, non-whitespace
-    // otherwise)
+    // true when we've encountered at least one character of the type before the
+    // boundary we're looking for:
+    // 1. If we're moving forward and eating whitepace, looking for a word
+    //    beginning (i.e. a boundary between whitespace and non-whitespace),
+    //    then mSawBeforeType==true means "we already saw some whitespace".
+    // 2. Otherwise, looking for a word beginning (i.e. a boundary between
+    //    non-whitespace and whitespace), then mSawBeforeType==true means "we
+    //    already saw some non-whitespace".
     bool mSawBeforeType;
     // true when the last character encountered was punctuation
     bool mLastCharWasPunctuation;
@@ -5169,15 +5212,6 @@ class nsIFrame : public nsQueryFrame {
                                           bool aWhitespaceAfter,
                                           bool aIsKeyboardSelect);
 
-  /**
-   * Search for the first paragraph boundary before or after the given position
-   * @param  aPos See description in nsFrameSelection.h. The following fields
-   *              are used by this method:
-   *              Input: mDirection
-   *              Output: mResultContent, mContentOffset
-   */
-  nsresult PeekOffsetParagraph(nsPeekOffsetStruct* aPos);
-
  private:
   // Get a pointer to the overflow areas property attached to the frame.
   nsOverflowAreas* GetOverflowAreasProperty() const {
@@ -5187,7 +5221,7 @@ class nsIFrame : public nsQueryFrame {
     return overflow;
   }
 
-  nsRect GetVisualOverflowFromDeltas() const {
+  nsRect InkOverflowFromDeltas() const {
     MOZ_ASSERT(mOverflow.mType != NS_FRAME_OVERFLOW_LARGE,
                "should not be called when overflow is in a property");
     // Calculate the rect using deltas from the frame's border rect.

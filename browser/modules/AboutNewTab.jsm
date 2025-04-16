@@ -26,8 +26,8 @@ const BROWSER_READY_NOTIFICATION = "sessionstore-windows-restored";
 
 const AboutNewTab = {
   QueryInterface: ChromeUtils.generateQI([
-    Ci.nsIObserver,
-    Ci.nsISupportsWeakReference,
+    "nsIObserver",
+    "nsISupportsWeakReference",
   ]),
 
   // AboutNewTab
@@ -242,6 +242,7 @@ const AboutNewTab = {
     let processStartTs = startupInfo.process.getTime();
     let delta = Math.round(timestamp - processStartTs);
     Services.telemetry.scalarSet(SCALAR_KEY, delta);
+    ChromeUtils.addProfilerMarker("aboutHomeTopsitesFirstPaint");
     this._alreadyRecordedTopsitesPainted = true;
   },
 

@@ -9,6 +9,7 @@
 #include "mozilla/Assertions.h"       // MOZ_ASSERT
 #include "mozilla/ReverseIterator.h"  // mozilla::Reversed
 
+#include "frontend/AbstractScopePtr.h"  // ScopeIndex
 #include "frontend/CompilationInfo.h"
 #include "frontend/SharedContext.h"  // FunctionBox
 #include "frontend/Stencil.h"        // ScopeCreationData
@@ -20,14 +21,11 @@
 using namespace js;
 using namespace js::frontend;
 
-bool GCThingList::append(FunctionBox* funbox, uint32_t* index) {
+bool GCThingList::append(FunctionBox* funbox, GCThingIndex* index) {
   // Append the function to the vector and return the index in *index.
-  *index = vector.length();
+  *index = GCThingIndex(vector.length());
 
-  // To avoid circular include issues, funbox can't return a FunctionIndex, so
-  // instead it returns a size_t, which we wrap in FunctionIndex here to
-  // disambiguate the variant.
-  return vector.append(mozilla::AsVariant(FunctionIndex(funbox->index())));
+  return vector.append(mozilla::AsVariant(funbox->index()));
 }
 
 AbstractScopePtr GCThingList::getScope(size_t index) const {
@@ -36,6 +34,10 @@ AbstractScopePtr GCThingList::getScope(size_t index) const {
     return AbstractScopePtr(&compilationInfo.cx->global()->emptyGlobalScope());
   }
   return AbstractScopePtr(compilationInfo, elem.as<ScopeIndex>());
+}
+
+ScopeIndex GCThingList::getScopeIndex(size_t index) const {
+  return vector[index].as<ScopeIndex>();
 }
 
 bool js::frontend::EmitScriptThingsVector(JSContext* cx,
@@ -92,22 +94,12 @@ bool js::frontend::EmitScriptThingsVector(JSContext* cx,
     }
 
     bool operator()(const ScopeIndex& index) {
-      MutableHandle<ScopeCreationData> data =
-          compilationInfo.scopeCreationData[index];
-      Scope* scope = data.get().createScope(cx);
-      if (!scope) {
-        return false;
-      }
-
-      output[i] = JS::GCCellPtr(scope);
+      ScopeCreationData& data = compilationInfo.scopeCreationData[index].get();
+      output[i] = JS::GCCellPtr(data.getScope());
       return true;
     }
 
     bool operator()(const FunctionIndex& index) {
-      // We should have already converted this data to a JSFunction as part
-      // of publishDeferredFunctions, which currently happens before BCE begins.
-      // Once we can do LazyScriptCreationData::create without referencing the
-      // functionbox, then we should be able to do JSFunction allocation here.
       output[i] = JS::GCCellPtr(compilationInfo.functions[index]);
       return true;
     }
@@ -141,7 +133,7 @@ bool CGTryNoteList::append(TryNoteKind kind, uint32_t stackDepth,
   return list.append(note);
 }
 
-bool CGScopeNoteList::append(uint32_t scopeIndex, BytecodeOffset offset,
+bool CGScopeNoteList::append(GCThingIndex scopeIndex, BytecodeOffset offset,
                              uint32_t parent) {
   ScopeNote note;
   note.index = scopeIndex;

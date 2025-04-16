@@ -12,7 +12,6 @@ const { XPCOMUtils } = ChromeUtils.import(
 
 XPCOMUtils.defineLazyModuleGetters(this, {
   AboutNewTab: "resource:///modules/AboutNewTab.jsm",
-  Log: "resource://gre/modules/Log.jsm",
   PlacesUtils: "resource://gre/modules/PlacesUtils.jsm",
   Services: "resource://gre/modules/Services.jsm",
   UrlbarPrefs: "resource:///modules/UrlbarPrefs.jsm",
@@ -25,10 +24,6 @@ XPCOMUtils.defineLazyModuleGetters(this, {
   TOP_SITES_DEFAULT_ROWS: "resource://activity-stream/common/Reducers.jsm",
 });
 
-XPCOMUtils.defineLazyGetter(this, "logger", () =>
-  Log.repository.getLogger("Urlbar.Provider.TopSites")
-);
-
 /**
  * This module exports a provider returning the user's newtab Top Sites.
  */
@@ -39,8 +34,6 @@ XPCOMUtils.defineLazyGetter(this, "logger", () =>
 class ProviderTopSites extends UrlbarProvider {
   constructor() {
     super();
-    // Maps the running queries by queryContext.
-    this.queries = new Map();
   }
 
   get PRIORITY() {
@@ -112,8 +105,7 @@ class ProviderTopSites extends UrlbarProvider {
 
     let sites = AboutNewTab.getTopSites();
 
-    let instance = {};
-    this.queries.set(queryContext, instance);
+    let instance = this.queryInstance;
 
     // Filter out empty values. Site is empty when there's a gap between tiles
     // on about:newtab.
@@ -187,7 +179,7 @@ class ProviderTopSites extends UrlbarProvider {
           }
 
           // Our query has been cancelled.
-          if (!this.queries.get(queryContext)) {
+          if (instance != this.queryInstance) {
             break;
           }
 
@@ -213,7 +205,7 @@ class ProviderTopSites extends UrlbarProvider {
             break;
           }
 
-          if (!this.queries.get(queryContext)) {
+          if (instance != this.queryInstance) {
             break;
           }
 
@@ -238,17 +230,6 @@ class ProviderTopSites extends UrlbarProvider {
           break;
       }
     }
-    this.queries.delete(queryContext);
-  }
-
-  /**
-   * Cancels a running query,
-   * @param {UrlbarQueryContext} queryContext the query context object to cancel
-   *        query for.
-   */
-  cancelQuery(queryContext) {
-    logger.info(`Canceling query for ${queryContext.searchString}`);
-    this.queries.delete(queryContext);
   }
 }
 

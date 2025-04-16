@@ -5,6 +5,7 @@
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 #include "mozilla/dom/HTMLDialogElement.h"
+#include "mozilla/dom/ElementBinding.h"
 #include "mozilla/dom/HTMLDialogElementBinding.h"
 #include "mozilla/dom/HTMLUnknownElement.h"
 #include "mozilla/StaticPrefs_dom.h"
@@ -15,11 +16,11 @@ nsGenericHTMLElement* NS_NewHTMLDialogElement(
     mozilla::dom::FromParser aFromParser) {
   RefPtr<mozilla::dom::NodeInfo> nodeInfo(aNodeInfo);
   auto* nim = nodeInfo->NodeInfoManager();
-  if (!mozilla::dom::HTMLDialogElement::IsDialogEnabled()) {
-    return new (nim) mozilla::dom::HTMLUnknownElement(nodeInfo.forget());
+  bool isChromeDocument = nsContentUtils::IsChromeDoc(nodeInfo->GetDocument());
+  if (mozilla::StaticPrefs::dom_dialog_element_enabled() || isChromeDocument) {
+    return new (nim) mozilla::dom::HTMLDialogElement(nodeInfo.forget());
   }
-
-  return new (nim) mozilla::dom::HTMLDialogElement(nodeInfo.forget());
+  return new (nim) mozilla::dom::HTMLUnknownElement(nodeInfo.forget());
 }
 
 namespace mozilla {
@@ -29,8 +30,10 @@ HTMLDialogElement::~HTMLDialogElement() = default;
 
 NS_IMPL_ELEMENT_CLONE(HTMLDialogElement)
 
-bool HTMLDialogElement::IsDialogEnabled() {
-  return StaticPrefs::dom_dialog_element_enabled();
+bool HTMLDialogElement::IsDialogEnabled(JSContext* aCx,
+                                        JS::Handle<JSObject*> aObj) {
+  return StaticPrefs::dom_dialog_element_enabled() ||
+         nsContentUtils::IsSystemCaller(aCx);
 }
 
 void HTMLDialogElement::Close(
@@ -46,8 +49,8 @@ void HTMLDialogElement::Close(
 
   RemoveFromTopLayerIfNeeded();
 
-  RefPtr<AsyncEventDispatcher> eventDispatcher = new AsyncEventDispatcher(
-      this, NS_LITERAL_STRING("close"), CanBubble::eNo);
+  RefPtr<AsyncEventDispatcher> eventDispatcher =
+      new AsyncEventDispatcher(this, u"close"_ns, CanBubble::eNo);
   eventDispatcher->PostDOMEvent();
 }
 
@@ -183,9 +186,9 @@ void HTMLDialogElement::RunCancelDialogSteps() {
   // 1) Let close be the result of firing an event named cancel at dialog, with
   // the cancelable attribute initialized to true.
   bool defaultAction = true;
-  nsContentUtils::DispatchTrustedEvent(
-      OwnerDoc(), this, NS_LITERAL_STRING("cancel"), CanBubble::eNo,
-      Cancelable::eYes, &defaultAction);
+  nsContentUtils::DispatchTrustedEvent(OwnerDoc(), this, u"cancel"_ns,
+                                       CanBubble::eNo, Cancelable::eYes,
+                                       &defaultAction);
 
   // 2) If close is true and dialog has an open attribute, then close the dialog
   // with no return value.

@@ -35,11 +35,29 @@ exports.WatcherActor = protocol.ActorClassWithSpec(watcherSpec, {
     protocol.Actor.prototype.initialize.call(this, conn);
     this._browser = options && options.browser;
 
-    if (this._browser) {
-      // The browsing context might change over time, which makes this code not ideal.
-      // This should be fixed in Bug 1625027.
-      this.browsingContextID = this._browser.browsingContext.id;
-    }
+    this.notifyResourceAvailable = this.notifyResourceAvailable.bind(this);
+  },
+
+  /**
+   * If we are debugging only one Tab or Document, returns its BrowserElement.
+   * For Tabs, it will be the <browser> element used to load the web page.
+   *
+   * This is typicaly used to fetch:
+   * - its `browserId` attribute, which uniquely defines it,
+   * - its `browsingContextID` or `browsingContext`, which helps inspecting its content.
+   */
+  get browserElement() {
+    return this._browser;
+  },
+
+  /**
+   * Unique identifier, which helps designates one precise browser element, the one
+   * we may debug. This is only set if we actually debug a browser element.
+   * So, that will be typically set when we debug a tab, but not when we debug
+   * a process, or a worker.
+   */
+  get browserId() {
+    return this._browser?.browserId;
   },
 
   destroy: function() {
@@ -70,13 +88,16 @@ exports.WatcherActor = protocol.ActorClassWithSpec(watcherSpec, {
       false
     );
 
+    const hasBrowserElement = !!this.browserElement;
+
     return {
       actor: this.actorID,
       traits: {
         // FF77+ supports frames in Watcher actor
         frame: true,
         resources: {
-          // FF79+ supports console messages and platform messages, but this isn't enabled yet.
+          // FF79+ supports console and platform messages, FF80+ supports error and css messages,
+          // but this isn't enabled yet.
           // We will implement a few other resources before enabling it in bug 1642295.
           // This is to prevent having to handle backward compat if we have to change Watcher
           // Actor API while implementing other resources.
@@ -84,7 +105,11 @@ exports.WatcherActor = protocol.ActorClassWithSpec(watcherSpec, {
           // content process targets yet. Bug 1620248 should help supporting them and enable
           // this more broadly.
           [Resources.TYPES.CONSOLE_MESSAGE]:
-            enableServerWatcher && !!this._browser,
+            enableServerWatcher && hasBrowserElement,
+          [Resources.TYPES.CSS_MESSAGE]:
+            enableServerWatcher && hasBrowserElement,
+          [Resources.TYPES.ERROR_MESSAGE]:
+            enableServerWatcher && hasBrowserElement,
           [Resources.TYPES.PLATFORM_MESSAGE]: enableServerWatcher,
         },
       },
@@ -175,6 +200,17 @@ exports.WatcherActor = protocol.ActorClassWithSpec(watcherSpec, {
   },
 
   /**
+   * Called by Resource Watchers, when new resources are available.
+   *
+   * @param Array<json> resources
+   *        List of all available resources. A resource is a JSON object piped over to the client.
+   *        It may contain actor IDs, actor forms, to be manually marshalled by the client.
+   */
+  notifyResourceAvailable(resources) {
+    this.emit("resource-available-form", resources);
+  },
+
+  /**
    * Start watching for a list of resource types.
    * This should only resolve once all "already existing" resources of these types
    * are notified to the client via resource-available-form event on related target actors.
@@ -183,7 +219,19 @@ exports.WatcherActor = protocol.ActorClassWithSpec(watcherSpec, {
    *        List of all types to listen to.
    */
   async watchResources(resourceTypes) {
-    WatcherRegistry.watchResources(this, resourceTypes);
+    // First process resources which have to be listened from the parent process
+    // (the watcher actor always runs in the parent process)
+    const contentProcessResourceTypes = Resources.watchParentProcessResources(
+      this,
+      resourceTypes
+    );
+
+    // Bail out early if all resources were watched from parent process
+    if (contentProcessResourceTypes.length == 0) {
+      return;
+    }
+
+    WatcherRegistry.watchResources(this, contentProcessResourceTypes);
 
     // Fetch resources from all existing targets
     for (const targetType in TARGET_HELPERS) {
@@ -198,7 +246,7 @@ exports.WatcherActor = protocol.ActorClassWithSpec(watcherSpec, {
       const targetHelperModule = TARGET_HELPERS[targetType];
       await targetHelperModule.watchResources({
         watcher: this,
-        resourceTypes,
+        resourceTypes: contentProcessResourceTypes,
       });
     }
 
@@ -221,8 +269,8 @@ exports.WatcherActor = protocol.ActorClassWithSpec(watcherSpec, {
      * We will eventually get rid of this code once all targets are properly supported by
      * the Watcher Actor and we have target helpers for all of them.
      */
-    const targetActor = this.browsingContextID
-      ? TargetActorRegistry.getTargetActor(this.browsingContextID)
+    const targetActor = this.browserElement
+      ? TargetActorRegistry.getTargetActor(this.browserId)
       : TargetActorRegistry.getParentProcessTargetActor();
     if (targetActor) {
       await targetActor.watchTargetResources(resourceTypes);
@@ -236,9 +284,23 @@ exports.WatcherActor = protocol.ActorClassWithSpec(watcherSpec, {
    *        List of all types to listen to.
    */
   unwatchResources(resourceTypes) {
-    const isWatchingResources = WatcherRegistry.unwatchResources(
+    // First process resources which are listened from the parent process
+    // (the watcher actor always runs in the parent process)
+    const contentProcessResourceTypes = Resources.unwatchParentProcessResources(
       this,
       resourceTypes
+    );
+
+    // Bail out early if all resources were watched from parent process.
+    // These parent process resource types won't be saved in the WatcherRegistry because content processes
+    // do not need to know about them.
+    if (contentProcessResourceTypes.length == 0) {
+      return;
+    }
+
+    const isWatchingResources = WatcherRegistry.unwatchResources(
+      this,
+      contentProcessResourceTypes
     );
     if (!isWatchingResources) {
       return;
@@ -246,7 +308,7 @@ exports.WatcherActor = protocol.ActorClassWithSpec(watcherSpec, {
 
     // Prevent trying to unwatch when the related BrowsingContext has already
     // been destroyed
-    if (!this._browser || this._browser.browsingContext) {
+    if (!this.browserElement || this.browserElement.browsingContext) {
       for (const targetType in TARGET_HELPERS) {
         // Frame target helper handles the top level target, if it runs in the content process
         // so we should always process it. It does a second check to isWatchingTargets.
@@ -259,17 +321,17 @@ exports.WatcherActor = protocol.ActorClassWithSpec(watcherSpec, {
         const targetHelperModule = TARGET_HELPERS[targetType];
         targetHelperModule.unwatchResources({
           watcher: this,
-          resourceTypes,
+          resourceTypes: contentProcessResourceTypes,
         });
       }
     }
 
     // See comment in watchResources.
-    const targetActor = this.browsingContextID
-      ? TargetActorRegistry.getTargetActor(this.browsingContextID)
+    const targetActor = this.browserElement
+      ? TargetActorRegistry.getTargetActor(this.browserId)
       : TargetActorRegistry.getParentProcessTargetActor();
     if (targetActor) {
-      targetActor.unwatchTargetResources(resourceTypes);
+      targetActor.unwatchTargetResources(contentProcessResourceTypes);
     }
 
     // Unregister the JS Window Actor if there is no more DevTools code observing any target/resource

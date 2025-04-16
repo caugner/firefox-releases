@@ -16,10 +16,6 @@ class BrowserTabParent extends JSWindowActorParent {
       return; // Can happen sometimes if browser is being destroyed
     }
 
-    if (browser.outerBrowser) {
-      browser = browser.outerBrowser; // handle RDM mode
-    }
-
     let gBrowser = browser.ownerGlobal.gBrowser;
 
     switch (message.name) {
@@ -30,7 +26,7 @@ class BrowserTabParent extends JSWindowActorParent {
       }
 
       case "Browser:FirstPaint": {
-        browser.ownerGlobal.gBrowserInit._firstBrowserPaintDeferred.resolve();
+        browser.ownerGlobal.gBrowserInit._firstContentWindowPaintDeferred.resolve();
         break;
       }
 

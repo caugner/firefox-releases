@@ -22,6 +22,7 @@
 #include "mozilla/Telemetry.h"
 #include "mozilla/ThreadLocal.h"
 #include "mozilla/Unused.h"
+#include "mozilla/dom/RemoteType.h"
 #include "nsAppDirectoryServiceDefs.h"
 #include "nsIObserver.h"
 #include "nsIObserverService.h"
@@ -142,7 +143,7 @@ BackgroundHangManager::Observe(nsISupports* aSubject, const char* aTopic,
     nsresult rv = NS_GetSpecialDirectory(NS_APP_USER_PROFILE_50_DIR,
                                          getter_AddRefs(mPermahangFile));
     if (NS_SUCCEEDED(rv)) {
-      mPermahangFile->AppendNative(NS_LITERAL_CSTRING("last_permahang.bin"));
+      mPermahangFile->AppendNative("last_permahang.bin"_ns);
     } else {
       mPermahangFile = nullptr;
     }
@@ -505,7 +506,7 @@ void BackgroundHangThread::ReportHang(TimeDuration aHangTime,
 
   HangDetails hangDetails(aHangTime,
                           nsDependentCString(XRE_GetProcessTypeString()),
-                          VoidString(), mThreadName, mRunnableName,
+                          NOT_REMOTE_TYPE, mThreadName, mRunnableName,
                           std::move(mHangStack), std::move(mAnnotations));
 
   PersistedToDisk persistedToDisk = aPersistedToDisk;

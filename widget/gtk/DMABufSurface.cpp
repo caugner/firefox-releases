@@ -140,6 +140,7 @@ DMABufSurface::DMABufSurface(SurfaceType aSurfaceType)
       mGbmBufferObject(),
       mMappedRegion(),
       mMappedRegionStride(),
+      mSyncFd(-1),
       mSync(0),
       mGlobalRefCountFd(0),
       mUID(0) {
@@ -178,6 +179,11 @@ already_AddRefed<DMABufSurface> DMABufSurface::CreateDMABufSurface(
 void DMABufSurface::FenceDelete() {
   auto* egl = gl::GLLibraryEGL::Get();
 
+  if (mSyncFd > 0) {
+    close(mSyncFd);
+    mSyncFd = -1;
+  }
+
   if (mSync) {
     // We can't call this unless we have the ext, but we will always have
     // the ext if we have something to destroy.
@@ -215,6 +221,10 @@ void DMABufSurface::FenceSet() {
 void DMABufSurface::FenceWait() {
   auto* egl = gl::GLLibraryEGL::Get();
 
+  if (!mSync && mSyncFd > 0) {
+    FenceImportFromFd();
+  }
+
   // Wait on the fence, because presumably we're going to want to read this
   // surface
   if (mSync) {
@@ -222,14 +232,15 @@ void DMABufSurface::FenceWait() {
   }
 }
 
-bool DMABufSurface::FenceCreate(int aFd) {
-  MOZ_ASSERT(aFd > 0);
-
+bool DMABufSurface::FenceImportFromFd() {
   auto* egl = gl::GLLibraryEGL::Get();
-  const EGLint attribs[] = {LOCAL_EGL_SYNC_NATIVE_FENCE_FD_ANDROID, aFd,
+  const EGLint attribs[] = {LOCAL_EGL_SYNC_NATIVE_FENCE_FD_ANDROID, mSyncFd,
                             LOCAL_EGL_NONE};
   mSync = egl->fCreateSync(egl->Display(), LOCAL_EGL_SYNC_NATIVE_FENCE_ANDROID,
                            attribs);
+  close(mSyncFd);
+  mSyncFd = -1;
+
   if (!mSync) {
     MOZ_ASSERT(false, "Failed to create GLFence!");
     return false;
@@ -294,17 +305,13 @@ DMABufSurfaceRGBA::~DMABufSurfaceRGBA() { ReleaseSurface(); }
 
 bool DMABufSurfaceRGBA::Create(int aWidth, int aHeight,
                                int aDMABufSurfaceFlags) {
-  nsWaylandDisplay* display = WaylandDisplayGet();
-  if (!display) {
-    return false;
-  }
   MOZ_ASSERT(mGbmBufferObject[0] == nullptr, "Already created?");
 
   mSurfaceFlags = aDMABufSurfaceFlags;
   mWidth = aWidth;
   mHeight = aHeight;
 
-  mGmbFormat = display->GetGbmFormat(mSurfaceFlags & DMABUF_ALPHA);
+  mGmbFormat = GetDMABufDevice()->GetGbmFormat(mSurfaceFlags & DMABUF_ALPHA);
   if (!mGmbFormat) {
     // Requested DRM format is not supported.
     return false;
@@ -391,7 +398,7 @@ void DMABufSurfaceRGBA::ImportSurfaceDescriptor(
   mHeight = desc.height()[0];
   mBufferModifier = desc.modifier();
   if (mBufferModifier != DRM_FORMAT_MOD_INVALID) {
-    mGmbFormat = WaylandDisplayGet()->GetExactGbmFormat(desc.format()[0]);
+    mGmbFormat = GetDMABufDevice()->GetExactGbmFormat(desc.format()[0]);
   } else {
     mDrmFormats[0] = desc.format()[0];
   }
@@ -407,10 +414,7 @@ void DMABufSurfaceRGBA::ImportSurfaceDescriptor(
   }
 
   if (desc.fence().Length() > 0) {
-    int fd = desc.fence()[0].ClonePlatformHandle().release();
-    if (!FenceCreate(fd)) {
-      close(fd);
-    }
+    mSyncFd = desc.fence()[0].ClonePlatformHandle().release();
   }
 
   if (desc.refCount().Length() > 0) {
@@ -768,8 +772,8 @@ bool DMABufSurfaceYUV::UpdateYUVData(const VADRMPRIMESurfaceDescriptor& aDesc) {
   return true;
 }
 
-bool DMABufSurfaceYUV::CreateYUVPlane(nsWaylandDisplay* display, int aPlane,
-                                      int aWidth, int aHeight, int aDrmFormat) {
+bool DMABufSurfaceYUV::CreateYUVPlane(int aPlane, int aWidth, int aHeight,
+                                      int aDrmFormat) {
   mWidth[aPlane] = aWidth;
   mHeight[aPlane] = aHeight;
   mDrmFormats[aPlane] = aDrmFormat;
@@ -829,17 +833,12 @@ bool DMABufSurfaceYUV::UpdateYUVData(void** aPixelData, int* aLineSizes) {
 
 bool DMABufSurfaceYUV::Create(int aWidth, int aHeight, void** aPixelData,
                               int* aLineSizes) {
-  nsWaylandDisplay* display = WaylandDisplayGet();
-  if (!display) {
-    return false;
-  }
-
   mBufferPlaneCount = 2;
 
-  if (!CreateYUVPlane(display, 0, aWidth, aHeight, GBM_FORMAT_R8)) {
+  if (!CreateYUVPlane(0, aWidth, aHeight, GBM_FORMAT_R8)) {
     return false;
   }
-  if (!CreateYUVPlane(display, 1, aWidth >> 1, aHeight >> 1, GBM_FORMAT_GR88)) {
+  if (!CreateYUVPlane(1, aWidth >> 1, aHeight >> 1, GBM_FORMAT_GR88)) {
     return false;
   }
 
@@ -872,10 +871,7 @@ void DMABufSurfaceYUV::ImportSurfaceDescriptor(
   }
 
   if (aDesc.fence().Length() > 0) {
-    int fd = aDesc.fence()[0].ClonePlatformHandle().release();
-    if (!FenceCreate(fd)) {
-      close(fd);
-    }
+    mSyncFd = aDesc.fence()[0].ClonePlatformHandle().release();
   }
 
   if (aDesc.refCount().Length() > 0) {

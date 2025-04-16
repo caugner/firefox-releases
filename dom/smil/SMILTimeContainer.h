@@ -4,8 +4,8 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-#ifndef mozilla_SMILTimeContainer_h
-#define mozilla_SMILTimeContainer_h
+#ifndef DOM_SMIL_SMILTIMECONTAINER_H_
+#define DOM_SMIL_SMILTIMECONTAINER_H_
 
 #include "mozilla/dom/SVGAnimationElement.h"
 #include "mozilla/SMILMilestone.h"
@@ -188,7 +188,7 @@ class SMILTimeContainer {
    */
   bool GetNextMilestoneInParentTime(SMILMilestone& aNextMilestone) const;
 
-  typedef nsTArray<RefPtr<mozilla::dom::SVGAnimationElement> > AnimElemArray;
+  using AnimElemArray = nsTArray<RefPtr<dom::SVGAnimationElement>>;
 
   /*
    * Removes and returns the timebase elements from the start of the list of
@@ -296,4 +296,4 @@ class SMILTimeContainer {
 
 }  // namespace mozilla
 
-#endif  // mozilla_SMILTimeContainer_h
+#endif  // DOM_SMIL_SMILTIMECONTAINER_H_

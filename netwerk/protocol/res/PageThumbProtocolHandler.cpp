@@ -7,6 +7,7 @@
 #include "PageThumbProtocolHandler.h"
 
 #include "mozilla/ClearOnShutdown.h"
+#include "mozilla/dom/URLSearchParams.h"
 #include "mozilla/ipc/URIParams.h"
 #include "mozilla/ipc/URIUtils.h"
 #include "mozilla/net/NeckoChild.h"
@@ -259,7 +260,7 @@ RefPtr<PageThumbStreamPromise> PageThumbProtocolHandler::NewStream(
   nsCOMPtr<nsIChannel> channel;
   rv = NS_NewChannel(getter_AddRefs(channel), resolvedURI,
                      nsContentUtils::GetSystemPrincipal(),
-                     nsILoadInfo::SEC_ALLOW_CROSS_ORIGIN_DATA_IS_NULL,
+                     nsILoadInfo::SEC_ALLOW_CROSS_ORIGIN_SEC_CONTEXT_IS_NULL,
                      nsIContentPolicy::TYPE_OTHER);
   if (NS_FAILED(rv)) {
     return PageThumbStreamPromise::CreateAndReject(rv, __func__);
@@ -414,8 +415,8 @@ nsresult PageThumbProtocolHandler::GetThumbnailPath(const nsACString& aPath,
 
   // Extract URL from query string.
   nsAutoString url;
-  bool found = dom::URLParams::Extract(Substring(aPath, queryIndex + 1),
-                                       NS_LITERAL_STRING("url"), url);
+  bool found =
+      dom::URLParams::Extract(Substring(aPath, queryIndex + 1), u"url"_ns, url);
   if (!found || url.IsVoid()) {
     return NS_ERROR_NOT_AVAILABLE;
   }

@@ -85,12 +85,23 @@ def get_adopt_open_jdk_8_path():
 
 class MozillaBuildBootstrapper(BaseBootstrapper):
     '''Bootstrapper for MozillaBuild to install rustup.'''
+
+    INSTALL_PYTHON_GUIDANCE = (
+        'Python is provided by MozillaBuild; ensure your MozillaBuild '
+        'installation is up to date.')
+
     def __init__(self, no_interactive=False, no_system_changes=False):
         BaseBootstrapper.__init__(self, no_interactive=no_interactive,
                                   no_system_changes=no_system_changes)
 
     def which(self, name, *extra_search_dirs):
         return BaseBootstrapper.which(self, name + '.exe', *extra_search_dirs)
+
+    def prepare(self):
+        if self.application.startswith('mobile_android'):
+            print('WARNING!!! Building Firefox for Android on Windows is not '
+                  'fully supported. See https://bugzilla.mozilla.org/show_bug.'
+                  'cgi?id=1169873 for details.')
 
     def install_system_packages(self):
         pass
@@ -100,9 +111,6 @@ class MozillaBuildBootstrapper(BaseBootstrapper):
         # from source requires MS Visual C++ 9.0. So we force pip to install
         # the last version that comes with wheels.
         self.pip_install('mercurial', '--only-binary', 'mercurial')
-
-    def upgrade_python(self, current):
-        pass
 
     def install_browser_packages(self):
         pass

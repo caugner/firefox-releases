@@ -40,6 +40,9 @@ nsresult HttpBackgroundChannelChild::Init(HttpChannelChild* aChannelChild) {
   mChannelChild = aChannelChild;
 
   if (NS_WARN_IF(!CreateBackgroundChannel())) {
+#ifdef MOZ_DIAGNOSTIC_ASSERT_ENABLED
+    mChannelChild->mCreateBackgroundChannelFailed = true;
+#endif
     mChannelChild = nullptr;
     return NS_ERROR_FAILURE;
   }
@@ -91,11 +94,12 @@ bool HttpBackgroundChannelChild::ChannelClosed() {
   return !mChannelChild;
 }
 
-void HttpBackgroundChannelChild::OnStartRequestReceived() {
+void HttpBackgroundChannelChild::OnStartRequestReceived(
+    Maybe<uint32_t> aMultiPartID) {
   LOG(("HttpBackgroundChannelChild::OnStartRequestReceived [this=%p]\n", this));
   MOZ_ASSERT(OnSocketThread());
   MOZ_ASSERT(mChannelChild);
-  MOZ_ASSERT(!mStartReceived);  // Should only be called once.
+  MOZ_ASSERT(!mStartReceived || *aMultiPartID > 0);
 
   mStartReceived = true;
 
@@ -132,30 +136,70 @@ bool HttpBackgroundChannelChild::CreateBackgroundChannel() {
   return true;
 }
 
-bool HttpBackgroundChannelChild::IsWaitingOnStartRequest(
-    bool aDataFromSocketProcess) {
+IPCResult HttpBackgroundChannelChild::RecvOnAfterLastPart(
+    const nsresult& aStatus) {
+  LOG(("HttpBackgroundChannelChild::RecvOnAfterLastPart [this=%p]\n", this));
   MOZ_ASSERT(OnSocketThread());
 
-  // When data is from socket process, it is possible that both mStartSent and
-  // mStartReceived are false here. We need to wait until OnStartRequest sent
-  // from parent process.
-  // TODO: We can remove this code when diversion is removed in bug 1604448.
-  if (aDataFromSocketProcess) {
-    return !mStartReceived;
+  if (NS_WARN_IF(!mChannelChild)) {
+    return IPC_OK();
   }
+
+  mChannelChild->ProcessOnAfterLastPart(aStatus);
+  return IPC_OK();
+}
+
+IPCResult HttpBackgroundChannelChild::RecvOnProgress(
+    const int64_t& aProgress, const int64_t& aProgressMax) {
+  LOG(("HttpBackgroundChannelChild::RecvOnProgress [this=%p]\n", this));
+  MOZ_ASSERT(OnSocketThread());
+
+  if (NS_WARN_IF(!mChannelChild)) {
+    return IPC_OK();
+  }
+
+  mChannelChild->ProcessOnProgress(aProgress, aProgressMax);
+  return IPC_OK();
+}
+
+IPCResult HttpBackgroundChannelChild::RecvOnStatus(const nsresult& aStatus) {
+  LOG(("HttpBackgroundChannelChild::RecvOnStatus [this=%p]\n", this));
+  MOZ_ASSERT(OnSocketThread());
+
+  if (NS_WARN_IF(!mChannelChild)) {
+    return IPC_OK();
+  }
+
+  mChannelChild->ProcessOnStatus(aStatus);
+  return IPC_OK();
+}
+
+bool HttpBackgroundChannelChild::IsWaitingOnStartRequest() {
+  MOZ_ASSERT(OnSocketThread());
 
   // Need to wait for OnStartRequest if it is sent by
   // parent process but not received by content process.
-  return (mStartSent && !mStartReceived);
+  return !mStartReceived;
 }
 
 // PHttpBackgroundChannelChild
-IPCResult HttpBackgroundChannelChild::RecvOnStartRequestSent() {
-  LOG(("HttpBackgroundChannelChild::RecvOnStartRequestSent [this=%p]\n", this));
+IPCResult HttpBackgroundChannelChild::RecvOnStartRequest(
+    const nsHttpResponseHead& aResponseHead, const bool& aUseResponseHead,
+    const nsHttpHeaderArray& aRequestHeaders,
+    const HttpChannelOnStartRequestArgs& aArgs) {
+  LOG(("HttpBackgroundChannelChild::RecvOnStartRequest [this=%p]\n", this));
   MOZ_ASSERT(OnSocketThread());
-  MOZ_ASSERT(!mStartSent);  // Should only receive this message once.
 
-  mStartSent = true;
+  if (NS_WARN_IF(!mChannelChild)) {
+    return IPC_OK();
+  }
+
+  mChannelChild->ProcessOnStartRequest(aResponseHead, aUseResponseHead,
+                                       aRequestHeaders, aArgs);
+  // Allow to queue other runnable since OnStartRequest Event already hits the
+  // child's mEventQ.
+  OnStartRequestReceived(aArgs.multiPartID());
+
   return IPC_OK();
 }
 
@@ -182,7 +226,8 @@ IPCResult HttpBackgroundChannelChild::RecvOnTransportAndData(
     return IPC_OK();
   }
 
-  if (IsWaitingOnStartRequest(aDataFromSocketProcess)) {
+  // Bug 1641336: Race only happens if the data is from socket process.
+  if (IsWaitingOnStartRequest()) {
     LOG(("  > pending until OnStartRequest [offset=%" PRIu64 " count=%" PRIu32
          "]\n",
          aOffset, aCount));
@@ -290,6 +335,96 @@ IPCResult HttpBackgroundChannelChild::RecvDivertMessages() {
 
   mChannelChild->ProcessDivertMessages();
 
+  return IPC_OK();
+}
+
+IPCResult HttpBackgroundChannelChild::RecvNotifyClassificationFlags(
+    const uint32_t& aClassificationFlags, const bool& aIsThirdParty) {
+  LOG(
+      ("HttpBackgroundChannelChild::RecvNotifyClassificationFlags "
+       "classificationFlags=%" PRIu32 ", thirdparty=%d [this=%p]\n",
+       aClassificationFlags, static_cast<int>(aIsThirdParty), this));
+  MOZ_ASSERT(OnSocketThread());
+
+  if (NS_WARN_IF(!mChannelChild)) {
+    return IPC_OK();
+  }
+
+  // NotifyClassificationFlags has no order dependency to OnStartRequest.
+  // It this be handled as soon as possible
+  mChannelChild->ProcessNotifyClassificationFlags(aClassificationFlags,
+                                                  aIsThirdParty);
+
+  return IPC_OK();
+}
+
+IPCResult HttpBackgroundChannelChild::RecvNotifyFlashPluginStateChanged(
+    const nsIHttpChannel::FlashPluginState& aState) {
+  LOG(
+      ("HttpBackgroundChannelChild::RecvNotifyFlashPluginStateChanged "
+       "[this=%p]\n",
+       this));
+  MOZ_ASSERT(OnSocketThread());
+
+  if (NS_WARN_IF(!mChannelChild)) {
+    return IPC_OK();
+  }
+
+  // NotifyFlashPluginStateChanged has no order dependency to OnStartRequest.
+  // It this be handled as soon as possible
+  mChannelChild->ProcessNotifyFlashPluginStateChanged(aState);
+
+  return IPC_OK();
+}
+
+IPCResult HttpBackgroundChannelChild::RecvSetClassifierMatchedInfo(
+    const ClassifierInfo& info) {
+  LOG(("HttpBackgroundChannelChild::RecvSetClassifierMatchedInfo [this=%p]\n",
+       this));
+  MOZ_ASSERT(OnSocketThread());
+
+  if (NS_WARN_IF(!mChannelChild)) {
+    return IPC_OK();
+  }
+
+  // SetClassifierMatchedInfo has no order dependency to OnStartRequest.
+  // It this be handled as soon as possible
+  mChannelChild->ProcessSetClassifierMatchedInfo(info.list(), info.provider(),
+                                                 info.fullhash());
+
+  return IPC_OK();
+}
+
+IPCResult HttpBackgroundChannelChild::RecvSetClassifierMatchedTrackingInfo(
+    const ClassifierInfo& info) {
+  LOG(
+      ("HttpBackgroundChannelChild::RecvSetClassifierMatchedTrackingInfo "
+       "[this=%p]\n",
+       this));
+  MOZ_ASSERT(OnSocketThread());
+
+  if (NS_WARN_IF(!mChannelChild)) {
+    return IPC_OK();
+  }
+
+  // SetClassifierMatchedTrackingInfo has no order dependency to OnStartRequest.
+  // It this be handled as soon as possible
+  mChannelChild->ProcessSetClassifierMatchedTrackingInfo(info.list(),
+                                                         info.fullhash());
+
+  return IPC_OK();
+}
+
+IPCResult HttpBackgroundChannelChild::RecvAttachStreamFilter(
+    Endpoint<extensions::PStreamFilterParent>&& aEndpoint) {
+  LOG(("HttpBackgroundChannelChild::RecvAttachStreamFilter [this=%p]\n", this));
+  MOZ_ASSERT(OnSocketThread());
+
+  if (NS_WARN_IF(!mChannelChild)) {
+    return IPC_OK();
+  }
+
+  mChannelChild->ProcessAttachStreamFilter(std::move(aEndpoint));
   return IPC_OK();
 }
 

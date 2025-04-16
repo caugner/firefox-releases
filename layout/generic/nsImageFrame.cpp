@@ -31,6 +31,7 @@
 #include "mozilla/PresShell.h"
 #include "mozilla/PresShellInlines.h"
 #include "mozilla/StaticPrefs_layout.h"
+#include "mozilla/SVGImageContext.h"
 #include "mozilla/Unused.h"
 
 #include "nsCOMPtr.h"
@@ -85,7 +86,6 @@
 #include "mozilla/Preferences.h"
 
 #include "mozilla/dom/Link.h"
-#include "SVGImageContext.h"
 #include "mozilla/dom/HTMLAnchorElement.h"
 
 using namespace mozilla;
@@ -1073,12 +1073,12 @@ void nsImageFrame::Reflow(nsPresContext* aPresContext, ReflowOutput& aMetrics,
             ICON_SIZE + 2 * (ICON_PADDING + ALT_BORDER_WIDTH)),
         nsPresContext::CSSPixelsToAppUnits(
             ICON_SIZE + 2 * (ICON_PADDING + ALT_BORDER_WIDTH)));
-    // We include the altFeedbackSize in our visual overflow, but not in our
+    // We include the altFeedbackSize in our ink overflow, but not in our
     // scrollable overflow, since it doesn't really need to be scrolled to
     // outside the image.
     static_assert(eOverflowType_LENGTH == 2, "Unknown overflow types?");
-    nsRect& visualOverflow = aMetrics.VisualOverflow();
-    visualOverflow.UnionRect(visualOverflow, altFeedbackSize);
+    nsRect& inkOverflow = aMetrics.InkOverflow();
+    inkOverflow.UnionRect(inkOverflow, altFeedbackSize);
   } else if (PresShell()->IsActive()) {
     // We've just reflowed and we should have an accurate size, so we're ready
     // to request a decode.
@@ -1327,7 +1327,7 @@ class nsDisplayAltFeedback final : public nsPaintedDisplayItem {
 
   nsRect GetBounds(nsDisplayListBuilder* aBuilder, bool* aSnap) const final {
     *aSnap = false;
-    return mFrame->GetVisualOverflowRectRelativeToSelf() + ToReferenceFrame();
+    return mFrame->InkOverflowRectRelativeToSelf() + ToReferenceFrame();
   }
 
   void Paint(nsDisplayListBuilder* aBuilder, gfxContext* aCtx) final {
@@ -2361,13 +2361,13 @@ nsresult nsImageFrame::HandleEvent(nsPresContext* aPresContext,
 Maybe<nsIFrame::Cursor> nsImageFrame::GetCursor(const nsPoint& aPoint) {
   nsImageMap* map = GetImageMap();
   if (!map) {
-    return nsFrame::GetCursor(aPoint);
+    return nsIFrame::GetCursor(aPoint);
   }
   nsIntPoint p;
   TranslateEventCoords(aPoint, p);
   HTMLAreaElement* area = map->GetArea(p.x, p.y);
   if (!area) {
-    return nsFrame::GetCursor(aPoint);
+    return nsIFrame::GetCursor(aPoint);
   }
 
   // Use the cursor from the style of the *area* element.
@@ -2417,7 +2417,7 @@ void nsImageFrame::OnVisibilityChange(
 
 #ifdef DEBUG_FRAME_DUMP
 nsresult nsImageFrame::GetFrameName(nsAString& aResult) const {
-  return MakeFrameName(NS_LITERAL_STRING("ImageFrame"), aResult);
+  return MakeFrameName(u"ImageFrame"_ns, aResult);
 }
 
 void nsImageFrame::List(FILE* out, const char* aPrefix,
@@ -2535,10 +2535,8 @@ void nsImageFrame::GetLoadGroup(nsPresContext* aPresContext,
 nsresult nsImageFrame::LoadIcons(nsPresContext* aPresContext) {
   NS_ASSERTION(!gIconLoad, "called LoadIcons twice");
 
-  NS_NAMED_LITERAL_STRING(loadingSrc,
-                          "resource://gre-resources/loading-image.png");
-  NS_NAMED_LITERAL_STRING(brokenSrc,
-                          "resource://gre-resources/broken-image.png");
+  constexpr auto loadingSrc = u"resource://gre-resources/loading-image.png"_ns;
+  constexpr auto brokenSrc = u"resource://gre-resources/broken-image.png"_ns;
 
   gIconLoad = new IconLoad();
 
@@ -2692,7 +2690,7 @@ static bool IsInAutoWidthTableCellForQuirk(nsIFrame* aFrame) {
   nsBlockFrame* ancestor = nsLayoutUtils::FindNearestBlockAncestor(aFrame);
   if (ancestor->Style()->GetPseudoType() == PseudoStyleType::cellContent) {
     // Assume direct parent is a table cell frame.
-    nsFrame* grandAncestor = static_cast<nsFrame*>(ancestor->GetParent());
+    nsIFrame* grandAncestor = static_cast<nsIFrame*>(ancestor->GetParent());
     return grandAncestor && grandAncestor->StylePosition()->mWidth.IsAuto();
   }
   return false;

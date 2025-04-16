@@ -82,8 +82,6 @@ class TipTestProvider extends UrlbarProvider {
       addCallback(this, match);
     }
   }
-  cancelQuery(context) {}
-  pickResult(result, details) {}
 }
 
 // Check that the URL bar manages accessibility focus appropriately.
@@ -336,6 +334,9 @@ async function runTipTests() {
       { url: "http://mozilla.org/c" }
     ),
   ];
+
+  // Ensure the tip appears in the expected position.
+  matches[1].suggestedIndex = 2;
 
   let provider = new TipTestProvider(matches);
   UrlbarProvidersManager.registerProvider(provider);

@@ -131,13 +131,6 @@ static MARGINS GetCheckboxMargins(HANDLE theme, HDC hdc) {
   return checkboxContent;
 }
 
-static COLORREF GetTextfieldFillColor(HANDLE theme, int32_t part,
-                                      int32_t state) {
-  COLORREF color = {0};
-  GetThemeColor(theme, part, state, TMT_FILLCOLOR, &color);
-  return color;
-}
-
 static SIZE GetCheckboxBGSize(HANDLE theme, HDC hdc) {
   SIZE checkboxSize;
   GetThemePartSize(theme, hdc, MENU_POPUPCHECK, MC_CHECKMARKNORMAL, nullptr,
@@ -651,7 +644,6 @@ nsresult nsNativeThemeWin::GetCachedMinimumWidgetSize(
   aResult->height = sz.cy;
 
   switch (aAppearance) {
-    case StyleAppearance::InnerSpinButton:
     case StyleAppearance::SpinnerUpbutton:
     case StyleAppearance::SpinnerDownbutton:
       aResult->width++;
@@ -690,7 +682,6 @@ mozilla::Maybe<nsUXThemeClass> nsNativeThemeWin::GetThemeClass(
     case StyleAppearance::Checkbox:
     case StyleAppearance::Groupbox:
       return Some(eUXButton);
-    case StyleAppearance::MenulistTextfield:
     case StyleAppearance::NumberInput:
     case StyleAppearance::Textfield:
     case StyleAppearance::Textarea:
@@ -711,7 +702,6 @@ mozilla::Maybe<nsUXThemeClass> nsNativeThemeWin::GetThemeClass(
     case StyleAppearance::Separator:
       return Some(eUXToolbar);
     case StyleAppearance::ProgressBar:
-    case StyleAppearance::ProgressbarVertical:
     case StyleAppearance::Progresschunk:
       return Some(eUXProgress);
     case StyleAppearance::Tab:
@@ -732,12 +722,7 @@ mozilla::Maybe<nsUXThemeClass> nsNativeThemeWin::GetThemeClass(
       return Some(eUXScrollbar);
     case StyleAppearance::Range:
     case StyleAppearance::RangeThumb:
-    case StyleAppearance::ScaleHorizontal:
-    case StyleAppearance::ScaleVertical:
-    case StyleAppearance::ScalethumbHorizontal:
-    case StyleAppearance::ScalethumbVertical:
       return Some(eUXTrackbar);
-    case StyleAppearance::InnerSpinButton:
     case StyleAppearance::SpinnerUpbutton:
     case StyleAppearance::SpinnerDownbutton:
       return Some(eUXSpin);
@@ -754,7 +739,6 @@ mozilla::Maybe<nsUXThemeClass> nsNativeThemeWin::GetThemeClass(
     case StyleAppearance::Treeheadersortarrow:
       return Some(eUXHeader);
     case StyleAppearance::Listbox:
-    case StyleAppearance::Listitem:
     case StyleAppearance::Treeview:
     case StyleAppearance::Treetwistyopen:
     case StyleAppearance::Treeitem:
@@ -907,7 +891,6 @@ nsresult nsNativeThemeWin::GetThemePartAndState(nsIFrame* aFrame,
       // same as GBS_NORMAL don't bother supporting GBS_DISABLED.
       return NS_OK;
     }
-    case StyleAppearance::MenulistTextfield:
     case StyleAppearance::NumberInput:
     case StyleAppearance::Textfield:
     case StyleAppearance::Textarea: {
@@ -958,13 +941,8 @@ nsresult nsNativeThemeWin::GetThemePartAndState(nsIFrame* aFrame,
       aState = TS_NORMAL;
       return NS_OK;
     }
-    case StyleAppearance::ProgressBar:
-    case StyleAppearance::ProgressbarVertical: {
-      // Note IsVerticalProgress only tests for orient css attrribute,
-      // StyleAppearance::ProgressbarVertical is dedicated to -moz-appearance:
-      // progressbar-vertical.
-      bool vertical = IsVerticalProgress(aFrame) ||
-                      aAppearance == StyleAppearance::ProgressbarVertical;
+    case StyleAppearance::ProgressBar: {
+      bool vertical = IsVerticalProgress(aFrame);
       aPart = vertical ? PP_BARVERT : PP_BAR;
       aState = PBBS_NORMAL;
       return NS_OK;
@@ -1031,8 +1009,8 @@ nsresult nsNativeThemeWin::GetThemePartAndState(nsIFrame* aFrame,
         aState += TS_DISABLED;
       else {
         nsIFrame* parent = aFrame->GetParent();
-        EventStates parentState =
-            GetContentState(parent, parent->StyleDisplay()->mAppearance);
+        EventStates parentState = GetContentState(
+            parent, parent->StyleDisplay()->EffectiveAppearance());
         if (eventState.HasAllStates(NS_EVENT_STATE_HOVER |
                                     NS_EVENT_STATE_ACTIVE))
           aState += TS_ACTIVE;
@@ -1079,12 +1057,8 @@ nsresult nsNativeThemeWin::GetThemePartAndState(nsIFrame* aFrame,
       }
       return NS_OK;
     }
-    case StyleAppearance::Range:
-    case StyleAppearance::ScaleHorizontal:
-    case StyleAppearance::ScaleVertical: {
-      if (aAppearance == StyleAppearance::ScaleHorizontal ||
-          (aAppearance == StyleAppearance::Range &&
-           IsRangeHorizontal(aFrame))) {
+    case StyleAppearance::Range: {
+      if (IsRangeHorizontal(aFrame)) {
         aPart = TKP_TRACK;
         aState = TRS_NORMAL;
       } else {
@@ -1093,19 +1067,11 @@ nsresult nsNativeThemeWin::GetThemePartAndState(nsIFrame* aFrame,
       }
       return NS_OK;
     }
-    case StyleAppearance::RangeThumb:
-    case StyleAppearance::ScalethumbHorizontal:
-    case StyleAppearance::ScalethumbVertical: {
-      if (aAppearance == StyleAppearance::RangeThumb) {
-        if (IsRangeHorizontal(aFrame)) {
-          aPart = TKP_THUMBBOTTOM;
-        } else {
-          aPart = IsFrameRTL(aFrame) ? TKP_THUMBLEFT : TKP_THUMBRIGHT;
-        }
+    case StyleAppearance::RangeThumb: {
+      if (IsRangeHorizontal(aFrame)) {
+        aPart = TKP_THUMBBOTTOM;
       } else {
-        aPart = (aAppearance == StyleAppearance::ScalethumbHorizontal)
-                    ? TKP_THUMB
-                    : TKP_THUMBVERT;
+        aPart = IsFrameRTL(aFrame) ? TKP_THUMBLEFT : TKP_THUMBRIGHT;
       }
       EventStates eventState = GetContentState(aFrame, aAppearance);
       if (!aFrame)
@@ -1128,7 +1094,6 @@ nsresult nsNativeThemeWin::GetThemePartAndState(nsIFrame* aFrame,
       }
       return NS_OK;
     }
-    case StyleAppearance::InnerSpinButton:
     case StyleAppearance::SpinnerUpbutton:
     case StyleAppearance::SpinnerDownbutton: {
       aPart = (aAppearance == StyleAppearance::SpinnerUpbutton) ? SPNP_UP
@@ -1686,9 +1651,7 @@ RENDER_AGAIN:
   // widgetRect is the bounding box for a widget, yet the scale track is only
   // a small portion of this size, so the edges of the scale need to be
   // adjusted to the real size of the track.
-  if (aAppearance == StyleAppearance::Range ||
-      aAppearance == StyleAppearance::ScaleHorizontal ||
-      aAppearance == StyleAppearance::ScaleVertical) {
+  if (aAppearance == StyleAppearance::Range) {
     RECT contentRect;
     GetThemeBackgroundContentRect(theme, hdc, part, state, &widgetRect,
                                   &contentRect);
@@ -1698,8 +1661,7 @@ RENDER_AGAIN:
 
     // When rounding is necessary, we round the position of the track
     // away from the chevron of the thumb to make it look better.
-    if (aAppearance == StyleAppearance::ScaleHorizontal ||
-        (aAppearance == StyleAppearance::Range && IsRangeHorizontal(aFrame))) {
+    if (IsRangeHorizontal(aFrame)) {
       contentRect.top += (contentRect.bottom - contentRect.top - siz.cy) / 2;
       contentRect.bottom = contentRect.top + siz.cy;
     } else {
@@ -1833,29 +1795,16 @@ RENDER_AGAIN:
            aAppearance == StyleAppearance::MozMenulistArrowButton) {
     DrawThemeBGRTLAware(theme, hdc, part, state, &widgetRect, &clipRect,
                         IsFrameRTL(aFrame));
-  } else if (aAppearance == StyleAppearance::MenulistTextfield ||
-             aAppearance == StyleAppearance::NumberInput ||
+  } else if (aAppearance == StyleAppearance::NumberInput ||
              aAppearance == StyleAppearance::Textfield ||
              aAppearance == StyleAppearance::Textarea) {
-    if (aAppearance == StyleAppearance::MenulistTextfield &&
-        state != TFS_EDITBORDER_FOCUSED) {
-      // We want 'menulist-textfield' to behave like 'textfield', except we
-      // don't want a border unless it's focused.  We have to handle the
-      // non-focused case manually here.
-      COLORREF color = GetTextfieldFillColor(theme, part, state);
-      HBRUSH brush = CreateSolidBrush(color);
-      ::FillRect(hdc, &widgetRect, brush);
-      DeleteObject(brush);
-    } else {
-      DrawThemeBackground(theme, hdc, part, state, &widgetRect, &clipRect);
-    }
+    DrawThemeBackground(theme, hdc, part, state, &widgetRect, &clipRect);
 
     if (state == TFS_EDITBORDER_DISABLED) {
       InflateRect(&widgetRect, -1, -1);
       ::FillRect(hdc, &widgetRect, reinterpret_cast<HBRUSH>(COLOR_BTNFACE + 1));
     }
-  } else if (aAppearance == StyleAppearance::ProgressBar ||
-             aAppearance == StyleAppearance::ProgressbarVertical) {
+  } else if (aAppearance == StyleAppearance::ProgressBar) {
     // DrawThemeBackground renders each corner with a solid white pixel.
     // Restore these pixels to the underlying color. Tracks are rendered
     // using alpha recovery, so this makes the corners transparent.
@@ -1888,11 +1837,9 @@ RENDER_AGAIN:
     DrawThemeBackground(theme, hdc, part, state, &widgetRect, &clipRect);
   }
 
-  // Draw focus rectangles for range and scale elements
+  // Draw focus rectangles for range elements
   // XXX it'd be nice to draw these outside of the frame
-  if (aAppearance == StyleAppearance::Range ||
-      aAppearance == StyleAppearance::ScaleHorizontal ||
-      aAppearance == StyleAppearance::ScaleVertical) {
+  if (aAppearance == StyleAppearance::Range) {
     EventStates contentState = GetContentState(aFrame, aAppearance);
 
     if (contentState.HasState(NS_EVENT_STATE_FOCUSRING)) {
@@ -2032,8 +1979,7 @@ LayoutDeviceIntMargin nsNativeThemeWin::GetWidgetBorder(
       result.left = 0;
   }
 
-  if (aFrame && (aAppearance == StyleAppearance::MenulistTextfield ||
-                 aAppearance == StyleAppearance::NumberInput ||
+  if (aFrame && (aAppearance == StyleAppearance::NumberInput ||
                  aAppearance == StyleAppearance::Textfield ||
                  aAppearance == StyleAppearance::Textarea)) {
     nsIContent* content = aFrame->GetContent();
@@ -2125,8 +2071,7 @@ bool nsNativeThemeWin::GetWidgetPadding(nsDeviceContext* aContext,
     return ok;
   }
 
-  if (aAppearance == StyleAppearance::MenulistTextfield ||
-      aAppearance == StyleAppearance::NumberInput ||
+  if (aAppearance == StyleAppearance::NumberInput ||
       aAppearance == StyleAppearance::Textfield ||
       aAppearance == StyleAppearance::Textarea ||
       aAppearance == StyleAppearance::MenulistButton ||
@@ -2144,8 +2089,7 @@ bool nsNativeThemeWin::GetWidgetPadding(nsDeviceContext* aContext,
    * Instead, we add 2px padding for the contents and fix this. (Used to be 1px
    * added, see bug 430212)
    */
-  if (aAppearance == StyleAppearance::MenulistTextfield ||
-      aAppearance == StyleAppearance::NumberInput ||
+  if (aAppearance == StyleAppearance::NumberInput ||
       aAppearance == StyleAppearance::Textfield ||
       aAppearance == StyleAppearance::Textarea) {
     aResult->top = aResult->bottom = 2;
@@ -2279,7 +2223,6 @@ nsNativeThemeWin::GetMinimumWidgetSize(nsPresContext* aPresContext,
 
   switch (aAppearance) {
     case StyleAppearance::Groupbox:
-    case StyleAppearance::MenulistTextfield:
     case StyleAppearance::NumberInput:
     case StyleAppearance::Textfield:
     case StyleAppearance::Toolbox:
@@ -2351,7 +2294,6 @@ nsNativeThemeWin::GetMinimumWidgetSize(nsPresContext* aPresContext,
       return NS_OK;
 
     case StyleAppearance::ProgressBar:
-    case StyleAppearance::ProgressbarVertical:
       // Best-fit size for progress meters is too large for most
       // themes. We want these widgets to be able to really shrink
       // down, so use the min-size request value (of 0).
@@ -2362,15 +2304,9 @@ nsNativeThemeWin::GetMinimumWidgetSize(nsPresContext* aPresContext,
       *aIsOverridable = false;
       break;
 
-    case StyleAppearance::RangeThumb:
-    case StyleAppearance::ScalethumbHorizontal:
-    case StyleAppearance::ScalethumbVertical: {
+    case StyleAppearance::RangeThumb: {
       *aIsOverridable = false;
-      // On Vista, GetThemePartAndState returns odd values for
-      // scale thumbs, so use a hardcoded size instead.
-      if (aAppearance == StyleAppearance::ScalethumbHorizontal ||
-          (aAppearance == StyleAppearance::RangeThumb &&
-           IsRangeHorizontal(aFrame))) {
+      if (IsRangeHorizontal(aFrame)) {
         aResult->width = 12;
         aResult->height = 20;
       } else {
@@ -2513,7 +2449,6 @@ nsNativeThemeWin::WidgetStateChanged(nsIFrame* aFrame,
       aAppearance == StyleAppearance::Resizerpanel ||
       aAppearance == StyleAppearance::Progresschunk ||
       aAppearance == StyleAppearance::ProgressBar ||
-      aAppearance == StyleAppearance::ProgressbarVertical ||
       aAppearance == StyleAppearance::Tooltip ||
       aAppearance == StyleAppearance::Tabpanels ||
       aAppearance == StyleAppearance::Tabpanel ||
@@ -2617,7 +2552,6 @@ bool nsNativeThemeWin::ThemeDrawsFocusForWidget(StyleAppearance aAppearance) {
   switch (aAppearance) {
     case StyleAppearance::Menulist:
     case StyleAppearance::MenulistButton:
-    case StyleAppearance::MenulistTextfield:
     case StyleAppearance::Textarea:
     case StyleAppearance::Textfield:
     case StyleAppearance::NumberInput:
@@ -2696,10 +2630,7 @@ nsITheme::Transparency nsNativeThemeWin::GetWidgetTransparency(
       return eOpaque;
     case StyleAppearance::MozWinGlass:
     case StyleAppearance::MozWinBorderlessGlass:
-    case StyleAppearance::ScaleHorizontal:
-    case StyleAppearance::ScaleVertical:
     case StyleAppearance::ProgressBar:
-    case StyleAppearance::ProgressbarVertical:
     case StyleAppearance::Progresschunk:
     case StyleAppearance::Range:
       return eTransparent;
@@ -2769,15 +2700,9 @@ bool nsNativeThemeWin::ClassicThemeSupportsWidget(nsIFrame* aFrame,
     case StyleAppearance::ScrollbarHorizontal:
     case StyleAppearance::ScrollbarNonDisappearing:
     case StyleAppearance::Scrollcorner:
-    case StyleAppearance::ScaleHorizontal:
-    case StyleAppearance::ScaleVertical:
-    case StyleAppearance::ScalethumbHorizontal:
-    case StyleAppearance::ScalethumbVertical:
     case StyleAppearance::Menulist:
     case StyleAppearance::MenulistButton:
-    case StyleAppearance::MenulistTextfield:
     case StyleAppearance::MozMenulistArrowButton:
-    case StyleAppearance::InnerSpinButton:
     case StyleAppearance::SpinnerUpbutton:
     case StyleAppearance::SpinnerDownbutton:
     case StyleAppearance::Listbox:
@@ -2787,7 +2712,6 @@ bool nsNativeThemeWin::ClassicThemeSupportsWidget(nsIFrame* aFrame,
     case StyleAppearance::Statusbarpanel:
     case StyleAppearance::Resizerpanel:
     case StyleAppearance::ProgressBar:
-    case StyleAppearance::ProgressbarVertical:
     case StyleAppearance::Progresschunk:
     case StyleAppearance::Tab:
     case StyleAppearance::Tabpanel:
@@ -2833,7 +2757,6 @@ LayoutDeviceIntMargin nsNativeThemeWin::ClassicGetWidgetBorder(
     case StyleAppearance::Treeview:
     case StyleAppearance::Menulist:
     case StyleAppearance::MenulistButton:
-    case StyleAppearance::MenulistTextfield:
     case StyleAppearance::Tab:
     case StyleAppearance::NumberInput:
     case StyleAppearance::Textfield:
@@ -2853,7 +2776,6 @@ LayoutDeviceIntMargin nsNativeThemeWin::ClassicGetWidgetBorder(
       result.top = result.left = result.bottom = result.right = 1;
       break;
     case StyleAppearance::ProgressBar:
-    case StyleAppearance::ProgressbarVertical:
       result.top = result.left = result.bottom = result.right = 1;
       break;
     case StyleAppearance::Menubar:
@@ -2900,7 +2822,6 @@ bool nsNativeThemeWin::ClassicGetWidgetPadding(nsDeviceContext* aContext,
       return true;
     }
     case StyleAppearance::ProgressBar:
-    case StyleAppearance::ProgressbarVertical:
       (*aResult).top = (*aResult).left = (*aResult).bottom = (*aResult).right =
           1;
       return true;
@@ -2925,7 +2846,6 @@ nsresult nsNativeThemeWin::ClassicGetMinimumWidgetSize(
       (*aResult).width = ::GetSystemMetrics(SM_CXMENUCHECK);
       (*aResult).height = ::GetSystemMetrics(SM_CYMENUCHECK);
       break;
-    case StyleAppearance::InnerSpinButton:
     case StyleAppearance::SpinnerUpbutton:
     case StyleAppearance::SpinnerDownbutton:
       (*aResult).width = ::GetSystemMetrics(SM_CXVSCROLL);
@@ -2973,16 +2893,6 @@ nsresult nsNativeThemeWin::ClassicGetMinimumWidgetSize(
       *aIsOverridable = false;
       break;
     }
-    case StyleAppearance::ScalethumbHorizontal:
-      (*aResult).width = 12;
-      (*aResult).height = 20;
-      *aIsOverridable = false;
-      break;
-    case StyleAppearance::ScalethumbVertical:
-      (*aResult).width = 20;
-      (*aResult).height = 12;
-      *aIsOverridable = false;
-      break;
     case StyleAppearance::MozMenulistArrowButton:
       (*aResult).width = ::GetSystemMetrics(SM_CXVSCROLL);
       break;
@@ -2995,14 +2905,12 @@ nsresult nsNativeThemeWin::ClassicGetMinimumWidgetSize(
     case StyleAppearance::NumberInput:
     case StyleAppearance::Textfield:
     case StyleAppearance::Textarea:
-    case StyleAppearance::MenulistTextfield:
     case StyleAppearance::Statusbar:
     case StyleAppearance::Statusbarpanel:
     case StyleAppearance::Resizerpanel:
     case StyleAppearance::Progresschunk:
     case StyleAppearance::Tooltip:
     case StyleAppearance::ProgressBar:
-    case StyleAppearance::ProgressbarVertical:
     case StyleAppearance::Tab:
     case StyleAppearance::Tabpanel:
     case StyleAppearance::Tabpanels:
@@ -3242,7 +3150,6 @@ nsresult nsNativeThemeWin::ClassicGetThemePartAndState(
     case StyleAppearance::Textarea:
     case StyleAppearance::Menulist:
     case StyleAppearance::MenulistButton:
-    case StyleAppearance::MenulistTextfield:
     case StyleAppearance::Range:
     case StyleAppearance::RangeThumb:
     case StyleAppearance::ScrollbarthumbVertical:
@@ -3250,17 +3157,12 @@ nsresult nsNativeThemeWin::ClassicGetThemePartAndState(
     case StyleAppearance::ScrollbarVertical:
     case StyleAppearance::ScrollbarHorizontal:
     case StyleAppearance::Scrollcorner:
-    case StyleAppearance::ScaleHorizontal:
-    case StyleAppearance::ScaleVertical:
-    case StyleAppearance::ScalethumbHorizontal:
-    case StyleAppearance::ScalethumbVertical:
     case StyleAppearance::Statusbar:
     case StyleAppearance::Statusbarpanel:
     case StyleAppearance::Resizerpanel:
     case StyleAppearance::Progresschunk:
     case StyleAppearance::Tooltip:
     case StyleAppearance::ProgressBar:
-    case StyleAppearance::ProgressbarVertical:
     case StyleAppearance::Tab:
     case StyleAppearance::Tabpanel:
     case StyleAppearance::Tabpanels:
@@ -3339,7 +3241,6 @@ nsresult nsNativeThemeWin::ClassicGetThemePartAndState(
 
       return NS_OK;
     }
-    case StyleAppearance::InnerSpinButton:
     case StyleAppearance::SpinnerUpbutton:
     case StyleAppearance::SpinnerDownbutton: {
       EventStates contentState = GetContentState(aFrame, aAppearance);
@@ -3349,7 +3250,6 @@ nsresult nsNativeThemeWin::ClassicGetThemePartAndState(
         case StyleAppearance::SpinnerUpbutton:
           aState = DFCS_SCROLLUP;
           break;
-        case StyleAppearance::InnerSpinButton:
         case StyleAppearance::SpinnerDownbutton:
           aState = DFCS_SCROLLDOWN;
           break;
@@ -3642,7 +3542,6 @@ RENDER_AGAIN:
     case StyleAppearance::ScrollbarbuttonDown:
     case StyleAppearance::ScrollbarbuttonLeft:
     case StyleAppearance::ScrollbarbuttonRight:
-    case StyleAppearance::InnerSpinButton:
     case StyleAppearance::SpinnerUpbutton:
     case StyleAppearance::SpinnerDownbutton:
     case StyleAppearance::MozMenulistArrowButton:
@@ -3660,13 +3559,9 @@ RENDER_AGAIN:
     case StyleAppearance::Textarea:
     case StyleAppearance::Listbox:
     case StyleAppearance::Menulist:
-    case StyleAppearance::MenulistButton:
-    case StyleAppearance::MenulistTextfield: {
-      // Paint the border, except for 'menulist-textfield' that isn't focused:
-      if (aAppearance != StyleAppearance::MenulistTextfield || focused) {
-        // Draw inset edge
-        ::DrawEdge(hdc, &widgetRect, EDGE_SUNKEN, BF_RECT | BF_ADJUST);
-      }
+    case StyleAppearance::MenulistButton: {
+      // Draw inset edge
+      ::DrawEdge(hdc, &widgetRect, EDGE_SUNKEN, BF_RECT | BF_ADJUST);
 
       EventStates eventState = GetContentState(aFrame, aAppearance);
 
@@ -3701,7 +3596,6 @@ RENDER_AGAIN:
       break;
     // Draw 3D face background controls
     case StyleAppearance::ProgressBar:
-    case StyleAppearance::ProgressbarVertical:
       // Draw 3D border
       ::DrawEdge(hdc, &widgetRect, BDR_SUNKENOUTER, BF_RECT | BF_MIDDLE);
       InflateRect(&widgetRect, -1, -1);
@@ -3728,9 +3622,7 @@ RENDER_AGAIN:
       ::DrawEdge(hdc, &widgetRect, EDGE_RAISED, BF_RECT | BF_MIDDLE);
 
       break;
-    case StyleAppearance::RangeThumb:
-    case StyleAppearance::ScalethumbVertical:
-    case StyleAppearance::ScalethumbHorizontal: {
+    case StyleAppearance::RangeThumb: {
       EventStates eventState = GetContentState(aFrame, aAppearance);
 
       ::DrawEdge(hdc, &widgetRect, EDGE_RAISED,
@@ -3769,15 +3661,11 @@ RENDER_AGAIN:
       ::FillRect(hdc, &widgetRect, (HBRUSH)(COLOR_SCROLLBAR + 1));
     }
     // Draw scale track background
-    case StyleAppearance::Range:
-    case StyleAppearance::ScaleVertical:
-    case StyleAppearance::ScaleHorizontal: {
+    case StyleAppearance::Range: {
       const int32_t trackWidth = 4;
       // When rounding is necessary, we round the position of the track
       // away from the chevron of the thumb to make it look better.
-      if (aAppearance == StyleAppearance::ScaleHorizontal ||
-          (aAppearance == StyleAppearance::Range &&
-           IsRangeHorizontal(aFrame))) {
+      if (IsRangeHorizontal(aFrame)) {
         widgetRect.top += (widgetRect.bottom - widgetRect.top - trackWidth) / 2;
         widgetRect.bottom = widgetRect.top + trackWidth;
       } else {
@@ -4019,7 +3907,6 @@ uint32_t nsNativeThemeWin::GetWidgetNativeDrawingFlags(
     case StyleAppearance::Textarea:
     case StyleAppearance::Menulist:
     case StyleAppearance::MenulistButton:
-    case StyleAppearance::MenulistTextfield:
       return gfxWindowsNativeDrawing::CANNOT_DRAW_TO_COLOR_ALPHA |
              gfxWindowsNativeDrawing::CAN_AXIS_ALIGNED_SCALE |
              gfxWindowsNativeDrawing::CANNOT_COMPLEX_TRANSFORM;

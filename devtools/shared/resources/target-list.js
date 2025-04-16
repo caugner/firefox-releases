@@ -25,7 +25,15 @@ const {
   LegacyWorkersWatcher,
 } = require("devtools/shared/resources/legacy-target-watchers/legacy-workers-watcher");
 
-class TargetList {
+// eslint-disable-next-line mozilla/reject-some-requires
+loader.lazyRequireGetter(
+  this,
+  "TargetFactory",
+  "devtools/client/framework/target",
+  true
+);
+
+class TargetList extends EventEmitter {
   /**
    * This class helps managing, iterating over and listening for Targets.
    *
@@ -45,6 +53,8 @@ class TargetList {
    *        this may be replaced by a new one over time.
    */
   constructor(rootFront, targetFront) {
+    super();
+
     this.rootFront = rootFront;
 
     // Once we have descriptor for all targets we create a toolbox for,
@@ -58,6 +68,15 @@ class TargetList {
     this.targetFront = targetFront;
     targetFront.setTargetType(this.getTargetType(targetFront));
     targetFront.setIsTopLevel(true);
+
+    // Until Watcher actor notify about new top level target when navigating to another process
+    // we have to manually switch to a new target from the client side
+    this.onLocalTabRemotenessChange = this.onLocalTabRemotenessChange.bind(
+      this
+    );
+    if (targetFront.isLocalTab) {
+      targetFront.on("remoteness-change", this.onLocalTabRemotenessChange);
+    }
 
     // Reports if we have at least one listener for the given target type
     this._listenersStarted = new Set();
@@ -121,11 +140,30 @@ class TargetList {
       return;
     }
 
+    // Handle top level target switching
+    // Note that, for now, `_onTargetAvailable` isn't called for the *initial* top level target.
+    // i.e. the one that is passed to TargetList constructor.
+    if (targetFront.isTopLevel) {
+      // First report that all existing targets are destroyed
+      for (const target of this._targets) {
+        // We only consider the top level target to be switched
+        const isDestroyedTargetSwitching = target == this.targetFront;
+        this._onTargetDestroyed(target, isDestroyedTargetSwitching);
+      }
+      // Stop listening to legacy listeners as we now have to listen
+      // on the new target.
+      this.stopListening({ onlyLegacy: true });
+
+      // Clear the cached target list
+      this._targets.clear();
+
+      // Update the reference to the memoized top level target
+      this.targetFront = targetFront;
+    }
+
     // Map the descriptor typeName to a target type.
     const targetType = this.getTargetType(targetFront);
-
     targetFront.setTargetType(targetType);
-    targetFront.setIsTopLevel(targetFront == this.targetFront);
 
     this._targets.add(targetFront);
 
@@ -134,6 +172,12 @@ class TargetList {
       targetFront,
       isTargetSwitching,
     });
+
+    // Re-register the listeners as the top level target changed
+    // and some targets are fetched from it
+    if (targetFront.isTopLevel) {
+      await this.startListening({ onlyLegacy: true });
+    }
   }
 
   _onTargetDestroyed(targetFront, isTargetSwitching = false) {
@@ -157,14 +201,21 @@ class TargetList {
   }
 
   /**
+   * Start listening for targets from the server
+   *
    * Interact with the actors in order to start listening for new types of targets.
    * This will fire the _onTargetAvailable function for all already-existing targets,
    * as well as the next one to be created. It will also call _onTargetDestroyed
    * everytime a target is reported as destroyed by the actors.
    * By the time this function resolves, all the already-existing targets will be
    * reported to _onTargetAvailable.
+   *
+   * @param Object options
+   *        Dictionary object with `onlyLegacy` optional boolean.
+   *        If true, we wouldn't register listener set on the Watcher Actor,
+   *        but still register listeners set via Legacy Listeners.
    */
-  async startListening() {
+  async startListening({ onlyLegacy = false } = {}) {
     let types = [];
     if (this.targetFront.isParentProcess) {
       const fissionBrowserToolboxEnabled = Services.prefs.getBoolPref(
@@ -209,6 +260,12 @@ class TargetList {
       if (supportsWatcher) {
         const watcher = await this.descriptorFront.getWatcher();
         if (watcher.traits[type]) {
+          // When we switch to a new top level target, we don't have to stop and restart
+          // Watcher listener as it is independant from the top level target.
+          // This isn't the case for some Legacy Listeners, which fetch targets from the top level target
+          if (onlyLegacy) {
+            continue;
+          }
           if (!this._startedListeningToWatcher) {
             this._startedListeningToWatcher = true;
             watcher.on("target-available", this._onTargetAvailable);
@@ -226,7 +283,15 @@ class TargetList {
     }
   }
 
-  stopListening() {
+  /**
+   * Stop listening for targets from the server
+   *
+   * @param Object options
+   *        Dictionary object with `onlyLegacy` optional boolean.
+   *        If true, we wouldn't unregister listener set on the Watcher Actor,
+   *        but still unregister listeners set via Legacy Listeners.
+   */
+  stopListening({ onlyLegacy = false } = {}) {
     for (const type of TargetList.ALL_TYPES) {
       if (!this._isListening(type)) {
         continue;
@@ -238,7 +303,12 @@ class TargetList {
       if (supportsWatcher) {
         const watcher = this.descriptorFront.getCachedWatcher();
         if (watcher && watcher.traits[type]) {
-          watcher.unwatchTargets(type);
+          // When we switch to a new top level target, we don't have to stop and restart
+          // Watcher listener as it is independant from the top level target.
+          // This isn't the case for some Legacy Listeners, which fetch targets from the top level target
+          if (!onlyLegacy) {
+            watcher.unwatchTargets(type);
+          }
           continue;
         }
       }
@@ -395,6 +465,35 @@ class TargetList {
   }
 
   /**
+   * This function is triggered by an event sent by LocalTabTarget when
+   * the tab navigates to a distinct content process.
+   *
+   * @param TargetFront targetFront
+   *        The LocalTabTarget instance that navigated to another process
+   */
+  async onLocalTabRemotenessChange(targetFront) {
+    // Cache the client as this property will be nullified when the target is closed
+    const client = targetFront.client;
+
+    // By default, we do close the DevToolsClient when the target is destroyed.
+    // This happens when we close the toolbox (Toolbox.destroy calls Target.destroy),
+    // or when the tab is closes, the server emits tabDetached and the target
+    // destroy itself.
+    // Here, in the context of the process switch, the current target will be destroyed
+    // due to a tabDetached event and a we will create a new one. But we want to reuse
+    // the same client.
+    targetFront.shouldCloseClient = false;
+
+    // Wait for the target to be destroyed so that TargetFactory clears its memoized target for this tab
+    await targetFront.once("target-destroyed");
+
+    // Fetch the new target from the existing client so that the new target uses the same client.
+    const newTarget = await TargetFactory.forTab(targetFront.localTab, client);
+
+    this.switchToTarget(newTarget);
+  }
+
+  /**
    * Called when the top level target is replaced by a new one.
    * Typically when we navigate to another domain which requires to be loaded in a distinct process.
    *
@@ -402,27 +501,15 @@ class TargetList {
    *        The new top level target to debug.
    */
   async switchToTarget(newTarget) {
-    // First report that all existing targets are destroyed
-    for (const target of this._targets) {
-      // We only consider the top level target to be switched
-      const isTargetSwitching = target == this.targetFront;
-      this._onTargetDestroyed(target, isTargetSwitching);
+    newTarget.setIsTopLevel(true);
+    if (newTarget.isLocalTab) {
+      newTarget.on("remoteness-change", this.onLocalTabRemotenessChange);
     }
-    this.stopListening();
-
-    // Clear the cached target list
-    this._targets.clear();
-
-    // Update the reference to the top level target so that
-    // creation listening can know this is about the top level target
-    this.targetFront = newTarget;
 
     // Notify about this new target to creation listeners
     await this._onTargetAvailable(newTarget, true);
 
-    // Re-register the listeners as the top level target changed
-    // and some targets are fetched from it
-    await this.startListening();
+    this.emit("switched-target", newTarget);
   }
 
   isTargetRegistered(targetFront) {

@@ -183,7 +183,8 @@ class Schema(voluptuous.Schema):
     """
     def __init__(self, *args, **kwargs):
         super(Schema, self).__init__(*args, **kwargs)
-        check_schema(self)
+        if not taskgraph.fast:
+            check_schema(self)
 
     def extend(self, *args, **kwargs):
         schema = super(Schema, self).extend(*args, **kwargs)
@@ -191,6 +192,11 @@ class Schema(voluptuous.Schema):
         # We want twice extend schema to be checked too.
         schema.__class__ = Schema
         return schema
+
+    def _compile(self, schema):
+        if taskgraph.fast:
+            return
+        return super(Schema, self)._compile(schema)
 
     def __getitem__(self, item):
         return self.schema[item]
@@ -217,7 +223,7 @@ OptimizationSchema = voluptuous.Any(
     # skip this task if unless the change files' SCHEDULES contains any of these components
     {'skip-unless-schedules': list(schedules.ALL_COMPONENTS)},
     # optimize strategy aliases for the test kind
-    {'test': (list(schedules.ALL_COMPONENTS), dict)},
+    {'test': list(schedules.ALL_COMPONENTS)},
     {'test-inclusive': list(schedules.ALL_COMPONENTS)},
     {'test-try': list(schedules.ALL_COMPONENTS)},
 )

@@ -70,6 +70,16 @@ const PREF_URLBAR_DEFAULTS = new Map([
   // Whether telemetry events should be recorded.
   ["eventTelemetry.enabled", false],
 
+  // Whether we expand the font size when when the urlbar is
+  // focused.
+  ["experimental.expandTextOnFocus", false],
+
+  // Whether the urlbar displays a permanent search button.
+  ["experimental.searchButton", false],
+
+  // Whether we style the search mode indicator's close button on hover.
+  ["experimental.searchModeIndicatorHover", false],
+
   // When true, `javascript:` URLs are not included in search results.
   ["filter.javascript", true],
 
@@ -149,8 +159,21 @@ const PREF_URLBAR_DEFAULTS = new Map([
   // popular domains will no longer be included in the results.
   ["usepreloadedtopurls.expire_days", 14],
 
-  // Whether the urlbar displays a permanent search button in design update 2.
-  ["update2.searchButton", false],
+  // Whether aliases are styled as a "chiclet" separated from the Urlbar.
+  // Also controls the other urlbar.update2 prefs.
+  ["update2", false],
+
+  // Whether the urlbar displays one-offs to filter searches to history,
+  // bookmarks, or tabs.
+  ["update2.localOneOffs", false],
+
+  // Whether the urlbar one-offs act as search filters instead of executing a
+  // search immediately.
+  ["update2.oneOffsRefresh", false],
+
+  // Whether we display a tab-to-complete result when the user types an engine
+  // name.
+  ["update2.tabToComplete", false],
 ]);
 const PREF_OTHER_DEFAULTS = new Map([
   ["keyword.enabled", true],
@@ -211,8 +234,8 @@ class Preferences {
   constructor() {
     this._map = new Map();
     this.QueryInterface = ChromeUtils.generateQI([
-      Ci.nsIObserver,
-      Ci.nsISupportsWeakReference,
+      "nsIObserver",
+      "nsISupportsWeakReference",
     ]);
     Services.prefs.addObserver(PREF_URLBAR_BRANCH, this, true);
     for (let pref of PREF_OTHER_DEFAULTS.keys()) {

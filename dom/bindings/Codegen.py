@@ -1281,6 +1281,9 @@ class CGHeaders(CGWrapper):
                     headerSet.add(typeDesc.headerFile)
             elif unrolled.isDictionary():
                 headerSet.add(self.getDeclarationFilename(unrolled.inner))
+                # And if it needs rooting, we need RootedDictionary too
+                if typeNeedsRooting(unrolled):
+                    headerSet.add("mozilla/dom/RootedDictionary.h")
             elif unrolled.isCallback():
                 headerSet.add(self.getDeclarationFilename(unrolled.callback))
             elif unrolled.isFloat() and not unrolled.isUnrestricted():
@@ -12752,7 +12755,7 @@ class CGDOMJSProxyHandler_delete(ClassMethod):
             delete += dedent(
                 """
                 if (!IsPlatformObjectSameOrigin(cx, proxy)) {
-                  return ReportCrossOriginDenial(cx, id, NS_LITERAL_CSTRING("delete"));
+                  return ReportCrossOriginDenial(cx, id, "delete"_ns);
                 }
 
                 // Safe to enter the Realm of proxy now.
@@ -18633,7 +18636,7 @@ class GlobalGenRoots():
         curr = CGWrapper(curr, post='\n')
 
         # Add include statement for PinnedStringId.
-        declareIncludes = ['mozilla/dom/BindingUtils.h']
+        declareIncludes = ['mozilla/dom/PinnedStringId.h']
         curr = CGHeaders([], [], [], [], declareIncludes, [], 'GeneratedAtomList',
                          curr)
 

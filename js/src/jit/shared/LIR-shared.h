@@ -213,6 +213,15 @@ class LValue : public LInstructionHelper<BOX_PIECES, 0, 0> {
   Value value() const { return v_; }
 };
 
+class LNurseryObject : public LInstructionHelper<1, 0, 0> {
+ public:
+  LIR_HEADER(NurseryObject);
+
+  LNurseryObject() : LInstructionHelper(classOpcode) {}
+
+  MNurseryObject* mir() const { return mir_->toNurseryObject(); }
+};
+
 // Clone an object literal such as we are not modifying the object contained in
 // the sources.
 class LCloneLiteral : public LCallInstructionHelper<1, 1, 0> {
@@ -1105,6 +1114,20 @@ class LEncodeSnapshot : public LInstructionHelper<0, 0, 0> {
   LIR_HEADER(EncodeSnapshot)
 
   LEncodeSnapshot() : LInstructionHelper(classOpcode) {}
+};
+
+class LUnreachableResultV : public LInstructionHelper<BOX_PIECES, 0, 0> {
+ public:
+  LIR_HEADER(UnreachableResultV)
+
+  LUnreachableResultV() : LInstructionHelper(classOpcode) {}
+};
+
+class LUnreachableResultT : public LInstructionHelper<1, 0, 0> {
+ public:
+  LIR_HEADER(UnreachableResultT)
+
+  LUnreachableResultT() : LInstructionHelper(classOpcode) {}
 };
 
 template <size_t defs, size_t ops>
@@ -4147,6 +4170,20 @@ class LStoreElementT : public LInstructionHelper<0, 3, 0> {
   const LAllocation* value() { return getOperand(2); }
 };
 
+class LStoreHoleValueElement : public LInstructionHelper<0, 2, 0> {
+ public:
+  LIR_HEADER(StoreHoleValueElement)
+
+  LStoreHoleValueElement(const LAllocation& elements, const LAllocation& index)
+      : LInstructionHelper(classOpcode) {
+    setOperand(0, elements);
+    setOperand(1, index);
+  }
+
+  const LAllocation* elements() { return getOperand(0); }
+  const LAllocation* index() { return getOperand(1); }
+};
+
 // Like LStoreElementV, but supports indexes >= initialized length.
 class LStoreElementHoleV : public LInstructionHelper<0, 3 + BOX_PIECES, 1> {
  public:
@@ -6053,15 +6090,18 @@ class LGuardSpecificFunction : public LInstructionHelper<0, 2, 0> {
   const LAllocation* expected() { return getOperand(1); }
 };
 
-class LGuardSpecificAtom : public LInstructionHelper<0, 1, 0> {
+class LGuardSpecificAtom : public LInstructionHelper<0, 1, 1> {
  public:
   LIR_HEADER(GuardSpecificAtom)
 
-  explicit LGuardSpecificAtom(const LAllocation& str)
+  LGuardSpecificAtom(const LAllocation& str, const LDefinition& temp)
       : LInstructionHelper(classOpcode) {
     setOperand(0, str);
+    setTemp(0, temp);
   }
   const LAllocation* str() { return getOperand(0); }
+  const LDefinition* temp() { return getTemp(0); }
+
   const MGuardSpecificAtom* mir() const { return mir_->toGuardSpecificAtom(); }
 };
 
@@ -6090,6 +6130,37 @@ class LGuardShape : public LInstructionHelper<1, 1, 1> {
   }
   const LDefinition* temp() { return getTemp(0); }
   const MGuardShape* mir() const { return mir_->toGuardShape(); }
+};
+
+class LGuardProto : public LInstructionHelper<0, 2, 1> {
+ public:
+  LIR_HEADER(GuardProto)
+
+  LGuardProto(const LAllocation& obj, const LAllocation& expected,
+              const LDefinition& temp)
+      : LInstructionHelper(classOpcode) {
+    setOperand(0, obj);
+    setOperand(1, expected);
+    setTemp(0, temp);
+  }
+
+  const LAllocation* object() { return getOperand(0); }
+  const LAllocation* expected() { return getOperand(1); }
+  const LDefinition* temp() { return getTemp(0); }
+};
+
+class LGuardNullProto : public LInstructionHelper<0, 1, 1> {
+ public:
+  LIR_HEADER(GuardNullProto)
+
+  LGuardNullProto(const LAllocation& obj, const LDefinition& temp)
+      : LInstructionHelper(classOpcode) {
+    setOperand(0, obj);
+    setTemp(0, temp);
+  }
+
+  const LAllocation* object() { return getOperand(0); }
+  const LDefinition* temp() { return getTemp(0); }
 };
 
 class LGuardObjectGroup : public LInstructionHelper<1, 1, 1> {
@@ -7542,13 +7613,13 @@ class LIsPackedArray : public LInstructionHelper<1, 1, 1> {
  public:
   LIR_HEADER(IsPackedArray)
 
-  LIsPackedArray(const LAllocation& array, const LDefinition& temp)
+  LIsPackedArray(const LAllocation& object, const LDefinition& temp)
       : LInstructionHelper(classOpcode) {
-    setOperand(0, array);
+    setOperand(0, object);
     setTemp(0, temp);
   }
 
-  const LAllocation* array() { return getOperand(0); }
+  const LAllocation* object() { return getOperand(0); }
   const LDefinition* temp() { return getTemp(0); }
 };
 

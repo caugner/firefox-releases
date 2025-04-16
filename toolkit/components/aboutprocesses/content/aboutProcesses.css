@@ -43,24 +43,18 @@ tr {
   width: 100%;
 }
 td:nth-child(1) {
-  width:  6%;
+  width:  16%;
 }
 /* At least one column needs to have a flexible width,
    so no width specified for td:nth-child(2) */
 td:nth-child(3) {
-  width: 10%;
+    width: 10%;
 }
 td:nth-child(4) {
-  width: 10%;
+    width: 10%;
 }
 td:nth-child(5) {
-  width: 10%;
-}
-td:nth-child(6) {
-  width: 10%;
-}
-td:nth-child(7) {
-  width: 2%;
+    width: 10%;
 }
 
 #process-thead > tr {
@@ -172,4 +166,13 @@ td {
 }
 #process-tbody > tr.thread {
   font-size-adjust: 0.5;
+}
+
+/*
+  Show a the separation between process groups.
+ */
+
+#process-tbody > tr.separate-from-next-process-group {
+  border-bottom: dotted 1px var(--in-content-box-border-color);
+  margin-bottom: -1px;
 }

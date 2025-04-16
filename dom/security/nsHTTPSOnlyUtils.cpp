@@ -9,16 +9,33 @@
 #include "nsContentUtils.h"
 #include "nsHTTPSOnlyUtils.h"
 #include "nsIConsoleService.h"
+#include "nsIHttpsOnlyModePermission.h"
+#include "nsIPermissionManager.h"
 #include "nsIScriptError.h"
 #include "prnetdb.h"
 
-/* ------ Upgrade ------ */
+/* static */
+bool nsHTTPSOnlyUtils::IsHttpsOnlyModeEnabled(bool aFromPrivateWindow) {
+  // if the general pref is set to true, then we always return
+  if (mozilla::StaticPrefs::dom_security_https_only_mode()) {
+    return true;
+  }
+
+  // otherwise we check if executing in private browsing mode and return true
+  // if the PBM pref for HTTPS-Only is set.
+  if (aFromPrivateWindow &&
+      mozilla::StaticPrefs::dom_security_https_only_mode_pbm()) {
+    return true;
+  }
+  return false;
+}
 
 /* static */
 bool nsHTTPSOnlyUtils::ShouldUpgradeRequest(nsIURI* aURI,
                                             nsILoadInfo* aLoadInfo) {
   // 1. Check if the HTTPS-Only Mode is even enabled, before we do anything else
-  if (!mozilla::StaticPrefs::dom_security_https_only_mode()) {
+  bool isPrivateWin = aLoadInfo->GetOriginAttributes().mPrivateBrowsingId > 0;
+  if (!IsHttpsOnlyModeEnabled(isPrivateWin)) {
     return false;
   }
 
@@ -34,10 +51,9 @@ bool nsHTTPSOnlyUtils::ShouldUpgradeRequest(nsIURI* aURI,
     uint32_t innerWindowId = aLoadInfo->GetInnerWindowID();
     AutoTArray<nsString, 1> params = {
         NS_ConvertUTF8toUTF16(aURI->GetSpecOrDefault())};
-    nsHTTPSOnlyUtils::LogLocalizedString(
-        "HTTPSOnlyNoUpgradeException", params, nsIScriptError::infoFlag,
-        innerWindowId, !!aLoadInfo->GetOriginAttributes().mPrivateBrowsingId,
-        aURI);
+    nsHTTPSOnlyUtils::LogLocalizedString("HTTPSOnlyNoUpgradeException", params,
+                                         nsIScriptError::infoFlag,
+                                         innerWindowId, isPrivateWin, aURI);
     return false;
   }
 
@@ -72,7 +88,7 @@ bool nsHTTPSOnlyUtils::ShouldUpgradeWebSocket(nsIURI* aURI,
                                               bool aFromPrivateWindow,
                                               uint32_t aHttpsOnlyStatus) {
   // 1. Check if the HTTPS-Only Mode is even enabled, before we do anything else
-  if (!mozilla::StaticPrefs::dom_security_https_only_mode()) {
+  if (!IsHttpsOnlyModeEnabled(aFromPrivateWindow)) {
     return false;
   }
 
@@ -122,6 +138,26 @@ bool nsHTTPSOnlyUtils::CouldBeHttpsOnlyError(nsresult aError) {
            NS_ERROR_FRAME_CRASHED == aError);
 }
 
+/* static */
+bool nsHTTPSOnlyUtils::TestHttpsOnlySitePermission(nsIPrincipal* aPrincipal) {
+  if (!aPrincipal) {
+    // We always deny the permission if we don't have a principal.
+    return false;
+  }
+
+  nsCOMPtr<nsIPermissionManager> permMgr =
+      mozilla::services::GetPermissionManager();
+  NS_ENSURE_TRUE(permMgr, false);
+
+  uint32_t perm;
+  nsresult rv = permMgr->TestExactPermissionFromPrincipal(
+      aPrincipal, "https-only-load-insecure"_ns, &perm);
+  NS_ENSURE_SUCCESS(rv, false);
+
+  return perm == nsIHttpsOnlyModePermission::LOAD_INSECURE_ALLOW ||
+         perm == nsIHttpsOnlyModePermission::LOAD_INSECURE_ALLOW_SESSION;
+}
+
 /* ------ Logging ------ */
 
 /* static */
@@ -168,7 +204,7 @@ bool nsHTTPSOnlyUtils::OnionException(nsIURI* aURI) {
   }
   nsAutoCString host;
   aURI->GetHost(host);
-  return StringEndsWith(host, NS_LITERAL_CSTRING(".onion"));
+  return StringEndsWith(host, ".onion"_ns);
 }
 
 /* static */

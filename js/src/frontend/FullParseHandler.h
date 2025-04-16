@@ -151,6 +151,10 @@ class FullParseHandler {
     return new_<NameNode>(ParseNodeKind::ObjectPropertyName, atom, pos);
   }
 
+  NameNodeType newPrivateName(JSAtom* atom, const TokenPos& pos) {
+    return new_<NameNode>(ParseNodeKind::PrivateName, atom, pos);
+  }
+
   NumericLiteralType newNumber(double value, DecimalPoint decimalPoint,
                                const TokenPos& pos) {
     return new_<NumericLiteral>(value, decimalPoint, pos);
@@ -919,7 +923,8 @@ class FullParseHandler {
            node->isKind(ParseNodeKind::BigIntExpr) ||
            node->isKind(ParseNodeKind::ObjectPropertyName) ||
            node->isKind(ParseNodeKind::StringExpr) ||
-           node->isKind(ParseNodeKind::ComputedName);
+           node->isKind(ParseNodeKind::ComputedName) ||
+           node->isKind(ParseNodeKind::PrivateName);
   }
 
   AssignmentNodeType finishInitializerAssignment(NameNodeType nameNode,
@@ -1014,18 +1019,36 @@ class FullParseHandler {
 
   bool isArgumentsName(Node node, JSContext* cx) {
     return node->isKind(ParseNodeKind::Name) &&
-           node->as<NameNode>().atom() == cx->names().arguments;
+           node->as<NameNode>().atom() == cx->parserNames().arguments;
   }
 
   bool isEvalName(Node node, JSContext* cx) {
     return node->isKind(ParseNodeKind::Name) &&
-           node->as<NameNode>().atom() == cx->names().eval;
+           node->as<NameNode>().atom() == cx->parserNames().eval;
   }
 
   bool isAsyncKeyword(Node node, JSContext* cx) {
     return node->isKind(ParseNodeKind::Name) &&
            node->pn_pos.begin + strlen("async") == node->pn_pos.end &&
-           node->as<NameNode>().atom() == cx->names().async;
+           node->as<NameNode>().atom() == cx->parserNames().async;
+  }
+
+  bool isPrivateName(Node node) {
+    return node->isKind(ParseNodeKind::PrivateName);
+  }
+
+  bool isPrivateField(Node node) {
+    if (node->isKind(ParseNodeKind::ElemExpr) ||
+        node->isKind(ParseNodeKind::OptionalElemExpr)) {
+      PropertyByValueBase& pbv = node->as<PropertyByValueBase>();
+      if (isPrivateName(&pbv.key())) {
+        return true;
+      }
+    }
+    if (node->isKind(ParseNodeKind::OptionalChain)) {
+      return isPrivateField(node->as<UnaryNode>().kid());
+    }
+    return false;
   }
 
   PropertyName* maybeDottedProperty(Node pn) {

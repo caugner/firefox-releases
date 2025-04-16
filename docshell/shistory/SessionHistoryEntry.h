@@ -8,8 +8,10 @@
 #define mozilla_dom_SessionHistoryEntry_h
 
 #include "mozilla/UniquePtr.h"
+#include "nsILayoutHistoryState.h"
 #include "nsISHEntry.h"
 #include "nsStructuredCloneContainer.h"
+#include "nsDataHashtable.h"
 
 class nsDocShellLoadState;
 class nsIChannel;
@@ -34,9 +36,26 @@ class SessionHistoryInfo {
     return false;  // FIXME
   }
 
+  nsIInputStream* GetPostData() const { return mPostData; }
+  void GetScrollPosition(int32_t* aScrollPositionX, int32_t* aScrollPositionY) {
+    *aScrollPositionX = mScrollPositionX;
+    *aScrollPositionY = mScrollPositionY;
+  }
+  bool GetScrollRestorationIsManual() const {
+    return mScrollRestorationIsManual;
+  }
+  const nsAString& GetTitle() { return mTitle; }
   nsIURI* GetURI() const { return mURI; }
 
+  bool GetURIWasModified() const { return mURIWasModified; }
+
   uint64_t Id() const { return mId; }
+
+  nsILayoutHistoryState* GetLayoutHistoryState() { return mLayoutHistoryState; }
+
+  void SetLayoutHistoryState(nsILayoutHistoryState* aState) {
+    mLayoutHistoryState = aState;
+  }
 
  private:
   friend class SessionHistoryEntry;
@@ -54,6 +73,11 @@ class SessionHistoryInfo {
   RefPtr<nsStructuredCloneContainer> mStateData;
   nsString mSrcdocData;
   nsCOMPtr<nsIURI> mBaseURI;
+  // mLayoutHistoryState is used to serialize layout history state across
+  // IPC. In the parent process this is then synchronized to
+  // SHEntrySharedParentState::mLayoutHistoryState
+  nsCOMPtr<nsILayoutHistoryState> mLayoutHistoryState;
+
   uint64_t mId = 0;
   bool mLoadReplace = false;
   bool mURIWasModified = false;
@@ -67,35 +91,52 @@ class SessionHistoryInfo {
 // SessionHistoryEntries, a parent and children.
 class SessionHistoryEntry : public nsISHEntry {
  public:
-  SessionHistoryEntry(nsISHistory* aSessionHistory,
-                      nsDocShellLoadState* aLoadState, nsIChannel* aChannel);
+  SessionHistoryEntry(nsDocShellLoadState* aLoadState, nsIChannel* aChannel);
+  explicit SessionHistoryEntry(SessionHistoryInfo* aInfo);
 
   NS_DECL_ISUPPORTS
   NS_DECL_NSISHENTRY
 
   const SessionHistoryInfo& Info() const { return *mInfo; }
 
+  // Get an entry based on SessionHistoryInfo's Id. Parent process only.
+  static SessionHistoryEntry* GetByInfoId(uint64_t aId);
+
+  static void UpdateLayoutHistoryState(uint64_t aSessionHistoryEntryID,
+                                       nsILayoutHistoryState* aState);
+
  private:
-  virtual ~SessionHistoryEntry() = default;
+  virtual ~SessionHistoryEntry();
 
   UniquePtr<SessionHistoryInfo> mInfo;
   RefPtr<SHEntrySharedParentState> mSharedInfo;
   nsISHEntry* mParent = nullptr;
   uint32_t mID;
   nsTArray<RefPtr<SessionHistoryEntry>> mChildren;
+
+  static nsDataHashtable<nsUint64HashKey, SessionHistoryEntry*>* sInfoIdToEntry;
 };
 
 }  // namespace dom
 
-// Allow sending SessionHistoryInfo objects over IPC.
 namespace ipc {
 
+// Allow sending SessionHistoryInfo objects over IPC.
 template <>
 struct IPDLParamTraits<dom::SessionHistoryInfo> {
   static void Write(IPC::Message* aMsg, IProtocol* aActor,
                     const dom::SessionHistoryInfo& aParam);
   static bool Read(const IPC::Message* aMsg, PickleIterator* aIter,
                    IProtocol* aActor, dom::SessionHistoryInfo* aResult);
+};
+
+// Allow sending nsILayoutHistoryState objects over IPC.
+template <>
+struct IPDLParamTraits<nsILayoutHistoryState*> {
+  static void Write(IPC::Message* aMsg, IProtocol* aActor,
+                    nsILayoutHistoryState* aParam);
+  static bool Read(const IPC::Message* aMsg, PickleIterator* aIter,
+                   IProtocol* aActor, RefPtr<nsILayoutHistoryState>* aResult);
 };
 
 }  // namespace ipc

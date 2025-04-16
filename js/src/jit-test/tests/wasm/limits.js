@@ -1,3 +1,6 @@
+// |jit-test| skip-if: wasmCompilersPresent().match("cranelift")
+// (Reason: the Cranelift backend does not support shared memory yet.)
+
 // Tests of limits of memory and table types
 
 const PageSize = 65536;
@@ -123,7 +126,7 @@ testMemoryFailGrow(1, MemoryMaxValid, MemoryMaxRuntime + 1, true);
 // Test that a table type is valid within a module
 function testTableValidate(initial, maximum) {
   wasmValidateText(`(module
-    (table ${initial} ${maximum || ''} externref)
+    (table ${initial} ${maximum || ''} anyfunc)
   )`);
 }
 
@@ -137,7 +140,7 @@ testTableValidate(TableMaxValid, TableMaxValid);
 // Test that a table type is not valid within a module
 function testTableFailValidate(initial, maximum, pattern) {
   wasmFailValidateText(`(module
-    (table ${initial} ${maximum || ''} externref)
+    (table ${initial} ${maximum || ''} anyfunc)
   )`, pattern);
 }
 
@@ -151,7 +154,7 @@ function testTableFailConstruct(initial, maximum, pattern) {
   assertErrorMessage(() => new WebAssembly.Table({
     initial,
     maximum,
-    element: 'externref',
+    element: 'anyfunc',
   }), TypeError, pattern);
 }
 
@@ -164,7 +167,7 @@ function testTableCreate(initial, maximum) {
   // May OOM, but must not fail to validate
   try {
       wasmEvalText(`(module
-        (table ${initial} ${maximum || ''} externref)
+        (table ${initial} ${maximum || ''} anyfunc)
       )`);
   } catch (e) {
       assertEq(String(e).indexOf("out of memory") !== -1, true, `${e}`);
@@ -173,7 +176,7 @@ function testTableCreate(initial, maximum) {
     new WebAssembly.Table({
       initial,
       maximum,
-      element: 'externref',
+      element: 'anyfunc',
     });
   } catch (e) {
     assertEq(String(e).indexOf("out of memory") !== -1, true, `${e}`);
@@ -191,38 +194,40 @@ testTableCreate(TableMaxRuntime, TableMaxValid);
 // with a WebAssembly.Table
 function testTableFailCreate(initial, maximum, pattern) {
   assertErrorMessage(() => wasmEvalText(`(module
-    (table ${initial} ${maximum || ''} externref)
+    (table ${initial} ${maximum || ''} anyfunc)
   )`), WebAssembly.RuntimeError, pattern);
   assertErrorMessage(() => new WebAssembly.Table({
     initial,
     maximum,
-    element: 'externref',
+    element: 'anyfunc',
   }), WebAssembly.RuntimeError, pattern);
 }
 
 testTableFailCreate(TableMaxRuntime + 1, undefined, /too many table elements/);
 testTableFailCreate(TableMaxRuntime + 1, TableMaxValid, /too many table elements/);
 
-// Test that a table type cannot be grown from initial to a target due to an
-// implementation limit
-function testTableFailGrow(initial, maximum, target) {
-  let {run} = wasmEvalText(`(module
-    (table ${initial} ${maximum || ''} externref)
-    (func (export "run") (result i32)
-      ref.null extern
-      i32.const ${target - initial}
-      table.grow
-    )
-  )`).exports;
-  assertEq(run(), -1, 'failed to grow');
+if (wasmReftypesEnabled()) {
+  // Test that a table type cannot be grown from initial to a target due to an
+  // implementation limit
+  function testTableFailGrow(initial, maximum, target) {
+    let {run} = wasmEvalText(`(module
+      (table ${initial} ${maximum || ''} externref)
+      (func (export "run") (result i32)
+        ref.null extern
+        i32.const ${target - initial}
+        table.grow
+      )
+    )`).exports;
+    assertEq(run(), -1, 'failed to grow');
 
-  let tab = new WebAssembly.Table({
-    initial,
-    maximum,
-    element: 'externref',
-  });
-  assertErrorMessage(() => tab.grow(target - initial), RangeError, /failed to grow table/);
+    let tab = new WebAssembly.Table({
+      initial,
+      maximum,
+      element: 'externref',
+    });
+    assertErrorMessage(() => tab.grow(target - initial), RangeError, /failed to grow table/);
+  }
+
+  testTableFailGrow(1, undefined, TableMaxRuntime + 1);
+  testTableFailGrow(1, TableMaxValid, TableMaxRuntime + 1);
 }
-
-testTableFailGrow(1, undefined, TableMaxRuntime + 1);
-testTableFailGrow(1, TableMaxValid, TableMaxRuntime + 1);

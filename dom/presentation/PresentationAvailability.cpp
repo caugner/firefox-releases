@@ -15,8 +15,8 @@
 #include "nsServiceManagerUtils.h"
 #include "PresentationLog.h"
 
-using namespace mozilla;
-using namespace mozilla::dom;
+namespace mozilla {
+namespace dom {
 
 NS_IMPL_CYCLE_COLLECTION_CLASS(PresentationAvailability)
 
@@ -193,7 +193,9 @@ void PresentationAvailability::UpdateAvailabilityAndDispatchEvent(
   }
 
   if (isChanged) {
-    Unused << NS_WARN_IF(
-        NS_FAILED(DispatchTrustedEvent(NS_LITERAL_STRING("change"))));
+    Unused << NS_WARN_IF(NS_FAILED(DispatchTrustedEvent(u"change"_ns)));
   }
 }
+
+}  // namespace dom
+}  // namespace mozilla

@@ -97,6 +97,25 @@ nsresult AnnotateCrashReport(Annotation key, const nsACString& data);
 nsresult RemoveCrashReportAnnotation(Annotation key);
 nsresult AppendAppNotesToCrashReport(const nsACString& data);
 
+// RAII class for setting a crash annotation during a limited scope of time.
+// Will reset the named annotation to its previous value when destroyed.
+//
+// This type is subject to the same restrictions as AnnotateCrashReport.
+class MOZ_RAII AutoAnnotateCrashReport final {
+ public:
+  AutoAnnotateCrashReport(Annotation key, bool data);
+  AutoAnnotateCrashReport(Annotation key, int data);
+  AutoAnnotateCrashReport(Annotation key, unsigned int data);
+  AutoAnnotateCrashReport(Annotation key, const nsACString& data);
+  ~AutoAnnotateCrashReport();
+
+#ifdef MOZ_CRASHREPORTER
+ private:
+  Annotation mKey;
+  nsCString mPrevious;
+#endif
+};
+
 void AnnotateOOMAllocationSize(size_t size);
 void AnnotateTexturesSize(size_t size);
 nsresult SetGarbageCollecting(bool collecting);
@@ -306,15 +325,6 @@ bool UnsetRemoteExceptionHandler();
 // the handle for the pipe since it can't get remapped to a default value.
 void SetNotificationPipeForChild(int childCrashFd);
 void SetCrashAnnotationPipeForChild(int childCrashAnnotationFd);
-
-// Android builds use a custom library loader, so /proc/<pid>/maps
-// will just show anonymous mappings for all the non-system
-// shared libraries. This API is to work around that by providing
-// info about the shared libraries that are mapped into these anonymous
-// mappings.
-void AddLibraryMapping(const char* library_name, uintptr_t start_address,
-                       size_t mapping_length, size_t file_offset);
-
 #endif
 
 // Annotates the crash report with the name of the calling thread.

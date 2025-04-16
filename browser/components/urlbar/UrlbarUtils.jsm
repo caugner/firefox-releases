@@ -23,6 +23,7 @@ const { XPCOMUtils } = ChromeUtils.import(
 XPCOMUtils.defineLazyModuleGetters(this, {
   BrowserUtils: "resource://gre/modules/BrowserUtils.jsm",
   BrowserWindowTracker: "resource:///modules/BrowserWindowTracker.jsm",
+  Log: "resource://gre/modules/Log.jsm",
   PrivateBrowsingUtils: "resource://gre/modules/PrivateBrowsingUtils.jsm",
   PlacesUIUtils: "resource:///modules/PlacesUIUtils.jsm",
   PlacesUtils: "resource://gre/modules/PlacesUtils.jsm",
@@ -443,6 +444,16 @@ var UrlbarUtils = {
     return [submission.uri.spec, submission.postData];
   },
 
+  // Ranks a URL prefix from 3 - 0 with the following preferences:
+  // https:// > https://www. > http:// > http://www.
+  // Higher is better for the purposes of deduping URLs.
+  // Returns -1 if the prefix does not match any of the above.
+  getPrefixRank(prefix) {
+    return ["http://www.", "http://", "https://www.", "https://"].indexOf(
+      prefix
+    );
+  },
+
   /**
    * Get the number of rows a result should span in the autocomplete dropdown.
    *
@@ -508,6 +519,58 @@ var UrlbarUtils = {
     } catch (ex) {
       // Can't setup speculative connection for this url, just ignore it.
     }
+  },
+
+  /**
+   * Strips parts of a URL defined in `options`.
+   *
+   * @param {string} spec
+   *        The text to modify.
+   * @param {object} options
+   * @param {boolean} options.stripHttp
+   *        Whether to strip http.
+   * @param {boolean} options.stripHttps
+   *        Whether to strip https.
+   * @param {boolean} options.stripWww
+   *        Whether to strip `www.`.
+   * @param {boolean} options.trimSlash
+   *        Whether to trim the trailing slash.
+   * @param {boolean} options.trimEmptyQuery
+   *        Whether to trim a trailing `?`.
+   * @param {boolean} options.trimEmptyHash
+   *        Whether to trim a trailing `#`.
+   * @returns {array} [modified, prefix, suffix]
+   *          modified: {string} The modified spec.
+   *          prefix: {string} The parts stripped from the prefix, if any.
+   *          suffix: {string} The parts trimmed from the suffix, if any.
+   */
+  stripPrefixAndTrim(spec, options = {}) {
+    let prefix = "";
+    let suffix = "";
+    if (options.stripHttp && spec.startsWith("http://")) {
+      spec = spec.slice(7);
+      prefix = "http://";
+    } else if (options.stripHttps && spec.startsWith("https://")) {
+      spec = spec.slice(8);
+      prefix = "https://";
+    }
+    if (options.stripWww && spec.startsWith("www.")) {
+      spec = spec.slice(4);
+      prefix += "www.";
+    }
+    if (options.trimEmptyHash && spec.endsWith("#")) {
+      spec = spec.slice(0, -1);
+      suffix = "#" + suffix;
+    }
+    if (options.trimEmptyQuery && spec.endsWith("?")) {
+      spec = spec.slice(0, -1);
+      suffix = "?" + suffix;
+    }
+    if (options.trimSlash && spec.endsWith("/")) {
+      spec = spec.slice(0, -1);
+      suffix = "/" + suffix;
+    }
+    return [spec, prefix, suffix];
   },
 
   /**
@@ -608,6 +671,28 @@ var UrlbarUtils = {
   },
 
   /**
+   * Strips the prefix from a URL and returns the prefix and the remainder of the
+   * URL.  "Prefix" is defined to be the scheme and colon, plus, if present, two
+   * slashes.  If the given string is not actually a URL, then an empty prefix and
+   * the string itself is returned.
+   *
+   * @param {string} str The possible URL to strip.
+   * @returns {array} If `str` is a URL, then [prefix, remainder].  Otherwise, ["", str].
+   */
+  stripURLPrefix(str) {
+    const REGEXP_STRIP_PREFIX = /^[a-z]+:(?:\/){0,2}/i;
+    let match = REGEXP_STRIP_PREFIX.exec(str);
+    if (!match) {
+      return ["", str];
+    }
+    let prefix = match[0];
+    if (prefix.length < str.length && str[prefix.length] == " ") {
+      return ["", str];
+    }
+    return [prefix, str.substr(prefix.length)];
+  },
+
+  /**
    * Runs a search for the given string, and returns the heuristic result.
    * @param {string} searchString The string to search for.
    * @param {nsIDOMWindow} window The window requesting it.
@@ -629,13 +714,37 @@ var UrlbarUtils = {
         "usercontextid"
       ),
       allowSearchSuggestions: false,
-      providers: ["UnifiedComplete"],
+      providers: ["UnifiedComplete", "HeuristicFallback"],
     });
     await UrlbarProvidersManager.startQuery(context);
     if (!context.heuristicResult) {
       throw new Error("There should always be an heuristic result");
     }
     return context.heuristicResult;
+  },
+
+  /**
+   * Creates a logger.
+   * Logging level can be controlled through browser.urlbar.loglevel.
+   * @param {string} [prefix] Prefix to use for the logged messages, "::" will
+   *                 be appended automatically to the prefix.
+   * @returns {object} The logger.
+   */
+  getLogger({ prefix = "" } = {}) {
+    if (!this._logger) {
+      this._logger = Log.repository.getLogger("urlbar");
+      this._logger.manageLevelFromPref("browser.urlbar.loglevel");
+      this._logger.addAppender(
+        new Log.ConsoleAppender(new Log.BasicFormatter())
+      );
+    }
+    if (prefix) {
+      // This is not an early return because it is necessary to invoke getLogger
+      // at least once before getLoggerWithMessagePrefix; it replaces a
+      // method of the original logger, rather than using an actual Proxy.
+      return Log.repository.getLoggerWithMessagePrefix("urlbar", prefix + "::");
+    }
+    return this._logger;
   },
 };
 
@@ -978,6 +1087,8 @@ class UrlbarQueryContext {
     }
 
     this.lastResultCount = 0;
+    this.allHeuristicResults = [];
+    this.pendingHeuristicProviders = new Set();
     this.userContextId =
       options.userContextId ||
       Ci.nsIScriptSecurityManager.DEFAULT_USER_CONTEXT_ID;
@@ -1003,9 +1114,12 @@ class UrlbarQueryContext {
 
   /**
    * Caches and returns fixup info from URIFixup for the current search string.
+   * Only returns a subset of the properties from URIFixup. This is both to
+   * reduce the memory footprint of UrlbarQueryContexts and to keep them
+   * serializable so they can be sent to extensions.
    */
   get fixupInfo() {
-    if (this.searchString && !this._fixupInfo) {
+    if (this.searchString.trim() && !this._fixupInfo) {
       let flags =
         Ci.nsIURIFixup.FIXUP_FLAG_FIX_SCHEME_TYPOS |
         Ci.nsIURIFixup.FIXUP_FLAG_ALLOW_KEYWORD_LOOKUP;
@@ -1013,13 +1127,34 @@ class UrlbarQueryContext {
         flags |= Ci.nsIURIFixup.FIXUP_FLAG_PRIVATE_CONTEXT;
       }
 
-      this._fixupInfo = Services.uriFixup.getFixupURIInfo(
-        this.searchString.trim(),
-        flags
-      );
+      try {
+        let info = Services.uriFixup.getFixupURIInfo(
+          this.searchString.trim(),
+          flags
+        );
+        this._fixupInfo = {
+          href: info.fixedURI.spec,
+          isSearch: !!info.keywordAsSent,
+        };
+      } catch (ex) {
+        this._fixupError = ex.result;
+      }
     }
 
     return this._fixupInfo || null;
+  }
+
+  /**
+   * Returns the error that was thrown when fixupInfo was fetched, if any. If
+   * fixupInfo has not yet been fetched for this queryContext, it is fetched
+   * here.
+   */
+  get fixupError() {
+    if (!this.fixupInfo) {
+      return this._fixupError;
+    }
+
+    return null;
   }
 }
 
@@ -1052,6 +1187,12 @@ class UrlbarMuxer {
  * The provider scope is to query a datasource and return results from it.
  */
 class UrlbarProvider {
+  constructor() {
+    XPCOMUtils.defineLazyGetter(this, "logger", () =>
+      UrlbarUtils.getLogger({ prefix: `Provider.${this.name}` })
+    );
+  }
+
   /**
    * Unique name for the provider, used by the context to filter on providers.
    * Not using a unique name will cause the newest registration to win.
@@ -1135,7 +1276,7 @@ class UrlbarProvider {
    * @abstract
    */
   cancelQuery(queryContext) {
-    throw new Error("Trying to access the base class, must be overridden");
+    // Override this with your clean-up on cancel code.
   }
 
   /**

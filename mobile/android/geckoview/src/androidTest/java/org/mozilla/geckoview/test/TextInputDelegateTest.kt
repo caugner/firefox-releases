@@ -605,6 +605,23 @@ class TextInputDelegateTest : BaseSessionTest() {
         assertText("Can type using event", ic, "frabat")
     }
 
+    // Test for Multiple setComposingText with same string length.
+    @WithDisplay(width = 512, height = 512) // Child process updates require having a display.
+    @Test fun inputConnection_multiple_setComposingText() {
+
+        setupContent("")
+        val ic = mainSession.textInput.onCreateInputConnection(EditorInfo())!!
+
+        // Don't wait composition event for this test.
+        ic.setComposingText("aaa", 1)
+        ic.setComposingText("aaa", 1)
+        ic.setComposingText("aab", 1)
+
+        finishComposingText(ic)
+        assertTextAndSelectionAt("Multiple setComposingText don't commit composition string",
+                                 ic, "aab", 3)
+    }
+
     // Bug 1133802, duplication when setting the same composing text more than once.
     @Ignore // Disable for frequent failures.
     @WithDisplay(width = 512, height = 512) // Child process updates require having a display.
@@ -866,10 +883,15 @@ class TextInputDelegateTest : BaseSessionTest() {
          """)
 
         setComposingText(ic, "b", 1)
-        setComposingText(ic, "a", 1)
-        pressKey(ic, KeyEvent.KEYCODE_R)
+        assertTextAndSelectionAt("Don't change caret position after calling blur and focus",
+                                 ic, "b", 1)
 
-        assertText("Can set composition string after calling blur and focus",
+        setComposingText(ic, "a", 1)
+        assertTextAndSelectionAt("Can set composition string after calling blur and focus",
+                                 ic, "ba", 2)
+
+        pressKey(ic, KeyEvent.KEYCODE_R)
+        assertText("Can set input string by keypress after calling blur and focus",
                    ic, "bar")
     }
 }

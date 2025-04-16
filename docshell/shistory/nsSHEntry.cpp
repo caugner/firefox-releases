@@ -32,8 +32,8 @@ namespace dom = mozilla::dom;
 
 static uint32_t gEntryID = 0;
 
-nsSHEntry::nsSHEntry(nsISHistory* aSHistory)
-    : mShared(new nsSHEntryShared(aSHistory)),
+nsSHEntry::nsSHEntry()
+    : mShared(new nsSHEntryShared()),
       mLoadType(0),
       mID(gEntryID++),
       mScrollPositionX(0),
@@ -322,18 +322,6 @@ nsSHEntry::GetCacheKey(uint32_t* aResult) {
 NS_IMETHODIMP
 nsSHEntry::SetCacheKey(uint32_t aCacheKey) {
   mShared->mCacheKey = aCacheKey;
-  return NS_OK;
-}
-
-NS_IMETHODIMP
-nsSHEntry::GetExpirationStatus(bool* aFlag) {
-  *aFlag = mShared->mExpired;
-  return NS_OK;
-}
-
-NS_IMETHODIMP
-nsSHEntry::SetExpirationStatus(bool aFlag) {
-  mShared->mExpired = aFlag;
   return NS_OK;
 }
 
@@ -838,6 +826,15 @@ nsSHEntry::GetShistory(nsISHistory** aSHistory) {
 }
 
 NS_IMETHODIMP
+nsSHEntry::SetShistory(nsISHistory* aSHistory) {
+  nsWeakPtr shistory = do_GetWeakReference(aSHistory);
+  // mSHistory can not be changed once it's set
+  MOZ_ASSERT(!mShared->mSHistory || (mShared->mSHistory == shistory));
+  mShared->mSHistory = shistory;
+  return NS_OK;
+}
+
+NS_IMETHODIMP
 nsSHEntry::SetLoadTypeAsHistory() {
   // Set the LoadType by default to loadHistory during creation
   mLoadType = LOAD_HISTORY;
@@ -952,12 +949,6 @@ void nsSHEntry::EvictContentViewer() {
     SyncPresentationState();
     viewer->Destroy();
   }
-}
-
-NS_IMETHODIMP
-nsSHEntry::SynchronizeLayoutHistoryState() {
-  // No-op on purpose. See nsISHEntry.idl
-  return NS_OK;
 }
 
 NS_IMETHODIMP

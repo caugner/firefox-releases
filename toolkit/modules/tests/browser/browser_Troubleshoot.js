@@ -36,6 +36,25 @@ registerCleanupFunction(function() {
 });
 
 var tests = [
+  function setup(done) {
+    SpecialPowers.pushPrefEnv(
+      {
+        set: [
+          ["devtools.inspector.compatibility.enabled", false],
+          ["devtools.webconsole.input.context", false],
+          ["dom.media.mediasession.enabled", false],
+          ["dom.forms.inputmode", false],
+          ["layout.css.focus-visible.enabled", false],
+          ["network.cookie.sameSite.laxByDefault", false],
+          ["network.cookie.sameSite.noneRequiresSecure", false],
+          ["network.cookie.sameSite.schemeful", false],
+          ["network.preload", false],
+        ],
+      },
+      done
+    );
+  },
+
   function snapshotSchema(done) {
     Troubleshoot.snapshot(function(snapshot) {
       try {
@@ -54,7 +73,7 @@ var tests = [
     for (let gate of featureGates) {
       ok(
         !Services.prefs.getBoolPref(gate.preference),
-        "Features should be disabled by default"
+        `Feature ${gate.preference} should be disabled by default`
       );
     }
 

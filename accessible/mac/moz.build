@@ -16,9 +16,11 @@ EXPORTS.mozilla.a11y += [
 UNIFIED_SOURCES += [
     'AccessibleWrap.mm',
     'DocAccessibleWrap.mm',
+    'GeckoTextMarker.mm',
     'MacUtils.mm',
     'MOXAccessibleBase.mm',
     'MOXMathAccessibles.mm',
+    'MOXTextMarkerDelegate.mm',
     'MOXWebAreaAccessible.mm',
     'mozAccessible.mm',
     'mozActionElements.mm',

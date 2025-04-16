@@ -459,6 +459,22 @@ var SessionStore = {
   },
 
   /**
+   * Ensures that session store has registered and started tracking a given window.
+   * @param window
+   *        Window reference
+   */
+  ensureInitialized(window) {
+    if (SessionStoreInternal._sessionInitialized && !window.__SSi) {
+      /*
+        We need to check that __SSi is not defined on the window so that if
+        onLoad function is in the middle of executing we don't enter the function
+        again and try to redeclare the ContentSessionStore script.
+       */
+      SessionStoreInternal.onLoad(window);
+    }
+  },
+
+  /**
    * Determines whether the passed version number is compatible with
    * the current version number of the SessionStore.
    *
@@ -530,8 +546,8 @@ Object.freeze(SessionStore);
 
 var SessionStoreInternal = {
   QueryInterface: ChromeUtils.generateQI([
-    Ci.nsIObserver,
-    Ci.nsISupportsWeakReference,
+    "nsIObserver",
+    "nsISupportsWeakReference",
   ]),
 
   _globalState: new GlobalState(),
@@ -989,8 +1005,8 @@ var SessionStoreInternal = {
     }
     SHistoryListener.prototype = {
       QueryInterface: ChromeUtils.generateQI([
-        Ci.nsISHistoryListener,
-        Ci.nsISupportsWeakReference,
+        "nsISHistoryListener",
+        "nsISupportsWeakReference",
       ]),
 
       notifySHistoryChanges(index) {
@@ -1108,8 +1124,8 @@ var SessionStoreInternal = {
     }
     SHistoryListener.prototype = {
       QueryInterface: ChromeUtils.generateQI([
-        Ci.nsISHistoryListener,
-        Ci.nsISupportsWeakReference,
+        "nsISHistoryListener",
+        "nsISupportsWeakReference",
       ]),
 
       uninstall() {
@@ -4927,8 +4943,13 @@ var SessionStoreInternal = {
         aOptions.restoreContentReason || RESTORE_TAB_CONTENT_REASON.SET_STATE,
     });
 
-    // Focus the tab's content area.
-    if (aTab.selected && !window.isBlankPageURL(uri)) {
+    // Focus the tab's content area, unless the restore is for a new tab URL or
+    // was triggered by a DocumentChannel process switch.
+    if (
+      aTab.selected &&
+      !window.isBlankPageURL(uri) &&
+      !aOptions.isRemotenessUpdate
+    ) {
       browser.focus();
     }
   },

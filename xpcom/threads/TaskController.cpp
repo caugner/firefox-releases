@@ -11,6 +11,7 @@
 #include <algorithm>
 #include <initializer_list>
 #include "mozilla/AbstractEventQueue.h"
+#include "mozilla/BackgroundHangMonitor.h"
 #include "mozilla/StaticMutex.h"
 #include "mozilla/SchedulerGroup.h"
 #include "mozilla/ScopeExit.h"
@@ -80,6 +81,9 @@ bool TaskController::InitializeInternal() {
   mMTProcessingRunnable = NS_NewRunnableFunction(
       "TaskController::ExecutePendingMTTasks()",
       []() { TaskController::Get()->ProcessPendingMTTask(); });
+  mMTBlockingProcessingRunnable = NS_NewRunnableFunction(
+      "TaskController::ExecutePendingMTTasks()",
+      []() { TaskController::Get()->ProcessPendingMTTask(true); });
 
   return true;
 }
@@ -115,6 +119,10 @@ void TaskController::AddTask(already_AddRefed<Task>&& aTask) {
     task->mPriorityModifier = manager->mCurrentPriorityModifier;
   }
 
+#ifdef MOZ_GECKO_PROFILER
+  task->mInsertionTime = TimeStamp::Now();
+#endif
+
 #ifdef DEBUG
   task->mIsInGraph = true;
 
@@ -123,6 +131,8 @@ void TaskController::AddTask(already_AddRefed<Task>&& aTask) {
                otherTask->mTaskManager == task->mTaskManager);
   }
 #endif
+
+  LogTask::LogDispatch(task);
 
   auto insertion = mMainThreadTasks.insert(std::move(task));
   MOZ_ASSERT(insertion.second);
@@ -134,6 +144,7 @@ void TaskController::AddTask(already_AddRefed<Task>&& aTask) {
 void TaskController::WaitForTaskOrMessage() {
   MutexAutoLock lock(mGraphMutex);
   while (!mMayHaveMainThreadTask) {
+    AUTO_PROFILER_LABEL("TaskController::WaitForTaskOrMessage", IDLE);
     mMainThreadCV.Wait();
   }
 }
@@ -144,12 +155,34 @@ void TaskController::ExecuteNextTaskOnlyMainThread() {
   ExecuteNextTaskOnlyMainThreadInternal(lock);
 }
 
-void TaskController::ProcessPendingMTTask() {
+void TaskController::ProcessPendingMTTask(bool aMayWait) {
   MOZ_ASSERT(NS_IsMainThread());
   MutexAutoLock lock(mGraphMutex);
-  mHasScheduledMTRunnable = false;
 
-  ExecuteNextTaskOnlyMainThreadInternal(lock);
+  for (;;) {
+    // We only ever process one event here. However we may sometimes
+    // not actually process a real event because of suspended tasks.
+    // This loop allows us to wait until we've processed something
+    // in that scenario.
+
+    mMTTaskRunnableProcessedTask = ExecuteNextTaskOnlyMainThreadInternal(lock);
+
+    if (mMTTaskRunnableProcessedTask || !aMayWait) {
+      break;
+    }
+
+    BackgroundHangMonitor().NotifyWait();
+
+    {
+      // ProcessNextEvent will also have attempted to wait, however we may have
+      // given it a Runnable when all the tasks in our task graph were suspended
+      // but we weren't able to cheaply determine that.
+      AUTO_PROFILER_LABEL("TaskController::ProcessPendingMTTask", IDLE);
+      mMainThreadCV.Wait();
+    }
+
+    BackgroundHangMonitor().NotifyActivity();
+  }
 
   if (mMayHaveMainThreadTask) {
     EnsureMainThreadTasksScheduled();
@@ -247,7 +280,7 @@ nsIRunnable* TaskController::GetRunnableForMTTask(bool aReallyWait) {
     mMainThreadCV.Wait();
   }
 
-  return mMTProcessingRunnable;
+  return aReallyWait ? mMTBlockingProcessingRunnable : mMTProcessingRunnable;
 }
 
 bool TaskController::HasMainThreadPendingTasks() {
@@ -330,11 +363,12 @@ bool TaskController::HasMainThreadPendingTasks() {
   return false;
 }
 
-void TaskController::ExecuteNextTaskOnlyMainThreadInternal(
+bool TaskController::ExecuteNextTaskOnlyMainThreadInternal(
     const MutexAutoLock& aProofOfLock) {
   // Block to make it easier to jump to our cleanup.
+  bool taskRan = false;
   do {
-    bool taskRan = DoExecuteNextTaskOnlyMainThreadInternal(aProofOfLock);
+    taskRan = DoExecuteNextTaskOnlyMainThreadInternal(aProofOfLock);
     if (taskRan) {
       break;
     }
@@ -357,7 +391,7 @@ void TaskController::ExecuteNextTaskOnlyMainThreadInternal(
 
     // When we unlocked, someone may have queued a new task on us.  So try to
     // see whether we can run things again.
-    Unused << DoExecuteNextTaskOnlyMainThreadInternal(aProofOfLock);
+    taskRan = DoExecuteNextTaskOnlyMainThreadInternal(aProofOfLock);
   } while (false);
 
   if (mIdleTaskManager) {
@@ -375,10 +409,17 @@ void TaskController::ExecuteNextTaskOnlyMainThreadInternal(
       mIdleTaskManager->State().RanOutOfTasks(unlock);
     }
   }
+
+  return taskRan;
 }
 
 bool TaskController::DoExecuteNextTaskOnlyMainThreadInternal(
     const MutexAutoLock& aProofOfLock) {
+  nsCOMPtr<nsIThread> mainIThread;
+  NS_GetMainThread(getter_AddRefs(mainIThread));
+  nsThread* mainThread = static_cast<nsThread*>(mainIThread.get());
+  mainThread->SetRunningEventDelay(TimeDuration(), TimeStamp());
+
   uint32_t totalSuspended = 0;
   for (TaskManager* manager : mTaskManagers) {
     bool modifierChanged =
@@ -451,12 +492,26 @@ bool TaskController::DoExecuteNextTaskOnlyMainThreadInternal(
           mIdleTaskManager->State().ClearCachedIdleDeadline();
         }
 
+        TimeStamp now = TimeStamp::Now();
+
+#ifdef MOZ_GECKO_PROFILER
+        if (task->GetPriority() < uint32_t(EventQueuePriority::InputHigh)) {
+          mainThread->SetRunningEventDelay(TimeDuration(), now);
+        } else {
+          mainThread->SetRunningEventDelay(now - task->mInsertionTime, now);
+        }
+#endif
+
         PerformanceCounterState::Snapshot snapshot =
             mPerformanceCounterState->RunnableWillRun(
-                task->GetPerformanceCounter(), TimeStamp::Now(),
+                task->GetPerformanceCounter(), now,
                 manager == mIdleTaskManager);
 
-        result = task->Run();
+        {
+          LogTask::Run log(task);
+          result = task->Run();
+        }
+
         // Task itself should keep manager alive.
         if (manager) {
           manager->DidRunTask();

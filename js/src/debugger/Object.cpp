@@ -68,8 +68,7 @@
 #include "vm/WrapperObject.h"             // for JSObject::is, WrapperObject
 
 #include "vm/Compartment-inl.h"  // for Compartment::wrap
-#include "vm/JSAtom-inl.h"       // for ValueToId
-#include "vm/JSObject-inl.h"  // for GetObjectClassName, InitClass, NewObjectWithGivenProtoAndKind
+#include "vm/JSObject-inl.h"  // for GetObjectClassName, InitClass, NewObjectWithGivenProtoAndKind, ToPropertyKey
 #include "vm/NativeObject-inl.h"      // for NativeObject::global
 #include "vm/ObjectOperations-inl.h"  // for DeleteProperty, GetProperty
 #include "vm/Realm-inl.h"             // for AutoRealm::AutoRealm
@@ -116,7 +115,7 @@ static DebuggerObject* DebuggerObject_checkThis(JSContext* cx,
   if (!thisobj) {
     return nullptr;
   }
-  if (thisobj->getClass() != &DebuggerObject::class_) {
+  if (!thisobj->is<DebuggerObject>()) {
     JS_ReportErrorNumberASCII(cx, GetErrorMessage, nullptr,
                               JSMSG_INCOMPATIBLE_PROTO, "Debugger.Object",
                               "method", thisobj->getClass()->name);
@@ -124,10 +123,9 @@ static DebuggerObject* DebuggerObject_checkThis(JSContext* cx,
   }
 
   // Forbid Debugger.Object.prototype, which is of class DebuggerObject::class_
-  // but isn't a real working Debugger.Object. The prototype object is
-  // distinguished by having no referent.
+  // but isn't a real working Debugger.Object.
   DebuggerObject* nthisobj = &thisobj->as<DebuggerObject>();
-  if (!nthisobj->getPrivate()) {
+  if (!nthisobj->isInstance()) {
     JS_ReportErrorNumberASCII(cx, GetErrorMessage, nullptr,
                               JSMSG_INCOMPATIBLE_PROTO, "Debugger.Object",
                               "method", "prototype object");
@@ -171,6 +169,7 @@ struct MOZ_STACK_CLASS DebuggerObject::CallData {
   bool boundThisGetter();
   bool boundArgumentsGetter();
   bool allocationSiteGetter();
+  bool isErrorGetter();
   bool errorMessageNameGetter();
   bool errorNotesGetter();
   bool errorLineNumberGetter();
@@ -378,7 +377,7 @@ bool DebuggerObject::CallData::parameterNamesGetter() {
 }
 
 bool DebuggerObject::CallData::scriptGetter() {
-  Debugger* dbg = Debugger::fromChildJSObject(object);
+  Debugger* dbg = object->owner();
 
   if (!referent->is<JSFunction>()) {
     args.rval().setUndefined();
@@ -412,7 +411,7 @@ bool DebuggerObject::CallData::scriptGetter() {
 }
 
 bool DebuggerObject::CallData::environmentGetter() {
-  Debugger* dbg = Debugger::fromChildJSObject(object);
+  Debugger* dbg = object->owner();
 
   // Don't bother switching compartments just to check obj's type and get its
   // env.
@@ -514,6 +513,11 @@ bool DebuggerObject::CallData::errorMessageNameGetter() {
   } else {
     args.rval().setUndefined();
   }
+  return true;
+}
+
+bool DebuggerObject::CallData::isErrorGetter() {
+  args.rval().setBoolean(object->isError());
   return true;
 }
 
@@ -714,7 +718,7 @@ bool DebuggerObject::CallData::promiseIDGetter() {
 }
 
 bool DebuggerObject::CallData::promiseDependentPromisesGetter() {
-  Debugger* dbg = Debugger::fromChildJSObject(object);
+  Debugger* dbg = object->owner();
 
   Rooted<PromiseObject*> promise(cx, EnsurePromise(cx, referent));
   if (!promise) {
@@ -808,7 +812,7 @@ bool DebuggerObject::CallData::getOwnPropertySymbolsMethod() {
 
 bool DebuggerObject::CallData::getOwnPropertyDescriptorMethod() {
   RootedId id(cx);
-  if (!ValueToId<CanGC>(cx, args.get(0), &id)) {
+  if (!ToPropertyKey(cx, args.get(0), &id)) {
     return false;
   }
 
@@ -853,7 +857,7 @@ bool DebuggerObject::CallData::definePropertyMethod() {
   }
 
   RootedId id(cx);
-  if (!ValueToId<CanGC>(cx, args[0], &id)) {
+  if (!ToPropertyKey(cx, args[0], &id)) {
     return false;
   }
 
@@ -904,7 +908,7 @@ bool DebuggerObject::CallData::definePropertiesMethod() {
  */
 bool DebuggerObject::CallData::deletePropertyMethod() {
   RootedId id(cx);
-  if (!ValueToId<CanGC>(cx, args.get(0), &id)) {
+  if (!ToPropertyKey(cx, args.get(0), &id)) {
     return false;
   }
 
@@ -940,10 +944,10 @@ bool DebuggerObject::CallData::callMethod() {
 }
 
 bool DebuggerObject::CallData::getPropertyMethod() {
-  Debugger* dbg = Debugger::fromChildJSObject(object);
+  Debugger* dbg = object->owner();
 
   RootedId id(cx);
-  if (!ValueToId<CanGC>(cx, args.get(0), &id)) {
+  if (!ToPropertyKey(cx, args.get(0), &id)) {
     return false;
   }
 
@@ -956,10 +960,10 @@ bool DebuggerObject::CallData::getPropertyMethod() {
 }
 
 bool DebuggerObject::CallData::setPropertyMethod() {
-  Debugger* dbg = Debugger::fromChildJSObject(object);
+  Debugger* dbg = object->owner();
 
   RootedId id(cx);
-  if (!ValueToId<CanGC>(cx, args.get(0), &id)) {
+  if (!ToPropertyKey(cx, args.get(0), &id)) {
     return false;
   }
 
@@ -1049,7 +1053,7 @@ static bool RequireGlobalObject(JSContext* cx, HandleValue dbgobj,
 }
 
 bool DebuggerObject::CallData::asEnvironmentMethod() {
-  Debugger* dbg = Debugger::fromChildJSObject(object);
+  Debugger* dbg = object->owner();
 
   if (!RequireGlobalObject(cx, args.thisv(), referent)) {
     return false;
@@ -1499,7 +1503,7 @@ struct DebuggerObject::PromiseReactionRecordBuilder
 };
 
 bool DebuggerObject::CallData::getPromiseReactionsMethod() {
-  Debugger* dbg = Debugger::fromChildJSObject(object);
+  Debugger* dbg = object->owner();
 
   Rooted<PromiseObject*> unwrappedPromise(cx, EnsurePromise(cx, referent));
   if (!unwrappedPromise) {
@@ -1538,6 +1542,7 @@ const JSPropertySpec DebuggerObject::properties_[] = {
     JS_DEBUG_PSG("boundThis", boundThisGetter),
     JS_DEBUG_PSG("boundArguments", boundArgumentsGetter),
     JS_DEBUG_PSG("allocationSite", allocationSiteGetter),
+    JS_DEBUG_PSG("isError", isErrorGetter),
     JS_DEBUG_PSG("errorMessageName", errorMessageNameGetter),
     JS_DEBUG_PSG("errorNotes", errorNotesGetter),
     JS_DEBUG_PSG("errorLineNumber", errorLineNumberGetter),
@@ -1628,7 +1633,7 @@ DebuggerObject* DebuggerObject::create(JSContext* cx, HandleObject proto,
   }
 
   obj->setPrivateGCThing(referent);
-  obj->setReservedSlot(JSSLOT_DEBUGOBJECT_OWNER, ObjectValue(*debugger));
+  obj->setReservedSlot(OWNER_SLOT, ObjectValue(*debugger));
 
   return obj;
 }
@@ -1682,7 +1687,7 @@ bool DebuggerObject::isPromise() const {
   JSObject* referent = this->referent();
 
   if (IsCrossCompartmentWrapper(referent)) {
-    /* We only care about promises, so CheckedUnwrapStatic is OK. */
+    // We only care about promises, so CheckedUnwrapStatic is OK.
     referent = CheckedUnwrapStatic(referent);
     if (!referent) {
       return false;
@@ -1690,6 +1695,20 @@ bool DebuggerObject::isPromise() const {
   }
 
   return referent->is<PromiseObject>();
+}
+
+bool DebuggerObject::isError() const {
+  JSObject* referent = this->referent();
+
+  if (IsCrossCompartmentWrapper(referent)) {
+    // We only check for error classes, so CheckedUnwrapStatic is OK.
+    referent = CheckedUnwrapStatic(referent);
+    if (!referent) {
+      return false;
+    }
+  }
+
+  return referent->is<ErrorObject>();
 }
 
 /* static */

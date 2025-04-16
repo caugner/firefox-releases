@@ -8,10 +8,14 @@
 #define mozilla_layers_OMTASampler_h
 
 #include <unordered_map>
+#include <queue>
 
 #include "base/platform_thread.h"  // for PlatformThreadId
+#include "mozilla/layers/OMTAController.h"  // for OMTAController
+#include "mozilla/Maybe.h"
 #include "mozilla/StaticMutex.h"
 #include "mozilla/StaticPtr.h"
+#include "mozilla/webrender/WebRenderTypes.h"  // For WrWindowId, WrEpoch, etc.
 
 namespace mozilla {
 
@@ -20,13 +24,14 @@ class TimeStamp;
 namespace wr {
 struct Transaction;
 class TransactionWrapper;
-struct WrWindowId;
 }  // namespace wr
 
 namespace layers {
 class Animation;
 class CompositorAnimationStorage;
+class OMTAValue;
 struct CompositorAnimationIdsForEpoch;
+struct LayersId;
 struct WrAnimations;
 
 /**
@@ -38,13 +43,14 @@ class OMTASampler final {
   NS_INLINE_DECL_THREADSAFE_REFCOUNTING(OMTASampler)
 
  public:
-  explicit OMTASampler(const RefPtr<CompositorAnimationStorage>& aAnimStorage);
+  OMTASampler(const RefPtr<CompositorAnimationStorage>& aAnimStorage,
+              LayersId aRootLayersId);
 
   // Whoever creates this sampler is responsible for calling Destroy() on it
   // before releasing the owning refptr.
   void Destroy();
 
-  void SetWebRenderWindowId(const wr::WindowId& aWindowId);
+  void SetWebRenderWindowId(const wr::WrWindowId& aWindowId);
 
   /**
    * This function is invoked from rust on the render backend thread when it
@@ -66,7 +72,7 @@ class OMTASampler final {
    */
   void SetSampleTime(const TimeStamp& aSampleTime);
   void ResetPreviousSampleTime();
-  void SetAnimations(uint64_t aId,
+  void SetAnimations(uint64_t aId, const LayersId& aLayersId,
                      const nsTArray<layers::Animation>& aAnimations);
   bool HasAnimations() const;
 
@@ -106,6 +112,7 @@ class OMTASampler final {
   WrAnimations SampleAnimations(const TimeStamp& aPreviousSampleTime,
                                 const TimeStamp& aSampleTime);
 
+  RefPtr<OMTAController> mController;
   // Can only be accessed or modified while holding mStorageLock.
   RefPtr<CompositorAnimationStorage> mAnimStorage;
   mutable Mutex mStorageLock;

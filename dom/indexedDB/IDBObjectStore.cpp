@@ -65,11 +65,12 @@ IndexUpdateInfo MakeIndexUpdateInfo(const int64_t aIndexID, const Key& aKey,
   indexUpdateInfo.indexId() = aIndexID;
   indexUpdateInfo.value() = aKey;
   if (!aLocale.IsEmpty()) {
-    const auto result =
-        aKey.ToLocaleAwareKey(indexUpdateInfo.localizedValue(), aLocale, *aRv);
-    if (result.Is(Invalid, *aRv)) {
-      aRv->Throw(NS_ERROR_DOM_INDEXEDDB_UNKNOWN_ERR);
+    auto result = aKey.ToLocaleAwareKey(aLocale);
+    if (!result.Is(Ok)) {
+      *aRv = result.ExtractErrorResult(
+          InvalidMapsTo<NS_ERROR_DOM_INDEXEDDB_UNKNOWN_ERR>);
     }
+    indexUpdateInfo.localizedValue() = result.Unwrap();
   }
   return indexUpdateInfo;
 }
@@ -134,8 +135,8 @@ struct MOZ_STACK_CLASS GetAddInfoClosure final {
   MOZ_COUNTED_DTOR(GetAddInfoClosure)
 };
 
-RefPtr<IDBRequest> GenerateRequest(JSContext* aCx,
-                                   IDBObjectStore* aObjectStore) {
+MovingNotNull<RefPtr<IDBRequest>> GenerateRequest(
+    JSContext* aCx, IDBObjectStore* aObjectStore) {
   MOZ_ASSERT(aObjectStore);
   aObjectStore->AssertIsOnOwningThread();
 
@@ -570,10 +571,12 @@ void IDBObjectStore::AppendIndexUpdateInfo(
       }
 
       Key value;
-      const auto result = value.SetFromJSVal(aCx, arrayItem, *aRv);
-      if (!result.Is(Ok, *aRv) || value.IsUnset()) {
+      auto result = value.SetFromJSVal(aCx, arrayItem);
+      if (!result.Is(Ok) || value.IsUnset()) {
         // Not a value we can do anything with, ignore it.
-        aRv->SuppressException();
+        if (result.Is(SpecialValues::Exception)) {
+          result.AsException().SuppressException();
+        }
         continue;
       }
 
@@ -585,10 +588,12 @@ void IDBObjectStore::AppendIndexUpdateInfo(
     }
   } else {
     Key value;
-    const auto result = value.SetFromJSVal(aCx, val, *aRv);
-    if (!result.Is(Ok, *aRv) || value.IsUnset()) {
+    auto result = value.SetFromJSVal(aCx, val);
+    if (!result.Is(Ok) || value.IsUnset()) {
       // Not a value we can do anything with, ignore it.
-      aRv->SuppressException();
+      if (result.Is(SpecialValues::Exception)) {
+        result.AsException().SuppressException();
+      }
       return;
     }
 
@@ -667,11 +672,10 @@ void IDBObjectStore::GetAddInfo(JSContext* aCx, ValueWrapper& aValueWrapper,
 
   if (!HasValidKeyPath()) {
     // Out-of-line keys must be passed in.
-    const auto result = aKey.SetFromJSVal(aCx, aKeyVal, aRv);
-    if (!result.Is(Ok, aRv)) {
-      if (result.Is(Invalid, aRv)) {
-        aRv.Throw(NS_ERROR_DOM_INDEXEDDB_DATA_ERR);
-      }
+    auto result = aKey.SetFromJSVal(aCx, aKeyVal);
+    if (!result.Is(Ok)) {
+      aRv = result.ExtractErrorResult(
+          InvalidMapsTo<NS_ERROR_DOM_INDEXEDDB_DATA_ERR>);
       return;
     }
   } else if (!isAutoIncrement) {
@@ -897,23 +901,22 @@ RefPtr<IDBRequest> IDBObjectStore::AddOrPut(JSContext* aCx,
       aOverwrite ? RequestParams{ObjectStorePutParams(std::move(commonParams))}
                  : RequestParams{ObjectStoreAddParams(std::move(commonParams))};
 
-  auto request = GenerateRequest(aCx, this);
-  MOZ_ASSERT(request);
+  auto request = GenerateRequest(aCx, this).unwrap();
 
   if (!aFromCursor) {
     if (aOverwrite) {
       IDB_LOG_MARK_CHILD_TRANSACTION_REQUEST(
           "database(%s).transaction(%s).objectStore(%s).put(%s)",
-          "IDBObjectStore.put()", mTransaction->LoggingSerialNumber(),
-          request->LoggingSerialNumber(),
+          "IDBObjectStore.put(%.0s%.0s%.0s%.0s)",
+          mTransaction->LoggingSerialNumber(), request->LoggingSerialNumber(),
           IDB_LOG_STRINGIFY(mTransaction->Database()),
           IDB_LOG_STRINGIFY(*mTransaction), IDB_LOG_STRINGIFY(this),
           IDB_LOG_STRINGIFY(key));
     } else {
       IDB_LOG_MARK_CHILD_TRANSACTION_REQUEST(
           "database(%s).transaction(%s).objectStore(%s).add(%s)",
-          "IDBObjectStore.add()", mTransaction->LoggingSerialNumber(),
-          request->LoggingSerialNumber(),
+          "IDBObjectStore.add(%.0s%.0s%.0s%.0s)",
+          mTransaction->LoggingSerialNumber(), request->LoggingSerialNumber(),
           IDB_LOG_STRINGIFY(mTransaction->Database()),
           IDB_LOG_STRINGIFY(*mTransaction), IDB_LOG_STRINGIFY(this),
           IDB_LOG_STRINGIFY(key));
@@ -966,15 +969,14 @@ RefPtr<IDBRequest> IDBObjectStore::GetAllInternal(
     params = ObjectStoreGetAllParams(id, optionalKeyRange, limit);
   }
 
-  auto request = GenerateRequest(aCx, this);
-  MOZ_ASSERT(request);
+  auto request = GenerateRequest(aCx, this).unwrap();
 
   if (aKeysOnly) {
     IDB_LOG_MARK_CHILD_TRANSACTION_REQUEST(
         "database(%s).transaction(%s).objectStore(%s)."
         "getAllKeys(%s, %s)",
-        "IDBObjectStore.getAllKeys()", mTransaction->LoggingSerialNumber(),
-        request->LoggingSerialNumber(),
+        "IDBObjectStore.getAllKeys(%.0s%.0s%.0s%.0s%.0s)",
+        mTransaction->LoggingSerialNumber(), request->LoggingSerialNumber(),
         IDB_LOG_STRINGIFY(mTransaction->Database()),
         IDB_LOG_STRINGIFY(*mTransaction), IDB_LOG_STRINGIFY(this),
         IDB_LOG_STRINGIFY(keyRange), IDB_LOG_STRINGIFY(aLimit));
@@ -982,8 +984,8 @@ RefPtr<IDBRequest> IDBObjectStore::GetAllInternal(
     IDB_LOG_MARK_CHILD_TRANSACTION_REQUEST(
         "database(%s).transaction(%s).objectStore(%s)."
         "getAll(%s, %s)",
-        "IDBObjectStore.getAll()", mTransaction->LoggingSerialNumber(),
-        request->LoggingSerialNumber(),
+        "IDBObjectStore.getAll(%.0s%.0s%.0s%.0s%.0s)",
+        mTransaction->LoggingSerialNumber(), request->LoggingSerialNumber(),
         IDB_LOG_STRINGIFY(mTransaction->Database()),
         IDB_LOG_STRINGIFY(*mTransaction), IDB_LOG_STRINGIFY(this),
         IDB_LOG_STRINGIFY(keyRange), IDB_LOG_STRINGIFY(aLimit));
@@ -1065,12 +1067,11 @@ RefPtr<IDBRequest> IDBObjectStore::Clear(JSContext* aCx, ErrorResult& aRv) {
 
   const ObjectStoreClearParams params = {Id()};
 
-  auto request = GenerateRequest(aCx, this);
-  MOZ_ASSERT(request);
+  auto request = GenerateRequest(aCx, this).unwrap();
 
   IDB_LOG_MARK_CHILD_TRANSACTION_REQUEST(
       "database(%s).transaction(%s).objectStore(%s).clear()",
-      "IDBObjectStore.clear()", mTransaction->LoggingSerialNumber(),
+      "IDBObjectStore.clear(%.0s%.0s%.0s)", mTransaction->LoggingSerialNumber(),
       request->LoggingSerialNumber(),
       IDB_LOG_STRINGIFY(mTransaction->Database()),
       IDB_LOG_STRINGIFY(*mTransaction), IDB_LOG_STRINGIFY(this));
@@ -1284,13 +1285,12 @@ RefPtr<IDBRequest> IDBObjectStore::GetInternal(bool aKeyOnly, JSContext* aCx,
       aKeyOnly ? RequestParams{ObjectStoreGetKeyParams(id, serializedKeyRange)}
                : RequestParams{ObjectStoreGetParams(id, serializedKeyRange)};
 
-  auto request = GenerateRequest(aCx, this);
-  MOZ_ASSERT(request);
+  auto request = GenerateRequest(aCx, this).unwrap();
 
   IDB_LOG_MARK_CHILD_TRANSACTION_REQUEST(
       "database(%s).transaction(%s).objectStore(%s).get(%s)",
-      "IDBObjectStore.get()", mTransaction->LoggingSerialNumber(),
-      request->LoggingSerialNumber(),
+      "IDBObjectStore.get(%.0s%.0s%.0s%.0s)",
+      mTransaction->LoggingSerialNumber(), request->LoggingSerialNumber(),
       IDB_LOG_STRINGIFY(mTransaction->Database()),
       IDB_LOG_STRINGIFY(*mTransaction), IDB_LOG_STRINGIFY(this),
       IDB_LOG_STRINGIFY(keyRange));
@@ -1342,14 +1342,13 @@ RefPtr<IDBRequest> IDBObjectStore::DeleteInternal(JSContext* aCx,
   params.objectStoreId() = Id();
   keyRange->ToSerialized(params.keyRange());
 
-  auto request = GenerateRequest(aCx, this);
-  MOZ_ASSERT(request);
+  auto request = GenerateRequest(aCx, this).unwrap();
 
   if (!aFromCursor) {
     IDB_LOG_MARK_CHILD_TRANSACTION_REQUEST(
         "database(%s).transaction(%s).objectStore(%s).delete(%s)",
-        "IDBObjectStore.delete()", mTransaction->LoggingSerialNumber(),
-        request->LoggingSerialNumber(),
+        "IDBObjectStore.delete(%.0s%.0s%.0s%.0s)",
+        mTransaction->LoggingSerialNumber(), request->LoggingSerialNumber(),
         IDB_LOG_STRINGIFY(mTransaction->Database()),
         IDB_LOG_STRINGIFY(*mTransaction), IDB_LOG_STRINGIFY(this),
         IDB_LOG_STRINGIFY(keyRange));
@@ -1458,8 +1457,9 @@ RefPtr<IDBIndex> IDBObjectStore::CreateIndex(
 
   IDB_LOG_MARK_CHILD_TRANSACTION_REQUEST(
       "database(%s).transaction(%s).objectStore(%s).createIndex(%s)",
-      "IDBObjectStore.createIndex()", mTransaction->LoggingSerialNumber(),
-      requestSerialNumber, IDB_LOG_STRINGIFY(mTransaction->Database()),
+      "IDBObjectStore.createIndex(%.0s%.0s%.0s%.0s)",
+      mTransaction->LoggingSerialNumber(), requestSerialNumber,
+      IDB_LOG_STRINGIFY(mTransaction->Database()),
       IDB_LOG_STRINGIFY(*mTransaction), IDB_LOG_STRINGIFY(this),
       IDB_LOG_STRINGIFY(index));
 
@@ -1524,8 +1524,9 @@ void IDBObjectStore::DeleteIndex(const nsAString& aName, ErrorResult& aRv) {
   IDB_LOG_MARK_CHILD_TRANSACTION_REQUEST(
       "database(%s).transaction(%s).objectStore(%s)."
       "deleteIndex(\"%s\")",
-      "IDBObjectStore.deleteIndex()", mTransaction->LoggingSerialNumber(),
-      requestSerialNumber, IDB_LOG_STRINGIFY(mTransaction->Database()),
+      "IDBObjectStore.deleteIndex(%.0s%.0s%.0s%.0s)",
+      mTransaction->LoggingSerialNumber(), requestSerialNumber,
+      IDB_LOG_STRINGIFY(mTransaction->Database()),
       IDB_LOG_STRINGIFY(*mTransaction), IDB_LOG_STRINGIFY(this),
       NS_ConvertUTF16toUTF8(aName).get());
 
@@ -1562,13 +1563,12 @@ RefPtr<IDBRequest> IDBObjectStore::Count(JSContext* aCx,
     params.optionalKeyRange().emplace(serializedKeyRange);
   }
 
-  auto request = GenerateRequest(aCx, this);
-  MOZ_ASSERT(request);
+  auto request = GenerateRequest(aCx, this).unwrap();
 
   IDB_LOG_MARK_CHILD_TRANSACTION_REQUEST(
       "database(%s).transaction(%s).objectStore(%s).count(%s)",
-      "IDBObjectStore.count()", mTransaction->LoggingSerialNumber(),
-      request->LoggingSerialNumber(),
+      "IDBObjectStore.count(%.0s%.0s%.0s%.0s)",
+      mTransaction->LoggingSerialNumber(), request->LoggingSerialNumber(),
       IDB_LOG_STRINGIFY(mTransaction->Database()),
       IDB_LOG_STRINGIFY(*mTransaction), IDB_LOG_STRINGIFY(this),
       IDB_LOG_STRINGIFY(keyRange));
@@ -1625,15 +1625,14 @@ RefPtr<IDBRequest> IDBObjectStore::OpenCursorInternal(
       aKeysOnly ? OpenCursorParams{ObjectStoreOpenKeyCursorParams{commonParams}}
                 : OpenCursorParams{ObjectStoreOpenCursorParams{commonParams}};
 
-  auto request = GenerateRequest(aCx, this);
-  MOZ_ASSERT(request);
+  auto request = GenerateRequest(aCx, this).unwrap();
 
   if (aKeysOnly) {
     IDB_LOG_MARK_CHILD_TRANSACTION_REQUEST(
         "database(%s).transaction(%s).objectStore(%s)."
         "openKeyCursor(%s, %s)",
-        "IDBObjectStore.openKeyCursor()", mTransaction->LoggingSerialNumber(),
-        request->LoggingSerialNumber(),
+        "IDBObjectStore.openKeyCursor(%.0s%.0s%.0s%.0s%.0s)",
+        mTransaction->LoggingSerialNumber(), request->LoggingSerialNumber(),
         IDB_LOG_STRINGIFY(mTransaction->Database()),
         IDB_LOG_STRINGIFY(*mTransaction), IDB_LOG_STRINGIFY(this),
         IDB_LOG_STRINGIFY(keyRange), IDB_LOG_STRINGIFY(aDirection));
@@ -1641,8 +1640,8 @@ RefPtr<IDBRequest> IDBObjectStore::OpenCursorInternal(
     IDB_LOG_MARK_CHILD_TRANSACTION_REQUEST(
         "database(%s).transaction(%s).objectStore(%s)."
         "openCursor(%s, %s)",
-        "IDBObjectStore.openCursor()", mTransaction->LoggingSerialNumber(),
-        request->LoggingSerialNumber(),
+        "IDBObjectStore.openCursor(%.0s%.0s%.0s%.0s%.0s)",
+        mTransaction->LoggingSerialNumber(), request->LoggingSerialNumber(),
         IDB_LOG_STRINGIFY(mTransaction->Database()),
         IDB_LOG_STRINGIFY(*mTransaction), IDB_LOG_STRINGIFY(this),
         IDB_LOG_STRINGIFY(keyRange), IDB_LOG_STRINGIFY(aDirection));
@@ -1767,8 +1766,9 @@ void IDBObjectStore::SetName(const nsAString& aName, ErrorResult& aRv) {
 
   IDB_LOG_MARK_CHILD_TRANSACTION_REQUEST(
       "database(%s).transaction(%s).objectStore(%s).rename(%s)",
-      "IDBObjectStore.rename()", mTransaction->LoggingSerialNumber(),
-      requestSerialNumber, IDB_LOG_STRINGIFY(mTransaction->Database()),
+      "IDBObjectStore.rename(%.0s%.0s%.0s%.0s)",
+      mTransaction->LoggingSerialNumber(), requestSerialNumber,
+      IDB_LOG_STRINGIFY(mTransaction->Database()),
       IDB_LOG_STRINGIFY(*mTransaction), loggingOldObjectStore.get(),
       IDB_LOG_STRINGIFY(this));
 

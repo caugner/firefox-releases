@@ -347,7 +347,7 @@ class MOZ_RAII CacheRegisterAllocator {
 
   void popPayload(MacroAssembler& masm, OperandLocation* loc, Register dest);
   void popValue(MacroAssembler& masm, OperandLocation* loc, ValueOperand dest);
-  Address valueAddress(MacroAssembler& masm, OperandLocation* loc);
+  Address valueAddress(MacroAssembler& masm, const OperandLocation* loc) const;
 
 #ifdef DEBUG
   void assertValidState() const;
@@ -496,9 +496,17 @@ class MOZ_RAII CacheRegisterAllocator {
 
   // Loads (potentially coercing) and unboxes a value into a float register
   // This is infallible, as there should have been a previous guard
-  // to ensure the ValOperandId is already a number.
+  // to ensure the value is already a number.
+  // Does not change the allocator's state.
   void ensureDoubleRegister(MacroAssembler& masm, NumberOperandId op,
-                            FloatRegister dest);
+                            FloatRegister dest) const;
+
+  // Loads an unboxed value into a scratch register. This can be useful
+  // especially on 32-bit x86 when there are not enough registers for
+  // useRegister.
+  // Does not change the allocator's state.
+  void copyToScratchRegister(MacroAssembler& masm, TypedOperandId typedId,
+                             Register dest) const;
 
   // Returns |val|'s JSValueType or JSVAL_TYPE_UNKNOWN.
   JSValueType knownType(ValOperandId val) const;
@@ -990,6 +998,39 @@ class MOZ_RAII AutoScratchRegisterMaybeOutput {
   operator Register() const { return scratchReg_; }
 };
 
+// Like AutoScratchRegisterMaybeOutput, but tries to use the ValueOperand's
+// type register for the scratch register on 32-bit.
+//
+// Word of warning: Passing an instance of this class and AutoOutputRegister to
+// functions may not work correctly, because no guarantee is given that the type
+// register is used last when modifying the output's ValueOperand.
+class MOZ_RAII AutoScratchRegisterMaybeOutputType {
+  mozilla::Maybe<AutoScratchRegister> scratch_;
+  Register scratchReg_;
+
+ public:
+  AutoScratchRegisterMaybeOutputType(CacheRegisterAllocator& alloc,
+                                     MacroAssembler& masm,
+                                     const AutoOutputRegister& output) {
+#if defined(JS_NUNBOX32)
+    scratchReg_ = output.hasValue() ? output.valueReg().typeReg() : InvalidReg;
+#else
+    scratchReg_ = InvalidReg;
+#endif
+    if (scratchReg_ == InvalidReg) {
+      scratch_.emplace(alloc, masm);
+      scratchReg_ = scratch_.ref();
+    }
+  }
+
+  AutoScratchRegisterMaybeOutputType(
+      const AutoScratchRegisterMaybeOutputType&) = delete;
+
+  void operator=(const AutoScratchRegisterMaybeOutputType&) = delete;
+
+  operator Register() const { return scratchReg_; }
+};
+
 // AutoCallVM is a wrapper class that unifies methods shared by
 // IonCacheIRCompiler and BaselineCacheIRCompiler that perform a callVM, but
 // require stub specific functionality before performing the VM call.
@@ -1172,6 +1213,12 @@ class CacheIRStubInfo {
 
   uintptr_t getStubRawWord(const uint8_t* stubData, uint32_t offset) const;
   uintptr_t getStubRawWord(ICStub* stub, uint32_t offset) const;
+
+  int64_t getStubRawInt64(const uint8_t* stubData, uint32_t offset) const;
+  int64_t getStubRawInt64(ICStub* stub, uint32_t offset) const;
+
+  void replaceStubRawWord(uint8_t* stubData, uint32_t offset, uintptr_t oldWord,
+                          uintptr_t newWord) const;
 };
 
 template <typename T>

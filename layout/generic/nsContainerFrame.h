@@ -66,6 +66,8 @@ class nsContainerFrame : public nsSplittableFrame {
             ListFlags aFlags = ListFlags()) const override;
   void ListWithMatchedRules(FILE* out = stderr,
                             const char* aPrefix = "") const override;
+  void ListChildLists(FILE* aOut, const char* aPrefix, ListFlags aFlags,
+                      ChildListIDs aSkippedListIDs) const;
   virtual void ExtraContainerFrameInfo(nsACString& aTo) const;
 #endif
 
@@ -180,7 +182,7 @@ class nsContainerFrame : public nsSplittableFrame {
   // Set the view's size and position after its frame has been reflowed.
   static void SyncFrameViewAfterReflow(
       nsPresContext* aPresContext, nsIFrame* aFrame, nsView* aView,
-      const nsRect& aVisualOverflowArea,
+      const nsRect& aInkOverflowArea,
       ReflowChildFlags aFlags = ReflowChildFlags::Default);
 
   // Syncs properties to the top level view and window, like transparency and
@@ -693,6 +695,12 @@ class nsContainerFrame : public nsSplittableFrame {
    * Helper to implement DrainSelfOverflowList() for flex / grid containers.
    */
   bool DrainAndMergeSelfOverflowList();
+
+  /**
+   * Helper to find the first non-anonymous-box frame in the subtree rooted at
+   * aFrame.
+   */
+  static nsIFrame* GetFirstNonAnonBoxInSubtree(nsIFrame* aFrame);
 
   /**
    * Reparent floats whose placeholders are inline descendants of aFrame from

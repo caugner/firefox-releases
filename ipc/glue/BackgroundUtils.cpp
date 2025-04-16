@@ -517,9 +517,7 @@ nsresult LoadInfoToLoadInfoArgs(nsILoadInfo* aLoadInfo,
       aLoadInfo->GetBypassCORSChecks(),
       aLoadInfo->GetSkipContentPolicyCheckForWebRequest(),
       aLoadInfo->GetForceInheritPrincipalDropped(),
-      aLoadInfo->GetInnerWindowID(), aLoadInfo->GetOuterWindowID(),
-      aLoadInfo->GetParentOuterWindowID(), aLoadInfo->GetTopOuterWindowID(),
-      aLoadInfo->GetFrameOuterWindowID(), aLoadInfo->GetBrowsingContextID(),
+      aLoadInfo->GetInnerWindowID(), aLoadInfo->GetBrowsingContextID(),
       aLoadInfo->GetFrameBrowsingContextID(),
       aLoadInfo->GetInitialSecurityCheckDone(),
       aLoadInfo->GetIsInThirdPartyContext(),
@@ -664,18 +662,18 @@ nsresult LoadInfoArgsToLoadInfo(
   }
 
   nsTArray<nsCOMPtr<nsIPrincipal>> ancestorPrincipals;
-  nsTArray<uint64_t> ancestorOuterWindowIDs;
+  nsTArray<uint64_t> ancestorBrowsingContextIDs;
   if (XRE_IsParentProcess() &&
       (nsContentUtils::InternalContentPolicyTypeToExternal(
            loadInfoArgs.contentPolicyType()) !=
        nsIContentPolicy::TYPE_DOCUMENT)) {
-    // Only fill out ancestor principals and outer window IDs when we
+    // Only fill out ancestor principals and browsing context IDs when we
     // are deserializing LoadInfoArgs to be LoadInfo for a subresource
     RefPtr<BrowsingContext> parentBC =
         BrowsingContext::Get(loadInfoArgs.browsingContextID());
     if (parentBC) {
       LoadInfo::ComputeAncestors(parentBC->Canonical(), ancestorPrincipals,
-                                 ancestorOuterWindowIDs);
+                                 ancestorBrowsingContextIDs);
     }
   }
 
@@ -748,15 +746,13 @@ nsresult LoadInfoArgsToLoadInfo(
       loadInfoArgs.bypassCORSChecks(),
       loadInfoArgs.skipContentPolicyCheckForWebRequest(),
       loadInfoArgs.forceInheritPrincipalDropped(), loadInfoArgs.innerWindowID(),
-      loadInfoArgs.outerWindowID(), loadInfoArgs.parentOuterWindowID(),
-      loadInfoArgs.topOuterWindowID(), loadInfoArgs.frameOuterWindowID(),
       loadInfoArgs.browsingContextID(), loadInfoArgs.frameBrowsingContextID(),
       loadInfoArgs.initialSecurityCheckDone(),
       loadInfoArgs.isInThirdPartyContext(),
       loadInfoArgs.isThirdPartyContextToTopWindow(),
       loadInfoArgs.isFormSubmission(), loadInfoArgs.sendCSPViolationEvents(),
       loadInfoArgs.originAttributes(), redirectChainIncludingInternalRedirects,
-      redirectChain, std::move(ancestorPrincipals), ancestorOuterWindowIDs,
+      redirectChain, std::move(ancestorPrincipals), ancestorBrowsingContextIDs,
       loadInfoArgs.corsUnsafeHeaders(), loadInfoArgs.forcePreflight(),
       loadInfoArgs.isPreflight(), loadInfoArgs.loadTriggeredFromExternal(),
       loadInfoArgs.serviceWorkerTaintingSynthesized(),
@@ -816,7 +812,8 @@ void LoadInfoToParentLoadInfoForwarder(
       aLoadInfo->GetAllowListFutureDocumentsCreatedFromThisRedirectChain(),
       cookieJarSettingsArgs, aLoadInfo->GetRequestBlockingReason(),
       aLoadInfo->GetHasStoragePermission(),
-      aLoadInfo->GetIsThirdPartyContextToTopWindow());
+      aLoadInfo->GetIsThirdPartyContextToTopWindow(),
+      aLoadInfo->GetIsInThirdPartyContext());
 }
 
 nsresult MergeParentLoadInfoForwarder(
@@ -892,6 +889,10 @@ nsresult MergeParentLoadInfoForwarder(
 
   rv = aLoadInfo->SetIsThirdPartyContextToTopWindow(
       aForwarderArgs.isThirdPartyContextToTopWindow());
+  NS_ENSURE_SUCCESS(rv, rv);
+
+  rv = aLoadInfo->SetIsInThirdPartyContext(
+      aForwarderArgs.isInThirdPartyContext());
   NS_ENSURE_SUCCESS(rv, rv);
 
   return NS_OK;

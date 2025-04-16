@@ -25,9 +25,10 @@
 #include "mozilla/dom/Touch.h"
 #include "mozilla/dom/UserActivation.h"
 #include "mozilla/PendingAnimationTracker.h"
+#include "mozilla/ServoStyleSet.h"
 #include "mozilla/SharedStyleSheetCache.h"
 #include "nsIObjectLoadingContent.h"
-#include "nsFrame.h"
+#include "nsIFrame.h"
 #include "mozilla/layers/APZCCallbackHelper.h"
 #include "mozilla/layers/PCompositorBridgeTypes.h"
 #include "mozilla/layers/ShadowLayers.h"
@@ -2615,13 +2616,9 @@ nsDOMWindowUtils::ZoomToFocusedInput() {
     // Note that we only do this if the frame belongs to `presShell` (that is,
     // we still zoom in fixed elements in subdocuments, as they're not fixed to
     // the root content document).
-    if (frame->PresShell() == presShell) {
-      for (; frame; frame = frame->GetParent()) {
-        if (frame->StyleDisplay()->mPosition == StylePositionProperty::Fixed &&
-            nsLayoutUtils::IsReallyFixedPos(frame)) {
-          return true;
-        }
-      }
+    if (frame->PresShell() == presShell &&
+        nsLayoutUtils::IsInPositionFixedSubtree(frame)) {
+      return true;
     }
     return false;
   }();
@@ -2763,16 +2760,6 @@ nsDOMWindowUtils::GetDisplayDPI(float* aDPI) {
 
   *aDPI = widget->GetDPI();
 
-  return NS_OK;
-}
-
-NS_IMETHODIMP
-nsDOMWindowUtils::GetContainerElement(Element** aResult) {
-  nsCOMPtr<nsPIDOMWindowOuter> window = do_QueryReferent(mWindow);
-  NS_ENSURE_STATE(window);
-
-  RefPtr<Element> element = window->GetFrameElementInternal();
-  element.forget(aResult);
   return NS_OK;
 }
 
@@ -3322,9 +3309,8 @@ nsDOMWindowUtils::SelectAtPoint(float aX, float aY, uint32_t aSelectBehavior,
   nsPoint relPoint = nsLayoutUtils::GetEventCoordinatesRelativeTo(
       widget, pt, RelativeTo{targetFrame});
 
-  nsresult rv = static_cast<nsFrame*>(targetFrame)
-                    ->SelectByTypeAtPoint(GetPresContext(), relPoint, amount,
-                                          amount, nsFrame::SELECT_ACCUMULATE);
+  nsresult rv = targetFrame->SelectByTypeAtPoint(
+      GetPresContext(), relPoint, amount, amount, nsIFrame::SELECT_ACCUMULATE);
   *_retval = !NS_FAILED(rv);
   return NS_OK;
 }

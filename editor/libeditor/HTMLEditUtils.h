@@ -93,11 +93,11 @@ class HTMLEditUtils final {
   static bool IsListItem(nsINode* aNode);
   static bool IsTable(nsINode* aNode);
   static bool IsTableRow(nsINode* aNode);
-  static bool IsTableElement(nsINode* aNode);
-  static bool IsTableElementButNotTable(nsINode* aNode);
+  static bool IsAnyTableElement(nsINode* aNode);
+  static bool IsAnyTableElementButNotTable(nsINode* aNode);
   static bool IsTableCell(nsINode* node);
   static bool IsTableCellOrCaption(nsINode& aNode);
-  static bool IsList(nsINode* aNode);
+  static bool IsAnyListElement(nsINode* aNode);
   static bool IsPre(nsINode* aNode);
   static bool IsImage(nsINode* aNode);
   static bool IsLink(nsINode* aNode);
@@ -529,10 +529,21 @@ class HTMLEditUtils final {
   }
 
   /**
+   * GetInclusiveAncestorEditableBlockElementOrInlineEditingHost() returns
+   * inclusive block ancestor element of aContent.  If aContent is in inline
+   * editing host, returns the editing host instead.
+   */
+  static Element* GetInclusiveAncestorEditableBlockElementOrInlineEditingHost(
+      nsIContent& aContent);
+  /**
    * GetClosestAncestorTableElement() returns the nearest inclusive ancestor
    * <table> element of aContent.
    */
   static Element* GetClosestAncestorTableElement(const nsIContent& aContent) {
+    // TODO: the method name and its documentation clash with the
+    // implementation. Split this method into
+    // `GetClosestAncestorTableElement` and
+    // `GetClosestInclusiveAncestorTableElement`.
     if (!aContent.GetParent()) {
       return nullptr;
     }
@@ -543,6 +554,8 @@ class HTMLEditUtils final {
     }
     return nullptr;
   }
+
+  static Element* GetClosestAncestorAnyListElement(const nsIContent& aContent);
 
   /**
    * GetElementIfOnlyOneSelected() returns an element if aRange selects only

@@ -33,6 +33,8 @@
 #include "prthread.h"
 #include "xpcpublic.h"
 
+class MessageLoop;
+
 //-----------------------------------------------------------------------------
 // These methods are alternatives to the methods on nsIThreadManager, provided
 // for convenience.
@@ -1785,6 +1787,8 @@ namespace IPC {
 class Message;
 }
 
+class nsTimerImpl;
+
 namespace mozilla {
 
 // RAII class that will set the TLS entry to return the currently running
@@ -1794,7 +1798,7 @@ class SerialEventTargetGuard {
  public:
   explicit SerialEventTargetGuard(nsISerialEventTarget* aThread)
       : mLastCurrentThread(sCurrentThreadTLS.get()) {
-    sCurrentThreadTLS.set(aThread);
+    Set(aThread);
   }
 
   ~SerialEventTargetGuard() { sCurrentThreadTLS.set(mLastCurrentThread); }
@@ -1802,6 +1806,13 @@ class SerialEventTargetGuard {
   static void InitTLS();
   static nsISerialEventTarget* GetCurrentSerialEventTarget() {
     return sCurrentThreadTLS.get();
+  }
+
+ protected:
+  friend class ::MessageLoop;
+  static void Set(nsISerialEventTarget* aThread) {
+    MOZ_ASSERT(aThread->IsOnCurrentThread());
+    sCurrentThreadTLS.set(aThread);
   }
 
  private:
@@ -1937,6 +1948,7 @@ class LogTaskBase {
 };
 
 class MicroTaskRunnable;
+class Task;  // TaskController
 
 // Specialized methods must be explicitly predeclared.
 template <>
@@ -1946,12 +1958,38 @@ void LogTaskBase<IPC::Message>::LogDispatchWithPid(IPC::Message* aEvent,
                                                    int32_t aPid);
 template <>
 LogTaskBase<IPC::Message>::Run::Run(IPC::Message* aMessage, bool aWillRunAgain);
+template <>
+LogTaskBase<nsTimerImpl>::Run::Run(nsTimerImpl* aEvent, bool aWillRunAgain);
 
 typedef LogTaskBase<nsIRunnable> LogRunnable;
 typedef LogTaskBase<MicroTaskRunnable> LogMicroTaskRunnable;
 typedef LogTaskBase<IPC::Message> LogIPCMessage;
+typedef LogTaskBase<nsTimerImpl> LogTimerEvent;
+typedef LogTaskBase<Task> LogTask;
 // If you add new types don't forget to add:
 // `template class LogTaskBase<YourType>;` to nsThreadUtils.cpp
+
+class DelayedRunnable : public mozilla::Runnable, public nsITimerCallback {
+ public:
+  DelayedRunnable(already_AddRefed<nsIEventTarget> aTarget,
+                  already_AddRefed<nsIRunnable> aRunnable, uint32_t aDelay);
+
+  NS_DECL_ISUPPORTS_INHERITED
+  NS_DECL_NSIRUNNABLE
+  NS_DECL_NSITIMERCALLBACK
+
+  nsresult Init();
+
+ private:
+  ~DelayedRunnable() = default;
+  nsresult DoRun();
+
+  const nsCOMPtr<nsIEventTarget> mTarget;
+  nsCOMPtr<nsIRunnable> mWrappedRunnable;
+  nsCOMPtr<nsITimer> mTimer;
+  const mozilla::TimeStamp mDelayedFrom;
+  uint32_t mDelay;
+};
 
 }  // namespace mozilla
 

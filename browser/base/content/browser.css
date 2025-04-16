@@ -93,7 +93,7 @@ body {
 #toolbar-menubar[autohide="true"][inactive="true"]:not([customizing="true"]) {
   min-height: 0 !important;
   height: 0 !important;
-  -moz-appearance: none !important;
+  appearance: none !important;
 }
 %endif
 
@@ -350,7 +350,8 @@ toolbar[customizing] #whats-new-menu-button {
 }
 
 .titlebar-buttonbox {
-  -moz-appearance: -moz-window-button-box;
+  appearance: auto;
+  -moz-default-appearance: -moz-window-button-box;
   position: relative;
 }
 
@@ -369,7 +370,8 @@ toolbarpaletteitem {
 
 %ifdef XP_MACOSX
 #titlebar-fullscreen-button {
-  -moz-appearance: -moz-mac-fullscreen-button;
+  appearance: auto;
+  -moz-default-appearance: -moz-mac-fullscreen-button;
 }
 
 /**
@@ -646,9 +648,12 @@ toolbar:not(#TabsToolbar) > #personal-bookmarks {
 }
 
 #urlbar[actionoverride] > #urlbar-input-container > #urlbar-label-box,
-#urlbar:not([actiontype="switchtab"]):not([actiontype="extension"]) > #urlbar-input-container > #urlbar-label-box,
+#urlbar:not([actiontype="switchtab"]):not([actiontype="extension"]):not([searchmode]) > #urlbar-input-container > #urlbar-label-box,
 #urlbar:not([actiontype="switchtab"]) > #urlbar-input-container > #urlbar-label-box > #urlbar-label-switchtab,
-#urlbar:not([actiontype="extension"]) > #urlbar-input-container > #urlbar-label-box > #urlbar-label-extension {
+#urlbar:not([actiontype="extension"]) > #urlbar-input-container > #urlbar-label-box > #urlbar-label-extension,
+#urlbar[searchmode][breakout-extend] > #urlbar-input-container > #urlbar-label-box,
+#urlbar:not([searchmode]) > #urlbar-input-container > #urlbar-label-box > #urlbar-label-search-mode,
+#urlbar[breakout-extend] > #urlbar-input-container > #urlbar-label-box > #urlbar-label-search-mode {
   display: none;
 }
 
@@ -860,6 +865,13 @@ menupopup[emptyplacesresult="true"] > .hide-if-empty-places-result {
   transform: rotate(180deg);
 }
 
+/* Pocket */
+:root[pocketdisabled=true] #context-pocket,
+:root[pocketdisabled=true] #context-savelinktopocket,
+:root[pocketdisabled=true] #appMenu-library-pocket-button {
+  display: none;
+}
+
 /*  Full Screen UI */
 
 #fullscr-toggler {
@@ -1029,7 +1041,7 @@ toolbarpaletteitem[place="palette"] > #downloads-button[indicator] > .toolbarbut
 
 /* Give this menupopup an arrow panel styling */
 #BMB_bookmarksPopup {
-  -moz-appearance: none;
+  appearance: none;
   background: transparent;
   border: none;
   /* The popup inherits -moz-image-region from the button, must reset it */
@@ -1315,7 +1327,7 @@ toolbarpaletteitem > toolbaritem {
 }
 
 .dragfeedback-tab {
-  -moz-appearance: none;
+  appearance: none;
   opacity: 0.65;
   -moz-window-shadow: none;
 }

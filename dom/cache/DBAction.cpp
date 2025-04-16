@@ -72,8 +72,8 @@ DBAction::DBAction(Mode aMode) : mMode(aMode) {}
 
 DBAction::~DBAction() = default;
 
-void DBAction::RunOnTarget(Resolver* aResolver, const QuotaInfo& aQuotaInfo,
-                           Data* aOptionalData) {
+void DBAction::RunOnTarget(SafeRefPtr<Resolver> aResolver,
+                           const QuotaInfo& aQuotaInfo, Data* aOptionalData) {
   MOZ_ASSERT(!NS_IsMainThread());
   MOZ_DIAGNOSTIC_ASSERT(aResolver);
   MOZ_DIAGNOSTIC_ASSERT(aQuotaInfo.mDir);
@@ -90,7 +90,7 @@ void DBAction::RunOnTarget(Resolver* aResolver, const QuotaInfo& aQuotaInfo,
     return;
   }
 
-  rv = dbDir->Append(NS_LITERAL_STRING("cache"));
+  rv = dbDir->Append(u"cache"_ns);
   if (NS_WARN_IF(NS_FAILED(rv))) {
     aResolver->Resolve(rv);
     return;
@@ -124,7 +124,7 @@ void DBAction::RunOnTarget(Resolver* aResolver, const QuotaInfo& aQuotaInfo,
     }
   }
 
-  RunWithDBOnTarget(aResolver, aQuotaInfo, dbDir, conn);
+  RunWithDBOnTarget(std::move(aResolver), aQuotaInfo, dbDir, conn);
 }
 
 nsresult DBAction::OpenConnection(const QuotaInfo& aQuotaInfo, nsIFile* aDBDir,
@@ -168,7 +168,7 @@ SyncDBAction::SyncDBAction(Mode aMode) : DBAction(aMode) {}
 
 SyncDBAction::~SyncDBAction() = default;
 
-void SyncDBAction::RunWithDBOnTarget(Resolver* aResolver,
+void SyncDBAction::RunWithDBOnTarget(SafeRefPtr<Resolver> aResolver,
                                      const QuotaInfo& aQuotaInfo,
                                      nsIFile* aDBDir,
                                      mozIStorageConnection* aConn) {
@@ -209,14 +209,12 @@ nsresult OpenDBConnection(const QuotaInfo& aQuotaInfo, nsIFile* aDBFile,
 
   const nsCString directoryLockIdClause =
       aQuotaInfo.mDirectoryLockId >= 0
-          ? NS_LITERAL_CSTRING("&directoryLockId=") +
-                IntCString(aQuotaInfo.mDirectoryLockId)
+          ? "&directoryLockId="_ns + IntCString(aQuotaInfo.mDirectoryLockId)
           : EmptyCString();
 
-  rv =
-      NS_MutateURI(mutator)
-          .SetQuery(NS_LITERAL_CSTRING("cache=private") + directoryLockIdClause)
-          .Finalize(dbFileUrl);
+  rv = NS_MutateURI(mutator)
+           .SetQuery("cache=private"_ns + directoryLockIdClause)
+           .Finalize(dbFileUrl);
   if (NS_WARN_IF(NS_FAILED(rv))) {
     return rv;
   }

@@ -164,6 +164,13 @@ class Repository(object):
         """
 
     @abc.abstractmethod
+    def get_user_email(self):
+        """Return the user's email address.
+
+        If no email is configured, then None is returned.
+        """
+
+    @abc.abstractmethod
     def get_upstream(self):
         """Reference to the upstream remote."""
 
@@ -351,6 +358,15 @@ class HgRepository(Repository):
 
             return False
 
+    def get_user_email(self):
+        # Output is in the form "First Last <flast@mozilla.com>"
+        username = self._run('config', 'ui.username', return_codes=[0, 1])
+        if not username:
+            # No username is set
+            return None
+        match = re.search(r'<(.*)>', username)
+        return match.group(1)
+
     def get_upstream(self):
         return 'default'
 
@@ -480,6 +496,12 @@ class GitRepository(Repository):
         # Not yet implemented.
         return False
 
+    def get_user_email(self):
+        email = self._run('config', 'user.email', return_codes=[0, 1])
+        if not email:
+            return None
+        return email.strip()
+
     def get_upstream(self):
         ref = self._run('symbolic-ref', '-q', 'HEAD').strip()
         upstream = self._run('for-each-ref', '--format=%(upstream:short)', ref).strip()
@@ -562,6 +584,9 @@ class GitRepository(Repository):
                                    '+HEAD:refs/heads/branches/default/tip'), cwd=self.path)
         finally:
             self._run('reset', 'HEAD~')
+
+    def set_config(self, name, value):
+        self._run('config', name, value)
 
 
 def get_repository_object(path, hg='hg', git='git'):

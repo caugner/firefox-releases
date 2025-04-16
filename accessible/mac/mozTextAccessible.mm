@@ -5,13 +5,15 @@
 
 #include "Accessible-inl.h"
 #include "HyperTextAccessible-inl.h"
-#include "TextLeafAccessible.h"
-
+#include "mozilla/a11y/PDocAccessible.h"
 #include "nsCocoaUtils.h"
+#include "nsIPersistentProperties2.h"
 #include "nsObjCExceptions.h"
+#include "TextLeafAccessible.h"
 
 #import "mozTextAccessible.h"
 
+using namespace mozilla;
 using namespace mozilla::a11y;
 
 inline bool ToNSRange(id aValue, NSRange* aRange) {
@@ -357,10 +359,6 @@ inline NSString* ToNSString(id aValue) {
     case nsIAccessibleEvent::EVENT_VALUE_CHANGE:
     case nsIAccessibleEvent::EVENT_TEXT_VALUE_CHANGE:
       [self moxPostNotification:NSAccessibilityValueChangedNotification];
-      break;
-    case nsIAccessibleEvent::EVENT_TEXT_CARET_MOVED:
-    case nsIAccessibleEvent::EVENT_TEXT_SELECTION_CHANGED:
-      [self moxPostNotification:NSAccessibilitySelectedTextChangedNotification];
       break;
     default:
       [super handleAccessibleEvent:eventType];

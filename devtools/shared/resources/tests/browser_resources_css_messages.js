@@ -9,6 +9,7 @@
 const {
   ResourceWatcher,
 } = require("devtools/shared/resources/resource-watcher");
+const { MESSAGE_CATEGORY } = require("devtools/shared/constants");
 
 // Create a simple server so we have a nice sourceName in the resources packets.
 const httpServer = createTestHTTPServer();
@@ -24,7 +25,19 @@ httpServer.registerPathHandler(`/test_css_messages.html`, (req, res) => {
 
 const TEST_URI = `http://localhost:${httpServer.identity.primaryPort}/test_css_messages.html`;
 
-add_task(async function testWatchingCssMessages() {
+add_task(async function() {
+  info("Test css messages legacy listener");
+  await pushPref("devtools.testing.enableServerWatcherSupport", false);
+  await testWatchingCssMessages();
+  await testWatchingCachedCssMessages();
+
+  info("Test css messages server listener");
+  await pushPref("devtools.testing.enableServerWatcherSupport", true);
+  await testWatchingCssMessages();
+  await testWatchingCachedCssMessages();
+});
+
+async function testWatchingCssMessages() {
   // Disable the preloaded process as it creates processes intermittently
   // which forces the emission of RDP requests we aren't correctly waiting for.
   await pushPref("dom.ipc.processPrelaunch.enabled", false);
@@ -66,9 +79,9 @@ add_task(async function testWatchingCssMessages() {
   Services.console.reset();
   targetList.stopListening();
   await client.close();
-});
+}
 
-add_task(async function testWatchingCachedCssMessages() {
+async function testWatchingCachedCssMessages() {
   // Disable the preloaded process as it creates processes intermittently
   // which forces the emission of RDP requests we aren't correctly waiting for.
   await pushPref("dom.ipc.processPrelaunch.enabled", false);
@@ -115,7 +128,7 @@ add_task(async function testWatchingCachedCssMessages() {
   Services.console.reset();
   targetList.stopListening();
   await client.close();
-});
+}
 
 function setupOnAvailableFunction(targetList, receivedMessages) {
   // The expected messages are the CSS warnings:
@@ -126,7 +139,7 @@ function setupOnAvailableFunction(targetList, receivedMessages) {
       pageError: {
         errorMessage: /Expected color but found ‘bloup’/,
         sourceName: /test_css_messages/,
-        category: "CSS Parser",
+        category: MESSAGE_CATEGORY.CSS_PARSER,
         timeStamp: /^\d+$/,
         error: false,
         warning: true,
@@ -137,7 +150,7 @@ function setupOnAvailableFunction(targetList, receivedMessages) {
       pageError: {
         errorMessage: /Error in parsing value for ‘width’/,
         sourceName: /test_css_messages/,
-        category: "CSS Parser",
+        category: MESSAGE_CATEGORY.CSS_PARSER,
         timeStamp: /^\d+$/,
         error: false,
         warning: true,
@@ -147,7 +160,7 @@ function setupOnAvailableFunction(targetList, receivedMessages) {
       pageError: {
         errorMessage: /Error in parsing value for ‘height’/,
         sourceName: /test_css_messages/,
-        category: "CSS Parser",
+        category: MESSAGE_CATEGORY.CSS_PARSER,
         timeStamp: /^\d+$/,
         error: false,
         warning: true,

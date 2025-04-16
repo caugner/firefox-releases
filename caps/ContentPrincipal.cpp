@@ -147,7 +147,7 @@ nsresult ContentPrincipal::GenerateOriginNoSuffixFromURI(
        // sources. We check for moz-safe-about:blank since origin is an
        // innermost URI.
        !StringBeginsWith(origin->GetSpecOrDefault(),
-                         NS_LITERAL_CSTRING("moz-safe-about:blank")))) {
+                         "moz-safe-about:blank"_ns))) {
     rv = origin->GetAsciiSpec(aOriginNoSuffix);
     NS_ENSURE_SUCCESS(rv, rv);
 
@@ -357,7 +357,8 @@ ContentPrincipal::SetDomain(nsIURI* aDomain) {
 
   // Set the changed-document-domain flag on compartments containing realms
   // using this principal.
-  auto cb = [](JSContext*, void*, JS::Handle<JS::Realm*> aRealm) {
+  auto cb = [](JSContext*, void*, JS::Realm* aRealm,
+               const JS::AutoRequireNoGC& nogc) {
     JS::Compartment* comp = JS::GetCompartmentForRealm(aRealm);
     xpc::SetCompartmentChangedDocumentDomain(comp);
   };

@@ -62,11 +62,11 @@
 
 using namespace js;
 
-#define IMPLEMENT_ERROR_PROTO_CLASS(name)                        \
-  {                                                              \
-    js_Object_str, JSCLASS_HAS_CACHED_PROTO(JSProto_##name),     \
-        JS_NULL_CLASS_OPS,                                       \
-        &ErrorObject::classSpecs[JSProto_##name - JSProto_Error] \
+#define IMPLEMENT_ERROR_PROTO_CLASS(name)                         \
+  {                                                               \
+#    name ".prototype", JSCLASS_HAS_CACHED_PROTO(JSProto_##name), \
+        JS_NULL_CLASS_OPS,                                        \
+        &ErrorObject::classSpecs[JSProto_##name - JSProto_Error]  \
   }
 
 const JSClass ErrorObject::protoClasses[JSEXN_ERROR_LIMIT] = {
@@ -153,7 +153,7 @@ const ClassSpec ErrorObject::classSpecs[JSEXN_ERROR_LIMIT] = {
 
 #define IMPLEMENT_ERROR_CLASS(name)                                   \
   {                                                                   \
-    js_Error_str, /* yes, really */                                   \
+    js_Error_str, /* yes, really, e.g. devtools depends on this. */   \
         JSCLASS_HAS_CACHED_PROTO(JSProto_##name) |                    \
             JSCLASS_HAS_RESERVED_SLOTS(ErrorObject::RESERVED_SLOTS) | \
             JSCLASS_BACKGROUND_FINALIZE,                              \
@@ -287,6 +287,9 @@ static ArrayObject* IterableToArray(JSContext* cx, HandleValue iterable) {
   }
 
   RootedArrayObject array(cx, NewDenseEmptyArray(cx));
+  if (!array) {
+    return nullptr;
+  }
 
   RootedValue nextValue(cx);
   while (true) {
@@ -320,22 +323,23 @@ static bool AggregateError(JSContext* cx, unsigned argc, Value* vp) {
     return false;
   }
 
-  // Step 3 (Inlined IterableToList).
-
+  // TypeError anyway, but this gives a better error message.
   if (!args.requireAtLeast(cx, "AggregateError", 1)) {
     return false;
   }
 
-  RootedArrayObject errorsList(cx, IterableToArray(cx, args.get(0)));
-  if (!errorsList) {
-    return false;
-  }
-
   // 9.1.13 OrdinaryCreateFromConstructor, step 3.
-  // Step 4.
+  // Step 3.
   Rooted<ErrorObject*> obj(
       cx, CreateErrorObject(cx, args, 1, JSEXN_AGGREGATEERR, proto));
   if (!obj) {
+    return false;
+  }
+
+  // Step 4.
+
+  RootedArrayObject errorsList(cx, IterableToArray(cx, args.get(0)));
+  if (!errorsList) {
     return false;
   }
 

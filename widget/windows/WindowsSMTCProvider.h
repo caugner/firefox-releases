@@ -22,6 +22,7 @@ using SMTCProperty = ABI::Windows::Media::SystemMediaTransportControlsProperty;
 using ISMTCDisplayUpdater =
     ABI::Windows::Media::ISystemMediaTransportControlsDisplayUpdater;
 
+using ABI::Windows::Foundation::IAsyncOperation;
 using ABI::Windows::Storage::Streams::IDataWriter;
 using ABI::Windows::Storage::Streams::IRandomAccessStream;
 using ABI::Windows::Storage::Streams::IRandomAccessStreamReference;
@@ -72,11 +73,8 @@ class WindowsSMTCProvider final : public mozilla::dom::MediaControlKeySource {
   // Buttons)
   bool SetControlAttributes(SMTCControlAttributes aAttributes);
 
-  bool RefreshDisplay();
-
   // Sets the Metadata for the currently playing media and sets the playback
   // type to "MUSIC"
-  // Note: This method does not call update(), you need to do that manually
   bool SetMusicMetadata(const wchar_t* aArtist, const wchar_t* aTitle,
                         const wchar_t* aAlbumArtist);
 
@@ -89,9 +87,11 @@ class WindowsSMTCProvider final : public mozilla::dom::MediaControlKeySource {
   // Thumbnail asynchronously
   void LoadImage(const char* aImageData, uint32_t aDataSize);
   // Sets the Thumbnail to the image stored in mImageStream
-  // Note: This method does not call update(), you need to do that manually
-  bool SetThumbnail();
+  bool SetThumbnail(const nsAString& aUrl);
   void ClearThumbnail();
+
+  nsresult UpdateThumbnailOnMainThread(const nsAString& aUrl);
+  void CancelPendingStoreAsyncOperation() const;
 
   bool mInitialized = false;
   ComPtr<ISMTC> mControls;
@@ -103,11 +103,21 @@ class WindowsSMTCProvider final : public mozilla::dom::MediaControlKeySource {
   ComPtr<IDataWriter> mImageDataWriter;
   ComPtr<IRandomAccessStream> mImageStream;
   ComPtr<IRandomAccessStreamReference> mImageStreamReference;
-  // The URL of the current image
-  nsString mImageSrc;
+  ComPtr<IAsyncOperation<unsigned int>> mStoreAsyncOperation;
+
+  // mThumbnailUrl is the url of the current Thumbnail
+  // mProcessingUrl is the url that is being processed. The process starts from
+  // fetching an image from the url and then storing the fetched image to the
+  // mImageStream. If mProcessingUrl is not empty, it means there is an image is
+  // in processing
+  // mThumbnailUrl and mProcessingUrl won't be set at the same time and they can
+  // only be touched on main thread
+  nsString mThumbnailUrl;
+  nsString mProcessingUrl;
 
   // mArtwork can only be used in main thread in case of data racing
   CopyableTArray<mozilla::dom::MediaImage> mArtwork;
+  size_t mNextImageIndex;
 
   mozilla::UniquePtr<mozilla::dom::FetchImageHelper> mImageFetcher;
   mozilla::MozPromiseRequestHolder<mozilla::dom::ImagePromise>

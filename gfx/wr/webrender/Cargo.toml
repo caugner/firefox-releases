@@ -10,7 +10,7 @@ edition = "2018"
 
 [features]
 default = ["freetype-lib"]
-freetype-lib = ["freetype/servo-freetype-sys"]
+freetype-lib = ["freetype/freetype-sys"]
 profiler = ["tracy-rs/enable_profiler"]
 debugger = ["ws", "serde_json", "serde", "image_loader", "base64"]
 capture = ["api/serialize", "ron", "serde", "smallvec/serde"]
@@ -34,7 +34,7 @@ cfg-if = "0.1.2"
 cstr = "0.1.2"
 euclid = { version = "0.20.0", features = ["serde"] }
 fxhash = "0.2.1"
-gleam = "0.12.0"
+gleam = "0.12.1"
 image_loader = { optional = true, version = "0.23", package = "image", default-features = false, features = ["png"] }
 lazy_static = "1"
 log = "0.4"
@@ -48,6 +48,7 @@ serde = { optional = true, version = "1.0", features = ["serde_derive"] }
 serde_json = { optional = true, version = "1.0" }
 smallvec = "1"
 time = "0.1"
+uuid = { version = "0.8", features = ["v4"] }
 api = { version = "0.61.0", path = "../webrender_api", package = "webrender_api" }
 webrender_build = { version = "0.0.1", path = "../webrender_build" }
 malloc_size_of = { version = "0.0.1", path = "../wr_malloc_size_of", package = "wr_malloc_size_of" }
@@ -60,13 +61,13 @@ mozangle = "0.3.1"
 rand = "0.4"
 
 [target.'cfg(any(target_os = "android", all(unix, not(target_os = "macos"))))'.dependencies]
-freetype = { version = "0.4", default-features = false }
+freetype = { version = "0.7", default-features = false }
 libc = "0.2"
 
 [target.'cfg(target_os = "windows")'.dependencies]
 dwrote = "0.11"
 
 [target.'cfg(target_os = "macos")'.dependencies]
-core-foundation = "0.7"
-core-graphics = "0.19"
-core-text = { version = "15", default-features = false }
+core-foundation = "0.9"
+core-graphics = "0.22"
+core-text = { version = "19", default-features = false }

@@ -14,7 +14,6 @@ const { XPCOMUtils } = ChromeUtils.import(
   "resource://gre/modules/XPCOMUtils.jsm"
 );
 XPCOMUtils.defineLazyModuleGetters(this, {
-  Log: "resource://gre/modules/Log.jsm",
   Services: "resource://gre/modules/Services.jsm",
   UrlbarPrefs: "resource:///modules/UrlbarPrefs.jsm",
   UrlbarMuxer: "resource:///modules/UrlbarUtils.jsm",
@@ -22,7 +21,7 @@ XPCOMUtils.defineLazyModuleGetters(this, {
 });
 
 XPCOMUtils.defineLazyGetter(this, "logger", () =>
-  Log.repository.getLogger("Urlbar.Muxer.UnifiedComplete")
+  UrlbarUtils.getLogger({ prefix: "MuxerUnifiedComplete" })
 );
 
 function groupFromResult(result) {
@@ -41,6 +40,18 @@ function groupFromResult(result) {
   }
 }
 
+// Breaks ties among heuristic results. Providers higher up the list are higher
+// priority.
+const heuristicOrder = [
+  // Test providers are handled in sort(),
+  // Extension providers are handled in sort(),
+  "UrlbarProviderSearchTips",
+  "Omnibox",
+  "UnifiedComplete",
+  "Autofill",
+  "TokenAliasEngines",
+  "HeuristicFallback",
+];
 /**
  * Class used to create a muxer.
  * The muxer receives and sorts results in a UrlbarQueryContext.
@@ -54,8 +65,14 @@ class MuxerUnifiedComplete extends UrlbarMuxer {
     return "UnifiedComplete";
   }
 
+  /* eslint-disable complexity */
   /**
    * Sorts results in the given UrlbarQueryContext.
+   *
+   * sort() is not suitable to be broken up into smaller functions or to rely
+   * on more convenience functions. It exists to efficiently group many
+   * conditions into just three loops. As a result, we must disable complexity
+   * linting.
    *
    * @param {UrlbarQueryContext} context
    *   The query context.
@@ -70,19 +87,42 @@ class MuxerUnifiedComplete extends UrlbarMuxer {
 
     // Capture information about the heuristic result to dedupe results from the
     // heuristic more quickly.
+    let topHeuristicRank = Infinity;
+    for (let result of context.allHeuristicResults) {
+      // Determine the highest-ranking heuristic result.
+      if (!result.heuristic) {
+        continue;
+      }
+
+      // + 2 to reserve the highest-priority slots for test and extension
+      // providers.
+      let heuristicRank = heuristicOrder.indexOf(result.providerName) + 2;
+      // Extension and test provider names vary widely and aren't suitable
+      // for a static safelist like heuristicOrder.
+      if (result.providerType == UrlbarUtils.PROVIDER_TYPE.EXTENSION) {
+        heuristicRank = 1;
+      } else if (result.providerName.startsWith("TestProvider")) {
+        heuristicRank = 0;
+      } else if (heuristicRank - 2 == -1) {
+        throw new Error(
+          `Heuristic result returned by unexpected provider: ${result.providerName}`
+        );
+      }
+      // Replace in case of ties, which would occur if a provider sent two
+      // heuristic results.
+      if (heuristicRank <= topHeuristicRank) {
+        topHeuristicRank = heuristicRank;
+        context.heuristicResult = result;
+      }
+    }
+
     let heuristicResultQuery;
-    let heuristicResultOmniboxContent;
     if (context.heuristicResult) {
       if (
         context.heuristicResult.type == UrlbarUtils.RESULT_TYPE.SEARCH &&
         context.heuristicResult.payload.query
       ) {
         heuristicResultQuery = context.heuristicResult.payload.query.toLocaleLowerCase();
-      } else if (
-        context.heuristicResult.type == UrlbarUtils.RESULT_TYPE.OMNIBOX &&
-        context.heuristicResult.payload.content
-      ) {
-        heuristicResultOmniboxContent = context.heuristicResult.payload.content.toLocaleLowerCase();
       }
     }
 
@@ -91,6 +131,9 @@ class MuxerUnifiedComplete extends UrlbarMuxer {
     let resultsWithSuggestedIndex = [];
     let formHistoryResults = new Set();
     let formHistorySuggestions = new Set();
+    // Used to deduped URLs based on their stripped prefix and title. Schema:
+    //   {string} strippedUrl => {prefix, title, rank}
+    let strippedUrlToTopPrefixAndTitle = new Map();
     let maxFormHistoryCount = Math.min(
       UrlbarPrefs.get("maxHistoricalSearchSuggestions"),
       context.maxResults
@@ -137,11 +180,94 @@ class MuxerUnifiedComplete extends UrlbarMuxer {
       ) {
         canShowTailSuggestions = false;
       }
+
+      if (result.type == UrlbarUtils.RESULT_TYPE.URL && result.payload.url) {
+        let [strippedUrl, prefix] = UrlbarUtils.stripPrefixAndTrim(
+          result.payload.url,
+          {
+            stripHttp: true,
+            stripHttps: true,
+            stripWww: true,
+            trimEmptyQuery: true,
+          }
+        );
+        let prefixRank = UrlbarUtils.getPrefixRank(prefix);
+        let topPrefixData = strippedUrlToTopPrefixAndTitle.get(strippedUrl);
+        let topPrefixRank = topPrefixData ? topPrefixData.rank : -1;
+        if (topPrefixRank < prefixRank) {
+          strippedUrlToTopPrefixAndTitle.set(strippedUrl, {
+            prefix,
+            title: result.payload.title,
+            rank: prefixRank,
+          });
+        }
+      }
     }
 
     // Do the second pass through results to build the list of unsorted results.
     let unsortedResults = [];
     for (let result of context.results) {
+      // Exclude low-ranked heuristic results.
+      if (result.heuristic && result != context.heuristicResult) {
+        continue;
+      }
+
+      // We expect UnifiedComplete sent us the highest-ranked www. and non-www
+      // origins, if any. Now, compare them to each other and to the heuristic
+      // result.
+      // 1. If the heuristic result is lower ranked than both, discard the www
+      //    origin, unless it has a different page title than the non-www
+      //    origin. This is a guard against deduping when www.site.com and
+      //    site.com have different content.
+      // 2. If the heuristic result is higher than either the www origin or
+      //    non-www origin:
+      //    2a. If the heuristic is a www origin, discard the non-www origin.
+      //    2b. If the heuristic is a non-www origin, discard the www origin.
+      if (
+        !result.heuristic &&
+        result.type == UrlbarUtils.RESULT_TYPE.URL &&
+        result.payload.url
+      ) {
+        let [strippedUrl, prefix] = UrlbarUtils.stripPrefixAndTrim(
+          result.payload.url,
+          {
+            stripHttp: true,
+            stripHttps: true,
+            stripWww: true,
+            trimEmptyQuery: true,
+          }
+        );
+        let topPrefixData = strippedUrlToTopPrefixAndTitle.get(strippedUrl);
+        // We don't expect completely identical URLs in the results at this
+        // point, so if the prefixes are the same, then we're deduping a result
+        // against itself.
+        if (topPrefixData && prefix != topPrefixData.prefix) {
+          let prefixRank = UrlbarUtils.getPrefixRank(prefix);
+          if (
+            topPrefixData.rank > prefixRank &&
+            prefix.endsWith("www.") == topPrefixData.prefix.endsWith("www.")
+          ) {
+            continue;
+          } else if (
+            topPrefixData.rank > prefixRank &&
+            result.payload?.title == topPrefixData.title
+          ) {
+            continue;
+          }
+        }
+      }
+
+      // Exclude results that dupe autofill.
+      if (
+        context.heuristicResult &&
+        context.heuristicResult.providerName == "Autofill" &&
+        result.providerName != "Autofill" &&
+        context.heuristicResult.payload?.url == result.payload.url &&
+        context.heuristicResult.type == result.type
+      ) {
+        continue;
+      }
+
       // Exclude "Search in a Private Window" as determined in the first pass.
       if (
         result.type == UrlbarUtils.RESULT_TYPE.SEARCH &&
@@ -212,15 +338,6 @@ class MuxerUnifiedComplete extends UrlbarMuxer {
             }
           }
         }
-      }
-
-      // Exclude omnibox results that dupe the heuristic.
-      if (
-        !result.heuristic &&
-        result.type == UrlbarUtils.RESULT_TYPE.OMNIBOX &&
-        result.payload.content == heuristicResultOmniboxContent
-      ) {
-        continue;
       }
 
       // Include this result.

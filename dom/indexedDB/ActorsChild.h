@@ -69,77 +69,6 @@ namespace mozilla {
 namespace dom {
 namespace indexedDB {
 
-class ThreadLocal {
-  friend class DefaultDelete<ThreadLocal>;
-  friend IDBFactory;
-
-  LoggingInfo mLoggingInfo;
-  Maybe<IDBTransaction&> mCurrentTransaction;
-  nsCString mLoggingIdString;
-
-  NS_DECL_OWNINGTHREAD
-
- public:
-  ThreadLocal() = delete;
-  ThreadLocal(const ThreadLocal& aOther) = delete;
-
-  void AssertIsOnOwningThread() const { NS_ASSERT_OWNINGTHREAD(ThreadLocal); }
-
-  const LoggingInfo& GetLoggingInfo() const {
-    AssertIsOnOwningThread();
-
-    return mLoggingInfo;
-  }
-
-  const nsID& Id() const {
-    AssertIsOnOwningThread();
-
-    return mLoggingInfo.backgroundChildLoggingId();
-  }
-
-  const nsCString& IdString() const {
-    AssertIsOnOwningThread();
-
-    return mLoggingIdString;
-  }
-
-  int64_t NextTransactionSN(IDBTransaction::Mode aMode) {
-    AssertIsOnOwningThread();
-    MOZ_ASSERT(mLoggingInfo.nextTransactionSerialNumber() < INT64_MAX);
-    MOZ_ASSERT(mLoggingInfo.nextVersionChangeTransactionSerialNumber() >
-               INT64_MIN);
-
-    if (aMode == IDBTransaction::Mode::VersionChange) {
-      return mLoggingInfo.nextVersionChangeTransactionSerialNumber()--;
-    }
-
-    return mLoggingInfo.nextTransactionSerialNumber()++;
-  }
-
-  uint64_t NextRequestSN() {
-    AssertIsOnOwningThread();
-    MOZ_ASSERT(mLoggingInfo.nextRequestSerialNumber() < UINT64_MAX);
-
-    return mLoggingInfo.nextRequestSerialNumber()++;
-  }
-
-  void SetCurrentTransaction(Maybe<IDBTransaction&> aCurrentTransaction) {
-    AssertIsOnOwningThread();
-
-    mCurrentTransaction = aCurrentTransaction;
-  }
-
-  Maybe<IDBTransaction&> MaybeCurrentTransactionRef() const {
-    AssertIsOnOwningThread();
-
-    return mCurrentTransaction;
-  }
-
- private:
-  explicit ThreadLocal(const nsID& aBackgroundChildLoggingId);
-  ~ThreadLocal();
-};
-
 class BackgroundFactoryChild final : public PBackgroundIDBFactoryChild {
   friend class mozilla::ipc::BackgroundChildImpl;
   friend IDBFactory;
@@ -198,7 +127,7 @@ class BackgroundDatabaseChild;
 
 class BackgroundRequestChildBase {
  protected:
-  RefPtr<IDBRequest> mRequest;
+  const NotNull<RefPtr<IDBRequest>> mRequest;
 
  public:
   void AssertIsOnOwningThread() const
@@ -210,7 +139,8 @@ class BackgroundRequestChildBase {
 #endif
 
  protected:
-  explicit BackgroundRequestChildBase(IDBRequest* aRequest);
+  explicit BackgroundRequestChildBase(
+      MovingNotNull<RefPtr<IDBRequest>> aRequest);
 
   virtual ~BackgroundRequestChildBase();
 };
@@ -245,13 +175,14 @@ class BackgroundFactoryRequestChild final
   const bool mIsDeleteOp;
 
  public:
-  IDBOpenDBRequest* GetOpenDBRequest() const;
+  NotNull<IDBOpenDBRequest*> GetOpenDBRequest() const;
 
  private:
   // Only created by IDBFactory.
-  BackgroundFactoryRequestChild(SafeRefPtr<IDBFactory> aFactory,
-                                IDBOpenDBRequest* aOpenRequest,
-                                bool aIsDeleteOp, uint64_t aRequestedVersion);
+  BackgroundFactoryRequestChild(
+      SafeRefPtr<IDBFactory> aFactory,
+      MovingNotNull<RefPtr<IDBOpenDBRequest>> aOpenRequest, bool aIsDeleteOp,
+      uint64_t aRequestedVersion);
 
   // Only destroyed by BackgroundFactoryChild.
   ~BackgroundFactoryRequestChild();
@@ -372,7 +303,8 @@ class BackgroundDatabaseRequestChild final
 
  private:
   // Only created by IDBDatabase.
-  BackgroundDatabaseRequestChild(IDBDatabase* aDatabase, IDBRequest* aRequest);
+  BackgroundDatabaseRequestChild(IDBDatabase* aDatabase,
+                                 MovingNotNull<RefPtr<IDBRequest>> aRequest);
 
   // Only destroyed by BackgroundDatabaseChild.
   ~BackgroundDatabaseRequestChild();
@@ -582,7 +514,7 @@ class BackgroundRequestChild final : public BackgroundRequestChildBase,
 
  private:
   // Only created by IDBTransaction.
-  explicit BackgroundRequestChild(IDBRequest* aRequest);
+  explicit BackgroundRequestChild(MovingNotNull<RefPtr<IDBRequest>> aRequest);
 
   // Only destroyed by BackgroundTransactionChild or
   // BackgroundVersionChangeTransactionChild.
@@ -649,7 +581,8 @@ class BackgroundCursorChildBase : public PBackgroundIDBCursorChild {
 
   const Direction mDirection;
 
-  BackgroundCursorChildBase(IDBRequest* aRequest, Direction aDirection);
+  BackgroundCursorChildBase(NotNull<IDBRequest*> aRequest,
+                            Direction aDirection);
 
   void HandleResponse(nsresult aResponse);
 
@@ -658,7 +591,9 @@ class BackgroundCursorChildBase : public PBackgroundIDBCursorChild {
     NS_ASSERT_OWNINGTHREAD(BackgroundCursorChildBase);
   }
 
-  IDBRequest* GetRequest() const {
+  MovingNotNull<RefPtr<IDBRequest>> AcquireRequest() const;
+
+  NotNull<IDBRequest*> GetRequest() const {
     AssertIsOnOwningThread();
 
     return *mRequest;
@@ -692,7 +627,7 @@ class BackgroundCursorChild final : public BackgroundCursorChildBase {
   bool mInFlightResponseInvalidationNeeded;
 
  public:
-  BackgroundCursorChild(IDBRequest* aRequest, SourceType* aSource,
+  BackgroundCursorChild(NotNull<IDBRequest*> aRequest, SourceType* aSource,
                         Direction aDirection);
 
   void SendContinueInternal(const CursorRequestParams& aParams,

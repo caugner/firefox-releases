@@ -17,7 +17,7 @@ html {
 body {
   // sass-lint:disable no-color-literals
   --grey-subtitle: #4A4A4F;
-  --grey-subtitle-1: #80808F;
+  --grey-subtitle-1: #696977;
   --newtab-background-color: #EDEDF0;
   --newtab-background-color-1: #F9F9FA;
   --newtab-text-primary-color: #0C0C0D;
@@ -36,6 +36,7 @@ body {
   --welcome-button-text-color: #FFF;
   --welcome-button-background-hover-color: #003EAA;
   --welcome-button-background-active-color: #002275;
+  --about-welcome-media-fade: linear-gradient(transparent, transparent 40%, #F9F9FA);
 
   font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Ubuntu',
   'Helvetica Neue', sans-serif;
@@ -62,6 +63,7 @@ body {
     --welcome-card-button-background-hover-color: rgba(12, 12, 13, 0.5);
     --welcome-card-button-background-active-color: rgba(12, 12, 13, 0.7);
     --welcome-button-box-shadow-color: rgba(249, 249, 250, 0.2);
+    --about-welcome-media-fade: linear-gradient(transparent, transparent 35%, #1D1133, #1D1133);
   }
 }
 
@@ -246,7 +248,6 @@ body {
 .multistageContainer {
   text-align: center;
   overflow-x: auto;
-  width: 100vw;
   height: 100vh;
   background-color: var(--newtab-background-color-1);
 
@@ -316,15 +317,43 @@ body {
     h2 {
       font-size: 18px;
       font-weight: normal;
-      margin: 0 6px;
+      margin: 10px 6px 0;
       color: var(--grey-subtitle-1);
       line-height: 28px;
+      max-width: 750px;
+      letter-spacing: -0.01em;
+    }
+  }
+
+  .tiles-theme-container {
+    margin: 10px auto;
+    border: 0;
+  }
+
+  .sr-only {
+    opacity: 0;
+    overflow: hidden;
+    position: absolute;
+
+    &.input {
+      height: 1px;
+      width: 1px;
     }
   }
 
   .tiles-theme-section {
-    display: flex;
-    margin: 10px auto;
+    display: grid;
+    grid-gap: 21px;
+    grid-template-columns: repeat(3, auto);
+    border: 0;
+
+    @media (max-width: $break-point-medium) {
+      grid-template-columns: repeat(2, auto);
+    }
+
+    &:focus-within {
+      border: 1px dotted;
+    }
 
     .theme {
       display: flex;
@@ -337,11 +366,6 @@ body {
       box-shadow: 0 1px 4px rgba(12, 12, 13, 0.1);
       border-radius: 4px;
       cursor: pointer;
-      margin-inline-start: 21px;
-
-      &:first-child {
-        margin-inline-start: 0;
-      }
 
       .icon {
         background-size: cover;
@@ -349,12 +373,20 @@ body {
         border-top-right-radius: 4px;
         height: 91px;
 
+        &:dir(rtl) {
+          transform: scaleX(-1);
+        }
+
         &.light {
           background-image: url('chrome://mozapps/content/extensions/firefox-compact-light.svg');
         }
 
         &.dark {
           background-image: url('chrome://mozapps/content/extensions/firefox-compact-dark.svg');
+        }
+
+        &.automatic {
+          background-image: url('chrome://mozapps/content/extensions/default-theme.svg');
         }
       }
 
@@ -365,6 +397,14 @@ body {
         line-height: 22px;
         margin-inline-start: 12px;
         margin-top: 9px;
+      }
+
+      .theme-desc {
+        display: flex;
+        font-size: 12px;
+        line-height: 18px;
+        margin-inline-start: 12px;
+        opacity: 0.5;
       }
 
       &.selected {
@@ -392,6 +432,16 @@ body {
         border-radius: 4px;
       }
     }
+  }
+
+  .tiles-topsites-disclaimer {
+    display: flex;
+    flex-direction: column;
+    padding: 1em;
+    text-align: center;
+    color: var(--grey-subtitle-1);
+    font-size: 12px;
+    line-height: 18px;
   }
 
   .tiles-topsites-section {
@@ -450,6 +500,39 @@ body {
     }
   }
 
+  .tiles-media-section {
+    align-self: center;
+    position: relative;
+    margin-top: -12px;
+    margin-bottom: -155px;
+
+    .fade {
+      height: 390px;
+      width: 800px;
+      position: absolute;
+      background-image: var(--about-welcome-media-fade);
+    }
+
+    .media {
+      height: 390px;
+      width: 800px;
+    }
+
+    @media (prefers-reduced-motion) {
+      height: 200px;
+      width: 800px;
+      margin: 0;
+
+      &.privacy {
+        background: top no-repeat url('../data/content/assets/firefox-protections.svg');
+      }
+
+      .media {
+        opacity: 0;
+      }
+    }
+  }
+
   button {
     font-family: inherit;
     cursor: pointer;
@@ -464,6 +547,8 @@ body {
       background-color: var(--newtab-button-primary-color);
       color: var(--welcome-button-text-color);
       border-radius: 4px;
+      position: relative;
+      z-index: 1;
 
       &:focus {
         background: var(--welcome-button-background-hover-color);
@@ -526,7 +611,12 @@ body {
     flex-direction: row;
     justify-content: center;
     margin-top: auto;
-    padding: 32px 0;
+    padding: 32px 0 66px;
+    z-index: 1;
+
+    &.has-disclaimer {
+      padding-bottom: 0;
+    }
 
     .indicator {
       width: 60px;

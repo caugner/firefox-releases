@@ -42,7 +42,7 @@ class WatcherFront extends FrontClassWithSpec(watcherSpec) {
   }
 
   _onTargetDestroyed(form) {
-    const front = this.actor(form.actor);
+    const front = this.getActorByID(form.actor);
     this.emit("target-destroyed", front);
   }
 
@@ -77,6 +77,17 @@ class WatcherFront extends FrontClassWithSpec(watcherSpec) {
     if (topLevelTarget.browsingContextID == id) {
       return topLevelTarget;
     }
+
+    // If we could not find a browsing context target for the provided id, the
+    // browsing context might not be the topmost browsing context of a given
+    // process. For now we only create targets for the top browsing context of
+    // each process, so we recursively check the parent browsing context ids
+    // until we find a valid target.
+    const parentBrowsingContextID = await this.getParentBrowsingContextID(id);
+    if (parentBrowsingContextID && parentBrowsingContextID !== id) {
+      return this.getBrowsingContextTarget(parentBrowsingContextID);
+    }
+
     return null;
   }
 }

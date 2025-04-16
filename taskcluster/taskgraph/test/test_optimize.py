@@ -4,7 +4,7 @@
 
 from __future__ import absolute_import, print_function, unicode_literals
 
-import sys
+from functools import partial
 import unittest
 
 import pytest
@@ -83,7 +83,8 @@ class TestOptimize(unittest.TestCase):
             target_task_graph=graph,
             optimizations=optimize._get_optimizations(graph, strategies),
             params={},
-            do_not_optimize=do_not_optimize)
+            do_not_optimize=do_not_optimize,
+            requested_tasks=graph)
         self.assertEqual(got_removed, exp_removed)
 
     def test_remove_tasks_never(self):
@@ -91,9 +92,6 @@ class TestOptimize(unittest.TestCase):
         graph = self.make_triangle()
         self.assert_remove_tasks(graph, set())
 
-    @pytest.mark.xfail(
-        sys.version_info >= (3, 0), reason="python3 migration is not complete"
-    )
     def test_remove_tasks_all(self):
         "A graph full of optimization=remove has removes everything"
         graph = self.make_triangle(
@@ -102,9 +100,6 @@ class TestOptimize(unittest.TestCase):
             t3={'remove': None})
         self.assert_remove_tasks(graph, {'t1', 't2', 't3'})
 
-    @pytest.mark.xfail(
-        sys.version_info >= (3, 0), reason="python3 migration is not complete"
-    )
     def test_composite_strategies_any(self):
         self.monkeypatch.setattr(optimize, 'registry', self.strategies)
         strategies = self.strategies.copy()
@@ -117,9 +112,6 @@ class TestOptimize(unittest.TestCase):
 
         self.assert_remove_tasks(graph, {'t1', 't2', 't3'}, strategies=strategies)
 
-    @pytest.mark.xfail(
-        sys.version_info >= (3, 0), reason="python3 migration is not complete"
-    )
     def test_composite_strategies_all(self):
         self.monkeypatch.setattr(optimize, 'registry', self.strategies)
         strategies = self.strategies.copy()
@@ -131,9 +123,6 @@ class TestOptimize(unittest.TestCase):
             t3={'all': None})
         self.assert_remove_tasks(graph, set(), strategies=strategies)
 
-    @pytest.mark.xfail(
-        sys.version_info >= (3, 0), reason="python3 migration is not complete"
-    )
     def test_remove_tasks_blocked(self):
         "Removable tasks that are depended on by non-removable tasks are not removed"
         graph = self.make_triangle(
@@ -141,9 +130,6 @@ class TestOptimize(unittest.TestCase):
             t3={'remove': None})
         self.assert_remove_tasks(graph, {'t3'})
 
-    @pytest.mark.xfail(
-        sys.version_info >= (3, 0), reason="python3 migration is not complete"
-    )
     def test_remove_tasks_do_not_optimize(self):
         "Removable tasks that are marked do_not_optimize are not removed"
         graph = self.make_triangle(
@@ -177,9 +163,6 @@ class TestOptimize(unittest.TestCase):
         graph = self.make_triangle()
         self.assert_replace_tasks(graph, set())
 
-    @pytest.mark.xfail(
-        sys.version_info >= (3, 0), reason="python3 migration is not complete"
-    )
     def test_replace_tasks_all(self):
         "All replacable tasks are replaced when strategy is 'replace'"
         graph = self.make_triangle(
@@ -191,9 +174,6 @@ class TestOptimize(unittest.TestCase):
             exp_replaced={'t1', 't2', 't3'},
             exp_label_to_taskid={'t1': 'e1', 't2': 'e2', 't3': 'e3'})
 
-    @pytest.mark.xfail(
-        sys.version_info >= (3, 0), reason="python3 migration is not complete"
-    )
     def test_replace_tasks_blocked(self):
         "A task cannot be replaced if it depends on one that was not replaced"
         graph = self.make_triangle(
@@ -204,9 +184,6 @@ class TestOptimize(unittest.TestCase):
             exp_replaced={'t1'},
             exp_label_to_taskid={'t1': 'e1'})
 
-    @pytest.mark.xfail(
-        sys.version_info >= (3, 0), reason="python3 migration is not complete"
-    )
     def test_replace_tasks_do_not_optimize(self):
         "A task cannot be replaced if it depends on one that was not replaced"
         graph = self.make_triangle(
@@ -219,9 +196,6 @@ class TestOptimize(unittest.TestCase):
             exp_label_to_taskid={'t1': 'e1'},
             do_not_optimize={'t2'})
 
-    @pytest.mark.xfail(
-        sys.version_info >= (3, 0), reason="python3 migration is not complete"
-    )
     def test_replace_tasks_removed(self):
         "A task can be replaced with nothing"
         graph = self.make_triangle(
@@ -237,7 +211,7 @@ class TestOptimize(unittest.TestCase):
     def assert_subgraph(self, graph, removed_tasks, replaced_tasks,
                         label_to_taskid, exp_subgraph, exp_label_to_taskid):
         self.maxDiff = None
-        optimize.slugid = ('tid{}'.format(i) for i in range(1, 10)).next
+        optimize.slugid = partial(next, (b'tid%d' % i for i in range(1, 10)))
         try:
             got_subgraph = optimize.get_subgraph(graph, removed_tasks,
                                                  replaced_tasks, label_to_taskid,
@@ -248,9 +222,6 @@ class TestOptimize(unittest.TestCase):
         self.assertEqual(got_subgraph.tasks, exp_subgraph.tasks)
         self.assertEqual(label_to_taskid, exp_label_to_taskid)
 
-    @pytest.mark.xfail(
-        sys.version_info >= (3, 0), reason="python3 migration is not complete"
-    )
     def test_get_subgraph_no_change(self):
         "get_subgraph returns a similarly-shaped subgraph when nothing is removed"
         graph = self.make_triangle()
@@ -265,9 +236,6 @@ class TestOptimize(unittest.TestCase):
                 ('tid2', 'tid1', 'dep')),
             {'t1': 'tid1', 't2': 'tid2', 't3': 'tid3'})
 
-    @pytest.mark.xfail(
-        sys.version_info >= (3, 0), reason="python3 migration is not complete"
-    )
     def test_get_subgraph_removed(self):
         "get_subgraph returns a smaller subgraph when tasks are removed"
         graph = self.make_triangle()
@@ -277,9 +245,6 @@ class TestOptimize(unittest.TestCase):
                 self.make_task('t1', task_id='tid1', dependencies={})),
             {'t1': 'tid1'})
 
-    @pytest.mark.xfail(
-        sys.version_info >= (3, 0), reason="python3 migration is not complete"
-    )
     def test_get_subgraph_replaced(self):
         "get_subgraph returns a smaller subgraph when tasks are replaced"
         graph = self.make_triangle()

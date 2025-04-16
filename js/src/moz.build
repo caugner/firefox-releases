@@ -126,6 +126,7 @@ EXPORTS.js += [
     '../public/Array.h',
     '../public/ArrayBuffer.h',
     '../public/ArrayBufferMaybeShared.h',
+    '../public/BigInt.h',
     '../public/BuildId.h',
     '../public/CallArgs.h',
     '../public/CallNonGenericMethod.h',
@@ -507,6 +508,7 @@ selfhosted_inputs = [
     'builtin/WeakMap.js',
     'builtin/WeakSet.js'
 ] + ([
+    'builtin/intl/NumberingSystemsGenerated.h',
     'builtin/intl/Collator.js',
     'builtin/intl/CommonFunctions.js',
     'builtin/intl/CurrencyDataGenerated.js',

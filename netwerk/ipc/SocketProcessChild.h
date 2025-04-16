@@ -38,12 +38,15 @@ class SocketProcessChild final
 
   void ActorDestroy(ActorDestroyReason aWhy) override;
 
+  mozilla::ipc::IPCResult RecvInit(
+      const SocketPorcessInitAttributes& aAttributes);
   mozilla::ipc::IPCResult RecvPreferenceUpdate(const Pref& aPref);
   mozilla::ipc::IPCResult RecvRequestMemoryReport(
       const uint32_t& generation, const bool& anonymize,
       const bool& minimizeMemoryUsage,
       const Maybe<mozilla::ipc::FileDescriptor>& DMDFile);
   mozilla::ipc::IPCResult RecvSetOffline(const bool& aOffline);
+  mozilla::ipc::IPCResult RecvSetConnectivity(const bool& aConnectivity);
   mozilla::ipc::IPCResult RecvInitLinuxSandbox(
       const Maybe<ipc::FileDescriptor>& aBrokerFd);
   mozilla::ipc::IPCResult RecvInitSocketProcessBridgeParent(
@@ -123,8 +126,14 @@ class SocketProcessChild final
   mozilla::ipc::IPCResult RecvNotifyObserver(const nsCString& aTopic,
                                              const nsString& aData);
 
-  virtual already_AddRefed<PIPCBlobInputStreamChild>
-  AllocPIPCBlobInputStreamChild(const nsID& aID, const uint64_t& aSize);
+  virtual already_AddRefed<PRemoteLazyInputStreamChild>
+  AllocPRemoteLazyInputStreamChild(const nsID& aID, const uint64_t& aSize);
+
+  mozilla::ipc::IPCResult RecvGetSocketData(GetSocketDataResolver&& aResolve);
+  mozilla::ipc::IPCResult RecvGetDNSCacheEntries(
+      GetDNSCacheEntriesResolver&& aResolve);
+  mozilla::ipc::IPCResult RecvGetHttpConnectionData(
+      GetHttpConnectionDataResolver&& aResolve);
 
  protected:
   friend class SocketProcessImpl;

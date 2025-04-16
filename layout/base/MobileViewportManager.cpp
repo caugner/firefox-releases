@@ -22,10 +22,10 @@ static mozilla::LazyLogModule sApzMvmLog("apz.mobileviewport");
 
 NS_IMPL_ISUPPORTS(MobileViewportManager, nsIDOMEventListener, nsIObserver)
 
-#define DOM_META_ADDED NS_LITERAL_STRING("DOMMetaAdded")
-#define DOM_META_CHANGED NS_LITERAL_STRING("DOMMetaChanged")
-#define LOAD NS_LITERAL_STRING("load")
-#define BEFORE_FIRST_PAINT NS_LITERAL_CSTRING("before-first-paint")
+#define DOM_META_ADDED u"DOMMetaAdded"_ns
+#define DOM_META_CHANGED u"DOMMetaChanged"_ns
+#define LOAD u"load"_ns
+#define BEFORE_FIRST_PAINT "before-first-paint"_ns
 
 using namespace mozilla;
 using namespace mozilla::dom;
@@ -557,17 +557,15 @@ void MobileViewportManager::RefreshVisualViewportSize() {
   UpdateVisualViewportSize(displaySize, GetZoom());
 }
 
-void MobileViewportManager::NotifyResizeReflow() {
-  // If there's a resize-reflow, the visual viewport may need to be recomputed
-  // for a new display size, so let's do that.
+void MobileViewportManager::UpdateSizesBeforeReflow() {
   if (Maybe<LayoutDeviceIntSize> newDisplaySize =
           mContext->GetContentViewerSize()) {
-    // Note that we intentionally don't short-circuit here if the display size
-    // (in LD units) is unchanged, because a resize-reflow may also be triggered
-    // by a change in the CSS/LD pixel ratio which would affect GetZoom() and
-    // therefore the computed visual viewport.
+    if (mDisplaySize == *newDisplaySize) {
+      return;
+    }
+
     mDisplaySize = *newDisplaySize;
-    MVM_LOG("%p: Display size updated to %s\n", this,
+    MVM_LOG("%p: Reflow starting, display size updated to %s\n", this,
             Stringify(mDisplaySize).c_str());
 
     if (mDisplaySize.width == 0 || mDisplaySize.height == 0) {
@@ -580,8 +578,6 @@ void MobileViewportManager::NotifyResizeReflow() {
     mMobileViewportSize = viewportInfo.GetSize();
     MVM_LOG("%p: MVSize updated to %s\n", this,
             Stringify(mMobileViewportSize).c_str());
-
-    RefreshVisualViewportSize();
   }
 }
 
@@ -720,4 +716,15 @@ void MobileViewportManager::ShrinkToDisplaySizeIfNeeded() {
             Stringify(scrollableRect->Size()).c_str());
     UpdateResolutionForContentSizeChange(scrollableRect->Size());
   }
+}
+
+CSSSize MobileViewportManager::GetIntrinsicCompositionSize() const {
+  ScreenIntSize displaySize = ViewAs<ScreenPixel>(
+      mDisplaySize, PixelCastJustification::LayoutDeviceIsScreenForBounds);
+  ScreenIntSize compositionSize = GetCompositionSize(displaySize);
+  CSSToScreenScale intrinsicScale =
+      ComputeIntrinsicScale(mContext->GetViewportInfo(displaySize),
+                            compositionSize, mMobileViewportSize);
+
+  return ScreenSize(compositionSize) / intrinsicScale;
 }

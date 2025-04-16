@@ -170,7 +170,7 @@ void HTMLTrackElement::CreateTextTrack() {
   nsCOMPtr<nsPIDOMWindowInner> window = do_QueryInterface(parentObject);
   if (!parentObject) {
     nsContentUtils::ReportToConsole(
-        nsIScriptError::errorFlag, NS_LITERAL_CSTRING("Media"), OwnerDoc(),
+        nsIScriptError::errorFlag, "Media"_ns, OwnerDoc(),
         nsContentUtils::eDOM_PROPERTIES,
         "Using track element in non-window context");
     return;
@@ -314,16 +314,16 @@ void HTMLTrackElement::LoadResource(RefPtr<WebVTTListener>&& aWebVTTListener) {
   nsSecurityFlags secFlags;
   if (CORS_NONE == corsMode) {
     // Same-origin is required for track element.
-    secFlags = nsILoadInfo::SEC_REQUIRE_SAME_ORIGIN_DATA_INHERITS;
+    secFlags = nsILoadInfo::SEC_REQUIRE_SAME_ORIGIN_INHERITS_SEC_CONTEXT;
   } else {
-    secFlags = nsILoadInfo::SEC_REQUIRE_CORS_DATA_INHERITS;
+    secFlags = nsILoadInfo::SEC_REQUIRE_CORS_INHERITS_SEC_CONTEXT;
     if (CORS_ANONYMOUS == corsMode) {
       secFlags |= nsILoadInfo::SEC_COOKIES_SAME_ORIGIN;
     } else if (CORS_USE_CREDENTIALS == corsMode) {
       secFlags |= nsILoadInfo::SEC_COOKIES_INCLUDE;
     } else {
       NS_WARNING("Unknown CORS mode.");
-      secFlags = nsILoadInfo::SEC_REQUIRE_SAME_ORIGIN_DATA_INHERITS;
+      secFlags = nsILoadInfo::SEC_REQUIRE_SAME_ORIGIN_INHERITS_SEC_CONTEXT;
     }
   }
 
@@ -439,11 +439,11 @@ void HTMLTrackElement::SetReadyState(TextTrackReadyState aReadyState) {
     switch (aReadyState) {
       case TextTrackReadyState::Loaded:
         LOG("dispatch 'load' event");
-        DispatchTrackRunnable(NS_LITERAL_STRING("load"));
+        DispatchTrackRunnable(u"load"_ns);
         break;
       case TextTrackReadyState::FailedToLoad:
         LOG("dispatch 'error' event");
-        DispatchTrackRunnable(NS_LITERAL_STRING("error"));
+        DispatchTrackRunnable(u"error"_ns);
         break;
       default:
         break;

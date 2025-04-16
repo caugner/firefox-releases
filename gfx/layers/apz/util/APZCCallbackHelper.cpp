@@ -37,6 +37,7 @@
 
 static mozilla::LazyLogModule sApzHlpLog("apz.helper");
 #define APZCCH_LOG(...) MOZ_LOG(sApzHlpLog, LogLevel::Debug, (__VA_ARGS__))
+static mozilla::LazyLogModule sDisplayportLog("apz.displayport");
 
 namespace mozilla {
 namespace layers {
@@ -256,6 +257,17 @@ static void SetDisplayPortMargins(PresShell* aPresShell, nsIContent* aContent,
   }
 
   bool hadDisplayPort = nsLayoutUtils::HasDisplayPort(aContent);
+  if (MOZ_LOG_TEST(sDisplayportLog, LogLevel::Debug)) {
+    if (!hadDisplayPort) {
+      mozilla::layers::ScrollableLayerGuid::ViewID viewID =
+          mozilla::layers::ScrollableLayerGuid::NULL_SCROLL_ID;
+      nsLayoutUtils::FindIDFor(aContent, &viewID);
+      MOZ_LOG(
+          sDisplayportLog, LogLevel::Debug,
+          ("APZCCH installing displayport margins %s on scrollId=%" PRIu64 "\n",
+           Stringify(aDisplayPortMargins).c_str(), viewID));
+    }
+  }
   nsLayoutUtils::SetDisplayPortMargins(aContent, aPresShell,
                                        aDisplayPortMargins, 0);
   if (!hadDisplayPort) {
@@ -417,6 +429,9 @@ void APZCCallbackHelper::InitializeRootDisplayport(PresShell* aPresShell) {
     } else if (pc) {
       baseRect = nsRect(nsPoint(0, 0), pc->GetVisibleArea().Size());
     }
+    MOZ_LOG(
+        sDisplayportLog, LogLevel::Debug,
+        ("Initializing root displayport on scrollId=%" PRIu64 "\n", viewId));
     nsLayoutUtils::SetDisplayPortBaseIfNotSet(content, baseRect);
     // Note that we also set the base rect that goes with these margins in
     // nsRootBoxFrame::BuildDisplayList.
@@ -446,7 +461,7 @@ PresShell* APZCCallbackHelper::GetRootContentDocumentPresShellForContent(
   if (!context) {
     return nullptr;
   }
-  context = context->GetToplevelContentDocumentPresContext();
+  context = context->GetInProcessRootContentDocumentPresContext();
   if (!context) {
     return nullptr;
   }
@@ -614,6 +629,9 @@ static bool PrepareForSetTargetAPZCNotification(
 
   APZCCH_LOG("%p didn't have a displayport, so setting one...\n",
              dpElement.get());
+  MOZ_LOG(sDisplayportLog, LogLevel::Debug,
+          ("Activating displayport on scrollId=%" PRIu64 " for SetTargetAPZC\n",
+           guid.mScrollId));
   bool activated = nsLayoutUtils::CalculateAndSetDisplayPortMargins(
       scrollAncestor, nsLayoutUtils::RepaintMode::Repaint);
   if (!activated) {
@@ -818,7 +836,8 @@ void APZCCallbackHelper::NotifyFlushComplete(PresShell* aPresShell) {
 bool APZCCallbackHelper::IsScrollInProgress(nsIScrollableFrame* aFrame) {
   return aFrame->IsProcessingAsyncScroll() ||
          nsLayoutUtils::CanScrollOriginClobberApz(aFrame->LastScrollOrigin()) ||
-         aFrame->LastSmoothScrollOrigin() != ScrollOrigin::None;
+         aFrame->LastSmoothScrollOrigin() != ScrollOrigin::None ||
+         aFrame->GetRelativeOffset().isSome();
 }
 
 /* static */
@@ -872,8 +891,10 @@ void APZCCallbackHelper::CancelAutoscroll(
 
 /* static */
 void APZCCallbackHelper::NotifyPinchGesture(
-    PinchGestureInput::PinchGestureType aType, LayoutDeviceCoord aSpanChange,
+    PinchGestureInput::PinchGestureType aType,
+    const LayoutDevicePoint& aFocusPoint, LayoutDeviceCoord aSpanChange,
     Modifiers aModifiers, const nsCOMPtr<nsIWidget>& aWidget) {
+  APZCCH_LOG("APZCCallbackHelper dispatching pinch gesture\n");
   EventMessage msg;
   switch (aType) {
     case PinchGestureInput::PINCHGESTURE_START:
@@ -896,6 +917,8 @@ void APZCCallbackHelper::NotifyPinchGesture(
   // on that currently, but we might want to fix it at some point.
   event.mDelta = aSpanChange;
   event.mModifiers = aModifiers;
+  event.mRefPoint = RoundedToInt(aFocusPoint);
+
   DispatchWidgetEvent(event);
 }
 

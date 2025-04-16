@@ -1,7 +1,7 @@
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
-const {XPCOMUtils} = ChromeUtils.import("resource://gre/modules/XPCOMUtils.jsm");
+const {ComponentUtils} = ChromeUtils.import("resource://gre/modules/ComponentUtils.jsm");
 
 function TestParams() {
 }
@@ -40,7 +40,7 @@ function f_size_and_iid(aSize, aIID, a, bSize, bIID, b, rvSize, rvIID) {
 TestParams.prototype = {
 
   /* Boilerplate */
-  QueryInterface: ChromeUtils.generateQI([Ci["nsIXPCTestParams"]]),
+  QueryInterface: ChromeUtils.generateQI(["nsIXPCTestParams"]),
   contractID: "@mozilla.org/js/xpc/test/js/Params;1",
   classID: Components.ID("{e3b86f4e-49c0-487c-a2b0-3a986720a044}"),
 
@@ -101,4 +101,4 @@ TestParams.prototype = {
   }
 };
 
-this.NSGetFactory = XPCOMUtils.generateNSGetFactory([TestParams]);
+this.NSGetFactory = ComponentUtils.generateNSGetFactory([TestParams]);

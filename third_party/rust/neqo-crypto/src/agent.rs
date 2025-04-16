@@ -21,7 +21,7 @@ use crate::secrets::SecretHolder;
 use crate::ssl::{self, PRBool};
 use crate::time::TimeHolder;
 
-use neqo_common::{hex_snip_middle, matches, qdebug, qinfo, qtrace, qwarn};
+use neqo_common::{hex_snip_middle, qdebug, qinfo, qtrace, qwarn};
 use std::cell::RefCell;
 use std::convert::TryFrom;
 use std::ffi::CString;
@@ -793,6 +793,18 @@ pub enum ZeroRttCheckResult {
 /// A `ZeroRttChecker` is used by the agent to validate the application token (as provided by `send_ticket`)
 pub trait ZeroRttChecker: std::fmt::Debug + std::marker::Unpin {
     fn check(&self, token: &[u8]) -> ZeroRttCheckResult;
+}
+
+/// Using `AllowZeroRtt` for the implementation of `ZeroRttChecker` means
+/// accepting 0-RTT always.  This generally isn't a great idea, so this
+/// generates a strong warning when it is used.
+#[derive(Debug)]
+pub struct AllowZeroRtt {}
+impl ZeroRttChecker for AllowZeroRtt {
+    fn check(&self, _token: &[u8]) -> ZeroRttCheckResult {
+        qwarn!("AllowZeroRtt accepting 0-RTT");
+        ZeroRttCheckResult::Accept
+    }
 }
 
 #[derive(Debug)]

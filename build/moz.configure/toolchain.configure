@@ -141,7 +141,7 @@ with only_when(host_is_osx | target_is_osx):
     @imports(_from='biplist', _import='readPlist')
     def macos_sdk(sdk, host):
         sdk_min_version = Version('10.11')
-        sdk_max_version = Version('10.15.4')
+        sdk_max_version = Version('10.15.6')
 
         if sdk:
             sdk = sdk[0]
@@ -1784,19 +1784,6 @@ set_config('HAVE_YASM', have_yasm)
 add_old_configure_assignment('YASM', have_yasm)
 
 
-# clang-cl integrated assembler support
-# ==============================================================
-@depends(target)
-def clangcl_asflags(target):
-    asflags = None
-    if target.os == 'WINNT' and target.cpu == 'aarch64':
-        asflags = ['--target=aarch64-windows-msvc']
-    return asflags
-
-
-set_config('CLANGCL_ASFLAGS', clangcl_asflags)
-
-
 # Code Coverage
 # ==============================================================
 
@@ -1987,7 +1974,7 @@ set_config('CARGO_INCREMENTAL', cargo_incremental)
 # For other OSes:
 # - on local developer builds: lld is used if present. Otherwise gold is used if present
 #   otherwise, BFD ld is used.
-# - on release/official builds: whatever "ld" resolves to is used, except on Android x86_64
+# - on release/official builds: whatever "ld" resolves to is used, except on Android x86/x86_64
 #   where BFD ld is used. Usually, "ld" resolves to BFD ld, except with the Android NDK,
 #   where it resolves to gold. lld is not used by default on Linux and Android because
 #   it introduces layout changes that prevent elfhack from working. See e.g.
@@ -2008,8 +1995,9 @@ imply_option('--enable-linker', 'gold', when='--enable-gold')
 @depends(target, developer_options)
 def enable_linker_default(target, developer_options):
     # x86-64 gold has bugs in how it lays out .note.* sections. See bug 1573820.
+    # x86-32 gold has a bug when assembly files are built. See bug 1651699.
     # lld is faster, so prefer that for developer builds.
-    if target.os == 'Android' and target.cpu == 'x86_64':
+    if target.os == 'Android' and target.cpu in ('x86', 'x86_64'):
         return 'lld' if developer_options else 'bfd'
 
 
@@ -2128,9 +2116,9 @@ set_config('LINKER_KIND', select_linker.KIND)
 
 @depends_if(select_linker, macos_sdk)
 def linker_ldflags(linker, macos_sdk):
-    flags = list(linker.LINKER_FLAG or [])
+    flags = list((linker and linker.LINKER_FLAG) or [])
     if macos_sdk:
-        if linker.KIND == 'ld64':
+        if linker and linker.KIND == 'ld64':
             flags.append('-Wl,-syslibroot,%s' % macos_sdk)
         else:
             flags.append('-Wl,--sysroot=%s' % macos_sdk)

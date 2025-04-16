@@ -252,16 +252,12 @@ impl MarionetteHandler {
 
         let mut runner = FirefoxRunner::new(&binary, profile);
 
-        // double-dashed flags are not accepted on Windows systems
-        runner.arg("-marionette");
+        runner.arg("--marionette");
         if self.settings.jsdebugger {
-            runner.arg("-jsdebugger");
+            runner.arg("--jsdebugger");
         }
         if let Some(args) = options.args.as_ref() {
             runner.args(args);
-        }
-        if let Some(env) = options.env {
-            runner.envs(env);
         }
 
         // https://developer.mozilla.org/docs/Environment_variables_affecting_crash_reporting

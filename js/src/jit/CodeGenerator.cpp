@@ -48,6 +48,7 @@
 #include "jit/SharedICHelpers.h"
 #include "jit/StackSlotAllocator.h"
 #include "jit/VMFunctions.h"
+#include "jit/WarpSnapshot.h"
 #include "js/RegExpFlags.h"  // JS::RegExpFlag
 #include "util/CheckedArithmetic.h"
 #include "util/Unicode.h"
@@ -894,6 +895,7 @@ CodeGenerator::CodeGenerator(MIRGenerator* gen, LIRGraph* graph,
                              MacroAssembler* masm)
     : CodeGeneratorSpecific(gen, graph, masm),
       ionScriptLabels_(gen->alloc()),
+      ionNurseryObjectLabels_(gen->alloc()),
       scriptCounts_(nullptr),
       realmStubsToReadBarrier_(0) {}
 
@@ -4065,6 +4067,20 @@ void CodeGenerator::visitPointer(LPointer* lir) {
   }
 }
 
+void CodeGenerator::visitNurseryObject(LNurseryObject* lir) {
+  MOZ_ASSERT(JitOptions.warpBuilder);
+
+  Register output = ToRegister(lir->output());
+  uint32_t nurseryIndex = lir->mir()->nurseryIndex();
+
+  // Load a pointer to the entry in IonScript's nursery objects list.
+  CodeOffset label = masm.movWithPatch(ImmWord(uintptr_t(-1)), output);
+  masm.propagateOOM(ionNurseryObjectLabels_.emplaceBack(label, nurseryIndex));
+
+  // Load the JSObject*.
+  masm.loadPtr(Address(output, 0), output);
+}
+
 void CodeGenerator::visitKeepAliveObject(LKeepAliveObject* lir) {
   // No-op.
 }
@@ -4408,6 +4424,29 @@ void CodeGenerator::visitGuardShape(LGuardShape* guard) {
   bailoutFrom(&bail, guard->snapshot());
 }
 
+void CodeGenerator::visitGuardProto(LGuardProto* guard) {
+  Register obj = ToRegister(guard->object());
+  Register expected = ToRegister(guard->expected());
+  Register temp = ToRegister(guard->temp());
+
+  masm.loadObjProto(obj, temp);
+
+  Label bail;
+  masm.branchPtr(Assembler::NotEqual, temp, expected, &bail);
+  bailoutFrom(&bail, guard->snapshot());
+}
+
+void CodeGenerator::visitGuardNullProto(LGuardNullProto* guard) {
+  Register obj = ToRegister(guard->input());
+  Register temp = ToRegister(guard->temp());
+
+  masm.loadObjProto(obj, temp);
+
+  Label bail;
+  masm.branchTestPtr(Assembler::NonZero, temp, temp, &bail);
+  bailoutFrom(&bail, guard->snapshot());
+}
+
 void CodeGenerator::visitGuardObjectGroup(LGuardObjectGroup* guard) {
   Register obj = ToRegister(guard->input());
   Register temp = ToTempRegisterOrInvalid(guard->temp());
@@ -4436,19 +4475,15 @@ void CodeGenerator::visitGuardSpecificFunction(LGuardSpecificFunction* guard) {
 
 void CodeGenerator::visitGuardSpecificAtom(LGuardSpecificAtom* guard) {
   Register str = ToRegister(guard->str());
+  Register scratch = ToRegister(guard->temp());
 
-  Label done;
-  masm.branchPtr(Assembler::Equal, str, ImmGCPtr(guard->mir()->atom()), &done);
+  LiveRegisterSet volatileRegs = liveVolatileRegs(guard);
+  volatileRegs.takeUnchecked(scratch);
 
-  // The pointers are not equal, so if the input string is also an atom it
-  // must be a different string.
-  bailoutTest32(Assembler::NonZero, Address(str, JSString::offsetOfFlags()),
-                Imm32(JSString::ATOM_BIT), guard->snapshot());
-
-  // Todo: Check length + VM fallback.
-  bailout(guard->snapshot());
-
-  masm.bind(&done);
+  Label bail;
+  masm.guardSpecificAtom(str, guard->mir()->atom(), scratch, volatileRegs,
+                         &bail);
+  bailoutFrom(&bail, guard->snapshot());
 }
 
 void CodeGenerator::visitGuardSpecificSymbol(LGuardSpecificSymbol* guard) {
@@ -4872,6 +4907,8 @@ void CodeGenerator::maybeEmitGlobalBarrierCheck(const LAllocation* maybeGlobal,
 template <class LPostBarrierType, MIRType nurseryType>
 void CodeGenerator::visitPostWriteBarrierCommon(LPostBarrierType* lir,
                                                 OutOfLineCode* ool) {
+  static_assert(NeedsPostBarrier(nurseryType));
+
   addOutOfLineCode(ool, lir->mir());
 
   Register temp = ToTempRegisterOrInvalid(lir->temp());
@@ -4888,16 +4925,16 @@ void CodeGenerator::visitPostWriteBarrierCommon(LPostBarrierType* lir,
   maybeEmitGlobalBarrierCheck(lir->object(), ool);
 
   Register value = ToRegister(lir->value());
-  if (nurseryType == MIRType::Object) {
+  if constexpr (nurseryType == MIRType::Object) {
     if (lir->mir()->value()->type() == MIRType::ObjectOrNull) {
       masm.branchTestPtr(Assembler::Zero, value, value, ool->rejoin());
     } else {
       MOZ_ASSERT(lir->mir()->value()->type() == MIRType::Object);
     }
-  } else if (nurseryType == MIRType::String) {
+  } else if constexpr (nurseryType == MIRType::String) {
     MOZ_ASSERT(lir->mir()->value()->type() == MIRType::String);
   } else {
-    MOZ_ASSERT(nurseryType == MIRType::BigInt);
+    static_assert(nurseryType == MIRType::BigInt);
     MOZ_ASSERT(lir->mir()->value()->type() == MIRType::BigInt);
   }
   masm.branchPtrInNurseryChunk(Assembler::Equal, value, temp, ool->entry());
@@ -5070,7 +5107,7 @@ void CodeGenerator::visitCallNative(LCallNative* call) {
   // Push a Value containing the callee object: natives are allowed to access
   // their callee before setting the return value. The StackPointer is moved
   // to &vp[0].
-  masm.Push(ObjectValue(*target->rawJSFunction()));
+  masm.Push(ObjectValue(*target->rawNativeJSFunction()));
 
   // Preload arguments into registers.
   masm.loadJSContext(argContextReg);
@@ -5080,7 +5117,7 @@ void CodeGenerator::visitCallNative(LCallNative* call) {
   masm.Push(argUintNReg);
 
   if (call->mir()->maybeCrossRealm()) {
-    masm.movePtr(ImmGCPtr(target->rawJSFunction()), tempReg);
+    masm.movePtr(ImmGCPtr(target->rawNativeJSFunction()), tempReg);
     masm.switchToObjectRealm(tempReg, tempReg);
   }
 
@@ -5219,7 +5256,7 @@ void CodeGenerator::visitCallDOMNative(LCallDOMNative* call) {
   // Push a Value containing the callee object: natives are allowed to access
   // their callee before setting the return value. After this the StackPointer
   // points to &vp[0].
-  masm.Push(ObjectValue(*target->rawJSFunction()));
+  masm.Push(ObjectValue(*target->rawNativeJSFunction()));
 
   // Now compute the argv value.  Since StackPointer is pointing to &vp[0] and
   // argv is &vp[2] we just need to add 2*sizeof(Value) to the current
@@ -5249,7 +5286,7 @@ void CodeGenerator::visitCallDOMNative(LCallDOMNative* call) {
 
   if (call->mir()->maybeCrossRealm()) {
     // We use argJSContext as scratch register here.
-    masm.movePtr(ImmGCPtr(target->rawJSFunction()), argJSContext);
+    masm.movePtr(ImmGCPtr(target->rawNativeJSFunction()), argJSContext);
     masm.switchToObjectRealm(argJSContext, argJSContext);
   }
 
@@ -6093,6 +6130,14 @@ void CodeGenerator::visitEncodeSnapshot(LEncodeSnapshot* lir) {
   encode(lir->snapshot());
 }
 
+void CodeGenerator::visitUnreachableResultV(LUnreachableResultV* lir) {
+  masm.assumeUnreachable("must be unreachable");
+}
+
+void CodeGenerator::visitUnreachableResultT(LUnreachableResultT* lir) {
+  masm.assumeUnreachable("must be unreachable");
+}
+
 void CodeGenerator::visitGetDynamicName(LGetDynamicName* lir) {
   Register envChain = ToRegister(lir->getEnvironmentChain());
   Register name = ToRegister(lir->getName());
@@ -6751,6 +6796,10 @@ bool CodeGenerator::generateBody() {
       return false;
     }
 #endif
+
+    if (current->mir()->isLoopHeader() && gen->compilingWasm()) {
+      masm.nopAlign(CodeAlignment);
+    }
 
     for (LInstructionIterator iter = current->begin(); iter != current->end();
          iter++) {
@@ -7632,8 +7681,19 @@ void CodeGenerator::visitArrowNewTarget(LArrowNewTarget* lir) {
 }
 
 void CodeGenerator::visitArrayLength(LArrayLength* lir) {
-  Address length(ToRegister(lir->elements()), ObjectElements::offsetOfLength());
-  masm.load32(length, ToRegister(lir->output()));
+  Register elements = ToRegister(lir->elements());
+  Register output = ToRegister(lir->output());
+
+  Address length(elements, ObjectElements::offsetOfLength());
+  masm.load32(length, output);
+
+  // IonBuilder relies on TI knowing the length fits in int32, but Warp needs to
+  // check this dynamically.
+  if (JitOptions.warpBuilder) {
+    Label bail;
+    masm.branchTest32(Assembler::Signed, output, output, &bail);
+    bailoutFrom(&bail, lir->snapshot());
+  }
 }
 
 static void SetLengthFromIndex(MacroAssembler& masm, const LAllocation* index,
@@ -8514,6 +8574,24 @@ void CodeGenerator::visitRoundF(LRoundF* lir) {
 
   Label bail;
   masm.roundFloat32ToInt32(input, output, temp, &bail);
+  bailoutFrom(&bail, lir->snapshot());
+}
+
+void CodeGenerator::visitTrunc(LTrunc* lir) {
+  FloatRegister input = ToFloatRegister(lir->input());
+  Register output = ToRegister(lir->output());
+
+  Label bail;
+  masm.truncDoubleToInt32(input, output, &bail);
+  bailoutFrom(&bail, lir->snapshot());
+}
+
+void CodeGenerator::visitTruncF(LTruncF* lir) {
+  FloatRegister input = ToFloatRegister(lir->input());
+  Register output = ToRegister(lir->output());
+
+  Label bail;
+  masm.truncFloat32ToInt32(input, output, &bail);
   bailoutFrom(&bail, lir->snapshot());
 }
 
@@ -9920,6 +9998,7 @@ void CodeGenerator::emitStoreElementTyped(const LAllocation* value,
                                           MIRType elementType,
                                           Register elements,
                                           const LAllocation* index) {
+  MOZ_ASSERT(valueType != MIRType::MagicHole);
   ConstantOrRegister v = ToConstantOrRegister(value, valueType);
   if (index->isConstant()) {
     Address dest(elements, ToInt32(index) * sizeof(js::Value));
@@ -9966,6 +10045,17 @@ void CodeGenerator::visitStoreElementV(LStoreElementV* lir) {
     BaseObjectElementIndex dest(elements, ToRegister(lir->index()));
     masm.storeValue(value, dest);
   }
+}
+
+void CodeGenerator::visitStoreHoleValueElement(LStoreHoleValueElement* lir) {
+  Register elements = ToRegister(lir->elements());
+  Register index = ToRegister(lir->index());
+
+  Address elementsFlags(elements, ObjectElements::offsetOfFlags());
+  masm.or32(Imm32(ObjectElements::NON_PACKED), elementsFlags);
+
+  BaseObjectElementIndex element(elements, index);
+  masm.storeValue(MagicValue(JS_ELEMENTS_HOLE), element);
 }
 
 template <typename T>
@@ -10326,10 +10416,12 @@ void CodeGenerator::emitArrayPush(LInstruction* lir, Register obj,
   masm.loadPtr(Address(obj, NativeObject::offsetOfElements()), elementsTemp);
   masm.load32(Address(elementsTemp, ObjectElements::offsetOfLength()), length);
 
-  // TODO(Warp) Adjust jit::ArrayPushDense to instead bailout for non-int32.
+  // TODO(Warp): reuse/share the CacheIR implementation when IonBuilder and TI
+  // are gone (bug 1654180).
   if (!IsTypeInferenceEnabled()) {
-    // Bailout if incrementing the length would overflow INT32_MAX.
-    bailoutCmp32(Assembler::Equal, length, Imm32(INT32_MAX), lir->snapshot());
+    // Bailout if the incremented length does not fit in int32.
+    bailoutCmp32(Assembler::AboveOrEqual, length, Imm32(INT32_MAX),
+                 lir->snapshot());
   }
 
 #ifdef DEBUG
@@ -10948,7 +11040,28 @@ bool CodeGenerator::generate() {
   return !masm.oom();
 }
 
-bool CodeGenerator::link(JSContext* cx, CompilerConstraintList* constraints) {
+static bool AddInlinedCompilations(HandleScript script,
+                                   IonCompilationId compilationId,
+                                   const WarpSnapshot* snapshot) {
+  RecompileInfo recompileInfo(script, compilationId);
+
+  for (const auto* scriptSnapshot : snapshot->scripts()) {
+    JSScript* inlinedScript = scriptSnapshot->script();
+    if (inlinedScript == script) {
+      continue;
+    }
+    AutoSweepJitScript sweep(inlinedScript);
+    if (!inlinedScript->jitScript()->addInlinedCompilation(sweep,
+                                                           recompileInfo)) {
+      return false;
+    }
+  }
+
+  return true;
+}
+
+bool CodeGenerator::link(JSContext* cx, CompilerConstraintList* constraints,
+                         const WarpSnapshot* snapshot) {
   // We cancel off-thread Ion compilations in a few places during GC, but if
   // this compilation was performed off-thread it will already have been
   // removed from the relevant lists by this point. Don't allow GC here.
@@ -10997,6 +11110,14 @@ bool CodeGenerator::link(JSContext* cx, CompilerConstraintList* constraints) {
     return true;
   }
 
+  if (JitOptions.warpBuilder) {
+    // If an inlined script is invalidated (for example, by attaching
+    // a debugger), we must also invalidate the parent IonScript.
+    if (!AddInlinedCompilations(script, compilationId, snapshot)) {
+      return false;
+    }
+  }
+
   // IonMonkey could have inferred better type information during
   // compilation. Since adding the new information to the actual type
   // information can reset the usecount, increase it back to what it was
@@ -11016,16 +11137,21 @@ bool CodeGenerator::link(JSContext* cx, CompilerConstraintList* constraints) {
     return false;
   }
 
+  size_t numNurseryObjects = 0;
+  if (JitOptions.warpBuilder) {
+    numNurseryObjects = snapshot->nurseryObjects().length();
+  }
+
   IonScript* ionScript = IonScript::New(
       cx, compilationId, graph.totalSlotCount(), argumentSlots, scriptFrameSize,
       snapshots_.listSize(), snapshots_.RVATableSize(), recovers_.size(),
-      bailouts_.length(), graph.numConstants(), safepointIndices_.length(),
-      osiIndices_.length(), icList_.length(), runtimeData_.length(),
-      safepoints_.size(), optimizationLevel);
+      bailouts_.length(), graph.numConstants(), numNurseryObjects,
+      safepointIndices_.length(), osiIndices_.length(), icList_.length(),
+      runtimeData_.length(), safepoints_.size(), optimizationLevel);
   if (!ionScript) {
     return false;
   }
-  auto guardIonScript = mozilla::MakeScopeExit([&ionScript] {
+  auto freeIonScript = mozilla::MakeScopeExit([&ionScript] {
     // Use js_free instead of IonScript::Destroy: the cache list is still
     // uninitialized.
     js_free(ionScript);
@@ -11098,16 +11224,19 @@ bool CodeGenerator::link(JSContext* cx, CompilerConstraintList* constraints) {
     ionScript->setHasProfilingInstrumentation();
   }
 
-  script->jitScript()->setIonScript(script, ionScript);
-
   Assembler::PatchDataWithValueCheck(
       CodeLocationLabel(code, invalidateEpilogueData_), ImmPtr(ionScript),
       ImmPtr((void*)-1));
 
-  for (size_t i = 0; i < ionScriptLabels_.length(); i++) {
-    Assembler::PatchDataWithValueCheck(
-        CodeLocationLabel(code, ionScriptLabels_[i]), ImmPtr(ionScript),
-        ImmPtr((void*)-1));
+  for (CodeOffset offset : ionScriptLabels_) {
+    Assembler::PatchDataWithValueCheck(CodeLocationLabel(code, offset),
+                                       ImmPtr(ionScript), ImmPtr((void*)-1));
+  }
+
+  for (NurseryObjectLabel label : ionNurseryObjectLabels_) {
+    void* entry = ionScript->addressOfNurseryObject(label.nurseryIndex);
+    Assembler::PatchDataWithValueCheck(CodeLocationLabel(code, label.offset),
+                                       ImmPtr(entry), ImmPtr((void*)-1));
   }
 
 #ifdef JS_TRACE_LOGGING
@@ -11165,8 +11294,10 @@ bool CodeGenerator::link(JSContext* cx, CompilerConstraintList* constraints) {
 
   ionScript->setInvalidationEpilogueDataOffset(
       invalidateEpilogueData_.offset());
-  ionScript->setOsrPc(gen->outerInfo().osrPc());
-  ionScript->setOsrEntryOffset(getOsrEntryOffset());
+  if (jsbytecode* osrPc = gen->outerInfo().osrPc()) {
+    ionScript->setOsrPc(osrPc);
+    ionScript->setOsrEntryOffset(getOsrEntryOffset());
+  }
   ionScript->setInvalidationEpilogueOffset(invalidate_.offset());
 
 #if defined(JS_ION_PERF)
@@ -11220,7 +11351,23 @@ bool CodeGenerator::link(JSContext* cx, CompilerConstraintList* constraints) {
     script->addIonCounts(counts);
   }
 
-  guardIonScript.release();
+  // WARNING: Code after this point must be infallible!
+
+  // Copy the list of nursery objects. Note that the store buffer can add
+  // HeapPtr edges that must be cleared in IonScript::Destroy. See the
+  // infallibility warning above.
+  if (JitOptions.warpBuilder) {
+    const auto& nurseryObjects = snapshot->nurseryObjects();
+    for (size_t i = 0; i < nurseryObjects.length(); i++) {
+      ionScript->nurseryObjects()[i].init(nurseryObjects[i]);
+    }
+  }
+
+  // Transfer ownership of the IonScript to the JitScript. At this point enough
+  // of the IonScript must be initialized for IonScript::Destroy to work.
+  freeIonScript.release();
+  script->jitScript()->setIonScript(script, ionScript);
+
   return true;
 }
 
@@ -11326,8 +11473,8 @@ void CodeGenerator::visitCallInitElementArray(LCallInitElementArray* lir) {
   pushArg(ToRegister(lir->object()));
   pushArg(ImmPtr(lir->mir()->resumePoint()->pc()));
 
-  using Fn =
-      bool (*)(JSContext*, jsbytecode*, HandleObject, uint32_t, HandleValue);
+  using Fn = bool (*)(JSContext*, jsbytecode*, HandleArrayObject, uint32_t,
+                      HandleValue);
   callVM<Fn, js::InitElementArray>(lir);
 }
 
@@ -14285,17 +14432,11 @@ void CodeGenerator::visitFinishBoundFunctionInit(
 }
 
 void CodeGenerator::visitIsPackedArray(LIsPackedArray* lir) {
-  Register array = ToRegister(lir->array());
+  Register obj = ToRegister(lir->object());
   Register output = ToRegister(lir->output());
-  Register elementsTemp = ToRegister(lir->temp());
+  Register temp = ToRegister(lir->temp());
 
-  // Load elements and length.
-  masm.loadPtr(Address(array, NativeObject::offsetOfElements()), elementsTemp);
-  masm.load32(Address(elementsTemp, ObjectElements::offsetOfLength()), output);
-
-  // Test length == initializedLength.
-  Address initLength(elementsTemp, ObjectElements::offsetOfInitializedLength());
-  masm.cmp32Set(Assembler::Equal, initLength, output, output);
+  masm.setIsPackedArray(obj, output, temp);
 }
 
 void CodeGenerator::visitGetPrototypeOf(LGetPrototypeOf* lir) {

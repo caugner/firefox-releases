@@ -42,7 +42,6 @@ class Layer;
 class LayerManager;
 struct CompositorAnimationData;
 struct PropertyAnimationGroup;
-enum class LayersBackend : int8_t;
 
 class AnimationInfo final {
   typedef nsTArray<Animation> AnimationArray;
@@ -77,6 +76,7 @@ class AnimationInfo final {
   void ClearAnimations();
   void ClearAnimationsForNextTransaction();
   void SetCompositorAnimations(
+      const LayersId& aLayersId,
       const CompositorAnimations& aCompositorAnimations);
   bool StartPendingAnimations(const TimeStamp& aReadyTime);
   void TransferMutatedFlagToLayer(Layer* aLayer);
@@ -91,6 +91,7 @@ class AnimationInfo final {
   const Maybe<TransformData>& GetTransformData() const {
     return mStorageData.mTransformData;
   }
+  const LayersId& GetLayersId() const { return mStorageData.mLayersId; }
   bool ApplyPendingUpdatesForThisTransaction();
   bool HasTransformAnimation() const;
 
@@ -115,10 +116,10 @@ class AnimationInfo final {
       const CompositorAnimatableDisplayItemTypes& aDisplayItemTypes,
       AnimationGenerationCallback);
 
-  void AddAnimationsForDisplayItem(nsIFrame* aFrame,
-                                   nsDisplayListBuilder* aBuilder,
-                                   nsDisplayItem* aItem, DisplayItemType aType,
-                                   LayersBackend aLayersBackend);
+  void AddAnimationsForDisplayItem(
+      nsIFrame* aFrame, nsDisplayListBuilder* aBuilder, nsDisplayItem* aItem,
+      DisplayItemType aType, LayerManager* aLayerManager,
+      const Maybe<LayoutDevicePoint>& aPosition = Nothing());
 
  private:
   enum class Send {
@@ -135,7 +136,7 @@ class AnimationInfo final {
       nsIFrame* aFrame, const EffectSet* aEffects,
       const nsTArray<RefPtr<dom::Animation>>& aCompositorAnimations,
       const Maybe<TransformData>& aTransformData, nsCSSPropertyID aProperty,
-      Send aSendFlag);
+      Send aSendFlag, LayerManager* aLayerManager);
 
   void AddNonAnimatingTransformLikePropertiesStyles(
       const nsCSSPropertyIDSet& aNonAnimatingProperties, nsIFrame* aFrame,

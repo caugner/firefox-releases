@@ -13,15 +13,11 @@
 
 #include "FrameMetrics.h"
 #include "VsyncSource.h"
-#include "base/process_util.h"
 #include "chrome/common/ipc_message_utils.h"
-#include "gfxTelemetry.h"
 #include "ipc/IPCMessageUtils.h"
-#include "ipc/nsGUIEventIPC.h"
-#include "mozilla/GfxMessageUtils.h"
 #include "mozilla/MotionPathUtils.h"
 #include "mozilla/ServoBindings.h"
-#include "mozilla/ipc/ByteBufUtils.h"
+#include "mozilla/ipc/ByteBuf.h"
 #include "mozilla/layers/APZInputBridge.h"
 #include "mozilla/layers/AsyncDragMetrics.h"
 #include "mozilla/layers/CompositorOptions.h"
@@ -32,10 +28,13 @@
 #include "mozilla/layers/LayerAttributes.h"
 #include "mozilla/layers/LayersTypes.h"
 #include "mozilla/layers/MatrixMessage.h"
-#include "mozilla/layers/RefCountedShmem.h"
 #include "mozilla/layers/RepaintRequest.h"
-#include "mozilla/layers/WebRenderMessageUtils.h"
 #include "nsSize.h"
+
+// For ParamTraits, could be moved to cpp file
+#include "ipc/nsGUIEventIPC.h"
+#include "mozilla/GfxMessageUtils.h"
+#include "mozilla/ipc/ByteBufUtils.h"
 
 #ifdef _MSC_VER
 #  pragma warning(disable : 4800)
@@ -62,11 +61,13 @@ struct ParamTraits<mozilla::VsyncEvent> {
   static void Write(Message* msg, const paramType& param) {
     WriteParam(msg, param.mId);
     WriteParam(msg, param.mTime);
+    WriteParam(msg, param.mOutputTime);
   }
   static bool Read(const Message* msg, PickleIterator* iter,
                    paramType* result) {
     return ReadParam(msg, iter, &result->mId) &&
-           ReadParam(msg, iter, &result->mTime);
+           ReadParam(msg, iter, &result->mTime) &&
+           ReadParam(msg, iter, &result->mOutputTime);
   }
 };
 
@@ -212,6 +213,7 @@ struct ParamTraits<mozilla::layers::FrameMetrics>
     WriteParam(aMsg, aParam.mVisualViewportOffset);
     WriteParam(aMsg, aParam.mVisualScrollUpdateType);
     WriteParam(aMsg, aParam.mFixedLayerMargins);
+    WriteParam(aMsg, aParam.mPureRelativeOffset);
     WriteParam(aMsg, aParam.mIsRootContent);
     WriteParam(aMsg, aParam.mIsRelative);
     WriteParam(aMsg, aParam.mDoSmoothScroll);
@@ -244,6 +246,7 @@ struct ParamTraits<mozilla::layers::FrameMetrics>
         ReadParam(aMsg, aIter, &aResult->mVisualViewportOffset) &&
         ReadParam(aMsg, aIter, &aResult->mVisualScrollUpdateType) &&
         ReadParam(aMsg, aIter, &aResult->mFixedLayerMargins) &&
+        ReadParam(aMsg, aIter, &aResult->mPureRelativeOffset) &&
         ReadBoolForBitfield(aMsg, aIter, aResult,
                             &paramType::SetIsRootContent) &&
         ReadBoolForBitfield(aMsg, aIter, aResult, &paramType::SetIsRelative) &&

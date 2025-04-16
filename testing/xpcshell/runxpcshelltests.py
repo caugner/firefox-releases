@@ -19,6 +19,7 @@ import sys
 import tempfile
 import time
 import traceback
+import six
 
 from argparse import Namespace
 from collections import defaultdict, deque, namedtuple
@@ -103,12 +104,43 @@ def cleanup_encoding(s):
        points, etc.  If it is a byte string, it is assumed to be
        UTF-8, but it may not be *correct* UTF-8.  Return a
        sanitized unicode object."""
-    if not isinstance(s, basestring):
-        return unicode(s)
-    if not isinstance(s, unicode):
+    if not isinstance(s, six.string_types):
+        if isinstance(s, six.binary_type):
+            return six.ensure_str(s)
+        else:
+            return six.text_type(s)
+    if isinstance(s, six.binary_type):
         s = s.decode('utf-8', 'replace')
     # Replace all C0 and C1 control characters with \xNN escapes.
     return _cleanup_encoding_re.sub(_cleanup_encoding_repl, s)
+
+
+def ensure_bytes(value, encoding='utf-8'):
+    if isinstance(value, six.text_type):
+        return value.encode(encoding)
+    return value
+
+
+def ensure_unicode(value, encoding='utf-8'):
+    if isinstance(value, six.binary_type):
+        return value.decode(encoding)
+    return value
+
+
+def ensure_subprocess_env(env, encoding='utf-8'):
+    """Ensure the environment is in the correct format for the `subprocess`
+    module.
+
+    This will convert all keys and values to bytes on Python 2, and text on
+    Python 3.
+
+    Args:
+        env (dict): Environment to ensure.
+        encoding (str): Encoding to use when converting to/from bytes/text
+                        (default: utf-8).
+    """
+    ensure = ensure_bytes if sys.version_info[0] < 3 else ensure_unicode
+    return {ensure(k, encoding): ensure(v, encoding) for k, v in six.iteritems(env)}
 
 
 """ Control-C handling """
@@ -267,6 +299,12 @@ class XPCShellTestThread(Thread):
         """
         # timeout is needed by remote xpcshell to extend the
         # remote device timeout. It is not used in this function.
+        if six.PY3:
+            cwd = six.ensure_str(cwd)
+            for i in range(len(cmd)):
+                cmd[i] = six.ensure_str(cmd[i])
+
+        env = ensure_subprocess_env(env)
         if HAVE_PSUTIL:
             popen_func = psutil.Popen
         else:
@@ -293,8 +331,8 @@ class XPCShellTestThread(Thread):
         self.log.info("%s | current directory: %r" % (name, testdir))
         # Show only those environment variables that are changed from
         # the ambient environment.
-        changedEnv = (set("%s=%s" % i for i in self.env.iteritems())
-                      - set("%s=%s" % i for i in os.environ.iteritems()))
+        changedEnv = (set("%s=%s" % i for i in six.iteritems(self.env))
+                      - set("%s=%s" % i for i in six.iteritems(os.environ)))
         self.log.info("%s | environment: %s" % (name, list(changedEnv)))
         shell_command_tokens = [pipes.quote(tok) for tok in list(changedEnv) + completeCmd]
         self.log.info("%s | as shell command: (cd %s; %s)" %
@@ -371,10 +409,11 @@ class XPCShellTestThread(Thread):
 
             prefs = self.test_object['prefs'].strip().split()
             name = self.test_object['id']
-            self.log.info(
-                "%s: Per-test extra prefs will be set:\n  {}".format(
-                    '\n  '.join(prefs)) % name
-            )
+            if self.verbose:
+                self.log.info(
+                    "%s: Per-test extra prefs will be set:\n  {}".format(
+                        '\n  '.join(prefs)) % name
+                )
 
             profile.set_preferences(parse_preferences(prefs), filename=filename)
             # Make sure that the extra prefs form the command line are overriding
@@ -587,7 +626,7 @@ class XPCShellTestThread(Thread):
     def log_line(self, line):
         """Log a line of output (either a parser json object or text output from
         the test process"""
-        if isinstance(line, basestring):
+        if isinstance(line, six.string_types) or isinstance(line, bytes):
             line = self.fix_text_output(line).rstrip('\r\n')
             self.log.process_output(self.proc_ident,
                                     line,
@@ -952,7 +991,7 @@ class XPCShellTests(object):
         if self.totalChunks > 1:
             filters.append(chunk_by_slice(self.thisChunk, self.totalChunks))
         try:
-            self.alltests = map(normalize, mp.active_tests(filters=filters, **mozinfo.info))
+            self.alltests = list(map(normalize, mp.active_tests(filters=filters, **mozinfo.info)))
         except TypeError:
             sys.stderr.write("*** offending mozinfo.info: %s\n" % repr(mozinfo.info))
             raise
@@ -1196,8 +1235,10 @@ class XPCShellTests(object):
             try:
                 # We pipe stdin to node because the server will exit when its
                 # stdin reaches EOF
+                self.env = ensure_subprocess_env(self.env)
                 process = Popen([nodeBin, serverJs], stdin=PIPE, stdout=PIPE,
-                                stderr=PIPE, env=self.env, cwd=os.getcwd())
+                                stderr=PIPE, env=self.env, cwd=os.getcwd(),
+                                universal_newlines=True)
                 self.nodeProc[name] = process
 
                 # Check to make sure the server starts properly by waiting for it to
@@ -1221,7 +1262,7 @@ class XPCShellTests(object):
         """
           Shut down our node process, if it exists
         """
-        for name, proc in self.nodeProc.iteritems():
+        for name, proc in six.iteritems(self.nodeProc):
             self.log.info('Node %s server shutting down ...' % name)
             if proc.poll() is not None:
                 self.log.info('Node server %s already dead %s' % (name, proc.poll()))
@@ -1237,6 +1278,7 @@ class XPCShellTests(object):
                     self.log.info(msg)
             dumpOutput(proc.stdout, "stdout")
             dumpOutput(proc.stderr, "stderr")
+        self.nodeProc = {}
 
     def startHttp3Server(self):
         """
@@ -1246,11 +1288,13 @@ class XPCShellTests(object):
         if sys.platform == 'win32':
             binSuffix = ".exe"
 
-        http3ServerPath = os.path.join(SCRIPT_DIR, "http3server",
-                                       "http3server" + binSuffix)
-        if build:
-            http3ServerPath = os.path.join(build.topobjdir, "dist", "bin",
+        http3ServerPath = self.http3server
+        if not http3ServerPath:
+            http3ServerPath = os.path.join(SCRIPT_DIR, "http3server",
                                            "http3server" + binSuffix)
+            if build:
+                http3ServerPath = os.path.join(build.topobjdir, "dist", "bin",
+                                               "http3server" + binSuffix)
 
         if not os.path.exists(http3ServerPath):
             self.log.warning("Http3 server not found at " + http3ServerPath +
@@ -1267,8 +1311,10 @@ class XPCShellTests(object):
             self.log.info('Using %s' % (dbPath))
             # We pipe stdin to the server because it will exit when its stdin
             # reaches EOF
+            self.env = ensure_subprocess_env(self.env)
             process = Popen([http3ServerPath, dbPath], stdin=PIPE, stdout=PIPE,
-                            stderr=PIPE, env=self.env, cwd=os.getcwd())
+                            stderr=PIPE, env=self.env, cwd=os.getcwd(),
+                            universal_newlines=True)
             self.http3ServerProc['http3Server'] = process
 
             # Check to make sure the server starts properly by waiting for it to
@@ -1287,7 +1333,7 @@ class XPCShellTests(object):
         """
           Shutdown our http3Server process, if it exists
         """
-        for name, proc in self.http3ServerProc.iteritems():
+        for name, proc in six.iteritems(self.http3ServerProc):
             self.log.info('%s server shutting down ...' % name)
             if proc.poll() is not None:
                 self.log.info('Http3 server %s already dead %s' % (name, proc.poll()))
@@ -1311,6 +1357,7 @@ class XPCShellTests(object):
                     self.log.info(msg)
             dumpOutput(proc.stdout, "stdout")
             dumpOutput(proc.stderr, "stderr")
+        self.http3ServerProc = {}
 
     def buildXpcsRunArgs(self):
         """
@@ -1344,8 +1391,8 @@ class XPCShellTests(object):
         # All of the keys in question should be ASCII.
         fixedInfo = {}
         for k, v in self.mozInfo.items():
-            if isinstance(k, unicode):
-                k = k.encode('ascii')
+            if isinstance(k, bytes):
+                k = k.decode('utf-8')
             fixedInfo[k] = v
         self.mozInfo = fixedInfo
 
@@ -1431,6 +1478,7 @@ class XPCShellTests(object):
             self.jsDebuggerInfo = JSDebuggerInfo(port=options['jsDebuggerPort'])
 
         self.xpcshell = options.get('xpcshell')
+        self.http3server = options.get('http3server')
         self.xrePath = options.get('xrePath')
         self.utility_path = options.get('utility_path')
         self.appPath = options.get('appPath')
@@ -1617,7 +1665,7 @@ class XPCShellTests(object):
                 # the logging system gets confused when 2 or more tests with the same
                 # name run at the same time.
                 sequential_tests = []
-                for i in xrange(VERIFY_REPEAT):
+                for i in range(VERIFY_REPEAT):
                     self.testCount += 1
                     test = testClass(test_object, retry=False,
                                      mobileArgs=mobileArgs, **kwargs)
@@ -1630,7 +1678,7 @@ class XPCShellTests(object):
                 # Run tests sequentially, with MOZ_CHAOSMODE enabled.
                 sequential_tests = []
                 self.env["MOZ_CHAOSMODE"] = "3"
-                for i in xrange(VERIFY_REPEAT):
+                for i in range(VERIFY_REPEAT):
                     self.testCount += 1
                     test = testClass(test_object, retry=False,
                                      mobileArgs=mobileArgs, **kwargs)
@@ -1797,7 +1845,7 @@ class XPCShellTests(object):
 
         # Clean up any slacker directories that might be lying around
         # Some might fail because of windows taking too long to unlock them.
-        # We don't do anything if this fails because the test slaves will have
+        # We don't do anything if this fails because the test machines will have
         # their $TEMP dirs cleaned up on reboot anyway.
         for directory in self.cleanup_dir_list:
             try:
@@ -1838,12 +1886,13 @@ def main():
     log = commandline.setup_logging("XPCShell", options, {"tbpl": sys.stdout})
 
     if options.xpcshell is None:
-        print >> sys.stderr, """Must provide path to xpcshell using --xpcshell"""
+        log.error("Must provide path to xpcshell using --xpcshell")
+        sys.exit(1)
 
     xpcsh = XPCShellTests(log)
 
     if options.interactive and not options.testPath:
-        print >>sys.stderr, "Error: You must specify a test filename in interactive mode!"
+        log.error("Error: You must specify a test filename in interactive mode!")
         sys.exit(1)
 
     if not xpcsh.runTests(options):

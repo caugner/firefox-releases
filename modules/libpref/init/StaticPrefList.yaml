@@ -452,6 +452,12 @@
   value: 1.0f
   mirror: always
 
+# new scrollbar code for desktop zooming
+- name: apz.force_disable_desktop_zooming_scrollbars
+  type: RelaxedAtomicBool
+  value: true
+  mirror: always
+
 #ifdef MOZ_WIDGET_GTK
 -   name: apz.gtk.kinetic_scroll.enabled
     type: RelaxedAtomicBool
@@ -496,7 +502,7 @@
 
 - name: apz.mvm.force-enabled
   type: RelaxedAtomicBool
-  value: false
+  value: true
   mirror: always
 
 - name: apz.one_touch_pinch.enabled
@@ -758,6 +764,13 @@
 - name: browser.cache.disk.smart_size.enabled
   type: RelaxedAtomicBool
   value: true
+  mirror: always
+
+# Disk cache capacity in kilobytes. It's used only when
+# browser.cache.disk.smart_size.enabled == false
+- name: browser.cache.disk.capacity
+  type: RelaxedAtomicUint32
+  value: 256000
   mirror: always
 
 # Enable/Disable Origin based cache isolation
@@ -1068,11 +1081,19 @@
   value: true
   mirror: always
 
-# If set, use DocumentChannel to directly initiate loads from
-# parent-process BrowsingContexts
+# If set, use DocumentChannel to initiate loads from
+# parent-process BrowsingContexts in parallel with the content
+# process.
 - name: browser.tabs.documentchannel.parent-initiated
   type: bool
   value: true
+  mirror: always
+
+# If set, use DocumentChannel to directly initiate loads entirely
+# from parent-process BrowsingContexts
+- name: browser.tabs.documentchannel.parent-controlled
+  type: bool
+  value: false
   mirror: always
 
 - name: browser.tabs.remote.desktopbehavior
@@ -1439,7 +1460,7 @@
 # Is support for composite operations from the Web Animations API enabled?
 - name: dom.animations-api.compositing.enabled
   type: bool
-  value: @IS_NOT_RELEASE_OR_BETA@
+  value: true
   mirror: always
 
 # Is support for the core interfaces of Web Animations API enabled?
@@ -1491,6 +1512,12 @@
 - name: dom.block_external_protocol_in_iframes
   type: bool
   value: true
+  mirror: always
+
+# Block Insecure downloads from Secure Origins
+- name: dom.block_download_insecure
+  type: bool
+  value: @IS_NIGHTLY_BUILD@
   mirror: always
 
 # Block multiple window.open() per single event.
@@ -1573,7 +1600,7 @@
 # HTML <dialog> element
 - name: dom.dialog_element.enabled
   type: bool
-  value: false
+  value: @IS_NIGHTLY_BUILD@
   mirror: always
 
 # Only propagate the open window click permission if the setTimeout() is equal
@@ -2501,7 +2528,7 @@
 # soon as they are fetched.
 - name: dom.script_loader.external_scripts.speculative_omt_parse.enabled
   type: bool
-  value: @IS_NIGHTLY_BUILD@
+  value: false
   mirror: always
 
 # Speculatively compile non parser inserted scripts
@@ -2601,6 +2628,14 @@
   value: false
   mirror: always
 
+# If true, all content requests in Private Browsing Mode will get
+# upgraded to HTTPS://. (If dom.security.https_only_mode is set
+# to true then this pref has no effect)
+- name: dom.security.https_only_mode_pbm
+  type: RelaxedAtomicBool
+  value: false
+  mirror: always
+
 # If true and HTTPS-only mode is enabled, requests
 # to local IP addresses are also upgraded
 - name: dom.security.https_only_mode.upgrade_local
@@ -2623,6 +2658,19 @@
   value: false
   mirror: always
 
+# WARNING: Don't ever update that pref manually! It is only used
+# for telemetry purposes and allows to reason about retention of
+# the pref dom.security.https_only_mode_pbm from above.
+- name: dom.security.https_only_mode_ever_enabled_pbm
+  type: RelaxedAtomicBool
+  value: false
+  mirror: always
+
+- name: dom.security.unexpected_system_load_telemetry_enabled
+  type: bool
+  value: true
+  mirror: always
+
 # Is support for selection event APIs enabled?
 - name: dom.select_events.enabled
   type: bool
@@ -2642,7 +2690,7 @@
 
 - name: dom.arena_allocator.enabled
   type: bool
-  value: @IS_EARLY_BETA_OR_EARLIER@
+  value: true
   mirror: once
 
 - name: dom.serviceWorkers.enabled
@@ -2652,7 +2700,6 @@
 
 # If true. then the service worker interception and the ServiceWorkerManager
 # will live in the parent process.  This only takes effect on browser start.
-# Note, this is not currently safe to use for normal browsing yet.
 - name: dom.serviceWorkers.parent_intercept
   type: bool
   value: true
@@ -2665,13 +2712,6 @@
 
 - name: dom.workers.serialized-sab-access
   type: RelaxedAtomicBool
-  value: false
-  mirror: always
-
-# External.AddSearchProvider is deprecated and it will be removed in the next
-# cycles.
-- name: dom.sidebar.enabled
-  type: bool
   value: false
   mirror: always
 
@@ -2746,6 +2786,17 @@
   # synchronous IO is very bad. We are enforcing simple per-origin quota only.
   value: 5 * 1024
   mirror: always
+
+# Whether or not LSNG (Next Generation Local Storage) is enabled.
+# See bug 1517090 for enabling this on Nightly.
+# See bug 1534736 for changing it to EARLY_BETA_OR_EARLIER.
+# See bug 1539835 for enabling this unconditionally.
+# See bug 1619948 for changing it back to EARLY_BETA_OR_EARLIER.
+- name: dom.storage.next_gen
+  type: RelaxedAtomicBool
+  value: @IS_EARLY_BETA_OR_EARLIER@
+  mirror: always
+  do_not_use_directly: true
 
 # Is support for Storage test APIs enabled?
 - name: dom.storage.testing
@@ -3345,6 +3396,12 @@
   value: false
   mirror: always
 
+# Whether we should suspend inactive tabs or not
+- name: dom.suspend_inactive.enabled
+  type: bool
+  value: @IS_ANDROID@
+  mirror: always
+
 #---------------------------------------------------------------------------
 # Prefs starting with "editor"
 #---------------------------------------------------------------------------
@@ -3422,6 +3479,22 @@
   value: false
   mirror: always
 
+# Whether the background.service_worker in the extension manifest.json file
+# is enabled.
+- name: extensions.backgroundServiceWorker.enabled
+  type: bool
+  value: false
+  mirror: once
+
+# Whether the extensions can register a service worker on its own.
+# NOTE: WebExtensions Framework ability to register a background service worker
+# is not controlled by this pref, only the extension code ability to use
+# navigator.serviceWorker.register is locked behind this pref.
+- name: extensions.serviceWorkerRegister.allowed
+  type: bool
+  value: false
+  mirror: always
+
 # This pref governs whether we enable content script CSP in extensions.
 - name: extensions.content_script_csp.enabled
   type: bool
@@ -3478,6 +3551,14 @@
 # Store the session history in the parent process, and access it over IPC
 # from the child processes.
 - name: fission.sessionHistoryInParent
+  type: bool
+  value: false
+  mirror: always
+
+# Allow renaming of process names to the origin on nightly
+# Setting this pref creates a privacy leak, but helps greatly with
+# debugging
+- name: fission.processOriginNames
   type: bool
   value: false
   mirror: always
@@ -4188,6 +4269,11 @@
   value: false
   mirror: once
 
+- name: gfx.use-ahardwarebuffer-content
+  type: bool
+  value: false
+  mirror: once
+
 # Use SurfaceTextures as preferred backend for TextureClient/Host.
 - name: gfx.use-surfacetexture-textures
   type: bool
@@ -4444,6 +4530,13 @@
   type: bool
   value: false
   mirror: always
+
+#ifdef XP_MACOSX
+- name: gfx.webrender.enable-client-storage
+  type: bool
+  value: @IS_NIGHTLY_BUILD@
+  mirror: once
+#endif
 
 # Use vsync events generated by hardware
 - name: gfx.work-around-driver-bugs
@@ -4828,6 +4921,12 @@
   type: RelaxedAtomicBool
   value: false
   mirror: always
+
+  # Experimental support for Private Fields in JavaScript.
+- name: javascript.options.experimental.private_fields
+  type: RelaxedAtomicBool
+  value: false
+  mirror: always
 #endif
 
 # The amount of time we wait between a request to GC (due to leaving a page) and doing the actual GC, in ms.
@@ -5164,7 +5263,7 @@
 
 - name: layers.gpu-process.enabled
   type: bool
-#if defined(XP_WIN) || defined(MOZ_WIDGET_GTK)
+#if defined(XP_WIN)
   value: true
 #else
   value: false
@@ -5567,6 +5666,14 @@
   value: 4096
   mirror: always
 
+# Test-only pref, if this is true, partial pre-rendered transform animations
+# get stuck when it reaches to the pre-rendered boundaries and the pre-render
+# region is never updated.
+- name: layout.animation.prerender.partial.jank
+  type: RelaxedAtomicBool
+  value: false
+  mirror: always
+
 # Whether Constructable Stylesheets are enabled in script.
 - name: layout.css.constructable-stylesheets.enabled
   type: bool
@@ -5878,6 +5985,17 @@
   type: bool
   value: true
   mirror: always
+
+# Dictates whether or not the prefers contrast media query will be
+# usable.
+#   true: prefers-contrast will toggle based on OS and browser settings.
+#   false: prefers-contrast will only parse and toggle in the browser
+#   chrome and ua.
+- name: layout.css.prefers-contrast.enabled
+  type: RelaxedAtomicBool
+  value: false
+  mirror: always
+  rust: true
 
 # Is support for -moz-prefixed animation properties enabled?
 - name: layout.css.prefixes.animations
@@ -6375,17 +6493,32 @@
   value: 1
   mirror: always
 
-# Whether we expand the layout viewport even if the expanded viewport doesn't
-# contain any contents in the area.
-- name: layout.viewport_contains_no_contents_area
-  type: bool
-  value: true
-  mirror: always
-
 # Test only.
 - name: layout.dynamic-toolbar-max-height
   type: RelaxedAtomicInt32
   value: 0
+  mirror: always
+
+# Controls double click and Alt+Arrow word selection behavior.
+- name: layout.word_select.eat_space_to_next_word
+  type: bool
+#ifdef XP_WIN
+  value: true
+#else
+  value: false
+#endif
+  mirror: always
+
+- name: layout.word_select.stop_at_punctuation
+  type: bool
+  value: true
+  mirror: always
+
+# Whether underscore should be treated as a word-breaking character for
+# word selection/arrow-key movement purposes.
+- name: layout.word_select.stop_at_underscore
+  type: bool
+  value: false
   mirror: always
 
 #---------------------------------------------------------------------------
@@ -6647,9 +6780,7 @@
 # Encrypted Media Extensions
 - name: media.eme.enabled
   type: bool
-#if defined(ANDROID)
-  value: @IS_NIGHTLY_BUILD@
-#elif defined(XP_LINUX)
+#if defined(XP_LINUX) && !defined(MOZ_WIDGET_ANDROID)
   # On Linux EME is visible but disabled by default. This is so that the "Play
   # DRM content" checkbox in the Firefox UI is unchecked by default. DRM
   # requires downloading and installing proprietary binaries, which users on an
@@ -6840,6 +6971,26 @@
     type: bool
     value: false
     mirror: always
+
+#ifdef MOZ_WAYLAND
+# Use DMABuf for ffmpeg video textures on Linux
+- name: media.ffmpeg.dmabuf-textures.enabled
+  type: RelaxedAtomicBool
+  value: false
+  mirror: always
+
+# Use VA-API for ffmpeg video playback on Linux
+- name: media.ffmpeg.vaapi.enabled
+  type: RelaxedAtomicBool
+  value: false
+  mirror: always
+
+# Use DRM display for VA-API ffmpeg video decoding on Linux
+- name: media.ffmpeg.vaapi-drm-display.enabled
+  type: RelaxedAtomicBool
+  value: false
+  mirror: always
+#endif # MOZ_WAYLAND
 #endif  # MOZ_FFMPEG
 
 #ifdef MOZ_FFVPX
@@ -7105,7 +7256,7 @@
   value: true
 #elif defined(XP_MACOSX)
   value: true
-#elif defined(XP_UNIX) && !defined(ANDROID)
+#elif defined(XP_UNIX)
   value: true
 #else
   value: false
@@ -7118,7 +7269,7 @@
   value: true
 #elif defined(XP_MACOSX)
   value: true
-#elif defined(XP_UNIX) && !defined(ANDROID)
+#elif defined(XP_UNIX)
   value: true
 #else
   value: false
@@ -7245,6 +7396,12 @@
 # in http, bypassing the instant NotAllowedError you get otherwise.
 - name: media.getusermedia.insecure.enabled
   type: bool
+  value: false
+  mirror: always
+
+# Enable tab sharing
+- name: media.getusermedia.browser.enabled
+  type: RelaxedAtomicBool
   value: false
   mirror: always
 
@@ -7925,7 +8082,7 @@
 #if defined(ANDROID) || defined(MOZ_THUNDERBIRD)
   value: false # see bug 1641427
 #else
-  value: @IS_NIGHTLY_BUILD@
+  value: @IS_EARLY_BETA_OR_EARLIER@
 #endif
 
 # Whether we can send OnDataAvailable to content process directly.
@@ -7965,9 +8122,20 @@
   value: 2000
   mirror: always
 
+# The proxy type. See nsIProtocolProxyService.idl
+#     PROXYCONFIG_DIRECT   = 0
+#     PROXYCONFIG_MANUAL   = 1
+#     PROXYCONFIG_PAC      = 2
+#     PROXYCONFIG_WPAD     = 4
+#     PROXYCONFIG_SYSTEM   = 5
+- name: network.proxy.type
+  type: RelaxedAtomicUint32
+  value: 5
+  mirror: always
+
 # Whether the SOCKS proxy should be in charge of DNS resolution.
 - name: network.proxy.socks_remote_dns
-  type: bool
+  type: RelaxedAtomicBool
   value: false
   mirror: always
 
@@ -8006,14 +8174,6 @@
 - name: network.ssl_tokens_cache_capacity
   type: RelaxedAtomicUint32
   value: 2048
-  mirror: always
-
-# Whether nsIURI.host/.hostname/.spec should return a punycode string.
-# If set to false we will revert to previous behaviour and return a unicode
-# string.
-- name: network.standard-url.punycode-host
-  type: RelaxedAtomicBool
-  value: true
   mirror: always
 
 # The maximum allowed length for a URL - 1MB default.
@@ -8640,6 +8800,11 @@
   value: false
   mirror: always
 
+- name: security.bad_cert_domain_error.url_fix_enabled
+  type: bool
+  value: @IS_EARLY_BETA_OR_EARLIER@
+  mirror: always
+
 - name: security.csp.enable
   type: bool
   value: true
@@ -8677,7 +8842,7 @@
 # a descendant frame of A) to a URI that loads externally.
 - name: security.allow_disjointed_external_uri_loads
   type: bool
-  value: true
+  value: false
   mirror: always
 
 # Allowed by default so it doesn't affect Thunderbird/SeaMonkey, but
@@ -8794,12 +8959,30 @@
     mirror: always
 #endif
 
+#if defined(XP_LINUX) && defined(MOZ_SANDBOX)
+  # Run content processes in headless mode and disallow connections to
+  # the X server.  Experimental; breaks WebGL and Flash, and requires
+  # `widget.disable-native-theme-for-content`.  Changing it requires a
+  # restart because sandbox policy information dependent on it is cached.
+  # See bug 1640345 for details.
+- name: security.sandbox.content.headless
+  type: bool
+  value: false
+  mirror: once
+#endif
+
 # When comparing schemes, if this pref is set, view-source URIs are reachable
 # from same-protocol (so e.g. file: can link to view-source:file). This is
 # required for reftests.
 - name: security.view-source.reachable-from-inner-protocol
   type: bool
   value: false
+  mirror: always
+
+# Pref to show warning when submitting from secure to insecure.
+- name: security.warn_submit_secure_to_insecure
+  type: bool
+  value: true
   mirror: always
 
 # Hardware Origin-bound Second Factor Support
@@ -8859,6 +9042,28 @@
   value: 0
 #endif
   mirror: once
+
+#---------------------------------------------------------------------------
+# Prefs starting with "storage."
+#---------------------------------------------------------------------------
+
+# Whether to use a non-exclusive VFS.
+# By default we use the unix-excl VFS, for the following reasons:
+# 1. It improves compatibility with NFS shares, whose implementation
+#    is incompatible with SQLite's locking requirements (reliable fcntl), and
+#    in particular with WAL journaling.
+#    Bug 433129 attempted to automatically identify such file-systems,
+#    but a reliable way was not found and the fallback locking is slower than
+#    POSIX locking, so we do not want to do it by default.
+# 2. It allows wal mode to avoid the memory mapped -shm file, reducing the
+#    likelihood of SIGBUS failures when disk space is exhausted.
+# 3. It provides some protection from third party database tampering while a
+#    connection is open.
+# Note there's no win32-excl VFS, so this has no effect on Windows.
+- name: storage.sqlite.exclusiveLock.enabled
+  type: RelaxedAtomicBool
+  value: @IS_NOT_ANDROID@
+  mirror: always
 
 #---------------------------------------------------------------------------
 # Prefs starting with "svg."
@@ -8994,8 +9199,12 @@
 # for this pref means we call _exit(0) earlier during shutdown.
 - name: toolkit.shutdown.fastShutdownStage
   type: int32_t
-#if !defined(DEBUG) && !defined(MOZ_CODE_COVERAGE) && !defined(MOZ_VALGRIND) && !defined(MOZ_PROFILE_GENERATE)
+#if !defined(DEBUG) && !defined(MOZ_ASAN) && !defined(MOZ_CODE_COVERAGE) && !defined(MOZ_VALGRIND) && !defined(MOZ_PROFILE_GENERATE)
+  #ifdef NIGHTLY_BUILD
+  value: 3
+  #else
   value: 1
+  #endif
 #else
   value: 0
 #endif
@@ -9351,6 +9560,11 @@
   value: true
   mirror: always
 
+- name: webgl.debug.incomplete-tex-color
+  type: RelaxedAtomicUint32
+  value: 0
+  mirror: always
+
 - name: webgl.default-antialias
   type: RelaxedAtomicBool
   value: @IS_NOT_ANDROID@
@@ -9426,7 +9640,7 @@
   mirror: always
 
 - name: webgl.force-layers-readback
-  type: bool
+  type: RelaxedAtomicBool
   value: false
   mirror: always
 
@@ -9476,14 +9690,14 @@
   mirror: always
 
 - name: webgl.power-preference-override
-  type: int32_t
+  type: RelaxedAtomicInt32
   value: 0
   mirror: always
 
 - name: webgl.prefer-16bpp
-  type: bool
+  type: RelaxedAtomicBool
   value: false
-  mirror: never
+  mirror: always
 
 - name: webgl.allow-immediate-queries
   type: RelaxedAtomicBool
@@ -9511,10 +9725,9 @@
   value: true
   mirror: always
 
-# value is 0 for PCQ, 1 for Ipdl
-- name: webgl.prototype.ipc-pcq
-  type: uint32_t
-  value: 0
+- name: webgl.oop.via-pcq
+  type: RelaxedAtomicBool
+  value: false
   mirror: always
 
 #---------------------------------------------------------------------------
@@ -9569,34 +9782,22 @@
 
 # Use DMABuf for content textures.
 # For testing purposes only.
-- name: widget.wayland-dmabuf-textures.enabled
+- name: widget.dmabuf-textures.enabled
   type: RelaxedAtomicBool
   value: false
   mirror: always
 #endif
 
-# Use DMABuf backend for WebGL on Wayland.
-- name: widget.wayland-dmabuf-webgl.enabled
-  type: RelaxedAtomicBool
-  value: true
-  mirror: always
-
-# Use VA-API for video playback on Wayland.
-- name: widget.wayland-dmabuf-vaapi.enabled
-  type: RelaxedAtomicBool
-  value: false
-  mirror: always
-
-# Use DMABuf for video textures.
-- name: widget.wayland-dmabuf-video-textures.enabled
-  type: RelaxedAtomicBool
-  value: false
-  mirror: always
-
-# Use smooth rendering for basic compositor.
+# Use smooth rendering for Wayland basic compositor.
 - name: widget.wayland-smooth-rendering
   type: RelaxedAtomicBool
   value: false
+  mirror: always
+
+# Use DMABuf backend for WebGL.
+- name: widget.dmabuf-webgl.enabled
+  type: RelaxedAtomicBool
+  value: true
   mirror: always
 #endif
 

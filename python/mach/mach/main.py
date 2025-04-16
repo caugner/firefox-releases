@@ -18,7 +18,6 @@ import traceback
 import uuid
 from collections import Iterable
 
-from mach.sentry import register_sentry, report_exception
 from six import string_types
 
 from .base import (
@@ -37,6 +36,7 @@ from .decorators import (
 from .dispatcher import CommandAction
 from .logging import LoggingManager
 from .registrar import Registrar
+from .sentry import register_sentry, NoopErrorReporter
 from .util import setenv
 
 SUGGEST_MACH_BUSTED_TEMPLATE = r'''
@@ -317,11 +317,7 @@ To see more help for a specific command, run:
         Returns the integer exit code that should be used. 0 means success. All
         other values indicate failure.
         """
-        if self.populate_context_handler:
-            topsrcdir = self.populate_context_handler('topdir')
-            register_sentry(argv, topsrcdir)
-        else:
-            register_sentry(argv)
+        sentry = NoopErrorReporter()
 
         # If no encoding is defined, we default to UTF-8 because without this
         # Python 2.7 will assume the default encoding of ASCII. This will blow
@@ -343,6 +339,18 @@ To see more help for a specific command, run:
         orig_env = dict(os.environ)
 
         try:
+            # Load settings as early as possible so things in dispatcher.py
+            # can use them.
+            for provider in Registrar.settings_providers:
+                self.settings.register_provider(provider)
+            self.load_settings(self.settings_paths)
+
+            if self.populate_context_handler:
+                topsrcdir = self.populate_context_handler('topdir')
+                sentry = register_sentry(argv, self.settings, topsrcdir)
+            else:
+                sentry = register_sentry(argv, self.settings)
+
             if sys.version_info < (3, 0):
                 if stdin.encoding is None:
                     sys.stdin = codecs.getreader('utf-8')(stdin)
@@ -360,7 +368,7 @@ To see more help for a specific command, run:
             if os.isatty(orig_stdout.fileno()):
                 setenv('MACH_STDOUT_ISATTY', '1')
 
-            return self._run(argv)
+            return self._run(argv, sentry)
         except KeyboardInterrupt:
             print('mach interrupted by signal or user action. Stopping.')
             return 1
@@ -378,7 +386,7 @@ To see more help for a specific command, run:
             stack = traceback.extract_tb(exc_tb)
 
             self._print_exception(sys.stdout, exc_type, exc_value, stack)
-            report_exception(exc_value)
+            sentry.report_exception(exc_value)
 
             return 1
 
@@ -390,13 +398,7 @@ To see more help for a specific command, run:
             sys.stdout = orig_stdout
             sys.stderr = orig_stderr
 
-    def _run(self, argv):
-        # Load settings as early as possible so things in dispatcher.py
-        # can use them.
-        for provider in Registrar.settings_providers:
-            self.settings.register_provider(provider)
-        self.load_settings(self.settings_paths)
-
+    def _run(self, argv, sentry):
         context = CommandContext(cwd=self.cwd,
                                  settings=self.settings, log_manager=self.log_manager,
                                  commands=Registrar)
@@ -483,7 +485,7 @@ To see more help for a specific command, run:
             return e.exit_code
         except Exception:
             exc_type, exc_value, exc_tb = sys.exc_info()
-            report_exception(exc_value)
+            sentry.report_exception(exc_value)
 
             # The first two frames are us and are never used.
             stack = traceback.extract_tb(exc_tb)[2:]

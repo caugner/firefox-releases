@@ -17,7 +17,6 @@ var EXPORTED_SYMBOLS = [
   "DownloadSaver",
   "DownloadCopySaver",
   "DownloadLegacySaver",
-  "DownloadPDFSaver",
 ];
 
 const { Integration } = ChromeUtils.import(
@@ -34,7 +33,6 @@ XPCOMUtils.defineLazyModuleGetters(this, {
   FileUtils: "resource://gre/modules/FileUtils.jsm",
   NetUtil: "resource://gre/modules/NetUtil.jsm",
   OS: "resource://gre/modules/osfile.jsm",
-  PrivateBrowsingUtils: "resource://gre/modules/PrivateBrowsingUtils.jsm",
   PromiseUtils: "resource://gre/modules/PromiseUtils.jsm",
   Services: "resource://gre/modules/Services.jsm",
 });
@@ -50,12 +48,6 @@ XPCOMUtils.defineLazyServiceGetter(
   "gExternalHelperAppService",
   "@mozilla.org/uriloader/external-helper-app-service;1",
   Ci.nsIExternalHelperAppService
-);
-XPCOMUtils.defineLazyServiceGetter(
-  this,
-  "gPrintSettingsService",
-  "@mozilla.org/gfx/printsettings-service;1",
-  Ci.nsIPrintSettingsService
 );
 
 /* global DownloadIntegration */
@@ -1438,12 +1430,6 @@ DownloadSource.fromSerializable = function(aSerializable) {
     source.url = aSerializable.toString();
   } else if (aSerializable instanceof Ci.nsIURI) {
     source.url = aSerializable.spec;
-  } else if (aSerializable instanceof Ci.nsIDOMWindow) {
-    source.url = aSerializable.location.href;
-    source.isPrivate = PrivateBrowsingUtils.isContentWindowPrivate(
-      aSerializable
-    );
-    source.windowRef = Cu.getWeakReference(aSerializable);
   } else {
     // Convert String objects to primitive strings at this point.
     source.url = aSerializable.url.toString();
@@ -1936,9 +1922,6 @@ DownloadSaver.fromSerializable = function(aSerializable) {
     case "legacy":
       saver = DownloadLegacySaver.fromSerializable(serializable);
       break;
-    case "pdf":
-      saver = DownloadPDFSaver.fromSerializable(serializable);
-      break;
     default:
       throw new Error("Unrecoginzed download saver type.");
   }
@@ -2080,8 +2063,8 @@ DownloadCopySaver.prototype = {
       let resumeFromBytes = 0;
 
       const notificationCallbacks = {
-        QueryInterface: ChromeUtils.generateQI([Ci.nsIInterfaceRequestor]),
-        getInterface: ChromeUtils.generateQI([Ci.nsIProgressEventSink]),
+        QueryInterface: ChromeUtils.generateQI(["nsIInterfaceRequestor"]),
+        getInterface: ChromeUtils.generateQI(["nsIProgressEventSink"]),
         onProgress: function DCSE_onProgress(
           aRequest,
           aProgress,
@@ -2248,7 +2231,8 @@ DownloadCopySaver.prototype = {
             uri: download.source.url,
             contentPolicyType: Ci.nsIContentPolicy.TYPE_SAVEAS_DOWNLOAD,
             loadingPrincipal: download.source.loadingPrincipal,
-            securityFlags: Ci.nsILoadInfo.SEC_ALLOW_CROSS_ORIGIN_DATA_IS_NULL,
+            securityFlags:
+              Ci.nsILoadInfo.SEC_ALLOW_CROSS_ORIGIN_SEC_CONTEXT_IS_NULL,
           });
         } else {
           channel = NetUtil.newChannel({
@@ -2844,154 +2828,4 @@ DownloadLegacySaver.prototype = {
  */
 DownloadLegacySaver.fromSerializable = function() {
   return new DownloadLegacySaver();
-};
-
-/**
- * This DownloadSaver type creates a PDF file from the current document in a
- * given window, specified using the windowRef property of the DownloadSource
- * object associated with the download.
- *
- * In order to prevent the download from saving a different document than the one
- * originally loaded in the window, any attempt to restart the download will fail.
- *
- * Since this DownloadSaver type requires a live document as a source, it cannot
- * be persisted across sessions, unless the download already succeeded.
- */
-var DownloadPDFSaver = function() {};
-
-DownloadPDFSaver.prototype = {
-  __proto__: DownloadSaver.prototype,
-
-  /**
-   * An nsIWebBrowserPrint instance for printing this page.
-   * This is null when saving has not started or has completed,
-   * or while the operation is being canceled.
-   */
-  _webBrowserPrint: null,
-
-  /**
-   * Implements "DownloadSaver.execute".
-   */
-  async execute(aSetProgressBytesFn, aSetPropertiesFn) {
-    if (!this.download.source.windowRef) {
-      throw new DownloadError({
-        message:
-          "PDF saver must be passed an open window, and cannot be restarted.",
-        becauseSourceFailed: true,
-      });
-    }
-
-    let win = this.download.source.windowRef.get();
-
-    // Set windowRef to null to avoid re-trying.
-    this.download.source.windowRef = null;
-
-    if (!win) {
-      throw new DownloadError({
-        message: "PDF saver can't save a window that has been closed.",
-        becauseSourceFailed: true,
-      });
-    }
-
-    this.addToHistory();
-
-    let targetPath = this.download.target.path;
-
-    // An empty target file must exist for the PDF printer to work correctly.
-    let file = await OS.File.open(targetPath, { truncate: true });
-    await file.close();
-
-    let printSettings = gPrintSettingsService.newPrintSettings;
-
-    printSettings.printToFile = true;
-    printSettings.outputFormat = Ci.nsIPrintSettings.kOutputFormatPDF;
-    printSettings.toFileName = targetPath;
-
-    printSettings.printSilent = true;
-    printSettings.showPrintProgress = false;
-
-    printSettings.printBGImages = true;
-    printSettings.printBGColors = true;
-    printSettings.headerStrCenter = "";
-    printSettings.headerStrLeft = "";
-    printSettings.headerStrRight = "";
-    printSettings.footerStrCenter = "";
-    printSettings.footerStrLeft = "";
-    printSettings.footerStrRight = "";
-
-    this._webBrowserPrint = win.getInterface(Ci.nsIWebBrowserPrint);
-
-    try {
-      await new Promise((resolve, reject) => {
-        this._webBrowserPrint.print(printSettings, {
-          onStateChange(webProgress, request, stateFlags, status) {
-            if (stateFlags & Ci.nsIWebProgressListener.STATE_STOP) {
-              if (!Components.isSuccessCode(status)) {
-                reject(new DownloadError({ result: status, inferCause: true }));
-              } else {
-                resolve();
-              }
-            }
-          },
-          onProgressChange(
-            webProgress,
-            request,
-            curSelfProgress,
-            maxSelfProgress,
-            curTotalProgress,
-            maxTotalProgress
-          ) {
-            aSetProgressBytesFn(curTotalProgress, maxTotalProgress, false);
-          },
-          onLocationChange() {},
-          onStatusChange() {},
-          onSecurityChange() {},
-          onContentBlockingEvent() {},
-        });
-      });
-    } finally {
-      // Remove the print object to avoid leaks
-      this._webBrowserPrint = null;
-    }
-
-    let fileInfo = await OS.File.stat(targetPath);
-    aSetProgressBytesFn(fileInfo.size, fileInfo.size, false);
-  },
-
-  /**
-   * Implements "DownloadSaver.cancel".
-   */
-  cancel: function DCS_cancel() {
-    if (this._webBrowserPrint) {
-      this._webBrowserPrint.cancel();
-      this._webBrowserPrint = null;
-    }
-  },
-
-  /**
-   * Implements "DownloadSaver.toSerializable".
-   */
-  toSerializable() {
-    if (this.download.succeeded) {
-      return DownloadCopySaver.prototype.toSerializable.call(this);
-    }
-
-    // This object needs a window to recreate itself. If it didn't succeded
-    // it will not be possible to restart. Returning null here will
-    // prevent us from serializing it at all.
-    return null;
-  },
-};
-
-/**
- * Creates a new DownloadPDFSaver object, with its initial state derived from
- * its serializable representation.
- *
- * @param aSerializable
- *        Serializable representation of a DownloadPDFSaver object.
- *
- * @return The newly created DownloadPDFSaver object.
- */
-DownloadPDFSaver.fromSerializable = function(aSerializable) {
-  return new DownloadPDFSaver();
 };

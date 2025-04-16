@@ -42,6 +42,7 @@ TEST_HARNESS_BINS = [
     'crashinject',
     'fileid',
     'geckodriver',
+    'http3server',
     'minidumpwriter',
     'pk12util',
     'screenshot',
@@ -116,6 +117,7 @@ ARCHIVE_FILES = {
                 'jsreftest/**',
                 'jit-test/**',
                 'jittest/**',  # To make the ignore checker happy
+                'perftests/**',
             ],
         },
         {
@@ -376,6 +378,12 @@ ARCHIVE_FILES = {
         },
         {
             'source': buildconfig.topsrcdir,
+            'base': 'third_party/python/virtualenv',
+            'dest': 'mozharness/third_party/python/virtualenv',
+            'pattern': '**',
+        },
+        {
+            'source': buildconfig.topsrcdir,
             'base': 'testing/mozbase/manifestparser',
             'pattern': 'manifestparser/**',
             'dest': 'mozharness',
@@ -464,6 +472,64 @@ ARCHIVE_FILES = {
             'pattern': '**',
             'dest': 'talos/talos/tests/webkit/PerformanceTests/',
         },
+    ],
+    'perftests': [
+        {
+            'source': buildconfig.topsrcdir,
+            'pattern': 'testing/mozbase/**',
+        },
+        {
+            'source': buildconfig.topsrcdir,
+            'pattern': 'testing/condprofile/**',
+        },
+        {
+            'source': buildconfig.topsrcdir,
+            'pattern': 'third_party/python/**',
+        },
+        {
+            'source': buildconfig.topsrcdir,
+            'pattern': 'tools/lint/eslint/**',
+        },
+        {
+            'source': buildconfig.topsrcdir,
+            'pattern': '**/perftest_*.js'
+        },
+        {
+            'source': buildconfig.topsrcdir,
+            'pattern': '**/hooks_*py'
+        },
+        {
+            'source': buildconfig.topsrcdir,
+            'pattern': 'build/autoconf/**'
+        },
+        {
+            'source': buildconfig.topsrcdir,
+            'pattern': 'build/moz.configure/**'
+        },
+        {
+            'source': buildconfig.topsrcdir,
+            'pattern': 'python/**'
+        },
+        {
+            'source': buildconfig.topsrcdir,
+            'pattern': 'build/mach_bootstrap.py'
+        },
+        {
+            'source': buildconfig.topsrcdir,
+            'pattern': 'build/virtualenv_packages.txt'
+        },
+        {
+            'source': buildconfig.topsrcdir,
+            'pattern': 'mach/**'
+        },
+        {
+            'source': buildconfig.topsrcdir,
+            'pattern': 'testing/web-platform/tests/tools/third_party/certifi/**'
+        },
+        {
+            'source': buildconfig.topsrcdir,
+            'pattern':  'testing/mozharness/**'
+        }
     ],
     'condprof': [
         {

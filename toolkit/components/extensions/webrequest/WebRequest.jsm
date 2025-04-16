@@ -259,7 +259,7 @@ function serializeRequestData(eventName, extension) {
     timeStamp: Date.now(),
     tabId: this.tabId,
     frameId: this.frameId,
-    parentFrameId: this.parentWindowId,
+    parentFrameId: this.parentFrameId,
     incognito: this.incognito,
     thirdParty: this.thirdParty,
   };
@@ -301,10 +301,7 @@ var ChannelEventSink = {
   _classID: Components.ID("115062f8-92f1-11e5-8b7f-080027b0f7ec"),
   _contractID: "@mozilla.org/webrequest/channel-event-sink;1",
 
-  QueryInterface: ChromeUtils.generateQI([
-    Ci.nsIChannelEventSink,
-    Ci.nsIFactory,
-  ]),
+  QueryInterface: ChromeUtils.generateQI(["nsIChannelEventSink", "nsIFactory"]),
 
   init() {
     Components.manager
@@ -483,7 +480,7 @@ class AuthRequestor {
     this.httpObserver.runChannelListener(wrapper, "onAuthRequired", data);
 
     return {
-      QueryInterface: ChromeUtils.generateQI([Ci.nsICancelable]),
+      QueryInterface: ChromeUtils.generateQI(["nsICancelable"]),
       cancel() {
         try {
           callback.onAuthCancelled(context, false);
@@ -748,8 +745,8 @@ HttpObserverManager = {
       documentUrl: channel.documentURL || undefined,
 
       tabId: this.getBrowserData(channel).tabId,
-      frameId: channel.windowId,
-      parentWindowId: channel.parentWindowId,
+      frameId: channel.frameId,
+      parentFrameId: channel.parentFrameId,
 
       frameAncestors: channel.frameAncestors || undefined,
 

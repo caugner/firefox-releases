@@ -88,7 +88,6 @@ async function initAccessibilityFrontsForUrl(
     "parentaccessibility"
   );
   const accessibility = await target.getFront("accessibility");
-  await accessibility.bootstrap();
   const a11yWalker = accessibility.accessibleWalkerFront;
   if (enableByDefault) {
     await parentAccessibility.enable();
@@ -198,10 +197,9 @@ function idleWait(time) {
 
 function busyWait(time) {
   const start = Date.now();
-  // eslint-disable-next-line
   let stack;
   while (Date.now() - start < time) {
-    stack = Components.stack;
+    stack = Components.stack; // eslint-disable-line no-unused-vars
   }
 }
 

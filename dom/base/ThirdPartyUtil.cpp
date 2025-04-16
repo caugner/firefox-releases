@@ -100,7 +100,9 @@ nsresult ThirdPartyUtil::IsThirdPartyInternal(const nsCString& aFirstDomain,
   nsresult rv = GetBaseDomain(aSecondURI, secondDomain);
   LOG(("ThirdPartyUtil::IsThirdPartyInternal %s =? %s", aFirstDomain.get(),
        secondDomain.get()));
-  if (NS_FAILED(rv)) return rv;
+  if (NS_FAILED(rv)) {
+    return rv;
+  }
 
   *aResult = IsThirdPartyInternal(aFirstDomain, secondDomain);
   return NS_OK;
@@ -161,7 +163,9 @@ ThirdPartyUtil::IsThirdPartyURI(nsIURI* aFirstURI, nsIURI* aSecondURI,
 
   nsAutoCString firstHost;
   nsresult rv = GetBaseDomain(aFirstURI, firstHost);
-  if (NS_FAILED(rv)) return rv;
+  if (NS_FAILED(rv)) {
+    return rv;
+  }
 
   return IsThirdPartyInternal(firstHost, aSecondURI, aResult);
 }
@@ -196,51 +200,17 @@ ThirdPartyUtil::IsThirdPartyWindow(mozIDOMWindowProxy* aWindow, nsIURI* aURI,
   }
 
   nsPIDOMWindowOuter* current = nsPIDOMWindowOuter::From(aWindow);
-  do {
-    // We use GetInProcessScriptableParent rather than GetParent because we
-    // consider <iframe mozbrowser> to be a top-level frame.
-    nsPIDOMWindowOuter* parent = current->GetInProcessScriptableParent();
-    // We don't use SameCOMIdentity here since we know that nsPIDOMWindowOuter
-    // is only implemented by nsGlobalWindowOuter, so different objects of that
-    // type will not have different nsISupports COM identities, and checking the
-    // actual COM identity using SameCOMIdentity is expensive due to the virtual
-    // calls involved.
-    if (parent == current) {
-      auto* const browsingContext = current->GetBrowsingContext();
-      MOZ_ASSERT(browsingContext);
+  auto* const browsingContext = current->GetBrowsingContext();
+  MOZ_ASSERT(browsingContext);
 
-      // We're either at the topmost content window (i.e. no third party), or,
-      // with fission, we may be an out-of-process content subframe (i.e. third
-      // party), since GetInProcessScriptableParent above explicitly does not
-      // go beyond process boundaries. In either case, we already know the
-      // result.
-      *aResult = browsingContext->IsContentSubframe();
-      return NS_OK;
-    }
+  WindowContext* wc = browsingContext->GetCurrentWindowContext();
+  if (NS_WARN_IF(!wc)) {
+    *aResult = true;
+    return NS_OK;
+  }
 
-    nsCOMPtr<nsIPrincipal> currentPrincipal;
-    nsresult rv =
-        GetPrincipalFromWindow(current, getter_AddRefs(currentPrincipal));
-    NS_ENSURE_SUCCESS(rv, rv);
-    nsCOMPtr<nsIPrincipal> parentPrincipal;
-    rv = GetPrincipalFromWindow(parent, getter_AddRefs(parentPrincipal));
-    NS_ENSURE_SUCCESS(rv, rv);
-
-    rv = currentPrincipal->IsThirdPartyPrincipal(parentPrincipal, &result);
-    if (NS_FAILED(rv)) {
-      return rv;
-    }
-
-    if (result) {
-      *aResult = true;
-      return NS_OK;
-    }
-
-    current = parent;
-  } while (1);
-
-  MOZ_ASSERT_UNREACHABLE("should've returned");
-  return NS_ERROR_UNEXPECTED;
+  *aResult = wc->GetIsThirdPartyWindow();
+  return NS_OK;
 }
 
 nsresult ThirdPartyUtil::IsThirdPartyGlobal(
@@ -309,29 +279,58 @@ ThirdPartyUtil::IsThirdPartyChannel(nsIChannel* aChannel, nsIURI* aURI,
   }
 
   bool parentIsThird = false;
+  nsAutoCString channelDomain;
 
   // Obtain the URI from the channel, and its base domain.
   nsCOMPtr<nsIURI> channelURI;
   rv = NS_GetFinalChannelURI(aChannel, getter_AddRefs(channelURI));
-  if (NS_FAILED(rv)) return rv;
+  if (NS_FAILED(rv)) {
+    return rv;
+  }
 
-  nsAutoCString channelDomain;
-  rv = GetBaseDomain(channelURI, channelDomain);
-  if (NS_FAILED(rv)) return rv;
+  BasePrincipal* loadingPrincipal = nullptr;
+  nsCOMPtr<nsILoadInfo> loadInfo = aChannel->LoadInfo();
 
   if (!doForce) {
-    nsCOMPtr<nsILoadInfo> loadInfo = aChannel->LoadInfo();
     parentIsThird = loadInfo->GetIsInThirdPartyContext();
-    BasePrincipal* loadingPrincipal =
-        BasePrincipal::Cast(loadInfo->GetLoadingPrincipal());
-    if (!parentIsThird &&
-        loadInfo->GetExternalContentPolicyType() !=
-            nsIContentPolicy::TYPE_DOCUMENT &&
-        (!loadingPrincipal->AddonPolicy() ||
-         !loadingPrincipal->AddonAllowsLoad(channelURI))) {
+    if (!parentIsThird && loadInfo->GetExternalContentPolicyType() !=
+                              nsIContentPolicy::TYPE_DOCUMENT) {
       // Check if the channel itself is third-party to its own requestor.
-      // Unforunately, we have to go through the loading principal.
+      // Unfortunately, we have to go through the loading principal.
+      loadingPrincipal = BasePrincipal::Cast(loadInfo->GetLoadingPrincipal());
+    }
+  }
 
+  // Special consideration must be done for about:blank URIs because those
+  // inherit the principal from the parent context. For them, let's consider the
+  // principal URI.
+  if (NS_IsAboutBlank(channelURI)) {
+    nsCOMPtr<nsIPrincipal> principalToInherit =
+        loadInfo->FindPrincipalToInherit(aChannel);
+    if (!principalToInherit) {
+      *aResult = true;
+      return NS_OK;
+    }
+
+    rv = principalToInherit->GetBaseDomain(channelDomain);
+    if (NS_FAILED(rv)) {
+      return rv;
+    }
+
+    if (loadingPrincipal) {
+      rv = loadingPrincipal->IsThirdPartyPrincipal(principalToInherit,
+                                                   &parentIsThird);
+      if (NS_FAILED(rv)) {
+        return rv;
+      }
+    }
+  } else {
+    rv = GetBaseDomain(channelURI, channelDomain);
+    if (NS_FAILED(rv)) {
+      return rv;
+    }
+
+    if (loadingPrincipal) {
       rv = loadingPrincipal->IsThirdPartyURI(channelURI, &parentIsThird);
       if (NS_FAILED(rv)) {
         return rv;

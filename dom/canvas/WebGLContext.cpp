@@ -209,10 +209,6 @@ void WebGLContext::DestroyResourcesAndContext() {
 
   mIndexedUniformBufferBindings.clear();
 
-  if (mAvailabilityRunnable) {
-    mAvailabilityRunnable->Run();
-  }
-
   //////
 
   if (mEmptyTFO) {
@@ -480,6 +476,15 @@ bool WebGLContext::CreateAndInitGL(
     return false;
   }
 
+  const auto val = StaticPrefs::webgl_debug_incomplete_tex_color();
+  if (val) {
+    mIncompleteTexOverride.reset(new gl::Texture(*gl));
+    const gl::ScopedBindTexture autoBind(gl, mIncompleteTexOverride->name);
+    const auto heapVal = std::make_unique<uint32_t>(val);
+    gl->fTexImage2D(LOCAL_GL_TEXTURE_2D, 0, LOCAL_GL_RGBA, 1, 1, 0,
+                    LOCAL_GL_RGBA, LOCAL_GL_UNSIGNED_BYTE, heapVal.get());
+  }
+
   return true;
 }
 
@@ -560,7 +565,7 @@ UniquePtr<webgl::FormatUsageAuthority> WebGLContext::CreateFormatUsage(
 RefPtr<WebGLContext> WebGLContext::Create(HostWebGLContext& host,
                                           const webgl::InitContextDesc& desc,
                                           webgl::InitContextResult* const out) {
-  nsCString failureId = NS_LITERAL_CSTRING("FEATURE_FAILURE_WEBGL_UNKOWN");
+  nsCString failureId = "FEATURE_FAILURE_WEBGL_UNKOWN"_ns;
   const bool forceEnabled = StaticPrefs::webgl_force_enabled();
   ScopedGfxFeatureReporter reporter("WebGL", forceEnabled);
 
@@ -572,9 +577,9 @@ RefPtr<WebGLContext> WebGLContext::Create(HostWebGLContext& host,
 
     if (disabled) {
       if (gfxPlatform::InSafeMode()) {
-        failureId = NS_LITERAL_CSTRING("FEATURE_FAILURE_WEBGL_SAFEMODE");
+        failureId = "FEATURE_FAILURE_WEBGL_SAFEMODE"_ns;
       } else {
-        failureId = NS_LITERAL_CSTRING("FEATURE_FAILURE_WEBGL_DISABLED");
+        failureId = "FEATURE_FAILURE_WEBGL_DISABLED"_ns;
       }
       return Err("WebGL is currently disabled.");
     }
@@ -582,7 +587,7 @@ RefPtr<WebGLContext> WebGLContext::Create(HostWebGLContext& host,
     if (desc.options.failIfMajorPerformanceCaveat) {
       nsCOMPtr<nsIGfxInfo> gfxInfo = services::GetGfxInfo();
       if (!HasAcceleratedLayers(gfxInfo)) {
-        failureId = NS_LITERAL_CSTRING("FEATURE_FAILURE_WEBGL_PERF_CAVEAT");
+        failureId = "FEATURE_FAILURE_WEBGL_PERF_CAVEAT"_ns;
         return Err(
             "failIfMajorPerformanceCaveat: Compositor is not"
             " hardware-accelerated.");
@@ -605,9 +610,8 @@ RefPtr<WebGLContext> WebGLContext::Create(HostWebGLContext& host,
       for (const auto& cur : failReasons) {
         // Don't try to accumulate using an empty key if |cur.key| is empty.
         if (cur.key.IsEmpty()) {
-          Telemetry::Accumulate(
-              Telemetry::CANVAS_WEBGL_FAILURE_ID,
-              NS_LITERAL_CSTRING("FEATURE_FAILURE_REASON_UNKNOWN"));
+          Telemetry::Accumulate(Telemetry::CANVAS_WEBGL_FAILURE_ID,
+                                "FEATURE_FAILURE_REASON_UNKNOWN"_ns);
         } else {
           Telemetry::Accumulate(Telemetry::CANVAS_WEBGL_FAILURE_ID, cur.key);
         }
@@ -615,14 +619,14 @@ RefPtr<WebGLContext> WebGLContext::Create(HostWebGLContext& host,
         text.AppendLiteral("\n* ");
         text.Append(cur.info);
       }
-      failureId = NS_LITERAL_CSTRING("FEATURE_FAILURE_REASON");
+      failureId = "FEATURE_FAILURE_REASON"_ns;
       return Err(text.BeginReading());
     }
     MOZ_ASSERT(webgl->gl);
 
     if (desc.options.failIfMajorPerformanceCaveat) {
       if (webgl->gl->IsWARP()) {
-        failureId = NS_LITERAL_CSTRING("FEATURE_FAILURE_WEBGL_PERF_WARP");
+        failureId = "FEATURE_FAILURE_WEBGL_PERF_WARP"_ns;
         return Err(
             "failIfMajorPerformanceCaveat: Driver is not"
             " hardware-accelerated.");
@@ -631,7 +635,7 @@ RefPtr<WebGLContext> WebGLContext::Create(HostWebGLContext& host,
 #ifdef XP_WIN
       if (webgl->gl->GetContextType() == gl::GLContextType::WGL &&
           !gl::sWGLLib.HasDXInterop2()) {
-        failureId = NS_LITERAL_CSTRING("FEATURE_FAILURE_WEBGL_DXGL_INTEROP2");
+        failureId = "FEATURE_FAILURE_WEBGL_DXGL_INTEROP2"_ns;
         return Err("Caveat: WGL without DXGLInterop2.");
       }
 #endif
@@ -643,14 +647,14 @@ RefPtr<WebGLContext> WebGLContext::Create(HostWebGLContext& host,
     if (!webgl->EnsureDefaultFB()) {
       MOZ_ASSERT(!webgl->mDefaultFB);
       MOZ_ASSERT(webgl->IsContextLost());
-      failureId = NS_LITERAL_CSTRING("FEATURE_FAILURE_WEBGL_BACKBUFFER");
+      failureId = "FEATURE_FAILURE_WEBGL_BACKBUFFER"_ns;
       return Err("Initializing WebGL backbuffer failed.");
     }
 
     return webgl;
   }();
   if (res.isOk()) {
-    failureId = NS_LITERAL_CSTRING("SUCCESS");
+    failureId = "SUCCESS"_ns;
   }
   Telemetry::Accumulate(Telemetry::CANVAS_WEBGL_FAILURE_ID, failureId);
 
@@ -1021,9 +1025,9 @@ Maybe<layers::SurfaceDescriptor> WebGLContext::GetFrontBuffer(
   return front->ToSurfaceDescriptor();
 }
 
-RefPtr<gfx::DataSourceSurface> WebGLContext::GetFrontBufferSnapshot() {
+bool WebGLContext::FrontBufferSnapshotInto(Range<uint8_t> dest) {
   const auto& front = mSwapChain.FrontBuffer();
-  if (!front) return nullptr;
+  if (!front) return false;
 
   // -
 
@@ -1068,32 +1072,13 @@ RefPtr<gfx::DataSourceSurface> WebGLContext::GetFrontBufferSnapshot() {
   });
 
   const auto& size = front->mDesc.size;
-  const auto surfFormat = mOptions.alpha ? gfx::SurfaceFormat::B8G8R8A8
-                                         : gfx::SurfaceFormat::B8G8R8X8;
-  const auto stride = size.width * 4;
-  RefPtr<gfx::DataSourceSurface> surf =
-      gfx::Factory::CreateDataSourceSurfaceWithStride(size, surfFormat, stride,
-                                                      /*zero=*/true);
-  MOZ_ASSERT(surf);
-  if (NS_WARN_IF(!surf)) return nullptr;
+  const size_t stride = size.width * 4;
+  MOZ_ASSERT(dest.length() == stride * size.height);
+  gl->fReadPixels(0, 0, size.width, size.height, LOCAL_GL_RGBA,
+                  LOCAL_GL_UNSIGNED_BYTE, dest.begin().get());
+  gfxUtils::ConvertBGRAtoRGBA(dest.begin().get(), stride * size.height);
 
-  // -
-
-  {
-    const gfx::DataSourceSurface::ScopedMap map(
-        surf, gfx::DataSourceSurface::READ_WRITE);
-    if (!map.IsMapped()) {
-      MOZ_ASSERT(false);
-      return nullptr;
-    }
-    MOZ_ASSERT(map.GetStride() == stride);
-
-    gl->fReadPixels(0, 0, size.width, size.height, LOCAL_GL_RGBA,
-                    LOCAL_GL_UNSIGNED_BYTE, map.GetData());
-    gfxUtils::ConvertBGRAtoRGBA(map.GetData(), stride * size.height);
-  }
-
-  return surf;
+  return true;
 }
 
 void WebGLContext::ClearVRSwapChain() { mWebVRSwapChain.ClearPool(); }
@@ -1204,6 +1189,7 @@ void WebGLContext::LoseContext(const webgl::ContextLossReason reason) {
   printf_stderr("WebGL(%p)::LoseContext(%u)\n", this,
                 static_cast<uint32_t>(reason));
   mIsContextLost = true;
+  mLruPosition = {};
   mHost->OnContextLoss(reason);
 }
 
@@ -1403,48 +1389,6 @@ uint64_t IndexedBufferBinding::ByteCount() const {
 
 ////////////////////////////////////////
 
-ScopedUnpackReset::ScopedUnpackReset(const WebGLContext* const webgl)
-    : mWebGL(webgl) {
-  const auto& gl = mWebGL->gl;
-  // clang-format off
-  if (mWebGL->mPixelStore.mUnpackAlignment != 4) gl->fPixelStorei(LOCAL_GL_UNPACK_ALIGNMENT, 4);
-
-  if (mWebGL->IsWebGL2()) {
-    if (mWebGL->mPixelStore.mUnpackRowLength   != 0) gl->fPixelStorei(LOCAL_GL_UNPACK_ROW_LENGTH  , 0);
-    if (mWebGL->mPixelStore.mUnpackImageHeight != 0) gl->fPixelStorei(LOCAL_GL_UNPACK_IMAGE_HEIGHT, 0);
-    if (mWebGL->mPixelStore.mUnpackSkipPixels  != 0) gl->fPixelStorei(LOCAL_GL_UNPACK_SKIP_PIXELS , 0);
-    if (mWebGL->mPixelStore.mUnpackSkipRows    != 0) gl->fPixelStorei(LOCAL_GL_UNPACK_SKIP_ROWS   , 0);
-    if (mWebGL->mPixelStore.mUnpackSkipImages  != 0) gl->fPixelStorei(LOCAL_GL_UNPACK_SKIP_IMAGES , 0);
-
-    if (mWebGL->mBoundPixelUnpackBuffer) gl->fBindBuffer(LOCAL_GL_PIXEL_UNPACK_BUFFER, 0);
-  }
-  // clang-format on
-}
-
-ScopedUnpackReset::~ScopedUnpackReset() {
-  const auto& gl = mWebGL->gl;
-  // clang-format off
-  gl->fPixelStorei(LOCAL_GL_UNPACK_ALIGNMENT, mWebGL->mPixelStore.mUnpackAlignment);
-
-  if (mWebGL->IsWebGL2()) {
-    gl->fPixelStorei(LOCAL_GL_UNPACK_ROW_LENGTH  , mWebGL->mPixelStore.mUnpackRowLength  );
-    gl->fPixelStorei(LOCAL_GL_UNPACK_IMAGE_HEIGHT, mWebGL->mPixelStore.mUnpackImageHeight);
-    gl->fPixelStorei(LOCAL_GL_UNPACK_SKIP_PIXELS , mWebGL->mPixelStore.mUnpackSkipPixels );
-    gl->fPixelStorei(LOCAL_GL_UNPACK_SKIP_ROWS   , mWebGL->mPixelStore.mUnpackSkipRows   );
-    gl->fPixelStorei(LOCAL_GL_UNPACK_SKIP_IMAGES , mWebGL->mPixelStore.mUnpackSkipImages );
-
-    GLuint pbo = 0;
-    if (mWebGL->mBoundPixelUnpackBuffer) {
-        pbo = mWebGL->mBoundPixelUnpackBuffer->mGLName;
-    }
-
-    gl->fBindBuffer(LOCAL_GL_PIXEL_UNPACK_BUFFER, pbo);
-  }
-  // clang-format on
-}
-
-////////////////////
-
 ScopedFBRebinder::~ScopedFBRebinder() {
   const auto fnName = [&](WebGLFramebuffer* fb) {
     return fb ? fb->mGLName : 0;
@@ -1533,54 +1477,6 @@ uint64_t AvailGroups(const uint64_t totalAvailItems,
 
 ////////////////////////////////////////////////////////////////////////////////
 
-CheckedUint32 WebGLContext::GetUnpackSize(bool isFunc3D, uint32_t width,
-                                          uint32_t height, uint32_t depth,
-                                          uint8_t bytesPerPixel) {
-  if (!width || !height || !depth) return 0;
-
-  ////////////////
-
-  const auto& maybeRowLength = mPixelStore.mUnpackRowLength;
-  const auto& maybeImageHeight = mPixelStore.mUnpackImageHeight;
-
-  const auto usedPixelsPerRow =
-      CheckedUint32(mPixelStore.mUnpackSkipPixels) + width;
-  const auto stridePixelsPerRow =
-      (maybeRowLength ? CheckedUint32(maybeRowLength) : usedPixelsPerRow);
-
-  const auto usedRowsPerImage =
-      CheckedUint32(mPixelStore.mUnpackSkipRows) + height;
-  const auto strideRowsPerImage =
-      (maybeImageHeight ? CheckedUint32(maybeImageHeight) : usedRowsPerImage);
-
-  const uint32_t skipImages = (isFunc3D ? mPixelStore.mUnpackSkipImages : 0);
-  const CheckedUint32 usedImages = CheckedUint32(skipImages) + depth;
-
-  ////////////////
-
-  CheckedUint32 strideBytesPerRow = bytesPerPixel * stridePixelsPerRow;
-  strideBytesPerRow =
-      RoundUpToMultipleOf(strideBytesPerRow, mPixelStore.mUnpackAlignment);
-
-  const CheckedUint32 strideBytesPerImage =
-      strideBytesPerRow * strideRowsPerImage;
-
-  ////////////////
-
-  CheckedUint32 usedBytesPerRow = bytesPerPixel * usedPixelsPerRow;
-  // Don't round this to the alignment, since alignment here is really just used
-  // for establishing stride, particularly in WebGL 1, where you can't set
-  // ROW_LENGTH.
-
-  CheckedUint32 totalBytes = strideBytesPerImage * (usedImages - 1);
-  totalBytes += strideBytesPerRow * (usedRowsPerImage - 1);
-  totalBytes += usedBytesPerRow;
-
-  return totalBytes;
-}
-
-////////////////////////////////////////////////////////////////////////////////
-
 const char* WebGLContext::FuncName() const {
   const char* ret;
   if (MOZ_LIKELY(mFuncScope)) {
@@ -1652,20 +1548,19 @@ already_AddRefed<dom::Promise> ClientWebGLContext::MakeXRCompatible(
 
 // --
 
-webgl::AvailabilityRunnable* WebGLContext::EnsureAvailabilityRunnable() {
+webgl::AvailabilityRunnable& ClientWebGLContext::EnsureAvailabilityRunnable()
+    const {
   if (!mAvailabilityRunnable) {
-    RefPtr<webgl::AvailabilityRunnable> runnable =
-        new webgl::AvailabilityRunnable(this);
-
-    NS_DispatchToCurrentThread(runnable.forget());
+    mAvailabilityRunnable = new webgl::AvailabilityRunnable(this);
+    auto forgettable = mAvailabilityRunnable;
+    NS_DispatchToCurrentThread(forgettable.forget());
   }
-  return mAvailabilityRunnable;
+  return *mAvailabilityRunnable;
 }
 
-webgl::AvailabilityRunnable::AvailabilityRunnable(WebGLContext* const webgl)
-    : Runnable("webgl::AvailabilityRunnable"), mWebGL(webgl) {
-  mWebGL->mAvailabilityRunnable = this;
-}
+webgl::AvailabilityRunnable::AvailabilityRunnable(
+    const ClientWebGLContext* const webgl)
+    : Runnable("webgl::AvailabilityRunnable"), mWebGL(webgl) {}
 
 webgl::AvailabilityRunnable::~AvailabilityRunnable() {
   MOZ_ASSERT(mQueries.empty());
@@ -1674,16 +1569,20 @@ webgl::AvailabilityRunnable::~AvailabilityRunnable() {
 
 nsresult webgl::AvailabilityRunnable::Run() {
   for (const auto& cur : mQueries) {
+    if (!cur) continue;
     cur->mCanBeAvailable = true;
   }
   mQueries.clear();
 
   for (const auto& cur : mSyncs) {
+    if (!cur) continue;
     cur->mCanBeAvailable = true;
   }
   mSyncs.clear();
 
-  mWebGL->mAvailabilityRunnable = nullptr;
+  if (mWebGL) {
+    mWebGL->mAvailabilityRunnable = nullptr;
+  }
   return NS_OK;
 }
 
@@ -2071,6 +1970,10 @@ webgl::LinkActiveInfo GetLinkActiveInfo(
   return ret;
 }
 
+nsCString ToCString(const std::string& s) {
+  return nsCString(s.data(), s.size());
+}
+
 webgl::CompileResult WebGLContext::GetCompileResult(
     const WebGLShader& shader) const {
   webgl::CompileResult ret;
@@ -2079,11 +1982,12 @@ webgl::CompileResult WebGLContext::GetCompileResult(
     const auto& info = shader.CompileResults();
     if (!info) return;
     if (!info->mValid) {
-      ret.log = info->mInfoLog;
+      ret.log = info->mInfoLog.c_str();
       return;
     }
-    ret.translatedSource = info->mObjectCode;
-    ret.log = shader.CompileLog();
+    // TODO: These could be large and should be made fallible.
+    ret.translatedSource = ToCString(info->mObjectCode);
+    ret.log = ToCString(shader.CompileLog());
     if (!shader.IsCompiled()) return;
     ret.success = true;
   }();
@@ -2094,7 +1998,7 @@ webgl::LinkResult WebGLContext::GetLinkResult(const WebGLProgram& prog) const {
   webgl::LinkResult ret;
   [&]() {
     ret.pending = false;  // Link status polling not yet implemented.
-    ret.log = prog.LinkLog();
+    ret.log = ToCString(prog.LinkLog());
     const auto& info = prog.LinkInfo();
     if (!info) return;
     ret.success = true;

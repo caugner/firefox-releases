@@ -23,6 +23,7 @@ loader.lazyRequireGetter(
 class WalkerFront extends FrontClassWithSpec(walkerSpec) {
   constructor(client, targetFront, parentFront) {
     super(client, targetFront, parentFront);
+    this._isPicking = false;
     this._orphaned = new Set();
     this._retainedOrphans = new Set();
 
@@ -66,7 +67,7 @@ class WalkerFront extends FrontClassWithSpec(walkerSpec) {
     // correct rootNode. Otherwise they might receive an outdated node.
     // See https://bugzilla.mozilla.org/show_bug.cgi?id=1633348.
     this._rootNodeWatchers++;
-    if (this.traits.watchRootNode && this._rootNodeWatchers === 1) {
+    if (this._rootNodeWatchers === 1) {
       await super.watchRootNode();
     }
 
@@ -76,7 +77,7 @@ class WalkerFront extends FrontClassWithSpec(walkerSpec) {
     }
 
     this._rootNodeWatchers--;
-    if (this.traits.watchRootNode && this._rootNodeWatchers === 0) {
+    if (this._rootNodeWatchers === 0) {
       super.unwatchRootNode();
     }
 
@@ -92,7 +93,7 @@ class WalkerFront extends FrontClassWithSpec(walkerSpec) {
    * with a real form by the end of the deserialization.
    */
   ensureDOMNodeFront(id) {
-    const front = this.get(id);
+    const front = this.getActorByID(id);
     if (front) {
       return front;
     }
@@ -273,7 +274,7 @@ class WalkerFront extends FrontClassWithSpec(walkerSpec) {
 
       // The target is only an actorID, get the associated front.
       const targetID = change.target;
-      const targetFront = this.get(targetID);
+      const targetFront = this.getActorByID(targetID);
 
       if (!targetFront) {
         console.warn(
@@ -295,7 +296,7 @@ class WalkerFront extends FrontClassWithSpec(walkerSpec) {
         const addedFronts = [];
         const removedFronts = [];
         for (const removed of change.removed) {
-          const removedFront = this.get(removed);
+          const removedFront = this.getActorByID(removed);
           if (!removedFront) {
             console.error(
               "Got a removal of an actor we didn't know about: " + removed
@@ -311,7 +312,7 @@ class WalkerFront extends FrontClassWithSpec(walkerSpec) {
           removedFronts.push(removedFront);
         }
         for (const added of change.added) {
-          const addedFront = this.get(added);
+          const addedFront = this.getActorByID(added);
           if (!addedFront) {
             console.error(
               "Got an addition of an actor we didn't know " + "about: " + added
@@ -351,10 +352,6 @@ class WalkerFront extends FrontClassWithSpec(walkerSpec) {
           }
         }
       } else if (change.type === "documentUnload") {
-        if (!this.traits.watchRootNode && targetFront === this.rootNode) {
-          this.emit("root-destroyed");
-        }
-
         // We try to give fronts instead of actorIDs, but these fronts need
         // to be destroyed now.
         emittedMutation.target = targetFront.actorID;
@@ -370,7 +367,7 @@ class WalkerFront extends FrontClassWithSpec(walkerSpec) {
         // Retained orphans were force-released without the intervention of
         // client (probably a navigated frame).
         for (const released of change.nodes) {
-          const releasedFront = this.get(released);
+          const releasedFront = this.getActorByID(released);
           this._retainedOrphans.delete(released);
           this._releaseFront(releasedFront, true);
         }
@@ -565,6 +562,7 @@ class WalkerFront extends FrontClassWithSpec(walkerSpec) {
   }
 
   _onRootNodeDestroyed() {
+    this._releaseFront(this.rootNode, true);
     this.rootNode = null;
   }
 
@@ -572,27 +570,63 @@ class WalkerFront extends FrontClassWithSpec(walkerSpec) {
     this.on("root-available", onRootNodeAvailable);
 
     this._rootNodeWatchers++;
-    if (this.traits.watchRootNode && this._rootNodeWatchers === 1) {
+    if (this._rootNodeWatchers === 1) {
       await super.watchRootNode();
     } else if (this.rootNode) {
-      // This else branch is here for 2 reasons:
-      // - subsequent calls to `watchRootNode`:
-      //   When debugging recent servers if we skip `super.watchRootNode`,
-      //   we should call `onRootNodeAvailable`` immediately, because the actor
-      //   will not emit "root-available". And we should not emit it from the
-      //   Front, because it would notify other consumers unnecessarily.
-      // - backward compatibility for FF77 or older:
-      //   we assume that a node will already be available when calling
-      //   `watchRootNode`, so we call `onRootNodeAvailable` immediately.
+      // This else branch is here for subsequent calls to `watchRootNode`:
+      //   If we skip `super.watchRootNode`, we should call
+      //   `onRootNodeAvailable` immediately, because the actor will not emit
+      //   "root-available". And we should not emit it from the Front, because
+      //   it would notify other consumers unnecessarily.
       await onRootNodeAvailable(this.rootNode);
     }
+  }
+
+  /**
+   * Start the element picker on the debuggee target.
+   * @param {Boolean} doFocus - Optionally focus the content area once the picker is
+   *                            activated.
+   */
+  pick(doFocus) {
+    if (this._isPicking) {
+      return Promise.resolve();
+    }
+    this._isPicking = true;
+
+    // Firefox 80 - backwards compatibility for servers without walker.pick()
+    if (!this.traits.supportsNodePicker) {
+      // parent is InspectorFront
+      return doFocus
+        ? this.parentFront.highlighter.pickAndFocus()
+        : this.parentFront.highlighter.pick();
+    }
+
+    return super.pick(doFocus);
+  }
+
+  /**
+   * Stop the element picker.
+   */
+  cancelPick() {
+    if (!this._isPicking) {
+      return Promise.resolve();
+    }
+    this._isPicking = false;
+
+    // Firefox 80 - backwards compatibility for servers without walker.cancelPick()
+    if (!this.traits.supportsNodePicker) {
+      // parent is InspectorFront
+      return this.parentFront.highlighter.cancelPick();
+    }
+
+    return super.cancelPick();
   }
 
   unwatchRootNode(onRootNodeAvailable) {
     this.off("root-available", onRootNodeAvailable);
 
     this._rootNodeWatchers--;
-    if (this.traits.watchRootNode && this._rootNodeWatchers === 0) {
+    if (this._rootNodeWatchers === 0) {
       super.unwatchRootNode();
     }
   }

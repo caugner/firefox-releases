@@ -473,15 +473,17 @@ void nsCSPContext::reportInlineViolation(
   // let's report the hash error; no need to report the unsafe-inline error
   // anymore.
   if (!aNonce.IsEmpty()) {
-    observerSubject =
-        (aContentType == nsIContentPolicy::TYPE_SCRIPT)
-            ? NS_LITERAL_STRING(SCRIPT_NONCE_VIOLATION_OBSERVER_TOPIC)
-            : NS_LITERAL_STRING(STYLE_NONCE_VIOLATION_OBSERVER_TOPIC);
+    observerSubject = (aContentType == nsIContentPolicy::TYPE_SCRIPT)
+                          ? NS_LITERAL_STRING_FROM_CSTRING(
+                                SCRIPT_NONCE_VIOLATION_OBSERVER_TOPIC)
+                          : NS_LITERAL_STRING_FROM_CSTRING(
+                                STYLE_NONCE_VIOLATION_OBSERVER_TOPIC);
   } else {
-    observerSubject =
-        (aContentType == nsIContentPolicy::TYPE_SCRIPT)
-            ? NS_LITERAL_STRING(SCRIPT_HASH_VIOLATION_OBSERVER_TOPIC)
-            : NS_LITERAL_STRING(STYLE_HASH_VIOLATION_OBSERVER_TOPIC);
+    observerSubject = (aContentType == nsIContentPolicy::TYPE_SCRIPT)
+                          ? NS_LITERAL_STRING_FROM_CSTRING(
+                                SCRIPT_HASH_VIOLATION_OBSERVER_TOPIC)
+                          : NS_LITERAL_STRING_FROM_CSTRING(
+                                STYLE_HASH_VIOLATION_OBSERVER_TOPIC);
   }
 
   nsAutoString sourceFile;
@@ -563,15 +565,11 @@ nsCSPContext::GetAllowsInline(nsContentPolicyType aContentType,
       }
     }
 
-    // Check if the csp-hash matches against the hash of the script or
-    // pseudoscript. If we can't get any content to check, block the script.
-    if (!content.IsEmpty() || !aContentOfPseudoScript.IsEmpty()) {
-      if (content.IsEmpty()) {
-        content = aContentOfPseudoScript;
-      }
-      allowed =
-          mPolicies[i]->allows(aContentType, CSP_HASH, content, aParserCreated);
+    if (content.IsEmpty()) {
+      content = aContentOfPseudoScript;
     }
+    allowed =
+        mPolicies[i]->allows(aContentType, CSP_HASH, content, aParserCreated);
 
     if (!allowed) {
       // policy is violoated: deny the load unless policy is report only and
@@ -661,7 +659,7 @@ nsCSPContext::GetAllowsNavigateTo(nsIURI* aURI, bool aIsFormSubmission,
           blockedURIForReporting,                     // aBlockedURI
           nsCSPContext::BlockedContentSource::eSelf,  // aBlockedSource
           nullptr,                                    // aOriginalURI
-          NS_LITERAL_STRING("navigate-to"),           // aViolatedDirective
+          u"navigate-to"_ns,                          // aViolatedDirective
           i,                                          // aViolatedPolicyIndex
           EmptyString(),                              // aObserverSubject
           NS_ConvertUTF8toUTF16(spec),                // aSourceFile
@@ -706,24 +704,24 @@ nsCSPContext::GetAllowsNavigateTo(nsIURI* aURI, bool aIsFormSubmission,
  * GetAllowsInline() and do not call this macro, hence we can pass 'false'
  * as the argument _aParserCreated_ to allows().
  */
-#define CASE_CHECK_AND_REPORT(violationType, contentPolicyType, nonceOrHash, \
-                              keyword, observerTopic)                        \
-  case nsIContentSecurityPolicy::VIOLATION_TYPE_##violationType:             \
-    PR_BEGIN_MACRO                                                           \
-    if (!mPolicies[p]->allows(nsIContentPolicy::TYPE_##contentPolicyType,    \
-                              keyword, nonceOrHash, false)) {                \
-      nsAutoString violatedDirective;                                        \
-      bool reportSample = false;                                             \
-      mPolicies[p]->getDirectiveStringAndReportSampleForContentType(         \
-          nsIContentPolicy::TYPE_##contentPolicyType, violatedDirective,     \
-          &reportSample);                                                    \
-      AsyncReportViolation(aTriggeringElement, aCSPEventListener, nullptr,   \
-                           blockedContentSource, nullptr, violatedDirective, \
-                           p, NS_LITERAL_STRING(observerTopic), aSourceFile, \
-                           reportSample ? aScriptSample : EmptyString(),     \
-                           aLineNum, aColumnNum);                            \
-    }                                                                        \
-    PR_END_MACRO;                                                            \
+#define CASE_CHECK_AND_REPORT(violationType, contentPolicyType, nonceOrHash,   \
+                              keyword, observerTopic)                          \
+  case nsIContentSecurityPolicy::VIOLATION_TYPE_##violationType:               \
+    PR_BEGIN_MACRO                                                             \
+    if (!mPolicies[p]->allows(nsIContentPolicy::TYPE_##contentPolicyType,      \
+                              keyword, nonceOrHash, false)) {                  \
+      nsAutoString violatedDirective;                                          \
+      bool reportSample = false;                                               \
+      mPolicies[p]->getDirectiveStringAndReportSampleForContentType(           \
+          nsIContentPolicy::TYPE_##contentPolicyType, violatedDirective,       \
+          &reportSample);                                                      \
+      AsyncReportViolation(                                                    \
+          aTriggeringElement, aCSPEventListener, nullptr,                      \
+          blockedContentSource, nullptr, violatedDirective, p,                 \
+          NS_LITERAL_STRING_FROM_CSTRING(observerTopic), aSourceFile,          \
+          reportSample ? aScriptSample : EmptyString(), aLineNum, aColumnNum); \
+    }                                                                          \
+    PR_END_MACRO;                                                              \
     break
 
 /**
@@ -775,13 +773,11 @@ nsCSPContext::LogViolationDetails(
     }
 
     switch (aViolationType) {
-      CASE_CHECK_AND_REPORT(EVAL, SCRIPT, NS_LITERAL_STRING(""),
-                            CSP_UNSAFE_EVAL, EVAL_VIOLATION_OBSERVER_TOPIC);
-      CASE_CHECK_AND_REPORT(INLINE_STYLE, STYLESHEET, NS_LITERAL_STRING(""),
-                            CSP_UNSAFE_INLINE,
+      CASE_CHECK_AND_REPORT(EVAL, SCRIPT, u""_ns, CSP_UNSAFE_EVAL,
+                            EVAL_VIOLATION_OBSERVER_TOPIC);
+      CASE_CHECK_AND_REPORT(INLINE_STYLE, STYLESHEET, u""_ns, CSP_UNSAFE_INLINE,
                             INLINE_STYLE_VIOLATION_OBSERVER_TOPIC);
-      CASE_CHECK_AND_REPORT(INLINE_SCRIPT, SCRIPT, NS_LITERAL_STRING(""),
-                            CSP_UNSAFE_INLINE,
+      CASE_CHECK_AND_REPORT(INLINE_SCRIPT, SCRIPT, u""_ns, CSP_UNSAFE_INLINE,
                             INLINE_SCRIPT_VIOLATION_OBSERVER_TOPIC);
       CASE_CHECK_AND_REPORT(NONCE_SCRIPT, SCRIPT, aNonce, CSP_UNSAFE_INLINE,
                             SCRIPT_NONCE_VIOLATION_OBSERVER_TOPIC);
@@ -1181,14 +1177,15 @@ nsresult nsCSPContext::SendReports(
 
     // try to create a new channel for every report-uri
     if (doc) {
-      rv = NS_NewChannel(getter_AddRefs(reportChannel), reportURI, doc,
-                         nsILoadInfo::SEC_ALLOW_CROSS_ORIGIN_DATA_IS_NULL,
-                         nsIContentPolicy::TYPE_CSP_REPORT);
+      rv =
+          NS_NewChannel(getter_AddRefs(reportChannel), reportURI, doc,
+                        nsILoadInfo::SEC_ALLOW_CROSS_ORIGIN_SEC_CONTEXT_IS_NULL,
+                        nsIContentPolicy::TYPE_CSP_REPORT);
     } else {
-      rv = NS_NewChannel(getter_AddRefs(reportChannel), reportURI,
-                         mLoadingPrincipal,
-                         nsILoadInfo::SEC_ALLOW_CROSS_ORIGIN_DATA_IS_NULL,
-                         nsIContentPolicy::TYPE_CSP_REPORT);
+      rv = NS_NewChannel(
+          getter_AddRefs(reportChannel), reportURI, mLoadingPrincipal,
+          nsILoadInfo::SEC_ALLOW_CROSS_ORIGIN_SEC_CONTEXT_IS_NULL,
+          nsIContentPolicy::TYPE_CSP_REPORT);
     }
 
     if (NS_FAILED(rv)) {
@@ -1253,14 +1250,13 @@ nsresult nsCSPContext::SendReports(
       continue;
     }
 
-    rv = uploadChannel->SetUploadStream(
-        sis, NS_LITERAL_CSTRING("application/csp-report"), -1);
+    rv = uploadChannel->SetUploadStream(sis, "application/csp-report"_ns, -1);
     NS_ENSURE_SUCCESS(rv, rv);
 
     // if this is an HTTP channel, set the request method to post
     nsCOMPtr<nsIHttpChannel> httpChannel(do_QueryInterface(reportChannel));
     if (httpChannel) {
-      rv = httpChannel->SetRequestMethod(NS_LITERAL_CSTRING("POST"));
+      rv = httpChannel->SetRequestMethod("POST"_ns);
       MOZ_ASSERT(NS_SUCCEEDED(rv));
     }
 
@@ -1334,8 +1330,7 @@ nsresult nsCSPContext::FireViolationEvent(
 
   RefPtr<mozilla::dom::Event> event =
       mozilla::dom::SecurityPolicyViolationEvent::Constructor(
-          eventTarget, NS_LITERAL_STRING("securitypolicyviolation"),
-          aViolationEventInit);
+          eventTarget, u"securitypolicyviolation"_ns, aViolationEventInit);
   event->SetTrusted(true);
 
   ErrorResult rv;
@@ -1641,7 +1636,7 @@ nsCSPContext::Permits(Element* aTriggeringElement,
     // As a hotfix we just allowlist pdf.js internals here explicitly.
     nsAutoCString uriSpec;
     aURI->GetSpec(uriSpec);
-    if (StringBeginsWith(uriSpec, NS_LITERAL_CSTRING("resource://pdf.js/"))) {
+    if (StringBeginsWith(uriSpec, "resource://pdf.js/"_ns)) {
       *outPermits = true;
       return NS_OK;
     }

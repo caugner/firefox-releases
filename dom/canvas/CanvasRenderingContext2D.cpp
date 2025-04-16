@@ -81,6 +81,7 @@
 #include "mozilla/dom/ToJSValue.h"
 #include "mozilla/dom/TypedArray.h"
 #include "mozilla/EndianUtils.h"
+#include "mozilla/FilterInstance.h"
 #include "mozilla/gfx/2D.h"
 #include "mozilla/gfx/Helpers.h"
 #include "mozilla/gfx/Tools.h"
@@ -107,7 +108,6 @@
 #include "mozilla/dom/TextMetrics.h"
 #include "mozilla/FloatingPoint.h"
 #include "nsGlobalWindow.h"
-#include "nsFilterInstance.h"
 #include "nsDeviceContext.h"
 #include "nsFontMetrics.h"
 #include "Units.h"
@@ -2204,7 +2204,7 @@ static already_AddRefed<RawServoDeclarationBlock> CreateDeclarationForServo(
   // From canvas spec, force to set line-height property to 'normal' font
   // property.
   if (aProperty == eCSSProperty_font) {
-    const nsCString normalString = NS_LITERAL_CSTRING("normal");
+    const nsCString normalString = "normal"_ns;
     Servo_DeclarationBlock_SetPropertyById(
         servoDeclarations, eCSSProperty_line_height, &normalString, false, data,
         ParsingMode::Default, aDocument->GetCompatibilityMode(),
@@ -2252,7 +2252,7 @@ static already_AddRefed<ComputedStyle> GetFontStyleForServo(
     }
   } else {
     RefPtr<RawServoDeclarationBlock> declarations =
-        CreateFontDeclarationForServo(NS_LITERAL_STRING("10px sans-serif"),
+        CreateFontDeclarationForServo(u"10px sans-serif"_ns,
                                       aPresShell->GetDocument());
     MOZ_ASSERT(declarations);
 
@@ -2394,7 +2394,7 @@ class CanvasUserSpaceMetrics : public UserSpaceMetricsWithSize {
 };
 
 // The filter might reference an SVG filter that is declared inside this
-// document. Flush frames so that we'll have an nsSVGFilterFrame to work
+// document. Flush frames so that we'll have a SVGFilterFrame to work
 // with.
 static bool FiltersNeedFrameFlush(Span<const StyleFilter> aFilters) {
   for (const auto& filter : aFilters) {
@@ -2428,7 +2428,7 @@ void CanvasRenderingContext2D::UpdateFilter() {
   const bool sourceGraphicIsTainted =
       mCanvasElement && mCanvasElement->IsWriteOnly();
 
-  CurrentState().filter = nsFilterInstance::GetFilterDescription(
+  CurrentState().filter = FilterInstance::GetFilterDescription(
       mCanvasElement, CurrentState().filterChain.AsSpan(),
       sourceGraphicIsTainted,
       CanvasUserSpaceMetrics(
@@ -3997,7 +3997,7 @@ gfxFontGroup* CanvasRenderingContext2D::GetCurrentFontStyle() {
   // use lazy initilization for the font group since it's rather expensive
   if (!CurrentState().fontGroup) {
     ErrorResult err;
-    NS_NAMED_LITERAL_STRING(kDefaultFontStyle, "10px sans-serif");
+    constexpr auto kDefaultFontStyle = u"10px sans-serif"_ns;
     static float kDefaultFontSize = 10.0;
     RefPtr<PresShell> presShell = GetPresShell();
     bool fontUpdated = SetFontInternal(kDefaultFontStyle, err);
@@ -4422,6 +4422,9 @@ void CanvasRenderingContext2D::DrawImage(const CanvasImageSource& aImage,
     srcSurf = imageBitmap.PrepareForDrawTarget(mTarget);
 
     if (!srcSurf) {
+      if (imageBitmap.IsClosed()) {
+        aError.Throw(NS_ERROR_DOM_INVALID_STATE_ERR);
+      }
       return;
     }
 

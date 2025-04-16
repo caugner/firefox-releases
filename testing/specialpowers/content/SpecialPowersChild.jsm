@@ -164,10 +164,7 @@ SPConsoleListener.prototype = {
     }
   },
 
-  QueryInterface: ChromeUtils.generateQI([
-    Ci.nsIConsoleListener,
-    Ci.nsIObserver,
-  ]),
+  QueryInterface: ChromeUtils.generateQI(["nsIConsoleListener", "nsIObserver"]),
 };
 
 class SpecialPowersChild extends JSWindowActorChild {
@@ -2361,7 +2358,7 @@ class SpecialPowersChild extends JSWindowActorChild {
     return classifierService.asyncClassifyLocalWithFeatures(
       WrapPrivileged.unwrap(uri),
       [feature],
-      Ci.nsIUrlClassifierFeature.blacklist,
+      Ci.nsIUrlClassifierFeature.blocklist,
       wrapCallback
     );
   }

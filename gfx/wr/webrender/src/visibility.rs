@@ -21,14 +21,15 @@ use crate::frame_builder::FrameBuilderConfig;
 use crate::gpu_cache::GpuCache;
 use crate::internal_types::FastHashMap;
 use crate::picture::{PictureCompositeMode, ClusterFlags, SurfaceInfo, TileCacheInstance};
-use crate::picture::{PrimitiveList, SurfaceIndex, RetainedTiles, RasterConfig, SliceId};
-use crate::prim_store::{ClipTaskIndex, PictureIndex, SpaceMapper, PrimitiveInstanceKind};
-use crate::prim_store::{SpaceSnapper, PrimitiveStore, PrimitiveInstance};
+use crate::picture::{PrimitiveList, SurfaceIndex, RasterConfig, SliceId};
+use crate::prim_store::{ClipTaskIndex, PictureIndex, PrimitiveInstanceKind};
+use crate::prim_store::{PrimitiveStore, PrimitiveInstance};
 use crate::prim_store::image::VisibleImageTile;
 use crate::render_backend::{DataStores, ScratchBuffer};
 use crate::render_task_graph::RenderTaskGraph;
 use crate::resource_cache::{ResourceCache, ImageProperties, ImageRequest};
 use crate::scene::SceneProperties;
+use crate::space::{SpaceMapper, SpaceSnapper};
 use crate::internal_types::Filter;
 use crate::util::{MaxRect};
 
@@ -48,7 +49,6 @@ pub struct FrameVisibilityState<'a> {
     pub gpu_cache: &'a mut GpuCache,
     pub scratch: &'a mut ScratchBuffer,
     pub tile_cache: Option<Box<TileCacheInstance>>,
-    pub retained_tiles: &'a mut RetainedTiles,
     pub data_stores: &'a mut DataStores,
     pub clip_chain_stack: ClipChainStack,
     pub render_tasks: &'a mut RenderTaskGraph,
@@ -420,42 +420,6 @@ pub fn update_primitive_visibility(
                         prim_instance.is_chased(),
                     );
 
-                // Primitive visibility flags default to empty, but may be supplied
-                // by the `update_prim_dependencies` method below when picture caching
-                // is active.
-                let mut vis_flags = PrimitiveVisibilityFlags::empty();
-
-                if let Some(ref mut tile_cache) = frame_state.tile_cache {
-                    // TODO(gw): Refactor how tile_cache is stored in frame_state
-                    //           so that we can pass frame_state directly to
-                    //           update_prim_dependencies, rather than splitting borrows.
-                    match tile_cache.update_prim_dependencies(
-                        prim_instance,
-                        cluster.spatial_node_index,
-                        clip_chain.as_ref(),
-                        prim_local_rect,
-                        frame_context,
-                        frame_state.data_stores,
-                        frame_state.clip_store,
-                        &store.pictures,
-                        frame_state.resource_cache,
-                        &store.color_bindings,
-                        &frame_state.surface_stack,
-                        &mut frame_state.composite_state,
-                    ) {
-                        Some(flags) => {
-                            vis_flags = flags;
-                        }
-                        None => {
-                            prim_instance.visibility_info = PrimitiveVisibilityIndex::INVALID;
-                            // Ensure the primitive clip is popped - perhaps we can use
-                            // some kind of scope to do this automatically in future.
-                            frame_state.clip_chain_stack.pop_clip();
-                            continue;
-                        }
-                    }
-                }
-
                 // Ensure the primitive clip is popped
                 frame_state.clip_chain_stack.pop_clip();
 
@@ -525,6 +489,41 @@ pub fn update_primitive_visibility(
                         }
                         prim_instance.visibility_info = PrimitiveVisibilityIndex::INVALID;
                         continue;
+                    }
+                }
+
+                // Primitive visibility flags default to empty, but may be supplied
+                // by the `update_prim_dependencies` method below when picture caching
+                // is active.
+                let mut vis_flags = PrimitiveVisibilityFlags::empty();
+
+                if let Some(ref mut tile_cache) = frame_state.tile_cache {
+                    // TODO(gw): Refactor how tile_cache is stored in frame_state
+                    //           so that we can pass frame_state directly to
+                    //           update_prim_dependencies, rather than splitting borrows.
+                    match tile_cache.update_prim_dependencies(
+                        prim_instance,
+                        cluster.spatial_node_index,
+                        &clip_chain,
+                        prim_local_rect,
+                        frame_context,
+                        frame_state.data_stores,
+                        frame_state.clip_store,
+                        &store.pictures,
+                        frame_state.resource_cache,
+                        &store.color_bindings,
+                        &frame_state.surface_stack,
+                        &mut frame_state.composite_state,
+                    ) {
+                        Some(flags) => {
+                            vis_flags = flags;
+                        }
+                        None => {
+                            prim_instance.visibility_info = PrimitiveVisibilityIndex::INVALID;
+                            // Ensure the primitive clip is popped - perhaps we can use
+                            // some kind of scope to do this automatically in future.
+                            continue;
+                        }
                     }
                 }
 

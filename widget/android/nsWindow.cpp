@@ -49,7 +49,7 @@ using mozilla::dom::ContentParent;
 
 #include "nsAppShell.h"
 #include "nsFocusManager.h"
-#include "nsIdleService.h"
+#include "nsUserIdleService.h"
 #include "nsLayoutUtils.h"
 #include "nsViewManager.h"
 
@@ -296,7 +296,7 @@ class nsWindow::NativePtr<Impl>::Locked final : private MutexAutoLock {
 
 class nsWindow::GeckoViewSupport final
     : public GeckoSession::Window::Natives<GeckoViewSupport>,
-      public SupportsWeakPtr<GeckoViewSupport> {
+      public SupportsWeakPtr {
   nsWindow& window;
 
   // We hold a WeakRef because we want to allow the
@@ -307,9 +307,6 @@ class nsWindow::GeckoViewSupport final
 
  public:
   typedef GeckoSession::Window::Natives<GeckoViewSupport> Base;
-  typedef SupportsWeakPtr<GeckoViewSupport> SupportsWeakPtr;
-
-  MOZ_DECLARE_WEAKREFERENCE_TYPENAME(GeckoViewSupport);
 
   template <typename Functor>
   static void OnNativeCall(Functor&& aCall) {
@@ -840,12 +837,19 @@ class nsWindow::LayerViewSupport final
   struct CaptureRequest {
     explicit CaptureRequest() : mResult(nullptr) {}
     explicit CaptureRequest(java::GeckoResult::GlobalRef aResult,
+                            java::sdk::Bitmap::GlobalRef aBitmap,
                             const ScreenRect& aSource,
                             const IntSize& aOutputSize)
-        : mResult(aResult), mSource(aSource), mOutputSize(aOutputSize) {}
+        : mResult(aResult),
+          mBitmap(aBitmap),
+          mSource(aSource),
+          mOutputSize(aOutputSize) {}
 
     // where to send the pixels
     java::GeckoResult::GlobalRef mResult;
+
+    // where to store the pixels
+    java::sdk::Bitmap::GlobalRef mBitmap;
 
     ScreenRect mSource;
 
@@ -952,16 +956,21 @@ class nsWindow::LayerViewSupport final
     return child.forget();
   }
 
-  int8_t* FlipScreenPixels(Shmem& aMem, const ScreenIntSize& aInSize,
-                           const ScreenRect& aInRegion,
-                           const IntSize& aOutSize) {
-    RefPtr<DataSourceSurface> image = gfx::CreateDataSourceSurfaceFromData(
-        IntSize(aInSize.width, aInSize.height), SurfaceFormat::B8G8R8A8,
-        aMem.get<uint8_t>(),
-        StrideForFormatAndWidth(SurfaceFormat::B8G8R8A8, aInSize.width));
+  already_AddRefed<DataSourceSurface> FlipScreenPixels(
+      Shmem& aMem, const ScreenIntSize& aInSize, const ScreenRect& aInRegion,
+      const IntSize& aOutSize) {
+    RefPtr<DataSourceSurface> image =
+        gfx::Factory::CreateWrappingDataSourceSurface(
+            aMem.get<uint8_t>(),
+            StrideForFormatAndWidth(SurfaceFormat::B8G8R8A8, aInSize.width),
+            IntSize(aInSize.width, aInSize.height), SurfaceFormat::B8G8R8A8);
     RefPtr<DrawTarget> drawTarget =
         gfxPlatform::GetPlatform()->CreateOffscreenContentDrawTarget(
             aOutSize, SurfaceFormat::B8G8R8A8);
+    if (!drawTarget) {
+      return nullptr;
+    }
+
     drawTarget->SetTransform(Matrix::Scaling(1.0, -1.0) *
                              Matrix::Translation(0, aOutSize.height));
 
@@ -973,9 +982,7 @@ class nsWindow::LayerViewSupport final
 
     RefPtr<SourceSurface> snapshot = drawTarget->Snapshot();
     RefPtr<DataSourceSurface> data = snapshot->GetDataSurface();
-    DataSourceSurface::ScopedMap* smap =
-        new DataSourceSurface::ScopedMap(data, DataSourceSurface::READ);
-    return reinterpret_cast<int8_t*>(smap->GetData());
+    return data.forget();
   }
 
   /**
@@ -1194,7 +1201,8 @@ class nsWindow::LayerViewSupport final
     }
   }
 
-  void RequestScreenPixels(jni::Object::Param aResult, int32_t aXOffset,
+  void RequestScreenPixels(jni::Object::Param aResult,
+                           jni::Object::Param aTarget, int32_t aXOffset,
                            int32_t aYOffset, int32_t aSrcWidth,
                            int32_t aSrcHeight, int32_t aOutWidth,
                            int32_t aOutHeight) {
@@ -1204,6 +1212,7 @@ class nsWindow::LayerViewSupport final
     if (LockedWindowPtr window{mWindow}) {
       mCapturePixelsResults.push(CaptureRequest(
           java::GeckoResult::GlobalRef(java::GeckoResult::LocalRef(aResult)),
+          java::sdk::Bitmap::GlobalRef(java::sdk::Bitmap::LocalRef(aTarget)),
           ScreenRect(aXOffset, aYOffset, aSrcWidth, aSrcHeight),
           IntSize(aOutWidth, aOutHeight)));
       size = mCapturePixelsResults.size();
@@ -1221,21 +1230,41 @@ class nsWindow::LayerViewSupport final
     MOZ_ASSERT(AndroidBridge::IsJavaUiThread());
     CaptureRequest request;
     java::GeckoResult::LocalRef result = nullptr;
+    java::sdk::Bitmap::LocalRef bitmap = nullptr;
     if (LockedWindowPtr window{mWindow}) {
       // The result might have been already rejected if the compositor was
       // detached from the session
       if (!mCapturePixelsResults.empty()) {
         request = mCapturePixelsResults.front();
         result = java::GeckoResult::LocalRef(request.mResult);
+        bitmap = java::sdk::Bitmap::LocalRef(request.mBitmap);
         mCapturePixelsResults.pop();
       }
     }
 
     if (result) {
-      auto pixels = mozilla::jni::ByteBuffer::New(
-          FlipScreenPixels(aMem, aSize, request.mSource, request.mOutputSize),
-          aMem.Size<int8_t>());
-      result->Complete(pixels);
+      if (bitmap) {
+        RefPtr<DataSourceSurface> surf =
+            FlipScreenPixels(aMem, aSize, request.mSource, request.mOutputSize);
+        if (surf) {
+          DataSourceSurface::ScopedMap smap(surf, DataSourceSurface::READ);
+          auto pixels = mozilla::jni::ByteBuffer::New(
+              reinterpret_cast<int8_t*>(smap.GetData()),
+              smap.GetStride() * request.mOutputSize.height);
+          bitmap->CopyPixelsFromBuffer(pixels);
+          result->Complete(bitmap);
+        } else {
+          result->CompleteExceptionally(
+              java::sdk::IllegalStateException::New(
+                  "Failed to create flipped snapshot surface (probably out of "
+                  "memory)")
+                  .Cast<jni::Throwable>());
+        }
+      } else {
+        result->CompleteExceptionally(java::sdk::IllegalArgumentException::New(
+                                          "No target bitmap argument provided")
+                                          .Cast<jni::Throwable>());
+      }
     }
 
     // Pixels have been copied, so Dealloc Shmem
@@ -1317,7 +1346,7 @@ void nsWindow::GeckoViewSupport::Open(
   } else {
     nsresult rv = Preferences::GetCString("toolkit.defaultChromeURI", url);
     if (NS_FAILED(rv)) {
-      url = NS_LITERAL_CSTRING("chrome://geckoview/content/geckoview.xhtml");
+      url = "chrome://geckoview/content/geckoview.xhtml"_ns;
     }
   }
 
@@ -1957,11 +1986,15 @@ nsresult nsWindow::MakeFullScreen(bool aFullScreen, nsIScreen*) {
     return NS_ERROR_NOT_AVAILABLE;
   }
 
+  nsIWidgetListener* listener = GetWidgetListener();
+  if (listener) {
+    listener->FullscreenWillChange(aFullScreen);
+  }
+
   mIsFullScreen = aFullScreen;
   mAndroidView->mEventDispatcher->Dispatch(
       aFullScreen ? u"GeckoView:FullScreenEnter" : u"GeckoView:FullScreenExit");
 
-  nsIWidgetListener* listener = GetWidgetListener();
   if (listener) {
     mSizeMode = mIsFullScreen ? nsSizeMode_Fullscreen : nsSizeMode_Normal;
     listener->SizeModeChanged(mSizeMode);
@@ -2161,7 +2194,7 @@ void nsWindow::GeckoViewSupport::OnReady(jni::Object::Param aQueue) {
 
 void nsWindow::UserActivity() {
   if (!mIdleService) {
-    mIdleService = do_GetService("@mozilla.org/widget/idleservice;1");
+    mIdleService = do_GetService("@mozilla.org/widget/useridleservice;1");
   }
 
   if (mIdleService) {

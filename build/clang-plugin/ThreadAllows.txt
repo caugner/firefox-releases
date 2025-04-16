@@ -14,7 +14,6 @@ COM MTA
 Cache Deleter
 Cache I/O
 Cameras IPC
-Canvas
 ChainedPipePump
 ChainedPipeRecv
 Checker Test
@@ -22,7 +21,6 @@ Compositor
 Cookie
 CrashRep Inject
 DDMediaLogs
-DOM File
 DOMCacheThread
 DataChannel IO
 DataStorage
@@ -64,10 +62,9 @@ ProcessHangMon
 ProfSymbolTable
 ProfilerChild
 ProxyResolution
+RemoteLzyStream
 RWLockTester
 RacingServMan
-RemVidChild
-RemVidParent
 Sandbox Testing
 SaveScripts
 Socket Thread
@@ -89,6 +86,7 @@ ToastBgThread
 TRR Background
 URL Classifier
 Update Watcher
+VRService
 VsyncIOThread
 Wifi Monitor
 Worker Launcher

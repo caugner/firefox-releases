@@ -57,7 +57,7 @@ already_AddRefed<Element> nsNumberControlFrame::MakeAnonymousElement(
   if (aPseudoType == PseudoStyleType::mozNumberSpinDown ||
       aPseudoType == PseudoStyleType::mozNumberSpinUp) {
     resultElement->SetAttr(kNameSpaceID_None, nsGkAtoms::aria_hidden,
-                           NS_LITERAL_STRING("true"), false);
+                           u"true"_ns, false);
   }
 
   if (aParent) {
@@ -107,7 +107,7 @@ nsresult nsNumberControlFrame::CreateAnonymousContent(
     }
   }
 
-  if (StyleDisplay()->mAppearance == StyleAppearance::Textfield) {
+  if (StyleDisplay()->EffectiveAppearance() == StyleAppearance::Textfield) {
     // The author has elected to hide the spinner by setting this
     // -moz-appearance. We will reframe if it changes.
     return NS_OK;
@@ -242,12 +242,12 @@ bool nsNumberControlFrame::ShouldUseNativeStyleForSpinner() const {
   nsIFrame* spinDownFrame = mSpinDown->GetPrimaryFrame();
 
   return spinUpFrame &&
-         spinUpFrame->StyleDisplay()->mAppearance ==
+         spinUpFrame->StyleDisplay()->EffectiveAppearance() ==
              StyleAppearance::SpinnerUpbutton &&
          !PresContext()->HasAuthorSpecifiedRules(
              spinUpFrame, STYLES_DISABLING_NATIVE_THEMING) &&
          spinDownFrame &&
-         spinDownFrame->StyleDisplay()->mAppearance ==
+         spinDownFrame->StyleDisplay()->EffectiveAppearance() ==
              StyleAppearance::SpinnerDownbutton &&
          !PresContext()->HasAuthorSpecifiedRules(
              spinDownFrame, STYLES_DISABLING_NATIVE_THEMING);

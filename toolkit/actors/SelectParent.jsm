@@ -710,11 +710,6 @@ class SelectParent extends JSWindowActorParent {
         let topBrowsingContext = this.manager.browsingContext.top;
         let browser = topBrowsingContext.embedderElement;
 
-        if (browser.outerBrowser) {
-          // We are in RDM mode
-          browser = browser.outerBrowser;
-        }
-
         if (!browser.hasAttribute("selectmenulist")) {
           return;
         }
@@ -739,7 +734,9 @@ class SelectParent extends JSWindowActorParent {
           data.options.options,
           data.options.uniqueStyles,
           data.selectedIndex,
-          ZoomManager.getZoomForBrowser(browser),
+          // We only want to apply the full zoom. The text zoom is already
+          // applied in the font-size.
+          ZoomManager.getFullZoomForBrowser(browser),
           data.defaultStyle,
           data.style
         );
@@ -756,11 +753,6 @@ class SelectParent extends JSWindowActorParent {
       case "Forms:HideDropDown": {
         let topBrowsingContext = this.manager.browsingContext.top;
         let browser = topBrowsingContext.embedderElement;
-
-        if (browser.outerBrowser) {
-          // We are in RDM mode
-          browser = browser.outerBrowser;
-        }
 
         SelectParentHelper.hide(this._menulist, browser);
         break;

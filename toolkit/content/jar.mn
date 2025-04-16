@@ -46,7 +46,7 @@ toolkit.jar:
    content/global/filepicker.properties
    content/global/customElements.js
    content/global/globalOverlay.js
-   content/global/mozilla.xhtml
+   content/global/mozilla.html
    content/global/aboutMozilla.css
    content/global/preferencesBindings.js
    content/global/process-content.js
@@ -105,3 +105,6 @@ toolkit.jar:
 #endif
    content/global/gmp-sources/openh264.json    (gmp-sources/openh264.json)
    content/global/gmp-sources/widevinecdm.json (gmp-sources/widevinecdm.json)
+
+# Third party files
+   content/global/third_party/d3/d3.js         (/third_party/js/d3/d3.js)

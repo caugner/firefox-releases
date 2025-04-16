@@ -103,7 +103,7 @@ enum class StreamCaptureBehavior : uint8_t {
 class HTMLMediaElement : public nsGenericHTMLElement,
                          public MediaDecoderOwner,
                          public PrincipalChangeObserver<MediaStreamTrack>,
-                         public SupportsWeakPtr<HTMLMediaElement>,
+                         public SupportsWeakPtr,
                          public nsStubMutationObserver {
  public:
   typedef mozilla::TimeStamp TimeStamp;
@@ -134,7 +134,6 @@ class HTMLMediaElement : public nsGenericHTMLElement,
     RefPtr<DOMMediaStream> mFinishWhenEndedAttrStream;
   };
 
-  MOZ_DECLARE_WEAKREFERENCE_TYPENAME(HTMLMediaElement)
   NS_DECL_NSIMUTATIONOBSERVER_CONTENTREMOVED
 
   CORSMode GetCORSMode() { return mCORSMode; }
@@ -258,6 +257,11 @@ class HTMLMediaElement : public nsGenericHTMLElement,
    * document being active, inactive, visible or hidden.
    */
   void NotifyOwnerDocumentActivityChanged();
+
+  // Called when the media element enters or leaves the fullscreen.
+  void NotifyFullScreenChanged();
+
+  bool IsInFullScreen() const;
 
   // From PrincipalChangeObserver<MediaStreamTrack>.
   void PrincipalChanged(MediaStreamTrack* aTrack) override;
@@ -1928,10 +1932,16 @@ class HTMLMediaElement : public nsGenericHTMLElement,
   MozPromiseRequestHolder<ResumeDelayedPlaybackAgent::ResumePromise>
       mResumePlaybackRequest;
 
-  // We use MediaControlKeyListener to listen media control key, by which we
-  // would play or pause media element.
-  void StartListeningMediaControlKeyIfNeeded();
-  void StopListeningMediaControlKeyIfNeeded();
+  // Return true if the media qualifies for being controlled by media control
+  // keys.
+  bool ShouldStartMediaControlKeyListener() const;
+
+  // Start the listener if media fits the requirement of being able to be
+  // controlled be media control keys.
+  void StartMediaControlKeyListenerIfNeeded();
+
+  // It's used to listen media control key, by which we would play or pause
+  // media element.
   RefPtr<MediaControlKeyListener> mMediaControlKeyListener;
 
   // Return true if the media element is being used in picture in picture mode.

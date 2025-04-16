@@ -126,7 +126,7 @@ void MediaFormatReader::DecoderData::ShutdownDecoder() {
   // mShutdownPromisePool will handle the order of decoder shutdown so
   // we can forget mDecoder and be ready to create a new one.
   mDecoder = nullptr;
-  mDescription = NS_LITERAL_CSTRING("shutdown");
+  mDescription = "shutdown"_ns;
   mOwner->ScheduleUpdate(mType == MediaData::Type::AUDIO_DATA
                              ? TrackType::kAudioTrack
                              : TrackType::kVideoTrack);
@@ -803,7 +803,7 @@ MediaFormatReader::DemuxerProxy::NotifyDataArrived() {
 
 MediaFormatReader::MediaFormatReader(MediaFormatReaderInit& aInit,
                                      MediaDataDemuxer* aDemuxer)
-    : mTaskQueue(new TaskQueue(GetMediaThreadPool(MediaThreadType::PLAYBACK),
+    : mTaskQueue(new TaskQueue(GetMediaThreadPool(MediaThreadType::CONTROLLER),
                                "MediaFormatReader::mTaskQueue",
                                /* aSupportsTailDispatch = */ true)),
       mAudio(this, MediaData::Type::AUDIO_DATA,

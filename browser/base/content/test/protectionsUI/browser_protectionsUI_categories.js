@@ -25,6 +25,9 @@ registerCleanupFunction(function() {
 
 add_task(async function testCookieCategoryLabel() {
   await BrowserTestUtils.withNewTab("http://www.example.com", async function() {
+    // Ensure the category nodes exist.
+    await openProtectionsPanel();
+    await closeProtectionsPanel();
     let categoryItem = document.getElementById(
       "protections-popup-category-cookies"
     );
@@ -142,14 +145,6 @@ add_task(async function testCookieCategoryLabel() {
   });
 });
 
-let categoryItems = [
-  "protections-popup-category-tracking-protection",
-  "protections-popup-category-socialblock",
-  "protections-popup-category-cookies",
-  "protections-popup-category-cryptominers",
-  "protections-popup-category-fingerprinters",
-].map(id => document.getElementById(id));
-
 let categoryEnabledPrefs = [TP_PREF, STC_PREF, TPC_PREF, CM_PREF, FP_PREF];
 
 let detectedStateFlags = [
@@ -183,6 +178,18 @@ add_task(async function testCategorySections() {
   }
 
   await BrowserTestUtils.withNewTab("http://www.example.com", async function() {
+    // Ensure the category nodes exist.
+    await openProtectionsPanel();
+    await closeProtectionsPanel();
+
+    let categoryItems = [
+      "protections-popup-category-tracking-protection",
+      "protections-popup-category-socialblock",
+      "protections-popup-category-cookies",
+      "protections-popup-category-cryptominers",
+      "protections-popup-category-fingerprinters",
+    ].map(id => document.getElementById(id));
+
     for (let item of categoryItems) {
       await waitForClass(item, "notFound");
       await waitForClass(item, "blocked", false);
@@ -205,6 +212,7 @@ add_task(async function testCategorySections() {
         Services.prefs.setBoolPref(enabledPref, true);
       }
       gProtectionsHandler.onContentBlockingEvent(contentBlockingState);
+      gProtectionsHandler.updatePanelForBlockingEvent(contentBlockingState);
       await waitForClass(itemToTest, "notFound", false);
       await waitForClass(itemToTest, "blocked", true);
       if (enabledPref == TPC_PREF) {
@@ -219,4 +227,65 @@ add_task(async function testCategorySections() {
       await waitForClass(itemToTest, "blocked", false);
     }
   });
+});
+
+/**
+ * Check that when we open the popup in a new window, the initial state is correct
+ * wrt the pref.
+ */
+add_task(async function testCategorySectionInitial() {
+  let categoryItems = [
+    "protections-popup-category-tracking-protection",
+    "protections-popup-category-socialblock",
+    "protections-popup-category-cookies",
+    "protections-popup-category-cryptominers",
+    "protections-popup-category-fingerprinters",
+  ];
+  for (let i = 0; i < categoryItems.length; i++) {
+    for (let shouldBlock of [true, false]) {
+      let win = await BrowserTestUtils.openNewBrowserWindow();
+      // Open non-about: page so our protections are active.
+      await BrowserTestUtils.openNewForegroundTab(
+        win.gBrowser,
+        "https://example.com/"
+      );
+      let enabledPref = categoryEnabledPrefs[i];
+      let contentBlockingState = detectedStateFlags[i];
+      if (enabledPref == TPC_PREF) {
+        Services.prefs.setIntPref(
+          TPC_PREF,
+          shouldBlock
+            ? Ci.nsICookieService.BEHAVIOR_REJECT
+            : Ci.nsICookieService.BEHAVIOR_ACCEPT
+        );
+      } else {
+        Services.prefs.setBoolPref(enabledPref, shouldBlock);
+      }
+      win.gProtectionsHandler.onContentBlockingEvent(contentBlockingState);
+      await openProtectionsPanel(false, win);
+      let categoryItem = win.document.getElementById(categoryItems[i]);
+      let expectedFound = true;
+      // Accepting cookies outright won't mark this as found.
+      if (i == 2 && !shouldBlock) {
+        // See bug 1653019
+        expectedFound = false;
+      }
+      is(
+        categoryItem.classList.contains("notFound"),
+        !expectedFound,
+        `Should have found ${categoryItems[i]} when it was ${
+          shouldBlock ? "blocked" : "allowed"
+        }`
+      );
+      is(
+        categoryItem.classList.contains("blocked"),
+        shouldBlock,
+        `Should ${shouldBlock ? "have blocked" : "not have blocked"} ${
+          categoryItems[i]
+        }`
+      );
+      await closeProtectionsPanel(win);
+      await BrowserTestUtils.closeWindow(win);
+    }
+  }
 });

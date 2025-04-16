@@ -81,11 +81,12 @@ void AnimationInfo::ClearAnimationsForNextTransaction() {
 }
 
 void AnimationInfo::SetCompositorAnimations(
+    const LayersId& aLayersId,
     const CompositorAnimations& aCompositorAnimations) {
   mCompositorAnimationsId = aCompositorAnimations.id();
 
-  mStorageData =
-      AnimationHelper::ExtractAnimations(aCompositorAnimations.animations());
+  mStorageData = AnimationHelper::ExtractAnimations(
+      aLayersId, aCompositorAnimations.animations());
 }
 
 bool AnimationInfo::StartPendingAnimations(const TimeStamp& aReadyTime) {
@@ -596,7 +597,7 @@ bool AnimationInfo::AddAnimationsForProperty(
     nsIFrame* aFrame, const EffectSet* aEffects,
     const nsTArray<RefPtr<dom::Animation>>& aCompositorAnimations,
     const Maybe<TransformData>& aTransformData, nsCSSPropertyID aProperty,
-    Send aSendFlag) {
+    Send aSendFlag, LayerManager* aLayerManager) {
   bool addedAny = false;
   // Add from first to last (since last overrides)
   for (dom::Animation* anim : aCompositorAnimations) {
@@ -642,8 +643,121 @@ bool AnimationInfo::AddAnimationsForProperty(
     AddAnimationForProperty(aFrame, *property, anim, aTransformData, aSendFlag);
     keyframeEffect->SetIsRunningOnCompositor(aProperty, true);
     addedAny = true;
+    if (aTransformData && aTransformData->partialPrerenderData() &&
+        aLayerManager) {
+      aLayerManager->AddPartialPrerenderedAnimation(GetCompositorAnimationsId(),
+                                                    anim);
+    }
   }
   return addedAny;
+}
+
+// Returns which pre-rendered area's sides are overflowed from the pre-rendered
+// rect.
+//
+// We don't need to make jank animations when we are going to composite the
+// area where there is no overflowed area even if it's outside of the
+// pre-rendered area.
+static SideBits GetOverflowedSides(const nsRect& aOverflow,
+                                   const nsRect& aPartialPrerenderArea) {
+  SideBits sides = SideBits::eNone;
+  if (aOverflow.X() < aPartialPrerenderArea.X()) {
+    sides |= SideBits::eLeft;
+  }
+  if (aOverflow.Y() < aPartialPrerenderArea.Y()) {
+    sides |= SideBits::eTop;
+  }
+  if (aOverflow.XMost() > aPartialPrerenderArea.XMost()) {
+    sides |= SideBits::eRight;
+  }
+  if (aOverflow.YMost() > aPartialPrerenderArea.YMost()) {
+    sides |= SideBits::eBottom;
+  }
+  return sides;
+}
+
+static std::pair<ParentLayerRect, gfx::Matrix4x4>
+GetClipRectAndTransformForPartialPrerender(const nsIFrame* aFrame,
+                                           int32_t aDevPixelsToAppUnits,
+                                           const nsIFrame* aClipFrame) {
+  nsIScrollableFrame* scrollFrame = nullptr;
+
+  if (!aClipFrame) {
+    scrollFrame = nsLayoutUtils::GetNearestScrollableFrame(
+        aFrame->GetParent(), nsLayoutUtils::SCROLLABLE_SAME_DOC |
+                                 nsLayoutUtils::SCROLLABLE_INCLUDE_HIDDEN);
+    if (!scrollFrame) {
+      // If there is no suitable scrollable frame in the same document, use the
+      // root one.
+      scrollFrame = aFrame->PresShell()->GetRootScrollFrameAsScrollable();
+    }
+    aClipFrame = do_QueryFrame(scrollFrame);
+  } else {
+    scrollFrame = do_QueryFrame(aClipFrame);
+  }
+
+  MOZ_ASSERT(scrollFrame);
+  MOZ_ASSERT(aClipFrame);
+
+  gfx::Matrix4x4 transformInClip =
+      nsLayoutUtils::GetTransformToAncestor(RelativeTo{aFrame->GetParent()},
+                                            RelativeTo{aClipFrame})
+          .GetMatrix();
+  transformInClip.PostTranslate(
+      LayoutDevicePoint::FromAppUnits(scrollFrame->GetScrollPosition(),
+                                      aDevPixelsToAppUnits)
+          .ToUnknownPoint());
+
+  // We don't necessarily use nsLayoutUtils::CalculateCompositionSizeForFrame
+  // since this is a case where we don't use APZ at all.
+  return std::make_pair(
+      LayoutDeviceRect::FromAppUnits(scrollFrame->GetScrollPortRect(),
+                                     aDevPixelsToAppUnits) *
+          LayoutDeviceToLayerScale2D() * LayerToParentLayerScale(),
+      transformInClip);
+}
+
+static PartialPrerenderData GetPartialPrerenderData(
+    const nsIFrame* aFrame, const nsDisplayItem* aItem) {
+  const nsRect& partialPrerenderedRect = aItem->GetUntransformedPaintRect();
+  nsRect overflow = aFrame->InkOverflowRectRelativeToSelf();
+
+  ScrollableLayerGuid::ViewID scrollId = ScrollableLayerGuid::NULL_SCROLL_ID;
+
+  const nsIFrame* clipFrame = nullptr;
+  if (nsLayoutUtils::AsyncPanZoomEnabled(const_cast<nsIFrame*>(aFrame))) {
+    const bool isInPositionFixed =
+        nsLayoutUtils::IsInPositionFixedSubtree(aFrame);
+    const ActiveScrolledRoot* asr = aItem->GetActiveScrolledRoot();
+    const nsIFrame* asrScrollableFrame =
+        asr ? do_QueryFrame(asr->mScrollableFrame) : nullptr;
+    if (!isInPositionFixed && asr &&
+        aFrame->PresContext() == asrScrollableFrame->PresContext()) {
+      scrollId = asr->GetViewId();
+      clipFrame = asrScrollableFrame;
+    } else {
+      // Use the root scroll id in the same document if the target frame is in
+      // position:fixed subtree or there is no ASR or the ASR is in a different
+      // ancestor document.
+      scrollId =
+          nsLayoutUtils::ScrollIdForRootScrollFrame(aFrame->PresContext());
+      clipFrame = aFrame->PresShell()->GetRootScrollFrame();
+    }
+  }
+
+  int32_t devPixelsToAppUnits = aFrame->PresContext()->AppUnitsPerDevPixel();
+
+  auto [clipRect, transformInClip] = GetClipRectAndTransformForPartialPrerender(
+      aFrame, devPixelsToAppUnits, clipFrame);
+
+  return PartialPrerenderData{
+      LayoutDeviceIntRect::FromAppUnitsToInside(partialPrerenderedRect,
+                                                devPixelsToAppUnits),
+      GetOverflowedSides(overflow, partialPrerenderedRect),
+      scrollId,
+      clipRect,
+      transformInClip,
+      LayoutDevicePoint()};  // will be set by caller.
 }
 
 enum class AnimationDataType {
@@ -652,7 +766,8 @@ enum class AnimationDataType {
 };
 static Maybe<TransformData> CreateAnimationData(
     nsIFrame* aFrame, nsDisplayItem* aItem, DisplayItemType aType,
-    layers::LayersBackend aLayersBackend, AnimationDataType aDataType) {
+    layers::LayersBackend aLayersBackend, AnimationDataType aDataType,
+    const Maybe<LayoutDevicePoint>& aPosition) {
   if (aType != DisplayItemType::TYPE_TRANSFORM) {
     return Nothing();
   }
@@ -671,9 +786,6 @@ static Maybe<TransformData> CreateAnimationData(
   gfx::Point3D offsetToTransformOrigin =
       nsDisplayTransform::GetDeltaToTransformOrigin(aFrame, refBox, scale);
   nsPoint origin;
-  float scaleX = 1.0f;
-  float scaleY = 1.0f;
-  bool hasPerspectiveParent = false;
   if (aLayersBackend == layers::LayersBackend::LAYERS_WR) {
     // leave origin empty, because we are sending it separately on the
     // stacking context that we are pushing to WR, and WR will automatically
@@ -706,9 +818,19 @@ static Maybe<TransformData> CreateAnimationData(
         motionPathOrigin, anchorAdjustment, RayReferenceData(aFrame)));
   }
 
+  Maybe<PartialPrerenderData> partialPrerenderData;
+  if (aItem && static_cast<nsDisplayTransform*>(aItem)->IsPartialPrerender()) {
+    partialPrerenderData = Some(GetPartialPrerenderData(aFrame, aItem));
+
+    if (aLayersBackend == layers::LayersBackend::LAYERS_WR) {
+      MOZ_ASSERT(aPosition);
+      partialPrerenderData->position() = *aPosition;
+    }
+  }
+
   return Some(TransformData(origin, offsetToTransformOrigin, bounds,
-                            devPixelsToAppUnits, scaleX, scaleY,
-                            hasPerspectiveParent, motionPathData));
+                            devPixelsToAppUnits, motionPathData,
+                            partialPrerenderData));
 }
 
 void AnimationInfo::AddNonAnimatingTransformLikePropertiesStyles(
@@ -788,7 +910,8 @@ void AnimationInfo::AddNonAnimatingTransformLikePropertiesStyles(
 
 void AnimationInfo::AddAnimationsForDisplayItem(
     nsIFrame* aFrame, nsDisplayListBuilder* aBuilder, nsDisplayItem* aItem,
-    DisplayItemType aType, layers::LayersBackend aLayersBackend) {
+    DisplayItemType aType, LayerManager* aLayerManager,
+    const Maybe<LayoutDevicePoint>& aPosition) {
   Send sendFlag = !aBuilder ? Send::NextTransaction : Send::Immediate;
   if (sendFlag == Send::NextTransaction) {
     ClearAnimationsForNextTransaction();
@@ -833,11 +956,12 @@ void AnimationInfo::AddAnimationsForDisplayItem(
       compositorAnimations =
           GroupAnimationsByProperty(matchedAnimations, propertySet);
   Maybe<TransformData> transformData =
-      CreateAnimationData(aFrame, aItem, aType, aLayersBackend,
+      CreateAnimationData(aFrame, aItem, aType, aLayerManager->GetBackendType(),
                           compositorAnimations.has(eCSSProperty_offset_path) ||
                                   !aFrame->StyleDisplay()->mOffsetPath.IsNone()
                               ? AnimationDataType::WithMotionPath
-                              : AnimationDataType::WithoutMotionPath);
+                              : AnimationDataType::WithoutMotionPath,
+                          aPosition);
   // Bug 1424900: Drop this pref check after shipping individual transforms.
   // Bug 1582554: Drop this pref check after shipping motion path.
   const bool hasMultipleTransformLikeProperties =
@@ -853,9 +977,9 @@ void AnimationInfo::AddAnimationsForDisplayItem(
     // structure, 2) AddAnimationsForProperty() marks these animations as
     // running on the composiror, so CanThrottle() returns true for them, and
     // we avoid running these animations on the main thread.
-    bool added =
-        AddAnimationsForProperty(aFrame, effects, iter.get().value(),
-                                 transformData, iter.get().key(), sendFlag);
+    bool added = AddAnimationsForProperty(aFrame, effects, iter.get().value(),
+                                          transformData, iter.get().key(),
+                                          sendFlag, aLayerManager);
     if (added && transformData) {
       // Only copy TransformLikeMetaData in the first animation property.
       transformData.reset();

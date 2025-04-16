@@ -6,8 +6,9 @@ from __future__ import absolute_import, print_function, unicode_literals
 
 """Utility functions to handle test chunking."""
 
-import os
 import json
+import logging
+import os
 from abc import ABCMeta, abstractmethod
 
 import six
@@ -21,8 +22,10 @@ from moztest.resolve import (
 )
 
 from taskgraph import GECKO
-from taskgraph.util.bugbug import CT_MEDIUM, push_schedules
+from taskgraph.util.backstop import is_backstop
+from taskgraph.util.bugbug import BugbugTimeoutException, CT_LOW, push_schedules
 
+logger = logging.getLogger(__name__)
 here = os.path.abspath(os.path.dirname(__file__))
 resolver = TestResolver.from_environment(cwd=here, loader_cls=TestManifestLoader)
 
@@ -207,17 +210,32 @@ class DefaultLoader(BaseManifestLoader):
 class BugbugLoader(DefaultLoader):
     """Load manifests using metadata from the TestResolver, and then
     filter them based on a query to bugbug."""
-    CONFIDENCE_THRESHOLD = CT_MEDIUM
+    CONFIDENCE_THRESHOLD = CT_LOW
+
+    def __init__(self, *args, **kwargs):
+        super(BugbugLoader, self).__init__(*args, **kwargs)
+        self.timedout = False
 
     @memoize
     def get_manifests(self, suite, mozinfo):
         manifests = super(BugbugLoader, self).get_manifests(suite, mozinfo)
 
-        data = push_schedules(self.params['project'], self.params['head_rev'])
+        # Don't prune any manifests if we're on a backstop push or there was a timeout.
+        if is_backstop(self.params) or self.timedout:
+            return manifests
+
+        try:
+            data = push_schedules(self.params['project'], self.params['head_rev'])
+        except BugbugTimeoutException:
+            logger.warning("Timed out waiting for bugbug, loading all test manifests.")
+            self.timedout = True
+            return self.get_manifests(suite, mozinfo)
+
         bugbug_manifests = {m for m, c in data.get('groups', {}).items()
                             if c >= self.CONFIDENCE_THRESHOLD}
 
         manifests['active'] = list(set(manifests['active']) & bugbug_manifests)
+        manifests['skipped'] = list(set(manifests['skipped']) & bugbug_manifests)
         return manifests
 
 

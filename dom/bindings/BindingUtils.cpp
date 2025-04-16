@@ -49,6 +49,7 @@
 #include "mozilla/dom/DeprecationReportBody.h"
 #include "mozilla/dom/DOMException.h"
 #include "mozilla/dom/ElementBinding.h"
+#include "mozilla/dom/Exceptions.h"
 #include "mozilla/dom/HTMLObjectElement.h"
 #include "mozilla/dom/HTMLObjectElementBinding.h"
 #include "mozilla/dom/HTMLEmbedElement.h"
@@ -2544,6 +2545,12 @@ void ConstructJSImplementation(const char* aContractId,
   {
     AutoNoJSAPI nojsapi;
 
+    nsCOMPtr<nsPIDOMWindowInner> window = do_QueryInterface(aGlobal);
+    if (!window->IsCurrentInnerWindow()) {
+      aRv.ThrowInvalidStateError("Window no longer active");
+      return;
+    }
+
     // Get the XPCOM component containing the JS implementation.
     nsresult rv;
     nsCOMPtr<nsISupports> implISupports = do_CreateInstance(aContractId, &rv);
@@ -2558,7 +2565,6 @@ void ConstructJSImplementation(const char* aContractId,
     // and our global is a window.
     nsCOMPtr<nsIDOMGlobalPropertyInitializer> gpi =
         do_QueryInterface(implISupports);
-    nsCOMPtr<nsPIDOMWindowInner> window = do_QueryInterface(aGlobal);
     if (gpi) {
       JS::Rooted<JS::Value> initReturn(RootingCx());
       rv = gpi->Init(window, &initReturn);
@@ -3983,8 +3989,8 @@ class GetLocalizedStringRunnable final : public WorkerMainThreadRunnable {
   GetLocalizedStringRunnable(WorkerPrivate* aWorkerPrivate,
                              const nsAutoCString& aKey,
                              nsAutoString& aLocalizedString)
-      : WorkerMainThreadRunnable(
-            aWorkerPrivate, NS_LITERAL_CSTRING("GetLocalizedStringRunnable")),
+      : WorkerMainThreadRunnable(aWorkerPrivate,
+                                 "GetLocalizedStringRunnable"_ns),
         mKey(aKey),
         mLocalizedString(aLocalizedString) {
     MOZ_ASSERT(aWorkerPrivate);
@@ -4063,8 +4069,7 @@ void ReportDeprecation(nsIGlobalObject* aGlobal, nsIURI* aURI,
       new DeprecationReportBody(aGlobal, type, nullptr /* date */, msg,
                                 aFileName, aLineNumber, aColumnNumber);
 
-  ReportingUtils::Report(aGlobal, nsGkAtoms::deprecation,
-                         NS_LITERAL_STRING("default"),
+  ReportingUtils::Report(aGlobal, nsGkAtoms::deprecation, u"default"_ns,
                          NS_ConvertUTF8toUTF16(spec), body);
 }
 

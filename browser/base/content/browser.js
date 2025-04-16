@@ -665,7 +665,7 @@ function updateFxaToolbarMenu(enable, isInitialUpdate = false) {
     false
   );
   const mainWindowEl = document.documentElement;
-  const fxaPanelEl = document.getElementById("PanelUI-fxa");
+  const fxaPanelEl = PanelMultiView.getViewNode(document, "PanelUI-fxa");
 
   mainWindowEl.setAttribute("fxastatus", "not_configured");
   fxaPanelEl.addEventListener("ViewShowing", gSync.updateSendToDeviceTitle);
@@ -687,16 +687,24 @@ function updateFxaToolbarMenu(enable, isInitialUpdate = false) {
     // When the pref for a FxA service is removed, we remove it from
     // the FxA toolbar menu as well. This is useful when the service
     // might not be available that browser.
-    document.getElementById(
+    PanelMultiView.getViewNode(
+      document,
       "PanelUI-fxa-menu-send-button"
     ).hidden = !gFxaSendLoginUrl;
-    document.getElementById(
+    PanelMultiView.getViewNode(
+      document,
       "PanelUI-fxa-menu-monitor-button"
     ).hidden = !gFxaMonitorLoginUrl;
     // If there are no services left, remove the label and sep.
     let hideSvcs = !gFxaSendLoginUrl && !gFxaMonitorLoginUrl;
-    document.getElementById("fxa-menu-service-separator").hidden = hideSvcs;
-    document.getElementById("fxa-menu-service-label").hidden = hideSvcs;
+    PanelMultiView.getViewNode(
+      document,
+      "fxa-menu-service-separator"
+    ).hidden = hideSvcs;
+    PanelMultiView.getViewNode(
+      document,
+      "fxa-menu-service-label"
+    ).hidden = hideSvcs;
   } else {
     mainWindowEl.removeAttribute("fxatoolbarmenu");
   }
@@ -1429,16 +1437,6 @@ var gKeywordURIFixup = {
 
     this.check(browser, fixupInfo);
   },
-
-  receiveMessage({ target: browser, data: fixupInfo }) {
-    // As fixupInfo comes from a serialized message, its URI properties are
-    // strings that we need to recreate nsIURIs from.
-    this.check(browser, {
-      fixedURI: fixupInfo.fixedURI ? makeURI(fixupInfo.fixedURI) : null,
-      keywordProviderName: fixupInfo.keywordProviderName,
-      preferredURI: makeURI(fixupInfo.preferredURI),
-    });
-  },
 };
 
 function serializeInputStream(aStream) {
@@ -1966,10 +1964,6 @@ var gBrowserInit = {
     Services.obs.addObserver(gXPInstallObserver, "addon-install-failed");
     Services.obs.addObserver(gXPInstallObserver, "addon-install-confirmation");
     Services.obs.addObserver(gXPInstallObserver, "addon-install-complete");
-    window.messageManager.addMessageListener(
-      "Browser:URIFixup",
-      gKeywordURIFixup
-    );
     Services.obs.addObserver(gKeywordURIFixup, "keyword-uri-fixup");
 
     BrowserOffline.init();
@@ -2110,13 +2104,15 @@ var gBrowserInit = {
     // We've announced that delayed startup has finished. Do not add code past this point.
   },
 
+  /**
+   * Resolved on the first MozAfterPaint in the first content window.
+   */
+  get firstContentWindowPaintPromise() {
+    return this._firstContentWindowPaintDeferred.promise;
+  },
+
   _setInitialFocus() {
     let initiallyFocusedElement = document.commandDispatcher.focusedElement;
-
-    this._firstBrowserPaintDeferred = {};
-    this._firstBrowserPaintDeferred.promise = new Promise(resolve => {
-      this._firstBrowserPaintDeferred.resolve = resolve;
-    });
 
     // To prevent startup flicker, the urlbar has the 'focused' attribute set
     // by default. If we are not sure the urlbar will be focused in this
@@ -2136,7 +2132,7 @@ var gBrowserInit = {
       if (gBrowser.selectedBrowser.isRemoteBrowser) {
         // If the initial browser is remote, in order to optimize for first paint,
         // we'll defer switching focus to that browser until it has painted.
-        this._firstBrowserPaintDeferred.promise.then(() => {
+        this._firstContentWindowPaintDeferred.promise.then(() => {
           // If focus didn't move while we were waiting for first paint, we're okay
           // to move to the browser.
           if (
@@ -2506,10 +2502,6 @@ var gBrowserInit = {
         "addon-install-confirmation"
       );
       Services.obs.removeObserver(gXPInstallObserver, "addon-install-complete");
-      window.messageManager.removeMessageListener(
-        "Browser:URIFixup",
-        gKeywordURIFixup
-      );
       Services.obs.removeObserver(gKeywordURIFixup, "keyword-uri-fixup");
 
       if (AppConstants.isPlatformAndVersionAtLeast("win", "10")) {
@@ -2533,6 +2525,12 @@ var gBrowserInit = {
   },
 };
 
+XPCOMUtils.defineLazyGetter(
+  gBrowserInit,
+  "_firstContentWindowPaintDeferred",
+  () => PromiseUtils.defer()
+);
+
 gBrowserInit.idleTasksFinishedPromise = new Promise(resolve => {
   gBrowserInit.idleTaskPromiseResolve = resolve;
 });
@@ -2546,7 +2544,10 @@ const SiteSpecificBrowserUI = {
     }
 
     XPCOMUtils.defineLazyGetter(this, "panelBody", () => {
-      return document.querySelector("#appMenu-SSBView .panel-subview-body");
+      return PanelMultiView.getViewNode(
+        document,
+        "appMenu-SSBView .panel-subview-body"
+      );
     });
 
     let initializeMenu = async () => {
@@ -2569,7 +2570,10 @@ const SiteSpecificBrowserUI = {
       "popupshowing",
       () => {
         let blocker = initializeMenu();
-        document.getElementById("appMenu-SSBView").addEventListener(
+        PanelMultiView.getViewNode(
+          document,
+          "appMenu-SSBView"
+        ).addEventListener(
           "ViewShowing",
           event => {
             event.detail.addBlocker(blocker);
@@ -2652,7 +2656,7 @@ const SiteSpecificBrowserUI = {
     document.getElementById("appMenu-ssb-button").hidden = false;
   },
 
-  QueryInterface: ChromeUtils.generateQI([Ci.nsISupportsWeakReference]),
+  QueryInterface: ChromeUtils.generateQI(["nsISupportsWeakReference"]),
 };
 
 function HandleAppCommandEvent(evt) {
@@ -5261,6 +5265,7 @@ var XULBrowserWindow = {
       SafeBrowsingNotificationBox.onLocationChange(aLocationURI);
 
       UrlbarProviderSearchTips.onLocationChange(
+        window,
         aLocationURI,
         aWebProgress,
         aFlags
@@ -5923,7 +5928,7 @@ var TabsProgressListener = {
 function nsBrowserAccess() {}
 
 nsBrowserAccess.prototype = {
-  QueryInterface: ChromeUtils.generateQI([Ci.nsIBrowserDOMWindow]),
+  QueryInterface: ChromeUtils.generateQI(["nsIBrowserDOMWindow"]),
 
   _openURIInNewTab(
     aURI,
@@ -6884,7 +6889,7 @@ function handleLinkClick(event, href, linkNode) {
     } catch (e) {}
   }
 
-  let frameOuterWindowID = WebNavigationFrames.getFrameId(doc.defaultView);
+  let frameID = WebNavigationFrames.getFrameId(doc.defaultView);
 
   urlSecurityCheck(href, doc.nodePrincipal);
   let params = {
@@ -6895,7 +6900,7 @@ function handleLinkClick(event, href, linkNode) {
     originStoragePrincipal: doc.effectiveStoragePrincipal,
     triggeringPrincipal: doc.nodePrincipal,
     csp: doc.csp,
-    frameOuterWindowID,
+    frameID,
   };
 
   // The new tab/window must use the same userContextId
@@ -7620,7 +7625,7 @@ var CanvasPermissionPromptHelper = {
 
     let options = {
       checkbox,
-      name: principal.URI.host,
+      name: principal.host,
       learnMoreURL:
         Services.urlFormatter.formatURLPref("app.support.baseURL") +
         "fingerprint-permission",
@@ -8434,8 +8439,8 @@ var RestoreLastSessionObserver = {
   },
 
   QueryInterface: ChromeUtils.generateQI([
-    Ci.nsIObserver,
-    Ci.nsISupportsWeakReference,
+    "nsIObserver",
+    "nsISupportsWeakReference",
   ]),
 };
 
@@ -8524,8 +8529,9 @@ function duplicateTabIn(aTab, where, delta) {
       // A background tab has been opened, nothing else to do here.
       break;
     case "tab":
-      let newTab = SessionStore.duplicateTab(window, aTab, delta);
-      gBrowser.selectedTab = newTab;
+      SessionStore.duplicateTab(window, aTab, delta, true, {
+        inBackground: false,
+      });
       break;
   }
 }
@@ -8790,7 +8796,14 @@ const SafeBrowsingNotificationBox = {
     let uri = gBrowser.currentURI;
 
     // start tracking host so that we know when we leave the domain
-    this._currentURIBaseDomain = Services.eTLD.getBaseDomain(uri);
+    try {
+      this._currentURIBaseDomain = Services.eTLD.getBaseDomain(uri);
+    } catch (e) {
+      // If we can't get the base domain, fallback to use host instead. However,
+      // host is sometimes empty when the scheme is file. In this case, just use
+      // spec.
+      this._currentURIBaseDomain = uri.asciiHost || uri.asciiSpec;
+    }
 
     let notificationBox = gBrowser.getNotificationBox();
     let value = "blocked-badware-page";

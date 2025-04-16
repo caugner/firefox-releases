@@ -77,7 +77,7 @@ static void ServoGetPropertyValueById() {
   RefPtr<URLExtraData> data =
       new URLExtraData(uri.forget(), referrerInfo.forget(),
                        NullPrincipal::CreateWithoutOriginAttributes());
-  NS_NAMED_LITERAL_CSTRING(css_, "10px");
+  constexpr auto css_ = "10px"_ns;
   const nsACString& css = css_;
   Servo_DeclarationBlock_SetPropertyById(
       block, eCSSProperty_width, &css,
@@ -102,11 +102,11 @@ MOZ_GTEST_BENCH(Stylo, Servo_StyleSheet_FromUTF8Bytes_Bench_UseCounters, [] {
 });
 
 MOZ_GTEST_BENCH(Stylo, Servo_DeclarationBlock_SetPropertyById_Bench,
-                [] { ServoSetPropertyByIdBench(NS_LITERAL_CSTRING("10px")); });
+                [] { ServoSetPropertyByIdBench("10px"_ns); });
 
 MOZ_GTEST_BENCH(Stylo,
                 Servo_DeclarationBlock_SetPropertyById_WithInitialSpace_Bench,
-                [] { ServoSetPropertyByIdBench(NS_LITERAL_CSTRING(" 10px")); });
+                [] { ServoSetPropertyByIdBench(" 10px"_ns); });
 
 MOZ_GTEST_BENCH(Stylo, Servo_DeclarationBlock_GetPropertyById_Bench,
                 ServoGetPropertyValueById);

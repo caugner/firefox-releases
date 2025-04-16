@@ -424,6 +424,10 @@ export type Source = {
   +isOriginal: boolean,
 };
 
+export type DisplaySource = Source & {
+  +displayURL: string,
+};
+
 /**
  * Script
  * This describes scripts which are sent to the debug server to be eval'd
@@ -525,4 +529,13 @@ export type Exception = {
   fileName: URL,
   lineNumber: number,
   sourceActorId: SourceActorId,
+  stacktrace: Array<StacktraceFrame>,
+};
+
+export type StacktraceFrame = {
+  columnNumber: number,
+  filename: URL,
+  functionName: string,
+  lineNumber: number,
+  sourceId: SourceActorId,
 };

@@ -32,16 +32,22 @@
  */
 
 // There are shutdown issues for which multiple rejections are left uncaught.
-// This bug should be fixed, but for the moment this directory is whitelisted.
+// This bug should be fixed, but for the moment all tests in this directory
+// allow various classes of promise rejections.
 //
-// NOTE: Entire directory whitelisting should be kept to a minimum. Normally you
-//       should use "expectUncaughtRejection" to flag individual failures.
+// NOTE: Allowing rejections on an entire directory should be avoided.
+//       Normally you should use "expectUncaughtRejection" to flag individual
+//       failures.
 const { PromiseTestUtils } = ChromeUtils.import(
   "resource://testing-common/PromiseTestUtils.jsm"
 );
-PromiseTestUtils.whitelistRejectionsGlobally(/Message manager disconnected/);
-PromiseTestUtils.whitelistRejectionsGlobally(/No matching message handler/);
-PromiseTestUtils.whitelistRejectionsGlobally(/Receiving end does not exist/);
+PromiseTestUtils.allowMatchingRejectionsGlobally(
+  /Message manager disconnected/
+);
+PromiseTestUtils.allowMatchingRejectionsGlobally(/No matching message handler/);
+PromiseTestUtils.allowMatchingRejectionsGlobally(
+  /Receiving end does not exist/
+);
 
 const { AppConstants } = ChromeUtils.import(
   "resource://gre/modules/AppConstants.jsm"

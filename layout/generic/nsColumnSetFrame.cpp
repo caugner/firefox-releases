@@ -32,7 +32,7 @@ class nsDisplayColumnRule : public nsPaintedDisplayItem {
   MOZ_COUNTED_DTOR_OVERRIDE(nsDisplayColumnRule)
 
   /**
-   * Returns the frame's visual overflow rect instead of the frame's bounds.
+   * Returns the frame's ink overflow rect instead of the frame's bounds.
    */
   nsRect GetBounds(nsDisplayListBuilder* aBuilder, bool* aSnap) const override {
     *aSnap = false;
@@ -572,9 +572,9 @@ nsColumnSetFrame::ColumnBalanceData nsColumnSetFrame::ReflowChildren(
     // column, but not be the last child because the desired number of columns
     // has changed.)
     bool skipIncremental =
-        !aReflowInput.ShouldReflowAllKids() && !NS_SUBTREE_DIRTY(child) &&
+        !aReflowInput.ShouldReflowAllKids() && !child->IsSubtreeDirty() &&
         child->GetNextSibling() && !isMeasuringFeasibleContentBSize &&
-        !NS_SUBTREE_DIRTY(child->GetNextSibling());
+        !child->GetNextSibling()->IsSubtreeDirty();
 
     // If column-fill is auto (not the default), then we might need to
     // move content between columns for any change in column block-size.
@@ -601,14 +601,12 @@ nsColumnSetFrame::ColumnBalanceData nsColumnSetFrame::ReflowChildren(
     if (skipIncremental && shrinkingBSize) {
       switch (wm.GetBlockDir()) {
         case WritingMode::eBlockTB:
-          if (child->GetScrollableOverflowRect().YMost() >
-              aConfig.mColMaxBSize) {
+          if (child->ScrollableOverflowRect().YMost() > aConfig.mColMaxBSize) {
             skipIncremental = false;
           }
           break;
         case WritingMode::eBlockLR:
-          if (child->GetScrollableOverflowRect().XMost() >
-              aConfig.mColMaxBSize) {
+          if (child->ScrollableOverflowRect().XMost() > aConfig.mColMaxBSize) {
             skipIncremental = false;
           }
           break;
@@ -998,24 +996,33 @@ void nsColumnSetFrame::FindBestBalanceBSize(const ReflowInput& aReflowInput,
   // that can break anywhere (thus foiling the linear decrease-by-one
   // search)
   bool maybeContinuousBreakingDetected = false;
+  bool possibleOptimalBSizeDetected = false;
 
   // This is the extra block-size added to the optimal column block-size
   // estimation which is calculated in the while-loop by dividing
   // aColData.mSumBSize into N columns.
   //
-  // The constant is arbitrary. We use a half of line-height first.
-  nscoord extraBlockSize = aReflowInput.CalcLineHeight() / 2;
+  // The constant is arbitrary. We use a half of line-height first. In case a
+  // column container uses *zero* (or a very small) line-height, use a half of
+  // default line-height 1140/2 = 570 app units as the minimum value. Otherwise
+  // we might take more than necessary iterations before finding a feasible
+  // block-size.
+  nscoord extraBlockSize = std::max(570, aReflowInput.CalcLineHeight() / 2);
 
   // We use divide-by-N to estimate the optimal column block-size only if the
   // last column's available block-size is unbounded.
   bool foundFeasibleBSizeCloserToBest = !aUnboundedLastColumn;
+
+  // Stop the binary search when the difference of the feasible and infeasible
+  // block-size is within this gap. Here we use one device pixel.
+  const int32_t gapToStop = aPresContext->DevPixelsToAppUnits(1);
 
   while (!aPresContext->HasPendingInterrupt()) {
     nscoord lastKnownFeasibleBSize = aConfig.mKnownFeasibleBSize;
 
     // Record what we learned from the last reflow
     if (aColData.mFeasible) {
-      // maxBSize is feasible. Also, mLastBalanceBSize is feasible.
+      // mMaxBSize is feasible. Also, mLastBalanceBSize is feasible.
       aConfig.mKnownFeasibleBSize =
           std::min(aConfig.mKnownFeasibleBSize, aColData.mMaxBSize);
       aConfig.mKnownFeasibleBSize =
@@ -1057,13 +1064,23 @@ void nsColumnSetFrame::FindBestBalanceBSize(const ReflowInput& aReflowInput,
         aConfig.mKnownFeasibleBSize);
 
     if (aConfig.mKnownInfeasibleBSize >= aConfig.mKnownFeasibleBSize - 1) {
-      // aConfig.mKnownFeasibleBSize is where we want to be
+      // aConfig.mKnownFeasibleBSize is where we want to be. This can happen in
+      // the very first iteration when a column container solely has a tall
+      // unbreakable child that overflows the container.
       break;
     }
 
     if (aConfig.mKnownInfeasibleBSize >= availableContentBSize) {
       // There's no feasible block-size to fit our contents. We may need to
       // reflow one more time after this loop.
+      break;
+    }
+
+    const nscoord gap =
+        aConfig.mKnownFeasibleBSize - aConfig.mKnownInfeasibleBSize;
+    if (gap <= gapToStop && possibleOptimalBSizeDetected) {
+      // We detected a possible optimal block-size in the last iteration. If it
+      // is infeasible, we may need to reflow one more time after this loop.
       break;
     }
 
@@ -1074,8 +1091,7 @@ void nsColumnSetFrame::FindBestBalanceBSize(const ReflowInput& aReflowInput,
       maybeContinuousBreakingDetected = true;
     }
 
-    nscoord nextGuess =
-        (aConfig.mKnownFeasibleBSize + aConfig.mKnownInfeasibleBSize) / 2;
+    nscoord nextGuess = aConfig.mKnownInfeasibleBSize + gap / 2;
     if (aConfig.mKnownFeasibleBSize - nextGuess < extraBlockSize &&
         !maybeContinuousBreakingDetected) {
       // We're close to our target, so just try shrinking just the
@@ -1097,7 +1113,13 @@ void nsColumnSetFrame::FindBestBalanceBSize(const ReflowInput& aReflowInput,
       // want to do an unbounded block-size measuring step. Let's just increase
       // from the infeasible block-size by some reasonable amount.
       nextGuess = aConfig.mKnownInfeasibleBSize * 2 + extraBlockSize;
+    } else if (gap <= gapToStop) {
+      // Floor nextGuess to the greatest multiple of gapToStop below or equal to
+      // mKnownFeasibleBSize.
+      nextGuess = aConfig.mKnownFeasibleBSize / gapToStop * gapToStop;
+      possibleOptimalBSizeDetected = true;
     }
+
     // Don't bother guessing more than our block-size constraint.
     nextGuess = std::min(availableContentBSize, nextGuess);
 

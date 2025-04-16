@@ -38,7 +38,7 @@ NS_QUERYFRAME_TAIL_INHERITING(nsContainerFrame)
 
 #ifdef DEBUG_FRAME_DUMP
 nsresult nsFirstLetterFrame::GetFrameName(nsAString& aResult) const {
-  return MakeFrameName(NS_LITERAL_STRING("Letter"), aResult);
+  return MakeFrameName(u"Letter"_ns, aResult);
 }
 #endif
 
@@ -88,7 +88,7 @@ nsresult nsFirstLetterFrame::GetChildFrameContainingOffset(
     return kid->GetChildFrameContainingOffset(
         inContentOffset, inHint, outFrameContentOffset, outChildFrame);
   } else {
-    return nsFrame::GetChildFrameContainingOffset(
+    return nsIFrame::GetChildFrameContainingOffset(
         inContentOffset, inHint, outFrameContentOffset, outChildFrame);
   }
 }

@@ -444,6 +444,7 @@ class ScrollFrameHelper : public nsIReflowCallback {
   void NotifyApzTransaction() {
     mAllowScrollOriginDowngrade = true;
     mApzScrollPos = GetScrollPosition();
+    mRelativeOffset.reset();
   }
   void NotifyApproximateFrameVisibilityUpdate(bool aIgnoreDisplayPort);
   bool GetDisplayPortAtLastApproximateFrameVisibilityUpdate(
@@ -470,6 +471,7 @@ class ScrollFrameHelper : public nsIReflowCallback {
       mLastSmoothScrollOrigin = ScrollOrigin::None;
     }
   }
+  Maybe<nsPoint> GetRelativeOffset() const { return mRelativeOffset; }
   bool WantAsyncScroll() const;
   Maybe<mozilla::layers::ScrollMetadata> ComputeScrollMetadata(
       LayerManager* aLayerManager, const nsIFrame* aContainerReferenceFrame,
@@ -574,6 +576,10 @@ class ScrollFrameHelper : public nsIReflowCallback {
   // just the current scroll position. ScrollBy will choose its
   // destination based on this value.
   nsPoint mDestination;
+
+  // Tracks a relative scroll offset to pass to apz to do a smooth scroll by.
+  // It is used by ScrollBy when this scroll frame can be scrolled by APZ.
+  Maybe<nsPoint> mRelativeOffset;
 
   // A goal position to try to scroll to as content loads. As long as mLastPos
   // matches the current logical scroll position, we try to scroll to
@@ -1040,6 +1046,9 @@ class nsHTMLScrollFrame : public nsContainerFrame,
   void ResetScrollInfoIfGeneration(uint32_t aGeneration) final {
     mHelper.ResetScrollInfoIfGeneration(aGeneration);
   }
+  Maybe<nsPoint> GetRelativeOffset() const final {
+    return mHelper.GetRelativeOffset();
+  }
   bool WantAsyncScroll() const final { return mHelper.WantAsyncScroll(); }
   mozilla::Maybe<mozilla::layers::ScrollMetadata> ComputeScrollMetadata(
       LayerManager* aLayerManager, const nsIFrame* aContainerReferenceFrame,
@@ -1056,6 +1065,7 @@ class nsHTMLScrollFrame : public nsContainerFrame,
   void MarkScrollbarsDirtyForReflow() const final {
     mHelper.MarkScrollbarsDirtyForReflow();
   }
+  void UpdateScrollbarPosition() final { mHelper.UpdateScrollbarPosition(); }
   bool DecideScrollableLayer(nsDisplayListBuilder* aBuilder,
                              nsRect* aVisibleRect, nsRect* aDirtyRect,
                              bool aSetBase) final {
@@ -1511,6 +1521,9 @@ class nsXULScrollFrame final : public nsBoxFrame,
   void ResetScrollInfoIfGeneration(uint32_t aGeneration) final {
     mHelper.ResetScrollInfoIfGeneration(aGeneration);
   }
+  Maybe<nsPoint> GetRelativeOffset() const final {
+    return mHelper.GetRelativeOffset();
+  }
   bool WantAsyncScroll() const final { return mHelper.WantAsyncScroll(); }
   mozilla::Maybe<mozilla::layers::ScrollMetadata> ComputeScrollMetadata(
       LayerManager* aLayerManager, const nsIFrame* aContainerReferenceFrame,
@@ -1527,6 +1540,7 @@ class nsXULScrollFrame final : public nsBoxFrame,
   void MarkScrollbarsDirtyForReflow() const final {
     mHelper.MarkScrollbarsDirtyForReflow();
   }
+  void UpdateScrollbarPosition() final { mHelper.UpdateScrollbarPosition(); }
 
   // nsIStatefulFrame
   mozilla::UniquePtr<mozilla::PresState> SaveState() final {

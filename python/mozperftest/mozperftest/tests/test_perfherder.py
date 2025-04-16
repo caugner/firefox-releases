@@ -9,13 +9,13 @@ from mozperftest.metrics.exceptions import PerfherderValidDataError
 from mozperftest.tests.support import (
     get_running_env,
     temp_file,
-    temp_dir,
     EXAMPLE_TEST,
     BT_DATA,
     HERE,
 )
 from mozperftest.environment import METRICS
-from mozperftest.utils import silence
+from mozperftest.utils import silence, temp_dir
+from mozperftest.metrics.utils import metric_fields
 
 
 def setup_env(options):
@@ -37,7 +37,7 @@ def test_perfherder():
         "perfherder": True,
         "perfherder-stats": True,
         "perfherder-prefix": "",
-        "perfherder-metrics": ["firstPaint"],
+        "perfherder-metrics": [metric_fields("firstPaint")],
     }
 
     metrics, metadata, env = setup_env(options)
@@ -68,7 +68,7 @@ def test_perfherder_logcat():
     options = {
         "perfherder": True,
         "perfherder-prefix": "",
-        "perfherder-metrics": ["TimeToDisplayed"],
+        "perfherder-metrics": [metric_fields("TimeToDisplayed")],
     }
 
     metrics, metadata, env = setup_env(options)
@@ -153,7 +153,7 @@ def test_perfherder_metrics_filtering():
     options = {
         "perfherder": True,
         "perfherder-prefix": "",
-        "perfherder-metrics": ["I shouldn't match a metric"],
+        "perfherder-metrics": [metric_fields("I shouldn't match a metric")],
     }
 
     metrics, metadata, env = setup_env(options)
@@ -178,7 +178,7 @@ def test_perfherder_exlude_stats():
     options = {
         "perfherder": True,
         "perfherder-prefix": "",
-        "perfherder-metrics": ["firstPaint"],
+        "perfherder-metrics": [metric_fields("firstPaint")],
     }
 
     metrics, metadata, env = setup_env(options)
@@ -208,7 +208,7 @@ def test_perfherder_app_name():
         "perfherder": True,
         "perfherder-prefix": "",
         "perfherder-app": "fenix",
-        "perfherder-metrics": ["firstPaint"],
+        "perfherder-metrics": [metric_fields("firstPaint")],
     }
 
     metrics, metadata, env = setup_env(options)
@@ -231,7 +231,7 @@ def test_perfherder_bad_app_name():
         "perfherder": True,
         "perfherder-prefix": "",
         "perfherder-app": "this is not an app",
-        "perfherder-metrics": ["firstPaint"],
+        "perfherder-metrics": [metric_fields("firstPaint")],
     }
 
     metrics, metadata, env = setup_env(options)

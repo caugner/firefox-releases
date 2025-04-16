@@ -13,6 +13,7 @@
 #include "mozilla/dom/ReportingUtils.h"
 #include "mozilla/StaticPrefs_dom.h"
 #include "mozilla/dom/Document.h"
+#include "nsJSUtils.h"
 
 namespace mozilla {
 namespace dom {
@@ -45,6 +46,7 @@ static FeatureMap sExperimentalFeatures[] = {
     // policy.
     {"autoplay", FeaturePolicyUtils::FeaturePolicyValue::eAll},
     {"encrypted-media", FeaturePolicyUtils::FeaturePolicyValue::eAll},
+    {"gamepad", FeaturePolicyUtils::FeaturePolicyValue::eSelf},
     {"midi", FeaturePolicyUtils::FeaturePolicyValue::eSelf},
     {"payment", FeaturePolicyUtils::FeaturePolicyValue::eAll},
     {"document-domain", FeaturePolicyUtils::FeaturePolicyValue::eAll},
@@ -180,13 +182,9 @@ bool FeaturePolicyUtils::IsFeatureAllowed(Document* aDocument,
     return true;
   }
 
-  // Skip apply features in experimental pharse
+  // Skip apply features in experimental phase
   if (!StaticPrefs::dom_security_featurePolicy_experimental_enabled() &&
       IsExperimentalFeature(aFeatureName)) {
-    return true;
-  }
-
-  if (!aDocument->IsHTMLDocument()) {
     return true;
   }
 
@@ -242,11 +240,10 @@ void FeaturePolicyUtils::ReportViolation(Document* aDocument,
   RefPtr<FeaturePolicyViolationReportBody> body =
       new FeaturePolicyViolationReportBody(window->AsGlobal(), aFeatureName,
                                            fileName, lineNumber, columnNumber,
-                                           NS_LITERAL_STRING("enforce"));
+                                           u"enforce"_ns);
 
   ReportingUtils::Report(window->AsGlobal(), nsGkAtoms::featurePolicyViolation,
-                         NS_LITERAL_STRING("default"),
-                         NS_ConvertUTF8toUTF16(spec), body);
+                         u"default"_ns, NS_ConvertUTF8toUTF16(spec), body);
 }
 
 }  // namespace dom

@@ -14,19 +14,19 @@ use std::time::{Duration, Instant};
 
 use smallvec::{smallvec, SmallVec};
 
-use neqo_common::{qdebug, qinfo, qtrace, qwarn};
+use neqo_common::{qdebug, qinfo, qlog::NeqoQlog, qtrace, qwarn};
 
 use crate::cc::CongestionControl;
 use crate::crypto::CryptoRecoveryToken;
 use crate::flow_mgr::FlowControlRecoveryToken;
+use crate::qlog::{self, QlogMetric};
 use crate::send_stream::StreamRecoveryToken;
 use crate::tracking::{AckToken, PNSpace, SentPacket};
 use crate::LOCAL_IDLE_TIMEOUT;
 
 pub const GRANULARITY: Duration = Duration::from_millis(20);
 pub const MAX_ACK_DELAY: Duration = Duration::from_millis(25);
-// Defined in -recovery 6.2 as 500ms but using lower value until we have RTT
-// caching. See https://github.com/mozilla/neqo/issues/79
+// Defined in -recovery 6.2 as 333ms but using lower value.
 const INITIAL_RTT: Duration = Duration::from_millis(100);
 const PACKET_THRESHOLD: u64 = 3;
 /// `ACK_ONLY_SIZE_LIMIT` is the minimum size of the congestion window.
@@ -46,47 +46,68 @@ pub enum RecoveryToken {
     HandshakeDone,
 }
 
-#[derive(Debug, Default)]
+#[derive(Debug)]
 struct RttVals {
+    samples: u64,
     latest_rtt: Duration,
-    smoothed_rtt: Option<Duration>,
+    smoothed_rtt: Duration,
     rttvar: Duration,
     min_rtt: Duration,
     max_ack_delay: Duration,
 }
 
 impl RttVals {
-    fn update_rtt(&mut self, latest_rtt: Duration, ack_delay: Duration) {
-        self.latest_rtt = latest_rtt;
+    pub fn set_initial_rtt(&mut self, rtt: Duration) {
+        // Only allow this when there are no samples.
+        debug_assert!(self.samples == 0);
+        self.latest_rtt = rtt;
+        self.min_rtt = rtt;
+        self.smoothed_rtt = rtt;
+        self.rttvar = rtt / 2;
+    }
+
+    fn update_rtt(
+        &mut self,
+        mut qlog: &mut NeqoQlog,
+        mut rtt_sample: Duration,
+        ack_delay: Duration,
+    ) {
         // min_rtt ignores ack delay.
-        self.min_rtt = min(self.min_rtt, self.latest_rtt);
+        self.min_rtt = min(self.min_rtt, rtt_sample);
         // Limit ack_delay by max_ack_delay
         let ack_delay = min(ack_delay, self.max_ack_delay);
         // Adjust for ack delay if it's plausible.
-        if self.latest_rtt - self.min_rtt >= ack_delay {
-            self.latest_rtt -= ack_delay;
+        if rtt_sample - self.min_rtt >= ack_delay {
+            rtt_sample -= ack_delay;
         }
-        // Based on {{?RFC6298}}.
-        match self.smoothed_rtt {
-            None => {
-                self.smoothed_rtt = Some(self.latest_rtt);
-                self.rttvar = self.latest_rtt / 2;
-            }
-            Some(smoothed_rtt) => {
-                let rttvar_sample = if smoothed_rtt > self.latest_rtt {
-                    smoothed_rtt - self.latest_rtt
-                } else {
-                    self.latest_rtt - smoothed_rtt
-                };
 
-                self.rttvar = (self.rttvar * 3 + rttvar_sample) / 4;
-                self.smoothed_rtt = Some((smoothed_rtt * 7 + self.latest_rtt) / 8);
-            }
+        if self.samples == 0 {
+            self.set_initial_rtt(rtt_sample);
+        } else {
+            // Calculate EWMA RTT (based on {{?RFC6298}}).
+            let rttvar_sample = if self.smoothed_rtt > rtt_sample {
+                self.smoothed_rtt - rtt_sample
+            } else {
+                rtt_sample - self.smoothed_rtt
+            };
+
+            self.latest_rtt = rtt_sample;
+            self.rttvar = (self.rttvar * 3 + rttvar_sample) / 4;
+            self.smoothed_rtt = (self.smoothed_rtt * 7 + rtt_sample) / 8;
         }
+        self.samples += 1;
+        qlog::metrics_updated(
+            &mut qlog,
+            &[
+                QlogMetric::LatestRtt(self.latest_rtt),
+                QlogMetric::MinRtt(self.min_rtt),
+                QlogMetric::SmoothedRtt(self.smoothed_rtt),
+            ],
+        );
     }
 
     pub fn rtt(&self) -> Duration {
-        self.smoothed_rtt.unwrap_or(self.latest_rtt)
+        self.smoothed_rtt
     }
 
     fn pto(&self, pn_space: PNSpace) -> Duration {
@@ -97,6 +118,19 @@ impl RttVals {
             } else {
                 Duration::from_millis(0)
             }
+    }
+}
+
+impl Default for RttVals {
+    fn default() -> Self {
+        Self {
+            samples: 0,
+            latest_rtt: INITIAL_RTT,
+            smoothed_rtt: INITIAL_RTT,
+            rttvar: INITIAL_RTT / 2,
+            min_rtt: INITIAL_RTT,
+            max_ack_delay: MAX_ACK_DELAY,
+        }
     }
 }
 
@@ -232,14 +266,14 @@ impl LossRecoverySpace {
         }
     }
 
-    pub fn on_packet_sent(&mut self, packet_number: u64, sent_packet: SentPacket) {
+    pub fn on_packet_sent(&mut self, sent_packet: SentPacket) {
         if sent_packet.ack_eliciting() {
             self.pto_base_time = Some(sent_packet.time_sent);
             if sent_packet.cc_in_flight() {
                 self.in_flight_outstanding += 1;
             }
         }
-        self.sent_packets.insert(packet_number, sent_packet);
+        self.sent_packets.insert(sent_packet.pn, sent_packet);
     }
 
     pub fn remove_packet(&mut self, pn: u64) -> Option<SentPacket> {
@@ -436,6 +470,10 @@ impl PtoState {
         self.packets = PTO_PACKET_COUNT;
     }
 
+    pub fn count(&self) -> usize {
+        self.count
+    }
+
     /// Generate a sending profile, indicating what space it should be from.
     /// This takes a packet from the supply or returns an ack-only profile if it can't.
     pub fn send_profile(&mut self, mtu: usize) -> SendProfile {
@@ -455,20 +493,18 @@ pub(crate) struct LossRecovery {
     cc: CongestionControl,
 
     spaces: LossRecoverySpaces,
+
+    qlog: NeqoQlog,
 }
 
 impl LossRecovery {
     pub fn new() -> Self {
         Self {
-            rtt_vals: RttVals {
-                min_rtt: Duration::from_secs(u64::max_value()),
-                max_ack_delay: MAX_ACK_DELAY,
-                latest_rtt: INITIAL_RTT,
-                ..RttVals::default()
-            },
+            rtt_vals: RttVals::default(),
             pto_state: None,
             cc: CongestionControl::default(),
             spaces: LossRecoverySpaces::new(),
+            qlog: NeqoQlog::disabled(),
         }
     }
 
@@ -486,9 +522,8 @@ impl LossRecovery {
         self.rtt_vals.rtt()
     }
 
-    pub fn set_initial_rtt(&mut self, value: Duration) {
-        debug_assert!(self.rtt_vals.smoothed_rtt.is_none());
-        self.rtt_vals.latest_rtt = value
+    pub fn set_initial_rtt(&mut self, rtt: Duration) {
+        self.rtt_vals.set_initial_rtt(rtt)
     }
 
     pub fn cwnd_avail(&self) -> usize {
@@ -501,6 +536,11 @@ impl LossRecovery {
 
     pub fn pto(&self) -> Duration {
         self.rtt_vals.pto(PNSpace::ApplicationData)
+    }
+
+    pub fn set_qlog(&mut self, qlog: NeqoQlog) {
+        self.cc.set_qlog(qlog.clone());
+        self.qlog = qlog;
     }
 
     pub fn drop_0rtt(&mut self) -> Vec<SentPacket> {
@@ -520,14 +560,20 @@ impl LossRecovery {
             .collect()
     }
 
-    pub fn on_packet_sent(&mut self, pn_space: PNSpace, pn: u64, sent_packet: SentPacket) {
-        qdebug!([self], "packet {}-{} sent", pn_space, pn);
+    pub fn on_packet_sent(&mut self, sent_packet: SentPacket) {
+        let pn_space = PNSpace::from(sent_packet.pt);
+        qdebug!([self], "packet {}-{} sent", pn_space, sent_packet.pn);
         let rtt = self.rtt();
         if let Some(space) = self.spaces.get_mut(pn_space) {
             self.cc.on_packet_sent(&sent_packet, rtt);
-            space.on_packet_sent(pn, sent_packet);
+            space.on_packet_sent(sent_packet);
         } else {
-            qinfo!([self], "ignoring {}-{} from dropped space", pn_space, pn);
+            qinfo!(
+                [self],
+                "ignoring {}-{} from dropped space",
+                pn_space,
+                sent_packet.pn
+            );
         }
     }
 
@@ -568,7 +614,8 @@ impl LossRecovery {
             space.largest_acked_sent_time = Some(largest_acked_pkt.time_sent);
             if any_ack_eliciting {
                 let latest_rtt = now - largest_acked_pkt.time_sent;
-                self.rtt_vals.update_rtt(latest_rtt, ack_delay);
+                self.rtt_vals
+                    .update_rtt(&mut self.qlog, latest_rtt, ack_delay);
             }
         }
         self.cc.on_packets_acked(&acked_packets);
@@ -597,10 +644,7 @@ impl LossRecovery {
         // kTimeThreshold = 9/8
         // loss_delay = kTimeThreshold * max(latest_rtt, smoothed_rtt)
         // loss_delay = max(loss_delay, kGranularity)
-        let rtt = match self.rtt_vals.smoothed_rtt {
-            None => self.rtt_vals.latest_rtt,
-            Some(smoothed_rtt) => max(self.rtt_vals.latest_rtt, smoothed_rtt),
-        };
+        let rtt = max(self.rtt_vals.latest_rtt, self.rtt_vals.smoothed_rtt);
         max(rtt * 9 / 8, GRANULARITY)
     }
 
@@ -717,6 +761,12 @@ impl LossRecovery {
             } else {
                 self.pto_state = Some(PtoState::new(pn_space));
             }
+            qlog::metrics_updated(
+                &mut self.qlog,
+                &[QlogMetric::PtoCount(
+                    self.pto_state.as_ref().unwrap().count(),
+                )],
+            );
         }
     }
 
@@ -781,6 +831,7 @@ impl ::std::fmt::Display for LossRecovery {
 #[cfg(test)]
 mod tests {
     use super::{LossRecovery, LossRecoverySpace, PNSpace, SentPacket};
+    use crate::packet::PacketType;
     use std::convert::TryInto;
     use std::rc::Rc;
     use std::time::{Duration, Instant};
@@ -803,7 +854,7 @@ mod tests {
             lr.rtt_vals.min_rtt,
         );
         assert_eq!(lr.rtt_vals.latest_rtt, latest_rtt, "latest RTT");
-        assert_eq!(lr.rtt_vals.smoothed_rtt, Some(smoothed_rtt), "smoothed RTT");
+        assert_eq!(lr.rtt_vals.smoothed_rtt, smoothed_rtt, "smoothed RTT");
         assert_eq!(lr.rtt_vals.rttvar, rttvar, "RTT variance");
         assert_eq!(lr.rtt_vals.min_rtt, min_rtt, "min RTT");
     }
@@ -857,11 +908,15 @@ mod tests {
 
     fn pace(lr: &mut LossRecovery, count: u64) {
         for pn in 0..count {
-            lr.on_packet_sent(
-                PNSpace::ApplicationData,
+            lr.on_packet_sent(SentPacket::new(
+                PacketType::Short,
                 pn,
-                SentPacket::new(pn_time(pn), true, Rc::default(), ON_SENT_SIZE, true),
-            );
+                pn_time(pn),
+                true,
+                Rc::default(),
+                ON_SENT_SIZE,
+                true,
+            ));
         }
     }
 
@@ -978,22 +1033,24 @@ mod tests {
         // So send two packets with 1/4 RTT between them.  Acknowledge pn 1 after 1 RTT.
         // pn 0 should then be marked lost because it is then outstanding for 5RTT/4
         // the loss time for packets is 9RTT/8.
-        lr.on_packet_sent(
-            PNSpace::ApplicationData,
+        lr.on_packet_sent(SentPacket::new(
+            PacketType::Short,
             0,
-            SentPacket::new(pn_time(0), true, Rc::default(), ON_SENT_SIZE, true),
-        );
-        lr.on_packet_sent(
-            PNSpace::ApplicationData,
+            pn_time(0),
+            true,
+            Rc::default(),
+            ON_SENT_SIZE,
+            true,
+        ));
+        lr.on_packet_sent(SentPacket::new(
+            PacketType::Short,
             1,
-            SentPacket::new(
-                pn_time(0) + INITIAL_RTT / 4,
-                true,
-                Rc::default(),
-                ON_SENT_SIZE,
-                true,
-            ),
-        );
+            pn_time(0) + INITIAL_RTT / 4,
+            true,
+            Rc::default(),
+            ON_SENT_SIZE,
+            true,
+        ));
         let (_, lost) = lr.on_ack_received(
             PNSpace::ApplicationData,
             1,
@@ -1088,32 +1145,57 @@ mod tests {
     fn drop_spaces() {
         let mut lr = LossRecovery::new();
         lr.start_pacer(now());
-        lr.on_packet_sent(
-            PNSpace::Initial,
+        lr.on_packet_sent(SentPacket::new(
+            PacketType::Initial,
             0,
-            SentPacket::new(pn_time(0), true, Rc::default(), ON_SENT_SIZE, true),
-        );
-        lr.on_packet_sent(
-            PNSpace::Handshake,
+            pn_time(0),
+            true,
+            Rc::default(),
+            ON_SENT_SIZE,
+            true,
+        ));
+        lr.on_packet_sent(SentPacket::new(
+            PacketType::Handshake,
             0,
-            SentPacket::new(pn_time(1), true, Rc::default(), ON_SENT_SIZE, true),
-        );
-        lr.on_packet_sent(
-            PNSpace::ApplicationData,
+            pn_time(1),
+            true,
+            Rc::default(),
+            ON_SENT_SIZE,
+            true,
+        ));
+        lr.on_packet_sent(SentPacket::new(
+            PacketType::Short,
             0,
-            SentPacket::new(pn_time(2), true, Rc::default(), ON_SENT_SIZE, true),
-        );
+            pn_time(2),
+            true,
+            Rc::default(),
+            ON_SENT_SIZE,
+            true,
+        ));
 
         // Now put all spaces on the LR timer so we can see them.
-        let pkt = SentPacket::new(pn_time(3), true, Rc::default(), ON_SENT_SIZE, true);
-        for sp in PNSpace::iter() {
-            lr.on_packet_sent(*sp, 1, pkt.clone());
-            lr.on_ack_received(*sp, 1, vec![(1, 1)], Duration::from_secs(0), pn_time(3));
+        for sp in &[
+            PacketType::Initial,
+            PacketType::Handshake,
+            PacketType::Short,
+        ] {
+            let sent_pkt =
+                SentPacket::new(*sp, 1, pn_time(3), true, Rc::default(), ON_SENT_SIZE, true);
+            let pn_space = PNSpace::from(sent_pkt.pt);
+            lr.on_packet_sent(sent_pkt);
+            lr.on_ack_received(
+                pn_space,
+                1,
+                vec![(1, 1)],
+                Duration::from_secs(0),
+                pn_time(3),
+            );
             let mut lost = Vec::new();
-            lr.spaces
-                .get_mut(*sp)
-                .unwrap()
-                .detect_lost_packets(pn_time(3), INITIAL_RTT, &mut lost);
+            lr.spaces.get_mut(pn_space).unwrap().detect_lost_packets(
+                pn_time(3),
+                INITIAL_RTT,
+                &mut lost,
+            );
             assert!(lost.is_empty());
         }
 
@@ -1125,11 +1207,15 @@ mod tests {
 
         // There are cases where we send a packet that is not subsequently tracked.
         // So check that this works.
-        lr.on_packet_sent(
-            PNSpace::Initial,
+        lr.on_packet_sent(SentPacket::new(
+            PacketType::Initial,
             0,
-            SentPacket::new(pn_time(3), true, Rc::default(), ON_SENT_SIZE, true),
-        );
+            pn_time(3),
+            true,
+            Rc::default(),
+            ON_SENT_SIZE,
+            true,
+        ));
         assert_sent_times(&lr, None, None, Some(pn_time(2)));
     }
 }

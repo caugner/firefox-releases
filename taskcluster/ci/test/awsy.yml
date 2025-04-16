@@ -32,7 +32,7 @@ job-defaults:
         by-test-platform:
             .*-devedition/.*: []  # don't run on devedition
             (linux|win|mac)(?!.*shippable).*/opt: []
-            default: ['try', 'integration', 'mozilla-central', 'mozilla-beta', 'mozilla-release']
+            default: ['integration', 'mozilla-central', 'mozilla-beta', 'mozilla-release']
     fission-run-on-projects:
         by-test-platform:
             linux1804-64-shippable-qr/opt: ['mozilla-central']
@@ -46,14 +46,17 @@ awsy:
 
 awsy-tp6:
     description: "Are we slim yet - tp6 pageset"
-    variants: ["fission"]
+    variants:
+        by-test-platform:
+            windows10-64-shippable-qr/opt: []  # temporary disable on win
+            default: ['fission']
     treeherder-symbol: SY(sy-tp6)
     run-on-projects:
         by-test-platform:
             .*-ccov/.*: []  # don't run on coverage
             .*-devedition/.*: []  # don't run on devedition
             (linux|win|mac)(?!.*shippable)(?!.*ccov).*/opt: []
-            default: ['try', 'integration', 'mozilla-central', 'mozilla-beta', 'mozilla-release']
+            default: ['integration', 'mozilla-central', 'mozilla-beta', 'mozilla-release']
     mozharness:
         extra-options:
             - --tp6
@@ -61,10 +64,7 @@ awsy-tp6:
 awsy-dmd:
     description: "Are we slim yet - dmd enabled"
     treeherder-symbol: SY(sy-d)
-    run-on-projects:
-        by-test-platform:
-            (linux|windows|macos)(?!.*shippable).*: []
-            default: ['try']
+    run-on-projects: []
     mozharness:
         extra-options:
             - --dmd
@@ -79,10 +79,7 @@ awsy-base:
 awsy-base-dmd:
     description: "Are we slim yet - about:blank base case - dmd enabled"
     treeherder-symbol: SY(ab-d)
-    run-on-projects:
-        by-test-platform:
-            (linux|windows|macos)(?!.*shippable).*: []
-            default: ['try']
+    run-on-projects: []
     mozharness:
         extra-options:
             - --base

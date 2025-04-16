@@ -11,10 +11,10 @@ top_sites:
     record_in_processes: ["main"]
     description: >
       This is recorded when using a search top site that has been overridden to a URL as part of an experiment.
-    bug_numbers: [1637217, 1644442]
+    bug_numbers: [1637217, 1644442, 1658915]
     notification_emails:
       - "dao@mozilla.com"
-    expiry_version: "80"
+    expiry_version: "81"
     extra_keys:
       searchProvider: Name of the search provider, e.g. "amazon" or "google".
       source: Which part of the UI request came from, i.e. "newtab" or "urlbar".
@@ -126,7 +126,7 @@ activity_stream:
 addonsManager:
   install:
     description: >
-      This events are recorded during the install and update flow for extensions and themes,
+      These events are recorded during the install and update flow for extensions and themes,
       the value of the event is an install_id shared by the events related to the same install
       or update flow.
     objects: ["extension", "theme", "locale", "dictionary", "other", "unknown"]
@@ -160,6 +160,32 @@ addonsManager:
       - "thunderbird"
     record_in_processes: ["main"]
     bug_numbers: [1433335, 1515697, 1523641, 1549770, 1590736, 1630596]
+    release_channel_collection: opt-out
+  install_stats:
+    description: >
+      These events are recorded at the end of the install flow, but only when
+      the source that originally triggered the add-on installation is "amo" or
+      "disco". The value of an event is the SHA256 hash of the addon_id.
+    objects: ["extension", "theme", "locale", "dictionary", "other", "unknown"]
+    extra_keys:
+      addon_id: >
+        A string which identifies the add-on. This value might be trimmed.
+      utm_campaign: >
+        The specific product promotion or strategic campaign that drives
+        traffic to the install page.
+      utm_content: >
+        The specific item that a person clicks on to access the install page
+        (such as an A/B test, a website banner, or a specific ad).
+      utm_medium: The channel used to share the install page.
+      utm_source: >
+        The name of the product, domain of the website that drives traffic to
+        the install page.
+    notification_emails: ["addons-dev-internal@mozilla.com"]
+    expiry_version: never
+    products:
+      - "firefox"
+    record_in_processes: ["main"]
+    bug_numbers: [1653020]
     release_channel_collection: opt-out
   manage:
     description: >
@@ -313,7 +339,7 @@ exp_import:
 downloads:
   added:
     description: >
-      Sent when downloading a new file. Possible values are in contained in DownloadsCommon::kFileExtensions. 
+      Sent when downloading a new file. Possible values are in contained in DownloadsCommon::kFileExtensions.
       All other downloads not in the listare marked as other.
     objects: ["fileExtension"]
     bug_numbers: [1627676]
@@ -349,6 +375,77 @@ form_autocomplete:
     record_in_processes: ["main"]
     release_channel_collection: opt-out
 
+creditcard:
+  doorhanger:
+    description: >-
+      User interactions for the browser credit card autofill doorhanger.
+    objects:
+      - "capture_doorhanger"
+      - "update_doorhanger"
+    methods:
+      - "show"
+      - "save"
+      - "update"
+      - "cancel"
+      - "disable"
+    bug_numbers: [1653073, 1653083]
+    notification_emails: ["jmathies@mozilla.com", "chsiang@mozilla.com"]
+    expiry_version: "93"
+    products:
+      - "firefox"
+    record_in_processes: ["main"]
+    release_channel_collection: opt-out
+  manage:
+    description: >-
+      User interactions for credit card autofill preferences management UI.
+    objects:
+      - "manage"
+    methods:
+      - "show"
+      - "add"
+      - "delete"
+      - "show_entry"
+      - "edit"
+    bug_numbers: [1653073, 1654167]
+    notification_emails: ["jmathies@mozilla.com", "chsiang@mozilla.com"]
+    expiry_version: "93"
+    products:
+      - "firefox"
+    record_in_processes: ["main"]
+    release_channel_collection: opt-out
+  cc_form:
+    description: >-
+      User interactions for credit card autofill forms
+    objects:
+      - "cc_form"
+    methods:
+      - "detected"
+      - "popup_shown"
+      - "filled"
+      - "filled_modified"
+      - "submitted"
+    bug_numbers: [1653073, 1653162]
+    notification_emails: ["jmathies@mozilla.com", "chsiang@mozilla.com"]
+    expiry_version: "93"
+    products:
+      - "firefox"
+    record_in_processes: ["content"]
+    release_channel_collection: opt-out
+    extra_keys:
+      cc_name_found: Whether the cardholder name field was identified
+      cc_number_found: Whether the credit card number field was identified
+      cc_exp_found: Whether the expiration date was identified
+      cc_name: Whether the name was autofilled (autofilled / not_filled / user_filled / unavailable)
+      cc_number: Whether the credit card number field was autofilled (autofilled / not_filled / user_filled / unavailable)
+      cc_exp: Whether the expiration date was autofilled (autofilled / not_filled / user_filled / unavailable)
+      field_name: Name of the field being affected by the method
+      fields_not_auto: >-
+        Number of fields in a `submitted` event that were not autofilled.
+        Note that this number counts all fields in a form, even if some of those fields might have been identified as password and/or address fields.
+        Additionally, it may include input elements that are not rendered as user-modifiable, such as hidden fields as well as <button> elements.
+      fields_auto: Number of fields in the `submitted` event that were autofilled
+      fields_modified: Number of fields in a `submitted` event that were autofilled and later modified
+
 extensions.data:
   migrateResult:
     objects: ["storageLocal"]
@@ -375,9 +472,9 @@ extensions.data:
       the value of this event is the addon id.
   storageLocalError:
     objects: ["get", "set", "remove", "clear"]
-    bug_numbers: [1606903]
+    bug_numbers: [1606903, 1649948]
     notification_emails: ["addons-dev-internal@mozilla.com"]
-    expiry_version: "81"
+    expiry_version: "88"
     products:
       - "firefox"
     record_in_processes: ["main", "content"]
@@ -768,6 +865,7 @@ pwmgr:
     objects: [
       "import_from_browser",
       "import_from_csv",
+      "import_csv_complete",
       "export",
       "export_complete",
       "preferences",
@@ -921,6 +1019,26 @@ messaging_experiments:
       branches: >
         A semicolon separated string for all the qualified branch ID(s).
         e.g. "control;variant_01;treatment_02".
+  targeting:
+    objects:
+      - attribute_error
+      - attribute_timeout
+    methods:
+      - targeting
+    release_channel_collection: opt-out
+    products:
+      - firefox
+    record_in_processes:
+      - main
+    description: >
+      Record generic JEXL errors that result from issues with experiment or
+      message targeting expressions. The value field contains the namespace and
+      attribute name that caused the error.
+    bug_numbers:
+      - 1644743
+    notification_emails:
+      - ujet@mozilla.com
+    expiry_version: never
 
 # This category contains event entries used for Telemetry tests.
 # They will not be sent out with any pings.
@@ -1137,6 +1255,19 @@ devtools.main:
     extra_keys:
       width: Toolbox width rounded up to the nearest 50px.
       session_id: The start time of the session in milliseconds since epoch (Unix Timestamp) e.g. 1396381378123.
+  close_source_tab:
+    objects: ["debugger"]
+    bug_numbers: [1647346]
+    notification_emails: ["dev-developer-tools@lists.mozilla.org", "hkirschner@mozilla.com", "dwalsh@mozilla.com"]
+    products:
+      - "firefox"
+    record_in_processes: ["main"]
+    description: The method by which users close source tabs within the debugger
+    release_channel_collection: opt-out
+    expiry_version: "82"
+    extra_keys:
+      reason: The method that the tab was closed ("click" or "shortcut")
+      num_tabs: The number of open tabs at the time the tab was closed
   connection_attempt:
     objects: ["aboutdebugging"]
     bug_numbers: [1549970]
@@ -1586,8 +1717,8 @@ devtools.main:
       runtime_name: Name of the runtime
       session_id: The start time of the session in milliseconds since epoch (Unix Timestamp) e.g. 1396381378123.
   select_page:
-    objects: ["aboutdebugging"]
-    bug_numbers: [1504173]
+    objects: ["aboutdebugging", "application"]
+    bug_numbers: [1504173, 1643253]
     notification_emails: ["dev-developer-tools@lists.mozilla.org", "hkirschner@mozilla.com"]
     products:
       - "firefox"
@@ -1642,6 +1773,18 @@ devtools.main:
       newpanel: The panel the user is switching to
       os: The OS name and version e.g. "Linux 4.4.0-1014-aws", "Darwin 14.5.0", "Windows_NT 6.1.7601" or "Windows_NT 10.0.15063." This can be used to make sense of data when a feature is only available from a particular operating system build number.
       session_id: The start time of the session in milliseconds since epoch (Unix Timestamp) e.g. 1396381378123.
+  start_worker:
+    objects: ["application"]
+    bug_numbers: [1643253]
+    notification_emails: ["dev-developer-tools@lists.mozilla.org", "hkirschner@mozilla.com"]
+    products:
+      - "firefox"
+    record_in_processes: ["main"]
+    description: User manually starts a service worker
+    release_channel_collection: opt-out
+    expiry_version: never
+    extra_keys:
+      session_id: The start time of the session in milliseconds since epoch (Unix Timestamp) e.g. 1396381378123.
   throttle_changed:
     objects: ["netmonitor"]
     bug_numbers: [1463147]
@@ -1670,6 +1813,18 @@ devtools.main:
     extra_keys:
       time_open: Time open.
       os: The OS name and version e.g. "Linux 4.4.0-1014-aws", "Darwin 14.5.0", "Windows_NT 6.1.7601" or "Windows_NT 10.0.15063." This can be used to make sense of data when a feature is only available from a particular operating system build number.
+      session_id: The start time of the session in milliseconds since epoch (Unix Timestamp) e.g. 1396381378123.
+  unregister_worker:
+    objects: ["application"]
+    bug_numbers: [1643253]
+    notification_emails: ["dev-developer-tools@lists.mozilla.org", "hkirschner@mozilla.com"]
+    products:
+      - "firefox"
+    record_in_processes: ["main"]
+    description: User manually unregisters a service worker registration
+    release_channel_collection: opt-out
+    expiry_version: never
+    extra_keys:
       session_id: The start time of the session in milliseconds since epoch (Unix Timestamp) e.g. 1396381378123.
   update_conn_prompt:
     objects: ["aboutdebugging"]
@@ -1956,7 +2111,7 @@ security:
     release_channel_collection: opt-out
     products:
       - firefox
-    expiry_version: "77"
+    expiry_version: "never"
     record_in_processes:
       - all
     extra_keys:
@@ -1974,11 +2129,39 @@ security:
     release_channel_collection: opt-out
     products:
       - firefox
-    expiry_version: "77"
+    expiry_version: "never"
     record_in_processes:
       - main
     extra_keys:
       fileinfo: Information about the filename that was requested to be loaded
+  unexpectedload:
+    objects: ["systemprincipal"]
+    bug_numbers:
+      - 1644671
+    description: >
+      Long term want to block all loads from the system principal that cause us to parse non-trivial data.
+      We don't look to break existing functionality and will allow exceptions, for this we are collecting
+      information about unexpected requests triggered by the system principal
+      Our measurement *excludes* acceptable requests. Those are:
+      - annotated using the 'AllowedDeprecatedSystemRequests' loadinfo flag
+      - using a nsContentPolicyType of FETCH, XMLHTTPREQUEST, WEBSOCKET, SAVEAS_DOWNLOAD or IMAGE
+      - with a requested URI object has the flag URI_IS_UI_RESOURCE
+      - if the URL scheme is 'view-source'
+      - if the URL scheme is 'file' and the Content-Type is STYLESHEET or OTHER
+      - if the scheme is 'jar', 'about' or 'moz-extension'
+    notification_emails:
+      - fbraun@mozilla.com
+      - ckerschb@mozilla.com
+    release_channel_collection: opt-out
+    products:
+      - firefox
+    expiry_version: "never"
+    record_in_processes:
+      - all
+    extra_keys:
+      contenttype: Information about the content-type we expect to receive
+      remotetype: Information about the remoteType in which we triggered the load
+      filedetails: Information about the file that triggered the load
 
 pictureinpicture:
   create:
@@ -2040,6 +2223,98 @@ pictureinpicture:
       - 1560590
     expiry_version: "86"
     release_channel_collection: opt-out
+
+doh:
+  evaluate_v2:
+    methods: ["evaluate_v2"]
+    objects: ["heuristics"]
+    bug_numbers:
+      - 1573840
+      - 1631609
+      - 1603779
+      - 1654714
+    description: >
+      Results of DoH heuristics at startup and after network changes.
+    expiry_version: never
+    record_in_processes:
+      - main
+    release_channel_collection: opt-out
+    notification_emails:
+      - nhnt11@mozilla.com
+      - ddamjanovic@mozilla.com
+      - seceng-telemetry@mozilla.com
+      - necko@mozilla.com
+    products:
+      - firefox
+    extra_keys:
+      canaries: Comma-separated list of canaries that were detected (canary,zscalerCanary)
+      filtering: Comma-separated list of detected parental controls/content filtering (browserParent,google,youtube)
+      enterprise: Comma-separated list of detected enterprise config (policy,modifiedRoots,thirdPartyRoots)
+      steeredProvider: Whether we detected a steering provider
+      evaluateReason: The reason for running heuristics - startup or netchange
+      networkID: An ID representing the network on which heuristics were run, unique to this client
+      captiveState: The Captive Portal Service state - unknown, not_captive, locked, or unlocked
+  evaluate:
+    methods: ["evaluate"]
+    objects: ["heuristics"]
+    bug_numbers:
+      - 1573840
+      - 1631609
+      - 1603779
+    description: >
+      Results of DoH heuristics at startup and after network changes. OLD FORMAT: here for documentation
+    expiry_version: never
+    record_in_processes:
+      - main
+    release_channel_collection: opt-out
+    notification_emails:
+      - nhnt11@mozilla.com
+      - ddamjanovic@mozilla.com
+      - seceng-telemetry@mozilla.com
+      - necko@mozilla.com
+    products:
+      - firefox
+    extra_keys:
+      google: Google safe search result
+      youtube: YouTube safe search result
+      zscalerCanary: ZScaler canary result
+      canary: Global canary result
+      modifiedRoots: Whether enterprise roots were enabled
+      browserParent: Whether OS parental controls were detected
+      thirdPartyRoots: Whether third party roots were installed
+      policy: Enterprise policy presence - no policy/with DoH/without DoH.
+      steeredProvider: Whether we detected a steering provider
+      evaluateReason: The reason for running heuristics - startup or netchange
+  state:
+    methods: ["state"]
+    objects: [
+      "enabled",
+      "disabled",
+      "manuallyDisabled",
+      "policyDisabled",
+      "uninstalled",
+      "UIOk",
+      "UIDisabled",
+      "rollback",
+      "shutdown",
+    ]
+    bug_numbers:
+      - 1573840
+      - 1631609
+      - 1603779
+    description: >
+      Results of DoH heuristics at startup and after network changes.
+    expiry_version: never
+    record_in_processes:
+      - main
+    release_channel_collection: opt-out
+    notification_emails:
+      - nhnt11@mozilla.com
+      - ddamjanovic@mozilla.com
+      - seceng-telemetry@mozilla.com
+      - necko@mozilla.com
+    products:
+      - firefox
 
 security.doh.trrPerformance:
   resolved:
@@ -2141,6 +2416,33 @@ security.ui.certerror:
       is_frame: If the error page is loaded in an iframe.
       has_sts: If the error page is for a site with HSTS headers or with a pinned key.
       panel_open: If the advanced panel was open at the time of the interaction.
+
+slow_script_warning:
+  shown:
+    bug_numbers:
+      - 1652613
+    description: >
+      Recorded when a slow script hang is resolved.
+    products:
+      - "firefox"
+    record_in_processes: ["main"]
+    release_channel_collection: opt-out
+    expiry_version: "85"
+    notification_emails:
+      - esmyth@mozilla.com
+      - gkruitbosch@mozilla.com
+    # Whether the hung script was for a content or browser process.
+    objects: [
+      "browser",
+      "content",
+    ]
+    extra_keys:
+      end_reason: Why the warning was hidden (user action, the process becoming responsive again, the browser quitting, etc.)
+      wait_count: How many times the user elected to wait.
+      hang_duration: How long we believe the hang continued (ms).
+      n_tab_deselect: How many times the user switched away from a tab affected by this hang.
+      uri_type: The kind of script URL that hung.
+      uptime: How long the notification was up (ms).
 
 webrtc.ui:
   share_display:

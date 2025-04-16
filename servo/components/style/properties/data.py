@@ -334,6 +334,7 @@ class Longhand(object):
                 "BackgroundRepeat",
                 "BorderImageRepeat",
                 "BorderStyle",
+                "ButtonAppearance",
                 "Clear",
                 "ColumnCount",
                 "Contain",
@@ -777,7 +778,9 @@ class PropertyRestrictions:
             "direction",
             "content",
             "-moz-osx-font-smoothing",
-        ] + PropertyRestrictions.spec(data, "css-fonts"))
+        ] + PropertyRestrictions.spec(data, "css-fonts")
+          + PropertyRestrictions.spec(data, "css-animations")
+          + PropertyRestrictions.spec(data, "css-transitions"))
 
     # https://www.w3.org/TR/webvtt1/#the-cue-pseudo-element
     @staticmethod

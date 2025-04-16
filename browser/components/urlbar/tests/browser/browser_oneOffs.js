@@ -1,6 +1,7 @@
 const TEST_ENGINE_BASENAME = "searchSuggestionEngine.xml";
 
 let gMaxResults;
+let engine;
 
 XPCOMUtils.defineLazyGetter(this, "oneOffSearchButtons", () => {
   return UrlbarTestUtils.getOneOffSearchButtons(window);
@@ -11,34 +12,140 @@ add_task(async function init() {
 
   // Add a search suggestion engine and move it to the front so that it appears
   // as the first one-off.
-  let engine = await SearchTestUtils.promiseNewSearchEngine(
+  engine = await SearchTestUtils.promiseNewSearchEngine(
     getRootDirectory(gTestPath) + TEST_ENGINE_BASENAME
   );
   await Services.search.moveEngine(engine, 0);
 
+  Services.prefs.setBoolPref(
+    "browser.search.separatePrivateDefault.ui.enabled",
+    false
+  );
   registerCleanupFunction(async function() {
     await PlacesUtils.history.clear();
     await UrlbarTestUtils.formHistory.clear();
+    Services.prefs.clearUserPref(
+      "browser.search.separatePrivateDefault.ui.enabled"
+    );
+    Services.prefs.clearUserPref("browser.urlbar.update2");
+    Services.prefs.clearUserPref("browser.urlbar.update2.oneOffsRefresh");
   });
 
+  // Initialize history with enough visits to fill up the view.
   await PlacesUtils.history.clear();
   await UrlbarTestUtils.formHistory.clear();
-
-  let visits = [];
   for (let i = 0; i < gMaxResults; i++) {
-    visits.push({
-      uri: makeURI("http://example.com/browser_urlbarOneOffs.js/?" + i),
-      // TYPED so that the visit shows up when the urlbar's drop-down arrow is
-      // pressed.
-      transition: Ci.nsINavHistoryService.TRANSITION_TYPED,
-    });
+    await PlacesTestUtils.addVisits(
+      "http://example.com/browser_urlbarOneOffs.js/?" + i
+    );
   }
-  await PlacesTestUtils.addVisits(visits);
+
+  // Add some more visits to the last URL added above so that the top-sites view
+  // will be non-empty.
+  for (let i = 0; i < 5; i++) {
+    await PlacesTestUtils.addVisits(
+      "http://example.com/browser_urlbarOneOffs.js/?" + (gMaxResults - 1)
+    );
+  }
+  await updateTopSites(sites => {
+    return sites && sites[0] && sites[0].url.startsWith("http://example.com/");
+  });
 });
 
-// Keys up and down through the non-history panel, i.e., the panel that's shown
-// when you type something in the textbox.
-add_task(async function() {
+// Opens the top-sites view, i.e., the view that's shown when the input hasn't
+// been edited.  The one-offs should be hidden.
+add_task(async function topSitesView() {
+  await UrlbarTestUtils.promiseAutocompleteResultPopup({
+    window,
+    value: "",
+    fireInputEvent: true,
+  });
+  Assert.equal(
+    UrlbarTestUtils.getOneOffSearchButtonsVisible(window),
+    false,
+    "One-offs should be hidden"
+  );
+  await hidePopup();
+});
+
+// Opens the top-sites view with update2 enabled.  The one-offs should be shown.
+add_task(async function topSitesViewUpdate2() {
+  // Set the update2 prefs.
+  await SpecialPowers.pushPrefEnv({
+    set: [
+      ["browser.urlbar.update2", true],
+      ["browser.urlbar.update2.oneOffsRefresh", true],
+    ],
+  });
+
+  // Do a search.
+  await UrlbarTestUtils.promiseAutocompleteResultPopup({
+    window,
+    value: "",
+    fireInputEvent: true,
+  });
+  await TestUtils.waitForCondition(
+    () => !oneOffSearchButtons._rebuilding,
+    "Waiting for one-offs to finish rebuilding"
+  );
+
+  // There's one top sites result, the page with a lot of visits from init.
+  let resultURL = "example.com/browser_urlbarOneOffs.js/?" + (gMaxResults - 1);
+  Assert.equal(UrlbarTestUtils.getResultCount(window), 1, "Result count");
+
+  Assert.equal(
+    UrlbarTestUtils.getOneOffSearchButtonsVisible(window),
+    true,
+    "One-offs are visible"
+  );
+
+  assertState(-1, -1, "");
+
+  // Key down into the result.
+  EventUtils.synthesizeKey("KEY_ArrowDown");
+  assertState(0, -1, resultURL);
+
+  // Key down through each one-off.
+  let numButtons = oneOffSearchButtons.getSelectableButtons(true).length;
+  for (let i = 0; i < numButtons; i++) {
+    EventUtils.synthesizeKey("KEY_ArrowDown");
+    assertState(-1, i, "");
+  }
+
+  // Key down again.  The selection should go away.
+  EventUtils.synthesizeKey("KEY_ArrowDown");
+  assertState(-1, -1, "");
+
+  // Key down again.  The result should be selected.
+  EventUtils.synthesizeKey("KEY_ArrowDown");
+  assertState(0, -1, resultURL);
+
+  // Key back up.  The selection should go away.
+  EventUtils.synthesizeKey("KEY_ArrowUp");
+  assertState(-1, -1, "");
+
+  // Key up again.  The selection should wrap back around to the one-offs.  Key
+  // up through all the one-offs.
+  for (let i = numButtons - 1; i >= 0; i--) {
+    EventUtils.synthesizeKey("KEY_ArrowUp");
+    assertState(-1, i, "");
+  }
+
+  // Key up.  The result should be selected.
+  EventUtils.synthesizeKey("KEY_ArrowUp");
+  assertState(0, -1, resultURL);
+
+  // Key up again.  The selection should go away.
+  EventUtils.synthesizeKey("KEY_ArrowUp");
+  assertState(-1, -1, "");
+
+  await hidePopup();
+  await SpecialPowers.popPrefEnv();
+});
+
+// Keys up and down through the non-top-sites view, i.e., the view that's shown
+// when the input has been edited.
+add_task(async function editedView() {
   // Use a typed value that returns the visits added above but that doesn't
   // trigger autofill since that would complicate the test.
   let typedValue = "browser_urlbarOneOffs";
@@ -131,8 +238,17 @@ add_task(async function() {
 });
 
 // Checks that "Search with Current Search Engine" items are updated to "Search
-// with One-Off Engine" when a one-off is selected.
+// with One-Off Engine" when a one-off is selected. If update2 one-offs are
+// enabled, only the heuristic result should update.
 add_task(async function searchWith() {
+  // Enable suggestions for this subtest so we can check non-heuristic results.
+  let oldDefaultEngine = await Services.search.getDefault();
+  let oldSuggestPref = Services.prefs.getBoolPref(
+    "browser.urlbar.suggest.searches"
+  );
+  await Services.search.setDefault(engine);
+  Services.prefs.setBoolPref("browser.urlbar.suggest.searches", true);
+
   let typedValue = "foo";
   await UrlbarTestUtils.promiseAutocompleteResultPopup({
     window,
@@ -147,16 +263,16 @@ add_task(async function searchWith() {
     "Sanity check: first result's action text"
   );
 
-  // Alt+Down to the first one-off.  Now the first result and the first one-off
-  // should both be selected.
-  EventUtils.synthesizeKey("KEY_ArrowDown", { altKey: true });
-  assertState(0, 0, typedValue);
+  // Alt+Down to the second one-off.  Now the first result and the second
+  // one-off should both be selected.
+  EventUtils.synthesizeKey("KEY_ArrowDown", { altKey: true, repeat: 2 });
+  assertState(0, 1, typedValue);
 
   let engineName = oneOffSearchButtons.selectedButton.engine.name;
   Assert.notEqual(
     engineName,
     (await Services.search.getDefault()).name,
-    "Sanity check: First one-off engine should not be the current engine"
+    "Sanity check: Second one-off engine should not be the current engine"
   );
   result = await UrlbarTestUtils.getDetailsOfResultAt(window, 0);
   Assert.equal(
@@ -165,6 +281,53 @@ add_task(async function searchWith() {
     "First result's action text should be updated"
   );
 
+  // Check non-heuristic results.
+  for (let refresh of [true, false]) {
+    UrlbarPrefs.set("update2", refresh);
+    UrlbarPrefs.set("update2.oneOffsRefresh", refresh);
+    await hidePopup();
+    await UrlbarTestUtils.promiseAutocompleteResultPopup({
+      window,
+      value: typedValue,
+    });
+
+    EventUtils.synthesizeKey("KEY_ArrowDown");
+    result = await UrlbarTestUtils.getDetailsOfResultAt(window, 1);
+    assertState(1, -1, typedValue + "foo");
+    Assert.equal(
+      result.displayed.action,
+      "Search with " + engine.name,
+      "Sanity check: second result's action text"
+    );
+    Assert.ok(!result.heuristic, "The second result is not heuristic.");
+    EventUtils.synthesizeKey("KEY_ArrowDown", { altKey: true, repeat: 2 });
+    assertState(1, 1, typedValue + "foo");
+
+    engineName = oneOffSearchButtons.selectedButton.engine.name;
+    Assert.notEqual(
+      engineName,
+      (await Services.search.getDefault()).name,
+      "Sanity check: Second one-off engine should not be the current engine"
+    );
+    result = await UrlbarTestUtils.getDetailsOfResultAt(window, 1);
+
+    if (refresh) {
+      Assert.equal(
+        result.displayed.action,
+        "Search with " + (await Services.search.getDefault()).name,
+        "Second result's action text should be the same"
+      );
+    } else {
+      Assert.equal(
+        result.displayed.action,
+        "Search with " + engineName,
+        "Second result's action text should be updated"
+      );
+    }
+  }
+
+  Services.prefs.setBoolPref("browser.urlbar.suggest.searches", oldSuggestPref);
+  await Services.search.setDefault(oldDefaultEngine);
   await hidePopup();
 });
 
@@ -175,21 +338,40 @@ add_task(async function oneOffClick() {
   // We are explicitly using something that looks like a url, to make the test
   // stricter. Even if it looks like a url, we should search.
   let typedValue = "foo.bar";
-  await UrlbarTestUtils.promiseAutocompleteResultPopup({
-    window,
-    value: typedValue,
-  });
-  await UrlbarTestUtils.getDetailsOfResultAt(window, 0);
-  assertState(0, -1, typedValue);
 
-  let oneOffs = oneOffSearchButtons.getSelectableButtons(true);
-  let resultsPromise = BrowserTestUtils.browserLoaded(
-    gBrowser.selectedBrowser,
-    false,
-    "http://mochi.test:8888/?terms=foo.bar"
-  );
-  EventUtils.synthesizeMouseAtCenter(oneOffs[0], {});
-  await resultsPromise;
+  for (let refresh of [true, false]) {
+    UrlbarPrefs.set("update2", refresh);
+    UrlbarPrefs.set("update2.oneOffsRefresh", refresh);
+
+    await UrlbarTestUtils.promiseAutocompleteResultPopup({
+      window,
+      value: typedValue,
+    });
+    await UrlbarTestUtils.getDetailsOfResultAt(window, 0);
+    assertState(0, -1, typedValue);
+    let oneOffs = oneOffSearchButtons.getSelectableButtons(true);
+
+    if (refresh) {
+      EventUtils.synthesizeMouseAtCenter(oneOffs[0], {});
+      Assert.ok(
+        UrlbarTestUtils.isPopupOpen(window),
+        "Urlbar view is still open."
+      );
+      Assert.ok(
+        UrlbarTestUtils.isInSearchMode(window, oneOffs[0].engine.name),
+        "The Urlbar is in search mode."
+      );
+      window.gURLBar.setSearchMode(null);
+    } else {
+      let resultsPromise = BrowserTestUtils.browserLoaded(
+        gBrowser.selectedBrowser,
+        false,
+        "http://mochi.test:8888/?terms=foo.bar"
+      );
+      EventUtils.synthesizeMouseAtCenter(oneOffs[0], {});
+      await resultsPromise;
+    }
+  }
 
   gBrowser.removeTab(gBrowser.selectedTab);
   await UrlbarTestUtils.formHistory.clear();
@@ -202,25 +384,45 @@ add_task(async function oneOffReturn() {
   // We are explicitly using something that looks like a url, to make the test
   // stricter. Even if it looks like a url, we should search.
   let typedValue = "foo.bar";
-  await UrlbarTestUtils.promiseAutocompleteResultPopup({
-    window,
-    value: typedValue,
-    fireInputEvent: true,
-  });
-  await UrlbarTestUtils.getDetailsOfResultAt(window, 0);
-  assertState(0, -1, typedValue);
 
-  // Alt+Down to select the first one-off.
-  EventUtils.synthesizeKey("KEY_ArrowDown", { altKey: true });
-  assertState(0, 0, typedValue);
+  for (let refresh of [true, false]) {
+    UrlbarPrefs.set("update2", refresh);
+    UrlbarPrefs.set("update2.oneOffsRefresh", refresh);
 
-  let resultsPromise = BrowserTestUtils.browserLoaded(
-    gBrowser.selectedBrowser,
-    false,
-    "http://mochi.test:8888/?terms=foo.bar"
-  );
-  EventUtils.synthesizeKey("KEY_Enter");
-  await resultsPromise;
+    await UrlbarTestUtils.promiseAutocompleteResultPopup({
+      window,
+      value: typedValue,
+      fireInputEvent: true,
+    });
+    await UrlbarTestUtils.getDetailsOfResultAt(window, 0);
+    assertState(0, -1, typedValue);
+    let oneOffs = oneOffSearchButtons.getSelectableButtons(true);
+
+    // Alt+Down to select the first one-off.
+    EventUtils.synthesizeKey("KEY_ArrowDown", { altKey: true });
+    assertState(0, 0, typedValue);
+
+    if (refresh) {
+      EventUtils.synthesizeKey("KEY_Enter");
+      Assert.ok(
+        UrlbarTestUtils.isPopupOpen(window),
+        "Urlbar view is still open."
+      );
+      Assert.ok(
+        UrlbarTestUtils.isInSearchMode(window, oneOffs[0].engine.name),
+        "The Urlbar is in search mode."
+      );
+      window.gURLBar.setSearchMode(null);
+    } else {
+      let resultsPromise = BrowserTestUtils.browserLoaded(
+        gBrowser.selectedBrowser,
+        false,
+        "http://mochi.test:8888/?terms=foo.bar"
+      );
+      EventUtils.synthesizeKey("KEY_Enter");
+      await resultsPromise;
+    }
+  }
 
   gBrowser.removeTab(gBrowser.selectedTab);
   await UrlbarTestUtils.formHistory.clear();

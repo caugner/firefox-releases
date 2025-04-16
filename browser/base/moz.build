@@ -20,6 +20,7 @@ MOCHITEST_CHROME_MANIFESTS += [
 BROWSER_CHROME_MANIFESTS += [
     'content/test/about/browser.ini',
     'content/test/alerts/browser.ini',
+    'content/test/backforward/browser.ini',
     'content/test/caps/browser.ini',
     'content/test/captivePortal/browser.ini',
     'content/test/contextMenu/browser.ini',
@@ -72,3 +73,7 @@ if CONFIG['MOZ_WIDGET_TOOLKIT'] in ('windows', 'gtk'):
     DEFINES['MENUBAR_CAN_AUTOHIDE'] = 1
 
 JAR_MANIFESTS += ['jar.mn']
+
+GeneratedFile('content/aboutNetErrorCodes.js', script='gen_aboutneterror_codes.py',
+              inputs=['/browser/locales/en-US/browser/nsserrors.ftl'])
+

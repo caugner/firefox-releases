@@ -16,6 +16,8 @@
 #include "mozilla/UniquePtr.h"
 #include "mozilla/WinHeaderOnlyUtils.h"
 
+#include "DefaultBrowser.h"
+
 const wchar_t* kTaskVendor = L"" MOZ_APP_VENDOR;
 // kTaskName should have the unique token appended before being used.
 const wchar_t* kTaskName = L"" MOZ_APP_DISPLAYNAME " Default Browser Agent ";
@@ -41,6 +43,14 @@ using BStrPtr = mozilla::UniquePtr<OLECHAR, SysFreeStringDeleter>;
 
 HRESULT RegisterTask(const wchar_t* uniqueToken,
                      BSTR startTime /* = nullptr */) {
+  // Do data migration during the task installation. This might seem like it
+  // belongs in UpdateTask, but we want to be able to call
+  //    RemoveTask();
+  //    RegisterTask();
+  // and still have data migration happen. Also, UpdateTask calls this function,
+  // so migration will still get run in that case.
+  MaybeMigrateCurrentDefault();
+
   // Make sure we don't try to register a task that already exists.
   RemoveTask(uniqueToken);
 
@@ -95,9 +105,9 @@ HRESULT RegisterTask(const wchar_t* uniqueToken,
   ENSURE(taskSettings->put_MultipleInstances(TASK_INSTANCES_IGNORE_NEW));
   ENSURE(taskSettings->put_StartWhenAvailable(VARIANT_TRUE));
   ENSURE(taskSettings->put_StopIfGoingOnBatteries(VARIANT_FALSE));
-  // This cryptic string means "5 minutes". So, if the task runs for longer
+  // This cryptic string means "35 minutes". So, if the task runs for longer
   // than that, the process will be killed, because that should never happen.
-  BStrPtr execTimeLimitBStr = BStrPtr(SysAllocString(L"PT5M"));
+  BStrPtr execTimeLimitBStr = BStrPtr(SysAllocString(L"PT35M"));
   ENSURE(taskSettings->put_ExecutionTimeLimit(execTimeLimitBStr.get()));
 
   RefPtr<IRegistrationInfo> regInfo;
@@ -179,7 +189,10 @@ HRESULT RegisterTask(const wchar_t* uniqueToken,
       BStrPtr(SysAllocString(mozilla::GetFullBinaryPath().get()));
   ENSURE(execAction->put_Path(binaryPathBStr.get()));
 
-  BStrPtr argsBStr = BStrPtr(SysAllocString(L"do-task"));
+  std::wstring taskArgs = L"do-task \"";
+  taskArgs += uniqueToken;
+  taskArgs += L"\"";
+  BStrPtr argsBStr = BStrPtr(SysAllocString(taskArgs.c_str()));
   ENSURE(execAction->put_Arguments(argsBStr.get()));
 
   std::wstring taskName(kTaskName);

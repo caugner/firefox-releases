@@ -342,12 +342,12 @@ class WorkerPrivate : public RelativeTimeline {
   }
 
   WorkerGlobalScope* GlobalScope() const {
-    MOZ_ACCESS_THREAD_BOUND(mWorkerThreadAccessible, data);
+    auto data = mWorkerThreadAccessible.Access();
     return data->mScope;
   }
 
   WorkerDebuggerGlobalScope* DebuggerGlobalScope() const {
-    MOZ_ACCESS_THREAD_BOUND(mWorkerThreadAccessible, data);
+    auto data = mWorkerThreadAccessible.Access();
     return data->mDebuggerScope;
   }
 
@@ -355,7 +355,7 @@ class WorkerPrivate : public RelativeTimeline {
   // null if we're not in a nested event loop or that nested event loop does not
   // have an associated global.
   nsIGlobalObject* GetCurrentEventLoopGlobal() const {
-    MOZ_ACCESS_THREAD_BOUND(mWorkerThreadAccessible, data);
+    auto data = mWorkerThreadAccessible.Access();
     return data->mCurrentEventLoopGlobal;
   }
 
@@ -398,7 +398,7 @@ class WorkerPrivate : public RelativeTimeline {
   bool RegisterDebuggerBindings(JSContext* aCx, JS::Handle<JSObject*> aGlobal);
 
   bool OnLine() const {
-    MOZ_ACCESS_THREAD_BOUND(mWorkerThreadAccessible, data);
+    auto data = mWorkerThreadAccessible.Access();
     return data->mOnLine;
   }
 
@@ -478,8 +478,6 @@ class WorkerPrivate : public RelativeTimeline {
 
   void EnsurePerformanceStorage();
 
-  void EnsurePerformanceCounter();
-
   bool GetExecutionGranted() const;
   void SetExecutionGranted(bool aGranted);
 
@@ -493,7 +491,13 @@ class WorkerPrivate : public RelativeTimeline {
 
   PerformanceStorage* GetPerformanceStorage();
 
-  PerformanceCounter* GetPerformanceCounter();
+  PerformanceCounter& MutablePerformanceCounterRef() const {
+    return *mPerformanceCounter;
+  }
+
+  const PerformanceCounter& PerformanceCounterRef() const {
+    return MutablePerformanceCounterRef();
+  }
 
   bool IsAcceptingEvents() {
     AssertIsOnParentThread();
@@ -962,6 +966,8 @@ class WorkerPrivate : public RelativeTimeline {
 
   nsILoadInfo::CrossOriginEmbedderPolicy GetOwnerEmbedderPolicy() const;
 
+  void SetCCCollectedAnything(bool collectedAnything);
+
  private:
   WorkerPrivate(
       WorkerPrivate* aParent, const nsAString& aScriptURL, bool aIsChromeWorker,
@@ -1039,7 +1045,7 @@ class WorkerPrivate : public RelativeTimeline {
   void NotifyWorkerRefs(WorkerStatus aStatus);
 
   bool HasActiveWorkerRefs() {
-    MOZ_ACCESS_THREAD_BOUND(mWorkerThreadAccessible, data);
+    auto data = mWorkerThreadAccessible.Access();
     return !(data->mChildWorkers.IsEmpty() && data->mTimeouts.IsEmpty() &&
              data->mWorkerRefs.IsEmpty());
   }
@@ -1094,7 +1100,7 @@ class WorkerPrivate : public RelativeTimeline {
   const nsString mScriptURL;
 
   // This is the worker name for shared workers and dedicated workers.
-  nsString mWorkerName;
+  const nsString mWorkerName;
 
   const WorkerType mWorkerType;
 
@@ -1255,6 +1261,7 @@ class WorkerPrivate : public RelativeTimeline {
     bool mIdleGCTimerRunning;
     bool mOnLine;
     bool mJSThreadExecutionGranted;
+    bool mCCCollectedAnything;
     FlippedOnce<false> mDeletionScheduled;
   };
   ThreadBound<WorkerThreadAccessible> mWorkerThreadAccessible;
@@ -1308,7 +1315,9 @@ class WorkerPrivate : public RelativeTimeline {
   // We expose some extra testing functions in that case.
   bool mIsInAutomation;
 
-  RefPtr<mozilla::PerformanceCounter> mPerformanceCounter;
+  const RefPtr<mozilla::PerformanceCounter> mPerformanceCounter =
+      MakeRefPtr<mozilla::PerformanceCounter>(nsPrintfCString(
+          "Worker:%s", NS_ConvertUTF16toUTF8(mWorkerName).get()));
 
   nsString mId;
 

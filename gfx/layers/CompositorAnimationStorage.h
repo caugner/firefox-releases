@@ -9,26 +9,30 @@
 
 #include "mozilla/layers/AnimationStorageData.h"
 #include "mozilla/layers/LayersMessages.h"  // for TransformData, etc
+#include "mozilla/webrender/webrender_ffi.h"
 #include "mozilla/Variant.h"
 #include "X11UndefineNone.h"
 #include <unordered_map>
+#include <unordered_set>
 
 namespace mozilla {
 namespace layers {
 class Animation;
-class Layers;
+class CompositorBridgeParent;
+class Layer;
+class OMTAController;
 
 typedef nsTArray<layers::Animation> AnimationArray;
 
 struct AnimationTransform {
   /*
    * This transform is calculated from sampleanimation in device pixel
-   * and used by compositor.
+   * and used for layers (i.e. non WebRender)
    */
   gfx::Matrix4x4 mTransformInDevSpace;
   /*
-   * This transform is calculated from frame and used by getOMTAStyle()
-   * for OMTA testing.
+   * This transform is calculated from frame used for WebRender and used by
+   * getOMTAStyle() for OMTA testing.
    */
   gfx::Matrix4x4 mFrameTransform;
   TransformData mData;
@@ -48,23 +52,32 @@ struct AnimatedValue final {
     return mValue.is<T>();
   }
 
-  AnimatedValue(gfx::Matrix4x4&& aTransformInDevSpace,
-                gfx::Matrix4x4&& aFrameTransform, const TransformData& aData)
-      : mValue(
-            AsVariant(AnimationTransform{std::move(aTransformInDevSpace),
-                                         std::move(aFrameTransform), aData})) {}
+  AnimatedValue(const gfx::Matrix4x4& aTransformInDevSpace,
+                const gfx::Matrix4x4& aFrameTransform,
+                const TransformData& aData)
+      : mValue(AsVariant(AnimationTransform{aTransformInDevSpace,
+                                            aFrameTransform, aData})) {}
 
   explicit AnimatedValue(const float& aValue) : mValue(AsVariant(aValue)) {}
 
   explicit AnimatedValue(nscolor aValue) : mValue(AsVariant(aValue)) {}
 
-  void SetTransform(gfx::Matrix4x4&& aTransformInDevSpace,
-                    gfx::Matrix4x4&& aFrameTransform,
+  void SetTransformForWebRender(const gfx::Matrix4x4& aFrameTransform,
+                                const TransformData& aData) {
+    MOZ_ASSERT(mValue.is<AnimationTransform>());
+    AnimationTransform& previous = mValue.as<AnimationTransform>();
+    previous.mFrameTransform = aFrameTransform;
+    if (previous.mData != aData) {
+      previous.mData = aData;
+    }
+  }
+  void SetTransform(const gfx::Matrix4x4& aTransformInDevSpace,
+                    const gfx::Matrix4x4& aFrameTransform,
                     const TransformData& aData) {
     MOZ_ASSERT(mValue.is<AnimationTransform>());
     AnimationTransform& previous = mValue.as<AnimationTransform>();
-    previous.mTransformInDevSpace = std::move(aTransformInDevSpace);
-    previous.mFrameTransform = std::move(aFrameTransform);
+    previous.mTransformInDevSpace = aTransformInDevSpace;
+    previous.mFrameTransform = aFrameTransform;
     if (previous.mData != aData) {
       previous.mData = aData;
     }
@@ -109,7 +122,9 @@ class CompositorAnimationStorage final {
 
   NS_INLINE_DECL_THREADSAFE_REFCOUNTING(CompositorAnimationStorage)
  public:
-  CompositorAnimationStorage() : mLock("CompositorAnimationStorage::mLock") {}
+  explicit CompositorAnimationStorage(CompositorBridgeParent* aCompositorBridge)
+      : mLock("CompositorAnimationStorage::mLock"),
+        mCompositorBridge(aCompositorBridge) {}
 
   OMTAValue GetOMTAValue(const uint64_t& aId) const;
 
@@ -121,7 +136,8 @@ class CompositorAnimationStorage final {
   /**
    * Set the animations based on the unique id
    */
-  void SetAnimations(uint64_t aId, const AnimationArray& aAnimations);
+  void SetAnimations(uint64_t aId, const LayersId& aLayersId,
+                     const AnimationArray& aAnimations);
 
   /**
    * Sample animation based the given timestamps and store them in this
@@ -135,7 +151,8 @@ class CompositorAnimationStorage final {
    *
    * Note: This is called only by WebRender.
    */
-  bool SampleAnimations(TimeStamp aPreviousFrameTime,
+  bool SampleAnimations(const OMTAController* aOMTAController,
+                        TimeStamp aPreviousFrameTime,
                         TimeStamp aCurrentFrameTime);
 
   /**
@@ -143,7 +160,8 @@ class CompositorAnimationStorage final {
    *
    * Note: This is called only by non WebRender.
    */
-  bool SampleAnimations(Layer* aRoot, TimeStamp aPreviousFrameTime,
+  bool SampleAnimations(Layer* aRoot, CompositorBridgeParent* aCompositorBridge,
+                        TimeStamp aPreviousFrameTime,
                         TimeStamp aCurrentFrameTime);
 
   bool HasAnimations() const;
@@ -154,7 +172,7 @@ class CompositorAnimationStorage final {
   void ClearById(const uint64_t& aId);
 
  private:
-  ~CompositorAnimationStorage(){};
+  ~CompositorAnimationStorage() = default;
 
   /**
    * Return the animated value if a given id can map to its animated value
@@ -169,9 +187,18 @@ class CompositorAnimationStorage final {
    * NOTE: |aPreviousValue| should be the value for the |aId|.
    */
   void SetAnimatedValue(uint64_t aId, AnimatedValue* aPreviousValue,
-                        gfx::Matrix4x4&& aTransformInDevSpace,
-                        gfx::Matrix4x4&& aFrameTransform,
+                        const gfx::Matrix4x4& aTransformInDevSpace,
+                        const gfx::Matrix4x4& aFrameTransform,
                         const TransformData& aData);
+
+  /**
+   * This is for the WebRender version of above SetAnimatedValue.
+   * In the case of WebRender we don't need to have |aTransformInDevSpace|
+   * separately because it's same as |aFrameTransform|.
+   */
+  void SetAnimatedValueForWebRender(uint64_t aId, AnimatedValue* aPreviousValue,
+                                    const gfx::Matrix4x4& aFrameTransform,
+                                    const TransformData& aData);
 
   /**
    * Similar to above but for opacity.
@@ -185,8 +212,9 @@ class CompositorAnimationStorage final {
   void SetAnimatedValue(uint64_t aId, AnimatedValue* aPreviousValue,
                         nscolor aColor);
 
-  void ApplyAnimatedValue(
-      Layer* aLayer, nsCSSPropertyID aProperty, AnimatedValue* aPreviousValue,
+  bool ApplyAnimatedValue(
+      CompositorBridgeParent* aCompositorBridge, Layer* aLayer,
+      nsCSSPropertyID aProperty, AnimatedValue* aPreviousValue,
       const nsTArray<RefPtr<RawServoAnimationValue>>& aValues);
 
   void Clear();
@@ -194,7 +222,10 @@ class CompositorAnimationStorage final {
  private:
   AnimatedValueTable mAnimatedValues;
   AnimationsTable mAnimations;
+  std::unordered_set<uint64_t> mNewAnimations;
   mutable Mutex mLock;
+  // CompositorBridgeParent owns this CompositorAnimationStorage instance.
+  CompositorBridgeParent* MOZ_NON_OWNING_REF mCompositorBridge;
 };
 
 }  // namespace layers

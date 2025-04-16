@@ -25,9 +25,6 @@ from voluptuous import Required, Optional, Extra
 
 
 packaging_description_schema = schema.extend({
-    # depname is used in taskref's to identify the taskID of the signed things
-    Required('depname', default='build'): text_type,
-
     # unique label to describe this repackaging task
     Optional('label'): text_type,
 
@@ -70,7 +67,7 @@ packaging_description_schema = schema.extend({
 
         # if true, perform a checkout of a comm-central based branch inside the
         # gecko checkout
-        Required('comm-checkout', default=False): bool,
+        Optional('comm-checkout'): bool,
     }
 })
 

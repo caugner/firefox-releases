@@ -56,6 +56,7 @@
 #  include <gdk/gdkwayland.h>
 #  include "mozilla/widget/nsWaylandDisplay.h"
 #  include "mozilla/widget/DMABufLibWrapper.h"
+#  include "mozilla/StaticPrefs_media.h"
 #endif
 
 #define GDK_PIXMAP_SIZE_MAX 32767
@@ -80,12 +81,17 @@ gfxPlatformGtk::gfxPlatformGtk() {
   mIsX11Display = gfxPlatform::IsHeadless()
                       ? false
                       : GDK_IS_X11_DISPLAY(gdk_display_get_default());
+  if (XRE_IsParentProcess()) {
 #ifdef MOZ_X11
-  if (mIsX11Display && XRE_IsParentProcess() &&
-      mozilla::Preferences::GetBool("gfx.xrender.enabled")) {
-    gfxVars::SetUseXRender(true);
-  }
+    if (mIsX11Display && mozilla::Preferences::GetBool("gfx.xrender.enabled")) {
+      gfxVars::SetUseXRender(true);
+    }
 #endif
+
+    if (IsWaylandDisplay() || (mIsX11Display && PR_GetEnv("MOZ_X11_EGL"))) {
+      gfxVars::SetUseEGL(true);
+    }
+  }
 
   InitBackendPrefs(GetBackendPrefs());
 
@@ -104,7 +110,7 @@ gfxPlatformGtk::gfxPlatformGtk() {
 #endif
 
   gPlatformFTLibrary = Factory::NewFTLibrary();
-  MOZ_ASSERT(gPlatformFTLibrary);
+  MOZ_RELEASE_ASSERT(gPlatformFTLibrary);
   Factory::SetFTLibrary(gPlatformFTLibrary);
 }
 
@@ -131,7 +137,7 @@ void gfxPlatformGtk::InitPlatformGPUProcessPrefs() {
     FeatureState& gpuProc = gfxConfig::GetFeature(Feature::GPU_PROCESS);
     gpuProc.ForceDisable(FeatureStatus::Blocked,
                          "Wayland does not work in the GPU process",
-                         NS_LITERAL_CSTRING("FEATURE_FAILURE_WAYLAND"));
+                         "FEATURE_FAILURE_WAYLAND"_ns);
   }
 #endif
 }
@@ -665,7 +671,8 @@ class GtkVsyncSource final : public VsyncSource {
         }
 
         lastVsync = TimeStamp::Now();
-        NotifyVsync(lastVsync);
+        TimeStamp outputTime = lastVsync + GetVsyncRate();
+        NotifyVsync(lastVsync, outputTime);
       }
     }
 
@@ -722,16 +729,19 @@ already_AddRefed<gfx::VsyncSource> gfxPlatformGtk::CreateHardwareVsyncSource() {
 #endif
 
 #ifdef MOZ_WAYLAND
-bool gfxPlatformGtk::UseWaylandDMABufTextures() {
-  return IsWaylandDisplay() && GetDMABufDevice()->IsDMABufTexturesEnabled();
+bool gfxPlatformGtk::UseDMABufTextures() {
+  return gfxVars::UseEGL() && GetDMABufDevice()->IsDMABufTexturesEnabled();
 }
-bool gfxPlatformGtk::UseWaylandDMABufVideoTextures() {
-  return IsWaylandDisplay() &&
+bool gfxPlatformGtk::UseDMABufVideoTextures() {
+  return gfxVars::UseEGL() &&
          (GetDMABufDevice()->IsDMABufVideoTexturesEnabled() ||
-          GetDMABufDevice()->IsDMABufVAAPIEnabled());
+          StaticPrefs::media_ffmpeg_vaapi_enabled());
 }
-bool gfxPlatformGtk::UseWaylandHardwareVideoDecoding() {
-  return IsWaylandDisplay() && GetDMABufDevice()->IsDMABufVAAPIEnabled() &&
-         gfxPlatform::CanUseHardwareVideoDecoding();
+bool gfxPlatformGtk::UseHardwareVideoDecoding() {
+  return gfxPlatform::CanUseHardwareVideoDecoding() &&
+         StaticPrefs::media_ffmpeg_vaapi_enabled();
+}
+bool gfxPlatformGtk::UseDRMVAAPIDisplay() {
+  return IsX11Display() || GetDMABufDevice()->IsDRMVAAPIDisplayEnabled();
 }
 #endif

@@ -35,6 +35,7 @@
 #include "mozilla/dom/IdleRequest.h"
 #include "mozilla/dom/Performance.h"
 #include "mozilla/dom/ScriptLoader.h"
+#include "mozilla/dom/SessionStorageManager.h"
 #include "mozilla/dom/StorageEvent.h"
 #include "mozilla/dom/StorageEventBinding.h"
 #include "mozilla/dom/StorageNotifierService.h"
@@ -315,6 +316,14 @@ static nsGlobalWindowOuter* GetOuterWindowForForwarding(
   }                                                                  \
   outer->method args;                                                \
   return;                                                            \
+  PR_END_MACRO
+
+#define ENSURE_ACTIVE_DOCUMENT(errorresult, err_rval) \
+  PR_BEGIN_MACRO                                      \
+  if (MOZ_UNLIKELY(!HasActiveDocument())) {           \
+    aError.Throw(NS_ERROR_XPC_SECURITY_MANAGER_VETO); \
+    return err_rval;                                  \
+  }                                                   \
   PR_END_MACRO
 
 #define DOM_TOUCH_LISTENER_ADDED "dom-touch-listener-added"
@@ -2936,7 +2945,7 @@ void nsGlobalWindowInner::GetOwnPropertyNames(
   }
 
   // "Components" is marked as enumerable but only resolved on demand :-/.
-  // aNames.AppendElement(NS_LITERAL_STRING("Components"));
+  // aNames.AppendElement(u"Components"_ns);
 
   JS::Rooted<JSObject*> wrapper(aCx, GetWrapper());
 
@@ -3322,12 +3331,8 @@ void nsGlobalWindowInner::CancelAnimationFrame(int32_t aHandle,
 already_AddRefed<MediaQueryList> nsGlobalWindowInner::MatchMedia(
     const nsAString& aMediaQueryList, CallerType aCallerType,
     ErrorResult& aError) {
-  // FIXME: This whole forward-to-outer and then get a pres
-  // shell/context off the docshell dance is sort of silly; it'd make
-  // more sense to forward to the inner, but it's what everyone else
-  // (GetSelection, GetScrollXY, etc.) does around here.
-  FORWARD_TO_OUTER_OR_THROW(MatchMediaOuter, (aMediaQueryList, aCallerType),
-                            aError, nullptr);
+  ENSURE_ACTIVE_DOCUMENT(aError, nullptr);
+  return mDoc->MatchMedia(aMediaQueryList, aCallerType);
 }
 
 void nsGlobalWindowInner::SetScreenX(int32_t aScreenX, CallerType aCallerType,
@@ -4261,7 +4266,7 @@ nsresult nsGlobalWindowInner::FireHashchange(const nsAString& aOldURL,
   init.mOldURL = aOldURL;
 
   RefPtr<HashChangeEvent> event =
-      HashChangeEvent::Constructor(this, NS_LITERAL_STRING("hashchange"), init);
+      HashChangeEvent::Constructor(this, u"hashchange"_ns, init);
 
   event->SetTrusted(true);
 
@@ -4299,7 +4304,7 @@ nsresult nsGlobalWindowInner::DispatchSyncPopState() {
   init.mState = stateJSValue;
 
   RefPtr<PopStateEvent> event =
-      PopStateEvent::Constructor(this, NS_LITERAL_STRING("popstate"), init);
+      PopStateEvent::Constructor(this, u"popstate"_ns, init);
   event->SetTrusted(true);
   event->SetTarget(this);
 
@@ -4715,7 +4720,8 @@ void nsGlobalWindowInner::FireOfflineStatusEventIfChanged() {
 
 nsGlobalWindowInner::SlowScriptResponse
 nsGlobalWindowInner::ShowSlowScriptDialog(JSContext* aCx,
-                                          const nsString& aAddonId) {
+                                          const nsString& aAddonId,
+                                          const double aDuration) {
   nsresult rv;
 
   if (Preferences::GetBool("dom.always_stop_slow_scripts")) {
@@ -4755,7 +4761,7 @@ nsGlobalWindowInner::ShowSlowScriptDialog(JSContext* aCx,
   mHasHadSlowScript = true;
 
   // Override the cursor to something that we're sure the user can see.
-  SetCursor(NS_LITERAL_CSTRING("auto"), IgnoreErrors());
+  SetCursor("auto"_ns, IgnoreErrors());
 
   if (XRE_IsContentProcess() && ProcessHangMonitor::Get()) {
     ProcessHangMonitor::SlowScriptAction action;
@@ -4763,7 +4769,8 @@ nsGlobalWindowInner::ShowSlowScriptDialog(JSContext* aCx,
     nsIDocShell* docShell = GetDocShell();
     nsCOMPtr<nsIBrowserChild> child =
         docShell ? docShell->GetBrowserChild() : nullptr;
-    action = monitor->NotifySlowScript(child, filename.get(), aAddonId);
+    action =
+        monitor->NotifySlowScript(child, filename.get(), aAddonId, aDuration);
     if (action == ProcessHangMonitor::Terminate) {
       return KillSlowScript;
     }
@@ -4982,7 +4989,7 @@ nsresult nsGlobalWindowInner::Observe(nsISupports* aSubject, const char* aTopic,
 
     nsAutoCString type;
     perm->GetType(type);
-    if (type == NS_LITERAL_CSTRING("autoplay-media")) {
+    if (type == "autoplay-media"_ns) {
       UpdateAutoplayPermission();
     }
 
@@ -5021,7 +5028,7 @@ nsresult nsGlobalWindowInner::Observe(nsISupports* aSubject, const char* aTopic,
     }
 
     RefPtr<Event> event = NS_NewDOMEvent(this, nullptr, nullptr);
-    event->InitEvent(NS_LITERAL_STRING("languagechange"), false, false);
+    event->InitEvent(u"languagechange"_ns, false, false);
     event->SetTrusted(true);
 
     ErrorResult rv;
@@ -5471,6 +5478,12 @@ CallState nsGlobalWindowInner::CallOnInProcessChildren(Method aMethod,
 
 Maybe<ClientInfo> nsGlobalWindowInner::GetClientInfo() const {
   MOZ_ASSERT(NS_IsMainThread());
+  if (mDoc && mDoc->IsStaticDocument()) {
+    if (Maybe<ClientInfo> info = mDoc->GetOriginalDocument()->GetClientInfo()) {
+      return info;
+    }
+  }
+
   Maybe<ClientInfo> clientInfo;
   if (mClientSource) {
     clientInfo.emplace(mClientSource->Info());
@@ -5480,6 +5493,13 @@ Maybe<ClientInfo> nsGlobalWindowInner::GetClientInfo() const {
 
 Maybe<ClientState> nsGlobalWindowInner::GetClientState() const {
   MOZ_ASSERT(NS_IsMainThread());
+  if (mDoc && mDoc->IsStaticDocument()) {
+    if (Maybe<ClientState> state =
+            mDoc->GetOriginalDocument()->GetClientState()) {
+      return state;
+    }
+  }
+
   Maybe<ClientState> clientState;
   if (mClientSource) {
     Result<ClientState, ErrorResult> res = mClientSource->SnapshotState();
@@ -5494,6 +5514,13 @@ Maybe<ClientState> nsGlobalWindowInner::GetClientState() const {
 
 Maybe<ServiceWorkerDescriptor> nsGlobalWindowInner::GetController() const {
   MOZ_ASSERT(NS_IsMainThread());
+  if (mDoc && mDoc->IsStaticDocument()) {
+    if (Maybe<ServiceWorkerDescriptor> controller =
+            mDoc->GetOriginalDocument()->GetController()) {
+      return controller;
+    }
+  }
+
   Maybe<ServiceWorkerDescriptor> controller;
   if (mClientSource) {
     controller = mClientSource->GetController();
@@ -5748,6 +5775,7 @@ bool WindowScriptTimeoutHandler::Call(const char* aExecutionReason) {
   JS::CompileOptions options(aes.cx());
   options.setFileAndLine(mFileName.get(), mLineNo);
   options.setNoScriptRval(true);
+  options.setIntroductionType("domTimer");
   JS::Rooted<JSObject*> global(aes.cx(), mGlobal->GetGlobalJSObject());
   {
     nsJSUtils::ExecutionContext exec(aes.cx(), global);
@@ -5932,12 +5960,8 @@ bool nsGlobalWindowInner::RunTimeoutHandler(Timeout* aTimeout,
   // timeouts from repeatedly opening poups.
   timeout->mPopupState = PopupBlocker::openAbused;
 
-  bool trackNestingLevel = !timeout->mIsInterval;
-  uint32_t nestingLevel;
-  if (trackNestingLevel) {
-    nestingLevel = TimeoutManager::GetNestingLevel();
-    TimeoutManager::SetNestingLevel(timeout->mNestingLevel);
-  }
+  uint32_t nestingLevel = TimeoutManager::GetNestingLevel();
+  TimeoutManager::SetNestingLevel(timeout->mNestingLevel);
 
   const char* reason = GetTimeoutReasonString(timeout);
 
@@ -5988,9 +6012,7 @@ bool nsGlobalWindowInner::RunTimeoutHandler(Timeout* aTimeout,
   // point anyway, and the script context should have already reported
   // the script error in the usual way - so we just drop it.
 
-  if (trackNestingLevel) {
-    TimeoutManager::SetNestingLevel(nestingLevel);
-  }
+  TimeoutManager::SetNestingLevel(nestingLevel);
 
   mTimeoutManager->EndRunningTimeout(last_running_timeout);
   timeout->mRunning = false;
@@ -6437,8 +6459,8 @@ void nsGlobalWindowInner::DispatchVRDisplayActivate(
       init.mDisplay = display;
       init.mReason.Construct(aReason);
 
-      RefPtr<VRDisplayEvent> event = VRDisplayEvent::Constructor(
-          this, NS_LITERAL_STRING("vrdisplayactivate"), init);
+      RefPtr<VRDisplayEvent> event =
+          VRDisplayEvent::Constructor(this, u"vrdisplayactivate"_ns, init);
       // vrdisplayactivate is a trusted event, allowing VRDisplay.requestPresent
       // to be used in response to link traversal, user request (chrome UX), and
       // HMD mounting detection sensors.
@@ -6474,8 +6496,8 @@ void nsGlobalWindowInner::DispatchVRDisplayDeactivate(
       init.mDisplay = display;
       init.mReason.Construct(aReason);
 
-      RefPtr<VRDisplayEvent> event = VRDisplayEvent::Constructor(
-          this, NS_LITERAL_STRING("vrdisplaydeactivate"), init);
+      RefPtr<VRDisplayEvent> event =
+          VRDisplayEvent::Constructor(this, u"vrdisplaydeactivate"_ns, init);
       event->SetTrusted(true);
       DispatchEvent(*event);
       // Once we dispatch the event, we must not access any members as an event
@@ -6500,8 +6522,8 @@ void nsGlobalWindowInner::DispatchVRDisplayConnect(uint32_t aDisplayID) {
       init.mDisplay = display;
       // VRDisplayEvent.reason is not set for vrdisplayconnect
 
-      RefPtr<VRDisplayEvent> event = VRDisplayEvent::Constructor(
-          this, NS_LITERAL_STRING("vrdisplayconnect"), init);
+      RefPtr<VRDisplayEvent> event =
+          VRDisplayEvent::Constructor(this, u"vrdisplayconnect"_ns, init);
       event->SetTrusted(true);
       DispatchEvent(*event);
       // Once we dispatch the event, we must not access any members as an event
@@ -6526,8 +6548,8 @@ void nsGlobalWindowInner::DispatchVRDisplayDisconnect(uint32_t aDisplayID) {
       init.mDisplay = display;
       // VRDisplayEvent.reason is not set for vrdisplaydisconnect
 
-      RefPtr<VRDisplayEvent> event = VRDisplayEvent::Constructor(
-          this, NS_LITERAL_STRING("vrdisplaydisconnect"), init);
+      RefPtr<VRDisplayEvent> event =
+          VRDisplayEvent::Constructor(this, u"vrdisplaydisconnect"_ns, init);
       event->SetTrusted(true);
       DispatchEvent(*event);
       // Once we dispatch the event, we must not access any members as an event
@@ -6551,8 +6573,8 @@ void nsGlobalWindowInner::DispatchVRDisplayPresentChange(uint32_t aDisplayID) {
       init.mCancelable = false;
       init.mDisplay = display;
       // VRDisplayEvent.reason is not set for vrdisplaypresentchange
-      RefPtr<VRDisplayEvent> event = VRDisplayEvent::Constructor(
-          this, NS_LITERAL_STRING("vrdisplaypresentchange"), init);
+      RefPtr<VRDisplayEvent> event =
+          VRDisplayEvent::Constructor(this, u"vrdisplaypresentchange"_ns, init);
       event->SetTrusted(true);
       DispatchEvent(*event);
       // Once we dispatch the event, we must not access any members as an event
@@ -6946,8 +6968,7 @@ void nsGlobalWindowInner::GetSidebar(OwningExternalOrWindowProxy& aResult,
                                      ErrorResult& aRv) {
 #ifdef HAVE_SIDEBAR
   // First check for a named frame named "sidebar"
-  RefPtr<BrowsingContext> domWindow =
-      GetChildWindow(NS_LITERAL_STRING("sidebar"));
+  RefPtr<BrowsingContext> domWindow = GetChildWindow(u"sidebar"_ns);
   if (domWindow) {
     aResult.SetAsWindowProxy() = std::move(domWindow);
     return;
@@ -7361,7 +7382,8 @@ nsPIDOMWindowInner::nsPIDOMWindowInner(nsPIDOMWindowOuter* aOuterWindow,
       mNumOfOpenWebSockets(0),
       mEvent(nullptr),
       mStorageAccessPermissionGranted(false),
-      mWindowGlobalChild(aActor) {
+      mWindowGlobalChild(aActor),
+      mWasSuspendedByGroup(false) {
   MOZ_ASSERT(aOuterWindow);
   mBrowsingContext = aOuterWindow->GetBrowsingContext();
 

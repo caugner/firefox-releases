@@ -39,6 +39,7 @@
 #include "mozilla/net/ChildDNSService.h"
 #include "mozilla/net/DNSListenerProxy.h"
 #include "mozilla/Services.h"
+#include "mozilla/StaticPrefs_network.h"
 #include "mozilla/StaticPtr.h"
 #include "mozilla/SyncRunnable.h"
 #include "mozilla/TextUtils.h"
@@ -59,7 +60,7 @@ static const char kPrefDnsLocalDomains[] = "network.dns.localDomains";
 static const char kPrefDnsForceResolve[] = "network.dns.forceResolve";
 static const char kPrefDnsOfflineLocalhost[] = "network.dns.offline-localhost";
 static const char kPrefDnsNotifyResolution[] = "network.dns.notifyResolution";
-static const char kPrefNetworkProxyType[] = "network.proxy.type";
+static const char kPrefNetworkProxySOCKS[] = "network.proxy.socks";
 
 //-----------------------------------------------------------------------------
 
@@ -549,8 +550,8 @@ nsDNSService::nsDNSService()
       mNotifyResolution(false),
       mOfflineLocalhost(false),
       mForceResolveOn(false),
-      mProxyType(0),
       mTrrService(nullptr),
+      mHasSocksProxy(false),
       mResCacheEntries(0),
       mResCacheExpiration(0),
       mResCacheGrace(0),
@@ -682,9 +683,10 @@ nsresult nsDNSService::ReadPrefs(const char* name) {
       mNotifyResolution = tmpbool;
     }
   }
-  if (!name || !strcmp(name, kPrefNetworkProxyType)) {
-    if (NS_SUCCEEDED(Preferences::GetUint(kPrefNetworkProxyType, &tmpint))) {
-      mProxyType = tmpint;
+  if (!name || !strcmp(name, kPrefNetworkProxySOCKS)) {
+    nsAutoCString socks;
+    if (NS_SUCCEEDED(Preferences::GetCString(kPrefNetworkProxySOCKS, socks))) {
+      mHasSocksProxy = !socks.IsEmpty();
     }
   }
   if (!name || !strcmp(name, kPrefIPv4OnlyDomains)) {
@@ -708,7 +710,8 @@ nsresult nsDNSService::ReadPrefs(const char* name) {
     mForceResolveOn = !mForceResolve.IsEmpty();
   }
 
-  if (mProxyType == nsIProtocolProxyService::PROXYCONFIG_MANUAL) {
+  if (StaticPrefs::network_proxy_type() ==
+      nsIProtocolProxyService::PROXYCONFIG_MANUAL) {
     // Disable prefetching either by explicit preference or if a
     // manual proxy is configured
     mDisablePrefetch = true;
@@ -756,8 +759,7 @@ nsDNSService::Init() {
     prefs->AddObserver(kPrefDnsNotifyResolution, this, false);
 
     // Monitor these to see if there is a change in proxy configuration
-    // If a manual proxy is in use, disable prefetch implicitly
-    prefs->AddObserver("network.proxy.type", this, false);
+    prefs->AddObserver(kPrefNetworkProxySOCKS, this, false);
   }
 
   nsDNSPrefetch::Initialize(this);
@@ -823,12 +825,32 @@ nsDNSService::SetPrefetchEnabled(bool inVal) {
   return NS_OK;
 }
 
+bool nsDNSService::DNSForbiddenByActiveProxy(const nsACString& aHostname,
+                                             uint32_t flags) {
+  if (flags & nsIDNSService::RESOLVE_IGNORE_SOCKS_DNS) {
+    return false;
+  }
+
+  // We should avoid doing DNS when a proxy is in use.
+  PRNetAddr tempAddr;
+  if (StaticPrefs::network_proxy_type() ==
+          nsIProtocolProxyService::PROXYCONFIG_MANUAL &&
+      mHasSocksProxy && StaticPrefs::network_proxy_socks_remote_dns()) {
+    // Allow IP lookups through, but nothing else.
+    if (PR_StringToNetAddr(nsCString(aHostname).get(), &tempAddr) !=
+        PR_SUCCESS) {
+      return true;
+    }
+  }
+  return false;
+}
+
 nsresult nsDNSService::PreprocessHostname(bool aLocalDomain,
                                           const nsACString& aInput,
                                           nsIIDNService* aIDN,
                                           nsACString& aACE) {
   // Enforce RFC 7686
-  if (mBlockDotOnion && StringEndsWith(aInput, NS_LITERAL_CSTRING(".onion"))) {
+  if (mBlockDotOnion && StringEndsWith(aInput, ".onion"_ns)) {
     return NS_ERROR_UNKNOWN_HOST;
   }
 
@@ -892,6 +914,13 @@ nsresult nsDNSService::AsyncResolveInternal(
   if ((type != RESOLVE_TYPE_DEFAULT) && (type != RESOLVE_TYPE_TXT) &&
       (type != RESOLVE_TYPE_HTTPSSVC)) {
     return NS_ERROR_INVALID_ARG;
+  }
+
+  if (DNSForbiddenByActiveProxy(aHostname, flags)) {
+    // nsHostResolver returns NS_ERROR_UNKNOWN_HOST for lots of reasons.
+    // We use a different error code to differentiate this failure and to make
+    // it clear(er) where this error comes from.
+    return NS_ERROR_UNKNOWN_PROXY_HOST;
   }
 
   nsCString hostname;
@@ -1193,6 +1222,10 @@ nsresult nsDNSService::ResolveInternal(
   if (GetOffline() &&
       (!mOfflineLocalhost || !hostname.LowerCaseEqualsASCII("localhost"))) {
     flags |= RESOLVE_OFFLINE;
+  }
+
+  if (DNSForbiddenByActiveProxy(aHostname, flags)) {
+    return NS_ERROR_UNKNOWN_PROXY_HOST;
   }
 
   //

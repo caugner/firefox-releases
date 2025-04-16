@@ -4,12 +4,12 @@
 
 // The rejection "The fetching process for the media resource was aborted by the
 // user agent at the user's request." is left unhandled in some cases. This bug
-// should be fixed, but for the moment this file is whitelisted.
+// should be fixed, but for the moment this file allows a class of rejections.
 //
-// NOTE: Whitelisting a class of rejections should be limited. Normally you
+// NOTE: Allowing a whole class of rejections should be avoided. Normally you
 //       should use "expectUncaughtRejection" to flag individual failures.
 ChromeUtils.import("resource://testing-common/PromiseTestUtils.jsm", this);
-PromiseTestUtils.whitelistRejectionsGlobally(/aborted by the user agent/);
+PromiseTestUtils.allowMatchingRejectionsGlobally(/aborted by the user agent/);
 ChromeUtils.import("resource:///modules/BrowserWindowTracker.jsm", this);
 
 const permissionError =
@@ -344,7 +344,7 @@ var gTests = [
       let sharingNonScaryWindow = typeof nonScaryWindowIndex == "number";
 
       // If we have a non-scary window, select it and verify the warning isn't displayed.
-      // A non-scary window may not always exist on test slaves.
+      // A non-scary window may not always exist on test machines.
       if (sharingNonScaryWindow) {
         menulist.getItemAtIndex(nonScaryWindowIndex).doCommand();
         ok(
@@ -366,7 +366,7 @@ var gTests = [
           "the scary warning is hidden"
         );
       } else {
-        info("no non-scary window available on this test slave");
+        info("no non-scary window available on this test machine");
       }
 
       let indicator = promiseIndicatorWindow();

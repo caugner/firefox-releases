@@ -8,13 +8,17 @@ from collections import OrderedDict
 
 import os
 import platform
+import re
 import sys
 import subprocess
 import time
+from distutils.version import LooseVersion
 
 # NOTE: This script is intended to be run with a vanilla Python install.  We
 # have to rely on the standard library instead of Python 2+3 helpers like
 # the six module.
+from subprocess import CalledProcessError
+
 if sys.version_info < (3,):
     from ConfigParser import (
         Error as ConfigParserError,
@@ -43,9 +47,7 @@ from mozboot.void import VoidBootstrapper
 from mozboot.windows import WindowsBootstrapper
 from mozboot.mozillabuild import MozillaBuildBootstrapper
 from mozboot.mozconfig import find_mozconfig
-from mozboot.util import (
-    get_state_dir,
-)
+from mozboot.util import get_state_dir
 
 # Use distro package to retrieve linux platform information
 import distro
@@ -231,6 +233,15 @@ build the latest version of tree. Running bootstrap on old revisions may fail
 and is not guaranteed to bring your machine to any working state in particular.
 Proceed at your own peril.
 '''
+
+
+# Version 2.24 changes the "core.commitGraph" setting to be "True" by default.
+MINIMUM_RECOMMENDED_GIT_VERSION = LooseVersion('2.24')
+OLD_GIT_WARNING = '''
+You are running an older version of git ("{old_version}").
+We recommend upgrading to at least version "{minimum_recommended_version}" to improve
+performance.
+'''.strip()
 
 
 def update_or_create_build_telemetry_config(path):
@@ -422,18 +433,19 @@ class Bootstrapper(object):
             self.instance.ensure_dump_syms_packages(state_dir, checkout_root)
 
     def check_telemetry_opt_in(self, state_dir):
-        # We can't prompt the user.
-        if self.instance.no_interactive:
-            return
         # Don't prompt if the user already has a setting for this value.
         if self.mach_context is not None and 'telemetry' in self.mach_context.settings.build:
-            return
+            return self.mach_context.settings.build.telemetry
+        # We can't prompt the user.
+        if self.instance.no_interactive:
+            return False
         choice = self.instance.prompt_yesno(prompt=TELEMETRY_OPT_IN_PROMPT)
         if choice:
             cfg_file = os.path.join(state_dir, 'machrc')
             if update_or_create_build_telemetry_config(cfg_file):
                 print('\nThanks for enabling build telemetry! You can change this setting at ' +
                       'any time by editing the config file `{}`\n'.format(cfg_file))
+        return choice
 
     def bootstrap(self):
         if sys.version_info[0] < 3:
@@ -458,12 +470,17 @@ class Bootstrapper(object):
         self.instance.application = application
         self.instance.artifact_mode = 'artifact_mode' in application
 
+        self.instance.prepare()
+
+        # This doesn't affect any system state and we'd like to bail out as soon
+        # as possible if this check fails.
+        self.instance.ensure_python_modern()
+
         if self.instance.no_system_changes:
             state_dir_available, state_dir = self.try_to_create_state_dir()
             # We need to enable the loading of hgrc in case extensions are
             # required to open the repo.
             r = current_firefox_checkout(
-                check_output=self.instance.check_output,
                 env=self.instance._hg_cleanenv(load_hgrc=True),
                 hg=self.instance.which('hg'))
             (checkout_type, checkout_root) = r
@@ -484,7 +501,6 @@ class Bootstrapper(object):
         getattr(self.instance, 'install_%s_packages' % application)()
 
         hg_installed, hg_modern = self.instance.ensure_mercurial_modern()
-        self.instance.ensure_python_modern()
         if not self.instance.artifact_mode:
             self.instance.ensure_rust_modern()
 
@@ -492,8 +508,7 @@ class Bootstrapper(object):
 
         # We need to enable the loading of hgrc in case extensions are
         # required to open the repo.
-        r = current_firefox_checkout(check_output=self.instance.check_output,
-                                     env=self.instance._hg_cleanenv(load_hgrc=True),
+        r = current_firefox_checkout(env=self.instance._hg_cleanenv(load_hgrc=True),
                                      hg=self.instance.which('hg'))
         (checkout_type, checkout_root) = r
 
@@ -558,7 +573,10 @@ class Bootstrapper(object):
             print(SOURCE_ADVERTISE)
 
         if state_dir_available:
-            self.check_telemetry_opt_in(state_dir)
+            is_telemetry_enabled = self.check_telemetry_opt_in(state_dir)
+            if is_telemetry_enabled:
+                _install_glean()
+
         self.maybe_install_private_packages_or_exit(state_dir,
                                                     state_dir_available,
                                                     have_clone,
@@ -711,7 +729,7 @@ def hg_clone_firefox(hg, dest):
     return True
 
 
-def current_firefox_checkout(check_output, env, hg=None):
+def current_firefox_checkout(env, hg=None):
     """Determine whether we're in a Firefox checkout.
 
     Returns one of None, ``git``, or ``hg``.
@@ -728,10 +746,9 @@ def current_firefox_checkout(check_output, env, hg=None):
         if hg and os.path.exists(hg_dir):
             # Verify the hg repo is a Firefox repo by looking at rev 0.
             try:
-                node = check_output([hg, 'log', '-r', '0', '--template', '{node}'],
-                                    cwd=path,
-                                    env=env,
-                                    universal_newlines=True)
+                node = subprocess.check_output(
+                    [hg, 'log', '-r', '0', '--template', '{node}'],
+                    cwd=path, env=env, universal_newlines=True)
                 if node in HG_ROOT_REVISIONS:
                     _warn_if_risky_revision(path)
                     return ('hg', path)
@@ -758,19 +775,6 @@ def current_firefox_checkout(check_output, env, hg=None):
 
 def update_git_tools(git, root_state_dir, top_src_dir):
     """Update git tools, hooks and extensions"""
-    # Bug 1481425 - delete the git-mozreview
-    # commit message hook in .git/hooks dir
-    if top_src_dir:
-        mozreview_commit_hook = os.path.join(top_src_dir, '.git/hooks/commit-msg')
-        if os.path.exists(mozreview_commit_hook):
-            with open(mozreview_commit_hook, 'rb') as f:
-                contents = f.read()
-
-            if b'MozReview' in contents:
-                print('removing git-mozreview commit message hook...')
-                os.remove(mozreview_commit_hook)
-                print('git-mozreview commit message hook removed.')
-
     # Ensure git-cinnabar is up to date.
     cinnabar_dir = os.path.join(root_state_dir, 'git-cinnabar')
 
@@ -813,6 +817,25 @@ def update_git_repo(git, url, dest):
 
 def configure_git(git, cinnabar, root_state_dir, top_src_dir):
     """Run the Git configuration steps."""
+
+    match = re.search(r'(\d+\.\d+\.\d+)',
+                      subprocess.check_output([git, '--version'],
+                                              universal_newlines=True))
+    if not match:
+        raise Exception('Could not find git version')
+    git_version = LooseVersion(match.group(1))
+
+    if git_version < MINIMUM_RECOMMENDED_GIT_VERSION:
+        print(OLD_GIT_WARNING.format(
+            old_version=git_version,
+            minimum_recommended_version=MINIMUM_RECOMMENDED_GIT_VERSION))
+
+    if top_src_dir and os.path.exists(top_src_dir):
+        if git_version >= LooseVersion('2.17'):
+            # "core.untrackedCache" has a bug before 2.17
+            subprocess.check_call(
+                [git, 'config', 'core.untrackedCache', 'true'], cwd=top_src_dir)
+
     cinnabar_dir = update_git_tools(git, root_state_dir, top_src_dir)
 
     if not cinnabar:
@@ -856,6 +879,28 @@ def git_clone_firefox(git, dest, watchman=None):
 
     print('Firefox source code available at %s' % dest)
     return True
+
+
+def _install_glean():
+    """Installs glean to the current python environment.
+
+    If the current python instance is a virtualenv, then glean is installed
+    directly.
+    If not, then glean is installed to the Python user install directory.
+    Upgrades glean if it's out-of-date.
+    """
+    pip_call = [sys.executable, '-m', 'pip', 'install', 'glean_sdk~=31.5.0']
+    if not os.environ.get('VIRTUAL_ENV'):
+        # If the user is already using a virtual environment before they invoked
+        # `mach bootstrap`, then we shouldn't add the "--user" flag. This is because
+        # virtual environments don't support the flags since they don't have a
+        # separate "user install directory".
+        pip_call.append('--user')
+
+    try:
+        subprocess.check_output(pip_call)
+    except CalledProcessError:
+        print("Failed to install glean, telemetry will not be gathered")
 
 
 def _warn_if_risky_revision(path):

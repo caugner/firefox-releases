@@ -4,8 +4,8 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-#ifndef MOZILLA_SVGCONTEXTPAINT_H_
-#define MOZILLA_SVGCONTEXTPAINT_H_
+#ifndef LAYOUT_SVG_SVGCONTEXTPAINT_H_
+#define LAYOUT_SVG_SVGCONTEXTPAINT_H_
 
 #include "DrawMode.h"
 #include "gfxMatrix.h"
@@ -23,9 +23,8 @@
 
 class gfxContext;
 
-class nsSVGPaintServerFrame;
-
 namespace mozilla {
+class SVGPaintServerFrame;
 
 namespace dom {
 class SVGDocument;
@@ -54,9 +53,9 @@ class SVGDocument;
  */
 class SVGContextPaint : public RefCounted<SVGContextPaint> {
  protected:
-  typedef mozilla::gfx::DrawTarget DrawTarget;
-  typedef mozilla::gfx::Float Float;
-  typedef mozilla::image::imgDrawingParams imgDrawingParams;
+  using DrawTarget = mozilla::gfx::DrawTarget;
+  using Float = mozilla::gfx::Float;
+  using imgDrawingParams = mozilla::image::imgDrawingParams;
 
   SVGContextPaint() : mDashOffset(0.0f), mStrokeWidth(0.0f) {}
 
@@ -145,7 +144,7 @@ class MOZ_RAII AutoSetRestoreSVGContextPaint {
  */
 struct SVGContextPaintImpl : public SVGContextPaint {
  protected:
-  typedef mozilla::gfx::DrawTarget DrawTarget;
+  using DrawTarget = mozilla::gfx::DrawTarget;
 
  public:
   DrawMode Init(const DrawTarget* aDrawTarget, const gfxMatrix& aContextMatrix,
@@ -177,7 +176,7 @@ struct SVGContextPaintImpl : public SVGContextPaint {
     Paint() : mPaintDefinition{}, mPaintType(Tag::None) {}
 
     void SetPaintServer(nsIFrame* aFrame, const gfxMatrix& aContextMatrix,
-                        nsSVGPaintServerFrame* aPaintServerFrame) {
+                        SVGPaintServerFrame* aPaintServerFrame) {
       mPaintType = Tag::PaintServer;
       mPaintDefinition.mPaintServerFrame = aPaintServerFrame;
       mFrame = aFrame;
@@ -196,7 +195,7 @@ struct SVGContextPaintImpl : public SVGContextPaint {
     }
 
     union {
-      nsSVGPaintServerFrame* mPaintServerFrame;
+      SVGPaintServerFrame* mPaintServerFrame;
       SVGContextPaint* mContextPaint;
       nscolor mColor;
     } mPaintDefinition;
@@ -231,7 +230,7 @@ struct SVGContextPaintImpl : public SVGContextPaint {
  * support context colors and not paint servers.
  */
 class SVGEmbeddingContextPaint : public SVGContextPaint {
-  typedef gfx::DeviceColor DeviceColor;
+  using DeviceColor = gfx::DeviceColor;
 
  public:
   SVGEmbeddingContextPaint() : mFillOpacity(1.0f), mStrokeOpacity(1.0f) {}
@@ -285,4 +284,4 @@ class SVGEmbeddingContextPaint : public SVGContextPaint {
 
 }  // namespace mozilla
 
-#endif  // MOZILLA_SVGCONTEXTPAINT_H_
+#endif  // LAYOUT_SVG_SVGCONTEXTPAINT_H_

@@ -426,7 +426,7 @@ static BOOL IsActive(nsIFrame* aFrame, BOOL aIsToolbarControl) {
 static bool IsInSourceList(nsIFrame* aFrame) {
   for (nsIFrame* frame = aFrame->GetParent(); frame;
        frame = nsLayoutUtils::GetCrossDocParentFrame(frame)) {
-    if (frame->StyleDisplay()->mAppearance == StyleAppearance::MozMacSourceList) {
+    if (frame->StyleDisplay()->EffectiveAppearance() == StyleAppearance::MozMacSourceList) {
       return true;
     }
   }
@@ -989,7 +989,7 @@ static bool IsToolbarStyleContainer(nsIFrame* aFrame) {
     return true;
   }
 
-  switch (aFrame->StyleDisplay()->mAppearance) {
+  switch (aFrame->StyleDisplay()->EffectiveAppearance()) {
     case StyleAppearance::Toolbar:
     case StyleAppearance::Statusbar:
       return true;
@@ -1223,8 +1223,7 @@ void nsNativeThemeCocoa::DrawMenuSeparator(CGContextRef cgContext, const CGRect&
 
 static bool ShouldUnconditionallyDrawFocusRingIfFocused(nsIFrame* aFrame) {
   // Mac always draws focus rings for textboxes and lists.
-  switch (aFrame->StyleDisplay()->mAppearance) {
-    case StyleAppearance::MenulistTextfield:
+  switch (aFrame->StyleDisplay()->EffectiveAppearance()) {
     case StyleAppearance::NumberInput:
     case StyleAppearance::Textfield:
     case StyleAppearance::Textarea:
@@ -2032,28 +2031,6 @@ void nsNativeThemeCocoa::DrawTabPanel(CGContextRef cgContext, const HIRect& inBo
   NS_OBJC_END_TRY_ABORT_BLOCK;
 }
 
-nsNativeThemeCocoa::ScaleParams nsNativeThemeCocoa::ComputeXULScaleParams(nsIFrame* aFrame,
-                                                                          EventStates aEventState,
-                                                                          bool aIsHorizontal) {
-  ScaleParams params;
-  params.value = CheckIntAttr(aFrame, nsGkAtoms::curpos, 0);
-  params.min = CheckIntAttr(aFrame, nsGkAtoms::minpos, 0);
-  params.max = CheckIntAttr(aFrame, nsGkAtoms::maxpos, 100);
-  if (!params.max) {
-    params.max = 100;
-  }
-
-  params.reverse =
-      aFrame->GetContent()->IsElement() &&
-      aFrame->GetContent()->AsElement()->AttrValueIs(kNameSpaceID_None, nsGkAtoms::dir,
-                                                     NS_LITERAL_STRING("reverse"), eCaseMatters);
-  params.insideActiveWindow = FrameIsInActiveWindow(aFrame);
-  params.focused = aEventState.HasState(NS_EVENT_STATE_FOCUSRING);
-  params.disabled = IsDisabled(aFrame, aEventState);
-  params.horizontal = aIsHorizontal;
-  return params;
-}
-
 Maybe<nsNativeThemeCocoa::ScaleParams> nsNativeThemeCocoa::ComputeHTMLScaleParams(
     nsIFrame* aFrame, EventStates aEventState) {
   nsRangeFrame* rangeFrame = do_QueryFrame(aFrame);
@@ -2376,7 +2353,7 @@ static bool IsSmallScrollbar(nsIFrame* aFrame) {
   }
   nsIFrame* scrollbarFrame = GetParentScrollbarFrame(aFrame);
   if (scrollbarFrame &&
-      scrollbarFrame->StyleDisplay()->mAppearance == StyleAppearance::ScrollbarSmall) {
+      scrollbarFrame->StyleDisplay()->EffectiveAppearance() == StyleAppearance::ScrollbarSmall) {
     return true;
   }
   return false;
@@ -2847,38 +2824,29 @@ Maybe<nsNativeThemeCocoa::WidgetInfo> nsNativeThemeCocoa::ComputeWidgetInfo(
           WidgetInfo::Button(ButtonParams{ComputeControlParams(aFrame, eventState), buttonType}));
     }
 
-    case StyleAppearance::ButtonBevel: {
-      bool isDefaultButton = IsDefaultButton(aFrame);
-      ButtonType buttonType =
-          isDefaultButton ? ButtonType::eDefaultBevelButton : ButtonType::eRegularBevelButton;
-      return Some(
-          WidgetInfo::Button(ButtonParams{ComputeControlParams(aFrame, eventState), buttonType}));
-    }
-
-    case StyleAppearance::InnerSpinButton: {
-      case StyleAppearance::Spinner:
-        bool isSpinner = (aAppearance == StyleAppearance::Spinner);
-        nsIContent* content = aFrame->GetContent();
-        if (isSpinner && content->IsHTMLElement()) {
-          // In HTML the theming for the spin buttons is drawn individually into
-          // their own backgrounds instead of being drawn into the background of
-          // their spinner parent as it is for XUL.
-          break;
+    case StyleAppearance::Spinner: {
+      bool isSpinner = (aAppearance == StyleAppearance::Spinner);
+      nsIContent* content = aFrame->GetContent();
+      if (isSpinner && content->IsHTMLElement()) {
+        // In HTML the theming for the spin buttons is drawn individually into
+        // their own backgrounds instead of being drawn into the background of
+        // their spinner parent as it is for XUL.
+        break;
+      }
+      SpinButtonParams params;
+      if (content->IsElement()) {
+        if (content->AsElement()->AttrValueIs(kNameSpaceID_None, nsGkAtoms::state, u"up"_ns,
+                                              eCaseMatters)) {
+          params.pressedButton = Some(SpinButton::eUp);
+        } else if (content->AsElement()->AttrValueIs(kNameSpaceID_None, nsGkAtoms::state,
+                                                     u"down"_ns, eCaseMatters)) {
+          params.pressedButton = Some(SpinButton::eDown);
         }
-        SpinButtonParams params;
-        if (content->IsElement()) {
-          if (content->AsElement()->AttrValueIs(kNameSpaceID_None, nsGkAtoms::state,
-                                                NS_LITERAL_STRING("up"), eCaseMatters)) {
-            params.pressedButton = Some(SpinButton::eUp);
-          } else if (content->AsElement()->AttrValueIs(kNameSpaceID_None, nsGkAtoms::state,
-                                                       NS_LITERAL_STRING("down"), eCaseMatters)) {
-            params.pressedButton = Some(SpinButton::eDown);
-          }
-        }
-        params.disabled = IsDisabled(aFrame, eventState);
-        params.insideActiveWindow = FrameIsInActiveWindow(aFrame);
+      }
+      params.disabled = IsDisabled(aFrame, eventState);
+      params.insideActiveWindow = FrameIsInActiveWindow(aFrame);
 
-        return Some(WidgetInfo::SpinButtons(params));
+      return Some(WidgetInfo::SpinButtons(params));
     }
 
     case StyleAppearance::SpinnerUpbutton:
@@ -2952,7 +2920,6 @@ Maybe<nsNativeThemeCocoa::WidgetInfo> nsNativeThemeCocoa::ComputeWidgetInfo(
     case StyleAppearance::Groupbox:
       return Some(WidgetInfo::GroupBox());
 
-    case StyleAppearance::MenulistTextfield:
     case StyleAppearance::Textfield:
     case StyleAppearance::NumberInput: {
       // See ShouldUnconditionallyDrawFocusRingIfFocused.
@@ -2967,8 +2934,8 @@ Maybe<nsNativeThemeCocoa::WidgetInfo> nsNativeThemeCocoa::ComputeWidgetInfo(
       }
 
       bool isDisabled = IsDisabled(aFrame, eventState) || IsReadOnly(aFrame);
-      bool borderless = (aAppearance == StyleAppearance::MenulistTextfield && !isFocused);
-      return Some(WidgetInfo::TextBox(TextBoxParams{isDisabled, isFocused, borderless}));
+      return Some(
+          WidgetInfo::TextBox(TextBoxParams{isDisabled, isFocused, /* borderless = */ false}));
     }
 
     case StyleAppearance::Searchfield:
@@ -2984,9 +2951,6 @@ Maybe<nsNativeThemeCocoa::WidgetInfo> nsNativeThemeCocoa::ComputeWidgetInfo(
       return Some(WidgetInfo::ProgressBar(
           ComputeProgressParams(aFrame, eventState, !IsVerticalProgress(aFrame))));
     }
-
-    case StyleAppearance::ProgressbarVertical:
-      return Some(WidgetInfo::ProgressBar(ComputeProgressParams(aFrame, eventState, false)));
 
     case StyleAppearance::Meter:
       return Some(WidgetInfo::Meter(ComputeMeterParams(aFrame)));
@@ -3017,16 +2981,6 @@ Maybe<nsNativeThemeCocoa::WidgetInfo> nsNativeThemeCocoa::ComputeWidgetInfo(
       // do nothing, taken care of by treeview header
     case StyleAppearance::Treeline:
       // do nothing, these lines don't exist on macos
-      break;
-
-    case StyleAppearance::ScaleHorizontal:
-    case StyleAppearance::ScaleVertical:
-      return Some(WidgetInfo::Scale(ComputeXULScaleParams(
-          aFrame, eventState, aAppearance == StyleAppearance::ScaleHorizontal)));
-
-    case StyleAppearance::ScalethumbHorizontal:
-    case StyleAppearance::ScalethumbVertical:
-      // do nothing, drawn by scale
       break;
 
     case StyleAppearance::Range: {
@@ -3415,7 +3369,6 @@ bool nsNativeThemeCocoa::CreateWebRenderCommandsForWidget(
     case StyleAppearance::MozMacHelpButton:
     case StyleAppearance::MozMacDisclosureButtonOpen:
     case StyleAppearance::MozMacDisclosureButtonClosed:
-    case StyleAppearance::ButtonBevel:
     case StyleAppearance::Spinner:
     case StyleAppearance::SpinnerUpbutton:
     case StyleAppearance::SpinnerDownbutton:
@@ -3425,7 +3378,6 @@ bool nsNativeThemeCocoa::CreateWebRenderCommandsForWidget(
     case StyleAppearance::MozWindowTitlebar:
     case StyleAppearance::Statusbar:
     case StyleAppearance::Menulist:
-    case StyleAppearance::MenulistTextfield:
     case StyleAppearance::MenulistButton:
     case StyleAppearance::MozMenulistArrowButton:
     case StyleAppearance::Groupbox:
@@ -3433,15 +3385,12 @@ bool nsNativeThemeCocoa::CreateWebRenderCommandsForWidget(
     case StyleAppearance::NumberInput:
     case StyleAppearance::Searchfield:
     case StyleAppearance::ProgressBar:
-    case StyleAppearance::ProgressbarVertical:
     case StyleAppearance::Meter:
     case StyleAppearance::Treetwisty:
     case StyleAppearance::Treetwistyopen:
     case StyleAppearance::Treeheadercell:
     case StyleAppearance::Treeitem:
     case StyleAppearance::Treeview:
-    case StyleAppearance::ScaleHorizontal:
-    case StyleAppearance::ScaleVertical:
     case StyleAppearance::Range:
     case StyleAppearance::ScrollbarthumbVertical:
     case StyleAppearance::ScrollbarthumbHorizontal:
@@ -3584,7 +3533,6 @@ LayoutDeviceIntMargin nsNativeThemeCocoa::GetWidgetBorder(nsDeviceContext* aCont
       result = DirectionAwareMargin(kAquaDropdownBorder, aFrame);
       break;
 
-    case StyleAppearance::MenulistTextfield:
     case StyleAppearance::NumberInput:
     case StyleAppearance::Textfield: {
       SInt32 frameOutset = 0;
@@ -3698,7 +3646,6 @@ bool nsNativeThemeCocoa::GetWidgetOverflow(nsDeviceContext* aContext, nsIFrame* 
     case StyleAppearance::Menulist:
     case StyleAppearance::MenulistButton:
     case StyleAppearance::MozMenulistArrowButton:
-    case StyleAppearance::MenulistTextfield:
     case StyleAppearance::Checkbox:
     case StyleAppearance::Radio:
     case StyleAppearance::Tab:
@@ -3787,7 +3734,6 @@ nsNativeThemeCocoa::GetMinimumWidgetSize(nsPresContext* aPresContext, nsIFrame* 
       break;
     }
 
-    case StyleAppearance::InnerSpinButton:
     case StyleAppearance::Spinner:
     case StyleAppearance::SpinnerUpbutton:
     case StyleAppearance::SpinnerDownbutton: {
@@ -3818,7 +3764,6 @@ nsNativeThemeCocoa::GetMinimumWidgetSize(nsPresContext* aPresContext, nsIFrame* 
       break;
     }
 
-    case StyleAppearance::MenulistTextfield:
     case StyleAppearance::NumberInput:
     case StyleAppearance::Textfield:
     case StyleAppearance::Textarea:
@@ -3889,22 +3834,6 @@ nsNativeThemeCocoa::GetMinimumWidgetSize(nsPresContext* aPresContext, nsIFrame* 
       ::GetThemeMetric(kThemeMetricSliderMinThumbWidth, &width);
       ::GetThemeMetric(kThemeMetricSliderMinThumbHeight, &height);
       aResult->SizeTo(width, height);
-      *aIsOverridable = false;
-      break;
-    }
-
-    case StyleAppearance::ScaleHorizontal: {
-      SInt32 scaleHeight = 0;
-      ::GetThemeMetric(kThemeMetricHSliderHeight, &scaleHeight);
-      aResult->SizeTo(scaleHeight, scaleHeight);
-      *aIsOverridable = false;
-      break;
-    }
-
-    case StyleAppearance::ScaleVertical: {
-      SInt32 scaleWidth = 0;
-      ::GetThemeMetric(kThemeMetricVSliderWidth, &scaleWidth);
-      aResult->SizeTo(scaleWidth, scaleWidth);
       *aIsOverridable = false;
       break;
     }
@@ -4019,7 +3948,6 @@ nsNativeThemeCocoa::WidgetStateChanged(nsIFrame* aFrame, StyleAppearance aAppear
     case StyleAppearance::Groupbox:
     case StyleAppearance::Progresschunk:
     case StyleAppearance::ProgressBar:
-    case StyleAppearance::ProgressbarVertical:
     case StyleAppearance::Meter:
     case StyleAppearance::Meterchunk:
     case StyleAppearance::MozMacVibrancyLight:
@@ -4104,9 +4032,7 @@ bool nsNativeThemeCocoa::ThemeSupportsWidget(nsPresContext* aPresContext, nsIFra
     case StyleAppearance::Button:
     case StyleAppearance::ButtonArrowUp:
     case StyleAppearance::ButtonArrowDown:
-    case StyleAppearance::ButtonBevel:
     case StyleAppearance::Toolbarbutton:
-    case StyleAppearance::InnerSpinButton:
     case StyleAppearance::Spinner:
     case StyleAppearance::SpinnerUpbutton:
     case StyleAppearance::SpinnerDownbutton:
@@ -4119,7 +4045,6 @@ bool nsNativeThemeCocoa::ThemeSupportsWidget(nsPresContext* aPresContext, nsIFra
     case StyleAppearance::Toolbox:
     // case StyleAppearance::Toolbarbutton:
     case StyleAppearance::ProgressBar:
-    case StyleAppearance::ProgressbarVertical:
     case StyleAppearance::Progresschunk:
     case StyleAppearance::Meter:
     case StyleAppearance::Meterchunk:
@@ -4136,17 +4061,11 @@ bool nsNativeThemeCocoa::ThemeSupportsWidget(nsPresContext* aPresContext, nsIFra
     case StyleAppearance::Treeheadersortarrow:
     case StyleAppearance::Treeitem:
     case StyleAppearance::Treeline:
-    case StyleAppearance::MenulistTextfield:
     case StyleAppearance::MozMacSourceList:
     case StyleAppearance::MozMacSourceListSelection:
     case StyleAppearance::MozMacActiveSourceListSelection:
 
     case StyleAppearance::Range:
-
-    case StyleAppearance::ScaleHorizontal:
-    case StyleAppearance::ScalethumbHorizontal:
-    case StyleAppearance::ScaleVertical:
-    case StyleAppearance::ScalethumbVertical:
 
     case StyleAppearance::Scrollbar:
     case StyleAppearance::ScrollbarSmall:
@@ -4248,13 +4167,11 @@ bool nsNativeThemeCocoa::WidgetAppearanceDependsOnWindowFocus(StyleAppearance aA
     case StyleAppearance::Menuitem:
     case StyleAppearance::Menuseparator:
     case StyleAppearance::Tooltip:
-    case StyleAppearance::InnerSpinButton:
     case StyleAppearance::Spinner:
     case StyleAppearance::SpinnerUpbutton:
     case StyleAppearance::SpinnerDownbutton:
     case StyleAppearance::Separator:
     case StyleAppearance::Toolbox:
-    case StyleAppearance::MenulistTextfield:
     case StyleAppearance::NumberInput:
     case StyleAppearance::Textfield:
     case StyleAppearance::Treeview:

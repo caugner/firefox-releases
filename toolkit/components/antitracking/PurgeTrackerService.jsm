@@ -47,7 +47,7 @@ this.PurgeTrackerService = function() {};
 
 PurgeTrackerService.prototype = {
   classID: Components.ID("{90d1fd17-2018-4e16-b73c-a04a26fa6dd4}"),
-  QueryInterface: ChromeUtils.generateQI([Ci.nsIPurgeTrackerService]),
+  QueryInterface: ChromeUtils.generateQI(["nsIPurgeTrackerService"]),
 
   // Purging is batched for cookies to avoid clearing too much data
   // at once. This flag tells us whether this is the first daily iteration.
@@ -56,14 +56,6 @@ PurgeTrackerService.prototype = {
   // We can only know asynchronously if a host is matched by the tracking
   // protection list, so we cache the result for faster future lookups.
   _trackingState: new Map(),
-  /**
-   * We use this collator to compare strings as if they were numbers.
-   * Timestamps are saved as strings since the number is too large for an int.
-   **/
-  collator: new Intl.Collator(undefined, {
-    numeric: true,
-    sensitivity: "base",
-  }),
 
   observe(aSubject, aTopic, aData) {
     switch (aTopic) {
@@ -99,7 +91,7 @@ PurgeTrackerService.prototype = {
           gClassifier.asyncClassifyLocalWithFeatures(
             principal.URI,
             [gClassifierFeature],
-            Ci.nsIUrlClassifierFeature.blacklist,
+            Ci.nsIUrlClassifierFeature.blocklist,
             list => {
               if (list.length) {
                 this._trackingState.set(host, true);
@@ -128,7 +120,7 @@ PurgeTrackerService.prototype = {
         gClassifier.asyncClassifyLocalWithFeatures(
           uri,
           [gClassifierFeature],
-          Ci.nsIUrlClassifierFeature.whitelist,
+          Ci.nsIUrlClassifierFeature.entitylist,
           list => {
             let sameList = !!list.length;
             logger.debug(`Is ${uri.spec} on the entity list?`, sameList);
@@ -287,17 +279,24 @@ PurgeTrackerService.prototype = {
       "privacy.purge_trackers.enabled",
       false
     );
-    // Only purge if ETP is enabled.
+
+    // Purge cookie jars for following cookie behaviors.
+    //   * BEHAVIOR_REJECT_FOREIGN
+    //   * BEHAVIOR_LIMIT_FOREIGN
+    //   * BEHAVIOR_REJECT_TRACKER (ETP)
+    //   * BEHAVIOR_REJECT_TRACKER_AND_PARTITION_FOREIGN (dFPI)
     let cookieBehavior = Services.cookies.cookieBehavior;
 
-    let etpActive =
+    let activeWithCookieBehavior =
+      cookieBehavior == Ci.nsICookieService.BEHAVIOR_REJECT_FOREIGN ||
+      cookieBehavior == Ci.nsICookieService.BEHAVIOR_LIMIT_FOREIGN ||
       cookieBehavior == Ci.nsICookieService.BEHAVIOR_REJECT_TRACKER ||
       cookieBehavior ==
         Ci.nsICookieService.BEHAVIOR_REJECT_TRACKER_AND_PARTITION_FOREIGN;
 
-    if (!etpActive || !purgeEnabled) {
+    if (!activeWithCookieBehavior || !purgeEnabled) {
       logger.log(
-        `returning early, etpActive: ${etpActive}, purgeEnabled: ${purgeEnabled}`
+        `returning early, activeWithCookieBehavior: ${activeWithCookieBehavior}, purgeEnabled: ${purgeEnabled}`
       );
       this.resetPurgeList();
       return;
@@ -347,22 +346,7 @@ PurgeTrackerService.prototype = {
     let maybeClearPrincipals = new Map();
 
     // TODO We only need the host name and creationTime, this gives too much info. See bug 1610373.
-    let cookies = Services.cookies.cookies;
-
-    // ensure we have only cookies that have a greater or equal creationTime than the saved creationTime.
-    // TODO only get cookies that fulfill this condition. See bug 1610373.
-    cookies = cookies.filter(cookie => {
-      return (
-        cookie.creationTime &&
-        this.collator.compare(cookie.creationTime, saved_date) > 0
-      );
-    });
-
-    // ensure the cookies are sorted by creationTime oldest to newest.
-    // TODO get cookies in this order. See bug 1610373.
-    cookies.sort((a, b) =>
-      this.collator.compare(a.creationTime, b.creationTime)
-    );
+    let cookies = Services.cookies.getCookiesSince(saved_date);
     cookies = cookies.slice(0, MAX_PURGE_COUNT);
 
     for (let cookie of cookies) {

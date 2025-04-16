@@ -104,10 +104,11 @@ use crate::gpu_cache::{GpuCache, GpuCacheHandle, ToGpuBlocks};
 use crate::gpu_types::{BoxShadowStretchMode};
 use crate::intern::{self, ItemUid};
 use crate::internal_types::{FastHashMap, FastHashSet};
-use crate::prim_store::{ClipData, ImageMaskData, SpaceMapper, VisibleMaskImageTile};
+use crate::prim_store::{ClipData, ImageMaskData, VisibleMaskImageTile};
 use crate::prim_store::{PointKey, SizeKey, RectangleKey};
 use crate::render_task_cache::to_cache_size;
 use crate::resource_cache::{ImageRequest, ResourceCache};
+use crate::space::SpaceMapper;
 use crate::util::{clamp_to_scale_factor, extract_inner_rect_safe, project_rect, ScaleOffset, VecHelper};
 use euclid::approxeq::ApproxEq;
 use std::{iter, ops, u32};
@@ -566,7 +567,11 @@ impl ClipNodeInfo {
                     let visible_rect = if repeat {
                         *clipped_rect
                     } else {
-                        clipped_rect.intersection(&rect).unwrap()
+                        // Bug 1648323 - It is unclear why on rare occasions we get
+                        // a clipped_rect that does not intersect the clip's mask rect.
+                        // defaulting to clipped_rect here results in zero repetitions
+                        // which clips the primitive entirely.
+                        clipped_rect.intersection(&rect).unwrap_or(*clipped_rect)
                     };
 
                     let repetitions = image_tiling::repetitions(
@@ -909,7 +914,7 @@ impl ClipChainStack {
         maybe_shared_clips: &[ClipInstance],
         spatial_tree: &SpatialTree,
     ) {
-        let mut shared_clips = Vec::new();
+        let mut shared_clips = Vec::with_capacity(maybe_shared_clips.len());
 
         // If there are clips in the shared list for a picture cache, only include
         // them if they are simple, axis-aligned clips (i.e. in the root coordinate
@@ -928,7 +933,7 @@ impl ClipChainStack {
         }
 
         let level = ClipChainLevel {
-            shared_clips: shared_clips.to_vec(),
+            shared_clips,
             first_clip_index: self.clips.len(),
             initial_clip_counts_len: self.clip_counts.len(),
         };

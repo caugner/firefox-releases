@@ -867,21 +867,6 @@ add_task(async function prohibit_suggestions() {
     ],
   });
 
-  if (!Services.prefs.getBoolPref("browser.fixup.defaultToSearch", true)) {
-    context = createContext("test/test", { isPrivate: false });
-    await check_results({
-      context,
-      matches: [
-        makeVisitResult(context, {
-          uri: "http://test/test",
-          title: "http://test/test",
-          iconUri: "page-icon:http://test/",
-          heuristic: true,
-        }),
-      ],
-    });
-  }
-
   context = createContext("data:text/plain,Content", { isPrivate: false });
   await check_results({
     context,
@@ -1514,7 +1499,6 @@ add_task(async function formHistory() {
         uri: "http://foo.example.com/",
         title: "foo.example.com",
         heuristic: true,
-        tags: [],
       }),
       makeFormHistoryResult(context, {
         suggestion: "foo",

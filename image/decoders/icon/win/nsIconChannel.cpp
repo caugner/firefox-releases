@@ -365,7 +365,7 @@ nsIconChannel::AsyncOpen(nsIStreamListener* aListener) {
       mLoadInfo->GetSecurityMode() == 0 ||
           mLoadInfo->GetInitialSecurityCheckDone() ||
           (mLoadInfo->GetSecurityMode() ==
-               nsILoadInfo::SEC_ALLOW_CROSS_ORIGIN_DATA_IS_NULL &&
+               nsILoadInfo::SEC_ALLOW_CROSS_ORIGIN_SEC_CONTEXT_IS_NULL &&
            mLoadInfo->GetLoadingPrincipal() &&
            mLoadInfo->GetLoadingPrincipal()->IsSystemPrincipal()),
       "security flags in loadInfo but doContentSecurityCheck() not called");
@@ -498,7 +498,7 @@ nsresult nsIconChannel::GetHIconFromFile(bool aNonBlocking, HICON* hIcon) {
     // If the mime service does not know about this mime type, we show
     // the generic icon.
     // In any case, we need to insert a '.' before the extension.
-    filePath = NS_LITERAL_STRING(".") + NS_ConvertUTF8toUTF16(defFileExt);
+    filePath = u"."_ns + NS_ConvertUTF8toUTF16(defFileExt);
   }
 
   if (aNonBlocking) {

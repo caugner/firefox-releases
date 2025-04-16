@@ -48,7 +48,7 @@ bool EmitterScope::checkEnvironmentChainLength(BytecodeEmitter* bce) {
   if (EmitterScope* emitterScope = enclosing(&bce)) {
     hops = emitterScope->environmentChainLength_;
   } else {
-    hops = bce->sc->compilationEnclosingScope()->environmentChainLength();
+    hops = bce->compilationInfo.enclosingScope->environmentChainLength();
   }
 
   if (hops >= ENVCOORD_HOPS_LIMIT - 1) {
@@ -118,13 +118,13 @@ AbstractScopePtr EmitterScope::enclosingScope(BytecodeEmitter* bce) const {
 
   // The enclosing script is already compiled or the current script is the
   // global script.
-  return AbstractScopePtr(bce->sc->compilationEnclosingScope());
+  return AbstractScopePtr(bce->compilationInfo.enclosingScope);
 }
 
 /* static */
 bool EmitterScope::nameCanBeFree(BytecodeEmitter* bce, JSAtom* name) {
   // '.generator' cannot be accessed by name.
-  return name != bce->cx->names().dotGenerator;
+  return name != bce->cx->parserNames().dotGenerator;
 }
 
 #ifdef DEBUG
@@ -205,6 +205,7 @@ NameLocation EmitterScope::searchInEnclosingScope(JSAtom* name, Scope* scope,
       case ScopeKind::SimpleCatch:
       case ScopeKind::Catch:
       case ScopeKind::FunctionLexical:
+      case ScopeKind::ClassBody:
         if (hasEnv) {
           for (BindingIter bi(si.scope()); bi; bi++) {
             if (bi.name() != name) {
@@ -307,8 +308,8 @@ NameLocation EmitterScope::searchAndCache(BytecodeEmitter* bce, JSAtom* name) {
   // chain encompassing the compilation.
   if (!loc) {
     inCurrentScript = false;
-    loc = Some(searchInEnclosingScope(
-        name, bce->sc->compilationEnclosingScope(), hops));
+    loc = Some(searchInEnclosingScope(name, bce->compilationInfo.enclosingScope,
+                                      hops));
   }
 
   // Each script has its own frame. A free name that is accessed
@@ -330,7 +331,8 @@ bool EmitterScope::internEmptyGlobalScopeAsBody(BytecodeEmitter* bce) {
   Scope* scope = &bce->cx->global()->emptyGlobalScope();
   hasEnvironment_ = scope->hasEnvironment();
 
-  bce->bodyScopeIndex = bce->perScriptData().gcThingList().length();
+  bce->bodyScopeIndex =
+      GCThingIndex(bce->perScriptData().gcThingList().length());
   return bce->perScriptData().gcThingList().appendEmptyGlobalScope(
       &scopeIndex_);
 }
@@ -351,9 +353,10 @@ bool EmitterScope::internScopeCreationData(BytecodeEmitter* bce,
 template <typename ScopeCreator>
 bool EmitterScope::internBodyScopeCreationData(BytecodeEmitter* bce,
                                                ScopeCreator createScope) {
-  MOZ_ASSERT(bce->bodyScopeIndex == UINT32_MAX,
+  MOZ_ASSERT(bce->bodyScopeIndex == ScopeNote::NoScopeIndex,
              "There can be only one body scope");
-  bce->bodyScopeIndex = bce->perScriptData().gcThingList().length();
+  bce->bodyScopeIndex =
+      GCThingIndex(bce->perScriptData().gcThingList().length());
   return internScopeCreationData(bce, createScope);
 }
 
@@ -634,8 +637,8 @@ bool EmitterScope::enterFunction(BytecodeEmitter* bce, FunctionBox* funbox) {
     return ScopeCreationData::create(
         cx, bce->compilationInfo, funbox->functionScopeBindings(),
         funbox->hasParameterExprs,
-        funbox->needsCallObjectRegardlessOfBindings(), funbox, enclosing,
-        index);
+        funbox->needsCallObjectRegardlessOfBindings(), funbox->index(),
+        funbox->isArrow(), enclosing, index);
   };
   if (!internBodyScopeCreationData(bce, createScope)) {
     return false;
@@ -775,7 +778,8 @@ bool EmitterScope::enterGlobal(BytecodeEmitter* bce,
   }
 
   // See: JSScript::outermostScope.
-  MOZ_ASSERT(bce->bodyScopeIndex == 0, "Global scope must be index 0");
+  MOZ_ASSERT(bce->bodyScopeIndex == GCThingIndex::outermostScopeIndex(),
+             "Global scope must be index 0");
 
   // Resolve binding names and emit Def{Var,Let,Const} prologue ops.
   if (globalsc->bindings) {
@@ -941,8 +945,7 @@ bool EmitterScope::enterModule(BytecodeEmitter* bce,
                                      Handle<AbstractScopePtr> enclosing,
                                      ScopeIndex* index) {
     return ScopeCreationData::create(cx, bce->compilationInfo,
-                                     modulesc->bindings, modulesc->module(),
-                                     enclosing, index);
+                                     modulesc->bindings, enclosing, index);
   };
   if (!internBodyScopeCreationData(bce, createScope)) {
     return false;
@@ -996,6 +999,7 @@ bool EmitterScope::leave(BytecodeEmitter* bce, bool nonLocal) {
     case ScopeKind::SimpleCatch:
     case ScopeKind::Catch:
     case ScopeKind::FunctionLexical:
+    case ScopeKind::ClassBody:
       if (!bce->emit1(hasEnvironment() ? JSOp::PopLexicalEnv
                                        : JSOp::DebugLeaveLexicalEnv)) {
         return false;
@@ -1046,6 +1050,10 @@ bool EmitterScope::leave(BytecodeEmitter* bce, bool nonLocal) {
 
 AbstractScopePtr EmitterScope::scope(const BytecodeEmitter* bce) const {
   return bce->perScriptData().gcThingList().getScope(index());
+}
+
+ScopeIndex EmitterScope::scopeIndex(const BytecodeEmitter* bce) const {
+  return bce->perScriptData().gcThingList().getScopeIndex(index());
 }
 
 NameLocation EmitterScope::lookup(BytecodeEmitter* bce, JSAtom* name) {

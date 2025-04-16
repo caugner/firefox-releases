@@ -607,7 +607,8 @@ imgRequestProxy* nsImageBoxFrame::GetRequestFromStyle() {
   const nsStyleDisplay* disp = StyleDisplay();
   if (disp->HasAppearance()) {
     nsPresContext* pc = PresContext();
-    if (pc->Theme()->ThemeSupportsWidget(pc, this, disp->mAppearance)) {
+    if (pc->Theme()->ThemeSupportsWidget(pc, this,
+                                         disp->EffectiveAppearance())) {
       return nullptr;
     }
   }
@@ -750,7 +751,7 @@ nscoord nsImageBoxFrame::GetXULBoxAscent(nsBoxLayoutState& aState) {
 
 #ifdef DEBUG_FRAME_DUMP
 nsresult nsImageBoxFrame::GetFrameName(nsAString& aResult) const {
-  return MakeFrameName(NS_LITERAL_STRING("ImageBox"), aResult);
+  return MakeFrameName(u"ImageBox"_ns, aResult);
 }
 #endif
 

@@ -24,6 +24,7 @@
 #include "builtin/intl/LanguageTag.h"
 #include "builtin/intl/ScopedICUObject.h"
 #include "builtin/intl/SharedIntlData.h"
+#include "builtin/String.h"
 #include "gc/AllocKind.h"
 #include "gc/FreeOp.h"
 #include "gc/Rooting.h"
@@ -74,7 +75,7 @@ const JSClassOps DisplayNamesObject::classOps_ = {nullptr, /* addProperty */
                                                   DisplayNamesObject::finalize};
 
 const JSClass DisplayNamesObject::class_ = {
-    js_Object_str,
+    "Intl.DisplayNames",
     JSCLASS_HAS_RESERVED_SLOTS(DisplayNamesObject::SLOT_COUNT) |
         JSCLASS_HAS_CACHED_PROTO(JSProto_DisplayNames) |
         JSCLASS_FOREGROUND_FINALIZE,
@@ -106,7 +107,7 @@ static const JSPropertySpec displayNames_properties[] = {
 static bool DisplayNames(JSContext* cx, unsigned argc, Value* vp);
 
 const ClassSpec DisplayNamesObject::classSpec_ = {
-    GenericCreateConstructor<DisplayNames, 0, gc::AllocKind::FUNCTION>,
+    GenericCreateConstructor<DisplayNames, 2, gc::AllocKind::FUNCTION>,
     GenericCreatePrototype<DisplayNamesObject>,
     displayNames_static_methods,
     nullptr,
@@ -175,6 +176,11 @@ static bool DisplayNames(JSContext* cx, const CallArgs& args,
     }
   }
 
+  // TypeError anyway, but this gives a better error message.
+  if (!args.requireAtLeast(cx, "DisplayNames", 2)) {
+    return false;
+  }
+
   Rooted<DisplayNamesObject*> displayNames(cx);
   displayNames = NewObjectWithClassProto<DisplayNamesObject>(cx, proto);
   if (!displayNames) {
@@ -230,7 +236,7 @@ bool js::AddDisplayNamesConstructor(JSContext* cx, HandleObject intl) {
 
 bool js::AddMozDisplayNamesConstructor(JSContext* cx, HandleObject intl) {
   RootedObject ctor(cx, GlobalObject::createConstructor(
-                            cx, MozDisplayNames, cx->names().DisplayNames, 0));
+                            cx, MozDisplayNames, cx->names().DisplayNames, 2));
   if (!ctor) {
     return false;
   }
@@ -262,6 +268,8 @@ bool js::AddMozDisplayNamesConstructor(JSContext* cx, HandleObject intl) {
 }
 
 enum class DisplayNamesStyle { Long, Short, Narrow };
+
+enum class DisplayNamesFallback { None, Code };
 
 static ULocaleDisplayNames* NewULocaleDisplayNames(
     JSContext* cx, const char* locale, DisplayNamesStyle displayStyle) {
@@ -330,7 +338,8 @@ static void ReportInvalidOptionError(JSContext* cx, const char* type,
 
 static JSString* GetLanguageDisplayName(
     JSContext* cx, Handle<DisplayNamesObject*> displayNames, const char* locale,
-    DisplayNamesStyle displayStyle, HandleLinearString languageStr) {
+    DisplayNamesStyle displayStyle, DisplayNamesFallback fallback,
+    HandleLinearString languageStr) {
   bool ok;
   intl::LanguageTag tag(cx);
   JS_TRY_VAR_OR_RETURN_NULL(
@@ -343,8 +352,6 @@ static JSString* GetLanguageDisplayName(
   // ICU always canonicalizes the input locale, but since we know that ICU's
   // canonicalization is incomplete, we need to perform our own canonicalization
   // to ensure consistent result.
-  // FIXME: spec issue - language tag canonicalisation not performed:
-  // https://github.com/tc39/proposal-intl-displaynames/issues/70
   if (!tag.canonicalizeBaseName(cx)) {
     return nullptr;
   }
@@ -360,8 +367,8 @@ static JSString* GetLanguageDisplayName(
     return nullptr;
   }
 
-  return CallICU(cx, [ldn, &languageChars](UChar* chars, uint32_t size,
-                                           UErrorCode* status) {
+  JSString* str = CallICU(cx, [ldn, &languageChars](UChar* chars, uint32_t size,
+                                                    UErrorCode* status) {
     int32_t res =
         uldn_localeDisplayName(ldn, languageChars.get(), chars, size, status);
 
@@ -373,12 +380,28 @@ static JSString* GetLanguageDisplayName(
     }
     return res;
   });
+  if (!str) {
+    return nullptr;
+  }
+
+  // Return the canonicalized input when no localized language name was found.
+  if (str->empty() && fallback == DisplayNamesFallback::Code) {
+    return NewStringCopyZ<CanGC>(cx, languageChars.get());
+  }
+
+  return str;
+}
+
+template <typename CharT>
+static JSString* NewStringCopy(JSContext* cx, mozilla::Span<const CharT> span) {
+  return NewStringCopyN<CanGC>(cx, span.data(), span.size());
 }
 
 static JSString* GetScriptDisplayName(JSContext* cx,
                                       Handle<DisplayNamesObject*> displayNames,
                                       const char* locale,
                                       DisplayNamesStyle displayStyle,
+                                      DisplayNamesFallback fallback,
                                       HandleLinearString scriptStr) {
   intl::ScriptSubtag script;
   if (!intl::ParseStandaloneScriptTag(scriptStr, script)) {
@@ -393,8 +416,6 @@ static JSString* GetScriptDisplayName(JSContext* cx,
   // ICU always canonicalizes the input locale, but since we know that ICU's
   // canonicalization is incomplete, we need to perform our own canonicalization
   // to ensure consistent result.
-  // FIXME: spec issue - language tag canonicalisation not performed:
-  // https://github.com/tc39/proposal-intl-displaynames/issues/70
   if (!tag.canonicalizeBaseName(cx)) {
     return nullptr;
   }
@@ -412,28 +433,38 @@ static JSString* GetScriptDisplayName(JSContext* cx,
       return nullptr;
     }
 
-    return CallICU(cx, [locale, &scriptChars](UChar* chars, uint32_t size,
-                                              UErrorCode* status) {
-      int32_t res =
-          uloc_getDisplayScript(scriptChars.get(), locale, chars, size, status);
+    JSString* str =
+        CallICU(cx, [locale, &scriptChars](UChar* chars, uint32_t size,
+                                           UErrorCode* status) {
+          int32_t res = uloc_getDisplayScript(scriptChars.get(), locale, chars,
+                                              size, status);
 
-      // |uloc_getDisplayScript| reports U_USING_DEFAULT_WARNING when no display
-      // name was found.
-      if (*status == U_USING_DEFAULT_WARNING) {
-        *status = U_ZERO_ERROR;
-        res = 0;
-      }
-      return res;
-    });
+          // |uloc_getDisplayScript| reports U_USING_DEFAULT_WARNING when no
+          // display name was found.
+          if (*status == U_USING_DEFAULT_WARNING) {
+            *status = U_ZERO_ERROR;
+            res = 0;
+          }
+          return res;
+        });
+    if (!str) {
+      return nullptr;
+    }
+
+    // Return the canonicalized input when no localized script name was found.
+    if (str->empty() && fallback == DisplayNamesFallback::Code) {
+      return NewStringCopy(cx, tag.script().span());
+    }
+
+    return str;
   }
 
   // Note: ICU requires the script subtag to be in canonical case.
   const intl::ScriptSubtag& canonicalScript = tag.script();
 
-  char scriptChars[intl::LanguageTagLimits::ScriptLength + 1];
+  char scriptChars[intl::LanguageTagLimits::ScriptLength + 1] = {};
   std::copy_n(canonicalScript.span().data(), canonicalScript.length(),
               scriptChars);
-  scriptChars[canonicalScript.length()] = '\0';
 
   ULocaleDisplayNames* ldn =
       GetOrCreateLocaleDisplayNames(cx, displayNames, locale, displayStyle);
@@ -441,8 +472,8 @@ static JSString* GetScriptDisplayName(JSContext* cx,
     return nullptr;
   }
 
-  return CallICU(cx, [ldn, scriptChars](UChar* chars, uint32_t size,
-                                        UErrorCode* status) {
+  JSString* str = CallICU(cx, [ldn, scriptChars](UChar* chars, uint32_t size,
+                                                 UErrorCode* status) {
     int32_t res = uldn_scriptDisplayName(ldn, scriptChars, chars, size, status);
 
     // |uldn_scriptDisplayName| reports U_ILLEGAL_ARGUMENT_ERROR when no display
@@ -453,12 +484,23 @@ static JSString* GetScriptDisplayName(JSContext* cx,
     }
     return res;
   });
+  if (!str) {
+    return nullptr;
+  }
+
+  // Return the canonicalized input when no localized script name was found.
+  if (str->empty() && fallback == DisplayNamesFallback::Code) {
+    return NewStringCopy(cx, tag.script().span());
+  }
+
+  return str;
 }
 
 static JSString* GetRegionDisplayName(JSContext* cx,
                                       Handle<DisplayNamesObject*> displayNames,
                                       const char* locale,
                                       DisplayNamesStyle displayStyle,
+                                      DisplayNamesFallback fallback,
                                       HandleLinearString regionStr) {
   intl::RegionSubtag region;
   if (!intl::ParseStandaloneRegionTag(regionStr, region)) {
@@ -473,8 +515,6 @@ static JSString* GetRegionDisplayName(JSContext* cx,
   // ICU always canonicalizes the input locale, but since we know that ICU's
   // canonicalization is incomplete, we need to perform our own canonicalization
   // to ensure consistent result.
-  // FIXME: spec issue - language tag canonicalisation not performed:
-  // https://github.com/tc39/proposal-intl-displaynames/issues/70
   if (!tag.canonicalizeBaseName(cx)) {
     return nullptr;
   }
@@ -483,10 +523,9 @@ static JSString* GetRegionDisplayName(JSContext* cx,
   // Note: ICU requires the region subtag to be in canonical case.
   const intl::RegionSubtag& canonicalRegion = tag.region();
 
-  char regionChars[intl::LanguageTagLimits::RegionLength + 1];
+  char regionChars[intl::LanguageTagLimits::RegionLength + 1] = {};
   std::copy_n(canonicalRegion.span().data(), canonicalRegion.length(),
               regionChars);
-  regionChars[canonicalRegion.length()] = '\0';
 
   ULocaleDisplayNames* ldn =
       GetOrCreateLocaleDisplayNames(cx, displayNames, locale, displayStyle);
@@ -494,8 +533,8 @@ static JSString* GetRegionDisplayName(JSContext* cx,
     return nullptr;
   }
 
-  return CallICU(cx, [ldn, regionChars](UChar* chars, uint32_t size,
-                                        UErrorCode* status) {
+  JSString* str = CallICU(cx, [ldn, regionChars](UChar* chars, uint32_t size,
+                                                 UErrorCode* status) {
     int32_t res = uldn_regionDisplayName(ldn, regionChars, chars, size, status);
 
     // |uldn_regionDisplayName| reports U_ILLEGAL_ARGUMENT_ERROR when no display
@@ -506,10 +545,21 @@ static JSString* GetRegionDisplayName(JSContext* cx,
     }
     return res;
   });
+  if (!str) {
+    return nullptr;
+  }
+
+  // Return the canonicalized input when no localized region name was found.
+  if (str->empty() && fallback == DisplayNamesFallback::Code) {
+    return NewStringCopy(cx, tag.region().span());
+  }
+
+  return str;
 }
 
 static JSString* GetCurrencyDisplayName(JSContext* cx, const char* locale,
                                         DisplayNamesStyle displayStyle,
+                                        DisplayNamesFallback fallback,
                                         HandleLinearString currencyStr) {
   // Inlined implementation of `IsWellFormedCurrencyCode ( currency )`.
   if (currencyStr->length() != 3) {
@@ -552,11 +602,57 @@ static JSString* GetCurrencyDisplayName(JSContext* cx, const char* locale,
   MOZ_ASSERT(length >= 0);
 
   if (status == U_USING_DEFAULT_WARNING) {
+    // Return the canonicalized input when no localized currency name was found.
+    if (fallback == DisplayNamesFallback::Code) {
+      // Canonical case for currency is upper case.
+      return js::StringToUpperCase(cx, currencyStr);
+    }
     return cx->emptyString();
   }
 
   return NewStringCopyN<CanGC>(cx, name, size_t(length));
 }
+
+#ifdef DEBUG
+static bool IsStandaloneMonth(UDateFormatSymbolType symbolType) {
+  switch (symbolType) {
+    case UDAT_STANDALONE_MONTHS:
+    case UDAT_STANDALONE_SHORT_MONTHS:
+    case UDAT_STANDALONE_NARROW_MONTHS:
+      return true;
+
+    case UDAT_ERAS:
+    case UDAT_MONTHS:
+    case UDAT_SHORT_MONTHS:
+    case UDAT_WEEKDAYS:
+    case UDAT_SHORT_WEEKDAYS:
+    case UDAT_AM_PMS:
+    case UDAT_LOCALIZED_CHARS:
+    case UDAT_ERA_NAMES:
+    case UDAT_NARROW_MONTHS:
+    case UDAT_NARROW_WEEKDAYS:
+    case UDAT_STANDALONE_WEEKDAYS:
+    case UDAT_STANDALONE_SHORT_WEEKDAYS:
+    case UDAT_STANDALONE_NARROW_WEEKDAYS:
+    case UDAT_QUARTERS:
+    case UDAT_SHORT_QUARTERS:
+    case UDAT_STANDALONE_QUARTERS:
+    case UDAT_STANDALONE_SHORT_QUARTERS:
+    case UDAT_SHORTER_WEEKDAYS:
+    case UDAT_STANDALONE_SHORTER_WEEKDAYS:
+    case UDAT_CYCLIC_YEARS_WIDE:
+    case UDAT_CYCLIC_YEARS_ABBREVIATED:
+    case UDAT_CYCLIC_YEARS_NARROW:
+    case UDAT_ZODIAC_NAMES_WIDE:
+    case UDAT_ZODIAC_NAMES_ABBREVIATED:
+    case UDAT_ZODIAC_NAMES_NARROW:
+      return false;
+  }
+
+  MOZ_ASSERT_UNREACHABLE("unenumerated, undocumented symbol type");
+  return false;
+}
+#endif
 
 static ListObject* GetDateTimeDisplayNames(
     JSContext* cx, Handle<DisplayNamesObject*> displayNames, const char* locale,
@@ -609,7 +705,7 @@ static ListObject* GetDateTimeDisplayNames(
 
   RootedValue value(cx);
   for (uint32_t i = 0; i < indices.size(); i++) {
-    uint32_t index = indices[i];
+    int32_t index = indices[i];
     JSString* name =
         CallICU(cx, [fmt, symbolType, index](UChar* chars, int32_t size,
                                              UErrorCode* status) {
@@ -618,6 +714,10 @@ static ListObject* GetDateTimeDisplayNames(
     if (!name) {
       return nullptr;
     }
+
+    // Everything except Undecimber should always have a non-empty name.
+    MOZ_ASSERT_IF(!IsStandaloneMonth(symbolType) || index != UCAL_UNDECIMBER,
+                  !name->empty());
 
     value.setString(name);
     if (!names->append(cx, value)) {
@@ -635,15 +735,20 @@ static JSString* GetWeekdayDisplayName(JSContext* cx,
                                        HandleLinearString calendar,
                                        DisplayNamesStyle displayStyle,
                                        HandleLinearString code) {
-  double weekday;
-  if (!StringToNumber(cx, code, &weekday)) {
-    return nullptr;
-  }
+  uint8_t weekday;
+  {
+    double d;
+    if (!StringToNumber(cx, code, &d)) {
+      return nullptr;
+    }
 
-  // Inlined implementation of `IsValidWeekdayCode ( weekday )`.
-  if (!IsInteger(weekday) || weekday < 1 || weekday > 7) {
-    ReportInvalidOptionError(cx, "weekday", weekday);
-    return nullptr;
+    // Inlined implementation of `IsValidWeekdayCode ( weekday )`.
+    if (!IsInteger(d) || d < 1 || d > 7) {
+      ReportInvalidOptionError(cx, "weekday", d);
+      return nullptr;
+    }
+
+    weekday = uint8_t(d);
   }
 
   UDateFormatSymbolType symbolType;
@@ -674,24 +779,27 @@ static JSString* GetWeekdayDisplayName(JSContext* cx,
   }
   MOZ_ASSERT(names->length() == mozilla::ArrayLength(indices));
 
-  return names->get(int32_t(weekday) - 1).toString();
+  return names->get(weekday - 1).toString();
 }
 
-static JSString* GetMonthDisplayName(JSContext* cx,
-                                     Handle<DisplayNamesObject*> displayNames,
-                                     const char* locale,
-                                     HandleLinearString calendar,
-                                     DisplayNamesStyle displayStyle,
-                                     HandleLinearString code) {
-  double month;
-  if (!StringToNumber(cx, code, &month)) {
-    return nullptr;
-  }
+static JSString* GetMonthDisplayName(
+    JSContext* cx, Handle<DisplayNamesObject*> displayNames, const char* locale,
+    HandleLinearString calendar, DisplayNamesStyle displayStyle,
+    DisplayNamesFallback fallback, HandleLinearString code) {
+  uint8_t month;
+  {
+    double d;
+    if (!StringToNumber(cx, code, &d)) {
+      return nullptr;
+    }
 
-  // Inlined implementation of `IsValidMonthCode ( month )`.
-  if (!IsInteger(month) || month < 1 || month > 13) {
-    ReportInvalidOptionError(cx, "month", month);
-    return nullptr;
+    // Inlined implementation of `IsValidMonthCode ( month )`.
+    if (!IsInteger(d) || d < 1 || d > 13) {
+      ReportInvalidOptionError(cx, "month", d);
+      return nullptr;
+    }
+
+    month = uint8_t(d);
   }
 
   UDateFormatSymbolType symbolType;
@@ -723,7 +831,11 @@ static JSString* GetMonthDisplayName(JSContext* cx,
   }
   MOZ_ASSERT(names->length() == mozilla::ArrayLength(indices));
 
-  return names->get(int32_t(month) - 1).toString();
+  JSString* str = names->get(month - 1).toString();
+  if (str->empty() && fallback == DisplayNamesFallback::Code) {
+    return cx->staticStrings().getInt(month);
+  }
+  return str;
 }
 
 static JSString* GetQuarterDisplayName(JSContext* cx,
@@ -732,15 +844,20 @@ static JSString* GetQuarterDisplayName(JSContext* cx,
                                        HandleLinearString calendar,
                                        DisplayNamesStyle displayStyle,
                                        HandleLinearString code) {
-  double quarter;
-  if (!StringToNumber(cx, code, &quarter)) {
-    return nullptr;
-  }
+  uint8_t quarter;
+  {
+    double d;
+    if (!StringToNumber(cx, code, &d)) {
+      return nullptr;
+    }
 
-  // Inlined implementation of `IsValidQuarterCode ( quarter )`.
-  if (!IsInteger(quarter) || quarter < 1 || quarter > 4) {
-    ReportInvalidOptionError(cx, "quarter", quarter);
-    return nullptr;
+    // Inlined implementation of `IsValidQuarterCode ( quarter )`.
+    if (!IsInteger(d) || d < 1 || d > 4) {
+      ReportInvalidOptionError(cx, "quarter", d);
+      return nullptr;
+    }
+
+    quarter = uint8_t(d);
   }
 
   UDateFormatSymbolType symbolType;
@@ -767,7 +884,7 @@ static JSString* GetQuarterDisplayName(JSContext* cx,
   }
   MOZ_ASSERT(names->length() == mozilla::ArrayLength(indices));
 
-  return names->get(int32_t(quarter) - 1).toString();
+  return names->get(quarter - 1).toString();
 }
 
 static JSString* GetDayPeriodDisplayName(
@@ -853,18 +970,22 @@ static JSString* GetDateTimeFieldDisplayName(JSContext* cx, const char* locale,
     return nullptr;
   }
 
-  return intl::CallICU(cx, [dtpg, field, width](UChar* chars, uint32_t size,
-                                                UErrorCode* status) {
+  JSString* str = intl::CallICU(cx, [dtpg, field, width](UChar* chars,
+                                                         uint32_t size,
+                                                         UErrorCode* status) {
     return udatpg_getFieldDisplayName(dtpg, field, width, chars, size, status);
   });
+  MOZ_ASSERT_IF(str, !str->empty());
+  return str;
 }
 
 /**
- * intl_ComputeDisplayName(displayNames, locale, calendar, style, type, code)
+ * intl_ComputeDisplayName(displayNames, locale, calendar, style, fallback,
+ *                         type, code)
  */
 bool js::intl_ComputeDisplayName(JSContext* cx, unsigned argc, Value* vp) {
   CallArgs args = CallArgsFromVp(argc, vp);
-  MOZ_ASSERT(args.length() == 6);
+  MOZ_ASSERT(args.length() == 7);
 
   Rooted<DisplayNamesObject*> displayNames(
       cx, &args[0].toObject().as<DisplayNamesObject>());
@@ -879,7 +1000,7 @@ bool js::intl_ComputeDisplayName(JSContext* cx, unsigned argc, Value* vp) {
     return false;
   }
 
-  RootedLinearString code(cx, args[5].toString()->ensureLinear(cx));
+  RootedLinearString code(cx, args[6].toString()->ensureLinear(cx));
   if (!code) {
     return false;
   }
@@ -901,7 +1022,22 @@ bool js::intl_ComputeDisplayName(JSContext* cx, unsigned argc, Value* vp) {
     }
   }
 
-  JSLinearString* type = args[4].toString()->ensureLinear(cx);
+  DisplayNamesFallback displayFallback;
+  {
+    JSLinearString* fallback = args[4].toString()->ensureLinear(cx);
+    if (!fallback) {
+      return false;
+    }
+
+    if (StringEqualsLiteral(fallback, "none")) {
+      displayFallback = DisplayNamesFallback::None;
+    } else {
+      MOZ_ASSERT(StringEqualsLiteral(fallback, "code"));
+      displayFallback = DisplayNamesFallback::Code;
+    }
+  }
+
+  JSLinearString* type = args[5].toString()->ensureLinear(cx);
   if (!type) {
     return false;
   }
@@ -909,21 +1045,22 @@ bool js::intl_ComputeDisplayName(JSContext* cx, unsigned argc, Value* vp) {
   JSString* result;
   if (StringEqualsLiteral(type, "language")) {
     result = GetLanguageDisplayName(cx, displayNames, locale.get(),
-                                    displayStyle, code);
+                                    displayStyle, displayFallback, code);
   } else if (StringEqualsLiteral(type, "script")) {
     result = GetScriptDisplayName(cx, displayNames, locale.get(), displayStyle,
-                                  code);
+                                  displayFallback, code);
   } else if (StringEqualsLiteral(type, "region")) {
     result = GetRegionDisplayName(cx, displayNames, locale.get(), displayStyle,
-                                  code);
+                                  displayFallback, code);
   } else if (StringEqualsLiteral(type, "currency")) {
-    result = GetCurrencyDisplayName(cx, locale.get(), displayStyle, code);
+    result = GetCurrencyDisplayName(cx, locale.get(), displayStyle,
+                                    displayFallback, code);
   } else if (StringEqualsLiteral(type, "weekday")) {
     result = GetWeekdayDisplayName(cx, displayNames, locale.get(), calendar,
                                    displayStyle, code);
   } else if (StringEqualsLiteral(type, "month")) {
     result = GetMonthDisplayName(cx, displayNames, locale.get(), calendar,
-                                 displayStyle, code);
+                                 displayStyle, displayFallback, code);
   } else if (StringEqualsLiteral(type, "quarter")) {
     result = GetQuarterDisplayName(cx, displayNames, locale.get(), calendar,
                                    displayStyle, code);
@@ -938,6 +1075,12 @@ bool js::intl_ComputeDisplayName(JSContext* cx, unsigned argc, Value* vp) {
     return false;
   }
 
-  args.rval().setString(result);
+  if (!result->empty()) {
+    args.rval().setString(result);
+  } else if (displayFallback == DisplayNamesFallback::Code) {
+    args.rval().setString(code);
+  } else {
+    args.rval().setUndefined();
+  }
   return true;
 }

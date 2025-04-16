@@ -61,6 +61,10 @@ void ProxyObject::init(const BaseProxyHandler* handler, HandleValue priv,
   } else {
     setSameCompartmentPrivate(priv);
   }
+
+  // The expando slot is nullptr until required by the installation of
+  // a private field.
+  setExpando(nullptr);
 }
 
 /* static */
@@ -267,6 +271,18 @@ inline void ProxyObject::setPrivate(const Value& priv) {
   *slotOfPrivate() = priv;
 }
 
+void ProxyObject::setExpando(JSObject* expando) {
+  // Ensure that we don't accidentally end up pointing to a
+  // grey object, which would violate GC invariants.
+  MOZ_ASSERT_IF(IsMarkedBlack(this) && expando,
+                !JS::GCThingIsMarkedGray(JS::GCCellPtr(expando)));
+
+  // Ensure we're in the same compartment as the proxy object: Don't want the
+  // expando to end up as a CCW.
+  MOZ_ASSERT_IF(expando, expando->compartment() == compartment());
+  *slotOfExpando() = ObjectOrNullValue(expando);
+}
+
 void ProxyObject::nuke() {
   // Notify the zone that a delegate is no longer a delegate. Be careful not to
   // expose this pointer, because it has already been removed from the wrapper
@@ -274,12 +290,15 @@ void ProxyObject::nuke() {
   // still present.
   JSObject* delegate = UncheckedUnwrapWithoutExpose(this);
   if (delegate != this) {
-    delegate->zone()->delegatePreWriteBarrier(this, delegate);
+    delegate->zone()->beforeClearDelegate(this, delegate);
   }
 
   // Clear the target reference and replaced it with a value that encodes
   // various information about the original target.
   setSameCompartmentPrivate(DeadProxyTargetValue(this));
+
+  // Clear out the expando
+  setExpando(nullptr);
 
   // Update the handler to make this a DeadObjectProxy.
   setHandler(&DeadObjectProxy::singleton);

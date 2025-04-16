@@ -6,7 +6,6 @@
 
 const { Cc, Ci, Cr, Cu } = require("chrome");
 const Services = require("Services");
-const flags = require("devtools/shared/flags");
 const {
   wildcardToRegExp,
 } = require("devtools/server/actors/network-monitor/utils/wildcard-to-regexp");
@@ -82,7 +81,6 @@ function matchRequest(channel, filters) {
   // Ignore requests from chrome or add-on code when we are monitoring
   // content.
   if (
-    !flags.wantAllNetworkRequests &&
     channel.loadInfo &&
     channel.loadInfo.loadingDocument === null &&
     (channel.loadInfo.loadingPrincipal ===
@@ -495,6 +493,7 @@ NetworkObserver.prototype = {
           status: response.status,
           statusText: response.statusText,
           headersSize: 0,
+          waitingTime: 0,
         },
         "",
         true
@@ -966,6 +965,14 @@ NetworkObserver.prototype = {
   },
 
   /**
+   * Returns a list of blocked requests
+   * Useful as blockedURLs is mutated by both console & netmonitor
+   */
+  getBlockedUrls() {
+    return this.blockedURLs;
+  },
+
+  /**
    * Setup the network response listener for the given HTTP activity. The
    * NetworkResponseListener is responsible for storing the response body.
    *
@@ -1087,6 +1094,18 @@ NetworkObserver.prototype = {
     response.status = statusLineArray.shift();
     response.statusText = statusLineArray.join(" ");
     response.headersSize = extraStringData.length;
+    response.waitingTime = this._convertTimeToMs(
+      this._getWaitTiming(httpActivity.timings)
+    );
+    // Mime type needs to be sent on response start for identifying an sse channel.
+    const contentType = headers.find(header => {
+      const lowerName = header.toLowerCase();
+      return lowerName.startsWith("content-type");
+    });
+
+    if (contentType) {
+      response.mimeType = contentType.slice("Content-Type: ".length);
+    }
 
     httpActivity.responseStatus = response.status;
     httpActivity.headersSize = response.headersSize;
@@ -1443,6 +1462,10 @@ NetworkObserver.prototype = {
     return serverTimings;
   },
 
+  _convertTimeToMs: function(timing) {
+    return Math.max(Math.round(timing / 1000), -1);
+  },
+
   _calculateOffsetAndTotalTime: function(
     harTimings,
     secureConnectionStartTime,
@@ -1452,7 +1475,7 @@ NetworkObserver.prototype = {
   ) {
     let totalTime = 0;
     for (const timing in harTimings) {
-      const time = Math.max(Math.round(harTimings[timing] / 1000), -1);
+      const time = this._convertTimeToMs(harTimings[timing]);
       harTimings[timing] = time;
       if (time > -1 && timing != "connect" && timing != "ssl") {
         totalTime += time;

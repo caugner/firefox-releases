@@ -115,8 +115,7 @@
 namespace mozilla {
 namespace dom {
 
-static const nsLiteralCString kVibrationPermissionType =
-    NS_LITERAL_CSTRING("vibration");
+static const nsLiteralCString kVibrationPermissionType = "vibration"_ns;
 
 Navigator::Navigator(nsPIDOMWindowInner* aWindow) : mWindow(aWindow) {}
 
@@ -589,7 +588,7 @@ void Navigator::GetBuildID(nsAString& aBuildID, CallerType aCallerType,
     }
 
     // Spoof the buildID on pages not loaded from "https://*.mozilla.org".
-    if (!isHTTPS || !StringEndsWith(host, NS_LITERAL_CSTRING(".mozilla.org"))) {
+    if (!isHTTPS || !StringEndsWith(host, ".mozilla.org"_ns)) {
       aBuildID.AssignLiteral(LEGACY_BUILD_ID);
       return;
     }
@@ -651,7 +650,7 @@ class VibrateWindowListener : public nsIDOMEventListener {
     mWindow = do_GetWeakReference(aWindow);
     mDocument = do_GetWeakReference(aDocument);
 
-    NS_NAMED_LITERAL_STRING(visibilitychange, "visibilitychange");
+    constexpr auto visibilitychange = u"visibilitychange"_ns;
     aDocument->AddSystemEventListener(visibilitychange, this, /* listener */
                                       true,                   /* use capture */
                                       false /* wants untrusted */);
@@ -702,7 +701,7 @@ void VibrateWindowListener::RemoveListener() {
   if (!target) {
     return;
   }
-  NS_NAMED_LITERAL_STRING(visibilitychange, "visibilitychange");
+  constexpr auto visibilitychange = u"visibilitychange"_ns;
   target->RemoveSystemEventListener(visibilitychange, this,
                                     true /* use capture */);
 }
@@ -895,7 +894,7 @@ void Navigator::CheckProtocolHandlerAllowed(const nsAString& aScheme,
   aHandlerURI->GetSpec(spec);
   // If the uri doesn't contain '%s', it won't be a good handler - the %s
   // gets replaced with the handled URI.
-  if (!FindInReadable(NS_LITERAL_CSTRING("%s"), spec)) {
+  if (!FindInReadable("%s"_ns, spec)) {
     aRv.ThrowSyntaxError("Handler URI does not contain \"%s\".");
     return;
   }
@@ -925,7 +924,7 @@ void Navigator::CheckProtocolHandlerAllowed(const nsAString& aScheme,
   // Having checked the handler URI, check the scheme:
   nsAutoCString scheme;
   ToLowerCase(NS_ConvertUTF16toUTF8(aScheme), scheme);
-  if (StringBeginsWith(scheme, NS_LITERAL_CSTRING("web+"))) {
+  if (StringBeginsWith(scheme, "web+"_ns)) {
     // Check for non-ascii
     nsReadingIterator<char> iter;
     nsReadingIterator<char> iterEnd;
@@ -998,8 +997,8 @@ void Navigator::RegisterProtocolHandler(const nsAString& aScheme,
     // If we're a private window, don't alert the user or webpage. We log to the
     // console so that web developers have some way to tell what's going wrong.
     nsContentUtils::ReportToConsole(
-        nsIScriptError::warningFlag, NS_LITERAL_CSTRING("DOM"),
-        mWindow->GetDoc(), nsContentUtils::eDOM_PROPERTIES,
+        nsIScriptError::warningFlag, "DOM"_ns, mWindow->GetDoc(),
+        nsContentUtils::eDOM_PROPERTIES,
         "RegisterProtocolHandlerPrivateBrowsingWarning");
     return;
   }
@@ -1186,11 +1185,11 @@ bool Navigator::SendBeaconInternal(const nsAString& aUrl,
   // Ensure that only streams with content types that are safelisted ignore CORS
   // rules
   if (aBody && !contentTypeWithCharset.IsVoid() &&
-      !nsContentUtils::IsCORSSafelistedRequestHeader(
-          NS_LITERAL_CSTRING("content-type"), contentTypeWithCharset)) {
-    securityFlags |= nsILoadInfo::SEC_REQUIRE_CORS_DATA_INHERITS;
+      !nsContentUtils::IsCORSSafelistedRequestHeader("content-type"_ns,
+                                                     contentTypeWithCharset)) {
+    securityFlags |= nsILoadInfo::SEC_REQUIRE_CORS_INHERITS_SEC_CONTEXT;
   } else {
-    securityFlags |= nsILoadInfo::SEC_ALLOW_CROSS_ORIGIN_DATA_INHERITS;
+    securityFlags |= nsILoadInfo::SEC_ALLOW_CROSS_ORIGIN_INHERITS_SEC_CONTEXT;
   }
 
   nsCOMPtr<nsIChannel> channel;
@@ -1221,9 +1220,9 @@ bool Navigator::SendBeaconInternal(const nsAString& aUrl,
     }
 
     uploadChannel->ExplicitSetUploadStream(in, contentTypeWithCharset, length,
-                                           NS_LITERAL_CSTRING("POST"), false);
+                                           "POST"_ns, false);
   } else {
-    rv = httpChannel->SetRequestMethod(NS_LITERAL_CSTRING("POST"));
+    rv = httpChannel->SetRequestMethod("POST"_ns);
     MOZ_ASSERT(NS_SUCCEEDED(rv));
   }
 
@@ -1472,7 +1471,7 @@ already_AddRefed<LegacyMozTCPSocket> Navigator::MozTCPSocket() {
 
 void Navigator::GetGamepads(nsTArray<RefPtr<Gamepad>>& aGamepads,
                             ErrorResult& aRv) {
-  if (!mWindow) {
+  if (!mWindow || !mWindow->GetExtantDoc()) {
     aRv.Throw(NS_ERROR_UNEXPECTED);
     return;
   }
@@ -1483,18 +1482,25 @@ void Navigator::GetGamepads(nsTArray<RefPtr<Gamepad>>& aGamepads,
   // show a console warning to developers.
   if (!mGamepadSecureContextWarningShown && !win->IsSecureContext()) {
     mGamepadSecureContextWarningShown = true;
-    auto msg = NS_LITERAL_STRING(
-        "The Gamepad API is only available in "
+    auto msg =
+        u"The Gamepad API is only available in "
         "secure contexts (e.g., https). Please see "
-        "https://hacks.mozilla.org/2020/06/securing-gamepad-api/ for more "
-        "info.");
+        "https://hacks.mozilla.org/2020/07/securing-gamepad-api/ for more "
+        "info."_ns;
     nsContentUtils::ReportToConsoleNonLocalized(
-        msg, nsIScriptError::warningFlag, NS_LITERAL_CSTRING("DOM"),
-        win->GetExtantDoc());
+        msg, nsIScriptError::warningFlag, "DOM"_ns, win->GetExtantDoc());
   }
 
 #ifdef NIGHTLY_BUILD
   if (!win->IsSecureContext()) {
+    return;
+  }
+
+  if (!FeaturePolicyUtils::IsFeatureAllowed(win->GetExtantDoc(),
+                                            u"gamepad"_ns)) {
+    aRv.ThrowSecurityError(
+        "Document's Permission Policy does not allow calling "
+        "getGamepads() from this context.");
     return;
   }
 #endif
@@ -1517,7 +1523,7 @@ already_AddRefed<Promise> Navigator::GetVRDisplays(ErrorResult& aRv) {
   }
 
   if (!FeaturePolicyUtils::IsFeatureAllowed(mWindow->GetExtantDoc(),
-                                            NS_LITERAL_STRING("vr"))) {
+                                            u"vr"_ns)) {
     aRv.Throw(NS_ERROR_DOM_SECURITY_ERR);
     return nullptr;
   }
@@ -1995,8 +2001,7 @@ nsresult Navigator::GetUserAgent(nsPIDOMWindowInner* aWindow,
   nsCOMPtr<nsIHttpChannel> httpChannel = do_QueryInterface(doc->GetChannel());
   if (httpChannel) {
     nsAutoCString userAgent;
-    rv = httpChannel->GetRequestHeader(NS_LITERAL_CSTRING("User-Agent"),
-                                       userAgent);
+    rv = httpChannel->GetRequestHeader("User-Agent"_ns, userAgent);
     if (NS_WARN_IF(NS_FAILED(rv))) {
       return rv;
     }
@@ -2033,22 +2038,21 @@ already_AddRefed<Promise> Navigator::RequestMediaKeySystemAccess(
     if (doc) {
       Unused << doc->GetDocumentURI(*uri);
     }
-    nsContentUtils::ReportToConsole(
-        nsIScriptError::warningFlag, NS_LITERAL_CSTRING("Media"), doc,
-        nsContentUtils::eDOM_PROPERTIES,
-        "MediaEMEInsecureContextDeprecatedWarning", params);
+    nsContentUtils::ReportToConsole(nsIScriptError::warningFlag, "Media"_ns,
+                                    doc, nsContentUtils::eDOM_PROPERTIES,
+                                    "MediaEMEInsecureContextDeprecatedWarning",
+                                    params);
   }
 
   Document* doc = mWindow->GetExtantDoc();
-  if (doc && !FeaturePolicyUtils::IsFeatureAllowed(
-                 doc, NS_LITERAL_STRING("encrypted-media"))) {
+  if (doc &&
+      !FeaturePolicyUtils::IsFeatureAllowed(doc, u"encrypted-media"_ns)) {
     aRv.Throw(NS_ERROR_DOM_SECURITY_ERR);
     return nullptr;
   }
 
   RefPtr<DetailedPromise> promise = DetailedPromise::Create(
-      mWindow->AsGlobal(), aRv,
-      NS_LITERAL_CSTRING("navigator.requestMediaKeySystemAccess"),
+      mWindow->AsGlobal(), aRv, "navigator.requestMediaKeySystemAccess"_ns,
       Telemetry::VIDEO_EME_REQUEST_SUCCESS_LATENCY_MS,
       Telemetry::VIDEO_EME_REQUEST_FAILURE_LATENCY_MS);
   if (aRv.Failed()) {

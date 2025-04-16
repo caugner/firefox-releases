@@ -10,12 +10,6 @@ const { webrtcUI } = ChromeUtils.import("resource:///modules/webrtcUI.jsm");
 
 ChromeUtils.defineModuleGetter(
   this,
-  "SitePermissions",
-  "resource:///modules/SitePermissions.jsm"
-);
-
-ChromeUtils.defineModuleGetter(
-  this,
   "AppConstants",
   "resource://gre/modules/AppConstants.jsm"
 );
@@ -48,6 +42,22 @@ function updateIndicatorState() {
 }
 
 /**
+ * Public function called by webrtcUI to indicate that webrtcUI
+ * is about to close the indicator. This is so that we can differentiate
+ * between closes that are caused by webrtcUI, and closes that are
+ * caused by other reasons (like the user closing the window via the
+ * OS window controls somehow).
+ *
+ * If the window is closed without having called this method first, the
+ * indicator will ask webrtcUI to shutdown any remaining streams and then
+ * select and focus the most recent browser tab that a stream was shared
+ * with.
+ */
+function closingInternally() {
+  WebRTCIndicator.closingInternally();
+}
+
+/**
  * Main control object for the WebRTC global indicator
  */
 const WebRTCIndicator = {
@@ -66,9 +76,17 @@ const WebRTCIndicator = {
 
     this.updatingIndicatorState = false;
     this.loaded = false;
+    this.isClosingInternally = false;
 
     if (AppConstants.platform == "macosx") {
       this.macOSIndicator = new MacOSWebRTCStatusbarIndicator();
+    }
+
+    if (
+      Services.prefs.getBoolPref("privacy.webrtc.hideGlobalIndicator", false)
+    ) {
+      let baseWin = window.docShell.treeOwner.QueryInterface(Ci.nsIBaseWindow);
+      baseWin.visibility = false;
     }
   },
 
@@ -155,30 +173,33 @@ const WebRTCIndicator = {
     }
     displayShare.setAttribute("aria-labelledby", labelledBy);
 
-    // Resize and ensure the window position is correct
-    // (sizeToContent messes with our position).
-    let docElStyle = document.documentElement.style;
-    docElStyle.minWidth = docElStyle.maxWidth = "unset";
-    docElStyle.minHeight = docElStyle.maxHeight = "unset";
-    window.sizeToContent();
+    if (window.windowState != window.STATE_MINIMIZED) {
+      // Resize and ensure the window position is correct
+      // (sizeToContent messes with our position).
+      let docElStyle = document.documentElement.style;
+      docElStyle.minWidth = docElStyle.maxWidth = "unset";
+      docElStyle.minHeight = docElStyle.maxHeight = "unset";
+      window.sizeToContent();
 
-    // On Linux GTK, the style of window we're using by default is resizable. We
-    // workaround this by setting explicit limits on the height and width of the
-    // window.
-    if (AppConstants.platform == "linux") {
-      let { width, height } = window.windowUtils.getBoundsWithoutFlushing(
-        document.documentElement
-      );
+      // On Linux GTK, the style of window we're using by default is resizable. We
+      // workaround this by setting explicit limits on the height and width of the
+      // window.
+      if (AppConstants.platform == "linux") {
+        let { width, height } = window.windowUtils.getBoundsWithoutFlushing(
+          document.documentElement
+        );
 
-      docElStyle.minWidth = docElStyle.maxWidth = `${width}px`;
-      docElStyle.minHeight = docElStyle.maxHeight = `${height}px`;
+        docElStyle.minWidth = docElStyle.maxWidth = `${width}px`;
+        docElStyle.minHeight = docElStyle.maxHeight = `${height}px`;
+      }
+
+      this.ensureOnScreen();
+
+      if (!this.positionCustomized) {
+        this.centerOnDisplay(initialLayout);
+      }
     }
 
-    this.ensureOnScreen();
-
-    if (!this.positionCustomized) {
-      this.centerOnDisplay(initialLayout);
-    }
     this.updatingIndicatorState = false;
   },
 
@@ -298,6 +319,12 @@ const WebRTCIndicator = {
         }
         break;
       }
+      case "sizemodechange": {
+        if (window.windowState != window.STATE_MINIMIZED) {
+          this.updateIndicatorState();
+        }
+        break;
+      }
     }
   },
 
@@ -307,6 +334,7 @@ const WebRTCIndicator = {
     this.updateIndicatorState(true /* initialLayout */);
 
     window.addEventListener("click", this);
+    window.addEventListener("sizemodechange", this);
     window.windowRoot.addEventListener("MozUpdateWindowPos", this);
 
     // Alert accessibility implementations stuff just changed. We only need to do
@@ -324,6 +352,21 @@ const WebRTCIndicator = {
   onUnload() {
     if (this.macOSIndicator) {
       this.macOSIndicator.close();
+      this.macOSIndicator = null;
+    }
+
+    if (!this.isClosingInternally) {
+      // Something has closed the indicator, but it wasn't webrtcUI. This
+      // means we might still have some streams being shared. To protect
+      // the user from unknowingly sharing streams, we shut those streams
+      // down.
+      let activeStreams = webrtcUI.getActiveStreams(
+        true /* camera */,
+        true /* microphone */,
+        true /* screen */,
+        true /* window */
+      );
+      webrtcUI.stopSharingStreams(activeStreams);
     }
   },
 
@@ -336,7 +379,23 @@ const WebRTCIndicator = {
           true /* screen */,
           false /* window */
         );
-        this.stopSharingScreen(activeStreams);
+
+        if (!activeStreams.length) {
+          return;
+        }
+
+        // getActiveStreams is filtering for streams that have screen
+        // sharing, but those streams might _also_ be sharing other
+        // devices like camera or microphone. This is why we need to
+        // tell stopSharingStreams explicitly which device type we want
+        // to stop.
+        webrtcUI.stopSharingStreams(
+          [activeStreams[0]],
+          false /* camera */,
+          false /* microphone */,
+          true /* screen */,
+          false /* window */
+        );
         break;
       }
       case "stop-sharing-window": {
@@ -346,14 +405,44 @@ const WebRTCIndicator = {
           false /* screen */,
           true /* window */
         );
+
         if (this.sharingBrowserWindow) {
           let browserWindowStreams = activeStreams.filter(stream => {
             return stream.devices.some(device => device.scary);
           });
-          this.stopSharingScreen(browserWindowStreams);
-        } else {
-          this.stopSharingScreen(activeStreams);
+
+          if (!browserWindowStreams.length) {
+            return;
+          }
+
+          // See below comment on why we need to pass the boolean values
+          // for which device types we want to stop vi stopSharingStreams.
+          webrtcUI.stopSharingStreams(
+            [browserWindowStreams[0]],
+            false /* camera */,
+            false /* microphone */,
+            false /* screen */,
+            true /* window */
+          );
+          break;
         }
+
+        if (!activeStreams.length) {
+          return;
+        }
+
+        // getActiveStreams is filtering for streams that have screen
+        // sharing, but those streams might _also_ be sharing other
+        // devices like camera or microphone. This is why we need to
+        // tell stopSharingStreams explicitly which device type we want
+        // to stop.
+        webrtcUI.stopSharingStreams(
+          [activeStreams[0]],
+          false /* camera */,
+          false /* microphone */,
+          false /* screen */,
+          true /* window */
+        );
         break;
       }
       case "microphone-button":
@@ -373,97 +462,6 @@ const WebRTCIndicator = {
         break;
       }
     }
-  },
-
-  /**
-   * Finds the most recent share in the set of active streams passed,
-   * and ends it.
-   *
-   * @param activeStreams (Array<Object>)
-   *   An array of streams obtained via webrtcUI.getActiveStreams.
-   *   It is presumed that one or more of those streams includes
-   *   one that is sharing a screen or window.
-   */
-  stopSharingScreen(activeStreams) {
-    if (!activeStreams.length) {
-      return;
-    }
-
-    // We'll default to choosing the most recent active stream to
-    // revoke the permissions from.
-    let chosenStream = activeStreams[activeStreams.length - 1];
-    let { browser } = chosenStream;
-
-    // This intentionally copies its approach from browser-siteIdentity.js,
-    // which powers the permission revocation from the Permissions Panel.
-    // Ideally, we would de-duplicate this with a shared revocation mechanism,
-    // but to lower the risk of uplifting this change, we keep it separate for
-    // now.
-    let gBrowser = browser.getTabBrowser();
-    if (!gBrowser) {
-      Cu.reportError("Can't stop sharing screen - cannot find gBrowser.");
-      return;
-    }
-
-    let tab = gBrowser.getTabForBrowser(browser);
-    if (!tab) {
-      Cu.reportError("Can't stop sharing screen - cannot find tab.");
-      return;
-    }
-
-    let permissions = SitePermissions.getAllPermissionDetailsForBrowser(
-      browser
-    );
-
-    let webrtcState = tab._sharingState.webRTC;
-    let windowId = `screen:${webrtcState.windowId}`;
-    // If WebRTC device or screen permissions are in use, we need to find
-    // the associated permission item to set the sharingState field.
-    if (webrtcState.screen) {
-      let found = false;
-      for (let permission of permissions) {
-        if (permission.id != "screen") {
-          continue;
-        }
-        found = true;
-        permission.sharingState = webrtcState.screen;
-        break;
-      }
-      if (!found) {
-        // If the permission item we were looking for doesn't exist,
-        // the user has temporarily allowed sharing and we need to add
-        // an item in the permissions array to reflect this.
-        permissions.push({
-          id: "screen",
-          state: SitePermissions.ALLOW,
-          scope: SitePermissions.SCOPE_REQUEST,
-          sharingState: webrtcState.screen,
-        });
-      }
-    }
-
-    let permission = permissions.find(perm => {
-      return perm.id == "screen";
-    });
-
-    if (!permission) {
-      Cu.reportError(
-        "Can't stop sharing screen - cannot find screen permission."
-      );
-      return;
-    }
-
-    let bc = webrtcState.browsingContext;
-    bc.currentWindowGlobal
-      .getActor("WebRTC")
-      .sendAsyncMessage("webrtc:StopSharing", windowId);
-    webrtcUI.forgetActivePermissionsFromBrowser(browser);
-
-    SitePermissions.removeFromPrincipal(
-      browser.contentPrincipal,
-      permission.id,
-      browser
-    );
   },
 
   /**
@@ -499,6 +497,13 @@ const WebRTCIndicator = {
     } else {
       docEl.removeAttribute(attr);
     }
+  },
+
+  /**
+   * See the documentation on the script global closingInternally() function.
+   */
+  closingInternally() {
+    this.isClosingInternally = true;
   },
 };
 

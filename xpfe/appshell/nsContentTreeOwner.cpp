@@ -313,8 +313,7 @@ nsContentTreeOwner::SetPersistence(bool aPersistPosition, bool aPersistSize,
 
   ErrorResult rv;
   if (saveString) {
-    docShellElement->SetAttribute(NS_LITERAL_STRING("persist"), persistString,
-                                  rv);
+    docShellElement->SetAttribute(u"persist"_ns, persistString, rv);
   }
 
   return NS_OK;
@@ -460,11 +459,6 @@ NS_IMETHODIMP nsContentTreeOwner::InitWindow(nativeWindow aParentNativeWindow,
   NS_ENSURE_SUCCESS(SetPositionAndSize(x, y, cx, cy, 0), NS_ERROR_FAILURE);
 
   return NS_OK;
-}
-
-NS_IMETHODIMP nsContentTreeOwner::Create() {
-  NS_ASSERTION(false, "You can't call this");
-  return NS_ERROR_UNEXPECTED;
 }
 
 NS_IMETHODIMP nsContentTreeOwner::Destroy() {

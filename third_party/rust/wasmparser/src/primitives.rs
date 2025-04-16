@@ -29,6 +29,7 @@ pub struct BinaryReaderError {
 pub(crate) struct BinaryReaderErrorInner {
     pub(crate) message: String,
     pub(crate) offset: usize,
+    pub(crate) needed_hint: Option<usize>,
 }
 
 pub type Result<T> = result::Result<T, BinaryReaderError>;
@@ -49,7 +50,21 @@ impl BinaryReaderError {
     pub(crate) fn new(message: impl Into<String>, offset: usize) -> Self {
         let message = message.into();
         BinaryReaderError {
-            inner: Box::new(BinaryReaderErrorInner { message, offset }),
+            inner: Box::new(BinaryReaderErrorInner {
+                message,
+                offset,
+                needed_hint: None,
+            }),
+        }
+    }
+
+    pub(crate) fn eof(offset: usize, needed_hint: usize) -> Self {
+        BinaryReaderError {
+            inner: Box::new(BinaryReaderErrorInner {
+                message: "Unexpected EOF".to_string(),
+                offset,
+                needed_hint: Some(needed_hint),
+            }),
         }
     }
 
@@ -83,18 +98,22 @@ pub enum SectionCode<'a> {
         name: &'a str,
         kind: CustomSectionKind,
     },
-    Type,      // Function signature declarations
-    Import,    // Import declarations
-    Function,  // Function declarations
-    Table,     // Indirect function table and other tables
-    Memory,    // Memory attributes
-    Global,    // Global declarations
-    Export,    // Exports
-    Start,     // Start function declaration
-    Element,   // Elements section
-    Code,      // Function bodies (code)
-    Data,      // Data segments
-    DataCount, // Count of passive data segments
+    Type,       // Function signature declarations
+    Alias,      // Aliased indices from nested/parent modules
+    Import,     // Import declarations
+    Module,     // Module declarations
+    Instance,   // Instance definitions
+    Function,   // Function declarations
+    Table,      // Indirect function table and other tables
+    Memory,     // Memory attributes
+    Global,     // Global declarations
+    Export,     // Exports
+    Start,      // Start function declaration
+    Element,    // Elements section
+    ModuleCode, // Module definitions
+    Code,       // Function bodies (code)
+    Data,       // Data segments
+    DataCount,  // Count of passive data segments
 }
 
 /// Types as defined [here].
@@ -135,6 +154,16 @@ pub enum ExternalKind {
     Table,
     Memory,
     Global,
+    Type,
+    Module,
+    Instance,
+}
+
+#[derive(Debug, Clone)]
+pub enum TypeDef<'a> {
+    Func(FuncType),
+    Instance(InstanceType<'a>),
+    Module(ModuleType<'a>),
 }
 
 #[derive(Debug, Clone, Eq, PartialEq, Hash)]
@@ -143,25 +172,42 @@ pub struct FuncType {
     pub returns: Box<[Type]>,
 }
 
-#[derive(Debug, Copy, Clone)]
+#[derive(Debug, Clone)]
+pub struct InstanceType<'a> {
+    pub exports: Box<[ExportType<'a>]>,
+}
+
+#[derive(Debug, Clone)]
+pub struct ModuleType<'a> {
+    pub imports: Box<[crate::Import<'a>]>,
+    pub exports: Box<[ExportType<'a>]>,
+}
+
+#[derive(Debug, Clone)]
+pub struct ExportType<'a> {
+    pub name: &'a str,
+    pub ty: ImportSectionEntryType,
+}
+
+#[derive(Debug, Copy, Clone, PartialEq, Eq)]
 pub struct ResizableLimits {
     pub initial: u32,
     pub maximum: Option<u32>,
 }
 
-#[derive(Debug, Copy, Clone)]
+#[derive(Debug, Copy, Clone, PartialEq, Eq)]
 pub struct TableType {
     pub element_type: Type,
     pub limits: ResizableLimits,
 }
 
-#[derive(Debug, Copy, Clone)]
+#[derive(Debug, Copy, Clone, PartialEq, Eq)]
 pub struct MemoryType {
     pub limits: ResizableLimits,
     pub shared: bool,
 }
 
-#[derive(Debug, Copy, Clone)]
+#[derive(Debug, Copy, Clone, PartialEq, Eq)]
 pub struct GlobalType {
     pub content_type: Type,
     pub mutable: bool,
@@ -173,6 +219,8 @@ pub enum ImportSectionEntryType {
     Table(TableType),
     Memory(MemoryType),
     Global(GlobalType),
+    Module(u32),
+    Instance(u32),
 }
 
 #[derive(Debug, Copy, Clone)]
@@ -313,7 +361,7 @@ pub enum Operator<'a> {
     F32Const { value: Ieee32 },
     F64Const { value: Ieee64 },
     RefNull { ty: Type },
-    RefIsNull { ty: Type },
+    RefIsNull,
     RefFunc { function_index: u32 },
     I32Eqz,
     I32Eq,
@@ -617,6 +665,7 @@ pub enum Operator<'a> {
     I8x16Neg,
     I8x16AnyTrue,
     I8x16AllTrue,
+    I8x16Bitmask,
     I8x16Shl,
     I8x16ShrS,
     I8x16ShrU,
@@ -634,6 +683,7 @@ pub enum Operator<'a> {
     I16x8Neg,
     I16x8AnyTrue,
     I16x8AllTrue,
+    I16x8Bitmask,
     I16x8Shl,
     I16x8ShrS,
     I16x8ShrU,
@@ -652,6 +702,7 @@ pub enum Operator<'a> {
     I32x4Neg,
     I32x4AnyTrue,
     I32x4AllTrue,
+    I32x4Bitmask,
     I32x4Shl,
     I32x4ShrS,
     I32x4ShrU,

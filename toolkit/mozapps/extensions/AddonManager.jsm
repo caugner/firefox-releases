@@ -60,6 +60,15 @@ const WEBAPI_TEST_INSTALL_HOSTS = [
   "example.com",
 ];
 
+const AMO_ATTRIBUTION_ALLOWED_SOURCES = ["amo", "disco"];
+const AMO_ATTRIBUTION_DATA_KEYS = [
+  "utm_campaign",
+  "utm_content",
+  "utm_medium",
+  "utm_source",
+];
+const AMO_ATTRIBUTION_DATA_MAX_LENGTH = 40;
+
 const { Services } = ChromeUtils.import("resource://gre/modules/Services.jsm");
 const { XPCOMUtils } = ChromeUtils.import(
   "resource://gre/modules/XPCOMUtils.jsm"
@@ -363,9 +372,9 @@ BrowserListener.prototype = {
   },
 
   QueryInterface: ChromeUtils.generateQI([
-    Ci.nsISupportsWeakReference,
-    Ci.nsIWebProgressListener,
-    Ci.nsIObserver,
+    "nsISupportsWeakReference",
+    "nsIWebProgressListener",
+    "nsIObserver",
   ]),
 };
 
@@ -3997,6 +4006,12 @@ var AddonManager = {
     return AddonManagerInternal.uninstallSystemProfileAddon(aID);
   },
 
+  stageLangpacksForAppUpdate(appVersion, platformVersion) {
+    return AddonManagerInternal._getProviderByName(
+      "XPIProvider"
+    ).stageLangpacksForAppUpdate(appVersion, platformVersion);
+  },
+
   /**
    * Gets an array of add-on IDs that changed during the most recent startup.
    *
@@ -4297,6 +4312,11 @@ AMTelemetry = {
 
   onInstallEnded(install) {
     this.recordInstallEvent(install, { step: "completed" });
+    // Skip install_stats events for install objects related to.
+    // add-on updates.
+    if (!install.existingAddon) {
+      this.recordInstallStatsEvent(install);
+    }
   },
 
   onDownloadStarted(install) {
@@ -4477,6 +4497,81 @@ AMTelemetry = {
         return value ? "1" : "0";
     }
     return String(value);
+  },
+
+  /**
+   * Return the UTM parameters found in `sourceURL` for AMO attribution data.
+   *
+   * @param {string} sourceURL
+   *        The source URL from where the add-on has been installed.
+   *
+   * @returns {object}
+   *          An object containing the attribution data for AMO if any. Keys
+   *          are defined in `AMO_ATTRIBUTION_DATA_KEYS`. Values are strings.
+   */
+  parseAttributionDataForAMO(sourceURL) {
+    let searchParams;
+
+    try {
+      searchParams = new URL(sourceURL).searchParams;
+    } catch {
+      return {};
+    }
+
+    const utmKeys = [...searchParams.keys()].filter(key =>
+      AMO_ATTRIBUTION_DATA_KEYS.includes(key)
+    );
+
+    return utmKeys.reduce((params, key) => {
+      let value = searchParams.get(key);
+      if (typeof value === "string") {
+        value = value.slice(0, AMO_ATTRIBUTION_DATA_MAX_LENGTH);
+      }
+
+      return { ...params, [key]: value };
+    }, {});
+  },
+
+  /**
+   * Record an "install stats" event when the source is included in
+   * `AMO_ATTRIBUTION_ALLOWED_SOURCES`.
+   *
+   * @param {AddonInstall} install
+   *        The AddonInstall instance to record an install_stats event for.
+   */
+  recordInstallStatsEvent(install) {
+    const telemetryInfo = this.getInstallTelemetryInfo(install);
+
+    if (!AMO_ATTRIBUTION_ALLOWED_SOURCES.includes(telemetryInfo?.source)) {
+      return;
+    }
+
+    const method = "install_stats";
+    const object = this.getEventObjectFromInstall(install);
+    const addonId = this.getAddonIdFromInstall(install);
+
+    if (!addonId) {
+      Cu.reportError(
+        "Missing addonId when trying to record an install_stats event"
+      );
+      return;
+    }
+
+    let extra = {
+      addon_id: this.getTrimmedString(addonId),
+    };
+
+    if (
+      telemetryInfo?.source === "amo" &&
+      typeof telemetryInfo?.sourceURL === "string"
+    ) {
+      extra = {
+        ...extra,
+        ...this.parseAttributionDataForAMO(telemetryInfo.sourceURL),
+      };
+    }
+
+    this.recordEvent({ method, object, value: install.hashedAddonId, extra });
   },
 
   /**

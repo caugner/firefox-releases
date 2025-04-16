@@ -42,7 +42,6 @@ add_task(async function() {
   info("Starting test... ");
 
   const wait = waitForNetworkEvents(monitor, 9);
-  loadFrameScriptUtils();
   await performRequestsInContent(REQUESTS_WITH_MEDIA_AND_FLASH_AND_WS);
   await wait;
 
@@ -100,7 +99,7 @@ add_task(async function() {
     );
     is(
       getSelectedRequest(store.getState()),
-      null,
+      undefined,
       "There should still be no selected item in the requests menu."
     );
 
@@ -123,7 +122,7 @@ add_task(async function() {
       );
       isnot(
         getSelectedRequest(store.getState()),
-        null,
+        undefined,
         "There should be a selected item in the requests menu."
       );
       is(
@@ -142,7 +141,7 @@ add_task(async function() {
       );
       is(
         getSelectedRequest(store.getState()),
-        null,
+        undefined,
         "There should still be no selected item in the requests menu."
       );
     }

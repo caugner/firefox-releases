@@ -56,6 +56,7 @@
 #include "nsPIDOMWindow.h"
 #include "nsIWidget.h"
 #include "mozilla/ShellHeaderOnlyUtils.h"
+#include "mozilla/Telemetry.h"
 #include "mozilla/WidgetUtils.h"
 #include "WinUtils.h"
 
@@ -231,8 +232,13 @@ class nsDriveEnumerator : public nsSimpleEnumerator,
 // static helper functions
 //-----------------------------------------------------------------------------
 
-// certainly not all the error that can be
-// encountered, but many of them common ones
+/**
+ * While not comprehensive, this will map many common Windows error codes to a
+ * corresponding nsresult. If an unmapped error is encountered, the hex error
+ * code will be logged to stderr. Error codes, names, and descriptions can be
+ * found at the following MSDN page:
+ * https://docs.microsoft.com/en-us/windows/win32/debug/system-error-codes
+ */
 static nsresult ConvertWinError(DWORD aWinErr) {
   nsresult rv;
 
@@ -257,6 +263,7 @@ static nsresult ConvertWinError(DWORD aWinErr) {
     case ERROR_ARENA_TRASHED:
       rv = NS_ERROR_OUT_OF_MEMORY;
       break;
+    case ERROR_DIR_NOT_EMPTY:
     case ERROR_CURRENT_DIRECTORY:
       rv = NS_ERROR_FILE_DIR_NOT_EMPTY;
       break;
@@ -281,6 +288,9 @@ static nsresult ConvertWinError(DWORD aWinErr) {
       rv = NS_OK;
       break;
     default:
+      printf_stderr(
+          "ConvertWinError received an unrecognized WinError: 0x%" PRIx32 "\n",
+          static_cast<uint32_t>(aWinErr));
       rv = NS_ERROR_FAILURE;
       break;
   }
@@ -960,8 +970,8 @@ static void StripRundll32(nsString& aCommandString) {
   // C:\Windows\System32\rundll32.exe "path to dll", var var
   // rundll32.exe "path to dll", var var
 
-  NS_NAMED_LITERAL_STRING(rundllSegment, "rundll32.exe ");
-  NS_NAMED_LITERAL_STRING(rundllSegmentShort, "rundll32 ");
+  constexpr auto rundllSegment = u"rundll32.exe "_ns;
+  constexpr auto rundllSegmentShort = u"rundll32 "_ns;
 
   // case insensitive
   int32_t strLen = rundllSegment.Length();
@@ -1197,7 +1207,7 @@ nsresult nsLocalFile::AppendInternal(const nsString& aNode,
     // "foo..foo", "..foo", and "foo.." are not falsely detected,
     // but the invalid paths "..\", "foo\..", "foo\..\foo",
     // "..\foo", etc are.
-    NS_NAMED_LITERAL_STRING(doubleDot, "\\..");
+    constexpr auto doubleDot = u"\\.."_ns;
     nsAString::const_iterator start, end, offset;
     aNode.BeginReading(start);
     aNode.EndReading(end);
@@ -1211,7 +1221,7 @@ nsresult nsLocalFile::AppendInternal(const nsString& aNode,
     }
 
     // catches the remaining cases of prefixes
-    if (StringBeginsWith(aNode, NS_LITERAL_STRING("..\\"))) {
+    if (StringBeginsWith(aNode, u"..\\"_ns)) {
       return NS_ERROR_FILE_UNRECOGNIZED_PATH;
     }
   }
@@ -1304,7 +1314,7 @@ nsLocalFile::Normalize() {
     if (currentDir.Last() == '\\') {
       path.Replace(0, 2, currentDir);
     } else {
-      path.Replace(0, 2, currentDir + NS_LITERAL_STRING("\\"));
+      path.Replace(0, 2, currentDir + u"\\"_ns);
     }
   }
 
@@ -3037,6 +3047,7 @@ nsLocalFile::Launch() {
   // Otherwise try ShellExecuteByExplorer first, and if it fails,
   // run ShellExecuteExW.
   if (!isExecutable) {
+    Telemetry::AutoTimer<Telemetry::SHELLEXECUTEBYEXPLORER_DURATION_MS> timer;
     mozilla::LauncherVoidResult shellExecuteOk =
         mozilla::ShellExecuteByExplorer(execPath, args, verbDefault,
                                         workingDirectoryPtr, showCmd);

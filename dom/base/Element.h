@@ -19,38 +19,29 @@
 #include "nsChangeHint.h"
 #include "nsContentUtils.h"
 #include "nsDOMAttributeMap.h"
-#include "nsINodeList.h"
 #include "nsIScrollableFrame.h"
+#include "nsRect.h"
 #include "Units.h"
 #include "mozilla/Attributes.h"
 #include "mozilla/CORSMode.h"
-#include "mozilla/EventForwards.h"
 #include "mozilla/EventStates.h"
 #include "mozilla/FlushType.h"
 #include "mozilla/PseudoStyleType.h"
 #include "mozilla/RustCell.h"
 #include "mozilla/SMILAttr.h"
 #include "mozilla/UniquePtr.h"
-#include "mozilla/dom/Attr.h"
-#include "mozilla/dom/BindingDeclarations.h"
 #include "mozilla/dom/DirectionalityUtils.h"
 #include "mozilla/dom/FragmentOrElement.h"
-#include "mozilla/dom/DOMRect.h"
-#include "mozilla/dom/DOMTokenListSupportedTokens.h"
-#include "mozilla/dom/ElementBinding.h"
-#include "mozilla/dom/Nullable.h"
 #include "mozilla/dom/PointerEventHandler.h"
-#include "mozilla/dom/WindowBinding.h"
+#include "mozilla/dom/ShadowRootBinding.h"
 
 class mozAutoDocUpdate;
 class nsIFrame;
 class nsIMozBrowserFrame;
 class nsIURI;
-class nsIScrollableFrame;
 class nsAttrValueOrString;
 class nsContentList;
 class nsDOMTokenList;
-struct nsRect;
 class nsFocusManager;
 class nsGlobalWindowInner;
 class nsGlobalWindowOuter;
@@ -82,6 +73,9 @@ namespace dom {
 struct GetAnimationsOptions;
 struct ScrollIntoViewOptions;
 struct ScrollToOptions;
+struct FocusOptions;
+struct ShadowRootInit;
+class BooleanOrScrollIntoViewOptions;
 class DOMIntersectionObserver;
 class DOMMatrixReadOnly;
 class Element;
@@ -157,11 +151,9 @@ class Grid;
     }                                                \
   }
 
-#define REFLECT_NULLABLE_DOMSTRING_ATTR(method, attr)           \
+#define REFLECT_DOMSTRING_ATTR(method, attr)                    \
   void Get##method(nsAString& aValue) const {                   \
-    if (!GetAttr(nsGkAtoms::attr, aValue)) {                    \
-      SetDOMStringToNull(aValue);                               \
-    }                                                           \
+    GetAttr(nsGkAtoms::attr, aValue);                           \
   }                                                             \
   void Set##method(const nsAString& aValue, ErrorResult& aRv) { \
     SetAttr(nsGkAtoms::attr, aValue, aRv);                      \
@@ -553,50 +545,50 @@ class Element : public FragmentOrElement {
   }
 
   // AccessibilityRole
-  REFLECT_NULLABLE_DOMSTRING_ATTR(Role, role)
+  REFLECT_DOMSTRING_ATTR(Role, role)
 
   // AriaAttributes
-  REFLECT_NULLABLE_DOMSTRING_ATTR(AriaAtomic, aria_atomic)
-  REFLECT_NULLABLE_DOMSTRING_ATTR(AriaAutoComplete, aria_autocomplete)
-  REFLECT_NULLABLE_DOMSTRING_ATTR(AriaBusy, aria_busy)
-  REFLECT_NULLABLE_DOMSTRING_ATTR(AriaChecked, aria_checked)
-  REFLECT_NULLABLE_DOMSTRING_ATTR(AriaColCount, aria_colcount)
-  REFLECT_NULLABLE_DOMSTRING_ATTR(AriaColIndex, aria_colindex)
-  REFLECT_NULLABLE_DOMSTRING_ATTR(AriaColIndexText, aria_colindextext)
-  REFLECT_NULLABLE_DOMSTRING_ATTR(AriaColSpan, aria_colspan)
-  REFLECT_NULLABLE_DOMSTRING_ATTR(AriaCurrent, aria_current)
-  REFLECT_NULLABLE_DOMSTRING_ATTR(AriaDescription, aria_description)
-  REFLECT_NULLABLE_DOMSTRING_ATTR(AriaDisabled, aria_disabled)
-  REFLECT_NULLABLE_DOMSTRING_ATTR(AriaExpanded, aria_expanded)
-  REFLECT_NULLABLE_DOMSTRING_ATTR(AriaHasPopup, aria_haspopup)
-  REFLECT_NULLABLE_DOMSTRING_ATTR(AriaHidden, aria_hidden)
-  REFLECT_NULLABLE_DOMSTRING_ATTR(AriaInvalid, aria_invalid)
-  REFLECT_NULLABLE_DOMSTRING_ATTR(AriaKeyShortcuts, aria_keyshortcuts)
-  REFLECT_NULLABLE_DOMSTRING_ATTR(AriaLabel, aria_label)
-  REFLECT_NULLABLE_DOMSTRING_ATTR(AriaLevel, aria_level)
-  REFLECT_NULLABLE_DOMSTRING_ATTR(AriaLive, aria_live)
-  REFLECT_NULLABLE_DOMSTRING_ATTR(AriaModal, aria_modal)
-  REFLECT_NULLABLE_DOMSTRING_ATTR(AriaMultiLine, aria_multiline)
-  REFLECT_NULLABLE_DOMSTRING_ATTR(AriaMultiSelectable, aria_multiselectable)
-  REFLECT_NULLABLE_DOMSTRING_ATTR(AriaOrientation, aria_orientation)
-  REFLECT_NULLABLE_DOMSTRING_ATTR(AriaPlaceholder, aria_placeholder)
-  REFLECT_NULLABLE_DOMSTRING_ATTR(AriaPosInSet, aria_posinset)
-  REFLECT_NULLABLE_DOMSTRING_ATTR(AriaPressed, aria_pressed)
-  REFLECT_NULLABLE_DOMSTRING_ATTR(AriaReadOnly, aria_readonly)
-  REFLECT_NULLABLE_DOMSTRING_ATTR(AriaRelevant, aria_relevant)
-  REFLECT_NULLABLE_DOMSTRING_ATTR(AriaRequired, aria_required)
-  REFLECT_NULLABLE_DOMSTRING_ATTR(AriaRoleDescription, aria_roledescription)
-  REFLECT_NULLABLE_DOMSTRING_ATTR(AriaRowCount, aria_rowcount)
-  REFLECT_NULLABLE_DOMSTRING_ATTR(AriaRowIndex, aria_rowindex)
-  REFLECT_NULLABLE_DOMSTRING_ATTR(AriaRowIndexText, aria_rowindextext)
-  REFLECT_NULLABLE_DOMSTRING_ATTR(AriaRowSpan, aria_rowspan)
-  REFLECT_NULLABLE_DOMSTRING_ATTR(AriaSelected, aria_selected)
-  REFLECT_NULLABLE_DOMSTRING_ATTR(AriaSetSize, aria_setsize)
-  REFLECT_NULLABLE_DOMSTRING_ATTR(AriaSort, aria_sort)
-  REFLECT_NULLABLE_DOMSTRING_ATTR(AriaValueMax, aria_valuemax)
-  REFLECT_NULLABLE_DOMSTRING_ATTR(AriaValueMin, aria_valuemin)
-  REFLECT_NULLABLE_DOMSTRING_ATTR(AriaValueNow, aria_valuenow)
-  REFLECT_NULLABLE_DOMSTRING_ATTR(AriaValueText, aria_valuetext)
+  REFLECT_DOMSTRING_ATTR(AriaAtomic, aria_atomic)
+  REFLECT_DOMSTRING_ATTR(AriaAutoComplete, aria_autocomplete)
+  REFLECT_DOMSTRING_ATTR(AriaBusy, aria_busy)
+  REFLECT_DOMSTRING_ATTR(AriaChecked, aria_checked)
+  REFLECT_DOMSTRING_ATTR(AriaColCount, aria_colcount)
+  REFLECT_DOMSTRING_ATTR(AriaColIndex, aria_colindex)
+  REFLECT_DOMSTRING_ATTR(AriaColIndexText, aria_colindextext)
+  REFLECT_DOMSTRING_ATTR(AriaColSpan, aria_colspan)
+  REFLECT_DOMSTRING_ATTR(AriaCurrent, aria_current)
+  REFLECT_DOMSTRING_ATTR(AriaDescription, aria_description)
+  REFLECT_DOMSTRING_ATTR(AriaDisabled, aria_disabled)
+  REFLECT_DOMSTRING_ATTR(AriaExpanded, aria_expanded)
+  REFLECT_DOMSTRING_ATTR(AriaHasPopup, aria_haspopup)
+  REFLECT_DOMSTRING_ATTR(AriaHidden, aria_hidden)
+  REFLECT_DOMSTRING_ATTR(AriaInvalid, aria_invalid)
+  REFLECT_DOMSTRING_ATTR(AriaKeyShortcuts, aria_keyshortcuts)
+  REFLECT_DOMSTRING_ATTR(AriaLabel, aria_label)
+  REFLECT_DOMSTRING_ATTR(AriaLevel, aria_level)
+  REFLECT_DOMSTRING_ATTR(AriaLive, aria_live)
+  REFLECT_DOMSTRING_ATTR(AriaModal, aria_modal)
+  REFLECT_DOMSTRING_ATTR(AriaMultiLine, aria_multiline)
+  REFLECT_DOMSTRING_ATTR(AriaMultiSelectable, aria_multiselectable)
+  REFLECT_DOMSTRING_ATTR(AriaOrientation, aria_orientation)
+  REFLECT_DOMSTRING_ATTR(AriaPlaceholder, aria_placeholder)
+  REFLECT_DOMSTRING_ATTR(AriaPosInSet, aria_posinset)
+  REFLECT_DOMSTRING_ATTR(AriaPressed, aria_pressed)
+  REFLECT_DOMSTRING_ATTR(AriaReadOnly, aria_readonly)
+  REFLECT_DOMSTRING_ATTR(AriaRelevant, aria_relevant)
+  REFLECT_DOMSTRING_ATTR(AriaRequired, aria_required)
+  REFLECT_DOMSTRING_ATTR(AriaRoleDescription, aria_roledescription)
+  REFLECT_DOMSTRING_ATTR(AriaRowCount, aria_rowcount)
+  REFLECT_DOMSTRING_ATTR(AriaRowIndex, aria_rowindex)
+  REFLECT_DOMSTRING_ATTR(AriaRowIndexText, aria_rowindextext)
+  REFLECT_DOMSTRING_ATTR(AriaRowSpan, aria_rowspan)
+  REFLECT_DOMSTRING_ATTR(AriaSelected, aria_selected)
+  REFLECT_DOMSTRING_ATTR(AriaSetSize, aria_setsize)
+  REFLECT_DOMSTRING_ATTR(AriaSort, aria_sort)
+  REFLECT_DOMSTRING_ATTR(AriaValueMax, aria_valuemax)
+  REFLECT_DOMSTRING_ATTR(AriaValueMin, aria_valuemin)
+  REFLECT_DOMSTRING_ATTR(AriaValueNow, aria_valuenow)
+  REFLECT_DOMSTRING_ATTR(AriaValueText, aria_valuetext)
 
  protected:
   /**
@@ -1259,7 +1251,8 @@ class Element : public FragmentOrElement {
       ShadowRootMode aMode);
 
   // Attach UA Shadow Root if it is not attached.
-  void AttachAndSetUAShadowRoot();
+  enum class NotifyUAWidgetSetup : bool { No, Yes };
+  void AttachAndSetUAShadowRoot(NotifyUAWidgetSetup = NotifyUAWidgetSetup::Yes);
 
   // Dispatch an event to UAWidgetsChild, triggering construction
   // or onchange callback on the existing widget.

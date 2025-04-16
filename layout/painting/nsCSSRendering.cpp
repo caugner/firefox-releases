@@ -20,6 +20,7 @@
 #include "mozilla/HashFunctions.h"
 #include "mozilla/MathAlgorithms.h"
 #include "mozilla/PresShell.h"
+#include "mozilla/SVGImageContext.h"
 #include "gfxFont.h"
 #include "ScaledFontBase.h"
 #include "skia/include/core/SkTextBlob.h"
@@ -48,8 +49,6 @@
 #include "nsCSSFrameConstructor.h"
 #include "nsCSSProps.h"
 #include "nsContentUtils.h"
-#include "SVGObserverUtils.h"
-#include "nsSVGIntegrationUtils.h"
 #include "gfxDrawable.h"
 #include "GeckoProfiler.h"
 #include "nsCSSRenderingBorders.h"
@@ -62,7 +61,6 @@
 #include "nsInlineFrame.h"
 #include "nsRubyTextContainerFrame.h"
 #include <algorithm>
-#include "SVGImageContext.h"
 #include "TextDrawTarget.h"
 
 using namespace mozilla;
@@ -836,11 +834,10 @@ ImgDrawResult nsCSSRendering::PaintBorderWithStyleBorder(
   // Check to see if we have an appearance defined.  If so, we let the theme
   // renderer draw the border.  DO not get the data from aForFrame, since the
   // passed in ComputedStyle may be different!  Always use |aStyle|!
-  const nsStyleDisplay* displayData = aStyle->StyleDisplay();
-  if (displayData->HasAppearance()) {
+  StyleAppearance appearance = aStyle->StyleDisplay()->EffectiveAppearance();
+  if (appearance != StyleAppearance::None) {
     nsITheme* theme = aPresContext->Theme();
-    if (theme->ThemeSupportsWidget(aPresContext, aForFrame,
-                                   displayData->mAppearance)) {
+    if (theme->ThemeSupportsWidget(aPresContext, aForFrame, appearance)) {
       return ImgDrawResult::SUCCESS;  // Let the theme handle it.
     }
   }
@@ -924,11 +921,10 @@ nsCSSRendering::CreateNullBorderRendererWithStyleBorder(
     const nsRect& aDirtyRect, const nsRect& aBorderArea,
     const nsStyleBorder& aStyleBorder, ComputedStyle* aStyle,
     bool* aOutBorderIsEmpty, Sides aSkipSides) {
-  const nsStyleDisplay* displayData = aStyle->StyleDisplay();
-  if (displayData->HasAppearance()) {
+  StyleAppearance appearance = aStyle->StyleDisplay()->EffectiveAppearance();
+  if (appearance != StyleAppearance::None) {
     nsITheme* theme = aPresContext->Theme();
-    if (theme->ThemeSupportsWidget(aPresContext, aForFrame,
-                                   displayData->mAppearance)) {
+    if (theme->ThemeSupportsWidget(aPresContext, aForFrame, appearance)) {
       return Nothing();
     }
   }
@@ -1379,10 +1375,9 @@ gfx::sRGBColor nsCSSRendering::GetShadowColor(const StyleSimpleShadow& aShadow,
 
 nsRect nsCSSRendering::GetShadowRect(const nsRect& aFrameArea,
                                      bool aNativeTheme, nsIFrame* aForFrame) {
-  nsRect frameRect = aNativeTheme
-                         ? aForFrame->GetVisualOverflowRectRelativeToSelf() +
-                               aFrameArea.TopLeft()
-                         : aFrameArea;
+  nsRect frameRect = aNativeTheme ? aForFrame->InkOverflowRectRelativeToSelf() +
+                                        aFrameArea.TopLeft()
+                                  : aFrameArea;
   Sides skipSides = aForFrame->GetSkipSides();
   frameRect = BoxDecorationRectForBorder(aForFrame, frameRect, skipSides);
 
@@ -1530,9 +1525,9 @@ void nsCSSRendering::PaintBoxShadowOuter(nsPresContext* aPresContext,
       nsRect nativeRect = aDirtyRect;
       nativeRect.MoveBy(-shadowOffset);
       nativeRect.IntersectRect(frameRect, nativeRect);
-      aPresContext->Theme()->DrawWidgetBackground(shadowContext, aForFrame,
-                                                  styleDisplay->mAppearance,
-                                                  aFrameArea, nativeRect);
+      aPresContext->Theme()->DrawWidgetBackground(
+          shadowContext, aForFrame, styleDisplay->EffectiveAppearance(),
+          aFrameArea, nativeRect);
 
       blurringArea.DoPaint();
       aRenderingContext.Restore();
@@ -1873,11 +1868,10 @@ bool nsCSSRendering::CanBuildWebRenderDisplayItemsForStyleImageLayer(
              (uint32_t)aLayer < aBackgroundStyle->mImage.mLayers.Length());
 
   // We cannot draw native themed backgrounds
-  const nsStyleDisplay* displayData = aFrame->StyleDisplay();
-  if (displayData->HasAppearance()) {
+  StyleAppearance appearance = aFrame->StyleDisplay()->EffectiveAppearance();
+  if (appearance != StyleAppearance::None) {
     nsITheme* theme = aPresCtx.Theme();
-    if (theme->ThemeSupportsWidget(&aPresCtx, aFrame,
-                                   displayData->mAppearance)) {
+    if (theme->ThemeSupportsWidget(&aPresCtx, aFrame, appearance)) {
       return false;
     }
   }
@@ -2336,7 +2330,7 @@ static Maybe<nscolor> CalcScrollbarColor(nsIFrame* aFrame,
 }
 
 static nscolor GetBackgroundColor(nsIFrame* aFrame, ComputedStyle* aStyle) {
-  switch (aStyle->StyleDisplay()->mAppearance) {
+  switch (aStyle->StyleDisplay()->EffectiveAppearance()) {
     case StyleAppearance::ScrollbarthumbVertical:
     case StyleAppearance::ScrollbarthumbHorizontal: {
       if (Maybe<nscolor> overrideColor =
@@ -2447,18 +2441,18 @@ ImgDrawResult nsCSSRendering::PaintStyleImageLayerWithSC(
   // Check to see if we have an appearance defined.  If so, we let the theme
   // renderer draw the background and bail out.
   // XXXzw this ignores aParams.bgClipRect.
-  const nsStyleDisplay* displayData = aParams.frame->StyleDisplay();
-  if (displayData->HasAppearance()) {
+  StyleAppearance appearance =
+      aParams.frame->StyleDisplay()->EffectiveAppearance();
+  if (appearance != StyleAppearance::None) {
     nsITheme* theme = aParams.presCtx.Theme();
     if (theme->ThemeSupportsWidget(&aParams.presCtx, aParams.frame,
-                                   displayData->mAppearance)) {
+                                   appearance)) {
       nsRect drawing(aParams.borderArea);
       theme->GetWidgetOverflow(aParams.presCtx.DeviceContext(), aParams.frame,
-                               displayData->mAppearance, &drawing);
+                               appearance, &drawing);
       drawing.IntersectRect(drawing, aParams.dirtyRect);
-      theme->DrawWidgetBackground(&aRenderingCtx, aParams.frame,
-                                  displayData->mAppearance, aParams.borderArea,
-                                  drawing);
+      theme->DrawWidgetBackground(&aRenderingCtx, aParams.frame, appearance,
+                                  aParams.borderArea, drawing);
       return ImgDrawResult::SUCCESS;
     }
   }

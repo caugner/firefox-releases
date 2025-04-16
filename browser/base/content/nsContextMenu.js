@@ -51,7 +51,8 @@ function openContextMenu(aMessage, aBrowser, aActor) {
     linkReferrerInfo,
     contentType: data.contentType,
     contentDisposition: data.contentDisposition,
-    frameOuterWindowID: data.frameOuterWindowID,
+    frameID: data.frameID,
+    frameOuterWindowID: data.frameID,
     frameBrowsingContext: BrowsingContext.get(data.frameBrowsingContextID),
     selectionInfo: data.selectionInfo,
     disableSetDesktopBackground: data.disableSetDesktopBackground,
@@ -137,7 +138,7 @@ class nsContextMenu {
         selectionText: this.isTextSelected
           ? this.selectionInfo.fullText
           : undefined,
-        frameId: this.frameOuterWindowID,
+        frameId: this.frameID,
         webExtBrowserType: this.webExtBrowserType,
         webExtContextData: this.contentData
           ? this.contentData.webExtContextData
@@ -231,6 +232,7 @@ class nsContextMenu {
 
     this.principal = context.principal;
     this.storagePrincipal = context.storagePrincipal;
+    this.frameID = context.frameID;
     this.frameOuterWindowID = context.frameOuterWindowID;
     this.frameBrowsingContext = BrowsingContext.get(
       context.frameBrowsingContextID
@@ -503,13 +505,7 @@ class nsContextMenu {
 
     var showInspectA11Y =
       showInspect &&
-      // Only when accessibility service started or the panel can be
-      // auto-enabled.
-      (Services.appinfo.accessibilityEnabled ||
-        Services.prefs.getBoolPref(
-          "devtools.accessibility.auto-init.enabled",
-          false
-        )) &&
+      Services.prefs.getBoolPref("devtools.accessibility.enabled", false) &&
       this.inTabBrowser &&
       Services.prefs.getBoolPref("devtools.enabled", true) &&
       Services.prefs.getBoolPref("devtools.accessibility.enabled", true) &&
@@ -1048,7 +1044,7 @@ class nsContextMenu {
       originStoragePrincipal: this.storagePrincipal,
       triggeringPrincipal: this.principal,
       csp: this.csp,
-      frameOuterWindowID: this.contentData.frameOuterWindowID,
+      frameID: this.contentData.frameID,
     };
     for (let p in extra) {
       params[p] = extra[p];
@@ -1539,7 +1535,7 @@ class nsContextMenu {
       uri: makeURI(linkURL),
       loadingPrincipal: this.principal,
       contentPolicyType: Ci.nsIContentPolicy.TYPE_SAVEAS_DOWNLOAD,
-      securityFlags: Ci.nsILoadInfo.SEC_ALLOW_CROSS_ORIGIN_DATA_INHERITS,
+      securityFlags: Ci.nsILoadInfo.SEC_ALLOW_CROSS_ORIGIN_INHERITS_SEC_CONTEXT,
     });
 
     if (linkDownload) {

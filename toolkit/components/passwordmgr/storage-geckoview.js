@@ -8,6 +8,9 @@
 
 "use strict";
 
+const { ComponentUtils } = ChromeUtils.import(
+  "resource://gre/modules/ComponentUtils.jsm"
+);
 const { XPCOMUtils } = ChromeUtils.import(
   "resource://gre/modules/XPCOMUtils.jsm"
 );
@@ -27,11 +30,11 @@ class LoginManagerStorage_geckoview extends LoginManagerStorage_json {
     return Components.ID("{337f317f-f713-452a-962d-db831c785fec}");
   }
   get QueryInterface() {
-    return ChromeUtils.generateQI([Ci.nsILoginManagerStorage]);
+    return ChromeUtils.generateQI(["nsILoginManagerStorage"]);
   }
 
   get _xpcom_factory() {
-    return XPCOMUtils.generateSingletonFactory(
+    return ComponentUtils.generateSingletonFactory(
       this.LoginManagerStorage_geckoview
     );
   }

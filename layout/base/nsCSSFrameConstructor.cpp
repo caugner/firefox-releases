@@ -119,7 +119,8 @@
 
 #include "nsMathMLParts.h"
 #include "mozilla/dom/SVGTests.h"
-#include "nsSVGUtils.h"
+#include "mozilla/SVGGradientFrame.h"
+#include "mozilla/SVGUtils.h"
 
 #include "nsRefreshDriver.h"
 #include "nsTextNode.h"
@@ -142,8 +143,6 @@ nsContainerFrame* NS_NewSVGOuterSVGAnonChildFrame(PresShell* aPresShell,
 nsIFrame* NS_NewSVGInnerSVGFrame(PresShell* aPresShell, ComputedStyle* aStyle);
 nsIFrame* NS_NewSVGGeometryFrame(PresShell* aPresShell, ComputedStyle* aStyle);
 nsIFrame* NS_NewSVGGFrame(PresShell* aPresShell, ComputedStyle* aStyle);
-nsIFrame* NS_NewSVGGenericContainerFrame(PresShell* aPresShell,
-                                         ComputedStyle* aStyle);
 nsContainerFrame* NS_NewSVGForeignObjectFrame(PresShell* aPresShell,
                                               ComputedStyle* aStyle);
 nsIFrame* NS_NewSVGAFrame(PresShell* aPresShell, ComputedStyle* aStyle);
@@ -354,7 +353,7 @@ static inline bool IsDisplayContents(const nsIContent* aContent) {
  */
 static bool IsFrameForSVG(const nsIFrame* aFrame) {
   return aFrame->IsFrameOfType(nsIFrame::eSVG) ||
-         nsSVGUtils::IsInSVGTextSubtree(aFrame);
+         SVGUtils::IsInSVGTextSubtree(aFrame);
 }
 
 static bool IsLastContinuationForColumnContent(const nsIFrame* aFrame) {
@@ -956,7 +955,7 @@ nsContainerFrame* nsFrameConstructorState::GetGeometricParent(
   // float to "none"?  That's OK per CSS 2.1, as far as I can tell.
 
   if (aContentParentFrame &&
-      nsSVGUtils::IsInSVGTextSubtree(aContentParentFrame)) {
+      SVGUtils::IsInSVGTextSubtree(aContentParentFrame)) {
     return aContentParentFrame;
   }
 
@@ -1329,7 +1328,7 @@ nsFrameConstructorSaveState::~nsFrameConstructorSaveState() {
 /**
  * Moves aFrameList from aOldParent to aNewParent.  This updates the parent
  * pointer of the frames in the list, and reparents their views as needed.
- * nsFrame::SetParent sets the NS_FRAME_HAS_VIEW bit on aNewParent and its
+ * nsIFrame::SetParent sets the NS_FRAME_HAS_VIEW bit on aNewParent and its
  * ancestors as needed. Then it sets the list as the initial child list
  * on aNewParent, unless aNewParent either already has kids or has been
  * reflowed; in that case it appends the new frames.  Note that this
@@ -2213,7 +2212,7 @@ nsIFrame* nsCSSFrameConstructor::ConstructDocElementFrame(
     // We need to copy <body>'s WritingMode to mDocElementContainingBlock before
     // construct mRootElementFrame so that anonymous internal frames such as
     // <html> with table style can copy their parent frame's mWritingMode in
-    // nsFrame::Init().
+    // nsIFrame::Init().
     MOZ_ASSERT(!mRootElementFrame,
                "We need to copy <body>'s principal writing-mode before "
                "constructing mRootElementFrame.");
@@ -2226,8 +2225,8 @@ nsIFrame* nsCSSFrameConstructor::ConstructDocElementFrame(
 
       if (bodyWM != docElementWM) {
         nsContentUtils::ReportToConsole(
-            nsIScriptError::warningFlag, NS_LITERAL_CSTRING("Layout"),
-            mDocument, nsContentUtils::eLAYOUT_PROPERTIES,
+            nsIScriptError::warningFlag, "Layout"_ns, mDocument,
+            nsContentUtils::eLAYOUT_PROPERTIES,
             "PrincipalWritingModePropagationWarning");
       }
 
@@ -2455,7 +2454,7 @@ void nsCSSFrameConstructor::SetUpDocElementContainingBlock(
       ViewportFrame [fixed-cb]
         nsHTMLScrollFrame
           nsCanvasFrame [abs-cb]
-            root element frame (nsBlockFrame, nsSVGOuterSVGFrame,
+            root element frame (nsBlockFrame, SVGOuterSVGFrame,
                                 nsTableWrapperFrame, nsPlaceholderFrame)
 
   Galley presentation, XUL
@@ -2471,7 +2470,7 @@ void nsCSSFrameConstructor::SetUpDocElementContainingBlock(
           nsPageFrame
             nsPageContentFrame [fixed-cb]
               nsCanvasFrame [abs-cb]
-                root element frame (nsBlockFrame, nsSVGOuterSVGFrame,
+                root element frame (nsBlockFrame, SVGOuterSVGFrame,
                                     nsTableWrapperFrame, nsPlaceholderFrame)
 
   Print-preview presentation, non-XUL
@@ -2482,7 +2481,7 @@ void nsCSSFrameConstructor::SetUpDocElementContainingBlock(
             nsPageFrame
               nsPageContentFrame [fixed-cb]
                 nsCanvasFrame [abs-cb]
-                  root element frame (nsBlockFrame, nsSVGOuterSVGFrame,
+                  root element frame (nsBlockFrame, SVGOuterSVGFrame,
                                       nsTableWrapperFrame, nsPlaceholderFrame)
 
   Print/print preview of XUL is not supported.
@@ -2971,11 +2970,6 @@ nsIFrame* nsCSSFrameConstructor::ConstructFieldSetFrame(
         PseudoStyleType::scrolledContent, false, scrollFrame);
   }
 
-  nsContainerFrame* absPosContainer = nullptr;
-  if (fieldsetFrame->IsAbsPosContainingBlock()) {
-    absPosContainer = fieldsetFrame;
-  }
-
   // Create the inner ::-moz-fieldset-content frame.
   nsContainerFrame* contentFrameTop;
   nsContainerFrame* contentFrame;
@@ -3002,9 +2996,6 @@ nsIFrame* nsCSSFrameConstructor::ConstructFieldSetFrame(
       if (fieldsetContentStyle->StyleColumn()->IsColumnContainerStyle()) {
         contentFrameTop = BeginBuildingColumns(
             aState, content, parent, contentFrame, fieldsetContentStyle);
-        if (absPosContainer) {
-          absPosContainer = contentFrameTop;
-        }
       } else {
         // No need to create column container. Initialize content frame.
         InitAndRestoreFrame(aState, content, parent, contentFrame);
@@ -3022,8 +3013,8 @@ nsIFrame* nsCSSFrameConstructor::ConstructFieldSetFrame(
   nsFrameList childList;
 
   contentFrameTop->AddStateBits(NS_FRAME_CAN_HAVE_ABSPOS_CHILDREN);
-  if (absPosContainer) {
-    aState.PushAbsoluteContainingBlock(contentFrameTop, absPosContainer,
+  if (fieldsetFrame->IsAbsPosContainingBlock()) {
+    aState.PushAbsoluteContainingBlock(contentFrameTop, fieldsetFrame,
                                        absoluteSaveState);
   }
 
@@ -3177,9 +3168,8 @@ const nsCSSFrameConstructor::FrameConstructionData*
 nsCSSFrameConstructor::FindTextData(const Text& aTextContent,
                                     nsIFrame* aParentFrame) {
   if (aParentFrame && IsFrameForSVG(aParentFrame)) {
-    nsIFrame* ancestorFrame =
-        nsSVGUtils::GetFirstNonAAncestorFrame(aParentFrame);
-    if (!ancestorFrame || !nsSVGUtils::IsInSVGTextSubtree(ancestorFrame)) {
+    nsIFrame* ancestorFrame = SVGUtils::GetFirstNonAAncestorFrame(aParentFrame);
+    if (!ancestorFrame || !SVGUtils::IsInSVGTextSubtree(ancestorFrame)) {
       return nullptr;
     }
 
@@ -4059,7 +4049,7 @@ nsCSSFrameConstructor::FindXULButtonData(const Element& aElement,
 
 #  ifdef MOZ_THUNDERBIRD
   if (aElement.AttrValueIs(kNameSpaceID_None, nsGkAtoms::type,
-                           NS_LITERAL_STRING("menu-button"), eCaseMatters)) {
+                           u"menu-button"_ns, eCaseMatters)) {
     return &sXULMenuData;
   }
 #  endif
@@ -4562,14 +4552,14 @@ nsIFrame* nsCSSFrameConstructor::ConstructNonScrollableBlockWithConstructor(
   // We want a block formatting context root in paginated contexts for
   // every block that would be scrollable in a non-paginated context.
   // We mark our blocks with a bit here if this condition is true, so
-  // we can check it later in nsFrame::ApplyPaginatedOverflowClipping.
+  // we can check it later in nsIFrame::ApplyPaginatedOverflowClipping.
   bool clipPaginatedOverflow =
       (aItem.mFCData->mBits & FCDATA_FORCED_NON_SCROLLABLE_BLOCK) != 0;
   nsFrameState flags = nsFrameState(0);
   if ((aDisplay->IsAbsolutelyPositionedStyle() || aDisplay->IsFloatingStyle() ||
        aDisplay->DisplayInside() == StyleDisplayInside::FlowRoot ||
        clipPaginatedOverflow) &&
-      !nsSVGUtils::IsInSVGTextSubtree(aParentFrame)) {
+      !SVGUtils::IsInSVGTextSubtree(aParentFrame)) {
     flags = NS_BLOCK_FORMATTING_CONTEXT_STATE_BITS;
     if (clipPaginatedOverflow) {
       flags |= NS_BLOCK_CLIP_PAGINATED_OVERFLOW;
@@ -4643,7 +4633,7 @@ void nsCSSFrameConstructor::FlushAccumulatedBlock(
   auto anonPseudo = PseudoStyleType::mozMathMLAnonymousBlock;
 
   ComputedStyle* parentContext =
-      nsFrame::CorrectStyleParentFrame(aParentFrame, anonPseudo)->Style();
+      nsIFrame::CorrectStyleParentFrame(aParentFrame, anonPseudo)->Style();
   ServoStyleSet* styleSet = mPresShell->StyleSet();
   RefPtr<ComputedStyle> blockContext;
   blockContext =
@@ -4902,12 +4892,12 @@ nsCSSFrameConstructor::FindSVGData(const Element& aElement,
   }
 
   if (tag == nsGkAtoms::svg && !parentIsSVG) {
-    // We need outer <svg> elements to have an nsSVGOuterSVGFrame regardless
+    // We need outer <svg> elements to have an SVGOuterSVGFrame regardless
     // of whether they fail conditional processing attributes, since various
     // SVG frames assume that one exists.  We handle the non-rendering
     // of failing outer <svg> element contents like <switch> statements,
     // and do the PassesConditionalProcessingTests call in
-    // nsSVGOuterSVGFrame::Init.
+    // SVGOuterSVGFrame::Init.
     static const FrameConstructionData sOuterSVGData =
         FULL_CTOR_FCDATA(0, &nsCSSFrameConstructor::ConstructOuterSVG);
     return &sOuterSVGData;
@@ -4923,7 +4913,7 @@ nsCSSFrameConstructor::FindSVGData(const Element& aElement,
   if (tests && !tests->PassesConditionalProcessingTests()) {
     // Elements with failing conditional processing attributes never get
     // rendered.  Note that this is not where we select which frame in a
-    // <switch> to render!  That happens in nsSVGSwitchFrame::PaintSVG.
+    // <switch> to render!  That happens in SVGSwitchFrame::PaintSVG.
     if (aIsWithinSVGText) {
       // SVGTextFrame doesn't handle conditional processing attributes,
       // so don't create frames for descendants of <text> with failing
@@ -4931,7 +4921,7 @@ nsCSSFrameConstructor::FindSVGData(const Element& aElement,
       // is correct.
       return &sSuppressData;
     }
-    // If we're not inside <text>, create an nsSVGContainerFrame (which is a
+    // If we're not inside <text>, create an SVGContainerFrame (which is a
     // frame that doesn't render) so that paint servers can still be referenced,
     // even if they live inside an element with failing conditional processing
     // attributes.
@@ -4940,9 +4930,8 @@ nsCSSFrameConstructor::FindSVGData(const Element& aElement,
 
   // Ensure that a stop frame is a child of a gradient and that gradients
   // can only have stop children.
-  bool parentIsGradient =
-      aParentFrame && (aParentFrame->IsSVGLinearGradientFrame() ||
-                       aParentFrame->IsSVGRadialGradientFrame());
+  bool parentIsGradient = aParentFrame && static_cast<SVGGradientFrame*>(
+                                              do_QueryFrame(aParentFrame));
   bool stop = (tag == nsGkAtoms::stop);
   if ((parentIsGradient && !stop) || (!parentIsGradient && stop)) {
     return &sSuppressData;
@@ -5015,7 +5004,6 @@ nsCSSFrameConstructor::FindSVGData(const Element& aElement,
       SIMPLE_SVG_CREATE(rect, NS_NewSVGGeometryFrame),
       SIMPLE_SVG_CREATE(path, NS_NewSVGGeometryFrame),
       SIMPLE_SVG_CREATE(defs, NS_NewSVGContainerFrame),
-      SIMPLE_SVG_CREATE(generic_, NS_NewSVGGenericContainerFrame),
       {nsGkAtoms::text,
        FCDATA_WITH_WRAPPING_BLOCK(
            FCDATA_DISALLOW_OUT_OF_FLOW | FCDATA_ALLOW_BLOCK_STYLES,
@@ -5122,7 +5110,7 @@ void nsCSSFrameConstructor::DoAddFrameConstructionItems(
     ItemFlags aFlags) {
   auto flags = aFlags + ItemFlag::AllowPageBreak;
   if (aParentFrame) {
-    if (nsSVGUtils::IsInSVGTextSubtree(aParentFrame)) {
+    if (SVGUtils::IsInSVGTextSubtree(aParentFrame)) {
       flags += ItemFlag::IsWithinSVGText;
     }
     if (aParentFrame->IsBlockFrame() && aParentFrame->GetParent() &&
@@ -8037,7 +8025,7 @@ nsIFrame* nsCSSFrameConstructor::CreateContinuingFrame(
   }
 
   // If a continuing frame needs to carry frame state bits from its previous
-  // continuation or parent, set them in nsFrame::Init(), or in any derived
+  // continuation or parent, set them in nsIFrame::Init(), or in any derived
   // frame class's Init() if the bits are belong to specific group.
 
   if (nextInFlow) {
@@ -9515,7 +9503,7 @@ void nsCSSFrameConstructor::ProcessChildren(
 
     if (aCanHaveGeneratedContent) {
       auto* styleParentFrame =
-          nsFrame::CorrectStyleParentFrame(aFrame, PseudoStyleType::NotPseudo);
+          nsIFrame::CorrectStyleParentFrame(aFrame, PseudoStyleType::NotPseudo);
       computedStyle = styleParentFrame->Style();
       if (computedStyle->StyleDisplay()->IsListItem() &&
           (listItem = do_QueryFrame(aFrame)) &&
@@ -9672,7 +9660,7 @@ void nsCSSFrameConstructor::WrapFramesInFirstLineFrame(
 
   if (!aLineFrame) {
     // Create line frame
-    ComputedStyle* parentStyle = nsFrame::CorrectStyleParentFrame(
+    ComputedStyle* parentStyle = nsIFrame::CorrectStyleParentFrame(
                                      aBlockFrame, PseudoStyleType::firstLine)
                                      ->Style();
     RefPtr<ComputedStyle> firstLineStyle =
@@ -9899,7 +9887,7 @@ void nsCSSFrameConstructor::CreateLetterFrame(
   // Get a ComputedStyle for the first-letter-frame.
   //
   // Keep this in sync with nsBlockFrame::UpdatePseudoElementStyles.
-  nsIFrame* parentFrame = nsFrame::CorrectStyleParentFrame(
+  nsIFrame* parentFrame = nsIFrame::CorrectStyleParentFrame(
       aParentFrame, PseudoStyleType::firstLetter);
 
   ComputedStyle* parentComputedStyle = parentFrame->Style();
@@ -9914,7 +9902,7 @@ void nsCSSFrameConstructor::CreateLetterFrame(
 
   if (sc) {
     if (parentFrame->IsLineFrame()) {
-      nsIFrame* parentIgnoringFirstLine = nsFrame::CorrectStyleParentFrame(
+      nsIFrame* parentIgnoringFirstLine = nsIFrame::CorrectStyleParentFrame(
           aBlockFrame, PseudoStyleType::firstLetter);
 
       sc = mPresShell->StyleSet()->ReparentComputedStyle(
@@ -9945,7 +9933,7 @@ void nsCSSFrameConstructor::CreateLetterFrame(
     const nsStyleDisplay* display = sc->StyleDisplay();
     nsFirstLetterFrame* letterFrame;
     if (display->IsFloatingStyle() &&
-        !nsSVGUtils::IsInSVGTextSubtree(aParentFrame)) {
+        !SVGUtils::IsInSVGTextSubtree(aParentFrame)) {
       // Make a floating first-letter frame
       letterFrame = CreateFloatingLetterFrame(state, aTextContent, textFrame,
                                               aParentFrame, parentComputedStyle,
@@ -10938,7 +10926,7 @@ void nsCSSFrameConstructor::CreateIBSiblings(nsFrameConstructorState& aState,
         // blockFrame later, we manually add the bit earlier here to make all
         // the continuations of blockFrame created in
         // CreateColumnSpanSiblings(), i.e. non-column-span wrappers, have the
-        // bit via nsFrame::Init().
+        // bit via nsIFrame::Init().
         blockFrame->AddStateBits(NS_FRAME_PART_OF_IBSPLIT);
 
         nsFrameList columnSpanSiblings =

@@ -1396,15 +1396,6 @@ JS_PUBLIC_API void JS::SetHostCleanupFinalizationRegistryCallback(
   cx->runtime()->gc.setHostCleanupFinalizationRegistryCallback(cb, data);
 }
 
-JS_PUBLIC_API bool JS::CleanupQueuedFinalizationRegistry(
-    JSContext* cx, HandleObject registry) {
-  AssertHeapIsIdle();
-  CHECK_THREAD(cx);
-  cx->check(registry);
-  return cx->runtime()->gc.cleanupQueuedFinalizationRegistry(
-      cx, registry.as<FinalizationRegistryObject>());
-}
-
 JS_PUBLIC_API void JS::ClearKeptObjects(JSContext* cx) {
   gc::GCRuntime* gc = &cx->runtime()->gc;
 
@@ -1584,7 +1575,7 @@ JS_PUBLIC_API bool JS_ValueToId(JSContext* cx, HandleValue value,
   AssertHeapIsIdle();
   CHECK_THREAD(cx);
   cx->check(value);
-  return ValueToId<CanGC>(cx, value, idp);
+  return ToPropertyKey(cx, value, idp);
 }
 
 JS_PUBLIC_API bool JS_StringToId(JSContext* cx, HandleString string,
@@ -1593,7 +1584,7 @@ JS_PUBLIC_API bool JS_StringToId(JSContext* cx, HandleString string,
   CHECK_THREAD(cx);
   cx->check(string);
   RootedValue value(cx, StringValue(string));
-  return ValueToId<CanGC>(cx, value, idp);
+  return PrimitiveValueToId<CanGC>(cx, value, idp);
 }
 
 JS_PUBLIC_API bool JS_IdToValue(JSContext* cx, jsid id, MutableHandleValue vp) {
@@ -1956,7 +1947,7 @@ JS_PUBLIC_API void JS::AssertObjectBelongsToCurrentThread(JSObject* obj) {
 // HelperThreadTaskCallback, use MOZ_NEVER_INLINE to prevent this. See
 // https://bugzilla.mozilla.org/show_bug.cgi?id=1630189#c4
 JS_PUBLIC_API MOZ_NEVER_INLINE void SetHelperThreadTaskCallback(
-    void (*callback)(js::UniquePtr<js::RunnableTask>)) {
+    bool (*callback)(js::UniquePtr<js::RunnableTask>)) {
   HelperThreadTaskCallback = callback;
 }
 
@@ -4162,7 +4153,7 @@ JS_PUBLIC_API bool JS_StringHasBeenPinned(JSContext* cx, JSString* str) {
     return false;
   }
 
-  return str->asAtom().isPinned();
+  return AtomIsPinned(cx, &str->asAtom());
 }
 
 JS_PUBLIC_API JSString* JS_AtomizeAndPinJSString(JSContext* cx,
@@ -4203,7 +4194,7 @@ JS_PUBLIC_API JSString* JS_NewLatin1String(
     size_t length) {
   AssertHeapIsIdle();
   CHECK_THREAD(cx);
-  return NewString(cx, std::move(chars), length);
+  return NewString<CanGC>(cx, std::move(chars), length);
 }
 
 JS_PUBLIC_API JSString* JS_NewUCString(JSContext* cx,
@@ -4211,7 +4202,7 @@ JS_PUBLIC_API JSString* JS_NewUCString(JSContext* cx,
                                        size_t length) {
   AssertHeapIsIdle();
   CHECK_THREAD(cx);
-  return NewString(cx, std::move(chars), length);
+  return NewString<CanGC>(cx, std::move(chars), length);
 }
 
 JS_PUBLIC_API JSString* JS_NewUCStringDontDeflate(JSContext* cx,
@@ -4219,7 +4210,7 @@ JS_PUBLIC_API JSString* JS_NewUCStringDontDeflate(JSContext* cx,
                                                   size_t length) {
   AssertHeapIsIdle();
   CHECK_THREAD(cx);
-  return NewStringDontDeflate(cx, std::move(chars), length);
+  return NewStringDontDeflate<CanGC>(cx, std::move(chars), length);
 }
 
 JS_PUBLIC_API JSString* JS_NewUCStringCopyN(JSContext* cx, const char16_t* s,

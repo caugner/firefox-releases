@@ -697,6 +697,7 @@ SECStatus PK11_ImportCertForKeyToSlot(PK11SlotInfo *slot, CERTCertificate *cert,
                                       void *wincx);
 CERTCertificate *PK11_FindBestKEAMatch(CERTCertificate *serverCert, void *wincx);
 PRBool PK11_FortezzaHasKEA(CERTCertificate *cert);
+CK_OBJECT_HANDLE PK11_FindEncodedCertInSlot(PK11SlotInfo *slot, SECItem *derCert, void *wincx);
 CK_OBJECT_HANDLE PK11_FindCertInSlot(PK11SlotInfo *slot, CERTCertificate *cert,
                                      void *wincx);
 SECStatus PK11_TraverseCertsForNicknameInSlot(SECItem *nickname,
@@ -948,7 +949,7 @@ PRBool SECMOD_HasRootCerts(void);
  *  the system state independent of the database state and can be called
  *  before NSS initializes.
  */
-int SECMOD_GetSystemFIPSEnabled();
+int SECMOD_GetSystemFIPSEnabled(void);
 
 SEC_END_PROTOS
 

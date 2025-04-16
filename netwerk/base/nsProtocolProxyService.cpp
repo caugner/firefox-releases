@@ -325,7 +325,7 @@ class nsAsyncResolveRequest final : public nsIRunnable,
       // If the PAC service is not avail (e.g. failed pac load
       // or shutdown) then we will be going direct. Make that
       // mapping now so that any filters are still applied.
-      mPACString = NS_LITERAL_CSTRING("DIRECT;");
+      mPACString = "DIRECT;"_ns;
       mStatus = NS_OK;
 
       LOG(("pac not available, use DIRECT\n"));
@@ -1590,7 +1590,7 @@ nsProtocolProxyService::AsyncResolve(
     // use systemPrincipal as the loadingPrincipal.
     rv = NS_NewChannel(getter_AddRefs(channel), uri,
                        nsContentUtils::GetSystemPrincipal(),
-                       nsILoadInfo::SEC_ALLOW_CROSS_ORIGIN_DATA_IS_NULL,
+                       nsILoadInfo::SEC_ALLOW_CROSS_ORIGIN_SEC_CONTEXT_IS_NULL,
                        nsIContentPolicy::TYPE_OTHER);
     NS_ENSURE_SUCCESS(rv, rv);
   }

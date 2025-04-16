@@ -549,7 +549,7 @@ class nsGlyphTableList final : public nsIObserver {
 
   nsPropertiesTable mUnicodeTable;
 
-  nsGlyphTableList() : mUnicodeTable(NS_LITERAL_CSTRING("Unicode")) {}
+  nsGlyphTableList() : mUnicodeTable("Unicode"_ns) {}
 
   nsresult Initialize();
   nsresult Finalize();
@@ -660,7 +660,7 @@ static nsresult InitCharGlobals() {
   // observer and will be deleted at shutdown. We now add some private
   // per font-family tables for stretchy operators, in order of preference.
   // Do not include the Unicode table in this list.
-  if (!glyphTableList->AddGlyphTable(NS_LITERAL_CSTRING("STIXGeneral"))) {
+  if (!glyphTableList->AddGlyphTable("STIXGeneral"_ns)) {
     rv = NS_ERROR_OUT_OF_MEMORY;
   }
 
@@ -1530,10 +1530,10 @@ nsresult nsMathMLChar::StretchInternal(
         font.fontlist.GetFontlist()->mNames;
     for (const FontFamilyName& name : fontlist) {
       if (StretchEnumContext::EnumCallback(name, name.IsGeneric(), &enumData)) {
-        if (name.IsNamedFamily(NS_LITERAL_STRING("STIXGeneral"))) {
+        if (name.IsNamedFamily(u"STIXGeneral"_ns)) {
           AutoTArray<nsString, 1> params{
-              NS_LITERAL_STRING("https://developer.mozilla.org/docs/Mozilla/"
-                                "MathML_Project/Fonts")};
+              u"https://developer.mozilla.org/docs/Mozilla/"
+              "MathML_Project/Fonts"_ns};
           aForFrame->PresContext()->Document()->WarnOnceAbout(
               dom::Document::eMathML_DeprecatedStixgeneralOperatorStretching,
               false, params);
@@ -1806,41 +1806,17 @@ void nsDisplayMathMLCharDebug::Paint(nsDisplayListBuilder* aBuilder,
 void nsMathMLChar::Display(nsDisplayListBuilder* aBuilder, nsIFrame* aForFrame,
                            const nsDisplayListSet& aLists, uint32_t aIndex,
                            const nsRect* aSelectedRect) {
-  bool usingParentStyle = false;
   ComputedStyle* computedStyle = mComputedStyle;
-
-  if (mDraw == DRAW_NORMAL) {
-    // normal drawing if there is nothing special about this char
-    // Use our parent element's style
-    usingParentStyle = true;
-    computedStyle = aForFrame->Style();
-  }
-
   if (!computedStyle->StyleVisibility()->IsVisible()) {
     return;
   }
 
   const bool isSelected = aSelectedRect && !aSelectedRect->IsEmpty();
 
-  // if the leaf computed style that we use for stretchy chars has a background
-  // color we use it -- this feature is mostly used for testing and debugging
-  // purposes. Normally, users will set the background on the container frame.
-  // paint the selection background -- beware MathML frames overlap a lot
   if (isSelected) {
     aLists.BorderBackground()->AppendNewToTop<nsDisplayMathMLSelectionRect>(
         aBuilder, aForFrame, *aSelectedRect);
   } else if (mRect.width && mRect.height) {
-    if (!usingParentStyle &&
-        NS_GET_A(computedStyle->StyleBackground()->BackgroundColor(
-            computedStyle)) > 0) {
-      nsDisplayBackgroundImage::AppendBackgroundItemsToTop(
-          aBuilder, aForFrame, mRect + aBuilder->ToReferenceFrame(aForFrame),
-          aLists.BorderBackground(),
-          /* aAllowWillPaintBorderOptimization */ true, computedStyle);
-    }
-    // else
-    //  our container frame will take care of painting its background
-
 #if defined(DEBUG) && defined(SHOW_BOUNDING_BOX)
     // for visual debug
     aLists.BorderBackground()->AppendNewToTop<nsDisplayMathMLCharDebug>(

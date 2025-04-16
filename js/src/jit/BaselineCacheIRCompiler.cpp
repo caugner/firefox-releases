@@ -2086,7 +2086,7 @@ static void ResetEnteredCounts(ICFallbackStub* stub) {
 
 ICStub* js::jit::AttachBaselineCacheIRStub(
     JSContext* cx, const CacheIRWriter& writer, CacheKind kind,
-    BaselineCacheIRStubKind stubKind, JSScript* outerScript,
+    BaselineCacheIRStubKind stubKind, JSScript* outerScript, ICScript* icScript,
     ICFallbackStub* stub, bool* attached) {
   // We shouldn't GC or report OOM (or any other exception) here.
   AutoAssertNoPendingException aanpe(cx);
@@ -2119,6 +2119,11 @@ ICStub* js::jit::AttachBaselineCacheIRStub(
   }
 
   JitZone* jitZone = cx->zone()->jitZone();
+
+  // The script to invalidate if we are modifying a transpiled IC.
+  JSScript* invalidationScript = icScript->isInlined()
+                                     ? icScript->inliningRoot()->owningScript()
+                                     : outerScript;
 
   // Check if we already have JitCode for this stub.
   CacheIRStubInfo* stubInfo;
@@ -2215,6 +2220,7 @@ ICStub* js::jit::AttachBaselineCacheIRStub(
     // attach. Just return nullptr, the caller should do nothing in this
     // case.
     if (updated) {
+      stub->maybeInvalidateWarp(cx, invalidationScript);
       *attached = true;
     } else {
       JitSpew(JitSpew_BaselineICFallback,
@@ -2229,8 +2235,8 @@ ICStub* js::jit::AttachBaselineCacheIRStub(
 
   size_t bytesNeeded = stubInfo->stubDataOffset() + stubInfo->stubDataSize();
 
-  ICStubSpace* stubSpace =
-      ICStubCompiler::StubSpaceForStub(stubInfo->makesGCCalls(), outerScript);
+  ICStubSpace* stubSpace = ICStubCompiler::StubSpaceForStub(
+      stubInfo->makesGCCalls(), outerScript, icScript);
   void* newStubMem = stubSpace->alloc(bytesNeeded);
   if (!newStubMem) {
     return nullptr;
@@ -2239,6 +2245,8 @@ ICStub* js::jit::AttachBaselineCacheIRStub(
   // Resetting the entered counts on the IC chain makes subsequent reasoning
   // about the chain much easier.
   ResetEnteredCounts(stub);
+
+  stub->maybeInvalidateWarp(cx, invalidationScript);
 
   switch (stubKind) {
     case BaselineCacheIRStubKind::Regular: {
@@ -2283,17 +2291,13 @@ ICStub* js::jit::AttachBaselineCacheIRStub(
   MOZ_CRASH("Invalid kind");
 }
 
-uint8_t* ICCacheIR_Regular::stubDataStart() {
+template <typename Base>
+uint8_t* ICCacheIR_Trait<Base>::stubDataStart() {
   return reinterpret_cast<uint8_t*>(this) + stubInfo_->stubDataOffset();
 }
 
-uint8_t* ICCacheIR_Monitored::stubDataStart() {
-  return reinterpret_cast<uint8_t*>(this) + stubInfo_->stubDataOffset();
-}
-
-uint8_t* ICCacheIR_Updated::stubDataStart() {
-  return reinterpret_cast<uint8_t*>(this) + stubInfo_->stubDataOffset();
-}
+template uint8_t* ICCacheIR_Trait<ICStub>::stubDataStart();
+template uint8_t* ICCacheIR_Trait<ICMonitoredStub>::stubDataStart();
 
 bool BaselineCacheIRCompiler::emitCallStringObjectConcatResult(
     ValOperandId lhsId, ValOperandId rhsId) {
@@ -3023,6 +3027,108 @@ bool BaselineCacheIRCompiler::emitCallScriptedFunction(ObjOperandId calleeId,
 
   masm.bind(&noUnderflow);
   masm.callJit(code);
+
+  // If this is a constructing call, and the callee returns a non-object,
+  // replace it with the |this| object passed in.
+  if (isConstructing) {
+    updateReturnValue();
+  }
+
+  stubFrame.leave(masm, true);
+
+  if (!isSameRealm) {
+    masm.switchToBaselineFrameRealm(scratch2);
+  }
+
+  return true;
+}
+
+bool BaselineCacheIRCompiler::emitCallInlinedFunction(ObjOperandId calleeId,
+                                                      Int32OperandId argcId,
+                                                      uint32_t icScriptOffset,
+                                                      CallFlags flags) {
+  JitSpew(JitSpew_Codegen, "%s", __FUNCTION__);
+  AutoOutputRegister output(*this);
+  AutoScratchRegisterMaybeOutput scratch(allocator, masm, output);
+  AutoScratchRegisterMaybeOutputType codeReg(allocator, masm, output);
+  AutoScratchRegister scratch2(allocator, masm);
+
+  Register calleeReg = allocator.useRegister(masm, calleeId);
+  Register argcReg = allocator.useRegister(masm, argcId);
+
+  bool isConstructing = flags.isConstructing();
+  bool isSameRealm = flags.isSameRealm();
+
+  FailurePath* failure;
+  if (!addFailurePath(&failure)) {
+    return false;
+  }
+
+  // Load JitScript
+  masm.loadPtr(Address(calleeReg, JSFunction::offsetOfScript()), codeReg);
+  masm.branchIfScriptHasNoJitScript(codeReg, failure->label());
+
+  masm.loadJitScript(codeReg, codeReg);
+
+  // Load BaselineScript
+  masm.loadPtr(Address(codeReg, JitScript::offsetOfBaselineScript()), codeReg);
+  static_assert(BaselineDisabledScript == 0x1);
+  masm.branchPtr(Assembler::BelowOrEqual, codeReg,
+                 ImmWord(BaselineDisabledScript), failure->label());
+
+  // Load Baseline jitcode
+  masm.loadPtr(Address(codeReg, BaselineScript::offsetOfMethod()), codeReg);
+  masm.loadPtr(Address(codeReg, JitCode::offsetOfCode()), codeReg);
+
+  if (!updateArgc(flags, argcReg, scratch)) {
+    return false;
+  }
+
+  allocator.discardStack(masm);
+
+  // Push a stub frame so that we can perform a non-tail call.
+  // Note that this leaves the return address in TailCallReg.
+  AutoStubFrame stubFrame(*this);
+  stubFrame.enter(masm, scratch);
+
+  if (!isSameRealm) {
+    masm.switchToObjectRealm(calleeReg, scratch);
+  }
+
+  if (isConstructing) {
+    createThis(argcReg, calleeReg, scratch, flags);
+  }
+
+  pushArguments(argcReg, calleeReg, scratch, scratch2, flags,
+                /*isJitCall =*/true);
+
+  // Store icScript in the context.
+  Address icScriptAddr(stubAddress(icScriptOffset));
+  masm.loadPtr(icScriptAddr, scratch);
+  masm.loadJSContext(scratch2);
+  masm.storePtr(scratch,
+                Address(scratch2, JSContext::offsetOfInlinedICScript()));
+
+  EmitBaselineCreateStubFrameDescriptor(masm, scratch, JitFrameLayout::Size());
+
+  // Note that we use Push, not push, so that callJit will align the stack
+  // properly on ARM.
+  masm.Push(argcReg);
+  masm.PushCalleeToken(calleeReg, isConstructing);
+  masm.Push(scratch);
+
+  // Handle arguments underflow.
+  // TODO: This is a tricky problem for spread calls, where we don't
+  // know the number of arguments statically. We may need a second
+  // copy of the arguments rectifier.
+  Label noUnderflow;
+  masm.load16ZeroExtend(Address(calleeReg, JSFunction::offsetOfNargs()),
+                        calleeReg);
+  masm.branch32(Assembler::AboveOrEqual, argcReg, calleeReg, &noUnderflow);
+  masm.assumeUnreachable("Arguments rectifier not yet supported.");
+
+  masm.bind(&noUnderflow);
+  masm.callJit(codeReg);
 
   // If this is a constructing call, and the callee returns a non-object,
   // replace it with the |this| object passed in.

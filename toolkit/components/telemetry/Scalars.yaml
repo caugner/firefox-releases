@@ -506,6 +506,52 @@ browser.startup:
     record_in_processes:
       - 'main'
 
+  abouthome_cache_result:
+    bug_numbers:
+      - 1622263
+      - 1614351
+    description: >
+      How the about:home startup cache functioned on startup.
+
+      0: Result value was never set (error case)
+      1: Cache did not exist
+      2: Cache page stream was corrupt / inaccessible
+      3: Cache script stream was corrupt / inaccessible
+      4: Cache was invalidated by a version bump
+      5: Cache was valid, but read too late to be useful.
+      6: Cache was valid and used.
+      7: Cache is disabled.
+      8: User did not load about:home on its own by default.
+      9: Cache is disabled because about:newtab preloading is disabled.
+
+    expires: "87"
+    kind: uint
+    notification_emails:
+      - mconley@mozilla.com
+    release_channel_collection: opt-out
+    products:
+      - 'firefox'
+    record_in_processes:
+      - 'main'
+
+  abouthome_cache_shutdownwrite:
+    bug_numbers:
+      - 1622263
+      - 1614351
+    description: >
+      True if the about:home startup cache was written via the AsyncShutdown
+      blocker.
+
+    expires: "87"
+    kind: boolean
+    notification_emails:
+      - mconley@mozilla.com
+    release_channel_collection: opt-out
+    products:
+      - 'firefox'
+    record_in_processes:
+      - 'main'
+
 # The following section contains the browser usage scalars.
 browser.usage:
   graphite:
@@ -567,7 +613,7 @@ browser.ui:
       - 1620358
     description: >
       The widgets in the toolbars.
-      See https://firefox-source-docs.mozilla.org/toolkit/components/telemetry/data/ecosystem-telemetry.html
+      See https://firefox-source-docs.mozilla.org/browser/BrowserUsageTelemetry.html
     expires: never
     kind: boolean
     keyed: true
@@ -585,7 +631,7 @@ browser.ui:
       - 1620358
     description: >
       Records when widgets are added, removed or moved in the UI.
-      See https://firefox-source-docs.mozilla.org/toolkit/components/telemetry/data/ecosystem-telemetry.html
+      See https://firefox-source-docs.mozilla.org/browser/BrowserUsageTelemetry.html
     expires: never
     kind: uint
     keyed: true
@@ -604,7 +650,7 @@ browser.ui.interaction:
       - 1620358
     description: >
       Records a count of interactions with keyboard shortcuts.
-      See https://firefox-source-docs.mozilla.org/toolkit/components/telemetry/data/ecosystem-telemetry.html
+      See https://firefox-source-docs.mozilla.org/browser/BrowserUsageTelemetry.html
     expires: never
     kind: uint
     keyed: true
@@ -622,7 +668,7 @@ browser.ui.interaction:
       - 1620358
     description: >
       Records a count of interactions with items in the menu bar.
-      See https://firefox-source-docs.mozilla.org/toolkit/components/telemetry/data/ecosystem-telemetry.html
+      See https://firefox-source-docs.mozilla.org/browser/BrowserUsageTelemetry.html
     expires: never
     kind: uint
     keyed: true
@@ -640,7 +686,7 @@ browser.ui.interaction:
       - 1620358
     description: >
       Records a count of interactions with items in the tab bar.
-      See https://firefox-source-docs.mozilla.org/toolkit/components/telemetry/data/ecosystem-telemetry.html
+      See https://firefox-source-docs.mozilla.org/browser/BrowserUsageTelemetry.html
     expires: never
     kind: uint
     keyed: true
@@ -658,7 +704,7 @@ browser.ui.interaction:
       - 1620358
     description: >
       Records a count of interactions with items in the nav bar.
-      See https://firefox-source-docs.mozilla.org/toolkit/components/telemetry/data/ecosystem-telemetry.html
+      See https://firefox-source-docs.mozilla.org/browser/BrowserUsageTelemetry.html
     expires: never
     kind: uint
     keyed: true
@@ -676,7 +722,7 @@ browser.ui.interaction:
       - 1620358
     description: >
       Records a count of interactions with items in the bookmarks bar.
-      See https://firefox-source-docs.mozilla.org/toolkit/components/telemetry/data/ecosystem-telemetry.html
+      See https://firefox-source-docs.mozilla.org/browser/BrowserUsageTelemetry.html
     expires: never
     kind: uint
     keyed: true
@@ -694,7 +740,7 @@ browser.ui.interaction:
       - 1620358
     description: >
       Records a count of interactions with items in the app menu.
-      See https://firefox-source-docs.mozilla.org/toolkit/components/telemetry/data/ecosystem-telemetry.html
+      See https://firefox-source-docs.mozilla.org/browser/BrowserUsageTelemetry.html
     expires: never
     kind: uint
     keyed: true
@@ -712,7 +758,7 @@ browser.ui.interaction:
       - 1620358
     description: >
       Records a count of interactions with items in the tab context menu.
-      See https://firefox-source-docs.mozilla.org/toolkit/components/telemetry/data/ecosystem-telemetry.html
+      See https://firefox-source-docs.mozilla.org/browser/BrowserUsageTelemetry.html
     expires: never
     kind: uint
     keyed: true
@@ -730,7 +776,7 @@ browser.ui.interaction:
       - 1620358
     description: >
       Records a count of interactions with items in the content context menu.
-      See https://firefox-source-docs.mozilla.org/toolkit/components/telemetry/data/ecosystem-telemetry.html
+      See https://firefox-source-docs.mozilla.org/browser/BrowserUsageTelemetry.html
     expires: never
     kind: uint
     keyed: true
@@ -748,7 +794,7 @@ browser.ui.interaction:
       - 1620358
     description: >
       Records a count of interactions with items in the overflow menu.
-      See https://firefox-source-docs.mozilla.org/toolkit/components/telemetry/data/ecosystem-telemetry.html
+      See https://firefox-source-docs.mozilla.org/browser/BrowserUsageTelemetry.html
     expires: never
     kind: uint
     keyed: true
@@ -767,7 +813,7 @@ browser.ui.interaction:
     description: >
       Records a count of interactions with items in the pinned area of the
       overflow menu.
-      See https://firefox-source-docs.mozilla.org/toolkit/components/telemetry/data/ecosystem-telemetry.html
+      See https://firefox-source-docs.mozilla.org/browser/BrowserUsageTelemetry.html
     expires: never
     kind: uint
     keyed: true
@@ -785,7 +831,7 @@ browser.ui.interaction:
       - 1620358
     description: >
       Records a count of interactions with page action items in the url bar.
-      See https://firefox-source-docs.mozilla.org/toolkit/components/telemetry/data/ecosystem-telemetry.html
+      See https://firefox-source-docs.mozilla.org/browser/BrowserUsageTelemetry.html
     expires: never
     kind: uint
     keyed: true
@@ -803,7 +849,7 @@ browser.ui.interaction:
       - 1620358
     description: >
       Records a count of interactions with page action items in the panel.
-      See https://firefox-source-docs.mozilla.org/toolkit/components/telemetry/data/ecosystem-telemetry.html
+      See https://firefox-source-docs.mozilla.org/browser/BrowserUsageTelemetry.html
     expires: never
     kind: uint
     keyed: true
@@ -821,7 +867,7 @@ browser.ui.interaction:
       - 1620358
     description: >
       Records the items interacted with in the Home section of preferences.
-      See https://firefox-source-docs.mozilla.org/toolkit/components/telemetry/data/ecosystem-telemetry.html
+      See https://firefox-source-docs.mozilla.org/browser/BrowserUsageTelemetry.html
     expires: never
     kind: uint
     keyed: true
@@ -839,7 +885,7 @@ browser.ui.interaction:
       - 1620358
     description: >
       Records the items interacted with in the General section of preferences.
-      See https://firefox-source-docs.mozilla.org/toolkit/components/telemetry/data/ecosystem-telemetry.html
+      See https://firefox-source-docs.mozilla.org/browser/BrowserUsageTelemetry.html
     expires: never
     kind: uint
     keyed: true
@@ -857,7 +903,7 @@ browser.ui.interaction:
       - 1620358
     description: >
       Records the items interacted with in the Privacy section of preferences.
-      See https://firefox-source-docs.mozilla.org/toolkit/components/telemetry/data/ecosystem-telemetry.html
+      See https://firefox-source-docs.mozilla.org/browser/BrowserUsageTelemetry.html
     expires: never
     kind: uint
     keyed: true
@@ -875,7 +921,7 @@ browser.ui.interaction:
       - 1620358
     description: >
       Records the items interacted with in the Search section of preferences.
-      See https://firefox-source-docs.mozilla.org/toolkit/components/telemetry/data/ecosystem-telemetry.html
+      See https://firefox-source-docs.mozilla.org/browser/BrowserUsageTelemetry.html
     expires: never
     kind: uint
     keyed: true
@@ -894,7 +940,7 @@ browser.ui.interaction:
     description: >
       Records the items interacted with in the Search results section of
       preferences.
-      See https://firefox-source-docs.mozilla.org/toolkit/components/telemetry/data/ecosystem-telemetry.html
+      See https://firefox-source-docs.mozilla.org/browser/BrowserUsageTelemetry.html
     expires: never
     kind: uint
     keyed: true
@@ -912,7 +958,7 @@ browser.ui.interaction:
       - 1620358
     description: >
       Records the items interacted with in the Sync section of preferences.
-      See https://firefox-source-docs.mozilla.org/toolkit/components/telemetry/data/ecosystem-telemetry.html
+      See https://firefox-source-docs.mozilla.org/browser/BrowserUsageTelemetry.html
     expires: never
     kind: uint
     keyed: true
@@ -931,7 +977,46 @@ browser.ui.interaction:
     description: >
       Records the items interacted with in the Containers section of
       preferences.
-      See https://firefox-source-docs.mozilla.org/toolkit/components/telemetry/data/ecosystem-telemetry.html
+      See https://firefox-source-docs.mozilla.org/browser/BrowserUsageTelemetry.html
+    expires: never
+    kind: uint
+    keyed: true
+    notification_emails:
+      - shong@mozilla.com
+      - dtownsend@mozilla.com
+    release_channel_collection: opt-out
+    products:
+      - 'firefox'
+    record_in_processes:
+      - 'main'
+
+  preferences_paneExperimental:
+    bug_numbers:
+      - 1620358
+      - 1651986
+    description: >
+      Records the items interacted with in the Experimental section of
+      preferences.
+      See https://firefox-source-docs.mozilla.org/browser/BrowserUsageTelemetry.html
+    expires: never
+    kind: uint
+    keyed: true
+    notification_emails:
+      - shong@mozilla.com
+      - dtownsend@mozilla.com
+    release_channel_collection: opt-out
+    products:
+      - 'firefox'
+    record_in_processes:
+      - 'main'
+
+  preferences_paneUnknown:
+    bug_numbers:
+      - 1620358
+      - 1651986
+    description: >
+      Records the items interacted with in any other section of preferences.
+      See https://firefox-source-docs.mozilla.org/browser/BrowserUsageTelemetry.html
     expires: never
     kind: uint
     keyed: true
@@ -1146,6 +1231,26 @@ security:
     notification_emails:
       - julianwels@mozilla.com
       - seceng-telemetry@mozilla.com
+    release_channel_collection: opt-out
+    products:
+      - 'firefox'
+    record_in_processes:
+      - 'main'
+  https_only_mode_enabled_pbm:
+    bug_numbers:
+      - 1647719
+    description: >
+      Measures user retention of the HTTPS-Only Mode in Private Browsing.
+      0 = https-only never enabled in PBM,
+      1 = https-only enabled in PBM,
+      2 = https-only disabled in PBM (but was enabled)
+    expires: never
+    kind: uint
+    notification_emails:
+      - julianwels@mozilla.com
+      - ckerschb@mozilla.com
+      - seceng-telemetry@mozilla.com
+    release_channel_collection: opt-out
     products:
       - 'firefox'
     record_in_processes:
@@ -1660,6 +1765,22 @@ pictureinpicture:
       - 'firefox'
     record_in_processes:
       - main
+  saw_toggle:
+    bug_numbers:
+      - 1657155
+    description: >
+      The number of times a Picture-in-Picture toggle was presented to the user when
+      they hovered the video with the mouse pointer.
+    expires: "87"
+    kind: uint
+    notification_emails:
+      - mconley@mozilla.com
+      - astevenson@mozilla.com
+    release_channel_collection: opt-out
+    products:
+      - 'firefox'
+    record_in_processes:
+      - content
 
 preferences:
   created_new_user_prefs_file:
@@ -3585,6 +3706,55 @@ formautofill.creditCards:
       - 'fennec'
     record_in_processes:
       - 'main'
+  autofill_profiles_count:
+    bug_numbers:
+      - 990203
+    description: >
+      Count at store time how many credit card autofill profiles user has.
+    expires: never
+    kind: uint
+    notification_emails:
+      - autofill@lists.mozilla.org
+      - jmathies@mozilla.com
+      - chsiang@mozilla.com
+    release_channel_collection: opt-out
+    products:
+      - 'firefox'
+    record_in_processes:
+      - 'main'
+  detected_sections_count:
+    bug_numbers:
+      - 1656344
+    description: >
+      Count at detection time number of credit card form sections.
+      A single form can contain more than one credit card form section.
+    expires: never
+    kind: uint
+    notification_emails:
+      - autofill@lists.mozilla.org
+      - jmathies@mozilla.com
+      - chsiang@mozilla.com
+    release_channel_collection: opt-out
+    products:
+      - 'firefox'
+    record_in_processes:
+      - 'content'
+  submitted_sections_count:
+    bug_numbers:
+      - 1656344
+    description: >
+      Count at submission time number of credit card form sections submitted.
+    expires: never
+    kind: uint
+    notification_emails:
+      - autofill@lists.mozilla.org
+      - jmathies@mozilla.com
+      - chsiang@mozilla.com
+    release_channel_collection: opt-out
+    products:
+      - 'firefox'
+    record_in_processes:
+      - 'content'
 
 # The following section contains scalars for Screenshots.
 screenshots:
@@ -3644,25 +3814,6 @@ screenshots:
     products:
       - 'firefox'
       - 'fennec'
-    record_in_processes:
-      - 'main'
-
-# The following section is for quotaManager.
-qm:
-  repositories_initialization_time:
-    bug_numbers:
-      - 1609625
-    description: >
-      A temporary probe to track the time for initializing the best-effort
-      repositories especially the longest the time.
-    expires: "76"
-    kind: uint
-    notification_emails:
-      - ttung@mozilla.com
-      - storage-telemetry@mozilla.com
-    release_channel_collection: opt-out
-    products:
-      - 'firefox'
     record_in_processes:
       - 'main'
 
@@ -4437,7 +4588,7 @@ script.preloader:
     description:
       How many times we ended up recompiling a script from the script preloader
       on the main thread.
-    expires: "81"
+    expires: "88"
     keyed: false
     kind: uint
     notification_emails:
@@ -4628,22 +4779,42 @@ networking:
       - 'main'
     release_channel_collection: opt-out
 
+  http3_enabled:
+    bug_numbers:
+      - 1652104
+    description: >
+      True if HTTP3 is enabled at the start of a session.
+    expires: never
+    kind: boolean
+    keyed: false
+    notification_emails:
+      - necko@mozilla.com
+      - ddamjanovic@mozilla.com
+    release_channel_collection: opt-out
+    products:
+      - 'firefox'
+    record_in_processes:
+      - 'main'
+      - 'content'
+
 blocklist:
   lastModified_rs_addons:
     bug_numbers:
       - 1572711
       - 1607744
+      - 1649960
     description: >
       Keep track of the last time the "addons" remotesetting blocklist has been successfully
       updated (as a datetime string in UTC format), set to "Missing Date" when the timestamp
       couldn't be retrieved.
-    expires: "81"
+    expires: "88"
     kind: string
     release_channel_collection: opt-out
     notification_emails:
       - addons-dev-internal@mozilla.com
       - lgreco@mozilla.com
       - awagner@mozilla.com
+      - rwu@mozilla.com
     products:
       - 'firefox'
       - 'fennec'
@@ -4654,11 +4825,12 @@ blocklist:
   lastModified_rs_addons_mlbf:
     bug_numbers:
       - 1633466
+      - 1649960
     description: >
       Keep track of the last time the "addons-bloomfilters" remotesetting blocklist has been successfully
       updated (as a datetime string in UTC format), set to "Missing Date" when the timestamp
       couldn't be retrieved.
-    expires: "81"
+    expires: "88"
     kind: string
     release_channel_collection: opt-out
     notification_emails:
@@ -4675,17 +4847,19 @@ blocklist:
     bug_numbers:
       - 1572711
       - 1607744
+      - 1649960
     description: >
       Keep track of the last time the "plugins" remotesetting blocklist has been successfully
       updated (as a datetime string in UTC format), set to "Missing Date" when the timestamp
       couldn't be retrieved.
-    expires: "81"
+    expires: "88"
     kind: string
     release_channel_collection: opt-out
     notification_emails:
       - addons-dev-internal@mozilla.com
       - lgreco@mozilla.com
       - awagner@mozilla.com
+      - rwu@mozilla.com
     products:
       - 'firefox'
       - 'thunderbird'
@@ -4695,10 +4869,11 @@ blocklist:
   mlbf_enabled:
     bug_numbers:
       - 1633466
+      - 1649960
     description: >
       Keep track of whether the addons blocklist engine uses bloom filters (blocklist v3).
       If false, the blocklist v2 is used instead.
-    expires: "81"
+    expires: "88"
     kind: boolean
     release_channel_collection: opt-out
     notification_emails:
@@ -4714,12 +4889,13 @@ blocklist:
   mlbf_stashes:
     bug_numbers:
       - 1633466
+      - 1649960
     description: >
       Keep track of whether the bloomfilter-based blocklist engine uses stashes from the
       addons-bloomfilters collection, together with an infrequently updated base bloomfilter.
       If false, the latest (full) bloom filter is downloaded on every update of the addon blocklist.
       This metric is only meaningful if mlbf_enabled is true.
-    expires: "81"
+    expires: "88"
     kind: boolean
     release_channel_collection: opt-out
     notification_emails:
@@ -4735,12 +4911,13 @@ blocklist:
   mlbf_generation_time:
     bug_numbers:
       - 1633466
+      - 1649960
     description: >
       Keep track of the generation time of the addon blocklist's bloom filter. This marks the
       point in time until which signed add-ons are recognized by the selected bloom filter from the
       addons-bloomfilters collection.
       The value is a datetime string in UTC format, or  "Missing Date" when unavailable.
-    expires: "81"
+    expires: "88"
     kind: string
     release_channel_collection: opt-out
     notification_emails:
@@ -4756,11 +4933,12 @@ blocklist:
   mlbf_stash_time_oldest:
     bug_numbers:
       - 1633466
+      - 1649960
     description: >
       Keep track of the timestamp of the oldest stash of the addons blocklist.
       Only meaningful when mlbf_enabled and mlbf_stashes are true.
       The value is a datetime string in UTC format, or "Missing Date" when unavailable.
-    expires: "81"
+    expires: "88"
     kind: string
     release_channel_collection: opt-out
     notification_emails:
@@ -4776,11 +4954,12 @@ blocklist:
   mlbf_stash_time_newest:
     bug_numbers:
       - 1633466
+      - 1649960
     description: >
       Keep track of the timestamp of the most recent stash of the addons blocklist.
       Only meaningful when mlbf_enabled and mlbf_stashes are true.
       The value is a datetime string in UTC format, or "Missing Date" when unavailable.
-    expires: "81"
+    expires: "88"
     kind: string
     release_channel_collection: opt-out
     notification_emails:

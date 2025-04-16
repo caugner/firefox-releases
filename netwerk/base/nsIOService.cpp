@@ -223,6 +223,7 @@ static const char* gCallbackPrefsForSocketProcess[] = {
     "network.trr.",
     "network.dns.disableIPv6",
     "network.dns.skipTRR-when-parental-control-enabled",
+    "network.offline-mirrors-connectivity",
     nullptr,
 };
 
@@ -271,13 +272,11 @@ nsresult nsIOService::Init() {
   PrefsChanged();
 
   mSocketProcessTopicBlackList.PutEntry(
-      NS_LITERAL_CSTRING(NS_XPCOM_WILL_SHUTDOWN_OBSERVER_ID));
+      nsLiteralCString(NS_XPCOM_WILL_SHUTDOWN_OBSERVER_ID));
   mSocketProcessTopicBlackList.PutEntry(
-      NS_LITERAL_CSTRING(NS_XPCOM_SHUTDOWN_OBSERVER_ID));
-  mSocketProcessTopicBlackList.PutEntry(
-      NS_LITERAL_CSTRING("xpcom-shutdown-threads"));
-  mSocketProcessTopicBlackList.PutEntry(
-      NS_LITERAL_CSTRING("profile-do-change"));
+      nsLiteralCString(NS_XPCOM_SHUTDOWN_OBSERVER_ID));
+  mSocketProcessTopicBlackList.PutEntry("xpcom-shutdown-threads"_ns);
+  mSocketProcessTopicBlackList.PutEntry("profile-do-change"_ns);
 
   // Register for profile change notifications
   mObserverService = services::GetObserverService();
@@ -850,9 +849,8 @@ nsresult nsIOService::GetCachedProtocolHandler(const char* scheme,
 }
 
 static bool UsesExternalProtocolHandler(const char* aScheme) {
-  if (NS_LITERAL_CSTRING("file").Equals(aScheme) ||
-      NS_LITERAL_CSTRING("chrome").Equals(aScheme) ||
-      NS_LITERAL_CSTRING("resource").Equals(aScheme)) {
+  if ("file"_ns.Equals(aScheme) || "chrome"_ns.Equals(aScheme) ||
+      "resource"_ns.Equals(aScheme)) {
     // Don't allow file:, chrome: or resource: URIs to be handled with
     // nsExternalProtocolHandler, since internally we rely on being able to
     // use and read from these URIs.
@@ -861,7 +859,7 @@ static bool UsesExternalProtocolHandler(const char* aScheme) {
 
   // When ftp protocol is disabled, return true if external protocol handler was
   // not explicitly disabled by the prererence.
-  if (NS_LITERAL_CSTRING("ftp").Equals(aScheme) &&
+  if ("ftp"_ns.Equals(aScheme) &&
       !Preferences::GetBool("network.ftp.enabled", true) &&
       Preferences::GetBool("network.protocol-handler.external.ftp", true)) {
     return true;
@@ -1372,6 +1370,9 @@ nsresult nsIOService::SetConnectivityInternal(bool aConnectivity) {
     observerService->NotifyObservers(nullptr,
                                      NS_IPC_IOSERVICE_SET_CONNECTIVITY_TOPIC,
                                      aConnectivity ? u"true" : u"false");
+    if (SocketProcessReady()) {
+      Unused << mSocketProcess->GetActor()->SendSetConnectivity(aConnectivity);
+    }
   }
 
   if (mOffline) {
@@ -1605,7 +1606,7 @@ nsIOService::Observe(nsISupports* subject, const char* topic,
       SetOffline(false);
     }
   } else if (!strcmp(topic, kProfileDoChange)) {
-    if (data && NS_LITERAL_STRING("startup").Equals(data)) {
+    if (data && u"startup"_ns.Equals(data)) {
       // Lazy initialization of network link service (see bug 620472)
       InitializeNetworkLinkService();
       // Set up the initilization flag regardless the actuall result.
@@ -1973,13 +1974,13 @@ nsresult nsIOService::SpeculativeConnectInternal(
   // channel we create underneath - hence it's safe to use
   // the systemPrincipal as the loadingPrincipal for this channel.
   nsCOMPtr<nsIChannel> channel;
-  rv = NewChannelFromURI(aURI,
-                         nullptr,  // aLoadingNode,
-                         loadingPrincipal,
-                         nullptr,  // aTriggeringPrincipal,
-                         nsILoadInfo::SEC_ALLOW_CROSS_ORIGIN_DATA_IS_NULL,
-                         nsIContentPolicy::TYPE_SPECULATIVE,
-                         getter_AddRefs(channel));
+  rv = NewChannelFromURI(
+      aURI,
+      nullptr,  // aLoadingNode,
+      loadingPrincipal,
+      nullptr,  // aTriggeringPrincipal,
+      nsILoadInfo::SEC_ALLOW_CROSS_ORIGIN_SEC_CONTEXT_IS_NULL,
+      nsIContentPolicy::TYPE_SPECULATIVE, getter_AddRefs(channel));
   NS_ENSURE_SUCCESS(rv, rv);
 
   if (aAnonymous) {

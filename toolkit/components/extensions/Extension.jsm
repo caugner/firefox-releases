@@ -67,6 +67,7 @@ XPCOMUtils.defineLazyModuleGetters(this, {
   OS: "resource://gre/modules/osfile.jsm",
   PluralForm: "resource://gre/modules/PluralForm.jsm",
   Schemas: "resource://gre/modules/Schemas.jsm",
+  ServiceWorkerCleanUp: "resource://gre/modules/ServiceWorkerCleanUp.jsm",
   XPIProvider: "resource://gre/modules/addons/XPIProvider.jsm",
 });
 
@@ -331,6 +332,32 @@ var ExtensionAddonObserver = {
       return;
     }
 
+    let baseURI = Services.io.newURI(`moz-extension://${uuid}/`);
+    let principal = Services.scriptSecurityManager.createContentPrincipal(
+      baseURI,
+      {}
+    );
+
+    // Clear all the registered service workers for the extension
+    // principal.
+    // Any stored data would be cleared below (if the pref
+    // "extensions.webextensions.keepStorageOnUninstall has not been
+    // explicitly set to true, which is usually only done in
+    // tests and by some extensions developers for testing purpose).
+    if (WebExtensionPolicy.backgroundServiceWorkerEnabled) {
+      // TODO: ServiceWorkerCleanUp may go away once Bug 1183245
+      // is fixed, and so this may actually go away, replaced by
+      // marking the registration as disabled or to be removed on
+      // shutdown (where we do know if the extension is shutting
+      // down because is being uninstalled) and then cleared from
+      // the persisted serviceworker registration on the next
+      // startup.
+      AsyncShutdown.profileChangeTeardown.addBlocker(
+        `Clear ServiceWorkers for ${addon.id}`,
+        ServiceWorkerCleanUp.removeFromPrincipal(principal)
+      );
+    }
+
     if (!Services.prefs.getBoolPref(LEAVE_STORAGE_PREF, false)) {
       // Clear browser.storage.local backends.
       AsyncShutdown.profileChangeTeardown.addBlocker(
@@ -340,11 +367,6 @@ var ExtensionAddonObserver = {
 
       // Clear any IndexedDB storage created by the extension
       // If LSNG is enabled, this also clears localStorage.
-      let baseURI = Services.io.newURI(`moz-extension://${uuid}/`);
-      let principal = Services.scriptSecurityManager.createContentPrincipal(
-        baseURI,
-        {}
-      );
       Services.qms.clearStoragesForPrincipal(principal);
 
       // Clear any storage.local data stored in the IDBBackend.
@@ -360,7 +382,7 @@ var ExtensionAddonObserver = {
 
       // If LSNG is not enabled, we need to clear localStorage explicitly using
       // the old API.
-      if (!Services.lsm.nextGenLocalStorageEnabled) {
+      if (!Services.domStorageManager.nextGenLocalStorageEnabled) {
         // Clear localStorage created by the extension
         let storage = Services.domStorageManager.getStorage(
           null,
@@ -479,6 +501,14 @@ class ExtensionData {
 
   _logMessage(message, severity) {
     this.logger[severity](`Loading extension '${this.id}': ${message}`);
+  }
+
+  ensureNoErrors() {
+    if (this.errors.length) {
+      // startup() repeatedly checks whether there are errors after parsing the
+      // extension/manifest before proceeding with starting up.
+      throw new Error(this.errors.join("\n"));
+    }
   }
 
   /**
@@ -2057,9 +2087,7 @@ class Extension extends ExtensionData {
   async loadManifest() {
     let manifest = await super.loadManifest();
 
-    if (this.errors.length) {
-      return Promise.reject({ errors: this.errors });
-    }
+    this.ensureNoErrors();
 
     return manifest;
   }
@@ -2089,7 +2117,11 @@ class Extension extends ExtensionData {
   }
 
   get backgroundScripts() {
-    return this.manifest.background && this.manifest.background.scripts;
+    return this.manifest.background?.scripts;
+  }
+
+  get backgroundWorkerScript() {
+    return this.manifest.background?.service_worker;
   }
 
   get optionalPermissions() {
@@ -2130,6 +2162,7 @@ class Extension extends ExtensionData {
   serializeExtended() {
     return {
       backgroundScripts: this.backgroundScripts,
+      backgroundWorkerScript: this.backgroundWorkerScript,
       childModules: this.modules && this.modules.child,
       dependencies: this.dependencies,
       schemaURLs: this.schemaURLs,
@@ -2363,6 +2396,8 @@ class Extension extends ExtensionData {
   async startup() {
     this.state = "Startup";
 
+    // readyPromise is resolved with the policy upon success,
+    // and with null if startup was interrupted.
     let resolveReadyPromise;
     let readyPromise = new Promise(resolve => {
       resolveReadyPromise = resolve;
@@ -2404,11 +2439,11 @@ class Extension extends ExtensionData {
         this.state = "Startup: Initted locale";
       }
 
-      if (this.errors.length) {
-        return Promise.reject({ errors: this.errors });
-      }
+      this.ensureNoErrors();
 
       if (this.hasShutdown) {
+        // Startup was interrupted and shutdown() has taken care of unloading
+        // the extension and running cleanup logic.
         return;
       }
 
@@ -2513,17 +2548,10 @@ class Extension extends ExtensionData {
       this.emit("ready");
 
       this.state = "Startup: Complete";
-    } catch (errors) {
-      this.state = `Startup: Error: ${errors}`;
+    } catch (e) {
+      this.state = `Startup: Error: ${e}`;
 
-      for (let e of [].concat(errors)) {
-        dump(
-          `Extension error: ${e.message || e} ${e.filename || e.fileName}:${
-            e.lineNumber
-          } :: ${e.stack || new Error().stack}\n`
-        );
-        Cu.reportError(e);
-      }
+      Cu.reportError(e);
 
       if (this.policy) {
         this.policy.active = false;
@@ -2531,9 +2559,12 @@ class Extension extends ExtensionData {
 
       this.cleanupGeneratedFile();
 
-      throw errors;
+      throw e;
     } finally {
       ExtensionTelemetry.extensionStartup.stopwatchFinish(this);
+      // Mark readyPromise as resolved in case it has not happened before,
+      // e.g. due to an early return or an error.
+      resolveReadyPromise(null);
     }
   }
 

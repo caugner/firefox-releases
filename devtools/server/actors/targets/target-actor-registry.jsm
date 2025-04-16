@@ -24,28 +24,42 @@ var TargetActorRegistry = {
   },
 
   /**
-   * Return the target actor matching the passed browsing context id. Returns null if
+   * Return the first target actor matching the passed browser element id. Returns null if
    * no matching target actors could be found.
    *
-   * @param {Integer} browsingContextID
+   * @param {Integer} browserId: The browserId to retrieve targets for. Pass null to
+   *                             retrieve the parent process targets.
    * @returns {TargetActor|null}
    */
-  getTargetActor(browsingContextID) {
+  getTargetActor(browserId) {
+    return this.getTargetActors(browserId)[0] || null;
+  },
+
+  /**
+   * Return the target actors matching the passed browser element id.
+   * In some scenarios, the registstry can have multiple target actors for a given
+   * browserId (e.g. the regular DevTools content toolbox + DevTools WebExtensions targets).
+   *
+   * @param {Integer} browserId: The browserId to retrieve targets for. Pass null to
+   *                             retrieve the parent process targets.
+   * @returns {Array<TargetActor>}
+   */
+  getTargetActors(browserId) {
+    const actors = [];
     for (const actor of browsingContextTargetActors) {
       if (
-        actor.browsingContextID == browsingContextID ||
-        (browsingContextID === null && actor.typeName === "parentProcessTarget")
+        actor.browserId == browserId ||
+        (browserId === null && actor.typeName === "parentProcessTarget")
       ) {
-        return actor;
+        actors.push(actor);
       }
     }
-    return null;
+    return actors;
   },
 
   /**
    * Return the parent process target actor. Returns null if it couldn't be found.
    *
-   * @param {Integer} browsingContextID
    * @returns {TargetActor|null}
    */
   getParentProcessTargetActor() {

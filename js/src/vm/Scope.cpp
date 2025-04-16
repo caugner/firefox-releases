@@ -65,6 +65,8 @@ const char* js::ScopeKindString(ScopeKind kind) {
       return "strict named lambda";
     case ScopeKind::FunctionLexical:
       return "function lexical";
+    case ScopeKind::ClassBody:
+      return "class body";
     case ScopeKind::With:
       return "with";
     case ScopeKind::Eval:
@@ -354,12 +356,12 @@ ConcreteScope* Scope::create(
 template <typename ConcreteScope>
 inline void Scope::initData(
     MutableHandle<UniquePtr<typename ConcreteScope::Data>> data) {
-  MOZ_ASSERT(!data_);
+  MOZ_ASSERT(!rawData());
 
   AddCellMemory(this, SizeOfAllocatedData(data.get().get()),
                 MemoryUse::ScopeData);
 
-  data_ = data.get().release();
+  setHeaderPtr(data.get().release());
 }
 
 uint32_t Scope::chainLength() const {
@@ -432,7 +434,8 @@ Scope* Scope::clone(JSContext* cx, HandleScope scope, HandleScope enclosing) {
     case ScopeKind::Catch:
     case ScopeKind::NamedLambda:
     case ScopeKind::StrictNamedLambda:
-    case ScopeKind::FunctionLexical: {
+    case ScopeKind::FunctionLexical:
+    case ScopeKind::ClassBody: {
       Rooted<UniquePtr<LexicalScope::Data>> dataClone(cx);
       dataClone =
           CopyScopeData<LexicalScope>(cx, &scope->as<LexicalScope>().data());
@@ -480,12 +483,12 @@ void Scope::finalize(JSFreeOp* fop) {
   applyScopeDataTyped([this, fop](auto data) {
     fop->delete_(this, data, SizeOfAllocatedData(data), MemoryUse::ScopeData);
   });
-  data_ = nullptr;
+  setHeaderPtr(nullptr);
 }
 
 size_t Scope::sizeOfExcludingThis(mozilla::MallocSizeOf mallocSizeOf) const {
-  if (data_) {
-    return mallocSizeOf(data_);
+  if (rawData()) {
+    return mallocSizeOf(rawData());
   }
   return 0;
 }
@@ -599,6 +602,7 @@ uint32_t LexicalScope::firstFrameSlot() const {
     case ScopeKind::SimpleCatch:
     case ScopeKind::Catch:
     case ScopeKind::FunctionLexical:
+    case ScopeKind::ClassBody:
       // For intra-frame scopes, find the enclosing scope's next frame slot.
       return nextFrameSlot(AbstractScopePtr(enclosing()));
     case ScopeKind::NamedLambda:
@@ -624,6 +628,7 @@ uint32_t LexicalScope::nextFrameSlot(const AbstractScopePtr& scope) {
       case ScopeKind::SimpleCatch:
       case ScopeKind::Catch:
       case ScopeKind::FunctionLexical:
+      case ScopeKind::ClassBody:
       case ScopeKind::NamedLambda:
       case ScopeKind::StrictNamedLambda:
       case ScopeKind::Eval:
@@ -1617,6 +1622,7 @@ BindingIter::BindingIter(Scope* scope) : Base() {
     case ScopeKind::SimpleCatch:
     case ScopeKind::Catch:
     case ScopeKind::FunctionLexical:
+    case ScopeKind::ClassBody:
       init(scope->as<LexicalScope>().data(),
            scope->as<LexicalScope>().firstFrameSlot(), 0);
       break;
@@ -1931,7 +1937,7 @@ bool ScopeCreationData::create(JSContext* cx,
                                frontend::CompilationInfo& compilationInfo,
                                Handle<FunctionScope::Data*> dataArg,
                                bool hasParameterExprs, bool needsEnvironment,
-                               frontend::FunctionBox* funbox,
+                               FunctionIndex functionIndex, bool isArrow,
                                Handle<AbstractScopePtr> enclosing,
                                ScopeIndex* index) {
   // The data that's passed in is from the frontend and is LifoAlloc'd.
@@ -1956,7 +1962,7 @@ bool ScopeCreationData::create(JSContext* cx,
   *index = compilationInfo.scopeCreationData.length();
   return compilationInfo.scopeCreationData.emplaceBack(
       cx, ScopeKind::Function, enclosing, envShape, std::move(data.get()),
-      funbox);
+      mozilla::Some(functionIndex), isArrow);
 }
 
 /* static */
@@ -2065,7 +2071,6 @@ bool ScopeCreationData::create(JSContext* cx,
 bool ScopeCreationData::create(JSContext* cx,
                                frontend::CompilationInfo& compilationInfo,
                                Handle<ModuleScope::Data*> dataArg,
-                               HandleModuleObject module,
                                Handle<AbstractScopePtr> enclosing,
                                ScopeIndex* index) {
   // The data that's passed in is from the frontend and is LifoAlloc'd.
@@ -2078,6 +2083,10 @@ bool ScopeCreationData::create(JSContext* cx,
   }
 
   MOZ_ASSERT(enclosing.get().is<GlobalScope>());
+
+  // We do not initialize the canonical module while the data is owned by the
+  // ScopeCreationData. It gets set in ScopeCreationData::releaseData.
+  RootedModuleObject module(cx, nullptr);
 
   // The data that's passed in is from the frontend and is LifoAlloc'd.
   // Copy it now that we're creating a permanent VM scope.
@@ -2105,11 +2114,9 @@ bool ScopeCreationData::create(JSContext* cx,
 // WithScopes are unique because they don't go through the
 // Scope::create<ConcreteType> path.
 template <>
-Scope* ScopeCreationData::createSpecificScope<WithScope>(JSContext* cx) {
-  RootedScope enclosingScope(cx);
-  if (!getOrCreateEnclosingScope(cx, &enclosingScope)) {
-    return nullptr;
-  }
+Scope* ScopeCreationData::createSpecificScope<WithScope>(
+    JSContext* cx, CompilationInfo& compilationInfo) {
+  RootedScope enclosingScope(cx, getEnclosingScope(cx));
 
   WithScope* scope = static_cast<WithScope*>(
       Scope::create(cx, ScopeKind::With, enclosingScope, nullptr));
@@ -2124,33 +2131,44 @@ Scope* ScopeCreationData::createSpecificScope<WithScope>(JSContext* cx) {
 }
 
 template <typename SpecificScopeType>
-UniquePtr<typename SpecificScopeType::Data> ScopeCreationData::releaseData() {
+UniquePtr<typename SpecificScopeType::Data> ScopeCreationData::releaseData(
+    CompilationInfo& compilationInfo) {
   return UniquePtr<typename SpecificScopeType::Data>(
       static_cast<typename SpecificScopeType::Data*>(data_.release()));
 }
 
 template <>
-UniquePtr<FunctionScope::Data> ScopeCreationData::releaseData<FunctionScope>() {
+UniquePtr<FunctionScope::Data> ScopeCreationData::releaseData<FunctionScope>(
+    CompilationInfo& compilationInfo) {
   // Initialize the GCPtrs in the Scope::Data.
-  data<FunctionScope>().canonicalFunction = funbox_->function();
+  data<FunctionScope>().canonicalFunction = function(compilationInfo);
 
   return UniquePtr<FunctionScope::Data>(
       static_cast<FunctionScope::Data*>(data_.release()));
 }
 
+template <>
+UniquePtr<ModuleScope::Data> ScopeCreationData::releaseData<ModuleScope>(
+    CompilationInfo& compilationInfo) {
+  // Initialize the GCPtrs in the Scope::Data.
+  data<ModuleScope>().module = compilationInfo.module;
+
+  return UniquePtr<ModuleScope::Data>(
+      static_cast<ModuleScope::Data*>(data_.release()));
+}
+
 template <class SpecificScopeType>
-Scope* ScopeCreationData::createSpecificScope(JSContext* cx) {
+Scope* ScopeCreationData::createSpecificScope(
+    JSContext* cx, CompilationInfo& compilationInfo) {
   Rooted<UniquePtr<typename SpecificScopeType::Data>> rootedData(
-      cx, releaseData<SpecificScopeType>());
+      cx, releaseData<SpecificScopeType>(compilationInfo));
   RootedShape shape(cx);
 
   if (!environmentShape_.createShape(cx, &shape)) {
     return nullptr;
   }
-  RootedScope enclosingScope(cx);
-  if (!getOrCreateEnclosingScope(cx, &enclosingScope)) {
-    return nullptr;
-  }
+
+  RootedScope enclosingScope(cx, getEnclosingScope(cx));
 
   // Because we already baked the data here, we needn't do it again.
   SpecificScopeType* scope = Scope::create<SpecificScopeType>(
@@ -2165,13 +2183,14 @@ Scope* ScopeCreationData::createSpecificScope(JSContext* cx) {
 }
 
 template Scope* ScopeCreationData::createSpecificScope<FunctionScope>(
-    JSContext* cx);
+    JSContext* cx, CompilationInfo& compilationInfo);
 template Scope* ScopeCreationData::createSpecificScope<LexicalScope>(
-    JSContext* cx);
+    JSContext* cx, CompilationInfo& compilationInfo);
 template Scope* ScopeCreationData::createSpecificScope<EvalScope>(
-    JSContext* cx);
+    JSContext* cx, CompilationInfo& compilationInfo);
 template Scope* ScopeCreationData::createSpecificScope<GlobalScope>(
-    JSContext* cx);
-template Scope* ScopeCreationData::createSpecificScope<VarScope>(JSContext* cx);
+    JSContext* cx, CompilationInfo& compilationInfo);
+template Scope* ScopeCreationData::createSpecificScope<VarScope>(
+    JSContext* cx, CompilationInfo& compilationInfo);
 template Scope* ScopeCreationData::createSpecificScope<ModuleScope>(
-    JSContext* cx);
+    JSContext* cx, CompilationInfo& compilationInfo);

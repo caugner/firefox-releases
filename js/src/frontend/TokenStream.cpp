@@ -350,7 +350,7 @@ PropertyName* TokenStreamAnyChars::reservedWordToPropertyName(
   switch (tt) {
 #define EMIT_CASE(word, name, type) \
   case type:                        \
-    return cx->names().name;
+    return cx->parserNames().name;
     FOR_EACH_JAVASCRIPT_RESERVED_WORD(EMIT_CASE)
 #undef EMIT_CASE
     default:
@@ -1891,6 +1891,7 @@ TokenStreamSpecific<Unit, AnyCharsAccess>::matchIdentifierStart(
     IdentifierEscapes* sawEscape) {
   int32_t unit = getCodeUnit();
   if (unicode::IsIdentifierStart(char16_t(unit))) {
+    ungetCodeUnit(unit);
     *sawEscape = IdentifierEscapes::None;
     return true;
   }

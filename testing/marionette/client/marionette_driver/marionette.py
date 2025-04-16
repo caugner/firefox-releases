@@ -1352,13 +1352,12 @@ class Marionette(object):
         """Switch to the specified window; subsequent commands will be
         directed at the new window.
 
-        :param handle: The id or name of the window to switch to.
+        :param handle: The id of the window to switch to.
 
         :param focus: A boolean value which determins whether to focus
             the window that we just switched to.
         """
-        self._send_message("WebDriver:SwitchToWindow",
-                           {"focus": focus, "name": handle, "handle": handle})
+        self._send_message("WebDriver:SwitchToWindow", {"handle": handle, "focus": focus})
         self.window = handle
 
     def get_active_frame(self):
@@ -1384,10 +1383,8 @@ class Marionette(object):
 
         :param frame: A reference to the frame to switch to.  This can
             be an :class:`~marionette_driver.marionette.HTMLElement`,
-            an integer index, string name, or an
-            ID attribute.  If you call ``switch_to_frame`` without an
+            or an integer index. If you call ``switch_to_frame`` without an
             argument, it will switch to the top-level frame.
-
         :param focus: A boolean value which determins whether to focus
             the frame that we just switched to.
         """

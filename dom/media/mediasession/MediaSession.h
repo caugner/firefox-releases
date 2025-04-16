@@ -24,6 +24,7 @@ namespace dom {
 
 // https://w3c.github.io/mediasession/#position-state
 struct PositionState {
+  PositionState() = default;
   PositionState(double aDuration, double aPlaybackRate,
                 double aLastReportedTime)
       : mDuration(aDuration),
@@ -63,9 +64,8 @@ class MediaSession final : public nsISupports, public nsWrapperCache {
 
   bool IsSupportedAction(MediaSessionAction aAction) const;
 
-  // Use these methods to trigger media session action handler asynchronously.
+  // Use this method to trigger media session action handler asynchronously.
   void NotifyHandler(const MediaSessionActionDetails& aDetails);
-  void NotifyHandler(MediaSessionAction aAction);
 
   void Shutdown();
 
@@ -83,6 +83,7 @@ class MediaSession final : public nsISupports, public nsWrapperCache {
   void NotifyMetadataUpdated();
   void NotifyEnableSupportedAction(MediaSessionAction aAction);
   void NotifyDisableSupportedAction(MediaSessionAction aAction);
+  void NotifyPositionStateChanged();
 
   void DispatchNotifyHandler(const MediaSessionActionDetails& aDetails);
 

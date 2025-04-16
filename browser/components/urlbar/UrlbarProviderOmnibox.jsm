@@ -15,17 +15,12 @@ const { XPCOMUtils } = ChromeUtils.import(
   "resource://gre/modules/XPCOMUtils.jsm"
 );
 XPCOMUtils.defineLazyModuleGetters(this, {
-  Log: "resource://gre/modules/Log.jsm",
   ExtensionSearchHandler: "resource://gre/modules/ExtensionSearchHandler.jsm",
   SkippableTimer: "resource:///modules/UrlbarUtils.jsm",
   UrlbarProvider: "resource:///modules/UrlbarUtils.jsm",
   UrlbarResult: "resource:///modules/UrlbarResult.jsm",
   UrlbarUtils: "resource:///modules/UrlbarUtils.jsm",
 });
-
-XPCOMUtils.defineLazyGetter(this, "logger", () =>
-  Log.repository.getLogger("Urlbar.Provider.Omnibox")
-);
 
 // After this time, we'll give up waiting for the extension to return matches.
 const MAXIMUM_ALLOWED_EXTENSION_TIME_MS = 3000;
@@ -38,8 +33,6 @@ const MAXIMUM_ALLOWED_EXTENSION_TIME_MS = 3000;
 class ProviderOmnibox extends UrlbarProvider {
   constructor() {
     super();
-    // Maps the running queries by queryContext.
-    this.queries = new Map();
   }
 
   /**
@@ -55,7 +48,7 @@ class ProviderOmnibox extends UrlbarProvider {
    * @returns {integer} one of the types from UrlbarUtils.PROVIDER_TYPE.*
    */
   get type() {
-    return UrlbarUtils.PROVIDER_TYPE.EXTENSION;
+    return UrlbarUtils.PROVIDER_TYPE.HEURISTIC;
   }
 
   /**
@@ -116,20 +109,41 @@ class ProviderOmnibox extends UrlbarProvider {
    *   The callback invoked by this method to add each result.
    */
   async startQuery(queryContext, addCallback) {
-    logger.info(`Starting query for ${queryContext.searchString}`);
-    let instance = {};
-    this.queries.set(queryContext, instance);
+    let instance = this.queryInstance;
 
+    // Fetch heuristic result.
+    let keyword = queryContext.tokens[0].value;
+    let description = ExtensionSearchHandler.getDescription(keyword);
+    let heuristicResult = new UrlbarResult(
+      UrlbarUtils.RESULT_TYPE.OMNIBOX,
+      UrlbarUtils.RESULT_SOURCE.OTHER_NETWORK,
+      ...UrlbarResult.payloadAndSimpleHighlights(queryContext.tokens, {
+        title: [description, UrlbarUtils.HIGHLIGHT.TYPED],
+        content: [queryContext.searchString, UrlbarUtils.HIGHLIGHT.TYPED],
+        keyword: [queryContext.tokens[0].value, UrlbarUtils.HIGHLIGHT.TYPED],
+        icon: UrlbarUtils.ICON.EXTENSION,
+      })
+    );
+    heuristicResult.heuristic = true;
+    addCallback(this, heuristicResult);
+
+    // Fetch non-heuristic results.
     let data = {
-      keyword: queryContext.tokens[0].value,
+      keyword,
       text: queryContext.searchString,
       inPrivateWindow: queryContext.isPrivate,
     };
     this._resultsPromise = ExtensionSearchHandler.handleSearch(
       data,
       suggestions => {
+        if (instance != this.queryInstance) {
+          return;
+        }
         for (let suggestion of suggestions) {
           let content = `${queryContext.tokens[0].value} ${suggestion.content}`;
+          if (content == heuristicResult.payload.content) {
+            continue;
+          }
           let result = new UrlbarResult(
             UrlbarUtils.RESULT_TYPE.OMNIBOX,
             UrlbarUtils.RESULT_SOURCE.OTHER_NETWORK,
@@ -153,24 +167,11 @@ class ProviderOmnibox extends UrlbarProvider {
     let timeoutPromise = new SkippableTimer({
       name: "ProviderOmnibox",
       time: MAXIMUM_ALLOWED_EXTENSION_TIME_MS,
-      logger,
+      logger: this.logger,
     }).promise;
     await Promise.race([timeoutPromise, this._resultsPromise]).catch(
       Cu.reportError
     );
-
-    this.queries.delete(queryContext);
-  }
-
-  /**
-   * This method is called by the providers manager when an ongoing query is
-   * canceled.  It fires the queryCanceled event.
-   *
-   * @param {UrlbarQueryContext} queryContext
-   *   The query context object.
-   */
-  cancelQuery(queryContext) {
-    this.queries.delete(queryContext);
   }
 }
 

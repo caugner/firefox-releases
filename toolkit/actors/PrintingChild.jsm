@@ -108,15 +108,6 @@ class PrintingChild extends ActorChild {
         );
         break;
       }
-
-      case "Printing:Print": {
-        this.print(
-          Services.wm.getOuterWindowWithId(data.windowID),
-          data.simplifiedMode,
-          data.lastUsedPrinterName
-        );
-        break;
-      }
     }
   }
 
@@ -186,9 +177,9 @@ class PrintingChild extends ActorChild {
         },
 
         QueryInterface: ChromeUtils.generateQI([
-          Ci.nsIWebProgressListener,
-          Ci.nsISupportsWeakReference,
-          Ci.nsIObserver,
+          "nsIWebProgressListener",
+          "nsISupportsWeakReference",
+          "nsIObserver",
         ]),
       };
 
@@ -379,37 +370,6 @@ class PrintingChild extends ActorChild {
     this.docShell.initOrReusePrintPreviewViewer().exitPrintPreview();
   }
 
-  print(contentWindow, simplifiedMode, lastUsedPrinterName) {
-    let printSettings = this.getPrintSettings(lastUsedPrinterName);
-    // Set the title so that the print dialog can pick it up and
-    // use it to generate the filename for save-to-PDF.
-    printSettings.title = contentWindow.document.title;
-
-    // If we happen to be on simplified mode, we need to set docURL in order
-    // to generate header/footer content correctly, since simplified tab has
-    // "about:blank" as its URI.
-    if (printSettings && simplifiedMode) {
-      printSettings.docURL = contentWindow.document.baseURI;
-    }
-
-    try {
-      contentWindow
-        .getInterface(Ci.nsIWebBrowserPrint)
-        .print(printSettings, null);
-    } catch (e) {
-      // Pressing cancel is expressed as an NS_ERROR_ABORT return value,
-      // causing an exception to be thrown which we catch here.
-      if (e.result != Cr.NS_ERROR_ABORT) {
-        Cu.reportError(`In Printing:Print:Done handler, got unexpected rv
-                        ${e.result}.`);
-        this.mm.sendAsyncMessage("Printing:Error", {
-          isPrinting: true,
-          nsresult: e.result,
-        });
-      }
-    }
-  }
-
   updatePageCount() {
     let numPages = this.docShell.initOrReusePrintPreviewViewer()
       .printPreviewNumPages;
@@ -426,14 +386,14 @@ class PrintingChild extends ActorChild {
 }
 
 PrintingChild.prototype.QueryInterface = ChromeUtils.generateQI([
-  Ci.nsIPrintingPromptService,
+  "nsIPrintingPromptService",
 ]);
 
 function PrintingListener(global) {
   this.global = global;
 }
 PrintingListener.prototype = {
-  QueryInterface: ChromeUtils.generateQI([Ci.nsIWebProgressListener]),
+  QueryInterface: ChromeUtils.generateQI(["nsIWebProgressListener"]),
 
   onStateChange(aWebProgress, aRequest, aStateFlags, aStatus) {
     this.global.sendAsyncMessage("Printing:Preview:StateChange", {

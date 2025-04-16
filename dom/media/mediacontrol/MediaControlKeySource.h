@@ -7,6 +7,7 @@
 
 #include "mozilla/dom/MediaControllerBinding.h"
 #include "mozilla/dom/MediaMetadata.h"
+#include "mozilla/dom/MediaSession.h"
 #include "mozilla/dom/MediaSessionBinding.h"
 #include "nsISupportsImpl.h"
 #include "nsTArray.h"
@@ -14,18 +15,39 @@
 namespace mozilla {
 namespace dom {
 
+// This is used to store seek related properties from MediaSessionActionDetails.
+// However, currently we have no plan to support `seekOffset`.
+// https://w3c.github.io/mediasession/#the-mediasessionactiondetails-dictionary
+struct SeekDetails {
+  SeekDetails() = default;
+  explicit SeekDetails(double aSeekTime) : mSeekTime(aSeekTime) {}
+  SeekDetails(double aSeekTime, bool aFastSeek)
+      : mSeekTime(aSeekTime), mFastSeek(aFastSeek) {}
+  double mSeekTime = 0.0;
+  bool mFastSeek = false;
+};
+
+struct MediaControlAction {
+  MediaControlAction() = default;
+  explicit MediaControlAction(MediaControlKey aKey) : mKey(aKey) {}
+  MediaControlAction(MediaControlKey aKey, const SeekDetails& aDetails)
+      : mKey(aKey), mDetails(Some(aDetails)) {}
+  MediaControlKey mKey = MediaControlKey::EndGuard_;
+  Maybe<SeekDetails> mDetails;
+};
+
 /**
  * MediaControlKeyListener is a pure interface, which is used to monitor
  * MediaControlKey, we can add it onto the MediaControlKeySource,
- * and then everytime when the media key events occur, `OnKeyPressed` will be
- * called so that we can do related handling.
+ * and then everytime when the media key events occur, `OnActionPerformed` will
+ * be called so that we can do related handling.
  */
 class MediaControlKeyListener {
  public:
   NS_INLINE_DECL_PURE_VIRTUAL_REFCOUNTING
   MediaControlKeyListener() = default;
 
-  virtual void OnKeyPressed(MediaControlKey aKey) = 0;
+  virtual void OnActionPerformed(const MediaControlAction& aAction) = 0;
 
  protected:
   virtual ~MediaControlKeyListener() = default;
@@ -38,7 +60,7 @@ class MediaControlKeyListener {
 class MediaControlKeyHandler final : public MediaControlKeyListener {
  public:
   NS_INLINE_DECL_REFCOUNTING(MediaControlKeyHandler, override)
-  void OnKeyPressed(MediaControlKey aKey) override;
+  void OnActionPerformed(const MediaControlAction& aAction) override;
 
  private:
   virtual ~MediaControlKeyHandler() = default;
@@ -66,6 +88,24 @@ class MediaControlKeySource {
   virtual void Close();
   virtual bool IsOpened() const = 0;
 
+  /**
+   * All following `SetXXX()` functions are used to update the playback related
+   * properties change from a specific tab, which can represent the playback
+   * status for Firefox instance. Even if we have multiple tabs playing media at
+   * the same time, we would only update information from one of that tabs that
+   * would be done by `MediaControlService`.
+   */
+
+  // Currently, this method is only useful for GeckoView. It would be called
+  // before all the other `SetXXX()` functions after the key source is open.
+  // It's used to indicate where the property change occurs. We would send the
+  // top level browsing context Id in order to allow the key source know which
+  // tab that the following coming information belong to. This function would be
+  // called whenever we change the controlled tab. If no controlled tab exists,
+  // the `aTopLevelBrowsingContextId` would be `Nothing()`.
+  virtual void SetControlledTabBrowsingContextId(
+      Maybe<uint64_t> aTopLevelBrowsingContextId){};
+
   virtual void SetPlaybackState(MediaSessionPlaybackState aState);
   virtual MediaSessionPlaybackState GetPlaybackState() const;
 
@@ -81,6 +121,7 @@ class MediaControlKeySource {
   // to notify change to the embedded application.
   virtual void SetEnableFullScreen(bool aIsEnabled){};
   virtual void SetEnablePictureInPictureMode(bool aIsEnabled){};
+  virtual void SetPositionState(const PositionState& aState){};
 
  protected:
   virtual ~MediaControlKeySource() = default;

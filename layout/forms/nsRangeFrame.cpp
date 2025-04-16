@@ -69,8 +69,7 @@ void nsRangeFrame::Init(nsIContent* aContent, nsContainerFrame* aParent,
   if (!mDummyTouchListener) {
     mDummyTouchListener = new DummyTouchListener();
   }
-  aContent->AddEventListener(NS_LITERAL_STRING("touchstart"),
-                             mDummyTouchListener, false);
+  aContent->AddEventListener(u"touchstart"_ns, mDummyTouchListener, false);
 
   return nsContainerFrame::Init(aContent, aParent, aPrevInFlow);
 }
@@ -81,8 +80,7 @@ void nsRangeFrame::DestroyFrom(nsIFrame* aDestructRoot,
                "nsRangeFrame should not have continuations; if it does we "
                "need to call RegUnregAccessKey only for the first.");
 
-  mContent->RemoveEventListener(NS_LITERAL_STRING("touchstart"),
-                                mDummyTouchListener, false);
+  mContent->RemoveEventListener(u"touchstart"_ns, mDummyTouchListener, false);
 
   nsCheckboxRadioFrame::RegUnRegAccessKey(static_cast<nsIFrame*>(this), false);
   aPostDestroyData.AddAnonymousContent(mTrackDiv.forget());
@@ -462,7 +460,7 @@ Decimal nsRangeFrame::GetValueAtEventPoint(WidgetGUIEvent* aEvent) {
 }
 
 void nsRangeFrame::UpdateForValueChange() {
-  if (NS_SUBTREE_DIRTY(this)) {
+  if (IsSubtreeDirty()) {
     return;  // we're going to be updated when we reflow
   }
   nsIFrame* rangeProgressFrame = mProgressDiv->GetPrimaryFrame();
@@ -711,7 +709,8 @@ bool nsRangeFrame::ShouldUseNativeStyle() const {
   nsIFrame* progressFrame = mProgressDiv->GetPrimaryFrame();
   nsIFrame* thumbFrame = mThumbDiv->GetPrimaryFrame();
 
-  return StyleDisplay()->mAppearance == StyleAppearance::Range && trackFrame &&
+  return StyleDisplay()->EffectiveAppearance() == StyleAppearance::Range &&
+         trackFrame &&
          !PresContext()->HasAuthorSpecifiedRules(
              trackFrame, STYLES_DISABLING_NATIVE_THEMING) &&
          progressFrame &&

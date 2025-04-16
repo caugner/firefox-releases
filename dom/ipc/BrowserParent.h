@@ -42,6 +42,7 @@ class nsIURI;
 class nsILoadContext;
 class nsIDocShell;
 class nsIWebBrowserPersistDocumentReceiver;
+class nsIWebProgress;
 
 namespace mozilla {
 
@@ -313,6 +314,8 @@ class BrowserParent final : public PBrowserParent,
       nsTArray<nsCString>&& aTrackingFullHashes,
       const Maybe<mozilla::ContentBlockingNotifier::
                       StorageAccessPermissionGrantedReason>& aReason);
+
+  mozilla::ipc::IPCResult RecvSetAllowDeprecatedTls(bool value);
 
   mozilla::ipc::IPCResult RecvNavigationFinished();
 

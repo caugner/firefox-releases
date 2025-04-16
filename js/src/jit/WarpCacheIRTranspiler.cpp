@@ -8,6 +8,7 @@
 
 #include "jsmath.h"
 
+#include "builtin/DataViewObject.h"
 #include "jit/CacheIR.h"
 #include "jit/CacheIRCompiler.h"
 #include "jit/CacheIROpsGenerated.h"
@@ -93,9 +94,6 @@ class MOZ_RAII WarpCacheIRTranspiler : public WarpBuilderShared {
   JS::Symbol* symbolStubField(uint32_t offset) {
     return reinterpret_cast<JS::Symbol*>(readStubWord(offset));
   }
-  JSObject* objectStubField(uint32_t offset) {
-    return reinterpret_cast<JSObject*>(readStubWord(offset));
-  }
   const void* rawPointerField(uint32_t offset) {
     return reinterpret_cast<const void*>(readStubWord(offset));
   }
@@ -105,6 +103,16 @@ class MOZ_RAII WarpCacheIRTranspiler : public WarpBuilderShared {
   uint32_t uint32StubField(uint32_t offset) {
     return static_cast<uint32_t>(readStubWord(offset));
   }
+
+  // This must only be called when the caller knows the object is tenured and
+  // not a nursery index.
+  JSObject* tenuredObjectStubField(uint32_t offset) {
+    WarpObjectField field = WarpObjectField::fromData(readStubWord(offset));
+    return field.toObject();
+  }
+
+  // Returns either MConstant or MNurseryIndex. See WarpObjectField.
+  MInstruction* objectStubField(uint32_t offset);
 
   MOZ_MUST_USE bool emitGuardTo(ValOperandId inputId, MIRType type);
 
@@ -178,6 +186,20 @@ bool WarpCacheIRTranspiler::transpile(const MDefinitionStackVector& inputs) {
   return true;
 }
 
+MInstruction* WarpCacheIRTranspiler::objectStubField(uint32_t offset) {
+  WarpObjectField field = WarpObjectField::fromData(readStubWord(offset));
+
+  if (field.isNurseryIndex()) {
+    auto* ins = MNurseryObject::New(alloc(), field.toNurseryIndex());
+    add(ins);
+    return ins;
+  }
+
+  auto* ins = MConstant::NewConstraintlessObject(alloc(), field.toObject());
+  add(ins);
+  return ins;
+}
+
 bool WarpCacheIRTranspiler::emitGuardClass(ObjOperandId objId,
                                            GuardClassKind kind) {
   MDefinition* def = getOperand(objId);
@@ -186,6 +208,9 @@ bool WarpCacheIRTranspiler::emitGuardClass(ObjOperandId objId,
   switch (kind) {
     case GuardClassKind::Array:
       classp = &ArrayObject::class_;
+      break;
+    case GuardClassKind::DataView:
+      classp = &DataViewObject::class_;
       break;
     default:
       MOZ_CRASH("not yet supported");
@@ -222,6 +247,28 @@ bool WarpCacheIRTranspiler::emitGuardShape(ObjOperandId objId,
   return true;
 }
 
+bool WarpCacheIRTranspiler::emitGuardNullProto(ObjOperandId objId) {
+  MDefinition* def = getOperand(objId);
+
+  auto* ins = MGuardNullProto::New(alloc(), def);
+  add(ins);
+
+  setOperand(objId, ins);
+  return true;
+}
+
+bool WarpCacheIRTranspiler::emitGuardProto(ObjOperandId objId,
+                                           uint32_t protoOffset) {
+  MDefinition* def = getOperand(objId);
+  MDefinition* proto = objectStubField(protoOffset);
+
+  auto* ins = MGuardProto::New(alloc(), def, proto);
+  add(ins);
+
+  setOperand(objId, ins);
+  return true;
+}
+
 bool WarpCacheIRTranspiler::emitGuardFunctionPrototype(ObjOperandId objId,
                                                        ObjOperandId protoId,
                                                        uint32_t slotOffset) {
@@ -249,7 +296,6 @@ bool WarpCacheIRTranspiler::emitGuardSpecificAtom(StringOperandId strId,
   MDefinition* str = getOperand(strId);
   JSString* expected = stringStubField(expectedOffset);
 
-  // TODO: Improve code-gen.
   auto* ins = MGuardSpecificAtom::New(alloc(), str, &expected->asAtom());
   add(ins);
 
@@ -272,12 +318,9 @@ bool WarpCacheIRTranspiler::emitGuardSpecificSymbol(SymbolOperandId symId,
 bool WarpCacheIRTranspiler::emitGuardSpecificObject(ObjOperandId objId,
                                                     uint32_t expectedOffset) {
   MDefinition* obj = getOperand(objId);
-  JSObject* expected = objectStubField(expectedOffset);
+  MDefinition* expected = objectStubField(expectedOffset);
 
-  auto* constObj = MConstant::NewConstraintlessObject(alloc(), expected);
-  add(constObj);
-
-  auto* ins = MGuardObjectIdentity::New(alloc(), obj, constObj,
+  auto* ins = MGuardObjectIdentity::New(alloc(), obj, expected,
                                         /* bailOnEquality = */ false);
   add(ins);
 
@@ -288,18 +331,13 @@ bool WarpCacheIRTranspiler::emitGuardSpecificObject(ObjOperandId objId,
 bool WarpCacheIRTranspiler::emitGuardSpecificFunction(
     ObjOperandId objId, uint32_t expectedOffset, uint32_t nargsAndFlagsOffset) {
   MDefinition* obj = getOperand(objId);
-  JSObject* expected = objectStubField(expectedOffset);
+  MDefinition* expected = objectStubField(expectedOffset);
   uint32_t nargsAndFlags = uint32StubField(nargsAndFlagsOffset);
-
-  MOZ_ASSERT(expected->is<JSFunction>());
-
-  auto* constObj = MConstant::NewConstraintlessObject(alloc(), expected);
-  add(constObj);
 
   uint16_t nargs = nargsAndFlags >> 16;
   FunctionFlags flags = FunctionFlags(uint16_t(nargsAndFlags));
 
-  auto* ins = MGuardSpecificFunction::New(alloc(), obj, constObj, nargs, flags);
+  auto* ins = MGuardSpecificFunction::New(alloc(), obj, expected, nargs, flags);
   add(ins);
 
   setOperand(objId, ins);
@@ -364,8 +402,20 @@ bool WarpCacheIRTranspiler::emitGuardToSymbol(ValOperandId inputId) {
   return emitGuardTo(inputId, MIRType::Symbol);
 }
 
-bool WarpCacheIRTranspiler::emitGuardToBoolean(ValOperandId inputId,
-                                               Int32OperandId resultId) {
+bool WarpCacheIRTranspiler::emitGuardToBigInt(ValOperandId inputId) {
+  return emitGuardTo(inputId, MIRType::BigInt);
+}
+
+bool WarpCacheIRTranspiler::emitGuardToBoolean(ValOperandId inputId) {
+  return emitGuardTo(inputId, MIRType::Boolean);
+}
+
+bool WarpCacheIRTranspiler::emitGuardToInt32(ValOperandId inputId) {
+  return emitGuardTo(inputId, MIRType::Int32);
+}
+
+bool WarpCacheIRTranspiler::emitGuardBooleanToInt32(ValOperandId inputId,
+                                                    Int32OperandId resultId) {
   MDefinition* input = getOperand(inputId);
 
   MDefinition* boolean;
@@ -378,21 +428,7 @@ bool WarpCacheIRTranspiler::emitGuardToBoolean(ValOperandId inputId,
     boolean = unbox;
   }
 
-  // This is actually a no-op, but still required to get the correct type.
   auto* ins = MToIntegerInt32::New(alloc(), boolean);
-  add(ins);
-
-  return defineOperand(resultId, ins);
-}
-
-bool WarpCacheIRTranspiler::emitGuardToInt32(ValOperandId inputId,
-                                             Int32OperandId resultId) {
-  MDefinition* input = getOperand(inputId);
-  if (input->type() == MIRType::Int32) {
-    return defineOperand(resultId, input);
-  }
-
-  auto* ins = MUnbox::New(alloc(), input, MIRType::Int32, MUnbox::Fallible);
   add(ins);
 
   return defineOperand(resultId, ins);
@@ -488,6 +524,15 @@ bool WarpCacheIRTranspiler::emitGuardToInt32ModUint32(ValOperandId valId,
   return defineOperand(resultId, ins);
 }
 
+bool WarpCacheIRTranspiler::emitGuardToUint8Clamped(ValOperandId valId,
+                                                    Int32OperandId resultId) {
+  MDefinition* input = getOperand(valId);
+  auto* ins = MClampToUint8::New(alloc(), input);
+  add(ins);
+
+  return defineOperand(resultId, ins);
+}
+
 bool WarpCacheIRTranspiler::emitToString(OperandId inputId,
                                          StringOperandId resultId) {
   MDefinition* input = getOperand(inputId);
@@ -508,20 +553,9 @@ bool WarpCacheIRTranspiler::emitCallNumberToString(NumberOperandId inputId,
   return emitToString(inputId, resultId);
 }
 
-bool WarpCacheIRTranspiler::emitBooleanToString(Int32OperandId inputId,
+bool WarpCacheIRTranspiler::emitBooleanToString(BooleanOperandId inputId,
                                                 StringOperandId resultId) {
-  MDefinition* input = getOperand(inputId);
-
-  // Remove the MToIntegerInt32 instruction added by emitGuardToBoolean.
-  // TODO: Bug 1647602 add a BooleanOperandId.
-  MDefinition* boolean = input->toToIntegerInt32()->input();
-  MOZ_ASSERT(boolean->type() == MIRType::Boolean);
-
-  auto* ins =
-      MToString::New(alloc(), boolean, MToString::SideEffectHandling::Bailout);
-  add(ins);
-
-  return defineOperand(resultId, ins);
+  return emitToString(inputId, resultId);
 }
 
 bool WarpCacheIRTranspiler::emitLoadInt32Result(Int32OperandId valId) {
@@ -583,6 +617,12 @@ bool WarpCacheIRTranspiler::emitLoadInt32Constant(uint32_t valOffset,
   return defineOperand(resultId, valConst);
 }
 
+bool WarpCacheIRTranspiler::emitLoadBooleanConstant(bool val,
+                                                    BooleanOperandId resultId) {
+  auto* valConst = constant(BooleanValue(val));
+  return defineOperand(resultId, valConst);
+}
+
 bool WarpCacheIRTranspiler::emitLoadEnclosingEnvironment(
     ObjOperandId objId, ObjOperandId resultId) {
   MDefinition* env = getOperand(objId);
@@ -594,10 +634,7 @@ bool WarpCacheIRTranspiler::emitLoadEnclosingEnvironment(
 
 bool WarpCacheIRTranspiler::emitLoadObject(ObjOperandId resultId,
                                            uint32_t objOffset) {
-  JSObject* obj = objectStubField(objOffset);
-
-  auto* ins = MConstant::NewConstraintlessObject(alloc(), obj);
-  add(ins);
+  MInstruction* ins = objectStubField(objOffset);
 
   return defineOperand(resultId, ins);
 }
@@ -999,6 +1036,19 @@ bool WarpCacheIRTranspiler::emitInt32IncResult(Int32OperandId inputId) {
   return true;
 }
 
+bool WarpCacheIRTranspiler::emitDoubleIncResult(NumberOperandId inputId) {
+  MDefinition* input = getOperand(inputId);
+
+  auto* constOne = MConstant::New(alloc(), DoubleValue(1.0));
+  add(constOne);
+
+  auto* ins = MAdd::New(alloc(), input, constOne, MIRType::Double);
+  add(ins);
+
+  pushResult(ins);
+  return true;
+}
+
 bool WarpCacheIRTranspiler::emitInt32DecResult(Int32OperandId inputId) {
   MDefinition* input = getOperand(inputId);
 
@@ -1006,6 +1056,19 @@ bool WarpCacheIRTranspiler::emitInt32DecResult(Int32OperandId inputId) {
   add(constOne);
 
   auto* ins = MSub::New(alloc(), input, constOne, MIRType::Int32);
+  add(ins);
+
+  pushResult(ins);
+  return true;
+}
+
+bool WarpCacheIRTranspiler::emitDoubleDecResult(NumberOperandId inputId) {
+  MDefinition* input = getOperand(inputId);
+
+  auto* constOne = MConstant::New(alloc(), DoubleValue(1.0));
+  add(constOne);
+
+  auto* ins = MSub::New(alloc(), input, constOne, MIRType::Double);
   add(ins);
 
   pushResult(ins);
@@ -1223,6 +1286,69 @@ bool WarpCacheIRTranspiler::emitCompareStringResult(JSOp op,
   return emitCompareResult(op, lhsId, rhsId, MCompare::Compare_String);
 }
 
+bool WarpCacheIRTranspiler::emitCompareSymbolResult(JSOp op,
+                                                    SymbolOperandId lhsId,
+                                                    SymbolOperandId rhsId) {
+  MOZ_ASSERT(IsEqualityOp(op));
+  return emitCompareResult(op, lhsId, rhsId, MCompare::Compare_Symbol);
+}
+
+bool WarpCacheIRTranspiler::emitMathHypot2NumberResult(
+    NumberOperandId firstId, NumberOperandId secondId) {
+  MDefinitionVector vector(alloc());
+  if (!vector.reserve(2)) {
+    return false;
+  }
+
+  vector.infallibleAppend(getOperand(firstId));
+  vector.infallibleAppend(getOperand(secondId));
+
+  auto* ins = MHypot::New(alloc(), vector);
+  add(ins);
+
+  pushResult(ins);
+  return true;
+}
+
+bool WarpCacheIRTranspiler::emitMathHypot3NumberResult(
+    NumberOperandId firstId, NumberOperandId secondId,
+    NumberOperandId thirdId) {
+  MDefinitionVector vector(alloc());
+  if (!vector.reserve(3)) {
+    return false;
+  }
+
+  vector.infallibleAppend(getOperand(firstId));
+  vector.infallibleAppend(getOperand(secondId));
+  vector.infallibleAppend(getOperand(thirdId));
+
+  auto* ins = MHypot::New(alloc(), vector);
+  add(ins);
+
+  pushResult(ins);
+  return true;
+}
+
+bool WarpCacheIRTranspiler::emitMathHypot4NumberResult(
+    NumberOperandId firstId, NumberOperandId secondId, NumberOperandId thirdId,
+    NumberOperandId fourthId) {
+  MDefinitionVector vector(alloc());
+  if (!vector.reserve(4)) {
+    return false;
+  }
+
+  vector.infallibleAppend(getOperand(firstId));
+  vector.infallibleAppend(getOperand(secondId));
+  vector.infallibleAppend(getOperand(thirdId));
+  vector.infallibleAppend(getOperand(fourthId));
+
+  auto* ins = MHypot::New(alloc(), vector);
+  add(ins);
+
+  pushResult(ins);
+  return true;
+}
+
 bool WarpCacheIRTranspiler::emitMathRandomResult(uint32_t rngOffset) {
 #ifdef DEBUG
   // CodeGenerator uses CompileRealm::addressOfRandomNumberGenerator. Assert it
@@ -1298,6 +1424,17 @@ bool WarpCacheIRTranspiler::emitMathCeilToInt32Result(NumberOperandId inputId) {
   MDefinition* input = getOperand(inputId);
 
   auto* ins = MCeil::New(alloc(), input);
+  add(ins);
+
+  pushResult(ins);
+  return true;
+}
+
+bool WarpCacheIRTranspiler::emitMathTruncToInt32Result(
+    NumberOperandId inputId) {
+  MDefinition* input = getOperand(inputId);
+
+  auto* ins = MTrunc::New(alloc(), input);
   add(ins);
 
   pushResult(ins);
@@ -1495,6 +1632,16 @@ bool WarpCacheIRTranspiler::emitIsObjectResult(ValOperandId inputId) {
   return true;
 }
 
+bool WarpCacheIRTranspiler::emitIsPackedArrayResult(ObjOperandId objId) {
+  MDefinition* obj = getOperand(objId);
+
+  auto* isPackedArray = MIsPackedArray::New(alloc(), obj);
+  add(isPackedArray);
+
+  pushResult(isPackedArray);
+  return true;
+}
+
 bool WarpCacheIRTranspiler::emitIsCallableResult(ValOperandId inputId) {
   MDefinition* value = getOperand(inputId);
 
@@ -1611,15 +1758,26 @@ bool WarpCacheIRTranspiler::emitCallFunction(ObjOperandId calleeId,
   WrappedFunction* wrappedTarget = nullptr;
   if (callee->isGuardSpecificFunction()) {
     auto* guard = callee->toGuardSpecificFunction();
-    JSFunction* target =
-        &guard->expected()->toConstant()->toObject().as<JSFunction>();
 
-    wrappedTarget =
-        new (alloc()) WrappedFunction(target, guard->nargs(), guard->flags());
+    MDefinition* expectedDef = guard->expected();
+    MOZ_ASSERT(expectedDef->isConstant() || expectedDef->isNurseryObject());
 
-    MOZ_ASSERT_IF(kind == CallKind::Native,
-                  wrappedTarget->isNativeWithoutJitEntry());
-    MOZ_ASSERT_IF(kind == CallKind::Scripted, wrappedTarget->hasJitEntry());
+    // If this is a native without a JitEntry, WrappedFunction needs to know the
+    // target JSFunction.
+    // TODO: support nursery-allocated natives with WrappedFunction, maybe by
+    // storing the JSNative in the Baseline stub like flags/nargs.
+    bool isNative = guard->flags().isNativeWithoutJitEntry();
+    if (!isNative || expectedDef->isConstant()) {
+      JSFunction* nativeTarget = nullptr;
+      if (isNative) {
+        nativeTarget = &expectedDef->toConstant()->toObject().as<JSFunction>();
+      }
+      wrappedTarget = new (alloc())
+          WrappedFunction(nativeTarget, guard->nargs(), guard->flags());
+      MOZ_ASSERT_IF(kind == CallKind::Native,
+                    wrappedTarget->isNativeWithoutJitEntry());
+      MOZ_ASSERT_IF(kind == CallKind::Scripted, wrappedTarget->hasJitEntry());
+    }
   }
 
   bool needsThisCheck = false;
@@ -1698,6 +1856,15 @@ bool WarpCacheIRTranspiler::emitCallScriptedFunction(ObjOperandId calleeId,
   return emitCallFunction(calleeId, argcId, flags, CallKind::Scripted);
 }
 
+bool WarpCacheIRTranspiler::emitCallInlinedFunction(ObjOperandId calleeId,
+                                                    Int32OperandId argcId,
+                                                    uint32_t icScriptOffset,
+                                                    CallFlags flags) {
+  // We are transpiling to generate the correct guards. Code for the inlined
+  // function itself will be generated in WarpBuilder::buildInlinedCall.
+  return true;
+}
+
 // TODO: rename the MetaTwoByte op when IonBuilder is gone.
 bool WarpCacheIRTranspiler::emitMetaTwoByte(MetaTwoByteKind kind,
                                             uint32_t functionObjectOffset,
@@ -1706,7 +1873,7 @@ bool WarpCacheIRTranspiler::emitMetaTwoByte(MetaTwoByteKind kind,
     return true;
   }
 
-  JSObject* templateObj = objectStubField(templateObjectOffset);
+  JSObject* templateObj = tenuredObjectStubField(templateObjectOffset);
   MConstant* templateConst = constant(ObjectValue(*templateObj));
 
   // TODO: support pre-tenuring.

@@ -7,12 +7,12 @@
 "use strict";
 
 // The folllowing rejection is left unhandled in some cases. This bug should be
-// fixed, but for the moment this file is whitelisted.
+// fixed, but for the moment this file allows a class of rejections.
 //
-// NOTE: Whitelisting a class of rejections should be limited. Normally you
+// NOTE: Allowing a whole class of rejections should be avoided. Normally you
 //       should use "expectUncaughtRejection" to flag individual failures.
 ChromeUtils.import("resource://testing-common/PromiseTestUtils.jsm", this);
-PromiseTestUtils.whitelistRejectionsGlobally(/NS_ERROR_ILLEGAL_VALUE/);
+PromiseTestUtils.allowMatchingRejectionsGlobally(/NS_ERROR_ILLEGAL_VALUE/);
 
 const kEnginePref = "browser.translation.engine";
 const kApiKeyPref = "browser.translation.yandex.apiKeyOverride";

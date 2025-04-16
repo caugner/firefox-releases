@@ -6,9 +6,11 @@
 
 #include "SessionHistoryEntry.h"
 #include "nsDocShellLoadState.h"
-#include "nsILayoutHistoryState.h"
 #include "nsSHEntryShared.h"
 #include "nsStructuredCloneContainer.h"
+#include "nsXULAppAPI.h"
+#include "mozilla/PresState.h"
+#include "mozilla/ipc/IPDLParamTraits.h"
 
 namespace mozilla {
 namespace dom {
@@ -41,12 +43,22 @@ SessionHistoryInfo::SessionHistoryInfo(nsDocShellLoadState* aLoadState,
 }
 
 static uint32_t gEntryID;
+nsDataHashtable<nsUint64HashKey, SessionHistoryEntry*>*
+    SessionHistoryEntry::sInfoIdToEntry = nullptr;
 
-SessionHistoryEntry::SessionHistoryEntry(nsISHistory* aSessionHistory,
-                                         nsDocShellLoadState* aLoadState,
+SessionHistoryEntry* SessionHistoryEntry::GetByInfoId(uint64_t aId) {
+  MOZ_ASSERT(XRE_IsParentProcess());
+  if (!sInfoIdToEntry) {
+    return nullptr;
+  }
+
+  return sInfoIdToEntry->Get(aId);
+}
+
+SessionHistoryEntry::SessionHistoryEntry(nsDocShellLoadState* aLoadState,
                                          nsIChannel* aChannel)
     : mInfo(new SessionHistoryInfo(aLoadState, aChannel)),
-      mSharedInfo(new SHEntrySharedParentState(aSessionHistory)),
+      mSharedInfo(new SHEntrySharedParentState()),
       mID(++gEntryID) {
   mSharedInfo->mTriggeringPrincipal = aLoadState->TriggeringPrincipal();
   mSharedInfo->mPrincipalToInherit = aLoadState->PrincipalToInherit();
@@ -54,6 +66,20 @@ SessionHistoryEntry::SessionHistoryEntry(nsISHistory* aSessionHistory,
       aLoadState->PartitionedPrincipalToInherit();
   mSharedInfo->mCsp = aLoadState->Csp();
   // FIXME Set remaining shared fields!
+
+  if (!sInfoIdToEntry) {
+    sInfoIdToEntry =
+        new nsDataHashtable<nsUint64HashKey, SessionHistoryEntry*>();
+  }
+  sInfoIdToEntry->Put(Info().Id(), this);
+}
+
+SessionHistoryEntry::~SessionHistoryEntry() {
+  sInfoIdToEntry->Remove(Info().Id());
+  if (sInfoIdToEntry->IsEmpty()) {
+    delete sInfoIdToEntry;
+    sInfoIdToEntry = nullptr;
+  }
 }
 
 NS_IMPL_ISUPPORTS(SessionHistoryEntry, nsISHEntry)
@@ -135,14 +161,15 @@ SessionHistoryEntry::SetIsSubFrame(bool aIsSubFrame) {
 
 NS_IMETHODIMP
 SessionHistoryEntry::GetHasUserInteraction(bool* aFlag) {
-  MOZ_CRASH("Not needed in the parent process?");
-  return NS_ERROR_FAILURE;
+  NS_WARNING("Not implemented in the parent process!");
+  *aFlag = true;
+  return NS_OK;
 }
 
 NS_IMETHODIMP
 SessionHistoryEntry::SetHasUserInteraction(bool aFlag) {
-  MOZ_CRASH("Not needed in the parent process?");
-  return NS_ERROR_FAILURE;
+  NS_WARNING("Not implemented in the parent process!");
+  return NS_OK;
 }
 
 NS_IMETHODIMP
@@ -298,18 +325,6 @@ SessionHistoryEntry::SetSaveLayoutStateFlag(bool aSaveLayoutStateFlag) {
 }
 
 NS_IMETHODIMP
-SessionHistoryEntry::GetExpirationStatus(bool* aExpirationStatus) {
-  MOZ_CRASH("This lives in the child process");
-  return NS_ERROR_FAILURE;
-}
-
-NS_IMETHODIMP
-SessionHistoryEntry::SetExpirationStatus(bool aExpirationStatus) {
-  MOZ_CRASH("This lives in the child process");
-  return NS_ERROR_FAILURE;
-}
-
-NS_IMETHODIMP
 SessionHistoryEntry::GetContentType(nsACString& aContentType) {
   aContentType = mSharedInfo->mContentType;
   return NS_OK;
@@ -406,14 +421,14 @@ SessionHistoryEntry::SetStateData(nsIStructuredCloneContainer* aStateData) {
 
 NS_IMETHODIMP
 SessionHistoryEntry::GetDocshellID(nsID& aDocshellID) {
-  MOZ_CRASH("This lives in the child process");
-  return NS_ERROR_FAILURE;
+  aDocshellID = mSharedInfo->mDocShellID;
+  return NS_OK;
 }
 
 NS_IMETHODIMP
 SessionHistoryEntry::SetDocshellID(const nsID& aDocshellID) {
-  NS_WARNING("This lives in the child process");
-  return NS_ERROR_FAILURE;
+  mSharedInfo->mDocShellID = aDocshellID;
+  return NS_OK;
 }
 
 NS_IMETHODIMP
@@ -472,6 +487,15 @@ NS_IMETHODIMP
 SessionHistoryEntry::GetShistory(nsISHistory** aShistory) {
   nsCOMPtr<nsISHistory> sHistory = do_QueryReferent(mSharedInfo->mSHistory);
   sHistory.forget(aShistory);
+  return NS_OK;
+}
+
+NS_IMETHODIMP
+SessionHistoryEntry::SetShistory(nsISHistory* aShistory) {
+  nsWeakPtr shistory = do_GetWeakReference(aShistory);
+  // mSHistory can not be changed once it's set
+  MOZ_ASSERT(!mSharedInfo->mSHistory || (mSharedInfo->mSHistory == shistory));
+  mSharedInfo->mSHistory = shistory;
   return NS_OK;
 }
 
@@ -742,17 +766,20 @@ SessionHistoryEntry::GetBfcacheID(uint64_t* aBfcacheID) {
   return NS_OK;
 }
 
-NS_IMETHODIMP
-SessionHistoryEntry::SynchronizeLayoutHistoryState() {
-  // No-op on purpose. See nsISHEntry.idl
-  return NS_OK;
-}
-
 NS_IMETHODIMP_(void)
 SessionHistoryEntry::SyncTreesForSubframeNavigation(
     nsISHEntry* aEntry, mozilla::dom::BrowsingContext* aTopBC,
     mozilla::dom::BrowsingContext* aIgnoreBC) {
   MOZ_CRASH("Need to implement this");
+}
+
+void SessionHistoryEntry::UpdateLayoutHistoryState(
+    uint64_t aSessionHistoryEntryID, nsILayoutHistoryState* aState) {
+  SessionHistoryEntry* entry =
+      SessionHistoryEntry::GetByInfoId(aSessionHistoryEntryID);
+  if (entry) {
+    entry->SetLayoutHistoryState(aState);
+  }
 }
 
 }  // namespace dom
@@ -788,6 +815,7 @@ void IPDLParamTraits<dom::SessionHistoryInfo>::Write(
   WriteIPDLParam(aMsg, aActor, stateData);
   WriteIPDLParam(aMsg, aActor, aParam.mSrcdocData);
   WriteIPDLParam(aMsg, aActor, aParam.mBaseURI);
+  WriteIPDLParam(aMsg, aActor, aParam.mLayoutHistoryState);
   WriteIPDLParam(aMsg, aActor, aParam.mId);
   WriteIPDLParam(aMsg, aActor, aParam.mLoadReplace);
   WriteIPDLParam(aMsg, aActor, aParam.mURIWasModified);
@@ -812,6 +840,7 @@ bool IPDLParamTraits<dom::SessionHistoryInfo>::Read(
       !ReadIPDLParam(aMsg, aIter, aActor, &stateData) ||
       !ReadIPDLParam(aMsg, aIter, aActor, &aResult->mSrcdocData) ||
       !ReadIPDLParam(aMsg, aIter, aActor, &aResult->mBaseURI) ||
+      !ReadIPDLParam(aMsg, aIter, aActor, &aResult->mLayoutHistoryState) ||
       !ReadIPDLParam(aMsg, aIter, aActor, &aResult->mId) ||
       !ReadIPDLParam(aMsg, aIter, aActor, &aResult->mLoadReplace) ||
       !ReadIPDLParam(aMsg, aIter, aActor, &aResult->mURIWasModified) ||
@@ -827,6 +856,57 @@ bool IPDLParamTraits<dom::SessionHistoryInfo>::Read(
     UnpackClonedMessageDataForChild(stateData, *aResult->mStateData);
   } else {
     UnpackClonedMessageDataForParent(stateData, *aResult->mStateData);
+  }
+  return true;
+}
+
+void IPDLParamTraits<nsILayoutHistoryState*>::Write(
+    IPC::Message* aMsg, IProtocol* aActor, nsILayoutHistoryState* aParam) {
+  if (aParam) {
+    WriteIPDLParam(aMsg, aActor, true);
+    bool scrollPositionOnly = false;
+    nsTArray<nsCString> keys;
+    nsTArray<mozilla::PresState> states;
+    aParam->GetContents(&scrollPositionOnly, keys, states);
+    WriteIPDLParam(aMsg, aActor, scrollPositionOnly);
+    WriteIPDLParam(aMsg, aActor, keys);
+    WriteIPDLParam(aMsg, aActor, states);
+  } else {
+    WriteIPDLParam(aMsg, aActor, false);
+  }
+}
+
+bool IPDLParamTraits<nsILayoutHistoryState*>::Read(
+    const IPC::Message* aMsg, PickleIterator* aIter, IProtocol* aActor,
+    RefPtr<nsILayoutHistoryState>* aResult) {
+  bool hasLayoutHistoryState = false;
+  if (!ReadIPDLParam(aMsg, aIter, aActor, &hasLayoutHistoryState)) {
+    aActor->FatalError("Error reading fields for nsILayoutHistoryState");
+    return false;
+  }
+
+  if (hasLayoutHistoryState) {
+    bool scrollPositionOnly = false;
+    nsTArray<nsCString> keys;
+    nsTArray<mozilla::PresState> states;
+    if (!ReadIPDLParam(aMsg, aIter, aActor, &scrollPositionOnly) ||
+        !ReadIPDLParam(aMsg, aIter, aActor, &keys) ||
+        !ReadIPDLParam(aMsg, aIter, aActor, &states)) {
+      aActor->FatalError("Error reading fields for nsILayoutHistoryState");
+    }
+
+    if (keys.Length() != states.Length()) {
+      aActor->FatalError("Error reading fields for nsILayoutHistoryState");
+      return false;
+    }
+
+    *aResult = NS_NewLayoutHistoryState();
+    (*aResult)->SetScrollPositionOnly(scrollPositionOnly);
+    for (uint32_t i = 0; i < keys.Length(); ++i) {
+      PresState& state = states[i];
+      UniquePtr<PresState> newState = MakeUnique<PresState>(state);
+      (*aResult)->AddState(keys[i], std::move(newState));
+    }
   }
   return true;
 }

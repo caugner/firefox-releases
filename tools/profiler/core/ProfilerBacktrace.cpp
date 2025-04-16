@@ -13,7 +13,7 @@
 
 ProfilerBacktrace::ProfilerBacktrace(
     const char* aName, int aThreadId,
-    UniquePtr<mozilla::ProfileChunkedBuffer> aProfileChunkedBuffer,
+    mozilla::UniquePtr<mozilla::ProfileChunkedBuffer> aProfileChunkedBuffer,
     mozilla::UniquePtr<ProfileBuffer> aProfileBuffer)
     : mName(strdup(aName)),
       mThreadId(aThreadId),
@@ -41,7 +41,7 @@ void ProfilerBacktrace::StreamJSON(SpliceableJSONWriter& aWriter,
   // any JitReturnAddr entries. For synchronous samples, JIT frames get expanded
   // at sample time.
   StreamSamplesAndMarkers(mName.get(), mThreadId, *mProfileBuffer, aWriter,
-                          NS_LITERAL_CSTRING(""), aProcessStartTime,
+                          ""_ns, ""_ns, aProcessStartTime,
                           /* aRegisterTime */ mozilla::TimeStamp(),
                           /* aUnregisterTime */ mozilla::TimeStamp(),
                           /* aSinceTime */ 0, aUniqueStacks);

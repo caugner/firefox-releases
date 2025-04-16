@@ -4,6 +4,9 @@
 
 "use strict";
 
+const { ComponentUtils } = ChromeUtils.import(
+  "resource://gre/modules/ComponentUtils.jsm"
+);
 const { Services } = ChromeUtils.import("resource://gre/modules/Services.jsm");
 const { XPCOMUtils } = ChromeUtils.import(
   "resource://gre/modules/XPCOMUtils.jsm"
@@ -536,9 +539,9 @@ class MarionetteParentProcess {
 
   get QueryInterface() {
     return ChromeUtils.generateQI([
-      Ci.nsICommandLineHandler,
-      Ci.nsIMarionette,
-      Ci.nsIObserver,
+      "nsICommandLineHandler",
+      "nsIMarionette",
+      "nsIObserver",
     ]);
   }
 }
@@ -554,7 +557,7 @@ class MarionetteContentProcess {
   }
 
   get QueryInterface() {
-    return ChromeUtils.generateQI([Ci.nsIMarionette]);
+    return ChromeUtils.generateQI(["nsIMarionette"]);
   }
 }
 
@@ -591,4 +594,4 @@ Marionette.prototype = {
   helpInfo: "  --marionette       Enable remote control server.\n",
 };
 
-this.NSGetFactory = XPCOMUtils.generateNSGetFactory([Marionette]);
+this.NSGetFactory = ComponentUtils.generateNSGetFactory([Marionette]);

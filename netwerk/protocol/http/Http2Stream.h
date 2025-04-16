@@ -31,9 +31,8 @@ class Http2Decompressor;
 
 class Http2Stream : public nsAHttpSegmentReader,
                     public nsAHttpSegmentWriter,
-                    public SupportsWeakPtr<Http2Stream> {
+                    public SupportsWeakPtr {
  public:
-  MOZ_DECLARE_WEAKREFERENCE_TYPENAME(Http2Stream)
   NS_DECL_NSAHTTPSEGMENTREADER
   NS_DECL_NSAHTTPSEGMENTWRITER
 
@@ -374,7 +373,7 @@ class Http2Stream : public nsAHttpSegmentReader,
  private:
   void ClearTransactionsBlockedOnTunnel();
   void MapStreamToPlainText();
-  void MapStreamToHttpConnection(const nsACString& aFlat407Headers,
+  bool MapStreamToHttpConnection(const nsACString& aFlat407Headers,
                                  int32_t aHttpResponseCode = -1);
 
   bool mIsTunnel;

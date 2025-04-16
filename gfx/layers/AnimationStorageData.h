@@ -10,6 +10,7 @@
 #include "mozilla/dom/Nullable.h"
 #include "mozilla/ComputedTimingFunction.h"  // for ComputedTimingFunction
 #include "mozilla/layers/LayersMessages.h"   // for TransformData, etc
+#include "mozilla/layers/LayersTypes.h"      // for LayersId
 #include "mozilla/TimeStamp.h"               // for TimeStamp
 #include "mozilla/TimingParams.h"
 #include "X11UndefineNone.h"
@@ -52,6 +53,13 @@ struct PropertyAnimation {
   float mPlaybackRate;
   dom::IterationCompositeOperation mIterationComposite;
   bool mIsNotPlaying;
+
+  void ResetLastCompositionValues() {
+    mCurrentIterationOnLastCompose = 0;
+    mSegmentIndexOnLastCompose = 0;
+    mProgressOnLastCompose.SetNull();
+    mPortionInSegmentOnLastCompose.SetNull();
+  }
 };
 
 struct PropertyAnimationGroup {
@@ -65,6 +73,11 @@ struct PropertyAnimationGroup {
     mAnimations.Clear();
     mBaseStyle = nullptr;
   }
+  void ResetLastCompositionValues() {
+    for (PropertyAnimation& animation : mAnimations) {
+      animation.ResetLastCompositionValues();
+    }
+  }
 };
 
 struct AnimationStorageData {
@@ -75,6 +88,9 @@ struct AnimationStorageData {
   Maybe<TransformData> mTransformData;
   // For motion path. We cached the gfx path for optimization.
   RefPtr<gfx::Path> mCachedMotionPath;
+  // This is used to communicate with the main-thread. E.g. to tell the fact
+  // that this animation needs to be pre-rendered again on the main-thread, etc.
+  LayersId mLayersId;
 
   AnimationStorageData() = default;
   AnimationStorageData(AnimationStorageData&& aOther) = default;

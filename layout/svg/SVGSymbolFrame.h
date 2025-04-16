@@ -4,8 +4,8 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-#ifndef __NS_SVGISYMBOLFRAME_H__
-#define __NS_SVGISYMBOLFRAME_H__
+#ifndef LAYOUT_SVG_SVGSYMBOLFRAME_H_
+#define LAYOUT_SVG_SVGSYMBOLFRAME_H_
 
 #include "SVGViewportFrame.h"
 
@@ -37,11 +37,11 @@ class SVGSymbolFrame final : public SVGViewportFrame {
 
 #ifdef DEBUG_FRAME_DUMP
   virtual nsresult GetFrameName(nsAString& aResult) const override {
-    return MakeFrameName(NS_LITERAL_STRING("SVGSymbol"), aResult);
+    return MakeFrameName(u"SVGSymbol"_ns, aResult);
   }
 #endif
 };
 
 }  // namespace mozilla
 
-#endif
+#endif  // LAYOUT_SVG_SVGSYMBOLFRAME_H_

@@ -501,8 +501,7 @@ AudioCallbackDriver::AudioCallbackDriver(
       mInputDeviceID(aInputDeviceID),
       mIterationDurationMS(MEDIA_GRAPH_TARGET_PERIOD_MS),
       mStarted(false),
-      mInitShutdownThread(
-          SharedThreadPool::Get(NS_LITERAL_CSTRING("CubebOperation"), 1)),
+      mInitShutdownThread(SharedThreadPool::Get("CubebOperation"_ns, 1)),
       mAudioThreadId(0),
       mAudioThreadIdInCb(std::thread::id()),
       mAudioStreamState(AudioStreamState::None),
@@ -1200,17 +1199,6 @@ TimeDuration AudioCallbackDriver::AudioOutputLatency() {
   TRACE();
   uint32_t latencyFrames;
   int rv = cubeb_stream_get_latency(mAudioStream, &latencyFrames);
-  if (rv || mSampleRate == 0) {
-    return TimeDuration::FromSeconds(0.0);
-  }
-
-  return TimeDuration::FromSeconds(static_cast<double>(latencyFrames) /
-                                   mSampleRate);
-}
-
-TimeDuration AudioCallbackDriver::AudioInputLatency() {
-  uint32_t latencyFrames;
-  int rv = cubeb_stream_get_input_latency(mAudioStream, &latencyFrames);
   if (rv || mSampleRate == 0) {
     return TimeDuration::FromSeconds(0.0);
   }

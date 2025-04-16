@@ -33,6 +33,7 @@
 #include "mozilla/dom/FetchEventOpProxyChild.h"
 #include "mozilla/dom/IndexedDatabaseManager.h"
 #include "mozilla/dom/MessagePort.h"
+#include "mozilla/dom/RemoteWorkerManager.h"  // RemoteWorkerManager::IsRemoteTypeAllowed
 #include "mozilla/dom/RemoteWorkerTypes.h"
 #include "mozilla/dom/ServiceWorkerDescriptor.h"
 #include "mozilla/dom/ServiceWorkerInterceptController.h"
@@ -269,7 +270,7 @@ nsISerialEventTarget* RemoteWorkerChild::GetOwningEventTarget() const {
 }
 
 void RemoteWorkerChild::ActorDestroy(ActorDestroyReason) {
-  MOZ_ACCESS_THREAD_BOUND(mLauncherData, launcherData);
+  auto launcherData = mLauncherData.Access();
   launcherData->mIPCActive = false;
 
   Unused << NS_WARN_IF(!launcherData->mTerminationPromise.IsEmpty());
@@ -286,7 +287,7 @@ void RemoteWorkerChild::ActorDestroy(ActorDestroyReason) {
 void RemoteWorkerChild::ExecWorker(const RemoteWorkerData& aData) {
 #ifdef DEBUG
   MOZ_ASSERT(GetOwningEventTarget()->IsOnCurrentThread());
-  MOZ_ACCESS_THREAD_BOUND(mLauncherData, launcherData);
+  auto launcherData = mLauncherData.Access();
   MOZ_ASSERT(launcherData->mIPCActive);
 #endif
 
@@ -312,6 +313,14 @@ nsresult RemoteWorkerChild::ExecWorkerOnMainThread(RemoteWorkerData&& aData) {
   Unused << NS_WARN_IF(!IndexedDatabaseManager::GetOrCreate());
 
   auto scopeExit = MakeScopeExit([&] { TransitionStateToTerminated(); });
+
+  // Verify the the RemoteWorker should be really allowed to run in this
+  // process, and fail if it shouldn't (This shouldn't normally happen,
+  // unless the RemoteWorkerData has been tempered in the process it was
+  // sent from).
+  if (!RemoteWorkerManager::IsRemoteTypeAllowed(aData)) {
+    return NS_ERROR_UNEXPECTED;
+  }
 
   auto principalOrErr = PrincipalInfoToPrincipal(aData.principalInfo());
   if (NS_WARN_IF(principalOrErr.isErr())) {
@@ -558,7 +567,7 @@ void RemoteWorkerChild::ShutdownOnWorker() {
 
   nsCOMPtr<nsIRunnable> r =
       NS_NewRunnableFunction(__func__, [self = std::move(self)] {
-        MOZ_ACCESS_THREAD_BOUND(self->mLauncherData, launcherData);
+        auto launcherData = self->mLauncherData.Access();
 
         if (!launcherData->mIPCActive) {
           return;
@@ -572,7 +581,7 @@ void RemoteWorkerChild::ShutdownOnWorker() {
 }
 
 RefPtr<GenericNonExclusivePromise> RemoteWorkerChild::GetTerminationPromise() {
-  MOZ_ACCESS_THREAD_BOUND(mLauncherData, launcherData);
+  auto launcherData = mLauncherData.Access();
   return launcherData->mTerminationPromise.Ensure(__func__);
 }
 
@@ -597,7 +606,7 @@ void RemoteWorkerChild::CreationSucceededOrFailedOnAnyThread(
   nsCOMPtr<nsIRunnable> r = NS_NewRunnableFunction(
       __func__,
       [self = std::move(self), didCreationSucceed = aDidCreationSucceed] {
-        MOZ_ACCESS_THREAD_BOUND(self->mLauncherData, launcherData);
+        auto launcherData = self->mLauncherData.Access();
 
         if (!launcherData->mIPCActive) {
           return;
@@ -633,7 +642,7 @@ void RemoteWorkerChild::CloseWorkerOnMainThread(State& aState) {
 void RemoteWorkerChild::ErrorPropagation(const ErrorValue& aValue) {
   MOZ_ASSERT(GetOwningEventTarget()->IsOnCurrentThread());
 
-  MOZ_ACCESS_THREAD_BOUND(mLauncherData, launcherData);
+  auto launcherData = mLauncherData.Access();
 
   if (!launcherData->mIPCActive) {
     return;
@@ -803,7 +812,7 @@ void RemoteWorkerChild::TransitionStateToTerminated(State& aState) {
 
   nsCOMPtr<nsIRunnable> r =
       NS_NewRunnableFunction(__func__, [self = SelfHolder(this)]() {
-        MOZ_ACCESS_THREAD_BOUND(self->mLauncherData, launcherData);
+        auto launcherData = self->mLauncherData.Access();
         launcherData->mTerminationPromise.ResolveIfExists(true, __func__);
       });
 
@@ -830,7 +839,7 @@ class RemoteWorkerChild::SharedWorkerOp : public RemoteWorkerChild::Op {
     MOZ_ASSERT(!mStarted);
     MOZ_ASSERT(aOwner);
 
-    MOZ_ACCESS_THREAD_BOUND(aOwner->mLauncherData, launcherData);
+    auto launcherData = aOwner->mLauncherData.Access();
 
     if (NS_WARN_IF(!launcherData->mIPCActive)) {
       Unused << NS_WARN_IF(!aState.is<Terminated>());
@@ -1009,7 +1018,7 @@ RemoteWorkerChild::MaybeSendSetServiceWorkerSkipWaitingFlag() {
   nsCOMPtr<nsIRunnable> r = NS_NewRunnableFunction(__func__, [self = std::move(
                                                                   self),
                                                               promise] {
-    MOZ_ACCESS_THREAD_BOUND(self->mLauncherData, launcherData);
+    auto launcherData = self->mLauncherData.Access();
 
     if (!launcherData->mIPCActive) {
       promise->Reject(NS_ERROR_DOM_ABORT_ERR, __func__);

@@ -2522,14 +2522,6 @@ NSEvent* gLastDragMouseDownEvent = nil;  // [strong]
 
 - (void)scrollbarSystemMetricChanged {
   [self systemMetricsChanged];
-
-  if (mGeckoChild) {
-    if (nsIWidgetListener* listener = mGeckoChild->GetWidgetListener()) {
-      if (RefPtr<PresShell> presShell = listener->GetPresShell()) {
-        presShell->ReconstructFrames();
-      }
-    }
-  }
 }
 
 - (NSString*)description {
@@ -3393,22 +3385,6 @@ static int32_t RoundUp(double aDouble) {
   return aDouble < 0 ? static_cast<int32_t>(floor(aDouble)) : static_cast<int32_t>(ceil(aDouble));
 }
 
-static int32_t TakeLargestInt(gfx::Float* aFloat) {
-  int32_t result(*aFloat);  // truncate towards zero
-  *aFloat -= result;
-  return result;
-}
-
-static gfx::IntPoint AccumulateIntegerDelta(NSEvent* aEvent) {
-  static gfx::Point sAccumulator(0.0f, 0.0f);
-  if (nsCocoaUtils::EventPhase(aEvent) == NSEventPhaseBegan) {
-    sAccumulator = gfx::Point(0.0f, 0.0f);
-  }
-  sAccumulator.x += [aEvent deltaX];
-  sAccumulator.y += [aEvent deltaY];
-  return gfx::IntPoint(TakeLargestInt(&sAccumulator.x), TakeLargestInt(&sAccumulator.y));
-}
-
 static gfx::IntPoint GetIntegerDeltaForEvent(NSEvent* aEvent) {
   if (nsCocoaFeatures::OnSierraOrLater() && [aEvent hasPreciseScrollingDeltas]) {
     // Pixel scroll events (events with hasPreciseScrollingDeltas == YES)
@@ -3420,7 +3396,8 @@ static gfx::IntPoint GetIntegerDeltaForEvent(NSEvent* aEvent) {
     // Starting with 10.12 however, pixel scroll events no longer accumulate
     // deltaX and deltaY; they just report floating point values for every
     // single event. So we need to do our own accumulation.
-    return AccumulateIntegerDelta(aEvent);
+    return PanGestureInput::GetIntegerDeltaForEvent(
+        (nsCocoaUtils::EventPhase(aEvent) == NSEventPhaseBegan), [aEvent deltaX], [aEvent deltaY]);
   }
 
   // For line scrolls, or pre-10.12, just use the rounded up value of deltaX / deltaY.
@@ -3879,8 +3856,8 @@ static gfx::IntPoint GetIntegerDeltaForEvent(NSEvent* aEvent) {
         !TextInputHandler::IsSecureEventInputEnabled()) {
 #  define CRASH_MESSAGE "A password editor has focus, but not in secure input mode"
 
-      CrashReporter::AppendAppNotesToCrashReport(NS_LITERAL_CSTRING("\nBug 893973: ") +
-                                                 NS_LITERAL_CSTRING(CRASH_MESSAGE));
+      CrashReporter::AppendAppNotesToCrashReport("\nBug 893973: "_ns +
+                                                 nsLiteralCString(CRASH_MESSAGE));
       CrashReporter::AppendAppNotesToCrashReport(additionalInfo);
 
       MOZ_CRASH(CRASH_MESSAGE);
@@ -3889,8 +3866,8 @@ static gfx::IntPoint GetIntegerDeltaForEvent(NSEvent* aEvent) {
                TextInputHandler::IsSecureEventInputEnabled()) {
 #  define CRASH_MESSAGE "A non-password editor has focus, but in secure input mode"
 
-      CrashReporter::AppendAppNotesToCrashReport(NS_LITERAL_CSTRING("\nBug 893973: ") +
-                                                 NS_LITERAL_CSTRING(CRASH_MESSAGE));
+      CrashReporter::AppendAppNotesToCrashReport("\nBug 893973: "_ns +
+                                                 nsLiteralCString(CRASH_MESSAGE));
       CrashReporter::AppendAppNotesToCrashReport(additionalInfo);
 
       MOZ_CRASH(CRASH_MESSAGE);

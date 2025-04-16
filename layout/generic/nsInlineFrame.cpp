@@ -14,6 +14,8 @@
 #include "mozilla/PresShell.h"
 #include "mozilla/RestyleManager.h"
 #include "mozilla/ServoStyleSet.h"
+#include "mozilla/SVGTextFrame.h"
+#include "mozilla/SVGUtils.h"
 #include "nsLineLayout.h"
 #include "nsBlockFrame.h"
 #include "nsPlaceholderFrame.h"
@@ -22,7 +24,6 @@
 #include "nsPresContextInlines.h"
 #include "nsCSSAnonBoxes.h"
 #include "nsDisplayList.h"
-#include "SVGTextFrame.h"
 #include "nsStyleChangeList.h"
 
 #ifdef DEBUG
@@ -48,13 +49,13 @@ NS_QUERYFRAME_TAIL_INHERITING(nsContainerFrame)
 
 #ifdef DEBUG_FRAME_DUMP
 nsresult nsInlineFrame::GetFrameName(nsAString& aResult) const {
-  return MakeFrameName(NS_LITERAL_STRING("Inline"), aResult);
+  return MakeFrameName(u"Inline"_ns, aResult);
 }
 #endif
 
 void nsInlineFrame::InvalidateFrame(uint32_t aDisplayItemKey,
                                     bool aRebuildDisplayItems) {
-  if (nsSVGUtils::IsInSVGTextSubtree(this)) {
+  if (SVGUtils::IsInSVGTextSubtree(this)) {
     nsIFrame* svgTextFrame = nsLayoutUtils::GetClosestFrameOfType(
         GetParent(), LayoutFrameType::SVGText);
     svgTextFrame->InvalidateFrame();
@@ -66,7 +67,7 @@ void nsInlineFrame::InvalidateFrame(uint32_t aDisplayItemKey,
 void nsInlineFrame::InvalidateFrameWithRect(const nsRect& aRect,
                                             uint32_t aDisplayItemKey,
                                             bool aRebuildDisplayItems) {
-  if (nsSVGUtils::IsInSVGTextSubtree(this)) {
+  if (SVGUtils::IsInSVGTextSubtree(this)) {
     nsIFrame* svgTextFrame = nsLayoutUtils::GetClosestFrameOfType(
         GetParent(), LayoutFrameType::SVGText);
     svgTextFrame->InvalidateFrame();
@@ -254,7 +255,7 @@ LogicalSize nsInlineFrame::ComputeSize(
 nsRect nsInlineFrame::ComputeTightBounds(DrawTarget* aDrawTarget) const {
   // be conservative
   if (Style()->HasTextDecorationLines()) {
-    return GetVisualOverflowRect();
+    return InkOverflowRect();
   }
   return ComputeSimpleTightBounds(aDrawTarget);
 }
@@ -379,7 +380,7 @@ nsresult nsInlineFrame::AttributeChanged(int32_t aNameSpaceID,
     return rv;
   }
 
-  if (nsSVGUtils::IsInSVGTextSubtree(this)) {
+  if (SVGUtils::IsInSVGTextSubtree(this)) {
     SVGTextFrame* f = static_cast<SVGTextFrame*>(
         nsLayoutUtils::GetClosestFrameOfType(this, LayoutFrameType::SVGText));
     f->HandleAttributeChangeInDescendant(mContent->AsElement(), aNameSpaceID,
@@ -969,7 +970,7 @@ void nsFirstLineFrame::Init(nsIContent* aContent, nsContainerFrame* aParent,
 
 #ifdef DEBUG_FRAME_DUMP
 nsresult nsFirstLineFrame::GetFrameName(nsAString& aResult) const {
-  return MakeFrameName(NS_LITERAL_STRING("Line"), aResult);
+  return MakeFrameName(u"Line"_ns, aResult);
 }
 #endif
 

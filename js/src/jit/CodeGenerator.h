@@ -37,6 +37,8 @@
 namespace js {
 namespace jit {
 
+class WarpSnapshot;
+
 template <typename Fn, Fn fn, class ArgSeq, class StoreOutputTo>
 class OutOfLineCallVM;
 
@@ -103,7 +105,8 @@ class CodeGenerator final : public CodeGeneratorSpecific {
                                  wasm::FuncOffsets* offsets,
                                  wasm::StackMaps* stackMaps);
 
-  MOZ_MUST_USE bool link(JSContext* cx, CompilerConstraintList* constraints);
+  MOZ_MUST_USE bool link(JSContext* cx, CompilerConstraintList* constraints,
+                         const WarpSnapshot* snapshot);
 
   void emitOOLTestObject(Register objreg, Label* ifTruthy, Label* ifFalsy,
                          Register scratch);
@@ -338,6 +341,16 @@ class CodeGenerator final : public CodeGeneratorSpecific {
                                    OutOfLineCode* ool);
 
   Vector<CodeOffset, 0, JitAllocPolicy> ionScriptLabels_;
+
+  // Used to bake in a pointer into the IonScript's list of nursery objects, for
+  // MNurseryObject codegen.
+  struct NurseryObjectLabel {
+    CodeOffset offset;
+    uint32_t nurseryIndex;
+    NurseryObjectLabel(CodeOffset offset, uint32_t nurseryIndex)
+        : offset(offset), nurseryIndex(nurseryIndex) {}
+  };
+  Vector<NurseryObjectLabel, 0, JitAllocPolicy> ionNurseryObjectLabels_;
 
   void branchIfInvalidated(Register temp, Label* invalidated);
 

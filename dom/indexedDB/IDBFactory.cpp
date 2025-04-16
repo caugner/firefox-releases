@@ -36,6 +36,7 @@
 #include "nsServiceManagerUtils.h"
 #include "ProfilerHelpers.h"
 #include "ReportInternalError.h"
+#include "ThreadLocal.h"
 
 // Include this last to avoid path problems on Windows.
 #include "ActorsChild.h"
@@ -444,19 +445,17 @@ RefPtr<IDBOpenDBRequest> IDBFactory::DeleteDatabase(
 int16_t IDBFactory::Cmp(JSContext* aCx, JS::Handle<JS::Value> aFirst,
                         JS::Handle<JS::Value> aSecond, ErrorResult& aRv) {
   Key first, second;
-  auto result = first.SetFromJSVal(aCx, aFirst, aRv);
-  if (!result.Is(Ok, aRv)) {
-    if (result.Is(Invalid, aRv)) {
-      aRv.Throw(NS_ERROR_DOM_INDEXEDDB_DATA_ERR);
-    }
+  auto result = first.SetFromJSVal(aCx, aFirst);
+  if (!result.Is(Ok)) {
+    aRv = result.ExtractErrorResult(
+        InvalidMapsTo<NS_ERROR_DOM_INDEXEDDB_DATA_ERR>);
     return 0;
   }
 
-  result = second.SetFromJSVal(aCx, aSecond, aRv);
-  if (!result.Is(Ok, aRv)) {
-    if (result.Is(Invalid, aRv)) {
-      aRv.Throw(NS_ERROR_DOM_INDEXEDDB_DATA_ERR);
-    }
+  result = second.SetFromJSVal(aCx, aSecond);
+  if (!result.Is(Ok)) {
+    aRv = result.ExtractErrorResult(
+        InvalidMapsTo<NS_ERROR_DOM_INDEXEDDB_DATA_ERR>);
     return 0;
   }
 
@@ -698,16 +697,16 @@ RefPtr<IDBOpenDBRequest> IDBFactory::OpenInternal(
 
   if (aDeleting) {
     IDB_LOG_MARK_CHILD_REQUEST(
-        "indexedDB.deleteDatabase(\"%s\")", "IDBFactory.deleteDatabase()",
+        "indexedDB.deleteDatabase(\"%s\")", "IDBFactory.deleteDatabase(%.0s)",
         request->LoggingSerialNumber(), NS_ConvertUTF16toUTF8(aName).get());
   } else {
     IDB_LOG_MARK_CHILD_REQUEST(
-        "indexedDB.open(\"%s\", %s)", "IDBFactory.open()",
+        "indexedDB.open(\"%s\", %s)", "IDBFactory.open(%.0s%.0s)",
         request->LoggingSerialNumber(), NS_ConvertUTF16toUTF8(aName).get(),
         IDB_LOG_STRINGIFY(aVersion));
   }
 
-  nsresult rv = InitiateRequest(request, params);
+  nsresult rv = InitiateRequest(WrapNotNull(request), params);
   if (NS_WARN_IF(NS_FAILED(rv))) {
     IDB_REPORT_INTERNAL_ERR();
     aRv.Throw(NS_ERROR_DOM_INDEXEDDB_UNKNOWN_ERR);
@@ -717,9 +716,9 @@ RefPtr<IDBOpenDBRequest> IDBFactory::OpenInternal(
   return request;
 }
 
-nsresult IDBFactory::InitiateRequest(IDBOpenDBRequest* aRequest,
-                                     const FactoryRequestParams& aParams) {
-  MOZ_ASSERT(aRequest);
+nsresult IDBFactory::InitiateRequest(
+    const NotNull<RefPtr<IDBOpenDBRequest>>& aRequest,
+    const FactoryRequestParams& aParams) {
   MOZ_ASSERT(mBackgroundActor);
   MOZ_ASSERT(!mBackgroundActorFailed);
 

@@ -49,6 +49,7 @@ whitelist_live_site_tests = [
     "nytimes",
     "people-article",
     "raptor-youtube-playback",
+    "youtube-playback",
     "reddit-thread",
     "rumble-fox",
     "stackoverflow-question",
@@ -443,7 +444,10 @@ def get_raptor_test_list(args, oskey):
             # want 1 single page-load for every browser-cycle
             next_test['cold'] = True
             next_test['expected_browser_cycles'] = int(next_test['browser_cycles'])
-            next_test['page_cycles'] = 1
+            if args.chimera:
+                next_test['page_cycles'] = 2
+            else:
+                next_test['page_cycles'] = 1
             # also ensure '-cold' is in test name so perfherder results indicate warm cold-load
             # Bug 1644344 we can remove this condition once we're migrated away from WebExtension
             if "-cold" not in next_test['name'] and not args.browsertime:
@@ -482,7 +486,11 @@ def get_raptor_test_list(args, oskey):
         # of supporting both webext and browsertime, just provide a dummy 'measure' setting
         # here to prevent having to check in multiple places; it has no effect on what
         # browsertime actually measures; remove this when eventually we remove webext support
-        if args.browsertime and next_test.get('measure') is None:
+        if (
+            args.browsertime
+            and next_test.get("measure") is None
+            and next_test.get("type") == "pageload"
+        ):
             next_test['measure'] = "fnbpaint, fcp, dcf, loadtime"
 
         # convert 'measure =' test INI line to list

@@ -4,16 +4,15 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-#ifndef NSSVGFOREIGNOBJECTFRAME_H__
-#define NSSVGFOREIGNOBJECTFRAME_H__
+#ifndef LAYOUT_SVG_SVGFOREIGNOBJECTFRAME_H_
+#define LAYOUT_SVG_SVGFOREIGNOBJECTFRAME_H_
 
 #include "mozilla/Attributes.h"
+#include "mozilla/ISVGDisplayableFrame.h"
 #include "mozilla/PresShellForwards.h"
 #include "mozilla/UniquePtr.h"
 #include "nsContainerFrame.h"
-#include "nsSVGDisplayableFrame.h"
 #include "nsRegion.h"
-#include "nsSVGUtils.h"
 
 class gfxContext;
 
@@ -23,7 +22,7 @@ nsContainerFrame* NS_NewSVGForeignObjectFrame(mozilla::PresShell* aPresShell,
 namespace mozilla {
 
 class SVGForeignObjectFrame final : public nsContainerFrame,
-                                    public nsSVGDisplayableFrame {
+                                    public ISVGDisplayableFrame {
   friend nsContainerFrame* ::NS_NewSVGForeignObjectFrame(
       mozilla::PresShell* aPresShell, ComputedStyle* aStyle);
 
@@ -67,11 +66,11 @@ class SVGForeignObjectFrame final : public nsContainerFrame,
 
 #ifdef DEBUG_FRAME_DUMP
   virtual nsresult GetFrameName(nsAString& aResult) const override {
-    return MakeFrameName(NS_LITERAL_STRING("SVGForeignObject"), aResult);
+    return MakeFrameName(u"SVGForeignObject"_ns, aResult);
   }
 #endif
 
-  // nsSVGDisplayableFrame interface:
+  // ISVGDisplayableFrame interface:
   virtual void PaintSVG(gfxContext& aContext, const gfxMatrix& aTransform,
                         imgDrawingParams& aImgParams,
                         const nsIntRect* aDirtyRect = nullptr) override;
@@ -106,4 +105,4 @@ class SVGForeignObjectFrame final : public nsContainerFrame,
 
 }  // namespace mozilla
 
-#endif
+#endif  // LAYOUT_SVG_SVGFOREIGNOBJECTFRAME_H_

@@ -12,7 +12,9 @@
 #include "mozilla/dom/BrowsingContext.h"
 #include "mozilla/StaticPtr.h"
 #include "mozilla/ClearOnShutdown.h"
+#include "nsIScriptError.h"
 #include "nsRefPtrHashtable.h"
+#include "nsContentUtils.h"
 
 namespace mozilla {
 namespace dom {
@@ -160,6 +162,11 @@ bool WindowContext::CanSet(FieldIndex<IDX_IsSecureContext>,
   return CheckOnlyOwningProcessCanSet(aSource);
 }
 
+bool WindowContext::CanSet(FieldIndex<IDX_DocTreeHadAudibleMedia>,
+                           const bool& aValue, ContentParent* aSource) {
+  return GetBrowsingContext()->IsTop();
+}
+
 bool WindowContext::CanSet(FieldIndex<IDX_AutoplayPermission>,
                            const uint32_t& aValue, ContentParent* aSource) {
   return CheckOnlyOwningProcessCanSet(aSource);
@@ -177,6 +184,26 @@ bool WindowContext::CanSet(
     const PermissionDelegateHandler::DelegatedPermissionList& aValue,
     ContentParent* aSource) {
   return CheckOnlyOwningProcessCanSet(aSource);
+}
+
+void WindowContext::DidSet(FieldIndex<IDX_HasReportedShadowDOMUsage>,
+                           bool aOldValue) {
+  if (!aOldValue && GetHasReportedShadowDOMUsage() && IsInProcess()) {
+    MOZ_ASSERT(TopWindowContext() == this);
+    if (mBrowsingContext) {
+      Document* topLevelDoc = mBrowsingContext->GetDocument();
+      if (topLevelDoc) {
+        nsAutoString uri;
+        Unused << topLevelDoc->GetDocumentURI(uri);
+        if (!uri.IsEmpty()) {
+          nsAutoString msg = u"Shadow DOM used in ["_ns + uri +
+                             u"] or in some of its subdocuments."_ns;
+          nsContentUtils::ReportToConsoleNonLocalized(
+              msg, nsIScriptError::infoFlag, "DOM"_ns, topLevelDoc);
+        }
+      }
+    }
+  }
 }
 
 void WindowContext::CreateFromIPC(IPCInitializer&& aInit) {
@@ -255,14 +282,14 @@ WindowContext::IPCInitializer WindowContext::GetIPCInitializer() {
   init.mInnerWindowId = mInnerWindowId;
   init.mOuterWindowId = mOuterWindowId;
   init.mBrowsingContextId = mBrowsingContext->Id();
-  init.mFields = mFields.Fields();
+  init.mFields = mFields.RawValues();
   return init;
 }
 
 WindowContext::WindowContext(BrowsingContext* aBrowsingContext,
                              uint64_t aInnerWindowId, uint64_t aOuterWindowId,
-                             bool aInProcess, FieldTuple&& aFields)
-    : mFields(std::move(aFields)),
+                             bool aInProcess, FieldValues&& aInit)
+    : mFields(std::move(aInit)),
       mInnerWindowId(aInnerWindowId),
       mOuterWindowId(aOuterWindowId),
       mBrowsingContext(aBrowsingContext),

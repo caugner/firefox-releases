@@ -19,6 +19,7 @@
 #include "mozilla/ipc/PBackgroundChild.h"
 #include "mozilla/ipc/PFileDescriptorSetChild.h"
 #include "mozilla/ipc/InputStreamUtils.h"
+#include "mozilla/StaticPrefs_extensions.h"
 #include "nsCOMPtr.h"
 #include "nsIIPCSerializableInputStream.h"
 #include "nsQueryObject.h"
@@ -44,7 +45,7 @@ namespace {
 static bool HasVaryStar(mozilla::dom::InternalHeaders* aHeaders) {
   nsCString varyHeaders;
   ErrorResult rv;
-  aHeaders->Get(NS_LITERAL_CSTRING("vary"), varyHeaders, rv);
+  aHeaders->Get("vary"_ns, varyHeaders, rv);
   MOZ_ALWAYS_TRUE(!rv.Failed());
 
   char* rawBuffer = varyHeaders.BeginWriting();
@@ -246,7 +247,7 @@ void TypeUtils::ToCacheQueryParams(CacheQueryParams& aOut,
   if (aOut.cacheNameSet()) {
     aOut.cacheName() = aIn.mCacheName.Value();
   } else {
-    aOut.cacheName() = NS_LITERAL_STRING("");
+    aOut.cacheName() = u""_ns;
   }
 }
 
@@ -390,8 +391,11 @@ void TypeUtils::ProcessURL(nsACString& aUrl, bool* aSchemeValidOut,
 
   if (aSchemeValidOut) {
     nsAutoCString scheme(Substring(flatURL, schemePos, schemeLen));
-    *aSchemeValidOut = scheme.LowerCaseEqualsLiteral("http") ||
-                       scheme.LowerCaseEqualsLiteral("https");
+    *aSchemeValidOut =
+        scheme.LowerCaseEqualsLiteral("http") ||
+        scheme.LowerCaseEqualsLiteral("https") ||
+        (StaticPrefs::extensions_backgroundServiceWorker_enabled_AtStartup() &&
+         scheme.LowerCaseEqualsLiteral("moz-extension"));
   }
 
   uint32_t queryPos;

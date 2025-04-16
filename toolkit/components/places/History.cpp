@@ -61,8 +61,7 @@ namespace places {
 // Observer event fired after a visit has been registered in the DB.
 #define URI_VISIT_SAVED "uri-visit-saved"
 
-#define DESTINATIONFILEURI_ANNO \
-  NS_LITERAL_CSTRING("downloads/destinationFileURI")
+#define DESTINATIONFILEURI_ANNO "downloads/destinationFileURI"_ns
 
 ////////////////////////////////////////////////////////////////////////////////
 //// VisitData
@@ -849,10 +848,11 @@ class InsertVisitedURIs final : public Runnable {
   }
 
   nsresult InnerRun() {
-    // Prevent the main thread from shutting down while this is running.
-    MutexAutoLock lockedScope(mHistory->GetShutdownMutex());
+    MOZ_ASSERT(!NS_IsMainThread());
+    // Prevent Shutdown() from proceeding while this is running.
+    MutexAutoLock lockedScope(mHistory->mBlockShutdownMutex);
+    // Check if we were already shutting down.
     if (mHistory->IsShuttingDown()) {
-      // If we were already shutting down, we cannot insert the URIs.
       return NS_OK;
     }
 
@@ -1119,20 +1119,17 @@ class InsertVisitedURIs final : public Runnable {
     NS_ENSURE_STATE(stmt);
     mozStorageStatementScoper scoper(stmt);
 
-    rv = stmt->BindInt64ByName(NS_LITERAL_CSTRING("page_id"), _place.placeId);
+    rv = stmt->BindInt64ByName("page_id"_ns, _place.placeId);
     NS_ENSURE_SUCCESS(rv, rv);
-    rv = stmt->BindInt64ByName(NS_LITERAL_CSTRING("from_visit"),
-                               _place.referrerVisitId);
+    rv = stmt->BindInt64ByName("from_visit"_ns, _place.referrerVisitId);
     NS_ENSURE_SUCCESS(rv, rv);
-    rv = stmt->BindInt64ByName(NS_LITERAL_CSTRING("visit_date"),
-                               _place.visitTime);
+    rv = stmt->BindInt64ByName("visit_date"_ns, _place.visitTime);
     NS_ENSURE_SUCCESS(rv, rv);
     uint32_t transitionType = _place.transitionType;
     MOZ_ASSERT(transitionType >= nsINavHistoryService::TRANSITION_LINK &&
                    transitionType <= nsINavHistoryService::TRANSITION_RELOAD,
                "Invalid transition type!");
-    rv =
-        stmt->BindInt32ByName(NS_LITERAL_CSTRING("visit_type"), transitionType);
+    rv = stmt->BindInt32ByName("visit_type"_ns, transitionType);
     NS_ENSURE_SUCCESS(rv, rv);
 
     rv = stmt->Execute();
@@ -1177,10 +1174,10 @@ class InsertVisitedURIs final : public Runnable {
       NS_ENSURE_STATE(stmt);
       mozStorageStatementScoper scoper(stmt);
 
-      rv = stmt->BindInt64ByName(NS_LITERAL_CSTRING("page_id"), aPlace.placeId);
+      rv = stmt->BindInt64ByName("page_id"_ns, aPlace.placeId);
       NS_ENSURE_SUCCESS(rv, rv);
-      rv = stmt->BindInt32ByName(NS_LITERAL_CSTRING("redirect"),
-                                 aPlace.useFrecencyRedirectBonus);
+      rv =
+          stmt->BindInt32ByName("redirect"_ns, aPlace.useFrecencyRedirectBonus);
       NS_ENSURE_SUCCESS(rv, rv);
 
       rv = stmt->Execute();
@@ -1197,7 +1194,7 @@ class InsertVisitedURIs final : public Runnable {
       NS_ENSURE_STATE(stmt);
       mozStorageStatementScoper scoper(stmt);
 
-      rv = stmt->BindInt64ByName(NS_LITERAL_CSTRING("page_id"), aPlace.placeId);
+      rv = stmt->BindInt64ByName("page_id"_ns, aPlace.placeId);
       NS_ENSURE_SUCCESS(rv, rv);
 
       rv = stmt->Execute();
@@ -1289,14 +1286,14 @@ class SetPageTitle : public Runnable {
 
     {
       mozStorageStatementScoper scoper(stmt);
-      rv = stmt->BindInt64ByName(NS_LITERAL_CSTRING("page_id"), mPlace.placeId);
+      rv = stmt->BindInt64ByName("page_id"_ns, mPlace.placeId);
       NS_ENSURE_SUCCESS(rv, rv);
       // Empty strings should clear the title, just like
       // nsNavHistory::SetPageTitle.
       if (mPlace.title.IsEmpty()) {
-        rv = stmt->BindNullByName(NS_LITERAL_CSTRING("page_title"));
+        rv = stmt->BindNullByName("page_title"_ns);
       } else {
-        rv = stmt->BindStringByName(NS_LITERAL_CSTRING("page_title"),
+        rv = stmt->BindStringByName("page_title"_ns,
                                     StringHead(mPlace.title, TITLE_LENGTH_MAX));
       }
       NS_ENSURE_SUCCESS(rv, rv);
@@ -1375,7 +1372,8 @@ History* History::gService = nullptr;
 
 History::History()
     : mShuttingDown(false),
-      mShutdownMutex("History::mShutdownMutex"),
+      mShuttingDownMutex("History::mShuttingDownMutex"),
+      mBlockShutdownMutex("History::mBlockShutdownMutex"),
       mRecentlyVisitedURIs(RECENTLY_VISITED_URIS_SIZE) {
   NS_ASSERTION(!gService, "Ruh-roh!  This service has already been created!");
   if (XRE_IsParentProcess()) {
@@ -1432,9 +1430,9 @@ class ConcurrentStatementsHolder final : public mozIStorageCompletionCallback {
 
     if (!mIsVisitedStatement) {
       (void)mReadOnlyDBConn->CreateAsyncStatement(
-          NS_LITERAL_CSTRING("SELECT 1 FROM moz_places h "
-                             "WHERE url_hash = hash(?1) AND url = ?1 AND "
-                             "last_visit_date NOTNULL "),
+          nsLiteralCString("SELECT 1 FROM moz_places h "
+                           "WHERE url_hash = hash(?1) AND url = ?1 AND "
+                           "last_visit_date NOTNULL "),
           getter_AddRefs(mIsVisitedStatement));
       MOZ_ASSERT(mIsVisitedStatement);
       auto queries = std::move(mVisitedQueries);
@@ -1484,7 +1482,7 @@ NS_IMPL_ISUPPORTS(ConcurrentStatementsHolder, mozIStorageCompletionCallback)
 
 nsresult History::QueueVisitedStatement(RefPtr<VisitedQuery> aQuery) {
   MOZ_ASSERT(NS_IsMainThread());
-  if (mShuttingDown) {
+  if (IsShuttingDown()) {
     return NS_ERROR_NOT_AVAILABLE;
   }
 
@@ -1511,34 +1509,33 @@ nsresult History::InsertPlace(VisitData& aPlace,
   NS_ENSURE_STATE(stmt);
   mozStorageStatementScoper scoper(stmt);
 
-  nsresult rv =
-      stmt->BindStringByName(NS_LITERAL_CSTRING("rev_host"), aPlace.revHost);
+  nsresult rv = stmt->BindStringByName("rev_host"_ns, aPlace.revHost);
   NS_ENSURE_SUCCESS(rv, rv);
-  rv = URIBinder::Bind(stmt, NS_LITERAL_CSTRING("url"), aPlace.spec);
+  rv = URIBinder::Bind(stmt, "url"_ns, aPlace.spec);
   NS_ENSURE_SUCCESS(rv, rv);
   nsString title = aPlace.title;
   // Empty strings should have no title, just like nsNavHistory::SetPageTitle.
   if (title.IsEmpty()) {
-    rv = stmt->BindNullByName(NS_LITERAL_CSTRING("title"));
+    rv = stmt->BindNullByName("title"_ns);
   } else {
     title.Assign(StringHead(aPlace.title, TITLE_LENGTH_MAX));
-    rv = stmt->BindStringByName(NS_LITERAL_CSTRING("title"), title);
+    rv = stmt->BindStringByName("title"_ns, title);
   }
   NS_ENSURE_SUCCESS(rv, rv);
-  rv = stmt->BindInt32ByName(NS_LITERAL_CSTRING("typed"), aPlace.typed);
+  rv = stmt->BindInt32ByName("typed"_ns, aPlace.typed);
   NS_ENSURE_SUCCESS(rv, rv);
   // When inserting a page for a first visit that should not appear in
   // autocomplete, for example an error page, use a zero frecency.
   int32_t frecency = aPlace.shouldUpdateFrecency ? aPlace.frecency : 0;
-  rv = stmt->BindInt32ByName(NS_LITERAL_CSTRING("frecency"), frecency);
+  rv = stmt->BindInt32ByName("frecency"_ns, frecency);
   NS_ENSURE_SUCCESS(rv, rv);
-  rv = stmt->BindInt32ByName(NS_LITERAL_CSTRING("hidden"), aPlace.hidden);
+  rv = stmt->BindInt32ByName("hidden"_ns, aPlace.hidden);
   NS_ENSURE_SUCCESS(rv, rv);
   if (aPlace.guid.IsVoid()) {
     rv = GenerateGUID(aPlace.guid);
     NS_ENSURE_SUCCESS(rv, rv);
   }
-  rv = stmt->BindUTF8StringByName(NS_LITERAL_CSTRING("guid"), aPlace.guid);
+  rv = stmt->BindUTF8StringByName("guid"_ns, aPlace.guid);
   NS_ENSURE_SUCCESS(rv, rv);
   rv = stmt->Execute();
   NS_ENSURE_SUCCESS(rv, rv);
@@ -1585,20 +1582,20 @@ nsresult History::UpdatePlace(const VisitData& aPlace) {
   if (!titleIsVoid) {
     // An empty string clears the title.
     if (aPlace.title.IsEmpty()) {
-      rv = stmt->BindNullByName(NS_LITERAL_CSTRING("title"));
+      rv = stmt->BindNullByName("title"_ns);
     } else {
-      rv = stmt->BindStringByName(NS_LITERAL_CSTRING("title"),
+      rv = stmt->BindStringByName("title"_ns,
                                   StringHead(aPlace.title, TITLE_LENGTH_MAX));
     }
     NS_ENSURE_SUCCESS(rv, rv);
   }
-  rv = stmt->BindInt32ByName(NS_LITERAL_CSTRING("typed"), aPlace.typed);
+  rv = stmt->BindInt32ByName("typed"_ns, aPlace.typed);
   NS_ENSURE_SUCCESS(rv, rv);
-  rv = stmt->BindInt32ByName(NS_LITERAL_CSTRING("hidden"), aPlace.hidden);
+  rv = stmt->BindInt32ByName("hidden"_ns, aPlace.hidden);
   NS_ENSURE_SUCCESS(rv, rv);
-  rv = stmt->BindUTF8StringByName(NS_LITERAL_CSTRING("guid"), aPlace.guid);
+  rv = stmt->BindUTF8StringByName("guid"_ns, aPlace.guid);
   NS_ENSURE_SUCCESS(rv, rv);
-  rv = stmt->BindInt64ByName(NS_LITERAL_CSTRING("page_id"), aPlace.placeId);
+  rv = stmt->BindInt64ByName("page_id"_ns, aPlace.placeId);
   NS_ENSURE_SUCCESS(rv, rv);
   rv = stmt->Execute();
   NS_ENSURE_SUCCESS(rv, rv);
@@ -1627,7 +1624,7 @@ nsresult History::FetchPageInfo(VisitData& _place, bool* _exists) {
         "WHERE url_hash = hash(:page_url) AND url = :page_url ");
     NS_ENSURE_STATE(stmt);
 
-    rv = URIBinder::Bind(stmt, NS_LITERAL_CSTRING("page_url"), _place.spec);
+    rv = URIBinder::Bind(stmt, "page_url"_ns, _place.spec);
     NS_ENSURE_SUCCESS(rv, rv);
   } else {
     stmt = GetStatement(
@@ -1640,7 +1637,7 @@ nsresult History::FetchPageInfo(VisitData& _place, bool* _exists) {
         "WHERE guid = :guid ");
     NS_ENSURE_STATE(stmt);
 
-    rv = stmt->BindUTF8StringByName(NS_LITERAL_CSTRING("guid"), _place.guid);
+    rv = stmt->BindUTF8StringByName("guid"_ns, _place.guid);
     NS_ENSURE_SUCCESS(rv, rv);
   }
 
@@ -1760,7 +1757,9 @@ already_AddRefed<History> History::GetSingleton() {
 
 mozIStorageConnection* History::GetDBConn() {
   MOZ_ASSERT(NS_IsMainThread());
-  if (mShuttingDown) return nullptr;
+  if (IsShuttingDown()) {
+    return nullptr;
+  }
   if (!mDB) {
     mDB = Database::GetDatabase();
     NS_ENSURE_TRUE(mDB, nullptr);
@@ -1773,23 +1772,24 @@ mozIStorageConnection* History::GetDBConn() {
 }
 
 const mozIStorageConnection* History::GetConstDBConn() {
-  MOZ_ASSERT(mDB || mShuttingDown);
-  if (mShuttingDown || !mDB) {
-    return nullptr;
+  MOZ_ASSERT(!NS_IsMainThread());
+  {
+    MOZ_ASSERT(mDB || IsShuttingDown());
+    if (IsShuttingDown() || !mDB) {
+      return nullptr;
+    }
   }
   return mDB->MainConn();
 }
 
 void History::Shutdown() {
   MOZ_ASSERT(NS_IsMainThread());
-
-  // Prevent other threads from scheduling uses of the DB while we mark
-  // ourselves as shutting down.
-  MutexAutoLock lockedScope(mShutdownMutex);
-  MOZ_ASSERT(!mShuttingDown && "Shutdown was called more than once!");
-
-  mShuttingDown = true;
-
+  MutexAutoLock lockedScope(mBlockShutdownMutex);
+  {
+    MutexAutoLock lockedScope(mShuttingDownMutex);
+    MOZ_ASSERT(!mShuttingDown && "Shutdown was called more than once!");
+    mShuttingDown = true;
+  }
   if (mConcurrentStatementsHolder) {
     mConcurrentStatementsHolder->Shutdown();
   }
@@ -1825,7 +1825,7 @@ History::VisitURI(nsIWidget* aWidget, nsIURI* aURI, nsIURI* aLastVisitedURI,
   MOZ_ASSERT(NS_IsMainThread());
   NS_ENSURE_ARG(aURI);
 
-  if (mShuttingDown) {
+  if (IsShuttingDown()) {
     return NS_OK;
   }
 
@@ -1958,7 +1958,7 @@ History::SetURITitle(nsIURI* aURI, const nsAString& aTitle) {
   MOZ_ASSERT(NS_IsMainThread());
   NS_ENSURE_ARG(aURI);
 
-  if (mShuttingDown) {
+  if (IsShuttingDown()) {
     return NS_OK;
   }
 

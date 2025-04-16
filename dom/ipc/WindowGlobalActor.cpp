@@ -13,6 +13,7 @@
 #include "mozilla/dom/JSActorService.h"
 #include "mozilla/dom/JSWindowActorParent.h"
 #include "mozilla/dom/JSWindowActorChild.h"
+#include "mozilla/dom/JSWindowActorProtocol.h"
 #include "mozilla/net/CookieJarSettings.h"
 
 namespace mozilla {
@@ -44,8 +45,9 @@ WindowGlobalInit WindowGlobalActor::BaseInitializer(
 
   // If any synced fields need to be initialized from our BrowsingContext, we
   // can initialize them here.
-  mozilla::Get<WindowContext::IDX_EmbedderPolicy>(ctx.mFields) =
-      InheritedPolicy(aBrowsingContext);
+  auto& fields = ctx.mFields;
+  fields.mEmbedderPolicy = InheritedPolicy(aBrowsingContext);
+  fields.mAutoplayPermission = nsIPermissionManager::UNKNOWN_ACTION;
   return init;
 }
 
@@ -83,30 +85,24 @@ WindowGlobalInit WindowGlobalActor::WindowInitializer(
       ->Serialize(init.cookieJarSettings());
   init.httpsOnlyStatus() = doc->HttpsOnlyStatus();
 
-  mozilla::Get<WindowContext::IDX_CookieBehavior>(init.context().mFields) =
-      Some(doc->CookieJarSettings()->GetCookieBehavior());
-  mozilla::Get<WindowContext::IDX_IsOnContentBlockingAllowList>(
-      init.context().mFields) =
+  auto& fields = init.context().mFields;
+  fields.mCookieBehavior = Some(doc->CookieJarSettings()->GetCookieBehavior());
+  fields.mIsOnContentBlockingAllowList =
       doc->CookieJarSettings()->GetIsOnContentBlockingAllowList();
-  mozilla::Get<WindowContext::IDX_IsThirdPartyWindow>(init.context().mFields) =
-      nsContentUtils::IsThirdPartyWindowOrChannel(aWindow, nullptr, nullptr);
-  mozilla::Get<WindowContext::IDX_IsThirdPartyTrackingResourceWindow>(
-      init.context().mFields) =
+  fields.mIsThirdPartyWindow = doc->HasThirdPartyChannel();
+  fields.mIsThirdPartyTrackingResourceWindow =
       nsContentUtils::IsThirdPartyTrackingResourceWindow(aWindow);
-  mozilla::Get<WindowContext::IDX_IsSecureContext>(init.context().mFields) =
-      aWindow->IsSecureContext();
+  fields.mIsSecureContext = aWindow->IsSecureContext();
 
   auto policy = doc->GetEmbedderPolicy();
   if (policy.isSome()) {
-    mozilla::Get<WindowContext::IDX_EmbedderPolicy>(init.context().mFields) =
-        policy.ref();
+    fields.mEmbedderPolicy = *policy;
   }
 
   // Init Mixed Content Fields
   nsCOMPtr<nsIURI> innerDocURI = NS_GetInnermostURI(doc->GetDocumentURI());
   if (innerDocURI) {
-    mozilla::Get<WindowContext::IDX_IsSecure>(init.context().mFields) =
-        innerDocURI->SchemeIs("https");
+    fields.mIsSecure = innerDocURI->SchemeIs("https");
   }
   nsCOMPtr<nsIChannel> mixedChannel;
   aWindow->GetDocShell()->GetMixedContentChannel(getter_AddRefs(mixedChannel));
@@ -114,8 +110,7 @@ WindowGlobalInit WindowGlobalActor::WindowInitializer(
   // that the user has overriden mixed content to allow mixed
   // content loads to happen.
   if (mixedChannel && (mixedChannel == doc->GetChannel())) {
-    mozilla::Get<WindowContext::IDX_AllowMixedContent>(init.context().mFields) =
-        true;
+    fields.mAllowMixedContent = true;
   }
 
   nsCOMPtr<nsITransportSecurityInfo> securityInfo;
@@ -133,105 +128,21 @@ WindowGlobalInit WindowGlobalActor::WindowInitializer(
   return init;
 }
 
-void WindowGlobalActor::ConstructActor(const nsACString& aName,
-                                       JS::MutableHandleObject aActor,
-                                       ErrorResult& aRv) {
-  MOZ_ASSERT(nsContentUtils::IsSafeToRunScript());
-
-  JSActor::Type actorType = GetSide();
-  MOZ_ASSERT_IF(actorType == JSActor::Type::Parent, XRE_IsParentProcess());
-
-  // Constructing an actor requires a running script, so push an AutoEntryScript
-  // onto the stack.
-  AutoEntryScript aes(xpc::PrivilegedJunkScope(),
-                      "WindowGlobalActor construction");
-  JSContext* cx = aes.cx();
-
-  RefPtr<JSActorService> actorSvc = JSActorService::GetSingleton();
-  if (!actorSvc) {
-    aRv.ThrowNotSupportedError("Could not acquire actor service");
-    return;
-  }
-
+already_AddRefed<JSActorProtocol> WindowGlobalActor::MatchingJSActorProtocol(
+    JSActorService* aActorSvc, const nsACString& aName, ErrorResult& aRv) {
   RefPtr<JSWindowActorProtocol> proto =
-      actorSvc->GetJSWindowActorProtocol(aName);
+      aActorSvc->GetJSWindowActorProtocol(aName);
   if (!proto) {
-    aRv.ThrowNotSupportedError(nsPrintfCString(
-        "Could not get JSWindowActorProtocol: %s is not registered",
-        PromiseFlatCString(aName).get()));
-    return;
+    aRv.ThrowNotFoundError(nsPrintfCString("No such JSWindowActor '%s'",
+                                           PromiseFlatCString(aName).get()));
+    return nullptr;
   }
 
   if (!proto->Matches(BrowsingContext(), GetDocumentURI(), GetRemoteType())) {
     aRv.Throw(NS_ERROR_NOT_AVAILABLE);
-    return;
+    return nullptr;
   }
-
-  // Load the module using mozJSComponentLoader.
-  RefPtr<mozJSComponentLoader> loader = mozJSComponentLoader::Get();
-  MOZ_ASSERT(loader);
-
-  JS::RootedObject global(cx);
-  JS::RootedObject exports(cx);
-
-  const JSWindowActorProtocol::Sided* side;
-  if (actorType == JSActor::Type::Parent) {
-    side = &proto->Parent();
-  } else {
-    side = &proto->Child();
-  }
-
-  // Support basic functionally such as SendAsyncMessage and SendQuery for
-  // unspecified moduleURI.
-  if (!side->mModuleURI) {
-    RefPtr<JSActor> actor;
-    if (actorType == JSActor::Type::Parent) {
-      actor = new JSWindowActorParent();
-    } else {
-      actor = new JSWindowActorChild();
-    }
-
-    JS::Rooted<JS::Value> wrapper(cx);
-    if (!ToJSValue(cx, actor, &wrapper)) {
-      aRv.NoteJSContextException(cx);
-      return;
-    }
-
-    MOZ_ASSERT(wrapper.isObject());
-    aActor.set(&wrapper.toObject());
-    return;
-  }
-
-  aRv = loader->Import(cx, side->mModuleURI.ref(), &global, &exports);
-  if (aRv.Failed()) {
-    return;
-  }
-
-  MOZ_ASSERT(exports, "null exports!");
-
-  // Load the specific property from our module.
-  JS::RootedValue ctor(cx);
-  nsAutoCString ctorName(aName);
-  ctorName.Append(actorType == JSActor::Type::Parent
-                      ? NS_LITERAL_CSTRING("Parent")
-                      : NS_LITERAL_CSTRING("Child"));
-  if (!JS_GetProperty(cx, exports, ctorName.get(), &ctor)) {
-    aRv.NoteJSContextException(cx);
-    return;
-  }
-
-  if (NS_WARN_IF(!ctor.isObject())) {
-    nsPrintfCString message("Could not find actor constructor '%s'",
-                            ctorName.get());
-    aRv.ThrowNotFoundError(message);
-    return;
-  }
-
-  // Invoke the constructor loaded from the module.
-  if (!JS::Construct(cx, ctor, JS::HandleValueArray::empty(), aActor)) {
-    aRv.NoteJSContextException(cx);
-    return;
-  }
+  return proto.forget();
 }
 
 }  // namespace dom

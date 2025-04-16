@@ -30,6 +30,7 @@
 #include "mozilla/TextServicesDocument.h"
 #include "mozilla/css/Loader.h"
 #include "mozilla/dom/AncestorIterator.h"
+#include "mozilla/dom/Attr.h"
 #include "mozilla/dom/DocumentFragment.h"
 #include "mozilla/dom/DocumentInlines.h"
 #include "mozilla/dom/Element.h"
@@ -729,7 +730,7 @@ nsresult HTMLEditor::HandleKeyPressEvent(WidgetKeyboardEvent* aKeyboardEvent) {
       }
 
       // If selection is in a table element, we need special handling.
-      if (HTMLEditUtils::IsTableElement(blockParent)) {
+      if (HTMLEditUtils::IsAnyTableElement(blockParent)) {
         EditActionResult result = HandleTabKeyPressInTable(aKeyboardEvent);
         if (result.Failed()) {
           NS_WARNING("HTMLEditor::HandleTabKeyPressInTable() failed");
@@ -766,7 +767,7 @@ nsresult HTMLEditor::HandleKeyPressEvent(WidgetKeyboardEvent* aKeyboardEvent) {
         return NS_OK;
       }
       aKeyboardEvent->PreventDefault();
-      nsresult rv = OnInputText(NS_LITERAL_STRING("\t"));
+      nsresult rv = OnInputText(u"\t"_ns);
       NS_WARNING_ASSERTION(NS_SUCCEEDED(rv),
                            "TextEditor::OnInputText(\\t) failed");
       return EditorBase::ToGenericNSResult(rv);
@@ -877,7 +878,7 @@ void HTMLEditor::IsPrevCharInNodeWhiteSpace(nsIContent* aContent,
   }
 }
 
-bool HTMLEditor::IsVisibleBRElement(const nsINode* aNode) {
+bool HTMLEditor::IsVisibleBRElement(const nsINode* aNode) const {
   MOZ_ASSERT(aNode);
   if (!aNode->IsHTMLElement(nsGkAtoms::br)) {
     return false;
@@ -935,7 +936,7 @@ NS_IMETHODIMP HTMLEditor::UpdateBaseURL() {
 
   // Look for an HTML <base> tag
   RefPtr<nsContentList> baseElementList =
-      document->GetElementsByTagName(NS_LITERAL_STRING("base"));
+      document->GetElementsByTagName(u"base"_ns);
 
   // If no base tag, then set baseURL to the document's URL.  This is very
   // important, else relative URLs for links and images are wrong
@@ -1221,7 +1222,7 @@ nsresult HTMLEditor::ReplaceHeadContentsWithSourceWithTransaction(
   }
 
   RefPtr<nsContentList> headElementList =
-      document->GetElementsByTagName(NS_LITERAL_STRING("head"));
+      document->GetElementsByTagName(u"head"_ns);
   if (NS_WARN_IF(!headElementList)) {
     return NS_ERROR_FAILURE;
   }
@@ -1237,12 +1238,10 @@ nsresult HTMLEditor::ReplaceHeadContentsWithSourceWithTransaction(
   nsAutoString inputString(aSourceToInsert);
 
   // Windows linebreaks: Map CRLF to LF:
-  inputString.ReplaceSubstring(NS_LITERAL_STRING("\r\n"),
-                               NS_LITERAL_STRING("\n"));
+  inputString.ReplaceSubstring(u"\r\n"_ns, u"\n"_ns);
 
   // Mac linebreaks: Map any remaining CR to LF:
-  inputString.ReplaceSubstring(NS_LITERAL_STRING("\r"),
-                               NS_LITERAL_STRING("\n"));
+  inputString.ReplaceSubstring(u"\r"_ns, u"\n"_ns);
 
   AutoPlaceholderBatch treatAsOneTransaction(*this);
 
@@ -1316,15 +1315,15 @@ NS_IMETHODIMP HTMLEditor::RebuildDocumentFromSource(
   nsReadingIterator<char16_t> endbody;
   aSourceString.BeginReading(beginbody);
   aSourceString.EndReading(endbody);
-  bool foundbody = CaseInsensitiveFindInReadable(NS_LITERAL_STRING("<body"),
-                                                 beginbody, endbody);
+  bool foundbody =
+      CaseInsensitiveFindInReadable(u"<body"_ns, beginbody, endbody);
 
   nsReadingIterator<char16_t> beginhead;
   nsReadingIterator<char16_t> endhead;
   aSourceString.BeginReading(beginhead);
   aSourceString.EndReading(endhead);
-  bool foundhead = CaseInsensitiveFindInReadable(NS_LITERAL_STRING("<head"),
-                                                 beginhead, endhead);
+  bool foundhead =
+      CaseInsensitiveFindInReadable(u"<head"_ns, beginhead, endhead);
   // a valid head appears before the body
   if (foundbody && beginhead.get() > beginbody.get()) {
     foundhead = false;
@@ -1337,7 +1336,7 @@ NS_IMETHODIMP HTMLEditor::RebuildDocumentFromSource(
 
   // Find the index after "<head>"
   bool foundclosehead = CaseInsensitiveFindInReadable(
-      NS_LITERAL_STRING("</head>"), beginclosehead, endclosehead);
+      u"</head>"_ns, beginclosehead, endclosehead);
   // a valid close head appears after a found head
   if (foundhead && beginhead.get() > beginclosehead.get()) {
     foundclosehead = false;
@@ -1388,7 +1387,7 @@ NS_IMETHODIMP HTMLEditor::RebuildDocumentFromSource(
   } else {
     nsReadingIterator<char16_t> begintotal;
     aSourceString.BeginReading(begintotal);
-    NS_NAMED_LITERAL_STRING(head, "<head>");
+    constexpr auto head = u"<head>"_ns;
     if (foundclosehead) {
       nsresult rv = ReplaceHeadContentsWithSourceWithTransaction(
           head + Substring(begintotal, beginclosehead));
@@ -1428,7 +1427,7 @@ NS_IMETHODIMP HTMLEditor::RebuildDocumentFromSource(
   }
 
   if (!foundbody) {
-    NS_NAMED_LITERAL_STRING(body, "<body>");
+    constexpr auto body = u"<body>"_ns;
     // XXX Without recourse to some parser/content sink/docshell hackery we
     // don't really know where the head ends and the body begins
     if (foundclosehead) {
@@ -1483,7 +1482,7 @@ NS_IMETHODIMP HTMLEditor::RebuildDocumentFromSource(
   nsReadingIterator<char16_t> beginclosebody = beginbody;
   nsReadingIterator<char16_t> endclosebody;
   aSourceString.EndReading(endclosebody);
-  if (!FindInReadable(NS_LITERAL_STRING(">"), beginclosebody, endclosebody)) {
+  if (!FindInReadable(u">"_ns, beginclosebody, endclosebody)) {
     NS_WARNING("'>' was not found");
     return NS_ERROR_FAILURE;
   }
@@ -1531,7 +1530,8 @@ NS_IMETHODIMP HTMLEditor::RebuildDocumentFromSource(
 }
 
 EditorRawDOMPoint HTMLEditor::GetBetterInsertionPointFor(
-    nsIContent& aContentToInsert, const EditorRawDOMPoint& aPointToInsert) {
+    nsIContent& aContentToInsert,
+    const EditorRawDOMPoint& aPointToInsert) const {
   if (NS_WARN_IF(!aPointToInsert.IsSet())) {
     return aPointToInsert;
   }
@@ -1548,7 +1548,7 @@ EditorRawDOMPoint HTMLEditor::GetBetterInsertionPointFor(
     return pointToInsert;
   }
 
-  WSRunScanner wsScannerForPointToInsert(this, pointToInsert);
+  WSRunScanner wsScannerForPointToInsert(*this, pointToInsert);
 
   // If the insertion position is after the last visible item in a line,
   // i.e., the insertion position is just before a visible line break <br>,
@@ -1786,7 +1786,7 @@ EditorDOMPoint HTMLEditor::InsertNodeIntoProperAncestorWithTransaction(
     // If the current parent is a root (body or table element)
     // then go no further - we can't insert.
     if (pointToInsert.IsContainerHTMLElement(nsGkAtoms::body) ||
-        HTMLEditUtils::IsTableElement(pointToInsert.GetContainer())) {
+        HTMLEditUtils::IsAnyTableElement(pointToInsert.GetContainer())) {
       return EditorDOMPoint();
     }
 
@@ -2555,7 +2555,7 @@ Element* HTMLEditor::GetInclusiveAncestorByTagNameInternal(
       }
     } else if (&aTagName == nsGkAtoms::list_) {
       // Match "ol", "ul", or "dl" for lists
-      if (HTMLEditUtils::IsList(element)) {
+      if (HTMLEditUtils::IsAnyListElement(element)) {
         return element;
       }
     } else if (&aTagName == nsGkAtoms::td) {
@@ -2825,39 +2825,35 @@ already_AddRefed<Element> HTMLEditor::CreateElementWithDefaults(
   // Mark the new element dirty, so it will be formatted
   // XXX Don't we need to check the error result of setting _moz_dirty attr?
   IgnoredErrorResult ignoredError;
-  newElement->SetAttribute(NS_LITERAL_STRING("_moz_dirty"), EmptyString(),
-                           ignoredError);
+  newElement->SetAttribute(u"_moz_dirty"_ns, EmptyString(), ignoredError);
   NS_WARNING_ASSERTION(!ignoredError.Failed(),
                        "Element::SetAttribute(_moz_dirty) failed, but ignored");
   ignoredError.SuppressException();
 
   // Set default values for new elements
   if (realTagName == nsGkAtoms::table) {
-    newElement->SetAttr(nsGkAtoms::cellpadding, NS_LITERAL_STRING("2"),
-                        ignoredError);
+    newElement->SetAttr(nsGkAtoms::cellpadding, u"2"_ns, ignoredError);
     if (ignoredError.Failed()) {
       NS_WARNING("Element::SetAttr(nsGkAtoms::cellpadding, 2) failed");
       return nullptr;
     }
     ignoredError.SuppressException();
 
-    newElement->SetAttr(nsGkAtoms::cellspacing, NS_LITERAL_STRING("2"),
-                        ignoredError);
+    newElement->SetAttr(nsGkAtoms::cellspacing, u"2"_ns, ignoredError);
     if (ignoredError.Failed()) {
       NS_WARNING("Element::SetAttr(nsGkAtoms::cellspacing, 2) failed");
       return nullptr;
     }
     ignoredError.SuppressException();
 
-    newElement->SetAttr(nsGkAtoms::border, NS_LITERAL_STRING("1"),
-                        ignoredError);
+    newElement->SetAttr(nsGkAtoms::border, u"1"_ns, ignoredError);
     if (ignoredError.Failed()) {
       NS_WARNING("Element::SetAttr(nsGkAtoms::border, 1) failed");
       return nullptr;
     }
   } else if (realTagName == nsGkAtoms::td) {
     nsresult rv = SetAttributeOrEquivalent(newElement, nsGkAtoms::valign,
-                                           NS_LITERAL_STRING("top"), true);
+                                           u"top"_ns, true);
     if (NS_FAILED(rv)) {
       NS_WARNING(
           "HTMLEditor::SetAttributeOrEquivalent(nsGkAtoms::valign, top) "
@@ -3148,7 +3144,7 @@ nsresult HTMLEditor::DeleteParentBlocksWithTransactionIfEmpty(
   MOZ_ASSERT(mPlaceholderBatch);
 
   // First, check there is visible contents before the point in current block.
-  WSRunScanner wsScannerForPoint(this, aPoint);
+  WSRunScanner wsScannerForPoint(*this, aPoint);
   if (!wsScannerForPoint.StartsFromCurrentBlockBoundary()) {
     // If there is visible node before the point, we shouldn't remove the
     // parent block.
@@ -3985,7 +3981,7 @@ bool HTMLEditor::SetCaretInTableCell(Element* aElement) {
   MOZ_ASSERT(IsEditActionDataAvailable());
 
   if (!aElement || !aElement->IsHTMLElement() ||
-      !HTMLEditUtils::IsTableElement(aElement) ||
+      !HTMLEditUtils::IsAnyTableElement(aElement) ||
       !IsDescendantOfEditorRoot(aElement)) {
     return false;
   }
@@ -5250,7 +5246,7 @@ bool HTMLEditor::IsEmptyNodeImpl(nsINode& aNode, bool aSingleBRDoesntCount,
           // if they contain other lists or tables
           if (child->IsElement()) {
             if (isListItemOrCell) {
-              if (HTMLEditUtils::IsList(child) ||
+              if (HTMLEditUtils::IsAnyListElement(child) ||
                   child->IsHTMLElement(nsGkAtoms::table)) {
                 // break out if we find we aren't empty
                 return false;

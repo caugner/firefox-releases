@@ -3269,11 +3269,11 @@ struct MOZ_STACK_CLASS nsGridContainerFrame::Grid {
   }
 
   static bool IsNameWithEndSuffix(nsAtom* aString, uint32_t* aIndex) {
-    return IsNameWithSuffix(aString, NS_LITERAL_STRING("-end"), aIndex);
+    return IsNameWithSuffix(aString, u"-end"_ns, aIndex);
   }
 
   static bool IsNameWithStartSuffix(nsAtom* aString, uint32_t* aIndex) {
-    return IsNameWithSuffix(aString, NS_LITERAL_STRING("-start"), aIndex);
+    return IsNameWithSuffix(aString, u"-start"_ns, aIndex);
   }
 
   // Return the relevant parent LineNameMap for the given subgrid axis aAxis.
@@ -9467,7 +9467,7 @@ void nsGridContainerFrame::CalculateBaselines(
 
 #ifdef DEBUG_FRAME_DUMP
 nsresult nsGridContainerFrame::GetFrameName(nsAString& aResult) const {
-  return MakeFrameName(NS_LITERAL_STRING("GridContainer"), aResult);
+  return MakeFrameName(u"GridContainer"_ns, aResult);
 }
 
 void nsGridContainerFrame::ExtraContainerFrameInfo(nsACString& aTo) const {
@@ -9618,8 +9618,12 @@ nsGridContainerFrame* nsGridContainerFrame::GetGridContainerFrame(
     if (MOZ_UNLIKELY(aFrame->IsFieldSetFrame())) {
       inner = static_cast<nsFieldSetFrame*>(aFrame)->GetInner();
     }
-    inner = inner->GetContentInsertionFrame();
-    nsIFrame* possibleGridFrame = inner ? inner : aFrame;
+    // Since "Get" methods like GetInner and GetContentInsertionFrame can
+    // return null, we check the return values before dereferencing. Our
+    // calling pattern makes this unlikely, but we're being careful.
+    nsIFrame* insertionFrame =
+        inner ? inner->GetContentInsertionFrame() : nullptr;
+    nsIFrame* possibleGridFrame = insertionFrame ? insertionFrame : aFrame;
     gridFrame = possibleGridFrame->IsGridContainerFrame()
                     ? static_cast<nsGridContainerFrame*>(possibleGridFrame)
                     : nullptr;

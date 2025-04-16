@@ -10,11 +10,13 @@ from __future__ import (
 
 import argparse
 import json
-import sys
 import os
-import tempfile
+import re
 import shutil
 import subprocess
+import sys
+import tempfile
+
 from collections import OrderedDict
 
 from six import iteritems
@@ -74,27 +76,31 @@ class RemoteCommands(MachCommandBase):
                      required=True,
                      help="The commit or tag object name to check out.")
     def vendor_puppeteer(self, repository, commitish):
-        puppeteerdir = os.path.join(self.remotedir, "test", "puppeteer")
+        puppeteer_dir = os.path.join(self.remotedir, "test", "puppeteer")
 
-        shutil.rmtree(puppeteerdir, ignore_errors=True)
-        os.makedirs(puppeteerdir)
+        # Preserve our custom mocha reporter
+        shutil.move(os.path.join(puppeteer_dir, "json-mocha-reporter.js"), self.remotedir)
+        shutil.rmtree(puppeteer_dir, ignore_errors=True)
+        os.makedirs(puppeteer_dir)
         with TemporaryDirectory() as tmpdir:
             git("clone", "-q", repository, tmpdir)
             git("checkout", commitish, worktree=tmpdir)
             git("checkout-index", "-a", "-f",
-                "--prefix", "{}/".format(puppeteerdir),
+                "--prefix", "{}/".format(puppeteer_dir),
                 worktree=tmpdir)
 
         # remove files which may interfere with git checkout of central
         try:
-            os.remove(os.path.join(puppeteerdir, ".gitattributes"))
-            os.remove(os.path.join(puppeteerdir, ".gitignore"))
+            os.remove(os.path.join(puppeteer_dir, ".gitattributes"))
+            os.remove(os.path.join(puppeteer_dir, ".gitignore"))
         except OSError:
             pass
 
-        experimental_dir = os.path.join(puppeteerdir, "experimental")
+        experimental_dir = os.path.join(puppeteer_dir, "experimental")
         if os.path.isdir(experimental_dir):
             shutil.rmtree(experimental_dir)
+
+        shutil.move(os.path.join(self.remotedir, "json-mocha-reporter.js"), puppeteer_dir)
 
         import yaml
         annotation = {
@@ -111,7 +117,7 @@ class RemoteCommands(MachCommandBase):
                 "release": commitish,
             },
         }
-        with open(os.path.join(puppeteerdir, "moz.yaml"), "w") as fh:
+        with open(os.path.join(puppeteer_dir, "moz.yaml"), "w") as fh:
             yaml.safe_dump(annotation, fh,
                            default_flow_style=False,
                            encoding="utf-8",
@@ -188,6 +194,8 @@ def wait_proc(p, cmd=None, exit_on_fail=True, output_timeout=None):
 
 class MochaOutputHandler(object):
     def __init__(self, logger, expected):
+        self.hook_re = re.compile('"before\b?.*" hook|"after\b?.*" hook')
+
         self.logger = logger
         self.proc = None
         self.test_results = OrderedDict()
@@ -235,6 +243,10 @@ class MochaOutputHandler(object):
                     status = "TIMEOUT"
             if test_name and test_path:
                 test_name = "{} ({})".format(test_name, os.path.basename(test_path))
+            # mocha hook failures are not tracked in metadata
+            if status != "PASS" and self.hook_re.search(test_name):
+                self.logger.error("TEST-UNEXPECTED-ERROR %s" % (test_name,))
+                return
             if test_start:
                 self.logger.test_start(test_name)
                 return
@@ -244,7 +256,7 @@ class MochaOutputHandler(object):
             # Also, mocha doesn't log test-start for skipped tests
             if status == "SKIP":
                 self.logger.test_start(test_name)
-                if status not in expected:
+                if self.expected and status not in expected:
                     self.unexpected_skips.add(test_name)
                 expected = ["SKIP"]
             known_intermittent = expected[1:]
@@ -321,7 +333,7 @@ class PuppeteerRunner(MozbuildObject):
         super(PuppeteerRunner, self).__init__(*args, **kwargs)
 
         self.remotedir = os.path.join(self.topsrcdir, "remote")
-        self.puppeteerdir = os.path.join(self.remotedir, "test", "puppeteer")
+        self.puppeteer_dir = os.path.join(self.remotedir, "test", "puppeteer")
 
     def run_test(self, logger, *tests, **params):
         """
@@ -332,9 +344,6 @@ class PuppeteerRunner(MozbuildObject):
         `binary`:
           Path for the browser binary to use.  Defaults to the local
           build.
-        `jobs`:
-          Number of tests to run in parallel.  Defaults to not
-          parallelise, e.g. `-j1`.
         `headless`:
           Boolean to indicate whether to activate Firefox' headless mode.
         `extra_prefs`:
@@ -368,15 +377,14 @@ class PuppeteerRunner(MozbuildObject):
             "--reporter", "./json-mocha-reporter.js",
             "--retries", "0",
             "--fullTrace",
-            "--timeout", "15000"
+            "--timeout", "15000",
+            "--no-parallel",
         ]
         if product == "firefox":
             env["BINARY"] = binary
             env["PUPPETEER_PRODUCT"] = "firefox"
         command = ["run", "unit", "--"] + mocha_options
 
-        if params.get("jobs"):
-            env["PPTR_PARALLEL_TESTS"] = str(params["jobs"])
         env["HEADLESS"] = str(params.get("headless", False))
 
         prefs = {}
@@ -398,7 +406,7 @@ class PuppeteerRunner(MozbuildObject):
             expected_data = {}
 
         output_handler = MochaOutputHandler(logger, expected_data)
-        proc = npm(*command, cwd=self.puppeteerdir, env=env,
+        proc = npm(*command, cwd=self.puppeteer_dir, env=env,
                    processOutputLine=output_handler, wait=False)
         output_handler.proc = proc
 
@@ -448,11 +456,6 @@ def create_parser_puppeteer():
                    dest="extra_options",
                    metavar="<option>=<value>",
                    help="Defines additional options for `puppeteer.launch`.")
-    p.add_argument("-j",
-                   dest="jobs",
-                   type=int,
-                   metavar="<N>",
-                   help="Optionally run tests in parallel.")
     p.add_argument("-v",
                    dest="verbosity",
                    action="count",
@@ -485,7 +488,7 @@ class PuppeteerTest(MachCommandBase):
              description="Run Puppeteer unit tests.",
              parser=create_parser_puppeteer)
     def puppeteer_test(self, binary=None, enable_fission=False, headless=False,
-                       extra_prefs=None, extra_options=None, jobs=1, verbosity=0,
+                       extra_prefs=None, extra_options=None, verbosity=0,
                        tests=None, product="firefox", write_results=None,
                        subset=False, **kwargs):
 
@@ -541,7 +544,6 @@ class PuppeteerTest(MachCommandBase):
                   "headless": headless,
                   "extra_prefs": prefs,
                   "product": product,
-                  "jobs": jobs,
                   "extra_launcher_options": options,
                   "write_results": write_results,
                   "subset": subset}
@@ -561,10 +563,9 @@ class PuppeteerTest(MachCommandBase):
         from mozversioncontrol import get_repository_object
         repo = get_repository_object(self.topsrcdir)
         puppeteer_dir = os.path.join("remote", "test", "puppeteer")
-        src_dir = os.path.join(puppeteer_dir, "src")
         changed_files = False
         for f in repo.get_changed_files():
-            if f.startswith(src_dir):
+            if f.startswith(puppeteer_dir) and f.endswith(".ts"):
                 changed_files = True
                 break
 

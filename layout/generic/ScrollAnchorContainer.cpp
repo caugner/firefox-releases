@@ -151,7 +151,7 @@ static nsRect FindScrollAnchoringBoundingRect(const nsIFrame* aScrollFrame,
     for (nsIFrame* continuation = aCandidate->FirstContinuation(); continuation;
          continuation = continuation->GetNextContinuation()) {
       nsRect overflowRect =
-          continuation->GetScrollableOverflowRectRelativeToSelf();
+          continuation->ScrollableOverflowRectRelativeToSelf();
       overflowRect += continuation->GetOffsetTo(blockAncestor);
       bounding = bounding.Union(overflowRect);
     }
@@ -160,7 +160,7 @@ static nsRect FindScrollAnchoringBoundingRect(const nsIFrame* aScrollFrame,
   }
 
   nsRect borderRect = aCandidate->GetRectRelativeToSelf();
-  nsRect overflowRect = aCandidate->GetScrollableOverflowRectRelativeToSelf();
+  nsRect overflowRect = aCandidate->ScrollableOverflowRectRelativeToSelf();
 
   NS_ASSERTION(overflowRect.Contains(borderRect),
                "overflow rect must include border rect, and the clamping logic "
@@ -361,7 +361,7 @@ void ScrollAnchorContainer::AdjustmentMade(nscoord aAdjustment) {
   arguments.AppendElement()->AppendFloat(cssPixels);
 
   nsContentUtils::ReportToConsole(
-      nsIScriptError::warningFlag, NS_LITERAL_CSTRING("Layout"),
+      nsIScriptError::warningFlag, "Layout"_ns,
       Frame()->PresContext()->Document(), nsContentUtils::eLAYOUT_PROPERTIES,
       "ScrollAnchoringDisabledInContainer", arguments);
 }

@@ -147,7 +147,8 @@ nsresult GfxDeviceFamily::Contains(nsAString& aDeviceId) const {
 
 // Macros for appending a device to the DeviceFamily.
 #define APPEND_DEVICE(device) APPEND_DEVICE2(#device)
-#define APPEND_DEVICE2(device) deviceFamily->Append(NS_LITERAL_STRING(device))
+#define APPEND_DEVICE2(device) \
+  deviceFamily->Append(NS_LITERAL_STRING_FROM_CSTRING(device))
 #define APPEND_RANGE(start, end) deviceFamily->AppendRange(start, end)
 
 const GfxDeviceFamily* GfxDriverInfo::GetDeviceFamily(DeviceFamily id) {
@@ -509,10 +510,7 @@ const GfxDeviceFamily* GfxDriverInfo::GetDeviceFamily(DeviceFamily id) {
       APPEND_DEVICE(0x0116);
       APPEND_DEVICE(0x0122);
       APPEND_DEVICE(0x0126);
-#endif
 
-#if defined(MOZ_WIDGET_GTK) || defined(NIGHTLY_BUILD)
-      // Gen7.5 not allowed until bug 1576637 is resolved.
       // gen7.5 gt1
       APPEND_DEVICE(0x0402);
       APPEND_DEVICE(0x0406);
@@ -542,7 +540,7 @@ const GfxDeviceFamily* GfxDriverInfo::GetDeviceFamily(DeviceFamily id) {
 #endif
       [[fallthrough]];
     case DeviceFamily::IntelModernRolloutWebRender:
-#ifdef NIGHTLY_BUILD
+#ifdef EARLY_BETA_OR_EARLIER
       // broxton (apollolake)
       APPEND_DEVICE(0x0a84);
       APPEND_DEVICE(0x1a84);
@@ -670,12 +668,14 @@ const GfxDeviceFamily* GfxDriverInfo::GetDeviceFamily(DeviceFamily id) {
       APPEND_RANGE(0x6860, 0x687f);
       APPEND_RANGE(0x6900, 0x69ff);
       APPEND_DEVICE(0x7300);
-      APPEND_RANGE(0x7310, 0x731f);
+      APPEND_RANGE(0x7310, 0x738e);
       APPEND_RANGE(0x9830, 0x986f);
       APPEND_RANGE(0x9900, 0x99ff);
       // Raven
       APPEND_DEVICE(0x15dd);
       APPEND_DEVICE(0x15d8);
+      // Renoir
+      APPEND_DEVICE(0x1636);
 
 #ifdef EARLY_BETA_OR_EARLIER
       // Stoney
@@ -742,6 +742,8 @@ const nsAString& GfxDriverInfo::GetDesktopEnvironment(DesktopEnvironment id) {
     DECLARE_DESKTOP_ENVIRONMENT_ID(Pantheon, "pantheon");
     DECLARE_DESKTOP_ENVIRONMENT_ID(LXQT, "lxqt");
     DECLARE_DESKTOP_ENVIRONMENT_ID(Deepin, "deepin");
+    DECLARE_DESKTOP_ENVIRONMENT_ID(Dwm, "dwm");
+    DECLARE_DESKTOP_ENVIRONMENT_ID(Budgie, "budgie");
     DECLARE_DESKTOP_ENVIRONMENT_ID(Unknown, "unknown");
     case DesktopEnvironment::Max:  // Suppress a warning.
       DECLARE_DESKTOP_ENVIRONMENT_ID(All, "");
@@ -771,9 +773,11 @@ const nsAString& GfxDriverInfo::GetWindowProtocol(WindowProtocol id) {
 
   switch (id) {
     DECLARE_WINDOW_PROTOCOL_ID(X11, "x11");
+    DECLARE_WINDOW_PROTOCOL_ID(XWayland, "xwayland");
     DECLARE_WINDOW_PROTOCOL_ID(Wayland, "wayland");
     DECLARE_WINDOW_PROTOCOL_ID(WaylandDRM, "wayland/drm");
     DECLARE_WINDOW_PROTOCOL_ID(WaylandAll, "wayland/all");
+    DECLARE_WINDOW_PROTOCOL_ID(X11All, "x11/all");
     case WindowProtocol::Max:  // Suppress a warning.
       DECLARE_WINDOW_PROTOCOL_ID(All, "");
   }

@@ -42,20 +42,20 @@ nsresult FontPreloader::BuildChannel(
     nsIInterfaceRequestor* aCallbacks, bool aIsPreload) {
   nsresult rv;
 
-  nsIPrincipal* principal = aUserFontEntry
-                                ? (aUserFontEntry->GetPrincipal()
-                                       ? aUserFontEntry->GetPrincipal()->get()
-                                       : nullptr)
-                                : aDocument->NodePrincipal();
+  nsIPrincipal* principal =
+      aUserFontEntry ? (aUserFontEntry->GetPrincipal()
+                            ? aUserFontEntry->GetPrincipal()->NodePrincipal()
+                            : nullptr)
+                     : aDocument->NodePrincipal();
 
   // aCORSMode is ignored.  We always load as crossorigin=anonymous, but a
   // preload started with anything other then "anonymous" will never be found.
 
   uint32_t securityFlags = 0;
   if (aURI->SchemeIs("file")) {
-    securityFlags = nsILoadInfo::SEC_ALLOW_CROSS_ORIGIN_DATA_INHERITS;
+    securityFlags = nsILoadInfo::SEC_ALLOW_CROSS_ORIGIN_INHERITS_SEC_CONTEXT;
   } else {
-    securityFlags = nsILoadInfo::SEC_REQUIRE_CORS_DATA_INHERITS;
+    securityFlags = nsILoadInfo::SEC_REQUIRE_CORS_INHERITS_SEC_CONTEXT;
   }
 
   nsContentPolicyType contentPolicyType =
@@ -77,9 +77,9 @@ nsresult FontPreloader::BuildChannel(
   nsCOMPtr<nsIHttpChannel> httpChannel(do_QueryInterface(channel));
   if (httpChannel) {
     rv = httpChannel->SetRequestHeader(
-        NS_LITERAL_CSTRING("Accept"),
-        NS_LITERAL_CSTRING("application/font-woff2;q=1.0,application/"
-                           "font-woff;q=0.9,*/*;q=0.8"),
+        "Accept"_ns,
+        nsLiteralCString("application/font-woff2;q=1.0,application/"
+                         "font-woff;q=0.9,*/*;q=0.8"),
         false);
     NS_ENSURE_SUCCESS(rv, rv);
 
@@ -91,9 +91,8 @@ nsresult FontPreloader::BuildChannel(
       // and apply additional compression at the content-encoding layer
       if (aFontFaceSrc->mFormatFlags & (gfxUserFontSet::FLAG_FORMAT_WOFF |
                                         gfxUserFontSet::FLAG_FORMAT_WOFF2)) {
-        rv = httpChannel->SetRequestHeader(
-            NS_LITERAL_CSTRING("Accept-Encoding"),
-            NS_LITERAL_CSTRING("identity"), false);
+        rv = httpChannel->SetRequestHeader("Accept-Encoding"_ns, "identity"_ns,
+                                           false);
         NS_ENSURE_SUCCESS(rv, rv);
       }
     } else {

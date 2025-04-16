@@ -39,7 +39,7 @@ def register_strategy(name, args=()):
     return wrap
 
 
-def optimize_task_graph(target_task_graph, params, do_not_optimize,
+def optimize_task_graph(target_task_graph, requested_tasks, params, do_not_optimize,
                         decision_task_id, existing_tasks=None, strategy_override=None):
     """
     Perform task optimization, returning a taskgraph and a map from label to
@@ -58,6 +58,7 @@ def optimize_task_graph(target_task_graph, params, do_not_optimize,
 
     removed_tasks = remove_tasks(
         target_task_graph=target_task_graph,
+        requested_tasks=requested_tasks,
         optimizations=optimizations,
         params=params,
         do_not_optimize=do_not_optimize)
@@ -80,7 +81,7 @@ def _get_optimizations(target_task_graph, strategies):
     def optimizations(label):
         task = target_task_graph.tasks[label]
         if task.optimization:
-            opt_by, arg = task.optimization.items()[0]
+            opt_by, arg = list(task.optimization.items())[0]
             strategy = strategies[opt_by]
             if hasattr(strategy, 'description'):
                 opt_by += " ({})".format(strategy.description)
@@ -96,13 +97,13 @@ def _log_optimization(verb, opt_counts):
             '{} '.format(verb.title()) +
             ', '.join(
                 '{} tasks by {}'.format(c, b)
-                for b, c in sorted(opt_counts.iteritems())) +
+                for b, c in sorted(opt_counts.items())) +
             ' during optimization.')
     else:
         logger.info('No tasks {} during optimization'.format(verb))
 
 
-def remove_tasks(target_task_graph, params, optimizations, do_not_optimize):
+def remove_tasks(target_task_graph, requested_tasks, params, optimizations, do_not_optimize):
     """
     Implement the "Removing Tasks" phase, returning a set of task labels of all removed tasks.
     """
@@ -123,6 +124,15 @@ def remove_tasks(target_task_graph, params, optimizations, do_not_optimize):
         if any(l not in removed for l in reverse_links_dict[label]):
             logger.debug(message.format(label=label, verb=verb, reason="dependent tasks"))
             continue
+
+        # Some tasks in the task graph only exist because they were required
+        # by a task that has just been optimized away. They can now be removed.
+        if label not in requested_tasks:
+            reason = "downstreams-optimized"
+            verb = "removed"
+            removed.add(label)
+            opt_counts['downstreams-optimized'] += 1
+            logger.debug(message.format(label=label, verb=verb, reason=reason))
 
         # call the optimization strategy
         task = target_task_graph.tasks[label]
@@ -210,19 +220,19 @@ def get_subgraph(
     # fill in label_to_taskid for anything not removed or replaced
     assert replaced_tasks <= set(label_to_taskid)
     for label in sorted(target_task_graph.graph.nodes - removed_tasks - set(label_to_taskid)):
-        label_to_taskid[label] = slugid()
+        label_to_taskid[label] = slugid().decode('ascii')
 
     # resolve labels to taskIds and populate task['dependencies']
     tasks_by_taskid = {}
     named_links_dict = target_task_graph.graph.named_links_dict()
     omit = removed_tasks | replaced_tasks
-    for label, task in target_task_graph.tasks.iteritems():
+    for label, task in six.iteritems(target_task_graph.tasks):
         if label in omit:
             continue
         task.task_id = label_to_taskid[label]
         named_task_dependencies = {
             name: label_to_taskid[label]
-            for name, label in named_links_dict.get(label, {}).iteritems()}
+            for name, label in named_links_dict.get(label, {}).items()}
 
         # Add remaining soft dependencies
         if task.soft_dependencies:
@@ -240,7 +250,7 @@ def get_subgraph(
             dependencies=named_task_dependencies,
         )
         deps = task.task.setdefault('dependencies', [])
-        deps.extend(sorted(named_task_dependencies.itervalues()))
+        deps.extend(sorted(named_task_dependencies.values()))
         tasks_by_taskid[task.task_id] = task
 
     # resolve edges to taskIds
@@ -363,10 +373,10 @@ class All(CompositeStrategy):
 
     @classmethod
     def reduce(cls, results):
-        rvs = list(results)
-        if all(rvs):
-            return rvs[0]
-        return False
+        for rv in results:
+            if not rv:
+                return rv
+        return True
 
 
 class Alias(CompositeStrategy):
@@ -386,6 +396,16 @@ class Alias(CompositeStrategy):
         return next(results)
 
 
+def split_bugbug_arg(arg):
+    """
+    The bugbug optimization strageies require passing an dict as
+    scratch space for communicating with downstream stratgies.
+    This function pass the provided argument to the first strategy,
+    and a fresh dictionary to the second stratgey.
+    """
+    return (arg, {})
+
+
 # Trigger registration in sibling modules.
 import_sibling_modules()
 
@@ -393,12 +413,12 @@ import_sibling_modules()
 # Register composite strategies.
 register_strategy('build', args=('skip-unless-schedules',))(Alias)
 register_strategy('build-optimized', args=(
-    Any('skip-unless-schedules', 'bugbug-reduced-fallback', split_args=tuple),
+    Any('skip-unless-schedules', 'bugbug-reduced-fallback', split_args=split_bugbug_arg),
     'backstop',
 ))(All)
 register_strategy('build-fuzzing', args=('push-interval-10',))(Alias)
 register_strategy('test', args=(
-    Any('skip-unless-schedules', 'bugbug-reduced-fallback', split_args=tuple),
+    Any('skip-unless-schedules', 'bugbug-reduced-fallback', split_args=split_bugbug_arg),
     'backstop',
 ))(All)
 register_strategy('test-inclusive', args=('skip-unless-schedules',))(Alias)
@@ -416,21 +436,21 @@ class experimental(object):
         ./mach try auto --strategy relevant_tests
     """
 
-    bugbug_all = {
-        'test': Any('skip-unless-schedules', 'bugbug', split_args=tuple),
+    bugbug_tasks_medium = {
+        'test': Any('skip-unless-schedules', 'bugbug-tasks-medium', split_args=split_bugbug_arg),
     }
     """Doesn't limit platforms, medium confidence threshold."""
 
-    bugbug_all_high = {
-        'test': Any('skip-unless-schedules', 'bugbug-high', split_args=tuple),
+    bugbug_tasks_high = {
+        'test': Any('skip-unless-schedules', 'bugbug-tasks-high', split_args=split_bugbug_arg),
     }
     """Doesn't limit platforms, high confidence threshold."""
 
     bugbug_debug_disperse = {
         'test': Any(
             'skip-unless-schedules',
-            Any('bugbug', 'platform-debug', 'platform-disperse'),
-            split_args=tuple
+            Any('bugbug-low', 'platform-debug', 'platform-disperse'),
+            split_args=split_bugbug_arg
         ),
     }
     """Restricts tests to debug platforms."""
@@ -439,47 +459,75 @@ class experimental(object):
         'test': Any(
             'skip-unless-schedules',
             Any('bugbug-low', 'platform-disperse'),
-            split_args=tuple
+            split_args=split_bugbug_arg
         ),
     }
     """Disperse tests across platforms, low confidence threshold."""
 
-    bugbug_disperse = {
+    bugbug_disperse_medium = {
         'test': Any(
             'skip-unless-schedules',
-            Any('bugbug', 'platform-disperse'),
-            split_args=tuple
+            Any('bugbug-medium', 'platform-disperse'),
+            split_args=split_bugbug_arg
         ),
     }
     """Disperse tests across platforms, medium confidence threshold."""
+
+    bugbug_disperse_reduced_medium = {
+        'test': Any(
+            'skip-unless-schedules',
+            Any('bugbug-reduced-manifests', 'platform-disperse'),
+            split_args=split_bugbug_arg
+        ),
+    }
+    """Disperse tests across platforms, medium confidence threshold with reduced tasks."""
+
+    bugbug_disperse_medium_no_unseen = {
+        'test': Any(
+            'skip-unless-schedules',
+            Any('bugbug-medium', 'platform-disperse-no-unseen'),
+            split_args=split_bugbug_arg
+        ),
+    }
+    """Disperse tests across platforms (no modified for unseen configurations), medium confidence
+    threshold."""
+
+    bugbug_disperse_medium_only_one = {
+        'test': Any(
+            'skip-unless-schedules',
+            Any('bugbug-medium', 'platform-disperse-only-one'),
+            split_args=split_bugbug_arg
+        ),
+    }
+    """Disperse tests across platforms (one platform per group), medium confidence threshold."""
 
     bugbug_disperse_high = {
         'test': Any(
             'skip-unless-schedules',
             Any('bugbug-high', 'platform-disperse'),
-            split_args=tuple
+            split_args=split_bugbug_arg
         ),
     }
     """Disperse tests across platforms, high confidence threshold."""
 
     bugbug_reduced = {
-        'test': Any('skip-unless-schedules', 'bugbug-reduced', split_args=tuple),
+        'test': Any('skip-unless-schedules', 'bugbug-reduced', split_args=split_bugbug_arg),
     }
     """Use the reduced set of tasks (and no groups) chosen by bugbug."""
 
     bugbug_reduced_high = {
-        'test': Any('skip-unless-schedules', 'bugbug-reduced-high', split_args=tuple),
+        'test': Any('skip-unless-schedules', 'bugbug-reduced-high', split_args=split_bugbug_arg),
     }
     """Use the reduced set of tasks (and no groups) chosen by bugbug, high
     confidence threshold."""
 
     relevant_tests = {
-        'test': Any('skip-unless-schedules', 'skip-unless-has-relevant-tests', split_args=tuple),
+        'test': Any('skip-unless-schedules', 'skip-unless-has-relevant-tests'),
     }
     """Runs task containing tests in the same directories as modified files."""
 
     seta = {
-        'test': Any('skip-unless-schedules', 'seta', split_args=tuple),
+        'test': Any('skip-unless-schedules', 'seta'),
     }
     """Provides a stable history of SETA's performance in the event we make it
     non-default in the future. Only useful as a benchmark."""
@@ -507,6 +555,6 @@ class ExperimentalOverride(object):
 
 
 tryselect = ExperimentalOverride(experimental, {
-    'build': Any('skip-unless-schedules', 'bugbug-reduced', split_args=tuple),
+    'build': Any('skip-unless-schedules', 'bugbug-reduced', split_args=split_bugbug_arg),
     'build-fuzzing': Alias('bugbug-reduced'),
 })

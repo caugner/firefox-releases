@@ -9,8 +9,8 @@
 
 // There are shutdown issues for which multiple rejections are left uncaught.
 // See bug 1018184 for resolving these issues.
-PromiseTestUtils.whitelistRejectionsGlobally(/File closed/);
-PromiseTestUtils.whitelistRejectionsGlobally(/NS_ERROR_FAILURE/);
+PromiseTestUtils.allowMatchingRejectionsGlobally(/File closed/);
+PromiseTestUtils.allowMatchingRejectionsGlobally(/NS_ERROR_FAILURE/);
 
 requestLongerTimeout(5);
 
@@ -18,7 +18,7 @@ const { BrowserToolboxLauncher } = ChromeUtils.import("resource://devtools/clien
 let gProcess = undefined;
 
 add_task(async function() {
-  // Windows XP and 8.1 test slaves are terribly slow at this test.
+  // Windows XP and 8.1 test machines are terribly slow at this test.
   await pushPref("devtools.chrome.enabled", true);
   await pushPref("devtools.debugger.remote-enabled", true);
 

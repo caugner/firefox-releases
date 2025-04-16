@@ -990,6 +990,7 @@ STATIC_ATOMS = [
     Atom("precedingSibling", "preceding-sibling"),
     Atom("prefersReducedMotion", "prefers-reduced-motion"),
     Atom("prefersColorScheme", "prefers-color-scheme"),
+    Atom("prefersContrast", "prefers-contrast"),
     Atom("prefix", "prefix"),
     Atom("preload", "preload"),
     Atom("mozpresentation", "mozpresentation"),
@@ -1405,8 +1406,6 @@ STATIC_ATOMS = [
     Atom("G", "G"),
     Atom("g", "g"),
     Atom("gamma", "gamma"),
-    # 'generic' conflicts with msvc11 winrt compiler extensions
-    Atom("generic_", "generic"),
     Atom("glyphRef", "glyphRef"),
     Atom("grad", "grad"),
     Atom("gradientTransform", "gradientTransform"),
@@ -2382,6 +2381,7 @@ STATIC_ATOMS = [
     Atom("onboundary", "onboundary"),
 
     # Media Controller
+    Atom("onpositionstatechange", "onpositionstatechange"),
     Atom("onsupportedkeyschange", "onsupportedkeyschange"),
 
     # Contextual Identity / Containers
@@ -2463,7 +2463,6 @@ STATIC_ATOMS = [
     PseudoElementAtom("PseudoElement_selection", ":selection"),
     PseudoElementAtom("PseudoElement_mozFocusInner", ":-moz-focus-inner"),
     PseudoElementAtom("PseudoElement_mozFocusOuter", ":-moz-focus-outer"),
-    PseudoElementAtom("PseudoElement_mozMathAnonymous", ":-moz-math-anonymous"),
     PseudoElementAtom("PseudoElement_mozNumberWrapper", ":-moz-number-wrapper"),
     PseudoElementAtom("PseudoElement_mozNumberSpinBox", ":-moz-number-spin-box"),
     PseudoElementAtom("PseudoElement_mozNumberSpinUp", ":-moz-number-spin-up"),

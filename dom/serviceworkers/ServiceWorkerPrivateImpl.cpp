@@ -38,15 +38,16 @@
 #include "mozilla/dom/ClientIPCTypes.h"
 #include "mozilla/dom/DOMTypes.h"
 #include "mozilla/dom/FetchEventOpChild.h"
-#include "mozilla/dom/IPCBlobInputStreamStorage.h"
 #include "mozilla/dom/InternalHeaders.h"
 #include "mozilla/dom/InternalRequest.h"
 #include "mozilla/dom/ReferrerInfo.h"
 #include "mozilla/dom/RemoteWorkerControllerChild.h"
+#include "mozilla/dom/RemoteWorkerManager.h"  // RemoteWorkerManager::GetRemoteType
 #include "mozilla/dom/ServiceWorkerBinding.h"
 #include "mozilla/ipc/BackgroundChild.h"
 #include "mozilla/ipc/IPCStreamUtils.h"
 #include "mozilla/net/CookieJarSettings.h"
+#include "mozilla/RemoteLazyInputStreamStorage.h"
 
 namespace mozilla {
 
@@ -71,7 +72,7 @@ ServiceWorkerPrivateImpl::RAIIActorPtrHolder::~RAIIActorPtrHolder() {
 }
 
 RemoteWorkerControllerChild*
-    ServiceWorkerPrivateImpl::RAIIActorPtrHolder::operator->() const {
+ServiceWorkerPrivateImpl::RAIIActorPtrHolder::operator->() const {
   AssertIsOnMainThread();
 
   return get();
@@ -186,6 +187,12 @@ nsresult ServiceWorkerPrivateImpl::Initialize() {
     return rv;
   }
 
+  auto remoteType = RemoteWorkerManager::GetRemoteType(
+      principal, WorkerType::WorkerTypeService);
+  if (NS_WARN_IF(remoteType.isErr())) {
+    return remoteType.unwrapErr();
+  }
+
   mRemoteWorkerData = RemoteWorkerData(
       NS_ConvertUTF8toUTF16(mOuter->mInfo->ScriptSpec()), baseScriptURL,
       baseScriptURL, /* name */ VoidString(),
@@ -204,7 +211,8 @@ nsresult ServiceWorkerPrivateImpl::Initialize() {
       // already_AddRefed<>. Let's set it to null.
       /* referrerInfo */ nullptr,
 
-      storageAccess, std::move(serviceWorkerData), regInfo->AgentClusterId());
+      storageAccess, std::move(serviceWorkerData), regInfo->AgentClusterId(),
+      remoteType.unwrap());
 
   mRemoteWorkerData.referrerInfo() = MakeAndAddRef<ReferrerInfo>();
 
@@ -774,7 +782,7 @@ nsresult MaybeStoreStreamForBackgroundThread(nsIInterceptedChannel* aChannel,
       MOZ_TRY(nsContentUtils::GenerateUUIDInPlace(
           body->get_ParentToParentStream().uuid()));
 
-      auto storageOrErr = IPCBlobInputStreamStorage::Get();
+      auto storageOrErr = RemoteLazyInputStreamStorage::Get();
       if (NS_WARN_IF(storageOrErr.isErr())) {
         return storageOrErr.unwrapErr();
       }

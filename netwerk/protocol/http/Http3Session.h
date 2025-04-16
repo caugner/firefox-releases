@@ -133,6 +133,7 @@ class Http3Session final : public nsAHttpTransaction,
   void CallCertVerification();
   void SetSecInfo();
 
+  void StreamReadyToWrite(Http3Stream* aStream);
   void MaybeResumeSend();
 
   void CloseConnectionTelemetry(CloseError& aError, bool aClosing);
@@ -177,6 +178,8 @@ class Http3Session final : public nsAHttpTransaction,
 
   RefPtr<QuicSocketControl> mSocketControl;
   nsCString mAlpnToken;
+
+  uint64_t mTransactionCount = 0;
 };
 
 NS_DEFINE_STATIC_IID_ACCESSOR(Http3Session, NS_HTTP3SESSION_IID);

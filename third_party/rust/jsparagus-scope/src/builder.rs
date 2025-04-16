@@ -345,7 +345,10 @@ struct PossiblyAnnexBFunction {
     name: SourceAtomSetIndex,
     owner_scope_index: ScopeIndex,
     binding_index: BindingIndex,
-    stencil_index: ScriptStencilIndex,
+
+    /// Index of the script in the list of `functions` in the
+    /// `FunctionScriptStencilBuilder`.
+    script_index: ScriptStencilIndex,
 }
 
 #[derive(Debug)]
@@ -365,14 +368,14 @@ impl PossiblyAnnexBFunctionList {
         name: SourceAtomSetIndex,
         owner_scope_index: ScopeIndex,
         binding_index: BindingIndex,
-        stencil_index: ScriptStencilIndex,
+        script_index: ScriptStencilIndex,
     ) {
         if let Some(functions) = self.functions.get_mut(&name) {
             functions.push(PossiblyAnnexBFunction {
                 name,
                 owner_scope_index,
                 binding_index,
-                stencil_index,
+                script_index,
             });
             return;
         }
@@ -382,7 +385,7 @@ impl PossiblyAnnexBFunctionList {
             name,
             owner_scope_index,
             binding_index,
-            stencil_index,
+            script_index,
         });
         self.functions.insert(name, functions);
     }
@@ -406,7 +409,7 @@ impl PossiblyAnnexBFunctionList {
                     _ => panic!("unexpected scope pointed by Annex B function"),
                 }
 
-                function_declaration_properties.mark_annex_b(fun.stencil_index);
+                function_declaration_properties.mark_annex_b(fun.script_index);
             }
         }
     }
@@ -1037,10 +1040,18 @@ struct FunctionParametersScopeBuilder {
     has_parameter_expressions: bool,
 
     scope_index: ScopeIndex,
+
+    /// Index of the script in the list of `functions` in the
+    /// `FunctionScriptStencilBuilder`.
+    script_index: ScriptStencilIndex,
+
+    has_direct_eval: bool,
+
+    is_arrow: bool,
 }
 
 impl FunctionParametersScopeBuilder {
-    fn new(scope_index: ScopeIndex, is_arrow: bool) -> Self {
+    fn new(scope_index: ScopeIndex, is_arrow: bool, script_index: ScriptStencilIndex) -> Self {
         let mut base = BaseScopeBuilder::new();
 
         if !is_arrow {
@@ -1073,6 +1084,9 @@ impl FunctionParametersScopeBuilder {
             simple_parameter_list: true,
             has_parameter_expressions: false,
             scope_index,
+            script_index,
+            has_direct_eval: false,
+            is_arrow,
         }
     }
 
@@ -1394,6 +1408,8 @@ impl FunctionParametersScopeBuilder {
             self.non_positional_parameter_names.len(),
             function_max_var_names_count,
             enclosing,
+            self.script_index,
+            self.is_arrow,
         );
 
         // FunctionDeclarationInstantiation ( func, argumentsList )
@@ -1509,6 +1525,10 @@ impl FunctionParametersScopeBuilder {
         else {
             debug_assert!(has_extra_body_var_scope);
 
+            // In non-strict mode code, direct `eval` can extend function's
+            // scope.
+            let function_has_extensible_scope = !self.strict && self.has_direct_eval;
+
             // Step 28.a. NOTE: A separate Environment Record is needed to
             //            ensure that closures created by expressions in the
             //            formal parameter list do not have visibility of
@@ -1520,6 +1540,7 @@ impl FunctionParametersScopeBuilder {
             //            varEnv.
             let mut data = VarScopeData::new(
                 body_scope_builder.var_names.len(),
+                function_has_extensible_scope,
                 /* encloding= */ self.scope_index,
             );
 
@@ -1866,11 +1887,28 @@ impl ScopeKindStack {
 #[derive(Debug)]
 struct ScopeBuilderStack {
     stack: Vec<ScopeBuilder>,
+
+    /// Stack of lists of names that is
+    ///   1. defined in the scope
+    ///   2. closed over by inner script
+    ///
+    /// Each list is delimited by `None`, for each scope.
+    ///
+    /// The order of scopes is depth-first post-order, and the order of names
+    /// inside each scope is in not defined.
+    ///
+    /// When entering a function, empty list is pushed to this stack, and
+    /// when leaving each function, top-most list is popped, and
+    /// added to gcthings of the function, and this list is reset to empty.
+    closed_over_bindings_for_lazy: Vec<Vec<Option<SourceAtomSetIndex>>>,
 }
 
 impl ScopeBuilderStack {
     fn new() -> Self {
-        Self { stack: Vec::new() }
+        Self {
+            stack: Vec::new(),
+            closed_over_bindings_for_lazy: Vec::new(),
+        }
     }
 
     fn innermost_var<'a>(&'a mut self) -> &'a mut ScopeBuilder {
@@ -1891,6 +1929,19 @@ impl ScopeBuilderStack {
         panic!("There should be at least one scope on the stack");
     }
 
+    fn maybe_innermost_function_parameters<'a>(
+        &'a mut self,
+    ) -> Option<&'a mut FunctionParametersScopeBuilder> {
+        for builder in self.stack.iter_mut().rev() {
+            match builder {
+                ScopeBuilder::FunctionParameters(builder) => return Some(builder),
+                _ => {}
+            }
+        }
+
+        None
+    }
+
     fn innermost_lexical<'a>(&'a mut self) -> &'a mut ScopeBuilder {
         // FIXME: If there's no other case, merge with innermost.
         self.innermost()
@@ -1907,6 +1958,10 @@ impl ScopeBuilderStack {
             .last()
             .expect("There should be at least one scope on the stack")
             .get_scope_index()
+    }
+
+    fn current_scope_index_or_empty_global(&self) -> ScopeIndex {
+        self.current_scope_index()
     }
 
     fn push_global(&mut self, builder: GlobalScopeBuilder) {
@@ -1978,6 +2033,18 @@ impl ScopeBuilderStack {
             Some(outer) => {
                 let inner_base = inner.base();
                 let outer_base = outer.base_mut();
+
+                match self.closed_over_bindings_for_lazy.last_mut() {
+                    Some(bindings) => {
+                        for name in inner_base.name_tracker.defined_and_closed_over_vars() {
+                            bindings.push(Some(*name));
+                        }
+                        bindings.push(None);
+                    }
+                    None => {
+                        // We're leaving lexical scope in top-level script.
+                    }
+                }
 
                 // When construct such as `eval`, `with` and `delete` access
                 // name dynamically in inner scopes, we have to propagate this
@@ -2060,7 +2127,12 @@ impl FunctionScriptStencilBuilder {
     ///
     /// This creates `ScriptStencil` for the function, and adds it to
     /// enclosing function if exists.
-    fn enter<T>(&mut self, fun: &T, syntax_kind: FunctionSyntaxKind) -> ScriptStencilIndex
+    fn enter<T>(
+        &mut self,
+        fun: &T,
+        syntax_kind: FunctionSyntaxKind,
+        enclosing_scope_index: ScopeIndex,
+    ) -> ScriptStencilIndex
     where
         T: SourceLocationAccessor + NodeTypeIdAccessor,
     {
@@ -2084,6 +2156,7 @@ impl FunctionScriptStencilBuilder {
             syntax_kind.is_generator(),
             syntax_kind.is_async(),
             FunctionFlags::interpreted(syntax_kind),
+            enclosing_scope_index,
         );
         let index = self.functions.push(function_stencil);
         self.function_stencil_indices.insert(fun, index);
@@ -2112,6 +2185,15 @@ impl FunctionScriptStencilBuilder {
         self.current_mut().set_to_string_end(source_end);
 
         self.function_stack.pop();
+    }
+
+    /// Returns the current function's index.
+    /// Panics if no current function is found.
+    fn current_index(&self) -> ScriptStencilIndex {
+        *self
+            .function_stack
+            .last()
+            .expect("should be inside function")
     }
 
     /// Returns a immutable reference to the innermost function. None otherwise.
@@ -2153,7 +2235,7 @@ impl FunctionScriptStencilBuilder {
     {
         let loc = params.get_loc();
         let params_start = loc.start;
-        self.current_mut().set_to_string_starts(params_start);
+        self.current_mut().set_source_starts(params_start);
     }
 
     fn on_non_rest_parameter(&mut self) {
@@ -2168,30 +2250,36 @@ impl FunctionScriptStencilBuilder {
         fun.set_has_rest();
     }
 
-    /// Add all closed over bindings of the current function,
-    /// that is calculated by `parameter_scope_builder`.
     fn add_closed_over_bindings(
         &mut self,
-        parameter_scope_builder: &FunctionParametersScopeBuilder,
+        mut closed_over_bindings_for_lazy: Vec<Option<SourceAtomSetIndex>>,
     ) {
-        let closed_over_freevars: HashSet<SourceAtomSetIndex> = parameter_scope_builder
-            .base
-            .name_tracker
-            .closed_over_freevars()
-            .cloned()
-            .collect();
-        let used_freevars: HashSet<SourceAtomSetIndex> = parameter_scope_builder
-            .base
-            .name_tracker
-            .used_freevars()
-            .cloned()
-            .collect();
-        let all_freevars = closed_over_freevars.union(&used_freevars);
+        // Remove trailing `None`s.
+        loop {
+            match closed_over_bindings_for_lazy.last() {
+                Some(Some(_)) => {
+                    // The last item isn't None.
+                    break;
+                }
+
+                Some(None) => {
+                    // The last item is None, remove it
+                    closed_over_bindings_for_lazy.pop();
+                }
+
+                None => {
+                    // List is empty.
+                    break;
+                }
+            }
+        }
 
         let current = self.current_mut();
-
-        for name in all_freevars {
-            current.push_closed_over_bindings(*name);
+        for name in closed_over_bindings_for_lazy {
+            match name {
+                Some(name) => current.push_closed_over_bindings(name),
+                None => current.push_closed_over_bindings_delimiter(),
+            }
         }
     }
 }
@@ -2411,6 +2499,7 @@ impl ScopeDataMapBuilder {
         let fun_index = self.function_stencil_builder.enter(
             fun,
             FunctionSyntaxKind::function_declaration(is_generator, is_async),
+            self.builder_stack.current_scope_index_or_empty_global(),
         );
 
         match self.builder_stack.innermost_lexical() {
@@ -2451,6 +2540,7 @@ impl ScopeDataMapBuilder {
         self.function_stencil_builder.enter(
             fun,
             FunctionSyntaxKind::function_expression(is_generator, is_async),
+            self.builder_stack.current_scope_index_or_empty_global(),
         );
     }
 
@@ -2473,8 +2563,11 @@ impl ScopeDataMapBuilder {
     where
         T: SourceLocationAccessor + NodeTypeIdAccessor,
     {
-        self.function_stencil_builder
-            .enter(fun, FunctionSyntaxKind::method(is_generator, is_async));
+        self.function_stencil_builder.enter(
+            fun,
+            FunctionSyntaxKind::method(is_generator, is_async),
+            self.builder_stack.current_scope_index_or_empty_global(),
+        );
     }
 
     pub fn after_method<T>(&mut self, fun: &T)
@@ -2488,8 +2581,11 @@ impl ScopeDataMapBuilder {
     where
         T: SourceLocationAccessor + NodeTypeIdAccessor,
     {
-        self.function_stencil_builder
-            .enter(fun, FunctionSyntaxKind::getter());
+        self.function_stencil_builder.enter(
+            fun,
+            FunctionSyntaxKind::getter(),
+            self.builder_stack.current_scope_index_or_empty_global(),
+        );
     }
 
     pub fn on_getter_parameter<T>(&mut self, param: &T)
@@ -2511,8 +2607,11 @@ impl ScopeDataMapBuilder {
     where
         T: SourceLocationAccessor + NodeTypeIdAccessor,
     {
-        self.function_stencil_builder
-            .enter(fun, FunctionSyntaxKind::setter());
+        self.function_stencil_builder.enter(
+            fun,
+            FunctionSyntaxKind::setter(),
+            self.builder_stack.current_scope_index_or_empty_global(),
+        );
     }
 
     pub fn before_setter_parameter<T>(&mut self, param: &T)
@@ -2538,8 +2637,11 @@ impl ScopeDataMapBuilder {
     where
         T: SourceLocationAccessor + NodeTypeIdAccessor,
     {
-        self.function_stencil_builder
-            .enter(params, FunctionSyntaxKind::arrow(is_async));
+        self.function_stencil_builder.enter(
+            params,
+            FunctionSyntaxKind::arrow(is_async),
+            self.builder_stack.current_scope_index_or_empty_global(),
+        );
     }
 
     pub fn after_arrow_function<T>(&mut self, body: &T)
@@ -2553,13 +2655,21 @@ impl ScopeDataMapBuilder {
     where
         T: SourceLocationAccessor + NodeTypeIdAccessor,
     {
+        self.builder_stack
+            .closed_over_bindings_for_lazy
+            .push(Vec::new());
+
         self.function_stencil_builder.on_function_parameters(params);
 
         let index = self.scopes.allocate();
 
         let is_arrow = self.function_stencil_builder.current().is_arrow_function();
 
-        let builder = FunctionParametersScopeBuilder::new(index, is_arrow);
+        let builder = FunctionParametersScopeBuilder::new(
+            index,
+            is_arrow,
+            self.function_stencil_builder.current_index(),
+        );
         self.non_global.insert(params, index);
 
         self.builder_stack.push_function_parameters(builder);
@@ -2630,8 +2740,12 @@ impl ScopeDataMapBuilder {
         let parameter_scope_builder = self.builder_stack.pop_function_parameters();
         let enclosing = self.builder_stack.current_scope_index();
 
-        self.function_stencil_builder
-            .add_closed_over_bindings(&parameter_scope_builder);
+        self.function_stencil_builder.add_closed_over_bindings(
+            self.builder_stack
+                .closed_over_bindings_for_lazy
+                .pop()
+                .expect("Vector should be pushed by before_function_parameters"),
+        );
 
         let function_scope_index = parameter_scope_builder.scope_index;
         let var_scope_index = body_scope_builder.var_scope_index;
@@ -2776,6 +2890,20 @@ impl ScopeDataMapBuilder {
             .populate(var_scope_index, scope_data_set.extra_body_var);
         self.scopes
             .populate(lexical_scope_index, scope_data_set.lexical);
+    }
+
+    #[allow(dead_code)]
+    pub fn on_direct_eval(&mut self) {
+        if let Some(parameter_scope_builder) =
+            self.builder_stack.maybe_innermost_function_parameters()
+        {
+            parameter_scope_builder.has_direct_eval = true;
+        }
+
+        self.builder_stack
+            .innermost()
+            .base_mut()
+            .bindings_accessed_dynamically = true;
     }
 }
 

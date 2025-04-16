@@ -9,11 +9,12 @@
 #include "AccessibleWrap.h"
 #include "nsIAccessibleText.h"
 #include "nsIAccessibleTypes.h"
+#include "nsIFrame.h"  // only for nsSelectionAmount
 #include "nsDirection.h"
 #include "WordMovementType.h"
-#include "nsIFrame.h"
 
 class nsFrameSelection;
+class nsIFrame;
 class nsRange;
 class nsIWidget;
 

@@ -56,7 +56,7 @@ class Runnable;
 class SplitNodeTransaction;
 class SplitRangeOffFromNodeResult;
 class SplitRangeOffResult;
-class WSRunObject;
+class WhiteSpaceVisibilityKeeper;
 class WSRunScanner;
 class WSScanResult;
 enum class EditSubAction : int32_t;
@@ -704,8 +704,8 @@ class HTMLEditor final : public TextEditor,
   /**
    * DeleteParentBlocksIfEmpty() removes parent block elements if they
    * don't have visible contents.  Note that due performance issue of
-   * WSRunObject, this call may be expensive.  And also note that this
-   * removes a empty block with a transaction.  So, please make sure that
+   * WhiteSpaceVisibilityKeeper, this call may be expensive.  And also note that
+   * this removes a empty block with a transaction.  So, please make sure that
    * you've already created `AutoPlaceholderBatch`.
    *
    * @param aPoint      The point whether this method climbing up the DOM
@@ -928,7 +928,7 @@ class HTMLEditor final : public TextEditor,
   /**
    * Small utility routine to test if a break node is visible to user.
    */
-  bool IsVisibleBRElement(const nsINode* aNode);
+  bool IsVisibleBRElement(const nsINode* aNode) const;
 
   /**
    * Helper routines for font size changing.
@@ -2626,13 +2626,13 @@ class HTMLEditor final : public TextEditor,
    * collapsed selection at white-spaces in a text node.
    *
    * @param aDirectionAndAmount Direction of the deletion.
-   * @param aWSRunObjectAtCaret WSRunObject instance which was initialized with
-   *                            the caret point.
+   * @param aPointToDelete      The point to delete.  I.e., typically, caret
+   *                            position.
    */
   [[nodiscard]] MOZ_CAN_RUN_SCRIPT EditActionResult
   HandleDeleteCollapsedSelectionAtWhiteSpaces(
       nsIEditor::EDirection aDirectionAndAmount,
-      WSRunObject& aWSRunObjectAtCaret);
+      const EditorDOMPoint& aPointToDelete);
 
   /**
    * HandleDeleteCollapsedSelectionAtTextNode() handles deletion of
@@ -4382,46 +4382,18 @@ class HTMLEditor final : public TextEditor,
   nsresult ParseCFHTML(nsCString& aCfhtml, char16_t** aStuffToPaste,
                        char16_t** aCfcontext);
 
-  nsresult StripFormattingNodes(nsIContent& aNode, bool aOnlyList = false);
-  nsresult CreateDOMFragmentFromPaste(
-      const nsAString& aInputString, const nsAString& aContextStr,
-      const nsAString& aInfoStr, nsCOMPtr<nsINode>* aOutFragNode,
-      nsCOMPtr<nsINode>* aOutStartNode, nsCOMPtr<nsINode>* aOutEndNode,
-      int32_t* aOutStartOffset, int32_t* aOutEndOffset, bool aTrustedInput);
-  nsresult ParseFragment(const nsAString& aStr, nsAtom* aContextLocalName,
-                         Document* aTargetDoc,
-                         dom::DocumentFragment** aFragment, bool aTrustedInput);
   /**
-   * CollectTopMostChildContentsCompletelyInRange() collects topmost child
-   * contents which are completely in the given range.
-   * For example, if the range points a node with its container node, the
-   * result is only the node (meaning does not include its descendants).
-   * If the range starts start of a node and ends end of it, and if the node
-   * does not have children, returns no nodes, otherwise, if the node has
-   * some children, the result includes its all children (not including their
-   * descendants).
-   *
-   * @param aStartPoint         Start point of the range.
-   * @param aEndPoint           End point of the range.
-   * @param aOutArrayOfContents [Out] Topmost children which are completely in
-   *                            the range.
-   */
-  static void CollectTopMostChildNodesCompletelyInRange(
-      const EditorRawDOMPoint& aStartPoint, const EditorRawDOMPoint& aEndPoint,
-      nsTArray<OwningNonNull<nsIContent>>& aOutArrayOfContents);
-
-  /**
-   * AutoHTMLFragmentBoundariesFixer fixes both edges of topmost child nodes
+   * AutoHTMLFragmentBoundariesFixer fixes both edges of topmost child contents
    * which are created with SubtreeContentIterator.
    */
   class MOZ_STACK_CLASS AutoHTMLFragmentBoundariesFixer final {
    public:
     /**
      * @param aArrayOfTopMostChildContents
-     *                         [in/out] The topmost child nodes which will be
+     *                         [in/out] The topmost child contents which will be
      *                         inserted into the DOM tree.  Both edges, i.e.,
      *                         first node and last node in this array will be
-     *                         checked whether they can be insertted into
+     *                         checked whether they can be inserted into
      *                         another DOM tree.  If not, it'll replaces some
      *                         orphan nodes around nodes with proper parent.
      */
@@ -4434,10 +4406,10 @@ class HTMLEditor final : public TextEditor,
      * start or end with proper element node if it's necessary.
      * If first or last node of aArrayOfTopMostChildContents is in list and/or
      * `<table>` element, looks for topmost list element or `<table>` element
-     * with `CollectListAndTableRelatedElementsAt()` and
-     * `GetMostAncestorListOrTableElement()`.  Then, checks whether
-     * some nodes are in aArrayOfTopMostChildContents are the topmost list/table
-     * element or its descendant and if so, removes the nodes from
+     * with `CollectTableAndAnyListElementsOfInclusiveAncestorsAt()` and
+     * `GetMostDistantAncestorListOrTableElement()`.  Then, checks
+     * whether some nodes are in aArrayOfTopMostChildContents are the topmost
+     * list/table element or its descendant and if so, removes the nodes from
      * aArrayOfTopMostChildContents and inserts the list/table element instead.
      * Then, aArrayOfTopMostChildContents won't start/end with list-item nor
      * table cells.
@@ -4449,24 +4421,24 @@ class HTMLEditor final : public TextEditor,
         const;
 
     /**
-     * CollectListAndTableRelatedElementsAt() collects list elements and
-     * table related elements from aNode (meaning aNode may be in the first of
-     * the result) to the root element.
+     * CollectTableAndAnyListElementsOfInclusiveAncestorsAt() collects list
+     * elements and table related elements from the inclusive ancestors
+     * (https://dom.spec.whatwg.org/#concept-tree-inclusive-ancestor) of aNode.
      */
-    void CollectListAndTableRelatedElementsAt(
+    static void CollectTableAndAnyListElementsOfInclusiveAncestorsAt(
         nsIContent& aContent,
-        nsTArray<OwningNonNull<Element>>& aOutArrayOfListAndTableElements)
-        const;
+        nsTArray<OwningNonNull<Element>>& aOutArrayOfListAndTableElements);
 
     /**
-     * GetMostAncestorListOrTableElement() returns a list or a `<table>`
-     * element which is in aArrayOfListAndTableElements and they are
-     * actually valid ancestor of at least one of aArrayOfTopMostChildContents.
+     * GetMostDistantAncestorListOrTableElement() returns a list or a
+     * `<table>` element which is in
+     * aInclusiveAncestorsTableOrListElements and they are actually
+     * valid ancestor of at least one of aArrayOfTopMostChildContents.
      */
-    Element* GetMostAncestorListOrTableElement(
+    static Element* GetMostDistantAncestorListOrTableElement(
         const nsTArray<OwningNonNull<nsIContent>>& aArrayOfTopMostChildContents,
         const nsTArray<OwningNonNull<Element>>&
-            aArrayOfListAndTableRelatedElements) const;
+            aInclusiveAncestorsTableOrListElements);
 
     /**
      * FindReplaceableTableElement() is a helper method of
@@ -4505,7 +4477,8 @@ class HTMLEditor final : public TextEditor,
    *                            different block level element.
    */
   EditorRawDOMPoint GetBetterInsertionPointFor(
-      nsIContent& aContentToInsert, const EditorRawDOMPoint& aPointToInsert);
+      nsIContent& aContentToInsert,
+      const EditorRawDOMPoint& aPointToInsert) const;
 
   /**
    * MakeDefinitionListItemWithTransaction() replaces parent list of current
@@ -4596,6 +4569,8 @@ class HTMLEditor final : public TextEditor,
    * Whether the outer window of the DOM event target has focus or not.
    */
   bool OurWindowHasFocus() const;
+
+  class HTMLWithContextInserter;
 
   /**
    * This function is used to insert a string of HTML input optionally with some
@@ -5040,7 +5015,7 @@ class HTMLEditor final : public TextEditor,
   friend class SlurpBlobEventListener;
   friend class SplitNodeTransaction;
   friend class TextEditor;
-  friend class WSRunObject;
+  friend class WhiteSpaceVisibilityKeeper;
   friend class WSRunScanner;
   friend class WSScanResult;
 };

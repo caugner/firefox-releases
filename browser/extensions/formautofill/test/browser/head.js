@@ -3,7 +3,7 @@
             TEST_ADDRESS_IE_1,
             TEST_CREDIT_CARD_1, TEST_CREDIT_CARD_2, TEST_CREDIT_CARD_3, TEST_CREDIT_CARD_4, TEST_CREDIT_CARD_5,
             FORM_URL, CREDITCARD_FORM_URL, CREDITCARD_FORM_IFRAME_URL
-            FTU_PREF, ENABLED_AUTOFILL_ADDRESSES_PREF, AUTOFILL_CREDITCARDS_AVAILABLE_PREF, ENABLED_AUTOFILL_CREDITCARDS_PREF,
+            FTU_PREF, ENABLED_AUTOFILL_ADDRESSES_PREF, ENABLED_AUTOFILL_ADDRESSES_CAPTURE_PREF, AUTOFILL_CREDITCARDS_AVAILABLE_PREF, ENABLED_AUTOFILL_CREDITCARDS_PREF,
             SUPPORTED_COUNTRIES_PREF,
             SYNC_USERNAME_PREF, SYNC_ADDRESSES_PREF, SYNC_CREDITCARDS_PREF, SYNC_CREDITCARDS_AVAILABLE_PREF, CREDITCARDS_USED_STATUS_PREF,
             sleep, expectPopupOpen, openPopupOn, openPopupForSubframe, expectPopupClose, closePopup, closePopupForSubframe,
@@ -41,6 +41,8 @@ const FTU_PREF = "extensions.formautofill.firstTimeUse";
 const CREDITCARDS_USED_STATUS_PREF = "extensions.formautofill.creditCards.used";
 const ENABLED_AUTOFILL_ADDRESSES_PREF =
   "extensions.formautofill.addresses.enabled";
+const ENABLED_AUTOFILL_ADDRESSES_CAPTURE_PREF =
+  "extensions.formautofill.addresses.capture.enabled";
 const AUTOFILL_CREDITCARDS_AVAILABLE_PREF =
   "extensions.formautofill.creditCards.available";
 const ENABLED_AUTOFILL_CREDITCARDS_PREF =
@@ -312,16 +314,20 @@ async function waitForPopupEnabled(browser) {
 async function openPopupOn(browser, selector) {
   await SimpleTest.promiseFocus(browser);
   await focusAndWaitForFieldsIdentified(browser, selector);
-  info("openPopupOn: before VK_DOWN");
-  await BrowserTestUtils.synthesizeKey("VK_DOWN", {}, browser);
+  if (!selector.includes("cc-")) {
+    info(`openPopupOn: before VK_DOWN on ${selector}`);
+    await BrowserTestUtils.synthesizeKey("VK_DOWN", {}, browser);
+  }
   await expectPopupOpen(browser);
 }
 
 async function openPopupForSubframe(browser, frameBrowsingContext, selector) {
   await SimpleTest.promiseFocus(browser);
   await focusAndWaitForFieldsIdentified(frameBrowsingContext, selector);
-  info("openPopupForSubframe: before VK_DOWN");
-  await BrowserTestUtils.synthesizeKey("VK_DOWN", {}, frameBrowsingContext);
+  if (!selector.includes("cc-")) {
+    info(`openPopupForSubframe: before VK_DOWN on ${selector}`);
+    await BrowserTestUtils.synthesizeKey("VK_DOWN", {}, frameBrowsingContext);
+  }
   await expectPopupOpen(browser);
 }
 

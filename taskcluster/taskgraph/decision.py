@@ -167,7 +167,7 @@ try_task_config_schema_v2 = Schema({
 
 def full_task_graph_to_runnable_jobs(full_task_json):
     runnable_jobs = {}
-    for label, node in full_task_json.iteritems():
+    for label, node in six.iteritems(full_task_json):
         if not ('extra' in node['task'] and 'treeherder' in node['task']['extra']):
             continue
 
@@ -186,7 +186,7 @@ def full_task_graph_to_runnable_jobs(full_task_json):
 
 def full_task_graph_to_manifests_by_task(full_task_json):
     manifests_by_task = defaultdict(list)
-    for label, node in full_task_json.iteritems():
+    for label, node in six.iteritems(full_task_json):
         manifests = node['attributes'].get('test_manifests')
         if not manifests:
             continue
@@ -229,6 +229,7 @@ def taskgraph_decision(options, parameters=None):
         root_dir=options.get('root'),
         parameters=parameters,
         decision_task_id=decision_task_id,
+        write_artifacts=True,
     )
 
     # write out the parameters used to generate this graph
@@ -258,7 +259,7 @@ def taskgraph_decision(options, parameters=None):
     _, _ = TaskGraph.from_json(full_task_json)
 
     # write out the target task set to allow reproducing this as input
-    write_artifact('target-tasks.json', tgg.target_task_set.tasks.keys())
+    write_artifact('target-tasks.json', list(tgg.target_task_set.tasks.keys()))
 
     # write out the optimized task graph to describe what will actually happen,
     # and the map of labels to taskids
@@ -478,10 +479,10 @@ def write_artifact(filename, data):
     elif filename.endswith('.json'):
         with open(path, 'w') as f:
             json.dump(data, f, sort_keys=True, indent=2, separators=(',', ': '))
-    elif filename.endswith('.gz'):
+    elif filename.endswith('.json.gz'):
         import gzip
         with gzip.open(path, 'wb') as f:
-            f.write(json.dumps(data))
+            f.write(json.dumps(data).encode('utf-8'))
     else:
         raise TypeError("Don't know how to write to {}".format(filename))
 
@@ -493,10 +494,10 @@ def read_artifact(filename):
     elif filename.endswith('.json'):
         with open(path, 'r') as f:
             return json.load(f)
-    elif filename.endswith('.gz'):
+    elif filename.endswith('.json.gz'):
         import gzip
         with gzip.open(path, 'rb') as f:
-            return json.load(f)
+            return json.load(f.decode('utf-8'))
     else:
         raise TypeError("Don't know how to read {}".format(filename))
 

@@ -1566,8 +1566,14 @@ nsEventStatus AsyncPanZoomController::OnScaleBegin(
   if (!StaticPrefs::apz_allow_zooming()) {
     if (RefPtr<GeckoContentController> controller =
             GetGeckoContentController()) {
-      controller->NotifyPinchGesture(aEvent.mType, GetGuid(), 0,
-                                     aEvent.modifiers);
+      APZC_LOG("%p notifying controller of pinch gesture start\n", this);
+      controller->NotifyPinchGesture(
+          aEvent.mType, GetGuid(),
+          ViewAs<LayoutDevicePixel>(
+              aEvent.mFocusPoint,
+              PixelCastJustification::
+                  LayoutDeviceIsScreenForUntransformedEvent),
+          0, aEvent.modifiers);
     }
   }
 
@@ -1615,11 +1621,17 @@ nsEventStatus AsyncPanZoomController::OnScale(const PinchGestureInput& aEvent) {
   if (!StaticPrefs::apz_allow_zooming()) {
     if (RefPtr<GeckoContentController> controller =
             GetGeckoContentController()) {
+      APZC_LOG("%p notifying controller of pinch gesture\n", this);
       controller->NotifyPinchGesture(
           aEvent.mType, GetGuid(),
           ViewAs<LayoutDevicePixel>(
+              aEvent.mFocusPoint,
+              PixelCastJustification::
+                  LayoutDeviceIsScreenForUntransformedEvent),
+          ViewAs<LayoutDevicePixel>(
               aEvent.mCurrentSpan - aEvent.mPreviousSpan,
-              PixelCastJustification::LayoutDeviceIsParentLayerForRCDRSF),
+              PixelCastJustification::
+                  LayoutDeviceIsScreenForUntransformedEvent),
           aEvent.modifiers);
     }
   }
@@ -1749,8 +1761,13 @@ nsEventStatus AsyncPanZoomController::OnScaleEnd(
   if (!StaticPrefs::apz_allow_zooming()) {
     if (RefPtr<GeckoContentController> controller =
             GetGeckoContentController()) {
-      controller->NotifyPinchGesture(aEvent.mType, GetGuid(), 0,
-                                     aEvent.modifiers);
+      controller->NotifyPinchGesture(
+          aEvent.mType, GetGuid(),
+          ViewAs<LayoutDevicePixel>(
+              aEvent.mFocusPoint,
+              PixelCastJustification::
+                  LayoutDeviceIsScreenForUntransformedEvent),
+          0, aEvent.modifiers);
     }
   }
 
@@ -2341,8 +2358,8 @@ nsEventStatus AsyncPanZoomController::OnScrollWheel(
         StaticPrefs::test_mousescroll()) {
       if (RefPtr<GeckoContentController> controller =
               GetGeckoContentController()) {
-        controller->NotifyMozMouseScrollEvent(
-            GetScrollId(), NS_LITERAL_STRING("MozMouseScrollFailed"));
+        controller->NotifyMozMouseScrollEvent(GetScrollId(),
+                                              u"MozMouseScrollFailed"_ns);
       }
     }
     return nsEventStatus_eConsumeNoDefault;
@@ -3900,6 +3917,17 @@ void AsyncPanZoomController::RequestContentRepaint(
     return;
   }
   if (!controller->IsRepaintThread()) {
+    // Even though we want to do the actual repaint request on the repaint
+    // thread, we want to update the expected gecko metrics synchronously.
+    // Otherwise we introduce a race condition where we might read from the
+    // expected gecko metrics on the controller thread before or after it gets
+    // updated on the repaint thread, when in fact we always want the updated
+    // version when reading.
+    {  // scope lock
+      RecursiveMutexAutoLock lock(mRecursiveMutex);
+      mExpectedGeckoMetrics.UpdateFrom(Metrics());
+    }
+
     // use the local variable to resolve the function overload.
     auto func =
         static_cast<void (AsyncPanZoomController::*)(RepaintUpdateType)>(
@@ -3973,7 +4001,7 @@ void AsyncPanZoomController::RequestContentRepaint(
   }
 
   controller->RequestContentRepaint(request);
-  mExpectedGeckoMetrics = aFrameMetrics;
+  mExpectedGeckoMetrics.UpdateFrom(aFrameMetrics);
   mLastPaintRequestMetrics = request;
 
   // We're holding the APZC lock here, so redispatch this so we can get
@@ -4523,13 +4551,16 @@ void AsyncPanZoomController::NotifyLayersUpdated(
       aLayerMetrics.GetDoSmoothScroll() &&
       (aLayerMetrics.GetScrollGeneration() != Metrics().GetScrollGeneration());
 
+  bool pureRelativeSmoothScrollRequested =
+      aLayerMetrics.IsPureRelative() &&
+      (aLayerMetrics.GetScrollGeneration() != Metrics().GetScrollGeneration());
+
   // If `isDefault` is true, this APZC is a "new" one (this is the first time
   // it's getting a NotifyLayersUpdated call). In this case we want to apply the
   // visual scroll offset from the main thread to our scroll offset.
   // The main thread may also ask us to scroll the visual viewport to a
   // particular location. This is different from a layout viewport offset update
-  // in that the layout viewport offset is limited to the layout scroll range
-  // (this will be enforced by the main thread once bug 1516056 is fixed),
+  // in that the layout viewport offset is limited to the layout scroll range,
   // while the visual viewport offset is not.
   // The update type indicates the priority; an eMainThread layout update (or
   // a smooth scroll request which is similar) takes precedence over an eRestore
@@ -4542,7 +4573,7 @@ void AsyncPanZoomController::NotifyLayersUpdated(
   if ((aLayerMetrics.GetScrollUpdateType() == FrameMetrics::eMainThread &&
        aLayerMetrics.GetVisualScrollUpdateType() !=
            FrameMetrics::eMainThread) ||
-      smoothScrollRequested) {
+      smoothScrollRequested || pureRelativeSmoothScrollRequested) {
     visualScrollOffsetUpdated = false;
   }
 
@@ -4559,7 +4590,7 @@ void AsyncPanZoomController::NotifyLayersUpdated(
     CancelAnimation();
 
     mScrollMetadata = aScrollMetadata;
-    mExpectedGeckoMetrics = aLayerMetrics;
+    mExpectedGeckoMetrics.UpdateFrom(aLayerMetrics);
     ShareCompositorFrameMetrics();
 
     for (auto& sampledState : mSampledState) {
@@ -4697,12 +4728,13 @@ void AsyncPanZoomController::NotifyLayersUpdated(
                  ToString(aLayerMetrics.GetScrollOffset()).c_str());
         Metrics().ApplyScrollUpdateFrom(aLayerMetrics);
       }
+
       Metrics().RecalculateLayoutViewportOffset();
 
       for (auto& sampledState : mSampledState) {
         sampledState.UpdateScrollProperties(Metrics());
       }
-      mExpectedGeckoMetrics = aLayerMetrics;
+      mExpectedGeckoMetrics.UpdateFrom(aLayerMetrics);
 
       // If an animation is underway, tell it about the scroll offset update.
       // Some animations can handle some scroll offset updates and continue
@@ -4736,7 +4768,7 @@ void AsyncPanZoomController::NotifyLayersUpdated(
     }
   }
 
-  if (smoothScrollRequested) {
+  if (smoothScrollRequested || pureRelativeSmoothScrollRequested) {
     // A smooth scroll has been requested for animation on the compositor
     // thread.  This flag will be reset by the main thread when it receives
     // the scroll update acknowledgement.
@@ -4745,16 +4777,26 @@ void AsyncPanZoomController::NotifyLayersUpdated(
              Stringify(Metrics().GetScrollOffset()).c_str(),
              Stringify(aLayerMetrics.GetSmoothScrollOffset()).c_str(), mState);
 
-    // See comment on the similar code in the |if (scrollOffsetUpdated)| block
-    // above.
-    if (StaticPrefs::apz_relative_update_enabled() &&
-        aLayerMetrics.IsRelative()) {
-      Metrics().ApplyRelativeSmoothScrollUpdateFrom(aLayerMetrics);
-    } else {
-      Metrics().ApplySmoothScrollUpdateFrom(aLayerMetrics);
+    if (smoothScrollRequested) {
+      // See comment on the similar code in the |if (scrollOffsetUpdated)| block
+      // above.
+      if (StaticPrefs::apz_relative_update_enabled() &&
+          aLayerMetrics.IsRelative()) {
+        Metrics().ApplyRelativeSmoothScrollUpdateFrom(aLayerMetrics);
+      } else {
+        Metrics().ApplySmoothScrollUpdateFrom(aLayerMetrics);
+      }
     }
+
+    if (pureRelativeSmoothScrollRequested) {
+      MOZ_ASSERT(aLayerMetrics.IsPureRelative());
+      MOZ_ASSERT(gfxPlatform::UseDesktopZoomingScrollbars());
+      Metrics().ApplyPureRelativeSmoothScrollUpdateFrom(aLayerMetrics,
+                                                        smoothScrollRequested);
+    }
+
     needContentRepaint = true;
-    mExpectedGeckoMetrics = aLayerMetrics;
+    mExpectedGeckoMetrics.UpdateFrom(aLayerMetrics);
 
     SmoothScrollTo(Metrics().GetSmoothScrollOffset());
   }
@@ -4771,7 +4813,7 @@ void AsyncPanZoomController::NotifyLayersUpdated(
     for (auto& sampledState : mSampledState) {
       sampledState.UpdateScrollProperties(Metrics());
     }
-    mExpectedGeckoMetrics = aLayerMetrics;
+    mExpectedGeckoMetrics.UpdateFrom(aLayerMetrics);
     if (ShouldCancelAnimationForScrollUpdate(Nothing())) {
       CancelAnimation();
     }
@@ -5012,6 +5054,9 @@ void AsyncPanZoomController::ZoomToRect(CSSRect aRect, const uint32_t aFlags) {
       RequestContentRepaint(endZoomToMetrics, velocity,
                             RepaintUpdateType::eUserAction);
     } else {
+      // See comment on similar code in RequestContentRepaint
+      mExpectedGeckoMetrics.UpdateFrom(endZoomToMetrics);
+
       // use a local var to resolve the function overload
       auto func = static_cast<void (AsyncPanZoomController::*)(
           const FrameMetrics&, const ParentLayerPoint&, RepaintUpdateType)>(

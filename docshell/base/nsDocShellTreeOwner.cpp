@@ -441,9 +441,6 @@ nsDocShellTreeOwner::InitWindow(nativeWindow aParentNativeWindow,
 }
 
 NS_IMETHODIMP
-nsDocShellTreeOwner::Create() { return NS_ERROR_NULL_POINTER; }
-
-NS_IMETHODIMP
 nsDocShellTreeOwner::Destroy() {
   nsCOMPtr<nsIWebBrowserChrome> webBrowserChrome = GetWebBrowserChrome();
   if (webBrowserChrome) {
@@ -811,9 +808,9 @@ nsDocShellTreeOwner::AddChromeListeners() {
 
   EventListenerManager* elmP = target->GetOrCreateListenerManager();
   if (elmP) {
-    elmP->AddEventListenerByType(this, NS_LITERAL_STRING("dragover"),
+    elmP->AddEventListenerByType(this, u"dragover"_ns,
                                  TrustedEventsAtSystemGroupBubble());
-    elmP->AddEventListenerByType(this, NS_LITERAL_STRING("drop"),
+    elmP->AddEventListenerByType(this, u"drop"_ns,
                                  TrustedEventsAtSystemGroupBubble());
   }
 
@@ -835,9 +832,9 @@ nsDocShellTreeOwner::RemoveChromeListeners() {
 
   EventListenerManager* elmP = piTarget->GetOrCreateListenerManager();
   if (elmP) {
-    elmP->RemoveEventListenerByType(this, NS_LITERAL_STRING("dragover"),
+    elmP->RemoveEventListenerByType(this, u"dragover"_ns,
                                     TrustedEventsAtSystemGroupBubble());
-    elmP->RemoveEventListenerByType(this, NS_LITERAL_STRING("drop"),
+    elmP->RemoveEventListenerByType(this, u"drop"_ns,
                                     TrustedEventsAtSystemGroupBubble());
   }
 
@@ -1009,18 +1006,18 @@ ChromeTooltipListener::AddTooltipListener() {
   if (mEventTarget) {
     nsresult rv = NS_OK;
 #ifndef XP_WIN
-    rv = mEventTarget->AddSystemEventListener(NS_LITERAL_STRING("keydown"),
-                                              this, false, false);
+    rv =
+        mEventTarget->AddSystemEventListener(u"keydown"_ns, this, false, false);
     NS_ENSURE_SUCCESS(rv, rv);
 #endif
-    rv = mEventTarget->AddSystemEventListener(NS_LITERAL_STRING("mousedown"),
-                                              this, false, false);
+    rv = mEventTarget->AddSystemEventListener(u"mousedown"_ns, this, false,
+                                              false);
     NS_ENSURE_SUCCESS(rv, rv);
-    rv = mEventTarget->AddSystemEventListener(NS_LITERAL_STRING("mouseout"),
-                                              this, false, false);
+    rv = mEventTarget->AddSystemEventListener(u"mouseout"_ns, this, false,
+                                              false);
     NS_ENSURE_SUCCESS(rv, rv);
-    rv = mEventTarget->AddSystemEventListener(NS_LITERAL_STRING("mousemove"),
-                                              this, false, false);
+    rv = mEventTarget->AddSystemEventListener(u"mousemove"_ns, this, false,
+                                              false);
     NS_ENSURE_SUCCESS(rv, rv);
 
     mTooltipListenerInstalled = true;
@@ -1049,15 +1046,11 @@ NS_IMETHODIMP
 ChromeTooltipListener::RemoveTooltipListener() {
   if (mEventTarget) {
 #ifndef XP_WIN
-    mEventTarget->RemoveSystemEventListener(NS_LITERAL_STRING("keydown"), this,
-                                            false);
+    mEventTarget->RemoveSystemEventListener(u"keydown"_ns, this, false);
 #endif
-    mEventTarget->RemoveSystemEventListener(NS_LITERAL_STRING("mousedown"),
-                                            this, false);
-    mEventTarget->RemoveSystemEventListener(NS_LITERAL_STRING("mouseout"), this,
-                                            false);
-    mEventTarget->RemoveSystemEventListener(NS_LITERAL_STRING("mousemove"),
-                                            this, false);
+    mEventTarget->RemoveSystemEventListener(u"mousedown"_ns, this, false);
+    mEventTarget->RemoveSystemEventListener(u"mouseout"_ns, this, false);
+    mEventTarget->RemoveSystemEventListener(u"mousemove"_ns, this, false);
     mTooltipListenerInstalled = false;
   }
 

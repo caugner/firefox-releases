@@ -44,14 +44,6 @@ var {
   Services.scriptloader.loadSubScript(uri.spec, this);
 }
 
-// Add a lazy getter for common autofill test tasks used by some tests.
-{
-  /* import-globals-from ./autofill_tasks.js */
-  let file = do_get_file("autofill_tasks.js", false);
-  let uri = Services.io.newFileURI(file);
-  XPCOMUtils.defineLazyScriptGetter(this, "addAutofillTasks", uri.spec);
-}
-
 // Put any other stuff relative to this test folder below.
 
 XPCOMUtils.defineLazyModuleGetters(this, {
@@ -99,7 +91,7 @@ AutoCompleteInput.prototype = {
   popup: {
     selectedIndex: -1,
     invalidate() {},
-    QueryInterface: ChromeUtils.generateQI([Ci.nsIAutoCompletePopup]),
+    QueryInterface: ChromeUtils.generateQI(["nsIAutoCompletePopup"]),
   },
   popupOpen: false,
 
@@ -142,7 +134,7 @@ AutoCompleteInput.prototype = {
   onTextEntered: () => false,
   onTextReverted: () => false,
 
-  QueryInterface: ChromeUtils.generateQI([Ci.nsIAutoCompleteInput]),
+  QueryInterface: ChromeUtils.generateQI(["nsIAutoCompleteInput"]),
 };
 
 /**
@@ -275,10 +267,6 @@ async function check_autocomplete(test) {
     };
   });
   let expectedSearches = 1;
-  if (test.incompleteSearch) {
-    controller.startSearch(test.incompleteSearch);
-    expectedSearches++;
-  }
 
   info("Searching for: '" + test.search + "'");
   controller.startSearch(test.search);
@@ -298,20 +286,24 @@ async function check_autocomplete(test) {
     if (matches.length) {
       let firstIndexToCheck = 0;
       if (test.searchParam && test.searchParam.includes("enable-actions")) {
-        firstIndexToCheck = 1;
-        info("Checking first match is first autocomplete entry");
         let result = {
           value: controller.getValueAt(0),
           comment: controller.getCommentAt(0),
           style: controller.getStyleAt(0),
           image: controller.getImageAt(0),
         };
-        info(`First match is "${result.value}", "${result.comment}"`);
-        Assert.ok(
-          await _check_autocomplete_matches(matches[0], result),
-          "first item is correct"
-        );
-        info("Checking rest of the matches");
+        // We only care about the positioning of the first result if it is
+        // heuristic.
+        if (result.style.includes("heuristic")) {
+          info("Checking first match is first autocomplete entry");
+          info(`First match is "${result.value}", "${result.comment}"`);
+          Assert.ok(
+            await _check_autocomplete_matches(matches[0], result),
+            "first item is correct"
+          );
+          info("Checking rest of the matches");
+          firstIndexToCheck = 1;
+        }
       }
 
       for (let i = firstIndexToCheck; i < controller.matchCount; i++) {
@@ -530,7 +522,7 @@ function addTestEngine(basename, httpServer = undefined) {
     }, "browser-search-engine-modified");
 
     info("Adding engine from URL: " + dataUrl + basename);
-    Services.search.addEngine(dataUrl + basename, null, false);
+    Services.search.addOpenSearchEngine(dataUrl + basename, null);
   });
 }
 

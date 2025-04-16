@@ -6,11 +6,12 @@
 
 // Keep in (case-insensitive) order:
 #include "mozilla/PresShell.h"
+#include "mozilla/SVGOuterSVGFrame.h"
+#include "mozilla/SVGUtils.h"
 #include "mozilla/dom/SVGSVGElement.h"
 #include "mozilla/dom/SVGViewElement.h"
-#include "nsFrame.h"
+#include "nsIFrame.h"
 #include "nsGkAtoms.h"
-#include "nsSVGOuterSVGFrame.h"
 
 using namespace mozilla::dom;
 
@@ -25,13 +26,13 @@ namespace mozilla {
  * identifier. The SVGViewFrame class passes on any attribute changes
  * the view receives to the overridden <svg> element (if there is one).
  **/
-class SVGViewFrame final : public nsFrame {
+class SVGViewFrame final : public nsIFrame {
   friend nsIFrame* ::NS_NewSVGViewFrame(mozilla::PresShell* aPresShell,
                                         ComputedStyle* aStyle);
 
  protected:
   explicit SVGViewFrame(ComputedStyle* aStyle, nsPresContext* aPresContext)
-      : nsFrame(aStyle, aPresContext, kClassID) {
+      : nsIFrame(aStyle, aPresContext, kClassID) {
     AddStateBits(NS_FRAME_SVG_LAYOUT | NS_FRAME_IS_NONDISPLAY);
   }
 
@@ -48,12 +49,12 @@ class SVGViewFrame final : public nsFrame {
       return false;
     }
 
-    return nsFrame::IsFrameOfType(aFlags & ~(nsIFrame::eSVG));
+    return nsIFrame::IsFrameOfType(aFlags & ~(nsIFrame::eSVG));
   }
 
 #ifdef DEBUG_FRAME_DUMP
   virtual nsresult GetFrameName(nsAString& aResult) const override {
-    return MakeFrameName(NS_LITERAL_STRING("SVGView"), aResult);
+    return MakeFrameName(u"SVGView"_ns, aResult);
   }
 #endif
 
@@ -61,7 +62,7 @@ class SVGViewFrame final : public nsFrame {
                                     int32_t aModType) override;
 
   virtual bool ComputeCustomOverflow(nsOverflowAreas& aOverflowAreas) override {
-    // We don't maintain a visual overflow rect
+    // We don't maintain a ink overflow rect
     return false;
   }
 };
@@ -84,7 +85,7 @@ void SVGViewFrame::Init(nsIContent* aContent, nsContainerFrame* aParent,
   NS_ASSERTION(aContent->IsSVGElement(nsGkAtoms::view),
                "Content is not an SVG view");
 
-  nsFrame::Init(aContent, aParent, aPrevInFlow);
+  nsIFrame::Init(aContent, aParent, aPrevInFlow);
 }
 #endif /* DEBUG */
 
@@ -95,7 +96,7 @@ nsresult SVGViewFrame::AttributeChanged(int32_t aNameSpaceID,
   if (aNameSpaceID == kNameSpaceID_None &&
       (aAttribute == nsGkAtoms::preserveAspectRatio ||
        aAttribute == nsGkAtoms::viewBox)) {
-    nsSVGOuterSVGFrame* outerSVGFrame = nsSVGUtils::GetOuterSVGFrame(this);
+    SVGOuterSVGFrame* outerSVGFrame = SVGUtils::GetOuterSVGFrame(this);
     NS_ASSERTION(outerSVGFrame->GetContent()->IsSVGElement(nsGkAtoms::svg),
                  "Expecting an <svg> element");
 
@@ -112,7 +113,7 @@ nsresult SVGViewFrame::AttributeChanged(int32_t aNameSpaceID,
     }
   }
 
-  return nsFrame::AttributeChanged(aNameSpaceID, aAttribute, aModType);
+  return nsIFrame::AttributeChanged(aNameSpaceID, aAttribute, aModType);
 }
 
 }  // namespace mozilla

@@ -91,7 +91,7 @@ inline JSScript* BaseScript::asJSScript() {
 
 }  // namespace js
 
-inline JSFunction* JSScript::getFunction(size_t index) const {
+inline JSFunction* JSScript::getFunction(js::GCThingIndex index) const {
   JSObject* obj = getObject(index);
   MOZ_RELEASE_ASSERT(obj->is<JSFunction>(), "Script object is not JSFunction");
   JSFunction* fun = &obj->as<JSFunction>();
@@ -100,10 +100,10 @@ inline JSFunction* JSScript::getFunction(size_t index) const {
 }
 
 inline JSFunction* JSScript::getFunction(jsbytecode* pc) const {
-  return getFunction(GET_UINT32_INDEX(pc));
+  return getFunction(GET_GCTHING_INDEX(pc));
 }
 
-inline js::RegExpObject* JSScript::getRegExp(size_t index) const {
+inline js::RegExpObject* JSScript::getRegExp(js::GCThingIndex index) const {
   JSObject* obj = getObject(index);
   MOZ_RELEASE_ASSERT(obj->is<js::RegExpObject>(),
                      "Script object is not RegExpObject");
@@ -234,14 +234,14 @@ inline uint32_t JSScript::getWarmUpCount() const {
   if (warmUpData_.isWarmUpCount()) {
     return warmUpData_.toWarmUpCount();
   }
-  return warmUpData_.toJitScript()->warmUpCount_;
+  return warmUpData_.toJitScript()->warmUpCount();
 }
 
 inline void JSScript::incWarmUpCounter(uint32_t amount) {
   if (warmUpData_.isWarmUpCount()) {
     warmUpData_.incWarmUpCount(amount);
   } else {
-    warmUpData_.toJitScript()->warmUpCount_ += amount;
+    warmUpData_.toJitScript()->incWarmUpCount(amount);
   }
 }
 
@@ -250,7 +250,7 @@ inline void JSScript::resetWarmUpCounterForGC() {
   if (warmUpData_.isWarmUpCount()) {
     warmUpData_.resetWarmUpCount(0);
   } else {
-    warmUpData_.toJitScript()->warmUpCount_ = 0;
+    warmUpData_.toJitScript()->resetWarmUpCount(0);
   }
 }
 

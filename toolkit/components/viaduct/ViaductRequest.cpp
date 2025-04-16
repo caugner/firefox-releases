@@ -97,8 +97,9 @@ nsresult ViaductRequest::LaunchRequest(
   nsresult rv = NS_NewURI(getter_AddRefs(uri), request.url().c_str());
   NS_ENSURE_SUCCESS(rv, rv);
 
-  nsSecurityFlags secFlags = nsILoadInfo::SEC_ALLOW_CROSS_ORIGIN_DATA_IS_NULL |
-                             nsILoadInfo::SEC_COOKIES_OMIT;
+  nsSecurityFlags secFlags =
+      nsILoadInfo::SEC_ALLOW_CROSS_ORIGIN_SEC_CONTEXT_IS_NULL |
+      nsILoadInfo::SEC_COOKIES_OMIT;
   uint32_t loadFlags = 0;
 
   if (!request.use_caches()) {
@@ -162,23 +163,23 @@ nsCString ConvertMethod(
   using appservices::httpconfig::protobuf::Request_Method;
   switch (method) {
     case Request_Method::Request_Method_GET:
-      return NS_LITERAL_CSTRING("GET");
+      return "GET"_ns;
     case Request_Method::Request_Method_HEAD:
-      return NS_LITERAL_CSTRING("HEAD");
+      return "HEAD"_ns;
     case Request_Method::Request_Method_POST:
-      return NS_LITERAL_CSTRING("POST");
+      return "POST"_ns;
     case Request_Method::Request_Method_PUT:
-      return NS_LITERAL_CSTRING("PUT");
+      return "PUT"_ns;
     case Request_Method::Request_Method_DELETE:
-      return NS_LITERAL_CSTRING("DELETE");
+      return "DELETE"_ns;
     case Request_Method::Request_Method_CONNECT:
-      return NS_LITERAL_CSTRING("CONNECT");
+      return "CONNECT"_ns;
     case Request_Method::Request_Method_OPTIONS:
-      return NS_LITERAL_CSTRING("OPTIONS");
+      return "OPTIONS"_ns;
     case Request_Method::Request_Method_TRACE:
-      return NS_LITERAL_CSTRING("TRACE");
+      return "TRACE"_ns;
   }
-  return NS_LITERAL_CSTRING("UNKNOWN");
+  return "UNKNOWN"_ns;
 }
 
 void ViaductRequest::ClearTimers() {

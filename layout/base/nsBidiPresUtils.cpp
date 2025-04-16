@@ -76,8 +76,8 @@ static bool IsIsolateControl(char16_t aChar) {
 // Returns 0 if no override control character is implied by this style.
 static char16_t GetBidiOverride(ComputedStyle* aComputedStyle) {
   const nsStyleVisibility* vis = aComputedStyle->StyleVisibility();
-  if ((vis->mWritingMode == NS_STYLE_WRITING_MODE_VERTICAL_RL ||
-       vis->mWritingMode == NS_STYLE_WRITING_MODE_VERTICAL_LR) &&
+  if ((vis->mWritingMode == StyleWritingModeProperty::VerticalRl ||
+       vis->mWritingMode == StyleWritingModeProperty::VerticalLr) &&
       vis->mTextOrientation == StyleTextOrientation::Upright) {
     return kLRO;
   }
@@ -1486,6 +1486,9 @@ nscoord nsBidiPresUtils::ReorderFrames(nsIFrame* aFirstFrameOnLine,
     // aNumFramesOnLine to -1 makes InitLogicalArrayFromLine look at all of
     // them.
     aNumFramesOnLine = -1;
+    // As the line frame itself has been adjusted at its inline-start position
+    // by the caller, we do not want to apply this to its children.
+    aStart = 0;
   }
 
   BidiLineData bld(aFirstFrameOnLine, aNumFramesOnLine);

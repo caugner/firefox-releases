@@ -166,7 +166,8 @@ NetworkConnectivityService::Observe(nsISupports* aSubject, const char* aTopic,
                                     "network:captive-portal-connectivity");
     observerService->RemoveObserver(this, NS_NETWORK_LINK_TOPIC);
   } else if (!strcmp(aTopic, NS_NETWORK_LINK_TOPIC) &&
-             !NS_LITERAL_STRING(NS_NETWORK_LINK_DATA_UNKNOWN).Equals(aData)) {
+             !NS_LITERAL_STRING_FROM_CSTRING(NS_NETWORK_LINK_DATA_UNKNOWN)
+                  .Equals(aData)) {
     PerformChecks();
   }
 
@@ -191,7 +192,7 @@ static inline already_AddRefed<nsIChannel> SetupIPCheckChannel(bool ipv4) {
   nsCOMPtr<nsIChannel> channel;
   rv = NS_NewChannel(
       getter_AddRefs(channel), uri, nsContentUtils::GetSystemPrincipal(),
-      nsILoadInfo::SEC_ALLOW_CROSS_ORIGIN_DATA_IS_NULL,
+      nsILoadInfo::SEC_ALLOW_CROSS_ORIGIN_SEC_CONTEXT_IS_NULL,
       nsIContentPolicy::TYPE_OTHER,
       nullptr,  // nsICookieJarSettings
       nullptr,  // aPerformanceStorage

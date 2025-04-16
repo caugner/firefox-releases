@@ -452,6 +452,31 @@ void MacroAssembler::storeToTypedBigIntArray(Scalar::Type arrayType,
   StoreToTypedBigIntArray(*this, arrayType, value, dest);
 }
 
+void MacroAssembler::boxUint32(Register source, ValueOperand dest,
+                               bool allowDouble, Label* fail) {
+  if (allowDouble) {
+    // If the value fits in an int32, store an int32 type tag.
+    // Else, convert the value to double and box it.
+    Label done, isDouble;
+    branchTest32(Assembler::Signed, source, source, &isDouble);
+    {
+      tagValue(JSVAL_TYPE_INT32, source, dest);
+      jump(&done);
+    }
+    bind(&isDouble);
+    {
+      ScratchDoubleScope fpscratch(*this);
+      convertUInt32ToDouble(source, fpscratch);
+      boxDouble(fpscratch, dest, fpscratch);
+    }
+    bind(&done);
+  } else {
+    // Fail if the value does not fit in an int32.
+    branchTest32(Assembler::Signed, source, source, fail);
+    tagValue(JSVAL_TYPE_INT32, source, dest);
+  }
+}
+
 template <typename T>
 void MacroAssembler::loadFromTypedArray(Scalar::Type arrayType, const T& src,
                                         AnyRegister dest, Register temp,
@@ -529,27 +554,7 @@ void MacroAssembler::loadFromTypedArray(Scalar::Type arrayType, const T& src,
     case Scalar::Uint32:
       // Don't clobber dest when we could fail, instead use temp.
       load32(src, temp);
-      if (allowDouble) {
-        // If the value fits in an int32, store an int32 type tag.
-        // Else, convert the value to double and box it.
-        Label done, isDouble;
-        branchTest32(Assembler::Signed, temp, temp, &isDouble);
-        {
-          tagValue(JSVAL_TYPE_INT32, temp, dest);
-          jump(&done);
-        }
-        bind(&isDouble);
-        {
-          ScratchDoubleScope fpscratch(*this);
-          convertUInt32ToDouble(temp, fpscratch);
-          boxDouble(fpscratch, dest, fpscratch);
-        }
-        bind(&done);
-      } else {
-        // Bailout if the value does not fit in an int32.
-        branchTest32(Assembler::Signed, temp, temp, fail);
-        tagValue(JSVAL_TYPE_INT32, temp, dest);
-      }
+      boxUint32(temp, dest, allowDouble, fail);
       break;
     case Scalar::Float32: {
       ScratchDoubleScope dscratch(*this);
@@ -1813,6 +1818,40 @@ void MacroAssembler::guardGroupHasUnanalyzedNewScript(Register group,
             ImmWord(0), fail);
 
   bind(&noNewScript);
+}
+
+void MacroAssembler::guardSpecificAtom(Register str, JSAtom* atom,
+                                       Register scratch,
+                                       const LiveRegisterSet& volatileRegs,
+                                       Label* fail) {
+  Label done;
+  branchPtr(Assembler::Equal, str, ImmGCPtr(atom), &done);
+
+  // The pointers are not equal, so if the input string is also an atom it
+  // must be a different string.
+  branchTest32(Assembler::NonZero, Address(str, JSString::offsetOfFlags()),
+               Imm32(JSString::ATOM_BIT), fail);
+
+  // Check the length.
+  branch32(Assembler::NotEqual, Address(str, JSString::offsetOfLength()),
+           Imm32(atom->length()), fail);
+
+  // We have a non-atomized string with the same length. Call a helper
+  // function to do the comparison.
+  PushRegsInMask(volatileRegs);
+
+  setupUnalignedABICall(scratch);
+  movePtr(ImmGCPtr(atom), scratch);
+  passABIArg(scratch);
+  passABIArg(str);
+  callWithABI(JS_FUNC_TO_DATA_PTR(void*, EqualStringsHelperPure));
+  mov(ReturnReg, scratch);
+
+  MOZ_ASSERT(!volatileRegs.has(scratch));
+  PopRegsInMask(volatileRegs);
+  branchIfFalseBool(scratch, fail);
+
+  bind(&done);
 }
 
 void MacroAssembler::generateBailoutTail(Register scratch,
@@ -3727,6 +3766,35 @@ void MacroAssembler::debugAssertObjHasFixedSlots(Register obj,
   assumeUnreachable("Expected a fixed slot");
   bind(&hasFixedSlots);
 #endif
+}
+
+void MacroAssembler::setIsPackedArray(Register obj, Register output,
+                                      Register temp) {
+  // Ensure it's an ArrayObject.
+  Label notPackedArray;
+  branchTestObjClass(Assembler::NotEqual, obj, &ArrayObject::class_, temp, obj,
+                     &notPackedArray);
+
+  loadPtr(Address(obj, NativeObject::offsetOfElements()), temp);
+
+  // Test length == initializedLength.
+  Label done;
+  Address initLength(temp, ObjectElements::offsetOfInitializedLength());
+  load32(Address(temp, ObjectElements::offsetOfLength()), output);
+  branch32(Assembler::NotEqual, initLength, output, &notPackedArray);
+
+  // Test the NON_PACKED flag.
+  Address flags(temp, ObjectElements::offsetOfFlags());
+  branchTest32(Assembler::NonZero, flags, Imm32(ObjectElements::NON_PACKED),
+               &notPackedArray);
+
+  move32(Imm32(1), output);
+  jump(&done);
+
+  bind(&notPackedArray);
+  move32(Imm32(0), output);
+
+  bind(&done);
 }
 
 void MacroAssembler::branchIfNativeIteratorNotReusable(Register ni,

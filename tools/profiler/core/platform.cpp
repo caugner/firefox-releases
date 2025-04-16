@@ -31,9 +31,11 @@
 #include "GeckoProfiler.h"
 #include "GeckoProfilerReporter.h"
 #include "PageInformation.h"
+#include "ProfileBuffer.h"
 #include "ProfiledThreadData.h"
 #include "ProfilerBacktrace.h"
-#include "ProfileBuffer.h"
+#include "ProfilerChild.h"
+#include "ProfilerCodeAddressService.h"
 #include "ProfilerIOInterposeObserver.h"
 #include "ProfilerMarkerPayload.h"
 #include "ProfilerParent.h"
@@ -637,6 +639,7 @@ class CorePS {
 #endif
 
   PS_GET_AND_SET(const nsACString&, ProcessName)
+  PS_GET_AND_SET(const nsACString&, ETLDplus1)
 
  private:
   // The singleton instance
@@ -677,6 +680,9 @@ class CorePS {
 
   // Process name, provided by child process initialization code.
   nsAutoCString mProcessName;
+  // Private name, provided by child process initialization code (eTLD+1 in
+  // fission)
+  nsAutoCString mETLDplus1;
 
   // This memory buffer is used by the MergeStacks mechanism. Previously it was
   // stack allocated, but this led to a stack overflow, as it was too much
@@ -811,10 +817,11 @@ class ActivePS {
                             ProfilerFeature::HasFileIOAll(aFeatures))
                                ? new ProfilerIOInterposeObserver()
                                : nullptr),
-        mIsPaused(false)
+        mIsPaused(false),
+        mIsSamplingPaused(false)
 #if defined(GP_OS_linux) || defined(GP_OS_freebsd)
         ,
-        mWasPaused(false)
+        mWasSamplingPaused(false)
 #endif
   {
     // Deep copy aFilters.
@@ -1181,8 +1188,20 @@ class ActivePS {
 
   PS_GET_AND_SET(bool, IsPaused)
 
+  // True if sampling is paused (though generic `SetIsPaused()` or specific
+  // `SetIsSamplingPaused()`).
+  static bool IsSamplingPaused(PSLockRef lock) {
+    MOZ_ASSERT(sInstance);
+    return IsPaused(lock) || sInstance->mIsSamplingPaused;
+  }
+
+  static void SetIsSamplingPaused(PSLockRef, bool aIsSamplingPaused) {
+    MOZ_ASSERT(sInstance);
+    sInstance->mIsSamplingPaused = aIsSamplingPaused;
+  }
+
 #if defined(GP_OS_linux) || defined(GP_OS_freebsd)
-  PS_GET_AND_SET(bool, WasPaused)
+  PS_GET_AND_SET(bool, WasSamplingPaused)
 #endif
 
   static void DiscardExpiredDeadProfiledThreads(PSLockRef) {
@@ -1387,13 +1406,16 @@ class ActivePS {
   // The interposer that records main thread I/O.
   RefPtr<ProfilerIOInterposeObserver> mInterposeObserver;
 
-  // Is the profiler paused?
+  // Is the profiler fully paused?
   bool mIsPaused;
 
+  // Is the profiler periodic sampling paused?
+  bool mIsSamplingPaused;
+
 #if defined(GP_OS_linux) || defined(GP_OS_freebsd)
-  // Used to record whether the profiler was paused just before forking. False
+  // Used to record whether the sampler was paused just before forking. False
   // at all times except just before/after forking.
-  bool mWasPaused;
+  bool mWasSamplingPaused;
 #endif
 
   // Optional startup profile thread array from BaseProfiler.
@@ -2521,7 +2543,7 @@ static void StreamMetaJSCustomObject(
 
           aWriter.StringElement(NS_ConvertUTF16toUTF8(ext->Name()).get());
 
-          auto url = ext->GetURL(NS_LITERAL_STRING(""));
+          auto url = ext->GetURL(u""_ns);
           if (url.isOk()) {
             aWriter.StringElement(NS_ConvertUTF16toUTF8(url.unwrap()).get());
           }
@@ -2733,7 +2755,7 @@ static void locked_profiler_stream_json_for_this_process(
       ProfiledThreadData* profiledThreadData = thread.second;
       profiledThreadData->StreamJSON(
           buffer, cx, aWriter, CorePS::ProcessName(aLock),
-          CorePS::ProcessStartTime(), aSinceTime,
+          CorePS::ETLDplus1(aLock), CorePS::ProcessStartTime(), aSinceTime,
           ActivePS::FeatureJSTracer(aLock), aService);
     }
 
@@ -2755,10 +2777,10 @@ static void locked_profiler_stream_json_for_this_process(
       RefPtr<ThreadInfo> threadInfo = new ThreadInfo(
           "Java Main Thread", 0, false, CorePS::ProcessStartTime());
       ProfiledThreadData profiledThreadData(threadInfo, nullptr);
-      profiledThreadData.StreamJSON(javaBuffer, nullptr, aWriter,
-                                    CorePS::ProcessName(aLock),
-                                    CorePS::ProcessStartTime(), aSinceTime,
-                                    ActivePS::FeatureJSTracer(aLock), nullptr);
+      profiledThreadData.StreamJSON(
+          javaBuffer, nullptr, aWriter, CorePS::ProcessName(aLock),
+          CorePS::ETLDplus1(aLock), CorePS::ProcessStartTime(), aSinceTime,
+          ActivePS::FeatureJSTracer(aLock), nullptr);
     }
 #endif
 
@@ -3209,7 +3231,7 @@ void SamplerThread::Run() {
 
       TimeStamp expiredMarkersCleaned = TimeStamp::NowUnfuzzed();
 
-      if (!ActivePS::IsPaused(lock)) {
+      if (!ActivePS::IsSamplingPaused(lock)) {
         TimeDuration delta = sampleStart - CorePS::ProcessStartTime();
         ProfileBuffer& buffer = ActivePS::Buffer(lock);
 
@@ -3551,6 +3573,8 @@ void SamplerThread::Run() {
     InvokePostSamplingCallbacks(std::move(postSamplingCallbacks),
                                 samplingState);
 
+    ProfilerChild::ProcessPendingUpdate();
+
     // Calculate how long a sleep to request.  After the sleep, measure how
     // long we actually slept and take the difference into account when
     // calculating the sleep interval for the next iteration.  This is an
@@ -3687,7 +3711,7 @@ static ProfilingStack* locked_register_thread(PSLockRef aLock,
                                               void* aStackTop) {
   MOZ_RELEASE_ASSERT(CorePS::Exists());
 
-  MOZ_RELEASE_ASSERT(!FindCurrentThreadRegisteredThread(aLock));
+  MOZ_ASSERT(!FindCurrentThreadRegisteredThread(aLock));
 
   VTUNE_REGISTER_THREAD(aName);
 
@@ -3863,7 +3887,7 @@ void profiler_init(void* aStackTop) {
     CorePS::Create(lock);
 
     // profiler_init implicitly registers this thread as main thread.
-    locked_register_thread(lock, kMainThreadName, aStackTop);
+    Unused << locked_register_thread(lock, kMainThreadName, aStackTop);
 
     // Platform-specific initialization.
     PlatformInit(lock);
@@ -3981,7 +4005,6 @@ void profiler_init(void* aStackTop) {
       LOG("- MOZ_PROFILER_STARTUP_FILTERS = %s", startupFilters);
     }
 
-    StartAudioCallbackTracing();
     locked_profiler_start(lock, capacity, interval, features, filters.begin(),
                           filters.length(), 0, duration);
   }
@@ -4035,7 +4058,6 @@ void profiler_shutdown(IsFastShutdown aIsFastShutdown) {
         return;
       }
 
-      StopAudioCallbackTracing();
       samplerThread = locked_profiler_stop(lock);
     } else if (aIsFastShutdown == IsFastShutdown::Yes) {
       return;
@@ -4087,10 +4109,15 @@ static bool WriteProfileToJSONWriter(SpliceableChunkedJSONWriter& aWriter,
   return true;
 }
 
-void profiler_set_process_name(const nsACString& aProcessName) {
-  LOG("profiler_set_process_name(\"%s\")", aProcessName.Data());
+void profiler_set_process_name(const nsACString& aProcessName,
+                               const nsACString* aETLDplus1) {
+  LOG("profiler_set_process_name(\"%s\", \"%s\")", aProcessName.Data(),
+      aETLDplus1 ? aETLDplus1->Data() : "<none>");
   PSAutoLock lock(gPSMutex);
   CorePS::SetProcessName(lock, aProcessName);
+  if (aETLDplus1) {
+    CorePS::SetETLDplus1(lock, *aETLDplus1);
+  }
 }
 
 UniquePtr<char[]> profiler_get_profile(double aSinceTime,
@@ -4516,6 +4543,10 @@ static void locked_profiler_start(PSLockRef aLock, PowerOfTwo32 aCapacity,
   }
 #endif
 
+  if (ProfilerFeature::HasAudioCallbackTracing(aFeatures)) {
+    StartAudioCallbackTracing();
+  }
+
   // At the very end, set up RacyFeatures.
   RacyFeatures::SetActive(ActivePS::Features(aLock));
 }
@@ -4539,11 +4570,9 @@ void profiler_start(PowerOfTwo32 aCapacity, double aInterval,
 
     // Reset the current state if the profiler is running.
     if (ActivePS::Exists(lock)) {
-      StopAudioCallbackTracing();
       samplerThread = locked_profiler_stop(lock);
     }
 
-    StartAudioCallbackTracing();
     locked_profiler_start(lock, aCapacity, aInterval, aFeatures, aFilters,
                           aFilterCount, aActiveBrowsingContextID, aDuration);
   }
@@ -4589,9 +4618,7 @@ void profiler_ensure_started(PowerOfTwo32 aCapacity, double aInterval,
       if (!ActivePS::Equals(lock, aCapacity, aDuration, aInterval, aFeatures,
                             aFilters, aFilterCount, aActiveBrowsingContextID)) {
         // Stop and restart with different settings.
-        StopAudioCallbackTracing();
         samplerThread = locked_profiler_stop(lock);
-        StartAudioCallbackTracing();
         locked_profiler_start(lock, aCapacity, aInterval, aFeatures, aFilters,
                               aFilterCount, aActiveBrowsingContextID,
                               aDuration);
@@ -4599,7 +4626,6 @@ void profiler_ensure_started(PowerOfTwo32 aCapacity, double aInterval,
       }
     } else {
       // The profiler is stopped.
-      StartAudioCallbackTracing();
       locked_profiler_start(lock, aCapacity, aInterval, aFeatures, aFilters,
                             aFilterCount, aActiveBrowsingContextID, aDuration);
       startedProfiler = true;
@@ -4627,6 +4653,10 @@ void profiler_ensure_started(PowerOfTwo32 aCapacity, double aInterval,
 
   // At the very start, clear RacyFeatures.
   RacyFeatures::SetInactive();
+
+  if (ActivePS::FeatureAudioCallbackTracing(aLock)) {
+    StopAudioCallbackTracing();
+  }
 
 #if defined(GP_OS_android)
   if (ActivePS::FeatureJava(aLock)) {
@@ -4701,7 +4731,6 @@ void profiler_stop() {
     if (!ActivePS::Exists(lock)) {
       return;
     }
-    StopAudioCallbackTracing();
 
     samplerThread = locked_profiler_stop(lock);
   }
@@ -4761,15 +4790,17 @@ void profiler_pause() {
       return;
     }
 
+#if defined(GP_OS_android)
+    if (ActivePS::FeatureJava(lock) && !ActivePS::IsSamplingPaused(lock)) {
+      // Not paused yet, so this is the first pause, let Java know.
+      // TODO: Distinguish Pause and PauseSampling in Java.
+      java::GeckoJavaSampler::PauseSampling();
+    }
+#endif
+
     RacyFeatures::SetPaused();
     ActivePS::SetIsPaused(lock, true);
     ActivePS::Buffer(lock).AddEntry(ProfileBufferEntry::Pause(profiler_time()));
-
-#if defined(GP_OS_android)
-    if (ActivePS::FeatureJava(lock)) {
-      java::GeckoJavaSampler::Pause();
-    }
-#endif
   }
 
   // gPSMutex must be unlocked when we notify, to avoid potential deadlocks.
@@ -4795,8 +4826,10 @@ void profiler_resume() {
     RacyFeatures::SetUnpaused();
 
 #if defined(GP_OS_android)
-    if (ActivePS::FeatureJava(lock)) {
-      java::GeckoJavaSampler::Unpause();
+    if (ActivePS::FeatureJava(lock) && !ActivePS::IsSamplingPaused(lock)) {
+      // Not paused anymore, so this is the last unpause, let Java know.
+      // TODO: Distinguish Unpause and UnpauseSampling in Java.
+      java::GeckoJavaSampler::UnpauseSampling();
     }
 #endif
   }
@@ -4804,6 +4837,80 @@ void profiler_resume() {
   // gPSMutex must be unlocked when we notify, to avoid potential deadlocks.
   ProfilerParent::ProfilerResumed();
   NotifyObservers("profiler-resumed");
+}
+
+bool profiler_is_sampling_paused() {
+  MOZ_RELEASE_ASSERT(CorePS::Exists());
+
+  PSAutoLock lock(gPSMutex);
+
+  if (!ActivePS::Exists(lock)) {
+    return false;
+  }
+
+  return ActivePS::IsSamplingPaused(lock);
+}
+
+void profiler_pause_sampling() {
+  LOG("profiler_pause_sampling");
+
+  MOZ_RELEASE_ASSERT(CorePS::Exists());
+
+  {
+    PSAutoLock lock(gPSMutex);
+
+    if (!ActivePS::Exists(lock)) {
+      return;
+    }
+
+#if defined(GP_OS_android)
+    if (ActivePS::FeatureJava(lock) && !ActivePS::IsSamplingPaused(lock)) {
+      // Not paused yet, so this is the first pause, let Java know.
+      // TODO: Distinguish Pause and PauseSampling in Java.
+      java::GeckoJavaSampler::PauseSampling();
+    }
+#endif
+
+    RacyFeatures::SetSamplingPaused();
+    ActivePS::SetIsSamplingPaused(lock, true);
+    ActivePS::Buffer(lock).AddEntry(
+        ProfileBufferEntry::PauseSampling(profiler_time()));
+  }
+
+  // gPSMutex must be unlocked when we notify, to avoid potential deadlocks.
+  ProfilerParent::ProfilerPausedSampling();
+  NotifyObservers("profiler-paused-sampling");
+}
+
+void profiler_resume_sampling() {
+  LOG("profiler_resume_sampling");
+
+  MOZ_RELEASE_ASSERT(CorePS::Exists());
+
+  {
+    PSAutoLock lock(gPSMutex);
+
+    if (!ActivePS::Exists(lock)) {
+      return;
+    }
+
+    ActivePS::Buffer(lock).AddEntry(
+        ProfileBufferEntry::ResumeSampling(profiler_time()));
+    ActivePS::SetIsSamplingPaused(lock, false);
+    RacyFeatures::SetSamplingUnpaused();
+
+#if defined(GP_OS_android)
+    if (ActivePS::FeatureJava(lock) && !ActivePS::IsSamplingPaused(lock)) {
+      // Not paused anymore, so this is the last unpause, let Java know.
+      // TODO: Distinguish Unpause and UnpauseSampling in Java.
+      java::GeckoJavaSampler::UnpauseSampling();
+    }
+#endif
+  }
+
+  // gPSMutex must be unlocked when we notify, to avoid potential deadlocks.
+  ProfilerParent::ProfilerResumedSampling();
+  NotifyObservers("profiler-resumed-sampling");
 }
 
 bool profiler_feature_active(uint32_t aFeature) {
@@ -4835,6 +4942,11 @@ void profiler_remove_sampled_counter(BaseProfilerCount* aCounter) {
   CorePS::RemoveCounter(lock, aCounter);
 }
 
+static void maybelocked_profiler_add_marker_for_thread(
+    int aThreadId, JS::ProfilingCategoryPair aCategoryPair,
+    const char* aMarkerName, const ProfilerMarkerPayload& aPayload,
+    const PSAutoLock* aLockOrNull);
+
 ProfilingStack* profiler_register_thread(const char* aName,
                                          void* aGuessStackTop) {
   DEBUG_LOG("profiler_register_thread(%s)", aName);
@@ -4847,6 +4959,28 @@ ProfilingStack* profiler_register_thread(const char* aName,
   NS_SetCurrentThreadName(aName);
 
   PSAutoLock lock(gPSMutex);
+
+  if (RegisteredThread* thread = FindCurrentThreadRegisteredThread(lock);
+      thread) {
+    LOG("profiler_register_thread(%s) - thread %d already registered as %s",
+        aName, profiler_current_thread_id(), thread->Info()->Name());
+    // TODO: Use new name. This is currently not possible because the
+    // RegisteredThread's ThreadInfo cannot be changed.
+    // In the meantime, we record a marker that could be used in the frontend.
+    nsCString text("Thread ");
+    text.AppendInt(profiler_current_thread_id());
+    text.AppendLiteral(" \"");
+    text.AppendASCII(thread->Info()->Name());
+    text.AppendLiteral("\" attempted to re-register as \"");
+    text.AppendASCII(aName);
+    text.AppendLiteral("\"");
+    maybelocked_profiler_add_marker_for_thread(
+        CorePS::MainThreadId(), JS::ProfilingCategoryPair::OTHER_Profiling,
+        "profiler_register_thread again",
+        TextMarkerPayload(text, TimeStamp::NowUnfuzzed()), &lock);
+
+    return &thread->RacyRegisteredThread().ProfilingStack();
+  }
 
   void* stackTop = GetStackTop(aGuessStackTop);
   return locked_register_thread(lock, aName, stackTop);
@@ -4889,6 +5023,20 @@ void profiler_unregister_thread() {
     // registeredThread object.
     CorePS::RemoveRegisteredThread(lock, registeredThread);
   } else {
+    LOG("profiler_unregister_thread() - thread %d already unregistered",
+        profiler_current_thread_id());
+    // We cannot record a marker on this thread because it was already
+    // unregistered. Send it to the main thread (unless this *is* already the
+    // main thread, which has been unregistered); this may be useful to catch
+    // mismatched register/unregister pairs in Firefox.
+    if (int tid = profiler_current_thread_id(); tid != CorePS::MainThreadId()) {
+      nsCString threadIdString;
+      threadIdString.AppendInt(tid);
+      maybelocked_profiler_add_marker_for_thread(
+          CorePS::MainThreadId(), JS::ProfilingCategoryPair::OTHER_Profiling,
+          "profiler_unregister_thread again",
+          TextMarkerPayload(threadIdString, TimeStamp::NowUnfuzzed()), &lock);
+    }
     // There are two ways FindCurrentThreadRegisteredThread() might have failed.
     //
     // - TLSRegisteredThread::Init() failed in locked_register_thread().

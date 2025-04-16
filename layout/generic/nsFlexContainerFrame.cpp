@@ -21,6 +21,7 @@
 #include "nsContentUtils.h"
 #include "nsCSSAnonBoxes.h"
 #include "nsDisplayList.h"
+#include "nsFieldSetFrame.h"
 #include "nsIFrameInlines.h"
 #include "nsLayoutUtils.h"
 #include "nsPlaceholderFrame.h"
@@ -128,45 +129,6 @@ static StyleContentDistribution ConvertLegacyStyleToJustifyContent(
   MOZ_ASSERT_UNREACHABLE("Unrecognized mBoxPack enum value");
   // Fall back to default value of "justify-content" property:
   return {StyleAlignFlags::FLEX_START};
-}
-
-// Helper-function to find the first non-anonymous-box descendent of aFrame.
-static nsIFrame* GetFirstNonAnonBoxDescendant(nsIFrame* aFrame) {
-  while (aFrame) {
-    // If aFrame isn't an anonymous container, or it's text or such, then it'll
-    // do.
-    if (!aFrame->Style()->IsAnonBox() ||
-        nsCSSAnonBoxes::IsNonElement(aFrame->Style()->GetPseudoType())) {
-      break;
-    }
-
-    // Otherwise, descend to its first child and repeat.
-
-    // SPECIAL CASE: if we're dealing with an anonymous table, then it might
-    // be wrapping something non-anonymous in its caption or col-group lists
-    // (instead of its principal child list), so we have to look there.
-    // (Note: For anonymous tables that have a non-anon cell *and* a non-anon
-    // column, we'll always return the column. This is fine; we're really just
-    // looking for a handle to *anything* with a meaningful content node inside
-    // the table, for use in DOM comparisons to things outside of the table.)
-    if (MOZ_UNLIKELY(aFrame->IsTableWrapperFrame())) {
-      nsIFrame* captionDescendant = GetFirstNonAnonBoxDescendant(
-          aFrame->GetChildList(kCaptionList).FirstChild());
-      if (captionDescendant) {
-        return captionDescendant;
-      }
-    } else if (MOZ_UNLIKELY(aFrame->IsTableFrame())) {
-      nsIFrame* colgroupDescendant = GetFirstNonAnonBoxDescendant(
-          aFrame->GetChildList(kColGroupList).FirstChild());
-      if (colgroupDescendant) {
-        return colgroupDescendant;
-      }
-    }
-
-    // USUAL CASE: Descend to the first child in principal list.
-    aFrame = aFrame->PrincipalChildList().FirstChild();
-  }
-  return aFrame;
 }
 
 /**
@@ -858,7 +820,11 @@ class nsFlexContainerFrame::FlexItem final {
 
   // Mutable b/c it's set & resolved lazily, sometimes via const pointer. See
   // comment above SetAscent().
-  mutable nscoord mAscent = 0;
+  // We initialize this to ASK_FOR_BASELINE, and opportunistically fill it in
+  // with a real value if we end up reflowing this flex item. (But if we don't
+  // reflow this flex item, then this sentinel tells us that we don't know it
+  // yet & anyone who cares will need to explicitly request it.)
+  mutable nscoord mAscent = ReflowOutput::ASK_FOR_BASELINE;
 
   // Temporary state, while we're resolving flexible widths (for our main size)
   // XXXdholbert To save space, we could use a union to make these variables
@@ -1376,7 +1342,7 @@ FlexItem* nsFlexContainerFrame::GenerateFlexItemForChild(
     LayoutDeviceIntSize widgetMinSize;
     bool canOverride = true;
     PresContext()->Theme()->GetMinimumWidgetSize(PresContext(), aChildFrame,
-                                                 disp->mAppearance,
+                                                 disp->EffectiveAppearance(),
                                                  &widgetMinSize, &canOverride);
 
     nscoord widgetMainMinSize = PresContext()->DevPixelsToAppUnits(
@@ -1445,7 +1411,7 @@ FlexItem* nsFlexContainerFrame::GenerateFlexItemForChild(
 // Indicates whether the cross-size property is set to something definite,
 // for the purpose of intrinsic ratio calculations.
 // The logic here should be similar to the logic for isAutoISize/isAutoBSize
-// in nsFrame::ComputeSizeWithIntrinsicDimensions().
+// in nsIFrame::ComputeSizeWithIntrinsicDimensions().
 static bool IsCrossSizeDefinite(const ReflowInput& aItemReflowInput,
                                 const FlexboxAxisTracker& aAxisTracker) {
   const nsStylePosition* pos = aItemReflowInput.mStylePosition;
@@ -1750,7 +1716,7 @@ void nsFlexContainerFrame::ResolveAutoFlexBasisAndMinSize(
  * won't change unless one of the pieces of the "key" change, or the flex
  * item's intrinsic size is marked as dirty (due to a style or DOM change).
  * (The latter will cause the cached value to be discarded, in
- * nsFrame::MarkIntrinsicISizesDirty.)
+ * nsIFrame::MarkIntrinsicISizesDirty.)
  *
  * Note that the components of "Key" (mComputed{MinB,MaxB,}Size and
  * mAvailableBSize) are sufficient to catch any changes to the flex container's
@@ -1838,14 +1804,14 @@ enum class FlexItemReflowType {
 
   // A reflow with the flex item's "final" size at the end of the flex layout
   // algorithm.
-  // XXXdholbert Unused for now, but will be used in a later patch.
   Final,
 };
 
 /**
- * This class stores information about the previous reflow for a given flex
- * item.  This should hopefully help us avoid redundant reflows of that
- * flex item.
+ * This class stores information about the conditions and results for the most
+ * recent ReflowChild call that we made on a given flex item.  This information
+ * helps us reason about whether we can assume that a subsequent ReflowChild()
+ * invocation is unnecessary & skippable.
  */
 class nsFlexContainerFrame::CachedFlexItemData {
  public:
@@ -1854,13 +1820,70 @@ class nsFlexContainerFrame::CachedFlexItemData {
                      FlexItemReflowType aType) {
     if (aType == FlexItemReflowType::Measuring) {
       mBAxisMeasurement.emplace(aReflowInput, aReflowOutput);
+    } else {
+      UpdateFinalReflowSize(aReflowInput, aReflowOutput);
     }
+  }
+
+  // This method is intended to be called just after we perform a "final
+  // reflow" for a given flex item.
+  void UpdateFinalReflowSize(const ReflowInput& aReflowInput,
+                             const ReflowOutput& aReflowOutput) {
+    auto wm = aReflowInput.GetWritingMode();
+
+    // Update the cached size:
+    mFinalReflowSize.reset();
+    mFinalReflowSize.emplace(
+        aReflowOutput.Size(wm) -
+        aReflowInput.ComputedLogicalBorderPadding().Size(wm));
+    // Save whether this reflow's BSize was considered definite vs. indefinite.
+    // (For a flex item "final reflow", this is 100% determined by the
+    // "mTreatBSizeAsIndefinite" ReflowInput flag -- when we get to this
+    // reflow, the flex container has already resolved an exact BSize for the
+    // flex item (it has to, in order position/size the item in its axes); and
+    // the only question is whether we're pretending that BSize is definite
+    // vs. indefinite.)
+    mLastReflowTreatedBSizeAsIndefinite =
+        aReflowInput.mFlags.mTreatBSizeAsIndefinite;
+  }
+
+  // This method is intended to be called for situations where we decide to
+  // skip a final reflow because we've just done a measuring reflow which left
+  // us (and our descendants) with the correct sizes. In this scenario, we
+  // still want to cache the size as if we did a final reflow (because we've
+  // determined that the recent measuring reflow was sufficient).  That way,
+  // our flex container can still skip a final reflow for this item in the
+  // future as long as conditions are right.
+  void UpdateFinalReflowSize(const FlexItem& aItem, const LogicalSize& aSize) {
+    MOZ_ASSERT(!mFinalReflowSize,
+               "This version of the method is only intended to be called when "
+               "the most recent reflow was a 'measuring reflow'; and that "
+               "should have cleared out mFinalReflowSize");
+
+    mFinalReflowSize.reset();  // Just in case this assert^ fails.
+    mFinalReflowSize.emplace(aSize);
+
+    mLastReflowTreatedBSizeAsIndefinite = aItem.TreatBSizeAsIndefinite();
   }
 
   // If the flex container needs a measuring reflow for the flex item, then the
   // resulting block-axis measurements can be cached here.  If no measurement
   // has been needed so far, then this member will be Nothing().
   Maybe<CachedBAxisMeasurement> mBAxisMeasurement;
+
+  // Content-box size that the corresponding flex item used in its most recent
+  // "final reflow". (Note: the assumption here is that this reflow was this
+  // item's most recent reflow of any type.  If the item ends up undergoing a
+  // subsequent measuring reflow, then this value needs to be cleared, because
+  // at that point it's no longer an accurate way of reasoning about the
+  // current state of the frame tree.)
+  Maybe<LogicalSize> mFinalReflowSize;
+
+  // True if the flex item's BSize was considered "indefinite" in its most
+  // recent "final reflow". (This bool is only meaningful if mFinalReflowSize
+  // is set; hence, the initial value is meaningless, but initialized to false
+  // to appease compilers' uninitialized-value checkers.)
+  bool mLastReflowTreatedBSizeAsIndefinite = false;
 
   // Instances of this class are stored under this frame property, on
   // frames that are flex items:
@@ -1869,8 +1892,10 @@ class nsFlexContainerFrame::CachedFlexItemData {
 
 void nsFlexContainerFrame::MarkCachedFlexMeasurementsDirty(
     nsIFrame* aItemFrame) {
+  MOZ_ASSERT(aItemFrame->IsFlexItem());
   if (auto* cache = aItemFrame->GetProperty(CachedFlexItemData::Prop())) {
     cache->mBAxisMeasurement.reset();
+    cache->mFinalReflowSize.reset();
   }
 }
 
@@ -1922,6 +1947,9 @@ nsFlexContainerFrame::MeasureAscentAndBSizeForFlexItem(
   if (cachedData) {
     cachedData->mBAxisMeasurement.reset();
     cachedData->mBAxisMeasurement.emplace(aChildReflowInput, childReflowOutput);
+    // Clear any cached "last final-reflow size", too, because now the most
+    // recent reflow was *not* a "final reflow".
+    cachedData->mFinalReflowSize.reset();
   } else {
     cachedData = new CachedFlexItemData(aChildReflowInput, childReflowOutput,
                                         FlexItemReflowType::Measuring);
@@ -2304,6 +2332,17 @@ bool FlexItem::NeedsFinalReflow(const nscoord aAvailableBSizeForItem) const {
     return true;
   }
 
+  // Bug 1637091: We can do better and skip this flex item's final reflow if
+  // both this flex item's block-size and overflow areas can fit the
+  // aAvailableBSizeForItem.
+  if (aAvailableBSizeForItem != NS_UNCONSTRAINEDSIZE) {
+    FLEX_LOG(
+        "[frag] Flex item %p needed both a measuring reflow and a final "
+        "reflow due to constrained available block-size",
+        mFrame);
+    return true;
+  }
+
   // Flex item's final content-box size (in terms of its own writing-mode):
   const LogicalSize finalSize = mIsInlineAxisMainAxis
                                     ? LogicalSize(mWM, mMainSize, mCrossSize)
@@ -2334,31 +2373,84 @@ bool FlexItem::NeedsFinalReflow(const nscoord aAvailableBSizeForItem) const {
       return true;
     }
 
-    // Bug 1637091: We can do better and skip this flex item's final reflow if
-    // both this flex item's block-size and overflow areas can fit the
-    // aAvailableBSizeForItem.
-    if (aAvailableBSizeForItem != NS_UNCONSTRAINEDSIZE) {
-      FLEX_LOG(
-          "[frag] Flex item %p needed both a measuring reflow and a final "
-          "reflow due to constrained available block-size",
-          mFrame);
-      return true;
-    }
-
     // If we get here, then this flex item had a measuring reflow, it left us
     // with the correct size, none of its descendants care that its BSize may
     // now be considered definite, and it can fit into the available block-size.
     // So it doesn't need a final reflow.
+    //
+    // We now cache this size as if we had done a final reflow (because we've
+    // determined that the measuring reflow was effectively equivalent).  This
+    // way, in our next time through flex layout, we may be able to skip both
+    // the measuring reflow *and* the final reflow (if conditions are the same
+    // as they are now).
+    if (auto* cache = mFrame->GetProperty(CachedFlexItemData::Prop())) {
+      cache->UpdateFinalReflowSize(*this, finalSize);
+    }
+
     return false;
   }
 
-  // This item didn't receive a measuring reflow. Does it need to be reflowed
-  // at all?
+  // This item didn't receive a measuring reflow (at least, not during this
+  // reflow of our flex container).  We may still be able to skip reflowing it
+  // (i.e. return false from this function), if its subtree is clean & its most
+  // recent "final reflow" had it at the correct content-box size &
+  // definiteness.
+  // Let's check for each condition that would still require us to reflow:
+  if (mFrame->IsSubtreeDirty()) {
+    FLEX_LOG(
+        "[perf] Flex item %p needed a final reflow due to its subtree"
+        "being dirty",
+        mFrame);
+    return true;
+  }
 
-  // XXXdholbert in a later patch, we'll add some special cases here, making
-  // use of "finalSize" (which is why it's declared at this outer scope).  For
-  // now, we assume that we unconditionally must reflow the item.
-  return true;
+  // Cool; this item & its subtree haven't experienced any style/content
+  // changes that would automatically require a reflow.
+  // (Note that if e.g. 'padding' had changed, that would cause our frame to
+  // be marked as dirty; this is how we can get away with only considering
+  // the content-box size below, even though the frame technically includes
+  // the space for border & padding. Also: hypothetically if our padding
+  // changed via being a percent value and its percent-basis changing, then
+  // the percent-basis change should've cleared descendant intrinsic sizes,
+  // which would purge cached values via MarkCachedFlexMeasurementsDirty
+  // and would make us fail the "if (cache...") check below.)
+
+  // Did we cache the content-box size from its most recent "final reflow"?
+  auto* cache = mFrame->GetProperty(CachedFlexItemData::Prop());
+  if (!cache || !cache->mFinalReflowSize) {
+    FLEX_LOG(
+        "[perf] Flex item %p needed a final reflow due to lacking a "
+        "cached mFinalReflowSize (maybe cache was cleared)",
+        mFrame);
+    return true;
+  }
+
+  // Does the cached size match our current size?
+  if (*cache->mFinalReflowSize != finalSize) {
+    FLEX_LOG(
+        "[perf] Flex item %p needed a final reflow due to having a "
+        "different content box size vs. its most recent final reflow",
+        mFrame);
+    return true;
+  }
+
+  // The flex container is giving this flex item the same size that the item
+  // had on its most recent "final reflow". But if its definiteness changed and
+  // one of the descendants cares, then it would still need a reflow.
+  if (cache->mLastReflowTreatedBSizeAsIndefinite != mTreatBSizeAsIndefinite &&
+      FrameHasRelativeBSizeDependency(mFrame)) {
+    FLEX_LOG(
+        "[perf] Flex item %p needed a final reflow due to having "
+        "its BSize change definiteness & having a rel-BSize child",
+        mFrame);
+    return true;
+  }
+
+  // If we get here, we can skip the final reflow! (The item's subtree isn't
+  // dirty, and our current conditions are sufficiently similar to the most
+  // recent "final reflow" that it should have left our subtree in the correct
+  // state.)
+  return false;
 }
 
 // Keeps track of our position along a particular axis (where a '0' position
@@ -2605,7 +2697,7 @@ void nsFlexContainerFrame::Init(nsIContent* aContent, nsContainerFrame* aParent,
 
 #ifdef DEBUG_FRAME_DUMP
 nsresult nsFlexContainerFrame::GetFrameName(nsAString& aResult) const {
-  return MakeFrameName(NS_LITERAL_STRING("FlexContainer"), aResult);
+  return MakeFrameName(u"FlexContainer"_ns, aResult);
 }
 #endif
 
@@ -3860,6 +3952,7 @@ void nsFlexContainerFrame::GenerateFlexLines(
   AddOrRemoveStateBits(NS_STATE_FLEX_NORMAL_FLOW_CHILDREN_IN_CSS_ORDER,
                        iter.ItemsAreAlreadyInOrder());
 
+  bool prevItemRequestedBreakAfter = false;
   const bool useMozBoxCollapseBehavior =
       ShouldUseMozBoxCollapseBehavior(aReflowInput.mStyleDisplay);
 
@@ -3871,10 +3964,13 @@ void nsFlexContainerFrame::GenerateFlexLines(
       continue;
     }
 
-    // Honor "page-break-before", if we're multi-line and this line isn't empty:
+    // If we're multi-line and current line isn't empty, create a new flex line
+    // to satisfy the previous flex item's request or to honor "break-before".
     if (!isSingleLine && !curLine->IsEmpty() &&
-        childFrame->StyleDisplay()->BreakBefore()) {
+        (prevItemRequestedBreakAfter ||
+         childFrame->StyleDisplay()->BreakBefore())) {
       curLine = ConstructNewFlexLine();
+      prevItemRequestedBreakAfter = false;
     }
 
     if (useMozBoxCollapseBehavior &&
@@ -3931,10 +4027,10 @@ void nsFlexContainerFrame::GenerateFlexLines(
     // Update the line's bookkeeping about how large its items collectively are.
     curLine->AddLastItemToMainSizeTotals();
 
-    // Honor "page-break-after", if we're multi-line and have more children:
-    if (!isSingleLine && childFrame->GetNextSibling() &&
-        childFrame->StyleDisplay()->BreakAfter()) {
-      curLine = ConstructNewFlexLine();
+    // Honor "break-after" if we're multi-line. If we have more children, we
+    // will create a new flex line in the next iteration.
+    if (!isSingleLine && childFrame->StyleDisplay()->BreakAfter()) {
+      prevItemRequestedBreakAfter = true;
     }
     itemIdxInContainer++;
   }
@@ -4494,7 +4590,7 @@ void nsFlexContainerFrame::Reflow(nsPresContext* aPresContext,
 
 // Class to let us temporarily provide an override value for the the main-size
 // CSS property ('width' or 'height') on a flex item, for use in
-// nsFrame::ComputeSizeWithIntrinsicDimensions.
+// nsIFrame::ComputeSizeWithIntrinsicDimensions.
 // (We could use this overridden size more broadly, too, but it's probably
 // better to avoid property-table accesses.  So, where possible, we communicate
 // the resolved main-size to the child via modifying its reflow input directly,
@@ -4621,7 +4717,7 @@ void nsFlexContainerFrame::CreateFlexLineAndFlexItemInfo(
       // anonymous flex item, e.g. wrapping one or more text nodes.
       // DevTools wants the content node for the actual child in
       // the DOM tree, so we descend through anonymous boxes.
-      nsIFrame* targetFrame = GetFirstNonAnonBoxDescendant(frame);
+      nsIFrame* targetFrame = GetFirstNonAnonBoxInSubtree(frame);
       nsIContent* content = targetFrame->GetContent();
 
       // Skip over content that is only whitespace, which might
@@ -4716,10 +4812,19 @@ nsFlexContainerFrame* nsFlexContainerFrame::GetFlexFrameWithComputedInfo(
     nsFlexContainerFrame* flexFrame = nullptr;
 
     if (aFrame) {
-      nsIFrame* contentFrame = aFrame->GetContentInsertionFrame();
-      if (contentFrame && (contentFrame->IsFlexContainerFrame())) {
-        flexFrame = static_cast<nsFlexContainerFrame*>(contentFrame);
+      nsIFrame* inner = aFrame;
+      if (MOZ_UNLIKELY(aFrame->IsFieldSetFrame())) {
+        inner = static_cast<nsFieldSetFrame*>(aFrame)->GetInner();
       }
+      // Since "Get" methods like GetInner and GetContentInsertionFrame can
+      // return null, we check the return values before dereferencing. Our
+      // calling pattern makes this unlikely, but we're being careful.
+      nsIFrame* insertionFrame =
+          inner ? inner->GetContentInsertionFrame() : nullptr;
+      nsIFrame* possibleFlexFrame = insertionFrame ? insertionFrame : aFrame;
+      flexFrame = possibleFlexFrame->IsFlexContainerFrame()
+                      ? static_cast<nsFlexContainerFrame*>(possibleFlexFrame)
+                      : nullptr;
     }
     return flexFrame;
   };
@@ -5426,6 +5531,15 @@ nsReflowStatus nsFlexContainerFrame::ReflowFlexItem(
                     ReflowChildFlags::ApplyRelativePositioning);
 
   aItem.SetAscent(childReflowOutput.BlockStartAscent());
+
+  // Update our cached flex item info:
+  if (auto* cached = aItem.Frame()->GetProperty(CachedFlexItemData::Prop())) {
+    cached->UpdateFinalReflowSize(childReflowInput, childReflowOutput);
+  } else {
+    cached = new CachedFlexItemData(childReflowInput, childReflowOutput,
+                                    FlexItemReflowType::Final);
+    aItem.Frame()->SetProperty(CachedFlexItemData::Prop(), cached);
+  }
 
   return childReflowStatus;
 }

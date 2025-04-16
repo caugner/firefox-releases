@@ -31,10 +31,6 @@
  *
  * Messages sent:
  *
- *   Printing:Print
- *     Kick off a print job for a nsIDOMWindow, passing the outer window ID as
- *     windowID.
- *
  *   Printing:Preview:Enter
  *     This message is sent to put content into print preview mode. We pass
  *     the content window of the browser we're showing the preview of, and
@@ -61,6 +57,13 @@
  *     other solutions.
  *
  */
+
+XPCOMUtils.defineLazyPreferenceGetter(
+  this,
+  "PRINT_TAB_MODAL",
+  "print.tab_modal.enabled",
+  false
+);
 
 var gFocusedElement = null;
 
@@ -111,12 +114,47 @@ var PrintUtils = {
   },
 
   /**
-   * Starts the process of printing the contents of a window.
+   * Opens the tab modal version of the print UI for the current tab.
    *
    * @param aBrowsingContext
    *        The BrowsingContext of the window to print.
    */
-  printWindow(aBrowsingContext) {
+  _openTabModalPrint(aBrowsingContext) {
+    let printPath = "chrome://global/content/print.html";
+    gBrowser.loadOneTab(
+      `${printPath}?browsingContextId=${aBrowsingContext.id}`,
+      {
+        inBackground: false,
+        relatedToCurrent: true,
+        triggeringPrincipal: Services.scriptSecurityManager.getSystemPrincipal(),
+      }
+    );
+  },
+
+  /**
+   * Initialize a print, this will open the tab modal UI if it is enabled or
+   * defer to the native dialog/silent print.
+   *
+   * @param aBrowsingContext
+   *        The BrowsingContext of the window to print.
+   */
+  startPrintWindow(aBrowsingContext) {
+    if (PRINT_TAB_MODAL) {
+      this._openTabModalPrint(aBrowsingContext);
+    } else {
+      this.printWindow(aBrowsingContext);
+    }
+  },
+
+  /**
+   * Starts the process of printing the contents of a window.
+   *
+   * @param aBrowsingContext
+   *        The BrowsingContext of the window to print.
+   * @param {Object?} aPrintSettings
+   *        Optional print settings for the print operation
+   */
+  printWindow(aBrowsingContext, aPrintSettings) {
     let windowID = aBrowsingContext.currentWindowGlobal.outerWindowId;
     let topBrowser = aBrowsingContext.top.embedderElement;
 
@@ -130,11 +168,23 @@ var PrintUtils = {
       this._logKeyedTelemetry("PRINT_DIALOG_OPENED_COUNT", "FROM_PAGE");
     }
 
-    topBrowser.messageManager.sendAsyncMessage("Printing:Print", {
-      windowID,
-      simplifiedMode: this._shouldSimplify,
-      lastUsedPrinterName: this._getLastUsedPrinterName(),
-    });
+    // Use the passed in settings if provided, otherwise pull the saved ones.
+    let printSettings = aPrintSettings || this.getPrintSettings();
+
+    // Set the title so that the print dialog can pick it up and
+    // use it to generate the filename for save-to-PDF.
+    printSettings.title = this._originalTitle || topBrowser.contentTitle;
+
+    if (this._shouldSimplify) {
+      // The generated document for simplified print preview has "about:blank"
+      // as its URL. We need to set docURL here so that the print header/footer
+      // can be given the original document's URL.
+      printSettings.docURL = this._originalURL || topBrowser.currentURI.spec;
+    }
+
+    // At some point we should handle the Promise that this returns (report
+    // rejection to telemetry?)
+    topBrowser.print(windowID, printSettings);
 
     if (printPreviewIsOpen) {
       if (this._shouldSimplify) {
@@ -187,6 +237,11 @@ var PrintUtils = {
    *        to it will be used).
    */
   printPreview(aListenerObj) {
+    if (PRINT_TAB_MODAL) {
+      this._openTabModalPrint(aListenerObj.getSourceBrowser().browsingContext);
+      return;
+    }
+
     // If we already have a toolbar someone is calling printPreview() to get us
     // to refresh the display and aListenerObj won't be passed.
     let printPreviewTB = document.getElementById("print-preview-toolbar");
@@ -329,6 +384,12 @@ var PrintUtils = {
     );
 
     Services.prompt.alert(window, title, msg);
+
+    Services.telemetry.keyedScalarAdd(
+      "printing.error",
+      this._getErrorCodeForNSResult(nsresult),
+      1
+    );
   },
 
   receiveMessage(aMessage) {
@@ -336,11 +397,6 @@ var PrintUtils = {
       this._displayPrintingError(
         aMessage.data.nsresult,
         aMessage.data.isPrinting
-      );
-      Services.telemetry.keyedScalarAdd(
-        "printing.error",
-        this._getErrorCodeForNSResult(aMessage.data.nsresult),
-        1
       );
       return undefined;
     }
@@ -678,6 +734,9 @@ var PrintUtils = {
     this.ensureProgressDialogClosed();
 
     this._listener.onExit();
+
+    this._originalTitle = "";
+    this._originalURL = "";
   },
 
   logTelemetry(ID) {

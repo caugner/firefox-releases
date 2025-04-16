@@ -7,6 +7,7 @@
 #ifndef ProfilerChild_h
 #define ProfilerChild_h
 
+#include "mozilla/DataMutex.h"
 #include "mozilla/PProfilerChild.h"
 #include "mozilla/ProfileBufferControlledChunkManager.h"
 #include "mozilla/RefPtr.h"
@@ -33,6 +34,9 @@ class ProfilerChild final : public PProfilerChild,
 
   void Destroy();
 
+  // This should be called regularly from outside of the profiler lock.
+  static void ProcessPendingUpdate();
+
  private:
   virtual ~ProfilerChild();
 
@@ -42,6 +46,8 @@ class ProfilerChild final : public PProfilerChild,
   mozilla::ipc::IPCResult RecvStop() override;
   mozilla::ipc::IPCResult RecvPause() override;
   mozilla::ipc::IPCResult RecvResume() override;
+  mozilla::ipc::IPCResult RecvPauseSampling() override;
+  mozilla::ipc::IPCResult RecvResumeSampling() override;
   mozilla::ipc::IPCResult RecvAwaitNextChunkManagerUpdate(
       AwaitNextChunkManagerUpdateResolver&& aResolve) override;
   mozilla::ipc::IPCResult RecvDestroyReleasedChunksAtOrBefore(
@@ -58,7 +64,7 @@ class ProfilerChild final : public PProfilerChild,
   void ResetChunkManager();
   void ResolveChunkUpdate(
       PProfilerChild::AwaitNextChunkManagerUpdateResolver& aResolve);
-  void ChunkManagerUpdateCallback(
+  void ProcessChunkManagerUpdate(
       ProfileBufferControlledChunkManager::Update&& aUpdate);
 
   nsCOMPtr<nsIThread> mThread;
@@ -67,6 +73,12 @@ class ProfilerChild final : public PProfilerChild,
   ProfileBufferControlledChunkManager* mChunkManager = nullptr;
   AwaitNextChunkManagerUpdateResolver mAwaitNextChunkManagerUpdateResolver;
   ProfileBufferControlledChunkManager::Update mChunkManagerUpdate;
+
+  struct ProfilerChildAndUpdate {
+    RefPtr<ProfilerChild> mProfilerChild;
+    ProfileBufferControlledChunkManager::Update mUpdate;
+  };
+  static StaticDataMutex<ProfilerChildAndUpdate> sPendingChunkManagerUpdate;
 };
 
 }  // namespace mozilla

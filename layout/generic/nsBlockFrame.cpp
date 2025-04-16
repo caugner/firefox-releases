@@ -19,6 +19,7 @@
 #include "mozilla/PresShell.h"
 #include "mozilla/StaticPrefs_browser.h"
 #include "mozilla/StaticPrefs_layout.h"
+#include "mozilla/SVGUtils.h"
 #include "mozilla/ToString.h"
 #include "mozilla/UniquePtr.h"
 
@@ -166,7 +167,7 @@ static bool LineHasVisibleInlineContent(nsLineBox* aLine) {
 
 /**
  * Iterates through the frame's in-flow children and
- * unions the visual overflow of all text frames which
+ * unions the ink overflow of all text frames which
  * participate in the line aFrame belongs to.
  * If a child of aFrame is not a text frame,
  * we recurse with the child as the aFrame argument.
@@ -178,7 +179,7 @@ static nsRect GetFrameTextArea(nsIFrame* aFrame,
                                nsDisplayListBuilder* aBuilder) {
   nsRect textArea;
   if (aFrame->IsTextFrame()) {
-    textArea = aFrame->GetVisualOverflowRect();
+    textArea = aFrame->InkOverflowRect();
   } else if (aFrame->IsFrameOfType(nsIFrame::eLineParticipant)) {
     for (nsIFrame* kid : aFrame->PrincipalChildList()) {
       nsRect kidTextArea = GetFrameTextArea(kid, aBuilder);
@@ -191,8 +192,8 @@ static nsRect GetFrameTextArea(nsIFrame* aFrame,
 
 /**
  * Iterates through the line's children and
- * unions the visual overflow of all text frames.
- * GetFrameTextArea unions and returns the visual overflow
+ * unions the ink overflow of all text frames.
+ * GetFrameTextArea unions and returns the ink overflow
  * from all line-participating text frames within the given child.
  * The nsRect returned from GetLineTextArea is offset
  * relative to the given line.
@@ -490,7 +491,7 @@ void nsBlockFrame::List(FILE* out, const char* aPrefix,
   nsCString str;
   ListGeneric(str, aPrefix, aFlags);
 
-  fprintf_stderr(out, "%s<\n", str.get());
+  fprintf_stderr(out, "%s <\n", str.get());
 
   nsCString pfx(aPrefix);
   pfx += "  ";
@@ -521,32 +522,19 @@ void nsBlockFrame::List(FILE* out, const char* aPrefix,
   // skip the principal list - we printed the lines above
   // skip the overflow list - we printed the overflow lines above
   ChildListIDs skip = {kPrincipalList, kOverflowList};
-  for (const auto& [list, listID] : ChildLists()) {
-    if (skip.contains(listID)) {
-      continue;
-    }
-    fprintf_stderr(out, "%s%s %p <\n", pfx.get(),
-                   mozilla::layout::ChildListName(listID),
-                   &GetChildList(listID));
-    nsCString nestedPfx(pfx);
-    nestedPfx += "  ";
-    for (nsIFrame* kid : list) {
-      kid->List(out, nestedPfx.get(), aFlags);
-    }
-    fprintf_stderr(out, "%s>\n", pfx.get());
-  }
+  ListChildLists(out, pfx.get(), aFlags, skip);
 
   fprintf_stderr(out, "%s>\n", aPrefix);
 }
 
 nsresult nsBlockFrame::GetFrameName(nsAString& aResult) const {
-  return MakeFrameName(NS_LITERAL_STRING("Block"), aResult);
+  return MakeFrameName(u"Block"_ns, aResult);
 }
 #endif
 
 void nsBlockFrame::InvalidateFrame(uint32_t aDisplayItemKey,
                                    bool aRebuildDisplayItems) {
-  if (nsSVGUtils::IsInSVGTextSubtree(this)) {
+  if (SVGUtils::IsInSVGTextSubtree(this)) {
     NS_ASSERTION(GetParent()->IsSVGTextFrame(),
                  "unexpected block frame in SVG text");
     GetParent()->InvalidateFrame();
@@ -558,7 +546,7 @@ void nsBlockFrame::InvalidateFrame(uint32_t aDisplayItemKey,
 void nsBlockFrame::InvalidateFrameWithRect(const nsRect& aRect,
                                            uint32_t aDisplayItemKey,
                                            bool aRebuildDisplayItems) {
-  if (nsSVGUtils::IsInSVGTextSubtree(this)) {
+  if (SVGUtils::IsInSVGTextSubtree(this)) {
     NS_ASSERTION(GetParent()->IsSVGTextFrame(),
                  "unexpected block frame in SVG text");
     GetParent()->InvalidateFrame();
@@ -928,7 +916,7 @@ nscoord nsBlockFrame::GetPrefISize(gfxContext* aRenderingContext) {
 nsRect nsBlockFrame::ComputeTightBounds(DrawTarget* aDrawTarget) const {
   // be conservative
   if (Style()->HasTextDecorationLines()) {
-    return GetVisualOverflowRect();
+    return InkOverflowRect();
   }
   return ComputeSimpleTightBounds(aDrawTarget);
 }
@@ -1303,7 +1291,7 @@ void nsBlockFrame::Reflow(nsPresContext* aPresContext, ReflowOutput& aMetrics,
 
   // OK, some lines may be reflowed. Blow away any saved line cursor
   // because we may invalidate the nondecreasing
-  // overflowArea.VisualOverflow().y/yMost invariant, and we may even
+  // overflowArea.InkOverflow().y/yMost invariant, and we may even
   // delete the line with the line cursor.
   ClearLineCursor();
 
@@ -1640,9 +1628,9 @@ void nsBlockFrame::Reflow(nsPresContext* aPresContext, ReflowOutput& aMetrics,
            ToString(aStatus).c_str(), aMetrics.ISize(parentWM),
            aMetrics.BSize(parentWM), aMetrics.mCarriedOutBEndMargin.get());
     if (HasOverflowAreas()) {
-      printf(" overflow-vis={%d,%d,%d,%d}", aMetrics.VisualOverflow().x,
-             aMetrics.VisualOverflow().y, aMetrics.VisualOverflow().width,
-             aMetrics.VisualOverflow().height);
+      printf(" overflow-vis={%d,%d,%d,%d}", aMetrics.InkOverflow().x,
+             aMetrics.InkOverflow().y, aMetrics.InkOverflow().width,
+             aMetrics.InkOverflow().height);
       printf(" overflow-scr={%d,%d,%d,%d}", aMetrics.ScrollableOverflow().x,
              aMetrics.ScrollableOverflow().y,
              aMetrics.ScrollableOverflow().width,
@@ -2058,12 +2046,12 @@ void nsBlockFrame::ComputeOverflowAreas(const nsRect& aBounds,
     for (const auto& line : Lines()) {
       if (aDisplay->IsContainLayout()) {
         // If we have layout containment, we should only consider our child's
-        // visual overflow, leaving the scrollable regions of the parent
+        // ink overflow, leaving the scrollable regions of the parent
         // unaffected.
-        // Note: scrollable overflow is a subset of visual overflow,
+        // Note: scrollable overflow is a subset of ink overflow,
         // so this has the same affect as unioning the child's visual and
-        // scrollable overflow with its parent's visual overflow.
-        nsRect childVisualRect = line.GetVisualOverflowArea();
+        // scrollable overflow with its parent's ink overflow.
+        nsRect childVisualRect = line.InkOverflowRect();
         nsOverflowAreas childVisualArea =
             nsOverflowAreas(childVisualRect, nsRect());
         areas.UnionWith(childVisualArea);
@@ -2087,8 +2075,8 @@ void nsBlockFrame::ComputeOverflowAreas(const nsRect& aBounds,
 
 #ifdef NOISY_COMBINED_AREA
   ListTag(stdout);
-  const nsRect& vis = areas.VisualOverflow();
-  printf(": VisualOverflowArea CA=%d,%d,%d,%d\n", vis.x, vis.y, vis.width,
+  const nsRect& vis = areas.InkOverflow();
+  printf(": InkOverflowArea CA=%d,%d,%d,%d\n", vis.x, vis.y, vis.width,
          vis.height);
   const nsRect& scr = areas.ScrollableOverflow();
   printf(": ScrollableOverflowArea CA=%d,%d,%d,%d\n", scr.x, scr.y, scr.width,
@@ -2152,7 +2140,7 @@ void nsBlockFrame::LazyMarkLinesDirty() {
       int32_t n = line->GetChildCount();
       for (nsIFrame* lineFrame = line->mFirstChild; n > 0;
            lineFrame = lineFrame->GetNextSibling(), --n) {
-        if (NS_SUBTREE_DIRTY(lineFrame)) {
+        if (lineFrame->IsSubtreeDirty()) {
           // NOTE:  MarkLineDirty does more than just marking the line dirty.
           MarkLineDirty(line, &mLines);
           break;
@@ -2201,7 +2189,7 @@ void nsBlockFrame::MarkLineDirty(LineIterator aLine,
 static inline bool IsAlignedLeft(StyleTextAlign aAlignment,
                                  StyleDirection aDirection,
                                  uint8_t aUnicodeBidi, nsIFrame* aFrame) {
-  return nsSVGUtils::IsInSVGTextSubtree(aFrame) ||
+  return SVGUtils::IsInSVGTextSubtree(aFrame) ||
          StyleTextAlign::Left == aAlignment ||
          (((StyleTextAlign::Start == aAlignment &&
             StyleDirection::Ltr == aDirection) ||
@@ -2406,8 +2394,8 @@ static void DumpLine(const BlockReflowInput& aState, nsLineBox* aLine,
                      nscoord aDeltaBCoord, int32_t aDeltaIndent) {
 #ifdef DEBUG
   if (nsBlockFrame::gNoisyReflow) {
-    nsRect ovis(aLine->GetVisualOverflowArea());
-    nsRect oscr(aLine->GetScrollableOverflowArea());
+    nsRect ovis(aLine->InkOverflowRect());
+    nsRect oscr(aLine->ScrollableOverflowRect());
     nsBlockFrame::IndentBy(stdout, nsBlockFrame::gNoiseIndent + aDeltaIndent);
     printf(
         "line=%p mBCoord=%d dirty=%s oldBounds={%d,%d,%d,%d} "
@@ -3877,7 +3865,7 @@ void nsBlockFrame::ReflowBlockFrame(BlockReflowInput& aState,
       // If an ancestor of ours is going to reflow for clearance, we
       // need to avoid calling PlaceBlock, because it unsets dirty bits
       // on the child block (both itself, and through its call to
-      // nsFrame::DidReflow), and those dirty bits imply dirtiness for
+      // nsIFrame::DidReflow), and those dirty bits imply dirtiness for
       // all of the child block, including the lines it didn't reflow.
       NS_ASSERTION(originalPosition == frame->GetPosition(),
                    "we need to call PositionChildViews");
@@ -4664,7 +4652,7 @@ void nsBlockFrame::SplitLine(BlockReflowInput& aState,
 
 #ifdef DEBUG
   if (gNoisyReflow) {
-    nsFrame::IndentBy(stdout, gNoiseIndent);
+    nsIFrame::IndentBy(stdout, gNoiseIndent);
     printf("split line: from line=%p pushCount=%d aFrame=",
            static_cast<void*>(aLine.get()), pushCount);
     if (aFrame) {
@@ -4860,7 +4848,7 @@ bool nsBlockFrame::PlaceLine(BlockReflowInput& aState,
     if (CRAZY_SIZE(aLine->BStart())) {
       lastHeight = aLine->BStart();
       if (abs(aLine->BStart() - lastHeight) > CRAZY_COORD / 10) {
-        nsFrame::ListTag(stdout);
+        nsIFrame::ListTag(stdout);
         printf(": line=%p y=%d line.bounds.height=%d\n",
                static_cast<void*>(aLine.get()), aLine->BStart(),
                aLine->BSize());
@@ -4883,7 +4871,7 @@ bool nsBlockFrame::PlaceLine(BlockReflowInput& aState,
    * In other words, isLastLine really means isLastLineAndWeCare.
    */
   const bool isLastLine =
-      !nsSVGUtils::IsInSVGTextSubtree(this) &&
+      !SVGUtils::IsInSVGTextSubtree(this) &&
       styleText->TextAlignForLastLine() != styleText->mTextAlign &&
       (aLineLayout.GetLineEndsInBR() || IsLastLine(aState, aLine));
 
@@ -5485,7 +5473,7 @@ void nsBlockFrame::AppendFrames(ChildListID aListID, nsFrameList& aFrameList) {
   printf("\n");
 #endif
 
-  if (nsSVGUtils::IsInSVGTextSubtree(this)) {
+  if (SVGUtils::IsInSVGTextSubtree(this)) {
     MOZ_ASSERT(GetParent()->IsSVGTextFrame(),
                "unexpected block frame in SVG text");
     // Workaround for bug 1399425 in case this bit has been removed from the
@@ -6250,9 +6238,9 @@ void nsBlockFrame::DoRemoveFrameInternal(nsIFrame* aDeletedFrame,
         // a call to RemoveFrame(), but we may not need to do this in all
         // cases...
 #ifdef NOISY_BLOCK_INVALIDATE
-        nsRect visOverflow(cur->GetVisualOverflowArea());
-        printf("%p invalidate 10 (%d, %d, %d, %d)\n", this, visOverflow.x,
-               visOverflow.y, visOverflow.width, visOverflow.height);
+        nsRect inkOverflow(cur->InkOverflowRect());
+        printf("%p invalidate 10 (%d, %d, %d, %d)\n", this, inkOverflow.x,
+               inkOverflow.y, inkOverflow.width, inkOverflow.height);
 #endif
       } else {
         line = overflowLines->mLines.erase(line);
@@ -6617,8 +6605,8 @@ void nsBlockFrame::ReflowFloat(BlockReflowInput& aState,
   aFloat->SetSize(metricsWM, metrics.Size(metricsWM));
   if (aFloat->HasView()) {
     nsContainerFrame::SyncFrameViewAfterReflow(
-        aState.mPresContext, aFloat, aFloat->GetView(),
-        metrics.VisualOverflow(), ReflowChildFlags::NoMoveView);
+        aState.mPresContext, aFloat, aFloat->GetView(), metrics.InkOverflow(),
+        ReflowChildFlags::NoMoveView);
   }
   // Pass floatRS so the frame hierarchy can be used (redoFloatRS has the same
   // hierarchy)
@@ -6773,18 +6761,18 @@ void nsBlockFrame::RecoverFloatsFor(nsIFrame* aFrame,
 // Painting, event handling
 
 #ifdef DEBUG
-static void ComputeVisualOverflowArea(nsLineList& aLines, nscoord aWidth,
-                                      nscoord aHeight, nsRect& aResult) {
+static void ComputeInkOverflowArea(nsLineList& aLines, nscoord aWidth,
+                                   nscoord aHeight, nsRect& aResult) {
   nscoord xa = 0, ya = 0, xb = aWidth, yb = aHeight;
   for (nsLineList::iterator line = aLines.begin(), line_end = aLines.end();
        line != line_end; ++line) {
     // Compute min and max x/y values for the reflowed frame's
     // combined areas
-    nsRect visOverflow(line->GetVisualOverflowArea());
-    nscoord x = visOverflow.x;
-    nscoord y = visOverflow.y;
-    nscoord xmost = x + visOverflow.width;
-    nscoord ymost = y + visOverflow.height;
+    nsRect inkOverflow(line->InkOverflowRect());
+    nscoord x = inkOverflow.x;
+    nscoord y = inkOverflow.y;
+    nscoord xmost = x + inkOverflow.width;
+    nscoord ymost = y + inkOverflow.height;
     if (x < xa) {
       xa = x;
     }
@@ -6809,8 +6797,8 @@ static void ComputeVisualOverflowArea(nsLineList& aLines, nscoord aWidth,
 #ifdef DEBUG
 static void DebugOutputDrawLine(int32_t aDepth, nsLineBox* aLine, bool aDrawn) {
   if (nsBlockFrame::gNoisyDamageRepair) {
-    nsFrame::IndentBy(stdout, aDepth + 1);
-    nsRect lineArea = aLine->GetVisualOverflowArea();
+    nsIFrame::IndentBy(stdout, aDepth + 1);
+    nsRect lineArea = aLine->InkOverflowRect();
     printf("%s line=%p bounds=%d,%d,%d,%d ca=%d,%d,%d,%d\n",
            aDrawn ? "draw" : "skip", static_cast<void*>(aLine), aLine->IStart(),
            aLine->BStart(), aLine->ISize(), aLine->BSize(), lineArea.x,
@@ -6830,7 +6818,7 @@ static void DisplayLine(nsDisplayListBuilder* aBuilder,
     aDrawnLines++;
   }
   const bool intersect =
-      aLine->GetVisualOverflowArea().Intersects(aBuilder->GetDirtyRect());
+      aLine->InkOverflowRect().Intersects(aBuilder->GetDirtyRect());
   DebugOutputDrawLine(aDepth, aLine.get(), intersect);
 #endif
 
@@ -6874,8 +6862,8 @@ void nsBlockFrame::BuildDisplayList(nsDisplayListBuilder* aBuilder,
     nsRect dirty = aBuilder->GetDirtyRect();
     depth = GetDepth();
     nsRect ca;
-    ::ComputeVisualOverflowArea(mLines, mRect.width, mRect.height, ca);
-    nsFrame::IndentBy(stdout, depth);
+    ::ComputeInkOverflowArea(mLines, mRect.width, mRect.height, ca);
+    nsIFrame::IndentBy(stdout, depth);
     ListTag(stdout);
     printf(": bounds=%d,%d,%d,%d dirty(absolute)=%d,%d,%d,%d ca=%d,%d,%d,%d\n",
            mRect.x, mRect.y, mRect.width, mRect.height, dirty.x, dirty.y,
@@ -6970,7 +6958,7 @@ void nsBlockFrame::BuildDisplayList(nsDisplayListBuilder* aBuilder,
 
   if (cursor) {
     for (LineIterator line = mLines.begin(cursor); line != line_end; ++line) {
-      const nsRect lineArea = line->GetVisualOverflowArea();
+      const nsRect lineArea = line->InkOverflowRect();
       if (!lineArea.IsEmpty()) {
         // Because we have a cursor, the combinedArea.ys are non-decreasing.
         // Once we've passed aDirtyRect.YMost(), we can never see it again.
@@ -7007,7 +6995,7 @@ void nsBlockFrame::BuildDisplayList(nsDisplayListBuilder* aBuilder,
     };
 
     for (LineIterator line = LinesBegin(); line != line_end; ++line) {
-      const nsRect lineArea = line->GetVisualOverflowArea();
+      const nsRect lineArea = line->InkOverflowRect();
       const bool lineInLine = line->IsInline();
 
       if ((lineInLine && textOverflowPtr) || ShouldDescendIntoLine(lineArea)) {
@@ -7145,17 +7133,17 @@ nsLineBox* nsBlockFrame::GetFirstLineContaining(nscoord y) {
 
   nsLineBox* property = GetProperty(LineCursorProperty());
   LineIterator cursor = mLines.begin(property);
-  nsRect cursorArea = cursor->GetVisualOverflowArea();
+  nsRect cursorArea = cursor->InkOverflowRect();
 
   while ((cursorArea.IsEmpty() || cursorArea.YMost() > y) &&
          cursor != mLines.front()) {
     cursor = cursor.prev();
-    cursorArea = cursor->GetVisualOverflowArea();
+    cursorArea = cursor->InkOverflowRect();
   }
   while ((cursorArea.IsEmpty() || cursorArea.YMost() <= y) &&
          cursor != mLines.back()) {
     cursor = cursor.next();
-    cursorArea = cursor->GetVisualOverflowArea();
+    cursorArea = cursor->InkOverflowRect();
   }
 
   if (cursor.get() != property) {
@@ -7491,7 +7479,7 @@ void nsBlockFrame::CheckFloats(BlockReflowInput& aState) {
         "nsBlockFrame::CheckFloats: Explicit float list is out of sync with "
         "float cache");
 #  if defined(DEBUG_roc)
-    nsFrame::RootFrameList(PresContext(), stdout, 0);
+    nsIFrame::RootFrameList(PresContext(), stdout, 0);
     for (i = 0; i < lineFloats.Length(); ++i) {
       printf("Line float: %p\n", lineFloats.ElementAt(i));
     }

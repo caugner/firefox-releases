@@ -569,8 +569,8 @@ async function checkClickOnNode(
     ok(line, `source line found ("${line}")`);
 
     is(
-      dbg._selectors.getSelectedLocation(dbg._getState()).line,
-      line,
+      parseInt(dbg._selectors.getSelectedLocation(dbg._getState()).line, 10),
+      parseInt(line, 10),
       "expected source line"
     );
   }
@@ -579,8 +579,8 @@ async function checkClickOnNode(
     ok(column, `source column found ("${column}")`);
 
     is(
-      dbg._selectors.getSelectedLocation(dbg._getState()).column,
-      column,
+      parseInt(dbg._selectors.getSelectedLocation(dbg._getState()).column, 10),
+      parseInt(column, 10),
       "expected source column"
     );
   }
@@ -847,6 +847,25 @@ async function openInspector(options = {}) {
   const target = await TargetFactory.forTab(options.tab);
   const toolbox = await gDevTools.showToolbox(target, "inspector");
 
+  return toolbox.getCurrentPanel();
+}
+
+/**
+ * Open the netmonitor for the given tab, or the current one if none given.
+ *
+ * @param Element tab
+ *        Optional tab element for which you want open the netmonitor.
+ *        Defaults to current selected tab.
+ * @return Promise
+ *         A promise that is resolved with the netmonitor panel once the netmonitor is open.
+ */
+async function openNetMonitor(tab) {
+  const target = await TargetFactory.forTab(tab || gBrowser.selectedTab);
+  let toolbox = await gDevTools.getToolbox(target);
+  if (!toolbox) {
+    toolbox = await gDevTools.showToolbox(target);
+  }
+  await toolbox.selectTool("netmonitor");
   return toolbox.getCurrentPanel();
 }
 

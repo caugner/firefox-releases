@@ -124,6 +124,10 @@ void ReportBlockingToConsole(uint64_t aWindowID, nsIURI* aURI,
       aRejectedReason == nsIWebProgressListener::STATE_COOKIES_BLOCKED_ALL ||
       aRejectedReason == nsIWebProgressListener::STATE_COOKIES_BLOCKED_FOREIGN);
 
+  if (aURI->SchemeIs("chrome") || aURI->SchemeIs("about")) {
+    return;
+  }
+
   nsAutoString sourceLine;
   uint32_t lineNumber = 0, columnNumber = 0;
   JSContext* cx = nsContentUtils::GetCurrentJSContext();
@@ -147,28 +151,28 @@ void ReportBlockingToConsole(uint64_t aWindowID, nsIURI* aURI,
           case uint32_t(
               nsIWebProgressListener::STATE_COOKIES_BLOCKED_BY_PERMISSION):
             message = "CookieBlockedByPermission";
-            category = NS_LITERAL_CSTRING("cookieBlockedPermission");
+            category = "cookieBlockedPermission"_ns;
             break;
 
           case uint32_t(nsIWebProgressListener::STATE_COOKIES_BLOCKED_TRACKER):
             message = "CookieBlockedTracker";
-            category = NS_LITERAL_CSTRING("cookieBlockedTracker");
+            category = "cookieBlockedTracker"_ns;
             break;
 
           case uint32_t(nsIWebProgressListener::STATE_COOKIES_BLOCKED_ALL):
             message = "CookieBlockedAll";
-            category = NS_LITERAL_CSTRING("cookieBlockedAll");
+            category = "cookieBlockedAll"_ns;
             break;
 
           case uint32_t(nsIWebProgressListener::STATE_COOKIES_BLOCKED_FOREIGN):
             message = "CookieBlockedForeign";
-            category = NS_LITERAL_CSTRING("cookieBlockedForeign");
+            category = "cookieBlockedForeign"_ns;
             break;
 
           case uint32_t(
               nsIWebProgressListener::STATE_COOKIES_PARTITIONED_FOREIGN):
             message = "CookiePartitionedForeign";
-            category = NS_LITERAL_CSTRING("cookiePartitionedForeign");
+            category = "cookiePartitionedForeign"_ns;
             break;
 
           default:
@@ -378,11 +382,13 @@ void ContentBlockingNotifier::ReportUnblockingToConsole(
     BrowsingContext* aBrowsingContext, const nsAString& aTrackingOrigin,
     ContentBlockingNotifier::StorageAccessPermissionGrantedReason aReason) {
   MOZ_ASSERT(aBrowsingContext);
+  MOZ_ASSERT_IF(XRE_IsContentProcess(), aBrowsingContext->Top()->IsInProcess());
 
   uint64_t windowID = aBrowsingContext->GetCurrentInnerWindowId();
 
+  // The storage permission is granted under the top-level origin.
   nsCOMPtr<nsIPrincipal> principal =
-      AntiTrackingUtils::GetPrincipal(aBrowsingContext);
+      AntiTrackingUtils::GetPrincipal(aBrowsingContext->Top());
   if (NS_WARN_IF(!principal)) {
     return;
   }

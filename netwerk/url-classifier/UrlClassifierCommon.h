@@ -20,7 +20,12 @@ class nsIURI;
   MOZ_LOG(UrlClassifierCommon::sLog, LogLevel::Debug, args)
 #define UC_LOG_WARN(args) \
   MOZ_LOG(UrlClassifierCommon::sLog, LogLevel::Warning, args)
-#define UC_LOG_ENABLED() MOZ_LOG_TEST(UrlClassifierCommon::sLog, LogLevel::Info)
+#define UC_LOG_LEAK(args) \
+  MOZ_LOG(UrlClassifierCommon::sLogLeak, LogLevel::Info, args)
+
+#define UC_LOG_ENABLED()                                     \
+  MOZ_LOG_TEST(UrlClassifierCommon::sLog, LogLevel::Info) || \
+      MOZ_LOG_TEST(UrlClassifierCommon::sLogLeak, LogLevel::Info)
 
 namespace mozilla {
 namespace net {
@@ -30,10 +35,11 @@ class UrlClassifierCommon final {
   static const nsCString::size_type sMaxSpecLength;
 
   static LazyLogModule sLog;
+  static LazyLogModule sLogLeak;
 
   static bool AddonMayLoad(nsIChannel* aChannel, nsIURI* aURI);
 
-  static bool ShouldEnableClassifier(nsIChannel* aChannel);
+  static bool ShouldEnableProtectionForChannel(nsIChannel* aChannel);
 
   static nsresult SetBlockedContent(nsIChannel* channel, nsresult aErrorCode,
                                     const nsACString& aList,
@@ -44,10 +50,10 @@ class UrlClassifierCommon final {
                                   const nsTArray<nsCString>& aLists,
                                   const nsTArray<nsCString>& aFullHashes);
 
-  // Use this function only when you are looking for a pairwise whitelist uri
+  // Use this function only when you are looking for a pairwise entitylist uri
   // with the format: http://toplevel.page/?resource=channel.uri.domain
-  static nsresult CreatePairwiseWhiteListURI(nsIChannel* aChannel,
-                                             nsIURI** aURI);
+  static nsresult CreatePairwiseEntityListURI(nsIChannel* aChannel,
+                                              nsIURI** aURI);
 
   static void AnnotateChannel(nsIChannel* aChannel,
                               uint32_t aClassificationFlags,
@@ -86,6 +92,9 @@ class UrlClassifierCommon final {
  private:
   static uint32_t TableToClassificationFlag(
       const nsACString& aTable, const std::vector<ClassificationData>& aData);
+
+  friend class AsyncUrlChannelClassifier;
+  static nsresult GetTopWindowURI(nsIChannel* aChannel, nsIURI** aURI);
 };
 
 }  // namespace net

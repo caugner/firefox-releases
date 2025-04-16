@@ -289,7 +289,7 @@ mozilla::ipc::IPCResult DocAccessibleParent::RecvCaretMoveEvent(
 #if defined(XP_WIN)
     const LayoutDeviceIntRect& aCaretRect,
 #endif  // defined (XP_WIN)
-    const int32_t& aOffset) {
+    const int32_t& aOffset, const bool& aIsSelectionCollapsed) {
   if (mShutdown) {
     return IPC_OK();
   }
@@ -303,7 +303,7 @@ mozilla::ipc::IPCResult DocAccessibleParent::RecvCaretMoveEvent(
 #if defined(XP_WIN)
   ProxyCaretMoveEvent(proxy, aCaretRect);
 #else
-  ProxyCaretMoveEvent(proxy, aOffset);
+  ProxyCaretMoveEvent(proxy, aOffset, aIsSelectionCollapsed);
 #endif
 
   if (!nsCoreUtils::AccEventObserversExist()) {
@@ -315,8 +315,8 @@ mozilla::ipc::IPCResult DocAccessibleParent::RecvCaretMoveEvent(
   nsINode* node = nullptr;
   bool fromUser = true;  // XXX fix me
   uint32_t type = nsIAccessibleEvent::EVENT_TEXT_CARET_MOVED;
-  RefPtr<xpcAccCaretMoveEvent> event =
-      new xpcAccCaretMoveEvent(type, xpcAcc, doc, node, fromUser, aOffset);
+  RefPtr<xpcAccCaretMoveEvent> event = new xpcAccCaretMoveEvent(
+      type, xpcAcc, doc, node, fromUser, aOffset, aIsSelectionCollapsed);
   nsCoreUtils::DispatchAccEvent(std::move(event));
 
   return IPC_OK();
@@ -502,10 +502,23 @@ mozilla::ipc::IPCResult DocAccessibleParent::RecvAnnouncementEvent(
 
 mozilla::ipc::IPCResult DocAccessibleParent::RecvTextSelectionChangeEvent(
     const uint64_t& aID, nsTArray<TextRangeData>&& aSelection) {
-  // XXX: nsIAccessibleTextRange is not e10s friendly, so don't bother
-  // supporting nsIAccessibleTextSelectionChangeEvent for now.
-  // This is a placeholder for potential platform support.
+#  ifdef MOZ_WIDGET_COCOA
+  if (mShutdown) {
+    return IPC_OK();
+  }
+
+  ProxyAccessible* target = GetAccessible(aID);
+  if (!target) {
+    NS_ERROR("no proxy for event!");
+    return IPC_OK();
+  }
+
+  ProxyTextSelectionChangeEvent(target, aSelection);
+
+  return IPC_OK();
+#  else
   return RecvEvent(aID, nsIAccessibleEvent::EVENT_TEXT_SELECTION_CHANGED);
+#  endif
 }
 
 #endif

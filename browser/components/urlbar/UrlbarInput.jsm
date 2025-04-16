@@ -17,6 +17,7 @@ XPCOMUtils.defineLazyModuleGetters(this, {
   FormHistory: "resource://gre/modules/FormHistory.jsm",
   PrivateBrowsingUtils: "resource://gre/modules/PrivateBrowsingUtils.jsm",
   ReaderMode: "resource://gre/modules/ReaderMode.jsm",
+  SearchEngine: "resource://gre/modules/SearchEngine.jsm",
   Services: "resource://gre/modules/Services.jsm",
   TopSiteAttribution: "resource:///modules/TopSiteAttribution.jsm",
   UrlbarController: "resource:///modules/UrlbarController.jsm",
@@ -83,7 +84,7 @@ class UrlbarInput {
     );
     this.panel = this.textbox.querySelector(".urlbarView");
 
-    this.searchButton = UrlbarPrefs.get("update2.searchButton");
+    this.searchButton = UrlbarPrefs.get("experimental.searchButton");
     if (this.searchButton) {
       this.textbox.classList.add("searchButton");
     }
@@ -153,6 +154,16 @@ class UrlbarInput {
     this.inputField = this.querySelector("#urlbar-input");
     this._inputContainer = this.querySelector("#urlbar-input-container");
     this._identityBox = this.querySelector("#identity-box");
+    this._searchModeIndicator = this.querySelector(
+      "#urlbar-search-mode-indicator"
+    );
+    this._searchModeIndicatorTitle = this._searchModeIndicator.querySelector(
+      "#urlbar-search-mode-indicator-title"
+    );
+    this._searchModeIndicatorClose = this._searchModeIndicator.querySelector(
+      "#urlbar-search-mode-indicator-close"
+    );
+    this._searchModeLabel = this.querySelector("#urlbar-label-search-mode");
     this._toolbar = this.textbox.closest("toolbar");
 
     XPCOMUtils.defineLazyGetter(this, "valueFormatter", () => {
@@ -201,6 +212,8 @@ class UrlbarInput {
     }
     this.textbox.addEventListener("mousedown", this);
     this._inputContainer.addEventListener("click", this);
+
+    this._searchModeIndicatorClose.addEventListener("click", this);
 
     // This is used to detect commands launched from the panel, to avoid
     // recording abandonment events when the command causes a blur event.
@@ -387,6 +400,9 @@ class UrlbarInput {
       return;
     }
 
+    let element = this.view.selectedElement;
+    let result = this.view.getResultFromElement(element);
+
     // Determine whether to use the selected one-off search button.  In
     // one-off search buttons parlance, "selected" means that the button
     // has been navigated to via the keyboard.  So we want to use it if
@@ -404,12 +420,17 @@ class UrlbarInput {
         selectedOneOff.doCommand();
         return;
       }
+
+      // If the user clicked on a filter-style one-off, we want to avoid the
+      // handling below to execute a search. One-off code in this function can
+      // be simplified when update2 is on by default.
+      if (this.view.oneOffsRefresh && !result?.heuristic) {
+        selectedOneOff = null;
+      }
     }
 
     // Use the selected element if we have one; this is usually the case
     // when the view is open.
-    let element = this.view.selectedElement;
-    let result = this.view.getResultFromElement(element);
     let selectedPrivateResult =
       result &&
       result.type == UrlbarUtils.RESULT_TYPE.SEARCH &&
@@ -538,6 +559,7 @@ class UrlbarInput {
   handleRevert() {
     this.window.gBrowser.userTypedValue = null;
     this.setURI(null, true);
+    this.setSearchMode(null);
     if (this.value && this.focused) {
       this.select();
     }
@@ -586,10 +608,7 @@ class UrlbarInput {
     this.controller.recordSelectedResult(event, result);
     if (result.payload.overriddenSearchTopSite) {
       TopSiteAttribution.makeRequest({
-        searchProvider: result.payload.url.match(
-          /^https?:\/\/(?:www.)?([^.]*)/
-        )[1],
-        siteURL: result.payload.url,
+        targetURL: result.payload.url,
         source: "urlbar",
       });
     }
@@ -1042,26 +1061,35 @@ class UrlbarInput {
     this._lastSearchString = searchString;
     this._valueOnLastSearch = this.value;
 
+    let options = {
+      allowAutofill,
+      isPrivate: this.isPrivate,
+      maxResults: UrlbarPrefs.get("maxRichResults"),
+      searchString,
+      userContextId: this.window.gBrowser.selectedBrowser.getAttribute(
+        "usercontextid"
+      ),
+      currentPage: this.window.gBrowser.currentURI.spec,
+      formHistoryName: this.formHistoryName,
+      allowSearchSuggestions:
+        !event ||
+        !UrlbarUtils.isPasteEvent(event) ||
+        !event.data ||
+        event.data.length <= UrlbarPrefs.get("maxCharsForSearchSuggestions"),
+    };
+
+    if (this.searchMode) {
+      options.sources = [this.searchMode.source];
+      if (this.searchMode.engineName) {
+        options.engineName = this.searchMode.engineName;
+      }
+    }
+
     // TODO (Bug 1522902): This promise is necessary for tests, because some
     // tests are not listening for completion when starting a query through
     // other methods than startQuery (input events for example).
     this.lastQueryContextPromise = this.controller.startQuery(
-      new UrlbarQueryContext({
-        allowAutofill,
-        isPrivate: this.isPrivate,
-        maxResults: UrlbarPrefs.get("maxRichResults"),
-        searchString,
-        userContextId: this.window.gBrowser.selectedBrowser.getAttribute(
-          "usercontextid"
-        ),
-        currentPage: this.window.gBrowser.currentURI.spec,
-        formHistoryName: this.formHistoryName,
-        allowSearchSuggestions:
-          !event ||
-          !UrlbarUtils.isPasteEvent(event) ||
-          !event.data ||
-          event.data.length <= UrlbarPrefs.get("maxCharsForSearchSuggestions"),
-      })
+      new UrlbarQueryContext(options)
     );
   }
 
@@ -1126,6 +1154,39 @@ class UrlbarInput {
       this.setAttribute("focused", "true");
       this.startLayoutExtend();
     }
+  }
+
+  /**
+   * Sets search mode and shows the search mode indicator.
+   *
+   * @param {nsISearchEngine | string} engineOrMode
+   *   Either the search engine to restrict to or a mode described by a string.
+   *   Exits search mode if null.
+   */
+  setSearchMode(engineOrMode) {
+    if (!UrlbarPrefs.get("update2")) {
+      return;
+    }
+
+    let indicatorTitle;
+    if (!engineOrMode) {
+      this.searchMode = null;
+      this.removeAttribute("searchmode");
+    } else if (
+      engineOrMode instanceof Ci.nsISearchEngine ||
+      engineOrMode instanceof SearchEngine
+    ) {
+      this.searchMode = {
+        source: UrlbarUtils.RESULT_SOURCE.SEARCH,
+        engineName: engineOrMode.name,
+      };
+      indicatorTitle = engineOrMode.name;
+      this.toggleAttribute("searchmode", true);
+    } else {
+      // TODO: Support non-RESULT_SOURCE.SEARCH search modes (bug 1647896).
+    }
+    this._searchModeIndicatorTitle.textContent = indicatorTitle;
+    this._searchModeLabel.textContent = indicatorTitle;
   }
 
   // Getters and Setters below.
@@ -1841,6 +1902,8 @@ class UrlbarInput {
     // area when the current tab is re-selected.
     browser.focus();
 
+    this.setSearchMode(null);
+
     if (openUILinkWhere != "current") {
       this.handleRevert();
     }
@@ -2071,6 +2134,15 @@ class UrlbarInput {
     ) {
       this._maybeSelectAll();
     }
+
+    if (event.target == this._searchModeIndicatorClose && event.button != 2) {
+      this.setSearchMode(null);
+      if (this.view.isOpen) {
+        this.startQuery({
+          event,
+        });
+      }
+    }
   }
 
   _on_contextmenu(event) {
@@ -2232,7 +2304,9 @@ class UrlbarInput {
     }
 
     let canShowTopSites =
-      !this.isPrivate && UrlbarPrefs.get("suggest.topsites");
+      !this.isPrivate &&
+      UrlbarPrefs.get("suggest.topsites") &&
+      !this.searchMode;
     if (!this.view.isOpen || (!value && !canShowTopSites)) {
       this.view.clear();
     }
@@ -2269,7 +2343,7 @@ class UrlbarInput {
     this.startQuery({
       searchString: value,
       allowAutofill,
-      resetSearchState: false,
+      resetSearchState: !!this.searchMode,
       event,
     });
   }

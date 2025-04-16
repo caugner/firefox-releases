@@ -48,23 +48,20 @@ static bool IsActivelyCapturingOrHasAPermission(nsPIDOMWindowInner* aWindow) {
   }
 
   auto principal = nsGlobalWindowInner::Cast(aWindow)->GetPrincipal();
-  return (nsContentUtils::IsExactSitePermAllow(principal,
-                                               NS_LITERAL_CSTRING("camera")) ||
-          nsContentUtils::IsExactSitePermAllow(
-              principal, NS_LITERAL_CSTRING("microphone")) ||
-          nsContentUtils::IsExactSitePermAllow(principal,
-                                               NS_LITERAL_CSTRING("screen")));
+  return (nsContentUtils::IsExactSitePermAllow(principal, "camera"_ns) ||
+          nsContentUtils::IsExactSitePermAllow(principal, "microphone"_ns) ||
+          nsContentUtils::IsExactSitePermAllow(principal, "screen"_ns));
 }
 
 static uint32_t SiteAutoplayPerm(nsPIDOMWindowInner* aWindow) {
   if (!aWindow || !aWindow->GetBrowsingContext()) {
-    return nsIPermissionManager::DENY_ACTION;
+    return nsIPermissionManager::UNKNOWN_ACTION;
   }
 
   WindowContext* topContext =
       aWindow->GetBrowsingContext()->GetTopWindowContext();
   if (!topContext) {
-    return nsIPermissionManager::DENY_ACTION;
+    return nsIPermissionManager::UNKNOWN_ACTION;
   }
   return topContext->GetAutoplayPermission();
 }
@@ -348,8 +345,8 @@ uint32_t AutoplayPolicy::GetSiteAutoplayPermission(nsIPrincipal* aPrincipal) {
   }
 
   uint32_t perm = nsIPermissionManager::DENY_ACTION;
-  permMgr->TestExactPermissionFromPrincipal(
-      aPrincipal, NS_LITERAL_CSTRING("autoplay-media"), &perm);
+  permMgr->TestExactPermissionFromPrincipal(aPrincipal, "autoplay-media"_ns,
+                                            &perm);
   return perm;
 }
 

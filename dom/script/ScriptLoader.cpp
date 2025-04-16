@@ -131,7 +131,7 @@ LazyLogModule ScriptLoader::gScriptLoaderLog("ScriptLoader");
 
 // Alternate Data MIME type used by the ScriptLoader to register that we want to
 // store bytecode without reading it.
-static NS_NAMED_LITERAL_CSTRING(kNullMimeType, "javascript/null");
+static constexpr auto kNullMimeType = "javascript/null"_ns;
 
 //////////////////////////////////////////////////////////////
 // ScriptLoader::PreloadInfo
@@ -308,7 +308,7 @@ static bool IsScriptEventHandler(ScriptKind kind, nsIContent* aScriptElement) {
   // We found for="window", now check for event="onload".
   const nsAString& event_str =
       nsContentUtils::TrimWhitespace<nsCRT::IsAsciiSpace>(eventAttr, false);
-  if (!StringBeginsWith(event_str, NS_LITERAL_STRING("onload"),
+  if (!StringBeginsWith(event_str, u"onload"_ns,
                         nsCaseInsensitiveStringComparator)) {
     // It ain't "onload.*".
 
@@ -682,9 +682,9 @@ static already_AddRefed<nsIURI> ResolveModuleSpecifier(
     return nullptr;
   }
 
-  if (!StringBeginsWith(aSpecifier, NS_LITERAL_STRING("/")) &&
-      !StringBeginsWith(aSpecifier, NS_LITERAL_STRING("./")) &&
-      !StringBeginsWith(aSpecifier, NS_LITERAL_STRING("../"))) {
+  if (!StringBeginsWith(aSpecifier, u"/"_ns) &&
+      !StringBeginsWith(aSpecifier, u"./"_ns) &&
+      !StringBeginsWith(aSpecifier, u"../"_ns)) {
     return nullptr;
   }
 
@@ -1343,9 +1343,9 @@ nsresult ScriptLoader::StartLoad(ScriptLoadRequest* aRequest) {
     // scripts and always use CORS. Only exception: Non linkable about: pages
     // which load local module scripts.
     if (IsAboutPageLoadingChromeURI(aRequest)) {
-      securityFlags = nsILoadInfo::SEC_ALLOW_CROSS_ORIGIN_DATA_IS_NULL;
+      securityFlags = nsILoadInfo::SEC_ALLOW_CROSS_ORIGIN_SEC_CONTEXT_IS_NULL;
     } else {
-      securityFlags = nsILoadInfo::SEC_REQUIRE_CORS_DATA_INHERITS;
+      securityFlags = nsILoadInfo::SEC_REQUIRE_CORS_INHERITS_SEC_CONTEXT;
       if (aRequest->CORSMode() == CORS_NONE ||
           aRequest->CORSMode() == CORS_ANONYMOUS) {
         securityFlags |= nsILoadInfo::SEC_COOKIES_SAME_ORIGIN;
@@ -1355,9 +1355,10 @@ nsresult ScriptLoader::StartLoad(ScriptLoadRequest* aRequest) {
       }
     }
   } else {
-    securityFlags = aRequest->CORSMode() == CORS_NONE
-                        ? nsILoadInfo::SEC_ALLOW_CROSS_ORIGIN_DATA_IS_NULL
-                        : nsILoadInfo::SEC_REQUIRE_CORS_DATA_INHERITS;
+    securityFlags =
+        aRequest->CORSMode() == CORS_NONE
+            ? nsILoadInfo::SEC_ALLOW_CROSS_ORIGIN_SEC_CONTEXT_IS_NULL
+            : nsILoadInfo::SEC_REQUIRE_CORS_INHERITS_SEC_CONTEXT;
     if (aRequest->CORSMode() == CORS_ANONYMOUS) {
       securityFlags |= nsILoadInfo::SEC_COOKIES_SAME_ORIGIN;
     } else if (aRequest->CORSMode() == CORS_USE_CREDENTIALS) {
@@ -1473,8 +1474,7 @@ nsresult ScriptLoader::StartLoad(ScriptLoadRequest* aRequest) {
         aRequest->ShouldAcceptBinASTEncoding()) {
       acceptTypes = APPLICATION_JAVASCRIPT_BINAST ", */*";
     }
-    rv = httpChannel->SetRequestHeader(NS_LITERAL_CSTRING("Accept"),
-                                       acceptTypes, false);
+    rv = httpChannel->SetRequestHeader("Accept"_ns, acceptTypes, false);
     MOZ_ASSERT(NS_SUCCEEDED(rv));
 
     nsCOMPtr<nsIReferrerInfo> referrerInfo =
@@ -1500,9 +1500,9 @@ nsresult ScriptLoader::StartLoad(ScriptLoadRequest* aRequest) {
   nsCOMPtr<nsITimedChannel> timedChannel(do_QueryInterface(httpChannel));
   if (timedChannel) {
     if (aRequest->IsLinkPreloadScript()) {
-      timedChannel->SetInitiatorType(NS_LITERAL_STRING("link"));
+      timedChannel->SetInitiatorType(u"link"_ns);
     } else {
-      timedChannel->SetInitiatorType(NS_LITERAL_STRING("script"));
+      timedChannel->SetInitiatorType(u"script"_ns);
     }
   }
 
@@ -2480,9 +2480,8 @@ nsresult ScriptLoader::ProcessRequest(ScriptLoadRequest* aRequest) {
   bool runScript = !!pwin;
   if (runScript) {
     nsContentUtils::DispatchTrustedEvent(
-        scriptElem->OwnerDoc(), scriptElem,
-        NS_LITERAL_STRING("beforescriptexecute"), CanBubble::eYes,
-        Cancelable::eYes, &runScript);
+        scriptElem->OwnerDoc(), scriptElem, u"beforescriptexecute"_ns,
+        CanBubble::eYes, Cancelable::eYes, &runScript);
   }
 
   // Inner window could have gone away after firing beforescriptexecute
@@ -2501,10 +2500,9 @@ nsresult ScriptLoader::ProcessRequest(ScriptLoadRequest* aRequest) {
       doc->DecrementIgnoreDestructiveWritesCounter();
     }
 
-    nsContentUtils::DispatchTrustedEvent(
-        scriptElem->OwnerDoc(), scriptElem,
-        NS_LITERAL_STRING("afterscriptexecute"), CanBubble::eYes,
-        Cancelable::eNo);
+    nsContentUtils::DispatchTrustedEvent(scriptElem->OwnerDoc(), scriptElem,
+                                         u"afterscriptexecute"_ns,
+                                         CanBubble::eYes, Cancelable::eNo);
   }
 
   FireScriptEvaluated(rv, aRequest);
@@ -2628,8 +2626,8 @@ nsresult ScriptLoader::FillCompileOptionsForRequest(
   aOptions->setFileAndLine(aRequest->mURL.get(), aRequest->mLineNo);
   aOptions->setIsRunOnce(true);
   aOptions->setNoScriptRval(true);
-  if (aRequest->mHasSourceMapURL) {
-    aOptions->setSourceMapURL(aRequest->mSourceMapURL.get());
+  if (aRequest->mSourceMapURL) {
+    aOptions->setSourceMapURL(aRequest->mSourceMapURL->get());
   }
   if (aRequest->mOriginPrincipal) {
     nsIPrincipal* scriptPrin = nsContentUtils::ObjectPrincipal(aScopeChain);
@@ -3568,9 +3566,9 @@ void ScriptLoader::ReportErrorToConsole(ScriptLoadRequest* aRequest,
   uint32_t columnNo = element ? element->GetScriptColumnNumber() : 0;
 
   nsContentUtils::ReportToConsole(
-      nsIScriptError::warningFlag, NS_LITERAL_CSTRING("Script Loader"),
-      mDocument, nsContentUtils::eDOM_PROPERTIES, message, params, nullptr,
-      EmptyString(), lineNo, columnNo);
+      nsIScriptError::warningFlag, "Script Loader"_ns, mDocument,
+      nsContentUtils::eDOM_PROPERTIES, message, params, nullptr, EmptyString(),
+      lineNo, columnNo);
 }
 
 void ScriptLoader::ReportPreloadErrorsToConsole(ScriptLoadRequest* aRequest) {
@@ -3772,8 +3770,7 @@ nsresult ScriptLoader::PrepareLoadedRequest(ScriptLoadRequest* aRequest,
 
     nsAutoCString sourceMapURL;
     if (nsContentUtils::GetSourceMapURL(httpChannel, sourceMapURL)) {
-      aRequest->mHasSourceMapURL = true;
-      aRequest->mSourceMapURL = NS_ConvertUTF8toUTF16(sourceMapURL);
+      aRequest->mSourceMapURL = Some(NS_ConvertUTF8toUTF16(sourceMapURL));
     }
 
     nsCOMPtr<nsIClassifiedChannel> classifiedChannel = do_QueryInterface(req);

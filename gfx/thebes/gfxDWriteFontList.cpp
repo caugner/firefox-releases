@@ -233,6 +233,15 @@ void gfxDWriteFontFamily::FindStyleVariations(FontInfoData* aFontInfoData) {
   if (mIsBadUnderlineFamily) {
     SetBadUnderlineFonts();
   }
+
+  CheckForSimpleFamily();
+  if (mIsSimpleFamily) {
+    for (auto& f : mAvailableFonts) {
+      if (f) {
+        static_cast<gfxDWriteFontEntry*>(f.get())->mMayUseGDIAccess = true;
+      }
+    }
+  }
 }
 
 void gfxDWriteFontFamily::ReadFaceNames(gfxPlatformFontList* aPlatformFontList,
@@ -382,7 +391,7 @@ nsresult gfxDWriteFontEntry::CopyFontTable(uint32_t aTableTag,
   // italic fonts in Arabic-script system locales because of
   // potential cmap discrepancies, see bug 629386.
   // Ditto for Hebrew, bug 837498.
-  if (mFont && pFontList->UseGDIFontTableAccess() &&
+  if (mFont && mMayUseGDIAccess && pFontList->UseGDIFontTableAccess() &&
       !(!IsUpright() && UsingArabicOrHebrewScriptSystemLocale()) &&
       !mFont->IsSymbolFont()) {
     LOGFONTW logfont = {0};
@@ -843,7 +852,10 @@ void gfxDWriteFontEntry::AddSizeOfIncludingThis(MallocSizeOf aMallocSizeOf,
 ////////////////////////////////////////////////////////////////////////////////
 // gfxDWriteFontList
 
-gfxDWriteFontList::gfxDWriteFontList() : mForceGDIClassicMaxFontSize(0.0) {}
+gfxDWriteFontList::gfxDWriteFontList() : mForceGDIClassicMaxFontSize(0.0) {
+  CheckFamilyList(kBaseFonts, ArrayLength(kBaseFonts));
+  CheckFamilyList(kLangPackFonts, ArrayLength(kLangPackFonts));
+}
 
 // bug 602792 - CJK systems default to large CJK fonts which cause excessive
 //   I/O strain during cold startup due to dwrite caching bugs.  Default to
@@ -853,7 +865,7 @@ FontFamily gfxDWriteFontList::GetDefaultFontForPlatform(
     const gfxFontStyle* aStyle) {
   // try Arial first
   FontFamily ff;
-  ff = FindFamily(NS_LITERAL_CSTRING("Arial"));
+  ff = FindFamily("Arial"_ns);
   if (!ff.IsNull()) {
     return ff;
   }
@@ -904,13 +916,14 @@ gfxFontEntry* gfxDWriteFontList::MakePlatformFont(
       aFontData, aLength, getter_AddRefs(fontFile),
       getter_AddRefs(fontFileStream));
   free((void*)aFontData);
+  NS_ASSERTION(SUCCEEDED(hr), "Failed to create font file reference");
   if (FAILED(hr)) {
-    NS_WARNING("Failed to create custom font file reference.");
     return nullptr;
   }
 
   nsAutoString uniqueName;
   nsresult rv = gfxFontUtils::MakeUniqueUserFontName(uniqueName);
+  NS_ASSERTION(NS_SUCCEEDED(rv), "Failed to make unique user font name");
   if (NS_FAILED(rv)) {
     return nullptr;
   }
@@ -919,18 +932,26 @@ gfxFontEntry* gfxDWriteFontList::MakePlatformFont(
   DWRITE_FONT_FILE_TYPE fileType;
   UINT32 numFaces;
 
-  gfxDWriteFontEntry* entry = new gfxDWriteFontEntry(
+  auto entry = MakeUnique<gfxDWriteFontEntry>(
       NS_ConvertUTF16toUTF8(uniqueName), fontFile, fontFileStream,
       aWeightForEntry, aStretchForEntry, aStyleForEntry);
 
-  fontFile->Analyze(&isSupported, &fileType, &entry->mFaceType, &numFaces);
-  if (!isSupported || numFaces > 1) {
+  hr = fontFile->Analyze(&isSupported, &fileType, &entry->mFaceType, &numFaces);
+  NS_ASSERTION(SUCCEEDED(hr), "IDWriteFontFile::Analyze failed");
+  if (FAILED(hr)) {
+    return nullptr;
+  }
+  NS_ASSERTION(isSupported, "Unsupported font file");
+  if (!isSupported) {
+    return nullptr;
+  }
+  NS_ASSERTION(numFaces == 1, "Font file does not contain exactly 1 face");
+  if (numFaces != 1) {
     // We don't know how to deal with 0 faces either.
-    delete entry;
     return nullptr;
   }
 
-  return entry;
+  return entry.release();
 }
 
 gfxFontEntry* gfxDWriteFontList::CreateFontEntry(
@@ -986,13 +1007,9 @@ gfxFontEntry* gfxDWriteFontList::CreateFontEntry(
     return nullptr;
   }
   auto fe = new gfxDWriteFontEntry(faceName, font, !aFamily->IsBundled());
-  fe->mStyleRange = aFace->mStyle;
-  fe->mStretchRange = aFace->mStretch;
-  fe->mWeightRange = aFace->mWeight;
-  fe->mShmemFace = aFace;
-  fe->mIsBadUnderlineFont = aFamily->IsBadUnderlineFamily();
-  fe->mFamilyName = familyName;
+  fe->InitializeFrom(aFace, aFamily);
   fe->mForceGDIClassic = aFamily->IsForceClassic();
+  fe->mMayUseGDIAccess = aFamily->IsSimple();
   return fe;
 }
 
@@ -1024,7 +1041,7 @@ void gfxDWriteFontList::AppendFamiliesFromCollection(
       if (FAILED(hr)) {
         continue;
       }
-      if (faceName.Find(NS_LITERAL_CSTRING("Ultra Bold")) == kNotFound) {
+      if (faceName.Find("Ultra Bold"_ns) == kNotFound) {
         return false;
       }
     }
@@ -1302,6 +1319,11 @@ void gfxDWriteFontList::InitSharedFontListForPlatform() {
 
   mSystemFonts = Factory::GetDWriteSystemFonts(true);
   NS_ASSERTION(mSystemFonts != nullptr, "GetSystemFontCollection failed!");
+  if (!mSystemFonts) {
+    Telemetry::Accumulate(Telemetry::DWRITEFONT_INIT_PROBLEM,
+                          uint32_t(errSystemFontCollection));
+    return;
+  }
 #ifdef MOZ_BUNDLED_FONTS
   mBundledFonts = CreateBundledFontsCollection(factory);
 #endif
@@ -1432,7 +1454,7 @@ nsresult gfxDWriteFontList::InitFontListForPlatform() {
     bool allUltraBold = true;
     for (i = 0; i < faces.Length(); i++) {
       // does the face have 'Ultra Bold' in the name?
-      if (faces[i]->Name().Find(NS_LITERAL_CSTRING("Ultra Bold")) == -1) {
+      if (faces[i]->Name().Find("Ultra Bold"_ns) == -1) {
         allUltraBold = false;
         break;
       }
@@ -2258,7 +2280,7 @@ gfxDWriteFontList::CreateBundledFontsCollection(IDWriteFactory* aFactory) {
   if (NS_FAILED(rv)) {
     return nullptr;
   }
-  if (NS_FAILED(localDir->Append(NS_LITERAL_STRING("fonts")))) {
+  if (NS_FAILED(localDir->Append(u"fonts"_ns))) {
     return nullptr;
   }
   bool isDir;

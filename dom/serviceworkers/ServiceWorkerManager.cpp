@@ -43,6 +43,7 @@
 #include "mozilla/dom/InternalHeaders.h"
 #include "mozilla/dom/Navigator.h"
 #include "mozilla/dom/NotificationEvent.h"
+#include "mozilla/dom/Promise.h"
 #include "mozilla/dom/PromiseNativeHandler.h"
 #include "mozilla/dom/Request.h"
 #include "mozilla/dom/RootedDictionary.h"
@@ -51,11 +52,13 @@
 #include "mozilla/dom/WorkerPrivate.h"
 #include "mozilla/dom/WorkerRunnable.h"
 #include "mozilla/dom/WorkerScope.h"
+#include "mozilla/extensions/WebExtensionPolicy.h"
 #include "mozilla/ipc/BackgroundChild.h"
 #include "mozilla/ipc/PBackgroundChild.h"
 #include "mozilla/ipc/PBackgroundSharedTypes.h"
 #include "mozilla/dom/ScriptLoader.h"
 #include "mozilla/PermissionManager.h"
+#include "mozilla/StaticPrefs_extensions.h"
 #include "mozilla/Unused.h"
 #include "mozilla/EnumSet.h"
 
@@ -939,6 +942,85 @@ class ResolvePromiseRunnable final : public CancelableRunnable {
 
 }  // namespace
 
+NS_IMETHODIMP
+ServiceWorkerManager::RegisterForTest(nsIPrincipal* aPrincipal,
+                                      const nsAString& aScopeURL,
+                                      const nsAString& aScriptURL,
+                                      JSContext* aCx,
+                                      mozilla::dom::Promise** aPromise) {
+  nsIGlobalObject* global = xpc::CurrentNativeGlobal(aCx);
+  if (NS_WARN_IF(!global)) {
+    return NS_ERROR_FAILURE;
+  }
+
+  ErrorResult erv;
+  RefPtr<Promise> outer = Promise::Create(global, erv);
+  if (NS_WARN_IF(erv.Failed())) {
+    return erv.StealNSResult();
+  }
+
+  if (!StaticPrefs::dom_serviceWorkers_testing_enabled()) {
+    outer->MaybeRejectWithAbortError(
+        "registerForTest only allowed when dom.serviceWorkers.testing.enabled "
+        "is true");
+    return NS_OK;
+  }
+
+  if (aPrincipal == nullptr) {
+    outer->MaybeRejectWithAbortError("Missing principal");
+    return NS_OK;
+  }
+
+  if (aScriptURL.IsEmpty()) {
+    outer->MaybeRejectWithAbortError("Missing script url");
+    return NS_OK;
+  }
+
+  if (aScopeURL.IsEmpty()) {
+    outer->MaybeRejectWithAbortError("Missing scope url");
+    return NS_OK;
+  }
+
+  // The ClientType isn't really used here, but ClientType::Window
+  // is the least bad choice since this is happening on the main thread.
+  Maybe<ClientInfo> clientInfo =
+      dom::ClientManager::CreateInfo(ClientType::Window, aPrincipal);
+
+  if (!clientInfo.isSome()) {
+    outer->MaybeRejectWithUnknownError("Error creating clientInfo");
+    return NS_OK;
+  }
+
+  auto scope = NS_ConvertUTF16toUTF8(aScopeURL);
+  auto scriptURL = NS_ConvertUTF16toUTF8(aScriptURL);
+
+  auto regPromise = Register(clientInfo.ref(), scope, scriptURL,
+                             dom::ServiceWorkerUpdateViaCache::Imports);
+  const RefPtr<ServiceWorkerManager> self(this);
+  const nsCOMPtr<nsIPrincipal> principal(aPrincipal);
+  regPromise->Then(
+      GetMainThreadSerialEventTarget(), __func__,
+      [self, outer, principal,
+       scope](const ServiceWorkerRegistrationDescriptor& regDesc) {
+        RefPtr<ServiceWorkerRegistrationInfo> registration =
+            self->GetRegistration(principal, NS_ConvertUTF16toUTF8(scope));
+        if (registration) {
+          outer->MaybeResolve(registration);
+        } else {
+          outer->MaybeRejectWithUnknownError(
+              "Failed to retrieve ServiceWorkerRegistrationInfo");
+        }
+      },
+      [outer](const mozilla::CopyableErrorResult& err) {
+        CopyableErrorResult result(err);
+        outer->MaybeReject(std::move(result));
+      });
+
+  outer.forget(aPromise);
+
+  return NS_OK;
+}
+
 RefPtr<ServiceWorkerRegistrationPromise> ServiceWorkerManager::Register(
     const ClientInfo& aClientInfo, const nsACString& aScopeURL,
     const nsACString& aScriptURL, ServiceWorkerUpdateViaCache aUpdateViaCache) {
@@ -1266,7 +1348,7 @@ ServiceWorkerManager::SendNotificationClickEvent(
     const nsAString& aLang, const nsAString& aBody, const nsAString& aTag,
     const nsAString& aIcon, const nsAString& aData,
     const nsAString& aBehavior) {
-  return SendNotificationEvent(NS_LITERAL_STRING(NOTIFICATION_CLICK_EVENT_NAME),
+  return SendNotificationEvent(nsLiteralString(NOTIFICATION_CLICK_EVENT_NAME),
                                aOriginSuffix, aScope, aID, aTitle, aDir, aLang,
                                aBody, aTag, aIcon, aData, aBehavior);
 }
@@ -1278,7 +1360,7 @@ ServiceWorkerManager::SendNotificationCloseEvent(
     const nsAString& aLang, const nsAString& aBody, const nsAString& aTag,
     const nsAString& aIcon, const nsAString& aData,
     const nsAString& aBehavior) {
-  return SendNotificationEvent(NS_LITERAL_STRING(NOTIFICATION_CLOSE_EVENT_NAME),
+  return SendNotificationEvent(nsLiteralString(NOTIFICATION_CLOSE_EVENT_NAME),
                                aOriginSuffix, aScope, aID, aTitle, aDir, aLang,
                                aBody, aTag, aIcon, aData, aBehavior);
 }
@@ -1656,6 +1738,20 @@ void ServiceWorkerManager::LoadRegistration(
     return;
   }
   nsCOMPtr<nsIPrincipal> principal = principalOrErr.unwrap();
+
+  // Purge extensions registrations if they are disabled by prefs.
+  if (!StaticPrefs::extensions_backgroundServiceWorker_enabled_AtStartup()) {
+    nsCOMPtr<nsIURI> uri = principal->GetURI();
+
+    // We do check the URI scheme here because when this is going to run
+    // the extension may not have been loaded yet and the WebExtensionPolicy
+    // may not exist yet.
+    if (uri->SchemeIs("moz-extension")) {
+      const auto& cacheName = aRegistration.cacheName();
+      serviceWorkerScriptCache::PurgeCache(principal, cacheName);
+    }
+    return;
+  }
 
   RefPtr<ServiceWorkerRegistrationInfo> registration =
       GetRegistration(principal, aRegistration.scope());
@@ -2769,6 +2865,89 @@ ServiceWorkerManager::GetRegistration(const PrincipalInfo& aPrincipalInfo,
   }
 
   return GetRegistration(scopeKey, aScope);
+}
+
+NS_IMETHODIMP
+ServiceWorkerManager::RegisterForAddonPrincipal(nsIPrincipal* aPrincipal,
+                                                JSContext* aCx,
+                                                dom::Promise** aPromise) {
+  nsIGlobalObject* global = xpc::CurrentNativeGlobal(aCx);
+  if (NS_WARN_IF(!global)) {
+    return NS_ERROR_FAILURE;
+  }
+
+  ErrorResult erv;
+  RefPtr<Promise> outer = Promise::Create(global, erv);
+  if (NS_WARN_IF(erv.Failed())) {
+    return erv.StealNSResult();
+  }
+
+  auto enabled =
+      StaticPrefs::extensions_backgroundServiceWorker_enabled_AtStartup();
+  if (!enabled) {
+    outer->MaybeRejectWithNotAllowedError(
+        "Disabled. extensions.backgroundServiceWorker.enabled is false");
+    return NS_OK;
+  }
+
+  MOZ_ASSERT(aPrincipal);
+  auto* addonPolicy = BasePrincipal::Cast(aPrincipal)->AddonPolicy();
+  if (!addonPolicy) {
+    outer->MaybeRejectWithNotAllowedError("Not an extension principal");
+    return NS_OK;
+  }
+
+  nsCString scope;
+  auto result = addonPolicy->GetURL(EmptyString());
+  if (result.isOk()) {
+    scope.Assign(NS_ConvertUTF16toUTF8(result.unwrap()));
+  } else {
+    outer->MaybeRejectWithUnknownError("Unable to resolve addon scope URL");
+    return NS_OK;
+  }
+
+  nsString scriptURL;
+  addonPolicy->GetBackgroundWorker(scriptURL);
+
+  if (scriptURL.IsEmpty()) {
+    outer->MaybeRejectWithNotFoundError("Missing background worker script url");
+    return NS_OK;
+  }
+
+  Maybe<ClientInfo> clientInfo =
+      dom::ClientManager::CreateInfo(ClientType::All, aPrincipal);
+
+  if (!clientInfo.isSome()) {
+    outer->MaybeRejectWithUnknownError("Error creating clientInfo");
+    return NS_OK;
+  }
+
+  auto regPromise =
+      Register(clientInfo.ref(), scope, NS_ConvertUTF16toUTF8(scriptURL),
+               dom::ServiceWorkerUpdateViaCache::Imports);
+  const RefPtr<ServiceWorkerManager> self(this);
+  const nsCOMPtr<nsIPrincipal> principal(aPrincipal);
+  regPromise->Then(
+      GetMainThreadSerialEventTarget(), __func__,
+      [self, outer, principal,
+       scope](const ServiceWorkerRegistrationDescriptor& regDesc) {
+        RefPtr<ServiceWorkerRegistrationInfo> registration =
+            self->GetRegistration(principal, scope);
+        if (registration) {
+          outer->MaybeResolve(registration);
+        } else {
+          outer->MaybeRejectWithUnknownError(
+              "Failed to retrieve ServiceWorkerRegistrationInfo");
+        }
+      },
+      [outer](const mozilla::CopyableErrorResult& err) {
+        CopyableErrorResult result(err);
+        outer->MaybeReject(std::move(result));
+      });
+
+  outer.forget(aPromise);
+
+  return NS_OK;
 }
 
 NS_IMETHODIMP

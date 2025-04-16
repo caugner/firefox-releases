@@ -17,6 +17,10 @@ constexpr static bool kCancelAndRemovePreloadOnZeroReferences = false;
 
 namespace mozilla {
 
+PreloaderBase::UsageTimer::UsageTimer(PreloaderBase* aPreload,
+                                      dom::Document* aDocument)
+    : mDocument(aDocument), mPreload(aPreload) {}
+
 PreloaderBase::RedirectSink::RedirectSink(PreloaderBase* aPreloader,
                                           nsIInterfaceRequestor* aCallbacks)
     : mPreloader(new nsMainThreadPtrHolder<PreloaderBase>(
@@ -312,10 +316,10 @@ NS_IMETHODIMP PreloaderBase::UsageTimer::Notify(nsITimer* aTimer) {
   }
   nsString spec = NS_ConvertUTF8toUTF16(uri->GetSpecOrDefault());
 
-  nsContentUtils::ReportToConsole(
-      nsIScriptError::warningFlag, NS_LITERAL_CSTRING("DOM"), mDocument,
-      nsContentUtils::eDOM_PROPERTIES, "UnusedLinkPreloadPending",
-      nsTArray<nsString>({spec}));
+  nsContentUtils::ReportToConsole(nsIScriptError::warningFlag, "DOM"_ns,
+                                  mDocument, nsContentUtils::eDOM_PROPERTIES,
+                                  "UnusedLinkPreloadPending",
+                                  nsTArray<nsString>({spec}));
 
   return NS_OK;
 }

@@ -110,23 +110,21 @@ use crate::debug_colors;
 use euclid::{vec2, vec3, Point2D, Scale, Size2D, Vector2D, Rect, Transform3D, SideOffsets2D};
 use euclid::approxeq::ApproxEq;
 use crate::filterdata::SFilterData;
-use crate::frame_builder::FrameBuilderConfig;
 use crate::intern::ItemUid;
 use crate::internal_types::{FastHashMap, FastHashSet, PlaneSplitter, Filter, PlaneSplitAnchor, TextureSource};
 use crate::frame_builder::{FrameBuildingContext, FrameBuildingState, PictureState, PictureContext};
 use crate::gpu_cache::{GpuCache, GpuCacheAddress, GpuCacheHandle};
 use crate::gpu_types::{UvRectKind, ZBufferId};
 use plane_split::{Clipper, Polygon, Splitter};
-use crate::prim_store::{SpaceMapper, PrimitiveTemplateKind};
-use crate::prim_store::{SpaceSnapper, PictureIndex, PrimitiveInstance, PrimitiveInstanceKind};
-use crate::prim_store::{get_raster_rects, PrimitiveScratchBuffer};
-use crate::prim_store::{ColorBindingStorage, ColorBindingIndex};
+use crate::prim_store::{PrimitiveTemplateKind, PictureIndex, PrimitiveInstance, PrimitiveInstanceKind};
+use crate::prim_store::{ColorBindingStorage, ColorBindingIndex, PrimitiveScratchBuffer};
 use crate::print_tree::{PrintTree, PrintTreePrinter};
 use crate::render_backend::{DataStores, FrameId};
 use crate::render_task_graph::RenderTaskId;
 use crate::render_target::RenderTargetKind;
 use crate::render_task::{RenderTask, RenderTaskLocation, BlurTaskCache, ClearMode};
 use crate::resource_cache::{ResourceCache, ImageGeneration};
+use crate::space::{SpaceMapper, SpaceSnapper};
 use crate::scene::SceneProperties;
 use smallvec::SmallVec;
 use std::{mem, u8, marker, u32};
@@ -134,7 +132,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::collections::hash_map::Entry;
 use std::ops::Range;
 use crate::texture_cache::TextureCacheHandle;
-use crate::util::{MaxRect, VecHelper, RectHelpers, MatrixHelpers, Recycler};
+use crate::util::{MaxRect, VecHelper, RectHelpers, MatrixHelpers, Recycler, raster_rect_to_device_pixels};
 use crate::filterdata::{FilterDataHandle};
 use crate::visibility::{PrimitiveVisibilityMask, PrimitiveVisibilityFlags, FrameVisibilityContext, FrameVisibilityState};
 #[cfg(any(feature = "capture", feature = "replay"))]
@@ -260,63 +258,6 @@ impl<Src, Dst> From<CoordinateSpaceMapping<Src, Dst>> for TransformKey {
 struct PictureInfo {
     /// The spatial node for this picture.
     _spatial_node_index: SpatialNodeIndex,
-}
-
-/// Picture-caching state to keep between scenes.
-pub struct PictureCacheState {
-    /// The tiles retained by this picture cache.
-    pub tiles: FastHashMap<TileOffset, Box<Tile>>,
-    /// State of the spatial nodes from previous frame
-    spatial_node_comparer: SpatialNodeComparer,
-    /// State of opacity bindings from previous frame
-    opacity_bindings: FastHashMap<PropertyBindingId, OpacityBindingInfo>,
-    /// State of color bindings from previous frame
-    color_bindings: FastHashMap<PropertyBindingId, ColorBindingInfo>,
-    /// The current transform of the picture cache root spatial node
-    root_transform: TransformKey,
-    /// The current tile size in device pixels
-    current_tile_size: DeviceIntSize,
-    /// Various allocations we want to avoid re-doing.
-    allocations: PictureCacheRecycledAllocations,
-    /// Currently allocated native compositor surface for this picture cache.
-    pub native_surface: Option<NativeSurface>,
-    /// A cache of compositor surfaces that are retained between display lists
-    pub external_native_surface_cache: FastHashMap<ExternalNativeSurfaceKey, ExternalNativeSurface>,
-    /// The retained virtual offset for this slice between display lists.
-    virtual_offset: DeviceIntPoint,
-    /// Current frame ID of this picture cache
-    frame_id: FrameId,
-}
-
-pub struct PictureCacheRecycledAllocations {
-    old_opacity_bindings: FastHashMap<PropertyBindingId, OpacityBindingInfo>,
-    old_color_bindings: FastHashMap<PropertyBindingId, ColorBindingInfo>,
-    compare_cache: FastHashMap<PrimitiveComparisonKey, PrimitiveCompareResult>,
-}
-
-/// Stores a list of cached picture tiles that are retained
-/// between new scenes.
-#[cfg_attr(feature = "capture", derive(Serialize))]
-pub struct RetainedTiles {
-    /// The tiles retained between display lists.
-    #[cfg_attr(feature = "capture", serde(skip))] //TODO
-    pub caches: FastHashMap<usize, PictureCacheState>,
-}
-
-impl RetainedTiles {
-    pub fn new() -> Self {
-        RetainedTiles {
-            caches: FastHashMap::default(),
-        }
-    }
-
-    /// Merge items from one retained tiles into another.
-    pub fn merge(&mut self, other: RetainedTiles) {
-        assert!(self.caches.is_empty() || other.caches.is_empty());
-        if self.caches.is_empty() {
-            self.caches = other.caches;
-        }
-    }
 }
 
 /// Unit for tile coordinates.
@@ -2275,6 +2216,26 @@ impl SliceId {
     }
 }
 
+/// Information that is required to reuse or create a new tile cache. Created
+/// during scene building and passed to the render backend / frame builder.
+pub struct TileCacheParams {
+    // Index of the slice (also effectively the key of the tile cache, though we use SliceId where that matters)
+    pub slice: usize,
+    // Flags describing content of this cache (e.g. scrollbars)
+    pub slice_flags: SliceFlags,
+    // The anchoring spatial node / scroll root
+    pub spatial_node_index: SpatialNodeIndex,
+    // Optional background color of this tilecache. If present, can be used as an optimization
+    // to enable opaque blending and/or subpixel AA in more places.
+    pub background_color: Option<ColorF>,
+    // List of clips shared by all prims that are promoted to this tile cache
+    pub shared_clips: Vec<ClipInstance>,
+    // The clip chain handle representing `shared_clips`
+    pub shared_clip_chain: ClipChainId,
+    // Virtual surface sizes are always square, so this represents both the width and height
+    pub virtual_surface_size: i32,
+}
+
 /// Represents a cache of tiles that make up a picture primitives.
 pub struct TileCacheInstance {
     /// Index of the tile cache / slice for this frame builder. It's determined
@@ -2388,21 +2349,11 @@ enum SurfacePromotionResult {
 }
 
 impl TileCacheInstance {
-    pub fn new(
-        slice: usize,
-        slice_flags: SliceFlags,
-        spatial_node_index: SpatialNodeIndex,
-        background_color: Option<ColorF>,
-        shared_clips: Vec<ClipInstance>,
-        shared_clip_chain: ClipChainId,
-        fb_config: &FrameBuilderConfig,
-    ) -> Self {
-        let virtual_surface_size = fb_config.compositor_kind.get_virtual_surface_size();
-
+    pub fn new(params: TileCacheParams) -> Self {
         TileCacheInstance {
-            slice,
-            slice_flags,
-            spatial_node_index,
+            slice: params.slice,
+            slice_flags: params.slice_flags,
+            spatial_node_index: params.spatial_node_index,
             tiles: FastHashMap::default(),
             map_local_to_surface: SpaceMapper::new(
                 ROOT_SPATIAL_NODE_INDEX,
@@ -2425,19 +2376,19 @@ impl TileCacheInstance {
             local_rect: PictureRect::zero(),
             local_clip_rect: PictureRect::zero(),
             surface_index: SurfaceIndex(0),
-            background_color,
+            background_color: params.background_color,
             backdrop: BackdropInfo::empty(),
             subpixel_mode: SubpixelMode::Allow,
             root_transform: TransformKey::Local,
-            shared_clips,
-            shared_clip_chain,
+            shared_clips: params.shared_clips,
+            shared_clip_chain: params.shared_clip_chain,
             current_tile_size: DeviceIntSize::zero(),
             frames_until_size_eval: 0,
             fract_offset: PictureVector2D::zero(),
             // Default to centering the virtual offset in the middle of the DC virtual surface
             virtual_offset: DeviceIntPoint::new(
-                virtual_surface_size / 2,
-                virtual_surface_size / 2,
+                params.virtual_surface_size / 2,
+                params.virtual_surface_size / 2,
             ),
             compare_cache: FastHashMap::default(),
             native_surface: None,
@@ -2447,6 +2398,46 @@ impl TileCacheInstance {
             z_id_opaque: ZBufferId::invalid(),
             external_native_surface_cache: FastHashMap::default(),
             frame_id: FrameId::INVALID,
+        }
+    }
+
+    /// Reset this tile cache with the updated parameters from a new scene
+    /// that has arrived. This allows the tile cache to be retained across
+    /// new scenes.
+    pub fn prepare_for_new_scene(
+        &mut self,
+        params: TileCacheParams,
+    ) {
+        // We should only receive updated state for matching slice key
+        assert_eq!(self.slice, params.slice);
+
+        // Store the parameters from the scene builder for this slice. Other
+        // params in the tile cache are retained and reused, or are always
+        // updated during pre/post_update.
+        self.slice_flags = params.slice_flags;
+        self.spatial_node_index = params.spatial_node_index;
+        self.background_color = params.background_color;
+        self.shared_clips = params.shared_clips;
+        self.shared_clip_chain = params.shared_clip_chain;
+
+        // Since the slice flags may have changed, ensure we re-evaluate the
+        // appropriate tile size for this cache next update.
+        self.frames_until_size_eval = 0;
+    }
+
+    /// Destroy any manually managed resources before this picture cache is
+    /// destroyed, such as native compositor surfaces.
+    pub fn destroy(
+        self,
+        resource_cache: &mut ResourceCache,
+    ) {
+        if let Some(native_surface) = self.native_surface {
+            resource_cache.destroy_compositor_surface(native_surface.opaque);
+            resource_cache.destroy_compositor_surface(native_surface.alpha);
+        }
+
+        for (_, external_surface) in self.external_native_surface_cache {
+            resource_cache.destroy_compositor_surface(external_surface.native_surface_id)
         }
     }
 
@@ -2567,50 +2558,6 @@ impl TileCacheInstance {
             });
         }
 
-        // If there are pending retained state, retrieve it.
-        if let Some(prev_state) = frame_state.retained_tiles.caches.remove(&self.slice) {
-            self.tiles.extend(prev_state.tiles);
-            self.root_transform = prev_state.root_transform;
-            self.spatial_node_comparer = prev_state.spatial_node_comparer;
-            self.opacity_bindings = prev_state.opacity_bindings;
-            self.color_bindings = prev_state.color_bindings;
-            self.current_tile_size = prev_state.current_tile_size;
-            self.native_surface = prev_state.native_surface;
-            self.external_native_surface_cache = prev_state.external_native_surface_cache;
-            self.virtual_offset = prev_state.virtual_offset;
-            self.frame_id = prev_state.frame_id;
-
-            fn recycle_map<K: std::cmp::Eq + std::hash::Hash, V>(
-                ideal_len: usize,
-                dest: &mut FastHashMap<K, V>,
-                src: FastHashMap<K, V>,
-            ) {
-                if dest.capacity() < src.capacity() {
-                    if src.capacity() < 3 * ideal_len {
-                        *dest = src;
-                    } else {
-                        dest.clear();
-                        dest.reserve(ideal_len);
-                    }
-                }
-            }
-            recycle_map(
-                self.opacity_bindings.len(),
-                &mut self.old_opacity_bindings,
-                prev_state.allocations.old_opacity_bindings,
-            );
-            recycle_map(
-                self.color_bindings.len(),
-                &mut self.old_color_bindings,
-                prev_state.allocations.old_color_bindings,
-            );
-            recycle_map(
-                prev_state.allocations.compare_cache.len(),
-                &mut self.compare_cache,
-                prev_state.allocations.compare_cache,
-            );
-        }
-
         // Advance the current frame ID counter for this picture cache (must be done
         // after any retained prev state is taken above).
         self.frame_id.advance();
@@ -2662,6 +2609,7 @@ impl TileCacheInstance {
                     frame_state.resource_cache.destroy_compositor_surface(native_surface.alpha);
                 }
                 self.tiles.clear();
+                self.tile_rect = TileRect::zero();
                 self.current_tile_size = desired_tile_size;
             }
 
@@ -3192,7 +3140,7 @@ impl TileCacheInstance {
         &mut self,
         prim_instance: &mut PrimitiveInstance,
         prim_spatial_node_index: SpatialNodeIndex,
-        prim_clip_chain: Option<&ClipChainInstance>,
+        prim_clip_chain: &ClipChainInstance,
         local_prim_rect: LayoutRect,
         frame_context: &FrameVisibilityContext,
         data_stores: &DataStores,
@@ -3206,13 +3154,6 @@ impl TileCacheInstance {
         // This primitive exists on the last element on the current surface stack.
         profile_scope!("update_prim_dependencies");
         let prim_surface_index = *surface_stack.last().unwrap();
-
-        // If the primitive is completely clipped out by the clip chain, there
-        // is no need to add it to any primitive dependencies.
-        let prim_clip_chain = match prim_clip_chain {
-            Some(prim_clip_chain) => prim_clip_chain,
-            None => return None,
-        };
 
         self.map_local_to_surface.set_target_spatial_node(
             prim_spatial_node_index,
@@ -4448,7 +4389,31 @@ impl PrimitiveList {
             .intersection(&prim_rect)
             .unwrap_or_else(LayoutRect::zero);
 
-        let instance_index = self.prim_instances.len();
+
+        // Primitive lengths aren't evenly distributed among primitive lists:
+        // We often have a large amount of single primitive lists, a
+        // few below 20~30 primitives, and even fewer lists (maybe a couple)
+        // in the multiple hundreds with nothing in between.
+        // We can see in profiles that reallocating vectors while pushing
+        // primitives is taking a large amount of the total scene build time,
+        // so we take advantage of what we know about the length distributions
+        // to go for an adapted vector growth pattern that avoids over-allocating
+        // for the many small allocations while avoiding a lot of reallocation by
+        // quickly converging to the common sizes.
+        // Rust's default vector growth strategy (when pushing elements one by one)
+        // is to double the capacity every time.
+        let prims_len = self.prim_instances.len();
+        if prims_len == self.prim_instances.capacity() {
+            let next_alloc = match prims_len {
+                1 ..= 31 => 32 - prims_len,
+                32 ..= 256 => 512 - prims_len,
+                _ => prims_len * 2,
+            };
+
+            self.prim_instances.reserve(next_alloc);
+        }
+
+        let instance_index = prims_len;
         self.prim_instances.push(prim_instance);
 
         if let Some(cluster) = self.clusters.last_mut() {
@@ -4456,6 +4421,18 @@ impl PrimitiveList {
                 cluster.add_instance(&culling_rect, instance_index);
                 return;
             }
+        }
+
+        // Same idea with clusters, using a different distribution.
+        let clusters_len = self.clusters.len();
+        if clusters_len == self.clusters.capacity() {
+            let next_alloc = match clusters_len {
+                1 ..= 15 => 16 - clusters_len,
+                16 ..= 127 => 128 - clusters_len,
+                _ => clusters_len * 2,
+            };
+
+            self.clusters.reserve(next_alloc);
         }
 
         let mut cluster = PrimitiveCluster::new(
@@ -4473,16 +4450,6 @@ impl PrimitiveList {
         self.clusters.is_empty()
     }
 
-    /// Add an existing cluster to this prim list
-    pub fn add_cluster(&mut self, mut cluster: PrimitiveCluster, prim_instances: &[PrimitiveInstance]) {
-        let start = self.prim_instances.len();
-        self.prim_instances.extend_from_slice(&prim_instances[cluster.prim_range()]);
-        let end = self.prim_instances.len();
-
-        cluster.prim_range = start..end;
-        self.clusters.push(cluster);
-    }
-
     /// Merge another primitive list into this one
     pub fn extend(&mut self, mut prim_list: PrimitiveList) {
         let offset = self.prim_instances.len();
@@ -4493,11 +4460,6 @@ impl PrimitiveList {
 
         self.prim_instances.extend(prim_list.prim_instances);
         self.clusters.extend(prim_list.clusters);
-    }
-
-    pub fn clear(&mut self) {
-        self.prim_instances.clear();
-        self.clusters.clear();
     }
 }
 
@@ -4668,43 +4630,6 @@ impl PicturePrimitive {
                 filter.is_visible()
             }
             _ => true,
-        }
-    }
-
-    /// Destroy an existing picture. This is called just before
-    /// a frame builder is replaced with a newly built scene. It
-    /// gives a picture a chance to retain any cached tiles that
-    /// may be useful during the next scene build.
-    pub fn destroy(
-        &mut self,
-        retained_tiles: &mut RetainedTiles,
-        tile_caches: &mut FastHashMap<SliceId, Box<TileCacheInstance>>,
-    ) {
-        if let Some(PictureCompositeMode::TileCache { slice_id }) = self.requested_composite_mode {
-            if let Some(tile_cache) = tile_caches.remove(&slice_id) {
-                if !tile_cache.tiles.is_empty() {
-                    retained_tiles.caches.insert(
-                        tile_cache.slice,
-                        PictureCacheState {
-                            tiles: tile_cache.tiles,
-                            spatial_node_comparer: tile_cache.spatial_node_comparer,
-                            opacity_bindings: tile_cache.opacity_bindings,
-                            color_bindings: tile_cache.color_bindings,
-                            root_transform: tile_cache.root_transform,
-                            current_tile_size: tile_cache.current_tile_size,
-                            native_surface: tile_cache.native_surface,
-                            external_native_surface_cache: tile_cache.external_native_surface_cache,
-                            virtual_offset: tile_cache.virtual_offset,
-                            frame_id: tile_cache.frame_id,
-                            allocations: PictureCacheRecycledAllocations {
-                                old_opacity_bindings: tile_cache.old_opacity_bindings,
-                                old_color_bindings: tile_cache.old_color_bindings,
-                                compare_cache: tile_cache.compare_cache,
-                            },
-                        },
-                    );
-                }
-            }
         }
     }
 
@@ -5265,7 +5190,7 @@ impl PicturePrimitive {
                                     Some(device_draw_rect) => {
                                         // Only check for occlusion on visible tiles that are fixed position.
                                         if tile_cache.spatial_node_index == ROOT_SPATIAL_NODE_INDEX &&
-                                           frame_state.composite_state.is_tile_occluded(tile.z_id, device_draw_rect) {
+                                           frame_state.composite_state.occluders.is_tile_occluded(tile.z_id, device_draw_rect) {
                                             // If this tile has an allocated native surface, free it, since it's completely
                                             // occluded. We will need to re-allocate this surface if it becomes visible,
                                             // but that's likely to be rare (e.g. when there is no content display list
@@ -5952,7 +5877,6 @@ impl PicturePrimitive {
 
         // See if this picture actually needs a surface for compositing.
         let actual_composite_mode = match self.requested_composite_mode {
-            Some(PictureCompositeMode::Filter(ref filter)) if filter.is_noop() => None,
             Some(PictureCompositeMode::TileCache { slice_id }) => {
                 // Only allow picture caching composite mode if global picture caching setting
                 // is enabled this frame.
@@ -6166,9 +6090,7 @@ impl PicturePrimitive {
             );
 
             // Mark the cluster visible, since it passed the invertible and
-            // backface checks. In future, this will include spatial clustering
-            // which will allow the frame building code to skip most of the
-            // current per-primitive culling code.
+            // backface checks.
             cluster.flags.insert(ClusterFlags::IS_VISIBLE);
             if let Some(cluster_rect) = surface.map_local_to_surface.map(&cluster.bounding_rect) {
                 surface.rect = surface.rect.union(&cluster_rect);
@@ -7185,4 +7107,39 @@ impl CompositeState {
             }
         }
     }
+}
+
+pub fn get_raster_rects(
+    pic_rect: PictureRect,
+    map_to_raster: &SpaceMapper<PicturePixel, RasterPixel>,
+    map_to_world: &SpaceMapper<RasterPixel, WorldPixel>,
+    prim_bounding_rect: WorldRect,
+    device_pixel_scale: DevicePixelScale,
+) -> Option<(DeviceRect, DeviceRect)> {
+    let unclipped_raster_rect = map_to_raster.map(&pic_rect)?;
+
+    let unclipped = raster_rect_to_device_pixels(
+        unclipped_raster_rect,
+        device_pixel_scale,
+    );
+
+    let unclipped_world_rect = map_to_world.map(&unclipped_raster_rect)?;
+
+    let clipped_world_rect = unclipped_world_rect.intersection(&prim_bounding_rect)?;
+
+    let clipped_raster_rect = map_to_world.unmap(&clipped_world_rect)?;
+
+    let clipped_raster_rect = clipped_raster_rect.intersection(&unclipped_raster_rect)?;
+
+    let clipped = raster_rect_to_device_pixels(
+        clipped_raster_rect,
+        device_pixel_scale,
+    );
+
+    // Ensure that we won't try to allocate a zero-sized clip render task.
+    if clipped.is_empty() {
+        return None;
+    }
+
+    Some((clipped, unclipped))
 }

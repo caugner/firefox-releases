@@ -11,6 +11,7 @@
 #include "nsHttpHandler.h"
 #include "nsCOMPtr.h"
 #include "nsIOService.h"
+#include "nsNetUtil.h"
 #include "nsQueryObject.h"
 #include "nsThreadUtils.h"
 #include "NullHttpChannel.h"
@@ -85,7 +86,7 @@ nsHttpActivityDistributor::ObserveActivityWithArgs(
       }
     } else if (args.type() == HttpActivityArgs::THttpActivity) {
       nsCOMPtr<nsIURI> uri;
-      nsAutoCString portStr(NS_LITERAL_CSTRING(""));
+      nsAutoCString portStr(""_ns);
       int32_t port = args.get_HttpActivity().port();
       bool endToEndSSL = args.get_HttpActivity().endToEndSSL();
       if (port != -1 &&
@@ -94,8 +95,7 @@ nsHttpActivityDistributor::ObserveActivityWithArgs(
       }
 
       nsresult rv = NS_NewURI(getter_AddRefs(uri),
-                              (endToEndSSL ? NS_LITERAL_CSTRING("https://")
-                                           : NS_LITERAL_CSTRING("http://")) +
+                              (endToEndSSL ? "https://"_ns : "http://"_ns) +
                                   args.get_HttpActivity().host() + portStr);
       if (NS_FAILED(rv)) {
         return;
@@ -111,8 +111,13 @@ nsHttpActivityDistributor::ObserveActivityWithArgs(
     }
   };
 
-  return NS_DispatchToMainThread(NS_NewRunnableFunction(
-      "net::nsHttpActivityDistributor::ObserveActivityWithArgs", task));
+  if (!NS_IsMainThread()) {
+    return NS_DispatchToMainThread(NS_NewRunnableFunction(
+        "net::nsHttpActivityDistributor::ObserveActivityWithArgs", task));
+  }
+
+  task();
+  return NS_OK;
 }
 
 NS_IMETHODIMP

@@ -19,6 +19,7 @@
 #endif
 #include <utility>
 
+#include "mozilla/AppShutdown.h"
 #include "mozilla/Assertions.h"
 #include "mozilla/Casting.h"
 #include "mozilla/PodOperations.h"
@@ -43,6 +44,10 @@
 #include "prerror.h"
 #include "secerr.h"
 #include "secder.h"
+
+#ifdef MOZ_WIDGET_COCOA
+#  include "nsCocoaFeatures.h"
+#endif
 
 #include "TrustOverrideUtils.h"
 #include "TrustOverride-AppleGoogleDigiCertData.inc"
@@ -1598,6 +1603,12 @@ bool LoadUserModuleAt(const char* moduleName, const char* libraryName,
 const char* kOSClientCertsModuleName = "OS Client Cert Module";
 
 bool LoadOSClientCertsModule(const nsCString& dir) {
+#ifdef MOZ_WIDGET_COCOA
+  // osclientcerts requires macOS 10.14 or later
+  if (!nsCocoaFeatures::OnMojaveOrLater()) {
+    return false;
+  }
+#endif
   return LoadUserModuleAt(kOSClientCertsModuleName, "osclientcerts", dir);
 }
 
@@ -1798,6 +1809,11 @@ void SaveIntermediateCerts(const UniqueCERTCertList& certList) {
   size_t numIntermediates = 0;
   for (CERTCertListNode* node = CERT_LIST_HEAD(certList);
        !CERT_LIST_END(node, certList); node = CERT_LIST_NEXT(node)) {
+    if (!node || !node->cert) {
+      // Something has gone wrong. This is best-effort, so just continue.
+      continue;
+    }
+
     if (isEndEntity) {
       // Skip the end-entity; we only want to store intermediates
       isEndEntity = false;
@@ -1810,7 +1826,11 @@ void SaveIntermediateCerts(const UniqueCERTCertList& certList) {
       continue;
     }
 
-    if (node->cert->isperm) {
+    PRBool isperm;
+    if (CERT_GetCertIsPerm(node->cert, &isperm) != SECSuccess) {
+      continue;
+    }
+    if (isperm) {
       // We don't need to remember certs already stored in perm db.
       continue;
     }
@@ -1839,6 +1859,10 @@ void SaveIntermediateCerts(const UniqueCERTCertList& certList) {
     nsCOMPtr<nsIRunnable> importCertsRunnable(NS_NewRunnableFunction(
         "IdleSaveIntermediateCerts",
         [intermediates = std::move(intermediates)]() -> void {
+          if (AppShutdown::IsShuttingDown()) {
+            return;
+          }
+
           UniquePK11SlotInfo slot(PK11_GetInternalKeySlot());
           if (!slot) {
             return;
@@ -1851,6 +1875,26 @@ void SaveIntermediateCerts(const UniqueCERTCertList& certList) {
           for (CERTCertListNode* node = CERT_LIST_HEAD(intermediates);
                !CERT_LIST_END(node, intermediates);
                node = CERT_LIST_NEXT(node)) {
+            if (AppShutdown::IsShuttingDown()) {
+              return;
+            }
+            if (!node || !node->cert) {
+              continue;
+            }
+            PRBool isperm;
+            if (CERT_GetCertIsPerm(node->cert, &isperm) != SECSuccess) {
+              continue;
+            }
+            if (isperm) {
+              // Multiple import tasks can be queued up, but only one runs at a
+              // time. In theory, if two separate connections made use of the
+              // same intermediate, the task that runs second could be trying
+              // to re-import an intermediate that has already been imported by
+              // the first task. This is unnecessary, so this check bails early
+              // in that case.
+              continue;
+            }
+
 #ifdef MOZ_NEW_CERT_STORAGE
             if (CertIsInCertStorage(node->cert, certStorage)) {
               continue;
@@ -1881,8 +1925,12 @@ void SaveIntermediateCerts(const UniqueCERTCertList& certList) {
               }));
           Unused << NS_DispatchToMainThread(runnable.forget());
         }));
-    Unused << NS_DispatchToCurrentThreadQueue(importCertsRunnable.forget(),
-                                              EventQueuePriority::Idle);
+    nsCOMPtr<nsINSSComponent> nssComponent(
+        do_GetService(PSM_COMPONENT_CONTRACTID));
+    if (nssComponent) {
+      Unused << nssComponent->DispatchTaskToSerialBackgroundQueue(
+          importCertsRunnable);
+    }
   }
 }
 

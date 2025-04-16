@@ -469,12 +469,14 @@ inline bool IsTypeofKind(ParseNodeKind kind) {
  *        true; If constant folding occurs, Elem expr may become Dot expr.
  *        OptionalElemExpr does not get folded into OptionalDot.
  * OptionalChain (UnaryNode)
- *   kid: expression that is evaluated. Contains optional nodes such as
- *        OptionalElemExpr, OptionalDotExpr, and OptionalCall, which
- *        shortcircuit and return Undefined without evaluating the rest of the
- *        expression of the node is nullish. Also can contain nodes such as
- *        DotExpr, ElemExpr, NameExpr CallExpr, etc. These are evaluated
- *        normally.
+ *   kid: expression that is evaluated as a chain. An Optional chain contains
+ *        one or more optional nodes. It's first node (kid) is always an
+ *        optional node, for example: an OptionalElemExpr, OptionalDotExpr, or
+ *        OptionalCall.  An OptionalChain will shortcircuit and return
+ *        Undefined without evaluating the rest of the expression if any of the
+ *        optional nodes it contains are nullish. An optionalChain also can
+ *        contain nodes such as DotExpr, ElemExpr, NameExpr CallExpr, etc.
+ *        These are evaluated normally.
  *          * OptionalDotExpr: Dot expr with jump
  *          * OptionalElemExpr: Elem expr with jump
  *          * OptionalCallExpr: Call expr with jump
@@ -486,11 +488,23 @@ inline bool IsTypeofKind(ParseNodeKind kind) {
  * DotExpr (PropertyAccess)
  *   left: MEMBER expr to left of '.'
  *   right: PropertyName to right of '.'
+ * OptionalDotExpr (OptionalPropertyAccess)
+ *   left: MEMBER expr to left of '.', short circuits back to OptionalChain
+ *        if nullish.
+ *   right: PropertyName to right of '.'
  * ElemExpr (PropertyByValue)
  *   left: MEMBER expr to left of '['
  *   right: expr between '[' and ']'
+ * OptionalElemExpr (OptionalPropertyByValue)
+ *   left: MEMBER expr to left of '[', short circuits back to OptionalChain
+ *         if nullish.
+ *   right: expr between '[' and ']'
  * CallExpr (BinaryNode)
  *   left: callee expression on the left of the '('
+ *   right: Arguments
+ * OptionalCallExpr (BinaryNode)
+ *   left: callee expression on the left of the '(', short circuits back to
+ *         OptionalChain if nullish.
  *   right: Arguments
  * Arguments (ListNode)
  *   head: list of arg1, arg2, ... argN
@@ -857,7 +871,8 @@ class NameNode : public ParseNode {
   JSAtom* atom() const { return atom_; }
 
   PropertyName* name() const {
-    MOZ_ASSERT(isKind(ParseNodeKind::Name));
+    MOZ_ASSERT(isKind(ParseNodeKind::Name) ||
+               isKind(ParseNodeKind::PrivateName));
     return atom()->asPropertyName();
   }
 
@@ -2199,6 +2214,15 @@ class ClassNames : public BinaryNode {
 };
 
 class ClassNode : public TernaryNode {
+ private:
+  LexicalScopeNode* innerScope() const {
+    return &kid3()->as<LexicalScopeNode>();
+  }
+
+  LexicalScopeNode* bodyScope() const {
+    return &innerScope()->scopeBody()->as<LexicalScopeNode>();
+  }
+
  public:
   ClassNode(ParseNode* names, ParseNode* heritage,
             LexicalScopeNode* memberBlock, const TokenPos& pos)
@@ -2220,14 +2244,18 @@ class ClassNode : public TernaryNode {
   ParseNode* heritage() const { return kid2(); }
 
   ListNode* memberList() const {
-    ListNode* list =
-        &kid3()->as<LexicalScopeNode>().scopeBody()->as<ListNode>();
+    ListNode* list = &bodyScope()->scopeBody()->as<ListNode>();
     MOZ_ASSERT(list->isKind(ParseNodeKind::ClassMemberList));
     return list;
   }
 
   LexicalScopeNode* scopeBindings() const {
-    LexicalScopeNode* scope = &kid3()->as<LexicalScopeNode>();
+    LexicalScopeNode* scope = innerScope();
+    return scope->isEmptyScope() ? nullptr : scope;
+  }
+
+  LexicalScopeNode* bodyScopeBindings() const {
+    LexicalScopeNode* scope = bodyScope();
     return scope->isEmptyScope() ? nullptr : scope;
   }
 };

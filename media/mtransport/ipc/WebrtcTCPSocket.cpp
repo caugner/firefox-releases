@@ -160,8 +160,7 @@ nsresult WebrtcTCPSocket::Open(
   }
 
   mOpened = true;
-  nsCString schemePrefix =
-      aUseTls ? NS_LITERAL_CSTRING("https://") : NS_LITERAL_CSTRING("http://");
+  nsCString schemePrefix = aUseTls ? "https://"_ns : "http://"_ns;
   nsCString spec = schemePrefix + aHost;
 
   nsresult rv = NS_MutateURI(NS_STANDARDURLMUTATOR_CONTRACTID)
@@ -207,7 +206,7 @@ nsresult WebrtcTCPSocket::DoProxyConfigLookup() {
   nsCOMPtr<nsIChannel> channel;
   rv = NS_NewChannel(getter_AddRefs(channel), mURI,
                      nsContentUtils::GetSystemPrincipal(),
-                     nsILoadInfo::SEC_ALLOW_CROSS_ORIGIN_DATA_IS_NULL,
+                     nsILoadInfo::SEC_ALLOW_CROSS_ORIGIN_SEC_CONTEXT_IS_NULL,
                      nsIContentPolicy::TYPE_OTHER);
   if (NS_WARN_IF(NS_FAILED(rv))) {
     return rv;
@@ -296,7 +295,7 @@ void WebrtcTCPSocket::OpenWithoutHttpProxy(nsIProxyInfo* aSocksProxyInfo) {
 
   AutoTArray<nsCString, 1> socketTypes;
   if (mTls) {
-    socketTypes.AppendElement(NS_LITERAL_CSTRING("ssl"));
+    socketTypes.AppendElement("ssl"_ns);
   }
 
   nsCOMPtr<nsISocketTransportService> sts =
@@ -391,7 +390,7 @@ nsresult WebrtcTCPSocket::OpenWithHttpProxy() {
       nsILoadInfo::SEC_DONT_FOLLOW_REDIRECTS | nsILoadInfo::SEC_COOKIES_OMIT |
           // We need this flag to allow loads from any origin since this channel
           // is being used to CONNECT to an HTTP proxy.
-          nsILoadInfo::SEC_ALLOW_CROSS_ORIGIN_DATA_IS_NULL,
+          nsILoadInfo::SEC_ALLOW_CROSS_ORIGIN_SEC_CONTEXT_IS_NULL,
       nsIContentPolicy::TYPE_OTHER, getter_AddRefs(localChannel));
   if (NS_FAILED(rv)) {
     LOG(("WebrtcTCPSocket %p: bad open channel\n", this));

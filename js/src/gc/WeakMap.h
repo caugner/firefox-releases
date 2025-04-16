@@ -163,8 +163,12 @@ class WeakMapBase : public mozilla::LinkedListElement<WeakMapBase> {
   // An unmarked CCW with a delegate will add a weakKeys entry for the
   // delegate. If the delegate is removed with NukeCrossCompartmentWrapper,
   // then the (former) CCW needs to be added to weakKeys instead.
-  virtual void postSeverDelegate(GCMarker* marker, JSObject* key,
-                                 Compartment* comp) = 0;
+  virtual void postSeverDelegate(GCMarker* marker, JSObject* key) = 0;
+
+  // When a wrapper is remapped, it will have its delegate removed then
+  // re-added. Update the delegate zone's gcWeakKeys accordingly.
+  virtual void postRestoreDelegate(GCMarker* marker, JSObject* key,
+                                   JSObject* delegate) = 0;
 
   virtual bool markEntries(GCMarker* marker) = 0;
 
@@ -325,8 +329,11 @@ class WeakMap
   bool markEntry(GCMarker* marker, Key& key, Value& value);
 
   // 'key' has lost its delegate, update our weak key state.
-  void postSeverDelegate(GCMarker* marker, JSObject* key,
-                         Compartment* comp) override;
+  void postSeverDelegate(GCMarker* marker, JSObject* key) override;
+
+  // 'key' regained its delegate, update our weak key state.
+  void postRestoreDelegate(GCMarker* marker, JSObject* key,
+                           JSObject* delegate) override;
 
   void trace(JSTracer* trc) override;
 
@@ -334,6 +341,7 @@ class WeakMap
   inline void forgetKey(UnbarrieredKey key);
 
   void barrierForInsert(Key k, const Value& v) {
+    assertMapIsSameZoneWithValue(v);
     if (!mapColor) {
       return;
     }
@@ -347,6 +355,8 @@ class WeakMap
     TraceEdge(trc, &tmp, "weakmap inserted value");
     MOZ_ASSERT(tmp == v);
   }
+
+  inline void assertMapIsSameZoneWithValue(const Value& v);
 
   bool markEntries(GCMarker* marker) override;
 

@@ -9,12 +9,12 @@
 #include "mozilla/ErrorResult.h"
 #include "mozilla/dom/Document.h"
 #include "mozilla/dom/FetchTypes.h"
-#include "mozilla/dom/IPCBlobInputStreamChild.h"
 #include "mozilla/dom/ScriptSettings.h"
 #include "mozilla/dom/WorkerCommon.h"
 #include "mozilla/dom/WorkerPrivate.h"
 #include "mozilla/ipc/IPCStreamUtils.h"
 #include "mozilla/ipc/PBackgroundChild.h"
+#include "mozilla/RemoteLazyInputStreamChild.h"
 #include "nsIContentPolicy.h"
 #include "nsStreamUtils.h"
 
@@ -83,7 +83,7 @@ InternalRequest::InternalRequest(const nsACString& aURL,
       mHeaders(new InternalHeaders(HeadersGuardEnum::None)),
       mBodyLength(InternalResponse::UNKNOWN_BODY_SIZE),
       mContentPolicyType(nsIContentPolicy::TYPE_FETCH),
-      mReferrer(NS_LITERAL_STRING(kFETCH_CLIENT_REFERRER_STR)),
+      mReferrer(NS_LITERAL_STRING_FROM_CSTRING(kFETCH_CLIENT_REFERRER_STR)),
       mReferrerPolicy(ReferrerPolicy::_empty),
       mEnvironmentReferrerPolicy(ReferrerPolicy::_empty),
       mMode(RequestMode::No_cors),
@@ -169,7 +169,7 @@ InternalRequest::InternalRequest(const IPCInternalRequest& aIPCRequest)
   // (constructed on the child side).
   if (body) {
     MOZ_ASSERT(body->type() == BodyStreamVariant::TParentToChildStream);
-    mBodyStream = static_cast<IPCBlobInputStreamChild*>(
+    mBodyStream = static_cast<RemoteLazyInputStreamChild*>(
                       body->get_ParentToChildStream().actorChild())
                       ->CreateStream();
   }
@@ -202,6 +202,7 @@ RequestDestination InternalRequest::MapContentPolicyTypeToRequestDestination(
     case nsIContentPolicy::TYPE_INTERNAL_MODULE_PRELOAD:
     case nsIContentPolicy::TYPE_INTERNAL_SERVICE_WORKER:
     case nsIContentPolicy::TYPE_INTERNAL_WORKER_IMPORT_SCRIPTS:
+    case nsIContentPolicy::TYPE_INTERNAL_CHROMEUTILS_COMPILED_SCRIPT:
     case nsIContentPolicy::TYPE_SCRIPT:
       destination = RequestDestination::Script;
       break;
@@ -382,13 +383,13 @@ RequestMode InternalRequest::MapChannelToRequestMode(nsIChannel* aChannel) {
   uint32_t securityMode = loadInfo->GetSecurityMode();
 
   switch (securityMode) {
-    case nsILoadInfo::SEC_REQUIRE_SAME_ORIGIN_DATA_INHERITS:
+    case nsILoadInfo::SEC_REQUIRE_SAME_ORIGIN_INHERITS_SEC_CONTEXT:
     case nsILoadInfo::SEC_REQUIRE_SAME_ORIGIN_DATA_IS_BLOCKED:
       return RequestMode::Same_origin;
-    case nsILoadInfo::SEC_ALLOW_CROSS_ORIGIN_DATA_INHERITS:
-    case nsILoadInfo::SEC_ALLOW_CROSS_ORIGIN_DATA_IS_NULL:
+    case nsILoadInfo::SEC_ALLOW_CROSS_ORIGIN_INHERITS_SEC_CONTEXT:
+    case nsILoadInfo::SEC_ALLOW_CROSS_ORIGIN_SEC_CONTEXT_IS_NULL:
       return RequestMode::No_cors;
-    case nsILoadInfo::SEC_REQUIRE_CORS_DATA_INHERITS:
+    case nsILoadInfo::SEC_REQUIRE_CORS_INHERITS_SEC_CONTEXT:
       // TODO: Check additional flag force-preflight after bug 1199693 (bug
       // 1189945)
       return RequestMode::Cors;

@@ -72,6 +72,7 @@ MSG_DEF(JSMSG_SOURCE_ARRAY_TOO_LONG,   0, JSEXN_RANGEERR, "source array is too l
 MSG_DEF(JSMSG_REDECLARED_PREV,         2, JSEXN_NOTE, "Previously declared at line {0}, column {1}")
 MSG_DEF(JSMSG_REDECLARED_VAR,          2, JSEXN_SYNTAXERR, "redeclaration of {0} {1}")
 MSG_DEF(JSMSG_UNDECLARED_VAR,          1, JSEXN_REFERENCEERR, "assignment to undeclared variable {0}")
+MSG_DEF(JSMSG_UNDECLARED_PRIVATE,      0, JSEXN_TYPEERR, "Trying to read undeclared field")
 MSG_DEF(JSMSG_GETTER_ONLY,             1, JSEXN_TYPEERR, "setting getter-only property {0}")
 MSG_DEF(JSMSG_OVERWRITING_ACCESSOR,    1, JSEXN_TYPEERR, "can't overwrite accessor property {0}")
 MSG_DEF(JSMSG_INVALID_MAP_ITERABLE,    1, JSEXN_TYPEERR, "iterable for {0} should have array-like objects")
@@ -225,6 +226,7 @@ MSG_DEF(JSMSG_BAD_STRICT_ASSIGN_EVAL,  0, JSEXN_SYNTAXERR, "'eval' can't be defi
 MSG_DEF(JSMSG_BAD_SWITCH,              0, JSEXN_SYNTAXERR, "invalid switch statement")
 MSG_DEF(JSMSG_BAD_SUPER,               0, JSEXN_SYNTAXERR, "invalid use of keyword 'super'")
 MSG_DEF(JSMSG_BAD_SUPERPROP,           1, JSEXN_SYNTAXERR, "use of super {0} accesses only valid within methods or eval code within methods")
+MSG_DEF(JSMSG_BAD_SUPERPRIVATE,        0, JSEXN_SYNTAXERR, "invalid access of private field on 'super'")
 MSG_DEF(JSMSG_BAD_SUPERCALL,           0, JSEXN_SYNTAXERR, "super() is only valid in derived class constructors")
 MSG_DEF(JSMSG_BAD_ARGUMENTS,           0, JSEXN_SYNTAXERR, "arguments is not valid in fields")
 MSG_DEF(JSMSG_BRACKET_AFTER_LIST,      0, JSEXN_SYNTAXERR, "missing ] after element list")
@@ -273,6 +275,8 @@ MSG_DEF(JSMSG_GARBAGE_AFTER_INPUT,     2, JSEXN_SYNTAXERR, "unexpected garbage a
 MSG_DEF(JSMSG_IDSTART_AFTER_NUMBER,    0, JSEXN_SYNTAXERR, "identifier starts immediately after numeric literal")
 MSG_DEF(JSMSG_BAD_ESCAPE,              0, JSEXN_SYNTAXERR, "invalid escape sequence")
 MSG_DEF(JSMSG_MISSING_PRIVATE_NAME,    0, JSEXN_SYNTAXERR, "'#' not followed by identifier")
+MSG_DEF(JSMSG_PRIVATE_DELETE,          0, JSEXN_SYNTAXERR, "private fields can't be deleted")
+MSG_DEF(JSMSG_MISSING_PRIVATE_DECL,    1, JSEXN_SYNTAXERR, "reference to undeclared private field or method {0}")
 MSG_DEF(JSMSG_ILLEGAL_CHARACTER,       0, JSEXN_SYNTAXERR, "illegal character")
 MSG_DEF(JSMSG_IMPORT_META_OUTSIDE_MODULE, 0, JSEXN_SYNTAXERR, "import.meta may only appear in a module")
 MSG_DEF(JSMSG_IMPORT_DECL_AT_TOP_LEVEL, 0, JSEXN_SYNTAXERR, "import declarations may only appear at top level of a module")
@@ -367,6 +371,7 @@ MSG_DEF(JSMSG_BAD_OPTIONAL_TEMPLATE,   0, JSEXN_SYNTAXERR, "tagged template cann
 MSG_DEF(JSMSG_ESCAPED_KEYWORD,         0, JSEXN_SYNTAXERR, "keywords must be written literally, without embedded escapes")
 MSG_DEF(JSMSG_PRIVATE_FIELDS_NOT_SUPPORTED, 0, JSEXN_SYNTAXERR, "private fields are not currently supported")
 MSG_DEF(JSMSG_ILLEGAL_PRIVATE_FIELD,   0, JSEXN_SYNTAXERR, "private fields aren't valid in this context")
+MSG_DEF(JSMSG_PRIVATE_FIELD_DOUBLE,    0, JSEXN_TYPEERR, "Initializing an object twice is an error with private fields")
 
 // UTF-8 source text encoding errors
 MSG_DEF(JSMSG_BAD_LEADING_UTF8_UNIT,   1, JSEXN_SYNTAXERR, "{0} byte doesn't begin a valid UTF-8 code point")
@@ -436,6 +441,7 @@ MSG_DEF(JSMSG_WASM_GLOBAL_IMMUTABLE,   0, JSEXN_TYPEERR,     "can't set value of
 MSG_DEF(JSMSG_WASM_TYPEREF_FROM_JS,    0, JSEXN_TYPEERR,     "conversion from JavaScript value to WebAssembly typed ref unimplemented")
 MSG_DEF(JSMSG_WASM_TYPEREF_TO_JS,      0, JSEXN_TYPEERR,     "conversion from WebAssembly typed ref to JavaScript value unimplemented")
 MSG_DEF(JSMSG_WASM_WRONG_NUMBER_OF_VALUES, 2, JSEXN_TYPEERR, "wrong number of values returned by JavaScript to WebAssembly (expected {0}, got {1})")
+MSG_DEF(JSMSG_WASM_NONSHARED_WAIT ,    0, JSEXN_WASMRUNTIMEERROR, "atomic wait on non-shared memory")
 
 // Proxy
 MSG_DEF(JSMSG_BAD_TRAP_RETURN_VALUE,   2, JSEXN_TYPEERR,"trap {1} for {0} returned a primitive value")
@@ -553,6 +559,9 @@ MSG_DEF(JSMSG_INVALID_DATETIME_OPTION, 2, JSEXN_TYPEERR, "can't set option {0} w
 MSG_DEF(JSMSG_INVALID_DATETIME_STYLE,  2, JSEXN_TYPEERR, "can't set option {0} in Date.{1}()")
 MSG_DEF(JSMSG_UNDEFINED_CURRENCY,      0, JSEXN_TYPEERR, "undefined currency in NumberFormat() with currency style")
 MSG_DEF(JSMSG_UNDEFINED_UNIT,          0, JSEXN_TYPEERR, "undefined unit in NumberFormat() with unit style")
+MSG_DEF(JSMSG_UNDEFINED_DATE,          2, JSEXN_TYPEERR, "undefined {0}-date in DateTimeFormat.{1}()")
+MSG_DEF(JSMSG_UNDEFINED_TYPE,          0, JSEXN_TYPEERR, "missing \"type\" option in DisplayNames()")
+MSG_DEF(JSMSG_START_AFTER_END_DATE,    1, JSEXN_RANGEERR, "start-date after end-date in DateTimeFormat.{0}()")
 
 // RegExp
 MSG_DEF(JSMSG_BAD_CLASS_RANGE,         0, JSEXN_SYNTAXERR, "invalid range in character class")
@@ -752,5 +761,8 @@ MSG_DEF(JSMSG_BAD_FINALIZATION_REGISTRY_OBJECT,          0, JSEXN_TYPEERR, "cann
 // WeakRef
 MSG_DEF(JSMSG_NOT_A_WEAK_REF,                            1, JSEXN_TYPEERR, "{0} is not a WeakRef")
 MSG_DEF(JSMSG_BAD_WEAKREF_TARGET,                        0, JSEXN_TYPEERR, "cannot use the given object as the target of a WeakRef")
+
+// Iterator Helpers
+MSG_DEF(JSMSG_NEGATIVE_LIMIT,                            0, JSEXN_RANGEERR, "Iterator limits cannot be negative")
 
 //clang-format on

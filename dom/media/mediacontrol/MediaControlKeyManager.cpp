@@ -89,9 +89,10 @@ void MediaControlKeyManager::ControllerAmountChanged(
   }
 }
 
-void MediaControlKeyManager::OnKeyPressed(MediaControlKey aKey) {
+void MediaControlKeyManager::OnActionPerformed(
+    const MediaControlAction& aAction) {
   for (auto listener : mListeners) {
-    listener->OnKeyPressed(aKey);
+    listener->OnActionPerformed(aAction);
   }
 }
 
@@ -143,6 +144,42 @@ void MediaControlKeyManager::SetSupportedMediaKeys(
   }
   if (mEventSource && mEventSource->IsOpened()) {
     mEventSource->SetSupportedMediaKeys(mSupportedKeys);
+  }
+}
+
+void MediaControlKeyManager::SetControlledTabBrowsingContextId(
+    Maybe<uint64_t> aTopLevelBrowsingContextId) {
+  if (aTopLevelBrowsingContextId) {
+    LOG_INFO("Controlled tab Id=%" PRId64, *aTopLevelBrowsingContextId);
+  } else {
+    LOG_INFO("No controlled tab exists");
+  }
+  if (mEventSource && mEventSource->IsOpened()) {
+    mEventSource->SetControlledTabBrowsingContextId(aTopLevelBrowsingContextId);
+  }
+}
+
+void MediaControlKeyManager::SetEnableFullScreen(bool aIsEnabled) {
+  LOG_INFO("Set fullscreen %s", aIsEnabled ? "enabled" : "disabled");
+  if (mEventSource && mEventSource->IsOpened()) {
+    mEventSource->SetEnableFullScreen(aIsEnabled);
+  }
+}
+
+void MediaControlKeyManager::SetEnablePictureInPictureMode(bool aIsEnabled) {
+  LOG_INFO("Set Picture-In-Picture mode %s",
+           aIsEnabled ? "enabled" : "disabled");
+  if (mEventSource && mEventSource->IsOpened()) {
+    mEventSource->SetEnablePictureInPictureMode(aIsEnabled);
+  }
+}
+
+void MediaControlKeyManager::SetPositionState(const PositionState& aState) {
+  LOG_INFO("Set PositionState, duration=%f, playbackRate=%f, position=%f",
+           aState.mDuration, aState.mPlaybackRate,
+           aState.mLastReportedPlaybackPosition);
+  if (mEventSource && mEventSource->IsOpened()) {
+    mEventSource->SetPositionState(aState);
   }
 }
 

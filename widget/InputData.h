@@ -205,7 +205,6 @@ class MultiTouchInput : public InputData {
   void Translate(const ScreenPoint& aTranslation);
 
   WidgetTouchEvent ToWidgetTouchEvent(nsIWidget* aWidget) const;
-  WidgetMouseEvent ToWidgetMouseEvent(nsIWidget* aWidget) const;
 
   // Return the index into mTouches of the SingleTouchData with the given
   // identifier, or -1 if there is no such SingleTouchData.
@@ -358,6 +357,8 @@ class PanGestureInput : public InputData {
 
   ScreenPoint UserMultipliedPanDisplacement() const;
   ParentLayerPoint UserMultipliedLocalPanDisplacement() const;
+
+  static gfx::IntPoint GetIntegerDeltaForEvent(bool aIsStart, float x, float y);
 
   // Warning, this class is serialized and sent over IPC. Any change to its
   // fields must be reflected in its ParamTraits<>, in nsGUIEventIPC.h

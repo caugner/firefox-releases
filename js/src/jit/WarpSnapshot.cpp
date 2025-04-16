@@ -23,12 +23,14 @@ using namespace js::jit;
 static_assert(!std::is_polymorphic_v<WarpOpSnapshot>,
               "WarpOpSnapshot should not have any virtual methods");
 
-WarpSnapshot::WarpSnapshot(JSContext* cx, WarpScriptSnapshot* script,
+WarpSnapshot::WarpSnapshot(JSContext* cx, TempAllocator& alloc,
+                           WarpScriptSnapshotList&& scriptSnapshots,
                            const WarpBailoutInfo& bailoutInfo)
-    : script_(script),
+    : scriptSnapshots_(std::move(scriptSnapshots)),
       globalLexicalEnv_(&cx->global()->lexicalEnvironment()),
       globalLexicalEnvThis_(globalLexicalEnv_->thisObject()),
-      bailoutInfo_(bailoutInfo) {}
+      bailoutInfo_(bailoutInfo),
+      nurseryObjects_(alloc) {}
 
 WarpScriptSnapshot::WarpScriptSnapshot(
     JSScript* script, const WarpEnvironment& env,
@@ -60,10 +62,20 @@ void WarpSnapshot::dump(GenericPrinter& out) const {
   out.printf("failedLexicalCheck: %u\n", bailoutInfo().failedLexicalCheck());
   out.printf("\n");
 
-  script_->dump(out);
+  out.printf("Nursery objects (%u):\n", unsigned(nurseryObjects_.length()));
+  for (size_t i = 0; i < nurseryObjects_.length(); i++) {
+    out.printf("  %u: 0x%p\n", unsigned(i), nurseryObjects_[i]);
+  }
+  out.printf("\n");
+
+  for (auto* scriptSnapshot : scriptSnapshots_) {
+    scriptSnapshot->dump(out);
+  }
 }
 
 void WarpScriptSnapshot::dump(GenericPrinter& out) const {
+  out.printf("WarpScriptSnapshot (0x%p)\n", this);
+  out.printf("------------------------------\n");
   out.printf("Script: %s:%u:%u (0x%p)\n", script_->filename(),
              script_->lineno(), script_->column(),
              static_cast<JSScript*>(script_));
@@ -155,6 +167,14 @@ void WarpNewObject::dumpData(GenericPrinter& out) const {
   out.printf("    template: 0x%p\n", templateObject());
 }
 
+void WarpBindGName::dumpData(GenericPrinter& out) const {
+  out.printf("    globalEnv: 0x%p\n", globalEnv());
+}
+
+void WarpBailout::dumpData(GenericPrinter& out) const {
+  // No fields.
+}
+
 void WarpCacheIR::dumpData(GenericPrinter& out) const {
   out.printf("    stubCode: 0x%p\n", static_cast<JitCode*>(stubCode_));
   out.printf("    stubInfo: 0x%p\n", stubInfo_);
@@ -165,6 +185,12 @@ void WarpCacheIR::dumpData(GenericPrinter& out) const {
 #  else
   out.printf("(CacheIR spew unavailable)\n");
 #  endif
+}
+
+void WarpInlinedCall::dumpData(GenericPrinter& out) const {
+  out.printf("    scriptSnapshot: 0x%p\n", scriptSnapshot_);
+  cacheIRSnapshot_->dumpData(out);
+  // TODO: dump callInfo
 }
 #endif  // JS_JITSPEW
 
@@ -177,9 +203,17 @@ static void TraceWarpGCPtr(JSTracer* trc, WarpGCPtr<T>& thing,
 }
 
 void WarpSnapshot::trace(JSTracer* trc) {
-  script_->trace(trc);
+  for (auto* script : scriptSnapshots_) {
+    script->trace(trc);
+  }
   TraceWarpGCPtr(trc, globalLexicalEnv_, "warp-lexical");
   TraceWarpGCPtr(trc, globalLexicalEnvThis_, "warp-lexicalthis");
+
+  // Note: nursery objects can be moved in parallel with Warp compilation,
+  // so don't use TraceWarpGCPtr here as that asserts non-moving.
+  for (size_t i = 0; i < nurseryObjects_.length(); i++) {
+    TraceManuallyBarrieredEdge(trc, &nurseryObjects_[i], "warp-nursery-object");
+  }
 }
 
 void WarpScriptSnapshot::trace(JSTracer* trc) {
@@ -261,7 +295,22 @@ void WarpNewObject::traceData(JSTracer* trc) {
   TraceWarpGCPtr(trc, templateObject_, "warp-newobject-template");
 }
 
+void WarpBindGName::traceData(JSTracer* trc) {
+  TraceWarpGCPtr(trc, globalEnv_, "warp-bindgname-globalenv");
+}
+
+void WarpBailout::traceData(JSTracer* trc) {
+  // No GC pointers.
+}
+
 void WarpCacheIR::traceData(JSTracer* trc) {
   TraceWarpGCPtr(trc, stubCode_, "warp-stub-code");
-  // TODO: trace pointers in stub data.
+
+  // TODO: trace pointers in stub data. Beware of nursery indexes in the stub
+  // data. See WarpObjectField.
+}
+
+void WarpInlinedCall::traceData(JSTracer* trc) {
+  // Note: scriptSnapshot_ is traced through WarpSnapshot.
+  cacheIRSnapshot_->trace(trc);
 }

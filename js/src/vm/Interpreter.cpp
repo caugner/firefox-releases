@@ -54,6 +54,7 @@
 #include "vm/Printer.h"
 #include "vm/Scope.h"
 #include "vm/Shape.h"
+#include "vm/SharedStencil.h"  // GCThingIndex
 #include "vm/StringType.h"
 #include "vm/ThrowMsgKind.h"  // ThrowMsgKind
 #include "vm/TraceLogging.h"
@@ -278,7 +279,7 @@ JSFunction* js::MakeDefaultConstructor(JSContext* cx, HandleScript script,
   MOZ_ASSERT(derived == !!proto);
 
   // Get class name and source offsets from bytecode.
-  uint32_t atomIndex = 0;
+  GCThingIndex atomIndex;
   uint32_t classStartOffset = 0, classEndOffset = 0;
   GetClassConstructorOperands(pc, &atomIndex, &classStartOffset,
                               &classEndOffset);
@@ -1017,6 +1018,7 @@ static void PopEnvironment(JSContext* cx, EnvironmentIter& ei) {
     case ScopeKind::NamedLambda:
     case ScopeKind::StrictNamedLambda:
     case ScopeKind::FunctionLexical:
+    case ScopeKind::ClassBody:
       if (MOZ_UNLIKELY(cx->realm()->isDebuggee())) {
         DebugEnvironments::onPopLexical(cx, ei);
       }
@@ -1083,7 +1085,7 @@ void js::UnwindEnvironment(JSContext* cx, EnvironmentIter& ei, jsbytecode* pc) {
   // bug; that section of code has no try-catch blocks.
   JSScript* script = ei.initialFrame().script();
   for (uint32_t i = 0; i < script->bodyScopeIndex(); i++) {
-    MOZ_ASSERT(scope != script->getScope(i));
+    MOZ_ASSERT(scope != script->getScope(GCThingIndex(i)));
   }
 #endif
 
@@ -2179,14 +2181,12 @@ static MOZ_NEVER_INLINE JS_HAZ_JSNATIVE_CALLER bool Interpret(JSContext* cx,
 
     /* Various 1-byte no-ops. */
     CASE(Nop)
+    CASE(Try)
     CASE(NopDestructuring)
     CASE(TryDestructuring) {
       MOZ_ASSERT(GetBytecodeLength(REGS.pc) == 1);
       ADVANCE_AND_DISPATCH(1);
     }
-
-    CASE(Try)
-    END_CASE(Try)
 
     CASE(JumpTarget)
     COUNT_COVERAGE();
@@ -3110,6 +3110,21 @@ static MOZ_NEVER_INLINE JS_HAZ_JSNATIVE_CALLER bool Interpret(JSContext* cx,
     }
     END_CASE(GetElem)
 
+    CASE(GetPrivateElem) {
+      int lvalIndex = -2;
+      MutableHandleValue lval = REGS.stackHandleAt(lvalIndex);
+      HandleValue rval = REGS.stackHandleAt(-1);
+      MutableHandleValue res = REGS.stackHandleAt(-2);
+
+      if (!GetPrivateElemOperation(cx, REGS.pc, lval, rval, res)) {
+        goto error;
+      }
+
+      JitScript::MonitorBytecodeType(cx, script, REGS.pc, res);
+      REGS.sp--;
+    }
+    END_CASE(GetPrivateElem)
+
     CASE(GetElemSuper) {
       ReservedRooted<Value> receiver(&rootValue1, REGS.sp[-3]);
       ReservedRooted<Value> rval(&rootValue0, REGS.sp[-2]);
@@ -3153,6 +3168,26 @@ static MOZ_NEVER_INLINE JS_HAZ_JSNATIVE_CALLER bool Interpret(JSContext* cx,
       REGS.sp -= 2;
     }
     END_CASE(SetElem)
+
+    CASE(SetPrivateElem) {
+      int receiverIndex = -3;
+      HandleValue receiver = REGS.stackHandleAt(receiverIndex);
+      ReservedRooted<JSObject*> obj(&rootObject0);
+      obj = ToObjectFromStackForPropertyAccess(cx, receiver, receiverIndex,
+                                               REGS.stackHandleAt(-2));
+      if (!obj) {
+        goto error;
+      }
+      ReservedRooted<jsid> id(&rootId0);
+      FETCH_ELEMENT_ID(-2, id);
+      HandleValue value = REGS.stackHandleAt(-1);
+      if (!SetPrivateElementOperation(cx, obj, id, value, receiver)) {
+        goto error;
+      }
+      REGS.sp[-3] = value;
+      REGS.sp -= 2;
+    }
+    END_CASE(SetPrivateElem)
 
     CASE(SetElemSuper)
     CASE(StrictSetElemSuper) {
@@ -3784,8 +3819,8 @@ static MOZ_NEVER_INLINE JS_HAZ_JSNATIVE_CALLER bool Interpret(JSContext* cx,
 
     CASE(Lambda) {
       /* Load the specified function object literal. */
-      ReservedRooted<JSFunction*> fun(
-          &rootFunction0, script->getFunction(GET_UINT32_INDEX(REGS.pc)));
+      ReservedRooted<JSFunction*> fun(&rootFunction0,
+                                      script->getFunction(REGS.pc));
       JSObject* obj = Lambda(cx, fun, REGS.fp()->environmentChain());
       if (!obj) {
         goto error;
@@ -3798,8 +3833,8 @@ static MOZ_NEVER_INLINE JS_HAZ_JSNATIVE_CALLER bool Interpret(JSContext* cx,
 
     CASE(LambdaArrow) {
       /* Load the specified function object literal. */
-      ReservedRooted<JSFunction*> fun(
-          &rootFunction0, script->getFunction(GET_UINT32_INDEX(REGS.pc)));
+      ReservedRooted<JSFunction*> fun(&rootFunction0,
+                                      script->getFunction(REGS.pc));
       ReservedRooted<Value> newTarget(&rootValue1, REGS.sp[-1]);
       JSObject* obj =
           LambdaArrow(cx, fun, REGS.fp()->environmentChain(), newTarget);
@@ -4032,6 +4067,21 @@ static MOZ_NEVER_INLINE JS_HAZ_JSNATIVE_CALLER bool Interpret(JSContext* cx,
     }
     END_CASE(InitElem)
 
+    CASE(InitPrivateElem) {
+      MOZ_ASSERT(REGS.stackDepth() >= 3);
+      HandleValue val = REGS.stackHandleAt(-1);
+      HandleValue id = REGS.stackHandleAt(-2);
+
+      ReservedRooted<JSObject*> obj(&rootObject0, &REGS.sp[-3].toObject());
+
+      if (!InitPrivateElemOperation(cx, REGS.pc, obj, id, val)) {
+        goto error;
+      }
+
+      REGS.sp -= 2;
+    }
+    END_CASE(InitElem)
+
     CASE(InitElemArray) {
       MOZ_ASSERT(REGS.stackDepth() >= 2);
       HandleValue val = REGS.stackHandleAt(-1);
@@ -4039,7 +4089,8 @@ static MOZ_NEVER_INLINE JS_HAZ_JSNATIVE_CALLER bool Interpret(JSContext* cx,
       ReservedRooted<JSObject*> obj(&rootObject0, &REGS.sp[-2].toObject());
 
       uint32_t index = GET_UINT32(REGS.pc);
-      if (!InitArrayElemOperation(cx, REGS.pc, obj, index, val)) {
+      if (!InitArrayElemOperation(cx, REGS.pc, obj.as<ArrayObject>(), index,
+                                  val)) {
         goto error;
       }
 
@@ -4054,7 +4105,8 @@ static MOZ_NEVER_INLINE JS_HAZ_JSNATIVE_CALLER bool Interpret(JSContext* cx,
       ReservedRooted<JSObject*> obj(&rootObject0, &REGS.sp[-3].toObject());
 
       uint32_t index = REGS.sp[-2].toInt32();
-      if (!InitArrayElemOperation(cx, REGS.pc, obj, index, val)) {
+      if (!InitArrayElemOperation(cx, REGS.pc, obj.as<ArrayObject>(), index,
+                                  val)) {
         goto error;
       }
 
@@ -4351,8 +4403,8 @@ static MOZ_NEVER_INLINE JS_HAZ_JSNATIVE_CALLER bool Interpret(JSContext* cx,
       ReservedRooted<JSObject*> proto(&rootObject1, &REGS.sp[-1].toObject());
 
       /* Load the specified function object literal. */
-      ReservedRooted<JSFunction*> fun(
-          &rootFunction0, script->getFunction(GET_UINT32_INDEX(REGS.pc)));
+      ReservedRooted<JSFunction*> fun(&rootFunction0,
+                                      script->getFunction(REGS.pc));
 
       JSObject* obj =
           FunWithProtoOperation(cx, fun, REGS.fp()->environmentChain(), proto);
@@ -5047,9 +5099,9 @@ bool js::SetObjectElement(JSContext* cx, HandleObject obj, HandleValue index,
                                    pc);
 }
 
-bool js::InitElementArray(JSContext* cx, jsbytecode* pc, HandleObject obj,
+bool js::InitElementArray(JSContext* cx, jsbytecode* pc, HandleArrayObject arr,
                           uint32_t index, HandleValue value) {
-  return InitArrayElemOperation(cx, pc, obj, index, value);
+  return InitArrayElemOperation(cx, pc, arr, index, value);
 }
 
 bool js::AddValues(JSContext* cx, MutableHandleValue lhs,
@@ -5199,6 +5251,7 @@ unsigned js::GetInitDataPropAttrs(JSOp op) {
       return JSPROP_PERMANENT | JSPROP_READONLY;
     case JSOp::InitHiddenProp:
     case JSOp::InitHiddenElem:
+    case JSOp::InitPrivateElem:
       // Non-enumerable, but writable and configurable
       return 0;
     default:;

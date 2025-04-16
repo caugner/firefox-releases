@@ -15,10 +15,14 @@ const LocalizationProvider = createFactory(FluentReact.LocalizationProvider);
 
 const compatibilityReducer = require("devtools/client/inspector/compatibility/reducers/compatibility");
 const {
+  appendNode,
+  clearDestroyedNodes,
   initUserSettings,
+  removeNode,
   updateNodes,
   updateSelectedNode,
   updateTopLevelTarget,
+  updateNode,
 } = require("devtools/client/inspector/compatibility/actions/compatibility");
 
 const CompatibilityApp = createFactory(
@@ -37,6 +41,7 @@ class CompatibilityView {
     this._onSelectedNodeChanged = this._onSelectedNodeChanged.bind(this);
     this._onTopLevelTargetChanged = this._onTopLevelTargetChanged.bind(this);
     this._onResourceAvailable = this._onResourceAvailable.bind(this);
+    this._onMarkupMutation = this._onMarkupMutation.bind(this);
 
     this._init();
   }
@@ -55,12 +60,12 @@ class CompatibilityView {
     }
 
     this.inspector.off("new-root", this._onTopLevelTargetChanged);
+    this.inspector.off("markupmutation", this._onMarkupMutation);
     this.inspector.selection.off("new-node-front", this._onSelectedNodeChanged);
     this.inspector.sidebar.off(
       "compatibilityview-selected",
       this._onPanelSelected
     );
-
     this.inspector = null;
   }
 
@@ -101,6 +106,7 @@ class CompatibilityView {
     this.inspector.store.dispatch(initUserSettings());
 
     this.inspector.on("new-root", this._onTopLevelTargetChanged);
+    this.inspector.on("markupmutation", this._onMarkupMutation);
     this.inspector.selection.on("new-node-front", this._onSelectedNodeChanged);
     this.inspector.sidebar.on(
       "compatibilityview-selected",
@@ -160,6 +166,59 @@ class CompatibilityView {
     }, 500);
   }
 
+  _onMarkupMutation(mutations) {
+    const attributeMutation = mutations.filter(
+      mutation =>
+        mutation.type === "attributes" &&
+        (mutation.attributeName === "style" ||
+          mutation.attributeName === "class")
+    );
+    const childListMutation = mutations.filter(
+      mutation => mutation.type === "childList"
+    );
+
+    if (attributeMutation.length === 0 && childListMutation.length === 0) {
+      return;
+    }
+
+    if (!this._isAvailable()) {
+      // In order to update this panel if a change is added while hiding this panel.
+      this._isChangeAddedWhileHidden = true;
+      return;
+    }
+
+    this._isChangeAddedWhileHidden = false;
+
+    // Resource Watcher doesn't respond to programmatic inline CSS
+    // change. This check can be removed once the following bug is resolved
+    // https://bugzilla.mozilla.org/show_bug.cgi?id=1506160
+    for (const { target } of attributeMutation) {
+      this.inspector.store.dispatch(updateNode(target));
+    }
+
+    // Destroyed nodes can be cleaned up
+    // once at the end if necessary
+    let cleanupDestroyedNodes = false;
+    for (const { removed, target } of childListMutation) {
+      if (!removed.length) {
+        this.inspector.store.dispatch(appendNode(target));
+        continue;
+      }
+
+      const retainedNodes = removed.filter(node => node?.actorID);
+      cleanupDestroyedNodes =
+        cleanupDestroyedNodes || retainedNodes.length !== removed.length;
+
+      for (const retainedNode of retainedNodes) {
+        this.inspector.store.dispatch(removeNode(retainedNode));
+      }
+    }
+
+    if (cleanupDestroyedNodes) {
+      this.inspector.store.dispatch(clearDestroyedNodes());
+    }
+  }
+
   _onPanelSelected() {
     const {
       selectedNode,
@@ -196,7 +255,13 @@ class CompatibilityView {
   }
 
   _onResourceAvailable({ resource }) {
-    this._onChangeAdded(resource);
+    // Style changes applied inline directly to
+    // the element and its changes are monitored by
+    // _onMarkupMutation via markupmutation events.
+    // Hence those changes can be ignored here
+    if (resource.source?.type !== "element") {
+      this._onChangeAdded(resource);
+    }
   }
 
   _onTopLevelTargetChanged() {

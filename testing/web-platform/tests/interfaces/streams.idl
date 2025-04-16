@@ -65,8 +65,13 @@ interface ReadableStreamDefaultReader {
   readonly attribute Promise<void> closed;
 
   Promise<void> cancel(optional any reason);
-  Promise<any> read();
+  Promise<ReadableStreamDefaultReadResult> read();
   void releaseLock();
+};
+
+dictionary ReadableStreamDefaultReadResult {
+ any value;
+ boolean done;
 };
 
 [Exposed=(Window,Worker,Worklet)]
@@ -76,8 +81,13 @@ interface ReadableStreamBYOBReader {
   readonly attribute Promise<void> closed;
 
   Promise<void> cancel(optional any reason);
-  Promise<any> read(ArrayBufferView view);
+  Promise<ReadableStreamBYOBReadResult> read(ArrayBufferView view);
   void releaseLock();
+};
+
+dictionary ReadableStreamBYOBReadResult {
+ ArrayBufferView value;
+ boolean done;
 };
 
 [Exposed=(Window,Worker,Worklet)]
@@ -127,7 +137,7 @@ dictionary UnderlyingSink {
 };
 
 callback UnderlyingSinkStartCallback = any (WritableStreamDefaultController controller);
-callback UnderlyingSinkWriteCallback = Promise<void> (WritableStreamDefaultController controller, optional any chunk);
+callback UnderlyingSinkWriteCallback = Promise<void> (any chunk, WritableStreamDefaultController controller);
 callback UnderlyingSinkCloseCallback = Promise<void> ();
 callback UnderlyingSinkAbortCallback = Promise<void> (optional any reason);
 
@@ -170,7 +180,7 @@ dictionary Transformer {
 
 callback TransformerStartCallback = any (TransformStreamDefaultController controller);
 callback TransformerFlushCallback = Promise<void> (TransformStreamDefaultController controller);
-callback TransformerTransformCallback = Promise<void> (TransformStreamDefaultController controller, optional any chunk);
+callback TransformerTransformCallback = Promise<void> (any chunk, TransformStreamDefaultController controller);
 
 [Exposed=(Window,Worker,Worklet)]
 interface TransformStreamDefaultController {

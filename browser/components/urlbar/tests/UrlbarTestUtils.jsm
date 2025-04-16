@@ -347,6 +347,27 @@ var UrlbarTestUtils = {
   },
 
   /**
+   * @param {object} win The browser window
+   * @param {string} [engineName]
+   * @returns {boolean} True if the UrlbarInput is in search mode. If
+   *   engineName is specified, only returns true if the search mode engine
+   *   matches.
+   */
+  isInSearchMode(win, engineName = null) {
+    if (!!win.gURLBar.searchMode != win.gURLBar.hasAttribute("searchmode")) {
+      throw new Error(
+        "Urlbar should never be in search mode without the corresponding attribute."
+      );
+    }
+
+    if (engineName) {
+      return win.gURLBar.searchMode.engineName == engineName;
+    }
+
+    return !!win.gURLBar.searchMode;
+  },
+
+  /**
    * Returns the userContextId (container id) for the last search.
    * @param {object} win The browser window
    * @returns {Promise} resolved when fetching is complete
@@ -598,7 +619,7 @@ class TestProvider extends UrlbarProvider {
    */
   constructor({
     results,
-    name = "TestProvider" + Math.floor(Math.random() * 100000),
+    name = Math.floor(Math.random() * 100000),
     type = UrlbarUtils.PROVIDER_TYPE.PROFILE,
     priority = 0,
     addTimeout = 0,
@@ -613,7 +634,7 @@ class TestProvider extends UrlbarProvider {
     this._onCancel = onCancel;
   }
   get name() {
-    return this._name;
+    return "TestProvider" + this._name;
   }
   get type() {
     return this._type;
@@ -643,7 +664,6 @@ class TestProvider extends UrlbarProvider {
       this._onCancel();
     }
   }
-  pickResult(result) {}
 }
 
 UrlbarTestUtils.TestProvider = TestProvider;

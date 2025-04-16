@@ -101,17 +101,13 @@ __webpack_require__.r(__webpack_exports__);
 /* harmony import */ var react_dom__WEBPACK_IMPORTED_MODULE_1__ = __webpack_require__(2);
 /* harmony import */ var react_dom__WEBPACK_IMPORTED_MODULE_1___default = /*#__PURE__*/__webpack_require__.n(react_dom__WEBPACK_IMPORTED_MODULE_1__);
 /* harmony import */ var _components_MultiStageAboutWelcome__WEBPACK_IMPORTED_MODULE_2__ = __webpack_require__(3);
-/* harmony import */ var _components_HeroText__WEBPACK_IMPORTED_MODULE_3__ = __webpack_require__(8);
-/* harmony import */ var _components_FxCards__WEBPACK_IMPORTED_MODULE_4__ = __webpack_require__(9);
-/* harmony import */ var _components_MSLocalized__WEBPACK_IMPORTED_MODULE_5__ = __webpack_require__(4);
-/* harmony import */ var _lib_aboutwelcome_utils__WEBPACK_IMPORTED_MODULE_6__ = __webpack_require__(6);
+/* harmony import */ var _components_SimpleAboutWelcome__WEBPACK_IMPORTED_MODULE_3__ = __webpack_require__(8);
+/* harmony import */ var _lib_aboutwelcome_utils__WEBPACK_IMPORTED_MODULE_4__ = __webpack_require__(6);
 function _extends() { _extends = Object.assign || function (target) { for (var i = 1; i < arguments.length; i++) { var source = arguments[i]; for (var key in source) { if (Object.prototype.hasOwnProperty.call(source, key)) { target[key] = source[key]; } } } return target; }; return _extends.apply(this, arguments); }
 
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this file,
  * You can obtain one at http://mozilla.org/MPL/2.0/. */
-
-
 
 
 
@@ -162,7 +158,7 @@ class AboutWelcome extends react__WEBPACK_IMPORTED_MODULE_0___default.a.PureComp
   }
 
   handleStartBtnClick() {
-    _lib_aboutwelcome_utils__WEBPACK_IMPORTED_MODULE_6__["AboutWelcomeUtils"].handleUserAction(this.props.startButton.action);
+    _lib_aboutwelcome_utils__WEBPACK_IMPORTED_MODULE_4__["AboutWelcomeUtils"].handleUserAction(this.props.startButton.action);
     const ping = {
       event: "CLICK_BUTTON",
       event_context: {
@@ -178,12 +174,9 @@ class AboutWelcome extends react__WEBPACK_IMPORTED_MODULE_0___default.a.PureComp
   render() {
     const {
       props
-    } = this; // TBD: Refactor to redirect based off template value
-    // inside props.template
-    // Create SimpleAboutWelcome that renders default about welcome
-    // See Bug 1638087
+    } = this;
 
-    if (props.screens) {
+    if (props.template === "multistage") {
       return react__WEBPACK_IMPORTED_MODULE_0___default.a.createElement(_components_MultiStageAboutWelcome__WEBPACK_IMPORTED_MODULE_2__["MultiStageAboutWelcome"], {
         screens: props.screens,
         metricsFlowUri: this.state.metricsFlowUri,
@@ -192,29 +185,21 @@ class AboutWelcome extends react__WEBPACK_IMPORTED_MODULE_0___default.a.PureComp
       });
     }
 
-    return react__WEBPACK_IMPORTED_MODULE_0___default.a.createElement("div", {
-      className: "outer-wrapper welcomeContainer"
-    }, react__WEBPACK_IMPORTED_MODULE_0___default.a.createElement("div", {
-      className: "welcomeContainerInner"
-    }, react__WEBPACK_IMPORTED_MODULE_0___default.a.createElement("main", null, react__WEBPACK_IMPORTED_MODULE_0___default.a.createElement(_components_HeroText__WEBPACK_IMPORTED_MODULE_3__["HeroText"], {
-      title: props.title,
-      subtitle: props.subtitle
-    }), react__WEBPACK_IMPORTED_MODULE_0___default.a.createElement(_components_FxCards__WEBPACK_IMPORTED_MODULE_4__["FxCards"], {
-      cards: props.cards,
+    return react__WEBPACK_IMPORTED_MODULE_0___default.a.createElement(_components_SimpleAboutWelcome__WEBPACK_IMPORTED_MODULE_3__["SimpleAboutWelcome"], {
       metricsFlowUri: this.state.metricsFlowUri,
-      sendTelemetry: window.AWSendEventTelemetry,
-      utm_term: props.UTMTerm
-    }), react__WEBPACK_IMPORTED_MODULE_0___default.a.createElement(_components_MSLocalized__WEBPACK_IMPORTED_MODULE_5__["Localized"], {
-      text: props.startButton.label
-    }, react__WEBPACK_IMPORTED_MODULE_0___default.a.createElement("button", {
-      className: "start-button",
-      onClick: this.handleStartBtnClick
-    })))));
+      message_id: props.messageId,
+      utm_term: props.UTMTerm,
+      title: props.title,
+      subtitle: props.subtitle,
+      cards: props.cards,
+      startButton: props.startButton,
+      handleStartBtnClick: this.handleStartBtnClick
+    });
   }
 
 }
 
-AboutWelcome.defaultProps = _lib_aboutwelcome_utils__WEBPACK_IMPORTED_MODULE_6__["DEFAULT_WELCOME_CONTENT"];
+AboutWelcome.defaultProps = _lib_aboutwelcome_utils__WEBPACK_IMPORTED_MODULE_4__["DEFAULT_WELCOME_CONTENT"];
 
 function ComputeMessageId(experimentId, branchId, settings) {
   let messageId = "ABOUT_WELCOME";
@@ -293,9 +278,6 @@ __webpack_require__.r(__webpack_exports__);
 
 
 
-const DEFAULT_SITES = ["youtube-com", "facebook-com", "amazon", "reddit-com", "wikipedia-org", "twitter-com"].map(site => ({
-  icon: `resource://activity-stream/data/content/tippytop/images/${site}@2x.png`
-}));
 const MultiStageAboutWelcome = props => {
   const [index, setScreenIndex] = Object(react__WEBPACK_IMPORTED_MODULE_0__["useState"])(0);
   Object(react__WEBPACK_IMPORTED_MODULE_0__["useEffect"])(() => {
@@ -340,22 +322,43 @@ const MultiStageAboutWelcome = props => {
       args: "home",
       where: "current"
     }
-  });
-  const useImportable = props.message_id.includes("IMPORTABLE");
-  const [topSites, setTopSites] = Object(react__WEBPACK_IMPORTED_MODULE_0__["useState"])(DEFAULT_SITES);
+  }); // Update top sites with default sites by region when region is available
+
+  const [region, setRegion] = Object(react__WEBPACK_IMPORTED_MODULE_0__["useState"])(null);
   Object(react__WEBPACK_IMPORTED_MODULE_0__["useEffect"])(() => {
     (async () => {
+      setRegion((await window.AWWaitForRegionChange()));
+    })();
+  }, []);
+  const useImportable = props.message_id.includes("IMPORTABLE"); // Track whether we have already sent the importable sites impression telemetry
+
+  const [importTelemetrySent, setImportTelemetrySent] = Object(react__WEBPACK_IMPORTED_MODULE_0__["useState"])(null);
+  const [topSites, setTopSites] = Object(react__WEBPACK_IMPORTED_MODULE_0__["useState"])([]);
+  Object(react__WEBPACK_IMPORTED_MODULE_0__["useEffect"])(() => {
+    (async () => {
+      let DEFAULT_SITES = await window.AWGetDefaultSites();
       const importable = JSON.parse((await window.AWGetImportableSites()));
       const showImportable = useImportable && importable.length >= 5;
-      _lib_aboutwelcome_utils__WEBPACK_IMPORTED_MODULE_3__["AboutWelcomeUtils"].sendImpressionTelemetry(`${props.message_id}_SITES`, {
-        display: showImportable ? "importable" : "static",
-        importable: importable.length
+
+      if (!importTelemetrySent) {
+        _lib_aboutwelcome_utils__WEBPACK_IMPORTED_MODULE_3__["AboutWelcomeUtils"].sendImpressionTelemetry(`${props.message_id}_SITES`, {
+          display: showImportable ? "importable" : "static",
+          importable: importable.length
+        });
+        setImportTelemetrySent(true);
+      }
+
+      setTopSites(showImportable ? {
+        data: importable,
+        showImportable
+      } : {
+        data: DEFAULT_SITES,
+        showImportable
       });
-      setTopSites(showImportable ? importable : DEFAULT_SITES);
     })();
-  }, [useImportable]);
+  }, [useImportable, region]);
   return react__WEBPACK_IMPORTED_MODULE_0___default.a.createElement(react__WEBPACK_IMPORTED_MODULE_0___default.a.Fragment, null, react__WEBPACK_IMPORTED_MODULE_0___default.a.createElement("div", {
-    className: `multistageContainer`
+    className: `outer-wrapper multistageContainer`
   }, props.screens.map(screen => {
     return index === screen.order ? react__WEBPACK_IMPORTED_MODULE_0___default.a.createElement(WelcomeScreen, {
       id: screen.id,
@@ -400,11 +403,11 @@ class WelcomeScreen extends react__WEBPACK_IMPORTED_MODULE_0___default.a.PureCom
   }
 
   highlightTheme(theme) {
-    const themes = document.querySelectorAll("button.theme");
+    const themes = document.querySelectorAll("label.theme");
     themes.forEach(function (element) {
       element.classList.remove("selected");
 
-      if (element.value === theme) {
+      if (element.firstElementChild.value === theme) {
         element.classList.add("selected");
       }
     });
@@ -465,47 +468,83 @@ class WelcomeScreen extends react__WEBPACK_IMPORTED_MODULE_0___default.a.PureCom
   renderTiles() {
     switch (this.props.content.tiles.type) {
       case "topsites":
-        return this.props.topSites ? react__WEBPACK_IMPORTED_MODULE_0___default.a.createElement(_MSLocalized__WEBPACK_IMPORTED_MODULE_1__["Localized"], {
-          text: typeof this.props.content.tiles.tooltip === "object" ? this.props.content.tiles.tooltip : {}
+        return this.props.topSites && this.props.topSites.data ? react__WEBPACK_IMPORTED_MODULE_0___default.a.createElement("div", {
+          className: `tiles-container ${this.props.content.tiles.info ? "info" : ""}`
         }, react__WEBPACK_IMPORTED_MODULE_0___default.a.createElement("div", {
-          className: `tiles-container ${this.props.content.tiles.tooltip ? "info" : ""}`,
-          title: this.props.content.tiles.tooltip
-        }, react__WEBPACK_IMPORTED_MODULE_0___default.a.createElement("div", {
-          className: "tiles-topsites-section"
-        }, this.props.topSites.slice(0, 5).map(({
+          className: "tiles-topsites-section",
+          name: "topsites-section",
+          id: "topsites-section",
+          "aria-labelledby": "topsites-disclaimer",
+          role: "region"
+        }, this.props.topSites.data.slice(0, 5).map(({
           icon,
-          label
+          label,
+          title
         }) => react__WEBPACK_IMPORTED_MODULE_0___default.a.createElement("div", {
           className: "site",
-          key: icon + label
+          key: icon + label,
+          "aria-label": title ? title : label,
+          role: "img"
         }, react__WEBPACK_IMPORTED_MODULE_0___default.a.createElement("div", {
           className: "icon",
           style: icon ? {
             backgroundColor: "transparent",
             backgroundImage: `url(${icon})`
           } : {}
-        }, icon ? "" : label[0].toUpperCase()), label && react__WEBPACK_IMPORTED_MODULE_0___default.a.createElement("div", {
+        }, icon ? "" : label && label[0].toUpperCase()), label && react__WEBPACK_IMPORTED_MODULE_0___default.a.createElement("div", {
           className: "host"
-        }, label)))))) : null;
+        }, label))))) : null;
 
       case "theme":
         return this.props.content.tiles.data ? react__WEBPACK_IMPORTED_MODULE_0___default.a.createElement("div", {
+          className: "tiles-theme-container"
+        }, react__WEBPACK_IMPORTED_MODULE_0___default.a.createElement("div", null, react__WEBPACK_IMPORTED_MODULE_0___default.a.createElement("fieldset", {
           className: "tiles-theme-section"
-        }, this.props.content.tiles.data.map(({
+        }, react__WEBPACK_IMPORTED_MODULE_0___default.a.createElement(_MSLocalized__WEBPACK_IMPORTED_MODULE_1__["Localized"], {
+          text: this.props.content.subtitle
+        }, react__WEBPACK_IMPORTED_MODULE_0___default.a.createElement("legend", {
+          className: "sr-only"
+        })), this.props.content.tiles.data.map(({
           theme,
-          label
-        }) => react__WEBPACK_IMPORTED_MODULE_0___default.a.createElement("button", {
-          className: "theme",
+          label,
+          tooltip,
+          description
+        }) => react__WEBPACK_IMPORTED_MODULE_0___default.a.createElement(_MSLocalized__WEBPACK_IMPORTED_MODULE_1__["Localized"], {
           key: theme + label,
+          text: typeof tooltip === "object" ? tooltip : {}
+        }, react__WEBPACK_IMPORTED_MODULE_0___default.a.createElement("label", {
+          className: "theme",
+          title: theme + label
+        }, react__WEBPACK_IMPORTED_MODULE_0___default.a.createElement("input", {
+          type: "radio",
           value: theme,
+          name: "theme",
+          className: "sr-only input",
           onClick: this.handleAction
-        }, react__WEBPACK_IMPORTED_MODULE_0___default.a.createElement("div", {
+        }), react__WEBPACK_IMPORTED_MODULE_0___default.a.createElement("div", {
           className: `icon ${theme}`
         }), label && react__WEBPACK_IMPORTED_MODULE_0___default.a.createElement(_MSLocalized__WEBPACK_IMPORTED_MODULE_1__["Localized"], {
           text: label
         }, react__WEBPACK_IMPORTED_MODULE_0___default.a.createElement("div", {
           className: "text"
-        }))))) : null;
+        })), description && react__WEBPACK_IMPORTED_MODULE_0___default.a.createElement(_MSLocalized__WEBPACK_IMPORTED_MODULE_1__["Localized"], {
+          text: description
+        }, react__WEBPACK_IMPORTED_MODULE_0___default.a.createElement("div", {
+          className: "theme-desc"
+        })))))))) : null;
+
+      case "video":
+        return this.props.content.tiles.source ? react__WEBPACK_IMPORTED_MODULE_0___default.a.createElement("div", {
+          className: `tiles-media-section ${this.props.content.tiles.media_type}`
+        }, react__WEBPACK_IMPORTED_MODULE_0___default.a.createElement("div", {
+          className: "fade"
+        }), react__WEBPACK_IMPORTED_MODULE_0___default.a.createElement("video", {
+          className: "media",
+          autoPlay: "true",
+          loop: "true",
+          muted: "true",
+          src: _lib_aboutwelcome_utils__WEBPACK_IMPORTED_MODULE_3__["AboutWelcomeUtils"].hasDarkMode() ? this.props.content.tiles.source.dark : this.props.content.tiles.source.default
+        })) : null;
     }
 
     return null;
@@ -525,9 +564,23 @@ class WelcomeScreen extends react__WEBPACK_IMPORTED_MODULE_0___default.a.PureCom
     return steps;
   }
 
+  renderDisclaimer() {
+    if (this.props.content.tiles && this.props.content.tiles.type === "topsites" && this.props.topSites && this.props.topSites.showImportable) {
+      return react__WEBPACK_IMPORTED_MODULE_0___default.a.createElement(_MSLocalized__WEBPACK_IMPORTED_MODULE_1__["Localized"], {
+        text: this.props.content.disclaimer
+      }, react__WEBPACK_IMPORTED_MODULE_0___default.a.createElement("p", {
+        id: "topsites-disclaimer",
+        className: "tiles-topsites-disclaimer"
+      }));
+    }
+
+    return null;
+  }
+
   render() {
     const {
-      content
+      content,
+      topSites
     } = this.props;
     const hasSecondaryTopCTA = content.secondary_button && content.secondary_button.position === "top";
     return react__WEBPACK_IMPORTED_MODULE_0___default.a.createElement("main", {
@@ -547,9 +600,11 @@ class WelcomeScreen extends react__WEBPACK_IMPORTED_MODULE_0___default.a.PureCom
       className: "primary",
       value: "primary_button",
       onClick: this.handleAction
-    }))), content.secondary_button && content.secondary_button.position !== "top" ? this.renderSecondaryCTA() : null, react__WEBPACK_IMPORTED_MODULE_0___default.a.createElement("div", {
-      className: "steps"
-    }, this.renderStepsIndicator()));
+    }))), content.secondary_button && content.secondary_button.position !== "top" ? this.renderSecondaryCTA() : null, react__WEBPACK_IMPORTED_MODULE_0___default.a.createElement("nav", {
+      className: content.tiles && content.tiles.type === "topsites" && topSites && topSites.showImportable ? "steps has-disclaimer" : "steps",
+      "data-l10n-id": "onboarding-welcome-steps-indicator",
+      "data-l10n-args": `{"current": ${parseInt(this.props.order, 10) + 1}, "total": ${this.props.totalNumberOfScreens}}`
+    }, this.renderStepsIndicator()), this.renderDisclaimer());
   }
 
 }
@@ -734,6 +789,10 @@ const AboutWelcomeUtils = {
       bubbles: true,
       detail
     }));
+  },
+
+  hasDarkMode() {
+    return document.body.hasAttribute("lwt-newtab-brighttext");
   }
 
 };
@@ -872,6 +931,52 @@ function addUtmParams(url, utmTerm) {
 
 "use strict";
 __webpack_require__.r(__webpack_exports__);
+/* harmony export (binding) */ __webpack_require__.d(__webpack_exports__, "SimpleAboutWelcome", function() { return SimpleAboutWelcome; });
+/* harmony import */ var react__WEBPACK_IMPORTED_MODULE_0__ = __webpack_require__(1);
+/* harmony import */ var react__WEBPACK_IMPORTED_MODULE_0___default = /*#__PURE__*/__webpack_require__.n(react__WEBPACK_IMPORTED_MODULE_0__);
+/* harmony import */ var _HeroText__WEBPACK_IMPORTED_MODULE_1__ = __webpack_require__(9);
+/* harmony import */ var _FxCards__WEBPACK_IMPORTED_MODULE_2__ = __webpack_require__(10);
+/* harmony import */ var _MSLocalized__WEBPACK_IMPORTED_MODULE_3__ = __webpack_require__(4);
+/* This Source Code Form is subject to the terms of the Mozilla Public
+ * License, v. 2.0. If a copy of the MPL was not distributed with this file,
+ * You can obtain one at http://mozilla.org/MPL/2.0/. */
+
+
+
+
+class SimpleAboutWelcome extends react__WEBPACK_IMPORTED_MODULE_0___default.a.PureComponent {
+  render() {
+    const {
+      props
+    } = this;
+    return react__WEBPACK_IMPORTED_MODULE_0___default.a.createElement("div", {
+      className: "outer-wrapper welcomeContainer"
+    }, react__WEBPACK_IMPORTED_MODULE_0___default.a.createElement("div", {
+      className: "welcomeContainerInner"
+    }, react__WEBPACK_IMPORTED_MODULE_0___default.a.createElement("main", null, react__WEBPACK_IMPORTED_MODULE_0___default.a.createElement(_HeroText__WEBPACK_IMPORTED_MODULE_1__["HeroText"], {
+      title: props.title,
+      subtitle: props.subtitle
+    }), react__WEBPACK_IMPORTED_MODULE_0___default.a.createElement(_FxCards__WEBPACK_IMPORTED_MODULE_2__["FxCards"], {
+      cards: props.cards,
+      metricsFlowUri: this.props.metricsFlowUri,
+      sendTelemetry: window.AWSendEventTelemetry,
+      utm_term: this.props.UTMTerm
+    }), react__WEBPACK_IMPORTED_MODULE_0___default.a.createElement(_MSLocalized__WEBPACK_IMPORTED_MODULE_3__["Localized"], {
+      text: props.startButton.label
+    }, react__WEBPACK_IMPORTED_MODULE_0___default.a.createElement("button", {
+      className: "start-button",
+      onClick: this.props.handleStartBtnClick
+    })))));
+  }
+
+}
+
+/***/ }),
+/* 9 */
+/***/ (function(module, __webpack_exports__, __webpack_require__) {
+
+"use strict";
+__webpack_require__.r(__webpack_exports__);
 /* harmony export (binding) */ __webpack_require__.d(__webpack_exports__, "HeroText", function() { return HeroText; });
 /* harmony import */ var react__WEBPACK_IMPORTED_MODULE_0__ = __webpack_require__(1);
 /* harmony import */ var react__WEBPACK_IMPORTED_MODULE_0___default = /*#__PURE__*/__webpack_require__.n(react__WEBPACK_IMPORTED_MODULE_0__);
@@ -894,7 +999,7 @@ const HeroText = props => {
 };
 
 /***/ }),
-/* 9 */
+/* 10 */
 /***/ (function(module, __webpack_exports__, __webpack_require__) {
 
 "use strict";
@@ -903,7 +1008,7 @@ __webpack_require__.r(__webpack_exports__);
 /* harmony import */ var react__WEBPACK_IMPORTED_MODULE_0__ = __webpack_require__(1);
 /* harmony import */ var react__WEBPACK_IMPORTED_MODULE_0___default = /*#__PURE__*/__webpack_require__.n(react__WEBPACK_IMPORTED_MODULE_0__);
 /* harmony import */ var _asrouter_templates_FirstRun_addUtmParams__WEBPACK_IMPORTED_MODULE_1__ = __webpack_require__(7);
-/* harmony import */ var _asrouter_templates_OnboardingMessage_OnboardingMessage__WEBPACK_IMPORTED_MODULE_2__ = __webpack_require__(10);
+/* harmony import */ var _asrouter_templates_OnboardingMessage_OnboardingMessage__WEBPACK_IMPORTED_MODULE_2__ = __webpack_require__(11);
 /* harmony import */ var _lib_aboutwelcome_utils__WEBPACK_IMPORTED_MODULE_3__ = __webpack_require__(6);
 function _extends() { _extends = Object.assign || function (target) { for (var i = 1; i < arguments.length; i++) { var source = arguments[i]; for (var key in source) { if (Object.prototype.hasOwnProperty.call(source, key)) { target[key] = source[key]; } } } return target; }; return _extends.apply(this, arguments); }
 
@@ -990,7 +1095,7 @@ class FxCards extends react__WEBPACK_IMPORTED_MODULE_0___default.a.PureComponent
 }
 
 /***/ }),
-/* 10 */
+/* 11 */
 /***/ (function(module, __webpack_exports__, __webpack_require__) {
 
 "use strict";

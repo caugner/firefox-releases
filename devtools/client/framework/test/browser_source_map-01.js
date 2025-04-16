@@ -14,8 +14,8 @@
 const { PromiseTestUtils } = ChromeUtils.import(
   "resource://testing-common/PromiseTestUtils.jsm"
 );
-PromiseTestUtils.whitelistRejectionsGlobally(/this\.worker is null/);
-PromiseTestUtils.whitelistRejectionsGlobally(/Component not initialized/);
+PromiseTestUtils.allowMatchingRejectionsGlobally(/this\.worker is null/);
+PromiseTestUtils.allowMatchingRejectionsGlobally(/Component not initialized/);
 
 // Empty page
 const PAGE_URL = `${URL_ROOT}doc_empty-tab-01.html`;
@@ -50,7 +50,7 @@ add_task(async function() {
 
 function checkLoc1(oldLoc, newLoc) {
   is(oldLoc.line, 6, "Correct line for JS:6");
-  is(oldLoc.column, null, "Correct column for JS:6");
+  is(oldLoc.column, undefined, "Correct column for JS:6");
   is(oldLoc.url, JS_URL, "Correct url for JS:6");
   is(newLoc.line, 4, "Correct line for JS:6 -> COFFEE");
   is(

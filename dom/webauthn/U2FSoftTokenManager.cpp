@@ -24,11 +24,10 @@ namespace dom {
 using namespace mozilla;
 using mozilla::dom::CreateECParamsForCurve;
 
-const nsCString U2FSoftTokenManager::mSecretNickname =
-    NS_LITERAL_CSTRING("U2F_NSSTOKEN");
+const nsCString U2FSoftTokenManager::mSecretNickname = "U2F_NSSTOKEN"_ns;
 
 namespace {
-NS_NAMED_LITERAL_CSTRING(kAttestCertSubjectName, "CN=Firefox U2F Soft Token");
+constexpr auto kAttestCertSubjectName = "CN=Firefox U2F Soft Token"_ns;
 
 // This U2F-compatible soft token uses FIDO U2F-compatible ECDSA keypairs
 // on the SEC_OID_SECG_EC_SECP256R1 curve. When asked to Register, it will
@@ -47,7 +46,8 @@ const uint32_t kWrappedKeyBufLen = 256;
 const uint32_t kWrappingKeyByteLen = 128 / 8;
 const uint32_t kSaltByteLen = 64 / 8;
 const uint32_t kVersion1KeyHandleLen = 162;
-NS_NAMED_LITERAL_STRING(kEcAlgorithm, WEBCRYPTO_NAMED_CURVE_P256);
+constexpr auto kEcAlgorithm =
+    NS_LITERAL_STRING_FROM_CSTRING(WEBCRYPTO_NAMED_CURVE_P256);
 
 const PRTime kOneDay = PRTime(PR_USEC_PER_SEC) * PRTime(60)  // sec
                        * PRTime(60)                          // min

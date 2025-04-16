@@ -99,6 +99,21 @@ public class ContentBlocking {
                 getSettings().setEnhancedTrackingProtectionLevel(level);
                 return this;
             }
+
+            /**
+             * Set whether or not strict social tracking protection is enabled. This will block
+             * resources from loading if they are on the social tracking protection list, rather
+             * than just blocking cookies as with normal social tracking protection.
+             *
+             * @param enabled A boolean indicating whether or not strict social tracking protection
+             *                should be enabled.
+             *
+             * @return The builder instance.
+             */
+            public @NonNull Builder strictSocialTrackingProtection(final boolean enabled) {
+                getSettings().setStrictSocialTrackingProtection(enabled);
+                return this;
+            }
         }
 
         /* package */ final Pref<String> mAt = new Pref<String>(
@@ -263,6 +278,16 @@ public class ContentBlocking {
                 return ContentBlocking.EtpLevel.DEFAULT;
             }
             return ContentBlocking.EtpLevel.NONE;
+        }
+
+        /**
+         * Get whether or not strict social tracking protection is enabled.
+         *
+         * @return A boolean indicating whether or not strict social tracking protection
+         *         is enabled.
+         */
+        public boolean getStrictSocialTrackingProtection() {
+            return mStStrict.get();
         }
 
         /**
@@ -612,8 +637,9 @@ public class ContentBlocking {
             final String matchedList =
                 blockedList != null ? blockedList : loadedList;
 
+            // Note: Even if loadedList is non-empty it does not necessarily
+            // mean that the event is not a blocking event.
             final boolean blocking =
-                loadedList.isEmpty() &&
                 (blockedList != null ||
                  error != 0L ||
                  ContentBlocking.isBlockingGeckoCbCat(category));

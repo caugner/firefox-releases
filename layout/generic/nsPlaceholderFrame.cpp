@@ -41,7 +41,7 @@ NS_IMPL_FRAMEARENA_HELPERS(nsPlaceholderFrame)
 #ifdef DEBUG
 NS_QUERYFRAME_HEAD(nsPlaceholderFrame)
   NS_QUERYFRAME_ENTRY(nsPlaceholderFrame)
-NS_QUERYFRAME_TAIL_INHERITING(nsFrame)
+NS_QUERYFRAME_TAIL_INHERITING(nsIFrame)
 #endif
 
 /* virtual */
@@ -183,7 +183,7 @@ void nsPlaceholderFrame::DestroyFrom(nsIFrame* aDestructRoot,
     // else oof will be destroyed by its parent
   }
 
-  nsFrame::DestroyFrom(aDestructRoot, aPostDestroyData);
+  nsIFrame::DestroyFrom(aDestructRoot, aPostDestroyData);
 }
 
 /* virtual */
@@ -261,7 +261,7 @@ void nsPlaceholderFrame::BuildDisplayList(nsDisplayListBuilder* aBuilder,
 
 #ifdef DEBUG_FRAME_DUMP
 nsresult nsPlaceholderFrame::GetFrameName(nsAString& aResult) const {
-  return MakeFrameName(NS_LITERAL_STRING("Placeholder"), aResult);
+  return MakeFrameName(u"Placeholder"_ns, aResult);
 }
 
 void nsPlaceholderFrame::List(FILE* out, const char* aPrefix,

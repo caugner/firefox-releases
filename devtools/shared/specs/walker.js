@@ -346,14 +346,6 @@ const walkerSpec = generateActorSpec({
         node: RetVal("nullable:domnode"),
       },
     },
-    hasAccessibilityProperties: {
-      request: {
-        node: Arg(0, "nullable:domnode"),
-      },
-      response: {
-        value: RetVal("boolean"),
-      },
-    },
     setMutationBreakpoints: {
       request: {
         node: Arg(0, "nullable:domnode"),
@@ -370,6 +362,15 @@ const walkerSpec = generateActorSpec({
       response: {
         nodeFront: RetVal("disconnectedNode"),
       },
+    },
+    pick: {
+      request: {
+        doFocus: Arg(0, "nullable:boolean"),
+      },
+    },
+    cancelPick: {
+      request: {},
+      response: {},
     },
     watchRootNode: {
       request: {},

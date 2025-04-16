@@ -21,6 +21,7 @@
 #include "vm/BytecodeUtil.h"              // JSOp
 #include "vm/JSAtom.h"                    // JSAtom
 #include "vm/JSFunction.h"                // JSFunction
+#include "vm/SharedStencil.h"             // GCThingIndex
 
 namespace js {
 namespace frontend {
@@ -136,9 +137,9 @@ class MOZ_STACK_CLASS FunctionEmitter {
 
   // Helper methods used by emitFunction for each case.
   // `index` is the object index of the function.
-  MOZ_MUST_USE bool emitNonHoisted(unsigned index);
-  MOZ_MUST_USE bool emitHoisted(unsigned index);
-  MOZ_MUST_USE bool emitTopLevelFunction(unsigned index);
+  MOZ_MUST_USE bool emitNonHoisted(GCThingIndex index);
+  MOZ_MUST_USE bool emitHoisted(GCThingIndex index);
+  MOZ_MUST_USE bool emitTopLevelFunction(GCThingIndex index);
   MOZ_MUST_USE bool emitNewTargetForArrow();
 };
 
@@ -249,7 +250,7 @@ class MOZ_STACK_CLASS FunctionScriptEmitter {
   MOZ_MUST_USE bool emitEndBody();
 
   // Generate the ScriptStencil using the bytecode emitter data.
-  MOZ_MUST_USE bool intoStencil(TopLevelFunction isTopLevel);
+  MOZ_MUST_USE bool intoStencil();
 
  private:
   MOZ_MUST_USE bool emitExtraBodyVarScope();

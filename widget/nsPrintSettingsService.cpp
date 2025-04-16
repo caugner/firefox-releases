@@ -8,7 +8,7 @@
 #include "mozilla/embedding/PPrinting.h"
 #include "mozilla/layout/RemotePrintJobChild.h"
 #include "mozilla/RefPtr.h"
-#include "nsIPrinterEnumerator.h"
+#include "nsIPrinterList.h"
 #include "nsPrintingProxy.h"
 #include "nsReadableUtils.h"
 #include "nsPrintSettingsImpl.h"
@@ -79,7 +79,7 @@ static const char kJustLeft[] = "left";
 static const char kJustCenter[] = "center";
 static const char kJustRight[] = "right";
 
-#define NS_PRINTER_ENUMERATOR_CONTRACTID "@mozilla.org/gfx/printerenumerator;1"
+#define NS_PRINTER_LIST_CONTRACTID "@mozilla.org/gfx/printerlist;1"
 
 nsresult nsPrintSettingsService::Init() { return NS_OK; }
 
@@ -538,7 +538,7 @@ nsresult nsPrintSettingsService::ReadPrefs(nsIPrintSettings* aPS,
 
   if (aFlags & nsIPrintSettings::kInitSaveToFileName) {
     if (GETSTRPREF(kPrintToFileName, str)) {
-      if (StringEndsWith(str, NS_LITERAL_STRING(".ps"))) {
+      if (StringEndsWith(str, u".ps"_ns)) {
         // We only support PDF since bug 1425188 landed.  Users may still have
         // prefs with .ps filenames if they last saved a file as Postscript
         // though, so we fix that up here.  (The pref values will be
@@ -893,38 +893,36 @@ NS_IMETHODIMP
 nsPrintSettingsService::GetLastUsedPrinterName(
     nsAString& aLastUsedPrinterName) {
   nsresult rv;
-  nsCOMPtr<nsIPrinterEnumerator> prtEnum =
-      do_GetService(NS_PRINTER_ENUMERATOR_CONTRACTID, &rv);
+  nsCOMPtr<nsIPrinterList> printerList =
+      do_GetService(NS_PRINTER_LIST_CONTRACTID, &rv);
   NS_ENSURE_SUCCESS(rv, rv);
 
+  aLastUsedPrinterName.Truncate();
+
   // Look up the printer from the last print job
-  nsAutoString lastPrinterName;
-  Preferences::GetString(kPrinterName, lastPrinterName);
-  if (!lastPrinterName.IsEmpty()) {
+  nsAutoString lastUsedPrinterName;
+  Preferences::GetString(kPrinterName, lastUsedPrinterName);
+  if (!lastUsedPrinterName.IsEmpty()) {
     // Verify it's still a valid printer
-    nsCOMPtr<nsIStringEnumerator> printers;
-    rv = prtEnum->GetPrinterNameList(getter_AddRefs(printers));
+
+    nsTArray<RefPtr<nsIPrinter>> printers;
+    rv = printerList->GetPrinters(printers);
     if (NS_SUCCEEDED(rv)) {
-      bool isValid = false;
-      bool hasMore;
-      while (NS_SUCCEEDED(printers->HasMore(&hasMore)) && hasMore) {
-        nsAutoString printer;
-        if (NS_SUCCEEDED(printers->GetNext(printer)) &&
-            lastPrinterName.Equals(printer)) {
-          isValid = true;
-          break;
+      for (nsIPrinter* printer : printers) {
+        nsAutoString printerName;
+        printer->GetName(printerName);
+        if (printerName.Equals(lastUsedPrinterName)) {
+          aLastUsedPrinterName = lastUsedPrinterName;
+          return NS_OK;
         }
-      }
-      if (isValid) {
-        aLastUsedPrinterName = lastPrinterName;
-        return NS_OK;
       }
     }
   }
 
   // There is no last printer preference, or it doesn't name a valid printer.
-  // Return the default from the printer enumeration.
-  return prtEnum->GetDefaultPrinterName(aLastUsedPrinterName);
+  // Return the system default from the printer list.
+  printerList->GetSystemDefaultPrinterName(aLastUsedPrinterName);
+  return NS_OK;
 }
 
 NS_IMETHODIMP
@@ -952,11 +950,11 @@ nsPrintSettingsService::InitPrintSettingsFromPrinter(
   if (isInitialized) return NS_OK;
 
   nsresult rv;
-  nsCOMPtr<nsIPrinterEnumerator> prtEnum =
-      do_GetService(NS_PRINTER_ENUMERATOR_CONTRACTID, &rv);
+  nsCOMPtr<nsIPrinterList> printerList =
+      do_GetService(NS_PRINTER_LIST_CONTRACTID, &rv);
   NS_ENSURE_SUCCESS(rv, rv);
 
-  rv = prtEnum->InitPrintSettingsFromPrinter(aPrinterName, aPrintSettings);
+  rv = printerList->InitPrintSettingsFromPrinter(aPrinterName, aPrintSettings);
   NS_ENSURE_SUCCESS(rv, rv);
 
   aPrintSettings->SetIsInitializedFromPrinter(true);
@@ -981,7 +979,7 @@ static nsresult GetAdjustedPrinterName(nsIPrintSettings* aPS, bool aUsePNP,
 
   // Convert any whitespaces, carriage returns or newlines to _
   // The below algorithm is supposedly faster than using iterators
-  NS_NAMED_LITERAL_STRING(replSubstr, "_");
+  constexpr auto replSubstr = u"_"_ns;
   const char* replaceStr = " \n\r";
 
   int32_t x;

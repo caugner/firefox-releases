@@ -6,6 +6,7 @@
 
 #include "TRRLoadInfo.h"
 #include "mozilla/dom/ClientSource.h"
+#include "nsContentUtils.h"
 #include "nsIRedirectHistoryEntry.h"
 
 using namespace mozilla::dom;
@@ -100,6 +101,11 @@ TRRLoadInfo::GetSecurityMode(uint32_t* aFlags) {
 
 NS_IMETHODIMP
 TRRLoadInfo::GetIsInThirdPartyContext(bool* aIsInThirdPartyContext) {
+  return NS_ERROR_NOT_IMPLEMENTED;
+}
+
+NS_IMETHODIMP
+TRRLoadInfo::SetIsInThirdPartyContext(bool aIsInThirdPartyContext) {
   return NS_ERROR_NOT_IMPLEMENTED;
 }
 
@@ -291,25 +297,6 @@ TRRLoadInfo::GetInnerWindowID(uint64_t* aResult) {
   return NS_ERROR_NOT_IMPLEMENTED;
 }
 
-NS_IMETHODIMP
-TRRLoadInfo::GetOuterWindowID(uint64_t* aResult) {
-  return NS_ERROR_NOT_IMPLEMENTED;
-}
-
-NS_IMETHODIMP
-TRRLoadInfo::GetParentOuterWindowID(uint64_t* aResult) {
-  return NS_ERROR_NOT_IMPLEMENTED;
-}
-
-NS_IMETHODIMP
-TRRLoadInfo::GetTopOuterWindowID(uint64_t* aResult) {
-  return NS_ERROR_NOT_IMPLEMENTED;
-}
-
-NS_IMETHODIMP
-TRRLoadInfo::GetFrameOuterWindowID(uint64_t* aResult) {
-  return NS_ERROR_NOT_IMPLEMENTED;
-}
 
 NS_IMETHODIMP
 TRRLoadInfo::GetBrowsingContextID(uint64_t* aResult) {
@@ -412,8 +399,8 @@ const nsTArray<nsCOMPtr<nsIPrincipal>>& TRRLoadInfo::AncestorPrincipals() {
   return mEmptyPrincipals;
 }
 
-const nsTArray<uint64_t>& TRRLoadInfo::AncestorOuterWindowIDs() {
-  return mEmptyWindowIDs;
+const nsTArray<uint64_t>& TRRLoadInfo::AncestorBrowsingContextIDs() {
+  return mEmptyBrowsingContextIDs;
 }
 
 void TRRLoadInfo::SetCorsPreflightInfo(const nsTArray<nsCString>& aHeaders,

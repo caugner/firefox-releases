@@ -518,10 +518,10 @@ static CVReturn VsyncCallback(CVDisplayLinkRef aDisplayLink,
   // Executed on OS X hardware vsync thread
   OSXVsyncSource::OSXDisplay* display =
       (OSXVsyncSource::OSXDisplay*)aDisplayLinkContext;
-  int64_t nextVsyncTimestamp = aOutputTime->hostTime;
 
-  mozilla::TimeStamp nextVsync =
-      mozilla::TimeStamp::FromSystemTime(nextVsyncTimestamp);
+  mozilla::TimeStamp outputTime =
+      mozilla::TimeStamp::FromSystemTime(aOutputTime->hostTime);
+  mozilla::TimeStamp nextVsync = outputTime;
   mozilla::TimeStamp previousVsync = display->mPreviousTimestamp;
   mozilla::TimeStamp now = TimeStamp::Now();
 
@@ -540,7 +540,7 @@ static CVReturn VsyncCallback(CVDisplayLinkRef aDisplayLink,
 
   display->mPreviousTimestamp = nextVsync;
 
-  display->NotifyVsync(previousVsync);
+  display->NotifyVsync(previousVsync, outputTime);
   return kCVReturnSuccess;
 }
 
@@ -607,5 +607,5 @@ void gfxPlatformMac::InitPlatformGPUProcessPrefs() {
   FeatureState& gpuProc = gfxConfig::GetFeature(Feature::GPU_PROCESS);
   gpuProc.ForceDisable(FeatureStatus::Blocked,
                        "GPU process does not work on Mac",
-                       NS_LITERAL_CSTRING("FEATURE_FAILURE_MAC_GPU_PROC"));
+                       "FEATURE_FAILURE_MAC_GPU_PROC"_ns);
 }

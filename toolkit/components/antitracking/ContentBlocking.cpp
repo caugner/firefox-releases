@@ -441,7 +441,7 @@ ContentBlocking::CompleteAllowAccessFor(
   // We hardcode this block reason since the first-party storage access
   // permission is granted for the purpose of blocking trackers.
   // Note that if aReason is eOpenerAfterUserInteraction and the
-  // trackingPrincipal is not in a blacklist, we don't check the
+  // trackingPrincipal is not in a blocklist, we don't check the
   // user-interaction state, because it could be that the current process has
   // just sent the request to store the user-interaction permission into the
   // parent, without having received the permission itself yet.
@@ -501,8 +501,20 @@ ContentBlocking::CompleteAllowAccessFor(
       }
     }
 
-    ContentBlockingNotifier::ReportUnblockingToConsole(
-        aParentContext, NS_ConvertUTF8toUTF16(trackingOrigin), aReason);
+    Maybe<ContentBlockingNotifier::StorageAccessPermissionGrantedReason>
+        reportReason;
+    // We can directly report here if we can know the origin of the top.
+    if (XRE_IsParentProcess() || aParentContext->Top()->IsInProcess()) {
+      ContentBlockingNotifier::ReportUnblockingToConsole(
+          aParentContext, NS_ConvertUTF8toUTF16(trackingOrigin), aReason);
+
+      // Set the report reason to nothing if we've already reported.
+      reportReason = Nothing();
+    } else {
+      // Set the report reason, so that we can know the reason when reporting
+      // in the parent.
+      reportReason.emplace(aReason);
+    }
 
     if (XRE_IsParentProcess()) {
       LOG(("Saving the permission: trackingOrigin=%s", trackingOrigin.get()));
@@ -534,7 +546,8 @@ ContentBlocking::CompleteAllowAccessFor(
     return cc
         ->SendStorageAccessPermissionGrantedForOrigin(
             aTopLevelWindowId, aParentContext,
-            IPC::Principal(trackingPrincipal), trackingOrigin, aAllowMode)
+            IPC::Principal(trackingPrincipal), trackingOrigin, aAllowMode,
+            reportReason)
         ->Then(GetCurrentSerialEventTarget(), __func__,
                [](const ContentChild::
                       StorageAccessPermissionGrantedForOriginPromise::
@@ -945,7 +958,7 @@ bool ContentBlocking::ShouldAllowAccessFor(nsPIDOMWindowInner* aWindow,
   } else {
     MOZ_ASSERT(CookieJarSettings::IsRejectThirdPartyWithExceptions(behavior));
     if (RejectForeignAllowList::Check(document)) {
-      LOG(("This window is whitelisted for reject foreign"));
+      LOG(("This window is exceptionlisted for reject foreign"));
       return true;
     }
 
@@ -970,6 +983,7 @@ bool ContentBlocking::ShouldAllowAccessFor(nsPIDOMWindowInner* aWindow,
   // Make sure storage access isn't disabled
   if (doc && (doc->StorageAccessSandboxed())) {
     LOG(("Our document is sandboxed"));
+    *aRejectedReason = blockedReason;
     return false;
   }
 
@@ -1155,7 +1169,7 @@ bool ContentBlocking::ShouldAllowAccessFor(nsIChannel* aChannel, nsIURI* aURI,
   } else {
     MOZ_ASSERT(CookieJarSettings::IsRejectThirdPartyWithExceptions(behavior));
     if (httpChannel && RejectForeignAllowList::Check(httpChannel)) {
-      LOG(("This channel is whitelisted"));
+      LOG(("This channel is exceptionlisted"));
       return true;
     }
     blockedReason = nsIWebProgressListener::STATE_COOKIES_BLOCKED_FOREIGN;
@@ -1180,6 +1194,7 @@ bool ContentBlocking::ShouldAllowAccessFor(nsIChannel* aChannel, nsIURI* aURI,
 
   if (Document::StorageAccessSandboxed(targetBC->GetSandboxFlags())) {
     LOG(("Our document is sandboxed"));
+    *aRejectedReason = blockedReason;
     return false;
   }
 
@@ -1231,7 +1246,7 @@ bool ContentBlocking::ShouldAllowAccessFor(
     PermissionManager* permManager = PermissionManager::GetInstance();
     if (permManager) {
       Unused << NS_WARN_IF(NS_FAILED(permManager->TestPermissionFromPrincipal(
-          aPrincipal, NS_LITERAL_CSTRING("cookie"), &access)));
+          aPrincipal, "cookie"_ns, &access)));
     }
   }
 

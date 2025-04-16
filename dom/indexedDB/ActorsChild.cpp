@@ -22,7 +22,7 @@
 #include "IndexedDatabaseInlines.h"
 #include "js/Array.h"  // JS::NewArrayObject, JS::SetArrayLength
 #include "js/Date.h"   // JS::NewDateObject, JS::TimeClip
-#include <mozIIPCBlobInputStream.h>
+#include <mozIRemoteLazyInputStream.h>
 #include "mozilla/ArrayAlgorithm.h"
 #include "mozilla/BasicEvents.h"
 #include "mozilla/CycleCollectedJSRuntime.h"
@@ -53,6 +53,7 @@
 #include "PermissionRequestBase.h"
 #include "ProfilerHelpers.h"
 #include "ReportInternalError.h"
+#include "ThreadLocal.h"
 
 #ifdef DEBUG
 #  include "IndexedDatabaseManager.h"
@@ -92,14 +93,9 @@ const uint32_t kFileCopyBufferSize = 32768;
  ******************************************************************************/
 
 ThreadLocal::ThreadLocal(const nsID& aBackgroundChildLoggingId)
-    : mLoggingInfo(aBackgroundChildLoggingId, 1, -1, 1) {
+    : mLoggingInfo(aBackgroundChildLoggingId, 1, -1, 1),
+      mLoggingIdString(aBackgroundChildLoggingId) {
   MOZ_COUNT_CTOR(mozilla::dom::indexedDB::ThreadLocal);
-
-  // NSID_LENGTH counts the null terminator, SetLength() does not.
-  mLoggingIdString.SetLength(NSID_LENGTH - 1);
-
-  aBackgroundChildLoggingId.ToProvidedString(
-      *reinterpret_cast<char(*)[NSID_LENGTH]>(mLoggingIdString.BeginWriting()));
 }
 
 ThreadLocal::~ThreadLocal() {
@@ -196,12 +192,12 @@ class MOZ_STACK_CLASS AutoSetCurrentTransaction final {
 
 template <typename T>
 void SetResultAndDispatchSuccessEvent(
-    const RefPtr<IDBRequest>& aRequest,
-    const SafeRefPtr<IDBTransaction>& aTransaction, T* aPtr,
+    const NotNull<RefPtr<IDBRequest>>& aRequest,
+    const SafeRefPtr<IDBTransaction>& aTransaction, T& aPtr,
     RefPtr<Event> aEvent = nullptr);
 
 namespace detail {
-void DispatchSuccessEvent(const RefPtr<IDBRequest>& aRequest,
+void DispatchSuccessEvent(const NotNull<RefPtr<IDBRequest>>& aRequest,
                           const SafeRefPtr<IDBTransaction>& aTransaction,
                           const RefPtr<Event>& aEvent);
 
@@ -496,17 +492,16 @@ StructuredCloneReadInfoChild DeserializeStructuredCloneReadInfo(
 // TODO: Remove duplication between DispatchErrorEvent and DispatchSucessEvent.
 
 void DispatchErrorEvent(
-    const RefPtr<IDBRequest>& aRequest, nsresult aErrorCode,
+    MovingNotNull<RefPtr<IDBRequest>> aRequest, nsresult aErrorCode,
     const SafeRefPtr<IDBTransaction>& aTransaction = nullptr,
     RefPtr<Event> aEvent = nullptr) {
-  MOZ_ASSERT(aRequest);
-  aRequest->AssertIsOnOwningThread();
+  const RefPtr<IDBRequest> request = std::move(aRequest);
+
+  request->AssertIsOnOwningThread();
   MOZ_ASSERT(NS_FAILED(aErrorCode));
   MOZ_ASSERT(NS_ERROR_GET_MODULE(aErrorCode) == NS_ERROR_MODULE_DOM_INDEXEDDB);
 
   AUTO_PROFILER_LABEL("IndexedDB:DispatchErrorEvent", DOM);
-
-  const RefPtr<IDBRequest> request = aRequest;
 
   request->SetError(aErrorCode);
 
@@ -530,14 +525,16 @@ void DispatchErrorEvent(
 
   if (aTransaction) {
     IDB_LOG_MARK_CHILD_TRANSACTION_REQUEST(
-        "Firing %s event with error 0x%x", "%s (0x%x)",
+        "Firing %s event with error 0x%x", "%s (0x%" PRIx32 ")",
         aTransaction->LoggingSerialNumber(), request->LoggingSerialNumber(),
-        IDB_LOG_STRINGIFY(aEvent, kErrorEventType), aErrorCode);
+        IDB_LOG_STRINGIFY(aEvent, kErrorEventType),
+        static_cast<uint32_t>(aErrorCode));
   } else {
-    IDB_LOG_MARK_CHILD_REQUEST("Firing %s event with error 0x%x", "%s (0x%x)",
+    IDB_LOG_MARK_CHILD_REQUEST("Firing %s event with error 0x%x",
+                               "%s (0x%" PRIx32 ")",
                                request->LoggingSerialNumber(),
                                IDB_LOG_STRINGIFY(aEvent, kErrorEventType),
-                               aErrorCode);
+                               static_cast<uint32_t>(aErrorCode));
   }
 
   IgnoredErrorResult rv;
@@ -573,12 +570,9 @@ void DispatchErrorEvent(
 
 template <typename T>
 void SetResultAndDispatchSuccessEvent(
-    const RefPtr<IDBRequest>& aRequest,
-    const SafeRefPtr<IDBTransaction>& aTransaction, T* aPtr,
+    const NotNull<RefPtr<IDBRequest>>& aRequest,
+    const SafeRefPtr<IDBTransaction>& aTransaction, T& aPtr,
     RefPtr<Event> aEvent) {
-  MOZ_ASSERT(aRequest);
-  MOZ_ASSERT(aPtr);
-
   const auto autoTransaction = AutoSetCurrentTransaction{
       aTransaction ? SomeRef(*aTransaction) : Nothing()};
 
@@ -592,22 +586,23 @@ void SetResultAndDispatchSuccessEvent(
   }
 
   if (!aEvent) {
-    aEvent = CreateGenericEvent(aRequest, nsDependentString(kSuccessEventType),
-                                eDoesNotBubble, eNotCancelable);
+    aEvent =
+        CreateGenericEvent(aRequest.get(), nsDependentString(kSuccessEventType),
+                           eDoesNotBubble, eNotCancelable);
   }
   MOZ_ASSERT(aEvent);
 
   aRequest->SetResult(
-      [aPtr](JSContext* aCx, JS::MutableHandle<JS::Value> aResult) {
+      [&aPtr](JSContext* aCx, JS::MutableHandle<JS::Value> aResult) {
         MOZ_ASSERT(aCx);
-        return detail::GetResult(aCx, aPtr, aResult);
+        return detail::GetResult(aCx, &aPtr, aResult);
       });
 
   detail::DispatchSuccessEvent(aRequest, aTransaction, aEvent);
 }
 
 namespace detail {
-void DispatchSuccessEvent(const RefPtr<IDBRequest>& aRequest,
+void DispatchSuccessEvent(const NotNull<RefPtr<IDBRequest>>& aRequest,
                           const SafeRefPtr<IDBTransaction>& aTransaction,
                           const RefPtr<Event>& aEvent) {
   if (aTransaction && aTransaction->IsInactive()) {
@@ -1181,10 +1176,10 @@ void PermissionRequestMainProcessHelper::OnPromptComplete(
  * BackgroundRequestChildBase
  ******************************************************************************/
 
-BackgroundRequestChildBase::BackgroundRequestChildBase(IDBRequest* aRequest)
-    : mRequest(aRequest) {
-  MOZ_ASSERT(aRequest);
-  aRequest->AssertIsOnOwningThread();
+BackgroundRequestChildBase::BackgroundRequestChildBase(
+    MovingNotNull<RefPtr<IDBRequest>> aRequest)
+    : mRequest(std::move(aRequest)) {
+  mRequest->AssertIsOnOwningThread();
 
   MOZ_COUNT_CTOR(indexedDB::BackgroundRequestChildBase);
 }
@@ -1198,7 +1193,6 @@ BackgroundRequestChildBase::~BackgroundRequestChildBase() {
 #ifdef DEBUG
 
 void BackgroundRequestChildBase::AssertIsOnOwningThread() const {
-  MOZ_ASSERT(mRequest);
   mRequest->AssertIsOnOwningThread();
 }
 
@@ -1296,9 +1290,10 @@ BackgroundFactoryChild::RecvPBackgroundIDBDatabaseConstructor(
  ******************************************************************************/
 
 BackgroundFactoryRequestChild::BackgroundFactoryRequestChild(
-    SafeRefPtr<IDBFactory> aFactory, IDBOpenDBRequest* aOpenRequest,
-    bool aIsDeleteOp, uint64_t aRequestedVersion)
-    : BackgroundRequestChildBase(aOpenRequest),
+    SafeRefPtr<IDBFactory> aFactory,
+    MovingNotNull<RefPtr<IDBOpenDBRequest>> aOpenRequest, bool aIsDeleteOp,
+    uint64_t aRequestedVersion)
+    : BackgroundRequestChildBase(std::move(aOpenRequest)),
       mFactory(std::move(aFactory)),
       mDatabaseActor(nullptr),
       mRequestedVersion(aRequestedVersion),
@@ -1306,7 +1301,6 @@ BackgroundFactoryRequestChild::BackgroundFactoryRequestChild(
   // Can't assert owning thread here because IPDL has not yet set our manager!
   MOZ_ASSERT(mFactory);
   mFactory->AssertIsOnOwningThread();
-  MOZ_ASSERT(aOpenRequest);
 
   MOZ_COUNT_CTOR(indexedDB::BackgroundFactoryRequestChild);
 }
@@ -1315,10 +1309,13 @@ BackgroundFactoryRequestChild::~BackgroundFactoryRequestChild() {
   MOZ_COUNT_DTOR(indexedDB::BackgroundFactoryRequestChild);
 }
 
-IDBOpenDBRequest* BackgroundFactoryRequestChild::GetOpenDBRequest() const {
+NotNull<IDBOpenDBRequest*> BackgroundFactoryRequestChild::GetOpenDBRequest()
+    const {
   AssertIsOnOwningThread();
 
-  return static_cast<IDBOpenDBRequest*>(mRequest.get());
+  // XXX NotNull might provide something to encapsulate this
+  return WrapNotNullUnchecked(
+      static_cast<IDBOpenDBRequest*>(mRequest.get().get()));
 }
 
 void BackgroundFactoryRequestChild::SetDatabaseActor(
@@ -1352,20 +1349,26 @@ bool BackgroundFactoryRequestChild::HandleResponse(
 
   mRequest->Reset();
 
-  auto databaseActor =
+  auto* databaseActor =
       static_cast<BackgroundDatabaseChild*>(aResponse.databaseChild());
   MOZ_ASSERT(databaseActor);
 
-  IDBDatabase* database = databaseActor->GetDOMObject();
-  if (!database) {
-    databaseActor->EnsureDOMObject();
-    MOZ_ASSERT(mDatabaseActor);
+  NotNull<IDBDatabase*> database = [this, databaseActor] {
+    IDBDatabase* database = databaseActor->GetDOMObject();
+    if (!database) {
+      Unused << this;
 
-    database = databaseActor->GetDOMObject();
-    MOZ_ASSERT(database);
+      databaseActor->EnsureDOMObject();
+      MOZ_ASSERT(mDatabaseActor);
 
-    MOZ_ASSERT(!database->IsClosed());
-  }
+      database = databaseActor->GetDOMObject();
+      MOZ_ASSERT(database);
+
+      MOZ_ASSERT(!database->IsClosed());
+    }
+
+    return WrapNotNullUnchecked(database);
+  }();
 
   MOZ_ASSERT(mDatabaseActor == databaseActor);
 
@@ -1375,7 +1378,7 @@ bool BackgroundFactoryRequestChild::HandleResponse(
     // Instead we fire an error event with AbortErr.
     DispatchErrorEvent(mRequest, NS_ERROR_DOM_INDEXEDDB_ABORT_ERR);
   } else {
-    SetResultAndDispatchSuccessEvent(mRequest, nullptr, database);
+    SetResultAndDispatchSuccessEvent(mRequest, nullptr, *database);
   }
 
   databaseActor->ReleaseDOMObject();
@@ -1389,11 +1392,11 @@ bool BackgroundFactoryRequestChild::HandleResponse(
   AssertIsOnOwningThread();
 
   RefPtr<Event> successEvent = IDBVersionChangeEvent::Create(
-      mRequest, nsDependentString(kSuccessEventType),
+      mRequest.get(), nsDependentString(kSuccessEventType),
       aResponse.previousVersion());
   MOZ_ASSERT(successEvent);
 
-  SetResultAndDispatchSuccessEvent(mRequest, nullptr, &JS::UndefinedHandleValue,
+  SetResultAndDispatchSuccessEvent(mRequest, nullptr, JS::UndefinedHandleValue,
                                    std::move(successEvent));
 
   MOZ_ASSERT(!mDatabaseActor);
@@ -1407,17 +1410,13 @@ void BackgroundFactoryRequestChild::ActorDestroy(ActorDestroyReason aWhy) {
   MaybeCollectGarbageOnIPCMessage();
 
   if (aWhy != Deletion) {
-    IDBOpenDBRequest* openRequest = GetOpenDBRequest();
-    if (openRequest) {
-      openRequest->NoteComplete();
-    }
+    GetOpenDBRequest()->NoteComplete();
   }
 }
 
 mozilla::ipc::IPCResult BackgroundFactoryRequestChild::Recv__delete__(
     const FactoryRequestResponse& aResponse) {
   AssertIsOnOwningThread();
-  MOZ_ASSERT(mRequest);
 
   MaybeCollectGarbageOnIPCMessage();
 
@@ -1440,8 +1439,7 @@ mozilla::ipc::IPCResult BackgroundFactoryRequestChild::Recv__delete__(
       MOZ_CRASH("Unknown response type!");
   }
 
-  IDBOpenDBRequest* request = GetOpenDBRequest();
-  MOZ_ASSERT(request);
+  auto request = GetOpenDBRequest();
 
   request->NoteComplete();
 
@@ -1530,7 +1528,6 @@ mozilla::ipc::IPCResult BackgroundFactoryRequestChild::RecvPermissionChallenge(
 mozilla::ipc::IPCResult BackgroundFactoryRequestChild::RecvBlocked(
     const uint64_t aCurrentVersion) {
   AssertIsOnOwningThread();
-  MOZ_ASSERT(mRequest);
 
   MaybeCollectGarbageOnIPCMessage();
 
@@ -1539,11 +1536,11 @@ mozilla::ipc::IPCResult BackgroundFactoryRequestChild::RecvBlocked(
   RefPtr<Event> blockedEvent;
   if (mIsDeleteOp) {
     blockedEvent =
-        IDBVersionChangeEvent::Create(mRequest, type, aCurrentVersion);
+        IDBVersionChangeEvent::Create(mRequest.get(), type, aCurrentVersion);
     MOZ_ASSERT(blockedEvent);
   } else {
     blockedEvent = IDBVersionChangeEvent::Create(
-        mRequest, type, aCurrentVersion, mRequestedVersion);
+        mRequest.get(), type, aCurrentVersion, mRequestedVersion);
     MOZ_ASSERT(blockedEvent);
   }
 
@@ -1607,13 +1604,13 @@ void BackgroundDatabaseChild::EnsureDOMObject() {
 
   if (mTemporaryStrongDatabase) {
     MOZ_ASSERT(!mSpec);
+    MOZ_ASSERT(mDatabase == mTemporaryStrongDatabase);
     return;
   }
 
   MOZ_ASSERT(mSpec);
 
-  auto request = mOpenRequestActor->GetOpenDBRequest();
-  MOZ_ASSERT(request);
+  const auto request = mOpenRequestActor->GetOpenDBRequest();
 
   auto& factory =
       static_cast<BackgroundFactoryChild*>(Manager())->GetDOMObject();
@@ -1648,6 +1645,8 @@ void BackgroundDatabaseChild::ReleaseDOMObject() {
   // calling SendDeleteMeInternal() here. Make sure everything is cleaned up
   // properly before proceeding.
   mTemporaryStrongDatabase = nullptr;
+
+  // XXX Why isn't mDatabase set to nullptr here?
 }
 
 void BackgroundDatabaseChild::ActorDestroy(ActorDestroyReason aWhy) {
@@ -1700,10 +1699,9 @@ BackgroundDatabaseChild::AllocPBackgroundIDBVersionChangeTransactionChild(
     const int64_t aNextObjectStoreId, const int64_t aNextIndexId) {
   AssertIsOnOwningThread();
 
-  IDBOpenDBRequest* request = mOpenRequestActor->GetOpenDBRequest();
-  MOZ_ASSERT(request);
-
-  return RefPtr{new BackgroundVersionChangeTransactionChild(request)}.forget();
+  return RefPtr{new BackgroundVersionChangeTransactionChild(
+                    mOpenRequestActor->GetOpenDBRequest())}
+      .forget();
 }
 
 mozilla::ipc::IPCResult
@@ -1723,8 +1721,9 @@ BackgroundDatabaseChild::RecvPBackgroundIDBVersionChangeTransactionConstructor(
 
   auto* actor = static_cast<BackgroundVersionChangeTransactionChild*>(aActor);
 
-  RefPtr<IDBOpenDBRequest> request = mOpenRequestActor->GetOpenDBRequest();
-  MOZ_ASSERT(request);
+  // XXX NotNull might encapsulate this
+  const auto request =
+      WrapNotNullUnchecked(RefPtr{mOpenRequestActor->GetOpenDBRequest().get()});
 
   SafeRefPtr<IDBTransaction> transaction = IDBTransaction::CreateVersionChange(
       mDatabase, actor, request, aNextObjectStoreId, aNextIndexId);
@@ -1734,17 +1733,20 @@ BackgroundDatabaseChild::RecvPBackgroundIDBVersionChangeTransactionConstructor(
 
   actor->SetDOMTransaction(transaction.clonePtr());
 
-  mDatabase->EnterSetVersionTransaction(aRequestedVersion);
+  const auto database = WrapNotNull(mDatabase);
+
+  database->EnterSetVersionTransaction(aRequestedVersion);
 
   request->SetTransaction(transaction.clonePtr());
 
   RefPtr<Event> upgradeNeededEvent = IDBVersionChangeEvent::Create(
-      request, nsDependentString(kUpgradeNeededEventType), aCurrentVersion,
-      aRequestedVersion);
+      request.get(), nsDependentString(kUpgradeNeededEventType),
+      aCurrentVersion, aRequestedVersion);
   MOZ_ASSERT(upgradeNeededEvent);
 
-  SetResultAndDispatchSuccessEvent(request, transaction, mDatabase,
-                                   std::move(upgradeNeededEvent));
+  SetResultAndDispatchSuccessEvent(
+      WrapNotNullUnchecked<RefPtr<IDBRequest>>(request.get()), transaction,
+      *database, std::move(upgradeNeededEvent));
 
   return IPC_OK();
 }
@@ -1861,12 +1863,11 @@ BackgroundDatabaseChild::RecvCloseAfterInvalidationComplete() {
  ******************************************************************************/
 
 BackgroundDatabaseRequestChild::BackgroundDatabaseRequestChild(
-    IDBDatabase* aDatabase, IDBRequest* aRequest)
-    : BackgroundRequestChildBase(aRequest), mDatabase(aDatabase) {
+    IDBDatabase* aDatabase, MovingNotNull<RefPtr<IDBRequest>> aRequest)
+    : BackgroundRequestChildBase(std::move(aRequest)), mDatabase(aDatabase) {
   // Can't assert owning thread here because IPDL has not yet set our manager!
   MOZ_ASSERT(aDatabase);
   aDatabase->AssertIsOnOwningThread();
-  MOZ_ASSERT(aRequest);
 
   MOZ_COUNT_CTOR(indexedDB::BackgroundDatabaseRequestChild);
 }
@@ -1899,11 +1900,9 @@ bool BackgroundDatabaseRequestChild::HandleResponse(
 
   mutableFileActor->EnsureDOMObject();
 
-  auto mutableFile =
-      static_cast<IDBMutableFile*>(mutableFileActor->GetDOMObject());
-  MOZ_ASSERT(mutableFile);
-
-  SetResultAndDispatchSuccessEvent(mRequest, nullptr, mutableFile);
+  SetResultAndDispatchSuccessEvent(mRequest, nullptr,
+                                   *WrapNotNull(static_cast<IDBMutableFile*>(
+                                       mutableFileActor->GetDOMObject())));
 
   mutableFileActor->ReleaseDOMObject();
 
@@ -1913,7 +1912,6 @@ bool BackgroundDatabaseRequestChild::HandleResponse(
 mozilla::ipc::IPCResult BackgroundDatabaseRequestChild::Recv__delete__(
     const DatabaseRequestResponse& aResponse) {
   AssertIsOnOwningThread();
-  MOZ_ASSERT(mRequest);
 
   switch (aResponse.type()) {
     case DatabaseRequestResponse::Tnsresult:
@@ -2291,9 +2289,10 @@ bool BackgroundMutableFileChild::DeallocPBackgroundFileHandleChild(
  * BackgroundRequestChild
  ******************************************************************************/
 
-BackgroundRequestChild::BackgroundRequestChild(IDBRequest* aRequest)
-    : BackgroundRequestChildBase(aRequest),
-      mTransaction(aRequest->AcquireTransaction()),
+BackgroundRequestChild::BackgroundRequestChild(
+    MovingNotNull<RefPtr<IDBRequest>> aRequest)
+    : BackgroundRequestChildBase(std::move(aRequest)),
+      mTransaction(mRequest->AcquireTransaction()),
       mRunningPreprocessHelpers(0),
       mCurrentCloneDataIndex(0),
       mPreprocessResultCode(NS_OK),
@@ -2388,13 +2387,13 @@ void BackgroundRequestChild::HandleResponse(nsresult aResponse) {
 void BackgroundRequestChild::HandleResponse(const Key& aResponse) {
   AssertIsOnOwningThread();
 
-  SetResultAndDispatchSuccessEvent(mRequest, AcquireTransaction(), &aResponse);
+  SetResultAndDispatchSuccessEvent(mRequest, AcquireTransaction(), aResponse);
 }
 
 void BackgroundRequestChild::HandleResponse(const nsTArray<Key>& aResponse) {
   AssertIsOnOwningThread();
 
-  SetResultAndDispatchSuccessEvent(mRequest, AcquireTransaction(), &aResponse);
+  SetResultAndDispatchSuccessEvent(mRequest, AcquireTransaction(), aResponse);
 }
 
 void BackgroundRequestChild::HandleResponse(
@@ -2406,7 +2405,7 @@ void BackgroundRequestChild::HandleResponse(
       [this] { return std::move(*GetNextCloneData()); });
 
   SetResultAndDispatchSuccessEvent(mRequest, AcquireTransaction(),
-                                   &cloneReadInfo);
+                                   cloneReadInfo);
 }
 
 void BackgroundRequestChild::HandleResponse(
@@ -2433,7 +2432,7 @@ void BackgroundRequestChild::HandleResponse(
   }
 
   SetResultAndDispatchSuccessEvent(mRequest, AcquireTransaction(),
-                                   &cloneReadInfos);
+                                   cloneReadInfos);
 }
 
 void BackgroundRequestChild::HandleResponse(JS::Handle<JS::Value> aResponse) {
@@ -2441,13 +2440,13 @@ void BackgroundRequestChild::HandleResponse(JS::Handle<JS::Value> aResponse) {
 
   SetResultAndDispatchSuccessEvent(
       mRequest, AcquireTransaction(),
-      const_cast<const JS::Handle<JS::Value>*>(&aResponse));
+      const_cast<const JS::Handle<JS::Value>&>(aResponse));
 }
 
 void BackgroundRequestChild::HandleResponse(const uint64_t aResponse) {
   AssertIsOnOwningThread();
 
-  SetResultAndDispatchSuccessEvent(mRequest, AcquireTransaction(), &aResponse);
+  SetResultAndDispatchSuccessEvent(mRequest, AcquireTransaction(), aResponse);
 }
 
 nsresult BackgroundRequestChild::HandlePreprocess(
@@ -2533,7 +2532,6 @@ void BackgroundRequestChild::ActorDestroy(ActorDestroyReason aWhy) {
 mozilla::ipc::IPCResult BackgroundRequestChild::Recv__delete__(
     RequestResponse&& aResponse) {
   AssertIsOnOwningThread();
-  MOZ_ASSERT(mRequest);
   MOZ_ASSERT(mTransaction);
 
   MaybeCollectGarbageOnIPCMessage();
@@ -2758,7 +2756,8 @@ nsresult BackgroundRequestChild::PreprocessHelper::ProcessStream() {
   // SnappyUncompressInputStream doesn't support reading from async input
   // streams.
 
-  nsCOMPtr<mozIIPCBlobInputStream> blobInputStream = do_QueryInterface(mStream);
+  nsCOMPtr<mozIRemoteLazyInputStream> blobInputStream =
+      do_QueryInterface(mStream);
   MOZ_ASSERT(blobInputStream);
 
   nsCOMPtr<nsIInputStream> internalInputStream =
@@ -2890,19 +2889,27 @@ BackgroundRequestChild::PreprocessHelper::OnFileMetadataReady(
  * BackgroundCursorChild
  ******************************************************************************/
 
-BackgroundCursorChildBase::BackgroundCursorChildBase(IDBRequest* const aRequest,
-                                                     const Direction aDirection)
-    : mRequest(WrapNotNull(aRequest)),
+BackgroundCursorChildBase::BackgroundCursorChildBase(
+    const NotNull<IDBRequest*> aRequest, const Direction aDirection)
+    : mRequest(aRequest),
       mTransaction(aRequest->MaybeTransactionRef()),
       mStrongRequest(aRequest),
       mDirection(aDirection) {
   MOZ_ASSERT(mTransaction);
 }
 
+MovingNotNull<RefPtr<IDBRequest>> BackgroundCursorChildBase::AcquireRequest()
+    const {
+  AssertIsOnOwningThread();
+
+  // XXX This could be encapsulated by NotNull
+  return WrapNotNullUnchecked(RefPtr{mRequest->get()});
+}
+
 template <IDBCursorType CursorType>
-BackgroundCursorChild<CursorType>::BackgroundCursorChild(IDBRequest* aRequest,
-                                                         SourceType* aSource,
-                                                         Direction aDirection)
+BackgroundCursorChild<CursorType>::BackgroundCursorChild(
+    const NotNull<IDBRequest*> aRequest, SourceType* aSource,
+    Direction aDirection)
     : BackgroundCursorChildBase(aRequest, aDirection),
       mSource(WrapNotNull(aSource)),
       mCursor(nullptr),
@@ -2968,7 +2975,7 @@ void BackgroundCursorChild<CursorType>::SendContinueInternal(
             if (discard) {
               IDB_LOG_MARK_CHILD_TRANSACTION_REQUEST(
                   "PRELOAD: Continue to key %s, discarding cached key %s/%s",
-                  "Continue, discarding", transactionSerialNumber,
+                  "Continue, discarding%.0s%.0s%.0s", transactionSerialNumber,
                   requestSerialNumber, key.GetBuffer().get(),
                   cachedSortKey.GetBuffer().get(),
                   currentCachedResponse.GetObjectStoreKeyForLogging());
@@ -2976,7 +2983,7 @@ void BackgroundCursorChild<CursorType>::SendContinueInternal(
               IDB_LOG_MARK_CHILD_TRANSACTION_REQUEST(
                   "PRELOAD: Continue to key %s, keeping cached key %s/%s and "
                   "further",
-                  "Continue, keeping", transactionSerialNumber,
+                  "Continue, keeping%.0s%.0s%.0s", transactionSerialNumber,
                   requestSerialNumber, key.GetBuffer().get(),
                   cachedSortKey.GetBuffer().get(),
                   currentCachedResponse.GetObjectStoreKeyForLogging());
@@ -3024,7 +3031,7 @@ void BackgroundCursorChild<CursorType>::SendContinueInternal(
             IDB_LOG_MARK_CHILD_TRANSACTION_REQUEST(
                 "PRELOAD: Continue to key %s with primary key %s, discarding "
                 "cached key %s with cached primary key %s",
-                "Continue, discarding", transactionSerialNumber,
+                "Continue, discarding%.0s%.0s%.0s%.0s", transactionSerialNumber,
                 requestSerialNumber, key.GetBuffer().get(),
                 primaryKey.GetBuffer().get(), cachedSortKey.GetBuffer().get(),
                 cachedSortPrimaryKey.GetBuffer().get());
@@ -3032,7 +3039,7 @@ void BackgroundCursorChild<CursorType>::SendContinueInternal(
             IDB_LOG_MARK_CHILD_TRANSACTION_REQUEST(
                 "PRELOAD: Continue to key %s with primary key %s, keeping "
                 "cached key %s with cached primary key %s and further",
-                "Continue, keeping", transactionSerialNumber,
+                "Continue, keeping%.0s%.0s%.0s%.0s", transactionSerialNumber,
                 requestSerialNumber, key.GetBuffer().get(),
                 primaryKey.GetBuffer().get(), cachedSortKey.GetBuffer().get(),
                 cachedSortPrimaryKey.GetBuffer().get());
@@ -3050,7 +3057,7 @@ void BackgroundCursorChild<CursorType>::SendContinueInternal(
     case CursorRequestParams::TAdvanceParams: {
       uint32_t& advanceCount = params.get_AdvanceParams().count();
       IDB_LOG_MARK_CHILD_TRANSACTION_REQUEST(
-          "PRELOAD: Advancing %" PRIu32 " records", "Advancing",
+          "PRELOAD: Advancing %" PRIu32 " records", "Advancing %" PRIu32,
           mTransaction->LoggingSerialNumber(),
           GetRequest()->LoggingSerialNumber(), advanceCount);
 
@@ -3121,8 +3128,8 @@ void BackgroundCursorChild<CursorType>::CompleteContinueRequestFromCache() {
 
   IDB_LOG_MARK_CHILD_TRANSACTION_REQUEST(
       "PRELOAD: Consumed 1 cached response, %zu cached responses remaining",
-      "Consumed cached response", mTransaction->LoggingSerialNumber(),
-      GetRequest()->LoggingSerialNumber(),
+      "Consumed cached response, %zu remaining",
+      mTransaction->LoggingSerialNumber(), GetRequest()->LoggingSerialNumber(),
       mDelayedResponses.size() + mCachedResponses.size());
 
   SetResultAndDispatchSuccessEvent(
@@ -3130,7 +3137,7 @@ void BackgroundCursorChild<CursorType>::CompleteContinueRequestFromCache() {
       mTransaction
           ? SafeRefPtr{&mTransaction.ref(), AcquireStrongRefFromRawPtr{}}
           : nullptr,
-      cursor.get());
+      *cursor);
 
   mTransaction->OnRequestFinished(/* aRequestCompletedSuccessfully */ true);
 }
@@ -3169,7 +3176,7 @@ void BackgroundCursorChild<CursorType>::InvalidateCachedResponses() {
   // need to care, etc.
 
   IDB_LOG_MARK_CHILD_TRANSACTION_REQUEST(
-      "PRELOAD: Invalidating all %zu cached responses", "Invalidating",
+      "PRELOAD: Invalidating all %zu cached responses", "Invalidating %zu",
       mTransaction->LoggingSerialNumber(), GetRequest()->LoggingSerialNumber(),
       mCachedResponses.size());
 
@@ -3201,9 +3208,10 @@ void BackgroundCursorChild<CursorType>::DiscardCachedResponses(
     ++discardedCount;
   }
   IDB_LOG_MARK_CHILD_TRANSACTION_REQUEST(
-      "PRELOAD: Discarded %zu cached responses, %zu remaining", "Discarded",
-      mTransaction->LoggingSerialNumber(), GetRequest()->LoggingSerialNumber(),
-      discardedCount, mCachedResponses.size());
+      "PRELOAD: Discarded %zu cached responses, %zu remaining",
+      "Discarded %zu; remaining %zu", mTransaction->LoggingSerialNumber(),
+      GetRequest()->LoggingSerialNumber(), discardedCount,
+      mCachedResponses.size());
 }
 
 void BackgroundCursorChildBase::HandleResponse(nsresult aResponse) {
@@ -3238,7 +3246,7 @@ void BackgroundCursorChild<CursorType>::HandleResponse(
       mTransaction
           ? SafeRefPtr{&mTransaction.ref(), AcquireStrongRefFromRawPtr{}}
           : nullptr,
-      &JS::NullHandleValue);
+      JS::NullHandleValue);
 
   if (!mCursor) {
     MOZ_ALWAYS_SUCCEEDS(this->GetActorEventTarget()->Dispatch(
@@ -3283,7 +3291,7 @@ void BackgroundCursorChild<CursorType>::HandleMultipleCursorResponses(
   MOZ_ASSERT(aResponses.Length() > 0);
 
   IDB_LOG_MARK_CHILD_TRANSACTION_REQUEST(
-      "PRELOAD: Received %zu cursor responses", "Received",
+      "PRELOAD: Received %zu cursor responses", "Received %zu",
       mTransaction->LoggingSerialNumber(), GetRequest()->LoggingSerialNumber(),
       aResponses.Length());
   MOZ_ASSERT_IF(aResponses.Length() > 1, mCachedResponses.empty());
@@ -3295,7 +3303,7 @@ void BackgroundCursorChild<CursorType>::HandleMultipleCursorResponses(
   bool isFirst = true;
   for (auto& response : aResponses) {
     IDB_LOG_MARK_CHILD_TRANSACTION_REQUEST(
-        "PRELOAD: Processing response for key %s", "Processing",
+        "PRELOAD: Processing response for key %s", "Processing%.0s",
         mTransaction->LoggingSerialNumber(),
         GetRequest()->LoggingSerialNumber(), response.key().GetBuffer().get());
 
@@ -3329,7 +3337,7 @@ void BackgroundCursorChild<CursorType>::HandleMultipleCursorResponses(
       mTransaction
           ? SafeRefPtr{&mTransaction.ref(), AcquireStrongRefFromRawPtr{}}
           : nullptr,
-      static_cast<IDBCursor*>(mCursor));
+      *static_cast<IDBCursor*>(mCursor));
 }
 
 template <IDBCursorType CursorType>

@@ -20,6 +20,7 @@
 #include "mozilla/dom/BindingUtils.h"
 #include "mozilla/dom/DOMException.h"
 #include "mozilla/dom/DOMExceptionBinding.h"
+#include "mozilla/dom/Exceptions.h"
 #include "mozilla/dom/MediaStreamError.h"
 #include "mozilla/dom/PromiseBinding.h"
 #include "mozilla/dom/ScriptSettings.h"
@@ -68,13 +69,8 @@ NS_IMPL_CYCLE_COLLECTION_TRACE_BEGIN(Promise)
   NS_IMPL_CYCLE_COLLECTION_TRACE_JS_MEMBER_CALLBACK(mPromiseObj);
 NS_IMPL_CYCLE_COLLECTION_TRACE_END
 
-NS_IMPL_CYCLE_COLLECTING_ADDREF(Promise)
-NS_IMPL_CYCLE_COLLECTING_RELEASE(Promise)
-
-NS_INTERFACE_MAP_BEGIN_CYCLE_COLLECTION(Promise)
-  NS_INTERFACE_MAP_ENTRY(nsISupports)
-  NS_INTERFACE_MAP_ENTRY(Promise)
-NS_INTERFACE_MAP_END
+NS_IMPL_CYCLE_COLLECTION_ROOT_NATIVE(Promise, AddRef)
+NS_IMPL_CYCLE_COLLECTION_UNROOT_NATIVE(Promise, Release)
 
 Promise::Promise(nsIGlobalObject* aGlobal)
     : mGlobal(aGlobal), mPromiseObj(nullptr) {

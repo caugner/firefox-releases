@@ -2330,8 +2330,7 @@ mozilla::ipc::IPCResult BrowserChild::RecvDestroy() {
     // Message handlers are called from the event loop, so it better be safe to
     // run script.
     MOZ_ASSERT(nsContentUtils::IsSafeToRunScript());
-    mBrowserChildMessageManager->DispatchTrustedEvent(
-        NS_LITERAL_STRING("unload"));
+    mBrowserChildMessageManager->DispatchTrustedEvent(u"unload"_ns);
   }
 
   nsCOMPtr<nsIObserverService> observerService =
@@ -3104,6 +3103,14 @@ NS_IMETHODIMP
 BrowserChild::OnHideTooltip() {
   SendHideTooltip();
   return NS_OK;
+}
+
+void BrowserChild::NotifyJankedAnimations(
+    const nsTArray<uint64_t>& aJankedAnimations) {
+  MOZ_ASSERT(mPuppetWidget);
+  RefPtr<LayerManager> lm = mPuppetWidget->GetLayerManager();
+  MOZ_ASSERT(lm);
+  lm->UpdatePartialPrerenderedAnimations(aJankedAnimations);
 }
 
 mozilla::ipc::IPCResult BrowserChild::RecvRequestNotifyAfterRemotePaint() {

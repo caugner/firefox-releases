@@ -18,9 +18,7 @@ namespace a11y {
 static StaticAutoPtr<PlatformChild> sPlatformChild;
 
 DocAccessibleChild::DocAccessibleChild(DocAccessible* aDoc, IProtocol* aManager)
-    : DocAccessibleChildBase(aDoc),
-      mIsRemoteConstructed(false),
-      mEmulatedWindowHandle(nullptr) {
+    : DocAccessibleChildBase(aDoc), mEmulatedWindowHandle(nullptr) {
   MOZ_COUNT_CTOR_INHERITED(DocAccessibleChild, DocAccessibleChildBase);
   if (!sPlatformChild) {
     sPlatformChild = new PlatformChild();
@@ -193,19 +191,22 @@ bool DocAccessibleChild::SendFocusEvent(const uint64_t& aID,
 }
 
 bool DocAccessibleChild::SendCaretMoveEvent(const uint64_t& aID,
-                                            const int32_t& aOffset) {
-  return SendCaretMoveEvent(aID, GetCaretRectFor(aID), aOffset);
+                                            const int32_t& aOffset,
+                                            const bool& aIsSelectionCollapsed) {
+  return SendCaretMoveEvent(aID, GetCaretRectFor(aID), aOffset,
+                            aIsSelectionCollapsed);
 }
 
 bool DocAccessibleChild::SendCaretMoveEvent(
     const uint64_t& aID, const LayoutDeviceIntRect& aCaretRect,
-    const int32_t& aOffset) {
+    const int32_t& aOffset, const bool& aIsSelectionCollapsed) {
   if (IsConstructedInParentProcess()) {
-    return PDocAccessibleChild::SendCaretMoveEvent(aID, aCaretRect, aOffset);
+    return PDocAccessibleChild::SendCaretMoveEvent(aID, aCaretRect, aOffset,
+                                                   aIsSelectionCollapsed);
   }
 
-  PushDeferredEvent(
-      MakeUnique<SerializedCaretMove>(this, aID, aCaretRect, aOffset));
+  PushDeferredEvent(MakeUnique<SerializedCaretMove>(
+      this, aID, aCaretRect, aOffset, aIsSelectionCollapsed));
   return true;
 }
 

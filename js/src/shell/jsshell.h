@@ -177,9 +177,9 @@ class NonshrinkingGCObjectVector
     : public GCVector<JSObject*, 0, SystemAllocPolicy> {
  public:
   void sweep() {
-    for (uint32_t i = 0; i < this->length(); i++) {
-      if (JS::GCPolicy<JSObject*>::needsSweep(&(*this)[i])) {
-        (*this)[i] = nullptr;
+    for (JSObject*& obj : *this) {
+      if (JS::GCPolicy<JSObject*>::needsSweep(&obj)) {
+        obj = nullptr;
       }
     }
   }
@@ -251,8 +251,8 @@ struct ShellContext {
   Vector<OffThreadJob*, 0, SystemAllocPolicy> offThreadJobs;
 
   // Queued finalization registry cleanup jobs.
-  using ObjectVector = GCVector<JSObject*, 0, SystemAllocPolicy>;
-  JS::PersistentRooted<ObjectVector> finalizationRegistriesToCleanUp;
+  using FunctionVector = GCVector<JSFunction*, 0, SystemAllocPolicy>;
+  JS::PersistentRooted<FunctionVector> finalizationRegistryCleanupCallbacks;
 };
 
 extern ShellContext* GetShellContext(JSContext* cx);

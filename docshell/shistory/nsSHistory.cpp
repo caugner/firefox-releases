@@ -78,16 +78,16 @@ extern mozilla::LazyLogModule gPageCacheLog;
 //  nsIURI *uri = [...];
 //  LOG_SPEC(("The URI is %s.", _spec), uri);
 //
-#define LOG_SPEC(format, uri)                             \
-  PR_BEGIN_MACRO                                          \
-  if (MOZ_LOG_TEST(gSHistoryLog, LogLevel::Debug)) {      \
-    nsAutoCString _specStr(NS_LITERAL_CSTRING("(null)")); \
-    if (uri) {                                            \
-      _specStr = uri->GetSpecOrDefault();                 \
-    }                                                     \
-    const char* _spec = _specStr.get();                   \
-    LOG(format);                                          \
-  }                                                       \
+#define LOG_SPEC(format, uri)                        \
+  PR_BEGIN_MACRO                                     \
+  if (MOZ_LOG_TEST(gSHistoryLog, LogLevel::Debug)) { \
+    nsAutoCString _specStr("(null)"_ns);             \
+    if (uri) {                                       \
+      _specStr = uri->GetSpecOrDefault();            \
+    }                                                \
+    const char* _spec = _specStr.get();              \
+    LOG(format);                                     \
+  }                                                  \
   PR_END_MACRO
 
 // This macro makes it easy to log a message including an SHEntry's URI.
@@ -134,6 +134,36 @@ extern mozilla::LazyLogModule gPageCacheLog;
     }                                                     \
   }                                                       \
   PR_END_MACRO
+
+class SHistoryChangeNotifier {
+ public:
+  explicit SHistoryChangeNotifier(nsSHistory* aHistory) {
+    // If we're already in an update, the outermost change notifier will
+    // update browsing context in the destructor.
+    if (!aHistory->HasOngoingUpdate()) {
+      aHistory->SetHasOngoingUpdate(true);
+      mSHistory = aHistory;
+      mInitialIndex = aHistory->Index();
+      mInitialLength = aHistory->Length();
+    }
+  }
+
+  ~SHistoryChangeNotifier() {
+    if (mSHistory) {
+      MOZ_ASSERT(mSHistory->HasOngoingUpdate());
+      mSHistory->SetHasOngoingUpdate(false);
+      if (mSHistory->GetBrowsingContext()) {
+        mSHistory->GetBrowsingContext()->SessionHistoryChanged(
+            mSHistory->Index() - mInitialIndex,
+            mSHistory->Length() - mInitialLength);
+      }
+    }
+  }
+
+  RefPtr<nsSHistory> mSHistory;
+  int32_t mInitialIndex;
+  int32_t mInitialLength;
+};
 
 enum HistCmd { HIST_CMD_GOTOINDEX, HIST_CMD_RELOAD };
 
@@ -202,6 +232,7 @@ void nsSHistory::EvictContentViewerForEntry(nsISHEntry* aEntry) {
 
 nsSHistory::nsSHistory(BrowsingContext* aRootBC)
     : mRootBC(aRootBC),
+      mHasOngoingUpdate(false),
       mIsRemote(false),
       mIndex(-1),
       mRequestedIndex(-1),
@@ -655,13 +686,15 @@ nsSHistory::AddEntry(nsISHEntry* aSHEntry, bool aPersist) {
   NS_ENSURE_ARG(aSHEntry);
 
   nsCOMPtr<nsISHistory> shistoryOfEntry = aSHEntry->GetShistory();
-  if (shistoryOfEntry != this) {
+  if (shistoryOfEntry && shistoryOfEntry != this) {
     NS_WARNING(
         "The entry has been associated to another nsISHistory instance. "
         "Try nsISHEntry.clone() and nsISHEntry.abandonBFCacheEntry() "
         "first if you're copying an entry from another nsISHistory.");
     return NS_ERROR_FAILURE;
   }
+
+  aSHEntry->SetShistory(this);
 
   // If we have a root docshell, update the docshell id of the root shentry to
   // match the id of that docshell
@@ -682,6 +715,8 @@ nsSHistory::AddEntry(nsISHEntry* aSHEntry, bool aPersist) {
       return NS_OK;
     }
   }
+
+  SHistoryChangeNotifier change(this);
 
   nsCOMPtr<nsIURI> uri = aSHEntry->GetURI();
   NOTIFY_LISTENERS(OnHistoryNewEntry, (uri, mIndex));
@@ -805,6 +840,8 @@ nsSHistory::PurgeHistory(int32_t aNumEntries) {
     return NS_ERROR_FAILURE;
   }
 
+  SHistoryChangeNotifier change(this);
+
   aNumEntries = std::min(aNumEntries, Length());
 
   NOTIFY_LISTENERS(OnHistoryPurge, ());
@@ -866,13 +903,15 @@ nsSHistory::ReplaceEntry(int32_t aIndex, nsISHEntry* aReplaceEntry) {
   }
 
   nsCOMPtr<nsISHistory> shistoryOfEntry = aReplaceEntry->GetShistory();
-  if (shistoryOfEntry != this) {
+  if (shistoryOfEntry && shistoryOfEntry != this) {
     NS_WARNING(
         "The entry has been associated to another nsISHistory instance. "
         "Try nsISHEntry.clone() and nsISHEntry.abandonBFCacheEntry() "
         "first if you're copying an entry from another nsISHistory.");
     return NS_ERROR_FAILURE;
   }
+
+  aReplaceEntry->SetShistory(this);
 
   NOTIFY_LISTENERS(OnHistoryReplaceEntry, ());
 
@@ -1368,6 +1407,8 @@ bool nsSHistory::RemoveDuplicate(int32_t aIndex, bool aKeepNext) {
     return false;
   }
 
+  SHistoryChangeNotifier change(this);
+
   if (IsSameTree(root1, root2)) {
     mEntries.RemoveElementAt(aIndex);
 
@@ -1413,6 +1454,8 @@ nsSHistory::RemoveEntries(nsTArray<nsID>& aIDs, int32_t aStartIndex) {
 
 void nsSHistory::RemoveEntries(nsTArray<nsID>& aIDs, int32_t aStartIndex,
                                bool* aDidRemove) {
+  SHistoryChangeNotifier change(this);
+
   int32_t index = aStartIndex;
   while (index >= 0 && RemoveChildEntries(this, --index, aIDs)) {
   }
@@ -1471,6 +1514,8 @@ void nsSHistory::RemoveDynEntriesForBFCacheEntry(nsIBFCacheEntry* aBFEntry) {
 
 NS_IMETHODIMP
 nsSHistory::UpdateIndex() {
+  SHistoryChangeNotifier change(this);
+
   // Update the actual index with the right value.
   if (mIndex != mRequestedIndex && mRequestedIndex != -1) {
     mIndex = mRequestedIndex;
@@ -1700,7 +1745,7 @@ void nsSHistory::InitiateLoad(nsISHEntry* aFrameEntry,
 
 NS_IMETHODIMP
 nsSHistory::CreateEntry(nsISHEntry** aEntry) {
-  nsCOMPtr<nsISHEntry> entry = new nsSHEntry(this);
+  nsCOMPtr<nsISHEntry> entry = new nsSHEntry();
   entry.forget(aEntry);
   return NS_OK;
 }

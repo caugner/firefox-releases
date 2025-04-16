@@ -4,8 +4,8 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-#ifndef mozilla_dom_SVGSVGElement_h
-#define mozilla_dom_SVGSVGElement_h
+#ifndef DOM_SVG_SVGSVGELEMENT_H_
+#define DOM_SVG_SVGSVGELEMENT_H_
 
 #include "SVGAnimatedEnumeration.h"
 #include "SVGViewportElement.h"
@@ -69,11 +69,11 @@ class DOMSVGTranslatePoint final : public nsISVGPoint {
   ~DOMSVGTranslatePoint() = default;
 };
 
-typedef SVGViewportElement SVGSVGElementBase;
+using SVGSVGElementBase = SVGViewportElement;
 
 class SVGSVGElement final : public SVGSVGElementBase {
-  friend class ::nsSVGOuterSVGFrame;
   friend class mozilla::SVGFragmentIdentifier;
+  friend class mozilla::SVGOuterSVGFrame;
   friend class mozilla::AutoSVGViewHandler;
   friend class mozilla::AutoPreserveAspectRatioOverride;
   friend class mozilla::dom::SVGView;
@@ -313,4 +313,4 @@ class MOZ_RAII AutoPreserveAspectRatioOverride {
 
 }  // namespace mozilla
 
-#endif  // SVGSVGElement_h
+#endif  // DOM_SVG_SVGSVGELEMENT_H_

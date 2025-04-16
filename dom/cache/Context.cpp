@@ -27,8 +27,8 @@ class NullAction final : public Action {
  public:
   NullAction() = default;
 
-  virtual void RunOnTarget(Resolver* aResolver, const QuotaInfo&,
-                           Data*) override {
+  virtual void RunOnTarget(mozilla::SafeRefPtr<Resolver> aResolver,
+                           const QuotaInfo&, Data*) override {
     // Resolve success immediately.  This Action does no actual work.
     MOZ_DIAGNOSTIC_ASSERT(aResolver);
     aResolver->Resolve(NS_OK);
@@ -90,14 +90,14 @@ class Context::QuotaInitRunnable final : public nsIRunnable,
  public:
   QuotaInitRunnable(SafeRefPtr<Context> aContext, SafeRefPtr<Manager> aManager,
                     Data* aData, nsISerialEventTarget* aTarget,
-                    Action* aInitAction)
+                    SafeRefPtr<Action> aInitAction)
       : mContext(std::move(aContext)),
         mThreadsafeHandle(mContext->CreateThreadsafeHandle()),
         mManager(std::move(aManager)),
         mData(aData),
         mTarget(aTarget),
-        mInitAction(aInitAction),
-        mInitiatingEventTarget(GetCurrentEventTarget()),
+        mInitAction(std::move(aInitAction)),
+        mInitiatingEventTarget(GetCurrentSerialEventTarget()),
         mResult(NS_OK),
         mState(STATE_INIT),
         mCanceled(false) {
@@ -203,7 +203,7 @@ class Context::QuotaInitRunnable final : public nsIRunnable,
   SafeRefPtr<Manager> mManager;
   RefPtr<Data> mData;
   nsCOMPtr<nsISerialEventTarget> mTarget;
-  RefPtr<Action> mInitAction;
+  SafeRefPtr<Action> mInitAction;
   nsCOMPtr<nsIEventTarget> mInitiatingEventTarget;
   nsresult mResult;
   QuotaInfo mQuotaInfo;
@@ -325,7 +325,7 @@ Context::QuotaInitRunnable::Run() {
   // May run on different threads depending on the state.  See individual
   // state cases for thread assertions.
 
-  RefPtr<SyncResolver> resolver = new SyncResolver();
+  SafeRefPtr<SyncResolver> resolver = MakeSafeRefPtr<SyncResolver>();
 
   switch (mState) {
     // -----------------------------------
@@ -414,7 +414,7 @@ Context::QuotaInitRunnable::Run() {
 
       // Execute the provided initialization Action.  The Action must Resolve()
       // before returning.
-      mInitAction->RunOnTarget(resolver, mQuotaInfo, mData);
+      mInitAction->RunOnTarget(resolver.clonePtr(), mQuotaInfo, mData);
       MOZ_DIAGNOSTIC_ASSERT(resolver->Resolved());
 
       mData = nullptr;
@@ -462,12 +462,12 @@ class Context::ActionRunnable final : public nsIRunnable,
                                       public Context::Activity {
  public:
   ActionRunnable(SafeRefPtr<Context> aContext, Data* aData,
-                 nsISerialEventTarget* aTarget, Action* aAction,
+                 nsISerialEventTarget* aTarget, SafeRefPtr<Action> aAction,
                  const QuotaInfo& aQuotaInfo)
       : mContext(std::move(aContext)),
         mData(aData),
         mTarget(aTarget),
-        mAction(aAction),
+        mAction(std::move(aAction)),
         mQuotaInfo(aQuotaInfo),
         mInitiatingThread(GetCurrentEventTarget()),
         mState(STATE_INIT),
@@ -556,7 +556,7 @@ class Context::ActionRunnable final : public nsIRunnable,
   SafeRefPtr<Context> mContext;
   RefPtr<Data> mData;
   nsCOMPtr<nsISerialEventTarget> mTarget;
-  RefPtr<Action> mAction;
+  SafeRefPtr<Action> mAction;
   const QuotaInfo mQuotaInfo;
   nsCOMPtr<nsIEventTarget> mInitiatingThread;
   State mState;
@@ -619,7 +619,7 @@ Context::ActionRunnable::Run() {
       mExecutingRunOnTarget = true;
 
       mState = STATE_RUNNING;
-      mAction->RunOnTarget(this, mQuotaInfo, mData);
+      mAction->RunOnTarget(SafeRefPtrFromThis(), mQuotaInfo, mData);
 
       mData = nullptr;
 
@@ -762,41 +762,43 @@ void Context::ThreadsafeHandle::ContextDestroyed(Context& aContext) {
 // static
 SafeRefPtr<Context> Context::Create(SafeRefPtr<Manager> aManager,
                                     nsISerialEventTarget* aTarget,
-                                    Action* aInitAction,
+                                    SafeRefPtr<Action> aInitAction,
                                     Maybe<Context&> aOldContext) {
-  auto context =
-      MakeSafeRefPtr<Context>(std::move(aManager), aTarget, aInitAction);
+  auto context = MakeSafeRefPtr<Context>(std::move(aManager), aTarget,
+                                         std::move(aInitAction));
   context->Init(aOldContext);
   return context;
 }
 
 Context::Context(SafeRefPtr<Manager> aManager, nsISerialEventTarget* aTarget,
-                 Action* aInitAction)
+                 SafeRefPtr<Action> aInitAction)
     : mManager(std::move(aManager)),
       mTarget(aTarget),
       mData(new Data(aTarget)),
       mState(STATE_CONTEXT_PREINIT),
       mOrphanedData(false),
-      mInitAction(aInitAction) {
+      mInitAction(std::move(aInitAction)) {
   MOZ_DIAGNOSTIC_ASSERT(mManager);
   MOZ_DIAGNOSTIC_ASSERT(mTarget);
 }
 
-void Context::Dispatch(Action* aAction) {
+void Context::Dispatch(SafeRefPtr<Action> aAction) {
   NS_ASSERT_OWNINGTHREAD(Context);
   MOZ_DIAGNOSTIC_ASSERT(aAction);
-
   MOZ_DIAGNOSTIC_ASSERT(mState != STATE_CONTEXT_CANCELED);
+
   if (mState == STATE_CONTEXT_CANCELED) {
     return;
-  } else if (mState == STATE_CONTEXT_INIT || mState == STATE_CONTEXT_PREINIT) {
+  }
+
+  if (mState == STATE_CONTEXT_INIT || mState == STATE_CONTEXT_PREINIT) {
     PendingAction* pending = mPendingActions.AppendElement();
-    pending->mAction = aAction;
+    pending->mAction = std::move(aAction);
     return;
   }
 
   MOZ_DIAGNOSTIC_ASSERT(mState == STATE_CONTEXT_READY);
-  DispatchAction(aAction);
+  DispatchAction(std::move(aAction));
 }
 
 void Context::CancelAll() {
@@ -908,10 +910,9 @@ void Context::Start() {
   MOZ_DIAGNOSTIC_ASSERT(mState == STATE_CONTEXT_PREINIT);
   MOZ_DIAGNOSTIC_ASSERT(!mInitRunnable);
 
-  mInitRunnable = new QuotaInitRunnable(
-      SafeRefPtrFromThis(), mManager.clonePtr(), mData, mTarget, mInitAction);
-  mInitAction = nullptr;
-
+  mInitRunnable =
+      new QuotaInitRunnable(SafeRefPtrFromThis(), mManager.clonePtr(), mData,
+                            mTarget, std::move(mInitAction));
   mState = STATE_CONTEXT_INIT;
 
   nsresult rv = mInitRunnable->Dispatch();
@@ -923,11 +924,11 @@ void Context::Start() {
   }
 }
 
-void Context::DispatchAction(Action* aAction, bool aDoomData) {
+void Context::DispatchAction(SafeRefPtr<Action> aAction, bool aDoomData) {
   NS_ASSERT_OWNINGTHREAD(Context);
 
-  RefPtr<ActionRunnable> runnable = new ActionRunnable(
-      SafeRefPtrFromThis(), mData, mTarget, aAction, mQuotaInfo);
+  auto runnable = MakeSafeRefPtr<ActionRunnable>(
+      SafeRefPtrFromThis(), mData, mTarget, std::move(aAction), mQuotaInfo);
 
   if (aDoomData) {
     mData = nullptr;
@@ -939,7 +940,7 @@ void Context::DispatchAction(Action* aAction, bool aDoomData) {
     // for this invariant violation.
     MOZ_CRASH("Failed to dispatch ActionRunnable to target thread.");
   }
-  AddActivity(runnable);
+  AddActivity(runnable.unsafeGetRawPtr());
 }
 
 void Context::OnQuotaInit(nsresult aRv, const QuotaInfo& aQuotaInfo,
@@ -978,7 +979,7 @@ void Context::OnQuotaInit(nsresult aRv, const QuotaInfo& aQuotaInfo,
   mState = STATE_CONTEXT_READY;
 
   for (uint32_t i = 0; i < mPendingActions.Length(); ++i) {
-    DispatchAction(mPendingActions[i].mAction);
+    DispatchAction(std::move(mPendingActions[i].mAction));
   }
   mPendingActions.Clear();
 }
@@ -1030,8 +1031,7 @@ void Context::DoomTargetData() {
   // roundtrip to the target thread and back to the owning thread.  The
   // ref to the Data object is cleared on the owning thread after creating
   // the ActionRunnable, but before dispatching it.
-  RefPtr<Action> action = new NullAction();
-  DispatchAction(action, true /* doomed data */);
+  DispatchAction(MakeSafeRefPtr<NullAction>(), true /* doomed data */);
 
   MOZ_DIAGNOSTIC_ASSERT(!mData);
 }

@@ -18,7 +18,7 @@
 #include "nsIContent.h"
 
 #include "nsViewManager.h"
-#include "nsFrame.h"
+#include "nsIFrame.h"
 
 #include "nsLayoutCID.h"
 
@@ -85,7 +85,7 @@ nsLayoutDebuggingTools::Init(mozIDOMWindow* aWin) {
 NS_IMETHODIMP
 nsLayoutDebuggingTools::SetVisualDebugging(bool aVisualDebugging) {
 #ifdef DEBUG
-  nsFrame::ShowFrameBorders(aVisualDebugging);
+  nsIFrame::ShowFrameBorders(aVisualDebugging);
   ForceRefresh();
 #endif
   return NS_OK;
@@ -94,7 +94,7 @@ nsLayoutDebuggingTools::SetVisualDebugging(bool aVisualDebugging) {
 NS_IMETHODIMP
 nsLayoutDebuggingTools::SetVisualEventDebugging(bool aVisualEventDebugging) {
 #ifdef DEBUG
-  nsFrame::ShowEventTargetFrameBorder(aVisualEventDebugging);
+  nsIFrame::ShowEventTargetFrameBorder(aVisualEventDebugging);
   ForceRefresh();
 #endif
   return NS_OK;
@@ -130,13 +130,13 @@ nsLayoutDebuggingTools::SetPagedMode(bool aPagedMode) {
   nsIntMargin unwriteableMargin(0, 0, 0, 0);
   printSettings->SetUnwriteableMarginInTwips(unwriteableMargin);
 
-  printSettings->SetHeaderStrLeft(NS_LITERAL_STRING(""));
-  printSettings->SetHeaderStrCenter(NS_LITERAL_STRING(""));
-  printSettings->SetHeaderStrRight(NS_LITERAL_STRING(""));
+  printSettings->SetHeaderStrLeft(u""_ns);
+  printSettings->SetHeaderStrCenter(u""_ns);
+  printSettings->SetHeaderStrRight(u""_ns);
 
-  printSettings->SetFooterStrLeft(NS_LITERAL_STRING(""));
-  printSettings->SetFooterStrCenter(NS_LITERAL_STRING(""));
-  printSettings->SetFooterStrRight(NS_LITERAL_STRING(""));
+  printSettings->SetFooterStrLeft(u""_ns);
+  printSettings->SetFooterStrCenter(u""_ns);
+  printSettings->SetFooterStrRight(u""_ns);
 
   nsCOMPtr<nsIContentViewer> contentViewer(doc_viewer(mDocShell));
   contentViewer->SetPageModeForTesting(aPagedMode, printSettings);

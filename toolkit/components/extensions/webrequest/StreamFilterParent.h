@@ -175,6 +175,12 @@ class StreamFilterParent final : public PStreamFilterParent,
   bool mSentStop;
   bool mDisconnected = false;
 
+  // If redirection happens or alterate cached data is being sent, the stream
+  // filter is disconnected in OnStartRequest and the following ODA would not
+  // be filtered. Using mDisconnected causes race condition. mState is possible
+  // to late to be set, which leads out of sync.
+  bool mDisconnectedByOnStartRequest = false;
+
   nsCOMPtr<nsISupports> mContext;
   uint64_t mOffset;
 

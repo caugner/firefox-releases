@@ -130,7 +130,7 @@ AddonContentPolicy::ShouldLoad(nsIURI* aContentLocation, nsILoadInfo* aLoadInfo,
       NS_ConvertUTF8toUTF16 nameString(sourceName);
 
       nsCOMPtr<nsISupports> context = aLoadInfo->GetLoadingContext();
-      LogMessage(NS_LITERAL_STRING(VERSIONED_JS_BLOCKED_MESSAGE), nameString,
+      LogMessage(nsLiteralString(VERSIONED_JS_BLOCKED_MESSAGE), nameString,
                  typeString, context);
       return NS_OK;
     }
@@ -259,7 +259,7 @@ class CSPValidator final : public nsCSPSrcVisitor {
   };
 
   bool visitNonceSrc(const nsCSPNonceSrc& src) override {
-    FormatError("csp.error.illegal-keyword", NS_LITERAL_STRING("'nonce-*'"));
+    FormatError("csp.error.illegal-keyword", u"'nonce-*'"_ns);
     return false;
   };
 
@@ -425,8 +425,7 @@ AddonContentPolicy::ValidateAddonCSP(const nsAString& aPolicyString,
     if (!policy->visitDirectiveSrcs(directive, &validator)) {
       aResult.Assign(validator.GetError());
     } else if (!validator.FoundSelf()) {
-      validator.FormatError("csp.error.missing-source",
-                            NS_LITERAL_STRING("'self'"));
+      validator.FormatError("csp.error.missing-source", u"'self'"_ns);
       aResult.Assign(validator.GetError());
     }
   }

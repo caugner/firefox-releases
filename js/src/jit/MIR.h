@@ -1985,26 +1985,6 @@ class MTest : public MAryControlInstruction<1, 2>, public TestPolicy::Data {
 #endif
 };
 
-// Equivalent to MTest(true, successor, fake), except without the foldsTo
-// method. This allows IonBuilder to insert fake CFG edges to magically protect
-// control flow for try-catch blocks.
-class MGotoWithFake : public MAryControlInstruction<0, 2>,
-                      public NoTypePolicy::Data {
-  MGotoWithFake(MBasicBlock* successor, MBasicBlock* fake)
-      : MAryControlInstruction(classOpcode) {
-    setSuccessor(0, successor);
-    setSuccessor(1, fake);
-  }
-
- public:
-  INSTRUCTION_HEADER(GotoWithFake)
-  TRIVIAL_NEW_WRAPPERS
-
-  MBasicBlock* target() const { return getSuccessor(0); }
-
-  AliasSet getAliasSet() const override { return AliasSet::None(); }
-};
-
 // Returns from this function to the previous caller.
 class MReturn : public MAryControlInstruction<1, 0>,
                 public BoxInputsPolicy::Data {
@@ -2626,18 +2606,19 @@ class MInitElemGetterSetter
   NAMED_OPERANDS((0, object), (1, idValue), (2, value))
 };
 
-// WrappedFunction wraps a JSFunction so it can safely be used off-thread.
-// In particular, a function's flags can be modified on the main thread as
-// functions are relazified and delazified, so we must be careful not to access
-// these flags off-thread.
+// WrappedFunction stores information about a function that can safely be used
+// off-thread. In particular, a function's flags can be modified on the main
+// thread as functions are relazified and delazified, so we must be careful not
+// to access these flags off-thread.
 class WrappedFunction : public TempObject {
-  CompilerFunction fun_;
+  // If this is a native function without a JitEntry, the JSFunction*.
+  CompilerFunction nativeFun_;
   uint16_t nargs_;
   js::FunctionFlags flags_;
 
  public:
   explicit WrappedFunction(JSFunction* fun);
-  WrappedFunction(JSFunction* fun, uint16_t nargs, FunctionFlags flags);
+  WrappedFunction(JSFunction* nativeFun, uint16_t nargs, FunctionFlags flags);
 
   // Note: When adding new accessors be sure to add consistency asserts
   // to the constructor.
@@ -2654,19 +2635,24 @@ class WrappedFunction : public TempObject {
   // These fields never change, they can be accessed off-main thread.
   JSNative native() const {
     MOZ_ASSERT(isNativeWithoutJitEntry());
-    return fun_->nativeUnchecked();
+    return nativeFun_->nativeUnchecked();
   }
   bool hasJitInfo() const {
-    return flags_.isBuiltinNative() && fun_->jitInfoUnchecked();
+    return flags_.isBuiltinNative() && nativeFun_->jitInfoUnchecked();
   }
   const JSJitInfo* jitInfo() const {
     MOZ_ASSERT(hasJitInfo());
-    return fun_->jitInfoUnchecked();
+    return nativeFun_->jitInfoUnchecked();
   }
 
-  JSFunction* rawJSFunction() const { return fun_; }
+  JSFunction* rawNativeJSFunction() const { return nativeFun_; }
 
-  bool appendRoots(MRootList& roots) const { return roots.append(fun_); }
+  bool appendRoots(MRootList& roots) const {
+    if (nativeFun_) {
+      return roots.append(nativeFun_);
+    }
+    return true;
+  }
 };
 
 class MCall : public MVariadicInstruction, public CallPolicy::Data {
@@ -2975,7 +2961,7 @@ class MBail : public MNullaryInstruction {
     return new (alloc) MBail(kind);
   }
   static MBail* New(TempAllocator& alloc) {
-    return new (alloc) MBail(Bailout_Inevitable);
+    return new (alloc) MBail(BailoutKind::Inevitable);
   }
 
   AliasSet getAliasSet() const override { return AliasSet::None(); }
@@ -3396,25 +3382,25 @@ class MUnbox final : public MUnaryInstruction, public BoxInputsPolicy::Data {
     BailoutKind kind;
     switch (type) {
       case MIRType::Boolean:
-        kind = Bailout_NonBooleanInput;
+        kind = BailoutKind::NonBooleanInput;
         break;
       case MIRType::Int32:
-        kind = Bailout_NonInt32Input;
+        kind = BailoutKind::NonInt32Input;
         break;
       case MIRType::Double:
-        kind = Bailout_NonNumericInput;  // Int32s are fine too
+        kind = BailoutKind::NonNumericInput;  // Int32s are fine too
         break;
       case MIRType::String:
-        kind = Bailout_NonStringInput;
+        kind = BailoutKind::NonStringInput;
         break;
       case MIRType::Symbol:
-        kind = Bailout_NonSymbolInput;
+        kind = BailoutKind::NonSymbolInput;
         break;
       case MIRType::BigInt:
-        kind = Bailout_NonBigIntInput;
+        kind = BailoutKind::NonBigIntInput;
         break;
       case MIRType::Object:
-        kind = Bailout_NonObjectInput;
+        kind = BailoutKind::NonObjectInput;
         break;
       default:
         MOZ_CRASH("Given MIRType cannot be unboxed.");
@@ -6440,7 +6426,7 @@ class MWasmTrap : public MAryControlInstruction<0, 0>,
 class MLexicalCheck : public MUnaryInstruction, public BoxPolicy<0>::Data {
   BailoutKind kind_;
   explicit MLexicalCheck(MDefinition* input,
-                         BailoutKind kind = Bailout_UninitializedLexical)
+                         BailoutKind kind = BailoutKind::UninitializedLexical)
       : MUnaryInstruction(classOpcode, input), kind_(kind) {
     setResultType(MIRType::Value);
     setResultTypeSet(input->resultTypeSet());
@@ -7771,6 +7757,7 @@ class MStoreElement : public MTernaryInstruction,
     needsHoleCheck_ = needsHoleCheck;
     MOZ_ASSERT(elements->type() == MIRType::Elements);
     MOZ_ASSERT(index->type() == MIRType::Int32);
+    MOZ_ASSERT(value->type() != MIRType::MagicHole);
   }
 
  public:
@@ -7787,6 +7774,27 @@ class MStoreElement : public MTernaryInstruction,
   ALLOW_CLONE(MStoreElement)
 };
 
+// Stores MagicValue(JS_ELEMENTS_HOLE) and marks the elements as non-packed.
+class MStoreHoleValueElement : public MBinaryInstruction,
+                               public NoTypePolicy::Data {
+  MStoreHoleValueElement(MDefinition* elements, MDefinition* index)
+      : MBinaryInstruction(classOpcode, elements, index) {
+    MOZ_ASSERT(elements->type() == MIRType::Elements);
+    MOZ_ASSERT(index->type() == MIRType::Int32);
+  }
+
+ public:
+  INSTRUCTION_HEADER(StoreHoleValueElement)
+  TRIVIAL_NEW_WRAPPERS
+  NAMED_OPERANDS((0, elements), (1, index))
+
+  AliasSet getAliasSet() const override {
+    return AliasSet::Store(AliasSet::Element | AliasSet::ObjectFields);
+  }
+
+  ALLOW_CLONE(MStoreHoleValueElement)
+};
+
 // Like MStoreElement, but supports indexes >= initialized length. The downside
 // is that we cannot hoist the elements vector and bounds check, since this
 // instruction may update the (initialized) length and reallocate the elements
@@ -7800,6 +7808,7 @@ class MStoreElementHole
       : MQuaternaryInstruction(classOpcode, object, elements, index, value) {
     MOZ_ASSERT(elements->type() == MIRType::Elements);
     MOZ_ASSERT(index->type() == MIRType::Int32);
+    MOZ_ASSERT(value->type() != MIRType::MagicHole);
   }
 
  public:
@@ -7826,6 +7835,7 @@ class MFallibleStoreElement
         needsHoleCheck_(needsHoleCheck) {
     MOZ_ASSERT(elements->type() == MIRType::Elements);
     MOZ_ASSERT(index->type() == MIRType::Int32);
+    MOZ_ASSERT(value->type() != MIRType::MagicHole);
   }
 
  public:
@@ -9042,6 +9052,82 @@ class MGuardShape : public MUnaryInstruction, public SingleObjectPolicy::Data {
   }
 };
 
+// Guard the object's proto is |expected|.
+class MGuardProto : public MBinaryInstruction, public SingleObjectPolicy::Data {
+  MGuardProto(MDefinition* obj, MDefinition* expected)
+      : MBinaryInstruction(classOpcode, obj, expected) {
+    MOZ_ASSERT(expected->isConstant() || expected->isNurseryObject());
+    setGuard();
+    setMovable();
+    setResultType(MIRType::Object);
+    setResultTypeSet(obj->resultTypeSet());
+  }
+
+ public:
+  INSTRUCTION_HEADER(GuardProto)
+  TRIVIAL_NEW_WRAPPERS
+  NAMED_OPERANDS((0, object), (1, expected))
+
+  bool congruentTo(const MDefinition* ins) const override {
+    return congruentIfOperandsEqual(ins);
+  }
+
+  AliasSet getAliasSet() const override {
+    return AliasSet::Load(AliasSet::ObjectFields);
+  }
+};
+
+// Guard the object has no proto.
+class MGuardNullProto : public MUnaryInstruction,
+                        public SingleObjectPolicy::Data {
+  explicit MGuardNullProto(MDefinition* obj)
+      : MUnaryInstruction(classOpcode, obj) {
+    setGuard();
+    setMovable();
+    setResultType(MIRType::Object);
+    setResultTypeSet(obj->resultTypeSet());
+  }
+
+ public:
+  INSTRUCTION_HEADER(GuardNullProto)
+  TRIVIAL_NEW_WRAPPERS
+  NAMED_OPERANDS((0, object))
+
+  bool congruentTo(const MDefinition* ins) const override {
+    return congruentIfOperandsEqual(ins);
+  }
+  AliasSet getAliasSet() const override {
+    return AliasSet::Load(AliasSet::ObjectFields);
+  }
+};
+
+// Loads a specific JSObject* that was originally nursery-allocated.
+// See also WarpObjectField.
+class MNurseryObject : public MNullaryInstruction {
+  // Index in the Vector of objects stored in the WarpSnapshot.
+  uint32_t nurseryIndex_;
+
+  explicit MNurseryObject(uint32_t nurseryIndex)
+      : MNullaryInstruction(classOpcode), nurseryIndex_(nurseryIndex) {
+    setMovable();
+    setResultType(MIRType::Object);
+  }
+
+ public:
+  INSTRUCTION_HEADER(NurseryObject)
+  TRIVIAL_NEW_WRAPPERS
+
+  uint32_t nurseryIndex() const { return nurseryIndex_; }
+
+  bool congruentTo(const MDefinition* ins) const override {
+    if (!ins->isNurseryObject()) {
+      return false;
+    }
+    return nurseryIndex() == ins->toNurseryObject()->nurseryIndex();
+  }
+  AliasSet getAliasSet() const override { return AliasSet::None(); }
+};
+
 // Guard on a specific Value.
 class MGuardValue : public MUnaryInstruction, public BoxInputsPolicy::Data {
   Value expected_;
@@ -9192,7 +9278,7 @@ class MGuardObjectIdentity : public MBinaryInstruction,
                        bool bailOnEquality)
       : MBinaryInstruction(classOpcode, obj, expected),
         bailOnEquality_(bailOnEquality) {
-    MOZ_ASSERT(expected->isConstant());
+    MOZ_ASSERT(expected->isConstant() || expected->isNurseryObject());
     setGuard();
     setMovable();
     setResultType(MIRType::Object);
@@ -9229,7 +9315,7 @@ class MGuardSpecificFunction : public MBinaryInstruction,
       : MBinaryInstruction(classOpcode, obj, expected),
         nargs_(nargs),
         flags_(flags) {
-    MOZ_ASSERT(expected->isConstant());
+    MOZ_ASSERT(expected->isConstant() || expected->isNurseryObject());
     setGuard();
     setMovable();
     setResultType(MIRType::Object);
@@ -10798,6 +10884,7 @@ class MIsCallable : public MUnaryInstruction,
   TRIVIAL_NEW_WRAPPERS
   NAMED_OPERANDS((0, object))
 
+  MDefinition* foldsTo(TempAllocator& alloc) override;
   AliasSet getAliasSet() const override { return AliasSet::None(); }
 };
 
@@ -10875,6 +10962,8 @@ class MHasClass : public MUnaryInstruction, public SingleObjectPolicy::Data {
   NAMED_OPERANDS((0, object))
 
   const JSClass* getClass() const { return class_; }
+
+  MDefinition* foldsTo(TempAllocator& alloc) override;
   AliasSet getAliasSet() const override { return AliasSet::None(); }
   bool congruentTo(const MDefinition* ins) const override {
     if (!ins->isHasClass()) {
@@ -11319,8 +11408,8 @@ class MFinishBoundFunctionInit
 
 class MIsPackedArray : public MUnaryInstruction,
                        public SingleObjectPolicy::Data {
-  explicit MIsPackedArray(MDefinition* array)
-      : MUnaryInstruction(classOpcode, array) {
+  explicit MIsPackedArray(MDefinition* object)
+      : MUnaryInstruction(classOpcode, object) {
     setResultType(MIRType::Boolean);
     setMovable();
   }
@@ -11328,7 +11417,7 @@ class MIsPackedArray : public MUnaryInstruction,
  public:
   INSTRUCTION_HEADER(IsPackedArray)
   TRIVIAL_NEW_WRAPPERS
-  NAMED_OPERANDS((0, array))
+  NAMED_OPERANDS((0, object))
 
   AliasSet getAliasSet() const override {
     return AliasSet::Load(AliasSet::ObjectFields);
@@ -12767,6 +12856,25 @@ class MUnknownValue : public MNullaryInstruction {
  public:
   INSTRUCTION_HEADER(UnknownValue)
   TRIVIAL_NEW_WRAPPERS
+};
+
+// Used by MIR building to represent the bytecode result of an operation for
+// which an MBail was generated, to balance the basic block's MDefinition stack.
+class MUnreachableResult : public MNullaryInstruction {
+ protected:
+  explicit MUnreachableResult(MIRType type) : MNullaryInstruction(classOpcode) {
+    MOZ_ASSERT(type != MIRType::None);
+    setResultType(type);
+  }
+
+ public:
+  INSTRUCTION_HEADER(UnreachableResult)
+  TRIVIAL_NEW_WRAPPERS
+
+  bool congruentTo(const MDefinition* ins) const override {
+    return congruentIfOperandsEqual(ins);
+  }
+  AliasSet getAliasSet() const override { return AliasSet::None(); }
 };
 
 class MIonToWasmCall final : public MVariadicInstruction,

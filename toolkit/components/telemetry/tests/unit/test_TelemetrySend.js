@@ -23,13 +23,6 @@ ChromeUtils.defineModuleGetter(
   "resource://gre/modules/HealthPing.jsm"
 );
 
-XPCOMUtils.defineLazyServiceGetter(
-  Services,
-  "cookies",
-  "@mozilla.org/cookieService;1",
-  "nsICookieService"
-);
-
 const MS_IN_A_MINUTE = 60 * 1000;
 
 function countPingTypes(pings) {
@@ -973,6 +966,7 @@ add_task(async function testCookies() {
     loadUsingSystemPrincipal: true,
     contentPolicyType: Ci.nsIContentPolicy.TYPE_DOCUMENT,
   });
+  Services.cookies.QueryInterface(Ci.nsICookieService);
   Services.cookies.setCookieStringFromHttp(uri, "cookie-time=yes", channel);
 
   const id = await TelemetryController.submitExternalPing(TEST_TYPE, {});
@@ -1026,7 +1020,7 @@ add_task(async function test_pref_observer() {
       let keys = new Set(["TelemetryClientId", "TelemetryServerURL"]);
 
       let crs = {
-        QueryInterface: ChromeUtils.generateQI([Ci.nsICrashReporter]),
+        QueryInterface: ChromeUtils.generateQI(["nsICrashReporter"]),
         annotateCrashReport(key, value) {
           if (!keys.delete(key)) {
             MockRegistrar.unregister(gMockCrs);

@@ -18,18 +18,23 @@ from taskgraph.util.bugbug import (
 )
 
 
-@register_strategy("bugbug", args=(CT_MEDIUM,))
 @register_strategy("bugbug-low", args=(CT_LOW,))
+@register_strategy("bugbug-medium", args=(CT_MEDIUM,))
 @register_strategy("bugbug-high", args=(CT_HIGH,))
-@register_strategy("bugbug-reduced", args=(CT_MEDIUM, True))
-@register_strategy("bugbug-reduced-fallback", args=(CT_MEDIUM, True, True))
-@register_strategy("bugbug-reduced-high", args=(CT_HIGH, True))
+@register_strategy("bugbug-tasks-medium", args=(CT_MEDIUM, True))
+@register_strategy("bugbug-tasks-high", args=(CT_HIGH, True))
+@register_strategy("bugbug-reduced", args=(CT_MEDIUM, True, True))
+@register_strategy("bugbug-reduced-fallback", args=(CT_MEDIUM, True, True, True))
+@register_strategy("bugbug-reduced-high", args=(CT_HIGH, True, True))
+@register_strategy("bugbug-reduced-manifests", args=(CT_MEDIUM, False, True))
 class BugBugPushSchedules(OptimizationStrategy):
     """Query the 'bugbug' service to retrieve relevant tasks and manifests.
 
     Args:
         confidence_threshold (float): The minimum confidence threshold (in
             range [0, 1]) needed for a task to be scheduled.
+        tasks_only (bool): Whether or not to only use tasks and no groups
+            (default: False)
         use_reduced_tasks (bool): Whether or not to use the reduced set of tasks
             provided by the bugbug service (default: False).
         fallback (bool): Whether or not to fallback to SETA if there was a failure
@@ -39,12 +44,14 @@ class BugBugPushSchedules(OptimizationStrategy):
     def __init__(
         self,
         confidence_threshold,
+        tasks_only=False,
         use_reduced_tasks=False,
         fallback=False,
     ):
         self.confidence_threshold = confidence_threshold
         self.use_reduced_tasks = use_reduced_tasks
         self.fallback = fallback
+        self.tasks_only = tasks_only
         self.timedout = False
 
     def should_remove_task(self, task, params, importance):
@@ -74,7 +81,7 @@ class BugBugPushSchedules(OptimizationStrategy):
         )
 
         test_manifests = task.attributes.get('test_manifests')
-        if test_manifests is None or self.use_reduced_tasks:
+        if test_manifests is None or self.tasks_only:
             if data.get("known_tasks") and task.label not in data["known_tasks"]:
                 return False
 
@@ -116,6 +123,13 @@ class SkipUnlessDebug(OptimizationStrategy):
 
 
 @register_strategy("platform-disperse")
+@register_strategy("platform-disperse-no-unseen", args=(None, 0))
+@register_strategy("platform-disperse-only-one", args=({
+    'high': 1,
+    'medium': 1,
+    'low': 1,
+    'lowest': 0,
+}, 0))
 class DisperseGroups(OptimizationStrategy):
     """Disperse groups across test configs.
 
@@ -154,7 +168,7 @@ class DisperseGroups(OptimizationStrategy):
     DEFAULT_UNSEEN_MODIFIER = 1
 
     def __init__(self, target_counts=None, unseen_modifier=DEFAULT_UNSEEN_MODIFIER):
-        self.target_counts = self.DEFAULT_TARGET_COUNTS
+        self.target_counts = self.DEFAULT_TARGET_COUNTS.copy()
         if target_counts:
             self.target_counts.update(target_counts)
         self.unseen_modifier = unseen_modifier

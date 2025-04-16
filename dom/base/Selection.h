@@ -10,6 +10,7 @@
 #include "mozilla/dom/StyledRange.h"
 #include "mozilla/AutoRestore.h"
 #include "mozilla/EventForwards.h"
+#include "mozilla/PresShellForwards.h"
 #include "mozilla/RangeBoundary.h"
 #include "mozilla/SelectionChangeEventDispatcher.h"
 #include "mozilla/UniquePtr.h"
@@ -55,7 +56,7 @@ namespace dom {
 // is never deleted before its Selections.
 class Selection final : public nsSupportsWeakReference,
                         public nsWrapperCache,
-                        public SupportsWeakPtr<Selection> {
+                        public SupportsWeakPtr {
  protected:
   virtual ~Selection();
 
@@ -65,8 +66,6 @@ class Selection final : public nsSupportsWeakReference,
    */
   explicit Selection(SelectionType aSelectionType,
                      nsFrameSelection* aFrameSelection);
-
-  MOZ_DECLARE_WEAKREFERENCE_TYPENAME(Selection)
 
   NS_DECL_CYCLE_COLLECTING_ISUPPORTS
   NS_DECL_CYCLE_COLLECTION_SCRIPT_HOLDER_CLASS(Selection)

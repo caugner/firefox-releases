@@ -48,6 +48,8 @@ struct HttpChannelOnStartRequestArgs
   nsCString appCacheGroupId;
   nsCString appCacheClientId;
   nsIReferrerInfo overrideReferrerInfo;
+  bool shouldWaitForOnStartRequestSent;
+  nsCString cookie;
 };
 
 } // namespace ipc

@@ -7,7 +7,7 @@ from argparse import ArgumentParser, SUPPRESS
 from distutils.util import strtobool
 from distutils import spawn
 from itertools import chain
-from urlparse import urlparse
+from six.moves.urllib.parse import urlparse
 import json
 import os
 import tempfile
@@ -930,7 +930,7 @@ class AndroidArguments(ArgumentContainer):
          {"dest": "remoteTestRoot",
           "default": None,
           "help": "Remote directory to use as test root "
-                  "(eg. /mnt/sdcard/tests or /data/local/tests).",
+                  "(eg. /data/local/tmp/test_root).",
           "suppress": True,
           }],
         [["--enable-coverage"],

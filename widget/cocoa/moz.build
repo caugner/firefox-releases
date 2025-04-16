@@ -42,7 +42,6 @@ UNIFIED_SOURCES += [
     'nsDeviceContextSpecX.mm',
     'nsFilePicker.mm',
     'nsIconLoaderService.mm',
-    'nsIdleServiceX.mm',
     'nsLookAndFeel.mm',
     'nsMacCursor.mm',
     'nsMacDockSupport.mm',
@@ -66,6 +65,7 @@ UNIFIED_SOURCES += [
     'nsTouchBarInput.mm',
     'nsTouchBarInputIcon.mm',
     'nsTouchBarUpdater.mm',
+    'nsUserIdleServiceX.mm',
     'nsWidgetFactory.mm',
     'nsWindowMap.mm',
     'OSXNotificationCenter.mm',
@@ -96,6 +96,10 @@ if not CONFIG['RELEASE_OR_BETA'] or CONFIG['MOZ_DEBUG']:
     SOURCES += [
         'nsSandboxViolationSink.mm',
     ]
+
+XPCOM_MANIFESTS += [
+    'components.conf',
+]
 
 include('/ipc/chromium/chromium-config.mozbuild')
 

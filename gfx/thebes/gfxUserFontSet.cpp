@@ -40,7 +40,7 @@ gfxUserFontEntry::gfxUserFontEntry(
     const nsTArray<gfxFontVariation>& aVariationSettings,
     uint32_t aLanguageOverride, gfxCharacterMap* aUnicodeRanges,
     StyleFontDisplay aFontDisplay, RangeFlags aRangeFlags)
-    : gfxFontEntry(NS_LITERAL_CSTRING("userfont")),
+    : gfxFontEntry("userfont"_ns),
       mUserFontLoadState(STATUS_NOT_LOADED),
       mFontDataLoadingState(NOT_LOADING),
       mUnsupportedFormat(false),
@@ -1260,7 +1260,7 @@ void gfxUserFontSet::UserFontCache::Entry::ReportMemory(
     }
     if (mPrincipal) {
       nsAutoCString spec;
-      mPrincipal->get()->GetAsciiSpec(spec);
+      mPrincipal->NodePrincipal()->GetAsciiSpec(spec);
       if (!spec.IsEmpty()) {
         // Include a clue as to who loaded this resource. (Note
         // that because of font entry sharing, other pages may now
@@ -1277,7 +1277,7 @@ void gfxUserFontSet::UserFontCache::Entry::ReportMemory(
       EmptyCString(), path, nsIMemoryReporter::KIND_HEAP,
       nsIMemoryReporter::UNITS_BYTES,
       mFontEntry->ComputedSizeOfExcludingThis(UserFontsMallocSizeOf),
-      NS_LITERAL_CSTRING("Memory used by @font-face resource."), aData);
+      "Memory used by @font-face resource."_ns, aData);
 }
 
 NS_IMPL_ISUPPORTS(gfxUserFontSet::UserFontCache::MemoryReporter,
@@ -1314,13 +1314,13 @@ void gfxUserFontSet::UserFontCache::Entry::Dump() {
 
   if (mPrincipal) {
     nsCOMPtr<nsIURI> principalURI;
-    rv = mPrincipal->get()->GetURI(getter_AddRefs(principalURI));
+    rv = mPrincipal->NodePrincipal()->GetURI(getter_AddRefs(principalURI));
     if (NS_SUCCEEDED(rv)) {
       principalURI->GetSpec(principalURISpec);
     }
 
     nsCOMPtr<nsIURI> domainURI;
-    mPrincipal->get()->GetDomain(getter_AddRefs(domainURI));
+    mPrincipal->NodePrincipal()->GetDomain(getter_AddRefs(domainURI));
     if (domainURI) {
       setDomain = true;
     }

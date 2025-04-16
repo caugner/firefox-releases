@@ -835,6 +835,9 @@ class SharedLibrary(Library):
             os_target = context.config.substs['OS_TARGET']
             if os_target == 'Darwin':
                 self.symbols_link_arg = '-Wl,-exported_symbols_list,' + self.symbols_file
+            elif os_target == 'SunOS':
+                self.symbols_link_arg = '-z gnu-version-script-compat -Wl,--version-script,' \
+                  + self.symbols_file
             elif os_target == 'WINNT':
                 if context.config.substs.get('GNU_CC'):
                     self.symbols_link_arg = self.symbols_file
@@ -1263,7 +1266,6 @@ class GeneratedFile(ContextDerived):
 
         suffixes = [
             '.h',
-            '.inc',
             '.py',
             '.rs',
             # We need to compile Java to generate JNI wrappers for native code
@@ -1290,7 +1292,7 @@ class GeneratedFile(ContextDerived):
         if required_during_compile is None:
             self.required_during_compile = [
                 f for f in self.outputs if f.endswith(
-                    ('.asm', '.c', '.cpp', '.m', '.mm', '.def', 'symverscript'))]
+                    ('.asm', '.c', '.cpp', '.inc', '.m', '.mm', '.def', 'symverscript'))]
         else:
             self.required_during_compile = required_during_compile
 

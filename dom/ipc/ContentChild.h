@@ -7,26 +7,23 @@
 #ifndef mozilla_dom_ContentChild_h
 #define mozilla_dom_ContentChild_h
 
-#include "base/shared_memory.h"
 #include "mozilla/Atomics.h"
-#include "mozilla/Attributes.h"
-#include "mozilla/UniquePtr.h"
-#include "mozilla/dom/BrowserBridgeChild.h"
-#include "mozilla/dom/ProcessActor.h"
-#include "mozilla/dom/JSProcessActorChild.h"
-#include "mozilla/dom/MediaControllerBinding.h"
+#include "mozilla/dom/MediaControlKeySource.h"
 #include "mozilla/dom/PContentChild.h"
-#include "mozilla/dom/RemoteBrowser.h"
-#include "mozilla/StaticPtr.h"
+#include "mozilla/dom/ProcessActor.h"
+#include "mozilla/dom/RemoteType.h"
 #include "mozilla/ipc/InputStreamUtils.h"
-#include "mozilla/ipc/Shmem.h"
+#include "mozilla/ipc/ProtocolUtils.h"
+#include "mozilla/StaticPtr.h"
+#include "mozilla/UniquePtr.h"
+#include "nsClassHashtable.h"
+#include "nscore.h"
 #include "nsHashKeys.h"
 #include "nsIDOMProcessChild.h"
-#include "nsIObserver.h"
-#include "nsTHashtable.h"
-#include "nsStringFwd.h"
-#include "nsTArrayForwardDeclare.h"
 #include "nsRefPtrHashtable.h"
+#include "nsString.h"
+#include "nsTArrayForwardDeclare.h"
+#include "nsTHashtable.h"
 
 #if defined(XP_MACOSX) && defined(MOZ_SANDBOX)
 #  include "nsIFile.h"
@@ -47,6 +44,10 @@ namespace mozilla {
 class RemoteSpellcheckEngineChild;
 class ChildProfilerController;
 class BenchmarkStorageChild;
+
+namespace loader {
+class PScriptCacheChild;
+}
 
 using mozilla::loader::PScriptCacheChild;
 
@@ -129,9 +130,8 @@ class ContentChild final : public PContentChild,
 
   const AppInfo& GetAppInfo() { return mAppInfo; }
 
-  void SetProcessName(const nsAString& aName);
-
-  void GetProcessName(nsAString& aName) const;
+  void SetProcessName(const nsACString& aName,
+                      const nsACString* aETLDplus1 = nullptr);
 
   void GetProcessName(nsACString& aName) const;
 
@@ -191,8 +191,8 @@ class ContentChild final : public PContentChild,
   mozilla::ipc::IPCResult RecvSetProcessSandbox(
       const Maybe<FileDescriptor>& aBroker);
 
-  already_AddRefed<PIPCBlobInputStreamChild> AllocPIPCBlobInputStreamChild(
-      const nsID& aID, const uint64_t& aSize);
+  already_AddRefed<PRemoteLazyInputStreamChild>
+  AllocPRemoteLazyInputStreamChild(const nsID& aID, const uint64_t& aSize);
 
   PHalChild* AllocPHalChild();
   bool DeallocPHalChild(PHalChild*);
@@ -383,11 +383,11 @@ class ContentChild final : public PContentChild,
       const nsCString& UAName, const nsCString& ID, const nsCString& vendor,
       const nsCString& sourceURL, const nsCString& updateURL);
 
-  mozilla::ipc::IPCResult RecvRemoteType(const nsString& aRemoteType);
+  mozilla::ipc::IPCResult RecvRemoteType(const nsCString& aRemoteType);
 
   // Call RemoteTypePrefix() on the result to remove URIs if you want to use
   // this for telemetry.
-  const nsAString& GetRemoteType() const override;
+  const nsACString& GetRemoteType() const override;
 
   mozilla::ipc::IPCResult RecvInitServiceWorkers(
       const ServiceWorkerConfiguration& aConfig);
@@ -629,8 +629,9 @@ class ContentChild final : public PContentChild,
   mozilla::ipc::IPCResult RecvStartDelayedAutoplayMediaComponents(
       const MaybeDiscarded<BrowsingContext>& aContext);
 
-  mozilla::ipc::IPCResult RecvUpdateMediaControlKey(
-      const MaybeDiscarded<BrowsingContext>& aContext, MediaControlKey aKey);
+  mozilla::ipc::IPCResult RecvUpdateMediaControlAction(
+      const MaybeDiscarded<BrowsingContext>& aContext,
+      const MediaControlAction& aAction);
 
   void HoldBrowsingContextGroup(BrowsingContextGroup* aBCG);
   void ReleaseBrowsingContextGroup(BrowsingContextGroup* aBCG);
@@ -773,14 +774,36 @@ class ContentChild final : public PContentChild,
   mozilla::ipc::IPCResult RecvDisplayLoadError(
       const MaybeDiscarded<BrowsingContext>& aContext, const nsAString& aURI);
 
+  mozilla::ipc::IPCResult RecvGoBack(
+      const MaybeDiscarded<BrowsingContext>& aContext,
+      const Maybe<int32_t>& aCancelContentJSEpoch,
+      bool aRequireUserInteraction);
+  mozilla::ipc::IPCResult RecvGoForward(
+      const MaybeDiscarded<BrowsingContext>& aContext,
+      const Maybe<int32_t>& aCancelContentJSEpoch,
+      bool aRequireUserInteraction);
+  mozilla::ipc::IPCResult RecvGoToIndex(
+      const MaybeDiscarded<BrowsingContext>& aContext, const int32_t& aIndex,
+      const Maybe<int32_t>& aCancelContentJSEpoch);
+  mozilla::ipc::IPCResult RecvReload(
+      const MaybeDiscarded<BrowsingContext>& aContext,
+      const uint32_t aReloadFlags);
+  mozilla::ipc::IPCResult RecvStopLoad(
+      const MaybeDiscarded<BrowsingContext>& aContext,
+      const uint32_t aStopFlags);
+
   mozilla::ipc::IPCResult RecvRawMessage(const JSActorMessageMeta& aMeta,
                                          const ClonedMessageData& aData,
                                          const ClonedMessageData& aStack);
 
-  JSActor::Type GetSide() override { return JSActor::Type::Child; }
+  already_AddRefed<JSActor> InitJSActor(JS::HandleObject aMaybeActor,
+                                        const nsACString& aName,
+                                        ErrorResult& aRv) override;
+  mozilla::ipc::IProtocol* AsNativeActor() override { return this; }
 
-  mozilla::ipc::IPCResult RecvHistoryCommitLength(
-      const MaybeDiscarded<BrowsingContext>& aContext, uint32_t aLength);
+  mozilla::ipc::IPCResult RecvHistoryCommitIndexAndLength(
+      const MaybeDiscarded<BrowsingContext>& aContext, const uint32_t& aIndex,
+      const uint32_t& aLength, const nsID& aChangeID);
 
   mozilla::ipc::IPCResult RecvFlushFOGData(FlushFOGDataResolver&& aResolver);
 
@@ -835,9 +858,9 @@ class ContentChild final : public PContentChild,
   AppInfo mAppInfo;
 
   bool mIsForBrowser;
-  nsString mRemoteType = VoidString();
+  nsCString mRemoteType = NOT_REMOTE_TYPE;
   bool mIsAlive;
-  nsString mProcessName;
+  nsCString mProcessName;
 
   static ContentChild* sSingleton;
 
@@ -877,9 +900,6 @@ class ContentChild final : public PContentChild,
 
   // See `BrowsingContext::mEpochs` for an explanation of this field.
   uint64_t mBrowsingContextFieldEpoch = 0;
-
-  nsRefPtrHashtable<nsCStringHashKey, JSProcessActorChild> mProcessActors;
-  DISALLOW_EVIL_CONSTRUCTORS(ContentChild);
 };
 
 inline nsISupports* ToSupports(mozilla::dom::ContentChild* aContentChild) {

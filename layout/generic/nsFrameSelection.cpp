@@ -1032,12 +1032,7 @@ nsresult nsFrameSelection::GetFrameFromLevel(nsIFrame* aFrameIn,
 
   do {
     *aFrameOut = foundFrame;
-    if (aDirection == eDirNext)
-      frameTraversal->Next();
-    else
-      frameTraversal->Prev();
-
-    foundFrame = frameTraversal->CurrentItem();
+    foundFrame = frameTraversal->Traverse(aDirection == eDirNext);
     if (!foundFrame) return NS_ERROR_FAILURE;
     foundLevel = foundFrame->GetEmbeddingLevel();
 
@@ -2474,7 +2469,7 @@ nsresult nsFrameSelection::TableSelection::HandleMouseUpOrDown(
 #endif
 
       // Start drag-selecting mode so multiple rows/cols can be selected
-      // Note: Currently, nsFrame::GetDataForTableSelection
+      // Note: Currently, nsIFrame::GetDataForTableSelection
       //       will never call us for row or column selection on mouse down
       mDragSelectingCells = true;
 

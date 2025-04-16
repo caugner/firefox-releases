@@ -595,24 +595,30 @@ void GeckoEditableSupport::AddIMETextChange(const IMETextChange& aChange) {
       // No overlap between ranges
       continue;
     }
-    // When merging two ranges, there are generally four posibilities:
-    // [----(----]----), (----[----]----),
-    // [----(----)----], (----[----)----]
-    // where [----] is the first range and (----) is the second range
-    // As seen above, the start of the merged range is always the lesser
-    // of the two start offsets. OldEnd and NewEnd then need to be
-    // adjusted separately depending on the case. In any case, the change
-    // in text length of the merged range should be the sum of text length
-    // changes of the two original ranges, i.e.,
-    // newNewEnd - newOldEnd == newEnd1 - oldEnd1 + newEnd2 - oldEnd2
-    dst.mStart = std::min(dst.mStart, src.mStart);
-    if (src.mOldEnd < dst.mNewEnd) {
-      // New range overlaps or is within previous range; merge
-      dst.mNewEnd += src.mNewEnd - src.mOldEnd;
-    } else {  // src.mOldEnd >= dst.mNewEnd
-      // New range overlaps previous range; merge
-      dst.mOldEnd += src.mOldEnd - dst.mNewEnd;
-      dst.mNewEnd = src.mNewEnd;
+
+    if (src.mStart == dst.mStart && src.mNewEnd == dst.mNewEnd) {
+      // Same range. Adjust old end offset.
+      dst.mOldEnd = std::min(src.mOldEnd, dst.mOldEnd);
+    } else {
+      // When merging two ranges, there are generally four posibilities:
+      // [----(----]----), (----[----]----),
+      // [----(----)----], (----[----)----]
+      // where [----] is the first range and (----) is the second range
+      // As seen above, the start of the merged range is always the lesser
+      // of the two start offsets. OldEnd and NewEnd then need to be
+      // adjusted separately depending on the case. In any case, the change
+      // in text length of the merged range should be the sum of text length
+      // changes of the two original ranges, i.e.,
+      // newNewEnd - newOldEnd == newEnd1 - oldEnd1 + newEnd2 - oldEnd2
+      dst.mStart = std::min(dst.mStart, src.mStart);
+      if (src.mOldEnd < dst.mNewEnd) {
+        // New range overlaps or is within previous range; merge
+        dst.mNewEnd += src.mNewEnd - src.mOldEnd;
+      } else {  // src.mOldEnd >= dst.mNewEnd
+        // New range overlaps previous range; merge
+        dst.mOldEnd += src.mOldEnd - dst.mNewEnd;
+        dst.mNewEnd = src.mNewEnd;
+      }
     }
     // src merged to dst; delete src.
     mIMETextChanges.RemoveElementAt(srcIndex);
@@ -1295,6 +1301,7 @@ nsresult GeckoEditableSupport::NotifyIME(
           mIMEDelaySynchronizeReply = false;
           mIMEActiveSynchronizeCount = 0;
           mIMEActiveCompositionCount = 0;
+          mInputContext.ShutDown();
           mEditable->NotifyIME(EditableListener::NOTIFY_IME_OF_BLUR);
           OnRemovedFrom(mDispatcher);
         }
@@ -1391,6 +1398,8 @@ GeckoEditableSupport::GetIMENotificationRequests() {
 
 void GeckoEditableSupport::SetInputContext(const InputContext& aContext,
                                            const InputContextAction& aAction) {
+  // SetInputContext is called from chrome process only
+  MOZ_ASSERT(XRE_IsParentProcess());
   MOZ_ASSERT(mEditable);
 
   ALOGIME(
@@ -1442,6 +1451,8 @@ void GeckoEditableSupport::NotifyIMEContext(const InputContext& aContext,
 }
 
 InputContext GeckoEditableSupport::GetInputContext() {
+  // GetInputContext is called from chrome process only
+  MOZ_ASSERT(XRE_IsParentProcess());
   InputContext context = mInputContext;
   context.mIMEState.mOpen = IMEState::OPEN_STATE_NOT_SUPPORTED;
   return context;
@@ -1454,7 +1465,20 @@ void GeckoEditableSupport::TransferParent(jni::Object::Param aEditableParent) {
   // and focus information, so it can accept additional calls from us.
   if (mIMEFocusCount > 0) {
     mEditable->NotifyIME(EditableListener::NOTIFY_IME_OF_TOKEN);
-    NotifyIMEContext(mInputContext, InputContextAction());
+    if (mIsRemote) {
+      // GeckoEditableSupport::SetInputContext is called on chrome process
+      // only, so mInputContext may be still invalid since it is set after
+      // we have gotton focus.
+      RefPtr<GeckoEditableSupport> self(this);
+      nsAppShell::PostEvent([self] {
+        NS_WARNING_ASSERTION(
+            self->mDispatcher,
+            "Text dispatcher is still null. Why don't we get focus yet?");
+        self->NotifyIMEContext(self->mInputContext, InputContextAction());
+      });
+    } else {
+      NotifyIMEContext(mInputContext, InputContextAction());
+    }
     mEditable->NotifyIME(EditableListener::NOTIFY_IME_OF_FOCUS);
     // We have focus, so don't destroy editable child.
     return;

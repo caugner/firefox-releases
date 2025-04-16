@@ -96,6 +96,16 @@ class UrlbarView {
 
   /**
    * @returns {boolean}
+   *   Whether the update2 one-offs are used.
+   */
+  get oneOffsRefresh() {
+    return (
+      UrlbarPrefs.get("update2") && UrlbarPrefs.get("update2.oneOffsRefresh")
+    );
+  }
+
+  /**
+   * @returns {boolean}
    *   Whether the panel is open.
    */
   get isOpen() {
@@ -523,7 +533,9 @@ class UrlbarView {
       // character.
       let trimmedValue = queryContext.searchString.trim();
       this._enableOrDisableOneOffSearches(
-        trimmedValue &&
+        ((UrlbarPrefs.get("update2") &&
+          UrlbarPrefs.get("update2.oneOffsRefresh")) ||
+          trimmedValue) &&
           trimmedValue[0] != "@" &&
           (trimmedValue[0] != UrlbarTokenizer.RESTRICT.SEARCH ||
             trimmedValue.length != 1)
@@ -545,6 +557,15 @@ class UrlbarView {
         updateInput: false,
         setAccessibleFocus: this.controller._userSelectionBehavior == "arrow",
       });
+    }
+
+    // If we update the selected element, a new unique ID is generated for it.
+    // We need to ensure that aria-activedescendant reflects this new ID.
+    if (this.selectedElement && !this.oneOffSearchButtons.selectedButton) {
+      let aadID = this.input.inputField.getAttribute("aria-activedescendant");
+      if (aadID && !this.document.getElementById(aadID)) {
+        this._setAccessibleFocus(this.selectedElement);
+      }
     }
 
     this._openPanel();
@@ -601,7 +622,8 @@ class UrlbarView {
 
   /**
    * This is called when a one-off is clicked and when "search in new tab"
-   * is selected from a one-off context menu.
+   * is selected from a one-off context menu. Can be removed when update2 is
+   * on by default.
    * @param {Event} event
    * @param {nsISearchEngine} engine
    * @param {string} where
@@ -609,6 +631,51 @@ class UrlbarView {
    */
   handleOneOffSearch(event, engine, where, params) {
     this.input.handleCommand(event, where, params);
+  }
+
+  /**
+   * Handles a command from a one-off button.
+   *
+   * @param {Event} event The one-off selection event.
+   * @param {nsISearchEngine} engine The engine associated with the one-off.
+   * @returns {boolean} True if this handler managed the event.
+   */
+  oneOffsCommandHandler(event, engine) {
+    if (!this.oneOffsRefresh) {
+      return false;
+    }
+
+    this.input.setSearchMode(engine);
+    this.input.startQuery({
+      allowAutofill: false,
+      event,
+    });
+    return true;
+  }
+
+  /**
+   * Handles a click on a one-off button.
+   *
+   * @param {Event} event The one-off click event.
+   * @returns {boolean} True if this handler managed the event.
+   */
+  oneOffsClickHandler(event) {
+    if (!this.oneOffsRefresh) {
+      return false;
+    }
+
+    if (event.button == 2) {
+      return false; // ignore right clicks.
+    }
+
+    let button = event.originalTarget;
+    let engine = button.engine;
+
+    if (!engine) {
+      return false;
+    }
+
+    return this.oneOffsCommandHandler(event, engine);
   }
 
   static dynamicViewTemplatesByName = new Map();
@@ -1700,6 +1767,14 @@ class UrlbarView {
         (!result.heuristic &&
           (!result.payload.suggestion || result.payload.isSearchHistory) &&
           (!result.payload.inPrivateWindow || result.payload.isPrivateEngine))
+      ) {
+        continue;
+      }
+
+      if (
+        this.oneOffsRefresh &&
+        !result.heuristic &&
+        (!result.payload.inPrivateWindow || result.payload.isPrivateEngine)
       ) {
         continue;
       }

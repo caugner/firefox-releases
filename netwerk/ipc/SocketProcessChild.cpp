@@ -8,10 +8,10 @@
 
 #include "base/task.h"
 #include "InputChannelThrottleQueueChild.h"
+#include "HttpInfo.h"
 #include "HttpTransactionChild.h"
 #include "HttpConnectionMgrChild.h"
 #include "mozilla/Assertions.h"
-#include "mozilla/dom/IPCBlobInputStreamChild.h"
 #include "mozilla/dom/MemoryReportRequest.h"
 #include "mozilla/ipc/CrashReporterClient.h"
 #include "mozilla/ipc/BackgroundChild.h"
@@ -28,6 +28,7 @@
 #include "mozilla/ipc/PChildToParentStreamChild.h"
 #include "mozilla/ipc/PParentToChildStreamChild.h"
 #include "mozilla/Preferences.h"
+#include "mozilla/RemoteLazyInputStreamChild.h"
 #include "mozilla/Telemetry.h"
 #include "nsDebugImpl.h"
 #include "nsHttpConnectionInfo.h"
@@ -35,6 +36,7 @@
 #include "nsIDNSService.h"
 #include "nsIHttpActivityObserver.h"
 #include "nsNSSComponent.h"
+#include "nsSocketTransportService2.h"
 #include "nsThreadManager.h"
 #include "ProcessUtils.h"
 #include "SocketProcessBridgeParent.h"
@@ -185,6 +187,16 @@ void SocketProcessChild::CleanUp() {
   NS_ShutdownXPCOM(nullptr);
 }
 
+mozilla::ipc::IPCResult SocketProcessChild::RecvInit(
+    const SocketPorcessInitAttributes& aAttributes) {
+  Unused << RecvSetOffline(aAttributes.mOffline());
+  Unused << RecvSetConnectivity(aAttributes.mConnectivity());
+  if (aAttributes.mInitSandbox()) {
+    Unused << RecvInitLinuxSandbox(aAttributes.mSandboxBroker());
+  }
+  return IPC_OK();
+}
+
 IPCResult SocketProcessChild::RecvPreferenceUpdate(const Pref& aPref) {
   Preferences::SetPreference(aPref);
   return IPC_OK();
@@ -215,6 +227,17 @@ mozilla::ipc::IPCResult SocketProcessChild::RecvSetOffline(
   NS_ASSERTION(io, "IO Service can not be null");
 
   io->SetOffline(aOffline);
+
+  return IPC_OK();
+}
+
+mozilla::ipc::IPCResult SocketProcessChild::RecvSetConnectivity(
+    const bool& aConnectivity) {
+  nsCOMPtr<nsIIOService> io(do_GetIOService());
+  nsCOMPtr<nsIIOServiceInternal> ioInternal(do_QueryInterface(io));
+  NS_ASSERTION(ioInternal, "IO Service can not be null");
+
+  ioInternal->SetConnectivity(aConnectivity);
 
   return IPC_OK();
 }
@@ -464,12 +487,128 @@ mozilla::ipc::IPCResult SocketProcessChild::RecvNotifyObserver(
   return IPC_OK();
 }
 
-already_AddRefed<dom::PIPCBlobInputStreamChild>
-SocketProcessChild::AllocPIPCBlobInputStreamChild(const nsID& aID,
-                                                  const uint64_t& aSize) {
-  RefPtr<dom::IPCBlobInputStreamChild> actor =
-      new dom::IPCBlobInputStreamChild(aID, aSize);
+already_AddRefed<PRemoteLazyInputStreamChild>
+SocketProcessChild::AllocPRemoteLazyInputStreamChild(const nsID& aID,
+                                                     const uint64_t& aSize) {
+  RefPtr<RemoteLazyInputStreamChild> actor =
+      new RemoteLazyInputStreamChild(aID, aSize);
   return actor.forget();
+}
+
+namespace {
+
+class DataResolverBase {
+ public:
+  NS_INLINE_DECL_THREADSAFE_REFCOUNTING(DataResolverBase)
+
+  DataResolverBase() = default;
+
+ protected:
+  virtual ~DataResolverBase() = default;
+};
+
+template <typename DataType, typename ResolverType>
+class DataResolver final : public DataResolverBase {
+ public:
+  explicit DataResolver(ResolverType&& aResolve)
+      : mResolve(std::move(aResolve)) {}
+
+  void OnResolve(DataType&& aData) {
+    MOZ_ASSERT(OnSocketThread());
+
+    RefPtr<DataResolver<DataType, ResolverType>> self = this;
+    mData = std::move(aData);
+    NS_DispatchToMainThread(NS_NewRunnableFunction(
+        "net::DataResolver::OnResolve",
+        [self{std::move(self)}]() { self->mResolve(std::move(self->mData)); }));
+  }
+
+ private:
+  virtual ~DataResolver() = default;
+
+  ResolverType mResolve;
+  DataType mData;
+};
+
+}  // anonymous namespace
+
+mozilla::ipc::IPCResult SocketProcessChild::RecvGetSocketData(
+    GetSocketDataResolver&& aResolve) {
+  if (!gSocketTransportService) {
+    aResolve(SocketDataArgs());
+    return IPC_OK();
+  }
+
+  RefPtr<
+      DataResolver<SocketDataArgs, SocketProcessChild::GetSocketDataResolver>>
+      resolver = new DataResolver<SocketDataArgs,
+                                  SocketProcessChild::GetSocketDataResolver>(
+          std::move(aResolve));
+  gSocketTransportService->Dispatch(
+      NS_NewRunnableFunction(
+          "net::SocketProcessChild::RecvGetSocketData",
+          [resolver{std::move(resolver)}]() {
+            SocketDataArgs args;
+            gSocketTransportService->GetSocketConnections(&args.info());
+            args.totalSent() = gSocketTransportService->GetSentBytes();
+            args.totalRecv() = gSocketTransportService->GetReceivedBytes();
+            resolver->OnResolve(std::move(args));
+          }),
+      NS_DISPATCH_NORMAL);
+  return IPC_OK();
+}
+
+mozilla::ipc::IPCResult SocketProcessChild::RecvGetDNSCacheEntries(
+    GetDNSCacheEntriesResolver&& aResolve) {
+  nsresult rv = NS_OK;
+  nsCOMPtr<nsIDNSService> dns =
+      do_GetService("@mozilla.org/network/dns-service;1", &rv);
+  if (NS_FAILED(rv)) {
+    aResolve(nsTArray<DNSCacheEntries>());
+    return IPC_OK();
+  }
+
+  RefPtr<DataResolver<nsTArray<DNSCacheEntries>,
+                      SocketProcessChild::GetDNSCacheEntriesResolver>>
+      resolver =
+          new DataResolver<nsTArray<DNSCacheEntries>,
+                           SocketProcessChild::GetDNSCacheEntriesResolver>(
+              std::move(aResolve));
+  gSocketTransportService->Dispatch(
+      NS_NewRunnableFunction(
+          "net::SocketProcessChild::RecvGetDNSCacheEntries",
+          [resolver{std::move(resolver)}, dns{std::move(dns)}]() {
+            nsTArray<DNSCacheEntries> entries;
+            dns->GetDNSCacheEntries(&entries);
+            resolver->OnResolve(std::move(entries));
+          }),
+      NS_DISPATCH_NORMAL);
+  return IPC_OK();
+}
+
+mozilla::ipc::IPCResult SocketProcessChild::RecvGetHttpConnectionData(
+    GetHttpConnectionDataResolver&& aResolve) {
+  if (!gSocketTransportService) {
+    aResolve(nsTArray<HttpRetParams>());
+    return IPC_OK();
+  }
+
+  RefPtr<DataResolver<nsTArray<HttpRetParams>,
+                      SocketProcessChild::GetHttpConnectionDataResolver>>
+      resolver =
+          new DataResolver<nsTArray<HttpRetParams>,
+                           SocketProcessChild::GetHttpConnectionDataResolver>(
+              std::move(aResolve));
+  gSocketTransportService->Dispatch(
+      NS_NewRunnableFunction(
+          "net::SocketProcessChild::RecvGetHttpConnectionData",
+          [resolver{std::move(resolver)}]() {
+            nsTArray<HttpRetParams> data;
+            HttpInfo::GetHttpConnectionData(&data);
+            resolver->OnResolve(std::move(data));
+          }),
+      NS_DISPATCH_NORMAL);
+  return IPC_OK();
 }
 
 }  // namespace net

@@ -2,15 +2,15 @@
  * Inserts an iframe usable for origin isolation testing, and returns a promise
  * fulfilled when the iframe is loaded and its document.domain is set. The
  * iframe will point to the send-origin-isolation-header.py file, on the
- * designated hostname
- * @param {string} hostname - The hostname used to calculate the iframe's src=""
+ * designated host
+ * @param {string} host - The host used to calculate the iframe's src=""
  * @param {string=} header - The value of the Origin-Isolation header that the
  *   iframe will set. Omit this to set no header.
  * @returns {HTMLIFrameElement} The created iframe element
  */
-export async function insertIframe(hostname, header) {
+export async function insertIframe(host, header) {
   const iframe = document.createElement("iframe");
-  const navigatePromise = navigateIframe(iframe, hostname, header);
+  const navigatePromise = navigateIframe(iframe, host, header);
   document.body.append(iframe);
   await navigatePromise;
   await setBothDocumentDomains(iframe.contentWindow);
@@ -21,15 +21,14 @@ export async function insertIframe(hostname, header) {
  * Navigates an iframe to a page for origin isolation testing, similar to
  * insertIframe but operating on an existing iframe.
  * @param {HTMLIFrameElement} iframeEl - The <iframe> element to navigate
- * @param {string} hostname - The hostname used to calculate the iframe's new
- *   src=""
+ * @param {string} host - The host to calculate the iframe's new src=""
  * @param {string=} header - The value of the Origin-Isolation header that the
  *   newly-navigated-to page will set. Omit this to set no header.
  * @returns {Promise} a promise fulfilled when the load event fires, or rejected
  *   if the error event fires
  */
-export function navigateIframe(iframeEl, hostname, header) {
-  const url = getIframeURL(hostname, header);
+export function navigateIframe(iframeEl, host, header) {
+  const url = getIframeURL(host, header);
 
   const waitPromise = waitForIframe(iframeEl, url);
   iframeEl.src = url;
@@ -159,6 +158,32 @@ export function testDifferentAgentClusters(testFrames, testLabelPrefix) {
 }
 
 /**
+ * Creates a promise_test() to check the value of the originIsolationRestricted
+ * getter in the given testFrame.
+ * @param {Window|number} testFrame - Either self, or a frame index to test.
+ * @param {boolean} expected - The expected value for originIsolationRestricted.
+ * @param {string=} testLabelPrefix - A prefix used in the test names. This can
+ *   be omitted if the function is only used once in a test file.
+ */
+export function testOriginIsolationRestricted(testFrame, expected, testLabelPrefix) {
+  const prefix = testLabelPrefix === undefined ? "" : `${testLabelPrefix}: `;
+
+  if (testFrame === self) {
+    // Need to use promise_test() even though it's sync because we use
+    // promise_setup() in many tests.
+    promise_test(async () => {
+      assert_equals(self.originIsolationRestricted, expected);
+    }, `${prefix}originIsolationRestricted must equal ${expected}`);
+  } else {
+    promise_test(async () => {
+      const frameWindow = frames[testFrame];
+      const result = await getOriginIsolationRestricted(frameWindow);
+      assert_equals(result, expected);
+    }, `${prefix}originIsolationRestricted must equal ${expected}`);
+  }
+}
+
+/**
  * Sends a WebAssembly.Module instance to the given Window, and waits for it to
  * send back a message indicating whether it got the module or got a
  * messageerror event. (This relies on the given Window being derived from
@@ -197,9 +222,16 @@ export async function setBothDocumentDomains(frameWindow) {
   assert_equals(whatHappened, "document.domain is set");
 }
 
-function getIframeURL(hostname, header) {
+async function getOriginIsolationRestricted(frameWindow) {
+  // This function is coupled to ./send-origin-isolation-header.py, which ensures
+  // that sending such a message will result in a message back.
+  frameWindow.postMessage({ command: "get originIsolationRestricted" }, "*");
+  return waitForMessage(frameWindow);
+}
+
+function getIframeURL(host, header) {
   const url = new URL("send-origin-isolation-header.py", import.meta.url);
-  url.hostname = hostname;
+  url.host = host;
   if (header !== undefined) {
     url.searchParams.set("header", header);
   }

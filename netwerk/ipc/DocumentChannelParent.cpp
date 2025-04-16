@@ -11,6 +11,7 @@
 #include "mozilla/dom/CanonicalBrowsingContext.h"
 #include "mozilla/dom/ClientInfo.h"
 #include "mozilla/dom/ContentParent.h"
+#include "nsDocShellLoadState.h"
 
 extern mozilla::LazyLogModule gDocumentChannelLog;
 #define LOG(fmt) MOZ_LOG(gDocumentChannelLog, mozilla::LogLevel::Verbose, fmt)
@@ -39,11 +40,12 @@ bool DocumentChannelParent::Init(dom::CanonicalBrowsingContext* aContext,
   if (loadState->GetChannelInitialized()) {
     promise = DocumentLoadListener::ClaimParentLoad(
         getter_AddRefs(mDocumentLoadListener), loadState->GetLoadIdentifier());
-    if (!promise) {
-      return false;
-    }
-  } else {
-    mDocumentLoadListener = new DocumentLoadListener(aContext);
+  }
+  if (!promise) {
+    bool isDocumentLoad =
+        aArgs.elementCreationArgs().type() ==
+        DocumentChannelElementCreationArgs::TDocumentCreationArgs;
+    mDocumentLoadListener = new DocumentLoadListener(aContext, isDocumentLoad);
 
     Maybe<ClientInfo> clientInfo;
     if (aArgs.initialClientInfo().isSome()) {
@@ -51,12 +53,28 @@ bool DocumentChannelParent::Init(dom::CanonicalBrowsingContext* aContext,
     }
 
     nsresult rv = NS_ERROR_UNEXPECTED;
-    promise = mDocumentLoadListener->Open(
-        loadState, aArgs.cacheKey(), Some(aArgs.channelId()),
-        aArgs.asyncOpenTime(), aArgs.timing().refOr(nullptr),
-        std::move(clientInfo), aArgs.outerWindowId(),
-        aArgs.hasValidTransientUserAction(), Some(aArgs.uriModified()),
-        Some(aArgs.isXFOError()), IProtocol::OtherPid(), &rv);
+
+    if (isDocumentLoad) {
+      const DocumentCreationArgs& docArgs = aArgs.elementCreationArgs();
+
+      promise = mDocumentLoadListener->OpenDocument(
+          loadState, aArgs.cacheKey(), Some(aArgs.channelId()),
+          aArgs.asyncOpenTime(), aArgs.timing().refOr(nullptr),
+          std::move(clientInfo), aArgs.hasValidTransientUserAction(),
+          Some(docArgs.uriModified()), Some(docArgs.isXFOError()),
+          IProtocol::OtherPid(), &rv);
+    } else {
+      const ObjectCreationArgs& objectArgs = aArgs.elementCreationArgs();
+
+      promise = mDocumentLoadListener->OpenObject(
+          loadState, aArgs.cacheKey(), Some(aArgs.channelId()),
+          aArgs.asyncOpenTime(), aArgs.timing().refOr(nullptr),
+          std::move(clientInfo), objectArgs.embedderInnerWindowId(),
+          objectArgs.loadFlags(), objectArgs.contentPolicyType(),
+          aArgs.hasValidTransientUserAction(), objectArgs.isUrgentStart(),
+          IProtocol::OtherPid(), &rv);
+    }
+
     if (NS_FAILED(rv)) {
       MOZ_ASSERT(!promise);
       return SendFailedAsyncOpen(rv);
@@ -79,11 +97,11 @@ bool DocumentChannelParent::Init(dom::CanonicalBrowsingContext* aContext,
         self->mDocumentLoadListener = nullptr;
       },
       [self](DocumentLoadListener::OpenPromiseFailedType&& aRejectValue) {
-        if (!self->CanSend()) {
-          return;
+        if (self->CanSend()) {
+          Unused << self->SendDisconnectChildListeners(
+              aRejectValue.mStatus, aRejectValue.mLoadGroupStatus,
+              aRejectValue.mSwitchedProcess);
         }
-        Unused << self->SendDisconnectChildListeners(
-            aRejectValue.mStatus, aRejectValue.mLoadGroupStatus);
         self->mDocumentLoadListener = nullptr;
       });
 

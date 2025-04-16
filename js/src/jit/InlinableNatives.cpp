@@ -17,6 +17,7 @@
 #endif
 #include "builtin/MapObject.h"
 #include "vm/ArrayBufferObject.h"
+#include "vm/AsyncIteration.h"
 #include "vm/Iteration.h"
 #include "vm/SharedArrayObject.h"
 
@@ -65,6 +66,10 @@ const JSClass* js::jit::InlinableNativeGuardToClass(InlinableNative native) {
       return &RegExpStringIteratorObject::class_;
     case InlinableNative::IntrinsicGuardToWrapForValidIterator:
       return &WrapForValidIteratorObject::class_;
+    case InlinableNative::IntrinsicGuardToIteratorHelper:
+      return &IteratorHelperObject::class_;
+    case InlinableNative::IntrinsicGuardToAsyncIteratorHelper:
+      return &AsyncIteratorHelperObject::class_;
 
     case InlinableNative::IntrinsicGuardToMapObject:
       return &MapObject::class_;
@@ -178,6 +183,8 @@ bool js::jit::CanInlineNativeCrossRealm(InlinableNative native) {
     case InlinableNative::IntrinsicGuardToStringIterator:
     case InlinableNative::IntrinsicGuardToRegExpStringIterator:
     case InlinableNative::IntrinsicGuardToWrapForValidIterator:
+    case InlinableNative::IntrinsicGuardToIteratorHelper:
+    case InlinableNative::IntrinsicGuardToAsyncIteratorHelper:
     case InlinableNative::IntrinsicObjectHasPrototype:
     case InlinableNative::IntrinsicFinishBoundFunctionInit:
     case InlinableNative::IntrinsicIsPackedArray:

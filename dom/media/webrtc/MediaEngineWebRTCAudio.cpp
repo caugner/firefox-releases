@@ -29,6 +29,7 @@ using namespace webrtc;
 
 // These are restrictions from the webrtc.org code
 #define MAX_CHANNELS 2
+#define MONO 1
 #define MAX_SAMPLING_FREQ 48000  // Hz - multiple of 100
 
 namespace mozilla {
@@ -165,32 +166,28 @@ nsresult MediaEngineWebRTCMicrophoneSource::Reconfigure(
 
 void MediaEngineWebRTCMicrophoneSource::UpdateAECSettings(
     bool aEnable, bool aUseAecMobile, EchoCancellation::SuppressionLevel aLevel,
-    EchoControlMobile::RoutingMode aRoutingMode,
-    bool aExperimentalInputProcessing) {
+    EchoControlMobile::RoutingMode aRoutingMode) {
   AssertIsOnOwningThread();
 
   RefPtr<MediaEngineWebRTCMicrophoneSource> that = this;
   NS_DispatchToMainThread(NS_NewRunnableFunction(
-      __func__, [that, track = mTrack, aEnable, aUseAecMobile, aLevel,
-                 aRoutingMode, aExperimentalInputProcessing] {
+      __func__,
+      [that, track = mTrack, aEnable, aUseAecMobile, aLevel, aRoutingMode] {
         class Message : public ControlMessage {
          public:
           Message(AudioInputProcessing* aInputProcessing, bool aEnable,
                   bool aUseAecMobile, EchoCancellation::SuppressionLevel aLevel,
-                  EchoControlMobile::RoutingMode aRoutingMode,
-                  bool aExperimentalInputProcessing)
+                  EchoControlMobile::RoutingMode aRoutingMode)
               : ControlMessage(nullptr),
                 mInputProcessing(aInputProcessing),
                 mEnable(aEnable),
                 mUseAecMobile(aUseAecMobile),
                 mLevel(aLevel),
-                mRoutingMode(aRoutingMode),
-                mExperimentalInputProcessing(aExperimentalInputProcessing) {}
+                mRoutingMode(aRoutingMode) {}
 
           void Run() override {
             mInputProcessing->UpdateAECSettings(mEnable, mUseAecMobile, mLevel,
-                                                mRoutingMode,
-                                                mExperimentalInputProcessing);
+                                                mRoutingMode);
           }
 
          protected:
@@ -199,16 +196,15 @@ void MediaEngineWebRTCMicrophoneSource::UpdateAECSettings(
           bool mUseAecMobile;
           EchoCancellation::SuppressionLevel mLevel;
           EchoControlMobile::RoutingMode mRoutingMode;
-          bool mExperimentalInputProcessing;
         };
 
         if (track->IsDestroyed()) {
           return;
         }
 
-        track->GraphImpl()->AppendMessage(MakeUnique<Message>(
-            that->mInputProcessing, aEnable, aUseAecMobile, aLevel,
-            aRoutingMode, aExperimentalInputProcessing));
+        track->GraphImpl()->AppendMessage(
+            MakeUnique<Message>(that->mInputProcessing, aEnable, aUseAecMobile,
+                                aLevel, aRoutingMode));
       }));
 }
 
@@ -365,15 +361,10 @@ void MediaEngineWebRTCMicrophoneSource::ApplySettings(
         aPrefs.mAecOn, aPrefs.mUseAecMobile,
         static_cast<webrtc::EchoCancellation::SuppressionLevel>(aPrefs.mAec),
         static_cast<webrtc::EchoControlMobile::RoutingMode>(
-            aPrefs.mRoutingMode),
-        aPrefs.mExperimentalInputProcessing);
+            aPrefs.mRoutingMode));
     UpdateHPFSettings(aPrefs.mHPFOn);
 
-    if (!aPrefs.mExperimentalInputProcessing) {
-      UpdateAPMExtraOptions(mExtendedFilter, mDelayAgnostic);
-    } else {
-      LOG("Using experimental input processing");
-    }
+    UpdateAPMExtraOptions(mExtendedFilter, mDelayAgnostic);
   }
 
   RefPtr<MediaEngineWebRTCMicrophoneSource> that = this;
@@ -642,8 +633,7 @@ AudioInputProcessing::AudioInputProcessing(
       mLiveSilenceAppended(false),
       mPrincipal(aPrincipalHandle),
       mEnabled(false),
-      mEnded(false),
-      mExperimentalInputProcessing(false) {
+      mEnded(false) {
 }
 
 void AudioInputProcessing::Disconnect(MediaTrackGraphImpl* aGraph) {
@@ -697,8 +687,7 @@ void AudioInputProcessing::SetRequestedInputChannelCount(
 
 void AudioInputProcessing::UpdateAECSettings(
     bool aEnable, bool aUseAecMobile, EchoCancellation::SuppressionLevel aLevel,
-    EchoControlMobile::RoutingMode aRoutingMode,
-    bool aExperimentalInputProcessing) {
+    EchoControlMobile::RoutingMode aRoutingMode) {
   if (aUseAecMobile) {
     HANDLE_APM_ERROR(mAudioProcessing->echo_control_mobile()->Enable(aEnable));
     HANDLE_APM_ERROR(mAudioProcessing->echo_control_mobile()->set_routing_mode(
@@ -719,8 +708,6 @@ void AudioInputProcessing::UpdateAECSettings(
     HANDLE_APM_ERROR(
         mAudioProcessing->echo_cancellation()->set_suppression_level(aLevel));
   }
-
-  mExperimentalInputProcessing = aExperimentalInputProcessing;
 }
 
 void AudioInputProcessing::UpdateAGCSettings(bool aEnable,
@@ -968,49 +955,65 @@ void AudioInputProcessing::PacketizeAndProcess(MediaTrackGraphImpl* aGraph,
     float* packet = mInputBuffer.Data();
     mPacketizerInput->Output(packet);
 
-    // Deinterleave the input data
-    // Prepare an array pointing to deinterleaved channels.
+    // Downmix from aChannels to mono if needed. We always have floats
+    // here, the packetizer performed the conversion. This handles sound cards
+    // with multiple physical jacks exposed as a single device with _n_
+    // discrete channels, where only a single mic is plugged in. Those channels
+    // are not correlated temporaly since they are discrete channels, mixing is
+    // just a sum.
     AutoTArray<float*, 8> deinterleavedPacketizedInputDataChannelPointers;
-    deinterleavedPacketizedInputDataChannelPointers.SetLength(aChannels);
-    offset = 0;
-    for (size_t i = 0;
-         i < deinterleavedPacketizedInputDataChannelPointers.Length(); ++i) {
-      deinterleavedPacketizedInputDataChannelPointers[i] =
-          mDeinterleavedBuffer.Data() + offset;
-      offset += mPacketizerInput->PacketSize();
+    uint32_t channelCountInput = 0;
+    if (aChannels > MAX_CHANNELS) {
+      channelCountInput = MONO;
+      deinterleavedPacketizedInputDataChannelPointers.SetLength(
+          channelCountInput);
+      deinterleavedPacketizedInputDataChannelPointers[0] =
+          mDeinterleavedBuffer.Data();
+      // Downmix to mono (and effectively have a planar buffer) by summing all
+      // channels in the first channel.
+      size_t readIndex = 0;
+      for (size_t i = 0; i < mPacketizerInput->PacketSize(); i++) {
+        mDeinterleavedBuffer.Data()[i] = 0.;
+        for (size_t j = 0; j < aChannels; j++) {
+          mDeinterleavedBuffer.Data()[i] += packet[readIndex++];
+        }
+      }
+    } else {
+      channelCountInput = aChannels;
+      // Deinterleave the input data
+      // Prepare an array pointing to deinterleaved channels.
+      deinterleavedPacketizedInputDataChannelPointers.SetLength(
+          channelCountInput);
+      offset = 0;
+      for (size_t i = 0;
+           i < deinterleavedPacketizedInputDataChannelPointers.Length(); ++i) {
+        deinterleavedPacketizedInputDataChannelPointers[i] =
+            mDeinterleavedBuffer.Data() + offset;
+        offset += mPacketizerInput->PacketSize();
+      }
+      // Deinterleave to mInputBuffer, pointed to by inputBufferChannelPointers.
+      Deinterleave(packet, mPacketizerInput->PacketSize(), channelCountInput,
+                   deinterleavedPacketizedInputDataChannelPointers.Elements());
     }
 
-    // Deinterleave to mInputBuffer, pointed to by inputBufferChannelPointers.
-    Deinterleave(packet, mPacketizerInput->PacketSize(), aChannels,
-                 deinterleavedPacketizedInputDataChannelPointers.Elements());
-
-    StreamConfig inputConfig(aRate, aChannels,
+    StreamConfig inputConfig(aRate, channelCountInput,
                              false /* we don't use typing detection*/);
     StreamConfig outputConfig = inputConfig;
 
-    if (mExperimentalInputProcessing) {
-      MediaTrackGraphImpl* graphImpl = mTrack->GraphImpl();
-      double roundtripLatencyMS = (graphImpl->AudioInputLatencyGraphThread() +
-                                   graphImpl->AudioOutputLatencyGraphThread()) *
-                                  1000;
-      LOG_FRAME("Audio roundtrip latency %lfms", roundtripLatencyMS);
-      mAudioProcessing->set_stream_delay_ms(
-          static_cast<uint32_t>(roundtripLatencyMS));
-    } else {
-      mAudioProcessing->set_stream_delay_ms(0);
-    }
+    // Bug 1404965: Get the right delay here, it saves some work down the line.
+    mAudioProcessing->set_stream_delay_ms(0);
 
     // Bug 1414837: find a way to not allocate here.
     CheckedInt<size_t> bufferSize(sizeof(float));
     bufferSize *= mPacketizerInput->PacketSize();
-    bufferSize *= aChannels;
+    bufferSize *= channelCountInput;
     RefPtr<SharedBuffer> buffer = SharedBuffer::Create(bufferSize);
 
     // Prepare channel pointers to the SharedBuffer created above.
     AutoTArray<float*, 8> processedOutputChannelPointers;
     AutoTArray<const float*, 8> processedOutputChannelPointersConst;
-    processedOutputChannelPointers.SetLength(aChannels);
-    processedOutputChannelPointersConst.SetLength(aChannels);
+    processedOutputChannelPointers.SetLength(channelCountInput);
+    processedOutputChannelPointersConst.SetLength(channelCountInput);
 
     offset = 0;
     for (size_t i = 0; i < processedOutputChannelPointers.Length(); ++i) {
@@ -1044,7 +1047,7 @@ void AudioInputProcessing::PacketizeAndProcess(MediaTrackGraphImpl* aGraph,
 
     // We already have planar audio data of the right format. Insert into the
     // MTG.
-    MOZ_ASSERT(processedOutputChannelPointers.Length() == aChannels);
+    MOZ_ASSERT(processedOutputChannelPointers.Length() == channelCountInput);
     RefPtr<SharedBuffer> other = buffer;
     segment.AppendFrames(other.forget(), processedOutputChannelPointersConst,
                          mPacketizerInput->PacketSize(), mPrincipal);
@@ -1165,18 +1168,18 @@ void AudioInputProcessing::DeviceChanged(MediaTrackGraphImpl* aGraph) {
 void AudioInputProcessing::End() { mEnded = true; }
 
 nsString MediaEngineWebRTCAudioCaptureSource::GetName() const {
-  return NS_LITERAL_STRING(u"AudioCapture");
+  return u"AudioCapture"_ns;
 }
 
 nsCString MediaEngineWebRTCAudioCaptureSource::GetUUID() const {
-  nsID uuid = nsID();
+  nsID uuid;
   char uuidBuffer[NSID_LENGTH];
   nsCString asciiString;
   ErrorResult rv;
 
   rv = nsContentUtils::GenerateUUIDInPlace(uuid);
   if (rv.Failed()) {
-    return NS_LITERAL_CSTRING("");
+    return ""_ns;
   }
 
   uuid.ToProvidedString(uuidBuffer);
@@ -1187,7 +1190,7 @@ nsCString MediaEngineWebRTCAudioCaptureSource::GetUUID() const {
 }
 
 nsString MediaEngineWebRTCAudioCaptureSource::GetGroupId() const {
-  return NS_LITERAL_STRING(u"AudioCaptureGroup");
+  return u"AudioCaptureGroup"_ns;
 }
 
 void MediaEngineWebRTCAudioCaptureSource::SetTrack(

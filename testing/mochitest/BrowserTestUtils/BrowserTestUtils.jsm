@@ -19,6 +19,9 @@ var EXPORTED_SYMBOLS = ["BrowserTestUtils"];
 const { AppConstants } = ChromeUtils.import(
   "resource://gre/modules/AppConstants.jsm"
 );
+const { ComponentUtils } = ChromeUtils.import(
+  "resource://gre/modules/ComponentUtils.jsm"
+);
 const { XPCOMUtils } = ChromeUtils.import(
   "resource://gre/modules/XPCOMUtils.jsm"
 );
@@ -57,7 +60,7 @@ function NewProcessSelector() {}
 
 NewProcessSelector.prototype = {
   classID: OUR_PROCESSSELECTOR_CID,
-  QueryInterface: ChromeUtils.generateQI([Ci.nsIContentProcessProvider]),
+  QueryInterface: ChromeUtils.generateQI(["nsIContentProcessProvider"]),
 
   provideProcess() {
     return Ci.nsIContentProcessProvider.NEW_PROCESS;
@@ -65,7 +68,7 @@ NewProcessSelector.prototype = {
 };
 
 let registrar = Components.manager.QueryInterface(Ci.nsIComponentRegistrar);
-let selectorFactory = XPCOMUtils._getFactory(NewProcessSelector);
+let selectorFactory = ComponentUtils._getFactory(NewProcessSelector);
 registrar.registerFactory(OUR_PROCESSSELECTOR_CID, "", null, selectorFactory);
 
 const kAboutPageRegistrationContentScript =
@@ -524,6 +527,66 @@ var BrowserTestUtils = {
 
   /**
    * Waits for the web progress listener associated with this tab to fire a
+   * state change that matches checkFn for the toplevel document.
+   *
+   * @param {xul:browser} browser
+   *        A xul:browser.
+   * @param {String} expectedURI (optional)
+   *        A specific URL to check the channel load against
+   * @param {Function} checkFn
+   *        If checkFn(aStateFlags, aStatus) returns false, the state change
+   *        is ignored and we continue to wait.
+   *
+   * @return {Promise}
+   * @resolves When the desired state change reaches the tab's progress listener
+   */
+  waitForBrowserStateChange(browser, expectedURI, checkFn) {
+    return new Promise(resolve => {
+      let wpl = {
+        onStateChange(aWebProgress, aRequest, aStateFlags, aStatus) {
+          dump(
+            "Saw state " +
+              aStateFlags.toString(16) +
+              " and status " +
+              aStatus.toString(16) +
+              "\n"
+          );
+          if (checkFn(aStateFlags, aStatus) && aWebProgress.isTopLevel) {
+            let chan = aRequest.QueryInterface(Ci.nsIChannel);
+            dump(
+              "Browser got expected state change " +
+                chan.originalURI.spec +
+                "\n"
+            );
+            if (!expectedURI || chan.originalURI.spec == expectedURI) {
+              browser.removeProgressListener(wpl);
+              BrowserTestUtils._webProgressListeners.delete(wpl);
+              resolve();
+            }
+          }
+        },
+        onSecurityChange() {},
+        onStatusChange() {},
+        onLocationChange() {},
+        onContentBlockingEvent() {},
+        QueryInterface: ChromeUtils.generateQI([
+          "nsIWebProgressListener",
+          "nsIWebProgressListener2",
+          "nsISupportsWeakReference",
+        ]),
+      };
+      browser.addProgressListener(wpl);
+      this._webProgressListeners.add(wpl);
+      dump(
+        "Waiting for browser state change" +
+          (expectedURI ? " of " + expectedURI : "") +
+          "\n"
+      );
+    });
+  },
+
+  /**
+   * Waits for the web progress listener associated with this tab to fire a
    * STATE_STOP for the toplevel document.
    *
    * @param {xul:browser} browser
@@ -538,49 +601,54 @@ var BrowserTestUtils = {
    * @resolves When STATE_STOP reaches the tab's progress listener
    */
   browserStopped(browser, expectedURI, checkAborts = false) {
-    return new Promise(resolve => {
-      let wpl = {
-        onStateChange(aWebProgress, aRequest, aStateFlags, aStatus) {
-          dump(
-            "Saw state " +
-              aStateFlags.toString(16) +
-              " and status " +
-              aStatus.toString(16) +
-              "\n"
-          );
-          if (
-            aStateFlags & Ci.nsIWebProgressListener.STATE_IS_NETWORK &&
-            aStateFlags & Ci.nsIWebProgressListener.STATE_STOP &&
-            (checkAborts || aStatus != Cr.NS_BINDING_ABORTED) &&
-            aWebProgress.isTopLevel
-          ) {
-            let chan = aRequest.QueryInterface(Ci.nsIChannel);
-            dump("Browser loaded " + chan.originalURI.spec + "\n");
-            if (!expectedURI || chan.originalURI.spec == expectedURI) {
-              browser.removeProgressListener(wpl);
-              BrowserTestUtils._webProgressListeners.delete(wpl);
-              resolve();
-            }
-          }
-        },
-        onSecurityChange() {},
-        onStatusChange() {},
-        onLocationChange() {},
-        onContentBlockingEvent() {},
-        QueryInterface: ChromeUtils.generateQI([
-          Ci.nsIWebProgressListener,
-          Ci.nsIWebProgressListener2,
-          Ci.nsISupportsWeakReference,
-        ]),
-      };
-      browser.addProgressListener(wpl);
-      this._webProgressListeners.add(wpl);
-      dump(
-        "Waiting for browser load" +
-          (expectedURI ? " of " + expectedURI : "") +
-          "\n"
+    let testFn = function(aStateFlags, aStatus) {
+      return (
+        aStateFlags & Ci.nsIWebProgressListener.STATE_IS_NETWORK &&
+        aStateFlags & Ci.nsIWebProgressListener.STATE_STOP &&
+        (checkAborts || aStatus != Cr.NS_BINDING_ABORTED)
       );
-    });
+    };
+    dump(
+      "Waiting for browser load" +
+        (expectedURI ? " of " + expectedURI : "") +
+        "\n"
+    );
+    return BrowserTestUtils.waitForBrowserStateChange(
+      browser,
+      expectedURI,
+      testFn
+    );
+  },
+
+  /**
+   * Waits for the web progress listener associated with this tab to fire a
+   * STATE_START for the toplevel document.
+   *
+   * @param {xul:browser} browser
+   *        A xul:browser.
+   * @param {String} expectedURI (optional)
+   *        A specific URL to check the channel load against
+   *
+   * @return {Promise}
+   * @resolves When STATE_START reaches the tab's progress listener
+   */
+  browserStarted(browser, expectedURI) {
+    let testFn = function(aStateFlags, aStatus) {
+      return (
+        aStateFlags & Ci.nsIWebProgressListener.STATE_IS_NETWORK &&
+        aStateFlags & Ci.nsIWebProgressListener.STATE_START
+      );
+    };
+    dump(
+      "Waiting for browser to start load" +
+        (expectedURI ? " of " + expectedURI : "") +
+        "\n"
+    );
+    return BrowserTestUtils.waitForBrowserStateChange(
+      browser,
+      expectedURI,
+      testFn
+    );
   },
 
   /**

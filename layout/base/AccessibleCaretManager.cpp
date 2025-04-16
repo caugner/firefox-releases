@@ -25,7 +25,7 @@
 #include "nsContentUtils.h"
 #include "nsDebug.h"
 #include "nsFocusManager.h"
-#include "nsFrame.h"
+#include "nsIFrame.h"
 #include "nsFrameSelection.h"
 #include "nsGenericHTMLElement.h"
 #include "nsIHapticFeedback.h"
@@ -902,9 +902,8 @@ void AccessibleCaretManager::ChangeFocusToOrClearOldFocus(
 nsresult AccessibleCaretManager::SelectWord(nsIFrame* aFrame,
                                             const nsPoint& aPoint) const {
   SetSelectionDragState(true);
-  nsFrame* frame = static_cast<nsFrame*>(aFrame);
-  nsresult rs = frame->SelectByTypeAtPoint(mPresShell->GetPresContext(), aPoint,
-                                           eSelectWord, eSelectWord, 0);
+  nsresult rs = aFrame->SelectByTypeAtPoint(
+      mPresShell->GetPresContext(), aPoint, eSelectWord, eSelectWord, 0);
 
   SetSelectionDragState(false);
   ClearMaintainedSelection();
@@ -926,8 +925,7 @@ void AccessibleCaretManager::SetSelectionDragState(bool aState) const {
 
 bool AccessibleCaretManager::IsPhoneNumber(nsAString& aCandidate) const {
   RefPtr<Document> doc = mPresShell->GetDocument();
-  nsAutoString phoneNumberRegex(
-      NS_LITERAL_STRING("(^\\+)?[0-9 ,\\-.()*#pw]{1,30}$"));
+  nsAutoString phoneNumberRegex(u"(^\\+)?[0-9 ,\\-.()*#pw]{1,30}$"_ns);
   return nsContentUtils::IsPatternMatching(aCandidate, phoneNumberRegex, doc)
       .valueOr(false);
 }
@@ -937,10 +935,10 @@ void AccessibleCaretManager::SelectMoreIfPhoneNumber() const {
 
   if (IsPhoneNumber(selectedText)) {
     SetSelectionDirection(eDirNext);
-    ExtendPhoneNumberSelection(NS_LITERAL_STRING("forward"));
+    ExtendPhoneNumberSelection(u"forward"_ns);
 
     SetSelectionDirection(eDirPrevious);
-    ExtendPhoneNumberSelection(NS_LITERAL_STRING("backward"));
+    ExtendPhoneNumberSelection(u"backward"_ns);
 
     SetSelectionDirection(eDirNext);
   }
@@ -972,8 +970,8 @@ void AccessibleCaretManager::ExtendPhoneNumberSelection(
     nsAutoString oldSelectedText = StringifiedSelection();
 
     // Extend the selection by one char.
-    selection->Modify(NS_LITERAL_STRING("extend"), aDirection,
-                      NS_LITERAL_STRING("character"), IgnoreErrors());
+    selection->Modify(u"extend"_ns, aDirection, u"character"_ns,
+                      IgnoreErrors());
     if (IsTerminated()) {
       return;
     }
@@ -1277,7 +1275,7 @@ nsRect AccessibleCaretManager::GetAllChildFrameRectsUnion(
     for (const auto& childList : frame->ChildLists()) {
       // Loop all children to union their scrollable overflow rect.
       for (nsIFrame* child : childList.mList) {
-        nsRect childRect = child->GetScrollableOverflowRectRelativeToSelf();
+        nsRect childRect = child->ScrollableOverflowRectRelativeToSelf();
         nsLayoutUtils::TransformRect(child, frame, childRect);
 
         // A TextFrame containing only '\n' has positive height and width 0, or
@@ -1463,7 +1461,7 @@ void AccessibleCaretManager::DispatchCaretStateChangedEvent(
   init.mSelectedTextContent = StringifiedSelection();
 
   RefPtr<CaretStateChangedEvent> event = CaretStateChangedEvent::Constructor(
-      doc, NS_LITERAL_STRING("mozcaretstatechanged"), init);
+      doc, u"mozcaretstatechanged"_ns, init);
 
   event->SetTrusted(true);
   event->WidgetEventPtr()->mFlags.mOnlyChromeDispatch = true;

@@ -43,7 +43,7 @@ class nsImageControlFrame final : public nsImageFrame,
 
 #ifdef DEBUG_FRAME_DUMP
   nsresult GetFrameName(nsAString& aResult) const final {
-    return MakeFrameName(NS_LITERAL_STRING("ImageControl"), aResult);
+    return MakeFrameName(u"ImageControl"_ns, aResult);
   }
 #endif
 
@@ -127,7 +127,7 @@ nsresult nsImageControlFrame::HandleEvent(nsPresContext* aPresContext,
   }
 
   if (IsContentDisabled()) {
-    return nsFrame::HandleEvent(aPresContext, aEvent, aEventStatus);
+    return nsIFrame::HandleEvent(aPresContext, aEvent, aEventStatus);
   }
 
   *aEventStatus = nsEventStatus_eIgnore;

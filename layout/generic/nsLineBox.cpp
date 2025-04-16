@@ -16,7 +16,7 @@
 #include "mozilla/WritingModes.h"
 #include "mozilla/ToString.h"
 #include "nsBidiPresUtils.h"
-#include "nsFrame.h"
+#include "nsIFrame.h"
 #include "nsIFrameInlines.h"
 #include "nsPresArena.h"
 #include "nsPrintfCString.h"
@@ -237,7 +237,7 @@ void nsLineBox::List(FILE* out, const char* aPrefix,
                      nsIFrame::ListFlags aFlags) const {
   nsCString str(aPrefix);
   char cbuf[100];
-  str += nsPrintfCString("line %p: count=%d state=%s ",
+  str += nsPrintfCString("line@%p count=%d state=%s ",
                          static_cast<const void*>(this), GetChildCount(),
                          StateToString(cbuf, sizeof(cbuf)));
   if (IsBlock() && !GetCarriedOutBEndMargin().IsZero()) {
@@ -255,10 +255,10 @@ void nsLineBox::List(FILE* out, const char* aPrefix,
         nsIFrame::ConvertToString(mBounds, mWritingMode, aFlags).c_str());
   }
   if (mData) {
-    const nsRect vo = mData->mOverflowAreas.VisualOverflow();
+    const nsRect vo = mData->mOverflowAreas.InkOverflow();
     const nsRect so = mData->mOverflowAreas.ScrollableOverflow();
     if (!vo.IsEqualEdges(bounds) || !so.IsEqualEdges(bounds)) {
-      str += nsPrintfCString("vis-overflow=%s scr-overflow=%s ",
+      str += nsPrintfCString("ink-overflow=%s scr-overflow=%s ",
                              nsIFrame::ConvertToString(vo, aFlags).c_str(),
                              nsIFrame::ConvertToString(so, aFlags).c_str());
     }
@@ -536,7 +536,7 @@ void nsLineBox::SetOverflowAreas(const nsOverflowAreas& aOverflowAreas) {
                  "illegal height for combined area");
   }
   nsRect bounds = GetPhysicalBounds();
-  if (!aOverflowAreas.VisualOverflow().IsEqualInterior(bounds) ||
+  if (!aOverflowAreas.InkOverflow().IsEqualInterior(bounds) ||
       !aOverflowAreas.ScrollableOverflow().IsEqualEdges(bounds)) {
     if (!mData) {
       if (IsInline()) {
@@ -607,24 +607,17 @@ int32_t nsLineIterator::GetNumLines() const { return mNumLines; }
 
 bool nsLineIterator::GetDirection() { return mRightToLeft; }
 
-NS_IMETHODIMP
-nsLineIterator::GetLine(int32_t aLineNumber, nsIFrame** aFirstFrameOnLine,
-                        int32_t* aNumFramesOnLine, nsRect& aLineBounds) const {
-  NS_ENSURE_ARG_POINTER(aFirstFrameOnLine);
-  NS_ENSURE_ARG_POINTER(aNumFramesOnLine);
-
+Result<nsILineIterator::LineInfo, nsresult> nsLineIterator::GetLine(
+    int32_t aLineNumber) const {
   if ((aLineNumber < 0) || (aLineNumber >= mNumLines)) {
-    *aFirstFrameOnLine = nullptr;
-    *aNumFramesOnLine = 0;
-    aLineBounds.SetRect(0, 0, 0, 0);
-    return NS_OK;
+    return Err(NS_ERROR_FAILURE);
   }
+  LineInfo structure;
   nsLineBox* line = mLines[aLineNumber];
-  *aFirstFrameOnLine = line->mFirstChild;
-  *aNumFramesOnLine = line->GetChildCount();
-  aLineBounds = line->GetPhysicalBounds();
-
-  return NS_OK;
+  structure.mFirstFrameOnLine = line->mFirstChild;
+  structure.mNumFramesOnLine = line->GetChildCount();
+  structure.mLineBounds = line->GetPhysicalBounds();
+  return structure;
 }
 
 int32_t nsLineIterator::FindLineContaining(nsIFrame* aFrame,

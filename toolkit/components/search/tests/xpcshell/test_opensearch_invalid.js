@@ -9,7 +9,7 @@ const mockPrompter = {
   alert() {
     this.promptCount++;
   },
-  QueryInterface: ChromeUtils.generateQI([Ci.nsIPrompt]),
+  QueryInterface: ChromeUtils.generateQI(["nsIPrompt"]),
 };
 
 add_task(async function setup() {
@@ -20,7 +20,7 @@ add_task(async function setup() {
   // Mock the modal error dialog
   let windowWatcher = {
     getNewPrompter: () => mockPrompter,
-    QueryInterface: ChromeUtils.generateQI([Ci.nsIWindowWatcher]),
+    QueryInterface: ChromeUtils.generateQI(["nsIWindowWatcher"]),
   };
   let origWindowWatcher = Services.ww;
   Services.ww = windowWatcher;
@@ -32,10 +32,9 @@ add_task(async function setup() {
 add_task(async function test_invalid_engine_from_dir() {
   console.log(gDataUrl + "data/invalid-engine.xml");
   await Assert.rejects(
-    Services.search.addEngine(
+    Services.search.addOpenSearchEngine(
       gDataUrl + "data/invalid-engine.xml",
-      null,
-      false
+      null
     ),
     error => {
       Assert.ok(error.result == Ci.nsISearchService.ERROR_UNKNOWN_FAILURE);

@@ -149,9 +149,6 @@ static mozilla::LazyLogModule gPrintingLog("printing");
 //-----------------------------------------------------
 
 class nsDocumentViewer;
-namespace mozilla {
-class AutoPrintEventDispatcher;
-}
 
 // a small delegate class used to avoid circular references
 
@@ -467,7 +464,6 @@ class nsDocumentViewer final : public nsIContentViewer,
   nsCOMPtr<nsIWebProgressListener> mCachedPrintWebProgressListner;
 
   RefPtr<nsPrintJob> mPrintJob;
-  UniquePtr<AutoPrintEventDispatcher> mAutoBeforeAndAfterPrint;
 #  endif  // NS_PRINT_PREVIEW
 
 #endif  // NS_PRINTING
@@ -475,58 +471,11 @@ class nsDocumentViewer final : public nsIContentViewer,
   /* character set member data */
   int32_t mHintCharsetSource;
   const Encoding* mHintCharset;
-  const Encoding* mForceCharacterSet;
 
   bool mIsPageMode;
   bool mInitializedForPrintPreview;
   bool mHidden;
 };
-
-namespace mozilla {
-
-/**
- * A RAII class for automatic dispatch of the 'beforeprint' and 'afterprint'
- * events ('beforeprint' on construction, 'afterprint' on destruction).
- *
- * https://developer.mozilla.org/en-US/docs/Web/Events/beforeprint
- * https://developer.mozilla.org/en-US/docs/Web/Events/afterprint
- */
-class AutoPrintEventDispatcher {
- public:
-  explicit AutoPrintEventDispatcher(Document* aTop) : mTop(aTop) {
-    DispatchEventToWindowTree(NS_LITERAL_STRING("beforeprint"));
-  }
-  ~AutoPrintEventDispatcher() {
-    DispatchEventToWindowTree(NS_LITERAL_STRING("afterprint"));
-  }
-
- private:
-  static CallState CollectDocuments(Document& aDoc,
-                                    nsTArray<nsCOMPtr<Document>>& aDocs) {
-    aDocs.AppendElement(&aDoc);
-    auto recurse = [&aDocs](Document& aSubDoc) {
-      return CollectDocuments(aSubDoc, aDocs);
-    };
-    aDoc.EnumerateSubDocuments(recurse);
-    return CallState::Continue;
-  }
-
-  void DispatchEventToWindowTree(const nsAString& aEvent) {
-    nsTArray<nsCOMPtr<Document>> targets;
-    if (mTop) {
-      CollectDocuments(*mTop, targets);
-    }
-    for (nsCOMPtr<Document>& doc : targets) {
-      nsContentUtils::DispatchTrustedEvent(doc, doc->GetWindow(), aEvent,
-                                           CanBubble::eNo, Cancelable::eNo,
-                                           nullptr);
-    }
-  }
-
-  nsCOMPtr<Document> mTop;
-};
-
-}  // namespace mozilla
 
 class nsDocumentShownDispatcher : public Runnable {
  public:
@@ -593,7 +542,6 @@ nsDocumentViewer::nsDocumentViewer()
 #endif    // NS_PRINTING
       mHintCharsetSource(kCharsetUninitialized),
       mHintCharset(nullptr),
-      mForceCharacterSet(nullptr),
       mIsPageMode(false),
       mInitializedForPrintPreview(false),
       mHidden(false) {
@@ -668,10 +616,8 @@ void nsDocumentViewer::RemoveFocusListener() {
           std::move(mFocusListener)) {
     oldListener->Disconnect();
     if (mDocument) {
-      mDocument->RemoveEventListener(NS_LITERAL_STRING("focus"), oldListener,
-                                     false);
-      mDocument->RemoveEventListener(NS_LITERAL_STRING("blur"), oldListener,
-                                     false);
+      mDocument->RemoveEventListener(u"focus"_ns, oldListener, false);
+      mDocument->RemoveEventListener(u"blur"_ns, oldListener, false);
     }
   }
 }
@@ -680,10 +626,8 @@ void nsDocumentViewer::ReinitializeFocusListener() {
   RemoveFocusListener();
   mFocusListener = new nsDocViewerFocusListener(this);
   if (mDocument) {
-    mDocument->AddEventListener(NS_LITERAL_STRING("focus"), mFocusListener,
-                                false, false);
-    mDocument->AddEventListener(NS_LITERAL_STRING("blur"), mFocusListener,
-                                false, false);
+    mDocument->AddEventListener(u"focus"_ns, mFocusListener, false, false);
+    mDocument->AddEventListener(u"blur"_ns, mFocusListener, false, false);
   }
 }
 
@@ -1279,7 +1223,7 @@ nsresult nsDocumentViewer::PermitUnloadInternal(uint32_t* aPermitUnloadFlags,
   nsPresContext* presContext = mDocument->GetPresContext();
   RefPtr<BeforeUnloadEvent> event =
       new BeforeUnloadEvent(mDocument, presContext, nullptr);
-  event->InitEvent(NS_LITERAL_STRING("beforeunload"), false, true);
+  event->InitEvent(u"beforeunload"_ns, false, true);
 
   // Dispatching to |window|, but using |document| as the target.
   event->SetTarget(mDocument);
@@ -1665,8 +1609,6 @@ nsDocumentViewer::Destroy() {
       return NS_OK;
     }
   }
-  // Dispatch the 'afterprint' event now, if pending:
-  mAutoBeforeAndAfterPrint = nullptr;
 #endif
 
   // We want to make sure to disconnect mBFCachePreventionObserver before we
@@ -1749,7 +1691,8 @@ nsDocumentViewer::Destroy() {
     // and shEntry has no window state at this point we'll be ok; we just won't
     // cache ourselves.
     shEntry->SyncPresentationState();
-    shEntry->SynchronizeLayoutHistoryState();
+    // XXX Synchronize layout history state to parent once bfcache is supported
+    //     in session-history-in-parent.
 
     // Shut down accessibility for the document before we start to tear it down.
 #ifdef ACCESSIBILITY
@@ -2763,46 +2706,6 @@ void nsDocumentViewer::EmulatePrefersColorSchemeInternal(
   PropagateToPresContextsHelper(childFn, presContextFn);
 }
 
-NS_IMETHODIMP nsDocumentViewer::GetForceCharacterSet(
-    nsACString& aForceCharacterSet) {
-  auto encoding = nsDocumentViewer::GetForceCharset();
-  if (encoding) {
-    encoding->Name(aForceCharacterSet);
-  } else {
-    aForceCharacterSet.Truncate();
-  }
-  return NS_OK;
-}
-
-/* [noscript,notxpcom] Encoding getForceCharset (); */
-NS_IMETHODIMP_(const Encoding*)
-nsDocumentViewer::GetForceCharset() { return mForceCharacterSet; }
-
-NS_IMETHODIMP
-nsDocumentViewer::SetForceCharacterSet(const nsACString& aForceCharacterSet) {
-  // The empty string means no hint.
-  const Encoding* encoding = nullptr;
-  if (!aForceCharacterSet.IsEmpty()) {
-    if (!(encoding = Encoding::ForLabel(aForceCharacterSet))) {
-      // Reject unknown labels
-      return NS_ERROR_INVALID_ARG;
-    }
-  }
-  nsDocumentViewer::SetForceCharset(encoding);
-  return NS_OK;
-}
-
-/* [noscript,notxpcom] void setForceCharset (in Encoding aEncoding); */
-NS_IMETHODIMP_(void)
-nsDocumentViewer::SetForceCharset(const Encoding* aEncoding) {
-  mForceCharacterSet = aEncoding;
-  auto childFn = [aEncoding](nsDocumentViewer* aChild) {
-    aChild->SetForceCharset(aEncoding);
-  };
-  // now set the force char set on all children of mContainer
-  CallChildren(childFn);
-}
-
 NS_IMETHODIMP nsDocumentViewer::GetHintCharacterSet(
     nsACString& aHintCharacterSet) {
   auto encoding = nsDocumentViewer::GetHintCharset();
@@ -3151,7 +3054,7 @@ NS_IMETHODIMP nsDocViewerSelectionListener::NotifySelectionChanged(
   // might need another update string for simple selection changes, but that
   // would be expenseive.
   if (mSelectionWasCollapsed != selectionCollapsed) {
-    domWindow->UpdateCommands(NS_LITERAL_STRING("select"), selection, aReason);
+    domWindow->UpdateCommands(u"select"_ns, selection, aReason);
     mSelectionWasCollapsed = selectionCollapsed;
   }
 
@@ -3232,41 +3135,20 @@ nsDocumentViewer::Print(nsIPrintSettings* aPrintSettings,
     return NS_ERROR_FAILURE;
   }
 
-  nsresult rv;
-
-  // if we are printing another URL, then exit
-  // the reason we check here is because this method can be called while
-  // another is still in here (the printing dialog is a good example).
-  // the only time we can print more than one job at a time is the regression
-  // tests
-  if (GetIsPrinting()) {
-    // Let the user know we are not ready to print.
-    rv = NS_ERROR_NOT_AVAILABLE;
-
-    if (mPrintJob) {
-      mPrintJob->FirePrintingErrorEvent(rv);
-    }
-
-    return rv;
-  }
-
-  // Dispatch 'beforeprint' event and ensure 'afterprint' will be dispatched:
-  MOZ_ASSERT(!mAutoBeforeAndAfterPrint,
-             "We don't want to dispatch nested beforeprint/afterprint");
-  auto autoBeforeAndAfterPrint =
-      MakeUnique<AutoPrintEventDispatcher>(mDocument);
-  NS_ENSURE_STATE(!GetIsPrinting());
   // If we are hosting a full-page plugin, tell it to print
   // first. It shows its own native print UI.
   nsCOMPtr<nsIPluginDocument> pDoc(do_QueryInterface(mDocument));
-  if (pDoc) return pDoc->Print();
+  if (pDoc) {
+    return pDoc->Print();
+  }
+
+  nsresult rv;
 
   // Our call to nsPrintJob::Print() may cause mPrintJob to be
   // Release()'d in Destroy().  Therefore, we need to grab the instance with
   // a local variable, so that it won't be deleted during its own method.
   RefPtr<nsPrintJob> printJob = mPrintJob;
   if (!printJob) {
-    NS_ENSURE_STATE(mDeviceContext);
     printJob = new nsPrintJob();
 
     rv = printJob->Initialize(this, mContainer, mDocument,
@@ -3277,12 +3159,17 @@ nsDocumentViewer::Print(nsIPrintSettings* aPrintSettings,
       return rv;
     }
     mPrintJob = printJob;
+  } else if (printJob->GetIsPrinting()) {
+    // if we are printing another URL, then exit
+    // the reason we check here is because this method can be called while
+    // another is still in here (the printing dialog is a good example).
+    // the only time we can print more than one job at a time is the regression
+    // tests
+    rv = NS_ERROR_NOT_AVAILABLE;
+    printJob->FirePrintingErrorEvent(rv);
+    return rv;
   }
-  if (printJob->HasPrintCallbackCanvas()) {
-    // Postpone the 'afterprint' event until after the mozPrintCallback
-    // callbacks have been called:
-    mAutoBeforeAndAfterPrint = std::move(autoBeforeAndAfterPrint);
-  }
+
   rv = printJob->Print(mDocument, aPrintSettings, aWebProgressListener);
   if (NS_FAILED(rv)) {
     OnDonePrinting();
@@ -3318,18 +3205,6 @@ nsDocumentViewer::PrintPreview(nsIPrintSettings* aPrintSettings,
   nsCOMPtr<Document> doc = window->GetDoc();
   NS_ENSURE_STATE(doc);
 
-  // Dispatch 'beforeprint' event and ensure 'afterprint' will be dispatched:
-  // XXX Currently[1] when the user switches between portrait and landscape
-  // mode in print preview, we re-enter this function before
-  // mAutoBeforeAndAfterPrint (if set) is cleared to dispatch the 'afterprint'
-  // event.  To avoid sending multiple 'beforeprint'/'afterprint' events we
-  // must avoid creating a new AutoPrintEventDispatcher object here if we
-  // already have one saved in mAutoBeforeAndAfterPrint.
-  // [1] Until PDF.js is removed (though, maybe after that as well).
-  UniquePtr<AutoPrintEventDispatcher> autoBeforeAndAfterPrint;
-  if (!mAutoBeforeAndAfterPrint) {
-    autoBeforeAndAfterPrint = MakeUnique<AutoPrintEventDispatcher>(doc);
-  }
   NS_ENSURE_STATE(!GetIsPrinting());
   // beforeprint event may have caused ContentViewer to be shutdown.
   NS_ENSURE_STATE(mContainer);
@@ -3352,11 +3227,6 @@ nsDocumentViewer::PrintPreview(nsIPrintSettings* aPrintSettings,
     mPrintJob = printJob;
 
     Telemetry::ScalarAdd(Telemetry::ScalarID::PRINTING_PREVIEW_OPENED, 1);
-  }
-  if (autoBeforeAndAfterPrint && printJob->HasPrintCallbackCanvas()) {
-    // Postpone the 'afterprint' event until after the mozPrintCallback
-    // callbacks have been called:
-    mAutoBeforeAndAfterPrint = std::move(autoBeforeAndAfterPrint);
   }
   rv = printJob->PrintPreview(doc, aPrintSettings, aWebProgressListener);
   if (NS_FAILED(rv)) {
@@ -3387,9 +3257,8 @@ nsDocumentViewer::PrintPreviewScrollToPage(int16_t aType, int32_t aPageNum) {
   }
 
   // in PP mPrtPreview->mPrintObject->mSeqFrame is null
-  nsIFrame* seqFrame = nullptr;
-  int32_t pageCount = 0;
-  if (NS_FAILED(mPrintJob->GetSeqFrameAndCountPages(seqFrame, pageCount))) {
+  auto [seqFrame, pageCount] = mPrintJob->GetSeqFrameAndCountPages();
+  if (!seqFrame) {
     return NS_ERROR_FAILURE;
   }
 
@@ -3445,17 +3314,11 @@ nsDocumentViewer::PrintPreviewScrollToPage(int16_t aType, int32_t aPageNum) {
   }
 
   if (fndPageFrame) {
-    nscoord newYPosn = nscoord(mPrintJob->GetPrintPreviewScale() *
+    nscoord newYPosn = nscoord(seqFrame->GetPrintPreviewScale() *
                                fndPageFrame->GetPosition().y);
     sf->ScrollTo(nsPoint(pt.x, newYPosn), ScrollMode::Instant);
   }
   return NS_OK;
-}
-
-NS_IMETHODIMP
-nsDocumentViewer::GetGlobalPrintSettings(
-    nsIPrintSettings** aGlobalPrintSettings) {
-  return nsPrintJob::GetGlobalPrintSettings(aGlobalPrintSettings);
 }
 
 // XXX This always returns false for subdocuments
@@ -3692,11 +3555,6 @@ void nsDocumentViewer::SetIsPrinting(bool aIsPrinting) {
   } else {
     NS_WARNING("Did you close a window before printing?");
   }
-
-  if (!aIsPrinting) {
-    // Dispatch the 'afterprint' event now, if pending:
-    mAutoBeforeAndAfterPrint = nullptr;
-  }
 #endif
 }
 
@@ -3722,10 +3580,6 @@ void nsDocumentViewer::SetIsPrintPreview(bool aIsPrintPreview) {
   nsCOMPtr<nsIDocShell> docShell(mContainer);
   if (docShell || !aIsPrintPreview) {
     SetIsPrintingInDocShellTree(docShell, aIsPrintPreview, true);
-  }
-  if (!aIsPrintPreview) {
-    // Dispatch the 'afterprint' event now, if pending:
-    mAutoBeforeAndAfterPrint = nullptr;
   }
 #endif
 

@@ -18,6 +18,13 @@ ChromeUtils.defineModuleGetter(
   "resource://gre/modules/LoginHelper.jsm"
 );
 
+XPCOMUtils.defineLazyServiceGetter(
+  this,
+  "usernameAutocompleteSearch",
+  "@mozilla.org/autocomplete/search;1?name=login-doorhanger-username",
+  "nsIAutoCompleteSimpleSearch"
+);
+
 XPCOMUtils.defineLazyGetter(this, "strBundle", () => {
   return Services.strings.createBundle(
     "chrome://passwordmgr/locale/passwordmgr.properties"
@@ -69,7 +76,7 @@ class LoginManagerPrompter {
   }
 
   get QueryInterface() {
-    return ChromeUtils.generateQI([Ci.nsILoginManagerPrompter]);
+    return ChromeUtils.generateQI(["nsILoginManagerPrompter"]);
   }
 
   /**
@@ -87,7 +94,7 @@ class LoginManagerPrompter {
    * @param {string} [autoSavedLoginGuid = ""]
    *                 A guid value for the old login to be removed if the changes match it
    *                 to a different login
-   * @param {object} possibleValues
+   * @param {object?} possibleValues
    *                 Contains values from anything that we think, but are not sure, might be
    *                 a username or password.  Has two properties, 'usernames' and 'passwords'.
    * @param {Set<String>} possibleValues.usernames
@@ -99,10 +106,7 @@ class LoginManagerPrompter {
     dismissed = false,
     notifySaved = false,
     autoFilledLoginGuid = "",
-    possibleValues = {
-      usernames: new Set(),
-      passwords: new Set(),
-    }
+    possibleValues = undefined
   ) {
     log.debug("promptToSavePassword");
     let inPrivateBrowsing = PrivateBrowsingUtils.isBrowserPrivate(aBrowser);
@@ -114,6 +118,7 @@ class LoginManagerPrompter {
         dismissed: inPrivateBrowsing || dismissed,
         extraAttr: notifySaved ? "attention" : "",
       },
+      possibleValues,
       {
         notifySaved,
         autoFilledLoginGuid,
@@ -144,12 +149,18 @@ class LoginManagerPrompter {
    *        match it to a different login
    * @param {string} [options.autoFilledLoginGuid = ""]
    *        A string guid value for the autofilled login
+   * @param {object?} possibleValues
+   *                 Contains values from anything that we think, but are not sure, might be
+   *                 a username or password.  Has two properties, 'usernames' and 'passwords'.
+   * @param {Set<String>} possibleValues.usernames
+   * @param {Set<String>} possibleValues.passwords
    */
   static _showLoginCaptureDoorhanger(
     browser,
     login,
     type,
     showOptions = {},
+    possibleValues = undefined,
     {
       notifySaved = false,
       messageStringID,
@@ -267,6 +278,7 @@ class LoginManagerPrompter {
       let nameField = chromeDoc.getElementById(
         "password-notification-username"
       );
+
       nameField.placeholder = usernamePlaceholder;
       nameField.value = login.username;
 
@@ -280,6 +292,7 @@ class LoginManagerPrompter {
       // Ensure the type is reset so the field is masked.
       passwordField.type = "password";
       passwordField.value = login.password;
+
       updateButtonLabel();
     };
 
@@ -329,6 +342,12 @@ class LoginManagerPrompter {
       }
       passwordField.selectionStart = selectionStart;
       passwordField.selectionEnd = selectionEnd;
+    };
+
+    let togglePopup = event => {
+      event.target.parentElement
+        .getElementsByClassName("ac-has-end-icon")[0]
+        .toggleHistoryPopup();
     };
 
     let persistData = () => {
@@ -603,6 +622,32 @@ class LoginManagerPrompter {
               chromeDoc
                 .getElementById("password-notification-password")
                 .addEventListener("input", onPasswordInput);
+              chromeDoc
+                .getElementById("password-notification-username-dropmarker")
+                .addEventListener("click", togglePopup);
+
+              LoginManagerPrompter._getUsernameSuggestions(
+                login,
+                possibleValues?.usernames
+              ).then(usernameSuggestions => {
+                let dropmarker = chromeDoc?.getElementById(
+                  "password-notification-username-dropmarker"
+                );
+                if (dropmarker) {
+                  dropmarker.hidden = !usernameSuggestions.length;
+                }
+
+                let usernameField = chromeDoc?.getElementById(
+                  "password-notification-username"
+                );
+                if (usernameField) {
+                  usernameField.classList.toggle(
+                    "ac-has-end-icon",
+                    !!usernameSuggestions.length
+                  );
+                }
+              });
+
               let toggleBtn = chromeDoc.getElementById(
                 "password-notification-visibilityToggle"
               );
@@ -631,6 +676,12 @@ class LoginManagerPrompter {
                       Date.now() - VISIBILITY_TOGGLE_MAX_PW_AGE_MS);
                 toggleBtn.setAttribute("hidden", hideToggle);
               }
+
+              LoginManagerPrompter._setUsernameAutocomplete(
+                login,
+                possibleValues?.usernames
+              );
+
               break;
             case "shown": {
               log.debug("shown");
@@ -663,6 +714,9 @@ class LoginManagerPrompter {
               passwordField.removeEventListener("input", onPasswordInput);
               passwordField.removeEventListener("keyup", onKeyUp);
               passwordField.removeEventListener("command", onVisibilityToggle);
+              chromeDoc
+                .getElementById("password-notification-username-dropmarker")
+                .removeEventListener("click", togglePopup);
               break;
             }
           }
@@ -707,7 +761,7 @@ class LoginManagerPrompter {
    * @param {string} [autoSavedLoginGuid = ""]
    *                 A guid value for the old login to be removed if the changes match it
    *                 to a different login
-   * @param {object} possibleValues
+   * @param {object?} possibleValues
    *                 Contains values from anything that we think, but are not sure, might be
    *                 a username or password.  Has two properties, 'usernames' and 'passwords'.
    * @param {Set<String>} possibleValues.usernames
@@ -721,10 +775,7 @@ class LoginManagerPrompter {
     notifySaved = false,
     autoSavedLoginGuid = "",
     autoFilledLoginGuid = "",
-    possibleValues = {
-      usernames: new Set(),
-      passwords: new Set(),
-    }
+    possibleValues = undefined
   ) {
     let login = aOldLogin.clone();
     login.origin = aNewLogin.origin;
@@ -752,6 +803,7 @@ class LoginManagerPrompter {
         dismissed,
         extraAttr: notifySaved ? "attention" : "",
       },
+      possibleValues,
       {
         notifySaved,
         messageStringID,
@@ -917,6 +969,79 @@ class LoginManagerPrompter {
         (l.password == aLogin.password && !l.username) ||
         (includeGUID && includeGUID == l.guid)
     );
+  }
+
+  /**
+   * Set the values that will be used the next time the username autocomplete popup is opened.
+   *
+   * @param {nsILoginInfo} login - used only for its information about the current domain.
+   * @param {Set<String>?} possibleUsernames - values that we believe may be new/changed login usernames.
+   */
+  static async _setUsernameAutocomplete(login, possibleUsernames = new Set()) {
+    let result = Cc["@mozilla.org/autocomplete/simple-result;1"].createInstance(
+      Ci.nsIAutoCompleteSimpleResult
+    );
+    result.setDefaultIndex(0);
+
+    let usernames = await this._getUsernameSuggestions(
+      login,
+      possibleUsernames
+    );
+    for (let { text, style } of usernames) {
+      let value = text;
+      let comment = "";
+      let image = "";
+      let _style = style;
+      result.appendMatch(value, comment, image, _style);
+    }
+
+    if (usernames.length) {
+      result.setSearchResult(Ci.nsIAutoCompleteResult.RESULT_SUCCESS);
+    } else {
+      result.setSearchResult(Ci.nsIAutoCompleteResult.RESULT_NOMATCH);
+    }
+
+    usernameAutocompleteSearch.overrideNextResult(result);
+  }
+
+  /**
+   * @param {nsILoginInfo} login - used only for its information about the current domain.
+   * @param {Set<String>?} possibleUsernames - values that we believe may be new/changed login usernames.
+   *
+   * @returns {object[]} an ordered list of usernames to be used the next time the username autocomplete popup is opened.
+   */
+  static async _getUsernameSuggestions(login, possibleUsernames = new Set()) {
+    if (!Services.prefs.getBoolPref("signon.capture.inputChanges.enabled")) {
+      return [];
+    }
+
+    let baseDomainLogins = await Services.logins.searchLoginsAsync({
+      origin: login.origin,
+      schemeUpgrades: LoginHelper.schemeUpgrades,
+      acceptDifferentSubdomains: true,
+    });
+
+    let saved = baseDomainLogins.map(login => {
+      return { text: login.username, style: "login" };
+    });
+    let possible = [...possibleUsernames].map(username => {
+      return { text: username, style: "possible-username" };
+    });
+
+    return possible
+      .concat(saved)
+      .reduce((acc, next) => {
+        let alreadyInAcc =
+          acc.findIndex(entry => entry.text == next.text) != -1;
+        if (!alreadyInAcc) {
+          acc.push(next);
+        } else if (next.style == "possible-username") {
+          let existingIndex = acc.findIndex(entry => entry.text == next.text);
+          acc[existingIndex] = next;
+        }
+        return acc;
+      }, [])
+      .filter(suggestion => !!suggestion.text);
   }
 }
 

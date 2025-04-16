@@ -126,6 +126,9 @@ with Files('ShortcutUtils.jsm'):
 with Files('Sqlite.jsm'):
     BUG_COMPONENT = ('Toolkit', 'Storage')
 
+with Files("SubDialog.jsm"):
+    BUG_COMPONENT = ("Toolkit", "Notifications and Alerts")
+
 with Files('UpdateUtils.jsm'):
     BUG_COMPONENT = ('Toolkit', 'Application Update')
 
@@ -202,7 +205,6 @@ EXTRA_JS_MODULES += [
     'ProfileAge.jsm',
     'Promise-backend.js',
     'Promise.jsm',
-    'PromiseMessage.jsm',
     'PromiseUtils.jsm',
     'Region.jsm',
     'RemotePageAccessManager.jsm',
@@ -212,6 +214,7 @@ EXTRA_JS_MODULES += [
     'Services.jsm',
     'ShortcutUtils.jsm',
     'Sqlite.jsm',
+    'SubDialog.jsm',
     'Timer.jsm',
     'Troubleshoot.jsm',
     'UpdateUtils.jsm',
@@ -299,6 +302,7 @@ DEFINES['TOPOBJDIR'] = TOPOBJDIR
 
 XPIDL_SOURCES += [
     'nsIE10SUtils.idl',
+    'nsIRegion.idl',
 ]
 
 XPIDL_MODULE = 'toolkit_modules'

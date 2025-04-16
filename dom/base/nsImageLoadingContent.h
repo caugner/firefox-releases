@@ -198,14 +198,13 @@ class nsImageLoadingContent : public nsIImageLoadingContent {
   void CancelImageRequests(bool aNotify);
 
   /**
-   * Derived classes of nsImageLoadingContent MUST call
-   * DestroyImageLoadingContent from their destructor, or earlier.  It
-   * does things that cannot be done in ~nsImageLoadingContent because
-   * they rely on being able to QueryInterface to other derived classes,
-   * which cannot happen once the derived class destructor has started
-   * calling the base class destructors.
+   * Derived classes of nsImageLoadingContent MUST call Destroy from their
+   * destructor, or earlier.  It does things that cannot be done in
+   * ~nsImageLoadingContent because they rely on being able to QueryInterface to
+   * other derived classes, which cannot happen once the derived class
+   * destructor has started calling the base class destructors.
    */
-  void DestroyImageLoadingContent();
+  void Destroy();
 
   /**
    * Returns the CORS mode that will be used for all future image loads. The
@@ -373,8 +372,6 @@ class nsImageLoadingContent : public nsIImageLoadingContent {
    */
   nsresult StringToURI(const nsAString& aSpec,
                        mozilla::dom::Document* aDocument, nsIURI** aURI);
-
-  void CreateStaticImageClone(nsImageLoadingContent* aDest) const;
 
   /**
    * Prepare and returns a reference to the "next request". If there's already

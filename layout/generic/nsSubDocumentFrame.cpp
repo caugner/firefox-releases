@@ -618,7 +618,7 @@ void nsSubDocumentFrame::List(FILE* out, const char* aPrefix,
 }
 
 nsresult nsSubDocumentFrame::GetFrameName(nsAString& aResult) const {
-  return MakeFrameName(NS_LITERAL_STRING("FrameOuter"), aResult);
+  return MakeFrameName(u"FrameOuter"_ns, aResult);
 }
 #endif
 
@@ -682,9 +682,9 @@ LogicalSize nsSubDocumentFrame::ComputeAutoSize(
     const LogicalSize& aBorder, const LogicalSize& aPadding,
     ComputeSizeFlags aFlags) {
   if (!IsInline()) {
-    return nsFrame::ComputeAutoSize(aRenderingContext, aWM, aCBSize,
-                                    aAvailableISize, aMargin, aBorder, aPadding,
-                                    aFlags);
+    return nsIFrame::ComputeAutoSize(aRenderingContext, aWM, aCBSize,
+                                     aAvailableISize, aMargin, aBorder,
+                                     aPadding, aFlags);
   }
 
   const WritingMode wm = GetWritingMode();

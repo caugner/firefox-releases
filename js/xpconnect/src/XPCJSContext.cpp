@@ -619,7 +619,8 @@ bool XPCJSContext::InterruptCallback(JSContext* cx) {
   // This is at least the second interrupt callback we've received since
   // returning to the event loop. See how long it's been, and what the limit
   // is.
-  TimeDuration duration = TimeStamp::NowLoRes() - self->mSlowScriptCheckpoint;
+  TimeStamp now = TimeStamp::NowLoRes();
+  TimeDuration duration = now - self->mSlowScriptCheckpoint;
   int32_t limit;
 
   nsString addonId;
@@ -644,13 +645,13 @@ bool XPCJSContext::InterruptCallback(JSContext* cx) {
     return true;
   }
 
+  self->mSlowScriptCheckpoint = now;
   self->mSlowScriptActualWait += duration;
 
   // In order to guard against time changes or laptops going to sleep, we
   // don't trigger the slow script warning until (limit/2) seconds have
   // elapsed twice.
   if (!self->mSlowScriptSecondHalf) {
-    self->mSlowScriptCheckpoint = TimeStamp::NowLoRes();
     self->mSlowScriptSecondHalf = true;
     return true;
   }
@@ -700,8 +701,8 @@ bool XPCJSContext::InterruptCallback(JSContext* cx) {
   }
 
   // Show the prompt to the user, and kill if requested.
-  nsGlobalWindowInner::SlowScriptResponse response =
-      win->ShowSlowScriptDialog(cx, addonId);
+  nsGlobalWindowInner::SlowScriptResponse response = win->ShowSlowScriptDialog(
+      cx, addonId, self->mSlowScriptActualWait.ToMilliseconds());
   if (response == nsGlobalWindowInner::KillSlowScript) {
     if (Preferences::GetBool("dom.global_stop_script", true)) {
       xpc::Scriptability::Get(global).Block();
@@ -735,7 +736,7 @@ bool XPCJSContext::InterruptCallback(JSContext* cx) {
   }
 
   // The user chose to continue the script. Reset the timer, and disable this
-  // machinery with a pref of the user opted out of future slow-script dialogs.
+  // machinery with a pref if the user opted out of future slow-script dialogs.
   if (response != nsGlobalWindowInner::ContinueSlowScriptAndKeepNotifying) {
     self->mSlowScriptCheckpoint = TimeStamp::NowLoRes();
   }
@@ -760,6 +761,7 @@ static mozilla::Atomic<bool> sPropertyErrorMessageFixEnabled(false);
 static mozilla::Atomic<bool> sWeakRefsEnabled(false);
 static mozilla::Atomic<bool> sWeakRefsExposeCleanupSome(false);
 static mozilla::Atomic<bool> sIteratorHelpersEnabled(false);
+static mozilla::Atomic<bool> sPrivateFieldsEnabled(false);
 
 static JS::WeakRefSpecifier GetWeakRefsEnabled() {
   if (!sWeakRefsEnabled) {
@@ -784,7 +786,8 @@ void xpc::SetPrefableRealmOptions(JS::RealmOptions& options) {
           StaticPrefs::javascript_options_writable_streams())
       .setPropertyErrorMessageFixEnabled(sPropertyErrorMessageFixEnabled)
       .setWeakRefsEnabled(GetWeakRefsEnabled())
-      .setIteratorHelpersEnabled(sIteratorHelpersEnabled);
+      .setIteratorHelpersEnabled(sIteratorHelpersEnabled)
+      .setPrivateClassFieldsEnabled(sPrivateFieldsEnabled);
 }
 
 static void LoadStartupJSPrefs(XPCJSContext* xpccx) {
@@ -847,7 +850,6 @@ static void LoadStartupJSPrefs(XPCJSContext* xpccx) {
     bool safeMode = false;
     xr->GetInSafeMode(&safeMode);
     if (safeMode) {
-      useBaselineInterp = false;
       useBaselineJit = false;
       useIon = false;
       useJitForTrustedPrincipals = false;
@@ -967,6 +969,8 @@ static void ReloadPrefsCallback(const char* pref, void* aXpccx) {
 #ifdef NIGHTLY_BUILD
   sIteratorHelpersEnabled =
       Preferences::GetBool(JS_OPTIONS_DOT_STR "experimental.iterator_helpers");
+  sPrivateFieldsEnabled =
+      Preferences::GetBool(JS_OPTIONS_DOT_STR "experimental.private_fields");
 #endif
 
 #ifdef JS_GC_ZEAL

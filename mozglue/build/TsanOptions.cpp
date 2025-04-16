@@ -247,10 +247,6 @@ extern "C" const char* __tsan_default_suppressions() {
          // Bug 1615569
          "race:mp_exptmod.max_window_bits\n"
 
-         // Bug 1642906
-         "race:EnsurePerformanceCounter\n"
-         "race:GetPerformanceCounter\n"
-
          // ~GLContextGLX unlocks a libGL mutex that cannot be seen
          // by TSan because libGL is not instrumented.
          "mutex:GLContextGLX::~GLContextGLX\n"
@@ -292,6 +288,33 @@ extern "C" const char* __tsan_default_suppressions() {
          // a thread at the same time it is already finishing.
          // See also bug 1615228 for discussion.
          "race:base::Thread::Stop\n"
+
+         // Likely benign race in webrtc.org code
+         // May be fixed upstream at some point
+         // See bug 1652499
+         "race:Loggable\n"
+         "race:UpdateMinLogSeverity\n"
+
+         // See bug 1652174
+         "race:event_debug_mode_too_late\n"
+
+         // See bug 1651446
+         "race:libavcodec.so*\n"
+         "race:libavutil.so*\n"
+
+         // See bug 1648604
+         "race:system_base_info\n"
+
+         // See bug 1648606
+         "race:sctp_close\n"
+         "race:sctp_iterator_work\n"
+
+         // See bug 1651770
+         "deadlock:mozilla::camera::LockAndDispatch\n"
+
+         // See bug 1653618
+         "race:sctp_handle_tick\n"
+         "race:sctp_handle_sack\n"
 
       // End of suppressions.
       ;  // Please keep this semicolon.

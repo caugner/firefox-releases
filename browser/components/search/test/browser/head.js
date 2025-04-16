@@ -6,6 +6,7 @@ XPCOMUtils.defineLazyModuleGetters(this, {
     "resource://testing-common/CustomizableUITestUtils.jsm",
   PrivateBrowsingUtils: "resource://gre/modules/PrivateBrowsingUtils.jsm",
   SearchUtils: "resource://gre/modules/SearchUtils.jsm",
+  UrlbarSearchUtils: "resource:///modules/UrlbarSearchUtils.jsm",
 });
 
 let gCUITestUtils = new CustomizableUITestUtils(window);
@@ -82,10 +83,9 @@ async function promiseNewEngine(basename, options = {}) {
     options.setAsCurrent == undefined ? true : options.setAsCurrent;
   info("Waiting for engine to be added: " + basename);
   let url = getRootDirectory(options.testPath || gTestPath) + basename;
-  let engine = await Services.search.addEngine(
+  let engine = await Services.search.addOpenSearchEngine(
     url,
-    options.iconURL || "",
-    false
+    options.iconURL || ""
   );
   info("Search engine added: " + basename);
   const current = await Services.search.getDefault();

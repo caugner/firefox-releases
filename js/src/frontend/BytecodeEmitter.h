@@ -21,7 +21,7 @@
 
 #include "jsapi.h"  // CompletionKind
 
-#include "frontend/AbstractScopePtr.h"
+#include "frontend/AbstractScopePtr.h"           // ScopeIndex
 #include "frontend/BCEParserHandle.h"            // BCEParserHandle
 #include "frontend/BytecodeControlStructures.h"  // NestableControl
 #include "frontend/BytecodeOffset.h"             // BytecodeOffset
@@ -48,10 +48,11 @@
 #include "vm/Instrumentation.h"            // InstrumentationKind
 #include "vm/Iteration.h"                  // IteratorKind
 #include "vm/JSFunction.h"                 // JSFunction
-#include "vm/JSScript.h"      // JSScript, BaseScript, FieldInitializers
-#include "vm/Runtime.h"       // ReportOutOfMemory
-#include "vm/StencilEnums.h"  // TryNoteKind
-#include "vm/StringType.h"    // JSAtom
+#include "vm/JSScript.h"       // JSScript, BaseScript, FieldInitializers
+#include "vm/Runtime.h"        // ReportOutOfMemory
+#include "vm/SharedStencil.h"  // GCThingIndex
+#include "vm/StencilEnums.h"   // TryNoteKind
+#include "vm/StringType.h"     // JSAtom
 
 namespace js {
 namespace frontend {
@@ -106,8 +107,8 @@ struct MOZ_STACK_CLASS BytecodeEmitter {
 
   uint32_t maxFixedSlots = 0; /* maximum number of fixed frame slots so far */
 
-  uint32_t bodyScopeIndex =
-      UINT32_MAX; /* index into scopeList of the body scope */
+  // Index into scopeList of the body scope.
+  GCThingIndex bodyScopeIndex = ScopeNote::NoScopeIndex;
 
   EmitterScope* varEmitterScope = nullptr;
   NestableControl* innermostNestableControl = nullptr;
@@ -235,25 +236,28 @@ struct MOZ_STACK_CLASS BytecodeEmitter {
     return perScriptData().gcThingList().firstScope();
   }
   AbstractScopePtr innermostScope() const;
+  ScopeIndex innermostScopeIndex() const;
   AbstractScopePtr bodyScope() const {
     return perScriptData().gcThingList().getScope(bodyScopeIndex);
   }
 
   MOZ_ALWAYS_INLINE
-  MOZ_MUST_USE bool makeAtomIndex(JSAtom* atom, uint32_t* indexp) {
+  MOZ_MUST_USE bool makeAtomIndex(JSAtom* atom, GCThingIndex* indexp) {
     MOZ_ASSERT(perScriptData().atomIndices());
     AtomIndexMap::AddPtr p = perScriptData().atomIndices()->lookupForAdd(atom);
     if (p) {
-      *indexp = p->value();
+      *indexp = GCThingIndex(p->value());
       return true;
     }
 
-    uint32_t index;
+    GCThingIndex index;
     if (!perScriptData().gcThingList().append(atom, &index)) {
       return false;
     }
 
-    if (!perScriptData().atomIndices()->add(p, atom, index)) {
+    // `atomIndices()` uses uint32_t instead of GCThingIndex, because
+    // GCThingIndex isn't trivial type.
+    if (!perScriptData().atomIndices()->add(p, atom, index.index)) {
       ReportOutOfMemory(cx);
       return false;
     }
@@ -447,23 +451,24 @@ struct MOZ_STACK_CLASS BytecodeEmitter {
   MOZ_MUST_USE bool emitGoto(NestableControl* target, JumpList* jumplist,
                              GotoKind kind);
 
-  MOZ_MUST_USE bool emitIndexOp(JSOp op, uint32_t index);
+  MOZ_MUST_USE bool emitGCIndexOp(JSOp op, GCThingIndex index);
 
   MOZ_MUST_USE bool emitAtomOp(
       JSOp op, JSAtom* atom,
       ShouldInstrument shouldInstrument = ShouldInstrument::No);
   MOZ_MUST_USE bool emitAtomOp(
-      JSOp op, uint32_t atomIndex,
+      JSOp op, GCThingIndex atomIndex,
       ShouldInstrument shouldInstrument = ShouldInstrument::No);
 
   MOZ_MUST_USE bool emitArrayLiteral(ListNode* array);
   MOZ_MUST_USE bool emitArray(ParseNode* arrayHead, uint32_t count,
                               bool isInner = false);
 
-  MOZ_MUST_USE bool emitInternedScopeOp(uint32_t index, JSOp op);
-  MOZ_MUST_USE bool emitInternedObjectOp(uint32_t index, JSOp op);
-  MOZ_MUST_USE bool emitObjectPairOp(uint32_t index1, uint32_t index2, JSOp op);
-  MOZ_MUST_USE bool emitRegExp(uint32_t index);
+  MOZ_MUST_USE bool emitInternedScopeOp(GCThingIndex index, JSOp op);
+  MOZ_MUST_USE bool emitInternedObjectOp(GCThingIndex index, JSOp op);
+  MOZ_MUST_USE bool emitObjectPairOp(GCThingIndex index1, GCThingIndex index2,
+                                     JSOp op);
+  MOZ_MUST_USE bool emitRegExp(GCThingIndex index);
 
   MOZ_NEVER_INLINE MOZ_MUST_USE bool emitFunction(
       FunctionNode* funNode, bool needsProto = false,
@@ -531,6 +536,7 @@ struct MOZ_STACK_CLASS BytecodeEmitter {
     return emitGetNameAtLocation(name, lookupName(name));
   }
   MOZ_MUST_USE bool emitGetName(NameNode* name);
+  MOZ_MUST_USE bool emitGetPrivateName(NameNode* name);
 
   MOZ_MUST_USE bool emitTDZCheckIfNeeded(HandleAtom name,
                                          const NameLocation& loc,
@@ -547,7 +553,7 @@ struct MOZ_STACK_CLASS BytecodeEmitter {
 
   MOZ_MUST_USE bool emitPrepareIteratorResult();
   MOZ_MUST_USE bool emitFinishIteratorResult(bool done);
-  MOZ_MUST_USE bool iteratorResultShape(uint32_t* shape);
+  MOZ_MUST_USE bool iteratorResultShape(GCThingIndex* shape);
 
   MOZ_MUST_USE bool emitGetDotGeneratorInInnermostScope() {
     return emitGetDotGeneratorInScope(*innermostEmitterScope());
@@ -686,7 +692,7 @@ struct MOZ_STACK_CLASS BytecodeEmitter {
   MOZ_MUST_USE bool emitInitializer(ParseNode* initializer, ParseNode* pattern);
 
   MOZ_MUST_USE bool emitCallSiteObjectArray(ListNode* cookedOrRaw,
-                                            uint32_t* arrayIndex);
+                                            GCThingIndex* arrayIndex);
   MOZ_MUST_USE bool emitCallSiteObject(CallSiteNode* callSiteObj);
   MOZ_MUST_USE bool emitTemplateString(ListNode* templateString);
   MOZ_MUST_USE bool emitAssignmentOrInit(ParseNodeKind kind, ParseNode* lhs,
@@ -836,7 +842,8 @@ struct MOZ_STACK_CLASS BytecodeEmitter {
            emitInstrumentationSlow(kind, std::function<bool(uint32_t)>());
   }
 
-  MOZ_MUST_USE bool emitInstrumentationForOpcode(JSOp op, uint32_t atomIndex) {
+  MOZ_MUST_USE bool emitInstrumentationForOpcode(JSOp op,
+                                                 GCThingIndex atomIndex) {
     return MOZ_LIKELY(!instrumentationKinds) ||
            emitInstrumentationForOpcodeSlow(op, atomIndex);
   }
@@ -849,7 +856,9 @@ struct MOZ_STACK_CLASS BytecodeEmitter {
       InstrumentationKind kind,
       const std::function<bool(uint32_t)>& pushOperandsCallback);
   MOZ_MUST_USE bool emitInstrumentationForOpcodeSlow(JSOp op,
-                                                     uint32_t atomIndex);
+                                                     GCThingIndex atomIndex);
+
+  MOZ_MUST_USE bool allowSelfHostedIter(ParseNode* parseNode);
 };
 
 class MOZ_RAII AutoCheckUnstableEmitterScope {

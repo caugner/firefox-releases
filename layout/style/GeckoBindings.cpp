@@ -68,6 +68,7 @@
 #include "mozilla/dom/ElementInlines.h"
 #include "mozilla/dom/HTMLTableCellElement.h"
 #include "mozilla/dom/HTMLBodyElement.h"
+#include "mozilla/dom/HTMLSelectElement.h"
 #include "mozilla/dom/HTMLSlotElement.h"
 #include "mozilla/dom/MediaList.h"
 #include "mozilla/dom/SVGElement.h"
@@ -774,6 +775,11 @@ bool Gecko_IsBrowserFrame(const Element* aElement) {
   return browserFrame && browserFrame->GetReallyIsBrowser();
 }
 
+bool Gecko_IsSelectListBox(const Element* aElement) {
+  const auto* select = HTMLSelectElement::FromNode(aElement);
+  return select && !select->IsCombobox();
+}
+
 template <typename Implementor>
 static nsAtom* LangValue(Implementor* aElement) {
   // TODO(emilio): Deduplicate a bit with nsIContent::GetLang().
@@ -1449,7 +1455,7 @@ GeckoFontMetrics Gecko_GetFontMetrics(const nsPresContext* aPresContext,
 
   int32_t d2a = aPresContext->AppUnitsPerDevPixel();
   auto ToLength = [](nscoord aLen) {
-      return Length::FromPixels(CSSPixel::FromAppUnits(aLen));
+    return Length::FromPixels(CSSPixel::FromAppUnits(aLen));
   };
   return {ToLength(NS_round(metrics.xHeight * d2a)),
           ToLength(NS_round(metrics.zeroWidth * d2a))};
@@ -1506,7 +1512,7 @@ static already_AddRefed<StyleSheet> LoadImportSheet(
     // Make a dummy URI if we don't have one because some methods assume
     // non-null URIs.
     if (!uri) {
-      NS_NewURI(getter_AddRefs(uri), NS_LITERAL_CSTRING("about:invalid"));
+      NS_NewURI(getter_AddRefs(uri), "about:invalid"_ns);
     }
     emptySheet->SetURIs(uri, uri, uri);
     emptySheet->SetPrincipal(aURL.ExtraData().Principal());

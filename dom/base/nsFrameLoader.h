@@ -12,28 +12,36 @@
 #ifndef nsFrameLoader_h_
 #define nsFrameLoader_h_
 
-#include "nsDocShell.h"
-#include "nsStringFwd.h"
-#include "nsPoint.h"
-#include "nsSize.h"
-#include "nsWrapperCache.h"
-#include "nsIURI.h"
-#include "nsFrameMessageManager.h"
-#include "mozilla/dom/BindingUtils.h"
-#include "mozilla/dom/BrowsingContext.h"
-#include "mozilla/dom/Element.h"
-#include "mozilla/dom/RemoteBrowser.h"
-#include "mozilla/Attributes.h"
-#include "mozilla/ScrollbarPreferences.h"
-#include "mozilla/layers/LayersTypes.h"
-#include "nsStubMutationObserver.h"
+#include <cstdint>
+#include "ErrorList.h"
 #include "Units.h"
+#include "js/RootingAPI.h"
+#include "mozilla/AlreadyAddRefed.h"
+#include "mozilla/Assertions.h"
+#include "mozilla/Attributes.h"
+#include "mozilla/RefPtr.h"
+#include "mozilla/dom/BrowsingContext.h"
+#include "mozilla/dom/Document.h"
+#include "mozilla/dom/Element.h"
+#include "mozilla/dom/Nullable.h"
+#include "mozilla/dom/Promise.h"
+#include "mozilla/dom/WindowProxyHolder.h"
+#include "mozilla/layers/LayersTypes.h"
+#include "nsCOMPtr.h"
+#include "nsCycleCollectionParticipant.h"
+#include "nsDocShell.h"
+#include "nsFrameMessageManager.h"
+#include "nsID.h"
 #include "nsIFrame.h"
-#include "nsPluginTags.h"
+#include "nsIMutationObserver.h"
+#include "nsISupports.h"
+#include "nsRect.h"
+#include "nsStringFwd.h"
+#include "nsStubMutationObserver.h"
+#include "nsWrapperCache.h"
 
 class nsIURI;
 class nsSubDocumentFrame;
-class nsView;
 class AutoResetInShow;
 class AutoResetInFrameSwap;
 class nsFrameLoaderOwner;
@@ -41,7 +49,6 @@ class nsIRemoteTab;
 class nsIDocShellTreeItem;
 class nsIDocShellTreeOwner;
 class nsILoadContext;
-class nsIMessageSender;
 class nsIPrintSettings;
 class nsIWebBrowserPersistDocumentReceiver;
 class nsIWebProgressListener;
@@ -57,12 +64,11 @@ class ContentParent;
 class TabListener;
 class InProcessBrowserChildMessageManager;
 class MessageSender;
-class PBrowserParent;
 class ProcessMessageManager;
-class Promise;
 class BrowserParent;
 class MutableTabContext;
 class BrowserBridgeChild;
+class RemoteBrowser;
 struct RemotenessOptions;
 
 namespace ipc {
@@ -99,6 +105,8 @@ class nsFrameLoader final : public nsStubMutationObserver,
   typedef mozilla::dom::BrowserParent BrowserParent;
   typedef mozilla::dom::BrowserBridgeChild BrowserBridgeChild;
   typedef mozilla::dom::BrowsingContext BrowsingContext;
+  typedef mozilla::dom::BrowsingContextGroup BrowsingContextGroup;
+  typedef mozilla::dom::Promise Promise;
 
  public:
   // Called by Frame Elements to create a new FrameLoader.
@@ -108,11 +116,9 @@ class nsFrameLoader final : public nsStubMutationObserver,
 
   // Called by nsFrameLoaderOwner::ChangeRemoteness when switching out
   // FrameLoaders.
-  static already_AddRefed<nsFrameLoader> Recreate(Element* aOwner,
-                                                  BrowsingContext* aContext,
-                                                  bool aIsRemote,
-                                                  bool aNetworkCreated,
-                                                  bool aPreserveContext);
+  static already_AddRefed<nsFrameLoader> Recreate(
+      Element* aOwner, BrowsingContext* aContext, BrowsingContextGroup* aGroup,
+      bool aIsRemote, bool aNetworkCreated, bool aPreserveContext);
 
   NS_DECLARE_STATIC_IID_ACCESSOR(NS_FRAMELOADER_IID)
 
@@ -219,9 +225,9 @@ class nsFrameLoader final : public nsStubMutationObserver,
 
   void RequestSHistoryUpdate(bool aImmediately = false);
 
-  void Print(uint64_t aOuterWindowID, nsIPrintSettings* aPrintSettings,
-             nsIWebProgressListener* aProgressListener,
-             mozilla::ErrorResult& aRv);
+  already_AddRefed<Promise> Print(uint64_t aOuterWindowID,
+                                  nsIPrintSettings* aPrintSettings,
+                                  mozilla::ErrorResult& aRv);
 
   void StartPersistence(BrowsingContext* aContext,
                         nsIWebBrowserPersistDocumentReceiver* aRecv,
@@ -399,7 +405,7 @@ class nsFrameLoader final : public nsStubMutationObserver,
   // `TryRemoteBrowser`, and a script blocker must be on the stack.
   //
   // |aContentParent|, if set, must have the remote type |aRemoteType|.
-  void ConfigRemoteProcess(const nsAString& aRemoteType,
+  void ConfigRemoteProcess(const nsACString& aRemoteType,
                            mozilla::dom::ContentParent* aContentParent);
 
   void MaybeNotifyCrashed(mozilla::dom::BrowsingContext* aBrowsingContext,
@@ -516,7 +522,7 @@ class nsFrameLoader final : public nsStubMutationObserver,
 
   RefPtr<mozilla::dom::TabListener> mSessionStoreListener;
 
-  nsString mRemoteType;
+  nsCString mRemoteType;
 
   bool mDepthTooGreat : 1;
   bool mIsTopLevelContent : 1;

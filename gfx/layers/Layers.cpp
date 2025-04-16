@@ -24,6 +24,7 @@
 #include "mozilla/StaticPrefs_layers.h"
 #include "mozilla/Telemetry.h"  // for Accumulate
 #include "mozilla/ToString.h"
+#include "mozilla/dom/Animation.h"              // for dom::Animation
 #include "mozilla/gfx/2D.h"                     // for DrawTarget
 #include "mozilla/gfx/BaseSize.h"               // for BaseSize
 #include "mozilla/gfx/Matrix.h"                 // for Matrix4x4
@@ -167,6 +168,37 @@ void LayerManager::PayloadPresented() {
   RecordCompositionPayloadsPresented(mPayload);
 }
 
+void LayerManager::AddPartialPrerenderedAnimation(
+    uint64_t aCompositorAnimationId, dom::Animation* aAnimation) {
+  mPartialPrerenderedAnimations.Put(aCompositorAnimationId, RefPtr{aAnimation});
+  aAnimation->SetPartialPrerendered(aCompositorAnimationId);
+}
+
+void LayerManager::RemovePartialPrerenderedAnimation(
+    uint64_t aCompositorAnimationId, dom::Animation* aAnimation) {
+  MOZ_ASSERT(aAnimation);
+#ifdef DEBUG
+  RefPtr<dom::Animation> animation;
+  if (mPartialPrerenderedAnimations.Remove(aCompositorAnimationId,
+                                           getter_AddRefs(animation))) {
+    MOZ_ASSERT(aAnimation == animation.get());
+  }
+#else
+  mPartialPrerenderedAnimations.Remove(aCompositorAnimationId);
+#endif
+  aAnimation->ResetPartialPrerendered();
+}
+
+void LayerManager::UpdatePartialPrerenderedAnimations(
+    const nsTArray<uint64_t>& aJankedAnimations) {
+  for (uint64_t id : aJankedAnimations) {
+    RefPtr<dom::Animation> animation;
+    if (mPartialPrerenderedAnimations.Remove(id, getter_AddRefs(animation))) {
+      animation->UpdatePartialPrerendered();
+    }
+  }
+}
+
 //--------------------------------------------------
 // Layer
 
@@ -187,12 +219,13 @@ Layer::Layer(LayerManager* aManager, void* aImplData)
 Layer::~Layer() = default;
 
 void Layer::SetCompositorAnimations(
+    const LayersId& aLayersId,
     const CompositorAnimations& aCompositorAnimations) {
   MOZ_LAYERS_LOG_IF_SHADOWABLE(
       this, ("Layer::Mutated(%p) SetCompositorAnimations with id=%" PRIu64,
              this, mAnimationInfo.GetCompositorAnimationsId()));
 
-  mAnimationInfo.SetCompositorAnimations(aCompositorAnimations);
+  mAnimationInfo.SetCompositorAnimations(aLayersId, aCompositorAnimations);
 
   Mutated();
 }
@@ -1155,6 +1188,7 @@ void ContainerLayer::DefaultComputeEffectiveTransforms(
         checkClipRect = true;
         checkMaskLayers = true;
       } else {
+        contTransform.NudgeToIntegers();
 #ifdef MOZ_GFX_OPTIMIZE_MOBILE
         if (!contTransform.PreservesAxisAlignedRectangles()) {
 #else
@@ -2298,11 +2332,19 @@ void RecordCompositionPayloadsPresented(
     for (const CompositionPayload& payload : aPayloads) {
 #if MOZ_GECKO_PROFILER
       if (profiler_can_accept_markers()) {
-        nsPrintfCString marker(
-            "Payload Presented, type: %d latency: %dms\n",
-            int32_t(payload.mType),
+        MOZ_RELEASE_ASSERT(payload.mType <= kHighestCompositionPayloadType);
+        nsAutoCString name(
+            kCompositionPayloadTypeNames[uint8_t(payload.mType)]);
+        name.AppendLiteral(" Payload Presented");
+        // This doesn't really need to be a text marker. Once we have a version
+        // of profiler_add_marker that accepts both a start time and an end
+        // time, we could use that here.
+        nsPrintfCString text(
+            "Latency: %dms",
             int32_t((presented - payload.mTimeStamp).ToMilliseconds()));
-        PROFILER_ADD_MARKER(marker.get(), GRAPHICS);
+        profiler_add_text_marker(name.get(), text,
+                                 JS::ProfilingCategoryPair::GRAPHICS,
+                                 payload.mTimeStamp, presented);
       }
 #endif
 

@@ -16,6 +16,8 @@ class FakeDevice:
         self._logger = mock.MagicMock()
         self._have_su = True
         self._have_android_su = True
+        self._have_root_shell = True
+        self.is_rooted = True
 
     def clear_logcat(self, *args, **kwargs):
         return True
@@ -60,6 +62,8 @@ def test_android_perf_tuning_rooted(device):
     # on rooted devices correctly
     device._have_su = True
     device._have_android_su = True
+    device._have_root_shell = True
+    device.is_rooted = True
     with mock.patch(
         "mozperftest.system.android_perf_tuner.PerformanceTuner.set_kernel_performance_parameters"
     ) as mockfunc:
@@ -74,6 +78,8 @@ def test_android_perf_tuning_nonrooted(device):
     # on non-rooted devices correctly
     device._have_su = False
     device._have_android_su = False
+    device._have_root_shell = False
+    device.is_rooted = False
     with mock.patch(
         "mozperftest.system.android_perf_tuner.PerformanceTuner.set_kernel_performance_parameters"
     ) as mockfunc:
@@ -127,9 +133,9 @@ def test_android_failure():
 def test_android_apk_alias(device):
     args = {
         "flavor": "mobile-browser",
-        "android-install-apk": ["fenix_fennec_nightly_armeabi_v7a"],
+        "android-install-apk": ["fenix_nightly_armeabi_v7a"],
         "android": True,
-        "android-app-name": "org.mozilla.fennec_aurora",
+        "android-app-name": "org.mozilla.fenix",
         "android-capture-adb": "stdout",
     }
 
@@ -138,7 +144,7 @@ def test_android_apk_alias(device):
     with system as android, silence(system):
         android(metadata)
     # XXX really ?
-    assert device.mock_calls[1][1][0] == "org.mozilla.fennec_aurora"
+    assert device.mock_calls[1][1][0] == "org.mozilla.fenix"
     assert device.mock_calls[2][1][0].endswith("target.apk")
 
 
@@ -199,7 +205,7 @@ def test_android_log_cat(device):
 
         mach_cmd, metadata, env = get_running_env(**args)
         system = env.layers[SYSTEM]
-        andro = system.layers[0]
+        andro = system.layers[1]
 
         with system as layer, silence(system):
             andro.device = device

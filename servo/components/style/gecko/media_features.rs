@@ -247,13 +247,12 @@ fn eval_color_index(
 
 /// https://drafts.csswg.org/mediaqueries-4/#monochrome
 fn eval_monochrome(
-    _: &Device,
+    device: &Device,
     query_value: Option<u32>,
     range_or_operator: Option<RangeOrOperator>,
 ) -> bool {
     // For color devices we should return 0.
-    // FIXME: On a monochrome device, return the actual color depth, not 0!
-    let depth = 0;
+    let depth = unsafe { bindings::Gecko_MediaFeatures_GetMonochromeBitsPerPixel(device.document()) };
     RangeOrOperator::evaluate(range_or_operator, query_value, depth)
 }
 
@@ -305,6 +304,53 @@ fn eval_prefers_reduced_motion(device: &Device, query_value: Option<PrefersReduc
     match query_value {
         PrefersReducedMotion::NoPreference => !prefers_reduced,
         PrefersReducedMotion::Reduce => prefers_reduced,
+    }
+}
+
+/// Possible values for prefers-contrast media query.
+/// https://drafts.csswg.org/mediaqueries-5/#prefers-contrast
+#[derive(Clone, Copy, Debug, FromPrimitive, PartialEq, Parse, ToCss)]
+#[repr(u8)]
+#[allow(missing_docs)]
+enum PrefersContrast {
+    High,
+    Low,
+    NoPreference,
+    Forced,
+}
+
+/// Represents the parts of prefers-contrast that explicitly deal with
+/// contrast. Used in combination with information about rather or not
+/// forced colors are active this allows for evaluation of the
+/// prefers-contrast media query.
+#[derive(Clone, Copy, Debug, FromPrimitive, PartialEq)]
+#[repr(u8)]
+pub enum ContrastPref {
+    /// High contrast is prefered. Corresponds to an accessibility theme
+    /// being enabled or firefox forcing high contrast colors.
+    High,
+    /// Low contrast is prefered. Corresponds to the
+    /// browser.display.prefers_low_contrast pref being true.
+    Low,
+    /// The default value if neither high or low contrast is enabled.
+    NoPreference,
+}
+
+/// https://drafts.csswg.org/mediaqueries-5/#prefers-contrast
+fn eval_prefers_contrast(device: &Device, query_value: Option<PrefersContrast>) -> bool {
+    let forced_colors = !device.use_document_colors();
+    let contrast_pref =
+        unsafe { bindings::Gecko_MediaFeatures_PrefersContrast(device.document(), forced_colors) };
+    if let Some(query_value) = query_value {
+        match query_value {
+            PrefersContrast::Forced => forced_colors,
+            PrefersContrast::High => contrast_pref == ContrastPref::High,
+            PrefersContrast::Low => contrast_pref == ContrastPref::Low,
+            PrefersContrast::NoPreference => contrast_pref == ContrastPref::NoPreference,
+        }
+    } else {
+        // Only prefers-contrast: no-preference evaluates to false.
+        forced_colors || (contrast_pref != ContrastPref::NoPreference)
     }
 }
 
@@ -548,7 +594,7 @@ macro_rules! system_metric_feature {
 /// to support new types in these entries and (2) ensuring that either
 /// nsPresContext::MediaFeatureValuesChanged is called when the value that
 /// would be returned by the evaluator function could change.
-pub static MEDIA_FEATURES: [MediaFeatureDescription; 53] = [
+pub static MEDIA_FEATURES: [MediaFeatureDescription; 54] = [
     feature!(
         atom!("width"),
         AllowsRanges::Yes,
@@ -664,6 +710,17 @@ pub static MEDIA_FEATURES: [MediaFeatureDescription; 53] = [
         atom!("prefers-reduced-motion"),
         AllowsRanges::No,
         keyword_evaluator!(eval_prefers_reduced_motion, PrefersReducedMotion),
+        ParsingRequirements::empty(),
+    ),
+    feature!(
+        atom!("prefers-contrast"),
+        AllowsRanges::No,
+        keyword_evaluator!(eval_prefers_contrast, PrefersContrast),
+        // Note: by default this is only enabled in browser chrome and
+        // ua. It can be enabled on the web via the
+        // layout.css.prefers-contrast.enabled preference. See
+        // disabed_by_pref in media_feature_expression.rs for how that
+        // is done.
         ParsingRequirements::empty(),
     ),
     feature!(

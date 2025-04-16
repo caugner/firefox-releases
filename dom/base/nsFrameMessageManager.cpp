@@ -152,7 +152,7 @@ NS_INTERFACE_MAP_END
 NS_IMPL_CYCLE_COLLECTING_ADDREF(nsFrameMessageManager)
 NS_IMPL_CYCLE_COLLECTING_RELEASE(nsFrameMessageManager)
 
-void MessageManagerCallback::DoGetRemoteType(nsAString& aRemoteType,
+void MessageManagerCallback::DoGetRemoteType(nsACString& aRemoteType,
                                              ErrorResult& aError) const {
   aRemoteType.Truncate();
   mozilla::dom::ProcessMessageManager* parent = GetProcessMessageManager();
@@ -391,12 +391,12 @@ bool nsFrameMessageManager::GetParamsForMessage(JSContext* aCx,
     nsJSUtils::GetCallingLocation(aCx, filename, &lineno, &column);
     nsCOMPtr<nsIScriptError> error(
         do_CreateInstance(NS_SCRIPTERROR_CONTRACTID));
-    error->Init(NS_LITERAL_STRING("Sending message that cannot be cloned. Are "
-                                  "you trying to send an XPCOM object?"),
-                filename, EmptyString(), lineno, column,
-                nsIScriptError::warningFlag, "chrome javascript",
-                false /* from private window */,
-                true /* from chrome context */);
+    error->Init(
+        u"Sending message that cannot be cloned. Are "
+        "you trying to send an XPCOM object?"_ns,
+        filename, EmptyString(), lineno, column, nsIScriptError::warningFlag,
+        "chrome javascript", false /* from private window */,
+        true /* from chrome context */);
     console->LogMessage(error);
   }
 
@@ -742,9 +742,10 @@ void nsFrameMessageManager::ReceiveMessage(
         data->Write(cx, rval, aError);
         if (NS_WARN_IF(aError.Failed())) {
           aRetVal->RemoveLastElement();
-          nsString msg = aMessage + NS_LITERAL_STRING(
-                                        ": message reply cannot be cloned. Are "
-                                        "you trying to send an XPCOM object?");
+          nsString msg =
+              aMessage + nsLiteralString(
+                             u": message reply cannot be cloned. Are "
+                             "you trying to send an XPCOM object?");
 
           nsCOMPtr<nsIConsoleService> console(
               do_GetService(NS_CONSOLESERVICE_CONTRACTID));
@@ -809,13 +810,10 @@ void nsFrameMessageManager::SetCallback(MessageManagerCallback* aCallback) {
 
 void nsFrameMessageManager::Close() {
   if (!mClosed) {
-    nsContentUtils::AddScriptRunner(NS_NewRunnableFunction(
-        "nsFrameMessageManager::Close", [self = nsCOMPtr<nsISupports>(this)]() {
-          if (nsCOMPtr<nsIObserverService> obs =
-                  mozilla::services::GetObserverService()) {
-            obs->NotifyObservers(self, "message-manager-close", nullptr);
-          }
-        }));
+    if (nsCOMPtr<nsIObserverService> obs =
+            mozilla::services::GetObserverService()) {
+      obs->NotifyWhenScriptSafe(this, "message-manager-close", nullptr);
+    }
   }
   mClosed = true;
   mCallback = nullptr;
@@ -827,14 +825,10 @@ void nsFrameMessageManager::Disconnect(bool aRemoveFromParent) {
   Close();
 
   if (!mDisconnected) {
-    nsContentUtils::AddScriptRunner(NS_NewRunnableFunction(
-        "nsFrameMessageManager::Disconnect",
-        [self = nsCOMPtr<nsISupports>(this)]() {
-          if (nsCOMPtr<nsIObserverService> obs =
-                  mozilla::services::GetObserverService()) {
-            obs->NotifyObservers(self, "message-manager-disconnect", nullptr);
-          }
-        }));
+    if (nsCOMPtr<nsIObserverService> obs =
+            mozilla::services::GetObserverService()) {
+      obs->NotifyWhenScriptSafe(this, "message-manager-disconnect", nullptr);
+    }
   }
 
   ClearParentManager(aRemoveFromParent);
@@ -916,7 +910,7 @@ nsFrameMessageManager::GetProcessMessageManager(ErrorResult& aError) {
   return pmm.forget();
 }
 
-void nsFrameMessageManager::GetRemoteType(nsAString& aRemoteType,
+void nsFrameMessageManager::GetRemoteType(nsACString& aRemoteType,
                                           ErrorResult& aError) const {
   aRemoteType.Truncate();
   if (mCallback) {
@@ -1211,7 +1205,7 @@ void nsMessageManagerScriptExecutor::TryCacheLoadAndCompileScript(
     nsCOMPtr<nsIChannel> channel;
     NS_NewChannel(getter_AddRefs(channel), uri,
                   nsContentUtils::GetSystemPrincipal(),
-                  nsILoadInfo::SEC_ALLOW_CROSS_ORIGIN_DATA_IS_NULL,
+                  nsILoadInfo::SEC_ALLOW_CROSS_ORIGIN_SEC_CONTEXT_IS_NULL,
                   nsIContentPolicy::TYPE_OTHER);
 
     if (!channel) {

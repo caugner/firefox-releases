@@ -745,7 +745,7 @@ Result<nsCOMPtr<nsIInputStream>, nsresult> ExtensionProtocolHandler::NewStream(
   nsCOMPtr<nsIChannel> channel;
   MOZ_TRY(NS_NewChannel(getter_AddRefs(channel), resolvedURI,
                         nsContentUtils::GetSystemPrincipal(),
-                        nsILoadInfo::SEC_ALLOW_CROSS_ORIGIN_DATA_IS_NULL,
+                        nsILoadInfo::SEC_ALLOW_CROSS_ORIGIN_SEC_CONTEXT_IS_NULL,
                         nsIContentPolicy::TYPE_OTHER));
 
   nsCOMPtr<nsIFileChannel> fileChannel = do_QueryInterface(channel, &rv);
@@ -828,9 +828,8 @@ Result<Ok, nsresult> ExtensionProtocolHandler::NewFD(
   MOZ_TRY(innerFileURL->GetFile(getter_AddRefs(jarFile)));
 
   if (!mFileOpenerThread) {
-    mFileOpenerThread =
-        new LazyIdleThread(DEFAULT_THREAD_TIMEOUT_MS,
-                           NS_LITERAL_CSTRING("ExtensionProtocolHandler"));
+    mFileOpenerThread = new LazyIdleThread(DEFAULT_THREAD_TIMEOUT_MS,
+                                           "ExtensionProtocolHandler"_ns);
   }
 
   RefPtr<ExtensionJARFileOpener> fileOpener =

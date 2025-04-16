@@ -22,25 +22,25 @@ use crate::glyph_rasterizer::FontInstance;
 use crate::hit_test::{HitTestingItem, HitTestingScene};
 use crate::intern::Interner;
 use crate::internal_types::{FastHashMap, FastHashSet, LayoutPrimitiveInfo, Filter};
-use crate::picture::{Picture3DContext, PictureCompositeMode, PicturePrimitive, PictureOptions, SliceId};
-use crate::picture::{BlitReason, OrderedPictureChild, PrimitiveList, TileCacheInstance, ClusterFlags};
-use crate::prim_store::PrimitiveInstance;
+use crate::picture::{Picture3DContext, PictureCompositeMode, PicturePrimitive, PictureOptions};
+use crate::picture::{BlitReason, OrderedPictureChild, PrimitiveList};
+use crate::prim_store::{PrimitiveInstance, register_prim_chase_id};
 use crate::prim_store::{PrimitiveInstanceKind, NinePatchDescriptor, PrimitiveStore};
 use crate::prim_store::{InternablePrimitive, SegmentInstanceIndex, PictureIndex};
-use crate::prim_store::{register_prim_chase_id, get_line_decoration_size};
-use crate::prim_store::{SpaceSnapper};
 use crate::prim_store::backdrop::Backdrop;
 use crate::prim_store::borders::{ImageBorder, NormalBorderPrim};
 use crate::prim_store::gradient::{GradientStopKey, LinearGradient, RadialGradient, RadialGradientParams, ConicGradient, ConicGradientParams};
 use crate::prim_store::image::{Image, YuvImage};
-use crate::prim_store::line_dec::{LineDecoration, LineDecorationCacheKey};
+use crate::prim_store::line_dec::{LineDecoration, LineDecorationCacheKey, get_line_decoration_size};
 use crate::prim_store::picture::{Picture, PictureCompositeKey, PictureKey};
 use crate::prim_store::text_run::TextRun;
 use crate::render_backend::SceneView;
 use crate::resource_cache::ImageRequest;
 use crate::scene::{Scene, BuiltScene, SceneStats, StackingContextHelpers};
 use crate::scene_builder_thread::Interners;
+use crate::space::SpaceSnapper;
 use crate::spatial_node::{StickyFrameInfo, ScrollFrameKind};
+use crate::tile_cache::TileCacheBuilder;
 use euclid::approxeq::ApproxEq;
 use std::{f32, mem, usize, ops};
 use std::collections::vec_deque::VecDeque;
@@ -213,21 +213,6 @@ bitflags! {
     }
 }
 
-/// Information about a set of primitive clusters that will form a picture cache slice.
-struct Slice {
-    /// The spatial node root of the picture cache. If this is None, the slice
-    /// will not be cached and instead drawn directly to the parent surface. This
-    /// is a temporary measure until we enable caching all slices.
-    cache_scroll_root: Option<SpatialNodeIndex>,
-    /// List of primitive clusters that make up this slice
-    prim_list: PrimitiveList,
-    /// A list of clips that are shared by all primitives in the slice. These can be
-    /// filtered out and applied when the tile cache is composited rather than per-item.
-    shared_clips: Option<Vec<ClipInstance>>,
-    /// Various flags describing properties of this slice
-    pub flags: SliceFlags,
-}
-
 /// A structure that converts a serialized display list into a form that WebRender
 /// can use to later build a frame. This structure produces a BuiltScene. Public
 /// members are typically those that are destructured into the BuiltScene.
@@ -271,40 +256,29 @@ pub struct SceneBuilder<'a> {
     /// Reference to the set of data that is interned across display lists.
     interners: &'a mut Interners,
 
-    /// The root picture index for this builder. This is the picture
-    /// to start the culling phase from.
-    pub root_pic_index: PictureIndex,
-
     /// Helper struct to map stacking context coords <-> reference frame coords.
     rf_mapper: ReferenceFrameMapper,
 
     /// Helper struct to map spatial nodes to external scroll offsets.
     external_scroll_mapper: ScrollOffsetMapper,
 
-    /// If true, picture caching setup has already been completed.
-    picture_caching_initialized: bool,
-
     /// The current recursion depth of iframes encountered. Used to restrict picture
     /// caching slices to only the top-level content frame.
     iframe_depth: usize,
     iframe_size: Vec<LayoutSize>,
 
-    /// The number of picture cache slices that were created for content.
-    content_slice_count: usize,
-
-    /// A set of any spatial nodes that are attached to either a picture cache
-    /// root, or a clip node on the picture cache primitive. These are used
-    /// to detect cases where picture caching must be disabled. This is mostly
-    /// a temporary workaround for some existing wrench tests. I don't think
-    /// Gecko ever produces picture cache slices with complex transforms, so
-    /// in future we should prevent this in the public API and remove this hack.
-    picture_cache_spatial_nodes: FastHashSet<SpatialNodeIndex>,
-
     /// The current quality / performance settings for this scene.
     quality_settings: QualitySettings,
 
-    /// Map of tile caches that were created for this scene
-    tile_caches: FastHashMap<SliceId, Box<TileCacheInstance>>,
+    /// Maintains state about the list of tile caches being built for this scene.
+    tile_cache_builder: TileCacheBuilder,
+
+    /// A helper struct to snap local rects in device space. During frame
+    /// building we may establish new raster roots, however typically that is in
+    /// cases where we won't be applying snapping (e.g. has perspective), or in
+    /// edge cases (e.g. SVG filter) where we can accept slightly incorrect
+    /// behaviour in favour of getting the common case right.
+    snap_to_device: SpaceSnapper,
 }
 
 impl<'a> SceneBuilder<'a> {
@@ -327,9 +301,17 @@ impl<'a> SceneBuilder<'a> {
             .background_color
             .and_then(|color| if color.a > 0.0 { Some(color) } else { None });
 
+        let device_pixel_scale = view.accumulated_scale_factor_for_snapping();
+        let spatial_tree = SpatialTree::new();
+
+        let snap_to_device = SpaceSnapper::new(
+            ROOT_SPATIAL_NODE_INDEX,
+            device_pixel_scale,
+        );
+
         let mut builder = SceneBuilder {
             scene,
-            spatial_tree: SpatialTree::new(),
+            spatial_tree,
             font_instances,
             config: *frame_builder_config,
             output_pipelines,
@@ -340,19 +322,14 @@ impl<'a> SceneBuilder<'a> {
             prim_store: PrimitiveStore::new(&stats.prim_store_stats),
             clip_store: ClipStore::new(),
             interners,
-            root_pic_index: PictureIndex(0),
             rf_mapper: ReferenceFrameMapper::new(),
             external_scroll_mapper: ScrollOffsetMapper::new(),
-            picture_caching_initialized: false,
             iframe_depth: 0,
             iframe_size: Vec::new(),
-            content_slice_count: 0,
-            picture_cache_spatial_nodes: FastHashSet::default(),
             quality_settings: view.quality_settings,
-            tile_caches: FastHashMap::default(),
+            tile_cache_builder: TileCacheBuilder::new(),
+            snap_to_device,
         };
-
-        let device_pixel_scale = view.accumulated_scale_factor_for_snapping();
 
         builder.clip_store.register_clip_template(
             ClipId::root(root_pipeline_id),
@@ -369,30 +346,6 @@ impl<'a> SceneBuilder<'a> {
             root_pipeline_id,
             &root_pipeline.viewport_size,
             &root_pipeline.content_size,
-            device_pixel_scale,
-        );
-
-        // In order to ensure we have a single root stacking context for the
-        // entire display list, we push one here. Gecko _almost_ wraps its
-        // entire display list within a single stacking context, but sometimes
-        // appends a few extra items in AddWindowOverlayWebRenderCommands. We
-        // could fix it there, but it's easier and more robust for WebRender
-        // to just ensure there's a context on the stack whenever we append
-        // primitives (since otherwise we'd panic).
-        //
-        // Note that we don't do this for iframes, even if they're pipeline
-        // roots, because they should be entirely contained within a stacking
-        // context, and we probably wouldn't crash if they weren't.
-        builder.push_stacking_context(
-            root_pipeline.pipeline_id,
-            CompositeOps::default(),
-            TransformStyle::Flat,
-            /* prim_flags = */ PrimitiveFlags::IS_BACKFACE_VISIBLE,
-            ROOT_SPATIAL_NODE_INDEX,
-            None,
-            RasterSpace::Screen,
-            StackingContextFlags::IS_BACKDROP_ROOT,
-            device_pixel_scale,
         );
 
         builder.build_items(
@@ -400,10 +353,32 @@ impl<'a> SceneBuilder<'a> {
             root_pipeline.pipeline_id,
         );
 
-        builder.pop_stacking_context();
         builder.clip_store.pop_clip_root();
 
         debug_assert!(builder.sc_stack.is_empty());
+
+        // Construct the picture cache primitive instance(s) from the tile cache builder
+        let (tile_cache_config, prim_list) = builder.tile_cache_builder.build(
+            &builder.config,
+            &mut builder.interners,
+            &mut builder.clip_store,
+            &mut builder.prim_store,
+        );
+
+        let root_pic_index = PictureIndex(builder.prim_store.pictures
+            .alloc()
+            .init(PicturePrimitive::new_image(
+                None,
+                Picture3DContext::Out,
+                None,
+                true,
+                PrimitiveFlags::IS_BACKFACE_VISIBLE,
+                RasterSpace::Screen,
+                prim_list,
+                ROOT_SPATIAL_NODE_INDEX,
+                PictureOptions::default(),
+            ))
+        );
 
         BuiltScene {
             has_root_pipeline: scene.has_root_pipeline(),
@@ -414,11 +389,9 @@ impl<'a> SceneBuilder<'a> {
             spatial_tree: builder.spatial_tree,
             prim_store: builder.prim_store,
             clip_store: builder.clip_store,
-            root_pic_index: builder.root_pic_index,
+            root_pic_index,
             config: builder.config,
-            content_slice_count: builder.content_slice_count,
-            picture_cache_spatial_nodes: builder.picture_cache_spatial_nodes,
-            tile_caches: builder.tile_caches,
+            tile_cache_config,
         }
     }
 
@@ -442,152 +415,6 @@ impl<'a> SceneBuilder<'a> {
             );
 
         rf_offset + scroll_offset
-    }
-
-    /// Figure out the shape of the display list, and wrap various primitive clusters
-    /// into tile cache primitive instances.
-    fn setup_picture_caching(
-        &mut self,
-        main_prim_list: &mut PrimitiveList,
-    ) {
-        if !self.config.global_enable_picture_caching {
-            return;
-        }
-
-        // Ensure that setup_picture_caching has executed
-        debug_assert!(self.picture_caching_initialized);
-
-        // Unconditionally insert a marker to create a picture cache slice on the
-        // first cluster. This handles implicit picture caches, and also the common
-        // case, by allowing the root / background primitives to be cached in a slice.
-        if let Some(cluster) = main_prim_list.clusters.first_mut() {
-            cluster.flags.insert(ClusterFlags::CREATE_PICTURE_CACHE_PRE);
-        }
-
-        // List of slices that have been found
-        let mut slices: Vec<Slice> = Vec::new();
-        // Tracker for whether a new slice should be created
-        let mut create_slice = true;
-        // The clips found the last time we traversed a set of clip chains. Stored and cleared
-        // here to avoid constant allocations.
-        let mut prim_clips = Vec::new();
-        // If true, the cache is out of date and needs to be rebuilt.
-        let mut update_shared_clips = true;
-        // The last prim clip chain we build prim_clips for.
-        let mut last_prim_clip_chain_id = ClipChainId::NONE;
-
-        // Walk the supplied top level of clusters, slicing into slices as appropriate
-        for cluster in main_prim_list.clusters.drain(..) {
-            // Check if this cluster requires a new slice
-            create_slice |= cluster.flags.intersects(
-                ClusterFlags::CREATE_PICTURE_CACHE_PRE | ClusterFlags::IS_CLEAR_PRIMITIVE
-            );
-
-            if create_slice {
-                let slice_flags = if cluster.flags.contains(ClusterFlags::SCROLLBAR_CONTAINER) {
-                    SliceFlags::IS_SCROLLBAR
-                } else {
-                    SliceFlags::empty()
-                };
-                let slice = Slice {
-                    cache_scroll_root: cluster.cache_scroll_root,
-                    prim_list: PrimitiveList::empty(),
-                    shared_clips: None,
-                    flags: slice_flags
-                };
-
-                // Open up clip chains on the stack on the new slice
-                slices.push(slice);
-                create_slice = false;
-            }
-
-            // Step through each prim instance, in order to collect shared clips for the slice.
-            for instance in &main_prim_list.prim_instances[cluster.prim_range()] {
-                // If the primitive clip chain is different, then we need to rebuild prim_clips.
-                update_shared_clips |= last_prim_clip_chain_id != instance.clip_chain_id;
-                last_prim_clip_chain_id = instance.clip_chain_id;
-
-                if update_shared_clips {
-                    prim_clips.clear();
-                    // Update the list of clips that apply to this primitive instance
-                    add_clips(
-                        instance.clip_chain_id,
-                        &mut prim_clips,
-                        &self.clip_store,
-                        &self.interners,
-                    );
-                }
-
-                // If there are no shared clips set for this slice, the shared clips are just
-                // the current clips set. Otherwise, the shared clips are those that are
-                // in both the current shared list and the clips list for this primitive.
-                match slices.last_mut().unwrap().shared_clips {
-                    Some(ref mut shared_clips) => {
-                        if update_shared_clips {
-                            shared_clips.retain(|h1: &ClipInstance| {
-                                let uid = h1.handle.uid();
-                                prim_clips.iter().any(|h2| {
-                                    uid == h2.handle.uid() &&
-                                    h1.spatial_node_index == h2.spatial_node_index
-                                })
-                            });
-                        }
-                    }
-                    ref mut shared_clips @ None => {
-                        *shared_clips = Some(prim_clips.clone());
-                    }
-                }
-
-                update_shared_clips = false;
-            }
-
-            // If this cluster creates a slice after, then note that for next cluster
-            create_slice |= cluster.flags.intersects(
-                ClusterFlags::CREATE_PICTURE_CACHE_POST | ClusterFlags::IS_CLEAR_PRIMITIVE
-            );
-
-            // Finally, add this cluster to the current slice
-            slices.last_mut().unwrap().prim_list.add_cluster(cluster, &main_prim_list.prim_instances);
-        }
-
-        main_prim_list.clear();
-
-        // Step through the slices, creating picture cache wrapper instances.
-        for (slice_index, slice) in slices.drain(..).enumerate() {
-            let background_color = if slice_index == 0 {
-                self.config.background_color
-            } else {
-                None
-            };
-
-            // If the cluster specifies a scroll root, use it. Otherwise,
-            // just cache assuming no scrolling takes place. Even if that's
-            // not true, we still get caching benefits for any changes that
-            // occur while not scrolling (such as animation, video etc);
-            let scroll_root = slice.cache_scroll_root.unwrap_or(ROOT_SPATIAL_NODE_INDEX);
-
-            let instance = create_tile_cache(
-                slice_index,
-                slice.flags,
-                scroll_root,
-                slice.prim_list,
-                background_color,
-                slice.shared_clips.unwrap_or_else(Vec::new),
-                &mut self.interners,
-                &mut self.prim_store,
-                &mut self.clip_store,
-                &mut self.picture_cache_spatial_nodes,
-                &self.config,
-                &mut self.tile_caches,
-            );
-
-            main_prim_list.add_prim(
-                instance,
-                LayoutRect::zero(),
-                scroll_root,
-                PrimitiveFlags::IS_BACKFACE_VISIBLE,
-            );
-        }
     }
 
     fn build_items(
@@ -800,7 +627,7 @@ impl<'a> SceneBuilder<'a> {
             )
         };
 
-        self.push_stacking_context(
+        let is_useful = self.push_stacking_context(
             pipeline_id,
             composition_operations,
             stacking_context.transform_style,
@@ -809,7 +636,6 @@ impl<'a> SceneBuilder<'a> {
             stacking_context.clip_id,
             stacking_context.raster_space,
             stacking_context.flags,
-            self.sc_stack.last().unwrap().snap_to_device.device_pixel_scale,
         );
 
         self.rf_mapper.push_offset(origin.to_vector());
@@ -819,7 +645,11 @@ impl<'a> SceneBuilder<'a> {
         );
         self.rf_mapper.pop_offset();
 
-        self.pop_stacking_context();
+        if is_useful {
+            self.pop_stacking_context();
+        } else if stacking_context.clip_id.is_some() {
+            self.clip_store.pop_clip_root();
+        }
     }
 
     fn build_iframe(
@@ -851,17 +681,14 @@ impl<'a> SceneBuilder<'a> {
             true,
         );
 
-        let snap_to_device = &mut self.sc_stack.last_mut().unwrap().snap_to_device;
-        snap_to_device.set_target_spatial_node(
-            spatial_node_index,
-            &self.spatial_tree,
-        );
-
-        let bounds = snap_to_device.snap_rect(
+        let bounds = self.snap_rect(
             &info.bounds.translate(current_offset),
+            spatial_node_index,
         );
-
-        let content_size = snap_to_device.snap_size(&pipeline.content_size);
+        let content_size = self.snap_size(
+            &pipeline.content_size,
+            spatial_node_index,
+        );
 
         let spatial_node_index = self.push_reference_frame(
             SpatialId::root_reference_frame(iframe_pipeline_id),
@@ -886,6 +713,14 @@ impl<'a> SceneBuilder<'a> {
             LayoutVector2D::zero(),
         );
 
+        // If this is a root iframe, force a new tile cache both before and after
+        // adding primitives for this iframe.
+
+        let is_root_iframe = self.iframe_depth == 0;
+        if is_root_iframe {
+            self.tile_cache_builder.add_tile_cache_barrier();
+        }
+
         self.rf_mapper.push_scope();
         self.iframe_depth += 1;
         self.iframe_size.push(bounds.size);
@@ -899,6 +734,9 @@ impl<'a> SceneBuilder<'a> {
         self.rf_mapper.pop_scope();
 
         self.clip_store.pop_clip_root();
+        if is_root_iframe {
+            self.tile_cache_builder.add_tile_cache_barrier();
+        }
     }
 
     fn get_space(
@@ -925,14 +763,11 @@ impl<'a> SceneBuilder<'a> {
 
         let current_offset = self.current_offset(spatial_node_index);
 
-        let snap_to_device = &mut self.sc_stack.last_mut().unwrap().snap_to_device;
-        snap_to_device.set_target_spatial_node(
-            spatial_node_index,
-            &self.spatial_tree
-        );
-
         let unsnapped_clip_rect = common.clip_rect.translate(current_offset);
-        let clip_rect = snap_to_device.snap_rect(&unsnapped_clip_rect);
+        let clip_rect = self.snap_rect(
+            &unsnapped_clip_rect,
+            spatial_node_index,
+        );
 
         let unsnapped_rect = bounds.map(|bounds| {
             bounds.translate(current_offset)
@@ -940,7 +775,10 @@ impl<'a> SceneBuilder<'a> {
 
         // If no bounds rect is given, default to clip rect.
         let rect = unsnapped_rect.map_or(clip_rect, |bounds| {
-            snap_to_device.snap_rect(&bounds)
+            self.snap_rect(
+                &bounds,
+                spatial_node_index,
+            )
         });
 
         let layout = LayoutPrimitiveInfo {
@@ -964,17 +802,28 @@ impl<'a> SceneBuilder<'a> {
         )
     }
 
+    fn snap_size(
+        &mut self,
+        size: &LayoutSize,
+        target_spatial_node: SpatialNodeIndex,
+    ) -> LayoutSize {
+        self.snap_to_device.set_target_spatial_node(
+            target_spatial_node,
+            &self.spatial_tree
+        );
+        self.snap_to_device.snap_size(size)
+    }
+
     pub fn snap_rect(
         &mut self,
         rect: &LayoutRect,
         target_spatial_node: SpatialNodeIndex,
     ) -> LayoutRect {
-        let snap_to_device = &mut self.sc_stack.last_mut().unwrap().snap_to_device;
-        snap_to_device.set_target_spatial_node(
+        self.snap_to_device.set_target_spatial_node(
             target_spatial_node,
             &self.spatial_tree
         );
-        snap_to_device.snap_rect(rect)
+        self.snap_to_device.snap_rect(rect)
     }
 
     fn build_item<'b>(
@@ -984,6 +833,8 @@ impl<'a> SceneBuilder<'a> {
     ) {
         match *item.item() {
             DisplayItem::Image(ref info) => {
+                profile_scope!("image");
+
                 let (layout, _, spatial_node_index, clip_chain_id) = self.process_common_properties_with_bounds(
                     &info.common,
                     &info.bounds,
@@ -1002,6 +853,8 @@ impl<'a> SceneBuilder<'a> {
                 );
             }
             DisplayItem::RepeatingImage(ref info) => {
+                profile_scope!("repeating_image");
+
                 let (layout, unsnapped_rect, spatial_node_index, clip_chain_id) = self.process_common_properties_with_bounds(
                     &info.common,
                     &info.bounds,
@@ -1026,6 +879,8 @@ impl<'a> SceneBuilder<'a> {
                 );
             }
             DisplayItem::YuvImage(ref info) => {
+                profile_scope!("yuv_image");
+
                 let (layout, _, spatial_node_index, clip_chain_id) = self.process_common_properties_with_bounds(
                     &info.common,
                     &info.bounds,
@@ -1043,6 +898,8 @@ impl<'a> SceneBuilder<'a> {
                 );
             }
             DisplayItem::Text(ref info) => {
+                profile_scope!("text");
+
                 // TODO(aosmond): Snapping text primitives does not make much sense, given the
                 // primitive bounds and clip are supposed to be conservative, not definitive.
                 // E.g. they should be able to grow and not impact the output. However there
@@ -1065,6 +922,8 @@ impl<'a> SceneBuilder<'a> {
                 );
             }
             DisplayItem::Rectangle(ref info) => {
+                profile_scope!("rect");
+
                 let (layout, _, spatial_node_index, clip_chain_id) = self.process_common_properties_with_bounds(
                     &info.common,
                     &info.bounds,
@@ -1078,6 +937,8 @@ impl<'a> SceneBuilder<'a> {
                 );
             }
             DisplayItem::HitTest(ref info) => {
+                profile_scope!("hit_test");
+
                 let (layout, _, spatial_node_index, clip_chain_id) = self.process_common_properties(
                     &info.common,
                     None,
@@ -1091,6 +952,8 @@ impl<'a> SceneBuilder<'a> {
                 );
             }
             DisplayItem::ClearRectangle(ref info) => {
+                profile_scope!("clear");
+
                 let (layout, _, spatial_node_index, clip_chain_id) = self.process_common_properties_with_bounds(
                     &info.common,
                     &info.bounds,
@@ -1103,6 +966,8 @@ impl<'a> SceneBuilder<'a> {
                 );
             }
             DisplayItem::Line(ref info) => {
+                profile_scope!("line");
+
                 let (layout, _, spatial_node_index, clip_chain_id) = self.process_common_properties_with_bounds(
                     &info.common,
                     &info.area,
@@ -1119,6 +984,8 @@ impl<'a> SceneBuilder<'a> {
                 );
             }
             DisplayItem::Gradient(ref info) => {
+                profile_scope!("gradient");
+
                 let (layout, unsnapped_rect, spatial_node_index, clip_chain_id) = self.process_common_properties_with_bounds(
                     &info.common,
                     &info.bounds,
@@ -1150,6 +1017,8 @@ impl<'a> SceneBuilder<'a> {
                 }
             }
             DisplayItem::RadialGradient(ref info) => {
+                profile_scope!("radial");
+
                 let (layout, unsnapped_rect, spatial_node_index, clip_chain_id) = self.process_common_properties_with_bounds(
                     &info.common,
                     &info.bounds,
@@ -1183,6 +1052,8 @@ impl<'a> SceneBuilder<'a> {
                 );
             }
             DisplayItem::ConicGradient(ref info) => {
+                profile_scope!("conic");
+
                 let (layout, unsnapped_rect, spatial_node_index, clip_chain_id) = self.process_common_properties_with_bounds(
                     &info.common,
                     &info.bounds,
@@ -1216,6 +1087,8 @@ impl<'a> SceneBuilder<'a> {
                 );
             }
             DisplayItem::BoxShadow(ref info) => {
+                profile_scope!("box_shadow");
+
                 let (layout, _, spatial_node_index, clip_chain_id) = self.process_common_properties_with_bounds(
                     &info.common,
                     &info.box_bounds,
@@ -1234,6 +1107,8 @@ impl<'a> SceneBuilder<'a> {
                 );
             }
             DisplayItem::Border(ref info) => {
+                profile_scope!("border");
+
                 let (layout, _, spatial_node_index, clip_chain_id) = self.process_common_properties_with_bounds(
                     &info.common,
                     &info.bounds,
@@ -1248,6 +1123,8 @@ impl<'a> SceneBuilder<'a> {
                 );
             }
             DisplayItem::Iframe(ref info) => {
+                profile_scope!("iframe");
+
                 let space = self.get_space(info.space_and_clip.spatial_id);
                 self.build_iframe(
                     info,
@@ -1255,6 +1132,8 @@ impl<'a> SceneBuilder<'a> {
                 );
             }
             DisplayItem::ImageMaskClip(ref info) => {
+                profile_scope!("image_clip");
+
                 let parent_space = self.get_space(info.parent_space_and_clip.spatial_id);
                 let current_offset = self.current_offset(parent_space);
 
@@ -1270,6 +1149,8 @@ impl<'a> SceneBuilder<'a> {
                 );
             }
             DisplayItem::RoundedRectClip(ref info) => {
+                profile_scope!("rounded_clip");
+
                 let parent_space = self.get_space(info.parent_space_and_clip.spatial_id);
                 let current_offset = self.current_offset(parent_space);
 
@@ -1281,6 +1162,8 @@ impl<'a> SceneBuilder<'a> {
                 );
             }
             DisplayItem::RectClip(ref info) => {
+                profile_scope!("rect_clip");
+
                 let parent_space = self.get_space(info.parent_space_and_clip.spatial_id);
                 let current_offset = self.current_offset(parent_space);
                 let clip_rect = info.clip_rect.translate(current_offset);
@@ -1292,6 +1175,8 @@ impl<'a> SceneBuilder<'a> {
                 );
             }
             DisplayItem::Clip(ref info) => {
+                profile_scope!("clip");
+
                 let parent_space = self.get_space(info.parent_space_and_clip.spatial_id);
                 let current_offset = self.current_offset(parent_space);
                 let clip_region = ClipRegion::create_for_clip_node(
@@ -1302,6 +1187,8 @@ impl<'a> SceneBuilder<'a> {
                 self.add_clip_node(info.id, &info.parent_space_and_clip, clip_region);
             }
             DisplayItem::ClipChain(ref info) => {
+                profile_scope!("clip_chain");
+
                 let parent = info.parent.map_or(ClipId::root(pipeline_id), |id| ClipId::ClipChain(id));
                 let mut instances: SmallVec<[ClipInstance; 4]> = SmallVec::new();
 
@@ -1317,6 +1204,8 @@ impl<'a> SceneBuilder<'a> {
                 );
             },
             DisplayItem::ScrollFrame(ref info) => {
+                profile_scope!("scrollframe");
+
                 let parent_space = self.get_space(info.parent_space_and_clip.spatial_id);
                 self.build_scroll_frame(
                     info,
@@ -1325,6 +1214,8 @@ impl<'a> SceneBuilder<'a> {
                 );
             }
             DisplayItem::StickyFrame(ref info) => {
+                profile_scope!("stickyframe");
+
                 let parent_space = self.get_space(info.parent_spatial_id);
                 self.build_sticky_frame(
                     info,
@@ -1332,6 +1223,8 @@ impl<'a> SceneBuilder<'a> {
                 );
             }
             DisplayItem::BackdropFilter(ref info) => {
+                profile_scope!("backdrop");
+
                 let (layout, _, spatial_node_index, clip_chain_id) = self.process_common_properties(
                     &info.common,
                     None,
@@ -1371,6 +1264,8 @@ impl<'a> SceneBuilder<'a> {
             }
 
             DisplayItem::PushShadow(info) => {
+                profile_scope!("push_shadow");
+
                 let spatial_node_index = self.get_space(info.space_and_clip.spatial_id);
                 let clip_chain_id = self.get_clip_chain(
                     info.space_and_clip.clip_id,
@@ -1384,6 +1279,8 @@ impl<'a> SceneBuilder<'a> {
                 );
             }
             DisplayItem::PopAllShadows => {
+                profile_scope!("pop_all_shadows");
+
                 self.pop_all_shadows();
             }
         }
@@ -1518,13 +1415,32 @@ impl<'a> SceneBuilder<'a> {
             println!("\tadded to stacking context at {}", self.sc_stack.len());
         }
 
-        let stacking_context = self.sc_stack.last_mut().unwrap();
-        stacking_context.prim_list.add_prim(
-            prim_instance,
-            prim_rect,
-            spatial_node_index,
-            flags,
-        );
+        // If we have a valid stacking context, the primitive gets added to that.
+        // Otherwise, it gets added to a top-level picture cache slice.
+
+        match self.sc_stack.last_mut() {
+            Some(stacking_context) => {
+                stacking_context.prim_list.add_prim(
+                    prim_instance,
+                    prim_rect,
+                    spatial_node_index,
+                    flags,
+                );
+            }
+            None => {
+                self.tile_cache_builder.add_prim(
+                    prim_instance,
+                    prim_rect,
+                    spatial_node_index,
+                    flags,
+                    &self.spatial_tree,
+                    &self.clip_store,
+                    self.interners,
+                    &self.config,
+                    &self.quality_settings,
+                );
+            }
+        }
     }
 
     /// Convenience interface that creates a primitive entry and adds it
@@ -1627,6 +1543,9 @@ impl<'a> SceneBuilder<'a> {
         );
     }
 
+    /// Returns true if the stacking context was pushed or skipped. If not pushed, pop_stacking_context()
+    /// should not be called!
+    #[must_use]
     pub fn push_stacking_context(
         &mut self,
         pipeline_id: PipelineId,
@@ -1637,8 +1556,9 @@ impl<'a> SceneBuilder<'a> {
         clip_id: Option<ClipId>,
         requested_raster_space: RasterSpace,
         flags: StackingContextFlags,
-        device_pixel_scale: DevicePixelScale,
-    ) {
+    ) -> bool {
+        profile_scope!("push_stacking_context");
+
         // Check if this stacking context is the root of a pipeline, and the caller
         // has requested it as an output frame.
         let is_pipeline_root =
@@ -1748,29 +1668,15 @@ impl<'a> SceneBuilder<'a> {
             current_clip_chain_id = clip_chain_node.parent_clip_chain_id;
         }
 
-        let snap_to_device = self.sc_stack.last().map_or(
-            SpaceSnapper::new(
-                ROOT_SPATIAL_NODE_INDEX,
-                device_pixel_scale,
-            ),
-            |sc| sc.snap_to_device.clone(),
+        let is_redundant = FlattenedStackingContext::is_redundant(
+            flags,
+            &context_3d,
+            &composite_ops,
+            prim_flags,
+            blit_reason,
+            requested_raster_space,
+            self.sc_stack.last(),
         );
-
-        let is_redundant = match self.sc_stack.last() {
-            Some(parent) => {
-                FlattenedStackingContext::is_redundant(
-                    &context_3d,
-                    &composite_ops,
-                    prim_flags,
-                    blit_reason,
-                    requested_raster_space,
-                    parent,
-                )
-            }
-            None => {
-                false
-            }
-        };
 
         if let Some(clip_id) = clip_id {
             // If this stacking context is redundant (prims will be pushed into
@@ -1785,6 +1691,10 @@ impl<'a> SceneBuilder<'a> {
             } else {
                 self.clip_store.push_clip_root(None, false);
             }
+        }
+
+        if is_redundant {
+            return false;
         }
 
         // Push the SC onto the stack, so we know how to handle things in
@@ -1804,84 +1714,27 @@ impl<'a> SceneBuilder<'a> {
             context_3d,
             is_redundant,
             is_backdrop_root: flags.contains(StackingContextFlags::IS_BACKDROP_ROOT),
-            snap_to_device,
         });
+
+        true
     }
 
     pub fn pop_stacking_context(&mut self) {
-        let mut stacking_context = self.sc_stack.pop().unwrap();
+        profile_scope!("pop_stacking_context");
+
+        let stacking_context = self.sc_stack.pop().unwrap();
 
         if stacking_context.clip_id.is_some() {
             self.clip_store.pop_clip_root();
         }
 
-        // If we encounter a stacking context that is effectively a no-op, then instead
-        // of creating a picture, just append the primitive list to the parent stacking
-        // context as a short cut. This serves two purposes:
-        // (a) It's an optimization to reduce picture count and allocations, as display lists
-        //     often contain a lot of these stacking contexts that don't require pictures or
-        //     off-screen surfaces.
-        // (b) It's useful for the initial version of picture caching in gecko, by enabling
-        //     is to just look for interesting scroll roots on the root stacking context,
-        //     without having to consider cuts at stacking context boundaries.
-        let parent_is_empty = match self.sc_stack.last_mut() {
+        let parent_is_empty = match self.sc_stack.last() {
             Some(parent_sc) => {
-                if stacking_context.is_redundant {
-                    if !stacking_context.prim_list.is_empty() {
-                        // If popping a redundant stacking context that is from a different pipeline,
-                        // we want to insert flags where the picture cache slices should be created
-                        // for this iframe. For now, we want to match existing behavior, that is:
-                        // - Only cache content that is within the main scroll root, and:
-                        // - Skip caching fixed position content before / after the scroll root.
-                        // This means that we don't add scrollbars, which cause lots of extra
-                        // invalidations. There is ongoing work to add tags to primitives that
-                        // are scrollbars. Once this lands, we can simplify this logic considerably
-                        // (and add a separate picture cache slice / OS layer for scroll bars).
-                        if parent_sc.pipeline_id != stacking_context.pipeline_id && self.iframe_depth == 1 {
-                            self.content_slice_count = stacking_context.init_picture_caching(
-                                &self.spatial_tree,
-                                &self.clip_store,
-                                &self.quality_settings,
-                            );
-
-                            // Mark that a user supplied tile cache was specified.
-                            self.picture_caching_initialized = true;
-                        }
-
-                        // If the parent context primitives list is empty, it's faster
-                        // to assign the storage of the popped context instead of paying
-                        // the copying cost for extend.
-                        if parent_sc.prim_list.is_empty() {
-                            parent_sc.prim_list = stacking_context.prim_list;
-                        } else {
-                            parent_sc.prim_list.extend(stacking_context.prim_list);
-                        }
-                    }
-
-                    return;
-                }
+                assert!(!stacking_context.is_redundant);
                 parent_sc.prim_list.is_empty()
             },
             None => true,
         };
-
-        if self.sc_stack.is_empty() {
-            // If we didn't encounter a content iframe, then set up picture caching slice markers
-            // on the root stacking context. This can happen in Gecko when the parent process
-            // provides the content display list (e.g. about:support, about:config etc).
-            if !self.picture_caching_initialized {
-                self.content_slice_count = stacking_context.init_picture_caching(
-                    &self.spatial_tree,
-                    &self.clip_store,
-                    &self.quality_settings,
-                );
-                self.picture_caching_initialized = true;
-            }
-
-            self.setup_picture_caching(
-                &mut stacking_context.prim_list,
-            );
-        }
 
         let (leaf_context_3d, leaf_composite_mode, leaf_output_pipeline_id) = match stacking_context.context_3d {
             // TODO(gw): For now, as soon as this picture is in
@@ -2002,7 +1855,6 @@ impl<'a> SceneBuilder<'a> {
 
         let has_filters = current_pic_index != filtered_pic_index;
 
-        current_pic_index = filtered_pic_index;
         cur_instance = filtered_instance;
 
         // Same for mix-blend-mode, except we can skip if this primitive is the first in the parent
@@ -2018,7 +1870,11 @@ impl<'a> SceneBuilder<'a> {
         // backdrop alpha will be 0, and then the blend equation collapses to just
         // Cs = Cs, and the blend mode isn't taken into account at all.
         if let (Some(mix_blend_mode), false) = (stacking_context.composite_ops.mix_blend_mode, parent_is_empty) {
-            if self.sc_stack.last().unwrap().blit_reason.contains(BlitReason::ISOLATE) {
+            let parent_is_isolated = match self.sc_stack.last() {
+                Some(parent_sc) => parent_sc.blit_reason.contains(BlitReason::ISOLATE),
+                None => false,
+            };
+            if parent_is_isolated {
                 let composite_mode = Some(PictureCompositeMode::MixBlend(mix_blend_mode));
 
                 let mut prim_list = PrimitiveList::empty();
@@ -2044,7 +1900,6 @@ impl<'a> SceneBuilder<'a> {
                     ))
                 );
 
-                current_pic_index = blend_pic_index;
                 cur_instance = create_prim_instance(
                     blend_pic_index,
                     composite_mode.into(),
@@ -2086,7 +1941,13 @@ impl<'a> SceneBuilder<'a> {
             }
             // This must be the root stacking context
             None => {
-                self.root_pic_index = current_pic_index;
+                self.add_primitive_to_draw_list(
+                    cur_instance,
+                    LayoutRect::zero(),
+                    stacking_context.spatial_node_index,
+                    stacking_context.prim_flags,
+                );
+
                 None
             }
         };
@@ -2135,7 +1996,6 @@ impl<'a> SceneBuilder<'a> {
         pipeline_id: PipelineId,
         viewport_size: &LayoutSize,
         content_size: &LayoutSize,
-        device_pixel_scale: DevicePixelScale,
     ) {
         if let ChasePrimitive::Id(id) = self.config.chase_primitive {
             println!("Chasing {:?} by index", id);
@@ -2152,18 +2012,13 @@ impl<'a> SceneBuilder<'a> {
             LayoutVector2D::zero(),
         );
 
-        // We can't use this with the stacking context because it does not exist
-        // yet. Just create a dedicated snapper for the root.
-        let snap_to_device = SpaceSnapper::new_with_target(
+        let content_size = self.snap_size(
+            content_size,
             spatial_node_index,
-            ROOT_SPATIAL_NODE_INDEX,
-            device_pixel_scale,
-            &self.spatial_tree,
         );
-
-        let content_size = snap_to_device.snap_size(content_size);
-        let viewport_rect = snap_to_device.snap_rect(
+        let viewport_rect = self.snap_rect(
             &LayoutRect::new(LayoutPoint::zero(), *viewport_size),
+            spatial_node_index,
         );
 
         self.add_scroll_frame(
@@ -2187,13 +2042,10 @@ impl<'a> SceneBuilder<'a> {
     ) {
         let spatial_node_index = self.id_to_index_mapper.get_spatial_node_index(space_and_clip.spatial_id);
 
-        let snap_to_device = &mut self.sc_stack.last_mut().unwrap().snap_to_device;
-        snap_to_device.set_target_spatial_node(
+        let snapped_mask_rect = self.snap_rect(
+            &image_mask.rect,
             spatial_node_index,
-            &self.spatial_tree,
         );
-
-        let snapped_mask_rect = snap_to_device.snap_rect(&image_mask.rect);
         let item = ClipItemKey {
             kind: ClipItemKeyKind::image_mask(image_mask, snapped_mask_rect),
         };
@@ -2225,13 +2077,10 @@ impl<'a> SceneBuilder<'a> {
     ) {
         let spatial_node_index = self.id_to_index_mapper.get_spatial_node_index(space_and_clip.spatial_id);
 
-        let snap_to_device = &mut self.sc_stack.last_mut().unwrap().snap_to_device;
-        snap_to_device.set_target_spatial_node(
+        let snapped_clip_rect = self.snap_rect(
+            clip_rect,
             spatial_node_index,
-            &self.spatial_tree,
         );
-
-        let snapped_clip_rect = snap_to_device.snap_rect(clip_rect);
 
         let item = ClipItemKey {
             kind: ClipItemKeyKind::rectangle(snapped_clip_rect, ClipMode::Clip),
@@ -2263,13 +2112,10 @@ impl<'a> SceneBuilder<'a> {
     ) {
         let spatial_node_index = self.id_to_index_mapper.get_spatial_node_index(space_and_clip.spatial_id);
 
-        let snap_to_device = &mut self.sc_stack.last_mut().unwrap().snap_to_device;
-        snap_to_device.set_target_spatial_node(
+        let snapped_region_rect = self.snap_rect(
+            &clip.rect.translate(current_offset),
             spatial_node_index,
-            &self.spatial_tree,
         );
-
-        let snapped_region_rect = snap_to_device.snap_rect(&clip.rect.translate(current_offset));
         let item = ClipItemKey {
             kind: ClipItemKeyKind::rounded_rect(
                 snapped_region_rect,
@@ -2308,13 +2154,10 @@ impl<'a> SceneBuilder<'a> {
         // Map the ClipId for the positioning node to a spatial node index.
         let spatial_node_index = self.id_to_index_mapper.get_spatial_node_index(space_and_clip.spatial_id);
 
-        let snap_to_device = &mut self.sc_stack.last_mut().unwrap().snap_to_device;
-        snap_to_device.set_target_spatial_node(
+        let snapped_clip_rect = self.snap_rect(
+            &clip_region.main,
             spatial_node_index,
-            &self.spatial_tree,
         );
-
-        let snapped_clip_rect = snap_to_device.snap_rect(&clip_region.main);
         let mut instances: SmallVec<[ClipInstance; 4]> = SmallVec::new();
 
         // Intern each clip item in this clip node, and add the interned
@@ -2337,7 +2180,7 @@ impl<'a> SceneBuilder<'a> {
         instances.push(ClipInstance::new(handle, spatial_node_index));
 
         for region in clip_region.complex_clips {
-            let snapped_region_rect = snap_to_device.snap_rect(&region.rect);
+            let snapped_region_rect = self.snap_rect(&region.rect, spatial_node_index);
             let item = ClipItemKey {
                 kind: ClipItemKeyKind::rounded_rect(
                     snapped_region_rect,
@@ -2445,7 +2288,7 @@ impl<'a> SceneBuilder<'a> {
                     // shadows always rasterize in local space.
                     // TODO(gw): expose API for clients to specify a raster scale
                     let raster_space = if is_passthrough {
-                        self.sc_stack.last().unwrap().requested_raster_space
+                        self.sc_stack.last().map_or(RasterSpace::Screen, |sc| sc.requested_raster_space)
                     } else {
                         RasterSpace::Local(1.0)
                     };
@@ -2503,8 +2346,12 @@ impl<'a> SceneBuilder<'a> {
                         // detect this and mark the picture to be drawn directly into the
                         // parent picture, which avoids an intermediate surface and blur.
                         let blur_filter = Filter::Blur(std_deviation);
-                        let composite_mode = PictureCompositeMode::Filter(blur_filter);
-                        let composite_mode_key = Some(composite_mode.clone()).into();
+                        let composite_mode = if blur_filter.is_noop() {
+                            None
+                        } else {
+                            Some(PictureCompositeMode::Filter(blur_filter))
+                        };
+                        let composite_mode_key = composite_mode.clone().into();
 
                         // Pass through configuration information about whether WR should
                         // do the bounding rect inflation for text shadows.
@@ -2516,7 +2363,7 @@ impl<'a> SceneBuilder<'a> {
                         let shadow_pic_index = PictureIndex(self.prim_store.pictures
                             .alloc()
                             .init(PicturePrimitive::new_image(
-                                Some(composite_mode),
+                                composite_mode,
                                 Picture3DContext::Out,
                                 None,
                                 is_passthrough,
@@ -2598,23 +2445,19 @@ impl<'a> SceneBuilder<'a> {
         P: InternablePrimitive + CreateShadow,
         Interners: AsMut<Interner<P>>,
     {
-        let snap_to_device = &mut self.sc_stack.last_mut().unwrap().snap_to_device;
-        snap_to_device.set_target_spatial_node(
-            pending_primitive.spatial_node_index,
-            &self.spatial_tree,
-        );
-
         // Offset the local rect and clip rect by the shadow offset. The pending
         // primitive has already been snapped, but we will need to snap the
         // shadow after translation. We don't need to worry about the size
         // changing because the shadow has the same raster space as the
         // primitive, and thus we know the size is already rounded.
         let mut info = pending_primitive.info.clone();
-        info.rect = snap_to_device.snap_rect(
+        info.rect = self.snap_rect(
             &info.rect.translate(pending_shadow.shadow.offset),
+            pending_primitive.spatial_node_index,
         );
-        info.clip_rect = snap_to_device.snap_rect(
+        info.clip_rect = self.snap_rect(
             &info.clip_rect.translate(pending_shadow.shadow.offset),
+            pending_primitive.spatial_node_index,
         );
 
         // Construct and add a primitive for the given shadow.
@@ -3405,7 +3248,7 @@ impl<'a> SceneBuilder<'a> {
         // For each filter, create a new image with that composite mode.
         let mut current_filter_data_index = 0;
         for filter in &mut filter_ops {
-            let composite_mode = Some(match *filter {
+            let composite_mode = match filter {
                 Filter::ComponentTransfer => {
                     let filter_data =
                         &filter_datas[current_filter_data_index];
@@ -3431,11 +3274,17 @@ impl<'a> SceneBuilder<'a> {
                         let handle = self.interners
                             .filter_data
                             .intern(&filter_data_key, || ());
-                        PictureCompositeMode::ComponentTransferFilter(handle)
+                        Some(PictureCompositeMode::ComponentTransferFilter(handle))
                     }
                 }
-                _ => PictureCompositeMode::Filter(filter.clone()),
-            });
+                _ => {
+                    if filter.is_noop() {
+                        None
+                    } else {
+                        Some(PictureCompositeMode::Filter(filter.clone()))
+                    }
+                }
+            };
 
             let mut prim_list = PrimitiveList::empty();
             prim_list.add_prim(
@@ -3608,13 +3457,6 @@ struct FlattenedStackingContext {
 
     /// True if this stacking context is redundant (i.e. doesn't require a surface)
     is_redundant: bool,
-
-    /// A helper struct to snap local rects in device space. During frame
-    /// building we may establish new raster roots, however typically that is in
-    /// cases where we won't be applying snapping (e.g. has perspective), or in
-    /// edge cases (e.g. SVG filter) where we can accept slightly incorrect
-    /// behaviour in favour of getting the common case right.
-    snap_to_device: SpaceSnapper,
 }
 
 impl FlattenedStackingContext {
@@ -3623,151 +3465,21 @@ impl FlattenedStackingContext {
         self.transform_style == TransformStyle::Preserve3D && self.composite_ops.is_empty()
     }
 
-    /// Set up appropriate cluster flags for picture caching on this stacking context.
-    fn init_picture_caching(
-        &mut self,
-        spatial_tree: &SpatialTree,
-        clip_store: &ClipStore,
-        quality_settings: &QualitySettings,
-    ) -> usize {
-        struct SliceInfo {
-            cluster_index: usize,
-            scroll_root: SpatialNodeIndex,
-            cluster_flags: ClusterFlags,
-        }
-
-        let mut content_slice_count = 0;
-        let mut slices: Vec<SliceInfo> = Vec::new();
-
-        // Step through each cluster, and work out where the slice boundaries should be.
-        for (cluster_index, cluster) in self.prim_list.clusters.iter().enumerate() {
-            let scroll_root = spatial_tree.find_scroll_root(
-                cluster.spatial_node_index,
-            );
-
-            // We want to create a slice in the following conditions:
-            // (1) This cluster is a scrollbar
-            // (2) Certain conditions when the scroll root changes (see below)
-            // (3) No slice exists yet
-            let mut cluster_flags = ClusterFlags::empty();
-
-            if cluster.flags.contains(ClusterFlags::SCROLLBAR_CONTAINER) {
-                // Scrollbar containers need to ensure that a new slice is
-                // created both before and after the scrollbar, so that no
-                // other prims with the same scroll root sneak into this slice.
-                cluster_flags.insert(
-                    ClusterFlags::CREATE_PICTURE_CACHE_PRE |
-                    ClusterFlags::CREATE_PICTURE_CACHE_POST
-                );
-            }
-
-            let create_new_slice_for_scroll_root =
-                slices.last().map(|slice| {
-                    match (slice.scroll_root, scroll_root) {
-                        (ROOT_SPATIAL_NODE_INDEX, ROOT_SPATIAL_NODE_INDEX) => {
-                            // Both current slice and this cluster are fixed position, no need to cut
-                            false
-                        }
-                        (ROOT_SPATIAL_NODE_INDEX, _) => {
-                            // A real scroll root is being established, so create a cache slice
-                            true
-                        }
-                        (_, ROOT_SPATIAL_NODE_INDEX) => {
-                            // If quality settings force subpixel AA over performance, skip creating
-                            // a slice for the fixed position element(s) here.
-                            if quality_settings.force_subpixel_aa_where_possible {
-                                return false;
-                            }
-
-                            // A fixed position slice is encountered within a scroll root. Only create
-                            // a slice in this case if all the clips referenced by this cluster are also
-                            // fixed position. There's no real point in creating slices for these cases,
-                            // since we'll have to rasterize them as the scrolling clip moves anyway. It
-                            // also allows us to retain subpixel AA in these cases. For these types of
-                            // slices, the intra-slice dirty rect handling typically works quite well
-                            // (a common case is parallax scrolling effects).
-                            for prim_instance in &self.prim_list.prim_instances[cluster.prim_range()] {
-                                let mut current_clip_chain_id = prim_instance.clip_chain_id;
-
-                                while current_clip_chain_id != ClipChainId::NONE {
-                                    let clip_chain_node = &clip_store
-                                        .clip_chain_nodes[current_clip_chain_id.0 as usize];
-                                    let spatial_root = spatial_tree.find_scroll_root(clip_chain_node.spatial_node_index);
-                                    if spatial_root != ROOT_SPATIAL_NODE_INDEX {
-                                        return false;
-                                    }
-                                    current_clip_chain_id = clip_chain_node.parent_clip_chain_id;
-                                }
-                            }
-
-                            true
-                        }
-                        (curr_scroll_root, scroll_root) => {
-                            // Two scrolling roots - only need a new slice if they differ
-                            curr_scroll_root != scroll_root
-                        }
-                    }
-                }).unwrap_or(true);
-
-            if create_new_slice_for_scroll_root {
-                cluster_flags.insert(ClusterFlags::CREATE_PICTURE_CACHE_PRE);
-            }
-
-            // Create a new slice if required
-            if !cluster_flags.is_empty() {
-                slices.push(SliceInfo {
-                    cluster_index,
-                    scroll_root,
-                    cluster_flags,
-                });
-            }
-        }
-
-        // If the page would create too many slices (an arbitrary definition where
-        // it's assumed the GPU memory + compositing overhead would be too high)
-        // then just create a single picture cache for the entire content. This at
-        // least means that we can cache small content changes efficiently when
-        // scrolling isn't occurring. Scrolling regions will be handled reasonably
-        // efficiently by the dirty rect tracking (since it's likely that if the
-        // page has so many slices there isn't a single major scroll region).
-        const MAX_CONTENT_SLICES: usize = 8;
-
-        if slices.len() > MAX_CONTENT_SLICES {
-            if let Some(cluster) = self.prim_list.clusters.first_mut() {
-                content_slice_count = 1;
-                cluster.flags.insert(ClusterFlags::CREATE_PICTURE_CACHE_PRE);
-                cluster.cache_scroll_root = None;
-            }
-        } else {
-            // Walk the list of slices, setting appropriate flags on the clusters which are
-            // later used during setup_picture_caching.
-            for slice in slices.drain(..) {
-                content_slice_count += 1;
-                let cluster = &mut self.prim_list.clusters[slice.cluster_index];
-                // Mark that this cluster creates a picture cache slice
-                cluster.flags.insert(slice.cluster_flags);
-                cluster.cache_scroll_root = Some(slice.scroll_root);
-            }
-        }
-
-        // Always end the cache at the end of the stacking context, so that we don't
-        // cache anything from primitives outside this pipeline in the same slice.
-        if let Some(cluster) = self.prim_list.clusters.last_mut() {
-            cluster.flags.insert(ClusterFlags::CREATE_PICTURE_CACHE_POST);
-        }
-
-        content_slice_count
-    }
-
     /// Return true if the stacking context isn't needed.
     pub fn is_redundant(
+        sc_flags: StackingContextFlags,
         context_3d: &Picture3DContext<ExtendedPrimitiveInstance>,
         composite_ops: &CompositeOps,
         prim_flags: PrimitiveFlags,
         blit_reason: BlitReason,
         requested_raster_space: RasterSpace,
-        parent: &FlattenedStackingContext,
+        parent: Option<&FlattenedStackingContext>,
     ) -> bool {
+        // If this is a backdrop or blend container, it's needed
+        if sc_flags.intersects(StackingContextFlags::IS_BACKDROP_ROOT | StackingContextFlags::IS_BLEND_CONTAINER) {
+            return false;
+        }
+
         // Any 3d context is required
         if let Picture3DContext::In { .. } = context_3d {
             return false;
@@ -3785,9 +3497,12 @@ impl FlattenedStackingContext {
 
         // We can skip mix-blend modes if they are the first primitive in a stacking context,
         // see pop_stacking_context for a full explanation.
-        if composite_ops.mix_blend_mode.is_some() &&
-            !parent.prim_list.is_empty() {
-            return false;
+        if composite_ops.mix_blend_mode.is_some() {
+            if let Some(parent) = parent {
+                if !parent.prim_list.is_empty() {
+                    return false;
+                }
+            }
         }
 
         // If backface visibility is explicitly set.
@@ -3796,8 +3511,17 @@ impl FlattenedStackingContext {
         }
 
         // If rasterization space is different
-        if requested_raster_space != parent.requested_raster_space {
-            return false;
+        match parent {
+            Some(parent) => {
+                if requested_raster_space != parent.requested_raster_space {
+                    return false;
+                }
+            }
+            None => {
+                if requested_raster_space != RasterSpace::Screen {
+                    return false;
+                }
+            }
         }
 
         // If need to isolate in surface due to clipping / mix-blend-mode
@@ -4003,112 +3727,4 @@ fn process_repeat_size(
             repeat_size.height
         },
     )
-}
-
-/// Given a PrimitiveList and scroll root, construct a tile cache primitive instance
-/// that wraps the primitive list.
-fn create_tile_cache(
-    slice: usize,
-    slice_flags: SliceFlags,
-    scroll_root: SpatialNodeIndex,
-    prim_list: PrimitiveList,
-    background_color: Option<ColorF>,
-    shared_clips: Vec<ClipInstance>,
-    interners: &mut Interners,
-    prim_store: &mut PrimitiveStore,
-    clip_store: &mut ClipStore,
-    picture_cache_spatial_nodes: &mut FastHashSet<SpatialNodeIndex>,
-    frame_builder_config: &FrameBuilderConfig,
-    tile_caches: &mut FastHashMap<SliceId, Box<TileCacheInstance>>,
-) -> PrimitiveInstance {
-    // Add this spatial node to the list to check for complex transforms
-    // at the start of a frame build.
-    picture_cache_spatial_nodes.insert(scroll_root);
-
-    // Now, create a picture with tile caching enabled that will hold all
-    // of the primitives selected as belonging to the main scroll root.
-    let pic_key = PictureKey::new(
-        Picture {
-            composite_mode_key: PictureCompositeKey::Identity,
-        },
-    );
-
-    let pic_data_handle = interners
-        .picture
-        .intern(&pic_key, || ());
-
-    // Build a clip-chain for the tile cache, that contains any of the shared clips
-    // we will apply when drawing the tiles. In all cases provided by Gecko, these
-    // are rectangle clips with a scale/offset transform only, and get handled as
-    // a simple local clip rect in the vertex shader. However, this should in theory
-    // also work with any complex clips, such as rounded rects and image masks, by
-    // producing a clip mask that is applied to the picture cache tiles.
-    let mut parent_clip_chain_id = ClipChainId::NONE;
-    for clip_instance in &shared_clips {
-        // Add this spatial node to the list to check for complex transforms
-        // at the start of a frame build.
-        picture_cache_spatial_nodes.insert(clip_instance.spatial_node_index);
-
-        parent_clip_chain_id = clip_store.add_clip_chain_node(
-            clip_instance.handle,
-            clip_instance.spatial_node_index,
-            parent_clip_chain_id,
-        );
-    }
-
-    let tile_cache = Box::new(TileCacheInstance::new(
-        slice,
-        slice_flags,
-        scroll_root,
-        background_color,
-        shared_clips,
-        parent_clip_chain_id,
-        frame_builder_config,
-    ));
-    let slice_id = SliceId::new(slice);
-    tile_caches.insert(slice_id, tile_cache);
-
-    let pic_index = prim_store.pictures.alloc().init(PicturePrimitive::new_image(
-        Some(PictureCompositeMode::TileCache { slice_id }),
-        Picture3DContext::Out,
-        None,
-        true,
-        PrimitiveFlags::IS_BACKFACE_VISIBLE,
-        RasterSpace::Screen,
-        prim_list,
-        scroll_root,
-        PictureOptions::default(),
-    ));
-
-    PrimitiveInstance::new(
-        LayoutRect::max_rect(),
-        PrimitiveInstanceKind::Picture {
-            data_handle: pic_data_handle,
-            pic_index: PictureIndex(pic_index),
-            segment_instance_index: SegmentInstanceIndex::INVALID,
-        },
-        parent_clip_chain_id,
-    )
-}
-
-// Helper fn to collect clip handles from a given clip chain.
-fn add_clips(
-    clip_chain_id: ClipChainId,
-    prim_clips: &mut Vec<ClipInstance>,
-    clip_store: &ClipStore,
-    interners: &Interners,
-) {
-    let mut current_clip_chain_id = clip_chain_id;
-
-    while current_clip_chain_id != ClipChainId::NONE {
-        let clip_chain_node = &clip_store
-            .clip_chain_nodes[current_clip_chain_id.0 as usize];
-
-        let clip_node_data = &interners.clip[clip_chain_node.handle];
-        if let ClipNodeKind::Rectangle = clip_node_data.clip_node_kind {
-            prim_clips.push(ClipInstance::new(clip_chain_node.handle, clip_chain_node.spatial_node_index));
-        }
-
-        current_clip_chain_id = clip_chain_node.parent_clip_chain_id;
-    }
 }

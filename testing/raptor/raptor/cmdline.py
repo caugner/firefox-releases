@@ -102,6 +102,8 @@ def create_parser(mach_interface=False):
             help="Use Raptor to measure CPU usage. Currently supported for Android only.")
     add_arg('--live-sites', dest="live_sites", action="store_true", default=False,
             help="Run tests using live sites instead of recorded sites.")
+    add_arg('--chimera', dest="chimera", action="store_true", default=False,
+            help="Run tests in chimera mode. Each browser cycle will run a cold and warm test.")
     add_arg('--is-release-build', dest="is_release_build", default=False,
             action='store_true',
             help="Whether the build is a release build which requires workarounds "
@@ -187,6 +189,8 @@ def create_parser(mach_interface=False):
             help="path to chromedriver executable")
     add_arg('--browsertime-video', dest='browsertime_video',
             help="records the viewport", default=False, action="store_true")
+    add_arg('--browsertime-no-ffwindowrecorder', dest='browsertime_no_ffwindowrecorder',
+            help="disable the firefox window recorder", default=False, action="store_true")
     add_arg('--browsertime-ffmpeg', dest='browsertime_ffmpeg',
             help="path to ffmpeg executable (for `--video=true`)")
     add_arg('--browsertime-geckodriver', dest='browsertime_geckodriver',
@@ -211,6 +215,17 @@ def verify_options(parser, args):
             parser.error(
                 "--browsertime-chromedriver path is required for android chrome tests"
             )
+
+    if args.chimera:
+        if not args.browsertime:
+            parser.error("--browsertime is required to run tests in chimera mode")
+        if isinstance(args.page_cycles, int) and args.page_cycles != 2:
+            parser.error(
+                "--page-cycles must either not be set, or must be equal to 2 in chimera mode"
+            )
+        # Force cold pageloads with 2 page cycles
+        args.cold = True
+        args.page_cycles = 2
 
     # if running on a desktop browser make sure the binary exists
     if args.app in DESKTOP_APPS:

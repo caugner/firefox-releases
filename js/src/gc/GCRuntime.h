@@ -15,6 +15,7 @@
 #include "gc/ArenaList.h"
 #include "gc/AtomMarking.h"
 #include "gc/GCMarker.h"
+#include "gc/IteratorUtils.h"
 #include "gc/Nursery.h"
 #include "gc/Scheduling.h"
 #include "gc/Statistics.h"
@@ -30,6 +31,7 @@ class AutoLockGC;
 class AutoLockGCBgAlloc;
 class AutoLockHelperThreadState;
 class FinalizationRegistryObject;
+class FinalizationQueueObject;
 class VerifyPreTracer;
 class WeakRefObject;
 class ZoneAllocator;
@@ -156,15 +158,9 @@ class BackgroundAllocTask : public GCParallelTask {
 // Search the provided Chunks for free arenas and decommit them.
 class BackgroundDecommitTask : public GCParallelTask {
  public:
-  using ChunkVector = mozilla::Vector<Chunk*>;
-
   explicit BackgroundDecommitTask(GCRuntime* gc) : GCParallelTask(gc) {}
-  void setChunksToScan(ChunkVector& chunks);
 
   void run() override;
-
- private:
-  MainThreadOrGCTaskData<ChunkVector> toDecommit;
 };
 
 class SweepMarkTask : public GCParallelTask {
@@ -189,38 +185,6 @@ struct Callback {
 
 template <typename F>
 using CallbackVector = Vector<Callback<F>, 4, SystemAllocPolicy>;
-
-template <typename T, typename Iter0, typename Iter1>
-class ChainedIter {
-  Iter0 iter0_;
-  Iter1 iter1_;
-
- public:
-  ChainedIter(const Iter0& iter0, const Iter1& iter1)
-      : iter0_(iter0), iter1_(iter1) {}
-
-  bool done() const { return iter0_.done() && iter1_.done(); }
-  void next() {
-    MOZ_ASSERT(!done());
-    if (!iter0_.done()) {
-      iter0_.next();
-    } else {
-      MOZ_ASSERT(!iter1_.done());
-      iter1_.next();
-    }
-  }
-  T get() const {
-    MOZ_ASSERT(!done());
-    if (!iter0_.done()) {
-      return iter0_.get();
-    }
-    MOZ_ASSERT(!iter1_.done());
-    return iter1_.get();
-  }
-
-  operator T() const { return get(); }
-  T operator->() const { return get(); }
-};
 
 typedef HashMap<Value*, const char*, DefaultHasher<Value*>, SystemAllocPolicy>
     RootedValueMap;
@@ -458,7 +422,7 @@ class GCRuntime {
   void setHostCleanupFinalizationRegistryCallback(
       JSHostCleanupFinalizationRegistryCallback callback, void* data);
   void callHostCleanupFinalizationRegistryCallback(
-      FinalizationRegistryObject* registry);
+      JSFunction* doCleanup, GlobalObject* incumbentGlobal);
   MOZ_MUST_USE bool addWeakPointerZonesCallback(
       JSWeakPointerZonesCallback callback, void* data);
   void removeWeakPointerZonesCallback(JSWeakPointerZonesCallback callback);
@@ -476,8 +440,6 @@ class GCRuntime {
                                FinalizationRegistryObject* registry);
   bool registerWithFinalizationRegistry(JSContext* cx, HandleObject target,
                                         HandleObject record);
-  bool cleanupQueuedFinalizationRegistry(
-      JSContext* cx, Handle<FinalizationRegistryObject*> registry);
 
   void setFullCompartmentChecks(bool enable);
 
@@ -545,11 +507,9 @@ class GCRuntime {
   const ChunkPool& emptyChunks(const AutoLockGC& lock) const {
     return emptyChunks_.ref();
   }
-  typedef ChainedIter<Chunk*, ChunkPool::Iter, ChunkPool::Iter>
-      NonEmptyChunksIter;
+  using NonEmptyChunksIter = ChainedIterator<ChunkPool::Iter, 2>;
   NonEmptyChunksIter allNonEmptyChunks(const AutoLockGC& lock) {
-    return NonEmptyChunksIter(ChunkPool::Iter(availableChunks(lock)),
-                              ChunkPool::Iter(fullChunks(lock)));
+    return NonEmptyChunksIter(availableChunks(lock), fullChunks(lock));
   }
 
   Chunk* getOrAllocChunk(AutoLockGCBgAlloc& lock);
@@ -712,7 +672,8 @@ class GCRuntime {
                                                  SliceBudget& budget);
   bool mightSweepInThisSlice(bool nonIncremental);
   bool mightCompactInThisSlice(bool nonIncremental);
-  void collectNursery(JS::GCReason reason, gcstats::PhaseKind phase);
+  void collectNursery(JSGCInvocationKind kind, JS::GCReason reason,
+                      gcstats::PhaseKind phase);
 
   friend class AutoCallGCCallbacks;
   void maybeCallGCCallback(JSGCStatus status, JS::GCReason reason);
@@ -778,8 +739,7 @@ class GCRuntime {
   void sweepJitDataOnMainThread(JSFreeOp* fop);
   void sweepFinalizationRegistriesOnMainThread();
   void sweepFinalizationRegistries(Zone* zone);
-  void queueFinalizationRegistryForCleanup(
-      FinalizationRegistryObject* registry);
+  void queueFinalizationRegistryForCleanup(FinalizationQueueObject* queue);
   void sweepWeakRefs();
   IncrementalProgress endSweepingSweepGroup(JSFreeOp* fop, SliceBudget& budget);
   IncrementalProgress performSweepActions(SliceBudget& sliceBudget);
@@ -794,8 +754,9 @@ class GCRuntime {
   void endSweepPhase(bool lastGC);
   bool allCCVisibleZonesWereCollected();
   void sweepZones(JSFreeOp* fop, bool destroyingRuntime);
-  void decommitFreeArenasWithoutUnlocking(const AutoLockGC& lock);
   void startDecommit();
+  void decommitFreeArenas(const bool& canel, AutoLockGC& lock);
+  void decommitFreeArenasWithoutUnlocking(const AutoLockGC& lock);
   void queueZonesAndStartBackgroundSweep(ZoneList& zones);
   void sweepFromBackgroundThread(AutoLockHelperThreadState& lock);
   void startBackgroundFree();
@@ -828,6 +789,8 @@ class GCRuntime {
   void releaseRelocatedArenas(Arena* arenaList);
   void releaseRelocatedArenasWithoutUnlocking(Arena* arenaList,
                                               const AutoLockGC& lock);
+  IncrementalProgress waitForBackgroundTask(GCParallelTask& task,
+                                            SliceBudget& budget);
   void maybeRequestGCAfterBackgroundTask(const AutoLockHelperThreadState& lock);
   void cancelRequestedGCAfterBackgroundTask();
   void finishCollection();

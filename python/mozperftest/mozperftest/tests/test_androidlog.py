@@ -3,8 +3,9 @@ import mozunit
 from unittest import mock
 import pathlib
 
-from mozperftest.tests.support import get_running_env, EXAMPLE_TEST, temp_file, temp_dir
+from mozperftest.tests.support import get_running_env, EXAMPLE_TEST, temp_file
 from mozperftest.environment import SYSTEM, TEST, METRICS
+from mozperftest.utils import temp_dir
 
 
 HERE = pathlib.Path(__file__).parent
@@ -64,7 +65,7 @@ def test_android_log(*mocked):
         env.set_arg("tests", [EXAMPLE_TEST])
 
         with env.layers[SYSTEM] as sys, env.layers[TEST] as andro:
-            metadata = sys(andro(metadata))
+            metadata = andro(sys(metadata))
 
         # we want to drop the first result
         metadata._results = metadata._results[1:]

@@ -3,7 +3,6 @@
    - You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 // Import globals from the files imported by the .xul files.
-/* import-globals-from subdialogs.js */
 /* import-globals-from main.js */
 /* import-globals-from home.js */
 /* import-globals-from search.js */
@@ -29,6 +28,42 @@ ChromeUtils.defineModuleGetter(
   "formAutofillParent",
   "resource://formautofill/FormAutofillParent.jsm"
 );
+
+XPCOMUtils.defineLazyGetter(this, "gSubDialog", function() {
+  const { SubDialogManager } = ChromeUtils.import(
+    "resource://gre/modules/SubDialog.jsm"
+  );
+  return new SubDialogManager({
+    dialogStack: document.getElementById("dialogStack"),
+    dialogTemplate: document.getElementById("dialogTemplate"),
+    dialogOptions: {
+      styleSheets: [
+        "chrome://browser/skin/preferences/dialog.css",
+        "chrome://browser/skin/preferences/preferences.css",
+      ],
+      resizeCallback: ({ title, frame }) => {
+        // Search within main document and highlight matched keyword.
+        gSearchResultsPane.searchWithinNode(title, gSearchResultsPane.query);
+
+        // Search within sub-dialog document and highlight matched keyword.
+        gSearchResultsPane.searchWithinNode(
+          frame.contentDocument.firstElementChild,
+          gSearchResultsPane.query
+        );
+
+        // Creating tooltips for all the instances found
+        for (let node of gSearchResultsPane.listSearchTooltips) {
+          if (!node.tooltipNode) {
+            gSearchResultsPane.createSearchTooltip(
+              node,
+              gSearchResultsPane.query
+            );
+          }
+        }
+      },
+    },
+  });
+});
 
 var gLastCategory = { category: undefined, subcategory: undefined };
 const gXULDOMParser = new DOMParser();
@@ -78,14 +113,19 @@ document.addEventListener("DOMContentLoaded", init_all, { once: true });
 function init_all() {
   Preferences.forceEnableInstantApply();
 
-  gSubDialog.init();
   register_module("paneGeneral", gMainPane);
   register_module("paneHome", gHomePane);
   register_module("paneSearch", gSearchPane);
   register_module("panePrivacy", gPrivacyPane);
   register_module("paneContainers", gContainersPane);
   if (Services.prefs.getBoolPref("browser.preferences.experimental")) {
-    document.getElementById("category-experimental").hidden = false;
+    // Set hidden based on previous load's hidden value.
+    document.getElementById(
+      "category-experimental"
+    ).hidden = Services.prefs.getBoolPref(
+      "browser.preferences.experimental.hidden",
+      false
+    );
     register_module("paneExperimental", gExperimentalPane);
   }
   // The Sync category needs to be the last of the "real" categories
@@ -207,7 +247,7 @@ async function gotoPref(aCategory) {
     }
 
     item = categories.querySelector(".category[value=" + category + "]");
-    if (!item) {
+    if (!item || item.hidden) {
       category = kDefaultCategoryInternalName;
       item = categories.querySelector(".category[value=" + category + "]");
     }

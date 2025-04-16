@@ -12,6 +12,7 @@
 #include "MediaStatusManager.h"
 #include "mozilla/DOMEventTargetHelper.h"
 #include "mozilla/dom/MediaControllerBinding.h"
+#include "mozilla/dom/MediaSession.h"
 #include "mozilla/LinkedList.h"
 #include "nsDataHashtable.h"
 #include "nsISupportsImpl.h"
@@ -38,6 +39,8 @@ class IMediaController {
   virtual void NextTrack() = 0;
   virtual void SeekBackward() = 0;
   virtual void SeekForward() = 0;
+  virtual void SkipAd() = 0;
+  virtual void SeekTo(double aSeekTime, bool aFastSeek) = 0;
 
   // Return the ID of the top level browsing context within a tab.
   virtual uint64_t Id() const = 0;
@@ -85,6 +88,7 @@ class MediaController final : public DOMEventTargetHelper,
                        JS::Handle<JSObject*> aGivenProto) override;
   void GetSupportedKeys(nsTArray<MediaControlKey>& aRetVal) const;
   IMPL_EVENT_HANDLER(supportedkeyschange);
+  IMPL_EVENT_HANDLER(positionstatechange);
 
   // IMediaController's methods
   void Focus() override;
@@ -95,6 +99,9 @@ class MediaController final : public DOMEventTargetHelper,
   void NextTrack() override;
   void SeekBackward() override;
   void SeekForward() override;
+  void SkipAd() override;
+  void SeekTo(double aSeekTime, bool aFastSeek) override;
+
   uint64_t Id() const override;
   bool IsAudible() const override;
   bool IsPlaying() const override;
@@ -136,9 +143,12 @@ class MediaController final : public DOMEventTargetHelper,
  private:
   ~MediaController();
   void HandleActualPlaybackStateChanged() override;
-  void UpdateMediaControlKeyToContentMediaIfNeeded(MediaControlKey aKey);
+  void UpdateMediaControlActionToContentMediaIfNeeded(
+      const MediaControlAction& aAction);
   void HandleSupportedMediaSessionActionsChanged(
       const nsTArray<MediaSessionAction>& aSupportedAction);
+
+  void HandlePositionStateChanged(const PositionState& aState);
 
   // This would register controller to the media control service that takes a
   // responsibility to manage all active controllers.
@@ -155,6 +165,9 @@ class MediaController final : public DOMEventTargetHelper,
 
   bool IsMediaBeingUsedInPIPModeOrFullScreen() const;
 
+  void DispatchAsyncEvent(const nsAString& aName);
+  void DispatchAsyncEvent(Event* aEvent);
+
   bool mIsActive = false;
   bool mShutdown = false;
   bool mIsInPictureInPictureMode = false;
@@ -164,6 +177,8 @@ class MediaController final : public DOMEventTargetHelper,
   // the media keys, then determine the supported media keys.
   MediaEventListener mSupportedActionsChangedListener;
   MediaEventProducer<nsTArray<MediaControlKey>> mSupportedKeysChangedEvent;
+
+  MediaEventListener mPositionStateChangedListener;
 
   MediaEventProducer<bool> mFullScreenChangedEvent;
   MediaEventProducer<bool> mPictureInPictureModeChangedEvent;

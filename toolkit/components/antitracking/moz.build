@@ -8,6 +8,7 @@ with Files('**'):
     BUG_COMPONENT = ('Core', 'Privacy: Anti-Tracking')
 
 XPIDL_SOURCES += [
+    'nsIPartitioningExceptionListService.idl',
     'nsIPurgeTrackerService.idl',
     'nsITrackingDBService.idl',
     'nsIURLDecorationAnnotationsService.idl',
@@ -21,6 +22,7 @@ EXTRA_COMPONENTS += [
 
 EXTRA_JS_MODULES += [
     'ContentBlockingAllowList.jsm',
+    'PartitioningExceptionListService.jsm',
     'PurgeTrackerService.jsm',
     'TrackingDBService.jsm',
     'URLDecorationAnnotationsService.jsm',
@@ -54,6 +56,7 @@ UNIFIED_SOURCES += [
     'ContentBlockingNotifier.cpp',
     'ContentBlockingUserInteraction.cpp',
     'DynamicFpiRedirectHeuristic.cpp',
+    'PartitioningExceptionList.cpp',
     'RejectForeignAllowList.cpp',
     'SettingsChangeObserver.cpp',
     'StorageAccess.cpp',

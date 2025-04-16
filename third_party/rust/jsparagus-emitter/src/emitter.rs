@@ -555,6 +555,10 @@ impl InstructionWriter {
         self.emit_op(Opcode::InitHiddenElem);
     }
 
+    pub fn init_private_elem(&mut self) {
+        self.emit_op(Opcode::InitPrivateElem);
+    }
+
     pub fn init_prop_getter(&mut self, name_index: GCThingIndex) {
         self.emit_op(Opcode::InitPropGetter);
         self.write_g_c_thing_index(name_index);
@@ -609,6 +613,10 @@ impl InstructionWriter {
         self.emit_op(Opcode::CallElem);
     }
 
+    pub fn get_private_elem(&mut self) {
+        self.emit_op(Opcode::GetPrivateElem);
+    }
+
     pub fn length(&mut self, name_index: GCThingIndex) {
         self.emit_op(Opcode::Length);
         self.write_g_c_thing_index(name_index);
@@ -630,6 +638,10 @@ impl InstructionWriter {
 
     pub fn strict_set_elem(&mut self) {
         self.emit_op(Opcode::StrictSetElem);
+    }
+
+    pub fn set_private_elem(&mut self) {
+        self.emit_op(Opcode::SetPrivateElem);
     }
 
     pub fn del_prop(&mut self, name_index: GCThingIndex) {
@@ -1035,9 +1047,8 @@ impl InstructionWriter {
         self.write_g_c_thing_index(name_index);
     }
 
-    pub fn try_(&mut self, jump_at_end_offset: i32) {
+    pub fn try_(&mut self) {
         self.emit_op(Opcode::Try);
-        self.write_i32(jump_at_end_offset);
     }
 
     pub fn try_destructuring(&mut self) {

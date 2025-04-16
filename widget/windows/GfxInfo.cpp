@@ -468,11 +468,11 @@ nsresult GfxInfo::Init() {
     }
   }
 
-  mDeviceKeyDebug = NS_LITERAL_STRING("PrimarySearch");
+  mDeviceKeyDebug = u"PrimarySearch"_ns;
 
   while (EnumDisplayDevicesW(nullptr, deviceIndex, &displayDevice, 0)) {
     if (displayDevice.StateFlags & DISPLAY_DEVICE_PRIMARY_DEVICE) {
-      mDeviceKeyDebug = NS_LITERAL_STRING("NullSearch");
+      mDeviceKeyDebug = u"NullSearch"_ns;
       break;
     }
     deviceIndex++;
@@ -491,12 +491,22 @@ nsresult GfxInfo::Init() {
   /* check that DeviceKey begins with DEVICE_KEY_PREFIX */
   /* some systems have a DeviceKey starting with \REGISTRY\Machine\ so we need
    * to compare case insenstively */
-  if (_wcsnicmp(displayDevice.DeviceKey, DEVICE_KEY_PREFIX,
-                ArrayLength(DEVICE_KEY_PREFIX) - 1) != 0)
-    return rv;
+  /* If the device key is empty, we are most likely in a remote desktop
+   * environment. In this case we set the devicekey to an empty string so
+   * it can be handled later.
+   */
+  if (displayDevice.DeviceKey[0] != '\0') {
+    if (_wcsnicmp(displayDevice.DeviceKey, DEVICE_KEY_PREFIX,
+                  ArrayLength(DEVICE_KEY_PREFIX) - 1) != 0) {
+      return rv;
+    }
 
-  // chop off DEVICE_KEY_PREFIX
-  mDeviceKey[0] = displayDevice.DeviceKey + ArrayLength(DEVICE_KEY_PREFIX) - 1;
+    // chop off DEVICE_KEY_PREFIX
+    mDeviceKey[0] =
+        displayDevice.DeviceKey + ArrayLength(DEVICE_KEY_PREFIX) - 1;
+  } else {
+    mDeviceKey[0] = EmptyString();
+  }
 
   mDeviceID[0] = displayDevice.DeviceID;
   mDeviceString[0] = displayDevice.DeviceString;
@@ -540,8 +550,8 @@ nsresult GfxInfo::Init() {
     DWORD memberIndex = 0;
 
     devinfoData.cbSize = sizeof(devinfoData);
-    NS_NAMED_LITERAL_STRING(driverKeyPre,
-                            "System\\CurrentControlSet\\Control\\Class\\");
+    constexpr auto driverKeyPre =
+        u"System\\CurrentControlSet\\Control\\Class\\"_ns;
     /* enumerate device information elements in the device information set */
     while (SetupDiEnumDeviceInfo(devinfo, memberIndex++, &devinfoData)) {
       /* get a string that identifies the device's driver key */
@@ -621,8 +631,8 @@ nsresult GfxInfo::Init() {
       nsAutoString driverVersion2;
       nsAutoString driverDate2;
 
-      NS_NAMED_LITERAL_STRING(driverKeyPre,
-                              "System\\CurrentControlSet\\Control\\Class\\");
+      constexpr auto driverKeyPre =
+          u"System\\CurrentControlSet\\Control\\Class\\"_ns;
       /* enumerate device information elements in the device information set */
       while (SetupDiEnumDeviceInfo(devinfo, memberIndex++, &devinfoData)) {
         /* get a string that identifies the device's driver key */
@@ -778,12 +788,12 @@ nsresult GfxInfo::Init() {
     nsAutoString eligibleDLLs;
     if (NS_SUCCEEDED(GetAdapterDriver(eligibleDLLs))) {
       if (FindInReadable(dllFileName, eligibleDLLs)) {
-        dllFileName += NS_LITERAL_STRING(".dll");
+        dllFileName += u".dll"_ns;
         gfxWindowsPlatform::GetDLLVersion(dllFileName.get(), dllVersion);
         ParseDriverVersion(dllVersion, &dllNumericVersion);
       }
       if (FindInReadable(dllFileName2, eligibleDLLs)) {
-        dllFileName2 += NS_LITERAL_STRING(".dll");
+        dllFileName2 += u".dll"_ns;
         gfxWindowsPlatform::GetDLLVersion(dllFileName2.get(), dllVersion2);
         ParseDriverVersion(dllVersion2, &dllNumericVersion2);
       }
@@ -814,8 +824,7 @@ nsresult GfxInfo::Init() {
     }
 
     ParseDriverVersion(mDriverVersion[mActiveGPUIndex], &driverNumericVersion);
-    ParseDriverVersion(NS_LITERAL_STRING("9.17.10.0"),
-                       &knownSafeMismatchVersion);
+    ParseDriverVersion(u"9.17.10.0"_ns, &knownSafeMismatchVersion);
 
     // If there's a driver version mismatch, consider this harmful only when
     // the driver version is less than knownSafeMismatchVersion.  See the
@@ -1089,8 +1098,7 @@ static void CheckForCiscoVPN() {
                     0, KEY_QUERY_VALUE, &key);
   if (result == ERROR_SUCCESS) {
     RegCloseKey(key);
-    CrashReporter::AppendAppNotesToCrashReport(
-        NS_LITERAL_CSTRING("Cisco VPN\n"));
+    CrashReporter::AppendAppNotesToCrashReport("Cisco VPN\n"_ns);
   }
 }
 
@@ -1098,8 +1106,7 @@ void GfxInfo::AddCrashReportAnnotations() {
   CheckForCiscoVPN();
 
   if (mHasDriverVersionMismatch) {
-    CrashReporter::AppendAppNotesToCrashReport(
-        NS_LITERAL_CSTRING("DriverVersionMismatch\n"));
+    CrashReporter::AppendAppNotesToCrashReport("DriverVersionMismatch\n"_ns);
   }
 
   nsString deviceID, vendorID, driverVersion, subsysID;
@@ -1809,8 +1816,8 @@ const nsTArray<GfxDriverInfo>& GfxInfo::GetGfxDriverInfo() {
         BatteryStatus::Present, DesktopEnvironment::All, WindowProtocol::All,
         DriverVendor::All, DeviceFamily::IntelModernRolloutWebRender,
         nsIGfxInfo::FEATURE_WEBRENDER, nsIGfxInfo::FEATURE_ALLOW_ALWAYS,
-        DRIVER_GREATER_THAN_OR_EQUAL, V(25, 20, 100, 6373),
-        "FEATURE_ROLLOUT_BATTERY_INTEL_S_SCRN");
+        DRIVER_GREATER_THAN_OR_EQUAL, V(24, 20, 100, 6286),
+        "FEATURE_ROLLOUT_BATTERY_INTEL");
 
     APPEND_TO_DRIVER_BLOCKLIST2_EXT(
         OperatingSystem::Windows, ScreenSizeStatus::All, BatteryStatus::All,
@@ -1939,7 +1946,25 @@ nsresult GfxInfo::GetFeatureStatusImpl(
         !adapterVendorID.LowerCaseEqualsLiteral("0xdcba") &&
         !adapterVendorID.LowerCaseEqualsLiteral("0xabab") &&
         !adapterVendorID.LowerCaseEqualsLiteral("0xdcdc")) {
-      aFailureId = "FEATURE_FAILURE_UNKNOWN_DEVICE_VENDOR";
+      if (adapterVendorID.Equals(
+              GfxDriverInfo::GetDeviceVendor(DeviceVendor::MicrosoftHyperV),
+              nsCaseInsensitiveStringComparator) ||
+          adapterVendorID.Equals(
+              GfxDriverInfo::GetDeviceVendor(DeviceVendor::VMWare),
+              nsCaseInsensitiveStringComparator) ||
+          adapterVendorID.Equals(
+              GfxDriverInfo::GetDeviceVendor(DeviceVendor::VirtualBox),
+              nsCaseInsensitiveStringComparator)) {
+        aFailureId = "FEATURE_FAILURE_VM_VENDOR";
+      } else if (adapterVendorID.Equals(GfxDriverInfo::GetDeviceVendor(
+                                            DeviceVendor::MicrosoftBasic),
+                                        nsCaseInsensitiveStringComparator)) {
+        aFailureId = "FEATURE_FAILURE_MICROSOFT_BASIC_VENDOR";
+      } else if (adapterVendorID.IsEmpty()) {
+        aFailureId = "FEATURE_FAILURE_EMPTY_DEVICE_VENDOR";
+      } else {
+        aFailureId = "FEATURE_FAILURE_UNKNOWN_DEVICE_VENDOR";
+      }
       *aStatus = FEATURE_BLOCKED_DEVICE;
       return NS_OK;
     }

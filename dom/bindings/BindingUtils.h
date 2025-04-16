@@ -15,22 +15,18 @@
 #include "js/MemoryFunctions.h"
 #include "js/Wrapper.h"
 #include "mozilla/ArrayUtils.h"
-#include "mozilla/Alignment.h"
 #include "mozilla/Array.h"
 #include "mozilla/Assertions.h"
 #include "mozilla/DeferredFinalize.h"
 #include "mozilla/UniquePtr.h"
 #include "mozilla/dom/BindingCallContext.h"
 #include "mozilla/dom/BindingDeclarations.h"
-#include "mozilla/dom/CallbackObject.h"
 #include "mozilla/dom/DOMJSClass.h"
 #include "mozilla/dom/DOMJSProxyHandler.h"
-#include "mozilla/dom/Exceptions.h"
 #include "mozilla/dom/NonRefcountedDOMObject.h"
 #include "mozilla/dom/Nullable.h"
 #include "mozilla/dom/PrototypeList.h"
 #include "mozilla/dom/RemoteObjectProxy.h"
-#include "mozilla/dom/RootedDictionary.h"
 #include "mozilla/dom/ScriptSettings.h"
 #include "mozilla/SegmentedVector.h"
 #include "mozilla/ErrorResult.h"
@@ -38,7 +34,6 @@
 #include "mozilla/MemoryReporting.h"
 #include "mozilla/dom/Document.h"
 #include "nsIGlobalObject.h"
-#include "nsIVariant.h"
 #include "nsJSUtils.h"
 #include "nsISupportsImpl.h"
 #include "xpcObjectHelper.h"
@@ -47,8 +42,6 @@
 #include "mozilla/dom/FakeString.h"
 
 #include "nsWrapperCacheInlines.h"
-
-class nsGenericHTMLElement;
 
 namespace mozilla {
 
@@ -2920,33 +2913,6 @@ bool CreateGlobal(JSContext* aCx, T* aNative, nsWrapperCache* aCache,
 
   return true;
 }
-
-/*
- * Holds a jsid that is initialized to a pinned string, with automatic
- * conversion to Handle<jsid>, as it is held live forever by pinning.
- */
-class PinnedStringId {
-  jsid id;
-
- public:
-  constexpr PinnedStringId() : id(JSID_VOID) {}
-
-  bool init(JSContext* cx, const char* string) {
-    JSString* str = JS_AtomizeAndPinString(cx, string);
-    if (!str) {
-      return false;
-    }
-    id = JS::PropertyKey::fromPinnedString(str);
-    return true;
-  }
-
-  operator const jsid&() const { return id; }
-
-  operator JS::Handle<jsid>() const {
-    /* This is safe because we have pinned the string. */
-    return JS::Handle<jsid>::fromMarkedLocation(&id);
-  }
-} JS_HAZ_ROOTED;
 
 namespace binding_detail {
 /**

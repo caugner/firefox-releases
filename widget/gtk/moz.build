@@ -65,7 +65,7 @@ if CONFIG['MOZ_X11']:
         'CompositorWidgetParent.cpp',
         'GtkCompositorWidget.cpp',
         'InProcessGtkCompositorWidget.cpp',
-        'nsIdleServiceGTK.cpp',
+        'nsUserIdleServiceGTK.cpp',
     ]
     EXPORTS.mozilla.widget += [
         'CompositorWidgetChild.h',
@@ -76,7 +76,6 @@ if CONFIG['MOZ_X11']:
 
 if CONFIG['NS_PRINTING']:
     UNIFIED_SOURCES += [
-        'nsCUPSShim.cpp',
         'nsDeviceContextSpecG.cpp',
         'nsPrintDialogGTK.cpp',
         'nsPrintSettingsGTK.cpp',
@@ -138,6 +137,7 @@ LOCAL_INCLUDES += [
     '/layout/generic',
     '/layout/xul',
     '/other-licenses/atk-1.0',
+    '/third_party/cups/include',
     '/widget',
     '/widget/headless',
 ]

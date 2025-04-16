@@ -60,7 +60,7 @@
 #include "nsAnimationManager.h"
 #include "nsNameSpaceManager.h"  // for Pref-related rule management (bugs 22963,20760,31816)
 #include "nsFlexContainerFrame.h"
-#include "nsFrame.h"
+#include "nsIFrame.h"
 #include "FrameLayerBuilder.h"
 #include "nsViewManager.h"
 #include "nsView.h"
@@ -120,9 +120,9 @@
 #include "nsStyleSheetService.h"
 #include "gfxUtils.h"
 #include "mozilla/SMILAnimationController.h"
-#include "SVGContentUtils.h"
-#include "SVGObserverUtils.h"
-#include "SVGFragmentIdentifier.h"
+#include "mozilla/SVGContentUtils.h"
+#include "mozilla/SVGObserverUtils.h"
+#include "mozilla/SVGFragmentIdentifier.h"
 #include "nsFrameSelection.h"
 
 #include "mozilla/dom/Performance.h"
@@ -486,7 +486,7 @@ class MOZ_STACK_CLASS nsPresShellEventCB : public EventDispatchingCallback {
     if (aVisitor.mPresContext && aVisitor.mEvent->mClass != eBasicEventClass) {
       if (aVisitor.mEvent->mMessage == eMouseDown ||
           aVisitor.mEvent->mMessage == eMouseUp) {
-        // Mouse-up and mouse-down events call nsFrame::HandlePress/Release
+        // Mouse-up and mouse-down events call nsIFrame::HandlePress/Release
         // which call GetContentOffsetsFromPoint which requires up-to-date
         // layout. Bring layout up-to-date now so that GetCurrentEventFrame()
         // below will return a real frame and we don't have to worry about
@@ -1228,9 +1228,7 @@ void PresShell::Destroy() {
             !uri->SchemeIs("resource") &&
             !(uri->SchemeIs("moz-extension") &&
               (NS_SUCCEEDED(uri->GetFilePath(path)) &&
-               StringEndsWith(
-                   path,
-                   NS_LITERAL_CSTRING("/_generated_background_page.html"))))) {
+               StringEndsWith(path, "/_generated_background_page.html"_ns)))) {
           Telemetry::Accumulate(Telemetry::BASE_FONT_FAMILIES_PER_PAGE,
                                 stats->mBaseFonts);
           Telemetry::Accumulate(Telemetry::LANGPACK_FONT_FAMILIES_PER_PAGE,
@@ -1955,9 +1953,6 @@ nsresult PresShell::ResizeReflow(nscoord aWidth, nscoord aHeight,
     MOZ_ASSERT(mMobileViewportManager);
     mMobileViewportManager->RequestReflow(false);
     return NS_OK;
-  }
-  if (mMobileViewportManager) {
-    mMobileViewportManager->NotifyResizeReflow();
   }
 
   return ResizeReflowIgnoreOverride(aWidth, aHeight, aOptions);
@@ -2708,7 +2703,7 @@ void PresShell::FrameNeedsReflow(nsIFrame* aFrame,
 
     // Grab |wasDirty| now so we can go ahead and update the bits on
     // subtreeRoot.
-    bool wasDirty = NS_SUBTREE_DIRTY(subtreeRoot);
+    bool wasDirty = subtreeRoot->IsSubtreeDirty();
     subtreeRoot->AddStateBits(aBitToAdd);
 
     // Determine whether we need to keep looking for the next ancestor
@@ -2816,7 +2811,7 @@ void PresShell::FrameNeedsReflow(nsIFrame* aFrame,
 
       nsIFrame* child = f;
       f = f->GetParent();
-      wasDirty = NS_SUBTREE_DIRTY(f);
+      wasDirty = f->IsSubtreeDirty();
       f->ChildIsDirty(child);
       NS_ASSERTION(f->HasAnyStateBits(NS_FRAME_HAS_DIRTY_CHILDREN),
                    "ChildIsDirty didn't do its job");
@@ -3130,10 +3125,10 @@ nsresult PresShell::GoToAnchor(const nsAString& aAnchorName, bool aScroll,
 
   // Search for anchor in the HTML namespace with a matching name
   if (!content && !mDocument->IsHTMLDocument()) {
-    NS_NAMED_LITERAL_STRING(nameSpace, "http://www.w3.org/1999/xhtml");
+    constexpr auto nameSpace = u"http://www.w3.org/1999/xhtml"_ns;
     // Get the list of anchor elements
     nsCOMPtr<nsINodeList> list =
-        mDocument->GetElementsByTagNameNS(nameSpace, NS_LITERAL_STRING("a"));
+        mDocument->GetElementsByTagNameNS(nameSpace, u"a"_ns);
     // Loop through the anchors looking for the first one with the given name.
     for (uint32_t i = 0; true; i++) {
       nsIContent* node = list->Item(i);
@@ -3220,7 +3215,7 @@ nsresult PresShell::GoToAnchor(const nsAString& aAnchorName, bool aScroll,
     }
   } else {
     rv = NS_ERROR_FAILURE;
-    NS_NAMED_LITERAL_STRING(top, "top");
+    constexpr auto top = u"top"_ns;
     if (nsContentUtils::EqualsIgnoreASCIICase(aAnchorName, top)) {
       // Scroll to the top/left if aAnchorName is "top" and there is no element
       // with such a name or id.
@@ -3308,19 +3303,12 @@ static void AccumulateFrameBounds(nsIFrame* aContainerFrame, nsIFrame* aFrame,
       if (aLines) {
         int32_t index = aLines->FindLineContaining(prevFrame, aCurLine);
         if (index >= 0) {
-          aCurLine = index;
-          nsIFrame* trash1;
-          int32_t trash2;
-          nsRect lineBounds;
-
-          if (NS_SUCCEEDED(
-                  aLines->GetLine(index, &trash1, &trash2, lineBounds))) {
-            frameBounds += frame->GetOffsetTo(f);
-            frame = f;
-            if (lineBounds.y < frameBounds.y) {
-              frameBounds.height = frameBounds.YMost() - lineBounds.y;
-              frameBounds.y = lineBounds.y;
-            }
+          auto line = aLines->GetLine(index).unwrap();
+          frameBounds += frame->GetOffsetTo(f);
+          frame = f;
+          if (line.mLineBounds.y < frameBounds.y) {
+            frameBounds.height = frameBounds.YMost() - line.mLineBounds.y;
+            frameBounds.y = line.mLineBounds.y;
           }
         }
       }
@@ -4745,7 +4733,7 @@ static bool gDumpRangePaintList = false;
 
 UniquePtr<RangePaintInfo> PresShell::CreateRangePaintInfo(
     nsRange* aRange, nsRect& aSurfaceRect, bool aForPrimarySelection) {
-  nsIFrame* ancestorFrame;
+  nsIFrame* ancestorFrame = nullptr;
   nsIFrame* rootFrame = GetRootFrame();
 
   // If the start or end of the range is the document, just use the root
@@ -4804,8 +4792,8 @@ UniquePtr<RangePaintInfo> PresShell::CreateRangePaintInfo(
     // XXX deal with frame being null due to display:contents
     for (; frame;
          frame = nsLayoutUtils::GetNextContinuationOrIBSplitSibling(frame)) {
-      info->mBuilder.SetVisibleRect(frame->GetVisualOverflowRect());
-      info->mBuilder.SetDirtyRect(frame->GetVisualOverflowRect());
+      info->mBuilder.SetVisibleRect(frame->InkOverflowRect());
+      info->mBuilder.SetDirtyRect(frame->InkOverflowRect());
       frame->BuildDisplayListForStackingContext(&info->mBuilder, &info->mList);
     }
   };
@@ -4850,7 +4838,7 @@ UniquePtr<RangePaintInfo> PresShell::CreateRangePaintInfo(
 #ifdef DEBUG
   if (gDumpRangePaintList) {
     fprintf(stderr, "CreateRangePaintInfo --- before ClipListToRange:\n");
-    nsFrame::PrintDisplayList(&(info->mBuilder), info->mList);
+    nsIFrame::PrintDisplayList(&(info->mBuilder), info->mList);
   }
 #endif
 
@@ -4861,7 +4849,7 @@ UniquePtr<RangePaintInfo> PresShell::CreateRangePaintInfo(
 #ifdef DEBUG
   if (gDumpRangePaintList) {
     fprintf(stderr, "CreateRangePaintInfo --- after ClipListToRange:\n");
-    nsFrame::PrintDisplayList(&(info->mBuilder), info->mList);
+    nsIFrame::PrintDisplayList(&(info->mBuilder), info->mList);
   }
 #endif
 
@@ -5301,9 +5289,10 @@ void PresShell::UpdateCanvasBackground() {
     bool drawBackgroundImage = false;
     bool drawBackgroundColor = false;
     const nsStyleDisplay* disp = rootStyleFrame->StyleDisplay();
+    StyleAppearance appearance = disp->EffectiveAppearance();
     if (rootStyleFrame->IsThemed(disp) &&
-        disp->mAppearance != StyleAppearance::MozWinGlass &&
-        disp->mAppearance != StyleAppearance::MozWinBorderlessGlass) {
+        appearance != StyleAppearance::MozWinGlass &&
+        appearance != StyleAppearance::MozWinBorderlessGlass) {
       // Ignore the CSS background-color if -moz-appearance is used and it is
       // not one of the glass values. (Windows 7 Glass has traditionally not
       // overridden background colors, so we preserve that behavior for now.)
@@ -5947,7 +5936,7 @@ void PresShell::MarkFramesInSubtreeApproximatelyVisible(
 
     for (nsIFrame* child : list) {
       nsRect r = rect - child->GetPosition();
-      if (!r.IntersectRect(r, child->GetVisualOverflowRect())) {
+      if (!r.IntersectRect(r, child->InkOverflowRect())) {
         continue;
       }
       if (child->IsTransformed()) {
@@ -5955,7 +5944,7 @@ void PresShell::MarkFramesInSubtreeApproximatelyVisible(
         // rect
         if (!preserves3DChildren ||
             !child->Combines3DTransformWithAncestors()) {
-          const nsRect overflow = child->GetVisualOverflowRectRelativeToSelf();
+          const nsRect overflow = child->InkOverflowRectRelativeToSelf();
           nsRect out;
           if (nsDisplayTransform::UntransformRect(r, overflow, child, &out)) {
             r = out;
@@ -6080,7 +6069,7 @@ bool PresShell::AssumeAllFramesVisible() {
   if (!mHaveShutDown && !mIsDestroying &&
       !mPresContext->IsRootContentDocumentInProcess()) {
     nsPresContext* presContext =
-        mPresContext->GetToplevelContentDocumentPresContext();
+        mPresContext->GetInProcessRootContentDocumentPresContext();
     if (presContext && presContext->PresShell()->AssumeAllFramesVisible()) {
       return true;
     }
@@ -6114,11 +6103,11 @@ void PresShell::ScheduleApproximateFrameVisibilityUpdateNow() {
 
   if (!mPresContext->IsRootContentDocument()) {
     nsPresContext* presContext =
-        mPresContext->GetToplevelContentDocumentPresContext();
+        mPresContext->GetInProcessRootContentDocumentPresContext();
     if (!presContext) return;
     MOZ_ASSERT(presContext->IsRootContentDocument(),
                "Didn't get a root prescontext from "
-               "GetToplevelContentDocumentPresContext?");
+               "GetInProcessRootContentDocumentPresContext?");
     presContext->PresShell()->ScheduleApproximateFrameVisibilityUpdateNow();
     return;
   }
@@ -6213,7 +6202,7 @@ void PresShell::Paint(nsView* aViewToPaint, const nsRegion& aDirtyRegion,
   if (contentRoot) {
     uri = contentRoot->GetDocumentURI();
   }
-  url = uri ? uri->GetSpecOrDefault() : NS_LITERAL_CSTRING("N/A");
+  url = uri ? uri->GetSpecOrDefault() : "N/A"_ns;
 #ifdef MOZ_GECKO_PROFILER
   AUTO_PROFILER_LABEL_DYNAMIC_NSCSTRING("PresShell::Paint", GRAPHICS, url);
 #endif
@@ -8004,7 +7993,7 @@ Document* PresShell::GetPrimaryContentDocument() {
 
 #ifdef DEBUG
 void PresShell::ShowEventTargetDebug() {
-  if (nsFrame::GetShowEventTargetFrameBorder() && GetCurrentEventFrame()) {
+  if (nsIFrame::GetShowEventTargetFrameBorder() && GetCurrentEventFrame()) {
     if (mDrawEventTargetFrame) {
       mDrawEventTargetFrame->InvalidateFrame();
     }
@@ -9472,8 +9461,7 @@ bool PresShell::DoReflow(nsIFrame* target, bool aInterruptible,
 #ifdef MOZ_GECKO_PROFILER
   nsIURI* uri = mDocument->GetDocumentURI();
   AUTO_PROFILER_LABEL_DYNAMIC_NSCSTRING(
-      "Reflow", LAYOUT_Reflow,
-      uri ? uri->GetSpecOrDefault() : NS_LITERAL_CSTRING("N/A"));
+      "Reflow", LAYOUT_Reflow, uri ? uri->GetSpecOrDefault() : "N/A"_ns);
 #endif
 
   LAYOUT_TELEMETRY_RECORD_BASE(Reflow);
@@ -9486,6 +9474,10 @@ bool PresShell::DoReflow(nsIFrame* target, bool aInterruptible,
     tp->Accumulate();
     tp->reflowCount++;
     timeStart = TimeStamp::Now();
+  }
+
+  if (mMobileViewportManager) {
+    mMobileViewportManager->UpdateSizesBeforeReflow();
   }
 
   // Schedule a paint, but don't actually mark this frame as changed for
@@ -9625,7 +9617,7 @@ bool PresShell::DoReflow(nsIFrame* target, bool aInterruptible,
   target->SetSize(boundsRelativeToTarget.Size());
 
   // Always use boundsRelativeToTarget here, not
-  // desiredSize.GetVisualOverflowArea(), because for root frames (where they
+  // desiredSize.InkOverflowRect(), because for root frames (where they
   // could be different, since root frames are allowed to have overflow) the
   // root view bounds need to match the viewport bounds; the view manager
   // "window dimensions" code depends on it.
@@ -9665,7 +9657,7 @@ bool PresShell::DoReflow(nsIFrame* target, bool aInterruptible,
     for (auto iter = mFramesToDirty.Iter(); !iter.Done(); iter.Next()) {
       // Mark frames dirty until target frame.
       nsPtrHashKey<nsIFrame>* p = iter.Get();
-      for (nsIFrame* f = p->GetKey(); f && !NS_SUBTREE_DIRTY(f);
+      for (nsIFrame* f = p->GetKey(); f && !f->IsSubtreeDirty();
            f = f->GetParent()) {
         f->AddStateBits(NS_FRAME_HAS_DIRTY_CHILDREN);
         if (f->IsFlexItem()) {
@@ -9678,11 +9670,11 @@ bool PresShell::DoReflow(nsIFrame* target, bool aInterruptible,
       }
     }
 
-    NS_ASSERTION(NS_SUBTREE_DIRTY(target), "Why is the target not dirty?");
+    NS_ASSERTION(target->IsSubtreeDirty(), "Why is the target not dirty?");
     mDirtyRoots.Add(target);
     SetNeedLayoutFlush();
 
-    // Clear mFramesToDirty after we've done the NS_SUBTREE_DIRTY(target)
+    // Clear mFramesToDirty after we've done the target->IsSubtreeDirty()
     // assertion so that if it fails it's easier to see what's going on.
 #ifdef NOISY_INTERRUPTIBLE_REFLOW
     printf("mFramesToDirty.Count() == %u\n", mFramesToDirty.Count());
@@ -9773,7 +9765,7 @@ bool PresShell::ProcessReflowCommands(bool aInterruptible) {
         // Send an incremental reflow notification to the target frame.
         nsIFrame* target = mDirtyRoots.PopShallowestRoot();
 
-        if (!NS_SUBTREE_DIRTY(target)) {
+        if (!target->IsSubtreeDirty()) {
           // It's not dirty anymore, which probably means the notification
           // was posted in the middle of a reflow (perhaps with a reflow
           // root in the middle).  Don't do anything.
@@ -11181,6 +11173,13 @@ bool PresShell::SetVisualViewportOffset(const nsPoint& aScrollOffset,
     }
   }
 
+  if (gfxPlatform::UseDesktopZoomingScrollbars()) {
+    if (nsIScrollableFrame* rootScrollFrame =
+            GetRootScrollFrameAsScrollable()) {
+      rootScrollFrame->UpdateScrollbarPosition();
+    }
+  }
+
   return true;
 }
 
@@ -11256,7 +11255,10 @@ nsSize PresShell::GetVisualViewportSizeUpdatedByDynamicToolbar() const {
   MOZ_ASSERT(GetDynamicToolbarState() == DynamicToolbarState::InTransition ||
              GetDynamicToolbarState() == DynamicToolbarState::Collapsed);
 
-  return mMobileViewportManager->GetVisualViewportSizeUpdatedByDynamicToolbar();
+  nsSize sizeUpdatedByDynamicToolbar =
+      mMobileViewportManager->GetVisualViewportSizeUpdatedByDynamicToolbar();
+  return sizeUpdatedByDynamicToolbar == nsSize() ? mVisualViewportSize
+                                                 : sizeUpdatedByDynamicToolbar;
 }
 
 void PresShell::RecomputeFontSizeInflationEnabled() {

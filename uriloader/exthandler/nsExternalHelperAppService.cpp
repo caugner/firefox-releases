@@ -46,6 +46,7 @@
 #include "nsIRedirectHistoryEntry.h"
 #include "nsOSHelperAppService.h"
 #include "nsOSHelperAppServiceChild.h"
+#include "nsContentSecurityUtils.h"
 
 // used to access our datastore of user-configured helper applications
 #include "nsIHandlerService.h"
@@ -635,7 +636,7 @@ nsresult nsExternalHelperAppService::DoContentContentProcessHelper(
   // Determine whether a new window was opened specifically for this request
   bool shouldCloseWindow = false;
   if (props) {
-    props->GetPropertyAsBool(NS_LITERAL_STRING("docshell.newWindowTarget"),
+    props->GetPropertyAsBool(u"docshell.newWindowTarget"_ns,
                              &shouldCloseWindow);
   }
 
@@ -749,7 +750,7 @@ NS_IMETHODIMP nsExternalHelperAppService::CreateListener(
     if (fileExtension.IsEmpty() || mimeType.IsEmpty()) {
       // Extension lookup gave us no useful match
       mimeSvc->GetFromTypeAndExtension(
-          NS_LITERAL_CSTRING(APPLICATION_OCTET_STREAM), fileExtension,
+          nsLiteralCString(APPLICATION_OCTET_STREAM), fileExtension,
           getter_AddRefs(mimeInfo));
       mimeType.AssignLiteral(APPLICATION_OCTET_STREAM);
     }
@@ -976,6 +977,9 @@ nsExternalHelperAppService::LoadURI(nsIURI* aURI,
   // from otherwise disjoint browsingcontext trees.
   if (aBrowsingContext && aTriggeringPrincipal &&
       !StaticPrefs::security_allow_disjointed_external_uri_loads() &&
+      // Add-on principals are always allowed:
+      !BasePrincipal::Cast(aTriggeringPrincipal)->AddonPolicy() &&
+      // As is chrome code:
       !aTriggeringPrincipal->IsSystemPrincipal()) {
     RefPtr<BrowsingContext> bc = aBrowsingContext;
     WindowGlobalParent* wgp = bc->Canonical()->GetCurrentWindowGlobal();
@@ -1464,7 +1468,7 @@ nsresult nsExternalAppHandler::SetUpTempFile(nsIChannel* aChannel) {
   rv = mTempFile->GetLeafName(mTempLeafName);
   NS_ENSURE_SUCCESS(rv, rv);
 
-  NS_ENSURE_TRUE(StringEndsWith(mTempLeafName, NS_LITERAL_STRING(".part")),
+  NS_ENSURE_TRUE(StringEndsWith(mTempLeafName, u".part"_ns),
                  NS_ERROR_UNEXPECTED);
 
   // Strip off the ".part" from mTempLeafName
@@ -1567,6 +1571,16 @@ NS_IMETHODIMP nsExternalAppHandler::OnStartRequest(nsIRequest* request) {
   nsCOMPtr<nsIChannel> aChannel = do_QueryInterface(request);
 
   nsresult rv;
+  nsAutoCString MIMEType;
+  if (mMimeInfo) {
+    mMimeInfo->GetMIMEType(MIMEType);
+  }
+
+  if (!nsContentSecurityUtils::IsDownloadAllowed(aChannel, MIMEType)) {
+    mCanceled = true;
+    request->Cancel(NS_ERROR_ABORT);
+    return NS_OK;
+  }
 
   nsCOMPtr<nsIFileChannel> fileChan(do_QueryInterface(request));
   mIsFileChannel = fileChan != nullptr;
@@ -1587,13 +1601,12 @@ NS_IMETHODIMP nsExternalAppHandler::OnStartRequest(nsIRequest* request) {
   if (mBrowsingContext) {
     mMaybeCloseWindowHelper = new MaybeCloseWindowHelper(mBrowsingContext);
     mMaybeCloseWindowHelper->SetShouldCloseWindow(mShouldCloseWindow);
-
     nsCOMPtr<nsIPropertyBag2> props(do_QueryInterface(request, &rv));
     // Determine whether a new window was opened specifically for this request
     if (props) {
       bool tmp = false;
-      if (NS_SUCCEEDED(props->GetPropertyAsBool(
-              NS_LITERAL_STRING("docshell.newWindowTarget"), &tmp))) {
+      if (NS_SUCCEEDED(
+              props->GetPropertyAsBool(u"docshell.newWindowTarget"_ns, &tmp))) {
         mMaybeCloseWindowHelper->SetShouldCloseWindow(tmp);
       }
     }
@@ -1676,8 +1689,6 @@ NS_IMETHODIMP nsExternalAppHandler::OnStartRequest(nsIRequest* request) {
 
   bool alwaysAsk = true;
   mMimeInfo->GetAlwaysAskBeforeHandling(&alwaysAsk);
-  nsAutoCString MIMEType;
-  mMimeInfo->GetMIMEType(MIMEType);
   if (alwaysAsk) {
     // But we *don't* ask if this mimeInfo didn't come from
     // our user configuration datastore and the user has said

@@ -1839,7 +1839,7 @@ static void WatchRegKey(uint32_t aRoot, nsCOMPtr<nsIWindowsRegKey>& aKey) {
     return;
   }
   nsresult rv = aKey->Open(
-      aRoot, NS_LITERAL_STRING("Software\\MozillaPlugins"),
+      aRoot, u"Software\\MozillaPlugins"_ns,
       nsIWindowsRegKey::ACCESS_READ | nsIWindowsRegKey::ACCESS_NOTIFY);
   if (NS_FAILED(rv)) {
     aKey = nullptr;
@@ -1952,9 +1952,9 @@ nsresult nsPluginHost::LoadPlugins() {
     nsCOMPtr<nsIAsyncShutdownClient> shutdownPhase =
         GetProfileChangeTeardownPhase();
     if (shutdownPhase) {
-      rv =
-          shutdownPhase->AddBlocker(mPendingFinder, NS_LITERAL_STRING(__FILE__),
-                                    __LINE__, NS_LITERAL_STRING(""));
+      rv = shutdownPhase->AddBlocker(mPendingFinder,
+                                     NS_LITERAL_STRING_FROM_CSTRING(__FILE__),
+                                     __LINE__, u""_ns);
       mAddedFinderShutdownBlocker = NS_SUCCEEDED(rv);
     }
 
@@ -2192,8 +2192,8 @@ void nsPluginHost::RegisterWithCategoryManager(const nsCString& aMimeType,
     return;
   }
 
-  NS_NAMED_LITERAL_CSTRING(
-      contractId, "@mozilla.org/content/plugin/document-loader-factory;1");
+  constexpr auto contractId =
+      "@mozilla.org/content/plugin/document-loader-factory;1"_ns;
 
   if (aType == ePluginRegister) {
     catMan->AddCategoryEntry("Gecko-Content-Viewers", aMimeType, contractId,
@@ -2263,7 +2263,7 @@ nsresult nsPluginHost::NewPluginURLStream(
   // form |nsDocShell::OnLinkClickSync| bug 166613
   rv = NS_NewChannel(
       getter_AddRefs(channel), url, element,
-      nsILoadInfo::SEC_ALLOW_CROSS_ORIGIN_DATA_INHERITS |
+      nsILoadInfo::SEC_ALLOW_CROSS_ORIGIN_INHERITS_SEC_CONTEXT |
           nsILoadInfo::SEC_FORCE_INHERIT_PRINCIPAL,
       nsIContentPolicy::TYPE_OBJECT_SUBREQUEST,
       nullptr,  // aPerformanceStorage
@@ -2755,21 +2755,20 @@ void nsPluginHost::PluginCrashed(nsNPAPIPlugin* aPlugin,
     if (!NS_WARN_IF(!library)) {
       library->GetRunID(&runID);
     }
-    propbag->SetPropertyAsUint32(NS_LITERAL_STRING("runID"), runID);
+    propbag->SetPropertyAsUint32(u"runID"_ns, runID);
 
     nsCString pluginName;
     crashedPluginTag->GetName(pluginName);
-    propbag->SetPropertyAsAString(NS_LITERAL_STRING("pluginName"),
+    propbag->SetPropertyAsAString(u"pluginName"_ns,
                                   NS_ConvertUTF8toUTF16(pluginName));
-    propbag->SetPropertyAsAString(NS_LITERAL_STRING("pluginDumpID"),
-                                  aPluginDumpID);
-    propbag->SetPropertyAsACString(NS_LITERAL_STRING("additionalMinidumps"),
+    propbag->SetPropertyAsAString(u"pluginDumpID"_ns, aPluginDumpID);
+    propbag->SetPropertyAsACString(u"additionalMinidumps"_ns,
                                    aAdditionalMinidumps);
-    propbag->SetPropertyAsBool(NS_LITERAL_STRING("submittedCrashReport"),
+    propbag->SetPropertyAsBool(u"submittedCrashReport"_ns,
                                submittedCrashReport);
     obsService->NotifyObservers(propbag, "plugin-crashed", nullptr);
     // see if an observer submitted a crash report.
-    propbag->GetPropertyAsBool(NS_LITERAL_STRING("submittedCrashReport"),
+    propbag->GetPropertyAsBool(u"submittedCrashReport"_ns,
                                &submittedCrashReport);
   }
 

@@ -167,7 +167,6 @@ class PeerConnectionImpl final
 
   static already_AddRefed<PeerConnectionImpl> Constructor(
       const mozilla::dom::GlobalObject& aGlobal);
-  static PeerConnectionImpl* CreatePeerConnection();
 
   // DataConnection observers
   void NotifyDataChannel(already_AddRefed<mozilla::DataChannel> aChannel)
@@ -394,18 +393,6 @@ class PeerConnectionImpl final
                                       bool aExternalNegotiated,
                                       uint16_t aStream);
 
-  // Called whenever something is unrecognized by the parser
-  // May be called more than once and does not necessarily mean
-  // that parsing was stopped, only that something was unrecognized.
-  void OnSdpParseError(const char* errorMessage);
-
-  // Called when OnLocal/RemoteDescriptionSuccess/Error
-  // is called to start the list over.
-  void ClearSdpParseErrorMessages();
-
-  // Called to retreive the list of parsing errors.
-  const std::vector<std::string>& GetSdpParseErrors();
-
   // Gets the RTC Signaling State of the JSEP session
   dom::RTCSignalingState GetSignalingState() const;
 
@@ -511,10 +498,17 @@ class PeerConnectionImpl final
 
   void RecordIceRestartStatistics(JsepSdpType type);
 
+  void StoreConfigurationForAboutWebrtc(const RTCConfiguration& aConfig);
+
+  dom::Sequence<dom::RTCSdpParsingErrorInternal> GetLastSdpParsingErrors()
+      const;
   // Timecard used to measure processing time. This should be the first class
   // attribute so that we accurately measure the time required to instantiate
   // any other attributes of this class.
   Timecard* mTimeCard;
+
+  // Configuration used to initialize the PeerConnection
+  dom::RTCConfigurationInternal mJsConfiguration;
 
   mozilla::dom::RTCSignalingState mSignalingState;
 

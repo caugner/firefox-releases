@@ -95,10 +95,6 @@ struct LoadInfoArgs
   bool                        skipContentPolicyCheckForWebRequest;
   bool                        forceInheritPrincipalDropped;
   uint64_t                    innerWindowID;
-  uint64_t                    outerWindowID;
-  uint64_t                    parentOuterWindowID;
-  uint64_t                    topOuterWindowID;
-  uint64_t                    frameOuterWindowID;
   uint64_t                    browsingContextID;
   uint64_t                    frameBrowsingContextID;
   bool                        initialSecurityCheckDone;
@@ -222,6 +218,8 @@ struct ParentLoadInfoForwarderArgs
   bool hasStoragePermission;
 
   bool isThirdPartyContextToTopWindow;
+
+  bool isInThirdPartyContext;
 
   // IMPORTANT: when you add new properites here you must also update
   // LoadInfoToParentLoadInfoForwarder and MergeParentLoadInfoForwarder
@@ -435,18 +433,32 @@ struct CookieStruct
   uint8_t   schemeMap;
 };
 
+struct DocumentCreationArgs {
+  bool uriModified;
+  bool isXFOError;
+};
+
+struct ObjectCreationArgs {
+  uint64_t embedderInnerWindowId;
+  uint32_t loadFlags;
+  uint8_t contentPolicyType;
+  bool isUrgentStart;
+};
+
+union DocumentChannelElementCreationArgs {
+  DocumentCreationArgs;
+  ObjectCreationArgs;
+};
+
 struct DocumentChannelCreationArgs {
   DocShellLoadStateInit loadState;
   TimeStamp asyncOpenTime;
   uint64_t channelId;
   uint32_t cacheKey;
-  bool pluginsAllowed;
   nsDOMNavigationTiming? timing;
   IPCClientInfo? initialClientInfo;
-  uint64_t outerWindowId;
   bool hasValidTransientUserAction;
-  bool uriModified;
-  bool isXFOError;
+  DocumentChannelElementCreationArgs elementCreationArgs;
 };
 
 struct RedirectToRealChannelArgs {
@@ -461,7 +473,6 @@ struct RedirectToRealChannelArgs {
   uint32_t redirectFlags;
   uint32_t? contentDisposition;
   nsString? contentDispositionFilename;
-  uint64_t redirectIdentifier;
   nsIPropertyBag2 properties;
   uint32_t loadStateLoadFlags;
   uint32_t loadStateLoadType;

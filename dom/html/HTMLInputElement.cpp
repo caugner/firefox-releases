@@ -12,6 +12,7 @@
 #include "mozilla/DebugOnly.h"
 #include "mozilla/dom/Directory.h"
 #include "mozilla/dom/DocumentOrShadowRoot.h"
+#include "mozilla/dom/ElementBinding.h"
 #include "mozilla/dom/FileSystemUtils.h"
 #include "mozilla/dom/GetFilesHelper.h"
 #include "mozilla/dom/HTMLFormSubmission.h"
@@ -242,7 +243,7 @@ class DispatchChangeEventCallback final : public GetFilesCallback {
 
     rv = nsContentUtils::DispatchTrustedEvent(
         mInputElement->OwnerDoc(), static_cast<Element*>(mInputElement.get()),
-        NS_LITERAL_STRING("change"), CanBubble::eYes, Cancelable::eNo);
+        u"change"_ns, CanBubble::eYes, Cancelable::eNo);
 
     return rv;
   }
@@ -347,7 +348,7 @@ UploadLastDir::ContentPrefCallback::HandleCompletion(uint16_t aReason) {
     // If no custom directory was set through the pref, default to
     // "desktop" directory for each platform.
     mFilePicker->SetDisplaySpecialDirectory(
-        NS_LITERAL_STRING(NS_OS_DESKTOP_DIR));
+        NS_LITERAL_STRING_FROM_CSTRING(NS_OS_DESKTOP_DIR));
   }
 
   mFilePicker->Open(mFpCallback);
@@ -625,8 +626,8 @@ nsColorPickerShownCallback::Done(const nsAString& aColor) {
 
   if (mValueChanged) {
     rv = nsContentUtils::DispatchTrustedEvent(
-        mInput->OwnerDoc(), static_cast<Element*>(mInput.get()),
-        NS_LITERAL_STRING("change"), CanBubble::eYes, Cancelable::eNo);
+        mInput->OwnerDoc(), static_cast<Element*>(mInput.get()), u"change"_ns,
+        CanBubble::eYes, Cancelable::eNo);
   }
 
   return rv;
@@ -808,7 +809,7 @@ nsresult HTMLInputElement::InitFilePicker(FilePickerType aType) {
   return NS_OK;
 }
 
-#define CPS_PREF_NAME NS_LITERAL_STRING("browser.upload.lastDir")
+#define CPS_PREF_NAME u"browser.upload.lastDir"_ns
 
 NS_IMPL_ISUPPORTS(UploadLastDir, nsIObserver, nsISupportsWeakReference)
 
@@ -972,7 +973,7 @@ HTMLInputElement::~HTMLInputElement() {
   if (mNumberControlSpinnerIsSpinning) {
     StopNumberControlSpinnerSpin(eDisallowDispatchingEvents);
   }
-  DestroyImageLoadingContent();
+  nsImageLoadingContent::Destroy();
   FreeData();
 }
 
@@ -1087,9 +1088,6 @@ nsresult HTMLInputElement::Clone(dom::NodeInfo* aNodeInfo,
       }
       break;
     case VALUE_MODE_DEFAULT:
-      if (mType == NS_FORM_INPUT_IMAGE && it->OwnerDoc()->IsStaticDocument()) {
-        CreateStaticImageClone(it);
-      }
       break;
   }
 
@@ -1280,7 +1278,7 @@ nsresult HTMLInputElement::AfterSetAttr(int32_t aNameSpaceID, nsAtom* aName,
                aValue->Equals(nsGkAtoms::_auto, eIgnoreCase)) {
       SetDirectionFromValue(aNotify);
     } else if (aName == nsGkAtoms::lang) {
-      // FIXME(emilio, bug 1605158): This doesn't account for lang changes on
+      // FIXME(emilio, bug 1651070): This doesn't account for lang changes on
       // ancestors.
       if (mType == NS_FORM_INPUT_NUMBER) {
         // The validity of our value may have changed based on the locale.
@@ -1302,9 +1300,8 @@ nsresult HTMLInputElement::AfterSetAttr(int32_t aNameSpaceID, nsAtom* aName,
         if (Element* dateTimeBoxElement = GetDateTimeBoxElement()) {
           AsyncEventDispatcher* dispatcher = new AsyncEventDispatcher(
               dateTimeBoxElement,
-              aName == nsGkAtoms::value
-                  ? NS_LITERAL_STRING("MozDateTimeValueChanged")
-                  : NS_LITERAL_STRING("MozDateTimeAttributeChanged"),
+              aName == nsGkAtoms::value ? u"MozDateTimeValueChanged"_ns
+                                        : u"MozDateTimeAttributeChanged"_ns,
               CanBubble::eNo, ChromeOnlyDispatch::eNo);
           dispatcher->RunDOMEventWhenSafe();
         }
@@ -2040,7 +2037,7 @@ void HTMLInputElement::MozSetFileNameArray(const Sequence<nsString>& aFileNames,
   for (uint32_t i = 0; i < aFileNames.Length(); ++i) {
     nsCOMPtr<nsIFile> file;
 
-    if (StringBeginsWith(aFileNames[i], NS_LITERAL_STRING("file:"),
+    if (StringBeginsWith(aFileNames[i], u"file:"_ns,
                          nsASCIICaseInsensitiveStringComparator)) {
       // Converts the URL string into the corresponding nsIFile if possible
       // A local file will be created if the URL string begins with file://
@@ -2134,10 +2131,9 @@ void HTMLInputElement::OpenDateTimePicker(const DateTimeValue& aInitialValue) {
   }
 
   mDateTimeInputBoxValue = MakeUnique<DateTimeValue>(aInitialValue);
-  nsContentUtils::DispatchChromeEvent(
-      OwnerDoc(), static_cast<Element*>(this),
-      NS_LITERAL_STRING("MozOpenDateTimePicker"), CanBubble::eYes,
-      Cancelable::eYes);
+  nsContentUtils::DispatchChromeEvent(OwnerDoc(), static_cast<Element*>(this),
+                                      u"MozOpenDateTimePicker"_ns,
+                                      CanBubble::eYes, Cancelable::eYes);
 }
 
 void HTMLInputElement::UpdateDateTimePicker(const DateTimeValue& aValue) {
@@ -2146,10 +2142,9 @@ void HTMLInputElement::UpdateDateTimePicker(const DateTimeValue& aValue) {
   }
 
   mDateTimeInputBoxValue = MakeUnique<DateTimeValue>(aValue);
-  nsContentUtils::DispatchChromeEvent(
-      OwnerDoc(), static_cast<Element*>(this),
-      NS_LITERAL_STRING("MozUpdateDateTimePicker"), CanBubble::eYes,
-      Cancelable::eYes);
+  nsContentUtils::DispatchChromeEvent(OwnerDoc(), static_cast<Element*>(this),
+                                      u"MozUpdateDateTimePicker"_ns,
+                                      CanBubble::eYes, Cancelable::eYes);
 }
 
 void HTMLInputElement::CloseDateTimePicker() {
@@ -2157,10 +2152,9 @@ void HTMLInputElement::CloseDateTimePicker() {
     return;
   }
 
-  nsContentUtils::DispatchChromeEvent(
-      OwnerDoc(), static_cast<Element*>(this),
-      NS_LITERAL_STRING("MozCloseDateTimePicker"), CanBubble::eYes,
-      Cancelable::eYes);
+  nsContentUtils::DispatchChromeEvent(OwnerDoc(), static_cast<Element*>(this),
+                                      u"MozCloseDateTimePicker"_ns,
+                                      CanBubble::eYes, Cancelable::eYes);
 }
 
 void HTMLInputElement::SetFocusState(bool aIsFocused) {
@@ -2537,8 +2531,8 @@ void HTMLInputElement::FireChangeEventIfNeeded() {
   // Dispatch the change event.
   mFocusedValue = value;
   nsContentUtils::DispatchTrustedEvent(
-      OwnerDoc(), static_cast<nsIContent*>(this), NS_LITERAL_STRING("change"),
-      CanBubble::eYes, Cancelable::eNo);
+      OwnerDoc(), static_cast<nsIContent*>(this), u"change"_ns, CanBubble::eYes,
+      Cancelable::eNo);
 }
 
 FileList* HTMLInputElement::GetFiles() {
@@ -2683,9 +2677,8 @@ nsresult HTMLInputElement::SetValueInternal(const nsAString& aValue,
                    !(aFlags & TextControlState::eSetValue_BySetUserInput)) {
           if (Element* dateTimeBoxElement = GetDateTimeBoxElement()) {
             AsyncEventDispatcher* dispatcher = new AsyncEventDispatcher(
-                dateTimeBoxElement,
-                NS_LITERAL_STRING("MozDateTimeValueChanged"), CanBubble::eNo,
-                ChromeOnlyDispatch::eNo);
+                dateTimeBoxElement, u"MozDateTimeValueChanged"_ns,
+                CanBubble::eNo, ChromeOnlyDispatch::eNo);
             dispatcher->RunDOMEventWhenSafe();
           }
         }
@@ -2954,8 +2947,8 @@ void HTMLInputElement::Blur(ErrorResult& aError) {
       !IsExperimentalMobileType(mType)) {
     if (Element* dateTimeBoxElement = GetDateTimeBoxElement()) {
       AsyncEventDispatcher* dispatcher = new AsyncEventDispatcher(
-          dateTimeBoxElement, NS_LITERAL_STRING("MozBlurInnerTextBox"),
-          CanBubble::eNo, ChromeOnlyDispatch::eNo);
+          dateTimeBoxElement, u"MozBlurInnerTextBox"_ns, CanBubble::eNo,
+          ChromeOnlyDispatch::eNo);
       dispatcher->RunDOMEventWhenSafe();
       return;
     }
@@ -2970,8 +2963,8 @@ void HTMLInputElement::Focus(const FocusOptions& aOptions,
       !IsExperimentalMobileType(mType)) {
     if (Element* dateTimeBoxElement = GetDateTimeBoxElement()) {
       AsyncEventDispatcher* dispatcher = new AsyncEventDispatcher(
-          dateTimeBoxElement, NS_LITERAL_STRING("MozFocusInnerTextBox"),
-          CanBubble::eNo, ChromeOnlyDispatch::eNo);
+          dateTimeBoxElement, u"MozFocusInnerTextBox"_ns, CanBubble::eNo,
+          ChromeOnlyDispatch::eNo);
       dispatcher->RunDOMEventWhenSafe();
       return;
     }
@@ -3234,8 +3227,8 @@ void HTMLInputElement::GetEventTargetParent(EventChainPreVisitor& aVisitor) {
     // pass the focus to the inner text control.
     if (Element* dateTimeBoxElement = GetDateTimeBoxElement()) {
       AsyncEventDispatcher* dispatcher = new AsyncEventDispatcher(
-          dateTimeBoxElement, NS_LITERAL_STRING("MozFocusInnerTextBox"),
-          CanBubble::eNo, ChromeOnlyDispatch::eNo);
+          dateTimeBoxElement, u"MozFocusInnerTextBox"_ns, CanBubble::eNo,
+          ChromeOnlyDispatch::eNo);
       dispatcher->RunDOMEventWhenSafe();
     }
   }
@@ -3423,8 +3416,7 @@ void HTMLInputElement::StartNumberControlSpinnerSpin() {
   mNumberControlSpinnerIsSpinning = true;
 
   nsRepeatService::GetInstance()->Start(
-      HandleNumberControlSpin, this, OwnerDoc(),
-      NS_LITERAL_CSTRING("HandleNumberControlSpin"));
+      HandleNumberControlSpin, this, OwnerDoc(), "HandleNumberControlSpin"_ns);
 
   // Capture the mouse so that we can tell if the pointer moves from one
   // spin button to the other, or to some other element:
@@ -4227,14 +4219,13 @@ nsresult HTMLInputElement::BindToTree(BindContext& aContext, nsINode& aParent) {
       IsInComposedDoc()) {
     // Construct Shadow Root so web content can be hidden in the DOM.
     AttachAndSetUAShadowRoot();
-    NotifyUAWidgetSetupOrChange();
   }
 
   if (mType == NS_FORM_INPUT_PASSWORD) {
     if (IsInComposedDoc()) {
-      AsyncEventDispatcher* dispatcher = new AsyncEventDispatcher(
-          this, NS_LITERAL_STRING("DOMInputPasswordAdded"), CanBubble::eYes,
-          ChromeOnlyDispatch::eYes);
+      AsyncEventDispatcher* dispatcher =
+          new AsyncEventDispatcher(this, u"DOMInputPasswordAdded"_ns,
+                                   CanBubble::eYes, ChromeOnlyDispatch::eYes);
       dispatcher->PostDOMEvent();
     }
 
@@ -4474,9 +4465,9 @@ void HTMLInputElement::HandleTypeChange(uint8_t aNewType, bool aNotify) {
   }
 
   if (mType == NS_FORM_INPUT_PASSWORD && IsInComposedDoc()) {
-    AsyncEventDispatcher* dispatcher = new AsyncEventDispatcher(
-        this, NS_LITERAL_STRING("DOMInputPasswordAdded"), CanBubble::eYes,
-        ChromeOnlyDispatch::eYes);
+    AsyncEventDispatcher* dispatcher =
+        new AsyncEventDispatcher(this, u"DOMInputPasswordAdded"_ns,
+                                 CanBubble::eYes, ChromeOnlyDispatch::eYes);
     dispatcher->PostDOMEvent();
   }
 
@@ -4492,7 +4483,6 @@ void HTMLInputElement::HandleTypeChange(uint8_t aNewType, bool aNotify) {
     } else if (mType == NS_FORM_INPUT_TIME || mType == NS_FORM_INPUT_DATE) {
       // Switch to date/time type.
       AttachAndSetUAShadowRoot();
-      NotifyUAWidgetSetupOrChange();
     }
   }
 }
@@ -5104,7 +5094,7 @@ bool HTMLInputElement::ParseAttribute(int32_t aNamespaceID, nsAtom* aAttribute,
       return ParseAlignValue(aValue, aResult);
     }
     if (aAttribute == nsGkAtoms::formmethod) {
-      if (StaticPrefs::dom_dialog_element_enabled()) {
+      if (StaticPrefs::dom_dialog_element_enabled() || IsInChromeDocument()) {
         return aResult.ParseEnumValue(aValue, kFormMethodTableDialogEnabled,
                                       false);
       }
@@ -5270,7 +5260,7 @@ already_AddRefed<Promise> HTMLInputElement::GetFilesAndDirectories(
       // In future we could refactor SetFilePickerFiltersFromAccept to return a
       // semicolon separated list of file extensions and include that in the
       // filter string passed here.
-      directory->SetContentFilters(NS_LITERAL_STRING("filter-out-sensitive"));
+      directory->SetContentFilters(u"filter-out-sensitive"_ns);
       filesAndDirsSeq[i].SetAsDirectory() = directory;
     } else {
       MOZ_ASSERT(filesAndDirs[i].IsFile());
@@ -5625,13 +5615,13 @@ HTMLInputElement::SubmitNamesValues(HTMLFormSubmission* aFormSubmission) {
     yVal.AppendInt(y);
 
     if (!name.IsEmpty()) {
-      aFormSubmission->AddNameValuePair(name + NS_LITERAL_STRING(".x"), xVal);
-      aFormSubmission->AddNameValuePair(name + NS_LITERAL_STRING(".y"), yVal);
+      aFormSubmission->AddNameValuePair(name + u".x"_ns, xVal);
+      aFormSubmission->AddNameValuePair(name + u".y"_ns, yVal);
     } else {
       // If the Image Element has no name, simply return x and y
       // to Nav and IE compatibility.
-      aFormSubmission->AddNameValuePair(NS_LITERAL_STRING("x"), xVal);
-      aFormSubmission->AddNameValuePair(NS_LITERAL_STRING("y"), yVal);
+      aFormSubmission->AddNameValuePair(u"x"_ns, xVal);
+      aFormSubmission->AddNameValuePair(u"y"_ns, yVal);
     }
 
     return NS_OK;
@@ -5828,6 +5818,11 @@ void HTMLInputElement::DoneCreatingElement() {
   }
 
   mShouldInitChecked = false;
+}
+
+void HTMLInputElement::DestroyContent() {
+  nsImageLoadingContent::Destroy();
+  TextControlElement::DestroyContent();
 }
 
 EventStates HTMLInputElement::IntrinsicState() const {
@@ -6729,7 +6724,7 @@ void HTMLInputElement::SetFilePickerFiltersFromAccept(
         // Ignore this filter as it contains reserved characters
         continue;
       }
-      extensionListStr = NS_LITERAL_STRING("*") + token;
+      extensionListStr = u"*"_ns + token;
       filterName = extensionListStr;
       atLeastOneFileExtensionFilter = true;
     } else {
@@ -6766,8 +6761,7 @@ void HTMLInputElement::SetFilePickerFiltersFromAccept(
         if (!extensionListStr.IsEmpty()) {
           extensionListStr.AppendLiteral("; ");
         }
-        extensionListStr +=
-            NS_LITERAL_STRING("*.") + NS_ConvertUTF8toUTF16(extension);
+        extensionListStr += u"*."_ns + NS_ConvertUTF8toUTF16(extension);
       }
     }
 
@@ -6817,8 +6811,8 @@ void HTMLInputElement::SetFilePickerFiltersFromAccept(
       // Add an extra "; " to be sure the check will work and avoid cases like
       // "*.xls" being a subtring of "*.xslx" while those are two differents
       // filters and none should be removed.
-      if (FindInReadable(filterToCheck.mFilter + NS_LITERAL_STRING(";"),
-                         filtersCopy[j].mFilter + NS_LITERAL_STRING(";"))) {
+      if (FindInReadable(filterToCheck.mFilter + u";"_ns,
+                         filtersCopy[j].mFilter + u";"_ns)) {
         // We already have a similar, less restrictive filter (i.e.
         // filterToCheck extensionList is just a subset of another filter
         // extension list): remove this one

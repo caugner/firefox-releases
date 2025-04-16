@@ -18,6 +18,7 @@ use std::{
     cell::{Cell, RefCell},
     cmp,
     collections::hash_map::Entry,
+    fmt::Write,
     marker::PhantomData,
     mem,
     num::NonZeroUsize,
@@ -31,6 +32,7 @@ use std::{
     thread,
     time::Duration,
 };
+use uuid::Uuid;
 use webrender_build::shader::{
     ProgramSourceDigest, ShaderKind, ShaderVersion, build_shader_main_string,
     build_shader_prefix_string, do_build_shader_string, shader_source_from_file,
@@ -1042,6 +1044,7 @@ pub struct Device {
 
     color_formats: TextureFormatPair<ImageFormat>,
     bgra_formats: TextureFormatPair<gl::GLuint>,
+    bgra_pixel_type: gl::GLuint,
     swizzle_settings: SwizzleSettings,
     depth_format: gl::GLuint,
 
@@ -1080,6 +1083,10 @@ pub struct Device {
     /// Whether we must ensure the source strings passed to glShaderSource()
     /// are null-terminated, to work around driver bugs.
     requires_null_terminated_shader_source: bool,
+
+    /// Whether we must ensure the source strings passed to glShaderSource()
+    /// are unique, to work around driver bugs.
+    requires_unique_shader_source: bool,
 
     /// Whether we must unbind any texture from GL_TEXTURE_EXTERNAL_OES before
     /// binding to GL_TEXTURE_2D, to work around an android emulator bug.
@@ -1400,7 +1407,8 @@ impl Device {
         let avoid_tex_image = is_emulator;
         let gl_version = gl.get_string(gl::VERSION);
 
-        let supports_texture_storage = allow_texture_storage_support &&
+        // We block texture storage on mac because it doesn't support BGRA
+        let supports_texture_storage = allow_texture_storage_support && !cfg!(target_os = "macos") &&
             match gl.get_type() {
                 gl::GlType::Gl => supports_extension(&extensions, "GL_ARB_texture_storage"),
                 // ES 3 technically always supports glTexStorage, but only check here for the extension
@@ -1415,18 +1423,20 @@ impl Device {
                 gl::GlType::Gles => true,
             };
 
-        let (color_formats, bgra_formats, bgra8_sampling_swizzle, texture_storage_usage) = match gl.get_type() {
+        let (color_formats, bgra_formats, bgra_pixel_type, bgra8_sampling_swizzle, texture_storage_usage) = match gl.get_type() {
             // There is `glTexStorage`, use it and expect RGBA on the input.
             gl::GlType::Gl if supports_texture_storage && supports_texture_swizzle => (
                 TextureFormatPair::from(ImageFormat::RGBA8),
                 TextureFormatPair { internal: gl::RGBA8, external: gl::RGBA },
+                gl::UNSIGNED_BYTE,
                 Swizzle::Bgra, // pretend it's RGBA, rely on swizzling
                 TexStorageUsage::Always
             ),
             // There is no `glTexStorage`, upload as `glTexImage` with BGRA input.
             gl::GlType::Gl => (
-                TextureFormatPair { internal: ImageFormat::RGBA8, external: ImageFormat::BGRA8 },
+                TextureFormatPair { internal: ImageFormat::BGRA8, external: ImageFormat::BGRA8 },
                 TextureFormatPair { internal: gl::RGBA, external: gl::BGRA },
+                gl::UNSIGNED_INT_8_8_8_8_REV,
                 Swizzle::Rgba, // converted on uploads by the driver, no swizzling needed
                 TexStorageUsage::Never
             ),
@@ -1434,6 +1444,7 @@ impl Device {
             gl::GlType::Gles if supports_gles_bgra && supports_texture_storage => (
                 TextureFormatPair::from(ImageFormat::BGRA8),
                 TextureFormatPair { internal: gl::BGRA8_EXT, external: gl::BGRA_EXT },
+                gl::UNSIGNED_BYTE,
                 Swizzle::Rgba, // no conversion needed
                 TexStorageUsage::Always,
             ),
@@ -1444,6 +1455,7 @@ impl Device {
             gl::GlType::Gles if supports_gles_bgra && !avoid_tex_image => (
                 TextureFormatPair::from(ImageFormat::RGBA8),
                 TextureFormatPair::from(gl::BGRA_EXT),
+                gl::UNSIGNED_BYTE,
                 Swizzle::Rgba, // no conversion needed
                 TexStorageUsage::NonBGRA8,
             ),
@@ -1452,6 +1464,7 @@ impl Device {
             gl::GlType::Gles if supports_texture_swizzle => (
                 TextureFormatPair::from(ImageFormat::RGBA8),
                 TextureFormatPair { internal: gl::RGBA8, external: gl::RGBA },
+                gl::UNSIGNED_BYTE,
                 Swizzle::Bgra, // pretend it's RGBA, rely on swizzling
                 TexStorageUsage::Always,
             ),
@@ -1459,6 +1472,7 @@ impl Device {
             gl::GlType::Gles => (
                 TextureFormatPair::from(ImageFormat::RGBA8),
                 TextureFormatPair { internal: gl::RGBA8, external: gl::BGRA },
+                gl::UNSIGNED_BYTE,
                 Swizzle::Rgba,
                 TexStorageUsage::Always,
             ),
@@ -1513,11 +1527,19 @@ impl Device {
         // strings are not null-terminated. See bug 1591945.
         let requires_null_terminated_shader_source = is_emulator;
 
+        // On Adreno 505 and 506 we encounter crashes during glLinkProgram(), which
+        // appear to be caused by some driver-internal caching of shader strings.
+        // We attempt to workaround this by appending unique comments to each source.
+        // See bug 1609191.
+        let requires_unique_shader_source = renderer_name == "Adreno (TM) 505" || renderer_name == "Adreno (TM) 506";
+
         // The android emulator gets confused if you don't explicitly unbind any texture
         // from GL_TEXTURE_EXTERNAL_OES before binding another to GL_TEXTURE_2D. See bug 1636085.
         let requires_texture_external_unbind = is_emulator;
 
-        let is_amd_macos = cfg!(target_os = "macos") && renderer_name.starts_with("AMD");
+        let is_macos = cfg!(target_os = "macos");
+             //  && renderer_name.starts_with("AMD");
+             //  (XXX: we apply this restriction to all GPUs to handle switching)
 
         // On certain GPUs PBO texture upload is only performed asynchronously
         // if the stride of the data is a multiple of a certain value.
@@ -1529,7 +1551,7 @@ impl Device {
         // The default value should be 4 bytes.
         let optimal_pbo_stride = if is_adreno {
             StrideAlignment::Pixels(NonZeroUsize::new(64).unwrap())
-        } else if is_amd_macos {
+        } else if is_macos {
             StrideAlignment::Bytes(NonZeroUsize::new(256).unwrap())
         } else {
             StrideAlignment::Bytes(NonZeroUsize::new(4).unwrap())
@@ -1537,7 +1559,7 @@ impl Device {
 
         // On AMD Macs there is a driver bug which causes some texture uploads
         // from a non-zero offset within a PBO to fail. See bug 1603783.
-        let supports_nonzero_pbo_offsets = !is_amd_macos;
+        let supports_nonzero_pbo_offsets = !is_macos;
 
         Device {
             gl,
@@ -1563,6 +1585,7 @@ impl Device {
 
             color_formats,
             bgra_formats,
+            bgra_pixel_type,
             swizzle_settings: SwizzleSettings {
                 bgra8_sampling_swizzle,
             },
@@ -1588,6 +1611,7 @@ impl Device {
             extensions,
             texture_storage_usage,
             requires_null_terminated_shader_source,
+            requires_unique_shader_source,
             requires_texture_external_unbind,
             optimal_pbo_stride,
             dump_shader_source,
@@ -1706,28 +1730,34 @@ impl Device {
     }
 
     pub fn compile_shader(
-        gl: &dyn gl::Gl,
+        &self,
         name: &str,
         shader_type: gl::GLenum,
         source: &String,
-        requires_null_terminated_shader_source: bool,
     ) -> Result<gl::GLuint, ShaderError> {
         debug!("compile {}", name);
-        let id = gl.create_shader(shader_type);
-        if requires_null_terminated_shader_source {
-            // Ensure the source strings we pass to glShaderSource are
-            // null-terminated on buggy platforms.
-            use std::ffi::CString;
-            let terminated_source = CString::new(source.as_bytes()).unwrap();
-            gl.shader_source(id, &[terminated_source.as_bytes_with_nul()]);
-        } else {
-            gl.shader_source(id, &[source.as_bytes()]);
+        let id = self.gl.create_shader(shader_type);
+
+        let mut new_source = Cow::from(source.as_str());
+        // On some drivers we encounter crashes during glLinkProgram(), which
+        // appear to be caused by some driver-internal caching of shader strings.
+        // We attempt to workaround this by appending unique comments to each source.
+        if self.requires_unique_shader_source {
+            let uuid = Uuid::new_v4().to_hyphenated();
+            write!(new_source.to_mut(), "\n//{}\n", uuid).unwrap();
         }
-        gl.compile_shader(id);
-        let log = gl.get_shader_info_log(id);
+        // Ensure the source strings we pass to glShaderSource are
+        // null-terminated on buggy platforms.
+        if self.requires_null_terminated_shader_source {
+            new_source.to_mut().push('\0');
+        }
+
+        self.gl.shader_source(id, &[new_source.as_bytes()]);
+        self.gl.compile_shader(id);
+        let log = self.gl.get_shader_info_log(id);
         let mut status = [0];
         unsafe {
-            gl.get_shader_iv(id, gl::COMPILE_STATUS, &mut status);
+            self.gl.get_shader_iv(id, gl::COMPILE_STATUS, &mut status);
         }
         if status[0] == 0 {
             error!("Failed to compile shader: {}\n{}", name, log);
@@ -2023,7 +2053,7 @@ impl Device {
         if build_program {
             // Compile the vertex shader
             let vs_source = info.compute_source(self, ShaderKind::Vertex);
-            let vs_id = match Device::compile_shader(&*self.gl, &info.base_filename, gl::VERTEX_SHADER, &vs_source, self.requires_null_terminated_shader_source) {
+            let vs_id = match self.compile_shader(&info.base_filename, gl::VERTEX_SHADER, &vs_source) {
                     Ok(vs_id) => vs_id,
                     Err(err) => return Err(err),
                 };
@@ -2031,7 +2061,7 @@ impl Device {
             // Compile the fragment shader
             let fs_source = info.compute_source(self, ShaderKind::Fragment);
             let fs_id =
-                match Device::compile_shader(&*self.gl, &info.base_filename, gl::FRAGMENT_SHADER, &fs_source, self.requires_null_terminated_shader_source) {
+                match self.compile_shader(&info.base_filename, gl::FRAGMENT_SHADER, &fs_source) {
                     Ok(fs_id) => fs_id,
                     Err(err) => {
                         self.gl.delete_shader(vs_id);
@@ -2128,9 +2158,12 @@ impl Device {
         Ok(())
     }
 
-    pub fn bind_program(&mut self, program: &Program) {
+    pub fn bind_program(&mut self, program: &Program) -> bool {
         debug_assert!(self.inside_frame);
         debug_assert!(program.is_initialized());
+        if !program.is_initialized() {
+            return false;
+        }
         #[cfg(debug_assertions)]
         {
             self.shader_is_ready = true;
@@ -2141,6 +2174,7 @@ impl Device {
             self.bound_program = program.id;
             self.program_mode_id = UniformLocation(program.u_mode);
         }
+        true
     }
 
     pub fn create_texture(
@@ -3686,7 +3720,7 @@ impl Device {
                     internal: self.bgra_formats.internal,
                     external: self.bgra_formats.external,
                     read: gl::BGRA,
-                    pixel_type: gl::UNSIGNED_BYTE,
+                    pixel_type: self.bgra_pixel_type,
                 }
             },
             ImageFormat::RGBA8 => {
@@ -3972,7 +4006,7 @@ impl<'a> UploadTarget<'a> {
         let (gl_format, bpp, data_type) = match format {
             ImageFormat::R8 => (gl::RED, 1, gl::UNSIGNED_BYTE),
             ImageFormat::R16 => (gl::RED, 2, gl::UNSIGNED_SHORT),
-            ImageFormat::BGRA8 => (self.device.bgra_formats.external, 4, gl::UNSIGNED_BYTE),
+            ImageFormat::BGRA8 => (self.device.bgra_formats.external, 4, self.device.bgra_pixel_type),
             ImageFormat::RGBA8 => (gl::RGBA, 4, gl::UNSIGNED_BYTE),
             ImageFormat::RG8 => (gl::RG, 2, gl::UNSIGNED_BYTE),
             ImageFormat::RG16 => (gl::RG, 4, gl::UNSIGNED_SHORT),

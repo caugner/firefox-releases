@@ -82,21 +82,25 @@ class PerftestTests(MachCommandBase):
         reimporting modules and produce wrong coverage info.
         """
         display = kw.pop("display", False)
+        verbose = kw.pop("verbose", False)
         args = [self.virtualenv_manager.python_path, "-m", module] + list(args)
         sys.stdout.write("=> %s " % kw.pop("label", module))
         sys.stdout.flush()
         try:
+            if verbose:
+                sys.stdout.write("\nRunning %s\n" % " ".join(args))
+                sys.stdout.flush()
             output = subprocess.check_output(args, stderr=subprocess.STDOUT)
             if display:
-                print()
+                sys.stdout.write("\n")
                 for line in output.split(b"\n"):
-                    print(line.decode("utf8"))
+                    sys.stdout.write(line.decode("utf8") + "\n")
             sys.stdout.write("[OK]\n")
             sys.stdout.flush()
             return True
         except subprocess.CalledProcessError as e:
             for line in e.output.split(b"\n"):
-                print(line.decode("utf8"))
+                sys.stdout.write(line.decode("utf8") + "\n")
             sys.stdout.write("[FAILED]\n")
             sys.stdout.flush()
             return False
@@ -114,6 +118,9 @@ class PerftestTests(MachCommandBase):
         default=False,
         help="Skip flake8 and black",
     )
+    @CommandArgument(
+        "-v", "--verbose", action="store_true", default=False, help="Verbose mode",
+    )
     def run_tests(self, **kwargs):
         MachCommandBase._activate_virtualenv(self)
 
@@ -122,6 +129,7 @@ class PerftestTests(MachCommandBase):
         from mozperftest.utils import install_package, temporary_env
 
         skip_linters = kwargs.get("skip_linters", False)
+        verbose = kwargs.get("verbose", False)
 
         # include in sys.path all deps
         _setup_path()
@@ -130,6 +138,8 @@ class PerftestTests(MachCommandBase):
         except ImportError:
             pydeps = Path(self.topsrcdir, "third_party", "python")
             vendors = ["coverage"]
+            if not ON_TRY:
+                vendors.append("attrs")
             if skip_linters:
                 pypis = []
             else:
@@ -178,6 +188,10 @@ class PerftestTests(MachCommandBase):
 
         import pytest
 
+        options = "-xs"
+        if kwargs.get("verbose"):
+            options += "v"
+
         with temporary_env(COVERAGE_RCFILE=str(here / ".coveragerc")):
             if run_coverage_check:
                 assert self._run_python_script(
@@ -186,10 +200,12 @@ class PerftestTests(MachCommandBase):
             args = [
                 "run",
                 pytest.__file__,
-                "-xs",
+                options,
                 tests,
             ]
-            assert self._run_python_script("coverage", *args, label="running tests")
+            assert self._run_python_script(
+                "coverage", *args, label="running tests", verbose=verbose
+            )
             if run_coverage_check and not self._run_python_script(
                 "coverage", "report", display=True
             ):

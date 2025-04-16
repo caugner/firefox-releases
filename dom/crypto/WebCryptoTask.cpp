@@ -208,7 +208,7 @@ inline nsresult GetKeyLengthForAlgorithm(JSContext* aCx,
 
     if (params.mLength != 128 && params.mLength != 192 &&
         params.mLength != 256) {
-      return NS_ERROR_DOM_DATA_ERR;
+      return NS_ERROR_DOM_OPERATION_ERR;
     }
 
     aLength = params.mLength;
@@ -535,7 +535,7 @@ class AesTask : public ReturnArrayBufferViewTask, public DeferredData {
       RootedDictionary<AesGcmParams> params(aCx);
       nsresult rv = Coerce(aCx, params, aAlgorithm);
       if (NS_FAILED(rv)) {
-        mEarlyRv = NS_ERROR_DOM_SYNTAX_ERR;
+        mEarlyRv = NS_ERROR_DOM_OPERATION_ERR;
         return;
       }
 
@@ -552,7 +552,7 @@ class AesTask : public ReturnArrayBufferViewTask, public DeferredData {
         if ((mTagLength > 128) ||
             !(mTagLength == 32 || mTagLength == 64 ||
               (mTagLength >= 96 && mTagLength % 8 == 0))) {
-          mEarlyRv = NS_ERROR_DOM_SYNTAX_ERR;
+          mEarlyRv = NS_ERROR_DOM_OPERATION_ERR;
           return;
         }
       }
@@ -1971,7 +1971,7 @@ class ExportKeyTask : public WebCryptoTask {
           return NS_ERROR_DOM_OPERATION_ERR;
         }
         mJwk.mK.Construct(k);
-        mJwk.mKty = NS_LITERAL_STRING(JWK_TYPE_SYMMETRIC);
+        mJwk.mKty = NS_LITERAL_STRING_FROM_CSTRING(JWK_TYPE_SYMMETRIC);
       } else if (mKeyType == CryptoKey::PUBLIC) {
         if (!mPublicKey) {
           return NS_ERROR_DOM_UNKNOWN_ERR;
@@ -2039,7 +2039,6 @@ class GenerateSymmetricKeyTask : public WebCryptoTask {
     }
 
     // Construct an appropriate KeyAlorithm
-    uint32_t allowedUsages = 0;
     if (algName.EqualsLiteral(WEBCRYPTO_ALG_AES_CBC) ||
         algName.EqualsLiteral(WEBCRYPTO_ALG_AES_CTR) ||
         algName.EqualsLiteral(WEBCRYPTO_ALG_AES_GCM) ||
@@ -2050,8 +2049,6 @@ class GenerateSymmetricKeyTask : public WebCryptoTask {
       }
       mKey->Algorithm().MakeAes(algName, mLength);
 
-      allowedUsages = CryptoKey::ENCRYPT | CryptoKey::DECRYPT |
-                      CryptoKey::WRAPKEY | CryptoKey::UNWRAPKEY;
     } else if (algName.EqualsLiteral(WEBCRYPTO_ALG_HMAC)) {
       RootedDictionary<HmacKeyGenParams> params(aCx);
       mEarlyRv = Coerce(aCx, params, aAlgorithm);
@@ -2078,7 +2075,6 @@ class GenerateSymmetricKeyTask : public WebCryptoTask {
       }
 
       mKey->Algorithm().MakeHmac(mLength, hashName);
-      allowedUsages = CryptoKey::SIGN | CryptoKey::VERIFY;
     } else {
       mEarlyRv = NS_ERROR_DOM_NOT_SUPPORTED_ERR;
       return;
@@ -2087,10 +2083,14 @@ class GenerateSymmetricKeyTask : public WebCryptoTask {
     // Add key usages
     mKey->ClearUsages();
     for (uint32_t i = 0; i < aKeyUsages.Length(); ++i) {
-      mEarlyRv = mKey->AddUsageIntersecting(aKeyUsages[i], allowedUsages);
+      mEarlyRv = mKey->AddAllowedUsageIntersecting(aKeyUsages[i], algName);
       if (NS_FAILED(mEarlyRv)) {
         return;
       }
+    }
+    if (!mKey->HasAnyUsage()) {
+      mEarlyRv = NS_ERROR_DOM_SYNTAX_ERR;
+      return;
     }
 
     mLength = mLength >> 3;  // bits to bytes
@@ -2183,13 +2183,13 @@ GenerateAsymmetricKeyTask::GenerateAsymmetricKeyTask(
     }
 
     // Create algorithm
-    if (!mKeyPair->mPublicKey.get()->Algorithm().MakeRsa(
-            mAlgName, modulusLength, publicExponent, hashName)) {
+    if (!mKeyPair->mPublicKey->Algorithm().MakeRsa(mAlgName, modulusLength,
+                                                   publicExponent, hashName)) {
       mEarlyRv = NS_ERROR_DOM_OPERATION_ERR;
       return;
     }
-    if (!mKeyPair->mPrivateKey.get()->Algorithm().MakeRsa(
-            mAlgName, modulusLength, publicExponent, hashName)) {
+    if (!mKeyPair->mPrivateKey->Algorithm().MakeRsa(mAlgName, modulusLength,
+                                                    publicExponent, hashName)) {
       mEarlyRv = NS_ERROR_DOM_OPERATION_ERR;
       return;
     }
@@ -2217,8 +2217,8 @@ GenerateAsymmetricKeyTask::GenerateAsymmetricKeyTask(
     }
 
     // Create algorithm.
-    mKeyPair->mPublicKey.get()->Algorithm().MakeEc(mAlgName, mNamedCurve);
-    mKeyPair->mPrivateKey.get()->Algorithm().MakeEc(mAlgName, mNamedCurve);
+    mKeyPair->mPublicKey->Algorithm().MakeEc(mAlgName, mNamedCurve);
+    mKeyPair->mPrivateKey->Algorithm().MakeEc(mAlgName, mNamedCurve);
     mMechanism = CKM_EC_KEY_PAIR_GEN;
   } else {
     mEarlyRv = NS_ERROR_DOM_NOT_SUPPORTED_ERR;
@@ -2241,33 +2241,26 @@ GenerateAsymmetricKeyTask::GenerateAsymmetricKeyTask(
     MOZ_ASSERT(false);  // This shouldn't happen.
   }
 
-  mKeyPair->mPrivateKey.get()->SetExtractable(aExtractable);
-  mKeyPair->mPrivateKey.get()->SetType(CryptoKey::PRIVATE);
+  mKeyPair->mPrivateKey->SetExtractable(aExtractable);
+  mKeyPair->mPrivateKey->SetType(CryptoKey::PRIVATE);
 
-  mKeyPair->mPublicKey.get()->SetExtractable(true);
-  mKeyPair->mPublicKey.get()->SetType(CryptoKey::PUBLIC);
+  mKeyPair->mPublicKey->SetExtractable(true);
+  mKeyPair->mPublicKey->SetType(CryptoKey::PUBLIC);
 
-  mKeyPair->mPrivateKey.get()->ClearUsages();
-  mKeyPair->mPublicKey.get()->ClearUsages();
+  mKeyPair->mPrivateKey->ClearUsages();
+  mKeyPair->mPublicKey->ClearUsages();
   for (uint32_t i = 0; i < aKeyUsages.Length(); ++i) {
-    mEarlyRv = mKeyPair->mPrivateKey.get()->AddUsageIntersecting(
-        aKeyUsages[i], privateAllowedUsages);
+    mEarlyRv = mKeyPair->mPrivateKey->AddAllowedUsageIntersecting(
+        aKeyUsages[i], mAlgName, privateAllowedUsages);
     if (NS_FAILED(mEarlyRv)) {
       return;
     }
 
-    mEarlyRv = mKeyPair->mPublicKey.get()->AddUsageIntersecting(
-        aKeyUsages[i], publicAllowedUsages);
+    mEarlyRv = mKeyPair->mPublicKey->AddAllowedUsageIntersecting(
+        aKeyUsages[i], mAlgName, publicAllowedUsages);
     if (NS_FAILED(mEarlyRv)) {
       return;
     }
-  }
-
-  // If no usages ended up being allowed, DataError
-  if (!mKeyPair->mPublicKey.get()->HasAnyUsage() &&
-      !mKeyPair->mPrivateKey.get()->HasAnyUsage()) {
-    mEarlyRv = NS_ERROR_DOM_DATA_ERR;
-    return;
   }
 }
 
@@ -2302,12 +2295,17 @@ nsresult GenerateAsymmetricKeyTask::DoCrypto() {
   mPublicKey = UniqueSECKEYPublicKey(pubKey);
   pubKey = nullptr;
   if (!mPrivateKey.get() || !mPublicKey.get()) {
-    return NS_ERROR_DOM_UNKNOWN_ERR;
+    return NS_ERROR_DOM_OPERATION_ERR;
   }
 
-  nsresult rv = mKeyPair->mPrivateKey.get()->SetPrivateKey(mPrivateKey.get());
+  // If no usages ended up being allowed, SyntaxError
+  if (!mKeyPair->mPrivateKey->HasAnyUsage()) {
+    return NS_ERROR_DOM_SYNTAX_ERR;
+  }
+
+  nsresult rv = mKeyPair->mPrivateKey->SetPrivateKey(mPrivateKey.get());
   NS_ENSURE_SUCCESS(rv, NS_ERROR_DOM_OPERATION_ERR);
-  rv = mKeyPair->mPublicKey.get()->SetPublicKey(mPublicKey.get());
+  rv = mKeyPair->mPublicKey->SetPublicKey(mPublicKey.get());
   NS_ENSURE_SUCCESS(rv, NS_ERROR_DOM_OPERATION_ERR);
 
   // PK11_GenerateKeyPair() does not set a CKA_EC_POINT attribute on the
@@ -2637,7 +2635,8 @@ class DeriveKeyTask : public DeriveBitsTask {
       return;
     }
 
-    NS_NAMED_LITERAL_STRING(format, WEBCRYPTO_KEY_FORMAT_RAW);
+    constexpr auto format =
+        NS_LITERAL_STRING_FROM_CSTRING(WEBCRYPTO_KEY_FORMAT_RAW);
     mTask = new ImportSymmetricKeyTask(aGlobal, aCx, format, aDerivedKeyType,
                                        aExtractable, aKeyUsages);
   }
@@ -3015,9 +3014,6 @@ WebCryptoTask* WebCryptoTask::CreateGenerateKeyTask(
   Telemetry::Accumulate(Telemetry::WEBCRYPTO_EXTRACTABLE_GENERATE,
                         aExtractable);
 
-  // Verify that aKeyUsages does not contain an unrecognized value
-  // SPEC-BUG: Spec says that this should be InvalidAccessError, but that
-  // is inconsistent with other analogous points in the spec
   if (!CryptoKey::AllUsagesRecognized(aKeyUsages)) {
     return new FailureTask(NS_ERROR_DOM_SYNTAX_ERR);
   }

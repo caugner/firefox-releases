@@ -26,6 +26,7 @@
 #include "nsTHashtable.h"
 #include "ProfilerHelpers.h"
 #include "ReportInternalError.h"
+#include "ThreadLocal.h"
 
 // Include this last to avoid path problems on Windows.
 #include "ActorsChild.h"
@@ -163,12 +164,11 @@ IDBTransaction::~IDBTransaction() {
 SafeRefPtr<IDBTransaction> IDBTransaction::CreateVersionChange(
     IDBDatabase* const aDatabase,
     BackgroundVersionChangeTransactionChild* const aActor,
-    IDBOpenDBRequest* const aOpenRequest, const int64_t aNextObjectStoreId,
-    const int64_t aNextIndexId) {
+    const NotNull<IDBOpenDBRequest*> aOpenRequest,
+    const int64_t aNextObjectStoreId, const int64_t aNextIndexId) {
   MOZ_ASSERT(aDatabase);
   aDatabase->AssertIsOnOwningThread();
   MOZ_ASSERT(aActor);
-  MOZ_ASSERT(aOpenRequest);
   MOZ_ASSERT(aNextObjectStoreId > 0);
   MOZ_ASSERT(aNextIndexId > 0);
 
@@ -278,12 +278,13 @@ void IDBTransaction::SetBackgroundActor(
 }
 
 BackgroundRequestChild* IDBTransaction::StartRequest(
-    IDBRequest* const aRequest, const RequestParams& aParams) {
+    MovingNotNull<RefPtr<mozilla::dom::IDBRequest> > aRequest,
+    const RequestParams& aParams) {
   AssertIsOnOwningThread();
-  MOZ_ASSERT(aRequest);
   MOZ_ASSERT(aParams.type() != RequestParams::T__None);
 
-  BackgroundRequestChild* const actor = new BackgroundRequestChild(aRequest);
+  BackgroundRequestChild* const actor =
+      new BackgroundRequestChild(std::move(aRequest));
 
   DoWithTransactionChild([actor, &aParams](auto& transactionChild) {
     transactionChild.SendPBackgroundIDBRequestConstructor(actor, aParams);
@@ -433,8 +434,9 @@ void IDBTransaction::SendAbort(const nsresult aResultCode) {
   const uint64_t requestSerialNumber = IDBRequest::NextSerialNumber();
 
   IDB_LOG_MARK_CHILD_TRANSACTION_REQUEST(
-      "Aborting transaction with result 0x%x", "IDBTransaction abort (0x%x)",
-      LoggingSerialNumber(), requestSerialNumber, aResultCode);
+      "Aborting transaction with result 0x%" PRIx32,
+      "IDBTransaction abort (0x%" PRIx32 ")", LoggingSerialNumber(),
+      requestSerialNumber, static_cast<uint32_t>(aResultCode));
 
   DoWithTransactionChild(
       [aResultCode](auto& actor) { actor.SendAbort(aResultCode); });
@@ -795,9 +797,10 @@ void IDBTransaction::FireCompleteOrAbortEvents(const nsresult aResult) {
                                    "IDBTransaction 'complete' event",
                                    mLoggingSerialNumber);
   } else {
-    IDB_LOG_MARK_CHILD_TRANSACTION("Firing 'abort' event with error 0x%x",
-                                   "IDBTransaction 'abort' event (0x%x)",
-                                   mLoggingSerialNumber, mAbortCode);
+    IDB_LOG_MARK_CHILD_TRANSACTION(
+        "Firing 'abort' event with error 0x%" PRIx32,
+        "IDBTransaction 'abort' event (0x%" PRIx32 ")", mLoggingSerialNumber,
+        static_cast<uint32_t>(mAbortCode));
   }
 
   IgnoredErrorResult rv;

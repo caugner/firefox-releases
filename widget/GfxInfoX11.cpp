@@ -48,6 +48,7 @@ nsresult GfxInfo::Init() {
   mIsAccelerated = true;
   mIsWayland = false;
   mIsWaylandDRM = false;
+  mIsXWayland = false;
   return GfxInfoBase::Init();
 }
 
@@ -343,9 +344,21 @@ void GfxInfo::GetData() {
   }
 #endif
 
+  // Make a best effort guess at whether or not we are using the XWayland compat
+  // layer. For all intents and purposes, we should otherwise believe we are
+  // using X11.
+  const char* windowEnv = getenv("XDG_SESSION_TYPE");
+  mIsXWayland = windowEnv && strcmp(windowEnv, "wayland") == 0;
+
   // Make a best effort guess at the desktop environment in use. Sadly there
   // does not appear to be a standard way to do this, so we check a few
   // different environment variables and search for relevant keywords.
+  //
+  // Note that some users manually change these values. Some applications check
+  // the environment variable like we are here, and either not work or restrict
+  // functionality. There may be some heroics we could go through to determine
+  // the truth, but for the moment, this is the best we can do. This is
+  // something to keep in mind when updating the blocklist.
   const char* desktopEnv = getenv("XDG_CURRENT_DESKTOP");
   if (!desktopEnv) {
     desktopEnv = getenv("DESKTOP_SESSION");
@@ -357,7 +370,13 @@ void GfxInfo::GetData() {
       c = std::tolower(c);
     }
 
-    if (currentDesktop.find("gnome") != std::string::npos) {
+    if (currentDesktop.find("budgie") != std::string::npos) {
+      // We need to check for Budgie first, because it might incorporate GNOME
+      // into the environment variable value.
+      CopyUTF16toUTF8(
+          GfxDriverInfo::GetDesktopEnvironment(DesktopEnvironment::Budgie),
+          mDesktopEnvironment);
+    } else if (currentDesktop.find("gnome") != std::string::npos) {
       CopyUTF16toUTF8(
           GfxDriverInfo::GetDesktopEnvironment(DesktopEnvironment::GNOME),
           mDesktopEnvironment);
@@ -409,6 +428,10 @@ void GfxInfo::GetData() {
     } else if (currentDesktop.find("deepin") != std::string::npos) {
       CopyUTF16toUTF8(
           GfxDriverInfo::GetDesktopEnvironment(DesktopEnvironment::Deepin),
+          mDesktopEnvironment);
+    } else if (currentDesktop.find("dwm") != std::string::npos) {
+      CopyUTF16toUTF8(
+          GfxDriverInfo::GetDesktopEnvironment(DesktopEnvironment::Dwm),
           mDesktopEnvironment);
     }
   }
@@ -511,6 +534,26 @@ const nsTArray<GfxDriverInfo>& GfxInfo::GetGfxDriverInfo() {
     ////////////////////////////////////
     // FEATURE_WEBRENDER - ALLOWLIST
 
+#ifdef EARLY_BETA_OR_EARLIER
+    // Intel Mesa baseline, chosen arbitrarily.
+    APPEND_TO_DRIVER_BLOCKLIST_EXT(
+        OperatingSystem::Linux, ScreenSizeStatus::SmallAndMedium,
+        BatteryStatus::All, DesktopEnvironment::GNOME, WindowProtocol::X11All,
+        DriverVendor::MesaAll, DeviceFamily::IntelRolloutWebRender,
+        nsIGfxInfo::FEATURE_WEBRENDER, nsIGfxInfo::FEATURE_ALLOW_ALWAYS,
+        DRIVER_GREATER_THAN_OR_EQUAL, V(18, 0, 0, 0),
+        "FEATURE_ROLLOUT_EARLY_BETA_INTEL_GNOME_XALL_MESA", "Mesa 18.0.0.0");
+
+    // ATI Mesa baseline, chosen arbitrarily.
+    APPEND_TO_DRIVER_BLOCKLIST_EXT(
+        OperatingSystem::Linux, ScreenSizeStatus::All, BatteryStatus::All,
+        DesktopEnvironment::GNOME, WindowProtocol::X11All,
+        DriverVendor::MesaAll, DeviceFamily::AtiRolloutWebRender,
+        nsIGfxInfo::FEATURE_WEBRENDER, nsIGfxInfo::FEATURE_ALLOW_ALWAYS,
+        DRIVER_GREATER_THAN_OR_EQUAL, V(18, 0, 0, 0),
+        "FEATURE_ROLLOUT_EARLY_BETA_ATI_GNOME_XALL_MESA", "Mesa 18.0.0.0");
+#endif
+
 #ifdef NIGHTLY_BUILD
     // Intel Mesa baseline, chosen arbitrarily.
     APPEND_TO_DRIVER_BLOCKLIST_EXT(
@@ -519,7 +562,7 @@ const nsTArray<GfxDriverInfo>& GfxInfo::GetGfxDriverInfo() {
         DriverVendor::MesaAll, DeviceFamily::IntelRolloutWebRender,
         nsIGfxInfo::FEATURE_WEBRENDER, nsIGfxInfo::FEATURE_ALLOW_QUALIFIED,
         DRIVER_GREATER_THAN_OR_EQUAL, V(18, 0, 0, 0),
-        "FEATURE_ROLLOUT_INTEL_MESA", "Mesa 18.0.0.0");
+        "FEATURE_ROLLOUT_NIGHTLY_INTEL_MESA", "Mesa 18.0.0.0");
 
     // Nvidia Mesa baseline, see bug 1563859.
     APPEND_TO_DRIVER_BLOCKLIST_EXT(
@@ -527,7 +570,7 @@ const nsTArray<GfxDriverInfo>& GfxInfo::GetGfxDriverInfo() {
         DesktopEnvironment::All, WindowProtocol::All, DriverVendor::MesaAll,
         DeviceFamily::NvidiaRolloutWebRender, nsIGfxInfo::FEATURE_WEBRENDER,
         nsIGfxInfo::FEATURE_ALLOW_QUALIFIED, DRIVER_GREATER_THAN_OR_EQUAL,
-        V(18, 2, 0, 0), "FEATURE_ROLLOUT_NVIDIA_MESA", "Mesa 18.2.0.0");
+        V(18, 2, 0, 0), "FEATURE_ROLLOUT_NIGHTLY_NVIDIA_MESA", "Mesa 18.2.0.0");
 
     // ATI Mesa baseline, chosen arbitrarily.
     APPEND_TO_DRIVER_BLOCKLIST_EXT(
@@ -535,7 +578,7 @@ const nsTArray<GfxDriverInfo>& GfxInfo::GetGfxDriverInfo() {
         DesktopEnvironment::All, WindowProtocol::All, DriverVendor::MesaAll,
         DeviceFamily::AtiRolloutWebRender, nsIGfxInfo::FEATURE_WEBRENDER,
         nsIGfxInfo::FEATURE_ALLOW_QUALIFIED, DRIVER_GREATER_THAN_OR_EQUAL,
-        V(18, 0, 0, 0), "FEATURE_ROLLOUT_ATI_MESA", "Mesa 18.0.0.0");
+        V(18, 0, 0, 0), "FEATURE_ROLLOUT_NIGHTLY_ATI_MESA", "Mesa 18.0.0.0");
 #endif
   }
   return *sDriverInfo;
@@ -546,6 +589,12 @@ bool GfxInfo::DoesWindowProtocolMatch(const nsAString& aBlocklistWindowProtocol,
   if (mIsWayland &&
       aBlocklistWindowProtocol.Equals(
           GfxDriverInfo::GetWindowProtocol(WindowProtocol::WaylandAll),
+          nsCaseInsensitiveStringComparator)) {
+    return true;
+  }
+  if (!mIsWayland &&
+      aBlocklistWindowProtocol.Equals(
+          GfxDriverInfo::GetWindowProtocol(WindowProtocol::X11All),
           nsCaseInsensitiveStringComparator)) {
     return true;
   }
@@ -651,10 +700,12 @@ GfxInfo::GetWindowProtocol(nsAString& aWindowProtocol) {
       aWindowProtocol =
           GfxDriverInfo::GetWindowProtocol(WindowProtocol::Wayland);
     }
-    return NS_OK;
+  } else if (mIsXWayland) {
+    aWindowProtocol =
+        GfxDriverInfo::GetWindowProtocol(WindowProtocol::XWayland);
+  } else {
+    aWindowProtocol = GfxDriverInfo::GetWindowProtocol(WindowProtocol::X11);
   }
-
-  aWindowProtocol = GfxDriverInfo::GetWindowProtocol(WindowProtocol::X11);
   return NS_OK;
 }
 

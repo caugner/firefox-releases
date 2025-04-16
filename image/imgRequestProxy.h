@@ -111,7 +111,6 @@ class imgRequestProxy : public mozilla::PreloaderBase,
   void MarkValidating();
   void ClearValidating();
 
-  bool IsOnEventTarget() const;
   already_AddRefed<nsIEventTarget> GetEventTarget() const override;
 
   // Removes all animation consumers that were created with
@@ -124,8 +123,7 @@ class imgRequestProxy : public mozilla::PreloaderBase,
                      Document* aLoadingDocument, imgRequestProxy** aClone);
   nsresult Clone(imgINotificationObserver* aObserver,
                  Document* aLoadingDocument, imgRequestProxy** aClone);
-  nsresult GetStaticRequest(Document* aLoadingDocument,
-                            imgRequestProxy** aReturn);
+  already_AddRefed<imgRequestProxy> GetStaticRequest(Document* aLoadingDocument);
 
   imgRequest* GetOwner() const;
 
@@ -203,7 +201,6 @@ class imgRequestProxy : public mozilla::PreloaderBase,
   void RemoveFromOwner(nsresult aStatus);
 
   nsresult DispatchWithTargetIfAvailable(already_AddRefed<nsIRunnable> aEvent);
-  void DispatchWithTarget(already_AddRefed<nsIRunnable> aEvent);
 
   // The URI of our request.
   nsCOMPtr<nsIURI> mURI;

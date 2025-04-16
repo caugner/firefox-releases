@@ -173,11 +173,18 @@ dictionary RTCVideoFrameHistoryInternal {
   sequence<RTCVideoFrameHistoryEntryInternal> entries = [];
 };
 
+// This is used by about:webrtc to report SDP parsing errors
+dictionary RTCSdpParsingErrorInternal {
+  required unsigned long lineNumber;
+  required DOMString     error;
+};
+
 // This is for tracking the flow of SDP for about:webrtc
 dictionary RTCSdpHistoryEntryInternal {
-  required DOMHighResTimeStamp timestamp;
-  required boolean             isLocal;
-  required DOMString           sdp;
+  required DOMHighResTimeStamp         timestamp;
+  required boolean                     isLocal;
+  required DOMString                   sdp;
+  sequence<RTCSdpParsingErrorInternal> errors = [];
 };
 
 // This is intended to be a list of dictionaries that inherit from RTCStats
@@ -199,10 +206,30 @@ dictionary RTCStatsCollection {
   sequence<RTCVideoFrameHistoryInternal>    videoFrameHistories = [];
 };
 
+// Details that about:webrtc can display about configured ICE servers
+dictionary RTCIceServerInternal {
+  sequence<DOMString> urls = [];
+  required boolean    credentialProvided;
+  required boolean    userNameProvided;
+};
+
+// Details that about:webrtc can display about the RTCConfiguration
+// Chrome only
+dictionary RTCConfigurationInternal {
+  RTCBundlePolicy                bundlePolicy;
+  required boolean               certificatesProvided;
+  sequence<RTCIceServerInternal> iceServers = [];
+  RTCIceTransportPolicy          iceTransportPolicy;
+  required boolean               peerIdentityProvided;
+  DOMString                      sdpSemantics;
+};
+
 // A collection of RTCStats dictionaries, plus some other info. Used by
 // WebrtcGlobalInformation for about:webrtc, and telemetry.
 dictionary RTCStatsReportInternal : RTCStatsCollection {
   required DOMString                        pcid;
+  RTCConfigurationInternal                  configuration;
+  DOMString                                 jsepSessionErrors;
   DOMString                                 localSdp;
   DOMString                                 remoteSdp;
   sequence<RTCSdpHistoryEntryInternal>      sdpHistory = [];

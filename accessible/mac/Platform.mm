@@ -6,6 +6,8 @@
 
 #import <Cocoa/Cocoa.h>
 
+#import "MOXTextMarkerDelegate.h"
+
 #include "Platform.h"
 #include "ProxyAccessible.h"
 #include "AccessibleOrProxy.h"
@@ -63,17 +65,19 @@ void ProxyDestroyed(ProxyAccessible* aProxy) {
   [wrapper expire];
   [wrapper release];
   aProxy->SetWrapper(0);
+
+  if (aProxy->IsDoc()) {
+    [MOXTextMarkerDelegate destroyForDoc:aProxy];
+  }
 }
 
 void ProxyEvent(ProxyAccessible* aProxy, uint32_t aEventType) {
   // ignore everything but focus-changed, value-changed, caret,
   // selection, and document load complete events for now.
-  NSLog(@"Event type is %u", aEventType);
   if (aEventType != nsIAccessibleEvent::EVENT_FOCUS &&
       aEventType != nsIAccessibleEvent::EVENT_VALUE_CHANGE &&
       aEventType != nsIAccessibleEvent::EVENT_TEXT_VALUE_CHANGE &&
       aEventType != nsIAccessibleEvent::EVENT_TEXT_CARET_MOVED &&
-      aEventType != nsIAccessibleEvent::EVENT_TEXT_SELECTION_CHANGED &&
       aEventType != nsIAccessibleEvent::EVENT_DOCUMENT_LOAD_COMPLETE &&
       aEventType != nsIAccessibleEvent::EVENT_REORDER)
     return;
@@ -91,14 +95,26 @@ void ProxyStateChangeEvent(ProxyAccessible* aProxy, uint64_t aState, bool aEnabl
   }
 }
 
-void ProxyCaretMoveEvent(ProxyAccessible* aTarget, int32_t aOffset) {
+void ProxyCaretMoveEvent(ProxyAccessible* aTarget, int32_t aOffset, bool aIsSelectionCollapsed) {
   mozAccessible* wrapper = GetNativeFromGeckoAccessible(aTarget);
+  if (aIsSelectionCollapsed) {
+    // If selection is collapsed, invalidate selection.
+    MOXTextMarkerDelegate* delegate = [MOXTextMarkerDelegate getOrCreateForDoc:aTarget->Document()];
+    [delegate invalidateSelection];
+  }
+
   if (wrapper) {
     [wrapper handleAccessibleEvent:nsIAccessibleEvent::EVENT_TEXT_CARET_MOVED];
   }
 }
 
-void ProxyTextChangeEvent(ProxyAccessible*, const nsString&, int32_t, uint32_t, bool, bool) {}
+void ProxyTextChangeEvent(ProxyAccessible* aTarget, const nsString& aStr, int32_t aStart,
+                          uint32_t aLen, bool aIsInsert, bool aFromUser) {
+  mozAccessible* wrapper = GetNativeFromGeckoAccessible(aTarget);
+  [wrapper handleAccessibleTextChangeEvent:nsCocoaUtils::ToNSString(aStr)
+                                  inserted:aIsInsert
+                                        at:aStart];
+}
 
 void ProxyShowHideEvent(ProxyAccessible*, ProxyAccessible*, bool, bool) {}
 
@@ -108,6 +124,27 @@ void ProxySelectionEvent(ProxyAccessible* aTarget, ProxyAccessible* aWidget, uin
     [wrapper handleAccessibleEvent:aEventType];
   }
 }
+
+void ProxyTextSelectionChangeEvent(ProxyAccessible* aTarget,
+                                   const nsTArray<TextRangeData>& aSelection) {
+  if (aSelection.Length()) {
+    MOXTextMarkerDelegate* delegate = [MOXTextMarkerDelegate getOrCreateForDoc:aTarget->Document()];
+    DocAccessibleParent* doc = aTarget->Document();
+    ProxyAccessible* startContainer = doc->GetAccessible(aSelection[0].StartID());
+    ProxyAccessible* endContainer = doc->GetAccessible(aSelection[0].EndID());
+    // Cache the selection.
+    [delegate setSelectionFrom:startContainer
+                            at:aSelection[0].StartOffset()
+                            to:endContainer
+                            at:aSelection[0].EndOffset()];
+  }
+
+  mozAccessible* wrapper = GetNativeFromGeckoAccessible(aTarget);
+  if (wrapper) {
+    [wrapper handleAccessibleEvent:nsIAccessibleEvent::EVENT_TEXT_SELECTION_CHANGED];
+  }
+}
+
 }  // namespace a11y
 }  // namespace mozilla
 

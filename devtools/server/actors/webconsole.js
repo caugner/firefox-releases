@@ -103,6 +103,12 @@ loader.lazyRequireGetter(
 loader.lazyRequireGetter(this, "EventEmitter", "devtools/shared/event-emitter");
 loader.lazyRequireGetter(
   this,
+  "MESSAGE_CATEGORY",
+  "devtools/shared/constants",
+  true
+);
+loader.lazyRequireGetter(
+  this,
   "stringToCauseType",
   "devtools/server/actors/network-monitor/network-observer",
   true
@@ -215,6 +221,8 @@ const WebConsoleActor = ActorClassWithSpec(webconsoleSpec, {
     this.traits = {
       // Supports new cached messages structure for 77+
       newCacheStructure: true,
+      // Supports retrieving blocked urls
+      blockedUrls: true,
     };
   },
   /**
@@ -1397,7 +1405,7 @@ const WebConsoleActor = ActorClassWithSpec(webconsoleSpec, {
       }
 
       matches = result.matches || new Set();
-      matchProp = result.matchProp;
+      matchProp = result.matchProp || "";
       isElementAccess = result.isElementAccess;
 
       // We consider '$' as alphanumeric because it is used in the names of some
@@ -1407,7 +1415,7 @@ const WebConsoleActor = ActorClassWithSpec(webconsoleSpec, {
 
       // We only return commands and keywords when we are not dealing with a property or
       // element access.
-      if (!lastNonAlphaIsDot && !isElementAccess) {
+      if (matchProp && !lastNonAlphaIsDot && !isElementAccess) {
         this._getWebConsoleCommandsCache().forEach(n => {
           // filter out `screenshot` command as it is inaccessible without the `:` prefix
           if (n !== "screenshot" && n.startsWith(result.matchProp)) {
@@ -1475,7 +1483,9 @@ const WebConsoleActor = ActorClassWithSpec(webconsoleSpec, {
     // cached messages for that window (and not the content messages for example).
     if (this.parentActor.isRootActor) {
       Services.console.reset();
-    } else {
+    } else if (this.consoleServiceListener) {
+      // If error and css messages are handled by the ResourceWatcher, the
+      // consoleServiceListener is never instantiated.
       this.consoleServiceListener.clearCachedMessages();
     }
   },
@@ -1705,9 +1715,11 @@ const WebConsoleActor = ActorClassWithSpec(webconsoleSpec, {
       columnNumber = stack[0].columnNumber;
     }
 
+    const isCSSMessage = pageError.category === MESSAGE_CATEGORY.CSS_PARSER;
+
     const result = {
       errorMessage: this._createStringGrip(pageError.errorMessage),
-      errorMessageName: pageError.errorMessageName,
+      errorMessageName: isCSSMessage ? undefined : pageError.errorMessageName,
       exceptionDocURL: ErrorDocs.GetURL(pageError),
       sourceName,
       sourceId: this.getActorIdForInternalSourceId(sourceId),
@@ -1724,9 +1736,11 @@ const WebConsoleActor = ActorClassWithSpec(webconsoleSpec, {
       stacktrace: stack,
       notes: notesArray,
       chromeContext: pageError.isFromChromeContext,
-      cssSelectors: pageError.cssSelectors,
-      isPromiseRejection: pageError.isPromiseRejection,
+      isPromiseRejection: isCSSMessage
+        ? undefined
+        : pageError.isPromiseRejection,
       isForwardedFromContentProcess: pageError.isForwardedFromContentProcess,
+      cssSelectors: isCSSMessage ? pageError.cssSelectors : undefined,
     };
 
     // If the pageError does have an exception object, we want to return the grip for it,
@@ -1760,54 +1774,6 @@ const WebConsoleActor = ActorClassWithSpec(webconsoleSpec, {
   },
 
   /**
-   * Get the NetworkEventActor for a given URL that may have been noticed by the network
-   * listener.  Requests are added when they start, so the actor might not yet have all
-   * data for the request until it has completed.
-   *
-   * @param string url
-   *        The URL of the request to search for.
-   */
-  getRequestContentForURL(url) {
-    if (!this.netmonitors) {
-      return null;
-    }
-    return new Promise(resolve => {
-      let messagesReceived = 0;
-      const onMessage = ({ data }) => {
-        // Resolve early if the console actor is destroyed
-        if (!this.netmonitors) {
-          resolve(null);
-          return;
-        }
-        if (data.url != url) {
-          return;
-        }
-        messagesReceived++;
-        // Either use the first response with a content, or return a null content
-        // if we received the responses from all the message managers.
-        if (data.content || messagesReceived == this.netmonitors.length) {
-          for (const { messageManager } of this.netmonitors) {
-            messageManager.removeMessageListener(
-              "debug:request-content:response",
-              onMessage
-            );
-          }
-          resolve(data.content);
-        }
-      };
-      for (const { messageManager } of this.netmonitors) {
-        messageManager.addMessageListener(
-          "debug:request-content:response",
-          onMessage
-        );
-        messageManager.sendAsyncMessage("debug:request-content:request", {
-          url,
-        });
-      }
-    });
-  },
-
-  /**
    * Send a new HTTP request from the target's window.
    *
    * @param object request
@@ -1822,7 +1788,7 @@ const WebConsoleActor = ActorClassWithSpec(webconsoleSpec, {
     const channel = NetUtil.newChannel({
       uri: NetUtil.newURI(url),
       loadingNode: doc,
-      securityFlags: Ci.nsILoadInfo.SEC_ALLOW_CROSS_ORIGIN_DATA_IS_NULL,
+      securityFlags: Ci.nsILoadInfo.SEC_ALLOW_CROSS_ORIGIN_SEC_CONTEXT_IS_NULL,
       contentPolicyType:
         stringToCauseType(cause.type) || Ci.nsIContentPolicy.TYPE_OTHER,
     });
@@ -1901,23 +1867,24 @@ const WebConsoleActor = ActorClassWithSpec(webconsoleSpec, {
    */
   async _sendMessageToNetmonitors(messageName, responseName, args) {
     if (!this.netmonitors) {
-      return;
+      return null;
     }
-    await Promise.all(
+    const results = await Promise.all(
       this.netmonitors.map(({ messageManager }) => {
         const onResponseReceived = new Promise(resolve => {
-          messageManager.addMessageListener(
-            responseName,
-            function onResponse() {
-              messageManager.removeMessageListener(responseName, onResponse);
-              resolve();
-            }
-          );
+          messageManager.addMessageListener(responseName, function onResponse(
+            response
+          ) {
+            messageManager.removeMessageListener(responseName, onResponse);
+            resolve(response);
+          });
         });
         messageManager.sendAsyncMessage(messageName, args);
         return onResponseReceived;
       })
     );
+
+    return results;
   },
 
   /**
@@ -1958,6 +1925,28 @@ const WebConsoleActor = ActorClassWithSpec(webconsoleSpec, {
     );
 
     return {};
+  },
+
+  /*
+   * Gets the list of blocked request urls as per the backend
+   */
+  async getBlockedUrls() {
+    const responses =
+      (await this._sendMessageToNetmonitors(
+        "debug:get-blocked-urls",
+        "debug:get-blocked-urls:response"
+      )) || [];
+    if (!responses || responses.length == 0) {
+      return [];
+    }
+
+    return Array.from(
+      new Set(
+        responses
+          .filter(response => response.data)
+          .map(response => response.data)
+      )
+    );
   },
 
   /**
@@ -2080,7 +2069,7 @@ const WebConsoleActor = ActorClassWithSpec(webconsoleSpec, {
     const needEntries = ["Map", "WeakMap", "Set", "WeakSet"].includes(dataType);
     const ignoreNonIndexedProperties = isArray(tableItemGrip);
 
-    const tableItemActor = this.actor(tableItemGrip.actor);
+    const tableItemActor = this.getActorByID(tableItemGrip.actor);
     if (!tableItemActor) {
       return null;
     }
@@ -2104,7 +2093,7 @@ const WebConsoleActor = ActorClassWithSpec(webconsoleSpec, {
             const grip = desc[key];
 
             // We need to load sub-properties as well to render the table in a nice way.
-            const actor = grip && this.actor(grip.actor);
+            const actor = grip && this.getActorByID(grip.actor);
             if (actor) {
               const res = actor
                 .enumProperties({

@@ -8,6 +8,7 @@ from unittest import mock
 import pytest
 from pathlib import Path
 import shutil
+from datetime import date, timedelta
 
 from mozperftest.utils import (
     host_platform,
@@ -16,6 +17,9 @@ from mozperftest.utils import (
     install_package,
     build_test_list,
     get_multi_tasks_url,
+    get_revision_namespace_url,
+    convert_day,
+    load_class,
 )
 from mozperftest.tests.support import temp_file, requests_content, EXAMPLE_TESTS_DIR
 
@@ -74,8 +78,25 @@ def _req(package):
 def test_install_package():
     vem = mock.Mock()
     vem.bin_path = "someplace"
-    install_package(vem, "foo")
+    assert install_package(vem, "foo")
     vem._run_pip.assert_called()
+
+
+@mock.patch("pip._internal.req.constructors.install_req_from_line", new=_req)
+def test_install_package_failures():
+    vem = mock.Mock()
+    vem.bin_path = "someplace"
+
+    def run_pip(*args):
+        raise Exception()
+
+    vem._run_pip = run_pip
+
+    with pytest.raises(Exception):
+        install_package(vem, "foo")
+
+    # we can also absorb the error, and just return False
+    assert not install_package(vem, "foo", ignore_failure=True)
 
 
 @mock.patch("mozperftest.utils.requests.get", requests_content())
@@ -88,23 +109,65 @@ def test_build_test_list():
         shutil.rmtree(tmp_dir)
 
 
+def test_convert_day():
+    day = "2020.06.08"
+    assert convert_day(day) == day
+    with pytest.raises(ValueError):
+        convert_day("2020-06-08")
+    today = date.today()
+    assert convert_day("today"), today.strftime("%Y.%m.%d")
+    yesterday = today - timedelta(days=1)
+    assert convert_day("yesterday") == yesterday.strftime("%Y.%m.%d")
+
+
+def test_revision_namespace_url():
+    route = "FakeBuildRoute"
+    day = "2020.06.08"
+    buildurl = get_revision_namespace_url(route, day=day)
+    assert day in buildurl and route in buildurl
+    assert buildurl.endswith(".revision")
+
+
 def test_multibuild_url():
     route = "FakeBuildRoute"
     day = "2020.06.08"
-    buildurl = get_multi_tasks_url(route, day=day)
-    assert day in buildurl and route in buildurl
+    revision = "deadbeef"
+    buildurl = get_multi_tasks_url(route, revision, day=day)
+    assert all(item in buildurl for item in (route, day, revision))
 
     with mock.patch("mozperftest.utils.date") as mockeddate:
         mockeddate.today.return_value = mockeddate
         mockeddate.strftime.return_value = "2020.07.09"
-        buildurl = get_multi_tasks_url(route, day="today")
+        buildurl = get_multi_tasks_url(route, revision, day="today")
         assert "2020.07.09" in buildurl and route in buildurl
 
         with mock.patch("mozperftest.utils.timedelta"):
             mockeddate.__sub__.return_value = mockeddate
             mockeddate.strftime.return_value = "2020.08.09"
-            buildurl = get_multi_tasks_url(route)
+            buildurl = get_multi_tasks_url(route, revision)
             assert "2020.08.09" in buildurl and route in buildurl
+
+
+class ImportMe:
+    pass
+
+
+def test_load_class():
+
+    with pytest.raises(ImportError):
+        load_class("notimportable")
+
+    with pytest.raises(ImportError):
+        load_class("notim:por:table")
+
+    with pytest.raises(ImportError):
+        load_class("notim:portable")
+
+    with pytest.raises(ImportError):
+        load_class("mozperftest.tests.test_utils:NOEXIST")
+
+    klass = load_class("mozperftest.tests.test_utils:ImportMe")
+    assert klass is ImportMe
 
 
 if __name__ == "__main__":

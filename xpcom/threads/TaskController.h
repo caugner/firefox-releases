@@ -217,6 +217,11 @@ class Task {
   uint32_t mPriority;
   // Modifier currently being applied to this task by its taskmanager.
   int32_t mPriorityModifier = 0;
+#ifdef MOZ_GECKO_PROFILER
+  // Time this task was inserted into the task graph, this is used by the
+  // profiler.
+  mozilla::TimeStamp mInsertionTime;
+#endif
 };
 
 // A task manager implementation for priority levels that should only
@@ -283,7 +288,7 @@ class TaskController {
   void ExecuteNextTaskOnlyMainThread();
 
   // Process all pending main thread tasks.
-  void ProcessPendingMTTask();
+  void ProcessPendingMTTask(bool aMayWait = false);
 
   // This allows reprioritization of a task already in the task graph.
   // This may be called on any thread.
@@ -296,10 +301,14 @@ class TaskController {
 
   bool HasMainThreadPendingTasks();
 
+  // Let users know whether the last main thread task runnable did work.
+  bool MTTaskRunnableProcessedTask() { return mMTTaskRunnableProcessedTask; }
+
  private:
   // This gets the next (highest priority) task that is only allowed to execute
   // on the main thread, if any, and executes it.
-  void ExecuteNextTaskOnlyMainThreadInternal(const MutexAutoLock& aProofOfLock);
+  // Returns true if it succeeded.
+  bool ExecuteNextTaskOnlyMainThreadInternal(const MutexAutoLock& aProofOfLock);
 
   // The guts of ExecuteNextTaskOnlyMainThreadInternal, which get idle handling
   // wrapped around them.  Returns whether a task actually ran.
@@ -338,10 +347,13 @@ class TaskController {
   // This ensures we keep running the main thread if we processed a task there.
   bool mMayHaveMainThreadTask = true;
 
+  // This stores whether the last main thread task runnable did work.
+  bool mMTTaskRunnableProcessedTask = false;
+
   // Whether we have scheduled a runnable on the main thread event loop.
   // This is used for nsIRunnable compatibility.
-  bool mHasScheduledMTRunnable = false;
   RefPtr<nsIRunnable> mMTProcessingRunnable;
+  RefPtr<nsIRunnable> mMTBlockingProcessingRunnable;
 
   // XXX - Thread observer to notify when a new event has been dispatched
   nsIThreadObserver* mObserver = nullptr;

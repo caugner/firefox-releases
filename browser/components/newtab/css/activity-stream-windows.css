@@ -1727,6 +1727,13 @@ main {
     padding: 6px 12px;
     margin-inline-start: 5px;
     margin-bottom: 0; }
+  .asrouter-admin .general-textarea {
+    width: 740px;
+    height: 500px;
+    overflow: auto;
+    resize: none;
+    border-radius: 4px;
+    display: flex; }
   .asrouter-admin .wnp-textarea {
     width: 740px;
     height: 500px;
@@ -2808,8 +2815,7 @@ main {
     min-width: 40px;
     padding: 0 0 0 40px;
     position: absolute;
-    transition: padding 100ms ease-in-out 0ms, color 100ms linear 100ms;
-    z-index: 1; }
+    transition: padding 100ms ease-in-out 0ms, color 100ms linear 100ms; }
     .ds-card .playhead:hover {
       color: white;
       padding: 0 20px 0 40px; }
@@ -3936,7 +3942,7 @@ body[lwt-newtab-brighttext] .scene2Icon .icon-light-theme {
   flex: 1 1 100%;
   width: 100%; }
   .SubmitFormSnippet .disclaimerText {
-    margin: 20px 0 0;
+    margin: 5px 0 0;
     font-size: 12px;
     color: var(--newtab-text-secondary-color); }
   .SubmitFormSnippet p {
@@ -3978,7 +3984,7 @@ body[lwt-newtab-brighttext] .scene2Icon .icon-light-theme {
     display: flex;
     flex: 0 0 100%; }
   .SubmitFormSnippet .innerWrapper {
-    max-width: 670px;
+    max-width: 736px;
     flex-wrap: wrap;
     justify-items: center;
     padding-top: 40px;
@@ -4009,6 +4015,29 @@ body[lwt-newtab-brighttext] .scene2Icon .icon-light-theme {
     .SubmitFormSnippet input.mainInput:focus {
       border: 1px solid var(--newtab-textbox-focus-color);
       box-shadow: var(--newtab-textbox-focus-boxshadow); }
+  .SubmitFormSnippet.scene2Alt {
+    text-align: start; }
+    .SubmitFormSnippet.scene2Alt .scene2Icon {
+      flex: 1;
+      margin-bottom: 0; }
+    .SubmitFormSnippet.scene2Alt .message {
+      flex: 5;
+      margin-bottom: 0; }
+      .SubmitFormSnippet.scene2Alt .message p {
+        margin-bottom: 10px; }
+    .SubmitFormSnippet.scene2Alt .section-header {
+      width: 100%; }
+      .SubmitFormSnippet.scene2Alt .section-header .icon {
+        width: 16px;
+        height: 16px; }
+    .SubmitFormSnippet.scene2Alt .section-title {
+      font-size: 13px; }
+    .SubmitFormSnippet.scene2Alt .section-title a {
+      color: var(--newtab-section-header-text-color);
+      font-weight: inherit;
+      text-decoration: none; }
+    .SubmitFormSnippet.scene2Alt .innerWrapper {
+      padding: 0 0 16px; }
 
 .submissionStatus {
   text-align: center;

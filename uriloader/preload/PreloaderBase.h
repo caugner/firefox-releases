@@ -39,10 +39,8 @@ class Document;
  *
  * This class is designed to be used only on the main thread.
  */
-class PreloaderBase : public SupportsWeakPtr<PreloaderBase>,
-                      public nsISupports {
+class PreloaderBase : public SupportsWeakPtr, public nsISupports {
  public:
-  MOZ_DECLARE_WEAKREFERENCE_TYPENAME(PreloaderBase)
   PreloaderBase() = default;
 
   // Called by resource loaders to register this preload in the document's
@@ -175,8 +173,7 @@ class PreloaderBase : public SupportsWeakPtr<PreloaderBase>,
     NS_DECL_ISUPPORTS
     NS_DECL_NSITIMERCALLBACK
 
-    UsageTimer(PreloaderBase* aPreload, dom::Document* aDocument)
-        : mDocument(aDocument), mPreload(aPreload) {}
+    UsageTimer(PreloaderBase* aPreload, dom::Document* aDocument);
 
    private:
     ~UsageTimer() = default;

@@ -379,6 +379,7 @@ class RecursiveMakeBackend(MakeBackend):
         self._rust_targets = set()
         self._rust_lib_targets = set()
         self._gkrust_target = None
+        self._pre_compile = set()
 
         self._no_skip = {
             'export': set(),
@@ -398,7 +399,8 @@ class RecursiveMakeBackend(MakeBackend):
 
     def _get_backend_file_for(self, obj):
         # For generated files that we put in the export or misc tiers, we use the
-        # top-level backend file.
+        # top-level backend file, except for localized files, which we need to keep
+        # in each directory for dependencies from jar manifests for l10n repacks.
         if isinstance(obj, GeneratedFile) and not obj.required_during_compile and \
                 not obj.localized:
             objdir = self.environment.topobjdir
@@ -545,27 +547,27 @@ class RecursiveMakeBackend(MakeBackend):
             if obj.required_before_compile:
                 tier = 'export'
             elif obj.required_during_compile:
-                tier = None
-            elif obj.localized:
-                tier = 'libs'
+                tier = 'pre-compile'
             else:
                 tier = 'misc'
-            if tier:
-                relobjdir = mozpath.relpath(obj.objdir, self.environment.topobjdir)
+            relobjdir = mozpath.relpath(obj.objdir, self.environment.topobjdir)
+            if tier == 'pre-compile':
+                self._pre_compile.add(relobjdir)
+            else:
                 self._no_skip[tier].add(relobjdir)
             backend_file.write_once('include $(topsrcdir)/config/AB_rCD.mk\n')
             relobjdir = mozpath.relpath(obj.objdir, backend_file.objdir)
             # For generated files that we handle in the top-level backend file,
             # we want to have a `directory/tier` target depending on the file.
             # For the others, we want a `tier` target.
-            if tier and relobjdir:
+            if tier != 'pre-compile' and relobjdir:
                 tier = '%s/%s' % (relobjdir, tier)
             for stmt in self._format_statements_for_generated_file(
                     obj, tier, extra_dependencies='backend.mk' if obj.flags else ''):
                 backend_file.write(stmt + '\n')
 
         elif isinstance(obj, JARManifest):
-            self._no_skip['libs'].add(backend_file.relobjdir)
+            self._no_skip['misc'].add(backend_file.relobjdir)
             backend_file.write('JAR_MANIFEST := %s\n' % obj.path.full_path)
 
         elif isinstance(obj, RustProgram):
@@ -742,6 +744,16 @@ class RecursiveMakeBackend(MakeBackend):
             if main:
                 rule.add_dependencies('%s/%s' % (d, tier) for d in sorted(main))
 
+        rule = root_deps_mk.create_rule(['recurse_pre-compile'])
+        rule.add_dependencies('%s/pre-compile' % d for d in sorted(self._pre_compile))
+
+        targets_with_pre_compile = sorted(
+            t for t in self._compile_graph if mozpath.dirname(t) in self._pre_compile)
+        for t in targets_with_pre_compile:
+            relobjdir = mozpath.dirname(t)
+            rule = root_deps_mk.create_rule([t])
+            rule.add_dependencies(['%s/pre-compile' % relobjdir])
+
         all_compile_deps = six.moves.reduce(
             lambda x, y: x | y,
             self._compile_graph.values()) if self._compile_graph else set()
@@ -782,7 +794,7 @@ class RecursiveMakeBackend(MakeBackend):
                     r = root_deps_mk.create_rule([target])
                     r.add_dependencies([prior_target])
 
-            rule.add_dependencies(chain(rust_roots, roots))
+            rule.add_dependencies(chain(rust_roots, sorted(roots)))
             for target, deps in sorted(graph.items()):
                 if deps:
                     rule = root_deps_mk.create_rule([target])
@@ -824,6 +836,8 @@ class RecursiveMakeBackend(MakeBackend):
 
         # Need a list of compile targets because we can't use pattern rules:
         # https://savannah.gnu.org/bugs/index.php?42833
+        root_mk.add_statement('pre_compile_targets := %s' % ' '.join(sorted(
+            '%s/pre-compile' % p for p in self._pre_compile)))
         root_mk.add_statement('compile_targets := %s' % ' '.join(sorted(
             set(self._compile_graph.keys()) | all_compile_deps)))
         root_mk.add_statement('syms_targets := %s' % ' '.join(sorted(
@@ -1290,7 +1304,6 @@ class RecursiveMakeBackend(MakeBackend):
         if libdef.symbols_file:
             if libdef.symbols_link_arg:
                 backend_file.write('EXTRA_DSO_LDOPTS += %s\n' % libdef.symbols_link_arg)
-                backend_file.write('EXTRA_DEPS += %s\n' % libdef.symbols_file)
         if not libdef.cxx_link:
             backend_file.write('LIB_IS_C_ONLY := 1\n')
         if libdef.output_category:
@@ -1487,6 +1500,9 @@ class RecursiveMakeBackend(MakeBackend):
             install_location = '$(DEPTH)/%s' % mozpath.join(target, path)
             if objdir_files:
                 tier = 'export' if obj.install_target == 'dist/include' else 'misc'
+                # We cannot generate multilocale.txt during misc at the moment.
+                if objdir_files[0] == 'multilocale.txt':
+                    tier = 'libs'
                 self._add_install_target(backend_file, target_var, tier,
                                          install_location, objdir_files)
             if absolute_files:
@@ -1545,12 +1561,12 @@ class RecursiveMakeBackend(MakeBackend):
             raise Exception('Cannot install localized files to ' + target)
         for i, (path, files) in enumerate(files.walk()):
             name = 'LOCALIZED_FILES_%d' % i
-            self._no_skip['libs'].add(backend_file.relobjdir)
+            self._no_skip['misc'].add(backend_file.relobjdir)
             self._write_localized_files_files(files, name + '_FILES', backend_file)
             # Use FINAL_TARGET here because some l10n repack rules set
             # XPI_NAME to generate langpacks.
             backend_file.write('%s_DEST = $(FINAL_TARGET)/%s\n' % (name, path))
-            backend_file.write('%s_TARGET := libs\n' % name)
+            backend_file.write('%s_TARGET := misc\n' % name)
             backend_file.write('INSTALL_TARGETS += %s\n' % name)
 
     def _process_localized_pp_files(self, obj, files, backend_file):
@@ -1560,12 +1576,12 @@ class RecursiveMakeBackend(MakeBackend):
             raise Exception('Cannot install localized files to ' + target)
         for i, (path, files) in enumerate(files.walk()):
             name = 'LOCALIZED_PP_FILES_%d' % i
-            self._no_skip['libs'].add(backend_file.relobjdir)
+            self._no_skip['misc'].add(backend_file.relobjdir)
             self._write_localized_files_files(files, name, backend_file)
             # Use FINAL_TARGET here because some l10n repack rules set
             # XPI_NAME to generate langpacks.
             backend_file.write('%s_PATH = $(FINAL_TARGET)/%s\n' % (name, path))
-            backend_file.write('%s_TARGET := libs\n' % name)
+            backend_file.write('%s_TARGET := misc\n' % name)
             # Localized files will have different content in different
             # localizations, and some preprocessed files may not have
             # any preprocessor directives.

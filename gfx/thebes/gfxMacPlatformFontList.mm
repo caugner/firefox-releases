@@ -266,6 +266,12 @@ nsresult MacOSFontEntry::ReadCMAP(FontInfoData* aFontInfoData) {
   return rv;
 }
 
+bool MacOSFontEntry::CheckForColorGlyphs() {
+  return HasFontTable(TRUETYPE_TAG('S', 'V', 'G', ' ')) ||
+         HasFontTable(TRUETYPE_TAG('C', 'O', 'L', 'R')) ||
+         HasFontTable(TRUETYPE_TAG('s', 'b', 'i', 'x'));
+}
+
 gfxFont* MacOSFontEntry::CreateFontInstance(const gfxFontStyle* aFontStyle) {
   RefPtr<UnscaledFontMac> unscaledFont(mUnscaledFont);
   if (!unscaledFont) {
@@ -273,7 +279,7 @@ gfxFont* MacOSFontEntry::CreateFontInstance(const gfxFontStyle* aFontStyle) {
     if (!baseFont) {
       return nullptr;
     }
-    unscaledFont = new UnscaledFontMac(baseFont, mIsDataUserFont);
+    unscaledFont = new UnscaledFontMac(baseFont, mIsDataUserFont, CheckForColorGlyphs());
     mUnscaledFont = unscaledFont;
   }
 
@@ -366,20 +372,6 @@ gfxFontEntry* MacOSFontEntry::Clone() const {
   fe->mStyleRange = mStyleRange;
   fe->mStretchRange = mStretchRange;
   fe->mFixedPitch = mFixedPitch;
-  return fe;
-}
-
-gfxFontEntry* gfxMacPlatformFontList::CreateFontEntry(fontlist::Face* aFace,
-                                                      const fontlist::Family* aFamily) {
-  MacOSFontEntry* fe =
-      new MacOSFontEntry(aFace->mDescriptor.AsString(SharedFontList()), aFace->mWeight, false,
-                         0.0);  // XXX standardFace, sizeHint
-  fe->mStyleRange = aFace->mStyle;
-  fe->mStretchRange = aFace->mStretch;
-  fe->mFixedPitch = aFace->mFixedPitch;
-  fe->mIsBadUnderlineFont = aFamily->IsBadUnderlineFamily();
-  fe->mShmemFace = aFace;
-  fe->mFamilyName = aFamily->DisplayName().AsString(SharedFontList());
   return fe;
 }
 
@@ -640,7 +632,9 @@ static inline int GetWeightOverride(const nsAString& aPSName) {
 }
 
 void gfxMacFontFamily::FindStyleVariations(FontInfoData* aFontInfoData) {
-  if (mHasStyles) return;
+  if (mHasStyles) {
+    return;
+  }
 
   AUTO_PROFILER_LABEL_DYNAMIC_NSCSTRING("gfxMacFontFamily::FindStyleVariations", LAYOUT, mName);
 
@@ -742,6 +736,8 @@ void gfxMacFontFamily::FindStyleVariations(FontInfoData* aFontInfoData) {
   if (mIsBadUnderlineFamily) {
     SetBadUnderlineFonts();
   }
+
+  CheckForSimpleFamily();
 }
 
 /* gfxSingleFaceMacFontFamily */
@@ -821,6 +817,8 @@ void gfxSingleFaceMacFontFamily::ReadOtherFamilyNames(gfxPlatformFontList* aPlat
 
 gfxMacPlatformFontList::gfxMacPlatformFontList()
     : gfxPlatformFontList(false), mDefaultFont(nullptr), mUseSizeSensitiveSystemFont(false) {
+  CheckFamilyList(kBaseFonts, ArrayLength(kBaseFonts));
+
 #ifdef MOZ_BUNDLED_FONTS
   ActivateBundledFonts();
 #endif
@@ -828,7 +826,7 @@ gfxMacPlatformFontList::gfxMacPlatformFontList()
   nsresult rv;
   nsCOMPtr<nsIFile> langFonts(do_CreateInstance(NS_LOCAL_FILE_CONTRACTID, &rv));
   if (NS_SUCCEEDED(rv)) {
-    rv = langFonts->InitWithNativePath(NS_LITERAL_CSTRING(LANG_FONTS_DIR));
+    rv = langFonts->InitWithNativePath(nsLiteralCString(LANG_FONTS_DIR));
     if (NS_SUCCEEDED(rv)) {
       ActivateFontsFromDir(langFonts);
     }
@@ -1625,6 +1623,15 @@ gfxFontFamily* gfxMacPlatformFontList::CreateFontFamily(const nsACString& aName,
   return new gfxMacFontFamily(aName, aVisibility, 0.0);
 }
 
+gfxFontEntry* gfxMacPlatformFontList::CreateFontEntry(fontlist::Face* aFace,
+                                                      const fontlist::Family* aFamily) {
+  MacOSFontEntry* fe =
+      new MacOSFontEntry(aFace->mDescriptor.AsString(SharedFontList()), aFace->mWeight, false,
+                         0.0);  // XXX standardFace, sizeHint
+  fe->InitializeFrom(aFace, aFamily);
+  return fe;
+}
+
 void gfxMacPlatformFontList::ActivateFontsFromDir(nsIFile* aDir) {
   bool isDir;
   if (NS_FAILED(aDir->IsDirectory(&isDir)) || !isDir) {
@@ -1791,7 +1798,7 @@ void gfxMacPlatformFontList::ActivateBundledFonts() {
   if (NS_FAILED(NS_GetSpecialDirectory(NS_GRE_DIR, getter_AddRefs(localDir)))) {
     return;
   }
-  if (NS_FAILED(localDir->Append(NS_LITERAL_STRING("fonts")))) {
+  if (NS_FAILED(localDir->Append(u"fonts"_ns))) {
     return;
   }
 

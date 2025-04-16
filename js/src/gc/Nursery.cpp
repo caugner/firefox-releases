@@ -230,6 +230,9 @@ js::Nursery::Nursery(GCRuntime* gc)
       canAllocateBigInts_(true),
       reportTenurings_(0),
       minorGCTriggerReason_(JS::GCReason::NO_REASON),
+#ifndef JS_MORE_DETERMINISTIC
+      smoothedGrowthFactor(1.0),
+#endif
       decommitTask(gc)
 #ifdef JS_GC_ZEAL
       ,
@@ -247,17 +250,6 @@ js::Nursery::Nursery(GCRuntime* gc)
 }
 
 bool js::Nursery::init(AutoLockGCBgAlloc& lock) {
-  capacity_ = tunables().gcMinNurseryBytes();
-  if (!allocateNextChunk(0, lock)) {
-    capacity_ = 0;
-    return false;
-  }
-  // After this point the Nursery has been enabled.
-
-  setCurrentChunk(0);
-  setStartPosition();
-  poisonAndInitCurrentChunk();
-
   char* env = getenv("JS_GC_PROFILE_NURSERY");
   if (env) {
     if (0 == strcmp(env, "help")) {
@@ -286,8 +278,7 @@ bool js::Nursery::init(AutoLockGCBgAlloc& lock) {
     return false;
   }
 
-  MOZ_ASSERT(isEnabled());
-  return true;
+  return initFirstChunk(lock);
 }
 
 js::Nursery::~Nursery() { disable(); }
@@ -301,23 +292,39 @@ void js::Nursery::enable() {
 
   {
     AutoLockGCBgAlloc lock(gc);
-    capacity_ = tunables().gcMinNurseryBytes();
-    if (!allocateNextChunk(0, lock)) {
-      capacity_ = 0;
+    if (!initFirstChunk(lock)) {
+      // If we fail to allocate memory, the nursery will not be enabled.
       return;
     }
   }
 
-  setCurrentChunk(0);
-  setStartPosition();
-  poisonAndInitCurrentChunk();
 #ifdef JS_GC_ZEAL
   if (gc->hasZealMode(ZealMode::GenerationalGC)) {
     enterZealMode();
   }
 #endif
 
+  // This should always succeed after the first time it's called.
   MOZ_ALWAYS_TRUE(gc->storeBuffer().enable());
+}
+
+bool js::Nursery::initFirstChunk(AutoLockGCBgAlloc& lock) {
+  MOZ_ASSERT(!isEnabled());
+
+  capacity_ = tunables().gcMinNurseryBytes();
+  if (!allocateNextChunk(0, lock)) {
+    capacity_ = 0;
+    return false;
+  }
+
+  setCurrentChunk(0);
+  setStartPosition();
+  poisonAndInitCurrentChunk();
+
+  // Clear any information about previous collections.
+  clearRecentGrowthData();
+
+  return true;
 }
 
 void js::Nursery::disable() {
@@ -949,7 +956,7 @@ static inline bool IsFullStoreBufferReason(JS::GCReason reason,
          reason == JS::GCReason::FULL_SHAPE_BUFFER;
 }
 
-void js::Nursery::collect(JS::GCReason reason) {
+void js::Nursery::collect(JSGCInvocationKind kind, JS::GCReason reason) {
   JSRuntime* rt = runtime();
   MOZ_ASSERT(!rt->mainContextFromOwnThread()->suppressGC);
 
@@ -1009,7 +1016,7 @@ void js::Nursery::collect(JS::GCReason reason) {
   }
 
   // Resize the nursery.
-  maybeResizeNursery(reason);
+  maybeResizeNursery(kind, reason);
 
   // Poison/initialise the first chunk.
   if (previousGC.nurseryUsedBytes) {
@@ -1074,7 +1081,6 @@ void js::Nursery::sendTelemetry(JS::GCReason reason, TimeDuration totalTime,
   rt->addTelemetry(JS_TELEMETRY_GC_NURSERY_BYTES, committed());
 
   if (!wasEmpty) {
-    rt->addTelemetry(JS_TELEMETRY_GC_PRETENURE_COUNT, pretenureCount);
     rt->addTelemetry(JS_TELEMETRY_GC_PRETENURE_COUNT_2, pretenureCount);
     rt->addTelemetry(JS_TELEMETRY_GC_NURSERY_PROMOTION_RATE,
                      promotionRate * 100);
@@ -1490,7 +1496,8 @@ MOZ_ALWAYS_INLINE void js::Nursery::setStartPosition() {
   currentStartPosition_ = position();
 }
 
-void js::Nursery::maybeResizeNursery(JS::GCReason reason) {
+void js::Nursery::maybeResizeNursery(JSGCInvocationKind kind,
+                                     JS::GCReason reason) {
 #ifdef JS_GC_ZEAL
   // This zeal mode disabled nursery resizing.
   if (gc->hasZealMode(ZealMode::GenerationalGC)) {
@@ -1499,7 +1506,7 @@ void js::Nursery::maybeResizeNursery(JS::GCReason reason) {
 #endif
 
   size_t newCapacity =
-      mozilla::Clamp(targetSize(reason), tunables().gcMinNurseryBytes(),
+      mozilla::Clamp(targetSize(kind, reason), tunables().gcMinNurseryBytes(),
                      tunables().gcMaxNurseryBytes());
 
   MOZ_ASSERT(roundSize(newCapacity) == newCapacity);
@@ -1526,38 +1533,83 @@ static inline double ClampDouble(double value, double min, double max) {
   return value;
 }
 
-size_t js::Nursery::targetSize(JS::GCReason reason) {
-  if (gc::IsOOMReason(reason) || gc->systemHasLowMemory()) {
-    // Shrink the nursery as much as possible in low memory situations.
+size_t js::Nursery::targetSize(JSGCInvocationKind kind, JS::GCReason reason) {
+  // Shrink the nursery as much as possible if shrinking was requested or in low
+  // memory situations.
+  if (kind == GC_SHRINK || gc::IsOOMReason(reason) ||
+      gc->systemHasLowMemory()) {
+    clearRecentGrowthData();
     return 0;
   }
+
+  // Don't resize the nursery during shutdown.
+  if (gc::IsShutdownReason(reason)) {
+    clearRecentGrowthData();
+    return capacity();
+  }
+
+  TimeStamp now = ReallyNow();
 
   // Calculate the fraction of the nursery promoted out of its entire
   // capacity. This gives better results than using the promotion rate (based on
   // the amount of nursery used) in cases where we collect before the nursery is
   // full.
-  const double fractionPromoted =
+  double fractionPromoted =
       double(previousGC.tenuredBytes) / double(previousGC.nurseryCapacity);
 
-  // Object lifetimes aren't going to behave linearly, but a better relationship
-  // that works for all programs and can be predicted in advance doesn't exist.
-  static const double GrowThreshold = 0.03;
-  static const double ShrinkThreshold = 0.01;
-  static const double PromotionGoal = (GrowThreshold + ShrinkThreshold) / 2.0;
+  // Calculate the fraction of time spent collecting the nursery.
+  double timeFraction = 0.0;
+#ifndef JS_MORE_DETERMINISTIC
+  if (lastResizeTime) {
+    TimeDuration collectorTime = now - collectionStartTime();
+    TimeDuration totalTime = now - lastResizeTime;
+    timeFraction = collectorTime.ToSeconds() / totalTime.ToSeconds();
+  }
+#endif
 
-  // Leave size untouched if we don't cross either threshold.
-  if (fractionPromoted > ShrinkThreshold && fractionPromoted < GrowThreshold) {
+  // Adjust the nursery size to try to achieve a target promotion rate and
+  // collector time goals.
+  static const double PromotionGoal = 0.02;
+  static const double TimeGoal = 0.01;
+  double growthFactor =
+      std::max(fractionPromoted / PromotionGoal, timeFraction / TimeGoal);
+
+  // Limit the range of the growth factor to prevent transient high promotion
+  // rates from affecting the nursery size too far into the future.
+  static const double GrowthRange = 2.0;
+  growthFactor = ClampDouble(growthFactor, 1.0 / GrowthRange, GrowthRange);
+
+#ifndef JS_MORE_DETERMINISTIC
+  // Use exponential smoothing on the desired growth rate to take into account
+  // the promotion rate from recent previous collections.
+  if (lastResizeTime &&
+      now - lastResizeTime < TimeDuration::FromMilliseconds(200)) {
+    growthFactor = 0.75 * smoothedGrowthFactor + 0.25 * growthFactor;
+  }
+
+  lastResizeTime = now;
+  smoothedGrowthFactor = growthFactor;
+#endif
+
+  // Leave size untouched if we are close to the promotion goal.
+  static const double GoalWidth = 1.5;
+  if (growthFactor > (1.0 / GoalWidth) && growthFactor < GoalWidth) {
     return capacity();
   }
 
-  const double growthFactor =
-      ClampDouble(fractionPromoted / PromotionGoal, 0.5, 2.0);
-
-  // The multiplication below cannot overflow because growthFactor is at most
-  // two.
+  // The multiplication below cannot overflow because growthFactor is at
+  // most two.
+  MOZ_ASSERT(growthFactor <= 2.0);
   MOZ_ASSERT(capacity() < SIZE_MAX / 2);
 
   return roundSize(size_t(double(capacity()) * growthFactor));
+}
+
+void js::Nursery::clearRecentGrowthData() {
+#ifndef JS_MORE_DETERMINISTIC
+  lastResizeTime = TimeStamp();
+  smoothedGrowthFactor = 1.0;
+#endif
 }
 
 /* static */

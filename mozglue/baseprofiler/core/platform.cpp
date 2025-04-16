@@ -57,6 +57,7 @@
 #include "prtime.h"
 
 #include "BaseProfiler.h"
+#include "BaseProfilingCategory.h"
 #include "PageInformation.h"
 #include "ProfiledThreadData.h"
 #include "ProfilerBacktrace.h"
@@ -512,6 +513,7 @@ class CorePS {
 #endif
 
   PS_GET_AND_SET(const std::string&, ProcessName)
+  PS_GET_AND_SET(const std::string&, ETLDplus1)
 
  private:
   // The singleton instance
@@ -552,6 +554,9 @@ class CorePS {
 
   // Process name, provided by child process initialization code.
   std::string mProcessName;
+  // Private name, provided by child process initialization code (eTLD+1 in
+  // fission)
+  std::string mETLDplus1;
 };
 
 CorePS* CorePS::sInstance = nullptr;
@@ -671,13 +676,12 @@ class ActivePS {
         // The new sampler thread doesn't start sampling immediately because the
         // main loop within Run() is blocked until this function's caller
         // unlocks gPSMutex.
-        mSamplerThread(NewSamplerThread(aLock, mGeneration, aInterval))
-#undef HAS_FEATURE
-        ,
-        mIsPaused(false)
+        mSamplerThread(NewSamplerThread(aLock, mGeneration, aInterval)),
+        mIsPaused(false),
+        mIsSamplingPaused(false)
 #if defined(GP_OS_linux) || defined(GP_OS_freebsd)
         ,
-        mWasPaused(false)
+        mWasSamplingPaused(false)
 #endif
   {
     // Deep copy aFilters.
@@ -923,8 +927,20 @@ class ActivePS {
 
   PS_GET_AND_SET(bool, IsPaused)
 
+  // True if sampling is paused (though generic `SetIsPaused()` or specific
+  // `SetIsSamplingPaused()`).
+  static bool IsSamplingPaused(PSLockRef lock) {
+    MOZ_ASSERT(sInstance);
+    return IsPaused(lock) || sInstance->mIsSamplingPaused;
+  }
+
+  static void SetIsSamplingPaused(PSLockRef, bool aIsSamplingPaused) {
+    MOZ_ASSERT(sInstance);
+    sInstance->mIsSamplingPaused = aIsSamplingPaused;
+  }
+
 #if defined(GP_OS_linux) || defined(GP_OS_freebsd)
-  PS_GET_AND_SET(bool, WasPaused)
+  PS_GET_AND_SET(bool, WasSamplingPaused)
 #endif
 
   static void DiscardExpiredDeadProfiledThreads(PSLockRef) {
@@ -1075,13 +1091,16 @@ class ActivePS {
   // can destroy it.
   SamplerThread* const mSamplerThread;
 
-  // Is the profiler paused?
+  // Is the profiler fully paused?
   bool mIsPaused;
 
+  // Is the profiler periodic sampling paused?
+  bool mIsSamplingPaused;
+
 #if defined(GP_OS_linux) || defined(GP_OS_freebsd)
-  // Used to record whether the profiler was paused just before forking. False
+  // Used to record whether the sampler was paused just before forking. False
   // at all times except just before/after forking.
-  bool mWasPaused;
+  bool mWasSamplingPaused;
 #endif
 
   struct ExitProfile {
@@ -1118,6 +1137,14 @@ void RacyFeatures::SetPaused() { sActiveAndFeatures |= Paused; }
 void RacyFeatures::SetUnpaused() { sActiveAndFeatures &= ~Paused; }
 
 /* static */
+void RacyFeatures::SetSamplingPaused() { sActiveAndFeatures |= SamplingPaused; }
+
+/* static */
+void RacyFeatures::SetSamplingUnpaused() {
+  sActiveAndFeatures &= ~SamplingPaused;
+}
+
+/* static */
 bool RacyFeatures::IsActiveWithFeature(uint32_t aFeature) {
   uint32_t af = sActiveAndFeatures;  // copy it first
   return (af & Active) && (af & aFeature);
@@ -1127,6 +1154,12 @@ bool RacyFeatures::IsActiveWithFeature(uint32_t aFeature) {
 bool RacyFeatures::IsActiveAndUnpaused() {
   uint32_t af = sActiveAndFeatures;  // copy it first
   return (af & Active) && !(af & Paused);
+}
+
+/* static */
+bool RacyFeatures::IsActiveAndSamplingUnpaused() {
+  uint32_t af = sActiveAndFeatures;  // copy it first
+  return (af & Active) && !(af & (Paused | SamplingPaused));
 }
 
 // Each live thread has a RegisteredThread, and we store a reference to it in
@@ -1884,9 +1917,9 @@ static void locked_profiler_stream_json_for_this_process(
         ActivePS::ProfiledThreads(aLock);
     for (auto& thread : threads) {
       ProfiledThreadData* profiledThreadData = thread.second;
-      profiledThreadData->StreamJSON(buffer, aWriter,
-                                     CorePS::ProcessName(aLock),
-                                     CorePS::ProcessStartTime(), aSinceTime);
+      profiledThreadData->StreamJSON(
+          buffer, aWriter, CorePS::ProcessName(aLock), CorePS::ETLDplus1(aLock),
+          CorePS::ProcessStartTime(), aSinceTime);
     }
   }
 
@@ -2231,7 +2264,7 @@ void SamplerThread::Run() {
 
       TimeStamp expiredMarkersCleaned = TimeStamp::NowUnfuzzed();
 
-      if (!ActivePS::IsPaused(lock)) {
+      if (!ActivePS::IsSamplingPaused(lock)) {
         TimeDuration delta = sampleStart - CorePS::ProcessStartTime();
         ProfileBuffer& buffer = ActivePS::Buffer(lock);
 
@@ -2446,7 +2479,7 @@ static ProfilingStack* locked_register_thread(PSLockRef aLock,
                                               void* aStackTop) {
   MOZ_RELEASE_ASSERT(CorePS::Exists());
 
-  MOZ_RELEASE_ASSERT(!FindCurrentThreadRegisteredThread(aLock));
+  MOZ_ASSERT(!FindCurrentThreadRegisteredThread(aLock));
 
   VTUNE_REGISTER_THREAD(aName);
 
@@ -2533,7 +2566,7 @@ void profiler_init(void* aStackTop) {
     // indicates that the profiler has initialized successfully.
     CorePS::Create(lock);
 
-    locked_register_thread(lock, kMainThreadName, aStackTop);
+    Unused << locked_register_thread(lock, kMainThreadName, aStackTop);
 
     // Platform-specific initialization.
     PlatformInit(lock);
@@ -2744,10 +2777,15 @@ static bool WriteProfileToJSONWriter(SpliceableChunkedJSONWriter& aWriter,
   return true;
 }
 
-void profiler_set_process_name(const std::string& aProcessName) {
-  LOG("profiler_set_process_name(\"%s\")", aProcessName.c_str());
+void profiler_set_process_name(const std::string& aProcessName,
+                               const std::string* aETLDplus1) {
+  LOG("profiler_set_process_name(\"%s\", \"%s\")", aProcessName.c_str(),
+      aETLDplus1 ? aETLDplus1->c_str() : "<none>");
   PSAutoLock lock;
   CorePS::SetProcessName(lock, aProcessName);
+  if (aETLDplus1) {
+    CorePS::SetETLDplus1(lock, *aETLDplus1);
+  }
 }
 
 UniquePtr<char[]> profiler_get_profile(double aSinceTime, bool aIsShuttingDown,
@@ -3206,6 +3244,56 @@ void profiler_resume() {
   }
 }
 
+bool profiler_is_sampling_paused() {
+  MOZ_RELEASE_ASSERT(CorePS::Exists());
+
+  PSAutoLock lock;
+
+  if (!ActivePS::Exists(lock)) {
+    return false;
+  }
+
+  return ActivePS::IsSamplingPaused(lock);
+}
+
+void profiler_pause_sampling() {
+  LOG("profiler_pause_sampling");
+
+  MOZ_RELEASE_ASSERT(CorePS::Exists());
+
+  {
+    PSAutoLock lock;
+
+    if (!ActivePS::Exists(lock)) {
+      return;
+    }
+
+    RacyFeatures::SetSamplingPaused();
+    ActivePS::SetIsSamplingPaused(lock, true);
+    ActivePS::Buffer(lock).AddEntry(
+        ProfileBufferEntry::PauseSampling(profiler_time()));
+  }
+}
+
+void profiler_resume_sampling() {
+  LOG("profiler_resume_sampling");
+
+  MOZ_RELEASE_ASSERT(CorePS::Exists());
+
+  {
+    PSAutoLock lock;
+
+    if (!ActivePS::Exists(lock)) {
+      return;
+    }
+
+    ActivePS::Buffer(lock).AddEntry(
+        ProfileBufferEntry::ResumeSampling(profiler_time()));
+    ActivePS::SetIsSamplingPaused(lock, false);
+    RacyFeatures::SetSamplingUnpaused();
+  }
+}
+
 bool profiler_feature_active(uint32_t aFeature) {
   // This function runs both on and off the main thread.
 
@@ -3229,6 +3317,10 @@ void profiler_remove_sampled_counter(BaseProfilerCount* aCounter) {
   CorePS::RemoveCounter(lock, aCounter);
 }
 
+static void maybelocked_profiler_add_marker_for_thread(
+    int aThreadId, ProfilingCategoryPair aCategoryPair, const char* aMarkerName,
+    const ProfilerMarkerPayload& aPayload, const PSAutoLock* aLockOrNull);
+
 ProfilingStack* profiler_register_thread(const char* aName,
                                          void* aGuessStackTop) {
   DEBUG_LOG("profiler_register_thread(%s)", aName);
@@ -3236,6 +3328,28 @@ ProfilingStack* profiler_register_thread(const char* aName,
   MOZ_RELEASE_ASSERT(CorePS::Exists());
 
   PSAutoLock lock;
+
+  if (RegisteredThread* thread = FindCurrentThreadRegisteredThread(lock);
+      thread) {
+    LOG("profiler_register_thread(%s) - thread %d already registered as %s",
+        aName, profiler_current_thread_id(), thread->Info()->Name());
+    // TODO: Use new name. This is currently not possible because the
+    // RegisteredThread's ThreadInfo cannot be changed.
+    // In the meantime, we record a marker that could be used in the frontend.
+    std::string text("Thread ");
+    text += std::to_string(profiler_current_thread_id());
+    text += " \"";
+    text += thread->Info()->Name();
+    text += "\" attempted to re-register as \"";
+    text += aName;
+    text += "\"";
+    maybelocked_profiler_add_marker_for_thread(
+        CorePS::MainThreadId(), ProfilingCategoryPair::OTHER_Profiling,
+        "profiler_register_thread again",
+        TextMarkerPayload(text, TimeStamp::NowUnfuzzed()), &lock);
+
+    return &thread->RacyRegisteredThread().ProfilingStack();
+  }
 
   void* stackTop = GetStackTop(aGuessStackTop);
   return locked_register_thread(lock, aName, stackTop);
@@ -3269,6 +3383,20 @@ void profiler_unregister_thread() {
     // registeredThread object.
     CorePS::RemoveRegisteredThread(lock, registeredThread);
   } else {
+    LOG("profiler_unregister_thread() - thread %d already unregistered",
+        profiler_current_thread_id());
+    // We cannot record a marker on this thread because it was already
+    // unregistered. Send it to the main thread (unless this *is* already the
+    // main thread, which has been unregistered); this may be useful to catch
+    // mismatched register/unregister pairs in Firefox.
+    if (int tid = profiler_current_thread_id(); tid != CorePS::MainThreadId()) {
+      maybelocked_profiler_add_marker_for_thread(
+          CorePS::MainThreadId(), ProfilingCategoryPair::OTHER_Profiling,
+          "profiler_unregister_thread again",
+          TextMarkerPayload(std::to_string(profiler_current_thread_id()),
+                            TimeStamp::NowUnfuzzed()),
+          &lock);
+    }
     // There are two ways FindCurrentThreadRegisteredThread() might have failed.
     //
     // - TLSRegisteredThread::Init() failed in locked_register_thread().

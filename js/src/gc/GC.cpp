@@ -296,6 +296,8 @@ static_assert(js::jit::CodeAlignment >= MinFirstWordAlignment,
               "CellFlagBitsReservedForGC should support JIT code");
 static_assert(js::gc::JSClassAlignBytes >= MinFirstWordAlignment,
               "CellFlagBitsReservedForGC should support JSClass pointers");
+static_assert(js::ScopeDataAlignBytes >= MinFirstWordAlignment,
+              "CellFlagBitsReservedForGC should support scope data pointers");
 
 static_assert(mozilla::ArrayLength(slotsToThingKind) ==
                   SLOTS_TO_THING_KIND_LIMIT,
@@ -313,17 +315,6 @@ static_assert(mozilla::ArrayLength(slotsToThingKind) ==
                 "Size of " #sizedType " is smaller than the minimum size");
 FOR_EACH_ALLOCKIND(CHECK_THING_SIZE);
 #undef CHECK_THING_SIZE
-
-// GC things must be standard-layout classes so we can access the cell header by
-// casting the thing pointer to a CellHeader*. This checks the property for the
-// least derived thing type.
-#define CHECK_THING_LAYOUT(_1, traceKind, _2, _3, _4, _5, _6)         \
-  static_assert(                                                      \
-      std::is_standard_layout<                                        \
-          MapTraceKindToType<JS::TraceKind::traceKind>::Type>::value, \
-      "The class for " #traceKind " must by a standard layout type.");
-FOR_EACH_ALLOCKIND(CHECK_THING_LAYOUT)
-#undef CHECK_THING_LAYOUT
 
 template <typename T>
 struct ArenaLayout {
@@ -1600,11 +1591,11 @@ void GCRuntime::setHostCleanupFinalizationRegistryCallback(
 }
 
 void GCRuntime::callHostCleanupFinalizationRegistryCallback(
-    FinalizationRegistryObject* registry) {
+    JSFunction* doCleanup, GlobalObject* incumbentGlobal) {
   JS::AutoSuppressGCAnalysis nogc;
   const auto& callback = hostCleanupFinalizationRegistryCallback.ref();
   if (callback.op) {
-    callback.op(registry, callback.data);
+    callback.op(doCleanup, incumbentGlobal, callback.data);
   }
 }
 
@@ -3178,21 +3169,26 @@ void GCRuntime::triggerFullGCForAtoms(JSContext* cx) {
   MOZ_RELEASE_ASSERT(triggerGC(JS::GCReason::DELAYED_ATOMS_GC));
 }
 
-// Do all possible decommit immediately from the current thread without
-// releasing the GC lock or allocating any memory.
-void GCRuntime::decommitFreeArenasWithoutUnlocking(const AutoLockGC& lock) {
-  MOZ_ASSERT(emptyChunks(lock).count() == 0);
-  for (ChunkPool::Iter chunk(availableChunks(lock)); !chunk.done();
-       chunk.next()) {
-    chunk->decommitFreeArenasWithoutUnlocking(lock);
-  }
-  MOZ_ASSERT(availableChunks(lock).verify());
-}
-
 void GCRuntime::startDecommit() {
   gcstats::AutoPhase ap(stats(), gcstats::PhaseKind::DECOMMIT);
+
+#ifdef DEBUG
   MOZ_ASSERT(CurrentThreadCanAccessRuntime(rt));
   MOZ_ASSERT(decommitTask.isIdle());
+
+  {
+    AutoLockGC lock(this);
+    MOZ_ASSERT(fullChunks(lock).verify());
+    MOZ_ASSERT(availableChunks(lock).verify());
+    MOZ_ASSERT(emptyChunks(lock).verify());
+
+    // Verify that all entries in the empty chunks pool are already decommitted.
+    for (ChunkPool::Iter chunk(emptyChunks(lock)); !chunk.done();
+         chunk.next()) {
+      MOZ_ASSERT(chunk->info.numArenasFreeCommitted == 0);
+    }
+  }
+#endif
 
   // If we are allocating heavily enough to trigger "high frequency" GC, then
   // skip decommit so that we do not compete with the mutator. However if we're
@@ -3202,36 +3198,12 @@ void GCRuntime::startDecommit() {
     return;
   }
 
-  BackgroundDecommitTask::ChunkVector toDecommit;
   {
     AutoLockGC lock(this);
-
-    // Verify that all entries in the empty chunks pool are already decommitted.
-    for (ChunkPool::Iter chunk(emptyChunks(lock)); !chunk.done();
-         chunk.next()) {
-      MOZ_ASSERT(!chunk->info.numArenasFreeCommitted);
-    }
-
-    // Since we release the GC lock while doing the decommit syscall below,
-    // it is dangerous to iterate the available list directly, as the active
-    // thread could modify it concurrently. Instead, we build and pass an
-    // explicit Vector containing the Chunks we want to visit.
-    MOZ_ASSERT(availableChunks(lock).verify());
-    availableChunks(lock).sort();
-    for (ChunkPool::Iter chunk(availableChunks(lock)); !chunk.done();
-         chunk.next()) {
-      if (chunk->info.numArenasFreeCommitted && !toDecommit.append(chunk)) {
-        // The OOM handler does a full, immediate decommit.
-        return onOutOfMallocMemory(lock);
-      }
-    }
-
-    if (toDecommit.empty() && !tooManyEmptyChunks(lock)) {
-      return;
+    if (availableChunks(lock).empty() && !tooManyEmptyChunks(lock)) {
+      return;  // Nothing to do.
     }
   }
-
-  decommitTask.setChunksToScan(toDecommit);
 
 #ifdef DEBUG
   {
@@ -3248,41 +3220,67 @@ void GCRuntime::startDecommit() {
   decommitTask.runFromMainThread();
 }
 
-void js::gc::BackgroundDecommitTask::setChunksToScan(ChunkVector& chunks) {
-  MOZ_ASSERT(CurrentThreadCanAccessRuntime(gc->rt));
-  MOZ_ASSERT(isIdle());
-  MOZ_ASSERT(toDecommit.ref().empty());
-  std::swap(toDecommit.ref(), chunks);
-}
-
 void js::gc::BackgroundDecommitTask::run() {
-  ChunkPool toFree;
+  ChunkPool emptyChunksToFree;
 
   {
     AutoLockGC lock(gc);
 
-    for (Chunk* chunk : toDecommit.ref()) {
-      // The arena list is not doubly-linked, so we have to work in the free
-      // list order and not in the natural order.
+    // To help minimize the total number of chunks needed over time, sort the
+    // available chunks list so that we allocate into more-used chunks first.
+    gc->availableChunks(lock).sort();
 
-      while (chunk->info.numArenasFreeCommitted && !cancel_) {
-        if (!chunk->decommitOneFreeArena(gc, lock)) {
-          // If we are low enough on memory that we can't update the page
-          // tables, break out of the loop.
-          break;
-        }
-      }
-    }
+    gc->decommitFreeArenas(cancel_, lock);
 
-    toDecommit.ref().clearAndFree();
-    toFree = gc->expireEmptyChunkPool(lock);
+    emptyChunksToFree = gc->expireEmptyChunkPool(lock);
   }
 
-  FreeChunkPool(toFree);
+  FreeChunkPool(emptyChunksToFree);
 
   AutoLockHelperThreadState lock;
   setFinishing(lock);
   gc->maybeRequestGCAfterBackgroundTask(lock);
+}
+
+// Called from a background thread to decommit free arenas. Releases the GC
+// lock.
+void GCRuntime::decommitFreeArenas(const bool& cancel, AutoLockGC& lock) {
+  // Since we release the GC lock while doing the decommit syscall below,
+  // it is dangerous to iterate the available list directly, as the active
+  // thread could modify it concurrently. Instead, we build and pass an
+  // explicit Vector containing the Chunks we want to visit.
+  Vector<Chunk*, 0, SystemAllocPolicy> chunksToDecommit;
+  for (ChunkPool::Iter chunk(availableChunks(lock)); !chunk.done();
+       chunk.next()) {
+    if (chunk->info.numArenasFreeCommitted != 0 &&
+        !chunksToDecommit.append(chunk)) {
+      onOutOfMallocMemory(lock);
+      return;
+    }
+  }
+
+  for (Chunk* chunk : chunksToDecommit) {
+    // The arena list is not doubly-linked, so we have to work in the free
+    // list order and not in the natural order.
+
+    while (chunk->info.numArenasFreeCommitted && !cancel) {
+      if (!chunk->decommitOneFreeArena(this, lock)) {
+        // If we are low enough on memory that we can't update the page
+        // tables, break out of the loop.
+        break;
+      }
+    }
+  }
+}
+
+// Do all possible decommit immediately from the current thread without
+// releasing the GC lock or allocating any memory.
+void GCRuntime::decommitFreeArenasWithoutUnlocking(const AutoLockGC& lock) {
+  for (ChunkPool::Iter chunk(availableChunks(lock)); !chunk.done();
+       chunk.next()) {
+    chunk->decommitFreeArenasWithoutUnlocking(lock);
+  }
+  MOZ_ASSERT(availableChunks(lock).verify());
 }
 
 void GCRuntime::maybeRequestGCAfterBackgroundTask(
@@ -4056,12 +4054,6 @@ void GCRuntime::unmarkWeakMaps() {
   }
 }
 
-static bool IsShutdownGC(JS::GCReason reason) {
-  return reason == JS::GCReason::WORKER_SHUTDOWN ||
-         reason == JS::GCReason::SHUTDOWN_CC ||
-         reason == JS::GCReason::DESTROY_RUNTIME;
-}
-
 bool GCRuntime::beginMarkPhase(JS::GCReason reason, AutoGCSession& session) {
 #ifdef DEBUG
   if (fullCompartmentChecks) {
@@ -4155,7 +4147,7 @@ bool GCRuntime::beginMarkPhase(JS::GCReason reason, AutoGCSession& session) {
      */
     purgeRuntime();
 
-    if (IsShutdownGC(reason)) {
+    if (IsShutdownReason(reason)) {
       /* Clear any engine roots that may hold external data live. */
       for (GCZonesIter zone(this); !zone.done(); zone.next()) {
         zone->clearRootsForShutdownGC();
@@ -4184,7 +4176,7 @@ bool GCRuntime::beginMarkPhase(JS::GCReason reason, AutoGCSession& session) {
    * Process any queued source compressions during the start of a major
    * GC.
    */
-  if (!IsShutdownGC(reason) && reason != JS::GCReason::ROOTS_REMOVED) {
+  if (!IsShutdownReason(reason) && reason != JS::GCReason::ROOTS_REMOVED) {
     AutoLockHelperThreadState helperLock;
     HelperThreadState().startHandlingCompressionTasks(
         helperLock, GlobalHelperThreadState::ScheduleCompressionTask::GC);
@@ -6136,7 +6128,6 @@ bool GCRuntime::initSweepActions() {
           Call(&GCRuntime::endMarkingSweepGroup),
           Call(&GCRuntime::beginSweepingSweepGroup),
           MaybeYield(ZealMode::IncrementalMultipleSlices),
-          Call(&GCRuntime::markDuringSweeping),
           MaybeYield(ZealMode::YieldBeforeSweepingAtoms),
           Call(&GCRuntime::sweepAtomsTable),
           MaybeYield(ZealMode::YieldBeforeSweepingCaches),
@@ -6511,12 +6502,13 @@ GCRuntime::IncrementalResult GCRuntime::resetIncrementalGC(
 namespace {
 
 /*
- * Temporarily disable barriers during GC slices.
+ * Manage barriers: disable during GC slices, and enable during an incremental
+ * GC for all zones that are marking.
  */
-class AutoDisableBarriers {
+class AutoUpdateBarriers {
  public:
-  explicit AutoDisableBarriers(GCRuntime* gc);
-  ~AutoDisableBarriers();
+  explicit AutoUpdateBarriers(GCRuntime* gc);
+  ~AutoUpdateBarriers();
 
  private:
   GCRuntime* gc;
@@ -6524,13 +6516,13 @@ class AutoDisableBarriers {
 
 } /* anonymous namespace */
 
-AutoDisableBarriers::AutoDisableBarriers(GCRuntime* gc) : gc(gc) {
+AutoUpdateBarriers::AutoUpdateBarriers(GCRuntime* gc) : gc(gc) {
   for (GCZonesIter zone(gc); !zone.done(); zone.next()) {
     /*
      * Clear needsIncrementalBarrier early so we don't do any write
      * barriers during GC. We don't need to update the Ion barriers (which
      * is expensive) because Ion code doesn't run during GC. If need be,
-     * we'll update the Ion barriers in ~AutoDisableBarriers.
+     * we'll update the Ion barriers in ~AutoUpdateBarriers.
      */
     if (zone->isGCMarking()) {
       MOZ_ASSERT(zone->needsIncrementalBarrier());
@@ -6540,7 +6532,7 @@ AutoDisableBarriers::AutoDisableBarriers(GCRuntime* gc) : gc(gc) {
   }
 }
 
-AutoDisableBarriers::~AutoDisableBarriers() {
+AutoUpdateBarriers::~AutoUpdateBarriers() {
   /* We can't use GCZonesIter if this is the end of the last slice. */
   for (ZonesIter zone(gc, WithAtoms); !zone.done(); zone.next()) {
     MOZ_ASSERT(!zone->needsIncrementalBarrier());
@@ -6555,7 +6547,7 @@ static bool ShouldCleanUpEverything(JS::GCReason reason,
   // During shutdown, we must clean everything up, for the sake of leak
   // detection. When a runtime has no contexts, or we're doing a GC before a
   // shutdown CC, those are strong indications that we're shutting down.
-  return IsShutdownGC(reason) || gckind == GC_SHRINK;
+  return IsShutdownReason(reason) || gckind == GC_SHRINK;
 }
 
 static bool ShouldSweepOnBackgroundThread(JS::GCReason reason) {
@@ -6565,7 +6557,7 @@ static bool ShouldSweepOnBackgroundThread(JS::GCReason reason) {
 void GCRuntime::incrementalSlice(SliceBudget& budget,
                                  const MaybeInvocationKind& gckind,
                                  JS::GCReason reason, AutoGCSession& session) {
-  AutoDisableBarriers disableBarriers(this);
+  AutoUpdateBarriers updateBarriers(this);
   AutoSetThreadIsPerformingGC performingGC;
 
   bool destroyingRuntime = (reason == JS::GCReason::DESTROY_RUNTIME);
@@ -6722,22 +6714,11 @@ void GCRuntime::incrementalSlice(SliceBudget& budget,
       [[fallthrough]];
 
     case State::Finalize:
-      // In incremental collections, yield here until background finalization
-      // is done and request a slice to notify us when this happens.
-      if (!budget.isUnlimited()) {
-        AutoLockHelperThreadState lock;
-        if (sweepTask.wasStarted(lock)) {
-          requestSliceAfterBackgroundTask = true;
-          break;
-        }
+      if (waitForBackgroundTask(sweepTask, budget) == NotFinished) {
+        break;
       }
 
-      {
-        gcstats::AutoPhase ap(stats(),
-                              gcstats::PhaseKind::WAIT_BACKGROUND_THREAD);
-        waitBackgroundSweepEnd();
-        cancelRequestedGCAfterBackgroundTask();
-      }
+      assertBackgroundSweepingFinished();
 
       {
         // Sweep the zones list now that background finalization is finished to
@@ -6779,21 +6760,8 @@ void GCRuntime::incrementalSlice(SliceBudget& budget,
       [[fallthrough]];
 
     case State::Decommit:
-      // In incremental collections, yield until background decommit is done and
-      // request a slice to notify us when that happens.
-      if (!budget.isUnlimited()) {
-        AutoLockHelperThreadState lock;
-        if (decommitTask.wasStarted(lock)) {
-          requestSliceAfterBackgroundTask = true;
-          break;
-        }
-      }
-
-      {
-        gcstats::AutoPhase ap(stats(),
-                              gcstats::PhaseKind::WAIT_BACKGROUND_THREAD);
-        decommitTask.join();
-        cancelRequestedGCAfterBackgroundTask();
+      if (waitForBackgroundTask(decommitTask, budget) == NotFinished) {
+        break;
       }
 
       incrementalState = State::Finish;
@@ -6825,6 +6793,26 @@ bool GCRuntime::hasForegroundWork() const {
       // In all other states there is still work to do.
       return true;
   }
+}
+
+IncrementalProgress GCRuntime::waitForBackgroundTask(GCParallelTask& task,
+                                                     SliceBudget& budget) {
+  // In incremental collections, yield if the task has not finished and request
+  // a slice to notify us when this happens.
+  if (!budget.isUnlimited()) {
+    AutoLockHelperThreadState lock;
+    if (task.wasStarted(lock)) {
+      requestSliceAfterBackgroundTask = true;
+      return NotFinished;
+    }
+  }
+
+  // Otherwise in non-incremental collections, wait here.
+  gcstats::AutoPhase ap(stats(), gcstats::PhaseKind::WAIT_BACKGROUND_THREAD);
+  task.join();
+  cancelRequestedGCAfterBackgroundTask();
+
+  return Finished;
 }
 
 gc::AbortReason gc::IsIncrementalGCUnsafe(JSRuntime* rt) {
@@ -7086,7 +7074,8 @@ MOZ_NEVER_INLINE GCRuntime::IncrementalResult GCRuntime::gcCycle(
   }
 
   if (shouldCollectNurseryForSlice(nonincrementalByAPI, budget)) {
-    collectNursery(reason, gcstats::PhaseKind::EVICT_NURSERY_FOR_MAJOR_GC);
+    collectNursery(gckind.valueOr(GC_NORMAL), reason,
+                   gcstats::PhaseKind::EVICT_NURSERY_FOR_MAJOR_GC);
   } else {
     ++number;  // This otherwise happens in Nursery::collect().
   }
@@ -7264,7 +7253,7 @@ bool GCRuntime::checkIfGCAllowedInCurrentState(JS::GCReason reason) {
 
   // Only allow shutdown GCs when we're destroying the runtime. This keeps
   // the GC callback from triggering a nested GC and resetting global state.
-  if (rt->isBeingDestroyed() && !IsShutdownGC(reason)) {
+  if (rt->isBeingDestroyed() && !IsShutdownReason(reason)) {
     return false;
   }
 
@@ -7341,13 +7330,13 @@ void GCRuntime::collect(bool nonincrementalByAPI, SliceBudget budget,
                           StateName(incrementalState));
 
   AutoTraceLog logGC(TraceLoggerForCurrentThread(), TraceLogger_GC);
-  AutoStopVerifyingBarriers av(rt, IsShutdownGC(reason));
+  AutoStopVerifyingBarriers av(rt, IsShutdownReason(reason));
   AutoEnqueuePendingParseTasksAfterGC aept(*this);
   AutoMaybeLeaveAtomsZone leaveAtomsZone(rt->mainContextFromOwnThread());
   AutoSetZoneSliceThresholds sliceThresholds(this);
 
 #ifdef DEBUG
-  if (IsShutdownGC(reason)) {
+  if (IsShutdownReason(reason)) {
     marker.markQueue.clear();
     marker.queuePos = 0;
   }
@@ -7376,7 +7365,7 @@ void GCRuntime::collect(bool nonincrementalByAPI, SliceBudget budget,
     if (!isIncrementalGCInProgress()) {
       if (cycleResult == ResetIncremental) {
         repeat = true;
-      } else if (rootsRemoved && IsShutdownGC(reason)) {
+      } else if (rootsRemoved && IsShutdownReason(reason)) {
         /* Need to re-schedule all zones for GC. */
         JS::PrepareForFullGC(rt->mainContextFromOwnThread());
         repeat = true;
@@ -7546,7 +7535,7 @@ void GCRuntime::minorGC(JS::GCReason reason, gcstats::PhaseKind phase) {
     return;
   }
 
-  collectNursery(reason, phase);
+  collectNursery(GC_NORMAL, reason, phase);
 
   for (ZonesIter zone(this, WithAtoms); !zone.done(); zone.next()) {
     maybeAllocTriggerZoneGC(zone);
@@ -7554,7 +7543,8 @@ void GCRuntime::minorGC(JS::GCReason reason, gcstats::PhaseKind phase) {
   }
 }
 
-void GCRuntime::collectNursery(JS::GCReason reason, gcstats::PhaseKind phase) {
+void GCRuntime::collectNursery(JSGCInvocationKind kind, JS::GCReason reason,
+                               gcstats::PhaseKind phase) {
   AutoMaybeLeaveAtomsZone leaveAtomsZone(rt->mainContextFromOwnThread());
 
   // Note that we aren't collecting the updated alloc counts from any helper
@@ -7572,7 +7562,7 @@ void GCRuntime::collectNursery(JS::GCReason reason, gcstats::PhaseKind phase) {
   nursery().clearMinorGCRequest();
   TraceLoggerThread* logger = TraceLoggerForCurrentThread();
   AutoTraceLog logMinorGC(logger, TraceLogger_MinorGC);
-  nursery().collect(reason);
+  nursery().collect(kind, reason);
   MOZ_ASSERT(nursery().isEmpty());
 
   startBackgroundFreeAfterMinorGC();
@@ -8328,22 +8318,6 @@ JS::dbg::GarbageCollectionEvent::Ptr JS::GCDescription::toGCEvent(
       cx->runtime()->gc.majorGCCount());
 }
 
-char16_t* JS::GCDescription::formatJSONTelemetry(JSContext* cx,
-                                                 uint64_t timestamp) const {
-  UniqueChars cstr = cx->runtime()->gc.stats().renderJsonMessage(
-      timestamp, gcstats::Statistics::JSONUse::TELEMETRY);
-
-  size_t nchars = strlen(cstr.get());
-  UniqueTwoByteChars out(js_pod_malloc<char16_t>(nchars + 1));
-  if (!out) {
-    return nullptr;
-  }
-  out.get()[nchars] = 0;
-
-  CopyAndInflateChars(out.get(), cstr.get(), nchars);
-  return out.release();
-}
-
 TimeStamp JS::GCDescription::startTime(JSContext* cx) const {
   return cx->runtime()->gc.stats().start();
 }
@@ -8367,8 +8341,7 @@ JS::UniqueChars JS::GCDescription::sliceToJSONProfiler(JSContext* cx) const {
 }
 
 JS::UniqueChars JS::GCDescription::formatJSONProfiler(JSContext* cx) const {
-  return cx->runtime()->gc.stats().renderJsonMessage(
-      0, js::gcstats::Statistics::JSONUse::PROFILER);
+  return cx->runtime()->gc.stats().renderJsonMessage();
 }
 
 JS_PUBLIC_API JS::UniqueChars JS::MinorGcToJSON(JSContext* cx) {

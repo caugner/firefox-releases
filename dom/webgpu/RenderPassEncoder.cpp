@@ -60,9 +60,10 @@ ffi::WGPURawPass BeginRenderPass(RawId aEncoderId,
     }
     dsDesc.depth_store_op = ConvertStoreOp(dsa.mDepthStoreOp);
 
-    if (dsa.mStencilLoadValue.IsUnsignedLong()) {
+    if (dsa.mStencilLoadValue.IsRangeEnforcedUnsignedLong()) {
       dsDesc.stencil_load_op = ffi::WGPULoadOp_Clear;
-      dsDesc.clear_stencil = dsa.mStencilLoadValue.GetAsUnsignedLong();
+      dsDesc.clear_stencil =
+          dsa.mStencilLoadValue.GetAsRangeEnforcedUnsignedLong();
     }
     if (dsa.mStencilLoadValue.IsGPULoadOp()) {
       dsDesc.stencil_load_op =
@@ -186,6 +187,22 @@ void RenderPassEncoder::DrawIndexed(uint32_t aIndexCount,
     ffi::wgpu_render_pass_draw_indexed(&mRaw, aIndexCount, aInstanceCount,
                                        aFirstIndex, aBaseVertex,
                                        aFirstInstance);
+  }
+}
+
+void RenderPassEncoder::DrawIndirect(const Buffer& aIndirectBuffer,
+                                     uint64_t aIndirectOffset) {
+  if (mValid) {
+    ffi::wgpu_render_pass_draw_indirect(&mRaw, aIndirectBuffer.mId,
+                                        aIndirectOffset);
+  }
+}
+
+void RenderPassEncoder::DrawIndexedIndirect(const Buffer& aIndirectBuffer,
+                                            uint64_t aIndirectOffset) {
+  if (mValid) {
+    ffi::wgpu_render_pass_draw_indexed_indirect(&mRaw, aIndirectBuffer.mId,
+                                                aIndirectOffset);
   }
 }
 

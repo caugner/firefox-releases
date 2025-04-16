@@ -34,19 +34,18 @@
 #include "vm/BigIntType.h"             // ParseBigIntLiteral
 #include "vm/FunctionFlags.h"          // FunctionFlags
 #include "vm/GeneratorAndAsyncKind.h"  // GeneratorKind, FunctionAsyncKind
-#include "vm/JSFunction.h"             // FunctionFlags
 #include "vm/JSScript.h"  // GeneratorKind, FunctionAsyncKind, FieldInitializers
 #include "vm/Runtime.h"   // ReportOutOfMemory
 #include "vm/Scope.h"  // BaseScopeData, FunctionScope, LexicalScope, VarScope, GlobalScope, EvalScope, ModuleScope
 #include "vm/ScopeKind.h"      // ScopeKind
-#include "vm/SharedStencil.h"  // ImmutableScriptFlags
+#include "vm/SharedStencil.h"  // ImmutableScriptFlags, GCThingIndex
+#include "vm/StencilEnums.h"   // ImmutableScriptFlagsEnum
 
 class JS_PUBLIC_API JSTracer;
 
 namespace js::frontend {
 
 struct CompilationInfo;
-class FunctionBox;
 
 // [SMDOC] Script Stencil (Frontend Representation)
 //
@@ -213,8 +212,11 @@ class ScopeCreationData {
   // ownership of the data on reification.
   HeapPtr<Scope*> scope_ = {};
 
-  // For FunctionScopes we need the funbox; nullptr otherwise.
-  frontend::FunctionBox* funbox_ = nullptr;
+  // Canonical function if this is a FunctionScope.
+  mozilla::Maybe<FunctionIndex> functionIndex_;
+
+  // True if this is a FunctionScope for an arrow function.
+  bool isArrow_;
 
   UniquePtr<BaseScopeData> data_;
 
@@ -223,24 +225,25 @@ class ScopeCreationData {
       JSContext* cx, ScopeKind kind, Handle<AbstractScopePtr> enclosing,
       Handle<frontend::EnvironmentShapeCreationData> environmentShape,
       UniquePtr<BaseScopeData> data = {},
-      frontend::FunctionBox* funbox = nullptr)
+      mozilla::Maybe<FunctionIndex> functionIndex = mozilla::Nothing(),
+      bool isArrow = false)
       : enclosing_(enclosing),
         kind_(kind),
         environmentShape_(environmentShape),  // Copied
-        funbox_(funbox),
+        functionIndex_(functionIndex),
+        isArrow_(isArrow),
         data_(std::move(data)) {}
 
   ScopeKind kind() const { return kind_; }
   AbstractScopePtr enclosing() { return enclosing_; }
-  bool getOrCreateEnclosingScope(JSContext* cx, MutableHandleScope scope) {
-    return enclosing_.getOrCreateScope(cx, scope);
-  }
+
+  Scope* getEnclosingScope(JSContext* cx);
 
   // FunctionScope
   static bool create(JSContext* cx, frontend::CompilationInfo& compilationInfo,
                      Handle<FunctionScope::Data*> dataArg,
                      bool hasParameterExprs, bool needsEnvironment,
-                     frontend::FunctionBox* funbox,
+                     FunctionIndex functionIndex, bool isArrow,
                      Handle<AbstractScopePtr> enclosing, ScopeIndex* index);
 
   // LexicalScope
@@ -267,7 +270,6 @@ class ScopeCreationData {
   // ModuleScope
   static bool create(JSContext* cx, frontend::CompilationInfo& compilationInfo,
                      Handle<ModuleScope::Data*> dataArg,
-                     HandleModuleObject module,
                      Handle<AbstractScopePtr> enclosing, ScopeIndex* index);
 
   // WithScope
@@ -281,7 +283,9 @@ class ScopeCreationData {
   }
 
   // Valid for functions;
-  bool isArrow() const;
+  JSFunction* function(frontend::CompilationInfo& compilationInfo);
+
+  bool isArrow() const { return isArrow_; }
 
   bool hasScope() const { return scope_ != nullptr; }
 
@@ -290,7 +294,7 @@ class ScopeCreationData {
     return scope_;
   }
 
-  Scope* createScope(JSContext* cx);
+  Scope* createScope(JSContext* cx, CompilationInfo& compilationInfo);
 
   void trace(JSTracer* trc);
 
@@ -306,10 +310,11 @@ class ScopeCreationData {
 
   // Transfer ownership into a new UniquePtr.
   template <typename SpecificScopeType>
-  UniquePtr<typename SpecificScopeType::Data> releaseData();
+  UniquePtr<typename SpecificScopeType::Data> releaseData(
+      CompilationInfo& compilationInfo);
 
   template <typename SpecificScopeType>
-  Scope* createSpecificScope(JSContext* cx);
+  Scope* createSpecificScope(JSContext* cx, CompilationInfo& compilationInfo);
 
   template <typename SpecificScopeType>
   uint32_t nextFrameSlot() const {
@@ -323,6 +328,114 @@ class ScopeCreationData {
 };
 
 class EmptyGlobalScopeType {};
+
+// See JSOp::Lambda for interepretation of this index.
+using FunctionDeclaration = GCThingIndex;
+using FunctionDeclarationVector = Vector<FunctionDeclaration>;
+
+// Common type for ImportEntry / ExportEntry / ModuleRequest within frontend. We
+// use a shared stencil class type to simplify serialization.
+//
+// https://tc39.es/ecma262/#importentry-record
+// https://tc39.es/ecma262/#exportentry-record
+//
+// Note: We subdivide the spec's ExportEntry into ExportAs / ExportFrom forms
+//       for readability.
+class StencilModuleEntry {
+ public:
+  //              | ModuleRequest | ImportEntry | ExportAs | ExportFrom |
+  //              |-----------------------------------------------------|
+  // specifier    | required      | required    | nullptr  | required   |
+  // localName    | null          | required    | required | nullptr    |
+  // importName   | null          | required    | nullptr  | required   |
+  // exportName   | null          | null        | required | optional   |
+  JSAtom* specifier = nullptr;
+  JSAtom* localName = nullptr;
+  JSAtom* importName = nullptr;
+  JSAtom* exportName = nullptr;
+
+  // Location used for error messages. If this is for a module request entry
+  // then it is the module specifier string, otherwise the import/export spec
+  // that failed. Exports may not fill these fields if an error cannot be
+  // generated such as `export let x;`.
+  uint32_t lineno = 0;
+  uint32_t column = 0;
+
+ private:
+  StencilModuleEntry(uint32_t lineno, uint32_t column)
+      : lineno(lineno), column(column) {}
+
+ public:
+  static StencilModuleEntry moduleRequest(JSAtom* specifier, uint32_t lineno,
+                                          uint32_t column) {
+    MOZ_ASSERT(specifier);
+    StencilModuleEntry entry(lineno, column);
+    entry.specifier = specifier;
+    return entry;
+  }
+
+  static StencilModuleEntry importEntry(JSAtom* specifier, JSAtom* localName,
+                                        JSAtom* importName, uint32_t lineno,
+                                        uint32_t column) {
+    MOZ_ASSERT(specifier && localName && importName);
+    StencilModuleEntry entry(lineno, column);
+    entry.specifier = specifier;
+    entry.localName = localName;
+    entry.importName = importName;
+    return entry;
+  }
+
+  static StencilModuleEntry exportAsEntry(JSAtom* localName, JSAtom* exportName,
+                                          uint32_t lineno, uint32_t column) {
+    MOZ_ASSERT(localName && exportName);
+    StencilModuleEntry entry(lineno, column);
+    entry.localName = localName;
+    entry.exportName = exportName;
+    return entry;
+  }
+
+  static StencilModuleEntry exportFromEntry(JSAtom* specifier,
+                                            JSAtom* importName,
+                                            JSAtom* exportName, uint32_t lineno,
+                                            uint32_t column) {
+    // NOTE: The `export * from "mod";` syntax generates nullptr exportName.
+    MOZ_ASSERT(specifier && importName);
+    StencilModuleEntry entry(lineno, column);
+    entry.specifier = specifier;
+    entry.importName = importName;
+    entry.exportName = exportName;
+    return entry;
+  }
+
+  // This traces the JSAtoms. This will be removed once atoms are deferred from
+  // parsing.
+  void trace(JSTracer* trc);
+};
+
+// Metadata generated by parsing module scripts, including import/export tables.
+class StencilModuleMetadata {
+ public:
+  using EntryVector = JS::GCVector<StencilModuleEntry>;
+
+  EntryVector requestedModules;
+  EntryVector importEntries;
+  EntryVector localExportEntries;
+  EntryVector indirectExportEntries;
+  EntryVector starExportEntries;
+  FunctionDeclarationVector functionDecls;
+
+  explicit StencilModuleMetadata(JSContext* cx)
+      : requestedModules(cx),
+        importEntries(cx),
+        localExportEntries(cx),
+        indirectExportEntries(cx),
+        starExportEntries(cx),
+        functionDecls(cx) {}
+
+  bool initModule(JSContext* cx, JS::Handle<ModuleObject*> module);
+
+  void trace(JSTracer* trc);
+};
 
 // The lazy closed-over-binding info is represented by these types that will
 // convert to a GCCellPtr(nullptr), GCCellPtr(JSAtom*).
@@ -342,8 +455,13 @@ using ScriptThingsVector = Vector<ScriptThingVariant>;
 // Data generated by frontend that will be used to create a js::BaseScript.
 class ScriptStencil {
  public:
-  // See `BaseScript::functionOrGlobal_`.
-  mozilla::Maybe<FunctionIndex> functionIndex;
+  // Fields for BaseScript.
+  // Used by:
+  //   * Global script
+  //   * Eval
+  //   * Module
+  //   * non-lazy Function (except asm.js module)
+  //   * lazy Function (cannot be asm.js module)
 
   // See `BaseScript::immutableFlags_`.
   ImmutableScriptFlags immutableFlags;
@@ -355,13 +473,70 @@ class ScriptStencil {
   // See `BaseScript::sharedData_`.
   js::UniquePtr<js::ImmutableScriptData> immutableScriptData = nullptr;
 
+  // The location of this script in the source.
+  SourceExtent extent = {};
+
+  // Fields for JSFunction.
+  // Used by:
+  //   * non-lazy Function
+  //   * lazy Function
+  //   * asm.js module
+
+  // The explicit or implicit name of the function. The FunctionFlags indicate
+  // the kind of name.
+  JSAtom* functionAtom = nullptr;
+
+  // See: `FunctionFlags`.
+  FunctionFlags functionFlags = {};
+
+  // See `JSFunction::nargs_`.
+  uint16_t nargs = 0;
+
+  // If this ScriptStencil refers to a lazy child of the function being
+  // compiled, this field holds the child's immediately enclosing scope's index.
+  // Once compilation succeeds, we will store the scope pointed by this in the
+  // child's BaseScript.  (Debugger may become confused if lazy scripts refer to
+  // partially initialized enclosing scopes, so we must avoid storing the
+  // scope in the BaseScript until compilation has completed
+  // successfully.)
+  mozilla::Maybe<ScopeIndex> lazyFunctionEnclosingScopeIndex_;
+
+  // This function is a standalone function that is not syntactically part of
+  // another script. Eg. Created by `new Function("")`.
+  bool isStandaloneFunction : 1;
+
+  // This is set by the BytecodeEmitter of the enclosing script when a reference
+  // to this function is generated.
+  bool wasFunctionEmitted : 1;
+
+  // This function should be marked as a singleton. It is expected to be defined
+  // at most once. This is a heuristic only and does not affect correctness.
+  bool isSingletonFunction : 1;
+
   // End of fields.
 
-  explicit ScriptStencil(JSContext* cx) : gcThings(cx) {}
+  explicit ScriptStencil(JSContext* cx)
+      : gcThings(cx),
+        isStandaloneFunction(false),
+        wasFunctionEmitted(false),
+        isSingletonFunction(false) {}
 
   // This traces any JSAtoms in the gcThings array. This will be removed once
   // atoms are deferred from parsing.
   void trace(JSTracer* trc);
+
+  bool isFunction() const {
+    bool result = functionFlags.toRaw() != 0x0000;
+    MOZ_ASSERT_IF(
+        result, functionFlags.isAsmJSNative() || functionFlags.hasBaseScript());
+    return result;
+  }
+
+  bool isModule() const {
+    bool result = immutableFlags.hasFlag(ImmutableScriptFlagsEnum::IsModule);
+    MOZ_ASSERT_IF(result, !isFunction());
+    return result;
+  }
 };
 
 } /* namespace js::frontend */

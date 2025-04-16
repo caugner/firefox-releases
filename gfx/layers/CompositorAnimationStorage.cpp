@@ -7,16 +7,23 @@
 #include "CompositorAnimationStorage.h"
 
 #include "AnimationHelper.h"
-#include "mozilla/layers/CompositorThread.h"  // for CompositorThreadHolder
+#include "mozilla/gfx/MatrixFwd.h"
+#include "mozilla/layers/APZSampler.h"              // for APZSampler
+#include "mozilla/layers/CompositorBridgeParent.h"  // for CompositorBridgeParent
+#include "mozilla/layers/CompositorThread.h"       // for CompositorThreadHolder
 #include "mozilla/layers/LayerManagerComposite.h"  // for LayerComposite, etc
+#include "mozilla/layers/LayerMetricsWrapper.h"    // for LayerMetricsWrapper
+#include "mozilla/layers/OMTAController.h"         // for OMTAController
 #include "mozilla/ServoStyleConsts.h"
 #include "mozilla/webrender/WebRenderTypes.h"  // for ToWrTransformProperty, etc
-#include "nsDeviceContext.h"  // for AppUnitsPerCSSPixel
-#include "nsDisplayList.h"    // for nsDisplayTransform, etc
+#include "nsDeviceContext.h"                   // for AppUnitsPerCSSPixel
+#include "nsDisplayList.h"                     // for nsDisplayTransform, etc
 #include "TreeTraversal.h"  // for ForEachNode, BreadthFirstSearch
 
 namespace mozilla {
 namespace layers {
+
+using gfx::Matrix4x4;
 
 void CompositorAnimationStorage::Clear() {
   MOZ_ASSERT(CompositorThreadHolder::IsInCompositorThread());
@@ -84,24 +91,39 @@ OMTAValue CompositorAnimationStorage::GetOMTAValue(const uint64_t& aId) const {
   return omtaValue;
 }
 
-void CompositorAnimationStorage::SetAnimatedValue(
+void CompositorAnimationStorage::SetAnimatedValueForWebRender(
     uint64_t aId, AnimatedValue* aPreviousValue,
-    gfx::Matrix4x4&& aTransformInDevSpace, gfx::Matrix4x4&& aFrameTransform,
-    const TransformData& aData) {
+    const gfx::Matrix4x4& aFrameTransform, const TransformData& aData) {
   mLock.AssertCurrentThreadOwns();
 
   if (!aPreviousValue) {
     MOZ_ASSERT(!mAnimatedValues.Contains(aId));
-    mAnimatedValues.Put(
-        aId, MakeUnique<AnimatedValue>(std::move(aTransformInDevSpace),
-                                       std::move(aFrameTransform), aData));
+    mAnimatedValues.Put(aId, MakeUnique<AnimatedValue>(gfx::Matrix4x4(),
+                                                       aFrameTransform, aData));
     return;
   }
   MOZ_ASSERT(aPreviousValue->Is<AnimationTransform>());
   MOZ_ASSERT(aPreviousValue == GetAnimatedValue(aId));
 
-  aPreviousValue->SetTransform(std::move(aTransformInDevSpace),
-                               std::move(aFrameTransform), aData);
+  aPreviousValue->SetTransformForWebRender(aFrameTransform, aData);
+}
+
+void CompositorAnimationStorage::SetAnimatedValue(
+    uint64_t aId, AnimatedValue* aPreviousValue,
+    const gfx::Matrix4x4& aTransformInDevSpace,
+    const gfx::Matrix4x4& aFrameTransform, const TransformData& aData) {
+  mLock.AssertCurrentThreadOwns();
+
+  if (!aPreviousValue) {
+    MOZ_ASSERT(!mAnimatedValues.Contains(aId));
+    mAnimatedValues.Put(aId, MakeUnique<AnimatedValue>(aTransformInDevSpace,
+                                                       aFrameTransform, aData));
+    return;
+  }
+  MOZ_ASSERT(aPreviousValue->Is<AnimationTransform>());
+  MOZ_ASSERT(aPreviousValue == GetAnimatedValue(aId));
+
+  aPreviousValue->SetTransform(aTransformInDevSpace, aFrameTransform, aData);
 }
 
 void CompositorAnimationStorage::SetAnimatedValue(uint64_t aId,
@@ -137,24 +159,51 @@ void CompositorAnimationStorage::SetAnimatedValue(uint64_t aId,
 }
 
 void CompositorAnimationStorage::SetAnimations(uint64_t aId,
+                                               const LayersId& aLayersId,
                                                const AnimationArray& aValue) {
   MOZ_ASSERT(CompositorThreadHolder::IsInCompositorThread());
   MutexAutoLock lock(mLock);
 
   mAnimations[aId] = std::make_unique<AnimationStorageData>(
-      AnimationHelper::ExtractAnimations(aValue));
+      AnimationHelper::ExtractAnimations(aLayersId, aValue));
+
+  // If there is the last animated value, then we need to store the id to remove
+  // the value if the new animation doesn't produce any animated data (i.e. in
+  // the delay phase) when we sample this new animation.
+  if (mAnimatedValues.Contains(aId)) {
+    mNewAnimations.insert(aId);
+  }
 }
 
-bool CompositorAnimationStorage::SampleAnimations(TimeStamp aPreviousFrameTime,
-                                                  TimeStamp aCurrentFrameTime) {
+// Returns clip rect in the scroll frame's coordinate space.
+static ParentLayerRect GetClipRectForPartialPrerender(
+    const LayersId aLayersId, const PartialPrerenderData& aPartialPrerenderData,
+    const RefPtr<APZSampler>& aSampler) {
+  if (aSampler &&
+      aPartialPrerenderData.scrollId() != ScrollableLayerGuid::NULL_SCROLL_ID) {
+    return aSampler->GetCompositionBounds(aLayersId,
+                                          aPartialPrerenderData.scrollId());
+  }
+
+  return aPartialPrerenderData.clipRect();
+}
+
+bool CompositorAnimationStorage::SampleAnimations(
+    const OMTAController* aOMTAController, TimeStamp aPreviousFrameTime,
+    TimeStamp aCurrentFrameTime) {
   MutexAutoLock lock(mLock);
 
   bool isAnimating = false;
+  auto cleanup = MakeScopeExit([&] { mNewAnimations.clear(); });
 
   // Do nothing if there are no compositor animations
   if (mAnimations.empty()) {
     return isAnimating;
   }
+
+  std::unordered_map<LayersId, nsTArray<uint64_t>, LayersId::HashFn> janked;
+
+  RefPtr<APZSampler> apzSampler = mCompositorBridge->GetAPZSampler();
 
   for (const auto& iter : mAnimations) {
     const auto& animationStorageData = iter.second;
@@ -171,6 +220,9 @@ bool CompositorAnimationStorage::SampleAnimations(TimeStamp aPreviousFrameTime,
             animationStorageData->mAnimation, animationValues);
 
     if (sampleResult != AnimationHelper::SampleResult::Sampled) {
+      if (mNewAnimations.find(iter.first) != mNewAnimations.end()) {
+        mAnimatedValues.Remove(iter.first);
+      }
       continue;
     }
 
@@ -205,22 +257,55 @@ bool CompositorAnimationStorage::SampleAnimations(TimeStamp aPreviousFrameTime,
             *animationStorageData->mTransformData;
         MOZ_ASSERT(transformData.origin() == nsPoint());
 
-        gfx::Matrix4x4 transform =
+        gfx::Matrix4x4 frameTransform =
             AnimationHelper::ServoAnimationValueToMatrix4x4(
                 animationValues, transformData,
                 animationStorageData->mCachedMotionPath);
-        gfx::Matrix4x4 frameTransform = transform;
 
-        transform.PostScale(transformData.inheritedXScale(),
-                            transformData.inheritedYScale(), 1);
+        if (const Maybe<PartialPrerenderData>& partialPrerenderData =
+                transformData.partialPrerenderData()) {
+          gfx::Matrix4x4 transform = frameTransform;
+          transform.PostTranslate(
+              partialPrerenderData->position().ToUnknownPoint());
 
-        SetAnimatedValue(iter.first, previousValue, std::move(transform),
-                         std::move(frameTransform), transformData);
+          gfx::Matrix4x4 transformInClip =
+              partialPrerenderData->transformInClip();
+          if (apzSampler && partialPrerenderData->scrollId() !=
+                                ScrollableLayerGuid::NULL_SCROLL_ID) {
+            AsyncTransform asyncTransform =
+                apzSampler->GetCurrentAsyncTransform(
+                    animationStorageData->mLayersId,
+                    partialPrerenderData->scrollId(), LayoutAndVisual);
+            transformInClip.PostTranslate(
+                asyncTransform.mTranslation.ToUnknownPoint());
+          }
+          transformInClip = transform * transformInClip;
+
+          ParentLayerRect clipRect =
+              GetClipRectForPartialPrerender(animationStorageData->mLayersId,
+                                             *partialPrerenderData, apzSampler);
+          if (AnimationHelper::ShouldBeJank(
+                  partialPrerenderData->rect(),
+                  partialPrerenderData->overflowedSides(), transformInClip,
+                  clipRect)) {
+            if (previousValue) {
+              frameTransform = previousValue->Transform().mFrameTransform;
+            }
+            janked[animationStorageData->mLayersId].AppendElement(iter.first);
+          }
+        }
+
+        SetAnimatedValueForWebRender(iter.first, previousValue, frameTransform,
+                                     transformData);
         break;
       }
       default:
         MOZ_ASSERT_UNREACHABLE("Unhandled animated property");
     }
+  }
+
+  if (!janked.empty() && aOMTAController) {
+    aOMTAController->NotifyJankedAnimations(std::move(janked));
   }
 
   return isAnimating;
@@ -236,7 +321,7 @@ WrAnimations CompositorAnimationStorage::CollectWebRenderAnimations() const {
     value->Value().match(
         [&](const AnimationTransform& aTransform) {
           animations.mTransformArrays.AppendElement(wr::ToWrTransformProperty(
-              iter.Key(), aTransform.mTransformInDevSpace));
+              iter.Key(), aTransform.mFrameTransform));
         },
         [&](const float& aOpacity) {
           animations.mOpacityArrays.AppendElement(
@@ -274,13 +359,68 @@ static gfx::Matrix4x4 FrameTransformToTransformInDevice(
   return transformInDevice;
 }
 
-void CompositorAnimationStorage::ApplyAnimatedValue(
-    Layer* aLayer, nsCSSPropertyID aProperty, AnimatedValue* aPreviousValue,
+static Matrix4x4 GetTransformForPartialPrerender(
+    Layer* aLayer, const LayersId aLayersId,
+    const ScrollableLayerGuid::ViewID& aScrollId,
+    const RefPtr<APZSampler>& aSampler) {
+  MOZ_ASSERT(aLayer);
+
+  ParentLayerPoint translationByApz;
+  Matrix4x4 transform;
+
+  for (Layer* layer = aLayer; layer; layer = layer->GetParent()) {
+    if (layer->AsRefLayer()) {
+      MOZ_ASSERT(layer->AsRefLayer()->GetReferentId() == aLayersId);
+      break;
+    }
+
+    // Accumulate static transforms.
+    if (layer != aLayer) {
+      Matrix4x4 baseTransform = layer->GetBaseTransform();
+      if (ContainerLayer* container = layer->AsContainerLayer()) {
+        baseTransform.PostScale(container->GetPreXScale(),
+                                container->GetPreYScale(), 1);
+      }
+      transform *= baseTransform;
+    }
+
+    if (!layer->GetIsStickyPosition() && !layer->GetIsFixedPosition()) {
+      bool hasSameScrollId = false;
+      for (uint32_t i = 0; i < layer->GetScrollMetadataCount(); i++) {
+        // Factor APZ translation if there exists.
+        if (aSampler) {
+          LayerMetricsWrapper wrapper = LayerMetricsWrapper(layer, i);
+          AsyncTransform asyncTransform =
+              aSampler->GetCurrentAsyncTransform(wrapper, LayoutAndVisual);
+          translationByApz += asyncTransform.mTranslation;
+        }
+        if (layer->GetFrameMetrics(i).GetScrollId() == aScrollId) {
+          hasSameScrollId = true;
+        }
+      }
+
+      if (hasSameScrollId) {
+        break;
+      }
+    } else {
+      // Bug 1642547: Fix for position:sticky layers.
+    }
+  }
+
+  transform.PostTranslate(translationByApz.ToUnknownPoint());
+
+  return transform;
+}
+
+bool CompositorAnimationStorage::ApplyAnimatedValue(
+    CompositorBridgeParent* aCompositorBridge, Layer* aLayer,
+    nsCSSPropertyID aProperty, AnimatedValue* aPreviousValue,
     const nsTArray<RefPtr<RawServoAnimationValue>>& aValues) {
   mLock.AssertCurrentThreadOwns();
 
   MOZ_ASSERT(!aValues.IsEmpty());
 
+  bool janked = false;
   HostLayer* layerCompositor = aLayer->AsHostLayer();
   switch (aProperty) {
     case eCSSProperty_background_color: {
@@ -327,12 +467,36 @@ void CompositorAnimationStorage::ApplyAnimatedValue(
 
       gfx::Matrix4x4 transform = FrameTransformToTransformInDevice(
           frameTransform, aLayer, transformData);
+      if (const Maybe<PartialPrerenderData>& partialPrerenderData =
+              transformData.partialPrerenderData()) {
+        Matrix4x4 transformInClip = GetTransformForPartialPrerender(
+            aLayer, aLayer->GetAnimationLayersId(),
+            partialPrerenderData->scrollId(),
+            aCompositorBridge->GetAPZSampler());
+        transformInClip = transform * transformInClip;
+        ParentLayerRect clipRect = GetClipRectForPartialPrerender(
+            aLayer->GetAnimationLayersId(), *partialPrerenderData,
+            aCompositorBridge->GetAPZSampler());
+        if (AnimationHelper::ShouldBeJank(
+                partialPrerenderData->rect(),
+                partialPrerenderData->overflowedSides(), transformInClip,
+                clipRect)) {
+          // It's possible that we don't have the previous value and we don't
+          // either have enough area to composite in the first composition,
+          // e.g. a translate animation with a step timing function.  In such
+          // cases we use the base transform value which was calculated on the
+          // main-thread as a fallback value.
+          transform = aPreviousValue
+                          ? aPreviousValue->Transform().mTransformInDevSpace
+                          : aLayer->GetBaseTransform();
+          janked = true;
+        }
+      }
 
       layerCompositor->SetShadowBaseTransform(transform);
       layerCompositor->SetShadowTransformSetByAnimation(true);
       SetAnimatedValue(aLayer->GetCompositorAnimationsId(), aPreviousValue,
-                       std::move(transform), std::move(frameTransform),
-                       transformData);
+                       transform, frameTransform, transformData);
 
       layerCompositor->SetShadowOpacity(aLayer->GetOpacity());
       layerCompositor->SetShadowOpacitySetByAnimation(false);
@@ -341,11 +505,12 @@ void CompositorAnimationStorage::ApplyAnimatedValue(
     default:
       MOZ_ASSERT_UNREACHABLE("Unhandled animated property");
   }
+  return !janked;
 }
 
-bool CompositorAnimationStorage::SampleAnimations(Layer* aRoot,
-                                                  TimeStamp aPreviousFrameTime,
-                                                  TimeStamp aCurrentFrameTime) {
+bool CompositorAnimationStorage::SampleAnimations(
+    Layer* aRoot, CompositorBridgeParent* aCompositorBridge,
+    TimeStamp aPreviousFrameTime, TimeStamp aCurrentFrameTime) {
   MutexAutoLock lock(mLock);
 
   bool isAnimating = false;
@@ -357,6 +522,8 @@ bool CompositorAnimationStorage::SampleAnimations(Layer* aRoot,
       Clear();
     }
   });
+
+  std::unordered_map<LayersId, nsTArray<uint64_t>, LayersId::HashFn> janked;
 
   ForEachNode<ForwardIterator>(aRoot, [&](Layer* layer) {
     auto& propertyAnimationGroups = layer->GetPropertyAnimationGroups();
@@ -382,8 +549,37 @@ bool CompositorAnimationStorage::SampleAnimations(Layer* aRoot,
         // We assume all transform like properties (on the same frame) live in
         // a single same layer, so using the transform data of the last element
         // should be fine.
-        ApplyAnimatedValue(layer, lastPropertyAnimationGroup.mProperty,
-                           previousValue, animationValues);
+        if (!ApplyAnimatedValue(aCompositorBridge, layer,
+                                lastPropertyAnimationGroup.mProperty,
+                                previousValue, animationValues)) {
+          // Reset the last composition values in cases of jank so that we will
+          // never mis-compare in a sanity check in the case of
+          // SampleResult::Skipped below in this function.
+          //
+          // An example;
+          // a translateX(0px) -> translateX(100px) animation with step(2,start)
+          // and if the animation janked at translateX(50px) and in a later
+          // frame if the calculated transform value is going to be still
+          // translateX(50px) (i.e. at the same timing portion calculated by the
+          // step timing function), we skip sampling. That's correct ideally.
+          // But we have an assertion to do a sanity check for the skip sampling
+          // case that the check compares the calculated value translateX(50px)
+          // with the previous composited value. In this case the previous
+          // composited value is translateX(0px).
+          //
+          // NOTE: Ideally we shouldn't update the last composition values when
+          // we met janks, but it's quite hard to tell whether the jank will
+          // happen or not when we calculate each transform like properties'
+          // value (i.e. when we set the last composition value) since janks are
+          // caused by a result of the combinations of all transform like
+          // properties (e.g. `transform: translateX(50px)` and
+          // `translate: -50px` results `translateX(0px)`.
+          for (PropertyAnimationGroup& group : propertyAnimationGroups) {
+            group.ResetLastCompositionValues();
+          }
+          janked[layer->GetAnimationLayersId()].AppendElement(
+              layer->GetCompositorAnimationsId());
+        }
         break;
       case AnimationHelper::SampleResult::Skipped:
         switch (lastPropertyAnimationGroup.mProperty) {
@@ -464,6 +660,10 @@ bool CompositorAnimationStorage::SampleAnimations(Layer* aRoot,
         break;
     }
   });
+
+  if (!janked.empty()) {
+    aCompositorBridge->NotifyJankedAnimations(janked);
+  }
 
   return isAnimating;
 }

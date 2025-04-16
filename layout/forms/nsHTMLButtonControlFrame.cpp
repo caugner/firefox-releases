@@ -71,7 +71,7 @@ nsresult nsHTMLButtonControlFrame::HandleEvent(nsPresContext* aPresContext,
 
   // mouse clicks are handled by content
   // we don't want our children to get any events. So just pass it to frame.
-  return nsFrame::HandleEvent(aPresContext, aEvent, aEventStatus);
+  return nsIFrame::HandleEvent(aPresContext, aEvent, aEventStatus);
 }
 
 bool nsHTMLButtonControlFrame::ShouldClipPaintingToBorderBox() {
@@ -176,7 +176,7 @@ void nsHTMLButtonControlFrame::Reflow(nsPresContext* aPresContext,
 
   // XXXbz Eventually we may want to check-and-bail if
   // !aReflowInput.ShouldReflowAllKids() &&
-  // !NS_SUBTREE_DIRTY(firstKid).
+  // !firstKid->IsSubtreeDirty().
   // We'd need to cache our ascent for that, of course.
 
   // Reflow the contents of the button.

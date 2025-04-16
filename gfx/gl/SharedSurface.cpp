@@ -109,10 +109,13 @@ UniquePtr<SurfaceFactory> SurfaceFactory::Create(
     case layers::TextureType::DMABUF:
 #ifdef MOZ_WAYLAND
       if (gl.GetContextType() == GLContextType::EGL &&
-          gfxPlatformGtk::GetPlatform()->UseWaylandDMABufWebGL()) {
+          gfxPlatformGtk::GetPlatform()->UseDMABufWebGL()) {
         return SurfaceFactory_DMABUF::Create(gl);
       }
 #endif
+      return nullptr;
+
+    case layers::TextureType::AndroidHardwareBuffer:
       return nullptr;
 
     case layers::TextureType::AndroidNativeWindow:

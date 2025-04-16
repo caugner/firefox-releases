@@ -81,8 +81,8 @@
 #include "nsStreamUtils.h"
 #include "nsThreadUtils.h"
 #include "nsURLHelper.h"
-#include "mozilla/dom/IPCBlobUtils.h"
-#include "mozilla/dom/IPCBlobInputStreamChild.h"
+#include "mozilla/RemoteLazyInputStreamChild.h"
+#include "mozilla/RemoteLazyInputStreamUtils.h"
 
 namespace mozilla {
 namespace net {
@@ -507,8 +507,7 @@ HttpBaseChannel::SetDocshellUserAgentOverride() {
   }
 
   NS_ConvertUTF16toUTF8 utf8CustomUserAgent(customUserAgent);
-  nsresult rv = SetRequestHeader(NS_LITERAL_CSTRING("User-Agent"),
-                                 utf8CustomUserAgent, false);
+  nsresult rv = SetRequestHeader("User-Agent"_ns, utf8CustomUserAgent, false);
   if (NS_FAILED(rv)) return rv;
 
   return NS_OK;
@@ -804,7 +803,7 @@ HttpBaseChannel::SetUploadStream(nsIInputStream* stream,
     nsCString contentType(contentTypeArg);
     if (contentType.IsEmpty()) {
       contentType.SetIsVoid(true);
-      method = NS_LITERAL_CSTRING("POST");
+      method = "POST"_ns;
 
       // MIME streams are a special case, and include headers which need to be
       // copied to the channel.
@@ -821,7 +820,7 @@ HttpBaseChannel::SetUploadStream(nsIInputStream* stream,
 
       hasHeaders = true;
     } else {
-      method = NS_LITERAL_CSTRING("PUT");
+      method = "PUT"_ns;
 
       MOZ_ASSERT(
           NS_FAILED(CallQueryInterface(stream, getter_AddRefs(mimeStream))),
@@ -834,7 +833,7 @@ HttpBaseChannel::SetUploadStream(nsIInputStream* stream,
   // if stream is null, ExplicitSetUploadStream returns error.
   // So we need special case for GET method.
   mUploadStreamHasHeaders = false;
-  mRequestHead.SetMethod(NS_LITERAL_CSTRING("GET"));  // revert to GET request
+  mRequestHead.SetMethod("GET"_ns);  // revert to GET request
   mUploadStream = stream;
   return NS_OK;
 }
@@ -1002,9 +1001,9 @@ HttpBaseChannel::ExplicitSetUploadStream(nsIInputStream* aStream,
 
   if (!aStreamHasHeaders && !aContentType.IsVoid()) {
     if (aContentType.IsEmpty()) {
-      SetEmptyRequestHeader(NS_LITERAL_CSTRING("Content-Type"));
+      SetEmptyRequestHeader("Content-Type"_ns);
     } else {
-      SetRequestHeader(NS_LITERAL_CSTRING("Content-Type"), aContentType, false);
+      SetRequestHeader("Content-Type"_ns, aContentType, false);
     }
   }
 
@@ -1330,15 +1329,14 @@ HttpBaseChannel::nsContentEncodings::GetNext(nsACString& aNextEncoding) {
   encoding.EndReading(end);
 
   bool haveType = false;
-  if (CaseInsensitiveFindInReadable(NS_LITERAL_CSTRING("gzip"), start, end)) {
+  if (CaseInsensitiveFindInReadable("gzip"_ns, start, end)) {
     aNextEncoding.AssignLiteral(APPLICATION_GZIP);
     haveType = true;
   }
 
   if (!haveType) {
     encoding.BeginReading(start);
-    if (CaseInsensitiveFindInReadable(NS_LITERAL_CSTRING("compress"), start,
-                                      end)) {
+    if (CaseInsensitiveFindInReadable("compress"_ns, start, end)) {
       aNextEncoding.AssignLiteral(APPLICATION_COMPRESS);
       haveType = true;
     }
@@ -1346,8 +1344,7 @@ HttpBaseChannel::nsContentEncodings::GetNext(nsACString& aNextEncoding) {
 
   if (!haveType) {
     encoding.BeginReading(start);
-    if (CaseInsensitiveFindInReadable(NS_LITERAL_CSTRING("deflate"), start,
-                                      end)) {
+    if (CaseInsensitiveFindInReadable("deflate"_ns, start, end)) {
       aNextEncoding.AssignLiteral(APPLICATION_ZIP);
       haveType = true;
     }
@@ -1355,7 +1352,7 @@ HttpBaseChannel::nsContentEncodings::GetNext(nsACString& aNextEncoding) {
 
   if (!haveType) {
     encoding.BeginReading(start);
-    if (CaseInsensitiveFindInReadable(NS_LITERAL_CSTRING("br"), start, end)) {
+    if (CaseInsensitiveFindInReadable("br"_ns, start, end)) {
       aNextEncoding.AssignLiteral(APPLICATION_BROTLI);
       haveType = true;
     }
@@ -2211,7 +2208,7 @@ nsresult HttpBaseChannel::ProcessCrossOriginResourcePolicyHeader() {
     // indicates. We might want to make that stricter.
     if (content.IsEmpty() && mLoadInfo->GetLoadingEmbedderPolicy() ==
                                  nsILoadInfo::EMBEDDER_POLICY_REQUIRE_CORP) {
-      content = NS_LITERAL_CSTRING("same-origin");
+      content = "same-origin"_ns;
     }
   }
 
@@ -3423,8 +3420,7 @@ HttpBaseChannel::CloneReplacementChannelConfig(bool aPreserveMethod,
     } else {
       dom::ReferrerPolicy referrerPolicy = dom::ReferrerPolicy::_empty;
       nsAutoCString tRPHeaderCValue;
-      Unused << GetResponseHeader(NS_LITERAL_CSTRING("referrer-policy"),
-                                  tRPHeaderCValue);
+      Unused << GetResponseHeader("referrer-policy"_ns, tRPHeaderCValue);
       NS_ConvertUTF8toUTF16 tRPHeaderValue(tRPHeaderCValue);
 
       if (!tRPHeaderValue.IsEmpty()) {
@@ -3658,7 +3654,7 @@ HttpBaseChannel::CloneReplacementChannelConfig(bool aPreserveMethod,
           if (config.contentType) {
             ctype = *config.contentType;
           } else {
-            ctype = NS_LITERAL_CSTRING("application/octet-stream");
+            ctype = "application/octet-stream"_ns;
           }
           if (config.contentLength && !config.contentLength->IsEmpty()) {
             uploadChannel->SetUploadStream(
@@ -3690,9 +3686,8 @@ HttpBaseChannel::ReplacementChannelConfig::ReplacementChannelConfig(
   method = aInit.method();
   referrerInfo = aInit.referrerInfo();
   timedChannel = aInit.timedChannel();
-  if (dom::IPCBlobInputStreamChild* actor =
-          static_cast<dom::IPCBlobInputStreamChild*>(
-              aInit.uploadStreamChild())) {
+  if (RemoteLazyInputStreamChild* actor =
+          static_cast<RemoteLazyInputStreamChild*>(aInit.uploadStreamChild())) {
     uploadStreamLength = actor->Size();
     uploadStream = actor->CreateStream();
     // actor can be deleted by CreateStream, so don't touch it
@@ -3716,8 +3711,10 @@ HttpBaseChannel::ReplacementChannelConfig::Serialize(
   config.referrerInfo() = referrerInfo;
   config.timedChannel() = timedChannel;
   if (uploadStream) {
-    dom::IPCBlobUtils::SerializeInputStream(
-        uploadStream, uploadStreamLength, config.uploadStreamParent(), aParent);
+    RemoteLazyStream ipdlStream;
+    RemoteLazyInputStreamUtils::SerializeInputStream(
+        uploadStream, uploadStreamLength, ipdlStream, aParent);
+    config.uploadStreamParent() = ipdlStream;
   }
   config.uploadStreamHasHeaders() = uploadStreamHasHeaders;
   config.contentType() = contentType;
@@ -3814,8 +3811,7 @@ nsresult HttpBaseChannel::SetupReplacementChannel(nsIURI* newURI,
     nsAutoCString oldAcceptValue;
     nsresult hasHeader = mRequestHead.GetHeader(nsHttp::Accept, oldAcceptValue);
     if (NS_SUCCEEDED(hasHeader)) {
-      rv = httpChannel->SetRequestHeader(NS_LITERAL_CSTRING("Accept"),
-                                         oldAcceptValue, false);
+      rv = httpChannel->SetRequestHeader("Accept"_ns, oldAcceptValue, false);
       MOZ_ASSERT(NS_SUCCEEDED(rv));
     }
   }
@@ -3828,8 +3824,7 @@ nsresult HttpBaseChannel::SetupReplacementChannel(nsIURI* newURI,
     nsresult hasHeader =
         mRequestHead.GetHeader(nsHttp::User_Agent, oldUserAgent);
     if (NS_SUCCEEDED(hasHeader)) {
-      rv = httpChannel->SetRequestHeader(NS_LITERAL_CSTRING("User-Agent"),
-                                         oldUserAgent, false);
+      rv = httpChannel->SetRequestHeader("User-Agent"_ns, oldUserAgent, false);
       MOZ_ASSERT(NS_SUCCEEDED(rv));
     }
   }
@@ -4168,8 +4163,7 @@ HttpBaseChannel::TimingAllowCheck(nsIPrincipal* aOrigin, bool* _retval) {
   }
 
   nsAutoCString headerValue;
-  rv =
-      GetResponseHeader(NS_LITERAL_CSTRING("Timing-Allow-Origin"), headerValue);
+  rv = GetResponseHeader("Timing-Allow-Origin"_ns, headerValue);
   if (NS_FAILED(rv)) {
     *_retval = false;
     return NS_OK;

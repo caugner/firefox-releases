@@ -7,6 +7,10 @@
 /* eslint-env mozilla/browser-window */
 /* globals XULCommandEvent */
 
+XPCOMUtils.defineLazyModuleGetters(this, {
+  UrlbarSearchUtils: "resource:///modules/UrlbarSearchUtils.jsm",
+});
+
 /**
  * Defines the search one-off button elements. These are displayed at the bottom
  * of the address bar or the search bar.
@@ -126,8 +130,8 @@ class SearchOneOffs {
 
     // Add weak referenced observers to invalidate our cached list of engines.
     this.QueryInterface = ChromeUtils.generateQI([
-      Ci.nsIObserver,
-      Ci.nsISupportsWeakReference,
+      "nsIObserver",
+      "nsISupportsWeakReference",
     ]);
     Services.prefs.addObserver("browser.search.hiddenOneOffs", this, true);
     Services.obs.addObserver(this, "browser-search-engine-modified", true);
@@ -549,7 +553,17 @@ class SearchOneOffs {
       }
       button.setAttribute("image", uri);
       button.setAttribute("class", "searchbar-engine-one-off-item");
-      button.setAttribute("tooltiptext", engine.name);
+      if (this.compact) {
+        let tooltip = engine.name;
+        let aliases = UrlbarSearchUtils.aliasesForEngine(engine);
+        if (aliases.length) {
+          tooltip = tooltip + ` (${aliases[0]})`;
+        }
+
+        button.setAttribute("tooltiptext", tooltip);
+      } else {
+        button.setAttribute("tooltiptext", engine.name);
+      }
       button.engine = engine;
 
       this.buttons.appendChild(button);
@@ -701,9 +715,12 @@ class SearchOneOffs {
   }
 
   handleSearchCommand(aEvent, aEngine, aForceNewTab) {
+    if (this._view?.oneOffsCommandHandler(aEvent, aEngine)) {
+      return;
+    }
+
     let where = "current";
     let params;
-
     // Open ctrl/cmd clicks on one-off buttons in a new background tab.
     if (aForceNewTab) {
       where = "tab";
@@ -1104,6 +1121,10 @@ class SearchOneOffs {
   }
 
   _on_click(event) {
+    if (this._view?.oneOffsClickHandler(event)) {
+      return;
+    }
+
     if (event.button == 2) {
       return; // ignore right clicks.
     }
@@ -1141,10 +1162,9 @@ class SearchOneOffs {
       // On success, hide the panel and tell event listeners to reshow it to
       // show the new engine.
       Services.search
-        .addEngine(
+        .addOpenSearchEngine(
           target.getAttribute("uri"),
-          target.getAttribute("image"),
-          false
+          target.getAttribute("image")
         )
         .then(engine => {
           this._rebuild();

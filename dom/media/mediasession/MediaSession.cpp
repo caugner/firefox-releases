@@ -127,18 +127,11 @@ void MediaSession::SetPositionState(const MediaPositionState& aState,
   MOZ_ASSERT(aState.mDuration.WasPassed());
   mPositionState =
       Some(PositionState(aState.mDuration.Value(), playbackRate, position));
-  // TODO : propagate position state to the media controller in the chrome
-  // process.
+  NotifyPositionStateChanged();
 }
 
 void MediaSession::NotifyHandler(const MediaSessionActionDetails& aDetails) {
   DispatchNotifyHandler(aDetails);
-}
-
-void MediaSession::NotifyHandler(MediaSessionAction aAction) {
-  MediaSessionActionDetails details;
-  details.mAction = aAction;
-  DispatchNotifyHandler(details);
 }
 
 void MediaSession::DispatchNotifyHandler(
@@ -218,6 +211,14 @@ void MediaSession::NotifyDisableSupportedAction(MediaSessionAction aAction) {
   MOZ_ASSERT(currentBC, "Update action after context destroyed!");
   if (RefPtr<IMediaInfoUpdater> updater = ContentMediaAgent::Get(currentBC)) {
     updater->DisableAction(currentBC->Id(), aAction);
+  }
+}
+
+void MediaSession::NotifyPositionStateChanged() {
+  RefPtr<BrowsingContext> currentBC = GetParentObject()->GetBrowsingContext();
+  MOZ_ASSERT(currentBC, "Update action after context destroyed!");
+  if (RefPtr<IMediaInfoUpdater> updater = ContentMediaAgent::Get(currentBC)) {
+    updater->UpdatePositionState(currentBC->Id(), *mPositionState);
   }
 }
 

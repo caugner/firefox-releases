@@ -1285,13 +1285,8 @@ NS_IMETHODIMP
 nsStandardURL::GetSpec(nsACString& result) {
   MOZ_ASSERT(mSpec.Length() <= StaticPrefs::network_standard_url_max_length(),
              "The spec should never be this long, we missed a check.");
-  nsresult rv = NS_OK;
-  if (StaticPrefs::network_standard_url_punycode_host()) {
-    result = mSpec;
-  } else {  // XXX: This code path may be slow
-    rv = GetDisplaySpec(result);
-  }
-  return rv;
+  result = mSpec;
+  return NS_OK;
 }
 
 // result may contain unescaped UTF-8 characters
@@ -1317,13 +1312,7 @@ nsStandardURL::GetSpecIgnoringRef(nsACString& result) {
 
   URLSegment noRef(0, mRef.mPos - 1);
   result = Segment(noRef);
-
   MOZ_ASSERT(mCheckedIfHostA);
-  if (!StaticPrefs::network_standard_url_punycode_host() &&
-      !mDisplayHost.IsEmpty()) {
-    result.Replace(mHost.mPos, mHost.mLen, mDisplayHost);
-  }
-
   return NS_OK;
 }
 
@@ -1375,7 +1364,7 @@ nsStandardURL::GetDisplayHostPort(nsACString& aUnicodeHostPort) {
     return rv;
   }
 
-  if (StringBeginsWith(Hostport(), NS_LITERAL_CSTRING("["))) {
+  if (StringBeginsWith(Hostport(), "["_ns)) {
     aUnicodeHostPort.AssignLiteral("[");
     aUnicodeHostPort.Append(unicodeHostPort);
     aUnicodeHostPort.AppendLiteral("]");
@@ -1407,10 +1396,6 @@ NS_IMETHODIMP
 nsStandardURL::GetPrePath(nsACString& result) {
   result = Prepath();
   MOZ_ASSERT(mCheckedIfHostA);
-  if (!StaticPrefs::network_standard_url_punycode_host() &&
-      !mDisplayHost.IsEmpty()) {
-    result.Replace(mHost.mPos, mHost.mLen, mDisplayHost);
-  }
   return NS_OK;
 }
 
@@ -1455,25 +1440,11 @@ nsStandardURL::GetPassword(nsACString& result) {
 
 NS_IMETHODIMP
 nsStandardURL::GetHostPort(nsACString& result) {
-  nsresult rv;
-  if (StaticPrefs::network_standard_url_punycode_host()) {
-    rv = GetAsciiHostPort(result);
-  } else {
-    rv = GetDisplayHostPort(result);
-  }
-  return rv;
+  return GetAsciiHostPort(result);
 }
 
 NS_IMETHODIMP
-nsStandardURL::GetHost(nsACString& result) {
-  nsresult rv;
-  if (StaticPrefs::network_standard_url_punycode_host()) {
-    rv = GetAsciiHost(result);
-  } else {
-    rv = GetDisplayHost(result);
-  }
-  return rv;
-}
+nsStandardURL::GetHost(nsACString& result) { return GetAsciiHost(result); }
 
 NS_IMETHODIMP
 nsStandardURL::GetPort(int32_t* result) {
@@ -1797,7 +1768,7 @@ nsresult nsStandardURL::SetUsername(const nsACString& input) {
   if (mUsername.mLen < 0 && mPassword.mLen < 0) {
     MOZ_ASSERT(!escUsername.IsEmpty(), "Should not be empty at this point");
     mUsername.mPos = mAuthority.mPos;
-    mSpec.Insert(escUsername + NS_LITERAL_CSTRING("@"), mUsername.mPos);
+    mSpec.Insert(escUsername + "@"_ns, mUsername.mPos);
     shift = escUsername.Length() + 1;
     mUsername.mLen = escUsername.Length() > 0 ? escUsername.Length() : -1;
   } else {
@@ -1877,13 +1848,11 @@ nsresult nsStandardURL::SetPassword(const nsACString& input) {
   if (mPassword.mLen < 0) {
     if (mUsername.mLen > 0) {
       mPassword.mPos = mUsername.mPos + mUsername.mLen + 1;
-      mSpec.Insert(NS_LITERAL_CSTRING(":") + escPassword, mPassword.mPos - 1);
+      mSpec.Insert(":"_ns + escPassword, mPassword.mPos - 1);
       shift = escPassword.Length() + 1;
     } else {
       mPassword.mPos = mAuthority.mPos + 1;
-      mSpec.Insert(
-          NS_LITERAL_CSTRING(":") + escPassword + NS_LITERAL_CSTRING("@"),
-          mPassword.mPos - 1);
+      mSpec.Insert(":"_ns + escPassword + "@"_ns, mPassword.mPos - 1);
       shift = escPassword.Length() + 2;
     }
   } else {
@@ -2538,8 +2507,7 @@ nsStandardURL::Resolve(const nsACString& in, nsACString& out) {
         break;
       default:
         if (coalesceFlag & NET_COALESCE_DOUBLE_SLASH_IS_ROOT) {
-          if (Filename().Equals(NS_LITERAL_CSTRING("%2F"),
-                                nsCaseInsensitiveCStringComparator)) {
+          if (Filename().Equals("%2F"_ns, nsCaseInsensitiveCStringComparator)) {
             // if ftp URL ends with %2F then simply
             // append relative part because %2F also
             // marks the root directory with ftp-urls

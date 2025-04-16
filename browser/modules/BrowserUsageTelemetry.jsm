@@ -156,6 +156,18 @@ const BROWSER_UI_CONTAINER_IDS = {
   "nav-bar": "nav-bar",
 };
 
+// A list of the expected panes in about:preferences
+const PREFERENCES_PANES = [
+  "paneHome",
+  "paneGeneral",
+  "panePrivacy",
+  "paneSearch",
+  "paneSearchResults",
+  "paneSync",
+  "paneContainers",
+  "paneExperimental",
+];
+
 const IGNORABLE_EVENTS = new WeakMap();
 
 const KNOWN_ADDONS = [];
@@ -414,8 +426,8 @@ let URICountListener = {
   },
 
   QueryInterface: ChromeUtils.generateQI([
-    Ci.nsIWebProgressListener,
-    Ci.nsISupportsWeakReference,
+    "nsIWebProgressListener",
+    "nsISupportsWeakReference",
   ]),
 };
 
@@ -463,8 +475,8 @@ let BrowserUsageTelemetry = {
   },
 
   QueryInterface: ChromeUtils.generateQI([
-    Ci.nsIObserver,
-    Ci.nsISupportsWeakReference,
+    "nsIObserver",
+    "nsISupportsWeakReference",
   ]),
 
   uninit() {
@@ -892,6 +904,8 @@ let BrowserUsageTelemetry = {
               widget == "tabbrowser-tabs" ||
               // We care about the page action and other buttons in here.
               widget == "urlbar-container" ||
+              // We care about the actual menu items.
+              widget == "menubar-items" ||
               // We care about individual bookmarks here.
               widget == "personal-bookmarks"
             ) {
@@ -960,7 +974,13 @@ let BrowserUsageTelemetry = {
         return null;
       }
 
-      return `preferences_${container.getAttribute("data-category")}`;
+      let pane = container.getAttribute("data-category");
+
+      if (!PREFERENCES_PANES.includes(pane)) {
+        pane = "paneUnknown";
+      }
+
+      return `preferences_${pane}`;
     }
 
     return null;

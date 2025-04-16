@@ -126,6 +126,12 @@ class BigIntOperandId : public OperandId {
   explicit BigIntOperandId(uint16_t id) : OperandId(id) {}
 };
 
+class BooleanOperandId : public OperandId {
+ public:
+  BooleanOperandId() = default;
+  explicit BooleanOperandId(uint16_t id) : OperandId(id) {}
+};
+
 class Int32OperandId : public OperandId {
  public:
   Int32OperandId() = default;
@@ -144,6 +150,8 @@ class TypedOperandId : public OperandId {
       : OperandId(id.id()), type_(JSVAL_TYPE_SYMBOL) {}
   MOZ_IMPLICIT TypedOperandId(BigIntOperandId id)
       : OperandId(id.id()), type_(JSVAL_TYPE_BIGINT) {}
+  MOZ_IMPLICIT TypedOperandId(BooleanOperandId id)
+      : OperandId(id.id()), type_(JSVAL_TYPE_BOOLEAN) {}
   MOZ_IMPLICIT TypedOperandId(Int32OperandId id)
       : OperandId(id.id()), type_(JSVAL_TYPE_INT32) {}
   MOZ_IMPLICIT TypedOperandId(ValueTagOperandId val)
@@ -269,6 +277,7 @@ class StubField {
 class CallFlags {
  public:
   enum ArgFormat : uint8_t {
+    Unknown,
     Standard,
     Spread,
     FunCall,
@@ -277,12 +286,12 @@ class CallFlags {
     LastArgFormat = FunApplyArray
   };
 
+  CallFlags() = default;
+  explicit CallFlags(ArgFormat format) : argFormat_(format) {}
   CallFlags(bool isConstructing, bool isSpread, bool isSameRealm = false)
       : argFormat_(isSpread ? Spread : Standard),
         isConstructing_(isConstructing),
         isSameRealm_(isSameRealm) {}
-  explicit CallFlags(ArgFormat format)
-      : argFormat_(format), isConstructing_(false), isSameRealm_(false) {}
 
   ArgFormat getArgFormat() const { return argFormat_; }
   bool isConstructing() const {
@@ -294,6 +303,7 @@ class CallFlags {
 
   uint8_t toByte() const {
     // See CacheIRReader::callFlags()
+    MOZ_ASSERT(argFormat_ != ArgFormat::Unknown);
     uint8_t value = getArgFormat();
     if (isConstructing()) {
       value |= CallFlags::IsConstructing;
@@ -305,9 +315,9 @@ class CallFlags {
   }
 
  private:
-  ArgFormat argFormat_;
-  bool isConstructing_;
-  bool isSameRealm_;
+  ArgFormat argFormat_ = ArgFormat::Unknown;
+  bool isConstructing_ = false;
+  bool isSameRealm_ = false;
 
   // Used for encoding/decoding
   static const uint8_t ArgFormatBits = 4;
@@ -385,6 +395,7 @@ inline int32_t GetIndexOfArgument(ArgumentKind kind, CallFlags flags,
       MOZ_ASSERT(kind <= ArgumentKind::Arg0);
       *addArgc = false;
       break;
+    case CallFlags::Unknown:
     case CallFlags::FunCall:
     case CallFlags::FunApplyArgs:
     case CallFlags::FunApplyArray:
@@ -418,6 +429,7 @@ inline int32_t GetIndexOfArgument(ArgumentKind kind, CallFlags flags,
 // in the IR, to keep the IR compact and the same size on all platforms.
 enum class GuardClassKind : uint8_t {
   Array,
+  DataView,
   MappedArguments,
   UnmappedArguments,
   WindowProxy,
@@ -550,6 +562,7 @@ class MOZ_RAII CacheIRWriter : public JS::CustomAutoRooter {
     addStubField(uintptr_t(group), StubField::Type::ObjectGroup);
   }
   void writeObjectField(JSObject* obj) {
+    MOZ_ASSERT(obj);
     assertSameCompartment(obj);
     addStubField(uintptr_t(obj), StubField::Type::JSObject);
   }
@@ -725,6 +738,16 @@ class MOZ_RAII CacheIRWriter : public JS::CustomAutoRooter {
     return BigIntOperandId(input.id());
   }
 
+  BooleanOperandId guardToBoolean(ValOperandId input) {
+    guardToBoolean_(input);
+    return BooleanOperandId(input.id());
+  }
+
+  Int32OperandId guardToInt32(ValOperandId input) {
+    guardToInt32_(input);
+    return Int32OperandId(input.id());
+  }
+
   NumberOperandId guardIsNumber(ValOperandId input) {
     guardIsNumber_(input);
     return NumberOperandId(input.id());
@@ -882,6 +905,7 @@ class MOZ_RAII CacheIRWriter : public JS::CustomAutoRooter {
     metaTwoByte_(MetaTwoByteKind::ScriptedTemplateObject, callee,
                  templateObject);
   }
+  friend class CacheIRCloner;
 
   CACHE_IR_WRITER_GENERATED
 };
@@ -935,6 +959,10 @@ class MOZ_RAII CacheIRReader {
     return BigIntOperandId(buffer_.readByte());
   }
 
+  BooleanOperandId booleanOperandId() {
+    return BooleanOperandId(buffer_.readByte());
+  }
+
   Int32OperandId int32OperandId() { return Int32OperandId(buffer_.readByte()); }
 
   uint32_t rawOperandId() { return buffer_.readByte(); }
@@ -977,6 +1005,8 @@ class MOZ_RAII CacheIRReader {
     bool isConstructing = encoded & CallFlags::IsConstructing;
     bool isSameRealm = encoded & CallFlags::IsSameRealm;
     switch (format) {
+      case CallFlags::Unknown:
+        MOZ_CRASH("Unexpected call flags");
       case CallFlags::Standard:
         return CallFlags(isConstructing, /*isSpread =*/false, isSameRealm);
       case CallFlags::Spread:
@@ -1026,6 +1056,35 @@ class MOZ_RAII CacheIRReader {
   const uint8_t* currentPosition() const { return buffer_.currentPosition(); }
 };
 
+class MOZ_RAII CacheIRCloner {
+ public:
+  explicit CacheIRCloner(ICStub* stubInfo);
+
+  void cloneOp(CacheOp op, CacheIRReader& reader, CacheIRWriter& writer);
+
+  CACHE_IR_CLONE_GENERATED
+
+ private:
+  const CacheIRStubInfo* stubInfo_;
+  const uint8_t* stubData_;
+
+  uintptr_t readStubWord(uint32_t offset);
+  int64_t readStubInt64(uint32_t offset);
+
+  Shape* getShapeField(uint32_t stubOffset);
+  ObjectGroup* getGroupField(uint32_t stubOffset);
+  JSObject* getObjectField(uint32_t stubOffset);
+  JSString* getStringField(uint32_t stubOffset);
+  JSAtom* getAtomField(uint32_t stubOffset);
+  PropertyName* getPropertyNameField(uint32_t stubOffset);
+  JS::Symbol* getSymbolField(uint32_t stubOffset);
+  uintptr_t getRawWordField(uint32_t stubOffset);
+  const void* getRawPointerField(uint32_t stubOffset);
+  jsid getIdField(uint32_t stubOffset);
+  const Value getValueField(uint32_t stubOffset);
+  uint64_t getDOMExpandoGenerationField(uint32_t stubOffset);
+};
+
 class MOZ_RAII IRGenerator {
  protected:
   CacheIRWriter writer;
@@ -1047,6 +1106,8 @@ class MOZ_RAII IRGenerator {
                                                   JSObject* expandoObj);
 
   void emitIdGuard(ValOperandId valId, jsid id);
+
+  OperandId emitNumericGuard(ValOperandId valId, Scalar::Type type);
 
   friend class CacheIRSpewer;
 
@@ -1333,8 +1394,6 @@ class MOZ_RAII SetPropIRGenerator : public IRGenerator {
   // matches |id|.
   void maybeEmitIdGuard(jsid id);
 
-  OperandId emitNumericGuard(ValOperandId valId, Scalar::Type type);
-
   AttachDecision tryAttachNativeSetSlot(HandleObject obj, ObjOperandId objId,
                                         HandleId id, ValOperandId rhsId);
   AttachDecision tryAttachUnboxedExpandoSetSlot(HandleObject obj,
@@ -1535,6 +1594,8 @@ class MOZ_RAII CallIRGenerator : public IRGenerator {
   AttachDecision tryAttachArrayPush(HandleFunction callee);
   AttachDecision tryAttachArrayJoin(HandleFunction callee);
   AttachDecision tryAttachArrayIsArray(HandleFunction callee);
+  AttachDecision tryAttachDataViewGet(HandleFunction callee, Scalar::Type type);
+  AttachDecision tryAttachDataViewSet(HandleFunction callee, Scalar::Type type);
   AttachDecision tryAttachUnsafeGetReservedSlot(HandleFunction callee,
                                                 InlinableNative native);
   AttachDecision tryAttachIsSuspendedGenerator(HandleFunction callee);
@@ -1543,6 +1604,7 @@ class MOZ_RAII CallIRGenerator : public IRGenerator {
   AttachDecision tryAttachToInteger(HandleFunction callee);
   AttachDecision tryAttachToLength(HandleFunction callee);
   AttachDecision tryAttachIsObject(HandleFunction callee);
+  AttachDecision tryAttachIsPackedArray(HandleFunction callee);
   AttachDecision tryAttachIsCallable(HandleFunction callee);
   AttachDecision tryAttachIsConstructor(HandleFunction callee);
   AttachDecision tryAttachGuardToClass(HandleFunction callee,
@@ -1562,9 +1624,11 @@ class MOZ_RAII CallIRGenerator : public IRGenerator {
   AttachDecision tryAttachMathAbs(HandleFunction callee);
   AttachDecision tryAttachMathFloor(HandleFunction callee);
   AttachDecision tryAttachMathCeil(HandleFunction callee);
+  AttachDecision tryAttachMathTrunc(HandleFunction callee);
   AttachDecision tryAttachMathRound(HandleFunction callee);
   AttachDecision tryAttachMathSqrt(HandleFunction callee);
   AttachDecision tryAttachMathFRound(HandleFunction callee);
+  AttachDecision tryAttachMathHypot(HandleFunction callee);
   AttachDecision tryAttachMathATan2(HandleFunction callee);
   AttachDecision tryAttachMathFunction(HandleFunction callee,
                                        UnaryMathFunction fun);

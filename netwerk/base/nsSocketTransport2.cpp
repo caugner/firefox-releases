@@ -1048,6 +1048,12 @@ nsresult nsSocketTransport::ResolveHost() {
   dnsFlags |= nsIDNSService::GetFlagsFromTRRMode(
       nsISocketTransport::GetTRRModeFromFlags(mConnectionFlags));
 
+  // When we get here, we are not resolving using any configured proxy likely
+  // because of individual proxy setting on the request or because the host is
+  // excluded from proxying.  Hence, force resolution despite global proxy-DNS
+  // configuration.
+  dnsFlags |= nsIDNSService::RESOLVE_IGNORE_SOCKS_DNS;
+
   NS_ASSERTION(!(dnsFlags & nsIDNSService::RESOLVE_DISABLE_IPV6) ||
                    !(dnsFlags & nsIDNSService::RESOLVE_DISABLE_IPV4),
                "Setting both RESOLVE_DISABLE_IPV6 and RESOLVE_DISABLE_IPV4");
@@ -1328,7 +1334,7 @@ nsresult nsSocketTransport::InitiateSocket() {
       netAddrCString.SetLength(kIPv6CStrBufSize);
       if (!NetAddrToString(&mNetAddr, netAddrCString.BeginWriting(),
                            kIPv6CStrBufSize))
-        netAddrCString = NS_LITERAL_CSTRING("<IP-to-string failed>");
+        netAddrCString = "<IP-to-string failed>"_ns;
       SOCKET_LOG(
           ("nsSocketTransport::InitiateSocket skipping "
            "speculative connection for host [%s:%d] proxy "

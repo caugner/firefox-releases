@@ -4,16 +4,15 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-#ifndef __NS_SVGMASKFRAME_H__
-#define __NS_SVGMASKFRAME_H__
+#ifndef LAYOUT_SVG_SVGMASKFRAME_H_
+#define LAYOUT_SVG_SVGMASKFRAME_H_
 
 #include "mozilla/Attributes.h"
-#include "mozilla/gfx/2D.h"
 #include "mozilla/RefPtr.h"
+#include "mozilla/SVGContainerFrame.h"
+#include "mozilla/gfx/2D.h"
 #include "gfxPattern.h"
 #include "gfxMatrix.h"
-#include "nsSVGContainerFrame.h"
-#include "nsSVGUtils.h"
 
 class gfxContext;
 
@@ -26,17 +25,17 @@ nsIFrame* NS_NewSVGMaskFrame(mozilla::PresShell* aPresShell,
 
 namespace mozilla {
 
-class SVGMaskFrame final : public nsSVGContainerFrame {
+class SVGMaskFrame final : public SVGContainerFrame {
   friend nsIFrame* ::NS_NewSVGMaskFrame(mozilla::PresShell* aPresShell,
                                         ComputedStyle* aStyle);
 
-  typedef gfx::Matrix Matrix;
-  typedef gfx::SourceSurface SourceSurface;
-  typedef image::imgDrawingParams imgDrawingParams;
+  using Matrix = gfx::Matrix;
+  using SourceSurface = gfx::SourceSurface;
+  using imgDrawingParams = image::imgDrawingParams;
 
  protected:
   explicit SVGMaskFrame(ComputedStyle* aStyle, nsPresContext* aPresContext)
-      : nsSVGContainerFrame(aStyle, aPresContext, kClassID), mInUse(false) {
+      : SVGContainerFrame(aStyle, aPresContext, kClassID), mInUse(false) {
     AddStateBits(NS_FRAME_IS_NONDISPLAY);
   }
 
@@ -87,7 +86,7 @@ class SVGMaskFrame final : public nsSVGContainerFrame {
 
 #ifdef DEBUG_FRAME_DUMP
   virtual nsresult GetFrameName(nsAString& aResult) const override {
-    return MakeFrameName(NS_LITERAL_STRING("SVGMask"), aResult);
+    return MakeFrameName(u"SVGMask"_ns, aResult);
   }
 #endif
 
@@ -103,10 +102,10 @@ class SVGMaskFrame final : public nsSVGContainerFrame {
   // recursion prevention flag
   bool mInUse;
 
-  // nsSVGContainerFrame methods:
+  // SVGContainerFrame methods:
   virtual gfxMatrix GetCanvasTM() override;
 };
 
 }  // namespace mozilla
 
-#endif
+#endif  // LAYOUT_SVG_SVGMASKFRAME_H_

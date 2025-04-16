@@ -18,7 +18,6 @@
 #include "nsIObserverService.h"
 #include "nsIPropertyBag2.h"
 #include "mozilla/Services.h"
-#include "mozilla/Preferences.h"
 #include "mozilla/LateWriteChecks.h"
 #include "mozIStorageCompletionCallback.h"
 #include "mozIStoragePendingStatement.h"
@@ -30,18 +29,6 @@
 // "windows.h" was included and it can #define lots of things we care about...
 #  undef CompareString
 #endif
-
-////////////////////////////////////////////////////////////////////////////////
-//// Defines
-
-#define PREF_TS_SYNCHRONOUS "toolkit.storage.synchronous"
-#define PREF_TS_SYNCHRONOUS_DEFAULT 1
-
-#define PREF_TS_PAGESIZE "toolkit.storage.pageSize"
-
-// This value must be kept in sync with the value of SQLITE_DEFAULT_PAGE_SIZE in
-// third_party/sqlite3/src/Makefile.in.
-#define PREF_TS_PAGESIZE_DEFAULT 32768
 
 namespace mozilla {
 namespace storage {
@@ -127,28 +114,22 @@ Service::CollectReports(nsIHandleReportCallback* aHandleReport,
 
       SQLiteMutexAutoLock lockedScope(conn->sharedDBMutex);
 
-      NS_NAMED_LITERAL_CSTRING(
-          stmtDesc,
+      constexpr auto stmtDesc =
           "Memory (approximate) used by all prepared statements used by "
-          "connections to this database.");
-      ReportConn(aHandleReport, aData, conn, pathHead,
-                 NS_LITERAL_CSTRING("stmt"), stmtDesc,
+          "connections to this database."_ns;
+      ReportConn(aHandleReport, aData, conn, pathHead, "stmt"_ns, stmtDesc,
                  SQLITE_DBSTATUS_STMT_USED, &totalConnSize);
 
-      NS_NAMED_LITERAL_CSTRING(
-          cacheDesc,
+      constexpr auto cacheDesc =
           "Memory (approximate) used by all pager caches used by connections "
-          "to this database.");
-      ReportConn(aHandleReport, aData, conn, pathHead,
-                 NS_LITERAL_CSTRING("cache"), cacheDesc,
+          "to this database."_ns;
+      ReportConn(aHandleReport, aData, conn, pathHead, "cache"_ns, cacheDesc,
                  SQLITE_DBSTATUS_CACHE_USED_SHARED, &totalConnSize);
 
-      NS_NAMED_LITERAL_CSTRING(
-          schemaDesc,
+      constexpr auto schemaDesc =
           "Memory (approximate) used to store the schema for all databases "
-          "associated with connections to this database.");
-      ReportConn(aHandleReport, aData, conn, pathHead,
-                 NS_LITERAL_CSTRING("schema"), schemaDesc,
+          "associated with connections to this database."_ns;
+      ReportConn(aHandleReport, aData, conn, pathHead, "schema"_ns, schemaDesc,
                  SQLITE_DBSTATUS_SCHEMA_USED, &totalConnSize);
     }
 
@@ -194,15 +175,9 @@ already_AddRefed<Service> Service::getSingleton() {
   return nullptr;
 }
 
-int32_t Service::sSynchronousPref;
-
-// static
-int32_t Service::getSynchronousPref() { return sSynchronousPref; }
-
-int32_t Service::sDefaultPageSize = PREF_TS_PAGESIZE_DEFAULT;
-
 Service::Service()
     : mMutex("Service::mMutex"),
+      mSqliteExclVFS(nullptr),
       mSqliteVFS(nullptr),
       mRegistrationMutex("Service::mRegistrationMutex"),
       mConnections() {}
@@ -211,12 +186,16 @@ Service::~Service() {
   mozilla::UnregisterWeakMemoryReporter(this);
   mozilla::UnregisterStorageSQLiteDistinguishedAmount();
 
-  int rc = sqlite3_vfs_unregister(mSqliteVFS);
-  if (rc != SQLITE_OK) NS_WARNING("Failed to unregister sqlite vfs wrapper.");
+  int srv = sqlite3_vfs_unregister(mSqliteVFS);
+  if (srv != SQLITE_OK) NS_WARNING("Failed to unregister sqlite vfs wrapper.");
+  srv = sqlite3_vfs_unregister(mSqliteExclVFS);
+  if (srv != SQLITE_OK) NS_WARNING("Failed to unregister sqlite vfs wrapper.");
 
   gService = nullptr;
   delete mSqliteVFS;
   mSqliteVFS = nullptr;
+  delete mSqliteExclVFS;
+  mSqliteExclVFS = nullptr;
 }
 
 void Service::registerConnection(Connection* aConnection) {
@@ -279,7 +258,7 @@ void Service::minimizeMemory() {
       continue;
     }
 
-    NS_NAMED_LITERAL_CSTRING(shrinkPragma, "PRAGMA shrink_memory");
+    constexpr auto shrinkPragma = "PRAGMA shrink_memory"_ns;
     bool onOpenedThread = false;
 
     if (!conn->operationSupported(Connection::SYNCHRONOUS)) {
@@ -315,8 +294,8 @@ void Service::minimizeMemory() {
   }
 }
 
-sqlite3_vfs* ConstructTelemetryVFS();
-const char* GetVFSName();
+sqlite3_vfs* ConstructTelemetryVFS(bool);
+const char* GetVFSName(bool);
 
 static const char* sObserverTopics[] = {"memory-pressure",
                                         "xpcom-shutdown-threads"};
@@ -327,12 +306,17 @@ nsresult Service::initialize() {
   int rc = AutoSQLiteLifetime::getInitResult();
   if (rc != SQLITE_OK) return convertResultCode(rc);
 
-  mSqliteVFS = ConstructTelemetryVFS();
+  mSqliteVFS = ConstructTelemetryVFS(false);
+  MOZ_ASSERT(mSqliteVFS, "Non-exclusive VFS should be created");
   if (mSqliteVFS) {
     rc = sqlite3_vfs_register(mSqliteVFS, 0);
     if (rc != SQLITE_OK) return convertResultCode(rc);
-  } else {
-    NS_WARNING("Failed to register telemetry VFS");
+  }
+  mSqliteExclVFS = ConstructTelemetryVFS(true);
+  MOZ_ASSERT(mSqliteExclVFS, "Exclusive VFS should be created");
+  if (mSqliteExclVFS) {
+    rc = sqlite3_vfs_register(mSqliteExclVFS, 0);
+    if (rc != SQLITE_OK) return convertResultCode(rc);
   }
 
   nsCOMPtr<nsIObserverService> os = mozilla::services::GetObserverService();
@@ -344,18 +328,6 @@ nsresult Service::initialize() {
       return rv;
     }
   }
-
-  // We need to obtain the toolkit.storage.synchronous preferences on the main
-  // thread because the preference service can only be accessed there.  This
-  // is cached in the service for all future Open[Unshared]Database calls.
-  sSynchronousPref =
-      Preferences::GetInt(PREF_TS_SYNCHRONOUS, PREF_TS_SYNCHRONOUS_DEFAULT);
-
-  // We need to obtain the toolkit.storage.pageSize preferences on the main
-  // thread because the preference service can only be accessed there.  This
-  // is cached in the service for all future Open[Unshared]Database calls.
-  sDefaultPageSize =
-      Preferences::GetInt(PREF_TS_PAGESIZE, PREF_TS_PAGESIZE_DEFAULT);
 
   mozilla::RegisterWeakMemoryReporter(this);
   mozilla::RegisterStorageSQLiteDistinguishedAmount(
@@ -516,10 +488,10 @@ Service::OpenAsyncDatabase(nsIVariant* aDatabaseStore,
 
   // Deal with options first:
   if (aOptions) {
-    rv = aOptions->GetPropertyAsBool(NS_LITERAL_STRING("readOnly"), &readOnly);
+    rv = aOptions->GetPropertyAsBool(u"readOnly"_ns, &readOnly);
     FAIL_IF_SET_BUT_INVALID(rv);
 
-    rv = aOptions->GetPropertyAsBool(NS_LITERAL_STRING("ignoreLockingMode"),
+    rv = aOptions->GetPropertyAsBool(u"ignoreLockingMode"_ns,
                                      &ignoreLockingMode);
     FAIL_IF_SET_BUT_INVALID(rv);
     // Specifying ignoreLockingMode will force use of the readOnly flag:
@@ -527,12 +499,11 @@ Service::OpenAsyncDatabase(nsIVariant* aDatabaseStore,
       readOnly = true;
     }
 
-    rv = aOptions->GetPropertyAsBool(NS_LITERAL_STRING("shared"), &shared);
+    rv = aOptions->GetPropertyAsBool(u"shared"_ns, &shared);
     FAIL_IF_SET_BUT_INVALID(rv);
 
     // NB: we re-set to -1 if we don't have a storage file later on.
-    rv = aOptions->GetPropertyAsInt32(NS_LITERAL_STRING("growthIncrement"),
-                                      &growthIncrement);
+    rv = aOptions->GetPropertyAsInt32(u"growthIncrement"_ns, &growthIncrement);
     FAIL_IF_SET_BUT_INVALID(rv);
   }
   int flags = readOnly ? SQLITE_OPEN_READONLY : SQLITE_OPEN_READWRITE;

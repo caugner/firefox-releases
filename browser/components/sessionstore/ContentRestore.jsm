@@ -158,6 +158,7 @@ ContentRestoreInternal.prototype = {
 
     this._shistoryInParent = shistoryInParent;
 
+    this._tabDataForFinishRestoreHistory = tabData;
     if (this._shistoryInParent) {
       callbacks.requestRestoreSHistory();
     } else {
@@ -177,8 +178,6 @@ ContentRestoreInternal.prototype = {
 
       webNavigation.sessionHistory.legacySHistory.addSHistoryListener(listener);
       this._historyListener = listener;
-
-      this._tabDataForFinishRestoreHistory = tabData;
       this.finishRestoreHistory(callbacks);
     }
   },
@@ -451,8 +450,8 @@ function HistoryListener(docShell, callback) {
 }
 HistoryListener.prototype = {
   QueryInterface: ChromeUtils.generateQI([
-    Ci.nsISHistoryListener,
-    Ci.nsISupportsWeakReference,
+    "nsISHistoryListener",
+    "nsISupportsWeakReference",
   ]),
 
   uninstall() {
@@ -511,8 +510,8 @@ function ProgressListener(docShell, callbacks) {
 
 ProgressListener.prototype = {
   QueryInterface: ChromeUtils.generateQI([
-    Ci.nsIWebProgressListener,
-    Ci.nsISupportsWeakReference,
+    "nsIWebProgressListener",
+    "nsISupportsWeakReference",
   ]),
 
   uninstall() {

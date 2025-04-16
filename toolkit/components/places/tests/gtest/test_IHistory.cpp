@@ -33,7 +33,7 @@ void expect_no_visit(nsLinkState aState) {
 already_AddRefed<nsIURI> new_test_uri() {
   // Create a unique spec.
   static int32_t specNumber = 0;
-  nsCString spec = NS_LITERAL_CSTRING("http://mozilla.org/");
+  nsCString spec = "http://mozilla.org/"_ns;
   spec.AppendInt(specNumber++);
 
   // Create the URI for the spec.
@@ -103,8 +103,7 @@ void test_wait_checkpoint() {
   // and cause concurrent readers to access an older checkpoint.
   nsCOMPtr<mozIStorageConnection> db = do_get_db();
   nsCOMPtr<mozIStorageAsyncStatement> stmt;
-  db->CreateAsyncStatement(NS_LITERAL_CSTRING("SELECT 1"),
-                           getter_AddRefs(stmt));
+  db->CreateAsyncStatement("SELECT 1"_ns, getter_AddRefs(stmt));
   RefPtr<PlacesAsyncStatementSpinner> spinner =
       new PlacesAsyncStatementSpinner();
   nsCOMPtr<mozIStoragePendingStatement> pending;
@@ -267,8 +266,8 @@ void test_RegisterVisitedCallback_returns_before_notifying() {
 }
 
 namespace test_observer_topic_dispatched_helpers {
-#define URI_VISITED "visited"
-#define URI_NOT_VISITED "not visited"
+#define URI_VISITED u"visited"
+#define URI_NOT_VISITED u"not visited"
 #define URI_VISITED_RESOLUTION_TOPIC "visited-status-resolution"
 class statusObserver final : public nsIObserver {
   ~statusObserver() = default;
@@ -302,8 +301,8 @@ class statusObserver final : public nsIObserver {
     }
 
     // Check that we have either the visited or not visited string.
-    bool visited = !!NS_LITERAL_STRING(URI_VISITED).Equals(aData);
-    bool notVisited = !!NS_LITERAL_STRING(URI_NOT_VISITED).Equals(aData);
+    bool visited = !!nsLiteralString(URI_VISITED).Equals(aData);
+    bool notVisited = !!nsLiteralString(URI_NOT_VISITED).Equals(aData);
     do_check_true(visited || notVisited);
 
     // Check to make sure we got the state we expected.

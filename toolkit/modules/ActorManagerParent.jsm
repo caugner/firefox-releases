@@ -33,7 +33,31 @@ const { DefaultMap } = ExtensionUtils;
  * Detailed documentation of these options is in dom/docs/Fission.rst,
  * available at https://firefox-source-docs.mozilla.org/dom/Fission.html#jsprocessactor
  */
-let JSPROCESSACTORS = {};
+let JSPROCESSACTORS = {
+  AsyncPrefs: {
+    parent: {
+      moduleURI: "resource://gre/modules/AsyncPrefs.jsm",
+    },
+    child: {
+      moduleURI: "resource://gre/modules/AsyncPrefs.jsm",
+    },
+  },
+
+  ContentPrefs: {
+    parent: {
+      moduleURI: "resource://gre/modules/ContentPrefServiceParent.jsm",
+    },
+    child: {
+      moduleURI: "resource://gre/modules/ContentPrefServiceChild.jsm",
+    },
+  },
+  ExtensionContent: {
+    child: {
+      moduleURI: "resource://gre/modules/ExtensionContent.jsm",
+    },
+    includeParent: true,
+  },
+};
 
 /**
  * Fission-compatible JSWindowActor implementations.
@@ -286,6 +310,13 @@ let JSWINDOWACTORS = {
     allFrames: true,
     messageManagerGroups: ["browsers", ""],
   },
+
+  ManifestMessages: {
+    child: {
+      moduleURI: "resource://gre/modules/ManifestMessagesChild.jsm",
+    },
+  },
+
   PictureInPicture: {
     parent: {
       moduleURI: "resource://gre/modules/PictureInPicture.jsm",
@@ -348,14 +379,6 @@ let JSWINDOWACTORS = {
         "mozshowdropdown-sourcetouch": {},
         mozhidedropdown: { mozSystemGroup: true },
       },
-    },
-
-    allFrames: true,
-  },
-
-  SidebarSearch: {
-    parent: {
-      moduleURI: "resource://gre/actors/SidebarSearchParent.jsm",
     },
 
     allFrames: true,
@@ -435,12 +458,6 @@ let JSWINDOWACTORS = {
     },
 
     allFrames: true,
-  },
-
-  WebNavigation: {
-    child: {
-      moduleURI: "resource://gre/actors/WebNavigationChild.jsm",
-    },
   },
 };
 
@@ -533,17 +550,6 @@ let JSWINDOWACTORS = {
  * sub-frames, it must use "allFrames".
  */
 let LEGACY_ACTORS = {
-  ManifestMessages: {
-    child: {
-      module: "resource://gre/modules/ManifestMessagesChild.jsm",
-      messages: [
-        "DOM:ManifestObtainer:Obtain",
-        "DOM:WebManifest:fetchIcon",
-        "DOM:WebManifest:hasManifestLink",
-      ],
-    },
-  },
-
   Printing: {
     child: {
       module: "resource://gre/actors/PrintingChild.jsm",
@@ -556,7 +562,6 @@ let LEGACY_ACTORS = {
         "Printing:Preview:Exit",
         "Printing:Preview:Navigate",
         "Printing:Preview:ParseDocument",
-        "Printing:Print",
       ],
     },
   },

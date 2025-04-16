@@ -44,6 +44,7 @@
 #include "mozilla/dom/DOMTokenListBinding.h"
 #include "mozilla/dom/ElementBinding.h"
 #include "mozilla/dom/EventBinding.h"
+#include "mozilla/dom/Exceptions.h"
 #include "mozilla/dom/IndexedDatabaseManager.h"
 #include "mozilla/dom/Fetch.h"
 #include "mozilla/dom/FileBinding.h"
@@ -1111,7 +1112,7 @@ nsresult ApplyAddonContentScriptCSP(nsISupports* prinOrSop) {
   }
 
   nsString url;
-  MOZ_TRY_VAR(url, addonPolicy->GetURL(NS_LITERAL_STRING("")));
+  MOZ_TRY_VAR(url, addonPolicy->GetURL(u""_ns));
 
   nsCOMPtr<nsIURI> selfURI;
   MOZ_TRY(NS_NewURI(getter_AddRefs(selfURI), url));
@@ -1833,7 +1834,7 @@ static nsresult AssembleSandboxMemoryReporterName(JSContext* cx,
                                                   nsCString& sandboxName) {
   // Use a default name when the caller did not provide a sandboxName.
   if (sandboxName.IsEmpty()) {
-    sandboxName = NS_LITERAL_CSTRING("[anonymous sandbox]");
+    sandboxName = "[anonymous sandbox]"_ns;
   } else {
 #ifndef DEBUG
     // Adding the caller location is fairly expensive, so in non-debug

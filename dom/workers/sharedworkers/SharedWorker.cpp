@@ -13,6 +13,7 @@
 #include "mozilla/dom/MessageChannel.h"
 #include "mozilla/dom/MessagePort.h"
 #include "mozilla/dom/PMessagePort.h"
+#include "mozilla/dom/RemoteWorkerManager.h"  // RemoteWorkerManager::GetRemoteType
 #include "mozilla/dom/RemoteWorkerTypes.h"
 #include "mozilla/dom/SharedWorkerBinding.h"
 #include "mozilla/dom/SharedWorkerChild.h"
@@ -198,13 +199,21 @@ already_AddRefed<SharedWorker> SharedWorker::Constructor(
   MOZ_ASSERT(loadInfo.mCookieJarSettings);
   net::CookieJarSettings::Cast(loadInfo.mCookieJarSettings)->Serialize(cjsData);
 
+  auto remoteType = RemoteWorkerManager::GetRemoteType(
+      loadInfo.mPrincipal, WorkerType::WorkerTypeShared);
+  if (NS_WARN_IF(remoteType.isErr())) {
+    aRv.Throw(remoteType.unwrapErr());
+    return nullptr;
+  }
+
   RemoteWorkerData remoteWorkerData(
       nsString(aScriptURL), baseURL, resolvedScriptURL, name,
       loadingPrincipalInfo, principalInfo, partitionedPrincipalInfo,
       loadInfo.mUseRegularPrincipal,
       loadInfo.mHasStorageAccessPermissionGranted, cjsData, loadInfo.mDomain,
       isSecureContext, ipcClientInfo, loadInfo.mReferrerInfo, storageAllowed,
-      void_t() /* OptionalServiceWorkerData */, agentClusterId);
+      void_t() /* OptionalServiceWorkerData */, agentClusterId,
+      remoteType.unwrap());
 
   PSharedWorkerChild* pActor = actorChild->SendPSharedWorkerConstructor(
       remoteWorkerData, loadInfo.mWindowID, portIdentifier.release());
@@ -377,8 +386,8 @@ void SharedWorker::ErrorPropagation(nsresult aError) {
   MOZ_ASSERT(mActor);
   MOZ_ASSERT(NS_FAILED(aError));
 
-  RefPtr<AsyncEventDispatcher> errorEvent = new AsyncEventDispatcher(
-      this, NS_LITERAL_STRING("error"), CanBubble::eNo);
+  RefPtr<AsyncEventDispatcher> errorEvent =
+      new AsyncEventDispatcher(this, u"error"_ns, CanBubble::eNo);
   errorEvent->PostDOMEvent();
 
   Close();

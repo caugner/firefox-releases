@@ -283,7 +283,7 @@ void ViewportFrame::Reflow(nsPresContext* aPresContext,
     // Deal with a non-incremental reflow or an incremental reflow
     // targeted at our one-and-only principal child frame.
     if (aReflowInput.ShouldReflowAllKids() || aReflowInput.IsBResize() ||
-        NS_SUBTREE_DIRTY(mFrames.FirstChild())) {
+        mFrames.FirstChild()->IsSubtreeDirty()) {
       // Reflow our one-and-only principal child frame
       nsIFrame* kidFrame = mFrames.FirstChild();
       ReflowOutput kidDesiredSize(aReflowInput);
@@ -386,15 +386,6 @@ nsSize ViewportFrame::AdjustViewportSizeForFixedPosition(
   // it has been set and it is larger than the computed size, otherwise use the
   // computed size.
   if (presShell->IsVisualViewportSizeSet()) {
-    if (RefPtr<MobileViewportManager> manager =
-            presShell->GetMobileViewportManager()) {
-      // Note that this runs during layout, and when we get here the root
-      // scrollframe has already been laid out. It may have added or removed
-      // scrollbars as a result of that layout, so we need to ensure the
-      // visual viewport is updated to account for that before we read the
-      // visual viewport size.
-      manager->UpdateVisualViewportSizeForPotentialScrollbarChange();
-    }
     if (presShell->GetDynamicToolbarState() == DynamicToolbarState::Collapsed &&
         result < presShell->GetVisualViewportSizeUpdatedByDynamicToolbar()) {
       // We need to use the viewport size updated by the dynamic toolbar in the
@@ -415,6 +406,6 @@ nsSize ViewportFrame::AdjustViewportSizeForFixedPosition(
 
 #ifdef DEBUG_FRAME_DUMP
 nsresult ViewportFrame::GetFrameName(nsAString& aResult) const {
-  return MakeFrameName(NS_LITERAL_STRING("Viewport"), aResult);
+  return MakeFrameName(u"Viewport"_ns, aResult);
 }
 #endif

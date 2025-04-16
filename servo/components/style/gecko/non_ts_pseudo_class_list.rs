@@ -32,6 +32,7 @@ macro_rules! apply_non_ts_list {
             [
                 ("-moz-table-border-nonzero", MozTableBorderNonzero, _, PSEUDO_CLASS_ENABLED_IN_UA_SHEETS),
                 ("-moz-browser-frame", MozBrowserFrame, _, PSEUDO_CLASS_ENABLED_IN_UA_SHEETS_AND_CHROME),
+                ("-moz-select-list-box", MozSelectListBox, _, PSEUDO_CLASS_ENABLED_IN_UA_SHEETS),
                 ("link", Link, IN_UNVISITED_STATE, _),
                 ("any-link", AnyLink, IN_VISITED_OR_UNVISITED_STATE, _),
                 ("visited", Visited, IN_VISITED_STATE, _),
@@ -47,6 +48,7 @@ macro_rules! apply_non_ts_list {
                 ("-moz-drag-over", MozDragOver, IN_DRAGOVER_STATE, _),
                 ("target", Target, IN_TARGET_STATE, _),
                 ("indeterminate", Indeterminate, IN_INDETERMINATE_STATE, _),
+                ("-moz-inert", MozInert, IN_MOZINERT_STATE, PSEUDO_CLASS_ENABLED_IN_UA_SHEETS),
                 ("-moz-devtools-highlighted", MozDevtoolsHighlighted, IN_DEVTOOLS_HIGHLIGHTED_STATE, PSEUDO_CLASS_ENABLED_IN_UA_SHEETS),
                 ("-moz-styleeditor-transitioning", MozStyleeditorTransitioning, IN_STYLEEDITOR_TRANSITIONING_STATE, PSEUDO_CLASS_ENABLED_IN_UA_SHEETS),
                 ("fullscreen", Fullscreen, IN_FULLSCREEN_STATE, _),

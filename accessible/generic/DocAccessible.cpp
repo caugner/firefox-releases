@@ -568,7 +568,10 @@ void DocAccessible::HandleScroll(nsINode* aTarget) {
   // kScrollEventInterval milliseconds, dispatch one now.
   if (!mLastScrollingDispatch.Get(aTarget, &lastDispatch) ||
       (now - lastDispatch).ToMilliseconds() >= kScrollEventInterval) {
-    DispatchScrollingEvent(aTarget, nsIAccessibleEvent::EVENT_SCROLLING);
+    // We can't fire events on a document whose tree isn't constructed yet.
+    if (HasLoadState(eTreeConstructed)) {
+      DispatchScrollingEvent(aTarget, nsIAccessibleEvent::EVENT_SCROLLING);
+    }
     mLastScrollingDispatch.Put(aTarget, now);
   }
 
@@ -824,8 +827,7 @@ void DocAccessible::AttributeChangedImpl(Accessible* aAccessible,
   // Check for namespaced ARIA attribute
   if (aNameSpaceID == kNameSpaceID_None) {
     // Check for hyphenated aria-foo property?
-    if (StringBeginsWith(nsDependentAtomString(aAttribute),
-                         NS_LITERAL_STRING("aria-"))) {
+    if (StringBeginsWith(nsDependentAtomString(aAttribute), u"aria-"_ns)) {
       ARIAAttributeChanged(aAccessible, aAttribute);
     }
   }
@@ -1591,7 +1593,9 @@ void DocAccessible::NotifyOfLoading(bool aIsReloading) {
 
   if (!IsLoadEventTarget()) return;
 
-  if (aIsReloading && !mLoadEventType) {
+  if (aIsReloading && !mLoadEventType &&
+      // We can't fire events on a document whose tree isn't constructed yet.
+      HasLoadState(eTreeConstructed)) {
     // Fire reload and state busy events on existing document accessible while
     // event from user input flag can be calculated properly and accessible
     // is alive. When new document gets loaded then this one is destroyed.
@@ -1641,6 +1645,13 @@ void DocAccessible::DoInitialUpdate() {
           ipcDoc->SendPDocAccessiblePlatformExtConstructor();
 #endif
         }
+#if !defined(XP_WIN)
+        // It's safe for us to mark top level documents as constructed in the
+        // parent process without receiving an explicit message, since we can
+        // never get queries for this document or descendants before parent
+        // process construction is complete.
+        ipcDoc->SetConstructedInParentProcess();
+#endif
       }
     }
   }

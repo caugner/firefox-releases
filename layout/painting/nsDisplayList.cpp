@@ -33,6 +33,8 @@
 #include "mozilla/StaticPrefs_gfx.h"
 #include "mozilla/StaticPrefs_layers.h"
 #include "mozilla/StaticPrefs_layout.h"
+#include "mozilla/SVGIntegrationUtils.h"
+#include "mozilla/SVGUtils.h"
 #include "mozilla/ViewportUtils.h"
 #include "nsCSSRendering.h"
 #include "nsCSSRenderingGradients.h"
@@ -41,8 +43,6 @@
 #include "nsStyleTransformMatrix.h"
 #include "nsTransitionManager.h"
 #include "gfxMatrix.h"
-#include "nsSVGIntegrationUtils.h"
-#include "nsSVGUtils.h"
 #include "nsLayoutUtils.h"
 #include "nsIScrollableFrame.h"
 #include "nsIFrameInlines.h"
@@ -56,8 +56,6 @@
 #include "nsBoxFrame.h"
 #include "nsImageFrame.h"
 #include "nsSubDocumentFrame.h"
-#include "SVGObserverUtils.h"
-#include "nsSVGClipPathFrame.h"
 #include "GeckoProfiler.h"
 #include "nsViewManager.h"
 #include "ImageLayers.h"
@@ -78,7 +76,9 @@
 #include "mozilla/Preferences.h"
 #include "mozilla/StyleAnimationValue.h"
 #include "mozilla/ServoBindings.h"
+#include "mozilla/SVGClipPathFrame.h"
 #include "mozilla/SVGMaskFrame.h"
+#include "mozilla/SVGObserverUtils.h"
 #include "mozilla/Telemetry.h"
 #include "mozilla/UniquePtr.h"
 #include "mozilla/Unused.h"
@@ -100,6 +100,7 @@
 #include "nsSliderFrame.h"
 #include "nsFocusManager.h"
 #include "ClientLayerManager.h"
+#include "TextDrawTarget.h"
 #include "mozilla/layers/AnimationHelper.h"
 #include "mozilla/layers/CompositorThread.h"
 #include "mozilla/layers/InputAPZContext.h"
@@ -207,7 +208,8 @@ nsCString ActiveScrolledRoot::ToString(
 
 static uint64_t AddAnimationsForWebRender(
     nsDisplayItem* aItem, mozilla::layers::RenderRootStateManager* aManager,
-    nsDisplayListBuilder* aDisplayListBuilder) {
+    nsDisplayListBuilder* aDisplayListBuilder,
+    const Maybe<LayoutDevicePoint>& aPosition = Nothing()) {
   EffectSet* effects =
       EffectSet::GetEffectSetForFrame(aItem->Frame(), aItem->GetType());
   if (!effects || effects->IsEmpty()) {
@@ -227,9 +229,9 @@ static uint64_t AddAnimationsForWebRender(
       aManager->CommandBuilder()
           .CreateOrRecycleWebRenderUserData<WebRenderAnimationData>(aItem);
   AnimationInfo& animationInfo = animationData->GetAnimationInfo();
-  animationInfo.AddAnimationsForDisplayItem(aItem->Frame(), aDisplayListBuilder,
-                                            aItem, aItem->GetType(),
-                                            layers::LayersBackend::LAYERS_WR);
+  animationInfo.AddAnimationsForDisplayItem(
+      aItem->Frame(), aDisplayListBuilder, aItem, aItem->GetType(),
+      aManager->LayerManager(), aPosition);
   animationInfo.StartPendingAnimations(
       aManager->LayerManager()->GetAnimationReadyTime());
 
@@ -321,8 +323,8 @@ void nsDisplayListBuilder::AddAnimationsAndTransitionsToLayer(
   }
 
   AnimationInfo& animationInfo = aLayer->GetAnimationInfo();
-  animationInfo.AddAnimationsForDisplayItem(
-      aFrame, aBuilder, aItem, aType, layers::LayersBackend::LAYERS_CLIENT);
+  animationInfo.AddAnimationsForDisplayItem(aFrame, aBuilder, aItem, aType,
+                                            aLayer->Manager());
   animationInfo.TransferMutatedFlagToLayer(aLayer);
 }
 
@@ -440,9 +442,11 @@ nsRect nsDisplayListBuilder::OutOfFlowDisplayData::ComputeVisibleRectForFrame(
   nsRect visible = aVisibleRect;
   nsRect dirtyRectRelativeToDirtyFrame = aDirtyRect;
 
+  bool inPartialUpdate =
+      aBuilder->IsRetainingDisplayList() && aBuilder->IsPartialUpdate();
   if (StaticPrefs::apz_allow_zooming() &&
       nsLayoutUtils::IsFixedPosFrameInDisplayPort(aFrame) &&
-      aBuilder->IsPaintingToWindow()) {
+      aBuilder->IsPaintingToWindow() && !inPartialUpdate) {
     dirtyRectRelativeToDirtyFrame =
         nsRect(nsPoint(0, 0), aFrame->GetParent()->GetSize());
 
@@ -483,7 +487,7 @@ nsRect nsDisplayListBuilder::OutOfFlowDisplayData::ComputeVisibleRectForFrame(
   *aOutDirtyRect = dirtyRectRelativeToDirtyFrame - aFrame->GetPosition();
   visible -= aFrame->GetPosition();
 
-  nsRect overflowRect = aFrame->GetVisualOverflowRect();
+  nsRect overflowRect = aFrame->InkOverflowRect();
 
   if (aFrame->IsTransformed() &&
       mozilla::EffectCompositor::HasAnimationsForCompositor(
@@ -801,6 +805,7 @@ void nsDisplayListBuilder::SetIsRelativeToLayoutViewport() {
 void nsDisplayListBuilder::UpdateShouldBuildAsyncZoomContainer() {
   Document* document = mReferenceFrame->PresContext()->Document();
   mBuildAsyncZoomContainer = !mIsRelativeToLayoutViewport &&
+                             !document->Fullscreen() &&
                              nsLayoutUtils::AllowZoomingForDocument(document);
 }
 
@@ -1223,7 +1228,7 @@ void nsDisplayListBuilder::MarkFramesForDisplayList(
       if (content && content->IsInNativeAnonymousSubtree() &&
           content->IsElement()) {
         auto classList = content->AsElement()->ClassList();
-        if (classList->Contains(NS_LITERAL_STRING("moz-accessiblecaret"))) {
+        if (classList->Contains(u"moz-accessiblecaret"_ns)) {
           continue;
         }
       }
@@ -1272,7 +1277,7 @@ void nsDisplayListBuilder::MarkFramesForDisplayList(
 /**
  * Mark all preserve-3d children with
  * NS_FRAME_FORCE_DISPLAY_LIST_DESCEND_INTO to make sure
- * nsFrame::BuildDisplayListForChild() would visit them.  Also compute
+ * nsIFrame::BuildDisplayListForChild() would visit them.  Also compute
  * dirty rect for preserve-3d children.
  *
  * @param aDirtyFrame is the frame to mark children extending context.
@@ -1974,7 +1979,7 @@ bool nsDisplayListBuilder::ShouldBuildScrollInfoItemsForHoisting() const {
    * ScrollFrameWillBuildScrollInfoLayer() in nsSliderFrame.cpp.
    */
   for (nsIFrame* frame : mSVGEffectsFrames) {
-    if (nsSVGIntegrationUtils::UsesSVGEffectsNotSupportedInCompositor(frame)) {
+    if (SVGIntegrationUtils::UsesSVGEffectsNotSupportedInCompositor(frame)) {
       return true;
     }
   }
@@ -2863,7 +2868,7 @@ bool nsDisplayItem::ForceActiveLayers() {
   return StaticPrefs::layers_force_active();
 }
 
-int32_t nsDisplayItem::ZIndex() const { return mFrame->ZIndex(); }
+int32_t nsDisplayItem::ZIndex() const { return mFrame->ZIndex().valueOr(0); }
 
 bool nsDisplayItem::ComputeVisibility(nsDisplayListBuilder* aBuilder,
                                       nsRegion* aVisibleRegion) {
@@ -4178,19 +4183,19 @@ nsDisplayThemedBackground::nsDisplayThemedBackground(
 
 void nsDisplayThemedBackground::Init(nsDisplayListBuilder* aBuilder) {
   const nsStyleDisplay* disp = StyleFrame()->StyleDisplay();
-  mAppearance = disp->mAppearance;
+  mAppearance = disp->EffectiveAppearance();
   StyleFrame()->IsThemed(disp, &mThemeTransparency);
 
   // Perform necessary RegisterThemeGeometry
   nsITheme* theme = StyleFrame()->PresContext()->Theme();
   nsITheme::ThemeGeometryType type =
-      theme->ThemeGeometryTypeForWidget(StyleFrame(), disp->mAppearance);
+      theme->ThemeGeometryTypeForWidget(StyleFrame(), mAppearance);
   if (type != nsITheme::eThemeGeometryTypeUnknown) {
     RegisterThemeGeometry(aBuilder, this, StyleFrame(), type);
   }
 
-  if (disp->mAppearance == StyleAppearance::MozWinBorderlessGlass ||
-      disp->mAppearance == StyleAppearance::MozWinGlass) {
+  if (mAppearance == StyleAppearance::MozWinBorderlessGlass ||
+      mAppearance == StyleAppearance::MozWinGlass) {
     aBuilder->SetGlassDisplayItem(this);
   }
 
@@ -4309,9 +4314,9 @@ nsRect nsDisplayThemedBackground::GetBoundsInternal() {
   nsPresContext* presContext = mFrame->PresContext();
 
   nsRect r = mBackgroundRect - ToReferenceFrame();
-  presContext->Theme()->GetWidgetOverflow(presContext->DeviceContext(), mFrame,
-                                          mFrame->StyleDisplay()->mAppearance,
-                                          &r);
+  presContext->Theme()->GetWidgetOverflow(
+      presContext->DeviceContext(), mFrame,
+      mFrame->StyleDisplay()->EffectiveAppearance(), &r);
   return r + ToReferenceFrame();
 }
 
@@ -4676,7 +4681,7 @@ void nsDisplayBackgroundColor::WriteDebugInfo(std::stringstream& aStream) {
 nsRect nsDisplayOutline::GetBounds(nsDisplayListBuilder* aBuilder,
                                    bool* aSnap) const {
   *aSnap = false;
-  return mFrame->GetVisualOverflowRectRelativeToSelf() + ToReferenceFrame();
+  return mFrame->InkOverflowRectRelativeToSelf() + ToReferenceFrame();
 }
 
 void nsDisplayOutline::Paint(nsDisplayListBuilder* aBuilder, gfxContext* aCtx) {
@@ -5722,7 +5727,7 @@ already_AddRefed<Layer> nsDisplayOpacity::BuildLayer(
  */
 static bool IsItemTooSmallForActiveLayer(nsIFrame* aFrame) {
   nsIntRect visibleDevPixels =
-      aFrame->GetVisualOverflowRectRelativeToSelf().ToOutsidePixels(
+      aFrame->InkOverflowRectRelativeToSelf().ToOutsidePixels(
           aFrame->PresContext()->AppUnitsPerDevPixel());
   return visibleDevPixels.Size() <
          nsIntSize(StaticPrefs::layout_min_active_layer_size(),
@@ -5912,7 +5917,7 @@ bool nsDisplayOpacity::ShouldFlattenAway(nsDisplayListBuilder* aBuilder) {
   const bool usingLayers = !aBuilder->IsPaintingForWebRender();
 
   if (ApplyToFilterOrMask(usingLayers)) {
-    MOZ_ASSERT(nsSVGIntegrationUtils::UsingEffectsForFrame(mFrame));
+    MOZ_ASSERT(SVGIntegrationUtils::UsingEffectsForFrame(mFrame));
     mChildOpacityState = ChildOpacityState::Applied;
     return true;
   }
@@ -7287,8 +7292,8 @@ nsDisplayTransform::nsDisplayTransform(nsDisplayListBuilder* aBuilder,
       mAnimatedGeometryRootForChildren(mAnimatedGeometryRoot),
       mAnimatedGeometryRootForScrollMetadata(mAnimatedGeometryRoot),
       mChildrenBuildingRect(aChildrenBuildingRect),
-      mIsTransformSeparator(true),
-      mAllowAsyncAnimation(false) {
+      mPrerenderDecision(PrerenderDecision::No),
+      mIsTransformSeparator(true) {
   MOZ_COUNT_CTOR(nsDisplayTransform);
   MOZ_ASSERT(aFrame, "Must have a frame!");
   Init(aBuilder, aList);
@@ -7297,14 +7302,14 @@ nsDisplayTransform::nsDisplayTransform(nsDisplayListBuilder* aBuilder,
 nsDisplayTransform::nsDisplayTransform(nsDisplayListBuilder* aBuilder,
                                        nsIFrame* aFrame, nsDisplayList* aList,
                                        const nsRect& aChildrenBuildingRect,
-                                       bool aAllowAsyncAnimation)
+                                       PrerenderDecision aPrerenderDecision)
     : nsDisplayHitTestInfoBase(aBuilder, aFrame),
       mTransformGetter(nullptr),
       mAnimatedGeometryRootForChildren(mAnimatedGeometryRoot),
       mAnimatedGeometryRootForScrollMetadata(mAnimatedGeometryRoot),
       mChildrenBuildingRect(aChildrenBuildingRect),
-      mIsTransformSeparator(false),
-      mAllowAsyncAnimation(aAllowAsyncAnimation) {
+      mPrerenderDecision(aPrerenderDecision),
+      mIsTransformSeparator(false) {
   MOZ_COUNT_CTOR(nsDisplayTransform);
   MOZ_ASSERT(aFrame, "Must have a frame!");
   SetReferenceFrameToAncestor(aBuilder);
@@ -7320,8 +7325,8 @@ nsDisplayTransform::nsDisplayTransform(
       mAnimatedGeometryRootForChildren(mAnimatedGeometryRoot),
       mAnimatedGeometryRootForScrollMetadata(mAnimatedGeometryRoot),
       mChildrenBuildingRect(aChildrenBuildingRect),
-      mIsTransformSeparator(false),
-      mAllowAsyncAnimation(false) {
+      mPrerenderDecision(PrerenderDecision::No),
+      mIsTransformSeparator(false) {
   MOZ_COUNT_CTOR(nsDisplayTransform);
   MOZ_ASSERT(aFrame, "Must have a frame!");
   Init(aBuilder, aList);
@@ -7561,7 +7566,7 @@ Matrix4x4 nsDisplayTransform::GetResultingTransformMatrixInternal(
   // Apply any translation due to 'transform-origin' and/or 'transform-box':
   result.ChangeBasis(aProperties.mToTransformOrigin);
 
-  // See the comment for nsSVGContainerFrame::HasChildrenOnlyTransform for
+  // See the comment for SVGContainerFrame::HasChildrenOnlyTransform for
   // an explanation of what children-only transforms are.
   bool parentHasChildrenOnlyTransform =
       hasSVGTransforms && !parentsChildrenOnlyTransform.IsIdentity();
@@ -7640,12 +7645,28 @@ bool nsDisplayOpacity::CanUseAsyncAnimations(nsDisplayListBuilder* aBuilder) {
 }
 
 bool nsDisplayTransform::CanUseAsyncAnimations(nsDisplayListBuilder* aBuilder) {
-  return mAllowAsyncAnimation;
+  return mPrerenderDecision != PrerenderDecision::No;
 }
 
 bool nsDisplayBackgroundColor::CanUseAsyncAnimations(
     nsDisplayListBuilder* aBuilder) {
   return StaticPrefs::gfx_omta_background_color();
+}
+
+static bool IsInStickyPositionedSubtree(const nsIFrame* aFrame) {
+  for (const nsIFrame* frame = aFrame; frame;
+       frame = nsLayoutUtils::GetCrossDocParentFrame(frame)) {
+    if (frame->IsStickyPositioned()) {
+      return true;
+    }
+  }
+  return false;
+}
+
+static bool ShouldUsePartialPrerender(const nsIFrame* aFrame) {
+  return StaticPrefs::layout_animation_prerender_partial() &&
+         // Bug 1642547: Support partial prerender for position:sticky elements.
+         !IsInStickyPositionedSubtree(aFrame);
 }
 
 /* static */
@@ -7713,7 +7734,7 @@ auto nsDisplayTransform::ShouldPrerenderTransformedContent(
 
   // If the incoming dirty rect already contains the entire overflow area,
   // we are already rendering the entire content.
-  nsRect overflow = aFrame->GetVisualOverflowRectRelativeToSelf();
+  nsRect overflow = aFrame->InkOverflowRectRelativeToSelf();
   // UntransformRect will not touch the output rect (`&untranformedDirtyRect`)
   // in cases of non-invertible transforms, so we set `untransformedRect` to
   // `aDirtyRect` as an initial value for such cases.
@@ -7732,6 +7753,15 @@ auto nsDisplayTransform::ShouldPrerenderTransformedContent(
   uint32_t absoluteLimitY =
       StaticPrefs::layout_animation_prerender_absolute_limit_y();
   nsSize refSize = aBuilder->RootReferenceFrame()->GetSize();
+
+  float resolution = aFrame->PresShell()->GetCumulativeResolution();
+  if (resolution < 1.0f) {
+    refSize.SizeTo(
+        NSCoordSaturatingNonnegativeMultiply(refSize.width, 1.0f / resolution),
+        NSCoordSaturatingNonnegativeMultiply(refSize.height,
+                                             1.0f / resolution));
+  }
+
   // Only prerender if the transformed frame's size is <= a multiple of the
   // reference frame size (~viewport), and less than an absolute limit.
   // Both the ratio and the absolute limit are configurable.
@@ -7760,7 +7790,7 @@ auto nsDisplayTransform::ShouldPrerenderTransformedContent(
     return result;
   }
 
-  if (StaticPrefs::layout_animation_prerender_partial()) {
+  if (ShouldUsePartialPrerender(aFrame)) {
     *aDirtyRect = nsLayoutUtils::ComputePartialPrerenderArea(
         aFrame, untransformedDirtyRect, overflow, maxSize);
     result.mDecision = PrerenderDecision::Partial;
@@ -7938,7 +7968,9 @@ bool nsDisplayTransform::CreateWebRenderCommands(
   uint64_t animationsId =
       mIsTransformSeparator
           ? 0
-          : AddAnimationsForWebRender(this, aManager, aDisplayListBuilder);
+          : AddAnimationsForWebRender(
+                this, aManager, aDisplayListBuilder,
+                IsPartialPrerender() ? Some(position) : Nothing());
   wr::WrAnimationProperty prop{
       wr::WrAnimationType::Transform,
       animationsId,
@@ -8044,7 +8076,7 @@ already_AddRefed<Layer> nsDisplayTransform::BuildLayer(
                                ~Layer::CONTENT_EXTEND_3D_CONTEXT);
   }
 
-  if (mAllowAsyncAnimation) {
+  if (CanUseAsyncAnimations(aBuilder)) {
     mFrame->SetProperty(nsIFrame::RefusedAsyncAnimationProperty(), false);
   }
 
@@ -8054,7 +8086,7 @@ already_AddRefed<Layer> nsDisplayTransform::BuildLayer(
         container, aBuilder, this, mFrame, GetType());
   }
 
-  if (mAllowAsyncAnimation && MayBeAnimated(aBuilder)) {
+  if (CanUseAsyncAnimations(aBuilder) && MayBeAnimated(aBuilder)) {
     // Only allow async updates to the transform if we're an animated layer,
     // since that's what triggers us to set the correct AGR in the constructor
     // and makes sure FrameLayerBuilder won't compute occlusions for this layer.
@@ -8132,7 +8164,7 @@ bool nsDisplayTransform::ComputeVisibility(nsDisplayListBuilder* aBuilder,
    * If we can't untransform, take the entire overflow rect */
   nsRect untransformedVisibleRect;
   if (!UntransformPaintRect(aBuilder, &untransformedVisibleRect)) {
-    untransformedVisibleRect = mFrame->GetVisualOverflowRectRelativeToSelf();
+    untransformedVisibleRect = mFrame->InkOverflowRectRelativeToSelf();
   }
 
   bool snap;
@@ -8531,7 +8563,19 @@ void nsDisplayTransform::WriteDebugInfo(std::stringstream& aStream) {
     aStream << " combines-3d-with-ancestors";
   }
 
-  aStream << " allowAsync(" << (mAllowAsyncAnimation ? "true" : "false") << ")";
+  aStream << " prerender(";
+  switch (mPrerenderDecision) {
+    case PrerenderDecision::No:
+      aStream << "no";
+      break;
+    case PrerenderDecision::Partial:
+      aStream << "partial";
+      break;
+    case PrerenderDecision::Full:
+      aStream << "full";
+      break;
+  }
+  aStream << ")";
   aStream << " childrenBuildingRect" << mChildrenBuildingRect;
 }
 
@@ -8703,6 +8747,12 @@ bool nsDisplayPerspective::CreateWebRenderCommands(
   return true;
 }
 
+bool nsDisplayPerspective::ComputeVisibility(nsDisplayListBuilder* aBuilder,
+                                             nsRegion* aVisibleRegion) {
+  return mList.ComputeVisibilityForSublist(aBuilder, aVisibleRegion,
+                                           GetPaintRect());
+}
+
 nsDisplayText::nsDisplayText(nsDisplayListBuilder* aBuilder,
                              nsTextFrame* aFrame,
                              const Maybe<bool>& aIsSelected)
@@ -8712,7 +8762,7 @@ nsDisplayText::nsDisplayText(nsDisplayListBuilder* aBuilder,
       mVisIEndEdge(0) {
   MOZ_COUNT_CTOR(nsDisplayText);
   mIsFrameSelected = aIsSelected;
-  mBounds = mFrame->GetVisualOverflowRectRelativeToSelf() + ToReferenceFrame();
+  mBounds = mFrame->InkOverflowRectRelativeToSelf() + ToReferenceFrame();
   // Bug 748228
   mBounds.Inflate(mFrame->PresContext()->AppUnitsPerDevPixel());
 }
@@ -8966,18 +9016,18 @@ void nsDisplayEffectsBase::HitTest(nsDisplayListBuilder* aBuilder,
                                    const nsRect& aRect, HitTestState* aState,
                                    nsTArray<nsIFrame*>* aOutFrames) {
   nsPoint rectCenter(aRect.x + aRect.width / 2, aRect.y + aRect.height / 2);
-  if (nsSVGIntegrationUtils::HitTestFrameForEffects(
+  if (SVGIntegrationUtils::HitTestFrameForEffects(
           mFrame, rectCenter - ToReferenceFrame())) {
     mList.HitTest(aBuilder, aRect, aState, aOutFrames);
   }
 }
 
 gfxRect nsDisplayEffectsBase::BBoxInUserSpace() const {
-  return nsSVGUtils::GetBBox(mFrame);
+  return SVGUtils::GetBBox(mFrame);
 }
 
 gfxPoint nsDisplayEffectsBase::UserSpaceOffset() const {
-  return nsSVGUtils::FrameSpaceInCSSPxToUserSpaceOffset(mFrame);
+  return SVGUtils::FrameSpaceInCSSPxToUserSpaceOffset(mFrame);
 }
 
 void nsDisplayEffectsBase::ComputeInvalidationRegion(
@@ -9005,7 +9055,7 @@ bool nsDisplayEffectsBase::ValidateSVGFrame() {
   const nsIContent* content = mFrame->GetContent();
   bool hasSVGLayout = mFrame->HasAnyStateBits(NS_FRAME_SVG_LAYOUT);
   if (hasSVGLayout) {
-    nsSVGDisplayableFrame* svgFrame = do_QueryFrame(mFrame);
+    ISVGDisplayableFrame* svgFrame = do_QueryFrame(mFrame);
     if (!svgFrame || !mFrame->GetContent()->IsSVGElement()) {
       NS_ASSERTION(false, "why?");
       return false;
@@ -9018,7 +9068,7 @@ bool nsDisplayEffectsBase::ValidateSVGFrame() {
   return true;
 }
 
-typedef nsSVGIntegrationUtils::PaintFramesParams PaintFramesParams;
+typedef SVGIntegrationUtils::PaintFramesParams PaintFramesParams;
 
 static void ComputeMaskGeometry(PaintFramesParams& aParams) {
   // Properties are added lazily and may have been removed by a restyle, so
@@ -9178,12 +9228,12 @@ bool nsDisplayMasksAndClipPaths::PaintMask(nsDisplayListBuilder* aBuilder,
 
   imgDrawingParams imgParams(aBuilder->GetImageDecodeFlags());
   nsRect borderArea = nsRect(ToReferenceFrame(), mFrame->GetSize());
-  nsSVGIntegrationUtils::PaintFramesParams params(
-      *aMaskContext, mFrame, mBounds, borderArea, aBuilder, nullptr,
-      mHandleOpacity, imgParams);
+  SVGIntegrationUtils::PaintFramesParams params(*aMaskContext, mFrame, mBounds,
+                                                borderArea, aBuilder, nullptr,
+                                                mHandleOpacity, imgParams);
   ComputeMaskGeometry(params);
   bool maskIsComplete = false;
-  bool painted = nsSVGIntegrationUtils::PaintMask(params, maskIsComplete);
+  bool painted = SVGIntegrationUtils::PaintMask(params, maskIsComplete);
   if (aMaskPainted) {
     *aMaskPainted = painted;
   }
@@ -9192,7 +9242,8 @@ bool nsDisplayMasksAndClipPaths::PaintMask(nsDisplayListBuilder* aBuilder,
 
   return maskIsComplete &&
          (imgParams.result == ImgDrawResult::SUCCESS ||
-          imgParams.result == ImgDrawResult::SUCCESS_NOT_COMPLETE);
+          imgParams.result == ImgDrawResult::SUCCESS_NOT_COMPLETE ||
+          imgParams.result == ImgDrawResult::WRONG_SIZE);
 }
 
 LayerState nsDisplayMasksAndClipPaths::GetLayerState(
@@ -9219,7 +9270,7 @@ bool nsDisplayMasksAndClipPaths::CanPaintOnMaskLayer(LayerManager* aManager) {
     return false;
   }
 
-  if (!nsSVGIntegrationUtils::IsMaskResourceReady(mFrame)) {
+  if (!SVGIntegrationUtils::IsMaskResourceReady(mFrame)) {
     return false;
   }
 
@@ -9295,13 +9346,13 @@ void nsDisplayMasksAndClipPaths::PaintAsLayer(nsDisplayListBuilder* aBuilder,
 
   imgDrawingParams imgParams(aBuilder->GetImageDecodeFlags());
   nsRect borderArea = nsRect(ToReferenceFrame(), mFrame->GetSize());
-  nsSVGIntegrationUtils::PaintFramesParams params(
-      *aCtx, mFrame, GetPaintRect(), borderArea, aBuilder, aManager,
-      mHandleOpacity, imgParams);
+  SVGIntegrationUtils::PaintFramesParams params(*aCtx, mFrame, GetPaintRect(),
+                                                borderArea, aBuilder, aManager,
+                                                mHandleOpacity, imgParams);
 
   ComputeMaskGeometry(params);
 
-  nsSVGIntegrationUtils::PaintMaskAndClipPath(params);
+  SVGIntegrationUtils::PaintMaskAndClipPath(params);
 
   context->PopClip();
 
@@ -9322,13 +9373,13 @@ void nsDisplayMasksAndClipPaths::PaintWithContentsPaintCallback(
 
   imgDrawingParams imgParams(aBuilder->GetImageDecodeFlags());
   nsRect borderArea = nsRect(ToReferenceFrame(), mFrame->GetSize());
-  nsSVGIntegrationUtils::PaintFramesParams params(*aCtx, mFrame, GetPaintRect(),
-                                                  borderArea, aBuilder, nullptr,
-                                                  mHandleOpacity, imgParams);
+  SVGIntegrationUtils::PaintFramesParams params(*aCtx, mFrame, GetPaintRect(),
+                                                borderArea, aBuilder, nullptr,
+                                                mHandleOpacity, imgParams);
 
   ComputeMaskGeometry(params);
 
-  nsSVGIntegrationUtils::PaintMaskAndClipPath(params, aPaintChildren);
+  SVGIntegrationUtils::PaintMaskAndClipPath(params, aPaintChildren);
 
   context->PopClip();
 
@@ -9341,7 +9392,7 @@ static Maybe<wr::WrClipId> CreateSimpleClipRegion(
   nsIFrame* frame = aDisplayItem.Frame();
   auto* style = frame->StyleSVGReset();
   MOZ_ASSERT(style->HasClipPath() || style->HasMask());
-  if (!nsSVGIntegrationUtils::UsingSimpleClipPathForFrame(frame)) {
+  if (!SVGIntegrationUtils::UsingSimpleClipPathForFrame(frame)) {
     return Nothing();
   }
 
@@ -9405,7 +9456,7 @@ static Maybe<wr::WrClipId> CreateSimpleClipRegion(
       // without using a mask image.
       //
       // And if you _really really_ need to add an exception, add it to
-      // nsSVGIntegrationUtils::UsingSimpleClipPathForFrame
+      // SVGIntegrationUtils::UsingSimpleClipPathForFrame
       MOZ_ASSERT_UNREACHABLE("Unhandled shape id?");
       return Nothing();
   }
@@ -9478,7 +9529,7 @@ bool nsDisplayMasksAndClipPaths::CreateWebRenderCommands(
 void nsDisplayMasksAndClipPaths::SelectOpacityOptimization(
     const bool aUsingLayers) {
   if (aUsingLayers ||
-      !nsSVGIntegrationUtils::UsingSimpleClipPathForFrame(mFrame)) {
+      !SVGIntegrationUtils::UsingSimpleClipPathForFrame(mFrame)) {
     // Handle opacity in mask and clip-path drawing code.
     SetHandleOpacity();
     MOZ_ASSERT(!mApplyOpacityWithSimpleClipPath);
@@ -9517,7 +9568,7 @@ void nsDisplayMasksAndClipPaths::PrintEffects(nsACString& aTo) {
     first = false;
     aTo += nsPrintfCString("opacity(%f)", mFrame->StyleEffects()->mOpacity);
   }
-  nsSVGClipPathFrame* clipPathFrame;
+  SVGClipPathFrame* clipPathFrame;
   // XXX Check return value?
   SVGObserverUtils::GetAndObserveClipPath(firstFrame, &clipPathFrame);
   if (clipPathFrame) {
@@ -9588,7 +9639,7 @@ bool nsDisplayBackdropRootContainer::CreateWebRenderCommands(
 /* static */
 bool nsDisplayBackdropFilters::CanCreateWebRenderCommands(
     nsDisplayListBuilder* aBuilder, nsIFrame* aFrame) {
-  return nsSVGIntegrationUtils::CanCreateWebRenderFiltersForFrame(aFrame);
+  return SVGIntegrationUtils::CanCreateWebRenderFiltersForFrame(aFrame);
 }
 
 bool nsDisplayBackdropFilters::CreateWebRenderCommands(
@@ -9600,10 +9651,10 @@ bool nsDisplayBackdropFilters::CreateWebRenderCommands(
   WrFiltersHolder wrFilters;
   Maybe<nsRect> filterClip;
   auto filterChain = mFrame->StyleEffects()->mBackdropFilters.AsSpan();
-  if (!nsSVGIntegrationUtils::CreateWebRenderCSSFilters(filterChain, mFrame,
-                                                        wrFilters) &&
-      !nsSVGIntegrationUtils::BuildWebRenderFilters(mFrame, filterChain,
-                                                    wrFilters, filterClip)) {
+  if (!SVGIntegrationUtils::CreateWebRenderCSSFilters(filterChain, mFrame,
+                                                      wrFilters) &&
+      !SVGIntegrationUtils::BuildWebRenderFilters(mFrame, filterChain,
+                                                  wrFilters, filterClip)) {
     return false;
   }
 
@@ -9639,7 +9690,7 @@ bool nsDisplayBackdropFilters::CreateWebRenderCommands(
 nsDisplayFilters::nsDisplayFilters(nsDisplayListBuilder* aBuilder,
                                    nsIFrame* aFrame, nsDisplayList* aList)
     : nsDisplayEffectsBase(aBuilder, aFrame, aList),
-      mEffectsBounds(aFrame->GetVisualOverflowRectRelativeToSelf()) {
+      mEffectsBounds(aFrame->InkOverflowRectRelativeToSelf()) {
   MOZ_COUNT_CTOR(nsDisplayFilters);
 }
 
@@ -9684,7 +9735,7 @@ LayerState nsDisplayFilters::GetLayerState(
 bool nsDisplayFilters::ComputeVisibility(nsDisplayListBuilder* aBuilder,
                                          nsRegion* aVisibleRegion) {
   nsPoint offset = ToReferenceFrame();
-  nsRect dirtyRect = nsSVGIntegrationUtils::GetRequiredSourceForInvalidArea(
+  nsRect dirtyRect = SVGIntegrationUtils::GetRequiredSourceForInvalidArea(
                          mFrame, GetPaintRect() - offset) +
                      offset;
 
@@ -9717,15 +9768,15 @@ void nsDisplayFilters::PaintAsLayer(nsDisplayListBuilder* aBuilder,
                                     gfxContext* aCtx, LayerManager* aManager) {
   imgDrawingParams imgParams(aBuilder->GetImageDecodeFlags());
   nsRect borderArea = nsRect(ToReferenceFrame(), mFrame->GetSize());
-  nsSVGIntegrationUtils::PaintFramesParams params(
-      *aCtx, mFrame, GetPaintRect(), borderArea, aBuilder, aManager,
-      mHandleOpacity, imgParams);
-  nsSVGIntegrationUtils::PaintFilter(params);
+  SVGIntegrationUtils::PaintFramesParams params(*aCtx, mFrame, GetPaintRect(),
+                                                borderArea, aBuilder, aManager,
+                                                mHandleOpacity, imgParams);
+  SVGIntegrationUtils::PaintFilter(params);
   nsDisplayFiltersGeometry::UpdateDrawResult(this, imgParams.result);
 }
 
 bool nsDisplayFilters::CanCreateWebRenderCommands() {
-  return nsSVGIntegrationUtils::CanCreateWebRenderFiltersForFrame(mFrame);
+  return SVGIntegrationUtils::CanCreateWebRenderFiltersForFrame(mFrame);
 }
 
 bool nsDisplayFilters::CreateWebRenderCommands(
@@ -9739,10 +9790,10 @@ bool nsDisplayFilters::CreateWebRenderCommands(
   WrFiltersHolder wrFilters;
   Maybe<nsRect> filterClip;
   auto filterChain = mFrame->StyleEffects()->mFilters.AsSpan();
-  if (!nsSVGIntegrationUtils::CreateWebRenderCSSFilters(filterChain, mFrame,
-                                                        wrFilters) &&
-      !nsSVGIntegrationUtils::BuildWebRenderFilters(mFrame, filterChain,
-                                                    wrFilters, filterClip)) {
+  if (!SVGIntegrationUtils::CreateWebRenderCSSFilters(filterChain, mFrame,
+                                                      wrFilters) &&
+      !SVGIntegrationUtils::BuildWebRenderFilters(mFrame, filterChain,
+                                                  wrFilters, filterClip)) {
     return false;
   }
 
@@ -10007,15 +10058,15 @@ PaintTelemetry::AutoRecordPaint::~AutoRecordPaint() {
   // If the total time was >= 16ms, then it's likely we missed a frame due to
   // painting. We bucket these metrics separately.
   if (totalMs >= 16.0) {
-    recordLarge(NS_LITERAL_CSTRING("dl"), dlMs);
-    recordLarge(NS_LITERAL_CSTRING("flb"), flbMs);
-    recordLarge(NS_LITERAL_CSTRING("fr"), frMs);
-    recordLarge(NS_LITERAL_CSTRING("r"), rMs);
+    recordLarge("dl"_ns, dlMs);
+    recordLarge("flb"_ns, flbMs);
+    recordLarge("fr"_ns, frMs);
+    recordLarge("r"_ns, rMs);
   } else {
-    recordSmall(NS_LITERAL_CSTRING("dl"), dlMs);
-    recordSmall(NS_LITERAL_CSTRING("flb"), flbMs);
-    recordSmall(NS_LITERAL_CSTRING("fr"), frMs);
-    recordSmall(NS_LITERAL_CSTRING("r"), rMs);
+    recordSmall("dl"_ns, dlMs);
+    recordSmall("flb"_ns, flbMs);
+    recordSmall("fr"_ns, frMs);
+    recordSmall("r"_ns, rMs);
   }
 
   Telemetry::Accumulate(Telemetry::PAINT_BUILD_LAYERS_TIME, flbMs);

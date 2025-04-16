@@ -16,6 +16,7 @@
 #include "mozilla/net/NeckoChannelParams.h"
 #include "mozilla/PermissionManager.h"
 #include "mozIThirdPartyUtil.h"
+#include "nsGlobalWindowInner.h"
 #include "nsIChannel.h"
 #include "nsIPermission.h"
 #include "nsIURI.h"
@@ -23,6 +24,7 @@
 #include "nsPIDOMWindow.h"
 #include "nsSandboxFlags.h"
 #include "nsScriptSecurityManager.h"
+#include "PartitioningExceptionList.h"
 
 #define ANTITRACKING_PERM_KEY "3rdPartyStorage"
 
@@ -92,7 +94,7 @@ void AntiTrackingUtils::CreateStoragePermissionKey(
   MOZ_ASSERT(aPermissionKey.IsEmpty());
 
   static const nsLiteralCString prefix =
-      NS_LITERAL_CSTRING(ANTITRACKING_PERM_KEY "^");
+      nsLiteralCString(ANTITRACKING_PERM_KEY "^");
 
   aPermissionKey.SetCapacity(prefix.Length() + aTrackingOrigin.Length());
   aPermissionKey.Append(prefix);
@@ -341,6 +343,11 @@ bool AntiTrackingUtils::CheckStoragePermission(nsIPrincipal* aPrincipal,
     return false;
   }
 
+  nsAutoCString targetOrigin;
+  if (NS_WARN_IF(NS_FAILED(targetPrincipal->GetAsciiOrigin(targetOrigin)))) {
+    return false;
+  }
+
   nsCOMPtr<nsIURI> trackingURI;
   rv = aChannel->GetURI(getter_AddRefs(trackingURI));
   if (NS_WARN_IF(NS_FAILED(rv))) {
@@ -357,6 +364,10 @@ bool AntiTrackingUtils::CheckStoragePermission(nsIPrincipal* aPrincipal,
   AntiTrackingUtils::CreateStoragePermissionKey(trackingOrigin, type);
 
   uint32_t unusedReason = 0;
+
+  if (PartitioningExceptionList::Check(targetOrigin, trackingOrigin)) {
+    return true;
+  }
 
   return AntiTrackingUtils::CheckStoragePermission(
       targetPrincipal, type, NS_UsePrivateBrowsing(aChannel), &unusedReason,
@@ -615,10 +626,10 @@ nsCString AntiTrackingUtils::GrantedReasonToString(
     ContentBlockingNotifier::StorageAccessPermissionGrantedReason aReason) {
   switch (aReason) {
     case ContentBlockingNotifier::eOpener:
-      return NS_LITERAL_CSTRING("opener");
+      return "opener"_ns;
     case ContentBlockingNotifier::eOpenerAfterUserInteraction:
-      return NS_LITERAL_CSTRING("user interaction");
+      return "user interaction"_ns;
     default:
-      return NS_LITERAL_CSTRING("stroage access API");
+      return "stroage access API"_ns;
   }
 }

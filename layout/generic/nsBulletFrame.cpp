@@ -13,7 +13,6 @@
 
 #include "CounterStyleManager.h"
 #include "ImageLayers.h"
-#include "SVGImageContext.h"
 #include "TextDrawTarget.h"
 #include "UnitTransforms.h"
 #include "gfx2DGlue.h"
@@ -23,6 +22,7 @@
 #include "imgRequestProxy.h"
 #include "mozilla/MathAlgorithms.h"
 #include "mozilla/PresShell.h"
+#include "mozilla/SVGImageContext.h"
 #include "mozilla/dom/Document.h"
 #include "mozilla/gfx/2D.h"
 #include "mozilla/gfx/PathHelpers.h"
@@ -64,7 +64,7 @@ NS_IMPL_FRAMEARENA_HELPERS(nsBulletFrame)
 #ifdef DEBUG
 NS_QUERYFRAME_HEAD(nsBulletFrame)
   NS_QUERYFRAME_ENTRY(nsBulletFrame)
-NS_QUERYFRAME_TAIL_INHERITING(nsFrame)
+NS_QUERYFRAME_TAIL_INHERITING(nsIFrame)
 #endif
 
 nsBulletFrame::~nsBulletFrame() = default;
@@ -84,12 +84,12 @@ void nsBulletFrame::DestroyFrom(nsIFrame* aDestructRoot,
   }
 
   // Let base class do the rest
-  nsFrame::DestroyFrom(aDestructRoot, aPostDestroyData);
+  nsIFrame::DestroyFrom(aDestructRoot, aPostDestroyData);
 }
 
 #ifdef DEBUG_FRAME_DUMP
 nsresult nsBulletFrame::GetFrameName(nsAString& aResult) const {
-  return MakeFrameName(NS_LITERAL_STRING("Bullet"), aResult);
+  return MakeFrameName(u"Bullet"_ns, aResult);
 }
 #endif
 
@@ -101,7 +101,7 @@ bool nsBulletFrame::IsSelfEmpty() {
 
 /* virtual */
 void nsBulletFrame::DidSetComputedStyle(ComputedStyle* aOldComputedStyle) {
-  nsFrame::DidSetComputedStyle(aOldComputedStyle);
+  nsIFrame::DidSetComputedStyle(aOldComputedStyle);
 
   imgRequestProxy* newRequest = StyleList()->GetListStyleImage();
 
@@ -549,7 +549,7 @@ class nsDisplayBullet final : public nsPaintedDisplayItem {
   virtual nsRect GetBounds(nsDisplayListBuilder* aBuilder,
                            bool* aSnap) const override {
     *aSnap = false;
-    return mFrame->GetVisualOverflowRectRelativeToSelf() + ToReferenceFrame();
+    return mFrame->InkOverflowRectRelativeToSelf() + ToReferenceFrame();
   }
 
   virtual bool CreateWebRenderCommands(
@@ -667,6 +667,8 @@ Maybe<BulletRenderer> nsBulletFrame::CreateBulletRenderer(
         nsCOMPtr<imgIContainer> imageCon;
         mImageRequest->GetImage(getter_AddRefs(imageCon));
         if (imageCon) {
+          imageCon = nsLayoutUtils::OrientImage(
+              imageCon, StyleVisibility()->mImageOrientation);
           nsRect dest(padding.left, padding.top,
                       mRect.width - (padding.left + padding.right),
                       mRect.height - (padding.top + padding.bottom));

@@ -48,6 +48,8 @@
 #include "mozilla/net/DocumentLoadListener.h"
 #include "mozilla/net/DocumentChannel.h"
 
+#include "mozilla/dom/nsHTTPSOnlyUtils.h"
+
 using namespace mozilla;
 using namespace mozilla::dom;
 
@@ -211,8 +213,9 @@ nsMixedContentBlocker::ShouldLoad(nsIURI* aContentLocation,
   // callers of this method don't know whether the load went through cached
   // image redirects.  This is handled by direct callers of the static
   // ShouldLoad.
-  nsresult rv = ShouldLoad(false,  // aHadInsecureImageRedirect
-                           aContentLocation, aLoadInfo, aMimeGuess, aDecision);
+  nsresult rv =
+      ShouldLoad(false,  // aHadInsecureImageRedirect
+                 aContentLocation, aLoadInfo, aMimeGuess, true, aDecision);
 
   if (*aDecision == nsIContentPolicy::REJECT_REQUEST) {
     NS_SetRequestBlockingReason(aLoadInfo,
@@ -268,7 +271,7 @@ bool nsMixedContentBlocker::IsPotentiallyTrustworthyOnion(nsIURI* aURL) {
   nsAutoCString host;
   nsresult rv = aURL->GetHost(host);
   NS_ENSURE_SUCCESS(rv, false);
-  return StringEndsWith(host, NS_LITERAL_CSTRING(".onion"));
+  return StringEndsWith(host, ".onion"_ns);
 }
 
 // static
@@ -378,6 +381,7 @@ nsresult nsMixedContentBlocker::ShouldLoad(bool aHadInsecureImageRedirect,
                                            nsIURI* aContentLocation,
                                            nsILoadInfo* aLoadInfo,
                                            const nsACString& aMimeGuess,
+                                           bool aReportError,
                                            int16_t* aDecision) {
   // Asserting that we are on the main thread here and hence do not have to lock
   // and unlock security.mixed_content.block_active_content and
@@ -390,6 +394,8 @@ nsresult nsMixedContentBlocker::ShouldLoad(bool aHadInsecureImageRedirect,
   nsCOMPtr<nsIPrincipal> triggeringPrincipal = aLoadInfo->TriggeringPrincipal();
   RefPtr<WindowContext> requestingWindow =
       WindowContext::GetById(aLoadInfo->GetInnerWindowID());
+
+  bool isPreload = nsContentUtils::IsPreloadType(contentType);
 
   // The content policy type that we receive may be an internal type for
   // scripts.  Let's remember if we have seen a worker type, and reset it to the
@@ -635,7 +641,8 @@ nsresult nsMixedContentBlocker::ShouldLoad(bool aHadInsecureImageRedirect,
   }
 
   // If https-only mode is enabled we'll upgrade this later anyway
-  if (StaticPrefs::dom_security_https_only_mode()) {
+  bool isPrivateWin = aLoadInfo->GetOriginAttributes().mPrivateBrowsingId > 0;
+  if (nsHTTPSOnlyUtils::IsHttpsOnlyModeEnabled(isPrivateWin)) {
     *aDecision = ACCEPT;
     return NS_OK;
   }
@@ -699,8 +706,7 @@ nsresult nsMixedContentBlocker::ShouldLoad(bool aHadInsecureImageRedirect,
                         EmptyString(),  // aScriptSample
                         0,              // aLineNumber
                         0,              // aColumnNumber
-                        nsIScriptError::errorFlag,
-                        NS_LITERAL_CSTRING("blockAllMixedContent"),
+                        nsIScriptError::errorFlag, "blockAllMixedContent"_ns,
                         requestingWindow->Id(),
                         !!aLoadInfo->GetOriginAttributes().mPrivateBrowsingId);
     *aDecision = REJECT_REQUEST;
@@ -767,10 +773,11 @@ nsresult nsMixedContentBlocker::ShouldLoad(bool aHadInsecureImageRedirect,
   }
 
   // set hasMixedContentObjectSubrequest on this object if necessary
-  if (contentType == TYPE_OBJECT_SUBREQUEST) {
+  if (contentType == TYPE_OBJECT_SUBREQUEST && aReportError) {
     if (!StaticPrefs::security_mixed_content_block_object_subrequest()) {
       nsAutoCString messageLookUpKey(
           "LoadingMixedDisplayObjectSubrequestDeprecation");
+
       LogMixedContentMessage(classification, aContentLocation, topWC->Id(),
                              eUserOverride, requestingLocation,
                              messageLookUpKey);
@@ -811,11 +818,15 @@ nsresult nsMixedContentBlocker::ShouldLoad(bool aHadInsecureImageRedirect,
     }
   }
 
-  LogMixedContentMessage(classification, aContentLocation, topWC->Id(),
-                         (*aDecision == nsIContentPolicy::REJECT_REQUEST)
-                             ? eBlocked
-                             : eUserOverride,
-                         requestingLocation);
+  // To avoid duplicate errors on the console, we do not report blocked
+  // preloads to the console.
+  if (!isPreload && aReportError) {
+    LogMixedContentMessage(classification, aContentLocation, topWC->Id(),
+                           (*aDecision == nsIContentPolicy::REJECT_REQUEST)
+                               ? eBlocked
+                               : eUserOverride,
+                           requestingLocation);
+  }
 
   // Notify the top WindowContext of the flags we've computed, and it
   // will handle updating any relevant security UI.

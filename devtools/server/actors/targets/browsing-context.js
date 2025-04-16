@@ -310,14 +310,14 @@ const browsingContextTargetPrototype = {
     this._onWorkerTargetActorListChanged = this._onWorkerTargetActorListChanged.bind(
       this
     );
-    this.onResourceAvailable = this.onResourceAvailable.bind(this);
+    this.notifyResourceAvailable = this.notifyResourceAvailable.bind(this);
 
     TargetActorRegistry.registerTargetActor(this);
   },
 
   /**
    * These two methods will create and destroy resource watchers
-   * for each resource type. This will end up calling `onResourceAvailable`
+   * for each resource type. This will end up calling `notifyResourceAvailable`
    * whenever new resources are observed.
    *
    * We have these shortcut methods in this module, because this is called from DevToolsFrameChild
@@ -338,12 +338,11 @@ const browsingContextTargetPrototype = {
    *        List of all available resources. A resource is a JSON object piped over to the client.
    *        It may contain actor IDs, actor forms, to be manually marshalled by the client.
    */
-  onResourceAvailable(resources) {
+  notifyResourceAvailable(resources) {
     if (!this.actorID) {
       // Don't try to emit if the actor was destroyed.
       return;
     }
-
     this.emit("resource-available-form", resources);
   },
 
@@ -439,6 +438,10 @@ const browsingContextTargetPrototype = {
 
   get browsingContextID() {
     return this.docShell && this.docShell.browsingContext.id;
+  },
+
+  get browserId() {
+    return this.docShell && this.docShell.browsingContext.browserId;
   },
 
   /**
@@ -566,7 +569,7 @@ const browsingContextTargetPrototype = {
       browsingContextID: this.browsingContextID,
       traits: {
         // FF64+ exposes a new trait to help identify BrowsingContextActor's inherited
-        // actorss from the client side.
+        // actors from the client side.
         isBrowsingContext: true,
       },
     };
@@ -633,14 +636,6 @@ const browsingContextTargetPrototype = {
    * be added as a debuggee, false otherwise.
    */
   _shouldAddNewGlobalAsDebuggee(wrappedGlobal) {
-    if (
-      wrappedGlobal.hostAnnotations &&
-      wrappedGlobal.hostAnnotations.type == "document" &&
-      wrappedGlobal.hostAnnotations.element === this.window
-    ) {
-      return true;
-    }
-
     // Otherwise, check if it is a WebExtension content script sandbox
     const global = unwrapDebuggerObjectGlobal(wrappedGlobal);
     if (!global) {
@@ -1226,7 +1221,7 @@ const browsingContextTargetPrototype = {
           continue;
         }
         // Reparse the sheet so that we see the existing errors.
-        const onStyleSheetParsed = getSheetText(sheet, this._consoleActor)
+        const onStyleSheetParsed = getSheetText(sheet)
           .then(text => {
             InspectorUtils.parseStyleSheet(sheet, text, /* aUpdate = */ false);
           })
@@ -1659,8 +1654,8 @@ function DebuggerProgressListener(targetActor) {
 
 DebuggerProgressListener.prototype = {
   QueryInterface: ChromeUtils.generateQI([
-    Ci.nsIWebProgressListener,
-    Ci.nsISupportsWeakReference,
+    "nsIWebProgressListener",
+    "nsISupportsWeakReference",
   ]),
 
   destroy() {

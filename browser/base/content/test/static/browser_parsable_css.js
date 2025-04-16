@@ -13,7 +13,7 @@ let whitelist = [
   // CodeMirror is imported as-is, see bug 1004423.
   { sourceName: /codemirror\.css$/i, isFromDevTools: true },
   {
-    sourceName: /devtools\/client\/debugger\/src\/components\/([A-z\/]+).css/i,
+    sourceName: /devtools\/content\/debugger\/src\/components\/([A-z\/]+).css/i,
     isFromDevTools: true,
   },
   // Highlighter CSS uses a UA-only pseudo-class, see bug 985597.
@@ -50,21 +50,6 @@ let whitelist = [
     errorMessage: /Unknown property.*overflow-clip-box/i,
     isFromDevTools: false,
   },
-  // System colors reserved to UA / chrome sheets
-  {
-    sourceName: /(?:res|gre-resources)\/forms\.css$/i,
-    errorMessage: /Expected color but found \u2018-moz.*/i,
-    platforms: ["linux"],
-    isFromDevTools: false,
-  },
-  // The '-moz-menulist-arrow-button' value is only supported in chrome and UA sheets
-  // but forms.css is loaded as a document sheet by this test.
-  // Maybe bug 1261237 will fix this?
-  {
-    sourceName: /(?:res|gre-resources)\/forms\.css$/i,
-    errorMessage: /Error in parsing value for \u2018-moz-appearance\u2019/iu,
-    isFromDevTools: false,
-  },
   // These variables are declared somewhere else, and error when we load the
   // files directly. They're all marked intermittent because their appearance
   // in the error console seems to not be consistent.
@@ -89,7 +74,15 @@ if (
   });
 }
 
-if (!Services.prefs.getBoolPref("layout.css.file-chooser-button.enabled")) {
+if (Services.prefs.getBoolPref("layout.css.file-chooser-button.enabled")) {
+  // System colors reserved to UA / chrome sheets
+  whitelist.push({
+    sourceName: /(?:res|gre-resources)\/forms\.css$/i,
+    errorMessage: /Expected color but found \u2018-moz.*/i,
+    platforms: ["linux"],
+    isFromDevTools: false,
+  });
+} else {
   // Reserved to UA sheets, behind a pref for content.
   whitelist.push({
     sourceName: /(?:res|gre-resources)\/forms\.css$/i,

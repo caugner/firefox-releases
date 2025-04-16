@@ -145,6 +145,7 @@
 #include "InProcessWinCompositorWidget.h"
 #include "InputDeviceUtils.h"
 #include "ScreenHelperWin.h"
+#include "mozilla/StaticPrefs_apz.h"
 #include "mozilla/StaticPrefs_layout.h"
 
 #include "nsIGfxInfo.h"
@@ -207,6 +208,7 @@
 #endif
 
 #include "mozilla/gfx/DeviceManagerDx.h"
+#include "mozilla/layers/APZInputBridge.h"
 #include "mozilla/layers/InputAPZContext.h"
 #include "mozilla/layers/KnowsCompositor.h"
 #include "InputData.h"
@@ -763,7 +765,8 @@ void nsWindow::RecreateDirectManipulationIfNeeded() {
     return;
   }
 
-  if (!StaticPrefs::apz_windows_use_direct_manipulation() ||
+  if (!(StaticPrefs::apz_allow_zooming() ||
+        StaticPrefs::apz_windows_use_direct_manipulation()) ||
       StaticPrefs::apz_windows_force_disable_direct_manipulation()) {
     return;
   }
@@ -2630,6 +2633,8 @@ bool nsWindow::UpdateNonClientMargins(int32_t aSizeMode, bool aReflowWindow) {
   bool hasCaption = (mBorderStyle & (eBorderStyle_all | eBorderStyle_title |
                                      eBorderStyle_menu | eBorderStyle_default));
 
+  float dpi = GetDPI();
+
   // mCaptionHeight is the default size of the NC area at
   // the top of the window. If the window has a caption,
   // the size is calculated as the sum of:
@@ -2640,11 +2645,12 @@ bool nsWindow::UpdateNonClientMargins(int32_t aSizeMode, bool aReflowWindow) {
   //      SM_CYCAPTION      - The height of the caption area
   //
   // If the window does not have a caption, mCaptionHeight will be equal to
-  // `GetSystemMetrics(SM_CYFRAME)`
-  mCaptionHeight = GetSystemMetrics(SM_CYFRAME) +
-                   (hasCaption ? GetSystemMetrics(SM_CYCAPTION) +
-                                     GetSystemMetrics(SM_CXPADDEDBORDER)
-                               : 0);
+  // `WinUtils::GetSystemMetricsForDpi(SM_CYFRAME, dpi)`
+  mCaptionHeight =
+      WinUtils::GetSystemMetricsForDpi(SM_CYFRAME, dpi) +
+      (hasCaption ? WinUtils::GetSystemMetricsForDpi(SM_CYCAPTION, dpi) +
+                        WinUtils::GetSystemMetricsForDpi(SM_CXPADDEDBORDER, dpi)
+                  : 0);
 
   // mHorResizeMargin is the size of the default NC areas on the
   // left and right sides of our window.  It is calculated as
@@ -2654,9 +2660,11 @@ bool nsWindow::UpdateNonClientMargins(int32_t aSizeMode, bool aReflowWindow) {
   //                          for captioned windows
   //
   // If the window does not have a caption, mHorResizeMargin will be equal to
-  // `GetSystemMetrics(SM_CXFRAME)`
-  mHorResizeMargin = GetSystemMetrics(SM_CXFRAME) +
-                     (hasCaption ? GetSystemMetrics(SM_CXPADDEDBORDER) : 0);
+  // `WinUtils::GetSystemMetricsForDpi(SM_CXFRAME, dpi)`
+  mHorResizeMargin =
+      WinUtils::GetSystemMetricsForDpi(SM_CXFRAME, dpi) +
+      (hasCaption ? WinUtils::GetSystemMetricsForDpi(SM_CXPADDEDBORDER, dpi)
+                  : 0);
 
   // mVertResizeMargin is the size of the default NC area at the
   // bottom of the window. It is calculated as the sum of:
@@ -2665,9 +2673,11 @@ bool nsWindow::UpdateNonClientMargins(int32_t aSizeMode, bool aReflowWindow) {
   //                          for captioned windows.
   //
   // If the window does not have a caption, mVertResizeMargin will be equal to
-  // `GetSystemMetrics(SM_CYFRAME)`
-  mVertResizeMargin = GetSystemMetrics(SM_CYFRAME) +
-                      (hasCaption ? GetSystemMetrics(SM_CXPADDEDBORDER) : 0);
+  // `WinUtils::GetSystemMetricsForDpi(SM_CYFRAME, dpi)`
+  mVertResizeMargin =
+      WinUtils::GetSystemMetricsForDpi(SM_CYFRAME, dpi) +
+      (hasCaption ? WinUtils::GetSystemMetricsForDpi(SM_CXPADDEDBORDER, dpi)
+                  : 0);
 
   if (aSizeMode == nsSizeMode_Minimized) {
     // Use default frame size for minimized windows
@@ -3494,6 +3504,10 @@ nsresult nsWindow::MakeFullScreen(bool aFullScreen, nsIScreen* aTargetScreen) {
   // taskbarInfo will be nullptr pre Windows 7 until Bug 680227 is resolved.
   nsCOMPtr<nsIWinTaskbar> taskbarInfo = do_GetService(NS_TASKBAR_CONTRACTID);
 
+  if (mWidgetListener) {
+    mWidgetListener->FullscreenWillChange(aFullScreen);
+  }
+
   mFullscreenMode = aFullScreen;
   if (aFullScreen) {
     if (mSizeMode == nsSizeMode_Fullscreen) return NS_OK;
@@ -3685,8 +3699,7 @@ void nsWindow::SetIcon(const nsAString& aIconSpec) {
   // Assume the given string is a local identifier for an icon file.
 
   nsCOMPtr<nsIFile> iconFile;
-  ResolveIconName(aIconSpec, NS_LITERAL_STRING(".ico"),
-                  getter_AddRefs(iconFile));
+  ResolveIconName(aIconSpec, u".ico"_ns, getter_AddRefs(iconFile));
   if (!iconFile) return;
 
   nsAutoString iconPath;
@@ -4352,8 +4365,7 @@ bool nsWindow::TouchEventShouldStartDrag(EventMessage aEventMessage,
         for (Element* element = content->GetAsElementOrParentElement(); element;
              element = element->GetParentElement()) {
           nsAutoString startDrag;
-          element->GetAttribute(NS_LITERAL_STRING("touchdownstartsdrag"),
-                                startDrag);
+          element->GetAttribute(u"touchdownstartsdrag"_ns, startDrag);
           if (!startDrag.IsEmpty()) {
             return true;
           }
@@ -4370,8 +4382,6 @@ bool nsWindow::DispatchMouseEvent(EventMessage aEventMessage, WPARAM wParam,
                                   LPARAM lParam, bool aIsContextMenuKey,
                                   int16_t aButton, uint16_t aInputSource,
                                   WinPointerInfo* aPointerInfo) {
-  enum { eUnset, ePrecise, eTouch };
-  static int sTouchInputActiveState = eUnset;
   bool result = false;
 
   UserActivity();
@@ -4401,15 +4411,6 @@ bool nsWindow::DispatchMouseEvent(EventMessage aEventMessage, WPARAM wParam,
                            1);
     }
 
-    // Fire an observer when the user initially touches a touch screen. Front
-    // end uses this to modify UX.
-    if (sTouchInputActiveState != eTouch) {
-      sTouchInputActiveState = eTouch;
-      nsCOMPtr<nsIObserverService> obsServ =
-          mozilla::services::GetObserverService();
-      obsServ->NotifyObservers(nullptr, "touch-input-detected", nullptr);
-    }
-
     if (mTouchWindow) {
       // If mTouchWindow is true, then we must have APZ enabled and be
       // feeding it raw touch events. In that case we only want to
@@ -4423,14 +4424,6 @@ bool nsWindow::DispatchMouseEvent(EventMessage aEventMessage, WPARAM wParam,
       } else {
         return result;
       }
-    }
-  } else {
-    // Fire an observer when the user initially uses a mouse or pen.
-    if (sTouchInputActiveState != ePrecise) {
-      sTouchInputActiveState = ePrecise;
-      nsCOMPtr<nsIObserverService> obsServ =
-          mozilla::services::GetObserverService();
-      obsServ->NotifyObservers(nullptr, "precise-input-detected", nullptr);
     }
   }
 
@@ -5327,18 +5320,10 @@ bool nsWindow::ProcessMessage(UINT msg, WPARAM& wParam, LPARAM& lParam,
         RECT* clientRect =
             wParam ? &(reinterpret_cast<NCCALCSIZE_PARAMS*>(lParam))->rgrc[0]
                    : (reinterpret_cast<RECT*>(lParam));
-        double scale = WinUtils::IsPerMonitorDPIAware()
-                           ? WinUtils::LogToPhysFactor(mWnd) /
-                                 WinUtils::SystemScaleFactor()
-                           : 1.0;
-        clientRect->top +=
-            NSToIntRound((mCaptionHeight - mNonClientOffset.top) * scale);
-        clientRect->left +=
-            NSToIntRound((mHorResizeMargin - mNonClientOffset.left) * scale);
-        clientRect->right -=
-            NSToIntRound((mHorResizeMargin - mNonClientOffset.right) * scale);
-        clientRect->bottom -=
-            NSToIntRound((mVertResizeMargin - mNonClientOffset.bottom) * scale);
+        clientRect->top += mCaptionHeight - mNonClientOffset.top;
+        clientRect->left += mHorResizeMargin - mNonClientOffset.left;
+        clientRect->right -= mHorResizeMargin - mNonClientOffset.right;
+        clientRect->bottom -= mVertResizeMargin - mNonClientOffset.bottom;
         // Make client rect's width and height more than 0 to
         // avoid problems of webrender and angle.
         clientRect->right = std::max(clientRect->right, clientRect->left + 1);
@@ -5967,7 +5952,7 @@ bool nsWindow::ProcessMessage(UINT msg, WPARAM& wParam, LPARAM& lParam,
       // actual mousedown event because that would break dragging or interfere
       // with other mousedown handling in the caption area.
       if (WithinDraggableRegion(GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam))) {
-        DispatchCustomEvent(NS_LITERAL_STRING("draggableregionleftmousedown"));
+        DispatchCustomEvent(u"draggableregionleftmousedown"_ns);
       }
       break;
     }
@@ -6938,7 +6923,7 @@ void nsWindow::OnWindowPosChanging(LPWINDOWPOS& info) {
 void nsWindow::UserActivity() {
   // Check if we have the idle service, if not we try to get it.
   if (!mIdleService) {
-    mIdleService = do_GetService("@mozilla.org/widget/idleservice;1");
+    mIdleService = do_GetService("@mozilla.org/widget/useridleservice;1");
   }
 
   // Check that we now have the idle service.

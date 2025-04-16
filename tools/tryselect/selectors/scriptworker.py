@@ -26,8 +26,8 @@ TASK_TYPES = {
         "repackage-signing-msi-win32-shippable/opt",
         "repackage-signing-msi-win64-shippable/opt",
         "mar-signing-linux64-shippable/opt",
-        "partials-signing-linux64-shippable/opt",
     ],
+    "linux-signing-partial": ["partials-signing-linux64-shippable/opt"],
     "mac-signing": ["build-signing-macosx64-shippable/opt"],
     "beetmover-candidates": ["beetmover-repackage-linux64-shippable/opt"],
     "bouncer-submit": ["release-bouncer-sub-firefox"],
@@ -66,7 +66,7 @@ class ScriptworkerParser(BaseTryParser):
     ]
 
     common_groups = ["push"]
-    task_configs = ["worker-overrides"]
+    task_configs = ["worker-overrides", "routes"]
 
 
 def get_releases(branch):
