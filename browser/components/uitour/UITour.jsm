@@ -1297,7 +1297,7 @@ var UITour = {
 
       tooltip.setAttribute("targetName", aAnchor.targetName);
 
-      let alignment = "bottomcenter topright";
+      let alignment = "bottomright topright";
       if (aAnchor.infoPanelPosition) {
         alignment = aAnchor.infoPanelPosition;
       }
@@ -1963,7 +1963,9 @@ var UITour = {
       Services.search.getVisibleEngines().then(engines => {
         for (let engine of engines) {
           if (engine.identifier == aID) {
-            Services.search.setDefault(engine).finally(resolve);
+            Services.search
+              .setDefault(engine, Ci.nsISearchService.CHANGE_REASON_UITOUR)
+              .finally(resolve);
             return;
           }
         }

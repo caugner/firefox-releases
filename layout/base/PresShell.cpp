@@ -1595,6 +1595,39 @@ void PresShell::AddAuthorSheet(StyleSheet* aSheet) {
   mDocument->ApplicableStylesChanged();
 }
 
+bool PresShell::FixUpFocus() {
+  if (!StaticPrefs::dom_focus_fixup()) {
+    return false;
+  }
+  if (NS_WARN_IF(!mDocument)) {
+    return false;
+  }
+
+  nsIContent* currentFocus = mDocument->GetUnretargetedFocusedContent(
+      Document::IncludeChromeOnly::Yes);
+  if (!currentFocus) {
+    return false;
+  }
+
+  nsIFrame* f = currentFocus->GetPrimaryFrame();
+  if (f && f->IsFocusable()) {
+    return false;
+  }
+
+  if (currentFocus == mDocument->GetBody() ||
+      currentFocus == mDocument->GetRootElement()) {
+    return false;
+  }
+
+  RefPtr fm = nsFocusManager::GetFocusManager();
+  nsCOMPtr<nsPIDOMWindowOuter> window = mDocument->GetWindow();
+  if (NS_WARN_IF(!window)) {
+    return false;
+  }
+  fm->ClearFocus(window);
+  return true;
+}
+
 void PresShell::SelectionWillTakeFocus() {
   if (mSelection) {
     FrameSelectionWillTakeFocus(*mSelection);
@@ -1967,8 +2000,8 @@ void PresShell::RefreshZoomConstraintsForScreenSizeChange() {
   }
 }
 
-nsresult PresShell::ResizeReflow(nscoord aWidth, nscoord aHeight,
-                                 ResizeReflowOptions aOptions) {
+void PresShell::ResizeReflow(nscoord aWidth, nscoord aHeight,
+                             ResizeReflowOptions aOptions) {
   if (mZoomConstraintsClient) {
     // If we have a ZoomConstraintsClient and the available screen area
     // changed, then we might need to disable double-tap-to-zoom, so notify
@@ -1983,21 +2016,19 @@ nsresult PresShell::ResizeReflow(nscoord aWidth, nscoord aHeight,
     // the MVM.
     MOZ_ASSERT(mMobileViewportManager);
     mMobileViewportManager->RequestReflow(false);
-    return NS_OK;
+    return;
   }
-
-  return ResizeReflowIgnoreOverride(aWidth, aHeight, aOptions);
+  ResizeReflowIgnoreOverride(aWidth, aHeight, aOptions);
 }
 
-void PresShell::SimpleResizeReflow(nscoord aWidth, nscoord aHeight,
-                                   ResizeReflowOptions aOptions) {
+bool PresShell::SimpleResizeReflow(nscoord aWidth, nscoord aHeight) {
   MOZ_ASSERT(aWidth != NS_UNCONSTRAINEDSIZE);
   MOZ_ASSERT(aHeight != NS_UNCONSTRAINEDSIZE);
   nsSize oldSize = mPresContext->GetVisibleArea().Size();
   mPresContext->SetVisibleArea(nsRect(0, 0, aWidth, aHeight));
   nsIFrame* rootFrame = GetRootFrame();
   if (!rootFrame) {
-    return;
+    return false;
   }
   WritingMode wm = rootFrame->GetWritingMode();
   bool isBSizeChanging =
@@ -2011,14 +2042,7 @@ void PresShell::SimpleResizeReflow(nscoord aWidth, nscoord aHeight,
   if (mMobileViewportManager) {
     mMobileViewportManager->UpdateSizesBeforeReflow();
   }
-
-  // For compat with the old code path which always reflowed as long as there
-  // was a root frame.
-  bool suppressReflow = (aOptions & ResizeReflowOptions::SuppressReflow) ||
-                        mPresContext->SuppressingResizeReflow();
-  if (!suppressReflow) {
-    mDocument->FlushPendingNotifications(FlushType::InterruptibleLayout);
-  }
+  return true;
 }
 
 void PresShell::AddResizeEventFlushObserverIfNeeded() {
@@ -2029,8 +2053,8 @@ void PresShell::AddResizeEventFlushObserverIfNeeded() {
   }
 }
 
-nsresult PresShell::ResizeReflowIgnoreOverride(nscoord aWidth, nscoord aHeight,
-                                               ResizeReflowOptions aOptions) {
+bool PresShell::ResizeReflowIgnoreOverride(nscoord aWidth, nscoord aHeight,
+                                           ResizeReflowOptions aOptions) {
   MOZ_ASSERT(!mIsReflowing, "Shouldn't be in reflow here!");
 
   // Historically we never fired resize events if there was no root frame by the
@@ -2047,17 +2071,13 @@ nsresult PresShell::ResizeReflowIgnoreOverride(nscoord aWidth, nscoord aHeight,
   if (!(aOptions & ResizeReflowOptions::BSizeLimit)) {
     nsSize oldSize = mPresContext->GetVisibleArea().Size();
     if (oldSize == nsSize(aWidth, aHeight)) {
-      return NS_OK;
+      return false;
     }
 
-    SimpleResizeReflow(aWidth, aHeight, aOptions);
+    bool changed = SimpleResizeReflow(aWidth, aHeight);
     postResizeEventIfNeeded();
-    return NS_OK;
+    return changed;
   }
-
-  MOZ_ASSERT(!mPresContext->SuppressingResizeReflow() &&
-                 !(aOptions & ResizeReflowOptions::SuppressReflow),
-             "Can't suppress resize reflow and shrink-wrap at the same time");
 
   // Make sure that style is flushed before setting the pres context
   // VisibleArea.
@@ -2075,13 +2095,13 @@ nsresult PresShell::ResizeReflowIgnoreOverride(nscoord aWidth, nscoord aHeight,
     if (aHeight == NS_UNCONSTRAINEDSIZE || aWidth == NS_UNCONSTRAINEDSIZE) {
       // We can't do the work needed for SizeToContent without a root
       // frame, and we want to return before setting the visible area.
-      return NS_ERROR_NOT_AVAILABLE;
+      return false;
     }
 
     mPresContext->SetVisibleArea(nsRect(0, 0, aWidth, aHeight));
     // There isn't anything useful we can do if the initial reflow hasn't
     // happened.
-    return NS_OK;
+    return true;
   }
 
   WritingMode wm = rootFrame->GetWritingMode();
@@ -2141,7 +2161,7 @@ nsresult PresShell::ResizeReflowIgnoreOverride(nscoord aWidth, nscoord aHeight,
       "height should not be NS_UNCONSTRAINEDSIZE after reflow");
 
   postResizeEventIfNeeded();
-  return NS_OK;  // XXX this needs to be real. MMP
+  return true;
 }
 
 void PresShell::FireResizeEvent() {
@@ -3700,7 +3720,7 @@ void PresShell::DoScrollContentIntoView() {
   NS_ASSERTION(mDidInitialize, "should have done initial reflow by now");
 
   nsIFrame* frame = mContentToScrollTo->GetPrimaryFrame();
-  if (!frame || frame->AncestorHidesContent()) {
+  if (!frame || frame->IsHiddenByContentVisibilityOnAnyAncestor()) {
     mContentToScrollTo->RemoveProperty(nsGkAtoms::scrolling);
     mContentToScrollTo = nullptr;
     return;
@@ -3779,7 +3799,7 @@ bool PresShell::ScrollFrameRectIntoView(nsIFrame* aFrame, const nsRect& aRect,
                                         ScrollAxis aHorizontal,
                                         ScrollFlags aScrollFlags,
                                         const nsIFrame* aTarget) {
-  if (aFrame->AncestorHidesContent()) {
+  if (aFrame->IsHiddenByContentVisibilityOnAnyAncestor()) {
     return false;
   }
 
@@ -4329,7 +4349,7 @@ void PresShell::DoFlushPendingNotifications(mozilla::ChangesToFlush aFlush) {
     // Process pending restyles, since any flush of the presshell wants
     // up-to-date style data.
     if (MOZ_LIKELY(!mIsDestroying)) {
-      viewManager->FlushDelayedResize(false);
+      viewManager->FlushDelayedResize();
       mPresContext->FlushPendingMediaFeatureValuesChanged();
     }
 
@@ -5413,12 +5433,12 @@ bool PresShell::IsTransparentContainerElement() const {
     if (pc->IsChrome()) {
       return true;
     }
-    // Frames are transparent except if their embedder color-scheme is
+    // Frames are transparent except if their used embedder color-scheme is
     // mismatched, in which case we use an opaque background to avoid
     // black-on-black or white-on-white text, see
     // https://github.com/w3c/csswg-drafts/issues/4772
     if (BrowsingContext* bc = pc->Document()->GetBrowsingContext()) {
-      switch (bc->GetEmbedderColorScheme()) {
+      switch (bc->GetEmbedderColorSchemes().mUsed) {
         case dom::PrefersColorSchemeOverride::Light:
           return pc->DefaultBackgroundColorScheme() == ColorScheme::Light;
         case dom::PrefersColorSchemeOverride::Dark:
@@ -5956,6 +5976,7 @@ void PresShell::ClearApproximatelyVisibleFramesList(
 
 void PresShell::MarkFramesInSubtreeApproximatelyVisible(
     nsIFrame* aFrame, const nsRect& aRect, bool aRemoveOnly /* = false */) {
+  MOZ_DIAGNOSTIC_ASSERT(aFrame, "aFrame arg should be a valid frame pointer");
   MOZ_ASSERT(aFrame->PresShell() == this, "wrong presshell");
 
   if (aFrame->TrackingVisibility() && aFrame->StyleVisibility()->IsVisible() &&
@@ -6038,6 +6059,11 @@ void PresShell::MarkFramesInSubtreeApproximatelyVisible(
     }
 
     for (nsIFrame* child : list) {
+      // Note: This assert should be trivially satisfied, just by virtue of how
+      // nsFrameList and its iterator works (with nullptr being an end-of-list
+      // sentinel which should terminate the loop).  But we do somehow get
+      // crash reports inside this loop that suggest `child` is null...
+      MOZ_DIAGNOSTIC_ASSERT(child, "shouldn't have null values in child lists");
       nsRect r = rect - child->GetPosition();
       if (!r.IntersectRect(r, child->InkOverflowRect())) {
         continue;
@@ -9410,6 +9436,8 @@ void PresShell::WillDoReflow() {
 }
 
 void PresShell::DidDoReflow(bool aInterruptible) {
+  mHiddenContentInForcedLayout.Clear();
+
   HandlePostedReflowCallbacks(aInterruptible);
   if (mIsDestroying) {
     return;
@@ -11821,4 +11849,42 @@ void PresShell::PingPerTickTelemetry(FlushType aFlushType) {
 
 bool PresShell::GetZoomableByAPZ() const {
   return mZoomConstraintsClient && mZoomConstraintsClient->GetAllowZoom();
+}
+
+void PresShell::EnsureReflowIfFrameHasHiddenContent(nsIFrame* aFrame) {
+  if (!aFrame || !aFrame->IsSubtreeDirty() ||
+      !StaticPrefs::layout_css_content_visibility_enabled()) {
+    return;
+  }
+
+  // Flushing notifications below might trigger more layouts, which might,
+  // in turn, trigger layout of other hidden content. We keep a local set
+  // of hidden content we are laying out to handle recursive calls.
+  nsTHashSet<nsIContent*> hiddenContentInForcedLayout;
+
+  MOZ_ASSERT(mHiddenContentInForcedLayout.IsEmpty());
+  nsIFrame* topmostFrameWithContentHidden = nullptr;
+  for (nsIFrame* cur = aFrame->GetInFlowParent(); cur;
+       cur = cur->GetInFlowParent()) {
+    if (cur->HidesContent()) {
+      topmostFrameWithContentHidden = cur;
+      mHiddenContentInForcedLayout.Insert(cur->GetContent());
+    }
+  }
+
+  if (mHiddenContentInForcedLayout.IsEmpty()) {
+    return;
+  }
+
+  // Queue and immediately flush a reflow for this node.
+  MOZ_ASSERT(topmostFrameWithContentHidden);
+  FrameNeedsReflow(topmostFrameWithContentHidden, IntrinsicDirty::Resize,
+                   NS_FRAME_IS_DIRTY);
+  mDocument->FlushPendingNotifications(FlushType::Layout);
+
+  mHiddenContentInForcedLayout.Clear();
+}
+
+bool PresShell::IsForcingLayoutForHiddenContent(const nsIFrame* aFrame) const {
+  return mHiddenContentInForcedLayout.Contains(aFrame->GetContent());
 }

@@ -1,2 +1,2 @@
-20220915150737
-https://hg.mozilla.org/releases/mozilla-release/rev/433fb8a983f63150726d31c00e98b02c462c8491
+20221010110315
+https://hg.mozilla.org/releases/mozilla-release/rev/eecea05aff4d09b70d13842a8e07160f04ac0349
