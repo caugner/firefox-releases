@@ -20,6 +20,7 @@ include protocol PRemoteLazyInputStream;
 include protocol PPaymentRequest;
 include protocol PWindowGlobal;
 include protocol PBrowserBridge;
+include protocol PVsync;
 
 include DOMTypes;
 include NeckoChannelParams;
@@ -78,7 +79,6 @@ using class mozilla::WidgetDragEvent from "ipc/nsGUIEventIPC.h";
 using struct nsRect from "nsRect.h";
 using class mozilla::WidgetSelectionEvent from "ipc/nsGUIEventIPC.h";
 using class mozilla::WidgetTouchEvent from "ipc/nsGUIEventIPC.h";
-using class mozilla::WidgetPluginEvent from "ipc/nsGUIEventIPC.h";
 using struct mozilla::dom::RemoteDOMEvent from "mozilla/dom/TabMessageTypes.h";
 using struct mozilla::layers::TextureFactoryIdentifier from "mozilla/layers/CompositorTypes.h";
 using mozilla::layers::CompositorOptions from "mozilla/layers/CompositorOptions.h";
@@ -194,6 +194,7 @@ nested(upto inside_cpow) sync refcounted protocol PBrowser
     manages PPaymentRequest;
     manages PWindowGlobal;
     manages PBrowserBridge;
+    manages PVsync;
 
 both:
     async AsyncMessage(nsString aMessage, ClonedMessageData aData);
@@ -220,6 +221,11 @@ parent:
     sync PPluginWidget();
 
     async PPaymentRequest();
+
+    /**
+     * Create a new Vsync connection for our associated root widget
+     */
+    async PVsync();
 
     /**
      * Sends an NS_NATIVE_CHILD_OF_SHAREABLE_WINDOW to be adopted by the
@@ -359,38 +365,6 @@ parent:
     nested(inside_cpow) async OnEventNeedingAckHandled(EventMessage message);
 
     /**
-     * Tells chrome to start plugin IME.  If this results in a string getting
-     * committed, the result is in aCommitted (otherwise aCommitted is empty).
-     *
-     * aKeyboardEvent     The event with which plugin IME is to be started
-     * panelX and panelY  Location in screen coordinates of the IME input panel
-     *                    (should be just under the plugin)
-     * aCommitted         The string committed during IME -- otherwise empty
-     */
-    nested(inside_cpow) sync StartPluginIME(WidgetKeyboardEvent aKeyboardEvent,
-                                            int32_t panelX, int32_t panelY)
-        returns (nsString aCommitted);
-
-    /**
-     * Tells chrome (and specifically the appropriate widget) whether or not
-     * a plugin (inside the widget) has the keyboard focus.  Should be sent
-     * when the keyboard focus changes too or from a plugin.
-     *
-     * aFocused  Whether or not a plugin is focused
-     */
-    nested(inside_cpow) async SetPluginFocused(bool aFocused);
-
-    /**
-     * Set IME candidate window by windowless plugin if plugin has focus.
-     */
-    async SetCandidateWindowForPlugin(CandidateWindowPosition aPosition);
-
-    /**
-     * Enable or Disable IME by windowless plugin if plugin has focus.
-     */
-    async EnableIMEForPlugin(bool aEnable);
-
-    /**
      * Notifies the parent process of native key event data received in a
      * plugin process directly.
      *
@@ -399,11 +373,6 @@ parent:
      *                  PluginInstanceChild.
      */
     nested(inside_cpow) async OnWindowedPluginKeyEvent(NativeEventData aKeyEventData);
-
-    /**
-     *  When plugin event isn't consumed, call this
-     */
-    async DefaultProcOfPluginEvent(WidgetPluginEvent aEvent);
 
     /**
      * Request that the parent process move focus to the browser's frame. If
@@ -873,8 +842,6 @@ child:
                         uint32_t aDropEffect, nsIPrincipal aPrincipal,
                         nsIContentSecurityPolicy csp);
 
-    async PluginEvent(WidgetPluginEvent aEvent);
-
     prio(input) async CompositionEvent(WidgetCompositionEvent event);
     async NormalPriorityCompositionEvent(WidgetCompositionEvent event);
 
@@ -888,7 +855,7 @@ child:
     async PasteTransferable(IPCDataTransfer aDataTransfer,
                             bool aIsPrivateData,
                             nsIPrincipal aRequestingPrincipal,
-                            uint32_t aContentPolicyType);
+                            nsContentPolicyType aContentPolicyType);
 
     /**
      * Activate event forwarding from client to parent.

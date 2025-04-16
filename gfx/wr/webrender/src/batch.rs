@@ -17,7 +17,8 @@ use crate::gpu_types::{PrimitiveHeader, PrimitiveHeaderIndex, TransformPaletteId
 use crate::gpu_types::{ImageBrushData, get_shader_opacity, BoxShadowData};
 use crate::gpu_types::{ClipMaskInstanceCommon, ClipMaskInstanceImage, ClipMaskInstanceRect, ClipMaskInstanceBoxShadow};
 use crate::internal_types::{FastHashMap, Swizzle, TextureSource, Filter, DeferredResolveIndex};
-use crate::picture::{Picture3DContext, PictureCompositeMode, PicturePrimitive, ClusterFlags};
+use crate::picture::{Picture3DContext, PictureCompositeMode, PicturePrimitive};
+use crate::picture::{ClusterFlags, SurfaceIndex, SurfaceRenderTasks};
 use crate::prim_store::{DeferredResolve, PrimitiveInstanceKind, ClipData};
 use crate::prim_store::{VisibleGradientTile, PrimitiveInstance, PrimitiveOpacity, SegmentInstanceIndex};
 use crate::prim_store::{BrushSegment, ClipMaskKind, ClipTaskIndex};
@@ -107,16 +108,6 @@ impl TextureSet {
         }
     }
 
-    fn render_target_cache() -> Self {
-        TextureSet {
-            colors: [
-                TextureSource::PrevPassColor,
-                TextureSource::PrevPassAlpha,
-                TextureSource::Invalid,
-            ],
-        }
-    }
-
     fn is_compatible_with(&self, other: &TextureSet) -> bool {
         self.colors[0].is_compatible(&other.colors[0]) &&
         self.colors[1].is_compatible(&other.colors[1]) &&
@@ -145,23 +136,6 @@ pub struct BatchTextures {
 }
 
 impl BatchTextures {
-    /// Construct a batch texture set referencing render target cache
-    // TODO(gw): Remove me once all tasks reference texture id directly!
-    pub fn render_target_cache(
-        clip_mask: TextureSource,
-    ) -> Self {
-        BatchTextures {
-            input: TextureSet {
-                colors: [
-                    TextureSource::PrevPassColor,
-                    TextureSource::PrevPassAlpha,
-                    TextureSource::Invalid,
-                ],
-            },
-            clip_mask,
-        }
-    }
-
     /// An empty batch textures (no binding slots set)
     pub fn empty() -> BatchTextures {
         BatchTextures {
@@ -556,6 +530,8 @@ bitflags! {
         const ALPHA_PASS = 1 << 0;
         const ANTIALIASING = 1 << 1;
         const REPETITION = 1 << 2;
+        /// Indicates a primitive in this batch may use a clip mask.
+        const CLIP_MASK = 1 << 3;
     }
 }
 
@@ -817,6 +793,7 @@ impl BatchBuilder {
     fn add_split_composite_instance_to_batches(
         &mut self,
         batch_key: BatchKey,
+        features: BatchFeatures,
         bounding_rect: &PictureRect,
         z_id: ZBufferId,
         prim_header_index: PrimitiveHeaderIndex,
@@ -829,7 +806,7 @@ impl BatchBuilder {
 
                 batcher.push_single_instance(
                     batch_key,
-                    BatchFeatures::empty(),
+                    features,
                     bounding_rect,
                     z_id,
                     PrimitiveInstanceData::from(SplitCompositeInstance {
@@ -1031,6 +1008,11 @@ impl BatchBuilder {
             batch_features |= BatchFeatures::ANTIALIASING;
         }
 
+        // Check if the primitive might require a clip mask.
+        if prim_info.clip_task_index != ClipTaskIndex::INVALID {
+            batch_features |= BatchFeatures::CLIP_MASK;
+        }
+
         if !bounding_rect.is_empty() {
             debug_assert_eq!(prim_info.clip_chain.pic_spatial_node_index, surface_spatial_node_index,
                 "The primitive's bounding box is specified in a different coordinate system from the current batch!");
@@ -1191,12 +1173,11 @@ impl BatchBuilder {
                 };
 
                 let glyph_keys = &ctx.scratch.glyph_keys[run.glyph_keys_range];
-                let raster_scale = run.raster_space.local_scale().unwrap_or(1.0).max(0.001);
                 let prim_header_index = prim_headers.push(
                     &prim_header,
                     z_id,
                     [
-                        (raster_scale * 65535.0).round() as i32,
+                        (run.raster_scale * 65535.0).round() as i32,
                         0,
                         0,
                         0,
@@ -1212,8 +1193,12 @@ impl BatchBuilder {
                     render_tasks,
                 ).unwrap();
 
+                // The run.used_font.clone() is here instead of instead of inline in the `fetch_glyph`
+                // function call to work around a miscompilation.
+                // https://github.com/rust-lang/rust/issues/80111
+                let font = run.used_font.clone();
                 ctx.resource_cache.fetch_glyphs(
-                    run.used_font.clone(),
+                    font,
                     &glyph_keys,
                     &mut self.glyph_fetch_buffer,
                     gpu_cache,
@@ -1330,7 +1315,7 @@ impl BatchBuilder {
                             } else {
                                 let mut local_bounding_rect = LayoutRect::default();
 
-                                let glyph_raster_scale = raster_scale * ctx.global_device_pixel_scale.get();
+                                let glyph_raster_scale = run.raster_scale * ctx.global_device_pixel_scale.get();
 
                                 for glyph in glyphs {
                                     let glyph_offset = prim_data.glyphs[glyph.index_in_text_run as usize].point + prim_header.local_rect.origin.to_vector();
@@ -1372,7 +1357,7 @@ impl BatchBuilder {
                                 let render_task_address = batcher.render_task_address;
                                 let batch = batcher.alpha_batch_list.set_params_and_get_batch(
                                     key,
-                                    BatchFeatures::empty(),
+                                    batch_features,
                                     &tight_bounding_rect,
                                     z_id,
                                 );
@@ -1536,10 +1521,7 @@ impl BatchBuilder {
                                 .as_ref()
                                 .expect("BUG: 3d primitive was not assigned a surface");
                             let (uv_rect_address, textures) = render_tasks.resolve_surface(
-                                ctx.surfaces[raster_config.surface_index.0]
-                                    .render_tasks
-                                    .expect("BUG: no surface")
-                                    .root,
+                                ctx.resolve_surface(raster_config.surface_index),
                                 clip_mask_texture_id,
                                 gpu_cache,
                             );
@@ -1563,6 +1545,7 @@ impl BatchBuilder {
 
                             self.add_split_composite_instance_to_batches(
                                 key,
+                                BatchFeatures::CLIP_MASK,
                                 &child_prim_info.clip_chain.pic_clip_rect,
                                 z_id,
                                 prim_header_index,
@@ -1589,40 +1572,16 @@ impl BatchBuilder {
                         };
 
                         let surface = &ctx.surfaces[raster_config.surface_index.0];
-                        let surface_task = surface.render_tasks.map(|s| s.root);
 
                         let mut is_opaque = prim_info.clip_task_index == ClipTaskIndex::INVALID
                             && surface.opaque_rect.contains_rect(&surface.rect);
 
                         match raster_config.composite_mode {
-                            PictureCompositeMode::TileCache { slice_id } => {
-                                // Tile cache instances are added to the composite config, rather than
-                                // directly added to batches. This allows them to be drawn with various
-                                // present modes during render, such as partial present etc.
-                                let tile_cache = &ctx.tile_caches[&slice_id];
-                                let map_local_to_world = SpaceMapper::new_with_target(
-                                    ROOT_SPATIAL_NODE_INDEX,
-                                    tile_cache.spatial_node_index,
-                                    ctx.screen_world_rect,
-                                    ctx.spatial_tree,
-                                );
-                                // TODO(gw): As a follow up to the valid_rect work, see why we use
-                                //           prim_info.combined_local_clip_rect here instead of the
-                                //           local_clip_rect built in the TileCacheInstance. Perhaps
-                                //           these can be unified or are different for a good reason?
-                                let world_clip_rect = map_local_to_world
-                                    .map(&prim_info.combined_local_clip_rect)
-                                    .expect("bug: unable to map clip rect");
-                                let device_clip_rect = (world_clip_rect * ctx.global_device_pixel_scale).round();
-
-                                composite_state.push_surface(
-                                    tile_cache,
-                                    device_clip_rect,
-                                    ctx.global_device_pixel_scale,
-                                    ctx.resource_cache,
-                                    gpu_cache,
-                                    deferred_resolves,
-                                );
+                            PictureCompositeMode::TileCache { .. } => {
+                                // TODO(gw): For now, TileCache is still a composite mode, even though
+                                //           it will only exist as a top level primitive and never
+                                //           be encountered during batching. Consider making TileCache
+                                //           a standalone type, not a picture.
                             }
                             PictureCompositeMode::Filter(ref filter) => {
                                 assert!(filter.is_visible());
@@ -1634,10 +1593,10 @@ impl BatchBuilder {
                                         ).unwrap();
 
                                         let kind = BatchKind::Brush(
-                                            BrushBatchKind::Image(ImageBufferKind::Texture2DArray)
+                                            BrushBatchKind::Image(ImageBufferKind::Texture2D)
                                         );
                                         let (uv_rect_address, textures) = render_tasks.resolve_surface(
-                                            surface_task.expect("bug: surface must be allocated by now"),
+                                            ctx.resolve_surface(raster_config.surface_index),
                                             clip_mask_texture_id,
                                             gpu_cache,
                                         );
@@ -1681,7 +1640,7 @@ impl BatchBuilder {
 
                                         // The shadows and the content get drawn as a brush image.
                                         let kind = BatchKind::Brush(
-                                            BrushBatchKind::Image(ImageBufferKind::Texture2DArray),
+                                            BrushBatchKind::Image(ImageBufferKind::Texture2D),
                                         );
 
                                         // Gets the saved render task ID of the content, which is
@@ -1692,15 +1651,22 @@ impl BatchBuilder {
                                             let texture_id = secondary_task.get_target_texture();
                                             TextureSource::TextureCache(
                                                 texture_id,
-                                                ImageBufferKind::Texture2DArray,
                                                 Swizzle::default(),
                                             )
                                         };
 
-                                        // Build BatchTextures for shadow/content
-                                        let shadow_textures = BatchTextures::render_target_cache(
+                                        // Retrieve the UV rect addresses for shadow/content.
+                                        let cache_task_id = ctx.resolve_surface(raster_config.surface_index);
+                                        let (shadow_uv_rect_address, shadow_textures) = render_tasks.resolve_surface(
+                                            cache_task_id,
                                             clip_mask_texture_id,
+                                            gpu_cache,
                                         );
+                                        let content_uv_rect_address = render_tasks[secondary_id]
+                                            .get_texture_address(gpu_cache)
+                                            .as_int();
+
+                                        // Build BatchTextures for shadow/content
                                         let content_textures = BatchTextures::prim_textured(
                                             content_source,
                                             clip_mask_texture_id,
@@ -1709,16 +1675,6 @@ impl BatchBuilder {
                                         // Build batch keys for shadow/content
                                         let shadow_key = BatchKey::new(kind, non_segmented_blend_mode, shadow_textures);
                                         let content_key = BatchKey::new(kind, non_segmented_blend_mode, content_textures);
-
-                                        // Retrieve the UV rect addresses for shadow/content.
-                                        let cache_task_id = surface_task
-                                            .expect("bug: surface must be allocated by now");
-                                        let shadow_uv_rect_address = render_tasks[cache_task_id]
-                                            .get_texture_address(gpu_cache)
-                                            .as_int();
-                                        let content_uv_rect_address = render_tasks[secondary_id]
-                                            .get_texture_address(gpu_cache)
-                                            .as_int();
 
                                         for (shadow, shadow_gpu_data) in shadows.iter().zip(picture.extra_gpu_data_handles.iter()) {
                                             // Get the GPU cache address of the extra data handle.
@@ -1753,7 +1709,7 @@ impl BatchBuilder {
                                                 clip_task_address,
                                                 brush_flags,
                                                 shadow_prim_header_index,
-                                                shadow_uv_rect_address,
+                                                shadow_uv_rect_address.as_int(),
                                                 prim_vis_mask,
                                             );
                                         }
@@ -1793,7 +1749,7 @@ impl BatchBuilder {
                                         let amount = (amount * 65536.0) as i32;
 
                                         let (uv_rect_address, textures) = render_tasks.resolve_surface(
-                                            surface_task.expect("bug: surface must be allocated by now"),
+                                            ctx.resolve_surface(raster_config.surface_index),
                                             clip_mask_texture_id,
                                             gpu_cache,
                                         );
@@ -1869,7 +1825,7 @@ impl BatchBuilder {
                                         }
 
                                         let (uv_rect_address, textures) = render_tasks.resolve_surface(
-                                            surface_task.expect("bug: surface must be allocated by now"),
+                                            ctx.resolve_surface(raster_config.surface_index),
                                             clip_mask_texture_id,
                                             gpu_cache,
                                         );
@@ -1928,7 +1884,7 @@ impl BatchBuilder {
                                 ).unwrap();
 
                                 let (uv_rect_address, textures) = render_tasks.resolve_surface(
-                                    surface_task.expect("bug: surface must be allocated by now"),
+                                    ctx.resolve_surface(raster_config.surface_index),
                                     clip_mask_texture_id,
                                     gpu_cache,
                                 );
@@ -1966,13 +1922,13 @@ impl BatchBuilder {
                                     render_tasks,
                                 ).unwrap();
                                 let (uv_rect_address, textures) = render_tasks.resolve_surface(
-                                    surface_task.expect("bug: surface must be allocated by now"),
+                                    ctx.resolve_surface(raster_config.surface_index),
                                     clip_mask_texture_id,
                                     gpu_cache,
                                 );
                                 let key = BatchKey::new(
                                     BatchKind::Brush(
-                                        BrushBatchKind::Image(ImageBufferKind::Texture2DArray),
+                                        BrushBatchKind::Image(ImageBufferKind::Texture2D),
                                     ),
                                     BlendMode::Advanced(mode),
                                     textures,
@@ -2007,13 +1963,16 @@ impl BatchBuilder {
                                     prim_info.clip_task_index,
                                     render_tasks,
                                 ).unwrap();
-                                let cache_task_id = surface_task.expect("bug: surface must be allocated by now");
+                                let cache_task_id = ctx.resolve_surface(raster_config.surface_index);
                                 let backdrop_id = picture.secondary_render_task_id.expect("no backdrop!?");
 
                                 // TODO(gw): For now, mix-blend is not supported as a picture
                                 //           caching root, so we can safely assume there is
                                 //           only a single batcher present.
                                 assert_eq!(self.batchers.len(), 1);
+
+                                let color0 = render_tasks[backdrop_id].get_target_texture();
+                                let color1 = render_tasks[cache_task_id].get_target_texture();
 
                                 let key = BatchKey::new(
                                     BatchKind::Brush(
@@ -2024,7 +1983,22 @@ impl BatchBuilder {
                                         },
                                     ),
                                     BlendMode::PremultipliedAlpha,
-                                    BatchTextures::prim_untextured(clip_mask_texture_id),
+                                    BatchTextures {
+                                        input: TextureSet {
+                                            colors: [
+                                                TextureSource::TextureCache(
+                                                    color0,
+                                                    Swizzle::default(),
+                                                ),
+                                                TextureSource::TextureCache(
+                                                    color1,
+                                                    Swizzle::default(),
+                                                ),
+                                                TextureSource::Invalid,
+                                            ],
+                                        },
+                                        clip_mask: clip_mask_texture_id,
+                                    },
                                 );
                                 let backdrop_task_address: RenderTaskAddress = backdrop_id.into();
                                 let source_task_address: RenderTaskAddress = cache_task_id.into();
@@ -2050,29 +2024,24 @@ impl BatchBuilder {
                                 );
                             }
                             PictureCompositeMode::Blit(_) => {
-                                let cache_task_id = surface_task.expect("bug: surface must be allocated by now");
+                                let cache_task_id = ctx.resolve_surface(raster_config.surface_index);
                                 let uv_rect_address = render_tasks[cache_task_id]
                                     .get_texture_address(gpu_cache)
                                     .as_int();
                                 let cache_render_task = &render_tasks[cache_task_id];
-                                let textures = if cache_render_task.save_target {
-                                    let texture_id = cache_render_task.get_target_texture();
-                                    TextureSet {
-                                        colors: [
-                                            TextureSource::TextureCache(
-                                                texture_id,
-                                                ImageBufferKind::Texture2DArray,
-                                                Swizzle::default(),
-                                            ),
-                                            TextureSource::PrevPassAlpha,
-                                            TextureSource::Invalid,
-                                        ],
-                                    }
-                                } else {
-                                    TextureSet::render_target_cache()
+                                let texture_id = cache_render_task.get_target_texture();
+                                let textures = TextureSet {
+                                    colors: [
+                                        TextureSource::TextureCache(
+                                            texture_id,
+                                            Swizzle::default(),
+                                        ),
+                                        TextureSource::Invalid,
+                                        TextureSource::Invalid,
+                                    ],
                                 };
                                 let batch_params = BrushBatchParameters::shared(
-                                    BrushBatchKind::Image(ImageBufferKind::Texture2DArray),
+                                    BrushBatchKind::Image(ImageBufferKind::Texture2D),
                                     textures,
                                     ImageBrushData {
                                         color_mode: ShaderColorMode::Image,
@@ -2138,10 +2107,10 @@ impl BatchBuilder {
                                 ).unwrap();
 
                                 let kind = BatchKind::Brush(
-                                    BrushBatchKind::Image(ImageBufferKind::Texture2DArray)
+                                    BrushBatchKind::Image(ImageBufferKind::Texture2D)
                                 );
                                 let (uv_rect_address, textures) = render_tasks.resolve_surface(
-                                    surface_task.expect("bug: surface must be allocated by now"),
+                                    ctx.resolve_surface(raster_config.surface_index),
                                     clip_mask_texture_id,
                                     gpu_cache,
                                 );
@@ -2788,6 +2757,7 @@ impl BatchBuilder {
                         &prim_data.stops_handle,
                         BrushBatchKind::LinearGradient,
                         specified_blend_mode,
+                        batch_features,
                         bounding_rect,
                         clip_task_address,
                         gpu_cache,
@@ -2875,6 +2845,7 @@ impl BatchBuilder {
                         &prim_data.stops_handle,
                         BrushBatchKind::RadialGradient,
                         specified_blend_mode,
+                        batch_features,
                         bounding_rect,
                         clip_task_address,
                         gpu_cache,
@@ -2962,6 +2933,7 @@ impl BatchBuilder {
                         &prim_data.stops_handle,
                         BrushBatchKind::ConicGradient,
                         specified_blend_mode,
+                        batch_features,
                         bounding_rect,
                         clip_task_address,
                         gpu_cache,
@@ -2981,20 +2953,16 @@ impl BatchBuilder {
                     .as_ref()
                     .expect("backdrop surface should be alloc by now")
                     .surface_index;
+                let backdrop_task_id = ctx.resolve_surface(backdrop_surface_index);
 
-                let backdrop_task_id = ctx.surfaces[backdrop_surface_index.0]
-                    .render_tasks
-                    .as_ref()
-                    .expect("backdrop task not available")
-                    .root;
+                let (backdrop_uv_rect_address, textures) = render_tasks.resolve_surface(
+                    backdrop_task_id,
+                    TextureSource::Invalid,
+                    gpu_cache,
+                );
 
-                let backdrop_uv_rect_address = render_tasks[backdrop_task_id]
-                    .get_texture_address(gpu_cache)
-                    .as_int();
-
-                let textures = BatchTextures::render_target_cache(TextureSource::Invalid);
                 let batch_key = BatchKey::new(
-                    BatchKind::Brush(BrushBatchKind::Image(ImageBufferKind::Texture2DArray)),
+                    BatchKind::Brush(BrushBatchKind::Image(ImageBufferKind::Texture2D)),
                     BlendMode::PremultipliedAlpha,
                     textures,
                 );
@@ -3029,7 +2997,7 @@ impl BatchBuilder {
                     OPAQUE_TASK_ADDRESS,
                     BrushFlags::empty(),
                     prim_header_index,
-                    backdrop_uv_rect_address,
+                    backdrop_uv_rect_address.as_int(),
                     prim_vis_mask,
                 );
             }
@@ -3218,6 +3186,7 @@ impl BatchBuilder {
         stops_handle: &GpuCacheHandle,
         kind: BrushBatchKind,
         blend_mode: BlendMode,
+        features: BatchFeatures,
         bounding_rect: &PictureRect,
         clip_task_address: RenderTaskAddress,
         gpu_cache: &GpuCache,
@@ -3246,7 +3215,7 @@ impl BatchBuilder {
 
             self.add_brush_instance_to_batches(
                 key,
-                BatchFeatures::empty(),
+                features,
                 bounding_rect,
                 z_id,
                 INVALID_SEGMENT_INDEX,
@@ -3349,9 +3318,17 @@ impl RenderTaskGraph {
         clip_mask: TextureSource,
         gpu_cache: &GpuCache,
     ) -> (GpuCacheAddress, BatchTextures) {
+        let task = &self[task_id];
+
         (
-            self[task_id].get_texture_address(gpu_cache),
-            BatchTextures::render_target_cache(clip_mask),
+            task.get_texture_address(gpu_cache),
+            BatchTextures::prim_textured(
+                TextureSource::TextureCache(
+                    task.get_target_texture(),
+                    Swizzle::default(),
+                ),
+                clip_mask,
+            ),
         )
     }
 }
@@ -3830,7 +3807,6 @@ impl<'a, 'rc> RenderTargetContext<'a, 'rc> {
                     task_id.into(),
                     TextureSource::TextureCache(
                         render_tasks[task_id].get_target_texture(),
-                        ImageBufferKind::Texture2DArray,
                         Swizzle::default(),
                     )
                 ))
@@ -3856,5 +3832,31 @@ impl<'a, 'rc> RenderTargetContext<'a, 'rc> {
             0,
             render_tasks,
         )
+    }
+
+    /// Given a surface index, return the render task id for the output render
+    /// task of this surface.
+    fn resolve_surface(
+        &self,
+        surface_index: SurfaceIndex,
+    ) -> RenderTaskId {
+        let surface = self.surfaces[surface_index.0]
+            .render_tasks
+            .as_ref()
+            .expect("bug: no surface");
+        match surface {
+            SurfaceRenderTasks::Simple(task_id) => {
+                *task_id
+            }
+            SurfaceRenderTasks::Tiled(..) => {
+                // For now, the tiled picture cache surfaces are never used as a readback
+                // source. Soon, that will change when they are available as inputs to
+                // elements such as mix-blend and backdrop-filter.
+                unreachable!();
+            }
+            SurfaceRenderTasks::Chained { root_task_id, .. } => {
+                *root_task_id
+            }
+        }
     }
 }

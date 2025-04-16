@@ -18,6 +18,7 @@
 #include "jit/WarpCacheIRTranspiler.h"
 #include "jit/WarpSnapshot.h"
 #include "js/friend/ErrorMessages.h"  // JSMSG_BAD_CONST_ASSIGN
+#include "vm/GeneratorObject.h"
 #include "vm/Opcodes.h"
 
 #include "jit/JitScript-inl.h"
@@ -338,8 +339,10 @@ MInstruction* WarpBuilder::buildNamedLambdaEnv(
   // that moved env/callee to the tenured heap.
   size_t enclosingSlot = NamedLambdaObject::enclosingEnvironmentSlot();
   size_t lambdaSlot = NamedLambdaObject::lambdaSlot();
-  current->add(MStoreFixedSlot::New(alloc(), namedLambda, enclosingSlot, env));
-  current->add(MStoreFixedSlot::New(alloc(), namedLambda, lambdaSlot, callee));
+  current->add(MStoreFixedSlot::NewUnbarriered(alloc(), namedLambda,
+                                               enclosingSlot, env));
+  current->add(MStoreFixedSlot::NewUnbarriered(alloc(), namedLambda, lambdaSlot,
+                                               callee));
 
   return namedLambda;
 }
@@ -356,8 +359,10 @@ MInstruction* WarpBuilder::buildCallObject(MDefinition* callee,
   // for the same reason as in buildNamedLambdaEnv.
   size_t enclosingSlot = CallObject::enclosingEnvironmentSlot();
   size_t calleeSlot = CallObject::calleeSlot();
-  current->add(MStoreFixedSlot::New(alloc(), callObj, enclosingSlot, env));
-  current->add(MStoreFixedSlot::New(alloc(), callObj, calleeSlot, callee));
+  current->add(
+      MStoreFixedSlot::NewUnbarriered(alloc(), callObj, enclosingSlot, env));
+  current->add(
+      MStoreFixedSlot::NewUnbarriered(alloc(), callObj, calleeSlot, callee));
 
   // Copy closed-over argument slots if there aren't parameter expressions.
   MSlots* slots = nullptr;
@@ -386,9 +391,11 @@ MInstruction* WarpBuilder::buildCallObject(MDefinition* callee,
         current->add(slots);
       }
       uint32_t dynamicSlot = slot - numFixedSlots;
-      current->add(MStoreDynamicSlot::New(alloc(), slots, dynamicSlot, param));
+      current->add(MStoreDynamicSlot::NewUnbarriered(alloc(), slots,
+                                                     dynamicSlot, param));
     } else {
-      current->add(MStoreFixedSlot::New(alloc(), callObj, slot, param));
+      current->add(
+          MStoreFixedSlot::NewUnbarriered(alloc(), callObj, slot, param));
     }
   }
 
@@ -482,6 +489,14 @@ bool WarpBuilder::buildPrologue() {
     return false;
   }
 
+#ifdef JS_CACHEIR_SPEW
+  if (snapshot().needsFinalWarmUpCount()) {
+    MIncrementWarmUpCounter* ins =
+        MIncrementWarmUpCounter::New(alloc(), script_);
+    current->add(ins);
+  }
+#endif
+
   return true;
 }
 
@@ -572,7 +587,7 @@ class MOZ_RAII WarpPoppedValueUseChecker {
   WarpPoppedValueUseChecker(MBasicBlock* current, BytecodeLocation loc)
       : current_(current), loc_(loc) {}
 
-  MOZ_MUST_USE bool init() {
+  [[nodiscard]] bool init() {
     // Don't require SSA uses for values popped by these ops.
     switch (loc_.getOp()) {
       case JSOp::Pop:
@@ -907,6 +922,13 @@ bool WarpBuilder::build_SetRval(BytecodeLocation) {
 
   MDefinition* rval = current->pop();
   current->setSlot(info().returnValueSlot(), rval);
+  return true;
+}
+
+bool WarpBuilder::build_GetRval(BytecodeLocation) {
+  MOZ_ASSERT(!script_->noScriptRval());
+  MDefinition* rval = current->getSlot(info().returnValueSlot());
+  current->push(rval);
   return true;
 }
 
@@ -1328,6 +1350,14 @@ bool WarpBuilder::build_LoopHead(BytecodeLocation loc) {
 
   MInterruptCheck* check = MInterruptCheck::New(alloc());
   current->add(check);
+
+#ifdef JS_CACHEIR_SPEW
+  if (snapshot().needsFinalWarmUpCount()) {
+    MIncrementWarmUpCounter* ins =
+        MIncrementWarmUpCounter::New(alloc(), script_);
+    current->add(ins);
+  }
+#endif
 
   return true;
 }
@@ -2096,6 +2126,227 @@ bool WarpBuilder::build_CheckThisReinit(BytecodeLocation) {
   return true;
 }
 
+bool WarpBuilder::build_Generator(BytecodeLocation loc) {
+  MDefinition* callee = getCallee();
+  MDefinition* environmentChain = current->environmentChain();
+  MDefinition* argsObj = info().needsArgsObj() ? current->argumentsObject()
+                                               : constant(Int32Value(0));
+
+  MGenerator* generator =
+      MGenerator::New(alloc(), callee, environmentChain, argsObj);
+
+  current->add(generator);
+  current->push(generator);
+  return resumeAfter(generator, loc);
+}
+
+bool WarpBuilder::build_AfterYield(BytecodeLocation loc) {
+  // This comes after a yield, so from the perspective of -warp-
+  // this is unreachable code.
+  return true;
+}
+
+bool WarpBuilder::build_FinalYieldRval(BytecodeLocation loc) {
+  MDefinition* gen = current->pop();
+
+  auto setSlotNull = [this, gen](size_t slot) {
+    auto* ins = MStoreFixedSlot::NewBarriered(alloc(), gen, slot,
+                                              constant(NullValue()));
+    current->add(ins);
+  };
+
+  // Close the generator
+  setSlotNull(AbstractGeneratorObject::calleeSlot());
+  setSlotNull(AbstractGeneratorObject::envChainSlot());
+  setSlotNull(AbstractGeneratorObject::argsObjectSlot());
+  setSlotNull(AbstractGeneratorObject::stackStorageSlot());
+  setSlotNull(AbstractGeneratorObject::resumeIndexSlot());
+
+  // Return
+  return build_RetRval(loc);
+}
+
+bool WarpBuilder::build_AsyncResolve(BytecodeLocation loc) {
+  MDefinition* generator = current->pop();
+  MDefinition* valueOrReason = current->pop();
+  auto resolveKind = loc.getAsyncFunctionResolveKind();
+
+  MAsyncResolve* resolve =
+      MAsyncResolve::New(alloc(), generator, valueOrReason, resolveKind);
+  current->add(resolve);
+  current->push(resolve);
+  return resumeAfter(resolve, loc);
+}
+
+bool WarpBuilder::build_ResumeKind(BytecodeLocation loc) {
+  GeneratorResumeKind resumeKind = loc.resumeKind();
+
+  current->push(constant(Int32Value(static_cast<int32_t>(resumeKind))));
+  return true;
+}
+
+bool WarpBuilder::build_CheckResumeKind(BytecodeLocation loc) {
+  // This comes after a yield, so from the perspective of -warp-
+  // this is unreachable code; we do want to manipulate the stack
+  // appropriately though.
+  MDefinition* resumeKind = current->pop();
+  MDefinition* gen = current->pop();
+  MDefinition* rval = current->peek(-1);
+
+  // Mark operands as implicitly used.
+  resumeKind->setImplicitlyUsedUnchecked();
+  gen->setImplicitlyUsedUnchecked();
+  rval->setImplicitlyUsedUnchecked();
+
+  return true;
+}
+
+bool WarpBuilder::build_CanSkipAwait(BytecodeLocation loc) {
+  MDefinition* val = current->pop();
+
+  MCanSkipAwait* canSkip = MCanSkipAwait::New(alloc(), val);
+  current->add(canSkip);
+
+  current->push(val);
+  current->push(canSkip);
+
+  return resumeAfter(canSkip, loc);
+}
+
+bool WarpBuilder::build_MaybeExtractAwaitValue(BytecodeLocation loc) {
+  MDefinition* canSkip = current->pop();
+  MDefinition* value = current->pop();
+
+  MMaybeExtractAwaitValue* extracted =
+      MMaybeExtractAwaitValue::New(alloc(), value, canSkip);
+  current->add(extracted);
+
+  current->push(extracted);
+  current->push(canSkip);
+
+  return resumeAfter(extracted, loc);
+}
+
+bool WarpBuilder::build_InitialYield(BytecodeLocation loc) {
+  MDefinition* gen = current->pop();
+  return buildSuspend(loc, gen, gen);
+}
+
+bool WarpBuilder::build_Await(BytecodeLocation loc) {
+  MDefinition* gen = current->pop();
+  MDefinition* promiseOrGenerator = current->pop();
+
+  return buildSuspend(loc, gen, promiseOrGenerator);
+}
+bool WarpBuilder::build_Yield(BytecodeLocation loc) { return build_Await(loc); }
+
+bool WarpBuilder::buildSuspend(BytecodeLocation loc, MDefinition* gen,
+                               MDefinition* retVal) {
+  // If required, unbox the generator object explicitly and infallibly.
+  //
+  // This is done to avoid fuzz-bugs where ApplyTypeInformation does the
+  // unboxing, and generates fallible unboxes which can lead to torn object
+  // state due to `bailAfter`.
+  MDefinition* genObj = gen;
+  if (genObj->type() != MIRType::Object) {
+    auto* unbox =
+        MUnbox::New(alloc(), gen, MIRType::Object, MUnbox::Mode::Infallible);
+    current->add(unbox);
+
+    genObj = unbox;
+  }
+
+  int32_t slotsToCopy = current->stackDepth() - info().firstLocalSlot();
+  MOZ_ASSERT(slotsToCopy >= 0);
+  if (slotsToCopy > 0) {
+    auto* arraySlot = MLoadFixedSlot::New(
+        alloc(), genObj, AbstractGeneratorObject::stackStorageSlot());
+    current->add(arraySlot);
+
+    auto* arrayObj = MUnbox::New(alloc(), arraySlot, MIRType::Object,
+                                 MUnbox::Mode::Infallible);
+    current->add(arrayObj);
+
+    auto* stackStorage = MElements::New(alloc(), arrayObj);
+    current->add(stackStorage);
+
+    for (int32_t i = 0; i < slotsToCopy; i++) {
+      if (!alloc().ensureBallast()) {
+        return false;
+      }
+      // Use peekUnchecked because we're also writing out the argument slots
+      int32_t peek = -slotsToCopy + i;
+      MDefinition* stackElem = current->peekUnchecked(peek);
+      auto* store = MStoreElement::New(alloc(), stackStorage,
+                                       constant(Int32Value(i)), stackElem,
+                                       /* needsHoleCheck = */ false);
+
+      current->add(store);
+      current->add(MPostWriteBarrier::New(alloc(), arrayObj, stackElem));
+    }
+
+    auto* len = constant(Int32Value(slotsToCopy - 1));
+
+    auto* setInitLength =
+        MSetInitializedLength::New(alloc(), stackStorage, len);
+    current->add(setInitLength);
+
+    auto* setLength = MSetArrayLength::New(alloc(), stackStorage, len);
+    current->add(setLength);
+  }
+
+  // Update Generator Object state
+  uint32_t resumeIndex = loc.getResumeIndex();
+
+  // This store is unbarriered, as it's only ever storing an integer, and as
+  // such doesn't partake of object tracing.
+  current->add(MStoreFixedSlot::NewUnbarriered(
+      alloc(), genObj, AbstractGeneratorObject::resumeIndexSlot(),
+      constant(Int32Value(resumeIndex))));
+
+  // This store is barriered because it stores an object value.
+  current->add(MStoreFixedSlot::NewBarriered(
+      alloc(), genObj, AbstractGeneratorObject::envChainSlot(),
+      current->environmentChain()));
+
+  current->add(
+      MPostWriteBarrier::New(alloc(), genObj, current->environmentChain()));
+
+  // GeneratorReturn will return from the method, however to support MIR
+  // generation isn't treated like the end of a block
+  MGeneratorReturn* ret = MGeneratorReturn::New(alloc(), retVal);
+  current->add(ret);
+
+  // To ensure the rest of the MIR generation looks correct, fill the stack with
+  // the appropriately typed MUnreachable's for the stack pushes from this
+  // opcode.
+  auto* unreachableResumeKind =
+      MUnreachableResult::New(alloc(), MIRType::Int32);
+  current->add(unreachableResumeKind);
+  current->push(unreachableResumeKind);
+
+  auto* unreachableGenerator =
+      MUnreachableResult::New(alloc(), MIRType::Object);
+  current->add(unreachableGenerator);
+  current->push(unreachableGenerator);
+
+  auto* unreachableRval = MUnreachableResult::New(alloc(), MIRType::Value);
+  current->add(unreachableRval);
+  current->push(unreachableRval);
+
+  return true;
+}
+
+bool WarpBuilder::build_AsyncAwait(BytecodeLocation loc) {
+  MDefinition* gen = current->pop();
+  MDefinition* value = current->pop();
+
+  MAsyncAwait* asyncAwait = MAsyncAwait::New(alloc(), value, gen);
+  current->add(asyncAwait);
+  current->push(asyncAwait);
+  return resumeAfter(asyncAwait, loc);
+}
+
 bool WarpBuilder::build_CheckReturn(BytecodeLocation) {
   MOZ_ASSERT(!script_->noScriptRval());
 
@@ -2238,11 +2489,9 @@ bool WarpBuilder::build_NewArray(BytecodeLocation loc) {
 
   MNewArray* ins;
   if (useVMCall) {
-    ins = MNewArray::NewVM(alloc(), length, templateConst, heap,
-                           loc.toRawBytecode());
+    ins = MNewArray::NewVM(alloc(), length, templateConst, heap);
   } else {
-    ins = MNewArray::New(alloc(), length, templateConst, heap,
-                         loc.toRawBytecode());
+    ins = MNewArray::New(alloc(), length, templateConst, heap);
   }
   current->add(ins);
   current->push(ins);
@@ -2522,7 +2771,7 @@ bool WarpBuilder::build_InitElemInc(BytecodeLocation loc) {
 
   // Push index + 1.
   MConstant* constOne = constant(Int32Value(1));
-  MAdd* nextIndex = MAdd::New(alloc(), index, constOne, MDefinition::Truncate);
+  MAdd* nextIndex = MAdd::New(alloc(), index, constOne, TruncateKind::Truncate);
   current->add(nextIndex);
   current->push(nextIndex);
 
@@ -2531,9 +2780,8 @@ bool WarpBuilder::build_InitElemInc(BytecodeLocation loc) {
 
 static LambdaFunctionInfo LambdaInfoFromSnapshot(JSFunction* fun,
                                                  const WarpLambda* snapshot) {
-  // Pass false for singletonType as asserted in WarpOracle.
   return LambdaFunctionInfo(fun, snapshot->baseScript(), snapshot->flags(),
-                            snapshot->nargs(), /* singletonType = */ false);
+                            snapshot->nargs());
 }
 
 bool WarpBuilder::build_Lambda(BytecodeLocation loc) {
@@ -2738,11 +2986,9 @@ bool WarpBuilder::build_Rest(BytecodeLocation loc) {
     MConstant* templateConst = constant(ObjectValue(*templateObject));
     MNewArray* newArray;
     if (numRest > snapshot->maxInlineElements()) {
-      newArray = MNewArray::NewVM(alloc(), numRest, templateConst, heap,
-                                  loc.toRawBytecode());
+      newArray = MNewArray::NewVM(alloc(), numRest, templateConst, heap);
     } else {
-      newArray = MNewArray::New(alloc(), numRest, templateConst, heap,
-                                loc.toRawBytecode());
+      newArray = MNewArray::New(alloc(), numRest, templateConst, heap);
     }
     current->add(newArray);
     current->push(newArray);
@@ -2837,6 +3083,19 @@ bool WarpBuilder::build_Throw(BytecodeLocation loc) {
 
 bool WarpBuilder::build_ThrowSetConst(BytecodeLocation loc) {
   auto* ins = MThrowRuntimeLexicalError::New(alloc(), JSMSG_BAD_CONST_ASSIGN);
+  current->add(ins);
+  if (!resumeAfter(ins, loc)) {
+    return false;
+  }
+
+  // Terminate the block.
+  current->end(MUnreachable::New(alloc()));
+  setTerminatedBlock();
+  return true;
+}
+
+bool WarpBuilder::build_ThrowMsg(BytecodeLocation loc) {
+  auto* ins = MThrowMsg::New(alloc(), loc.throwMsgKind());
   current->add(ins);
   if (!resumeAfter(ins, loc)) {
     return false;
@@ -3131,6 +3390,19 @@ MDefinition* WarpBuilder::maybeGuardNotOptimizedArguments(MDefinition* def) {
   current->add(ins);
   return ins;
 }
+
+class MOZ_RAII AutoAccumulateReturns {
+  MIRGraph& graph_;
+  MIRGraphReturns* prev_;
+
+ public:
+  AutoAccumulateReturns(MIRGraph& graph, MIRGraphReturns& returns)
+      : graph_(graph) {
+    prev_ = graph_.returnAccumulator();
+    graph_.setReturnAccumulator(&returns);
+  }
+  ~AutoAccumulateReturns() { graph_.setReturnAccumulator(prev_); }
+};
 
 bool WarpBuilder::buildInlinedCall(BytecodeLocation loc,
                                    const WarpInlinedCall* inlineSnapshot,

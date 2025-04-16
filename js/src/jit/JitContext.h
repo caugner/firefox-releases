@@ -86,8 +86,7 @@ class JitContext {
 
 #ifdef DEBUG
   // Whether this thread is actively Ion compiling (does not include Wasm or
-  // IonBuilder).
-  // TODO(no-TI): fix IonBuilder references in comments.
+  // WarpOracle).
   bool inIonBackend_ = false;
 
   bool isCompilingWasm_ = false;
@@ -128,6 +127,11 @@ class JitContext {
 
 #ifdef DEBUG
   bool isCompilingWasm() { return isCompilingWasm_; }
+  bool setIsCompilingWasm(bool flag) {
+    bool oldFlag = isCompilingWasm_;
+    isCompilingWasm_ = flag;
+    return oldFlag;
+  }
   bool hasOOM() { return oom_; }
   void setOOM() { oom_ = true; }
 
@@ -145,7 +149,7 @@ class JitContext {
 };
 
 // Process-wide initialization of JIT data structures.
-MOZ_MUST_USE bool InitializeJit();
+[[nodiscard]] bool InitializeJit();
 
 // Call this after changing hardware parameters via command line flags (on
 // platforms that support that).

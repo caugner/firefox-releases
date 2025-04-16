@@ -315,10 +315,8 @@ class JS::Realm : public JS::shadow::Realm {
   friend js::ObjectRealm& js::ObjectRealm::get(const JSObject*);
 
   // Object group tables and other state in the realm. This is private to
-  // enforce use of ObjectGroupRealm::get(group)/getForNewObject(cx).
+  // enforce use of ObjectGroupRealm::getForNewObject(cx).
   js::ObjectGroupRealm objectGroups_;
-  friend js::ObjectGroupRealm& js::ObjectGroupRealm::get(
-      const js::ObjectGroup* group);
   friend js::ObjectGroupRealm& js::ObjectGroupRealm::getForNewObject(
       JSContext* cx);
 
@@ -497,8 +495,13 @@ class JS::Realm : public JS::shadow::Realm {
   const JS::RealmCreationOptions& creationOptions() const {
     return creationOptions_;
   }
-  JS::RealmBehaviors& behaviors() { return behaviors_; }
+
+  // NOTE: Do not provide accessor for mutable reference.
+  // Modifying RealmBehaviors after creating a realm can result in
+  // inconsistency.
   const JS::RealmBehaviors& behaviors() const { return behaviors_; }
+
+  void setNonLive() { behaviors_.setNonLive(); }
 
   /* Whether to preserve JIT code on non-shrinking GCs. */
   bool preserveJitCode() { return creationOptions_.preserveJitCode(); }
@@ -559,8 +562,6 @@ class JS::Realm : public JS::shadow::Realm {
   void traceWeakRegExps(JSTracer* trc);
   void traceWeakSelfHostingScriptSource(JSTracer* trc);
   void traceWeakTemplateObjects(JSTracer* trc);
-
-  void traceWeakObjectGroups(JSTracer* trc) { objectGroups_.traceWeak(trc); }
 
   void clearScriptCounts();
   void clearScriptLCov();
@@ -751,11 +752,9 @@ class JS::Realm : public JS::shadow::Realm {
   }
   void updateDebuggerObservesCoverage();
 
-  // The code coverage can be enabled either for each realm, with the
-  // Debugger API, or for the entire runtime.
-  bool collectCoverage() const;
+  // Returns true if the Debugger API is collecting code coverage data for this
+  // realm or if the process-wide LCov option is enabled.
   bool collectCoverageForDebug() const;
-  bool collectCoverageForPGO() const;
 
   // Get or allocate the associated LCovRealm.
   js::coverage::LCovRealm* lcovRealm();

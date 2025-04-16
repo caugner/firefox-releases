@@ -37,8 +37,8 @@ use webrender::{
     api::units::*, api::*, render_api::*, set_profiler_hooks, AsyncPropertySampler, AsyncScreenshotHandle, Compositor,
     CompositorCapabilities, CompositorConfig, CompositorSurfaceTransform, DebugFlags, Device, NativeSurfaceId,
     NativeSurfaceInfo, NativeTileId, PartialPresentCompositor, PipelineInfo, ProfilerHooks, RecordedFrameHandle,
-    Renderer, RendererOptions, RendererStats, SceneBuilderHooks, ShaderPrecacheFlags, Shaders, ThreadListener,
-    UploadMethod, WrShaders, ONE_TIME_USAGE_HINT,
+    Renderer, RendererOptions, RendererStats, SceneBuilderHooks, ShaderPrecacheFlags, Shaders, SharedShaders,
+    TextureCacheConfig, ThreadListener, UploadMethod, ONE_TIME_USAGE_HINT,
 };
 use wr_malloc_size_of::MallocSizeOfOps;
 
@@ -531,6 +531,8 @@ extern "C" {
     fn gfx_critical_error(msg: *const c_char);
     fn gfx_critical_note(msg: *const c_char);
     fn record_telemetry_time(probe: TelemetryProbe, time_ns: u64);
+    fn gfx_wr_set_crash_annotation(annotation: CrashAnnotation, value: *const c_char);
+    fn gfx_wr_clear_crash_annotation(annotation: CrashAnnotation);
 }
 
 struct CppNotifier {
@@ -540,7 +542,7 @@ struct CppNotifier {
 unsafe impl Send for CppNotifier {}
 
 extern "C" {
-    fn wr_notifier_wake_up(window_id: WrWindowId);
+    fn wr_notifier_wake_up(window_id: WrWindowId, composite_needed: bool);
     fn wr_notifier_new_frame_ready(window_id: WrWindowId);
     fn wr_notifier_nop_frame_done(window_id: WrWindowId);
     fn wr_notifier_external_event(window_id: WrWindowId, raw_event: usize);
@@ -558,9 +560,9 @@ impl RenderNotifier for CppNotifier {
         })
     }
 
-    fn wake_up(&self, _composite_needed: bool) {
+    fn wake_up(&self, composite_needed: bool) {
         unsafe {
-            wr_notifier_wake_up(self.window_id);
+            wr_notifier_wake_up(self.window_id, composite_needed);
         }
     }
 
@@ -581,6 +583,29 @@ impl RenderNotifier for CppNotifier {
         unsafe {
             wr_notifier_external_event(self.window_id, event.unwrap());
         }
+    }
+}
+
+struct MozCrashAnnotator;
+
+unsafe impl Send for MozCrashAnnotator {}
+
+impl CrashAnnotator for MozCrashAnnotator {
+    fn set(&self, annotation: CrashAnnotation, value: &str) {
+        let value = CString::new(value).unwrap();
+        unsafe {
+            gfx_wr_set_crash_annotation(annotation, value.as_ptr());
+        }
+    }
+
+    fn clear(&self, annotation: CrashAnnotation) {
+        unsafe {
+            gfx_wr_clear_crash_annotation(annotation);
+        }
+    }
+
+    fn box_clone(&self) -> Box<dyn CrashAnnotator> {
+        Box::new(MozCrashAnnotator)
     }
 }
 
@@ -1183,6 +1208,7 @@ fn wr_device_new(gl_context: *mut c_void, pc: Option<&mut WrProgramCache>) -> De
 
     Device::new(
         gl,
+        Some(Box::new(MozCrashAnnotator)),
         resource_override_path,
         use_optimized_shaders,
         upload_method,
@@ -1228,6 +1254,13 @@ extern "C" {
         transform: &CompositorSurfaceTransform,
         clip_rect: DeviceIntRect,
         image_rendering: ImageRendering,
+    );
+    fn wr_compositor_start_compositing(
+        compositor: *mut c_void,
+        dirty_rects: *const DeviceIntRect,
+        num_dirty_rects: usize,
+        opaque_rects: *const DeviceIntRect,
+        num_opaque_rects: usize,
     );
     fn wr_compositor_end_frame(compositor: *mut c_void);
     fn wr_compositor_enable_native_compositor(compositor: *mut c_void, enable: bool);
@@ -1339,6 +1372,22 @@ impl Compositor for WrCompositor {
         }
     }
 
+    fn start_compositing(
+        &mut self,
+        dirty_rects: &[DeviceIntRect],
+        opaque_rects: &[DeviceIntRect],
+    ) {
+        unsafe {
+            wr_compositor_start_compositing(
+                self.0,
+                dirty_rects.as_ptr(),
+                dirty_rects.len(),
+                opaque_rects.as_ptr(),
+                opaque_rects.len(),
+            );
+        }
+    }
+
     fn end_frame(&mut self) {
         unsafe {
             wr_compositor_end_frame(self.0);
@@ -1424,12 +1473,16 @@ impl WrCompositor {
     }
 }
 
+/// A wrapper around a strong reference to a Shaders object.
+pub struct WrShaders(SharedShaders);
+
 // Call MakeCurrent before this.
 #[no_mangle]
 pub extern "C" fn wr_window_new(
     window_id: WrWindowId,
     window_width: i32,
     window_height: i32,
+    is_main_window: bool,
     support_low_priority_transactions: bool,
     support_low_priority_threadpool: bool,
     allow_texture_swizzling: bool,
@@ -1446,8 +1499,9 @@ pub extern "C" fn wr_window_new(
     enclosing_size_of_op: VoidPtrToSizeFn,
     document_id: u32,
     compositor: *mut c_void,
+    use_native_compositor: bool,
     max_update_rects: usize,
-    partial_present_compositor: *mut c_void,
+    use_partial_present: bool,
     max_partial_present_rects: usize,
     draw_previous_partial_present_regions: bool,
     out_handle: &mut *mut DocumentHandle,
@@ -1522,16 +1576,16 @@ pub extern "C" fn wr_window_new(
     };
 
     let compositor_config = if software {
-        let wr_compositor = if compositor != ptr::null_mut() {
-            Some(WrCompositor(compositor))
-        } else {
-            None
-        };
         CompositorConfig::Native {
             max_update_rects: 1,
-            compositor: Box::new(SwCompositor::new(sw_gl.unwrap(), native_gl, wr_compositor)),
+            compositor: Box::new(SwCompositor::new(
+                sw_gl.unwrap(),
+                native_gl,
+                WrCompositor(compositor),
+                use_native_compositor,
+            )),
         }
-    } else if compositor != ptr::null_mut() {
+    } else if use_native_compositor {
         CompositorConfig::Native {
             max_update_rects,
             compositor: Box::new(WrCompositor(compositor)),
@@ -1540,8 +1594,8 @@ pub extern "C" fn wr_window_new(
         CompositorConfig::Draw {
             max_partial_present_rects,
             draw_previous_partial_present_regions,
-            partial_present: if partial_present_compositor != ptr::null_mut() {
-                Some(Box::new(WrPartialPresentCompositor(partial_present_compositor)))
+            partial_present: if use_partial_present {
+                Some(Box::new(WrPartialPresentCompositor(compositor)))
             } else {
                 None
             },
@@ -1554,6 +1608,19 @@ pub extern "C" fn wr_window_new(
         None
     };
 
+    let texture_cache_config = if is_main_window {
+        TextureCacheConfig::DEFAULT
+    } else {
+        TextureCacheConfig {
+            color8_linear_texture_size: 512,
+            color8_nearest_texture_size: 512,
+            color8_glyph_texture_size: 512,
+            alpha8_texture_size: 512,
+            alpha8_glyph_texture_size: 512,
+            alpha16_texture_size: 512,
+        }
+    };
+
     let opts = RendererOptions {
         enable_aa: true,
         force_subpixel_aa: false,
@@ -1564,6 +1631,7 @@ pub extern "C" fn wr_window_new(
             workers.clone(),
             workers_low_priority,
         ))),
+        crash_annotator: Some(Box::new(MozCrashAnnotator)),
         workers: Some(workers),
         thread_listener: Some(Box::new(GeckoProfilerThreadListener::new())),
         size_of_op: Some(size_of_op),
@@ -1598,6 +1666,7 @@ pub extern "C" fn wr_window_new(
         enable_gpu_markers,
         panic_on_gl_error,
         picture_tile_size,
+        texture_cache_config,
         ..Default::default()
     };
 
@@ -1606,7 +1675,7 @@ pub extern "C" fn wr_window_new(
 
     let window_size = DeviceIntSize::new(window_width, window_height);
     let notifier = Box::new(CppNotifier { window_id });
-    let (renderer, sender) = match Renderer::new(gl, notifier, opts, shaders) {
+    let (renderer, sender) = match Renderer::new(gl, notifier, opts, shaders.map(|sh| &sh.0)) {
         Ok((renderer, sender)) => (renderer, sender),
         Err(e) => {
             warn!(" Failed to create a Renderer: {:?}", e);
@@ -2710,7 +2779,7 @@ pub extern "C" fn wr_dp_define_scroll_layer(
 
     let space_and_clip = state.frame_builder.dl_builder.define_scroll_frame(
         &parent.to_webrender(state.pipeline_id),
-        Some(ExternalScrollId(external_scroll_id, state.pipeline_id)),
+        ExternalScrollId(external_scroll_id, state.pipeline_id),
         content_rect,
         clip_rect,
         ScrollSensitivity::Script,
@@ -3917,7 +3986,7 @@ pub extern "C" fn wr_shaders_new(
         }
     }));
 
-    let shaders = WrShaders { shaders };
+    let shaders = WrShaders(shaders);
 
     device.end_frame();
     Box::into_raw(Box::new(shaders))
@@ -3927,7 +3996,7 @@ pub extern "C" fn wr_shaders_new(
 pub unsafe extern "C" fn wr_shaders_delete(shaders: *mut WrShaders, gl_context: *mut c_void) {
     let mut device = wr_device_new(gl_context, None);
     let shaders = Box::from_raw(shaders);
-    if let Ok(shaders) = Rc::try_unwrap(shaders.shaders) {
+    if let Ok(shaders) = Rc::try_unwrap(shaders.0) {
         shaders.into_inner().deinit(&mut device);
     }
     // let shaders go out of scope and get dropped

@@ -71,17 +71,10 @@ mozAccessible* AccessibleWrap::GetNativeObject() {
     // We don't creat OSX accessibles for xul tooltips, defunct accessibles,
     // <br> (whitespace) elements, or pruned children.
     //
-    // We also don't create a native object if we're child of a "flat"
-    // accessible; for example, on OS X buttons shouldn't have any children,
-    // because that makes the OS confused.
-    //
     // To maintain a scripting environment where the XPCOM accessible hierarchy
     // look the same on all platforms, we still let the C++ objects be created
     // though.
-    Accessible* parent = Parent();
-    bool mustBePruned = parent && nsAccUtils::MustPrune(parent);
-    if (!IsXULTooltip() && !IsDefunct() && !mustBePruned &&
-        Role() != roles::WHITESPACE) {
+    if (!IsXULTooltip() && !IsDefunct() && Role() != roles::WHITESPACE) {
       mNativeObject = [[GetNativeType() alloc] initWithAccessible:this];
     }
   }
@@ -223,18 +216,26 @@ nsresult AccessibleWrap::HandleAccEvent(AccEvent* aEvent) {
 
     case nsIAccessibleEvent::EVENT_TEXT_CARET_MOVED: {
       AccCaretMoveEvent* event = downcast_accEvent(aEvent);
+      int32_t caretOffset = event->GetCaretOffset();
+      MOXTextMarkerDelegate* delegate =
+          [MOXTextMarkerDelegate getOrCreateForDoc:aEvent->Document()];
+      [delegate setCaretOffset:eventTarget at:caretOffset];
       if (event->IsSelectionCollapsed()) {
         // If the selection is collapsed, invalidate our text selection cache.
-        MOXTextMarkerDelegate* delegate =
-            [MOXTextMarkerDelegate getOrCreateForDoc:aEvent->Document()];
-        int32_t caretOffset = event->GetCaretOffset();
         [delegate setSelectionFrom:eventTarget
                                 at:caretOffset
                                 to:eventTarget
                                 at:caretOffset];
       }
 
-      [nativeAcc handleAccessibleEvent:eventType];
+      if (mozTextAccessible* textAcc = static_cast<mozTextAccessible*>(
+              [nativeAcc moxEditableAncestor])) {
+        [textAcc
+            handleAccessibleEvent:nsIAccessibleEvent::EVENT_TEXT_CARET_MOVED];
+      } else {
+        [nativeAcc
+            handleAccessibleEvent:nsIAccessibleEvent::EVENT_TEXT_CARET_MOVED];
+      }
       break;
     }
 
@@ -273,6 +274,16 @@ nsresult AccessibleWrap::HandleAccEvent(AccEvent* aEvent) {
   NS_OBJC_END_TRY_ABORT_BLOCK_NSRESULT;
 }
 
+bool AccessibleWrap::ApplyPostFilter(const EWhichPostFilter& aSearchKey,
+                                     const nsString& aSearchText) {
+  // We currently only support the eContainsText post filter.
+  MOZ_ASSERT(aSearchKey == EWhichPostFilter::eContainsText,
+             "Only search text supported");
+  nsAutoString name;
+  Name(name);
+  return name.Find(aSearchText, true) != kNotFound;
+}
+
 ////////////////////////////////////////////////////////////////////////////////
 // AccessibleWrap protected
 
@@ -309,6 +320,7 @@ Class a11y::GetTypeFromRole(roles::Role aRole) {
     case roles::ENTRY:
     case roles::CAPTION:
     case roles::ACCEL_LABEL:
+    case roles::EDITCOMBOBOX:
     case roles::PASSWORD_TEXT:
       // normal textfield (static or editable)
       return [mozTextAccessible class];

@@ -308,7 +308,8 @@ class ContentChild final : public PContentChild,
                                                  const bool& haveBidiKeyboards);
 
   mozilla::ipc::IPCResult RecvNotifyVisited(nsTArray<VisitedQueryResult>&&);
-  mozilla::ipc::IPCResult RecvThemeChanged(LookAndFeelCache&& aLookAndFeelCache,
+
+  mozilla::ipc::IPCResult RecvThemeChanged(LookAndFeelData&& aLookAndFeelData,
                                            widget::ThemeChangeKind);
 
   mozilla::ipc::IPCResult RecvUpdateSystemParameters(
@@ -365,7 +366,7 @@ class ContentChild final : public PContentChild,
 
   mozilla::ipc::IPCResult RecvUpdateFontList(
       nsTArray<SystemFontListEntry>&& aFontList);
-  mozilla::ipc::IPCResult RecvRebuildFontList();
+  mozilla::ipc::IPCResult RecvRebuildFontList(const bool& aFullRebuild);
 
   mozilla::ipc::IPCResult RecvUpdateAppLocales(
       nsTArray<nsCString>&& aAppLocales);
@@ -546,7 +547,7 @@ class ContentChild final : public PContentChild,
 
   mozilla::ipc::IPCResult RecvSetXPCOMProcessAttributes(
       XPCOMInitData&& aXPCOMInit, const StructuredCloneData& aInitialData,
-      LookAndFeelCache&& aLookAndFeelCache,
+      LookAndFeelData&& aLookAndFeelData,
       nsTArray<SystemFontListEntry>&& aFontList,
       const Maybe<base::SharedMemoryHandle>& aSharedUASheetHandle,
       const uintptr_t& aSharedUASheetAddress,
@@ -611,7 +612,7 @@ class ContentChild final : public PContentChild,
   bool DeallocPSessionStorageObserverChild(
       PSessionStorageObserverChild* aActor);
 
-  LookAndFeelCache& BorrowLookAndFeelCache() { return mLookAndFeelCache; }
+  LookAndFeelData& BorrowLookAndFeelData() { return mLookAndFeelData; }
 
   /**
    * Helper function for protocols that use the GPU process when available.
@@ -713,7 +714,8 @@ class ContentChild final : public PContentChild,
   mozilla::ipc::IPCResult RecvWindowClose(
       const MaybeDiscarded<BrowsingContext>& aContext, bool aTrustedCaller);
   mozilla::ipc::IPCResult RecvWindowFocus(
-      const MaybeDiscarded<BrowsingContext>& aContext, CallerType aCallerType);
+      const MaybeDiscarded<BrowsingContext>& aContext, CallerType aCallerType,
+      uint64_t aActionId);
   mozilla::ipc::IPCResult RecvWindowBlur(
       const MaybeDiscarded<BrowsingContext>& aContext);
   mozilla::ipc::IPCResult RecvRaiseWindow(
@@ -784,8 +786,7 @@ class ContentChild final : public PContentChild,
       nsDocShellLoadState* aLoadState, bool aSetNavigating,
       LoadURIResolver&& aResolve);
 
-  mozilla::ipc::IPCResult RecvInternalLoad(nsDocShellLoadState* aLoadState,
-                                           bool aTakeFocus);
+  mozilla::ipc::IPCResult RecvInternalLoad(nsDocShellLoadState* aLoadState);
 
   mozilla::ipc::IPCResult RecvDisplayLoadError(
       const MaybeDiscarded<BrowsingContext>& aContext, const nsAString& aURI);
@@ -836,6 +837,10 @@ class ContentChild final : public PContentChild,
  private:
   mozilla::ipc::IPCResult RecvFlushFOGData(FlushFOGDataResolver&& aResolver);
 
+  mozilla::ipc::IPCResult RecvUpdateMediaCodecsSupported(
+      RemoteDecodeIn aLocation,
+      const PDMFactory::MediaCodecsSupported& aSupported);
+
 #ifdef NIGHTLY_BUILD
   virtual PContentChild::Result OnMessageReceived(const Message& aMsg) override;
 #else
@@ -856,8 +861,8 @@ class ContentChild final : public PContentChild,
   // parent process and used to initialize gfx in the child. Currently used
   // only on MacOSX and Linux.
   nsTArray<mozilla::dom::SystemFontListEntry> mFontList;
-  // Temporary storage for nsXPLookAndFeel cache info.
-  LookAndFeelCache mLookAndFeelCache;
+  // Temporary storage for look and feel data.
+  LookAndFeelData mLookAndFeelData;
   // Temporary storage for list of shared-fontlist memory blocks.
   nsTArray<base::SharedMemoryHandle> mSharedFontListBlocks;
 

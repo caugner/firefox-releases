@@ -81,6 +81,11 @@ void WindowDragLeaveHandler(GtkWidget* aWidget);
 
 class gfxPattern;
 class nsIFrame;
+#if !GTK_CHECK_VERSION(3, 18, 0)
+struct _GdkEventTouchpadPinch;
+typedef struct _GdkEventTouchpadPinch GdkEventTouchpadPinch;
+
+#endif
 
 namespace mozilla {
 class TimeStamp;
@@ -211,6 +216,7 @@ class nsWindow final : public nsBaseWidget {
   gboolean OnKeyReleaseEvent(GdkEventKey* aEvent);
 
   void OnScrollEvent(GdkEventScroll* aEvent);
+
   void OnWindowStateEvent(GtkWidget* aWidget, GdkEventWindowState* aEvent);
   void OnDragDataReceivedEvent(GtkWidget* aWidget, GdkDragContext* aDragContext,
                                gint aX, gint aY,
@@ -218,6 +224,7 @@ class nsWindow final : public nsBaseWidget {
                                guint aTime, gpointer aData);
   gboolean OnPropertyNotifyEvent(GtkWidget* aWidget, GdkEventProperty* aEvent);
   gboolean OnTouchEvent(GdkEventTouch* aEvent);
+  gboolean OnTouchpadPinchEvent(GdkEventTouchpadPinch* aEvent);
 
   void UpdateTopLevelOpaqueRegion();
 
@@ -236,6 +243,8 @@ class nsWindow final : public nsBaseWidget {
 #endif
 
   RefPtr<mozilla::gfx::VsyncSource> GetVsyncSource() override;
+
+  static void WithSettingsChangesIgnored(const std::function<void()>& aFn);
 
  private:
   void UpdateAlpha(mozilla::gfx::SourceSurface* aSourceSurface,
@@ -292,6 +301,7 @@ class nsWindow final : public nsBaseWidget {
   GtkWidget* GetGtkWidget() { return mShell; }
   nsIFrame* GetFrame();
   bool IsDestroyed() { return mIsDestroyed; }
+  bool IsPopup();
   bool IsWaylandPopup();
   bool IsPIPWindow() { return mIsPIPWindow; };
 
@@ -370,6 +380,7 @@ class nsWindow final : public nsBaseWidget {
   virtual nsresult SetNonClientMargins(
       LayoutDeviceIntMargin& aMargins) override;
   void SetDrawsInTitlebar(bool aState) override;
+  bool GetTitlebarRect(mozilla::gfx::Rect& aRect);
   virtual void UpdateWindowDraggingRegion(
       const LayoutDeviceIntRegion& aRegion) override;
 
@@ -525,7 +536,7 @@ class nsWindow final : public nsBaseWidget {
 
   // This field omits duplicate scroll events caused by GNOME bug 726878.
   guint32 mLastScrollEventTime;
-
+  mozilla::ScreenCoord mLastPinchEventSpan;
   bool mPanInProgress = false;
 
   // for touch event handling

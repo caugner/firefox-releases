@@ -10,6 +10,7 @@
 
 #include "vm/JSScript-inl.h"
 
+#include "mozilla/ArrayUtils.h"
 #include "mozilla/CheckedInt.h"
 #include "mozilla/DebugOnly.h"
 #include "mozilla/Maybe.h"
@@ -33,12 +34,13 @@
 
 #include "frontend/BytecodeCompiler.h"
 #include "frontend/BytecodeEmitter.h"
-#include "frontend/CompilationInfo.h"  // frontend::CompilationStencil
+#include "frontend/CompilationInfo.h"  // frontend::BaseCompilationStencil
 #include "frontend/SharedContext.h"
 #include "frontend/SourceNotes.h"  // SrcNote, SrcNoteType, SrcNoteIterator
 #include "frontend/StencilXdr.h"   // frontend::StencilXdr::SharedData
 #include "gc/FreeOp.h"
 #include "jit/BaselineJIT.h"
+#include "jit/CacheIRHealth.h"
 #include "jit/Invalidation.h"
 #include "jit/Ion.h"
 #include "jit/IonScript.h"
@@ -646,8 +648,17 @@ void js::BaseScript::finalize(JSFreeOp* fop) {
 
   if (warmUpData_.isJitScript()) {
     JSScript* script = this->asJSScript();
+#ifdef JS_CACHEIR_SPEW
+    maybeUpdateWarmUpCount(script);
+#endif
     script->releaseJitScriptOnFinalize(fop);
   }
+
+#ifdef JS_CACHEIR_SPEW
+  if (hasBytecode()) {
+    maybeSpewScriptFinalWarmUpCount(this->asJSScript());
+  }
+#endif
 
   if (data_) {
     // We don't need to triger any barriers here, just free the memory.
@@ -1174,7 +1185,7 @@ XDRResult js::XDRScript(XDRState<mode>* xdr, HandleScope scriptEnclosingScope,
       ssHolder.get().reset(sourceObject->source());
     }
 
-    MOZ_TRY(ScriptSource::XDR(xdr, options, &ssHolder));
+    MOZ_TRY(ScriptSource::XDR(xdr, options.ptrOr(nullptr), &ssHolder));
 
     if (mode == XDR_DECODE) {
       sourceObject = ScriptSourceObject::create(cx, ssHolder.get().get());
@@ -2773,7 +2784,7 @@ bool ScriptSource::xdrEncodeTopLevel(JSContext* cx, HandleScript script) {
 }
 
 bool ScriptSource::xdrEncodeInitialStencil(
-    JSContext* cx, frontend::CompilationInfo& compilationInfo,
+    JSContext* cx, frontend::CompilationStencil& stencil,
     UniquePtr<XDRIncrementalEncoderBase>& xdrEncoder) {
   // Encoding failures are reported by the xdrFinalizeEncoder function.
   if (containsAsmJS()) {
@@ -2789,7 +2800,7 @@ bool ScriptSource::xdrEncodeInitialStencil(
   AutoIncrementalTimer timer(cx->realm()->timers.xdrEncodingTime);
   auto failureCase = mozilla::MakeScopeExit([&] { xdrEncoder.reset(nullptr); });
 
-  XDRResult res = xdrEncoder->codeStencil(compilationInfo);
+  XDRResult res = xdrEncoder->codeStencil(stencil);
   if (res.isErr()) {
     // On encoding failure, let failureCase destroy encoder and return true
     // to avoid failing any currently executing script.
@@ -2805,13 +2816,13 @@ bool ScriptSource::xdrEncodeInitialStencil(
 }
 
 bool ScriptSource::xdrEncodeStencils(
-    JSContext* cx, frontend::CompilationInfoVector& compilationInfos,
+    JSContext* cx, frontend::CompilationStencilSet& stencilSet,
     UniquePtr<XDRIncrementalEncoderBase>& xdrEncoder) {
-  if (!xdrEncodeInitialStencil(cx, compilationInfos.initial, xdrEncoder)) {
+  if (!xdrEncodeInitialStencil(cx, stencilSet, xdrEncoder)) {
     return false;
   }
 
-  for (auto& delazification : compilationInfos.delazifications) {
+  for (auto& delazification : stencilSet.delazifications) {
     if (!xdrEncodeFunctionStencilWith(cx, delazification, xdrEncoder)) {
       return false;
     }
@@ -2850,14 +2861,14 @@ bool ScriptSource::xdrEncodeFunction(JSContext* cx, HandleFunction fun,
 }
 
 bool ScriptSource::xdrEncodeFunctionStencil(
-    JSContext* cx, frontend::CompilationStencil& stencil) {
+    JSContext* cx, frontend::BaseCompilationStencil& stencil) {
   MOZ_ASSERT(hasEncoder());
   AutoIncrementalTimer timer(cx->realm()->timers.xdrEncodingTime);
   return xdrEncodeFunctionStencilWith(cx, stencil, xdrEncoder_);
 }
 
 bool ScriptSource::xdrEncodeFunctionStencilWith(
-    JSContext* cx, frontend::CompilationStencil& stencil,
+    JSContext* cx, frontend::BaseCompilationStencil& stencil,
     UniquePtr<XDRIncrementalEncoderBase>& xdrEncoder) {
   auto failureCase = mozilla::MakeScopeExit([&] { xdrEncoder.reset(nullptr); });
 
@@ -2884,7 +2895,7 @@ bool ScriptSource::xdrFinalizeEncoder(JSContext* cx,
 
   auto cleanup = mozilla::MakeScopeExit([&] { xdrEncoder_.reset(nullptr); });
 
-  XDRResult res = xdrEncoder_->linearize(buffer);
+  XDRResult res = xdrEncoder_->linearize(buffer, this);
   return res.isOk();
 }
 
@@ -3226,7 +3237,7 @@ XDRResult ScriptSource::xdrData(XDRState<mode>* const xdr,
 template <XDRMode mode>
 /* static */
 XDRResult ScriptSource::XDR(XDRState<mode>* xdr,
-                            const mozilla::Maybe<JS::CompileOptions>& options,
+                            const ReadOnlyCompileOptions* maybeOptions,
                             MutableHandle<ScriptSourceHolder> holder) {
   JSContext* cx = xdr->cx();
   ScriptSource* ss = nullptr;
@@ -3245,7 +3256,7 @@ XDRResult ScriptSource::XDR(XDRState<mode>* xdr,
     // Most CompileOptions fields aren't used by ScriptSourceObject, and those
     // that are (element; elementAttributeName) aren't preserved by XDR. So
     // this can be simple.
-    if (!ss->initFromOptions(cx, *options)) {
+    if (!ss->initFromOptions(cx, *maybeOptions)) {
       return xdr->fail(JS::TranscodeResult_Throw);
     }
   }
@@ -3313,12 +3324,12 @@ XDRResult ScriptSource::XDR(XDRState<mode>* xdr,
 template /* static */
     XDRResult
     ScriptSource::XDR(XDRState<XDR_ENCODE>* xdr,
-                      const mozilla::Maybe<JS::CompileOptions>& options,
+                      const ReadOnlyCompileOptions* maybeOptions,
                       MutableHandle<ScriptSourceHolder> holder);
 template /* static */
     XDRResult
     ScriptSource::XDR(XDRState<XDR_DECODE>* xdr,
-                      const mozilla::Maybe<JS::CompileOptions>& options,
+                      const ReadOnlyCompileOptions* maybeOptions,
                       MutableHandle<ScriptSourceHolder> holder);
 
 // Format and return a cx->pod_malloc'ed URL for a generated script like:
@@ -3718,10 +3729,11 @@ PrivateScriptData* PrivateScriptData::new_(JSContext* cx, uint32_t ngcthings) {
 bool PrivateScriptData::InitFromStencil(
     JSContext* cx, js::HandleScript script,
     js::frontend::CompilationInput& input,
-    js::frontend::CompilationStencil& stencil,
+    js::frontend::BaseCompilationStencil& stencil,
     js::frontend::CompilationGCOutput& gcOutput,
-    const frontend::ScriptStencil& scriptStencil) {
-  uint32_t ngcthings = scriptStencil.gcThings.size();
+    const js::frontend::ScriptIndex scriptIndex) {
+  js::frontend::ScriptStencil& scriptStencil = stencil.scriptData[scriptIndex];
+  uint32_t ngcthings = scriptStencil.gcThingsLength;
 
   MOZ_ASSERT(ngcthings <= INDEX_LIMIT);
 
@@ -3733,13 +3745,14 @@ bool PrivateScriptData::InitFromStencil(
   js::PrivateScriptData* data = script->data_;
   if (ngcthings) {
     if (!EmitScriptThingsVector(cx, input, stencil, gcOutput,
-                                scriptStencil.gcThings, data->gcthings())) {
+                                scriptStencil.gcthings(stencil),
+                                data->gcthings())) {
       return false;
     }
   }
 
-  if (scriptStencil.memberInitializers) {
-    script->setMemberInitializers(*scriptStencil.memberInitializers);
+  if (scriptStencil.hasMemberInitializers()) {
+    script->setMemberInitializers(scriptStencil.memberInitializers());
   }
 
   return true;
@@ -3814,9 +3827,9 @@ bool JSScript::createPrivateScriptData(JSContext* cx, HandleScript script,
 /* static */
 bool JSScript::fullyInitFromStencil(
     JSContext* cx, js::frontend::CompilationInput& input,
-    js::frontend::CompilationStencil& stencil,
+    js::frontend::BaseCompilationStencil& stencil,
     frontend::CompilationGCOutput& gcOutput, HandleScript script,
-    const frontend::ScriptStencil& scriptStencil, HandleFunction fun) {
+    const js::frontend::ScriptIndex scriptIndex) {
   MutableScriptFlags lazyMutableFlags;
   RootedScope lazyEnclosingScope(cx);
 
@@ -3863,28 +3876,33 @@ bool JSScript::fullyInitFromStencil(
   });
 
   /* The counts of indexed things must be checked during code generation. */
-  MOZ_ASSERT(scriptStencil.gcThings.size() <= INDEX_LIMIT);
+  js::frontend::ScriptStencil& scriptStencil = stencil.scriptData[scriptIndex];
+  MOZ_ASSERT(scriptStencil.gcThingsLength <= INDEX_LIMIT);
 
   // Note: These flags should already be correct when the BaseScript was
   // allocated.
-  MOZ_ASSERT(script->immutableFlags() == scriptStencil.immutableFlags);
+  MOZ_ASSERT_IF(stencil.isInitialStencil(),
+                script->immutableFlags() == stencil.asCompilationStencil()
+                                                .scriptExtra[scriptIndex]
+                                                .immutableFlags);
 
   // Derive initial mutable flags
   script->resetArgsUsageAnalysis();
 
   // Create and initialize PrivateScriptData
   if (!PrivateScriptData::InitFromStencil(cx, script, input, stencil, gcOutput,
-                                          scriptStencil)) {
+                                          scriptIndex)) {
     return false;
   }
 
-  script->initSharedData(scriptStencil.sharedData);
+  script->initSharedData(stencil.sharedData.get(scriptIndex));
 
   // NOTE: JSScript is now constructed and should be linked in.
   rollbackGuard.release();
 
   // Link JSFunction to this JSScript.
-  if (fun) {
+  if (scriptStencil.isFunction()) {
+    JSFunction* fun = gcOutput.functions[scriptIndex];
     if (fun->isIncomplete()) {
       fun->initScript(script);
     } else {
@@ -3919,26 +3937,28 @@ JSScript* JSScript::fromStencil(JSContext* cx,
                                 js::frontend::CompilationInput& input,
                                 js::frontend::CompilationStencil& stencil,
                                 frontend::CompilationGCOutput& gcOutput,
-                                const frontend::ScriptStencil& scriptStencil,
-                                HandleFunction fun) {
-  MOZ_ASSERT(scriptStencil.sharedData,
+                                const js::frontend::ScriptIndex scriptIndex) {
+  js::frontend::ScriptStencil& scriptStencil = stencil.scriptData[scriptIndex];
+  js::frontend::ScriptStencilExtra& scriptExtra =
+      stencil.scriptExtra[scriptIndex];
+  MOZ_ASSERT(scriptStencil.hasSharedData(),
              "Need generated bytecode to use JSScript::fromStencil");
 
   RootedObject functionOrGlobal(cx, cx->global());
-  if (fun) {
-    functionOrGlobal = fun;
+  if (scriptStencil.isFunction()) {
+    functionOrGlobal = gcOutput.functions[scriptIndex];
   }
 
   Rooted<ScriptSourceObject*> sourceObject(cx, gcOutput.sourceObject);
   RootedScript script(
-      cx, Create(cx, functionOrGlobal, sourceObject, scriptStencil.extent,
-                 scriptStencil.immutableFlags));
+      cx, Create(cx, functionOrGlobal, sourceObject, scriptExtra.extent,
+                 scriptExtra.immutableFlags));
   if (!script) {
     return nullptr;
   }
 
-  if (!fullyInitFromStencil(cx, input, stencil, gcOutput, script, scriptStencil,
-                            fun)) {
+  if (!fullyInitFromStencil(cx, input, stencil, gcOutput, script,
+                            scriptIndex)) {
     return nullptr;
   }
 
@@ -4208,6 +4228,51 @@ JS_FRIEND_API unsigned js::GetScriptLineExtent(JSScript* script) {
   return 1 + maxLineNo - script->lineno();
 }
 
+#ifdef JS_CACHEIR_SPEW
+void js::maybeUpdateWarmUpCount(JSScript* script) {
+  if (script->needsFinalWarmUpCount()) {
+    ScriptFinalWarmUpCountMap* map =
+        script->zone()->scriptFinalWarmUpCountMap.get();
+    // If needsFinalWarmUpCount is true, ScriptFinalWarmUpCountMap must have
+    // already been created and thus must be asserted.
+    MOZ_ASSERT(map);
+    ScriptFinalWarmUpCountMap::Ptr p = map->lookup(script);
+    MOZ_ASSERT(p);
+
+    mozilla::Get<0>(p->value()) += script->jitScript()->warmUpCount();
+  }
+}
+
+void js::maybeSpewScriptFinalWarmUpCount(JSScript* script) {
+  if (script->needsFinalWarmUpCount()) {
+    ScriptFinalWarmUpCountMap* map =
+        script->zone()->scriptFinalWarmUpCountMap.get();
+    // If needsFinalWarmUpCount is true, ScriptFinalWarmUpCountMap must have
+    // already been created and thus must be asserted.
+    MOZ_ASSERT(map);
+    ScriptFinalWarmUpCountMap::Ptr p = map->lookup(script);
+    MOZ_ASSERT(p);
+    uint32_t warmUpCount;
+    const char* scriptName;
+    mozilla::Tie(warmUpCount, scriptName) = p->value();
+
+    JSContext* cx = TlsContext.get();
+    cx->spewer().enableSpewing();
+
+    // In the case that we care about a script's final warmup count but the
+    // spewer is not enabled, AutoSpewChannel automatically sets and unsets
+    // the proper channel for the duration of spewing a health report's warm
+    // up count.
+    AutoSpewChannel channel(cx, SpewChannel::RateMyCacheIR, script);
+    jit::CacheIRHealth cih;
+    cih.spewScriptFinalWarmUpCount(cx, scriptName, script, warmUpCount);
+
+    script->zone()->scriptFinalWarmUpCountMap->remove(script);
+    script->setNeedsFinalWarmUpCount(false);
+  }
+}
+#endif
+
 void js::DescribeScriptedCallerForDirectEval(JSContext* cx, HandleScript script,
                                              jsbytecode* pc, const char** file,
                                              unsigned* linenop,
@@ -4475,6 +4540,11 @@ static JSScript* CopyScriptImpl(JSContext* cx, HandleScript src,
 
   // Reset the mutable flags to request arguments analysis as needed.
   dst->resetArgsUsageAnalysis();
+
+  // Maintain this flag when cloning self-hosted functions.
+  if (src->isInlinableLargeFunction()) {
+    dst->setIsInlinableLargeFunction();
+  }
 
   // Clone the PrivateScriptData into dst
   if (!PrivateScriptData::Clone(cx, src, dst, scopes)) {
@@ -4842,7 +4912,7 @@ void JSScript::argumentsOptimizationFailed(JSContext* cx, HandleScript script) {
 
   // Warp code depends on the NeedsArgsObj flag so invalidate the script
   // (including compilations inlining the script).
-  if (jit::JitOptions.warpBuilder) {
+  {
     jit::RecompileInfoVector invalid;
     AddPendingInvalidation(invalid, script);
     Invalidate(cx, invalid);

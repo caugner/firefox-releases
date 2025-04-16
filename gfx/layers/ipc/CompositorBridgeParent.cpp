@@ -65,6 +65,7 @@
 #include "mozilla/layers/AsyncImagePipelineManager.h"
 #include "mozilla/webrender/WebRenderAPI.h"
 #include "mozilla/webgpu/WebGPUParent.h"
+#include "mozilla/webrender/RenderThread.h"
 #include "mozilla/media/MediaSystemResourceService.h"  // for MediaSystemResourceService
 #include "mozilla/mozalloc.h"                          // for operator new, etc
 #include "mozilla/PerfStats.h"
@@ -392,7 +393,8 @@ void CompositorBridgeParent::Initialize() {
     MOZ_ASSERT(!mApzcTreeManager);
     MOZ_ASSERT(!mApzSampler);
     MOZ_ASSERT(!mApzUpdater);
-    mApzcTreeManager = new APZCTreeManager(mRootLayerTreeID);
+    mApzcTreeManager =
+        new APZCTreeManager(mRootLayerTreeID, mOptions.UseWebRender());
     mApzSampler = new APZSampler(mApzcTreeManager, mOptions.UseWebRender());
     mApzUpdater = new APZUpdater(mApzcTreeManager, mOptions.UseWebRender());
   }
@@ -1864,7 +1866,8 @@ mozilla::ipc::IPCResult CompositorBridgeParent::RecvAdoptChild(
 }
 
 PWebRenderBridgeParent* CompositorBridgeParent::AllocPWebRenderBridgeParent(
-    const wr::PipelineId& aPipelineId, const LayoutDeviceIntSize& aSize) {
+    const wr::PipelineId& aPipelineId, const LayoutDeviceIntSize& aSize,
+    const WindowKind& aWindowKind) {
   MOZ_ASSERT(wr::AsLayersId(aPipelineId) == mRootLayerTreeID);
   MOZ_ASSERT(!mWrBridge);
   MOZ_ASSERT(!mCompositor);
@@ -1895,9 +1898,9 @@ PWebRenderBridgeParent* CompositorBridgeParent::AllocPWebRenderBridgeParent(
     mOMTASampler->SetWebRenderWindowId(windowId);
   }
 
-  nsCString error("FEATURE_FAILTURE_WEBRENDER_INITIALIZE_UNSPECIFIED");
-  RefPtr<wr::WebRenderAPI> api =
-      wr::WebRenderAPI::Create(this, std::move(widget), windowId, aSize, error);
+  nsCString error("FEATURE_FAILURE_WEBRENDER_INITIALIZE_UNSPECIFIED");
+  RefPtr<wr::WebRenderAPI> api = wr::WebRenderAPI::Create(
+      this, std::move(widget), windowId, aSize, aWindowKind, error);
   if (!api) {
     mWrBridge =
         WebRenderBridgeParent::CreateDestroyed(aPipelineId, std::move(error));
@@ -1911,7 +1914,10 @@ PWebRenderBridgeParent* CompositorBridgeParent::AllocPWebRenderBridgeParent(
 
   bool useCompositorWnd = false;
 #ifdef XP_WIN
-  useCompositorWnd = !!mWidget->AsWindows()->GetCompositorHwnd();
+  // Headless mode uses HeadlessWidget.
+  if (mWidget->AsWindows()) {
+    useCompositorWnd = !!mWidget->AsWindows()->GetCompositorHwnd();
+  }
 #endif
   mAsyncImageManager =
       new AsyncImagePipelineManager(api->Clone(), useCompositorWnd);
@@ -2331,7 +2337,7 @@ void CompositorBridgeParent::NotifyDidRender(const VsyncId& aCompositeStartId,
   RefPtr<UiCompositorControllerParent> uiController =
       UiCompositorControllerParent::GetFromRootLayerTreeId(mRootLayerTreeID);
 
-  if (mIsForcedFirstPaint) {
+  if (uiController && mIsForcedFirstPaint) {
     uiController->NotifyFirstPaint();
     mIsForcedFirstPaint = false;
   }
@@ -2553,15 +2559,6 @@ mozilla::ipc::IPCResult CompositorBridgeParent::RecvReleasePCanvasParent() {
 
 bool CompositorBridgeParent::IsSameProcess() const {
   return OtherPid() == base::GetCurrentProcId();
-}
-
-void CompositorBridgeParent::NotifyWebRenderContextPurge() {
-  MOZ_ASSERT(CompositorThread()->IsOnCurrentThread());
-  if (!mWrBridge) {
-    return;
-  }
-  RefPtr<wr::WebRenderAPI> api = mWrBridge->GetWebRenderAPI();
-  api->ClearAllCaches();
 }
 
 void CompositorBridgeParent::NotifyWebRenderDisableNativeCompositor() {

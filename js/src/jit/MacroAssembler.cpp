@@ -47,6 +47,7 @@
 #include "jit/ABIFunctionList-inl.h"
 #include "jit/shared/Lowering-shared-inl.h"
 #include "jit/TemplateObject-inl.h"
+#include "vm/BytecodeUtil-inl.h"
 #include "vm/Interpreter-inl.h"
 #include "vm/JSObject-inl.h"
 
@@ -1166,8 +1167,7 @@ void MacroAssembler::loadBigIntDigits(Register bigInt, Register digits) {
 
   // If inline digits aren't used, load the heap digits. Use a conditional move
   // to prevent speculative execution.
-  cmp32LoadPtr(Assembler::GreaterThan,
-               Address(bigInt, BigInt::offsetOfLength()),
+  cmp32LoadPtr(Assembler::Above, Address(bigInt, BigInt::offsetOfLength()),
                Imm32(int32_t(BigInt::inlineDigitsLength())),
                Address(bigInt, BigInt::offsetOfHeapDigits()), digits);
 }
@@ -1180,8 +1180,7 @@ void MacroAssembler::loadBigInt64(Register bigInt, Register64 dest) {
 
   Label done, nonZero;
 
-  branch32(Assembler::NotEqual, Address(bigInt, BigInt::offsetOfLength()),
-           Imm32(0), &nonZero);
+  branchIfBigIntIsNonZero(bigInt, &nonZero);
   {
     move64(Imm64(0), dest);
     jump(&done);
@@ -1205,7 +1204,7 @@ void MacroAssembler::loadBigInt64(Register bigInt, Register64 dest) {
 
   // And conditionally load the second digit into the high value register.
   Label twoDigits, digitsDone;
-  branch32(Assembler::GreaterThan, Address(bigInt, BigInt::offsetOfLength()),
+  branch32(Assembler::Above, Address(bigInt, BigInt::offsetOfLength()),
            Imm32(1), &twoDigits);
   {
     move32(Imm32(0), dest.high);
@@ -1228,8 +1227,7 @@ void MacroAssembler::loadBigInt64(Register bigInt, Register64 dest) {
 void MacroAssembler::loadFirstBigIntDigitOrZero(Register bigInt,
                                                 Register dest) {
   Label done, nonZero;
-  branch32(Assembler::NotEqual, Address(bigInt, BigInt::offsetOfLength()),
-           Imm32(0), &nonZero);
+  branchIfBigIntIsNonZero(bigInt, &nonZero);
   {
     movePtr(ImmWord(0), dest);
     jump(&done);
@@ -1242,6 +1240,73 @@ void MacroAssembler::loadFirstBigIntDigitOrZero(Register bigInt,
   loadPtr(Address(dest, 0), dest);
 
   bind(&done);
+}
+
+void MacroAssembler::loadBigInt(Register bigInt, Register dest, Label* fail) {
+  Label done, nonZero;
+  branchIfBigIntIsNonZero(bigInt, &nonZero);
+  {
+    movePtr(ImmWord(0), dest);
+    jump(&done);
+  }
+  bind(&nonZero);
+
+  loadBigIntNonZero(bigInt, dest, fail);
+
+  bind(&done);
+}
+
+void MacroAssembler::loadBigIntNonZero(Register bigInt, Register dest,
+                                       Label* fail) {
+  MOZ_ASSERT(bigInt != dest);
+
+#ifdef DEBUG
+  Label nonZero;
+  branchIfBigIntIsNonZero(bigInt, &nonZero);
+  assumeUnreachable("Unexpected zero BigInt");
+  bind(&nonZero);
+#endif
+
+  branch32(Assembler::Above, Address(bigInt, BigInt::offsetOfLength()),
+           Imm32(1), fail);
+
+  static_assert(BigInt::inlineDigitsLength() > 0,
+                "Single digit BigInts use inline storage");
+
+  // Load the first inline digit into the destination register.
+  loadPtr(Address(bigInt, BigInt::offsetOfInlineDigits()), dest);
+
+  // Return as a signed pointer.
+  bigIntDigitToSignedPtr(bigInt, dest, fail);
+}
+
+void MacroAssembler::bigIntDigitToSignedPtr(Register bigInt, Register digit,
+                                            Label* fail) {
+  // BigInt digits are stored as absolute numbers. Take the failure path when
+  // the digit can't be stored in intptr_t.
+  branchTestPtr(Assembler::Signed, digit, digit, fail);
+
+  // Negate |dest| when the BigInt is negative.
+  Label nonNegative;
+  branchIfBigIntIsNonNegative(bigInt, &nonNegative);
+  negPtr(digit);
+  bind(&nonNegative);
+}
+
+void MacroAssembler::loadBigIntAbsolute(Register bigInt, Register dest,
+                                        Label* fail) {
+  MOZ_ASSERT(bigInt != dest);
+
+  branch32(Assembler::Above, Address(bigInt, BigInt::offsetOfLength()),
+           Imm32(1), fail);
+
+  static_assert(BigInt::inlineDigitsLength() > 0,
+                "Single digit BigInts use inline storage");
+
+  // Load the first inline digit into the destination register.
+  movePtr(ImmWord(0), dest);
+  cmp32LoadPtr(Assembler::NotEqual, Address(bigInt, BigInt::offsetOfLength()),
+               Imm32(0), Address(bigInt, BigInt::offsetOfInlineDigits()), dest);
 }
 
 void MacroAssembler::initializeBigInt64(Scalar::Type type, Register bigInt,
@@ -1292,6 +1357,193 @@ void MacroAssembler::initializeBigInt64(Scalar::Type type, Register bigInt,
   store64(val, Address(bigInt, js::BigInt::offsetOfInlineDigits()));
 
   bind(&done);
+}
+
+void MacroAssembler::initializeBigInt(Register bigInt, Register val) {
+  store32(Imm32(0), Address(bigInt, BigInt::offsetOfFlags()));
+
+  Label done, nonZero;
+  branchTestPtr(Assembler::NonZero, val, val, &nonZero);
+  {
+    store32(Imm32(0), Address(bigInt, BigInt::offsetOfLength()));
+    jump(&done);
+  }
+  bind(&nonZero);
+
+  // Set the sign-bit for negative values and then continue with the two's
+  // complement.
+  Label isPositive;
+  branchTestPtr(Assembler::NotSigned, val, val, &isPositive);
+  {
+    store32(Imm32(BigInt::signBitMask()),
+            Address(bigInt, BigInt::offsetOfFlags()));
+    negPtr(val);
+  }
+  bind(&isPositive);
+
+  store32(Imm32(1), Address(bigInt, BigInt::offsetOfLength()));
+
+  static_assert(sizeof(BigInt::Digit) == sizeof(uintptr_t),
+                "BigInt Digit size matches uintptr_t");
+
+  storePtr(val, Address(bigInt, js::BigInt::offsetOfInlineDigits()));
+
+  bind(&done);
+}
+
+void MacroAssembler::initializeBigIntAbsolute(Register bigInt, Register val) {
+  store32(Imm32(0), Address(bigInt, BigInt::offsetOfFlags()));
+
+  Label done, nonZero;
+  branchTestPtr(Assembler::NonZero, val, val, &nonZero);
+  {
+    store32(Imm32(0), Address(bigInt, BigInt::offsetOfLength()));
+    jump(&done);
+  }
+  bind(&nonZero);
+
+  store32(Imm32(1), Address(bigInt, BigInt::offsetOfLength()));
+
+  static_assert(sizeof(BigInt::Digit) == sizeof(uintptr_t),
+                "BigInt Digit size matches uintptr_t");
+
+  storePtr(val, Address(bigInt, js::BigInt::offsetOfInlineDigits()));
+
+  bind(&done);
+}
+
+void MacroAssembler::copyBigIntWithInlineDigits(Register src, Register dest,
+                                                Register temp, Label* fail,
+                                                bool attemptNursery) {
+  branch32(Assembler::Above, Address(src, BigInt::offsetOfLength()),
+           Imm32(int32_t(BigInt::inlineDigitsLength())), fail);
+
+  newGCBigInt(dest, temp, fail, attemptNursery);
+
+  // Copy the sign-bit, but not any of the other bits used by the GC.
+  load32(Address(src, BigInt::offsetOfFlags()), temp);
+  and32(Imm32(BigInt::signBitMask()), temp);
+  store32(temp, Address(dest, BigInt::offsetOfFlags()));
+
+  // Copy the length.
+  load32(Address(src, BigInt::offsetOfLength()), temp);
+  store32(temp, Address(dest, BigInt::offsetOfLength()));
+
+  // Copy the digits.
+  Address srcDigits(src, js::BigInt::offsetOfInlineDigits());
+  Address destDigits(dest, js::BigInt::offsetOfInlineDigits());
+
+  for (size_t i = 0; i < BigInt::inlineDigitsLength(); i++) {
+    static_assert(sizeof(BigInt::Digit) == sizeof(uintptr_t),
+                  "BigInt Digit size matches uintptr_t");
+
+    loadPtr(srcDigits, temp);
+    storePtr(temp, destDigits);
+
+    srcDigits = Address(src, srcDigits.offset + sizeof(BigInt::Digit));
+    destDigits = Address(dest, destDigits.offset + sizeof(BigInt::Digit));
+  }
+}
+
+void MacroAssembler::compareBigIntAndInt32(JSOp op, Register bigInt,
+                                           Register int32, Register scratch1,
+                                           Register scratch2, Label* ifTrue,
+                                           Label* ifFalse) {
+  MOZ_ASSERT(IsLooseEqualityOp(op) || IsRelationalOp(op));
+
+  static_assert(std::is_same_v<BigInt::Digit, uintptr_t>,
+                "BigInt digit can be loaded in a pointer-sized register");
+  static_assert(sizeof(BigInt::Digit) >= sizeof(uint32_t),
+                "BigInt digit stores at least an uint32");
+
+  // Test for too large numbers.
+  //
+  // If the absolute value of the BigInt can't be expressed in an uint32/uint64,
+  // the result of the comparison is a constant.
+  if (op == JSOp::Eq || op == JSOp::Ne) {
+    Label* tooLarge = op == JSOp::Eq ? ifFalse : ifTrue;
+    branch32(Assembler::GreaterThan,
+             Address(bigInt, BigInt::offsetOfDigitLength()), Imm32(1),
+             tooLarge);
+  } else {
+    Label doCompare;
+    branch32(Assembler::LessThanOrEqual,
+             Address(bigInt, BigInt::offsetOfDigitLength()), Imm32(1),
+             &doCompare);
+
+    // Still need to take the sign-bit into account for relational operations.
+    if (op == JSOp::Lt || op == JSOp::Le) {
+      branchIfBigIntIsNegative(bigInt, ifTrue);
+      jump(ifFalse);
+    } else {
+      branchIfBigIntIsNegative(bigInt, ifFalse);
+      jump(ifTrue);
+    }
+
+    bind(&doCompare);
+  }
+
+  // Test for mismatched signs and, if the signs are equal, load |abs(x)| in
+  // |scratch1| and |abs(y)| in |scratch2| and then compare the absolute numbers
+  // against each other.
+  {
+    // Jump to |ifTrue| resp. |ifFalse| if the BigInt is strictly less than
+    // resp. strictly greater than the int32 value, depending on the comparison
+    // operator.
+    Label* greaterThan;
+    Label* lessThan;
+    if (op == JSOp::Eq) {
+      greaterThan = ifFalse;
+      lessThan = ifFalse;
+    } else if (op == JSOp::Ne) {
+      greaterThan = ifTrue;
+      lessThan = ifTrue;
+    } else if (op == JSOp::Lt || op == JSOp::Le) {
+      greaterThan = ifFalse;
+      lessThan = ifTrue;
+    } else {
+      MOZ_ASSERT(op == JSOp::Gt || op == JSOp::Ge);
+      greaterThan = ifTrue;
+      lessThan = ifFalse;
+    }
+
+    // BigInt digits are always stored as an absolute number.
+    loadFirstBigIntDigitOrZero(bigInt, scratch1);
+
+    // Load the int32 into |scratch2| and negate it for negative numbers.
+    move32(int32, scratch2);
+
+    Label isNegative, doCompare;
+    branchIfBigIntIsNegative(bigInt, &isNegative);
+    branch32(Assembler::LessThan, int32, Imm32(0), greaterThan);
+    jump(&doCompare);
+
+    // We rely on |neg32(INT32_MIN)| staying INT32_MIN, because we're using an
+    // unsigned comparison below.
+    bind(&isNegative);
+    branch32(Assembler::GreaterThanOrEqual, int32, Imm32(0), lessThan);
+    neg32(scratch2);
+
+    // Not all supported platforms (e.g. MIPS64) zero-extend 32-bit operations,
+    // so we need to explicitly clear any high 32-bits.
+    move32ZeroExtendToPtr(scratch2, scratch2);
+
+    // Reverse the relational comparator for negative numbers.
+    // |-x < -y| <=> |+x > +y|.
+    // |-x ≤ -y| <=> |+x ≥ +y|.
+    // |-x > -y| <=> |+x < +y|.
+    // |-x ≥ -y| <=> |+x ≤ +y|.
+    JSOp reversed = ReverseCompareOp(op);
+    if (reversed != op) {
+      branchPtr(JSOpToCondition(reversed, /* isSigned = */ false), scratch1,
+                scratch2, ifTrue);
+      jump(ifFalse);
+    }
+
+    bind(&doCompare);
+    branchPtr(JSOpToCondition(op, /* isSigned = */ false), scratch1, scratch2,
+              ifTrue);
+  }
 }
 
 void MacroAssembler::typeOfObject(Register obj, Register scratch, Label* slow,
@@ -2149,10 +2401,10 @@ void MacroAssembler::convertDoubleToInt(FloatRegister src, Register output,
 }
 
 void MacroAssembler::convertValueToInt(
-    ValueOperand value, MDefinition* maybeInput, Label* handleStringEntry,
-    Label* handleStringRejoin, Label* truncateDoubleSlow, Register stringReg,
-    FloatRegister temp, Register output, Label* fail,
-    IntConversionBehavior behavior, IntConversionInputKind conversion) {
+    ValueOperand value, Label* handleStringEntry, Label* handleStringRejoin,
+    Label* truncateDoubleSlow, Register stringReg, FloatRegister temp,
+    Register output, Label* fail, IntConversionBehavior behavior,
+    IntConversionInputKind conversion) {
   Label done, isInt32, isBool, isDouble, isNull, isString;
 
   bool handleStrings = (behavior == IntConversionBehavior::Truncate ||
@@ -2165,12 +2417,12 @@ void MacroAssembler::convertValueToInt(
     ScratchTagScope tag(*this, value);
     splitTagForTest(value, tag);
 
-    maybeBranchTestType(MIRType::Int32, maybeInput, tag, &isInt32);
+    branchTestInt32(Equal, tag, &isInt32);
     if (conversion == IntConversionInputKind::Any ||
         conversion == IntConversionInputKind::NumbersOrBoolsOnly) {
-      maybeBranchTestType(MIRType::Boolean, maybeInput, tag, &isBool);
+      branchTestBoolean(Equal, tag, &isBool);
     }
-    maybeBranchTestType(MIRType::Double, maybeInput, tag, &isDouble);
+    branchTestDouble(Equal, tag, &isDouble);
 
     if (conversion == IntConversionInputKind::Any) {
       // If we are not truncating, we fail for anything that's not
@@ -2184,9 +2436,9 @@ void MacroAssembler::convertValueToInt(
         case IntConversionBehavior::Truncate:
         case IntConversionBehavior::TruncateNoWrap:
         case IntConversionBehavior::ClampToUint8:
-          maybeBranchTestType(MIRType::Null, maybeInput, tag, &isNull);
+          branchTestNull(Equal, tag, &isNull);
           if (handleStrings) {
-            maybeBranchTestType(MIRType::String, maybeInput, tag, &isString);
+            branchTestString(Equal, tag, &isString);
           }
           branchTestUndefined(Assembler::NotEqual, tag, fail);
           break;
@@ -3233,16 +3485,6 @@ void MacroAssembler::branchTestObjCompartment(
   branchPtr(cond, scratch, ImmPtr(compartment), label);
 }
 
-void MacroAssembler::branchIfPretenuredGroup(const ObjectGroup* group,
-                                             Register scratch, Label* label) {
-  movePtr(ImmGCPtr(group), scratch);
-  branchIfPretenuredGroup(scratch, label);
-}
-
-void MacroAssembler::branchIfPretenuredGroup(Register group, Label* label) {
-  // TODO(no-TI): remove.
-}
-
 void MacroAssembler::branchIfNonNativeObj(Register obj, Register scratch,
                                           Label* label) {
   loadObjClassUnsafe(obj, scratch);
@@ -3259,40 +3501,6 @@ void MacroAssembler::branchIfObjectNotExtensible(Register obj, Register scratch,
   // based on this check.
   branchTest32(Assembler::NonZero, Address(scratch, BaseShape::offsetOfFlags()),
                Imm32(js::BaseShape::NOT_EXTENSIBLE), label);
-}
-
-void MacroAssembler::maybeBranchTestType(MIRType type, MDefinition* maybeDef,
-                                         Register tag, Label* label) {
-  if (!maybeDef || maybeDef->mightBeType(type)) {
-    switch (type) {
-      case MIRType::Null:
-        branchTestNull(Equal, tag, label);
-        break;
-      case MIRType::Boolean:
-        branchTestBoolean(Equal, tag, label);
-        break;
-      case MIRType::Int32:
-        branchTestInt32(Equal, tag, label);
-        break;
-      case MIRType::Double:
-        branchTestDouble(Equal, tag, label);
-        break;
-      case MIRType::String:
-        branchTestString(Equal, tag, label);
-        break;
-      case MIRType::Symbol:
-        branchTestSymbol(Equal, tag, label);
-        break;
-      case MIRType::BigInt:
-        branchTestBigInt(Equal, tag, label);
-        break;
-      case MIRType::Object:
-        branchTestObject(Equal, tag, label);
-        break;
-      default:
-        MOZ_CRASH("Unsupported type");
-    }
-  }
 }
 
 void MacroAssembler::wasmTrap(wasm::Trap trap,
@@ -3555,13 +3763,13 @@ void MacroAssembler::emitPreBarrierFastPath(JSRuntime* rt, MIRType type,
   // If the GC thing is in the nursery, we don't need to barrier it.
   if (type == MIRType::Value || type == MIRType::Object ||
       type == MIRType::String) {
-    branch32(Assembler::Equal, Address(temp2, gc::ChunkLocationOffset),
-             Imm32(int32_t(gc::ChunkLocation::Nursery)), noBarrier);
+    branchPtr(Assembler::NotEqual, Address(temp2, gc::ChunkStoreBufferOffset),
+              ImmWord(0), noBarrier);
   } else {
 #ifdef DEBUG
     Label isTenured;
-    branch32(Assembler::NotEqual, Address(temp2, gc::ChunkLocationOffset),
-             Imm32(int32_t(gc::ChunkLocation::Nursery)), &isTenured);
+    branchPtr(Assembler::Equal, Address(temp2, gc::ChunkStoreBufferOffset),
+              ImmWord(0), &isTenured);
     assumeUnreachable("JIT pre-barrier: unexpected nursery pointer");
     bind(&isTenured);
 #endif
@@ -3593,26 +3801,32 @@ void MacroAssembler::emitPreBarrierFastPath(JSRuntime* rt, MIRType type,
   andPtr(Imm32(gc::ChunkMask), temp1);
   rshiftPtr(Imm32(3), temp1);
 
-  static const size_t nbits = sizeof(uintptr_t) * CHAR_BIT;
-  static_assert(nbits == JS_BITS_PER_WORD, "Calculation below relies on this");
+  static_assert(gc::MarkBitmapWordBits == JS_BITS_PER_WORD,
+                "Calculation below relies on this");
 
   // Load the bitmap word in temp2.
   //
-  // word = chunk.bitmap[bit / nbits];
+  // word = chunk.bitmap[bit / MarkBitmapWordBits];
+
+  // Fold the adjustment for the fact that arenas don't start at the beginning
+  // of the chunk into the offset to the chunk bitmap.
+  const size_t firstArenaAdjustment = gc::FirstArenaAdjustmentBits / CHAR_BIT;
+  const intptr_t offset =
+      intptr_t(gc::ChunkMarkBitmapOffset) - intptr_t(firstArenaAdjustment);
+
   movePtr(temp1, temp3);
 #if JS_BITS_PER_WORD == 64
   rshiftPtr(Imm32(6), temp1);
-  loadPtr(BaseIndex(temp2, temp1, TimesEight, gc::ChunkMarkBitmapOffset),
-          temp2);
+  loadPtr(BaseIndex(temp2, temp1, TimesEight, offset), temp2);
 #else
   rshiftPtr(Imm32(5), temp1);
-  loadPtr(BaseIndex(temp2, temp1, TimesFour, gc::ChunkMarkBitmapOffset), temp2);
+  loadPtr(BaseIndex(temp2, temp1, TimesFour, offset), temp2);
 #endif
 
   // Load the mask in temp1.
   //
-  // mask = uintptr_t(1) << (bit % nbits);
-  andPtr(Imm32(nbits - 1), temp3);
+  // mask = uintptr_t(1) << (bit % MarkBitmapWordBits);
+  andPtr(Imm32(gc::MarkBitmapWordBits - 1), temp3);
   move32(Imm32(1), temp1);
 #ifdef JS_CODEGEN_X64
   MOZ_ASSERT(temp3 == rcx);
@@ -3661,8 +3875,8 @@ void MacroAssembler::atomicIsLockFreeJS(Register value, Register output) {
 // ========================================================================
 // Spectre Mitigations.
 
-void MacroAssembler::spectreMaskIndex(Register index, Register length,
-                                      Register output) {
+void MacroAssembler::spectreMaskIndex32(Register index, Register length,
+                                        Register output) {
   MOZ_ASSERT(JitOptions.spectreIndexMasking);
   MOZ_ASSERT(length != output);
   MOZ_ASSERT(index != output);
@@ -3671,8 +3885,8 @@ void MacroAssembler::spectreMaskIndex(Register index, Register length,
   cmp32Move32(Assembler::Below, index, length, index, output);
 }
 
-void MacroAssembler::spectreMaskIndex(Register index, const Address& length,
-                                      Register output) {
+void MacroAssembler::spectreMaskIndex32(Register index, const Address& length,
+                                        Register output) {
   MOZ_ASSERT(JitOptions.spectreIndexMasking);
   MOZ_ASSERT(index != length.base);
   MOZ_ASSERT(length.base != output);
@@ -3680,6 +3894,27 @@ void MacroAssembler::spectreMaskIndex(Register index, const Address& length,
 
   move32(Imm32(0), output);
   cmp32Move32(Assembler::Below, index, length, index, output);
+}
+
+void MacroAssembler::spectreMaskIndexPtr(Register index, Register length,
+                                         Register output) {
+  MOZ_ASSERT(JitOptions.spectreIndexMasking);
+  MOZ_ASSERT(length != output);
+  MOZ_ASSERT(index != output);
+
+  movePtr(ImmWord(0), output);
+  cmpPtrMovePtr(Assembler::Below, index, length, index, output);
+}
+
+void MacroAssembler::spectreMaskIndexPtr(Register index, const Address& length,
+                                         Register output) {
+  MOZ_ASSERT(JitOptions.spectreIndexMasking);
+  MOZ_ASSERT(index != length.base);
+  MOZ_ASSERT(length.base != output);
+  MOZ_ASSERT(index != output);
+
+  movePtr(ImmWord(0), output);
+  cmpPtrMovePtr(Assembler::Below, index, length, index, output);
 }
 
 void MacroAssembler::boundsCheck32PowerOfTwo(Register index, uint32_t length,

@@ -5,7 +5,12 @@
 "use strict";
 
 /* exported getNativeInterface, waitForMacEventWithInfo, waitForMacEvent,
-   NSRange, NSDictionary, stringForRange */
+   NSRange, NSDictionary, stringForRange, AXTextStateChangeTypeEdit,
+   AXTextEditTypeDelete, AXTextEditTypeTyping, AXTextStateChangeTypeSelectionMove,
+   AXTextStateChangeTypeSelectionExtend, AXTextSelectionDirectionUnknown,
+   AXTextSelectionDirectionPrevious, AXTextSelectionDirectionNext,
+   AXTextSelectionDirectionDiscontiguous, AXTextSelectionGranularityUnknown,
+   AXTextSelectionGranularityCharacter, AXTextSelectionGranularityWord */
 
 // Load the shared-head file first.
 /* import-globals-from ../shared-head.js */
@@ -20,6 +25,26 @@ loadScripts(
   { name: "common.js", dir: MOCHITESTS_DIR },
   { name: "promisified-events.js", dir: MOCHITESTS_DIR }
 );
+
+// AXTextStateChangeType enum values
+const AXTextStateChangeTypeEdit = 1;
+const AXTextStateChangeTypeSelectionMove = 2;
+const AXTextStateChangeTypeSelectionExtend = 3;
+
+// AXTextEditType enum values
+const AXTextEditTypeDelete = 1;
+const AXTextEditTypeTyping = 3;
+
+// AXTextSelectionDirection enum values
+const AXTextSelectionDirectionUnknown = 0;
+const AXTextSelectionDirectionPrevious = 3;
+const AXTextSelectionDirectionNext = 4;
+const AXTextSelectionDirectionDiscontiguous = 5;
+
+// AXTextSelectionGranularity enum values
+const AXTextSelectionGranularityUnknown = 0;
+const AXTextSelectionGranularityCharacter = 1;
+const AXTextSelectionGranularityWord = 2;
 
 function getNativeInterface(accDoc, id) {
   return findAccessibleChildByID(accDoc, id).nativeInterface.QueryInterface(

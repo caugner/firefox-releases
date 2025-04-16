@@ -18,9 +18,10 @@
 #include "mozilla/Assertions.h"
 #include "mozilla/Attributes.h"
 #include "mozilla/HashFunctions.h"
+#include "mozilla/BaseProfilerMarkers.h"
+#include "mozilla/FStream.h"
 #include "mozilla/HelperMacros.h"
 #include "mozilla/glue/Debug.h"
-#include "mozilla/BaseProfilerMarkers.h"
 #include "mozilla/ScopeExit.h"
 #include "mozilla/UniquePtr.h"
 #include "mozilla/UniquePtrExtensions.h"
@@ -41,6 +42,7 @@ struct ColorRect {
   int height;
   int borderWidth;
   int borderRadius;
+  bool flipIfRTL;
 };
 
 // DrawRect is mostly the same as ColorRect, but exists as an implementation
@@ -185,7 +187,7 @@ static const wchar_t* sCssToDevPixelScalingRegSuffix = L"|CssToDevPixelScaling";
 static const wchar_t* sSearchbarRegSuffix = L"|SearchbarCSSSpan";
 static const wchar_t* sSpringsCSSRegSuffix = L"|SpringsCSSSpan";
 static const wchar_t* sThemeRegSuffix = L"|Theme";
-static const wchar_t* sMenubarShownRegSuffix = L"|MenubarShown";
+static const wchar_t* sFlagsRegSuffix = L"|Flags";
 
 struct LoadedCoTaskMemFreeDeleter {
   void operator()(void* ptr) {
@@ -329,6 +331,58 @@ static bool TryGetSkeletonUILock() {
                     nullptr);
 
   return lockFile != INVALID_HANDLE_VALUE;
+}
+
+const char kGeneralSection[] = "[General]";
+const char kStartWithLastProfile[] = "StartWithLastProfile=";
+
+static bool ProfileDbHasStartWithLastProfile(IFStream& iniContents) {
+  bool inGeneral = false;
+  std::string line;
+  while (std::getline(iniContents, line)) {
+    int whitespace = 0;
+    while (line.length() > whitespace &&
+           (line[whitespace] == ' ' || line[whitespace] == '\t')) {
+      whitespace++;
+    }
+    line.erase(0, whitespace);
+
+    if (line.compare(kGeneralSection) == 0) {
+      inGeneral = true;
+    } else if (inGeneral) {
+      if (line[0] == '[') {
+        inGeneral = false;
+      } else {
+        if (line.find(kStartWithLastProfile) == 0) {
+          char val = line.c_str()[sizeof(kStartWithLastProfile) - 1];
+          if (val == '0') {
+            return false;
+          } else if (val == '1') {
+            return true;
+          }
+        }
+      }
+    }
+  }
+
+  // If we don't find it in the .ini file, we interpret that as true
+  return true;
+}
+
+static bool CheckForStartWithLastProfile() {
+  auto roamingAppData = GetKnownFolderPath(FOLDERID_RoamingAppData);
+  if (!roamingAppData) {
+    return false;
+  }
+  std::wstring profileDbPath(roamingAppData.get());
+  profileDbPath.append(
+      L"\\" MOZ_APP_VENDOR L"\\" MOZ_APP_BASENAME L"\\profiles.ini");
+  IFStream profileDb(profileDbPath.c_str());
+  if (profileDb.fail()) {
+    return false;
+  }
+
+  return ProfileDbHasStartWithLastProfile(profileDb);
 }
 
 // We could use nsAutoRegKey, but including nsWindowsHelpers.h causes build
@@ -639,8 +693,9 @@ bool RasterizeAnimatedRect(const ColorRect& colorRect,
 
 void DrawSkeletonUI(HWND hWnd, CSSPixelSpan urlbarCSSSpan,
                     CSSPixelSpan searchbarCSSSpan,
-                    const Vector<CSSPixelSpan>& springs,
-                    const ThemeColors& currentTheme, const bool& menubarShown) {
+                    Vector<CSSPixelSpan>& springs,
+                    const ThemeColors& currentTheme,
+                    const EnumSet<SkeletonUIFlag, uint32_t>& flags) {
   // NOTE: we opt here to paint a pixel buffer for the application chrome by
   // hand, without using native UI library methods. Why do we do this?
   //
@@ -665,6 +720,11 @@ void DrawSkeletonUI(HWND hWnd, CSSPixelSpan urlbarCSSSpan,
   sAnimationColor = currentTheme.animationColor;
   sToolbarForegroundColor = currentTheme.toolbarForegroundColor;
 
+  bool menubarShown = flags.contains(SkeletonUIFlag::MenubarShown);
+  bool bookmarksToolbarShown =
+      flags.contains(SkeletonUIFlag::BookmarksToolbarShown);
+  bool rtlEnabled = flags.contains(SkeletonUIFlag::RtlEnabled);
+
   int chromeHorMargin = CSSToDevPixels(2, sCSSToDevPixelScaling);
   int verticalOffset = sMaximized ? sNonClientVerticalMargins : 0;
   int horizontalOffset =
@@ -677,13 +737,18 @@ void DrawSkeletonUI(HWND hWnd, CSSPixelSpan urlbarCSSSpan,
   int tabBarHeight = CSSToDevPixels(33, sCSSToDevPixelScaling) + verticalOffset;
   // found in tabs.inc.css, ".titlebar-spacer"
   int titlebarSpacerWidth = horizontalOffset;
-  if (!sMaximized && menubarShown == false) {
+  if (!sMaximized && !menubarShown) {
     titlebarSpacerWidth += CSSToDevPixels(40, sCSSToDevPixelScaling);
   }
   // found in tabs.inc.css, ".tab-line"
   int tabLineHeight = CSSToDevPixels(2, sCSSToDevPixelScaling) + verticalOffset;
   int selectedTabWidth = CSSToDevPixels(224, sCSSToDevPixelScaling);
   int toolbarHeight = CSSToDevPixels(39, sCSSToDevPixelScaling);
+  // found in browser.css, "#PersonalToolbar"
+  int bookmarkToolbarHeight = CSSToDevPixels(28, sCSSToDevPixelScaling);
+  if (bookmarksToolbarShown) {
+    toolbarHeight += bookmarkToolbarHeight;
+  }
   // found in urlbar-searchbar.inc.css, "#urlbar[breakout]"
   int urlbarTopOffset = CSSToDevPixels(5, sCSSToDevPixelScaling);
   int urlbarHeight = CSSToDevPixels(30, sCSSToDevPixelScaling);
@@ -695,10 +760,13 @@ void DrawSkeletonUI(HWND hWnd, CSSPixelSpan urlbarCSSSpan,
   int tabPlaceholderBarHeight = CSSToDevPixels(8, sCSSToDevPixelScaling);
   int tabPlaceholderBarWidth = CSSToDevPixels(120, sCSSToDevPixelScaling);
 
-  int toolbarPlaceholderMarginLeft = CSSToDevPixels(9, sCSSToDevPixelScaling);
-  int toolbarPlaceholderMarginRight = CSSToDevPixels(11, sCSSToDevPixelScaling);
   int toolbarPlaceholderHeight = CSSToDevPixels(10, sCSSToDevPixelScaling);
-
+  int toolbarPlaceholderMarginRight =
+      rtlEnabled ? CSSToDevPixels(11, sCSSToDevPixelScaling)
+                 : CSSToDevPixels(9, sCSSToDevPixelScaling);
+  int toolbarPlaceholderMarginLeft =
+      rtlEnabled ? CSSToDevPixels(9, sCSSToDevPixelScaling)
+                 : CSSToDevPixels(11, sCSSToDevPixelScaling);
   int placeholderMargin = CSSToDevPixels(8, sCSSToDevPixelScaling);
 
   int menubarHeightDevPixels =
@@ -733,6 +801,7 @@ void DrawSkeletonUI(HWND hWnd, CSSPixelSpan urlbarCSSSpan,
   topBorder.y = 0;
   topBorder.width = sWindowWidth;
   topBorder.height = topBorderHeight;
+  topBorder.flipIfRTL = false;
   if (!rects.append(topBorder)) {
     return;
   }
@@ -743,6 +812,7 @@ void DrawSkeletonUI(HWND hWnd, CSSPixelSpan urlbarCSSSpan,
   menubar.y = topBorder.height;
   menubar.width = sWindowWidth;
   menubar.height = menubarHeightDevPixels;
+  menubar.flipIfRTL = false;
   if (!rects.append(menubar)) {
     return;
   }
@@ -752,15 +822,16 @@ void DrawSkeletonUI(HWND hWnd, CSSPixelSpan urlbarCSSSpan,
   int urlbarBorderRadius = CSSToDevPixels(2, sCSSToDevPixelScaling);
   // found in urlbar-searchbar.inc.css "#urlbar-background"
   int urlbarBorderWidth = CSSToDevPixelsFloor(1, sCSSToDevPixelScaling);
-  int urlbarBorderColor = 0xbebebe;
+  int urlbarBorderColor = currentTheme.urlbarBorderColor;
 
   // The (traditionally dark blue on Windows) background of the tab bar.
   ColorRect tabBar = {};
   tabBar.color = currentTheme.tabBarColor;
   tabBar.x = 0;
-  tabBar.y = menubar.height;
+  tabBar.y = menubar.height + topBorder.height;
   tabBar.width = sWindowWidth;
   tabBar.height = tabBarHeight;
+  tabBar.flipIfRTL = false;
   if (!rects.append(tabBar)) {
     return;
   }
@@ -769,9 +840,10 @@ void DrawSkeletonUI(HWND hWnd, CSSPixelSpan urlbarCSSSpan,
   ColorRect tabLine = {};
   tabLine.color = currentTheme.tabLineColor;
   tabLine.x = titlebarSpacerWidth;
-  tabLine.y = menubar.height;
+  tabLine.y = menubar.height + topBorder.height;
   tabLine.width = selectedTabWidth;
   tabLine.height = tabLineHeight;
+  tabLine.flipIfRTL = true;
   if (!rects.append(tabLine)) {
     return;
   }
@@ -783,6 +855,7 @@ void DrawSkeletonUI(HWND hWnd, CSSPixelSpan urlbarCSSSpan,
   selectedTab.y = tabLine.y + tabLineHeight;
   selectedTab.width = selectedTabWidth;
   selectedTab.height = tabBar.y + tabBar.height - selectedTab.y;
+  selectedTab.flipIfRTL = true;
   if (!rects.append(selectedTab)) {
     return;
   }
@@ -795,6 +868,7 @@ void DrawSkeletonUI(HWND hWnd, CSSPixelSpan urlbarCSSSpan,
   tabTextPlaceholder.width = tabPlaceholderBarWidth;
   tabTextPlaceholder.height = tabPlaceholderBarHeight;
   tabTextPlaceholder.borderRadius = placeholderBorderRadius;
+  tabTextPlaceholder.flipIfRTL = true;
   if (!rects.append(tabTextPlaceholder)) {
     return;
   }
@@ -806,6 +880,7 @@ void DrawSkeletonUI(HWND hWnd, CSSPixelSpan urlbarCSSSpan,
   toolbar.y = tabBar.y + tabBarHeight;
   toolbar.width = sWindowWidth;
   toolbar.height = toolbarHeight;
+  toolbar.flipIfRTL = false;
   if (!rects.append(toolbar)) {
     return;
   }
@@ -817,6 +892,7 @@ void DrawSkeletonUI(HWND hWnd, CSSPixelSpan urlbarCSSSpan,
   chromeContentDivider.y = toolbar.y + toolbar.height;
   chromeContentDivider.width = sWindowWidth;
   chromeContentDivider.height = chromeContentDividerHeight;
+  chromeContentDivider.flipIfRTL = false;
   if (!rects.append(chromeContentDivider)) {
     return;
   }
@@ -833,18 +909,26 @@ void DrawSkeletonUI(HWND hWnd, CSSPixelSpan urlbarCSSSpan,
   urlbar.borderRadius = urlbarBorderRadius;
   urlbar.borderWidth = urlbarBorderWidth;
   urlbar.borderColor = urlbarBorderColor;
+  urlbar.flipIfRTL = false;
   if (!rects.append(urlbar)) {
     return;
   }
 
   // The urlbar placeholder rect representating text that will fill the urlbar
+  // If rtl is enabled, it is flipped relative to the the urlbar rectangle, not
+  // sWindowWidth.
   ColorRect urlbarTextPlaceholder = {};
   urlbarTextPlaceholder.color = sToolbarForegroundColor;
-  urlbarTextPlaceholder.x = urlbar.x + urlbarTextPlaceholderMarginLeft;
+  urlbarTextPlaceholder.x =
+      rtlEnabled
+          ? ((urlbar.x + urlbar.width) - urlbarTextPlaceholderMarginLeft -
+             urlbarTextPlaceHolderWidth)
+          : (urlbar.x + urlbarTextPlaceholderMarginLeft);
   urlbarTextPlaceholder.y = urlbar.y + urlbarTextPlaceholderMarginTop;
   urlbarTextPlaceholder.width = urlbarTextPlaceHolderWidth;
   urlbarTextPlaceholder.height = urlbarTextPlaceholderHeight;
   urlbarTextPlaceholder.borderRadius = placeholderBorderRadius;
+  urlbarTextPlaceholder.flipIfRTL = false;
   if (!rects.append(urlbarTextPlaceholder)) {
     return;
   }
@@ -865,20 +949,27 @@ void DrawSkeletonUI(HWND hWnd, CSSPixelSpan urlbarCSSSpan,
     searchbarRect.borderRadius = urlbarBorderRadius;
     searchbarRect.borderWidth = urlbarBorderWidth;
     searchbarRect.borderColor = urlbarBorderColor;
+    searchbarRect.flipIfRTL = false;
     if (!rects.append(searchbarRect)) {
       return;
     }
 
     // The placeholder rect representating text that will fill the searchbar
     // This uses the same margins as the urlbarTextPlaceholder
+    // If rtl is enabled, it is flipped relative to the the searchbar rectangle,
+    // not sWindowWidth.
     ColorRect searchbarTextPlaceholder = {};
     searchbarTextPlaceholder.color = sToolbarForegroundColor;
     searchbarTextPlaceholder.x =
-        searchbarRect.x + urlbarTextPlaceholderMarginLeft;
+        rtlEnabled
+            ? ((searchbarRect.x + searchbarRect.width) -
+               urlbarTextPlaceholderMarginLeft - searchbarTextPlaceholderWidth)
+            : (searchbarRect.x + urlbarTextPlaceholderMarginLeft);
     searchbarTextPlaceholder.y =
         searchbarRect.y + urlbarTextPlaceholderMarginTop;
     searchbarTextPlaceholder.width = searchbarTextPlaceholderWidth;
     searchbarTextPlaceholder.height = urlbarTextPlaceholderHeight;
+    searchbarTextPlaceholder.flipIfRTL = false;
     if (!rects.append(searchbarTextPlaceholder) ||
         !sAnimatedRects->append(searchbarTextPlaceholder)) {
       return;
@@ -904,6 +995,12 @@ void DrawSkeletonUI(HWND hWnd, CSSPixelSpan urlbarCSSSpan,
   marginLeftPlaceholder.end = toolbarPlaceholderMarginLeft;
   if (!noPlaceholderSpans.append(marginLeftPlaceholder)) {
     return;
+  }
+
+  if (rtlEnabled) {
+    // If we're RTL, then the springs as ordered in the DOM will be from right
+    // to left, which will break our comparison logic below
+    springs.reverse();
   }
 
   for (auto spring : springs) {
@@ -957,6 +1054,7 @@ void DrawSkeletonUI(HWND hWnd, CSSPixelSpan urlbarCSSSpan,
     placeholderRect.width = end - start;
     placeholderRect.height = toolbarPlaceholderHeight;
     placeholderRect.borderRadius = placeholderBorderRadius;
+    placeholderRect.flipIfRTL = false;
     if (!rects.append(placeholderRect) ||
         !sAnimatedRects->append(placeholderRect)) {
       return;
@@ -978,6 +1076,9 @@ void DrawSkeletonUI(HWND hWnd, CSSPixelSpan urlbarCSSSpan,
       (uint32_t*)calloc(sWindowWidth * sTotalChromeHeight, sizeof(uint32_t));
 
   for (auto& rect : *sAnimatedRects) {
+    if (rtlEnabled && rect.flipIfRTL) {
+      rect.x = sWindowWidth - rect.x - rect.width;
+    }
     rect.x = std::clamp(rect.x, 0, sWindowWidth);
     rect.width = std::clamp(rect.width, 0, sWindowWidth - rect.x);
     rect.y = std::clamp(rect.y, 0, sTotalChromeHeight);
@@ -985,6 +1086,9 @@ void DrawSkeletonUI(HWND hWnd, CSSPixelSpan urlbarCSSSpan,
   }
 
   for (auto& rect : rects) {
+    if (rtlEnabled && rect.flipIfRTL) {
+      rect.x = sWindowWidth - rect.x - rect.width;
+    }
     rect.x = std::clamp(rect.x, 0, sWindowWidth);
     rect.width = std::clamp(rect.width, 0, sWindowWidth - rect.x);
     rect.y = std::clamp(rect.y, 0, sTotalChromeHeight);
@@ -1238,8 +1342,10 @@ ThemeColors GetTheme(ThemeMode themeId) {
       theme.chromeContentDividerColor = 0x0c0c0d;
       // controlled by css variable --tab-line-color
       theme.tabLineColor = 0x0a84ff;
-      // controlled by css variable --lwt-toolbar-field-background-colo
+      // controlled by css variable --lwt-toolbar-field-background-color
       theme.urlbarColor = 0x474749;
+      // controlled by css variable --lwt-toolbar-field-border-color
+      theme.urlbarBorderColor = 0x5a5a5c;
       theme.animationColor = theme.urlbarColor;
       return theme;
     case ThemeMode::Light:
@@ -1251,11 +1357,13 @@ ThemeColors GetTheme(ThemeMode themeId) {
       // controlled by css variable --lwt-accent-color
       theme.tabBarColor = 0xe3e4e6;
       // --chrome-content-separator-color in browser.css
-      theme.chromeContentDividerColor = 0x9e9fa1;
+      theme.chromeContentDividerColor = 0xcccccc;
       // controlled by css variable --tab-line-color
       theme.tabLineColor = 0x0a84ff;
       // by css variable --lwt-toolbar-field-background-color
       theme.urlbarColor = 0xffffff;
+      // controlled by css variable --lwt-toolbar-field-border-color
+      theme.urlbarBorderColor = 0xcccccc;
       theme.animationColor = theme.backgroundColor;
       return theme;
     case ThemeMode::Default:
@@ -1275,6 +1383,8 @@ ThemeColors GetTheme(ThemeMode themeId) {
       theme.tabLineColor = 0x0a84ff;
       // controlled by css variable --toolbar-color
       theme.urlbarColor = 0xffffff;
+      // controlled by css variable --lwt-toolbar-field-border-color
+      theme.urlbarBorderColor = 0xbebebe;
       theme.animationColor = theme.backgroundColor;
       return theme;
   }
@@ -1470,7 +1580,8 @@ static bool EnvHasValue(const char* name) {
 // which is visually jarring and can also be unpredictable - there's no
 // guarantee that the code which handles the non-default window is set up to
 // properly handle the transition from the skeleton UI window.
-bool AreAllCmdlineArgumentsApproved(int argc, char** argv) {
+bool AreAllCmdlineArgumentsApproved(int argc, char** argv,
+                                    bool* explicitProfile) {
   const char* approvedArgumentsArray[] = {
       // These won't cause the browser to be visualy different in any way
       "new-instance", "no-remote", "browser", "foreground", "setDefaultBrowser",
@@ -1515,6 +1626,7 @@ bool AreAllCmdlineArgumentsApproved(int argc, char** argv) {
   }
 
 #ifdef MOZILLA_OFFICIAL
+  int profileArgIndex = -1;
   // If we're running mochitests or direct marionette tests, those specify a
   // temporary profile, and we want to ensure that we get the added coverage
   // from those.
@@ -1524,10 +1636,13 @@ bool AreAllCmdlineArgumentsApproved(int argc, char** argv) {
       if (!approvedArguments.append("profile")) {
         return false;
       }
+      profileArgIndex = approvedArguments.length() - 1;
 
       break;
     }
   }
+#else
+  int profileArgIndex = approvedArguments.length() - 1;
 #endif
 
   for (int i = 1; i < argc; ++i) {
@@ -1558,6 +1673,10 @@ bool AreAllCmdlineArgumentsApproved(int argc, char** argv) {
       // casing would visually alter the firefox window.
       if (!_stricmp(flag, approvedArg)) {
         approved = true;
+
+        if (i == profileArgIndex) {
+          *explicitProfile = true;
+        }
         break;
       }
     }
@@ -1581,9 +1700,10 @@ void CreateAndStorePreXULSkeletonUI(HINSTANCE hInstance, int argc,
   const TimeStamp skeletonStart = TimeStamp::NowUnfuzzed();
 #endif
 
-  if (!AreAllCmdlineArgumentsApproved(argc, argv) ||
+  bool explicitProfile = false;
+  if (!AreAllCmdlineArgumentsApproved(argc, argv, &explicitProfile) ||
       EnvHasValue("MOZ_SAFE_MODE_RESTART") || EnvHasValue("XRE_PROFILE_PATH") ||
-      EnvHasValue("MOZ_RESET_PROFILE_RESTART")) {
+      EnvHasValue("MOZ_RESET_PROFILE_RESTART") || EnvHasValue("MOZ_HEADLESS")) {
     sPreXULSkeletonUIDisallowed = true;
     return;
   }
@@ -1616,6 +1736,10 @@ void CreateAndStorePreXULSkeletonUI(HINSTANCE hInstance, int argc,
 
   if (!TryGetSkeletonUILock()) {
     printf_stderr("Error trying to get skeleton UI lock %lu\n", GetLastError());
+    return;
+  }
+
+  if (!explicitProfile && !CheckForStartWithLastProfile()) {
     return;
   }
 
@@ -1689,16 +1813,16 @@ void CreateAndStorePreXULSkeletonUI(HINSTANCE hInstance, int argc,
   }
   sMaximized = maximized != 0;
 
-  uint32_t menubarShown;
+  EnumSet<SkeletonUIFlag, uint32_t> flags;
+  uint32_t flagsUint;
   result = ::RegGetValueW(
-      regKey, nullptr,
-      GetRegValueName(binPath.get(), sMenubarShownRegSuffix).c_str(),
-      RRF_RT_REG_DWORD, nullptr, reinterpret_cast<PBYTE>(&menubarShown),
-      &dataLen);
+      regKey, nullptr, GetRegValueName(binPath.get(), sFlagsRegSuffix).c_str(),
+      RRF_RT_REG_DWORD, nullptr, reinterpret_cast<PBYTE>(&flagsUint), &dataLen);
   if (result != ERROR_SUCCESS) {
-    printf_stderr("Error reading menubarShown %lu\n", GetLastError());
+    printf_stderr("Error reading flags %lu\n", GetLastError());
     return;
   }
+  flags.deserialize(flagsUint);
 
   dataLen = sizeof(double);
   result = ::RegGetValueW(
@@ -1849,7 +1973,7 @@ void CreateAndStorePreXULSkeletonUI(HINSTANCE hInstance, int argc,
                 SWP_FRAMECHANGED | SWP_NOACTIVATE | SWP_NOMOVE |
                     SWP_NOOWNERZORDER | SWP_NOSIZE | SWP_NOZORDER);
   DrawSkeletonUI(sPreXULSkeletonUIWindow, urlbar, searchbar, springs,
-                 currentTheme, menubarShown);
+                 currentTheme, flags);
   if (sAnimatedRects) {
     sPreXULSKeletonUIAnimationThread = ::CreateThread(
         nullptr, 256 * 1024, AnimateSkeletonUI, nullptr, 0, nullptr);
@@ -1947,13 +2071,23 @@ void PersistPreXULSkeletonUIValues(const SkeletonUISettings& settings) {
     printf_stderr("Failed persisting maximized to Windows registry\n");
   }
 
-  DWORD menubarShownDword = settings.menubarShown ? 1 : 0;
+  EnumSet<SkeletonUIFlag, uint32_t> flags;
+  if (settings.menubarShown) {
+    flags += SkeletonUIFlag::MenubarShown;
+  }
+  if (settings.bookmarksToolbarShown) {
+    flags += SkeletonUIFlag::BookmarksToolbarShown;
+  }
+  if (settings.rtlEnabled) {
+    flags += SkeletonUIFlag::RtlEnabled;
+  }
+  uint32_t flagsUint = flags.serialize();
   result = ::RegSetValueExW(
-      regKey, GetRegValueName(binPath.get(), sMenubarShownRegSuffix).c_str(), 0,
-      REG_DWORD, reinterpret_cast<const BYTE*>(&menubarShownDword),
-      sizeof(menubarShownDword));
+      regKey, GetRegValueName(binPath.get(), sFlagsRegSuffix).c_str(), 0,
+      REG_DWORD, reinterpret_cast<const BYTE*>(&flagsUint), sizeof(flagsUint));
   if (result != ERROR_SUCCESS) {
-    printf_stderr("Failed persisting menubarShown to Windows registry\n");
+    printf_stderr("Failed persisting flags to Windows registry\n");
+    return;
   }
 
   result = ::RegSetValueExW(

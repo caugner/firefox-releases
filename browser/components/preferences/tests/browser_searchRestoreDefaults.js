@@ -9,7 +9,7 @@ const { SearchUtils } = ChromeUtils.import(
 );
 add_task(async function test_restore_functionality() {
   // Ensure no engines are hidden to begin with.
-  for (let engine of await Services.search.getDefaultEngines()) {
+  for (let engine of await Services.search.getAppProvidedEngines()) {
     if (engine.hidden) {
       engine.hidden = false;
     }
@@ -32,7 +32,7 @@ add_task(async function test_restore_functionality() {
 
   let tree = doc.querySelector("#engineList");
   // Check for default search engines to be displayed in the engineList
-  let defaultEngines = await Services.search.getDefaultEngines();
+  let defaultEngines = await Services.search.getAppProvidedEngines();
   for (let i = 0; i < defaultEngines.length; i++) {
     let cellName = tree.view.getCellText(
       i,
@@ -122,7 +122,7 @@ add_task(async function test_removeOutOfOrder() {
   let removeEngineButton = doc.getElementById("removeEngineButton");
   removeEngineButton.scrollIntoView();
 
-  let defaultEngines = await Services.search.getDefaultEngines();
+  let defaultEngines = await Services.search.getAppProvidedEngines();
 
   // Remove the last two engines.  After each removal, the selection should move
   // to the first local shortcut.

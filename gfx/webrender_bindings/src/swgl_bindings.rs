@@ -42,12 +42,14 @@ pub extern "C" fn wr_swgl_make_current(ctx: *mut c_void) {
 #[no_mangle]
 pub extern "C" fn wr_swgl_init_default_framebuffer(
     ctx: *mut c_void,
+    x: i32,
+    y: i32,
     width: i32,
     height: i32,
     stride: i32,
     buf: *mut c_void,
 ) {
-    swgl::Context::from(ctx).init_default_framebuffer(width, height, stride, buf);
+    swgl::Context::from(ctx).init_default_framebuffer(x, y, width, height, stride, buf);
 }
 
 #[no_mangle]
@@ -168,13 +170,7 @@ impl SwTile {
         clip_rect: &DeviceIntRect,
     ) -> Option<DeviceIntRect> {
         let origin = self.origin(surface);
-        // If the tile was invalidated this frame, then we don't have precise
-        // bounds. Instead, just use the default surface tile size.
-        let bounds = if self.invalid.get() {
-            DeviceIntRect::new(origin, surface.tile_size)
-        } else {
-            self.valid_rect.translate(origin.to_vector())
-        };
+        let bounds = self.valid_rect.translate(origin.to_vector());
         let device_rect = transform.outer_transformed_rect(&bounds.to_f32())?.round_out().to_i32();
         device_rect.intersection(clip_rect)
     }
@@ -569,7 +565,7 @@ struct SwCompositeGraphNode {
     /// Job to be queued for this graph node once ready.
     job: Option<SwCompositeJob>,
     /// The maximum number of available bands associated with this job.
-    max_bands: u8,
+    max_bands: AtomicU8,
     /// The number of remaining bands associated with this job. When this is
     /// non-zero and the node has no more parents left, then the node is being
     /// actively used by the composite thread to process jobs. Once it hits
@@ -592,7 +588,7 @@ impl SwCompositeGraphNode {
     fn new() -> SwCompositeGraphNodeRef {
         SwCompositeGraphNodeRef::new(SwCompositeGraphNode {
             job: None,
-            max_bands: 0,
+            max_bands: AtomicU8::new(0),
             remaining_bands: AtomicU8::new(0),
             band_index: AtomicU8::new(0),
             parents: AtomicU32::new(0),
@@ -603,7 +599,7 @@ impl SwCompositeGraphNode {
     /// Reset the node's state for a new frame
     fn reset(&mut self) {
         self.job = None;
-        self.max_bands = 0;
+        self.max_bands.store(0, Ordering::SeqCst);
         self.remaining_bands.store(0, Ordering::SeqCst);
         self.band_index.store(0, Ordering::SeqCst);
         // Initialize parents to 1 as sentinel dependency for uninitialized job
@@ -622,7 +618,7 @@ impl SwCompositeGraphNode {
     /// that would block immediate composition.
     fn set_job(&mut self, job: SwCompositeJob, num_bands: u8) -> bool {
         self.job = Some(job);
-        self.max_bands = num_bands;
+        self.max_bands.store(num_bands, Ordering::SeqCst);
         self.remaining_bands.store(num_bands, Ordering::SeqCst);
         // Subtract off the sentinel parent dependency now that job is initialized and check
         // whether there are any remaining parent dependencies to see if this job is ready.
@@ -631,7 +627,7 @@ impl SwCompositeGraphNode {
 
     fn take_band(&self) -> Option<u8> {
         let band_index = self.band_index.fetch_add(1, Ordering::SeqCst);
-        if band_index < self.max_bands {
+        if band_index < self.max_bands.load(Ordering::SeqCst) {
             Some(band_index)
         } else {
             None
@@ -926,7 +922,8 @@ impl SwCompositeThread {
 pub struct SwCompositor {
     gl: swgl::Context,
     native_gl: Option<Rc<dyn gl::Gl>>,
-    compositor: Option<WrCompositor>,
+    compositor: WrCompositor,
+    use_native_compositor: bool,
     surfaces: HashMap<NativeSurfaceId, SwSurface>,
     frame_surfaces: Vec<(
         NativeSurfaceId,
@@ -960,13 +957,18 @@ pub struct SwCompositor {
 }
 
 impl SwCompositor {
-    pub fn new(gl: swgl::Context, native_gl: Option<Rc<dyn gl::Gl>>, compositor: Option<WrCompositor>) -> Self {
+    pub fn new(
+        gl: swgl::Context,
+        native_gl: Option<Rc<dyn gl::Gl>>,
+        compositor: WrCompositor,
+        use_native_compositor: bool,
+    ) -> Self {
         let depth_id = gl.gen_textures(1)[0];
         // Only create the SwComposite thread if we're neither using OpenGL composition nor a native
         // render compositor. Thus, we are compositing into the main software framebuffer, which in
         // that case benefits from compositing asynchronously while we are updating tiles.
-        assert!(native_gl.is_none() || compositor.is_none());
-        let composite_thread = if native_gl.is_none() && compositor.is_none() {
+        assert!(native_gl.is_none() || !use_native_compositor);
+        let composite_thread = if native_gl.is_none() && !use_native_compositor {
             Some(SwCompositeThread::new())
         } else {
             None
@@ -974,6 +976,7 @@ impl SwCompositor {
         SwCompositor {
             gl,
             compositor,
+            use_native_compositor,
             surfaces: HashMap::new(),
             frame_surfaces: Vec::new(),
             late_surfaces: Vec::new(),
@@ -1044,13 +1047,18 @@ impl SwCompositor {
         overlap_transform: &CompositorSurfaceTransform,
         overlap_clip_rect: &DeviceIntRect,
     ) {
-        let overlap_rect = match overlap_tile.overlap_rect(overlap_surface, overlap_transform, overlap_clip_rect) {
-            Some(overlap_rect) => overlap_rect,
-            None => return,
-        };
         // Record an extra overlap for an invalid tile to track the tile's dependency
         // on its own future update.
         let mut overlaps = if overlap_tile.invalid.get() { 1 } else { 0 };
+
+        let overlap_rect = match overlap_tile.overlap_rect(overlap_surface, overlap_transform, overlap_clip_rect) {
+            Some(overlap_rect) => overlap_rect,
+            None => {
+                overlap_tile.overlaps.set(overlaps);
+                return;
+            }
+        };
+
         for &(ref id, ref transform, ref clip_rect, _) in &self.frame_surfaces {
             // We only want to consider surfaces that were added before the current one we're
             // checking for overlaps. If we find that surface, then we're done.
@@ -1127,19 +1135,20 @@ impl SwCompositor {
                 } else {
                     return;
                 };
-                let framebuffer = self.locked_framebuffer.clone().unwrap();
-                composite_thread.queue_composite(
-                    source,
-                    framebuffer,
-                    src_rect,
-                    dst_rect,
-                    *clip_rect,
-                    surface.is_opaque,
-                    flip_y,
-                    filter,
-                    tile.graph_node.clone(),
-                    job_queue,
-                );
+                if let Some(ref framebuffer) = self.locked_framebuffer {
+                    composite_thread.queue_composite(
+                        source,
+                        framebuffer.clone(),
+                        src_rect,
+                        dst_rect,
+                        *clip_rect,
+                        surface.is_opaque,
+                        flip_y,
+                        filter,
+                        tile.graph_node.clone(),
+                        job_queue,
+                    );
+                }
             }
         }
     }
@@ -1279,8 +1288,8 @@ impl Compositor for SwCompositor {
         tile_size: DeviceIntSize,
         is_opaque: bool,
     ) {
-        if let Some(compositor) = &mut self.compositor {
-            compositor.create_surface(id, virtual_offset, tile_size, is_opaque);
+        if self.use_native_compositor {
+            self.compositor.create_surface(id, virtual_offset, tile_size, is_opaque);
         }
         self.max_tile_size = DeviceIntSize::new(
             self.max_tile_size.width.max(tile_size.width),
@@ -1290,8 +1299,8 @@ impl Compositor for SwCompositor {
     }
 
     fn create_external_surface(&mut self, id: NativeSurfaceId, is_opaque: bool) {
-        if let Some(compositor) = &mut self.compositor {
-            compositor.create_external_surface(id, is_opaque);
+        if self.use_native_compositor {
+            self.compositor.create_external_surface(id, is_opaque);
         }
         self.surfaces
             .insert(id, SwSurface::new(DeviceIntSize::zero(), is_opaque));
@@ -1301,8 +1310,8 @@ impl Compositor for SwCompositor {
         if let Some(surface) = self.surfaces.remove(&id) {
             self.deinit_surface(&surface);
         }
-        if let Some(compositor) = &mut self.compositor {
-            compositor.destroy_surface(id);
+        if self.use_native_compositor {
+            self.compositor.destroy_surface(id);
         }
     }
 
@@ -1319,14 +1328,14 @@ impl Compositor for SwCompositor {
 
         self.deinit_shader();
 
-        if let Some(compositor) = &mut self.compositor {
-            compositor.deinit();
+        if self.use_native_compositor {
+            self.compositor.deinit();
         }
     }
 
     fn create_tile(&mut self, id: NativeTileId) {
-        if let Some(compositor) = &mut self.compositor {
-            compositor.create_tile(id);
+        if self.use_native_compositor {
+            self.compositor.create_tile(id);
         }
         if let Some(surface) = self.surfaces.get_mut(&id.surface_id) {
             let mut tile = SwTile::new(id.x, id.y);
@@ -1391,14 +1400,14 @@ impl Compositor for SwCompositor {
                 self.deinit_tile(&tile);
             }
         }
-        if let Some(compositor) = &mut self.compositor {
-            compositor.destroy_tile(id);
+        if self.use_native_compositor {
+            self.compositor.destroy_tile(id);
         }
     }
 
     fn attach_external_image(&mut self, id: NativeSurfaceId, external_image: ExternalImageId) {
-        if let Some(compositor) = &mut self.compositor {
-            compositor.attach_external_image(id, external_image);
+        if self.use_native_compositor {
+            self.compositor.attach_external_image(id, external_image);
         }
         if let Some(surface) = self.surfaces.get_mut(&id) {
             // Surfaces with attached external images have a single tile at the origin encompassing
@@ -1411,13 +1420,14 @@ impl Compositor for SwCompositor {
         }
     }
 
-    fn invalidate_tile(&mut self, id: NativeTileId) {
-        if let Some(compositor) = &mut self.compositor {
-            compositor.invalidate_tile(id);
+    fn invalidate_tile(&mut self, id: NativeTileId, valid_rect: DeviceIntRect) {
+        if self.use_native_compositor {
+            self.compositor.invalidate_tile(id, valid_rect);
         }
         if let Some(surface) = self.surfaces.get_mut(&id.surface_id) {
             if let Some(tile) = surface.tiles.iter_mut().find(|t| t.x == id.x && t.y == id.y) {
                 tile.invalid.set(true);
+                tile.valid_rect = valid_rect;
             }
         }
     }
@@ -1433,15 +1443,15 @@ impl Compositor for SwCompositor {
         if let Some(surface) = self.surfaces.get_mut(&id.surface_id) {
             if let Some(tile) = surface.tiles.iter_mut().find(|t| t.x == id.x && t.y == id.y) {
                 tile.dirty_rect = dirty_rect;
-                tile.valid_rect = valid_rect;
+                assert_eq!(tile.valid_rect, valid_rect);
                 if valid_rect.is_empty() {
                     return surface_info;
                 }
 
                 let mut stride = 0;
                 let mut buf = ptr::null_mut();
-                if let Some(compositor) = &mut self.compositor {
-                    if let Some(tile_info) = compositor.map_tile(id, dirty_rect, valid_rect) {
+                if self.use_native_compositor {
+                    if let Some(tile_info) = self.compositor.map_tile(id, dirty_rect, valid_rect) {
                         stride = tile_info.stride;
                         buf = tile_info.data;
                     }
@@ -1513,8 +1523,8 @@ impl Compositor for SwCompositor {
                 // sure that any delayed clears are resolved
                 let (swbuf, _, _, stride) = self.gl.get_color_buffer(tile.fbo_id, true);
 
-                if let Some(compositor) = &mut self.compositor {
-                    compositor.unmap_tile();
+                if self.use_native_compositor {
+                    self.compositor.unmap_tile();
                     return;
                 }
 
@@ -1568,16 +1578,13 @@ impl Compositor for SwCompositor {
     }
 
     fn begin_frame(&mut self) {
-        if let Some(compositor) = &mut self.compositor {
-            compositor.begin_frame();
+        if self.use_native_compositor {
+            self.compositor.begin_frame();
         }
         self.frame_surfaces.clear();
         self.late_surfaces.clear();
 
         self.reset_overlaps();
-        if self.composite_thread.is_some() {
-            self.locked_framebuffer = self.gl.lock_framebuffer(0);
-        }
     }
 
     fn add_surface(
@@ -1587,8 +1594,8 @@ impl Compositor for SwCompositor {
         clip_rect: DeviceIntRect,
         filter: ImageRendering,
     ) {
-        if let Some(compositor) = &mut self.compositor {
-            compositor.add_surface(id, transform, clip_rect, filter);
+        if self.use_native_compositor {
+            self.compositor.add_surface(id, transform, clip_rect, filter);
         }
 
         if self.composite_thread.is_some() {
@@ -1613,7 +1620,31 @@ impl Compositor for SwCompositor {
     /// frame will not have overlap dependencies assigned and so must instead
     /// be added to the late_surfaces queue to be processed at the end of the
     /// frame.
-    fn start_compositing(&mut self, dirty_rects: &[DeviceIntRect]) {
+    fn start_compositing(
+        &mut self,
+        dirty_rects: &[DeviceIntRect],
+        _opaque_rects: &[DeviceIntRect],
+    ) {
+        // Opaque rects are currently only computed here, not by WR itself, so we
+        // ignore the passed parameter and forward our own version onto the native
+        // compositor.
+        let mut opaque_rects : Vec<DeviceIntRect> = Vec::new();
+        for &(ref id, ref transform, ref clip_rect, _filter) in &self.frame_surfaces {
+            if let Some(surface) = self.surfaces.get(id) {
+                if !surface.is_opaque {
+                    continue;
+                }
+
+                for tile in &surface.tiles {
+                    if let Some(rect) = tile.overlap_rect(surface, transform, clip_rect) {
+                        opaque_rects.push(rect);
+                    }
+                }
+            }
+        }
+
+        self.compositor.start_compositing(dirty_rects, &opaque_rects);
+
         if dirty_rects.len() == 1 {
             // Factor dirty rect into surface clip rects and discard surfaces that are
             // entirely clipped out.
@@ -1634,6 +1665,8 @@ impl Compositor for SwCompositor {
                 }
             }
 
+            self.locked_framebuffer = self.gl.lock_framebuffer(0);
+
             composite_thread.start_compositing();
             // Issue any initial composite jobs for the SwComposite thread.
             let mut lock = composite_thread.lock();
@@ -1651,8 +1684,8 @@ impl Compositor for SwCompositor {
     }
 
     fn end_frame(&mut self) {
-        if let Some(compositor) = &mut self.compositor {
-            compositor.end_frame();
+        if self.use_native_compositor {
+            self.compositor.end_frame();
         } else if let Some(native_gl) = &self.native_gl {
             let (_, fw, fh, _) = self.gl.get_color_buffer(0, false);
             let viewport = DeviceIntRect::from_size(DeviceIntSize::new(fw, fh));
@@ -1723,18 +1756,11 @@ impl Compositor for SwCompositor {
     }
 
     fn enable_native_compositor(&mut self, enable: bool) {
-        if let Some(compositor) = &mut self.compositor {
-            compositor.enable_native_compositor(enable);
-        }
+        self.compositor.enable_native_compositor(enable);
+        self.use_native_compositor = enable;
     }
 
     fn get_capabilities(&self) -> CompositorCapabilities {
-        if let Some(compositor) = &self.compositor {
-            compositor.get_capabilities()
-        } else {
-            CompositorCapabilities {
-                virtual_surface_size: 0,
-            }
-        }
+        self.compositor.get_capabilities()
     }
 }

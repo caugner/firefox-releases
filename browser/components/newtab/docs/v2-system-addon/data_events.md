@@ -50,7 +50,7 @@ A user event ping includes some basic metadata (tab id, addon version, etc.) as 
 ```js
 {
   // This indicates the type of interaction
-  "event": ["CLICK", "SEARCH", "BLOCK", "DELETE", "OPEN_NEW_WINDOW", "OPEN_PRIVATE_WINDOW", "BOOKMARK_DELETE", "BOOKMARK_ADD", "OPEN_NEWTAB_PREFS", "CLOSE_NEWTAB_PREFS", "SEARCH_HANDOFF"],
+  "event": ["CLICK", "SEARCH", "BLOCK", "DELETE", "OPEN_NEW_WINDOW", "OPEN_PRIVATE_WINDOW", "BOOKMARK_DELETE", "BOOKMARK_ADD", "OPEN_NEWTAB_PREFS", "CLOSE_NEWTAB_PREFS", "SEARCH_HANDOFF", "SHOW_PERSONALIZE", "HIDE_PERSONALIZE"],
 
   // Optional field indicating the UI component type
   "source": "TOP_SITES",
@@ -77,6 +77,22 @@ A user event ping includes some basic metadata (tab id, addon version, etc.) as 
 ```
 
 ### Types of user interactions
+
+#### Show/hide Personalization Panel
+
+```js
+{
+  "event": [ "SHOW_PERSONALIZE" | "HIDE_PERSONALIZE" ],  // Basic metadata
+  "action": "activity_stream_event",
+  "page": ["about:newtab" | "about:home" | "about:welcome" | "unknown"],
+  "client_id": "26288a14-5cc4-d14f-ae0a-bb01ef45be9c",
+  "session_id": "005deed0-e3e4-4c02-a041-17405fd703f6",
+  "browser_session_id": "e7e52665-7db3-f348-9918-e93160eb2ef3",
+  "addon_version": "20180710100040",
+  "locale": "en-US",
+  "user_prefs": 7
+}
+```
 
 #### Performing a search
 
@@ -448,12 +464,12 @@ A user event ping includes some basic metadata (tab id, addon version, etc.) as 
 }
 ```
 
-#### Changing preferences from about:preferences#home
+#### Changing preferences from about:preferences#home or on the customize menu on the newtab page.
 
 ```js
 {
   "event": "PREF_CHANGED",
-  "source": "TOP_STORIES|POCKET_SPOCS|HIGHLIGHTS",
+  "source": "TOP_STORIES|POCKET_SPOCS|HIGHLIGHTS|SNIPPETS|TOP_SITES|SPONSORED_TOP_SITES",
   "value": "{\"status\":true|false,\"menu_source\":\"ABOUT_PREFERENCES|CUSTOMIZE_MENU\"}"
   "release_channel": "default",
   "experiments": {},
@@ -618,11 +634,6 @@ This reports all the Pocket recommended articles (a list of `id`s) when the user
 
 ```js
 {
-  "action": "activity_stream_impression_stats",
-
-  // both "client_id" and "session_id" are set to "n/a" in this ping.
-  "client_id": "n/a",
-  "session_id": "n/a",
   "impression_id": "{005deed0-e3e4-4c02-a041-17405fd703f6}",
   "addon_version": "20180710100040",
   "locale": "en-US",
@@ -643,11 +654,6 @@ This reports the user's interaction with those Pocket tiles.
 
 ```js
 {
-  "action": "activity_stream_impression_stats",
-
-  // both "client_id" and "session_id" are set to "n/a" in this ping.
-  "client_id": "n/a",
-  "session_id": "n/a",
   "impression_id": "{005deed0-e3e4-4c02-a041-17405fd703f6}",
   "addon_version": "20180710100040",
   "locale": "en-US",
@@ -686,60 +692,6 @@ These pings record user interaction with the save to Pocket button.
   "pocket_logged_in_state": true|false,
   "impression_id": "{005deed0-e3e4-4c02-a041-17405fd703f6}",
   "profile_creation_date": 18550
-}
-```
-
-## Discovery Stream SPOCS Fill ping
-
-This reports the internal status of Pocket SPOCS (Sponsored Contents).
-
-```js
-{
-  // both "client_id" and "session_id" are set to "n/a" in this ping.
-  "client_id": "n/a",
-  "session_id": "n/a",
-  "impression_id": "{005deed0-e3e4-4c02-a041-17405fd703f6}",
-  "addon_version": "20180710100040",
-  "locale": "en-US",
-  "version": "68",
-  "release_channel": "release",
-  "experiments": {
-    "experiment_1": {"branch": "control"},
-    "experiment_2": {"branch": "treatment"}
-  },
-  "spoc_fills": [
-    {"id": 10000, displayed: 0, reason: "frequency_cap", full_recalc: 1},
-    {"id": 10001, displayed: 0, reason: "blocked_by_user", full_recalc: 1},
-    {"id": 10002, displayed: 0, reason: "below_min_score", full_recalc: 1},
-    {"id": 10003, displayed: 0, reason: "campaign_duplicate", full_recalc: 1},
-    {"id": 10004, displayed: 0, reason: "probability_selection", full_recalc: 0},
-    {"id": 10004, displayed: 0, reason: "out_of_position", full_recalc: 0},
-    {"id": 10005, displayed: 1, reason: "n/a", full_recalc: 0}
-  ]
-}
-```
-
-## Undesired event pings
-
-These pings record the undesired events happen in the addon for further investigation.
-
-### Addon initialization failure
-
-This reports when the addon fails to initialize
-
-```js
-{
-  "action": "activity_stream_undesired_event",
-  "client_id": "26288a14-5cc4-d14f-ae0a-bb01ef45be9c",
-  "addon_version": "20180710100040",
-  "locale": "en-US",
-  "experiments": {
-    "experiment_1": {"branch": "control"},
-    "experiment_2": {"branch": "treatment"}
-  },
-  "user_prefs": 7,
-  "event": "ADDON_INIT_FAILED",
-  "value": -1
 }
 ```
 
@@ -1011,6 +963,30 @@ as other CFR messages.
   },
   "locale": "en-US",
   "client_id": "21dc1375-b24e-984b-83e9-c8a9660ae4ff"
+}
+```
+
+## InfoBar pings
+
+This reports when the user interacts with the browser infobar (messaging area
+located at the top of the content area). Similar policy applied as for the
+What's New panel client_id is reported in all the channels.
+
+```
+{
+  "experiments" : {
+    "exp1" : {
+      "branch" : "treatment-a"
+    }
+  },
+  "addon_version" : "20210115035053",
+  "release_channel" : "release",
+  "locale" : "en-US",
+  "event" : ["IMPRESSION", "CLICK_PRIMARY_BUTTON", "CLICK_SECONDARY_BUTTON", "DISMISSED"],
+  "client_id" : "c4beb4bf-4feb-9c4e-9587-9323b28c2e50",
+  "version" : "86",
+  "message_id" : "INFOBAR_ACTION_86",
+  "browser_session_id" : "93714e76-9919-ca49-b697-5e7c09a1394f"
 }
 ```
 

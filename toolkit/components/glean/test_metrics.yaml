@@ -64,6 +64,23 @@ test_only:
     send_in_pings:
       - test-ping
 
+  cheesy_string_list:
+    type: string_list
+    description: |
+      Only the cheesiest of strings. In list form!
+      This is a test-only metric.
+    bugs:
+      - https://bugzilla.mozilla.org/show_bug.cgi?id=1682960
+    data_reviews:
+      - https://bugzilla.mozilla.org/show_bug.cgi?id=1682960#c1
+    data_sensitivity:
+      - technical
+    notification_emails:
+      - glean-team@mozilla.com
+    expires: never
+    send_in_pings:
+      - test-ping
+
   what_a_date:
     type: datetime
     time_unit: second
@@ -108,6 +125,43 @@ test_only:
     notification_emails:
       - glean-team@mozilla.com
     expires: never
+    send_in_pings:
+      - test-ping
+
+  do_you_remember:
+    type: memory_distribution
+    memory_unit: megabyte
+    description: |
+      They say it's the second thing to go.
+      This is a test-only metric.
+    bugs:
+      - https://bugzilla.mozilla.org/show_bug.cgi?id=1673648
+    data_reviews:
+      - https://bugzilla.mozilla.org/show_bug.cgi?id=1673648#c1
+    data_sensitivity:
+      - technical
+    expires: never
+    notification_emails:
+      - glean-team@mozilla.com
+    send_in_pings:
+      - test-ping
+
+  what_time_is_it:
+    type: timing_distribution
+    time_unit: microsecond
+    description: |
+      Adheres to at least two of the top ten fallacies programmers believe
+      about time.
+      This is a test-only metric.
+    bugs:
+      - https://bugzilla.mozilla.org/show_bug.cgi?id=1673663
+    data_reviews:
+      - https://bugzilla.mozilla.org/show_bug.cgi?id=1673663#c1
+    data_sensitivity:
+      - technical
+    expires: never
+    notification_emails:
+      - glean-team@mozilla.com
     send_in_pings:
       - test-ping
 

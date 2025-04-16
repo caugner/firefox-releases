@@ -89,9 +89,7 @@ function NavHistoryObserver() {}
 NavHistoryObserver.prototype = {
   onBeginUpdateBatch() {},
   onEndUpdateBatch() {},
-  onTitleChanged() {},
   onDeleteURI() {},
-  onClearHistory() {},
   onDeleteVisits() {},
   QueryInterface: ChromeUtils.generateQI(["nsINavHistoryObserver"]),
 };

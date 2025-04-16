@@ -14,6 +14,7 @@
 #include <algorithm>
 #include <utility>
 
+#include "BackgroundChild.h"
 #include "BrowserParent.h"
 #include "ClientLayerManager.h"
 #include "ContentChild.h"
@@ -75,6 +76,7 @@
 #include "mozilla/gfx/Matrix.h"
 #include "mozilla/gfx/gfxVars.h"
 #include "mozilla/ipc/BackgroundUtils.h"
+#include "mozilla/ipc/PBackgroundChild.h"
 #include "mozilla/ipc/URIUtils.h"
 #include "mozilla/layers/APZCCallbackHelper.h"
 #include "mozilla/layers/APZCTreeManagerChild.h"
@@ -141,6 +143,10 @@
 
 #ifdef XP_WIN
 #  include "mozilla/plugins/PluginWidgetChild.h"
+#endif
+
+#ifdef MOZ_WAYLAND
+#  include "nsAppRunner.h"
 #endif
 
 #ifdef NS_PRINTING
@@ -217,12 +223,8 @@ class BrowserChild::DelayedDeleteRunnable final : public Runnable,
                                                   public nsIRunnablePriority {
   RefPtr<BrowserChild> mBrowserChild;
 
-  // In order to ensure that this runnable runs after everything that could
-  // possibly touch this tab, we send it through the event queue twice. The
-  // first time it runs at normal priority and the second time it runs at
-  // input priority. This ensures that it runs after all events that were in
-  // either queue at the time it was first dispatched. mReadyToDelete starts
-  // out false (when it runs at normal priority) and is then set to true.
+  // In order to try that this runnable runs after everything that could
+  // possibly touch this tab, we send it through the event queue twice.
   bool mReadyToDelete = false;
 
  public:
@@ -242,8 +244,7 @@ class BrowserChild::DelayedDeleteRunnable final : public Runnable,
   }
 
   NS_IMETHOD GetPriority(uint32_t* aPriority) override {
-    *aPriority = mReadyToDelete ? nsIRunnablePriority::PRIORITY_INPUT_HIGH
-                                : nsIRunnablePriority::PRIORITY_NORMAL;
+    *aPriority = nsIRunnablePriority::PRIORITY_NORMAL;
     return NS_OK;
   }
 
@@ -315,6 +316,7 @@ BrowserChild::BrowserChild(ContentChild* aManager, const TabId& aTabId,
       mDidFakeShow(false),
       mTriedBrowserInit(false),
       mOrientation(hal::eScreenOrientation_PortraitPrimary),
+      mVsyncChild(nullptr),
       mIgnoreKeyPressEvent(false),
       mHasValidInnerSize(false),
       mDestroyed(false),
@@ -1902,18 +1904,6 @@ mozilla::ipc::IPCResult BrowserChild::RecvRealDragEvent(
   return IPC_OK();
 }
 
-mozilla::ipc::IPCResult BrowserChild::RecvPluginEvent(
-    const WidgetPluginEvent& aEvent) {
-  WidgetPluginEvent localEvent(aEvent);
-  localEvent.mWidget = mPuppetWidget;
-  nsEventStatus status = DispatchWidgetEventViaAPZ(localEvent);
-  if (status != nsEventStatus_eConsumeNoDefault) {
-    // If not consumed, we should call default action
-    SendDefaultProcOfPluginEvent(aEvent);
-  }
-  return IPC_OK();
-}
-
 void BrowserChild::RequestEditCommands(nsIWidget::NativeKeyBindingsType aType,
                                        const WidgetKeyboardEvent& aEvent,
                                        nsTArray<CommandInt>& aCommands) {
@@ -2094,7 +2084,8 @@ mozilla::ipc::IPCResult BrowserChild::RecvNormalPrioritySelectionEvent(
 
 mozilla::ipc::IPCResult BrowserChild::RecvPasteTransferable(
     const IPCDataTransfer& aDataTransfer, const bool& aIsPrivateData,
-    nsIPrincipal* aRequestingPrincipal, const uint32_t& aContentPolicyType) {
+    nsIPrincipal* aRequestingPrincipal,
+    const nsContentPolicyType& aContentPolicyType) {
   nsresult rv;
   nsCOMPtr<nsITransferable> trans =
       do_CreateInstance("@mozilla.org/widget/transferable;1", &rv);
@@ -2156,6 +2147,34 @@ bool BrowserChild::DeallocPFilePickerChild(PFilePickerChild* actor) {
   nsFilePickerProxy* filePicker = static_cast<nsFilePickerProxy*>(actor);
   NS_RELEASE(filePicker);
   return true;
+}
+
+PVsyncChild* BrowserChild::AllocPVsyncChild() {
+  RefPtr<dom::VsyncChild> actor = new VsyncChild();
+  // There still has one ref-count after return, and it will be released in
+  // DeallocPVsyncChild().
+  return actor.forget().take();
+}
+
+bool BrowserChild::DeallocPVsyncChild(PVsyncChild* aActor) {
+  MOZ_ASSERT(aActor);
+
+  // This actor already has one ref-count. Please check AllocPVsyncChild().
+  RefPtr<VsyncChild> actor = dont_AddRef(static_cast<VsyncChild*>(aActor));
+  return true;
+}
+
+RefPtr<VsyncChild> BrowserChild::GetVsyncChild() {
+  // Initializing mVsyncChild here turns on per-BrowserChild Vsync for a
+  // given platform. Note: this only makes sense if nsWindow returns a
+  // window-specific VsyncSource.
+#if defined(MOZ_WAYLAND)
+  if (!IsWaylandDisabled() && !mVsyncChild) {
+    PVsyncChild* actor = SendPVsyncConstructor();
+    mVsyncChild = static_cast<VsyncChild*>(actor);
+  }
+#endif
+  return mVsyncChild;
 }
 
 mozilla::ipc::IPCResult BrowserChild::RecvActivateFrameEvent(
@@ -3305,7 +3324,6 @@ nsresult BrowserChild::CreatePluginWidget(nsIWidget* aParent,
 
   nsWidgetInitData initData;
   initData.mWindowType = eWindowType_plugin_ipc_content;
-  initData.mUnicode = false;
   initData.clipChildren = true;
   initData.clipSiblings = true;
   nsresult rv = pluginWidget->Create(

@@ -58,7 +58,7 @@ loader.lazyRequireGetter(
 loader.lazyRequireGetter(
   this,
   "saveScreenshot",
-  "devtools/shared/screenshot/save"
+  "devtools/client/shared/save-screenshot"
 );
 loader.lazyRequireGetter(
   this,
@@ -301,10 +301,6 @@ Inspector.prototype = {
     }
 
     return this._highlighters;
-  },
-
-  get isHighlighterReady() {
-    return !!this._highlighters;
   },
 
   get is3PaneModeEnabled() {
@@ -1650,9 +1646,6 @@ Inspector.prototype = {
     }
     this._destroyed = true;
 
-    this.currentTarget.threadFront.off("paused", this.handleThreadPaused);
-    this.currentTarget.threadFront.off("resumed", this.handleThreadResumed);
-
     this.cancelUpdate();
 
     this.sidebar.destroy();
@@ -1676,7 +1669,6 @@ Inspector.prototype = {
 
     if (this._highlighters) {
       this._highlighters.destroy();
-      this._highlighters = null;
     }
 
     if (this._markupFrame) {
@@ -1915,7 +1907,9 @@ Inspector.prototype = {
       nodeActorID: this.selection.nodeFront.actorID,
       clipboard: clipboardEnabled,
     };
-    const screenshotFront = await this.currentTarget.getFront("screenshot");
+    const screenshotFront = await this.selection.nodeFront.targetFront.getFront(
+      "screenshot"
+    );
     const screenshot = await screenshotFront.capture(args);
     await saveScreenshot(this.panelWin, args, screenshot);
   },

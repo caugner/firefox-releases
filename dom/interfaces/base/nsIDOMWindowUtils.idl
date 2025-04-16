@@ -828,6 +828,11 @@ interface nsIDOMWindowUtils : nsISupports {
   readonly attribute boolean isMozAfterPaintPending;
 
   /**
+   * Returns true if the InputTaskManager is suspended.
+   */
+  readonly attribute boolean isInputTaskManagerSuspended;
+
+  /**
    * Suppresses/unsuppresses user initiated event handling in window's document
    * and subdocuments.
    *
@@ -969,12 +974,6 @@ interface nsIDOMWindowUtils : nsISupports {
    * This state is same as |ime-mode: disabled;|.
    */
   const unsigned long IME_STATUS_PASSWORD = 2;
-
-  /**
-   * PLUGIN means a plug-in has focus. At this time we should not touch to
-   * controlling the IME state.
-   */
-  const unsigned long IME_STATUS_PLUGIN   = 3;
 
   /**
    * Get IME status, see above IME_STATUS_* definitions.
@@ -1288,6 +1287,7 @@ interface nsIDOMWindowUtils : nsISupports {
    * issues, and NS_ERROR_INVALID_ARG for coordinates that are outside
    * this window.
    */
+  [can_run_script]
   boolean selectAtPoint(in float aX,
                         in float aY,
                         in unsigned long aSelectBehavior);

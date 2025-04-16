@@ -814,11 +814,23 @@ function getHighlighterTestHelpers(inspector) {
   }
 
   return {
+    getActiveHighlighter(type) {
+      return inspector.highlighters.getActiveHighlighter(type);
+    },
+    getNodeForActiveHighlighter(type) {
+      return inspector.highlighters.getNodeForActiveHighlighter(type);
+    },
     waitForHighlighterTypeShown(type) {
       return _waitForHighlighterTypeEvent(type, "highlighter-shown");
     },
     waitForHighlighterTypeHidden(type) {
       return _waitForHighlighterTypeEvent(type, "highlighter-hidden");
+    },
+    waitForHighlighterTypeRestored(type) {
+      return _waitForHighlighterTypeEvent(type, "highlighter-restored");
+    },
+    waitForHighlighterTypeDiscarded(type) {
+      return _waitForHighlighterTypeEvent(type, "highlighter-discarded");
     },
   };
 }
@@ -1132,7 +1144,7 @@ async function toggleShapesHighlighter(
 
   if (show) {
     const onHighlighterShown = highlighters.once("shapes-highlighter-shown");
-    EventUtils.sendMouseEvent(
+    await EventUtils.sendMouseEvent(
       { type: "click", metaKey, ctrlKey },
       shapesToggle,
       view.styleWindow
@@ -1140,7 +1152,7 @@ async function toggleShapesHighlighter(
     await onHighlighterShown;
   } else {
     const onHighlighterHidden = highlighters.once("shapes-highlighter-hidden");
-    EventUtils.sendMouseEvent(
+    await EventUtils.sendMouseEvent(
       { type: "click", metaKey, ctrlKey },
       shapesToggle,
       view.styleWindow

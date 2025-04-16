@@ -14,6 +14,7 @@
 namespace mozilla {
 
 class PresShell;
+class PrintedSheetFrame;
 
 namespace dom {
 
@@ -80,11 +81,10 @@ class nsSharedPageData {
   // PrintedSheetFrame.
   float mPagesPerSheetScale = 1.0f;
   // Number of "columns" in our pages-per-sheet layout. For example: if we're
-  // printing with 6 pages-per-sheet (once we've fixed Bug 1669905), then this
-  // could be either 3 or 2, depending on whether we're printing
-  // portrait-oriented pages onto a landscape-oriented sheet (3 cols) vs. if
-  // we're printing landscape-oriented pages onto a portrait-oriented sheet (2
-  // cols).
+  // printing with 6 pages-per-sheet, then this could be either 3 or 2,
+  // depending on whether we're printing portrait-oriented pages onto a
+  // landscape-oriented sheet (3 cols) vs. if we're printing landscape-oriented
+  // pages onto a portrait-oriented sheet (2 cols).
   uint32_t mPagesPerSheetNumCols = 1;
   nsPoint mPagesPerSheetGridOrigin;
 
@@ -180,7 +180,7 @@ class nsPageSequenceFrame final : public nsContainerFrame {
                                  nscoord aChildPaddingBoxWidth,
                                  const nsMargin& aChildPhysicalMargin);
 
-  nsIFrame* GetCurrentSheetFrame();
+  mozilla::PrintedSheetFrame* GetCurrentSheetFrame();
 
   nsSize mSize;
 

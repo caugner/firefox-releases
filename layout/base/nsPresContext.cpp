@@ -298,6 +298,7 @@ void nsPresContext::Destroy() {
                                    gExactCallbackPrefs, this);
 
   mRefreshDriver = nullptr;
+  MOZ_ASSERT(mOneShotPostRefreshObservers.IsEmpty());
 }
 
 nsPresContext::~nsPresContext() {
@@ -692,9 +693,6 @@ nsresult nsPresContext::Init(nsDeviceContext* aDeviceContext) {
 
     if (!mRefreshDriver) {
       mRefreshDriver = new nsRefreshDriver(this);
-      if (XRE_IsContentProcess()) {
-        mRefreshDriver->InitializeTimer();
-      }
     }
   }
 
@@ -710,7 +708,9 @@ nsresult nsPresContext::Init(nsDeviceContext* aDeviceContext) {
   mEventManager->SetPresContext(this);
 
 #if defined(MOZ_WIDGET_ANDROID)
-  if (IsRootContentDocumentCrossProcess()) {
+  if (IsRootContentDocumentCrossProcess() &&
+      MOZ_LIKELY(
+          !Preferences::HasUserValue("layout.dynamic-toolbar-max-height"))) {
     if (BrowserChild* browserChild =
             BrowserChild::GetFrom(mDocument->GetDocShell())) {
       mDynamicToolbarMaxHeight = browserChild->GetDynamicToolbarMaxHeight();
@@ -1401,12 +1401,7 @@ void nsPresContext::ThemeChangedInternal() {
     image::SurfaceCacheUtils::DiscardAll();
 
     if (XRE_IsParentProcess()) {
-      nsTArray<ContentParent*> cp;
-      ContentParent::GetAll(cp);
-      widget::LookAndFeelCache lnfCache = LookAndFeel::GetCache();
-      for (ContentParent* c : cp) {
-        Unused << c->SendThemeChanged(lnfCache, kind);
-      }
+      ContentParent::BroadcastThemeUpdate(kind);
     }
   }
 
@@ -1513,6 +1508,33 @@ void nsPresContext::EmulateMedium(nsAtom* aMediaType) {
 void nsPresContext::ContentLanguageChanged() {
   PostRebuildAllStyleDataEvent(nsChangeHint(0),
                                RestyleHint::RecascadeSubtree());
+}
+
+bool nsPresContext::RegisterOneShotPostRefreshObserver(
+    mozilla::OneShotPostRefreshObserver* aObserver) {
+  RefreshDriver()->AddPostRefreshObserver(
+      static_cast<nsAPostRefreshObserver*>(aObserver));
+  mOneShotPostRefreshObservers.AppendElement(aObserver);
+  return true;
+}
+
+void nsPresContext::UnregisterOneShotPostRefreshObserver(
+    mozilla::OneShotPostRefreshObserver* aObserver) {
+  RefreshDriver()->RemovePostRefreshObserver(
+      static_cast<nsAPostRefreshObserver*>(aObserver));
+  DebugOnly<bool> removed =
+      mOneShotPostRefreshObservers.RemoveElement(aObserver);
+  MOZ_ASSERT(removed,
+             "OneShotPostRefreshObserver should be owned by PresContext");
+}
+
+void nsPresContext::ClearOneShotPostRefreshObservers() {
+  for (const auto& observer : mOneShotPostRefreshObservers) {
+    RefreshDriver()->RemovePostRefreshObserver(
+        static_cast<nsAPostRefreshObserver*>(observer));
+  }
+
+  mOneShotPostRefreshObservers.Clear();
 }
 
 void nsPresContext::RebuildAllStyleData(nsChangeHint aExtraHint,

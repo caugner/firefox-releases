@@ -32,6 +32,7 @@
 #include "mozilla/Monitor.h"
 #include "mozilla/Preferences.h"
 #include "mozilla/StaticPrefs_layers.h"
+#include "nsAppRunner.h"
 #include "nsIGfxInfo.h"
 #include "nsMathUtils.h"
 #include "nsUnicharUtils.h"
@@ -95,8 +96,17 @@ gfxPlatformGtk::gfxPlatformGtk() {
     }
 #endif
 
-    if (IsWaylandDisplay() || (mIsX11Display && PR_GetEnv("MOZ_X11_EGL"))) {
+    bool useEGLOnX11 = false;
+#ifdef MOZ_X11
+    useEGLOnX11 = IsX11EGLEnabled();
+#endif
+    if (IsWaylandDisplay() || useEGLOnX11) {
       gfxVars::SetUseEGL(true);
+
+      nsCOMPtr<nsIGfxInfo> gfxInfo = services::GetGfxInfo();
+      nsAutoCString drmRenderDevice;
+      gfxInfo->GetDrmRenderDevice(drmRenderDevice);
+      gfxVars::SetDrmRenderDevice(drmRenderDevice);
     }
   }
 
@@ -198,11 +208,6 @@ nsresult gfxPlatformGtk::GetFontList(nsAtom* aLangGroup,
                                      nsTArray<nsString>& aListOfFonts) {
   gfxPlatformFontList::PlatformFontList()->GetFontList(
       aLangGroup, aGenericFamily, aListOfFonts);
-  return NS_OK;
-}
-
-nsresult gfxPlatformGtk::UpdateFontList() {
-  gfxPlatformFontList::PlatformFontList()->UpdateFontList();
   return NS_OK;
 }
 

@@ -6,9 +6,10 @@
 
 #include "jit/x86/CodeGenerator-x86.h"
 
-#include "mozilla/ArrayUtils.h"
 #include "mozilla/Casting.h"
 #include "mozilla/DebugOnly.h"
+
+#include <iterator>
 
 #include "jsnum.h"
 
@@ -38,7 +39,7 @@ CodeGeneratorX86::CodeGeneratorX86(MIRGenerator* gen, LIRGraph* graph,
 static const uint32_t FrameSizes[] = {128, 256, 512, 1024};
 
 FrameSizeClass FrameSizeClass::FromDepth(uint32_t frameDepth) {
-  for (uint32_t i = 0; i < mozilla::ArrayLength(FrameSizes); i++) {
+  for (uint32_t i = 0; i < std::size(FrameSizes); i++) {
     if (frameDepth < FrameSizes[i]) {
       return FrameSizeClass(i);
     }
@@ -48,12 +49,12 @@ FrameSizeClass FrameSizeClass::FromDepth(uint32_t frameDepth) {
 }
 
 FrameSizeClass FrameSizeClass::ClassLimit() {
-  return FrameSizeClass(mozilla::ArrayLength(FrameSizes));
+  return FrameSizeClass(std::size(FrameSizes));
 }
 
 uint32_t FrameSizeClass::frameSize() const {
   MOZ_ASSERT(class_ != NO_FRAME_SIZE_CLASS_ID);
-  MOZ_ASSERT(class_ < mozilla::ArrayLength(FrameSizes));
+  MOZ_ASSERT(class_ < std::size(FrameSizes));
 
   return FrameSizes[class_];
 }
@@ -119,94 +120,6 @@ void CodeGenerator::visitUnbox(LUnbox* unbox) {
   // default to a no-op as long as the lowering allocate the same register for
   // the output and the payload.
   masm.unboxNonDouble(type, payload, output, ValueTypeFromMIRType(mir->type()));
-}
-
-void CodeGenerator::visitCompareB(LCompareB* lir) {
-  MCompare* mir = lir->mir();
-
-  const ValueOperand lhs = ToValue(lir, LCompareB::Lhs);
-  const LAllocation* rhs = lir->rhs();
-  const Register output = ToRegister(lir->output());
-
-  MOZ_ASSERT(mir->jsop() == JSOp::StrictEq || mir->jsop() == JSOp::StrictNe);
-
-  Label notBoolean, done;
-  masm.branchTestBoolean(Assembler::NotEqual, lhs, &notBoolean);
-  {
-    if (rhs->isConstant()) {
-      masm.cmp32(lhs.payloadReg(), Imm32(rhs->toConstant()->toBoolean()));
-    } else {
-      masm.cmp32(lhs.payloadReg(), ToRegister(rhs));
-    }
-    masm.emitSet(JSOpToCondition(mir->compareType(), mir->jsop()), output);
-    masm.jump(&done);
-  }
-  masm.bind(&notBoolean);
-  { masm.move32(Imm32(mir->jsop() == JSOp::StrictNe), output); }
-
-  masm.bind(&done);
-}
-
-void CodeGenerator::visitCompareBAndBranch(LCompareBAndBranch* lir) {
-  MCompare* mir = lir->cmpMir();
-  const ValueOperand lhs = ToValue(lir, LCompareBAndBranch::Lhs);
-  const LAllocation* rhs = lir->rhs();
-
-  MOZ_ASSERT(mir->jsop() == JSOp::StrictEq || mir->jsop() == JSOp::StrictNe);
-
-  Assembler::Condition cond = masm.testBoolean(Assembler::NotEqual, lhs);
-  jumpToBlock((mir->jsop() == JSOp::StrictEq) ? lir->ifFalse() : lir->ifTrue(),
-              cond);
-
-  if (rhs->isConstant()) {
-    masm.cmp32(lhs.payloadReg(), Imm32(rhs->toConstant()->toBoolean()));
-  } else {
-    masm.cmp32(lhs.payloadReg(), ToRegister(rhs));
-  }
-  emitBranch(JSOpToCondition(mir->compareType(), mir->jsop()), lir->ifTrue(),
-             lir->ifFalse());
-}
-
-void CodeGenerator::visitCompareBitwise(LCompareBitwise* lir) {
-  MCompare* mir = lir->mir();
-  Assembler::Condition cond = JSOpToCondition(mir->compareType(), mir->jsop());
-  const ValueOperand lhs = ToValue(lir, LCompareBitwise::LhsInput);
-  const ValueOperand rhs = ToValue(lir, LCompareBitwise::RhsInput);
-  const Register output = ToRegister(lir->output());
-
-  MOZ_ASSERT(IsEqualityOp(mir->jsop()));
-
-  Label notEqual, done;
-  masm.cmp32(lhs.typeReg(), rhs.typeReg());
-  masm.j(Assembler::NotEqual, &notEqual);
-  {
-    masm.cmp32(lhs.payloadReg(), rhs.payloadReg());
-    masm.emitSet(cond, output);
-    masm.jump(&done);
-  }
-  masm.bind(&notEqual);
-  { masm.move32(Imm32(cond == Assembler::NotEqual), output); }
-
-  masm.bind(&done);
-}
-
-void CodeGenerator::visitCompareBitwiseAndBranch(
-    LCompareBitwiseAndBranch* lir) {
-  MCompare* mir = lir->cmpMir();
-  Assembler::Condition cond = JSOpToCondition(mir->compareType(), mir->jsop());
-  const ValueOperand lhs = ToValue(lir, LCompareBitwiseAndBranch::LhsInput);
-  const ValueOperand rhs = ToValue(lir, LCompareBitwiseAndBranch::RhsInput);
-
-  MOZ_ASSERT(mir->jsop() == JSOp::Eq || mir->jsop() == JSOp::StrictEq ||
-             mir->jsop() == JSOp::Ne || mir->jsop() == JSOp::StrictNe);
-
-  MBasicBlock* notEqual =
-      (cond == Assembler::Equal) ? lir->ifFalse() : lir->ifTrue();
-
-  masm.cmp32(lhs.typeReg(), rhs.typeReg());
-  jumpToBlock(notEqual, Assembler::NotEqual);
-  masm.cmp32(lhs.payloadReg(), rhs.payloadReg());
-  emitBranch(cond, lir->ifTrue(), lir->ifFalse());
 }
 
 // See ../CodeGenerator.cpp for more information.
@@ -982,6 +895,45 @@ void CodeGenerator::visitUDivOrModI64(LUDivOrModI64* lir) {
   MOZ_ASSERT(eax == output.low);
 
   masm.Pop(WasmTlsReg);
+}
+
+void CodeGeneratorX86::emitBigIntDiv(LBigIntDiv* ins, Register dividend,
+                                     Register divisor, Register output,
+                                     Label* fail) {
+  // Callers handle division by zero and integer overflow.
+
+  MOZ_ASSERT(dividend == eax);
+  MOZ_ASSERT(output == edx);
+
+  // Sign extend the lhs into rdx to make rdx:rax.
+  masm.cdq();
+
+  masm.idiv(divisor);
+
+  // Create and return the result.
+  masm.newGCBigInt(output, divisor, fail, bigIntsCanBeInNursery());
+  masm.initializeBigInt(output, dividend);
+}
+
+void CodeGeneratorX86::emitBigIntMod(LBigIntMod* ins, Register dividend,
+                                     Register divisor, Register output,
+                                     Label* fail) {
+  // Callers handle division by zero and integer overflow.
+
+  MOZ_ASSERT(dividend == eax);
+  MOZ_ASSERT(output == edx);
+
+  // Sign extend the lhs into rdx to make edx:eax.
+  masm.cdq();
+
+  masm.idiv(divisor);
+
+  // Move the remainder from edx.
+  masm.movl(output, dividend);
+
+  // Create and return the result.
+  masm.newGCBigInt(output, divisor, fail, bigIntsCanBeInNursery());
+  masm.initializeBigInt(output, dividend);
 }
 
 void CodeGenerator::visitWasmSelectI64(LWasmSelectI64* lir) {

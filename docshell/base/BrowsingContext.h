@@ -7,6 +7,7 @@
 #ifndef mozilla_dom_BrowsingContext_h
 #define mozilla_dom_BrowsingContext_h
 
+#include <tuple>
 #include "GVAutoplayRequestUtils.h"
 #include "mozilla/ErrorResult.h"
 #include "mozilla/HalScreenConfiguration.h"
@@ -16,9 +17,9 @@
 #include "mozilla/Span.h"
 #include "mozilla/Tuple.h"
 #include "mozilla/dom/BindingDeclarations.h"
-#include "mozilla/dom/FeaturePolicy.h"
 #include "mozilla/dom/LocationBase.h"
 #include "mozilla/dom/MaybeDiscarded.h"
+#include "mozilla/dom/PopupBlocker.h"
 #include "mozilla/dom/UserActivation.h"
 #include "mozilla/dom/BrowsingContextBinding.h"
 #include "mozilla/dom/ScreenOrientationBinding.h"
@@ -63,6 +64,7 @@ class CanonicalBrowsingContext;
 class ChildSHistory;
 class ContentParent;
 class Element;
+struct LoadingSessionHistoryInfo;
 template <typename>
 struct Nullable;
 template <typename T>
@@ -119,7 +121,6 @@ enum class ExplicitActiveStatus : uint8_t {
   /* Hold the audio muted state and should be used on top level browsing     \
    * contexts only */                                                        \
   FIELD(Muted, bool)                                                         \
-  FIELD(FeaturePolicy, RefPtr<mozilla::dom::FeaturePolicy>)                  \
   /* See nsSandboxFlags.h for the possible flags. */                         \
   FIELD(SandboxFlags, uint32_t)                                              \
   FIELD(InitialSandboxFlags, uint32_t)                                       \
@@ -723,6 +724,10 @@ class BrowsingContext : public nsILoadContext, public nsWrapperCache {
   // context or any of its ancestors.
   bool IsPopupAllowed();
 
+  void SessionHistoryCommit(const LoadingSessionHistoryInfo& aInfo,
+                            uint32_t aLoadType, bool aHadActiveEntry,
+                            bool aPersist, bool aCloneEntryChildren);
+
   // Set a new active entry on this browsing context. This is used for
   // implementing history.pushState/replaceState and same document navigations.
   // The new active entry will be linked to the current active entry through
@@ -772,6 +777,12 @@ class BrowsingContext : public nsILoadContext, public nsWrapperCache {
   void ResetLocationChangeRateLimit();
 
   mozilla::dom::DisplayMode DisplayMode() { return Top()->GetDisplayMode(); }
+
+  // Returns canFocus, isActive
+  std::tuple<bool, bool> CanFocusCheck(CallerType aCallerType);
+
+  PopupBlocker::PopupControlState RevisePopupAbuseLevel(
+      PopupBlocker::PopupControlState aControl);
 
  protected:
   virtual ~BrowsingContext();

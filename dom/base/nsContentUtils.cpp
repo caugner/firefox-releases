@@ -3527,7 +3527,7 @@ nsresult nsContentUtils::LoadImage(
     nsIPrincipal* aLoadingPrincipal, uint64_t aRequestContextID,
     nsIReferrerInfo* aReferrerInfo, imgINotificationObserver* aObserver,
     int32_t aLoadFlags, const nsAString& initiatorType,
-    imgRequestProxy** aRequest, uint32_t aContentPolicyType,
+    imgRequestProxy** aRequest, nsContentPolicyType aContentPolicyType,
     bool aUseUrgentStartForChannel, bool aLinkPreload) {
   MOZ_ASSERT(aURI, "Must have a URI");
   MOZ_ASSERT(aContext, "Must have a context");
@@ -4734,6 +4734,8 @@ EventListenerManager* nsContentUtils::GetExistingListenerManagerForNode(
 void nsContentUtils::AddEntryToDOMArenaTable(nsINode* aNode,
                                              DOMArena* aDOMArena) {
   MOZ_ASSERT(StaticPrefs::dom_arena_allocator_enabled_AtStartup());
+  MOZ_ASSERT_IF(sDOMArenaHashtable, !sDOMArenaHashtable->Contains(aNode));
+  MOZ_ASSERT(!aNode->HasFlag(NODE_KEEPS_DOMARENA));
   if (!sDOMArenaHashtable) {
     sDOMArenaHashtable =
         new nsRefPtrHashtable<nsPtrHashKey<const nsINode>, dom::DOMArena>();
@@ -6985,17 +6987,22 @@ void nsContentUtils::GetSelectionInTextControl(Selection* aSelection,
   aOutEndOffset = endOffset;
 }
 
+// static
 HTMLEditor* nsContentUtils::GetHTMLEditor(nsPresContext* aPresContext) {
   if (!aPresContext) {
     return nullptr;
   }
+  return GetHTMLEditor(aPresContext->GetDocShell());
+}
 
-  nsCOMPtr<nsIDocShell> docShell(aPresContext->GetDocShell());
+// static
+HTMLEditor* nsContentUtils::GetHTMLEditor(nsDocShell* aDocShell) {
   bool isEditable;
-  if (!docShell || NS_FAILED(docShell->GetEditable(&isEditable)) || !isEditable)
+  if (!aDocShell || NS_FAILED(aDocShell->GetEditable(&isEditable)) ||
+      !isEditable) {
     return nullptr;
-
-  return docShell->GetHTMLEditor();
+  }
+  return aDocShell->GetHTMLEditor();
 }
 
 // static
@@ -7004,15 +7011,19 @@ TextEditor* nsContentUtils::GetActiveEditor(nsPresContext* aPresContext) {
     return nullptr;
   }
 
-  nsPIDOMWindowOuter* window = aPresContext->Document()->GetWindow();
-  if (!window) {
+  return GetActiveEditor(aPresContext->Document()->GetWindow());
+}
+
+// static
+TextEditor* nsContentUtils::GetActiveEditor(nsPIDOMWindowOuter* aWindow) {
+  if (!aWindow || !aWindow->GetExtantDoc()) {
     return nullptr;
   }
 
   // If it's in designMode, nobody can have focus.  Therefore, the HTMLEditor
   // handles all events.  I.e., it's focused editor in this case.
-  if (aPresContext->Document()->HasFlag(NODE_IS_EDITABLE)) {
-    return GetHTMLEditor(aPresContext);
+  if (aWindow->GetExtantDoc()->HasFlag(NODE_IS_EDITABLE)) {
+    return GetHTMLEditor(nsDocShell::Cast(aWindow->GetDocShell()));
   }
 
   // If focused element is associated with TextEditor, it must be <input>
@@ -7020,7 +7031,7 @@ TextEditor* nsContentUtils::GetActiveEditor(nsPresContext* aPresContext) {
   // contenteditable element.
   nsCOMPtr<nsPIDOMWindowOuter> focusedWindow;
   if (Element* focusedElement = nsFocusManager::GetFocusedDescendant(
-          window, nsFocusManager::SearchRange::eOnlyCurrentWindow,
+          aWindow, nsFocusManager::SearchRange::eOnlyCurrentWindow,
           getter_AddRefs(focusedWindow))) {
     if (TextEditor* textEditor = focusedElement->GetTextEditorInternal()) {
       return textEditor;
@@ -7029,7 +7040,7 @@ TextEditor* nsContentUtils::GetActiveEditor(nsPresContext* aPresContext) {
 
   // Otherwise, HTMLEditor may handle inputs even non-editable element has
   // focus or nobody has focus.
-  return GetHTMLEditor(aPresContext);
+  return GetHTMLEditor(nsDocShell::Cast(aWindow->GetDocShell()));
 }
 
 // static
@@ -8048,9 +8059,9 @@ int16_t nsContentUtils::GetButtonsFlagForButton(int32_t aButton) {
       return MouseButtonsFlag::eMiddleFlag;
     case MouseButton::eSecondary:
       return MouseButtonsFlag::eSecondaryFlag;
-    case 4:
+    case 3:
       return MouseButtonsFlag::e4thFlag;
-    case 5:
+    case 4:
       return MouseButtonsFlag::e5thFlag;
     default:
       NS_ERROR("Button not known.");
@@ -8111,10 +8122,10 @@ nsresult nsContentUtils::SendMouseEvent(
     msg = eMouseEnterIntoWidget;
   } else if (aType.EqualsLiteral("mouseout")) {
     msg = eMouseExitFromWidget;
-    exitFrom = Some(WidgetMouseEvent::eChild);
+    exitFrom = Some(WidgetMouseEvent::ePlatformChild);
   } else if (aType.EqualsLiteral("mousecancel")) {
     msg = eMouseExitFromWidget;
-    exitFrom = Some(XRE_IsParentProcess() ? WidgetMouseEvent::eTopLevel
+    exitFrom = Some(XRE_IsParentProcess() ? WidgetMouseEvent::ePlatformTopLevel
                                           : WidgetMouseEvent::ePuppet);
   } else if (aType.EqualsLiteral("mouselongtap")) {
     msg = eMouseLongTap;
@@ -8258,10 +8269,10 @@ bool nsContentUtils::IsPreloadType(nsContentPolicyType aType) {
 }
 
 /* static */
-bool nsContentUtils::IsUpgradableDisplayType(nsContentPolicyType aType) {
+bool nsContentUtils::IsUpgradableDisplayType(ExtContentPolicyType aType) {
   MOZ_ASSERT(NS_IsMainThread());
-  return (aType == nsIContentPolicy::TYPE_IMAGE ||
-          aType == nsIContentPolicy::TYPE_MEDIA);
+  return (aType == ExtContentPolicy::TYPE_IMAGE ||
+          aType == ExtContentPolicy::TYPE_MEDIA);
 }
 
 // static
@@ -8893,10 +8904,6 @@ static inline bool ShouldEscape(nsIContent* aParent) {
   static const nsAtom* nonEscapingElements[] = {
       nsGkAtoms::style, nsGkAtoms::script, nsGkAtoms::xmp, nsGkAtoms::iframe,
       nsGkAtoms::noembed, nsGkAtoms::noframes, nsGkAtoms::plaintext,
-      // Per the current spec noscript should be escaped in case
-      // scripts are disabled or if document doesn't have
-      // browsing context. However the latter seems to be a spec bug
-      // and Gecko hasn't traditionally done the former.
       nsGkAtoms::noscript};
   static mozilla::BloomFilter<12, nsAtom> sFilter;
   static bool sInitialized = false;
@@ -8911,6 +8918,10 @@ static inline bool ShouldEscape(nsIContent* aParent) {
   if (sFilter.mightContain(tag)) {
     for (auto& nonEscapingElement : nonEscapingElements) {
       if (tag == nonEscapingElement) {
+        if (MOZ_UNLIKELY(tag == nsGkAtoms::noscript) &&
+            MOZ_UNLIKELY(!aParent->OwnerDoc()->IsScriptEnabled())) {
+          return true;
+        }
         return false;
       }
     }
@@ -9943,7 +9954,7 @@ already_AddRefed<nsISerialEventTarget> nsContentUtils::GetEventTargetByLoadInfo(
 }
 
 /* static */
-bool nsContentUtils::IsLocalRefURL(const nsString& aString) {
+bool nsContentUtils::IsLocalRefURL(const nsAString& aString) {
   return !aString.IsEmpty() && aString[0] == '#';
 }
 

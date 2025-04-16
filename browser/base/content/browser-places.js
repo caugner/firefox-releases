@@ -1140,43 +1140,28 @@ var PlacesMenuDNDHandler = {
  * toolbar. It also has helper functions for the managed bookmarks button.
  */
 var PlacesToolbarHelper = {
-  /**
-   * If init is called and _canShowPromise is null, this method
-   * is overwritten and won't run.
-   * If we get called and nobody has tried to call `init` yet,
-   * just create a resolved promise for _canShowPromise.
-   */
-  _readyToShowCallback() {
-    this._canShowPromise = Promise.resolve();
-  },
-  _readyToShow: false,
-  _canShowPromise: null,
-
   get _viewElt() {
     return document.getElementById("PlacesToolbar");
   },
 
   /**
-   * Initialize. This will await _canShowPromise - which is either created
-   * as a resolved promise if the idle task calling startShowingToolbar is
-   * called first, or created here and resolved once startShowingToolbar is
-   * called.
+   * Initialize. This will check whether we've finished startup and can
+   * show toolbars.
    */
-  init() {
-    if (!this._readyToShow) {
-      this._canShowPromise = new Promise(resolve => {
-        this._readyToShowCallback = resolve;
-      });
-      this._canShowPromise.then(() => this._realInit());
-    } else {
-      this._realInit();
-    }
+  async init() {
+    let telemetryKey = await PlacesUIUtils.canLoadToolbarContentPromise;
+    let didCreate = this._realInit();
+    this._measureToolbarPaintDelay(telemetryKey, didCreate);
   },
 
+  /**
+   * @return whether we actually initialized the places view (and
+   * aren't collapsed).
+   */
   _realInit() {
     let viewElt = this._viewElt;
-    if (!viewElt || viewElt._placesView) {
-      return;
+    if (!viewElt || viewElt._placesView || window.closed) {
+      return false;
     }
 
     // CustomizableUI.addListener is idempotent, so we can safely
@@ -1201,7 +1186,7 @@ var PlacesToolbarHelper = {
       this._isCustomizing ||
       getComputedStyle(toolbar, "").display == "none"
     ) {
-      return;
+      return false;
     }
 
     if (
@@ -1213,11 +1198,52 @@ var PlacesToolbarHelper = {
     }
 
     new PlacesToolbar(`place:parent=${PlacesUtils.bookmarks.toolbarGuid}`);
+    return true;
   },
 
-  startShowingToolbar() {
-    this._readyToShow = true;
-    this._readyToShowCallback();
+  // Only measure once per window:
+  _shouldMeasure: true,
+  _measureToolbarPaintDelay(telemetryKey, didCreate) {
+    if (!this._shouldMeasure) {
+      return;
+    }
+    this._shouldMeasure = false;
+    // If we create and show the toolbar later, we don't want to measure how
+    // long it took, so it's important this check happens after setting
+    // _shouldMeasure.
+    if (!didCreate) {
+      return;
+    }
+
+    let recordDelay = time => {
+      let entries = window.performance.getEntriesByType("paint");
+      let timeEntry = entries.find(e => e.name == "first-contentful-paint");
+      let histogram = Services.telemetry.getKeyedHistogramById(
+        "PLACES_BOOKMARKS_TOOLBAR_RENDER_DELAY_MS"
+      );
+      if (timeEntry) {
+        let delay = time - timeEntry.startTime - timeEntry.duration;
+        histogram.add(telemetryKey, Math.round(delay));
+      } else {
+        // If there is no base time, we haven't painted yet, so we rendered
+        // before paint:
+        histogram.add(telemetryKey, 0);
+      }
+    };
+    if (!window.windowUtils.isMozAfterPaintPending) {
+      recordDelay(performance.now());
+      return;
+    }
+    let removeListeners = () => {
+      window.removeEventListener("unload", removeListeners);
+      window.removeEventListener("MozAfterPaint", paintHandler);
+    };
+    let paintHandler = ev => {
+      removeListeners();
+      recordDelay(ev.paintTimeStamp);
+    };
+    window.addEventListener("MozAfterPaint", paintHandler);
+    window.addEventListener("unload", removeListeners);
   },
 
   handleEvent(event) {
@@ -1239,7 +1265,6 @@ var PlacesToolbarHelper = {
       window.removeEventListener("toolbarvisibilitychange", this);
     }
     CustomizableUI.removeListener(this);
-    this._readyToShowCallback = () => {};
   },
 
   customizeStart: function PTH_customizeStart() {
@@ -1591,19 +1616,17 @@ var BookmarkingUI = {
 
     this._initMobileBookmarks(document.getElementById("BMB_mobileBookmarks"));
 
-    this.selectLabel(
+    this.updateLabel(
       "BMB_viewBookmarksSidebar",
       SidebarUI.currentID == "viewBookmarksSidebar"
     );
-    this.selectLabel("BMB_viewBookmarksToolbar", !this.toolbar.collapsed);
+    this.updateLabel("BMB_viewBookmarksToolbar", !this.toolbar.collapsed);
   },
 
-  selectLabel(elementId, visible) {
+  updateLabel(elementId, visible) {
     let element = PanelMultiView.getViewNode(document, elementId);
-    element.setAttribute(
-      "label",
-      element.getAttribute(visible ? "label-hide" : "label-show")
-    );
+    let l10nID = element.getAttribute("data-l10n-id");
+    document.l10n.setAttributes(element, l10nID, { isVisible: !!visible });
   },
 
   toggleBookmarksToolbar(reason) {
@@ -2045,12 +2068,15 @@ var BookmarkingUI = {
       document.l10n.setAttributes(menuItem, menuItemL10nId);
     }
 
+    let panelMenuItemL10nId = isStarred
+      ? "library-bookmarks-bookmark-edit"
+      : "library-bookmarks-bookmark-this-page";
     let panelMenuToolbarButton = PanelMultiView.getViewNode(
       document,
       "panelMenuBookmarkThisPage"
     );
     if (panelMenuToolbarButton) {
-      document.l10n.setAttributes(panelMenuToolbarButton, menuItemL10nId);
+      document.l10n.setAttributes(panelMenuToolbarButton, panelMenuItemL10nId);
     }
 
     // Localize the context menu item element.
@@ -2231,15 +2257,15 @@ var BookmarkingUI = {
     let placement = CustomizableUI.getPlacementOfWidget(
       this.BOOKMARK_BUTTON_ID
     );
-    this.selectLabel(
+    this.updateLabel(
       "panelMenu_toggleBookmarksMenu",
       placement && placement.area == CustomizableUI.AREA_NAVBAR
     );
-    this.selectLabel(
+    this.updateLabel(
       "panelMenu_viewBookmarksSidebar",
       SidebarUI.currentID == "viewBookmarksSidebar"
     );
-    this.selectLabel("panelMenu_viewBookmarksToolbar", !this.toolbar.collapsed);
+    this.updateLabel("panelMenu_viewBookmarksToolbar", !this.toolbar.collapsed);
     PanelUI.showSubView("PanelUI-bookmarkingTools", triggerNode);
   },
 
@@ -2404,31 +2430,36 @@ var BookmarkingUI = {
   },
 
   async maybeShowOtherBookmarksFolder() {
-    // otherBookmarks may be null if personal-bookmarks is in the palette.
-    let otherBookmarks = document.getElementById("OtherBookmarks");
+    // PlacesToolbar._placesView can be undefined if the toolbar isn't initialized,
+    // collapsed, or hidden in some other way.
+    let toolbar = document.getElementById("PlacesToolbar");
 
     // Only show the "Other Bookmarks" folder in the toolbar if pref is enabled.
-    if (!gBookmarksToolbar2h2020 || !otherBookmarks) {
+    if (!gBookmarksToolbar2h2020 || !toolbar?._placesView) {
       return;
     }
 
     let unfiledGuid = PlacesUtils.bookmarks.unfiledGuid;
     let numberOfBookmarks = PlacesUtils.getChildCountForFolder(unfiledGuid);
     let placement = CustomizableUI.getPlacementOfWidget("personal-bookmarks");
+    let otherBookmarks = document.getElementById("OtherBookmarks");
 
     if (
       numberOfBookmarks > 0 &&
       SHOW_OTHER_BOOKMARKS &&
       placement?.area == CustomizableUI.AREA_BOOKMARKS
     ) {
-      let otherBookmarksPopup = document.getElementById("OtherBookmarksPopup");
       let result = PlacesUtils.getFolderContents(unfiledGuid);
       let node = result.root;
-      otherBookmarksPopup._placesNode = PlacesUtils.asContainer(node);
-      otherBookmarks._placesNode = PlacesUtils.asContainer(node);
 
+      // Build the "Other Bookmarks" button if it doesn't exist.
+      if (!otherBookmarks) {
+        this.buildOtherBookmarksFolder(node);
+      }
+
+      otherBookmarks = document.getElementById("OtherBookmarks");
       otherBookmarks.hidden = false;
-    } else {
+    } else if (otherBookmarks) {
       otherBookmarks.hidden = true;
     }
   },
@@ -2462,6 +2493,41 @@ var BookmarkingUI = {
     });
 
     return menuItem;
+  },
+
+  buildOtherBookmarksFolder(node) {
+    let otherBookmarksButton = document.createXULElement("toolbarbutton");
+    otherBookmarksButton.setAttribute("type", "menu");
+    otherBookmarksButton.setAttribute("container", "true");
+    otherBookmarksButton.setAttribute(
+      "onpopupshowing",
+      "document.getElementById('PlacesToolbar')._placesView._onOtherBookmarksPopupShowing(event);"
+    );
+    otherBookmarksButton.id = "OtherBookmarks";
+    otherBookmarksButton.className = "bookmark-item";
+    otherBookmarksButton.hidden = "true";
+
+    MozXULElement.insertFTLIfNeeded("browser/places.ftl");
+    document.l10n.setAttributes(otherBookmarksButton, "other-bookmarks-folder");
+
+    let otherBookmarksPopup = document.createXULElement("menupopup", {
+      is: "places-popup",
+    });
+    otherBookmarksPopup.setAttribute("placespopup", "true");
+    otherBookmarksPopup.setAttribute("context", "placesContext");
+    otherBookmarksPopup.id = "OtherBookmarksPopup";
+
+    otherBookmarksPopup._placesNode = PlacesUtils.asContainer(node);
+    otherBookmarksButton._placesNode = PlacesUtils.asContainer(node);
+
+    otherBookmarksButton.appendChild(otherBookmarksPopup);
+
+    let chevronButton = document.getElementById("PlacesChevron");
+    chevronButton.parentNode.append(otherBookmarksButton);
+
+    let placesToolbar = document.getElementById("PlacesToolbar");
+    placesToolbar._placesView._otherBookmarks = otherBookmarksButton;
+    placesToolbar._placesView._otherBookmarksPopup = otherBookmarksPopup;
   },
 
   QueryInterface: ChromeUtils.generateQI(["nsINavBookmarkObserver"]),

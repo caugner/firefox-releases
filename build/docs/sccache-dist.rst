@@ -49,7 +49,7 @@ must read::
   ``~/.mozbuild/clang-dist-toolchain.tar.xz`` and
   ``~/.mozbuild/rustc-dist-toolchain.tar.xz``. This is an example of the paths
   that should be added to your client config to specify toolchains to build on
-  macOS, located at ``~/Library/Preferences/Mozilla.sccache/config``::
+  macOS, located at ``~/Library/Application Support/Mozilla.sccache/config``::
 
     [[dist.toolchains]]
     type = "path_override"
@@ -126,7 +126,7 @@ must read::
     export HOST_CXXFLAGS="--target=x86_64-apple-darwin16.0.0"
 
     # Specify the macOS SDK to use
-    ac_add_options --with-macos-sdk=/path/to/MacOSX-SDKs/MacOSX10.11.sdk
+    ac_add_options --with-macos-sdk=/path/to/MacOSX-SDKs/MacOSX10.12.sdk
 
   You can get the right macOS SDK by downloading an old version of XCode from
   `developer.apple.com <https://developer.apple.com>`_ and unpacking the SDK

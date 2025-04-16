@@ -69,7 +69,7 @@ class OutOfLineTypedArrayIndexToInt32;
 class OutOfLineBoxNonStrictThis;
 
 class CodeGenerator final : public CodeGeneratorSpecific {
-  MOZ_MUST_USE bool generateBody();
+  [[nodiscard]] bool generateBody();
 
   ConstantOrRegister toConstantOrRegister(LInstruction* lir, size_t n,
                                           MIRType type);
@@ -95,16 +95,16 @@ class CodeGenerator final : public CodeGeneratorSpecific {
                 MacroAssembler* masm = nullptr);
   ~CodeGenerator();
 
-  MOZ_MUST_USE bool generate();
-  MOZ_MUST_USE bool generateWasm(wasm::TypeIdDesc funcTypeId,
-                                 wasm::BytecodeOffset trapOffset,
-                                 const wasm::ArgTypeVector& argTys,
-                                 const MachineState& trapExitLayout,
-                                 size_t trapExitLayoutNumWords,
-                                 wasm::FuncOffsets* offsets,
-                                 wasm::StackMaps* stackMaps);
+  [[nodiscard]] bool generate();
+  [[nodiscard]] bool generateWasm(wasm::TypeIdDesc funcTypeId,
+                                  wasm::BytecodeOffset trapOffset,
+                                  const wasm::ArgTypeVector& argTys,
+                                  const MachineState& trapExitLayout,
+                                  size_t trapExitLayoutNumWords,
+                                  wasm::FuncOffsets* offsets,
+                                  wasm::StackMaps* stackMaps);
 
-  MOZ_MUST_USE bool link(JSContext* cx, const WarpSnapshot* snapshot);
+  [[nodiscard]] bool link(JSContext* cx, const WarpSnapshot* snapshot);
 
   void emitOOLTestObject(Register objreg, Label* ifTruthy, Label* ifFalsy,
                          Register scratch);
@@ -188,28 +188,8 @@ class CodeGenerator final : public CodeGeneratorSpecific {
   void visitNewArrayCallVM(LNewArray* lir);
   void visitNewObjectVMCall(LNewObject* lir);
 
-  void emitGetPropertyPolymorphic(LInstruction* lir, Register obj,
-                                  Register scratch,
-                                  const TypedOrValueRegister& output);
-  void emitSetPropertyPolymorphic(LInstruction* lir, Register obj,
-                                  Register scratch,
-                                  const ConstantOrRegister& value);
-  void emitCompareS(LInstruction* lir, JSOp op, Register left, Register right,
-                    Register output);
-
   void emitConcat(LInstruction* lir, Register lhs, Register rhs,
                   Register output);
-  template <typename T>
-  void emitLoadElementT(LLoadElementT* lir, const T& source);
-
-  template <typename T>
-  void emitStoreElementHoleT(T* lir);
-  template <typename T>
-  void emitStoreElementHoleV(T* lir);
-
-  void emitArrayPush(LInstruction* lir, Register obj,
-                     const ConstantOrRegister& value, Register elementsTemp,
-                     Register length, Register spectreTemp);
 
   void emitRest(LInstruction* lir, Register array, Register numActuals,
                 Register temp0, Register temp1, unsigned numFormals,
@@ -243,8 +223,8 @@ class CodeGenerator final : public CodeGeneratorSpecific {
                            const ConstantOrRegister& id,
                            const ConstantOrRegister& value, bool strict);
 
-  MOZ_MUST_USE bool generateBranchV(const ValueOperand& value, Label* ifTrue,
-                                    Label* ifFalse, FloatRegister fr);
+  [[nodiscard]] bool generateBranchV(const ValueOperand& value, Label* ifTrue,
+                                     Label* ifFalse, FloatRegister fr);
 
   void emitLambdaInit(Register resultReg, Register envChainReg,
                       const LambdaFunctionInfo& info);
@@ -332,6 +312,9 @@ class CodeGenerator final : public CodeGeneratorSpecific {
 
   void maybeEmitGlobalBarrierCheck(const LAllocation* maybeGlobal,
                                    OutOfLineCode* ool);
+
+  void incrementWarmUpCounter(AbsoluteAddress warmUpCount, JSScript* script,
+                              Register tmp);
 
   Vector<CodeOffset, 0, JitAllocPolicy> ionScriptLabels_;
 

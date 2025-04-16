@@ -1100,7 +1100,7 @@ int32_t nsLayoutUtils::DoCompareTreePosition(
   // TODO: remove the uglyness, see bug 598468.
   NS_ASSERTION(gPreventAssertInCompareTreePosition || parent,
                "no common ancestor at all???");
-#endif  // DEBUG
+#endif            // DEBUG
   if (!parent) {  // different documents??
     return 0;
   }
@@ -1397,15 +1397,15 @@ nsIScrollableFrame* nsLayoutUtils::GetNearestScrollableFrameForDirection(
   for (nsIFrame* f = aFrame; f; f = nsLayoutUtils::GetCrossDocParentFrame(f)) {
     nsIScrollableFrame* scrollableFrame = do_QueryFrame(f);
     if (scrollableFrame) {
-      uint32_t directions =
+      ScrollDirections directions =
           scrollableFrame->GetAvailableScrollingDirectionsForUserInputEvents();
       if (aDirections.contains(ScrollDirection::eVertical)) {
-        if (directions & nsIScrollableFrame::VERTICAL) {
+        if (directions.contains(ScrollDirection::eVertical)) {
           return scrollableFrame;
         }
       }
       if (aDirections.contains(ScrollDirection::eHorizontal)) {
-        if (directions & nsIScrollableFrame::HORIZONTAL) {
+        if (directions.contains(ScrollDirection::eHorizontal)) {
           return scrollableFrame;
         }
       }
@@ -1422,10 +1422,18 @@ static nsIFrame* GetNearestScrollableOrOverflowClipFrame(
       aFrame,
       "GetNearestScrollableOrOverflowClipFrame expects a non-null frame");
 
-  for (nsIFrame* f = aFrame; f;
-       f = (aFlags & nsLayoutUtils::SCROLLABLE_SAME_DOC)
-               ? f->GetParent()
-               : nsLayoutUtils::GetCrossDocParentFrame(f)) {
+  auto GetNextFrame = [aFlags](const nsIFrame* aFrame) -> nsIFrame* {
+    if (aFlags & nsLayoutUtils::SCROLLABLE_FOLLOW_OOF_TO_PLACEHOLDER) {
+      return (aFlags & nsLayoutUtils::SCROLLABLE_SAME_DOC)
+                 ? nsLayoutUtils::GetParentOrPlaceholderFor(aFrame)
+                 : nsLayoutUtils::GetParentOrPlaceholderForCrossDoc(aFrame);
+    }
+    return (aFlags & nsLayoutUtils::SCROLLABLE_SAME_DOC)
+               ? aFrame->GetParent()
+               : nsLayoutUtils::GetCrossDocParentFrame(aFrame);
+  };
+
+  for (nsIFrame* f = aFrame; f; f = GetNextFrame(f)) {
     if (aClipFrameCheck && aClipFrameCheck(f)) {
       return f;
     }
@@ -2790,7 +2798,8 @@ nsIScrollableFrame* nsLayoutUtils::GetAsyncScrollableAncestorFrame(
     nsIFrame* aTarget) {
   uint32_t flags = nsLayoutUtils::SCROLLABLE_ALWAYS_MATCH_ROOT |
                    nsLayoutUtils::SCROLLABLE_ONLY_ASYNC_SCROLLABLE |
-                   nsLayoutUtils::SCROLLABLE_FIXEDPOS_FINDS_ROOT;
+                   nsLayoutUtils::SCROLLABLE_FIXEDPOS_FINDS_ROOT |
+                   nsLayoutUtils::SCROLLABLE_FOLLOW_OOF_TO_PLACEHOLDER;
   return nsLayoutUtils::GetNearestScrollableFrame(aTarget, flags);
 }
 
@@ -4130,7 +4139,8 @@ nsIFrame* nsLayoutUtils::GetParentOrPlaceholderFor(const nsIFrame* aFrame) {
   return aFrame->GetParent();
 }
 
-nsIFrame* nsLayoutUtils::GetParentOrPlaceholderForCrossDoc(nsIFrame* aFrame) {
+nsIFrame* nsLayoutUtils::GetParentOrPlaceholderForCrossDoc(
+    const nsIFrame* aFrame) {
   nsIFrame* f = GetParentOrPlaceholderFor(aFrame);
   if (f) return f;
   return GetCrossDocParentFrame(aFrame);
@@ -4539,54 +4549,6 @@ static bool GetIntrinsicCoord(const SizeOrMaxSize& aStyle,
 static int32_t gNoiseIndent = 0;
 #endif
 
-// Return true for form controls whose minimum intrinsic inline-size
-// shrinks to 0 when they have a percentage inline-size (but not
-// percentage max-inline-size).  (Proper replaced elements, whose
-// intrinsic minimium inline-size shrinks to 0 for both percentage
-// inline-size and percentage max-inline-size, are handled elsewhere.)
-inline static bool FormControlShrinksForPercentISize(nsIFrame* aFrame) {
-  if (!aFrame->IsFrameOfType(nsIFrame::eReplaced)) {
-    // Quick test to reject most frames.
-    return false;
-  }
-
-  LayoutFrameType fType = aFrame->Type();
-  if (fType == LayoutFrameType::Meter || fType == LayoutFrameType::Progress ||
-      fType == LayoutFrameType::Range) {
-    // progress, meter and range do have this shrinking behavior
-    // FIXME: Maybe these should be nsIFormControlFrame?
-    return true;
-  }
-
-  if (!static_cast<nsIFormControlFrame*>(do_QueryFrame(aFrame))) {
-    // Not a form control.  This includes fieldsets, which do not
-    // shrink.
-    return false;
-  }
-
-  if (fType == LayoutFrameType::GfxButtonControl ||
-      fType == LayoutFrameType::HTMLButtonControl) {
-    // Buttons don't have this shrinking behavior.  (Note that color
-    // inputs do, even though they inherit from button, so we can't use
-    // do_QueryFrame here.)
-    return false;
-  }
-
-  return true;
-}
-
-// https://drafts.csswg.org/css-sizing-3/#percentage-sizing
-// Return true if the above spec's rule for replaced boxes applies.
-// XXX bug 1463700 will make this match the spec...
-static bool IsReplacedBoxResolvedAgainstZero(
-    nsIFrame* aFrame, const StyleSize& aStyleSize,
-    const StyleMaxSize& aStyleMaxSize) {
-  const bool sizeHasPercent = aStyleSize.HasPercent();
-  return ((sizeHasPercent || aStyleMaxSize.HasPercent()) &&
-          aFrame->IsFrameOfType(nsIFrame::eReplacedSizing)) ||
-         (sizeHasPercent && FormControlShrinksForPercentISize(aFrame));
-}
-
 /**
  * Add aOffsets which describes what to add on outside of the content box
  * aContentSize (controlled by 'box-sizing') and apply min/max properties.
@@ -4639,7 +4601,7 @@ static nscoord AddIntrinsicSizeOffset(
 
   nscoord size;
   if (aType == IntrinsicISizeType::MinISize &&
-      ::IsReplacedBoxResolvedAgainstZero(aFrame, aStyleSize, aStyleMaxSize)) {
+      aFrame->IsPercentageResolvedAgainstZero(aStyleSize, aStyleMaxSize)) {
     // XXX bug 1463700: this doesn't handle calc() according to spec
     result = 0;  // let |min| handle padding/border/margin
   } else if (GetAbsoluteCoord(aStyleSize, size) ||
@@ -5047,7 +5009,7 @@ nscoord nsLayoutUtils::MinSizeContributionForAxis(
         // We have a definite width/height.  This is the "specified size" in:
         // https://drafts.csswg.org/css-grid/#min-size-auto
         fixedMinSize = &minSize;
-      } else if (::IsReplacedBoxResolvedAgainstZero(aFrame, size, maxSize)) {
+      } else if (aFrame->IsPercentageResolvedAgainstZero(size, maxSize)) {
         // XXX bug 1463700: this doesn't handle calc() according to spec
         minSize = 0;
         fixedMinSize = &minSize;
@@ -8045,6 +8007,9 @@ nsRect nsLayoutUtils::CalculateScrollableRectForFrame(
     contentBounds.height += aScrollableFrame->GetScrollPortRect().height;
   } else {
     contentBounds = aRootFrame->GetRect();
+    // Clamp to (0, 0) if there is no corresponding scrollable frame for the
+    // given |aRootFrame|.
+    contentBounds.MoveTo(0, 0);
   }
   return contentBounds;
 }
@@ -8832,7 +8797,7 @@ void nsLayoutUtils::AppendFrameTextContent(nsIFrame* aFrame,
 }
 
 /* static */
-nsRect nsLayoutUtils::GetSelectionBoundingRect(Selection* aSel) {
+nsRect nsLayoutUtils::GetSelectionBoundingRect(const Selection* aSel) {
   nsRect res;
   // Bounding client rect may be empty after calling GetBoundingClientRect
   // when range is collapsed. So we get caret's rect when range is
@@ -9558,13 +9523,20 @@ nsSize nsLayoutUtils::ExpandHeightForViewportUnits(nsPresContext* aPresContext,
 template <typename SizeType>
 /* static */ SizeType ExpandHeightForDynamicToolbarImpl(
     const nsPresContext* aPresContext, const SizeType& aSize) {
-  RefPtr<MobileViewportManager> MVM =
-      aPresContext->PresShell()->GetMobileViewportManager();
-  MOZ_ASSERT(MVM);
+  MOZ_ASSERT(aPresContext);
+
+  LayoutDeviceIntSize displaySize;
+  if (RefPtr<MobileViewportManager> MVM =
+          aPresContext->PresShell()->GetMobileViewportManager()) {
+    displaySize = MVM->DisplaySize();
+  } else if (!nsLayoutUtils::GetContentViewerSize(aPresContext, displaySize)) {
+    return aSize;
+  }
+
   float toolbarHeightRatio =
       mozilla::ScreenCoord(aPresContext->GetDynamicToolbarMaxHeight()) /
       mozilla::ViewAs<mozilla::ScreenPixel>(
-          MVM->DisplaySize(),
+          displaySize,
           mozilla::PixelCastJustification::LayoutDeviceIsScreenForBounds)
           .height;
 

@@ -167,6 +167,8 @@ void GfxInfo::GetData() {
   nsCString screenInfo;
   nsCString adapterRam;
 
+  nsCString drmRenderDevice;
+
   AutoTArray<nsCString, 2> pciVendors;
   AutoTArray<nsCString, 2> pciDevices;
 
@@ -207,6 +209,8 @@ void GfxInfo::GetData() {
       stringToFill = pciVendors.AppendElement();
     } else if (!strcmp(line, "PCI_DEVICE_ID")) {
       stringToFill = pciDevices.AppendElement();
+    } else if (!strcmp(line, "DRM_RENDERDEVICE")) {
+      stringToFill = &drmRenderDevice;
     } else if (!strcmp(line, "WARNING")) {
       logString = true;
     } else if (!strcmp(line, "ERROR")) {
@@ -265,6 +269,8 @@ void GfxInfo::GetData() {
     NS_WARNING("Failed to parse GL version!");
   }
 
+  mDrmRenderDevice = std::move(drmRenderDevice);
+
   // Mesa always exposes itself in the GL_VERSION string, but not always the
   // GL_VENDOR string.
   mIsMesa = glVersion.Find("Mesa") != -1;
@@ -304,16 +310,10 @@ void GfxInfo::GetData() {
 
     if (!mesaVendor.IsEmpty()) {
       mVendorId = mesaVendor;
-    } else {
-      NS_WARNING(
-          "Failed to get Mesa vendor ID! GLX_MESA_query_renderer unsupported?");
     }
 
     if (!mesaDevice.IsEmpty()) {
       mDeviceId = mesaDevice;
-    } else {
-      NS_WARNING(
-          "Failed to get Mesa device ID! GLX_MESA_query_renderer unsupported?");
     }
   } else if (glVendor.EqualsLiteral("NVIDIA Corporation")) {
     CopyUTF16toUTF8(GfxDriverInfo::GetDeviceVendor(DeviceVendor::NVIDIA),
@@ -776,7 +776,9 @@ const nsTArray<GfxDriverInfo>& GfxInfo::GetGfxDriverInfo() {
 
     ////////////////////////////////////
     // FEATURE_WEBRENDER_SOFTWARE - ALLOWLIST
-#ifdef NIGHTLY_BUILD
+#ifdef EARLY_BETA_OR_EARLIER
+#  if defined(_M_IX86) || defined(_M_X64) || defined(__i386__) || \
+      defined(__i386) || defined(__amd64__)
     APPEND_TO_DRIVER_BLOCKLIST_EXT(
         OperatingSystem::Linux, ScreenSizeStatus::SmallAndMedium,
         BatteryStatus::All, DesktopEnvironment::All, WindowProtocol::All,
@@ -794,6 +796,7 @@ const nsTArray<GfxDriverInfo>& GfxInfo::GetGfxDriverInfo() {
         nsIGfxInfo::FEATURE_ALLOW_ALWAYS, DRIVER_COMPARISON_IGNORED,
         V(0, 0, 0, 0), "FEATURE_ROLLOUT_NIGHTLY_SOFTWARE_WR_HW_MESA_S_M_SCRN",
         "");
+#  endif
 #endif
 
     ////////////////////////////////////
@@ -1096,6 +1099,13 @@ NS_IMETHODIMP
 GfxInfo::GetIsGPU2Active(bool* aIsGPU2Active) {
   // This is never the case, as the active GPU should be the primary GPU.
   *aIsGPU2Active = false;
+  return NS_OK;
+}
+
+NS_IMETHODIMP
+GfxInfo::GetDrmRenderDevice(nsACString& aDrmRenderDevice) {
+  GetData();
+  aDrmRenderDevice.Assign(mDrmRenderDevice);
   return NS_OK;
 }
 

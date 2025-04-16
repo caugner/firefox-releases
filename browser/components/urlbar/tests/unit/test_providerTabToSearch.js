@@ -13,8 +13,6 @@ let testEngine;
 add_task(async function init() {
   // Disable search suggestions for a less verbose test.
   Services.prefs.setBoolPref("browser.search.suggest.enabled", false);
-  // Enable tab-to-search.
-  Services.prefs.setBoolPref("browser.urlbar.update2", true);
   // Disable tab-to-search onboarding results. Those are covered in
   // browser/components/urlbar/tests/browser/browser_tabToSearch.js.
   Services.prefs.setIntPref(
@@ -30,8 +28,6 @@ add_task(async function init() {
     Services.prefs.clearUserPref(
       "browser.urlbar.tabToSearch.onboard.interactionsLeft"
     );
-    Services.prefs.clearUserPref("browser.urlbar.update2.tabToComplete");
-    Services.prefs.clearUserPref("browser.urlbar.update2");
     Services.prefs.clearUserPref("browser.search.suggest.enabled");
   });
 });
@@ -58,7 +54,7 @@ add_task(async function basic() {
         uri: UrlbarUtils.stripPublicSuffixFromHost(
           testEngine.getResultDomain()
         ),
-        keywordOffer: UrlbarUtils.KEYWORD_OFFER.SHOW,
+        providesSearchMode: true,
         query: "",
         providerName: "TabToSearch",
       }),
@@ -148,7 +144,7 @@ add_task(async function ignoreWww() {
         uri: UrlbarUtils.stripPublicSuffixFromHost(
           testEngine.getResultDomain()
         ),
-        keywordOffer: UrlbarUtils.KEYWORD_OFFER.SHOW,
+        providesSearchMode: true,
         query: "",
         providerName: "TabToSearch",
       }),
@@ -179,7 +175,7 @@ add_task(async function ignoreWww() {
         uri: UrlbarUtils.stripPublicSuffixFromHost(
           wwwTestEngine.getResultDomain()
         ),
-        keywordOffer: UrlbarUtils.KEYWORD_OFFER.SHOW,
+        providesSearchMode: true,
         query: "",
         providerName: "TabToSearch",
       }),
@@ -207,7 +203,7 @@ add_task(async function ignoreWww() {
         uri: UrlbarUtils.stripPublicSuffixFromHost(
           wwwTestEngine.getResultDomain()
         ),
-        keywordOffer: UrlbarUtils.KEYWORD_OFFER.SHOW,
+        providesSearchMode: true,
         query: "",
         providerName: "TabToSearch",
       }),
@@ -257,7 +253,7 @@ add_task(async function conflictingEngines() {
         uri: UrlbarUtils.stripPublicSuffixFromHost(
           fooTestEngine.getResultDomain()
         ),
-        keywordOffer: UrlbarUtils.KEYWORD_OFFER.SHOW,
+        providesSearchMode: true,
         query: "",
         providerName: "TabToSearch",
       }),
@@ -289,7 +285,7 @@ add_task(async function conflictingEngines() {
         uri: UrlbarUtils.stripPublicSuffixFromHost(
           fooBarTestEngine.getResultDomain()
         ),
-        keywordOffer: UrlbarUtils.KEYWORD_OFFER.SHOW,
+        providesSearchMode: true,
         query: "",
         providerName: "TabToSearch",
       }),
@@ -327,7 +323,7 @@ add_task(async function multipleEnginesForHostname() {
         uri: UrlbarUtils.stripPublicSuffixFromHost(
           testEngine.getResultDomain()
         ),
-        keywordOffer: UrlbarUtils.KEYWORD_OFFER.SHOW,
+        providesSearchMode: true,
         query: "",
         providerName: "TabToSearch",
       }),
@@ -358,7 +354,7 @@ add_task(async function test_casing() {
         uri: UrlbarUtils.stripPublicSuffixFromHost(
           testEngine.getResultDomain()
         ),
-        keywordOffer: UrlbarUtils.KEYWORD_OFFER.SHOW,
+        providesSearchMode: true,
         query: "",
         providerName: "TabToSearch",
       }),
@@ -387,7 +383,7 @@ add_task(async function test_publicSuffix() {
         engineName: engine.name,
         engineIconUri: UrlbarUtils.ICON.SEARCH_GLASS_INVERTED,
         uri: UrlbarUtils.stripPublicSuffixFromHost(engine.getResultDomain()),
-        keywordOffer: UrlbarUtils.KEYWORD_OFFER.SHOW,
+        providesSearchMode: true,
         query: "",
         providerName: "TabToSearch",
         satisfiesAutofillThreshold: true,
@@ -452,7 +448,7 @@ add_task(async function test_disabledEngine() {
         engineName: engine.name,
         engineIconUri: UrlbarUtils.ICON.SEARCH_GLASS_INVERTED,
         uri: UrlbarUtils.stripPublicSuffixFromHost(engine.getResultDomain()),
-        keywordOffer: UrlbarUtils.KEYWORD_OFFER.SHOW,
+        providesSearchMode: true,
         query: "",
         providerName: "TabToSearch",
       }),

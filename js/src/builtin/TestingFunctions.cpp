@@ -24,6 +24,7 @@
 #include <cstdlib>
 #include <ctime>
 #include <initializer_list>
+#include <iterator>
 #include <utility>
 
 #if defined(XP_UNIX) && !defined(XP_DARWIN)
@@ -45,7 +46,7 @@
 #  include "frontend/TokenStream.h"
 #endif
 #include "frontend/BytecodeCompilation.h"
-#include "frontend/CompilationInfo.h"  // frontend::CompilationInfo, frontend::CompilationInfoVector
+#include "frontend/CompilationInfo.h"  // frontend::CompilationStencil, frontend::CompilationStencilSet
 #include "gc/Allocator.h"
 #include "gc/Zone.h"
 #include "jit/BaselineJIT.h"
@@ -53,6 +54,7 @@
 #include "jit/InlinableNatives.h"
 #include "jit/Invalidation.h"
 #include "jit/Ion.h"
+#include "jit/JitOptions.h"
 #include "jit/JitRuntime.h"
 #include "jit/TrialInlining.h"
 #include "js/Array.h"        // JS::NewArrayObject
@@ -130,7 +132,6 @@
 
 using namespace js;
 
-using mozilla::ArrayLength;
 using mozilla::AssertedCast;
 using mozilla::AsWritableChars;
 using mozilla::Maybe;
@@ -495,20 +496,9 @@ static bool IsLCovEnabled(JSContext* cx, unsigned argc, Value* vp) {
   return true;
 }
 
-static bool IsTypeInferenceEnabled(JSContext* cx, unsigned argc, Value* vp) {
-  CallArgs args = CallArgsFromVp(argc, vp);
-  // TODO(no-TI): remove testing function.
-  args.rval().setBoolean(false);
-  return true;
-}
-
 static bool TrialInline(JSContext* cx, unsigned argc, Value* vp) {
   CallArgs args = CallArgsFromVp(argc, vp);
   args.rval().setUndefined();
-
-  if (!jit::JitOptions.warpBuilder) {
-    return true;
-  }
 
   FrameIter iter(cx);
   if (iter.done() || !iter.isBaseline() || iter.realm() != cx->realm()) {
@@ -624,7 +614,10 @@ static bool MinorGC(JSContext* cx, unsigned argc, Value* vp) {
   _("gcBytes", JSGC_BYTES, false)                                          \
   _("nurseryBytes", JSGC_NURSERY_BYTES, false)                             \
   _("gcNumber", JSGC_NUMBER, false)                                        \
-  _("mode", JSGC_MODE, true)                                               \
+  _("majorGCNumber", JSGC_MAJOR_GC_NUMBER, false)                          \
+  _("minorGCNumber", JSGC_MINOR_GC_NUMBER, false)                          \
+  _("incrementalGCEnabled", JSGC_INCREMENTAL_GC_ENABLED, true)             \
+  _("perZoneGCEnabled", JSGC_PER_ZONE_GC_ENABLED, true)                    \
   _("unusedChunks", JSGC_UNUSED_CHUNKS, false)                             \
   _("totalChunks", JSGC_TOTAL_CHUNKS, false)                               \
   _("sliceTimeBudgetMS", JSGC_SLICE_TIME_BUDGET_MS, true)                  \
@@ -684,18 +677,17 @@ static bool GCParameter(JSContext* cx, unsigned argc, Value* vp) {
     return false;
   }
 
-  size_t paramIndex = 0;
-  for (;; paramIndex++) {
-    if (paramIndex == ArrayLength(paramMap)) {
-      JS_ReportErrorASCII(
-          cx, "the first argument must be one of:" GC_PARAMETER_ARGS_LIST);
-      return false;
-    }
-    if (JS_LinearStringEqualsAscii(linearStr, paramMap[paramIndex].name)) {
-      break;
-    }
+  const auto* ptr = std::find_if(
+      std::begin(paramMap), std::end(paramMap), [&](const auto& param) {
+        return JS_LinearStringEqualsAscii(linearStr, param.name);
+      });
+  if (ptr == std::end(paramMap)) {
+    JS_ReportErrorASCII(
+        cx, "the first argument must be one of:" GC_PARAMETER_ARGS_LIST);
+    return false;
   }
-  const ParamInfo& info = paramMap[paramIndex];
+
+  const ParamInfo& info = *ptr;
   JSGCParamKey param = info.param;
 
   // Request mode.
@@ -879,6 +871,12 @@ static bool WasmSimdExperimentalEnabled(JSContext* cx, unsigned argc,
 #else
   args.rval().setBoolean(false);
 #endif
+  return true;
+}
+
+static bool WasmSimdWormholeEnabled(JSContext* cx, unsigned argc, Value* vp) {
+  CallArgs args = CallArgsFromVp(argc, vp);
+  args.rval().setBoolean(wasm::SimdWormholeAvailable(cx));
   return true;
 }
 
@@ -3353,7 +3351,9 @@ static bool testingFunc_invalidate(JSContext* cx, unsigned argc, Value* vp) {
     while (!iter.isPhysicalJitFrame()) {
       ++iter;
     }
-    js::jit::Invalidate(cx, iter.script());
+    if (iter.script()->hasIonScript()) {
+      js::jit::Invalidate(cx, iter.script());
+    }
   }
 
   args.rval().setUndefined();
@@ -4966,16 +4966,6 @@ static bool GetStringRepresentation(JSContext* cx, unsigned argc, Value* vp) {
 
 #endif
 
-static bool SetLazyParsingDisabled(JSContext* cx, unsigned argc, Value* vp) {
-  CallArgs args = CallArgsFromVp(argc, vp);
-
-  bool disable = !args.hasDefined(0) || ToBoolean(args[0]);
-  cx->realm()->behaviors().setDisableLazyParsing(disable);
-
-  args.rval().setUndefined();
-  return true;
-}
-
 static bool CompileStencilXDR(JSContext* cx, uint32_t argc, Value* vp) {
   CallArgs args = CallArgsFromVp(argc, vp);
 
@@ -5010,19 +5000,19 @@ static bool CompileStencilXDR(JSContext* cx, uint32_t argc, Value* vp) {
   /* TODO: StencilXDR - Add option to select between full and syntax parse. */
   options.setForceFullParse();
 
-  Rooted<frontend::CompilationInfo> compilationInfo(
-      cx, frontend::CompilationInfo(cx, options));
-  if (!compilationInfo.get().input.initForGlobal(cx)) {
+  Rooted<frontend::CompilationStencil> stencil(
+      cx, frontend::CompilationStencil(cx, options));
+  if (!stencil.get().input.initForGlobal(cx)) {
     return false;
   }
-  if (!frontend::CompileGlobalScriptToStencil(cx, compilationInfo.get(), srcBuf,
+  if (!frontend::CompileGlobalScriptToStencil(cx, stencil.get(), srcBuf,
                                               ScopeKind::Global)) {
     return false;
   }
 
   /* Serialize the stencil to XDR. */
   JS::TranscodeBuffer xdrBytes;
-  if (!compilationInfo.get().serializeStencils(cx, xdrBytes)) {
+  if (!stencil.get().serializeStencils(cx, xdrBytes)) {
     return false;
   }
 
@@ -5060,21 +5050,21 @@ static bool EvalStencilXDR(JSContext* cx, uint32_t argc, Value* vp) {
   const char* filename = "compileStencilXDR-DATA.js";
   uint32_t lineno = 1;
 
-  /* Prepare the CompilationInfoVector for decoding. */
+  /* Prepare the CompilationStencilSet for decoding. */
   CompileOptions options(cx);
   options.setFileAndLine(filename, lineno);
   options.setForceFullParse();
 
-  Rooted<frontend::CompilationInfoVector> compilationInfos(
-      cx, frontend::CompilationInfoVector(cx, options));
-  if (!compilationInfos.get().initial.input.initForGlobal(cx)) {
+  Rooted<frontend::CompilationStencilSet> stencilSet(
+      cx, frontend::CompilationStencilSet(cx, options));
+  if (!stencilSet.get().input.initForGlobal(cx)) {
     return false;
   }
 
   /* Deserialize the stencil from XDR. */
   JS::TranscodeRange xdrRange(src->dataPointer(), src->byteLength().get());
   bool succeeded = false;
-  if (!compilationInfos.get().deserializeStencils(cx, xdrRange, &succeeded)) {
+  if (!stencilSet.get().deserializeStencils(cx, xdrRange, &succeeded)) {
     return false;
   }
   if (!succeeded) {
@@ -5085,8 +5075,8 @@ static bool EvalStencilXDR(JSContext* cx, uint32_t argc, Value* vp) {
   /* Instantiate the stencil. */
   Rooted<frontend::CompilationGCOutput> output(cx);
   Rooted<frontend::CompilationGCOutput> outputForDelazification(cx);
-  if (!compilationInfos.get().instantiateStencils(
-          cx, output.get(), outputForDelazification.get())) {
+  if (!stencilSet.get().instantiateStencils(cx, output.get(),
+                                            outputForDelazification.get())) {
     return false;
   }
 
@@ -5098,16 +5088,6 @@ static bool EvalStencilXDR(JSContext* cx, uint32_t argc, Value* vp) {
   }
 
   args.rval().set(retVal);
-  return true;
-}
-
-static bool SetDiscardSource(JSContext* cx, unsigned argc, Value* vp) {
-  CallArgs args = CallArgsFromVp(argc, vp);
-
-  bool discard = !args.hasDefined(0) || ToBoolean(args[0]);
-  cx->realm()->behaviors().setDiscardSource(discard);
-
-  args.rval().setUndefined();
   return true;
 }
 
@@ -6289,6 +6269,36 @@ static bool GetICUOptions(JSContext* cx, unsigned argc, Value* vp) {
   return true;
 }
 
+static bool IsSmallFunction(JSContext* cx, unsigned argc, Value* vp) {
+  CallArgs args = CallArgsFromVp(argc, vp);
+  RootedObject callee(cx, &args.callee());
+
+  if (!args.requireAtLeast(cx, "IsSmallFunction", 1)) {
+    return false;
+  }
+
+  HandleValue arg = args[0];
+  if (!arg.isObject() || !arg.toObject().is<JSFunction>()) {
+    ReportUsageErrorASCII(cx, callee, "First argument must be a function");
+    return false;
+  }
+
+  RootedFunction fun(cx, &args[0].toObject().as<JSFunction>());
+  if (!fun->isInterpreted()) {
+    ReportUsageErrorASCII(cx, callee,
+                          "First argument must be an interpreted function");
+    return false;
+  }
+
+  JSScript* script = JSFunction::getOrCreateScript(cx, fun);
+  if (!script) {
+    return false;
+  }
+
+  args.rval().setBoolean(jit::JitOptions.isSmallFunction(script));
+  return true;
+}
+
 static bool PCCountProfiling_Start(JSContext* cx, unsigned argc, Value* vp) {
   CallArgs args = CallArgsFromVp(argc, vp);
 
@@ -6418,10 +6428,6 @@ static const JSFunctionSpecWithHelp TestingFunctions[] = {
     JS_FN_HELP("isLcovEnabled", ::IsLCovEnabled, 0, 0,
 "isLcovEnabled()",
 "  Return true if JS LCov support is enabled."),
-
-    JS_FN_HELP("isTypeInferenceEnabled", ::IsTypeInferenceEnabled, 0, 0,
-"isTypeInferenceEnabled()",
-"  Return true if Type Inference is enabled."),
 
   JS_FN_HELP("trialInline", TrialInline, 0, 0,
 "trialInline()",
@@ -6801,6 +6807,11 @@ gc::ZealModeHelpText),
 "  Returns a boolean indicating whether WebAssembly SIMD experimental instructions\n"
 "  are supported by the compilers and runtime."),
 
+    JS_FN_HELP("wasmSimdWormholeEnabled", WasmSimdWormholeEnabled, 0, 0,
+"wasmSimdWormholeEnabled()",
+"  Returns a boolean indicating whether WebAssembly SIMD wormhole instructions\n"
+"  are supported by the compilers and runtime."),
+
     JS_FN_HELP("wasmReftypesEnabled", WasmReftypesEnabled, 1, 0,
 "wasmReftypesEnabled()",
 "  Returns a boolean indicating whether the WebAssembly reftypes proposal is enabled."),
@@ -7101,16 +7112,6 @@ gc::ZealModeHelpText),
 
 #endif
 
-    JS_FN_HELP("setLazyParsingDisabled", SetLazyParsingDisabled, 1, 0,
-"setLazyParsingDisabled(bool)",
-"  Explicitly disable lazy parsing in the current compartment.  The default is that lazy "
-"  parsing is not explicitly disabled."),
-
-    JS_FN_HELP("setDiscardSource", SetDiscardSource, 1, 0,
-"setDiscardSource(bool)",
-"  Explicitly enable source discarding in the current compartment.  The default is that "
-"  source discarding is not explicitly enabled."),
-
     JS_FN_HELP("allocationMarker", AllocationMarker, 0, 0,
 "allocationMarker([options])",
 "  Return a freshly allocated object whose [[Class]] name is\n"
@@ -7289,6 +7290,10 @@ JS_FN_HELP("getICUOptions", GetICUOptions, 0, 0,
 "    tzdata: a string containing the tzdata version number, e.g. '2020a'\n"
 "    timezone: the ICU default time zone, e.g. 'America/Los_Angeles'\n"
 "    host-timezone: the host time zone, e.g. 'America/Los_Angeles'"),
+
+JS_FN_HELP("isSmallFunction", IsSmallFunction, 1, 0,
+"isSmallFunction(fun)",
+"  Returns true if a scripted function is small enough to be inlinable."),
 
     JS_FS_HELP_END
 };

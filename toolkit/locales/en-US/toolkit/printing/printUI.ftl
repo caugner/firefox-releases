@@ -53,6 +53,7 @@ printui-duplex-checkbox = Print on both sides
 printui-options = Options
 printui-headers-footers-checkbox = Print headers and footers
 printui-backgrounds-checkbox = Print backgrounds
+printui-selection-checkbox = Print selection only
 
 printui-color-mode-label = Color mode
 printui-color-mode-color = Color
@@ -87,6 +88,11 @@ printui-preview-label =
     .aria-label = Print Preview
 
 printui-pages-per-sheet = Pages per sheet
+
+# This is shown next to the Print button with an indefinite loading spinner
+# when the user prints a page and it is being sent to the printer.
+printui-print-progress-indicator = Printing…
+printui-print-progress-indicator-saving = Saving…
 
 ## Paper sizes that may be supported by the Save to PDF destination:
 

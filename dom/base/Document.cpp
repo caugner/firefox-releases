@@ -70,6 +70,7 @@
 #include "mozilla/HTMLEditor.h"
 #include "mozilla/HoldDropJSObjects.h"
 #include "mozilla/IdentifierMapEntry.h"
+#include "mozilla/InputTaskManager.h"
 #include "mozilla/IntegerRange.h"
 #include "mozilla/InternalMutationEvent.h"
 #include "mozilla/Likely.h"
@@ -110,6 +111,7 @@
 #include "mozilla/StaticAnalysisFunctions.h"
 #include "mozilla/StaticPrefs_apz.h"
 #include "mozilla/StaticPrefs_browser.h"
+#include "mozilla/StaticPrefs_docshell.h"
 #include "mozilla/StaticPrefs_dom.h"
 #include "mozilla/StaticPrefs_full_screen_api.h"
 #include "mozilla/StaticPrefs_layout.h"
@@ -1775,14 +1777,6 @@ void Document::GetFailedCertSecurityInfo(FailedCertSecurityInfo& aInfo,
     return;
   }
   aInfo.mValidNotAfter = DOMTimeStamp(validityResult / PR_USEC_PER_MSEC);
-
-  nsAutoString subjectAltNames;
-  rv = cert->GetSubjectAltNames(subjectAltNames);
-  if (NS_WARN_IF(NS_FAILED(rv))) {
-    aRv.Throw(rv);
-    return;
-  }
-  aInfo.mSubjectAltNames = subjectAltNames;
 
   nsAutoString issuerCommonName;
   nsAutoString certChainPEMString;
@@ -3577,7 +3571,7 @@ nsresult Document::InitCSP(nsIChannel* aChannel) {
   // served with a CSP might block internally applied inline styles.
   nsCOMPtr<nsILoadInfo> loadInfo = aChannel->LoadInfo();
   if (loadInfo->GetExternalContentPolicyType() ==
-      nsIContentPolicy::TYPE_IMAGE) {
+      ExtContentPolicy::TYPE_IMAGE) {
     return NS_OK;
   }
 
@@ -3648,10 +3642,7 @@ nsresult Document::InitCSP(nsIChannel* aChannel) {
 
   // ----- if the doc is an addon, apply its CSP.
   if (addonPolicy) {
-    nsAutoString extensionPageCSP;
-    Unused << ExtensionPolicyService::GetSingleton().GetBaseCSP(
-        extensionPageCSP);
-    mCSP->AppendPolicy(extensionPageCSP, false, false);
+    mCSP->AppendPolicy(addonPolicy->BaseCSP(), false, false);
 
     mCSP->AppendPolicy(addonPolicy->ExtensionPageCSP(), false, false);
     // Bug 1548468: Move CSP off ExpandedPrincipal
@@ -3700,8 +3691,7 @@ nsresult Document::InitCSP(nsIChannel* aChannel) {
     // The principal is only used to enable/disable trackingprotection via
     // permission and can be shared with the top level sandboxed site.
     // See Bug 1654546.
-    SetPrincipals(principal, principal,
-                  /* aSetContentBlockingAllowListPrincipal = */ false);
+    SetPrincipals(principal, principal);
   }
 
   ApplySettingsFromCSP(false);
@@ -3709,36 +3699,35 @@ nsresult Document::InitCSP(nsIChannel* aChannel) {
 }
 
 already_AddRefed<dom::FeaturePolicy> Document::GetParentFeaturePolicy() {
-  if (!mDocumentContainer) {
+  BrowsingContext* browsingContext = GetBrowsingContext();
+  if (!browsingContext) {
+    return nullptr;
+  }
+  if (!browsingContext->IsContentSubframe()) {
     return nullptr;
   }
 
-  nsPIDOMWindowOuter* containerWindow = mDocumentContainer->GetWindow();
-  if (!containerWindow) {
+  HTMLIFrameElement* iframe =
+      HTMLIFrameElement::FromNodeOrNull(browsingContext->GetEmbedderElement());
+  if (iframe) {
+    return do_AddRef(iframe->FeaturePolicy());
+  }
+
+  if (XRE_IsParentProcess()) {
+    return do_AddRef(browsingContext->Canonical()->GetContainerFeaturePolicy());
+  }
+
+  WindowContext* windowContext = browsingContext->GetCurrentWindowContext();
+  if (!windowContext) {
     return nullptr;
   }
 
-  BrowsingContext* context = containerWindow->GetBrowsingContext();
-  if (!context) {
+  WindowGlobalChild* child = windowContext->GetWindowGlobalChild();
+  if (!child) {
     return nullptr;
   }
 
-  RefPtr<dom::FeaturePolicy> parentPolicy;
-  if (context->IsContentSubframe() && !context->GetParent()->IsInProcess()) {
-    // We are in cross process, so try to get feature policy from
-    // container's BrowsingContext
-    parentPolicy = context->GetFeaturePolicy();
-    return parentPolicy.forget();
-  }
-
-  nsCOMPtr<nsINode> node = containerWindow->GetFrameElementInternal();
-  HTMLIFrameElement* iframe = HTMLIFrameElement::FromNodeOrNull(node);
-  if (!iframe) {
-    return nullptr;
-  }
-
-  parentPolicy = iframe->FeaturePolicy();
-  return parentPolicy.forget();
+  return do_AddRef(child->GetContainerFeaturePolicy());
 }
 
 nsresult Document::InitFeaturePolicy(nsIChannel* aChannel) {
@@ -4025,8 +4014,7 @@ void Document::UpdateReferrerInfoFromMeta(const nsAString& aMetaReferrer,
 }
 
 void Document::SetPrincipals(nsIPrincipal* aNewPrincipal,
-                             nsIPrincipal* aNewPartitionedPrincipal,
-                             bool aSetContentBlockingAllowListPrincipal) {
+                             nsIPrincipal* aNewPartitionedPrincipal) {
   MOZ_ASSERT(!!aNewPrincipal == !!aNewPartitionedPrincipal);
   if (aNewPrincipal && mAllowDNSPrefetch &&
       StaticPrefs::network_dns_disablePrefetchFromHTTPS()) {
@@ -4041,11 +4029,6 @@ void Document::SetPrincipals(nsIPrincipal* aNewPrincipal,
   mPartitionedPrincipal = aNewPartitionedPrincipal;
 
   mCSSLoader->RegisterInSheetCache();
-
-  if (aSetContentBlockingAllowListPrincipal) {
-    ContentBlockingAllowList::ComputePrincipal(
-        aNewPrincipal, getter_AddRefs(mContentBlockingAllowListPrincipal));
-  }
 
 #ifdef DEBUG
   // Validate that the docgroup is set correctly by calling its getter and
@@ -4075,8 +4058,7 @@ void Document::AssertDocGroupMatchesKey() const {
 
     // GetKey() can fail, e.g. after the TLD service has shut down.
     nsresult rv = mozilla::dom::DocGroup::GetKey(
-        NodePrincipal(), GetBrowsingContext()->CrossOriginIsolated(),
-        docGroupKey);
+        NodePrincipal(), CrossOriginIsolated(), docGroupKey);
     if (NS_SUCCEEDED(rv)) {
       MOZ_ASSERT(mDocGroup->MatchesKey(docGroupKey));
     }
@@ -7009,14 +6991,24 @@ nsIGlobalObject* Document::GetScopeObject() const {
   return scope;
 }
 
+bool Document::CrossOriginIsolated() const {
+  // For a data document, it doesn't have a browsing context so that we check
+  // the cross-origin-isolated state from its creator's inner window.
+  if (mLoadedAsData) {
+    nsCOMPtr<nsPIDOMWindowInner> window = do_QueryInterface(GetScopeObject());
+
+    return window && window->GetBrowsingContext() &&
+           window->GetBrowsingContext()->CrossOriginIsolated();
+  }
+
+  return GetBrowsingContext() && GetBrowsingContext()->CrossOriginIsolated();
+}
+
 DocGroup* Document::GetDocGroupOrCreate() {
   if (!mDocGroup) {
-    bool crossOriginIsolated = GetBrowsingContext()
-                                   ? GetBrowsingContext()->CrossOriginIsolated()
-                                   : false;
     nsAutoCString docGroupKey;
     nsresult rv = mozilla::dom::DocGroup::GetKey(
-        NodePrincipal(), crossOriginIsolated, docGroupKey);
+        NodePrincipal(), CrossOriginIsolated(), docGroupKey);
     if (NS_SUCCEEDED(rv) && mDocumentContainer) {
       BrowsingContextGroup* group = GetBrowsingContext()->Group();
       if (group) {
@@ -7039,15 +7031,11 @@ void Document::SetScopeObject(nsIGlobalObject* aGlobal) {
     BrowsingContextGroup* browsingContextGroup =
         window->GetBrowsingContextGroup();
 
-    bool crossOriginIsolated = GetBrowsingContext()
-                                   ? GetBrowsingContext()->CrossOriginIsolated()
-                                   : false;
-
     // We should already have the principal, and now that we have been added
     // to a window, we should be able to join a DocGroup!
     nsAutoCString docGroupKey;
     nsresult rv = mozilla::dom::DocGroup::GetKey(
-        NodePrincipal(), crossOriginIsolated, docGroupKey);
+        NodePrincipal(), CrossOriginIsolated(), docGroupKey);
     if (mDocGroup) {
       if (NS_SUCCEEDED(rv)) {
         MOZ_RELEASE_ASSERT(mDocGroup->MatchesKey(docGroupKey));
@@ -7270,8 +7258,7 @@ void Document::SetScriptGlobalObject(
   // still test false at this point and no state change will happen) or we're
   // doing the initial document load and don't want to fire the event for this
   // change.
-  dom::VisibilityState oldState = mVisibilityState;
-  mVisibilityState = ComputeVisibilityState();
+  //
   // When the visibility is changed, notify it to observers.
   // Some observers need the notification, for example HTMLMediaElement uses
   // it to update internal media resource allocation.
@@ -7284,9 +7271,7 @@ void Document::SetScriptGlobalObject(
   // not yet necessary. But soon after Document::SetScriptGlobalObject()
   // call, the document becomes not hidden. At the time, MediaDecoder needs
   // to know it and needs to start updating decoding.
-  if (oldState != mVisibilityState) {
-    EnumerateActivityObservers(NotifyActivityChanged);
-  }
+  UpdateVisibilityState(DispatchVisibilityChange::No);
 
   // The global in the template contents owner document should be the same.
   if (mTemplateContentsOwner && mTemplateContentsOwner != this) {
@@ -8413,9 +8398,7 @@ void Document::SetDomain(const nsAString& aDomain, ErrorResult& rv) {
     return;
   }
 
-  if (StaticPrefs::
-          dom_postMessage_sharedArrayBuffer_withCOOP_COEP_AtStartup() &&
-      GetBrowsingContext() && GetBrowsingContext()->CrossOriginIsolated()) {
+  if (CrossOriginIsolated()) {
     WarnOnceAbout(Document::eDocumentSetDomainNotAllowed);
     return;
   }
@@ -8736,7 +8719,7 @@ void Document::DoNotifyPossibleTitleChange() {
 }
 
 already_AddRefed<MediaQueryList> Document::MatchMedia(
-    const nsAString& aMediaQueryList, CallerType aCallerType) {
+    const nsACString& aMediaQueryList, CallerType aCallerType) {
   RefPtr<MediaQueryList> result =
       new MediaQueryList(this, aMediaQueryList, aCallerType);
 
@@ -10719,7 +10702,8 @@ bool Document::CanSavePresentation(nsIRequest* aNewRequest,
 
   // Check our event listener manager for unload/beforeunload listeners.
   nsCOMPtr<EventTarget> piTarget = do_QueryInterface(mScriptGlobalObject);
-  if (piTarget) {
+  if (!StaticPrefs::docshell_shistory_bfcache_allow_unload_listeners() &&
+      piTarget) {
     EventListenerManager* manager = piTarget->GetExistingListenerManager();
     if (manager && manager->HasUnloadListeners()) {
       MOZ_LOG(gPageCacheLog, mozilla::LogLevel::Verbose,
@@ -14900,18 +14884,19 @@ void Document::UnlockPointer(Document* aDoc) {
   asyncDispatcher->RunDOMEventWhenSafe();
 }
 
-void Document::UpdateVisibilityState() {
+void Document::UpdateVisibilityState(DispatchVisibilityChange aDispatchEvent) {
   dom::VisibilityState oldState = mVisibilityState;
   mVisibilityState = ComputeVisibilityState();
   if (oldState != mVisibilityState) {
-    nsContentUtils::DispatchTrustedEvent(this, ToSupports(this),
-                                         u"visibilitychange"_ns,
-                                         CanBubble::eYes, Cancelable::eNo);
+    if (aDispatchEvent == DispatchVisibilityChange::Yes) {
+      nsContentUtils::DispatchTrustedEvent(this, ToSupports(this),
+                                           u"visibilitychange"_ns,
+                                           CanBubble::eYes, Cancelable::eNo);
+    }
     EnumerateActivityObservers(NotifyActivityChanged);
-  }
-
-  if (mVisibilityState == dom::VisibilityState::Visible) {
-    MaybeActiveMediaComponents();
+    if (mVisibilityState == dom::VisibilityState::Visible) {
+      MaybeActiveMediaComponents();
+    }
   }
 }
 
@@ -14932,9 +14917,9 @@ VisibilityState Document::ComputeVisibilityState() const {
 }
 
 void Document::PostVisibilityUpdateEvent() {
-  nsCOMPtr<nsIRunnable> event =
-      NewRunnableMethod("Document::UpdateVisibilityState", this,
-                        &Document::UpdateVisibilityState);
+  nsCOMPtr<nsIRunnable> event = NewRunnableMethod<DispatchVisibilityChange>(
+      "Document::UpdateVisibilityState", this, &Document::UpdateVisibilityState,
+      DispatchVisibilityChange::Yes);
   Dispatch(TaskCategory::Other, event.forget());
 }
 
@@ -15662,7 +15647,9 @@ static CallState MarkDocumentTreeToBeInSyncOperation(
   return CallState::Continue;
 }
 
-nsAutoSyncOperation::nsAutoSyncOperation(Document* aDoc) {
+nsAutoSyncOperation::nsAutoSyncOperation(Document* aDoc,
+                                         SyncOperationBehavior aSyncBehavior)
+    : mSyncBehavior(aSyncBehavior) {
   mMicroTaskLevel = 0;
   CycleCollectedJSContext* ccjs = CycleCollectedJSContext::Get();
   if (ccjs) {
@@ -15677,6 +15664,13 @@ nsAutoSyncOperation::nsAutoSyncOperation(Document* aDoc) {
         }
       }
     }
+
+    mBrowsingContext = aDoc->GetBrowsingContext();
+    if (mBrowsingContext &&
+        mSyncBehavior == SyncOperationBehavior::eSuspendInput &&
+        InputTaskManager::CanSuspendInputEvent()) {
+      mBrowsingContext->Group()->IncInputEventSuspensionLevel();
+    }
   }
 }
 
@@ -15690,6 +15684,12 @@ nsAutoSyncOperation::~nsAutoSyncOperation() {
   CycleCollectedJSContext* ccjs = CycleCollectedJSContext::Get();
   if (ccjs) {
     ccjs->SetMicroTaskLevel(mMicroTaskLevel);
+  }
+
+  if (mBrowsingContext &&
+      mSyncBehavior == SyncOperationBehavior::eSuspendInput &&
+      InputTaskManager::CanSuspendInputEvent()) {
+    mBrowsingContext->Group()->DecInputEventSuspensionLevel();
   }
 }
 
@@ -16594,7 +16594,17 @@ already_AddRefed<mozilla::dom::Promise> Document::RequestStorageAccess(
   //         user for explicit permission. Reject if some rule is not fulfilled.
   if (CookieJarSettings()->GetRejectThirdPartyContexts()) {
     // Only do something special for third-party tracking content.
-    if (StorageDisabledByAntiTracking(this, nullptr)) {
+    uint32_t antiTrackingRejectedReason = 0;
+    if (StorageDisabledByAntiTracking(this, nullptr,
+                                      antiTrackingRejectedReason)) {
+      // If storage is disabled because of a custom cookie permission for the
+      // site, reject.
+      if (antiTrackingRejectedReason ==
+          nsIWebProgressListener::STATE_COOKIES_BLOCKED_BY_PERMISSION) {
+        promise->MaybeRejectWithUndefined();
+        return promise.forget();
+      }
+
       // Note: If this has returned true, the top-level document is guaranteed
       // to not be on the Content Blocking allow list.
       MOZ_ASSERT(!CookieJarSettings()->GetIsOnContentBlockingAllowList());

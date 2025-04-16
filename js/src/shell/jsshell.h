@@ -102,6 +102,8 @@ extern int sArgc;
 extern char** sArgv;
 
 // Shell state set once at startup.
+extern const char* selfHostedXDRPath;
+extern bool encodeSelfHostedCode;
 extern bool enableCodeCoverage;
 extern bool enableDisassemblyDumps;
 extern bool offthreadCompilation;
@@ -122,6 +124,9 @@ extern bool enableWasmMultiValue;
 #endif
 #ifdef ENABLE_WASM_SIMD
 extern bool enableWasmSimd;
+#endif
+#ifdef ENABLE_WASM_SIMD_WORMHOLE
+extern bool enableWasmSimdWormhole;
 #endif
 #ifdef ENABLE_WASM_EXCEPTIONS
 extern bool enableWasmExceptions;

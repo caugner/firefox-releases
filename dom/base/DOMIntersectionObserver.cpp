@@ -189,15 +189,14 @@ DOMIntersectionObserver::CreateLazyLoadObserver(Document& aDocument) {
   return observer.forget();
 }
 
-bool DOMIntersectionObserver::SetRootMargin(const nsAString& aString) {
+bool DOMIntersectionObserver::SetRootMargin(const nsACString& aString) {
   return Servo_IntersectionObserverRootMargin_Parse(&aString, &mRootMargin);
 }
 
 nsISupports* DOMIntersectionObserver::GetParentObject() const { return mOwner; }
 
-void DOMIntersectionObserver::GetRootMargin(DOMString& aRetVal) {
-  nsString& retVal = aRetVal;
-  Servo_IntersectionObserverRootMargin_ToString(&mRootMargin, &retVal);
+void DOMIntersectionObserver::GetRootMargin(nsACString& aRetVal) {
+  Servo_IntersectionObserverRootMargin_ToString(&mRootMargin, &aRetVal);
 }
 
 void DOMIntersectionObserver::GetThresholds(nsTArray<double>& aRetVal) {
@@ -285,30 +284,16 @@ static Maybe<nsRect> EdgeInclusiveIntersection(const nsRect& aRect,
 
 enum class BrowsingContextOrigin { Similar, Different };
 
-// FIXME(emilio): The whole concept of "units of related similar-origin browsing
-// contexts" is gone, but this is still in the spec, see
+// NOTE(emilio): Checking docgroup as per discussion in:
 // https://github.com/w3c/IntersectionObserver/issues/161
 static BrowsingContextOrigin SimilarOrigin(const Element& aTarget,
                                            const nsINode* aRoot) {
   if (!aRoot) {
     return BrowsingContextOrigin::Different;
   }
-  nsIPrincipal* principal1 = aTarget.NodePrincipal();
-  nsIPrincipal* principal2 = aRoot->NodePrincipal();
-
-  if (principal1 == principal2) {
-    return BrowsingContextOrigin::Similar;
-  }
-
-  nsAutoCString baseDomain1;
-  nsAutoCString baseDomain2;
-  if (NS_FAILED(principal1->GetBaseDomain(baseDomain1)) ||
-      NS_FAILED(principal2->GetBaseDomain(baseDomain2))) {
-    return BrowsingContextOrigin::Different;
-  }
-
-  return baseDomain1 == baseDomain2 ? BrowsingContextOrigin::Similar
-                                    : BrowsingContextOrigin::Different;
+  return aTarget.OwnerDoc()->GetDocGroup() == aRoot->OwnerDoc()->GetDocGroup()
+             ? BrowsingContextOrigin::Similar
+             : BrowsingContextOrigin::Different;
 }
 
 // NOTE: This returns nullptr if |aDocument| is in another process from the top

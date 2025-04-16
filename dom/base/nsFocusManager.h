@@ -113,6 +113,11 @@ class nsFocusManager final : public nsIFocusManager,
   }
 
   /**
+   * Returns whether the given browsing context is in the active window.
+   */
+  bool IsInActiveWindow(mozilla::dom::BrowsingContext*) const;
+
+  /**
    * Return an active window. Version of nsIFocusManager::GetActiveWindow.
    */
   nsPIDOMWindowOuter* GetActiveWindow() const { return mActiveWindow; }
@@ -231,7 +236,8 @@ class nsFocusManager final : public nsIFocusManager,
   /**
    * Called when a window has been lowered.
    */
-  void WindowLowered(mozIDOMWindowProxy* aWindow, uint64_t aActionId);
+  MOZ_CAN_RUN_SCRIPT_BOUNDARY void WindowLowered(mozIDOMWindowProxy* aWindow,
+                                                 uint64_t aActionId);
 
   /**
    * Called when a new document in a window is shown.
@@ -334,13 +340,13 @@ class nsFocusManager final : public nsIFocusManager,
    * ancestor of aWindow.
    */
   bool IsSameOrAncestor(nsPIDOMWindowOuter* aPossibleAncestor,
-                        nsPIDOMWindowOuter* aWindow);
+                        nsPIDOMWindowOuter* aWindow) const;
   bool IsSameOrAncestor(nsPIDOMWindowOuter* aPossibleAncestor,
-                        mozilla::dom::BrowsingContext* aContext);
+                        mozilla::dom::BrowsingContext* aContext) const;
   bool IsSameOrAncestor(mozilla::dom::BrowsingContext* aPossibleAncestor,
-                        nsPIDOMWindowOuter* aWindow);
+                        nsPIDOMWindowOuter* aWindow) const;
   bool IsSameOrAncestor(mozilla::dom::BrowsingContext* aPossibleAncestor,
-                        mozilla::dom::BrowsingContext* aContext);
+                        mozilla::dom::BrowsingContext* aContext) const;
 
   /**
    * Returns the window that is the lowest common ancestor of both aWindow

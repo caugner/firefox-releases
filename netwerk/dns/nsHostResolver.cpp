@@ -20,6 +20,7 @@
 #include "nsISupportsUtils.h"
 #include "nsIThreadManager.h"
 #include "nsComponentManagerUtils.h"
+#include "nsNetUtil.h"
 #include "nsPrintfCString.h"
 #include "nsXPCOMCIDInternal.h"
 #include "prthread.h"
@@ -1371,10 +1372,42 @@ nsresult nsHostResolver::TrrLookup(nsHostRecord* aRec, TRR* pushedTRR) {
 
   MOZ_ASSERT(!rec->mResolving);
 
+  auto hasConnectivity = [this]() -> bool {
+    if (!mNCS) {
+      return true;
+    }
+    nsINetworkConnectivityService::ConnectivityState ipv4 = mNCS->GetIPv4();
+    nsINetworkConnectivityService::ConnectivityState ipv6 = mNCS->GetIPv6();
+
+    if (ipv4 == nsINetworkConnectivityService::OK ||
+        ipv6 == nsINetworkConnectivityService::OK) {
+      return true;
+    }
+
+    if (ipv4 == nsINetworkConnectivityService::UNKNOWN ||
+        ipv6 == nsINetworkConnectivityService::UNKNOWN) {
+      // One of the checks hasn't completed yet. Optimistically assume we'll
+      // have network connectivity.
+      return true;
+    }
+
+    return false;
+  };
+
   nsIRequest::TRRMode reqMode = rec->mEffectiveTRRMode;
   if (rec->mTrrServer.IsEmpty() &&
       (!gTRRService || !gTRRService->Enabled(reqMode))) {
-    rec->RecordReason(nsHostRecord::TRR_NOT_CONFIRMED);
+    if (NS_IsOffline()) {
+      // If we are in the NOT_CONFIRMED state _because_ we lack connectivity,
+      // then we should report that the browser is offline instead.
+      rec->RecordReason(nsHostRecord::TRR_IS_OFFLINE);
+    }
+    if (!hasConnectivity()) {
+      rec->RecordReason(nsHostRecord::TRR_NO_CONNECTIVITY);
+    } else {
+      rec->RecordReason(nsHostRecord::TRR_NOT_CONFIRMED);
+    }
+
     LOG(("TrrLookup:: %s service not enabled\n", rec->host.get()));
     return NS_ERROR_UNKNOWN_HOST;
   }
@@ -1559,6 +1592,10 @@ nsresult nsHostResolver::NameLookup(nsHostRecord* rec) {
     LOG(("NameLookup %s while already resolving\n", rec->host.get()));
     return NS_OK;
   }
+
+  // Make sure we reset the reason each time we attempt to do a new lookup
+  // so we don't wronly report the reason for the previous one.
+  rec->mTRRTRRSkippedReason = nsHostRecord::TRR_UNSET;
 
   ComputeEffectiveTRRMode(rec);
 

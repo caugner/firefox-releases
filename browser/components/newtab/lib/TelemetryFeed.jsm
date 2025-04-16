@@ -548,19 +548,13 @@ this.TelemetryFeed = class TelemetryFeed {
    * @return {obj}    A telemetry ping
    */
   createImpressionStats(portID, data) {
-    return Object.assign(this.createPing(portID), data, {
-      action: "activity_stream_impression_stats",
+    let ping = Object.assign(this.createPing(portID), data, {
       impression_id: this._impressionId,
-      client_id: "n/a",
-      session_id: "n/a",
     });
-  }
-
-  createSpocsFillPing(data) {
-    return Object.assign(this.createPing(null), data, {
-      impression_id: this._impressionId,
-      session_id: "n/a",
-    });
+    // Make sure `session_id` and `client_id` are not in the ping.
+    delete ping.session_id;
+    delete ping.client_id;
+    return ping;
   }
 
   createUserEvent(action) {
@@ -568,15 +562,6 @@ this.TelemetryFeed = class TelemetryFeed {
       this.createPing(au.getPortIdOfSender(action)),
       action.data,
       { action: "activity_stream_user_event" }
-    );
-  }
-
-  createUndesiredEvent(action) {
-    return Object.assign(
-      this.createPing(au.getPortIdOfSender(action)),
-      { value: 0 }, // Default value
-      action.data,
-      { action: "activity_stream_undesired_event" }
     );
   }
 
@@ -618,6 +603,9 @@ this.TelemetryFeed = class TelemetryFeed {
       case "badge_user_event":
       case "whats-new-panel_user_event":
         event = await this.applyWhatsNewPolicy(event);
+        break;
+      case "infobar_user_event":
+        event = await this.applyInfoBarPolicy(event);
         break;
       case "moments_user_event":
         event = await this.applyMomentsPolicy(event);
@@ -665,6 +653,13 @@ this.TelemetryFeed = class TelemetryFeed {
     // Attach page info to `event_context` if there is a session associated with this ping
     delete ping.action;
     return { ping, pingType: "whats-new-panel" };
+  }
+
+  async applyInfoBarPolicy(ping) {
+    ping.client_id = await this.telemetryClientId;
+    ping.browser_session_id = browserSessionId;
+    delete ping.action;
+    return { ping, pingType: "infobar" };
   }
 
   /**
@@ -839,8 +834,14 @@ this.TelemetryFeed = class TelemetryFeed {
     );
   }
 
-  handleUndesiredEvent(action) {
-    this.sendEvent(this.createUndesiredEvent(action));
+  /**
+   * This function is used by ActivityStreamStorage to report errors
+   * trying to access IndexedDB.
+   */
+  SendASRouterUndesiredEvent(data) {
+    this.handleASRouterUserEvent({
+      data: { ...data, action: "asrouter_undesired_event" },
+    });
   }
 
   async sendPageTakeoverData() {
@@ -941,12 +942,6 @@ this.TelemetryFeed = class TelemetryFeed {
           action.data
         );
         break;
-      case at.DISCOVERY_STREAM_SPOCS_FILL:
-        this.handleDiscoveryStreamSpocsFill(action.data);
-        break;
-      case at.TELEMETRY_UNDESIRED_EVENT:
-        this.handleUndesiredEvent(action);
-        break;
       case at.TELEMETRY_USER_EVENT:
         this.handleUserEvent(action);
         break;
@@ -959,6 +954,8 @@ this.TelemetryFeed = class TelemetryFeed {
       case msg.MOMENTS_PAGE_TELEMETRY:
       // Intentional fall-through
       case msg.DOORHANGER_TELEMETRY:
+      // Intentional fall-through
+      case msg.INFOBAR_TELEMETRY:
       // Intentional fall-through
       case at.AS_ROUTER_TELEMETRY_USER_EVENT:
         this.handleASRouterUserEvent(action);
@@ -1029,38 +1026,6 @@ this.TelemetryFeed = class TelemetryFeed {
     );
     loadedContentSets[data.source] = loadedContents;
     session.loadedContentSets = loadedContentSets;
-  }
-
-  /**
-   * Handl SPOCS Fill actions from Discovery Stream.
-   *
-   * @param {Object} data
-   *   The SPOCS Fill event structured as:
-   *   {
-   *     spoc_fills: [
-   *       {
-   *         id: 123,
-   *         displayed: 0,
-   *         reason: "frequency_cap",
-   *         full_recalc: 1
-   *        },
-   *        {
-   *          id: 124,
-   *          displayed: 1,
-   *          reason: "n/a",
-   *          full_recalc: 1
-   *        }
-   *      ]
-   *    }
-   */
-  handleDiscoveryStreamSpocsFill(data) {
-    const payload = this.createSpocsFillPing(data);
-    this.sendStructuredIngestionEvent(
-      payload,
-      STRUCTURED_INGESTION_NAMESPACE_AS,
-      "spoc-fills",
-      "1"
-    );
   }
 
   /**

@@ -31,6 +31,7 @@
 #include "mozilla/HoldDropJSObjects.h"
 #include "mozilla/JSObjectHolder.h"
 #include "mozilla/Maybe.h"
+#include "mozilla/Preferences.h"
 #include "mozilla/StaticPrefs_devtools.h"
 #include "mozilla/StaticPrefs_dom.h"
 #include "nsCycleCollectionParticipant.h"
@@ -42,6 +43,7 @@
 #include "nsContentUtils.h"
 #include "nsDocShell.h"
 #include "nsProxyRelease.h"
+#include "nsReadableUtils.h"
 #include "mozilla/ConsoleTimelineMarker.h"
 #include "mozilla/TimestampTimelineMarker.h"
 
@@ -1643,6 +1645,7 @@ bool Console::PopulateConsoleNotificationInTheTargetScope(
     case MethodAssert:
     case MethodGroup:
     case MethodGroupCollapsed:
+    case MethodTrace:
       event.mArguments.Construct();
       event.mStyles.Construct();
       if (NS_WARN_IF(!ProcessArguments(aCx, aArguments,
@@ -2058,24 +2061,21 @@ static void ComposeAndStoreGroupName(JSContext* aCx,
                                      const Sequence<JS::Value>& aData,
                                      nsAString& aName,
                                      nsTArray<nsString>* aGroupStack) {
-  for (uint32_t i = 0; i < aData.Length(); ++i) {
-    if (i != 0) {
-      aName.AppendLiteral(" ");
-    }
+  StringJoinAppend(
+      aName, u" "_ns, aData, [aCx](nsAString& dest, const JS::Value& valueRef) {
+        JS::Rooted<JS::Value> value(aCx, valueRef);
+        JS::Rooted<JSString*> jsString(aCx, JS::ToString(aCx, value));
+        if (!jsString) {
+          return;
+        }
 
-    JS::Rooted<JS::Value> value(aCx, aData[i]);
-    JS::Rooted<JSString*> jsString(aCx, JS::ToString(aCx, value));
-    if (!jsString) {
-      return;
-    }
+        nsAutoJSString string;
+        if (!string.init(aCx, jsString)) {
+          return;
+        }
 
-    nsAutoJSString string;
-    if (!string.init(aCx, jsString)) {
-      return;
-    }
-
-    aName.Append(string);
-  }
+        dest.Append(string);
+      });
 
   aGroupStack->AppendElement(aName);
 }
@@ -2809,8 +2809,42 @@ void Console::ExecuteDumpFunction(const nsAString& aMessage) {
   fflush(stdout);
 }
 
+ConsoleLogLevel PrefToValue(const nsAString& aPref,
+                            const ConsoleLogLevel aLevel) {
+  if (!NS_IsMainThread()) {
+    NS_WARNING("Console.maxLogLevelPref is not supported on workers!");
+    return ConsoleLogLevel::All;
+  }
+  if (aPref.IsEmpty()) {
+    return aLevel;
+  }
+
+  NS_ConvertUTF16toUTF8 pref(aPref);
+  nsAutoCString value;
+  nsresult rv = Preferences::GetCString(pref.get(), value);
+  if (NS_WARN_IF(NS_FAILED(rv))) {
+    return aLevel;
+  }
+
+  int index = FindEnumStringIndexImpl(value.get(), value.Length(),
+                                      ConsoleLogLevelValues::strings);
+  if (NS_WARN_IF(index < 0)) {
+    nsString message;
+    message.AssignLiteral("Invalid Console.maxLogLevelPref value: ");
+    message.Append(NS_ConvertUTF8toUTF16(value));
+
+    nsContentUtils::LogSimpleConsoleError(message, "chrome", false,
+                                          true /* from chrome context*/);
+    return aLevel;
+  }
+
+  MOZ_ASSERT(index < (int)ConsoleLogLevelValues::Count);
+  return static_cast<ConsoleLogLevel>(index);
+}
+
 bool Console::ShouldProceed(MethodName aName) const {
-  return WebIDLLogLevelToInteger(mMaxLogLevel) <=
+  ConsoleLogLevel maxLogLevel = PrefToValue(mMaxLogLevelPref, mMaxLogLevel);
+  return WebIDLLogLevelToInteger(maxLogLevel) <=
          InternalLogLevelToInteger(aName);
 }
 

@@ -633,13 +633,9 @@ async function promiseVisit(expectedType, expectedURI) {
       },
       onBeginUpdateBatch() {},
       onEndUpdateBatch() {},
-      onTitleChanged() {},
-      onFrecencyChanged() {},
-      onManyFrecenciesChanged() {},
       onDeleteURI(uri) {
         done("removed", uri.spec);
       },
-      onClearHistory() {},
       onDeleteVisits() {},
     };
     PlacesUtils.history.addObserver(observer, false);

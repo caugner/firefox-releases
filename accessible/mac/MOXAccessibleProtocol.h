@@ -124,6 +124,15 @@
 // AXRequired
 - (NSNumber* _Nullable)moxRequired;
 
+// AXElementBusy
+- (NSNumber* _Nullable)moxElementBusy;
+
+// AXLinkedUIElements
+- (NSArray* _Nullable)moxLinkedUIElements;
+
+// AXARIAControls
+- (NSArray* _Nullable)moxARIAControls;
+
 // AXDOMIdentifier
 - (NSString* _Nullable)moxDOMIdentifier;
 
@@ -214,6 +223,9 @@
 // AXIdentifier
 - (NSString* _Nullable)moxIdentifier;
 
+// AXVisibleChildren
+- (NSArray* _Nullable)moxVisibleChildren;
+
 // Outline Attributes
 
 // AXDisclosing
@@ -303,6 +315,9 @@
 - (NSString* _Nullable)moxMozDebugDescription;
 
 #pragma mark - AttributeSetters
+
+// AXDisclosing
+- (void)moxSetDisclosing:(NSNumber* _Nullable)disclosing;
 
 // AXValue
 - (void)moxSetValue:(id _Nullable)value;

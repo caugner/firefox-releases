@@ -29,6 +29,7 @@
 #include "mozilla/dom/CoalescedMouseData.h"
 #include "mozilla/dom/CoalescedWheelData.h"
 #include "mozilla/dom/MessageManagerCallback.h"
+#include "mozilla/dom/VsyncChild.h"
 #include "mozilla/DOMEventTargetHelper.h"
 #include "mozilla/EventDispatcher.h"
 #include "mozilla/EventForwards.h"
@@ -389,8 +390,6 @@ class BrowserChild final : public nsMessageManagerScriptExecutor,
   mozilla::ipc::IPCResult RecvNativeSynthesisResponse(
       const uint64_t& aObserverId, const nsCString& aResponse);
 
-  mozilla::ipc::IPCResult RecvPluginEvent(const WidgetPluginEvent& aEvent);
-
   mozilla::ipc::IPCResult RecvCompositionEvent(
       const mozilla::WidgetCompositionEvent& aEvent);
 
@@ -409,7 +408,8 @@ class BrowserChild final : public nsMessageManagerScriptExecutor,
   MOZ_CAN_RUN_SCRIPT_BOUNDARY
   mozilla::ipc::IPCResult RecvPasteTransferable(
       const IPCDataTransfer& aDataTransfer, const bool& aIsPrivateData,
-      nsIPrincipal* aRequestingPrincipal, const uint32_t& aContentPolicyType);
+      nsIPrincipal* aRequestingPrincipal,
+      const nsContentPolicyType& aContentPolicyType);
 
   mozilla::ipc::IPCResult RecvActivateFrameEvent(const nsString& aType,
                                                  const bool& aCapture);
@@ -440,6 +440,12 @@ class BrowserChild final : public nsMessageManagerScriptExecutor,
 
   PFilePickerChild* AllocPFilePickerChild(const nsString& aTitle,
                                           const int16_t& aMode);
+
+  virtual PVsyncChild* AllocPVsyncChild();
+
+  virtual bool DeallocPVsyncChild(PVsyncChild* aActor);
+
+  RefPtr<VsyncChild> GetVsyncChild();
 
   bool DeallocPFilePickerChild(PFilePickerChild* aActor);
 
@@ -813,6 +819,8 @@ class BrowserChild final : public nsMessageManagerScriptExecutor,
   bool mDidFakeShow;
   bool mTriedBrowserInit;
   hal::ScreenOrientation mOrientation;
+
+  RefPtr<VsyncChild> mVsyncChild;
 
   bool mIgnoreKeyPressEvent;
   RefPtr<APZEventState> mAPZEventState;

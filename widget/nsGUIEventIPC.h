@@ -424,13 +424,6 @@ struct ParamTraits<mozilla::WidgetKeyboardEvent> {
     WriteParam(aMsg, aParam.mUniqueId);
     WriteParam(aMsg, aParam.mIsSynthesizedByTIP);
     WriteParam(aMsg, aParam.mMaybeSkippableInRemoteProcess);
-#ifdef XP_MACOSX
-    WriteParam(aMsg, aParam.mNativeKeyCode);
-    WriteParam(aMsg, aParam.mNativeModifierFlags);
-    WriteParam(aMsg, aParam.mNativeCharacters);
-    WriteParam(aMsg, aParam.mNativeCharactersIgnoringModifiers);
-    WriteParam(aMsg, aParam.mPluginTextEventString);
-#endif
 
     // An OS-specific native event might be attached in |mNativeKeyEvent|,  but
     // that cannot be copied across process boundaries.
@@ -462,13 +455,6 @@ struct ParamTraits<mozilla::WidgetKeyboardEvent> {
         ReadParam(aMsg, aIter, &aResult->mUniqueId) &&
         ReadParam(aMsg, aIter, &aResult->mIsSynthesizedByTIP) &&
         ReadParam(aMsg, aIter, &aResult->mMaybeSkippableInRemoteProcess) &&
-#ifdef XP_MACOSX
-        ReadParam(aMsg, aIter, &aResult->mNativeKeyCode) &&
-        ReadParam(aMsg, aIter, &aResult->mNativeModifierFlags) &&
-        ReadParam(aMsg, aIter, &aResult->mNativeCharacters) &&
-        ReadParam(aMsg, aIter, &aResult->mNativeCharactersIgnoringModifiers) &&
-        ReadParam(aMsg, aIter, &aResult->mPluginTextEventString) &&
-#endif
         ReadParam(aMsg, aIter, &aResult->mEditCommandsForSingleLineEditor) &&
         ReadParam(aMsg, aIter, &aResult->mEditCommandsForMultiLineEditor) &&
         ReadParam(aMsg, aIter, &aResult->mEditCommandsForRichTextEditor) &&
@@ -844,10 +830,10 @@ struct ParamTraits<mozilla::widget::IMENotification> {
 };
 
 template <>
-struct ParamTraits<mozilla::widget::IMEState::Enabled>
-    : ContiguousEnumSerializer<mozilla::widget::IMEState::Enabled,
-                               mozilla::widget::IMEState::Enabled::DISABLED,
-                               mozilla::widget::IMEState::Enabled::UNKNOWN> {};
+struct ParamTraits<mozilla::widget::IMEEnabled>
+    : ContiguousEnumSerializer<mozilla::widget::IMEEnabled,
+                               mozilla::widget::IMEEnabled::Disabled,
+                               mozilla::widget::IMEEnabled::Unknown> {};
 
 template <>
 struct ParamTraits<mozilla::widget::IMEState::Open>
@@ -937,23 +923,6 @@ struct ParamTraits<mozilla::widget::InputContextAction> {
                    paramType* aResult) {
     return ReadParam(aMsg, aIter, &aResult->mCause) &&
            ReadParam(aMsg, aIter, &aResult->mFocusChange);
-  }
-};
-
-template <>
-struct ParamTraits<mozilla::WidgetPluginEvent> {
-  typedef mozilla::WidgetPluginEvent paramType;
-
-  static void Write(Message* aMsg, const paramType& aParam) {
-    WriteParam(aMsg, static_cast<const mozilla::WidgetGUIEvent&>(aParam));
-    WriteParam(aMsg, aParam.mRetargetToFocusedDocument);
-  }
-
-  static bool Read(const Message* aMsg, PickleIterator* aIter,
-                   paramType* aResult) {
-    return ReadParam(aMsg, aIter,
-                     static_cast<mozilla::WidgetGUIEvent*>(aResult)) &&
-           ReadParam(aMsg, aIter, &aResult->mRetargetToFocusedDocument);
   }
 };
 

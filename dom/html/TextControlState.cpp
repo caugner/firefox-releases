@@ -340,12 +340,14 @@ class TextInputSelectionController final : public nsSupportsWeakReference,
                           bool aExtend) override;
   NS_IMETHOD CharacterMove(bool aForward, bool aExtend) override;
   NS_IMETHOD WordMove(bool aForward, bool aExtend) override;
-  NS_IMETHOD LineMove(bool aForward, bool aExtend) override;
+  MOZ_CAN_RUN_SCRIPT_BOUNDARY NS_IMETHOD LineMove(bool aForward,
+                                                  bool aExtend) override;
   NS_IMETHOD IntraLineMove(bool aForward, bool aExtend) override;
   MOZ_CAN_RUN_SCRIPT
   NS_IMETHOD PageMove(bool aForward, bool aExtend) override;
   NS_IMETHOD CompleteScroll(bool aForward) override;
-  NS_IMETHOD CompleteMove(bool aForward, bool aExtend) override;
+  MOZ_CAN_RUN_SCRIPT NS_IMETHOD CompleteMove(bool aForward,
+                                             bool aExtend) override;
   NS_IMETHOD ScrollPage(bool aForward) override;
   NS_IMETHOD ScrollLine(bool aForward) override;
   NS_IMETHOD ScrollCharacter(bool aRight) override;
@@ -699,10 +701,11 @@ TextInputSelectionController::CompleteMove(bool aForward, bool aExtend) {
     }
   }
 
+  const RefPtr<nsIContent> pinnedParentDIV{parentDIV};
   const nsFrameSelection::FocusMode focusMode =
       aExtend ? nsFrameSelection::FocusMode::kExtendSelection
               : nsFrameSelection::FocusMode::kCollapseToNewPoint;
-  frameSelection->HandleClick(parentDIV, offset, offset, focusMode, hint);
+  frameSelection->HandleClick(pinnedParentDIV, offset, offset, focusMode, hint);
 
   // if we got this far, attempt to scroll no matter what the above result is
   return CompleteScroll(aForward);
@@ -2080,6 +2083,12 @@ void TextControlState::SetSelectionRange(
   nsresult rv = NS_OK;  // For the ScrollSelectionIntoView() return value.
   if (IsSelectionCached()) {
     SelectionProperties& props = GetSelectionProperties();
+    if (!props.HasMaxLength()) {
+      // A clone without a dirty value flag may not have a max length yet
+      nsAutoString value;
+      GetValue(value, false);
+      props.SetMaxLength(value.Length());
+    }
     changed |= props.SetStart(aStart);
     changed |= props.SetEnd(aEnd);
     changed |= props.SetDirection(aDirection);
@@ -2090,7 +2099,9 @@ void TextControlState::SetSelectionRange(
         handlingSetSelectionRange.IsTextControlStateDestroyed()) {
       return;
     }
-    if (aScroll == ScrollAfterSelection::Yes) {
+    if (aScroll == ScrollAfterSelection::Yes && mBoundFrame) {
+      // mBoundFrame could be gone if selection listeners flushed layout for
+      // example.
       mBoundFrame->ScrollSelectionIntoViewAsync();
     }
     // Press on to firing the event even if that failed, like our old code did.
@@ -2106,10 +2117,19 @@ void TextControlState::SetSelectionRange(
 
   if (changed) {
     // It sure would be nice if we had an existing Element* or so to work with.
-    RefPtr<AsyncEventDispatcher> asyncDispatcher =
-        new AsyncEventDispatcher(mTextCtrlElement, u"select"_ns,
-                                 CanBubble::eYes, ChromeOnlyDispatch::eNo);
+    RefPtr<AsyncEventDispatcher> asyncDispatcher = new AsyncEventDispatcher(
+        mTextCtrlElement, eFormSelect, CanBubble::eYes);
     asyncDispatcher->PostDOMEvent();
+
+    // SelectionChangeEventDispatcher covers this when !IsSelectionCached().
+    // XXX(krosylight): Shouldn't it fire before select event?
+    // Currently Gecko and Blink both fire selectionchange after select.
+    if (IsSelectionCached() &&
+        StaticPrefs::dom_select_events_textcontrols_enabled()) {
+      asyncDispatcher = new AsyncEventDispatcher(
+          mTextCtrlElement, eSelectionChange, CanBubble::eNo);
+      asyncDispatcher->PostDOMEvent();
+    }
   }
 
   if (NS_FAILED(rv)) {
@@ -2291,6 +2311,11 @@ void TextControlState::SetRangeText(const nsAString& aReplacement,
     selectionStart = *aSelectionStart;
     selectionEnd = *aSelectionEnd;
   }
+
+  // Batch selectionchanges from SetValueFromSetRangeText and SetSelectionRange
+  Selection* selection =
+      mSelCon ? mSelCon->GetSelection(SelectionType::eNormal) : nullptr;
+  SelectionBatcher selectionBatcher(selection);  // no-op if nullptr
 
   MOZ_ASSERT(aStart <= aEnd);
   value.Replace(aStart, aEnd - aStart, aReplacement);
@@ -2483,7 +2508,7 @@ void TextControlState::GetValue(nsAString& aValue, bool aIgnoreWrap) const {
   if (mHandlingState &&
       mHandlingState->IsHandling(TextControlAction::CommitComposition)) {
     aValue = mHandlingState->GetSettingValue();
-    MOZ_ASSERT(aValue.FindChar(static_cast<char16_t>('\r')) == -1);
+    MOZ_ASSERT(aValue.FindChar(u'\r') == -1);
     return;
   }
 
@@ -2491,7 +2516,7 @@ void TextControlState::GetValue(nsAString& aValue, bool aIgnoreWrap) const {
       (mEditorInitialized || !IsSingleLineTextControl())) {
     if (aIgnoreWrap && !mBoundFrame->CachedValue().IsVoid()) {
       aValue = mBoundFrame->CachedValue();
-      MOZ_ASSERT(aValue.FindChar(static_cast<char16_t>('\r')) == -1);
+      MOZ_ASSERT(aValue.FindChar(u'\r') == -1);
       return;
     }
 
@@ -2526,7 +2551,7 @@ void TextControlState::GetValue(nsAString& aValue, bool aIgnoreWrap) const {
       AutoNoJSAPI nojsapi;
 
       DebugOnly<nsresult> rv = mTextEditor->ComputeTextValue(flags, aValue);
-      MOZ_ASSERT(aValue.FindChar(static_cast<char16_t>('\r')) == -1);
+      MOZ_ASSERT(aValue.FindChar(u'\r') == -1);
       NS_WARNING_ASSERTION(NS_SUCCEEDED(rv), "Failed to get value");
     }
     // Only when the result doesn't include line breaks caused by hard-wrap,
@@ -2546,7 +2571,7 @@ void TextControlState::GetValue(nsAString& aValue, bool aIgnoreWrap) const {
       aValue = value;
     } else {
       aValue = *mValue;
-      MOZ_ASSERT(aValue.FindChar(static_cast<char16_t>('\r')) == -1);
+      MOZ_ASSERT(aValue.FindChar(u'\r') == -1);
     }
   }
 }

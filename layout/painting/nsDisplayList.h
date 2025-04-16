@@ -4739,7 +4739,7 @@ class nsDisplayBackgroundImage : public nsDisplayImageContainer {
     const auto& styleImage =
         mBackgroundStyle->StyleBackground()->mImage.mLayers[mLayer].mImage;
 
-    return styleImage.IsSizeAvailable() && styleImage.IsUrl();
+    return styleImage.IsSizeAvailable() && styleImage.FinalImage().IsUrl();
   }
 
  protected:

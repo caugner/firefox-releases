@@ -35,6 +35,7 @@
 #include "mozilla/dom/BindingDeclarations.h"
 #include "mozilla/dom/ChromeMessageBroadcaster.h"
 #include "mozilla/dom/DebuggerNotificationManager.h"
+#include "mozilla/dom/GamepadHandle.h"
 #include "mozilla/dom/Location.h"
 #include "mozilla/dom/NavigatorBinding.h"
 #include "mozilla/dom/StorageEvent.h"
@@ -50,7 +51,8 @@
 #include "mozilla/dom/WindowBinding.h"
 #include "mozilla/dom/WindowProxyHolder.h"
 #ifdef MOZ_GLEAN
-#  include "mozilla/glean/Glean.h"
+#  include "mozilla/glean/bindings/Glean.h"
+#  include "mozilla/glean/bindings/GleanPings.h"
 #endif
 #include "Units.h"
 #include "nsComponentManagerUtils.h"
@@ -488,10 +490,12 @@ class nsGlobalWindowInner final : public mozilla::dom::EventTarget,
                                           const double aDuration);
 
   // Inner windows only.
-  void AddGamepad(uint32_t aIndex, mozilla::dom::Gamepad* aGamepad);
-  void RemoveGamepad(uint32_t aIndex);
+  void AddGamepad(mozilla::dom::GamepadHandle aHandle,
+                  mozilla::dom::Gamepad* aGamepad);
+  void RemoveGamepad(mozilla::dom::GamepadHandle aHandle);
   void GetGamepads(nsTArray<RefPtr<mozilla::dom::Gamepad>>& aGamepads);
-  already_AddRefed<mozilla::dom::Gamepad> GetGamepad(uint32_t aIndex);
+  already_AddRefed<mozilla::dom::Gamepad> GetGamepad(
+      mozilla::dom::GamepadHandle aHandle);
   void SetHasSeenGamepadInput(bool aHasSeen);
   bool HasSeenGamepadInput();
   void SyncGamepadState();
@@ -733,7 +737,7 @@ class nsGlobalWindowInner final : public mozilla::dom::EventTarget,
       mozilla::ErrorResult& aError) override;
   mozilla::dom::VisualViewport* VisualViewport();
   already_AddRefed<mozilla::dom::MediaQueryList> MatchMedia(
-      const nsAString& aQuery, mozilla::dom::CallerType aCallerType,
+      const nsACString& aQuery, mozilla::dom::CallerType aCallerType,
       mozilla::ErrorResult& aError);
   nsScreen* GetScreen(mozilla::ErrorResult& aError);
   void MoveTo(int32_t aXPos, int32_t aYPos,
@@ -836,6 +840,7 @@ class nsGlobalWindowInner final : public mozilla::dom::EventTarget,
 
 #ifdef MOZ_GLEAN
   mozilla::glean::Glean* Glean();
+  mozilla::glean::GleanPings* GleanPings();
 #endif
   already_AddRefed<nsICSSDeclaration> GetDefaultComputedStyle(
       mozilla::dom::Element& aElt, const nsAString& aPseudoElt,
@@ -1331,7 +1336,9 @@ class nsGlobalWindowInner final : public mozilla::dom::EventTarget,
   bool mHasOpenedExternalProtocolFrame : 1;
 
   nsCheapSet<nsUint32HashKey> mGamepadIndexSet;
-  nsRefPtrHashtable<nsUint32HashKey, mozilla::dom::Gamepad> mGamepads;
+  nsRefPtrHashtable<nsGenericHashKey<mozilla::dom::GamepadHandle>,
+                    mozilla::dom::Gamepad>
+      mGamepads;
 
   RefPtr<nsScreen> mScreen;
 
@@ -1440,6 +1447,7 @@ class nsGlobalWindowInner final : public mozilla::dom::EventTarget,
 
 #ifdef MOZ_GLEAN
   RefPtr<mozilla::glean::Glean> mGlean;
+  RefPtr<mozilla::glean::GleanPings> mGleanPings;
 #endif
 
   // This is the CC generation the last time we called CanSkip.

@@ -6,7 +6,6 @@
 
 #include "builtin/Array-inl.h"
 
-#include "mozilla/ArrayUtils.h"
 #include "mozilla/CheckedInt.h"
 #include "mozilla/DebugOnly.h"
 #include "mozilla/MathAlgorithms.h"
@@ -14,6 +13,7 @@
 #include "mozilla/TextUtils.h"
 
 #include <algorithm>
+#include <iterator>
 
 #include "jsapi.h"
 #include "jsfriendapi.h"
@@ -58,7 +58,6 @@
 using namespace js;
 
 using mozilla::Abs;
-using mozilla::ArrayLength;
 using mozilla::CeilingLog2;
 using mozilla::CheckedInt;
 using mozilla::DebugOnly;
@@ -453,7 +452,7 @@ bool js::GetElements(JSContext* cx, HandleObject aobj, uint32_t length,
 
   if (aobj->is<TypedArrayObject>()) {
     Handle<TypedArrayObject*> typedArray = aobj.as<TypedArrayObject>();
-    if (typedArray->length().deprecatedGetUint32() == length) {
+    if (typedArray->length().get() == length) {
       return TypedArrayObject::getElements(cx, typedArray, vp);
     }
   }
@@ -1761,11 +1760,11 @@ static inline bool CompareLexicographicInt32(const Value& a, const Value& b,
     if (digitsa == digitsb) {
       *lessOrEqualp = (auint <= buint);
     } else if (digitsa > digitsb) {
-      MOZ_ASSERT((digitsa - digitsb) < ArrayLength(powersOf10));
+      MOZ_ASSERT((digitsa - digitsb) < std::size(powersOf10));
       *lessOrEqualp =
           (uint64_t(auint) < uint64_t(buint) * powersOf10[digitsa - digitsb]);
     } else { /* if (digitsb > digitsa) */
-      MOZ_ASSERT((digitsb - digitsa) < ArrayLength(powersOf10));
+      MOZ_ASSERT((digitsb - digitsa) < std::size(powersOf10));
       *lessOrEqualp =
           (uint64_t(auint) * powersOf10[digitsb - digitsa] <= uint64_t(buint));
     }
@@ -2436,7 +2435,7 @@ void js::ArrayShiftMoveElements(ArrayObject* arr) {
   AutoUnsafeCallWithABI unsafe;
   MOZ_ASSERT(arr->isExtensible());
   MOZ_ASSERT(arr->lengthIsWritable());
-  MOZ_ASSERT_IF(jit::JitOptions.warpBuilder, IsPackedArray(arr));
+  MOZ_ASSERT(IsPackedArray(arr));
   MOZ_ASSERT(!arr->denseElementsHaveMaybeInIterationFlag());
 
   size_t initlen = arr->getDenseInitializedLength();
@@ -3222,8 +3221,7 @@ static bool GetIndexedPropertiesInRange(JSContext* cx, HandleObject obj,
 
     // Append typed array elements.
     if (nativeObj->is<TypedArrayObject>()) {
-      uint32_t len =
-          nativeObj->as<TypedArrayObject>().length().deprecatedGetUint32();
+      size_t len = nativeObj->as<TypedArrayObject>().length().get();
       for (uint32_t i = begin; i < len && i < end; i++) {
         if (!indexes.append(i)) {
           return false;
@@ -3555,7 +3553,7 @@ static bool ArraySliceDenseKernel(JSContext* cx, ArrayObject* arr,
 
 JSObject* js::ArraySliceDense(JSContext* cx, HandleObject obj, int32_t begin,
                               int32_t end, HandleObject result) {
-  MOZ_ASSERT_IF(jit::JitOptions.warpBuilder, IsPackedArray(obj));
+  MOZ_ASSERT(IsPackedArray(obj));
 
   if (result && IsArraySpecies(cx, obj)) {
     if (!ArraySliceDenseKernel(cx, &obj->as<ArrayObject>(), begin, end,
@@ -3846,6 +3844,12 @@ static bool array_proto_finish(JSContext* cx, JS::HandleObject ctor,
   }
 
   RootedValue value(cx, BooleanValue(true));
+#ifdef NIGHTLY_BUILD
+  if (!DefineDataProperty(cx, unscopables, cx->names().at, value)) {
+    return false;
+  }
+#endif
+
   if (!DefineDataProperty(cx, unscopables, cx->names().copyWithin, value) ||
       !DefineDataProperty(cx, unscopables, cx->names().entries, value) ||
       !DefineDataProperty(cx, unscopables, cx->names().fill, value) ||
@@ -3988,8 +3992,6 @@ static MOZ_ALWAYS_INLINE ArrayObject* NewArray(JSContext* cx, uint32_t length,
     shape = arr->lastProperty();
     EmptyShape::insertInitialShape(cx, shape, proto);
   }
-
-  MOZ_ASSERT(newKind != SingletonObject);
 
   if (isCachable) {
     NewObjectCache& cache = cx->caches().newObjectCache;

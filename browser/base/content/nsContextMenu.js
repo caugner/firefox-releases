@@ -853,7 +853,8 @@ class nsContextMenu {
           "media.videocontrols.picture-in-picture.enabled"
         ) &&
         this.onVideo &&
-        !this.target.ownerDocument.fullscreen;
+        !this.target.ownerDocument.fullscreen &&
+        this.target.readyState > 0;
       this.showItem("context-video-pictureinpicture", shouldDisplay);
     }
     this.showItem("context-media-eme-learnmore", this.onDRMMedia);
@@ -1937,7 +1938,8 @@ class nsContextMenu {
   printFrame() {
     PrintUtils.startPrintWindow(
       "context_print_frame",
-      this.actor.browsingContext
+      this.actor.browsingContext,
+      { printFrameOnly: true }
     );
   }
 
@@ -1945,8 +1947,7 @@ class nsContextMenu {
     PrintUtils.startPrintWindow(
       "context_print_selection",
       this.actor.browsingContext,
-      /* aOpenWindowInfo = */ null,
-      /* aPrintSelectionOnly = */ true
+      { printSelectionOnly: true }
     );
   }
 

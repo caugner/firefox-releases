@@ -162,7 +162,7 @@ function _EU_nativeMouseDownEventMsg() {
     case "windows":
       return 2; // MOUSEEVENTF_LEFTDOWN
     case "mac":
-      return 1; // NSLeftMouseDown
+      return 1; // NSEventTypeLeftMouseDown
     case "linux":
       return 4; // GDK_BUTTON_PRESS
     case "android":
@@ -178,7 +178,7 @@ function _EU_nativeMouseUpEventMsg() {
     case "windows":
       return 4; // MOUSEEVENTF_LEFTUP
     case "mac":
-      return 2; // NSLeftMouseUp
+      return 2; // NSEventTypeLeftMouseUp
     case "linux":
       return 7; // GDK_BUTTON_RELEASE
     case "android":
@@ -211,7 +211,7 @@ function computeButton(aEvent) {
   return aEvent.type == "contextmenu" ? 2 : 0;
 }
 
-function sendMouseEvent(aEvent, aTarget, aWindow) {
+async function sendMouseEvent(aEvent, aTarget, aWindow) {
   if (
     ![
       "click",
@@ -234,6 +234,10 @@ function sendMouseEvent(aEvent, aTarget, aWindow) {
 
   if (typeof aTarget == "string") {
     aTarget = aWindow.document.getElementById(aTarget);
+  }
+
+  if (aEvent.type === "click" && this.AccessibilityUtils) {
+    await this.AccessibilityUtils.assertCanBeClicked(aTarget);
   }
 
   var event = aWindow.document.createEvent("MouseEvent");

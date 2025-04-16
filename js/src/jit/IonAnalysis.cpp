@@ -362,6 +362,7 @@ static void ConvertToBailingBlock(TempAllocator& alloc, MBasicBlock* block) {
 }
 
 bool jit::PruneUnusedBranches(MIRGenerator* mir, MIRGraph& graph) {
+  JitSpew(JitSpew_Prune, "Begin");
   MOZ_ASSERT(!mir->compilingWasm(),
              "wasm compilation has no code coverage support.");
 
@@ -717,19 +718,6 @@ static bool BlockComputesConstant(MBasicBlock* block, MDefinition* value,
   return value->toConstant()->valueToBoolean(constBool);
 }
 
-// Find phis that are redudant:
-//
-// 1) phi(a, a)
-//     can get replaced by a
-static bool IsPhiRedudantFilter(MPhi* phi) {
-  // TODO(no-TI): clean up.
-  if (phi->operandIfRedundant()) {
-    return true;
-  }
-
-  return false;
-}
-
 // Determine whether phiBlock/testBlock simply compute a phi and perform a
 // test on it.
 static bool BlockIsSingleTest(MBasicBlock* phiBlock, MBasicBlock* testBlock,
@@ -774,15 +762,9 @@ static bool BlockIsSingleTest(MBasicBlock* phiBlock, MBasicBlock* testBlock,
 
   for (MPhiIterator iter = phiBlock->phisBegin(); iter != phiBlock->phisEnd();
        ++iter) {
-    if (*iter == phi) {
-      continue;
+    if (*iter != phi) {
+      return false;
     }
-
-    if (IsPhiRedudantFilter(*iter)) {
-      continue;
-    }
-
-    return false;
   }
 
   if (phiBlock != testBlock && !testBlock->phisEmpty()) {
@@ -797,10 +779,10 @@ static bool BlockIsSingleTest(MBasicBlock* phiBlock, MBasicBlock* testBlock,
 
 // Change block so that it ends in a goto to the specific target block.
 // existingPred is an existing predecessor of the block.
-static MOZ_MUST_USE bool UpdateGotoSuccessor(TempAllocator& alloc,
-                                             MBasicBlock* block,
-                                             MBasicBlock* target,
-                                             MBasicBlock* existingPred) {
+[[nodiscard]] static bool UpdateGotoSuccessor(TempAllocator& alloc,
+                                              MBasicBlock* block,
+                                              MBasicBlock* target,
+                                              MBasicBlock* existingPred) {
   MInstruction* ins = block->lastIns();
   MOZ_ASSERT(ins->isGoto());
   ins->toGoto()->target()->removePredecessor(block);
@@ -817,7 +799,7 @@ static MOZ_MUST_USE bool UpdateGotoSuccessor(TempAllocator& alloc,
 // or ifFalse with the same values incoming to ifTrue/ifFalse as block.
 // existingPred is not required to be a predecessor of ifTrue/ifFalse if block
 // already ends in a test going to that block on a true/false result.
-static MOZ_MUST_USE bool UpdateTestSuccessors(
+[[nodiscard]] static bool UpdateTestSuccessors(
     TempAllocator& alloc, MBasicBlock* block, MDefinition* value,
     MBasicBlock* ifTrue, MBasicBlock* ifFalse, MBasicBlock* existingPred) {
   MInstruction* ins = block->lastIns();
@@ -944,23 +926,6 @@ static bool MaybeFoldConditionBlock(MIRGraph& graph,
       phi->getOperand(phiBlock->indexForPredecessor(falseBranch));
 
   // OK, we found the desired pattern, now transform the graph.
-
-  // Patch up phis that filter their input.
-  for (MPhiIterator iter = phiBlock->phisBegin(); iter != phiBlock->phisEnd();
-       ++iter) {
-    if (*iter == phi) {
-      continue;
-    }
-
-    MOZ_ASSERT(IsPhiRedudantFilter(*iter));
-    MDefinition* redundant = (*iter)->operandIfRedundant();
-
-    if (!redundant) {
-      redundant = (*iter)->getOperand(0);
-    }
-
-    (*iter)->replaceAllUsesWith(redundant);
-  }
 
   // Remove the phi from phiBlock.
   phiBlock->discardPhi(*phiBlock->phisBegin());
@@ -1249,21 +1214,9 @@ bool js::jit::DeadIfUnused(const MDefinition* def) {
     return false;
   }
 
-  // Guard instructions by definition are live if they have no uses, however,
-  // in the OSR block we are able to eliminate these guards, as some are
-  // artificially created and superceeded by failible unboxes. If WarpBuilder
-  // is enabled we never eliminate guard instructions (we don't want to
-  // eliminate MGuardValue).
+  // Never eliminate guard instructions.
   if (def->isGuard()) {
-    if (JitOptions.warpBuilder) {
-      return false;
-    }
-    if (def->isImplicitlyUsed()) {
-      return false;
-    }
-    if (def->block() != def->block()->graph().osrBlock()) {
-      return false;
-    }
+    return false;
   }
 
   // Required to be preserved, as the type guard related to this instruction
@@ -1527,7 +1480,7 @@ class TypeAnalyzer {
     return phi;
   }
 
-  MOZ_MUST_USE bool propagateAllPhiSpecializations();
+  [[nodiscard]] bool propagateAllPhiSpecializations();
 
   bool respecialize(MPhi* phi, MIRType type);
   bool propagateSpecialization(MPhi* phi);
@@ -1545,7 +1498,7 @@ class TypeAnalyzer {
   bool tryEmitFloatOperations();
 
   bool shouldSpecializeOsrPhis() const;
-  MIRType guessPhiType(MPhi* phi, bool* hasInputsWithEmptyTypes) const;
+  MIRType guessPhiType(MPhi* phi) const;
 
  public:
   TypeAnalyzer(MIRGenerator* mir, MIRGraph& graph) : mir(mir), graph(graph) {}
@@ -1556,15 +1509,11 @@ class TypeAnalyzer {
 } /* anonymous namespace */
 
 bool TypeAnalyzer::shouldSpecializeOsrPhis() const {
-  // [SMDOC] WarpBuilder OSR Phi Type Specialization
+  // [SMDOC] OSR Phi Type Specialization
   //
-  // IonBuilder does type specialization while building MIR. This includes
-  // adding type guards and unboxing for Values flowing in from the OSR block.
-  //
-  // WarpBuilder doesn't do this. This means that without special handling for
-  // these OSR phis, we end up with unspecialized phis (MIRType::Value) in the
-  // loop (pre)header and other blocks, resulting in unnecessary boxing and
-  // unboxing in the loop body.
+  // Without special handling for OSR phis, we end up with unspecialized phis
+  // (MIRType::Value) in the loop (pre)header and other blocks, resulting in
+  // unnecessary boxing and unboxing in the loop body.
   //
   // To fix this, phi type specialization needs special code to deal with the
   // OSR entry block. Recall that OSR results in the following basic block
@@ -1610,12 +1559,11 @@ bool TypeAnalyzer::shouldSpecializeOsrPhis() const {
   //
   //     * TypeAnalyzer::replaceRedundantPhi: adds a type guard for values that
   //       can't be unboxed (null/undefined/magic Values).
-  return JitOptions.warpBuilder && !mir->outerInfo().hadSpeculativePhiBailout();
+  return !mir->outerInfo().hadSpeculativePhiBailout();
 }
 
 // Try to specialize this phi based on its non-cyclic inputs.
-MIRType TypeAnalyzer::guessPhiType(MPhi* phi,
-                                   bool* hasInputsWithEmptyTypes) const {
+MIRType TypeAnalyzer::guessPhiType(MPhi* phi) const {
 #ifdef DEBUG
   // Check that different magic constants aren't flowing together. Ignore
   // JS_OPTIMIZED_OUT, since an operand could be legitimately optimized
@@ -1634,11 +1582,9 @@ MIRType TypeAnalyzer::guessPhiType(MPhi* phi,
   }
 #endif
 
-  *hasInputsWithEmptyTypes = false;
-
   MIRType type = MIRType::None;
   bool convertibleToFloat32 = false;
-  bool hasPhiInputs = false;
+  DebugOnly<bool> hasPhiInputs = false;
   for (size_t i = 0, e = phi->numOperands(); i < e; i++) {
     MDefinition* in = phi->getOperand(i);
     if (in->isPhi()) {
@@ -1653,8 +1599,6 @@ MIRType TypeAnalyzer::guessPhiType(MPhi* phi,
         continue;
       }
     }
-
-    // TODO(no-TI): remove hasInputsWithEmptyTypes.
 
     // See shouldSpecializeOsrPhis comment. This is the first step mentioned
     // there.
@@ -1695,12 +1639,7 @@ MIRType TypeAnalyzer::guessPhiType(MPhi* phi,
     }
   }
 
-  if (type == MIRType::None && !hasPhiInputs) {
-    // All inputs are non-phis with empty typesets. Use MIRType::Value
-    // in this case, as it's impossible to get better type information.
-    MOZ_ASSERT(*hasInputsWithEmptyTypes);
-    type = MIRType::Value;
-  }
+  MOZ_ASSERT_IF(type == MIRType::None, hasPhiInputs);
 
   return type;
 }
@@ -1782,8 +1721,6 @@ bool TypeAnalyzer::propagateAllPhiSpecializations() {
 }
 
 bool TypeAnalyzer::specializePhis() {
-  Vector<MPhi*, 0, SystemAllocPolicy> phisWithEmptyInputTypes;
-
   for (PostorderIterator block(graph.poBegin()); block != graph.poEnd();
        block++) {
     if (mir->shouldCancel("Specialize Phis (main loop)")) {
@@ -1795,22 +1732,13 @@ bool TypeAnalyzer::specializePhis() {
         return false;
       }
 
-      bool hasInputsWithEmptyTypes;
-      MIRType type = guessPhiType(*phi, &hasInputsWithEmptyTypes);
+      MIRType type = guessPhiType(*phi);
       phi->specialize(type);
       if (type == MIRType::None) {
         // We tried to guess the type but failed because all operands are
         // phis we still have to visit. Set the triedToSpecialize flag but
         // don't propagate the type to other phis, propagateSpecialization
         // will do that once we know the type of one of the operands.
-
-        // Edge case: when this phi has a non-phi input with an empty
-        // typeset, it's possible for two phis to have a cyclic
-        // dependency and they will both have MIRType::None. Specialize
-        // such phis to MIRType::Value later on.
-        if (hasInputsWithEmptyTypes && !phisWithEmptyInputTypes.append(*phi)) {
-          return false;
-        }
         continue;
       }
       if (!propagateSpecialization(*phi)) {
@@ -1819,28 +1747,9 @@ bool TypeAnalyzer::specializePhis() {
     }
   }
 
-  do {
-    if (!propagateAllPhiSpecializations()) {
-      return false;
-    }
-
-    // When two phis have a cyclic dependency and inputs that have an empty
-    // typeset (which are ignored by guessPhiType), we may still have to
-    // specialize these to MIRType::Value.
-    while (!phisWithEmptyInputTypes.empty()) {
-      if (mir->shouldCancel("Specialize Phis (phisWithEmptyInputTypes)")) {
-        return false;
-      }
-
-      MPhi* phi = phisWithEmptyInputTypes.popCopy();
-      if (phi->type() == MIRType::None) {
-        phi->specialize(MIRType::Value);
-        if (!propagateSpecialization(phi)) {
-          return false;
-        }
-      }
-    }
-  } while (!phiWorklist_.empty());
+  if (!propagateAllPhiSpecializations()) {
+    return false;
+  }
 
   if (shouldSpecializeOsrPhis() && graph.osrBlock()) {
     // See shouldSpecializeOsrPhis comment. This is the second step, propagating
@@ -2453,7 +2362,7 @@ bool jit::RemoveUnmarkedBlocks(MIRGenerator* mir, MIRGraph& graph,
       for (size_t i = 0, e = block->numSuccessors(); i != e; ++i) {
         block->getSuccessor(i)->removePredecessor(block);
       }
-      graph.removeBlockIncludingPhis(block);
+      graph.removeBlock(block);
     }
   }
 
@@ -3036,7 +2945,6 @@ static bool IsResumableMIRType(MIRType type) {
       return true;
 
     case MIRType::MagicHole:
-    case MIRType::ObjectOrNull:
     case MIRType::None:
     case MIRType::Slots:
     case MIRType::Elements:
@@ -3251,13 +3159,13 @@ static MathSpace ExtractMathSpace(MDefinition* ins) {
     arith = ins->toSub();
   }
   switch (arith->truncateKind()) {
-    case MDefinition::NoTruncate:
-    case MDefinition::TruncateAfterBailouts:
+    case TruncateKind::NoTruncate:
+    case TruncateKind::TruncateAfterBailouts:
       // TruncateAfterBailouts is considered as infinite space because the
       // LinearSum will effectively remove the bailout check.
       return MathSpace::Infinite;
-    case MDefinition::IndirectTruncate:
-    case MDefinition::Truncate:
+    case TruncateKind::IndirectTruncate:
+    case TruncateKind::Truncate:
       return MathSpace::Modulo;
   }
   MOZ_MAKE_COMPILER_ASSUME_IS_UNREACHABLE("Unknown TruncateKind");
@@ -3487,20 +3395,7 @@ static bool TryEliminateBoundsCheck(BoundsCheckMap& checks, size_t blockIndex,
   return true;
 }
 
-static bool TryOptimizeLoadObjectOrNull(MDefinition* def,
-                                        MDefinitionVector* peliminateList) {
-  if (def->type() != MIRType::Value) {
-    return true;
-  }
-
-  // TODO(no-TI): remove more code.
-  return true;
-}
-
 // Eliminate checks which are redundant given each other or other instructions.
-//
-// A type barrier is considered redundant if all missing types have been tested
-// for by earlier control instructions.
 //
 // A bounds check is considered redundant if it's dominated by another bounds
 // check with the same length and the indexes differ by only a constant amount.
@@ -3545,23 +3440,14 @@ bool jit::EliminateRedundantChecks(MIRGraph& graph) {
     for (MDefinitionIterator iter(block); iter;) {
       MDefinition* def = *iter++;
 
-      bool eliminated = false;
+      if (!def->isBoundsCheck()) {
+        continue;
+      }
 
-      switch (def->op()) {
-        case MDefinition::Opcode::BoundsCheck:
-          if (!TryEliminateBoundsCheck(checks, index, def->toBoundsCheck(),
-                                       &eliminated)) {
-            return false;
-          }
-          break;
-        case MDefinition::Opcode::LoadFixedSlot:
-        case MDefinition::Opcode::LoadDynamicSlot:
-          if (!TryOptimizeLoadObjectOrNull(def, &eliminateList)) {
-            return false;
-          }
-          break;
-        default:
-          break;
+      bool eliminated = false;
+      if (!TryEliminateBoundsCheck(checks, index, def->toBoundsCheck(),
+                                   &eliminated)) {
+        return false;
       }
 
       if (eliminated) {
@@ -3640,8 +3526,6 @@ bool jit::AddKeepAliveInstructions(MIRGraph& graph) {
 
       MDefinition* ownerObject;
       switch (ins->op()) {
-        case MDefinition::Opcode::ConstantElements:
-          continue;
         case MDefinition::Opcode::Elements:
         case MDefinition::Opcode::ArrayBufferViewElements:
           MOZ_ASSERT(ins->numOperands() == 1);
@@ -3672,14 +3556,6 @@ bool jit::AddKeepAliveInstructions(MIRGraph& graph) {
           MOZ_ASSERT_IF(!use->toStoreElementHole()->object()->isUnbox() &&
                             !ownerObject->isUnbox(),
                         use->toStoreElementHole()->object() == ownerObject);
-          continue;
-        }
-
-        if (use->isFallibleStoreElement()) {
-          // See StoreElementHole case above.
-          MOZ_ASSERT_IF(!use->toFallibleStoreElement()->object()->isUnbox() &&
-                            !ownerObject->isUnbox(),
-                        use->toFallibleStoreElement()->object() == ownerObject);
           continue;
         }
 
@@ -4290,32 +4166,26 @@ bool jit::FoldLoadsWithUnbox(MIRGenerator* mir, MIRGraph& graph) {
 
       MIRType type = unbox->type();
       MUnbox::Mode mode = unbox->mode();
-      BailoutKind bailoutKind = unbox->bailoutKind();
 
       MInstruction* replacement;
       switch (load->op()) {
         case MDefinition::Opcode::LoadFixedSlot: {
           auto* loadIns = load->toLoadFixedSlot();
           replacement = MLoadFixedSlotAndUnbox::New(
-              graph.alloc(), loadIns->object(), loadIns->slot(), mode, type,
-              bailoutKind);
+              graph.alloc(), loadIns->object(), loadIns->slot(), mode, type);
           break;
         }
         case MDefinition::Opcode::LoadDynamicSlot: {
           auto* loadIns = load->toLoadDynamicSlot();
           replacement = MLoadDynamicSlotAndUnbox::New(
-              graph.alloc(), loadIns->slots(), loadIns->slot(), mode, type,
-              bailoutKind);
+              graph.alloc(), loadIns->slots(), loadIns->slot(), mode, type);
           break;
         }
         case MDefinition::Opcode::LoadElement: {
           auto* loadIns = load->toLoadElement();
-          MOZ_ASSERT(!loadIns->loadDoubles(),
-                     "Unexpected loadDoubles with MIRType::Value");
           MOZ_ASSERT_IF(loadIns->needsHoleCheck(), unbox->fallible());
           replacement = MLoadElementAndUnbox::New(
-              graph.alloc(), loadIns->elements(), loadIns->index(), mode, type,
-              bailoutKind);
+              graph.alloc(), loadIns->elements(), loadIns->index(), mode, type);
           break;
         }
         default:
@@ -4417,29 +4287,6 @@ bool jit::MakeLoopsContiguous(MIRGraph& graph) {
   return true;
 }
 
-MRootList::MRootList(TempAllocator& alloc) {
-#define INIT_VECTOR(name, _0, _1, _2) roots_[JS::RootKind::name].emplace(alloc);
-  JS_FOR_EACH_TRACEKIND(INIT_VECTOR)
-#undef INIT_VECTOR
-}
-
-template <typename T>
-static void TraceVector(JSTracer* trc, const MRootList::RootVector& vector,
-                        const char* name) {
-  for (auto ptr : vector) {
-    T ptrT = static_cast<T>(ptr);
-    TraceManuallyBarrieredEdge(trc, &ptrT, name);
-    MOZ_ASSERT(ptr == ptrT, "Shouldn't move without updating MIR pointers");
-  }
-}
-
-void MRootList::trace(JSTracer* trc) {
-#define TRACE_ROOTS(name, type, _, _1) \
-  TraceVector<type*>(trc, *roots_[JS::RootKind::name], "mir-root-" #name);
-  JS_FOR_EACH_TRACEKIND(TRACE_ROOTS)
-#undef TRACE_ROOTS
-}
-
 #ifdef JS_JITSPEW
 static void DumpDefinition(GenericPrinter& out, MDefinition* def,
                            size_t depth) {
@@ -4473,10 +4320,17 @@ void jit::DumpMIRExpressions(MIRGraph& graph, const CompileInfo& info,
   out.printf("===== %s =====\n", phase);
 
   size_t depth = 2;
+  bool isFirstBlock = true;
   for (ReversePostorderIterator block(graph.rpoBegin());
        block != graph.rpoEnd(); block++) {
+    if (isFirstBlock) {
+      isFirstBlock = false;
+    } else {
+      out.printf("  --\n");
+    }
     for (MInstructionIterator iter(block->begin()), end(block->end());
          iter != end; iter++) {
+      out.printf("  ");
       DumpDefinition(out, *iter, depth);
       out.printf("\n");
     }

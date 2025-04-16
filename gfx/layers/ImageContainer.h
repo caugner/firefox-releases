@@ -49,6 +49,7 @@ class ImageContainer;
 class ImageContainerChild;
 class SharedPlanarYCbCrImage;
 class SharedSurfacesAnimation;
+class SurfaceDescriptor;
 class PlanarYCbCrImage;
 class TextureClient;
 class TextureClientRecycleAllocator;
@@ -144,7 +145,12 @@ class Image {
 
   virtual NVImage* AsNVImage() { return nullptr; }
 
+  virtual Maybe<SurfaceDescriptor> GetDesc();
+
  protected:
+  Maybe<SurfaceDescriptor> GetDescFromTexClient(
+      TextureClient* tcOverride = nullptr);
+
   Image(void* aImplData, ImageFormat aFormat)
       : mImplData(aImplData), mSerial(++sSerialCounter), mFormat(aFormat) {}
 
@@ -661,6 +667,16 @@ struct PlanarYCbCrData {
   gfx::IntRect GetPictureRect() const {
     return gfx::IntRect(mPicX, mPicY, mPicSize.width, mPicSize.height);
   }
+};
+
+// This type is currently only used for AVIF and therefore makes some
+// AVIF-specific assumptions (e.g., Alpha's bpc and stride is equal to Y's one)
+struct PlanarYCbCrAData : PlanarYCbCrData {
+  uint8_t* mAlphaChannel = nullptr;
+  gfx::IntSize mAlphaSize = gfx::IntSize(0, 0);
+  bool mPremultipliedAlpha = false;
+
+  bool hasAlpha() { return mAlphaChannel; }
 };
 
 /****** Image subtypes for the different formats ******/

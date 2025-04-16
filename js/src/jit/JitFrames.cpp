@@ -422,7 +422,7 @@ static bool ProcessTryNotesBaseline(JSContext* cx, const JSJitFrameIter& frame,
         BaselineFrameAndStackPointersFromTryNote(tn, frame, &framePointer,
                                                  &stackPointer);
         // Note: if this ever changes, also update the
-        // TryNoteKind::Destructuring code in IonBuilder.cpp!
+        // TryNoteKind::Destructuring code in WarpBuilder.cpp!
         RootedValue doneValue(cx, *(reinterpret_cast<Value*>(stackPointer)));
         MOZ_RELEASE_ASSERT(!doneValue.isMagic());
         bool done = ToBoolean(doneValue);
@@ -1009,10 +1009,10 @@ static void TraceBaselineStubFrame(JSTracer* trc, const JSJitFrameIter& frame) {
   JitStubFrameLayout* layout = (JitStubFrameLayout*)frame.fp();
 
   if (ICStub* stub = layout->maybeStubPtr()) {
-    MOZ_ASSERT(stub->makesGCCalls());
     if (stub->isFallback()) {
       stub->toFallbackStub()->trace(trc);
     } else {
+      MOZ_ASSERT(stub->toCacheIRStub()->makesGCCalls());
       stub->toCacheIRStub()->trace(trc);
     }
   }
@@ -1502,9 +1502,8 @@ uintptr_t SnapshotIterator::fromStack(int32_t offset) const {
 }
 
 static Value FromObjectPayload(uintptr_t payload) {
-  // Note: Both MIRType::Object and MIRType::ObjectOrNull are encoded in
-  // snapshots using JSVAL_TYPE_OBJECT.
-  return ObjectOrNullValue(reinterpret_cast<JSObject*>(payload));
+  MOZ_ASSERT(payload != 0);
+  return ObjectValue(*reinterpret_cast<JSObject*>(payload));
 }
 
 static Value FromStringPayload(uintptr_t payload) {

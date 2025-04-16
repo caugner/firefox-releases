@@ -17,8 +17,6 @@ use crate::internal_types::FastHashMap;
 use crate::resource_cache::CachedImageData;
 use crate::texture_cache::{TextureCache, TextureCacheHandle, Eviction, TargetShader};
 use crate::gpu_cache::GpuCache;
-use crate::render_task_graph::RenderTaskGraph;
-use crate::render_task_cache::RenderTaskCache;
 use crate::profiler::{self, TransactionProfile};
 use malloc_size_of::{MallocSizeOf, MallocSizeOfOps};
 use rayon::ThreadPool;
@@ -68,8 +66,6 @@ impl GlyphRasterizer {
         glyph_keys: &[GlyphKey],
         texture_cache: &mut TextureCache,
         gpu_cache: &mut GpuCache,
-        _: &mut RenderTaskCache,
-        _: &mut RenderTaskGraph,
     ) {
         assert!(
             self.font_contexts
@@ -185,6 +181,16 @@ impl GlyphRasterizer {
 
                 // Check if the glyph has a bitmap that needs to be downscaled.
                 glyph.downscale_bitmap_if_required(&font);
+
+                // Convert from BGRA8 to R8 if required. In the future we can make it the
+                // backends' responsibility to output glyphs in the desired format,
+                // potentially reducing the number of copies.
+                if glyph.format.image_format().bytes_per_pixel() == 1 {
+                    glyph.bytes = glyph.bytes
+                        .chunks_mut(4)
+                        .map(|pixel| pixel[3])
+                        .collect::<Vec<_>>();
+                }
             }
 
             job
@@ -287,7 +293,7 @@ impl GlyphRasterizer {
                             ImageDescriptor {
                                 size: size2(glyph.width, glyph.height),
                                 stride: None,
-                                format: FORMAT,
+                                format: glyph.format.image_format(),
                                 flags: ImageDescriptorFlags::empty(),
                                 offset: 0,
                             },
@@ -318,9 +324,6 @@ impl GlyphRasterizer {
         profile.end_time(profiler::GLYPH_RESOLVE_TIME);
     }
 }
-
-#[allow(dead_code)]
-pub const FORMAT: ImageFormat = ImageFormat::BGRA8;
 
 #[derive(Clone, Copy, Debug, MallocSizeOf, PartialEq, PartialOrd)]
 #[cfg_attr(feature = "capture", derive(Serialize))]
@@ -760,6 +763,15 @@ impl GlyphFormat {
             _ => self,
         }
     }
+
+    /// Returns the ImageFormat that a glyph should be stored as in the texture cache.
+    pub fn image_format(&self) -> ImageFormat {
+        // GlyphFormat::Alpha and GlyphFormat::TransformedAlpha should be stored in an R8
+        // texture, but we ran in to some rendering issues on various platforms after doing so.
+        // So keep using BGRA8 for all glyph formats until those are solved.
+        // See bug 1687554.
+        ImageFormat::BGRA8
+    }
 }
 
 pub struct RasterizedGlyph {
@@ -1123,6 +1135,8 @@ struct GlyphRasterJobs {
 
 #[cfg(test)]
 mod test_glyph_rasterizer {
+    pub const FORMAT: api::ImageFormat = api::ImageFormat::BGRA8;
+
     #[test]
     fn rasterize_200_glyphs() {
         // This test loads a font from disc, the renders 4 requests containing
@@ -1134,15 +1148,12 @@ mod test_glyph_rasterizer {
         use crate::texture_cache::TextureCache;
         use crate::glyph_cache::GlyphCache;
         use crate::gpu_cache::GpuCache;
-        use crate::render_task_cache::RenderTaskCache;
-        use crate::render_task_graph::{RenderTaskGraph, RenderTaskGraphCounters};
         use crate::profiler::TransactionProfile;
         use api::{FontKey, FontInstanceKey, FontSize, FontTemplate, FontRenderMode,
                   IdNamespace, ColorU};
         use api::units::DevicePoint;
-        use crate::render_backend::FrameId;
         use std::sync::Arc;
-        use crate::glyph_rasterizer::{FORMAT, FontInstance, BaseFontInstance, GlyphKey, GlyphRasterizer};
+        use crate::glyph_rasterizer::{FontInstance, BaseFontInstance, GlyphKey, GlyphRasterizer};
 
         let worker = ThreadPoolBuilder::new()
             .thread_name(|idx|{ format!("WRWorker#{}", idx) })
@@ -1152,8 +1163,6 @@ mod test_glyph_rasterizer {
         let mut glyph_cache = GlyphCache::new();
         let mut gpu_cache = GpuCache::new_for_testing();
         let mut texture_cache = TextureCache::new_for_testing(2048, FORMAT);
-        let mut render_task_cache = RenderTaskCache::new();
-        let mut render_task_tree = RenderTaskGraph::new(FrameId::INVALID, &RenderTaskGraphCounters::new());
         let mut font_file =
             File::open("../wrench/reftests/text/VeraBd.ttf").expect("Couldn't open font file");
         let mut font_data = vec![];
@@ -1194,8 +1203,6 @@ mod test_glyph_rasterizer {
                 &glyph_keys[(50 * i) .. (50 * (i + 1))],
                 &mut texture_cache,
                 &mut gpu_cache,
-                &mut render_task_cache,
-                &mut render_task_tree,
             );
         }
 
@@ -1219,15 +1226,12 @@ mod test_glyph_rasterizer {
         use crate::texture_cache::TextureCache;
         use crate::glyph_cache::GlyphCache;
         use crate::gpu_cache::GpuCache;
-        use crate::render_task_cache::RenderTaskCache;
-        use crate::render_task_graph::{RenderTaskGraph, RenderTaskGraphCounters};
         use crate::profiler::TransactionProfile;
         use api::{FontKey, FontInstanceKey, FontSize, FontTemplate, FontRenderMode,
                   IdNamespace, ColorU};
         use api::units::DevicePoint;
-        use crate::render_backend::FrameId;
         use std::sync::Arc;
-        use crate::glyph_rasterizer::{FORMAT, FontInstance, BaseFontInstance, GlyphKey, GlyphRasterizer};
+        use crate::glyph_rasterizer::{FontInstance, BaseFontInstance, GlyphKey, GlyphRasterizer};
 
         let worker = ThreadPoolBuilder::new()
             .thread_name(|idx|{ format!("WRWorker#{}", idx) })
@@ -1237,8 +1241,6 @@ mod test_glyph_rasterizer {
         let mut glyph_cache = GlyphCache::new();
         let mut gpu_cache = GpuCache::new_for_testing();
         let mut texture_cache = TextureCache::new_for_testing(2048, FORMAT);
-        let mut render_task_cache = RenderTaskCache::new();
-        let mut render_task_tree = RenderTaskGraph::new(FrameId::INVALID, &RenderTaskGraphCounters::new());
         let mut font_file =
             File::open("../wrench/reftests/text/VeraBd.ttf").expect("Couldn't open font file");
         let mut font_data = vec![];
@@ -1278,8 +1280,6 @@ mod test_glyph_rasterizer {
             &glyph_keys,
             &mut texture_cache,
             &mut gpu_cache,
-            &mut render_task_cache,
-            &mut render_task_tree,
         );
 
         glyph_rasterizer.delete_font(font_key);

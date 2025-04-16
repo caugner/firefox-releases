@@ -4,12 +4,14 @@
 
 #include "gtest/gtest.h"
 #include "mozilla/glean/GleanMetrics.h"
+#include "mozilla/glean/GleanPings.h"
 #include "mozilla/glean/fog_ffi_generated.h"
 #include "mozilla/Maybe.h"
 #include "mozilla/Tuple.h"
 #include "nsTArray.h"
 
 #include "mozilla/Preferences.h"
+#include "mozilla/Unused.h"
 #include "nsString.h"
 #include "prtime.h"
 
@@ -61,6 +63,8 @@ TEST(FOG, TestCppCounterWorks)
   ASSERT_EQ(
       42,
       mozilla::glean::test_only::bad_code.TestGetValue("test-ping"_ns).value());
+  // And test that the ping name's optional, while you're at it:
+  ASSERT_EQ(42, test_only::bad_code.TestGetValue().value());
 }
 
 TEST(FOG, TestCppStringWorks)
@@ -136,4 +140,81 @@ TEST(FOG, TestCppEventWorks)
 
   test_only_ipc::an_event.Record(std::move(extra));
   ASSERT_TRUE(test_only_ipc::an_event.TestGetValue("store1"_ns).isSome());
+}
+
+TEST(FOG, TestCppMemoryDistWorks)
+{
+  test_only::do_you_remember.Accumulate(7);
+  test_only::do_you_remember.Accumulate(17);
+
+  DistributionData data =
+      test_only::do_you_remember.TestGetValue("test-ping"_ns).ref();
+  // Sum is in bytes, test_only::do_you_remember is in megabytes. So
+  // multiplication ahoy!
+  ASSERT_EQ(data.sum, 24UL * 1024 * 1024);
+  for (auto iter = data.values.Iter(); !iter.Done(); iter.Next()) {
+    const uint64_t bucket = iter.Key();
+    const uint64_t count = iter.UserData();
+    ASSERT_TRUE(count == 0 ||
+                (count == 1 && (bucket == 17520006 || bucket == 7053950)))
+    << "Only two occupied buckets";
+  }
+}
+
+TEST(FOG, TestCppPings)
+{
+  auto ping = mozilla::glean_pings::OnePingOnly;
+  mozilla::Unused << ping;
+  // That's it. That's the test. It will fail to compile if it's missing.
+  // For a test that actually submits the ping, we have integration tests.
+  // See also bug 1681742.
+}
+
+TEST(FOG, TestCppStringLists)
+{
+  auto kValue = "cheez!"_ns;
+  auto kValue2 = "cheezier!"_ns;
+  auto kValue3 = "cheeziest."_ns;
+
+  nsTArray<nsCString> cheezList;
+  cheezList.EmplaceBack(kValue);
+  cheezList.EmplaceBack(kValue2);
+
+  test_only::cheesy_string_list.Set(cheezList);
+
+  auto val = test_only::cheesy_string_list.TestGetValue().value();
+  // Note: This is fragile if the order is ever not preserved.
+  ASSERT_STREQ(kValue.get(), val[0].get());
+  ASSERT_STREQ(kValue2.get(), val[1].get());
+
+  test_only::cheesy_string_list.Add(kValue3);
+
+  val = test_only::cheesy_string_list.TestGetValue().value();
+  ASSERT_STREQ(kValue3.get(), val[2].get());
+}
+
+TEST(FOG, TestCppTimingDistWorks)
+{
+  auto id1 = test_only::what_time_is_it.Start();
+  auto id2 = test_only::what_time_is_it.Start();
+  PR_Sleep(PR_MillisecondsToInterval(5));
+  auto id3 = test_only::what_time_is_it.Start();
+  test_only::what_time_is_it.Cancel(std::move(id1));
+  PR_Sleep(PR_MillisecondsToInterval(5));
+  test_only::what_time_is_it.StopAndAccumulate(std::move(id2));
+  test_only::what_time_is_it.StopAndAccumulate(std::move(id3));
+
+  DistributionData data = test_only::what_time_is_it.TestGetValue().ref();
+  const uint64_t NANOS_IN_MILLIS = 1e6;
+
+  // We don't know exactly how long those sleeps took, only that it was at
+  // least 15ms total.
+  ASSERT_GT(data.sum, (uint64_t)(15 * NANOS_IN_MILLIS));
+
+  // We also can't guarantee the buckets, but we can guarantee two samples.
+  uint64_t sampleCount = 0;
+  for (auto iter = data.values.Iter(); !iter.Done(); iter.Next()) {
+    sampleCount += iter.UserData();
+  }
+  ASSERT_EQ(sampleCount, (uint64_t)2);
 }

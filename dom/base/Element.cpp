@@ -1639,7 +1639,7 @@ void Element::GetElementsWithGrid(nsTArray<RefPtr<Element>>& aElements) {
 
 bool Element::HasVisibleScrollbars() {
   nsIScrollableFrame* scrollFrame = GetScrollFrame();
-  return scrollFrame && scrollFrame->GetScrollbarVisibility();
+  return scrollFrame && (!scrollFrame->GetScrollbarVisibility().isEmpty());
 }
 
 nsresult Element::BindToTree(BindContext& aContext, nsINode& aParent) {
@@ -3170,10 +3170,34 @@ nsresult Element::CopyInnerTo(Element* aDst, ReparseAttributes aReparse) {
     }
   }
 
+  dom::NodeInfo* dstNodeInfo = aDst->NodeInfo();
+  if (CustomElementData* data = GetCustomElementData()) {
+    // The cloned node may be a custom element that may require
+    // enqueing upgrade reaction.
+    if (nsAtom* typeAtom = data->GetCustomElementType()) {
+      aDst->SetCustomElementData(new CustomElementData(typeAtom));
+      MOZ_ASSERT(dstNodeInfo->NameAtom()->Equals(dstNodeInfo->LocalName()));
+      CustomElementDefinition* definition =
+          nsContentUtils::LookupCustomElementDefinition(
+              dstNodeInfo->GetDocument(), dstNodeInfo->NameAtom(),
+              dstNodeInfo->NamespaceID(), typeAtom);
+      if (definition) {
+        nsContentUtils::EnqueueUpgradeReaction(aDst, definition);
+      }
+    }
+  }
+
+  if (dstNodeInfo->GetDocument()->IsStaticDocument()) {
+    // Propagate :defined state to the static clone.
+    if (State().HasState(NS_EVENT_STATE_DEFINED)) {
+      aDst->SetDefined(true);
+    }
+  }
+
   return NS_OK;
 }
 
-Element* Element::Closest(const nsAString& aSelector, ErrorResult& aResult) {
+Element* Element::Closest(const nsACString& aSelector, ErrorResult& aResult) {
   const RawServoSelectorList* list = ParseSelectorList(aSelector, aResult);
   if (!list) {
     return nullptr;
@@ -3182,11 +3206,12 @@ Element* Element::Closest(const nsAString& aSelector, ErrorResult& aResult) {
   return const_cast<Element*>(Servo_SelectorList_Closest(this, list));
 }
 
-bool Element::Matches(const nsAString& aSelector, ErrorResult& aResult) {
+bool Element::Matches(const nsACString& aSelector, ErrorResult& aResult) {
   const RawServoSelectorList* list = ParseSelectorList(aSelector, aResult);
   if (!list) {
     return false;
   }
+
   return Servo_SelectorList_Matches(this, list);
 }
 
@@ -4120,6 +4145,17 @@ already_AddRefed<nsIAutoCompletePopup> Element::AsAutoCompletePopup() {
   nsCOMPtr<nsIAutoCompletePopup> value;
   GetCustomInterface(getter_AddRefs(value));
   return value.forget();
+}
+
+nsPresContext* Element::GetPresContext(PresContextFor aFor) {
+  // Get the document
+  Document* doc =
+      (aFor == eForComposedDoc) ? GetComposedDoc() : GetUncomposedDoc();
+  if (doc) {
+    return doc->GetPresContext();
+  }
+
+  return nullptr;
 }
 
 MOZ_DEFINE_MALLOC_SIZE_OF(ServoElementMallocSizeOf)

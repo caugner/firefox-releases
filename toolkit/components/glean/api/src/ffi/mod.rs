@@ -4,7 +4,10 @@
 
 #![cfg(feature = "with_gecko")]
 
-use {nsstring::nsACString, uuid::Uuid};
+use crate::pings;
+use nsstring::{nsACString, nsCString};
+use thin_vec::ThinVec;
+use uuid::Uuid;
 
 #[macro_use]
 mod macros;
@@ -89,6 +92,38 @@ pub extern "C" fn fog_string_set(id: u32, value: &nsACString) {
     metric.set(value.to_utf8());
 }
 
+// String List Functions:
+
+#[no_mangle]
+pub extern "C" fn fog_string_list_test_has_value(id: u32, storage_name: &nsACString) -> bool {
+    test_has!(STRING_LIST_MAP, id, storage_name)
+}
+
+#[no_mangle]
+pub extern "C" fn fog_string_list_test_get_value(
+    id: u32,
+    storage_name: &nsACString,
+    value: &mut ThinVec<nsCString>,
+) {
+    let val = test_get!(STRING_LIST_MAP, id, storage_name);
+    for v in val {
+        value.push(v.into());
+    }
+}
+
+#[no_mangle]
+pub extern "C" fn fog_string_list_add(id: u32, value: &nsACString) {
+    let metric = metric_get!(STRING_LIST_MAP, id);
+    metric.add(value.to_utf8());
+}
+
+#[no_mangle]
+pub extern "C" fn fog_string_list_set(id: u32, value: &ThinVec<nsCString>) {
+    let metric = metric_get!(STRING_LIST_MAP, id);
+    let value = value.iter().map(|s| s.to_utf8().into()).collect();
+    metric.set(value);
+}
+
 // The Uuid functions are custom because test_get needs to use an outparam.
 // If we can make test_get optional, we can go back to using the macro to
 // generate the rest of the functions, or something.
@@ -134,7 +169,7 @@ pub extern "C" fn fog_datetime_test_get_value(
     value: &mut nsACString,
 ) {
     let val = test_get!(DATETIME_MAP, id, storage_name);
-    value.assign(&val);
+    value.assign(&val.to_rfc3339());
 }
 
 #[no_mangle]
@@ -151,4 +186,83 @@ pub extern "C" fn fog_datetime_set(
 ) {
     let metric = metric_get!(DATETIME_MAP, id);
     metric.set_with_details(year, month, day, hour, minute, second, nano, offset_seconds);
+}
+
+#[no_mangle]
+pub extern "C" fn fog_memory_distribution_test_has_value(
+    id: u32,
+    storage_name: &nsACString,
+) -> bool {
+    test_has!(MEMORY_DISTRIBUTION_MAP, id, storage_name)
+}
+
+#[no_mangle]
+pub extern "C" fn fog_memory_distribution_test_get_value(
+    id: u32,
+    storage_name: &nsACString,
+    sum: &mut u64,
+    buckets: &mut ThinVec<u64>,
+    counts: &mut ThinVec<u64>,
+) {
+    let val = test_get!(MEMORY_DISTRIBUTION_MAP, id, storage_name);
+    *sum = val.sum;
+    for (&bucket, &count) in val.values.iter() {
+        buckets.push(bucket);
+        counts.push(count);
+    }
+}
+
+#[no_mangle]
+pub extern "C" fn fog_memory_distribution_accumulate(id: u32, sample: u64) {
+    let metric = metric_get!(MEMORY_DISTRIBUTION_MAP, id);
+    metric.accumulate(sample);
+}
+
+#[no_mangle]
+pub extern "C" fn fog_submit_ping_by_id(id: u32, reason: &nsACString) {
+    let reason = if reason.is_empty() {
+        None
+    } else {
+        Some(reason.to_utf8())
+    };
+    pings::submit_ping_by_id(id, reason.as_deref());
+}
+
+#[no_mangle]
+pub extern "C" fn fog_timing_distribution_start(id: u32) -> u64 {
+    let metric = metric_get!(TIMING_DISTRIBUTION_MAP, id);
+    metric.start()
+}
+
+#[no_mangle]
+pub extern "C" fn fog_timing_distribution_stop_and_accumulate(id: u32, timing_id: u64) {
+    let metric = metric_get!(TIMING_DISTRIBUTION_MAP, id);
+    metric.stop_and_accumulate(timing_id);
+}
+
+#[no_mangle]
+pub extern "C" fn fog_timing_distribution_cancel(id: u32, timing_id: u64) {
+    let metric = metric_get!(TIMING_DISTRIBUTION_MAP, id);
+    metric.cancel(timing_id);
+}
+
+#[no_mangle]
+pub extern "C" fn fog_timing_distribution_test_has_value(id: u32, ping_name: &nsACString) -> bool {
+    test_has!(TIMING_DISTRIBUTION_MAP, id, ping_name)
+}
+
+#[no_mangle]
+pub extern "C" fn fog_timing_distribution_test_get_value(
+    id: u32,
+    ping_name: &nsACString,
+    sum: &mut u64,
+    buckets: &mut ThinVec<u64>,
+    counts: &mut ThinVec<u64>,
+) {
+    let val = test_get!(TIMING_DISTRIBUTION_MAP, id, ping_name);
+    *sum = val.sum;
+    for (&bucket, &count) in val.values.iter() {
+        buckets.push(bucket);
+        counts.push(count);
+    }
 }

@@ -663,7 +663,7 @@ class FunctionCompiler {
     if (inDeadCode()) {
       return nullptr;
     }
-    auto* ins = MCompare::New(alloc(), lhs, rhs, op, type);
+    auto* ins = MCompare::NewWasm(alloc(), lhs, rhs, op, type);
     curBlock_->add(ins);
     return ins;
   }
@@ -1705,7 +1705,7 @@ class FunctionCompiler {
   }
 
  public:
-  MOZ_MUST_USE bool pushDefs(const DefVector& defs) {
+  [[nodiscard]] bool pushDefs(const DefVector& defs) {
     if (inDeadCode()) {
       return true;
     }
@@ -4324,6 +4324,34 @@ static bool EmitShuffleSimd128(FunctionCompiler& f) {
     return false;
   }
 
+#  ifdef ENABLE_WASM_SIMD_WORMHOLE
+  static const uint8_t trigger[] = {31, 0, 30, 2,  29, 4,  28, 6,
+                                    27, 8, 26, 10, 25, 12, 24};
+  static_assert(sizeof(trigger) == 15);
+
+  if (f.moduleEnv().features.simdWormhole &&
+      memcmp(control.bytes, trigger, sizeof(trigger)) == 0) {
+    switch (control.bytes[15]) {
+      case 0:
+        f.iter().setResult(
+            f.binarySimd128(v1, v2, false, wasm::SimdOp::MozWHSELFTEST));
+        return true;
+#    if defined(JS_CODEGEN_X86) || defined(JS_CODEGEN_X64)
+      case 1:
+        f.iter().setResult(
+            f.binarySimd128(v1, v2, false, wasm::SimdOp::MozWHPMADDUBSW));
+        return true;
+      case 2:
+        f.iter().setResult(
+            f.binarySimd128(v1, v2, false, wasm::SimdOp::MozWHPMADDWD));
+        return true;
+#    endif
+      default:
+        return f.iter().fail("Unrecognized wormhole opcode");
+    }
+  }
+#  endif
+
   f.iter().setResult(f.shuffleSimd128(v1, v2, control));
   return true;
 }
@@ -5455,7 +5483,10 @@ bool wasm::IonCompileFunctions(const ModuleEnvironment& moduleEnv,
   GenerateTrapExitMachineState(&trapExitLayout, &trapExitLayoutNumWords);
 
   for (const FuncCompileInput& func : inputs) {
-    JitSpew(JitSpew_Codegen, "# ========================================");
+    JitSpewCont(JitSpew_Codegen, "\n");
+    JitSpew(JitSpew_Codegen,
+            "# ================================"
+            "==================================");
     JitSpew(JitSpew_Codegen, "# ==");
     JitSpew(JitSpew_Codegen,
             "# wasm::IonCompileFunctions: starting on function index %d",
@@ -5537,7 +5568,10 @@ bool wasm::IonCompileFunctions(const ModuleEnvironment& moduleEnv,
             "# wasm::IonCompileFunctions: completed function index %d",
             (int)func.index);
     JitSpew(JitSpew_Codegen, "# ==");
-    JitSpew(JitSpew_Codegen, "# ========================================");
+    JitSpew(JitSpew_Codegen,
+            "# ================================"
+            "==================================");
+    JitSpewCont(JitSpew_Codegen, "\n");
   }
 
   masm.finish();

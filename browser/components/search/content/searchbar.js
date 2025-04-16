@@ -65,6 +65,7 @@
 
       this._ignoreFocus = false;
       this._engines = null;
+      this.telemetrySelectedIndex = -1;
     }
 
     connectedCallback() {
@@ -349,46 +350,19 @@
       let textBox = this._textbox;
       let textValue = textBox.value;
 
-      let selection = this.telemetrySearchDetails;
-      let oneOffRecorded = false;
+      let selectedIndex = this.telemetrySelectedIndex;
+      let isOneOff = false;
 
       BrowserSearchTelemetry.recordSearchSuggestionSelectionMethod(
         aEvent,
         "searchbar",
-        selection ? selection.index : -1
+        selectedIndex
       );
 
-      if (!selection || selection.index == -1) {
-        oneOffRecorded = this.textbox.popup.oneOffButtons.maybeRecordTelemetry(
+      if (selectedIndex == -1) {
+        isOneOff = this.textbox.popup.oneOffButtons.eventTargetIsAOneOff(
           aEvent
         );
-        if (!oneOffRecorded) {
-          let source = "unknown";
-          let type = "unknown";
-          let target = aEvent.originalTarget;
-          if (aEvent instanceof KeyboardEvent) {
-            type = "key";
-          } else if (aEvent instanceof MouseEvent) {
-            type = "mouse";
-            if (
-              target.classList.contains("search-panel-header") ||
-              target.parentNode.classList.contains("search-panel-header")
-            ) {
-              source = "header";
-            }
-          } else if (aEvent instanceof XULCommandEvent) {
-            if (target.getAttribute("anonid") == "paste-and-search") {
-              source = "paste";
-            }
-          }
-          if (!aEngine) {
-            aEngine = this.currentEngine;
-          }
-          BrowserSearchTelemetry.recordSearch(gBrowser, aEngine, source, {
-            type,
-            isOneOff: true,
-          });
-        }
       }
 
       if (aWhere === "tab" && !!aParams.inBackground) {
@@ -404,10 +378,10 @@
       }
 
       // This is a one-off search only if oneOffRecorded is true.
-      this.doSearch(textValue, aWhere, aEngine, aParams, oneOffRecorded);
+      this.doSearch(textValue, aWhere, aEngine, aParams, isOneOff);
     }
 
-    doSearch(aData, aWhere, aEngine, aParams, aOneOff) {
+    doSearch(aData, aWhere, aEngine, aParams, isOneOff = false) {
       let textBox = this._textbox;
       let engine = aEngine || this.currentEngine;
 
@@ -437,20 +411,18 @@
       }
 
       let submission = engine.getSubmission(aData, null, "searchbar");
-      let telemetrySearchDetails = this.telemetrySearchDetails;
-      this.telemetrySearchDetails = null;
-      if (telemetrySearchDetails && telemetrySearchDetails.index == -1) {
-        telemetrySearchDetails = null;
-      }
+
       // If we hit here, we come either from a one-off, a plain search or a suggestion.
       const details = {
-        isOneOff: aOneOff,
-        isSuggestion: !aOneOff && telemetrySearchDetails,
-        selection: telemetrySearchDetails,
+        isOneOff,
+        isSuggestion: !isOneOff && this.telemetrySelectedIndex != -1,
         url: submission.uri,
       };
+
+      this.telemetrySelectedIndex = -1;
+
       BrowserSearchTelemetry.recordSearch(
-        gBrowser,
+        gBrowser.selectedBrowser,
         engine,
         "searchbar",
         details
@@ -820,9 +792,9 @@
           }
           engine = oneOff.engine;
         }
-        if (this.textbox._selectionDetails) {
-          BrowserSearch.searchBar.telemetrySearchDetails = this.textbox._selectionDetails;
-          this.textbox._selectionDetails = null;
+        if (this.textbox.popupSelectedIndex != -1) {
+          this.telemetrySelectedIndex = this.textbox.popupSelectedIndex;
+          this.textbox.popupSelectedIndex = -1;
         }
         this.handleSearchCommand(event, engine);
       };

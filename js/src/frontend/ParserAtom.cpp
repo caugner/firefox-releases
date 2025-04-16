@@ -6,12 +6,14 @@
 
 #include "frontend/ParserAtom.h"
 
+#include <memory>  // std::uninitialized_fill_n
 #include <type_traits>
 
 #include "jsnum.h"
 
 #include "frontend/CompilationInfo.h"
 #include "frontend/NameCollections.h"
+#include "frontend/StencilXdr.h"  // CanCopyDataToDisk
 #include "vm/JSContext.h"
 #include "vm/Printer.h"
 #include "vm/Runtime.h"
@@ -170,6 +172,20 @@ template <typename CharT, typename SeqCharT>
   return entry;
 }
 
+/* static */ ParserAtomEntry* ParserAtomEntry::allocateRaw(
+    JSContext* cx, LifoAlloc& alloc, const uint8_t* srcRaw,
+    size_t totalLength) {
+  void* raw = alloc.alloc(totalLength);
+  if (!raw) {
+    js::ReportOutOfMemory(cx);
+    return nullptr;
+  }
+
+  memcpy(raw, srcRaw, totalLength);
+
+  return static_cast<ParserAtomEntry*>(raw);
+}
+
 bool ParserAtomEntry::equalsJSAtom(JSAtom* other) const {
   // Compare hashes and lengths first.
   if (hash_ != other->hash() || length_ != other->length()) {
@@ -314,11 +330,8 @@ void ParserAtomEntry::dumpCharsNoQuote(js::GenericPrinter& out) const {
 }
 #endif
 
-ParserAtomsTable::ParserAtomsTable(JSRuntime* rt, LifoAlloc& alloc,
-                                   ParserAtomVector& entries)
-    : wellKnownTable_(*rt->commonParserNames),
-      alloc_(alloc),
-      entries_(entries) {}
+ParserAtomsTable::ParserAtomsTable(JSRuntime* rt, LifoAlloc& alloc)
+    : wellKnownTable_(*rt->commonParserNames), alloc_(alloc) {}
 
 const ParserAtom* ParserAtomsTable::addEntry(JSContext* cx,
                                              EntrySet::AddPtr& addPtr,
@@ -389,76 +402,26 @@ const ParserAtom* ParserAtomsTable::internLatin1(JSContext* cx,
   return internChar16Seq<Latin1Char>(cx, addPtr, lookup.hash(), seq, length);
 }
 
-ParserAtomVectorBuilder::ParserAtomVectorBuilder(JSRuntime* rt,
-                                                 LifoAlloc& alloc,
-                                                 ParserAtomVector& entries)
-    : wellKnownTable_(*rt->commonParserNames),
-      alloc_(&alloc),
-      entries_(entries) {}
+ParserAtomSpanBuilder::ParserAtomSpanBuilder(JSRuntime* rt,
+                                             ParserAtomSpan& entries)
+    : wellKnownTable_(*rt->commonParserNames), entries_(entries) {}
 
-bool ParserAtomVectorBuilder::resize(JSContext* cx, size_t count) {
+bool ParserAtomSpanBuilder::allocate(JSContext* cx, LifoAlloc& alloc,
+                                     size_t count) {
   if (count >= TaggedParserAtomIndex::IndexLimit) {
     ReportAllocationOverflow(cx);
     return false;
   }
-  if (!entries_.resize(count)) {
-    ReportOutOfMemory(cx);
+
+  auto* p = alloc.newArrayUninitialized<ParserAtomEntry*>(count);
+  if (!p) {
+    js::ReportOutOfMemory(cx);
     return false;
   }
+  std::uninitialized_fill_n(p, count, nullptr);
+
+  entries_ = mozilla::Span(p, count);
   return true;
-}
-
-const ParserAtom* ParserAtomVectorBuilder::internLatin1At(
-    JSContext* cx, const Latin1Char* latin1Ptr, HashNumber hash,
-    uint32_t length, ParserAtomIndex index) {
-  return internAt<Latin1Char, Latin1Char>(cx, latin1Ptr, hash, length, index);
-}
-
-const ParserAtom* ParserAtomVectorBuilder::internChar16At(
-    JSContext* cx, LittleEndianChars twoByteLE, HashNumber hash,
-    uint32_t length, ParserAtomIndex index) {
-#ifdef DEBUG
-  InflatedChar16Sequence<LittleEndianChars> seq(twoByteLE, length);
-  bool wide = false;
-  while (seq.hasMore()) {
-    char16_t ch = seq.next();
-    if (ch > MAX_LATIN1_CHAR) {
-      wide = true;
-      break;
-    }
-  }
-  MOZ_ASSERT(wide);
-#endif
-
-  return internAt<char16_t, LittleEndianChars>(cx, twoByteLE, hash, length,
-                                               index);
-}
-
-template <typename CharT, typename SeqCharT, typename InputCharsT>
-const ParserAtom* ParserAtomVectorBuilder::internAt(JSContext* cx,
-                                                    InputCharsT chars,
-                                                    HashNumber hash,
-                                                    uint32_t length,
-                                                    ParserAtomIndex index) {
-  InflatedChar16Sequence<SeqCharT> seq(chars, length);
-
-#ifdef DEBUG
-  SpecificParserAtomLookup<SeqCharT> lookup(seq);
-
-  MOZ_ASSERT(wellKnownTable_.lookupTiny(chars, length) == nullptr);
-  MOZ_ASSERT(wellKnownTable_.lookupChar16Seq(lookup) == nullptr);
-#endif
-
-  ParserAtomEntry* entry =
-      ParserAtomEntry::allocate<CharT>(cx, *alloc_, seq, length, hash);
-  if (!entry) {
-    return nullptr;
-  }
-
-  entry->setParserAtomIndex(index);
-  entries_[index] = entry;
-
-  return entry->asAtom();
 }
 
 const ParserAtom* ParserAtomsTable::internUtf8(JSContext* cx,
@@ -551,8 +514,9 @@ const ParserAtom* ParserAtomsTable::internChar16(JSContext* cx,
                                            length);
 }
 
-const ParserAtom* ParserAtomsTable::internJSAtom(
-    JSContext* cx, CompilationInfo& compilationInfo, JSAtom* atom) {
+const ParserAtom* ParserAtomsTable::internJSAtom(JSContext* cx,
+                                                 CompilationStencil& stencil,
+                                                 JSAtom* atom) {
   const ParserAtom* parserAtom;
   {
     JS::AutoCheckCannotGC nogc;
@@ -568,7 +532,7 @@ const ParserAtom* ParserAtomsTable::internJSAtom(
 
   if (parserAtom->isParserAtomIndex()) {
     ParserAtomIndex index = parserAtom->toParserAtomIndex();
-    auto& atomCache = compilationInfo.input.atomCache;
+    auto& atomCache = stencil.input.atomCache;
 
     if (!atomCache.hasAtomAt(index)) {
       if (!atomCache.setAtomAt(cx, index, atom)) {
@@ -578,7 +542,7 @@ const ParserAtom* ParserAtomsTable::internJSAtom(
   }
 
   // We should (infallibly) map back to the same JSAtom.
-  MOZ_ASSERT(parserAtom->toJSAtom(cx, compilationInfo.input.atomCache) == atom);
+  MOZ_ASSERT(parserAtom->toJSAtom(cx, stencil.input.atomCache) == atom);
 
   return parserAtom;
 }
@@ -663,22 +627,22 @@ const ParserAtom* WellKnownParserAtoms::getStatic2(StaticParserString2 s) {
   return WellKnownParserAtoms::rom_.length2Table[size_t(s)].asAtom();
 }
 
-const ParserAtom* ParserAtomVectorBuilder::getWellKnown(
+const ParserAtom* ParserAtomSpanBuilder::getWellKnown(
     WellKnownAtomId atomId) const {
   return wellKnownTable_.getWellKnown(atomId);
 }
 
-const ParserAtom* ParserAtomVectorBuilder::getStatic1(
+const ParserAtom* ParserAtomSpanBuilder::getStatic1(
     StaticParserString1 s) const {
   return WellKnownParserAtoms::getStatic1(s);
 }
 
-const ParserAtom* ParserAtomVectorBuilder::getStatic2(
+const ParserAtom* ParserAtomSpanBuilder::getStatic2(
     StaticParserString2 s) const {
   return WellKnownParserAtoms::getStatic2(s);
 }
 
-const ParserAtom* ParserAtomVectorBuilder::getParserAtom(
+const ParserAtom* ParserAtomSpanBuilder::getParserAtom(
     ParserAtomIndex index) const {
   return entries_[index]->asAtom();
 }
@@ -705,7 +669,7 @@ const ParserAtom* GetParserAtom(T self, TaggedParserAtomIndex index) {
   return nullptr;
 }
 
-const ParserAtom* ParserAtomVectorBuilder::getParserAtom(
+const ParserAtom* ParserAtomSpanBuilder::getParserAtom(
     TaggedParserAtomIndex index) const {
   return GetParserAtom(this, index);
 }
@@ -731,7 +695,7 @@ const ParserAtom* ParserAtomsTable::getParserAtom(
   return GetParserAtom(this, index);
 }
 
-bool InstantiateMarkedAtoms(JSContext* cx, const ParserAtomVector& entries,
+bool InstantiateMarkedAtoms(JSContext* cx, const ParserAtomSpan& entries,
                             CompilationAtomCache& atomCache) {
   for (const auto& entry : entries) {
     if (!entry) {
@@ -845,178 +809,33 @@ bool WellKnownParserAtoms::init(JSContext* cx) {
 namespace js {
 
 template <XDRMode mode>
-XDRResult XDRTaggedParserAtomIndex(XDRState<mode>* xdr,
-                                   TaggedParserAtomIndex* taggedIndex) {
-  MOZ_TRY(xdr->codeUint32(taggedIndex->rawData()));
+XDRResult XDRParserAtomEntry(XDRState<mode>* xdr, ParserAtomEntry** entryp) {
+  static_assert(CanCopyDataToDisk<ParserAtomEntry>::value,
+                "ParserAtomEntry cannot be bulk-copied to disk.");
 
+  MOZ_TRY(xdr->align32());
+
+  const ParserAtomEntry* header;
   if (mode == XDR_ENCODE) {
-    return Ok();
-  }
-
-  if (taggedIndex->isParserAtomIndex()) {
-    auto index = taggedIndex->toParserAtomIndex();
-    if (size_t(index) >= xdr->frontendAtoms().length()) {
-      return xdr->fail(JS::TranscodeResult_Failure_BadDecode);
-    }
-    return Ok();
-  }
-
-  if (taggedIndex->isWellKnownAtomId()) {
-    auto index = taggedIndex->toWellKnownAtomId();
-    if (size_t(index) >= uint32_t(WellKnownAtomId::Limit)) {
-      return xdr->fail(JS::TranscodeResult_Failure_BadDecode);
-    }
-    return Ok();
-  }
-
-  if (taggedIndex->isStaticParserString1()) {
-    auto index = taggedIndex->toStaticParserString1();
-    if (size_t(index) >= WellKnownParserAtoms_ROM::ASCII_STATIC_LIMIT) {
-      return xdr->fail(JS::TranscodeResult_Failure_BadDecode);
-    }
-    return Ok();
-  }
-
-  if (taggedIndex->isStaticParserString2()) {
-    auto index = taggedIndex->toStaticParserString2();
-    if (size_t(index) >= WellKnownParserAtoms_ROM::NUM_LENGTH2_ENTRIES) {
-      return xdr->fail(JS::TranscodeResult_Failure_BadDecode);
-    }
-    return Ok();
-  }
-
-  return xdr->fail(JS::TranscodeResult_Failure_BadDecode);
-}
-
-template XDRResult XDRTaggedParserAtomIndex(XDRState<XDR_ENCODE>* xdr,
-                                            TaggedParserAtomIndex* taggedIndex);
-template XDRResult XDRTaggedParserAtomIndex(XDRState<XDR_DECODE>* xdr,
-                                            TaggedParserAtomIndex* taggedIndex);
-
-template <XDRMode mode>
-XDRResult XDRParserAtomDataAt(XDRState<mode>* xdr, const ParserAtom** atomp,
-                              ParserAtomIndex index) {
-  static_assert(JSString::MAX_LENGTH <= INT32_MAX,
-                "String length must fit in 31 bits");
-
-  uint32_t hash = 0;
-  bool latin1 = false;
-  uint32_t length = 0;
-  uint32_t lengthAndEncoding = 0;
-
-  /* Encode/decode the length and string-data encoding (Latin1 or TwoByte). */
-
-  if (mode == XDR_ENCODE) {
-    hash = (*atomp)->hash();
-    latin1 = (*atomp)->hasLatin1Chars();
-    length = (*atomp)->length();
-    lengthAndEncoding = (length << 1) | uint32_t(latin1);
-  }
-
-  MOZ_TRY(xdr->codeUint32(&hash));
-  MOZ_TRY(xdr->codeUint32(&lengthAndEncoding));
-
-  if (mode == XDR_DECODE) {
-    length = lengthAndEncoding >> 1;
-    latin1 = !!(lengthAndEncoding & 0x1);
-  }
-
-  /* Encode the character data. */
-  if (mode == XDR_ENCODE) {
-    return latin1
-               ? xdr->codeChars(
-                     const_cast<JS::Latin1Char*>((*atomp)->latin1Chars()),
-                     length)
-               : xdr->codeChars(const_cast<char16_t*>((*atomp)->twoByteChars()),
-                                length);
-  }
-
-  /* Decode the character data. */
-  MOZ_ASSERT(mode == XDR_DECODE);
-  JSContext* cx = xdr->cx();
-  const ParserAtom* atom = nullptr;
-  if (latin1) {
-    const Latin1Char* chars = nullptr;
-    if (length) {
-      const uint8_t* ptr = nullptr;
-      MOZ_TRY(xdr->peekData(&ptr, length * sizeof(Latin1Char)));
-      chars = reinterpret_cast<const Latin1Char*>(ptr);
-    }
-    atom = xdr->frontendAtoms().internLatin1At(cx, chars, hash, length, index);
+    header = *entryp;
   } else {
-    const uint8_t* twoByteCharsLE = nullptr;
-    if (length) {
-      MOZ_TRY(xdr->peekData(&twoByteCharsLE, length * sizeof(char16_t)));
-    }
-    LittleEndianChars leTwoByte(twoByteCharsLE);
-    atom =
-        xdr->frontendAtoms().internChar16At(cx, leTwoByte, hash, length, index);
-  }
-  if (!atom) {
-    return xdr->fail(JS::TranscodeResult_Throw);
+    MOZ_TRY(xdr->peekData(&header));
   }
 
-  // We only transcoded ParserAtoms used for Stencils so on decode, all
-  // ParserAtoms should be marked as in-use by Stencil.
-  atom->markUsedByStencil();
+  const uint32_t CharSize =
+      header->hasLatin1Chars() ? sizeof(JS::Latin1Char) : sizeof(char16_t);
+  uint32_t totalLength =
+      sizeof(ParserAtomEntry) + (CharSize * header->length());
 
-  *atomp = atom;
-  return Ok();
-}
-
-template XDRResult XDRParserAtomDataAt(XDRState<XDR_ENCODE>* xdr,
-                                       const ParserAtom** atomp,
-                                       ParserAtomIndex index);
-template XDRResult XDRParserAtomDataAt(XDRState<XDR_DECODE>* xdr,
-                                       const ParserAtom** atomp,
-                                       ParserAtomIndex index);
-
-template <XDRMode mode>
-XDRResult XDRParserAtom(XDRState<mode>* xdr, const ParserAtom** atomp) {
-  TaggedParserAtomIndex taggedIndex;
-  if (mode == XDR_ENCODE) {
-    taggedIndex = (*atomp)->toIndex();
-  }
-  MOZ_TRY(XDRTaggedParserAtomIndex(xdr, &taggedIndex));
-  if (mode == XDR_DECODE) {
-    MOZ_ASSERT(xdr->hasAtomTable());
-    *atomp = xdr->frontendAtoms().getParserAtom(taggedIndex);
-  }
+  MOZ_TRY(xdr->borrowedData(entryp, totalLength));
 
   return Ok();
 }
 
-template XDRResult XDRParserAtom(XDRState<XDR_ENCODE>* xdr,
-                                 const ParserAtom** atomp);
-
-template XDRResult XDRParserAtom(XDRState<XDR_DECODE>* xdr,
-                                 const ParserAtom** atomp);
-
-template <XDRMode mode>
-XDRResult XDRParserAtomOrNull(XDRState<mode>* xdr, const ParserAtom** atomp) {
-  uint8_t isNull = false;
-  if (mode == XDR_ENCODE) {
-    if (!*atomp) {
-      isNull = true;
-    }
-  }
-
-  MOZ_TRY(xdr->codeUint8(&isNull));
-
-  if (!isNull) {
-    MOZ_TRY(XDRParserAtom(xdr, atomp));
-  } else if (mode == XDR_DECODE) {
-    *atomp = nullptr;
-  }
-
-  return Ok();
-}
-
-template XDRResult XDRParserAtomOrNull(XDRState<XDR_ENCODE>* xdr,
-                                       const ParserAtom** atomp);
-
-template XDRResult XDRParserAtomOrNull(XDRState<XDR_DECODE>* xdr,
-                                       const ParserAtom** atomp);
+template XDRResult XDRParserAtomEntry(XDRState<XDR_ENCODE>* xdr,
+                                      ParserAtomEntry** atomp);
+template XDRResult XDRParserAtomEntry(XDRState<XDR_DECODE>* xdr,
+                                      ParserAtomEntry** atomp);
 
 } /* namespace js */
 

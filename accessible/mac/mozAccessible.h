@@ -27,7 +27,9 @@ namespace a11y {
 
 inline mozAccessible* GetNativeFromGeckoAccessible(
     mozilla::a11y::AccessibleOrProxy aAccOrProxy) {
-  MOZ_ASSERT(!aAccOrProxy.IsNull(), "Cannot get native from null accessible");
+  if (aAccOrProxy.IsNull()) {
+    return nil;
+  }
   if (Accessible* acc = aAccOrProxy.AsAccessible()) {
     mozAccessible* native = nil;
     acc->GetNativeInterface((void**)&native);
@@ -113,6 +115,10 @@ inline mozAccessible* GetNativeFromGeckoAccessible(
 
 // Get ARIA role
 - (nsStaticAtom*)ARIARole;
+
+// Get array of related mozAccessibles
+- (NSArray<mozAccessible*>*)getRelationsByType:
+    (mozilla::a11y::RelationType)relationType;
 
 #pragma mark - mozAccessible protocol / widget
 
@@ -207,6 +213,15 @@ inline mozAccessible* GetNativeFromGeckoAccessible(
 
 // override
 - (NSNumber*)moxRequired;
+
+// override
+- (NSNumber*)moxElementBusy;
+
+// override
+- (NSArray*)moxLinkedUIElements;
+
+// override
+- (NSArray*)moxARIAControls;
 
 // override
 - (id)moxEditableAncestor;

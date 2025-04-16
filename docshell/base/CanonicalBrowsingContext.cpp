@@ -31,6 +31,7 @@
 #include "nsFrameLoaderOwner.h"
 #include "nsGlobalWindowOuter.h"
 #include "nsIWebBrowserChrome.h"
+#include "nsIXULRuntime.h"
 #include "nsNetUtil.h"
 #include "nsSHistory.h"
 #include "nsSecureBrowserUI.h"
@@ -166,6 +167,8 @@ void CanonicalBrowsingContext::ReplacedBy(
   aNewContext->mWebProgress = std::move(mWebProgress);
   aNewContext->mFields.SetWithoutSyncing<IDX_BrowserId>(GetBrowserId());
   aNewContext->mFields.SetWithoutSyncing<IDX_HistoryID>(GetHistoryID());
+  aNewContext->mFields.SetWithoutSyncing<IDX_ExplicitActive>(
+      GetExplicitActive());
 
   if (mSessionHistory) {
     mSessionHistory->SetBrowsingContext(aNewContext);
@@ -469,7 +472,9 @@ void CanonicalBrowsingContext::CallOnAllTopDescendants(
 
 void CanonicalBrowsingContext::SessionHistoryCommit(uint64_t aLoadId,
                                                     const nsID& aChangeID,
-                                                    uint32_t aLoadType) {
+                                                    uint32_t aLoadType,
+                                                    bool aPersist,
+                                                    bool aCloneEntryChildren) {
   MOZ_LOG(gSHLog, LogLevel::Verbose,
           ("CanonicalBrowsingContext::SessionHistoryCommit %p %" PRIu64, this,
            aLoadId));
@@ -523,7 +528,7 @@ void CanonicalBrowsingContext::SessionHistoryCommit(uint64_t aLoadId,
           }
 
           if (addEntry) {
-            shistory->AddEntry(mActiveEntry, mActiveEntry->GetPersist());
+            shistory->AddEntry(mActiveEntry, aPersist);
           }
         }
       } else {
@@ -552,9 +557,8 @@ void CanonicalBrowsingContext::SessionHistoryCommit(uint64_t aLoadId,
             } else {
               // AddChildSHEntryHelper does update the index of the session
               // history!
-              // FIXME Need to figure out the right value for aCloneChildren.
               shistory->AddChildSHEntryHelper(mActiveEntry, newActiveEntry,
-                                              Top(), true);
+                                              Top(), aCloneEntryChildren);
               mActiveEntry = newActiveEntry;
             }
           } else {
@@ -578,6 +582,8 @@ void CanonicalBrowsingContext::SessionHistoryCommit(uint64_t aLoadId,
 
       HistoryCommitIndexAndLength(aChangeID, caller);
 
+      shistory->LogHistory();
+
       return;
     }
     // XXX Should the loading entries before [i] be removed?
@@ -587,17 +593,12 @@ void CanonicalBrowsingContext::SessionHistoryCommit(uint64_t aLoadId,
 }
 
 static already_AddRefed<nsDocShellLoadState> CreateLoadInfo(
-    SessionHistoryEntry* aEntry, Maybe<uint64_t> aLoadId) {
+    SessionHistoryEntry* aEntry) {
   const SessionHistoryInfo& info = aEntry->Info();
   RefPtr<nsDocShellLoadState> loadState(new nsDocShellLoadState(info.GetURI()));
   info.FillLoadInfo(*loadState);
   UniquePtr<LoadingSessionHistoryInfo> loadingInfo;
-  if (aLoadId.isSome()) {
-    loadingInfo =
-        MakeUnique<LoadingSessionHistoryInfo>(aEntry, aLoadId.value());
-  } else {
-    loadingInfo = MakeUnique<LoadingSessionHistoryInfo>(aEntry);
-  }
+  loadingInfo = MakeUnique<LoadingSessionHistoryInfo>(aEntry);
   loadState->SetLoadingSessionHistoryInfo(std::move(loadingInfo));
 
   return loadState.forget();
@@ -619,7 +620,7 @@ void CanonicalBrowsingContext::NotifyOnHistoryReload(
   }
 
   if (mActiveEntry) {
-    aLoadState.emplace(CreateLoadInfo(mActiveEntry, Nothing()));
+    aLoadState.emplace(CreateLoadInfo(mActiveEntry));
     aReloadActiveEntry.emplace(true);
     if (aForceReload) {
       shistory->RemoveFrameEntries(mActiveEntry);
@@ -627,8 +628,7 @@ void CanonicalBrowsingContext::NotifyOnHistoryReload(
   } else if (!mLoadingEntries.IsEmpty()) {
     const LoadingSessionHistoryEntry& loadingEntry =
         mLoadingEntries.LastElement();
-    aLoadState.emplace(
-        CreateLoadInfo(loadingEntry.mEntry, Some(loadingEntry.mLoadId)));
+    aLoadState.emplace(CreateLoadInfo(loadingEntry.mEntry));
     aReloadActiveEntry.emplace(false);
     if (aForceReload) {
       SessionHistoryEntry* entry =
@@ -696,6 +696,8 @@ void CanonicalBrowsingContext::SetActiveSessionHistoryEntry(
 
   // FIXME Need to do the equivalent of EvictContentViewersOrReplaceEntry.
   HistoryCommitIndexAndLength(aChangeID, caller);
+
+  static_cast<nsSHistory*>(shistory)->LogHistory();
 }
 
 void CanonicalBrowsingContext::ReplaceActiveSessionHistoryEntry(
@@ -1663,6 +1665,15 @@ void CanonicalBrowsingContext::ResetScalingZoom() {
   }
 }
 
+void CanonicalBrowsingContext::SetContainerFeaturePolicy(
+    FeaturePolicy* aContainerFeaturePolicy) {
+  mContainerFeaturePolicy = aContainerFeaturePolicy;
+
+  if (WindowGlobalParent* current = GetCurrentWindowGlobal()) {
+    Unused << current->SendSetContainerFeaturePolicy(mContainerFeaturePolicy);
+  }
+}
+
 void CanonicalBrowsingContext::SetCrossGroupOpenerId(uint64_t aOpenerId) {
   MOZ_DIAGNOSTIC_ASSERT(IsTopContent());
   MOZ_DIAGNOSTIC_ASSERT(mCrossGroupOpenerId == 0,
@@ -1671,7 +1682,7 @@ void CanonicalBrowsingContext::SetCrossGroupOpenerId(uint64_t aOpenerId) {
 }
 
 NS_IMPL_CYCLE_COLLECTION_INHERITED(CanonicalBrowsingContext, BrowsingContext,
-                                   mSessionHistory)
+                                   mSessionHistory, mContainerFeaturePolicy)
 
 NS_IMPL_ADDREF_INHERITED(CanonicalBrowsingContext, BrowsingContext)
 NS_IMPL_RELEASE_INHERITED(CanonicalBrowsingContext, BrowsingContext)

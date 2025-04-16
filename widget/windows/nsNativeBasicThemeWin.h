@@ -13,11 +13,14 @@ class nsNativeBasicThemeWin : public nsNativeBasicTheme {
  public:
   nsNativeBasicThemeWin() = default;
 
+  Transparency GetWidgetTransparency(nsIFrame* aFrame,
+                                     StyleAppearance aAppearance) override;
+
  protected:
   virtual ~nsNativeBasicThemeWin() = default;
 
   std::pair<sRGBColor, sRGBColor> ComputeCheckboxColors(
-      const EventStates& aState) override;
+      const EventStates& aState, StyleAppearance aAppearance) override;
   sRGBColor ComputeCheckmarkColor(const EventStates& aState) override;
   std::pair<sRGBColor, sRGBColor> ComputeRadioCheckmarkColors(
       const EventStates& aState) override;
@@ -35,10 +38,21 @@ class nsNativeBasicThemeWin : public nsNativeBasicTheme {
   std::pair<sRGBColor, sRGBColor> ComputeProgressColors() override;
   std::pair<sRGBColor, sRGBColor> ComputeProgressTrackColors() override;
   std::pair<sRGBColor, sRGBColor> ComputeMeterchunkColors(
-      const double aValue, const double aOptimum, const double aLow) override;
+      const EventStates& aMeterState) override;
   std::pair<sRGBColor, sRGBColor> ComputeMeterTrackColors() override;
   sRGBColor ComputeMenulistArrowButtonColor(const EventStates& aState) override;
   std::array<sRGBColor, 3> ComputeFocusRectColors() override;
+  std::pair<sRGBColor, sRGBColor> ComputeScrollbarColors(
+      nsIFrame* aFrame, const ComputedStyle& aStyle,
+      const EventStates& aDocumentState, bool aIsRoot) override;
+  sRGBColor ComputeScrollbarThumbColor(
+      nsIFrame* aFrame, const ComputedStyle& aStyle,
+      const EventStates& aElementState,
+      const EventStates& aDocumentState) override;
+  std::array<sRGBColor, 3> ComputeScrollbarButtonColors(
+      nsIFrame* aFrame, StyleAppearance aAppearance,
+      const ComputedStyle& aStyle, const EventStates& aElementState,
+      const EventStates& aDocumentState) override;
 };
 
 #endif

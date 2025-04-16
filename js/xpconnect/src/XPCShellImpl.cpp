@@ -1053,8 +1053,6 @@ int XRE_XPCShellMain(int argc, char** argv, char** envp,
 
 #ifdef MOZ_GECKO_PROFILER
   char aLocal;
-  // The baseprofiler must be nested outside of the Gecko Profiler.
-  mozilla::baseprofiler::profiler_init(&aLocal);
   profiler_init(&aLocal);
 #endif
 
@@ -1264,6 +1262,11 @@ int XRE_XPCShellMain(int argc, char** argv, char** envp,
     options.creationOptions().setNewCompartmentAndZone();
     xpc::SetPrefableRealmOptions(options);
 
+    // Even if we're building in a configuration where source is
+    // discarded, there's no reason to do that on XPCShell, and doing so
+    // might break various automation scripts.
+    options.behaviors().setDiscardSource(false);
+
     JS::Rooted<JSObject*> glob(cx);
     rv = xpc::InitClassesWithNewWrappedGlobal(
         cx, static_cast<nsIGlobalObject*>(backstagePass), systemprincipal, 0,
@@ -1316,11 +1319,6 @@ int XRE_XPCShellMain(int argc, char** argv, char** envp,
       backstagePass->SetGlobalObject(glob);
 
       JSAutoRealm ar(cx, glob);
-
-      // Even if we're building in a configuration where source is
-      // discarded, there's no reason to do that on XPCShell, and doing so
-      // might break various automation scripts.
-      JS::RealmBehaviorsRef(cx).setDiscardSource(false);
 
       if (!JS_InitReflectParse(cx, glob)) {
         return 1;
@@ -1395,7 +1393,6 @@ int XRE_XPCShellMain(int argc, char** argv, char** envp,
   // This must precede NS_LogTerm(), otherwise xpcshell return non-zero
   // during some tests, which causes failures.
   profiler_shutdown();
-  mozilla::baseprofiler::profiler_shutdown();
 #endif
 
   NS_LogTerm();

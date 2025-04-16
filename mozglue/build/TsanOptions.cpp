@@ -102,6 +102,8 @@ extern "C" const char* __tsan_default_suppressions() {
          "deadlock:third_party/rust/rkv/src/env.rs\n"
          // Bug 1680655 - permanent
          "deadlock:EncryptedClientHelloServer\n"
+         // Bug 1682861 - permanent
+         "deadlock:nsDOMWindowUtils::CompareCanvases\n"
 
 
 
@@ -182,23 +184,9 @@ extern "C" const char* __tsan_default_suppressions() {
          // Probably a false-positive from crossbeam's deque not being
          // understood by tsan.
          "race:crossbeam_deque::Worker*::resize\n"
-
-
-
-
-
-         // Benign read/write races on bitfields
-         //
-         // WARNING: Bitfield races are only benign if one of the concurrent
-         // accesses is a read. Write/write races on different parts of a
-         // bitfield can have severe side-effects.
-         //
-         // These should all still be fixed because the compiler is incentivized
-         // to combine/cache these accesses without proper atomic annotations.
-
-         // Bug 1614697
-         "race:nsHttpChannel::OnCacheEntryCheck\n"
-         "race:~AutoCacheWaitFlags\n"
+         "race:crossbeam_deque::Worker*::push\n"
+         "race:crossbeam_deque::Buffer*::write\n"
+         "race:crossbeam_deque::Buffer*::read\n"
 
 
 
@@ -215,10 +203,6 @@ extern "C" const char* __tsan_default_suppressions() {
          "race:Clamp_S32_D32_nofilter_trans_shaderproc\n"
          "race:SkSpriteBlitter_Memcpy\n"
 
-         // Bug 1601632
-         "race:ScriptPreloader::MaybeFinishOffThreadDecode\n"
-         "race:ScriptPreloader::DoFinishOffThreadDecode\n"
-
          // Bug 1606651
          "race:nsPluginTag::nsPluginTag\n"
          "race:nsFakePluginTag\n"
@@ -234,12 +218,6 @@ extern "C" const char* __tsan_default_suppressions() {
          "race:nsSocketTransport::OnSocketDetached\n"
          "race:nsSocketTransport::OnMsgInputClosed\n"
          "race:nsSocketTransport::OpenOutputStream\n"
-
-         // Bug 1607138
-         "race:gXPCOMThreadsShutDown\n"
-
-         // Bug 1608462
-         "deadlock:ScriptPreloader::OffThreadDecodeCallback\n"
 
          // Bug 1615017
          "race:CacheFileMetadata::SetHash\n"
@@ -262,13 +240,10 @@ extern "C" const char* __tsan_default_suppressions() {
          // No Bug - Logging bug in Mochitests
          "race:mochitest/ssltunnel/ssltunnel.cpp\n"
 
-         // No Bug - Suppress thread leaks for now
-         "thread:NS_NewNamedThread\n"
-         "thread:nsThread::Init\n"
-         "thread:libglib-2\n"
-
-         // No Bug - This thread does not seem to be stopped/joined
-         "thread:mozilla::layers::ImageBridgeChild\n"
+         // This thread does not seem to be stopped/joined.
+         // ImageBridgeChild should be turned back into a background
+         // task queue in bug 1647628, in which case these suppressions
+         // can be removed.
          "race:mozilla::layers::ImageBridgeChild::ShutDown\n"
 
          // Bug 1652530
@@ -279,9 +254,6 @@ extern "C" const char* __tsan_default_suppressions() {
          "race:GetCompositorBackendType\n"
          "race:SupportsTextureDirectMapping\n"
 
-         // Bug 1671574
-         "thread:StartupCache\n"
-
          // Bug 1671601
          "race:CamerasParent::ActorDestroy\n"
          "race:CamerasParent::DispatchToVideoCaptureThread\n"
@@ -289,6 +261,8 @@ extern "C" const char* __tsan_default_suppressions() {
          // Bug 1623541
          "race:VRShMem::PullSystemState\n"
          "race:VRShMem::PushSystemState\n"
+         "race:VRShMem::PullBrowserState\n"
+         "race:VRShMem::PushBrowserState\n"
 
          // Bug 1674776
          "race:DocumentTimeline::GetCurrentTimeAsDuration\n"
@@ -300,6 +274,29 @@ extern "C" const char* __tsan_default_suppressions() {
          // Bug 1680285
          "race:style::traversal::note_children\n"
          "race:style::matching::MatchMethods::apply_selector_flags\n"
+
+         // Bug 1607588
+         "race:nssToken_Destroy\n"
+         "race:nssSlot_GetToken\n"
+
+         // Bug 1683439
+         "race:AudioCallbackDriver::MixerCallback\n"
+         "race:AudioCallbackDriver::Init\n"
+
+         // Bug 1683417
+         "race:DataChannelConnection::SetSignals\n"
+         "race:DataChannelConnection::SetReady\n"
+
+         // Bug 1683404
+         "race:nsTimerImpl::Shutdown\n"
+         "race:nsTimerImpl::CancelImpl\n"
+
+         // Bug 1682951
+         "race:storage::Connection::Release\n"
+
+         // Bug 1683357
+         "race:image::ImageSurfaceCache::SuggestedSizeInternal\n"
+         "race:image::RasterImage::SetMetadata\n"
 
       // End of suppressions.
       ;  // Please keep this semicolon.

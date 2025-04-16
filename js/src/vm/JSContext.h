@@ -684,6 +684,17 @@ struct JS_PUBLIC_API JSContext : public JS::RootingContext,
   // ReportOverRecursed. See Debugger::slowPathOnExceptionUnwind.
   js::ContextData<bool> overRecursed_;
 
+#ifdef DEBUG
+  // True if this context has ever called ReportOverRecursed.
+  js::ContextData<bool> hadOverRecursed_;
+
+ public:
+  bool hadNondeterministicException() const {
+    return hadOverRecursed_ || runtime()->hadOutOfMemory;
+  }
+#endif
+
+ private:
   // True if propagating a forced return from an interrupt handler during
   // debug mode.
   js::ContextData<bool> propagatingForcedReturn_;
@@ -1186,22 +1197,18 @@ class MOZ_RAII AutoUnsafeCallWithABI {
 
 namespace gc {
 
-// Set/unset the performing GC flag for the current thread.
+// Set/restore the performing GC flag for the current thread.
 class MOZ_RAII AutoSetThreadIsPerformingGC {
   JSContext* cx;
+  bool prev;
 
  public:
-  AutoSetThreadIsPerformingGC() : cx(TlsContext.get()) {
-    JSFreeOp* fop = cx->defaultFreeOp();
-    MOZ_ASSERT(!fop->isCollecting());
-    fop->isCollecting_ = true;
+  AutoSetThreadIsPerformingGC()
+      : cx(TlsContext.get()), prev(cx->defaultFreeOp()->isCollecting_) {
+    cx->defaultFreeOp()->isCollecting_ = true;
   }
 
-  ~AutoSetThreadIsPerformingGC() {
-    JSFreeOp* fop = cx->defaultFreeOp();
-    MOZ_ASSERT(fop->isCollecting());
-    fop->isCollecting_ = false;
-  }
+  ~AutoSetThreadIsPerformingGC() { cx->defaultFreeOp()->isCollecting_ = prev; }
 };
 
 struct MOZ_RAII AutoSetThreadGCUse {

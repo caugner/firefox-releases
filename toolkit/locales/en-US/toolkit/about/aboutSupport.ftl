@@ -192,6 +192,10 @@ support-third-party-modules-thread = Thread
 support-third-party-modules-base = Imagebase Address
 support-third-party-modules-uptime = Process Uptime (ms)
 support-third-party-modules-duration = Loading Duration (ms)
+support-third-party-modules-status = Status
+support-third-party-modules-status-loaded = Loaded
+support-third-party-modules-status-blocked = Blocked
+support-third-party-modules-status-redirected = Redirected
 support-third-party-modules-empty = No third-party modules were loaded.
 support-third-party-modules-no-value = (No value)
 support-third-party-modules-button-open =
@@ -311,8 +315,6 @@ support-blocklisted-bug = Blocklisted due to known issues: <a data-l10n-name="bu
 unknown-failure = Blocklisted; failure code { $failureCode }
 
 d3d11layers-crash-guard = D3D11 Compositor
-d3d11video-crash-guard = D3D11 Video Decoder
-d3d9video-crash-guard = D3D9 Video Decoder
 glcontext-crash-guard = OpenGL
 wmfvpxvideo-crash-guard = WMF VPX Video Decoder
 

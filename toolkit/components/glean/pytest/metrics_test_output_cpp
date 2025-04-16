@@ -9,7 +9,7 @@
 #ifndef mozilla_Metrics_h
 #define mozilla_Metrics_h
 
-#include "mozilla/glean/MetricTypes.h"
+#include "mozilla/glean/bindings/MetricTypes.h"
 
 namespace mozilla::glean {
 
@@ -45,6 +45,15 @@ namespace test {
     constexpr impl::StringMetric string_metric(7);
 
     /**
+     * generated from test.string_list_metric
+     */
+    /**
+     * A multi-line
+     * description
+     */
+    constexpr impl::StringListMetric string_list_metric(10);
+
+    /**
      * generated from test.timespan_metric
      */
     /**
@@ -52,6 +61,24 @@ namespace test {
      * description
      */
     constexpr impl::TimespanMetric timespan_metric(11);
+
+    /**
+     * generated from test.timing_distribution_metric
+     */
+    /**
+     * A multi-line
+     * description
+     */
+    constexpr impl::TimingDistributionMetric timing_distribution_metric(12);
+
+    /**
+     * generated from test.memory_distribution_metric
+     */
+    /**
+     * A multi-line
+     * description
+     */
+    constexpr impl::MemoryDistributionMetric memory_distribution_metric(13);
 
 }
 namespace test_nested {

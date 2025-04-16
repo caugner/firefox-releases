@@ -18,6 +18,7 @@
 #include "mozilla/dom/BrowserBridgeParent.h"
 #include "mozilla/dom/PBrowserParent.h"
 #include "mozilla/dom/TabContext.h"
+#include "mozilla/dom/VsyncParent.h"
 #include "mozilla/dom/ipc/IdType.h"
 #include "mozilla/layout/RemoteLayerTreeOwner.h"
 #include "nsCOMPtr.h"
@@ -378,19 +379,6 @@ class BrowserParent final : public PBrowserParent,
   mozilla::ipc::IPCResult RecvRequestIMEToCommitComposition(
       const bool& aCancel, bool* aIsCommitted, nsString* aCommittedString);
 
-  mozilla::ipc::IPCResult RecvStartPluginIME(
-      const WidgetKeyboardEvent& aKeyboardEvent, const int32_t& aPanelX,
-      const int32_t& aPanelY, nsString* aCommitted);
-
-  mozilla::ipc::IPCResult RecvSetPluginFocused(const bool& aFocused);
-
-  mozilla::ipc::IPCResult RecvSetCandidateWindowForPlugin(
-      const widget::CandidateWindowPosition& aPosition);
-  mozilla::ipc::IPCResult RecvEnableIMEForPlugin(const bool& aEnable);
-
-  mozilla::ipc::IPCResult RecvDefaultProcOfPluginEvent(
-      const WidgetPluginEvent& aEvent);
-
   mozilla::ipc::IPCResult RecvGetInputContext(widget::IMEState* aIMEState);
 
   mozilla::ipc::IPCResult RecvSetInputContext(
@@ -459,6 +447,10 @@ class BrowserParent final : public PBrowserParent,
                                               const nsString& aInitialColor);
 
   bool DeallocPColorPickerParent(PColorPickerParent* aColorPicker);
+
+  PVsyncParent* AllocPVsyncParent();
+
+  bool DeallocPVsyncParent(PVsyncParent* aActor);
 
 #ifdef ACCESSIBILITY
   PDocAccessibleParent* AllocPDocAccessibleParent(PDocAccessibleParent*,
@@ -577,8 +569,6 @@ class BrowserParent final : public PBrowserParent,
 
   void SendRealTouchEvent(WidgetTouchEvent& aEvent);
 
-  void SendPluginEvent(WidgetPluginEvent& aEvent);
-
   /**
    * Different from above Send*Event(), these methods return true if the
    * event has been posted to the remote process or failed to do that but
@@ -613,7 +603,7 @@ class BrowserParent final : public PBrowserParent,
   bool SendPasteTransferable(const IPCDataTransfer& aDataTransfer,
                              const bool& aIsPrivateData,
                              nsIPrincipal* aRequestingPrincipal,
-                             const uint32_t& aContentPolicyType);
+                             const nsContentPolicyType& aContentPolicyType);
 
   // Helper for transforming a point
   LayoutDeviceIntPoint TransformPoint(
@@ -872,6 +862,8 @@ class BrowserParent final : public PBrowserParent,
   void SendRealTouchMoveEvent(WidgetTouchEvent& aEvent, APZData& aAPZData,
                               uint32_t aConsecutiveTouchMoveCount);
 
+  void UpdateVsyncParentVsyncSource();
+
  public:
   // Unsets sTopLevelWebFocus regardless of its current value.
   static void UnsetTopLevelWebFocusAll();
@@ -956,6 +948,8 @@ class BrowserParent final : public PBrowserParent,
   uint32_t mCustomCursorHotspotX, mCustomCursorHotspotY;
 
   nsTArray<nsString> mVerifyDropLinks;
+
+  RefPtr<VsyncParent> mVsyncParent;
 
 #ifdef DEBUG
   int32_t mActiveSupressDisplayportCount = 0;

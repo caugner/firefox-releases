@@ -19,9 +19,8 @@
 #ifndef wasm_js_h
 #define wasm_js_h
 
-#include "mozilla/Attributes.h"  // MOZ_MUST_USE
-#include "mozilla/HashTable.h"   // DefaultHasher
-#include "mozilla/Maybe.h"       // mozilla::Maybe
+#include "mozilla/HashTable.h"  // DefaultHasher
+#include "mozilla/Maybe.h"      // mozilla::Maybe
 
 #include <stdint.h>  // int32_t, int64_t, uint32_t
 
@@ -152,6 +151,9 @@ bool ThreadsAvailable(JSContext* cx);
 // SIMD data and operations.
 bool SimdAvailable(JSContext* cx);
 
+// Very experimental SIMD operations.
+bool SimdWormholeAvailable(JSContext* cx);
+
 #if defined(ENABLE_WASM_SIMD) && defined(DEBUG)
 // Report the result of a Simd simplification to the testing infrastructure.
 void ReportSimdAnalysis(const char* data);
@@ -164,17 +166,17 @@ bool ExceptionsAvailable(JSContext* cx);
 // Compiles the given binary wasm module given the ArrayBufferObject
 // and links the module's imports with the given import object.
 
-MOZ_MUST_USE bool Eval(JSContext* cx, Handle<TypedArrayObject*> code,
-                       HandleObject importObj,
-                       MutableHandleWasmInstanceObject instanceObj);
+[[nodiscard]] bool Eval(JSContext* cx, Handle<TypedArrayObject*> code,
+                        HandleObject importObj,
+                        MutableHandleWasmInstanceObject instanceObj);
 
 // Extracts the various imports from the given import object into the given
 // ImportValues structure while checking the imports against the given module.
 // The resulting structure can be passed to WasmModule::instantiate.
 
 struct ImportValues;
-MOZ_MUST_USE bool GetImports(JSContext* cx, const Module& module,
-                             HandleObject importObj, ImportValues* imports);
+[[nodiscard]] bool GetImports(JSContext* cx, const Module& module,
+                              HandleObject importObj, ImportValues* imports);
 
 // For testing cross-process (de)serialization, this pair of functions are
 // responsible for, in the child process, compiling the given wasm bytecode
@@ -182,11 +184,11 @@ MOZ_MUST_USE bool GetImports(JSContext* cx, const Module& module,
 // the parent process, deserializing the given byte array into a
 // WebAssembly.Module object.
 
-MOZ_MUST_USE bool CompileAndSerialize(const ShareableBytes& bytecode,
-                                      Bytes* serialized);
+[[nodiscard]] bool CompileAndSerialize(const ShareableBytes& bytecode,
+                                       Bytes* serialized);
 
-MOZ_MUST_USE bool DeserializeModule(JSContext* cx, const Bytes& serialized,
-                                    MutableHandleObject module);
+[[nodiscard]] bool DeserializeModule(JSContext* cx, const Bytes& serialized,
+                                     MutableHandleObject module);
 
 // A WebAssembly "Exported Function" is the spec name for the JS function
 // objects created to wrap wasm functions. This predicate returns false
@@ -202,7 +204,6 @@ WasmInstanceObject* ExportedFunctionToInstanceObject(JSFunction* fun);
 uint32_t ExportedFunctionToFuncIndex(JSFunction* fun);
 
 bool IsSharedWasmMemoryObject(JSObject* obj);
-
 
 // Abstractions that clarify that we are working on a 32-bit memory and check
 // that the buffer length does not exceed that's memory's fixed limits.
@@ -469,6 +470,15 @@ class WasmTableObject : public NativeObject {
                                  mozilla::Maybe<uint32_t> maximumLength,
                                  wasm::RefType tableType, HandleObject proto);
   wasm::Table& table() const;
+
+  // Perform the standard `ToWebAssemblyValue` coercion on `value` and fill the
+  // range [index, index + length) in the table. Callers are required to ensure
+  // the range is within bounds. Returns false if the coercion failed.
+  bool fillRange(JSContext* cx, uint32_t index, uint32_t length,
+                 HandleValue value) const;
+#ifdef DEBUG
+  void assertRangeNull(uint32_t index, uint32_t length) const;
+#endif
 };
 
 // The class of WebAssembly.Exception. This class is used to track exception
@@ -492,11 +502,13 @@ class WasmExceptionObject : public NativeObject {
   static const JSFunctionSpec static_methods[];
   static bool construct(JSContext*, unsigned, Value*);
 
-  static WasmExceptionObject* create(JSContext* cx, wasm::ResultType type,
+  static WasmExceptionObject* create(JSContext* cx,
+                                     const wasm::ValTypeVector& type,
                                      HandleObject proto);
   bool isNewborn() const;
 
   wasm::ValTypeVector& valueTypes() const;
+  wasm::ResultType resultType() const;
   wasm::ExceptionTag& tag() const;
 };
 

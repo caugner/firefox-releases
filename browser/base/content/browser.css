@@ -1082,10 +1082,10 @@ toolbarpaletteitem[place="palette"] > #downloads-button[indicator] > .toolbarbut
       -moz-window-opacity: 0;
       -moz-window-transform: translateY(-70px);
     }
-  }
 
-  #BMB_bookmarksPopup[side="bottom"]:not([animate="false"]) {
-    -moz-window-transform: translateY(70px);
+    #BMB_bookmarksPopup[side="bottom"]:not([animate="false"]) {
+      -moz-window-transform: translateY(70px);
+    }
   }
 
   /* [animate] is here only so that this rule has greater specificity than the
@@ -1408,8 +1408,14 @@ toolbarpaletteitem > toolbaritem {
 }
 
 .printPreviewBrowser {
+  display: none;
   opacity: 1;
   transition: opacity 60ms;
+}
+
+.previewStack[previewtype="primary"] > .printPreviewBrowser[previewtype="primary"],
+.previewStack[previewtype="selection"] > .printPreviewBrowser[previewtype="selection"] {
+  display: block;
 }
 
 .previewStack[rendering=true] > .printPreviewBrowser {
@@ -1560,6 +1566,11 @@ toolbar[keyNav=true]:not([collapsed=true], [customizing=true]) toolbartabstop {
   -moz-box-flex: 1;
   /* Default dialog dimensions */
   width: 66ch;
+}
+
+.content-prompt-dialog > .dialogOverlay {
+  display: grid;
+  place-content: center;
 }
 
 /**

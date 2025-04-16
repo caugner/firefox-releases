@@ -75,7 +75,6 @@ ChromeUtils.defineModuleGetter(
 const DEFAULT_SITES_PREF = "default.sites";
 const SHOWN_ON_NEWTAB_PREF = "feeds.topsites";
 const DEFAULT_TOP_SITES = [];
-const ATTRIBUTION_REQUEST_SITES = [];
 const FRECENCY_THRESHOLD = 100 + 1; // 1 visit (skip first-run/one-time pages)
 const MIN_FAVICON_SIZE = 96;
 const CACHED_LINK_PROPS_TO_MIGRATE = ["screenshot", "customScreenshot"];
@@ -140,6 +139,7 @@ this.TopSitesFeed = class TopSitesFeed {
     this._readDefaults({ isStartup: true });
     this._storage = this.store.dbStorage.getDbTable("sectionPrefs");
     Services.obs.addObserver(this, "browser-search-engine-modified");
+    Services.obs.addObserver(this, "browser-region");
     Services.prefs.addObserver(REMOTE_SETTING_DEFAULTS_PREF, this);
     Services.prefs.addObserver(DEFAULT_SITES_POLICY_PREF, this);
     Services.prefs.addObserver(DEFAULT_SITES_EXPERIMENTS_PREF_BRANCH, this);
@@ -148,6 +148,7 @@ this.TopSitesFeed = class TopSitesFeed {
   uninit() {
     PageThumbs.removeExpirationFilter(this);
     Services.obs.removeObserver(this, "browser-search-engine-modified");
+    Services.obs.removeObserver(this, "browser-region");
     Services.prefs.removeObserver(REMOTE_SETTING_DEFAULTS_PREF, this);
     Services.prefs.removeObserver(DEFAULT_SITES_POLICY_PREF, this);
     Services.prefs.removeObserver(DEFAULT_SITES_EXPERIMENTS_PREF_BRANCH, this);
@@ -166,6 +167,9 @@ this.TopSitesFeed = class TopSitesFeed {
           this._currentSearchHostname = getShortURLForCurrentSearch();
           this.refresh({ broadcast: true });
         }
+        break;
+      case "browser-region":
+        this._readDefaults();
         break;
       case "nsPref:changed":
         if (
@@ -231,13 +235,13 @@ this.TopSitesFeed = class TopSitesFeed {
 
     // Clear out the array of any previous defaults.
     DEFAULT_TOP_SITES.length = 0;
-    ATTRIBUTION_REQUEST_SITES.length = 0;
 
     for (let siteData of remoteSettingData) {
       let link = {
         isDefault: true,
         url: siteData.url,
         hostname: shortURL(siteData),
+        sendAttributionRequest: !!siteData.send_attribution_request,
       };
       if (siteData.url_urlbar_override) {
         link.url_urlbar = siteData.url_urlbar_override;
@@ -247,13 +251,8 @@ this.TopSitesFeed = class TopSitesFeed {
       }
       if (siteData.search_shortcut) {
         link = await this.topSiteToSearchTopSite(link);
-      } else {
-        if (siteData.sponsored_position) {
-          link.sponsored_position = siteData.sponsored_position;
-        }
-        if (siteData.send_attribution_request) {
-          ATTRIBUTION_REQUEST_SITES.push(siteData.url);
-        }
+      } else if (siteData.sponsored_position) {
+        link.sponsored_position = siteData.sponsored_position;
       }
       DEFAULT_TOP_SITES.push(link);
     }
@@ -264,7 +263,6 @@ this.TopSitesFeed = class TopSitesFeed {
   refreshDefaults(sites, { isStartup = false } = {}) {
     // Clear out the array of any previous defaults
     DEFAULT_TOP_SITES.length = 0;
-    ATTRIBUTION_REQUEST_SITES.length = 0;
 
     // Add default sites if any based on the pref
     if (sites) {
@@ -521,9 +519,14 @@ this.TopSitesFeed = class TopSitesFeed {
       if (this.shouldFilterSearchTile(link.hostname)) {
         continue;
       }
-      let isBlocked = NewTabUtils.blockedLinks.isBlocked({
-        url: link.url,
-      });
+      // Drop blocked default sites.
+      if (
+        NewTabUtils.blockedLinks.isBlocked({
+          url: link.url,
+        })
+      ) {
+        continue;
+      }
       // Process %YYYYMMDDHH% tag in the URL.
       let url_end;
       let url_start;
@@ -541,30 +544,6 @@ this.TopSitesFeed = class TopSitesFeed {
         if (link.url_urlbar) {
           link.url_urlbar = link.url_urlbar.replace("%YYYYMMDDHH%", yyyymmddhh);
         }
-        // Update frecent link that may have an unprocessed or old datetime
-        // tag. This list has only one entry per domain so we don't have
-        // to look for multiple entries here.
-        let frecentIndex = frecent.findIndex(
-          frecentLink =>
-            // Look for unprocessed datetime tag:
-            frecentLink.url === link.original_url ||
-            // Look for processed datetime tag:
-            (frecentLink.url.startsWith(url_start) &&
-              frecentLink.url.endsWith(url_end) &&
-              frecentLink.url.length === link.url.length)
-        );
-        if (frecentIndex > -1) {
-          if (isBlocked) {
-            frecent.splice(frecentIndex, 1);
-          } else {
-            frecent[frecentIndex].original_url = link.original_url;
-            frecent[frecentIndex].url = link.url;
-          }
-        }
-      }
-      // Drop blocked default sites.
-      if (isBlocked) {
-        continue;
       }
       // If we've previously blocked a search shortcut, remove the default top site
       // that matches the hostname
@@ -691,10 +670,6 @@ this.TopSitesFeed = class TopSitesFeed {
 
         // Indicate that these links should get a frecency bonus when clicked
         link.typedBonus = true;
-
-        if (ATTRIBUTION_REQUEST_SITES.includes(link.original_url || link.url)) {
-          link.sendAttributionRequest = true;
-        }
       }
     }
 
@@ -782,7 +757,7 @@ this.TopSitesFeed = class TopSitesFeed {
 
     // Populate the state with available search shortcuts
     let searchShortcuts = [];
-    for (const engine of await Services.search.getDefaultEngines()) {
+    for (const engine of await Services.search.getAppProvidedEngines()) {
       const shortcut = CUSTOM_SEARCH_SHORTCUTS.find(s =>
         engine.aliases.includes(s.keyword)
       );

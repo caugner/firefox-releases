@@ -1537,7 +1537,9 @@ pub struct MemoryReport {
     pub vertex_data_textures: usize,
     pub render_target_textures: usize,
     pub texture_cache_textures: usize,
+    pub texture_cache_structures: usize,
     pub depth_target_textures: usize,
     pub texture_upload_pbos: usize,
     pub swap_chain: usize,
+    pub render_texture_hosts: usize,
 }

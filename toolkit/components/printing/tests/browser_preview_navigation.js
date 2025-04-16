@@ -215,7 +215,6 @@ add_task(async function testPreviewNavigationCommands() {
       paginationElem.shadowRoot.querySelector("#navigateNext"),
       {}
     );
-    await helper.awaitAnimationFrame();
     EventUtils.synthesizeMouseAtCenter(
       paginationElem.shadowRoot.querySelector("#navigateNext"),
       {}
@@ -230,7 +229,6 @@ add_task(async function testPreviewNavigationCommands() {
       paginationElem.shadowRoot.querySelector("#navigatePrevious"),
       {}
     );
-    await helper.awaitAnimationFrame();
     EventUtils.synthesizeMouseAtCenter(
       paginationElem.shadowRoot.querySelector("#navigatePrevious"),
       {}
@@ -243,7 +241,6 @@ add_task(async function testPreviewNavigationCommands() {
 
     // move focus before closing the dialog
     helper.get("cancel-button").focus();
-    await helper.awaitAnimationFrame();
     await helper.closeDialog();
   }, "longerArticle.html");
 });
@@ -270,7 +267,7 @@ add_task(async function testMultiplePreviewNavigation() {
     await helper2.startPrint();
 
     let [previewBrowser1, previewBrowser2] = document.querySelectorAll(
-      ".printPreviewBrowser"
+      ".printPreviewBrowser[previewtype='primary']"
     );
     ok(previewBrowser1 && previewBrowser2, "There are 2 preview browsers");
 
@@ -315,5 +312,113 @@ add_task(async function testMultiplePreviewNavigation() {
     );
 
     gBrowser.removeTab(tab2);
+  }, "longerArticle.html");
+});
+
+add_task(async function testPreviewNavigationSelection() {
+  await PrintHelper.withTestPage(async helper => {
+    await SpecialPowers.spawn(helper.sourceBrowser, [], async function() {
+      let element = content.document.querySelector("#page-2");
+      content.window.getSelection().selectAllChildren(element);
+    });
+
+    await helper.startPrint();
+
+    let paginationElem = document.querySelector(".printPreviewNavigation");
+    let paginationSheetIndicator = paginationElem.shadowRoot.querySelector(
+      "#sheetIndicator"
+    );
+    // Wait for the first _updatePrintPreview before interacting with the preview
+    await waitForPageStatusUpdate(
+      paginationSheetIndicator,
+      { sheetNum: 1, sheetCount: 3 },
+      "Paginator indicates the correct number of sheets"
+    );
+
+    // click a navigation button
+    // and verify the indicator is updated correctly
+    EventUtils.synthesizeMouseAtCenter(
+      paginationElem.shadowRoot.querySelector("#navigateNext"),
+      {}
+    );
+    await waitForPageStatusUpdate(
+      paginationSheetIndicator,
+      { sheetNum: 2, sheetCount: 3 },
+      "Indicator updates on navigation"
+    );
+
+    await helper.openMoreSettings();
+    let printSelect = helper.get("print-selection-container");
+    await helper.waitForPreview(() => helper.click(printSelect));
+
+    // Wait for the first _updatePrintPreview before interacting with the preview
+    await waitForPageStatusUpdate(
+      paginationSheetIndicator,
+      { sheetNum: 1, sheetCount: 2 },
+      "Paginator indicates the correct number of sheets"
+    );
+
+    // click a navigation button
+    // and verify the indicator is updated correctly
+    EventUtils.synthesizeMouseAtCenter(
+      paginationElem.shadowRoot.querySelector("#navigateNext"),
+      {}
+    );
+    await waitForPageStatusUpdate(
+      paginationSheetIndicator,
+      { sheetNum: 2, sheetCount: 2 },
+      "Indicator updates on navigation"
+    );
+
+    // move focus before closing the dialog
+    helper.get("cancel-button").focus();
+    await helper.closeDialog();
+  }, "longerArticle.html");
+});
+
+add_task(async function testPaginatorAfterSettingsUpdate() {
+  const mockPrinterName = "Fake Printer";
+  await PrintHelper.withTestPage(async helper => {
+    helper.addMockPrinter(mockPrinterName);
+    await helper.startPrint();
+
+    let paginationElem = document.querySelector(".printPreviewNavigation");
+    let paginationSheetIndicator = paginationElem.shadowRoot.querySelector(
+      "#sheetIndicator"
+    );
+    // Wait for the first _updatePrintPreview before interacting with the preview
+    await waitForPageStatusUpdate(
+      paginationSheetIndicator,
+      { sheetNum: 1, sheetCount: 3 },
+      "Paginator indicates the correct number of sheets"
+    );
+
+    // click the navigation buttons
+    // and verify the indicator is updated correctly
+    EventUtils.synthesizeMouseAtCenter(
+      paginationElem.shadowRoot.querySelector("#navigateNext"),
+      {}
+    );
+    await waitForPageStatusUpdate(
+      paginationSheetIndicator,
+      { sheetNum: 2, sheetCount: 3 },
+      "Indicator updates on navigation"
+    );
+
+    // Select a new printer
+    await helper.dispatchSettingsChange({ printerName: mockPrinterName });
+    await waitForPageStatusUpdate(
+      paginationSheetIndicator,
+      { sheetNum: 1, sheetCount: 3 },
+      "Indicator updates on navigation"
+    );
+    ok(
+      compare10nArgs(paginationSheetIndicator, { sheetNum: 1, sheetCount: 3 }),
+      "Sheet indicator has correct value"
+    );
+
+    // move focus before closing the dialog
+    helper.get("cancel-button").focus();
+    await helper.closeDialog();
   }, "longerArticle.html");
 });

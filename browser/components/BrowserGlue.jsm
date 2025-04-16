@@ -25,6 +25,7 @@ XPCOMUtils.defineLazyModuleGetters(this, {
   ASRouterDefaultConfig:
     "resource://activity-stream/lib/ASRouterDefaultConfig.jsm",
   ASRouterNewTabHook: "resource://activity-stream/lib/ASRouterNewTabHook.jsm",
+  ASRouter: "resource://activity-stream/lib/ASRouter.jsm",
   AsyncShutdown: "resource://gre/modules/AsyncShutdown.jsm",
   Blocklist: "resource://gre/modules/Blocklist.jsm",
   BookmarkHTMLUtils: "resource://gre/modules/BookmarkHTMLUtils.jsm",
@@ -43,6 +44,7 @@ XPCOMUtils.defineLazyModuleGetters(this, {
     "resource:///modules/DownloadsViewableInternally.jsm",
   E10SUtils: "resource://gre/modules/E10SUtils.jsm",
   ExtensionsUI: "resource:///modules/ExtensionsUI.jsm",
+  ExperimentAPI: "resource://messaging-system/experiments/ExperimentAPI.jsm",
   FeatureGate: "resource://featuregates/FeatureGate.jsm",
   FirefoxMonitor: "resource:///modules/FirefoxMonitor.jsm",
   FxAccounts: "resource://gre/modules/FxAccounts.jsm",
@@ -121,8 +123,8 @@ const PREF_PDFJS_ISDEFAULT_CACHE_STATE = "pdfjs.enabledCache.state";
 /**
  * Fission-compatible JSProcess implementations.
  * Each actor options object takes the form of a ProcessActorOptions dictionary.
- * Detailed documentation of these options is in dom/docs/Fission.rst,
- * available at https://firefox-source-docs.mozilla.org/dom/Fission.html#jsprocessactor
+ * Detailed documentation of these options is in dom/docs/ipc/jsactors.rst,
+ * available at https://firefox-source-docs.mozilla.org/dom/ipc/jsactors.html
  */
 let JSPROCESSACTORS = {
   // Miscellaneous stuff that needs to be initialized per process.
@@ -172,8 +174,8 @@ let JSPROCESSACTORS = {
 
 /**
  * Fission-compatible JSWindowActor implementations.
- * Detailed documentation of these is in dom/docs/Fission.rst,
- * available at https://firefox-source-docs.mozilla.org/dom/Fission.html#jswindowactor
+ * Detailed documentation of these options is in dom/docs/ipc/jsactors.rst,
+ * available at https://firefox-source-docs.mozilla.org/dom/ipc/jsactors.html
  */
 let JSWINDOWACTORS = {
   AboutLogins: {
@@ -403,17 +405,18 @@ let JSWINDOWACTORS = {
     },
     child: {
       moduleURI: "resource:///actors/ContentSearchChild.jsm",
-      matches: [
-        "about:home",
-        "about:newtab",
-        "about:welcome",
-        "about:privatebrowsing",
-        "chrome://mochitests/content/*",
-      ],
       events: {
         ContentSearchClient: { capture: true, wantUntrusted: true },
       },
     },
+    matches: [
+      "about:home",
+      "about:welcome",
+      "about:newtab",
+      "about:privatebrowsing",
+      "about:test-about-content-search-ui",
+    ],
+    remoteTypes: ["privilegedabout"],
   },
 
   ContextMenu: {
@@ -691,17 +694,6 @@ let JSWINDOWACTORS = {
     allFrames: true,
   },
 
-  SiteSpecificBrowser: {
-    parent: {
-      moduleURI: "resource:///actors/SiteSpecificBrowserParent.jsm",
-    },
-    child: {
-      moduleURI: "resource:///actors/SiteSpecificBrowserChild.jsm",
-    },
-
-    allFrames: true,
-  },
-
   Translation: {
     parent: {
       moduleURI: "resource:///modules/translation/TranslationParent.jsm",
@@ -871,6 +863,7 @@ const listeners = {
     "update-downloaded": ["UpdateListener"],
     "update-available": ["UpdateListener"],
     "update-error": ["UpdateListener"],
+    "update-swap": ["UpdateListener"],
     "gmp-plugin-crash": ["PluginManager"],
     "plugin-crashed": ["PluginManager"],
   },
@@ -1134,7 +1127,11 @@ BrowserGlue.prototype = {
           Cu.reportError(ex);
         }
         let win = BrowserWindowTracker.getTopWindow();
-        BrowserSearchTelemetry.recordSearch(win.gBrowser, engine, "urlbar");
+        BrowserSearchTelemetry.recordSearch(
+          win.gBrowser.selectedBrowser,
+          engine,
+          "urlbar"
+        );
         break;
       case "browser-search-engine-modified":
         // Ensure we cleanup the hiddenOneOffs pref when removing
@@ -2420,6 +2417,14 @@ BrowserGlue.prototype = {
         task: async () => {
           await ContextualIdentityService.load();
           Discovery.update();
+        },
+      },
+
+      {
+        task: () => {
+          // We postponed loading bookmarks toolbar content until startup
+          // has finished, so we can start loading it now:
+          PlacesUIUtils.unblockToolbars();
         },
       },
 
@@ -3829,21 +3834,44 @@ BrowserGlue.prototype = {
   },
 
   _maybeShowDefaultBrowserPrompt() {
-    DefaultBrowserCheck.willCheckDefaultBrowser(/* isStartupCheck */ true).then(
-      async willPrompt => {
-        let { DefaultBrowserNotification } = ChromeUtils.import(
-          "resource:///actors/AboutNewTabParent.jsm",
-          {}
-        );
-        if (willPrompt) {
-          // Prevent the related notification from appearing and
-          // show the modal prompt.
-          DefaultBrowserNotification.notifyModalDisplayed();
-          let win = BrowserWindowTracker.getTopWindow();
-          DefaultBrowserCheck.prompt(win);
-        }
+    Promise.all([
+      DefaultBrowserCheck.willCheckDefaultBrowser(/* isStartupCheck */ true),
+      ExperimentAPI.ready,
+    ]).then(async ([willPrompt]) => {
+      let { DefaultBrowserNotification } = ChromeUtils.import(
+        "resource:///actors/AboutNewTabParent.jsm",
+        {}
+      );
+      let isFeatureEnabled = false;
+      try {
+        isFeatureEnabled = ExperimentAPI.getExperiment({
+          featureId: "infobar",
+          sendExposurePing: false,
+        })?.branch.feature.enabled;
+      } catch (e) {}
+      if (willPrompt) {
+        // Prevent the related notification from appearing and
+        // show the modal prompt.
+        DefaultBrowserNotification.notifyModalDisplayed();
       }
-    );
+      // If no experiment go ahead with default experience
+      if (willPrompt && !isFeatureEnabled) {
+        let win = BrowserWindowTracker.getTopWindow();
+        DefaultBrowserCheck.prompt(win);
+      }
+      // If in experiment notify ASRouter to dispatch message
+      if (isFeatureEnabled) {
+        ASRouter.waitForInitialized.then(() =>
+          ASRouter.sendTriggerMessage({
+            browser: BrowserWindowTracker.getTopWindow()?.gBrowser
+              .selectedBrowser,
+            // triggerId and triggerContext
+            id: "defaultBrowserCheck",
+            context: { willShowDefaultPrompt: willPrompt },
+          })
+        );
+      }
+    });
   },
 
   /**
@@ -4642,10 +4670,10 @@ var DefaultBrowserCheck = {
         "browser.shell.didSkipDefaultBrowserCheckOnFirstRun"
       );
 
-    const usePromptLimit = !AppConstants.RELEASE_OR_BETA;
-    let promptCount = usePromptLimit
-      ? Services.prefs.getIntPref("browser.shell.defaultBrowserCheckCount")
-      : 0;
+    let promptCount = Services.prefs.getIntPref(
+      "browser.shell.defaultBrowserCheckCount",
+      0
+    );
 
     // If SessionStartup's state is not initialized, checking sessionType will set
     // its internal state to "do not restore".
@@ -4681,9 +4709,7 @@ var DefaultBrowserCheck = {
           );
         }
         willPrompt = false;
-      }
-
-      if (usePromptLimit) {
+      } else {
         promptCount++;
         if (isStartupCheck) {
           Services.prefs.setIntPref(
@@ -4691,7 +4717,7 @@ var DefaultBrowserCheck = {
             promptCount
           );
         }
-        if (promptCount > 3) {
+        if (!AppConstants.RELEASE_OR_BETA && promptCount > 3) {
           willPrompt = false;
         }
       }

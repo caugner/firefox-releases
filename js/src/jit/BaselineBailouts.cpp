@@ -37,6 +37,7 @@
 using namespace js;
 using namespace js::jit;
 
+using mozilla::DebugOnly;
 using mozilla::Maybe;
 
 // BaselineStackBuilder may reallocate its buffer if the current one is too
@@ -128,7 +129,7 @@ class MOZ_STACK_CLASS BaselineStackBuilder {
                        SnapshotIterator& iter,
                        const ExceptionBailoutInfo* excInfo);
 
-  MOZ_MUST_USE bool init() {
+  [[nodiscard]] bool init() {
     MOZ_ASSERT(!header_);
     MOZ_ASSERT(bufferUsed_ == 0);
 
@@ -145,7 +146,7 @@ class MOZ_STACK_CLASS BaselineStackBuilder {
     return true;
   }
 
-  MOZ_MUST_USE bool buildOneFrame();
+  [[nodiscard]] bool buildOneFrame();
   bool done();
   void nextFrame();
 
@@ -169,24 +170,24 @@ class MOZ_STACK_CLASS BaselineStackBuilder {
   }
 
  private:
-  MOZ_MUST_USE bool initFrame();
-  MOZ_MUST_USE bool buildBaselineFrame();
-  MOZ_MUST_USE bool buildArguments();
-  MOZ_MUST_USE bool buildFixedSlots();
-  MOZ_MUST_USE bool fixUpCallerArgs(MutableHandleValueVector savedCallerArgs,
-                                    bool* fixedUp);
-  MOZ_MUST_USE bool buildExpressionStack();
-  MOZ_MUST_USE bool finishLastFrame();
+  [[nodiscard]] bool initFrame();
+  [[nodiscard]] bool buildBaselineFrame();
+  [[nodiscard]] bool buildArguments();
+  [[nodiscard]] bool buildFixedSlots();
+  [[nodiscard]] bool fixUpCallerArgs(MutableHandleValueVector savedCallerArgs,
+                                     bool* fixedUp);
+  [[nodiscard]] bool buildExpressionStack();
+  [[nodiscard]] bool finishLastFrame();
 
-  MOZ_MUST_USE bool prepareForNextFrame(HandleValueVector savedCallerArgs);
-  MOZ_MUST_USE bool finishOuterFrame(uint32_t frameSize);
-  MOZ_MUST_USE bool buildStubFrame(uint32_t frameSize,
-                                   HandleValueVector savedCallerArgs);
-  MOZ_MUST_USE bool buildRectifierFrame(uint32_t actualArgc,
-                                        size_t endOfBaselineStubArgs);
+  [[nodiscard]] bool prepareForNextFrame(HandleValueVector savedCallerArgs);
+  [[nodiscard]] bool finishOuterFrame(uint32_t frameSize);
+  [[nodiscard]] bool buildStubFrame(uint32_t frameSize,
+                                    HandleValueVector savedCallerArgs);
+  [[nodiscard]] bool buildRectifierFrame(uint32_t actualArgc,
+                                         size_t endOfBaselineStubArgs);
 
 #ifdef DEBUG
-  MOZ_MUST_USE bool validateFrame();
+  [[nodiscard]] bool validateFrame();
 #endif
 
 #ifdef DEBUG
@@ -226,7 +227,7 @@ class MOZ_STACK_CLASS BaselineStackBuilder {
     return op_ == JSOp::FunApply || IsIonInlinableGetterOrSetterOp(op_);
   }
 
-  MOZ_MUST_USE bool enlarge() {
+  [[nodiscard]] bool enlarge() {
     MOZ_ASSERT(header_ != nullptr);
     if (bufferTotal_ & mozilla::tl::MulOverflowMask<2>::value) {
       ReportOutOfMemory(cx_);
@@ -271,7 +272,7 @@ class MOZ_STACK_CLASS BaselineStackBuilder {
 
   size_t framePushed() const { return framePushed_; }
 
-  MOZ_MUST_USE bool subtract(size_t size, const char* info = nullptr) {
+  [[nodiscard]] bool subtract(size_t size, const char* info = nullptr) {
     // enlarge the buffer if need be.
     while (size > bufferAvail_) {
       if (!enlarge()) {
@@ -293,7 +294,7 @@ class MOZ_STACK_CLASS BaselineStackBuilder {
   }
 
   template <typename T>
-  MOZ_MUST_USE bool write(const T& t) {
+  [[nodiscard]] bool write(const T& t) {
     MOZ_ASSERT(!(uintptr_t(&t) >= uintptr_t(header_->copyStackBottom) &&
                  uintptr_t(&t) < uintptr_t(header_->copyStackTop)),
                "Should not reference memory that can be freed");
@@ -305,7 +306,7 @@ class MOZ_STACK_CLASS BaselineStackBuilder {
   }
 
   template <typename T>
-  MOZ_MUST_USE bool writePtr(T* t, const char* info) {
+  [[nodiscard]] bool writePtr(T* t, const char* info) {
     if (!write<T*>(t)) {
       return false;
     }
@@ -317,7 +318,7 @@ class MOZ_STACK_CLASS BaselineStackBuilder {
     return true;
   }
 
-  MOZ_MUST_USE bool writeWord(size_t w, const char* info) {
+  [[nodiscard]] bool writeWord(size_t w, const char* info) {
     if (!write<size_t>(w)) {
       return false;
     }
@@ -335,7 +336,7 @@ class MOZ_STACK_CLASS BaselineStackBuilder {
     return true;
   }
 
-  MOZ_MUST_USE bool writeValue(const Value& val, const char* info) {
+  [[nodiscard]] bool writeValue(const Value& val, const char* info) {
     if (!write<Value>(val)) {
       return false;
     }
@@ -348,8 +349,8 @@ class MOZ_STACK_CLASS BaselineStackBuilder {
     return true;
   }
 
-  MOZ_MUST_USE bool maybeWritePadding(size_t alignment, size_t after,
-                                      const char* info) {
+  [[nodiscard]] bool maybeWritePadding(size_t alignment, size_t after,
+                                       const char* info) {
     MOZ_ASSERT(framePushed_ % sizeof(Value) == 0);
     MOZ_ASSERT(after % sizeof(Value) == 0);
     size_t offset = ComputeByteAlignment(after, alignment);
@@ -419,6 +420,14 @@ class MOZ_STACK_CLASS BaselineStackBuilder {
     // registers too.
     if (JSJitFrameIter::isEntry(type) || type == FrameType::IonJS ||
         type == FrameType::IonICCall) {
+      return nullptr;
+    }
+
+    // If the previous frame is BaselineJS, with no intervening
+    // BaselineStubFrame, then the caller is responsible for recomputing
+    // BaselineFramePointer from the descriptor when returning. This currently
+    // only happens in frames constructed by emit_Resume().
+    if (type == FrameType::BaselineJS) {
       return nullptr;
     }
 
@@ -544,28 +553,15 @@ bool BaselineStackBuilder::initFrame() {
                             : script_->offsetToPC(iter_.pcOffset());
   op_ = JSOp(*pc_);
 
-  // When pgo is enabled, increment the counter of the block in which we
-  // resume, as Ion does not keep track of the code coverage.
-  //
-  // We need to do that when pgo is enabled, as after a specific number of
-  // FirstExecution bailouts, we invalidate and recompile the script with
-  // IonMonkey. Failing to increment the counter of the current basic block
-  // might lead to repeated bailouts and invalidations.
-  if (!JitOptions.disablePgo && script_->hasScriptCounts()) {
-    script_->incHitCount(pc_);
-  }
-
   return true;
 }
 
 void BaselineStackBuilder::setNextCallee(JSFunction* nextCallee) {
   nextCallee_ = nextCallee;
 
-  if (JitOptions.warpBuilder) {
-    // Update icScript_ to point to the icScript of nextCallee
-    const uint32_t pcOff = script_->pcToOffset(pc_);
-    icScript_ = icScript_->findInlinedChild(pcOff);
-  }
+  // Update icScript_ to point to the icScript of nextCallee
+  const uint32_t pcOff = script_->pcToOffset(pc_);
+  icScript_ = icScript_->findInlinedChild(pcOff);
 }
 
 bool BaselineStackBuilder::done() {
@@ -1576,6 +1572,7 @@ bool jit::BailoutIonToBaseline(JSContext* cx, JitActivation* activation,
   //      BaselineStub - Baseline calling into Ion.
   //      Entry / WasmToJSJit - Interpreter or other (wasm) calling into Ion.
   //      Rectifier - Arguments rectifier calling into Ion.
+  //      BaselineJS - Resume'd Baseline, then likely OSR'd into Ion.
   MOZ_ASSERT(iter.isBailoutJS());
 #if defined(DEBUG) || defined(JS_JITSPEW)
   FrameType prevFrameType = iter.prevType();
@@ -1583,7 +1580,8 @@ bool jit::BailoutIonToBaseline(JSContext* cx, JitActivation* activation,
              prevFrameType == FrameType::IonJS ||
              prevFrameType == FrameType::BaselineStub ||
              prevFrameType == FrameType::Rectifier ||
-             prevFrameType == FrameType::IonICCall);
+             prevFrameType == FrameType::IonICCall ||
+             prevFrameType == FrameType::BaselineJS);
 #endif
 
   // All incoming frames are going to look like this:
@@ -1627,9 +1625,6 @@ bool jit::BailoutIonToBaseline(JSContext* cx, JitActivation* activation,
           "  Reading from snapshot offset %u size %zu", iter.snapshotOffset(),
           iter.ionScript()->snapshotsListSize());
 
-  if (!excInfo) {
-    iter.ionScript()->incNumBailouts();
-  }
   iter.script()->updateJitCodeRaw(cx->runtime());
 
   // Under a bailout, there is no need to invalidate the frame after
@@ -1830,6 +1825,13 @@ static bool CopyFromRematerializedFrame(JSContext* cx, JitActivation* act,
   return true;
 }
 
+enum class BailoutAction {
+  InvalidateImmediately,
+  InvalidateIfFrequent,
+  DisableIfFrequent,
+  NoAction
+};
+
 bool jit::FinishBailoutToBaseline(BaselineBailoutInfo* bailoutInfoArg) {
   JitSpew(JitSpew_BaselineBailouts, "  Done restoring frames");
 
@@ -1980,10 +1982,14 @@ bool jit::FinishBailoutToBaseline(BaselineBailoutInfo* bailoutInfoArg) {
           innerScript->lineno(), innerScript->column(),
           innerScript->getWarmUpCount(), (unsigned)bailoutKind);
 
+  BailoutAction action = BailoutAction::InvalidateImmediately;
+  DebugOnly<bool> saveFailedICHash = false;
   switch (bailoutKind) {
     case BailoutKind::TranspiledCacheIR:
-      // Do nothing. The baseline fallback code will invalidate the script
-      // if necessary to prevent bailout loops.
+      // A transpiled guard failed. If this happens often enough, we will
+      // invalidate and recompile.
+      action = BailoutAction::InvalidateIfFrequent;
+      saveFailedICHash = true;
       break;
 
     case BailoutKind::SpeculativePhi:
@@ -1995,24 +2001,35 @@ bool jit::FinishBailoutToBaseline(BaselineBailoutInfo* bailoutInfoArg) {
 
     case BailoutKind::TypePolicy:
       // A conversion inserted by a type policy failed.
-      // TODO: invalidate and disable recompilation if this happens too often.
+      // We will invalidate and disable recompilation if this happens too often.
+      action = BailoutAction::DisableIfFrequent;
       break;
 
     case BailoutKind::LICM:
       // LICM may cause spurious bailouts by hoisting unreachable
       // guards past branches.  To prevent bailout loops, when an
-      // instruction hoisted by LICM bails out, we set a flag on the
+      // instruction hoisted by LICM bails out, we update the
       // IonScript and resume in baseline. If the guard would have
-      // been executed anyway, then the baseline fallback code will
-      // invalidate the script. Otherwise, the next time we reach this
-      // point, we will invalidate the script and disable LICM.
+      // been executed anyway, then we will hit the baseline fallback,
+      // and call noteBaselineFallback. If that does not happen,
+      // then the next time we reach this point, we will disable LICM
+      // for this script.
       MOZ_ASSERT(!outerScript->hadLICMInvalidation());
       if (outerScript->hasIonScript()) {
-        if (outerScript->ionScript()->hadLICMBailout()) {
-          outerScript->setHadLICMInvalidation();
-          InvalidateAfterBailout(cx, outerScript, "LICM failure");
-        } else {
-          outerScript->ionScript()->setHadLICMBailout();
+        switch (outerScript->ionScript()->licmState()) {
+          case IonScript::LICMState::NeverBailed:
+            outerScript->ionScript()->setHadLICMBailout();
+            action = BailoutAction::NoAction;
+            break;
+          case IonScript::LICMState::Bailed:
+            outerScript->setHadLICMInvalidation();
+            InvalidateAfterBailout(cx, outerScript, "LICM failure");
+            break;
+          case IonScript::LICMState::BailedAndHitFallback:
+            // This bailout is not due to LICM. Treat it like a
+            // regular TranspiledCacheIR bailout.
+            action = BailoutAction::InvalidateIfFrequent;
+            break;
         }
       }
       break;
@@ -2026,26 +2043,48 @@ bool jit::FinishBailoutToBaseline(BaselineBailoutInfo* bailoutInfoArg) {
 
     case BailoutKind::EagerTruncation:
       // An eager truncation generated by range analysis bailed out.
+      // To avoid bailout loops, we set a flag to avoid generating
+      // eager truncations next time we recompile.
       MOZ_ASSERT(!outerScript->hadEagerTruncationBailout());
       outerScript->setHadEagerTruncationBailout();
       InvalidateAfterBailout(cx, outerScript, "eager range analysis failure");
       break;
 
+    case BailoutKind::UnboxFolding:
+      // An unbox that was hoisted to fold with a load bailed out.
+      // To avoid bailout loops, we set a flag to avoid folding
+      // loads with unboxes next time we recompile.
+      MOZ_ASSERT(!outerScript->hadUnboxFoldingBailout());
+      outerScript->setHadUnboxFoldingBailout();
+      InvalidateAfterBailout(cx, outerScript, "unbox folding failure");
+      break;
+
     case BailoutKind::TooManyArguments:
       // A funapply or spread call had more than JIT_ARGS_LENGTH_MAX arguments.
-      // TODO: Invalidate and disable recompilation if this happens too often.
+      // We will invalidate and disable recompilation if this happens too often.
+      action = BailoutAction::DisableIfFrequent;
+      break;
+
+    case BailoutKind::DuringVMCall:
+      if (cx->isExceptionPending()) {
+        // We are bailing out to catch an exception. We will invalidate
+        // and disable recompilation if this happens too often.
+        action = BailoutAction::DisableIfFrequent;
+      }
       break;
 
     case BailoutKind::Inevitable:
-    case BailoutKind::DuringVMCall:
     case BailoutKind::Debugger:
       // Do nothing.
+      action = BailoutAction::NoAction;
       break;
 
     case BailoutKind::FirstExecution:
-      // Do not return directly, as this was not frequent in the first place,
-      // thus rely on the check for frequent bailouts to recompile the current
-      // script.
+      // We reached an instruction that had not been executed yet at
+      // the time we compiled. If this happens often enough, we will
+      // invalidate and recompile.
+      action = BailoutAction::InvalidateIfFrequent;
+      saveFailedICHash = true;
       break;
 
     case BailoutKind::NotOptimizedArgumentsGuard:
@@ -2065,12 +2104,48 @@ bool jit::FinishBailoutToBaseline(BaselineBailoutInfo* bailoutInfoArg) {
 
     case BailoutKind::OnStackInvalidation:
       // The script has already been invalidated. There is nothing left to do.
+      action = BailoutAction::NoAction;
       break;
 
     default:
       MOZ_CRASH("Unknown bailout kind!");
   }
 
-  CheckFrequentBailouts(cx, outerScript, bailoutKind);
+#ifdef DEBUG
+  if (MOZ_UNLIKELY(cx->runtime()->jitRuntime()->ionBailAfterEnabled())) {
+    action = BailoutAction::NoAction;
+  }
+#endif
+
+  if (outerScript->hasIonScript()) {
+    IonScript* ionScript = outerScript->ionScript();
+    switch (action) {
+      case BailoutAction::InvalidateImmediately:
+        // The IonScript should already have been invalidated.
+        MOZ_ASSERT(false);
+        break;
+      case BailoutAction::InvalidateIfFrequent:
+        ionScript->incNumFixableBailouts();
+        if (ionScript->shouldInvalidate()) {
+#ifdef DEBUG
+          if (saveFailedICHash && !JitOptions.disableBailoutLoopCheck) {
+            outerScript->jitScript()->setFailedICHash(ionScript->icHash());
+          }
+#endif
+          InvalidateAfterBailout(cx, outerScript, "fixable bailouts");
+        }
+        break;
+      case BailoutAction::DisableIfFrequent:
+        ionScript->incNumUnfixableBailouts();
+        if (ionScript->shouldInvalidateAndDisable()) {
+          InvalidateAfterBailout(cx, outerScript, "unfixable bailouts");
+          outerScript->disableIon();
+        }
+        break;
+      case BailoutAction::NoAction:
+        break;
+    }
+  }
+
   return true;
 }

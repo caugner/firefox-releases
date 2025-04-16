@@ -652,10 +652,6 @@ class Document : public nsINode,
 
   void ClearActiveStoragePrincipal() { mActiveStoragePrincipal = nullptr; }
 
-  nsIPrincipal* GetContentBlockingAllowListPrincipal() const {
-    return mContentBlockingAllowListPrincipal;
-  }
-
   // EventTarget
   void GetEventTargetParent(EventChainPreVisitor& aVisitor) override;
   EventListenerManager* GetOrCreateListenerManager() override;
@@ -897,13 +893,9 @@ class Document : public nsINode,
   /**
    * Set the principals responsible for this document.  Chances are, you do not
    * want to be using this.
-   * Set aSetContentBlockingAllowListPrincipal to false to skip updating the
-   * content blocking allowlist principal. Currently used to prevent setting it
-   * to a NullPrincipal for sandboxed documents.
    */
   void SetPrincipals(nsIPrincipal* aPrincipal,
-                     nsIPrincipal* aPartitionedPrincipal,
-                     bool aSetContentBlockingAllowListPrincipal = true);
+                     nsIPrincipal* aPartitionedPrincipal);
 
   /**
    * Returns true if exempt from HTTPS-Only Mode upgrade.
@@ -1609,11 +1601,11 @@ class Document : public nsINode,
  private:
   class SelectorCacheKey {
    public:
-    explicit SelectorCacheKey(const nsAString& aString) : mKey(aString) {
+    explicit SelectorCacheKey(const nsACString& aString) : mKey(aString) {
       MOZ_COUNT_CTOR(SelectorCacheKey);
     }
 
-    nsString mKey;
+    nsCString mKey;
     nsExpirationState mState;
 
     nsExpirationState* GetExpirationState() { return &mState; }
@@ -1627,17 +1619,10 @@ class Document : public nsINode,
   class SelectorCache final : public nsExpirationTracker<SelectorCacheKey, 4> {
    public:
     using SelectorList = UniquePtr<RawServoSelectorList>;
+    using Table = nsDataHashtable<nsCStringHashKey, SelectorList>;
 
     explicit SelectorCache(nsIEventTarget* aEventTarget);
-
-    void CacheList(const nsAString& aSelector, SelectorList aSelectorList) {
-      MOZ_ASSERT(NS_IsMainThread());
-      SelectorCacheKey* key = new SelectorCacheKey(aSelector);
-      mTable.Put(key->mKey, std::move(aSelectorList));
-      AddObject(key);
-    }
-
-    void NotifyExpired(SelectorCacheKey* aSelector) final;
+    void NotifyExpired(SelectorCacheKey*) final;
 
     // We do not call MarkUsed because it would just slow down lookups and
     // because we're OK expiring things after a few seconds even if they're
@@ -1646,14 +1631,15 @@ class Document : public nsINode,
     // If we have an entry and the selector list returned has a null
     // RawServoSelectorList*, that indicates that aSelector has already been
     // parsed and is not a syntactically valid selector.
-    SelectorList* GetList(const nsAString& aSelector) {
-      return mTable.GetValue(aSelector);
+    Table::EntryPtr GetList(const nsACString& aSelector) {
+      MOZ_ASSERT(NS_IsMainThread());
+      return mTable.LookupForAdd(aSelector);
     }
 
     ~SelectorCache();
 
    private:
-    nsDataHashtable<nsStringHashKey, SelectorList> mTable;
+    Table mTable;
   };
 
   SelectorCache& GetSelectorCache() {
@@ -1808,6 +1794,12 @@ class Document : public nsINode,
    */
   nsIGlobalObject* GetScopeObject() const;
   void SetScopeObject(nsIGlobalObject* aGlobal);
+
+  /**
+   * Return the cross-origin-isolated state from browsing context. If it's a
+   * data document, we get its creator's state.
+   */
+  bool CrossOriginIsolated() const;
 
   /**
    * Return the window containing the document (the outer window).
@@ -2471,7 +2463,7 @@ class Document : public nsINode,
    * Support for window.matchMedia()
    */
 
-  already_AddRefed<MediaQueryList> MatchMedia(const nsAString& aMediaQueryList,
+  already_AddRefed<MediaQueryList> MatchMedia(const nsACString& aMediaQueryList,
                                               CallerType aCallerType);
 
   LinkedList<MediaQueryList>& MediaQueryLists() { return mDOMMediaQueryLists; }
@@ -3213,7 +3205,11 @@ class Document : public nsINode,
 
   // This method may fire a DOM event; if it does so it will happen
   // synchronously.
-  void UpdateVisibilityState();
+  //
+  // Whether the event fires is controlled by the argument.
+  enum class DispatchVisibilityChange { No, Yes };
+  void UpdateVisibilityState(
+      DispatchVisibilityChange = DispatchVisibilityChange::Yes);
 
   // Posts an event to call UpdateVisibilityState.
   void PostVisibilityUpdateEvent();
@@ -3564,12 +3560,14 @@ class Document : public nsINode,
    * Defined inline in nsHTMLDocument.h
    */
   inline nsHTMLDocument* AsHTMLDocument();
+  inline const nsHTMLDocument* AsHTMLDocument() const;
 
   /**
    * Asserts IsSVGDocument, and can't return null.
    * Defined inline in SVGDocument.h
    */
   inline SVGDocument* AsSVGDocument();
+  inline const SVGDocument* AsSVGDocument() const;
 
   /*
    * Given a node, get a weak reference to it and append that reference to
@@ -5148,9 +5146,6 @@ class Document : public nsINode,
   // which is required due to its CloneDocHelper() call site.  :-(
   mutable nsCOMPtr<nsIPrincipal> mActiveStoragePrincipal;
 
-  // The principal to use for the content blocking allow list.
-  nsCOMPtr<nsIPrincipal> mContentBlockingAllowListPrincipal;
-
   // See GetNextFormNumber and GetNextControlNumber.
   int32_t mNextFormNumber;
   int32_t mNextControlNumber;
@@ -5221,14 +5216,19 @@ class MOZ_STACK_CLASS mozAutoSubtreeModified {
   RefPtr<Document> mSubtreeOwner;
 };
 
+enum class SyncOperationBehavior { eSuspendInput, eAllowInput };
+
 class MOZ_STACK_CLASS nsAutoSyncOperation {
  public:
-  explicit nsAutoSyncOperation(Document* aDocument);
+  explicit nsAutoSyncOperation(Document* aDocument,
+                               SyncOperationBehavior aSyncBehavior);
   ~nsAutoSyncOperation();
 
  private:
   nsTArray<RefPtr<Document>> mDocuments;
   uint32_t mMicroTaskLevel;
+  const SyncOperationBehavior mSyncBehavior;
+  RefPtr<BrowsingContext> mBrowsingContext;
 };
 
 class MOZ_RAII AutoSetThrowOnDynamicMarkupInsertionCounter final {

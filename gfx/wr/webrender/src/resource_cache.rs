@@ -26,10 +26,11 @@ use crate::glyph_rasterizer::{GLYPH_FLASHING, FontInstance, GlyphFormat, GlyphKe
 use crate::gpu_cache::{GpuCache, GpuCacheAddress, GpuCacheHandle};
 use crate::gpu_types::UvRectKind;
 use crate::internal_types::{CacheTextureId, FastHashMap, FastHashSet, TextureSource, ResourceUpdateList};
+use crate::picture::SurfaceInfo;
 use crate::profiler::{self, TransactionProfile, bytes_to_mb};
 use crate::render_backend::{FrameId, FrameStamp};
-use crate::render_task_graph::{RenderTaskGraph, RenderTaskId};
-use crate::render_task_cache::{RenderTaskCache, RenderTaskCacheKey};
+use crate::render_task_graph::{RenderTaskId, RenderTaskGraphBuilder};
+use crate::render_task_cache::{RenderTaskCache, RenderTaskCacheKey, RenderTaskParent};
 use crate::render_task_cache::{RenderTaskCacheEntry, RenderTaskCacheEntryHandle};
 use euclid::point2;
 use smallvec::SmallVec;
@@ -425,7 +426,6 @@ pub struct BlobImageRasterizerEpoch(usize);
 /// Internal information about allocated render targets in the pool
 struct RenderTarget {
     size: DeviceIntSize,
-    num_layers: usize,
     format: ImageFormat,
     texture_id: CacheTextureId,
     /// If true, this is currently leant out, and not available to other passes
@@ -436,7 +436,7 @@ struct RenderTarget {
 impl RenderTarget {
     fn size_in_bytes(&self) -> usize {
         let bpp = self.format.bytes_per_pixel() as usize;
-        self.num_layers * (self.size.width * self.size.height) as usize * bpp
+        (self.size.width * self.size.height) as usize * bpp
     }
 
     /// Returns true if this texture was used within `threshold` frames of
@@ -528,6 +528,28 @@ impl ResourceCache {
         }
     }
 
+    /// Construct a resource cache for use in unit tests.
+    #[cfg(test)]
+    pub fn new_for_testing() -> Self {
+        use rayon::ThreadPoolBuilder;
+
+        let texture_cache = TextureCache::new_for_testing(
+            4096,
+            ImageFormat::RGBA8,
+        );
+        let workers = Arc::new(ThreadPoolBuilder::new().build().unwrap());
+        let glyph_rasterizer = GlyphRasterizer::new(workers).unwrap();
+        let cached_glyphs = GlyphCache::new();
+        let font_instances = SharedFontInstanceMap::new();
+
+        ResourceCache::new(
+            texture_cache,
+            glyph_rasterizer,
+            cached_glyphs,
+            font_instances,
+        )
+    }
+
     pub fn max_texture_size(&self) -> i32 {
         self.texture_cache.max_texture_size()
     }
@@ -557,21 +579,25 @@ impl ResourceCache {
         &mut self,
         key: RenderTaskCacheKey,
         gpu_cache: &mut GpuCache,
-        render_tasks: &mut RenderTaskGraph,
+        rg_builder: &mut RenderTaskGraphBuilder,
         user_data: Option<[f32; 3]>,
         is_opaque: bool,
+        parent: RenderTaskParent,
+        surfaces: &[SurfaceInfo],
         f: F,
     ) -> RenderTaskCacheEntryHandle
     where
-        F: FnOnce(&mut RenderTaskGraph) -> RenderTaskId,
+        F: FnOnce(&mut RenderTaskGraphBuilder) -> RenderTaskId,
     {
         self.cached_render_tasks.request_render_task(
             key,
             &mut self.texture_cache,
             gpu_cache,
-            render_tasks,
+            rg_builder,
             user_data,
             is_opaque,
+            parent,
+            surfaces,
             |render_graph| Ok(f(render_graph))
         ).expect("Failed to request a render task from the resource cache!")
     }
@@ -1030,7 +1056,6 @@ impl ResourceCache {
         mut font: FontInstance,
         glyph_keys: &[GlyphKey],
         gpu_cache: &mut GpuCache,
-        render_task_tree: &mut RenderTaskGraph,
     ) {
         debug_assert_eq!(self.state, State::AddResources);
 
@@ -1041,8 +1066,6 @@ impl ResourceCache {
             glyph_keys,
             &mut self.texture_cache,
             gpu_cache,
-            &mut self.cached_render_tasks,
-            render_task_tree,
         );
     }
 
@@ -1182,7 +1205,6 @@ impl ResourceCache {
         self.cached_glyphs.begin_frame(
             stamp,
             &mut self.texture_cache,
-            &self.cached_render_tasks,
             &mut self.glyph_rasterizer,
         );
         self.cached_render_tasks.begin_frame(&mut self.texture_cache);
@@ -1434,7 +1456,7 @@ impl ResourceCache {
         profile_scope!("end_frame");
         self.state = State::Idle;
 
-        // GC the render target pool, if it's currently > 32 MB in size.
+        // GC the render target pool, if it's currently > 64 MB in size.
         //
         // We use a simple scheme whereby we drop any texture that hasn't been used
         // in the last 60 frames, until we are below the size threshold. This should
@@ -1447,7 +1469,7 @@ impl ResourceCache {
         //
         // [1] https://bugzilla.mozilla.org/show_bug.cgi?id=1494099
         self.gc_render_targets(
-            32 * 1024 * 1024,
+            64 * 1024 * 1024,
             32 * 1024 * 1024 * 10,
             60,
         );
@@ -1578,12 +1600,10 @@ impl ResourceCache {
     pub fn get_or_create_render_target_from_pool(
         &mut self,
         size: DeviceIntSize,
-        num_layers: usize,
         format: ImageFormat,
     ) -> CacheTextureId {
         for target in &mut self.render_target_pool {
             if target.size == size &&
-               target.num_layers == num_layers &&
                target.format == format &&
                !target.is_active {
                 // Found a target that's not currently in use which matches. Update
@@ -1598,13 +1618,11 @@ impl ResourceCache {
 
         let texture_id = self.texture_cache.alloc_render_target(
             size,
-            num_layers,
             format,
         );
 
         self.render_target_pool.push(RenderTarget {
             size,
-            num_layers,
             format,
             texture_id,
             is_active: true,
@@ -1665,7 +1683,7 @@ impl ResourceCache {
         let mut retained_targets = SmallVec::<[RenderTarget; 8]>::new();
 
         for target in self.render_target_pool.drain(..) {
-            debug_assert!(!target.is_active);
+            assert!(!target.is_active);
 
             // Drop oldest textures until we are under the allowed size threshold.
             // However, if it's been used in very recently, it is always kept around,
@@ -1685,6 +1703,19 @@ impl ResourceCache {
         }
 
         self.render_target_pool.extend(retained_targets);
+    }
+
+    #[cfg(test)]
+    pub fn validate_surfaces(
+        &self,
+        expected_surfaces: &[(i32, i32, ImageFormat)],
+    ) {
+        assert_eq!(expected_surfaces.len(), self.render_target_pool.len());
+
+        for (expected, surface) in expected_surfaces.iter().zip(self.render_target_pool.iter()) {
+            assert_eq!(DeviceIntSize::new(expected.0, expected.1), surface.size);
+            assert_eq!(expected.2, surface.format);
+        }
     }
 }
 
@@ -1946,6 +1977,7 @@ impl ResourceCache {
         config: &CaptureConfig,
     ) -> Vec<PlainExternalImage> {
         use std::{fs, path::Path};
+        use crate::texture_cache::TextureCacheConfig;
 
         info!("loading resource cache");
         //TODO: instead of filling the local path to Arc<data> map as we process
@@ -1972,6 +2004,7 @@ impl ResourceCache {
                     self.texture_cache.default_picture_tile_size(),
                     self.texture_cache.color_formats(),
                     self.texture_cache.swizzle_settings(),
+                    &TextureCacheConfig::DEFAULT,
                 );
             }
         }

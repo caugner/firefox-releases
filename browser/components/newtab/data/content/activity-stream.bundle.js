@@ -205,7 +205,7 @@ const globalImportContext = typeof Window === "undefined" ? BACKGROUND_PROCESS :
 // }
 const actionTypes = {};
 
-for (const type of ["ABOUT_SPONSORED_TOP_SITES", "ADDONS_INFO_REQUEST", "ADDONS_INFO_RESPONSE", "ARCHIVE_FROM_POCKET", "AS_ROUTER_INITIALIZED", "AS_ROUTER_PREF_CHANGED", "AS_ROUTER_TARGETING_UPDATE", "AS_ROUTER_TELEMETRY_USER_EVENT", "BLOCK_URL", "BOOKMARK_URL", "CLEAR_PREF", "COPY_DOWNLOAD_LINK", "DELETE_BOOKMARK_BY_ID", "DELETE_FROM_POCKET", "DELETE_HISTORY_URL", "DIALOG_CANCEL", "DIALOG_OPEN", "DISCOVERY_STREAM_COLLECTION_DISMISSIBLE_TOGGLE", "DISCOVERY_STREAM_CONFIG_CHANGE", "DISCOVERY_STREAM_CONFIG_RESET", "DISCOVERY_STREAM_CONFIG_RESET_DEFAULTS", "DISCOVERY_STREAM_CONFIG_SETUP", "DISCOVERY_STREAM_CONFIG_SET_VALUE", "DISCOVERY_STREAM_DEV_EXPIRE_CACHE", "DISCOVERY_STREAM_DEV_IDLE_DAILY", "DISCOVERY_STREAM_DEV_SYNC_RS", "DISCOVERY_STREAM_DEV_SYSTEM_TICK", "DISCOVERY_STREAM_FEEDS_UPDATE", "DISCOVERY_STREAM_FEED_UPDATE", "DISCOVERY_STREAM_IMPRESSION_STATS", "DISCOVERY_STREAM_LAYOUT_RESET", "DISCOVERY_STREAM_LAYOUT_UPDATE", "DISCOVERY_STREAM_LINK_BLOCKED", "DISCOVERY_STREAM_LOADED_CONTENT", "DISCOVERY_STREAM_PERSONALIZATION_INIT", "DISCOVERY_STREAM_PERSONALIZATION_LAST_UPDATED", "DISCOVERY_STREAM_PERSONALIZATION_VERSION", "DISCOVERY_STREAM_PERSONALIZATION_VERSION_TOGGLE", "DISCOVERY_STREAM_RETRY_FEED", "DISCOVERY_STREAM_SPOCS_CAPS", "DISCOVERY_STREAM_SPOCS_ENDPOINT", "DISCOVERY_STREAM_SPOCS_FILL", "DISCOVERY_STREAM_SPOCS_PLACEMENTS", "DISCOVERY_STREAM_SPOCS_UPDATE", "DISCOVERY_STREAM_SPOC_BLOCKED", "DISCOVERY_STREAM_SPOC_IMPRESSION", "DOWNLOAD_CHANGED", "FAKE_FOCUS_SEARCH", "FILL_SEARCH_TERM", "HANDOFF_SEARCH_TO_AWESOMEBAR", "HIDE_PRIVACY_INFO", "HIDE_SEARCH", "INIT", "NEW_TAB_INIT", "NEW_TAB_INITIAL_STATE", "NEW_TAB_LOAD", "NEW_TAB_REHYDRATED", "NEW_TAB_STATE_REQUEST", "NEW_TAB_UNLOAD", "OPEN_DOWNLOAD_FILE", "OPEN_LINK", "OPEN_NEW_WINDOW", "OPEN_PRIVATE_WINDOW", "OPEN_WEBEXT_SETTINGS", "PARTNER_LINK_ATTRIBUTION", "PLACES_BOOKMARK_ADDED", "PLACES_BOOKMARK_REMOVED", "PLACES_HISTORY_CLEARED", "PLACES_LINKS_CHANGED", "PLACES_LINK_BLOCKED", "PLACES_LINK_DELETED", "PLACES_SAVED_TO_POCKET", "POCKET_CTA", "POCKET_LINK_DELETED_OR_ARCHIVED", "POCKET_LOGGED_IN", "POCKET_WAITING_FOR_SPOC", "PREFS_INITIAL_VALUES", "PREF_CHANGED", "PREVIEW_REQUEST", "PREVIEW_REQUEST_CANCEL", "PREVIEW_RESPONSE", "REMOVE_DOWNLOAD_FILE", "RICH_ICON_MISSING", "SAVE_SESSION_PERF_DATA", "SAVE_TO_POCKET", "SCREENSHOT_UPDATED", "SECTION_DEREGISTER", "SECTION_DISABLE", "SECTION_ENABLE", "SECTION_MOVE", "SECTION_OPTIONS_CHANGED", "SECTION_REGISTER", "SECTION_UPDATE", "SECTION_UPDATE_CARD", "SETTINGS_CLOSE", "SETTINGS_OPEN", "SET_PREF", "SHOW_DOWNLOAD_FILE", "SHOW_FIREFOX_ACCOUNTS", "SHOW_PRIVACY_INFO", "SHOW_SEARCH", "SKIPPED_SIGNIN", "SNIPPETS_BLOCKLIST_CLEARED", "SNIPPETS_BLOCKLIST_UPDATED", "SNIPPETS_DATA", "SNIPPETS_PREVIEW_MODE", "SNIPPETS_RESET", "SNIPPET_BLOCKED", "SUBMIT_EMAIL", "SUBMIT_SIGNIN", "SYSTEM_TICK", "TELEMETRY_IMPRESSION_STATS", "TELEMETRY_UNDESIRED_EVENT", "TELEMETRY_USER_EVENT", "TOP_SITES_CANCEL_EDIT", "TOP_SITES_CLOSE_SEARCH_SHORTCUTS_MODAL", "TOP_SITES_EDIT", "TOP_SITES_INSERT", "TOP_SITES_OPEN_SEARCH_SHORTCUTS_MODAL", "TOP_SITES_PIN", "TOP_SITES_PREFS_UPDATED", "TOP_SITES_UNPIN", "TOP_SITES_UPDATED", "TOTAL_BOOKMARKS_REQUEST", "TOTAL_BOOKMARKS_RESPONSE", "UNINIT", "UPDATE_PINNED_SEARCH_SHORTCUTS", "UPDATE_SEARCH_SHORTCUTS", "UPDATE_SECTION_PREFS", "WEBEXT_CLICK", "WEBEXT_DISMISS"]) {
+for (const type of ["ABOUT_SPONSORED_TOP_SITES", "ADDONS_INFO_REQUEST", "ADDONS_INFO_RESPONSE", "ARCHIVE_FROM_POCKET", "AS_ROUTER_INITIALIZED", "AS_ROUTER_PREF_CHANGED", "AS_ROUTER_TARGETING_UPDATE", "AS_ROUTER_TELEMETRY_USER_EVENT", "BLOCK_URL", "BOOKMARK_URL", "CLEAR_PREF", "COPY_DOWNLOAD_LINK", "DELETE_BOOKMARK_BY_ID", "DELETE_FROM_POCKET", "DELETE_HISTORY_URL", "DIALOG_CANCEL", "DIALOG_OPEN", "DISCOVERY_STREAM_COLLECTION_DISMISSIBLE_TOGGLE", "DISCOVERY_STREAM_CONFIG_CHANGE", "DISCOVERY_STREAM_CONFIG_RESET", "DISCOVERY_STREAM_CONFIG_RESET_DEFAULTS", "DISCOVERY_STREAM_CONFIG_SETUP", "DISCOVERY_STREAM_CONFIG_SET_VALUE", "DISCOVERY_STREAM_DEV_EXPIRE_CACHE", "DISCOVERY_STREAM_DEV_IDLE_DAILY", "DISCOVERY_STREAM_DEV_SYNC_RS", "DISCOVERY_STREAM_DEV_SYSTEM_TICK", "DISCOVERY_STREAM_FEEDS_UPDATE", "DISCOVERY_STREAM_FEED_UPDATE", "DISCOVERY_STREAM_IMPRESSION_STATS", "DISCOVERY_STREAM_LAYOUT_RESET", "DISCOVERY_STREAM_LAYOUT_UPDATE", "DISCOVERY_STREAM_LINK_BLOCKED", "DISCOVERY_STREAM_LOADED_CONTENT", "DISCOVERY_STREAM_PERSONALIZATION_INIT", "DISCOVERY_STREAM_PERSONALIZATION_LAST_UPDATED", "DISCOVERY_STREAM_PERSONALIZATION_VERSION", "DISCOVERY_STREAM_PERSONALIZATION_VERSION_TOGGLE", "DISCOVERY_STREAM_RETRY_FEED", "DISCOVERY_STREAM_SPOCS_CAPS", "DISCOVERY_STREAM_SPOCS_ENDPOINT", "DISCOVERY_STREAM_SPOCS_PLACEMENTS", "DISCOVERY_STREAM_SPOCS_UPDATE", "DISCOVERY_STREAM_SPOC_BLOCKED", "DISCOVERY_STREAM_SPOC_IMPRESSION", "DOWNLOAD_CHANGED", "FAKE_FOCUS_SEARCH", "FILL_SEARCH_TERM", "HANDOFF_SEARCH_TO_AWESOMEBAR", "HIDE_PRIVACY_INFO", "HIDE_SEARCH", "INIT", "NEW_TAB_INIT", "NEW_TAB_INITIAL_STATE", "NEW_TAB_LOAD", "NEW_TAB_REHYDRATED", "NEW_TAB_STATE_REQUEST", "NEW_TAB_UNLOAD", "OPEN_DOWNLOAD_FILE", "OPEN_LINK", "OPEN_NEW_WINDOW", "OPEN_PRIVATE_WINDOW", "OPEN_WEBEXT_SETTINGS", "PARTNER_LINK_ATTRIBUTION", "PLACES_BOOKMARK_ADDED", "PLACES_BOOKMARK_REMOVED", "PLACES_HISTORY_CLEARED", "PLACES_LINKS_CHANGED", "PLACES_LINK_BLOCKED", "PLACES_LINK_DELETED", "PLACES_SAVED_TO_POCKET", "POCKET_CTA", "POCKET_LINK_DELETED_OR_ARCHIVED", "POCKET_LOGGED_IN", "POCKET_WAITING_FOR_SPOC", "PREFS_INITIAL_VALUES", "PREF_CHANGED", "PREVIEW_REQUEST", "PREVIEW_REQUEST_CANCEL", "PREVIEW_RESPONSE", "REMOVE_DOWNLOAD_FILE", "RICH_ICON_MISSING", "SAVE_SESSION_PERF_DATA", "SAVE_TO_POCKET", "SCREENSHOT_UPDATED", "SECTION_DEREGISTER", "SECTION_DISABLE", "SECTION_ENABLE", "SECTION_MOVE", "SECTION_OPTIONS_CHANGED", "SECTION_REGISTER", "SECTION_UPDATE", "SECTION_UPDATE_CARD", "SETTINGS_CLOSE", "SETTINGS_OPEN", "SET_PREF", "SHOW_DOWNLOAD_FILE", "SHOW_FIREFOX_ACCOUNTS", "SHOW_PRIVACY_INFO", "SHOW_SEARCH", "SKIPPED_SIGNIN", "SNIPPETS_BLOCKLIST_CLEARED", "SNIPPETS_BLOCKLIST_UPDATED", "SNIPPETS_DATA", "SNIPPETS_PREVIEW_MODE", "SNIPPETS_RESET", "SNIPPET_BLOCKED", "SUBMIT_EMAIL", "SUBMIT_SIGNIN", "SYSTEM_TICK", "TELEMETRY_IMPRESSION_STATS", "TELEMETRY_USER_EVENT", "TOP_SITES_CANCEL_EDIT", "TOP_SITES_CLOSE_SEARCH_SHORTCUTS_MODAL", "TOP_SITES_EDIT", "TOP_SITES_INSERT", "TOP_SITES_OPEN_SEARCH_SHORTCUTS_MODAL", "TOP_SITES_PIN", "TOP_SITES_PREFS_UPDATED", "TOP_SITES_UNPIN", "TOP_SITES_UPDATED", "TOTAL_BOOKMARKS_REQUEST", "TOTAL_BOOKMARKS_RESPONSE", "UNINIT", "UPDATE_PINNED_SEARCH_SHORTCUTS", "UPDATE_SEARCH_SHORTCUTS", "UPDATE_SECTION_PREFS", "WEBEXT_CLICK", "WEBEXT_DISMISS"]) {
   actionTypes[type] = type;
 } // Helper function for creating routed actions between content and main
 // Not intended to be used by consumers
@@ -359,38 +359,6 @@ function ASRouterUserEvent(data) {
   });
 }
 /**
- * DiscoveryStreamSpocsFill - A telemetry ping indicating a SPOCS Fill event.
- *
- * @param  {object} data Fields to include in the ping (spoc_fills, etc.)
- * @param  {int} importContext (For testing) Override the import context for testing.
- * @return {object} An AlsoToMain action
- */
-
-
-function DiscoveryStreamSpocsFill(data, importContext = globalImportContext) {
-  const action = {
-    type: actionTypes.DISCOVERY_STREAM_SPOCS_FILL,
-    data
-  };
-  return importContext === UI_CODE ? AlsoToMain(action) : action;
-}
-/**
- * UndesiredEvent - A telemetry ping indicating an undesired state.
- *
- * @param  {object} data Fields to include in the ping (value, etc.)
- * @param  {int} importContext (For testing) Override the import context for testing.
- * @return {object} An action. For UI code, a AlsoToMain action.
- */
-
-
-function UndesiredEvent(data, importContext = globalImportContext) {
-  const action = {
-    type: actionTypes.TELEMETRY_UNDESIRED_EVENT,
-    data
-  };
-  return importContext === UI_CODE ? AlsoToMain(action) : action;
-}
-/**
  * ImpressionStats - A telemetry ping indicating an impression stats.
  *
  * @param  {object} data Fields to include in the ping
@@ -466,7 +434,6 @@ var actionCreators = {
   BroadcastToContent,
   UserEvent,
   ASRouterUserEvent,
-  UndesiredEvent,
   ImpressionStats,
   AlsoToOneContent,
   OnlyToOneContent,
@@ -476,8 +443,7 @@ var actionCreators = {
   SetPref,
   WebExtEvent,
   DiscoveryStreamImpressionStats,
-  DiscoveryStreamLoadedContent,
-  DiscoveryStreamSpocsFill
+  DiscoveryStreamLoadedContent
 }; // These are helpers to test for certain kinds of actions
 
 var actionUtils = {
@@ -671,6 +637,7 @@ class BaseContent extends react__WEBPACK_IMPORTED_MODULE_8___default.a.PureCompo
     this.openPreferences = this.openPreferences.bind(this);
     this.openCustomizationMenu = this.openCustomizationMenu.bind(this);
     this.closeCustomizationMenu = this.closeCustomizationMenu.bind(this);
+    this.handleOnKeyDown = this.handleOnKeyDown.bind(this);
     this.onWindowScroll = debounce(this.onWindowScroll.bind(this), 5);
     this.setPref = this.setPref.bind(this);
     this.state = {
@@ -681,17 +648,17 @@ class BaseContent extends react__WEBPACK_IMPORTED_MODULE_8___default.a.PureCompo
 
   componentDidMount() {
     global.addEventListener("scroll", this.onWindowScroll);
+    global.addEventListener("keydown", this.handleOnKeyDown);
   }
 
   componentWillUnmount() {
     global.removeEventListener("scroll", this.onWindowScroll);
+    global.removeEventListener("keydown", this.handleOnKeyDown);
   }
 
   onWindowScroll() {
-    const prefs = this.props.Prefs.values; // Show logo only if the logo is enabled and pocket is not enabled.
-
-    const showLogo = prefs["logowordmark.alwaysVisible"] && !(prefs["feeds.section.topstories"] && prefs["feeds.system.topstories"]);
-    const SCROLL_THRESHOLD = showLogo ? 179 : 34;
+    const prefs = this.props.Prefs.values;
+    const SCROLL_THRESHOLD = prefs["logowordmark.alwaysVisible"] ? 179 : 34;
 
     if (global.scrollY > SCROLL_THRESHOLD && !this.state.fixedSearch) {
       this.setState({
@@ -717,12 +684,26 @@ class BaseContent extends react__WEBPACK_IMPORTED_MODULE_8___default.a.PureCompo
     this.setState({
       customizeMenuVisible: true
     });
+    this.props.dispatch(common_Actions_jsm__WEBPACK_IMPORTED_MODULE_0__["actionCreators"].UserEvent({
+      event: "SHOW_PERSONALIZE"
+    }));
   }
 
   closeCustomizationMenu() {
-    this.setState({
-      customizeMenuVisible: false
-    });
+    if (this.state.customizeMenuVisible) {
+      this.setState({
+        customizeMenuVisible: false
+      });
+      this.props.dispatch(common_Actions_jsm__WEBPACK_IMPORTED_MODULE_0__["actionCreators"].UserEvent({
+        event: "HIDE_PERSONALIZE"
+      }));
+    }
+  }
+
+  handleOnKeyDown(e) {
+    if (e.key === "Escape") {
+      this.closeCustomizationMenu();
+    }
   }
 
   setPref(pref, value) {
@@ -749,7 +730,6 @@ class BaseContent extends react__WEBPACK_IMPORTED_MODULE_8___default.a.PureCompo
     const pocketEnabled = prefs["feeds.section.topstories"] && prefs["feeds.system.topstories"];
     const noSectionsEnabled = !prefs["feeds.topsites"] && !pocketEnabled && filteredSections.filter(section => section.enabled).length === 0;
     const searchHandoffEnabled = prefs["improvesearch.handoffToAwesomebar"];
-    const showLogo = prefs["logowordmark.alwaysVisible"] && (!prefs["feeds.section.topstories"] || !prefs["feeds.system.topstories"] && prefs.region);
     const customizationMenuEnabled = prefs["customizationMenu.enabled"];
     const newNewtabExperienceEnabled = prefs["newNewtabExperience.enabled"];
     const canShowCustomizationMenu = customizationMenuEnabled || newNewtabExperienceEnabled;
@@ -767,18 +747,31 @@ class BaseContent extends react__WEBPACK_IMPORTED_MODULE_8___default.a.PureCompo
     const {
       mayHaveSponsoredTopSites
     } = prefs;
-    const outerClassName = ["outer-wrapper", isDiscoveryStream && pocketEnabled && "ds-outer-wrapper-search-alignment", isDiscoveryStream && "ds-outer-wrapper-breakpoint-override", prefs.showSearch && this.state.fixedSearch && !noSectionsEnabled && "fixed-search", prefs.showSearch && noSectionsEnabled && "only-search", showLogo && "visible-logo"].filter(v => v).join(" ");
-    return react__WEBPACK_IMPORTED_MODULE_8___default.a.createElement("div", null, canShowCustomizationMenu ? react__WEBPACK_IMPORTED_MODULE_8___default.a.createElement(PersonalizeButton, {
+    const outerClassName = ["outer-wrapper", isDiscoveryStream && pocketEnabled && "ds-outer-wrapper-search-alignment", isDiscoveryStream && "ds-outer-wrapper-breakpoint-override", prefs.showSearch && this.state.fixedSearch && !noSectionsEnabled && "fixed-search", prefs.showSearch && noSectionsEnabled && "only-search", prefs["logowordmark.alwaysVisible"] && "visible-logo", newNewtabExperienceEnabled && "newtab-experience"].filter(v => v).join(" ");
+    return react__WEBPACK_IMPORTED_MODULE_8___default.a.createElement("div", null, canShowCustomizationMenu ? react__WEBPACK_IMPORTED_MODULE_8___default.a.createElement("span", null, react__WEBPACK_IMPORTED_MODULE_8___default.a.createElement(PersonalizeButton, {
       onClick: this.openCustomizationMenu
-    }) : react__WEBPACK_IMPORTED_MODULE_8___default.a.createElement(PrefsButton, {
+    }), react__WEBPACK_IMPORTED_MODULE_8___default.a.createElement(react_transition_group__WEBPACK_IMPORTED_MODULE_11__["CSSTransition"], {
+      timeout: 0,
+      classNames: "customize-animate",
+      in: showCustomizationMenu,
+      appear: true
+    }, react__WEBPACK_IMPORTED_MODULE_8___default.a.createElement(content_src_components_CustomizeMenu_CustomizeMenu__WEBPACK_IMPORTED_MODULE_7__["CustomizeMenu"], {
+      onClose: this.closeCustomizationMenu,
+      openPreferences: this.openPreferences,
+      setPref: this.setPref,
+      enabledSections: enabledSections,
+      pocketRegion: pocketRegion,
+      mayHaveSponsoredTopSites: mayHaveSponsoredTopSites
+    }))) : react__WEBPACK_IMPORTED_MODULE_8___default.a.createElement(PrefsButton, {
       onClick: this.openPreferences,
       icon: prefsButtonIcon
     }), react__WEBPACK_IMPORTED_MODULE_8___default.a.createElement("div", {
-      className: outerClassName
+      className: outerClassName,
+      onClick: this.closeCustomizationMenu
     }, react__WEBPACK_IMPORTED_MODULE_8___default.a.createElement("main", null, prefs.showSearch && react__WEBPACK_IMPORTED_MODULE_8___default.a.createElement("div", {
       className: "non-collapsible-section"
     }, react__WEBPACK_IMPORTED_MODULE_8___default.a.createElement(content_src_components_ErrorBoundary_ErrorBoundary__WEBPACK_IMPORTED_MODULE_6__["ErrorBoundary"], null, react__WEBPACK_IMPORTED_MODULE_8___default.a.createElement(content_src_components_Search_Search__WEBPACK_IMPORTED_MODULE_9__["Search"], _extends({
-      showLogo: noSectionsEnabled || showLogo,
+      showLogo: noSectionsEnabled || prefs["logowordmark.alwaysVisible"],
       handoffEnabled: searchHandoffEnabled
     }, props.Search)))), react__WEBPACK_IMPORTED_MODULE_8___default.a.createElement(_asrouter_asrouter_content__WEBPACK_IMPORTED_MODULE_2__["ASRouterUISurface"], {
       adminContent: this.props.adminContent,
@@ -791,20 +784,7 @@ class BaseContent extends react__WEBPACK_IMPORTED_MODULE_8___default.a.PureCompo
       className: "borderless-error"
     }, react__WEBPACK_IMPORTED_MODULE_8___default.a.createElement(content_src_components_DiscoveryStreamBase_DiscoveryStreamBase__WEBPACK_IMPORTED_MODULE_5__["DiscoveryStreamBase"], {
       locale: props.App.locale
-    })) : react__WEBPACK_IMPORTED_MODULE_8___default.a.createElement(content_src_components_Sections_Sections__WEBPACK_IMPORTED_MODULE_10__["Sections"], null)), react__WEBPACK_IMPORTED_MODULE_8___default.a.createElement(content_src_components_ConfirmDialog_ConfirmDialog__WEBPACK_IMPORTED_MODULE_3__["ConfirmDialog"], null))), canShowCustomizationMenu && react__WEBPACK_IMPORTED_MODULE_8___default.a.createElement(react_transition_group__WEBPACK_IMPORTED_MODULE_11__["CSSTransition"], {
-      timeout: 0,
-      classNames: "customize-animate",
-      in: showCustomizationMenu,
-      appear: true
-    }, react__WEBPACK_IMPORTED_MODULE_8___default.a.createElement(content_src_components_CustomizeMenu_CustomizeMenu__WEBPACK_IMPORTED_MODULE_7__["CustomizeMenu"], {
-      onClose: this.closeCustomizationMenu,
-      openPreferences: this.openPreferences,
-      setPref: this.setPref,
-      enabledSections: enabledSections,
-      pocketRegion: pocketRegion,
-      mayHaveSponsoredTopSites: mayHaveSponsoredTopSites,
-      dispatch: this.props.dispatch
-    })));
+    })) : react__WEBPACK_IMPORTED_MODULE_8___default.a.createElement(content_src_components_Sections_Sections__WEBPACK_IMPORTED_MODULE_10__["Sections"], null)), react__WEBPACK_IMPORTED_MODULE_8___default.a.createElement(content_src_components_ConfirmDialog_ConfirmDialog__WEBPACK_IMPORTED_MODULE_3__["ConfirmDialog"], null))));
   }
 
 }
@@ -1270,7 +1250,8 @@ class ASRouterAdminInner extends react__WEBPACK_IMPORTED_MODULE_3___default.a.Pu
         content: "iridium@particlecore.github.io",
         experiment: "ua-onboarding",
         variation: "chrome",
-        ua: "Google Chrome 123"
+        ua: "Google Chrome 123",
+        dltoken: "00000000-0000-0000-0000-000000000000"
       }
     };
   }
@@ -2031,6 +2012,12 @@ class ASRouterAdminInner extends react__WEBPACK_IMPORTED_MODULE_3___default.a.Pu
       placeholder: "Google Chrome 123",
       value: this.state.attributionParameters.ua,
       onChange: this.onChangeAttributionParameters
+    }), " ")), react__WEBPACK_IMPORTED_MODULE_3___default.a.createElement("tr", null, react__WEBPACK_IMPORTED_MODULE_3___default.a.createElement("td", null, react__WEBPACK_IMPORTED_MODULE_3___default.a.createElement("b", null, " Download Token ")), react__WEBPACK_IMPORTED_MODULE_3___default.a.createElement("td", null, " ", react__WEBPACK_IMPORTED_MODULE_3___default.a.createElement("input", {
+      type: "text",
+      name: "dltoken",
+      placeholder: "00000000-0000-0000-0000-000000000000",
+      value: this.state.attributionParameters.dltoken,
+      onChange: this.onChangeAttributionParameters
     }), " ")), react__WEBPACK_IMPORTED_MODULE_3___default.a.createElement("tr", null, react__WEBPACK_IMPORTED_MODULE_3___default.a.createElement("td", null, " ", react__WEBPACK_IMPORTED_MODULE_3___default.a.createElement("button", {
       className: "ASRouterButton primary button",
       onClick: this.setAttribution
@@ -2398,7 +2385,7 @@ __webpack_require__.r(__webpack_exports__);
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 
-const MESSAGE_TYPE_LIST = ["BLOCK_MESSAGE_BY_ID", "USER_ACTION", "IMPRESSION", "TRIGGER", "NEWTAB_MESSAGE_REQUEST", "DOORHANGER_TELEMETRY", "TOOLBAR_BADGE_TELEMETRY", "TOOLBAR_PANEL_TELEMETRY", "MOMENTS_PAGE_TELEMETRY", "AS_ROUTER_TELEMETRY_USER_EVENT", // Admin types
+const MESSAGE_TYPE_LIST = ["BLOCK_MESSAGE_BY_ID", "USER_ACTION", "IMPRESSION", "TRIGGER", "NEWTAB_MESSAGE_REQUEST", "DOORHANGER_TELEMETRY", "TOOLBAR_BADGE_TELEMETRY", "TOOLBAR_PANEL_TELEMETRY", "MOMENTS_PAGE_TELEMETRY", "INFOBAR_TELEMETRY", "AS_ROUTER_TELEMETRY_USER_EVENT", // Admin types
 "ADMIN_CONNECT_STATE", "UNBLOCK_MESSAGE_BY_ID", "UNBLOCK_ALL", "BLOCK_BUNDLE", "UNBLOCK_BUNDLE", "DISABLE_PROVIDER", "ENABLE_PROVIDER", "EVALUATE_JEXL_EXPRESSION", "EXPIRE_QUERY_CACHE", "FORCE_ATTRIBUTION", "FORCE_WHATSNEW_PANEL", "CLOSE_WHATSNEW_PANEL", "OVERRIDE_MESSAGE", "MODIFY_MESSAGE_JSON", "RESET_PROVIDER_PREF", "SET_PROVIDER_USER_PREF", "RESET_GROUPS_STATE"];
 const MESSAGE_TYPE_HASH = MESSAGE_TYPE_LIST.reduce((hash, value) => {
   hash[value] = value;
@@ -2530,8 +2517,7 @@ class ASRouterUISurface extends react__WEBPACK_IMPORTED_MODULE_7___default.a.Pur
   async fetchFlowParams(params = {}) {
     let result = {};
     const {
-      fxaEndpoint,
-      dispatch
+      fxaEndpoint
     } = this.props;
 
     if (!fxaEndpoint) {
@@ -2562,24 +2548,9 @@ class ASRouterUISurface extends react__WEBPACK_IMPORTED_MODULE_7___default.a.Pur
         };
       } else {
         console.error("Non-200 response", response); // eslint-disable-line no-console
-
-        dispatch(common_Actions_jsm__WEBPACK_IMPORTED_MODULE_1__["actionCreators"].OnlyToMain({
-          type: common_Actions_jsm__WEBPACK_IMPORTED_MODULE_1__["actionTypes"].TELEMETRY_UNDESIRED_EVENT,
-          data: {
-            event: "FXA_METRICS_FETCH_ERROR",
-            value: response.status
-          }
-        }));
       }
     } catch (error) {
       console.error(error); // eslint-disable-line no-console
-
-      dispatch(common_Actions_jsm__WEBPACK_IMPORTED_MODULE_1__["actionCreators"].OnlyToMain({
-        type: common_Actions_jsm__WEBPACK_IMPORTED_MODULE_1__["actionTypes"].TELEMETRY_UNDESIRED_EVENT,
-        data: {
-          event: "FXA_METRICS_ERROR"
-        }
-      }));
     }
 
     return result;
@@ -2590,9 +2561,11 @@ class ASRouterUISurface extends react__WEBPACK_IMPORTED_MODULE_7___default.a.Pur
       message
     } = this.state;
     const eventType = `${message.provider}_user_event`;
+    const source = extraProps.id;
+    delete extraProps.id;
     _asrouter_utils__WEBPACK_IMPORTED_MODULE_2__["ASRouterUtils"].sendTelemetry({
+      source,
       message_id: message.id,
-      source: extraProps.id,
       action: eventType,
       ...extraProps
     });
@@ -3111,26 +3084,25 @@ __webpack_require__.r(__webpack_exports__);
 /* WEBPACK VAR INJECTION */(function(global) {/* harmony export (binding) */ __webpack_require__.d(__webpack_exports__, "isAllowedCSS", function() { return isAllowedCSS; });
 /* harmony export (binding) */ __webpack_require__.d(__webpack_exports__, "_DiscoveryStreamBase", function() { return _DiscoveryStreamBase; });
 /* harmony export (binding) */ __webpack_require__.d(__webpack_exports__, "DiscoveryStreamBase", function() { return DiscoveryStreamBase; });
-/* harmony import */ var common_Actions_jsm__WEBPACK_IMPORTED_MODULE_0__ = __webpack_require__(1);
-/* harmony import */ var content_src_components_DiscoveryStreamComponents_CardGrid_CardGrid__WEBPACK_IMPORTED_MODULE_1__ = __webpack_require__(17);
-/* harmony import */ var content_src_components_DiscoveryStreamComponents_CollectionCardGrid_CollectionCardGrid__WEBPACK_IMPORTED_MODULE_2__ = __webpack_require__(32);
-/* harmony import */ var content_src_components_CollapsibleSection_CollapsibleSection__WEBPACK_IMPORTED_MODULE_3__ = __webpack_require__(34);
-/* harmony import */ var react_redux__WEBPACK_IMPORTED_MODULE_4__ = __webpack_require__(7);
-/* harmony import */ var react_redux__WEBPACK_IMPORTED_MODULE_4___default = /*#__PURE__*/__webpack_require__.n(react_redux__WEBPACK_IMPORTED_MODULE_4__);
-/* harmony import */ var content_src_components_DiscoveryStreamComponents_DSMessage_DSMessage__WEBPACK_IMPORTED_MODULE_5__ = __webpack_require__(39);
-/* harmony import */ var content_src_components_DiscoveryStreamComponents_DSPrivacyModal_DSPrivacyModal__WEBPACK_IMPORTED_MODULE_6__ = __webpack_require__(40);
-/* harmony import */ var content_src_components_DiscoveryStreamComponents_DSSignup_DSSignup__WEBPACK_IMPORTED_MODULE_7__ = __webpack_require__(42);
-/* harmony import */ var content_src_components_DiscoveryStreamComponents_DSTextPromo_DSTextPromo__WEBPACK_IMPORTED_MODULE_8__ = __webpack_require__(43);
-/* harmony import */ var content_src_components_DiscoveryStreamComponents_Hero_Hero__WEBPACK_IMPORTED_MODULE_9__ = __webpack_require__(44);
-/* harmony import */ var content_src_components_DiscoveryStreamComponents_Highlights_Highlights__WEBPACK_IMPORTED_MODULE_10__ = __webpack_require__(46);
-/* harmony import */ var content_src_components_DiscoveryStreamComponents_HorizontalRule_HorizontalRule__WEBPACK_IMPORTED_MODULE_11__ = __webpack_require__(59);
-/* harmony import */ var content_src_components_DiscoveryStreamComponents_List_List__WEBPACK_IMPORTED_MODULE_12__ = __webpack_require__(45);
-/* harmony import */ var content_src_components_DiscoveryStreamComponents_Navigation_Navigation__WEBPACK_IMPORTED_MODULE_13__ = __webpack_require__(60);
-/* harmony import */ var react__WEBPACK_IMPORTED_MODULE_14__ = __webpack_require__(8);
-/* harmony import */ var react__WEBPACK_IMPORTED_MODULE_14___default = /*#__PURE__*/__webpack_require__.n(react__WEBPACK_IMPORTED_MODULE_14__);
-/* harmony import */ var content_src_components_DiscoveryStreamComponents_SectionTitle_SectionTitle__WEBPACK_IMPORTED_MODULE_15__ = __webpack_require__(61);
-/* harmony import */ var content_src_lib_selectLayoutRender__WEBPACK_IMPORTED_MODULE_16__ = __webpack_require__(62);
-/* harmony import */ var content_src_components_DiscoveryStreamComponents_TopSites_TopSites__WEBPACK_IMPORTED_MODULE_17__ = __webpack_require__(63);
+/* harmony import */ var content_src_components_DiscoveryStreamComponents_CardGrid_CardGrid__WEBPACK_IMPORTED_MODULE_0__ = __webpack_require__(17);
+/* harmony import */ var content_src_components_DiscoveryStreamComponents_CollectionCardGrid_CollectionCardGrid__WEBPACK_IMPORTED_MODULE_1__ = __webpack_require__(32);
+/* harmony import */ var content_src_components_CollapsibleSection_CollapsibleSection__WEBPACK_IMPORTED_MODULE_2__ = __webpack_require__(34);
+/* harmony import */ var react_redux__WEBPACK_IMPORTED_MODULE_3__ = __webpack_require__(7);
+/* harmony import */ var react_redux__WEBPACK_IMPORTED_MODULE_3___default = /*#__PURE__*/__webpack_require__.n(react_redux__WEBPACK_IMPORTED_MODULE_3__);
+/* harmony import */ var content_src_components_DiscoveryStreamComponents_DSMessage_DSMessage__WEBPACK_IMPORTED_MODULE_4__ = __webpack_require__(39);
+/* harmony import */ var content_src_components_DiscoveryStreamComponents_DSPrivacyModal_DSPrivacyModal__WEBPACK_IMPORTED_MODULE_5__ = __webpack_require__(40);
+/* harmony import */ var content_src_components_DiscoveryStreamComponents_DSSignup_DSSignup__WEBPACK_IMPORTED_MODULE_6__ = __webpack_require__(42);
+/* harmony import */ var content_src_components_DiscoveryStreamComponents_DSTextPromo_DSTextPromo__WEBPACK_IMPORTED_MODULE_7__ = __webpack_require__(43);
+/* harmony import */ var content_src_components_DiscoveryStreamComponents_Hero_Hero__WEBPACK_IMPORTED_MODULE_8__ = __webpack_require__(44);
+/* harmony import */ var content_src_components_DiscoveryStreamComponents_Highlights_Highlights__WEBPACK_IMPORTED_MODULE_9__ = __webpack_require__(46);
+/* harmony import */ var content_src_components_DiscoveryStreamComponents_HorizontalRule_HorizontalRule__WEBPACK_IMPORTED_MODULE_10__ = __webpack_require__(59);
+/* harmony import */ var content_src_components_DiscoveryStreamComponents_List_List__WEBPACK_IMPORTED_MODULE_11__ = __webpack_require__(45);
+/* harmony import */ var content_src_components_DiscoveryStreamComponents_Navigation_Navigation__WEBPACK_IMPORTED_MODULE_12__ = __webpack_require__(60);
+/* harmony import */ var react__WEBPACK_IMPORTED_MODULE_13__ = __webpack_require__(8);
+/* harmony import */ var react__WEBPACK_IMPORTED_MODULE_13___default = /*#__PURE__*/__webpack_require__.n(react__WEBPACK_IMPORTED_MODULE_13__);
+/* harmony import */ var content_src_components_DiscoveryStreamComponents_SectionTitle_SectionTitle__WEBPACK_IMPORTED_MODULE_14__ = __webpack_require__(61);
+/* harmony import */ var content_src_lib_selectLayoutRender__WEBPACK_IMPORTED_MODULE_15__ = __webpack_require__(62);
+/* harmony import */ var content_src_components_DiscoveryStreamComponents_TopSites_TopSites__WEBPACK_IMPORTED_MODULE_16__ = __webpack_require__(63);
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this file,
  * You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -3151,11 +3123,8 @@ __webpack_require__.r(__webpack_exports__);
 
 
 
-
 const ALLOWED_CSS_URL_PREFIXES = ["chrome://", "resource://", "https://img-getpocket.cdn.mozilla.net/"];
 const DUMMY_CSS_SELECTOR = "DUMMY#CSS.SELECTOR";
-let rollCache = []; // Cache of random probability values for a spoc position
-
 /**
  * Validate a CSS declaration. The values are assumed to be normalized by CSSOM.
  */
@@ -3172,7 +3141,7 @@ function isAllowedCSS(property, value) {
   const urls = value.match(/url\("[^"]+"\)/g);
   return !urls || urls.every(url => ALLOWED_CSS_URL_PREFIXES.some(prefix => url.slice(5).startsWith(prefix)));
 }
-class _DiscoveryStreamBase extends react__WEBPACK_IMPORTED_MODULE_14___default.a.PureComponent {
+class _DiscoveryStreamBase extends react__WEBPACK_IMPORTED_MODULE_13___default.a.PureComponent {
   constructor(props) {
     super(props);
     this.onStyleMount = this.onStyleMount.bind(this);
@@ -3231,7 +3200,7 @@ class _DiscoveryStreamBase extends react__WEBPACK_IMPORTED_MODULE_14___default.a
 
     switch (component.type) {
       case "Highlights":
-        return react__WEBPACK_IMPORTED_MODULE_14___default.a.createElement(content_src_components_DiscoveryStreamComponents_Highlights_Highlights__WEBPACK_IMPORTED_MODULE_10__["Highlights"], null);
+        return react__WEBPACK_IMPORTED_MODULE_13___default.a.createElement(content_src_components_DiscoveryStreamComponents_Highlights_Highlights__WEBPACK_IMPORTED_MODULE_9__["Highlights"], null);
 
       case "TopSites":
         let promoAlignment;
@@ -3240,28 +3209,28 @@ class _DiscoveryStreamBase extends react__WEBPACK_IMPORTED_MODULE_14___default.a
           promoAlignment = component.spocs.positions[0].index === 0 ? "left" : "right";
         }
 
-        return react__WEBPACK_IMPORTED_MODULE_14___default.a.createElement(content_src_components_DiscoveryStreamComponents_TopSites_TopSites__WEBPACK_IMPORTED_MODULE_17__["TopSites"], {
+        return react__WEBPACK_IMPORTED_MODULE_13___default.a.createElement(content_src_components_DiscoveryStreamComponents_TopSites_TopSites__WEBPACK_IMPORTED_MODULE_16__["TopSites"], {
           header: component.header,
           data: component.data,
           promoAlignment: promoAlignment
         });
 
       case "TextPromo":
-        return react__WEBPACK_IMPORTED_MODULE_14___default.a.createElement(content_src_components_DiscoveryStreamComponents_DSTextPromo_DSTextPromo__WEBPACK_IMPORTED_MODULE_8__["DSTextPromo"], {
+        return react__WEBPACK_IMPORTED_MODULE_13___default.a.createElement(content_src_components_DiscoveryStreamComponents_DSTextPromo_DSTextPromo__WEBPACK_IMPORTED_MODULE_7__["DSTextPromo"], {
           dispatch: this.props.dispatch,
           type: component.type,
           data: component.data
         });
 
       case "Signup":
-        return react__WEBPACK_IMPORTED_MODULE_14___default.a.createElement(content_src_components_DiscoveryStreamComponents_DSSignup_DSSignup__WEBPACK_IMPORTED_MODULE_7__["DSSignup"], {
+        return react__WEBPACK_IMPORTED_MODULE_13___default.a.createElement(content_src_components_DiscoveryStreamComponents_DSSignup_DSSignup__WEBPACK_IMPORTED_MODULE_6__["DSSignup"], {
           dispatch: this.props.dispatch,
           type: component.type,
           data: component.data
         });
 
       case "Message":
-        return react__WEBPACK_IMPORTED_MODULE_14___default.a.createElement(content_src_components_DiscoveryStreamComponents_DSMessage_DSMessage__WEBPACK_IMPORTED_MODULE_5__["DSMessage"], {
+        return react__WEBPACK_IMPORTED_MODULE_13___default.a.createElement(content_src_components_DiscoveryStreamComponents_DSMessage_DSMessage__WEBPACK_IMPORTED_MODULE_4__["DSMessage"], {
           title: component.header && component.header.title,
           subtitle: component.header && component.header.subtitle,
           link_text: component.header && component.header.link_text,
@@ -3270,12 +3239,12 @@ class _DiscoveryStreamBase extends react__WEBPACK_IMPORTED_MODULE_14___default.a
         });
 
       case "SectionTitle":
-        return react__WEBPACK_IMPORTED_MODULE_14___default.a.createElement(content_src_components_DiscoveryStreamComponents_SectionTitle_SectionTitle__WEBPACK_IMPORTED_MODULE_15__["SectionTitle"], {
+        return react__WEBPACK_IMPORTED_MODULE_13___default.a.createElement(content_src_components_DiscoveryStreamComponents_SectionTitle_SectionTitle__WEBPACK_IMPORTED_MODULE_14__["SectionTitle"], {
           header: component.header
         });
 
       case "Navigation":
-        return react__WEBPACK_IMPORTED_MODULE_14___default.a.createElement(content_src_components_DiscoveryStreamComponents_Navigation_Navigation__WEBPACK_IMPORTED_MODULE_13__["Navigation"], {
+        return react__WEBPACK_IMPORTED_MODULE_13___default.a.createElement(content_src_components_DiscoveryStreamComponents_Navigation_Navigation__WEBPACK_IMPORTED_MODULE_12__["Navigation"], {
           dispatch: this.props.dispatch,
           links: component.properties.links,
           alignment: component.properties.alignment,
@@ -3288,7 +3257,7 @@ class _DiscoveryStreamBase extends react__WEBPACK_IMPORTED_MODULE_14___default.a
         const {
           DiscoveryStream
         } = this.props;
-        return react__WEBPACK_IMPORTED_MODULE_14___default.a.createElement(content_src_components_DiscoveryStreamComponents_CollectionCardGrid_CollectionCardGrid__WEBPACK_IMPORTED_MODULE_2__["CollectionCardGrid"], {
+        return react__WEBPACK_IMPORTED_MODULE_13___default.a.createElement(content_src_components_DiscoveryStreamComponents_CollectionCardGrid_CollectionCardGrid__WEBPACK_IMPORTED_MODULE_1__["CollectionCardGrid"], {
           data: component.data,
           feed: component.feed,
           spocs: DiscoveryStream.spocs,
@@ -3303,7 +3272,7 @@ class _DiscoveryStreamBase extends react__WEBPACK_IMPORTED_MODULE_14___default.a
         });
 
       case "CardGrid":
-        return react__WEBPACK_IMPORTED_MODULE_14___default.a.createElement(content_src_components_DiscoveryStreamComponents_CardGrid_CardGrid__WEBPACK_IMPORTED_MODULE_1__["CardGrid"], {
+        return react__WEBPACK_IMPORTED_MODULE_13___default.a.createElement(content_src_components_DiscoveryStreamComponents_CardGrid_CardGrid__WEBPACK_IMPORTED_MODULE_0__["CardGrid"], {
           enable_video_playheads: !!component.properties.enable_video_playheads,
           title: component.header && component.header.title,
           display_variant: component.properties.display_variant,
@@ -3318,7 +3287,7 @@ class _DiscoveryStreamBase extends react__WEBPACK_IMPORTED_MODULE_14___default.a
         });
 
       case "Hero":
-        return react__WEBPACK_IMPORTED_MODULE_14___default.a.createElement(content_src_components_DiscoveryStreamComponents_Hero_Hero__WEBPACK_IMPORTED_MODULE_9__["Hero"], {
+        return react__WEBPACK_IMPORTED_MODULE_13___default.a.createElement(content_src_components_DiscoveryStreamComponents_Hero_Hero__WEBPACK_IMPORTED_MODULE_8__["Hero"], {
           subComponentType: embedWidth >= 9 ? `cards` : `list`,
           feed: component.feed,
           title: component.header && component.header.title,
@@ -3330,10 +3299,10 @@ class _DiscoveryStreamBase extends react__WEBPACK_IMPORTED_MODULE_14___default.a
         });
 
       case "HorizontalRule":
-        return react__WEBPACK_IMPORTED_MODULE_14___default.a.createElement(content_src_components_DiscoveryStreamComponents_HorizontalRule_HorizontalRule__WEBPACK_IMPORTED_MODULE_11__["HorizontalRule"], null);
+        return react__WEBPACK_IMPORTED_MODULE_13___default.a.createElement(content_src_components_DiscoveryStreamComponents_HorizontalRule_HorizontalRule__WEBPACK_IMPORTED_MODULE_10__["HorizontalRule"], null);
 
       case "List":
-        return react__WEBPACK_IMPORTED_MODULE_14___default.a.createElement(content_src_components_DiscoveryStreamComponents_List_List__WEBPACK_IMPORTED_MODULE_12__["List"], {
+        return react__WEBPACK_IMPORTED_MODULE_13___default.a.createElement(content_src_components_DiscoveryStreamComponents_List_List__WEBPACK_IMPORTED_MODULE_11__["List"], {
           data: component.data,
           feed: component.feed,
           fullWidth: component.properties.full_width,
@@ -3346,7 +3315,7 @@ class _DiscoveryStreamBase extends react__WEBPACK_IMPORTED_MODULE_14___default.a
         });
 
       default:
-        return react__WEBPACK_IMPORTED_MODULE_14___default.a.createElement("div", null, component.type);
+        return react__WEBPACK_IMPORTED_MODULE_13___default.a.createElement("div", null, component.type);
     }
   }
 
@@ -3354,44 +3323,25 @@ class _DiscoveryStreamBase extends react__WEBPACK_IMPORTED_MODULE_14___default.a
     // Use json string as both the key and styles to render so React knows when
     // to unmount and mount a new instance for new styles.
     const json = JSON.stringify(styles);
-    return react__WEBPACK_IMPORTED_MODULE_14___default.a.createElement("style", {
+    return react__WEBPACK_IMPORTED_MODULE_13___default.a.createElement("style", {
       key: json,
       "data-styles": json,
       ref: this.onStyleMount
     });
   }
 
-  componentWillReceiveProps(oldProps) {
-    if (this.props.DiscoveryStream.layout !== oldProps.DiscoveryStream.layout) {
-      rollCache = [];
-    }
-  }
-
   render() {
     // Select layout render data by adding spocs and position to recommendations
     const {
-      layoutRender,
-      spocsFill
-    } = Object(content_src_lib_selectLayoutRender__WEBPACK_IMPORTED_MODULE_16__["selectLayoutRender"])({
+      layoutRender
+    } = Object(content_src_lib_selectLayoutRender__WEBPACK_IMPORTED_MODULE_15__["selectLayoutRender"])({
       state: this.props.DiscoveryStream,
       prefs: this.props.Prefs.values,
-      rollCache,
       locale: this.props.locale
     });
     const {
-      config,
-      spocs,
-      feeds
-    } = this.props.DiscoveryStream; // Send SPOCS Fill if any. Note that it should not send it again if the same
-    // page gets re-rendered by state changes.
-
-    if (spocs.loaded && feeds.loaded && spocsFill.length && !this._spocsFillSent) {
-      this.props.dispatch(common_Actions_jsm__WEBPACK_IMPORTED_MODULE_0__["actionCreators"].DiscoveryStreamSpocsFill({
-        spoc_fills: spocsFill
-      }));
-      this._spocsFillSent = true;
-    } // Allow rendering without extracting special components
-
+      config
+    } = this.props.DiscoveryStream; // Allow rendering without extracting special components
 
     if (!config.collapsible) {
       return this.renderLayout(layoutRender);
@@ -3435,7 +3385,7 @@ class _DiscoveryStreamBase extends react__WEBPACK_IMPORTED_MODULE_14___default.a
       }
     }; // Render a DS-style TopSites then the rest if any in a collapsible section
 
-    return react__WEBPACK_IMPORTED_MODULE_14___default.a.createElement(react__WEBPACK_IMPORTED_MODULE_14___default.a.Fragment, null, this.props.DiscoveryStream.isPrivacyInfoModalVisible && react__WEBPACK_IMPORTED_MODULE_14___default.a.createElement(content_src_components_DiscoveryStreamComponents_DSPrivacyModal_DSPrivacyModal__WEBPACK_IMPORTED_MODULE_6__["DSPrivacyModal"], {
+    return react__WEBPACK_IMPORTED_MODULE_13___default.a.createElement(react__WEBPACK_IMPORTED_MODULE_13___default.a.Fragment, null, this.props.DiscoveryStream.isPrivacyInfoModalVisible && react__WEBPACK_IMPORTED_MODULE_13___default.a.createElement(content_src_components_DiscoveryStreamComponents_DSPrivacyModal_DSPrivacyModal__WEBPACK_IMPORTED_MODULE_5__["DSPrivacyModal"], {
       dispatch: this.props.dispatch
     }), topSites && this.renderLayout([{
       width: 12,
@@ -3443,7 +3393,7 @@ class _DiscoveryStreamBase extends react__WEBPACK_IMPORTED_MODULE_14___default.a
     }]), sponsoredCollection && this.renderLayout([{
       width: 12,
       components: [sponsoredCollection]
-    }]), !!layoutRender.length && react__WEBPACK_IMPORTED_MODULE_14___default.a.createElement(content_src_components_CollapsibleSection_CollapsibleSection__WEBPACK_IMPORTED_MODULE_3__["CollapsibleSection"], {
+    }]), !!layoutRender.length && react__WEBPACK_IMPORTED_MODULE_13___default.a.createElement(content_src_components_CollapsibleSection_CollapsibleSection__WEBPACK_IMPORTED_MODULE_2__["CollapsibleSection"], {
       className: "ds-layout",
       collapsed: topStories.pref.collapsed,
       dispatch: this.props.dispatch,
@@ -3470,12 +3420,12 @@ class _DiscoveryStreamBase extends react__WEBPACK_IMPORTED_MODULE_14___default.a
 
   renderLayout(layoutRender) {
     const styles = [];
-    return react__WEBPACK_IMPORTED_MODULE_14___default.a.createElement("div", {
+    return react__WEBPACK_IMPORTED_MODULE_13___default.a.createElement("div", {
       className: "discovery-stream ds-layout"
-    }, layoutRender.map((row, rowIndex) => react__WEBPACK_IMPORTED_MODULE_14___default.a.createElement("div", {
+    }, layoutRender.map((row, rowIndex) => react__WEBPACK_IMPORTED_MODULE_13___default.a.createElement("div", {
       key: `row-${rowIndex}`,
       className: `ds-column ds-column-${row.width}`
-    }, react__WEBPACK_IMPORTED_MODULE_14___default.a.createElement("div", {
+    }, react__WEBPACK_IMPORTED_MODULE_13___default.a.createElement("div", {
       className: "ds-column-grid"
     }, row.components.map((component, componentIndex) => {
       if (!component) {
@@ -3483,14 +3433,14 @@ class _DiscoveryStreamBase extends react__WEBPACK_IMPORTED_MODULE_14___default.a
       }
 
       styles[rowIndex] = [...(styles[rowIndex] || []), component.styles];
-      return react__WEBPACK_IMPORTED_MODULE_14___default.a.createElement("div", {
+      return react__WEBPACK_IMPORTED_MODULE_13___default.a.createElement("div", {
         key: `component-${componentIndex}`
       }, this.renderComponent(component, row.width));
     })))), this.renderStyles(styles));
   }
 
 }
-const DiscoveryStreamBase = Object(react_redux__WEBPACK_IMPORTED_MODULE_4__["connect"])(state => ({
+const DiscoveryStreamBase = Object(react_redux__WEBPACK_IMPORTED_MODULE_3__["connect"])(state => ({
   DiscoveryStream: state.DiscoveryStream,
   Prefs: state.Prefs,
   Sections: state.Sections,
@@ -4269,12 +4219,16 @@ const LinkMenu = Object(react_redux__WEBPACK_IMPORTED_MODULE_1__["connect"])(get
 "use strict";
 __webpack_require__.r(__webpack_exports__);
 /* WEBPACK VAR INJECTION */(function(global) {/* harmony export (binding) */ __webpack_require__.d(__webpack_exports__, "ContextMenu", function() { return ContextMenu; });
+/* harmony export (binding) */ __webpack_require__.d(__webpack_exports__, "_ContextMenuItem", function() { return _ContextMenuItem; });
 /* harmony export (binding) */ __webpack_require__.d(__webpack_exports__, "ContextMenuItem", function() { return ContextMenuItem; });
 /* harmony import */ var react__WEBPACK_IMPORTED_MODULE_0__ = __webpack_require__(8);
 /* harmony import */ var react__WEBPACK_IMPORTED_MODULE_0___default = /*#__PURE__*/__webpack_require__.n(react__WEBPACK_IMPORTED_MODULE_0__);
+/* harmony import */ var react_redux__WEBPACK_IMPORTED_MODULE_1__ = __webpack_require__(7);
+/* harmony import */ var react_redux__WEBPACK_IMPORTED_MODULE_1___default = /*#__PURE__*/__webpack_require__.n(react_redux__WEBPACK_IMPORTED_MODULE_1__);
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this file,
  * You can obtain one at http://mozilla.org/MPL/2.0/. */
+
 
 class ContextMenu extends react__WEBPACK_IMPORTED_MODULE_0___default.a.PureComponent {
   constructor(props) {
@@ -4336,7 +4290,7 @@ class ContextMenu extends react__WEBPACK_IMPORTED_MODULE_0___default.a.PureCompo
   }
 
 }
-class ContextMenuItem extends react__WEBPACK_IMPORTED_MODULE_0___default.a.PureComponent {
+class _ContextMenuItem extends react__WEBPACK_IMPORTED_MODULE_0___default.a.PureComponent {
   constructor(props) {
     super(props);
     this.onClick = this.onClick.bind(this);
@@ -4420,6 +4374,7 @@ class ContextMenuItem extends react__WEBPACK_IMPORTED_MODULE_0___default.a.PureC
     const {
       option
     } = this.props;
+    const isNewNewtabExperienceEnabled = this.props.Prefs.values["newNewtabExperience.enabled"];
     return react__WEBPACK_IMPORTED_MODULE_0___default.a.createElement("li", {
       role: "presentation",
       className: "context-menu-item"
@@ -4430,7 +4385,7 @@ class ContextMenuItem extends react__WEBPACK_IMPORTED_MODULE_0___default.a.PureC
       onKeyDown: this.onKeyDown,
       onKeyUp: this.onKeyUp,
       ref: option.first ? this.focusFirst : null
-    }, option.icon && react__WEBPACK_IMPORTED_MODULE_0___default.a.createElement("span", {
+    }, !isNewNewtabExperienceEnabled && option.icon && react__WEBPACK_IMPORTED_MODULE_0___default.a.createElement("span", {
       className: `icon icon-spacer icon-${option.icon}`
     }), react__WEBPACK_IMPORTED_MODULE_0___default.a.createElement("span", {
       "data-l10n-id": option.string_id || option.id
@@ -4438,6 +4393,9 @@ class ContextMenuItem extends react__WEBPACK_IMPORTED_MODULE_0___default.a.PureC
   }
 
 }
+const ContextMenuItem = Object(react_redux__WEBPACK_IMPORTED_MODULE_1__["connect"])(state => ({
+  Prefs: state.Prefs
+}))(_ContextMenuItem);
 /* WEBPACK VAR INJECTION */}.call(this, __webpack_require__(3)))
 
 /***/ }),
@@ -5666,15 +5624,18 @@ class DSDismiss extends react__WEBPACK_IMPORTED_MODULE_0___default.a.PureCompone
 
 "use strict";
 __webpack_require__.r(__webpack_exports__);
-/* WEBPACK VAR INJECTION */(function(global) {/* harmony export (binding) */ __webpack_require__.d(__webpack_exports__, "CollapsibleSection", function() { return CollapsibleSection; });
+/* WEBPACK VAR INJECTION */(function(global) {/* harmony export (binding) */ __webpack_require__.d(__webpack_exports__, "_CollapsibleSection", function() { return _CollapsibleSection; });
+/* harmony export (binding) */ __webpack_require__.d(__webpack_exports__, "CollapsibleSection", function() { return CollapsibleSection; });
 /* harmony import */ var common_Actions_jsm__WEBPACK_IMPORTED_MODULE_0__ = __webpack_require__(1);
 /* harmony import */ var content_src_components_ErrorBoundary_ErrorBoundary__WEBPACK_IMPORTED_MODULE_1__ = __webpack_require__(35);
 /* harmony import */ var content_src_components_FluentOrText_FluentOrText__WEBPACK_IMPORTED_MODULE_2__ = __webpack_require__(30);
 /* harmony import */ var react__WEBPACK_IMPORTED_MODULE_3__ = __webpack_require__(8);
 /* harmony import */ var react__WEBPACK_IMPORTED_MODULE_3___default = /*#__PURE__*/__webpack_require__.n(react__WEBPACK_IMPORTED_MODULE_3__);
-/* harmony import */ var content_src_components_SectionMenu_SectionMenu__WEBPACK_IMPORTED_MODULE_4__ = __webpack_require__(37);
-/* harmony import */ var content_src_lib_section_menu_options__WEBPACK_IMPORTED_MODULE_5__ = __webpack_require__(38);
-/* harmony import */ var content_src_components_ContextMenu_ContextMenuButton__WEBPACK_IMPORTED_MODULE_6__ = __webpack_require__(24);
+/* harmony import */ var react_redux__WEBPACK_IMPORTED_MODULE_4__ = __webpack_require__(7);
+/* harmony import */ var react_redux__WEBPACK_IMPORTED_MODULE_4___default = /*#__PURE__*/__webpack_require__.n(react_redux__WEBPACK_IMPORTED_MODULE_4__);
+/* harmony import */ var content_src_components_SectionMenu_SectionMenu__WEBPACK_IMPORTED_MODULE_5__ = __webpack_require__(37);
+/* harmony import */ var content_src_lib_section_menu_options__WEBPACK_IMPORTED_MODULE_6__ = __webpack_require__(38);
+/* harmony import */ var content_src_components_ContextMenu_ContextMenuButton__WEBPACK_IMPORTED_MODULE_7__ = __webpack_require__(24);
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this file,
  * You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -5685,12 +5646,14 @@ __webpack_require__.r(__webpack_exports__);
 
 
 
+
 const VISIBLE = "visible";
 const VISIBILITY_CHANGE_EVENT = "visibilitychange";
-class CollapsibleSection extends react__WEBPACK_IMPORTED_MODULE_3___default.a.PureComponent {
+class _CollapsibleSection extends react__WEBPACK_IMPORTED_MODULE_3___default.a.PureComponent {
   constructor(props) {
     super(props);
     this.onBodyMount = this.onBodyMount.bind(this);
+    this.collapseOrExpandSection = this.collapseOrExpandSection.bind(this);
     this.onHeaderClick = this.onHeaderClick.bind(this);
     this.onKeyPress = this.onKeyPress.bind(this);
     this.onTransitionEnd = this.onTransitionEnd.bind(this);
@@ -5727,14 +5690,19 @@ class CollapsibleSection extends react__WEBPACK_IMPORTED_MODULE_3___default.a.Pu
   }
 
   componentDidMount() {
-    this.contextMenuButtonRef.addEventListener("mouseenter", this.onMenuButtonMouseEnter);
-    this.contextMenuButtonRef.addEventListener("mouseleave", this.onMenuButtonMouseLeave);
+    if (!this.props.Prefs.values["newNewtabExperience.enabled"]) {
+      this.contextMenuButtonRef.addEventListener("mouseenter", this.onMenuButtonMouseEnter);
+      this.contextMenuButtonRef.addEventListener("mouseleave", this.onMenuButtonMouseLeave);
+    }
   }
 
   componentWillUnmount() {
     this.props.document.removeEventListener(VISIBILITY_CHANGE_EVENT, this.enableOrDisableAnimation);
-    this.contextMenuButtonRef.removeEventListener("mouseenter", this.onMenuButtonMouseEnter);
-    this.contextMenuButtonRef.removeEventListener("mouseleave", this.onMenuButtonMouseLeave);
+
+    if (!this.props.Prefs.values["newNewtabExperience.enabled"]) {
+      this.contextMenuButtonRef.removeEventListener("mouseenter", this.onMenuButtonMouseEnter);
+      this.contextMenuButtonRef.removeEventListener("mouseleave", this.onMenuButtonMouseLeave);
+    }
   }
 
   enableOrDisableAnimation() {
@@ -5752,12 +5720,11 @@ class CollapsibleSection extends react__WEBPACK_IMPORTED_MODULE_3___default.a.Pu
     this.sectionBody = node;
   }
 
-  onHeaderClick() {
+  collapseOrExpandSection() {
     // If this.sectionBody is unset, it means that we're in some sort of error
     // state, probably displaying the error fallback, so we won't be able to
     // compute the height, and we don't want to persist the preference.
-    // If props.collapsed is undefined handler shouldn't do anything.
-    if (!this.sectionBody || this.props.collapsed === undefined) {
+    if (!this.sectionBody) {
       return;
     } // Get the current height of the body so max-height transitions can work
 
@@ -5767,10 +5734,26 @@ class CollapsibleSection extends react__WEBPACK_IMPORTED_MODULE_3___default.a.Pu
       maxHeight: `${this._getSectionBodyHeight()}px`
     });
     const {
-      action,
-      userEvent
-    } = content_src_lib_section_menu_options__WEBPACK_IMPORTED_MODULE_5__["SectionMenuOptions"].CheckCollapsed(this.props);
+      action
+    } = content_src_lib_section_menu_options__WEBPACK_IMPORTED_MODULE_6__["SectionMenuOptions"].CheckCollapsed(this.props);
     this.props.dispatch(action);
+  }
+
+  onHeaderClick() {
+    // If the new new tab experience pref is turned on,
+    // sections should not be collapsible.
+    // If this.sectionBody is unset, it means that we're in some sort of error
+    // state, probably displaying the error fallback, so we won't be able to
+    // compute the height, and we don't want to persist the preference.
+    // If props.collapsed is undefined handler shouldn't do anything.
+    if (this.props.Prefs.values["newNewtabExperience.enabled"] || !this.sectionBody || this.props.collapsed === undefined) {
+      return;
+    }
+
+    this.collapseOrExpandSection();
+    const {
+      userEvent
+    } = content_src_lib_section_menu_options__WEBPACK_IMPORTED_MODULE_6__["SectionMenuOptions"].CheckCollapsed(this.props);
     this.props.dispatch(common_Actions_jsm__WEBPACK_IMPORTED_MODULE_0__["actionCreators"].UserEvent({
       event: userEvent,
       source: this.props.eventSource
@@ -5845,6 +5828,14 @@ class CollapsibleSection extends react__WEBPACK_IMPORTED_MODULE_3___default.a.Pu
 
   render() {
     const isCollapsible = this.props.collapsed !== undefined;
+    const isNewNewtabExperienceEnabled = this.props.Prefs.values["newNewtabExperience.enabled"]; // If new new tab prefs are set to true, sections should not be
+    // collapsible. Expand and make the section visible, if it has been
+    // previously collapsed.
+
+    if (isNewNewtabExperienceEnabled && this.props.collapsed) {
+      this.collapseOrExpandSection();
+    }
+
     const {
       enableAnimation,
       isAnimating,
@@ -5906,9 +5897,9 @@ class CollapsibleSection extends react__WEBPACK_IMPORTED_MODULE_3___default.a.Pu
       tabIndex: "0",
       onKeyPress: this.onKeyPress,
       onClick: this.onHeaderClick
-    }, this.renderIcon(), react__WEBPACK_IMPORTED_MODULE_3___default.a.createElement(content_src_components_FluentOrText_FluentOrText__WEBPACK_IMPORTED_MODULE_2__["FluentOrText"], {
+    }, !isNewNewtabExperienceEnabled && this.renderIcon(), react__WEBPACK_IMPORTED_MODULE_3___default.a.createElement(content_src_components_FluentOrText_FluentOrText__WEBPACK_IMPORTED_MODULE_2__["FluentOrText"], {
       message: title
-    }), isCollapsible && react__WEBPACK_IMPORTED_MODULE_3___default.a.createElement("span", {
+    }), !isNewNewtabExperienceEnabled && isCollapsible && react__WEBPACK_IMPORTED_MODULE_3___default.a.createElement("span", {
       "data-l10n-id": collapsed ? "newtab-section-expand-section-label" : "newtab-section-collapse-section-label",
       className: `collapsible-arrow icon ${collapsed ? "icon-arrowhead-forward-small" : "icon-arrowhead-down-small"}`
     })), react__WEBPACK_IMPORTED_MODULE_3___default.a.createElement("span", {
@@ -5919,11 +5910,11 @@ class CollapsibleSection extends react__WEBPACK_IMPORTED_MODULE_3___default.a.Pu
       message: learnMore.link.message
     }, react__WEBPACK_IMPORTED_MODULE_3___default.a.createElement("a", {
       href: learnMore.link.href
-    })))))), react__WEBPACK_IMPORTED_MODULE_3___default.a.createElement("div", null, react__WEBPACK_IMPORTED_MODULE_3___default.a.createElement(content_src_components_ContextMenu_ContextMenuButton__WEBPACK_IMPORTED_MODULE_6__["ContextMenuButton"], {
+    })))))), !isNewNewtabExperienceEnabled && react__WEBPACK_IMPORTED_MODULE_3___default.a.createElement("div", null, react__WEBPACK_IMPORTED_MODULE_3___default.a.createElement(content_src_components_ContextMenu_ContextMenuButton__WEBPACK_IMPORTED_MODULE_7__["ContextMenuButton"], {
       tooltip: "newtab-menu-section-tooltip",
       onUpdate: this.onMenuUpdate,
       refFunction: this.setContextMenuButtonRef
-    }, react__WEBPACK_IMPORTED_MODULE_3___default.a.createElement(content_src_components_SectionMenu_SectionMenu__WEBPACK_IMPORTED_MODULE_4__["SectionMenu"], {
+    }, react__WEBPACK_IMPORTED_MODULE_3___default.a.createElement(content_src_components_SectionMenu_SectionMenu__WEBPACK_IMPORTED_MODULE_5__["SectionMenu"], {
       id: id,
       extraOptions: extraMenuOptions,
       source: eventSource,
@@ -5946,16 +5937,16 @@ class CollapsibleSection extends react__WEBPACK_IMPORTED_MODULE_3___default.a.Pu
   }
 
 }
-CollapsibleSection.defaultProps = {
+_CollapsibleSection.defaultProps = {
   document: global.document || {
     addEventListener: () => {},
     removeEventListener: () => {},
     visibilityState: "hidden"
-  },
-  Prefs: {
-    values: {}
   }
 };
+const CollapsibleSection = Object(react_redux__WEBPACK_IMPORTED_MODULE_4__["connect"])(state => ({
+  Prefs: state.Prefs
+}))(_CollapsibleSection);
 /* WEBPACK VAR INJECTION */}.call(this, __webpack_require__(3)))
 
 /***/ }),
@@ -6087,10 +6078,13 @@ __webpack_require__.r(__webpack_exports__);
 /* harmony import */ var content_src_components_ContextMenu_ContextMenu__WEBPACK_IMPORTED_MODULE_1__ = __webpack_require__(22);
 /* harmony import */ var react__WEBPACK_IMPORTED_MODULE_2__ = __webpack_require__(8);
 /* harmony import */ var react__WEBPACK_IMPORTED_MODULE_2___default = /*#__PURE__*/__webpack_require__.n(react__WEBPACK_IMPORTED_MODULE_2__);
-/* harmony import */ var content_src_lib_section_menu_options__WEBPACK_IMPORTED_MODULE_3__ = __webpack_require__(38);
+/* harmony import */ var react_redux__WEBPACK_IMPORTED_MODULE_3__ = __webpack_require__(7);
+/* harmony import */ var react_redux__WEBPACK_IMPORTED_MODULE_3___default = /*#__PURE__*/__webpack_require__.n(react_redux__WEBPACK_IMPORTED_MODULE_3__);
+/* harmony import */ var content_src_lib_section_menu_options__WEBPACK_IMPORTED_MODULE_4__ = __webpack_require__(38);
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this file,
  * You can obtain one at http://mozilla.org/MPL/2.0/. */
+
 
 
 
@@ -6102,7 +6096,7 @@ class _SectionMenu extends react__WEBPACK_IMPORTED_MODULE_2___default.a.PureComp
     const {
       action,
       userEvent
-    } = content_src_lib_section_menu_options__WEBPACK_IMPORTED_MODULE_3__["SectionMenuOptions"].ExpandSection(this.props);
+    } = content_src_lib_section_menu_options__WEBPACK_IMPORTED_MODULE_4__["SectionMenuOptions"].ExpandSection(this.props);
     this.props.dispatch(action);
 
     if (userEvent) {
@@ -6117,7 +6111,17 @@ class _SectionMenu extends react__WEBPACK_IMPORTED_MODULE_2___default.a.PureComp
     const {
       props
     } = this;
-    const propOptions = props.isWebExtension ? [...WEBEXT_SECTION_MENU_OPTIONS] : [...DEFAULT_SECTION_MENU_OPTIONS]; // Remove the move related options if the section is fixed
+    const propOptions = props.isWebExtension ? [...WEBEXT_SECTION_MENU_OPTIONS] : [...DEFAULT_SECTION_MENU_OPTIONS]; // Remove Collapse/Expand related option if the `newNewtabExperience.enabled`
+    // pref is set to true.
+
+    if (props.Prefs.values["newNewtabExperience.enabled"]) {
+      if (props.isWebExtension) {
+        propOptions.splice(2, 2);
+      } else {
+        propOptions.splice(4, 1);
+      }
+    } // Remove the move related options if the section is fixed
+
 
     if (props.isFixed) {
       propOptions.splice(propOptions.indexOf("MoveUp"), 3);
@@ -6133,7 +6137,7 @@ class _SectionMenu extends react__WEBPACK_IMPORTED_MODULE_2___default.a.PureComp
       propOptions.splice(-1, 0, "PrivacyNotice");
     }
 
-    const options = propOptions.map(o => content_src_lib_section_menu_options__WEBPACK_IMPORTED_MODULE_3__["SectionMenuOptions"][o](props)).map(option => {
+    const options = propOptions.map(o => content_src_lib_section_menu_options__WEBPACK_IMPORTED_MODULE_4__["SectionMenuOptions"][o](props)).map(option => {
       const {
         action,
         id,
@@ -6179,7 +6183,9 @@ class _SectionMenu extends react__WEBPACK_IMPORTED_MODULE_2___default.a.PureComp
   }
 
 }
-const SectionMenu = _SectionMenu;
+const SectionMenu = Object(react_redux__WEBPACK_IMPORTED_MODULE_3__["connect"])(state => ({
+  Prefs: state.Prefs
+}))(_SectionMenu);
 
 /***/ }),
 /* 38 */
@@ -8157,7 +8163,7 @@ class ComponentPerfTimer extends react__WEBPACK_IMPORTED_MODULE_2___default.a.Co
     }
   }
   /**
-   * Creates `TELEMETRY_UNDESIRED_EVENT` with timestamp in ms
+   * Creates `SAVE_SESSION_PERF_DATA` with timestamp in ms
    * of how much longer the data took to be ready for display than it would
    * have been the ideal case.
    * https://github.com/mozilla/ping-centre/issues/98
@@ -8614,9 +8620,22 @@ class _TopSites extends react__WEBPACK_IMPORTED_MODULE_6___default.a.PureCompone
       showSearchShortcutsForm
     } = props.TopSites;
     const extraMenuOptions = ["AddTopSite"];
+    const newNewtabExperienceEnabled = props.Prefs.values["newNewtabExperience.enabled"];
+    const customizationMenuEnabled = props.Prefs.values["customizationMenu.enabled"];
+    const colors = props.Prefs.values["newNewtabExperience.colors"];
 
     if (props.Prefs.values["improvesearch.topSiteSearchShortcuts"]) {
       extraMenuOptions.push("AddSearchShortcut");
+    }
+
+    const canShowCustomizationMenu = newNewtabExperienceEnabled || customizationMenuEnabled;
+    const hideTitle = props.Prefs.values.hideTopSitesTitle || canShowCustomizationMenu; // `collapsed` should be sent to CollapsibleSection as undefined if
+    // `props.TopSites.pref` is not set to true.
+
+    let collapsed;
+
+    if (props.TopSites.pref) {
+      collapsed = canShowCustomizationMenu ? false : props.TopSites.pref.collapsed;
     }
 
     return react__WEBPACK_IMPORTED_MODULE_6___default.a.createElement(content_src_components_ComponentPerfTimer_ComponentPerfTimer__WEBPACK_IMPORTED_MODULE_3__["ComponentPerfTimer"], {
@@ -8630,11 +8649,11 @@ class _TopSites extends react__WEBPACK_IMPORTED_MODULE_6___default.a.PureCompone
       title: props.title || {
         id: "newtab-section-header-topsites"
       },
-      hideTitle: props.Prefs.values.hideTopSitesTitle,
+      hideTitle: hideTitle,
       extraMenuOptions: extraMenuOptions,
       showPrefName: "feeds.topsites",
       eventSource: _TopSitesConstants__WEBPACK_IMPORTED_MODULE_1__["TOP_SITES_SOURCE"],
-      collapsed: props.TopSites.pref ? props.TopSites.pref.collapsed : undefined,
+      collapsed: collapsed,
       isFixed: props.isFixed,
       isFirst: props.isFirst,
       isLast: props.isLast,
@@ -8643,7 +8662,9 @@ class _TopSites extends react__WEBPACK_IMPORTED_MODULE_6___default.a.PureCompone
       TopSites: props.TopSites,
       TopSitesRows: props.TopSitesRows,
       dispatch: props.dispatch,
-      topSiteIconType: topSiteIconType
+      topSiteIconType: topSiteIconType,
+      newNewtabExperienceEnabled: newNewtabExperienceEnabled,
+      colors: colors
     }), react__WEBPACK_IMPORTED_MODULE_6___default.a.createElement("div", {
       className: "edit-topsites-wrapper"
     }, editForm && react__WEBPACK_IMPORTED_MODULE_6___default.a.createElement("div", {
@@ -8656,7 +8677,10 @@ class _TopSites extends react__WEBPACK_IMPORTED_MODULE_6___default.a.PureCompone
       site: props.TopSites.rows[editForm.index],
       onClose: this.onEditFormClose,
       dispatch: this.props.dispatch
-    }, editForm)))), showSearchShortcutsForm && react__WEBPACK_IMPORTED_MODULE_6___default.a.createElement("div", {
+    }, editForm, {
+      newNewtabExperienceEnabled: newNewtabExperienceEnabled,
+      customizationMenuEnabled: customizationMenuEnabled
+    })))), showSearchShortcutsForm && react__WEBPACK_IMPORTED_MODULE_6___default.a.createElement("div", {
       className: "edit-search-shortcuts"
     }, react__WEBPACK_IMPORTED_MODULE_6___default.a.createElement(_asrouter_components_ModalOverlay_ModalOverlay__WEBPACK_IMPORTED_MODULE_5__["ModalOverlayWrapper"], {
       unstyled: true,
@@ -9056,33 +9080,65 @@ class TopSiteLink extends react__WEBPACK_IMPORTED_MODULE_4___default.a.PureCompo
       this.props.onClick(event);
     }
   }
+  /*
+   * Takes the url as a string, runs it through a simple (non-secure) hash turning it into a random number
+   * Apply that random number to the color array. The same url will always generate the same color.
+   */
 
-  render() {
-    const {
-      children,
-      className,
-      defaultStyle,
-      isDraggable,
-      link,
-      onClick,
-      title
+
+  generateColor() {
+    let {
+      title,
+      colors
     } = this.props;
-    const topSiteOuterClassName = `top-site-outer${className ? ` ${className}` : ""}${link.isDragged ? " dragged" : ""}${link.searchTopSite ? " search-shortcut" : ""}`;
+
+    if (!colors) {
+      return "";
+    }
+
+    let colorArray = colors.split(",");
+
+    const hashStr = str => {
+      let hash = 0;
+
+      for (let i = 0; i < str.length; i++) {
+        let charCode = str.charCodeAt(i);
+        hash += charCode;
+      }
+
+      return hash;
+    };
+
+    let hash = hashStr(title);
+    let index = hash % colorArray.length;
+    return colorArray[index];
+  }
+
+  calculateStyle() {
+    const {
+      defaultStyle,
+      link,
+      newNewtabExperienceEnabled
+    } = this.props;
     const {
       tippyTopIcon,
       faviconSize
     } = link;
-    const [letterFallback] = title;
     let imageClassName;
     let imageStyle;
     let showSmallFavicon = false;
     let smallFaviconStyle;
     let smallFaviconFallback;
     let hasScreenshotImage = this.state.screenshotImage && this.state.screenshotImage.url;
+    let selectedColor;
 
     if (defaultStyle) {
       // force no styles (letter fallback) even if the link has imagery
       smallFaviconFallback = false;
+
+      if (newNewtabExperienceEnabled) {
+        selectedColor = this.generateColor();
+      }
     } else if (link.searchTopSite) {
       imageClassName = "top-site-icon rich-icon";
       imageStyle = {
@@ -9120,6 +9176,9 @@ class TopSiteLink extends react__WEBPACK_IMPORTED_MODULE_4___default.a.PureCompo
         smallFaviconStyle = {
           backgroundImage: `url(${link.favicon})`
         };
+      } else if (newNewtabExperienceEnabled) {
+        selectedColor = this.generateColor();
+        imageClassName = "";
       } else if (hasScreenshotImage) {
         // Don't show a small favicon if there is no screenshot, because that
         // would result in two fallback icons
@@ -9128,6 +9187,36 @@ class TopSiteLink extends react__WEBPACK_IMPORTED_MODULE_4___default.a.PureCompo
       }
     }
 
+    return {
+      showSmallFavicon,
+      smallFaviconFallback,
+      smallFaviconStyle,
+      imageStyle,
+      imageClassName,
+      selectedColor
+    };
+  }
+
+  render() {
+    const {
+      children,
+      className,
+      isDraggable,
+      link,
+      onClick,
+      title,
+      newNewtabExperienceEnabled
+    } = this.props;
+    const topSiteOuterClassName = `top-site-outer${className ? ` ${className}` : ""}${link.isDragged ? " dragged" : ""}${link.searchTopSite ? " search-shortcut" : ""}`;
+    const [letterFallback] = title;
+    const {
+      showSmallFavicon,
+      smallFaviconFallback,
+      smallFaviconStyle,
+      imageStyle,
+      imageClassName,
+      selectedColor
+    } = this.calculateStyle();
     let draggableProps = {};
 
     if (isDraggable) {
@@ -9154,7 +9243,25 @@ class TopSiteLink extends react__WEBPACK_IMPORTED_MODULE_4___default.a.PureCompo
       onKeyPress: this.onKeyPress,
       onClick: onClick,
       draggable: true
+    }, newNewtabExperienceEnabled && react__WEBPACK_IMPORTED_MODULE_4___default.a.createElement("div", {
+      className: "tile",
+      "aria-hidden": true
     }, react__WEBPACK_IMPORTED_MODULE_4___default.a.createElement("div", {
+      className: selectedColor ? "icon-wrapper letter-fallback" : "icon-wrapper",
+      "data-fallback": letterFallback,
+      style: selectedColor ? {
+        backgroundColor: selectedColor
+      } : {}
+    }, react__WEBPACK_IMPORTED_MODULE_4___default.a.createElement("div", {
+      className: imageClassName,
+      style: imageStyle
+    }), showSmallFavicon && react__WEBPACK_IMPORTED_MODULE_4___default.a.createElement("div", {
+      className: "top-site-icon default-icon",
+      "data-fallback": smallFaviconFallback && letterFallback,
+      style: smallFaviconStyle
+    })), link.searchTopSite && react__WEBPACK_IMPORTED_MODULE_4___default.a.createElement("div", {
+      className: "top-site-icon search-topsite"
+    })) || react__WEBPACK_IMPORTED_MODULE_4___default.a.createElement("div", {
       className: "tile",
       "aria-hidden": true,
       "data-fallback": letterFallback
@@ -9169,14 +9276,21 @@ class TopSiteLink extends react__WEBPACK_IMPORTED_MODULE_4___default.a.PureCompo
       style: smallFaviconStyle
     })), react__WEBPACK_IMPORTED_MODULE_4___default.a.createElement("div", {
       className: `title${link.isPinned ? " has-icon pinned" : ""}${link.type === SPOC_TYPE || link.sponsored_position ? " sponsored" : ""}`
+    }, newNewtabExperienceEnabled && react__WEBPACK_IMPORTED_MODULE_4___default.a.createElement("span", {
+      dir: "auto"
     }, link.isPinned && react__WEBPACK_IMPORTED_MODULE_4___default.a.createElement("div", {
+      className: "icon icon-pin-small"
+    }), title || react__WEBPACK_IMPORTED_MODULE_4___default.a.createElement("br", null), react__WEBPACK_IMPORTED_MODULE_4___default.a.createElement("span", {
+      className: "sponsored-label",
+      "data-l10n-id": "newtab-topsite-sponsored"
+    })) || react__WEBPACK_IMPORTED_MODULE_4___default.a.createElement("div", null, link.isPinned && react__WEBPACK_IMPORTED_MODULE_4___default.a.createElement("div", {
       className: "icon icon-pin-small"
     }), react__WEBPACK_IMPORTED_MODULE_4___default.a.createElement("span", {
       dir: "auto"
     }, title || react__WEBPACK_IMPORTED_MODULE_4___default.a.createElement("br", null)), react__WEBPACK_IMPORTED_MODULE_4___default.a.createElement("span", {
       className: "sponsored-label",
       "data-l10n-id": "newtab-topsite-sponsored"
-    }))), children, link.type === SPOC_TYPE ? react__WEBPACK_IMPORTED_MODULE_4___default.a.createElement(_DiscoveryStreamImpressionStats_ImpressionStats__WEBPACK_IMPORTED_MODULE_3__["ImpressionStats"], {
+    })))), children, link.type === SPOC_TYPE ? react__WEBPACK_IMPORTED_MODULE_4___default.a.createElement(_DiscoveryStreamImpressionStats_ImpressionStats__WEBPACK_IMPORTED_MODULE_3__["ImpressionStats"], {
       flightId: link.flightId,
       rows: [{
         id: link.id,
@@ -9561,7 +9675,8 @@ class TopSiteList extends react__WEBPACK_IMPORTED_MODULE_4___default.a.PureCompo
     const topSitesUI = [];
     const commonProps = {
       onDragEvent: this.onDragEvent,
-      dispatch: props.dispatch
+      dispatch: props.dispatch,
+      newNewtabExperienceEnabled: props.newNewtabExperienceEnabled
     }; // We assign a key to each placeholder slot. We need it to be independent
     // of the slot index (i below) so that the keys used stay the same during
     // drag and drop reordering and the underlying DOM nodes are reused.
@@ -9589,7 +9704,9 @@ class TopSiteList extends react__WEBPACK_IMPORTED_MODULE_4___default.a.PureCompo
         link: link,
         activeIndex: this.state.activeIndex,
         onActivate: this.onActivate
-      }, slotProps, commonProps)));
+      }, slotProps, commonProps, {
+        colors: props.colors
+      })));
     }
 
     return react__WEBPACK_IMPORTED_MODULE_4___default.a.createElement("ul", {
@@ -9740,7 +9857,6 @@ __webpack_require__.r(__webpack_exports__);
 const selectLayoutRender = ({
   state = {},
   prefs = {},
-  rollCache = [],
   locale = ""
 }) => {
   const {
@@ -9748,46 +9864,37 @@ const selectLayoutRender = ({
     feeds,
     spocs
   } = state;
-  let spocIndexMap = {};
-  let bufferRollCache = []; // Records the chosen and unchosen spocs by the probability selection.
+  let spocIndexPlacementMap = {};
+  /* This function fills spoc positions on a per placement basis with available spocs.
+   * It does this by looping through each position for a placement and replacing a rec with a spoc.
+   * If it runs out of spocs or positions, it stops.
+   * If it sees the same placement again, it remembers the previous spoc index, and continues.
+   * If it sees a blocked spoc, it skips that position leaving in a regular story.
+   */
 
-  let chosenSpocs = new Set();
-  let unchosenSpocs = new Set();
-
-  function rollForSpocs(data, spocsConfig, spocsData, placementName) {
-    if (!spocIndexMap[placementName] && spocIndexMap[placementName] !== 0) {
-      spocIndexMap[placementName] = 0;
+  function fillSpocPositionsForPlacement(data, spocsConfig, spocsData, placementName) {
+    if (!spocIndexPlacementMap[placementName] && spocIndexPlacementMap[placementName] !== 0) {
+      spocIndexPlacementMap[placementName] = 0;
     }
 
     const results = [...data];
 
     for (let position of spocsConfig.positions) {
-      const spoc = spocsData[spocIndexMap[placementName]];
+      const spoc = spocsData[spocIndexPlacementMap[placementName]]; // If there are no spocs left, we can stop filling positions.
 
       if (!spoc) {
         break;
-      } // Cache random number for a position
+      } // A placement could be used in two sections.
+      // In these cases, we want to maintain the index of the previous section.
+      // If we didn't do this, it might duplicate spocs.
 
 
-      let rickRoll;
+      spocIndexPlacementMap[placementName]++; // A spoc that's blocked is removed from the source for subsequent newtab loads.
+      // If we have a spoc in the source that's blocked, it means it was *just* blocked,
+      // and in this case, we skip this position, and show a regular spoc instead.
 
-      if (!rollCache.length) {
-        rickRoll = Math.random();
-        bufferRollCache.push(rickRoll);
-      } else {
-        rickRoll = rollCache.shift();
-        bufferRollCache.push(rickRoll);
-      }
-
-      if (rickRoll <= spocsConfig.probability) {
-        spocIndexMap[placementName]++;
-
-        if (!spocs.blocked.includes(spoc.url)) {
-          results.splice(position.index, 0, spoc);
-          chosenSpocs.add(spoc);
-        }
-      } else {
-        unchosenSpocs.add(spoc);
+      if (!spocs.blocked.includes(spoc.url)) {
+        results.splice(position.index, 0, spoc);
       }
     }
 
@@ -9852,7 +9959,7 @@ const selectLayoutRender = ({
       const spocsData = spocs.data[placementName]; // We expect a spoc, spocs are loaded, and the server returned spocs.
 
       if (spocs.loaded && spocsData && spocsData.items && spocsData.items.length) {
-        result = rollForSpocs(result, component.spocs, spocsData.items, placementName);
+        result = fillSpocPositionsForPlacement(result, component.spocs, spocsData.items, placementName);
       }
     }
 
@@ -9958,42 +10065,8 @@ const selectLayoutRender = ({
     return renderedLayoutArray;
   };
 
-  const layoutRender = renderLayout(); // If empty, fill rollCache with random probability values from bufferRollCache
-
-  if (!rollCache.length) {
-    rollCache.push(...bufferRollCache);
-  } // Generate the payload for the SPOCS Fill ping. Note that a SPOC could be rejected
-  // by the `probability_selection` first, then gets chosen for the next position. For
-  // all other SPOCS that never went through the probabilistic selection, its reason will
-  // be "out_of_position".
-
-
-  let spocsFill = [];
-
-  if (spocs.loaded && feeds.loaded && spocs.data.spocs && spocs.data.spocs.items) {
-    const chosenSpocsFill = [...chosenSpocs].map(spoc => ({
-      id: spoc.id,
-      reason: "n/a",
-      displayed: 1,
-      full_recalc: 0
-    }));
-    const unchosenSpocsFill = [...unchosenSpocs].filter(spoc => !chosenSpocs.has(spoc)).map(spoc => ({
-      id: spoc.id,
-      reason: "probability_selection",
-      displayed: 0,
-      full_recalc: 0
-    }));
-    const outOfPositionSpocsFill = spocs.data.spocs.items.slice(spocIndexMap.spocs).filter(spoc => !unchosenSpocs.has(spoc)).map(spoc => ({
-      id: spoc.id,
-      reason: "out_of_position",
-      displayed: 0,
-      full_recalc: 0
-    }));
-    spocsFill = [...chosenSpocsFill, ...unchosenSpocsFill, ...outOfPositionSpocsFill];
-  }
-
+  const layoutRender = renderLayout();
   return {
-    spocsFill,
     layoutRender
   };
 };
@@ -10293,6 +10366,7 @@ class _Search extends react__WEBPACK_IMPORTED_MODULE_3___default.a.PureComponent
 
   render() {
     const wrapperClassName = ["search-wrapper", this.props.hide && "search-hidden", this.props.fakeFocus && "fake-focus"].filter(v => v).join(" ");
+    const isNewNewtabExperienceEnabled = this.props.Prefs.values["newNewtabExperience.enabled"];
     return react__WEBPACK_IMPORTED_MODULE_3___default.a.createElement("div", {
       className: wrapperClassName
     }, this.props.showLogo && react__WEBPACK_IMPORTED_MODULE_3___default.a.createElement("div", {
@@ -10305,7 +10379,7 @@ class _Search extends react__WEBPACK_IMPORTED_MODULE_3___default.a.PureComponent
       className: "search-inner-wrapper"
     }, react__WEBPACK_IMPORTED_MODULE_3___default.a.createElement("input", {
       id: "newtab-search-text",
-      "data-l10n-id": "newtab-search-box-search-the-web-input",
+      "data-l10n-id": isNewNewtabExperienceEnabled ? "newtab-search-box-input" : "newtab-search-box-search-the-web-input",
       maxLength: "256",
       ref: this.onInputMount,
       type: "search"
@@ -10318,13 +10392,13 @@ class _Search extends react__WEBPACK_IMPORTED_MODULE_3___default.a.PureComponent
       className: "search-inner-wrapper"
     }, react__WEBPACK_IMPORTED_MODULE_3___default.a.createElement("button", {
       className: "search-handoff-button",
-      "data-l10n-id": "newtab-search-box-search-the-web-input",
+      "data-l10n-id": isNewNewtabExperienceEnabled ? "newtab-search-box-input" : "newtab-search-box-search-the-web-input",
       ref: this.onSearchHandoffButtonMount,
       onClick: this.onSearchHandoffClick,
       tabIndex: "-1"
     }, react__WEBPACK_IMPORTED_MODULE_3___default.a.createElement("div", {
       className: "fake-textbox",
-      "data-l10n-id": "newtab-search-box-search-the-web-text"
+      "data-l10n-id": isNewNewtabExperienceEnabled ? "newtab-search-box-text" : "newtab-search-box-search-the-web-text"
     }), react__WEBPACK_IMPORTED_MODULE_3___default.a.createElement("input", {
       type: "search",
       className: "fake-editable",
@@ -10339,7 +10413,9 @@ class _Search extends react__WEBPACK_IMPORTED_MODULE_3___default.a.PureComponent
   }
 
 }
-const Search = Object(react_redux__WEBPACK_IMPORTED_MODULE_1__["connect"])()(_Search);
+const Search = Object(react_redux__WEBPACK_IMPORTED_MODULE_1__["connect"])(state => ({
+  Prefs: state.Prefs
+}))(_Search);
 
 /***/ }),
 /* 65 */
@@ -14249,10 +14325,28 @@ class ContentSection_ContentSection extends external_React_default.a.PureCompone
     }, external_React_default.a.createElement("div", {
       id: "shortcuts-section",
       className: "section"
-    }, external_React_default.a.createElement("div", null, external_React_default.a.createElement("h2", {
-      className: "title",
+    }, external_React_default.a.createElement("label", {
+      className: "switch"
+    }, external_React_default.a.createElement("input", {
+      id: "shortcuts-toggle",
+      checked: topSitesEnabled,
+      type: "checkbox",
+      onChange: this.onPreferenceSelect,
+      preference: "feeds.topsites",
+      "aria-labelledby": "custom-shortcuts-title",
+      "aria-describedby": "custom-shortcuts-subtitle",
+      eventSource: "TOP_SITES"
+    }), external_React_default.a.createElement("span", {
+      className: "slider",
+      role: "presentation"
+    })), external_React_default.a.createElement("div", null, external_React_default.a.createElement("h2", {
+      id: "custom-shortcuts-title",
+      className: "title"
+    }, external_React_default.a.createElement("label", {
+      htmlFor: "shortcuts-toggle",
       "data-l10n-id": "newtab-custom-shortcuts-title"
-    }), external_React_default.a.createElement("p", {
+    })), external_React_default.a.createElement("p", {
+      id: "custom-shortcuts-subtitle",
       className: "subtitle",
       "data-l10n-id": "newtab-custom-shortcuts-subtitle"
     }), external_React_default.a.createElement("div", {
@@ -14266,7 +14360,8 @@ class ContentSection_ContentSection extends external_React_default.a.PureCompone
       preference: "topSitesRows",
       value: topSitesRowsCount,
       onChange: this.onPreferenceSelect,
-      disabled: !topSitesEnabled
+      disabled: !topSitesEnabled,
+      "aria-labelledby": "custom-shortcuts-title"
     }, external_React_default.a.createElement("option", {
       value: "1",
       "data-l10n-id": "newtab-custom-row-selector",
@@ -14284,7 +14379,8 @@ class ContentSection_ContentSection extends external_React_default.a.PureCompone
       "data-l10n-id": "newtab-custom-row-selector",
       "data-l10n-args": "{\"num\": 4}"
     })), this.props.mayHaveSponsoredTopSites && external_React_default.a.createElement("div", {
-      className: "check-wrapper"
+      className: "check-wrapper",
+      role: "presentation"
     }, external_React_default.a.createElement("input", {
       id: "sponsored-shortcuts",
       className: "sponsored-checkbox",
@@ -14292,27 +14388,37 @@ class ContentSection_ContentSection extends external_React_default.a.PureCompone
       checked: showSponsoredTopSitesEnabled,
       type: "checkbox",
       onChange: this.onPreferenceSelect,
-      preference: "showSponsoredTopSites"
+      preference: "showSponsoredTopSites",
+      eventSource: "SPONSORED_TOP_SITES"
     }), external_React_default.a.createElement("label", {
       className: "sponsored",
       htmlFor: "sponsored-shortcuts",
       "data-l10n-id": "newtab-custom-sponsored-sites"
-    }))))), external_React_default.a.createElement("label", {
-      className: "switch"
-    }, external_React_default.a.createElement("input", {
-      checked: topSitesEnabled,
-      type: "checkbox",
-      onChange: this.onPreferenceSelect,
-      preference: "feeds.topsites"
-    }), external_React_default.a.createElement("span", {
-      className: "slider"
-    }))), this.props.pocketRegion && external_React_default.a.createElement("div", {
+    })))))), this.props.pocketRegion && external_React_default.a.createElement("div", {
       id: "pocket-section",
       className: "section"
-    }, external_React_default.a.createElement("div", null, external_React_default.a.createElement("h2", {
-      className: "title",
+    }, external_React_default.a.createElement("label", {
+      className: "switch"
+    }, external_React_default.a.createElement("input", {
+      id: "pocket-toggle",
+      checked: pocketEnabled,
+      type: "checkbox",
+      onChange: this.onPreferenceSelect,
+      preference: "feeds.section.topstories",
+      "aria-labelledby": "custom-pocket-title",
+      "aria-describedby": "custom-pocket-subtitle",
+      eventSource: "TOP_STORIES"
+    }), external_React_default.a.createElement("span", {
+      className: "slider",
+      role: "presentation"
+    })), external_React_default.a.createElement("div", null, external_React_default.a.createElement("h2", {
+      id: "custom-pocket-title",
+      className: "title"
+    }, external_React_default.a.createElement("label", {
+      htmlFor: "pocket-toggle",
       "data-l10n-id": "newtab-custom-pocket-title"
-    }), external_React_default.a.createElement("p", {
+    })), external_React_default.a.createElement("p", {
+      id: "custom-pocket-subtitle",
       className: "subtitle",
       "data-l10n-id": "newtab-custom-pocket-subtitle"
     }), this.props.mayHaveSponsoredStories && external_React_default.a.createElement("div", {
@@ -14320,7 +14426,8 @@ class ContentSection_ContentSection extends external_React_default.a.PureCompone
     }, external_React_default.a.createElement("div", {
       className: `more-information ${pocketEnabled ? "expand" : "shrink"}`
     }, external_React_default.a.createElement("div", {
-      className: "check-wrapper"
+      className: "check-wrapper",
+      role: "presentation"
     }, external_React_default.a.createElement("input", {
       id: "sponsored-pocket",
       className: "sponsored-checkbox",
@@ -14334,55 +14441,63 @@ class ContentSection_ContentSection extends external_React_default.a.PureCompone
       className: "sponsored",
       htmlFor: "sponsored-pocket",
       "data-l10n-id": "newtab-custom-pocket-sponsored"
-    }))))), external_React_default.a.createElement("label", {
-      className: "switch"
-    }, external_React_default.a.createElement("input", {
-      checked: pocketEnabled,
-      type: "checkbox",
-      onChange: this.onPreferenceSelect,
-      preference: "feeds.section.topstories",
-      eventSource: "TOP_STORIES"
-    }), external_React_default.a.createElement("span", {
-      className: "slider"
-    }))), external_React_default.a.createElement("div", {
+    })))))), external_React_default.a.createElement("div", {
       id: "recent-section",
       className: "section"
-    }, external_React_default.a.createElement("div", null, external_React_default.a.createElement("h2", {
-      className: "title",
-      "data-l10n-id": "newtab-custom-recent-title"
-    }), external_React_default.a.createElement("p", {
-      className: "subtitle",
-      "data-l10n-id": "newtab-custom-recent-subtitle"
-    })), external_React_default.a.createElement("label", {
+    }, external_React_default.a.createElement("label", {
       className: "switch"
     }, external_React_default.a.createElement("input", {
+      id: "highlights-toggle",
       checked: highlightsEnabled,
       type: "checkbox",
       onChange: this.onPreferenceSelect,
       preference: "feeds.section.highlights",
-      eventSource: "HIGHLIGHTS"
+      eventSource: "HIGHLIGHTS",
+      "aria-labelledby": "custom-recent-title",
+      "aria-describedby": "custom-recent-subtitle"
     }), external_React_default.a.createElement("span", {
-      className: "slider"
+      className: "slider",
+      role: "presentation"
+    })), external_React_default.a.createElement("div", null, external_React_default.a.createElement("h2", {
+      id: "custom-recent-title",
+      className: "title"
+    }, external_React_default.a.createElement("label", {
+      htmlFor: "highlights-toggle",
+      "data-l10n-id": "newtab-custom-recent-title"
+    })), external_React_default.a.createElement("p", {
+      id: "custom-recent-subtitle",
+      className: "subtitle",
+      "data-l10n-id": "newtab-custom-recent-subtitle"
     }))), external_React_default.a.createElement("div", {
       id: "snippets-section",
       className: "section"
-    }, external_React_default.a.createElement("div", null, external_React_default.a.createElement("h2", {
-      className: "title",
-      "data-l10n-id": "newtab-custom-snippets-title"
-    }), external_React_default.a.createElement("p", {
-      className: "subtitle",
-      "data-l10n-id": "newtab-custom-snippets-subtitle"
-    })), external_React_default.a.createElement("label", {
+    }, external_React_default.a.createElement("label", {
       className: "switch"
     }, external_React_default.a.createElement("input", {
+      id: "snippets-toggle",
       checked: snippetsEnabled,
       type: "checkbox",
       onChange: this.onPreferenceSelect,
-      preference: "feeds.snippets"
+      preference: "feeds.snippets",
+      "aria-labelledby": "custom-snippets-title",
+      "aria-describedby": "custom-snippets-subtitle",
+      eventSource: "SNIPPETS"
     }), external_React_default.a.createElement("span", {
-      className: "slider"
+      className: "slider",
+      role: "presentation"
+    })), external_React_default.a.createElement("div", null, external_React_default.a.createElement("h2", {
+      id: "custom-snippets-title",
+      className: "title"
+    }, external_React_default.a.createElement("label", {
+      htmlFor: "snippets-toggle",
+      "data-l10n-id": "newtab-custom-snippets-title"
+    })), external_React_default.a.createElement("p", {
+      id: "custom-snippets-subtitle",
+      className: "subtitle",
+      "data-l10n-id": "newtab-custom-snippets-subtitle"
     }))), external_React_default.a.createElement("span", {
-      className: "divider"
+      className: "divider",
+      role: "separator"
     }), external_React_default.a.createElement("div", null, external_React_default.a.createElement("button", {
       id: "settings-link",
       className: "external-link",
@@ -15773,7 +15888,10 @@ class TopSiteForm_TopSiteForm extends external_React_default.a.PureComponent {
     } // Handles the form submit so an enter press performs the correct action
 
 
-    const onSubmit = previewMode ? this.onPreviewButtonClick : this.onDoneButtonClick;
+    const onSubmit = previewMode ? this.onPreviewButtonClick : this.onDoneButtonClick; // When the newNewtabExperience is enabled by default, use only shortcut ids.
+
+    const addTopsitesHeaderL10nId = this.props.newNewtabExperienceEnabled || this.props.customizationMenuEnabled ? "newtab-topsites-add-shortcut-header" : "newtab-topsites-add-topsites-header";
+    const editTopsitesHeaderL10nId = this.props.newNewtabExperienceEnabled || this.props.customizationMenuEnabled ? "newtab-topsites-edit-shortcut-header" : "newtab-topsites-edit-topsites-header";
     return external_React_default.a.createElement("form", {
       className: "topsite-form",
       onSubmit: onSubmit
@@ -15781,7 +15899,7 @@ class TopSiteForm_TopSiteForm extends external_React_default.a.PureComponent {
       className: "form-input-container"
     }, external_React_default.a.createElement("h3", {
       className: "section-title grey-title",
-      "data-l10n-id": showAsAdd ? "newtab-topsites-add-topsites-header" : "newtab-topsites-edit-topsites-header"
+      "data-l10n-id": showAsAdd ? addTopsitesHeaderL10nId : editTopsitesHeaderL10nId
     }), external_React_default.a.createElement("div", {
       className: "fields-and-preview"
     }, external_React_default.a.createElement("div", {
@@ -15804,7 +15922,8 @@ class TopSiteForm_TopSiteForm extends external_React_default.a.PureComponent {
     }), this._renderCustomScreenshotInput()), external_React_default.a.createElement(TopSite["TopSiteLink"], {
       link: previewLink,
       defaultStyle: requestFailed,
-      title: this.state.label
+      title: this.state.label,
+      newNewtabExperienceEnabled: this.props.newNewtabExperienceEnabled
     }))), external_React_default.a.createElement("section", {
       className: "actions"
     }, external_React_default.a.createElement("button", {

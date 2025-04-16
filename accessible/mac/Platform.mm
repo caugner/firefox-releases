@@ -41,9 +41,7 @@ void PlatformInit() {}
 void PlatformShutdown() {}
 
 void ProxyCreated(ProxyAccessible* aProxy, uint32_t) {
-  ProxyAccessible* parent = aProxy->Parent();
-  if ((parent && nsAccUtils::MustPrune(parent)) ||
-      aProxy->Role() == roles::WHITESPACE) {
+  if (aProxy->Role() == roles::WHITESPACE) {
     // We don't create a native object if we're child of a "flat" accessible;
     // for example, on OS X buttons shouldn't have any children, because that
     // makes the OS confused. We also don't create accessibles for <br>
@@ -112,15 +110,23 @@ void ProxyStateChangeEvent(ProxyAccessible* aProxy, uint64_t aState,
 void ProxyCaretMoveEvent(ProxyAccessible* aTarget, int32_t aOffset,
                          bool aIsSelectionCollapsed) {
   mozAccessible* wrapper = GetNativeFromGeckoAccessible(aTarget);
+  MOXTextMarkerDelegate* delegate =
+      [MOXTextMarkerDelegate getOrCreateForDoc:aTarget->Document()];
+  [delegate setCaretOffset:aTarget at:aOffset];
   if (aIsSelectionCollapsed) {
     // If selection is collapsed, invalidate selection.
-    MOXTextMarkerDelegate* delegate =
-        [MOXTextMarkerDelegate getOrCreateForDoc:aTarget->Document()];
     [delegate setSelectionFrom:aTarget at:aOffset to:aTarget at:aOffset];
   }
 
   if (wrapper) {
-    [wrapper handleAccessibleEvent:nsIAccessibleEvent::EVENT_TEXT_CARET_MOVED];
+    if (mozTextAccessible* textAcc =
+            static_cast<mozTextAccessible*>([wrapper moxEditableAncestor])) {
+      [textAcc
+          handleAccessibleEvent:nsIAccessibleEvent::EVENT_TEXT_CARET_MOVED];
+    } else {
+      [wrapper
+          handleAccessibleEvent:nsIAccessibleEvent::EVENT_TEXT_CARET_MOVED];
+    }
   }
 }
 
@@ -188,7 +194,6 @@ void ProxyRoleChangedEvent(ProxyAccessible* aTarget, const a11y::role& aRole) {
 @implementation GeckoNSApplication (a11y)
 
 - (void)accessibilitySetValue:(id)value forAttribute:(NSString*)attribute {
-  NSLog(@"Checking a11y");
   if ([attribute isEqualToString:@"AXEnhancedUserInterface"]) {
     mozilla::a11y::sA11yShouldBeEnabled = ([value intValue] == 1);
 #if defined(MOZ_TELEMETRY_REPORTING)

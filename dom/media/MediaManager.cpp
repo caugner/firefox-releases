@@ -14,7 +14,6 @@
 #include "MediaTrackConstraints.h"
 #include "MediaTrackGraphImpl.h"
 #include "MediaTrackListener.h"
-#include "ThreadSafeRefcountingWithMainThreadDestruction.h"
 #include "VideoStreamTrack.h"
 #include "VideoUtils.h"
 #include "mozilla/Base64.h"
@@ -303,7 +302,7 @@ class SourceListener : public SupportsWeakPtr {
   typedef MozPromise<bool /* aIgnored */, RefPtr<MediaMgrError>, true>
       SourceListenerPromise;
 
-  NS_INLINE_DECL_THREADSAFE_REFCOUNTING_WITH_MAIN_THREAD_DESTRUCTION(
+  NS_INLINE_DECL_THREADSAFE_REFCOUNTING_WITH_DELETE_ON_MAIN_THREAD(
       SourceListener)
 
   SourceListener();

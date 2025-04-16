@@ -1580,7 +1580,7 @@ static void* pages_map(void* aAddr, size_t aSize) {
 #endif
 
 #ifdef XP_DARWIN
-#  define VM_COPY_MIN (gPageSize * 32)
+#  define VM_COPY_MIN kChunkSize
 static inline void pages_copy(void* dest, const void* src, size_t n) {
   MOZ_ASSERT((void*)((uintptr_t)dest & ~gPageSizeMask) == dest);
   MOZ_ASSERT(n >= VM_COPY_MIN);
@@ -3509,6 +3509,7 @@ arena_t::arena_t(arena_params_t* aParams, bool aIsPrivate) {
 
   memset(&mLink, 0, sizeof(mLink));
   memset(&mStats, 0, sizeof(arena_stats_t));
+  mId = 0;
 
   // Initialize chunks.
   mChunksDirty.Init();

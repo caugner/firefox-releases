@@ -238,6 +238,9 @@ class startup_about_home_paint_realworld_webextensions(ts_paint):
     ]
     tpmanifest = "${talos}/startup_test/startup_about_home_paint/startup_about_home_paint.manifest"
     webextensions_folder = "${talos}/webextensions"
+    preferences = {
+        "browser.startup.homepage.abouthome_cache.enabled": False,
+    }
 
 
 @register_test()
@@ -629,7 +632,8 @@ class tp5n(PageloaderTest):
     """
 
     resolution = 20
-    tpmanifest = "${talos}/tests/tp5n/tp5n.manifest"
+    multidomain = True
+    tpmanifest = "${talos}/fis/tp5n/tp5n.manifest"
     tpcycles = 1
     tppagecycles = 1
     cycles = 1
@@ -687,7 +691,8 @@ class tp5o(PageloaderTest):
     tpmozafterpaint = True
     tptimeout = 5000
     mainthread = False
-    tpmanifest = "${talos}/tests/tp5n/tp5o.manifest"
+    multidomain = True
+    tpmanifest = "${talos}/fis/tp5n/tp5o.manifest"
     win_counters = ["% Processor Time"]
     w7_counters = ["% Processor Time"]
     linux_counters = ["XRes"]

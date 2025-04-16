@@ -116,6 +116,7 @@
 #include "mozilla/dom/EventTarget.h"
 #include "mozilla/dom/Fetch.h"
 #include "mozilla/dom/Gamepad.h"
+#include "mozilla/dom/GamepadHandle.h"
 #include "mozilla/dom/GamepadManager.h"
 #include "mozilla/dom/HashChangeEvent.h"
 #include "mozilla/dom/HashChangeEventBinding.h"
@@ -340,6 +341,7 @@ using namespace mozilla::dom;
 using namespace mozilla::dom::ipc;
 using mozilla::TimeDuration;
 using mozilla::TimeStamp;
+using mozilla::dom::GamepadHandle;
 using mozilla::dom::cache::CacheStorage;
 
 #define FORWARD_TO_OUTER(method, args, err_rval)                     \
@@ -1189,8 +1191,6 @@ void nsGlobalWindowInner::FreeInnerObjects() {
     mDocumentPartitionedPrincipal = mDoc->PartitionedPrincipal();
     mDocumentURI = mDoc->GetDocumentURI();
     mDocBaseURI = mDoc->GetDocBaseURI();
-    mDocContentBlockingAllowListPrincipal =
-        mDoc->GetContentBlockingAllowListPrincipal();
     mDocumentCsp = mDoc->GetCsp();
 
     while (mDoc->EventHandlingSuppressed()) {
@@ -1311,6 +1311,7 @@ void nsGlobalWindowInner::FreeInnerObjects() {
 
 #ifdef MOZ_GLEAN
   mGlean = nullptr;
+  mGleanPings = nullptr;
 #endif
 
   mParentTarget = nullptr;
@@ -1405,6 +1406,7 @@ NS_IMPL_CYCLE_COLLECTION_TRAVERSE_BEGIN_INTERNAL(nsGlobalWindowInner)
 
 #ifdef MOZ_GLEAN
   NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mGlean)
+  NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mGleanPings)
 #endif
 
   NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mOuterWindow)
@@ -1489,7 +1491,7 @@ NS_IMPL_CYCLE_COLLECTION_UNLINK_BEGIN(nsGlobalWindowInner)
   if (wrapper) {
     // Mark our realm as dead, so the JS engine won't hand out our
     // global after this point.
-    JS::RealmBehaviorsRef(js::GetNonCCWObjectRealm(wrapper)).setNonLive();
+    JS::SetRealmNonLive(js::GetNonCCWObjectRealm(wrapper));
   }
 
   NS_IMPL_CYCLE_COLLECTION_UNLINK(mNavigator)
@@ -1502,6 +1504,7 @@ NS_IMPL_CYCLE_COLLECTION_UNLINK_BEGIN(nsGlobalWindowInner)
 
 #ifdef MOZ_GLEAN
   NS_IMPL_CYCLE_COLLECTION_UNLINK(mGlean)
+  NS_IMPL_CYCLE_COLLECTION_UNLINK(mGleanPings)
 #endif
 
   if (tmp->mOuterWindow) {
@@ -2829,6 +2832,14 @@ mozilla::glean::Glean* nsGlobalWindowInner::Glean() {
 
   return mGlean;
 }
+
+mozilla::glean::GleanPings* nsGlobalWindowInner::GleanPings() {
+  if (!mGleanPings) {
+    mGleanPings = new mozilla::glean::GleanPings();
+  }
+
+  return mGleanPings;
+}
 #endif
 
 Nullable<WindowProxyHolder> nsGlobalWindowInner::GetParent(
@@ -3526,7 +3537,7 @@ void nsGlobalWindowInner::CancelAnimationFrame(int32_t aHandle,
 }
 
 already_AddRefed<MediaQueryList> nsGlobalWindowInner::MatchMedia(
-    const nsAString& aMediaQueryList, CallerType aCallerType,
+    const nsACString& aMediaQueryList, CallerType aCallerType,
     ErrorResult& aError) {
   ENSURE_ACTIVE_DOCUMENT(aError, nullptr);
   return mDoc->MatchMedia(aMediaQueryList, aCallerType);
@@ -3712,7 +3723,9 @@ void nsGlobalWindowInner::Prompt(const nsAString& aMessage,
 }
 
 void nsGlobalWindowInner::Focus(CallerType aCallerType, ErrorResult& aError) {
-  FORWARD_TO_OUTER_OR_THROW(FocusOuter, (aCallerType), aError, );
+  FORWARD_TO_OUTER_OR_THROW(
+      FocusOuter, (aCallerType, nsFocusManager::GenerateFocusActionId()),
+      aError, );
 }
 
 nsresult nsGlobalWindowInner::Focus(CallerType aCallerType) {
@@ -6200,7 +6213,7 @@ bool nsGlobalWindowInner::RunTimeoutHandler(Timeout* aTimeout,
     timeout->mScriptHandler->GetDescription(handlerDescription);
     str.Append(handlerDescription);
   }
-  AUTO_PROFILER_MARKER_TEXT("setTimeout callback", JS,
+  AUTO_PROFILER_MARKER_TEXT("setTimeout callback", DOM,
                             MarkerOptions(MarkerStack::TakeBacktrace(
                                               timeout->TakeProfilerBacktrace()),
                                           MarkerInnerWindowId(mWindowID)),
@@ -6563,7 +6576,7 @@ void nsGlobalWindowInner::AddSizeOfIncludingThis(
   }
 }
 
-void nsGlobalWindowInner::AddGamepad(uint32_t aIndex, Gamepad* aGamepad) {
+void nsGlobalWindowInner::AddGamepad(GamepadHandle aHandle, Gamepad* aGamepad) {
   // Create the index we will present to content based on which indices are
   // already taken, as required by the spec.
   // https://w3c.github.io/gamepad/gamepad.html#widl-Gamepad-index
@@ -6573,17 +6586,17 @@ void nsGlobalWindowInner::AddGamepad(uint32_t aIndex, Gamepad* aGamepad) {
   }
   mGamepadIndexSet.Put(index);
   aGamepad->SetIndex(index);
-  mGamepads.Put(aIndex, RefPtr{aGamepad});
+  mGamepads.Put(aHandle, RefPtr{aGamepad});
 }
 
-void nsGlobalWindowInner::RemoveGamepad(uint32_t aIndex) {
+void nsGlobalWindowInner::RemoveGamepad(GamepadHandle aHandle) {
   RefPtr<Gamepad> gamepad;
-  if (!mGamepads.Get(aIndex, getter_AddRefs(gamepad))) {
+  if (!mGamepads.Get(aHandle, getter_AddRefs(gamepad))) {
     return;
   }
   // Free up the index we were using so it can be reused
   mGamepadIndexSet.Remove(gamepad->Index());
-  mGamepads.Remove(aIndex);
+  mGamepads.Remove(aHandle);
 }
 
 void nsGlobalWindowInner::GetGamepads(nsTArray<RefPtr<Gamepad>>& aGamepads) {
@@ -6604,10 +6617,11 @@ void nsGlobalWindowInner::GetGamepads(nsTArray<RefPtr<Gamepad>>& aGamepads) {
   }
 }
 
-already_AddRefed<Gamepad> nsGlobalWindowInner::GetGamepad(uint32_t aIndex) {
+already_AddRefed<Gamepad> nsGlobalWindowInner::GetGamepad(
+    GamepadHandle aHandle) {
   RefPtr<Gamepad> gamepad;
 
-  if (mGamepads.Get(aIndex, getter_AddRefs(gamepad))) {
+  if (mGamepads.Get(aHandle, getter_AddRefs(gamepad))) {
     return gamepad.forget();
   }
 
@@ -7544,12 +7558,6 @@ nsIURI* nsPIDOMWindowInner::GetDocumentURI() const {
 
 nsIURI* nsPIDOMWindowInner::GetDocBaseURI() const {
   return mDoc ? mDoc->GetDocBaseURI() : mDocBaseURI.get();
-}
-
-nsIPrincipal* nsPIDOMWindowInner::GetDocumentContentBlockingAllowListPrincipal()
-    const {
-  return mDoc ? mDoc->GetContentBlockingAllowListPrincipal()
-              : mDocContentBlockingAllowListPrincipal.get();
 }
 
 mozilla::dom::WindowContext* nsPIDOMWindowInner::GetWindowContext() const {

@@ -19,6 +19,7 @@
 #include "nsQueryObject.h"
 #include "mozilla/dom/PlacesObservers.h"
 #include "mozilla/dom/PlacesVisit.h"
+#include "mozilla/dom/PlacesVisitTitle.h"
 
 #include "nsCycleCollectionParticipant.h"
 
@@ -2185,10 +2186,8 @@ nsresult nsNavHistoryQueryResultNode::OnVisit(nsIURI* aURI, int64_t aVisitId,
  * when the user visits the page, and then the title will be set asynchronously
  * when the title element of the page is parsed.
  */
-NS_IMETHODIMP
-nsNavHistoryQueryResultNode::OnTitleChanged(nsIURI* aURI,
-                                            const nsAString& aPageTitle,
-                                            const nsACString& aGUID) {
+nsresult nsNavHistoryQueryResultNode::OnTitleChanged(
+    nsIURI* aURI, const nsAString& aPageTitle, const nsACString& aGUID) {
   if (!mExpanded) {
     // When we are not expanded, we don't update, just invalidate and unhook.
     // It would still be pretty easy to traverse the results and update the
@@ -2258,18 +2257,6 @@ nsNavHistoryQueryResultNode::OnTitleChanged(nsIURI* aURI,
   return ChangeTitles(aURI, newTitle, true, onlyOneEntry);
 }
 
-NS_IMETHODIMP
-nsNavHistoryQueryResultNode::OnFrecencyChanged(nsIURI* aURI,
-                                               int32_t aNewFrecency,
-                                               const nsACString& aGUID,
-                                               bool aHidden,
-                                               PRTime aLastVisitDate) {
-  return NS_OK;
-}
-
-NS_IMETHODIMP
-nsNavHistoryQueryResultNode::OnManyFrecenciesChanged() { return NS_OK; }
-
 /**
  * Here, we can always live update by just deleting all occurrences of
  * the given URI.
@@ -2325,8 +2312,7 @@ nsNavHistoryQueryResultNode::OnDeleteURI(nsIURI* aURI, const nsACString& aGUID,
   return NS_OK;
 }
 
-NS_IMETHODIMP
-nsNavHistoryQueryResultNode::OnClearHistory() {
+nsresult nsNavHistoryQueryResultNode::OnClearHistory() {
   nsresult rv = Refresh();
   NS_ENSURE_SUCCESS(rv, rv);
   return NS_OK;
@@ -3504,7 +3490,7 @@ nsNavHistoryResult::~nsNavHistoryResult() {
 }
 
 void nsNavHistoryResult::StopObserving() {
-  AutoTArray<PlacesEventType, 4> events;
+  AutoTArray<PlacesEventType, 6> events;
   events.AppendElement(PlacesEventType::Favicon_changed);
   if (mIsBookmarksObserver) {
     nsNavBookmarks* bookmarks = nsNavBookmarks::GetBookmarksService();
@@ -3526,9 +3512,11 @@ void nsNavHistoryResult::StopObserving() {
       history->RemoveObserver(this);
       mIsHistoryObserver = false;
     }
+    events.AppendElement(PlacesEventType::History_cleared);
   }
   if (mIsHistoryDetailsObserver) {
     events.AppendElement(PlacesEventType::Page_visited);
+    events.AppendElement(PlacesEventType::Page_title_changed);
     mIsHistoryDetailsObserver = false;
   }
 
@@ -3557,12 +3545,15 @@ void nsNavHistoryResult::AddHistoryObserver(
     NS_ASSERTION(history, "Can't create history service");
     history->AddObserver(this, true);
     mIsHistoryObserver = true;
+
+    AutoTArray<PlacesEventType, 3> events;
+    events.AppendElement(PlacesEventType::History_cleared);
     if (!mIsHistoryDetailsObserver) {
-      AutoTArray<PlacesEventType, 1> events;
       events.AppendElement(PlacesEventType::Page_visited);
-      PlacesObservers::AddListener(events, this);
+      events.AppendElement(PlacesEventType::Page_title_changed);
       mIsHistoryDetailsObserver = true;
     }
+    PlacesObservers::AddListener(events, this);
   }
   // Don't add duplicate observers.  In some case we don't unregister when
   // children are cleared (see ClearChildren) and the next FillChildren call
@@ -3777,15 +3768,17 @@ bool nsNavHistoryResult::UpdateHistoryDetailsObservers() {
   // If one observer wants history details we may have to add the listener.
   if (!CanSkipHistoryDetailsNotifications()) {
     if (!mIsHistoryDetailsObserver) {
-      AutoTArray<PlacesEventType, 1> events;
+      AutoTArray<PlacesEventType, 2> events;
       events.AppendElement(PlacesEventType::Page_visited);
+      events.AppendElement(PlacesEventType::Page_title_changed);
       PlacesObservers::AddListener(events, this);
       mIsHistoryDetailsObserver = true;
       return true;
     }
   } else {
-    AutoTArray<PlacesEventType, 1> events;
+    AutoTArray<PlacesEventType, 2> events;
     events.AppendElement(PlacesEventType::Page_visited);
+    events.AppendElement(PlacesEventType::Page_title_changed);
     PlacesObservers::RemoveListener(events, this);
     mIsHistoryDetailsObserver = false;
   }
@@ -4190,6 +4183,26 @@ void nsNavHistoryResult::HandlePlacesEvent(const PlacesEventSequence& aEvents) {
             item->mGuid, item->mParentGuid, item->mSource));
         break;
       }
+      case PlacesEventType::Page_title_changed: {
+        const PlacesVisitTitle* titleEvent = event->AsPlacesVisitTitle();
+        if (NS_WARN_IF(!titleEvent)) {
+          continue;
+        }
+
+        nsCOMPtr<nsIURI> uri;
+        MOZ_ALWAYS_SUCCEEDS(NS_NewURI(getter_AddRefs(uri), titleEvent->mUrl));
+        if (!uri) {
+          continue;
+        }
+
+        ENUMERATE_HISTORY_OBSERVERS(
+            OnTitleChanged(uri, titleEvent->mTitle, titleEvent->mPageGuid));
+        break;
+      }
+      case PlacesEventType::History_cleared: {
+        ENUMERATE_HISTORY_OBSERVERS(OnClearHistory());
+        break;
+      }
       default: {
         MOZ_ASSERT_UNREACHABLE(
             "Receive notification of a type not subscribed to.");
@@ -4199,36 +4212,11 @@ void nsNavHistoryResult::HandlePlacesEvent(const PlacesEventSequence& aEvents) {
 }
 
 NS_IMETHODIMP
-nsNavHistoryResult::OnTitleChanged(nsIURI* aURI, const nsAString& aPageTitle,
-                                   const nsACString& aGUID) {
-  NS_ENSURE_ARG(aURI);
-
-  ENUMERATE_HISTORY_OBSERVERS(OnTitleChanged(aURI, aPageTitle, aGUID));
-  return NS_OK;
-}
-
-NS_IMETHODIMP
-nsNavHistoryResult::OnFrecencyChanged(nsIURI* aURI, int32_t aNewFrecency,
-                                      const nsACString& aGUID, bool aHidden,
-                                      PRTime aLastVisitDate) {
-  return NS_OK;
-}
-
-NS_IMETHODIMP
-nsNavHistoryResult::OnManyFrecenciesChanged() { return NS_OK; }
-
-NS_IMETHODIMP
 nsNavHistoryResult::OnDeleteURI(nsIURI* aURI, const nsACString& aGUID,
                                 uint16_t aReason) {
   NS_ENSURE_ARG(aURI);
 
   ENUMERATE_HISTORY_OBSERVERS(OnDeleteURI(aURI, aGUID, aReason));
-  return NS_OK;
-}
-
-NS_IMETHODIMP
-nsNavHistoryResult::OnClearHistory() {
-  ENUMERATE_HISTORY_OBSERVERS(OnClearHistory());
   return NS_OK;
 }
 

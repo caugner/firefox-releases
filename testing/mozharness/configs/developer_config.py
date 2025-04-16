@@ -14,6 +14,7 @@ Using this config file should be accompanied with using
 --test-url and --installer-url where appropiate
 """
 
+from __future__ import absolute_import
 import os
 
 LOCAL_WORKDIR = os.path.expanduser("~/.mozilla/releng")
@@ -37,7 +38,6 @@ config = {
     # Tooltool related
     "tooltool_cache": os.path.join(LOCAL_WORKDIR, "builds/tooltool_cache"),
     "tooltool_cache_path": os.path.join(LOCAL_WORKDIR, "builds/tooltool_cache"),
-    "tooltool_authentication_file": os.path.join(LOCAL_WORKDIR, "relengapi.tok"),
     # VCS tools
     "gittool.py": "http://hg.mozilla.org/build/puppet/raw-file/faaf5abd792e/modules/packages/files/gittool.py",
     # Android related

@@ -55,6 +55,7 @@ window.addEventListener("AboutLoginsChromeToContent", event => {
       document.documentElement.classList.remove(
         "master-password-auth-required"
       );
+      document.documentElement.classList.remove("login-selected");
       setKeyboardAccessForNonDialogElements(true);
       handleAllLogins(event.detail.value);
       break;
@@ -125,14 +126,28 @@ window.addEventListener("AboutLoginsChromeToContent", event => {
       gElements.loginItem.updateVulnerableLogins(event.detail.value);
       break;
     }
+    case "ImportPasswordsDialog": {
+      let dialog = document.querySelector("import-summary-dialog");
+      let options = {
+        logins: event.detail.value,
+      };
+      dialog.show(options);
+      break;
+    }
+    case "RemaskPassword": {
+      window.dispatchEvent(new CustomEvent("AboutLoginsRemaskPassword"));
+      break;
+    }
+    case "ImportPasswordsErrorDialog": {
+      let dialog = document.querySelector("import-error-dialog");
+      dialog.show(event.detail.value);
+      break;
+    }
   }
 });
 
 window.addEventListener("AboutLoginsRemoveAllLoginsDialog", () => {
   let loginItem = document.querySelector("login-item");
-  if (loginItem.dataset.editing) {
-    loginItem._toggleEditing();
-  }
   let options = {};
   if (fxaLoggedIn && passwordSyncEnabled) {
     options.title = "about-logins-confirm-remove-all-sync-dialog-title";
@@ -152,6 +167,14 @@ window.addEventListener("AboutLoginsRemoveAllLoginsDialog", () => {
   try {
     dialogPromise.then(
       () => {
+        if (loginItem.dataset.isNewLogin) {
+          // Bug 1681042 - Resetting the form prevents a double confirmation dialog since there
+          // may be pending changes in the new login.
+          loginItem.resetForm();
+          window.dispatchEvent(new CustomEvent("AboutLoginsClearSelection"));
+        } else if (loginItem.dataset.editing) {
+          loginItem._toggleEditing();
+        }
         window.document.documentElement.classList.remove("login-selected");
         let removeAllEvt = new CustomEvent("AboutLoginsRemoveAllLogins", {
           bubbles: true,

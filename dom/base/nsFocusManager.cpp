@@ -280,6 +280,14 @@ bool nsFocusManager::IsFocused(nsIContent* aContent) {
 
 bool nsFocusManager::IsTestMode() { return sTestMode; }
 
+bool nsFocusManager::IsInActiveWindow(BrowsingContext* aBC) const {
+  RefPtr<BrowsingContext> top = aBC->Top();
+  if (XRE_IsParentProcess()) {
+    top = top->Canonical()->TopCrossChromeBoundary();
+  }
+  return IsSameOrAncestor(top, GetActiveBrowsingContext());
+}
+
 // get the current window for the given content node
 static nsPIDOMWindowOuter* GetCurrentWindow(nsIContent* aContent) {
   Document* doc = aContent->GetComposedDoc();
@@ -1626,13 +1634,6 @@ void nsFocusManager::SetFocusInner(Element* aNewContent, int32_t aFlags,
     }
     // return if blurring fails or the focus changes during the blur
     if (focusedBrowsingContext) {
-      // if the focus is being moved to another element in the same document,
-      // or to a descendant, pass the existing window to Blur so that the
-      // current node in the existing window is cleared. If moving to a
-      // window elsewhere, we want to maintain the current node in the
-      // window but still blur it.
-      bool currentIsSameOrAncestor =
-          IsSameOrAncestor(focusedBrowsingContext, newWindow);
       // find the common ancestor of the currently focused window and the new
       // window. The ancestor will need to have its currently focused node
       // cleared once the document has been blurred. Otherwise, we'll be in a
@@ -1650,11 +1651,28 @@ void nsFocusManager::SetFocusInner(Element* aNewContent, int32_t aFlags,
         commonAncestor = GetCommonAncestor(newWindow, focusedBrowsingContext);
       }
 
-      if (!Blur(
-              currentIsSameOrAncestor ? focusedBrowsingContext.get() : nullptr,
-              commonAncestor ? commonAncestor.get() : nullptr,
-              focusMovesToDifferentBC, aAdjustWidget, aActionId,
-              elementToFocus)) {
+      bool needToClearFocusedElement = false;
+      if (focusedBrowsingContext->IsChrome()) {
+        // Always reset focused element if focus is currently in chrome window.
+        needToClearFocusedElement = true;
+      } else {
+        // Only reset focused element if focus moves within the same top-level
+        // content window.
+        if (focusedBrowsingContext->Top() == browsingContextToFocus->Top()) {
+          // XXX for the case that we try to focus an
+          // already-focused-remote-frame, we would still send blur and focus
+          // IPC to it, but they will not generate blur or focus event, we don't
+          // want to reset activeElement on the remote frame.
+          needToClearFocusedElement = (focusMovesToDifferentBC ||
+                                       focusedBrowsingContext->IsInProcess());
+        }
+      }
+
+      if (!Blur(needToClearFocusedElement ? focusedBrowsingContext.get()
+                                          : nullptr,
+                commonAncestor ? commonAncestor.get() : nullptr,
+                focusMovesToDifferentBC, aAdjustWidget, aActionId,
+                elementToFocus)) {
         return;
       }
     }
@@ -1721,7 +1739,7 @@ static already_AddRefed<BrowsingContext> GetParentIgnoreChromeBoundary(
 }
 
 bool nsFocusManager::IsSameOrAncestor(BrowsingContext* aPossibleAncestor,
-                                      BrowsingContext* aContext) {
+                                      BrowsingContext* aContext) const {
   if (!aPossibleAncestor) {
     return false;
   }
@@ -1737,7 +1755,7 @@ bool nsFocusManager::IsSameOrAncestor(BrowsingContext* aPossibleAncestor,
 }
 
 bool nsFocusManager::IsSameOrAncestor(nsPIDOMWindowOuter* aPossibleAncestor,
-                                      nsPIDOMWindowOuter* aWindow) {
+                                      nsPIDOMWindowOuter* aWindow) const {
   if (aWindow && aPossibleAncestor) {
     return IsSameOrAncestor(aPossibleAncestor->GetBrowsingContext(),
                             aWindow->GetBrowsingContext());
@@ -1746,7 +1764,7 @@ bool nsFocusManager::IsSameOrAncestor(nsPIDOMWindowOuter* aPossibleAncestor,
 }
 
 bool nsFocusManager::IsSameOrAncestor(nsPIDOMWindowOuter* aPossibleAncestor,
-                                      BrowsingContext* aContext) {
+                                      BrowsingContext* aContext) const {
   if (aPossibleAncestor) {
     return IsSameOrAncestor(aPossibleAncestor->GetBrowsingContext(), aContext);
   }
@@ -1754,7 +1772,7 @@ bool nsFocusManager::IsSameOrAncestor(nsPIDOMWindowOuter* aPossibleAncestor,
 }
 
 bool nsFocusManager::IsSameOrAncestor(BrowsingContext* aPossibleAncestor,
-                                      nsPIDOMWindowOuter* aWindow) {
+                                      nsPIDOMWindowOuter* aWindow) const {
   if (aWindow) {
     return IsSameOrAncestor(aPossibleAncestor, aWindow->GetBrowsingContext());
   }
@@ -2023,8 +2041,7 @@ Element* nsFocusManager::FlushAndCheckIfFocusable(Element* aElement,
                                                                    : nullptr;
   }
 
-  return frame->IsFocusable(nullptr, aFlags & FLAG_BYMOUSE) ? aElement
-                                                            : nullptr;
+  return frame->IsFocusable(aFlags & FLAG_BYMOUSE) ? aElement : nullptr;
 }
 
 bool nsFocusManager::Blur(BrowsingContext* aBrowsingContextToClear,
@@ -3284,7 +3301,7 @@ nsresult nsFocusManager::DetermineElementToMoveFocus(
     if (startContent->IsHTMLElement(nsGkAtoms::area)) {
       startContent->IsFocusable(&tabIndex);
     } else if (frame) {
-      frame->IsFocusable(&tabIndex, 0);
+      tabIndex = frame->IsFocusable().mTabIndex;
     } else {
       startContent->IsFocusable(&tabIndex);
     }
@@ -3518,7 +3535,7 @@ nsresult nsFocusManager::DetermineElementToMoveFocus(
         return NS_OK;
       }
 
-      frame->IsFocusable(&tabIndex, 0);
+      tabIndex = frame->IsFocusable().mTabIndex;
       if (tabIndex < 0) {
         tabIndex = 1;
         ignoreTabIndex = true;
@@ -3545,11 +3562,12 @@ nsresult nsFocusManager::DetermineElementToMoveFocus(
         docShell->TabToTreeOwner(forward, forDocumentNavigation, &tookFocus);
         // If the tree owner took the focus, blur the current element.
         if (tookFocus) {
-          nsCOMPtr<nsPIDOMWindowOuter> window = docShell->GetWindow();
-          if (window->GetFocusedElement() == mFocusedElement) {
+          if (GetFocusedBrowsingContext() &&
+              GetFocusedBrowsingContext()->IsInProcess()) {
             Blur(GetFocusedBrowsingContext(), nullptr, true, true,
                  GenerateFocusActionId());
           } else {
+            nsCOMPtr<nsPIDOMWindowOuter> window = docShell->GetWindow();
             window->SetFocusedElement(nullptr);
           }
           return NS_OK;
@@ -3736,13 +3754,8 @@ static int32_t HostOrSlotTabIndexValue(const nsIContent* aContent,
   MOZ_ASSERT(IsHostOrSlot(aContent));
 
   if (aIsFocusable) {
-    *aIsFocusable = false;
     nsIFrame* frame = aContent->GetPrimaryFrame();
-    if (frame) {
-      int32_t tabIndex;
-      frame->IsFocusable(&tabIndex, 0);
-      *aIsFocusable = tabIndex >= 0;
-    }
+    *aIsFocusable = frame && frame->IsFocusable().mTabIndex >= 0;
   }
 
   const nsAttrValue* attrVal =
@@ -3766,10 +3779,11 @@ nsIContent* nsFocusManager::GetNextTabbableContentInScope(
   MOZ_ASSERT(IsHostOrSlot(aOwner), "Scope owner should be host or slot");
 
   if (!aSkipOwner && (aForward && aOwner == aStartContent)) {
-    int32_t tabIndex = -1;
-    nsIFrame* frame = aOwner->GetPrimaryFrame();
-    if (frame && frame->IsFocusable(&tabIndex, false) && tabIndex >= 0) {
-      return aOwner;
+    if (nsIFrame* frame = aOwner->GetPrimaryFrame()) {
+      auto focusable = frame->IsFocusable();
+      if (focusable && focusable.mTabIndex >= 0) {
+        return aOwner;
+      }
     }
   }
 
@@ -3810,7 +3824,7 @@ nsIContent* nsFocusManager::GetNextTabbableContentInScope(
       int32_t tabIndex = 0;
       if (iterContent->IsInNativeAnonymousSubtree() &&
           iterContent->GetPrimaryFrame()) {
-        iterContent->GetPrimaryFrame()->IsFocusable(&tabIndex);
+        tabIndex = iterContent->GetPrimaryFrame()->IsFocusable().mTabIndex;
       } else if (IsHostOrSlot(iterContent)) {
         tabIndex = HostOrSlotTabIndexValue(iterContent);
       } else {
@@ -3818,7 +3832,7 @@ nsIContent* nsFocusManager::GetNextTabbableContentInScope(
         if (!frame) {
           continue;
         }
-        frame->IsFocusable(&tabIndex, 0);
+        tabIndex = frame->IsFocusable().mTabIndex;
       }
       if (tabIndex < 0 || !(aIgnoreTabIndex || tabIndex == aCurrentTabIndex)) {
         continue;
@@ -3877,10 +3891,11 @@ nsIContent* nsFocusManager::GetNextTabbableContentInScope(
   // Return scope owner at last for backward navigation if its tabindex
   // is non-negative
   if (!aSkipOwner && !aForward) {
-    int32_t tabIndex = -1;
-    nsIFrame* frame = aOwner->GetPrimaryFrame();
-    if (frame && frame->IsFocusable(&tabIndex, false) && tabIndex >= 0) {
-      return aOwner;
+    if (nsIFrame* frame = aOwner->GetPrimaryFrame()) {
+      auto focusable = frame->IsFocusable();
+      if (focusable && focusable.mTabIndex >= 0) {
+        return aOwner;
+      }
     }
   }
 
@@ -3902,7 +3917,7 @@ nsIContent* nsFocusManager::GetNextTabbableContentInAncestorScopes(
     if (IsHostOrSlot(startContent)) {
       tabIndex = HostOrSlotTabIndexValue(startContent);
     } else if (nsIFrame* frame = startContent->GetPrimaryFrame()) {
-      frame->IsFocusable(&tabIndex);
+      tabIndex = frame->IsFocusable().mTabIndex;
     } else {
       startContent->IsFocusable(&tabIndex);
     }
@@ -4190,8 +4205,7 @@ nsresult nsFocusManager::GetNextTabbableContent(
       //          == 0 in normal tab order (last after positive tabindexed items)
       //          > 0 can be tabbed to in the order specified by this value
       // clang-format on
-      int32_t tabIndex;
-      frame->IsFocusable(&tabIndex, 0);
+      int32_t tabIndex = frame->IsFocusable().mTabIndex;
 
       LOGCONTENTNAVIGATION("Next Tabbable %s:", frame->GetContent());
       LOGFOCUSNAVIGATION(

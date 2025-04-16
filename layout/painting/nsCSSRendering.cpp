@@ -1879,7 +1879,8 @@ bool nsCSSRendering::CanBuildWebRenderDisplayItemsForStyleImageLayer(
 
   // We only support painting gradients and image for a single style image
   // layer, and we don't support crop-rects.
-  const auto& styleImage = aBackgroundStyle->mImage.mLayers[aLayer].mImage;
+  const auto& styleImage =
+      aBackgroundStyle->mImage.mLayers[aLayer].mImage.FinalImage();
   if (styleImage.IsImageRequestType()) {
     if (styleImage.IsRect()) {
       return false;
@@ -4008,8 +4009,7 @@ void nsCSSRendering::PaintDecorationLine(
       aFrame->StyleText()->mTextDecorationSkipInk;
   bool skipInkEnabled =
       skipInk != mozilla::StyleTextDecorationSkipInk::None &&
-      aParams.decoration != StyleTextDecorationLine::LINE_THROUGH &&
-      StaticPrefs::layout_css_text_decoration_skip_ink_enabled();
+      aParams.decoration != StyleTextDecorationLine::LINE_THROUGH;
 
   if (!skipInkEnabled || aParams.glyphRange.Length() == 0) {
     PaintDecorationLineInternal(aFrame, aDrawTarget, aParams, rect);

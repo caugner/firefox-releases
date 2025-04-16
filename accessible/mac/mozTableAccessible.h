@@ -139,6 +139,9 @@
 - (NSNumber*)moxDisclosing;
 
 // override
+- (void)moxSetDisclosing:(NSNumber*)disclosing;
+
+// override
 - (NSNumber*)moxExpanded;
 
 // override
@@ -155,5 +158,8 @@
 
 // override
 - (NSString*)moxLabel;
+
+// override
+- (void)stateChanged:(uint64_t)state isEnabled:(BOOL)enabled;
 
 @end

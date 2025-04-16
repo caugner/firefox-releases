@@ -309,24 +309,6 @@ inline NSString* ToNSString(id aValue) {
 
 #pragma mark - mozAccessible
 
-enum AXTextEditType {
-  AXTextEditTypeUnknown,
-  AXTextEditTypeDelete,
-  AXTextEditTypeInsert,
-  AXTextEditTypeTyping,
-  AXTextEditTypeDictation,
-  AXTextEditTypeCut,
-  AXTextEditTypePaste,
-  AXTextEditTypeAttributesChange
-};
-
-enum AXTextStateChangeType {
-  AXTextStateChangeTypeUnknown,
-  AXTextStateChangeTypeEdit,
-  AXTextStateChangeTypeSelectionMove,
-  AXTextStateChangeTypeSelectionExtend
-};
-
 - (void)handleAccessibleTextChangeEvent:(NSString*)change
                                inserted:(BOOL)isInserted
                             inContainer:(const AccessibleOrProxy&)container
@@ -389,7 +371,7 @@ enum AXTextStateChangeType {
   GeckoTextMarkerRange selection =
       [static_cast<MOXTextMarkerDelegate*>(delegate) selection];
 
-  if (!selection.Crop(mGeckoAccessible)) {
+  if (!selection.IsValid() || !selection.Crop(mGeckoAccessible)) {
     // The selection is not in this accessible. Return invalid range.
     return GeckoTextMarkerRange();
   }

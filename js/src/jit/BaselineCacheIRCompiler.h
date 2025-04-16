@@ -16,13 +16,14 @@
 namespace js {
 namespace jit {
 
+class ICCacheIRStub;
 class ICFallbackStub;
-class ICStub;
 
-ICStub* AttachBaselineCacheIRStub(JSContext* cx, const CacheIRWriter& writer,
-                                  CacheKind kind, JSScript* outerScript,
-                                  ICScript* icScript, ICFallbackStub* stub,
-                                  bool* attached);
+ICCacheIRStub* AttachBaselineCacheIRStub(JSContext* cx,
+                                         const CacheIRWriter& writer,
+                                         CacheKind kind, JSScript* outerScript,
+                                         ICScript* icScript,
+                                         ICFallbackStub* stub, bool* attached);
 
 // BaselineCacheIRCompiler compiles CacheIR to BaselineIC native code.
 class MOZ_RAII BaselineCacheIRCompiler : public CacheIRCompiler {
@@ -33,10 +34,10 @@ class MOZ_RAII BaselineCacheIRCompiler : public CacheIRCompiler {
   template <typename Fn, Fn fn>
   void tailCallVM(MacroAssembler& masm);
 
-  MOZ_MUST_USE bool emitStoreSlotShared(bool isFixed, ObjOperandId objId,
-                                        uint32_t offsetOffset,
-                                        ValOperandId rhsId);
-  MOZ_MUST_USE bool emitAddAndStoreSlotShared(
+  [[nodiscard]] bool emitStoreSlotShared(bool isFixed, ObjOperandId objId,
+                                         uint32_t offsetOffset,
+                                         ValOperandId rhsId);
+  [[nodiscard]] bool emitAddAndStoreSlotShared(
       CacheOp op, ObjOperandId objId, uint32_t offsetOffset, ValOperandId rhsId,
       uint32_t newShapeOffset, mozilla::Maybe<uint32_t> numNewSlotsOffset);
 
@@ -86,7 +87,7 @@ class MOZ_RAII BaselineCacheIRCompiler : public CacheIRCompiler {
   BaselineCacheIRCompiler(JSContext* cx, const CacheIRWriter& writer,
                           uint32_t stubDataOffset);
 
-  MOZ_MUST_USE bool init(CacheKind kind);
+  [[nodiscard]] bool init(CacheKind kind);
 
   template <typename Fn, Fn fn>
   void callVM(MacroAssembler& masm);

@@ -79,15 +79,23 @@ class nsXPLookAndFeel : public mozilla::LookAndFeel {
 
   virtual uint32_t GetPasswordMaskDelayImpl() { return 600; }
 
+  using FullLookAndFeel = mozilla::widget::FullLookAndFeel;
   using LookAndFeelCache = mozilla::widget::LookAndFeelCache;
   using LookAndFeelInt = mozilla::widget::LookAndFeelInt;
   using LookAndFeelFont = mozilla::widget::LookAndFeelFont;
   using LookAndFeelColor = mozilla::widget::LookAndFeelColor;
+  using LookAndFeelTheme = mozilla::widget::LookAndFeelTheme;
 
   virtual LookAndFeelCache GetCacheImpl();
   virtual void SetCacheImpl(const LookAndFeelCache& aCache) {}
+  virtual void SetDataImpl(FullLookAndFeel&& aTables) {}
 
   virtual void NativeInit() = 0;
+
+  virtual void WithThemeConfiguredForContent(
+      const std::function<void(const LookAndFeelTheme& aTheme)>& aFn) {
+    aFn(LookAndFeelTheme{});
+  }
 
  protected:
   nsXPLookAndFeel() = default;

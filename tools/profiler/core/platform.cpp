@@ -276,10 +276,11 @@ static uint32_t DefaultFeatures() {
 // Extra default features when MOZ_PROFILER_STARTUP is set (even if not
 // available).
 static uint32_t StartupExtraDefaultFeatures() {
+  // Enable CPUUtilization by default for startup profiles as it is useful to
+  // see when startup alternates between CPU intensive tasks and being blocked.
   // Enable file I/Os by default for startup profiles as startup is heavy on
   // I/O operations.
-  return ProfilerFeature::MainThreadIO | ProfilerFeature::FileIO |
-         ProfilerFeature::FileIOAll;
+  return ProfilerFeature::CPUUtilization | ProfilerFeature::FileIOAll;
 }
 
 // The class is a thin shell around mozglue PlatformMutex. It does not preserve
@@ -712,9 +713,6 @@ struct LiveProfiledThreadData {
 // bytes.
 constexpr static uint32_t scBytesPerEntry = 8;
 
-// Expected maximum size needed to store one stack sample.
-constexpr static uint32_t scExpectedMaximumStackSize = 64 * 1024;
-
 // This class contains the profiler's global state that is valid only when the
 // profiler is active. When not instantiated, the profiler is inactive.
 //
@@ -729,7 +727,8 @@ class ActivePS {
   // mechanism to control the overal memory limit.
 
   // Minimum chunk size allowed, enough for at least one stack.
-  constexpr static uint32_t scMinimumChunkSize = 2 * scExpectedMaximumStackSize;
+  constexpr static uint32_t scMinimumChunkSize =
+      2 * ProfileBufferChunkManager::scExpectedMaximumStackSize;
 
   // Ideally we want at least 2 unreleased chunks to work with (1 current and 1
   // next), and 2 released chunks (so that one can be recycled when old, leaving
@@ -2260,8 +2259,6 @@ static void DoSyncSample(PSLockRef aLock, RegisteredThread& aRegisteredThread,
 // is `aSamplePos`, we can write the rest to `aBuffer` (which may be different).
 static inline void DoPeriodicSample(PSLockRef aLock,
                                     RegisteredThread& aRegisteredThread,
-                                    ProfiledThreadData& aProfiledThreadData,
-                                    const TimeStamp& aNow,
                                     const Registers& aRegs, uint64_t aSamplePos,
                                     ProfileBuffer& aBuffer) {
   // WARNING: this function runs within the profiler's "critical section".
@@ -2493,6 +2490,11 @@ static PreRecordedMetaInformation PreRecordMetaInformation() {
   return info;
 }
 
+// Implemented in platform-specific cpps, to add object properties describing
+// the units of CPU measurements in samples.
+static void StreamMetaPlatformSampleUnits(PSLockRef aLock,
+                                          SpliceableJSONWriter& aWriter);
+
 static void StreamMetaJSCustomObject(
     PSLockRef aLock, SpliceableJSONWriter& aWriter, bool aIsShuttingDown,
     const PreRecordedMetaInformation& aPreRecordedMetaInformation) {
@@ -2595,6 +2597,14 @@ static void StreamMetaJSCustomObject(
     aWriter.IntProperty("logicalCPUs",
                         aPreRecordedMetaInformation.mProcessInfoCpuCount);
   }
+
+  aWriter.StartObjectProperty("sampleUnits");
+  {
+    aWriter.StringProperty("time", "ms");
+    aWriter.StringProperty("eventDelay", "ms");
+    StreamMetaPlatformSampleUnits(aLock, aWriter);
+  }
+  aWriter.EndObject();
 
   // We should avoid collecting extension metadata for profiler while XPCOM is
   // shutting down since it cannot create a new ExtensionPolicyService.
@@ -3121,6 +3131,70 @@ class Sampler {
 // END Sampler
 ////////////////////////////////////////////////////////////////////////
 
+// Platform-specific function that retrieves per-thread CPU measurements.
+static RunningTimes GetThreadRunningTimesDiff(
+    PSLockRef aLock, const RegisteredThread& aRegisteredThread);
+
+// Template function to be used by `GetThreadRunningTimesDiff()` (unless some
+// platform has a better way to achieve this).
+// It help perform CPU measurements and tie them to a timestamp, such that the
+// measurements and timestamp are very close together.
+// This is necessary, because the relative CPU usage is computed by dividing
+// consecutive CPU measurements by their timestamp difference; if there was an
+// unexpected big gap, it could skew this computation and produce impossible
+// spikes that would hide the rest of the data. See bug 1685938 for more info.
+// Note that this may call the measurement function more than once; it is
+// assumed to normally be fast.
+// This was verified experimentally, but there is currently no regression
+// testing for it; see follow-up bug 1687402.
+template <typename GetCPURunningTimesFunction>
+RunningTimes GetRunningTimesWithTightTimestamp(
+    GetCPURunningTimesFunction&& aGetCPURunningTimesFunction) {
+  // Once per process, compute a threshold over which running times and their
+  // timestamp is considered too far apart.
+  static const TimeDuration scMaxRunningTimesReadDuration = [&]() {
+    // Run the main CPU measurements + timestamp a number of times and capture
+    // their durations.
+    constexpr int loops = 128;
+    TimeDuration durations[loops];
+    RunningTimes runningTimes;
+    TimeStamp before = TimeStamp::NowUnfuzzed();
+    for (int i = 0; i < loops; ++i) {
+      AUTO_PROFILER_STATS(GetRunningTimes_MaxRunningTimesReadDuration);
+      aGetCPURunningTimesFunction(runningTimes);
+      const TimeStamp after = TimeStamp::NowUnfuzzed();
+      durations[i] = after - before;
+      before = after;
+    }
+    // Move median duration to the middle.
+    std::nth_element(&durations[0], &durations[loops / 2], &durations[loops]);
+    // Use median*8 as cut-off point.
+    // Typical durations should be around a microsecond, the cut-off should then
+    // be around 10 microseconds, well below the expected minimum inter-sample
+    // interval (observed as a few milliseconds), so overall this should keep
+    // cpu/interval spikes
+    return durations[loops / 2] * 8;
+  }();
+
+  // Record CPU measurements between two timestamps.
+  RunningTimes runningTimes;
+  TimeStamp before = TimeStamp::NowUnfuzzed();
+  aGetCPURunningTimesFunction(runningTimes);
+  TimeStamp after = TimeStamp::NowUnfuzzed();
+  // In most cases, the above should be quick enough. But if not, repeat:
+  while (MOZ_UNLIKELY(after - before > scMaxRunningTimesReadDuration)) {
+    AUTO_PROFILER_STATS(GetRunningTimes_REDO);
+    before = after;
+    aGetCPURunningTimesFunction(runningTimes);
+    after = TimeStamp::NowUnfuzzed();
+  }
+  // Finally, record the closest timestamp just after the final measurement was
+  // done. This must stay *after* the CPU measurements.
+  runningTimes.SetPostMeasurementTimeStamp(after);
+
+  return runningTimes;
+}
+
 ////////////////////////////////////////////////////////////////////////
 // BEGIN SamplerThread
 
@@ -3244,24 +3318,29 @@ static SamplerThread* NewSamplerThread(PSLockRef aLock, uint32_t aGeneration,
 void SamplerThread::Run() {
   PR_SetCurrentThreadName("SamplerThread");
 
-  // Features won't change during this SamplerThread's lifetime, so we can
-  // determine now whether stack sampling is required.
-  const bool noStackSampling = []() {
+  // Features won't change during this SamplerThread's lifetime, so we can read
+  // them once and store them locally.
+  const uint32_t features = []() -> uint32_t {
     PSAutoLock lock(gPSMutex);
     if (!ActivePS::Exists(lock)) {
       // If there is no active profiler, it doesn't matter what we return,
-      // because this thread will exit before any stack sampling is attempted.
-      return false;
+      // because this thread will exit before any feature is used.
+      return 0;
     }
-    return ActivePS::FeatureNoStackSampling(lock);
+    return ActivePS::Features(lock);
   }();
+
+  // Not *no*-stack-sampling means we do want stack sampling.
+  const bool stackSampling = !ProfilerFeature::HasNoStackSampling(features);
+
+  const bool cpuUtilization = ProfilerFeature::HasCPUUtilization(features);
 
   // Use local ProfileBuffer and underlying buffer to capture the stack.
   // (This is to avoid touching the CorePS::CoreBuffer lock while a thread is
   // suspended, because that thread could be working with the CorePS::CoreBuffer
   // as well.)
   mozilla::ProfileBufferChunkManagerSingle localChunkManager(
-      scExpectedMaximumStackSize);
+      ProfileBufferChunkManager::scExpectedMaximumStackSize);
   ProfileChunkedBuffer localBuffer(
       ProfileChunkedBuffer::ThreadSafety::WithoutMutex, localChunkManager);
   ProfileBuffer localProfileBuffer(localBuffer);
@@ -3269,18 +3348,25 @@ void SamplerThread::Run() {
   // Will be kept between collections, to know what each collection does.
   auto previousState = localBuffer.GetState();
 
-  // This will be positive if we are running behind schedule (sampling less
-  // frequently than desired) and negative if we are ahead of schedule.
-  TimeDuration lastSleepOvershoot = 0;
-  TimeStamp sampleStart = TimeStamp::NowUnfuzzed();
-
   // This will be set inside the loop, from inside the lock scope, to capture
   // all callbacks added before that, but none after the lock is released.
   UniquePtr<PostSamplingCallbackListItem> postSamplingCallbacks;
   // This will be set inside the loop, before invoking callbacks outside.
   SamplingState samplingState{};
 
+  const TimeDuration sampleInterval =
+      TimeDuration::FromMicroseconds(mIntervalMicroseconds);
+  const uint32_t minimumIntervalSleepUs =
+      static_cast<uint32_t>(mIntervalMicroseconds / 4);
+
+  // This is the scheduled time at which each sampling loop should start.
+  // It will determine the ideal next sampling start by adding the expected
+  // interval, unless when sampling runs late -- See end of while() loop.
+  TimeStamp scheduledSampleStart = TimeStamp::NowUnfuzzed();
+
   while (true) {
+    const TimeStamp sampleStart = TimeStamp::NowUnfuzzed();
+
     // This scope is for |lock|. It ends before we sleep below.
     {
       // There should be no local callbacks left from a previous loop.
@@ -3315,7 +3401,8 @@ void SamplerThread::Run() {
       TimeStamp expiredMarkersCleaned = TimeStamp::NowUnfuzzed();
 
       if (!ActivePS::IsSamplingPaused(lock)) {
-        TimeDuration delta = sampleStart - CorePS::ProcessStartTime();
+        double sampleStartDeltaMs =
+            (sampleStart - CorePS::ProcessStartTime()).ToMilliseconds();
         ProfileBuffer& buffer = ActivePS::Buffer(lock);
 
         // handle per-process generic counters
@@ -3323,7 +3410,7 @@ void SamplerThread::Run() {
         for (auto& counter : counters) {
           // create Buffer entries for each counter
           buffer.AddEntry(ProfileBufferEntry::CounterId(counter));
-          buffer.AddEntry(ProfileBufferEntry::Time(delta.ToMilliseconds()));
+          buffer.AddEntry(ProfileBufferEntry::Time(sampleStartDeltaMs));
           // XXX support keyed maps of counts
           // In the future, we'll support keyed counters - for example, counters
           // with a key which is a thread ID. For "simple" counters we'll just
@@ -3339,7 +3426,7 @@ void SamplerThread::Run() {
         }
         TimeStamp countersSampled = TimeStamp::NowUnfuzzed();
 
-        if (!noStackSampling) {
+        if (stackSampling || cpuUtilization) {
           samplingState = SamplingState::SamplingCompleted;
 
           const Vector<LiveProfiledThreadData>& liveThreads =
@@ -3351,22 +3438,34 @@ void SamplerThread::Run() {
                 thread.mProfiledThreadData.get();
             RefPtr<ThreadInfo> info = registeredThread->Info();
 
+            const RunningTimes runningTimesDiff = [&]() {
+              if (!cpuUtilization) {
+                // If we don't need CPU measurements, we only need a timestamp.
+                return RunningTimes(TimeStamp::NowUnfuzzed());
+              }
+              return GetThreadRunningTimesDiff(lock, *registeredThread);
+            }();
+
+            const TimeStamp& now = runningTimesDiff.PostMeasurementTimeStamp();
+            double threadSampleDeltaMs =
+                (now - CorePS::ProcessStartTime()).ToMilliseconds();
+
             // If the thread is asleep and has been sampled before in the same
             // sleep episode, find and copy the previous sample, as that's
             // cheaper than taking a new sample.
+            // However we're using current running times (instead of copying the
+            // old ones) because some work could have happened.
             if (registeredThread->RacyRegisteredThread()
                     .CanDuplicateLastSampleDueToSleep()) {
-              bool dup_ok = ActivePS::Buffer(lock).DuplicateLastSample(
-                  info->ThreadId(), CorePS::ProcessStartTime(),
-                  profiledThreadData->LastSample());
+              const bool dup_ok = ActivePS::Buffer(lock).DuplicateLastSample(
+                  info->ThreadId(), threadSampleDeltaMs,
+                  profiledThreadData->LastSample(), runningTimesDiff);
               if (dup_ok) {
                 continue;
               }
             }
 
             AUTO_PROFILER_STATS(gecko_SamplerThread_Run_DoPeriodicSample);
-
-            TimeStamp now = TimeStamp::NowUnfuzzed();
 
             // Add the thread ID now, so we know its position in the main
             // buffer, which is used by some JS data.
@@ -3377,216 +3476,225 @@ void SamplerThread::Run() {
 
             // Also add the time, so it's always there after the thread ID, as
             // expected by the parser. (Other stack data is optional.)
-            TimeDuration delta = now - CorePS::ProcessStartTime();
             buffer.AddEntry(ProfileBufferEntry::TimeBeforeCompactStack(
-                delta.ToMilliseconds()));
+                threadSampleDeltaMs));
 
             Maybe<double> unresponsiveDuration_ms;
 
-            // Suspend the thread and collect its stack data in the local
-            // buffer.
-            mSampler.SuspendAndSampleAndResumeThread(
-                lock, *registeredThread, now,
-                [&](const Registers& aRegs, const TimeStamp& aNow) {
-                  DoPeriodicSample(lock, *registeredThread, *profiledThreadData,
-                                   now, aRegs, samplePos, localProfileBuffer);
-
-                  // For "eventDelay", we want the input delay - but if
-                  // there are no events in the input queue (or even if there
-                  // are), we're interested in how long the delay *would* be for
-                  // an input event now, which would be the time to finish the
-                  // current event + the delay caused by any events already in
-                  // the input queue (plus any High priority events).  Events at
-                  // lower priorities (in a PrioritizedEventQueue) than Input
-                  // count for input delay only for the duration that they're
-                  // running, since when they finish, any queued input event
-                  // would run.
-                  //
-                  // Unless we record the time state of all events and queue
-                  // states at all times, this is hard to precisely calculate,
-                  // but we can approximate it well in post-processing with
-                  // RunningEventDelay and RunningEventStart.
-                  //
-                  // RunningEventDelay is the time duration the event was queued
-                  // before starting execution.  RunningEventStart is the time
-                  // the event started. (Note: since we care about Input event
-                  // delays on MainThread, for PrioritizedEventQueues we return
-                  // 0 for RunningEventDelay if the currently running event has
-                  // a lower priority than Input (since Input events won't queue
-                  // behind them).
-                  //
-                  // To directly measure this we would need to record the time
-                  // at which the newest event currently in each queue at time X
-                  // (the sample time) finishes running.  This of course would
-                  // require looking into the future, or recording all this
-                  // state and then post-processing it later. If we were to
-                  // trace every event start and end we could do this, but it
-                  // would have significant overhead to do so (and buffer
-                  // usage).  From a recording of RunningEventDelays and
-                  // RunningEventStarts we can infer the actual delay:
-                  //
-                  // clang-format off
-                  // Event queue: <tail> D  :  C  :  B  : A <head>
-                  // Time inserted (ms): 40 :  20 : 10  : 0
-                  // Run Time (ms):      30 : 100 : 40  : 30
-                  //
-                  // 0    10   20   30   40   50   60   70   80   90  100  110  120  130  140  150  160  170
-                  // [A||||||||||||]
-                  //      ----------[B|||||||||||||||||]
-                  //           -------------------------[C|||||||||||||||||||||||||||||||||||||||||||||||]
-                  //                     -----------------------------------------------------------------[D|||||||||...]
-                  //
-                  // Calculate the delay of a new event added at time t: (run every sample)
-                  //    TimeSinceRunningEventBlockedInputEvents = RunningEventDelay + (now - RunningEventStart);
-                  //    effective_submission = now - TimeSinceRunningEventBlockedInputEvents;
-                  //    delta = (now - last_sample_time);
-                  //    last_sample_time = now;
-                  //    for (t=effective_submission to now) {
-                  //       delay[t] += delta;
-                  //    }
-                  //
-                  // Can be reduced in overhead by:
-                  //    TimeSinceRunningEventBlockedInputEvents = RunningEventDelay + (now - RunningEventStart);
-                  //    effective_submission = now - TimeSinceRunningEventBlockedInputEvents;
-                  //    if (effective_submission != last_submission) {
-                  //      delta = (now - last_submision);
-                  //      // this loop should be made to match each sample point in the range
-                  //      // intead of assuming 1ms sampling as this pseudocode does
-                  //      for (t=last_submission to effective_submission-1) {
-                  //         delay[t] += delta;
-                  //         delta -= 1; // assumes 1ms; adjust as needed to match for()
-                  //      }
-                  //      last_submission = effective_submission;
-                  //    }
-                  //
-                  // Time  Head of queue   Running Event  RunningEventDelay  Delay of       Effective     Started    Calc (submission->now add 10ms)  Final
-                  //                                                         hypothetical   Submission    Running @                                   result
-                  //                                                         event E
-                  // 0        Empty            A                0                30              0           0       @0=10                             30
-                  // 10         B              A                0                60              0           0       @0=20, @10=10                     60
-                  // 20         B              A                0               150              0           0       @0=30, @10=20, @20=10            150
-                  // 30         C              B               20               140             10          30       @10=20, @20=10, @30=0            140
-                  // 40         C              B               20               160                                  @10=30, @20=20...                160
-                  // 50         C              B               20               150                                                                   150
-                  // 60         C              B               20               140                                  @10=50, @20=40...                140
-                  // 70         D              C               50               130             20          70       @20=50, @30=40...                130
-                  // ...
-                  // 160        D              C               50                40                                  @20=140, @30=130...               40
-                  // 170      <empty>          D              140                30             40                   @40=140, @50=130... (rounding)    30
-                  // 180      <empty>          D              140                20             40                   @40=150                           20
-                  // 190      <empty>          D              140                10             40                   @40=160                           10
-                  // 200      <empty>        <empty>            0                 0             NA                                                      0
-                  //
-                  // Function Delay(t) = the time between t and the time at which a hypothetical
-                  // event e would start executing, if e was enqueued at time t.
-                  //
-                  // Delay(-1) = 0 // Before A was enqueued. No wait time, can start running
-                  //               // instantly.
-                  // Delay(0) = 30 // The hypothetical event e got enqueued just after A got
-                  //               // enqueued. It can start running at 30, when A is done.
-                  // Delay(5) = 25
-                  // Delay(10) = 60 // Can start running at 70, after both A and B are done.
-                  // Delay(19) = 51
-                  // Delay(20) = 150 // Can start running at 170, after A, B & C.
-                  // Delay(25) = 145
-                  // Delay(30) = 170 // Can start running at 200, after A, B, C & D.
-                  // Delay(120) = 80
-                  // Delay(200) = 0 // (assuming nothing was enqueued after D)
-                  //
-                  // For every event that gets enqueued, the Delay time will go up by the
-                  // event's running time at the time at which the event is enqueued.
-                  // The Delay function will be a sawtooth of the following shape:
-                  //
-                  //             |\           |...
-                  //             | \          |
-                  //        |\   |  \         |
-                  //        | \  |   \        |
-                  //     |\ |  \ |    \       |
-                  //  |\ | \|   \|     \      |
-                  //  | \|              \     |
-                  // _|                  \____|
-                  //
-                  //
-                  // A more complex example with a PrioritizedEventQueue:
-                  //
-                  // Event queue: <tail> D  :  C  :  B  : A <head>
-                  // Time inserted (ms): 40 :  20 : 10  : 0
-                  // Run Time (ms):      30 : 100 : 40  : 30
-                  // Priority:         Input: Norm: Norm: Norm
-                  //
-                  // 0    10   20   30   40   50   60   70   80   90  100  110  120  130  140  150  160  170
-                  // [A||||||||||||]
-                  //      ----------[B|||||||||||||||||]
-                  //           ----------------------------------------[C|||||||||||||||||||||||||||||||||||||||||||||||]
-                  //                     ---------------[D||||||||||||]
-                  //
-                  //
-                  // Time  Head of queue   Running Event  RunningEventDelay  Delay of       Effective   Started    Calc (submission->now add 10ms)   Final
-                  //                                                         hypothetical   Submission  Running @                                    result
-                  //                                                         event
-                  // 0        Empty            A                0                30              0           0       @0=10                             30
-                  // 10         B              A                0                20              0           0       @0=20, @10=10                     20
-                  // 20         B              A                0                10              0           0       @0=30, @10=20, @20=10             10
-                  // 30         C              B                0                40             30          30       @30=10                            40
-                  // 40         C              B                0                60             30                   @40=10, @30=20                    60
-                  // 50         C              B                0                50             30                   @50=10, @40=20, @30=30            50
-                  // 60         C              B                0                40             30                   @60=10, @50=20, @40=30, @30=40    40
-                  // 70         C              D               30                30             40          70       @60=20, @50=30, @40=40            30
-                  // 80         C              D               30                20             40          70       ...@50=40, @40=50                 20
-                  // 90         C              D               30                10             40          70       ...@60=40, @50=50, @40=60         10
-                  // 100      <empty>          C                0               100             100        100       @100=10                          100
-                  // 110      <empty>          C                0                90             100        100       @110=10, @100=20                  90
-
-                  //
-                  // For PrioritizedEventQueue, the definition of the Delay(t) function is adjusted: the hypothetical event e has Input priority.
-                  // Delay(-1) = 0 // Before A was enqueued. No wait time, can start running
-                  //               // instantly.
-                  // Delay(0) = 30 // The hypothetical input event e got enqueued just after A got
-                  //               // enqueued. It can start running at 30, when A is done.
-                  // Delay(5) = 25
-                  // Delay(10) = 20
-                  // Delay(25) = 5 // B has been queued, but e does not need to wait for B because e has Input priority and B does not.
-                  //               // So e can start running at 30, when A is done.
-                  // Delay(30) = 40 // Can start running at 70, after B is done.
-                  // Delay(40) = 60 // Can start at 100, after B and D are done (D is Input Priority)
-                  // Delay(80) = 20
-                  // Delay(100) = 100 // Wait for C to finish
-
-                  // clang-format on
-                  //
-                  // Alternatively we could insert (recycled instead of
-                  // allocated/freed) input events at every sample period
-                  // (1ms...), and use them to back-calculate the delay.  This
-                  // might also be somewhat expensive, and would require
-                  // guessing at the maximum delay, which would likely be in the
-                  // seconds, and so you'd need 1000's of pre-allocated events
-                  // per queue per thread - so there would be a memory impact as
-                  // well.
-
-                  TimeDuration currentEventDelay;
-                  TimeDuration currentEventRunning;
-                  registeredThread->GetRunningEventDelay(
-                      aNow, currentEventDelay, currentEventRunning);
-
-                  // Note: eventDelay is a different definition of
-                  // responsiveness than the 16ms event injection.
-
-                  // Don't suppress 0's for now; that can be a future
-                  // optimization.  We probably want one zero to be stored
-                  // before we start suppressing, which would be more
-                  // complex.
-                  unresponsiveDuration_ms =
-                      Some(currentEventDelay.ToMilliseconds() +
-                           currentEventRunning.ToMilliseconds());
-                });
-
-            // If we got eventDelay data, store it before the CompactStack.
+            // If we have RunningTimes data, store it before the CompactStack.
             // Note: It is not stored inside the CompactStack so that it doesn't
             // get incorrectly duplicated when the thread is sleeping.
-            if (unresponsiveDuration_ms.isSome()) {
+            if (!runningTimesDiff.IsEmpty()) {
               CorePS::CoreBuffer().PutObjects(
-                  ProfileBufferEntry::Kind::UnresponsiveDurationMs,
-                  *unresponsiveDuration_ms);
+                  ProfileBufferEntry::Kind::RunningTimes, runningTimesDiff);
+            }
+
+            if (stackSampling) {
+              // Suspend the thread and collect its stack data in the local
+              // buffer.
+              mSampler.SuspendAndSampleAndResumeThread(
+                  lock, *registeredThread, now,
+                  [&](const Registers& aRegs, const TimeStamp& aNow) {
+                    DoPeriodicSample(lock, *registeredThread, aRegs, samplePos,
+                                     localProfileBuffer);
+
+                    // For "eventDelay", we want the input delay - but if
+                    // there are no events in the input queue (or even if there
+                    // are), we're interested in how long the delay *would* be
+                    // for an input event now, which would be the time to finish
+                    // the current event + the delay caused by any events
+                    // already in the input queue (plus any High priority
+                    // events).  Events at lower priorities (in a
+                    // PrioritizedEventQueue) than Input count for input delay
+                    // only for the duration that they're running, since when
+                    // they finish, any queued input event would run.
+                    //
+                    // Unless we record the time state of all events and queue
+                    // states at all times, this is hard to precisely calculate,
+                    // but we can approximate it well in post-processing with
+                    // RunningEventDelay and RunningEventStart.
+                    //
+                    // RunningEventDelay is the time duration the event was
+                    // queued before starting execution.  RunningEventStart is
+                    // the time the event started. (Note: since we care about
+                    // Input event delays on MainThread, for
+                    // PrioritizedEventQueues we return 0 for RunningEventDelay
+                    // if the currently running event has a lower priority than
+                    // Input (since Input events won't queue behind them).
+                    //
+                    // To directly measure this we would need to record the time
+                    // at which the newest event currently in each queue at time
+                    // X (the sample time) finishes running.  This of course
+                    // would require looking into the future, or recording all
+                    // this state and then post-processing it later. If we were
+                    // to trace every event start and end we could do this, but
+                    // it would have significant overhead to do so (and buffer
+                    // usage).  From a recording of RunningEventDelays and
+                    // RunningEventStarts we can infer the actual delay:
+                    //
+                    // clang-format off
+                    // Event queue: <tail> D  :  C  :  B  : A <head>
+                    // Time inserted (ms): 40 :  20 : 10  : 0
+                    // Run Time (ms):      30 : 100 : 40  : 30
+                    //
+                    // 0    10   20   30   40   50   60   70   80   90  100  110  120  130  140  150  160  170
+                    // [A||||||||||||]
+                    //      ----------[B|||||||||||||||||]
+                    //           -------------------------[C|||||||||||||||||||||||||||||||||||||||||||||||]
+                    //                     -----------------------------------------------------------------[D|||||||||...]
+                    //
+                    // Calculate the delay of a new event added at time t: (run every sample)
+                    //    TimeSinceRunningEventBlockedInputEvents = RunningEventDelay + (now - RunningEventStart);
+                    //    effective_submission = now - TimeSinceRunningEventBlockedInputEvents;
+                    //    delta = (now - last_sample_time);
+                    //    last_sample_time = now;
+                    //    for (t=effective_submission to now) {
+                    //       delay[t] += delta;
+                    //    }
+                    //
+                    // Can be reduced in overhead by:
+                    //    TimeSinceRunningEventBlockedInputEvents = RunningEventDelay + (now - RunningEventStart);
+                    //    effective_submission = now - TimeSinceRunningEventBlockedInputEvents;
+                    //    if (effective_submission != last_submission) {
+                    //      delta = (now - last_submision);
+                    //      // this loop should be made to match each sample point in the range
+                    //      // intead of assuming 1ms sampling as this pseudocode does
+                    //      for (t=last_submission to effective_submission-1) {
+                    //         delay[t] += delta;
+                    //         delta -= 1; // assumes 1ms; adjust as needed to match for()
+                    //      }
+                    //      last_submission = effective_submission;
+                    //    }
+                    //
+                    // Time  Head of queue   Running Event  RunningEventDelay  Delay of       Effective     Started    Calc (submission->now add 10ms)  Final
+                    //                                                         hypothetical   Submission    Running @                                   result
+                    //                                                         event E
+                    // 0        Empty            A                0                30              0           0       @0=10                             30
+                    // 10         B              A                0                60              0           0       @0=20, @10=10                     60
+                    // 20         B              A                0               150              0           0       @0=30, @10=20, @20=10            150
+                    // 30         C              B               20               140             10          30       @10=20, @20=10, @30=0            140
+                    // 40         C              B               20               160                                  @10=30, @20=20...                160
+                    // 50         C              B               20               150                                                                   150
+                    // 60         C              B               20               140                                  @10=50, @20=40...                140
+                    // 70         D              C               50               130             20          70       @20=50, @30=40...                130
+                    // ...
+                    // 160        D              C               50                40                                  @20=140, @30=130...               40
+                    // 170      <empty>          D              140                30             40                   @40=140, @50=130... (rounding)    30
+                    // 180      <empty>          D              140                20             40                   @40=150                           20
+                    // 190      <empty>          D              140                10             40                   @40=160                           10
+                    // 200      <empty>        <empty>            0                 0             NA                                                      0
+                    //
+                    // Function Delay(t) = the time between t and the time at which a hypothetical
+                    // event e would start executing, if e was enqueued at time t.
+                    //
+                    // Delay(-1) = 0 // Before A was enqueued. No wait time, can start running
+                    //               // instantly.
+                    // Delay(0) = 30 // The hypothetical event e got enqueued just after A got
+                    //               // enqueued. It can start running at 30, when A is done.
+                    // Delay(5) = 25
+                    // Delay(10) = 60 // Can start running at 70, after both A and B are done.
+                    // Delay(19) = 51
+                    // Delay(20) = 150 // Can start running at 170, after A, B & C.
+                    // Delay(25) = 145
+                    // Delay(30) = 170 // Can start running at 200, after A, B, C & D.
+                    // Delay(120) = 80
+                    // Delay(200) = 0 // (assuming nothing was enqueued after D)
+                    //
+                    // For every event that gets enqueued, the Delay time will go up by the
+                    // event's running time at the time at which the event is enqueued.
+                    // The Delay function will be a sawtooth of the following shape:
+                    //
+                    //             |\           |...
+                    //             | \          |
+                    //        |\   |  \         |
+                    //        | \  |   \        |
+                    //     |\ |  \ |    \       |
+                    //  |\ | \|   \|     \      |
+                    //  | \|              \     |
+                    // _|                  \____|
+                    //
+                    //
+                    // A more complex example with a PrioritizedEventQueue:
+                    //
+                    // Event queue: <tail> D  :  C  :  B  : A <head>
+                    // Time inserted (ms): 40 :  20 : 10  : 0
+                    // Run Time (ms):      30 : 100 : 40  : 30
+                    // Priority:         Input: Norm: Norm: Norm
+                    //
+                    // 0    10   20   30   40   50   60   70   80   90  100  110  120  130  140  150  160  170
+                    // [A||||||||||||]
+                    //      ----------[B|||||||||||||||||]
+                    //           ----------------------------------------[C|||||||||||||||||||||||||||||||||||||||||||||||]
+                    //                     ---------------[D||||||||||||]
+                    //
+                    //
+                    // Time  Head of queue   Running Event  RunningEventDelay  Delay of       Effective   Started    Calc (submission->now add 10ms)   Final
+                    //                                                         hypothetical   Submission  Running @                                    result
+                    //                                                         event
+                    // 0        Empty            A                0                30              0           0       @0=10                             30
+                    // 10         B              A                0                20              0           0       @0=20, @10=10                     20
+                    // 20         B              A                0                10              0           0       @0=30, @10=20, @20=10             10
+                    // 30         C              B                0                40             30          30       @30=10                            40
+                    // 40         C              B                0                60             30                   @40=10, @30=20                    60
+                    // 50         C              B                0                50             30                   @50=10, @40=20, @30=30            50
+                    // 60         C              B                0                40             30                   @60=10, @50=20, @40=30, @30=40    40
+                    // 70         C              D               30                30             40          70       @60=20, @50=30, @40=40            30
+                    // 80         C              D               30                20             40          70       ...@50=40, @40=50                 20
+                    // 90         C              D               30                10             40          70       ...@60=40, @50=50, @40=60         10
+                    // 100      <empty>          C                0               100             100        100       @100=10                          100
+                    // 110      <empty>          C                0                90             100        100       @110=10, @100=20                  90
+
+                    //
+                    // For PrioritizedEventQueue, the definition of the Delay(t) function is adjusted: the hypothetical event e has Input priority.
+                    // Delay(-1) = 0 // Before A was enqueued. No wait time, can start running
+                    //               // instantly.
+                    // Delay(0) = 30 // The hypothetical input event e got enqueued just after A got
+                    //               // enqueued. It can start running at 30, when A is done.
+                    // Delay(5) = 25
+                    // Delay(10) = 20
+                    // Delay(25) = 5 // B has been queued, but e does not need to wait for B because e has Input priority and B does not.
+                    //               // So e can start running at 30, when A is done.
+                    // Delay(30) = 40 // Can start running at 70, after B is done.
+                    // Delay(40) = 60 // Can start at 100, after B and D are done (D is Input Priority)
+                    // Delay(80) = 20
+                    // Delay(100) = 100 // Wait for C to finish
+
+                    // clang-format on
+                    //
+                    // Alternatively we could insert (recycled instead of
+                    // allocated/freed) input events at every sample period
+                    // (1ms...), and use them to back-calculate the delay.  This
+                    // might also be somewhat expensive, and would require
+                    // guessing at the maximum delay, which would likely be in
+                    // the seconds, and so you'd need 1000's of pre-allocated
+                    // events per queue per thread - so there would be a memory
+                    // impact as well.
+
+                    TimeDuration currentEventDelay;
+                    TimeDuration currentEventRunning;
+                    registeredThread->GetRunningEventDelay(
+                        aNow, currentEventDelay, currentEventRunning);
+
+                    // Note: eventDelay is a different definition of
+                    // responsiveness than the 16ms event injection.
+
+                    // Don't suppress 0's for now; that can be a future
+                    // optimization.  We probably want one zero to be stored
+                    // before we start suppressing, which would be more
+                    // complex.
+                    unresponsiveDuration_ms =
+                        Some(currentEventDelay.ToMilliseconds() +
+                             currentEventRunning.ToMilliseconds());
+                  });
+
+              // If we got eventDelay data, store it before the CompactStack.
+              // Note: It is not stored inside the CompactStack so that it
+              // doesn't get incorrectly duplicated when the thread is sleeping.
+              if (unresponsiveDuration_ms.isSome()) {
+                CorePS::CoreBuffer().PutObjects(
+                    ProfileBufferEntry::Kind::UnresponsiveDurationMs,
+                    *unresponsiveDuration_ms);
+              }
             }
 
             // There *must* be a CompactStack after a TimeBeforeCompactStack;
@@ -3596,10 +3704,12 @@ void SamplerThread::Run() {
             // global buffer, otherwise add an empty one to satisfy the parser
             // that expects one.
             auto state = localBuffer.GetState();
-            if (NS_WARN_IF(state.mClearedBlockCount !=
-                           previousState.mClearedBlockCount)) {
-              LOG("Stack sample too big for local storage, needed %u bytes",
-                  unsigned(state.mRangeEnd - previousState.mRangeEnd));
+            if (NS_WARN_IF(state.mFailedPutBytes !=
+                           previousState.mFailedPutBytes)) {
+              LOG("Stack sample too big for local storage, failed to store %u "
+                  "bytes",
+                  unsigned(state.mFailedPutBytes -
+                           previousState.mFailedPutBytes));
               // There *must* be a CompactStack after a TimeBeforeCompactStack,
               // even an empty one.
               CorePS::CoreBuffer().PutObjects(
@@ -3642,7 +3752,8 @@ void SamplerThread::Run() {
           ActivePS::FulfillChunkRequests(lock);
         }
 
-        buffer.CollectOverheadStats(delta, lockAcquired - sampleStart,
+        buffer.CollectOverheadStats(sampleStartDeltaMs,
+                                    lockAcquired - sampleStart,
                                     expiredMarkersCleaned - lockAcquired,
                                     countersSampled - expiredMarkersCleaned,
                                     threadsSampled - countersSampled);
@@ -3658,21 +3769,32 @@ void SamplerThread::Run() {
 
     ProfilerChild::ProcessPendingUpdate();
 
-    // Calculate how long a sleep to request.  After the sleep, measure how
-    // long we actually slept and take the difference into account when
-    // calculating the sleep interval for the next iteration.  This is an
-    // attempt to keep "to schedule" in the presence of inaccuracy of the
-    // actual sleep intervals.
-    TimeStamp targetSleepEndTime =
-        sampleStart + TimeDuration::FromMicroseconds(mIntervalMicroseconds);
-    TimeStamp beforeSleep = TimeStamp::NowUnfuzzed();
-    TimeDuration targetSleepDuration = targetSleepEndTime - beforeSleep;
-    double sleepTime = std::max(
-        0.0, (targetSleepDuration - lastSleepOvershoot).ToMicroseconds());
-    SleepMicro(static_cast<uint32_t>(sleepTime));
-    sampleStart = TimeStamp::NowUnfuzzed();
-    lastSleepOvershoot =
-        sampleStart - (beforeSleep + TimeDuration::FromMicroseconds(sleepTime));
+    // We expect the next sampling loop to start `sampleInterval` after this
+    // loop here was scheduled to start.
+    scheduledSampleStart += sampleInterval;
+
+    // Try to sleep until we reach that next scheduled time.
+    const TimeStamp beforeSleep = TimeStamp::NowUnfuzzed();
+    if (scheduledSampleStart >= beforeSleep) {
+      // There is still time before the next scheduled sample time.
+      const uint32_t sleepTimeUs = static_cast<uint32_t>(
+          (scheduledSampleStart - beforeSleep).ToMicroseconds());
+      if (sleepTimeUs >= minimumIntervalSleepUs) {
+        SleepMicro(sleepTimeUs);
+      } else {
+        // If we're too close to that time, sleep the minimum amount of time.
+        // Note that the next scheduled start is not shifted, so at the end of
+        // the next loop, sleep may again be adjusted to get closer to schedule.
+        SleepMicro(minimumIntervalSleepUs);
+      }
+    } else {
+      // This sampling loop ended after the next sampling should have started!
+      // There is little point to try and keep up to schedule now, it would
+      // require more work, while it's likely we're late because the system is
+      // already busy. Try and restart a normal schedule from now.
+      scheduledSampleStart = beforeSleep + sampleInterval;
+      SleepMicro(static_cast<uint32_t>(sampleInterval.ToMicroseconds()));
+    }
   }
 
   // End of `while` loop. We can only be here from a `break` inside the loop.
@@ -4530,11 +4652,12 @@ static void locked_profiler_start(PSLockRef aLock, PowerOfTwo32 aCapacity,
 #endif
 
   // Fall back to the default values if the passed-in values are unreasonable.
-  // Less than 8192 entries (65536 bytes) may not be enough for the most complex
-  // stack, so we should be able to store at least one full stack.
-  // TODO: Review magic numbers.
+  // We want to be able to store at least one full stack.
   PowerOfTwo32 capacity =
-      (aCapacity.Value() >= 8192u) ? aCapacity : PROFILER_DEFAULT_ENTRIES;
+      (aCapacity.Value() >=
+       ProfileBufferChunkManager::scExpectedMaximumStackSize / scBytesPerEntry)
+          ? aCapacity
+          : PROFILER_DEFAULT_ENTRIES;
   Maybe<double> duration = aDuration;
 
   if (aDuration && *aDuration <= 0) {
@@ -5352,7 +5475,8 @@ UniquePtr<ProfileChunkedBuffer> profiler_capture_backtrace() {
 
   auto buffer = MakeUnique<ProfileChunkedBuffer>(
       ProfileChunkedBuffer::ThreadSafety::WithoutMutex,
-      MakeUnique<ProfileBufferChunkManagerSingle>(scExpectedMaximumStackSize));
+      MakeUnique<ProfileBufferChunkManagerSingle>(
+          ProfileBufferChunkManager::scExpectedMaximumStackSize));
 
   if (!profiler_capture_backtrace_into(*buffer)) {
     return nullptr;

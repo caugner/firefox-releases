@@ -37,6 +37,7 @@ class DocumentLoadListener;
 namespace dom {
 
 class BrowserParent;
+class FeaturePolicy;
 struct LoadURIOptions;
 class MediaController;
 struct LoadingSessionHistoryInfo;
@@ -125,7 +126,8 @@ class CanonicalBrowsingContext final : public BrowsingContext {
           aCallback);
 
   void SessionHistoryCommit(uint64_t aLoadId, const nsID& aChangeID,
-                            uint32_t aLoadType);
+                            uint32_t aLoadType, bool aPersist,
+                            bool aCloneEntryChildren);
 
   // Calls the session history listeners' OnHistoryReload, storing the result in
   // aCanReload. If aCanReload is set to true and we have an active or a loading
@@ -262,6 +264,11 @@ class CanonicalBrowsingContext final : public BrowsingContext {
 
   void ResetScalingZoom();
 
+  void SetContainerFeaturePolicy(FeaturePolicy* aContainerFeaturePolicy);
+  FeaturePolicy* GetContainerFeaturePolicy() const {
+    return mContainerFeaturePolicy;
+  }
+
  protected:
   // Called when the browsing context is being discarded.
   void CanonicalDiscard();
@@ -366,6 +373,8 @@ class CanonicalBrowsingContext final : public BrowsingContext {
   RefPtr<nsSecureBrowserUI> mSecureBrowserUI;
   RefPtr<BrowsingContextWebProgress> mWebProgress;
   RefPtr<nsBrowserStatusFilter> mStatusFilter;
+
+  RefPtr<FeaturePolicy> mContainerFeaturePolicy;
 };
 
 }  // namespace dom

@@ -753,8 +753,6 @@ class NativeObject : public JSObject {
 
   static MOZ_MUST_USE bool reshapeForShadowedProp(JSContext* cx,
                                                   HandleNativeObject obj);
-  static MOZ_MUST_USE bool reshapeForProtoMutation(JSContext* cx,
-                                                   HandleNativeObject obj);
   static bool clearFlag(JSContext* cx, HandleNativeObject obj,
                         BaseShape::Flag flag);
 
@@ -900,13 +898,6 @@ class NativeObject : public JSObject {
     return lookup(cx, shape->propid()) == shape;
   }
 
-  bool containsShapeOrElement(JSContext* cx, jsid id) {
-    if (JSID_IS_INT(id) && containsDenseElement(JSID_TO_INT(id))) {
-      return true;
-    }
-    return contains(cx, id);
-  }
-
   /* Contextless; can be called from other pure code. */
   Shape* lookupPure(jsid id);
   Shape* lookupPure(PropertyName* name) { return lookupPure(NameToId(name)); }
@@ -977,9 +968,6 @@ class NativeObject : public JSObject {
 
   /* Remove the property named by id from this object. */
   static bool removeProperty(JSContext* cx, HandleNativeObject obj, jsid id);
-
-  /* Clear the scope, making it empty. */
-  static void clear(JSContext* cx, HandleNativeObject obj);
 
  protected:
   /*
@@ -1251,11 +1239,6 @@ class NativeObject : public JSObject {
                                            uint32_t* goodAmount);
   bool growElements(JSContext* cx, uint32_t newcap);
   void shrinkElements(JSContext* cx, uint32_t cap);
-  void setDynamicElements(ObjectElements* header) {
-    MOZ_ASSERT(!hasDynamicElements());
-    elements_ = header->elements();
-    MOZ_ASSERT(hasDynamicElements());
-  }
 
  private:
   // Run a post write barrier that encompasses multiple contiguous elements in a

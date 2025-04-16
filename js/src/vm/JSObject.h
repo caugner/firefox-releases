@@ -65,7 +65,7 @@ bool SetImmutablePrototype(JSContext* cx, JS::HandleObject obj,
  * The members common to all objects are as follows:
  *
  * - The |group_| member stores the group of the object, which contains its
- *   prototype object, its class and the possible types of its properties.
+ *   prototype object, its class, and its realm.
  *
  * - The |shape_| member stores the current 'shape' of the object, which
  *   describes the current layout and set of property keys of the object. The
@@ -93,6 +93,7 @@ class JSObject
  private:
   friend class js::DictionaryShapeLink;
   friend class js::GCMarker;
+  friend class js::GlobalObject;
   friend class js::NewObjectCache;
   friend class js::Nursery;
   friend class js::gc::RelocationOverlay;
@@ -138,11 +139,6 @@ class JSObject
   }
 
   void initGroup(js::ObjectGroup* group) { initHeaderPtr(group); }
-
-  /*
-   * Whether this is the only object which has its specified group.
-   */
-  bool isSingleton() const { return group()->singleton(); }
 
   JS::Compartment* compartment() const { return group()->compartment(); }
   JS::Compartment* maybeCompartment() const { return compartment(); }
@@ -277,10 +273,6 @@ class JSObject
   // along with them, and are not each their own malloc blocks.
   size_t sizeOfIncludingThisInNursery() const;
 
-  // Marks this object as having a singleton group. This should only be called
-  // for an object that was just created.
-  static bool setSingleton(JSContext* cx, js::HandleObject obj);
-
 #ifdef DEBUG
   static void debugCheckNewObject(js::ObjectGroup* group, js::Shape* shape,
                                   js::gc::AllocKind allocKind,
@@ -343,10 +335,6 @@ class JSObject
   inline bool staticPrototypeIsImmutable() const;
 
   inline void setGroup(js::ObjectGroup* group);
-
-  /* Set a new prototype for an object with a singleton type. */
-  static bool splicePrototype(JSContext* cx, js::HandleObject obj,
-                              js::Handle<js::TaggedProto> proto);
 
   /*
    * Environment chains.

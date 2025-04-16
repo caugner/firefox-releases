@@ -1182,8 +1182,8 @@ class Element : public FragmentOrElement {
   bool HasAttributeNS(const nsAString& aNamespaceURI,
                       const nsAString& aLocalName) const;
   bool HasAttributes() const { return HasAttrs(); }
-  Element* Closest(const nsAString& aSelector, ErrorResult& aResult);
-  bool Matches(const nsAString& aSelector, ErrorResult& aError);
+  Element* Closest(const nsACString& aSelector, ErrorResult& aResult);
+  bool Matches(const nsACString& aSelector, ErrorResult& aError);
   already_AddRefed<nsIHTMLCollection> GetElementsByTagName(
       const nsAString& aQualifiedName);
   already_AddRefed<nsIHTMLCollection> GetElementsByTagNameNS(
@@ -1639,6 +1639,13 @@ class Element : public FragmentOrElement {
   already_AddRefed<nsIDOMXULSelectControlItemElement> AsXULSelectControlItem();
   already_AddRefed<nsIBrowser> AsBrowser();
   already_AddRefed<nsIAutoCompletePopup> AsAutoCompletePopup();
+
+  /**
+   * Get the presentation context for this content node.
+   * @return the presentation context
+   */
+  enum PresContextFor { eForComposedDoc, eForUncomposedDoc };
+  nsPresContext* GetPresContext(PresContextFor aFor);
 
  protected:
   /*

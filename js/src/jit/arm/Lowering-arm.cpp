@@ -85,16 +85,6 @@ void LIRGenerator::visitBox(MBox* box) {
 void LIRGenerator::visitUnbox(MUnbox* unbox) {
   MDefinition* inner = unbox->getOperand(0);
 
-  if (inner->type() == MIRType::ObjectOrNull) {
-    LUnboxObjectOrNull* lir =
-        new (alloc()) LUnboxObjectOrNull(useRegisterAtStart(inner));
-    if (unbox->fallible()) {
-      assignSnapshot(lir, unbox->bailoutKind());
-    }
-    defineReuseInput(lir, unbox, 0);
-    return;
-  }
-
   // An unbox on arm reads in a type tag (either in memory or a register) and
   // a payload. Unlike most instructions consuming a box, we ask for the type
   // second, so that the result can re-use the first input.
@@ -129,11 +119,10 @@ void LIRGenerator::visitUnbox(MUnbox* unbox) {
   defineReuseInput(lir, unbox, 0);
 }
 
-void LIRGenerator::visitReturn(MReturn* ret) {
-  MDefinition* opd = ret->getOperand(0);
+void LIRGenerator::visitReturnImpl(MDefinition* opd, bool isGenerator) {
   MOZ_ASSERT(opd->type() == MIRType::Value);
 
-  LReturn* ins = new (alloc()) LReturn;
+  LReturn* ins = new (alloc()) LReturn(isGenerator);
   ins->setOperand(0, LUse(JSReturnReg_Type));
   ins->setOperand(1, LUse(JSReturnReg_Data));
   fillBoxUses(ins, 0, opd);
@@ -512,6 +501,50 @@ void LIRGeneratorARM::lowerPowOfTwoI(MPow* mir) {
   auto* lir = new (alloc()) LPowOfTwoI(base, useRegister(power));
   assignSnapshot(lir, mir->bailoutKind());
   define(lir, mir);
+}
+
+void LIRGeneratorARM::lowerBigIntLsh(MBigIntLsh* ins) {
+  auto* lir = new (alloc()) LBigIntLsh(
+      useRegister(ins->lhs()), useRegister(ins->rhs()), temp(), temp(), temp());
+  define(lir, ins);
+  assignSafepoint(lir, ins);
+}
+
+void LIRGeneratorARM::lowerBigIntRsh(MBigIntRsh* ins) {
+  auto* lir = new (alloc()) LBigIntRsh(
+      useRegister(ins->lhs()), useRegister(ins->rhs()), temp(), temp(), temp());
+  define(lir, ins);
+  assignSafepoint(lir, ins);
+}
+
+void LIRGeneratorARM::lowerBigIntDiv(MBigIntDiv* ins) {
+  LDefinition temp1, temp2;
+  if (HasIDIV()) {
+    temp1 = temp();
+    temp2 = temp();
+  } else {
+    temp1 = tempFixed(r0);
+    temp2 = tempFixed(r1);
+  }
+  auto* lir = new (alloc()) LBigIntDiv(useRegister(ins->lhs()),
+                                       useRegister(ins->rhs()), temp1, temp2);
+  define(lir, ins);
+  assignSafepoint(lir, ins);
+}
+
+void LIRGeneratorARM::lowerBigIntMod(MBigIntMod* ins) {
+  LDefinition temp1, temp2;
+  if (HasIDIV()) {
+    temp1 = temp();
+    temp2 = temp();
+  } else {
+    temp1 = tempFixed(r0);
+    temp2 = tempFixed(r1);
+  }
+  auto* lir = new (alloc()) LBigIntMod(useRegister(ins->lhs()),
+                                       useRegister(ins->rhs()), temp1, temp2);
+  define(lir, ins);
+  assignSafepoint(lir, ins);
 }
 
 void LIRGenerator::visitWasmNeg(MWasmNeg* ins) {
@@ -1043,4 +1076,46 @@ void LIRGenerator::visitSignExtendInt64(MSignExtendInt64* ins) {
   defineInt64(new (alloc())
                   LSignExtendInt64(useInt64RegisterAtStart(ins->input())),
               ins);
+}
+
+void LIRGenerator::visitWasmBitselectSimd128(MWasmBitselectSimd128* ins) {
+  MOZ_CRASH("bitselect NYI");
+}
+
+void LIRGenerator::visitWasmBinarySimd128(MWasmBinarySimd128* ins) {
+  MOZ_CRASH("binary SIMD NYI");
+}
+
+bool MWasmBinarySimd128::specializeForConstantRhs() {
+  // Probably many we want to do here
+  return false;
+}
+
+void LIRGenerator::visitWasmBinarySimd128WithConstant(
+    MWasmBinarySimd128WithConstant* ins) {
+  MOZ_CRASH("binary SIMD with constant NYI");
+}
+
+void LIRGenerator::visitWasmShiftSimd128(MWasmShiftSimd128* ins) {
+  MOZ_CRASH("shift SIMD NYI");
+}
+
+void LIRGenerator::visitWasmShuffleSimd128(MWasmShuffleSimd128* ins) {
+  MOZ_CRASH("shuffle SIMD NYI");
+}
+
+void LIRGenerator::visitWasmReplaceLaneSimd128(MWasmReplaceLaneSimd128* ins) {
+  MOZ_CRASH("replace-lane SIMD NYI");
+}
+
+void LIRGenerator::visitWasmScalarToSimd128(MWasmScalarToSimd128* ins) {
+  MOZ_CRASH("scalar-to-SIMD NYI");
+}
+
+void LIRGenerator::visitWasmUnarySimd128(MWasmUnarySimd128* ins) {
+  MOZ_CRASH("unary SIMD NYI");
+}
+
+void LIRGenerator::visitWasmReduceSimd128(MWasmReduceSimd128* ins) {
+  MOZ_CRASH("reduce-SIMD NYI");
 }

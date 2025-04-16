@@ -68,9 +68,16 @@ bool WebRenderLayerManager::Initialize(
   // succeeded, or if this is the first attempt.
   static bool hasInitialized = false;
 
+  WindowKind windowKind;
+  if (mWidget->WindowType() != eWindowType_popup) {
+    windowKind = WindowKind::MAIN;
+  } else {
+    windowKind = WindowKind::SECONDARY;
+  }
+
   LayoutDeviceIntSize size = mWidget->GetClientSize();
   PWebRenderBridgeChild* bridge =
-      aCBChild->SendPWebRenderBridgeConstructor(aLayersId, size);
+      aCBChild->SendPWebRenderBridgeConstructor(aLayersId, size, windowKind);
   if (!bridge) {
     // This should only fail if we attempt to access a layer we don't have
     // permission for, or more likely, the GPU process crashed again during
@@ -159,7 +166,9 @@ CompositorBridgeChild* WebRenderLayerManager::GetCompositorBridgeChild() {
 }
 
 void WebRenderLayerManager::GetBackendName(nsAString& name) {
-  if (WrBridge()->UsingSoftwareWebRender()) {
+  if (WrBridge()->UsingSoftwareWebRenderD3D11()) {
+    name.AssignLiteral("WebRender (Software D3D11)");
+  } else if (WrBridge()->UsingSoftwareWebRender()) {
     name.AssignLiteral("WebRender (Software)");
   } else {
     name.AssignLiteral("WebRender");
@@ -276,6 +285,7 @@ bool WebRenderLayerManager::EndEmptyTransaction(EndTransactionFlags aFlags) {
   if (mStateManager.mAsyncResourceUpdates || !mPendingScrollUpdates.IsEmpty() ||
       WrBridge()->HasWebRenderParentCommands()) {
     transactionData.emplace();
+    transactionData->mIdNamespace = WrBridge()->GetNamespace();
     transactionData->mPaintSequenceNumber = mPaintSequenceNumber;
     if (mStateManager.mAsyncResourceUpdates) {
       mStateManager.mAsyncResourceUpdates->Flush(

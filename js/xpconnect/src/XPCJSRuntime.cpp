@@ -146,7 +146,7 @@ const char* const XPCJSRuntime::mStrings[] = {
 class AsyncFreeSnowWhite : public Runnable {
  public:
   NS_IMETHOD Run() override {
-    AUTO_PROFILER_LABEL("AsyncFreeSnowWhite::Run", GCCC);
+    AUTO_PROFILER_LABEL("AsyncFreeSnowWhite::Run", GCCC_FreeSnowWhite);
 
     TimeStamp start = TimeStamp::Now();
     // 2 ms budget, given that kICCSliceBudget is only 3 ms
@@ -2651,6 +2651,9 @@ static void SetUseCounterCallback(JSObject* obj, JSUseCounter counter) {
       break;
     case JSUseCounter::WASM:
       SetUseCounter(obj, eUseCounter_custom_JS_wasm);
+      break;
+    case JSUseCounter::WASM_DUPLICATE_IMPORTS:
+      SetUseCounter(obj, eUseCounter_custom_JS_wasm_duplicate_imports);
       break;
     default:
       MOZ_ASSERT_UNREACHABLE("Unexpected JSUseCounter id");

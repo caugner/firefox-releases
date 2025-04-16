@@ -11,6 +11,7 @@
 #include "mozilla/dom/SyncedContextInlines.h"
 #include "mozilla/dom/BrowsingContext.h"
 #include "mozilla/dom/Document.h"
+#include "mozilla/dom/UserActivationIPCUtils.h"
 #include "mozilla/PermissionDelegateIPCUtils.h"
 #include "mozilla/StaticPrefs_dom.h"
 #include "mozilla/StaticPtr.h"
@@ -78,6 +79,13 @@ Document* WindowContext::GetDocument() const {
 Document* WindowContext::GetExtantDoc() const {
   nsGlobalWindowInner* innerWindow = GetInnerWindow();
   return innerWindow ? innerWindow->GetExtantDoc() : nullptr;
+}
+
+WindowGlobalChild* WindowContext::GetWindowGlobalChild() const {
+  MOZ_ASSERT(XRE_IsContentProcess());
+  NS_ENSURE_TRUE(XRE_IsContentProcess(), nullptr);
+  nsGlobalWindowInner* innerWindow = GetInnerWindow();
+  return innerWindow ? innerWindow->GetWindowGlobalChild() : nullptr;
 }
 
 WindowContext* WindowContext::GetParentWindowContext() {
@@ -244,6 +252,11 @@ bool WindowContext::CanSet(
     FieldIndex<IDX_DelegatedExactHostMatchPermissions>,
     const PermissionDelegateHandler::DelegatedPermissionList& aValue,
     ContentParent* aSource) {
+  return CheckOnlyOwningProcessCanSet(aSource);
+}
+
+bool WindowContext::CanSet(FieldIndex<IDX_IsLocalIP>, const bool& aValue,
+                           ContentParent* aSource) {
   return CheckOnlyOwningProcessCanSet(aSource);
 }
 

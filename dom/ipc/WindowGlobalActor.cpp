@@ -66,8 +66,6 @@ WindowGlobalInit WindowGlobalActor::AboutBlankInitializer(
 
   init.principal() = aPrincipal;
   Unused << NS_NewURI(getter_AddRefs(init.documentURI()), "about:blank");
-  ContentBlockingAllowList::ComputePrincipal(
-      aPrincipal, getter_AddRefs(init.contentBlockingAllowListPrincipal()));
 
   return init;
 }
@@ -79,8 +77,6 @@ WindowGlobalInit WindowGlobalActor::WindowInitializer(
                       aWindow->GetOuterWindow()->WindowID());
 
   init.principal() = aWindow->GetPrincipal();
-  init.contentBlockingAllowListPrincipal() =
-      aWindow->GetDocumentContentBlockingAllowListPrincipal();
   init.documentURI() = aWindow->GetDocumentURI();
 
   Document* doc = aWindow->GetDocument();
@@ -141,6 +137,8 @@ WindowGlobalInit WindowGlobalActor::WindowInitializer(
     securityInfo = do_QueryInterface(securityInfoSupports);
   }
   init.securityInfo() = securityInfo;
+
+  fields.mIsLocalIP = init.principal()->GetIsLocalIpAddress();
 
   // Most data here is specific to the Document, which can change without
   // creating a new WindowGlobal. Anything new added here which fits that

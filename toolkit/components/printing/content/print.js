@@ -115,6 +115,8 @@ var PrintEventHandler = {
   allPaperSizes: {},
   previewIsEmpty: false,
   _delayedChanges: {},
+  _hasRenderedSelectionPreview: false,
+  _hasRenderedPrimaryPreview: false,
   _userChangedSettings: {},
   settingFlags: {
     margins: Ci.nsIPrintSettings.kInitSaveMargins,
@@ -141,10 +143,16 @@ var PrintEventHandler = {
   originalSourceContentTitle: null,
   originalSourceCurrentURI: null,
   previewBrowser: null,
+  selectionPreviewBrowser: null,
+  currentPreviewBrowser: null,
 
   // These settings do not have an associated pref value or flag, but
   // changing them requires us to update the print preview.
-  _nonFlaggedUpdatePreviewSettings: new Set(["pageRanges", "numPagesPerSheet"]),
+  _nonFlaggedUpdatePreviewSettings: new Set([
+    "pageRanges",
+    "numPagesPerSheet",
+    "printSelectionOnly",
+  ]),
   _noPreviewUpdateSettings: new Set(["numCopies", "printDuplex"]),
 
   async init() {
@@ -154,23 +162,28 @@ var PrintEventHandler = {
     // is initiated and the print preview clone must be a snapshot from the
     // time that the print was started.
     let sourceBrowsingContext = this.getSourceBrowsingContext();
-    this.previewBrowser = PrintUtils.createPreviewBrowser(
-      sourceBrowsingContext,
-      ourBrowser
-    );
+    ({
+      previewBrowser: this.previewBrowser,
+      selectionPreviewBrowser: this.selectionPreviewBrowser,
+    } = PrintUtils.createPreviewBrowsers(sourceBrowsingContext, ourBrowser));
 
+    let args = window.arguments[0];
+    this.printSelectionOnly = args.getProperty("printSelectionOnly");
+    this.hasSelection =
+      args.getProperty("hasSelection") && this.selectionPreviewBrowser;
+    this.printFrameOnly = args.getProperty("printFrameOnly");
     // Get the temporary browser that will previously have been created for the
     // platform code to generate the static clone printing doc into if this
     // print is for a window.print() call.  In that case we steal the browser's
     // docshell to get the static clone, then discard it.
-    let args = window.arguments[0];
-    this.printSelectionOnly = args.getProperty("printSelectionOnly");
     let existingBrowser = args.getProperty("previewBrowser");
     if (existingBrowser) {
       sourceBrowsingContext = existingBrowser.browsingContext;
       this.previewBrowser.swapDocShells(existingBrowser);
       existingBrowser.remove();
     }
+    document.querySelector("#print-selection-container").hidden = !this
+      .hasSelection;
 
     let sourcePrincipal =
       sourceBrowsingContext.currentWindowGlobal.documentPrincipal;
@@ -181,6 +194,17 @@ var PrintEventHandler = {
     this.originalSourceCurrentURI =
       sourceBrowsingContext.currentWindowContext.documentURI.spec;
 
+    this.sourceWindowId = this.printFrameOnly
+      ? sourceBrowsingContext.currentWindowGlobal.outerWindowId
+      : sourceBrowsingContext.top.embedderElement.browsingContext
+          .currentWindowGlobal.outerWindowId;
+    this.selectionWindowId =
+      sourceBrowsingContext.currentWindowGlobal.outerWindowId;
+
+    // We don't need the sourceBrowsingContext anymore, get rid of it.
+    sourceBrowsingContext = undefined;
+
+    this.printProgressIndicator = document.getElementById("print-progress");
     this.printForm = document.getElementById("print");
     if (sourceIsPdf) {
       this.printForm.removeNonPdfSettings();
@@ -254,7 +278,7 @@ var PrintEventHandler = {
       let sourceBrowser = this.getSourceBrowsingContext().top.embedderElement;
       let dialogBoxManager = gBrowser
         .getTabDialogBox(sourceBrowser)
-        .getManager();
+        .getTabDialogManager();
       dialogBoxManager.hideDialog(sourceBrowser);
 
       // Use our settings to prepopulate the system dialog.
@@ -265,7 +289,7 @@ var PrintEventHandler = {
         this.settings.printerName == PrintUtils.SAVE_TO_PDF_PRINTER
           ? PrintUtils.getPrintSettings(this.viewSettings.defaultSystemPrinter)
           : this.settings.clone();
-      settings.showPrintProgress = true;
+      settings.showPrintProgress = false;
       // We set the title so that if the user chooses save-to-PDF from the
       // system dialog the title will be used to generate the prepopulated
       // filename in the file picker.
@@ -296,10 +320,7 @@ var PrintEventHandler = {
     let settingsToChange = await this.refreshSettings(selectedPrinter.value);
     await this.updateSettings(settingsToChange, true);
 
-    // Kick off the initial print preview with the source browsing context.
-    let initialPreviewDone = this._updatePrintPreview(sourceBrowsingContext);
-    // We don't need the sourceBrowsingContext anymore, get rid of it.
-    sourceBrowsingContext = undefined;
+    let initialPreviewDone = this._updatePrintPreview();
 
     // Use a DeferredTask for updating the preview. This will ensure that we
     // only have one update running at a time.
@@ -318,6 +339,9 @@ var PrintEventHandler = {
     );
 
     await document.l10n.translateElements([this.previewBrowser]);
+    if (this.selectionPreviewBrowser) {
+      await document.l10n.translateElements([this.selectionPreviewBrowser]);
+    }
 
     document.body.removeAttribute("loading");
 
@@ -333,6 +357,9 @@ var PrintEventHandler = {
 
   unload() {
     this.previewBrowser.frameLoader.exitPrintPreview();
+    if (this.selectionPreviewBrowser) {
+      this.selectionPreviewBrowser.frameLoader.exitPrintPreview();
+    }
   },
 
   async print(systemDialogSettings) {
@@ -376,10 +403,16 @@ var PrintEventHandler = {
     Services.prefs.setStringPref("print_printer", settings.printerName);
 
     try {
-      // The print progress dialog is causing an uncaught exception in tests.
-      // Only show it to users.
-      this.settings.showPrintProgress = !Cu.isInAutomation;
-      let bc = this.previewBrowser.browsingContext;
+      // We'll provide our own progress indicator.
+      this.settings.showPrintProgress = false;
+      let l10nId =
+        settings.printerName == PrintUtils.SAVE_TO_PDF_PRINTER
+          ? "printui-print-progress-indicator-saving"
+          : "printui-print-progress-indicator";
+      document.l10n.setAttributes(this.printProgressIndicator, l10nId);
+      this.printProgressIndicator.hidden = false;
+
+      let bc = this.currentPreviewBrowser.browsingContext;
       await this._doPrint(bc, settings);
     } catch (e) {
       Cu.reportError(e);
@@ -721,17 +754,16 @@ var PrintEventHandler = {
   },
 
   /**
-   * Create a print preview for the provided source browsingContext, or refresh
-   * the preview with new settings when omitted.
-   *
-   * @param sourceBrowsingContext {BrowsingContext} [optional]
-   *        The source BrowsingContext (the one associated with a tab or
-   *        subdocument) that should be previewed.
+   * Creates a print preview or refreshes the preview with new settings when omitted.
    *
    * @return {Promise} Resolves when the preview has been updated.
    */
-  async _updatePrintPreview(sourceBrowsingContext) {
-    let { previewBrowser, settings } = this;
+  async _updatePrintPreview() {
+    let { settings } = this;
+    let { printSelectionOnly } = this.viewSettings;
+    if (!this.selectionPreviewBrowser) {
+      printSelectionOnly = false;
+    }
 
     // We never want the progress dialog to show
     settings.showPrintProgress = false;
@@ -739,9 +771,24 @@ var PrintEventHandler = {
     this._showRenderingIndicator();
 
     let sourceWinId;
-    if (sourceBrowsingContext) {
-      sourceWinId = sourceBrowsingContext.currentWindowGlobal.outerWindowId;
+
+    // If it's the first time loading this type of browser, get the stored window id.
+    if (printSelectionOnly && !this._hasRenderedSelectionPreview) {
+      sourceWinId = this.selectionWindowId;
+      this._hasRenderedSelectionPreview = true;
+    } else if (!printSelectionOnly && !this._hasRenderedPrimaryPreview) {
+      sourceWinId = this.sourceWindowId;
+      this._hasRenderedPrimaryPreview = true;
     }
+
+    this.previewBrowser.parentElement.setAttribute(
+      "previewtype",
+      printSelectionOnly ? "selection" : "primary"
+    );
+
+    this.currentPreviewBrowser = printSelectionOnly
+      ? this.selectionPreviewBrowser
+      : this.previewBrowser;
 
     const isFirstCall = !this.printInitiationTime;
     if (isFirstCall) {
@@ -756,15 +803,17 @@ var PrintEventHandler = {
         .add(elapsed);
     }
 
-    let totalPageCount, sheetCount, hasSelection, isEmpty;
+    let totalPageCount, sheetCount, isEmpty;
     try {
       // This resolves with a PrintPreviewSuccessInfo dictionary.
       ({
         totalPageCount,
         sheetCount,
-        hasSelection,
         isEmpty,
-      } = await previewBrowser.frameLoader.printPreview(settings, sourceWinId));
+      } = await this.currentPreviewBrowser.frameLoader.printPreview(
+        settings,
+        sourceWinId
+      ));
     } catch (e) {
       this.reportPrintingError("PRINT_PREVIEW");
       throw e;
@@ -779,14 +828,14 @@ var PrintEventHandler = {
     }
 
     // Update the settings print options on whether there is a selection.
-    settings.isPrintSelectionRBEnabled = hasSelection;
+    settings.isPrintSelectionRBEnabled = this.hasSelection;
 
     document.dispatchEvent(
       new CustomEvent("page-count", {
         detail: { sheetCount, totalPages: totalPageCount },
       })
     );
-    this.previewBrowser.setAttribute("sheet-count", sheetCount);
+    this.currentPreviewBrowser.setAttribute("sheet-count", sheetCount);
 
     this._hideRenderingIndicator();
 
@@ -1423,6 +1472,7 @@ var PrintSettingsViewProxy = {
 function PrintUIControlMixin(superClass) {
   return class PrintUIControl extends superClass {
     connectedCallback() {
+      this.setAttribute("autocomplete", "off");
       this.initialize();
       this.render();
     }
@@ -1467,199 +1517,9 @@ function PrintUIControlMixin(superClass) {
       );
     }
 
-    handleKeypress(e) {
-      let char = String.fromCharCode(e.charCode);
-      let acceptedChar = e.target.step.includes(".")
-        ? char.match(/^[0-9.]$/)
-        : char.match(/^[0-9]$/);
-      if (!acceptedChar && !char.match("\x00") && !e.ctrlKey && !e.metaKey) {
-        e.preventDefault();
-      }
-    }
-
-    handlePaste(e) {
-      let paste = (e.clipboardData || window.clipboardData)
-        .getData("text")
-        .trim();
-      let acceptedChars = e.target.step.includes(".")
-        ? paste.match(/^[0-9.]*$/)
-        : paste.match(/^[0-9]*$/);
-      if (!acceptedChars) {
-        e.preventDefault();
-      }
-    }
-
     handleEvent(event) {}
   };
 }
-
-class PrintSettingSelect extends PrintUIControlMixin(HTMLSelectElement) {
-  initialize() {
-    super.initialize();
-    this.addEventListener("keypress", this);
-  }
-
-  connectedCallback() {
-    this.settingName = this.dataset.settingName;
-    super.connectedCallback();
-  }
-
-  setOptions(optionValues = []) {
-    this.textContent = "";
-    for (let optionData of optionValues) {
-      let opt = new Option(
-        optionData.name,
-        "value" in optionData ? optionData.value : optionData.name
-      );
-      if (optionData.nameId) {
-        document.l10n.setAttributes(opt, optionData.nameId);
-      }
-      // option selectedness is set via update() and assignment to this.value
-      this.options.add(opt);
-    }
-  }
-
-  update(settings) {
-    if (this.settingName) {
-      this.value = settings[this.settingName];
-    }
-  }
-
-  handleEvent(e) {
-    if (e.type == "input" && this.settingName) {
-      this.dispatchSettingsChange({
-        [this.settingName]: e.target.value,
-      });
-    } else if (e.type == "keypress") {
-      if (
-        e.key == "Enter" &&
-        (!e.metaKey || AppConstants.platform == "macosx")
-      ) {
-        this.form.requestPrint();
-      }
-    }
-  }
-}
-customElements.define("setting-select", PrintSettingSelect, {
-  extends: "select",
-});
-
-class DestinationPicker extends PrintSettingSelect {
-  initialize() {
-    super.initialize();
-    document.addEventListener("available-destinations", this);
-  }
-
-  update(settings) {
-    super.update(settings);
-    let isPdf = settings.outputFormat == Ci.nsIPrintSettings.kOutputFormatPDF;
-    this.setAttribute("output", isPdf ? "pdf" : "paper");
-  }
-
-  handleEvent(e) {
-    super.handleEvent(e);
-
-    if (e.type == "available-destinations") {
-      this.setOptions(e.detail);
-    }
-  }
-}
-customElements.define("destination-picker", DestinationPicker, {
-  extends: "select",
-});
-
-class ColorModePicker extends PrintSettingSelect {
-  update(settings) {
-    this.value = settings[this.settingName] ? "color" : "bw";
-    let canSwitch = settings.supportsColor && settings.supportsMonochrome;
-    if (this.disablePicker != canSwitch) {
-      this.toggleAttribute("disallowed", !canSwitch);
-      this.disabled = !canSwitch;
-    }
-    this.disablePicker = canSwitch;
-  }
-
-  handleEvent(e) {
-    if (e.type == "input") {
-      // turn our string value into the expected boolean
-      this.dispatchSettingsChange({
-        [this.settingName]: this.value == "color",
-      });
-    }
-  }
-}
-customElements.define("color-mode-select", ColorModePicker, {
-  extends: "select",
-});
-
-class PaperSizePicker extends PrintSettingSelect {
-  initialize() {
-    super.initialize();
-    this._printerName = null;
-  }
-
-  update(settings) {
-    if (settings.printerName !== this._printerName) {
-      this._printerName = settings.printerName;
-      this.setOptions(settings.paperSizes);
-    }
-    this.value = settings.paperId;
-  }
-}
-customElements.define("paper-size-select", PaperSizePicker, {
-  extends: "select",
-});
-
-class OrientationInput extends PrintUIControlMixin(HTMLElement) {
-  get templateId() {
-    return "orientation-template";
-  }
-
-  update(settings) {
-    for (let input of this.querySelectorAll("input")) {
-      input.checked = settings.orientation == input.value;
-    }
-  }
-
-  handleEvent(e) {
-    this.dispatchSettingsChange({
-      orientation: e.target.value,
-    });
-  }
-}
-customElements.define("orientation-input", OrientationInput);
-
-class CopiesInput extends PrintUIControlMixin(HTMLInputElement) {
-  initialize() {
-    super.initialize();
-    this.addEventListener("keypress", this);
-    this.addEventListener("paste", this);
-  }
-
-  update(settings) {
-    this.value = settings.numCopies;
-  }
-
-  handleEvent(e) {
-    if (e.type == "keypress") {
-      this.handleKeypress(e);
-      return;
-    }
-
-    if (e.type === "paste") {
-      this.handlePaste(e);
-    }
-
-    if (this.checkValidity()) {
-      this.dispatchSettingsChange({
-        numCopies: e.target.value,
-      });
-    }
-  }
-}
-customElements.define("copy-count-input", CopiesInput, {
-  extends: "input",
-});
 
 class PrintUIForm extends PrintUIControlMixin(HTMLFormElement) {
   initialize() {
@@ -1683,7 +1543,12 @@ class PrintUIForm extends PrintUIControlMixin(HTMLFormElement) {
   }
 
   removeNonPdfSettings() {
-    let selectors = ["#margins", "#headers-footers", "#backgrounds"];
+    let selectors = [
+      "#margins",
+      "#headers-footers",
+      "#backgrounds",
+      "#print-selection-container",
+    ];
     for (let selector of selectors) {
       this.querySelector(selector).remove();
     }
@@ -1789,6 +1654,226 @@ class PrintUIForm extends PrintUIControlMixin(HTMLFormElement) {
 }
 customElements.define("print-form", PrintUIForm, { extends: "form" });
 
+class PrintSettingSelect extends PrintUIControlMixin(HTMLSelectElement) {
+  initialize() {
+    super.initialize();
+    this.addEventListener("keypress", this);
+  }
+
+  connectedCallback() {
+    this.settingName = this.dataset.settingName;
+    super.connectedCallback();
+  }
+
+  setOptions(optionValues = []) {
+    this.textContent = "";
+    for (let optionData of optionValues) {
+      let opt = new Option(
+        optionData.name,
+        "value" in optionData ? optionData.value : optionData.name
+      );
+      if (optionData.nameId) {
+        document.l10n.setAttributes(opt, optionData.nameId);
+      }
+      // option selectedness is set via update() and assignment to this.value
+      this.options.add(opt);
+    }
+  }
+
+  update(settings) {
+    if (this.settingName) {
+      this.value = settings[this.settingName];
+    }
+  }
+
+  handleEvent(e) {
+    if (e.type == "input" && this.settingName) {
+      this.dispatchSettingsChange({
+        [this.settingName]: e.target.value,
+      });
+    } else if (e.type == "keypress") {
+      if (
+        e.key == "Enter" &&
+        (!e.metaKey || AppConstants.platform == "macosx")
+      ) {
+        this.form.requestPrint();
+      }
+    }
+  }
+}
+customElements.define("setting-select", PrintSettingSelect, {
+  extends: "select",
+});
+
+class PrintSettingNumber extends PrintUIControlMixin(HTMLInputElement) {
+  initialize() {
+    super.initialize();
+    this.addEventListener("keypress", e => this.handleKeypress(e));
+    this.addEventListener("paste", e => this.handlePaste(e));
+  }
+
+  connectedCallback() {
+    this.type = "number";
+    this.settingName = this.dataset.settingName;
+    super.connectedCallback();
+  }
+
+  update(settings) {
+    if (this.settingName) {
+      this.value = settings[this.settingName];
+    }
+  }
+
+  handleKeypress(e) {
+    let char = String.fromCharCode(e.charCode);
+    let acceptedChar = e.target.step.includes(".")
+      ? char.match(/^[0-9.]$/)
+      : char.match(/^[0-9]$/);
+    if (!acceptedChar && !char.match("\x00") && !e.ctrlKey && !e.metaKey) {
+      e.preventDefault();
+    }
+  }
+
+  handlePaste(e) {
+    let paste = (e.clipboardData || window.clipboardData)
+      .getData("text")
+      .trim();
+    let acceptedChars = e.target.step.includes(".")
+      ? paste.match(/^[0-9.]*$/)
+      : paste.match(/^[0-9]*$/);
+    if (!acceptedChars) {
+      e.preventDefault();
+    }
+  }
+
+  handleEvent(e) {
+    switch (e.type) {
+      case "paste":
+        this.handlePaste();
+        break;
+      case "keypress":
+        this.handleKeypress();
+        break;
+      case "input":
+        if (this.settingName && this.checkValidity()) {
+          this.dispatchSettingsChange({
+            [this.settingName]: this.value,
+          });
+        }
+        break;
+    }
+  }
+}
+customElements.define("setting-number", PrintSettingNumber, {
+  extends: "input",
+});
+
+class PrintSettingCheckbox extends PrintUIControlMixin(HTMLInputElement) {
+  connectedCallback() {
+    this.type = "checkbox";
+    this.settingName = this.dataset.settingName;
+    super.connectedCallback();
+  }
+
+  update(settings) {
+    this.checked = settings[this.settingName];
+  }
+
+  handleEvent(e) {
+    this.dispatchSettingsChange({
+      [this.settingName]: this.checked,
+    });
+  }
+}
+customElements.define("setting-checkbox", PrintSettingCheckbox, {
+  extends: "input",
+});
+
+class DestinationPicker extends PrintSettingSelect {
+  initialize() {
+    super.initialize();
+    document.addEventListener("available-destinations", this);
+  }
+
+  update(settings) {
+    super.update(settings);
+    let isPdf = settings.outputFormat == Ci.nsIPrintSettings.kOutputFormatPDF;
+    this.setAttribute("output", isPdf ? "pdf" : "paper");
+  }
+
+  handleEvent(e) {
+    super.handleEvent(e);
+
+    if (e.type == "available-destinations") {
+      this.setOptions(e.detail);
+    }
+  }
+}
+customElements.define("destination-picker", DestinationPicker, {
+  extends: "select",
+});
+
+class ColorModePicker extends PrintSettingSelect {
+  update(settings) {
+    this.value = settings[this.settingName] ? "color" : "bw";
+    let canSwitch = settings.supportsColor && settings.supportsMonochrome;
+    if (this.disablePicker != canSwitch) {
+      this.toggleAttribute("disallowed", !canSwitch);
+      this.disabled = !canSwitch;
+    }
+    this.disablePicker = canSwitch;
+  }
+
+  handleEvent(e) {
+    if (e.type == "input") {
+      // turn our string value into the expected boolean
+      this.dispatchSettingsChange({
+        [this.settingName]: this.value == "color",
+      });
+    }
+  }
+}
+customElements.define("color-mode-select", ColorModePicker, {
+  extends: "select",
+});
+
+class PaperSizePicker extends PrintSettingSelect {
+  initialize() {
+    super.initialize();
+    this._printerName = null;
+  }
+
+  update(settings) {
+    if (settings.printerName !== this._printerName) {
+      this._printerName = settings.printerName;
+      this.setOptions(settings.paperSizes);
+    }
+    this.value = settings.paperId;
+  }
+}
+customElements.define("paper-size-select", PaperSizePicker, {
+  extends: "select",
+});
+
+class OrientationInput extends PrintUIControlMixin(HTMLElement) {
+  get templateId() {
+    return "orientation-template";
+  }
+
+  update(settings) {
+    for (let input of this.querySelectorAll("input")) {
+      input.checked = settings.orientation == input.value;
+    }
+  }
+
+  handleEvent(e) {
+    this.dispatchSettingsChange({
+      orientation: e.target.value,
+    });
+  }
+}
+customElements.define("orientation-input", OrientationInput);
+
 class ScaleInput extends PrintUIControlMixin(HTMLElement) {
   get templateId() {
     return "scale-template";
@@ -1801,9 +1886,6 @@ class ScaleInput extends PrintUIControlMixin(HTMLElement) {
     this._shrinkToFitChoice = this.querySelector("#fit-choice");
     this._scaleChoice = this.querySelector("#percent-scale-choice");
     this._scaleError = this.querySelector("#error-invalid-scale");
-
-    this._percentScale.addEventListener("keypress", this);
-    this._percentScale.addEventListener("paste", this);
   }
 
   updateScale() {
@@ -1844,15 +1926,6 @@ class ScaleInput extends PrintUIControlMixin(HTMLElement) {
   }
 
   handleEvent(e) {
-    if (e.type == "keypress") {
-      this.handleKeypress(e);
-      return;
-    }
-
-    if (e.type === "paste") {
-      this.handlePaste(e);
-    }
-
     if (e.target == this._shrinkToFitChoice || e.target == this._scaleChoice) {
       if (!this._percentScale.checkValidity()) {
         this._percentScale.value = 100;
@@ -1912,9 +1985,6 @@ class PageRangeInput extends PrintUIControlMixin(HTMLElement) {
     let isAll = this._rangePicker.value == "all";
     if (isAll) {
       this._pagesSet.clear();
-      for (let i = 1; i <= this._numPages; i++) {
-        this._pagesSet.add(i);
-      }
       if (!this._rangeInput.checkValidity()) {
         this._rangeInput.setCustomValidity("");
         this._rangeInput.value = "";
@@ -2105,6 +2175,7 @@ class PageRangeInput extends PrintUIControlMixin(HTMLElement) {
 
     if (e.type === "paste" && e.target == this._rangeInput) {
       this.handlePaste(e);
+      return;
     }
 
     if (e.type == "page-count") {
@@ -2118,8 +2189,19 @@ class PageRangeInput extends PrintUIControlMixin(HTMLElement) {
       this._numPages = totalPages;
       this._rangeInput.disabled = false;
 
+      let prevPages = Array.from(this._pagesSet);
       this.updatePageRange();
-      this.dispatchPageRange(false);
+      if (
+        prevPages.length != this._pagesSet.size ||
+        !prevPages.every(page => this._pagesSet.has(page))
+      ) {
+        // If the calculated set of pages has changed then we need to dispatch
+        // a new pageRanges setting :(
+        // Ideally this would be resolved in the settings code since it should
+        // only happen for the "N-" case where pages N through the end of the
+        // document are in the range.
+        this.dispatchPageRange(false);
+      }
 
       return;
     }
@@ -2149,9 +2231,6 @@ class MarginsPicker extends PrintUIControlMixin(HTMLElement) {
     this._customLeftMargin = this.querySelector("#custom-margin-left");
     this._customRightMargin = this.querySelector("#custom-margin-right");
     this._marginError = this.querySelector("#error-invalid-margin");
-
-    this.addEventListener("keypress", this);
-    this.addEventListener("paste", this);
   }
 
   get templateId() {
@@ -2268,15 +2347,6 @@ class MarginsPicker extends PrintUIControlMixin(HTMLElement) {
   }
 
   handleEvent(e) {
-    if (e.type == "keypress") {
-      this.handleKeypress(e);
-      return;
-    }
-
-    if (e.type === "paste") {
-      this.handlePaste(e);
-    }
-
     if (e.target == this._marginPicker) {
       let customMargin = e.target.value == "custom";
       this.querySelector(".margin-group").hidden = !customMargin;
@@ -2333,47 +2403,6 @@ class MarginsPicker extends PrintUIControlMixin(HTMLElement) {
   }
 }
 customElements.define("margins-select", MarginsPicker);
-
-class PrintSettingNumber extends PrintUIControlMixin(HTMLInputElement) {
-  connectedCallback() {
-    this.type = "number";
-    this.settingName = this.dataset.settingName;
-    super.connectedCallback();
-  }
-  update(settings) {
-    this.value = settings[this.settingName];
-  }
-
-  handleEvent(e) {
-    this.dispatchSettingsChange({
-      [this.settingName]: this.value,
-    });
-  }
-}
-customElements.define("setting-number", PrintSettingNumber, {
-  extends: "input",
-});
-
-class PrintSettingCheckbox extends PrintUIControlMixin(HTMLInputElement) {
-  connectedCallback() {
-    this.type = "checkbox";
-    this.settingName = this.dataset.settingName;
-    super.connectedCallback();
-  }
-
-  update(settings) {
-    this.checked = settings[this.settingName];
-  }
-
-  handleEvent(e) {
-    this.dispatchSettingsChange({
-      [this.settingName]: this.checked,
-    });
-  }
-}
-customElements.define("setting-checkbox", PrintSettingCheckbox, {
-  extends: "input",
-});
 
 class TwistySummary extends PrintUIControlMixin(HTMLElement) {
   get isOpen() {
@@ -2520,6 +2549,10 @@ async function pickFileName(contentTitle, currentURI) {
       ].createInstance(Ci.nsIFileOutputStream);
       fstream.init(picker.file, 0x2a, 0o666, 0); // ioflags = write|create|truncate, file permissions = rw-rw-rw-
       fstream.close();
+
+      // Remove the file to reduce the likelihood of the user opening an empty or damaged fle when the
+      // preview is loading
+      await IOUtils.remove(picker.file.path);
     } catch (e) {
       throw new Error({ reason: retval == 0 ? "not_saved" : "not_replaced" });
     }

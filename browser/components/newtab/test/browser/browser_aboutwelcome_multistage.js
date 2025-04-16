@@ -60,7 +60,6 @@ const TEST_MULTISTAGE_CONTENT = {
       content: {
         zap: true,
         title: "Step 2 longzaptest",
-        disclaimer: "test",
         tiles: {
           type: "topsites",
           info: true,
@@ -82,6 +81,14 @@ const TEST_MULTISTAGE_CONTENT = {
       order: 2,
       content: {
         title: "Step 3",
+        tiles: {
+          type: "image",
+          media_type: "test-img",
+          source: {
+            default:
+              "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIxNiIgaGVpZ2h0PSIxNiI+PHBhdGggZmlsbD0iIzQ1YTFmZiIgZmlsbC1vcGFjaXR5PSJjb250ZXh0LWZpbGwtb3BhY2l0eSIgZD0iTTE1Ljg0NSA2LjA2NEExLjEgMS4xIDAgMCAwIDE1IDUuMzMxTDEwLjkxMSA0LjYgOC45ODUuNzM1YTEuMSAxLjEgMCAwIDAtMS45NjkgMEw1LjA4OSA0LjZsLTQuMDgxLjcyOWExLjEgMS4xIDAgMCAwLS42MTUgMS44MzRMMy4zMiAxMC4zMWwtLjYwOSA0LjM2YTEuMSAxLjEgMCAwIDAgMS42IDEuMTI3TDggMTMuODczbDMuNjkgMS45MjdhMS4xIDEuMSAwIDAgMCAxLjYtMS4xMjdsLS42MS00LjM2MyAyLjkyNi0zLjE0NmExLjEgMS4xIDAgMCAwIC4yMzktMS4xeiIvPjwvc3ZnPg==",
+          },
+        },
         primary_button: {
           label: "Next",
           action: {
@@ -94,6 +101,10 @@ const TEST_MULTISTAGE_CONTENT = {
             type: "SHOW_MIGRATION_WIZARD",
             data: { source: "chrome" },
           },
+        },
+        help_text: {
+          text: "Here's some sample help text",
+          position: "default",
         },
       },
     },
@@ -305,7 +316,7 @@ add_task(async function test_multistage_aboutwelcome_experimentAPI() {
       "div.tiles-container.info",
     ],
     // Unexpected selectors:
-    ["main.AW_STEP1", "main.AW_STEP3", "div.secondary-cta.top"]
+    ["main.AW_STEP1", "main.AW_STEP3", "div.secondary-cta.top", "div.test-img"]
   );
   await onButtonClick(browser, "button.primary");
   await test_screen_content(
@@ -317,6 +328,8 @@ add_task(async function test_multistage_aboutwelcome_experimentAPI() {
       "main.AW_STEP3",
       "div.brand-logo",
       "div.welcome-text",
+      "p.helptext",
+      "div.test-img",
     ],
     // Unexpected selectors:
     ["main.AW_STEP1", "main.AW_STEP2"]

@@ -161,7 +161,7 @@ RenderedFrameId RendererOGL::UpdateAndRender(
   }
   // XXX set clear color if MOZ_WIDGET_ANDROID is defined.
 
-  if (!mCompositor->BeginFrame()) {
+  if (mThread->IsHandlingDeviceReset() || !mCompositor->BeginFrame()) {
     CheckGraphicsResetStatus("BeginFrame", /* aForce */ true);
     mCompositor->GetWidget()->PostRender(&widgetContext);
     return RenderedFrameId();
@@ -206,8 +206,10 @@ RenderedFrameId RendererOGL::UpdateAndRender(
     }
   }
 
-  if (!mCompositor->MaybeGrabScreenshot(size.ToUnknownSize())) {
-    mScreenshotGrabber.MaybeGrabScreenshot(this, size.ToUnknownSize());
+  if (size.Width() != 0 && size.Height() != 0) {
+    if (!mCompositor->MaybeGrabScreenshot(size.ToUnknownSize())) {
+      mScreenshotGrabber.MaybeGrabScreenshot(this, size.ToUnknownSize());
+    }
   }
 
   RenderedFrameId frameId = mCompositor->EndFrame(dirtyRects);
@@ -280,6 +282,8 @@ void RendererOGL::Pause() { mCompositor->Pause(); }
 
 bool RendererOGL::Resume() { return mCompositor->Resume(); }
 
+bool RendererOGL::IsPaused() { return mCompositor->IsPaused(); }
+
 layers::SyncObjectHost* RendererOGL::GetSyncObject() const {
   return mCompositor->GetSyncObject();
 }
@@ -304,6 +308,7 @@ void RendererOGL::BeginRecording(const TimeStamp& aRecordingStart,
   mRootPipelineId = aRootPipelineId;
   mCompositionRecorder =
       MakeUnique<layers::CompositionRecorder>(aRecordingStart);
+  mCompositor->MaybeRequestAllowFrameRecording(true);
 }
 
 void RendererOGL::MaybeRecordFrame(const WebRenderPipelineInfo* aPipelineInfo) {
@@ -375,6 +380,7 @@ void RendererOGL::WriteCollectedFrames() {
 
   wr_renderer_release_composition_recorder_structures(mRenderer);
 
+  mCompositor->MaybeRequestAllowFrameRecording(false);
   mCompositionRecorder = nullptr;
 }
 
@@ -389,6 +395,7 @@ Maybe<layers::CollectedFrames> RendererOGL::GetCollectedFrames() {
 
   wr_renderer_release_composition_recorder_structures(mRenderer);
 
+  mCompositor->MaybeRequestAllowFrameRecording(false);
   mCompositionRecorder = nullptr;
 
   return Some(std::move(frames));

@@ -62,7 +62,6 @@ class NativeEventData;
 class WidgetGUIEvent;
 class WidgetInputEvent;
 class WidgetKeyboardEvent;
-class WidgetPluginEvent;
 struct FontRange;
 
 enum class StyleWindowShadow : uint8_t;
@@ -378,6 +377,7 @@ class nsIWidget : public nsISupports {
   typedef mozilla::layers::PLayerTransactionChild PLayerTransactionChild;
   typedef mozilla::layers::ScrollableLayerGuid ScrollableLayerGuid;
   typedef mozilla::layers::ZoomConstraints ZoomConstraints;
+  typedef mozilla::widget::IMEEnabled IMEEnabled;
   typedef mozilla::widget::IMEMessage IMEMessage;
   typedef mozilla::widget::IMENotification IMENotification;
   typedef mozilla::widget::IMENotificationRequests IMENotificationRequests;
@@ -1581,7 +1581,8 @@ class nsIWidget : public nsISupports {
    * @param aPoint screen location of the mouse, in device
    * pixels, with origin at the top left
    * @param aNativeMessage *platform-specific* event type (e.g. on Mac,
-   * NSMouseMoved; on Windows, MOUSEEVENTF_MOVE, MOUSEEVENTF_LEFTDOWN etc)
+   * NSEventTypeMouseMoved; on Windows, MOUSEEVENTF_MOVE, MOUSEEVENTF_LEFTDOWN
+   * etc)
    * @param aModifierFlags *platform-specific* modifier flags (ignored
    * on Windows)
    * @param aObserver the observer that will get notified once the events
@@ -1837,52 +1838,6 @@ class nsIWidget : public nsISupports {
    *         IME, this returns NS_SUCCESS_EVENT_CONSUMED.
    */
   virtual nsresult NotifyIME(const IMENotification& aIMENotification) = 0;
-
-  /**
-   * Start plugin IME.  If this results in a string getting committed, the
-   * result is in aCommitted (otherwise aCommitted is empty).
-   *
-   * aKeyboardEvent     The event with which plugin IME is to be started
-   * panelX and panelY  Location in screen coordinates of the IME input panel
-   *                    (should be just under the plugin)
-   * aCommitted         The string committed during IME -- otherwise empty
-   */
-  [[nodiscard]] virtual nsresult StartPluginIME(
-      const mozilla::WidgetKeyboardEvent& aKeyboardEvent, int32_t aPanelX,
-      int32_t aPanelY, nsString& aCommitted) = 0;
-
-  /**
-   * Tells the widget whether or not a plugin (inside the widget) has the
-   * keyboard focus.  Should be sent when the keyboard focus changes too or
-   * from a plugin.
-   *
-   * aFocused  Whether or not a plugin is focused
-   */
-  virtual void SetPluginFocused(bool& aFocused) = 0;
-
-  /*
-   * Tell the plugin has focus.  It is unnecessary to use IPC
-   */
-  bool PluginHasFocus() {
-    return GetInputContext().mIMEState.mEnabled == IMEState::PLUGIN;
-  }
-
-  /**
-   * Set IME candidate window position by windowless plugin.
-   */
-  virtual void SetCandidateWindowForPlugin(
-      const mozilla::widget::CandidateWindowPosition& aPosition) = 0;
-
-  /**
-   * Handle default action when PluginEvent isn't handled
-   */
-  virtual void DefaultProcOfPluginEvent(
-      const mozilla::WidgetPluginEvent& aEvent) = 0;
-
-  /*
-   * Enable or Disable IME by windowless plugin.
-   */
-  virtual void EnableIMEForPlugin(bool aEnable) {}
 
   /**
    * MaybeDispatchInitialFocusEvent will dispatch a focus event after creation

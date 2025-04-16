@@ -16,7 +16,7 @@
 #include "frontend/AbstractScopePtr.h"    // ScopeIndex
 #include "frontend/FunctionSyntaxKind.h"  // FunctionSyntaxKind
 #include "frontend/ParseNode.h"
-#include "frontend/Stencil.h"          // FunctionIndex
+#include "frontend/ScriptIndex.h"      // ScriptIndex
 #include "js/WasmModule.h"             // JS::WasmModule
 #include "vm/FunctionFlags.h"          // js::FunctionFlags
 #include "vm/GeneratorAndAsyncKind.h"  // js::GeneratorKind, js::FunctionAsyncKind
@@ -28,7 +28,7 @@
 namespace js {
 namespace frontend {
 
-struct CompilationInfo;
+struct CompilationStencil;
 struct CompilationState;
 class ParseContext;
 class ScriptStencil;
@@ -105,25 +105,14 @@ enum class ThisBinding : uint8_t {
   DerivedConstructor
 };
 
+// If Yes, the script inherits it's "this" environment and binding from the
+// enclosing script. This is true for arrow-functions and eval scripts.
+enum class InheritThis { No, Yes };
+
 class GlobalSharedContext;
 class EvalSharedContext;
 class ModuleSharedContext;
 class SuspendableContext;
-
-using ParserBindingName = AbstractBindingName<const ParserAtom>;
-using ParserBindingIter = AbstractBindingIter<const ParserAtom>;
-
-using BaseParserScopeData = AbstractBaseScopeData<const ParserAtom>;
-
-template <typename Scope>
-using ParserScopeData = typename Scope::template AbstractData<const ParserAtom>;
-
-using ParserGlobalScopeData = ParserScopeData<GlobalScope>;
-using ParserEvalScopeData = ParserScopeData<EvalScope>;
-using ParserLexicalScopeData = ParserScopeData<LexicalScope>;
-using ParserFunctionScopeData = ParserScopeData<FunctionScope>;
-using ParserModuleScopeData = ParserScopeData<ModuleScope>;
-using ParserVarScopeData = ParserScopeData<VarScope>;
 
 #define FLAG_GETTER(enumName, enumEntry, lowerName, name) \
  public:                                                  \
@@ -151,7 +140,7 @@ class SharedContext {
   JSContext* const cx_;
 
  protected:
-  CompilationInfo& compilationInfo_;
+  CompilationStencil& stencil_;
 
   // See: BaseScript::immutableFlags_
   ImmutableScriptFlags immutableFlags_ = {};
@@ -206,7 +195,7 @@ class SharedContext {
   }
 
  public:
-  SharedContext(JSContext* cx, Kind kind, CompilationInfo& compilationInfo,
+  SharedContext(JSContext* cx, Kind kind, CompilationStencil& stencil,
                 Directives directives, SourceExtent extent);
 
   IMMUTABLE_FLAG_GETTER_SETTER(isForEval, IsForEval)
@@ -242,7 +231,7 @@ class SharedContext {
 
   bool isTopLevelContext() const { return !isFunction(); }
 
-  CompilationInfo& compilationInfo() const { return compilationInfo_; }
+  CompilationStencil& stencil() const { return stencil_; }
 
   ThisBinding thisBinding() const { return thisBinding_; }
   bool hasFunctionThisBinding() const {
@@ -284,16 +273,17 @@ class SharedContext {
                                         const ParserAtom* atomId);
 
   void copyScriptFields(ScriptStencil& script);
+  void copyScriptExtraFields(ScriptStencilExtra& scriptExtra);
 };
 
 class MOZ_STACK_CLASS GlobalSharedContext : public SharedContext {
   ScopeKind scopeKind_;
 
  public:
-  ParserGlobalScopeData* bindings;
+  GlobalScope::ParserData* bindings;
 
   GlobalSharedContext(JSContext* cx, ScopeKind scopeKind,
-                      CompilationInfo& compilationInfo, Directives directives,
+                      CompilationStencil& stencil, Directives directives,
                       SourceExtent extent);
 
   ScopeKind scopeKind() const { return scopeKind_; }
@@ -306,9 +296,9 @@ inline GlobalSharedContext* SharedContext::asGlobalContext() {
 
 class MOZ_STACK_CLASS EvalSharedContext : public SharedContext {
  public:
-  ParserEvalScopeData* bindings;
+  EvalScope::ParserData* bindings;
 
-  EvalSharedContext(JSContext* cx, CompilationInfo& compilationInfo,
+  EvalSharedContext(JSContext* cx, CompilationStencil& stencil,
                     CompilationState& compilationState, SourceExtent extent);
 };
 
@@ -321,7 +311,7 @@ enum class HasHeritage { No, Yes };
 
 class SuspendableContext : public SharedContext {
  public:
-  SuspendableContext(JSContext* cx, Kind kind, CompilationInfo& compilationInfo,
+  SuspendableContext(JSContext* cx, Kind kind, CompilationStencil& stencil,
                      Directives directives, SourceExtent extent,
                      bool isGenerator, bool isAsync);
 
@@ -338,6 +328,8 @@ class SuspendableContext : public SharedContext {
 class FunctionBox : public SuspendableContext {
   friend struct GCThingList;
 
+  CompilationState& compilationState_;
+
   // If this FunctionBox refers to a lazy child of the function being
   // compiled, this field holds the child's immediately enclosing scope's index.
   // Once compilation succeeds, we will store the scope pointed by this in the
@@ -350,14 +342,14 @@ class FunctionBox : public SuspendableContext {
   mozilla::Maybe<ScopeIndex> enclosingScopeIndex_;
 
   // Names from the named lambda scope, if a named lambda.
-  ParserLexicalScopeData* namedLambdaBindings_ = nullptr;
+  LexicalScope::ParserData* namedLambdaBindings_ = nullptr;
 
   // Names from the function scope.
-  ParserFunctionScopeData* functionScopeBindings_ = nullptr;
+  FunctionScope::ParserData* functionScopeBindings_ = nullptr;
 
   // Names from the extra 'var' scope of the function, if the parameter list
   // has expressions.
-  ParserVarScopeData* extraVarScopeBindings_ = nullptr;
+  VarScope::ParserData* extraVarScopeBindings_ = nullptr;
 
   // The explicit or implicit name of the function. The FunctionFlags indicate
   // the kind of name.
@@ -365,8 +357,8 @@ class FunctionBox : public SuspendableContext {
   // Any update after the copy should be synced to the ScriptStencil.
   const ParserAtom* atom_ = nullptr;
 
-  // Index into CompilationInfo::{funcData, functions}.
-  FunctionIndex funcDataIndex_ = FunctionIndex(-1);
+  // Index into BaseCompilationStencil::scriptData.
+  ScriptIndex funcDataIndex_ = ScriptIndex(-1);
 
   // See: FunctionFlags
   // This is copied to ScriptStencil.
@@ -421,27 +413,34 @@ class FunctionBox : public SuspendableContext {
 
   // End of fields.
 
-  FunctionBox(JSContext* cx, SourceExtent extent,
-              CompilationInfo& compilationInfo, Directives directives,
+  FunctionBox(JSContext* cx, SourceExtent extent, CompilationStencil& stencil,
+              CompilationState& compilationState, Directives directives,
               GeneratorKind generatorKind, FunctionAsyncKind asyncKind,
-              const ParserAtom* atom, FunctionFlags flags, FunctionIndex index);
+              const ParserAtom* atom, FunctionFlags flags, ScriptIndex index);
 
   ScriptStencil& functionStencil() const;
+  ScriptStencilExtra& functionExtraStencil() const;
 
-  ParserLexicalScopeData* namedLambdaBindings() { return namedLambdaBindings_; }
-  void setNamedLambdaBindings(ParserLexicalScopeData* bindings) {
+  bool hasFunctionExtraStencil() const;
+
+  LexicalScope::ParserData* namedLambdaBindings() {
+    return namedLambdaBindings_;
+  }
+  void setNamedLambdaBindings(LexicalScope::ParserData* bindings) {
     namedLambdaBindings_ = bindings;
   }
 
-  ParserFunctionScopeData* functionScopeBindings() {
+  FunctionScope::ParserData* functionScopeBindings() {
     return functionScopeBindings_;
   }
-  void setFunctionScopeBindings(ParserFunctionScopeData* bindings) {
+  void setFunctionScopeBindings(FunctionScope::ParserData* bindings) {
     functionScopeBindings_ = bindings;
   }
 
-  ParserVarScopeData* extraVarScopeBindings() { return extraVarScopeBindings_; }
-  void setExtraVarScopeBindings(ParserVarScopeData* bindings) {
+  VarScope::ParserData* extraVarScopeBindings() {
+    return extraVarScopeBindings_;
+  }
+  void setExtraVarScopeBindings(VarScope::ParserData* bindings) {
     extraVarScopeBindings_ = bindings;
   }
 
@@ -660,11 +659,12 @@ class FunctionBox : public SuspendableContext {
     }
   }
 
-  FunctionIndex index() { return funcDataIndex_; }
+  ScriptIndex index() { return funcDataIndex_; }
 
   void finishScriptFlags();
   void copyScriptFields(ScriptStencil& script);
   void copyFunctionFields(ScriptStencil& script);
+  void copyFunctionExtraFields(ScriptStencilExtra& scriptExtra);
 
   // * setCtorFunctionHasThisBinding can be called to a class constructor
   //   with a lazy function, while parsing enclosing class

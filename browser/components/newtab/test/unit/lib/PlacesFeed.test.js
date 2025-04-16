@@ -39,6 +39,9 @@ describe("PlacesFeed", () => {
         archivePocketEntry: sandbox.spy(() => Promise.resolve()),
       },
     });
+    globals.set("PartnerLinkAttribution", {
+      makeRequest: sandbox.spy(),
+    });
     sandbox
       .stub(global.PlacesUtils.bookmarks, "TYPE_BOOKMARK")
       .value(TYPE_BOOKMARK);
@@ -124,7 +127,7 @@ describe("PlacesFeed", () => {
       );
       assert.calledWith(
         global.PlacesUtils.observers.addListener,
-        ["bookmark-added", "bookmark-removed"],
+        ["bookmark-added", "bookmark-removed", "history-cleared"],
         feed.placesObserver.handlePlacesEvent
       );
       assert.calledWith(global.Services.obs.addObserver, feed, BLOCKED_EVENT);
@@ -146,7 +149,7 @@ describe("PlacesFeed", () => {
       );
       assert.calledWith(
         global.PlacesUtils.observers.removeListener,
-        ["bookmark-added", "bookmark-removed"],
+        ["bookmark-added", "bookmark-removed", "history-cleared"],
         feed.placesObserver.handlePlacesEvent
       );
       assert.calledWith(
@@ -565,6 +568,22 @@ describe("PlacesFeed", () => {
       feed.onAction(action);
       assert.calledWith(feed.handoffSearchToAwesomebar, action);
     });
+    it("should call makeAttributionRequest on PARTNER_LINK_ATTRIBUTION", () => {
+      sinon.stub(feed, "makeAttributionRequest");
+      let data = { targetURL: "https://partnersite.com", source: "topsites" };
+      feed.onAction({
+        type: at.PARTNER_LINK_ATTRIBUTION,
+        data,
+      });
+
+      assert.calledOnce(feed.makeAttributionRequest);
+      assert.calledWithExactly(feed.makeAttributionRequest, data);
+    });
+    it("should call PartnerLinkAttribution.makeRequest when calling makeAttributionRequest", () => {
+      let data = { targetURL: "https://partnersite.com", source: "topsites" };
+      feed.makeAttributionRequest(data);
+      assert.calledOnce(global.PartnerLinkAttribution.makeRequest);
+    });
   });
 
   describe("handoffSearchToAwesomebar", () => {
@@ -743,19 +762,10 @@ describe("PlacesFeed", () => {
         });
       });
     });
-    describe("#onClearHistory", () => {
-      it("should dispatch a PLACES_HISTORY_CLEARED action", () => {
-        observer.onClearHistory();
-        assert.calledWith(dispatch, { type: at.PLACES_HISTORY_CLEARED });
-      });
-    });
     describe("Other empty methods (to keep code coverage happy)", () => {
       it("should have a various empty functions for xpconnect happiness", () => {
         observer.onBeginUpdateBatch();
         observer.onEndUpdateBatch();
-        observer.onTitleChanged();
-        observer.onFrecencyChanged();
-        observer.onManyFrecenciesChanged();
         observer.onDeleteVisits();
       });
     });
@@ -831,6 +841,15 @@ describe("PlacesFeed", () => {
       dispatch = sandbox.spy();
       observer = new PlacesObserver(dispatch);
     });
+
+    describe("#history-cleared", () => {
+      it("should dispatch a PLACES_HISTORY_CLEARED action", async () => {
+        const args = [{ type: "history-cleared" }];
+        await observer.handlePlacesEvent(args);
+        assert.calledWith(dispatch, { type: at.PLACES_HISTORY_CLEARED });
+      });
+    });
+
     describe("#bookmark-added", () => {
       it("should dispatch a PLACES_BOOKMARK_ADDED action with the bookmark data - http", async () => {
         const args = [

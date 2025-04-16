@@ -36,6 +36,7 @@
 #include "mozilla/dom/PerformanceStorage.h"
 #include "mozilla/dom/UserActivation.h"
 #include "mozilla/dom/WorkerCommon.h"
+#include "mozilla/PreloaderBase.h"
 #include "mozilla/net/NeckoChannelParams.h"
 #include "mozilla/ipc/PBackgroundSharedTypes.h"
 #include "mozilla/StaticPrefs_browser.h"
@@ -1562,6 +1563,17 @@ void FetchDriver::SetRequestHeaders(nsIHttpChannel* aChannel,
     } else {
       DebugOnly<nsresult> rv = aChannel->SetRequestHeader(
           headers[i].mName, headers[i].mValue, alreadySet /* merge */);
+      MOZ_ASSERT(NS_SUCCEEDED(rv));
+    }
+  }
+  nsAutoCString method;
+  mRequest->GetMethod(method);
+  if (!method.EqualsLiteral("GET") && !method.EqualsLiteral("HEAD")) {
+    nsAutoString origin;
+    if (NS_SUCCEEDED(nsContentUtils::GetUTFOrigin(mPrincipal, origin))) {
+      DebugOnly<nsresult> rv = aChannel->SetRequestHeader(
+          nsDependentCString(net::nsHttp::Origin),
+          NS_ConvertUTF16toUTF8(origin), false /* merge */);
       MOZ_ASSERT(NS_SUCCEEDED(rv));
     }
   }

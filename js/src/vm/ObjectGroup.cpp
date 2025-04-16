@@ -41,7 +41,7 @@ using namespace js;
 
 static ObjectGroup* MakeGroup(JSContext* cx, const JSClass* clasp,
                               Handle<TaggedProto> proto,
-                              ObjectGroupFlags initialFlags = 0) {
+                              HandleTypeDescr descr) {
   MOZ_ASSERT_IF(proto.isObject(),
                 cx->isInsideCurrentCompartment(proto.toObject()));
 
@@ -49,17 +49,17 @@ static ObjectGroup* MakeGroup(JSContext* cx, const JSClass* clasp,
   if (!group) {
     return nullptr;
   }
-  new (group) ObjectGroup(clasp, proto, cx->realm(), initialFlags);
+  new (group) ObjectGroup(clasp, proto, cx->realm(), descr);
 
   return group;
 }
 
 ObjectGroup::ObjectGroup(const JSClass* clasp, TaggedProto proto,
-                         JS::Realm* realm, ObjectGroupFlags initialFlags)
+                         JS::Realm* realm, TypeDescr* descr)
     : TenuredCellWithNonGCPointer(clasp),
       proto_(proto),
       realm_(realm),
-      flags_(initialFlags) {
+      typeDescr_(descr) {
   /* Windows may not appear on prototype chains. */
   MOZ_ASSERT_IF(proto.isObject(), !IsWindow(proto.toObject()));
   MOZ_ASSERT(JS::StringIsASCII(clasp->name));
@@ -78,13 +78,8 @@ void ObjectGroup::setProtoUnchecked(TaggedProto proto) {
                 proto_.toObject()->isDelegate());
 }
 
-void ObjectGroup::setProto(TaggedProto proto) {
-  MOZ_ASSERT(singleton());
-  setProtoUnchecked(proto);
-}
-
 /////////////////////////////////////////////////////////////////////
-// JSObject
+// GlobalObject
 /////////////////////////////////////////////////////////////////////
 
 bool GlobalObject::shouldSplicePrototype() {
@@ -95,23 +90,12 @@ bool GlobalObject::shouldSplicePrototype() {
 }
 
 /* static */
-bool JSObject::splicePrototype(JSContext* cx, HandleObject obj,
-                               Handle<TaggedProto> proto) {
-  MOZ_ASSERT(cx->compartment() == obj->compartment());
-
-  /*
-   * For singleton groups representing only a single JSObject, the proto
-   * can be rearranged as needed without destroying type information for
-   * the old or new types.
-   */
-  MOZ_ASSERT(obj->isSingleton());
+bool GlobalObject::splicePrototype(JSContext* cx, Handle<GlobalObject*> global,
+                                   Handle<TaggedProto> proto) {
+  MOZ_ASSERT(cx->realm() == global->realm());
 
   // Windows may not appear on prototype chains.
   MOZ_ASSERT_IF(proto.isObject(), !IsWindow(proto.toObject()));
-
-#ifdef DEBUG
-  const JSClass* oldClass = obj->getClass();
-#endif
 
   if (proto.isObject()) {
     RootedObject protoObj(cx, proto.toObject());
@@ -120,9 +104,13 @@ bool JSObject::splicePrototype(JSContext* cx, HandleObject obj,
     }
   }
 
-  MOZ_ASSERT(obj->group()->clasp() == oldClass,
-             "splicing a prototype doesn't change a group's class");
-  obj->group()->setProto(proto);
+  ObjectGroup* group = MakeGroup(cx, global->getClass(), proto,
+                                 /* descr = */ nullptr);
+  if (!group) {
+    return false;
+  }
+
+  global->setGroupRaw(group);
   return true;
 }
 
@@ -131,43 +119,35 @@ bool JSObject::splicePrototype(JSContext* cx, HandleObject obj,
 /////////////////////////////////////////////////////////////////////
 
 /*
- * Entries for the per-realm set of groups which are the default
- * types to use for some prototype. An optional associated object is used which
- * allows multiple groups to be created with the same prototype. The
- * associated object may be a function (for types constructed with 'new') or a
- * type descriptor (for typed objects). These entries are also used for the set
- * of lazy groups in the realm, which use a null associated object
- * (though there are only a few of these per realm).
+ * Entries for the per-realm set of groups based on prototype and class. An
+ * optional associated object is used which allows multiple groups to be
+ * created with the same prototype. The associated object is a type descriptor
+ * (for typed objects).
  */
 struct ObjectGroupRealm::NewEntry {
   WeakHeapPtrObjectGroup group;
 
   // Note: This pointer is only used for equality and does not need a read
   // barrier.
-  JSObject* associated;
+  TypeDescr* associated;
 
-  NewEntry(ObjectGroup* group, JSObject* associated)
+  NewEntry(ObjectGroup* group, TypeDescr* associated)
       : group(group), associated(associated) {}
 
   struct Lookup {
     const JSClass* clasp;
     TaggedProto proto;
-    JSObject* associated;
+    TypeDescr* associated;
 
-    Lookup(const JSClass* clasp, TaggedProto proto, JSObject* associated)
+    Lookup(const JSClass* clasp, TaggedProto proto, TypeDescr* associated)
         : clasp(clasp), proto(proto), associated(associated) {
       MOZ_ASSERT(clasp);
-      MOZ_ASSERT_IF(associated && associated->is<JSFunction>(),
-                    clasp == &PlainObject::class_);
     }
 
     explicit Lookup(const NewEntry& entry)
         : clasp(entry.group.unbarrieredGet()->clasp()),
           proto(entry.group.unbarrieredGet()->proto()),
-          associated(entry.associated) {
-      MOZ_ASSERT_IF(associated && associated->is<JSFunction>(),
-                    clasp == &PlainObject::class_);
-    }
+          associated(entry.associated) {}
   };
 
   bool needsSweep() {
@@ -231,16 +211,12 @@ class ObjectGroupRealm::NewTable
   explicit NewTable(Zone* zone) : Base(zone) {}
 };
 
-/* static*/ ObjectGroupRealm& ObjectGroupRealm::get(const ObjectGroup* group) {
-  return group->realm()->objectGroups_;
-}
-
 /* static*/ ObjectGroupRealm& ObjectGroupRealm::getForNewObject(JSContext* cx) {
   return cx->realm()->objectGroups_;
 }
 
 MOZ_ALWAYS_INLINE ObjectGroup* ObjectGroupRealm::DefaultNewGroupCache::lookup(
-    const JSClass* clasp, TaggedProto proto, JSObject* associated) {
+    const JSClass* clasp, TaggedProto proto, TypeDescr* associated) {
   if (group_ && associated_ == associated && group_->proto() == proto &&
       group_->clasp() == clasp) {
     return group_;
@@ -251,30 +227,16 @@ MOZ_ALWAYS_INLINE ObjectGroup* ObjectGroupRealm::DefaultNewGroupCache::lookup(
 /* static */
 ObjectGroup* ObjectGroup::defaultNewGroup(JSContext* cx, const JSClass* clasp,
                                           TaggedProto proto,
-                                          JSObject* associated) {
+                                          Handle<TypeDescr*> descr) {
   MOZ_ASSERT(clasp);
-  MOZ_ASSERT_IF(associated, proto.isObject());
+  MOZ_ASSERT_IF(descr, proto.isObject());
   MOZ_ASSERT_IF(proto.isObject(),
                 cx->isInsideCurrentCompartment(proto.toObject()));
-
-  if (associated && !associated->is<TypeDescr>()) {
-    associated = nullptr;
-  }
-
-  if (associated) {
-    MOZ_ASSERT(associated->is<TypeDescr>());
-    if (!IsTypedObjectClass(clasp)) {
-      // This can happen when we call Reflect.construct with a TypeDescr as
-      // newTarget argument. We're not creating a TypedObject in this case, so
-      // don't set the TypeDescr on the group.
-      associated = nullptr;
-    }
-  }
 
   ObjectGroupRealm& groups = ObjectGroupRealm::getForNewObject(cx);
 
   if (ObjectGroup* group =
-          groups.defaultNewGroupCache.lookup(clasp, proto, associated)) {
+          groups.defaultNewGroupCache.lookup(clasp, proto, descr)) {
     return group;
   }
 
@@ -297,31 +259,27 @@ ObjectGroup* ObjectGroup::defaultNewGroup(JSContext* cx, const JSClass* clasp,
   }
 
   ObjectGroupRealm::NewTable::AddPtr p = table->lookupForAdd(
-      ObjectGroupRealm::NewEntry::Lookup(clasp, proto, associated));
+      ObjectGroupRealm::NewEntry::Lookup(clasp, proto, descr));
   if (p) {
     ObjectGroup* group = p->group;
     MOZ_ASSERT(group->clasp() == clasp);
     MOZ_ASSERT(group->proto() == proto);
-    groups.defaultNewGroupCache.put(group, associated);
+    groups.defaultNewGroupCache.put(group, descr);
     return group;
   }
 
   Rooted<TaggedProto> protoRoot(cx, proto);
-  ObjectGroup* group = MakeGroup(cx, clasp, protoRoot);
+  ObjectGroup* group = MakeGroup(cx, clasp, protoRoot, descr);
   if (!group) {
     return nullptr;
   }
 
-  if (!table->add(p, ObjectGroupRealm::NewEntry(group, associated))) {
+  if (!table->add(p, ObjectGroupRealm::NewEntry(group, descr))) {
     ReportOutOfMemory(cx);
     return nullptr;
   }
 
-  if (associated) {
-    group->setTypeDescr(&associated->as<TypeDescr>());
-  }
-
-  groups.defaultNewGroupCache.put(group, associated);
+  groups.defaultNewGroupCache.put(group, descr);
   return group;
 }
 
@@ -359,37 +317,7 @@ PlainObject* js::NewPlainObjectWithProperties(JSContext* cx,
 // ObjectGroupRealm
 /////////////////////////////////////////////////////////////////////
 
-ObjectGroupRealm::~ObjectGroupRealm() {
-  js_delete(defaultNewTable);
-  stringSplitStringGroup = nullptr;
-}
-
-/* static */
-ObjectGroup* ObjectGroupRealm::getStringSplitStringGroup(JSContext* cx) {
-  ObjectGroupRealm& groups = ObjectGroupRealm::getForNewObject(cx);
-
-  ObjectGroup* group = groups.stringSplitStringGroup.get();
-  if (group) {
-    return group;
-  }
-
-  // The following code is a specialized version of the code
-  // for ObjectGroup::allocationSiteGroup().
-
-  JSObject* proto = GlobalObject::getOrCreateArrayPrototype(cx, cx->global());
-  if (!proto) {
-    return nullptr;
-  }
-  Rooted<TaggedProto> tagged(cx, TaggedProto(proto));
-
-  group = MakeGroup(cx, &ArrayObject::class_, tagged);
-  if (!group) {
-    return nullptr;
-  }
-
-  groups.stringSplitStringGroup.set(group);
-  return group;
-}
+ObjectGroupRealm::~ObjectGroupRealm() { js_delete(defaultNewTable); }
 
 void ObjectGroupRealm::addSizeOfExcludingThis(
     mozilla::MallocSizeOf mallocSizeOf, size_t* realmTables) {
@@ -403,13 +331,6 @@ void ObjectGroupRealm::clearTables() {
     defaultNewTable->clear();
   }
   defaultNewGroupCache.purge();
-}
-
-void ObjectGroupRealm::traceWeak(JSTracer* trc) {
-  if (stringSplitStringGroup) {
-    JS::GCPolicy<WeakHeapPtrObjectGroup>::traceWeak(trc,
-                                                    &stringSplitStringGroup);
-  }
 }
 
 void ObjectGroupRealm::fixupNewTableAfterMovingGC(NewTable* table) {
@@ -438,27 +359,6 @@ void ObjectGroupRealm::fixupNewTableAfterMovingGC(NewTable* table) {
       }
     }
   }
-}
-
-/* static */
-bool JSObject::setSingleton(JSContext* cx, js::HandleObject obj) {
-  MOZ_ASSERT(!IsInsideNursery(obj));
-  MOZ_ASSERT(!obj->isSingleton());
-  MOZ_ASSERT(cx->realm() == obj->nonCCWRealm());
-
-  // At this point singleton groups are only used for the global object. We can
-  // remove this after replacing JS_SplicePrototype.
-  MOZ_ASSERT(obj->is<GlobalObject>());
-
-  ObjectGroupFlags initialFlags = OBJECT_FLAG_SINGLETON;
-  Rooted<TaggedProto> proto(cx, obj->taggedProto());
-  ObjectGroup* group = MakeGroup(cx, obj->getClass(), proto, initialFlags);
-  if (!group) {
-    return false;
-  }
-
-  obj->setGroupRaw(group);
-  return true;
 }
 
 #ifdef JSGC_HASH_TABLE_CHECKS

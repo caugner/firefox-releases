@@ -19,6 +19,9 @@ const { XPCOMUtils } = ChromeUtils.import(
 );
 const { Services } = ChromeUtils.import("resource://gre/modules/Services.jsm");
 
+const IS_MAIN_PROCESS =
+  Services.appinfo.processType === Services.appinfo.PROCESS_TYPE_DEFAULT;
+
 const SYNC_DATA_PREF = "messaging-system.syncdatastore.data";
 let tryJSONParse = data => {
   try {
@@ -44,7 +47,7 @@ const DEFAULT_STORE_ID = "ExperimentStoreData";
 const SYNC_ACCESS_FEATURES = ["newtab", "aboutwelcome"];
 
 class ExperimentStore extends SharedDataMap {
-  constructor(sharedDataKey, options) {
+  constructor(sharedDataKey, options = { isParent: IS_MAIN_PROCESS }) {
     super(sharedDataKey || DEFAULT_STORE_ID, options);
   }
 
@@ -126,7 +129,9 @@ class ExperimentStore extends SharedDataMap {
 
   _emitExperimentUpdates(experiment) {
     this.emit(`update:${experiment.slug}`, experiment);
-    this.emit(`update:${experiment.branch.feature.featureId}`, experiment);
+    if (experiment.branch.feature) {
+      this.emit(`update:${experiment.branch.feature.featureId}`, experiment);
+    }
   }
 
   /**
@@ -140,7 +145,7 @@ class ExperimentStore extends SharedDataMap {
    * @param {Enrollment} experiment
    */
   _updateSyncStore(experiment) {
-    if (SYNC_ACCESS_FEATURES.includes(experiment.branch.feature.featureId)) {
+    if (SYNC_ACCESS_FEATURES.includes(experiment.branch.feature?.featureId)) {
       if (!experiment.active) {
         // Remove experiments on un-enroll, otherwise nothing to do
         if (syncDataStore[experiment.slug]) {

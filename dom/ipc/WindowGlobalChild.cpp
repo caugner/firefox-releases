@@ -89,7 +89,7 @@ already_AddRefed<WindowGlobalChild> WindowGlobalChild::Create(
   nsILoadInfo::CrossOriginOpenerPolicy policy;
   if (httpChan &&
       loadInfo->GetExternalContentPolicyType() ==
-          nsIContentPolicy::TYPE_DOCUMENT &&
+          ExtContentPolicy::TYPE_DOCUMENT &&
       NS_SUCCEEDED(httpChan->GetCrossOriginOpenerPolicy(&policy))) {
     MOZ_DIAGNOSTIC_ASSERT(policy ==
                           aWindow->GetBrowsingContext()->GetOpenerPolicy());
@@ -249,6 +249,9 @@ void WindowGlobalChild::OnNewDocument(Document* aDocument) {
   if (mixedChannel && (mixedChannel == aDocument->GetChannel())) {
     txn.SetAllowMixedContent(true);
   }
+
+  MOZ_DIAGNOSTIC_ASSERT(mDocumentPrincipal->GetIsLocalIpAddress() ==
+                        mWindowContext->IsLocalIP());
 
   MOZ_ALWAYS_SUCCEEDS(txn.Commit(mWindowContext));
 }
@@ -551,6 +554,12 @@ mozilla::ipc::IPCResult WindowGlobalChild::RecvResetScalingZoom() {
   return IPC_OK();
 }
 
+mozilla::ipc::IPCResult WindowGlobalChild::RecvSetContainerFeaturePolicy(
+    dom::FeaturePolicy* aContainerFeaturePolicy) {
+  mContainerFeaturePolicy = aContainerFeaturePolicy;
+  return IPC_OK();
+}
+
 IPCResult WindowGlobalChild::RecvRawMessage(
     const JSActorMessageMeta& aMeta, const Maybe<ClonedMessageData>& aData,
     const Maybe<ClonedMessageData>& aStack) {
@@ -677,7 +686,8 @@ void WindowGlobalChild::MaybeSendUpdateDocumentWouldPreloadResources() {
   }
 }
 
-NS_IMPL_CYCLE_COLLECTION_WRAPPERCACHE(WindowGlobalChild, mWindowGlobal)
+NS_IMPL_CYCLE_COLLECTION_WRAPPERCACHE(WindowGlobalChild, mWindowGlobal,
+                                      mContainerFeaturePolicy)
 
 NS_INTERFACE_MAP_BEGIN_CYCLE_COLLECTION(WindowGlobalChild)
   NS_WRAPPERCACHE_INTERFACE_MAP_ENTRY

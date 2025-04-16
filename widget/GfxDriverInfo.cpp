@@ -167,6 +167,7 @@ const GfxDeviceFamily* GfxDriverInfo::GetDeviceFamily(DeviceFamily id) {
     case DeviceFamily::ParallelsAll:
     case DeviceFamily::QualcommAll:
     case DeviceFamily::AppleAll:
+    case DeviceFamily::AmazonAll:
       return nullptr;
     default:
       break;
@@ -499,13 +500,10 @@ const GfxDeviceFamily* GfxDriverInfo::GetDeviceFamily(DeviceFamily id) {
       APPEND_DEVICE(0x0a7c);
       break;
     case DeviceFamily::NvidiaRolloutWebRender:
-#ifdef EARLY_BETA_OR_EARLIER
       APPEND_RANGE(0x0400, 0x04ff);
       APPEND_RANGE(0x05e0, 0x05ff);
       APPEND_RANGE(0x0600, INT32_MAX);
-#else
       APPEND_RANGE(0x06c0, INT32_MAX);
-#endif
       break;
     case DeviceFamily::IntelRolloutWebRender:
 #ifdef EARLY_BETA_OR_EARLIER
@@ -532,6 +530,15 @@ const GfxDeviceFamily* GfxDriverInfo::GetDeviceFamily(DeviceFamily id) {
       APPEND_DEVICE(0x0116);
       APPEND_DEVICE(0x0122);
       APPEND_DEVICE(0x0126);
+
+#ifdef EARLY_BETA_OR_EARLIER
+      // ivybridge gen7 baytrail
+      APPEND_DEVICE(0x0f30);
+      APPEND_DEVICE(0x0f31);
+      APPEND_DEVICE(0x0f33);
+      APPEND_DEVICE(0x0155);
+      APPEND_DEVICE(0x0157);
+#endif
 
       // ivybridge gen7 gt1
       APPEND_DEVICE(0x0152);
@@ -791,6 +798,7 @@ const GfxDeviceFamily* GfxDriverInfo::GetDeviceFamily(DeviceFamily id) {
     case DeviceFamily::ParallelsAll:
     case DeviceFamily::QualcommAll:
     case DeviceFamily::AppleAll:
+    case DeviceFamily::AmazonAll:
       NS_WARNING("Invalid DeviceFamily id");
       break;
   }
@@ -935,6 +943,9 @@ const nsAString& GfxDriverInfo::GetDeviceVendor(DeviceFamily id) {
     case DeviceFamily::AppleAll:
       vendor = DeviceVendor::Apple;
       break;
+    case DeviceFamily::AmazonAll:
+      vendor = DeviceVendor::Amazon;
+      break;
     case DeviceFamily::QualcommAll:
       // Choose an arbitrary Qualcomm PCI VENdor ID for now.
       // TODO: This should be "QCOM" when Windows device ID parsing is reworked.
@@ -973,6 +984,7 @@ const nsAString& GfxDriverInfo::GetDeviceVendor(DeviceVendor id) {
     DECLARE_VENDOR_ID(VMWare, "0x15ad");
     DECLARE_VENDOR_ID(VirtualBox, "0x80ee");
     DECLARE_VENDOR_ID(Apple, "0x106b");
+    DECLARE_VENDOR_ID(Amazon, "0x1d0f");
     // Choose an arbitrary Qualcomm PCI VENdor ID for now.
     // TODO: This should be "QCOM" when Windows device ID parsing is reworked.
     DECLARE_VENDOR_ID(Qualcomm, "0x5143");

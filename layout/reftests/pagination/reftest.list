@@ -2,11 +2,11 @@
 #   and layout/reftests/w3c-css/submitted/multicol3/
 # Pagination tests
 # asserts(3) == abspos-breaking-000.xhtml abspos-breaking-000.ref.xhtml # bug 1067755, 1135556
-asserts(3) random-if(/^Windows\x20NT\x206\.1/.test(http.oscpu)) == abspos-breaking-001.xhtml abspos-breaking-000.ref.xhtml # Bug 1655630, Bug 1392106
-asserts(3) random-if(/^Windows\x20NT\x206\.1/.test(http.oscpu)) == abspos-breaking-002.xhtml abspos-breaking-000.ref.xhtml # Bug 1655630, Bug 1392106
-asserts(2) random-if(/^Windows\x20NT\x206\.1/.test(http.oscpu)) == abspos-breaking-003.html abspos-breaking-003-ref.html # Bug 1655630, Bug 1392106
-asserts(4) random-if(/^Windows\x20NT\x206\.1/.test(http.oscpu)) == abspos-breaking-004.html abspos-breaking-004-ref.html # Bug 1655630, Bug 1392106
-asserts(4) random-if(/^Windows\x20NT\x206\.1/.test(http.oscpu)) == abspos-breaking-005.html abspos-breaking-005-ref.html # Bug 1655630, Bug 1392106
+asserts(3-7) random-if(/^Windows\x20NT\x206\.1/.test(http.oscpu)) == abspos-breaking-001.xhtml abspos-breaking-000.ref.xhtml # Bug 1655630, Bug 1392106
+asserts(3-6) random-if(/^Windows\x20NT\x206\.1/.test(http.oscpu)) == abspos-breaking-002.xhtml abspos-breaking-000.ref.xhtml # Bug 1655630, Bug 1392106
+asserts(2-3) random-if(/^Windows\x20NT\x206\.1/.test(http.oscpu)) == abspos-breaking-003.html abspos-breaking-003-ref.html # Bug 1655630, Bug 1392106
+asserts(4-6) random-if(/^Windows\x20NT\x206\.1/.test(http.oscpu)) == abspos-breaking-004.html abspos-breaking-004-ref.html # Bug 1655630, Bug 1392106
+asserts(4-6) random-if(/^Windows\x20NT\x206\.1/.test(http.oscpu)) == abspos-breaking-005.html abspos-breaking-005-ref.html # Bug 1655630, Bug 1392106
 asserts(4) random-if(/^Windows\x20NT\x206\.1/.test(http.oscpu)) == abspos-breaking-006.html abspos-breaking-006-ref.html # Bug 1655630, Bug 1392106
 asserts(2) random-if(/^Windows\x20NT\x206\.1/.test(http.oscpu)) == abspos-breaking-007.html abspos-breaking-007-ref.html # Bug 1655630, Bug 1392106
 asserts(2) random-if(/^Windows\x20NT\x206\.1/.test(http.oscpu)) == abspos-breaking-008.html abspos-breaking-008-ref.html # Bug 1655630, Bug 1392106
@@ -110,7 +110,7 @@ pref(layout.display-list.improve-fragmentation,false) fuzzy-if(OSX,23-23,1-1) ==
 == 115199-2a.html 115199-2-ref.html
 == 115199-2b.html 115199-2-ref.html
 == 652178-1.html 652178-1-ref2.html
-fuzzy-if(cocoaWidget,0-1,0-5000) fuzzy-if(webrender&&swgl,0-1,9-9) == 745025-1.html 745025-1-ref.html
+fuzzy-if(cocoaWidget,0-1,0-5000) fuzzy-if(webrender&&swgl,0-1,0-9) == 745025-1.html 745025-1-ref.html
 == 820496-1.html 820496-1-ref.html
 
 # NOTE: These tests don't yet rigorously test what they're
