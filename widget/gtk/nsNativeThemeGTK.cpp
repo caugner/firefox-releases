@@ -1507,6 +1507,14 @@ nsNativeThemeGTK::GetMinimumWidgetSize(nsPresContext* aPresContext,
       }
       *aIsOverridable = false;
     } break;
+    case StyleAppearance::ScrollbarNonDisappearing: {
+      const ScrollbarGTKMetrics* verticalMetrics =
+          GetActiveScrollbarMetrics(GTK_ORIENTATION_VERTICAL);
+      const ScrollbarGTKMetrics* horizontalMetrics =
+          GetActiveScrollbarMetrics(GTK_ORIENTATION_HORIZONTAL);
+      aResult->width = verticalMetrics->size.scrollbar.width;
+      aResult->height = horizontalMetrics->size.scrollbar.height;
+    } break;
     case StyleAppearance::ScrollbarHorizontal:
     case StyleAppearance::ScrollbarVertical: {
       /* While we enforce a minimum size for the thumb, this is ignored
@@ -1655,9 +1663,38 @@ nsNativeThemeGTK::GetMinimumWidgetSize(nsPresContext* aPresContext,
     case StyleAppearance::MenulistTextfield:
     case StyleAppearance::NumberInput:
     case StyleAppearance::Textfield: {
-      moz_gtk_get_entry_min_height(aFrame->GetWritingMode().IsVertical()
-                                       ? &aResult->width
-                                       : &aResult->height);
+      gint contentHeight = 0;
+      gint borderPaddingHeight = 0;
+      moz_gtk_get_entry_min_height(&contentHeight, &borderPaddingHeight);
+
+      // Scale the min content height proportionately with the font-size if it's
+      // smaller than the default one. This prevents <input type=text
+      // style="font-size: .5em"> from keeping a ridiculously large size, for
+      // example.
+      const gfxFloat fieldFontSizeInCSSPixels = [] {
+        gfxFontStyle fieldFontStyle;
+        nsAutoString unusedFontName;
+        DebugOnly<bool> result = LookAndFeel::GetFont(
+            LookAndFeel::eFont_Field, unusedFontName, fieldFontStyle);
+        MOZ_ASSERT(result, "GTK look and feel supports the field font");
+        // NOTE: GetFont returns font sizes in CSS pixels, and we want just
+        // that.
+        return fieldFontStyle.size;
+      }();
+
+      const gfxFloat fontSize =
+          CSSPixel::FromAppUnits(aFrame->StyleFont()->mFont.size);
+      if (fieldFontSizeInCSSPixels > fontSize) {
+        contentHeight =
+            std::round(contentHeight * fontSize / fieldFontSizeInCSSPixels);
+      }
+
+      gint height = contentHeight + borderPaddingHeight;
+      if (aFrame->GetWritingMode().IsVertical()) {
+        aResult->width = height;
+      } else {
+        aResult->height = height;
+      }
     } break;
     case StyleAppearance::Separator: {
       gint separator_width;
@@ -1806,7 +1843,9 @@ NS_IMETHODIMP_(bool)
 nsNativeThemeGTK::ThemeSupportsWidget(nsPresContext* aPresContext,
                                       nsIFrame* aFrame,
                                       StyleAppearance aAppearance) {
-  if (IsWidgetTypeDisabled(mDisabledWidgetTypes, aAppearance)) return false;
+  if (IsWidgetTypeDisabled(mDisabledWidgetTypes, aAppearance)) {
+    return false;
+  }
 
   if (IsWidgetScrollbarPart(aAppearance)) {
     ComputedStyle* cs = nsLayoutUtils::StyleForScrollbar(aFrame);
@@ -1882,6 +1921,7 @@ nsNativeThemeGTK::ThemeSupportsWidget(nsPresContext* aPresContext,
     case StyleAppearance::ScrollbartrackVertical:
     case StyleAppearance::ScrollbarthumbHorizontal:
     case StyleAppearance::ScrollbarthumbVertical:
+    case StyleAppearance::ScrollbarNonDisappearing:
     case StyleAppearance::MenulistTextfield:
     case StyleAppearance::NumberInput:
     case StyleAppearance::Textfield:
@@ -1961,13 +2001,19 @@ nsNativeThemeGTK::WidgetIsContainer(StyleAppearance aAppearance) {
 }
 
 bool nsNativeThemeGTK::ThemeDrawsFocusForWidget(StyleAppearance aAppearance) {
-  if (aAppearance == StyleAppearance::Menulist ||
-      aAppearance == StyleAppearance::MenulistButton ||
-      aAppearance == StyleAppearance::Button ||
-      aAppearance == StyleAppearance::Treeheadercell)
-    return true;
-
-  return false;
+  switch (aAppearance) {
+    case StyleAppearance::Button:
+    case StyleAppearance::Menulist:
+    case StyleAppearance::MenulistButton:
+    case StyleAppearance::MenulistTextfield:
+    case StyleAppearance::Textarea:
+    case StyleAppearance::Textfield:
+    case StyleAppearance::Treeheadercell:
+    case StyleAppearance::NumberInput:
+      return true;
+    default:
+      return false;
+  }
 }
 
 bool nsNativeThemeGTK::ThemeNeedsComboboxDropmarker() { return false; }

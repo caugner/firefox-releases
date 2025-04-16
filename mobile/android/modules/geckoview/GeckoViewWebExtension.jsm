@@ -150,11 +150,22 @@ class EmbedderPort {
 }
 
 class GeckoViewConnection {
-  constructor(sender, nativeApp) {
+  constructor(sender, nativeApp, allowContentMessaging) {
     this.sender = sender;
     this.nativeApp = nativeApp;
-    const scope = GeckoViewWebExtension.extensionScopes.get(sender.extensionId);
-    this.allowContentMessaging = scope.allowContentMessaging;
+    if (allowContentMessaging) {
+      this.allowContentMessaging = allowContentMessaging;
+    } else {
+      const scope = GeckoViewWebExtension.extensionScopes.get(
+        sender.extensionId
+      );
+      if (scope) {
+        this.allowContentMessaging = scope.allowContentMessaging;
+      } else {
+        this.allowContentMessaging = false;
+      }
+    }
+
     if (!this.allowContentMessaging && !sender.verified) {
       throw new Error(`Unexpected messaging sender: ${JSON.stringify(sender)}`);
     }
@@ -251,7 +262,28 @@ async function filterPromptPermissions(aPermissions) {
   return promptPermissions;
 }
 
+// Keep in sync with WebExtension.java
+const FLAG_NONE = 0;
+const FLAG_ALLOW_CONTENT_MESSAGING = 1 << 0;
+
+function exportFlags(aPolicy) {
+  let flags = FLAG_NONE;
+  if (!aPolicy) {
+    return flags;
+  }
+  const { extension } = aPolicy;
+  if (extension.hasPermission("nativeMessagingFromContent")) {
+    flags |= FLAG_ALLOW_CONTENT_MESSAGING;
+  }
+  return flags;
+}
+
 async function exportExtension(aAddon, aPermissions, aSourceURI) {
+  // First, let's make sure the policy is ready if present
+  let policy = WebExtensionPolicy.getByID(aAddon.id);
+  if (policy?.readyPromise) {
+    policy = await policy.readyPromise;
+  }
   const {
     creator,
     description,
@@ -288,13 +320,8 @@ async function exportExtension(aAddon, aPermissions, aSourceURI) {
   if (embedderDisabled) {
     disabledFlags.push("appDisabled");
   }
-  let baseURL = "";
-  let privateBrowsingAllowed = false;
-  const policy = WebExtensionPolicy.getByID(id);
-  if (policy) {
-    baseURL = policy.getURL();
-    privateBrowsingAllowed = policy.privateBrowsingAllowed;
-  }
+  const baseURL = policy ? policy.getURL() : "";
+  const privateBrowsingAllowed = policy ? policy.privateBrowsingAllowed : false;
   const promptPermissions = aPermissions
     ? await filterPromptPermissions(aPermissions.permissions)
     : [];
@@ -302,6 +329,7 @@ async function exportExtension(aAddon, aPermissions, aSourceURI) {
     webExtensionId: id,
     locationURI: aSourceURI != null ? aSourceURI.spec : "",
     isBuiltIn: isBuiltin,
+    webExtensionFlags: exportFlags(policy),
     metaData: {
       origins: aPermissions ? aPermissions.origins : [],
       promptPermissions,
@@ -612,7 +640,7 @@ var GeckoViewWebExtension = {
   async extensionById(aId) {
     const scope = this.extensionScopes.get(aId);
     if (!scope) {
-      // Check if this is an installed extension we haven't seen yet
+      // Check if this is an installed extension
       const addon = await AddonManager.getAddonByID(aId);
       if (!addon) {
         debug`Could not find extension with id=${aId}`;
@@ -622,6 +650,12 @@ var GeckoViewWebExtension = {
     }
 
     return scope.extension;
+  },
+
+  async installBuiltIn(aUri) {
+    const addon = await AddonManager.installBuiltinAddon(aUri.spec);
+    const exported = await exportExtension(addon, addon.userPermissions, aUri);
+    return { extension: exported };
   },
 
   async installWebExtension(aInstallId, aUri) {
@@ -797,10 +831,17 @@ var GeckoViewWebExtension = {
         this.pageActionClick(aData.extensionId);
         break;
       }
+      // TODO: Remove deprecated Bug 1634504
       case "GeckoView:RegisterWebExtension": {
-        const uri = Services.io.newURI(aData.locationUri);
+        let uri;
+        try {
+          uri = Services.io.newURI(aData.locationUri);
+        } catch (ex) {
+          aCallback.onError(`Could not parse URI: ${aData.locationUri}`);
+          return;
+        }
         if (
-          uri == null ||
+          !uri ||
           (!(uri instanceof Ci.nsIFileURL) && !(uri instanceof Ci.nsIJARURI))
         ) {
           aCallback.onError(
@@ -840,6 +881,7 @@ var GeckoViewWebExtension = {
         break;
       }
 
+      // TODO: Remove deprecated Bug 1634504
       case "GeckoView:UnregisterWebExtension": {
         if (!this.extensionScopes.has(aData.id)) {
           aCallback.onError(
@@ -887,8 +929,10 @@ var GeckoViewWebExtension = {
 
       case "GeckoView:WebExtension:Install": {
         const { locationUri, installId } = aData;
-        const uri = Services.io.newURI(locationUri);
-        if (uri == null) {
+        let uri;
+        try {
+          uri = Services.io.newURI(locationUri);
+        } catch (ex) {
           aCallback.onError(`Could not parse uri: ${locationUri}`);
           return;
         }
@@ -909,8 +953,41 @@ var GeckoViewWebExtension = {
       }
 
       case "GeckoView:WebExtension:InstallBuiltIn": {
-        // TODO
-        aCallback.onError(`Not implemented`);
+        const { locationUri } = aData;
+        let uri;
+        try {
+          uri = Services.io.newURI(locationUri);
+        } catch (ex) {
+          aCallback.onError(
+            `Could not parse uri: ${locationUri}. Error: ${ex}`
+          );
+          return;
+        }
+
+        if (uri.scheme !== "resource" || uri.host !== "android") {
+          aCallback.onError(`Only resource://android/... URIs are allowed.`);
+          return;
+        }
+
+        if (uri.fileName !== "") {
+          aCallback.onError(
+            `This URI does not point to a folder. Note: folders URIs must end with a "/".`
+          );
+          return;
+        }
+
+        try {
+          const result = await this.installBuiltIn(uri);
+          if (result.extension) {
+            aCallback.onSuccess(result);
+          } else {
+            aCallback.onError(result);
+          }
+        } catch (ex) {
+          debug`Install exception error ${ex}`;
+          aCallback.onError(`Unexpected error: ${ex}`);
+        }
+
         break;
       }
 
@@ -999,6 +1076,7 @@ var GeckoViewWebExtension = {
   },
 };
 
+// TODO: Remove deprecated Bug 1634504
 GeckoViewWebExtension.extensionScopes = new Map();
 // WeakMap[Extension -> BrowserAction]
 GeckoViewWebExtension.browserActions = new WeakMap();

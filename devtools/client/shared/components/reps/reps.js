@@ -3142,16 +3142,29 @@ function ErrorRep(props) {
     name = "Error";
   }
 
+  const errorTitle = mode === MODE.TINY ? name : `${name}: `;
   const content = [];
 
-  if (!customFormat) {
-    content.push(span({
-      className: "objectTitle"
-    }, name));
-  } else if (typeof preview.message !== "string") {
-    content.push(name);
+  if (customFormat) {
+    content.push(errorTitle);
   } else {
-    content.push(`${name}: "${preview.message}"`);
+    content.push(span({
+      className: "objectTitle",
+      key: "title"
+    }, errorTitle));
+  }
+
+  if (mode !== MODE.TINY) {
+    const {
+      Rep
+    } = __webpack_require__(24);
+
+    content.push(Rep({ ...props,
+      key: "message",
+      object: preview.message,
+      mode: props.mode || MODE.TINY,
+      useQuotes: false
+    }));
   }
 
   const renderStack = preview.stack && customFormat;
@@ -3164,7 +3177,7 @@ function ErrorRep(props) {
   return span({
     "data-link-actor-id": object.actor,
     className: `objectBox-stackTrace ${customFormat ? "reps-custom-format" : ""}`
-  }, content);
+  }, ...content);
 }
 /**
  * Returns a React element reprensenting the Error stacktrace, i.e.
@@ -5155,6 +5168,7 @@ function getLinkifiedElements({
         // displayed in content page (e.g. in the JSONViewer).
         href: openLink || isInContentPage ? useUrl : null,
         target: "_blank",
+        rel: "noopener noreferrer",
         onClick: openLink ? e => {
           e.preventDefault();
           openLink(useUrl, e);
@@ -6821,7 +6835,8 @@ const {
 const {
   getGripType,
   isGrip,
-  wrapRender
+  wrapRender,
+  ELLIPSIS
 } = __webpack_require__(2);
 /**
  * Renders a grip object with regular expression.
@@ -6843,7 +6858,15 @@ function RegExp(props) {
 }
 
 function getSource(grip) {
-  return grip.displayString;
+  const {
+    displayString
+  } = grip;
+
+  if ((displayString === null || displayString === void 0 ? void 0 : displayString.type) === "longString") {
+    return `${displayString.initial}${ELLIPSIS}`;
+  }
+
+  return displayString;
 } // Registration
 
 

@@ -46,6 +46,7 @@
 #include "mozilla/StaticPrefs_widget.h"
 #include "mozilla/StaticPresData.h"
 #include "mozilla/StorageAccess.h"
+#include "mozilla/StoragePrincipalHelper.h"
 #include "mozilla/TextControlElement.h"
 #include "mozilla/TextEditor.h"
 #include "mozilla/URLDecorationStripper.h"
@@ -116,6 +117,7 @@
 #include "mozilla/dom/HTMLAllCollection.h"
 #include "mozilla/dom/HTMLMetaElement.h"
 #include "mozilla/dom/HTMLSharedElement.h"
+#include "mozilla/dom/HTMLDialogElement.h"
 #include "mozilla/dom/MutationObservers.h"
 #include "mozilla/dom/Navigator.h"
 #include "mozilla/dom/Performance.h"
@@ -1250,10 +1252,6 @@ Document::Document(const char* aContentType)
       mFlushingPendingLinkUpdates(false),
       mMayHaveDOMMutationObservers(false),
       mMayHaveAnimationObservers(false),
-      mHasMixedActiveContentLoaded(false),
-      mHasMixedActiveContentBlocked(false),
-      mHasMixedDisplayContentLoaded(false),
-      mHasMixedDisplayContentBlocked(false),
       mHasCSP(false),
       mHasUnsafeEvalCSP(false),
       mHasUnsafeInlineCSP(false),
@@ -1349,6 +1347,7 @@ Document::Document(const char* aContentType)
       mHasUserInteractionTimerScheduled(false),
       mStackRefCnt(0),
       mUpdateNestLevel(0),
+      mHttpsOnlyStatus(nsILoadInfo::HTTPS_ONLY_UNINITIALIZED),
       mViewportType(Unknown),
       mViewportFit(ViewportFitType::Auto),
       mSubDocuments(nullptr),
@@ -1365,7 +1364,8 @@ Document::Document(const char* aContentType)
       mGeneration(0),
       mCachedTabSizeGeneration(0),
       mNextFormNumber(0),
-      mNextControlNumber(0) {
+      mNextControlNumber(0),
+      mPreloadService(this) {
   MOZ_LOG(gDocumentLeakPRLog, LogLevel::Debug, ("DOCUMENT %p created", this));
 
   SetIsInDocument();
@@ -1801,7 +1801,7 @@ void Document::GetFailedCertSecurityInfo(FailedCertSecurityInfo& aInfo,
   uint32_t flags =
       isPrivateBrowsing ? nsISocketProvider::NO_PERMANENT_STORAGE : 0;
   OriginAttributes attrs;
-  attrs = nsContentUtils::GetOriginAttributes(this);
+  StoragePrincipalHelper::GetRegularPrincipalOriginAttributes(this, attrs);
   nsCOMPtr<nsIURI> aURI;
   mFailedChannel->GetURI(getter_AddRefs(aURI));
   if (XRE_IsContentProcess()) {
@@ -1809,8 +1809,8 @@ void Document::GetFailedCertSecurityInfo(FailedCertSecurityInfo& aInfo,
     MOZ_ASSERT(cc);
     cc->SendIsSecureURI(nsISiteSecurityService::HEADER_HSTS, aURI, flags, attrs,
                         &aInfo.mHasHSTS);
-    cc->SendIsSecureURI(nsISiteSecurityService::HEADER_HPKP, aURI, flags, attrs,
-                        &aInfo.mHasHPKP);
+    cc->SendIsSecureURI(nsISiteSecurityService::STATIC_PINNING, aURI, flags,
+                        attrs, &aInfo.mHasHPKP);
   } else {
     nsCOMPtr<nsISiteSecurityService> sss =
         do_GetService(NS_SSSERVICE_CONTRACTID);
@@ -1821,7 +1821,7 @@ void Document::GetFailedCertSecurityInfo(FailedCertSecurityInfo& aInfo,
         sss->IsSecureURI(nsISiteSecurityService::HEADER_HSTS, aURI, flags,
                          attrs, nullptr, nullptr, &aInfo.mHasHSTS)));
     Unused << NS_WARN_IF(NS_FAILED(
-        sss->IsSecureURI(nsISiteSecurityService::HEADER_HPKP, aURI, flags,
+        sss->IsSecureURI(nsISiteSecurityService::STATIC_PINNING, aURI, flags,
                          attrs, nullptr, nullptr, &aInfo.mHasHPKP)));
   }
 }
@@ -1847,40 +1847,6 @@ Document::~Document() {
 
     // don't report for about: pages
     if (!IsAboutPage()) {
-      // Record the page load
-      uint32_t pageLoaded = 1;
-      Accumulate(Telemetry::MIXED_CONTENT_UNBLOCK_COUNTER, pageLoaded);
-      // Record the mixed content status of the docshell in Telemetry
-      enum {
-        NO_MIXED_CONTENT = 0,  // There is no Mixed Content on the page
-        MIXED_DISPLAY_CONTENT =
-            1,  // The page attempted to load Mixed Display Content
-        MIXED_ACTIVE_CONTENT =
-            2,  // The page attempted to load Mixed Active Content
-        MIXED_DISPLAY_AND_ACTIVE_CONTENT =
-            3  // The page attempted to load Mixed Display & Mixed Active
-               // Content
-      };
-
-      bool mixedActiveLoaded = GetHasMixedActiveContentLoaded();
-      bool mixedActiveBlocked = GetHasMixedActiveContentBlocked();
-
-      bool mixedDisplayLoaded = GetHasMixedDisplayContentLoaded();
-      bool mixedDisplayBlocked = GetHasMixedDisplayContentBlocked();
-
-      bool hasMixedDisplay = (mixedDisplayBlocked || mixedDisplayLoaded);
-      bool hasMixedActive = (mixedActiveBlocked || mixedActiveLoaded);
-
-      uint32_t mixedContentLevel = NO_MIXED_CONTENT;
-      if (hasMixedDisplay && hasMixedActive) {
-        mixedContentLevel = MIXED_DISPLAY_AND_ACTIVE_CONTENT;
-      } else if (hasMixedActive) {
-        mixedContentLevel = MIXED_ACTIVE_CONTENT;
-      } else if (hasMixedDisplay) {
-        mixedContentLevel = MIXED_DISPLAY_CONTENT;
-      }
-      Accumulate(Telemetry::MIXED_CONTENT_PAGE_LOAD, mixedContentLevel);
-
       // record CSP telemetry on this document
       if (mHasCSP) {
         Accumulate(Telemetry::CSP_DOCUMENTS_COUNT, 1);
@@ -3146,6 +3112,16 @@ nsresult Document::StartDocumentLoad(const char* aCommand, nsIChannel* aChannel,
     WarnIfSandboxIneffective(docShell, mSandboxFlags, GetChannel());
   }
 
+  // Set the opener policy for the top level content document.
+  nsCOMPtr<nsIHttpChannelInternal> httpChan = do_QueryInterface(mChannel);
+  nsILoadInfo::CrossOriginOpenerPolicy policy =
+      nsILoadInfo::OPENER_POLICY_UNSAFE_NONE;
+  if (IsTopLevelContentDocument() && httpChan &&
+      NS_SUCCEEDED(httpChan->GetCrossOriginOpenerPolicy(&policy)) && docShell &&
+      docShell->GetBrowsingContext()) {
+    docShell->GetBrowsingContext()->SetOpenerPolicy(policy);
+  }
+
   // The CSP directives upgrade-insecure-requests as well as
   // block-all-mixed-content not only apply to the toplevel document,
   // but also to nested documents. The loadInfo of a subdocument
@@ -3158,7 +3134,15 @@ nsresult Document::StartDocumentLoad(const char* aCommand, nsIChannel* aChannel,
   mBlockAllMixedContent = loadInfo->GetBlockAllMixedContent();
   mBlockAllMixedContentPreloads = mBlockAllMixedContent;
 
+  // The HTTPS_ONLY_EXEMPT flag of the HTTPS-Only state gets propagated to all
+  // sub-resources and sub-documents.
+  mHttpsOnlyStatus =
+      loadInfo->GetHttpsOnlyStatus() & nsILoadInfo::HTTPS_ONLY_EXEMPT;
+
   nsresult rv = InitReferrerInfo(aChannel);
+  NS_ENSURE_SUCCESS(rv, rv);
+
+  rv = InitCOEP(aChannel);
   NS_ENSURE_SUCCESS(rv, rv);
 
   // Check CSP navigate-to
@@ -3470,6 +3454,7 @@ nsresult Document::InitFeaturePolicy(nsIChannel* aChannel) {
   if (parentPolicy) {
     // Let's inherit the policy from the parent HTMLIFrameElement if it exists.
     mFeaturePolicy->InheritPolicy(parentPolicy);
+    mFeaturePolicy->SetSrcOrigin(parentPolicy->GetSrcOrigin());
   }
 
   // We don't want to parse the http Feature-Policy header if this pref is off.
@@ -3550,6 +3535,28 @@ nsresult Document::InitReferrerInfo(nsIChannel* aChannel) {
   return NS_OK;
 }
 
+nsresult Document::InitCOEP(nsIChannel* aChannel) {
+  nsCOMPtr<nsIHttpChannel> httpChannel;
+  nsresult rv = GetHttpChannelHelper(aChannel, getter_AddRefs(httpChannel));
+  if (NS_FAILED(rv)) {
+    return NS_OK;
+  }
+
+  nsCOMPtr<nsIHttpChannelInternal> intChannel = do_QueryInterface(httpChannel);
+
+  if (!intChannel) {
+    return NS_OK;
+  }
+
+  nsILoadInfo::CrossOriginEmbedderPolicy policy =
+      nsILoadInfo::EMBEDDER_POLICY_NULL;
+  if (NS_SUCCEEDED(intChannel->GetResponseEmbedderPolicy(&policy))) {
+    mEmbedderPolicyFromHTTP = Some(policy);
+  }
+
+  return NS_OK;
+}
+
 void Document::StopDocumentLoad() {
   if (mParser) {
     mParserAborted = true;
@@ -3595,14 +3602,6 @@ void Document::SetDocumentURI(nsIURI* aURI) {
   nsPIDOMWindowInner* inner = GetInnerWindow();
   if (inner && inner->GetWindowGlobalChild()) {
     inner->GetWindowGlobalChild()->SetDocumentURI(mDocumentURI);
-  }
-
-  auto* browsingContext = GetBrowsingContext();
-  if (browsingContext) {
-    nsCOMPtr<nsIURI> innerDocURI = NS_GetInnermostURI(mDocumentURI);
-    if (innerDocURI) {
-      browsingContext->SetIsSecure(innerDocURI->SchemeIs("https"));
-    }
   }
 }
 
@@ -3737,11 +3736,18 @@ void Document::SetPrincipals(nsIPrincipal* aNewPrincipal,
 #ifdef DEBUG
 void Document::AssertDocGroupMatchesKey() const {
   // Sanity check that we have an up-to-date and accurate docgroup
+  // We only check if the principal when we can get the browsing context.
+  if (!GetBrowsingContext()) {
+    return;
+  }
+
   if (mDocGroup) {
     nsAutoCString docGroupKey;
 
     // GetKey() can fail, e.g. after the TLD service has shut down.
-    nsresult rv = mozilla::dom::DocGroup::GetKey(NodePrincipal(), docGroupKey);
+    nsresult rv = mozilla::dom::DocGroup::GetKey(
+        NodePrincipal(), GetBrowsingContext()->CrossOriginIsolated(),
+        docGroupKey);
     if (NS_SUCCEEDED(rv)) {
       MOZ_ASSERT(mDocGroup->MatchesKey(docGroupKey));
     }
@@ -3934,7 +3940,7 @@ void Document::OnParsingCompleted() {
   }
 }
 
-void Document::InitialTranslationCompleted() {
+void Document::InitialTranslationCompleted(bool aL10nCached) {
   if (mDocumentL10n && mDocumentL10n->mBlockingLayout) {
     // This means we blocked the load event in LocalizationLinkAdded.  It's
     // important that the load blocker removal here be async, because our caller
@@ -3948,7 +3954,7 @@ void Document::InitialTranslationCompleted() {
 
   nsXULPrototypeDocument* proto = GetPrototype();
   if (proto) {
-    proto->SetIsL10nCached();
+    proto->SetIsL10nCached(aL10nCached);
   }
 }
 
@@ -5047,10 +5053,7 @@ bool Document::QueryCommandState(const nsAString& aHTMLCommandName,
       return currentValue.EqualsLiteral("justify");
     }
     default:
-      // If command does not have a state_all value, this call fails and sets
-      // retval to false.  This is fine -- we want to return false in that case
-      // anyway (bug 738385), so we just succeed and return false regardless.
-      return params->GetBool("state_all");
+      break;
   }
 
   // If command does not have a state_all value, this call fails and sets
@@ -5671,7 +5674,7 @@ void Document::GetCookie(nsAString& aCookie, ErrorResult& rv) {
       do_GetService(NS_COOKIESERVICE_CONTRACTID);
   if (service) {
     nsAutoCString cookie;
-    service->GetCookieStringForPrincipal(EffectiveStoragePrincipal(), cookie);
+    service->GetCookieStringFromDocument(this, cookie);
     // CopyUTF8toUTF16 doesn't handle error
     // because it assumes that the input is valid.
     UTF_8_ENCODING->DecodeWithoutBOMHandling(cookie, aCookie);
@@ -5709,26 +5712,6 @@ void Document::SetCookie(const nsAString& aCookie, ErrorResult& aRv) {
     return;
   }
 
-  // The code for getting the URI matches Navigator::CookieEnabled
-  nsCOMPtr<nsIURI> principalURI;
-  auto* basePrin = BasePrincipal::Cast(NodePrincipal());
-  basePrin->GetURI(getter_AddRefs(principalURI));
-
-  if (!principalURI) {
-    // Document's principal is not a content or null (may be system), so
-    // can't set cookies
-
-    return;
-  }
-
-  nsCOMPtr<nsIChannel> channel(mChannel);
-  if (!channel) {
-    channel = CreateDummyChannelForCookies(principalURI);
-    if (!channel) {
-      return;
-    }
-  }
-
   // not having a cookie service isn't an error
   nsCOMPtr<nsICookieService> service =
       do_GetService(NS_COOKIESERVICE_CONTRACTID);
@@ -5737,7 +5720,7 @@ void Document::SetCookie(const nsAString& aCookie, ErrorResult& aRv) {
   }
 
   NS_ConvertUTF16toUTF8 cookie(aCookie);
-  nsresult rv = service->SetCookieString(principalURI, cookie, channel);
+  nsresult rv = service->SetCookieStringFromDocument(this, cookie);
 
   // No warning messages here.
   if (NS_FAILED(rv)) {
@@ -5750,45 +5733,6 @@ void Document::SetCookie(const nsAString& aCookie, ErrorResult& aRv) {
     observerService->NotifyObservers(ToSupports(this), "document-set-cookie",
                                      nsString(aCookie).get());
   }
-}
-
-already_AddRefed<nsIChannel> Document::CreateDummyChannelForCookies(
-    nsIURI* aContentURI) {
-  // The cookie service reads the privacy status of the channel we pass to it in
-  // order to determine which cookie database to query.  In some cases we don't
-  // have a proper channel to hand it to the cookie service though.  This
-  // function creates a dummy channel that is not used to load anything, for the
-  // sole purpose of handing it to the cookie service.  DO NOT USE THIS CHANNEL
-  // FOR ANY OTHER PURPOSE.
-  MOZ_ASSERT(!mChannel);
-
-  // The following channel is never openend, so it does not matter what
-  // securityFlags we pass; let's follow the principle of least privilege.
-  nsCOMPtr<nsIChannel> channel;
-  NS_NewChannel(getter_AddRefs(channel), aContentURI, this,
-                nsILoadInfo::SEC_REQUIRE_SAME_ORIGIN_DATA_IS_BLOCKED,
-                nsIContentPolicy::TYPE_INVALID);
-  nsCOMPtr<nsIPrivateBrowsingChannel> pbChannel = do_QueryInterface(channel);
-  nsCOMPtr<nsIDocShell> docShell(mDocumentContainer);
-  nsCOMPtr<nsILoadContext> loadContext = do_QueryInterface(docShell);
-  if (!pbChannel || !loadContext) {
-    return nullptr;
-  }
-  pbChannel->SetPrivate(loadContext->UsePrivateBrowsing());
-
-  // We need to set the hasStoragePermission for the dummy channel because we
-  // will use this channel to do a content blocking check. The channel URI
-  // is from the NodePrincipal of this document which is the inital document for
-  // the 'about:blank' content viewer. In this case, the NodePrincipal is the
-  // same as the parent document if the parent exists. So, we can copy the flag
-  // from the parent document directly.
-  bool parentDocHasStoragePermissin =
-      mParentDocument ? mParentDocument->HasStoragePermission() : false;
-
-  nsCOMPtr<nsILoadInfo> loadInfo = channel->LoadInfo();
-  Unused << loadInfo->SetHasStoragePermission(parentDocHasStoragePermissin);
-
-  return channel.forget();
 }
 
 ReferrerPolicy Document::GetReferrerPolicy() const {
@@ -6725,8 +6669,12 @@ nsIGlobalObject* Document::GetScopeObject() const {
 
 DocGroup* Document::GetDocGroupOrCreate() {
   if (!mDocGroup) {
+    bool crossOriginIsolated = GetBrowsingContext()
+                                   ? GetBrowsingContext()->CrossOriginIsolated()
+                                   : false;
     nsAutoCString docGroupKey;
-    nsresult rv = mozilla::dom::DocGroup::GetKey(NodePrincipal(), docGroupKey);
+    nsresult rv = mozilla::dom::DocGroup::GetKey(
+        NodePrincipal(), crossOriginIsolated, docGroupKey);
     if (NS_SUCCEEDED(rv) && mDocumentContainer) {
       BrowsingContextGroup* group = GetBrowsingContext()->Group();
       if (group) {
@@ -6749,10 +6697,15 @@ void Document::SetScopeObject(nsIGlobalObject* aGlobal) {
     BrowsingContextGroup* browsingContextGroup =
         window->GetBrowsingContextGroup();
 
+    bool crossOriginIsolated = GetBrowsingContext()
+                                   ? GetBrowsingContext()->CrossOriginIsolated()
+                                   : false;
+
     // We should already have the principal, and now that we have been added
     // to a window, we should be able to join a DocGroup!
     nsAutoCString docGroupKey;
-    nsresult rv = mozilla::dom::DocGroup::GetKey(NodePrincipal(), docGroupKey);
+    nsresult rv = mozilla::dom::DocGroup::GetKey(
+        NodePrincipal(), crossOriginIsolated, docGroupKey);
     if (mDocGroup) {
       if (NS_SUCCEEDED(rv)) {
         MOZ_RELEASE_ASSERT(mDocGroup->MatchesKey(docGroupKey));
@@ -6873,8 +6826,8 @@ void Document::SetContainer(nsDocShell* aContainer) {
     SetIsContentDocument(true);
   }
 
-  mAncestorPrincipals = aContainer->AncestorPrincipals();
-  mAncestorOuterWindowIDs = aContainer->AncestorOuterWindowIDs();
+  mAncestorPrincipals = aContainer->AncestorPrincipals().Clone();
+  mAncestorOuterWindowIDs = aContainer->AncestorOuterWindowIDs().Clone();
 }
 
 nsISupports* Document::GetContainer() const {
@@ -7863,8 +7816,7 @@ already_AddRefed<nsSimpleContentList> Document::BlockedNodesByClassifier()
     const {
   RefPtr<nsSimpleContentList> list = new nsSimpleContentList(nullptr);
 
-  nsTArray<nsWeakPtr> blockedNodes;
-  blockedNodes = mBlockedNodesByClassifier;
+  const nsTArray<nsWeakPtr> blockedNodes = mBlockedNodesByClassifier.Clone();
 
   for (unsigned long i = 0; i < blockedNodes.Length(); i++) {
     nsWeakPtr weakNode = blockedNodes[i];
@@ -8104,6 +8056,13 @@ void Document::SetDomain(const nsAString& aDomain, ErrorResult& rv) {
   if (!newURI) {
     // Error: illegal domain
     rv.Throw(NS_ERROR_DOM_SECURITY_ERR);
+    return;
+  }
+
+  if (StaticPrefs::
+          dom_postMessage_sharedArrayBuffer_withCOOP_COEP_AtStartup() &&
+      GetBrowsingContext() && GetBrowsingContext()->CrossOriginIsolated()) {
+    WarnOnceAbout(Document::eDocumentSetDomainNotAllowed);
     return;
   }
 
@@ -9310,7 +9269,7 @@ nsINode* Document::AdoptNode(nsINode& aAdoptedNode, ErrorResult& rv) {
     case COMMENT_NODE:
     case DOCUMENT_TYPE_NODE: {
       // Don't allow adopting a node's anonymous subtree out from under it.
-      if (adoptedNode->AsContent()->IsRootOfAnonymousSubtree()) {
+      if (adoptedNode->IsRootOfNativeAnonymousSubtree()) {
         rv.Throw(NS_ERROR_DOM_NOT_SUPPORTED_ERR);
         return nullptr;
       }
@@ -9537,14 +9496,18 @@ nsViewportInfo Document::GetViewportInfo(const ScreenIntSize& aDisplaySize) {
     CSSSize viewportSize(viewportWidth, viewportWidth * aspectRatio);
     ScreenIntSize fakeDesktopSize = RoundedToInt(viewportSize * scaleToFit);
     return nsViewportInfo(fakeDesktopSize, scaleToFit,
-                          nsViewportInfo::ZoomFlag::AllowZoom);
+                          nsViewportInfo::ZoomFlag::AllowZoom,
+                          nsViewportInfo::ZoomBehaviour::Mobile);
   }
 
   if (!nsLayoutUtils::ShouldHandleMetaViewport(this)) {
     return nsViewportInfo(aDisplaySize, defaultScale,
                           nsLayoutUtils::AllowZoomingForDocument(this)
                               ? nsViewportInfo::ZoomFlag::AllowZoom
-                              : nsViewportInfo::ZoomFlag::DisallowZoom);
+                              : nsViewportInfo::ZoomFlag::DisallowZoom,
+                          StaticPrefs::apz_allow_zooming_out()
+                              ? nsViewportInfo::ZoomBehaviour::Mobile
+                              : nsViewportInfo::ZoomBehaviour::Desktop);
   }
 
   // In cases where the width of the CSS viewport is less than or equal to the
@@ -9554,7 +9517,8 @@ nsViewportInfo Document::GetViewportInfo(const ScreenIntSize& aDisplaySize) {
   switch (mViewportType) {
     case DisplayWidthHeight:
       return nsViewportInfo(aDisplaySize, defaultScale,
-                            nsViewportInfo::ZoomFlag::AllowZoom);
+                            nsViewportInfo::ZoomFlag::AllowZoom,
+                            nsViewportInfo::ZoomBehaviour::Mobile);
     case Unknown: {
       nsAutoString viewport;
       GetHeaderData(nsGkAtoms::viewport, viewport);
@@ -9574,7 +9538,8 @@ nsViewportInfo Document::GetViewportInfo(const ScreenIntSize& aDisplaySize) {
             // We're making an assumption that the docType can't change here
             mViewportType = DisplayWidthHeight;
             return nsViewportInfo(aDisplaySize, defaultScale,
-                                  nsViewportInfo::ZoomFlag::AllowZoom);
+                                  nsViewportInfo::ZoomFlag::AllowZoom,
+                                  nsViewportInfo::ZoomBehaviour::Mobile);
           }
         }
 
@@ -9583,7 +9548,8 @@ nsViewportInfo Document::GetViewportInfo(const ScreenIntSize& aDisplaySize) {
         if (handheldFriendly.EqualsLiteral("true")) {
           mViewportType = DisplayWidthHeight;
           return nsViewportInfo(aDisplaySize, defaultScale,
-                                nsViewportInfo::ZoomFlag::AllowZoom);
+                                nsViewportInfo::ZoomFlag::AllowZoom,
+                                nsViewportInfo::ZoomBehaviour::Mobile);
         }
       }
 
@@ -10538,6 +10504,9 @@ void Document::Destroy() {
   // Manually break cycles via promise's global object pointer.
   mReadyForIdle = nullptr;
   mOrientationPendingPromise = nullptr;
+
+  // To break cycles.
+  mPreloadService.ClearAllPreloads();
 }
 
 void Document::RemovedFromDocShell() {
@@ -10733,7 +10702,7 @@ nsIContent* Document::GetContentInThisDocument(nsIFrame* aFrame) const {
   for (nsIFrame* f = aFrame; f;
        f = nsLayoutUtils::GetParentOrPlaceholderForCrossDoc(f)) {
     nsIContent* content = f->GetContent();
-    if (!content || content->IsInAnonymousSubtree()) continue;
+    if (!content || content->IsInNativeAnonymousSubtree()) continue;
 
     if (content->OwnerDoc() == this) {
       return content;
@@ -11076,6 +11045,16 @@ nsresult Document::CloneDocHelper(Document* clone) const {
     }
 
     clone->SetContainer(mDocumentContainer);
+
+    // Setup the navigation time. This will be needed by any animations in the
+    // document, even if they are only paused.
+    MOZ_ASSERT(!clone->GetNavigationTiming(),
+               "Navigation time was already set?");
+    MOZ_ASSERT(mTiming,
+               "Timing should have been setup before making a static clone");
+    RefPtr<nsDOMNavigationTiming> timing =
+        mTiming->CloneNavigationTime(nsDocShell::Cast(clone->GetDocShell()));
+    clone->SetNavigationTiming(timing);
   }
 
   // Now ensure that our clone has the same URI, base URI, and principal as us.
@@ -11358,16 +11337,9 @@ already_AddRefed<nsIURI> Document::ResolvePreloadImage(
   return uri.forget();
 }
 
-void Document::MaybePreLoadImage(nsIURI* uri, const nsAString& aCrossOriginAttr,
-                                 enum ReferrerPolicy aReferrerPolicy,
-                                 bool aIsImgSet) {
-  // Early exit if the img is already present in the img-cache
-  // which indicates that the "real" load has already started and
-  // that we shouldn't preload it.
-  if (nsContentUtils::IsImageInCache(uri, this)) {
-    return;
-  }
-
+void Document::PreLoadImage(nsIURI* aUri, const nsAString& aCrossOriginAttr,
+                            ReferrerPolicyEnum aReferrerPolicy, bool aIsImgSet,
+                            bool aLinkPreload) {
   nsLoadFlags loadFlags = nsIRequest::LOAD_NORMAL |
                           nsContentUtils::CORSModeToLoadImageFlags(
                               Element::StringToCORSMode(aCrossOriginAttr));
@@ -11379,19 +11351,48 @@ void Document::MaybePreLoadImage(nsIURI* uri, const nsAString& aCrossOriginAttr,
   nsCOMPtr<nsIReferrerInfo> referrerInfo =
       ReferrerInfo::CreateFromDocumentAndPolicyOverride(this, aReferrerPolicy);
 
-  // Image not in cache - trigger preload
   RefPtr<imgRequestProxy> request;
   nsresult rv = nsContentUtils::LoadImage(
-      uri, static_cast<nsINode*>(this), this, NodePrincipal(), 0, referrerInfo,
-      nullptr,  // no observer
-      loadFlags, NS_LITERAL_STRING("img"), getter_AddRefs(request), policyType);
+      aUri, static_cast<nsINode*>(this), this, NodePrincipal(), 0, referrerInfo,
+      nullptr /* no observer */, loadFlags,
+      aLinkPreload ? NS_LITERAL_STRING("link") : NS_LITERAL_STRING("img"),
+      getter_AddRefs(request), policyType, false /* urgent */, aLinkPreload);
 
   // Pin image-reference to avoid evicting it from the img-cache before
   // the "real" load occurs. Unpinned in DispatchContentLoadedEvents and
   // unlink
-  if (NS_SUCCEEDED(rv)) {
-    mPreloadingImages.Put(uri, std::move(request));
+  if (!aLinkPreload && NS_SUCCEEDED(rv)) {
+    mPreloadingImages.Put(aUri, std::move(request));
   }
+}
+
+void Document::MaybePreLoadImage(nsIURI* aUri,
+                                 const nsAString& aCrossOriginAttr,
+                                 ReferrerPolicyEnum aReferrerPolicy,
+                                 bool aIsImgSet, bool aLinkPreload) {
+  if (aLinkPreload) {
+    // Check if the image was already preloaded in this document to avoid
+    // duplicate preloading.
+    PreloadHashKey key = PreloadHashKey::CreateAsImage(
+        aUri, NodePrincipal(), dom::Element::StringToCORSMode(aCrossOriginAttr),
+        aReferrerPolicy);
+    if (!mPreloadService.PreloadExists(&key)) {
+      PreLoadImage(aUri, aCrossOriginAttr, aReferrerPolicy, aIsImgSet,
+                   aLinkPreload);
+    }
+    return;
+  }
+
+  // Early exit if the img is already present in the img-cache
+  // which indicates that the "real" load has already started and
+  // that we shouldn't preload it.
+  if (nsContentUtils::IsImageInCache(aUri, this)) {
+    return;
+  }
+
+  // Image not in cache - trigger preload
+  PreLoadImage(aUri, aCrossOriginAttr, aReferrerPolicy, aIsImgSet,
+               aLinkPreload);
 }
 
 void Document::MaybePreconnect(nsIURI* aOrigURI, mozilla::CORSMode aCORSMode) {
@@ -11511,7 +11512,7 @@ void Document::PreloadStyle(nsIURI* uri, const Encoding* aEncoding,
 
   // Charset names are always ASCII.
   Unused << CSSLoader()->LoadSheet(
-      uri, preloadType, NodePrincipal(), aEncoding, referrerInfo, obs,
+      uri, preloadType, aEncoding, referrerInfo, obs,
       Element::StringToCORSMode(aCrossOriginAttr), aIntegrity);
 }
 
@@ -11737,6 +11738,13 @@ class nsAutoFocusEvent : public Runnable {
       return NS_OK;
     }
 
+    if (Document* doc = mTopWindow->GetExtantDoc()) {
+      if (doc->IsAutoFocusFired()) {
+        return NS_OK;
+      }
+      doc->SetAutoFocusFired();
+    }
+
     // Don't steal focus from the user.
     if (mTopWindow->GetFocusedElement()) {
       return NS_OK;
@@ -11769,6 +11777,10 @@ void Document::SetAutoFocusElement(Element* aAutoFocusElement) {
   TriggerAutoFocus();
 }
 
+void Document::SetAutoFocusFired() { mAutoFocusFired = true; }
+
+bool Document::IsAutoFocusFired() { return mAutoFocusFired; }
+
 void Document::TriggerAutoFocus() {
   if (mAutoFocusFired) {
     return;
@@ -11782,8 +11794,6 @@ void Document::TriggerAutoFocus() {
 
   nsCOMPtr<Element> autoFocusElement = do_QueryReferent(mAutoFocusElement);
   if (autoFocusElement && autoFocusElement->OwnerDoc() == this) {
-    mAutoFocusFired = true;
-
     nsCOMPtr<nsPIDOMWindowOuter> topWindow =
         FindTopWindowForElement(autoFocusElement);
     if (!topWindow) {
@@ -11985,76 +11995,77 @@ already_AddRefed<Document> Document::CreateStaticClone(
   SetProperty(nsGkAtoms::adoptedsheetclones, new AdoptedStyleSheetCloneCache(),
               nsINode::DeleteProperty<AdoptedStyleSheetCloneCache>);
 
+  auto raii = MakeScopeExit([&] {
+    RemoveProperty(nsGkAtoms::adoptedsheetclones);
+    mCreatingStaticClone = false;
+  });
+
   // Make document use different container during cloning.
   RefPtr<nsDocShell> originalShell = mDocumentContainer.get();
   SetContainer(static_cast<nsDocShell*>(aCloneContainer));
-  ErrorResult rv;
+  IgnoredErrorResult rv;
   nsCOMPtr<nsINode> clonedNode = this->CloneNode(true, rv);
   SetContainer(originalShell);
-
-  nsCOMPtr<Document> clonedDoc;
   if (rv.Failed()) {
-    // Don't return yet; we need to reset mCreatingStaticClone
-    rv.SuppressException();
-  } else {
-    clonedDoc = do_QueryInterface(clonedNode);
-    if (clonedDoc) {
-      if (IsStaticDocument()) {
-        clonedDoc->mOriginalDocument = mOriginalDocument;
-        mOriginalDocument->mLatestStaticClone = clonedDoc;
-      } else {
-        clonedDoc->mOriginalDocument = this;
-        mLatestStaticClone = clonedDoc;
-      }
-
-      clonedDoc->mOriginalDocument->mStaticCloneCount++;
-
-      size_t sheetsCount = SheetCount();
-      for (size_t i = 0; i < sheetsCount; ++i) {
-        RefPtr<StyleSheet> sheet = SheetAt(i);
-        if (sheet) {
-          if (sheet->IsApplicable()) {
-            RefPtr<StyleSheet> clonedSheet =
-                sheet->Clone(nullptr, nullptr, clonedDoc, nullptr);
-            NS_WARNING_ASSERTION(clonedSheet,
-                                 "Cloning a stylesheet didn't work!");
-            if (clonedSheet) {
-              clonedDoc->AddStyleSheet(clonedSheet);
-            }
-          }
-        }
-      }
-      clonedDoc->CloneAdoptedSheetsFrom(*this);
-
-      for (int t = 0; t < AdditionalSheetTypeCount; ++t) {
-        auto& sheets = mAdditionalSheets[additionalSheetType(t)];
-        for (StyleSheet* sheet : sheets) {
-          if (sheet->IsApplicable()) {
-            RefPtr<StyleSheet> clonedSheet =
-                sheet->Clone(nullptr, nullptr, clonedDoc, nullptr);
-            NS_WARNING_ASSERTION(clonedSheet,
-                                 "Cloning a stylesheet didn't work!");
-            if (clonedSheet) {
-              clonedDoc->AddAdditionalStyleSheet(additionalSheetType(t),
-                                                 clonedSheet);
-            }
-          }
-        }
-      }
-
-      // Font faces created with the JS API will not be reflected in the
-      // stylesheets and need to be copied over to the cloned document.
-      if (const FontFaceSet* set = GetFonts()) {
-        set->CopyNonRuleFacesTo(clonedDoc->Fonts());
-      }
-
-      clonedDoc->mReferrerInfo =
-          static_cast<dom::ReferrerInfo*>(mReferrerInfo.get())->Clone();
-      clonedDoc->mPreloadReferrerInfo = clonedDoc->mReferrerInfo;
-    }
+    return nullptr;
   }
-  RemoveProperty(nsGkAtoms::adoptedsheetclones);
-  mCreatingStaticClone = false;
+
+  nsCOMPtr<Document> clonedDoc = do_QueryInterface(clonedNode);
+  if (clonedDoc) {
+    if (IsStaticDocument()) {
+      clonedDoc->mOriginalDocument = mOriginalDocument;
+      mOriginalDocument->mLatestStaticClone = clonedDoc;
+    } else {
+      clonedDoc->mOriginalDocument = this;
+      mLatestStaticClone = clonedDoc;
+    }
+
+    clonedDoc->mOriginalDocument->mStaticCloneCount++;
+
+    size_t sheetsCount = SheetCount();
+    for (size_t i = 0; i < sheetsCount; ++i) {
+      RefPtr<StyleSheet> sheet = SheetAt(i);
+      if (sheet) {
+        if (sheet->IsApplicable()) {
+          RefPtr<StyleSheet> clonedSheet =
+              sheet->Clone(nullptr, nullptr, clonedDoc, nullptr);
+          NS_WARNING_ASSERTION(clonedSheet,
+                               "Cloning a stylesheet didn't work!");
+          if (clonedSheet) {
+            clonedDoc->AddStyleSheet(clonedSheet);
+          }
+        }
+      }
+    }
+    clonedDoc->CloneAdoptedSheetsFrom(*this);
+
+    for (int t = 0; t < AdditionalSheetTypeCount; ++t) {
+      auto& sheets = mAdditionalSheets[additionalSheetType(t)];
+      for (StyleSheet* sheet : sheets) {
+        if (sheet->IsApplicable()) {
+          RefPtr<StyleSheet> clonedSheet =
+              sheet->Clone(nullptr, nullptr, clonedDoc, nullptr);
+          NS_WARNING_ASSERTION(clonedSheet,
+                               "Cloning a stylesheet didn't work!");
+          if (clonedSheet) {
+            clonedDoc->AddAdditionalStyleSheet(additionalSheetType(t),
+                                               clonedSheet);
+          }
+        }
+      }
+    }
+
+    // Font faces created with the JS API will not be reflected in the
+    // stylesheets and need to be copied over to the cloned document.
+    if (const FontFaceSet* set = GetFonts()) {
+      set->CopyNonRuleFacesTo(clonedDoc->Fonts());
+    }
+
+    clonedDoc->mReferrerInfo =
+        static_cast<dom::ReferrerInfo*>(mReferrerInfo.get())->Clone();
+    clonedDoc->mPreloadReferrerInfo = clonedDoc->mReferrerInfo;
+  }
+
   return clonedDoc.forget();
 }
 
@@ -12327,7 +12338,7 @@ already_AddRefed<nsDOMCaretPosition> Document::CaretPositionFromPoint(
   }
 
   nsIFrame* ptFrame = nsLayoutUtils::GetFrameForPoint(
-      rootFrame, pt,
+      RelativeTo{rootFrame}, pt,
       {FrameForPointOption::IgnorePaintSuppression,
        FrameForPointOption::IgnoreCrossDoc});
   if (!ptFrame) {
@@ -12339,8 +12350,8 @@ already_AddRefed<nsDOMCaretPosition> Document::CaretPositionFromPoint(
   nsCOMPtr<nsIWidget> widget = nsContentUtils::GetWidget(presShell, &aOffset);
   LayoutDeviceIntPoint refPoint = nsContentUtils::ToWidgetPoint(
       CSSPoint(aX, aY), aOffset, GetPresContext());
-  nsPoint adjustedPoint =
-      nsLayoutUtils::GetEventCoordinatesRelativeTo(widget, refPoint, ptFrame);
+  nsPoint adjustedPoint = nsLayoutUtils::GetEventCoordinatesRelativeTo(
+      widget, refPoint, RelativeTo{ptFrame});
 
   nsFrame::ContentOffsets offsets =
       ptFrame->GetContentOffsetsFromPoint(adjustedPoint);
@@ -12789,7 +12800,7 @@ void FullscreenRoots::ForEach(void (*aFunction)(Document* aDoc)) {
   }
   // Create a copy of the roots array, and iterate over the copy. This is so
   // that if an element is removed from mRoots we don't mess up our iteration.
-  nsTArray<nsWeakPtr> roots(sInstance->mRoots);
+  nsTArray<nsWeakPtr> roots(sInstance->mRoots.Clone());
   // Call aFunction on all entries.
   for (uint32_t i = 0; i < roots.Length(); i++) {
     nsCOMPtr<Document> root = do_QueryReferent(roots[i]);
@@ -12968,6 +12979,18 @@ size_t Document::CountFullscreenElements() const {
 
 void Document::SetFullscreenRoot(Document* aRoot) {
   mFullscreenRoot = do_GetWeakReference(aRoot);
+}
+
+void Document::TryCancelDialog() {
+  // Check if the document is blocked by modal dialog
+  for (const nsWeakPtr& weakPtr : Reversed(mTopLayer)) {
+    nsCOMPtr<Element> element(do_QueryReferent(weakPtr));
+    if (HTMLDialogElement* dialog =
+            HTMLDialogElement::FromNodeOrNull(element)) {
+      dialog->QueueCancelDialog();
+      break;
+    }
+  }
 }
 
 already_AddRefed<Promise> Document::ExitFullscreen(ErrorResult& aRv) {
@@ -16178,7 +16201,12 @@ nsICookieJarSettings* Document::CookieJarSettings() {
     mCookieJarSettings =
         inProcessParent
             ? net::CookieJarSettings::Create(
-                  inProcessParent->CookieJarSettings()->GetCookieBehavior())
+                  inProcessParent->CookieJarSettings()->GetCookieBehavior(),
+                  mozilla::net::CookieJarSettings::Cast(
+                      inProcessParent->CookieJarSettings())
+                      ->GetFirstPartyDomain(),
+                  inProcessParent->CookieJarSettings()
+                      ->GetIsFirstPartyIsolated())
             : net::CookieJarSettings::Create();
 
     if (auto* wgc = GetWindowGlobalChild()) {
@@ -16201,7 +16229,7 @@ bool Document::HasStoragePermission() {
   // it is set in the parent process, so we need to check the cache
   // to see if the permission is granted afterwards.
   nsPIDOMWindowInner* inner = GetInnerWindow();
-  if (ContentBlocking::HasStorageAccessGranted(inner)) {
+  if (inner && inner->HasStorageAccessGranted()) {
     return true;
   }
 
@@ -16293,8 +16321,10 @@ void Document::RemoveToplevelLoadingDocument(Document* aDoc) {
   }
 }
 
-StylePrefersColorScheme Document::PrefersColorScheme() const {
-  if (nsContentUtils::ShouldResistFingerprinting(this)) {
+StylePrefersColorScheme Document::PrefersColorScheme(
+    IgnoreRFP aIgnoreRFP) const {
+  if (aIgnoreRFP == IgnoreRFP::No &&
+      nsContentUtils::ShouldResistFingerprinting(this)) {
     return StylePrefersColorScheme::Light;
   }
 

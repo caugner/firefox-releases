@@ -804,13 +804,14 @@ bool js::CallSetter(JSContext* cx, HandleValue thisv, HandleValue setter,
 }
 
 bool js::ExecuteKernel(JSContext* cx, HandleScript script,
-                       JSObject& envChainArg, const Value& newTargetValue,
-                       AbstractFramePtr evalInFrame, Value* result) {
+                       HandleObject envChainArg, HandleValue newTargetValue,
+                       AbstractFramePtr evalInFrame,
+                       MutableHandleValue result) {
   MOZ_ASSERT_IF(script->isGlobalCode(),
-                IsGlobalLexicalEnvironment(&envChainArg) ||
-                    !IsSyntacticEnvironment(&envChainArg));
+                IsGlobalLexicalEnvironment(envChainArg) ||
+                    !IsSyntacticEnvironment(envChainArg));
 #ifdef DEBUG
-  RootedObject terminatingEnv(cx, &envChainArg);
+  RootedObject terminatingEnv(cx, envChainArg);
   while (IsSyntacticEnvironment(terminatingEnv)) {
     terminatingEnv = terminatingEnv->enclosingEnvironment();
   }
@@ -829,9 +830,7 @@ bool js::ExecuteKernel(JSContext* cx, HandleScript script,
   }
 
   if (script->isEmpty()) {
-    if (result) {
-      result->setUndefined();
-    }
+    result.setUndefined();
     return true;
   }
 
@@ -844,11 +843,10 @@ bool js::ExecuteKernel(JSContext* cx, HandleScript script,
   return ok;
 }
 
-bool js::Execute(JSContext* cx, HandleScript script, JSObject& envChainArg,
-                 Value* rval) {
+bool js::Execute(JSContext* cx, HandleScript script, HandleObject envChain,
+                 MutableHandleValue rval) {
   /* The env chain is something we control, so we know it can't
      have any outer objects on it. */
-  RootedObject envChain(cx, &envChainArg);
   MOZ_ASSERT(!IsWindowProxy(envChain));
 
   if (script->isModule()) {
@@ -871,7 +869,7 @@ bool js::Execute(JSContext* cx, HandleScript script, JSObject& envChainArg,
   } while ((s = s->enclosingEnvironment()));
 #endif
 
-  return ExecuteKernel(cx, script, *envChain, NullValue(),
+  return ExecuteKernel(cx, script, envChain, NullHandleValue,
                        NullFramePtr() /* evalInFrame */, rval);
 }
 
@@ -2963,15 +2961,6 @@ static MOZ_NEVER_INLINE JS_HAZ_JSNATIVE_CALLER bool Interpret(JSContext* cx,
     }
     END_CASE(CheckIsObj)
 
-    CASE(CheckIsCallable) {
-      if (!IsCallable(REGS.sp[-1])) {
-        MOZ_ALWAYS_FALSE(
-            ThrowCheckIsCallable(cx, CheckIsCallableKind(GET_UINT8(REGS.pc))));
-        goto error;
-      }
-    }
-    END_CASE(CheckIsCallable)
-
     CASE(CheckThis) {
       if (REGS.sp[-1].isMagic(JS_UNINITIALIZED_LEXICAL)) {
         MOZ_ALWAYS_FALSE(ThrowUninitializedThis(cx));
@@ -3971,7 +3960,7 @@ static MOZ_NEVER_INLINE JS_HAZ_JSNATIVE_CALLER bool Interpret(JSContext* cx,
 
     CASE(NewArray) {
       uint32_t length = GET_UINT32(REGS.pc);
-      JSObject* obj = NewArrayOperation(cx, script, REGS.pc, length);
+      ArrayObject* obj = NewArrayOperation(cx, script, REGS.pc, length);
       if (!obj) {
         goto error;
       }
@@ -5508,9 +5497,9 @@ JSObject* js::CreateThisWithTemplate(JSContext* cx,
   return NewObjectOperationWithTemplate(cx, templateObject);
 }
 
-JSObject* js::NewArrayOperation(JSContext* cx, HandleScript script,
-                                jsbytecode* pc, uint32_t length,
-                                NewObjectKind newKind /* = GenericObject */) {
+ArrayObject* js::NewArrayOperation(
+    JSContext* cx, HandleScript script, jsbytecode* pc, uint32_t length,
+    NewObjectKind newKind /* = GenericObject */) {
   MOZ_ASSERT(JSOp(*pc) == JSOp::NewArray);
   MOZ_ASSERT(newKind != SingletonObject);
 
@@ -5543,8 +5532,8 @@ JSObject* js::NewArrayOperation(JSContext* cx, HandleScript script,
   return obj;
 }
 
-JSObject* js::NewArrayOperationWithTemplate(JSContext* cx,
-                                            HandleObject templateObject) {
+ArrayObject* js::NewArrayOperationWithTemplate(JSContext* cx,
+                                               HandleObject templateObject) {
   MOZ_ASSERT(!templateObject->isSingleton());
 
   NewObjectKind newKind;
@@ -5646,18 +5635,6 @@ bool js::ThrowCheckIsObject(JSContext* cx, CheckIsObjectKind kind) {
     case CheckIsObjectKind::GetAsyncIterator:
       JS_ReportErrorNumberASCII(cx, GetErrorMessage, nullptr,
                                 JSMSG_GET_ASYNC_ITER_RETURNED_PRIMITIVE);
-      break;
-    default:
-      MOZ_CRASH("Unknown kind");
-  }
-  return false;
-}
-
-bool js::ThrowCheckIsCallable(JSContext* cx, CheckIsCallableKind kind) {
-  switch (kind) {
-    case CheckIsCallableKind::IteratorReturn:
-      JS_ReportErrorNumberASCII(cx, GetErrorMessage, nullptr,
-                                JSMSG_RETURN_NOT_CALLABLE);
       break;
     default:
       MOZ_CRASH("Unknown kind");

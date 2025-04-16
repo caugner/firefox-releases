@@ -4,22 +4,19 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
+#include "ProfileBufferEntry.h"
+
+#include <ostream>
+#include <type_traits>
+
+#include "mozilla/Logging.h"
+#include "mozilla/Sprintf.h"
+#include "mozilla/StackWalk.h"
+
 #include "BaseProfiler.h"
-
-#ifdef MOZ_BASE_PROFILER
-
-#  include "ProfileBufferEntry.h"
-
-#  include "BaseProfilerMarkerPayload.h"
-#  include "platform.h"
-#  include "ProfileBuffer.h"
-
-#  include "mozilla/Logging.h"
-#  include "mozilla/Sprintf.h"
-#  include "mozilla/StackWalk.h"
-
-#  include <ostream>
-#  include <type_traits>
+#include "BaseProfilerMarkerPayload.h"
+#include "platform.h"
+#include "ProfileBuffer.h"
 
 namespace mozilla {
 namespace baseprofiler {
@@ -341,6 +338,9 @@ struct CStringWriteFunc : public JSONWriteFunc {
   explicit CStringWriteFunc(std::string& aBuffer) : mBuffer(aBuffer) {}
 
   void Write(const char* aStr) override { mBuffer += aStr; }
+  void Write(const char* aStr, size_t aLen) override {
+    mBuffer.append(aStr, 0, aLen);
+  }
 };
 
 struct ProfileSample {
@@ -526,15 +526,6 @@ class EntryGetter {
 //     LineNumber(945)
 //     CategoryPair(ProfilingCategoryPair::JS)
 //
-// - A profiling stack frame with a dynamic string, but with privacy enabled:
-//
-//     Label("nsObserverService::NotifyObservers")
-//     FrameFlags(uint64_t(ProfilingStackFrame::Flags::IS_LABEL_FRAME))
-//     DynamicStringFragment("(private")
-//     DynamicStringFragment(")")
-//     LineNumber(291)
-//     CategoryPair(ProfilingCategoryPair::OTHER)
-//
 // - A profiling stack frame with an overly long dynamic string:
 //
 //     Label("")
@@ -577,12 +568,12 @@ class EntryGetter {
 // Because this is a format entirely internal to the Profiler, any parsing
 // error indicates a bug in the ProfileBuffer writing or the parser itself,
 // or possibly flaky hardware.
-#  define ERROR_AND_CONTINUE(msg)                            \
-    {                                                        \
-      fprintf(stderr, "ProfileBuffer parse error: %s", msg); \
-      MOZ_ASSERT(false, msg);                                \
-      continue;                                              \
-    }
+#define ERROR_AND_CONTINUE(msg)                            \
+  {                                                        \
+    fprintf(stderr, "ProfileBuffer parse error: %s", msg); \
+    MOZ_ASSERT(false, msg);                                \
+    continue;                                              \
+  }
 
 void ProfileBuffer::StreamSamplesToJSON(SpliceableJSONWriter& aWriter,
                                         int aThreadId, double aSinceTime,
@@ -666,11 +657,11 @@ void ProfileBuffer::StreamSamplesToJSON(SpliceableJSONWriter& aWriter,
           unsigned long long pcULL = (unsigned long long)(uintptr_t)pc;
           SprintfLiteral(buf, "%#llx", pcULL);
 
-          // If the "MOZ_BASE_PROFILER_SYMBOLICATE" env-var is set, we add a
-          // local symbolication description to the PC address. This is off by
+          // If the "MOZ_PROFILER_SYMBOLICATE" env-var is set, we add a local
+          // symbolication description to the PC address. This is off by
           // default, and mainly intended for local development.
           static const bool preSymbolicate = []() {
-            const char* symbolicate = getenv("MOZ_BASE_PROFILER_SYMBOLICATE");
+            const char* symbolicate = getenv("MOZ_PROFILER_SYMBOLICATE");
             return symbolicate && symbolicate[0] != '\0';
           }();
           if (preSymbolicate) {
@@ -959,17 +950,17 @@ void ProfileBuffer::StreamProfilerOverheadToJSON(
       aWriter.DoubleProperty("overheadDurations", overheads.sum);
       aWriter.DoubleProperty("overheadPercentage",
                              overheads.sum / (lastTime - firstTime));
-#  define PROFILER_STATS(name, var)                           \
-    aWriter.DoubleProperty("mean" name, (var).sum / (var).n); \
-    aWriter.DoubleProperty("min" name, (var).min);            \
-    aWriter.DoubleProperty("max" name, (var).max);
+#define PROFILER_STATS(name, var)                           \
+  aWriter.DoubleProperty("mean" name, (var).sum / (var).n); \
+  aWriter.DoubleProperty("min" name, (var).min);            \
+  aWriter.DoubleProperty("max" name, (var).max);
       PROFILER_STATS("Interval", intervals);
       PROFILER_STATS("Overhead", overheads);
       PROFILER_STATS("Lockings", lockings);
       PROFILER_STATS("Cleaning", cleanings);
       PROFILER_STATS("Counter", counters);
       PROFILER_STATS("Thread", threads);
-#  undef PROFILER_STATS
+#undef PROFILER_STATS
       aWriter.EndObject();  // statistics
     }
     aWriter.EndObject();  // profilerOverhead
@@ -1162,7 +1153,7 @@ void ProfileBuffer::StreamCountersToJSON(SpliceableJSONWriter& aWriter,
   });
 }
 
-#  undef ERROR_AND_CONTINUE
+#undef ERROR_AND_CONTINUE
 
 static void AddPausedRange(SpliceableJSONWriter& aWriter, const char* aReason,
                            const Maybe<double>& aStartTime,
@@ -1376,5 +1367,3 @@ void ProfileBuffer::DiscardSamplesBeforeTime(double aTime) {
 
 }  // namespace baseprofiler
 }  // namespace mozilla
-
-#endif  // MOZ_BASE_PROFILER

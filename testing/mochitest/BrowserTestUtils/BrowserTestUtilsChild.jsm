@@ -264,7 +264,9 @@ class BrowserTestUtilsChild extends JSWindowActorChild {
       case "load": {
         this.sendAsyncMessage(aEvent.type, {
           internalURL: aEvent.target.documentURI,
-          visibleURL: aEvent.target.location.href,
+          visibleURL: aEvent.target.location
+            ? aEvent.target.location.href
+            : null,
         });
         break;
       }
@@ -292,7 +294,8 @@ class BrowserTestUtilsChild extends JSWindowActorChild {
         // Account for nodes found in iframes.
         let cur = target;
         do {
-          let frame = cur.ownerGlobal.frameElement;
+          // eslint-disable-next-line mozilla/use-ownerGlobal
+          let frame = cur.ownerDocument.defaultView.frameElement;
           let rect = frame.getBoundingClientRect();
 
           left += rect.left;

@@ -307,8 +307,6 @@ class nsGlobalWindowInner final : public mozilla::dom::EventTarget,
 
   nsresult PostHandleEvent(mozilla::EventChainPostVisitor& aVisitor) override;
 
-  void ClearActiveStoragePrincipal();
-
   void Suspend();
   void Resume();
   virtual bool IsSuspended() const override;
@@ -875,13 +873,11 @@ class nsGlobalWindowInner final : public mozilla::dom::EventTarget,
                   mozilla::ErrorResult& aError);
 
   already_AddRefed<mozilla::dom::Promise> CreateImageBitmap(
-      JSContext* aCx, const mozilla::dom::ImageBitmapSource& aImage,
-      mozilla::ErrorResult& aRv);
+      const mozilla::dom::ImageBitmapSource& aImage, mozilla::ErrorResult& aRv);
 
   already_AddRefed<mozilla::dom::Promise> CreateImageBitmap(
-      JSContext* aCx, const mozilla::dom::ImageBitmapSource& aImage,
-      int32_t aSx, int32_t aSy, int32_t aSw, int32_t aSh,
-      mozilla::ErrorResult& aRv);
+      const mozilla::dom::ImageBitmapSource& aImage, int32_t aSx, int32_t aSy,
+      int32_t aSw, int32_t aSh, mozilla::ErrorResult& aRv);
 
   // ChromeWindow bits.  Do NOT call these unless your window is in
   // fact chrome.
@@ -1204,6 +1200,8 @@ class nsGlobalWindowInner final : public mozilla::dom::EventTarget,
   // Try to fire the "load" event on our content embedder if we're an iframe.
   void FireFrameLoadEvent();
 
+  void UpdateAutoplayPermission();
+
  public:
   // Dispatch a runnable related to the global.
   virtual nsresult Dispatch(mozilla::TaskCategory aCategory,
@@ -1258,10 +1256,6 @@ class nsGlobalWindowInner final : public mozilla::dom::EventTarget,
   // event.
   bool mNeedsFocus : 1;
   bool mHasFocus : 1;
-
-  // when true, show focus rings for the current focused content only.
-  // This will be reset when another element is focused
-  bool mShowFocusRingForContent : 1;
 
   // true if tab navigation has occurred for this window. Focus rings
   // should be displayed.

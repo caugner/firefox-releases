@@ -1668,9 +1668,9 @@ void AppWindow::SyncAttributesToWidget() {
 
   NS_ENSURE_TRUE_VOID(mWindow);
 
-  // "fullscreenbutton" attribute
-  windowElement->GetAttribute(NS_LITERAL_STRING("fullscreenbutton"), attr);
-  mWindow->SetShowsFullScreenButton(attr.LowerCaseEqualsLiteral("true"));
+  // "macnativefullscreen" attribute
+  windowElement->GetAttribute(NS_LITERAL_STRING("macnativefullscreen"), attr);
+  mWindow->SetSupportsNativeFullscreen(attr.LowerCaseEqualsLiteral("true"));
 
   NS_ENSURE_TRUE_VOID(mWindow);
 

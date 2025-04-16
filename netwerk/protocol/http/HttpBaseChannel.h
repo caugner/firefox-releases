@@ -319,6 +319,7 @@ class HttpBaseChannel : public nsHashPropertyBag,
   NS_IMETHOD ComputeCrossOriginOpenerPolicy(
       nsILoadInfo::CrossOriginOpenerPolicy aInitiatorPolicy,
       nsILoadInfo::CrossOriginOpenerPolicy* aOutPolicy) override;
+  NS_IMETHOD HasCrossOriginOpenerPolicyMismatch(bool* aIsMismatch) override;
   NS_IMETHOD GetResponseEmbedderPolicy(
       nsILoadInfo::CrossOriginEmbedderPolicy* aOutPolicy) override;
   virtual bool GetHasNonEmptySandboxingFlag() override {
@@ -568,7 +569,7 @@ class HttpBaseChannel : public nsHashPropertyBag,
 
   // Redirect tracking
   // Checks whether or not aURI and mOriginalURI share the same domain.
-  bool SameOriginWithOriginalUri(nsIURI* aURI);
+  virtual bool SameOriginWithOriginalUri(nsIURI* aURI);
 
   // GetPrincipal Returns the channel's URI principal.
   nsIPrincipal* GetURIPrincipal();
@@ -599,6 +600,12 @@ class HttpBaseChannel : public nsHashPropertyBag,
   void MaybeFlushConsoleReports();
 
   bool IsBrowsingContextDiscarded() const;
+
+  nsresult ProcessCrossOriginEmbedderPolicyHeader();
+
+  nsresult ProcessCrossOriginResourcePolicyHeader();
+
+  nsresult ComputeCrossOriginOpenerPolicyMismatch();
 
   friend class PrivateBrowsingChannel<HttpBaseChannel>;
   friend class InterceptFailedOnStop;
@@ -886,6 +893,10 @@ class HttpBaseChannel : public nsHashPropertyBag,
   void RemoveAsNonTailRequest();
 
   void EnsureTopLevelOuterContentWindowId();
+
+  // True if this is a navigation to a page with a different cross origin
+  // opener policy ( see ComputeCrossOriginOpenerPolicyMismatch )
+  uint32_t mHasCrossOriginOpenerPolicyMismatch : 1;
 };
 
 NS_DEFINE_STATIC_IID_ACCESSOR(HttpBaseChannel, HTTP_BASE_CHANNEL_IID)

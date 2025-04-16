@@ -172,7 +172,7 @@ class Element : public FragmentOrElement {
 #ifdef MOZILLA_INTERNAL_API
   explicit Element(already_AddRefed<mozilla::dom::NodeInfo>&& aNodeInfo)
       : FragmentOrElement(std::move(aNodeInfo)),
-        mState(NS_EVENT_STATE_MOZ_READONLY | NS_EVENT_STATE_DEFINED) {
+        mState(NS_EVENT_STATE_READONLY | NS_EVENT_STATE_DEFINED) {
     MOZ_ASSERT(mNodeInfo->NodeType() == ELEMENT_NODE,
                "Bad NodeType in aNodeInfo");
     SetIsElement();
@@ -1384,6 +1384,8 @@ class Element : public FragmentOrElement {
                                     PseudoStyleType aPseudoType,
                                     nsTArray<RefPtr<Animation>>& aAnimations);
 
+  void CloneAnimationsFrom(const Element& aOther);
+
   virtual void GetInnerHTML(nsAString& aInnerHTML, OOMReporter& aError);
   virtual void SetInnerHTML(const nsAString& aInnerHTML,
                             nsIPrincipal* aSubjectPrincipal,
@@ -1616,8 +1618,8 @@ class Element : public FragmentOrElement {
 
   void GetImplementedPseudoElement(nsAString&) const;
 
-  ReferrerPolicy GetReferrerPolicyAsEnum();
-  ReferrerPolicy ReferrerPolicyFromAttr(const nsAttrValue* aValue);
+  ReferrerPolicy GetReferrerPolicyAsEnum() const;
+  ReferrerPolicy ReferrerPolicyFromAttr(const nsAttrValue* aValue) const;
 
   /*
    * Helpers for .dataset.  This is implemented on Element, though only some

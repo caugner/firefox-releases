@@ -91,6 +91,7 @@ bool TypedArrayObject::convertForSideEffect(JSContext* cx,
     }
     case Scalar::MaxTypedArrayViewType:
     case Scalar::Int64:
+    case Scalar::Simd128:
       MOZ_CRASH("Unsupported TypedArray type");
   }
   MOZ_ASSERT_UNREACHABLE("Invalid scalar type");
@@ -268,7 +269,7 @@ bool TypedArrayObject::hasInlineElements() const {
 }
 
 void TypedArrayObject::setInlineElements() {
-  char* dataSlot = reinterpret_cast<char*>(this) + this->dataOffset();
+  char* dataSlot = reinterpret_cast<char*>(this) + dataOffset();
   *reinterpret_cast<void**>(dataSlot) =
       this->fixedData(TypedArrayObject::FIXED_DATA_START);
 }
@@ -526,7 +527,7 @@ class TypedArrayObjectTemplate : public TypedArrayObject {
       InitObjectPrivate(tarray, buf, nbytes, MemoryUse::TypedArrayElements);
     } else {
 #ifdef DEBUG
-      constexpr size_t dataOffset = TypedArrayObject::dataOffset();
+      constexpr size_t dataOffset = ArrayBufferViewObject::dataOffset();
       constexpr size_t offset = dataOffset + sizeof(HeapSlot);
       MOZ_ASSERT(offset + nbytes <= GetGCKindBytes(allocKind));
 #endif
@@ -2073,6 +2074,7 @@ bool TypedArrayObject::getElement<CanGC>(JSContext* cx, uint32_t index,
 #undef GET_ELEMENT
     case Scalar::MaxTypedArrayViewType:
     case Scalar::Int64:
+    case Scalar::Simd128:
       break;
   }
 
@@ -2097,6 +2099,7 @@ bool TypedArrayObject::getElementPure(uint32_t index, Value* vp) {
 #undef GET_ELEMENT
     case Scalar::MaxTypedArrayViewType:
     case Scalar::Int64:
+    case Scalar::Simd128:
       break;
   }
 
@@ -2124,6 +2127,7 @@ bool TypedArrayObject::getElements(JSContext* cx,
 #undef GET_ELEMENTS
     case Scalar::MaxTypedArrayViewType:
     case Scalar::Int64:
+    case Scalar::Simd128:
       break;
   }
 
@@ -2496,6 +2500,7 @@ bool js::SetTypedArrayElement(JSContext* cx, Handle<TypedArrayObject*> obj,
 #undef SET_TYPED_ARRAY_ELEMENT
     case Scalar::MaxTypedArrayViewType:
     case Scalar::Int64:
+    case Scalar::Simd128:
       break;
   }
 
@@ -2555,6 +2560,7 @@ bool js::DefineTypedArrayElement(JSContext* cx, HandleObject obj,
 #undef DEFINE_TYPED_ARRAY_ELEMENT
       case Scalar::MaxTypedArrayViewType:
       case Scalar::Int64:
+      case Scalar::Simd128:
         break;
     }
 

@@ -18,6 +18,7 @@
 #include "nsServiceManagerUtils.h"
 #include "nsNetCID.h"
 #include "nsIPrefBranch.h"
+#include "mozilla/dom/Document.h"
 #include "mozilla/Unused.h"
 #include "mozilla/net/CookieJarSettings.h"
 #include "Cookie.h"
@@ -107,16 +108,6 @@ void SetACookie(nsICookieService* aCookieService, const char* aSpec,
   SetACookieInternal(aCookieService, aSpec, aCookieString, true);
 }
 
-void SetACookieNoHttp(nsICookieService* aCookieService, const char* aSpec,
-                      const char* aCookieString) {
-  nsCOMPtr<nsIURI> uri;
-  NS_NewURI(getter_AddRefs(uri), aSpec);
-
-  nsresult rv = aCookieService->SetCookieString(
-      uri, nsDependentCString(aCookieString), nullptr);
-  EXPECT_TRUE(NS_SUCCEEDED(rv));
-}
-
 // The cookie string is returned via aCookie.
 void GetACookie(nsICookieService* aCookieService, const char* aSpec,
                 nsACString& aCookie) {
@@ -144,7 +135,18 @@ void GetACookieNoHttp(nsICookieService* aCookieService, const char* aSpec,
       BasePrincipal::CreateContentPrincipal(uri, OriginAttributes());
   MOZ_ASSERT(principal);
 
-  Unused << aCookieService->GetCookieStringForPrincipal(principal, aCookie);
+  nsCOMPtr<mozilla::dom::Document> document;
+  nsresult rv = NS_NewDOMDocument(getter_AddRefs(document),
+                                  EmptyString(),  // aNamespaceURI
+                                  EmptyString(),  // aQualifiedName
+                                  nullptr,        // aDoctype
+                                  uri, uri, principal,
+                                  false,    // aLoadedAsData
+                                  nullptr,  // aEventObject
+                                  DocumentFlavorHTML);
+  Unused << NS_WARN_IF(NS_FAILED(rv));
+
+  Unused << aCookieService->GetCookieStringFromDocument(document, aCookie);
 }
 
 // some #defines for comparison rules
@@ -626,52 +628,6 @@ TEST(TestCookie, TestCookieMain)
                           "test7=path; test6=path; test3=path; test1=path; "
                           "test5=path; test4=path; test2=path; test8=path"));
 
-  // *** httponly tests
-
-  // Since this cookie is NOT set via http, setting it fails
-  SetACookieNoHttp(cookieService, "http://httponly.test/",
-                   "test=httponly; httponly");
-  GetACookie(cookieService, "http://httponly.test/", cookie);
-  EXPECT_TRUE(CheckResult(cookie.get(), MUST_BE_NULL));
-  // Since this cookie is set via http, it can be retrieved
-  SetACookie(cookieService, "http://httponly.test/", "test=httponly; httponly");
-  GetACookie(cookieService, "http://httponly.test/", cookie);
-  EXPECT_TRUE(CheckResult(cookie.get(), MUST_EQUAL, "test=httponly"));
-  // ... but not by web content
-  GetACookieNoHttp(cookieService, "http://httponly.test/", cookie);
-  EXPECT_TRUE(CheckResult(cookie.get(), MUST_BE_NULL));
-  // Non-Http cookies should not replace HttpOnly cookies
-  SetACookie(cookieService, "http://httponly.test/", "test=httponly; httponly");
-  SetACookieNoHttp(cookieService, "http://httponly.test/", "test=not-httponly");
-  GetACookie(cookieService, "http://httponly.test/", cookie);
-  EXPECT_TRUE(CheckResult(cookie.get(), MUST_EQUAL, "test=httponly"));
-  // ... and, if an HttpOnly cookie already exists, should not be set at all
-  GetACookieNoHttp(cookieService, "http://httponly.test/", cookie);
-  EXPECT_TRUE(CheckResult(cookie.get(), MUST_BE_NULL));
-  // Non-Http cookies should not delete HttpOnly cookies
-  SetACookie(cookieService, "http://httponly.test/", "test=httponly; httponly");
-  SetACookieNoHttp(cookieService, "http://httponly.test/",
-                   "test=httponly; max-age=-1");
-  GetACookie(cookieService, "http://httponly.test/", cookie);
-  EXPECT_TRUE(CheckResult(cookie.get(), MUST_EQUAL, "test=httponly"));
-  // ... but HttpOnly cookies should
-  SetACookie(cookieService, "http://httponly.test/",
-             "test=httponly; httponly; max-age=-1");
-  GetACookie(cookieService, "http://httponly.test/", cookie);
-  EXPECT_TRUE(CheckResult(cookie.get(), MUST_BE_NULL));
-  // Non-Httponly cookies can replace HttpOnly cookies when set over http
-  SetACookie(cookieService, "http://httponly.test/", "test=httponly; httponly");
-  SetACookie(cookieService, "http://httponly.test/", "test=not-httponly");
-  GetACookieNoHttp(cookieService, "http://httponly.test/", cookie);
-  EXPECT_TRUE(CheckResult(cookie.get(), MUST_EQUAL, "test=not-httponly"));
-  // scripts should not be able to set httponly cookies by replacing an existing
-  // non-httponly cookie
-  SetACookie(cookieService, "http://httponly.test/", "test=not-httponly");
-  SetACookieNoHttp(cookieService, "http://httponly.test/",
-                   "test=httponly; httponly");
-  GetACookieNoHttp(cookieService, "http://httponly.test/", cookie);
-  EXPECT_TRUE(CheckResult(cookie.get(), MUST_EQUAL, "test=not-httponly"));
-
   // *** Cookie prefix tests
 
   // prefixed cookies can't be set from insecure HTTP
@@ -1070,6 +1026,7 @@ TEST(TestCookie, SameSiteLax)
 TEST(TestCookie, OnionSite)
 {
   Preferences::SetBool("dom.securecontext.whitelist_onions", true);
+  Preferences::SetBool("network.cookie.sameSite.laxByDefault", false);
 
   nsresult rv;
   nsCString cookie;

@@ -138,10 +138,8 @@ class FontList {
   /**
    * Look up a Family record by name, typically to satisfy the font-family
    * property or a font family listed in preferences.
-   * If aAllowHidden is true, "system" font families normally not exposed
-   * to users may be found.
    */
-  Family* FindFamily(const nsCString& aName, bool aAllowHidden = false);
+  Family* FindFamily(const nsCString& aName);
 
   /**
    * Look up an individual Face by PostScript or Full name, for @font-face
@@ -222,7 +220,9 @@ class FontList {
 
   /**
    * Used by the parent process to pass a handle to a shared block to a
-   * specific child process.
+   * specific child process. This is used when a child process requests
+   * an additional block that was not already passed to it (because the
+   * list has changed/grown since the child was first initialized).
    */
   void ShareShmBlockToProcess(uint32_t aIndex, base::ProcessId aPid,
                               base::SharedMemoryHandle* aOut) {
@@ -235,6 +235,14 @@ class FontList {
       MOZ_CRASH("failed to share block");
     }
   }
+
+  /**
+   * Collect an array of handles to all the shmem blocks, ready to be
+   * shared to the given process. This is used at child process startup
+   * to pass the complete list at once.
+   */
+  void ShareBlocksToProcess(nsTArray<base::SharedMemoryHandle>* aBlocks,
+                            base::ProcessId aPid);
 
   /**
    * Support for memory reporter.

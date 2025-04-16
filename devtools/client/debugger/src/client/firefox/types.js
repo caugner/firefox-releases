@@ -13,9 +13,7 @@
 import type {
   BreakpointLocation,
   BreakpointOptions,
-  FrameId,
   ActorId,
-  Script,
   PendingLocation,
   SourceId,
   Range,
@@ -189,7 +187,7 @@ export type Target = {
   off: (string, Function) => void,
   on: (string, Function) => void,
   emit: (string, any) => void,
-  getFront: string => Promise<ConsoleFront>,
+  getFront: string => Promise<*>,
   form: { consoleActor: any },
   root: any,
   navigateTo: ({ url: URL }) => Promise<*>,
@@ -209,24 +207,10 @@ export type Target = {
   isParentProcess: boolean,
   isServiceWorker: boolean,
   targetForm: Object,
+  reconfigure: Object,
 
   // Property installed by the debugger itself.
   debuggerServiceWorkerStatus: string,
-};
-
-type ConsoleFront = {
-  evaluateJSAsync: (
-    script: Script,
-    func: Function,
-    params?: { frameActor: ?FrameId }
-  ) => Promise<{ result: ExpressionResult }>,
-  autocomplete: (
-    input: string,
-    cursor: number,
-    func: Function,
-    frameId: ?string
-  ) => void,
-  emit: (string, any) => void,
 };
 
 /**
@@ -272,7 +256,7 @@ type ProcessDescriptor = Object;
 export type TargetList = {
   watchTargets: (Array<string>, Function, Function) => void,
   unwatchTargets: (Array<string>, Function, Function) => void,
-  getAllTargets: string => Array<Target>,
+  getAllTargets: (Array<string>) => Array<Target>,
   targetFront: Target,
   TYPES: {
     FRAME: string,

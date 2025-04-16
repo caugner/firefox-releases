@@ -15,6 +15,7 @@
 #include "nsIWebProgressListener.h"
 #include "nsContentUtils.h"
 #include "mozilla/dom/BrowsingContext.h"
+#include "mozilla/dom/WindowContext.h"
 #include "mozilla/dom/Document.h"
 #include "nsIChannel.h"
 #include "nsIParentChannel.h"
@@ -33,6 +34,7 @@
 #include "mozilla/LoadInfo.h"
 #include "nsISiteSecurityService.h"
 #include "prnetdb.h"
+#include "nsQueryObject.h"
 
 #include "mozilla/BasePrincipal.h"
 #include "mozilla/Logging.h"
@@ -43,6 +45,7 @@
 #include "mozilla/dom/ContentChild.h"
 #include "mozilla/ipc/URIUtils.h"
 #include "mozilla/net/DNS.h"
+#include "mozilla/net/DocumentLoadListener.h"
 
 using namespace mozilla;
 using namespace mozilla::dom;
@@ -61,158 +64,15 @@ enum MixedContentHSTSState {
   MCB_HSTS_ACTIVE_WITH_HSTS = 3
 };
 
-// Fired at the document that attempted to load mixed content.  The UI could
-// handle this event, for example, by displaying an info bar that offers the
-// choice to reload the page with mixed content permitted.
-class nsMixedContentEvent : public Runnable {
- public:
-  nsMixedContentEvent(nsISupports* aContext, MixedContentTypes aType,
-                      bool aRootHasSecureConnection)
-      : mozilla::Runnable("nsMixedContentEvent"),
-        mContext(aContext),
-        mType(aType),
-        mRootHasSecureConnection(aRootHasSecureConnection) {}
-
-  NS_IMETHOD Run() override {
-    NS_ASSERTION(mContext,
-                 "You can't call this runnable without a requesting context");
-
-    // To update the security UI in the tab with the blocked mixed content, call
-    // nsDocLoader::OnSecurityChange.
-
-    // Mixed content was allowed and is about to load; get the document and
-    // set the approriate flag to true if we are about to load Mixed Active
-    // Content.
-    nsCOMPtr<nsIDocShell> docShell = NS_CP_GetDocShellFromContext(mContext);
-    if (!docShell) {
-      return NS_OK;
-    }
-
-    nsCOMPtr<nsIDocShell> rootShell =
-        docShell->GetBrowsingContext()->Top()->GetDocShell();
-    if (!rootShell) {
-      return NS_OK;
-    }
-
-    // now get the document from sameTypeRoot
-    nsCOMPtr<Document> rootDoc = rootShell->GetDocument();
-    NS_ASSERTION(rootDoc,
-                 "No root document from document shell root tree item.");
-
-    nsDocShell* nativeDocShell = nsDocShell::Cast(docShell);
-    uint32_t state = nsIWebProgressListener::STATE_IS_BROKEN;
-    nsCOMPtr<nsISecureBrowserUI> securityUI;
-    rootShell->GetSecurityUI(getter_AddRefs(securityUI));
-    // If there is no securityUI, document doesn't have a security state to
-    // update.  But we still want to set the document flags, so we don't return
-    // early.
-    nsresult stateRV = NS_ERROR_FAILURE;
-    if (securityUI) {
-      stateRV = securityUI->GetState(&state);
-    }
-
-    if (mType == eMixedScript) {
-      // See if the pref will change here. If it will, only then do we need to
-      // call OnSecurityChange() to update the UI.
-      if (rootDoc->GetHasMixedActiveContentLoaded()) {
-        return NS_OK;
-      }
-      rootDoc->SetHasMixedActiveContentLoaded(true);
-
-      // Update the security UI in the tab with the allowed mixed active content
-      if (securityUI) {
-        // Bug 1182551 - before changing the security state to broken, check
-        // that the root is actually secure.
-        if (mRootHasSecureConnection) {
-          // reset state security flag
-          state = state >> 4 << 4;
-          // set state security flag to broken, since there is mixed content
-          state |= nsIWebProgressListener::STATE_IS_BROKEN;
-
-          // If mixed display content is loaded, make sure to include that in
-          // the state.
-          if (rootDoc->GetHasMixedDisplayContentLoaded()) {
-            state |= nsIWebProgressListener::STATE_LOADED_MIXED_DISPLAY_CONTENT;
-          }
-
-          nativeDocShell->nsDocLoader::OnSecurityChange(
-              mContext,
-              (state |
-               nsIWebProgressListener::STATE_LOADED_MIXED_ACTIVE_CONTENT));
-        } else {
-          // root not secure, mixed active content loaded in an https subframe
-          if (NS_SUCCEEDED(stateRV)) {
-            nativeDocShell->nsDocLoader::OnSecurityChange(
-                mContext,
-                (state |
-                 nsIWebProgressListener::STATE_LOADED_MIXED_ACTIVE_CONTENT));
-          }
-        }
-      }
-
-    } else if (mType == eMixedDisplay) {
-      // See if the pref will change here. If it will, only then do we need to
-      // call OnSecurityChange() to update the UI.
-      if (rootDoc->GetHasMixedDisplayContentLoaded()) {
-        return NS_OK;
-      }
-      rootDoc->SetHasMixedDisplayContentLoaded(true);
-
-      // Update the security UI in the tab with the allowed mixed display
-      // content.
-      if (securityUI) {
-        // Bug 1182551 - before changing the security state to broken, check
-        // that the root is actually secure.
-        if (mRootHasSecureConnection) {
-          // reset state security flag
-          state = state >> 4 << 4;
-          // set state security flag to broken, since there is mixed content
-          state |= nsIWebProgressListener::STATE_IS_BROKEN;
-
-          // If mixed active content is loaded, make sure to include that in the
-          // state.
-          if (rootDoc->GetHasMixedActiveContentLoaded()) {
-            state |= nsIWebProgressListener::STATE_LOADED_MIXED_ACTIVE_CONTENT;
-          }
-
-          nativeDocShell->nsDocLoader::OnSecurityChange(
-              mContext,
-              (state |
-               nsIWebProgressListener::STATE_LOADED_MIXED_DISPLAY_CONTENT));
-        } else {
-          // root not secure, mixed display content loaded in an https subframe
-          if (NS_SUCCEEDED(stateRV)) {
-            nativeDocShell->nsDocLoader::OnSecurityChange(
-                mContext,
-                (state |
-                 nsIWebProgressListener::STATE_LOADED_MIXED_DISPLAY_CONTENT));
-          }
-        }
-      }
-    }
-
-    return NS_OK;
-  }
-
- private:
-  // The requesting context for the content load. Generally, a DOM node from
-  // the document that caused the load.
-  nsCOMPtr<nsISupports> mContext;
-
-  // The type of mixed content detected, e.g. active or display
-  const MixedContentTypes mType;
-
-  // Indicates whether the top level load is https or not.
-  bool mRootHasSecureConnection;
-};
-
 nsMixedContentBlocker::~nsMixedContentBlocker() = default;
 
 NS_IMPL_ISUPPORTS(nsMixedContentBlocker, nsIContentPolicy, nsIChannelEventSink)
 
 static void LogMixedContentMessage(
     MixedContentTypes aClassification, nsIURI* aContentLocation,
-    Document* aRootDoc, nsMixedContentBlockerMessageType aMessageType) {
+    uint64_t aInnerWindowID, nsMixedContentBlockerMessageType aMessageType,
+    nsIURI* aRequestingLocation,
+    const nsACString& aOverruleMessageLookUpKeyWithThis = EmptyCString()) {
   nsAutoCString messageCategory;
   uint32_t severityFlag;
   nsAutoCString messageLookupKey;
@@ -235,12 +95,24 @@ static void LogMixedContentMessage(
     }
   }
 
-  AutoTArray<nsString, 1> strings;
+  // if the callee explicitly wants to use a special message for this
+  // console report, then we allow to overrule the default with the
+  // explicitly provided one here.
+  if (!aOverruleMessageLookUpKeyWithThis.IsEmpty()) {
+    messageLookupKey = aOverruleMessageLookUpKeyWithThis;
+  }
+
+  nsAutoString localizedMsg;
+  AutoTArray<nsString, 1> params;
   CopyUTF8toUTF16(aContentLocation->GetSpecOrDefault(),
-                  *strings.AppendElement());
-  nsContentUtils::ReportToConsole(severityFlag, messageCategory, aRootDoc,
-                                  nsContentUtils::eSECURITY_PROPERTIES,
-                                  messageLookupKey.get(), strings);
+                  *params.AppendElement());
+  nsContentUtils::FormatLocalizedString(nsContentUtils::eSECURITY_PROPERTIES,
+                                        messageLookupKey.get(), params,
+                                        localizedMsg);
+
+  nsContentUtils::ReportToConsoleByWindowID(localizedMsg, severityFlag,
+                                            messageCategory, aInnerWindowID,
+                                            aRequestingLocation);
 }
 
 /* nsIChannelEventSink implementation
@@ -265,7 +137,9 @@ nsMixedContentBlocker::AsyncOnChannelRedirect(
   // on redirects in the parent.  Let the child check for mixed content.
   nsCOMPtr<nsIParentChannel> is_ipc_channel;
   NS_QueryNotificationCallbacks(aNewChannel, is_ipc_channel);
-  if (is_ipc_channel) {
+  RefPtr<net::DocumentLoadListener> docListener =
+      do_QueryObject(is_ipc_channel);
+  if (is_ipc_channel && !docListener) {
     return NS_OK;
   }
 
@@ -322,19 +196,12 @@ nsMixedContentBlocker::ShouldLoad(nsIURI* aContentLocation,
                                   nsILoadInfo* aLoadInfo,
                                   const nsACString& aMimeGuess,
                                   int16_t* aDecision) {
-  uint32_t contentType = aLoadInfo->InternalContentPolicyType();
-  nsCOMPtr<nsISupports> requestingContext = aLoadInfo->GetLoadingContext();
-  nsCOMPtr<nsIPrincipal> loadingPrincipal = aLoadInfo->GetLoadingPrincipal();
-  nsCOMPtr<nsIPrincipal> triggeringPrincipal = aLoadInfo->TriggeringPrincipal();
-
   // We pass in false as the first parameter to ShouldLoad(), because the
   // callers of this method don't know whether the load went through cached
   // image redirects.  This is handled by direct callers of the static
   // ShouldLoad.
-  nsresult rv =
-      ShouldLoad(false,  // aHadInsecureImageRedirect
-                 contentType, aContentLocation, loadingPrincipal,
-                 triggeringPrincipal, requestingContext, aMimeGuess, aDecision);
+  nsresult rv = ShouldLoad(false,  // aHadInsecureImageRedirect
+                           aContentLocation, aLoadInfo, aMimeGuess, aDecision);
 
   if (*aDecision == nsIContentPolicy::REJECT_REQUEST) {
     NS_SetRequestBlockingReason(aLoadInfo,
@@ -496,28 +363,33 @@ bool nsMixedContentBlocker::IsPotentiallyTrustworthyOrigin(nsIURI* aURI) {
 /* Static version of ShouldLoad() that contains all the Mixed Content Blocker
  * logic.  Called from non-static ShouldLoad().
  */
-nsresult nsMixedContentBlocker::ShouldLoad(
-    bool aHadInsecureImageRedirect, uint32_t aContentType,
-    nsIURI* aContentLocation, nsIPrincipal* aLoadingPrincipal,
-    nsIPrincipal* aTriggeringPrincipal, nsISupports* aRequestingContext,
-    const nsACString& aMimeGuess, int16_t* aDecision) {
+nsresult nsMixedContentBlocker::ShouldLoad(bool aHadInsecureImageRedirect,
+                                           nsIURI* aContentLocation,
+                                           nsILoadInfo* aLoadInfo,
+                                           const nsACString& aMimeGuess,
+                                           int16_t* aDecision) {
   // Asserting that we are on the main thread here and hence do not have to lock
   // and unlock security.mixed_content.block_active_content and
   // security.mixed_content.block_display_content before reading/writing to
   // them.
   MOZ_ASSERT(NS_IsMainThread());
 
-  bool isPreload = nsContentUtils::IsPreloadType(aContentType);
+  uint32_t contentType = aLoadInfo->InternalContentPolicyType();
+  nsCOMPtr<nsISupports> requestingContext = aLoadInfo->GetLoadingContext();
+  nsCOMPtr<nsIPrincipal> loadingPrincipal = aLoadInfo->GetLoadingPrincipal();
+  nsCOMPtr<nsIPrincipal> triggeringPrincipal = aLoadInfo->TriggeringPrincipal();
+  RefPtr<WindowContext> requestingWindow =
+      WindowContext::GetById(aLoadInfo->GetInnerWindowID());
 
   // The content policy type that we receive may be an internal type for
   // scripts.  Let's remember if we have seen a worker type, and reset it to the
   // external type in all cases right now.
   bool isWorkerType =
-      aContentType == nsIContentPolicy::TYPE_INTERNAL_WORKER ||
-      aContentType == nsIContentPolicy::TYPE_INTERNAL_SHARED_WORKER ||
-      aContentType == nsIContentPolicy::TYPE_INTERNAL_SERVICE_WORKER;
-  aContentType =
-      nsContentUtils::InternalContentPolicyTypeToExternal(aContentType);
+      contentType == nsIContentPolicy::TYPE_INTERNAL_WORKER ||
+      contentType == nsIContentPolicy::TYPE_INTERNAL_SHARED_WORKER ||
+      contentType == nsIContentPolicy::TYPE_INTERNAL_SERVICE_WORKER;
+  contentType =
+      nsContentUtils::InternalContentPolicyTypeToExternal(contentType);
 
   // Assume active (high risk) content and blocked by default
   MixedContentTypes classification = eMixedScript;
@@ -585,7 +457,7 @@ nsresult nsMixedContentBlocker::ShouldLoad(
                 "TYPE_DATAREQUEST is not a synonym for "
                 "TYPE_XMLHTTPREQUEST");
 
-  switch (aContentType) {
+  switch (contentType) {
     // The top-level document cannot be mixed content by definition
     case TYPE_DOCUMENT:
       *aDecision = ACCEPT;
@@ -633,7 +505,6 @@ nsresult nsMixedContentBlocker::ShouldLoad(
     case TYPE_SUBDOCUMENT:
     case TYPE_PING:
     case TYPE_WEB_MANIFEST:
-    case TYPE_XBL:
     case TYPE_XMLHTTPREQUEST:
     case TYPE_XSLT:
     case TYPE_OTHER:
@@ -681,13 +552,13 @@ nsresult nsMixedContentBlocker::ShouldLoad(
   // 1) Check if the load was triggered by the system (SystemPrincipal) or
   // a content script from addons code (ExpandedPrincipal) in which case the
   // load is not subject to mixed content blocking.
-  if (aTriggeringPrincipal) {
-    if (aTriggeringPrincipal->IsSystemPrincipal()) {
+  if (triggeringPrincipal) {
+    if (triggeringPrincipal->IsSystemPrincipal()) {
       *aDecision = ACCEPT;
       return NS_OK;
     }
     nsCOMPtr<nsIExpandedPrincipal> expanded =
-        do_QueryInterface(aTriggeringPrincipal);
+        do_QueryInterface(triggeringPrincipal);
     if (expanded) {
       *aDecision = ACCEPT;
       return NS_OK;
@@ -698,12 +569,12 @@ nsresult nsMixedContentBlocker::ShouldLoad(
   // we fall back to to querying the requestingLocation from
   // aTriggeringPrincipal.
   nsCOMPtr<nsIURI> requestingLocation;
-  auto* baseLoadingPrincipal = BasePrincipal::Cast(aLoadingPrincipal);
+  auto* baseLoadingPrincipal = BasePrincipal::Cast(loadingPrincipal);
   if (baseLoadingPrincipal) {
     baseLoadingPrincipal->GetURI(getter_AddRefs(requestingLocation));
   }
   if (!requestingLocation) {
-    auto* baseTriggeringPrincipal = BasePrincipal::Cast(aTriggeringPrincipal);
+    auto* baseTriggeringPrincipal = BasePrincipal::Cast(triggeringPrincipal);
     if (baseTriggeringPrincipal) {
       baseTriggeringPrincipal->GetURI(getter_AddRefs(requestingLocation));
     }
@@ -771,21 +642,17 @@ nsresult nsMixedContentBlocker::ShouldLoad(
   // blocking if the subresource load uses http: and the CSP directive
   // 'upgrade-insecure-requests' is present on the page.
 
-  nsCOMPtr<nsIDocShell> docShell =
-      NS_CP_GetDocShellFromContext(aRequestingContext);
   // Carve-out: if we're in the parent and we're loading media, e.g. through
   // webbrowserpersist, don't reject it if we can't find a docshell.
-  if (XRE_IsParentProcess() && !docShell &&
-      (aContentType == TYPE_IMAGE || aContentType == TYPE_MEDIA)) {
+  if (XRE_IsParentProcess() && !requestingWindow &&
+      (contentType == TYPE_IMAGE || contentType == TYPE_MEDIA)) {
     *aDecision = ACCEPT;
     return NS_OK;
   }
-  // Otherwise, we must have a docshell
-  NS_ENSURE_TRUE(docShell, NS_OK);
+  // Otherwise, we must have a window
+  NS_ENSURE_TRUE(requestingWindow, NS_OK);
 
-  Document* document = docShell->GetDocument();
-  MOZ_ASSERT(document, "Expected a document");
-  if (isHttpScheme && document->GetUpgradeInsecureRequests(isPreload)) {
+  if (isHttpScheme && aLoadInfo->GetUpgradeInsecureRequests()) {
     *aDecision = ACCEPT;
     return NS_OK;
   }
@@ -795,7 +662,7 @@ nsresult nsMixedContentBlocker::ShouldLoad(
   // This behaves like GetUpgradeInsecureRequests above in that the channel will
   // be upgraded to https before fetching any data from the netwerk.
   bool isUpgradableDisplayType =
-      nsContentUtils::IsUpgradableDisplayType(aContentType) &&
+      nsContentUtils::IsUpgradableDisplayType(contentType) &&
       StaticPrefs::security_mixed_content_upgrade_display_content();
   if (isHttpScheme && isUpgradableDisplayType) {
     *aDecision = ACCEPT;
@@ -808,7 +675,7 @@ nsresult nsMixedContentBlocker::ShouldLoad(
   // Block all non secure loads in case the CSP directive is present. Please
   // note that at this point we already know, based on |schemeSecure| that the
   // load is not secure, so we can bail out early at this point.
-  if (document->GetBlockAllMixedContent(isPreload)) {
+  if (aLoadInfo->GetBlockAllMixedContent()) {
     // log a message to the console before returning.
     nsAutoCString spec;
     nsresult rv = aContentLocation->GetSpec(spec);
@@ -817,42 +684,35 @@ nsresult nsMixedContentBlocker::ShouldLoad(
     AutoTArray<nsString, 1> params;
     CopyUTF8toUTF16(spec, *params.AppendElement());
 
-    CSP_LogLocalizedStr(
-        "blockAllMixedContent", params,
-        EmptyString(),  // aSourceFile
-        EmptyString(),  // aScriptSample
-        0,              // aLineNumber
-        0,              // aColumnNumber
-        nsIScriptError::errorFlag, NS_LITERAL_CSTRING("blockAllMixedContent"),
-        document->InnerWindowID(),
-        !!document->NodePrincipal()->OriginAttributesRef().mPrivateBrowsingId);
+    CSP_LogLocalizedStr("blockAllMixedContent", params,
+                        EmptyString(),  // aSourceFile
+                        EmptyString(),  // aScriptSample
+                        0,              // aLineNumber
+                        0,              // aColumnNumber
+                        nsIScriptError::errorFlag,
+                        NS_LITERAL_CSTRING("blockAllMixedContent"),
+                        requestingWindow->Id(),
+                        !!aLoadInfo->GetOriginAttributes().mPrivateBrowsingId);
     *aDecision = REJECT_REQUEST;
     return NS_OK;
   }
 
   // Determine if the rootDoc is https and if the user decided to allow Mixed
   // Content
-  bool rootHasSecureConnection =
-      docShell->GetBrowsingContext()->Top()->GetIsSecure();
-  bool allowMixedContent = false;
-  nsresult rv =
-      docShell->GetAllowMixedContentAndConnectionData(&allowMixedContent);
-  if (NS_FAILED(rv)) {
-    *aDecision = REJECT_REQUEST;
-    return rv;
-  }
+  WindowContext* topWC = requestingWindow->TopWindowContext();
+  bool rootHasSecureConnection = topWC->GetIsSecure();
+  bool allowMixedContent = topWC->GetAllowMixedContent();
 
   // When navigating an iframe, the iframe may be https
   // but its parents may not be.  Check the parents to see if any of them are
   // https. If none of the parents are https, allow the load.
-  if (aContentType == TYPE_SUBDOCUMENT && !rootHasSecureConnection) {
+  if (contentType == TYPE_SUBDOCUMENT && !rootHasSecureConnection) {
     bool httpsParentExists = false;
 
-    RefPtr<BrowsingContext> curBC = docShell->GetBrowsingContext();
-
-    while (!httpsParentExists && curBC) {
-      httpsParentExists = curBC->GetIsSecure();
-      curBC = curBC->GetParent();
+    RefPtr<WindowContext> curWindow = requestingWindow;
+    while (!httpsParentExists && curWindow) {
+      httpsParentExists = curWindow->GetIsSecure();
+      curWindow = curWindow->GetParentWindowContext();
     }
 
     if (!httpsParentExists) {
@@ -861,54 +721,11 @@ nsresult nsMixedContentBlocker::ShouldLoad(
     }
   }
 
-  // Get the root document from the rootShell
-  nsCOMPtr<nsIDocShell> rootShell =
-      docShell->GetBrowsingContext()->Top()->GetDocShell();
-  nsCOMPtr<Document> rootDoc = rootShell ? rootShell->GetDocument() : nullptr;
-
-  // TODO Fission: Bug 1631405: Make Mixed Content UI fission compatible
-  // At this point we know it's a mixed content load, which means we we would
-  // allow mixed passive content to load but only allow mixed active content
-  // if the user has updated prefs or overriden mixed content using the UI.
-  // In fission however, we might not have access to the rootShell or RootDoc
-  // so might not be able to access Mixed Content UI. Until we have fixed
-  // Bug 1631405 we assume default behavior and allow mixed passive content
-  // but block mixed active content in fission.
-  if (StaticPrefs::fission_autostart()) {
-    if (!rootShell || !rootDoc) {
-      if (classification == eMixedDisplay) {
-        *aDecision = nsIContentPolicy::ACCEPT;
-        return NS_OK;
-      }
-      // some tests explicitly flip the allow active content pref, so
-      // let's make them work in fission mode.
-      if (!StaticPrefs::security_mixed_content_block_active_content()) {
-        *aDecision = nsIContentPolicy::ACCEPT;
-        return NS_OK;
-      }
-      *aDecision = nsIContentPolicy::REJECT_REQUEST;
-      return NS_OK;
-    }
-  }
-
-  nsDocShell* nativeDocShell = nsDocShell::Cast(docShell);
-
-  uint32_t state = nsIWebProgressListener::STATE_IS_BROKEN;
-  nsCOMPtr<nsISecureBrowserUI> securityUI;
-  rootShell->GetSecurityUI(getter_AddRefs(securityUI));
-  // If there is no securityUI, document doesn't have a security state.
-  // Allow load and return early.
-  if (!securityUI) {
-    *aDecision = nsIContentPolicy::ACCEPT;
-    return NS_OK;
-  }
-  nsresult stateRV = securityUI->GetState(&state);
-
   OriginAttributes originAttributes;
-  if (aLoadingPrincipal) {
-    originAttributes = aLoadingPrincipal->OriginAttributesRef();
-  } else if (aTriggeringPrincipal) {
-    originAttributes = aTriggeringPrincipal->OriginAttributesRef();
+  if (loadingPrincipal) {
+    originAttributes = loadingPrincipal->OriginAttributesRef();
+  } else if (triggeringPrincipal) {
+    originAttributes = triggeringPrincipal->OriginAttributesRef();
   }
 
   // At this point we know that the request is mixed content, and the only
@@ -940,150 +757,60 @@ nsresult nsMixedContentBlocker::ShouldLoad(
   }
 
   // set hasMixedContentObjectSubrequest on this object if necessary
-  if (aContentType == TYPE_OBJECT_SUBREQUEST) {
+  if (contentType == TYPE_OBJECT_SUBREQUEST) {
     if (!StaticPrefs::security_mixed_content_block_object_subrequest()) {
-      rootDoc->WarnOnceAbout(Document::eMixedDisplayObjectSubrequest);
+      nsAutoCString messageLookUpKey(
+          "LoadingMixedDisplayObjectSubrequestDeprecation");
+      LogMixedContentMessage(classification, aContentLocation, topWC->Id(),
+                             eUserOverride, requestingLocation,
+                             messageLookUpKey);
     }
   }
 
+  uint32_t newState = 0;
   // If the content is display content, and the pref says display content should
   // be blocked, block it.
-  if (StaticPrefs::security_mixed_content_block_display_content() &&
-      classification == eMixedDisplay) {
-    if (allowMixedContent) {
-      LogMixedContentMessage(classification, aContentLocation, rootDoc,
-                             eUserOverride);
+  if (classification == eMixedDisplay) {
+    if (!StaticPrefs::security_mixed_content_block_display_content() ||
+        allowMixedContent) {
       *aDecision = nsIContentPolicy::ACCEPT;
-      // See if mixed display content has already loaded on the page or if the
-      // state needs to be updated here. If mixed display hasn't loaded
-      // previously, then we need to call OnSecurityChange() to update the UI.
-      if (rootDoc->GetHasMixedDisplayContentLoaded()) {
-        return NS_OK;
-      }
-      rootDoc->SetHasMixedDisplayContentLoaded(true);
-
-      if (rootHasSecureConnection) {
-        // reset state security flag
-        state = state >> 4 << 4;
-        // set state security flag to broken, since there is mixed content
-        state |= nsIWebProgressListener::STATE_IS_BROKEN;
-
-        // If mixed active content is loaded, make sure to include that in the
-        // state.
-        if (rootDoc->GetHasMixedActiveContentLoaded()) {
-          state |= nsIWebProgressListener::STATE_LOADED_MIXED_ACTIVE_CONTENT;
-        }
-
-        nativeDocShell->nsDocLoader::OnSecurityChange(
-            aRequestingContext,
-            (state |
-             nsIWebProgressListener::STATE_LOADED_MIXED_DISPLAY_CONTENT));
-      } else {
-        // User has overriden the pref and the root is not https;
-        // mixed display content was allowed on an https subframe.
-        if (NS_SUCCEEDED(stateRV)) {
-          nativeDocShell->nsDocLoader::OnSecurityChange(
-              aRequestingContext,
-              (state |
-               nsIWebProgressListener::STATE_LOADED_MIXED_DISPLAY_CONTENT));
-        }
-      }
+      // User has overriden the pref and the root is not https;
+      // mixed display content was allowed on an https subframe.
+      newState |= nsIWebProgressListener::STATE_LOADED_MIXED_DISPLAY_CONTENT;
     } else {
       *aDecision = nsIContentPolicy::REJECT_REQUEST;
-      LogMixedContentMessage(classification, aContentLocation, rootDoc,
-                             eBlocked);
-      if (!rootDoc->GetHasMixedDisplayContentBlocked() &&
-          NS_SUCCEEDED(stateRV)) {
-        rootDoc->SetHasMixedDisplayContentBlocked(true);
-        nativeDocShell->nsDocLoader::OnSecurityChange(
-            aRequestingContext,
-            (state |
-             nsIWebProgressListener::STATE_BLOCKED_MIXED_DISPLAY_CONTENT));
-      }
+      newState |= nsIWebProgressListener::STATE_BLOCKED_MIXED_DISPLAY_CONTENT;
     }
-    return NS_OK;
-
-  } else if (StaticPrefs::security_mixed_content_block_active_content() &&
-             classification == eMixedScript) {
+  } else {
+    MOZ_ASSERT(classification == eMixedScript);
     // If the content is active content, and the pref says active content should
     // be blocked, block it unless the user has choosen to override the pref
-    if (allowMixedContent) {
-      LogMixedContentMessage(classification, aContentLocation, rootDoc,
-                             eUserOverride);
+    if (!StaticPrefs::security_mixed_content_block_active_content() ||
+        allowMixedContent) {
       *aDecision = nsIContentPolicy::ACCEPT;
-      // See if the state will change here. If it will, only then do we need to
-      // call OnSecurityChange() to update the UI.
-      if (rootDoc->GetHasMixedActiveContentLoaded()) {
-        return NS_OK;
-      }
-      rootDoc->SetHasMixedActiveContentLoaded(true);
-
-      if (rootHasSecureConnection) {
-        // reset state security flag
-        state = state >> 4 << 4;
-        // set state security flag to broken, since there is mixed content
-        state |= nsIWebProgressListener::STATE_IS_BROKEN;
-
-        // If mixed display content is loaded, make sure to include that in the
-        // state.
-        if (rootDoc->GetHasMixedDisplayContentLoaded()) {
-          state |= nsIWebProgressListener::STATE_LOADED_MIXED_DISPLAY_CONTENT;
-        }
-
-        nativeDocShell->nsDocLoader::OnSecurityChange(
-            aRequestingContext,
-            (state |
-             nsIWebProgressListener::STATE_LOADED_MIXED_ACTIVE_CONTENT));
-
-        return NS_OK;
-      } else {
-        // User has already overriden the pref and the root is not https;
-        // mixed active content was allowed on an https subframe.
-        if (NS_SUCCEEDED(stateRV)) {
-          nativeDocShell->nsDocLoader::OnSecurityChange(
-              aRequestingContext,
-              (state |
-               nsIWebProgressListener::STATE_LOADED_MIXED_ACTIVE_CONTENT));
-        }
-        return NS_OK;
-      }
+      // User has already overriden the pref and the root is not https;
+      // mixed active content was allowed on an https subframe.
+      newState |= nsIWebProgressListener::STATE_LOADED_MIXED_ACTIVE_CONTENT;
     } else {
       // User has not overriden the pref by Disabling protection. Reject the
       // request and update the security state.
       *aDecision = nsIContentPolicy::REJECT_REQUEST;
-      LogMixedContentMessage(classification, aContentLocation, rootDoc,
-                             eBlocked);
-      // See if the pref will change here. If it will, only then do we need to
-      // call OnSecurityChange() to update the UI.
-      if (rootDoc->GetHasMixedActiveContentBlocked()) {
-        return NS_OK;
-      }
-      rootDoc->SetHasMixedActiveContentBlocked(true);
-
       // The user has not overriden the pref, so make sure they still have an
       // option by calling nativeDocShell which will invoke the doorhanger
-      if (NS_SUCCEEDED(stateRV)) {
-        nativeDocShell->nsDocLoader::OnSecurityChange(
-            aRequestingContext,
-            (state |
-             nsIWebProgressListener::STATE_BLOCKED_MIXED_ACTIVE_CONTENT));
-      }
-      return NS_OK;
+      newState |= nsIWebProgressListener::STATE_BLOCKED_MIXED_ACTIVE_CONTENT;
     }
-  } else {
-    // The content is not blocked by the mixed content prefs.
-
-    // Log a message that we are loading mixed content.
-    LogMixedContentMessage(classification, aContentLocation, rootDoc,
-                           eUserOverride);
-
-    // Fire the event from a script runner as it is unsafe to run script
-    // from within ShouldLoad
-    nsContentUtils::AddScriptRunner(new nsMixedContentEvent(
-        aRequestingContext, classification, rootHasSecureConnection));
-    *aDecision = ACCEPT;
-    return NS_OK;
   }
+
+  LogMixedContentMessage(classification, aContentLocation, topWC->Id(),
+                         (*aDecision == nsIContentPolicy::REJECT_REQUEST)
+                             ? eBlocked
+                             : eUserOverride,
+                         requestingLocation);
+
+  // Notify the top WindowContext of the flags we've computed, and it
+  // will handle updating any relevant security UI.
+  topWC->AddMixedContentSecurityState(newState);
+  return NS_OK;
 }
 
 bool nsMixedContentBlocker::URISafeToBeLoadedInSecureContext(nsIURI* aURI) {

@@ -49,7 +49,6 @@ XPCOMUtils.defineLazyServiceGetters(this, {
 const TYPE_PDF = "application/pdf";
 
 const PREF_PDFJS_DISABLED = "pdfjs.disabled";
-const TOPIC_PDFJS_HANDLER_CHANGED = "pdfjs:handlerChanged";
 
 const PREF_DISABLED_PLUGIN_TYPES = "plugin.disable_full_page_plugin_for_types";
 
@@ -3648,11 +3647,10 @@ class InternalHandlerInfoWrapper extends HandlerInfoWrapper {
   // or unregistration of this handler.
   store() {
     super.store();
-    Services.obs.notifyObservers(null, this._handlerChanged);
   }
 
   get enabled() {
-    throw Cr.NS_ERROR_NOT_IMPLEMENTED;
+    throw Components.Exception("", Cr.NS_ERROR_NOT_IMPLEMENTED);
   }
 
   get description() {
@@ -3663,10 +3661,6 @@ class InternalHandlerInfoWrapper extends HandlerInfoWrapper {
 class PDFHandlerInfoWrapper extends InternalHandlerInfoWrapper {
   constructor() {
     super(TYPE_PDF);
-  }
-
-  get _handlerChanged() {
-    return TOPIC_PDFJS_HANDLER_CHANGED;
   }
 
   get _appPrefLabel() {

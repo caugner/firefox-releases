@@ -303,20 +303,30 @@ class OSXBootstrapper(BaseBootstrapper):
 
         installed = set(self.check_output(cmd + ['list'],
                                           universal_newlines=True).split())
-        to_install = [package for package in packages if package not in installed]
+        to_install = set(
+            package for package in packages if package not in installed)
 
         # The "--quiet" tells "brew" to only list the package names, and not the
         # comparison between current and new version.
         outdated = set(self.check_output(cmd + ['outdated', '--quiet'],
                                          universal_newlines=True).split())
-        to_upgrade = [package for package in packages if package in outdated]
+        to_upgrade = set(package for package in packages if package in outdated)
 
         if to_install or to_upgrade:
             print(PACKAGE_MANAGER_PACKAGES % ('Homebrew',))
+        if 'python@2' in to_install:
+            # Special handling for Python 2 since brew can't install it
+            # out-of-the-box any more.
+            to_install.remove('python@2')
+            subprocess.check_call(
+                cmd + ['install',
+                       'https://raw.githubusercontent.com/Homebrew/homebrew-core'
+                       '/86a44a0a552c673a05f11018459c9f5faae3becc'
+                       '/Formula/python@2.rb'])
         if to_install:
-            subprocess.check_call(cmd + ['install'] + to_install)
+            subprocess.check_call(cmd + ['install'] + list(to_install))
         if to_upgrade:
-            subprocess.check_call(cmd + ['upgrade'] + to_upgrade)
+            subprocess.check_call(cmd + ['upgrade'] + list(to_upgrade))
 
     def _ensure_homebrew_casks(self, casks):
         self._ensure_homebrew_found()
@@ -348,6 +358,7 @@ class OSXBootstrapper(BaseBootstrapper):
             'gnu-tar',
             'node',
             'python',
+            'python@2',
             'terminal-notifier',
             'watchman',
         ]
@@ -560,6 +571,12 @@ class OSXBootstrapper(BaseBootstrapper):
         # XXX from necessary?
         from mozboot import node
         self.install_toolchain_artifact(state_dir, checkout_root, node.OSX)
+
+    def ensure_minidump_stackwalk_packages(self, state_dir, checkout_root):
+        from mozboot import minidump_stackwalk
+
+        self.install_toolchain_artifact(state_dir, checkout_root,
+                                        minidump_stackwalk.MACOS_MINIDUMP_STACKWALK)
 
     def install_homebrew(self):
         print(PACKAGE_MANAGER_INSTALL % ('Homebrew', 'Homebrew', 'Homebrew', 'brew'))

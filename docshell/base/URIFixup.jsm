@@ -7,11 +7,14 @@
 /**
  * This component handles fixing up URIs, by correcting obvious typos and adding
  * missing schemes.
+ * URI references:
+ *   http://www.faqs.org/rfcs/rfc1738.html
+ *   http://www.faqs.org/rfcs/rfc2396.html
  */
 
-// TODO (Bug 1623383): This is a direct conversion from .cpp, as such a few
-// functions are overly complex and should be cleaned up.
-/* eslint complexity: ["error", 63] */
+// TODO (Bug 1641220) getFixupURIInfo has a complex logic, that likely could be
+// simplified, but the risk of regressing its behavior is high.
+/* eslint complexity: ["error", 43] */
 
 var EXPORTED_SYMBOLS = ["URIFixup", "URIFixupInfo"];
 
@@ -55,11 +58,20 @@ XPCOMUtils.defineLazyPreferenceGetter(
   "keyword.enabled",
   true
 );
-
 XPCOMUtils.defineLazyPreferenceGetter(
   this,
   "alternateEnabled",
   "browser.fixup.alternate.enabled",
+  true
+);
+// This is a feature preference that inverts the keyword fixup behavior to
+// search by default, unless the string has URI characteristics.
+// When set to false, we'll consider most strings URIs, unless they have search
+// characteristics.
+XPCOMUtils.defineLazyPreferenceGetter(
+  this,
+  "defaultToSearch",
+  "browser.fixup.defaultToSearch",
   true
 );
 
@@ -74,36 +86,32 @@ const {
 const COMMON_PROTOCOLS = ["http", "https", "ftp", "file"];
 
 // Regex used to identify user:password tokens in url strings.
-// This is not a strict character check, because we try to fixup this part of
-// a the url too.
+// This is not a strict valid characters check, because we try to fixup this
+// part of the url too.
 XPCOMUtils.defineLazyGetter(
   this,
   "userPasswordRegex",
   () => /^([a-z+.-]+:\/{0,3})*[^\/@]+@.+/i
 );
 
-// Regex used to identify ascii alphabetical characters.
-XPCOMUtils.defineLazyGetter(this, "asciiAlphaRegex", () => /^[a-z]$/i);
+// Regex used to look for ascii alphabetical characters.
+XPCOMUtils.defineLazyGetter(this, "asciiAlphaRegex", () => /[a-z]/i);
 
-// Regex used to identify ascii a-f characters.
-XPCOMUtils.defineLazyGetter(this, "asciiHexRegex", () => /^[a-f0-9]$/i);
-
-// Regex used to identify ascii numbers.
+// Regex used to identify specific URI characteristics to disallow searching.
 XPCOMUtils.defineLazyGetter(
   this,
-  "asciiNumberRegex",
-  () => /^[0-9]+(\.[0-9]+)?$/
+  "uriLikeRegex",
+  () => /(:\d{1,5}([?#/]|$)|\/.*[?#])/
 );
+
+// Regex used to identify numbers.
+XPCOMUtils.defineLazyGetter(this, "numberRegex", () => /^[0-9]+(\.[0-9]+)?$/);
 
 // Regex used to identify tab separated content (having at least 2 tabs).
 XPCOMUtils.defineLazyGetter(this, "maxOneTabRegex", () => /^[^\t]*\t?[^\t]*$/);
 
-// Regex to test if the protocol might actually be a url without a protocol:
-//
-//   http://www.faqs.org/rfcs/rfc1738.html
-//   http://www.faqs.org/rfcs/rfc2396.html
-//
-// e.g. Anything of the form:
+// Regex used to test if a string with a protocol might instead be a url
+// without a protocol but with a port:
 //
 //   <hostname>:<port> or
 //   <hostname>:<port>/
@@ -138,18 +146,34 @@ XPCOMUtils.defineLazyGetter(
   () => /^([a-z][a-z0-9.+\t-]*):/i
 );
 
+// Regex used to match IPs. Note that these are not made to validate IPs, but
+// just to detect strings that look like an IP. They also skip protocol.
+// For IPv4 this also accepts a shorthand format with just 2 dots.
+XPCOMUtils.defineLazyGetter(
+  this,
+  "IPv4LikeRegex",
+  () => /^(?:[a-z+.-]+:\/*(?!\/))?(?:\d{1,3}\.){2,3}\d{1,3}(?::\d+|\/)?/i
+);
+XPCOMUtils.defineLazyGetter(
+  this,
+  "IPv6LikeRegex",
+  () =>
+    /^(?:[a-z+.-]+:\/*(?!\/))?\[(?:[0-9a-f]{0,4}:){0,7}[0-9a-f]{0,4}\]?(?::\d+|\/)?/i
+);
+
 // Cache of whitelisted domains.
 XPCOMUtils.defineLazyGetter(this, "domainsWhitelist", () => {
+  const branch = "browser.fixup.domainwhitelist.";
   let domains = new Set(
     Services.prefs
-      .getChildList("browser.fixup.domainwhitelist.")
+      .getChildList(branch)
       .filter(p => Services.prefs.getBoolPref(p, false))
-      .map(p => p.substring(30))
+      .map(p => p.substring(branch.length))
   );
-  // Hold onto the observer.
+  // Hold onto the observer to avoid it being GC-ed.
   domains._observer = {
     observe(subject, topic, data) {
-      let domain = data.substring(30);
+      let domain = data.substring(branch.length);
       if (Services.prefs.getBoolPref(data, false)) {
         domains.add(domain);
       } else {
@@ -161,12 +185,66 @@ XPCOMUtils.defineLazyGetter(this, "domainsWhitelist", () => {
       Ci.nsISupportsWeakReference,
     ]),
   };
-  Services.prefs.addObserver(
-    "browser.fixup.domainwhitelist.",
-    domains._observer,
-    true
-  );
+  Services.prefs.addObserver(branch, domains._observer, true);
   return domains;
+});
+
+// Cache of whitelisted suffixes.
+// This works differently from the domains whitelist, because when we examine a
+// domain we can't tell how many dot-separated parts constitute the suffix.
+// We create a Map keyed by the last dotted part, containing a Set of
+// all the suffixes ending with that part:
+//   "two" => ["two"]
+//   "three" => ["some.three", "three"]
+// When searching we can restrict the linear scan based on the last part.
+// The ideal structure for this would be a Directed Acyclic Word Graph, but
+// since we expect this list to be small it's not worth the complication.
+XPCOMUtils.defineLazyGetter(this, "suffixesWhitelist", () => {
+  const branch = "browser.fixup.domainsuffixwhitelist.";
+  let suffixes = new Map();
+  let prefs = Services.prefs
+    .getChildList(branch)
+    .filter(p => Services.prefs.getBoolPref(p, false));
+  for (let pref of prefs) {
+    let suffix = pref.substring(branch.length);
+    let lastPart = suffix.substr(suffix.lastIndexOf(".") + 1);
+    if (lastPart) {
+      let entries = suffixes.get(lastPart);
+      if (!entries) {
+        entries = new Set();
+        suffixes.set(lastPart, entries);
+      }
+      entries.add(suffix);
+    }
+  }
+  // Hold onto the observer to avoid it being GC-ed.
+  suffixes._observer = {
+    observe(subject, topic, data) {
+      let suffix = data.substring(branch.length);
+      let lastPart = suffix.substr(suffix.lastIndexOf(".") + 1);
+      let entries = suffixes.get(lastPart);
+      if (Services.prefs.getBoolPref(data, false)) {
+        // Add the suffix.
+        if (!entries) {
+          entries = new Set();
+          suffixes.set(lastPart, entries);
+        }
+        entries.add(suffix);
+      } else if (entries) {
+        // Remove the suffix.
+        entries.delete(suffix);
+        if (!entries.size) {
+          suffixes.delete(lastPart);
+        }
+      }
+    },
+    QueryInterface: ChromeUtils.generateQI([
+      Ci.nsIObserver,
+      Ci.nsISupportsWeakReference,
+    ]),
+  };
+  Services.prefs.addObserver(branch, suffixes._observer, true);
+  return suffixes;
 });
 
 function URIFixup() {}
@@ -209,39 +287,11 @@ URIFixup.prototype = {
     let info = new URIFixupInfo(uriString);
 
     let scheme = extractScheme(uriString);
-    let isCommonProtocol = COMMON_PROTOCOLS.includes(scheme);
-    // View-source is a pseudo scheme. We're interested in fixing up the stuff
-    // after it. The easiest way to do that is to call this method again with
-    // the "view-source:" lopped off and then prepend it again afterwards.
     if (scheme == "view-source") {
-      // We disable keyword lookup and alternate URIs so that small typos don't
-      // cause us to look at very different domains.
-      let newFixupFlags =
-        fixupFlags &
-        ~FIXUP_FLAG_ALLOW_KEYWORD_LOOKUP &
-        ~FIXUP_FLAGS_MAKE_ALTERNATE_URI;
-
-      let innerURIString = uriString.substring(12).trim();
-
-      // Prevent recursion.
-      let innerScheme = extractScheme(innerURIString);
-      if (innerScheme == "view-source") {
-        throw new Components.Exception(
-          "Prevent view-source recursion",
-          Cr.NS_ERROR_FAILURE
-        );
-      }
-
-      let innerInfo = this.getFixupURIInfo(
-        innerURIString,
-        newFixupFlags,
+      info.preferredURI = info.fixedURI = fixupViewSource(
+        uriString,
+        fixupFlags,
         postData
-      );
-      if (!innerInfo.preferredURI) {
-        throw new Components.Exception("No preferredURI", Cr.NS_ERROR_FAILURE);
-      }
-      info.preferredURI = info.fixedURI = Services.io.newURI(
-        "view-source:" + innerInfo.preferredURI.spec
       );
       return info;
     }
@@ -259,13 +309,14 @@ URIFixup.prototype = {
 
     // Fix up common scheme typos.
     // TODO: Use levenshtein distance here?
+    let isCommonProtocol = COMMON_PROTOCOLS.includes(scheme);
     if (
       fixupSchemeTypos &&
       fixupFlags & FIXUP_FLAG_FIX_SCHEME_TYPOS &&
       scheme &&
       !isCommonProtocol
     ) {
-      for (let [typo, fixed] of [
+      info.fixupChangedProtocol = [
         ["ttp", "http"],
         ["htp", "http"],
         ["ttps", "https"],
@@ -274,25 +325,31 @@ URIFixup.prototype = {
         ["htps", "https"],
         ["ile", "file"],
         ["le", "file"],
-      ]) {
+      ].some(([typo, fixed]) => {
         if (uriString.startsWith(typo)) {
           scheme = fixed;
           uriString = scheme + uriString.substring(typo.length);
-          info.fixupChangedProtocol = true;
           isCommonProtocol = true;
-          break;
+          return true;
         }
-      }
+        return false;
+      });
     }
 
-    // Now we need to check whether "scheme" is something we don't
-    // really know about.
-    let isDefaultProtocolHandler =
-      !isCommonProtocol &&
+    let canHandleProtocol =
       scheme &&
-      Services.io.getProtocolHandler(scheme) == defaultProtocolHandler;
+      (isCommonProtocol ||
+        Services.io.getProtocolHandler(scheme) != defaultProtocolHandler ||
+        externalProtocolService.externalProtocolHandlerExists(scheme));
 
-    if (!isDefaultProtocolHandler || !possiblyHostPortRegex.test(uriString)) {
+    if (
+      canHandleProtocol ||
+      // If it's an unknown handler and the given URL looks like host:port or
+      // has a user:password we can't pass it to the external protocol handler.
+      // We'll instead try fixing it with http later.
+      (!possiblyHostPortRegex.test(uriString) &&
+        !userPasswordRegex.test(uriString))
+    ) {
       // Just try to create an URL out of it.
       try {
         info.fixedURI = Services.io.newURI(uriString);
@@ -303,35 +360,25 @@ URIFixup.prototype = {
       }
     }
 
+    // We're dealing with a theoretically valid URI but we have no idea how to
+    // load it. (e.g. "christmas:humbug")
+    // It's more likely the user wants to search, and so we chuck this over to
+    // their preferred search provider.
     // TODO (Bug 1588118): Should check FIXUP_FLAG_ALLOW_KEYWORD_LOOKUP
     // instead of FIXUP_FLAG_FIX_SCHEME_TYPOS.
     if (
       info.fixedURI &&
-      isDefaultProtocolHandler &&
       keywordEnabled &&
       fixupFlags & FIXUP_FLAG_FIX_SCHEME_TYPOS &&
       scheme &&
-      !externalProtocolService.externalProtocolHandlerExists(scheme)
+      !canHandleProtocol
     ) {
-      if (!userPasswordRegex.test(uriString)) {
-        // This basically means we're dealing with a theoretically valid
-        // URI... but we have no idea how to load it. (e.g. "christmas:humbug")
-        // It's more likely the user wants to search, and so we
-        // chuck this over to their preferred search provider instead:
-        tryKeywordFixupForURIInfo(uriString, info, isPrivateContext, postData);
-      } else {
-        // If the given URL has a user:password we can't just pass it to the
-        // external protocol handler; we'll try using it with http instead
-        // later
-        info.preferredURI = info.fixedURI = null;
-      }
+      tryKeywordFixupForURIInfo(uriString, info, isPrivateContext, postData);
     }
 
     if (info.fixedURI) {
       if (!info.preferredURI) {
-        if (fixupFlags & FIXUP_FLAGS_MAKE_ALTERNATE_URI) {
-          info.fixupCreatedAlternateURI = makeAlternateFixedURI(info);
-        }
+        maybeSetAlternateFixedURI(info, fixupFlags);
         info.preferredURI = info.fixedURI;
       }
       return info;
@@ -342,15 +389,10 @@ URIFixup.prototype = {
     // Prune duff protocol schemes:
     //   ://totallybroken.url.com
     //   //shorthand.url.com
-    let inputHadDuffProtocol = false;
-    if (!scheme) {
-      if (uriString.startsWith("://")) {
-        uriString = uriString.substring(3);
-        inputHadDuffProtocol = true;
-      } else if (uriString.startsWith("//")) {
-        uriString = uriString.substring(2);
-        inputHadDuffProtocol = true;
-      }
+    let inputHadDuffProtocol =
+      uriString.startsWith("://") || uriString.startsWith("//");
+    if (inputHadDuffProtocol) {
+      uriString = uriString.replace(/^:?\/\//, "");
     }
 
     // Avoid fixing up content that looks like tab-separated values.
@@ -361,35 +403,48 @@ URIFixup.prototype = {
       if (uriWithProtocol) {
         info.fixedURI = uriWithProtocol;
         info.fixupChangedProtocol = true;
-        // Did the caller want us to try an alternative URI?
-        // If so, attempt to fixup http://foo into http://www.foo.com
-        if (fixupFlags & FIXUP_FLAGS_MAKE_ALTERNATE_URI) {
-          info.fixupCreatedAlternateURI = makeAlternateFixedURI(info);
-        }
+        maybeSetAlternateFixedURI(info, fixupFlags);
         info.preferredURI = info.fixedURI;
+        // Check if it's a forced visit. The user can enforce a visit by
+        // appending a slash, but the string must be in a valid uri format.
+        if (uriString.endsWith("/")) {
+          return info;
+        }
       }
+    }
+
+    // Memoize the public suffix check, since it may be expensive and should
+    // only run once when necessary.
+    let suffixInfo;
+    function checkSuffix(info) {
+      if (!suffixInfo) {
+        suffixInfo = checkAndFixPublicSuffix(info);
+      }
+      return suffixInfo;
     }
 
     // See if it is a keyword and whether a keyword must be fixed up.
     if (
       keywordEnabled &&
       fixupFlags & FIXUP_FLAG_ALLOW_KEYWORD_LOOKUP &&
-      !inputHadDuffProtocol
+      !inputHadDuffProtocol &&
+      // When defaultToSearch is false, we are conservative about always going
+      // through keywordURIFixup.
+      (!defaultToSearch || !checkSuffix(info).suffix) &&
+      keywordURIFixup(uriString, info, isPrivateContext, postData)
     ) {
-      if (keywordURIFixup(uriString, info, isPrivateContext, postData)) {
-        return info;
-      }
+      return info;
     }
 
     if (
       info.fixedURI &&
-      (!info.fixupChangedProtocol || checkAndFixPublicSuffix(info))
+      (!info.fixupChangedProtocol || !checkSuffix(info).hasUnknownSuffix)
     ) {
       return info;
     }
 
     // If we still haven't been able to construct a valid URI, try to force a
-    // keyword match.  This catches search strings with '.' or ':' in them.
+    // keyword match.
     if (keywordEnabled && fixupFlags & FIXUP_FLAG_ALLOW_KEYWORD_LOOKUP) {
       tryKeywordFixupForURIInfo(
         info.originalInput,
@@ -400,7 +455,7 @@ URIFixup.prototype = {
     }
 
     if (!info.preferredURI) {
-      // we couldn't salvage anything.
+      // We couldn't salvage anything.
       throw new Components.Exception(
         "Couldn't build a valid uri",
         Cr.NS_ERROR_MALFORMED_URI
@@ -575,6 +630,7 @@ URIFixupInfo.prototype = {
  * Implementation of isDomainWhitelisted, so we don't have to go through the
  * service.
  * @param {string} asciiHost
+ * @returns {boolean} whether the domain is whitelisted
  */
 function isDomainWhitelisted(asciiHost) {
   if (dnsFirstForSingleWords) {
@@ -584,10 +640,28 @@ function isDomainWhitelisted(asciiHost) {
   // domain (which will prevent a keyword query)
   // Note that any processing of the host here should stay in sync with
   // code in the front-end(s) that set the pref.
-  if (asciiHost.endsWith(".")) {
+  let lastDotIndex = asciiHost.lastIndexOf(".");
+  if (lastDotIndex == asciiHost.length - 1) {
     asciiHost = asciiHost.substring(0, asciiHost.length - 1);
+    lastDotIndex = asciiHost.lastIndexOf(".");
   }
-  return domainsWhitelist.has(asciiHost.toLowerCase());
+  if (domainsWhitelist.has(asciiHost.toLowerCase())) {
+    return true;
+  }
+  // If there's no dot or only a leading dot we are done, otherwise we'll check
+  // against the suffixes whitelist.
+  if (lastDotIndex <= 0) {
+    return false;
+  }
+  // Don't use getPublicSuffix here, since the suffix is not in a known list,
+  // thus it couldn't tell if the suffix is made up of one or multiple
+  // dot-separated parts.
+  let lastPart = asciiHost.substr(lastDotIndex + 1);
+  let suffixes = suffixesWhitelist.get(lastPart);
+  if (suffixes) {
+    return Array.from(suffixes).some(s => asciiHost.endsWith(s));
+  }
+  return false;
 }
 
 /**
@@ -595,38 +669,49 @@ function isDomainWhitelisted(asciiHost) {
  * If the suffix is unknown due to a typo this will try to fix it up.
  * @param {URIFixupInfo} info about the uri to check.
  * @note this may modify the public suffix of info.fixedURI.
- * @returns false if the public suffix is unknown, true in any other case,
- *          included if it's not present.
+ * @returns {object} result The lookup result.
+ * @returns {string} result.suffix The public suffix if one can be identified.
+ * @returns {boolean} result.hasUnknownSuffix True when the suffix is not in the
+ *     Public Suffix List and it's not whitelisted. False in the other cases.
  */
 function checkAndFixPublicSuffix(info) {
   let uri = info.fixedURI;
-  let asciiHost = uri.asciiHost;
+  let asciiHost = uri?.asciiHost;
   if (
     !asciiHost ||
-    // Quick bailouts for most common cases, according to Alexa Top 1 million.
-    asciiHost.endsWith(".com") ||
-    asciiHost.endsWith(".net") ||
-    asciiHost.endsWith(".org") ||
-    asciiHost.endsWith(".ru") ||
-    asciiHost.endsWith(".de") ||
     !asciiHost.includes(".") ||
     asciiHost.endsWith(".") ||
     isDomainWhitelisted(asciiHost)
   ) {
-    return true;
+    return { suffix: "", hasUnknownSuffix: false };
+  }
+
+  // Quick bailouts for most common cases, according to Alexa Top 1 million.
+  if (
+    asciiHost.endsWith(".com") ||
+    asciiHost.endsWith(".net") ||
+    asciiHost.endsWith(".org") ||
+    asciiHost.endsWith(".ru") ||
+    asciiHost.endsWith(".de")
+  ) {
+    return {
+      suffix: asciiHost.substring(asciiHost.lastIndexOf(".") + 1),
+      hasUnknownSuffix: false,
+    };
   }
   try {
-    if (Services.eTLD.getKnownPublicSuffix(uri)) {
-      return true;
+    let suffix = Services.eTLD.getKnownPublicSuffix(uri);
+    if (suffix) {
+      return { suffix, hasUnknownSuffix: false };
     }
   } catch (ex) {
-    return true;
+    return { suffix: "", hasUnknownSuffix: false };
   }
   // Suffix is unknown, try to fix most common 3 chars TLDs typos.
   // .com is the most commonly mistyped tld, so it has more cases.
   let suffix = Services.eTLD.getPublicSuffix(uri);
-  if (!suffix || asciiNumberRegex.test(suffix)) {
-    return true;
+  if (!suffix || numberRegex.test(suffix)) {
+    return { suffix: "", hasUnknownSuffix: false };
   }
   for (let [typo, fixed] of [
     ["ocm", "com"],
@@ -655,10 +740,10 @@ function checkAndFixPublicSuffix(info) {
       if (updatePreferredURI) {
         info.preferredURI = info.fixedURI;
       }
-      return true;
+      return { suffix: fixed, hasUnknownSuffix: false };
     }
   }
-  return false;
+  return { suffix: "", hasUnknownSuffix: true };
 }
 
 function tryKeywordFixupForURIInfo(
@@ -685,12 +770,14 @@ function tryKeywordFixupForURIInfo(
  * This generates an alternate fixedURI, by adding a prefix and a suffix to
  * the fixedURI host, if and only if the protocol is http. It should _never_
  * modify URIs with other protocols.
- * @param info an URIInfo object
- * @returns whether an alternate uri was generated.
+ * @param {URIFixupInfo} info an URIInfo object
+ * @param {integer} fixupFlags the fixup flags
+ * @returns {boolean} Whether an alternate uri was generated
  */
-function makeAlternateFixedURI(info) {
+function maybeSetAlternateFixedURI(info, fixupFlags) {
   let uri = info.fixedURI;
   if (
+    !(fixupFlags & FIXUP_FLAGS_MAKE_ALTERNATE_URI) ||
     !alternateEnabled ||
     // Code only works for http. Not for any other protocol including https!
     !uri.schemeIs("http") ||
@@ -701,13 +788,12 @@ function makeAlternateFixedURI(info) {
   ) {
     return false;
   }
+
   let oldHost = uri.host;
   // Don't create an alternate uri for localhost, because it would be confusing.
   if (oldHost == "localhost") {
     return false;
   }
-
-  let numDots = (oldHost.match(/\./g) || []).length;
 
   // Get the prefix and suffix to stick onto the new hostname. By default these
   // are www. & .com but they could be any other value, e.g. www. & .org
@@ -721,6 +807,7 @@ function makeAlternateFixedURI(info) {
   );
 
   let newHost = "";
+  let numDots = (oldHost.match(/\./g) || []).length;
   if (numDots == 0) {
     newHost = prefix + oldHost + suffix;
   } else if (numDots == 1) {
@@ -746,12 +833,13 @@ function makeAlternateFixedURI(info) {
     }
     return false;
   }
+  info.fixupCreatedAlternateURI = true;
   return true;
 }
 
 /**
  * Try to fixup a file URI.
- * @param uriString The file URI to fix.
+ * @param {string} uriString The file URI to fix.
  * @returns {nsIURI} a fixed uri or null.
  * @note FileURIFixup only returns a URI if it has to add the file: protocol.
  */
@@ -791,7 +879,7 @@ function fileURIFixup(uriString) {
  *    user:pass@no-scheme.com
  *
  * @param {string} uriString The string to fixup.
- * @returns an nsIURI built adding the default protocol to the string,
+ * @returns {nsIURI} an nsIURI built adding the default protocol to the string,
  *          or null if fixing was not possible.
  */
 function fixupURIProtocol(uriString) {
@@ -816,6 +904,91 @@ function fixupURIProtocol(uriString) {
  * @returns {boolean} Whether the keyword fixup was succesful.
  */
 function keywordURIFixup(uriString, fixupInfo, isPrivateContext, postData) {
+  if (!defaultToSearch) {
+    return keywordURIFixupLegacy(
+      uriString,
+      fixupInfo,
+      isPrivateContext,
+      postData
+    );
+  }
+  // Here is a few examples of strings that should be searched:
+  // "what is mozilla"
+  // "what is mozilla?"
+  // "docshell site:mozilla.org" - has a space in the origin part
+  // "?site:mozilla.org - anything that begins with a question mark
+  // "mozilla'.org" - Things that have a quote before the first dot/colon
+  // "mozilla/test" - non whiteliste host
+  // ".mozilla", "mozilla." - starts or ends with a dot ()
+
+  // These other strings should not be searched, because they could be URIs:
+  // "www.blah.com" - Domain with a known or whitelisted suffix
+  // "whitelisted" - Whitelisted domain
+  // "nonQualifiedHost:8888?something" - has a port
+  // "user@nonQualifiedHost"
+  // "blah.com."
+
+  // We do keyword lookups if the input starts with a question mark.
+  if (uriString.startsWith("?")) {
+    return tryKeywordFixupForURIInfo(
+      fixupInfo.originalInput,
+      fixupInfo,
+      isPrivateContext,
+      postData
+    );
+  }
+
+  // Check for IPs.
+  if (IPv4LikeRegex.test(uriString) || IPv6LikeRegex.test(uriString)) {
+    return false;
+  }
+
+  // Avoid lookup if we can identify a host and it's whitelisted, or ends with
+  // a dot and has some path.
+  // Note that if dnsFirstForSingleWords is true isDomainWhitelisted will always
+  // return true, so we can avoid checking dnsFirstForSingleWords after this.
+  let asciiHost = fixupInfo.fixedURI?.asciiHost;
+  if (
+    asciiHost &&
+    (isDomainWhitelisted(asciiHost) ||
+      (asciiHost.endsWith(".") &&
+        asciiHost.indexOf(".") != asciiHost.length - 1))
+  ) {
+    return false;
+  }
+
+  // Even if the host is invalid, avoid lookup if the string has uri-like
+  // characteristics.
+  // Also avoid lookup if there's a valid userPass. We only check for spaces,
+  // the URI parser has encoded any disallowed chars at this point, but if the
+  // user typed spaces before the first @, it's unlikely a valid userPass, plus
+  // some urlbar features use the @ char and we don't want to break them.
+  let userPass = fixupInfo.fixedURI?.userPass;
+  if (
+    !uriLikeRegex.test(uriString) &&
+    !(userPass && /^[^\s@]+@/.test(uriString))
+  ) {
+    return tryKeywordFixupForURIInfo(
+      fixupInfo.originalInput,
+      fixupInfo,
+      isPrivateContext,
+      postData
+    );
+  }
+
+  return false;
+}
+
+/**
+ * This is the old version of keywordURIFixup, used when
+ * browser.fixup.defaultToSearch is false
+ */
+function keywordURIFixupLegacy(
+  uriString,
+  fixupInfo,
+  isPrivateContext,
+  postData
+) {
   // These are keyword formatted strings
   // "what is mozilla"
   // "what is mozilla?"
@@ -837,165 +1010,41 @@ function keywordURIFixup(uriString, fixupInfo, isPrivateContext, postData) {
   // "nonQualifiedHost?some args"
   // "blah.com."
 
-  // Note: -1 is greater than any actual location
-  // in practice.  So if we cast all locations to uint32_t, then a <
-  // b guarantees that either b is kNotFound and a is found, or both
-  // are found and a found before b.
-
-  // TODO: the cpp code used to assign -1 to an unsigned int, causing overflow.
-  // We should replace most of this with better js code.
-  const NOT_FOUND = Infinity;
-  let firstDotLoc = NOT_FOUND;
-  let lastDotLoc = NOT_FOUND;
-  let firstColonLoc = NOT_FOUND;
-  let firstQuoteLoc = NOT_FOUND;
-  let firstSpaceLoc = NOT_FOUND;
-  let firstQMarkLoc = NOT_FOUND;
-  let lastLSBracketLoc = NOT_FOUND;
-  let lastSlashLoc = NOT_FOUND;
-  let foundDots = 0;
-  let foundColons = 0;
-  let foundDigits = 0;
-  let foundRSBrackets = 0;
-  let looksLikeIpv6 = true;
-  let hasAsciiAlpha = false;
-  for (let i = 0, pos = 0; i < uriString.length; ++i, ++pos) {
-    let iter = uriString[i];
-    if (pos >= 1 && foundRSBrackets == 0) {
-      if (
-        !(
-          lastLSBracketLoc == 0 &&
-          (iter == ":" ||
-            iter == "." ||
-            iter == "]" ||
-            asciiHexRegex.test(iter))
-        )
-      ) {
-        looksLikeIpv6 = false;
-      }
-    }
-
-    // If we're at the end of the string or this is the first slash,
-    // check if the thing before the slash looks like ipv4:
-    if (
-      (i == uriString.length - 1 ||
-        (lastSlashLoc == NOT_FOUND && iter == "/")) &&
-      // Need 2 or 3 dots + only digits
-      (foundDots == 2 || foundDots == 3) &&
-      // and they should be all that came before now:
-      (foundDots + foundDigits == pos ||
-        // or maybe there was also exactly 1 colon that came after the last
-        // dot, and the digits, dots and colon were all that came before now:
-        (foundColons == 1 &&
-          firstColonLoc > lastDotLoc &&
-          foundDots + foundDigits + foundColons == pos))
-    ) {
-      // Hurray, we got ourselves some ipv4!
-      // At this point, there's no way we will do a keyword lookup, so just bail
-      // immediately:
-      return false;
-    }
-
-    if (iter == ".") {
-      foundDots++;
-      lastDotLoc = pos;
-      if (firstDotLoc == NOT_FOUND) {
-        firstDotLoc = pos;
-      }
-    } else if (iter == ":") {
-      foundColons++;
-      if (firstColonLoc == NOT_FOUND) {
-        firstColonLoc = pos;
-      }
-    } else if (iter == " " && firstSpaceLoc == NOT_FOUND) {
-      firstSpaceLoc = pos;
-    } else if (iter == "?" && firstQMarkLoc == NOT_FOUND) {
-      firstQMarkLoc = pos;
-    } else if ((iter == "'" || iter == '"') && firstQuoteLoc == NOT_FOUND) {
-      firstQuoteLoc = pos;
-    } else if (iter == "[") {
-      lastLSBracketLoc = pos;
-    } else if (iter == "]") {
-      foundRSBrackets++;
-    } else if (iter == "/") {
-      lastSlashLoc = pos;
-    } else if (asciiAlphaRegex.test(iter)) {
-      hasAsciiAlpha = true;
-    } else if (asciiNumberRegex.test(iter)) {
-      foundDigits++;
-    }
-  }
-
-  if (lastLSBracketLoc > 0 || foundRSBrackets != 1) {
-    looksLikeIpv6 = false;
-  }
-
-  // If there are only colons and only hexadecimal characters ([a-z][0-9])
-  // enclosed in [], then don't do a keyword lookup
-  if (looksLikeIpv6) {
+  // Check for IPs.
+  if (IPv4LikeRegex.test(uriString) || IPv6LikeRegex.test(uriString)) {
     return false;
   }
 
-  let asciiHost = fixupInfo.fixedURI && fixupInfo.fixedURI.asciiHost;
-  let displayHost = fixupInfo.fixedURI && fixupInfo.fixedURI.displayHost;
-
-  // We do keyword lookups if a space or quote preceded the dot, colon
-  // or question mark (or if the latter is not found, or if the input starts
-  // with a question mark)
-  if (
-    ((firstSpaceLoc < firstDotLoc || firstQuoteLoc < firstDotLoc) &&
-      (firstSpaceLoc < firstColonLoc || firstQuoteLoc < firstColonLoc) &&
-      (firstSpaceLoc < firstQMarkLoc || firstQuoteLoc < firstQMarkLoc)) ||
-    firstQMarkLoc == 0
-  ) {
+  // We do keyword lookups if the input starts with a question mark, or if it
+  // contains a space or quote, provided they don't come after a dot, colon or
+  // question mark.
+  if (uriString.startsWith("?") || /^[^.:?]*[\s"']/.test(uriString)) {
     return tryKeywordFixupForURIInfo(
       fixupInfo.originalInput,
       fixupInfo,
       isPrivateContext,
       postData
     );
-    // ... or when the asciiHost is the same as displayHost and there are no
-    // characters from [a-z][A-Z]
-  } else if (
+  }
+
+  // Avoid lookup if we can identify a host and it's whitelisted.
+  // Note that if dnsFirstForSingleWords is true isDomainWhitelisted will always
+  // return true, so we can avoid checking dnsFirstForSingleWords after this.
+  let asciiHost = fixupInfo.fixedURI?.asciiHost;
+  if (asciiHost && isDomainWhitelisted(asciiHost)) {
+    return false;
+  }
+
+  // Or when the asciiHost is the same as displayHost and there are no
+  // alphabetical characters
+  let displayHost = fixupInfo.fixedURI && fixupInfo.fixedURI.displayHost;
+  let hasAsciiAlpha = asciiAlphaRegex.test(uriString);
+  if (
     asciiHost &&
     displayHost &&
     !hasAsciiAlpha &&
     asciiHost.toLowerCase() == displayHost.toLowerCase()
   ) {
-    if (!dnsFirstForSingleWords) {
-      return tryKeywordFixupForURIInfo(
-        fixupInfo.originalInput,
-        fixupInfo,
-        isPrivateContext,
-        postData
-      );
-    }
-    // ... or if there is no question mark or colon, and there is either no
-    // dot, or exactly 1 and it is the first or last character of the input:
-  } else if (
-    (firstDotLoc == NOT_FOUND ||
-      (foundDots == 1 &&
-        (firstDotLoc == 0 || firstDotLoc == uriString.length - 1))) &&
-    firstColonLoc == NOT_FOUND &&
-    firstQMarkLoc == NOT_FOUND
-  ) {
-    if (asciiHost && isDomainWhitelisted(asciiHost)) {
-      return false;
-    }
-
-    // ... unless there are no dots, and a slash, and alpha characters, and
-    // this is a valid host:
-    if (
-      firstDotLoc == NOT_FOUND &&
-      lastSlashLoc != NOT_FOUND &&
-      hasAsciiAlpha &&
-      asciiHost
-    ) {
-      return false;
-    }
-
-    // If we get here, we don't have a valid URI, or we did but the
-    // host is not whitelisted, so we do a keyword search *anyway*:
     return tryKeywordFixupForURIInfo(
       fixupInfo.originalInput,
       fixupInfo,
@@ -1003,10 +1052,93 @@ function keywordURIFixup(uriString, fixupInfo, isPrivateContext, postData) {
       postData
     );
   }
+
+  // Avoid lookup if we reached this point and there is a question mark or colon.
+  if (uriString.includes(":") || uriString.includes("?")) {
+    return false;
+  }
+
+  // Keyword lookup if there is exactly one dot and it is the first or last
+  // character of the input.
+  let firstDotIndex = uriString.indexOf(".");
+  if (
+    firstDotIndex == uriString.length - 1 ||
+    (firstDotIndex == 0 && firstDotIndex == uriString.lastIndexOf("."))
+  ) {
+    return tryKeywordFixupForURIInfo(
+      fixupInfo.originalInput,
+      fixupInfo,
+      isPrivateContext,
+      postData
+    );
+  }
+
+  // Keyword lookup if there is no dot and the string doesn't include a slash,
+  // or any alphabetical character or a host.
+  if (
+    firstDotIndex == -1 &&
+    (!uriString.includes("/") || !hasAsciiAlpha || !asciiHost)
+  ) {
+    return tryKeywordFixupForURIInfo(
+      fixupInfo.originalInput,
+      fixupInfo,
+      isPrivateContext,
+      postData
+    );
+  }
+
   return false;
 }
 
+/**
+ * Mimics the logic in Services.io.extractScheme, but avoids crossing XPConnect.
+ * @param {string} uriString the string to examine
+ * @returns {string} a scheme or empty string if one could not be identified
+ */
 function extractScheme(uriString) {
   let matches = uriString.match(possibleProtocolRegex);
   return matches ? matches[1].replace("\t", "").toLowerCase() : "";
+}
+
+/**
+ * View-source is a pseudo scheme. We're interested in fixing up the stuff
+ * after it. The easiest way to do that is to call this method again with
+ * the "view-source:" lopped off and then prepend it again afterwards.
+ * @param {string} uriString The original string to fixup
+ * @param {integer} fixupFlags The original fixup flags
+ * @param {nsIInputStream} postData Optional POST data for the search
+ * @returns {nsIURI} a fixed URI
+ * @throws if it's not possible to fixup the url
+ */
+function fixupViewSource(uriString, fixupFlags, postData) {
+  // We disable keyword lookup and alternate URIs so that small typos don't
+  // cause us to look at very different domains.
+  let newFixupFlags =
+    fixupFlags &
+    ~FIXUP_FLAG_ALLOW_KEYWORD_LOOKUP &
+    ~FIXUP_FLAGS_MAKE_ALTERNATE_URI;
+
+  let innerURIString = uriString.substring(12).trim();
+
+  // Prevent recursion.
+  let innerScheme = extractScheme(innerURIString);
+  if (innerScheme == "view-source") {
+    throw new Components.Exception(
+      "Prevent view-source recursion",
+      Cr.NS_ERROR_FAILURE
+    );
+  }
+
+  let info = Services.uriFixup.getFixupURIInfo(
+    innerURIString,
+    newFixupFlags,
+    postData
+  );
+  if (!info.preferredURI) {
+    throw new Components.Exception(
+      "Couldn't build a valid uri",
+      Cr.NS_ERROR_MALFORMED_URI
+    );
+  }
+  return Services.io.newURI("view-source:" + info.preferredURI.spec);
 }

@@ -9,8 +9,9 @@
  */
 
 Services.prefs.setBoolPref("extensions.blocklist.useMLBF", true);
+Services.prefs.setBoolPref("extensions.blocklist.useMLBF.stashes", true);
 
-const { ExtensionBlocklist: ExtensionBlocklistMLBF } = Blocklist;
+const ExtensionBlocklistMLBF = getExtensionBlocklistMLBF();
 
 // A known blocked version from bug 1626602.
 const blockedAddon = {
@@ -82,13 +83,13 @@ add_task(async function verify_dump_first_run() {
   // - undefined could mean that the implementation of Attachments.jsm changed.
   Assert.equal(
     downloadResult._source,
-    "dump_fallback",
+    "dump_match",
     "MLBF attachment should match the RemoteSettings collection"
   );
 
   Assert.equal(
     await sha256(downloadResult.buffer),
-    downloadResult.record.attachment.hash,
+    inputRecord.attachment.hash,
     "The content of the attachment should actually matches the record"
   );
 });

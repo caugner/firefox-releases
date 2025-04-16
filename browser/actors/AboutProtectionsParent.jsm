@@ -20,6 +20,7 @@ XPCOMUtils.defineLazyModuleGetters(this, {
   LoginBreaches: "resource:///modules/LoginBreaches.jsm",
   LoginHelper: "resource://gre/modules/LoginHelper.jsm",
   PrivateBrowsingUtils: "resource://gre/modules/PrivateBrowsingUtils.jsm",
+  Region: "resource://gre/modules/Region.jsm",
 });
 
 XPCOMUtils.defineLazyServiceGetter(
@@ -37,7 +38,9 @@ let idToTextMap = new Map([
   [Ci.nsITrackingDBService.SOCIAL_ID, "social"],
 ]);
 
-const MONITOR_API_ENDPOINT = "https://monitor.firefox.com/user/breach-stats";
+const MONITOR_API_ENDPOINT = Services.urlFormatter.formatURLPref(
+  "browser.contentblocking.report.endpoint_url"
+);
 
 const SECURE_PROXY_ADDON_ID = "secure-proxy@mozilla.com";
 
@@ -54,15 +57,20 @@ const UNEXPECTED_RESPONSE = "Unexpected response";
 const UNKNOWN_ERROR = "Unknown error";
 
 // Valid response info for successful Monitor data
-const MONITOR_RESPONSE_PROPS = ["monitoredEmails", "numBreaches", "passwords"];
+const MONITOR_RESPONSE_PROPS = [
+  "monitoredEmails",
+  "numBreaches",
+  "passwords",
+  "numBreachesResolved",
+  "passwordsResolved",
+];
 
 let gTestOverride = null;
+let monitorResponse = null;
 
 class AboutProtectionsParent extends JSWindowActorParent {
   constructor() {
     super();
-
-    this.monitorResponse = null;
   }
 
   // Some tests wish to override certain functions with ones that mostly do nothing.
@@ -77,13 +85,13 @@ class AboutProtectionsParent extends JSWindowActorParent {
    * @return valid data from endpoint.
    */
   async fetchUserBreachStats(token) {
-    if (this.monitorResponse && this.monitorResponse.timestamp) {
-      var timeDiff = Date.now() - this.monitorResponse.timestamp;
+    if (monitorResponse && monitorResponse.timestamp) {
+      var timeDiff = Date.now() - monitorResponse.timestamp;
       let oneDayInMS = 24 * 60 * 60 * 1000;
       if (timeDiff >= oneDayInMS) {
-        this.monitorResponse = null;
+        monitorResponse = null;
       } else {
-        return this.monitorResponse;
+        return monitorResponse;
       }
     }
 
@@ -107,53 +115,49 @@ class AboutProtectionsParent extends JSWindowActorParent {
         }
       }
 
-      this.monitorResponse = isValid ? json : new Error(UNEXPECTED_RESPONSE);
+      monitorResponse = isValid ? json : new Error(UNEXPECTED_RESPONSE);
       if (isValid) {
-        this.monitorResponse.timestamp = Date.now();
+        monitorResponse.timestamp = Date.now();
       }
     } else {
       // Check the reason for the error
       switch (response.status) {
         case 400:
         case 401:
-          this.monitorResponse = new Error(INVALID_OAUTH_TOKEN);
+          monitorResponse = new Error(INVALID_OAUTH_TOKEN);
           break;
         case 404:
-          this.monitorResponse = new Error(USER_UNSUBSCRIBED_TO_MONITOR);
+          monitorResponse = new Error(USER_UNSUBSCRIBED_TO_MONITOR);
           break;
         case 503:
-          this.monitorResponse = new Error(SERVICE_UNAVAILABLE);
+          monitorResponse = new Error(SERVICE_UNAVAILABLE);
           break;
         default:
-          this.monitorResponse = new Error(UNKNOWN_ERROR);
+          monitorResponse = new Error(UNKNOWN_ERROR);
           break;
       }
     }
 
-    if (this.monitorResponse instanceof Error) {
-      throw this.monitorResponse;
+    if (monitorResponse instanceof Error) {
+      throw monitorResponse;
     }
-    return this.monitorResponse;
+    return monitorResponse;
   }
 
   /**
    * Retrieves login data for the user.
    *
-   * @return {{ hasFxa: Boolean,
+   * @return {{
    *            numLogins: Number,
-   *            numSyncedDevices: Number,
    *            mobileDeviceConnected: Boolean }}
-   *         The login data.
    */
   async getLoginData() {
     if (gTestOverride && "getLoginData" in gTestOverride) {
       return gTestOverride.getLoginData();
     }
 
-    let hasFxa = false;
-
     try {
-      if ((hasFxa = !!(await fxAccounts.getSignedInUser()))) {
+      if (await fxAccounts.getSignedInUser()) {
         await fxAccounts.device.refreshDeviceList();
       }
     } catch (e) {
@@ -171,11 +175,7 @@ class AboutProtectionsParent extends JSWindowActorParent {
       ).length;
 
     return {
-      hasFxa,
       numLogins: userFacingLogins,
-      numSyncedDevices: fxAccounts.device.recentDeviceList
-        ? fxAccounts.device.recentDeviceList.length
-        : 0,
       mobileDeviceConnected,
     };
   }
@@ -193,7 +193,11 @@ class AboutProtectionsParent extends JSWindowActorParent {
    */
   async getMonitorData() {
     if (gTestOverride && "getMonitorData" in gTestOverride) {
-      return gTestOverride.getMonitorData();
+      monitorResponse = gTestOverride.getMonitorData();
+      monitorResponse.timestamp = Date.now();
+      // In a test, expect this to not fetch from the monitor endpoint due to the timestamp guaranteeing we use the cache.
+      monitorResponse = await this.fetchUserBreachStats();
+      return monitorResponse;
     }
 
     let monitorData = {};
@@ -279,7 +283,7 @@ class AboutProtectionsParent extends JSWindowActorParent {
    * and does not yet have Proxy installed.
    */
   async shouldShowProxyCard() {
-    const region = Services.prefs.getCharPref("browser.search.region");
+    const region = Region.home || "";
     const languages = Services.prefs.getComplexValue(
       "intl.accept_languages",
       Ci.nsIPrefLocalizedString
@@ -364,10 +368,12 @@ class AboutProtectionsParent extends JSWindowActorParent {
         return this.getMonitorData();
 
       case "FetchUserLoginsData":
-        return this.getLoginData();
+        let { potentiallyBreachedLogins } = await this.getMonitorData();
+        let loginsData = await this.getLoginData();
+        return { ...loginsData, potentiallyBreachedLogins };
 
       case "ClearMonitorCache":
-        this.monitorResponse = null;
+        monitorResponse = null;
         break;
 
       case "GetShowProxyCard":

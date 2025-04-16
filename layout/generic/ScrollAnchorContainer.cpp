@@ -257,7 +257,7 @@ void ScrollAnchorContainer::SelectAnchor() {
     ANCHOR_LOG("Beginning selection.\n");
     mAnchorNode = FindAnchorIn(mScrollFrame->mScrolledFrame);
   } else {
-    ANCHOR_LOG("Skipping selection, doesn't maintain a scroll anchor");
+    ANCHOR_LOG("Skipping selection, doesn't maintain a scroll anchor.\n");
     mAnchorNode = nullptr;
   }
 
@@ -651,21 +651,20 @@ ScrollAnchorContainer::ExamineAnchorCandidate(nsIFrame* aFrame) const {
 
 nsIFrame* ScrollAnchorContainer::FindAnchorIn(nsIFrame* aFrame) const {
   // Visit the child lists of this frame
-  for (nsIFrame::ChildListIterator lists(aFrame); !lists.IsDone();
-       lists.Next()) {
+  for (const auto& [list, listID] : aFrame->ChildLists()) {
     // Skip child lists that contain out-of-flow frames, we'll visit them by
     // following placeholders in the in-flow lists so that we visit these
     // frames in DOM order.
     // XXX do we actually need to exclude kOverflowOutOfFlowList too?
-    if (lists.CurrentID() == FrameChildListID::kAbsoluteList ||
-        lists.CurrentID() == FrameChildListID::kFixedList ||
-        lists.CurrentID() == FrameChildListID::kFloatList ||
-        lists.CurrentID() == FrameChildListID::kOverflowOutOfFlowList) {
+    if (listID == FrameChildListID::kAbsoluteList ||
+        listID == FrameChildListID::kFixedList ||
+        listID == FrameChildListID::kFloatList ||
+        listID == FrameChildListID::kOverflowOutOfFlowList) {
       continue;
     }
 
     // Search the child list, and return if we selected an anchor
-    if (nsIFrame* anchor = FindAnchorInList(lists.CurrentList())) {
+    if (nsIFrame* anchor = FindAnchorInList(list)) {
       return anchor;
     }
   }

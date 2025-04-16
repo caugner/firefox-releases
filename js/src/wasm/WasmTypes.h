@@ -232,11 +232,17 @@ class Opcode {
     static_assert(size_t(MozOp::Limit) <= 0xFFFFFF, "fits");
     MOZ_ASSERT(size_t(op) < size_t(MozOp::Limit));
   }
+  MOZ_IMPLICIT Opcode(SimdOp op)
+      : bits_((uint32_t(op) << 8) | uint32_t(Op::SimdPrefix)) {
+    static_assert(size_t(SimdOp::Limit) <= 0xFFFFFF, "fits");
+    MOZ_ASSERT(size_t(op) < size_t(SimdOp::Limit));
+  }
 
   bool isOp() const { return bits_ < uint32_t(Op::FirstPrefix); }
   bool isMisc() const { return (bits_ & 255) == uint32_t(Op::MiscPrefix); }
   bool isThread() const { return (bits_ & 255) == uint32_t(Op::ThreadPrefix); }
   bool isMoz() const { return (bits_ & 255) == uint32_t(Op::MozPrefix); }
+  bool isSimd() const { return (bits_ & 255) == uint32_t(Op::SimdPrefix); }
 
   Op asOp() const {
     MOZ_ASSERT(isOp());
@@ -254,6 +260,10 @@ class Opcode {
     MOZ_ASSERT(isMoz());
     return MozOp(bits_ >> 8);
   }
+  SimdOp asSimd() const {
+    MOZ_ASSERT(isSimd());
+    return SimdOp(bits_ >> 8);
+  }
 
   uint32_t bits() const { return bits_; }
 
@@ -263,8 +273,8 @@ class Opcode {
 
 // A PackedTypeCode represents a TypeCode paired with a refTypeIndex (valid only
 // for TypeCode::OptRef).  PackedTypeCode is guaranteed to be POD.  The TypeCode
-// spans the full range of type codes including the specialized AnyRef, FuncRef,
-// NullRef.
+// spans the full range of type codes including the specialized AnyRef, and
+// FuncRef.
 //
 // PackedTypeCode is an enum class, as opposed to the more natural
 // struct-with-bitfields, because bitfields would make it non-POD.
@@ -353,7 +363,6 @@ static inline bool IsReferenceType(PackedTypeCode ptc) {
 class RefType {
  public:
   enum Kind {
-    Null = uint8_t(TypeCode::NullRef),
     Any = uint8_t(TypeCode::AnyRef),
     Func = uint8_t(TypeCode::FuncRef),
     TypeIndex = uint8_t(TypeCode::OptRef)
@@ -365,7 +374,6 @@ class RefType {
 #ifdef DEBUG
   bool isValid() const {
     switch (UnpackTypeCodeType(ptc_)) {
-      case TypeCode::NullRef:
       case TypeCode::FuncRef:
       case TypeCode::AnyRef:
         MOZ_ASSERT(UnpackTypeCodeIndexUnchecked(ptc_) == NoRefTypeIndex);
@@ -378,7 +386,6 @@ class RefType {
     }
   }
 #endif
-
   explicit RefType(Kind kind) : ptc_(PackTypeCode(TypeCode(kind))) {
     MOZ_ASSERT(isValid());
   }
@@ -390,6 +397,7 @@ class RefType {
   }
 
  public:
+  RefType() : ptc_(InvalidPackedTypeCode()) {}
   explicit RefType(PackedTypeCode ptc) : ptc_(ptc) { MOZ_ASSERT(isValid()); }
 
   static RefType fromTypeCode(TypeCode tc) {
@@ -409,7 +417,6 @@ class RefType {
 
   static RefType any() { return RefType(Any); }
   static RefType func() { return RefType(Func); }
-  static RefType null() { return RefType(Null); }
 
   bool operator==(const RefType& that) const { return ptc_ == that.ptc_; }
   bool operator!=(const RefType& that) const { return ptc_ != that.ptc_; }
@@ -429,9 +436,9 @@ class ValType {
       case TypeCode::I64:
       case TypeCode::F32:
       case TypeCode::F64:
+      case TypeCode::V128:
       case TypeCode::AnyRef:
       case TypeCode::FuncRef:
-      case TypeCode::NullRef:
       case TypeCode::OptRef:
         return true;
       default:
@@ -446,6 +453,7 @@ class ValType {
     I64 = uint8_t(TypeCode::I64),
     F32 = uint8_t(TypeCode::F32),
     F64 = uint8_t(TypeCode::F64),
+    V128 = uint8_t(TypeCode::V128),
     Ref = uint8_t(TypeCode::OptRef),
   };
 
@@ -490,6 +498,9 @@ class ValType {
       case jit::MIRType::Double:
         tc_ = PackTypeCode(TypeCode::F64);
         break;
+      case jit::MIRType::Simd128:
+        tc_ = PackTypeCode(TypeCode::V128);
+        break;
       default:
         MOZ_CRASH("ValType(MIRType): unexpected type");
     }
@@ -502,6 +513,7 @@ class ValType {
       case TypeCode::I64:
       case TypeCode::F32:
       case TypeCode::F64:
+      case TypeCode::V128:
         break;
       default:
         MOZ_CRASH("Bad type code");
@@ -527,10 +539,6 @@ class ValType {
   }
 
   bool isAnyRef() const { return UnpackTypeCodeType(tc_) == TypeCode::AnyRef; }
-
-  bool isNullRef() const {
-    return UnpackTypeCodeType(tc_) == TypeCode::NullRef;
-  }
 
   bool isFuncRef() const {
     return UnpackTypeCodeType(tc_) == TypeCode::FuncRef;
@@ -574,7 +582,6 @@ class ValType {
     switch (typeCode()) {
       case TypeCode::AnyRef:
       case TypeCode::FuncRef:
-      case TypeCode::NullRef:
         return true;
       default:
         return false;
@@ -600,6 +607,28 @@ class ValType {
   bool operator!=(Kind that) const { return !(*this == that); }
 };
 
+struct V128 {
+  uint8_t bytes[16];  // Little-endian
+
+  V128() { memset(bytes, 0, sizeof(bytes)); }
+
+  template <typename T>
+  T extractLane(int lane) {
+    T result;
+    MOZ_ASSERT(lane < 16 / sizeof(T));
+    memcpy(&result, bytes + sizeof(T) * lane, sizeof(T));
+    return result;
+  }
+
+  template <typename T>
+  void insertLane(int lane, T value) {
+    MOZ_ASSERT(lane < 16 / sizeof(T));
+    memcpy(bytes + sizeof(T) * lane, &value, sizeof(T));
+  }
+};
+
+static_assert(sizeof(V128) == 16, "Invariant");
+
 // The dominant use of this data type is for locals and args, and profiling
 // with ZenGarden and Tanks suggests an initial size of 16 minimises heap
 // allocation, both in terms of blocks and bytes.
@@ -615,6 +644,8 @@ static inline unsigned SizeOf(ValType vt) {
     case ValType::I64:
     case ValType::F64:
       return 8;
+    case ValType::V128:
+      return 16;
     case ValType::Ref:
       return sizeof(intptr_t);
   }
@@ -636,6 +667,8 @@ static inline jit::MIRType ToMIRType(ValType vt) {
       return jit::MIRType::Float32;
     case ValType::F64:
       return jit::MIRType::Double;
+    case ValType::V128:
+      return jit::MIRType::Simd128;
     case ValType::Ref:
       return jit::MIRType::RefOrNull;
   }
@@ -648,12 +681,16 @@ static inline jit::MIRType ToMIRType(const Maybe<ValType>& t) {
   return t ? ToMIRType(ValType(t.ref())) : jit::MIRType::None;
 }
 
+extern UniqueChars ToString(ValType type);
+
 static inline const char* ToCString(ValType type) {
   switch (type.kind()) {
     case ValType::I32:
       return "i32";
     case ValType::I64:
       return "i64";
+    case ValType::V128:
+      return "v128";
     case ValType::F32:
       return "f32";
     case ValType::F64:
@@ -661,13 +698,11 @@ static inline const char* ToCString(ValType type) {
     case ValType::Ref:
       switch (type.refTypeKind()) {
         case RefType::Any:
-          return "anyref";
+          return "externref";
         case RefType::Func:
           return "funcref";
-        case RefType::Null:
-          return "nullref";
         case RefType::TypeIndex:
-          return "ref";
+          return "optref";
       }
   }
   MOZ_CRASH("bad value type");
@@ -946,6 +981,7 @@ class LitVal {
     float f32_;
     double f64_;
     AnyRef ref_;
+    V128 v128_;
   } u;
 
  public:
@@ -969,12 +1005,14 @@ class LitVal {
         u.f64_ = 0;
         break;
       }
+      case ValType::Kind::V128: {
+        new (&u.v128_) V128();
+        break;
+      }
       case ValType::Kind::Ref: {
         u.ref_ = AnyRef::null();
         break;
       }
-      default:
-        MOZ_CRASH();
     }
   }
 
@@ -983,6 +1021,8 @@ class LitVal {
 
   explicit LitVal(float f32) : type_(ValType::F32) { u.f32_ = f32; }
   explicit LitVal(double f64) : type_(ValType::F64) { u.f64_ = f64; }
+
+  explicit LitVal(V128 v128) : type_(ValType::V128) { u.v128_ = v128; }
 
   explicit LitVal(ValType type, AnyRef any) : type_(type) {
     MOZ_ASSERT(type.isReference());
@@ -1014,6 +1054,10 @@ class LitVal {
     MOZ_ASSERT(type_.isReference());
     return u.ref_;
   }
+  const V128& v128() const {
+    MOZ_ASSERT(type_ == ValType::V128);
+    return u.v128_;
+  }
 };
 
 // A Val is a LitVal that can contain (non-null) pointers to GC things. All Vals
@@ -1030,6 +1074,7 @@ class MOZ_NON_PARAM Val : public LitVal {
   explicit Val(uint64_t i64) : LitVal(i64) {}
   explicit Val(float f32) : LitVal(f32) {}
   explicit Val(double f64) : LitVal(f64) {}
+  explicit Val(V128 v128) : LitVal(v128) {}
   explicit Val(ValType type, AnyRef val) : LitVal(type, AnyRef::null()) {
     MOZ_ASSERT(type.isReference());
     u.ref_ = val;
@@ -1096,19 +1141,6 @@ class FuncType {
   }
   bool operator!=(const FuncType& rhs) const { return !(*this == rhs); }
 
-  bool hasI64ArgOrRet() const {
-    for (ValType arg : args()) {
-      if (arg == ValType::I64) {
-        return true;
-      }
-    }
-    for (ValType result : results()) {
-      if (result == ValType::I64) {
-        return true;
-      }
-    }
-    return false;
-  }
   // Entry from JS to wasm via the JIT is currently unimplemented for
   // functions that return multiple values.
   bool temporarilyUnsupportedResultCountForJitEntry() const {
@@ -1119,8 +1151,24 @@ class FuncType {
   bool temporarilyUnsupportedResultCountForJitExit() const {
     return results().length() > MaxResultsForJitExit;
   }
-  // For JS->wasm jit entries, AnyRef parameters and returns are allowed,
-  // as are all reference types apart from TypeIndex.
+#ifdef ENABLE_WASM_SIMD
+  bool hasV128ArgOrRet() const {
+    for (ValType arg : args()) {
+      if (arg == ValType::V128) {
+        return true;
+      }
+    }
+    for (ValType result : results()) {
+      if (result == ValType::V128) {
+        return true;
+      }
+    }
+    return false;
+  }
+#endif
+  // For JS->wasm jit entries, AnyRef parameters and returns are allowed, as are
+  // all reference types apart from TypeIndex.  V128 types are excluded per spec
+  // but are guarded against separately.
   bool temporarilyUnsupportedReftypeForEntry() const {
     for (ValType arg : args()) {
       if (arg.isReference() && !arg.isAnyRef()) {
@@ -1135,7 +1183,8 @@ class FuncType {
     return false;
   }
   // For inlined JS->wasm jit entries, AnyRef parameters and returns are
-  // allowed, as are all reference types apart from TypeIndex.
+  // allowed, as are all reference types apart from TypeIndex.  V128 types are
+  // excluded per spec but are guarded against separately.
   bool temporarilyUnsupportedReftypeForInlineEntry() const {
     for (ValType arg : args()) {
       if (arg.isReference() && !arg.isAnyRef()) {
@@ -1150,7 +1199,8 @@ class FuncType {
     return false;
   }
   // For wasm->JS jit exits, AnyRef parameters and returns are allowed, as are
-  // reference type parameters of all types except TypeIndex.
+  // reference type parameters of all types except TypeIndex.  V128 types are
+  // excluded per spec but are guarded against separately.
   bool temporarilyUnsupportedReftypeForExit() const {
     for (ValType arg : args()) {
       if (arg.isTypeIndex()) {
@@ -2592,21 +2642,19 @@ enum class SymbolicAddress {
   HandleDebugTrap,
   HandleThrow,
   HandleTrap,
-  ReportInt64JSCall,
+  ReportV128JSCall,
   CallImport_Void,
   CallImport_I32,
   CallImport_I64,
+  CallImport_V128,
   CallImport_F64,
   CallImport_FuncRef,
   CallImport_AnyRef,
-  CallImport_NullRef,
   CoerceInPlace_ToInt32,
   CoerceInPlace_ToNumber,
   CoerceInPlace_JitEntry,
-#ifdef ENABLE_WASM_BIGINT
   CoerceInPlace_ToBigInt,
   AllocateBigInt,
-#endif
   BoxValue_Anyref,
   DivI64,
   UDivI64,
@@ -2729,21 +2777,16 @@ struct Limits {
 //
 // The TableKind determines the representation:
 //  - AnyRef: a wasm anyref word (wasm::AnyRef)
-//  - NullRef: as AnyRef
 //  - FuncRef: a two-word FunctionTableElem (wasm indirect call ABI)
 //  - AsmJS: a two-word FunctionTableElem (asm.js ABI)
 // Eventually there should be a single unified AnyRef representation.
-//
-// TableKind::NullRef is a reasonable default initializer, if one is needed.
 
-enum class TableKind { AnyRef, NullRef, FuncRef, AsmJS };
+enum class TableKind { AnyRef, FuncRef, AsmJS };
 
 static inline ValType ToElemValType(TableKind tk) {
   switch (tk) {
     case TableKind::AnyRef:
       return RefType::any();
-    case TableKind::NullRef:
-      return RefType::null();
     case TableKind::FuncRef:
       return RefType::func();
     case TableKind::AsmJS:
@@ -3193,6 +3236,9 @@ class DebugFrame {
     AnyRef anyref_;
     float f32_;
     double f64_;
+#ifdef ENABLE_WASM_SIMD
+    V128 v128_;
+#endif
 #ifdef DEBUG
     // Should we add a new value representation, this will remind us to update
     // SpilledRegisterResult.
@@ -3202,12 +3248,12 @@ class DebugFrame {
         case ValType::I64:
         case ValType::F32:
         case ValType::F64:
+        case ValType::V128:
           return;
         case ValType::Ref:
           switch (type.refTypeKind()) {
             case RefType::Any:
             case RefType::Func:
-            case RefType::Null:
             case RefType::TypeIndex:
               return;
           }

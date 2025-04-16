@@ -7,7 +7,6 @@
 #include "mozilla/dom/AudioContext.h"
 #include "mozilla/dom/AudioDeviceInfo.h"
 #include "mozilla/dom/BaseAudioContextBinding.h"
-#include "mozilla/dom/WorkletThread.h"
 #include "mozilla/SchedulerGroup.h"
 #include "mozilla/SharedThreadPool.h"
 #include "mozilla/ClearOnShutdown.h"
@@ -206,7 +205,6 @@ void ThreadedDriver::RunThread() {
 
     if (result.IsStop()) {
       // Signal that we're done stopping.
-      dom::WorkletThread::DeleteCycleCollectedJSContext();
       result.Stopped();
       break;
     }
@@ -574,6 +572,7 @@ bool IsMacbookOrMacbookAir() {
 }
 
 void AudioCallbackDriver::Init() {
+  AUTO_PROFILER_LABEL("AudioCallbackDriver::Init", MEDIA_CUBEB);
   MOZ_ASSERT(OnCubebOperationThread());
   MOZ_ASSERT(mAudioStreamState == AudioStreamState::Pending);
   FallbackDriverState fallbackState = mFallbackDriverState;
@@ -642,7 +641,8 @@ void AudioCallbackDriver::Init() {
   output.layout = static_cast<uint32_t>(channelMap);
   output.prefs = CubebUtils::GetDefaultStreamPrefs();
 #if !defined(XP_WIN)
-  if (mInputDevicePreference == CUBEB_DEVICE_PREF_VOICE) {
+  if (mInputDevicePreference == CUBEB_DEVICE_PREF_VOICE &&
+      CubebUtils::RouteOutputAsVoice()) {
     output.prefs |= static_cast<cubeb_stream_prefs>(CUBEB_STREAM_PREF_VOICE);
   }
 #endif
@@ -671,6 +671,10 @@ void AudioCallbackDriver::Init() {
   input = output;
   input.channels = mInputChannelCount;
   input.layout = CUBEB_LAYOUT_UNDEFINED;
+  input.prefs = CubebUtils::GetDefaultStreamPrefs();
+  if (mInputDevicePreference == CUBEB_DEVICE_PREF_VOICE) {
+    input.prefs |= static_cast<cubeb_stream_prefs>(CUBEB_STREAM_PREF_VOICE);
+  }
 
   cubeb_stream* stream = nullptr;
   bool inputWanted = mInputChannelCount > 0;
@@ -764,6 +768,7 @@ void AudioCallbackDriver::Start() {
 }
 
 bool AudioCallbackDriver::StartStream() {
+  AUTO_PROFILER_LABEL("AudioCallbackDriver::StartStream", MEDIA_CUBEB);
   MOZ_ASSERT(!IsStarted() && OnCubebOperationThread());
   // Set mStarted before cubeb_stream_start, since starting the cubeb stream can
   // result in a callback (that may read mStarted) before mStarted would
@@ -779,6 +784,7 @@ bool AudioCallbackDriver::StartStream() {
 }
 
 void AudioCallbackDriver::Stop() {
+  AUTO_PROFILER_LABEL("AudioCallbackDriver::Stop", MEDIA_CUBEB);
   MOZ_ASSERT(OnCubebOperationThread());
   if (cubeb_stream_stop(mAudioStream) != CUBEB_OK) {
     NS_WARNING("Could not stop cubeb stream for MTG.");
@@ -810,6 +816,7 @@ void AudioCallbackDriver::Shutdown() {
 
 #if defined(XP_WIN)
 void AudioCallbackDriver::ResetDefaultDevice() {
+  AUTO_PROFILER_LABEL("AudioCallbackDriver::ResetDefaultDevice", MEDIA_CUBEB);
   if (cubeb_stream_reset_default_device(mAudioStream) != CUBEB_OK) {
     NS_WARNING("Could not reset cubeb stream to default output device.");
   }
@@ -957,6 +964,12 @@ long AudioCallbackDriver::DataCallback(const AudioDataValue* aInputBuffer,
 
   mBuffer.BufferFilled();
 
+#ifdef MOZ_SAMPLE_TYPE_FLOAT32
+  // Prevent returning NaN to the OS mixer, and propagating NaN into the reverse
+  // stream of the AEC.
+  NaNToZeroInPlace(aOutputBuffer, aFrames * mOutputChannelCount);
+#endif
+
   // Callback any observers for the AEC speaker data.  Note that one
   // (maybe) of these will be full-duplex, the others will get their input
   // data off separate cubeb callbacks.  Take care with how stuff is
@@ -1074,6 +1087,7 @@ void AudioCallbackDriver::MixerCallback(AudioDataValue* aMixedBuffer,
 
 void AudioCallbackDriver::PanOutputIfNeeded(bool aMicrophoneActive) {
 #ifdef XP_MACOSX
+  AUTO_PROFILER_LABEL("AudioCallbackDriver::PanOutputIfNeeded", MEDIA_CUBEB);
   cubeb_device* out = nullptr;
   int rv;
   char name[128];
@@ -1084,22 +1098,17 @@ void AudioCallbackDriver::PanOutputIfNeeded(bool aMicrophoneActive) {
     return;
   }
 
-  int major,minor;
+  int major, minor;
   for (uint32_t i = 0; i < length; i++) {
     // skip the model name
     if (isalpha(name[i])) {
       continue;
     }
-    sscanf(name+i, "%d,%d", &major, &minor);
+    sscanf(name + i, "%d,%d", &major, &minor);
     break;
   }
 
-  enum MacbookModel {
-    MacBook,
-    MacBookPro,
-    MacBookAir,
-    NotAMacbook
-  };
+  enum MacbookModel { MacBook, MacBookPro, MacBookAir, NotAMacbook };
 
   MacbookModel model;
 
@@ -1212,8 +1221,20 @@ void AudioCallbackDriver::CompleteAudioContextOperations(
 }
 
 TimeDuration AudioCallbackDriver::AudioOutputLatency() {
+  AUTO_PROFILER_LABEL("AudioCallbackDriver::AudioOutputLatency", MEDIA_CUBEB);
   uint32_t latencyFrames;
   int rv = cubeb_stream_get_latency(mAudioStream, &latencyFrames);
+  if (rv || mSampleRate == 0) {
+    return TimeDuration::FromSeconds(0.0);
+  }
+
+  return TimeDuration::FromSeconds(static_cast<double>(latencyFrames) /
+                                   mSampleRate);
+}
+
+TimeDuration AudioCallbackDriver::AudioInputLatency() {
+  uint32_t latencyFrames;
+  int rv = cubeb_stream_get_input_latency(mAudioStream, &latencyFrames);
   if (rv || mSampleRate == 0) {
     return TimeDuration::FromSeconds(0.0);
   }

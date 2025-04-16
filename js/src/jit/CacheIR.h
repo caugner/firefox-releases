@@ -9,6 +9,8 @@
 
 #include "mozilla/Maybe.h"
 
+#include "jsmath.h"
+
 #include "NamespaceImports.h"
 
 #include "gc/Rooting.h"
@@ -180,6 +182,10 @@ enum class CacheKind : uint8_t {
 };
 
 extern const char* const CacheKindNames[];
+
+#ifdef DEBUG
+extern size_t NumInputsForCacheKind(CacheKind kind);
+#endif
 
 enum class CacheOp {
 #define DEFINE_OP(op, ...) op,
@@ -602,6 +608,11 @@ class MOZ_RAII CacheIRWriter : public JS::CustomAutoRooter {
                   "MetaTwoByteKind must fit in a byte");
     buffer_.writeByte(uint8_t(kind));
   }
+  void writeUnaryMathFunctionImm(UnaryMathFunction fun) {
+    static_assert(sizeof(UnaryMathFunction) == sizeof(uint8_t),
+                  "UnaryMathFunction must fit in a byte");
+    buffer_.writeByte(uint8_t(fun));
+  }
   void writeBoolImm(bool b) { buffer_.writeByte(uint32_t(b)); }
 
   void writeByteImm(uint32_t b) {
@@ -751,7 +762,15 @@ class MOZ_RAII CacheIRWriter : public JS::CustomAutoRooter {
   void guardSpecificFunction(ObjOperandId obj, JSFunction* expected) {
     // Guard object is a specific function. This implies immutable fields on
     // the JSFunction struct itself are unchanged.
-    guardSpecificObject(obj, expected);
+    // Bake in the nargs and FunctionFlags so Warp can use them off-main thread,
+    // instead of directly using the JSFunction fields.
+    static_assert(JSFunction::NArgsBits == 16);
+    static_assert(sizeof(decltype(expected->flags().toRaw())) ==
+                  sizeof(uint16_t));
+
+    uint32_t nargsAndFlags =
+        (uint32_t(expected->nargs()) << 16) | expected->flags().toRaw();
+    guardSpecificFunction_(obj, expected, nargsAndFlags);
   }
 
   ValOperandId loadArgumentFixedSlot(
@@ -932,6 +951,10 @@ class MOZ_RAII CacheIRReader {
     return ReferenceType(buffer_.readByte());
   }
 
+  UnaryMathFunction unaryMathFunction() {
+    return UnaryMathFunction(buffer_.readByte());
+  }
+
   CallFlags callFlags() {
     // See CacheIRWriter::writeCallFlagsImm()
     uint8_t encoded = buffer_.readByte();
@@ -1077,6 +1100,8 @@ class MOZ_RAII GetPropIRGenerator : public IRGenerator {
                                       HandleId id);
   AttachDecision tryAttachObjectLength(HandleObject obj, ObjOperandId objId,
                                        HandleId id);
+  AttachDecision tryAttachTypedArrayLength(HandleObject obj, ObjOperandId objId,
+                                           HandleId id);
   AttachDecision tryAttachModuleNamespace(HandleObject obj, ObjOperandId objId,
                                           HandleId id);
   AttachDecision tryAttachWindowProxy(HandleObject obj, ObjOperandId objId,
@@ -1472,6 +1497,8 @@ class MOZ_RAII GetIteratorIRGenerator : public IRGenerator {
   void trackAttached(const char* name);
 };
 
+enum class StringChar { CodeAt, At };
+
 class MOZ_RAII CallIRGenerator : public IRGenerator {
  private:
   JSOp op_;
@@ -1489,13 +1516,33 @@ class MOZ_RAII CallIRGenerator : public IRGenerator {
   bool getTemplateObjectForNative(HandleFunction calleeFunc,
                                   MutableHandleObject result);
 
-  AttachDecision tryAttachArrayPush();
-  AttachDecision tryAttachArrayJoin();
-  AttachDecision tryAttachIsSuspendedGenerator();
+  void emitNativeCalleeGuard(HandleFunction callee);
+
+  AttachDecision tryAttachArrayPush(HandleFunction callee);
+  AttachDecision tryAttachArrayJoin(HandleFunction callee);
+  AttachDecision tryAttachArrayIsArray(HandleFunction callee);
+  AttachDecision tryAttachIsSuspendedGenerator(HandleFunction callee);
+  AttachDecision tryAttachToString(HandleFunction callee);
+  AttachDecision tryAttachToObject(HandleFunction callee);
+  AttachDecision tryAttachToInteger(HandleFunction callee);
+  AttachDecision tryAttachIsObject(HandleFunction callee);
+  AttachDecision tryAttachIsCallable(HandleFunction callee);
+  AttachDecision tryAttachIsConstructor(HandleFunction callee);
+  AttachDecision tryAttachStringChar(HandleFunction callee, StringChar kind);
+  AttachDecision tryAttachStringCharCodeAt(HandleFunction callee);
+  AttachDecision tryAttachStringCharAt(HandleFunction callee);
+  AttachDecision tryAttachMathAbs(HandleFunction callee);
+  AttachDecision tryAttachMathFloor(HandleFunction callee);
+  AttachDecision tryAttachMathCeil(HandleFunction callee);
+  AttachDecision tryAttachMathRound(HandleFunction callee);
+  AttachDecision tryAttachMathSqrt(HandleFunction callee);
+  AttachDecision tryAttachMathFunction(HandleFunction callee,
+                                       UnaryMathFunction fun);
+
   AttachDecision tryAttachFunCall(HandleFunction calleeFunc);
   AttachDecision tryAttachFunApply(HandleFunction calleeFunc);
   AttachDecision tryAttachCallScripted(HandleFunction calleeFunc);
-  AttachDecision tryAttachSpecialCaseCallNative(HandleFunction calleeFunc);
+  AttachDecision tryAttachInlinableNative(HandleFunction calleeFunc);
   AttachDecision tryAttachCallNative(HandleFunction calleeFunc);
   AttachDecision tryAttachCallHook(HandleObject calleeObj);
 
@@ -1559,7 +1606,7 @@ class MOZ_RAII ToBoolIRGenerator : public IRGenerator {
   HandleValue val_;
 
   AttachDecision tryAttachInt32();
-  AttachDecision tryAttachDouble();
+  AttachDecision tryAttachNumber();
   AttachDecision tryAttachString();
   AttachDecision tryAttachSymbol();
   AttachDecision tryAttachNullOrUndefined();

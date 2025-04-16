@@ -9,8 +9,8 @@
 
 #include "BaseProfiler.h"
 
-#ifndef MOZ_BASE_PROFILER
-#  error Do not #include this header when MOZ_BASE_PROFILER is not #defined.
+#ifndef MOZ_GECKO_PROFILER
+#  error Do not #include this header when MOZ_GECKO_PROFILER is not #defined.
 #endif
 
 #include "mozilla/Types.h"
@@ -103,6 +103,10 @@ namespace baseprofiler {
   END_CATEGORY                                                                 \
   BEGIN_CATEGORY(IPC, "IPC", "lightgreen")                                     \
     SUBCATEGORY(IPC, IPC, "Other")                                             \
+    END_CATEGORY                                                               \
+  BEGIN_CATEGORY(MEDIA, "Media", "orange")                                     \
+    SUBCATEGORY(MEDIA, MEDIA_CUBEB, "Cubeb")                                   \
+    SUBCATEGORY(MEDIA, MEDIA_PLAYBACK, "Playback")                             \
   END_CATEGORY
 
 // An enum that lists all possible category pairs in one list.

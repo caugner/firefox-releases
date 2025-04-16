@@ -8,11 +8,13 @@
 #define nsDocShellLoadState_h__
 
 #include "mozilla/dom/BrowsingContext.h"
+#include "mozilla/dom/SessionHistoryEntry.h"
 
 // Helper Classes
 #include "nsCOMPtr.h"
 #include "nsString.h"
 #include "nsDocShellLoadTypes.h"
+#include "nsTArrayForwardDeclare.h"
 
 class nsIContentSecurityPolicy;
 class nsIInputStream;
@@ -49,7 +51,7 @@ class nsDocShellLoadState final {
                                            nsDocShellLoadState** aResult);
 
   static nsresult CreateFromLoadURIOptions(
-      nsISupports* aConsumer, const nsAString& aURI,
+      BrowsingContext* aBrowsingContext, const nsAString& aURI,
       const mozilla::dom::LoadURIOptions& aLoadURIOptions,
       nsDocShellLoadState** aResult);
 
@@ -127,6 +129,12 @@ class nsDocShellLoadState final {
 
   void SetSHEntry(nsISHEntry* aSHEntry);
 
+  const mozilla::dom::SessionHistoryInfo& GetSessionHistoryInfo() const;
+  uint64_t GetSessionHistoryID() const;
+
+  void SetSessionHistoryInfo(
+      const mozilla::dom::SessionHistoryInfoAndId& aIdAndInfo);
+
   const nsString& Target() const;
 
   void SetTarget(const nsAString& aTarget);
@@ -189,6 +197,10 @@ class nsDocShellLoadState final {
   const nsString& FileName() const;
 
   void SetFileName(const nsAString& aFileName);
+
+  bool IsHttpsOnlyModeUpgradeExempt() const;
+
+  void SetIsHttpsOnlyModeUpgradeExempt(bool aIsExempt);
 
   // Give the type of DocShell we're loading into (chrome/content/etc) and
   // origin attributes for the URI we're loading, figure out if we should
@@ -342,6 +354,9 @@ class nsDocShellLoadState final {
   // Active Session History entry (if loading from SH)
   nsCOMPtr<nsISHEntry> mSHEntry;
 
+  // Session history info for the load
+  mozilla::dom::SessionHistoryInfoAndId mSessionHistoryInfo;
+
   // Target for load, like _content, _blank etc.
   nsString mTarget;
 
@@ -381,6 +396,10 @@ class nsDocShellLoadState final {
   // specified, but link should still trigger a download. If not a download,
   // mFileName.IsVoid() should return true.
   nsString mFileName;
+
+  // If the HTTPS-Only mode is enabled, every insecure request gets upgraded to
+  // HTTPS by default. The load is exempt from that if this flag is set to true.
+  bool mIsHttpsOnlyModeUpgradeExempt;
 
   // This will be true if this load is triggered by attribute changes.
   // See nsILoadInfo.isFromProcessingFrameAttributes

@@ -615,9 +615,9 @@ nsScriptSecurityManager::CheckLoadURIWithPrincipal(nsIPrincipal* aPrincipal,
   }
 
   nsCOMPtr<nsIURI> sourceURI;
-  aPrincipal->GetURI(getter_AddRefs(sourceURI));
+  auto* basePrin = BasePrincipal::Cast(aPrincipal);
+  basePrin->GetURI(getter_AddRefs(sourceURI));
   if (!sourceURI) {
-    auto* basePrin = BasePrincipal::Cast(aPrincipal);
     if (basePrin->Is<ExpandedPrincipal>()) {
       auto expanded = basePrin->As<ExpandedPrincipal>();
       for (auto& prin : expanded->AllowList()) {
@@ -720,7 +720,6 @@ nsScriptSecurityManager::CheckLoadURIWithPrincipal(nsIPrincipal* aPrincipal,
 
   // If we get here, check all the schemes can link to each other, from the top
   // down:
-  nsCaseInsensitiveCStringComparator stringComparator;
   nsCOMPtr<nsIURI> currentURI = sourceURI;
   nsCOMPtr<nsIURI> currentOtherURI = aTargetURI;
 
@@ -735,7 +734,8 @@ nsScriptSecurityManager::CheckLoadURIWithPrincipal(nsIPrincipal* aPrincipal,
     currentURI->GetScheme(scheme);
     currentOtherURI->GetScheme(otherScheme);
 
-    bool schemesMatch = scheme.Equals(otherScheme, stringComparator);
+    bool schemesMatch =
+        scheme.Equals(otherScheme, nsCaseInsensitiveCStringComparator);
     bool isSamePage = false;
     // about: URIs are special snowflakes.
     if (scheme.EqualsLiteral("about") && schemesMatch) {

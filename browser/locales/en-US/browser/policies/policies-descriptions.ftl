@@ -109,6 +109,8 @@ policy-FirefoxHome = Configure Firefox Home.
 
 policy-FlashPlugin = Allow or deny usage of the Flash plugin.
 
+policy-Handlers = Configure default application handlers.
+
 policy-HardwareAcceleration = If false, turn off hardware acceleration.
 
 # “lock” means that the user won’t be able to change this setting
@@ -148,6 +150,8 @@ policy-PasswordManagerEnabled = Enable saving passwords to the password manager.
 policy-PDFjs = Disable or configure PDF.js, the built-in PDF viewer in { -brand-short-name }.
 
 policy-Permissions2 = Configure permissions for camera, microphone, location, notifications, and autoplay.
+
+policy-PictureInPicture = Enable or disable Picture-in-Picture.
 
 policy-PopupBlocking = Allow certain websites to display popups by default.
 

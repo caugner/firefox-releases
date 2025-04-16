@@ -65,6 +65,9 @@ let RemotePageAccessManager = {
       RPMIsWindowPrivate: ["*"],
       RPMAddToHistogram: ["*"],
     },
+    "about:httpsonlyerror": {
+      RPMSendAsyncMessage: ["goBack", "openInsecure"],
+    },
     "about:neterror": {
       RPMSendAsyncMessage: [
         "Browser:EnableOnlineMode",
@@ -92,6 +95,10 @@ let RemotePageAccessManager = {
       ],
       RPMPrefIsLocked: ["security.tls.version.min"],
       RPMAddToHistogram: ["*"],
+    },
+    "about:newinstall": {
+      RPMGetUpdateChannel: ["*"],
+      RPMGetFxAccountsEndpoint: ["*"],
     },
     "about:plugins": {
       RPMSendQuery: ["RequestPlugins"],
@@ -156,6 +163,8 @@ let RemotePageAccessManager = {
       RPMGetFormatURLPref: [
         "browser.contentblocking.report.monitor.how_it_works.url",
         "browser.contentblocking.report.lockwise.how_it_works.url",
+        "browser.contentblocking.report.monitor.preferences_url",
+        "browser.contentblocking.report.monitor.home_page_url",
         "browser.contentblocking.report.social.url",
         "browser.contentblocking.report.cookie.url",
         "browser.contentblocking.report.tracker.url",

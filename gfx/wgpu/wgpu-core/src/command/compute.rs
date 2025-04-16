@@ -26,11 +26,14 @@ enum PipelineState {
 }
 
 #[derive(Clone, Copy, Debug, PeekPoke)]
-enum ComputeCommand {
+#[cfg_attr(feature = "trace", derive(serde::Serialize))]
+#[cfg_attr(feature = "replay", derive(serde::Deserialize))]
+pub enum ComputeCommand {
     SetBindGroup {
         index: u8,
         num_dynamic_offsets: u8,
         bind_group_id: id::BindGroupId,
+        #[cfg_attr(any(feature = "trace", feature = "replay"), serde(skip))]
         phantom_offsets: PhantomSlice<DynamicOffset>,
     },
     SetPipeline(id::ComputePipelineId),
@@ -79,7 +82,7 @@ impl<G: GlobalIdentityHandlerFactory> Global<G> {
         let (mut cmb_guard, mut token) = hub.command_buffers.write(&mut token);
         let cmb = &mut cmb_guard[encoder_id];
         let raw = cmb.raw.last_mut().unwrap();
-        let mut binder = Binder::new(cmb.features.max_bind_groups);
+        let mut binder = Binder::new(cmb.limits.max_bind_groups);
 
         let (pipeline_layout_guard, mut token) = hub.pipeline_layouts.read(&mut token);
         let (bind_group_guard, mut token) = hub.bind_groups.read(&mut token);
@@ -183,13 +186,13 @@ impl<G: GlobalIdentityHandlerFactory> Global<G> {
                         binder.reset_expectations(pipeline_layout.bind_group_layout_ids.len());
                         let mut is_compatible = true;
 
-                        for (index, (entry, &bgl_id)) in binder
+                        for (index, (entry, bgl_id)) in binder
                             .entries
                             .iter_mut()
                             .zip(&pipeline_layout.bind_group_layout_ids)
                             .enumerate()
                         {
-                            match entry.expect_layout(bgl_id) {
+                            match entry.expect_layout(bgl_id.value) {
                                 LayoutChange::Match(bg_id, offsets) if is_compatible => {
                                     let desc_set = bind_group_guard[bg_id].raw.raw();
                                     unsafe {
@@ -246,6 +249,43 @@ impl<G: GlobalIdentityHandlerFactory> Global<G> {
                 }
                 ComputeCommand::End => break,
             }
+        }
+
+        #[cfg(feature = "trace")]
+        match cmb.commands {
+            Some(ref mut list) => {
+                let mut pass_commands = Vec::new();
+                let mut pass_dynamic_offsets = Vec::new();
+                peeker = raw_data.as_ptr();
+                loop {
+                    peeker = unsafe { ComputeCommand::peek_from(peeker, &mut command) };
+                    match command {
+                        ComputeCommand::SetBindGroup {
+                            num_dynamic_offsets,
+                            phantom_offsets,
+                            ..
+                        } => {
+                            let (new_peeker, offsets) = unsafe {
+                                phantom_offsets.decode_unaligned(
+                                    peeker,
+                                    num_dynamic_offsets as usize,
+                                    raw_data_end,
+                                )
+                            };
+                            peeker = new_peeker;
+                            pass_dynamic_offsets.extend_from_slice(offsets);
+                        }
+                        ComputeCommand::End => break,
+                        _ => {}
+                    }
+                    pass_commands.push(command);
+                }
+                list.push(crate::device::trace::Command::RunComputePass {
+                    commands: pass_commands,
+                    dynamic_offsets: pass_dynamic_offsets,
+                });
+            }
+            None => {}
         }
     }
 }

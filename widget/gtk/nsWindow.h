@@ -19,7 +19,7 @@
 #  include "base/thread.h"
 #  include "WaylandVsyncSource.h"
 #endif
-#include "mozcontainer.h"
+#include "MozContainer.h"
 #include "mozilla/RefPtr.h"
 #include "mozilla/UniquePtr.h"
 #include "nsIDragService.h"
@@ -407,9 +407,6 @@ class nsWindow final : public nsBaseWidget {
   nsresult SetSystemFont(const nsCString& aFontName) override;
   nsresult GetSystemFont(nsCString& aFontName) override;
 
-  nsresult SetPrefersReducedMotionOverrideForTest(bool aValue) final;
-  nsresult ResetPrefersReducedMotionOverrideForTest() final;
-
   typedef enum {
     CSD_SUPPORT_SYSTEM,  // CSD including shadows
     CSD_SUPPORT_CLIENT,  // CSD without shadows
@@ -432,6 +429,7 @@ class nsWindow final : public nsBaseWidget {
   };
   virtual void FlushPreferredPopupRect() override {
     mPreferredPopupRect = nsRect(0, 0, 0, 0);
+    mPreferredPopupRectFlushed = true;
   };
 #endif
   bool IsRemoteContent() { return HasRemoteContent(); }
@@ -542,6 +540,7 @@ class nsWindow final : public nsBaseWidget {
   uint32_t mHasMappedToplevel : 1, mIsFullyObscured : 1, mRetryPointerGrab : 1;
   nsSizeMode mSizeState;
   float mAspectRatio;
+  float mAspectRatioSaved;
   nsIntPoint mClientOffset;
 
 #if GTK_CHECK_VERSION(3, 4, 0)
@@ -583,6 +582,7 @@ class nsWindow final : public nsBaseWidget {
   LayoutDeviceIntRegion mDraggableRegion;
   // It's PictureInPicture window.
   bool mIsPIPWindow;
+  bool mAlwaysOnTop;
 
 #ifdef ACCESSIBILITY
   RefPtr<mozilla::a11y::Accessible> mRootAccessible;
@@ -701,6 +701,7 @@ class nsWindow final : public nsBaseWidget {
   GtkWindow* GetTopmostWindow();
   bool IsWidgetOverflowWindow();
   nsRect mPreferredPopupRect;
+  bool mPreferredPopupRectFlushed;
   bool mWaitingForMoveToRectCB;
   LayoutDeviceIntRect mPendingSizeRect;
 

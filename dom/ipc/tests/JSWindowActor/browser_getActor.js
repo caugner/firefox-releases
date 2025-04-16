@@ -10,6 +10,11 @@ declTest("getActor on both sides", {
     is(actorParent.show(), "TestWindowParent", "actor show should have vaule.");
     is(actorParent.manager, parent, "manager should match WindowGlobalParent.");
 
+    ok(
+      actorParent.sawActorCreated,
+      "Checking that we can observe parent creation"
+    );
+
     await SpecialPowers.spawn(browser, [], async function() {
       let child = content.windowGlobalChild;
       ok(child, "WindowGlobalChild should have value.");
@@ -21,6 +26,11 @@ declTest("getActor on both sides", {
       let actorChild = child.getActor("TestWindow");
       is(actorChild.show(), "TestWindowChild", "actor show should have vaule.");
       is(actorChild.manager, child, "manager should match WindowGlobalChild.");
+
+      ok(
+        actorChild.sawActorCreated,
+        "Checking that we can observe child creation"
+      );
     });
   },
 });

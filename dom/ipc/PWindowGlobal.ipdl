@@ -5,6 +5,7 @@
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 include "mozilla/dom/DocShellMessageUtils.h";
+include "mozilla/ipc/TransportSecurityInfoUtils.h";
 
 include protocol PBrowser;
 include protocol PInProcess;
@@ -20,6 +21,8 @@ using moveonly mozilla::gfx::PaintFragment from "mozilla/gfx/CrossProcessPaint.h
 using nscolor from "nsColor.h";
 using refcounted class nsDocShellLoadState from "nsDocShellLoadState.h";
 using mozilla::dom::TabId from "mozilla/dom/ipc/IdType.h";
+using mozilla::layers::LayersId from "mozilla/layers/LayersTypes.h";
+using refcounted class nsITransportSecurityInfo from "nsITransportSecurityInfo.h";
 
 namespace mozilla {
 namespace dom {
@@ -55,7 +58,7 @@ child:
                        uint64_t aSwitchId);
   async MakeFrameRemote(MaybeDiscardedBrowsingContext aFrameContext,
                         ManagedEndpoint<PBrowserBridgeChild> aEndpoint,
-                        TabId aTabId) returns (bool success);
+                        TabId aTabId, LayersId aLayersId) returns (bool success);
 
   async DrawSnapshot(IntRect? aRect, float aScale, nscolor aBackgroundColor,
                      uint32_t aFlags) returns (PaintFragment retval);
@@ -67,7 +70,7 @@ child:
 
   async DispatchSecurityPolicyViolation(nsString aViolationEventJSON);
 
-  async SaveStorageAccessGranted(nsCString aPermissionKey);
+  async SaveStorageAccessGranted();
 
 both:
   async RawMessage(JSActorMessageMeta aMetadata, ClonedMessageData aData,
@@ -109,6 +112,11 @@ parent:
 
   // Update the title of the document in this WindowGlobal.
   async UpdateDocumentTitle(nsString aTitle);
+
+  async UpdateDocumentSecurityInfo(nsITransportSecurityInfo aSecurityInfo);
+
+  // Update the document's HTTPS-Only Mode flags in this WindowGlobal.
+  async UpdateHttpsOnlyStatus(uint32_t aHttpsOnlyStatus);
 
   /// Send down initial document bit to the parent.
   async SetIsInitialDocument(bool aIsInitialDocument);

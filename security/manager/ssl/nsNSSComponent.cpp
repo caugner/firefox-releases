@@ -17,6 +17,7 @@
 #include "mozilla/ArrayUtils.h"
 #include "mozilla/Assertions.h"
 #include "mozilla/Casting.h"
+#include "mozilla/net/SocketProcessParent.h"
 #include "mozilla/Preferences.h"
 #include "mozilla/PodOperations.h"
 #include "mozilla/PublicSSL.h"
@@ -37,6 +38,7 @@
 #include "nsIFile.h"
 #include "nsILocalFileWin.h"
 #include "nsIObserverService.h"
+#include "nsIOService.h"
 #include "nsIPrompt.h"
 #include "nsIProperties.h"
 #include "nsITokenPasswordDialogs.h"
@@ -1048,16 +1050,20 @@ static const CipherPref sCipherPrefs[] = {
      TLS_ECDHE_ECDSA_WITH_AES_256_CBC_SHA, true},
 
     {"security.ssl3.dhe_rsa_aes_128_sha", TLS_DHE_RSA_WITH_AES_128_CBC_SHA,
-     true},
+     false},
 
     {"security.ssl3.dhe_rsa_aes_256_sha", TLS_DHE_RSA_WITH_AES_256_CBC_SHA,
-     true},
+     false},
 
     {"security.tls13.aes_128_gcm_sha256", TLS_AES_128_GCM_SHA256, true},
     {"security.tls13.chacha20_poly1305_sha256", TLS_CHACHA20_POLY1305_SHA256,
      true},
     {"security.tls13.aes_256_gcm_sha384", TLS_AES_256_GCM_SHA384, true},
 
+    {"security.ssl3.rsa_aes_128_gcm_sha256", TLS_RSA_WITH_AES_128_GCM_SHA256,
+     true},  // deprecated (RSA key exchange)
+    {"security.ssl3.rsa_aes_256_gcm_sha384", TLS_RSA_WITH_AES_256_GCM_SHA384,
+     true},  // deprecated (RSA key exchange)
     {"security.ssl3.rsa_aes_128_sha", TLS_RSA_WITH_AES_128_CBC_SHA,
      true},  // deprecated (RSA key exchange)
     {"security.ssl3.rsa_aes_256_sha", TLS_RSA_WITH_AES_256_CBC_SHA,
@@ -1369,7 +1375,7 @@ nsresult CipherSuiteChangeObserver::Observe(nsISupports* /*aSubject*/,
         bool cipherEnabled =
             Preferences::GetBool(cp[i].pref, cp[i].enabledByDefault);
         SSL_CipherPrefSetDefault(cp[i].id, cipherEnabled);
-        nsNSSComponent::ClearSSLExternalAndInternalSessionCacheNative();
+        nsNSSComponent::DoClearSSLExternalAndInternalSessionCache();
         break;
       }
     }
@@ -1528,7 +1534,7 @@ void nsNSSComponent::UpdateCertVerifierWithEnterpriseRoots() {
 nsresult nsNSSComponent::SetEnabledTLSVersions() {
   // Keep these values in sync with all.js.
   // 1 means TLS 1.0, 2 means TLS 1.1, etc.
-  static const uint32_t PSM_DEFAULT_MIN_TLS_VERSION = 1;
+  static const uint32_t PSM_DEFAULT_MIN_TLS_VERSION = 3;
   static const uint32_t PSM_DEFAULT_MAX_TLS_VERSION = 4;
   static const uint32_t PSM_DEPRECATED_TLS_VERSION = 1;
 
@@ -1537,8 +1543,8 @@ nsresult nsNSSComponent::SetEnabledTLSVersions() {
   uint32_t maxFromPrefs = Preferences::GetUint("security.tls.version.max",
                                                PSM_DEFAULT_MAX_TLS_VERSION);
 
-  // This override should be removed after PSM_DEFAULT_MIN_TLS_VERSION is
-  // increased to 3 in March 2020, see bug 1579285.
+  // This override should be removed some time after
+  // PSM_DEFAULT_MIN_TLS_VERSION is increased to 3.
   bool enableDeprecated =
       Preferences::GetBool("security.tls.version.enable-deprecated", false);
   if (enableDeprecated) {
@@ -2022,8 +2028,8 @@ nsresult nsNSSComponent::InitializeNSS() {
     return NS_ERROR_UNEXPECTED;
   }
 
-  nsCOMPtr<nsIClientAuthRemember> cars =
-      do_GetService(NS_CLIENTAUTHREMEMBER_CONTRACTID);
+  nsCOMPtr<nsIClientAuthRememberService> cars =
+      do_GetService(NS_CLIENTAUTHREMEMBERSERVICE_CONTRACTID);
 
   MOZ_LOG(gPIPNSSLog, LogLevel::Debug, ("NSS Initialization done\n"));
 
@@ -2258,8 +2264,8 @@ nsresult nsNSSComponent::LogoutAuthenticatedPK11() {
         NS_LITERAL_CSTRING("all:temporary-certificates"), 0);
   }
 
-  nsCOMPtr<nsIClientAuthRemember> svc =
-      do_GetService(NS_CLIENTAUTHREMEMBER_CONTRACTID);
+  nsCOMPtr<nsIClientAuthRememberService> svc =
+      do_GetService(NS_CLIENTAUTHREMEMBERSERVICE_CONTRACTID);
 
   if (svc) {
     nsresult rv = svc->ClearRememberedDecisions();
@@ -2376,6 +2382,21 @@ nsNSSComponent::GetDefaultCertVerifier(SharedCertVerifier** result) {
 
 // static
 void nsNSSComponent::ClearSSLExternalAndInternalSessionCacheNative() {
+  MOZ_ASSERT(XRE_IsParentProcess());
+
+  if (mozilla::net::nsIOService::UseSocketProcess()) {
+    if (mozilla::net::gIOService) {
+      mozilla::net::gIOService->CallOrWaitForSocketProcess([]() {
+        Unused << mozilla::net::SocketProcessParent::GetSingleton()
+                      ->SendClearSessionCache();
+      });
+    }
+  }
+  DoClearSSLExternalAndInternalSessionCache();
+}
+
+// static
+void nsNSSComponent::DoClearSSLExternalAndInternalSessionCache() {
   SSL_ClearSessionCache();
   mozilla::net::SSLTokensCache::Clear();
 }

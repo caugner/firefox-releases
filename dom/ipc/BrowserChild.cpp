@@ -489,8 +489,8 @@ nsresult BrowserChild::Init(mozIDOMWindowProxy* aParent,
                                   LayoutDeviceIntRect(0, 0, 0, 0),
                                   nullptr);  // HandleWidgetEvent
 
-  mWebBrowser = nsWebBrowser::Create(this, mPuppetWidget, OriginAttributesRef(),
-                                     mBrowsingContext, aInitialWindowChild);
+  mWebBrowser = nsWebBrowser::Create(this, mPuppetWidget, mBrowsingContext,
+                                     aInitialWindowChild);
   nsIWebBrowser* webBrowser = mWebBrowser;
 
   mWebNav = do_QueryInterface(webBrowser);
@@ -526,8 +526,6 @@ nsresult BrowserChild::Init(mozIDOMWindowProxy* aParent,
 #ifdef DEBUG
   nsCOMPtr<nsILoadContext> loadContext = do_GetInterface(WebNavigation());
   MOZ_ASSERT(loadContext);
-  MOZ_ASSERT(loadContext->UsePrivateBrowsing() ==
-             (OriginAttributesRef().mPrivateBrowsingId > 0));
   MOZ_ASSERT(loadContext->UseRemoteTabs() ==
              !!(mChromeFlags & nsIWebBrowserChrome::CHROME_REMOTE_WINDOW));
   MOZ_ASSERT(loadContext->UseRemoteSubframes() ==
@@ -1001,8 +999,9 @@ mozilla::ipc::IPCResult BrowserChild::RecvWillChangeProcess(
   return IPC_OK();
 }
 
-mozilla::ipc::IPCResult BrowserChild::RecvLoadURL(const nsCString& aURI,
-                                                  const ParentShowInfo& aInfo) {
+mozilla::ipc::IPCResult BrowserChild::RecvLoadURL(
+    const nsCString& aURI, nsIPrincipal* aTriggeringPrincipal,
+    const ParentShowInfo& aInfo) {
   if (!mDidLoadURLInit) {
     mDidLoadURLInit = true;
     if (!InitBrowserChildMessageManager()) {
@@ -1013,7 +1012,7 @@ mozilla::ipc::IPCResult BrowserChild::RecvLoadURL(const nsCString& aURI,
   }
 
   LoadURIOptions loadURIOptions;
-  loadURIOptions.mTriggeringPrincipal = nsContentUtils::GetSystemPrincipal();
+  loadURIOptions.mTriggeringPrincipal = aTriggeringPrincipal;
   loadURIOptions.mLoadFlags =
       nsIWebNavigation::LOAD_FLAGS_ALLOW_THIRD_PARTY_FIXUP |
       nsIWebNavigation::LOAD_FLAGS_DISALLOW_INHERIT_PRINCIPAL;
@@ -1326,8 +1325,13 @@ mozilla::ipc::IPCResult BrowserChild::RecvHandleTap(
   }
   CSSToLayoutDeviceScale scale(
       presShell->GetPresContext()->CSSToDevPixelScale());
-  CSSPoint point =
-      APZCCallbackHelper::ApplyCallbackTransform(aPoint / scale, aGuid);
+  CSSPoint point = aPoint / scale;
+
+  // Stash the guid in InputAPZContext so that when the visual-to-layout
+  // transform is applied to the event's coordinates, we use the right transform
+  // based on the scroll frame being targeted.
+  // The other values don't really matter.
+  InputAPZContext context(aGuid, aInputBlockId, nsEventStatus_eSentinel);
 
   switch (aType) {
     case GeckoContentController::TapType::eSingleTap:
@@ -1456,16 +1460,16 @@ mozilla::ipc::IPCResult BrowserChild::RecvStopIMEStateManagement() {
 mozilla::ipc::IPCResult BrowserChild::RecvMouseEvent(
     const nsString& aType, const float& aX, const float& aY,
     const int32_t& aButton, const int32_t& aClickCount,
-    const int32_t& aModifiers, const bool& aIgnoreRootScrollFrame) {
+    const int32_t& aModifiers) {
   // IPDL doesn't hold a strong reference to protocols as they're not required
   // to be refcounted. This function can run script, which may trigger a nested
   // event loop, which may release this, so we hold a strong reference here.
   RefPtr<BrowserChild> kungFuDeathGrip(this);
   RefPtr<PresShell> presShell = GetTopLevelPresShell();
-  APZCCallbackHelper::DispatchMouseEvent(
-      presShell, aType, CSSPoint(aX, aY), aButton, aClickCount, aModifiers,
-      aIgnoreRootScrollFrame, MouseEvent_Binding::MOZ_SOURCE_UNKNOWN,
-      0 /* Use the default value here. */);
+  APZCCallbackHelper::DispatchMouseEvent(presShell, aType, CSSPoint(aX, aY),
+                                         aButton, aClickCount, aModifiers,
+                                         MouseEvent_Binding::MOZ_SOURCE_UNKNOWN,
+                                         0 /* Use the default value here. */);
   return IPC_OK();
 }
 
@@ -1622,6 +1626,16 @@ mozilla::ipc::IPCResult BrowserChild::RecvRealMouseButtonEvent(
 void BrowserChild::HandleRealMouseButtonEvent(const WidgetMouseEvent& aEvent,
                                               const ScrollableLayerGuid& aGuid,
                                               const uint64_t& aInputBlockId) {
+  WidgetMouseEvent localEvent(aEvent);
+  localEvent.mWidget = mPuppetWidget;
+
+  // We need one InputAPZContext here to propagate |aGuid| to places in
+  // SendSetTargetAPZCNotification() which apply the visual-to-layout transform,
+  // and another below to propagate the |postLayerization| flag (whose value
+  // we don't know until SendSetTargetAPZCNotification() returns) into
+  // the event dispatch code.
+  InputAPZContext context1(aGuid, aInputBlockId, nsEventStatus_eSentinel);
+
   // Mouse events like eMouseEnterIntoWidget, that are created in the parent
   // process EventStateManager code, have an input block id which they get from
   // the InputAPZContext in the parent process stack. However, they did not
@@ -1629,23 +1643,19 @@ void BrowserChild::HandleRealMouseButtonEvent(const WidgetMouseEvent& aEvent,
   // Since thos events didn't go through APZ, we don't need to send
   // notifications for them.
   UniquePtr<DisplayportSetListener> postLayerization;
-  if (aInputBlockId && aEvent.mFlags.mHandledByAPZ) {
+  if (aInputBlockId && localEvent.mFlags.mHandledByAPZ) {
     nsCOMPtr<Document> document(GetTopLevelDocument());
     postLayerization = APZCCallbackHelper::SendSetTargetAPZCNotification(
-        mPuppetWidget, document, aEvent, aGuid.mLayersId, aInputBlockId);
+        mPuppetWidget, document, localEvent, aGuid.mLayersId, aInputBlockId);
   }
 
-  InputAPZContext context(aGuid, aInputBlockId, nsEventStatus_eIgnore,
-                          postLayerization != nullptr);
+  InputAPZContext context2(aGuid, aInputBlockId, nsEventStatus_eSentinel,
+                           postLayerization != nullptr);
 
-  WidgetMouseEvent localEvent(aEvent);
-  localEvent.mWidget = mPuppetWidget;
-  APZCCallbackHelper::ApplyCallbackTransform(localEvent, aGuid,
-                                             mPuppetWidget->GetDefaultScale());
   DispatchWidgetEventViaAPZ(localEvent);
 
-  if (aInputBlockId && aEvent.mFlags.mHandledByAPZ) {
-    mAPZEventState->ProcessMouseEvent(aEvent, aInputBlockId);
+  if (aInputBlockId && localEvent.mFlags.mHandledByAPZ) {
+    mAPZEventState->ProcessMouseEvent(localEvent, aInputBlockId);
   }
 
   // Do this after the DispatchWidgetEventViaAPZ call above, so that if the
@@ -1732,8 +1742,13 @@ void BrowserChild::DispatchWheelEvent(const WidgetWheelEvent& aEvent,
   }
 
   localEvent.mWidget = mPuppetWidget;
-  APZCCallbackHelper::ApplyCallbackTransform(localEvent, aGuid,
-                                             mPuppetWidget->GetDefaultScale());
+
+  // Stash the guid in InputAPZContext so that when the visual-to-layout
+  // transform is applied to the event's coordinates, we use the right transform
+  // based on the scroll frame being targeted.
+  // The other values don't really matter.
+  InputAPZContext context(aGuid, aInputBlockId, nsEventStatus_eSentinel);
+
   DispatchWidgetEventViaAPZ(localEvent);
 
   if (localEvent.mCanTriggerSwipe) {
@@ -1787,8 +1802,11 @@ mozilla::ipc::IPCResult BrowserChild::RecvRealTouchEvent(
   WidgetTouchEvent localEvent(aEvent);
   localEvent.mWidget = mPuppetWidget;
 
-  APZCCallbackHelper::ApplyCallbackTransform(localEvent, aGuid,
-                                             mPuppetWidget->GetDefaultScale());
+  // Stash the guid in InputAPZContext so that when the visual-to-layout
+  // transform is applied to the event's coordinates, we use the right transform
+  // based on the scroll frame being targeted.
+  // The other values don't really matter.
+  InputAPZContext context(aGuid, aInputBlockId, aApzResponse);
 
   if (localEvent.mMessage == eTouchStart && AsyncPanZoomEnabled()) {
     nsCOMPtr<Document> document = GetTopLevelDocument();
@@ -2263,21 +2281,6 @@ mozilla::ipc::IPCResult BrowserChild::RecvHandleAccessKey(
       localEvent.mWidget = mPuppetWidget;
       SendAccessKeyNotHandled(localEvent);
     }
-  }
-
-  return IPC_OK();
-}
-
-mozilla::ipc::IPCResult BrowserChild::RecvSetUseGlobalHistory(
-    const bool& aUse) {
-  nsCOMPtr<nsIDocShell> docShell = do_GetInterface(WebNavigation());
-  if (!docShell) {
-    return IPC_OK();
-  }
-
-  nsresult rv = docShell->SetUseGlobalHistory(aUse);
-  if (NS_FAILED(rv)) {
-    NS_WARNING("Failed to set UseGlobalHistory on BrowserChild docShell");
   }
 
   return IPC_OK();
@@ -3175,21 +3178,6 @@ mozilla::ipc::IPCResult BrowserChild::RecvUIResolutionChanged(
   return IPC_OK();
 }
 
-mozilla::ipc::IPCResult BrowserChild::RecvThemeChanged(
-    nsTArray<LookAndFeelInt>&& aLookAndFeelIntCache) {
-  nsCOMPtr<Document> document(GetTopLevelDocument());
-  if (!document) {
-    return IPC_OK();
-  }
-
-  LookAndFeel::SetIntCache(aLookAndFeelIntCache);
-  RefPtr<nsPresContext> presContext = document->GetPresContext();
-  if (presContext) {
-    presContext->ThemeChanged();
-  }
-  return IPC_OK();
-}
-
 mozilla::ipc::IPCResult BrowserChild::RecvSafeAreaInsetsChanged(
     const mozilla::ScreenIntMargin& aSafeAreaInsets) {
   mPuppetWidget->UpdateSafeAreaInsets(aSafeAreaInsets);
@@ -3723,56 +3711,9 @@ NS_IMETHODIMP BrowserChild::OnStatusChange(nsIWebProgress* aWebProgress,
 NS_IMETHODIMP BrowserChild::OnSecurityChange(nsIWebProgress* aWebProgress,
                                              nsIRequest* aRequest,
                                              uint32_t aState) {
-  if (!IPCOpen() || !mShouldSendWebProgressEventsToParent) {
-    return NS_OK;
-  }
-
-  Maybe<WebProgressData> webProgressData;
-  RequestData requestData;
-
-  MOZ_TRY(PrepareProgressListenerData(aWebProgress, aRequest, webProgressData,
-                                      requestData));
-
-  Maybe<WebProgressSecurityChangeData> securityChangeData;
-
-  if (aWebProgress && webProgressData->isTopLevel()) {
-    nsCOMPtr<nsIDocShell> docShell = do_GetInterface(WebNavigation());
-    if (!docShell) {
-      return NS_OK;
-    }
-
-    nsCOMPtr<nsITransportSecurityInfo> securityInfo;
-    {
-      nsCOMPtr<nsISecureBrowserUI> securityUI;
-      MOZ_TRY(docShell->GetSecurityUI(getter_AddRefs(securityUI)));
-
-      if (securityUI) {
-        MOZ_TRY(securityUI->GetSecInfo(getter_AddRefs(securityInfo)));
-      }
-    }
-
-    bool isSecureContext = false;
-    {
-      nsCOMPtr<nsPIDOMWindowOuter> outerWindow = do_GetInterface(docShell);
-      if (!outerWindow) {
-        return NS_OK;
-      }
-
-      if (nsPIDOMWindowInner* window = outerWindow->GetCurrentInnerWindow()) {
-        isSecureContext = window->IsSecureContext();
-      } else {
-        return NS_OK;
-      }
-    }
-
-    securityChangeData.emplace();
-    securityChangeData->securityInfo() = ToRefPtr(std::move(securityInfo));
-    securityChangeData->isSecureContext() = isSecureContext;
-  }
-
-  Unused << SendOnSecurityChange(webProgressData, requestData, aState,
-                                 securityChangeData);
-
+  // Security changes are now handled entirely in the parent process
+  // so we don't need to worry about forwarding them (and we shouldn't
+  // be receiving any to forward).
   return NS_OK;
 }
 

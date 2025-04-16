@@ -45,8 +45,7 @@ class BrowserBridgeChild : public PBrowserBridgeChild {
 
   BrowsingContext* GetBrowsingContext() { return mBrowsingContext; }
 
-  // XXX(nika): We should have a load context here. (bug 1532664)
-  nsILoadContext* GetLoadContext() { return nullptr; }
+  nsILoadContext* GetLoadContext();
 
   void NavigateByKey(bool aForward, bool aForDocumentNavigation);
 
@@ -68,14 +67,12 @@ class BrowserBridgeChild : public PBrowserBridgeChild {
 
   static BrowserBridgeChild* GetFrom(nsIContent* aContent);
 
-  BrowserBridgeChild(BrowsingContext* aBrowsingContext, TabId aId);
+  BrowserBridgeChild(BrowsingContext* aBrowsingContext, TabId aId,
+                     const LayersId& aLayersId);
 
  protected:
   friend class ContentChild;
   friend class PBrowserBridgeChild;
-
-  mozilla::ipc::IPCResult RecvSetLayersId(
-      const mozilla::layers::LayersId& aLayersId);
 
   mozilla::ipc::IPCResult RecvRequestFocus(const bool& aCanRaise,
                                            const CallerType aCallerType);

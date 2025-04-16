@@ -79,6 +79,9 @@ Val::Val(const LitVal& val) {
     case ValType::F64:
       u.f64_ = val.f64();
       return;
+    case ValType::V128:
+      u.v128_ = val.v128();
+      return;
     case ValType::Ref:
       u.ref_ = val.ref();
       return;
@@ -254,12 +257,12 @@ static bool IsImmediateType(ValType vt) {
     case ValType::I64:
     case ValType::F32:
     case ValType::F64:
+    case ValType::V128:
       return true;
     case ValType::Ref:
       switch (vt.refTypeKind()) {
         case RefType::Func:
         case RefType::Any:
-        case RefType::Null:
           return true;
         case RefType::TypeIndex:
           return false;
@@ -280,13 +283,13 @@ static unsigned EncodeImmediateType(ValType vt) {
       return 2;
     case ValType::F64:
       return 3;
+    case ValType::V128:
+      return 4;
     case ValType::Ref:
       switch (vt.refTypeKind()) {
         case RefType::Func:
-          return 4;
-        case RefType::Any:
           return 5;
-        case RefType::Null:
+        case RefType::Any:
           return 6;
         case RefType::TypeIndex:
           break;
@@ -708,6 +711,11 @@ bool DebugFrame::getLocal(uint32_t localIndex, MutableHandleValue vp) {
     case jit::MIRType::RefOrNull:
       vp.set(ObjectOrNullValue(*(JSObject**)dataPtr));
       break;
+#ifdef ENABLE_WASM_SIMD
+    case jit::MIRType::Simd128:
+      vp.set(NumberValue(0));
+      break;
+#endif
     default:
       MOZ_CRASH("local type");
   }
@@ -987,4 +995,38 @@ void wasm::DebugCodegen(DebugChannel channel, const char* fmt, ...) {
   vfprintf(stderr, fmt, ap);
   va_end(ap);
 #endif
+}
+
+UniqueChars wasm::ToString(ValType type) {
+  const char* literal = nullptr;
+  switch (type.kind()) {
+    case ValType::I32:
+      literal = "i32";
+      break;
+    case ValType::I64:
+      literal = "i64";
+      break;
+    case ValType::V128:
+      literal = "v128";
+      break;
+    case ValType::F32:
+      literal = "f32";
+      break;
+    case ValType::F64:
+      literal = "f64";
+      break;
+    case ValType::Ref:
+      switch (type.refTypeKind()) {
+        case RefType::Any:
+          literal = "externref";
+          break;
+        case RefType::Func:
+          literal = "funcref";
+          break;
+        case RefType::TypeIndex:
+          return JS_smprintf("optref %d", type.refType().typeIndex());
+      }
+      break;
+  }
+  return JS_smprintf("%s", literal);
 }

@@ -57,6 +57,7 @@
 #include "mozilla/HashTable.h"
 #include "mozilla/LinkedList.h"
 #include "mozilla/NotNull.h"
+#include "mozilla/PreloadService.h"
 #include "mozilla/SegmentedVector.h"
 #include "mozilla/TimeStamp.h"
 #include "mozilla/UniquePtr.h"
@@ -869,6 +870,11 @@ class Document : public nsINode,
   }
 
   /**
+   * Returns true if exempt from HTTPS-Only Mode upgrade.
+   */
+  uint32_t HttpsOnlyStatus() const { return mHttpsOnlyStatus; }
+
+  /**
    * Get the list of ancestor outerWindowIDs for a document that correspond to
    * the ancestor principals (see above for more details).
    */
@@ -1045,60 +1051,6 @@ class Document : public nsINode,
   void SetBidiOptions(uint32_t aBidiOptions) { mBidiOptions = aBidiOptions; }
 
   /**
-   * Get the has mixed active content loaded flag for this document.
-   */
-  bool GetHasMixedActiveContentLoaded() { return mHasMixedActiveContentLoaded; }
-
-  /**
-   * Set the has mixed active content loaded flag for this document.
-   */
-  void SetHasMixedActiveContentLoaded(bool aHasMixedActiveContentLoaded) {
-    mHasMixedActiveContentLoaded = aHasMixedActiveContentLoaded;
-  }
-
-  /**
-   * Get mixed active content blocked flag for this document.
-   */
-  bool GetHasMixedActiveContentBlocked() {
-    return mHasMixedActiveContentBlocked;
-  }
-
-  /**
-   * Set the mixed active content blocked flag for this document.
-   */
-  void SetHasMixedActiveContentBlocked(bool aHasMixedActiveContentBlocked) {
-    mHasMixedActiveContentBlocked = aHasMixedActiveContentBlocked;
-  }
-
-  /**
-   * Get the has mixed display content loaded flag for this document.
-   */
-  bool GetHasMixedDisplayContentLoaded() {
-    return mHasMixedDisplayContentLoaded;
-  }
-
-  /**
-   * Set the has mixed display content loaded flag for this document.
-   */
-  void SetHasMixedDisplayContentLoaded(bool aHasMixedDisplayContentLoaded) {
-    mHasMixedDisplayContentLoaded = aHasMixedDisplayContentLoaded;
-  }
-
-  /**
-   * Get mixed display content blocked flag for this document.
-   */
-  bool GetHasMixedDisplayContentBlocked() {
-    return mHasMixedDisplayContentBlocked;
-  }
-
-  /**
-   * Set the mixed display content blocked flag for this document.
-   */
-  void SetHasMixedDisplayContentBlocked(bool aHasMixedDisplayContentBlocked) {
-    mHasMixedDisplayContentBlocked = aHasMixedDisplayContentBlocked;
-  }
-
-  /**
    * Set CSP flag for this document.
    */
   void SetHasCSP(bool aHasCSP) { mHasCSP = aHasCSP; }
@@ -1137,6 +1089,11 @@ class Document : public nsINode,
    * @see nsSandboxFlags.h for the possible flags
    */
   uint32_t GetSandboxFlags() const { return mSandboxFlags; }
+
+  Maybe<nsILoadInfo::CrossOriginEmbedderPolicy> GetEmbedderPolicyFromHTTP()
+      const {
+    return mEmbedderPolicyFromHTTP;
+  }
 
   /**
    * Get string representation of sandbox flags (null if no flags are set)
@@ -1522,10 +1479,13 @@ class Document : public nsINode,
   // parser inserted form control element.
   int32_t GetNextControlNumber() { return mNextControlNumber++; }
 
+  PreloadService& Preloads() { return mPreloadService; }
+
  protected:
   friend class nsUnblockOnloadEvent;
 
   nsresult InitCSP(nsIChannel* aChannel);
+  nsresult InitCOEP(nsIChannel* aChannel);
 
   nsresult InitFeaturePolicy(nsIChannel* aChannel);
 
@@ -1919,6 +1879,9 @@ class Document : public nsINode,
   // Pushes the given element into the top of top layer and set fullscreen
   // flag.
   bool SetFullscreenElement(Element* aElement);
+
+  // Cancel the dialog element if the document is blocked by the dialog
+  void TryCancelDialog();
 
   /**
    * Called when a frame in a child process has entered fullscreen or when a
@@ -2904,7 +2867,11 @@ class Document : public nsINode,
    * when this image is for loading <picture> or <img srcset> images.
    */
   void MaybePreLoadImage(nsIURI* uri, const nsAString& aCrossOriginAttr,
-                         ReferrerPolicyEnum aReferrerPolicy, bool aIsImgSet);
+                         ReferrerPolicyEnum aReferrerPolicy, bool aIsImgSet,
+                         bool aLinkPreload);
+  void PreLoadImage(nsIURI* uri, const nsAString& aCrossOriginAttr,
+                    ReferrerPolicyEnum aReferrerPolicy, bool aIsImgSet,
+                    bool aLinkPreload);
 
   /**
    * Called by images to forget an image preload when they start doing
@@ -2997,6 +2964,8 @@ class Document : public nsINode,
 
   void SetAutoFocusElement(Element* aAutoFocusElement);
   void TriggerAutoFocus();
+  void SetAutoFocusFired();
+  bool IsAutoFocusFired();
 
   void SetScrollToRef(nsIURI* aDocumentURI);
   MOZ_CAN_RUN_SCRIPT void ScrollToRef();
@@ -3730,8 +3699,11 @@ class Document : public nsINode,
    * of the document is completed.
    *
    * It unblocks the load event if translation was blocking it.
+   *
+   * If the `aL10nCached` is set to `true`, and the document has
+   * a prototype, it will set the `isL10nCached` flag on it.
    */
-  void InitialTranslationCompleted();
+  void InitialTranslationCompleted(bool aL10nCached);
 
   /**
    * Returns whether the document allows localization.
@@ -3896,7 +3868,8 @@ class Document : public nsINode,
   nsIPermissionDelegateHandler* PermDelegateHandler();
 
   // CSS prefers-color-scheme media feature for this document.
-  StylePrefersColorScheme PrefersColorScheme() const;
+  enum class IgnoreRFP { No, Yes };
+  StylePrefersColorScheme PrefersColorScheme(IgnoreRFP = IgnoreRFP::No) const;
 
   // Returns true if we use overlay scrollbars on the system wide or on the
   // given document.
@@ -4202,10 +4175,6 @@ class Document : public nsINode,
   MOZ_MUST_USE RefPtr<AutomaticStorageAccessGrantPromise>
   AutomaticStorageAccessCanBeGranted();
 
-  // This should *ONLY* be used in GetCookie/SetCookie.
-  already_AddRefed<nsIChannel> CreateDummyChannelForCookies(
-      nsIURI* aContentURI);
-
   static void AddToplevelLoadingDocument(Document* aDoc);
   static void RemoveToplevelLoadingDocument(Document* aDoc);
   static AutoTArray<Document*, 8>* sLoadingForegroundTopLevelContentDocument;
@@ -4427,22 +4396,6 @@ class Document : public nsINode,
   // True if an nsIAnimationObserver is perhaps attached to a node in the
   // document.
   bool mMayHaveAnimationObservers : 1;
-
-  // True if a document has loaded Mixed Active Script (see
-  // nsMixedContentBlocker.cpp)
-  bool mHasMixedActiveContentLoaded : 1;
-
-  // True if a document has blocked Mixed Active Script (see
-  // nsMixedContentBlocker.cpp)
-  bool mHasMixedActiveContentBlocked : 1;
-
-  // True if a document has loaded Mixed Display/Passive Content (see
-  // nsMixedContentBlocker.cpp)
-  bool mHasMixedDisplayContentLoaded : 1;
-
-  // True if a document has blocked Mixed Display/Passive Content (see
-  // nsMixedContentBlocker.cpp)
-  bool mHasMixedDisplayContentBlocked : 1;
 
   // True if a document load has a CSP attached.
   bool mHasCSP : 1;
@@ -4702,6 +4655,9 @@ class Document : public nsINode,
   // possible flags.
   uint32_t mSandboxFlags;
 
+  // The embedder policy obtained from parsing the HTTP response header.
+  Maybe<nsILoadInfo::CrossOriginEmbedderPolicy> mEmbedderPolicyFromHTTP;
+
   nsCString mContentLanguage;
 
   // The channel that got passed to Document::StartDocumentLoad(), if any.
@@ -4882,6 +4838,10 @@ class Document : public nsINode,
 
   // Our update nesting level
   uint32_t mUpdateNestLevel;
+
+  // HTTPS-Only Mode Status
+  // Constants are defined at nsILoadInfo::HTTPS_ONLY_*
+  uint32_t mHttpsOnlyStatus;
 
   enum ViewportType : uint8_t {
     DisplayWidthHeight,
@@ -5091,6 +5051,9 @@ class Document : public nsINode,
   // See GetNextFormNumber and GetNextControlNumber.
   int32_t mNextFormNumber;
   int32_t mNextControlNumber;
+
+  // Scope preloads per document.  This is used by speculative loading as well.
+  PreloadService mPreloadService;
 
  public:
   // Needs to be public because the bindings code pokes at it.

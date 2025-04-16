@@ -203,10 +203,6 @@ class HTMLImageElement final : public nsGenericHTMLElement,
 
   already_AddRefed<Promise> Decode(ErrorResult& aRv);
 
-  ReferrerPolicy GetImageReferrerPolicy() override {
-    return GetReferrerPolicyAsEnum();
-  }
-
   MOZ_CAN_RUN_SCRIPT int32_t X();
   MOZ_CAN_RUN_SCRIPT int32_t Y();
   void GetLowsrc(nsAString& aLowsrc) {
@@ -377,15 +373,13 @@ class HTMLImageElement final : public nsGenericHTMLElement,
    *        previously set. This value should only be used when
    *        aValueMaybeChanged is true; when aValueMaybeChanged is false,
    *        aOldValue should be considered unreliable.
-   * @param aValueMaybeChanged will be false when this function is called from
-   *        OnAttrSetButNotChanged to indicate that the value was not changed.
    * @param aNotify Whether we plan to notify document observers.
    */
   void AfterMaybeChangeAttr(int32_t aNamespaceID, nsAtom* aName,
                             const nsAttrValueOrString& aValue,
                             const nsAttrValue* aOldValue,
                             nsIPrincipal* aMaybeScriptedPrincipal,
-                            bool aValueMaybeChanged, bool aNotify);
+                            bool aNotify);
 
   bool ShouldLoadImage() const;
 

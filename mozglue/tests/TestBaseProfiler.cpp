@@ -5,21 +5,23 @@
  * You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 #include "BaseProfiler.h"
-#include "mozilla/Attributes.h"
-#include "mozilla/BlocksRingBuffer.h"
-#include "mozilla/leb128iterator.h"
-#include "mozilla/ModuloBuffer.h"
-#include "mozilla/PowerOfTwo.h"
-#include "mozilla/ProfileBufferChunk.h"
-#include "mozilla/ProfileBufferChunkManagerSingle.h"
-#include "mozilla/ProfileBufferChunkManagerWithLocalLimit.h"
-#include "mozilla/ProfileChunkedBuffer.h"
-#include "mozilla/Vector.h"
 
-#ifdef MOZ_BASE_PROFILER
+#include "mozilla/Attributes.h"
+
+#ifdef MOZ_GECKO_PROFILER
 #  include "BaseProfileJSONWriter.h"
 #  include "BaseProfilerMarkerPayload.h"
-#endif  // MOZ_BASE_PROFILER
+#  include "mozilla/BlocksRingBuffer.h"
+#  include "mozilla/leb128iterator.h"
+#  include "mozilla/ModuloBuffer.h"
+#  include "mozilla/PowerOfTwo.h"
+#  include "mozilla/ProfileBufferChunk.h"
+#  include "mozilla/ProfileBufferChunkManagerSingle.h"
+#  include "mozilla/ProfileBufferChunkManagerWithLocalLimit.h"
+#  include "mozilla/ProfileBufferControlledChunkManager.h"
+#  include "mozilla/ProfileChunkedBuffer.h"
+#  include "mozilla/Vector.h"
+#endif  // MOZ_GECKO_PROFILER
 
 #if defined(_MSC_VER) || defined(__MINGW32__)
 #  include <windows.h>
@@ -38,8 +40,6 @@
 #include <type_traits>
 #include <utility>
 
-using namespace mozilla;
-
 MOZ_MAYBE_UNUSED static void SleepMilli(unsigned aMilliseconds) {
 #if defined(_MSC_VER) || defined(__MINGW32__)
   Sleep(aMilliseconds);
@@ -57,6 +57,10 @@ MOZ_MAYBE_UNUSED static void SleepMilli(unsigned aMilliseconds) {
   }
 #endif
 }
+
+#ifdef MOZ_GECKO_PROFILER
+
+using namespace mozilla;
 
 void TestPowerOfTwoMask() {
   printf("TestPowerOfTwoMask...\n");
@@ -511,10 +515,10 @@ static void TestChunkManagerSingle() {
   // Reference to base class, to exercize virtual methods.
   ProfileBufferChunkManager& cm = cms;
 
-#ifdef DEBUG
+#  ifdef DEBUG
   const char* chunkManagerRegisterer = "TestChunkManagerSingle";
   cm.RegisteredWith(chunkManagerRegisterer);
-#endif  // DEBUG
+#  endif  // DEBUG
 
   const auto maxTotalSize = cm.MaxTotalSize();
   MOZ_RELEASE_ASSERT(maxTotalSize >= ChunkMinBufferBytes);
@@ -663,9 +667,9 @@ static void TestChunkManagerSingle() {
   chunk->MarkDone();
   cm.ForgetUnreleasedChunks();
 
-#ifdef DEBUG
+#  ifdef DEBUG
   cm.DeregisteredFrom(chunkManagerRegisterer);
-#endif  // DEBUG
+#  endif  // DEBUG
 
   printf("TestChunkManagerSingle done\n");
 }
@@ -683,10 +687,10 @@ static void TestChunkManagerWithLocalLimit() {
   // Reference to base class, to exercize virtual methods.
   ProfileBufferChunkManager& cm = cmll;
 
-#ifdef DEBUG
+#  ifdef DEBUG
   const char* chunkManagerRegisterer = "TestChunkManagerWithLocalLimit";
   cm.RegisteredWith(chunkManagerRegisterer);
-#endif  // DEBUG
+#  endif  // DEBUG
 
   MOZ_RELEASE_ASSERT(cm.MaxTotalSize() == MaxTotalBytes,
                      "Max total size should be exactly as given");
@@ -822,11 +826,476 @@ static void TestChunkManagerWithLocalLimit() {
   chunk->MarkDone();
   cm.ForgetUnreleasedChunks();
 
-#ifdef DEBUG
+#  ifdef DEBUG
   cm.DeregisteredFrom(chunkManagerRegisterer);
-#endif  // DEBUG
+#  endif  // DEBUG
 
   printf("TestChunkManagerWithLocalLimit done\n");
+}
+
+static bool IsSameMetadata(
+    const ProfileBufferControlledChunkManager::ChunkMetadata& a1,
+    const ProfileBufferControlledChunkManager::ChunkMetadata& a2) {
+  return a1.mDoneTimeStamp == a2.mDoneTimeStamp &&
+         a1.mBufferBytes == a2.mBufferBytes;
+};
+
+static bool IsSameUpdate(
+    const ProfileBufferControlledChunkManager::Update& a1,
+    const ProfileBufferControlledChunkManager::Update& a2) {
+  // Final and not-an-update don't carry other data, so we can test these two
+  // states first.
+  if (a1.IsFinal() || a2.IsFinal()) {
+    return a1.IsFinal() && a2.IsFinal();
+  }
+  if (a1.IsNotUpdate() || a2.IsNotUpdate()) {
+    return a1.IsNotUpdate() && a2.IsNotUpdate();
+  }
+
+  // Here, both are "normal" udpates, check member variables:
+
+  if (a1.UnreleasedBytes() != a2.UnreleasedBytes()) {
+    return false;
+  }
+  if (a1.ReleasedBytes() != a2.ReleasedBytes()) {
+    return false;
+  }
+  if (a1.OldestDoneTimeStamp() != a2.OldestDoneTimeStamp()) {
+    return false;
+  }
+  if (a1.NewlyReleasedChunksRef().size() !=
+      a2.NewlyReleasedChunksRef().size()) {
+    return false;
+  }
+  for (unsigned i = 0; i < a1.NewlyReleasedChunksRef().size(); ++i) {
+    if (!IsSameMetadata(a1.NewlyReleasedChunksRef()[i],
+                        a2.NewlyReleasedChunksRef()[i])) {
+      return false;
+    }
+  }
+  return true;
+}
+
+static void TestControlledChunkManagerUpdate() {
+  printf("TestControlledChunkManagerUpdate...\n");
+
+  using Update = ProfileBufferControlledChunkManager::Update;
+
+  // Default construction.
+  Update update1;
+  MOZ_RELEASE_ASSERT(update1.IsNotUpdate());
+  MOZ_RELEASE_ASSERT(!update1.IsFinal());
+
+  // Clear an already-cleared update.
+  update1.Clear();
+  MOZ_RELEASE_ASSERT(update1.IsNotUpdate());
+  MOZ_RELEASE_ASSERT(!update1.IsFinal());
+
+  // Final construction with nullptr.
+  const Update final(nullptr);
+  MOZ_RELEASE_ASSERT(final.IsFinal());
+  MOZ_RELEASE_ASSERT(!final.IsNotUpdate());
+
+  // Copy final to cleared.
+  update1 = final;
+  MOZ_RELEASE_ASSERT(update1.IsFinal());
+  MOZ_RELEASE_ASSERT(!update1.IsNotUpdate());
+
+  // Copy final to final.
+  update1 = final;
+  MOZ_RELEASE_ASSERT(update1.IsFinal());
+  MOZ_RELEASE_ASSERT(!update1.IsNotUpdate());
+
+  // Clear a final update.
+  update1.Clear();
+  MOZ_RELEASE_ASSERT(update1.IsNotUpdate());
+  MOZ_RELEASE_ASSERT(!update1.IsFinal());
+
+  // Move final to cleared.
+  update1 = Update(nullptr);
+  MOZ_RELEASE_ASSERT(update1.IsFinal());
+  MOZ_RELEASE_ASSERT(!update1.IsNotUpdate());
+
+  // Move final to final.
+  update1 = Update(nullptr);
+  MOZ_RELEASE_ASSERT(update1.IsFinal());
+  MOZ_RELEASE_ASSERT(!update1.IsNotUpdate());
+
+  // Move from not-an-update (effectively same as Clear).
+  update1 = Update();
+  MOZ_RELEASE_ASSERT(update1.IsNotUpdate());
+  MOZ_RELEASE_ASSERT(!update1.IsFinal());
+
+  auto CreateBiggerChunkAfter = [](const ProfileBufferChunk& aChunkToBeat) {
+    while (TimeStamp::NowUnfuzzed() <=
+           aChunkToBeat.ChunkHeader().mDoneTimeStamp) {
+      ::SleepMilli(1);
+    }
+    auto chunk = ProfileBufferChunk::Create(aChunkToBeat.BufferBytes() * 2);
+    MOZ_RELEASE_ASSERT(!!chunk);
+    MOZ_RELEASE_ASSERT(chunk->BufferBytes() >= aChunkToBeat.BufferBytes() * 2);
+    Unused << chunk->ReserveInitialBlockAsTail(0);
+    chunk->MarkDone();
+    MOZ_RELEASE_ASSERT(chunk->ChunkHeader().mDoneTimeStamp >
+                       aChunkToBeat.ChunkHeader().mDoneTimeStamp);
+    return chunk;
+  };
+
+  update1 = Update(1, 2, nullptr, nullptr);
+
+  // Create initial update with 2 released chunks and 1 unreleased chunk.
+  auto released = ProfileBufferChunk::Create(10);
+  ProfileBufferChunk* c1 = released.get();
+  Unused << c1->ReserveInitialBlockAsTail(0);
+  c1->MarkDone();
+
+  released->SetLast(CreateBiggerChunkAfter(*c1));
+  ProfileBufferChunk* c2 = c1->GetNext();
+
+  auto unreleased = CreateBiggerChunkAfter(*c2);
+  ProfileBufferChunk* c3 = unreleased.get();
+
+  Update update2(c3->BufferBytes(), c1->BufferBytes() + c2->BufferBytes(), c1,
+                 c1);
+  MOZ_RELEASE_ASSERT(IsSameUpdate(
+      update2,
+      Update(c3->BufferBytes(), c1->BufferBytes() + c2->BufferBytes(),
+             c1->ChunkHeader().mDoneTimeStamp,
+             {{c1->ChunkHeader().mDoneTimeStamp, c1->BufferBytes()},
+              {c2->ChunkHeader().mDoneTimeStamp, c2->BufferBytes()}})));
+  // Check every field, this time only, after that we'll trust that the
+  // `SameUpdate` test will be enough.
+  MOZ_RELEASE_ASSERT(!update2.IsNotUpdate());
+  MOZ_RELEASE_ASSERT(!update2.IsFinal());
+  MOZ_RELEASE_ASSERT(update2.UnreleasedBytes() == c3->BufferBytes());
+  MOZ_RELEASE_ASSERT(update2.ReleasedBytes() ==
+                     c1->BufferBytes() + c2->BufferBytes());
+  MOZ_RELEASE_ASSERT(update2.OldestDoneTimeStamp() ==
+                     c1->ChunkHeader().mDoneTimeStamp);
+  MOZ_RELEASE_ASSERT(update2.NewlyReleasedChunksRef().size() == 2);
+  MOZ_RELEASE_ASSERT(
+      IsSameMetadata(update2.NewlyReleasedChunksRef()[0],
+                     {c1->ChunkHeader().mDoneTimeStamp, c1->BufferBytes()}));
+  MOZ_RELEASE_ASSERT(
+      IsSameMetadata(update2.NewlyReleasedChunksRef()[1],
+                     {c2->ChunkHeader().mDoneTimeStamp, c2->BufferBytes()}));
+
+  // Fold into not-an-update.
+  update1.Fold(std::move(update2));
+  MOZ_RELEASE_ASSERT(IsSameUpdate(
+      update1,
+      Update(c3->BufferBytes(), c1->BufferBytes() + c2->BufferBytes(),
+             c1->ChunkHeader().mDoneTimeStamp,
+             {{c1->ChunkHeader().mDoneTimeStamp, c1->BufferBytes()},
+              {c2->ChunkHeader().mDoneTimeStamp, c2->BufferBytes()}})));
+
+  // Pretend nothing happened.
+  update2 = Update(c3->BufferBytes(), c1->BufferBytes() + c2->BufferBytes(), c1,
+                   nullptr);
+  MOZ_RELEASE_ASSERT(IsSameUpdate(
+      update2, Update(c3->BufferBytes(), c1->BufferBytes() + c2->BufferBytes(),
+                      c1->ChunkHeader().mDoneTimeStamp, {})));
+  update1.Fold(std::move(update2));
+  MOZ_RELEASE_ASSERT(IsSameUpdate(
+      update1,
+      Update(c3->BufferBytes(), c1->BufferBytes() + c2->BufferBytes(),
+             c1->ChunkHeader().mDoneTimeStamp,
+             {{c1->ChunkHeader().mDoneTimeStamp, c1->BufferBytes()},
+              {c2->ChunkHeader().mDoneTimeStamp, c2->BufferBytes()}})));
+
+  // Pretend there's a new unreleased chunk.
+  c3->SetLast(CreateBiggerChunkAfter(*c3));
+  ProfileBufferChunk* c4 = c3->GetNext();
+  update2 = Update(c3->BufferBytes() + c4->BufferBytes(),
+                   c1->BufferBytes() + c2->BufferBytes(), c1, nullptr);
+  MOZ_RELEASE_ASSERT(
+      IsSameUpdate(update2, Update(c3->BufferBytes() + c4->BufferBytes(),
+                                   c1->BufferBytes() + c2->BufferBytes(),
+                                   c1->ChunkHeader().mDoneTimeStamp, {})));
+  update1.Fold(std::move(update2));
+  MOZ_RELEASE_ASSERT(IsSameUpdate(
+      update1,
+      Update(c3->BufferBytes() + c4->BufferBytes(),
+             c1->BufferBytes() + c2->BufferBytes(),
+             c1->ChunkHeader().mDoneTimeStamp,
+             {{c1->ChunkHeader().mDoneTimeStamp, c1->BufferBytes()},
+              {c2->ChunkHeader().mDoneTimeStamp, c2->BufferBytes()}})));
+
+  // Pretend the first unreleased chunk c3 has been released.
+  released->SetLast(std::exchange(unreleased, unreleased->ReleaseNext()));
+  update2 =
+      Update(c4->BufferBytes(),
+             c1->BufferBytes() + c2->BufferBytes() + c3->BufferBytes(), c1, c3);
+  MOZ_RELEASE_ASSERT(IsSameUpdate(
+      update2,
+      Update(c4->BufferBytes(),
+             c1->BufferBytes() + c2->BufferBytes() + c3->BufferBytes(),
+             c1->ChunkHeader().mDoneTimeStamp,
+             {{c3->ChunkHeader().mDoneTimeStamp, c3->BufferBytes()}})));
+  update1.Fold(std::move(update2));
+  MOZ_RELEASE_ASSERT(IsSameUpdate(
+      update1,
+      Update(c4->BufferBytes(),
+             c1->BufferBytes() + c2->BufferBytes() + c3->BufferBytes(),
+             c1->ChunkHeader().mDoneTimeStamp,
+             {{c1->ChunkHeader().mDoneTimeStamp, c1->BufferBytes()},
+              {c2->ChunkHeader().mDoneTimeStamp, c2->BufferBytes()},
+              {c3->ChunkHeader().mDoneTimeStamp, c3->BufferBytes()}})));
+
+  // Pretend c1 has been destroyed, so the oldest timestamp is now at c2.
+  released = released->ReleaseNext();
+  c1 = nullptr;
+  update2 = Update(c4->BufferBytes(), c2->BufferBytes() + c3->BufferBytes(), c2,
+                   nullptr);
+  MOZ_RELEASE_ASSERT(IsSameUpdate(
+      update2, Update(c4->BufferBytes(), c2->BufferBytes() + c3->BufferBytes(),
+                      c2->ChunkHeader().mDoneTimeStamp, {})));
+  update1.Fold(std::move(update2));
+  MOZ_RELEASE_ASSERT(IsSameUpdate(
+      update1,
+      Update(c4->BufferBytes(), c2->BufferBytes() + c3->BufferBytes(),
+             c2->ChunkHeader().mDoneTimeStamp,
+             {{c2->ChunkHeader().mDoneTimeStamp, c2->BufferBytes()},
+              {c3->ChunkHeader().mDoneTimeStamp, c3->BufferBytes()}})));
+
+  // Pretend c2 has been recycled to make unreleased c5, and c4 has been
+  // released.
+  auto recycled = std::exchange(released, released->ReleaseNext());
+  recycled->MarkRecycled();
+  Unused << recycled->ReserveInitialBlockAsTail(0);
+  recycled->MarkDone();
+  released->SetLast(std::move(unreleased));
+  unreleased = std::move(recycled);
+  ProfileBufferChunk* c5 = c2;
+  c2 = nullptr;
+  update2 =
+      Update(c5->BufferBytes(), c3->BufferBytes() + c4->BufferBytes(), c3, c4);
+  MOZ_RELEASE_ASSERT(IsSameUpdate(
+      update2,
+      Update(c5->BufferBytes(), c3->BufferBytes() + c4->BufferBytes(),
+             c3->ChunkHeader().mDoneTimeStamp,
+             {{c4->ChunkHeader().mDoneTimeStamp, c4->BufferBytes()}})));
+  update1.Fold(std::move(update2));
+  MOZ_RELEASE_ASSERT(IsSameUpdate(
+      update1,
+      Update(c5->BufferBytes(), c3->BufferBytes() + c4->BufferBytes(),
+             c3->ChunkHeader().mDoneTimeStamp,
+             {{c3->ChunkHeader().mDoneTimeStamp, c3->BufferBytes()},
+              {c4->ChunkHeader().mDoneTimeStamp, c4->BufferBytes()}})));
+
+  // And send a final update.
+  update1.Fold(Update(nullptr));
+  MOZ_RELEASE_ASSERT(update1.IsFinal());
+  MOZ_RELEASE_ASSERT(!update1.IsNotUpdate());
+
+  printf("TestControlledChunkManagerUpdate done\n");
+}
+
+static void TestControlledChunkManagerWithLocalLimit() {
+  printf("TestControlledChunkManagerWithLocalLimit...\n");
+
+  // Construct a ProfileBufferChunkManagerWithLocalLimit with chunk of minimum
+  // size >=100, up to 1000 bytes.
+  constexpr ProfileBufferChunk::Length MaxTotalBytes = 1000;
+  constexpr ProfileBufferChunk::Length ChunkMinBufferBytes = 100;
+  ProfileBufferChunkManagerWithLocalLimit cmll{MaxTotalBytes,
+                                               ChunkMinBufferBytes};
+
+  // Reference to chunk manager base class.
+  ProfileBufferChunkManager& cm = cmll;
+
+  // Reference to controlled chunk manager base class.
+  ProfileBufferControlledChunkManager& ccm = cmll;
+
+#  ifdef DEBUG
+  const char* chunkManagerRegisterer =
+      "TestControlledChunkManagerWithLocalLimit";
+  cm.RegisteredWith(chunkManagerRegisterer);
+#  endif  // DEBUG
+
+  MOZ_RELEASE_ASSERT(cm.MaxTotalSize() == MaxTotalBytes,
+                     "Max total size should be exactly as given");
+
+  unsigned destroyedChunks = 0;
+  unsigned destroyedBytes = 0;
+  cm.SetChunkDestroyedCallback([&](const ProfileBufferChunk& aChunks) {
+    for (const ProfileBufferChunk* chunk = &aChunks; chunk;
+         chunk = chunk->GetNext()) {
+      destroyedChunks += 1;
+      destroyedBytes += chunk->BufferBytes();
+    }
+  });
+
+  using Update = ProfileBufferControlledChunkManager::Update;
+  unsigned updateCount = 0;
+  ProfileBufferControlledChunkManager::Update update;
+  MOZ_RELEASE_ASSERT(update.IsNotUpdate());
+  auto updateCallback = [&](Update&& aUpdate) {
+    ++updateCount;
+    update.Fold(std::move(aUpdate));
+  };
+  ccm.SetUpdateCallback(updateCallback);
+  MOZ_RELEASE_ASSERT(updateCount == 1,
+                     "SetUpdateCallback should have triggered an update");
+  MOZ_RELEASE_ASSERT(IsSameUpdate(update, Update(0, 0, TimeStamp{}, {})));
+  updateCount = 0;
+  update.Clear();
+
+  UniquePtr<ProfileBufferChunk> extantReleasedChunks =
+      cm.GetExtantReleasedChunks();
+  MOZ_RELEASE_ASSERT(!extantReleasedChunks, "Unexpected released chunk(s)");
+  MOZ_RELEASE_ASSERT(updateCount == 1,
+                     "GetExtantReleasedChunks should have triggered an update");
+  MOZ_RELEASE_ASSERT(IsSameUpdate(update, Update(0, 0, TimeStamp{}, {})));
+  updateCount = 0;
+  update.Clear();
+
+  // First request.
+  UniquePtr<ProfileBufferChunk> chunk = cm.GetChunk();
+  MOZ_RELEASE_ASSERT(!!chunk,
+                     "First chunk immediate request should always work");
+  const auto chunkActualBufferBytes = chunk->BufferBytes();
+  // Keep address, for later checks.
+  const uintptr_t chunk1Address = reinterpret_cast<uintptr_t>(chunk.get());
+  MOZ_RELEASE_ASSERT(updateCount == 1,
+                     "GetChunk should have triggered an update");
+  MOZ_RELEASE_ASSERT(
+      IsSameUpdate(update, Update(chunk->BufferBytes(), 0, TimeStamp{}, {})));
+  updateCount = 0;
+  update.Clear();
+
+  extantReleasedChunks = cm.GetExtantReleasedChunks();
+  MOZ_RELEASE_ASSERT(!extantReleasedChunks, "Unexpected released chunk(s)");
+  MOZ_RELEASE_ASSERT(updateCount == 1,
+                     "GetExtantReleasedChunks should have triggered an update");
+  MOZ_RELEASE_ASSERT(
+      IsSameUpdate(update, Update(chunk->BufferBytes(), 0, TimeStamp{}, {})));
+  updateCount = 0;
+  update.Clear();
+
+  // For this test, we need to be able to get at least 2 chunks without hitting
+  // the limit. (If this failed, it wouldn't necessary be a problem with
+  // ProfileBufferChunkManagerWithLocalLimit, fiddle with constants at the top
+  // of this test.)
+  MOZ_RELEASE_ASSERT(chunkActualBufferBytes < 2 * MaxTotalBytes);
+
+  ProfileBufferChunk::Length previousUnreleasedBytes = chunk->BufferBytes();
+  ProfileBufferChunk::Length previousReleasedBytes = 0;
+  TimeStamp previousOldestDoneTimeStamp;
+
+  unsigned chunk1ReuseCount = 0;
+
+  // We will do enough loops to go through the maximum size a number of times.
+  const unsigned Rollovers = 3;
+  const unsigned Loops = Rollovers * MaxTotalBytes / chunkActualBufferBytes;
+  for (unsigned i = 0; i < Loops; ++i) {
+    // Add some data to the chunk.
+    const ProfileBufferIndex index =
+        ProfileBufferIndex(chunkActualBufferBytes) * i + 1;
+    chunk->SetRangeStart(index);
+    Unused << chunk->ReserveInitialBlockAsTail(1);
+    Unused << chunk->ReserveBlock(2);
+
+    // Request a new chunk.
+    UniquePtr<ProfileBufferChunk> newChunk;
+    cm.RequestChunk([&](UniquePtr<ProfileBufferChunk> aChunk) {
+      newChunk = std::move(aChunk);
+    });
+    MOZ_RELEASE_ASSERT(updateCount == 0,
+                       "RequestChunk() shouldn't have triggered an update");
+    cm.FulfillChunkRequests();
+    MOZ_RELEASE_ASSERT(!!newChunk, "Chunk request should always work");
+    MOZ_RELEASE_ASSERT(newChunk->BufferBytes() == chunkActualBufferBytes,
+                       "Unexpected chunk size");
+    MOZ_RELEASE_ASSERT(!newChunk->GetNext(), "There should only be one chunk");
+
+    MOZ_RELEASE_ASSERT(updateCount == 1,
+                       "FulfillChunkRequests() after a request should have "
+                       "triggered an update");
+    MOZ_RELEASE_ASSERT(!update.IsFinal());
+    MOZ_RELEASE_ASSERT(!update.IsNotUpdate());
+    MOZ_RELEASE_ASSERT(update.UnreleasedBytes() ==
+                       previousUnreleasedBytes + newChunk->BufferBytes());
+    previousUnreleasedBytes = update.UnreleasedBytes();
+    MOZ_RELEASE_ASSERT(update.ReleasedBytes() <= previousReleasedBytes);
+    previousReleasedBytes = update.ReleasedBytes();
+    MOZ_RELEASE_ASSERT(previousOldestDoneTimeStamp.IsNull() ||
+                       update.OldestDoneTimeStamp() >=
+                           previousOldestDoneTimeStamp);
+    previousOldestDoneTimeStamp = update.OldestDoneTimeStamp();
+    MOZ_RELEASE_ASSERT(update.NewlyReleasedChunksRef().empty());
+    updateCount = 0;
+    update.Clear();
+
+    // Make sure the "Done" timestamp below cannot be the same as from the
+    // previous loop.
+    const TimeStamp now = TimeStamp::NowUnfuzzed();
+    while (TimeStamp::NowUnfuzzed() == now) {
+      ::SleepMilli(1);
+    }
+
+    // Mark previous chunk done and release it.
+    chunk->MarkDone();
+    const auto doneTimeStamp = chunk->ChunkHeader().mDoneTimeStamp;
+    const auto bufferBytes = chunk->BufferBytes();
+    cm.ReleaseChunks(std::move(chunk));
+
+    MOZ_RELEASE_ASSERT(updateCount == 1,
+                       "ReleaseChunks() should have triggered an update");
+    MOZ_RELEASE_ASSERT(!update.IsFinal());
+    MOZ_RELEASE_ASSERT(!update.IsNotUpdate());
+    MOZ_RELEASE_ASSERT(update.UnreleasedBytes() ==
+                       previousUnreleasedBytes - bufferBytes);
+    previousUnreleasedBytes = update.UnreleasedBytes();
+    MOZ_RELEASE_ASSERT(update.ReleasedBytes() ==
+                       previousReleasedBytes + bufferBytes);
+    previousReleasedBytes = update.ReleasedBytes();
+    MOZ_RELEASE_ASSERT(previousOldestDoneTimeStamp.IsNull() ||
+                       update.OldestDoneTimeStamp() >=
+                           previousOldestDoneTimeStamp);
+    previousOldestDoneTimeStamp = update.OldestDoneTimeStamp();
+    MOZ_RELEASE_ASSERT(update.OldestDoneTimeStamp() <= doneTimeStamp);
+    MOZ_RELEASE_ASSERT(update.NewlyReleasedChunksRef().size() == 1);
+    MOZ_RELEASE_ASSERT(update.NewlyReleasedChunksRef()[0].mDoneTimeStamp ==
+                       doneTimeStamp);
+    MOZ_RELEASE_ASSERT(update.NewlyReleasedChunksRef()[0].mBufferBytes ==
+                       bufferBytes);
+    updateCount = 0;
+    update.Clear();
+
+    // And cycle to the new chunk.
+    chunk = std::move(newChunk);
+
+    if (reinterpret_cast<uintptr_t>(chunk.get()) == chunk1Address) {
+      ++chunk1ReuseCount;
+    }
+  }
+
+  // Enough testing! Clean-up.
+  Unused << chunk->ReserveInitialBlockAsTail(0);
+  chunk->MarkDone();
+  cm.ForgetUnreleasedChunks();
+  MOZ_RELEASE_ASSERT(
+      updateCount == 1,
+      "ForgetUnreleasedChunks() should have triggered an update");
+  MOZ_RELEASE_ASSERT(!update.IsFinal());
+  MOZ_RELEASE_ASSERT(!update.IsNotUpdate());
+  MOZ_RELEASE_ASSERT(update.UnreleasedBytes() == 0);
+  MOZ_RELEASE_ASSERT(update.ReleasedBytes() == previousReleasedBytes);
+  MOZ_RELEASE_ASSERT(update.NewlyReleasedChunksRef().empty() == 1);
+  updateCount = 0;
+  update.Clear();
+
+  ccm.SetUpdateCallback({});
+  MOZ_RELEASE_ASSERT(updateCount == 1,
+                     "SetUpdateCallback({}) should have triggered an update");
+  MOZ_RELEASE_ASSERT(update.IsFinal());
+
+#  ifdef DEBUG
+  cm.DeregisteredFrom(chunkManagerRegisterer);
+#  endif  // DEBUG
+
+  printf("TestControlledChunkManagerWithLocalLimit done\n");
 }
 
 static void TestChunkedBuffer() {
@@ -1146,15 +1615,15 @@ static void TestChunkedBuffer() {
   } while (blockIndex);
   MOZ_RELEASE_ASSERT(read > 1);
 
-#ifdef DEBUG
+#  ifdef DEBUG
   // cb.Dump();
-#endif
+#  endif
 
   cb.Clear();
 
-#ifdef DEBUG
+#  ifdef DEBUG
   // cb.Dump();
-#endif
+#  endif
 
   // Start writer threads.
   constexpr int ThreadCount = 32;
@@ -1191,9 +1660,9 @@ static void TestChunkedBuffer() {
     thread.join();
   }
 
-#ifdef DEBUG
+#  ifdef DEBUG
   // cb.Dump();
-#endif
+#  endif
 
   // Reset to out-of-session.
   cb.ResetChunkManager();
@@ -1315,10 +1784,10 @@ static void TestChunkedBufferSingle() {
   MOZ_RELEASE_ASSERT(read == firstIndexToFail - 1,
                      "We should have read up to before the first failure");
 
-#ifdef DEBUG
+#  ifdef DEBUG
   // cbSingle.Dump();
   // cbTarget.Dump();
-#endif
+#  endif
 
   printf("TestChunkedBufferSingle done\n");
 }
@@ -1581,7 +2050,7 @@ void TestModuloBuffer() {
 
     // Compare the two outputs.
     for (uint32_t i = 0; i < TRISize; ++i) {
-#ifdef TEST_MODULOBUFFER_FAILURE_DEBUG
+#  ifdef TEST_MODULOBUFFER_FAILURE_DEBUG
       // Only used when debugging failures.
       if (output[i] != outputCheck[i]) {
         printf(
@@ -1590,15 +2059,15 @@ void TestModuloBuffer() {
             unsigned(aReadFrom), unsigned(aWriteTo), unsigned(aBytes),
             unsigned(i), input, output, outputCheck);
       }
-#endif
+#  endif
       MOZ_RELEASE_ASSERT(output[i] == outputCheck[i]);
     }
 
-#ifdef TEST_MODULOBUFFER_HELPER
+#  ifdef TEST_MODULOBUFFER_HELPER
     // Only used when adding more tests.
     printf("*** from=%u to=%u bytes=%u output: %s\n", unsigned(aReadFrom),
            unsigned(aWriteTo), unsigned(aBytes), output);
-#endif
+#  endif
 
     return std::string(reinterpret_cast<const char*>(output));
   };
@@ -1638,16 +2107,16 @@ void TestBlocksRingBufferAPI() {
     BlocksRingBuffer rb(BlocksRingBuffer::ThreadSafety::WithMutex,
                         &buffer[MBSize], MakePowerOfTwo32<MBSize>());
 
-#define VERIFY_START_END_PUSHED_CLEARED(aStart, aEnd, aPushed, aCleared)  \
-  {                                                                       \
-    BlocksRingBuffer::State state = rb.GetState();                        \
-    MOZ_RELEASE_ASSERT(state.mRangeStart.ConvertToProfileBufferIndex() == \
-                       (aStart));                                         \
-    MOZ_RELEASE_ASSERT(state.mRangeEnd.ConvertToProfileBufferIndex() ==   \
-                       (aEnd));                                           \
-    MOZ_RELEASE_ASSERT(state.mPushedBlockCount == (aPushed));             \
-    MOZ_RELEASE_ASSERT(state.mClearedBlockCount == (aCleared));           \
-  }
+#  define VERIFY_START_END_PUSHED_CLEARED(aStart, aEnd, aPushed, aCleared)  \
+    {                                                                       \
+      BlocksRingBuffer::State state = rb.GetState();                        \
+      MOZ_RELEASE_ASSERT(state.mRangeStart.ConvertToProfileBufferIndex() == \
+                         (aStart));                                         \
+      MOZ_RELEASE_ASSERT(state.mRangeEnd.ConvertToProfileBufferIndex() ==   \
+                         (aEnd));                                           \
+      MOZ_RELEASE_ASSERT(state.mPushedBlockCount == (aPushed));             \
+      MOZ_RELEASE_ASSERT(state.mClearedBlockCount == (aCleared));           \
+    }
 
     // All entries will contain one 32-bit number. The resulting blocks will
     // have the following structure:
@@ -2305,7 +2774,7 @@ void TestBlocksRingBufferSerialization() {
                       &buffer[MBSize], MakePowerOfTwo32<MBSize>());
 
   // Will expect literal string to always have the same address.
-#define THE_ANSWER "The answer is "
+#  define THE_ANSWER "The answer is "
   const char* theAnswer = THE_ANSWER;
 
   rb.PutObjects('0', WrapProfileBufferLiteralCStringPointer(THE_ANSWER), 42,
@@ -2521,6 +2990,8 @@ void TestProfilerDependencies() {
   TestChunk();
   TestChunkManagerSingle();
   TestChunkManagerWithLocalLimit();
+  TestControlledChunkManagerUpdate();
+  TestControlledChunkManagerWithLocalLimit();
   TestChunkedBuffer();
   TestChunkedBufferSingle();
   TestModuloBuffer();
@@ -2529,8 +3000,6 @@ void TestProfilerDependencies() {
   TestBlocksRingBufferThreading();
   TestBlocksRingBufferSerialization();
 }
-
-#ifdef MOZ_BASE_PROFILER
 
 class BaseTestMarkerPayload : public baseprofiler::ProfilerMarkerPayload {
  public:
@@ -2671,6 +3140,8 @@ void TestProfiler() {
          baseprofiler::profiler_current_process_id(),
          baseprofiler::profiler_current_thread_id());
   // ::SleepMilli(10000);
+
+  TestProfilerDependencies();
 
   TestProfilerMarkerSerialization();
 
@@ -2855,10 +3326,10 @@ void TestProfiler() {
   printf("TestProfiler done\n");
 }
 
-#else  // MOZ_BASE_PROFILER
+#else  // MOZ_GECKO_PROFILER
 
 // Testing that macros are still #defined (but do nothing) when
-// MOZ_BASE_PROFILER is disabled.
+// MOZ_GECKO_PROFILER is disabled.
 void TestProfiler() {
   // These don't need to make sense, we just want to know that they're defined
   // and don't do anything.
@@ -2872,7 +3343,7 @@ void TestProfiler() {
   AUTO_BASE_PROFILER_THREAD_SLEEP;
 }
 
-#endif  // MOZ_BASE_PROFILER else
+#endif  // MOZ_GECKO_PROFILER else
 
 #if defined(XP_WIN)
 int wmain()
@@ -2880,18 +3351,15 @@ int wmain()
 int main()
 #endif  // defined(XP_WIN)
 {
-#ifdef MOZ_BASE_PROFILER
+#ifdef MOZ_GECKO_PROFILER
   printf("BaseTestProfiler -- pid: %d, tid: %d\n",
          baseprofiler::profiler_current_process_id(),
          baseprofiler::profiler_current_thread_id());
   // ::SleepMilli(10000);
-#endif  // MOZ_BASE_PROFILER
-
-  // Always run tests that don't involve the profiler directly.
-  TestProfilerDependencies();
+#endif  // MOZ_GECKO_PROFILER
 
   // Note that there are two `TestProfiler` functions above, depending on
-  // whether MOZ_BASE_PROFILER is #defined.
+  // whether MOZ_GECKO_PROFILER is #defined.
   TestProfiler();
 
   return 0;

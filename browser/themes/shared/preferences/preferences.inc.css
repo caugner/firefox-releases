@@ -141,7 +141,6 @@ button > hbox > label {
 }
 
 .accessory-button {
-  min-height: 30px;
   min-width: 150px;
   margin: 4px 0;
 }
@@ -363,6 +362,10 @@ button > hbox > label {
   min-height: 0;
 }
 
+#rememberedList > richlistitem {
+  min-height: 30px !important;
+}
+
 .typeIcon {
   margin-inline: 10px 9px !important;
 }
@@ -488,11 +491,6 @@ button > hbox > label {
   display: flex;
   flex-direction: column;
   justify-content: space-between;
-}
-
-#sanitizeEverythingWarningBox {
-  background-color: var(--in-content-box-background);
-  border: 1px solid var(--in-content-box-border-color);
 }
 
 #blockCookies,
@@ -836,6 +834,20 @@ image.update-throbber {
 .navigation {
   overflow-x: hidden;
   overflow-y: auto;
+  position: relative;
+}
+
+@media (prefers-reduced-motion) {
+  /* Setting border-inline-end on .navigation makes it a focusable element */
+  .navigation::after {
+    content: "";
+    width: 1px;
+    height: 100%;
+    background-color: var(--in-content-border-color);
+    top: 0;
+    inset-inline-end: 0;
+    position: absolute;
+  }
 }
 
 .face-sad {
@@ -945,11 +957,6 @@ image.update-throbber {
   visibility: collapse;
 }
 
-menulist {
-  min-height: 30px;
-  margin-block: 4px;
-}
-
 menulist[indicator=true] > menupopup menuitem:not([image]) > .menu-iconic-left {
   display: -moz-box;
   min-width: auto; /* Override the min-width defined in menu.css */
@@ -1012,14 +1019,20 @@ menulist[indicator=true] > menupopup menuitem[indicator=true]:not([image]) > .me
   min-width: 20em;
 }
 
-#selectedLocales > richlistitem {
-  padding-inline-start: 13px;
+#availableLanguages,
+#availableLocales {
+  margin-inline-start: 0;
 }
 
 #availableLanguages,
-#availableLocales {
-  margin: 0;
+#availableLocales,
+#activeLanguages,
+#selectedLocales {
   margin-inline-end: 4px;
+}
+
+#selectedLocales > richlistitem {
+  padding-inline-start: 13px;
 }
 
 #warning-message > .message-bar-description {
@@ -1028,12 +1041,6 @@ menulist[indicator=true] > menupopup menuitem[indicator=true]:not([image]) > .me
 
 #warning-message {
   margin-top: 8px;
-}
-
-.add-web-language,
-.add-browser-language {
-  margin: 0;
-  margin-inline-start: 4px;
 }
 
 .action-button {

@@ -10,6 +10,8 @@
 
 #  include "mozilla/Sprintf.h"
 
+#  include <algorithm>
+
 #  ifdef XP_WIN
 #    include <process.h>
 #    define getpid _getpid
@@ -17,6 +19,8 @@
 #    include <unistd.h>
 #  endif
 #  include <stdarg.h>
+
+#  include "jsmath.h"
 
 #  include "util/Text.h"
 #  include "vm/JSFunction.h"
@@ -109,6 +113,10 @@ class MOZ_RAII CacheIROpsJitSpewer {
   }
   void spewMetaTwoByteKindImm(const char* name, MetaTwoByteKind kind) {
     out_.printf("%s MetaTwoByteKind(%u)", name, unsigned(kind));
+  }
+  void spewUnaryMathFunctionImm(const char* name, UnaryMathFunction fun) {
+    const char* funName = GetUnaryMathFunctionName(fun);
+    out_.printf("%s UnaryMathFunction::%s", name, funName);
   }
   void spewValueTypeImm(const char* name, ValueType type) {
     out_.printf("%s ValueType(%u)", name, unsigned(type));
@@ -247,6 +255,10 @@ class MOZ_RAII CacheIROpsJSONSpewer {
   void spewMetaTwoByteKindImm(const char* name, MetaTwoByteKind kind) {
     spewArgImpl(name, "Imm", unsigned(kind));
   }
+  void spewUnaryMathFunctionImm(const char* name, UnaryMathFunction fun) {
+    const char* funName = GetUnaryMathFunctionName(fun);
+    spewArgImpl(name, "MathFunction", funName);
+  }
   void spewValueTypeImm(const char* name, ValueType type) {
     spewArgImpl(name, "Imm", unsigned(type));
   }
@@ -368,10 +380,13 @@ static void QuoteString(GenericPrinter& out, const CharT* s, size_t length) {
 
 static void QuoteString(GenericPrinter& out, JSLinearString* str) {
   JS::AutoCheckCannotGC nogc;
+
+  // Limit the string length to reduce the JSON file size.
+  size_t length = std::min(str->length(), size_t(128));
   if (str->hasLatin1Chars()) {
-    QuoteString(out, str->latin1Chars(nogc), str->length());
+    QuoteString(out, str->latin1Chars(nogc), length);
   } else {
-    QuoteString(out, str->twoByteChars(nogc), str->length());
+    QuoteString(out, str->twoByteChars(nogc), length);
   }
 }
 
@@ -401,6 +416,15 @@ void CacheIRSpewer::valueProperty(const char* name, const Value& v) {
   } else if (v.isObject()) {
     JSObject& object = v.toObject();
     j.formatProperty("value", "%p (shape: %p)", &object, object.shape());
+
+    if (object.is<JSFunction>()) {
+      if (JSAtom* name = object.as<JSFunction>().displayAtom()) {
+        j.beginStringProperty("funName");
+        QuoteString(output_, name);
+        j.endStringProperty();
+      }
+    }
+
     if (NativeObject* nobj =
             object.isNative() ? &object.as<NativeObject>() : nullptr) {
       j.beginListProperty("flags");

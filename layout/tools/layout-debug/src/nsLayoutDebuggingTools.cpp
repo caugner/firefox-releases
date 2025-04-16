@@ -218,7 +218,6 @@ nsLayoutDebuggingTools::DumpContent() {
 static void DumpFramesRecur(
     nsIDocShell* aDocShell, FILE* out,
     nsIFrame::ListFlags aFlags = nsIFrame::ListFlags()) {
-#ifdef DEBUG_FRAME_DUMP
   if (aFlags.contains(nsIFrame::ListFlag::DisplayInCSSPixels)) {
     fprintf(out, "Frame tree in CSS pixels:\n");
   } else {
@@ -246,7 +245,6 @@ static void DumpFramesRecur(
       DumpFramesRecur(childAsShell, out, aFlags);
     }
   }
-#endif
 }
 
 NS_IMETHODIMP
@@ -300,7 +298,7 @@ nsLayoutDebuggingTools::DumpViews() {
 NS_IMETHODIMP
 nsLayoutDebuggingTools::DumpStyleSheets() {
   NS_ENSURE_TRUE(mDocShell, NS_ERROR_NOT_INITIALIZED);
-#ifdef DEBUG
+#if defined(DEBUG) || defined(MOZ_LAYOUT_DEBUGGER)
   FILE* out = stdout;
   if (PresShell* presShell = GetPresShell(mDocShell)) {
     presShell->ListStyleSheets(out);
@@ -313,7 +311,6 @@ nsLayoutDebuggingTools::DumpStyleSheets() {
 
 NS_IMETHODIMP nsLayoutDebuggingTools::DumpMatchedRules() {
   NS_ENSURE_TRUE(mDocShell, NS_ERROR_NOT_INITIALIZED);
-#ifdef DEBUG_FRAME_DUMP
   FILE* out = stdout;
   if (PresShell* presShell = GetPresShell(mDocShell)) {
     nsIFrame* root = presShell->GetRootFrame();
@@ -323,7 +320,6 @@ NS_IMETHODIMP nsLayoutDebuggingTools::DumpMatchedRules() {
   } else {
     fputs("null pres shell\n", out);
   }
-#endif
   return NS_OK;
 }
 

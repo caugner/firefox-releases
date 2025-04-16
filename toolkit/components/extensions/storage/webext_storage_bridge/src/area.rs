@@ -4,27 +4,68 @@
 
 use std::{
     cell::{Ref, RefCell},
+    convert::TryInto,
     ffi::OsString,
-    mem, str,
+    mem,
+    path::PathBuf,
+    str,
     sync::Arc,
 };
 
+use golden_gate::{ApplyTask, FerryTask};
 use moz_task::{self, DispatchOptions, TaskRunnable};
 use nserror::{nsresult, NS_OK};
-use nsstring::{nsACString, nsString};
+use nsstring::{nsACString, nsCString, nsString};
+use thin_vec::ThinVec;
+use webext_storage::STORAGE_VERSION;
 use xpcom::{
-    interfaces::{mozIExtensionStorageCallback, nsIFile, nsISerialEventTarget},
+    interfaces::{
+        mozIBridgedSyncEngineApplyCallback, mozIBridgedSyncEngineCallback,
+        mozIExtensionStorageCallback, mozIServicesLogger, nsIFile, nsISerialEventTarget,
+    },
     RefPtr,
 };
 
 use crate::error::{Error, Result};
-use crate::op::{StorageOp, StorageTask, TeardownTask};
+use crate::punt::{Punt, PuntTask, TeardownTask};
 use crate::store::{LazyStore, LazyStoreConfig};
+
+fn path_from_nsifile(file: &nsIFile) -> Result<PathBuf> {
+    let mut raw_path = nsString::new();
+    // `nsIFile::GetPath` gives us a UTF-16-encoded version of its
+    // native path, which we must turn back into a platform-native
+    // string. We can't use `nsIFile::nativePath()` here because
+    // it's marked as `nostdcall`, which Rust doesn't support.
+    unsafe { file.GetPath(&mut *raw_path) }.to_result()?;
+    let native_path = {
+        // On Windows, we can create a native string directly from the
+        // encoded path.
+        #[cfg(windows)]
+        {
+            use std::os::windows::prelude::*;
+            OsString::from_wide(&*raw_path)
+        }
+        // On other platforms, we must first decode the raw path from
+        // UTF-16, and then create our native string.
+        #[cfg(not(windows))]
+        OsString::from(String::from_utf16(&*raw_path)?)
+    };
+    Ok(native_path.into())
+}
 
 /// An XPCOM component class for the Rust extension storage API. This class
 /// implements the interfaces needed for syncing and storage.
+///
+/// This class can be created on any thread, but must not be shared between
+/// threads. In Rust terms, it's `Send`, but not `Sync`.
 #[derive(xpcom)]
-#[xpimplements(mozIConfigurableExtensionStorageArea)]
+#[xpimplements(
+    mozIExtensionStorageArea,
+    mozIConfigurableExtensionStorageArea,
+    mozISyncedExtensionStorageArea,
+    mozIInterruptible,
+    mozIBridgedSyncEngine
+)]
 #[refcnt = "nonatomic"]
 pub struct InitStorageSyncArea {
     /// A background task queue, used to run all our storage operations on a
@@ -58,44 +99,30 @@ impl StorageSyncArea {
     }
 
     /// Dispatches a task for a storage operation to the task queue.
-    fn dispatch(&self, op: StorageOp, callback: &mozIExtensionStorageCallback) -> Result<()> {
-        let name = op.name();
-        let task = StorageTask::new(Arc::downgrade(&*self.store()?), op, callback)?;
+    fn dispatch(&self, punt: Punt, callback: &mozIExtensionStorageCallback) -> Result<()> {
+        let name = punt.name();
+        let task = PuntTask::new(Arc::downgrade(&*self.store()?), punt, callback)?;
         let runnable = TaskRunnable::new(name, Box::new(task))?;
         // `may_block` schedules the runnable on a dedicated I/O pool.
-        runnable
-            .dispatch_with_options(self.queue.coerce(), DispatchOptions::new().may_block(true))?;
+        TaskRunnable::dispatch_with_options(
+            runnable,
+            self.queue.coerce(),
+            DispatchOptions::new().may_block(true),
+        )?;
         Ok(())
     }
 
     xpcom_method!(
         configure => Configure(
-            database_file: *const nsIFile
+            database_file: *const nsIFile,
+            kinto_file: *const nsIFile
         )
     );
     /// Sets up the storage area.
-    fn configure(&self, database_file: &nsIFile) -> Result<()> {
-        let mut raw_path = nsString::new();
-        // `nsIFile::GetPath` gives us a UTF-16-encoded version of its
-        // native path, which we must turn back into a platform-native
-        // string. We can't use `nsIFile::nativePath()` here because
-        // it's marked as `nostdcall`, which Rust doesn't support.
-        unsafe { database_file.GetPath(&mut *raw_path) }.to_result()?;
-        let native_path = {
-            // On Windows, we can create a native string directly from the
-            // encoded path.
-            #[cfg(windows)]
-            {
-                use std::os::windows::prelude::*;
-                OsString::from_wide(&*raw_path)
-            }
-            // On other platforms, we must first decode the raw path from
-            // UTF-16, and then create our native string.
-            #[cfg(not(windows))]
-            OsString::from(String::from_utf16(&*raw_path)?)
-        };
+    fn configure(&self, database_file: &nsIFile, kinto_file: &nsIFile) -> Result<()> {
         self.store()?.configure(LazyStoreConfig {
-            path: native_path.into(),
+            path: path_from_nsifile(database_file)?,
+            kinto_path: path_from_nsifile(kinto_file)?,
         })?;
         Ok(())
     }
@@ -115,7 +142,7 @@ impl StorageSyncArea {
         callback: &mozIExtensionStorageCallback,
     ) -> Result<()> {
         self.dispatch(
-            StorageOp::Set {
+            Punt::Set {
                 ext_id: str::from_utf8(&*ext_id)?.into(),
                 value: serde_json::from_str(str::from_utf8(&*json)?)?,
             },
@@ -139,7 +166,7 @@ impl StorageSyncArea {
         callback: &mozIExtensionStorageCallback,
     ) -> Result<()> {
         self.dispatch(
-            StorageOp::Get {
+            Punt::Get {
                 ext_id: str::from_utf8(&*ext_id)?.into(),
                 keys: serde_json::from_str(str::from_utf8(&*json)?)?,
             },
@@ -162,7 +189,7 @@ impl StorageSyncArea {
         callback: &mozIExtensionStorageCallback,
     ) -> Result<()> {
         self.dispatch(
-            StorageOp::Remove {
+            Punt::Remove {
                 ext_id: str::from_utf8(&*ext_id)?.into(),
                 keys: serde_json::from_str(str::from_utf8(&*json)?)?,
             },
@@ -179,7 +206,7 @@ impl StorageSyncArea {
     /// Removes all keys and values for the specified extension.
     fn clear(&self, ext_id: &nsACString, callback: &mozIExtensionStorageCallback) -> Result<()> {
         self.dispatch(
-            StorageOp::Clear {
+            Punt::Clear {
                 ext_id: str::from_utf8(&*ext_id)?.into(),
             },
             callback,
@@ -187,13 +214,26 @@ impl StorageSyncArea {
     }
 
     xpcom_method!(
-        wipe_all => WipeAll(
+        getBytesInUse => GetBytesInUse(
+            ext_id: *const ::nsstring::nsACString,
+            keys: *const ::nsstring::nsACString,
             callback: *const mozIExtensionStorageCallback
         )
     );
-    /// Removes all keys and values for all extensions.
-    fn wipe_all(&self, callback: &mozIExtensionStorageCallback) -> Result<()> {
-        self.dispatch(StorageOp::WipeAll, callback)
+    /// Obtains the count of bytes in use for the specified key or for all keys.
+    fn getBytesInUse(
+        &self,
+        ext_id: &nsACString,
+        keys: &nsACString,
+        callback: &mozIExtensionStorageCallback,
+    ) -> Result<()> {
+        self.dispatch(
+            Punt::GetBytesInUse {
+                ext_id: str::from_utf8(&*ext_id)?.into(),
+                keys: serde_json::from_str(str::from_utf8(&*keys)?)?,
+            },
+            callback,
+        )
     }
 
     xpcom_method!(teardown => Teardown(callback: *const mozIExtensionStorageCallback));
@@ -211,20 +251,23 @@ impl StorageSyncArea {
         let mut maybe_store = self.store.borrow_mut();
         match mem::take(&mut *maybe_store) {
             Some(store) => {
-                // If dispatching the runnable fails, we'll drop the store and
-                // close its database connection on the main thread. This is a
-                // last resort, and can also happen if the last `RefPtr` to this
-                // storage area is released without calling `teardown`. In that
-                // case, the destructor for `self.store` will run, which
-                // automatically closes its database connection. mozStorage's
-                // `Connection::Release` also falls back to closing the
-                // connection on the main thread if it can't dispatch to the
-                // background thread.
+                // Interrupt any currently-running statements.
+                store.interrupt();
+                // If dispatching the runnable fails, we'll leak the store
+                // without closing its database connection.
                 teardown(&self.queue, store, callback)?;
             }
             None => return Err(Error::AlreadyTornDown),
         }
         Ok(())
+    }
+
+    xpcom_method!(takeMigrationInfo => TakeMigrationInfo(callback: *const mozIExtensionStorageCallback));
+
+    /// Fetch-and-delete (e.g. `take`) information about the migration from the
+    /// kinto-based extension-storage to the rust-based storage.
+    fn takeMigrationInfo(&self, callback: &mozIExtensionStorageCallback) -> Result<()> {
+        self.dispatch(Punt::TakeMigrationInfo, callback)
     }
 }
 
@@ -235,6 +278,202 @@ fn teardown(
 ) -> Result<()> {
     let task = TeardownTask::new(store, callback)?;
     let runnable = TaskRunnable::new(TeardownTask::name(), Box::new(task))?;
-    runnable.dispatch_with_options(queue.coerce(), DispatchOptions::new().may_block(true))?;
+    TaskRunnable::dispatch_with_options(
+        runnable,
+        queue.coerce(),
+        DispatchOptions::new().may_block(true),
+    )?;
     Ok(())
+}
+
+/// `mozISyncedExtensionStorageArea` implementation.
+impl StorageSyncArea {
+    xpcom_method!(
+        fetch_pending_sync_changes => FetchPendingSyncChanges(callback: *const mozIExtensionStorageCallback)
+    );
+    fn fetch_pending_sync_changes(&self, callback: &mozIExtensionStorageCallback) -> Result<()> {
+        self.dispatch(Punt::FetchPendingSyncChanges, callback)
+    }
+}
+
+/// `mozIInterruptible` implementation.
+impl StorageSyncArea {
+    xpcom_method!(
+        interrupt => Interrupt()
+    );
+    /// Interrupts any operations currently running on the background task
+    /// queue.
+    fn interrupt(&self) -> Result<()> {
+        self.store()?.interrupt();
+        Ok(())
+    }
+}
+
+/// `mozIBridgedSyncEngine` implementation.
+impl StorageSyncArea {
+    xpcom_method!(get_logger => GetLogger() -> *const mozIServicesLogger);
+    fn get_logger(&self) -> Result<RefPtr<mozIServicesLogger>> {
+        Err(NS_OK)?
+    }
+
+    xpcom_method!(set_logger => SetLogger(logger: *const mozIServicesLogger));
+    fn set_logger(&self, _logger: Option<&mozIServicesLogger>) -> Result<()> {
+        Ok(())
+    }
+
+    xpcom_method!(get_storage_version => GetStorageVersion() -> i32);
+    fn get_storage_version(&self) -> Result<i32> {
+        Ok(STORAGE_VERSION.try_into().unwrap())
+    }
+
+    // It's possible that migration, or even merging, will result in records
+    // too large for the server. We tolerate that (and hope that the addons do
+    // too :)
+    xpcom_method!(get_allow_skipped_record => GetAllowSkippedRecord() -> bool);
+    fn get_allow_skipped_record(&self) -> Result<bool> {
+        Ok(true)
+    }
+
+    xpcom_method!(
+        get_last_sync => GetLastSync(
+            callback: *const mozIBridgedSyncEngineCallback
+        )
+    );
+    fn get_last_sync(&self, callback: &mozIBridgedSyncEngineCallback) -> Result<()> {
+        Ok(FerryTask::for_last_sync(&*self.store()?, callback)?.dispatch(&self.queue)?)
+    }
+
+    xpcom_method!(
+        set_last_sync => SetLastSync(
+            last_sync_millis: i64,
+            callback: *const mozIBridgedSyncEngineCallback
+        )
+    );
+    fn set_last_sync(
+        &self,
+        last_sync_millis: i64,
+        callback: &mozIBridgedSyncEngineCallback,
+    ) -> Result<()> {
+        Ok(
+            FerryTask::for_set_last_sync(&*self.store()?, last_sync_millis, callback)?
+                .dispatch(&self.queue)?,
+        )
+    }
+
+    xpcom_method!(
+        get_sync_id => GetSyncId(
+            callback: *const mozIBridgedSyncEngineCallback
+        )
+    );
+    fn get_sync_id(&self, callback: &mozIBridgedSyncEngineCallback) -> Result<()> {
+        Ok(FerryTask::for_sync_id(&*self.store()?, callback)?.dispatch(&self.queue)?)
+    }
+
+    xpcom_method!(
+        reset_sync_id => ResetSyncId(
+            callback: *const mozIBridgedSyncEngineCallback
+        )
+    );
+    fn reset_sync_id(&self, callback: &mozIBridgedSyncEngineCallback) -> Result<()> {
+        Ok(FerryTask::for_reset_sync_id(&*self.store()?, callback)?.dispatch(&self.queue)?)
+    }
+
+    xpcom_method!(
+        ensure_current_sync_id => EnsureCurrentSyncId(
+            new_sync_id: *const nsACString,
+            callback: *const mozIBridgedSyncEngineCallback
+        )
+    );
+    fn ensure_current_sync_id(
+        &self,
+        new_sync_id: &nsACString,
+        callback: &mozIBridgedSyncEngineCallback,
+    ) -> Result<()> {
+        Ok(
+            FerryTask::for_ensure_current_sync_id(&*self.store()?, new_sync_id, callback)?
+                .dispatch(&self.queue)?,
+        )
+    }
+
+    xpcom_method!(
+        sync_started => SyncStarted(
+            callback: *const mozIBridgedSyncEngineCallback
+        )
+    );
+    fn sync_started(&self, callback: &mozIBridgedSyncEngineCallback) -> Result<()> {
+        Ok(FerryTask::for_sync_started(&*self.store()?, callback)?.dispatch(&self.queue)?)
+    }
+
+    xpcom_method!(
+        store_incoming => StoreIncoming(
+            incoming_envelopes_json: *const ThinVec<::nsstring::nsCString>,
+            callback: *const mozIBridgedSyncEngineCallback
+        )
+    );
+    fn store_incoming(
+        &self,
+        incoming_envelopes_json: Option<&ThinVec<nsCString>>,
+        callback: &mozIBridgedSyncEngineCallback,
+    ) -> Result<()> {
+        Ok(FerryTask::for_store_incoming(
+            &*self.store()?,
+            incoming_envelopes_json.map(|v| v.as_slice()).unwrap_or(&[]),
+            callback,
+        )?
+        .dispatch(&self.queue)?)
+    }
+
+    xpcom_method!(apply => Apply(callback: *const mozIBridgedSyncEngineApplyCallback));
+    fn apply(&self, callback: &mozIBridgedSyncEngineApplyCallback) -> Result<()> {
+        Ok(ApplyTask::new(&*self.store()?, callback)?.dispatch(&self.queue)?)
+    }
+
+    xpcom_method!(
+        set_uploaded => SetUploaded(
+            server_modified_millis: i64,
+            uploaded_ids: *const ThinVec<::nsstring::nsCString>,
+            callback: *const mozIBridgedSyncEngineCallback
+        )
+    );
+    fn set_uploaded(
+        &self,
+        server_modified_millis: i64,
+        uploaded_ids: Option<&ThinVec<nsCString>>,
+        callback: &mozIBridgedSyncEngineCallback,
+    ) -> Result<()> {
+        Ok(FerryTask::for_set_uploaded(
+            &*self.store()?,
+            server_modified_millis,
+            uploaded_ids.map(|v| v.as_slice()).unwrap_or(&[]),
+            callback,
+        )?
+        .dispatch(&self.queue)?)
+    }
+
+    xpcom_method!(
+        sync_finished => SyncFinished(
+            callback: *const mozIBridgedSyncEngineCallback
+        )
+    );
+    fn sync_finished(&self, callback: &mozIBridgedSyncEngineCallback) -> Result<()> {
+        Ok(FerryTask::for_sync_finished(&*self.store()?, callback)?.dispatch(&self.queue)?)
+    }
+
+    xpcom_method!(
+        reset => Reset(
+            callback: *const mozIBridgedSyncEngineCallback
+        )
+    );
+    fn reset(&self, callback: &mozIBridgedSyncEngineCallback) -> Result<()> {
+        Ok(FerryTask::for_reset(&*self.store()?, callback)?.dispatch(&self.queue)?)
+    }
+
+    xpcom_method!(
+        wipe => Wipe(
+            callback: *const mozIBridgedSyncEngineCallback
+        )
+    );
+    fn wipe(&self, callback: &mozIBridgedSyncEngineCallback) -> Result<()> {
+        Ok(FerryTask::for_wipe(&*self.store()?, callback)?.dispatch(&self.queue)?)
+    }
 }

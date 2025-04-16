@@ -9,7 +9,6 @@
 #include "mozilla/Assertions.h"  // MOZ_ASSERT
 
 #include "builtin/ModuleObject.h"          // ModuleObject
-#include "frontend/BCEScriptStencil.h"     // BCEScriptStencil
 #include "frontend/BytecodeEmitter.h"      // BytecodeEmitter
 #include "frontend/FunctionSyntaxKind.h"   // FunctionSyntaxKind
 #include "frontend/ModuleSharedContext.h"  // ModuleSharedContext
@@ -700,35 +699,18 @@ bool FunctionScriptEmitter::emitEndBody() {
   return true;
 }
 
-bool FunctionScriptEmitter::initScript() {
+bool FunctionScriptEmitter::intoStencil(TopLevelFunction isTopLevel) {
   MOZ_ASSERT(state_ == State::EndBody);
 
-  js::UniquePtr<ImmutableScriptData> immutableScriptData =
-      bce_->createImmutableScriptData(bce_->cx);
-  if (!immutableScriptData) {
+  // If this function is the top-level of the compile, store directly into the
+  // CompilationInfo like all other top-level scripts.
+  ScriptStencil* stencilPtr = isTopLevel == TopLevelFunction::Yes
+                                  ? bce_->compilationInfo.topLevel.address()
+                                  : funbox_->functionStencil().address();
+
+  if (!bce_->intoScriptStencil(stencilPtr)) {
     return false;
   }
-
-  RootedFunction function(bce_->cx, funbox_->function());
-  RootedScript script(bce_->cx);
-  if (bce_->emitterMode == BytecodeEmitter::LazyFunction) {
-    script = JSScript::CastFromLazy(funbox_->function()->baseScript());
-  } else {
-    script =
-        JSScript::Create(bce_->cx, function, bce_->compilationInfo.sourceObject,
-                         funbox_->getScriptExtent(), funbox_->immutableFlags());
-    if (!script) {
-      return false;
-    }
-  }
-
-  BCEScriptStencil stencil(*bce_, std::move(immutableScriptData));
-  if (!JSScript::fullyInitFromStencil(bce_->cx, bce_->compilationInfo, script,
-                                      stencil)) {
-    return false;
-  }
-  MOZ_ASSERT(!bce_->outputScript);
-  bce_->outputScript = script;
 
 #ifdef DEBUG
   state_ = State::End;

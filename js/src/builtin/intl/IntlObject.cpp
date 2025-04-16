@@ -620,6 +620,8 @@ bool js::intl_BestAvailableLocale(JSContext* cx, unsigned argc, Value* vp) {
       kind = SupportedLocaleKind::Collator;
     } else if (StringEqualsLiteral(typeStr, "DateTimeFormat")) {
       kind = SupportedLocaleKind::DateTimeFormat;
+    } else if (StringEqualsLiteral(typeStr, "DisplayNames")) {
+      kind = SupportedLocaleKind::DisplayNames;
     } else if (StringEqualsLiteral(typeStr, "ListFormat")) {
       kind = SupportedLocaleKind::ListFormat;
     } else if (StringEqualsLiteral(typeStr, "NumberFormat")) {
@@ -814,8 +816,8 @@ static bool IntlClassFinish(JSContext* cx, HandleObject intl,
   RootedId ctorId(cx);
   RootedValue ctorValue(cx);
   for (const auto& protoKey :
-       {JSProto_Collator, JSProto_DateTimeFormat, JSProto_Locale,
-        JSProto_NumberFormat, JSProto_PluralRules,
+       {JSProto_Collator, JSProto_DateTimeFormat, JSProto_ListFormat,
+        JSProto_Locale, JSProto_NumberFormat, JSProto_PluralRules,
         JSProto_RelativeTimeFormat}) {
     JSObject* ctor = GlobalObject::getOrCreateConstructor(cx, protoKey);
     if (!ctor) {

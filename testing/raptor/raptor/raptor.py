@@ -32,7 +32,7 @@ from cmdline import parse_args, CHROMIUM_DISTROS
 from logger.logger import RaptorLogger
 from manifest import get_raptor_test_list
 from signal_handler import SignalHandler
-from utils import view_gecko_profile
+from utils import view_gecko_profile_from_raptor
 from webextension import (
     WebExtensionFirefox,
     WebExtensionDesktopChrome,
@@ -123,6 +123,7 @@ def main(args=sys.argv[1:]):
             cpu_test=args.cpu_test,
             memory_test=args.memory_test,
             live_sites=args.live_sites,
+            cold=args.cold,
             is_release_build=args.is_release_build,
             debug_mode=args.debug_mode,
             post_startup_delay=args.post_startup_delay,
@@ -194,7 +195,7 @@ def main(args=sys.argv[1:]):
                 "Not launching profiler.firefox.com because DISABLE_PROFILE_LAUNCH=1"
             )
         else:
-            view_gecko_profile(args.binary)
+            view_gecko_profile_from_raptor()
 
 
 if __name__ == "__main__":

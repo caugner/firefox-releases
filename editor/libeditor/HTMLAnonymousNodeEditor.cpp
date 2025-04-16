@@ -194,8 +194,8 @@ ManualNACPtr HTMLEditor::CreateAnonymousElement(nsAtom* aTag,
     styleSet->StyleNewSubtree(newNativeAnonymousContent);
   }
 
-  ElementDeletionObserver* observer = new ElementDeletionObserver(
-      newNativeAnonymousContent, aParentContent.AsElement());
+  auto* observer = new ElementDeletionObserver(newNativeAnonymousContent,
+                                               aParentContent.AsElement());
   NS_ADDREF(observer);  // NodeWillBeDestroyed releases.
   aParentContent.AddMutationObserver(observer);
   newNativeAnonymousContent->AddMutationObserver(observer);
@@ -248,7 +248,7 @@ void HTMLEditor::DeleteRefToAnonymousNode(ManualNACPtr aContent,
   // See bug 338129.
   if (aContent->IsInComposedDoc() && aPresShell &&
       !aPresShell->IsDestroying()) {
-    MOZ_ASSERT(aContent->IsRootOfAnonymousSubtree());
+    MOZ_ASSERT(aContent->IsRootOfNativeAnonymousSubtree());
     MOZ_ASSERT(!aContent->GetPreviousSibling(), "NAC has no siblings");
 
     // FIXME(emilio): This is the only caller to PresShell::ContentRemoved that

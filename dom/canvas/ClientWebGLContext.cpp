@@ -1338,24 +1338,22 @@ void ClientWebGLContext::DeleteQuery(WebGLQueryJS* const obj) {
   const FuncScope funcScope(*this, "deleteQuery");
   if (IsContextLost()) return;
   if (!ValidateOrSkipForDelete(*this, obj)) return;
+  const auto& state = State();
 
   // Unbind if current
 
+  if (obj->mTarget) {
+    const auto slotTarget = QuerySlotTarget(obj->mTarget);
+    const auto& curForTarget =
+        *MaybeFind(state.mCurrentQueryByTarget, slotTarget);
+
+    if (curForTarget == obj) {
+      EndQuery(obj->mTarget);
+    }
+  }
+
   obj->mDeleteRequested = true;
   Run<RPROC(DeleteQuery)>(obj->mId);
-
-  if (!obj->mTarget) return;
-  const auto& state = State();
-  const auto slotTarget = QuerySlotTarget(obj->mTarget);
-  const auto& curForTarget =
-      *MaybeFind(state.mCurrentQueryByTarget, slotTarget);
-
-  if (curForTarget == obj) {
-    EndQuery(obj->mTarget);
-  } else {
-    // Not currently active, so fully-delete immediately.
-    obj->mIsFullyDeleted = true;
-  }
 }
 
 void ClientWebGLContext::DeleteRenderbuffer(WebGLRenderbufferJS* const obj) {
@@ -3014,22 +3012,29 @@ Maybe<webgl::ErrorInfo> CheckFramebufferAttach(const GLenum bindImageTarget,
                                                const uint32_t zLayerBase,
                                                const uint32_t zLayerCount,
                                                const webgl::Limits& limits) {
+  if (!curTexTarget) {
+    return Some(
+        webgl::ErrorInfo{LOCAL_GL_INVALID_OPERATION,
+                         "`tex` not yet bound. Call bindTexture first."});
+  }
+
   auto texTarget = curTexTarget;
   if (bindImageTarget) {
     // FramebufferTexture2D
     const auto bindTexTarget = ImageToTexTarget(bindImageTarget);
+    if (curTexTarget != bindTexTarget) {
+      return Some(webgl::ErrorInfo{LOCAL_GL_INVALID_OPERATION,
+                                   "`tex` cannot be rebound to a new target."});
+    }
+
     switch (bindTexTarget) {
       case LOCAL_GL_TEXTURE_2D:
       case LOCAL_GL_TEXTURE_CUBE_MAP:
         break;
       default:
-        return Some(webgl::ErrorInfo{
-            LOCAL_GL_INVALID_ENUM,
-            "`tex` must have been bound to target TEXTURE_2D_ARRAY."});
-    }
-    if (curTexTarget && curTexTarget != bindTexTarget) {
-      return Some(webgl::ErrorInfo{LOCAL_GL_INVALID_OPERATION,
-                                   "`tex` cannot be rebound to a new target."});
+        return Some(webgl::ErrorInfo{LOCAL_GL_INVALID_ENUM,
+                                     "`tex` must have been bound to target "
+                                     "TEXTURE_2D or TEXTURE_CUBE_MAP."});
     }
     texTarget = bindTexTarget;
   } else {
@@ -4243,9 +4248,6 @@ void ClientWebGLContext::EndQuery(const GLenum specificTarget) {
     EnqueueError(LOCAL_GL_INVALID_OPERATION, "No Query is active for %s.",
                  EnumString(specificTarget).c_str());
     return;
-  }
-  if (slot->mDeleteRequested) {
-    slot->mIsFullyDeleted = true;
   }
 
   slot = nullptr;

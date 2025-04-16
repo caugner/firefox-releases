@@ -110,8 +110,9 @@ void MobileViewportManager::ResolutionUpdated(
     return;
   }
 
-  if (!mPainted &&
-      aOrigin == mozilla::ResolutionChangeOrigin::MainThreadRestore) {
+  if ((!mPainted &&
+       aOrigin == mozilla::ResolutionChangeOrigin::MainThreadRestore) ||
+      aOrigin == mozilla::ResolutionChangeOrigin::Test) {
     // Save the value, so our default zoom calculation
     // can take it into account later on.
     SetRestoreResolution(mContext->GetResolution());
@@ -578,6 +579,10 @@ void MobileViewportManager::RefreshViewportSize(bool aForceAdjustResolution) {
   ScreenIntSize displaySize = ViewAs<ScreenPixel>(
       mDisplaySize, PixelCastJustification::LayoutDeviceIsScreenForBounds);
   nsViewportInfo viewportInfo = mContext->GetViewportInfo(displaySize);
+  MVM_LOG("%p: viewport info has zooms min=%f max=%f default=%f,valid=%d\n",
+          this, viewportInfo.GetMinZoom().scale,
+          viewportInfo.GetMaxZoom().scale, viewportInfo.GetDefaultZoom().scale,
+          viewportInfo.IsDefaultZoomValid());
 
   CSSSize viewport = viewportInfo.GetSize();
   MVM_LOG("%p: Computed CSS viewport %s\n", this, Stringify(viewport).c_str());

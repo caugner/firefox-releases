@@ -9,7 +9,7 @@ import React, { Component } from "react";
 
 import { connect } from "../../utils/connect";
 import classnames from "classnames";
-import { features, javascriptPrefs } from "../../utils/prefs";
+import { features, prefs } from "../../utils/prefs";
 import {
   getIsWaitingOnBreak,
   getSkipPausing,
@@ -90,6 +90,7 @@ type Props = {
   isWaitingOnBreak: boolean,
   horizontal: boolean,
   skipPausing: boolean,
+  javascriptEnabled: boolean,
   topFrameSelected: boolean,
   resume: typeof actions.resume,
   stepIn: typeof actions.stepIn,
@@ -98,6 +99,9 @@ type Props = {
   breakOnNext: typeof actions.breakOnNext,
   pauseOnExceptions: typeof actions.pauseOnExceptions,
   toggleSkipPausing: typeof actions.toggleSkipPausing,
+  toggleInlinePreview: typeof actions.toggleInlinePreview,
+  toggleSourceMapsEnabled: typeof actions.toggleSourceMapsEnabled,
+  toggleJavaScriptEnabled: typeof actions.toggleJavaScriptEnabled,
 };
 
 class CommandBar extends Component<Props> {
@@ -256,12 +260,30 @@ class CommandBar extends Component<Props> {
         <MenuItem
           key="debugger-settings-menu-item-disable-javascript"
           className="menu-item debugger-settings-menu-item-disable-javascript"
-          checked={!javascriptPrefs.enableJavaScript}
+          checked={!this.props.javascriptEnabled}
           label={L10N.getStr("settings.disableJavaScript.label")}
           tooltip={L10N.getStr("settings.disableJavaScript.tooltip")}
           onClick={() => {
-            javascriptPrefs.enableJavaScript = !javascriptPrefs.enableJavaScript;
+            this.props.toggleJavaScriptEnabled(!this.props.javascriptEnabled);
           }}
+        />
+        <MenuItem
+          key="debugger-settings-menu-item-disable-inline-previews"
+          checked={features.inlinePreview}
+          label={L10N.getStr("inlinePreview.toggle.label")}
+          tooltip={L10N.getStr("inlinePreview.toggle.tooltip")}
+          onClick={() =>
+            this.props.toggleInlinePreview(!features.inlinePreview)
+          }
+        />
+        <MenuItem
+          key="debugger-settings-menu-item-disable-sourcemaps"
+          checked={prefs.clientSourceMapsEnabled}
+          label={L10N.getStr("settings.toggleSourceMaps.label")}
+          tooltip={L10N.getStr("settings.toggleSourceMaps.tooltip")}
+          onClick={() =>
+            this.props.toggleSourceMapsEnabled(!prefs.clientSourceMapsEnabled)
+          }
         />
       </MenuList>
     );
@@ -277,6 +299,7 @@ class CommandBar extends Component<Props> {
         {this.renderStepButtons()}
         <div className="filler" />
         {this.renderSkipPausingButton()}
+        <div className="devtools-separator" />
         {this.renderSettingsButton()}
       </div>
     );
@@ -293,6 +316,7 @@ const mapStateToProps = state => ({
   isWaitingOnBreak: getIsWaitingOnBreak(state, getCurrentThread(state)),
   skipPausing: getSkipPausing(state),
   topFrameSelected: isTopFrameSelected(state, getCurrentThread(state)),
+  javascriptEnabled: state.ui.javascriptEnabled,
 });
 
 export default connect<Props, OwnProps, _, _, _, _>(mapStateToProps, {
@@ -303,4 +327,7 @@ export default connect<Props, OwnProps, _, _, _, _>(mapStateToProps, {
   breakOnNext: actions.breakOnNext,
   pauseOnExceptions: actions.pauseOnExceptions,
   toggleSkipPausing: actions.toggleSkipPausing,
+  toggleInlinePreview: actions.toggleInlinePreview,
+  toggleSourceMapsEnabled: actions.toggleSourceMapsEnabled,
+  toggleJavaScriptEnabled: actions.toggleJavaScriptEnabled,
 })(CommandBar);

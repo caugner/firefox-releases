@@ -2162,7 +2162,7 @@ bool nsComputedDOMStyle::GetLineHeightCoord(nscoord& aCoord) {
   // the text zoom, if any.
   const nsStyleFont* font = StyleFont();
   float fCoord = float(aCoord);
-  if (font->mAllowZoom) {
+  if (font->mAllowZoomAndMinSize) {
     fCoord /= presContext->EffectiveTextZoom();
   }
   if (font->mFont.size != font->mSize) {
@@ -2186,13 +2186,6 @@ already_AddRefed<CSSValue> nsComputedDOMStyle::GetBorderWidthFor(
   }
   val->SetAppUnits(width);
 
-  return val.forget();
-}
-
-already_AddRefed<CSSValue> nsComputedDOMStyle::GetBorderColorFor(
-    mozilla::Side aSide) {
-  RefPtr<nsROCSSPrimitiveValue> val = new nsROCSSPrimitiveValue;
-  SetValueFromComplexColor(val, StyleBorder()->BorderColorFor(aSide));
   return val.forget();
 }
 

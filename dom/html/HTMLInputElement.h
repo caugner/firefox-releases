@@ -808,10 +808,8 @@ class HTMLInputElement final : public TextControlElement,
 
   bool MozIsTextField(bool aExcludePassword);
 
-  /**
-   * GetEditor() and HasEditor() for webidl bindings.
-   */
-  MOZ_CAN_RUN_SCRIPT nsIEditor* GetEditor();
+  MOZ_CAN_RUN_SCRIPT nsIEditor* GetEditorForBindings();
+  // For WebIDL bindings.
   bool HasEditor();
 
   bool IsInputEventTarget() const { return IsSingleLineTextControl(false); }
@@ -961,6 +959,8 @@ class HTMLInputElement final : public TextControlElement,
   virtual void BeforeSetForm(bool aBindToTree) override;
 
   virtual void AfterClearForm(bool aUnbindOrDelete) override;
+
+  virtual void ResultForDialogSubmit(nsAString& aResult) override;
 
   /**
    * Dispatch a select event. Returns true if the event was not cancelled.

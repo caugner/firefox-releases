@@ -3,7 +3,7 @@
 
 "use strict";
 
-// Test the ResourceWatcher API around DOCUMENT_EVENTS
+// Test the ResourceWatcher API around DOCUMENT_EVENT
 
 const { TargetList } = require("devtools/shared/resources/target-list");
 const {
@@ -11,12 +11,15 @@ const {
 } = require("devtools/shared/resources/resource-watcher");
 
 add_task(async function() {
+  info("Test ResourceWatcher for DOCUMENT_EVENT");
+
   // Open a test tab
   const tab = await addTab("data:text/html,Document Events");
 
   // Create a TargetList for the test tab
   const client = await createLocalClient();
-  const target = await client.mainRoot.getTab({ tab });
+  const descriptor = await client.mainRoot.getTab({ tab });
+  const target = await descriptor.getTarget();
   const targetList = new TargetList(client.mainRoot, target);
   await targetList.startListening();
 
@@ -30,11 +33,10 @@ add_task(async function() {
   const onLoadingAtInit = listener.once("dom-loading");
   const onInteractiveAtInit = listener.once("dom-interactive");
   const onCompleteAtInit = listener.once("dom-complete");
-  await resourceWatcher.watch(
-    [ResourceWatcher.TYPES.DOCUMENT_EVENTS],
-    parameters => listener.dispatch(parameters)
-  );
-  await assertEvents(onLoadingAtInit, onInteractiveAtInit, onCompleteAtInit);
+  await resourceWatcher.watchResources([ResourceWatcher.TYPES.DOCUMENT_EVENT], {
+    onAvailable: parameters => listener.dispatch(parameters),
+  });
+  await assertPromises(onLoadingAtInit, onInteractiveAtInit, onCompleteAtInit);
   ok(
     true,
     "Document events are fired even when the document was already loaded"
@@ -45,7 +47,7 @@ add_task(async function() {
   const onInteractiveAtReloaded = listener.once("dom-interactive");
   const onCompleteAtReloaded = listener.once("dom-complete");
   gBrowser.reloadTab(tab);
-  await assertEvents(
+  await assertPromises(
     onLoadingAtReloaded,
     onInteractiveAtReloaded,
     onCompleteAtReloaded
@@ -56,10 +58,43 @@ add_task(async function() {
   await client.close();
 });
 
-async function assertEvents(onLoading, onInteractive, onComplete) {
+add_task(async function() {
+  info("Test ignoreExistingResources option for DOCUMENT_EVENT");
+
+  const tab = await addTab("data:text/html,Document Events");
+
+  const {
+    client,
+    resourceWatcher,
+    targetList,
+  } = await initResourceWatcherAndTarget(tab);
+
+  info("Check whether the existing document events will not be fired");
+  const documentEvents = [];
+  await resourceWatcher.watchResources([ResourceWatcher.TYPES.DOCUMENT_EVENT], {
+    onAvailable: ({ resource }) => documentEvents.push(resource),
+    ignoreExistingResources: true,
+  });
+  is(documentEvents.length, 0, "Existing document events are not fired");
+
+  info("Check whether the future document events are fired");
+  gBrowser.reloadTab(tab);
+  info("Wait for dom-loading, dom-interactive and dom-complete events");
+  await waitUntil(() => documentEvents.length === 3);
+  assertEvents(...documentEvents);
+
+  await targetList.stopListening();
+  await client.close();
+});
+
+async function assertPromises(onLoading, onInteractive, onComplete) {
   const loadingEvent = await onLoading;
   const interactiveEvent = await onInteractive;
   const completeEvent = await onComplete;
+  assertEvents(loadingEvent, interactiveEvent, completeEvent);
+}
+
+function assertEvents(loadingEvent, interactiveEvent, completeEvent) {
   is(
     typeof loadingEvent.time,
     "number",

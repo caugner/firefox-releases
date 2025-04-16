@@ -15,7 +15,7 @@ transforms:
 job-defaults:
     attributes:
         retrigger: true
-    run-on-projects: ['mozilla-beta', 'trunk', 'try']
+    run-on-projects: ['mozilla-beta', 'trunk']
     treeherder:
         tier: 1
         kind: other
@@ -336,6 +336,8 @@ jobs:
         fetches:
             webrender-wrench-android-debug:
                 - 'wrench-debug.apk'
+            toolchain:
+                - android-sdk-linux
         run:
             using: run-task
             tooltool-downloads: internal
@@ -376,6 +378,8 @@ jobs:
         fetches:
             webrender-wrench-android-release:
                 - 'wrench-release.apk'
+            toolchain:
+                - android-sdk-linux
         run:
             using: run-task
             tooltool-downloads: internal

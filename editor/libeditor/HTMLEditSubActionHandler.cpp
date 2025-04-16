@@ -69,6 +69,7 @@ namespace mozilla {
 
 using namespace dom;
 using StyleDifference = HTMLEditUtils::StyleDifference;
+using ChildBlockBoundary = HTMLEditUtils::ChildBlockBoundary;
 
 enum { kLonely = 0, kPrevSib = 1, kNextSib = 2, kBothSibs = 3 };
 
@@ -195,6 +196,11 @@ template nsIContent* HTMLEditor::FindNearEditableContent(
     const EditorDOMPoint& aPoint, nsIEditor::EDirection aDirection);
 template nsIContent* HTMLEditor::FindNearEditableContent(
     const EditorRawDOMPoint& aPoint, nsIEditor::EDirection aDirection);
+template nsresult HTMLEditor::DeleteTextAndTextNodesWithTransaction(
+    const EditorDOMPoint& aStartPoint, const EditorDOMPoint& aEndPoint);
+template nsresult HTMLEditor::DeleteTextAndTextNodesWithTransaction(
+    const EditorDOMPointInText& aStartPoint,
+    const EditorDOMPointInText& aEndPoint);
 
 nsresult HTMLEditor::InitEditorContentAndSelection() {
   MOZ_ASSERT(IsEditActionDataAvailable());
@@ -268,7 +274,7 @@ void HTMLEditor::OnStartToHandleTopLevelEditSubAction(
       aRv.Throw(NS_ERROR_UNEXPECTED);
       return;
     }
-    if (nsRange* range = SelectionRefPtr()->GetRangeAt(0)) {
+    if (const nsRange* range = SelectionRefPtr()->GetRangeAt(0)) {
       TopLevelEditSubActionDataRef().mSelectedRange->StoreRange(*range);
     }
   }
@@ -692,7 +698,7 @@ EditActionResult HTMLEditor::CanHandleHTMLEditSubAction() const {
     return EditActionCanceled();
   }
 
-  nsRange* range = SelectionRefPtr()->GetRangeAt(0);
+  const nsRange* range = SelectionRefPtr()->GetRangeAt(0);
   nsINode* selStartNode = range->GetStartContainer();
   if (NS_WARN_IF(!selStartNode)) {
     return EditActionResult(NS_ERROR_FAILURE);
@@ -892,7 +898,7 @@ AlignStateAtSelection::AlignStateAtSelection(HTMLEditor& aHTMLEditor,
   OwningNonNull<Element> bodyOrDocumentElement = *aHTMLEditor.GetRoot();
   EditorRawDOMPoint atBodyOrDocumentElement(bodyOrDocumentElement);
 
-  nsRange* firstRange = aHTMLEditor.SelectionRefPtr()->GetRangeAt(0);
+  const nsRange* firstRange = aHTMLEditor.SelectionRefPtr()->GetRangeAt(0);
   mFoundSelectionRanges = !!firstRange;
   if (!mFoundSelectionRanges) {
     NS_WARNING("There was no selection range");
@@ -1005,7 +1011,7 @@ AlignStateAtSelection::AlignStateAtSelection(HTMLEditor& aHTMLEditor,
   }
 
   for (nsIContent* containerContent :
-       InclusiveAncestorsOfType<nsIContent>(*editTargetContent)) {
+       editTargetContent->InclusiveAncestorsOfType<nsIContent>()) {
     // If the node is a parent `<table>` element of edit target, let's break
     // here to materialize the 'inline-block' behaviour of html tables
     // regarding to text alignment.
@@ -1292,7 +1298,7 @@ nsresult HTMLEditor::EnsureCaretNotAfterPaddingBRElement() {
 
   // If we are after a padding `<br>` element for empty last line in the same
   // block, then move selection to be before it
-  nsRange* firstRange = SelectionRefPtr()->GetRangeAt(0);
+  const nsRange* firstRange = SelectionRefPtr()->GetRangeAt(0);
   if (NS_WARN_IF(!firstRange)) {
     return NS_ERROR_FAILURE;
   }
@@ -1429,7 +1435,7 @@ EditActionResult HTMLEditor::HandleInsertText(
     return EditActionHandled(NS_ERROR_FAILURE);
   }
 
-  RefPtr<nsRange> firstRange = SelectionRefPtr()->GetRangeAt(0);
+  RefPtr<const nsRange> firstRange = SelectionRefPtr()->GetRangeAt(0);
   if (NS_WARN_IF(!firstRange)) {
     return EditActionHandled(NS_ERROR_FAILURE);
   }
@@ -1449,7 +1455,8 @@ EditActionResult HTMLEditor::HandleInsertText(
   }
 
   EditorDOMPoint pointToInsert(firstRange->StartRef());
-  if (NS_WARN_IF(!pointToInsert.IsSet())) {
+  if (NS_WARN_IF(!pointToInsert.IsSet()) ||
+      NS_WARN_IF(!pointToInsert.IsInContentNode())) {
     return EditActionHandled(NS_ERROR_FAILURE);
   }
   MOZ_ASSERT(pointToInsert.IsSetAndValid());
@@ -1517,7 +1524,8 @@ EditActionResult HTMLEditor::HandleInsertText(
 
   // is our text going to be PREformatted?
   // We remember this so that we know how to handle tabs.
-  bool isPRE = EditorBase::IsPreformatted(pointToInsert.GetContainer());
+  bool isPRE =
+      EditorUtils::IsContentPreformatted(*pointToInsert.ContainerAsContent());
 
   // turn off the edit listener: we know how to
   // build the "doc changed range" ourselves, and it's
@@ -1807,7 +1815,7 @@ EditActionResult HTMLEditor::InsertParagraphSeparatorAsSubAction() {
   }
 
   // Smart splitting rules
-  nsRange* firstRange = SelectionRefPtr()->GetRangeAt(0);
+  const nsRange* firstRange = SelectionRefPtr()->GetRangeAt(0);
   if (NS_WARN_IF(!firstRange)) {
     return EditActionIgnored(NS_ERROR_FAILURE);
   }
@@ -2670,7 +2678,7 @@ EditActionResult HTMLEditor::HandleDeleteCollapsedSelectionAtTextNode(
       }
     }
   } else {
-    RefPtr<nsRange> range = SelectionRefPtr()->GetRangeAt(0);
+    RefPtr<const nsRange> range = SelectionRefPtr()->GetRangeAt(0);
     if (NS_WARN_IF(!range) ||
         NS_WARN_IF(range->GetStartContainer() !=
                    aPointToDelete.GetContainer()) ||
@@ -3154,7 +3162,7 @@ EditActionResult HTMLEditor::HandleDeleteNonCollapsedSelection(
   // Else we have a non-collapsed selection.  First adjust the selection.
   // XXX Why do we extend selection only when there is only one range?
   if (SelectionRefPtr()->RangeCount() == 1) {
-    if (nsRange* firstRange = SelectionRefPtr()->GetRangeAt(0)) {
+    if (const nsRange* firstRange = SelectionRefPtr()->GetRangeAt(0)) {
       RefPtr<StaticRange> extendedRange =
           GetRangeExtendedToIncludeInvisibleNodes(*firstRange);
       if (!extendedRange) {
@@ -3180,7 +3188,7 @@ EditActionResult HTMLEditor::HandleDeleteNonCollapsedSelection(
   // Remember that we did a ranged delete for the benefit of AfterEditInner().
   TopLevelEditSubActionDataRef().mDidDeleteNonCollapsedRange = true;
 
-  nsRange* firstRange = SelectionRefPtr()->GetRangeAt(0);
+  const nsRange* firstRange = SelectionRefPtr()->GetRangeAt(0);
   if (NS_WARN_IF(!firstRange)) {
     return EditActionResult(NS_ERROR_FAILURE);
   }
@@ -3563,6 +3571,100 @@ nsresult HTMLEditor::DeleteNodeIfInvisibleAndEditableTextNode(
   NS_WARNING_ASSERTION(NS_SUCCEEDED(rv),
                        "HTMLEditor::DeleteNodeWithTransaction() failed");
   return rv;
+}
+
+template <typename EditorDOMPointType>
+nsresult HTMLEditor::DeleteTextAndTextNodesWithTransaction(
+    const EditorDOMPointType& aStartPoint,
+    const EditorDOMPointType& aEndPoint) {
+  if (NS_WARN_IF(!aStartPoint.IsSet()) || NS_WARN_IF(!aEndPoint.IsSet())) {
+    return NS_ERROR_INVALID_ARG;
+  }
+
+  // MOOSE: this routine needs to be modified to preserve the integrity of the
+  // wsFragment info.
+
+  if (aStartPoint == aEndPoint) {
+    // Nothing to delete
+    return NS_OK;
+  }
+
+  if (aStartPoint.GetContainer() == aEndPoint.GetContainer() &&
+      aStartPoint.IsInTextNode()) {
+    RefPtr<Text> textNode = aStartPoint.ContainerAsText();
+    nsresult rv =
+        DeleteTextWithTransaction(*textNode, aStartPoint.Offset(),
+                                  aEndPoint.Offset() - aStartPoint.Offset());
+    NS_WARNING_ASSERTION(NS_SUCCEEDED(rv),
+                         "HTMLEditor::DeleteTextWithTransaction() failed");
+    return rv;
+  }
+
+  RefPtr<nsRange> range =
+      nsRange::Create(aStartPoint.ToRawRangeBoundary(),
+                      aEndPoint.ToRawRangeBoundary(), IgnoreErrors());
+  if (!range) {
+    NS_WARNING("nsRange::Create() failed");
+    return NS_ERROR_FAILURE;
+  }
+
+  // Collect editable text nodes in the given range.
+  AutoTArray<OwningNonNull<Text>, 16> arrayOfTextNodes;
+  DOMIterator iter;
+  if (NS_FAILED(iter.Init(*range))) {
+    return NS_OK;  // Nothing to delete in the range.
+  }
+  iter.AppendNodesToArray(
+      +[](nsINode& aNode, void*) {
+        MOZ_ASSERT(aNode.IsText());
+        return HTMLEditUtils::IsSimplyEditableNode(aNode);
+      },
+      arrayOfTextNodes);
+  for (OwningNonNull<Text>& textNode : arrayOfTextNodes) {
+    if (textNode == aStartPoint.GetContainer()) {
+      if (aStartPoint.IsEndOfContainer()) {
+        continue;
+      }
+      nsresult rv = DeleteTextWithTransaction(
+          MOZ_KnownLive(textNode), aStartPoint.Offset(),
+          textNode->Length() - aStartPoint.Offset());
+      if (NS_WARN_IF(Destroyed())) {
+        return NS_ERROR_EDITOR_DESTROYED;
+      }
+      if (NS_FAILED(rv)) {
+        NS_WARNING("HTMLEditor::DeleteTextWithTransaction() failed");
+        return rv;
+      }
+      continue;
+    }
+
+    if (textNode == aEndPoint.GetContainer()) {
+      if (aEndPoint.IsStartOfContainer()) {
+        break;
+      }
+      nsresult rv = DeleteTextWithTransaction(MOZ_KnownLive(textNode), 0,
+                                              aEndPoint.Offset());
+      if (NS_WARN_IF(Destroyed())) {
+        return NS_ERROR_EDITOR_DESTROYED;
+      }
+      if (NS_FAILED(rv)) {
+        NS_WARNING("HTMLEditor::DeleteTextWithTransaction() failed");
+        return rv;
+      }
+      return NS_OK;
+    }
+
+    nsresult rv = DeleteNodeWithTransaction(MOZ_KnownLive(textNode));
+    if (NS_WARN_IF(Destroyed())) {
+      return NS_ERROR_EDITOR_DESTROYED;
+    }
+    if (NS_FAILED(rv)) {
+      NS_WARNING("HTMLEditor::DeleteNodeWithTransaction() failed");
+      return rv;
+    }
+  }
+
+  return NS_OK;
 }
 
 nsresult HTMLEditor::InsertBRElementIfHardLineIsEmptyAndEndsWithBlockBoundary(
@@ -4689,7 +4791,7 @@ EditActionResult HTMLEditor::ChangeSelectedHardLinesToList(
       }
     }
 
-    nsRange* firstRange = SelectionRefPtr()->GetRangeAt(0);
+    const nsRange* firstRange = SelectionRefPtr()->GetRangeAt(0);
     if (NS_WARN_IF(!firstRange)) {
       return EditActionResult(NS_ERROR_FAILURE);
     }
@@ -5232,7 +5334,7 @@ nsresult HTMLEditor::FormatBlockContainerWithTransaction(nsAtom& blockType) {
   // empty block.
   // XXX Isn't this odd if there are only non-editable visible nodes?
   if (IsEmptyOneHardLine(arrayOfContents)) {
-    nsRange* firstRange = SelectionRefPtr()->GetRangeAt(0);
+    const nsRange* firstRange = SelectionRefPtr()->GetRangeAt(0);
     if (NS_WARN_IF(!firstRange)) {
       return NS_ERROR_FAILURE;
     }
@@ -5395,7 +5497,7 @@ nsresult HTMLEditor::MaybeInsertPaddingBRElementForEmptyLastLineAtSelection() {
     return NS_OK;
   }
 
-  nsRange* firstRange = SelectionRefPtr()->GetRangeAt(0);
+  const nsRange* firstRange = SelectionRefPtr()->GetRangeAt(0);
   if (NS_WARN_IF(!firstRange)) {
     return NS_ERROR_FAILURE;
   }
@@ -5670,7 +5772,7 @@ nsresult HTMLEditor::HandleCSSIndentAtSelectionInternal() {
   // XXX Isn't this odd if there are only non-editable visible nodes?
   if (IsEmptyOneHardLine(arrayOfContents)) {
     // get selection location
-    nsRange* firstRange = SelectionRefPtr()->GetRangeAt(0);
+    const nsRange* firstRange = SelectionRefPtr()->GetRangeAt(0);
     if (NS_WARN_IF(!firstRange)) {
       return NS_ERROR_FAILURE;
     }
@@ -5887,7 +5989,7 @@ nsresult HTMLEditor::HandleHTMLIndentAtSelectionInternal() {
   // empty block.
   // XXX Isn't this odd if there are only non-editable visible nodes?
   if (IsEmptyOneHardLine(arrayOfContents)) {
-    nsRange* firstRange = SelectionRefPtr()->GetRangeAt(0);
+    const nsRange* firstRange = SelectionRefPtr()->GetRangeAt(0);
     if (NS_WARN_IF(!firstRange)) {
       return NS_ERROR_FAILURE;
     }
@@ -6173,7 +6275,7 @@ EditActionResult HTMLEditor::HandleOutdentAtSelection() {
 
   // Push selection past end of left element of last split indented element.
   if (outdentResult.GetLeftContent()) {
-    nsRange* firstRange = SelectionRefPtr()->GetRangeAt(0);
+    const nsRange* firstRange = SelectionRefPtr()->GetRangeAt(0);
     if (NS_WARN_IF(!firstRange)) {
       return EditActionHandled();
     }
@@ -6202,7 +6304,7 @@ EditActionResult HTMLEditor::HandleOutdentAtSelection() {
   // And pull selection before beginning of right element of last split
   // indented element.
   if (outdentResult.GetRightContent()) {
-    nsRange* firstRange = SelectionRefPtr()->GetRangeAt(0);
+    const nsRange* firstRange = SelectionRefPtr()->GetRangeAt(0);
     if (NS_WARN_IF(!firstRange)) {
       return EditActionHandled();
     }
@@ -6739,7 +6841,8 @@ CreateElementResult HTMLEditor::ChangeListElementType(Element& aListElement,
   return CreateElementResult(std::move(listElement));
 }
 
-nsresult HTMLEditor::CreateStyleForInsertText(AbstractRange& aAbstractRange) {
+nsresult HTMLEditor::CreateStyleForInsertText(
+    const AbstractRange& aAbstractRange) {
   MOZ_ASSERT(IsEditActionDataAvailable());
   MOZ_ASSERT(aAbstractRange.IsPositioned());
   MOZ_ASSERT(mTypeInState);
@@ -7016,7 +7119,7 @@ nsresult HTMLEditor::AlignContentsAtSelection(const nsAString& aAlignType) {
       //      node because of the fact that arrayOfContents can be empty?  We
       //      should probably revisit this issue. - kin
 
-      nsRange* firstRange = SelectionRefPtr()->GetRangeAt(0);
+      const nsRange* firstRange = SelectionRefPtr()->GetRangeAt(0);
       if (NS_WARN_IF(!firstRange)) {
         return NS_ERROR_FAILURE;
       }
@@ -7057,7 +7160,7 @@ EditActionResult HTMLEditor::AlignContentsAtSelectionWithEmptyDivElement(
   MOZ_ASSERT(IsTopLevelEditSubActionDataAvailable());
   MOZ_ASSERT(!IsSelectionRangeContainerNotContent());
 
-  nsRange* firstRange = SelectionRefPtr()->GetRangeAt(0);
+  const nsRange* firstRange = SelectionRefPtr()->GetRangeAt(0);
   if (NS_WARN_IF(!firstRange)) {
     return EditActionResult(NS_ERROR_FAILURE);
   }
@@ -7765,7 +7868,7 @@ nsresult HTMLEditor::MaybeExtendSelectionToHardLineEdgesForBlockEditAction() {
     return NS_OK;
   }
 
-  RefPtr<nsRange> range = SelectionRefPtr()->GetRangeAt(0);
+  const RefPtr<nsRange> range = SelectionRefPtr()->GetRangeAt(0);
   if (NS_WARN_IF(!range)) {
     return NS_ERROR_FAILURE;
   }
@@ -7796,8 +7899,9 @@ nsresult HTMLEditor::MaybeExtendSelectionToHardLineEdgesForBlockEditAction() {
     // of going "down" into a block and "up" out of a block.
     if (wsScannerAtEnd.StartsFromOtherBlockElement()) {
       // endpoint is just after the close of a block.
-      nsINode* child = GetRightmostChild(
-          wsScannerAtEnd.StartReasonOtherBlockElementPtr(), true);
+      nsIContent* child = HTMLEditUtils::GetLastLeafChild(
+          *wsScannerAtEnd.StartReasonOtherBlockElementPtr(),
+          ChildBlockBoundary::TreatAsLeaf);
       if (child) {
         newEndPoint.SetAfter(child);
       }
@@ -7824,8 +7928,9 @@ nsresult HTMLEditor::MaybeExtendSelectionToHardLineEdgesForBlockEditAction() {
     // of going "down" into a block and "up" out of a block.
     if (wsScannerAtStart.EndsByOtherBlockElement()) {
       // startpoint is just before the start of a block.
-      nsINode* child = GetLeftmostChild(
-          wsScannerAtStart.EndReasonOtherBlockElementPtr(), true);
+      nsINode* child = HTMLEditUtils::GetFirstLeafChild(
+          *wsScannerAtStart.EndReasonOtherBlockElementPtr(),
+          ChildBlockBoundary::TreatAsLeaf);
       if (child) {
         newStartPoint.Set(child);
       }
@@ -8043,8 +8148,8 @@ EditorDOMPoint HTMLEditor::GetCurrentHardLineEndPoint(
     }
 
     // Check for newlines in pre-formatted text nodes.
-    if (EditorBase::IsPreformatted(nextEditableContent) &&
-        nextEditableContent->IsText()) {
+    if (nextEditableContent->IsText() &&
+        EditorUtils::IsContentPreformatted(*nextEditableContent)) {
       nsAutoString textContent;
       nextEditableContent->GetAsText()->GetData(textContent);
       int32_t newlinePos = textContent.FindChar(nsCRT::LF);
@@ -8094,7 +8199,7 @@ void HTMLEditor::GetSelectionRangesExtendedToIncludeAdjuscentWhiteSpaces(
 
   aOutArrayOfRanges.SetCapacity(SelectionRefPtr()->RangeCount());
   for (uint32_t i = 0; i < SelectionRefPtr()->RangeCount(); i++) {
-    nsRange* selectionRange = SelectionRefPtr()->GetRangeAt(i);
+    const nsRange* selectionRange = SelectionRefPtr()->GetRangeAt(i);
     MOZ_ASSERT(selectionRange);
 
     RefPtr<nsRange> extendedRange =
@@ -8764,8 +8869,7 @@ nsIContent* HTMLEditor::GetMostAncestorInlineElement(nsINode& aNode) const {
 
   // Looks for the highest inline parent in the editing host.
   nsIContent* topMostInlineContent = aNode.AsContent();
-  for (nsIContent* content :
-       InclusiveAncestorsOfType<nsIContent>(*aNode.GetParent())) {
+  for (nsIContent* content : aNode.AncestorsOfType<nsIContent>()) {
     if (content == host || !HTMLEditUtils::IsInlineElement(*content)) {
       break;
     }
@@ -9208,7 +9312,8 @@ nsresult HTMLEditor::SplitParagraph(
 
   // selection to beginning of right hand para;
   // look inside any containers that are up front.
-  nsCOMPtr<nsIContent> child = GetLeftmostChild(&aParentDivOrP, true);
+  nsCOMPtr<nsIContent> child = HTMLEditUtils::GetFirstLeafChild(
+      aParentDivOrP, ChildBlockBoundary::TreatAsLeaf);
   if (child && (child->IsText() || HTMLEditUtils::IsContainerNode(*child))) {
     nsresult rv = CollapseSelectionToStartOf(*child);
     if (NS_WARN_IF(rv == NS_ERROR_EDITOR_DESTROYED)) {
@@ -10366,7 +10471,7 @@ void HTMLEditor::SetSelectionInterlinePosition() {
   MOZ_ASSERT(SelectionRefPtr()->IsCollapsed());
 
   // Get the (collapsed) selection location
-  nsRange* firstRange = SelectionRefPtr()->GetRangeAt(0);
+  const nsRange* firstRange = SelectionRefPtr()->GetRangeAt(0);
   if (NS_WARN_IF(!firstRange)) {
     return;
   }
@@ -10819,7 +10924,7 @@ bool HTMLEditor::StartOrEndOfSelectionRangesIsIn(nsIContent& aContent) const {
   MOZ_ASSERT(IsEditActionDataAvailable());
 
   for (uint32_t i = 0; i < SelectionRefPtr()->RangeCount(); ++i) {
-    nsRange* range = SelectionRefPtr()->GetRangeAt(i);
+    const nsRange* range = SelectionRefPtr()->GetRangeAt(i);
     nsINode* startContainer = range->GetStartContainer();
     if (startContainer) {
       if (&aContent == startContainer) {
@@ -11580,7 +11685,7 @@ nsresult HTMLEditor::MoveSelectedContentsToDivElementToMakeItAbsolutePosition(
   // empty block.
   // XXX Isn't this odd if there are only non-editable visible nodes?
   if (IsEmptyOneHardLine(arrayOfContents)) {
-    nsRange* firstRange = SelectionRefPtr()->GetRangeAt(0);
+    const nsRange* firstRange = SelectionRefPtr()->GetRangeAt(0);
     if (NS_WARN_IF(!firstRange)) {
       return NS_ERROR_FAILURE;
     }

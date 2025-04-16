@@ -5,10 +5,13 @@
 use crate::api::{self, StorageChanges};
 use crate::db::StorageDb;
 use crate::error::*;
+use crate::migration::{migrate, MigrationInfo};
+use crate::sync;
 use std::path::Path;
 use std::result;
 
 use serde_json::Value as JsonValue;
+use sql_support::SqlInterruptHandle;
 
 /// A store is used to access `storage.sync` data. It manages an underlying
 /// database connection, and exposes methods for reading and writing storage
@@ -40,6 +43,11 @@ impl Store {
         Ok(Self {
             db: StorageDb::new_memory(db_path)?,
         })
+    }
+
+    /// Returns an interrupt handle for this store.
+    pub fn interrupt_handle(&self) -> SqlInterruptHandle {
+        self.db.interrupt_handle()
     }
 
     /// Sets one or more JSON key-value pairs for an extension ID. Returns a
@@ -93,13 +101,15 @@ impl Store {
         Ok(result)
     }
 
-    /// Wipe all local data without syncing or returning any information about
-    /// the deletion.
-    pub fn wipe_all(&self) -> Result<()> {
-        let tx = self.db.unchecked_transaction()?;
-        api::wipe_all(&tx)?;
-        tx.commit()?;
-        Ok(())
+    /// Returns the bytes in use for the specified items (which can be null,
+    /// a string, or an array)
+    pub fn get_bytes_in_use(&self, ext_id: &str, keys: JsonValue) -> Result<usize> {
+        api::get_bytes_in_use(&self.db, ext_id, keys)
+    }
+
+    /// Returns a bridged sync engine for Desktop for this store.
+    pub fn bridged_engine(&self) -> sync::BridgedEngine<'_> {
+        sync::BridgedEngine::new(&self.db)
     }
 
     /// Closes the store and its database connection. See the docs for
@@ -107,15 +117,56 @@ impl Store {
     pub fn close(self) -> result::Result<(), (Store, Error)> {
         self.db.close().map_err(|(db, err)| (Store { db }, err))
     }
+
+    /// Gets the changes which the current sync applied. Should be used
+    /// immediately after the bridged engine is told to apply incoming changes,
+    /// and can be used to notify observers of the StorageArea of the changes
+    /// that were applied.
+    /// The result is a Vec of already JSON stringified changes.
+    pub fn get_synced_changes(&self) -> Result<Vec<sync::SyncedExtensionChange>> {
+        sync::get_synced_changes(&self.db)
+    }
+
+    /// Migrates data from a database in the format of the "old" kinto
+    /// implementation. Information about how the migration went is stored in
+    /// the database, and can be read using `Self::take_migration_info`.
+    ///
+    /// Note that `filename` isn't normalized or canonicalized.
+    pub fn migrate(&self, filename: impl AsRef<Path>) -> Result<()> {
+        let tx = self.db.unchecked_transaction()?;
+        let result = migrate(&tx, filename.as_ref())?;
+        tx.commit()?;
+        // Failing to store this information should not cause migration failure.
+        if let Err(e) = result.store(&self.db) {
+            debug_assert!(false, "Migration error: {:?}", e);
+            log::warn!("Failed to record migration telmetry: {}", e);
+        }
+        Ok(())
+    }
+
+    /// Read-and-delete (e.g. `take` in rust parlance, see Option::take)
+    /// operation for any MigrationInfo stored in this database.
+    pub fn take_migration_info(&self) -> Result<Option<MigrationInfo>> {
+        let tx = self.db.unchecked_transaction()?;
+        let result = MigrationInfo::take(&tx)?;
+        tx.commit()?;
+        Ok(result)
+    }
 }
 
 #[cfg(test)]
-mod test {
+pub mod test {
     use super::*;
     #[test]
     fn test_send() {
         fn ensure_send<T: Send>() {}
         // Compile will fail if not send.
         ensure_send::<Store>();
+    }
+
+    pub fn new_mem_store() -> Store {
+        Store {
+            db: crate::db::test::new_mem_db(),
+        }
     }
 }

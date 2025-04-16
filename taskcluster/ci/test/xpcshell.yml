@@ -6,7 +6,7 @@ job-defaults:
     suite: xpcshell
     variants:
         by-test-platform:
-            linux1804-64/debug: ['fission']
+            linux1804-64/debug: ['fission', 'socketprocess_networking']
             default: ['fission']
     target:
         by-test-platform:
@@ -92,5 +92,6 @@ xpcshell:
                     - win32-minidump-stackwalk
                     - win32-fix-stacks
                 android-em-7.*:
+                    - android-emulator-linux
                     - linux64-node
                     - linux64-minidump-stackwalk

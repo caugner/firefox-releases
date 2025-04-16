@@ -1487,7 +1487,7 @@ JS::Result<Ok> BinASTParser<Tok>::parseInterfaceAssertedBlockScope(
   if (hasDirectEval && pc_->isFunctionBox() && !pc_->sc()->strict()) {
     // In non-strict mode code, direct calls to eval can
     // add variables to the call object.
-    pc_->functionBox()->setHasExtensibleScope();
+    pc_->functionBox()->setFunHasExtensibleScope();
   }
   auto result = Ok();
   return result;
@@ -1582,7 +1582,7 @@ JS::Result<Ok> BinASTParser<Tok>::parseInterfaceAssertedBoundNamesScope(
   if (hasDirectEval && pc_->isFunctionBox() && !pc_->sc()->strict()) {
     // In non-strict mode code, direct calls to eval can
     // add variables to the call object.
-    pc_->functionBox()->setHasExtensibleScope();
+    pc_->functionBox()->setFunHasExtensibleScope();
   }
   auto result = Ok();
   return result;
@@ -1696,7 +1696,7 @@ JS::Result<Ok> BinASTParser<Tok>::parseInterfaceAssertedParameterScope(
   if (hasDirectEval && pc_->isFunctionBox() && !pc_->sc()->strict()) {
     // In non-strict mode code, direct calls to eval can
     // add variables to the call object.
-    pc_->functionBox()->setHasExtensibleScope();
+    pc_->functionBox()->setFunHasExtensibleScope();
   }
   auto result = Ok();
   return result;
@@ -1799,7 +1799,7 @@ JS::Result<Ok> BinASTParser<Tok>::parseInterfaceAssertedScriptGlobalScope(
   if (hasDirectEval && pc_->isFunctionBox() && !pc_->sc()->strict()) {
     // In non-strict mode code, direct calls to eval can
     // add variables to the call object.
-    pc_->functionBox()->setHasExtensibleScope();
+    pc_->functionBox()->setFunHasExtensibleScope();
   }
   auto result = Ok();
   return result;
@@ -1847,7 +1847,7 @@ JS::Result<Ok> BinASTParser<Tok>::parseInterfaceAssertedVarScope(
   if (hasDirectEval && pc_->isFunctionBox() && !pc_->sc()->strict()) {
     // In non-strict mode code, direct calls to eval can
     // add variables to the call object.
-    pc_->functionBox()->setHasExtensibleScope();
+    pc_->functionBox()->setFunHasExtensibleScope();
   }
   auto result = Ok();
   return result;
@@ -4009,7 +4009,7 @@ JS::Result<ParseNode*> BinASTParser<Tok>::parseInterfaceThisExpression(
 
   TokenPos pos = tokenizer_->pos(start);
   ParseNode* thisName(nullptr);
-  if (pc_->sc()->thisBinding() == ThisBinding::Function) {
+  if (pc_->sc()->hasFunctionThisBinding()) {
     HandlePropertyName dotThis = cx_->names().dotThis;
     BINJS_TRY(usedNames_.noteUse(cx_, dotThis, pc_->scriptId(),
                                  pc_->innermostScope()->id()));

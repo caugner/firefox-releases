@@ -15,6 +15,7 @@
 #include "mozilla/Unused.h"
 
 #include <algorithm>
+#include <initializer_list>
 #include <type_traits>
 
 #include "jsfriendapi.h"
@@ -87,46 +88,43 @@ using mozilla::PodCopy;
 // internals.
 //
 /* clang-format off */
-//                                                                                              //
-//   .---------.    .---------.    .--------------------------.       .----------.              //
-//   |TraceEdge|    |TraceRoot|    |TraceManuallyBarrieredEdge|  ...  |TraceRange|   ... etc.   //
-//   '---------'    '---------'    '--------------------------'       '----------'              //
-//        \              \                        /                        /                    //
-//         \              \  .-----------------. /                        /                     //
-//          o------------->o-|TraceEdgeInternal|-o<----------------------o                      //
-//                           '-----------------'                                                //
-//                              /          \                                                    //
-//                             /            \                                                   //
-//                       .---------.   .----------.         .-----------------.                 //
-//                       |DoMarking|   |DoCallback|-------> |<JSTraceCallback>|----------->     //
-//                       '---------'   '----------'         '-----------------'                 //
-//                            |                                                                 //
-//                            |                                                                 //
-//                     .-----------.                                                            //
-//      o------------->|traverse(T)| .                                                          //
-//     /_\             '-----------'   ' .                                                      //
-//      |                   .       .      ' .                                                  //
-//      |                   .         .        ' .                                              //
-//      |                   .           .          ' .                                          //
-//      |          .--------------.  .--------------.  ' .     .-----------------------.        //
-//      |          |markAndScan(T)|  |markAndPush(T)|      ' - |markAndTraceChildren(T)|        //
-//      |          '--------------'  '--------------'          '-----------------------'        //
-//      |                   |                  \                               |                //
-//      |                   |                   \                              |                //
-//      |       .----------------------.     .----------------.         .------------------.    //
-//      |       |eagerlyMarkChildren(T)|     |pushMarkStackTop|<===Oo   |T::traceChildren()|--> //
-//      |       '----------------------'     '----------------'    ||   '------------------'    //
-//      |                  |                         ||            ||                           //
-//      |                  |                         ||            ||                           //
-//      |                  |                         ||            ||                           //
-//      o<-----------------o<========================OO============Oo                           //
-//                                                                                              //
-//                                                                                              //
-//   Legend:                                                                                    //
-//     ------  Direct calls                                                                     //
-//     . . .   Static dispatch                                                                  //
-//     ======  Dispatch through a manual stack.                                                 //
-//                                                                                              //
+//
+//  +----------------------+                             ...................
+//  |                      |                             :                 :
+//  |                      v                             v                 :
+//  |      TraceRoot   TraceEdge   TraceRange        GCMarker::            :
+//  |          |           |           |         processMarkStackTop   +---+---+
+//  |          +-----------+-----------+                 |             |       |
+//  |                      |                             |             | Mark  |
+//  |                      v                             |             | Stack |
+//  |              TraceEdgeInternal                     |             |       |
+//  |                      |                             |             +---+---+
+//  |                      |                             |                 ^
+//  |       +--------------+---------------+             +<----------+     :
+//  |       |              |               |             |           |     :
+//  |       v              v               v             v           |     :
+//  |  DoCallback   TenuringTracer::   DoMarking    traverseEdge     |     :
+//  |       |          traverse            |             |           |     :
+//  |       |                              +------+------+           |     :
+//  |       |                                     |                  |     :
+//  |       v                                     v                  |     :
+//  |  CallbackTracer::                   GCMarker::traverse         |     :
+//  |  dispatchToOnEdge                           |                  |     :
+//  |                                             |                  |     :
+//  |             +-------------------+-----------+------+           |     :
+//  |             |                   |                  |           |     :
+//  |             v                   v                  v           |     :
+//  |    markAndTraceChildren    markAndPush    eagerlyMarkChildren  |     :
+//  |             |                   :                  |           |     :
+//  |             v                   :                  +-----------+     :
+//  |      T::traceChildren           :                                    :
+//  |             |                   :                                    :
+//  +-------------+                   ......................................
+//
+//   Legend:
+//     ------- Direct calls
+//     ....... Data flow
+//
 /* clang-format on */
 
 /*** Tracing Invariants *****************************************************/
@@ -763,6 +761,56 @@ void GCMarker::markEphemeronValues(gc::Cell* markedCell,
   MOZ_ASSERT(values.length() == initialLen);
 }
 
+void GCMarker::forgetWeakKey(js::gc::WeakKeyTable& weakKeys, WeakMapBase* map,
+                             gc::Cell* keyOrDelegate, gc::Cell* keyToRemove) {
+  // Find and remove the exact pair <map,keyToRemove> from the values of the
+  // weak keys table.
+  //
+  // This function is called when 'keyToRemove' is removed from a weakmap
+  // 'map'. If 'keyToRemove' has a delegate, then the delegate will be used as
+  // the lookup key in gcWeakKeys; otherwise, 'keyToRemove' itself will be. In
+  // either case, 'keyToRemove' is what we will be filtering out of the
+  // Markable values in the weakKey table.
+  auto p = weakKeys.get(keyOrDelegate);
+
+  // Note that this is not guaranteed to find anything. The key will have
+  // only been inserted into the weakKeys table if it was unmarked when the
+  // map was traced.
+  if (p) {
+    // Entries should only have been added to weakKeys if the map was marked.
+    for (auto r = p->value.all(); !r.empty(); r.popFront()) {
+      MOZ_ASSERT(r.front().weakmap->mapColor);
+    }
+
+    p->value.eraseIfEqual(WeakMarkable(map, keyToRemove));
+  }
+}
+
+void GCMarker::forgetWeakMap(WeakMapBase* map, Zone* zone) {
+  for (auto table : {&zone->gcNurseryWeakKeys(), &zone->gcWeakKeys()}) {
+    for (auto p = table->all(); !p.empty(); p.popFront()) {
+      p.front().value.eraseIf([map](const WeakMarkable& markable) -> bool {
+        return markable.weakmap == map;
+      });
+    }
+  }
+}
+
+// 'delegate' is no longer the delegate of 'key'.
+void GCMarker::severWeakDelegate(JSObject* key, JSObject* delegate) {
+  JS::Zone* zone = delegate->zone();
+  auto p = zone->gcWeakKeys(delegate).get(delegate);
+  if (p) {
+    p->value.eraseIf([this, key](const WeakMarkable& markable) -> bool {
+      if (markable.key != key) {
+        return false;
+      }
+      markable.weakmap->postSeverDelegate(this, key, key->compartment());
+      return true;
+    });
+  }
+}
+
 template <typename T>
 void GCMarker::markImplicitEdgesHelper(T markedThing) {
   if (!isWeakMarking()) {
@@ -860,6 +908,8 @@ template <typename T>
 void DoMarking(GCMarker* gcmarker, T* thing) {
   // Do per-type marking precondition checks.
   if (!ShouldMark(gcmarker, thing)) {
+    MOZ_ASSERT(gc::detail::GetEffectiveColor(gcmarker->runtime(), thing) ==
+               js::gc::CellColor::Black);
     return;
   }
 
@@ -1103,10 +1153,6 @@ void BaseScript::traceChildren(JSTracer* trc) {
     data_->trace(trc);
   }
 
-  if (sharedData_) {
-    sharedData_->traceChildren(trc);
-  }
-
   // Scripts with bytecode may have optional data stored in per-runtime or
   // per-zone maps. Note that a failed compilation must not have entries since
   // the script itself will not be marked as having bytecode.
@@ -1234,36 +1280,10 @@ inline void js::GCMarker::eagerlyMarkChildren(JSRope* rope) {
   // types.
   gc::MarkStack& stack = currentStack();
   size_t savedPos = stack.position();
-  JS_DIAGNOSTICS_ASSERT(rope->getTraceKind() == JS::TraceKind::String);
-#ifdef JS_DEBUG
-  static const size_t DEEP_ROPE_THRESHOLD = 100000;
-  static const size_t ROPE_CYCLE_HISTORY = 100;
-  DebugOnly<size_t> ropeDepth = 0;
-  JSRope* history[ROPE_CYCLE_HISTORY];
-#endif
+  MOZ_DIAGNOSTIC_ASSERT(rope->getTraceKind() == JS::TraceKind::String);
   while (true) {
-#ifdef JS_DEBUG
-    if (++ropeDepth >= DEEP_ROPE_THRESHOLD) {
-      // Bug 1011786 comment 294 - detect cyclic ropes. There are some
-      // legitimate deep ropes, at least in tests. So if we hit a deep
-      // rope, start recording the nodes we visit and check whether we
-      // repeat. But do it on a finite window size W so that we're not
-      // scanning the full history for every node. And only check every
-      // Wth push, to add only constant overhead per node. This will only
-      // catch cycles of size up to W (but it seems most likely that any
-      // cycles will be size 1 or maybe 2.)
-      if ((ropeDepth > DEEP_ROPE_THRESHOLD + ROPE_CYCLE_HISTORY) &&
-          (ropeDepth % ROPE_CYCLE_HISTORY) == 0) {
-        for (size_t i = 0; i < ROPE_CYCLE_HISTORY; i++) {
-          MOZ_ASSERT(history[i] != rope, "cycle detected in rope");
-        }
-      }
-      history[ropeDepth % ROPE_CYCLE_HISTORY] = rope;
-    }
-#endif
-
-    JS_DIAGNOSTICS_ASSERT(rope->getTraceKind() == JS::TraceKind::String);
-    JS_DIAGNOSTICS_ASSERT(rope->JSString::isRope());
+    MOZ_DIAGNOSTIC_ASSERT(rope->getTraceKind() == JS::TraceKind::String);
+    MOZ_DIAGNOSTIC_ASSERT(rope->JSString::isRope());
     AssertShouldMarkInZone(rope);
     MOZ_ASSERT(rope->isMarkedAny());
     JSRope* next = nullptr;
@@ -1368,7 +1388,9 @@ inline void js::GCMarker::eagerlyMarkChildren(Scope* scope) {
     switch (scope->kind()) {
       case ScopeKind::Function: {
         FunctionScope::Data& data = scope->as<FunctionScope>().data();
-        traverseObjectEdge(scope, data.canonicalFunction);
+        if (data.canonicalFunction) {
+          traverseObjectEdge(scope, data.canonicalFunction);
+        }
         names = &data.trailingNames;
         length = data.length;
         break;
@@ -1697,7 +1719,8 @@ GCMarker::MarkQueueProgress GCMarker::processMarkQueue() {
         }
       } else if (js::StringEqualsLiteral(str, "drain")) {
         auto unlimited = SliceBudget::unlimited();
-        MOZ_RELEASE_ASSERT(markUntilBudgetExhausted(unlimited));
+        MOZ_RELEASE_ASSERT(
+            markUntilBudgetExhausted(unlimited, DontReportMarkTime));
       } else if (js::StringEqualsLiteral(str, "set-color-gray")) {
         queueMarkColor = mozilla::Some(MarkColor::Gray);
         if (gcrt.state() != State::Sweep) {
@@ -1719,7 +1742,21 @@ GCMarker::MarkQueueProgress GCMarker::processMarkQueue() {
   return QueueComplete;
 }
 
-bool GCMarker::markUntilBudgetExhausted(SliceBudget& budget) {
+static gcstats::PhaseKind GrayMarkingPhaseForCurrentPhase(
+    const gcstats::Statistics& stats) {
+  using namespace gcstats;
+  switch (stats.currentPhaseKind()) {
+    case PhaseKind::SWEEP_MARK:
+      return PhaseKind::SWEEP_MARK_GRAY;
+    case PhaseKind::SWEEP_MARK_WEAK:
+      return PhaseKind::SWEEP_MARK_GRAY_WEAK;
+    default:
+      MOZ_CRASH("Unexpected current phase");
+  }
+}
+
+bool GCMarker::markUntilBudgetExhausted(SliceBudget& budget,
+                                        ShouldReportMarkTime reportTime) {
 #ifdef DEBUG
   MOZ_ASSERT(!strictCompartmentChecking);
   strictCompartmentChecking = true;
@@ -1747,6 +1784,12 @@ bool GCMarker::markUntilBudgetExhausted(SliceBudget& budget) {
     }
 
     if (hasGrayEntries()) {
+      mozilla::Maybe<gcstats::AutoPhase> ap;
+      if (reportTime) {
+        auto& stats = runtime()->gc.stats();
+        ap.emplace(stats, GrayMarkingPhaseForCurrentPhase(stats));
+      }
+
       AutoSetMarkColor autoSetGray(*this, MarkColor::Gray);
       do {
         processMarkStackTop(budget);
@@ -2520,11 +2563,12 @@ GCMarker::GCMarker(JSRuntime* rt)
     : JSTracer(rt, JSTracer::TracerKindTag::Marking, ExpandWeakMaps),
       stack(),
       auxStack(),
-      color(MarkColor::Black),
       mainStackColor(MarkColor::Black),
       delayedMarkingList(nullptr),
       delayedMarkingWorkAdded(false),
-      state(MarkingState::NotActive)
+      state(MarkingState::NotActive),
+      incrementalWeakMapMarkingEnabled(
+          TuningDefaults::IncrementalWeakMapMarkingEnabled)
 #ifdef DEBUG
       ,
       markLaterArenas(0),
@@ -2533,6 +2577,7 @@ GCMarker::GCMarker(JSRuntime* rt)
       queuePos(0)
 #endif
 {
+  setMarkColorUnchecked(MarkColor::Black);
   setTraceWeakEdges(false);
 }
 
@@ -2610,34 +2655,22 @@ void GCMarker::reset() {
 }
 
 void GCMarker::setMarkColor(gc::MarkColor newColor) {
-  if (color == newColor) {
-    return;
-  }
-  if (newColor == gc::MarkColor::Black) {
-    setMarkColorBlack();
-  } else {
-    setMarkColorGray();
+  if (color != newColor) {
+    MOZ_ASSERT(runtime()->gc.state() == State::Sweep);
+    setMarkColorUnchecked(newColor);
   }
 }
 
-void GCMarker::setMarkColorGray() {
-  MOZ_ASSERT(color == gc::MarkColor::Black);
-  MOZ_ASSERT(runtime()->gc.state() == State::Sweep);
-
-  color = gc::MarkColor::Gray;
-}
-
-void GCMarker::setMarkColorBlack() {
-  MOZ_ASSERT(color == gc::MarkColor::Gray);
-  MOZ_ASSERT(runtime()->gc.state() == State::Sweep);
-
-  color = gc::MarkColor::Black;
+void GCMarker::setMarkColorUnchecked(gc::MarkColor newColor) {
+  color = newColor;
+  currentStackPtr = &getStack(color);
 }
 
 void GCMarker::setMainStackColor(gc::MarkColor newColor) {
   if (newColor != mainStackColor) {
     MOZ_ASSERT(isMarkStackEmpty());
     mainStackColor = newColor;
+    setMarkColorUnchecked(color);
   }
 }
 
@@ -2696,13 +2729,78 @@ bool GCMarker::enterWeakMarkingMode() {
   return true;
 }
 
-void JS::Zone::enterWeakMarkingMode(GCMarker* marker) {
+IncrementalProgress JS::Zone::enterWeakMarkingMode(GCMarker* marker,
+                                                   SliceBudget& budget) {
   MOZ_ASSERT(marker->isWeakMarking());
-  for (WeakMapBase* m : gcWeakMapList()) {
-    if (m->mapColor) {
-      mozilla::Unused << m->markEntries(marker);
+
+  if (!marker->incrementalWeakMapMarkingEnabled) {
+    // Do not rely on the information about not-yet-marked weak keys that have
+    // been collected by barriers. Rebuild the full table here.
+    mozilla::Unused << gcWeakKeys().clear();
+
+    for (WeakMapBase* m : gcWeakMapList()) {
+      if (m->mapColor) {
+        mozilla::Unused << m->markEntries(marker);
+      }
+    }
+    return IncrementalProgress::Finished;
+  }
+
+  // gcWeakKeys contains the keys from all weakmaps marked so far, or at least
+  // the keys that might still need to be marked through. Scan through
+  // gcWeakKeys and mark all values whose keys are marked. This marking may
+  // recursively mark through other weakmap entries (immediately since we are
+  // now in WeakMarking mode). The end result is a consistent state where all
+  // values are marked if both their map and key are marked -- though note that
+  // we may later leave weak marking mode, do some more marking, and then enter
+  // back in.
+  if (!isGCMarking()) {
+    return IncrementalProgress::Finished;
+  }
+
+  MOZ_ASSERT(gcNurseryWeakKeys().count() == 0);
+
+  // An OrderedHashMap::Range stays valid even when the underlying table
+  // (zone->gcWeakKeys) is mutated, which is useful here since we may add
+  // additional entries while iterating over the Range.
+  gc::WeakKeyTable::Range r = gcWeakKeys().all();
+  while (!r.empty()) {
+    gc::Cell* key = r.front().key;
+    gc::CellColor keyColor =
+        gc::detail::GetEffectiveColor(marker->runtime(), key);
+    if (keyColor) {
+      MOZ_ASSERT(key == r.front().key);
+      auto& markables = r.front().value;
+      r.popFront();  // Pop before any mutations happen.
+      size_t end = markables.length();
+      for (size_t i = 0; i < end; i++) {
+        WeakMarkable& v = markables[i];
+        // Note: if the key is marked gray but not black, then the markables
+        // vector may be appended to within this loop body. So iterate just
+        // over the ones from before weak marking mode was switched on.
+        v.weakmap->markKey(marker, key, v.key);
+        budget.step();
+        if (budget.isOverBudget()) {
+          return NotFinished;
+        }
+      }
+
+      if (keyColor == gc::CellColor::Black) {
+        // We can't mark the key any more than already is, so it no longer
+        // needs to be in the weak keys table.
+        if (end == markables.length()) {
+          bool found;
+          gcWeakKeys().remove(key, &found);
+        } else {
+          markables.erase(markables.begin(), &markables[end]);
+        }
+      }
+    } else {
+      r.popFront();
     }
   }
+
+  return IncrementalProgress::Finished;
 }
 
 #ifdef DEBUG
@@ -2724,14 +2822,8 @@ void GCMarker::leaveWeakMarkingMode() {
     state = MarkingState::RegularMarking;
   }
 
-  // Table is expensive to maintain when not in weak marking mode, so we'll
-  // rebuild it upon entry rather than allow it to contain stale data.
-  AutoEnterOOMUnsafeRegion oomUnsafe;
-  for (GCZonesIter zone(runtime()); !zone.done(); zone.next()) {
-    if (!zone->gcWeakKeys().clear()) {
-      oomUnsafe.crash("clearing weak keys in GCMarker::leaveWeakMarkingMode()");
-    }
-  }
+  // The gcWeakKeys table is still populated and may be used during a future
+  // weak marking mode within this GC.
 }
 
 void GCMarker::delayMarkingChildren(Cell* cell) {
@@ -3162,11 +3254,11 @@ inline T* js::TenuringTracer::allocTenured(Zone* zone, AllocKind kind) {
 
 JSObject* js::TenuringTracer::moveToTenuredSlow(JSObject* src) {
   MOZ_ASSERT(IsInsideNursery(src));
-  MOZ_ASSERT(!src->zone()->usedByHelperThread());
+  MOZ_ASSERT(!src->nurseryZone()->usedByHelperThread());
   MOZ_ASSERT(!src->is<PlainObject>());
 
   AllocKind dstKind = src->allocKindForTenure(nursery());
-  auto dst = allocTenured<JSObject>(src->zone(), dstKind);
+  auto dst = allocTenured<JSObject>(src->nurseryZone(), dstKind);
 
   size_t srcSize = Arena::thingSize(dstKind);
   size_t dstSize = srcSize;
@@ -3231,7 +3323,7 @@ JSObject* js::TenuringTracer::moveToTenuredSlow(JSObject* src) {
   RelocationOverlay* overlay = RelocationOverlay::forwardCell(src, dst);
   insertIntoObjectFixupList(overlay);
 
-  gcTracer.tracePromoteToTenured(src, dst);
+  gcprobes::PromoteToTenured(src, dst);
   return dst;
 }
 
@@ -3240,10 +3332,10 @@ inline JSObject* js::TenuringTracer::movePlainObjectToTenured(
   // Fast path version of moveToTenuredSlow() for specialized for PlainObject.
 
   MOZ_ASSERT(IsInsideNursery(src));
-  MOZ_ASSERT(!src->zone()->usedByHelperThread());
+  MOZ_ASSERT(!src->nurseryZone()->usedByHelperThread());
 
   AllocKind dstKind = src->allocKindForTenure();
-  auto dst = allocTenured<PlainObject>(src->zone(), dstKind);
+  auto dst = allocTenured<PlainObject>(src->nurseryZone(), dstKind);
 
   size_t srcSize = Arena::thingSize(dstKind);
   tenuredSize += srcSize;
@@ -3262,7 +3354,7 @@ inline JSObject* js::TenuringTracer::movePlainObjectToTenured(
   RelocationOverlay* overlay = RelocationOverlay::forwardCell(src, dst);
   insertIntoObjectFixupList(overlay);
 
-  gcTracer.tracePromoteToTenured(src, dst);
+  gcprobes::PromoteToTenured(src, dst);
   return dst;
 }
 
@@ -3273,7 +3365,7 @@ size_t js::TenuringTracer::moveSlotsToTenured(NativeObject* dst,
     return 0;
   }
 
-  Zone* zone = src->zone();
+  Zone* zone = src->nurseryZone();
   size_t count = src->numDynamicSlots();
 
   if (!nursery().isInside(src->slots_)) {
@@ -3305,7 +3397,7 @@ size_t js::TenuringTracer::moveElementsToTenured(NativeObject* dst,
     return 0;
   }
 
-  Zone* zone = src->zone();
+  Zone* zone = src->nurseryZone();
 
   ObjectElements* srcHeader = src->getElementsHeader();
   size_t nslots = srcHeader->numAllocatedElements();
@@ -3367,10 +3459,10 @@ inline void js::TenuringTracer::insertIntoStringFixupList(
 
 JSString* js::TenuringTracer::moveToTenured(JSString* src) {
   MOZ_ASSERT(IsInsideNursery(src));
-  MOZ_ASSERT(!src->zone()->usedByHelperThread());
+  MOZ_ASSERT(!src->nurseryZone()->usedByHelperThread());
 
   AllocKind dstKind = src->getAllocKind();
-  Zone* zone = src->zone();
+  Zone* zone = src->nurseryZone();
   zone->tenuredStrings++;
 
   JSString* dst = allocTenured<JSString>(zone, dstKind);
@@ -3380,7 +3472,7 @@ JSString* js::TenuringTracer::moveToTenured(JSString* src) {
   RelocationOverlay* overlay = RelocationOverlay::forwardCell(src, dst);
   insertIntoStringFixupList(overlay);
 
-  gcTracer.tracePromoteToTenured(src, dst);
+  gcprobes::PromoteToTenured(src, dst);
   return dst;
 }
 
@@ -3393,10 +3485,10 @@ inline void js::TenuringTracer::insertIntoBigIntFixupList(
 
 JS::BigInt* js::TenuringTracer::moveToTenured(JS::BigInt* src) {
   MOZ_ASSERT(IsInsideNursery(src));
-  MOZ_ASSERT(!src->zone()->usedByHelperThread());
+  MOZ_ASSERT(!src->nurseryZone()->usedByHelperThread());
 
   AllocKind dstKind = src->getAllocKind();
-  Zone* zone = src->zone();
+  Zone* zone = src->nurseryZone();
   zone->tenuredBigInts++;
 
   JS::BigInt* dst = allocTenured<JS::BigInt>(zone, dstKind);
@@ -3406,7 +3498,7 @@ JS::BigInt* js::TenuringTracer::moveToTenured(JS::BigInt* src) {
   RelocationOverlay* overlay = RelocationOverlay::forwardCell(src, dst);
   insertIntoBigIntFixupList(overlay);
 
-  gcTracer.tracePromoteToTenured(src, dst);
+  gcprobes::PromoteToTenured(src, dst);
   return dst;
 }
 
@@ -3467,14 +3559,14 @@ size_t js::TenuringTracer::moveBigIntToTenured(JS::BigInt* dst, JS::BigInt* src,
   MOZ_ASSERT(OffsetToChunkEnd(src) >= ptrdiff_t(size));
   js_memcpy(dst, src, size);
 
-  MOZ_ASSERT(dst->zone() == src->zone());
+  MOZ_ASSERT(dst->zone() == src->nurseryZone());
 
   if (src->hasHeapDigits()) {
     size_t length = dst->digitLength();
     if (!nursery().isInside(src->heapDigits_)) {
       nursery().removeMallocedBufferDuringMinorGC(src->heapDigits_);
     } else {
-      Zone* zone = src->zone();
+      Zone* zone = src->nurseryZone();
       {
         AutoEnterOOMUnsafeRegion oomUnsafe;
         dst->heapDigits_ = zone->pod_malloc<JS::BigInt::Digit>(length);

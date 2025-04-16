@@ -31,6 +31,7 @@ else:
 # list in bin/bootstrap.py!
 from mozboot.base import MODERN_RUST_VERSION
 from mozboot.centosfedora import CentOSFedoraBootstrapper
+from mozboot.opensuse import OpenSUSEBootstrapper
 from mozboot.debian import DebianBootstrapper
 from mozboot.freebsd import FreeBSDBootstrapper
 from mozboot.gentoo import GentooBootstrapper
@@ -191,10 +192,14 @@ Build system telemetry
 Mozilla collects data about local builds in order to make builds faster and
 improve developer tooling. To learn more about the data we intend to collect
 read here:
-https://firefox-source-docs.mozilla.org/build/buildsystem/telemetry.html.
 
-If you have questions, please ask in #build in irc.mozilla.org. If you would
-like to opt out of data collection, select (N) at the prompt.
+  https://firefox-source-docs.mozilla.org/build/buildsystem/telemetry.html
+
+If you have questions, please ask in #build on Matrix:
+
+  https://chat.mozilla.org/#/room/#build:mozilla.org
+
+If you would like to opt out of data collection, select (N) at the prompt.
 
 Would you like to enable build system telemetry?'''
 
@@ -274,6 +279,8 @@ class Bootstrapper(object):
                 cls = SolusBootstrapper
             elif dist_id in ('arch') or os.path.exists('/etc/arch-release'):
                 cls = ArchlinuxBootstrapper
+            elif os.path.exists('/etc/SUSE-brand'):
+                cls = OpenSUSEBootstrapper
             else:
                 raise NotImplementedError('Bootstrap support for this Linux '
                                           'distro not yet available: ' + dist_id)
@@ -390,6 +397,7 @@ class Bootstrapper(object):
         self.instance.state_dir = state_dir
         self.instance.ensure_node_packages(state_dir, checkout_root)
         self.instance.ensure_fix_stacks_packages(state_dir, checkout_root)
+        self.instance.ensure_minidump_stackwalk_packages(state_dir, checkout_root)
         if not self.instance.artifact_mode:
             self.instance.ensure_stylo_packages(state_dir, checkout_root)
             self.instance.ensure_clang_static_analysis_package(state_dir, checkout_root)

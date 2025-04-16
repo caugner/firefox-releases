@@ -68,6 +68,7 @@
 #include "mozilla/AsyncEventDispatcher.h"
 #include "mozilla/BasePrincipal.h"
 #include "mozilla/ExpandedPrincipal.h"
+#include "mozilla/FlushType.h"
 #include "mozilla/GuardObjects.h"
 #include "mozilla/HTMLEditor.h"
 #include "mozilla/NullPrincipal.h"
@@ -274,8 +275,8 @@ static already_AddRefed<BrowsingContext> CreateBrowsingContext(
   RefPtr<BrowsingContext> opener;
   if (aOpenWindowInfo && !aOpenWindowInfo->GetForceNoOpener()) {
     opener = aOpenWindowInfo->GetParent();
-    MOZ_ASSERT(opener->IsInProcess(),
-               "Must create BrowsingContext with opener in-process");
+    // Must create BrowsingContext with opener in-process.
+    MOZ_ASSERT_IF(opener, opener->IsInProcess());
   }
 
   RefPtr<nsGlobalWindowInner> parentInner =
@@ -414,11 +415,6 @@ already_AddRefed<nsFrameLoader> nsFrameLoader::Recreate(
     context = CreateBrowsingContext(aOwner, /* openWindowInfo */ nullptr);
   }
   NS_ENSURE_TRUE(context, nullptr);
-
-  // aContext is not preserved, propagate its COEP to the new created.
-  if (aContext && !aPreserveContext) {
-    context->SetEmbedderPolicy(aContext->GetEmbedderPolicy());
-  }
 
   RefPtr<nsFrameLoader> fl =
       new nsFrameLoader(aOwner, context, aRemoteType, aNetworkCreated);
@@ -580,7 +576,15 @@ nsresult nsFrameLoader::ReallyStartLoadingInternal() {
       mRemoteBrowser->ResumeLoad(mPendingSwitchID);
       mPendingSwitchID = 0;
     } else {
-      mRemoteBrowser->LoadURL(mURIToLoad);
+      // The triggering principal could be null if the frame is loaded other
+      // than the src attribute, for example, the frame is sandboxed. In the
+      // case we use the principal of the owner content, which is needed to
+      // prevent XSS attaches on documents loaded in subframes.
+      if (mTriggeringPrincipal) {
+        mRemoteBrowser->LoadURL(mURIToLoad, mTriggeringPrincipal);
+      } else {
+        mRemoteBrowser->LoadURL(mURIToLoad, mOwnerContent->NodePrincipal());
+      }
     }
 
     if (!mRemoteBrowserShown) {
@@ -658,8 +662,7 @@ nsresult nsFrameLoader::ReallyStartLoadingInternal() {
     loadState->SetBaseURI(mOwnerContent->GetBaseURI());
   }
 
-  nsCOMPtr<nsIReferrerInfo> referrerInfo = new ReferrerInfo();
-  referrerInfo->InitWithNode(mOwnerContent);
+  auto referrerInfo = MakeRefPtr<ReferrerInfo>(*mOwnerContent);
   loadState->SetReferrerInfo(referrerInfo);
 
   // Default flags:
@@ -1157,6 +1160,9 @@ nsresult nsFrameLoader::SwapWithOtherRemoteLoader(
     return NS_ERROR_NOT_IMPLEMENTED;
   }
 
+  RefPtr<BrowsingContext> ourBc = browserParent->GetBrowsingContext();
+  RefPtr<BrowsingContext> otherBc = otherBrowserParent->GetBrowsingContext();
+
   // When we swap docShells, maybe we have to deal with a new page created just
   // for this operation. In this case, the browser code should already have set
   // the correct userContextId attribute value in the owning element, but our
@@ -1165,12 +1171,11 @@ nsresult nsFrameLoader::SwapWithOtherRemoteLoader(
   // This is the reason why now we must retrieve the correct value from the
   // usercontextid attribute before comparing our originAttributes with the
   // other one.
-  OriginAttributes ourOriginAttributes = browserParent->OriginAttributesRef();
+  OriginAttributes ourOriginAttributes = ourBc->OriginAttributesRef();
   rv = PopulateOriginContextIdsFromAttributes(ourOriginAttributes);
   NS_ENSURE_SUCCESS(rv, rv);
 
-  OriginAttributes otherOriginAttributes =
-      otherBrowserParent->OriginAttributesRef();
+  OriginAttributes otherOriginAttributes = otherBc->OriginAttributesRef();
   rv = aOther->PopulateOriginContextIdsFromAttributes(otherOriginAttributes);
   NS_ENSURE_SUCCESS(rv, rv);
 
@@ -1194,6 +1199,7 @@ nsresult nsFrameLoader::SwapWithOtherRemoteLoader(
   }
   mInSwap = aOther->mInSwap = true;
 
+  // NOTE(emilio): This doesn't have to flush because the caller does already.
   nsIFrame* ourFrame = ourContent->GetPrimaryFrame();
   nsIFrame* otherFrame = otherContent->GetPrimaryFrame();
   if (!ourFrame || !otherFrame) {
@@ -1395,11 +1401,21 @@ nsresult nsFrameLoader::SwapWithOtherLoader(nsFrameLoader* aOther,
     return NS_ERROR_NOT_IMPLEMENTED;
   }
 
-  Element* ourContent = mOwnerContent;
-  Element* otherContent = aOther->mOwnerContent;
-
+  RefPtr<Element> ourContent = mOwnerContent;
+  RefPtr<Element> otherContent = aOther->mOwnerContent;
   if (!ourContent || !otherContent) {
     // Can't handle this
+    return NS_ERROR_NOT_IMPLEMENTED;
+  }
+
+  nsIFrame* ourFrame = ourContent->GetPrimaryFrame(FlushType::Frames);
+  nsIFrame* otherFrame = otherContent->GetPrimaryFrame(FlushType::Frames);
+  if (!ourFrame || !otherFrame) {
+    return NS_ERROR_NOT_IMPLEMENTED;
+  }
+
+  // Ensure the flushes above haven't changed all the world.
+  if (ourContent != mOwnerContent || otherContent != aOther->mOwnerContent) {
     return NS_ERROR_NOT_IMPLEMENTED;
   }
 
@@ -1612,12 +1628,6 @@ nsresult nsFrameLoader::SwapWithOtherLoader(nsFrameLoader* aOther,
   AutoResetInFrameSwap autoFrameSwap(this, aOther, ourDocshell, otherDocshell,
                                      ourEventTarget, otherEventTarget);
 
-  nsIFrame* ourFrame = ourContent->GetPrimaryFrame();
-  nsIFrame* otherFrame = otherContent->GetPrimaryFrame();
-  if (!ourFrame || !otherFrame) {
-    return NS_ERROR_NOT_IMPLEMENTED;
-  }
-
   nsSubDocumentFrame* ourFrameFrame = do_QueryFrame(ourFrame);
   if (!ourFrameFrame) {
     return NS_ERROR_NOT_IMPLEMENTED;
@@ -1731,8 +1741,8 @@ nsresult nsFrameLoader::SwapWithOtherLoader(nsFrameLoader* aOther,
   // hi-dpi and low-dpi screens), it will have style data that is based on
   // the wrong appUnitsPerDevPixel value. So we tell the PresShells that their
   // backing scale factor may have changed. (Bug 822266)
-  ourPresShell->BackingScaleFactorChanged();
-  otherPresShell->BackingScaleFactorChanged();
+  ourFrame->PresShell()->BackingScaleFactorChanged();
+  otherFrame->PresShell()->BackingScaleFactorChanged();
 
   // Initialize browser API if needed now that owner content has changed
   InitializeBrowserAPI();
@@ -2057,6 +2067,8 @@ nsresult nsFrameLoader::MaybeCreateDocShell() {
   mPendingBrowsingContext->SetEmbedderElement(mOwnerContent);
   mPendingBrowsingContext->Embed();
 
+  InvokeBrowsingContextReadyCallback();
+
   mIsTopLevelContent = mPendingBrowsingContext->IsContent() &&
                        !mPendingBrowsingContext->GetParent();
   if (!mNetworkCreated && !mIsTopLevelContent) {
@@ -2130,8 +2142,7 @@ nsresult nsFrameLoader::MaybeCreateDocShell() {
   if (mIsTopLevelContent && mOwnerContent->IsXULElement(nsGkAtoms::browser) &&
       !mOwnerContent->HasAttr(kNameSpaceID_None, nsGkAtoms::disablehistory)) {
     // XXX(nika): Set this up more explicitly?
-    nsresult rv = docShell->InitSessionHistory();
-    NS_ENSURE_SUCCESS(rv, rv);
+    mPendingBrowsingContext->InitSessionHistory();
   }
 
   // Apply sandbox flags even if our owner is not an iframe, as this copies
@@ -2163,13 +2174,13 @@ nsresult nsFrameLoader::MaybeCreateDocShell() {
     // Propagate through the ancestor principals.
     nsTArray<nsCOMPtr<nsIPrincipal>> ancestorPrincipals;
     // Make a copy, so we can modify it.
-    ancestorPrincipals = doc->AncestorPrincipals();
+    ancestorPrincipals = doc->AncestorPrincipals().Clone();
     ancestorPrincipals.InsertElementAt(0, doc->NodePrincipal());
     docShell->SetAncestorPrincipals(std::move(ancestorPrincipals));
 
     // Repeat for outer window IDs.
     nsTArray<uint64_t> ancestorOuterWindowIDs;
-    ancestorOuterWindowIDs = doc->AncestorOuterWindowIDs();
+    ancestorOuterWindowIDs = doc->AncestorOuterWindowIDs().Clone();
     ancestorOuterWindowIDs.InsertElementAt(0, win->WindowID());
     docShell->SetAncestorOuterWindowIDs(std::move(ancestorOuterWindowIDs));
   }
@@ -2439,12 +2450,34 @@ bool nsFrameLoader::TryRemoteBrowserInternal() {
   // XXXsmaug Per spec (2014/08/21) frameloader should not work in case the
   //         element isn't in document, only in shadow dom, but that will change
   //         https://www.w3.org/Bugs/Public/show_bug.cgi?id=26365#c0
-  Document* doc = mOwnerContent->GetComposedDoc();
+  RefPtr<Document> doc = mOwnerContent->GetComposedDoc();
   if (!doc) {
     return false;
   }
 
   MOZ_RELEASE_ASSERT(!doc->IsResourceDoc(), "We shouldn't even exist");
+
+  // Graphics initialization code relies on having frames up-to-date for the
+  // remote browser case, as we can be inside a popup, which is a different
+  // widget.
+  //
+  // FIXME: Ideally this should be unconditional, but we skip if for <iframe
+  // mozbrowser> because the old RDM ui depends on current behavior, and the
+  // mozbrowser frame code is scheduled for deletion, see bug 1574886.
+  if (!OwnerIsMozBrowserFrame()) {
+    doc->FlushPendingNotifications(FlushType::Frames);
+  }
+
+  // The flush could have initialized us.
+  if (mRemoteBrowser) {
+    return true;
+  }
+
+  // Ensure the world hasn't changed that much as a result of that.
+  if (!mOwnerContent || mOwnerContent->OwnerDoc() != doc ||
+      !mOwnerContent->IsInComposedDoc()) {
+    return false;
+  }
 
   if (!doc->IsActive()) {
     // Don't allow subframe loads in non-active documents.
@@ -2533,7 +2566,7 @@ bool nsFrameLoader::TryRemoteBrowserInternal() {
   nsresult rv = GetNewTabContext(&context);
   NS_ENSURE_SUCCESS(rv, false);
 
-  nsCOMPtr<Element> ownerElement = mOwnerContent;
+  RefPtr<Element> ownerElement = mOwnerContent;
 
   RefPtr<BrowserParent> nextRemoteBrowser =
       mOpenWindowInfo ? mOpenWindowInfo->GetNextRemoteBrowser() : nullptr;
@@ -2557,6 +2590,7 @@ bool nsFrameLoader::TryRemoteBrowserInternal() {
                         mRemoteBrowser->GetBrowsingContext());
 
   mRemoteBrowser->GetBrowsingContext()->Embed();
+  InvokeBrowsingContextReadyCallback();
 
   // Grab the reference to the actor
   RefPtr<BrowserParent> browserParent = GetBrowserParent();
@@ -2684,7 +2718,6 @@ void nsFrameLoader::SendCrossProcessMouseEvent(const nsAString& aType, float aX,
                                                float aY, int32_t aButton,
                                                int32_t aClickCount,
                                                int32_t aModifiers,
-                                               bool aIgnoreRootScrollFrame,
                                                ErrorResult& aRv) {
   auto* browserParent = GetBrowserParent();
   if (!browserParent) {
@@ -2692,8 +2725,8 @@ void nsFrameLoader::SendCrossProcessMouseEvent(const nsAString& aType, float aX,
     return;
   }
 
-  browserParent->SendMouseEvent(aType, aX, aY, aButton, aClickCount, aModifiers,
-                                aIgnoreRootScrollFrame);
+  browserParent->SendMouseEvent(aType, aX, aY, aButton, aClickCount,
+                                aModifiers);
 }
 
 void nsFrameLoader::ActivateFrameEvent(const nsAString& aType, bool aCapture,
@@ -3141,13 +3174,7 @@ already_AddRefed<nsIRemoteTab> nsFrameLoader::GetRemoteTab() {
 }
 
 already_AddRefed<nsILoadContext> nsFrameLoader::LoadContext() {
-  nsCOMPtr<nsILoadContext> loadContext;
-  if (IsRemoteFrame() && EnsureRemoteBrowser()) {
-    loadContext = mRemoteBrowser->GetLoadContext();
-  } else {
-    loadContext = do_GetInterface(ToSupports(GetDocShell(IgnoreErrors())));
-  }
-  return loadContext.forget();
+  return do_AddRef(GetBrowsingContext());
 }
 
 BrowsingContext* nsFrameLoader::GetBrowsingContext() {
@@ -3282,7 +3309,6 @@ nsresult nsFrameLoader::GetNewTabContext(MutableTabContext* aTabContext,
   NS_ENSURE_STATE(parentContext);
 
   MOZ_ASSERT(mPendingBrowsingContext->EverAttached());
-  OriginAttributes attrs = mPendingBrowsingContext->OriginAttributesRef();
 
   UIStateChangeType showFocusRings = UIStateChangeType_NoChange;
   uint64_t chromeOuterWindowID = 0;
@@ -3303,9 +3329,8 @@ nsresult nsFrameLoader::GetNewTabContext(MutableTabContext* aTabContext,
 
   uint32_t maxTouchPoints = BrowserParent::GetMaxTouchPoints(mOwnerContent);
 
-  bool tabContextUpdated =
-      aTabContext->SetTabContext(chromeOuterWindowID, showFocusRings, attrs,
-                                 presentationURLStr, maxTouchPoints);
+  bool tabContextUpdated = aTabContext->SetTabContext(
+      chromeOuterWindowID, showFocusRings, presentationURLStr, maxTouchPoints);
   NS_ENSURE_STATE(tabContextUpdated);
 
   return NS_OK;
@@ -3531,4 +3556,13 @@ bool nsFrameLoader::EnsureBrowsingContextAttached() {
   // Finish attaching.
   mPendingBrowsingContext->EnsureAttached();
   return true;
+}
+
+void nsFrameLoader::InvokeBrowsingContextReadyCallback() {
+  if (mOpenWindowInfo) {
+    if (RefPtr<nsIBrowsingContextReadyCallback> callback =
+            mOpenWindowInfo->BrowsingContextReadyCallback()) {
+      callback->BrowsingContextReady(mPendingBrowsingContext);
+    }
+  }
 }

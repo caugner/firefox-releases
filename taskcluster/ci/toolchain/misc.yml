@@ -100,24 +100,6 @@ linux64-mar-tools:
             - toolkit/mozapps/update/updater/bspatch/
             - tools/update-packaging/
 
-linux64-tup:
-    description: "tup toolchain build"
-    treeherder:
-        symbol: TL(tup)
-    worker:
-        max-run-time: 3600
-    run:
-        script: build-tup-linux.sh
-        toolchain-artifact: public/build/tup.tar.xz
-    run-on-projects:
-        - trunk
-        - try
-    fetches:
-        fetch:
-            - tup
-        toolchain:
-            - linux64-gcc-7
-
 linux64-upx:
     description: "UPX build"
     treeherder:
@@ -201,6 +183,8 @@ wgpu-deps:
     run:
         script: wgpu-deps-vendoring.sh
         sparse-profile: null
+        resources:
+            - 'gfx/wgpu/Cargo.lock'
         toolchain-artifact: public/build/wgpu-deps.tar.bz2
     fetches:
         fetch:
@@ -282,6 +266,20 @@ win64-pdbstr:
         script: exfiltrate-pdbstr.sh
         arguments: ['x64']
         toolchain-artifact: project/gecko/pdbstr/pdbstr.tar.bz2
+
+linux64-winchecksec:
+    description: "winchecksec"
+    treeherder:
+        symbol: TL(winchecksec)
+    worker:
+        docker-image: {in-tree: deb10-toolchain-build}
+    run:
+        script: build-winchecksec.sh
+        toolchain-artifact: public/build/winchecksec.tar.bz2
+        tooltool-downloads: internal
+    fetches:
+        fetch:
+            - winchecksec
 
 win64-winchecksec:
     description: "winchecksec"

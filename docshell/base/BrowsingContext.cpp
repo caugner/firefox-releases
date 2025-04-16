@@ -9,6 +9,7 @@
 #include "ipc/IPCMessageUtils.h"
 
 #include "mozilla/dom/CanonicalBrowsingContext.h"
+#include "mozilla/dom/BrowserParent.h"
 #include "mozilla/dom/BrowsingContextGroup.h"
 #include "mozilla/dom/BrowsingContextBinding.h"
 #include "mozilla/dom/ContentChild.h"
@@ -29,6 +30,7 @@
 #include "mozilla/dom/WindowProxyHolder.h"
 #include "mozilla/dom/SyncedContextInlines.h"
 #include "mozilla/net/DocumentLoadListener.h"
+#include "mozilla/net/RequestContextService.h"
 #include "mozilla/Assertions.h"
 #include "mozilla/AsyncEventDispatcher.h"
 #include "mozilla/ClearOnShutdown.h"
@@ -37,6 +39,7 @@
 #include "mozilla/Logging.h"
 #include "mozilla/ResultExtensions.h"
 #include "mozilla/Services.h"
+#include "mozilla/StaticPrefs_fission.h"
 #include "mozilla/StaticPrefs_page_load.h"
 #include "mozilla/StaticPtr.h"
 #include "nsIURIFixup.h"
@@ -115,6 +118,13 @@ BrowsingContext* BrowsingContext::Top() {
     bc = bc->GetParent();
   }
   return bc;
+}
+
+WindowContext* BrowsingContext::GetTopWindowContext() {
+  if (mParentWindow) {
+    return mParentWindow->TopWindowContext();
+  }
+  return mCurrentWindowContext;
 }
 
 /* static */
@@ -230,11 +240,8 @@ already_AddRefed<BrowsingContext> BrowsingContext::CreateDetached(
         aParent->WindowID());
   }
 
-  context->mFields.SetWithoutSyncing<IDX_EmbedderPolicy>(
-      nsILoadInfo::EMBEDDER_POLICY_NULL);
   context->mFields.SetWithoutSyncing<IDX_OpenerPolicy>(
       nsILoadInfo::OPENER_POLICY_UNSAFE_NONE);
-  context->mFields.SetWithoutSyncing<IDX_WatchedByDevtools>(false);
 
   if (aOpener && aOpener->SameOriginWithTop()) {
     // We inherit the opener policy if there is a creator and if the creator's
@@ -256,10 +263,6 @@ already_AddRefed<BrowsingContext> BrowsingContext::CreateDetached(
     context->mUseRemoteTabs = inherit->mUseRemoteTabs;
     context->mUseRemoteSubframes = inherit->mUseRemoteSubframes;
     context->mOriginAttributes = inherit->mOriginAttributes;
-
-    // CORPP 3.1.3 https://mikewest.github.io/corpp/#integration-html
-    context->mFields.SetWithoutSyncing<IDX_EmbedderPolicy>(
-        inherit->GetEmbedderPolicy());
   }
 
   // if our parent has a parent that's loading, we need it too
@@ -300,6 +303,20 @@ already_AddRefed<BrowsingContext> BrowsingContext::CreateDetached(
   context->mFields.SetWithoutSyncing<IDX_OrientationLock>(
       mozilla::hal::eScreenOrientation_None);
 
+  const bool useGlobalHistory =
+      inherit ? inherit->GetUseGlobalHistory() : false;
+  context->mFields.SetWithoutSyncing<IDX_UseGlobalHistory>(useGlobalHistory);
+
+  nsCOMPtr<nsIRequestContextService> rcsvc =
+      net::RequestContextService::GetOrCreate();
+  if (rcsvc) {
+    nsCOMPtr<nsIRequestContext> requestContext;
+    nsresult rv = rcsvc->NewRequestContext(getter_AddRefs(requestContext));
+    if (NS_SUCCEEDED(rv) && requestContext) {
+      context->mRequestContextId = requestContext->GetID();
+    }
+  }
+
   return context.forget();
 }
 
@@ -310,11 +327,6 @@ already_AddRefed<BrowsingContext> BrowsingContext::CreateIndependent(
   bc->mWindowless = bc->IsContent();
   bc->EnsureAttached();
   return bc.forget();
-}
-
-void BrowsingContext::SetWindowless() {
-  MOZ_DIAGNOSTIC_ASSERT(!mEverAttached);
-  mWindowless = true;
 }
 
 void BrowsingContext::EnsureAttached() {
@@ -360,12 +372,16 @@ void BrowsingContext::CreateFromIPC(BrowsingContext::IPCInitializer&& aInit,
   }
 
   context->mWindowless = aInit.mWindowless;
+  if (aInit.mHasSessionHistory) {
+    context->InitSessionHistory();
+  }
 
   // NOTE: Call through the `Set` methods for these values to ensure that any
   // relevant process-local state is also updated.
   context->SetOriginAttributes(aInit.mOriginAttributes);
   context->SetRemoteTabs(aInit.mUseRemoteTabs);
   context->SetRemoteSubframes(aInit.mUseRemoteSubframes);
+  context->mRequestContextId = aInit.mRequestContextId;
   // NOTE: Private browsing ID is set by `SetOriginAttributes`.
 
   Register(context);
@@ -405,6 +421,9 @@ void BrowsingContext::SetDocShell(nsIDocShell* aDocShell) {
   mDocShell = aDocShell;
   mDanglingRemoteOuterProxies = !mIsInProcess;
   mIsInProcess = true;
+  if (mChildSessionHistory) {
+    mChildSessionHistory->SetIsInProcess(true);
+  }
 }
 
 // This class implements a callback that will return the remote window proxy for
@@ -470,6 +489,10 @@ void BrowsingContext::SetEmbedderElement(Element* aEmbedder) {
                            messageManagerGroup);
       }
       txn.SetMessageManagerGroup(messageManagerGroup);
+
+      bool useGlobalHistory = !aEmbedder->HasAttr(
+          kNameSpaceID_None, nsGkAtoms::disableglobalhistory);
+      txn.SetUseGlobalHistory(useGlobalHistory);
     }
     txn.Commit(this);
   }
@@ -501,6 +524,8 @@ void BrowsingContext::Attach(bool aFromIPC, ContentParent* aOriginProcess) {
   MOZ_DIAGNOSTIC_ASSERT(mGroup);
   MOZ_DIAGNOSTIC_ASSERT(!mIsDiscarded);
 
+  AssertCoherentLoadContext();
+
   // Add ourselves either to our parent or BrowsingContextGroup's child list.
   if (mParentWindow) {
     mParentWindow->AppendChildBrowsingContext(this);
@@ -510,6 +535,10 @@ void BrowsingContext::Attach(bool aFromIPC, ContentParent* aOriginProcess) {
 
   if (GetIsPopupSpam()) {
     PopupBlocker::RegisterOpenPopupSpam();
+  }
+
+  if (IsTop() && GetHasSessionHistory()) {
+    CreateChildSHistory();
   }
 
   if (XRE_IsContentProcess() && !aFromIPC) {
@@ -535,6 +564,12 @@ void BrowsingContext::Detach(bool aFromIPC) {
           ("%s: Detaching 0x%08" PRIx64 " from 0x%08" PRIx64,
            XRE_IsParentProcess() ? "Parent" : "Child", Id(),
            GetParent() ? GetParent()->Id() : 0));
+
+  nsCOMPtr<nsIRequestContextService> rcsvc =
+      net::RequestContextService::GetOrCreate();
+  if (rcsvc) {
+    rcsvc->RemoveRequestContext(GetRequestContextId());
+  }
 
   // This will only ever be null if the cycle-collector has unlinked us. Don't
   // try to detach ourselves in that case.
@@ -621,6 +656,11 @@ void BrowsingContext::PrepareForProcessChange() {
   // different process now. This may need to change in the future with
   // Cross-Process BFCache.
   mDocShell = nullptr;
+  if (mChildSessionHistory) {
+    // This can be removed once session history is stored exclusively in the
+    // parent process.
+    mChildSessionHistory->SetIsInProcess(false);
+  }
 
   if (!mWindowProxy) {
     return;
@@ -941,6 +981,19 @@ RefPtr<SessionStorageManager> BrowsingContext::GetSessionStorageManager() {
     manager = new SessionStorageManager(this);
   }
   return manager;
+}
+
+bool BrowsingContext::CrossOriginIsolated() {
+  MOZ_ASSERT(NS_IsMainThread());
+
+  return StaticPrefs::
+             dom_postMessage_sharedArrayBuffer_withCOOP_COEP_AtStartup() &&
+         Top()->GetOpenerPolicy() ==
+             nsILoadInfo::
+                 OPENER_POLICY_SAME_ORIGIN_EMBEDDER_POLICY_REQUIRE_CORP &&
+         XRE_IsContentProcess() &&
+         StringBeginsWith(ContentChild::GetSingleton()->GetRemoteType(),
+                          NS_LITERAL_STRING(WITH_COOP_COEP_REMOTE_TYPE_PREFIX));
 }
 
 BrowsingContext::~BrowsingContext() {
@@ -1310,6 +1363,40 @@ nsresult BrowsingContext::SetOriginAttributes(const OriginAttributes& aAttrs) {
   return NS_OK;
 }
 
+void BrowsingContext::AssertCoherentLoadContext() {
+#ifdef MOZ_DIAGNOSTIC_ASSERT_ENABLED
+  // LoadContext should generally match our opener or parent.
+  if (IsContent()) {
+    if (RefPtr<BrowsingContext> opener = GetOpener()) {
+      MOZ_DIAGNOSTIC_ASSERT(opener->mType == mType);
+      MOZ_DIAGNOSTIC_ASSERT(opener->mGroup == mGroup);
+      MOZ_DIAGNOSTIC_ASSERT(opener->mUseRemoteTabs == mUseRemoteTabs);
+      MOZ_DIAGNOSTIC_ASSERT(opener->mUseRemoteSubframes == mUseRemoteSubframes);
+      MOZ_DIAGNOSTIC_ASSERT(opener->mPrivateBrowsingId == mPrivateBrowsingId);
+      MOZ_DIAGNOSTIC_ASSERT(
+          opener->mOriginAttributes.EqualsIgnoringFPD(mOriginAttributes));
+    }
+  }
+  if (RefPtr<BrowsingContext> parent = GetParent()) {
+    MOZ_DIAGNOSTIC_ASSERT(parent->mType == mType);
+    MOZ_DIAGNOSTIC_ASSERT(parent->mGroup == mGroup);
+    MOZ_DIAGNOSTIC_ASSERT(parent->mUseRemoteTabs == mUseRemoteTabs);
+    MOZ_DIAGNOSTIC_ASSERT(parent->mUseRemoteSubframes == mUseRemoteSubframes);
+    MOZ_DIAGNOSTIC_ASSERT(parent->mPrivateBrowsingId == mPrivateBrowsingId);
+    MOZ_DIAGNOSTIC_ASSERT(
+        parent->mOriginAttributes.EqualsIgnoringFPD(mOriginAttributes));
+  }
+
+  // UseRemoteSubframes and UseRemoteTabs must match.
+  MOZ_DIAGNOSTIC_ASSERT(
+      !mUseRemoteSubframes || mUseRemoteTabs,
+      "Cannot set useRemoteSubframes without also setting useRemoteTabs");
+
+  // Double-check OriginAttributes/Private Browsing
+  AssertOriginAttributesMatchPrivateBrowsing();
+#endif
+}
+
 void BrowsingContext::AssertOriginAttributesMatchPrivateBrowsing() {
   // Chrome browsing contexts must not have a private browsing OriginAttribute
   // Content browsing contexts must maintain the equality:
@@ -1349,16 +1436,16 @@ NS_IMPL_CYCLE_COLLECTION_UNLINK_BEGIN(BrowsingContext)
     tmp->mFields.SetWithoutSyncing<IDX_IsPopupSpam>(false);
   }
 
-  NS_IMPL_CYCLE_COLLECTION_UNLINK(mDocShell, mParentWindow, mGroup,
-                                  mEmbedderElement, mWindowContexts,
-                                  mCurrentWindowContext, mSessionStorageManager)
+  NS_IMPL_CYCLE_COLLECTION_UNLINK(
+      mDocShell, mParentWindow, mGroup, mEmbedderElement, mWindowContexts,
+      mCurrentWindowContext, mSessionStorageManager, mChildSessionHistory)
   NS_IMPL_CYCLE_COLLECTION_UNLINK_PRESERVED_WRAPPER
 NS_IMPL_CYCLE_COLLECTION_UNLINK_END
 
 NS_IMPL_CYCLE_COLLECTION_TRAVERSE_BEGIN(BrowsingContext)
   NS_IMPL_CYCLE_COLLECTION_TRAVERSE(
       mDocShell, mParentWindow, mGroup, mEmbedderElement, mWindowContexts,
-      mCurrentWindowContext, mSessionStorageManager)
+      mCurrentWindowContext, mSessionStorageManager, mChildSessionHistory)
 NS_IMPL_CYCLE_COLLECTION_TRAVERSE_END
 
 class RemoteLocationProxy
@@ -1681,24 +1768,71 @@ void BrowsingContext::PostMessageMoz(JSContext* aCx,
     return;
   }
 
-  ipc::StructuredCloneData message;
-  message.Write(aCx, aMessage, transferArray, JS::CloneDataPolicy(), aError);
+  JS::CloneDataPolicy clonePolicy;
+  if (callerInnerWindow && callerInnerWindow->IsSharedMemoryAllowed()) {
+    clonePolicy.allowSharedMemoryObjects();
+  }
+
+  // We will see if the message is required to be in the same process or it can
+  // be in the different process after Write().
+  ipc::StructuredCloneData message = ipc::StructuredCloneData(
+      StructuredCloneHolder::StructuredCloneScope::UnknownDestination,
+      StructuredCloneHolder::TransferringSupported);
+  message.Write(aCx, aMessage, transferArray, clonePolicy, aError);
   if (NS_WARN_IF(aError.Failed())) {
     return;
   }
 
-  ClonedMessageData messageData;
+  ClonedOrErrorMessageData messageData;
   if (ContentChild* cc = ContentChild::GetSingleton()) {
-    if (!message.BuildClonedMessageDataForChild(cc, messageData)) {
-      aError.Throw(NS_ERROR_FAILURE);
-      return;
+    // The clone scope gets set when we write the message data based on the
+    // requirements of that data that we're writing.
+    // If the message data contins a shared memory object, then CloneScope would
+    // return SameProcess. Otherwise, it returns DifferentProcess.
+    if (message.CloneScope() ==
+        StructuredCloneHolder::StructuredCloneScope::DifferentProcess) {
+      ClonedMessageData clonedMessageData;
+      if (!message.BuildClonedMessageDataForChild(cc, clonedMessageData)) {
+        aError.Throw(NS_ERROR_FAILURE);
+        return;
+      }
+
+      messageData = std::move(clonedMessageData);
+    } else {
+      MOZ_ASSERT(message.CloneScope() ==
+                 StructuredCloneHolder::StructuredCloneScope::SameProcess);
+
+      messageData = ErrorMessageData();
+
+      nsContentUtils::ReportToConsole(
+          nsIScriptError::warningFlag, NS_LITERAL_CSTRING("DOM Window"),
+          callerInnerWindow ? callerInnerWindow->GetDocument() : nullptr,
+          nsContentUtils::eDOM_PROPERTIES,
+          "PostMessageSharedMemoryObjectToCrossOriginWarning");
     }
 
     cc->SendWindowPostMessage(this, messageData, data);
   } else if (ContentParent* cp = Canonical()->GetContentParent()) {
-    if (!message.BuildClonedMessageDataForParent(cp, messageData)) {
-      aError.Throw(NS_ERROR_FAILURE);
-      return;
+    if (message.CloneScope() ==
+        StructuredCloneHolder::StructuredCloneScope::DifferentProcess) {
+      ClonedMessageData clonedMessageData;
+      if (!message.BuildClonedMessageDataForParent(cp, clonedMessageData)) {
+        aError.Throw(NS_ERROR_FAILURE);
+        return;
+      }
+
+      messageData = std::move(clonedMessageData);
+    } else {
+      MOZ_ASSERT(message.CloneScope() ==
+                 StructuredCloneHolder::StructuredCloneScope::SameProcess);
+
+      messageData = ErrorMessageData();
+
+      nsContentUtils::ReportToConsole(
+          nsIScriptError::warningFlag, NS_LITERAL_CSTRING("DOM Window"),
+          callerInnerWindow ? callerInnerWindow->GetDocument() : nullptr,
+          nsContentUtils::eDOM_PROPERTIES,
+          "PostMessageSharedMemoryObjectToCrossOriginWarning");
     }
 
     Unused << cp->SendWindowPostMessage(this, messageData, data);
@@ -1737,6 +1871,8 @@ BrowsingContext::IPCInitializer BrowsingContext::GetIPCInitializer() {
   init.mUseRemoteTabs = mUseRemoteTabs;
   init.mUseRemoteSubframes = mUseRemoteSubframes;
   init.mOriginAttributes = mOriginAttributes;
+  init.mHasSessionHistory = mChildSessionHistory != nullptr;
+  init.mRequestContextId = mRequestContextId;
   init.mFields = mFields.Fields();
   return init;
 }
@@ -1877,15 +2013,27 @@ bool BrowsingContext::CanSet(FieldIndex<IDX_AllowPlugins>,
   return CheckOnlyOwningProcessCanSet(aSource);
 }
 
-bool BrowsingContext::CanSet(FieldIndex<IDX_IsSecure>, const bool& aIsSecure,
-                             ContentParent* aSource) {
-  return CheckOnlyOwningProcessCanSet(aSource);
+// We map `watchedByDevTools` WebIDL attribute to `watchedByDevToolsInternal`
+// BC field. And we map it to the top level BrowsingContext.
+bool BrowsingContext::WatchedByDevTools() {
+  return Top()->GetWatchedByDevToolsInternal();
 }
 
-bool BrowsingContext::CanSet(FieldIndex<IDX_WatchedByDevtools>,
-                             const bool& aWatchedByDevtools,
+// Enforce that the watchedByDevTools BC field can only be set on the top level
+// Browsing Context.
+bool BrowsingContext::CanSet(FieldIndex<IDX_WatchedByDevToolsInternal>,
+                             const bool& aWatchedByDevTools,
                              ContentParent* aSource) {
-  return CheckOnlyOwningProcessCanSet(aSource);
+  return IsTop();
+}
+void BrowsingContext::SetWatchedByDevTools(bool aWatchedByDevTools,
+                                           ErrorResult& aRv) {
+  if (!IsTop()) {
+    aRv.ThrowInvalidModificationError(
+        "watchedByDevTools can only be set on top BrowsingContext");
+    return;
+  }
+  SetWatchedByDevToolsInternal(aWatchedByDevTools);
 }
 
 bool BrowsingContext::CanSet(FieldIndex<IDX_DefaultLoadFlags>,
@@ -1909,6 +2057,14 @@ void BrowsingContext::DidSet(FieldIndex<IDX_DefaultLoadFlags>) {
       }
     });
   }
+}
+
+bool BrowsingContext::CanSet(FieldIndex<IDX_UseGlobalHistory>,
+                             const bool& aUseGlobalHistory,
+                             ContentParent* aSource) {
+  // Should only be set in the parent process.
+  //  return XRE_IsParentProcess() && !aSource;
+  return true;
 }
 
 bool BrowsingContext::CanSet(FieldIndex<IDX_UserAgentOverride>,
@@ -1981,6 +2137,7 @@ bool BrowsingContext::CanSet(FieldIndex<IDX_CurrentInnerWindowId>,
 }
 
 void BrowsingContext::DidSet(FieldIndex<IDX_CurrentInnerWindowId>) {
+  RefPtr<WindowContext> prevWindowContext = mCurrentWindowContext.forget();
   mCurrentWindowContext = WindowContext::GetById(GetCurrentInnerWindowId());
   MOZ_ASSERT(
       !mCurrentWindowContext || mWindowContexts.Contains(mCurrentWindowContext),
@@ -1991,6 +2148,14 @@ void BrowsingContext::DidSet(FieldIndex<IDX_CurrentInnerWindowId>) {
   BrowsingContext_Binding::ClearCachedChildrenValue(this);
 
   if (XRE_IsParentProcess()) {
+    if (prevWindowContext != mCurrentWindowContext) {
+      if (prevWindowContext) {
+        prevWindowContext->Canonical()->DidBecomeCurrentWindowGlobal(false);
+      }
+      if (mCurrentWindowContext) {
+        mCurrentWindowContext->Canonical()->DidBecomeCurrentWindowGlobal(true);
+      }
+    }
     BrowserParent::UpdateFocusFromBrowsingContext();
   }
 }
@@ -2142,6 +2307,55 @@ void BrowsingContext::AddDeprioritizedLoadRunner(nsIRunnable* aRunner) {
       EventQueuePriority::Idle);
 }
 
+void BrowsingContext::InitSessionHistory() {
+  MOZ_ASSERT(!IsDiscarded());
+  MOZ_ASSERT(IsTop());
+  MOZ_ASSERT(EverAttached());
+
+  if (!GetHasSessionHistory()) {
+    SetHasSessionHistory(true);
+
+    // If the top browsing context (this one) is loaded in this process then we
+    // also create the session history implementation for the child process.
+    // This can be removed once session history is stored exclusively in the
+    // parent process.
+    mChildSessionHistory->SetIsInProcess(mDocShell);
+  }
+}
+
+ChildSHistory* BrowsingContext::GetChildSessionHistory() {
+  if (!StaticPrefs::fission_sessionHistoryInParent()) {
+    // For now we're checking that the session history object for the child
+    // process is available before returning the ChildSHistory object, because
+    // it is the actual implementation that ChildSHistory forwards to. This can
+    // be removed once session history is stored exclusively in the parent
+    // process.
+    return mChildSessionHistory && mChildSessionHistory->IsInProcess()
+               ? mChildSessionHistory.get()
+               : nullptr;
+  }
+
+  return mChildSessionHistory;
+}
+
+void BrowsingContext::CreateChildSHistory() {
+  MOZ_ASSERT(IsTop());
+
+  // Because session history is global in a browsing context tree, every process
+  // that has access to a browsing context tree needs access to its session
+  // history. That is why we create the ChildSHistory object in every process
+  // where we have access to this browsing context (which is the top one).
+  mChildSessionHistory = new ChildSHistory(this);
+}
+
+void BrowsingContext::DidSet(FieldIndex<IDX_HasSessionHistory>,
+                             bool aOldValue) {
+  MOZ_ASSERT(GetHasSessionHistory() || !aOldValue,
+             "We don't support turning off session history.");
+
+  CreateChildSHistory();
+}
+
 }  // namespace dom
 
 namespace ipc {
@@ -2183,6 +2397,7 @@ void IPDLParamTraits<dom::BrowsingContext::IPCInitializer>::Write(
   WriteIPDLParam(aMessage, aActor, aInit.mUseRemoteTabs);
   WriteIPDLParam(aMessage, aActor, aInit.mUseRemoteSubframes);
   WriteIPDLParam(aMessage, aActor, aInit.mOriginAttributes);
+  WriteIPDLParam(aMessage, aActor, aInit.mRequestContextId);
   WriteIPDLParam(aMessage, aActor, aInit.mFields);
 }
 
@@ -2197,6 +2412,7 @@ bool IPDLParamTraits<dom::BrowsingContext::IPCInitializer>::Read(
       !ReadIPDLParam(aMessage, aIterator, aActor,
                      &aInit->mUseRemoteSubframes) ||
       !ReadIPDLParam(aMessage, aIterator, aActor, &aInit->mOriginAttributes) ||
+      !ReadIPDLParam(aMessage, aIterator, aActor, &aInit->mRequestContextId) ||
       !ReadIPDLParam(aMessage, aIterator, aActor, &aInit->mFields)) {
     return false;
   }

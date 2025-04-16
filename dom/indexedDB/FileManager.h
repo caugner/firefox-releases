@@ -19,7 +19,8 @@ namespace dom {
 namespace indexedDB {
 
 // Implemented in ActorsParent.cpp.
-class FileManager final : public FileManagerBase<FileManager> {
+class FileManager final : public FileManagerBase<FileManager>,
+                          public AtomicSafeRefCounted<FileManager> {
   using PersistenceType = mozilla::dom::quota::PersistenceType;
   using FileManagerBase<FileManager>::MutexType;
 
@@ -67,7 +68,7 @@ class FileManager final : public FileManagerBase<FileManager> {
 
   bool EnforcingQuota() const { return mEnforcingQuota; }
 
-  nsresult Init(nsIFile* aDirectory, mozIStorageConnection* aConnection);
+  nsresult Init(nsIFile* aDirectory, mozIStorageConnection& aConnection);
 
   [[nodiscard]] nsCOMPtr<nsIFile> GetDirectory();
 
@@ -85,11 +86,10 @@ class FileManager final : public FileManagerBase<FileManager> {
 
   [[nodiscard]] nsresult AsyncDeleteFile(int64_t aFileId);
 
-  NS_INLINE_DECL_THREADSAFE_REFCOUNTING(FileManager)
+  MOZ_DECLARE_REFCOUNTED_TYPENAME(FileManager)
 
   static StaticMutex& Mutex() { return sMutex; }
 
- private:
   ~FileManager() = default;
 };
 

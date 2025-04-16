@@ -1531,7 +1531,11 @@ bool js::AddMozDateTimeFormatConstructor(JSContext* cx, JS::HandleObject intl) {
   return IntlNotEnabled(cx);
 }
 
-bool js::AddListFormatConstructor(JSContext* cx, JS::HandleObject intl) {
+bool js::AddMozDisplayNamesConstructor(JSContext* cx, JS::HandleObject intl) {
+  return IntlNotEnabled(cx);
+}
+
+bool js::AddDisplayNamesConstructor(JSContext* cx, JS::HandleObject intl) {
   return IntlNotEnabled(cx);
 }
 

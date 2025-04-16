@@ -1332,6 +1332,26 @@ void HTMLInputElement::AfterClearForm(bool aUnbindOrDelete) {
   }
 }
 
+void HTMLInputElement::ResultForDialogSubmit(nsAString& aResult) {
+  if (mType == NS_FORM_INPUT_IMAGE) {
+    // Get a property set by the frame to find out where it was clicked.
+    nsIntPoint* lastClickedPoint =
+        static_cast<nsIntPoint*>(GetProperty(nsGkAtoms::imageClickedPoint));
+    int32_t x, y;
+    if (lastClickedPoint) {
+      x = lastClickedPoint->x;
+      y = lastClickedPoint->y;
+    } else {
+      x = y = 0;
+    }
+    aResult.AppendInt(x);
+    aResult.AppendLiteral(",");
+    aResult.AppendInt(y);
+  } else {
+    GetAttr(kNameSpaceID_None, nsGkAtoms::value, aResult);
+  }
+}
+
 void HTMLInputElement::GetAutocomplete(nsAString& aValue) {
   if (!DoesAutocompleteApply()) {
     return;
@@ -2020,7 +2040,7 @@ void HTMLInputElement::MozSetFileNameArray(const Sequence<nsString>& aFileNames,
     nsCOMPtr<nsIFile> file;
 
     if (StringBeginsWith(aFileNames[i], NS_LITERAL_STRING("file:"),
-                         nsASCIICaseInsensitiveStringComparator())) {
+                         nsASCIICaseInsensitiveStringComparator)) {
       // Converts the URL string into the corresponding nsIFile if possible
       // A local file will be created if the URL string begins with file://
       NS_GetFileFromURLSpec(NS_ConvertUTF16toUTF8(aFileNames[i]),
@@ -2220,7 +2240,13 @@ void HTMLInputElement::SetUserInput(const nsAString& aValue,
   }
 }
 
-nsIEditor* HTMLInputElement::GetEditor() { return GetTextEditorFromState(); }
+nsIEditor* HTMLInputElement::GetEditorForBindings() {
+  if (!GetPrimaryFrame()) {
+    // Ensure we construct frames (and thus an editor) if needed.
+    GetPrimaryFrame(FlushType::Frames);
+  }
+  return GetTextEditorFromState();
+}
 
 bool HTMLInputElement::HasEditor() { return !!GetTextEditorWithoutCreation(); }
 
@@ -2836,7 +2862,7 @@ nsIRadioGroupContainer* HTMLInputElement::GetRadioGroupContainer() const {
     return mForm;
   }
 
-  if (IsInAnonymousSubtree()) {
+  if (IsInNativeAnonymousSubtree()) {
     return nullptr;
   }
 
@@ -5115,6 +5141,10 @@ bool HTMLInputElement::ParseAttribute(int32_t aNamespaceID, nsAtom* aAttribute,
       return ParseAlignValue(aValue, aResult);
     }
     if (aAttribute == nsGkAtoms::formmethod) {
+      if (StaticPrefs::dom_dialog_element_enabled()) {
+        return aResult.ParseEnumValue(aValue, kFormMethodTableDialogEnabled,
+                                      false);
+      }
       return aResult.ParseEnumValue(aValue, kFormMethodTable, false);
     }
     if (aAttribute == nsGkAtoms::formenctype) {
@@ -6029,8 +6059,8 @@ bool HTMLInputElement::AllowDrop() {
 void HTMLInputElement::AddedToRadioGroup() {
   // If the element is neither in a form nor a document, there is no group so we
   // should just stop here.
-  if (!mForm &&
-      (!GetUncomposedDocOrConnectedShadowRoot() || IsInAnonymousSubtree())) {
+  if (!mForm && (!GetUncomposedDocOrConnectedShadowRoot() ||
+                 IsInNativeAnonymousSubtree())) {
     return;
   }
 
@@ -6808,8 +6838,7 @@ void HTMLInputElement::SetFilePickerFiltersFromAccept(
 
   // Remove similar filters
   // Iterate over a copy, as we might modify the original filters list
-  nsTArray<nsFilePickerFilter> filtersCopy;
-  filtersCopy = filters;
+  const nsTArray<nsFilePickerFilter> filtersCopy = filters.Clone();
   for (uint32_t i = 0; i < filtersCopy.Length(); ++i) {
     const nsFilePickerFilter& filterToCheck = filtersCopy[i];
     if (filterToCheck.mFilterMask) {

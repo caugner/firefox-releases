@@ -64,10 +64,11 @@ namespace dom {
 class ClientInfo;
 class ClientSource;
 class EventTarget;
+class SessionHistoryInfo;
 }  // namespace dom
 namespace net {
 class LoadInfo;
-class DocumentChannelRedirect;
+class DocumentLoadListener;
 }  // namespace net
 }  // namespace mozilla
 
@@ -453,6 +454,8 @@ class nsDocShell final : public nsDocLoader,
     return static_cast<nsDocShell*>(aDocShell);
   }
 
+  static bool CanLoadInParentProcess(nsIURI* aURI);
+
   // Returns true if the current load is a force reload (started by holding
   // shift while triggering reload)
   bool IsForceReloading();
@@ -509,6 +512,8 @@ class nsDocShell final : public nsDocLoader,
 
   nsDocShell* GetInProcessChildAt(int32_t aIndex);
 
+  static bool ShouldAddURIVisit(nsIChannel* aChannel);
+
   /**
    * Helper function that finds the last URI and its transition flags for a
    * channel.
@@ -538,6 +543,7 @@ class nsDocShell final : public nsDocLoader,
   friend class OnLinkClickEvent;
   friend class nsIDocShell;
   friend class mozilla::dom::BrowsingContext;
+  friend class mozilla::net::DocumentLoadListener;
 
   // It is necessary to allow adding a timeline marker wherever a docshell
   // instance is available. This operation happens frequently and needs to
@@ -659,6 +665,10 @@ class nsDocShell final : public nsDocLoader,
   void SetHistoryEntryAndUpdateBC(const Maybe<nsISHEntry*>& aLSHE,
                                   const Maybe<nsISHEntry*>& aOSHE);
 
+  mozilla::dom::ChildSHistory* GetSessionHistory() {
+    return mBrowsingContext->GetChildSessionHistory();
+  }
+
   //
   // URI Load
   //
@@ -762,8 +772,8 @@ class nsDocShell final : public nsDocLoader,
    * @param aChannelRedirectFlags
    *        The nsIChannelEventSink redirect flags to save for later
    */
-  void SaveLastVisit(nsIChannel* aChannel, nsIURI* aURI,
-                     uint32_t aChannelRedirectFlags);
+  static void SaveLastVisit(nsIChannel* aChannel, nsIURI* aURI,
+                            uint32_t aChannelRedirectFlags);
 
   /**
    * Helper function for adding a URI visit using IHistory.
@@ -793,22 +803,12 @@ class nsDocShell final : public nsDocLoader,
                    uint32_t aResponseStatus = 0);
 
   /**
-   * Helper function that will add the redirect chain found in aRedirects using
-   * IHistory (see AddURI and SaveLastVisit above for details)
-   *
-   * @param aChannel
-   *        Channel that will have these properties saved
-   * @param aURI
-   *        The URI that was just visited
-   * @param aChannelRedirectFlags
-   *        For redirects, the redirect flags from nsIChannelEventSink
-   *        (0 otherwise)
-   * @param aRedirects
-   *        The redirect chain collected by the DocumentChannelParent
+   * Internal helper funtion
    */
-  void SavePreviousRedirectsAndLastVisit(
-      nsIChannel* aChannel, nsIURI* aURI, uint32_t aChannelRedirectFlags,
-      const nsTArray<mozilla::net::DocumentChannelRedirect>& aRedirects);
+  static void InternalAddURIVisit(
+      nsIURI* aURI, nsIURI* aPreviousURI, uint32_t aChannelRedirectFlags,
+      uint32_t aResponseStatus, mozilla::dom::BrowsingContext* aBrowsingContext,
+      nsIWidget* aWidget, uint32_t aLoadType);
 
   already_AddRefed<nsIURIFixupInfo> KeywordToURI(const nsACString& aKeyword,
                                                  bool aIsPrivateContext,
@@ -983,6 +983,8 @@ class nsDocShell final : public nsDocLoader,
   void ReattachEditorToWindow(nsISHEntry* aSHEntry);
   void RecomputeCanExecuteScripts();
   void ClearFrameHistory(nsISHEntry* aEntry);
+  // Determine if this type of load should update history.
+  static bool ShouldUpdateGlobalHistory(uint32_t aLoadType);
   void UpdateGlobalHistoryTitle(nsIURI* aURI);
   bool IsFrame() { return mBrowsingContext->GetParent(); }
   bool CanSetOriginAttributes();
@@ -1133,6 +1135,11 @@ class nsDocShell final : public nsDocLoader,
   // parent has loaded does. (This isn't the only purpose of mLSHE.)
   nsCOMPtr<nsISHEntry> mLSHE;
 
+  // These are only set when fission.sessionHistoryInParent is set.
+  mozilla::UniquePtr<mozilla::dom::SessionHistoryInfo> mActiveEntry;
+  mozilla::UniquePtr<mozilla::dom::SessionHistoryInfo> mLoadingEntry;
+  uint64_t mLoadingEntryId;
+
   // Holds a weak pointer to a RestorePresentationEvent object if any that
   // holds a weak pointer back to us. We use this pointer to possibly revoke
   // the event whenever necessary.
@@ -1140,9 +1147,6 @@ class nsDocShell final : public nsDocLoader,
 
   // Editor data, if this document is designMode or contentEditable.
   mozilla::UniquePtr<nsDocShellEditorData> mEditorData;
-
-  // Secure browser UI object
-  nsCOMPtr<nsISecureBrowserUI> mSecurityUI;
 
   // The URI we're currently loading. This is only relevant during the
   // firing of a pagehide/unload. The caller of FirePageHideNotification()
@@ -1263,7 +1267,6 @@ class nsDocShell final : public nsDocLoader,
   bool mIsOffScreenBrowser : 1;
   bool mDisableMetaRefreshWhenInactive : 1;
   bool mIsAppTab : 1;
-  bool mUseGlobalHistory : 1;
   bool mDeviceSizeIsPageSize : 1;
   bool mWindowDraggingAllowed : 1;
   bool mInFrameSwap : 1;
@@ -1314,9 +1317,6 @@ class nsDocShell final : public nsDocLoader,
   // If mWillChangeProcess is set to true, then when the docshell is destroyed,
   // we prepare the browsing context to change process.
   bool mWillChangeProcess : 1;
-
-  // Set when activity in this docshell is being watched by the developer tools.
-  bool mWatchedByDevtools : 1;
 
   // This flag indicates whether or not the DocShell is currently executing an
   // nsIWebNavigation navigation method.

@@ -7,6 +7,8 @@
 #ifndef gc_Cell_h
 #define gc_Cell_h
 
+#include <type_traits>
+
 #include "gc/GCEnum.h"
 #include "gc/Heap.h"
 #include "js/GCAnnotations.h"
@@ -115,19 +117,9 @@ class CellHeader {
   // compacting GC and is now a RelocationOverlay.
   static constexpr uintptr_t FORWARD_BIT = Bit(0);
 
-  // When a Cell is in the nursery, this will indicate if it is a JSString (1)
-  // or JSObject/BigInt (0). When not in nursery, this bit is still reserved for
-  // JSString to use as JSString::NON_ATOM bit. This may be removed by Bug
-  // 1376646.
-  static constexpr uintptr_t JSSTRING_BIT = Bit(1);
-
-  // When a Cell is in the nursery, this will indicate if it is a BigInt (1)
-  // or JSObject/JSString (0).
-  static constexpr uintptr_t BIGINT_BIT = Bit(2);
+  // Bits 1 and 2 are currently unused.
 
   bool isForwarded() const { return header_ & FORWARD_BIT; }
-  bool isString() const { return header_ & JSSTRING_BIT; }
-  bool isBigInt() const { return header_ & BIGINT_BIT; }
 
   uintptr_t flags() const { return header_ & RESERVED_MASK; }
 
@@ -190,22 +182,12 @@ struct alignas(gc::CellAlignBytes) Cell {
     return reinterpret_cast<const CellHeader*>(this)->isForwarded();
   }
 
-  inline bool nurseryCellIsString() const {
-    MOZ_ASSERT(!isTenured());
-    return reinterpret_cast<const CellHeader*>(this)->isString();
-  }
-
-  inline bool nurseryCellIsBigInt() const {
-    MOZ_ASSERT(!isTenured());
-    return reinterpret_cast<const CellHeader*>(this)->isBigInt();
-  }
-
-  template <class T>
+  template <typename T, typename = std::enable_if_t<JS::IsBaseTraceType_v<T>>>
   inline bool is() const {
     return getTraceKind() == JS::MapTypeToTraceKind<T>::kind;
   }
 
-  template <class T>
+  template <typename T, typename = std::enable_if_t<JS::IsBaseTraceType_v<T>>>
   inline T* as() {
     // |this|-qualify the |is| call below to avoid compile errors with even
     // fairly recent versions of gcc, e.g. 7.1.1 according to bz.
@@ -213,13 +195,20 @@ struct alignas(gc::CellAlignBytes) Cell {
     return static_cast<T*>(this);
   }
 
-  template <class T>
+  template <typename T, typename = std::enable_if_t<JS::IsBaseTraceType_v<T>>>
   inline const T* as() const {
     // |this|-qualify the |is| call below to avoid compile errors with even
     // fairly recent versions of gcc, e.g. 7.1.1 according to bz.
     MOZ_ASSERT(this->is<T>());
     return static_cast<const T*>(this);
   }
+
+  inline JS::Zone* zone() const;
+  inline JS::Zone* zoneFromAnyThread() const;
+
+  // Get the zone for a cell known to be in the nursery.
+  inline JS::Zone* nurseryZone() const;
+  inline JS::Zone* nurseryZoneFromAnyThread() const;
 
 #ifdef DEBUG
   static inline void assertThingIsNotGray(Cell* cell);
@@ -280,12 +269,12 @@ class TenuredCell : public Cell {
     return JS::shadow::Zone::from(zoneFromAnyThread());
   }
 
-  template <class T>
+  template <typename T, typename = std::enable_if_t<JS::IsBaseTraceType_v<T>>>
   inline bool is() const {
     return getTraceKind() == JS::MapTypeToTraceKind<T>::kind;
   }
 
-  template <class T>
+  template <typename T, typename = std::enable_if_t<JS::IsBaseTraceType_v<T>>>
   inline T* as() {
     // |this|-qualify the |is| call below to avoid compile errors with even
     // fairly recent versions of gcc, e.g. 7.1.1 according to bz.
@@ -293,7 +282,7 @@ class TenuredCell : public Cell {
     return static_cast<T*>(this);
   }
 
-  template <class T>
+  template <typename T, typename = std::enable_if_t<JS::IsBaseTraceType_v<T>>>
   inline const T* as() const {
     // |this|-qualify the |is| call below to avoid compile errors with even
     // fairly recent versions of gcc, e.g. 7.1.1 according to bz.
@@ -374,6 +363,32 @@ inline StoreBuffer* Cell::storeBuffer() const {
   return chunk()->trailer.storeBuffer;
 }
 
+JS::Zone* Cell::zone() const {
+  if (isTenured()) {
+    return asTenured().zone();
+  }
+
+  return nurseryZone();
+}
+
+JS::Zone* Cell::zoneFromAnyThread() const {
+  if (isTenured()) {
+    return asTenured().zoneFromAnyThread();
+  }
+
+  return nurseryZoneFromAnyThread();
+}
+
+JS::Zone* Cell::nurseryZone() const {
+  JS::Zone* zone = nurseryZoneFromAnyThread();
+  MOZ_ASSERT(CurrentThreadIsGCMarking() || CurrentThreadCanAccessZone(zone));
+  return zone;
+}
+
+JS::Zone* Cell::nurseryZoneFromAnyThread() const {
+  return NurseryCellHeader::from(this)->zone();
+}
+
 #ifdef DEBUG
 extern Cell* UninlinedForwarded(const Cell* cell);
 #endif
@@ -384,19 +399,8 @@ inline JS::TraceKind Cell::getTraceKind() const {
                                      asTenured().getTraceKind());
     return asTenured().getTraceKind();
   }
-  if (nurseryCellIsString()) {
-    MOZ_ASSERT_IF(isForwarded(), UninlinedForwarded(this)->getTraceKind() ==
-                                     JS::TraceKind::String);
-    return JS::TraceKind::String;
-  }
-  if (nurseryCellIsBigInt()) {
-    MOZ_ASSERT_IF(isForwarded(), UninlinedForwarded(this)->getTraceKind() ==
-                                     JS::TraceKind::BigInt);
-    return JS::TraceKind::BigInt;
-  }
-  MOZ_ASSERT_IF(isForwarded(), UninlinedForwarded(this)->getTraceKind() ==
-                                   JS::TraceKind::Object);
-  return JS::TraceKind::Object;
+
+  return NurseryCellHeader::from(this)->traceKind();
 }
 
 /* static */ MOZ_ALWAYS_INLINE bool Cell::needWriteBarrierPre(JS::Zone* zone) {

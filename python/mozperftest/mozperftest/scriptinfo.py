@@ -20,6 +20,7 @@ _INFO = """\
 %(description)s
 
 Owner: %(owner)s
+Test Name: %(test_name)s
 Usage:
 %(usage)s
 
@@ -63,7 +64,7 @@ class ScriptInfo(MetadataDict):
                 elif prop.value.type == "TemplateLiteral":
                     # ugly
                     value = prop.value.quasis[0].value.cooked.replace("\n", " ")
-                    value = re.sub("\s+", " ", value).strip()
+                    value = re.sub(r"\s+", " ", value).strip()
                 elif prop.value.type == "ArrayExpression":
                     value = [e.value for e in prop.value.elements]
                 else:

@@ -18,6 +18,7 @@
 #include "nsIInputStreamPump.h"
 #include "nsIIOService.h"
 #include "nsIOService.h"
+#include "nsIPrincipal.h"
 #include "nsIProtocolHandler.h"
 #include "nsIScriptError.h"
 #include "nsIScriptSecurityManager.h"
@@ -30,6 +31,7 @@
 #include "jsapi.h"
 #include "jsfriendapi.h"
 #include "js/CompilationAndEvaluation.h"
+#include "js/Exception.h"
 #include "js/SourceText.h"
 #include "nsError.h"
 #include "nsContentPolicyUtils.h"
@@ -73,6 +75,7 @@
 #include "mozilla/dom/ServiceWorkerManager.h"
 #include "mozilla/Result.h"
 #include "mozilla/ResultExtensions.h"
+#include "mozilla/StaticPrefs_browser.h"
 #include "mozilla/StaticPrefs_dom.h"
 #include "mozilla/StaticPrefs_security.h"
 #include "mozilla/UniquePtr.h"
@@ -580,6 +583,10 @@ class ScriptResponseHeaderProcessor final : public nsIRequestObserver {
   }
 
   NS_IMETHOD OnStartRequest(nsIRequest* aRequest) override {
+    if (!StaticPrefs::browser_tabs_remote_useCrossOriginEmbedderPolicy()) {
+      return NS_OK;
+    }
+
     nsresult rv = ProcessCrossOriginEmbedderPolicyHeader(aRequest);
 
     if (NS_WARN_IF(NS_FAILED(rv))) {
@@ -591,9 +598,6 @@ class ScriptResponseHeaderProcessor final : public nsIRequestObserver {
 
   NS_IMETHOD OnStopRequest(nsIRequest* aRequest,
                            nsresult aStatusCode) override {
-    MOZ_DIAGNOSTIC_ASSERT_IF(NS_SUCCEEDED(aStatusCode),
-                             mWorkerPrivate->GetEmbedderPolicy().isSome());
-
     return NS_OK;
   }
 
@@ -619,8 +623,6 @@ class ScriptResponseHeaderProcessor final : public nsIRequestObserver {
   ~ScriptResponseHeaderProcessor() = default;
 
   nsresult ProcessCrossOriginEmbedderPolicyHeader(nsIRequest* aRequest) {
-    MOZ_ASSERT_IF(!mIsMainScript, mWorkerPrivate->GetEmbedderPolicy().isSome());
-
     nsCOMPtr<nsIHttpChannelInternal> httpChannel = do_QueryInterface(aRequest);
 
     // NOTE: the spec doesn't say what to do with non-HTTP workers.
@@ -1365,9 +1367,8 @@ class ScriptLoaderRunnable final : public nsIRunnable, public nsINamed {
     ScriptLoadInfo& loadInfo = mLoadInfos[aIndex];
     MOZ_ASSERT(loadInfo.mCacheStatus == ScriptLoadInfo::Cached);
 
-    nsCOMPtr<nsIPrincipal> responsePrincipal =
-        PrincipalInfoToPrincipal(*aPrincipalInfo);
-    MOZ_DIAGNOSTIC_ASSERT(responsePrincipal);
+    auto responsePrincipalOrErr = PrincipalInfoToPrincipal(*aPrincipalInfo);
+    MOZ_DIAGNOSTIC_ASSERT(responsePrincipalOrErr.isOk());
 
     nsIPrincipal* principal = mWorkerPrivate->GetPrincipal();
     if (!principal) {
@@ -1375,6 +1376,8 @@ class ScriptLoaderRunnable final : public nsIRunnable, public nsINamed {
       MOZ_ASSERT(parentWorker, "Must have a parent!");
       principal = parentWorker->GetPrincipal();
     }
+
+    nsCOMPtr<nsIPrincipal> responsePrincipal = responsePrincipalOrErr.unwrap();
 
     loadInfo.mMutedErrorFlag.emplace(!principal->Subsumes(responsePrincipal));
 
@@ -2248,8 +2251,9 @@ void ScriptExecutorRunnable::LogExceptionToConsole(
   MOZ_ASSERT(!JS_IsExceptionPending(aCx));
   MOZ_ASSERT(!mScriptLoader.mRv.Failed());
 
-  js::ErrorReport report(aCx);
-  if (!report.init(aCx, exn, js::ErrorReport::WithSideEffects)) {
+  JS::ExceptionStack exnStack(aCx, exn, nullptr);
+  JS::ErrorReportBuilder report(aCx);
+  if (!report.init(aCx, exnStack, JS::ErrorReportBuilder::WithSideEffects)) {
     JS_ClearPendingException(aCx);
     return;
   }

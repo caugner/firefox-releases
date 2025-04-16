@@ -1,6 +1,7 @@
 # This Source Code Form is subject to the terms of the Mozilla Public
 # License, v. 2.0. If a copy of the MPL was not distributed with this
 # file, You can obtain one at http://mozilla.org/MPL/2.0/.
+# NOTE: New strings should use the about-logins- prefix.
 
 about-logins-page-title = Logins & Passwords
 
@@ -29,6 +30,7 @@ menu =
   .title = Open menu
 # This menuitem is only visible on Windows and macOS
 about-logins-menu-menuitem-import-from-another-browser = Import from Another Browser…
+about-logins-menu-menuitem-export-logins = Export Logins…
 menu-menuitem-preferences =
   { PLATFORM() ->
       [windows] Options
@@ -161,6 +163,10 @@ about-logins-confirm-remove-dialog-title = Remove this login?
 confirm-delete-dialog-message = This action cannot be undone.
 about-logins-confirm-remove-dialog-confirm-button = Remove
 
+about-logins-confirm-export-dialog-title = Export logins and passwords
+about-logins-confirm-export-dialog-message = Your passwords will be saved as readable text (e.g., BadP@ssw0rd) so anyone who can open the exported file can view them.
+about-logins-confirm-export-dialog-confirm-button = Export…
+
 confirm-discard-changes-dialog-title = Discard unsaved changes?
 confirm-discard-changes-dialog-message = All unsaved changes will be lost.
 confirm-discard-changes-dialog-confirm-button = Discard
@@ -194,3 +200,20 @@ about-logins-error-message-duplicate-login-with-link = An entry for { $loginTitl
 
 # This is a generic error message.
 about-logins-error-message-default = An error occurred while trying to save this password.
+
+
+## Login Export Dialog
+
+# Title of the file picker dialog
+about-logins-export-file-picker-title = Export Logins File
+# The default file name shown in the file picker when exporting saved logins.
+# This must end in .csv
+about-logins-export-file-picker-default-filename = logins.csv
+about-logins-export-file-picker-export-button = Export
+# A description for the .csv file format that may be shown as the file type
+# filter by the operating system.
+about-logins-export-file-picker-csv-filter-title =
+  { PLATFORM() ->
+      [macos] CSV Document
+     *[other] CSV File
+  }

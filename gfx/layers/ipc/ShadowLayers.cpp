@@ -189,7 +189,7 @@ RefPtr<KnowsCompositor> ShadowLayerForwarder::GetForMedia() {
 ShadowLayerForwarder::ShadowLayerForwarder(
     ClientLayerManager* aClientLayerManager)
     : mClientLayerManager(aClientLayerManager),
-      mMessageLoop(MessageLoop::current()),
+      mThread(NS_GetCurrentThread()),
       mDiagnosticTypes(DiagnosticTypes::NO_DIAGNOSTIC),
       mIsFirstPaint(false),
       mNextLayerHandle(1) {
@@ -402,8 +402,7 @@ void ShadowLayerForwarder::UpdateTextureRegion(
 
 void ShadowLayerForwarder::UseTextures(
     CompositableClient* aCompositable,
-    const nsTArray<TimedTextureClient>& aTextures,
-    const Maybe<wr::RenderRoot>& aRenderRoot) {
+    const nsTArray<TimedTextureClient>& aTextures) {
   MOZ_ASSERT(aCompositable);
 
   if (!aCompositable->IsConnected()) {
@@ -482,8 +481,7 @@ bool ShadowLayerForwarder::DestroyInTransaction(
 }
 
 void ShadowLayerForwarder::RemoveTextureFromCompositable(
-    CompositableClient* aCompositable, TextureClient* aTexture,
-    const Maybe<wr::RenderRoot>& aRenderRoot) {
+    CompositableClient* aCompositable, TextureClient* aTexture) {
   MOZ_ASSERT(aCompositable);
   MOZ_ASSERT(aTexture);
   MOZ_ASSERT(aTexture->GetIPDLActor());
@@ -500,9 +498,7 @@ void ShadowLayerForwarder::RemoveTextureFromCompositable(
 }
 
 bool ShadowLayerForwarder::InWorkerThread() {
-  return MessageLoop::current() &&
-         (GetTextureForwarder()->GetMessageLoop()->id() ==
-          MessageLoop::current()->id());
+  return GetTextureForwarder()->GetThread()->IsOnCurrentThread();
 }
 
 void ShadowLayerForwarder::StorePluginWidgetConfigurations(
@@ -630,9 +626,10 @@ bool ShadowLayerForwarder::EndTransaction(
       common.maskLayer() = LayerHandle();
     }
     common.compositorAnimations().id() = mutant->GetCompositorAnimationsId();
-    common.compositorAnimations().animations() = mutant->GetAnimations();
+    common.compositorAnimations().animations() =
+        mutant->GetAnimations().Clone();
     common.invalidRegion() = mutant->GetInvalidRegion().GetRegion();
-    common.scrollMetadata() = mutant->GetAllScrollMetadata();
+    common.scrollMetadata() = mutant->GetAllScrollMetadata().Clone();
     for (size_t i = 0; i < mutant->GetAncestorMaskLayerCount(); i++) {
       auto layer =
           Shadow(mutant->GetAncestorMaskLayerAt(i)->AsShadowableLayer());
@@ -659,10 +656,10 @@ bool ShadowLayerForwarder::EndTransaction(
   info.setSimpleAttrs() = std::move(setSimpleAttrs);
   info.setAttrs() = std::move(setAttrs);
   info.paints() = std::move(mTxn->mPaints);
-  info.toDestroy() = mTxn->mDestroyedActors;
+  info.toDestroy() = mTxn->mDestroyedActors.Clone();
   info.fwdTransactionId() = GetFwdTransactionId();
   info.id() = aId;
-  info.plugins() = mPluginWindowData;
+  info.plugins() = mPluginWindowData.Clone();
   info.isFirstPaint() = mIsFirstPaint;
   info.focusTarget() = mFocusTarget;
   info.scheduleComposite() = aScheduleComposite;
@@ -677,7 +674,7 @@ bool ShadowLayerForwarder::EndTransaction(
 #if defined(ENABLE_FRAME_LATENCY_LOG)
   info.fwdTime() = TimeStamp::Now();
 #endif
-  info.payload() = aPayload;
+  info.payload() = aPayload.Clone();
 
   TargetConfig targetConfig(mTxn->mTargetBounds, mTxn->mTargetRotation,
                             mTxn->mTargetOrientation, aRegionToClear);

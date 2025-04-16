@@ -225,6 +225,10 @@ class BuildMonitor(MozbuildObject):
         self.instance_warnings = WarningsDatabase()
 
         def on_warning(warning):
+            # Skip `errors`
+            if warning['type'] == 'error':
+                return
+
             filename = warning['filename']
 
             if not os.path.exists(filename):
@@ -1094,7 +1098,7 @@ class BuildDriver(MozbuildObject):
                                                            backend))
                      for backend in all_backends])):
                 print('Build configuration changed. Regenerating backend.')
-                args = [config.substs['PYTHON'],
+                args = [config.substs['PYTHON3'],
                         mozpath.join(self.topobjdir, 'config.status')]
                 self.run_process(args, cwd=self.topobjdir, pass_thru=True)
 

@@ -537,10 +537,10 @@ nsresult nsTypeAheadFind::FindItNow(uint32_t aMode, bool aIsLinksOnly,
           nsCOMPtr<nsIEditor> editor;
           if (RefPtr<HTMLInputElement> input =
                   HTMLInputElement::FromNode(node)) {
-            editor = input->GetEditor();
+            editor = input->GetTextEditor();
           } else if (RefPtr<HTMLTextAreaElement> textarea =
                          HTMLTextAreaElement::FromNode(node)) {
-            editor = textarea->GetEditor();
+            editor = textarea->GetTextEditor();
           } else {
             node = node->GetParentNode();
             continue;
@@ -776,7 +776,7 @@ nsresult nsTypeAheadFind::GetSearchContainers(
 
   // Consider current selection as null if
   // it's not in the currently focused document
-  RefPtr<nsRange> currentSelectionRange;
+  RefPtr<const nsRange> currentSelectionRange;
   RefPtr<PresShell> selectionPresShell = GetPresShell();
   if (aSelectionController && selectionPresShell &&
       selectionPresShell == presShell) {
@@ -1058,7 +1058,7 @@ nsresult nsTypeAheadFind::FindInternal(uint32_t aMode,
 
       mStartFindRange = nullptr;
       if (selection) {
-        RefPtr<nsRange> startFindRange = selection->GetRangeAt(0);
+        RefPtr<const nsRange> startFindRange = selection->GetRangeAt(0);
         if (startFindRange) {
           mStartFindRange = startFindRange->CloneRange();
         }
@@ -1186,7 +1186,7 @@ bool nsTypeAheadFind::IsRangeRendered(nsRange* aRange) {
              nsPresContext::CSSPixelsToAppUnits((float)rect->Height()));
     // Append visible frames to frames array.
     nsLayoutUtils::GetFramesForArea(
-        rootFrame, r, frames,
+        RelativeTo{rootFrame}, r, frames,
         {FrameForPointOption::IgnorePaintSuppression,
          FrameForPointOption::IgnoreRootScrollFrame,
          FrameForPointOption::OnlyVisible});

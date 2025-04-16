@@ -40,6 +40,10 @@ bool WebRenderCanvasRendererAsync::CreateCompositable() {
       flags |= TextureFlags::ORIGIN_BOTTOM_LEFT;
     }
 
+    if (IsOpaque()) {
+      flags |= TextureFlags::IS_OPAQUE;
+    }
+
     if (!mIsAlphaPremultiplied) {
       flags |= TextureFlags::NON_PREMULTIPLIED;
     }
@@ -81,7 +85,7 @@ void WebRenderCanvasRendererAsync::Destroy() {
 void WebRenderCanvasRendererAsync::
     UpdateCompositableClientForEmptyTransaction() {
   bool wasDirty = IsDirty();
-  UpdateCompositableClient(mManager->GetRenderRoot());
+  UpdateCompositableClient();
   if (wasDirty && mPipelineId.isSome()) {
     // Notify an update of async image pipeline during empty transaction.
     // During non empty transaction, WebRenderBridgeParent receives

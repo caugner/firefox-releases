@@ -72,7 +72,7 @@ role HyperTextAccessible::NativeRole() const {
 uint64_t HyperTextAccessible::NativeState() const {
   uint64_t states = AccessibleWrap::NativeState();
 
-  if (mContent->AsElement()->State().HasState(NS_EVENT_STATE_MOZ_READWRITE)) {
+  if (mContent->AsElement()->State().HasState(NS_EVENT_STATE_READWRITE)) {
     states |= states::EDITABLE;
 
   } else if (mContent->IsHTMLElement(nsGkAtoms::article)) {
@@ -1182,7 +1182,11 @@ nsIntRect HyperTextAccessible::TextBounds(int32_t aStartOffset,
   if (CharacterCount() == 0) {
     nsPresContext* presContext = mDoc->PresContext();
     // Empty content, use our own bound to at least get x,y coordinates
-    return GetFrame()->GetScreenRectInAppUnits().ToNearestPixels(
+    nsIFrame* frame = GetFrame();
+    if (!frame) {
+      return nsIntRect();
+    }
+    return frame->GetScreenRectInAppUnits().ToNearestPixels(
         presContext->AppUnitsPerDevPixel());
   }
 
@@ -1713,7 +1717,7 @@ void HyperTextAccessible::SelectionRanges(
   aRanges->SetCapacity(sel->RangeCount());
 
   for (uint32_t idx = 0; idx < sel->RangeCount(); idx++) {
-    nsRange* DOMRange = sel->GetRangeAt(idx);
+    const nsRange* DOMRange = sel->GetRangeAt(idx);
     HyperTextAccessible* startContainer =
         nsAccUtils::GetTextContainer(DOMRange->GetStartContainer());
     HyperTextAccessible* endContainer =
@@ -2033,7 +2037,7 @@ void HyperTextAccessible::GetSpellTextAttr(
 
   uint32_t startOffset = 0, endOffset = 0;
   for (int32_t idx = 0; idx < rangeCount; idx++) {
-    nsRange* range = domSel->GetRangeAt(idx);
+    const nsRange* range = domSel->GetRangeAt(idx);
     if (range->Collapsed()) continue;
 
     // See if the point comes after the range in which case we must continue in
@@ -2087,7 +2091,7 @@ void HyperTextAccessible::GetSpellTextAttr(
     endOffset = DOMPointToOffset(startNode, startNodeOffset);
 
     if (idx > 0) {
-      nsRange* prevRange = domSel->GetRangeAt(idx - 1);
+      const nsRange* prevRange = domSel->GetRangeAt(idx - 1);
       startOffset = DOMPointToOffset(prevRange->GetEndContainer(),
                                      prevRange->EndOffset());
     }
@@ -2107,7 +2111,7 @@ void HyperTextAccessible::GetSpellTextAttr(
   // the point is not in a range, that we do not need to compute an end offset,
   // and that we should use the end offset of the last range to compute the
   // start offset of the text attribute range.
-  nsRange* prevRange = domSel->GetRangeAt(rangeCount - 1);
+  const nsRange* prevRange = domSel->GetRangeAt(rangeCount - 1);
   startOffset =
       DOMPointToOffset(prevRange->GetEndContainer(), prevRange->EndOffset());
 

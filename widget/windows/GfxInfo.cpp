@@ -302,7 +302,7 @@ uint32_t ParseIDFromDeviceID(const nsAString& key, const char* prefix,
     id.Cut(0, start + strlen(prefix));
     id.Truncate(length);
   }
-  if (id.Equals(L"QCOM", nsCaseInsensitiveStringComparator())) {
+  if (id.Equals(L"QCOM", nsCaseInsensitiveStringComparator)) {
     // String format assumptions are broken, so use a Qualcomm PCI Vendor ID
     // for now. See also GfxDriverInfo::GetDeviceVendor.
     return 0x5143;
@@ -1740,6 +1740,7 @@ const nsTArray<GfxDriverInfo>& GfxInfo::GetGfxDriverInfo() {
         DRIVER_LESS_THAN, GfxDriverInfo::allDriverVersions,
         "FEATURE_UNQUALIFIED_WEBRENDER_NVIDIA_BLOCKED");
 
+#ifndef NIGHTLY_BUILD
     // Block all Windows versions other than Windows 10.
     APPEND_TO_DRIVER_BLOCKLIST2(
         OperatingSystem::Windows7, DeviceFamily::All,
@@ -1756,39 +1757,48 @@ const nsTArray<GfxDriverInfo>& GfxInfo::GetGfxDriverInfo() {
         nsIGfxInfo::FEATURE_WEBRENDER, nsIGfxInfo::FEATURE_BLOCKED_DEVICE,
         DRIVER_LESS_THAN, GfxDriverInfo::allDriverVersions,
         "FEATURE_UNQUALIFIED_WEBRENDER_WINDOWS_8_1");
+#endif
 
     // Bug 1525084 - Window jumps with certain Intel drivers
     // On nightly, we use a more conversative range of drivers that we have
     // confirmed the issue occurs with. On beta/release, we block everything
     // earlier to minimize the probability of missing a particular driver.
-#ifdef NIGHTLY_BUILD
+#ifdef EARLY_BETA_OR_EARLIER
+#  ifndef NIGHTLY_BUILD
     APPEND_TO_DRIVER_BLOCKLIST_RANGE(
         OperatingSystem::Windows, DeviceFamily::IntelAll,
         nsIGfxInfo::FEATURE_WEBRENDER,
         nsIGfxInfo::FEATURE_BLOCKED_DRIVER_VERSION, DRIVER_BETWEEN_INCLUSIVE,
         V(10, 18, 15, 4256), V(10, 18, 15, 4281),
-        "FEATURE_FAILURE_WEBRENDER_INTEL_BAD_DRIVER",
+        // clang-format off
+        "FEATURE_FAILURE_WEBRENDER_WINDOW_JUMP_INTEL_10.18.15.4256_10.18.15.4281",
+        // clang-format on
         "Intel driver >= 21.20.16.4590");
     APPEND_TO_DRIVER_BLOCKLIST_RANGE(
         OperatingSystem::Windows, DeviceFamily::IntelAll,
         nsIGfxInfo::FEATURE_WEBRENDER,
         nsIGfxInfo::FEATURE_BLOCKED_DRIVER_VERSION, DRIVER_BETWEEN_INCLUSIVE,
         V(20, 19, 15, 4285), V(20, 19, 15, 4835),
-        "FEATURE_FAILURE_WEBRENDER_INTEL_BAD_DRIVER",
+        // clang-format off
+        "FEATURE_FAILURE_WEBRENDER_WINDOW_JUMP_INTEL_20.19.15.4285_20.19.15.4835",
+        // clang-format on
         "Intel driver >= 21.20.16.4590");
     APPEND_TO_DRIVER_BLOCKLIST_RANGE(
         OperatingSystem::Windows, DeviceFamily::IntelAll,
         nsIGfxInfo::FEATURE_WEBRENDER,
         nsIGfxInfo::FEATURE_BLOCKED_DRIVER_VERSION, DRIVER_BETWEEN_INCLUSIVE,
         V(21, 20, 16, 4471), V(21, 20, 16, 4565),
-        "FEATURE_FAILURE_WEBRENDER_INTEL_BAD_DRIVER",
+        // clang-format off
+        "FEATURE_FAILURE_WEBRENDER_WINDOW_JUMP_INTEL_21.20.16.4471_21.20.16.4565",
+        // clang-format on
         "Intel driver >= 21.20.16.4590");
+#  endif
 #else
     APPEND_TO_DRIVER_BLOCKLIST2(
         OperatingSystem::Windows, DeviceFamily::IntelAll,
         nsIGfxInfo::FEATURE_WEBRENDER,
         nsIGfxInfo::FEATURE_BLOCKED_DRIVER_VERSION, DRIVER_LESS_THAN,
-        V(21, 20, 16, 4590), "Intel driver >= 21.20.16.4590");
+        V(21, 20, 16, 4590), "FEATURE_FAILURE_WEBRENDER_WINDOW_JUMP_INTEL");
 #endif
 
     // Bug 1615421 / 1607860 - Playing videos appear to crash with WebRender
@@ -1797,7 +1807,8 @@ const nsTArray<GfxDriverInfo>& GfxInfo::GetGfxDriverInfo() {
         OperatingSystem::Windows, DeviceFamily::IntelAll,
         nsIGfxInfo::FEATURE_WEBRENDER,
         nsIGfxInfo::FEATURE_BLOCKED_DRIVER_VERSION, DRIVER_EQUAL,
-        V(23, 20, 16, 4973), "Intel driver > 23.20.16.4973");
+        V(23, 20, 16, 4973),
+        "FEATURE_FAILURE_WEBRENDER_VIDEO_CRASH_INTEL_23.20.16.4973");
 
     ////////////////////////////////////
     // FEATURE_WEBRENDER - ALLOWLIST
@@ -1811,15 +1822,14 @@ const nsTArray<GfxDriverInfo>& GfxInfo::GetGfxDriverInfo() {
         "FEATURE_ROLLOUT_BATTERY_S_SCRN_NV_RECENT");
 
     APPEND_TO_DRIVER_BLOCKLIST2_EXT(
-        OperatingSystem::Windows10, ScreenSizeStatus::Small,
-        BatteryStatus::None, DesktopEnvironment::All, WindowProtocol::All,
-        DriverVendor::All, DeviceFamily::IntelRolloutWebRender,
-        nsIGfxInfo::FEATURE_WEBRENDER, nsIGfxInfo::FEATURE_ALLOW_ALWAYS,
-        DRIVER_COMPARISON_IGNORED, V(0, 0, 0, 0),
-        "FEATURE_ROLLOUT_DESKTOP_INTEL_S_SCRN");
+        OperatingSystem::Windows, ScreenSizeStatus::All, BatteryStatus::None,
+        DesktopEnvironment::All, WindowProtocol::All, DriverVendor::All,
+        DeviceFamily::IntelRolloutWebRender, nsIGfxInfo::FEATURE_WEBRENDER,
+        nsIGfxInfo::FEATURE_ALLOW_ALWAYS, DRIVER_COMPARISON_IGNORED,
+        V(0, 0, 0, 0), "FEATURE_ROLLOUT_DESKTOP_INTEL_S_SCRN");
 
     APPEND_TO_DRIVER_BLOCKLIST2_EXT(
-        OperatingSystem::RecentWindows10, ScreenSizeStatus::Small,
+        OperatingSystem::RecentWindows10, ScreenSizeStatus::All,
         BatteryStatus::Present, DesktopEnvironment::All, WindowProtocol::All,
         DriverVendor::All, DeviceFamily::IntelModernRolloutWebRender,
         nsIGfxInfo::FEATURE_WEBRENDER, nsIGfxInfo::FEATURE_ALLOW_ALWAYS,
@@ -1827,14 +1837,14 @@ const nsTArray<GfxDriverInfo>& GfxInfo::GetGfxDriverInfo() {
         "FEATURE_ROLLOUT_DESKTOP_INTEL_S_SCRN");
 
     APPEND_TO_DRIVER_BLOCKLIST2_EXT(
-        OperatingSystem::Windows10, ScreenSizeStatus::All, BatteryStatus::None,
+        OperatingSystem::Windows, ScreenSizeStatus::All, BatteryStatus::None,
         DesktopEnvironment::All, WindowProtocol::All, DriverVendor::All,
         DeviceFamily::AtiRolloutWebRender, nsIGfxInfo::FEATURE_WEBRENDER,
         nsIGfxInfo::FEATURE_ALLOW_ALWAYS, DRIVER_COMPARISON_IGNORED,
         V(0, 0, 0, 0), "FEATURE_ROLLOUT_DESKTOP_AMD");
 
     APPEND_TO_DRIVER_BLOCKLIST2_EXT(
-        OperatingSystem::Windows10, ScreenSizeStatus::All, BatteryStatus::None,
+        OperatingSystem::Windows, ScreenSizeStatus::All, BatteryStatus::None,
         DesktopEnvironment::All, WindowProtocol::All, DriverVendor::All,
         DeviceFamily::NvidiaRolloutWebRender, nsIGfxInfo::FEATURE_WEBRENDER,
         nsIGfxInfo::FEATURE_ALLOW_ALWAYS, DRIVER_COMPARISON_IGNORED,
@@ -1842,7 +1852,7 @@ const nsTArray<GfxDriverInfo>& GfxInfo::GetGfxDriverInfo() {
 
 #ifdef EARLY_BETA_OR_EARLIER
     APPEND_TO_DRIVER_BLOCKLIST2_EXT(
-        OperatingSystem::Windows10, ScreenSizeStatus::Small,
+        OperatingSystem::Windows, ScreenSizeStatus::Small,
         BatteryStatus::Present, DesktopEnvironment::All, WindowProtocol::All,
         DriverVendor::All, DeviceFamily::AtiRolloutWebRender,
         nsIGfxInfo::FEATURE_WEBRENDER, nsIGfxInfo::FEATURE_ALLOW_ALWAYS,
@@ -1850,31 +1860,31 @@ const nsTArray<GfxDriverInfo>& GfxInfo::GetGfxDriverInfo() {
         "FEATURE_ROLLOUT_NIGHTLY_BATTERY_AMD_S_SCRN");
 
     APPEND_TO_DRIVER_BLOCKLIST2_EXT(
-        OperatingSystem::Windows10, ScreenSizeStatus::SmallAndMedium,
-        BatteryStatus::Present, DesktopEnvironment::All, WindowProtocol::All,
+        OperatingSystem::Windows, ScreenSizeStatus::All,
+        BatteryStatus::All, DesktopEnvironment::All, WindowProtocol::All,
         DriverVendor::All, DeviceFamily::IntelRolloutWebRender,
         nsIGfxInfo::FEATURE_WEBRENDER, nsIGfxInfo::FEATURE_ALLOW_ALWAYS,
         DRIVER_COMPARISON_IGNORED, V(0, 0, 0, 0),
-        "FEATURE_ROLLOUT_NIGHTLY_BATTERY_INTEL_S_SCRN");
+        "FEATURE_ROLLOUT_EARLY_BETA_INTEL");
 #endif
 
 #ifdef NIGHTLY_BUILD
     APPEND_TO_DRIVER_BLOCKLIST2_EXT(
-        OperatingSystem::Windows10, ScreenSizeStatus::All, BatteryStatus::All,
+        OperatingSystem::Windows, ScreenSizeStatus::All, BatteryStatus::All,
         DesktopEnvironment::All, WindowProtocol::All, DriverVendor::All,
         DeviceFamily::NvidiaRolloutWebRender, nsIGfxInfo::FEATURE_WEBRENDER,
         nsIGfxInfo::FEATURE_ALLOW_QUALIFIED, DRIVER_COMPARISON_IGNORED,
         V(0, 0, 0, 0), "FEATURE_ROLLOUT_NIGHTLY_LISTED_NVIDIA");
 
     APPEND_TO_DRIVER_BLOCKLIST2_EXT(
-        OperatingSystem::Windows10, ScreenSizeStatus::All, BatteryStatus::All,
+        OperatingSystem::Windows, ScreenSizeStatus::All, BatteryStatus::All,
         DesktopEnvironment::All, WindowProtocol::All, DriverVendor::All,
         DeviceFamily::AtiRolloutWebRender, nsIGfxInfo::FEATURE_WEBRENDER,
         nsIGfxInfo::FEATURE_ALLOW_QUALIFIED, DRIVER_COMPARISON_IGNORED,
         V(0, 0, 0, 0), "FEATURE_ROLLOUT_NIGHTLY_LISTED_AMD");
 
     APPEND_TO_DRIVER_BLOCKLIST2_EXT(
-        OperatingSystem::Windows10, ScreenSizeStatus::All, BatteryStatus::All,
+        OperatingSystem::Windows, ScreenSizeStatus::All, BatteryStatus::All,
         DesktopEnvironment::All, WindowProtocol::All, DriverVendor::All,
         DeviceFamily::IntelRolloutWebRender, nsIGfxInfo::FEATURE_WEBRENDER,
         nsIGfxInfo::FEATURE_ALLOW_QUALIFIED, DRIVER_COMPARISON_IGNORED,
@@ -1939,22 +1949,22 @@ nsresult GfxInfo::GetFeatureStatusImpl(
     if (OnlyAllowFeatureOnWhitelistedVendor(aFeature) &&
         !adapterVendorID.Equals(
             GfxDriverInfo::GetDeviceVendor(DeviceVendor::Intel),
-            nsCaseInsensitiveStringComparator()) &&
+            nsCaseInsensitiveStringComparator) &&
         !adapterVendorID.Equals(
             GfxDriverInfo::GetDeviceVendor(DeviceVendor::NVIDIA),
-            nsCaseInsensitiveStringComparator()) &&
+            nsCaseInsensitiveStringComparator) &&
         !adapterVendorID.Equals(
             GfxDriverInfo::GetDeviceVendor(DeviceVendor::ATI),
-            nsCaseInsensitiveStringComparator()) &&
+            nsCaseInsensitiveStringComparator) &&
         !adapterVendorID.Equals(
             GfxDriverInfo::GetDeviceVendor(DeviceVendor::Microsoft),
-            nsCaseInsensitiveStringComparator()) &&
+            nsCaseInsensitiveStringComparator) &&
         !adapterVendorID.Equals(
             GfxDriverInfo::GetDeviceVendor(DeviceVendor::Parallels),
-            nsCaseInsensitiveStringComparator()) &&
+            nsCaseInsensitiveStringComparator) &&
         !adapterVendorID.Equals(
             GfxDriverInfo::GetDeviceVendor(DeviceVendor::Qualcomm),
-            nsCaseInsensitiveStringComparator()) &&
+            nsCaseInsensitiveStringComparator) &&
         // FIXME - these special hex values are currently used in xpcshell tests
         // introduced by bug 625160 patch 8/8. Maybe these tests need to be
         // adjusted now that we're only whitelisting intel/ati/nvidia.

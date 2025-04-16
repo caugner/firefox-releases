@@ -516,6 +516,8 @@ STATIC_ATOMS = [
     Atom("ignoreuserfocus", "ignoreuserfocus"),
     Atom("image", "image"),
     Atom("imageClickedPoint", "image-clicked-point"),
+    Atom("imagesizes", "imagesizes"),
+    Atom("imagesrcset", "imagesrcset"),
     Atom("img", "img"),
     Atom("implementation", "implementation"),
     Atom("implements", "implements"),
@@ -562,7 +564,6 @@ STATIC_ATOMS = [
     Atom("keypress", "keypress"),
     Atom("keyset", "keyset"),
     Atom("keysystem", "keysystem"),
-    Atom("keytext", "keytext"),
     Atom("keyup", "keyup"),
     Atom("kind", "kind"),
     Atom("korean_hangul_formal", "korean-hangul-formal"),
@@ -1198,7 +1199,6 @@ STATIC_ATOMS = [
     Atom("tokenize", "tokenize"),
     Atom("toolbar", "toolbar"),
     Atom("toolbarbutton", "toolbarbutton"),
-    Atom("toolbarbuttonMultilineText", "toolbarbutton-multiline-text"),
     Atom("toolbaritem", "toolbaritem"),
     Atom("toolbarpaletteitem", "toolbarpaletteitem"),
     Atom("toolbox", "toolbox"),
@@ -2488,6 +2488,7 @@ STATIC_ATOMS = [
     PseudoElementAtom("PseudoElement_mozColorSwatch", ":-moz-color-swatch"),
     PseudoElementAtom("PseudoElement_mozTextControlEditingRoot", ":-moz-text-control-editing-root"),
     PseudoElementAtom("PseudoElement_mozTextControlPreview", ":-moz-text-control-preview"),
+    PseudoElementAtom("PseudoElement_fileChooserButton", ":file-chooser-button"),
 
     # CSS anonymous boxes -- these must appear in the same order as
     # in nsCSSAnonBoxList.h

@@ -33,8 +33,6 @@
 #include "RecentEventsBuffer.h"  // for RecentEventsBuffer
 #include "SampledAPZCState.h"
 
-#include "base/message_loop.h"
-
 namespace mozilla {
 
 namespace ipc {
@@ -890,7 +888,6 @@ class AsyncPanZoomController {
   void OnTouchEndOrCancel();
 
   LayersId mLayersId;
-  wr::RenderRoot mRenderRoot;
   RefPtr<CompositorController> mCompositorController;
   RefPtr<MetricsSharingController> mMetricsSharingController;
 
@@ -1632,8 +1629,6 @@ class AsyncPanZoomController {
   }
 
   LayersId GetLayersId() const { return mLayersId; }
-
-  wr::RenderRoot GetRenderRoot() const { return mRenderRoot; }
 
   bool IsAsyncZooming() const {
     return mState == PINCHING || mState == ANIMATING_ZOOM;

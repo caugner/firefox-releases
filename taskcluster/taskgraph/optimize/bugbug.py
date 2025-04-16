@@ -8,8 +8,9 @@ from collections import defaultdict
 
 from six.moves.urllib.parse import urlsplit
 
-from taskgraph.optimize import register_strategy, OptimizationStrategy
+from taskgraph.optimize import register_strategy, OptimizationStrategy, seta
 from taskgraph.util.bugbug import (
+    BugbugTimeoutException,
     push_schedules,
     CT_HIGH,
     CT_MEDIUM,
@@ -18,10 +19,10 @@ from taskgraph.util.bugbug import (
 
 
 @register_strategy("bugbug", args=(CT_MEDIUM,))
-@register_strategy("bugbug-combined-high", args=(CT_HIGH, False, True))
 @register_strategy("bugbug-low", args=(CT_LOW,))
 @register_strategy("bugbug-high", args=(CT_HIGH,))
 @register_strategy("bugbug-reduced", args=(CT_MEDIUM, True))
+@register_strategy("bugbug-reduced-fallback", args=(CT_MEDIUM, True, True))
 @register_strategy("bugbug-reduced-high", args=(CT_HIGH, True))
 class BugBugPushSchedules(OptimizationStrategy):
     """Query the 'bugbug' service to retrieve relevant tasks and manifests.
@@ -31,19 +32,39 @@ class BugBugPushSchedules(OptimizationStrategy):
             range [0, 1]) needed for a task to be scheduled.
         use_reduced_tasks (bool): Whether or not to use the reduced set of tasks
             provided by the bugbug service (default: False).
-        combine_weights (bool): If True, sum the confidence thresholds of all
-            groups within a task to find the overall task confidence. Otherwise
-            the maximum confidence threshold is used (default: False).
+        fallback (bool): Whether or not to fallback to SETA if there was a failure
+            in bugbug (default: False)
     """
-    def __init__(self, confidence_threshold, use_reduced_tasks=False, combine_weights=False):
+
+    def __init__(
+        self,
+        confidence_threshold,
+        use_reduced_tasks=False,
+        fallback=False,
+    ):
         self.confidence_threshold = confidence_threshold
         self.use_reduced_tasks = use_reduced_tasks
-        self.combine_weights = combine_weights
+        self.fallback = fallback
+        self.timedout = False
 
     def should_remove_task(self, task, params, importance):
+        if params['project'] not in ("autoland", "try"):
+            return False
+
         branch = urlsplit(params['head_repository']).path.strip('/')
         rev = params['head_rev']
-        data = push_schedules(branch, rev)
+
+        if self.timedout:
+            return seta.is_low_value_task(task.label, params['project'])
+
+        try:
+            data = push_schedules(branch, rev)
+        except BugbugTimeoutException:
+            if not self.fallback:
+                raise
+
+            self.timedout = True
+            return self.should_remove_task(task, params, importance)
 
         key = "reduced_tasks" if self.use_reduced_tasks else "tasks"
         tasks = set(
@@ -54,28 +75,18 @@ class BugBugPushSchedules(OptimizationStrategy):
 
         test_manifests = task.attributes.get('test_manifests')
         if test_manifests is None or self.use_reduced_tasks:
+            if data.get("known_tasks") and task.label not in data["known_tasks"]:
+                return False
+
             if task.label not in tasks:
                 return True
 
             return False
 
-        # If a task contains more than one group, figure out which confidence
-        # threshold to use. If 'self.combine_weights' is set, add up all
-        # confidence thresholds. Otherwise just use the max.
-        task_confidence = 0
+        # If a task contains more than one group, use the max confidence.
         groups = data.get("groups", {})
-        for group, confidence in groups.items():
-            if group not in test_manifests:
-                continue
-
-            if self.combine_weights:
-                task_confidence = round(
-                    task_confidence + confidence - task_confidence * confidence, 2
-                )
-            else:
-                task_confidence = max(task_confidence, confidence)
-
-        if task_confidence < self.confidence_threshold:
+        confidences = [c for g, c in groups.items() if g in test_manifests]
+        if not confidences or max(confidences) < self.confidence_threshold:
             return True
 
         # Store group importance so future optimizers can access it.
@@ -101,7 +112,7 @@ class SkipUnlessDebug(OptimizationStrategy):
     """Only run debug platforms."""
 
     def should_remove_task(self, task, params, arg):
-        return not (task.attributes.get('build_type') == "debug")
+        return "build_type" in task.attributes and task.attributes["build_type"] != "debug"
 
 
 @register_strategy("platform-disperse")

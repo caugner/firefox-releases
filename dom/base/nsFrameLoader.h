@@ -201,7 +201,6 @@ class nsFrameLoader final : public nsStubMutationObserver,
   void SendCrossProcessMouseEvent(const nsAString& aType, float aX, float aY,
                                   int32_t aButton, int32_t aClickCount,
                                   int32_t aModifiers,
-                                  bool aIgnoreRootScrollFrame,
                                   mozilla::ErrorResult& aRv);
 
   void ActivateFrameEvent(const nsAString& aType, bool aCapture,
@@ -465,6 +464,10 @@ class nsFrameLoader final : public nsStubMutationObserver,
       mozilla::OriginAttributes& aAttr);
 
   bool EnsureBrowsingContextAttached();
+
+  // Invoke the callback from nsOpenWindowInfo to indicate that a
+  // browsing context for a newly opened tab/window is ready.
+  void InvokeBrowsingContextReadyCallback();
 
   RefPtr<mozilla::dom::BrowsingContext> mPendingBrowsingContext;
   nsCOMPtr<nsIURI> mURIToLoad;

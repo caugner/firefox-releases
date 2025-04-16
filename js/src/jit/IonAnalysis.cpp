@@ -3060,13 +3060,7 @@ static bool IsResumableMIRType(MIRType type) {
     case MIRType::MagicUninitializedLexical:
     case MIRType::MagicIsConstructing:
     case MIRType::Value:
-    case MIRType::Int32x4:
-    case MIRType::Int16x8:
-    case MIRType::Int8x16:
-    case MIRType::Float32x4:
-    case MIRType::Bool32x4:
-    case MIRType::Bool16x8:
-    case MIRType::Bool8x16:
+    case MIRType::Simd128:
       return true;
 
     case MIRType::MagicHole:
@@ -3077,7 +3071,6 @@ static bool IsResumableMIRType(MIRType type) {
     case MIRType::Pointer:
     case MIRType::Shape:
     case MIRType::ObjectGroup:
-    case MIRType::Doublex2:  // NYI, see also RSimdBox::recover
     case MIRType::Int64:
     case MIRType::RefOrNull:
     case MIRType::StackResults:
@@ -3650,7 +3643,7 @@ static bool TryOptimizeLoadObjectOrNull(MDefinition* def,
         break;
       case MDefinition::Opcode::StoreFixedSlot:
         break;
-      case MDefinition::Opcode::StoreSlot:
+      case MDefinition::Opcode::StoreDynamicSlot:
         break;
       case MDefinition::Opcode::ToObjectOrNull:
         if (!eliminateList.append(ndef->toToObjectOrNull())) {
@@ -3681,7 +3674,7 @@ static bool TryOptimizeLoadObjectOrNull(MDefinition* def,
   bool foundUse = false;
   for (MUseDefIterator iter(def); iter; ++iter) {
     MDefinition* ndef = iter.def();
-    if (!ndef->isStoreFixedSlot() && !ndef->isStoreSlot()) {
+    if (!ndef->isStoreFixedSlot() && !ndef->isStoreDynamicSlot()) {
       foundUse = true;
       break;
     }
@@ -3786,7 +3779,7 @@ bool jit::EliminateRedundantChecks(MIRGraph& graph) {
           }
           break;
         case MDefinition::Opcode::LoadFixedSlot:
-        case MDefinition::Opcode::LoadSlot:
+        case MDefinition::Opcode::LoadDynamicSlot:
           if (!TryOptimizeLoadObjectOrNull(def, &eliminateList)) {
             return false;
           }
@@ -3841,8 +3834,8 @@ static bool NeedsKeepAlive(MInstruction* slotsOrElements, MInstruction* use) {
       case MDefinition::Opcode::Constant:
       case MDefinition::Opcode::KeepAliveObject:
       case MDefinition::Opcode::Unbox:
-      case MDefinition::Opcode::LoadSlot:
-      case MDefinition::Opcode::StoreSlot:
+      case MDefinition::Opcode::LoadDynamicSlot:
+      case MDefinition::Opcode::StoreDynamicSlot:
       case MDefinition::Opcode::LoadFixedSlot:
       case MDefinition::Opcode::StoreFixedSlot:
       case MDefinition::Opcode::LoadElement:
@@ -3880,7 +3873,7 @@ bool jit::AddKeepAliveInstructions(MIRGraph& graph) {
           MOZ_ASSERT(!ins->hasUses());
           continue;
         case MDefinition::Opcode::Elements:
-        case MDefinition::Opcode::TypedArrayElements:
+        case MDefinition::Opcode::ArrayBufferViewElements:
           MOZ_ASSERT(ins->numOperands() == 1);
           ownerObject = ins->getOperand(0);
           break;
@@ -4890,6 +4883,112 @@ void jit::UnmarkLoopBlocks(MIRGraph& graph, MBasicBlock* header) {
 #endif
 }
 
+bool jit::FoldLoadsWithUnbox(MIRGenerator* mir, MIRGraph& graph) {
+  // This pass folds MLoadFixedSlot, MLoadDynamicSlot, MLoadElement instructions
+  // followed by MUnbox into a single instruction. For LoadElement this allows
+  // us to fuse the hole check with the type check for the unbox.
+
+  for (MBasicBlockIterator block(graph.begin()); block != graph.end();
+       block++) {
+    if (mir->shouldCancel("FoldLoadsWithUnbox")) {
+      return false;
+    }
+
+    for (MInstructionIterator insIter(block->begin());
+         insIter != block->end();) {
+      MInstruction* ins = *insIter;
+      insIter++;
+
+      // We're only interested in loads producing a Value.
+      if (!ins->isLoadFixedSlot() && !ins->isLoadDynamicSlot() &&
+          !ins->isLoadElement()) {
+        continue;
+      }
+      if (ins->type() != MIRType::Value) {
+        continue;
+      }
+
+      MInstruction* load = ins;
+
+      // Ensure there's a single def-use (ignoring resume points) and it's an
+      // unbox.
+      MDefinition* defUse = load->maybeSingleDefUse();
+      if (!defUse) {
+        continue;
+      }
+      if (!defUse->isUnbox()) {
+        continue;
+      }
+
+      // For now require the load and unbox to be in the same block. This isn't
+      // strictly necessary but it's the common case and could prevent bailouts
+      // when moving the unbox before a loop.
+      MUnbox* unbox = defUse->toUnbox();
+      if (unbox->block() != *block) {
+        continue;
+      }
+
+      MOZ_ASSERT(!IsMagicType(unbox->type()));
+
+      // If this is a LoadElement that needs a hole check, we only support
+      // folding it with a fallible unbox so that we can eliminate the hole
+      // check.
+      if (load->isLoadElement() && load->toLoadElement()->needsHoleCheck() &&
+          !unbox->fallible()) {
+        continue;
+      }
+
+      // Combine the load and unbox into a single MIR instruction.
+
+      MIRType type = unbox->type();
+      MUnbox::Mode mode = unbox->mode();
+      BailoutKind bailoutKind = unbox->bailoutKindUnchecked();
+
+      MInstruction* replacement;
+      switch (load->op()) {
+        case MDefinition::Opcode::LoadFixedSlot: {
+          auto* loadIns = load->toLoadFixedSlot();
+          replacement = MLoadFixedSlotAndUnbox::New(
+              graph.alloc(), loadIns->object(), loadIns->slot(), mode, type,
+              bailoutKind);
+          break;
+        }
+        case MDefinition::Opcode::LoadDynamicSlot: {
+          auto* loadIns = load->toLoadDynamicSlot();
+          replacement = MLoadDynamicSlotAndUnbox::New(
+              graph.alloc(), loadIns->slots(), loadIns->slot(), mode, type,
+              bailoutKind);
+          break;
+        }
+        case MDefinition::Opcode::LoadElement: {
+          auto* loadIns = load->toLoadElement();
+          MOZ_ASSERT(!loadIns->loadDoubles(),
+                     "Unexpected loadDoubles with MIRType::Value");
+          MOZ_ASSERT_IF(loadIns->needsHoleCheck(), unbox->fallible());
+          replacement = MLoadElementAndUnbox::New(
+              graph.alloc(), loadIns->elements(), loadIns->index(), mode, type,
+              bailoutKind);
+          break;
+        }
+        default:
+          MOZ_CRASH("Unexpected instruction");
+      }
+
+      block->insertBefore(load, replacement);
+      unbox->replaceAllUsesWith(replacement);
+      load->replaceAllUsesWith(replacement);
+
+      if (*insIter == unbox) {
+        insIter++;
+      }
+      block->discard(unbox);
+      block->discard(load);
+    }
+  }
+
+  return true;
+}
+
 // Reorder the blocks in the loop starting at the given header to be contiguous.
 static void MakeLoopContiguous(MIRGraph& graph, MBasicBlock* header,
                                size_t numMarked) {
@@ -5035,6 +5134,10 @@ void jit::DumpMIRExpressions(MIRGraph& graph, const CompileInfo& info,
     }
   }
 
-  out.printf("===== %s:%u =====\n", info.filename(), info.lineno());
+  if (info.compilingWasm()) {
+    out.printf("===== end wasm MIR dump =====\n");
+  } else {
+    out.printf("===== %s:%u =====\n", info.filename(), info.lineno());
+  }
 #endif
 }

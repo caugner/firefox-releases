@@ -6,18 +6,50 @@ import contextlib
 import sys
 import os
 import random
+from io import StringIO
+from redo import retry
+import requests
+from collections import defaultdict
+from pathlib import Path
+import tempfile
 
-from six import StringIO
+
+RETRY_SLEEP = 10
 
 
 @contextlib.contextmanager
-def silence():
+def silence(layer=None):
+    if layer is None:
+        to_patch = (MachLogger,)
+    else:
+        to_patch = (MachLogger, layer)
+
+    meths = ("info", "debug", "warning", "error", "log")
+    patched = defaultdict(dict)
+
+    def _vacuum(*args, **kw):
+        pass
+
+    for obj in to_patch:
+        for meth in meths:
+            if not hasattr(obj, meth):
+                continue
+            patched[obj][meth] = getattr(obj, meth)
+            setattr(obj, meth, _vacuum)
+
     oldout, olderr = sys.stdout, sys.stderr
     try:
         sys.stdout, sys.stderr = StringIO(), StringIO()
-        yield
+        sys.stdout.fileno = sys.stderr.fileno = lambda: -1
+        yield sys.stdout, sys.stderr
     finally:
         sys.stdout, sys.stderr = oldout, olderr
+        for obj, meths in patched.items():
+            for name, old_func in meths.items():
+                try:
+                    setattr(obj, name, old_func)
+                except Exception:
+                    pass
 
 
 def host_platform():
@@ -73,26 +105,87 @@ def install_package(virtualenv_manager, package):
         if site_packages.startswith(venv_site_lib):
             # already installed in this venv, we can skip
             return
-    virtualenv_manager._run_pip(["install", package])
+    with silence():
+        virtualenv_manager._run_pip(["install", package])
 
 
 def build_test_list(tests, randomized=False):
+    """Collects tests given a list of directories, files and URLs.
+
+    Returns a tuple containing the list of tests found and a temp dir for tests
+    that were downloaded from an URL.
+    """
+    temp_dir = None
+
     if isinstance(tests, str):
         tests = [tests]
     res = []
     for test in tests:
-        if os.path.isfile(test):
-            res.append(test)
-        elif os.path.isdir(test):
-            for root, dirs, files in os.walk(test):
-                for file in files:
-                    if not file.startswith("perftest"):
-                        continue
-                    res.append(os.path.join(root, file))
+        if test.startswith("http"):
+            if temp_dir is None:
+                temp_dir = tempfile.mkdtemp()
+            target = Path(temp_dir, test.split("/")[-1])
+            download_file(test, target)
+            res.append(str(target))
+            continue
+
+        test = Path(test)
+
+        if test.is_file():
+            res.append(str(test))
+        elif test.is_dir():
+            for file in test.rglob("perftest_*.js"):
+                res.append(str(file))
     if not randomized:
         res.sort()
     else:
         # random shuffling is used to make sure
         # we don't always run tests in the same order
         random.shuffle(res)
-    return res
+
+    return res, temp_dir
+
+
+def download_file(url, target, retry_sleep=RETRY_SLEEP, attempts=3):
+    """Downloads a file, given an URL in the target path.
+
+    The function will attempt several times on failures.
+    """
+
+    def _download_file(url, target):
+        req = requests.get(url, stream=True, timeout=30)
+        target_dir = target.parent.resolve()
+        if str(target_dir) != "":
+            target_dir.mkdir(exist_ok=True)
+
+        with target.open("wb") as f:
+            for chunk in req.iter_content(chunk_size=1024):
+                if not chunk:
+                    continue
+                f.write(chunk)
+                f.flush()
+        return target
+
+    return retry(
+        _download_file,
+        args=(url, target),
+        attempts=attempts,
+        sleeptime=retry_sleep,
+        jitter=0,
+    )
+
+
+@contextlib.contextmanager
+def temporary_env(**env):
+    old = {}
+    for key, value in env.items():
+        old[key] = os.environ.get(key)
+        os.environ[key] = value
+    try:
+        yield
+    finally:
+        for key, value in old.items():
+            if value is None:
+                del os.environ[key]
+            else:
+                os.environ[key] = value

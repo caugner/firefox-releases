@@ -13,8 +13,7 @@
 
 #include "jspubtd.h"
 
-#include "vm/CheckIsCallableKind.h"  // CheckIsCallableKind
-#include "vm/CheckIsObjectKind.h"    // CheckIsObjectKind
+#include "vm/CheckIsObjectKind.h"  // CheckIsObjectKind
 #include "vm/Iteration.h"
 #include "vm/Stack.h"
 
@@ -181,18 +180,18 @@ extern bool InternalConstructWithProvidedThis(JSContext* cx, HandleValue fval,
                                               MutableHandleValue rval);
 
 /*
- * Executes a script with the given scopeChain/this. The 'type' indicates
- * whether this is eval code or global code. To support debugging, the
- * evalFrame parameter can point to an arbitrary frame in the context's call
+ * Executes a script with the given envChain. To support debugging, the
+ * evalInFrame parameter can point to an arbitrary frame in the context's call
  * stack to simulate executing an eval in that frame.
  */
 extern bool ExecuteKernel(JSContext* cx, HandleScript script,
-                          JSObject& scopeChain, const Value& newTargetVal,
-                          AbstractFramePtr evalInFrame, Value* result);
+                          HandleObject envChainArg, HandleValue newTargetValue,
+                          AbstractFramePtr evalInFrame,
+                          MutableHandleValue result);
 
-/* Execute a script with the given scopeChain as global code. */
-extern bool Execute(JSContext* cx, HandleScript script, JSObject& scopeChain,
-                    Value* rval);
+/* Execute a script with the given envChain as global code. */
+extern bool Execute(JSContext* cx, HandleScript script, HandleObject envChain,
+                    MutableHandleValue rval);
 
 class ExecuteState;
 class InvokeState;
@@ -200,7 +199,7 @@ class InvokeState;
 // RunState is passed to RunScript and RunScript then either passes it to the
 // interpreter or to the JITs. RunState contains all information we need to
 // construct an interpreter or JIT frame.
-class RunState {
+class MOZ_RAII RunState {
  protected:
   enum Kind { Execute, Invoke };
   Kind kind_;
@@ -236,24 +235,24 @@ class RunState {
 };
 
 // Eval or global script.
-class ExecuteState : public RunState {
+class MOZ_RAII ExecuteState : public RunState {
   RootedValue newTargetValue_;
-  RootedObject envChain_;
+  HandleObject envChain_;
 
   AbstractFramePtr evalInFrame_;
-  Value* result_;
+  MutableHandleValue result_;
 
  public:
-  ExecuteState(JSContext* cx, JSScript* script, const Value& newTargetValue,
-               JSObject& envChain, AbstractFramePtr evalInFrame, Value* result)
+  ExecuteState(JSContext* cx, JSScript* script, HandleValue newTargetValue,
+               HandleObject envChain, AbstractFramePtr evalInFrame,
+               MutableHandleValue result)
       : RunState(cx, Execute, script),
         newTargetValue_(cx, newTargetValue),
-        envChain_(cx, &envChain),
+        envChain_(envChain),
         evalInFrame_(evalInFrame),
         result_(result) {}
 
   Value newTarget() const { return newTargetValue_; }
-  void setNewTarget(const Value& v) { newTargetValue_ = v; }
   Value* addressOfNewTarget() { return newTargetValue_.address(); }
 
   JSObject* environmentChain() const { return envChain_; }
@@ -261,15 +260,11 @@ class ExecuteState : public RunState {
 
   InterpreterFrame* pushInterpreterFrame(JSContext* cx);
 
-  void setReturnValue(const Value& v) {
-    if (result_) {
-      *result_ = v;
-    }
-  }
+  void setReturnValue(const Value& v) { result_.set(v); }
 };
 
 // Data to invoke a function.
-class InvokeState final : public RunState {
+class MOZ_RAII InvokeState final : public RunState {
   const CallArgs& args_;
   MaybeConstruct construct_;
 
@@ -647,12 +642,12 @@ JSObject* NewObjectOperationWithTemplate(JSContext* cx,
                                          HandleObject templateObject);
 JSObject* CreateThisWithTemplate(JSContext* cx, HandleObject templateObject);
 
-JSObject* NewArrayOperation(JSContext* cx, HandleScript script, jsbytecode* pc,
-                            uint32_t length,
-                            NewObjectKind newKind = GenericObject);
+ArrayObject* NewArrayOperation(JSContext* cx, HandleScript script,
+                               jsbytecode* pc, uint32_t length,
+                               NewObjectKind newKind = GenericObject);
 
-JSObject* NewArrayOperationWithTemplate(JSContext* cx,
-                                        HandleObject templateObject);
+ArrayObject* NewArrayOperationWithTemplate(JSContext* cx,
+                                           HandleObject templateObject);
 
 ArrayObject* NewArrayCopyOnWriteOperation(JSContext* cx, HandleScript script,
                                           jsbytecode* pc);
@@ -680,8 +675,6 @@ void ReportRuntimeRedeclaration(JSContext* cx, HandlePropertyName name,
                                 const char* redeclKind);
 
 bool ThrowCheckIsObject(JSContext* cx, CheckIsObjectKind kind);
-
-bool ThrowCheckIsCallable(JSContext* cx, CheckIsCallableKind kind);
 
 bool ThrowUninitializedThis(JSContext* cx);
 

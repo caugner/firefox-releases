@@ -19,6 +19,7 @@
 #include "nsContentUtils.h"
 #include "nsContentPolicyUtils.h"
 #include "nsNetUtil.h"
+#include "mozilla/net/DocumentLoadListener.h"
 
 using namespace mozilla;
 
@@ -68,13 +69,11 @@ bool subjectToCSP(nsIURI* aURI, nsContentPolicyType aContentType) {
   // hence we use protocol flags to accomplish that, but we also
   // want resource:, chrome: and moz-icon to be subject to CSP
   // (which also use URI_IS_LOCAL_RESOURCE).
-  // Exception to the rule are images, styles, localization DTDs,
-  // and XBLs using a scheme of resource: or chrome:
-  bool isImgOrStyleOrDTDorXBL =
-      contentType == nsIContentPolicy::TYPE_IMAGE ||
-      contentType == nsIContentPolicy::TYPE_STYLESHEET ||
-      contentType == nsIContentPolicy::TYPE_DTD ||
-      contentType == nsIContentPolicy::TYPE_XBL;
+  // Exception to the rule are images, styles, and localization
+  // DTDs using a scheme of resource: or chrome:
+  bool isImgOrStyleOrDTD = contentType == nsIContentPolicy::TYPE_IMAGE ||
+                           contentType == nsIContentPolicy::TYPE_STYLESHEET ||
+                           contentType == nsIContentPolicy::TYPE_DTD;
   if (aURI->SchemeIs("resource")) {
     nsAutoCString uriSpec;
     aURI->GetSpec(uriSpec);
@@ -82,11 +81,11 @@ bool subjectToCSP(nsIURI* aURI, nsContentPolicyType aContentType) {
     if (StringBeginsWith(uriSpec, NS_LITERAL_CSTRING("resource://pdf.js/"))) {
       return false;
     }
-    if (!isImgOrStyleOrDTDorXBL) {
+    if (!isImgOrStyleOrDTD) {
       return true;
     }
   }
-  if (aURI->SchemeIs("chrome") && !isImgOrStyleOrDTDorXBL) {
+  if (aURI->SchemeIs("chrome") && !isImgOrStyleOrDTD) {
     return true;
   }
   if (aURI->SchemeIs("moz-icon")) {
@@ -238,10 +237,16 @@ CSPService::AsyncOnChannelRedirect(nsIChannel* oldChannel,
   if (XRE_IsE10sParentProcess()) {
     nsCOMPtr<nsIParentChannel> parentChannel;
     NS_QueryNotificationCallbacks(oldChannel, parentChannel);
+    RefPtr<net::DocumentLoadListener> docListener =
+        do_QueryObject(parentChannel);
     // Since this is an IPC'd channel we do not have access to the request
     // context. In turn, we do not have an event target for policy violations.
     // Enforce the CSP check in the content process where we have that info.
-    if (parentChannel) {
+    // We allow redirect checks to run for document loads via
+    // DocumentLoadListener, since these are fully supported and we don't
+    // expose the redirects to the content process. We can't do this for all
+    // request types yet because we don't serialize nsICSPEventListener.
+    if (parentChannel && !docListener) {
       return NS_OK;
     }
   }

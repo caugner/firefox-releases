@@ -235,17 +235,24 @@ bool BaselineInspector::dimorphicStub(jsbytecode* pc, ICStub** pfirst,
 
 // Process the type guards in the stub in order to reveal the
 // underlying operation.
-static void SkipBinaryGuards(CacheIRReader& reader) {
+static void SkipBinaryGuards(CacheIRReader& reader, bool* sawStringOperand) {
   while (true) {
     // Two skip opcodes
     if (reader.matchOp(CacheOp::GuardToInt32) ||
-        reader.matchOp(CacheOp::GuardType) ||
+        reader.matchOp(CacheOp::GuardNonDoubleType) ||
         reader.matchOp(CacheOp::TruncateDoubleToUInt32) ||
-        reader.matchOp(CacheOp::GuardToBoolean) ||
-        reader.matchOp(CacheOp::GuardAndGetNumberFromString) ||
-        reader.matchOp(CacheOp::GuardAndGetInt32FromString)) {
+        reader.matchOp(CacheOp::GuardToBoolean)) {
       reader.skip();  // Skip over operandId
       reader.skip();  // Skip over result/type.
+      continue;
+    }
+    if (reader.matchOp(CacheOp::GuardAndGetNumberFromString) ||
+        reader.matchOp(CacheOp::GuardAndGetInt32FromString)) {
+      if (sawStringOperand) {
+        *sawStringOperand = true;
+      }
+      reader.skip();  // Skip over operandId
+      reader.skip();  // Skip over result.
       continue;
     }
 
@@ -261,10 +268,11 @@ static void SkipBinaryGuards(CacheIRReader& reader) {
   }
 }
 
-static MIRType ParseCacheIRStub(ICStub* stub) {
+static MIRType ParseCacheIRStub(ICStub* stub,
+                                bool* sawStringOperand = nullptr) {
   ICCacheIR_Regular* cacheirStub = stub->toCacheIR_Regular();
   CacheIRReader reader(cacheirStub->stubInfo());
-  SkipBinaryGuards(reader);
+  SkipBinaryGuards(reader, sawStringOperand);
   switch (reader.readOp()) {
     case CacheOp::LoadUndefinedResult:
       return MIRType::Undefined;
@@ -548,11 +556,12 @@ static bool TryToSpecializeBinaryArithOp(ICStub** stubs, uint32_t nstubs,
   DebugOnly<bool> sawInt32 = false;
   bool sawDouble = false;
   bool sawOther = false;
+  bool sawStringOperand = false;
 
   for (uint32_t i = 0; i < nstubs; i++) {
     switch (stubs[i]->kind()) {
       case ICStub::CacheIR_Regular:
-        switch (ParseCacheIRStub(stubs[i])) {
+        switch (ParseCacheIRStub(stubs[i], &sawStringOperand)) {
           case MIRType::Double:
             sawDouble = true;
             break;
@@ -571,6 +580,14 @@ static bool TryToSpecializeBinaryArithOp(ICStub** stubs, uint32_t nstubs,
   }
 
   if (sawOther) {
+    return false;
+  }
+
+  // Ion doesn't support string operands for binary arithmetic operations, so
+  // return false when we did see one. We don't test for strings in Ion itself,
+  // because Ion generally doesn't have sufficient type information when it
+  // falls back to the baseline inspector.
+  if (sawStringOperand) {
     return false;
   }
 
@@ -975,7 +992,7 @@ static bool AddCacheIRGetPropFunction(
   //   [..Id Guard..]
   //   [..WindowProxy innerization..]
   //   <GuardReceiver objId>
-  //   Call(Scripted|Native)GetterResult objId
+  //   (Call(Scripted|Native)Getter|TypedArrayLength)Result objId
   //
   // Or a getter on the prototype:
   //
@@ -985,7 +1002,7 @@ static bool AddCacheIRGetPropFunction(
   //   <GuardReceiver objId>
   //   LoadObject holderId
   //   GuardShape holderId
-  //   Call(Scripted|Native)GetterResult objId
+  //   (Call(Scripted|Native)Getter|TypedArrayLength)Result objId
   //
   // If |innerized| is true, we replaced a WindowProxy with the Window
   // object and we're only interested in Baseline getter stubs that performed
@@ -1044,7 +1061,8 @@ static bool AddCacheIRGetPropFunction(
   }
 
   if (reader.matchOp(CacheOp::CallScriptedGetterResult, objId) ||
-      reader.matchOp(CacheOp::CallNativeGetterResult, objId)) {
+      reader.matchOp(CacheOp::CallNativeGetterResult, objId) ||
+      reader.matchOp(CacheOp::LoadTypedArrayLengthResult, objId)) {
     // This is an own property getter, the first case.
     MOZ_ASSERT(receiver.getShape());
     MOZ_ASSERT(!receiver.getGroup());
@@ -1081,7 +1099,8 @@ static bool AddCacheIRGetPropFunction(
       stub->stubInfo()->getStubField<Shape*>(stub, reader.stubOffset());
 
   if (!reader.matchOp(CacheOp::CallScriptedGetterResult, objId) &&
-      !reader.matchOp(CacheOp::CallNativeGetterResult, objId)) {
+      !reader.matchOp(CacheOp::CallNativeGetterResult, objId) &&
+      !reader.matchOp(CacheOp::LoadTypedArrayLengthResult, objId)) {
     return false;
   }
 
@@ -1508,7 +1527,7 @@ static MIRType GetCacheIRExpectedInputType(ICCacheIR_Monitored* stub) {
   if (reader.matchOp(CacheOp::GuardIsNumber, ValOperandId(0))) {
     return MIRType::Double;
   }
-  if (reader.matchOp(CacheOp::GuardType, ValOperandId(0))) {
+  if (reader.matchOp(CacheOp::GuardNonDoubleType, ValOperandId(0))) {
     ValueType type = reader.valueType();
     return MIRTypeFromValueType(JSValueType(type));
   }

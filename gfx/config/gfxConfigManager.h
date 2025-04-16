@@ -30,6 +30,7 @@ class gfxConfigManager {
         mWrForceAngle(false),
         mWrForceAngleNoGPUProcess(false),
         mWrDCompWinEnabled(false),
+        mWrCompositorDCompRequired(false),
         mWrPictureCaching(false),
         mWrPartialPresent(false),
         mGPUProcessAllowSoftware(false),
@@ -40,7 +41,9 @@ class gfxConfigManager {
         mDisableHwCompositingNoWr(false),
         mIsNightly(false),
         mSafeMode(false),
-        mIsWin10OrLater(false) {}
+        mIsWin10OrLater(false),
+        mIsWindows(false),
+        mDwmCompositionEnabled(false) {}
 
   void Init();
 
@@ -76,6 +79,7 @@ class gfxConfigManager {
   bool mWrForceAngle;
   bool mWrForceAngleNoGPUProcess;
   bool mWrDCompWinEnabled;
+  bool mWrCompositorDCompRequired;
   bool mWrPictureCaching;
   bool mWrPartialPresent;
   bool mGPUProcessAllowSoftware;
@@ -95,6 +99,8 @@ class gfxConfigManager {
   bool mIsNightly;
   bool mSafeMode;
   bool mIsWin10OrLater;
+  bool mIsWindows;
+  bool mDwmCompositionEnabled;
 };
 
 }  // namespace gfx

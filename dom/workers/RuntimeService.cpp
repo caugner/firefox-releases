@@ -298,12 +298,17 @@ void LoadContextOptions(const char* aPrefName, void* /* aClosure */) {
       .setWasmMultiValue(
           GetWorkerPref<bool>(NS_LITERAL_CSTRING("wasm_multi_value")))
 #endif
+#ifdef ENABLE_WASM_SIMD
+      .setWasmSimd(GetWorkerPref<bool>(NS_LITERAL_CSTRING("wasm_simd")))
+#endif
 #ifdef ENABLE_WASM_REFTYPES
       .setWasmGc(GetWorkerPref<bool>(NS_LITERAL_CSTRING("wasm_gc")))
 #endif
       .setWasmVerbose(GetWorkerPref<bool>(NS_LITERAL_CSTRING("wasm_verbose")))
       .setThrowOnAsmJSValidationFailure(GetWorkerPref<bool>(
           NS_LITERAL_CSTRING("throw_on_asmjs_validation_failure")))
+      .setSourcePragmas(
+          GetWorkerPref<bool>(NS_LITERAL_CSTRING("source_pragmas")))
       .setAsyncStack(GetWorkerPref<bool>(NS_LITERAL_CSTRING("asyncstack")));
 
   nsCOMPtr<nsIXULRuntime> xr = do_GetService("@mozilla.org/xre/runtime;1");
@@ -1629,15 +1634,17 @@ class CrashIfHangingRunnable : public WorkerControlRunnable {
     return NS_OK;
   }
 
-  void DispatchAndWait() {
+  bool DispatchAndWait() {
     MonitorAutoLock lock(mMonitor);
 
     if (!Dispatch()) {
-      mMsg.Assign("Dispatch Error");
-      return;
+      // The worker is already dead but the main thread still didn't remove it
+      // from RuntimeService's registry.
+      return false;
     }
 
     lock.Wait();
+    return true;
   }
 
   const nsCString& MsgData() const { return mMsg; }
@@ -1652,29 +1659,41 @@ class CrashIfHangingRunnable : public WorkerControlRunnable {
   nsCString mMsg;
 };
 
+struct ActiveWorkerStats {
+  template <uint32_t ActiveWorkerStats::*Category>
+  void Update(const nsTArray<WorkerPrivate*>& aWorkers) {
+    for (const auto worker : aWorkers) {
+      RefPtr<CrashIfHangingRunnable> runnable =
+          new CrashIfHangingRunnable(worker);
+      if (runnable->DispatchAndWait()) {
+        ++(this->*Category);
+
+        // BC: Busy Count
+        mMessage.AppendPrintf("-BC:%d", worker->BusyCount());
+        mMessage.Append(runnable->MsgData());
+      }
+    }
+  }
+
+  uint32_t mWorkers = 0;
+  uint32_t mServiceWorkers = 0;
+  nsCString mMessage;
+};
+
 }  // namespace
 
 void RuntimeService::CrashIfHanging() {
   MutexAutoLock lock(mMutex);
 
-  if (mDomainMap.IsEmpty()) {
-    return;
-  }
-
-  uint32_t activeWorkers = 0;
-  uint32_t activeServiceWorkers = 0;
+  ActiveWorkerStats activeStats;
   uint32_t inactiveWorkers = 0;
-
-  nsTArray<WorkerPrivate*> workers;
 
   for (auto iter = mDomainMap.Iter(); !iter.Done(); iter.Next()) {
     WorkerDomainInfo* aData = iter.UserData();
 
-    activeWorkers += aData->mActiveWorkers.Length();
-    activeServiceWorkers += aData->mActiveServiceWorkers.Length();
-
-    workers.AppendElements(aData->mActiveWorkers);
-    workers.AppendElements(aData->mActiveServiceWorkers);
+    activeStats.Update<&ActiveWorkerStats::mWorkers>(aData->mActiveWorkers);
+    activeStats.Update<&ActiveWorkerStats::mServiceWorkers>(
+        aData->mActiveServiceWorkers);
 
     // These might not be top-level workers...
     for (uint32_t index = 0; index < aData->mQueuedWorkers.Length(); index++) {
@@ -1685,28 +1704,18 @@ void RuntimeService::CrashIfHanging() {
     }
   }
 
-  // We must have something pending...
-  MOZ_DIAGNOSTIC_ASSERT(activeWorkers + activeServiceWorkers + inactiveWorkers);
+  if (activeStats.mWorkers + activeStats.mServiceWorkers + inactiveWorkers ==
+      0) {
+    return;
+  }
 
   nsCString msg;
 
   // A: active Workers | S: active ServiceWorkers | Q: queued Workers
   msg.AppendPrintf("Workers Hanging - %d|A:%d|S:%d|Q:%d", mShuttingDown ? 1 : 0,
-                   activeWorkers, activeServiceWorkers, inactiveWorkers);
-
-  // For each thread, let's print some data to know what is going wrong.
-  for (uint32_t i = 0; i < workers.Length(); ++i) {
-    WorkerPrivate* workerPrivate = workers[i];
-
-    // BC: Busy Count
-    msg.AppendPrintf("-BC:%d", workerPrivate->BusyCount());
-
-    RefPtr<CrashIfHangingRunnable> runnable =
-        new CrashIfHangingRunnable(workerPrivate);
-    runnable->DispatchAndWait();
-
-    msg.Append(runnable->MsgData());
-  }
+                   activeStats.mWorkers, activeStats.mServiceWorkers,
+                   inactiveWorkers);
+  msg.Append(activeStats.mMessage);
 
   // This string will be leaked.
   MOZ_CRASH_UNSAFE(strdup(msg.BeginReading()));
@@ -2026,7 +2035,7 @@ void RuntimeService::UpdateAllWorkerLanguages(
     const nsTArray<nsString>& aLanguages) {
   MOZ_ASSERT(NS_IsMainThread());
 
-  mNavigatorProperties.mLanguages = aLanguages;
+  mNavigatorProperties.mLanguages = aLanguages.Clone();
   BROADCAST_ALL_WORKERS(UpdateLanguages, aLanguages);
 }
 
@@ -2210,8 +2219,9 @@ WorkerThreadPrimaryRunnable::Run() {
   auto failureCleanup = MakeScopeExit([&]() {
     // The creation of threadHelper above is the point at which a worker is
     // considered to have run, because the `mPreStartRunnables` are all
-    // re-dispatched after `mThread` is set.
-    mWorkerPrivate->ScheduleDeletion(WorkerPrivate::WorkerRan);
+    // re-dispatched after `mThread` is set.  We need to let the WorkerPrivate
+    // know so it can clean up the various event loops and delete the worker.
+    mWorkerPrivate->RunLoopNeverRan();
   });
 
   mWorkerPrivate->AssertIsOnWorkerThread();
@@ -2222,8 +2232,6 @@ WorkerThreadPrimaryRunnable::Run() {
   mWorkerPrivate->EnsurePerformanceCounter();
 
   if (NS_WARN_IF(!BackgroundChild::GetOrCreateForCurrentThread())) {
-    WorkerErrorReport::CreateAndDispatchGenericErrorRunnableToParent(
-        mWorkerPrivate);
     return NS_ERROR_FAILURE;
   }
 
@@ -2239,8 +2247,6 @@ WorkerThreadPrimaryRunnable::Run() {
     JSContext* cx = context->Context();
 
     if (!InitJSContextForWorker(mWorkerPrivate, cx)) {
-      WorkerErrorReport::CreateAndDispatchGenericErrorRunnableToParent(
-          mWorkerPrivate);
       return NS_ERROR_FAILURE;
     }
 

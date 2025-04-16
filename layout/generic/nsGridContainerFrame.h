@@ -50,10 +50,10 @@ struct ComputedGridTrackInfo {
         mNumExplicitTracks(aNumExplicitTracks),
         mStartFragmentTrack(aStartFragmentTrack),
         mEndFragmentTrack(aEndFragmentTrack),
-        mPositions(aPositions),
-        mSizes(aSizes),
-        mStates(aStates),
-        mRemovedRepeatTracks(aRemovedRepeatTracks),
+        mPositions(std::move(aPositions)),
+        mSizes(std::move(aSizes)),
+        mStates(std::move(aStates)),
+        mRemovedRepeatTracks(std::move(aRemovedRepeatTracks)),
         mResolvedLineNames(std::move(aResolvedLineNames)),
         mRepeatFirstTrack(aRepeatFirstTrack),
         mIsSubgrid(aIsSubgrid),
@@ -84,10 +84,10 @@ struct ComputedGridLineInfo {
       const nsTArray<RefPtr<nsAtom>>& aNamesBefore,
       const nsTArray<RefPtr<nsAtom>>& aNamesAfter,
       nsTArray<RefPtr<nsAtom>>&& aNamesFollowingRepeat)
-      : mNames(aNames),
-        mNamesBefore(aNamesBefore),
-        mNamesAfter(aNamesAfter),
-        mNamesFollowingRepeat(aNamesFollowingRepeat) {}
+      : mNames(std::move(aNames)),
+        mNamesBefore(aNamesBefore.Clone()),
+        mNamesAfter(aNamesAfter.Clone()),
+        mNamesFollowingRepeat(std::move(aNamesFollowingRepeat)) {}
   nsTArray<nsTArray<RefPtr<nsAtom>>> mNames;
   nsTArray<RefPtr<nsAtom>> mNamesBefore;
   nsTArray<RefPtr<nsAtom>> mNamesAfter;
@@ -360,8 +360,6 @@ class nsGridContainerFrame final : public nsContainerFrame {
       const mozilla::StyleOwnedSlice<mozilla::StyleCustomIdent>;
   void AddImplicitNamedAreas(mozilla::Span<LineNameList>);
 
-  void NormalizeChildLists();
-
   /**
    * Reflow and place our children.
    * @return the consumed size of all of this grid container's continuations
@@ -377,9 +375,6 @@ class nsGridContainerFrame final : public nsContainerFrame {
    */
   nscoord IntrinsicISize(gfxContext* aRenderingContext,
                          IntrinsicISizeType aConstraint);
-
-  // Helper for AppendFrames / InsertFrames.
-  void NoteNewChildren(ChildListID aListID, const nsFrameList& aFrameList);
 
   bool GetBBaseline(BaselineSharingGroup aBaselineGroup,
                     nscoord* aResult) const {
@@ -447,10 +442,6 @@ class nsGridContainerFrame final : public nsContainerFrame {
       const nsTArray<GridItemInfo>& aGridItems, LineRange GridArea::*aMajor,
       LineRange GridArea::*aMinor, uint32_t aFragmentStartTrack,
       uint32_t aFirstExcludedTrack);
-
-#ifdef DEBUG
-  void SanityCheckGridItemsBeforeReflow() const;
-#endif  // DEBUG
 
   /**
    * Update our NS_STATE_GRID_IS_COL/ROW_SUBGRID bits and related subgrid state
@@ -554,13 +545,6 @@ class nsGridContainerFrame final : public nsContainerFrame {
 
   // Our baselines, one per BaselineSharingGroup per axis.
   PerLogicalAxis<PerBaseline<nscoord>> mBaseline;
-
-#ifdef DEBUG
-  // If true, NS_STATE_GRID_DID_PUSH_ITEMS may be set even though all pushed
-  // frames may have been removed.  This is used to suppress an assertion
-  // in case RemoveFrame removed all associated child frames.
-  bool mDidPushItemsBitMayLie{false};
-#endif
 };
 
 #endif /* nsGridContainerFrame_h___ */

@@ -62,14 +62,22 @@ XPCOMUtils.defineLazyServiceGetter(
   "nsIPushService"
 );
 
-const PREF_PDFJS_ENABLED_CACHE_STATE = "pdfjs.enabledCache.state";
+const PREF_PDFJS_ISDEFAULT_CACHE_STATE = "pdfjs.enabledCache.state";
+
+/**
+ * Fission-compatible JSProcess implementations.
+ * Each actor options object takes the form of a ProcessActorOptions dictionary.
+ * Detailed documentation of these options is in dom/docs/Fission.rst,
+ * available at https://firefox-source-docs.mozilla.org/dom/Fission.html#jsprocessactor
+ */
+let JSPROCESSACTORS = {};
 
 /**
  * Fission-compatible JSWindowActor implementations.
  * Detailed documentation of these is in dom/docs/Fission.rst,
  * available at https://firefox-source-docs.mozilla.org/dom/Fission.html#jswindowactor
  */
-let ACTORS = {
+let JSWINDOWACTORS = {
   AboutLogins: {
     parent: {
       moduleURI: "resource:///actors/AboutLoginsParent.jsm",
@@ -94,9 +102,25 @@ let ACTORS = {
         AboutLoginsSyncEnable: { wantUntrusted: true },
         AboutLoginsSyncOptions: { wantUntrusted: true },
         AboutLoginsUpdateLogin: { wantUntrusted: true },
+        AboutLoginsExportPasswords: { wantUntrusted: true },
       },
     },
     matches: ["about:logins", "about:logins?*"],
+  },
+
+  AboutNewInstall: {
+    parent: {
+      moduleURI: "resource:///actors/AboutNewInstallParent.jsm",
+    },
+    child: {
+      moduleURI: "resource:///actors/AboutNewInstallChild.jsm",
+
+      events: {
+        DOMWindowCreated: { capture: true },
+      },
+    },
+
+    matches: ["about:newinstall"],
   },
 
   AboutNewTab: {
@@ -393,6 +417,7 @@ let ACTORS = {
     // Only matching web pages, as opposed to internal about:, chrome: or
     // resource: pages. See https://developer.mozilla.org/en-US/docs/Mozilla/Add-ons/WebExtensions/Match_patterns
     matches: ["*://*/*"],
+    messageManagerGroups: ["browsers"],
     allFrames: true,
   },
 
@@ -420,14 +445,6 @@ let ACTORS = {
   Prompt: {
     parent: {
       moduleURI: "resource:///actors/PromptParent.jsm",
-    },
-    child: {
-      moduleURI: "resource:///actors/PromptChild.jsm",
-      events: {
-        pagehide: {
-          capture: true,
-        },
-      },
     },
     includeChrome: true,
     allFrames: true,
@@ -1168,7 +1185,8 @@ BrowserGlue.prototype = {
     os.addObserver(this, "handlersvc-store-initialized");
     os.addObserver(this, "shield-init-complete");
 
-    ActorManagerParent.addActors(ACTORS);
+    ActorManagerParent.addJSProcessActors(JSPROCESSACTORS);
+    ActorManagerParent.addJSWindowActors(JSWINDOWACTORS);
     ActorManagerParent.addLegacyActors(LEGACY_ACTORS);
     ActorManagerParent.flush();
 
@@ -1281,13 +1299,8 @@ BrowserGlue.prototype = {
     // handle any UI migration
     this._migrateUI();
 
-    if (Services.prefs.prefHasUserValue(PREF_PDFJS_ENABLED_CACHE_STATE)) {
-      Services.ppmm.sharedData.set(
-        "pdfjs.enabled",
-        Services.prefs.getBoolPref(PREF_PDFJS_ENABLED_CACHE_STATE)
-      );
-    } else {
-      PdfJs.earlyInit(this._isNewProfile);
+    if (!Services.prefs.prefHasUserValue(PREF_PDFJS_ISDEFAULT_CACHE_STATE)) {
+      PdfJs.checkIsDefault(this._isNewProfile);
     }
 
     listeners.init();
@@ -1967,12 +1980,13 @@ BrowserGlue.prototype = {
 
     let exceptions = 0;
     for (let permission of Services.perms.all) {
-      let uri = permission.principal.URI;
       // We consider just permissions set for http, https and file URLs.
       if (
         permission.type == "cookie" &&
         permission.capability == Ci.nsICookiePermission.ACCESS_SESSION &&
-        (uri.scheme == "http" || uri.scheme == "https" || uri.scheme == "file")
+        ["http", "https", "file"].some(scheme =>
+          permission.principal.schemeIs(scheme)
+        )
       ) {
         exceptions++;
       }
@@ -2085,6 +2099,38 @@ BrowserGlue.prototype = {
     _checkHTTPSOnlyPref();
   },
 
+  _monitorPioneerPref() {
+    const PREF_PIONEER_ID = "toolkit.telemetry.pioneerId";
+
+    const _checkPioneerPref = async () => {
+      for (let win of Services.wm.getEnumerator("navigator:browser")) {
+        win.document.getElementById(
+          "pioneer-button"
+        ).hidden = !Services.prefs.getStringPref(PREF_PIONEER_ID, null);
+      }
+    };
+
+    const windowListener = {
+      onOpenWindow(xulWindow) {
+        const win = xulWindow.docShell.domWindow;
+        win.addEventListener("load", () => {
+          const pioneerButton = win.document.getElementById("pioneer-button");
+          if (pioneerButton) {
+            pioneerButton.hidden = !Services.prefs.getStringPref(
+              PREF_PIONEER_ID,
+              null
+            );
+          }
+        });
+      },
+      onCloseWindow() {},
+    };
+
+    Services.prefs.addObserver(PREF_PIONEER_ID, _checkPioneerPref);
+    Services.wm.addListener(windowListener);
+    _checkPioneerPref();
+  },
+
   _showNewInstallModal() {
     // Allow other observers of the same topic to run while we open the dialog.
     Services.tm.dispatchToMainThread(() => {
@@ -2173,6 +2219,7 @@ BrowserGlue.prototype = {
     this._monitorScreenshotsPref();
     this._monitorWebcompatReporterPref();
     this._monitorHTTPSOnlyPref();
+    this._monitorPioneerPref();
 
     let pService = Cc["@mozilla.org/toolkit/profile-service;1"].getService(
       Ci.nsIToolkitProfileService
@@ -2386,13 +2433,6 @@ BrowserGlue.prototype = {
         },
       },
 
-      // Marionette needs to be initialized as very last step
-      {
-        task: () => {
-          Services.obs.notifyObservers(null, "marionette-startup-requested");
-        },
-      },
-
       // Run TRR performance measurements for DoH.
       {
         task: () => {
@@ -2420,6 +2460,22 @@ BrowserGlue.prototype = {
           }
         },
       },
+
+      // Marionette needs to be initialized as very last step
+      {
+        task: () => {
+          // Use idleDispatch a second time to run this after the per-window
+          // idle tasks.
+          ChromeUtils.idleDispatch(() => {
+            Services.obs.notifyObservers(
+              null,
+              "browser-startup-idle-tasks-finished"
+            );
+            Services.obs.notifyObservers(null, "marionette-startup-requested");
+          });
+        },
+      },
+      // Do NOT add anything after marionette initialization.
     ];
 
     for (let task of idleTasks) {
@@ -3067,7 +3123,7 @@ BrowserGlue.prototype = {
   _migrateUI: function BG__migrateUI() {
     // Use an increasing number to keep track of the current migration state.
     // Completely unrelated to the current Firefox release number.
-    const UI_VERSION = 94;
+    const UI_VERSION = 96;
     const BROWSER_DOCURL = AppConstants.BROWSER_CHROME_URL;
 
     if (!Services.prefs.prefHasUserValue("browser.migration.version")) {
@@ -3635,6 +3691,24 @@ BrowserGlue.prototype = {
       if (backupPort == socksPort) {
         Services.prefs.clearUserPref("network.proxy.backup.socks_port");
       }
+    }
+
+    if (currentUIVersion < 95) {
+      const oldPrefName = "media.autoplay.enabled.user-gestures-needed";
+      const oldPrefValue = Services.prefs.getBoolPref(oldPrefName, true);
+      const newPrefValue = oldPrefValue ? 0 : 1;
+      Services.prefs.setIntPref("media.autoplay.blocking_policy", newPrefValue);
+      Services.prefs.clearUserPref(oldPrefName);
+    }
+
+    if (currentUIVersion < 96) {
+      const oldPrefName = "browser.urlbar.openViewOnFocus";
+      const oldPrefValue = Services.prefs.getBoolPref(oldPrefName, true);
+      Services.prefs.setBoolPref(
+        "browser.urlbar.suggest.topsites",
+        oldPrefValue
+      );
+      Services.prefs.clearUserPref(oldPrefName);
     }
 
     // Update the migration version.

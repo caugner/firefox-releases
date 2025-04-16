@@ -22,73 +22,51 @@ add_task(async function test_interface() {
     constructor() {
       this.storageVersion = 2;
       this.syncID = "syncID111111";
-      this.wasInitialized = false;
       this.clear();
     }
 
     clear() {
       this.lastSyncMillis = 0;
-      this.incomingRecords = [];
+      this.wasSyncStarted = false;
+      this.incomingEnvelopes = [];
       this.uploadedIDs = [];
-      this.wasSynced = false;
+      this.wasSyncFinished = false;
       this.wasReset = false;
       this.wasWiped = false;
     }
 
     // `mozIBridgedSyncEngine` methods.
 
-    initialize(callback) {
-      ok(
-        !this.wasInitialized,
-        "Shouldn't initialize a bridged engine more than once"
-      );
-      this.wasInitialized = true;
-      CommonUtils.nextTick(() => callback.handleSuccess());
-    }
-
     getLastSync(callback) {
-      ok(
-        this.wasInitialized,
-        "Should initialize before getting last sync time"
-      );
       CommonUtils.nextTick(() => callback.handleSuccess(this.lastSyncMillis));
     }
 
     setLastSync(millis, callback) {
-      ok(
-        this.wasInitialized,
-        "Should initialize before setting last sync time"
-      );
       this.lastSyncMillis = millis;
       CommonUtils.nextTick(() => callback.handleSuccess());
     }
 
     resetSyncId(callback) {
-      ok(this.wasInitialized, "Should initialize before resetting sync ID");
       CommonUtils.nextTick(() => callback.handleSuccess(this.syncID));
     }
 
     ensureCurrentSyncId(newSyncId, callback) {
-      ok(
-        this.wasInitialized,
-        "Should initialize before ensuring current sync ID"
-      );
       equal(newSyncId, this.syncID, "Local and new sync IDs should match");
       CommonUtils.nextTick(() => callback.handleSuccess(this.syncID));
     }
 
-    storeIncoming(records, callback) {
-      ok(
-        this.wasInitialized,
-        "Should initialize before storing incoming records"
-      );
-      this.incomingRecords.push(...records.map(r => JSON.parse(r)));
+    syncStarted(callback) {
+      this.wasSyncStarted = true;
+      CommonUtils.nextTick(() => callback.handleSuccess());
+    }
+
+    storeIncoming(envelopes, callback) {
+      this.incomingEnvelopes.push(...envelopes.map(r => JSON.parse(r)));
       CommonUtils.nextTick(() => callback.handleSuccess());
     }
 
     apply(callback) {
-      ok(this.wasInitialized, "Should initialize before applying records");
-      let outgoingRecords = [
+      let outgoingEnvelopes = [
         {
           id: "hanson",
           data: {
@@ -103,40 +81,32 @@ add_task(async function test_interface() {
             tomorrow: "winding 🛣",
           },
         },
-      ].map(r => JSON.stringify(r));
-      CommonUtils.nextTick(() => callback.handleSuccess(outgoingRecords));
-      return { cancel() {} };
+      ].map(cleartext =>
+        JSON.stringify({
+          id: cleartext.id,
+          cleartext: JSON.stringify(cleartext),
+        })
+      );
+      CommonUtils.nextTick(() => callback.handleSuccess(outgoingEnvelopes));
     }
 
     setUploaded(millis, ids, callback) {
-      ok(
-        this.wasInitialized,
-        "Should initialize before setting records as uploaded"
-      );
       this.uploadedIDs.push(...ids);
       CommonUtils.nextTick(() => callback.handleSuccess());
-      return { cancel() {} };
     }
 
     syncFinished(callback) {
-      ok(
-        this.wasInitialized,
-        "Should initialize before flagging sync as finished"
-      );
-      this.wasSynced = true;
+      this.wasSyncFinished = true;
       CommonUtils.nextTick(() => callback.handleSuccess());
-      return { cancel() {} };
     }
 
     reset(callback) {
-      ok(this.wasInitialized, "Should initialize before resetting");
       this.clear();
       this.wasReset = true;
       CommonUtils.nextTick(() => callback.handleSuccess());
     }
 
     wipe(callback) {
-      ok(this.wasInitialized, "Should initialize before wiping");
       this.clear();
       this.wasWiped = true;
       CommonUtils.nextTick(() => callback.handleSuccess());
@@ -180,7 +150,7 @@ add_task(async function test_interface() {
 
     info("Sync the engine");
     // Advance the last sync time to skip the Backstreet Boys...
-    bridge.lastSyncMillis = now + 2;
+    bridge.lastSyncMillis = 1000 * (now + 2);
     await sync_engine_and_validate_telem(engine, false);
 
     let metaGlobal = foo
@@ -197,14 +167,27 @@ add_task(async function test_interface() {
     );
 
     greater(bridge.lastSyncMillis, 0, "Should update last sync time");
+    ok(
+      bridge.wasSyncStarted,
+      "Should have started sync before storing incoming"
+    );
     deepEqual(
-      bridge.incomingRecords.sort((a, b) => a.id.localeCompare(b.id)),
+      bridge.incomingEnvelopes
+        .sort((a, b) => a.id.localeCompare(b.id))
+        .map(({ cleartext, ...envelope }) => ({
+          cleartextAsObject: JSON.parse(cleartext),
+          ...envelope,
+        })),
       [
         {
           id: "tlc",
-          data: {
-            forbidden: ["scrubs 🚫"],
-            numberAvailable: false,
+          modified: now + 5,
+          cleartextAsObject: {
+            id: "tlc",
+            data: {
+              forbidden: ["scrubs 🚫"],
+              numberAvailable: false,
+            },
           },
         },
       ],
@@ -215,7 +198,7 @@ add_task(async function test_interface() {
       ["hanson", "sheryl-crow"],
       "Should mark new local records as uploaded"
     );
-    ok(bridge.wasSynced, "Should have finished sync after uploading");
+    ok(bridge.wasSyncFinished, "Should have finished sync after uploading");
 
     deepEqual(
       collection.keys().sort(),

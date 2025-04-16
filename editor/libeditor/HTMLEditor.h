@@ -694,6 +694,14 @@ class HTMLEditor final : public TextEditor,
                                                         uint32_t aLength);
 
   /**
+   * ReplaceTextWithTransaction() replaces text in the range with
+   * aStringToInsert.
+   */
+  [[nodiscard]] MOZ_CAN_RUN_SCRIPT nsresult ReplaceTextWithTransaction(
+      dom::Text& aTextNode, uint32_t aOffset, uint32_t aLength,
+      const nsAString& aStringToInsert);
+
+  /**
    * DeleteParentBlocksIfEmpty() removes parent block elements if they
    * don't have visible contents.  Note that due performance issue of
    * WSRunObject, this call may be expensive.  And also note that this
@@ -920,7 +928,7 @@ class HTMLEditor final : public TextEditor,
   /**
    * Small utility routine to test if a break node is visible to user.
    */
-  bool IsVisibleBRElement(nsINode* aNode);
+  bool IsVisibleBRElement(const nsINode* aNode);
 
   /**
    * Helper routines for font size changing.
@@ -1000,10 +1008,10 @@ class HTMLEditor final : public TextEditor,
    * EditorBase::GetPreviousElementOrText*() but this won't return nodes
    * outside active editing host.
    */
-  nsIContent* GetPreviousHTMLElementOrText(nsINode& aNode) const {
+  nsIContent* GetPreviousHTMLElementOrText(const nsINode& aNode) const {
     return GetPreviousHTMLElementOrTextInternal(aNode, false);
   }
-  nsIContent* GetPreviousHTMLElementOrTextInBlock(nsINode& aNode) const {
+  nsIContent* GetPreviousHTMLElementOrTextInBlock(const nsINode& aNode) const {
     return GetPreviousHTMLElementOrTextInternal(aNode, true);
   }
   template <typename PT, typename CT>
@@ -1021,7 +1029,7 @@ class HTMLEditor final : public TextEditor,
    * GetPreviousHTMLElementOrTextInternal() methods are common implementation
    * of above methods.  Please don't use this method directly.
    */
-  nsIContent* GetPreviousHTMLElementOrTextInternal(nsINode& aNode,
+  nsIContent* GetPreviousHTMLElementOrTextInternal(const nsINode& aNode,
                                                    bool aNoBlockCrossing) const;
   template <typename PT, typename CT>
   nsIContent* GetPreviousHTMLElementOrTextInternal(
@@ -1069,10 +1077,10 @@ class HTMLEditor final : public TextEditor,
    * On the other hand, methods which take |nsINode&| start to search from
    * next node of aNode.
    */
-  nsIContent* GetNextHTMLElementOrText(nsINode& aNode) const {
+  nsIContent* GetNextHTMLElementOrText(const nsINode& aNode) const {
     return GetNextHTMLElementOrTextInternal(aNode, false);
   }
-  nsIContent* GetNextHTMLElementOrTextInBlock(nsINode& aNode) const {
+  nsIContent* GetNextHTMLElementOrTextInBlock(const nsINode& aNode) const {
     return GetNextHTMLElementOrTextInternal(aNode, true);
   }
   template <typename PT, typename CT>
@@ -1090,7 +1098,7 @@ class HTMLEditor final : public TextEditor,
    * GetNextHTMLNodeInternal() methods are common implementation
    * of above methods.  Please don't use this method directly.
    */
-  nsIContent* GetNextHTMLElementOrTextInternal(nsINode& aNode,
+  nsIContent* GetNextHTMLElementOrTextInternal(const nsINode& aNode,
                                                bool aNoBlockCrossing) const;
   template <typename PT, typename CT>
   nsIContent* GetNextHTMLElementOrTextInternal(
@@ -1281,7 +1289,7 @@ class HTMLEditor final : public TextEditor,
    *                            should be inserted.
    */
   [[nodiscard]] MOZ_CAN_RUN_SCRIPT nsresult
-  CreateStyleForInsertText(dom::AbstractRange& aAbstractRange);
+  CreateStyleForInsertText(const dom::AbstractRange& aAbstractRange);
 
   /**
    * GetMostAncestorMailCiteElement() returns most-ancestor mail cite element.
@@ -2011,6 +2019,16 @@ class HTMLEditor final : public TextEditor,
    */
   [[nodiscard]] MOZ_CAN_RUN_SCRIPT nsresult
   DeleteNodeIfInvisibleAndEditableTextNode(nsIContent& aContent);
+
+  /**
+   * DeleteTextAndTextNodesWithTransaction() removes text nodes which are in
+   * the given range and delete some characters in start and/or end of
+   * the range.
+   */
+  template <typename EditorDOMPointType>
+  [[nodiscard]] MOZ_CAN_RUN_SCRIPT nsresult
+  DeleteTextAndTextNodesWithTransaction(const EditorDOMPointType& aStartPoint,
+                                        const EditorDOMPointType& aEndPoint);
 
   /**
    * If aPoint follows invisible `<br>` element, returns the invisible `<br>`
@@ -3243,10 +3261,11 @@ class HTMLEditor final : public TextEditor,
      * @param aRv               Returns error if layout information is not
      *                          available or given element is not a table cell.
      */
-    CellIndexes(Element& aCellElement, ErrorResult& aRv)
+    MOZ_CAN_RUN_SCRIPT CellIndexes(Element& aCellElement, PresShell* aPresShell,
+                                   ErrorResult& aRv)
         : mRow(-1), mColumn(-1) {
       MOZ_ASSERT(!aRv.Failed());
-      Update(aCellElement, aRv);
+      Update(aCellElement, aPresShell, aRv);
     }
 
     /**
@@ -3254,7 +3273,8 @@ class HTMLEditor final : public TextEditor,
      *
      * @param                   See above.
      */
-    void Update(Element& aCellElement, ErrorResult& aRv);
+    MOZ_CAN_RUN_SCRIPT void Update(Element& aCellElement, PresShell* aPresShell,
+                                   ErrorResult& aRv);
 
     /**
      * This constructor initializes mRowIndex and mColumnIndex with indexes of
@@ -3266,8 +3286,8 @@ class HTMLEditor final : public TextEditor,
      *                          which contains anchor of Selection, or layout
      *                          information is not available.
      */
-    CellIndexes(HTMLEditor& aHTMLEditor, Selection& aSelection,
-                ErrorResult& aRv)
+    MOZ_CAN_RUN_SCRIPT CellIndexes(HTMLEditor& aHTMLEditor,
+                                   Selection& aSelection, ErrorResult& aRv)
         : mRow(-1), mColumn(-1) {
       Update(aHTMLEditor, aSelection, aRv);
     }
@@ -3278,8 +3298,8 @@ class HTMLEditor final : public TextEditor,
      *
      * @param                   See above.
      */
-    void Update(HTMLEditor& aHTMLEditor, Selection& aSelection,
-                ErrorResult& aRv);
+    MOZ_CAN_RUN_SCRIPT void Update(HTMLEditor& aHTMLEditor,
+                                   Selection& aSelection, ErrorResult& aRv);
 
     bool operator==(const CellIndexes& aOther) const {
       return mRow == aOther.mRow && mColumn == aOther.mColumn;
@@ -3305,8 +3325,8 @@ class HTMLEditor final : public TextEditor,
      * first range is in the cell element, this does not treat it as the
      * cell element is selected.
      */
-    CellAndIndexes(HTMLEditor& aHTMLEditor, Selection& aSelection,
-                   ErrorResult& aRv) {
+    MOZ_CAN_RUN_SCRIPT CellAndIndexes(HTMLEditor& aHTMLEditor,
+                                      Selection& aSelection, ErrorResult& aRv) {
       Update(aHTMLEditor, aSelection, aRv);
     }
 
@@ -3316,8 +3336,8 @@ class HTMLEditor final : public TextEditor,
      * in the cell element, this does not treat it as the cell element is
      * selected.
      */
-    void Update(HTMLEditor& aHTMLEditor, Selection& aSelection,
-                ErrorResult& aRv);
+    MOZ_CAN_RUN_SCRIPT void Update(HTMLEditor& aHTMLEditor,
+                                   Selection& aSelection, ErrorResult& aRv);
   };
 
   struct MOZ_STACK_CLASS CellData final {
@@ -4101,9 +4121,11 @@ class HTMLEditor final : public TextEditor,
    * Returns NS_EDITOR_ELEMENT_NOT_FOUND if cell is not found even if aCell is
    * null.
    */
-  nsresult GetCellContext(Element** aTable, Element** aCell,
-                          nsINode** aCellParent, int32_t* aCellOffset,
-                          int32_t* aRowIndex, int32_t* aColIndex);
+  MOZ_CAN_RUN_SCRIPT nsresult GetCellContext(Element** aTable, Element** aCell,
+                                             nsINode** aCellParent,
+                                             int32_t* aCellOffset,
+                                             int32_t* aRowIndex,
+                                             int32_t* aColIndex);
 
   nsresult GetCellSpansAt(Element* aTable, int32_t aRowIndex, int32_t aColIndex,
                           int32_t& aActualRowSpan, int32_t& aActualColSpan);

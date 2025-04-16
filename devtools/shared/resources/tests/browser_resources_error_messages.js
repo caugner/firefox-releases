@@ -3,7 +3,7 @@
 
 "use strict";
 
-// Test the ResourceWatcher API around ERROR_MESSAGES
+// Test the ResourceWatcher API around ERROR_MESSAGE
 // Reproduces assertions from devtools/shared/webconsole/test/chrome/test_page_errors.html
 
 const {
@@ -41,38 +41,46 @@ add_task(async function() {
   );
 
   info(
-    "Log some errors *before* calling ResourceWatcher.watch in order to assert the behavior of already existing messages."
+    "Log some errors *before* calling ResourceWatcher.watchResources in order to assert" +
+      " the behavior of already existing messages."
   );
   await triggerErrors(tab);
 
   let done;
   const onAllErrorReceived = new Promise(resolve => (done = resolve));
+  const onAvailable = ({ resourceType, targetFront, resource }) => {
+    const { pageError } = resource;
 
-  await resourceWatcher.watch(
-    [ResourceWatcher.TYPES.ERROR_MESSAGES],
-    ({ resourceType, targetFront, resource }) => {
-      const { pageError } = resource;
+    is(
+      resource.targetFront,
+      targetList.targetFront,
+      "The targetFront property is the expected one"
+    );
 
-      if (!pageError.sourceName.includes("test_page_errors")) {
-        info(`Ignore error from unknown source: "${pageError.sourceName}"`);
-        return;
-      }
-
-      const index = receivedMessages.length;
-      receivedMessages.push(pageError);
-
-      info(`checking received page error #${index}: ${pageError.errorMessage}`);
-      ok(pageError, "The resource has a pageError attribute");
-      checkObject(pageError, expectedMessages[index]);
-
-      if (receivedMessages.length == expectedMessages.length) {
-        done();
-      }
+    if (!pageError.sourceName.includes("test_page_errors")) {
+      info(`Ignore error from unknown source: "${pageError.sourceName}"`);
+      return;
     }
-  );
+
+    const index = receivedMessages.length;
+    receivedMessages.push(pageError);
+
+    info(`checking received page error #${index}: ${pageError.errorMessage}`);
+    ok(pageError, "The resource has a pageError attribute");
+    checkObject(pageError, expectedMessages[index]);
+
+    if (receivedMessages.length == expectedMessages.length) {
+      done();
+    }
+  };
+
+  await resourceWatcher.watchResources([ResourceWatcher.TYPES.ERROR_MESSAGE], {
+    onAvailable,
+  });
 
   info(
-    "Now log errors *after* the call to ResourceWatcher.watch and after having received all existing messages"
+    "Now log errors *after* the call to ResourceWatcher.watchResources and after having" +
+      " received all existing messages"
   );
   await BrowserTestUtils.waitForCondition(
     () => receivedMessages.length === expectedPageErrors.size
@@ -85,6 +93,55 @@ add_task(async function() {
 
   Services.console.reset();
   targetList.stopListening();
+  await client.close();
+});
+
+add_task(async function() {
+  info("Test ignoreExistingResources option for ERROR_MESSAGE");
+
+  // Disable the preloaded process as it creates processes intermittently
+  // which forces the emission of RDP requests we aren't correctly waiting for.
+  await pushPref("dom.ipc.processPrelaunch.enabled", false);
+
+  const tab = await addTab(TEST_URI);
+
+  const {
+    client,
+    resourceWatcher,
+    targetList,
+  } = await initResourceWatcherAndTarget(tab);
+
+  info(
+    "Check whether onAvailable will not be called with existing error messages"
+  );
+  await triggerErrors(tab);
+
+  const availableResources = [];
+  await resourceWatcher.watchResources([ResourceWatcher.TYPES.ERROR_MESSAGE], {
+    onAvailable: ({ resource }) => availableResources.push(resource),
+    ignoreExistingResources: true,
+  });
+  is(
+    availableResources.length,
+    0,
+    "onAvailable wasn't called for existing error messages"
+  );
+
+  info(
+    "Check whether onAvailable will be called with the future error messages"
+  );
+  await triggerErrors(tab);
+
+  const expectedMessages = Array.from(expectedPageErrors.values());
+  await waitUntil(() => availableResources.length === expectedMessages.length);
+  for (let i = 0; i < expectedMessages.length; i++) {
+    const { pageError } = availableResources[i];
+    const expected = expectedMessages[i];
+    checkObject(pageError, expected);
+  }
+
+  Services.console.reset();
+  await targetList.stopListening();
   await client.close();
 });
 

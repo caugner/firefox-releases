@@ -1114,12 +1114,6 @@ nsFocusManager::ParentActivated(mozIDOMWindowProxy* aWindow, bool aActive) {
 
 static bool ShouldMatchFocusVisible(const Element& aElement,
                                     int32_t aFocusFlags) {
-  if (StaticPrefs::browser_display_show_focus_rings()) {
-    // FIXME: Spec is ambiguous about whether we should take platform
-    // conventions into account. This branch does make us account for them.
-    return true;
-  }
-
   switch (nsFocusManager::GetFocusMoveActionCause(aFocusFlags)) {
     case InputContextAction::CAUSE_UNKNOWN:
     case InputContextAction::CAUSE_KEY:
@@ -1142,6 +1136,23 @@ static bool ShouldMatchFocusVisible(const Element& aElement,
   return false;
 }
 
+// On Windows and Linux, focus rings are only shown when the FLAG_SHOWRING flag
+// is used.
+static bool ShouldShowFocusRingForElement(Element& aElement, int32_t aFlags) {
+  if (aFlags & nsIFocusManager::FLAG_SHOWRING) {
+    return true;
+  }
+#if defined(XP_MACOSX) || defined(ANDROID)
+  if (aFlags & nsIFocusManager::FLAG_BYMOUSE) {
+    return !nsContentUtils::ContentIsLink(&aElement) &&
+           !aElement.IsAnyOfHTMLElements(nsGkAtoms::video, nsGkAtoms::audio);
+  }
+  return true;
+#else
+  return false;
+#endif
+}
+
 /* static */
 void nsFocusManager::NotifyFocusStateChange(nsIContent* aContent,
                                             nsIContent* aContentToFocus,
@@ -1149,7 +1160,8 @@ void nsFocusManager::NotifyFocusStateChange(nsIContent* aContent,
                                             int32_t aFlags,
                                             bool aGettingFocus) {
   MOZ_ASSERT_IF(aContentToFocus, !aGettingFocus);
-  if (!aContent->IsElement()) {
+  auto* element = Element::FromNode(aContent);
+  if (!element) {
     return;
   }
 
@@ -1161,18 +1173,20 @@ void nsFocusManager::NotifyFocusStateChange(nsIContent* aContent,
 
   if (aGettingFocus) {
     EventStates eventStateToAdd = NS_EVENT_STATE_FOCUS;
-    if (aWindowShouldShowFocusRing) {
+    if (aWindowShouldShowFocusRing ||
+        ShouldShowFocusRingForElement(*element, aFlags)) {
       eventStateToAdd |= NS_EVENT_STATE_FOCUSRING;
     }
-    if (ShouldMatchFocusVisible(*aContent->AsElement(), aFlags)) {
+    if (aWindowShouldShowFocusRing ||
+        ShouldMatchFocusVisible(*element, aFlags)) {
       eventStateToAdd |= NS_EVENT_STATE_FOCUS_VISIBLE;
     }
-    aContent->AsElement()->AddStates(eventStateToAdd);
+    element->AddStates(eventStateToAdd);
   } else {
     EventStates eventStateToRemove = NS_EVENT_STATE_FOCUS |
                                      NS_EVENT_STATE_FOCUSRING |
                                      NS_EVENT_STATE_FOCUS_VISIBLE;
-    aContent->AsElement()->RemoveStates(eventStateToRemove);
+    element->RemoveStates(eventStateToRemove);
   }
 
   for (nsIContent* content = aContent; content && content != commonAncestor;
@@ -1542,7 +1556,10 @@ void nsFocusManager::SetFocusInner(Element* aNewContent, int32_t aFlags,
   } else {
     // otherwise, for inactive windows and when the caller cannot steal the
     // focus, update the node in the window, and  raise the window if desired.
-    if (allowFrameSwitch) AdjustWindowFocus(newWindow, true);
+    if (allowFrameSwitch) {
+      AdjustWindowFocus(newWindow->GetBrowsingContext(), true,
+                        IsWindowVisible(newWindow));
+    }
 
     // set the focus node and method as needed
     uint32_t focusMethod =
@@ -1717,41 +1734,55 @@ mozilla::dom::BrowsingContext* nsFocusManager::GetCommonAncestor(
   return parent;
 }
 
-void nsFocusManager::AdjustWindowFocus(nsPIDOMWindowOuter* aWindow,
-                                       bool aCheckPermission) {
-  bool isVisible = IsWindowVisible(aWindow);
-
-  nsCOMPtr<nsPIDOMWindowOuter> window(aWindow);
-  while (window) {
+void nsFocusManager::AdjustWindowFocus(BrowsingContext* aBrowsingContext,
+                                       bool aCheckPermission, bool aIsVisible) {
+  BrowsingContext* bc = aBrowsingContext;
+  while (bc) {
     // get the containing <iframe> or equivalent element so that it can be
     // focused below.
-    nsCOMPtr<Element> frameElement = window->GetFrameElementInternal();
+    nsCOMPtr<Element> frameElement = bc->GetEmbedderElement();
 
-    nsCOMPtr<nsIDocShellTreeItem> dsti = window->GetDocShell();
-    if (!dsti) return;
-    nsCOMPtr<nsIDocShellTreeItem> parentDsti;
-    dsti->GetInProcessParent(getter_AddRefs(parentDsti));
-    if (!parentDsti) {
+    if (!frameElement && XRE_IsContentProcess()) {
+      // The containing <iframe> isn't in this process and we are in a child
+      // process, so continue the walk in another process.
+      mozilla::dom::ContentChild* contentChild =
+          mozilla::dom::ContentChild::GetSingleton();
+      MOZ_ASSERT(contentChild);
+      contentChild->SendAdjustWindowFocus(bc, false, aIsVisible);
       return;
     }
 
-    window = parentDsti->GetWindow();
-    if (window) {
-      // if the parent window is visible but aWindow was not, then we have
-      // likely moved up and out from a hidden tab to the browser window, or a
-      // similar such arrangement. Stop adjusting the current nodes.
-      if (IsWindowVisible(window) != isVisible) break;
-
-      // When aCheckPermission is true, we should check whether the caller can
-      // access the window or not.  If it cannot access, we should stop the
-      // adjusting.
-      if (aCheckPermission && !nsContentUtils::LegacyIsCallerNativeCode() &&
-          !nsContentUtils::CanCallerAccess(window->GetCurrentInnerWindow())) {
-        break;
+    BrowsingContext* parent = bc->GetParent();
+    if (!parent && XRE_IsParentProcess()) {
+      CanonicalBrowsingContext* canonical = bc->Canonical();
+      RefPtr<WindowGlobalParent> embedder =
+          canonical->GetEmbedderWindowGlobal();
+      if (embedder) {
+        parent = embedder->BrowsingContext();
       }
-
-      window->SetFocusedElement(frameElement);
     }
+    bc = parent;
+    if (!bc) {
+      return;
+    }
+    nsCOMPtr<nsPIDOMWindowOuter> window = bc->GetDOMWindow();
+    MOZ_ASSERT(window);
+    // if the parent window is visible but the original window was not, then we
+    // have likely moved up and out from a hidden tab to the browser window, or
+    // a similar such arrangement. Stop adjusting the current nodes.
+    if (IsWindowVisible(window) != aIsVisible) {
+      return;
+    }
+
+    // When aCheckPermission is true, we should check whether the caller can
+    // access the window or not.  If it cannot access, we should stop the
+    // adjusting.
+    if (aCheckPermission && !nsContentUtils::LegacyIsCallerNativeCode() &&
+        !nsContentUtils::CanCallerAccess(window->GetCurrentInnerWindow())) {
+      return;
+    }
+
+    window->SetFocusedElement(frameElement);
   }
 }
 
@@ -2251,7 +2282,8 @@ void nsFocusManager::Focus(nsPIDOMWindowOuter* aWindow, Element* aElement,
     // if this is a new document, update the parent chain of frames so that
     // focus can be traversed from the top level down to the newly focused
     // window.
-    AdjustWindowFocus(aWindow, false);
+    AdjustWindowFocus(aWindow->GetBrowsingContext(), false,
+                      IsWindowVisible(aWindow));
   }
 
   // indicate that the window has taken focus.
@@ -2578,8 +2610,7 @@ void nsFocusManager::FireFocusOrBlurEvent(EventMessage aEventMessage,
     EventMessage focusInOrOutMessage =
         aEventMessage == eFocus ? eFocusIn : eFocusOut;
     FireFocusInOrOutEvent(focusInOrOutMessage, aPresShell, aTarget,
-                          currentWindow, currentFocusedContent,
-                          aRelatedTarget);
+                          currentWindow, currentFocusedContent, aRelatedTarget);
   }
 }
 
@@ -2838,7 +2869,7 @@ nsresult nsFocusManager::GetSelectionLocation(Document* aDocument,
   uint32_t startOffset = 0;
   if (domSelection) {
     isCollapsed = domSelection->IsCollapsed();
-    RefPtr<nsRange> domRange = domSelection->GetRangeAt(0);
+    RefPtr<const nsRange> domRange = domSelection->GetRangeAt(0);
     if (domRange) {
       nsCOMPtr<nsINode> startNode = domRange->GetStartContainer();
       nsCOMPtr<nsINode> endNode = domRange->GetEndContainer();

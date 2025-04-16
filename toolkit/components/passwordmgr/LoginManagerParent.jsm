@@ -312,7 +312,13 @@ class LoginManagerParent extends JSWindowActorParent {
    * Trigger a login form fill and send relevant data (e.g. logins and recipes)
    * to the child process (LoginManagerChild).
    */
-  async fillForm({ browser, loginFormOrigin, login, inputElementIdentifier }) {
+  async fillForm({
+    browser,
+    loginFormOrigin,
+    login,
+    inputElementIdentifier,
+    style,
+  }) {
     let recipes = [];
     if (loginFormOrigin) {
       let formHost;
@@ -339,6 +345,7 @@ class LoginManagerParent extends JSWindowActorParent {
       originMatches,
       logins: jsLogins,
       recipes,
+      style,
     });
   }
 
@@ -517,7 +524,7 @@ class LoginManagerParent extends JSWindowActorParent {
           Services.logins.getLoginSavingEnabled(formOrigin)))
     ) {
       generatedPassword = this.getGeneratedPassword();
-      let potentialConflictingLogins = LoginHelper.searchLoginsWithObject({
+      let potentialConflictingLogins = await Services.logins.searchLoginsAsync({
         origin: formOrigin,
         formActionOrigin: actionOrigin,
         httpRealm: null,
@@ -665,11 +672,12 @@ class LoginManagerParent extends JSWindowActorParent {
     }
   ) {
     function recordLoginUse(login) {
-      if (!browser || PrivateBrowsingUtils.isBrowserPrivate(browser)) {
-        // don't record non-interactive use in private browsing
-        return;
-      }
-      Services.logins.recordPasswordUse(login);
+      Services.logins.recordPasswordUse(
+        login,
+        browser && PrivateBrowsingUtils.isBrowserPrivate(browser),
+        login.username ? "form_login" : "form_password",
+        !!autoFilledLoginGuid
+      );
     }
 
     // If password storage is disabled, bail out.

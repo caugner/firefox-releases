@@ -6,6 +6,7 @@
 
 #include "mozilla/dom/JSWindowActorBinding.h"
 #include "mozilla/dom/JSWindowActorParent.h"
+#include "mozilla/dom/BrowserParent.h"
 #include "mozilla/dom/ContentParent.h"
 #include "mozilla/dom/WindowGlobalParent.h"
 #include "mozilla/dom/MessageManagerBinding.h"
@@ -31,6 +32,8 @@ void JSWindowActorParent::Init(const nsACString& aName,
   MOZ_ASSERT(!mManager, "Cannot Init() a JSWindowActorParent twice!");
   SetName(aName);
   mManager = aManager;
+
+  InvokeCallback(CallbackFunction::ActorCreated);
 }
 
 namespace {

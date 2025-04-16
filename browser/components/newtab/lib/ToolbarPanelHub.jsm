@@ -10,6 +10,9 @@ XPCOMUtils.defineLazyModuleGetters(this, {
   Services: "resource://gre/modules/Services.jsm",
   EveryWindow: "resource:///modules/EveryWindow.jsm",
   PrivateBrowsingUtils: "resource://gre/modules/PrivateBrowsingUtils.jsm",
+  Preferences: "resource://gre/modules/Preferences.jsm",
+  SpecialMessageActions:
+    "resource://messaging-system/lib/SpecialMessageActions.jsm",
 });
 XPCOMUtils.defineLazyServiceGetter(
   this,
@@ -50,20 +53,15 @@ class _ToolbarPanelHub {
     this.state = {};
   }
 
-  async init(waitForInitialized, { getMessages, dispatch, handleUserAction }) {
+  async init(waitForInitialized, { getMessages, dispatch }) {
     this._getMessages = getMessages;
     this._dispatch = dispatch;
-    this._handleUserAction = handleUserAction;
     // Wait for ASRouter messages to become available in order to know
     // if we can show the What's New panel
     await waitForInitialized;
-    if (this.whatsNewPanelEnabled) {
-      // Enable the application menu button so that the user can access
-      // the panel outside of the toolbar button
-      this.enableAppmenuButton();
-    }
-    // Listen for pref changes that could turn off the feature
-    Services.prefs.addObserver(WHATSNEW_ENABLED_PREF, this);
+    // Enable the application menu button so that the user can access
+    // the panel outside of the toolbar button
+    await this.enableAppmenuButton();
 
     this.state = {
       protectionPanelMessageSeen: Services.prefs.getBoolPref(
@@ -76,17 +74,6 @@ class _ToolbarPanelHub {
   uninit() {
     EveryWindow.unregisterCallback(TOOLBAR_BUTTON_ID);
     EveryWindow.unregisterCallback(APPMENU_BUTTON_ID);
-    Services.prefs.removeObserver(WHATSNEW_ENABLED_PREF, this);
-  }
-
-  observe(aSubject, aTopic, aPrefName) {
-    switch (aPrefName) {
-      case WHATSNEW_ENABLED_PREF:
-        if (!this.whatsNewPanelEnabled) {
-          this.uninit();
-        }
-        break;
-    }
   }
 
   get messages() {
@@ -97,8 +84,8 @@ class _ToolbarPanelHub {
     });
   }
 
-  get whatsNewPanelEnabled() {
-    return Services.prefs.getBoolPref(WHATSNEW_ENABLED_PREF, false);
+  toggleWhatsNewPref(event) {
+    Preferences.set(WHATSNEW_ENABLED_PREF, event.target.checked);
   }
 
   maybeInsertFTL(win) {
@@ -178,6 +165,12 @@ class _ToolbarPanelHub {
 
   // Render what's new messages into the panel.
   async renderMessages(win, doc, containerId, options = {}) {
+    // Set the checked status of the footer checkbox
+    let value = Preferences.get(WHATSNEW_ENABLED_PREF);
+    let checkbox = win.document.getElementById("panelMenu-toggleWhatsNew");
+
+    checkbox.checked = value;
+
     this.maybeLoadCustomElement(win);
     const messages =
       (options.force && options.messages) ||
@@ -241,16 +234,16 @@ class _ToolbarPanelHub {
       Cu.reportError(e);
       url = message.content.cta_url;
     }
-    this._handleUserAction({
-      target: win,
-      data: {
+    SpecialMessageActions.handleAction(
+      {
         type: message.content.cta_type,
         data: {
           args: url,
           where: "tabshifted",
         },
       },
-    });
+      win.browser
+    );
 
     this.sendUserEventTelemetry(win, "CLICK", message);
   }
@@ -516,7 +509,7 @@ class _ToolbarPanelHub {
   _sendTelemetry(ping) {
     this._dispatch({
       type: "TOOLBAR_PANEL_TELEMETRY",
-      data: { action: "cfr_user_event", source: "CFR", ...ping },
+      data: { action: "whats-new-panel_user_event", ...ping },
     });
   }
 

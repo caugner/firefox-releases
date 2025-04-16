@@ -14,7 +14,7 @@
 #include "jsfriendapi.h"
 
 #include "builtin/TypedObject.h"
-#include "gc/GCTrace.h"
+#include "gc/GCProbes.h"
 #include "jit/AtomicOp.h"
 #include "jit/Bailouts.h"
 #include "jit/BaselineFrame.h"
@@ -27,6 +27,7 @@
 #include "jit/Simulator.h"
 #include "js/Conversions.h"
 #include "js/Printf.h"
+#include "vm/ArrayBufferViewObject.h"
 #include "vm/FunctionFlags.h"  // js::FunctionFlags
 #include "vm/TraceLogging.h"
 
@@ -183,6 +184,70 @@ void MacroAssembler::guardTypeSet(const Source& address, const TypeSet* types,
   bind(&matched);
 }
 
+template <>
+void MacroAssembler::guardTypeSet(const TypedOrValueRegister& reg,
+                                  const TypeSet* types, BarrierKind kind,
+                                  Register unboxScratch, Register objScratch,
+                                  Register spectreRegToZero, Label* miss) {
+  // See guardTypeSet comments above. This is a specialization for
+  // TypedOrValueRegister.
+
+  MOZ_ASSERT(kind == BarrierKind::TypeTagOnly || kind == BarrierKind::TypeSet);
+  MOZ_ASSERT(!types->unknown());
+
+  if (reg.hasValue()) {
+    guardTypeSet(reg.valueReg(), types, kind, unboxScratch, objScratch,
+                 spectreRegToZero, miss);
+    return;
+  }
+
+  MIRType valType = reg.type();
+  MOZ_ASSERT(valType != MIRType::Value);
+
+  if (valType != MIRType::Object) {
+    // Barrier always either succeeds or fails.
+    if (!types->hasType(TypeSet::PrimitiveType(valType))) {
+      jump(miss);
+    }
+    return;
+  }
+
+  if (types->unknownObject()) {
+    // Barrier always succeeds.
+    return;
+  }
+
+  if (types->getObjectCount() == 0) {
+    // Barrier always fails.
+    jump(miss);
+    return;
+  }
+
+  if (kind == BarrierKind::TypeTagOnly) {
+    // Barrier always succeeds. Assert the type matches in DEBUG builds.
+#ifdef DEBUG
+    Label fail, matched;
+    Register obj = reg.typedReg().gpr();
+    guardObjectType(obj, types, objScratch, spectreRegToZero, &fail);
+    jump(&matched);
+
+    bind(&fail);
+    guardTypeSetMightBeIncomplete(types, obj, objScratch, &matched);
+    assumeUnreachable("Unexpected object type");
+
+    bind(&matched);
+#endif
+    return;
+  }
+
+  MOZ_ASSERT(kind == BarrierKind::TypeSet);
+  MOZ_ASSERT(objScratch != InvalidReg);
+
+  // Test specific objects.
+  Register obj = reg.typedReg().gpr();
+  guardObjectType(obj, types, objScratch, spectreRegToZero, miss);
+}
+
 #ifdef DEBUG
 // guardTypeSetMightBeIncomplete is only used in DEBUG builds. If this ever
 // changes, we need to make sure it's Spectre-safe.
@@ -337,10 +402,6 @@ template void MacroAssembler::guardTypeSet(
     Label* miss);
 template void MacroAssembler::guardTypeSet(
     const ValueOperand& value, const TypeSet* types, BarrierKind kind,
-    Register unboxScratch, Register objScratch, Register spectreRegToZero,
-    Label* miss);
-template void MacroAssembler::guardTypeSet(
-    const TypedOrValueRegister& value, const TypeSet* types, BarrierKind kind,
     Register unboxScratch, Register objScratch, Register spectreRegToZero,
     Label* miss);
 
@@ -544,10 +605,10 @@ template void MacroAssembler::loadFromTypedBigIntArray(Scalar::Type arrayType,
 // Inlined version of gc::CheckAllocatorState that checks the bare essentials
 // and bails for anything that cannot be handled with our jit allocators.
 void MacroAssembler::checkAllocatorState(Label* fail) {
-  // Don't execute the inline path if we are tracing allocations.
-  if (js::gc::gcTracer.traceEnabled()) {
-    jump(fail);
-  }
+  // Don't execute the inline path if GC probes are built in.
+#ifdef JS_GC_PROBES
+  jump(fail);
+#endif
 
 #ifdef JS_GC_ZEAL
   // Don't execute the inline path if gc zeal or tracing are active.
@@ -599,8 +660,9 @@ void MacroAssembler::nurseryAllocateObject(Register result, Register temp,
   MOZ_ASSERT(totalSize < INT32_MAX);
   MOZ_ASSERT(totalSize % gc::CellAlignBytes == 0);
 
-  bumpPointerAllocate(result, temp, fail, zone->addressOfNurseryPosition(),
-                      zone->addressOfNurseryCurrentEnd(), totalSize, totalSize);
+  bumpPointerAllocate(
+      result, temp, fail, zone, zone->addressOfNurseryPosition(),
+      zone->addressOfNurseryCurrentEnd(), JS::TraceKind::Object, totalSize);
 
   if (nDynamicSlots) {
     computeEffectiveAddress(Address(result, thingSize), temp);
@@ -735,14 +797,11 @@ void MacroAssembler::nurseryAllocateString(Register result, Register temp,
 
   CompileZone* zone = GetJitContext()->realm()->zone();
   size_t thingSize = gc::Arena::thingSize(allocKind);
-  size_t totalSize = js::Nursery::stringHeaderSize() + thingSize;
-  MOZ_ASSERT(totalSize < INT32_MAX, "Nursery allocation too large");
-  MOZ_ASSERT(totalSize % gc::CellAlignBytes == 0);
 
-  bumpPointerAllocate(
-      result, temp, fail, zone->addressOfStringNurseryPosition(),
-      zone->addressOfStringNurseryCurrentEnd(), totalSize, thingSize);
-  storePtr(ImmPtr(zone), Address(result, -js::Nursery::stringHeaderSize()));
+  bumpPointerAllocate(result, temp, fail, zone,
+                      zone->addressOfStringNurseryPosition(),
+                      zone->addressOfStringNurseryCurrentEnd(),
+                      JS::TraceKind::String, thingSize);
 }
 
 // Inline version of Nursery::allocateBigInt.
@@ -755,20 +814,22 @@ void MacroAssembler::nurseryAllocateBigInt(Register result, Register temp,
 
   CompileZone* zone = GetJitContext()->realm()->zone();
   size_t thingSize = gc::Arena::thingSize(gc::AllocKind::BIGINT);
-  size_t totalSize = js::Nursery::bigIntHeaderSize() + thingSize;
-  MOZ_ASSERT(totalSize < INT32_MAX, "Nursery allocation too large");
-  MOZ_ASSERT(totalSize % gc::CellAlignBytes == 0);
 
-  bumpPointerAllocate(
-      result, temp, fail, zone->addressOfBigIntNurseryPosition(),
-      zone->addressOfBigIntNurseryCurrentEnd(), totalSize, thingSize);
-  storePtr(ImmPtr(zone), Address(result, -js::Nursery::bigIntHeaderSize()));
+  bumpPointerAllocate(result, temp, fail, zone,
+                      zone->addressOfBigIntNurseryPosition(),
+                      zone->addressOfBigIntNurseryCurrentEnd(),
+                      JS::TraceKind::BigInt, thingSize);
 }
 
 void MacroAssembler::bumpPointerAllocate(Register result, Register temp,
-                                         Label* fail, void* posAddr,
-                                         const void* curEndAddr,
-                                         uint32_t totalSize, uint32_t size) {
+                                         Label* fail, CompileZone* zone,
+                                         void* posAddr, const void* curEndAddr,
+                                         JS::TraceKind traceKind,
+                                         uint32_t size) {
+  uint32_t totalSize = size + Nursery::nurseryCellHeaderSize();
+  MOZ_ASSERT(totalSize < INT32_MAX, "Nursery allocation too large");
+  MOZ_ASSERT(totalSize % gc::CellAlignBytes == 0);
+
   // The position (allocation pointer) and the end pointer are stored
   // very close to each other -- specifically, easily within a 32 bit offset.
   // Use relative offsets between them, to avoid 64-bit immediate loads.
@@ -787,9 +848,10 @@ void MacroAssembler::bumpPointerAllocate(Register result, Register temp,
   branchPtr(Assembler::Below, Address(temp, endOffset.value()), result, fail);
   storePtr(result, Address(temp, 0));
   subPtr(Imm32(size), result);
+  storePtr(ImmWord(zone->nurseryCellHeader(traceKind)),
+           Address(result, -js::Nursery::nurseryCellHeaderSize()));
 
   if (GetJitContext()->runtime->geckoProfiler().enabled()) {
-    CompileZone* zone = GetJitContext()->realm()->zone();
     uint32_t* countAddress = zone->addressOfNurseryAllocCount();
     CheckedInt<int32_t> counterOffset =
         (CheckedInt<uintptr_t>(uintptr_t(countAddress)) -
@@ -973,7 +1035,7 @@ void MacroAssembler::initTypedArraySlots(Register obj, Register temp,
   MOZ_ASSERT(templateObj->hasPrivate());
   MOZ_ASSERT(!templateObj->hasBuffer());
 
-  constexpr size_t dataSlotOffset = TypedArrayObject::dataOffset();
+  constexpr size_t dataSlotOffset = ArrayBufferViewObject::dataOffset();
   constexpr size_t dataOffset = dataSlotOffset + sizeof(HeapSlot);
 
   static_assert(
@@ -1110,10 +1172,10 @@ void MacroAssembler::initGCSlots(Register obj, Register temp,
   }
 }
 
-#ifdef JS_GC_TRACE
+#ifdef JS_GC_PROBES
 static void TraceCreateObject(JSObject* obj) {
   AutoUnsafeCallWithABI unsafe;
-  js::gc::gcTracer.traceCreateObject(obj);
+  js::gc::gcprobes::CreateObject(obj);
 }
 #endif
 
@@ -1196,7 +1258,7 @@ void MacroAssembler::initGCThing(Register obj, Register temp,
     MOZ_CRASH("Unknown object");
   }
 
-#ifdef JS_GC_TRACE
+#ifdef JS_GC_PROBES
   AllocatableRegisterSet regs(RegisterSet::Volatile());
   LiveRegisterSet save(regs.asLiveSet());
   PushRegsInMask(save);
@@ -1235,11 +1297,11 @@ void MacroAssembler::compareStrings(JSOp op, Register left, Register right,
     Label leftIsNotAtom;
     Label setNotEqualResult;
     // Atoms cannot be equal to each other if they point to different strings.
-    Imm32 nonAtomBit(JSString::NON_ATOM_BIT);
-    branchTest32(Assembler::NonZero, Address(left, JSString::offsetOfFlags()),
-                 nonAtomBit, &leftIsNotAtom);
-    branchTest32(Assembler::Zero, Address(right, JSString::offsetOfFlags()),
-                 nonAtomBit, &setNotEqualResult);
+    Imm32 atomBit(JSString::ATOM_BIT);
+    branchTest32(Assembler::Zero, Address(left, JSString::offsetOfFlags()),
+                 atomBit, &leftIsNotAtom);
+    branchTest32(Assembler::NonZero, Address(right, JSString::offsetOfFlags()),
+                 atomBit, &setNotEqualResult);
 
     bind(&leftIsNotAtom);
     // Strings of different length can never be equal.
@@ -1559,9 +1621,7 @@ void MacroAssembler::initializeBigInt64(Scalar::Type type, Register bigInt,
                                         Register64 val) {
   MOZ_ASSERT(Scalar::isBigIntType(type));
 
-  uint32_t flags = BigInt::TYPE_FLAGS;
-
-  store32(Imm32(flags), Address(bigInt, BigInt::offsetOfFlags()));
+  store32(Imm32(0), Address(bigInt, BigInt::offsetOfFlags()));
 
   Label done, nonZero;
   branch64(Assembler::NotEqual, val, Imm64(0), &nonZero);
@@ -1577,7 +1637,7 @@ void MacroAssembler::initializeBigInt64(Scalar::Type type, Register bigInt,
     Label isPositive;
     branch64(Assembler::GreaterThan, val, Imm64(0), &isPositive);
     {
-      store32(Imm32(BigInt::signBitMask() | flags),
+      store32(Imm32(BigInt::signBitMask()),
               Address(bigInt, BigInt::offsetOfFlags()));
       neg64(val);
     }
@@ -1632,6 +1692,52 @@ void MacroAssembler::typeOfObject(Register obj, Register scratch, Label* slow,
             ImmPtr(nullptr), isObject);
 
   jump(isCallable);
+}
+
+void MacroAssembler::isCallableOrConstructor(bool isCallable, Register obj,
+                                             Register output, Label* isProxy) {
+  Label notFunction, hasCOps, done;
+  loadObjClassUnsafe(obj, output);
+
+  // An object is callable iff:
+  //   is<JSFunction>() || (getClass()->cOps && getClass()->cOps->call).
+  // An object is constructor iff:
+  //  ((is<JSFunction>() && as<JSFunction>().isConstructor) ||
+  //   (getClass()->cOps && getClass()->cOps->construct)).
+  branchPtr(Assembler::NotEqual, output, ImmPtr(&JSFunction::class_),
+            &notFunction);
+  if (isCallable) {
+    move32(Imm32(1), output);
+  } else {
+    static_assert(mozilla::IsPowerOfTwo(uint32_t(FunctionFlags::CONSTRUCTOR)),
+                  "FunctionFlags::CONSTRUCTOR has only one bit set");
+
+    load16ZeroExtend(Address(obj, JSFunction::offsetOfFlags()), output);
+    rshift32(Imm32(mozilla::FloorLog2(uint32_t(FunctionFlags::CONSTRUCTOR))),
+             output);
+    and32(Imm32(1), output);
+  }
+  jump(&done);
+
+  bind(&notFunction);
+
+  // Just skim proxies off. Their notion of isCallable()/isConstructor() is
+  // more complicated.
+  branchTestClassIsProxy(true, output, isProxy);
+
+  branchPtr(Assembler::NonZero, Address(output, offsetof(JSClass, cOps)),
+            ImmPtr(nullptr), &hasCOps);
+  move32(Imm32(0), output);
+  jump(&done);
+
+  bind(&hasCOps);
+  loadPtr(Address(output, offsetof(JSClass, cOps)), output);
+  size_t opsOffset =
+      isCallable ? offsetof(JSClassOps, call) : offsetof(JSClassOps, construct);
+  cmpPtrSet(Assembler::NonZero, Address(output, opsOffset), ImmPtr(nullptr),
+            output);
+
+  bind(&done);
 }
 
 void MacroAssembler::loadJSContext(Register dest) {
@@ -2628,6 +2734,16 @@ void MacroAssembler::Push(JSValueType type, Register reg) {
   framePushed_ += sizeof(Value);
 }
 
+void MacroAssembler::Push(const Register64 reg) {
+#if JS_BITS_PER_WORD == 64
+  Push(reg.reg);
+#else
+  MOZ_ASSERT(MOZ_LITTLE_ENDIAN(), "Big-endian not supported.");
+  Push(reg.high);
+  Push(reg.low);
+#endif
+}
+
 void MacroAssembler::PushValue(const Address& addr) {
   MOZ_ASSERT(addr.base != getStackPointer());
   pushValue(addr);
@@ -3344,7 +3460,7 @@ void MacroAssembler::emitPreBarrierFastPath(JSRuntime* rt, MIRType type,
 
   // Load the GC thing in temp1.
   if (type == MIRType::Value) {
-    unboxGCThingForPreBarrierTrampoline(Address(PreBarrierReg, 0), temp1);
+    unboxGCThingForGCBarrier(Address(PreBarrierReg, 0), temp1);
   } else {
     MOZ_ASSERT(type == MIRType::Object || type == MIRType::String ||
                type == MIRType::Shape || type == MIRType::ObjectGroup);

@@ -31,7 +31,6 @@
 
 #ifdef MOZ_WIDGET_ANDROID
 #  include "GLLibraryEGL.h"
-#  include "GeneratedJNIWrappers.h"
 #  include "mozilla/webrender/RenderAndroidSurfaceTextureHostOGL.h"
 #endif
 
@@ -344,13 +343,7 @@ void RenderThread::HandleFrameOneDoc(wr::WindowId aWindowId, bool aRender) {
 
     WindowInfo* info = it->second;
     PendingFrameInfo& frameInfo = info->mPendingFrames.front();
-    frameInfo.mDocFramesSeen++;
     frameInfo.mFrameNeedsRender |= aRender;
-    if (frameInfo.mDocFramesSeen < frameInfo.mDocFramesTotal) {
-      return;
-    }
-
-    MOZ_ASSERT(frameInfo.mDocFramesSeen == frameInfo.mDocFramesTotal);
     render = frameInfo.mFrameNeedsRender;
 
     frame = frameInfo;
@@ -436,9 +429,7 @@ static void NotifyDidRender(layers::CompositorBridgeParent* aBridge,
     aBridge->GetWrBridge()->RecordFrame();
   }
 
-  auto info = aInfo->Raw();
-
-  for (const auto& epoch : info.epochs) {
+  for (const auto& epoch : aInfo->Raw().epochs) {
     aBridge->NotifyPipelineRendered(epoch.pipeline_id, epoch.epoch,
                                     aCompositeStartId, aCompositeStart,
                                     aRenderStart, aEnd, &aStats);
@@ -477,7 +468,7 @@ void RenderThread::UpdateAndRender(
 
   auto& renderer = it->second;
 
-  layers::CompositorThreadHolder::Loop()->PostTask(
+  layers::CompositorThread()->Dispatch(
       NewRunnableFunction("NotifyDidStartRenderRunnable", &NotifyDidStartRender,
                           renderer->GetCompositorBridge()));
 
@@ -495,7 +486,7 @@ void RenderThread::UpdateAndRender(
   TimeStamp end = TimeStamp::Now();
   RefPtr<const WebRenderPipelineInfo> info = renderer->FlushPipelineInfo();
 
-  layers::CompositorThreadHolder::Loop()->PostTask(
+  layers::CompositorThread()->Dispatch(
       NewRunnableFunction("NotifyDidRenderRunnable", &NotifyDidRender,
                           renderer->GetCompositorBridge(), info, aStartId,
                           aStartTime, start, end, aRender, stats));
@@ -604,17 +595,16 @@ void RenderThread::SetDestroyed(wr::WindowId aWindowId) {
 
 void RenderThread::IncPendingFrameCount(wr::WindowId aWindowId,
                                         const VsyncId& aStartId,
-                                        const TimeStamp& aStartTime,
-                                        uint8_t aDocFrameCount) {
+                                        const TimeStamp& aStartTime) {
   auto windows = mWindowInfos.Lock();
   auto it = windows->find(AsUint64(aWindowId));
   if (it == windows->end()) {
     MOZ_ASSERT(false);
     return;
   }
-  it->second->mPendingFrameBuild += aDocFrameCount;
+  it->second->mPendingFrameBuild++;
   it->second->mPendingFrames.push(
-      PendingFrameInfo{aStartTime, aStartId, 0, aDocFrameCount, false});
+      PendingFrameInfo{aStartTime, aStartId, false});
 }
 
 void RenderThread::DecPendingFrameBuildCount(wr::WindowId aWindowId) {
@@ -711,6 +701,25 @@ void RenderThread::NotifyNotUsed(uint64_t aExternalImageId) {
   Loop()->PostTask(task.forget());
 }
 
+void RenderThread::NofityForUse(uint64_t aExternalImageId) {
+  MOZ_ASSERT(RenderThread::IsInRenderThread());
+
+  HandlePrepareForUse();
+
+  {
+    MutexAutoLock lock(mRenderTextureMapLock);
+    if (mHasShutdown) {
+      return;
+    }
+    auto it = mRenderTextures.find(aExternalImageId);
+    MOZ_ASSERT(it != mRenderTextures.end());
+    if (it == mRenderTextures.end()) {
+      return;
+    }
+    it->second->NofityForUse();
+  }
+}
+
 void RenderThread::UnregisterExternalImageDuringShutdown(
     uint64_t aExternalImageId) {
   MOZ_ASSERT(IsInRenderThread());
@@ -718,20 +727,6 @@ void RenderThread::UnregisterExternalImageDuringShutdown(
   MOZ_ASSERT(mHasShutdown);
   MOZ_ASSERT(mRenderTextures.find(aExternalImageId) != mRenderTextures.end());
   mRenderTextures.erase(aExternalImageId);
-}
-
-void RenderThread::NotifyAllAndroidSurfaceTexturesDetatched() {
-  MOZ_ASSERT(IsInRenderThread());
-#ifdef MOZ_WIDGET_ANDROID
-  MutexAutoLock lock(mRenderTextureMapLock);
-  for (const auto& entry : mRenderTextures) {
-    RenderAndroidSurfaceTextureHostOGL* host =
-        entry.second->AsRenderAndroidSurfaceTextureHostOGL();
-    if (host) {
-      host->DetachedFromGLContext();
-    }
-  }
-#endif
 }
 
 void RenderThread::HandlePrepareForUse() {
@@ -830,7 +825,7 @@ void RenderThread::HandleWebRenderError(WebRenderError aError) {
     return;
   }
 
-  layers::CompositorThreadHolder::Loop()->PostTask(NewRunnableFunction(
+  layers::CompositorThread()->Dispatch(NewRunnableFunction(
       "DoNotifyWebRenderErrorRunnable", &DoNotifyWebRenderError, aError));
   {
     MutexAutoLock lock(mRenderTextureMapLock);
@@ -1089,42 +1084,28 @@ void wr_notifier_external_event(mozilla::wr::WrWindowId aWindowId,
                                              std::move(evt));
 }
 
-void wr_schedule_render(mozilla::wr::WrWindowId aWindowId,
-                        const mozilla::wr::WrDocumentId* aDocumentIds,
-                        size_t aDocumentIdsCount) {
+void wr_schedule_render(mozilla::wr::WrWindowId aWindowId) {
   RefPtr<mozilla::layers::CompositorBridgeParent> cbp = mozilla::layers::
       CompositorBridgeParent::GetCompositorBridgeParentFromWindowId(aWindowId);
   if (cbp) {
-    wr::RenderRootSet renderRoots;
-    for (size_t i = 0; i < aDocumentIdsCount; ++i) {
-      renderRoots += wr::RenderRootFromId(aDocumentIds[i]);
-    }
-    cbp->ScheduleRenderOnCompositorThread(renderRoots);
+    cbp->ScheduleRenderOnCompositorThread();
   }
 }
 
 static void NotifyDidSceneBuild(RefPtr<layers::CompositorBridgeParent> aBridge,
-                                const nsTArray<wr::RenderRoot>& aRenderRoots,
                                 RefPtr<const wr::WebRenderPipelineInfo> aInfo) {
-  aBridge->NotifyDidSceneBuild(aRenderRoots, aInfo);
+  aBridge->NotifyDidSceneBuild(aInfo);
 }
 
 void wr_finished_scene_build(mozilla::wr::WrWindowId aWindowId,
-                             const mozilla::wr::WrDocumentId* aDocumentIds,
-                             size_t aDocumentIdsCount,
                              mozilla::wr::WrPipelineInfo* aInfo) {
   RefPtr<mozilla::layers::CompositorBridgeParent> cbp = mozilla::layers::
       CompositorBridgeParent::GetCompositorBridgeParentFromWindowId(aWindowId);
   RefPtr<wr::WebRenderPipelineInfo> info = new wr::WebRenderPipelineInfo();
   info->Raw() = std::move(*aInfo);
   if (cbp) {
-    nsTArray<wr::RenderRoot> renderRoots;
-    renderRoots.SetLength(aDocumentIdsCount);
-    for (size_t i = 0; i < aDocumentIdsCount; ++i) {
-      renderRoots[i] = wr::RenderRootFromId(aDocumentIds[i]);
-    }
-    layers::CompositorThreadHolder::Loop()->PostTask(NewRunnableFunction(
-        "NotifyDidSceneBuild", &NotifyDidSceneBuild, cbp, renderRoots, info));
+    layers::CompositorThread()->Dispatch(NewRunnableFunction(
+        "NotifyDidSceneBuild", &NotifyDidSceneBuild, cbp, info));
   }
 }
 

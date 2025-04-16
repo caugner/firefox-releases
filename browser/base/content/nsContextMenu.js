@@ -503,8 +503,13 @@ class nsContextMenu {
 
     var showInspectA11Y =
       showInspect &&
-      // Only when accessibility service started.
-      Services.appinfo.accessibilityEnabled &&
+      // Only when accessibility service started or the panel can be
+      // auto-enabled.
+      (Services.appinfo.accessibilityEnabled ||
+        Services.prefs.getBoolPref(
+          "devtools.accessibility.auto-init.enabled",
+          false
+        )) &&
       this.inTabBrowser &&
       Services.prefs.getBoolPref("devtools.enabled", true) &&
       Services.prefs.getBoolPref("devtools.accessibility.enabled", true) &&
@@ -1515,7 +1520,7 @@ class nsContextMenu {
           timer.cancel();
           channel.cancel(NS_ERROR_SAVE_LINK_AS_TIMEOUT);
         }
-        throw Cr.NS_ERROR_NO_INTERFACE;
+        throw Components.Exception("", Cr.NS_ERROR_NO_INTERFACE);
       },
     };
 

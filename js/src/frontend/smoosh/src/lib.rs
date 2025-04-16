@@ -20,11 +20,13 @@ use env_logger;
 use jsparagus::ast::source_atom_set::SourceAtomSet;
 use jsparagus::ast::source_slice_list::SourceSliceList;
 use jsparagus::ast::types::Program;
-use jsparagus::emitter::{
-    emit, EmitError, EmitOptions, EmitResult, GCThing, RegExpItem, ScopeNote,
-};
+use jsparagus::emitter::{emit, EmitError, EmitOptions};
 use jsparagus::parser::{parse_module, parse_script, ParseError, ParseOptions};
-use jsparagus::scope::data::{BindingName, ScopeData};
+use jsparagus::stencil::gcthings::GCThing;
+use jsparagus::stencil::regexp::RegExpItem;
+use jsparagus::stencil::result::EmitResult;
+use jsparagus::stencil::scope::{BindingName, ScopeData};
+use jsparagus::stencil::scope_notes::ScopeNote;
 use std::boxed::Box;
 use std::cell::RefCell;
 use std::os::raw::{c_char, c_void};
@@ -69,6 +71,7 @@ pub struct SmooshCompileOptions {
 
 #[repr(C)]
 pub enum SmooshGCThingKind {
+    AtomIndex,
     ScopeIndex,
     RegExpIndex,
 }
@@ -82,6 +85,10 @@ pub struct SmooshGCThing {
 impl From<GCThing> for SmooshGCThing {
     fn from(item: GCThing) -> Self {
         match item {
+            GCThing::Atom(index) => Self {
+                kind: SmooshGCThingKind::AtomIndex,
+                index: index.into(),
+            },
             GCThing::Function(_index) => {
                 panic!("Not yet implemented");
             }
@@ -211,7 +218,6 @@ pub struct SmooshResult {
     unimplemented: bool,
     error: CVec<u8>,
     bytecode: CVec<u8>,
-    atoms: CVec<usize>,
     gcthings: CVec<SmooshGCThing>,
     scopes: CVec<SmooshScopeData>,
     scope_notes: CVec<SmooshScopeNote>,
@@ -245,15 +251,7 @@ pub struct SmooshResult {
     num_type_sets: u32,
 
     /// `See BaseScript::ImmutableFlags`.
-    strict: bool,
-    bindings_accessed_dynamically: bool,
-    has_call_site_obj: bool,
-    is_for_eval: bool,
-    is_module: bool,
-    is_function: bool,
-    has_non_syntactic_scope: bool,
-    needs_function_environment_objects: bool,
-    has_module_goal: bool,
+    immutable_flags: u32,
 
     all_atoms: *mut c_void,
     all_atoms_len: usize,
@@ -277,7 +275,6 @@ impl SmooshResult {
             unimplemented,
             error,
             bytecode: CVec::empty(),
-            atoms: CVec::empty(),
             gcthings: CVec::empty(),
             scopes: CVec::empty(),
             scope_notes: CVec::empty(),
@@ -290,15 +287,7 @@ impl SmooshResult {
             body_scope_index: 0,
             num_ic_entries: 0,
             num_type_sets: 0,
-            strict: false,
-            bindings_accessed_dynamically: false,
-            has_call_site_obj: false,
-            is_for_eval: false,
-            is_module: false,
-            is_function: false,
-            has_non_syntactic_scope: false,
-            needs_function_environment_objects: false,
-            has_module_goal: false,
+            immutable_flags: 0,
 
             all_atoms: std::ptr::null_mut(),
             all_atoms_len: 0,
@@ -337,37 +326,45 @@ pub unsafe extern "C" fn smoosh_run(
     let text = str::from_utf8(slice::from_raw_parts(text, text_len)).expect("Invalid UTF8");
     let allocator = Box::new(bumpalo::Bump::new());
     match smoosh(&allocator, text, options) {
-        Ok(mut result) => {
-            // The first item is for top-level script.
-            // TODO: Once jsparagus supports functions, handle them stored in
-            // trailing items.
-            let script = result.scripts.remove(0);
-
-            let bytecode = CVec::from(script.bytecode);
-            let atoms = CVec::from(script.atoms.into_iter().map(|s| s.into()).collect());
-            let gcthings = CVec::from(script.gcthings.into_iter().map(|x| x.into()).collect());
+        Ok(result) => {
+            let bytecode = CVec::from(result.script.bytecode);
+            let gcthings = CVec::from(
+                result
+                    .script
+                    .base
+                    .gcthings
+                    .into_iter()
+                    .map(|x| x.into())
+                    .collect(),
+            );
             let scopes = CVec::from(result.scopes.into_iter().map(|x| x.into()).collect());
-            let scope_notes =
-                CVec::from(script.scope_notes.into_iter().map(|x| x.into()).collect());
-            let regexps = CVec::from(script.regexps.into_iter().map(|x| x.into()).collect());
+            let scope_notes = CVec::from(
+                result
+                    .script
+                    .scope_notes
+                    .into_iter()
+                    .map(|x| x.into())
+                    .collect(),
+            );
+            let regexps = CVec::from(
+                result
+                    .script
+                    .regexps
+                    .into_iter()
+                    .map(|x| x.into())
+                    .collect(),
+            );
 
-            let lineno = script.lineno;
-            let column = script.column;
-            let main_offset = script.main_offset;
-            let max_fixed_slots = script.max_fixed_slots.into();
-            let maximum_stack_depth = script.maximum_stack_depth;
-            let body_scope_index = script.body_scope_index;
-            let num_ic_entries = script.num_ic_entries;
-            let num_type_sets = script.num_type_sets;
-            let strict = script.strict;
-            let bindings_accessed_dynamically = script.bindings_accessed_dynamically;
-            let has_call_site_obj = script.has_call_site_obj;
-            let is_for_eval = script.is_for_eval;
-            let is_module = script.is_module;
-            let is_function = script.is_function;
-            let has_non_syntactic_scope = script.has_non_syntactic_scope;
-            let needs_function_environment_objects = script.needs_function_environment_objects;
-            let has_module_goal = script.has_module_goal;
+            let lineno = result.script.lineno;
+            let column = result.script.column;
+            let main_offset = result.script.main_offset;
+            let max_fixed_slots = result.script.max_fixed_slots.into();
+            let maximum_stack_depth = result.script.maximum_stack_depth;
+            let body_scope_index = result.script.body_scope_index;
+            let num_ic_entries = result.script.num_ic_entries;
+            let num_type_sets = result.script.num_type_sets;
+
+            let immutable_flags = result.script.base.immutable_flags.into();
 
             let all_atoms_len = result.atoms.len();
             let all_atoms = Box::new(result.atoms);
@@ -386,7 +383,6 @@ pub unsafe extern "C" fn smoosh_run(
                 unimplemented: false,
                 error: CVec::empty(),
                 bytecode,
-                atoms,
                 gcthings,
                 scopes,
                 scope_notes,
@@ -399,15 +395,7 @@ pub unsafe extern "C" fn smoosh_run(
                 body_scope_index,
                 num_ic_entries,
                 num_type_sets,
-                strict,
-                bindings_accessed_dynamically,
-                has_call_site_obj,
-                is_for_eval,
-                is_module,
-                is_function,
-                has_non_syntactic_scope,
-                needs_function_environment_objects,
-                has_module_goal,
+                immutable_flags,
 
                 all_atoms: opaque_all_atoms,
                 all_atoms_len,
@@ -433,7 +421,7 @@ fn convert_parse_result<'alloc, T>(r: jsparagus::parser::Result<T>) -> SmooshPar
             unimplemented: false,
             error: CVec::empty(),
         },
-        Err(err) => match err {
+        Err(err) => match *err {
             ParseError::NotImplemented(_) => {
                 let message = err.message();
                 SmooshParseResult {
@@ -543,7 +531,6 @@ pub unsafe extern "C" fn smoosh_get_slice_len_at(result: SmooshResult, index: us
 pub unsafe extern "C" fn smoosh_free(result: SmooshResult) {
     let _ = result.error.into();
     let _ = result.bytecode.into();
-    let _ = result.atoms.into();
     let _ = result.gcthings.into();
     let _ = result.scopes.into();
     let _ = result.scope_notes.into();
@@ -577,7 +564,7 @@ fn smoosh<'alloc>(
         slices.clone(),
     ) {
         Ok(result) => result,
-        Err(err) => match err {
+        Err(err) => match *err {
             ParseError::NotImplemented(_) => {
                 println!("Unimplemented: {}", err.message());
                 return Err(SmooshError::NotImplemented);

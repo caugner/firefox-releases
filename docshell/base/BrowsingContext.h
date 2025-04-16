@@ -61,6 +61,7 @@ namespace dom {
 class BrowsingContent;
 class BrowsingContextGroup;
 class CanonicalBrowsingContext;
+class ChildSHistory;
 class ContentParent;
 class Element;
 template <typename>
@@ -88,7 +89,6 @@ class WindowProxyHolder;
   FIELD(Name, nsString)                                                      \
   FIELD(Closed, bool)                                                        \
   FIELD(IsActive, bool)                                                      \
-  FIELD(EmbedderPolicy, nsILoadInfo::CrossOriginEmbedderPolicy)              \
   FIELD(OpenerPolicy, nsILoadInfo::CrossOriginOpenerPolicy)                  \
   /* Current opener for the BrowsingContext. Weak reference */               \
   FIELD(OpenerId, uint64_t)                                                  \
@@ -115,6 +115,7 @@ class WindowProxyHolder;
   FIELD(AllowContentRetargeting, bool)                                       \
   FIELD(AllowContentRetargetingOnChildren, bool)                             \
   FIELD(ForceEnableTrackingProtection, bool)                                 \
+  FIELD(UseGlobalHistory, bool)                                              \
   /* These field are used to store the states of autoplay media request on   \
    * GeckoView only, and it would only be modified on the top level browsing \
    * context. */                                                             \
@@ -129,13 +130,14 @@ class WindowProxyHolder;
   FIELD(MessageManagerGroup, nsString)                                       \
   FIELD(MaxTouchPointsOverride, uint8_t)                                     \
   FIELD(FullZoom, float)                                                     \
-  FIELD(WatchedByDevtools, bool)                                             \
+  FIELD(WatchedByDevToolsInternal, bool)                                     \
   FIELD(TextZoom, float)                                                     \
   /* See nsIRequest for possible flags. */                                   \
   FIELD(DefaultLoadFlags, uint32_t)                                          \
-  /* Mixed-Content: If the corresponding documentURI is https,               \
-   * then this flag is true. */                                              \
-  FIELD(IsSecure, bool)
+  /* Signals that session history is enabled for this browsing context tree. \
+   * This is only ever set to true on the top BC, so consumers need to get   \
+   * the value from the top BC! */                                           \
+  FIELD(HasSessionHistory, bool)
 
 // BrowsingContext, in this context, is the cross process replicated
 // environment in which information about documents is stored. In
@@ -219,7 +221,6 @@ class BrowsingContext : public nsILoadContext, public nsWrapperCache {
   bool IsDiscarded() const { return mIsDiscarded; }
 
   bool Windowless() const { return mWindowless; }
-  void SetWindowless();
 
   // Get the DocShell for this BrowsingContext if it is in-process, or
   // null if it's not.
@@ -257,6 +258,8 @@ class BrowsingContext : public nsILoadContext, public nsWrapperCache {
   nsPIDOMWindowOuter* GetDOMWindow() const {
     return mDocShell ? mDocShell->GetWindow() : nullptr;
   }
+
+  uint64_t GetRequestContextId() const { return mRequestContextId; }
 
   // Detach the current BrowsingContext from its parent, in both the
   // child and the parent process.
@@ -306,9 +309,10 @@ class BrowsingContext : public nsILoadContext, public nsWrapperCache {
   BrowsingContext* GetParent() const;
   BrowsingContext* Top();
 
-  // NOTE: Unlike `GetEmbedderWindowGlobal`, `GetParentWindow` does not cross
-  // toplevel content browser boundaries.
-  WindowContext* GetParentWindow() const { return mParentWindow; }
+  // NOTE: Unlike `GetEmbedderWindowGlobal`, `GetParentWindowContext` does not
+  // cross toplevel content browser boundaries.
+  WindowContext* GetParentWindowContext() const { return mParentWindow; }
+  WindowContext* GetTopWindowContext();
 
   already_AddRefed<BrowsingContext> GetOpener() const {
     RefPtr<BrowsingContext> opener(Get(GetOpenerId()));
@@ -381,8 +385,13 @@ class BrowsingContext : public nsILoadContext, public nsWrapperCache {
 
   bool InRDMPane() const { return GetInRDMPane(); }
 
+  bool WatchedByDevTools();
+  void SetWatchedByDevTools(bool aWatchedByDevTools, ErrorResult& aRv);
+
   float FullZoom() const { return GetFullZoom(); }
   float TextZoom() const { return GetTextZoom(); }
+
+  bool UseGlobalHistory() const { return GetUseGlobalHistory(); }
 
   bool IsLoading();
 
@@ -519,7 +528,7 @@ class BrowsingContext : public nsILoadContext, public nsWrapperCache {
                       const WindowPostMessageOptions& aOptions,
                       nsIPrincipal& aSubjectPrincipal, ErrorResult& aError);
 
-  void GetCustomUserAgent(nsString& aUserAgent) {
+  void GetCustomUserAgent(nsAString& aUserAgent) {
     aUserAgent = Top()->GetUserAgentOverride();
   }
   void SetCustomUserAgent(const nsAString& aUserAgent);
@@ -555,7 +564,9 @@ class BrowsingContext : public nsILoadContext, public nsWrapperCache {
     bool mWindowless = false;
     bool mUseRemoteTabs = false;
     bool mUseRemoteSubframes = false;
+    bool mHasSessionHistory = false;
     OriginAttributes mOriginAttributes;
+    uint64_t mRequestContextId = 0;
 
     FieldTuple mFields;
 
@@ -565,6 +576,7 @@ class BrowsingContext : public nsILoadContext, public nsWrapperCache {
              mUseRemoteTabs == aOther.mUseRemoteTabs &&
              mUseRemoteSubframes == aOther.mUseRemoteSubframes &&
              mOriginAttributes == aOther.mOriginAttributes &&
+             mRequestContextId == aOther.mRequestContextId &&
              mFields == aOther.mFields;
     }
   };
@@ -595,6 +607,15 @@ class BrowsingContext : public nsILoadContext, public nsWrapperCache {
   const OriginAttributes& OriginAttributesRef() { return mOriginAttributes; }
   nsresult SetOriginAttributes(const OriginAttributes& aAttrs);
 
+  // This should only be called on the top browsing context.
+  void InitSessionHistory();
+
+  // This will only ever return a non-null value if called on the top browsing
+  // context.
+  ChildSHistory* GetChildSessionHistory();
+
+  bool CrossOriginIsolated();
+
  protected:
   virtual ~BrowsingContext();
   BrowsingContext(WindowContext* aParentWindow, BrowsingContextGroup* aGroup,
@@ -614,6 +635,10 @@ class BrowsingContext : public nsILoadContext, public nsWrapperCache {
   bool CanSetOriginAttributes();
 
   void AssertOriginAttributesMatchPrivateBrowsing();
+
+  // Assert that the BrowsingContext's LoadContext flags appear coherent
+  // relative to related BrowsingContexts.
+  void AssertCoherentLoadContext();
 
   friend class ::nsOuterWindowProxy;
   friend class ::nsGlobalWindowOuter;
@@ -721,14 +746,17 @@ class BrowsingContext : public nsILoadContext, public nsWrapperCache {
               ContentParent* aSource);
   bool CanSet(FieldIndex<IDX_AllowPlugins>, const bool& aAllowPlugins,
               ContentParent* aSource);
-  bool CanSet(FieldIndex<IDX_IsSecure>, const bool& aIsSecure,
-              ContentParent* aSource);
-  bool CanSet(FieldIndex<IDX_WatchedByDevtools>, const bool& aWatchedByDevtools,
-              ContentParent* aSource);
+  bool CanSet(FieldIndex<IDX_WatchedByDevToolsInternal>,
+              const bool& aWatchedByDevToolsInternal, ContentParent* aSource);
 
   bool CanSet(FieldIndex<IDX_DefaultLoadFlags>,
               const uint32_t& aDefaultLoadFlags, ContentParent* aSource);
   void DidSet(FieldIndex<IDX_DefaultLoadFlags>);
+
+  bool CanSet(FieldIndex<IDX_UseGlobalHistory>, const bool& aUseGlobalHistory,
+              ContentParent* aSource);
+
+  void DidSet(FieldIndex<IDX_HasSessionHistory>, bool aOldValue);
 
   template <size_t I, typename T>
   bool CanSet(FieldIndex<I>, const T&, ContentParent*) {
@@ -753,6 +781,8 @@ class BrowsingContext : public nsILoadContext, public nsWrapperCache {
   // True if the process attempting to set field is the same as the embedder's
   // process.
   bool CheckOnlyEmbedderCanSet(ContentParent* aSource);
+
+  void CreateChildSHistory();
 
   // Type of BrowsingContent
   const Type mType;
@@ -779,6 +809,10 @@ class BrowsingContext : public nsILoadContext, public nsWrapperCache {
   // OriginAttributes for this BrowsingContext. May not be changed after this
   // BrowsingContext is attached.
   OriginAttributes mOriginAttributes;
+
+  // The network request context id, representing the nsIRequestContext
+  // associated with this BrowsingContext, and LoadGroups created for it.
+  uint64_t mRequestContextId = 0;
 
   // Determines if private browsing should be used. May not be changed after
   // this BrowsingContext is attached. This field matches mOriginAttributes in
@@ -848,7 +882,8 @@ class BrowsingContext : public nsILoadContext, public nsWrapperCache {
 
   mozilla::LinkedList<DeprioritizedLoadRunner> mDeprioritizedLoadRunner;
 
-  RefPtr<dom::SessionStorageManager> mSessionStorageManager;
+  RefPtr<SessionStorageManager> mSessionStorageManager;
+  RefPtr<ChildSHistory> mChildSessionHistory;
 };
 
 /**

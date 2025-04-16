@@ -8,10 +8,10 @@
 //! See the comment at the top of the `renderer` module for a description of
 //! how these two pieces interact.
 
-use api::{ApiMsg, ClearCache, DebugCommand, DebugFlags};
+use api::{ApiMsg, ClearCache, DebugCommand, DebugFlags, BlobImageHandler};
 use api::{DocumentId, DocumentLayer, ExternalScrollId, FrameMsg, HitTestFlags, HitTestResult};
 use api::{IdNamespace, MemoryReport, PipelineId, RenderNotifier, ScrollClamping};
-use api::{ScrollLocation, TransactionMsg, ResourceUpdate, BlobImageKey};
+use api::{ScrollLocation, TransactionMsg, ResourceUpdate};
 use api::{NotificationRequest, Checkpoint, QualitySettings};
 use api::{ClipIntern, FilterDataIntern, PrimitiveKeyKind};
 use api::units::*;
@@ -303,10 +303,6 @@ impl DataStores {
                 let pic = &prim_store.pictures[pic_index.0];
                 pic.precise_local_rect
             }
-            PrimitiveInstanceKind::PushClipChain |
-            PrimitiveInstanceKind::PopClipChain => {
-                unreachable!();
-            }
             _ => {
                 self.as_common_data(prim_instance).prim_rect
             }
@@ -323,10 +319,6 @@ impl DataStores {
         match prim_instance.kind {
             PrimitiveInstanceKind::Picture { .. } => {
                 false
-            }
-            PrimitiveInstanceKind::PushClipChain |
-            PrimitiveInstanceKind::PopClipChain => {
-                unreachable!();
             }
             _ => {
                 self.as_common_data(prim_instance).may_need_repetition
@@ -386,10 +378,6 @@ impl DataStores {
             PrimitiveInstanceKind::Backdrop { data_handle, .. } => {
                 let prim_data = &self.backdrop[data_handle];
                 &prim_data.common
-            }
-            PrimitiveInstanceKind::PushClipChain |
-            PrimitiveInstanceKind::PopClipChain => {
-                unreachable!();
             }
         }
     }
@@ -766,6 +754,7 @@ pub struct RenderBackend {
     result_tx: Sender<ResultMsg>,
     scene_tx: Sender<SceneBuilderRequest>,
     low_priority_scene_tx: Sender<SceneBuilderRequest>,
+    backend_scene_tx: Sender<BackendSceneBuilderRequest>,
     scene_rx: Receiver<SceneBuilderResult>,
 
     default_device_pixel_ratio: f32,
@@ -784,6 +773,11 @@ pub struct RenderBackend {
     debug_flags: DebugFlags,
     namespace_alloc_by_client: bool,
 
+    // We keep one around to be able to call clear_namespace
+    // after the api object is deleted. For most purposes the
+    // api object's blob handler should be used instead.
+    blob_image_handler: Option<Box<dyn BlobImageHandler>>,
+
     recycler: Recycler,
     #[cfg(feature = "capture")]
     capture_config: Option<CaptureConfig>,
@@ -797,10 +791,12 @@ impl RenderBackend {
         result_tx: Sender<ResultMsg>,
         scene_tx: Sender<SceneBuilderRequest>,
         low_priority_scene_tx: Sender<SceneBuilderRequest>,
+        backend_scene_tx: Sender<BackendSceneBuilderRequest>,
         scene_rx: Receiver<SceneBuilderResult>,
         default_device_pixel_ratio: f32,
         resource_cache: ResourceCache,
         notifier: Box<dyn RenderNotifier>,
+        blob_image_handler: Option<Box<dyn BlobImageHandler>>,
         frame_config: FrameBuilderConfig,
         sampler: Option<Box<dyn AsyncPropertySampler + Send>>,
         size_of_ops: Option<MallocSizeOfOps>,
@@ -812,6 +808,7 @@ impl RenderBackend {
             result_tx,
             scene_tx,
             low_priority_scene_tx,
+            backend_scene_tx,
             scene_rx,
             default_device_pixel_ratio,
             resource_cache,
@@ -826,6 +823,7 @@ impl RenderBackend {
             debug_flags,
             namespace_alloc_by_client,
             recycler: Recycler::new(),
+            blob_image_handler,
             #[cfg(feature = "capture")]
             capture_config: None,
             #[cfg(feature = "replay")]
@@ -884,6 +882,25 @@ impl RenderBackend {
 
                         self.bookkeep_after_frames();
                     },
+                    SceneBuilderResult::GetGlyphDimensions(request) => {
+                        let mut glyph_dimensions = Vec::with_capacity(request.glyph_indices.len());
+                        if let Some(base) = self.resource_cache.get_font_instance(request.key) {
+                            let font = FontInstance::from_base(Arc::clone(&base));
+                            for glyph_index in &request.glyph_indices {
+                                let glyph_dim = self.resource_cache.get_glyph_dimensions(&font, *glyph_index);
+                                glyph_dimensions.push(glyph_dim);
+                            }
+                        }
+                        request.sender.send(glyph_dimensions).unwrap();
+                    }
+                    SceneBuilderResult::GetGlyphIndices(request) => {
+                        let mut glyph_indices = Vec::with_capacity(request.text.len());
+                        for ch in request.text.chars() {
+                            let index = self.resource_cache.get_glyph_index(request.key, ch);
+                            glyph_indices.push(index);
+                        }
+                        request.sender.send(glyph_indices).unwrap();
+                    }
                     SceneBuilderResult::FlushComplete(tx) => {
                         tx.send(()).ok();
                     }
@@ -893,6 +910,9 @@ impl RenderBackend {
                     SceneBuilderResult::ClearNamespace(id) => {
                         self.resource_cache.clear_namespace(id);
                         self.documents.retain(|doc_id, _doc| doc_id.namespace_id != id);
+                        if let Some(handler) = &mut self.blob_image_handler {
+                            handler.clear_namespace(id);
+                        }
                     }
                     SceneBuilderResult::Stopped => {
                         panic!("We haven't sent a Stop yet, how did we get a Stopped back?");
@@ -1066,34 +1086,11 @@ impl RenderBackend {
             ApiMsg::FlushSceneBuilder(tx) => {
                 self.low_priority_scene_tx.send(SceneBuilderRequest::Flush(tx)).unwrap();
             }
-            ApiMsg::UpdateResources(mut updates) => {
-                self.resource_cache.pre_scene_building_update(
-                    &mut updates,
-                    &mut profile_counters.resources
-                );
-                self.resource_cache.post_scene_building_update(
-                    updates,
-                    &mut profile_counters.resources
-                );
+            ApiMsg::GetGlyphDimensions(request) => {
+                self.scene_tx.send(SceneBuilderRequest::GetGlyphDimensions(request)).unwrap();
             }
-            ApiMsg::GetGlyphDimensions(instance_key, glyph_indices, tx) => {
-                let mut glyph_dimensions = Vec::with_capacity(glyph_indices.len());
-                if let Some(base) = self.resource_cache.get_font_instance(instance_key) {
-                    let font = FontInstance::from_base(Arc::clone(&base));
-                    for glyph_index in &glyph_indices {
-                        let glyph_dim = self.resource_cache.get_glyph_dimensions(&font, *glyph_index);
-                        glyph_dimensions.push(glyph_dim);
-                    }
-                }
-                tx.send(glyph_dimensions).unwrap();
-            }
-            ApiMsg::GetGlyphIndices(font_key, text, tx) => {
-                let mut glyph_indices = Vec::new();
-                for ch in text.chars() {
-                    let index = self.resource_cache.get_glyph_index(font_key, ch);
-                    glyph_indices.push(index);
-                }
-                tx.send(glyph_indices).unwrap();
+            ApiMsg::GetGlyphIndices(request) => {
+                self.scene_tx.send(SceneBuilderRequest::GetGlyphIndices(request)).unwrap();
             }
             ApiMsg::CloneApi(sender) => {
                 assert!(!self.namespace_alloc_by_client);
@@ -1175,7 +1172,7 @@ impl RenderBackend {
                     DebugCommand::FetchDocuments => {
                         // Ask SceneBuilderThread to send JSON presentation of the documents,
                         // that will be forwarded to Renderer.
-                        self.scene_tx.send(SceneBuilderRequest::DocumentsForDebugger).unwrap();
+                        self.send_backend_message(BackendSceneBuilderRequest::DocumentsForDebugger);
                         return RenderBackendStatus::Continue;
                     }
                     DebugCommand::FetchClipScrollTree => {
@@ -1299,9 +1296,8 @@ impl RenderBackend {
                 info!("Recycling stats: {:?}", self.recycler);
                 return RenderBackendStatus::ShutDown(sender);
             }
-            ApiMsg::UpdateDocuments(document_ids, transaction_msgs) => {
+            ApiMsg::UpdateDocuments(transaction_msgs) => {
                 self.prepare_transactions(
-                    document_ids,
                     transaction_msgs,
                     frame_counter,
                     profile_counters,
@@ -1313,9 +1309,11 @@ impl RenderBackend {
     }
 
     fn update_frame_builder_config(&self) {
-        self.low_priority_scene_tx.send(SceneBuilderRequest::SetFrameBuilderConfig(
-            self.frame_config.clone()
-        )).unwrap();
+        self.send_backend_message(
+            BackendSceneBuilderRequest::SetFrameBuilderConfig(
+                self.frame_config.clone()
+            )
+        );
     }
 
     fn prepare_for_frames(&mut self) {
@@ -1334,51 +1332,19 @@ impl RenderBackend {
 
     fn prepare_transactions(
         &mut self,
-        document_ids: Vec<DocumentId>,
-        mut transaction_msgs: Vec<TransactionMsg>,
+        txns: Vec<Box<TransactionMsg>>,
         frame_counter: &mut u32,
         profile_counters: &mut BackendProfileCounters,
     ) {
-        let mut use_scene_builder = transaction_msgs.iter()
+        let mut use_scene_builder = txns.iter()
             .any(|transaction_msg| transaction_msg.use_scene_builder_thread);
-        let use_high_priority = transaction_msgs.iter()
+        let use_high_priority = txns.iter()
             .any(|transaction_msg| !transaction_msg.low_priority);
 
-        let txns : Vec<Box<Transaction>> = document_ids.iter().zip(transaction_msgs.drain(..))
-            .map(|(&document_id, mut transaction_msg)| {
-
-                self.resource_cache.pre_scene_building_update(
-                    &mut transaction_msg.resource_updates,
-                    &mut profile_counters.resources,
-                );
-
-                let mut txn = Box::new(Transaction {
-                    document_id,
-                    blob_rasterizer: None,
-                    blob_requests: Vec::new(),
-                    resource_updates: transaction_msg.resource_updates,
-                    frame_ops: transaction_msg.frame_ops,
-                    scene_ops: transaction_msg.scene_ops,
-                    rasterized_blobs: Vec::new(),
-                    notifications: transaction_msg.notifications,
-                    render_frame: transaction_msg.generate_frame,
-                    invalidate_rendered_frame: transaction_msg.invalidate_rendered_frame,
-                    fonts: self.resource_cache.get_font_instances(),
-                });
-
-                let blobs_to_rasterize = get_blob_image_updates(&txn.resource_updates);
-                if !blobs_to_rasterize.is_empty() {
-                    let (blob_rasterizer, blob_requests) = self.resource_cache
-                        .create_blob_scene_builder_requests(&blobs_to_rasterize);
-
-                    txn.blob_requests = blob_requests;
-                    txn.blob_rasterizer = blob_rasterizer;
-                }
-                txn
-            }).collect();
-
         use_scene_builder = use_scene_builder || txns.iter().any(|txn| {
-            !txn.can_skip_scene_builder() || txn.blob_rasterizer.is_some()
+            !txn.scene_ops.is_empty()
+                || !txn.blob_requests.is_empty()
+                || txn.blob_rasterizer.is_some()
         });
 
         if !use_scene_builder {
@@ -1395,7 +1361,7 @@ impl RenderBackend {
                     txn.resource_updates.take(),
                     txn.frame_ops.take(),
                     txn.notifications.take(),
-                    txn.render_frame,
+                    txn.generate_frame,
                     txn.invalidate_rendered_frame,
                     frame_counter,
                     profile_counters,
@@ -1532,7 +1498,8 @@ impl RenderBackend {
         // external image with NativeTexture or when platform requested to composite frame.
         if invalidate_rendered_frame {
             doc.rendered_frame_is_valid = false;
-            if let CompositorKind::Draw { max_partial_present_rects } = doc.scene.config.compositor_kind {
+            if let CompositorKind::Draw { max_partial_present_rects, .. } = doc.scene.config.compositor_kind {
+
               // When partial present is enabled, we need to force redraw.
               if max_partial_present_rects > 0 {
                   let msg = ResultMsg::ForceRedraw;
@@ -1660,6 +1627,11 @@ impl RenderBackend {
         build_frame
     }
 
+    fn send_backend_message(&self, msg: BackendSceneBuilderRequest) {
+        self.backend_scene_tx.send(msg).unwrap();
+        self.low_priority_scene_tx.send(SceneBuilderRequest::BackendMessage).unwrap();
+    }
+
     #[cfg(not(feature = "debugger"))]
     fn get_spatial_tree_for_debugger(&self) -> String {
         String::new()
@@ -1703,7 +1675,9 @@ impl RenderBackend {
         // Send a message to report memory on the scene-builder thread, which
         // will add its report to this one and send the result back to the original
         // thread waiting on the request.
-        self.scene_tx.send(SceneBuilderRequest::ReportMemory(report, tx)).unwrap();
+        self.send_backend_message(
+            BackendSceneBuilderRequest::ReportMemory(report, tx)
+        );
     }
 
     #[cfg(feature = "capture")]
@@ -1728,26 +1702,6 @@ impl RenderBackend {
             }
         }
     }
-}
-
-fn get_blob_image_updates(updates: &[ResourceUpdate]) -> Vec<BlobImageKey> {
-    let mut requests = Vec::new();
-    for update in updates {
-        match *update {
-            ResourceUpdate::AddBlobImage(ref img) => {
-                requests.push(img.key);
-            }
-            ResourceUpdate::UpdateBlobImage(ref img) => {
-                requests.push(img.key);
-            }
-            ResourceUpdate::SetBlobImageVisibleArea(key, ..) => {
-                requests.push(key);
-            }
-            _ => {}
-        }
-    }
-
-    requests
 }
 
 impl RenderBackend {
@@ -1828,7 +1782,9 @@ impl RenderBackend {
         }
 
         debug!("\tscene builder");
-        self.scene_tx.send(SceneBuilderRequest::SaveScene(config.clone())).unwrap();
+        self.send_backend_message(
+            BackendSceneBuilderRequest::SaveScene(config.clone())
+        );
 
         debug!("\tresource cache");
         let (resources, deferred) = self.resource_cache.save_capture(&config.root);
@@ -1875,14 +1831,18 @@ impl RenderBackend {
         root: PathBuf,
         bits: CaptureBits,
     ) {
-        self.scene_tx.send(SceneBuilderRequest::StartCaptureSequence(CaptureConfig::new(root, bits))).unwrap();
+        self.send_backend_message(
+            BackendSceneBuilderRequest::StartCaptureSequence(CaptureConfig::new(root, bits))
+        );
     }
 
     #[cfg(feature = "capture")]
     fn stop_capture_sequence(
         &mut self,
     ) {
-        self.scene_tx.send(SceneBuilderRequest::StopCaptureSequence).unwrap();
+        self.send_backend_message(
+            BackendSceneBuilderRequest::StopCaptureSequence
+        );
     }
 
     #[cfg(feature = "replay")]
@@ -2043,9 +2003,9 @@ impl RenderBackend {
         }
 
         if !scenes_to_build.is_empty() {
-            self.low_priority_scene_tx.send(
-                SceneBuilderRequest::LoadScenes(scenes_to_build)
-            ).unwrap();
+            self.send_backend_message(
+                BackendSceneBuilderRequest::LoadScenes(scenes_to_build)
+            );
         }
     }
 }

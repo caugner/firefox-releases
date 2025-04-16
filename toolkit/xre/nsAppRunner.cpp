@@ -101,6 +101,7 @@
 #  include <math.h>
 #  include "cairo/cairo-features.h"
 #  include "mozilla/WindowsDllBlocklist.h"
+#  include "mozilla/WindowsProcessMitigations.h"
 #  include "mozilla/WinHeaderOnlyUtils.h"
 #  include "mozilla/mscom/ProcessRuntime.h"
 #  include "mozilla/widget/AudioSession.h"
@@ -217,7 +218,7 @@
 #include "GTestRunner.h"
 
 #ifdef MOZ_WIDGET_ANDROID
-#  include "GeneratedJNIWrappers.h"
+#  include "mozilla/java/GeckoAppShellWrappers.h"
 #endif
 
 #if defined(MOZ_SANDBOX)
@@ -2083,6 +2084,16 @@ static nsresult SelectProfile(nsToolkitProfileService* aProfileSvc,
     gDoMigration = true;
   }
 
+#if defined(XP_WIN)
+  // This arg is only used to indicate to telemetry that a profile refresh
+  // (reset+migration) was requested from the uninstaller, pass this along
+  // via an environment variable for simplicity.
+  ar = CheckArg("uninstaller-profile-refresh");
+  if (ar == ARG_FOUND) {
+    SaveToEnv("MOZ_UNINSTALLER_PROFILE_REFRESH=1");
+  }
+#endif
+
   if (EnvHasValue("XRE_RESTART_TO_PROFILE_MANAGER")) {
     return ShowProfileManager(aProfileSvc, aNative);
   }
@@ -2128,6 +2139,9 @@ struct FileWriteFunc : public JSONWriteFunc {
   explicit FileWriteFunc(FILE* aFile) : mFile(aFile) {}
 
   void Write(const char* aStr) override { fprintf(mFile, "%s", aStr); }
+  void Write(const char* aStr, size_t aLen) override {
+    fprintf(mFile, "%s", aStr);
+  }
 };
 
 static void SubmitDowngradeTelemetry(const nsCString& aLastVersion,
@@ -3575,26 +3589,57 @@ static void AnnotateLSBRelease(void*) {
 #endif  // defined(XP_LINUX) && !defined(ANDROID)
 
 #ifdef XP_WIN
-static void ReadAheadDll(const wchar_t* dllName) {
+static void ReadAheadSystemDll(const wchar_t* dllName) {
   wchar_t dllPath[MAX_PATH];
   if (ConstructSystem32Path(dllName, dllPath, MAX_PATH)) {
     ReadAheadLib(dllPath);
   }
 }
 
-static void PR_CALLBACK ReadAheadDlls_ThreadStart(void*) {
-  // Load DataExchange.dll and twinapi.appcore.dll for nsWindow::EnableDragDrop
-  ReadAheadDll(L"DataExchange.dll");
-  ReadAheadDll(L"twinapi.appcore.dll");
+#  ifdef NIGHTLY_BUILD
+static void ReadAheadPackagedDll(const wchar_t* dllName,
+                                 const wchar_t* aGREDir) {
+  wchar_t dllPath[MAX_PATH];
+  swprintf(dllPath, MAX_PATH, L"%s\\%s", aGREDir, dllName);
+  ReadAheadLib(dllPath);
+}
+#  endif
+
+static void PR_CALLBACK ReadAheadDlls_ThreadStart(void* arg) {
+  UniquePtr<wchar_t[]> greDir(static_cast<wchar_t*>(arg));
+
+  // In Bug 1628903, we investigated which DLLs we should prefetch in
+  // order to reduce disk I/O and improve startup on Windows machines.
+  // Our ultimate goal is to measure the impact of these improvements on
+  // retention (see Bug 1640087). Before we place this within a pref,
+  // we should ensure this feature only ships to the nightly channel
+  // and monitor results from that subset.
+#  ifdef NIGHTLY_BUILD
+  // Prefetch the DLLs shipped with firefox
+  ReadAheadPackagedDll(L"libegl.dll", greDir.get());
+  ReadAheadPackagedDll(L"libGLESv2.dll", greDir.get());
+  ReadAheadPackagedDll(L"nssckbi.dll", greDir.get());
+  ReadAheadPackagedDll(L"freebl3.dll", greDir.get());
+  ReadAheadPackagedDll(L"softokn3.dll", greDir.get());
+
+  // Prefetch the system DLLs
+  ReadAheadSystemDll(L"DWrite.dll");
+  ReadAheadSystemDll(L"D3DCompiler_47.dll");
+#  else
+  // Load DataExchange.dll and twinapi.appcore.dll for
+  // nsWindow::EnableDragDrop
+  ReadAheadSystemDll(L"DataExchange.dll");
+  ReadAheadSystemDll(L"twinapi.appcore.dll");
 
   // Load twinapi.dll for WindowsUIUtils::UpdateTabletModeState
-  ReadAheadDll(L"twinapi.dll");
+  ReadAheadSystemDll(L"twinapi.dll");
 
   // Load explorerframe.dll for WinTaskbar::Initialize
-  ReadAheadDll(L"ExplorerFrame.dll");
+  ReadAheadSystemDll(L"ExplorerFrame.dll");
 
   // Load WinTypes.dll for nsOSHelperAppService::GetApplicationDescription
-  ReadAheadDll(L"WinTypes.dll");
+  ReadAheadSystemDll(L"WinTypes.dll");
+#  endif
 }
 #endif
 
@@ -4283,9 +4328,20 @@ nsresult XREMain::XRE_mainRun() {
 
 #ifdef XP_WIN
   if (!PR_GetEnv("XRE_NO_DLL_READAHEAD")) {
-    PR_CreateThread(PR_USER_THREAD, ReadAheadDlls_ThreadStart, 0,
-                    PR_PRIORITY_NORMAL, PR_GLOBAL_THREAD, PR_UNJOINABLE_THREAD,
-                    0);
+    nsCOMPtr<nsIFile> greDir = mDirProvider.GetGREDir();
+    nsAutoString path;
+    rv = greDir->GetPath(path);
+    if (NS_SUCCEEDED(rv)) {
+      PRThread* readAheadThread;
+      wchar_t* pathRaw = new wchar_t[MAX_PATH];
+      wcscpy_s(pathRaw, MAX_PATH, path.get());
+      readAheadThread = PR_CreateThread(
+          PR_USER_THREAD, ReadAheadDlls_ThreadStart, (void*)pathRaw,
+          PR_PRIORITY_NORMAL, PR_GLOBAL_THREAD, PR_UNJOINABLE_THREAD, 0);
+      if (readAheadThread == NULL) {
+        delete[] pathRaw;
+      }
+    }
   }
 #endif
 
@@ -4709,7 +4765,12 @@ int XREMain::XRE_main(int argc, char* argv[], const BootstrapConfig& aConfig) {
   // this browser process fails to launch sandbox processes because we cannot
   // copy a modified IAT into a remote process (See SandboxBroker::LaunchApp).
   // To prevent that, we cache the intact IAT before COM initialization.
-  mozilla::ipc::GeckoChildProcessHost::CacheNtDllThunk();
+  // If EAF+ is enabled, CacheNtDllThunk() causes a crash, but EAF+ will
+  // also prevent an injected module from parsing the PE headers and modifying
+  // the IAT.  Therefore, we can skip CacheNtDllThunk().
+  if (!mozilla::IsEafPlusEnabled()) {
+    mozilla::ipc::GeckoChildProcessHost::CacheNtDllThunk();
+  }
 
   // Some COM settings are global to the process and must be set before any non-
   // trivial COM is run in the application. Since these settings may affect
@@ -4925,18 +4986,6 @@ bool XRE_UseNativeEventProcessing() {
 
   return true;
 }
-
-#if defined(XP_WIN)
-bool XRE_Win32kCallsAllowed() {
-  switch (XRE_GetProcessType()) {
-    case GeckoProcessType_GMPlugin:
-    case GeckoProcessType_RDD:
-      return false;
-    default:
-      return true;
-  }
-}
-#endif
 
 // If you add anything to this enum, please update about:support to reflect it
 enum {

@@ -409,6 +409,15 @@ WindowlessBrowser::Close() {
 }
 
 NS_IMETHODIMP
+WindowlessBrowser::GetBrowsingContext(BrowsingContext** aBrowsingContext) {
+  nsCOMPtr<nsIDocShellTreeItem> docShellTreeItem = do_QueryInterface(mBrowser);
+  if (!docShellTreeItem) {
+    return NS_ERROR_NOT_INITIALIZED;
+  }
+  return docShellTreeItem->GetBrowsingContextXPCOM(aBrowsingContext);
+}
+
+NS_IMETHODIMP
 WindowlessBrowser::GetDocShell(nsIDocShell** aDocShell) {
   nsCOMPtr<nsIDocShell> docShell = do_GetInterface(mInterfaceRequestor);
   if (!docShell) {
@@ -457,8 +466,7 @@ nsAppShellService::CreateWindowlessBrowser(bool aIsChrome,
    * an associated doc shell, which is what we're interested in.
    */
   nsCOMPtr<nsIWebBrowser> browser = nsWebBrowser::Create(
-      stub, widget, OriginAttributes(), browsingContext,
-      nullptr /* initialWindowChild */, true /* disable history */);
+      stub, widget, browsingContext, nullptr /* initialWindowChild */);
 
   if (NS_WARN_IF(!browser)) {
     NS_ERROR("Couldn't create instance of nsWebBrowser!");
@@ -643,6 +651,7 @@ nsresult nsAppShellService::JustCreateTopWindow(
       widgetInitData.mBorderStyle = static_cast<enum nsBorderStyle>(
           widgetInitData.mBorderStyle | eBorderStyle_close);
     if (aChromeMask & nsIWebBrowserChrome::CHROME_WINDOW_RESIZE) {
+      widgetInitData.mResizable = true;
       widgetInitData.mBorderStyle = static_cast<enum nsBorderStyle>(
           widgetInitData.mBorderStyle | eBorderStyle_resizeh);
       // only resizable windows get the maximize button (but not dialogs)

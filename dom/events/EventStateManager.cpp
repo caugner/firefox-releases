@@ -135,6 +135,10 @@ static inline int32_t RoundDown(double aDouble) {
                        : static_cast<int32_t>(ceil(aDouble));
 }
 
+static UniquePtr<WidgetMouseEvent> CreateMouseOrPointerWidgetEvent(
+    WidgetMouseEvent* aMouseEvent, EventMessage aMessage,
+    EventTarget* aRelatedTarget);
+
 /******************************************************************/
 /* mozilla::UITimerCallback                                       */
 /******************************************************************/
@@ -984,7 +988,7 @@ static bool IsAccessKeyTarget(nsIContent* aContent, nsIFrame* aFrame,
   if (!aContent->IsElement() ||
       !aContent->AsElement()->GetAttr(kNameSpaceID_None, nsGkAtoms::accesskey,
                                       contentKey) ||
-      !contentKey.Equals(aKey, nsCaseInsensitiveStringComparator()))
+      !contentKey.Equals(aKey, nsCaseInsensitiveStringComparator))
     return false;
 
   if (!aContent->IsXULElement()) return true;
@@ -1306,6 +1310,29 @@ void EventStateManager::DispatchCrossProcessEvent(WidgetEvent* aEvent,
 
   switch (aEvent->mClass) {
     case eMouseEventClass: {
+      // If a mouse is over a remote target A, and then moves to
+      // remote target B, we'd deliver the event directly to remote target B
+      // after the moving, A would never get notified that the mouse left.
+      // So we generate a exit event to notify A after the move.
+      // XXXedgar, if the synthesized mouse events could deliver to the correct
+      // process directly (see
+      // https://bugzilla.mozilla.org/show_bug.cgi?id=1549355), we probably
+      // don't need to check mReason then.
+      BrowserParent* oldRemote = BrowserParent::GetLastMouseRemoteTarget();
+      if (mouseEvent->mReason == WidgetMouseEvent::eReal && oldRemote &&
+          remote != oldRemote) {
+        UniquePtr<WidgetMouseEvent> mouseExitEvent =
+            CreateMouseOrPointerWidgetEvent(mouseEvent, eMouseExitFromWidget,
+                                            mouseEvent->mRelatedTarget);
+        oldRemote->SendRealMouseEvent(*mouseExitEvent);
+
+        if (mouseEvent->mMessage != eMouseExitFromWidget &&
+            mouseEvent->mMessage != eMouseEnterIntoWidget) {
+          // This is to make cursor would be updated correctly.
+          remote->MouseEnterIntoWidget();
+        }
+      }
+
       remote->SendRealMouseEvent(*mouseEvent);
       return;
     }
@@ -3260,30 +3287,6 @@ nsresult EventStateManager::PostHandleEvent(nsPresContext* aPresContext,
         // if we're here, the event handler returned false, so stop
         // any of our own processing of a drag. Workaround for bug 43258.
         StopTrackingDragGesture(true);
-
-        // When the event was cancelled, there is currently a chrome document
-        // focused and a mousedown just occurred on a content document, ensure
-        // that the window that was clicked is focused.
-        EnsureDocument(mPresContext);
-        nsIFocusManager* fm = nsFocusManager::GetFocusManager();
-        if (mDocument && fm) {
-          nsCOMPtr<mozIDOMWindowProxy> window;
-          fm->GetFocusedWindow(getter_AddRefs(window));
-          auto* currentWindow = nsPIDOMWindowOuter::From(window);
-          if (currentWindow && mDocument->GetWindow() &&
-              currentWindow != mDocument->GetWindow() &&
-              !nsContentUtils::IsChromeDoc(mDocument)) {
-            nsCOMPtr<nsPIDOMWindowOuter> currentTop;
-            nsCOMPtr<nsPIDOMWindowOuter> newTop;
-            currentTop = currentWindow->GetInProcessTop();
-            newTop = mDocument->GetWindow()->GetInProcessTop();
-            nsCOMPtr<Document> currentDoc = currentWindow->GetExtantDoc();
-            if (nsContentUtils::IsChromeDoc(currentDoc) ||
-                (currentTop && newTop && currentTop != newTop)) {
-              fm->SetFocusedWindow(mDocument->GetWindow());
-            }
-          }
-        }
       }
       SetActiveManager(this, activeContent);
     } break;
@@ -3347,12 +3350,14 @@ nsresult EventStateManager::PostHandleEvent(nsPresContext* aPresContext,
       WidgetWheelEvent* wheelEvent = aEvent->AsWheelEvent();
       MOZ_ASSERT(wheelEvent);
 
-      // When APZ is enabled, the actual scroll animation might be handled by
-      // the compositor.
       WheelPrefs::Action action =
-          wheelEvent->mFlags.mHandledByAPZ
-              ? WheelPrefs::ACTION_NONE
-              : WheelPrefs::GetInstance()->ComputeActionFor(wheelEvent);
+          WheelPrefs::GetInstance()->RecordTelemetryAndComputeActionFor(
+              wheelEvent);
+      if (wheelEvent->mFlags.mHandledByAPZ) {
+        // When APZ is enabled, the actual scroll animation might be handled by
+        // the compositor.
+        action = WheelPrefs::ACTION_NONE;
+      }
 
       WheelDeltaAdjustmentStrategy strategy =
           GetWheelDeltaAdjustmentStrategy(*wheelEvent);
@@ -3798,7 +3803,7 @@ static bool ShouldBlockCustomCursor(nsPresContext* aPresContext,
   }
 
   nsPoint point = nsLayoutUtils::GetEventCoordinatesRelativeTo(
-      aEvent, topLevel->PresShell()->GetRootFrame());
+      aEvent, RelativeTo{topLevel->PresShell()->GetRootFrame()});
 
   nsSize size(CSSPixel::ToAppUnits(width), CSSPixel::ToAppUnits(height));
   nsPoint hotspot(CSSPixel::ToAppUnits(aCursor.mHotspot.x),
@@ -3893,8 +3898,8 @@ void EventStateManager::UpdateCursor(nsPresContext* aPresContext,
   }
   // If not locked, look for correct cursor
   else if (aTargetFrame) {
-    nsPoint pt =
-        nsLayoutUtils::GetEventCoordinatesRelativeTo(aEvent, aTargetFrame);
+    nsPoint pt = nsLayoutUtils::GetEventCoordinatesRelativeTo(
+        aEvent, RelativeTo{aTargetFrame});
     Maybe<nsIFrame::Cursor> framecursor = aTargetFrame->GetCursor(pt);
     // Avoid setting cursor when the mouse is over a windowless plugin.
     if (!framecursor) {
@@ -4124,7 +4129,7 @@ class MOZ_STACK_CLASS ESMEventCB : public EventDispatchingCallback {
 
 static UniquePtr<WidgetMouseEvent> CreateMouseOrPointerWidgetEvent(
     WidgetMouseEvent* aMouseEvent, EventMessage aMessage,
-    nsIContent* aRelatedContent) {
+    EventTarget* aRelatedTarget) {
   WidgetPointerEvent* sourcePointer = aMouseEvent->AsPointerEvent();
   UniquePtr<WidgetMouseEvent> newEvent;
   if (sourcePointer) {
@@ -4136,15 +4141,14 @@ static UniquePtr<WidgetMouseEvent> CreateMouseOrPointerWidgetEvent(
     newPointerEvent->mWidth = sourcePointer->mWidth;
     newPointerEvent->mHeight = sourcePointer->mHeight;
     newPointerEvent->mInputSource = sourcePointer->mInputSource;
-    newPointerEvent->mRelatedTarget = aRelatedContent;
 
     newEvent = WrapUnique(newPointerEvent);
   } else {
     newEvent = MakeUnique<WidgetMouseEvent>(aMouseEvent->IsTrusted(), aMessage,
                                             aMouseEvent->mWidget,
                                             WidgetMouseEvent::eReal);
-    newEvent->mRelatedTarget = aRelatedContent;
   }
+  newEvent->mRelatedTarget = aRelatedTarget;
   newEvent->mRefPoint = aMouseEvent->mRefPoint;
   newEvent->mModifiers = aMouseEvent->mModifiers;
   newEvent->mButton = aMouseEvent->mButton;
@@ -4959,10 +4963,6 @@ nsresult EventStateManager::InitAndDispatchClickEvent(
   nsresult rv = aPresShell->HandleEventWithTarget(
       &event, targetFrame, MOZ_KnownLive(target), &status);
 
-  if (event.mFlags.mHadNonPrivilegedClickListeners && !aNoContentDispatch) {
-    Telemetry::AccumulateCategorical(
-        Telemetry::LABELS_TYPES_OF_USER_CLICKS::Has_JS_Listener);
-  }
   // Copy mMultipleActionsPrevented flag from a click event to the mouseup
   // event only when it's set to true.  It may be set to true if an editor has
   // already handled it.  This is important to avoid two or more default
@@ -5089,14 +5089,6 @@ nsresult EventStateManager::DispatchClickEvents(
     }
   }
 
-  // notDispatchToContents is used here because we don't want to
-  // count auxclicks.
-  if (XRE_IsParentProcess() && !IsRemoteTarget(aClickTarget) &&
-      !notDispatchToContents) {
-    Telemetry::AccumulateCategorical(
-        Telemetry::LABELS_TYPES_OF_USER_CLICKS::Browser_Chrome);
-  }
-
   return rv;
 }
 
@@ -5187,7 +5179,7 @@ nsresult EventStateManager::HandleMiddleClickPaste(
 
   // The selection may have been modified during reflow.  Therefore, we
   // should adjust event target to pass IsAcceptableInputEvent().
-  nsRange* range = selection->GetRangeAt(0);
+  const nsRange* range = selection->GetRangeAt(0);
   if (!range) {
     return NS_OK;
   }
@@ -6211,6 +6203,18 @@ EventStateManager::WheelPrefs::ComputeActionFor(
   }
 
   return actions[index];
+}
+
+EventStateManager::WheelPrefs::Action
+EventStateManager::WheelPrefs::RecordTelemetryAndComputeActionFor(
+    const WidgetWheelEvent* aEvent) {
+  Index index = GetIndexFor(aEvent);
+  Action action = ComputeActionFor(aEvent);
+  mozilla::Telemetry::Accumulate(mozilla::Telemetry::WHEEL_INDEX,
+                                 (uint32_t)index);
+  mozilla::Telemetry::Accumulate(mozilla::Telemetry::WHEEL_ACTION,
+                                 (uint32_t)action);
+  return action;
 }
 
 bool EventStateManager::WheelPrefs::NeedToComputeLineOrPageDelta(

@@ -229,8 +229,8 @@ var whitelist = [
   // Referenced from the screenshots webextension
   { file: "resource://app/localization/en-US/browser/screenshots.ftl" },
 
-  // services/sync/modules/bridged_engine.js
-  { file: "resource://services-sync/bridged_engine.js" },
+  // services/fxaccounts/RustFxAccount.js
+  { file: "resource://gre/modules/RustFxAccount.js" },
 ];
 
 if (AppConstants.NIGHTLY_BUILD && AppConstants.platform != "win") {

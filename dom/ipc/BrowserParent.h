@@ -88,6 +88,7 @@ class BrowserParent final : public PBrowserParent,
                             public TabContext,
                             public LiveResizeListener {
   typedef mozilla::dom::ClonedMessageData ClonedMessageData;
+  using TapType = GeckoContentController_TapType;
 
   friend class PBrowserParent;
 
@@ -117,6 +118,8 @@ class BrowserParent final : public PBrowserParent,
    * is focused.
    */
   static BrowserParent* GetFocused();
+
+  static BrowserParent* GetLastMouseRemoteTarget();
 
   static BrowserParent* GetFrom(nsFrameLoader* aFrameLoader);
 
@@ -304,11 +307,6 @@ class BrowserParent final : public PBrowserParent,
       const RequestData& aRequestData, const nsresult aStatus,
       const nsString& aMessage);
 
-  mozilla::ipc::IPCResult RecvOnSecurityChange(
-      const Maybe<WebProgressData>& aWebProgressData,
-      const RequestData& aRequestData, const uint32_t aState,
-      const Maybe<WebProgressSecurityChangeData>& aSecurityChangeData);
-
   mozilla::ipc::IPCResult RecvNotifyContentBlockingEvent(
       const uint32_t& aEvent, const RequestData& aRequestData,
       const bool aBlocked, const nsACString& aTrackingOrigin,
@@ -487,7 +485,7 @@ class BrowserParent final : public PBrowserParent,
       const uint64_t& aOuterWindowID,
       IsWindowSupportingWebVRResolver&& aResolve);
 
-  void LoadURL(nsIURI* aURI);
+  void LoadURL(nsIURI* aURI, nsIPrincipal* aTriggeringPrincipal);
 
   void ResumeLoad(uint64_t aPendingSwitchID);
 
@@ -504,8 +502,6 @@ class BrowserParent final : public PBrowserParent,
   nsresult UpdatePosition();
 
   void SizeModeChanged(const nsSizeMode& aSizeMode);
-
-  void ThemeChanged();
 
   void HandleAccessKey(const WidgetKeyboardEvent& aEvent,
                        nsTArray<uint32_t>& aCharCodes);
@@ -562,13 +558,8 @@ class BrowserParent final : public PBrowserParent,
   mozilla::ipc::IPCResult RecvClearNativeTouchSequence(
       const uint64_t& aObserverId);
 
-  mozilla::ipc::IPCResult RecvSetPrefersReducedMotionOverrideForTest(
-      const bool& aValue);
-  mozilla::ipc::IPCResult RecvResetPrefersReducedMotionOverrideForTest();
-
   void SendMouseEvent(const nsAString& aType, float aX, float aY,
-                      int32_t aButton, int32_t aClickCount, int32_t aModifiers,
-                      bool aIgnoreRootScrollFrame);
+                      int32_t aButton, int32_t aClickCount, int32_t aModifiers);
 
   /**
    * The following Send*Event() marks aEvent as posted to remote process if
@@ -847,6 +838,13 @@ class BrowserParent final : public PBrowserParent,
 
   // Recomputes sFocus and returns it.
   static BrowserParent* UpdateFocus();
+
+  // Keeps track of which BrowserParent the real mouse event is sent to.
+  static BrowserParent* sLastMouseRemoteTarget;
+
+  // Unsetter for LastMouseRemoteTarget; only unsets if argument matches
+  // current sLastMouseRemoteTarget.
+  static void UnsetLastMouseRemoteTarget(BrowserParent* aBrowserParent);
 
   struct APZData {
     bool operator==(const APZData& aOther) {

@@ -33,10 +33,6 @@
 //!
 //! [1]: https://tc39.es/ecma262/#sec-globaldeclarationinstantiation
 
-use crate::data::{
-    BindingName, FunctionScopeData, GlobalScopeData, LexicalScopeData, ScopeData, ScopeDataList,
-    ScopeDataMap, ScopeIndex, VarScopeData,
-};
 use crate::free_name_tracker::FreeNameTracker;
 use ast::associated_data::{AssociatedData, Key as AssociatedDataKey};
 use ast::source_atom_set::{CommonSourceAtomSetIndices, SourceAtomSetIndex};
@@ -44,6 +40,10 @@ use ast::source_location_accessor::SourceLocationAccessor;
 use ast::type_id::NodeTypeIdAccessor;
 use indexmap::set::IndexSet;
 use std::collections::HashSet;
+use stencil::scope::{
+    BindingName, FunctionScopeData, GlobalScopeData, LexicalScopeData, ScopeData, ScopeDataList,
+    ScopeDataMap, ScopeIndex, VarScopeData,
+};
 
 /// The kind of items inside the result of VarScopedDeclarations.
 ///
@@ -678,7 +678,7 @@ impl FunctionExpressionScopeBuilder {
 
                 ScopeData::Lexical(data)
             }
-            None => ScopeData::AliasPrevious,
+            None => ScopeData::Alias(enclosing),
         }
     }
 }
@@ -709,10 +709,10 @@ struct FunctionScopeDataSet {
     /// ScopeData::Function.
     function: ScopeData,
 
-    /// Either ScopeData::Var or ScopeData::AliasPrevious.
+    /// Either ScopeData::Var or ScopeData::Alias.
     extra_body_var: ScopeData,
 
-    /// Either ScopeData::Lexical or ScopeData::AliasPrevious.
+    /// Either ScopeData::Lexical or ScopeData::Alias.
     lexical: ScopeData,
 }
 
@@ -1148,7 +1148,7 @@ impl FunctionParametersScopeBuilder {
 
             // Step 27.d. Let varEnv be env.
             // Step 27.e. Let varEnvRec be envRec.
-            ScopeData::AliasPrevious
+            ScopeData::Alias(self.scope_index)
         }
         // Step 28. Else,
         else {
@@ -1253,7 +1253,7 @@ impl FunctionParametersScopeBuilder {
 
                 ScopeData::Lexical(data)
             } else {
-                ScopeData::AliasPrevious
+                ScopeData::Alias(body_scope_builder.var_scope_index)
             };
 
         // Step 36. For each Parse Node f in functionsToInitialize, do

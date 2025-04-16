@@ -323,6 +323,19 @@ class ToInt32Policy final : public TypePolicy {
   }
 };
 
+// Box any non-BigInts as input to a ToBigInt instruction.
+class ToBigIntPolicy final : public TypePolicy {
+ public:
+  constexpr ToBigIntPolicy() = default;
+  EMPTY_DATA_;
+  static MOZ_MUST_USE bool staticAdjustInputs(TempAllocator& alloc,
+                                              MInstruction* def);
+  MOZ_MUST_USE bool adjustInputs(TempAllocator& alloc,
+                                 MInstruction* def) const override {
+    return staticAdjustInputs(alloc, def);
+  }
+};
+
 // Box objects as input to a ToString instruction.
 class ToStringPolicy final : public TypePolicy {
  public:
@@ -333,6 +346,19 @@ class ToStringPolicy final : public TypePolicy {
   MOZ_MUST_USE bool adjustInputs(TempAllocator& alloc,
                                  MInstruction* def) const override {
     return staticAdjustInputs(alloc, def);
+  }
+};
+
+// Box non-Boolean, non-String, non-BigInt as input to a ToInt64 instruction.
+class ToInt64Policy final : public TypePolicy {
+ public:
+  constexpr ToInt64Policy() = default;
+  EMPTY_DATA_;
+  static MOZ_MUST_USE bool staticAdjustInputs(TempAllocator& alloc,
+                                              MInstruction* ins);
+  MOZ_MUST_USE bool adjustInputs(TempAllocator& alloc,
+                                 MInstruction* ins) const override {
+    return staticAdjustInputs(alloc, ins);
   }
 };
 
@@ -427,6 +453,7 @@ class InstanceOfPolicy final : public TypePolicy {
                                  MInstruction* def) const override;
 };
 
+class StoreDataViewElementPolicy;
 class StoreTypedArrayHolePolicy;
 
 class StoreUnboxedScalarPolicy : public TypePolicy {
@@ -438,9 +465,18 @@ class StoreUnboxedScalarPolicy : public TypePolicy {
                                             MDefinition* value,
                                             int valueOperand);
 
+  friend class StoreDataViewElementPolicy;
   friend class StoreTypedArrayHolePolicy;
 
  public:
+  EMPTY_DATA_;
+  MOZ_MUST_USE bool adjustInputs(TempAllocator& alloc,
+                                 MInstruction* ins) const override;
+};
+
+class StoreDataViewElementPolicy final : public StoreUnboxedScalarPolicy {
+ public:
+  constexpr StoreDataViewElementPolicy() = default;
   EMPTY_DATA_;
   MOZ_MUST_USE bool adjustInputs(TempAllocator& alloc,
                                  MInstruction* ins) const override;

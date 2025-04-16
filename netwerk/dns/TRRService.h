@@ -6,11 +6,11 @@
 #ifndef TRRService_h_
 #define TRRService_h_
 
-#include "mozilla/Atomics.h"
 #include "mozilla/DataStorage.h"
 #include "nsHostResolver.h"
 #include "nsIObserver.h"
 #include "nsWeakReference.h"
+#include "TRRServiceBase.h"
 
 class nsDNSService;
 class nsIPrefBranch;
@@ -19,7 +19,11 @@ class nsINetworkLinkService;
 namespace mozilla {
 namespace net {
 
-class TRRService : public nsIObserver,
+class TRRServiceChild;
+class TRRServiceParent;
+
+class TRRService : public TRRServiceBase,
+                   public nsIObserver,
                    public nsITimerCallback,
                    public nsSupportsWeakReference,
                    public AHostResolver {
@@ -31,10 +35,9 @@ class TRRService : public nsIObserver,
   TRRService();
   nsresult Init();
   nsresult Start();
-  bool Enabled(nsIRequest::TRRMode aMode);
+  bool Enabled(nsIRequest::TRRMode aMode = nsIRequest::TRR_FIRST_MODE);
   bool IsConfirmed() { return mConfirmationState == CONFIRM_OK; }
 
-  uint32_t Mode() { return mMode; }
   bool AllowRFC1918() { return mRfc1918; }
   bool UseGET() { return mUseGET; }
   bool EarlyAAAA() { return mEarlyAAAA; }
@@ -53,8 +56,8 @@ class TRRService : public nsIObserver,
                               bool pb,
                               const nsACString& aOriginSuffix) override;
   LookupStatus CompleteLookupByType(nsHostRecord*, nsresult,
-                                    const nsTArray<nsCString>*, uint32_t,
-                                    bool pb) override;
+                                    mozilla::net::TypeRecordResultType&,
+                                    uint32_t, bool pb) override;
   void TRRBlacklist(const nsACString& host, const nsACString& originSuffix,
                     bool privateBrowsing, bool aParentsToo);
   bool IsTRRBlacklisted(const nsACString& aHost,
@@ -71,14 +74,24 @@ class TRRService : public nsIObserver,
   already_AddRefed<nsIThread> TRRThread();
   bool IsOnTRRThread();
 
+  bool IsUsingAutoDetectedURL() { return mURISetByDetection; }
+  static const nsCString& AutoDetectedKey();
+
  private:
   virtual ~TRRService();
+
+  friend class TRRServiceChild;
+  friend class TRRServiceParent;
+  static void AddObserver(nsIObserver* aObserver);
+  static bool CheckCaptivePortalIsPassed();
+  static bool GetParentalControlEnabledInternal();
+  static bool CheckPlatformDNSStatus(nsINetworkLinkService* aLinkService);
+
   nsresult ReadPrefs(const char* name);
   void GetPrefBranch(nsIPrefBranch** result);
   void MaybeConfirm();
   void MaybeConfirm_locked();
   friend class ::nsDNSService;
-  void GetParentalControlEnabledInternal();
   void SetDetectedTrrURI(const nsACString& aURI);
 
   bool IsDomainBlacklisted(const nsACString& aHost,
@@ -86,8 +99,7 @@ class TRRService : public nsIObserver,
                            bool aPrivateBrowsing);
   bool IsExcludedFromTRR_unlocked(const nsACString& aHost);
 
-  void RebuildSuffixList(nsINetworkLinkService* aLinkService);
-  void CheckPlatformDNSStatus(nsINetworkLinkService* aLinkService);
+  void RebuildSuffixList(nsTArray<nsCString>&& aSuffixList);
 
   nsresult DispatchTRRRequestInternal(TRR* aTrrRequest, bool aWithLock);
   already_AddRefed<nsIThread> TRRThread_locked();
@@ -95,34 +107,17 @@ class TRRService : public nsIObserver,
   // This method will process the URI and try to set mPrivateURI to that value.
   // Will return true if performed the change (if the value was different)
   // or false if mPrivateURI already had that value.
-  bool MaybeSetPrivateURI(const nsACString& aURI);
-  // Checks the network.trr.uri or the doh-rollout.uri prefs and sets the URI
-  // in order of preference:
-  // 1. The value of network.trr.uri if it is not the default one, meaning
-  //    is was set by an explicit user action
-  // 2. The value of doh-rollout.uri if it exists
-  //    this is set by the rollout addon
-  // 3. The default value of network.trr.uri
-  void CheckURIPrefs();
-  void ProcessURITemplate(nsACString& aURI);
+  bool MaybeSetPrivateURI(const nsACString& aURI) override;
   void ClearEntireCache();
 
   bool mInitialized;
-  Atomic<uint32_t, Relaxed> mMode;
   Atomic<uint32_t, Relaxed> mTRRBlacklistExpireTime;
-
-  // Pref caches should only be used on the main thread.
-  nsCString mURIPref;
-  bool mURIPrefHasUserValue = false;
-  nsCString mRolloutURIPref;
 
   Mutex mLock;
 
-  nsCString mPrivateURI;   // main thread only
   nsCString mPrivateCred;  // main thread only
   nsCString mConfirmationNS;
   nsCString mBootstrapAddr;
-  bool mURISetByDetection = false;
 
   Atomic<bool, Relaxed> mWaitForCaptive;  // wait for the captive portal to say
                                           // OK before using TRR

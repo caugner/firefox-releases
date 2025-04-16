@@ -4,8 +4,6 @@
 
 from __future__ import absolute_import, print_function, unicode_literals
 
-import json
-import logging
 import time
 
 import requests
@@ -13,16 +11,27 @@ from mozbuild.util import memoize
 
 from taskgraph.util.taskcluster import requests_retry_session
 
-logger = logging.getLogger(__name__)
-
 BUGBUG_BASE_URL = "https://bugbug.herokuapp.com"
-RETRY_TIMEOUT = 4 * 60  # seconds
-RETRY_INTERVAL = 5      # seconds
+RETRY_TIMEOUT = 8 * 60  # seconds
+RETRY_INTERVAL = 10      # seconds
 
 # Preset confidence thresholds.
 CT_LOW = 0.5
 CT_MEDIUM = 0.7
 CT_HIGH = 0.9
+
+GROUP_TRANSLATIONS = {
+    "testing/web-platform/tests": "",
+    "testing/web-platform/mozilla/tests": "/_mozilla",
+}
+
+
+def translate_group(group):
+    for prefix, value in GROUP_TRANSLATIONS.items():
+        if group.startswith(prefix):
+            return group.replace(prefix, value)
+
+    return group
 
 
 class BugbugTimeoutException(Exception):
@@ -54,10 +63,10 @@ def push_schedules(branch, rev):
         i += 1
 
     data = r.json()
-    logger.debug("Bugbug scheduler service returns:\n{}".format(
-                 json.dumps(data, indent=2)))
-
     if r.status_code == 202:
         raise BugbugTimeoutException("Timed out waiting for result from '{}'".format(url))
+
+    if "groups" in data:
+        data["groups"] = {translate_group(k): v for k, v in data["groups"].items()}
 
     return data

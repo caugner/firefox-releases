@@ -12,13 +12,14 @@ use crate::selector_map::PrecomputedHashMap;
 use crate::str::HTML_SPACE_CHARACTERS;
 use crate::values::computed::LengthPercentage as ComputedLengthPercentage;
 use crate::values::computed::{Context, Percentage, ToComputedValue};
+use crate::values::generics::position::AspectRatio as GenericAspectRatio;
 use crate::values::generics::position::Position as GenericPosition;
 use crate::values::generics::position::PositionComponent as GenericPositionComponent;
 use crate::values::generics::position::PositionOrAuto as GenericPositionOrAuto;
+use crate::values::generics::position::Ratio as GenericRatio;
 use crate::values::generics::position::ZIndex as GenericZIndex;
-use crate::values::specified::{AllowQuirks, Integer, LengthPercentage};
-use crate::Atom;
-use crate::Zero;
+use crate::values::specified::{AllowQuirks, Integer, LengthPercentage, NonNegativeNumber};
+use crate::{Atom, One, Zero};
 use cssparser::Parser;
 use selectors::parser::SelectorParseErrorKind;
 use servo_arc::Arc;
@@ -877,3 +878,74 @@ impl GridTemplateAreas {
 
 /// A specified value for the `z-index` property.
 pub type ZIndex = GenericZIndex<Integer>;
+
+/// A specified value for the `aspect-ratio` property.
+pub type AspectRatio = GenericAspectRatio<NonNegativeNumber>;
+
+impl Parse for AspectRatio {
+    fn parse<'i, 't>(
+        context: &ParserContext,
+        input: &mut Parser<'i, 't>,
+    ) -> Result<Self, ParseError<'i>> {
+        use crate::values::generics::position::PreferredRatio;
+
+        let location = input.current_source_location();
+        let mut auto = input.try(|i| i.expect_ident_matching("auto"));
+        let ratio = input.try(|i| Ratio::parse(context, i));
+        if auto.is_err() {
+            auto = input.try(|i| i.expect_ident_matching("auto"));
+        }
+
+        if auto.is_err() && ratio.is_err() {
+            return Err(location.new_custom_error(StyleParseErrorKind::UnspecifiedError));
+        }
+
+        Ok(AspectRatio {
+            auto: auto.is_ok(),
+            ratio: match ratio {
+                Ok(ratio) => PreferredRatio::Ratio(ratio),
+                Err(..) => PreferredRatio::None,
+            },
+        })
+    }
+}
+
+impl AspectRatio {
+    /// Returns Self by a valid ratio.
+    pub fn from_mapped_ratio(w: f32, h: f32) -> Self {
+        use crate::values::generics::position::PreferredRatio;
+        AspectRatio {
+            auto: true,
+            ratio: PreferredRatio::Ratio(GenericRatio(
+                NonNegativeNumber::new(w),
+                NonNegativeNumber::new(h),
+            )),
+        }
+    }
+}
+
+/// A specified <ratio> value.
+pub type Ratio = GenericRatio<NonNegativeNumber>;
+
+// https://drafts.csswg.org/css-values-4/#ratios
+impl Parse for Ratio {
+    fn parse<'i, 't>(
+        context: &ParserContext,
+        input: &mut Parser<'i, 't>,
+    ) -> Result<Self, ParseError<'i>> {
+        let a = NonNegativeNumber::parse(context, input)?;
+        let b = match input.try_parse(|input| input.expect_delim('/')) {
+            Ok(()) => NonNegativeNumber::parse(context, input)?,
+            _ => One::one(),
+        };
+
+        // The computed value of a <ratio> is the pair of numbers provided, unless
+        // both numbers are zero, in which case the computed value is the pair (1, 0)
+        // (same as 1 / 0).
+        // https://drafts.csswg.org/css-values-4/#ratios
+        if a.is_zero() && b.is_zero() {
+            return Ok(GenericRatio(One::one(), Zero::zero()));
+        }
+        return Ok(GenericRatio(a, b));
+    }
+}

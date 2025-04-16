@@ -87,15 +87,13 @@ template <typename Tok>
 BinASTParserPerTokenizer<Tok>::BinASTParserPerTokenizer(
     JSContext* cx, CompilationInfo& compilationInfo,
     const JS::ReadOnlyCompileOptions& options,
-    HandleScriptSourceObject sourceObject,
     Handle<BaseScript*> lazyScript /* = nullptr */)
-    : BinASTParserBase(cx, compilationInfo, sourceObject),
+    : BinASTParserBase(cx, compilationInfo),
       options_(options),
       lazyScript_(cx, lazyScript),
       handler_(cx, compilationInfo.allocScope.alloc(), nullptr,
                SourceKind::Binary),
-      variableDeclarationKind_(VariableDeclarationKind::Var),
-      treeHolder_(cx) {
+      variableDeclarationKind_(VariableDeclarationKind::Var) {
   MOZ_ASSERT_IF(lazyScript_, lazyScript_->isBinAST());
 }
 
@@ -238,40 +236,39 @@ JS::Result<FunctionBox*> BinASTParserPerTokenizer<Tok>::buildFunctionBox(
     FunctionSyntaxKind syntax, ParseNode* name) {
   MOZ_ASSERT_IF(!pc_, lazyScript_);
 
+  RootedFunction fun(cx_);
   RootedAtom atom(cx_);
+  FunctionFlags flags;
 
   // Name might be any of {Identifier,ComputedPropertyName,LiteralPropertyName}
   if (name && name->is<NameNode>()) {
     atom = name->as<NameNode>().atom();
   }
 
-  if (pc_ && syntax == FunctionSyntaxKind::Statement) {
-    auto ptr = pc_->varScope().lookupDeclaredName(atom);
-    if (MOZ_UNLIKELY(!ptr)) {
-      return raiseError(
-          "FunctionDeclaration without corresponding AssertedDeclaredName.");
-    }
-
-    DeclarationKind declaredKind = ptr->value()->kind();
-    if (DeclarationKindIsVar(declaredKind)) {
-      if (MOZ_UNLIKELY(!pc_->atBodyLevel())) {
-        return raiseError(
-            "body-level FunctionDeclaration inside non-body-level context.");
-      }
-      RedeclareVar(ptr, DeclarationKind::BodyLevelFunction);
-    }
-  }
-
-  // Allocate the function before walking down the tree.
-  RootedFunction fun(cx_);
   if (pc_) {
-    Rooted<FunctionCreationData> fcd(
-        cx_,
-        FunctionCreationData(atom, syntax, generatorKind, functionAsyncKind));
-    BINJS_TRY_VAR(fun, AllocNewFunction(cx_, fcd));
-    MOZ_ASSERT(fun->explicitName() == atom);
+    if (syntax == FunctionSyntaxKind::Statement) {
+      auto ptr = pc_->varScope().lookupDeclaredName(atom);
+      if (MOZ_UNLIKELY(!ptr)) {
+        return raiseError(
+            "FunctionDeclaration without corresponding AssertedDeclaredName.");
+      }
+
+      DeclarationKind declaredKind = ptr->value()->kind();
+      if (DeclarationKindIsVar(declaredKind)) {
+        if (MOZ_UNLIKELY(!pc_->atBodyLevel())) {
+          return raiseError(
+              "body-level FunctionDeclaration inside non-body-level context.");
+        }
+        RedeclareVar(ptr, DeclarationKind::BodyLevelFunction);
+      }
+    }
+
+    flags = InitialFunctionFlags(syntax, generatorKind, functionAsyncKind);
   } else {
-    BINJS_TRY_VAR(fun, lazyScript_->function());
+    fun = lazyScript_->function();
+
+    atom = fun->displayAtom();
+    flags = fun->flags();
   }
 
   mozilla::Maybe<Directives> directives;
@@ -282,27 +279,30 @@ JS::Result<FunctionBox*> BinASTParserPerTokenizer<Tok>::buildFunctionBox(
   }
 
   size_t index = this->getCompilationInfo().funcData.length();
-  if (!this->getCompilationInfo().funcData.emplaceBack(
-          mozilla::AsVariant(fun.get()))) {
+  if (!this->getCompilationInfo().functions.emplaceBack(fun)) {
+    return nullptr;
+  }
+  if (!this->getCompilationInfo().funcData.emplaceBack(cx_)) {
     return nullptr;
   }
 
   // This extent will be further filled in during parse.
   SourceExtent extent;
   auto* funbox = alloc_.new_<FunctionBox>(
-      cx_, traceListHead_, extent, getCompilationInfo(), *directives,
-      generatorKind, functionAsyncKind, fun->explicitName(), fun->flags(),
-      index);
+      cx_, compilationInfo_.traceListHead, extent, getCompilationInfo(),
+      *directives, generatorKind, functionAsyncKind, atom, flags, index);
   if (MOZ_UNLIKELY(!funbox)) {
     return raiseOOM();
   }
 
-  traceListHead_ = funbox;
+  compilationInfo_.traceListHead = funbox;
   if (pc_) {
-    funbox->initWithEnclosingParseContext(pc_, fun, syntax);
+    funbox->initWithEnclosingParseContext(pc_, flags, syntax);
   } else {
+    frontend::ScopeContext scopeContext(fun->enclosingScope());
     funbox->initFromLazyFunction(fun);
-    funbox->initWithEnclosingScope(fun);
+    funbox->initWithEnclosingScope(scopeContext, fun->enclosingScope(), flags,
+                                   syntax);
   }
   return funbox;
 }
@@ -338,7 +338,6 @@ JS::Result<Ok> BinASTParserPerTokenizer<Tok>::finishEagerFunction(
   // already has correct `nargs_`.
   if (!lazyScript_ || lazyScript_->function() != funbox->function()) {
     funbox->setArgCount(nargs);
-    funbox->synchronizeArgCount();
   } else {
     MOZ_ASSERT(funbox->function()->nargs() == nargs);
     funbox->setArgCount(nargs);
@@ -356,10 +355,9 @@ JS::Result<Ok> BinASTParserPerTokenizer<Tok>::finishEagerFunction(
   // Check all our bindings after maybe adding function metavars.
   MOZ_TRY(checkFunctionClosedVars());
 
-  BINJS_TRY_DECL(bindings,
-                 NewFunctionScopeData(cx_, pc_->functionScope(),
-                                      /* hasParameterExprs = */ false,
-                                      IsFieldInitializer::No, alloc_, pc_));
+  BINJS_TRY_DECL(bindings, NewFunctionScopeData(cx_, pc_->functionScope(),
+                                                /* hasParameterExprs = */ false,
+                                                alloc_, pc_));
 
   funbox->functionScopeBindings().set(*bindings);
 
@@ -388,36 +386,22 @@ JS::Result<Ok> BinASTParserPerTokenizer<Tok>::finishEagerFunction(
 template <typename Tok>
 JS::Result<Ok> BinASTParserPerTokenizer<Tok>::finishLazyFunction(
     FunctionBox* funbox, uint32_t nargs, size_t start, size_t end) {
-  RootedFunction fun(cx_, funbox->function());
-
   funbox->setArgCount(nargs);
-  funbox->synchronizeArgCount();
 
+  ScriptStencil& stencil = funbox->functionStencil().get();
+
+  // Compute the flags for the BaseScript.
   using ImmutableFlags = ImmutableScriptFlagsEnum;
-  ImmutableScriptFlags immutableFlags = funbox->immutableFlags();
+  stencil.immutableFlags = funbox->immutableFlags();
+  stencil.immutableFlags.setFlag(ImmutableFlags::HasMappedArgsObj,
+                                 funbox->hasMappedArgsObj());
+  stencil.immutableFlags.setFlag(ImmutableFlags::IsLikelyConstructorWrapper,
+                                 funbox->isLikelyConstructorWrapper());
 
-  // Compute the flags that frontend doesn't directly compute.
-  immutableFlags.setFlag(ImmutableFlags::ForceStrict,
-                         options().forceStrictMode());
-  immutableFlags.setFlag(ImmutableFlags::HasMappedArgsObj,
-                         funbox->hasMappedArgsObj());
-  immutableFlags.setFlag(ImmutableFlags::IsLikelyConstructorWrapper,
-                         funbox->isLikelyConstructorWrapper());
+  funbox->extent = SourceExtent(start, end, start, end,
+                                /* lineno = */ 0, start);
 
-  SourceExtent extent(start, end, start, end,
-                      /* lineno = */ 0, start);
-
-  // NOTE: Lazy functions generated by BinAST do not track inner functions or
-  //       closed-over-binding data on the VM. Instead they use out-of-band data
-  //       from the BinAST stream during delazification.
-  BINJS_TRY_DECL(
-      lazy, BaseScript::CreateRawLazy(cx_, /* ngcthings = */ 0, fun,
-                                      sourceObject_, extent, immutableFlags));
-
-  MOZ_ASSERT(lazy->isBinAST());
-  funbox->initLazyScript(lazy);
-
-  MOZ_TRY(tokenizer_->registerLazyScript(lazy));
+  MOZ_TRY(tokenizer_->registerLazyScript(funbox));
 
   return Ok();
 }
@@ -811,7 +795,8 @@ bool BinASTParserPerTokenizer<Tok>::computeErrorMetadata(
 }
 
 template <typename Tok>
-void BinASTParserPerTokenizer<Tok>::doTrace(JSTracer* trc) {
+void BinASTParserPerTokenizer<Tok>::trace(JSTracer* trc) {
+  BinASTParserBase::trace(trc);
   if (tokenizer_) {
     tokenizer_->traceMetadata(trc);
   }

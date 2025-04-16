@@ -570,8 +570,7 @@ nsDOMWindowUtils::SetResolutionAndScaleTo(float aResolution) {
     return NS_ERROR_FAILURE;
   }
 
-  presShell->SetResolutionAndScaleTo(aResolution,
-                                     ResolutionChangeOrigin::MainThreadRestore);
+  presShell->SetResolutionAndScaleTo(aResolution, ResolutionChangeOrigin::Test);
 
   return NS_OK;
 }
@@ -1155,8 +1154,8 @@ nsDOMWindowUtils::ElementFromPoint(float aX, float aY,
   nsCOMPtr<Document> doc = GetDocument();
   NS_ENSURE_STATE(doc);
 
-  RefPtr<Element> el =
-      doc->ElementFromPointHelper(aX, aY, aIgnoreRootScrollFrame, aFlushLayout);
+  RefPtr<Element> el = doc->ElementFromPointHelper(
+      aX, aY, aIgnoreRootScrollFrame, aFlushLayout, ViewportType::Layout);
   el.forget(aReturn);
   return NS_OK;
 }
@@ -2219,6 +2218,50 @@ nsDOMWindowUtils::GetCurrentPreferredSampleRate(uint32_t* aRate) {
 }
 
 NS_IMETHODIMP
+nsDOMWindowUtils::DefaultDevicesRoundTripLatency(Promise** aOutPromise) {
+  NS_ENSURE_ARG_POINTER(aOutPromise);
+  *aOutPromise = nullptr;
+
+  nsCOMPtr<nsPIDOMWindowOuter> outer = do_QueryReferent(mWindow);
+  NS_ENSURE_STATE(outer);
+  nsCOMPtr<nsPIDOMWindowInner> inner = outer->GetCurrentInnerWindow();
+  NS_ENSURE_STATE(inner);
+
+  ErrorResult err;
+  RefPtr<Promise> promise = Promise::Create(inner->AsGlobal(), err);
+  if (NS_WARN_IF(err.Failed())) {
+    return err.StealNSResult();
+  }
+
+  NS_ADDREF(promise.get());
+  void* p = reinterpret_cast<void*>(promise.get());
+  NS_DispatchBackgroundTask(
+      NS_NewRunnableFunction("DefaultDevicesRoundTripLatency", [p]() {
+        double mean, stddev;
+        bool success =
+            CubebUtils::EstimatedRoundTripLatencyDefaultDevices(&mean, &stddev);
+
+        NS_DispatchToMainThread(NS_NewRunnableFunction(
+            "DefaultDevicesRoundTripLatency", [p, success, mean, stddev]() {
+              Promise* promise = reinterpret_cast<Promise*>(p);
+              if (!success) {
+                promise->MaybeReject(NS_ERROR_FAILURE);
+                NS_RELEASE(promise);
+                return;
+              }
+              nsTArray<double> a;
+              a.AppendElement(mean);
+              a.AppendElement(stddev);
+              promise->MaybeResolve(a);
+              NS_RELEASE(promise);
+            }));
+      }));
+
+  promise.forget(aOutPromise);
+  return NS_OK;
+}
+
+NS_IMETHODIMP
 nsDOMWindowUtils::AudioDevices(uint16_t aSide, nsIArray** aDevices) {
   NS_ENSURE_ARG_POINTER(aDevices);
   NS_ENSURE_ARG((aSide == AUDIO_INPUT) || (aSide == AUDIO_OUTPUT));
@@ -3004,12 +3047,6 @@ nsDOMWindowUtils::FlushPendingFileDeletions() {
 }
 
 NS_IMETHODIMP
-nsDOMWindowUtils::IsIncrementalGCEnabled(JSContext* cx, bool* aResult) {
-  *aResult = JS::IsIncrementalGCEnabled(cx);
-  return NS_OK;
-}
-
-NS_IMETHODIMP
 nsDOMWindowUtils::StartPCCountProfiling(JSContext* cx) {
   js::StartPCCountProfiling(cx);
   return NS_OK;
@@ -3231,9 +3268,10 @@ nsDOMWindowUtils::SelectAtPoint(float aX, float aY, uint32_t aSelectBehavior,
   nsCOMPtr<nsIWidget> widget = GetWidget(&offset);
   LayoutDeviceIntPoint pt =
       nsContentUtils::ToWidgetPoint(CSSPoint(aX, aY), offset, GetPresContext());
-  nsPoint ptInRoot =
-      nsLayoutUtils::GetEventCoordinatesRelativeTo(widget, pt, rootFrame);
-  nsIFrame* targetFrame = nsLayoutUtils::GetFrameForPoint(rootFrame, ptInRoot);
+  nsPoint ptInRoot = nsLayoutUtils::GetEventCoordinatesRelativeTo(
+      widget, pt, RelativeTo{rootFrame});
+  nsIFrame* targetFrame =
+      nsLayoutUtils::GetFrameForPoint(RelativeTo{rootFrame}, ptInRoot);
   // This can happen if the page hasn't loaded yet or if the point
   // is outside the frame.
   if (!targetFrame) {
@@ -3242,8 +3280,8 @@ nsDOMWindowUtils::SelectAtPoint(float aX, float aY, uint32_t aSelectBehavior,
 
   // Convert point to coordinates relative to the target frame, which is
   // what targetFrame's SelectByTypeAtPoint expects.
-  nsPoint relPoint =
-      nsLayoutUtils::GetEventCoordinatesRelativeTo(widget, pt, targetFrame);
+  nsPoint relPoint = nsLayoutUtils::GetEventCoordinatesRelativeTo(
+      widget, pt, RelativeTo{targetFrame});
 
   nsresult rv = static_cast<nsFrame*>(targetFrame)
                     ->SelectByTypeAtPoint(GetPresContext(), relPoint, amount,
@@ -4050,26 +4088,6 @@ nsDOMWindowUtils::EnsureDirtyRootFrame() {
   return NS_OK;
 }
 
-NS_IMETHODIMP
-nsDOMWindowUtils::SetPrefersReducedMotionOverrideForTest(bool aValue) {
-  nsIWidget* widget = GetWidget();
-  if (!widget) {
-    return NS_OK;
-  }
-
-  return widget->SetPrefersReducedMotionOverrideForTest(aValue);
-}
-
-NS_IMETHODIMP
-nsDOMWindowUtils::ResetPrefersReducedMotionOverrideForTest() {
-  nsIWidget* widget = GetWidget();
-  if (!widget) {
-    return NS_OK;
-  }
-
-  return widget->ResetPrefersReducedMotionOverrideForTest();
-}
-
 NS_INTERFACE_MAP_BEGIN(nsTranslationNodeList)
   NS_INTERFACE_MAP_ENTRY(nsISupports)
   NS_INTERFACE_MAP_ENTRY(nsITranslationNodeList)
@@ -4264,14 +4282,6 @@ nsDOMWindowUtils::StopCompositionRecording(bool aWriteToDisk,
   }
 
   promise.forget(aOutPromise);
-  return NS_OK;
-}
-
-NS_IMETHODIMP
-nsDOMWindowUtils::SetTransactionLogging(bool aValue) {
-  if (WebRenderBridgeChild* wrbc = GetWebRenderBridge()) {
-    wrbc->SetTransactionLogging(aValue);
-  }
   return NS_OK;
 }
 

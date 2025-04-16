@@ -684,7 +684,7 @@ PRStatus nsNSSSocketInfo::CloseSocketAndDestroy() {
 
   // We need to clear the callback to make sure the ssl layer cannot call the
   // callback after mFD is nulled.
-  if (net::SSLTokensCache::IsEnabled()) {
+  if (StaticPrefs::network_ssl_tokens_cache_enabled()) {
     SSL_SetResumptionTokenCallback(mFd, nullptr, nullptr);
   }
 
@@ -769,7 +769,7 @@ nsNSSSocketInfo::GetPeerId(nsACString& aResult) {
 }
 
 nsresult nsNSSSocketInfo::SetResumptionTokenFromExternalCache() {
-  if (!mozilla::net::SSLTokensCache::IsEnabled()) {
+  if (!StaticPrefs::network_ssl_tokens_cache_enabled()) {
     return NS_OK;
   }
 
@@ -1815,7 +1815,7 @@ class RemoteClientAuthDataRunnable : public ClientAuthDataRunnable {
  protected:
   virtual void RunOnTargetThread() override;
 
-  nsTArray<ByteArray> mBuiltChain;
+  CopyableTArray<ByteArray> mBuiltChain;
 };
 
 nsTArray<nsTArray<uint8_t>> CollectCANames(CERTDistNames* caNames) {
@@ -2250,7 +2250,7 @@ void ClientAuthDataRunnable::RunOnTargetThread() {
   if (NS_WARN_IF(NS_FAILED(rv))) {
     return;
   }
-  mEnterpriseCertificates.AppendElements(enterpriseRoots);
+  mEnterpriseCertificates.AppendElements(std::move(enterpriseRoots));
 
   if (NS_WARN_IF(NS_FAILED(CheckForSmartCardChanges()))) {
     return;
@@ -2336,10 +2336,10 @@ void ClientAuthDataRunnable::RunOnTargetThread() {
   // Not Auto => ask
   // Get the SSL Certificate
   const nsACString& hostname = mInfo.HostName();
-  nsCOMPtr<nsIClientAuthRemember> cars = nullptr;
+  nsCOMPtr<nsIClientAuthRememberService> cars = nullptr;
 
   if (mInfo.ProviderTlsFlags() == 0) {
-    cars = do_GetService(NS_CLIENTAUTHREMEMBER_CONTRACTID);
+    cars = do_GetService(NS_CLIENTAUTHREMEMBERSERVICE_CONTRACTID);
   }
 
   if (cars) {
@@ -2475,9 +2475,8 @@ mozilla::pkix::Result RemoteClientAuthDataRunnable::BuildChainForCertificate(
 void RemoteClientAuthDataRunnable::RunOnTargetThread() {
   MOZ_ASSERT(NS_IsMainThread());
 
-  nsTArray<uint8_t> serverCertSerialized;
-  serverCertSerialized.AppendElements(mServerCert->derCert.data,
-                                      mServerCert->derCert.len);
+  const ByteArray serverCertSerialized = CopyableTArray<uint8_t>{
+      mServerCert->derCert.data, mServerCert->derCert.len};
 
   // Note that client cert is NULL in socket process until bug 1632809 is done.
   Maybe<ByteArray> clientCertSerialized;
@@ -2868,7 +2867,7 @@ nsresult nsSSLIOLayerAddToSocket(int32_t family, const char* host, int32_t port,
 
   infoObject->SharedState().NoteSocketCreated();
 
-  if (net::SSLTokensCache::IsEnabled()) {
+  if (StaticPrefs::network_ssl_tokens_cache_enabled()) {
     rv = infoObject->SetResumptionTokenFromExternalCache();
     if (NS_FAILED(rv)) {
       return rv;

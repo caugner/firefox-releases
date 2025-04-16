@@ -357,9 +357,9 @@ class InterpreterFrame {
                      JSFunction& callee, JSScript* script, Value* argv,
                      uint32_t nactual, MaybeConstruct constructing);
 
-  /* Used for global and eval frames. */
+  /* Used for eval, module or global frames. */
   void initExecuteFrame(JSContext* cx, HandleScript script,
-                        AbstractFramePtr prev, const Value& newTargetValue,
+                        AbstractFramePtr prev, HandleValue newTargetValue,
                         HandleObject envChain);
 
  public:
@@ -805,9 +805,9 @@ class InterpreterStack {
 
   ~InterpreterStack() { MOZ_ASSERT(frameCount_ == 0); }
 
-  // For execution of eval or global code.
+  // For execution of eval, module or global code.
   InterpreterFrame* pushExecuteFrame(JSContext* cx, HandleScript script,
-                                     const Value& newTargetValue,
+                                     HandleValue newTargetValue,
                                      HandleObject envChain,
                                      AbstractFramePtr evalInFrame);
 
@@ -892,7 +892,7 @@ class FixedArgsBase
   static_assert(N <= ARGS_LENGTH_MAX, "o/~ too many args o/~");
 
  protected:
-  JS::AutoValueArray<2 + N + uint32_t(Construct)> v_;
+  JS::RootedValueArray<2 + N + uint32_t(Construct)> v_;
 
   explicit FixedArgsBase(JSContext* cx) : v_(cx) {
     *static_cast<JS::CallArgs*>(this) = CallArgsFromVp(N, v_.begin());

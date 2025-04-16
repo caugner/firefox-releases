@@ -55,7 +55,6 @@
     'rijndael.c',
     'rsa.c',
     'rsapkcs.c',
-    'seed.c',
     'sha_fast.c',
     'shvfy.c',
     'sysrand.c',
@@ -160,6 +159,11 @@
         'verified/Hacl_Chacha20.c',
         'verified/Hacl_Chacha20Poly1305_32.c',
         'verified/Hacl_Poly1305_32.c',
+      ],
+    }],
+    [ 'disable_deprecated_seed==0', {
+      'sources': [
+        'deprecated/seed.c',
       ],
     }],
     [ 'fuzz==1', {

@@ -12,7 +12,6 @@ include protocol PDocAccessible;
 include DOMTypes;
 
 using mozilla::layers::LayersObserverEpoch from "mozilla/layers/LayersTypes.h";
-using mozilla::layers::LayersId from "mozilla/layers/LayersTypes.h";
 using mozilla::WidgetMouseEvent from "ipc/nsGUIEventIPC.h";
 using mozilla::a11y::IDispatchHolder from "mozilla/a11y/IPCTypes.h";
 using mozilla::dom::EffectsInfo from "mozilla/dom/TabMessageUtils.h";
@@ -37,8 +36,6 @@ async refcounted protocol PBrowserBridge {
   manager PBrowser;
 
 child:
-  async SetLayersId(LayersId layersId);
-
   /**
    * Request that the IPC child / Web parent process move focus to the
    * browser's frame. If canRaise is true, the window can be raised if
@@ -76,7 +73,7 @@ parent:
   async __delete__();
 
   // DocShell messaging.
-  async LoadURL(nsCString aSpec);
+  async LoadURL(nsCString aSpec, nsIPrincipal aTriggeringPrincipal);
   async ResumeLoad(uint64_t aPendingSwitchID);
 
   // Out of process rendering.

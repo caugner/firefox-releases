@@ -13,11 +13,14 @@
 #include "mozilla/MozPromise.h"
 #include "nsCycleCollectionParticipant.h"
 #include "nsWrapperCache.h"
+#include "nsTArray.h"
 #include "nsTHashtable.h"
 #include "nsHashKeys.h"
-#include "nsISHistory.h"
-#include "nsISHEntry.h"
 
+class nsISHistory;
+#include "nsISecureBrowserUI.h"
+
+class nsSecureBrowserUI;
 namespace mozilla {
 namespace net {
 class DocumentLoadListener;
@@ -25,10 +28,19 @@ class DocumentLoadListener;
 
 namespace dom {
 
-class WindowGlobalParent;
 class BrowserParent;
 class MediaController;
+struct SessionHistoryInfoAndId;
+class SessionHistoryEntry;
 class WindowGlobalParent;
+
+struct SessionHistoryEntryAndId {
+  SessionHistoryEntryAndId(uint64_t aId, SessionHistoryEntry* aEntry)
+      : mId(aId), mEntry(aEntry) {}
+
+  uint64_t mId;
+  RefPtr<SessionHistoryEntry> mEntry;
+};
 
 // CanonicalBrowsingContext is a BrowsingContext living in the parent
 // process, with whatever extra data that a BrowsingContext in the
@@ -65,19 +77,28 @@ class CanonicalBrowsingContext final : public BrowsingContext {
   // The current active WindowGlobal.
   WindowGlobalParent* GetCurrentWindowGlobal() const;
 
+  // Same as the methods on `BrowsingContext`, but with the types already cast
+  // to the parent process type.
+  CanonicalBrowsingContext* GetParent() {
+    return Cast(BrowsingContext::GetParent());
+  }
+  CanonicalBrowsingContext* Top() { return Cast(BrowsingContext::Top()); }
+  WindowGlobalParent* GetParentWindowContext();
+  WindowGlobalParent* GetTopWindowContext();
+
   already_AddRefed<nsIWidget> GetParentProcessWidgetContaining();
 
+  // Same as `GetParentWindowContext`, but will also cross <browser> and
+  // content/chrome boundaries.
   already_AddRefed<WindowGlobalParent> GetEmbedderWindowGlobal() const;
-
-  // Same as GetEmbedderWindowGlobal but within the same browsing context group
-  already_AddRefed<WindowGlobalParent> GetParentWindowGlobal() const;
 
   already_AddRefed<CanonicalBrowsingContext> GetParentCrossChromeBoundary();
 
   nsISHistory* GetSessionHistory();
-  void SetSessionHistory(nsISHistory* aSHistory) {
-    mSessionHistory = aSHistory;
-  }
+  UniquePtr<SessionHistoryInfoAndId> CreateSessionHistoryEntryForLoad(
+      nsDocShellLoadState* aLoadState, nsIChannel* aChannel);
+  void SessionHistoryCommit(uint64_t aSessionHistoryEntryId);
+
   JSObject* WrapObject(JSContext* aCx,
                        JS::Handle<JSObject*> aGivenProto) override;
 
@@ -122,24 +143,14 @@ class CanonicalBrowsingContext final : public BrowsingContext {
   bool AttemptLoadURIInParent(nsDocShellLoadState* aLoadState,
                               uint32_t* aLoadIdentifier);
 
-  bool HasHistoryEntry(nsISHEntry* aEntry) const {
-    return aEntry && (aEntry == mOSHE || aEntry == mLSHE);
-  }
+  // Get or create a secure browser UI for this BrowsingContext
+  nsISecureBrowserUI* GetSecureBrowserUI();
 
-  void UpdateSHEntries(nsISHEntry* aNewLSHE, nsISHEntry* aNewOSHE) {
-    mLSHE = aNewLSHE;
-    mOSHE = aNewOSHE;
-  }
-
-  void SwapHistoryEntries(nsISHEntry* aOldEntry, nsISHEntry* aNewEntry) {
-    if (aOldEntry == mOSHE) {
-      mOSHE = aNewEntry;
-    }
-
-    if (aOldEntry == mLSHE) {
-      mLSHE = aNewEntry;
-    }
-  }
+  // Called when the current URI changes (from an
+  // nsIWebProgressListener::OnLocationChange event, so that we
+  // can update our security UI for the new location, or when the
+  // mixed content state for our current window is changed.
+  void UpdateSecurityStateForLocationOrMixedContentChange();
 
  protected:
   // Called when the browsing context is being discarded.
@@ -214,9 +225,10 @@ class CanonicalBrowsingContext final : public BrowsingContext {
 
   RefPtr<net::DocumentLoadListener> mCurrentLoad;
 
-  // These are being mirrored from docshell
-  nsCOMPtr<nsISHEntry> mOSHE;
-  nsCOMPtr<nsISHEntry> mLSHE;
+  nsTArray<SessionHistoryEntryAndId> mLoadingEntries;
+  RefPtr<SessionHistoryEntry> mActiveEntry;
+
+  RefPtr<nsSecureBrowserUI> mSecureBrowserUI;
 };
 
 }  // namespace dom

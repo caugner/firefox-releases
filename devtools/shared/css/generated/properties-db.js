@@ -3103,6 +3103,7 @@ exports.CSS_PROPERTIES = {
       "grid-template-areas",
       "column-gap",
       "row-gap",
+      "aspect-ratio",
       "vector-effect",
       "stop-color",
       "stop-opacity",
@@ -10685,14 +10686,14 @@ exports.PSEUDO_ELEMENTS = [
   ":first-line",
   ":selection",
   ":-moz-focus-inner",
-  ":-moz-focus-outer",
   ":-moz-progress-bar",
   ":-moz-range-track",
   ":-moz-range-progress",
   ":-moz-range-thumb",
   ":-moz-meter-bar",
   ":placeholder",
-  ":-moz-color-swatch"
+  ":-moz-color-swatch",
+  ":file-chooser-button"
 ];
 
 /**
@@ -10700,6 +10701,10 @@ exports.PSEUDO_ELEMENTS = [
  * exposed for testing purposes.
  */
 exports.PREFERENCES = [
+  [
+    "aspect-ratio",
+    "layout.css.aspect-ratio.enabled"
+  ],
   [
     "font-optical-sizing",
     "layout.css.font-variations.enabled"

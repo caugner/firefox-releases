@@ -22,11 +22,13 @@ const { XPCOMUtils } = ChromeUtils.import(
 );
 XPCOMUtils.defineLazyModuleGetters(this, {
   BrowserUtils: "resource://gre/modules/BrowserUtils.jsm",
+  BrowserWindowTracker: "resource:///modules/BrowserWindowTracker.jsm",
   PrivateBrowsingUtils: "resource://gre/modules/PrivateBrowsingUtils.jsm",
   PlacesUIUtils: "resource:///modules/PlacesUIUtils.jsm",
   PlacesUtils: "resource://gre/modules/PlacesUtils.jsm",
   Services: "resource://gre/modules/Services.jsm",
   UrlbarPrefs: "resource:///modules/UrlbarPrefs.jsm",
+  UrlbarProvidersManager: "resource:///modules/UrlbarProvidersManager.jsm",
 });
 
 var UrlbarUtils = {
@@ -48,8 +50,8 @@ var UrlbarUtils = {
   // Defines provider types.
   PROVIDER_TYPE: {
     // Should be executed immediately, because it returns heuristic results
-    // that must be handled to the user asap.
-    IMMEDIATE: 1,
+    // that must be handed to the user asap.
+    HEURISTIC: 1,
     // Can be delayed, contains results coming from the session or the profile.
     PROFILE: 2,
     // Can be delayed, contains results coming from the network.
@@ -98,6 +100,7 @@ var UrlbarUtils = {
   // This defines icon locations that are commonly used in the UI.
   ICON: {
     // DEFAULT is defined lazily so it doesn't eagerly initialize PlacesUtils.
+    HISTORY: "chrome://browser/skin/history.svg",
     SEARCH_GLASS: "chrome://browser/skin/search-glass.svg",
     TIP: "chrome://browser/skin/tip.svg",
   },
@@ -275,8 +278,11 @@ var UrlbarUtils = {
    *
    * @param {array} tokens The tokens to search for.
    * @param {string} str The string to match against.
-   * @param {boolean} highlightType If HIGHLIGHT.SUGGESTED, return a list of all
-   *   the token string non-matches. Otherwise, return matches.
+   * @param {boolean} highlightType
+   *   One of the HIGHLIGHT values:
+   *     TYPED: match ranges matching the tokens; or
+   *     SUGGESTED: match ranges for words not matching the tokens and the
+   *                endings of words that start with a token.
    * @returns {array} An array: [
    *            [matchIndex_0, matchLength_0],
    *            [matchIndex_1, matchLength_1],
@@ -289,7 +295,7 @@ var UrlbarUtils = {
     str = str.toLocaleLowerCase();
     // To generate non-overlapping ranges, we start from a 0-filled array with
     // the same length of the string, and use it as a collision marker, setting
-    // 1 where a token matches.
+    // 1 where the text should be highlighted.
     let hits = new Array(str.length).fill(
       highlightType == this.HIGHLIGHT.SUGGESTED ? 1 : 0
     );
@@ -308,6 +314,20 @@ var UrlbarUtils = {
         if (index < 0) {
           break;
         }
+
+        if (highlightType == UrlbarUtils.HIGHLIGHT.SUGGESTED) {
+          // We de-emphasize the match only if it's preceded by a space, thus
+          // it's a perfect match or the beginning of a longer word.
+          let previousSpaceIndex = str.lastIndexOf(" ", index) + 1;
+          if (index != previousSpaceIndex) {
+            index += needle.length;
+            // We found the token but we won't de-emphasize it, because it's not
+            // after a word boundary.
+            found = true;
+            continue;
+          }
+        }
+
         hits.fill(
           highlightType == this.HIGHLIGHT.SUGGESTED ? 0 : 1,
           index,
@@ -335,6 +355,13 @@ var UrlbarUtils = {
         while (index < str.length) {
           let hay = str.substr(index, needle.length);
           if (compareIgnoringDiacritics(needle, hay) === 0) {
+            if (highlightType == UrlbarUtils.HIGHLIGHT.SUGGESTED) {
+              let previousSpaceIndex = str.lastIndexOf(" ", index) + 1;
+              if (index != previousSpaceIndex) {
+                index += needle.length;
+                continue;
+              }
+            }
             hits.fill(
               highlightType == this.HIGHLIGHT.SUGGESTED ? 0 : 1,
               index,
@@ -544,6 +571,37 @@ var UrlbarUtils = {
     let str = value.trim();
     return this.REGEXP_SINGLE_WORD.test(str);
   },
+
+  /**
+   * Runs a search for the given string, and returns the heuristic result.
+   * @param {string} searchString The string to search for.
+   * @param {nsIDOMWindow} window The window requesting it.
+   * @returns {UrlbarResult} an heuristic result.
+   */
+  async getHeuristicResultFor(
+    searchString,
+    window = BrowserWindowTracker.getTopWindow()
+  ) {
+    if (!searchString) {
+      throw new Error("Must pass a non-null search string");
+    }
+    let context = new UrlbarQueryContext({
+      allowAutofill: false,
+      isPrivate: PrivateBrowsingUtils.isWindowPrivate(window),
+      maxResults: 1,
+      searchString,
+      userContextId: window.gBrowser.selectedBrowser.getAttribute(
+        "usercontextid"
+      ),
+      allowSearchSuggestions: false,
+      providers: ["UnifiedComplete"],
+    });
+    await UrlbarProvidersManager.startQuery(context);
+    if (!context.heuristicResult) {
+      throw new Error("There should always be an heuristic result");
+    }
+    return context.heuristicResult;
+  },
 };
 
 XPCOMUtils.defineLazyGetter(UrlbarUtils.ICON, "DEFAULT", () => {
@@ -594,13 +652,16 @@ UrlbarUtils.RESULT_PAYLOAD_SCHEMA = {
       icon: {
         type: "string",
       },
-      isPinned: {
-        type: "boolean",
-      },
       inPrivateWindow: {
         type: "boolean",
       },
+      isPinned: {
+        type: "boolean",
+      },
       isPrivateEngine: {
+        type: "boolean",
+      },
+      isSearchHistory: {
         type: "boolean",
       },
       keyword: {
@@ -609,14 +670,23 @@ UrlbarUtils.RESULT_PAYLOAD_SCHEMA = {
       keywordOffer: {
         type: "number", // UrlbarUtils.KEYWORD_OFFER
       },
+      lowerCaseSuggestion: {
+        type: "string",
+      },
       query: {
         type: "string",
       },
-      isSearchHistory: {
-        type: "boolean",
-      },
       suggestion: {
         type: "string",
+      },
+      tail: {
+        type: "string",
+      },
+      tailPrefix: {
+        type: "string",
+      },
+      tailOffsetIndex: {
+        type: "number",
       },
       title: {
         type: "string",
@@ -637,6 +707,9 @@ UrlbarUtils.RESULT_PAYLOAD_SCHEMA = {
         type: "string",
       },
       isPinned: {
+        type: "boolean",
+      },
+      overriddenSearchTopSite: {
         type: "boolean",
       },
       tags: {
@@ -824,6 +897,8 @@ class UrlbarQueryContext {
    *   false, suggestions will not be fetched, but when true, some other
    *   condition may still prohibit suggestions, like private browsing mode.
    *   Defaults to true.
+   * @param {string} [options.formHistoryName]
+   *   The name under which the local form history is registered.
    */
   constructor(options = {}) {
     this._checkRequiredOptions(options, [
@@ -841,11 +916,12 @@ class UrlbarQueryContext {
 
     // Manage optional properties of options.
     for (let [prop, checkFn, defaultValue] of [
+      ["allowSearchSuggestions", v => true, true],
+      ["currentPage", v => typeof v == "string" && !!v.length],
+      ["engineName", v => typeof v == "string" && !!v.length],
+      ["formHistoryName", v => typeof v == "string" && !!v.length],
       ["providers", v => Array.isArray(v) && v.length],
       ["sources", v => Array.isArray(v) && v.length],
-      ["engineName", v => typeof v == "string" && !!v.length],
-      ["currentPage", v => typeof v == "string" && !!v.length],
-      ["allowSearchSuggestions", v => true, true],
     ]) {
       if (prop in options) {
         if (!checkFn(options[prop])) {

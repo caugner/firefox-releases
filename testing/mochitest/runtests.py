@@ -28,6 +28,7 @@ import mozrunner
 import numbers
 import platform
 import re
+import shlex
 import shutil
 import signal
 import socket
@@ -53,6 +54,7 @@ from manifestparser.filters import (
     subsuite,
     tags,
 )
+from mozgeckoprofiler import symbolicate_profile_json, view_gecko_profile
 
 try:
     from marionette_driver.addons import Addons
@@ -72,7 +74,7 @@ from mozprofile.cli import parse_preferences, parse_key_value, KeyValueParseErro
 from mozprofile.permissions import ServerLocations
 from urllib import quote_plus as encodeURIComponent
 from mozlog.formatters import TbplFormatter
-from mozlog import commandline
+from mozlog import commandline, get_proxy_logger
 from mozrunner.utils import get_stack_fixer_function, test_environment
 from mozscreenshot import dump_screen
 import mozleak
@@ -437,7 +439,7 @@ else:
         except OSError as err:
             # Catch the errors we might expect from os.kill/os.waitpid,
             # and re-raise any others
-            if err.errno == errno.ESRCH or err.errno == errno.ECHILD:
+            if err.errno in (errno.ESRCH, errno.ECHILD, errno.EPERM):
                 return False
             raise
 # TODO: ^ upstream isPidAlive to mozprocess
@@ -499,6 +501,9 @@ class MochitestServer(object):
         # also be TSan-enabled. Except that in this case, we don't really
         # care about races in xpcshell. So disable TSan for the server.
         env["TSAN_OPTIONS"] = "report_bugs=0"
+
+        # Don't use socket process for the xpcshell server.
+        env["MOZ_DISABLE_SOCKET_PROCESS"] = "1"
 
         if mozinfo.isWin:
             env["PATH"] = env["PATH"] + ";" + str(self._xrePath)
@@ -954,6 +959,9 @@ class MochitestDesktop(object):
         self.result = {}
 
         self.start_script = os.path.join(here, 'start_desktop.js')
+
+        # Used to temporarily serve a performance profile
+        self.profiler_tempdir = None
 
     def environment(self, **kwargs):
         kwargs['log'] = self.log
@@ -1490,8 +1498,11 @@ toolbar#nav-bar {
                         self.log.error("runtime file %s not found!" % runtime_file)
                         sys.exit(1)
 
+                    # Given the mochitest flavor, load the runtimes information
+                    # for only that flavor due to manifest runtime format change in Bug 1637463.
                     with open(runtime_file, 'r') as f:
-                        runtimes = json.loads(f.read())
+                        runtimes = json.load(f).get(options.suite_name, {})
+
                     filters.append(
                         chunk_by_runtime(options.thisChunk,
                                          options.totalChunks,
@@ -1705,6 +1716,31 @@ toolbar#nav-bar {
             # Only turn on the bloat log if the profiler's native allocation feature is
             # not enabled. The two are not compatible.
             browserEnv["XPCOM_MEM_BLOAT_LOG"] = self.leak_report_file
+
+        # If profiling options are enabled, turn on the gecko profiler by using the
+        # profiler environmental variables.
+        if options.profiler:
+            # The user wants to capture a profile, and automatically view it. The
+            # profile will be saved to a temporary folder, then deleted after
+            # opening in profiler.firefox.com.
+            self.profiler_tempdir = tempfile.mkdtemp()
+            browserEnv["MOZ_PROFILER_SHUTDOWN"] = os.path.join(
+                self.profiler_tempdir, "mochitest-profile.json")
+            browserEnv["MOZ_PROFILER_STARTUP"] = "1"
+
+        if options.profilerSaveOnly:
+            # The user wants to capture a profile, but only to save it. This defaults
+            # to the MOZ_UPLOAD_DIR.
+            browserEnv["MOZ_PROFILER_STARTUP"] = "1"
+            if "MOZ_UPLOAD_DIR" in browserEnv:
+                browserEnv["MOZ_PROFILER_SHUTDOWN"] = os.path.join(
+                    browserEnv["MOZ_UPLOAD_DIR"], "mochitest-profile.json")
+            else:
+                self.log.error("--profiler-save-only was specified, but no MOZ_UPLOAD_DIR "
+                               "environment variable was provided. Please set this "
+                               "environment variable to a directory path in order to save "
+                               "a performance profile.")
+                return None
 
         try:
             gmp_path = self.getGMPPluginPath(options)
@@ -2187,7 +2223,7 @@ toolbar#nav-bar {
         if valgrindPath:
             interactive = False
             valgrindArgs_split = ([] if valgrindArgs is None
-                                  else valgrindArgs.split(","))
+                                  else shlex.split(valgrindArgs))
 
             valgrindSuppFiles_final = []
             if valgrindSuppFiles is not None:
@@ -2302,6 +2338,8 @@ toolbar#nav-bar {
             self.log.process_start(gecko_id)
             self.message_logger.gecko_id = gecko_id
 
+            temp_file_paths = []
+
             try:
                 # start marionette and kick off the tests
                 marionette_args = marionette_args or {}
@@ -2318,7 +2356,9 @@ toolbar#nav-bar {
                                 "TEST-UNEXPECTED-FAIL | invalid setup: missing extension at %s" %
                                 addon_path)
                             return 1, self.lastTestSeen
-                        addons.install(create_zip(addon_path))
+                        temp_addon_path = create_zip(addon_path)
+                        temp_file_paths.append(temp_addon_path)
+                        addons.install(temp_addon_path)
 
                 self.execute_start_script()
 
@@ -2386,10 +2426,12 @@ toolbar#nav-bar {
             # cleanup
             if os.path.exists(processLog):
                 os.remove(processLog)
+            for p in temp_file_paths:
+                os.remove(p)
 
         if marionette_exception is not None:
             exc, value, tb = marionette_exception
-            raise exc(value).with_traceback(tb)
+            six.reraise(exc, value, tb)
 
         return status, self.lastTestSeen
 
@@ -2692,6 +2734,22 @@ toolbar#nav-bar {
             print("3 INFO Todo:    %s" % self.counttodo)
             print("4 INFO Mode:    %s" % e10s_mode)
             print("5 INFO SimpleTest FINISHED")
+
+        # If shutdown profiling was enabled, then the user will want to access the
+        # performance profile. The following code with display helpful log messages
+        # and automatically open the profile if it is requested.
+        if self.browserEnv and "MOZ_PROFILER_SHUTDOWN" in self.browserEnv:
+            profile_path = self.browserEnv["MOZ_PROFILER_SHUTDOWN"]
+
+            profiler_logger = get_proxy_logger("profiler")
+            profiler_logger.info("Shutdown performance profiling was enabled")
+            profiler_logger.info("Profile saved locally to: %s" % profile_path)
+            symbolicate_profile_json(profile_path, options.topobjdir)
+            view_gecko_profile_from_mochitest(profile_path, options, profiler_logger)
+
+            # Clean up the temporary file if it exists.
+            if self.profiler_tempdir:
+                shutil.rmtree(self.profiler_tempdir)
 
         if not result:
             if self.countfail or \
@@ -3146,6 +3204,33 @@ toolbar#nav-bar {
             if self.shutdownLeaks:
                 self.shutdownLeaks.log(message)
             return message
+
+
+def view_gecko_profile_from_mochitest(profile_path, options, profiler_logger):
+    """Getting shutdown performance profiles from just the command line arguments is
+    difficult. This function makes the developer ergonomics a bit easier by taking the
+    generated Gecko profile, and automatically serving it to profiler.firefox.com. The
+    Gecko profile during shutdown is dumped to disk at:
+
+    {objdir}/_tests/testing/mochitest/{profilename}
+
+    This function takes that file, and launches a local webserver, and then points
+    a browser to profiler.firefox.com to view it. From there it's easy to publish
+    or save the profile.
+    """
+
+    if options.profilerSaveOnly:
+        # The user did not want this to automatically open, only share the location.
+        return
+
+    if not os.path.exists(profile_path):
+        profiler_logger.error("No profile was found at the profile path, cannot "
+                              "launch profiler.firefox.com.")
+        return
+
+    profiler_logger.info('Loading this profile in the Firefox Profiler')
+
+    view_gecko_profile(profile_path)
 
 
 def run_test_harness(parser, options):

@@ -15,7 +15,7 @@ SearchTestUtils.initXPCShellAddonManager(this);
 async function restart() {
   Services.search.reset();
   await promiseRestartManager();
-  await Services.search.init(false);
+  await Services.search.init();
 }
 
 async function getEngineNames() {
@@ -61,7 +61,7 @@ add_task(async function basic_install_test() {
 
 add_task(async function basic_multilocale_test() {
   await forceExpiration();
-  Services.prefs.setCharPref("browser.search.region", "an");
+  Region._setRegion("an", false);
 
   await withGeoServer(
     async function cont(requests) {
@@ -78,7 +78,7 @@ add_task(async function basic_multilocale_test() {
 
 add_task(async function complex_multilocale_test() {
   await forceExpiration();
-  Services.prefs.setCharPref("browser.search.region", "af");
+  Region._setRegion("af", false);
 
   await withGeoServer(
     async function cont(requests) {
@@ -91,5 +91,28 @@ add_task(async function complex_multilocale_test() {
       ]);
     },
     { visibleDefaultEngines: ["multilocale-af", "multilocale-an"] }
+  );
+});
+add_task(async function test_manifest_selection() {
+  await forceExpiration();
+  Region._setRegion("an", false);
+  Services.locale.availableLocales = ["af"];
+  Services.locale.requestedLocales = ["af"];
+
+  await withGeoServer(
+    async function cont(requests) {
+      await restart();
+      let engine = await Services.search.getEngineByName("Multilocale AN");
+      Assert.ok(
+        engine.iconURI.spec.endsWith("favicon-an.ico"),
+        "Should have the correct favicon for an extension of one locale using a different locale."
+      );
+      Assert.equal(
+        engine.description,
+        "A enciclopedia Libre",
+        "Should have the correct engine name for an extension of one locale using a different locale."
+      );
+    },
+    { visibleDefaultEngines: ["multilocale-an"] }
   );
 });

@@ -8,6 +8,7 @@
 
 #include "Platform.h"
 #include "ProxyAccessible.h"
+#include "AccessibleOrProxy.h"
 #include "DocAccessibleParent.h"
 #include "mozTableAccessible.h"
 
@@ -30,6 +31,14 @@ void PlatformInit() {}
 void PlatformShutdown() {}
 
 void ProxyCreated(ProxyAccessible* aProxy, uint32_t) {
+  ProxyAccessible* parent = aProxy->Parent();
+  if (parent && nsAccUtils::MustPrune(parent)) {
+    // We don't create a native object if we're child of a "flat" accessible;
+    // for example, on OS X buttons shouldn't have any children, because that
+    // makes the OS confused.
+    return;
+  }
+
   // Pass in dummy state for now as retrieving proxy state requires IPC.
   // Note that we can use ProxyAccessible::IsTable* functions here because they
   // do not use IPC calls but that might change after bug 1210477.
@@ -43,13 +52,12 @@ void ProxyCreated(ProxyAccessible* aProxy, uint32_t) {
   else
     type = GetTypeFromRole(aProxy->Role());
 
-  uintptr_t accWrap = reinterpret_cast<uintptr_t>(aProxy) | IS_PROXY;
-  mozAccessible* mozWrapper = [[type alloc] initWithAccessible:accWrap];
+  mozAccessible* mozWrapper = [[type alloc] initWithAccessible:aProxy];
   aProxy->SetWrapper(reinterpret_cast<uintptr_t>(mozWrapper));
 }
 
 void ProxyDestroyed(ProxyAccessible* aProxy) {
-  mozAccessible* wrapper = GetNativeFromProxy(aProxy);
+  mozAccessible* wrapper = GetNativeFromGeckoAccessible(aProxy);
   [wrapper expire];
   [wrapper release];
   aProxy->SetWrapper(0);
@@ -66,21 +74,21 @@ void ProxyEvent(ProxyAccessible* aProxy, uint32_t aEventType) {
       aEventType != nsIAccessibleEvent::EVENT_REORDER)
     return;
 
-  mozAccessible* wrapper = GetNativeFromProxy(aProxy);
+  mozAccessible* wrapper = GetNativeFromGeckoAccessible(aProxy);
   if (wrapper) {
     [wrapper handleAccessibleEvent:aEventType];
   }
 }
 
 void ProxyStateChangeEvent(ProxyAccessible* aProxy, uint64_t aState, bool aEnabled) {
-  mozAccessible* wrapper = GetNativeFromProxy(aProxy);
+  mozAccessible* wrapper = GetNativeFromGeckoAccessible(aProxy);
   if (wrapper) {
     [wrapper stateChanged:aState isEnabled:aEnabled];
   }
 }
 
 void ProxyCaretMoveEvent(ProxyAccessible* aTarget, int32_t aOffset) {
-  mozAccessible* wrapper = GetNativeFromProxy(aTarget);
+  mozAccessible* wrapper = GetNativeFromGeckoAccessible(aTarget);
   if (wrapper) {
     [wrapper handleAccessibleEvent:nsIAccessibleEvent::EVENT_TEXT_CARET_MOVED];
   }
@@ -91,7 +99,7 @@ void ProxyTextChangeEvent(ProxyAccessible*, const nsString&, int32_t, uint32_t, 
 void ProxyShowHideEvent(ProxyAccessible*, ProxyAccessible*, bool, bool) {}
 
 void ProxySelectionEvent(ProxyAccessible* aTarget, ProxyAccessible* aWidget, uint32_t aEventType) {
-  mozAccessible* wrapper = GetNativeFromProxy(aWidget);
+  mozAccessible* wrapper = GetNativeFromGeckoAccessible(aWidget);
   if (wrapper) {
     [wrapper handleAccessibleEvent:aEventType];
   }

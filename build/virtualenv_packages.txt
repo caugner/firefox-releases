@@ -63,8 +63,10 @@ mozilla.pth:third_party/python/pytest/src
 mozilla.pth:third_party/python/pytoml
 mozilla.pth:third_party/python/redo
 mozilla.pth:third_party/python/responses
+mozilla.pth:third_party/python/sentry-sdk
 mozilla.pth:third_party/python/six
 mozilla.pth:third_party/python/taskcluster-urls
+mozilla.pth:third_party/python/urllib3/src
 mozilla.pth:third_party/python/voluptuous
 mozilla.pth:third_party/python/json-e
 mozilla.pth:third_party/python/yamllint
@@ -77,7 +79,7 @@ mozilla.pth:config/mozunit
 mozilla.pth:dom/bindings
 mozilla.pth:dom/bindings/parser
 mozilla.pth:layout/tools/reftest
-mozilla.pth:other-licenses/ply/
+mozilla.pth:third_party/python/ply
 mozilla.pth:taskcluster
 mozilla.pth:testing
 mozilla.pth:testing/condprofile

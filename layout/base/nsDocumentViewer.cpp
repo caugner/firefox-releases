@@ -10,6 +10,7 @@
 #include "mozilla/PresShell.h"
 #include "mozilla/RestyleManager.h"
 #include "mozilla/ServoStyleSet.h"
+#include "mozilla/Telemetry.h"
 #include "nscore.h"
 #include "nsCOMPtr.h"
 #include "nsCRT.h"
@@ -19,6 +20,7 @@
 #include "nsIContent.h"
 #include "nsIContentViewer.h"
 #include "nsIDocumentViewerPrint.h"
+#include "nsIScreen.h"
 #include "mozilla/dom/BrowsingContext.h"
 #include "mozilla/dom/BeforeUnloadEvent.h"
 #include "mozilla/dom/PopupBlocker.h"
@@ -82,6 +84,7 @@
 #include "nsStyleSheetService.h"
 #include "nsILoadContext.h"
 #include "mozilla/ThrottledEventQueue.h"
+#include "nsIPromptCollection.h"
 #include "nsIPromptService.h"
 #include "imgIContainer.h"  // image animation mode constants
 
@@ -1323,60 +1326,16 @@ nsresult nsDocumentViewer::PermitUnloadInternal(uint32_t* aPermitUnloadFlags,
 
     // Ask the user if it's ok to unload the current page
 
-    nsCOMPtr<nsIPromptService> promptService =
-        do_GetService("@mozilla.org/embedcomp/prompt-service;1");
+    nsCOMPtr<nsIPromptCollection> prompt =
+        do_GetService("@mozilla.org/embedcomp/prompt-collection;1");
 
-    if (promptService) {
-      bool isTabModalPromptAllowed;
-      GetIsTabModalPromptAllowed(&isTabModalPromptAllowed);
-      uint32_t modalType = isTabModalPromptAllowed
-                               ? nsIPromptService::MODAL_TYPE_CONTENT
-                               : nsIPromptService::MODAL_TYPE_WINDOW;
-
-      nsAutoString title, message, stayLabel, leaveLabel;
-      rv = nsContentUtils::GetLocalizedString(nsContentUtils::eDOM_PROPERTIES,
-                                              "OnBeforeUnloadTitle", title);
-      nsresult tmp = nsContentUtils::GetLocalizedString(
-          nsContentUtils::eDOM_PROPERTIES, "OnBeforeUnloadMessage", message);
-      if (NS_FAILED(tmp)) {
-        rv = tmp;
-      }
-      tmp = nsContentUtils::GetLocalizedString(nsContentUtils::eDOM_PROPERTIES,
-                                               "OnBeforeUnloadLeaveButton",
-                                               leaveLabel);
-      if (NS_FAILED(tmp)) {
-        rv = tmp;
-      }
-      tmp = nsContentUtils::GetLocalizedString(nsContentUtils::eDOM_PROPERTIES,
-                                               "OnBeforeUnloadStayButton",
-                                               stayLabel);
-      if (NS_FAILED(tmp)) {
-        rv = tmp;
-      }
-
-      if (NS_FAILED(rv)) {
-        NS_ERROR("Failed to get strings from dom.properties!");
-        return NS_OK;
-      }
-
-      // Although the exact value is ignored, we must not pass invalid
-      // bool values through XPConnect.
-      bool dummy = false;
-      int32_t buttonPressed = 0;
-      uint32_t buttonFlags = (nsIPromptService::BUTTON_POS_0_DEFAULT |
-                              (nsIPromptService::BUTTON_TITLE_IS_STRING *
-                               nsIPromptService::BUTTON_POS_0) |
-                              (nsIPromptService::BUTTON_TITLE_IS_STRING *
-                               nsIPromptService::BUTTON_POS_1));
-
+    if (prompt) {
       nsAutoSyncOperation sync(mDocument);
       mInPermitUnloadPrompt = true;
       mozilla::Telemetry::Accumulate(
           mozilla::Telemetry::ONBEFOREUNLOAD_PROMPT_COUNT, 1);
-      rv = promptService->ConfirmExBC(docShell->GetBrowsingContext(), modalType,
-                                      title.get(), message.get(), buttonFlags,
-                                      leaveLabel.get(), stayLabel.get(),
-                                      nullptr, nullptr, &dummy, &buttonPressed);
+      rv = prompt->BeforeUnloadCheck(docShell->GetBrowsingContext(),
+                                     aPermitUnload);
       mInPermitUnloadPrompt = false;
 
       // If the prompt aborted, we tell our consumer that it is not allowed
@@ -1394,8 +1353,6 @@ nsresult nsDocumentViewer::PermitUnloadInternal(uint32_t* aPermitUnloadFlags,
         return NS_OK;
       }
 
-      // Button 0 == leave, button 1 == stay
-      *aPermitUnload = (buttonPressed == 0);
       mozilla::Telemetry::Accumulate(
           mozilla::Telemetry::ONBEFOREUNLOAD_PROMPT_ACTION,
           (*aPermitUnload ? 1 : 0));
@@ -2439,10 +2396,8 @@ nsView* nsDocumentViewer::FindContainerView() {
     return nullptr;
   }
 
-  // subdocFrame might not be a subdocument frame; the frame
-  // constructor can treat a <frame> as an inline in some XBL
-  // cases. Treat that as display:none, the document is not
-  // displayed.
+  // Check subdocFrame just to be safe. If this somehow fails we treat that as
+  // display:none, the document is not displayed.
   if (!subdocFrame->IsSubDocumentFrame()) {
     NS_WARNING_ASSERTION(subdocFrame->Type() == LayoutFrameType::None,
                          "Subdocument container has non-subdocument frame");
@@ -3387,6 +3342,8 @@ nsDocumentViewer::PrintPreview(nsIPrintSettings* aPrintSettings,
       return rv;
     }
     mPrintJob = printJob;
+
+    Telemetry::ScalarAdd(Telemetry::ScalarID::PRINTING_PREVIEW_OPENED, 1);
   }
   if (autoBeforeAndAfterPrint && printJob->HasPrintCallbackCanvas()) {
     // Postpone the 'afterprint' event until after the mozPrintCallback
@@ -3565,6 +3522,10 @@ nsDocumentViewer::ExitPrintPreview() {
   if (!GetIsPrintPreview()) {
     NS_ERROR("Wow, we should never get here!");
     return NS_OK;
+  }
+
+  if (!mPrintJob->HasEverPrinted()) {
+    Telemetry::ScalarAdd(Telemetry::ScalarID::PRINTING_PREVIEW_CANCELLED, 1);
   }
 
 #  ifdef NS_PRINT_PREVIEW

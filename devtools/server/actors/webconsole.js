@@ -947,9 +947,10 @@ const WebConsoleActor = ActorClassWithSpec(webconsoleSpec, {
               return;
             }
 
-            const message = this.prepareConsoleMessageForRemote(cachedMessage);
-            message._type = type;
-            messages.push(message);
+            messages.push({
+              message: this.prepareConsoleMessageForRemote(cachedMessage),
+              type: "consoleAPICall",
+            });
           });
           break;
         }
@@ -964,9 +965,10 @@ const WebConsoleActor = ActorClassWithSpec(webconsoleSpec, {
               continue;
             }
 
-            const message = this.preparePageErrorForRemote(cachedMessage);
-            message._type = type;
-            messages.push(message);
+            messages.push({
+              pageError: this.preparePageErrorForRemote(cachedMessage),
+              type: "pageError",
+            });
           }
           break;
         }
@@ -982,9 +984,9 @@ const WebConsoleActor = ActorClassWithSpec(webconsoleSpec, {
             }
 
             messages.push({
-              _type: type,
               message: this._createStringGrip(cachedMessage.message),
               timeStamp: cachedMessage.timeStamp,
+              type: "logMessage",
             });
           }
           break;
@@ -1115,12 +1117,14 @@ const WebConsoleActor = ActorClassWithSpec(webconsoleSpec, {
     const evalOptions = {
       frameActor: request.frameActor,
       url: request.url,
+      innerWindowID: request.innerWindowID,
       selectedNodeActor: request.selectedNodeActor,
       selectedObjectActor: request.selectedObjectActor,
       eager: request.eager,
       bindings: request.bindings,
       lineNumber: request.lineNumber,
     };
+
     const { mapped } = request;
 
     // Set a flag on the thread actor which indicates an evaluation is being
@@ -1294,6 +1298,7 @@ const WebConsoleActor = ActorClassWithSpec(webconsoleSpec, {
       exceptionMessage: this._createStringGrip(errorMessage),
       exceptionDocURL: errorDocURL,
       exceptionStack,
+      hasException: errorGrip !== null,
       errorMessageName,
       frame,
       helperResult: helperResult,
@@ -1695,7 +1700,7 @@ const WebConsoleActor = ActorClassWithSpec(webconsoleSpec, {
       columnNumber = stack[0].columnNumber;
     }
 
-    return {
+    const result = {
       errorMessage: this._createStringGrip(pageError.errorMessage),
       errorMessageName: pageError.errorMessageName,
       exceptionDocURL: ErrorDocs.GetURL(pageError),
@@ -1715,7 +1720,23 @@ const WebConsoleActor = ActorClassWithSpec(webconsoleSpec, {
       notes: notesArray,
       chromeContext: pageError.isFromChromeContext,
       cssSelectors: pageError.cssSelectors,
+      isPromiseRejection: pageError.isPromiseRejection,
     };
+
+    // If the pageError does have an exception object, we want to return the grip for it,
+    // but only if we do manage to get the grip, as we're checking the property on the
+    // client to render things differently.
+    if (pageError.hasException) {
+      try {
+        const obj = this.makeDebuggeeValue(pageError.exception, true);
+        if (obj?.class !== "DeadObject") {
+          result.exception = this.createValueGrip(obj);
+          result.hasException = true;
+        }
+      } catch (e) {}
+    }
+
+    return result;
   },
 
   /**

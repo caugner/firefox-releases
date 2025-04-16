@@ -298,7 +298,7 @@ void GamepadManager::NewConnectionEvent(uint32_t aIndex, bool aConnected) {
 
   // Hold on to listeners in a separate array because firing events
   // can mutate the mListeners array.
-  nsTArray<RefPtr<nsGlobalWindowInner>> listeners(mListeners);
+  nsTArray<RefPtr<nsGlobalWindowInner>> listeners(mListeners.Clone());
 
   if (aConnected) {
     for (uint32_t i = 0; i < listeners.Length(); i++) {
@@ -416,9 +416,9 @@ bool GamepadManager::MaybeWindowHasSeenGamepad(nsGlobalWindowInner* aWindow,
     // This window hasn't seen this gamepad before, so
     // send a connection event first.
     SetWindowHasSeenGamepad(aWindow, aIndex);
-    return true;
+    return false;
   }
-  return false;
+  return true;
 }
 
 bool GamepadManager::WindowHasSeenGamepad(nsGlobalWindowInner* aWindow,
@@ -479,7 +479,7 @@ void GamepadManager::Update(const GamepadChangeEvent& aEvent) {
 
   // Hold on to listeners in a separate array because firing events
   // can mutate the mListeners array.
-  nsTArray<RefPtr<nsGlobalWindowInner>> listeners(mListeners);
+  nsTArray<RefPtr<nsGlobalWindowInner>> listeners(mListeners.Clone());
 
   for (uint32_t i = 0; i < listeners.Length(); i++) {
     // Only send events to non-background windows
@@ -531,7 +531,7 @@ bool GamepadManager::SetGamepadByEvent(const GamepadChangeEvent& aEvent,
   const uint32_t index =
       GetGamepadIndexWithServiceType(aEvent.index(), aEvent.service_type());
   if (aWindow) {
-    firstTime = MaybeWindowHasSeenGamepad(aWindow, index);
+    firstTime = !MaybeWindowHasSeenGamepad(aWindow, index);
   }
 
   RefPtr<Gamepad> gamepad =

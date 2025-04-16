@@ -32,6 +32,19 @@ function IsCSSPropertyPrefEnabled(prefName) {
   return false;
 }
 
+// Returns true if WebRender is enabled. Otherwise, returns false
+function IsWebRenderEnabled() {
+  try {
+    return SpecialPowers.Cc["@mozilla.org/gfx/info;1"].getService(
+      SpecialPowers.Ci.nsIGfxInfo
+    ).WebRenderEnabled;
+  } catch (ex) {
+    ok(false, "Failed to check WebRender's enabled state");
+  }
+
+  return false;
+}
+
 // True longhand properties.
 const CSS_TYPE_LONGHAND = 0;
 
@@ -6741,6 +6754,8 @@ var gCSSProperties = {
     domProp: "opacity",
     inherited: false,
     type: CSS_TYPE_LONGHAND,
+    applies_to_first_letter: true,
+    applies_to_first_line: true,
     applies_to_placeholder: true,
     applies_to_cue: true,
     initial_values: [
@@ -13165,7 +13180,10 @@ if (IsCSSPropertyPrefEnabled("layout.css.step-position-jump.enabled")) {
   );
 }
 
-if (IsCSSPropertyPrefEnabled("layout.css.backdrop-filter.enabled")) {
+if (
+  IsCSSPropertyPrefEnabled("layout.css.backdrop-filter.enabled") &&
+  IsWebRenderEnabled()
+) {
   gCSSProperties["backdrop-filter"] = {
     domProp: "backdropFilter",
     inherited: false,
@@ -13279,6 +13297,28 @@ if (
 ) {
   gCSSProperties["image-orientation"].initial_values = ["none"];
   gCSSProperties["image-orientation"].other_values = ["from-image"];
+}
+
+if (IsCSSPropertyPrefEnabled("layout.css.aspect-ratio.enabled")) {
+  gCSSProperties["aspect-ratio"] = {
+    domProp: "aspectRatio",
+    inherited: false,
+    type: CSS_TYPE_LONGHAND,
+    initial_values: ["auto"],
+    other_values: [
+      "1",
+      "1.0",
+      "1 / 2",
+      "1/2",
+      "16.2 / 9.5",
+      "1/0",
+      "0/1",
+      "0 / 0",
+      "auto 1",
+      "0 auto",
+    ],
+    invalid_values: ["none", "1 test", "1 / auto", "auto / 1"],
+  };
 }
 
 // Copy aliased properties' fields from their alias targets. Keep this logic

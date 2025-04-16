@@ -20,6 +20,7 @@ namespace js {
 class Scope;
 class GlobalScope;
 class EvalScope;
+struct FieldInitializers;
 class GCMarker;
 
 namespace frontend {
@@ -116,7 +117,6 @@ class AbstractScopePtr {
   uint32_t nextFrameSlot() const;
   // Valid iff is<FunctionScope>
   bool isArrow() const;
-  JSFunction* canonicalFunction() const;
 
   bool hasOnChain(ScopeKind kind) const {
     for (AbstractScopePtr it = *this; it; it = it.enclosing()) {

@@ -46,6 +46,8 @@ namespace mozilla {
 
 using namespace dom;
 
+using ChildBlockBoundary = HTMLEditUtils::ChildBlockBoundary;
+
 nsresult HTMLEditor::SetInlinePropertyAsAction(nsAtom& aProperty,
                                                nsAtom* aAttribute,
                                                const nsAString& aValue,
@@ -76,6 +78,10 @@ nsresult HTMLEditor::SetInlinePropertyAsAction(nsAtom& aProperty,
   }
 
   AutoPlaceholderBatch treatAsOneTransaction(*this);
+
+  nsAtom* property = &aProperty;
+  nsAtom* attribute = aAttribute;
+  nsAutoString value(aValue);
 
   if (&aProperty == nsGkAtoms::sup) {
     // Superscript and Subscript styles are mutually exclusive.
@@ -114,17 +120,34 @@ nsresult HTMLEditor::SetInlinePropertyAsAction(nsAtom& aProperty,
         return EditorBase::ToGenericNSResult(rv);
       }
     } else if (&aProperty == nsGkAtoms::font && aAttribute == nsGkAtoms::face) {
-      nsresult rv = RemoveInlinePropertyInternal(nsGkAtoms::tt, nullptr,
-                                                 RemoveRelatedElements::No);
-      if (NS_FAILED(rv)) {
-        NS_WARNING(
-            "HTMLEditor::RemoveInlinePropertyInternal(nsGkAtoms::tt, "
-            "RemoveRelatedElements::No) failed");
-        return EditorBase::ToGenericNSResult(rv);
+      if (!value.LowerCaseEqualsASCII("tt")) {
+        nsresult rv = RemoveInlinePropertyInternal(nsGkAtoms::tt, nullptr,
+                                                   RemoveRelatedElements::No);
+        if (NS_FAILED(rv)) {
+          NS_WARNING(
+              "HTMLEditor::RemoveInlinePropertyInternal(nsGkAtoms::tt, "
+              "RemoveRelatedElements::No) failed");
+          return EditorBase::ToGenericNSResult(rv);
+        }
+      } else {
+        nsresult rv = RemoveInlinePropertyInternal(
+            nsGkAtoms::font, nsGkAtoms::face, RemoveRelatedElements::No);
+        if (NS_FAILED(rv)) {
+          NS_WARNING(
+              "HTMLEditor::RemoveInlinePropertyInternal(nsGkAtoms::font, "
+              "nsGkAtoms::face, RemoveRelatedElements::No) failed");
+          return EditorBase::ToGenericNSResult(rv);
+        }
+        // Override property, attribute and value if the new font face value is
+        // "tt".
+        property = nsGkAtoms::tt;
+        attribute = nullptr;
+        value.Truncate();
       }
     }
   }
-  rv = SetInlinePropertyInternal(aProperty, aAttribute, aValue);
+  rv = SetInlinePropertyInternal(MOZ_KnownLive(*property),
+                                 MOZ_KnownLive(attribute), value);
   NS_WARNING_ASSERTION(NS_SUCCEEDED(rv),
                        "HTMLEditor::SetInlinePropertyInternal() failed");
   return EditorBase::ToGenericNSResult(rv);
@@ -352,7 +375,7 @@ bool HTMLEditor::IsSimpleModifiableNode(nsIContent* aContent, nsAtom* aProperty,
     if (element->IsHTMLElement(aProperty) &&
         IsOnlyAttribute(element, aAttribute) &&
         element->GetAttr(kNameSpaceID_None, aAttribute, attrValue) &&
-        attrValue.Equals(*aValue, nsCaseInsensitiveStringComparator())) {
+        attrValue.Equals(*aValue, nsCaseInsensitiveStringComparator)) {
       // This is not quite correct, because it excludes cases like
       // <font face=000> being the same as <font face=#000000>.
       // Property-specific handling is needed (bug 760211).
@@ -754,7 +777,7 @@ SplitNodeResult HTMLEditor::SplitAncestorStyledInlineElementsAt(
 
   AutoTArray<OwningNonNull<nsIContent>, 24> arrayOfParents;
   for (nsIContent* content :
-       InclusiveAncestorsOfType<nsIContent>(*aPointToSplit.GetContainer())) {
+       aPointToSplit.GetContainer()->InclusiveAncestorsOfType<nsIContent>()) {
     if (HTMLEditUtils::IsBlockElement(*content) || !content->GetParent() ||
         !EditorUtils::IsEditableContent(*content->GetParent(),
                                         EditorType::HTML)) {
@@ -880,10 +903,10 @@ EditResult HTMLEditor::ClearStyleAt(const EditorDOMPoint& aPoint,
   // the next node.  The first example should become
   // `<p><b><i>a</i></b><b><i></i></b><b><i>bc</i></b></p>`.
   //                    ^^^^^^^^^^^^^^
-  nsIContent* leftmostChildOfNextNode =
-      GetLeftmostChild(splitResult.GetNextNode());
-  EditorDOMPoint atStartOfNextNode(leftmostChildOfNextNode
-                                       ? leftmostChildOfNextNode
+  nsIContent* firstLeafChildOfNextNode = HTMLEditUtils::GetFirstLeafChild(
+      *splitResult.GetNextNode(), ChildBlockBoundary::Ignore);
+  EditorDOMPoint atStartOfNextNode(firstLeafChildOfNextNode
+                                       ? firstLeafChildOfNextNode
                                        : splitResult.GetNextNode(),
                                    0);
   RefPtr<HTMLBRElement> brElement;
@@ -938,11 +961,13 @@ EditResult HTMLEditor::ClearStyleAt(const EditorDOMPoint& aPoint,
   // Now, we want to put `<br>` element into the empty split node if
   // it was in next node of the first split.
   // E.g., `<p><b><i>a</i></b><b><i><br></i></b><b><i>bc</i></b></p>`
-  nsIContent* leftmostChild =
-      GetLeftmostChild(splitResultAtStartOfNextNode.GetPreviousNode());
+  nsIContent* firstLeafChildOfPreviousNode = HTMLEditUtils::GetFirstLeafChild(
+      *splitResultAtStartOfNextNode.GetPreviousNode(),
+      ChildBlockBoundary::Ignore);
   EditorDOMPoint pointToPutCaret(
-      leftmostChild ? leftmostChild
-                    : splitResultAtStartOfNextNode.GetPreviousNode(),
+      firstLeafChildOfPreviousNode
+          ? firstLeafChildOfPreviousNode
+          : splitResultAtStartOfNextNode.GetPreviousNode(),
       0);
   // If the right node starts with a `<br>`, suck it out of right node and into
   // the left node left node.  This is so we you don't revert back to the
@@ -1182,7 +1207,7 @@ nsresult HTMLEditor::PromoteRangeIfStartsOrEndsInNamedAnchor(nsRange& aRange) {
   }
   EditorRawDOMPoint newRangeStart(aRange.StartRef());
   for (Element* element :
-       InclusiveAncestorsOfType<Element>(*aRange.GetStartContainer())) {
+       aRange.GetStartContainer()->InclusiveAncestorsOfType<Element>()) {
     if (element->IsHTMLElement(nsGkAtoms::body)) {
       break;
     }
@@ -1202,7 +1227,7 @@ nsresult HTMLEditor::PromoteRangeIfStartsOrEndsInNamedAnchor(nsRange& aRange) {
 
   EditorRawDOMPoint newRangeEnd(aRange.EndRef());
   for (Element* element :
-       InclusiveAncestorsOfType<Element>(*aRange.GetEndContainer())) {
+       aRange.GetEndContainer()->InclusiveAncestorsOfType<Element>()) {
     if (element->IsHTMLElement(nsGkAtoms::body)) {
       break;
     }
@@ -1237,7 +1262,7 @@ nsresult HTMLEditor::PromoteInlineRange(nsRange& aRange) {
   }
   EditorRawDOMPoint newRangeStart(aRange.StartRef());
   for (nsIContent* content :
-       InclusiveAncestorsOfType<nsIContent>(*aRange.GetStartContainer())) {
+       aRange.GetStartContainer()->InclusiveAncestorsOfType<nsIContent>()) {
     MOZ_ASSERT(newRangeStart.GetContainer() == content);
     if (content->IsHTMLElement(nsGkAtoms::body) ||
         !EditorUtils::IsEditableContent(*content, EditorType::HTML) ||
@@ -1255,7 +1280,7 @@ nsresult HTMLEditor::PromoteInlineRange(nsRange& aRange) {
 
   EditorRawDOMPoint newRangeEnd(aRange.EndRef());
   for (nsIContent* content :
-       InclusiveAncestorsOfType<nsIContent>(*aRange.GetEndContainer())) {
+       aRange.GetEndContainer()->InclusiveAncestorsOfType<nsIContent>()) {
     MOZ_ASSERT(newRangeEnd.GetContainer() == content);
     if (content->IsHTMLElement(nsGkAtoms::body) ||
         !EditorUtils::IsEditableContent(*content, EditorType::HTML) ||
@@ -2101,7 +2126,7 @@ nsresult HTMLEditor::RelativeFontChange(FontSize aDir) {
     if (NS_WARN_IF(!SelectionRefPtr()->RangeCount())) {
       return NS_OK;
     }
-    RefPtr<nsRange> firstRange = SelectionRefPtr()->GetRangeAt(0);
+    RefPtr<const nsRange> firstRange = SelectionRefPtr()->GetRangeAt(0);
     if (NS_WARN_IF(!firstRange) ||
         NS_WARN_IF(!firstRange->GetStartContainer())) {
       return NS_OK;

@@ -189,31 +189,142 @@ function simulateGATTDisconnectionAndWait(device, fake_peripheral) {
   ]);
 }
 
-/**
- * Returns an array containing two FakePeripherals corresponding
- * to the simulated devices.
- * @returns {Promise<Array<FakePeripheral>>} The fake devices are initialized as
- *     Health Thermometer and Heart Rate devices.
- */
-function setUpHealthThermometerAndHeartRateDevices() {
-  return navigator.bluetooth.test.simulateCentral({state: 'powered-on'})
-      .then(fake_central => Promise.all([
-        fake_central.simulatePreconnectedPeripheral({
-          address: '09:09:09:09:09:09',
-          name: 'Health Thermometer',
-          knownServiceUUIDs: ['generic_access', 'health_thermometer'],
-        }),
-        fake_central.simulatePreconnectedPeripheral({
-          address: '08:08:08:08:08:08',
-          name: 'Heart Rate',
-          knownServiceUUIDs: ['generic_access', 'heart_rate'],
-        })
-      ]));
+/** @type {FakeCentral} The fake adapter for the current test. */
+let fake_central = null;
+
+async function initializeFakeCentral({state = 'powered-on'}) {
+  if (!fake_central) {
+    fake_central = await navigator.bluetooth.test.simulateCentral({state});
+  }
 }
 
 /**
- * Simulates a pre-connected device with |address|, |name| and
- * |knownServiceUUIDs|.
+ * A dictionary for specifying fake Bluetooth device setup options.
+ * @typedef {{address: !string, name: !string,
+ *            knownServiceUUIDs: !Array<string>, connectable: !boolean,
+ *            serviceDiscoveryComplete: !boolean}}
+ */
+let FakeDeviceOptions;
+
+/**
+ * @typedef {{fakeDeviceOptions: FakeDeviceOptions,
+ *            requestDeviceOptions: RequestDeviceOptions}}
+ */
+let SetupOptions;
+
+/**
+ * Default options for setting up a Bluetooth device.
+ * @type {FakeDeviceOptions}
+ */
+const fakeDeviceOptionsDefault = {
+  address: '00:00:00:00:00:00',
+  name: 'LE Device',
+  knownServiceUUIDs: [],
+  connectable: false,
+  serviceDiscoveryComplete: false,
+};
+
+/**
+ * A dictionary containing the fake Bluetooth device object. The dictionary can
+ * optionally contain its fake services and its BluetoothDevice counterpart.
+ * @typedef {{fake_peripheral: !FakePeripheral,
+ *            fake_services: Object<string, FakeService>,
+ *            device: BluetoothDevice}}
+ */
+let FakeDevice;
+
+/**
+ * Creates a SetupOptions object using |setupOptionsDefault| as the base options
+ * object with the options from |setupOptionsOverride| overriding these
+ * defaults.
+ * @param {SetupOptions} setupOptionsDefault The default options object to use
+ *     as the base.
+ * @param {SetupOptions} setupOptionsOverride The options to override the
+ *     defaults with.
+ * @returns {SetupOptions} The merged setup options containing the defaults with
+ *     the overrides applied.
+ */
+function createSetupOptions(setupOptionsDefault, setupOptionsOverride) {
+  // Merge the properties of |setupOptionsDefault| and |setupOptionsOverride|
+  // without modifying |setupOptionsDefault|.
+  let fakeDeviceOptions = Object.assign(
+      {...setupOptionsDefault.fakeDeviceOptions},
+      setupOptionsOverride.fakeDeviceOptions);
+  let requestDeviceOptions = Object.assign(
+      {...setupOptionsDefault.requestDeviceOptions},
+      setupOptionsOverride.requestDeviceOptions);
+
+  return {fakeDeviceOptions, requestDeviceOptions};
+}
+
+/**
+ * Adds a preconnected device with the given options. A preconnected device is a
+ * device that has been paired with the system previously. This can be done if,
+ * for example, the user pairs the device using the OS'es settings.
+ *
+ * By default, the preconnected device will be set up using the
+ * |fakeDeviceOptionsDefault| and will not use a RequestDeviceOption object.
+ * This means that the device will not be requested during the setup.
+ *
+ * If |setupOptionsOverride| is provided, these options will override the
+ * defaults. If |setupOptionsOverride| includes the requestDeviceOptions
+ * property, then the device will be requested using those options.
+ * @param {SetupOptions} setupOptionsOverride An object containing options for
+ *     setting up a fake Bluetooth device and for requesting the device.
+ * @returns {Promise<FakeDevice>} The device fake initialized with the
+ *     parameter values.
+ */
+async function setUpPreconnectedFakeDevice(setupOptionsOverride) {
+  await initializeFakeCentral({state: 'powered-on'});
+
+  let setupOptions = createSetupOptions(
+      {fakeDeviceOptions: fakeDeviceOptionsDefault}, setupOptionsOverride);
+
+  // Simulate the fake peripheral.
+  let preconnectedDevice = {};
+  preconnectedDevice.fake_peripheral =
+      await fake_central.simulatePreconnectedPeripheral({
+        address: setupOptions.fakeDeviceOptions.address,
+        name: setupOptions.fakeDeviceOptions.name,
+        knownServiceUUIDs: setupOptions.fakeDeviceOptions.knownServiceUUIDs,
+      });
+
+  if (setupOptions.fakeDeviceOptions.connectable) {
+    await preconnectedDevice.fake_peripheral.setNextGATTConnectionResponse(
+        {code: HCI_SUCCESS});
+  }
+
+  // Add known services.
+  preconnectedDevice.fake_services = new Map();
+  for (let service of setupOptions.fakeDeviceOptions.knownServiceUUIDs) {
+    let fake_service = await preconnectedDevice.fake_peripheral.addFakeService(
+        {uuid: service});
+    preconnectedDevice.fake_services.set(service, fake_service);
+  }
+
+  // Request the device if options have been provided.
+  if (setupOptions.requestDeviceOptions) {
+    preconnectedDevice.device =
+        await requestDeviceWithTrustedClick(setupOptions.requestDeviceOptions);
+  }
+
+  // Set up services discovered state.
+  if (setupOptions.fakeDeviceOptions.serviceDiscoveryComplete) {
+    await preconnectedDevice.fake_peripheral.setNextGATTDiscoveryResponse(
+        {code: HCI_SUCCESS});
+  }
+
+  return preconnectedDevice;
+}
+
+/**
+ * Deprecated: Use setUpPreconnectedFakeDevice() instead.
+ * Simulates a preconnected device with |address|, |name| and
+ * |knownServiceUUIDs|. A preconnected device is a device that has been paired
+ * with the system previously. This can be done if, for example, the user pairs
+ * the device using the OS'es settings.
+ * TODO(https://crbug.com/1070816): Remove this method when all uses have been
+ * converted to using setUpPreconnectedFakeDevice();
  * @param {string} address The device MAC address.
  * @param {string} name The device name.
  * @param {Array<string>} knownServiceUUIDs An array of GATT service UUIDs to
@@ -221,20 +332,40 @@ function setUpHealthThermometerAndHeartRateDevices() {
  * @returns {Promise<FakePeripheral>} The fake devices are initialized with the
  *     parameter values.
  */
-function setUpPreconnectedDevice({
+async function setUpPreconnectedDevice({
   address = '00:00:00:00:00:00',
   name = 'LE Device',
   knownServiceUUIDs = []
 }) {
-  return navigator.bluetooth.test.simulateCentral({state: 'powered-on'})
-      .then(fake_central => fake_central.simulatePreconnectedPeripheral({
-        address: address,
-        name: name,
-        knownServiceUUIDs: knownServiceUUIDs,
-      }));
+  await initializeFakeCentral({state: 'powered-on'});
+  return await fake_central.simulatePreconnectedPeripheral({
+    address: address,
+    name: name,
+    knownServiceUUIDs: knownServiceUUIDs,
+  });
 }
 
 /** Blocklisted GATT Device Helper Methods */
+
+/** @type {FakeDeviceOptions} */
+const blocklistFakeDeviceOptionsDefault = {
+  address: '11:11:11:11:11:11',
+  name: 'Blocklist Device',
+  knownServiceUUIDs: ['generic_access', blocklist_test_service_uuid],
+  connectable: true,
+  serviceDiscoveryComplete: true
+};
+
+/** @type {RequestDeviceOptions} */
+const blocklistRequestDeviceOptionsDefault = {
+  filters: [{services: [blocklist_test_service_uuid]}]
+};
+
+/** @type {SetupOptions} */
+const blocklistSetupOptionsDefault = {
+  fakeDeviceOptions: blocklistFakeDeviceOptionsDefault,
+  requestDeviceOptions: blocklistRequestDeviceOptionsDefault
+};
 
 /**
  * Returns an object containing a BluetoothDevice discovered using |options|,
@@ -266,65 +397,45 @@ function setUpPreconnectedDevice({
  *         object containing the BluetoothDevice object and its corresponding
  *         GATT fake objects.
  */
-function getBlocklistDevice(options = {
-  filters: [{services: [blocklist_test_service_uuid]}]
-}) {
-  let device, fake_peripheral, fake_blocklist_test_service,
-      fake_blocklist_exclude_reads_characteristic,
-      fake_blocklist_exclude_writes_characteristic, fake_blocklist_descriptor,
-      fake_blocklist_exclude_reads_descriptor,
-      fake_blocklist_exclude_writes_descriptor;
-  return setUpPreconnectedDevice({
-           address: '11:11:11:11:11:11',
-           name: 'Blocklist Device',
-           knownServiceUUIDs: ['generic_access', blocklist_test_service_uuid],
-         })
-      .then(_ => fake_peripheral = _)
-      .then(() => requestDeviceWithTrustedClick(options))
-      .then(_ => device = _)
-      .then(() => fake_peripheral.setNextGATTConnectionResponse({
-        code: HCI_SUCCESS,
-      }))
-      .then(() => device.gatt.connect())
-      .then(() => fake_peripheral.addFakeService({
-        uuid: blocklist_test_service_uuid,
-      }))
-      .then(_ => fake_blocklist_test_service = _)
-      .then(() => fake_blocklist_test_service.addFakeCharacteristic({
+async function getBlocklistDevice(setupOptionsOverride = {}) {
+  let setupOptions =
+      createSetupOptions(blocklistSetupOptionsDefault, setupOptionsOverride);
+  let fakeDevice = await setUpPreconnectedFakeDevice(setupOptions);
+  await fakeDevice.device.gatt.connect();
+
+  let fake_blocklist_test_service =
+      fakeDevice.fake_services.get(blocklist_test_service_uuid);
+
+  let fake_blocklist_exclude_reads_characteristic =
+      await fake_blocklist_test_service.addFakeCharacteristic({
         uuid: blocklist_exclude_reads_characteristic_uuid,
         properties: ['read', 'write'],
-      }))
-      .then(_ => fake_blocklist_exclude_reads_characteristic = _)
-      .then(() => fake_blocklist_test_service.addFakeCharacteristic({
+      });
+  let fake_blocklist_exclude_writes_characteristic =
+      await fake_blocklist_test_service.addFakeCharacteristic({
         uuid: 'gap.peripheral_privacy_flag',
         properties: ['read', 'write'],
-      }))
-      .then(_ => fake_blocklist_exclude_writes_characteristic = _)
-      .then(
-          () => fake_blocklist_exclude_writes_characteristic.addFakeDescriptor(
-              {uuid: blocklist_test_descriptor_uuid}))
-      .then(_ => fake_blocklist_descriptor = _)
-      .then(
-          () => fake_blocklist_exclude_writes_characteristic.addFakeDescriptor(
-              {uuid: blocklist_exclude_reads_descriptor_uuid}))
-      .then(_ => fake_blocklist_exclude_reads_descriptor = _)
-      .then(
-          () => fake_blocklist_exclude_writes_characteristic.addFakeDescriptor(
-              {uuid: 'gatt.client_characteristic_configuration'}))
-      .then(_ => fake_blocklist_exclude_writes_descriptor = _)
-      .then(() => fake_peripheral.setNextGATTDiscoveryResponse({
-        code: HCI_SUCCESS,
-      }))
-      .then(() => ({
-              device,
-              fake_peripheral,
-              fake_blocklist_test_service,
-              fake_blocklist_exclude_reads_characteristic,
-              fake_blocklist_exclude_writes_characteristic,
-              fake_blocklist_descriptor,
-              fake_blocklist_exclude_reads_descriptor,
-              fake_blocklist_exclude_writes_descriptor,
-            }));
+      });
+
+  let fake_blocklist_descriptor =
+      await fake_blocklist_exclude_writes_characteristic.addFakeDescriptor(
+          {uuid: blocklist_test_descriptor_uuid});
+  let fake_blocklist_exclude_reads_descriptor =
+      await fake_blocklist_exclude_writes_characteristic.addFakeDescriptor(
+          {uuid: blocklist_exclude_reads_descriptor_uuid});
+  let fake_blocklist_exclude_writes_descriptor =
+      await fake_blocklist_exclude_writes_characteristic.addFakeDescriptor(
+          {uuid: 'gatt.client_characteristic_configuration'});
+  return {
+    device: fakeDevice.device,
+    fake_peripheral: fakeDevice.fake_peripheral,
+    fake_blocklist_test_service,
+    fake_blocklist_exclude_reads_characteristic,
+    fake_blocklist_exclude_writes_characteristic,
+    fake_blocklist_descriptor,
+    fake_blocklist_exclude_reads_descriptor,
+    fake_blocklist_exclude_writes_descriptor,
+  };
 }
 
 /**
@@ -343,17 +454,14 @@ function getBlocklistDevice(options = {
  *     fake_service: FakeBluetoothRemoteGATTService}>} An object containing the
  *         BluetoothDevice object and its corresponding GATT fake objects.
  */
-function getBlocklistTestService() {
-  let result;
-  return getBlocklistDevice()
-      .then(_ => result = _)
-      .then(
-          () =>
-              result.device.gatt.getPrimaryService(blocklist_test_service_uuid))
-      .then(service => Object.assign(result, {
-        service,
-        fake_service: result.fake_blocklist_test_service,
-      }));
+async function getBlocklistTestService() {
+  let result = await getBlocklistDevice();
+  let service =
+      await result.device.gatt.getPrimaryService(blocklist_test_service_uuid);
+  return Object.assign(result, {
+    service,
+    fake_service: result.fake_blocklist_test_service,
+  });
 }
 
 /**
@@ -375,17 +483,14 @@ function getBlocklistTestService() {
  *         containing the BluetoothDevice object and its corresponding GATT fake
  *         objects.
  */
-function getBlocklistExcludeReadsCharacteristic() {
-  let result, fake_characteristic;
-  return getBlocklistTestService()
-      .then(_ => result = _)
-      .then(
-          () => result.service.getCharacteristic(
-              blocklist_exclude_reads_characteristic_uuid))
-      .then(characteristic => Object.assign(result, {
-        characteristic,
-        fake_characteristic: result.fake_blocklist_exclude_reads_characteristic
-      }));
+async function getBlocklistExcludeReadsCharacteristic() {
+  let result = await getBlocklistTestService();
+  let characteristic = await result.service.getCharacteristic(
+      blocklist_exclude_reads_characteristic_uuid);
+  return Object.assign(result, {
+    characteristic,
+    fake_characteristic: result.fake_blocklist_exclude_reads_characteristic
+  });
 }
 
 /**
@@ -407,16 +512,14 @@ function getBlocklistExcludeReadsCharacteristic() {
  *         containing the BluetoothDevice object and its corresponding GATT fake
  *         objects.
  */
-function getBlocklistExcludeWritesCharacteristic() {
-  let result, fake_characteristic;
-  return getBlocklistTestService()
-      .then(_ => result = _)
-      .then(
-          () => result.service.getCharacteristic('gap.peripheral_privacy_flag'))
-      .then(characteristic => Object.assign(result, {
-        characteristic,
-        fake_characteristic: result.fake_blocklist_exclude_writes_characteristic
-      }));
+async function getBlocklistExcludeWritesCharacteristic() {
+  let result = await getBlocklistTestService();
+  let characteristic =
+      await result.service.getCharacteristic('gap.peripheral_privacy_flag');
+  return Object.assign(result, {
+    characteristic,
+    fake_characteristic: result.fake_blocklist_exclude_writes_characteristic
+  });
 }
 
 /**
@@ -440,17 +543,14 @@ function getBlocklistExcludeWritesCharacteristic() {
  *         containing the BluetoothDevice object and its corresponding GATT fake
  *         objects.
  */
-function getBlocklistExcludeReadsDescriptor() {
-  let result;
-  return getBlocklistExcludeWritesCharacteristic()
-      .then(_ => result = _)
-      .then(
-          () => result.characteristic.getDescriptor(
-              blocklist_exclude_reads_descriptor_uuid))
-      .then(descriptor => Object.assign(result, {
-        descriptor,
-        fake_descriptor: result.fake_blocklist_exclude_reads_descriptor
-      }));
+async function getBlocklistExcludeReadsDescriptor() {
+  let result = await getBlocklistExcludeWritesCharacteristic();
+  let descriptor = await result.characteristic.getDescriptor(
+      blocklist_exclude_reads_descriptor_uuid);
+  return Object.assign(result, {
+    descriptor,
+    fake_descriptor: result.fake_blocklist_exclude_reads_descriptor
+  });
 }
 
 /**
@@ -474,20 +574,42 @@ function getBlocklistExcludeReadsDescriptor() {
  *         containing the BluetoothDevice object and its corresponding GATT fake
  *         objects.
  */
-function getBlocklistExcludeWritesDescriptor() {
-  let result;
-  return getBlocklistExcludeWritesCharacteristic()
-      .then(_ => result = _)
-      .then(
-          () => result.characteristic.getDescriptor(
-              'gatt.client_characteristic_configuration'))
-      .then(descriptor => Object.assign(result, {
-        descriptor: descriptor,
-        fake_descriptor: result.fake_blocklist_exclude_writes_descriptor,
-      }));
+async function getBlocklistExcludeWritesDescriptor() {
+  let result = await getBlocklistExcludeWritesCharacteristic();
+  let descriptor = await result.characteristic.getDescriptor(
+      'gatt.client_characteristic_configuration');
+  return Object.assign(result, {
+    descriptor: descriptor,
+    fake_descriptor: result.fake_blocklist_exclude_writes_descriptor,
+  });
 }
 
 /** Bluetooth HID Device Helper Methods */
+
+/** @type {FakeDeviceOptions} */
+const connectedHIDFakeDeviceOptionsDefault = {
+  address: '10:10:10:10:10:10',
+  name: 'HID Device',
+  knownServiceUUIDs: [
+    'generic_access',
+    'device_information',
+    'human_interface_device',
+  ],
+  connectable: true,
+  serviceDiscoveryComplete: false
+};
+
+/** @type {RequestDeviceOptions} */
+const connectedHIDRequestDeviceOptionsDefault = {
+  filters: [{services: ['device_information']}],
+  optionalServices: ['human_interface_device']
+};
+
+/** @type {SetupOptions} */
+const connectedHIDSetupOptionsDefault = {
+  fakeDeviceOptions: connectedHIDFakeDeviceOptionsDefault,
+  requestDeviceOptions: connectedHIDRequestDeviceOptionsDefault
+};
 
 /**
  * Similar to getHealthThermometerDevice except the GATT discovery
@@ -498,40 +620,24 @@ function getBlocklistExcludeWritesDescriptor() {
  * @returns {device: BluetoothDevice, fake_peripheral: FakePeripheral} An object
  *     containing a requested BluetoothDevice and its fake counter part.
  */
-function getConnectedHIDDevice(options) {
-  let device, fake_peripheral;
-  return setUpPreconnectedDevice({
-           address: '10:10:10:10:10:10',
-           name: 'HID Device',
-           knownServiceUUIDs: [
-             'generic_access',
-             'device_information',
-             'human_interface_device',
-           ],
-         })
-      .then(_ => (fake_peripheral = _))
-      .then(() => requestDeviceWithTrustedClick(options))
-      .then(_ => (device = _))
-      .then(() => fake_peripheral.setNextGATTConnectionResponse({
-        code: HCI_SUCCESS,
-      }))
-      .then(() => device.gatt.connect())
-      .then(() => fake_peripheral.addFakeService({
-        uuid: 'generic_access',
-      }))
-      .then(() => fake_peripheral.addFakeService({
-        uuid: 'device_information',
-      }))
-      // Blocklisted Characteristic:
-      // https://github.com/WebBluetoothCG/registries/blob/master/gatt_blocklist.txt
-      .then(dev_info => dev_info.addFakeCharacteristic({
-        uuid: 'serial_number_string',
-        properties: ['read'],
-      }))
-      .then(() => fake_peripheral.addFakeService({
-        uuid: 'human_interface_device',
-      }))
-      .then(() => ({device, fake_peripheral}));
+async function getConnectedHIDDevice(
+    requestDeviceOptionsOverride, fakeDeviceOptionsOverride) {
+  let setupOptions = createSetupOptions(connectedHIDSetupOptionsDefault, {
+    fakeDeviceOptions: fakeDeviceOptionsOverride,
+    requestDeviceOptions: requestDeviceOptionsOverride
+  });
+
+  let fakeDevice = await setUpPreconnectedFakeDevice(setupOptions);
+  await fakeDevice.device.gatt.connect();
+
+  // Blocklisted Characteristic:
+  // https://github.com/WebBluetoothCG/registries/blob/master/gatt_blocklist.txt
+  let dev_info = fakeDevice.fake_services.get('device_information');
+  await dev_info.addFakeCharacteristic({
+    uuid: 'serial_number_string',
+    properties: ['read'],
+  });
+  return fakeDevice;
 }
 
 /**
@@ -547,14 +653,10 @@ function getConnectedHIDDevice(options) {
  * @returns {device: BluetoothDevice, fake_peripheral: FakePeripheral} An object
  *     containing a requested BluetoothDevice and its fake counter part.
  */
-function getHIDDevice(options) {
-  let device, fake_peripheral;
-  return getConnectedHIDDevice(options)
-      .then(_ => ({device, fake_peripheral} = _))
-      .then(() => fake_peripheral.setNextGATTDiscoveryResponse({
-        code: HCI_SUCCESS,
-      }))
-      .then(() => ({device, fake_peripheral}));
+async function getHIDDevice(options) {
+  let result =
+      await getConnectedHIDDevice(options, {serviceDiscoveryComplete: true});
+  return result;
 }
 
 /** Health Thermometer Bluetooth Device Helper Methods */
@@ -563,7 +665,7 @@ function getHIDDevice(options) {
  * Returns a FakePeripheral that corresponds to a simulated pre-connected device
  * called 'Health Thermometer'. The device has two known serviceUUIDs:
  * 'generic_access' and 'health_thermometer'.
- * @returns {FakePeripheral} The device fake initialized as a Health
+ * @returns {Promise<FakePeripheral>} The device fake initialized as a Health
  *     Thermometer device.
  */
 function setUpHealthThermometerDevice() {
@@ -580,14 +682,12 @@ function setUpHealthThermometerDevice() {
  * @returns {Promise<FakePeripheral>} The device fake initialized as a
  *     connectable Health Thermometer device.
  */
-function setUpConnectableHealthThermometerDevice() {
-  let fake_peripheral;
-  return setUpHealthThermometerDevice()
-      .then(_ => fake_peripheral = _)
-      .then(() => fake_peripheral.setNextGATTConnectionResponse({
-        code: HCI_SUCCESS,
-      }))
-      .then(() => fake_peripheral);
+async function setUpConnectableHealthThermometerDevice() {
+  let fake_peripheral = await setUpHealthThermometerDevice();
+  await fake_peripheral.setNextGATTConnectionResponse({
+    code: HCI_SUCCESS,
+  });
+  return fake_peripheral;
 }
 
 /**
@@ -607,49 +707,44 @@ function setUpConnectableHealthThermometerDevice() {
  * passed into this method along with the fake GATT services, characteristics,
  *         and descriptors added to it.
  */
-function populateHealthThermometerFakes(fake_peripheral) {
-  let fake_generic_access, fake_health_thermometer, fake_measurement_interval,
-      fake_user_description, fake_cccd, fake_temperature_measurement,
-      fake_temperature_type;
-  return fake_peripheral.addFakeService({uuid: 'generic_access'})
-      .then(_ => fake_generic_access = _)
-      .then(() => fake_peripheral.addFakeService({
-        uuid: 'health_thermometer',
-      }))
-      .then(_ => fake_health_thermometer = _)
-      .then(() => fake_health_thermometer.addFakeCharacteristic({
+async function populateHealthThermometerFakes(fake_peripheral) {
+  let fake_generic_access =
+      await fake_peripheral.addFakeService({uuid: 'generic_access'});
+  let fake_health_thermometer = await fake_peripheral.addFakeService({
+    uuid: 'health_thermometer',
+  });
+  let fake_measurement_interval =
+      await fake_health_thermometer.addFakeCharacteristic({
         uuid: 'measurement_interval',
         properties: ['read', 'write', 'indicate'],
-      }))
-      .then(_ => fake_measurement_interval = _)
-      .then(() => fake_measurement_interval.addFakeDescriptor({
+      });
+  let fake_user_description =
+      await fake_measurement_interval.addFakeDescriptor({
         uuid: 'gatt.characteristic_user_description',
-      }))
-      .then(_ => fake_user_description = _)
-      .then(() => fake_measurement_interval.addFakeDescriptor({
-        uuid: 'gatt.client_characteristic_configuration',
-      }))
-      .then(_ => fake_cccd = _)
-      .then(() => fake_health_thermometer.addFakeCharacteristic({
+      });
+  let fake_cccd = await fake_measurement_interval.addFakeDescriptor({
+    uuid: 'gatt.client_characteristic_configuration',
+  });
+  let fake_temperature_measurement =
+      await fake_health_thermometer.addFakeCharacteristic({
         uuid: 'temperature_measurement',
         properties: ['indicate'],
-      }))
-      .then(_ => fake_temperature_measurement = _)
-      .then(() => fake_health_thermometer.addFakeCharacteristic({
+      });
+  let fake_temperature_type =
+      await fake_health_thermometer.addFakeCharacteristic({
         uuid: 'temperature_type',
         properties: ['read'],
-      }))
-      .then(_ => fake_temperature_type = _)
-      .then(() => ({
-              fake_peripheral,
-              fake_generic_access,
-              fake_health_thermometer,
-              fake_measurement_interval,
-              fake_cccd,
-              fake_user_description,
-              fake_temperature_measurement,
-              fake_temperature_type,
-            }));
+      });
+  return {
+    fake_peripheral,
+    fake_generic_access,
+    fake_health_thermometer,
+    fake_measurement_interval,
+    fake_cccd,
+    fake_user_description,
+    fake_temperature_measurement,
+    fake_temperature_type,
+  };
 }
 
 /**
@@ -670,50 +765,45 @@ function populateHealthThermometerFakes(fake_peripheral) {
  *         containing a requested BluetoothDevice and all of the GATT fake
  *         objects.
  */
-function getHealthThermometerDeviceWithServicesDiscovered(options) {
-  let device, fake_peripheral, fakes;
+async function getHealthThermometerDeviceWithServicesDiscovered(options) {
   let iframe = document.createElement('iframe');
-  return setUpConnectableHealthThermometerDevice()
-      .then(_ => fake_peripheral = _)
-      .then(() => populateHealthThermometerFakes(fake_peripheral))
-      .then(_ => fakes = _)
-      .then(() => fake_peripheral.setNextGATTDiscoveryResponse({
-        code: HCI_SUCCESS,
-      }))
-      .then(
-          () => new Promise(resolve => {
-            let src = '/bluetooth/resources/health-thermometer-iframe.html';
-            // TODO(509038): Can be removed once LayoutTests/bluetooth/* that
-            // use health-thermometer-iframe.html have been moved to
-            // LayoutTests/external/wpt/bluetooth/*
-            if (window.location.pathname.includes('/LayoutTests/')) {
-              src =
-                  '../../../external/wpt/bluetooth/resources/health-thermometer-iframe.html';
-            }
-            iframe.src = src;
-            document.body.appendChild(iframe);
-            iframe.addEventListener('load', resolve);
-          }))
-      .then(() => new Promise((resolve, reject) => {
-              callWithTrustedClick(() => {
-                iframe.contentWindow.postMessage(
-                    {type: 'DiscoverServices', options: options}, '*');
-              });
+  let fake_peripheral = await setUpConnectableHealthThermometerDevice();
+  let fakes = populateHealthThermometerFakes(fake_peripheral);
+  await fake_peripheral.setNextGATTDiscoveryResponse({
+    code: HCI_SUCCESS,
+  });
+  await new Promise(resolve => {
+    let src = '/bluetooth/resources/health-thermometer-iframe.html';
+    // TODO(509038): Can be removed once LayoutTests/bluetooth/* that
+    // use health-thermometer-iframe.html have been moved to
+    // LayoutTests/external/wpt/bluetooth/*
+    if (window.location.pathname.includes('/LayoutTests/')) {
+      src =
+          '../../../external/wpt/bluetooth/resources/health-thermometer-iframe.html';
+    }
+    iframe.src = src;
+    document.body.appendChild(iframe);
+    iframe.addEventListener('load', resolve);
+  });
+  await new Promise((resolve, reject) => {
+    callWithTrustedClick(() => {
+      iframe.contentWindow.postMessage(
+          {type: 'DiscoverServices', options: options}, '*');
+    });
 
-              function messageHandler(messageEvent) {
-                if (messageEvent.data == 'DiscoveryComplete') {
-                  window.removeEventListener('message', messageHandler);
-                  resolve();
-                } else {
-                  reject(new Error(`Unexpected message: ${messageEvent.data}`));
-                }
-              }
-              window.addEventListener('message', messageHandler);
-            }))
-      .then(() => requestDeviceWithTrustedClick(options))
-      .then(_ => device = _)
-      .then(device => device.gatt.connect())
-      .then(_ => Object.assign({device}, fakes));
+    function messageHandler(messageEvent) {
+      if (messageEvent.data == 'DiscoveryComplete') {
+        window.removeEventListener('message', messageHandler);
+        resolve();
+      } else {
+        reject(new Error(`Unexpected message: ${messageEvent.data}`));
+      }
+    }
+    window.addEventListener('message', messageHandler);
+  });
+  let device = await requestDeviceWithTrustedClick(options);
+  await device.gatt.connect();
+  return Object.assign({device}, fakes);
 }
 
 /**
@@ -725,13 +815,12 @@ function getHealthThermometerDeviceWithServicesDiscovered(options) {
  * @returns {device: BluetoothDevice, fake_peripheral: FakePeripheral} An object
  *     containing a requested BluetoothDevice and its fake counter part.
  */
-function getDiscoveredHealthThermometerDevice(options = {
+async function getDiscoveredHealthThermometerDevice(options = {
   filters: [{services: ['health_thermometer']}]
 }) {
-  return setUpHealthThermometerDevice().then(fake_peripheral => {
-    return requestDeviceWithTrustedClick(options).then(
-        device => ({device: device, fake_peripheral: fake_peripheral}));
-  });
+  let fake_peripheral = await setUpHealthThermometerDevice();
+  let device = await requestDeviceWithTrustedClick(options);
+  return {device: device, fake_peripheral: fake_peripheral};
 }
 
 /**
@@ -742,17 +831,14 @@ function getDiscoveredHealthThermometerDevice(options = {
  * @returns {device: BluetoothDevice, fake_peripheral: FakePeripheral} An object
  *     containing a requested BluetoothDevice and its fake counter part.
  */
-function getEmptyHealthThermometerDevice(options) {
-  return getDiscoveredHealthThermometerDevice(options).then(
-      ({device, fake_peripheral}) => {
-        return fake_peripheral
-            .setNextGATTConnectionResponse({code: HCI_SUCCESS})
-            .then(() => device.gatt.connect())
-            .then(
-                () => fake_peripheral.setNextGATTDiscoveryResponse(
-                    {code: HCI_SUCCESS}))
-            .then(() => ({device: device, fake_peripheral: fake_peripheral}));
-      });
+async function getEmptyHealthThermometerDevice(options) {
+  let result = await getDiscoveredHealthThermometerDevice(options);
+  await result.fake_peripheral.setNextGATTConnectionResponse(
+      {code: HCI_SUCCESS});
+  await result.device.gatt.connect();
+  await result.fake_peripheral.setNextGATTDiscoveryResponse(
+      {code: HCI_SUCCESS});
+  return result;
 }
 
 /**
@@ -764,26 +850,21 @@ function getEmptyHealthThermometerDevice(options) {
  *     fake_health_thermometer: FakeRemoteGATTService} An object containing the
  * health themometer service object and its corresponding fake.
  */
-function getEmptyHealthThermometerService(options) {
-  let device;
-  let fake_peripheral;
-  let fake_health_thermometer;
-  return getDiscoveredHealthThermometerDevice(options)
-      .then(result => ({device, fake_peripheral} = result))
-      .then(
-          () => fake_peripheral.setNextGATTConnectionResponse(
-              {code: HCI_SUCCESS}))
-      .then(() => device.gatt.connect())
-      .then(() => fake_peripheral.addFakeService({uuid: 'health_thermometer'}))
-      .then(s => fake_health_thermometer = s)
-      .then(
-          () =>
-              fake_peripheral.setNextGATTDiscoveryResponse({code: HCI_SUCCESS}))
-      .then(() => device.gatt.getPrimaryService('health_thermometer'))
-      .then(service => ({
-              service: service,
-              fake_health_thermometer: fake_health_thermometer,
-            }));
+async function getEmptyHealthThermometerService(options) {
+  let result = await getDiscoveredHealthThermometerDevice(options);
+  await result.fake_peripheral.setNextGATTConnectionResponse(
+      {code: HCI_SUCCESS});
+  await result.device.gatt.connect();
+  let fake_health_thermometer =
+      await result.fake_peripheral.addFakeService({uuid: 'health_thermometer'});
+  await result.fake_peripheral.setNextGATTDiscoveryResponse(
+      {code: HCI_SUCCESS});
+  let service =
+      await result.device.gatt.getPrimaryService('health_thermometer');
+  return {
+    service: service,
+    fake_health_thermometer: fake_health_thermometer,
+  };
 }
 
 /**
@@ -803,17 +884,14 @@ function getEmptyHealthThermometerService(options) {
  *         containing a requested BluetoothDevice and all of the GATT fake
  *         objects.
  */
-function getConnectedHealthThermometerDevice(options) {
-  let device, fake_peripheral, fakes;
-  return getDiscoveredHealthThermometerDevice(options)
-      .then(_ => ({device, fake_peripheral} = _))
-      .then(() => fake_peripheral.setNextGATTConnectionResponse({
-        code: HCI_SUCCESS,
-      }))
-      .then(() => populateHealthThermometerFakes(fake_peripheral))
-      .then(_ => fakes = _)
-      .then(() => device.gatt.connect())
-      .then(() => Object.assign({device}, fakes));
+async function getConnectedHealthThermometerDevice(options) {
+  let result = await getDiscoveredHealthThermometerDevice(options);
+  await result.fake_peripheral.setNextGATTConnectionResponse({
+    code: HCI_SUCCESS,
+  });
+  let fakes = await populateHealthThermometerFakes(result.fake_peripheral);
+  await result.device.gatt.connect();
+  return Object.assign({device: result.device}, fakes);
 }
 
 /**
@@ -845,14 +923,12 @@ function getConnectedHealthThermometerDevice(options) {
  *         containing a requested BluetoothDevice and all of the GATT fake
  *         objects.
  */
-function getHealthThermometerDevice(options) {
-  let result;
-  return getConnectedHealthThermometerDevice(options)
-      .then(_ => result = _)
-      .then(() => result.fake_peripheral.setNextGATTDiscoveryResponse({
-        code: HCI_SUCCESS,
-      }))
-      .then(() => result);
+async function getHealthThermometerDevice(options) {
+  let result = await getConnectedHealthThermometerDevice(options);
+  await result.fake_peripheral.setNextGATTDiscoveryResponse({
+    code: HCI_SUCCESS,
+  });
+  return result;
 }
 
 /**
@@ -866,34 +942,19 @@ function getHealthThermometerDevice(options) {
  * object containing a requested Bluetooth device and two fake health
  * thermometer GATT services.
  */
-function getTwoHealthThermometerServicesDevice(options) {
-  let device;
-  let fake_peripheral;
-  let fake_generic_access;
-  let fake_health_thermometer1;
-  let fake_health_thermometer2;
-
-  return getConnectedHealthThermometerDevice(options)
-      .then(result => {
-        ({
-          device,
-          fake_peripheral,
-          fake_generic_access,
-          fake_health_thermometer: fake_health_thermometer1,
-        } = result);
-      })
-      .then(() => fake_peripheral.addFakeService({uuid: 'health_thermometer'}))
-      .then(s => fake_health_thermometer2 = s)
-      .then(
-          () =>
-              fake_peripheral.setNextGATTDiscoveryResponse({code: HCI_SUCCESS}))
-      .then(() => ({
-              device: device,
-              fake_peripheral: fake_peripheral,
-              fake_generic_access: fake_generic_access,
-              fake_health_thermometer1: fake_health_thermometer1,
-              fake_health_thermometer2: fake_health_thermometer2
-            }));
+async function getTwoHealthThermometerServicesDevice(options) {
+  let result = await getConnectedHealthThermometerDevice(options);
+  let fake_health_thermometer2 =
+      await result.fake_peripheral.addFakeService({uuid: 'health_thermometer'});
+  await result.fake_peripheral.setNextGATTDiscoveryResponse(
+      {code: HCI_SUCCESS});
+  return {
+    device: result.device,
+    fake_peripheral: result.fake_peripheral,
+    fake_generic_access: result.fake_generic_access,
+    fake_health_thermometer1: result.fake_health_thermometer,
+    fake_health_thermometer2: fake_health_thermometer2
+  };
 }
 
 /**
@@ -913,15 +974,14 @@ function getTwoHealthThermometerServicesDevice(options) {
  *         containing a requested BluetoothDevice and all of the GATT fake
  *         objects.
  */
-function getHealthThermometerService() {
-  let result;
-  return getHealthThermometerDevice()
-      .then(r => result = r)
-      .then(() => result.device.gatt.getPrimaryService('health_thermometer'))
-      .then(service => Object.assign(result, {
-        service,
-        fake_service: result.fake_health_thermometer,
-      }));
+async function getHealthThermometerService() {
+  let result = await getHealthThermometerDevice();
+  let service =
+      await result.device.gatt.getPrimaryService('health_thermometer');
+  return Object.assign(result, {
+    service,
+    fake_service: result.fake_health_thermometer,
+  });
 }
 
 /**
@@ -944,15 +1004,14 @@ function getHealthThermometerService() {
  *         containing a requested BluetoothDevice and all of the GATT fake
  *         objects.
  */
-function getMeasurementIntervalCharacteristic() {
-  let result;
-  return getHealthThermometerService()
-      .then(r => result = r)
-      .then(() => result.service.getCharacteristic('measurement_interval'))
-      .then(characteristic => Object.assign(result, {
-        characteristic,
-        fake_characteristic: result.fake_measurement_interval,
-      }));
+async function getMeasurementIntervalCharacteristic() {
+  let result = await getHealthThermometerService();
+  let characteristic =
+      await result.service.getCharacteristic('measurement_interval');
+  return Object.assign(result, {
+    characteristic,
+    fake_characteristic: result.fake_measurement_interval,
+  });
 }
 
 /**
@@ -977,15 +1036,34 @@ function getMeasurementIntervalCharacteristic() {
  *         containing a requested BluetoothDevice and all of the GATT fake
  *         objects.
  */
-function getUserDescriptionDescriptor() {
-  let result;
-  return getMeasurementIntervalCharacteristic()
-      .then(r => result = r)
-      .then(
-          () => result.characteristic.getDescriptor(
-              'gatt.characteristic_user_description'))
-      .then(descriptor => Object.assign(result, {
-        descriptor,
-        fake_descriptor: result.fake_user_description,
-      }));
+async function getUserDescriptionDescriptor() {
+  let result = await getMeasurementIntervalCharacteristic();
+  let descriptor = await result.characteristic.getDescriptor(
+      'gatt.characteristic_user_description');
+  return Object.assign(result, {
+    descriptor,
+    fake_descriptor: result.fake_user_description,
+  });
+}
+
+/**
+ * Returns an array containing two FakePeripherals corresponding
+ * to the simulated devices.
+ * @returns {Promise<Array<FakePeripheral>>} The device fakes initialized as
+ *     Health Thermometer and Heart Rate devices.
+ */
+async function setUpHealthThermometerAndHeartRateDevices() {
+  await initializeFakeCentral({state: 'powered-on'});
+  return Promise.all([
+    fake_central.simulatePreconnectedPeripheral({
+      address: '09:09:09:09:09:09',
+      name: 'Health Thermometer',
+      knownServiceUUIDs: ['generic_access', 'health_thermometer'],
+    }),
+    fake_central.simulatePreconnectedPeripheral({
+      address: '08:08:08:08:08:08',
+      name: 'Heart Rate',
+      knownServiceUUIDs: ['generic_access', 'heart_rate'],
+    })
+  ]);
 }

@@ -333,8 +333,8 @@ class StyleSheet final : public nsICSSLoaderObserver, public nsWrapperCache {
   }
 
   size_t SizeOfIncludingThis(MallocSizeOf aMallocSizeOf) const;
-#ifdef DEBUG
-  void List(FILE* aOut = stdout, int32_t aIndex = 0) const;
+#if defined(DEBUG) || defined(MOZ_LAYOUT_DEBUGGER)
+  void List(FILE* aOut = stdout, int32_t aIndex = 0);
 #endif
 
   // WebIDL StyleSheet API
@@ -441,8 +441,10 @@ class StyleSheet final : public nsICSSLoaderObserver, public nsWrapperCache {
 
   // Copy the contents of this style sheet into the shared memory buffer managed
   // by aBuilder.  Returns the pointer into the buffer that the sheet contents
-  // were stored at.  (The returned pointer is to an Arc<Locked<Rules>> value.)
-  const ServoCssRules* ToShared(RawServoSharedMemoryBuilder* aBuilder);
+  // were stored at.  (The returned pointer is to an Arc<Locked<Rules>> value,
+  // or null, with a filled in aErrorMessage, on failure.)
+  const ServoCssRules* ToShared(RawServoSharedMemoryBuilder* aBuilder,
+                                nsCString& aErrorMessage);
 
   // Sets the contents of this style sheet to the specified aSharedRules
   // pointer, which must be a pointer somewhere in the aSharedMemory buffer

@@ -199,7 +199,7 @@ class RootFront extends FrontClassWithSpec(rootSpec) {
   }
 
   /**
-   * Fetch the target actor for the currently selected tab, or for a specific
+   * Fetch the tab descriptor for the currently selected tab, or for a specific
    * tab given as first parameter.
    *
    * @param [optional] object filter
@@ -238,7 +238,17 @@ class RootFront extends FrontClassWithSpec(rootSpec) {
     }
 
     const descriptorFront = await super.getTab(packet);
-    return descriptorFront.getTarget(filter);
+
+    // If the tab is a local tab, forward it to the descriptor.
+    if (filter?.tab?.tagName == "tab") {
+      // Ignore the fake `tab` object we receive, where there is only a
+      // `linkedBrowser` attribute, but this isn't a real <tab> element.
+      // devtools/client/framework/test/browser_toolbox_target.js is passing such
+      // a fake tab.
+      descriptorFront.setLocalTab(filter.tab);
+    }
+
+    return descriptorFront;
   }
 
   /**

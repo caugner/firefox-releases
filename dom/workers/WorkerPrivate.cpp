@@ -41,7 +41,9 @@
 #include "mozilla/dom/TimeoutHandler.h"
 #include "mozilla/dom/WorkerBinding.h"
 #include "mozilla/dom/JSExecutionManager.h"
+#include "mozilla/dom/WindowContext.h"
 #include "mozilla/StorageAccess.h"
+#include "mozilla/StoragePrincipalHelper.h"
 #include "mozilla/ThreadEventQueue.h"
 #include "mozilla/ThrottledEventQueue.h"
 #include "mozilla/TimelineConsumers.h"
@@ -514,7 +516,7 @@ class ReportErrorToConsoleRunnable final : public WorkerRunnable {
                                const nsTArray<nsString>& aParams)
       : WorkerRunnable(aWorkerPrivate, ParentThreadUnchangedBusyCount),
         mMessage(aMessage),
-        mParams(aParams) {}
+        mParams(aParams.Clone()) {}
 
   virtual void PostDispatch(WorkerPrivate* aWorkerPrivate,
                             bool aDispatchResult) override {
@@ -655,7 +657,7 @@ class UpdateLanguagesRunnable final : public WorkerRunnable {
  public:
   UpdateLanguagesRunnable(WorkerPrivate* aWorkerPrivate,
                           const nsTArray<nsString>& aLanguages)
-      : WorkerRunnable(aWorkerPrivate), mLanguages(aLanguages) {}
+      : WorkerRunnable(aWorkerPrivate), mLanguages(aLanguages.Clone()) {}
 
   virtual bool WorkerRun(JSContext* aCx,
                          WorkerPrivate* aWorkerPrivate) override {
@@ -2234,12 +2236,7 @@ WorkerPrivate::WorkerPrivate(
       // in a fresh global object when shared memory objects aren't allowed
       // (because COOP/COEP support isn't enabled, or because COOP/COEP don't
       // act to isolate this worker to a separate process).
-      //
-      // Normal pages haven't yet been made to respect COOP/COEP in this regard
-      // yet -- they just always add the property.  This should be changed to
-      // |IsSharedMemoryAllowed()| when bug 1624266 fixes this for normal pages.
-      bool defineSharedArrayBufferConstructor = true;
-
+      const bool defineSharedArrayBufferConstructor = IsSharedMemoryAllowed();
       chromeCreationOptions.setDefineSharedArrayBufferConstructor(
           defineSharedArrayBufferConstructor);
       contentCreationOptions.setDefineSharedArrayBufferConstructor(
@@ -2429,7 +2426,7 @@ already_AddRefed<WorkerPrivate> WorkerPrivate::Constructor(
   MOZ_DIAGNOSTIC_ASSERT(worker->PrincipalIsValid());
 
   UniquePtr<SerializedStackHolder> stack;
-  if (worker->IsWatchedByDevtools()) {
+  if (worker->IsWatchedByDevTools()) {
     stack = GetCurrentStackForNetMonitor(aCx);
   }
 
@@ -2539,7 +2536,7 @@ nsresult WorkerPrivate::GetLoadInfo(JSContext* aCx, nsPIDOMWindowInner* aWindow,
     loadInfo.mServiceWorkersTestingInWindow =
         aParent->ServiceWorkersTestingInWindow();
     loadInfo.mParentController = aParent->GlobalScope()->GetController();
-    loadInfo.mWatchedByDevtools = aParent->IsWatchedByDevtools();
+    loadInfo.mWatchedByDevTools = aParent->IsWatchedByDevTools();
   } else {
     AssertIsOnMainThread();
 
@@ -2660,10 +2657,9 @@ nsresult WorkerPrivate::GetLoadInfo(JSContext* aCx, nsPIDOMWindowInner* aWindow,
 
       loadInfo.mXHRParamsAllowed = perm == nsIPermissionManager::ALLOW_ACTION;
 
-      nsIDocShell* docShell = globalWindow->GetDocShell();
-      if (docShell) {
-        loadInfo.mWatchedByDevtools = docShell->GetWatchedByDevtools();
-      }
+      BrowsingContext* browsingContext = globalWindow->GetBrowsingContext();
+      loadInfo.mWatchedByDevTools =
+          browsingContext ? browsingContext->WatchedByDevTools() : false;
 
       loadInfo.mReferrerInfo =
           ReferrerInfo::CreateForFetch(loadInfo.mLoadingPrincipal, document);
@@ -2671,8 +2667,8 @@ nsresult WorkerPrivate::GetLoadInfo(JSContext* aCx, nsPIDOMWindowInner* aWindow,
       loadInfo.mWindowID = globalWindow->WindowID();
       loadInfo.mStorageAccess = StorageAllowedForWindow(globalWindow);
       loadInfo.mCookieJarSettings = document->CookieJarSettings();
-      loadInfo.mOriginAttributes =
-          nsContentUtils::GetOriginAttributes(document);
+      StoragePrincipalHelper::GetRegularPrincipalOriginAttributes(
+          document, loadInfo.mOriginAttributes);
       loadInfo.mParentController = globalWindow->GetController();
       loadInfo.mSecureContext = loadInfo.mWindow->IsSecureContext()
                                     ? WorkerLoadInfo::eSecureContext
@@ -2801,6 +2797,26 @@ void WorkerPrivate::OverrideLoadInfoLoadGroup(WorkerLoadInfo& aLoadInfo,
   aLoadInfo.mLoadGroup = std::move(loadGroup);
 
   MOZ_ASSERT(NS_LoadGroupMatchesPrincipal(aLoadInfo.mLoadGroup, aPrincipal));
+}
+
+void WorkerPrivate::RunLoopNeverRan() {
+  {
+    MutexAutoLock lock(mMutex);
+
+    mStatus = Dead;
+  }
+
+  // After mStatus is set to Dead there can be no more
+  // WorkerControlRunnables so no need to lock here.
+  if (!mControlQueue.IsEmpty()) {
+    WorkerControlRunnable* runnable = nullptr;
+    while (mControlQueue.Pop(runnable)) {
+      runnable->Cancel();
+      runnable->Release();
+    }
+  }
+
+  ScheduleDeletion(WorkerPrivate::WorkerRan);
 }
 
 void WorkerPrivate::DoRunLoop(JSContext* aCx) {
@@ -2983,10 +2999,38 @@ void WorkerPrivate::DoRunLoop(JSContext* aCx) {
   MOZ_CRASH("Shouldn't get here!");
 }
 
+namespace {
+/**
+ * If there is a current CycleCollectedJSContext, return its recursion depth,
+ * otherwise return 1.
+ *
+ * In the edge case where a worker is starting up so late that PBackground is
+ * already shutting down, the cycle collected context will never be created,
+ * but we will need to drain the event loop in ClearMainEventQueue.  This will
+ * result in a normal NS_ProcessPendingEvents invocation which will call
+ * WorkerPrivate::OnProcessNextEvent and WorkerPrivate::AfterProcessNextEvent
+ * which want to handle the need to process control runnables and perform a
+ * sanity check assertion, respectively.
+ *
+ * We claim a depth of 1 when there's no CCJS because this most corresponds to
+ * reality, but this doesn't meant that other code might want to drain various
+ * runnable queues as part of this cleanup.
+ */
+uint32_t GetEffectiveEventLoopRecursionDepth() {
+  auto ccjs = CycleCollectedJSContext::Get();
+  if (ccjs) {
+    return ccjs->RecursionDepth();
+  }
+
+  return 1;
+}
+
+}  // namespace
+
 void WorkerPrivate::OnProcessNextEvent() {
   AssertIsOnWorkerThread();
 
-  uint32_t recursionDepth = CycleCollectedJSContext::Get()->RecursionDepth();
+  uint32_t recursionDepth = GetEffectiveEventLoopRecursionDepth();
   MOZ_ASSERT(recursionDepth);
 
   // Normally we process control runnables in DoRunLoop or RunCurrentSyncLoop.
@@ -3002,7 +3046,7 @@ void WorkerPrivate::OnProcessNextEvent() {
 
 void WorkerPrivate::AfterProcessNextEvent() {
   AssertIsOnWorkerThread();
-  MOZ_ASSERT(CycleCollectedJSContext::Get()->RecursionDepth());
+  MOZ_ASSERT(GetEffectiveEventLoopRecursionDepth());
 }
 
 nsIEventTarget* WorkerPrivate::MainThreadEventTargetForMessaging() {
@@ -3669,6 +3713,15 @@ bool WorkerPrivate::AddWorkerRef(WorkerRef* aWorkerRef,
     if (mStatus >= aFailStatus) {
       return false;
     }
+
+    // We shouldn't create strong references to workers before their main loop
+    // begins running. Strong references must be disposed of on the worker
+    // thread, so strong references from other threads use a control runnable
+    // for that purpose. If the worker fails to reach the main loop stage then
+    // no control runnables get run and it would be impossible to get rid of the
+    // reference properly.
+    MOZ_DIAGNOSTIC_ASSERT_IF(aWorkerRef->IsPreventingShutdown(),
+                             mStatus >= WorkerStatus::Running);
   }
 
   MOZ_ASSERT(!data->mWorkerRefs.Contains(aWorkerRef),
@@ -5181,7 +5234,8 @@ bool WorkerPrivate::IsSharedMemoryAllowed() const {
 }
 
 bool WorkerPrivate::CrossOriginIsolated() const {
-  if (!StaticPrefs::dom_postMessage_sharedArrayBuffer_withCOOP_COEP()) {
+  if (!StaticPrefs::
+          dom_postMessage_sharedArrayBuffer_withCOOP_COEP_AtStartup()) {
     return false;
   }
 
@@ -5189,20 +5243,19 @@ bool WorkerPrivate::CrossOriginIsolated() const {
          nsILoadInfo::OPENER_POLICY_SAME_ORIGIN_EMBEDDER_POLICY_REQUIRE_CORP;
 }
 
-Maybe<nsILoadInfo::CrossOriginEmbedderPolicy> WorkerPrivate::GetEmbedderPolicy()
+nsILoadInfo::CrossOriginEmbedderPolicy WorkerPrivate::GetEmbedderPolicy()
     const {
-  MOZ_ASSERT(NS_IsMainThread());
-
   if (!StaticPrefs::browser_tabs_remote_useCrossOriginEmbedderPolicy()) {
-    return Some(nsILoadInfo::EMBEDDER_POLICY_NULL);
+    return nsILoadInfo::EMBEDDER_POLICY_NULL;
   }
 
-  return mEmbedderPolicy;
+  return mEmbedderPolicy.valueOr(nsILoadInfo::EMBEDDER_POLICY_NULL);
 }
 
 Result<Ok, nsresult> WorkerPrivate::SetEmbedderPolicy(
     nsILoadInfo::CrossOriginEmbedderPolicy aPolicy) {
   MOZ_ASSERT(NS_IsMainThread());
+  MOZ_ASSERT(mEmbedderPolicy.isNothing());
 
   if (!StaticPrefs::browser_tabs_remote_useCrossOriginEmbedderPolicy()) {
     return Ok();
@@ -5212,10 +5265,10 @@ Result<Ok, nsresult> WorkerPrivate::SetEmbedderPolicy(
   // corp_reqired. But if owner's embedder policy is null, aPolicy needs not
   // match owner's value.
   // https://wicg.github.io/cross-origin-embedder-policy/#cascade-vs-require
-  auto ownerEmbedderPolicy = GetOwnerEmbedderPolicy();
-  if (ownerEmbedderPolicy.valueOr(nsILoadInfo::EMBEDDER_POLICY_NULL) !=
+  EnsureOwnerEmbedderPolicy();
+  if (mOwnerEmbedderPolicy.valueOr(nsILoadInfo::EMBEDDER_POLICY_NULL) !=
       nsILoadInfo::EMBEDDER_POLICY_NULL) {
-    if (ownerEmbedderPolicy.valueOr(aPolicy) != aPolicy) {
+    if (mOwnerEmbedderPolicy.valueOr(aPolicy) != aPolicy) {
       return Err(NS_ERROR_BLOCKED_BY_POLICY);
     }
   }
@@ -5229,9 +5282,9 @@ void WorkerPrivate::InheritOwnerEmbedderPolicyOrNull(nsIRequest* aRequest) {
   MOZ_ASSERT(NS_IsMainThread());
   MOZ_ASSERT(aRequest);
 
-  auto coep = GetOwnerEmbedderPolicy();
+  EnsureOwnerEmbedderPolicy();
 
-  if (coep.isSome()) {
+  if (mOwnerEmbedderPolicy.isSome()) {
     nsCOMPtr<nsIChannel> channel = do_QueryInterface(aRequest);
     MOZ_ASSERT(channel);
 
@@ -5246,7 +5299,8 @@ void WorkerPrivate::InheritOwnerEmbedderPolicyOrNull(nsIRequest* aRequest) {
     MOZ_RELEASE_ASSERT(isLocalScriptURI);
   }
 
-  mEmbedderPolicy.emplace(coep.valueOr(nsILoadInfo::EMBEDDER_POLICY_NULL));
+  mEmbedderPolicy.emplace(
+      mOwnerEmbedderPolicy.valueOr(nsILoadInfo::EMBEDDER_POLICY_NULL));
 }
 
 bool WorkerPrivate::MatchEmbedderPolicy(
@@ -5260,19 +5314,25 @@ bool WorkerPrivate::MatchEmbedderPolicy(
   return mEmbedderPolicy.value() == aPolicy;
 }
 
-Maybe<nsILoadInfo::CrossOriginEmbedderPolicy>
-WorkerPrivate::GetOwnerEmbedderPolicy() const {
+nsILoadInfo::CrossOriginEmbedderPolicy WorkerPrivate::GetOwnerEmbedderPolicy()
+    const {
+  if (!StaticPrefs::browser_tabs_remote_useCrossOriginEmbedderPolicy()) {
+    return nsILoadInfo::EMBEDDER_POLICY_NULL;
+  }
+
+  return mOwnerEmbedderPolicy.valueOr(nsILoadInfo::EMBEDDER_POLICY_NULL);
+}
+
+void WorkerPrivate::EnsureOwnerEmbedderPolicy() {
   MOZ_ASSERT(NS_IsMainThread());
+  MOZ_ASSERT(mOwnerEmbedderPolicy.isNothing());
 
   if (GetParent()) {
-    return GetParent()->GetEmbedderPolicy();
+    mOwnerEmbedderPolicy.emplace(GetParent()->GetEmbedderPolicy());
+  } else if (GetWindow() && GetWindow()->GetWindowContext()) {
+    mOwnerEmbedderPolicy.emplace(
+        GetWindow()->GetWindowContext()->GetEmbedderPolicy());
   }
-
-  if (GetWindow() && GetWindow()->GetBrowsingContext()) {
-    return Some(GetWindow()->GetBrowsingContext()->GetEmbedderPolicy());
-  }
-
-  return Nothing();
 }
 
 NS_IMPL_ADDREF(WorkerPrivate::EventTarget)

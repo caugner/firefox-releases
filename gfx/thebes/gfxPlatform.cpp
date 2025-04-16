@@ -619,7 +619,7 @@ static void WebRenderDebugPrefChangeCallback(const char* aPrefName, void*) {
 }
 
 static void WebRenderQualityPrefChangeCallback(const char* aPref, void*) {
-  gfxPlatform::GetPlatform()->UpdateAllowSacrificingSubpixelAA();
+  gfxPlatform::GetPlatform()->UpdateForceSubpixelAAWherePossible();
 }
 
 static void WebRenderMultithreadingPrefChangeCallback(const char* aPrefName,
@@ -2503,13 +2503,10 @@ void gfxPlatform::UpdateCanUseHardwareVideoDecoding() {
   }
 }
 
-void gfxPlatform::UpdateAllowSacrificingSubpixelAA() {
-  int64_t kMaxPixels = 1920 * 1200;  // WUXGA
-  bool allowSacrificingSubpixelAA =
-      mScreenPixels > kMaxPixels &&
-      !StaticPrefs::
-          gfx_webrender_quality_force_disable_sacrificing_subpixel_aa();
-  gfxVars::SetAllowSacrificingSubpixelAA(allowSacrificingSubpixelAA);
+void gfxPlatform::UpdateForceSubpixelAAWherePossible() {
+  bool forceSubpixelAAWherePossible =
+      StaticPrefs::gfx_webrender_quality_force_subpixel_aa_where_possible();
+  gfxVars::SetForceSubpixelAAWherePossible(forceSubpixelAAWherePossible);
 }
 
 void gfxPlatform::InitAcceleration() {
@@ -2688,6 +2685,11 @@ void gfxPlatform::InitWebRenderConfig() {
   bool prefEnabled = WebRenderPrefEnabled();
   bool envvarEnabled = WebRenderEnvvarEnabled();
 
+  // This would ideally be in the nsCSSProps code
+  // but nsCSSProps is initialized before gfxPlatform
+  // so it has to be done here.
+  gfxVars::AddReceiver(&nsCSSProps::GfxVarReceiver());
+
   // WR? WR+   => means WR was enabled via gfx.webrender.all.qualified on
   //              qualified hardware
   // WR! WR+   => means WR was enabled via gfx.webrender.{all,enabled} or
@@ -2702,6 +2704,9 @@ void gfxPlatform::InitWebRenderConfig() {
     // later in this function. For other processes we still want to report
     // the state of the feature for crash reports.
     if (gfxVars::UseWebRender()) {
+      // gfxVars doesn't notify receivers when initialized on content processes
+      // we need to explicitly recompute backdrop-filter's enabled state here.
+      nsCSSProps::RecomputeEnabledState("layout.css.backdrop-filter.enabled");
       reporter.SetSuccessful();
     }
     return;
@@ -2744,7 +2749,7 @@ void gfxPlatform::InitWebRenderConfig() {
         WebRenderQualityPrefChangeCallback,
         nsDependentCString(
             StaticPrefs::
-                GetPrefName_gfx_webrender_quality_force_disable_sacrificing_subpixel_aa()));
+                GetPrefName_gfx_webrender_quality_force_subpixel_aa_where_possible()));
     Preferences::RegisterCallback(
         WebRenderMultithreadingPrefChangeCallback,
         nsDependentCString(
@@ -2755,7 +2760,7 @@ void gfxPlatform::InitWebRenderConfig() {
         nsDependentCString(
             StaticPrefs::GetPrefName_gfx_webrender_batching_lookback()));
 
-    UpdateAllowSacrificingSubpixelAA();
+    UpdateForceSubpixelAAWherePossible();
   }
 
 #ifdef XP_WIN
@@ -3284,7 +3289,6 @@ void gfxPlatform::NotifyGPUProcessDisabled() {
             NS_LITERAL_CSTRING("FEATURE_FAILURE_GPU_PROCESS_DISABLED"));
     gfxVars::SetUseWebRender(false);
   }
-
   gfxVars::SetRemoteCanvasEnabled(false);
 }
 

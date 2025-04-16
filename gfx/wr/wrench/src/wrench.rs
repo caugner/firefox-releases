@@ -353,7 +353,7 @@ impl Wrench {
         font_key: FontKey,
         instance_key: FontInstanceKey,
         text: &str,
-        size: Au,
+        size: f32,
         origin: LayoutPoint,
         flags: FontInstanceFlags,
     ) -> (Vec<u32>, Vec<LayoutPoint>, LayoutRect) {
@@ -399,7 +399,7 @@ impl Wrench {
                     // Extract the advances from the metrics. The get_glyph_dimensions API
                     // has a limitation that it can't currently get dimensions for non-renderable
                     // glyphs (e.g. spaces), so just use a rough estimate in that case.
-                    let space_advance = size.to_f32_px() / 3.0;
+                    let space_advance = size / 3.0;
                     cursor += direction * space_advance;
                 }
             }
@@ -446,7 +446,7 @@ impl Wrench {
         let key = self.api.generate_font_key();
         let mut txn = Transaction::new();
         txn.add_native_font(key, descriptor.clone());
-        self.api.update_resources(txn.resource_updates);
+        self.api.send_transaction(self.document_id, txn);
         key
     }
 
@@ -537,13 +537,13 @@ impl Wrench {
         let key = self.api.generate_font_key();
         let mut txn = Transaction::new();
         txn.add_raw_font(key, bytes, index);
-        self.api.update_resources(txn.resource_updates);
+        self.api.send_transaction(self.document_id, txn);
         key
     }
 
     pub fn add_font_instance(&mut self,
         font_key: FontKey,
-        size: Au,
+        size: f32,
         flags: FontInstanceFlags,
         render_mode: Option<FontRenderMode>,
         bg_color: Option<ColorU>,
@@ -561,7 +561,7 @@ impl Wrench {
         }
         options.synthetic_italics = synthetic_italics;
         txn.add_font_instance(key, font_key, size, Some(options), None, Vec::new());
-        self.api.update_resources(txn.resource_updates);
+        self.api.send_transaction(self.document_id, txn);
         key
     }
 
@@ -569,7 +569,7 @@ impl Wrench {
     pub fn delete_font_instance(&mut self, key: FontInstanceKey) {
         let mut txn = Transaction::new();
         txn.delete_font_instance(key);
-        self.api.update_resources(txn.resource_updates);
+        self.api.send_transaction(self.document_id, txn);
     }
 
     pub fn update(&mut self, dim: DeviceIntSize) {

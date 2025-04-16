@@ -75,6 +75,22 @@ function TargetMixin(parentClass) {
       return null;
     }
 
+    get targetType() {
+      return this._targetType;
+    }
+
+    get isTopLevel() {
+      return this._isTopLevel;
+    }
+
+    setTargetType(type) {
+      this._targetType = type;
+    }
+
+    setIsTopLevel(isTopLevel) {
+      this._isTopLevel = isTopLevel;
+    }
+
     /**
      * Get the top level WatcherFront for this target.
      *
@@ -559,6 +575,10 @@ function TargetMixin(parentClass) {
           this.logDetachError(e);
         }
       }
+
+      // This event should be emitted before calling super.destroy(), because
+      // super.destroy() will remove all event listeners attached to this front.
+      this.emit("target-destroyed");
 
       // Do that very last in order to let a chance to dispatch `detach` requests.
       super.destroy();

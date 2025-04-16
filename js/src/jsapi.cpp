@@ -437,6 +437,13 @@ JS::ContextOptions& JS::ContextOptions::setWasmMultiValue(bool flag) {
   return *this;
 }
 
+JS::ContextOptions& JS::ContextOptions::setWasmSimd(bool flag) {
+#ifdef ENABLE_WASM_SIMD
+  wasmSimd_ = flag;
+#endif
+  return *this;
+}
+
 JS::ContextOptions& JS::ContextOptions::setFuzzing(bool flag) {
 #ifdef FUZZING
   fuzzing_ = flag;
@@ -3452,6 +3459,8 @@ void JS::TransitiveCompileOptions::copyPODTransitiveOptions(
   mutedErrors_ = rhs.mutedErrors_;
   forceFullParse_ = rhs.forceFullParse_;
   forceStrictMode_ = rhs.forceStrictMode_;
+  skipFilenameValidation_ = rhs.skipFilenameValidation_;
+  sourcePragmas_ = rhs.sourcePragmas_;
   selfHostingMode = rhs.selfHostingMode;
   asmJSOption = rhs.asmJSOption;
   throwOnAsmJSValidationFailureOption = rhs.throwOnAsmJSValidationFailureOption;
@@ -3463,6 +3472,7 @@ void JS::TransitiveCompileOptions::copyPODTransitiveOptions(
   introductionOffset = rhs.introductionOffset;
   hasIntroductionInfo = rhs.hasIntroductionInfo;
   hideScriptFromDebugger = rhs.hideScriptFromDebugger;
+  nonSyntacticScope = rhs.nonSyntacticScope;
 };
 
 void JS::ReadOnlyCompileOptions::copyPODNonTransitiveOptions(
@@ -3472,16 +3482,14 @@ void JS::ReadOnlyCompileOptions::copyPODNonTransitiveOptions(
   scriptSourceOffset = rhs.scriptSourceOffset;
   isRunOnce = rhs.isRunOnce;
   noScriptRval = rhs.noScriptRval;
-  nonSyntacticScope = rhs.nonSyntacticScope;
-  skipFilenameValidation_ = rhs.skipFilenameValidation_;
 }
 
 JS::OwningCompileOptions::OwningCompileOptions(JSContext* cx)
     : ReadOnlyCompileOptions(),
-      elementRoot(cx),
       elementAttributeNameRoot(cx),
       introductionScriptRoot(cx),
-      scriptOrModuleRoot(cx) {}
+      scriptOrModuleRoot(cx),
+      privateValueRoot(cx) {}
 
 void JS::OwningCompileOptions::release() {
   // OwningCompileOptions always owns these, so these casts are okay.
@@ -3507,13 +3515,13 @@ bool JS::OwningCompileOptions::copy(JSContext* cx,
   // Release existing string allocations.
   release();
 
-  copyPODTransitiveOptions(rhs);
   copyPODNonTransitiveOptions(rhs);
+  copyPODTransitiveOptions(rhs);
 
-  elementRoot = rhs.element();
   elementAttributeNameRoot = rhs.elementAttributeName();
   introductionScriptRoot = rhs.introductionScript();
   scriptOrModuleRoot = rhs.scriptOrModule();
+  privateValueRoot = rhs.privateValue();
 
   if (rhs.filename()) {
     filename_ = DuplicateString(cx, rhs.filename()).release();
@@ -3542,10 +3550,10 @@ bool JS::OwningCompileOptions::copy(JSContext* cx,
 
 JS::CompileOptions::CompileOptions(JSContext* cx)
     : ReadOnlyCompileOptions(),
-      elementRoot(cx),
       elementAttributeNameRoot(cx),
       introductionScriptRoot(cx),
-      scriptOrModuleRoot(cx) {
+      scriptOrModuleRoot(cx),
+      privateValueRoot(cx) {
   discardSource = cx->realm()->behaviors().discardSource();
   if (!cx->options().asmJS()) {
     asmJSOption = AsmJSOption::Disabled;
@@ -3556,6 +3564,8 @@ JS::CompileOptions::CompileOptions(JSContext* cx)
   }
   throwOnAsmJSValidationFailureOption =
       cx->options().throwOnAsmJSValidationFailure();
+
+  sourcePragmas_ = cx->options().sourcePragmas();
 
   // Certain modes of operation force strict-mode in general.
   forceStrictMode_ = cx->options().strictMode();
@@ -5868,26 +5878,8 @@ JS_PUBLIC_API bool JS::CopyAsyncStack(JSContext* cx,
 
 JS_PUBLIC_API Zone* JS::GetObjectZone(JSObject* obj) { return obj->zone(); }
 
-JS_PUBLIC_API Zone* JS::GetNurseryGCThingZone(GCCellPtr thing) {
-  MOZ_ASSERT(!thing.asCell()->isTenured());
-  if (thing.is<JSObject>()) {
-    return thing.as<JSObject>().zone();
-  }
-
-  if (thing.is<JSString>()) {
-    return Nursery::getStringZone(&thing.as<JSString>());
-  }
-
-  if (thing.is<BigInt>()) {
-    return Nursery::getBigIntZone(&thing.as<BigInt>());
-  }
-
-  MOZ_CRASH("Unexpected GC thing kind");
-}
-
-JS_PUBLIC_API Zone* JS::GetNurseryStringZone(JSString* str) {
-  MOZ_ASSERT(!str->isTenured());
-  return str->zone();
+JS_PUBLIC_API Zone* JS::GetNurseryCellZone(gc::Cell* cell) {
+  return cell->nurseryZone();
 }
 
 JS_PUBLIC_API JS::TraceKind JS::GCThingTraceKind(void* thing) {

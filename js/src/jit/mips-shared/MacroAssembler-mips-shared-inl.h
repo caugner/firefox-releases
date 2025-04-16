@@ -69,6 +69,17 @@ void MacroAssembler::xor32(Register src, Register dest) { ma_xor(dest, src); }
 void MacroAssembler::xor32(Imm32 imm, Register dest) { ma_xor(dest, imm); }
 
 // ===============================================================
+// Swap instructions
+
+void MacroAssembler::byteSwap16SignExtend(Register reg) { MOZ_CRASH("NYI"); }
+
+void MacroAssembler::byteSwap16ZeroExtend(Register reg) { MOZ_CRASH("NYI"); }
+
+void MacroAssembler::byteSwap32(Register reg) { MOZ_CRASH("NYI"); }
+
+void MacroAssembler::byteSwap64(Register64 reg) { MOZ_CRASH("NYI"); }
+
+// ===============================================================
 // Arithmetic instructions
 
 void MacroAssembler::add32(Register src, Register dest) {
@@ -535,6 +546,12 @@ void MacroAssembler::branchRshift32(Condition cond, T src, Register dest,
   branch32(cond == Zero ? Equal : NotEqual, dest, Imm32(0), label);
 }
 
+void MacroAssembler::branchNeg32(Condition cond, Register reg, Label* label) {
+  MOZ_ASSERT(cond == Overflow);
+  neg32(reg);
+  branch32(Assembler::Equal, reg, Imm32(INT32_MIN), label);
+}
+
 void MacroAssembler::decBranchPtr(Condition cond, Register lhs, Imm32 rhs,
                                   Label* label) {
   subPtr(rhs, lhs);
@@ -779,14 +796,23 @@ void MacroAssembler::branchTestObject(Condition cond, const BaseIndex& address,
 
 void MacroAssembler::branchTestGCThing(Condition cond, const Address& address,
                                        Label* label) {
-  MOZ_ASSERT(cond == Equal || cond == NotEqual);
-  SecondScratchRegisterScope scratch2(*this);
-  Register tag = extractTag(address, scratch2);
-  ma_b(tag, ImmTag(JS::detail::ValueLowerInclGCThingTag), label,
-       (cond == Equal) ? AboveOrEqual : Below);
+  branchTestGCThingImpl(cond, address, label);
 }
+
 void MacroAssembler::branchTestGCThing(Condition cond, const BaseIndex& address,
                                        Label* label) {
+  branchTestGCThingImpl(cond, address, label);
+}
+
+void MacroAssembler::branchTestGCThing(Condition cond,
+                                       const ValueOperand& address,
+                                       Label* label) {
+  branchTestGCThingImpl(cond, address, label);
+}
+
+template <typename T>
+void MacroAssembler::branchTestGCThingImpl(Condition cond, const T& address,
+                                           Label* label) {
   MOZ_ASSERT(cond == Equal || cond == NotEqual);
   SecondScratchRegisterScope scratch2(*this);
   Register tag = extractTag(address, scratch2);

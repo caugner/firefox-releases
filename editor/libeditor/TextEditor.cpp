@@ -8,6 +8,7 @@
 #include <algorithm>
 
 #include "EditAggregateTransaction.h"
+#include "HTMLEditUtils.h"
 #include "InternetCiter.h"
 #include "PlaceholderTransaction.h"
 #include "gfxFontUtils.h"
@@ -68,6 +69,8 @@ class nsISupports;
 namespace mozilla {
 
 using namespace dom;
+
+using ChildBlockBoundary = HTMLEditUtils::ChildBlockBoundary;
 
 TextEditor::TextEditor()
     : mMaxTextLength(-1),
@@ -238,7 +241,7 @@ bool TextEditor::UpdateMetaCharset(Document& aDocument,
     metaElement->GetAttr(kNameSpaceID_None, nsGkAtoms::httpEquiv, currentValue);
 
     if (!FindInReadable(NS_LITERAL_STRING("content-type"), currentValue,
-                        nsCaseInsensitiveStringComparator())) {
+                        nsCaseInsensitiveStringComparator)) {
       continue;
     }
 
@@ -249,7 +252,7 @@ bool TextEditor::UpdateMetaCharset(Document& aDocument,
     originalStart = currentValue.BeginReading(start);
     currentValue.EndReading(end);
     if (!FindInReadable(charsetEquals, start, end,
-                        nsCaseInsensitiveStringComparator())) {
+                        nsCaseInsensitiveStringComparator)) {
       continue;
     }
 
@@ -1000,11 +1003,12 @@ nsresult TextEditor::UndoAsAction(uint32_t aCount, nsIPrincipal* aPrincipal) {
       // at redo, or doing it everywhere else that might care.  Since undo
       // and redo are relatively rare, it makes sense to take the (small)
       // performance hit here.
-      nsIContent* leftMostChild = GetLeftmostChild(mRootElement);
-      if (leftMostChild &&
-          EditorUtils::IsPaddingBRElementForEmptyEditor(*leftMostChild)) {
+      nsIContent* firstLeafChild = HTMLEditUtils::GetFirstLeafChild(
+          *mRootElement, ChildBlockBoundary::Ignore);
+      if (firstLeafChild &&
+          EditorUtils::IsPaddingBRElementForEmptyEditor(*firstLeafChild)) {
         mPaddingBRElementForEmptyEditor =
-            static_cast<HTMLBRElement*>(leftMostChild);
+            static_cast<HTMLBRElement*>(firstLeafChild);
       } else {
         mPaddingBRElementForEmptyEditor = nullptr;
       }

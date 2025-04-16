@@ -50,6 +50,34 @@ const tests = [
       extra: {
         elapsed: val => parseInt(val) > 0,
         numChars: "1",
+        numWords: "1",
+        selIndex: "0",
+        selType: "search",
+      },
+    };
+  },
+
+  async function(win) {
+    info("Type a multi-word query, pres Enter.");
+    win.gURLBar.select();
+    let promise = BrowserTestUtils.browserLoaded(win.gBrowser.selectedBrowser);
+    await UrlbarTestUtils.promiseAutocompleteResultPopup({
+      window: win,
+      waitForFocus: SimpleTest.waitForFocus,
+      value: "multi word query ",
+      fireInputEvent: true,
+    });
+    EventUtils.synthesizeKey("VK_RETURN", {}, win);
+    await promise;
+    return {
+      category: "urlbar",
+      method: "engagement",
+      object: "enter",
+      value: "typed",
+      extra: {
+        elapsed: val => parseInt(val) > 0,
+        numChars: "17",
+        numWords: "3",
         selIndex: "0",
         selType: "search",
       },
@@ -76,6 +104,7 @@ const tests = [
       extra: {
         elapsed: val => parseInt(val) > 0,
         numChars: "4",
+        numWords: "1",
         selIndex: "0",
         selType: "search",
       },
@@ -103,6 +132,7 @@ const tests = [
       extra: {
         elapsed: val => parseInt(val) > 0,
         numChars: "3",
+        numWords: "1",
         selIndex: "0",
         selType: "oneoff",
       },
@@ -131,6 +161,7 @@ const tests = [
       extra: {
         elapsed: val => parseInt(val) > 0,
         numChars: "3",
+        numWords: "1",
         selIndex: "0",
         selType: "oneoff",
       },
@@ -154,6 +185,7 @@ const tests = [
       extra: {
         elapsed: val => parseInt(val) > 0,
         numChars: "1",
+        numWords: "1",
         selIndex: "0",
         selType: "search",
       },
@@ -180,6 +212,7 @@ const tests = [
       extra: {
         elapsed: val => parseInt(val) > 0,
         numChars: "7",
+        numWords: "2",
         selIndex: "0",
         selType: "keyword",
       },
@@ -203,6 +236,7 @@ const tests = [
       extra: {
         elapsed: val => parseInt(val) > 0,
         numChars: "1",
+        numWords: "1",
         selIndex: "1",
         selType: "tip",
       },
@@ -229,6 +263,7 @@ const tests = [
       extra: {
         elapsed: val => parseInt(val) > 0,
         numChars: "1",
+        numWords: "1",
         selIndex: "1",
         selType: "tiphelp",
       },
@@ -255,6 +290,7 @@ const tests = [
       extra: {
         elapsed: val => parseInt(val) > 0,
         numChars: "7",
+        numWords: "1",
         selIndex: "0",
         selType: "canonized",
       },
@@ -290,6 +326,7 @@ const tests = [
       extra: {
         elapsed: val => parseInt(val) > 0,
         numChars: "3",
+        numWords: "1",
         selIndex: val => parseInt(val) > 0,
         selType: "bookmark",
       },
@@ -319,6 +356,7 @@ const tests = [
       extra: {
         elapsed: val => parseInt(val) > 0,
         numChars: "3",
+        numWords: "1",
         selIndex: "0",
         selType: "autofill",
       },
@@ -348,8 +386,73 @@ const tests = [
       extra: {
         elapsed: val => parseInt(val) > 0,
         numChars: "3",
+        numWords: "1",
         selIndex: val => parseInt(val) > 0,
         selType: "bookmark",
+      },
+    };
+  },
+
+  async function(win) {
+    info("Type something, select remote search suggestion, Enter.");
+    win.gURLBar.select();
+    let promise = BrowserTestUtils.browserLoaded(win.gBrowser.selectedBrowser);
+    await UrlbarTestUtils.promiseAutocompleteResultPopup({
+      window: win,
+      waitForFocus: SimpleTest.waitForFocus,
+      value: "foo",
+      fireInputEvent: true,
+    });
+    while (win.gURLBar.untrimmedValue != "foofoo") {
+      EventUtils.synthesizeKey("KEY_ArrowDown", {}, win);
+    }
+    EventUtils.synthesizeKey("VK_RETURN", {}, win);
+    await promise;
+    return {
+      category: "urlbar",
+      method: "engagement",
+      object: "enter",
+      value: "typed",
+      extra: {
+        elapsed: val => parseInt(val) > 0,
+        numChars: "3",
+        numWords: "1",
+        selIndex: val => parseInt(val) > 0,
+        selType: "searchsuggestion",
+      },
+    };
+  },
+
+  async function(win) {
+    info("Type something, select form history, Enter.");
+    await SpecialPowers.pushPrefEnv({
+      set: [["browser.urlbar.maxHistoricalSearchSuggestions", 2]],
+    });
+    await UrlbarTestUtils.formHistory.add(["foofoo", "foobar"]);
+    win.gURLBar.select();
+    let promise = BrowserTestUtils.browserLoaded(win.gBrowser.selectedBrowser);
+    await UrlbarTestUtils.promiseAutocompleteResultPopup({
+      window: win,
+      waitForFocus: SimpleTest.waitForFocus,
+      value: "foo",
+      fireInputEvent: true,
+    });
+    while (win.gURLBar.untrimmedValue != "foofoo") {
+      EventUtils.synthesizeKey("KEY_ArrowDown", {}, win);
+    }
+    EventUtils.synthesizeKey("VK_RETURN", {}, win);
+    await promise;
+    return {
+      category: "urlbar",
+      method: "engagement",
+      object: "enter",
+      value: "typed",
+      extra: {
+        elapsed: val => parseInt(val) > 0,
+        numChars: "3",
+        numWords: "1",
+        selIndex: val => parseInt(val) > 0,
+        selType: "formhistory",
       },
     };
   },
@@ -376,6 +479,7 @@ const tests = [
       extra: {
         elapsed: val => parseInt(val) > 0,
         numChars: "1",
+        numWords: "1",
         selIndex: val => parseInt(val) > 0,
         selType: "keywordoffer",
       },
@@ -401,6 +505,7 @@ const tests = [
       extra: {
         elapsed: val => parseInt(val) > 0,
         numChars: "15",
+        numWords: "1",
         selIndex: "-1",
         selType: "none",
       },
@@ -436,13 +541,14 @@ const tests = [
       extra: {
         elapsed: val => parseInt(val) > 0,
         numChars: "15",
+        numWords: "1",
         selIndex: "-1",
         selType: "none",
       },
     };
   },
 
-  // The URLs in the down arrow/openViewOnFocus tests must vary from test to test,
+  // The URLs in the down arrow/autoOpen tests must vary from test to test,
   // else  the first Top Site results will be a switch-to-tab result and a page
   // load will not occur.
   async function(win) {
@@ -468,6 +574,7 @@ const tests = [
       extra: {
         elapsed: val => parseInt(val) > 0,
         numChars: "0",
+        numWords: "0",
         selType: "history",
         selIndex: val => parseInt(val) >= 0,
       },
@@ -497,22 +604,20 @@ const tests = [
       extra: {
         elapsed: val => parseInt(val) > 0,
         numChars: "0",
+        numWords: "0",
         selType: "history",
         selIndex: "0",
       },
     };
   },
 
-  // The URLs in the openViewOnFocus tests must vary from test to test, else
+  // The URLs in the autoOpen tests must vary from test to test, else
   // the first Top Site results will be a switch-to-tab result and a page load
   // will not occur.
   async function(win) {
     info(
-      "With pageproxystate=valid, open the panel with openViewOnFocus, select with DOWN, Enter."
+      "With pageproxystate=valid, autoopen the panel, select with DOWN, Enter."
     );
-    await SpecialPowers.pushPrefEnv({
-      set: [["browser.urlbar.openViewOnFocus", true]],
-    });
     await addTopSite("http://example.org/");
     win.gURLBar.value = "";
     let promise = BrowserTestUtils.browserLoaded(win.gBrowser.selectedBrowser);
@@ -534,6 +639,7 @@ const tests = [
       extra: {
         elapsed: val => parseInt(val) > 0,
         numChars: "0",
+        numWords: "0",
         selType: "history",
         selIndex: val => parseInt(val) >= 0,
       },
@@ -541,13 +647,7 @@ const tests = [
   },
 
   async function(win) {
-    info(
-      "With pageproxystate=valid, open the panel with openViewOnFocus, click on entry."
-    );
-
-    await SpecialPowers.pushPrefEnv({
-      set: [["browser.urlbar.openViewOnFocus", true]],
-    });
+    info("With pageproxystate=valid, autoopen the panel, click on entry.");
     await addTopSite("http://example.com/");
     win.gURLBar.value = "";
     let promise = BrowserTestUtils.browserLoaded(win.gBrowser.selectedBrowser);
@@ -570,6 +670,7 @@ const tests = [
       extra: {
         elapsed: val => parseInt(val) > 0,
         numChars: "0",
+        numWords: "0",
         selType: "history",
         selIndex: "0",
       },
@@ -596,6 +697,7 @@ const tests = [
       extra: {
         elapsed: val => parseInt(val) > 0,
         numChars: "11",
+        numWords: "1",
         selType: "autofill",
         selIndex: "0",
       },
@@ -624,6 +726,7 @@ const tests = [
       extra: {
         elapsed: val => parseInt(val) > 0,
         numChars: "11",
+        numWords: "1",
         selType: "autofill",
         selIndex: "0",
       },
@@ -657,6 +760,7 @@ const tests = [
         extra: {
           elapsed: val => parseInt(val) > 0,
           numChars: "6",
+          numWords: "1",
         },
       },
       {
@@ -667,6 +771,7 @@ const tests = [
         extra: {
           elapsed: val => parseInt(val) > 0,
           numChars: "6",
+          numWords: "1",
           selType: "search",
           selIndex: "0",
         },
@@ -694,6 +799,7 @@ const tests = [
       extra: {
         elapsed: val => parseInt(val) > 0,
         numChars: "1",
+        numWords: "1",
         selIndex: "0",
         selType: "search",
       },
@@ -730,6 +836,7 @@ const tests = [
         extra: {
           elapsed: val => parseInt(val) > 0,
           numChars: "6",
+          numWords: "1",
         },
       },
       {
@@ -740,6 +847,7 @@ const tests = [
         extra: {
           elapsed: val => parseInt(val) > 0,
           numChars: "6",
+          numWords: "1",
           selType: "search",
           selIndex: "0",
         },
@@ -775,6 +883,7 @@ const tests = [
         extra: {
           elapsed: val => parseInt(val) > 0,
           numChars: "6",
+          numWords: "1",
         },
       },
       {
@@ -785,6 +894,7 @@ const tests = [
         extra: {
           elapsed: val => parseInt(val) > 0,
           numChars: "1",
+          numWords: "1",
           selType: "search",
           selIndex: "0",
         },
@@ -812,6 +922,7 @@ const tests = [
       extra: {
         elapsed: val => parseInt(val) > 0,
         numChars: "1",
+        numWords: "1",
         selIndex: "0",
         selType: "search",
       },
@@ -835,6 +946,7 @@ const tests = [
       extra: {
         elapsed: val => parseInt(val) > 0,
         numChars: "1",
+        numWords: "1",
       },
     };
   },
@@ -855,20 +967,17 @@ const tests = [
       extra: {
         elapsed: val => parseInt(val) > 0,
         numChars: "0",
+        numWords: "0",
       },
     };
   },
 
   async function(win) {
-    info(
-      "With pageproxystate=valid, open the panel with openViewOnFocus, don't type, blur it."
-    );
+    info("With pageproxystate=valid, autoopen the panel, don't type, blur it.");
     win.gURLBar.value = "";
-    Services.prefs.setBoolPref("browser.urlbar.openViewOnFocus", true);
     await UrlbarTestUtils.promisePopupOpen(win, () => {
       win.document.getElementById("Browser:OpenLocation").doCommand();
     });
-    Services.prefs.clearUserPref("browser.urlbar.openViewOnFocus");
     win.gURLBar.blur();
     return {
       category: "urlbar",
@@ -878,6 +987,7 @@ const tests = [
       extra: {
         elapsed: val => parseInt(val) > 0,
         numChars: "0",
+        numWords: "0",
       },
     };
   },
@@ -900,6 +1010,7 @@ const tests = [
       extra: {
         elapsed: val => parseInt(val) > 0,
         numChars: "10",
+        numWords: "1",
       },
     };
   },
@@ -997,6 +1108,7 @@ add_task(async function test() {
     await PlacesUtils.keywords.remove("kw");
     await PlacesUtils.bookmarks.remove(bm);
     await PlacesUtils.history.clear();
+    await UrlbarTestUtils.formHistory.clear(window);
   });
 
   // This is not necessary after each loop, because assertEvents does it.
@@ -1011,6 +1123,7 @@ add_task(async function test() {
     // Always blur to ensure it's not accounted as an additional abandonment.
     gURLBar.blur();
     TelemetryTestUtils.assertEvents(events, { category: "urlbar" });
+    await UrlbarTestUtils.formHistory.clear(window);
   }
 
   for (let i = 0; i < noEventTests.length; i++) {

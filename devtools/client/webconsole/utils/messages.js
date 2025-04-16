@@ -9,6 +9,9 @@ const l10n = require("devtools/client/webconsole/utils/l10n");
 const {
   getUrlDetails,
 } = require("devtools/client/netmonitor/src/utils/request-utils");
+const {
+  ResourceWatcher,
+} = require("devtools/shared/resources/resource-watcher");
 
 // URL Regex, common idioms:
 //
@@ -76,57 +79,56 @@ const {
   NetworkEventMessage,
 } = require("devtools/client/webconsole/types");
 
-function prepareMessage(packet, idGenerator) {
-  if (!packet.source) {
-    packet = transformPacket(packet);
+function prepareMessage(resource, idGenerator) {
+  if (!resource.source) {
+    resource = transformResource(resource);
   }
 
-  if (packet.allowRepeating) {
-    packet.repeatId = getRepeatId(packet);
+  if (resource.allowRepeating) {
+    resource.repeatId = getRepeatId(resource);
   }
-  packet.id = idGenerator.getNextId(packet);
-  return packet;
+  resource.id = idGenerator.getNextId(resource);
+  return resource;
 }
 
 /**
- * Transforms a packet from Firefox RDP structure to Chrome RDP structure.
+ * Transforms a resource given its type.
+ *
+ * @param {Object} resource: This can be either a simple RDP packet or an object emitted
+ *                           by the Resource API.
  */
-function transformPacket(packet) {
-  if (packet._type) {
-    packet = convertCachedPacket(packet);
-  }
-
-  switch (packet.type) {
-    case "consoleAPICall": {
-      return transformConsoleAPICallPacket(packet);
+function transformResource(resource) {
+  switch (resource.resourceType || resource.type) {
+    case ResourceWatcher.TYPES.CONSOLE_MESSAGE: {
+      return transformConsoleAPICallResource(resource);
     }
 
-    case "will-navigate": {
-      return transformNavigationMessagePacket(packet);
+    case ResourceWatcher.TYPES.PLATFORM_MESSAGE: {
+      return transformPlatformMessageResource(resource);
     }
 
-    case "logMessage": {
-      return transformLogMessagePacket(packet);
-    }
-
-    case "pageError": {
-      return transformPageErrorPacket(packet);
+    case ResourceWatcher.TYPES.ERROR_MESSAGE: {
+      return transformPageErrorResource(resource);
     }
 
     case "networkEvent": {
-      return transformNetworkEventPacket(packet);
+      return transformNetworkEventResource(resource);
+    }
+
+    case "will-navigate": {
+      return transformNavigationMessagePacket(resource);
     }
 
     case "evaluationResult":
     default: {
-      return transformEvaluationResultPacket(packet);
+      return transformEvaluationResultPacket(resource);
     }
   }
 }
 
 // eslint-disable-next-line complexity
-function transformConsoleAPICallPacket(packet) {
-  const { message } = packet;
+function transformConsoleAPICallResource(consoleMessageResource) {
+  const { message, targetFront } = consoleMessageResource;
 
   let parameters = message.arguments;
   let type = message.level;
@@ -259,6 +261,7 @@ function transformConsoleAPICallPacket(packet) {
   }
 
   return new ConsoleMessage({
+    targetFront,
     source: MESSAGE_SOURCE.CONSOLE_API,
     type,
     level,
@@ -287,10 +290,11 @@ function transformNavigationMessagePacket(packet) {
   });
 }
 
-function transformLogMessagePacket(packet) {
-  const { message, timeStamp } = packet;
+function transformPlatformMessageResource(platformMessageResource) {
+  const { message, timeStamp, targetFront } = platformMessageResource;
 
   return new ConsoleMessage({
+    targetFront,
     source: MESSAGE_SOURCE.CONSOLE_API,
     type: MESSAGE_TYPE.LOG,
     level: MESSAGE_LEVEL.LOG,
@@ -301,8 +305,8 @@ function transformLogMessagePacket(packet) {
   });
 }
 
-function transformPageErrorPacket(packet) {
-  const { pageError } = packet;
+function transformPageErrorResource(pageErrorResource) {
+  const { pageError, targetFront } = pageErrorResource;
   let level = MESSAGE_LEVEL.ERROR;
   if (pageError.warning) {
     level = MESSAGE_LEVEL.WARN;
@@ -324,6 +328,7 @@ function transformPageErrorPacket(packet) {
     ? MESSAGE_SOURCE.CSS
     : MESSAGE_SOURCE.JAVASCRIPT;
   return new ConsoleMessage({
+    targetFront,
     innerWindowID: pageError.innerWindowID,
     source: messageSource,
     type: MESSAGE_TYPE.LOG,
@@ -334,32 +339,34 @@ function transformPageErrorPacket(packet) {
     frame,
     errorMessageName: pageError.errorMessageName,
     exceptionDocURL: pageError.exceptionDocURL,
+    hasException: pageError.hasException,
+    parameters: pageError.hasException ? [pageError.exception] : null,
     timeStamp: pageError.timeStamp,
     notes: pageError.notes,
     private: pageError.private,
     chromeContext: pageError.chromeContext,
     cssSelectors: pageError.cssSelectors,
+    isPromiseRejection: pageError.isPromiseRejection,
   });
 }
 
-function transformNetworkEventPacket(packet) {
-  const { networkEvent } = packet;
-
+function transformNetworkEventResource(networkEventResource) {
   return new NetworkEventMessage({
-    actor: networkEvent.actor,
-    isXHR: networkEvent.isXHR,
-    request: networkEvent.request,
-    response: networkEvent.response,
-    timeStamp: networkEvent.timeStamp,
-    totalTime: networkEvent.totalTime,
-    url: networkEvent.request.url,
-    urlDetails: getUrlDetails(networkEvent.request.url),
-    method: networkEvent.request.method,
-    updates: networkEvent.updates,
-    cause: networkEvent.cause,
-    private: networkEvent.private,
-    securityState: networkEvent.securityState,
-    chromeContext: networkEvent.chromeContext,
+    targetFront: networkEventResource.targetFront,
+    actor: networkEventResource.actor,
+    isXHR: networkEventResource.isXHR,
+    request: networkEventResource.request,
+    response: networkEventResource.response,
+    timeStamp: networkEventResource.timeStamp,
+    totalTime: networkEventResource.totalTime,
+    url: networkEventResource.request.url,
+    urlDetails: getUrlDetails(networkEventResource.request.url),
+    method: networkEventResource.request.method,
+    updates: networkEventResource.updates,
+    cause: networkEventResource.cause,
+    private: networkEventResource.private,
+    securityState: networkEventResource.securityState,
+    chromeContext: networkEventResource.chromeContext,
   });
 }
 
@@ -370,6 +377,7 @@ function transformEvaluationResultPacket(packet) {
     exceptionDocURL,
     exception,
     exceptionStack,
+    hasException,
     frame,
     result,
     helperResult,
@@ -377,22 +385,27 @@ function transformEvaluationResultPacket(packet) {
     notes,
   } = packet;
 
-  const parameter =
-    helperResult && helperResult.object ? helperResult.object : result;
+  let parameter;
 
-  if (helperResult && helperResult.type === "error") {
+  if (hasException) {
+    // If we have an exception, we prefix it, and we reset the exception message, as we're
+    // not going to use it.
+    parameter = exception;
+    exceptionMessage = null;
+  } else if (helperResult?.object) {
+    parameter = helperResult.object;
+  } else if (helperResult?.type === "error") {
     try {
       exceptionMessage = l10n.getStr(helperResult.message);
     } catch (ex) {
       exceptionMessage = helperResult.message;
     }
-  } else if (typeof exception === "string") {
-    // Wrap thrown strings in Error objects, so `throw "foo"` outputs "Error: foo"
-    exceptionMessage = new Error(exceptionMessage).toString();
+  } else {
+    parameter = result;
   }
 
   const level =
-    typeof exceptionMessage !== "undefined" && exceptionMessage !== null
+    typeof exceptionMessage !== "undefined" && packet.exceptionMessage !== null
       ? MESSAGE_LEVEL.ERROR
       : MESSAGE_LEVEL.LOG;
 
@@ -402,6 +415,7 @@ function transformEvaluationResultPacket(packet) {
     helperType: helperResult ? helperResult.type : null,
     level,
     messageText: exceptionMessage,
+    hasException,
     parameters: [parameter],
     errorMessageName,
     exceptionDocURL,
@@ -442,30 +456,6 @@ function getRepeatId(message) {
       return value;
     }
   );
-}
-
-function convertCachedPacket(packet) {
-  // The devtools server provides cached message packets in a different shape, so we
-  // transform them here.
-  let convertPacket = {};
-  if (packet._type === "ConsoleAPI") {
-    convertPacket.message = packet;
-    convertPacket.type = "consoleAPICall";
-  } else if (packet._type === "PageError") {
-    convertPacket.pageError = packet;
-    convertPacket.type = "pageError";
-  } else if (packet._type === "NetworkEvent") {
-    convertPacket.networkEvent = packet;
-    convertPacket.type = "networkEvent";
-  } else if (packet._type === "LogMessage") {
-    convertPacket = {
-      ...packet,
-      type: "logMessage",
-    };
-  } else {
-    throw new Error("Unexpected packet type: " + packet._type);
-  }
-  return convertPacket;
 }
 
 /**

@@ -10,11 +10,17 @@ use std::time::{SystemTime, UNIX_EPOCH};
 // Re-export of `glean_core` types we can re-use.
 // That way a user only needs to depend on this crate, not on glean_core (and there can't be a
 // version mismatch).
-pub use glean_core::{metrics::TimeUnit, CommonMetricData, ErrorType, Lifetime};
+pub use glean_core::{
+    metrics::DistributionData, metrics::MemoryUnit, metrics::TimeUnit, CommonMetricData, ErrorType,
+    Lifetime,
+};
 
 mod boolean;
 mod counter;
+mod datetime;
+mod event;
 mod labeled;
+mod memory_distribution;
 mod ping;
 mod string;
 mod string_list;
@@ -24,7 +30,10 @@ mod uuid;
 
 pub use self::boolean::BooleanMetric;
 pub use self::counter::CounterMetric;
+pub use self::datetime::DatetimeMetric;
+pub use self::event::{EventMetric, ExtraKeys, NoExtraKeys};
 pub use self::labeled::LabeledMetric;
+pub use self::memory_distribution::MemoryDistributionMetric;
 pub use self::ping::Ping;
 pub use self::string::StringMetric;
 pub use self::string_list::StringListMetric;
@@ -59,7 +68,14 @@ impl Instant {
         }
     }
 
-    fn as_u64(&self) -> u64 {
+    /// Get this instant as a timestamp in nanoseconds.
+    fn as_nanos(&self) -> u64 {
         self.0
+    }
+
+    /// Get this instant as a timestamp in milliseconds.
+    fn as_millis(&self) -> u64 {
+        const NANOS_PER_MILLI: u64 = 1_000_000;
+        self.0 / NANOS_PER_MILLI
     }
 }

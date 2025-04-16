@@ -104,6 +104,18 @@ TRRLoadInfo::GetIsInThirdPartyContext(bool* aIsInThirdPartyContext) {
 }
 
 NS_IMETHODIMP
+TRRLoadInfo::GetIsThirdPartyContextToTopWindow(
+    bool* aIsThirdPartyContextToTopWindow) {
+  return NS_ERROR_NOT_IMPLEMENTED;
+}
+
+NS_IMETHODIMP
+TRRLoadInfo::SetIsThirdPartyContextToTopWindow(
+    bool aIsThirdPartyContextToTopWindow) {
+  return NS_ERROR_NOT_IMPLEMENTED;
+}
+
+NS_IMETHODIMP
 TRRLoadInfo::GetCookiePolicy(uint32_t* aResult) {
   return NS_ERROR_NOT_IMPLEMENTED;
 }
@@ -643,6 +655,18 @@ TRRLoadInfo::GetParserCreatedScript(bool* aParserCreatedScript) {
 
 NS_IMETHODIMP
 TRRLoadInfo::SetParserCreatedScript(bool aParserCreatedScript) {
+  return NS_ERROR_NOT_IMPLEMENTED;
+}
+
+NS_IMETHODIMP
+TRRLoadInfo::GetLoadingEmbedderPolicy(
+    nsILoadInfo::CrossOriginEmbedderPolicy* aOutPolicy) {
+  return NS_ERROR_NOT_IMPLEMENTED;
+}
+
+NS_IMETHODIMP
+TRRLoadInfo::SetLoadingEmbedderPolicy(
+    nsILoadInfo::CrossOriginEmbedderPolicy aPolicy) {
   return NS_ERROR_NOT_IMPLEMENTED;
 }
 

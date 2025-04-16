@@ -229,7 +229,9 @@ class JSFunction : public js::NativeObject {
   /* Compound attributes: */
   bool isBuiltin() const { return isBuiltinNative() || isSelfHostedBuiltin(); }
 
-  bool isNamedLambda() const { return flags_.isNamedLambda(displayAtom()); }
+  bool isNamedLambda() const {
+    return flags_.isNamedLambda(displayAtom() != nullptr);
+  }
 
   bool hasLexicalThis() const { return isArrow(); }
 
@@ -427,12 +429,12 @@ class JSFunction : public js::NativeObject {
     return nullptr;
   }
 
-  // The default state of a JSFunction that is not ready for execution. This is
-  // generally the result of failure during bytecode compilation.
+  // The default state of a JSFunction that is not ready for execution. If
+  // observed outside initialization, this is the result of failure during
+  // bytecode compilation.
   //
-  // If u.scripted.s.script_ is non-null, the pointed JSScript is guaranteed to
-  // be complete (see the comment above JSScript::initFromFunctionBox callsite
-  // in JSScript::fullyInitFromEmitter).
+  // A BaseScript is fully initialized before u.script.s.script_ is initialized
+  // with a reference to it.
   bool isIncomplete() const { return isInterpreted() && !u.scripted.s.script_; }
 
   JSScript* nonLazyScript() const {
@@ -458,10 +460,6 @@ class JSFunction : public js::NativeObject {
                         uint16_t* length);
 
   js::Scope* enclosingScope() const { return baseScript()->enclosingScope(); }
-
-  void setEnclosingScope(js::Scope* enclosingScope) {
-    baseScript()->setEnclosingScope(enclosingScope);
-  }
 
   void setEnclosingLazyScript(js::BaseScript* enclosingScript) {
     baseScript()->setEnclosingScript(enclosingScript);
@@ -489,22 +487,10 @@ class JSFunction : public js::NativeObject {
     return asyncKind() == js::FunctionAsyncKind::AsyncFunction;
   }
 
-  void initScript(JSScript* script) {
+  void initScript(js::BaseScript* script) {
     MOZ_ASSERT_IF(script, realm() == script->realm());
-
-    u.scripted.s.script_ = script;
-  }
-
-  void initLazyScript(js::BaseScript* lazy) {
     MOZ_ASSERT(isInterpreted());
-    u.scripted.s.script_ = lazy;
-  }
-
-  // Release the lazyScript() pointer while triggering barriers.
-  void clearLazyScript() {
-    js::BaseScript::writeBarrierPre(baseScript());
-    u.scripted.s.script_ = nullptr;
-    MOZ_ASSERT(isIncomplete());
+    u.scripted.s.script_ = script;
   }
 
   void initSelfHostedLazyScript(js::SelfHostedLazyScript* lazy) {
@@ -529,6 +515,10 @@ class JSFunction : public js::NativeObject {
     MOZ_ASSERT(isNative());
     return u.native.func_;
   }
+  JSNative nativeUnchecked() const {
+    // Called by Ion off-main thread.
+    return u.native.func_;
+  }
 
   JSNative maybeNative() const { return isInterpreted() ? nullptr : native(); }
 
@@ -544,6 +534,10 @@ class JSFunction : public js::NativeObject {
   }
   const JSJitInfo* jitInfo() const {
     MOZ_ASSERT(hasJitInfo());
+    return u.native.extra.jitInfo_;
+  }
+  const JSJitInfo* jitInfoUnchecked() const {
+    // Called by Ion off-main thread.
     return u.native.extra.jitInfo_;
   }
   void setJitInfo(const JSJitInfo* data) {
@@ -583,6 +577,7 @@ class JSFunction : public js::NativeObject {
   }
 
   bool isDerivedClassConstructor() const;
+  bool isFieldInitializer() const;
 
   static unsigned offsetOfNative() {
     return offsetof(JSFunction, u.native.func_);

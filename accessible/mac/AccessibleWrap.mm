@@ -11,6 +11,7 @@
 #include "Role.h"
 #include "gfxPlatform.h"
 
+#import "MOXMathAccessibles.h"
 #import "mozAccessible.h"
 #import "mozActionElements.h"
 #import "mozHTMLAccessible.h"
@@ -32,9 +33,18 @@ mozAccessible* AccessibleWrap::GetNativeObject() {
   if (!mNativeInited && !mNativeObject) {
     // We don't creat OSX accessibles for xul tooltips, defunct accessibles,
     // or pruned children.
-    if (!IsXULTooltip() && !IsDefunct() && !AncestorIsFlat()) {
-      uintptr_t accWrap = reinterpret_cast<uintptr_t>(this);
-      mNativeObject = [[GetNativeType() alloc] initWithAccessible:accWrap];
+    //
+    // We also don't create a native object if we're child of a "flat" accessible;
+    // for example, on OS X buttons shouldn't have any children, because that
+    // makes the OS confused.
+    //
+    // To maintain a scripting environment where the XPCOM accessible hierarchy
+    // look the same on all platforms, we still let the C++ objects be created
+    // though.
+    Accessible* parent = Parent();
+    bool mustBePruned = parent && nsAccUtils::MustPrune(parent);
+    if (!IsXULTooltip() && !IsDefunct() && !mustBePruned) {
+      mNativeObject = [[GetNativeType() alloc] initWithAccessible:this];
     }
   }
 
@@ -157,30 +167,13 @@ nsresult AccessibleWrap::HandleAccEvent(AccEvent* aEvent) {
 ////////////////////////////////////////////////////////////////////////////////
 // AccessibleWrap protected
 
-bool AccessibleWrap::AncestorIsFlat() {
-  // We don't create a native object if we're child of a "flat" accessible;
-  // for example, on OS X buttons shouldn't have any children, because that
-  // makes the OS confused.
-  //
-  // To maintain a scripting environment where the XPCOM accessible hierarchy
-  // look the same on all platforms, we still let the C++ objects be created
-  // though.
-
-  Accessible* parent = Parent();
-  while (parent) {
-    if (nsAccUtils::MustPrune(parent)) return true;
-
-    parent = parent->Parent();
-  }
-  // no parent was flat
-  return false;
-}
-
 Class a11y::GetTypeFromRole(roles::Role aRole) {
   NS_OBJC_BEGIN_TRY_ABORT_BLOCK_NIL;
 
   switch (aRole) {
     case roles::COMBOBOX:
+      return [mozPopupButtonAccessible class];
+
     case roles::PUSHBUTTON:
       return [mozButtonAccessible class];
 
@@ -189,8 +182,10 @@ Class a11y::GetTypeFromRole(roles::Role aRole) {
 
     case roles::CHECKBUTTON:
     case roles::TOGGLE_BUTTON:
-    case roles::RADIOBUTTON:
       return [mozCheckboxAccessible class];
+
+    case roles::RADIOBUTTON:
+      return [mozRadioButtonAccessible class];
 
     case roles::SPINBUTTON:
     case roles::SLIDER:
@@ -215,6 +210,47 @@ Class a11y::GetTypeFromRole(roles::Role aRole) {
 
     case roles::LINK:
       return [mozLinkAccessible class];
+
+    case roles::LISTBOX:
+      return [mozListboxAccessible class];
+
+    case roles::OPTION: {
+      return [mozOptionAccessible class];
+    }
+
+    case roles::COMBOBOX_LIST:
+    case roles::MENUBAR:
+    case roles::MENUPOPUP: {
+      return [mozMenuAccessible class];
+    }
+
+    case roles::COMBOBOX_OPTION:
+    case roles::PARENT_MENUITEM:
+    case roles::MENUITEM: {
+      return [mozMenuItemAccessible class];
+    }
+
+    case roles::MATHML_ROOT:
+      return [MOXMathRootAccessible class];
+
+    case roles::MATHML_SQUARE_ROOT:
+      return [MOXMathSquareRootAccessible class];
+
+    case roles::MATHML_FRACTION:
+      return [MOXMathFractionAccessible class];
+
+    case roles::MATHML_SUB:
+    case roles::MATHML_SUP:
+    case roles::MATHML_SUB_SUP:
+      return [MOXMathSubSupAccessible class];
+
+    case roles::MATHML_UNDER:
+    case roles::MATHML_OVER:
+    case roles::MATHML_UNDER_OVER:
+      return [MOXMathUnderOverAccessible class];
+
+    case roles::SUMMARY:
+      return [MOXSummaryAccessible class];
 
     default:
       return [mozAccessible class];

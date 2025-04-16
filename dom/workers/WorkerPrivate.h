@@ -214,6 +214,22 @@ class WorkerPrivate : public RelativeTimeline {
     return std::move(mDefaultLocale);
   }
 
+  /**
+   * Invoked by WorkerThreadPrimaryRunnable::Run if it already called
+   * SetWorkerPrivateInWorkerThread but has to bail out on initialization before
+   * calling DoRunLoop because PBackground failed to initialize or something
+   * like that.  Note that there's currently no point earlier than this that
+   * failure can be reported.
+   *
+   * When this happens, the worker will need to be deleted, plus the call to
+   * SetWorkerPrivateInWorkerThread will have scheduled all the
+   * mPreStartRunnables which need to be cleaned up after, as well as any
+   * scheduled control runnables.  We're somewhat punting on debugger runnables
+   * for now, which may leak, but the intent is to moot this whole scenario via
+   * shutdown blockers, so we don't want the extra complexity right now.
+   */
+  void RunLoopNeverRan();
+
   MOZ_CAN_RUN_SCRIPT
   void DoRunLoop(JSContext* aCx);
 
@@ -790,7 +806,7 @@ class WorkerPrivate : public RelativeTimeline {
     return mLoadInfo.mServiceWorkersTestingInWindow;
   }
 
-  bool IsWatchedByDevtools() const { return mLoadInfo.mWatchedByDevtools; }
+  bool IsWatchedByDevTools() const { return mLoadInfo.mWatchedByDevTools; }
 
   // Determine if the worker is currently loading its top level script.
   bool IsLoadingWorkerScript() const { return mLoadingWorkerScript; }
@@ -917,8 +933,7 @@ class WorkerPrivate : public RelativeTimeline {
    * will, depending on the return type, return a value that will avoid
    * assertion failures or a value that won't block loads.
    */
-
-  Maybe<nsILoadInfo::CrossOriginEmbedderPolicy> GetEmbedderPolicy() const;
+  nsILoadInfo::CrossOriginEmbedderPolicy GetEmbedderPolicy() const;
 
   // Fails if a policy has already been set or if `aPolicy` violates the owner's
   // policy, if an owner exists.
@@ -937,6 +952,8 @@ class WorkerPrivate : public RelativeTimeline {
   // Requires a policy to already have been set.
   bool MatchEmbedderPolicy(
       nsILoadInfo::CrossOriginEmbedderPolicy aPolicy) const;
+
+  nsILoadInfo::CrossOriginEmbedderPolicy GetOwnerEmbedderPolicy() const;
 
  private:
   WorkerPrivate(
@@ -1043,7 +1060,13 @@ class WorkerPrivate : public RelativeTimeline {
 
   UniquePtr<ClientSource> CreateClientSource();
 
-  Maybe<nsILoadInfo::CrossOriginEmbedderPolicy> GetOwnerEmbedderPolicy() const;
+  // This method is called when corresponding script loader processes the COEP
+  // header for the worker.
+  // This method should be called only once in the main thread.
+  // After this method is called the COEP value owner(window/parent worker) is
+  // cached in mOwnerEmbedderPolicy such that it can be accessed in other
+  // threads, i.e. WorkerThread.
+  void EnsureOwnerEmbedderPolicy();
 
   class EventTarget;
   friend class EventTarget;
@@ -1292,6 +1315,7 @@ class WorkerPrivate : public RelativeTimeline {
   // there isn't a strong reason to store it on the global scope other than
   // better consistency with the COEP spec.
   Maybe<nsILoadInfo::CrossOriginEmbedderPolicy> mEmbedderPolicy;
+  Maybe<nsILoadInfo::CrossOriginEmbedderPolicy> mOwnerEmbedderPolicy;
 };
 
 class AutoSyncLoopHolder {

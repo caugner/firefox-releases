@@ -1468,8 +1468,8 @@ fuzzy-if(Android,0-12,0-300) == 551463-1.html 551463-1-ref.html
 random != 553571-1.html 553571-1-notref.html # expect dotted circle in test, not in ref: "fails" under harfbuzz, which doesn't consider the sequence invalid
 fuzzy-if(!contentSameGfxBackendAsCanvas,0-128,0-91) random-if(d2d) skip-if(azureSkiaGL) fuzzy-if(skiaContent,0-32,0-150) == 555388-1.html 555388-1-ref.html
 == 556661-1.html 556661-1-ref.html
-fuzzy-if(skiaContent,0-4,0-9) fuzzy-if(Android,0-1,0-22) == 557087-1.html 557087-ref.html
-fuzzy-if(skiaContent,0-2,0-5) fuzzy-if(Android,0-1,0-22) == 557087-2.html 557087-ref.html
+fuzzy-if(skiaContent,0-4,0-9) == 557087-1.html 557087-ref.html
+fuzzy-if(skiaContent,0-2,0-5) fuzzy-if(Android,0-1,0-9) == 557087-2.html 557087-ref.html
 == 557736-1.html 557736-1-ref.html
 skip-if(Android) != chrome://reftest/content/bugs/558011-1.xhtml chrome://reftest/content/bugs/558011-1-ref.xhtml
 == 559284-1.html 559284-1-ref.html
@@ -1773,6 +1773,7 @@ fuzzy-if(skiaContent,0-1,0-3) == 931464-1.html 931464-1-ref.html
 == 931853.html 931853-ref.html
 == 931853-quirks.html 931853-quirks-ref.html
 == 933264-1.html 933264-1-ref.html
+test-pref(font.minimum-size.x-western,32) fuzzy-if(Android,0-45,0-324) == 935056-1.html 935056-1-ref.html
 random-if(/^Windows\x20NT\x206\.1/.test(http.oscpu)) == 936670-1.svg 936670-1-ref.svg # Bug 1392106
 == 941940-1.html 941940-1-ref.html
 fails == 942017.html 942017-ref.html # bug 942017
@@ -1919,7 +1920,7 @@ pref(apz.allow_zooming,true) skip-if(!Android) != 1133905-ref-vh-rtl.html about:
 fuzzy-if(skiaContent,0-7,0-84) == 1156129-1.html 1156129-1-ref.html
 pref(dom.use_xbl_scopes_for_remote_xul,true) HTTP(..) == 1157127-1.html 1157127-1-ref.html
 fuzzy-if(Android,0-6,0-6) == 1169331-1.html 1169331-1-ref.html
-fuzzy(0-1,0-74) fails-if(Android||gtkWidget) == 1174332-1.html 1174332-1-ref.html # bug 1312658
+fuzzy(0-1,0-74) random-if(Android||gtkWidget) == 1174332-1.html 1174332-1-ref.html # bug 1312658
 == 1179078-1.html 1179078-1-ref.html
 == 1179288-1.html 1179288-1-ref.html
 == 1190635-1.html 1190635-1-ref.html
@@ -2049,8 +2050,7 @@ fuzzy-if(!webrender,0-74,0-2234) == 1425243-1.html 1425243-1-ref.html
 fuzzy-if(Android,0-66,0-574) fuzzy-if(d2d,0-89,0-777) fuzzy-if(!Android&&!d2d,0-1,0-31341) fuzzy-if(webrender&&winWidget,1-1,31320-31320) == 1425243-2.html 1425243-2-ref.html
 == 1430869.html 1430869-ref.html
 == 1432541.html 1432541-ref.html
-pref(layout.css.moz-document.url-prefix-hack.enabled,true) == 1446470.html 1035091-ref.html
-pref(layout.css.moz-document.url-prefix-hack.enabled,false) == 1446470-2.html 1035091-ref.html
+== 1446470.html 1035091-ref.html
 == 1456111-1.html about:blank
 # Note: The following test depends on having a pref-controllable CSS property,
 # and the property needs to have a non-initial value that causes it to create
@@ -2086,7 +2086,7 @@ pref(image.downscale-during-decode.enabled,true) skip-if(Android&&webrender) == 
 == 1558937-1.html 1558937-1-ref.html
 != 1563484.html 1563484-notref.html
 == 1563484.html 1563484-ref.html
-fuzzy-if(!webrender||!winWidget,251-255,464-1613) fuzzy-if(geckoview&&webrender,251-255,1392-1405) == 1562733-rotated-nastaliq-1.html 1562733-rotated-nastaliq-1-ref.html
+fuzzy-if(!webrender||!winWidget,251-255,464-1613) fuzzy-if(geckoview&&webrender,251-255,1392-1405) skip-if(Android&&webrender) == 1562733-rotated-nastaliq-1.html 1562733-rotated-nastaliq-1-ref.html #Bug 1604765
 fuzzy-if(winWidget&&webrender,0-31,0-3) fuzzy-if(geckoview&&webrender,0-93,0-87) == 1562733-rotated-nastaliq-2.html 1562733-rotated-nastaliq-2-ref.html
 test-pref(plain_text.wrap_long_lines,false) != 1565129.txt 1565129.txt
 fuzzy(0-32,0-8) fuzzy-if(Android&&webrender,0-32,0-1458) == 1576553-1.html 1576553-1-ref.html

@@ -13,6 +13,8 @@
 
 #include "mozilla/dom/ContentChild.h"
 #include "mozilla/IMEStateManager.h"
+#include "mozilla/java/GeckoEditableChildWrappers.h"
+#include "mozilla/java/GeckoServiceChildProcessWrappers.h"
 #include "mozilla/Preferences.h"
 #include "mozilla/StaticPrefs_intl.h"
 #include "mozilla/TextComposition.h"
@@ -903,6 +905,7 @@ bool GeckoEditableSupport::DoReplaceText(int32_t aStart, int32_t aEnd,
     }
 
     if (!mIMEKeyEvents.IsEmpty()) {
+      bool ignoreNextKeyPress = false;
       for (uint32_t i = 0; i < mIMEKeyEvents.Length(); i++) {
         const auto event = mIMEKeyEvents[i]->AsKeyboardEvent();
         // widget for duplicated events is initially nullptr.
@@ -911,7 +914,16 @@ bool GeckoEditableSupport::DoReplaceText(int32_t aStart, int32_t aEnd,
         status = nsEventStatus_eIgnore;
         if (event->mMessage != eKeyPress) {
           mDispatcher->DispatchKeyboardEvent(event->mMessage, *event, status);
+          // Skip default processing. It means that next key press shouldn't
+          // be dispatched.
+          ignoreNextKeyPress = event->mMessage == eKeyDown &&
+                               status == nsEventStatus_eConsumeNoDefault;
         } else {
+          if (ignoreNextKeyPress) {
+            // Don't dispatch key press since previous key down is consumed.
+            ignoreNextKeyPress = false;
+            continue;
+          }
           mDispatcher->MaybeDispatchKeypressEvents(*event, status);
           if (status == nsEventStatus_eConsumeNoDefault) {
             textChanged = true;

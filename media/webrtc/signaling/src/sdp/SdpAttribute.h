@@ -1214,13 +1214,11 @@ class SdpFmtpAttributeList : public SdpAttribute {
 
   class RtxParameters : public Parameters {
    public:
-    uint8_t apt;
+    uint8_t apt = 255;  // Valid payload types are 0 - 127, use 255 to represent
+                        // unset value.
     Maybe<uint32_t> rtx_time;
 
-    RtxParameters(const uint8_t aApt, const Maybe<uint32_t>& aRtxTime)
-        : Parameters(SdpRtpmapAttributeList::kRtx),
-          apt(aApt),
-          rtx_time(aRtxTime) {}
+    RtxParameters() : Parameters(SdpRtpmapAttributeList::kRtx) {}
 
     virtual ~RtxParameters() {}
 
@@ -1229,8 +1227,10 @@ class SdpFmtpAttributeList : public SdpAttribute {
     }
 
     virtual void Serialize(std::ostream& os) const override {
-      os << "apt=" << apt;
-      rtx_time.apply([&](const auto& time) { os << ";rtx-time=" << time; });
+      if (apt <= 127) {
+        os << "apt=" << static_cast<uint32_t>(apt);
+        rtx_time.apply([&](const auto& time) { os << ";rtx-time=" << time; });
+      }
     }
 
     virtual bool CompareEq(const Parameters& aOther) const override {
@@ -1356,19 +1356,50 @@ class SdpFmtpAttributeList : public SdpAttribute {
     enum {
       kDefaultMaxPlaybackRate = 48000,
       kDefaultStereo = 0,
-      kDefaultUseInBandFec = 0
+      kDefaultUseInBandFec = 0,
+      kDefaultMaxAverageBitrate = 0,
+      kDefaultUseDTX = 0,
+      kDefaultFrameSize = 0,
+      kDefaultMinFrameSize = 0,
+      kDefaultMaxFrameSize = 0,
+      kDefaultUseCbr = 0
     };
     OpusParameters()
         : Parameters(SdpRtpmapAttributeList::kOpus),
           maxplaybackrate(kDefaultMaxPlaybackRate),
           stereo(kDefaultStereo),
-          useInBandFec(kDefaultUseInBandFec) {}
+          useInBandFec(kDefaultUseInBandFec),
+          maxAverageBitrate(kDefaultMaxAverageBitrate),
+          useDTX(kDefaultUseDTX),
+          frameSizeMs(kDefaultFrameSize),
+          minFrameSizeMs(kDefaultMinFrameSize),
+          maxFrameSizeMs(kDefaultMaxFrameSize),
+          useCbr(kDefaultUseCbr) {}
 
     Parameters* Clone() const override { return new OpusParameters(*this); }
 
     void Serialize(std::ostream& os) const override {
       os << "maxplaybackrate=" << maxplaybackrate << ";stereo=" << stereo
          << ";useinbandfec=" << useInBandFec;
+
+      if (useDTX) {
+        os << ";usedtx=1";
+      }
+      if (maxAverageBitrate) {
+        os << ";maxaveragebitrate=" << maxAverageBitrate;
+      }
+      if (frameSizeMs) {
+        os << ";ptime=" << frameSizeMs;
+      }
+      if (minFrameSizeMs) {
+        os << ";minptime=" << minFrameSizeMs;
+      }
+      if (maxFrameSizeMs) {
+        os << ";maxptime=" << maxFrameSizeMs;
+      }
+      if (useCbr) {
+        os << ";cbr=1";
+      }
     }
 
     virtual bool CompareEq(const Parameters& other) const override {
@@ -1384,12 +1415,24 @@ class SdpFmtpAttributeList : public SdpAttribute {
       }
 
       return maxplaybackrateIsEq && stereo == otherOpus.stereo &&
-             useInBandFec == otherOpus.useInBandFec;
+             useInBandFec == otherOpus.useInBandFec &&
+             maxAverageBitrate == otherOpus.maxAverageBitrate &&
+             useDTX == otherOpus.useDTX &&
+             frameSizeMs == otherOpus.frameSizeMs &&
+             minFrameSizeMs == otherOpus.minFrameSizeMs &&
+             maxFrameSizeMs == otherOpus.maxFrameSizeMs &&
+             useCbr == otherOpus.useCbr;
     }
 
     unsigned int maxplaybackrate;
     unsigned int stereo;
     unsigned int useInBandFec;
+    uint32_t maxAverageBitrate;
+    bool useDTX;
+    uint32_t frameSizeMs;
+    uint32_t minFrameSizeMs;
+    uint32_t maxFrameSizeMs;
+    bool useCbr;
   };
 
   class TelephoneEventParameters : public Parameters {

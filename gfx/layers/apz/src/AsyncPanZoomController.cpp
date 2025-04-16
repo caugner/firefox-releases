@@ -146,6 +146,10 @@ typedef PlatformSpecificStateBase
  * a single input block. If set to false, a single input block can only
  * scroll one APZC.
  *
+ * \li\b apz.allow_zooming_out
+ * If set to true, APZ will allow zooming out past the initial scale on
+ * desktop. This is false by default to match Chrome's behaviour.
+ *
  * \li\b apz.android.chrome_fling_physics.enabled
  * If set to true, APZ uses a fling physical model similar to Chrome's
  * on Android, rather than Android's StackScroller.
@@ -824,7 +828,6 @@ AsyncPanZoomController::AsyncPanZoomController(
     const RefPtr<InputQueue>& aInputQueue,
     GeckoContentController* aGeckoContentController, GestureBehavior aGestures)
     : mLayersId(aLayersId),
-      mRenderRoot(wr::RenderRoot::Default),
       mGeckoContentController(aGeckoContentController),
       mRefPtrMonitor("RefPtrMonitor"),
       // mTreeManager must be initialized before GetFrameTime() is called
@@ -1085,10 +1088,7 @@ nsEventStatus AsyncPanZoomController::HandleDragEvent(
       GetAxisStart(direction, Metrics().GetScrollableRect().TopLeft());
   CSSCoord maxScrollPosition =
       GetAxisStart(direction, Metrics().GetScrollableRect().BottomRight()) -
-      GetAxisLength(
-          direction,
-          Metrics()
-              .CalculateCompositionBoundsInCssPixelsOfSurroundingContent());
+      GetAxisLength(direction, Metrics().CalculateCompositedSizeInCssPixels());
   CSSCoord scrollPosition =
       minScrollPosition +
       (scrollPercent * (maxScrollPosition - minScrollPosition));
@@ -1261,6 +1261,7 @@ nsEventStatus AsyncPanZoomController::HandleGestureEvent(
         case PinchGestureInput::PINCHGESTURE_SCALE:
           rv = OnScale(pinchGestureInput);
           break;
+        case PinchGestureInput::PINCHGESTURE_FINGERLIFTED:
         case PinchGestureInput::PINCHGESTURE_END:
           rv = OnScaleEnd(pinchGestureInput);
           break;
@@ -1747,8 +1748,8 @@ nsEventStatus AsyncPanZoomController::OnScaleEnd(
 
   mPinchEventBuffer.clear();
 
-  // Non-negative focus point would indicate that one finger is still down
-  if (aEvent.mLocalFocusPoint != PinchGestureInput::BothFingersLifted()) {
+  if (aEvent.mType == PinchGestureInput::PINCHGESTURE_FINGERLIFTED) {
+    // One finger is still down, so transition to a TOUCHING state
     if (mZoomConstraints.mAllowZoom) {
       mPanDirRestricted = false;
       StartTouch(aEvent.mLocalFocusPoint, aEvent.mTime);
@@ -1759,7 +1760,7 @@ nsEventStatus AsyncPanZoomController::OnScaleEnd(
       StartPanning(ToExternalPoint(aEvent.mScreenOffset, aEvent.mFocusPoint));
     }
   } else {
-    // Otherwise, handle the fingers being lifted.
+    // Otherwise, handle the gesture being completely done.
 
     // Some of the code paths below, like ScrollSnap() or HandleEndOfPan(),
     // may start an animation, but otherwise we want to end up in the NOTHING
@@ -3802,8 +3803,7 @@ const ScreenMargin AsyncPanZoomController::CalculatePendingDisplayPort(
 
 void AsyncPanZoomController::ScheduleComposite() {
   if (mCompositorController) {
-    mCompositorController->ScheduleRenderOnCompositorThread(
-        wr::RenderRootSet(mRenderRoot));
+    mCompositorController->ScheduleRenderOnCompositorThread();
   }
 }
 
@@ -4503,6 +4503,9 @@ void AsyncPanZoomController::NotifyLayersUpdated(
       aLayerMetrics.GetDoSmoothScroll() &&
       (aLayerMetrics.GetScrollGeneration() != Metrics().GetScrollGeneration());
 
+  // If `isDefault` is true, this APZC is a "new" one (this is the first time
+  // it's getting a NotifyLayersUpdated call). In this case we want to apply the
+  // visual scroll offset from the main thread to our scroll offset.
   // The main thread may also ask us to scroll the visual viewport to a
   // particular location. This is different from a layout viewport offset update
   // in that the layout viewport offset is limited to the layout scroll range
@@ -4514,6 +4517,7 @@ void AsyncPanZoomController::NotifyLayersUpdated(
   // to scroll both the layout and visual viewports to distinct (but compatible)
   // locations (via e.g. both updates being eRestore).
   bool visualScrollOffsetUpdated =
+      isDefault ||
       aLayerMetrics.GetVisualScrollUpdateType() != FrameMetrics::eNone;
   if ((aLayerMetrics.GetScrollUpdateType() == FrameMetrics::eMainThread &&
        aLayerMetrics.GetVisualScrollUpdateType() !=

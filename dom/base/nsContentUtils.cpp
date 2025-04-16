@@ -112,9 +112,11 @@
 #include "mozilla/StaticPrefs_privacy.h"
 #include "mozilla/StaticPrefs_test.h"
 #include "mozilla/StaticPrefs_ui.h"
+#include "mozilla/StoragePrincipalHelper.h"
 #include "mozilla/TextControlState.h"
 #include "mozilla/TextEditor.h"
 #include "mozilla/TextEvents.h"
+#include "mozilla/ViewportUtils.h"
 #include "nsArrayUtils.h"
 #include "nsAString.h"
 #include "nsAttrName.h"
@@ -232,7 +234,6 @@
 #include "nsViewManager.h"
 #include "nsViewportInfo.h"
 #include "nsWidgetsCID.h"
-#include "nsIWindowProvider.h"
 #include "nsWrapperCacheInlines.h"
 #include "nsXULPopupManager.h"
 #include "xpcprivate.h"  // nsXPConnect
@@ -2699,7 +2700,7 @@ void nsContentUtils::GenerateStateKey(nsIContent* aContent, Document* aDocument,
   uint32_t partID = aDocument ? aDocument->GetPartID() : 0;
 
   // Don't capture state for anonymous content
-  if (aContent->IsInAnonymousSubtree()) {
+  if (aContent->IsInNativeAnonymousSubtree()) {
     return;
   }
 
@@ -3237,44 +3238,6 @@ bool nsContentUtils::CanLoadImage(nsIURI* aURI, nsINode* aNode,
 }
 
 // static
-mozilla::OriginAttributes nsContentUtils::GetOriginAttributes(
-    Document* aDocument) {
-  if (!aDocument) {
-    return mozilla::OriginAttributes();
-  }
-
-  nsCOMPtr<nsILoadGroup> loadGroup = aDocument->GetDocumentLoadGroup();
-  if (loadGroup) {
-    return GetOriginAttributes(loadGroup);
-  }
-
-  mozilla::OriginAttributes attrs;
-  nsCOMPtr<nsIChannel> channel = aDocument->GetChannel();
-  if (channel) {
-    NS_GetOriginAttributes(channel, attrs);
-  }
-  return attrs;
-}
-
-// static
-mozilla::OriginAttributes nsContentUtils::GetOriginAttributes(
-    nsILoadGroup* aLoadGroup) {
-  if (!aLoadGroup) {
-    return mozilla::OriginAttributes();
-  }
-  mozilla::OriginAttributes attrs;
-  nsCOMPtr<nsIInterfaceRequestor> callbacks;
-  aLoadGroup->GetNotificationCallbacks(getter_AddRefs(callbacks));
-  if (callbacks) {
-    nsCOMPtr<nsILoadContext> loadContext = do_GetInterface(callbacks);
-    if (loadContext) {
-      loadContext->GetOriginAttributes(attrs);
-    }
-  }
-  return attrs;
-}
-
-// static
 bool nsContentUtils::IsInPrivateBrowsing(Document* aDoc) {
   if (!aDoc) {
     return false;
@@ -3378,7 +3341,7 @@ nsresult nsContentUtils::LoadImage(
     nsIReferrerInfo* aReferrerInfo, imgINotificationObserver* aObserver,
     int32_t aLoadFlags, const nsAString& initiatorType,
     imgRequestProxy** aRequest, uint32_t aContentPolicyType,
-    bool aUseUrgentStartForChannel) {
+    bool aUseUrgentStartForChannel, bool aLinkPreload) {
   MOZ_ASSERT(aURI, "Must have a URI");
   MOZ_ASSERT(aContext, "Must have a context");
   MOZ_ASSERT(aLoadingDocument, "Must have a document");
@@ -3414,6 +3377,7 @@ nsresult nsContentUtils::LoadImage(
                               aContentPolicyType, /* content policy type */
                               initiatorType,      /* the load initiator */
                               aUseUrgentStartForChannel, /* urgent-start flag */
+                              aLinkPreload, /* <link preload> initiator */
                               aRequest);
 }
 
@@ -4704,7 +4668,7 @@ already_AddRefed<DocumentFragment> nsContentUtils::CreateContextualFragment(
 
   AutoTArray<nsString, 32> tagStack;
   nsAutoString uriStr, nameStr;
-  for (Element* element : InclusiveAncestorsOfType<Element>(*aContextNode)) {
+  for (Element* element : aContextNode->InclusiveAncestorsOfType<Element>()) {
     nsString& tagName = *tagStack.AppendElement();
     // It mostly doesn't actually matter what tag name we use here: XML doesn't
     // have parsing that depends on the open tag stack, apart from namespace
@@ -5388,12 +5352,6 @@ void nsContentUtils::RemoveScriptBlocker() {
   sRemovingScriptBlockers = true;
 #endif
   sBlockedScriptRunners->RemoveElementsAt(originalFirstBlocker, blockersCount);
-}
-
-/* static */
-nsIWindowProvider* nsContentUtils::GetWindowProviderForContentProcess() {
-  MOZ_ASSERT(XRE_IsContentProcess());
-  return ContentChild::GetSingleton();
 }
 
 /* static */
@@ -6432,26 +6390,14 @@ nsContentUtils::FindInternalContentViewer(const nsACString& aType,
 
 static void ReportPatternCompileFailure(nsAString& aPattern,
                                         const Document* aDocument,
+                                        JS::MutableHandle<JS::Value> error,
                                         JSContext* cx) {
-  MOZ_ASSERT(JS_IsExceptionPending(cx));
-
-  JS::RootedValue exn(cx);
-  if (!JS_GetPendingException(cx, &exn)) {
-    return;
-  }
-  if (!exn.isObject()) {
-    // If pending exception is not an object, it should be OOM.
-    return;
-  }
-
   JS::AutoSaveExceptionState savedExc(cx);
-  JS::RootedObject exnObj(cx, &exn.toObject());
+  JS::RootedObject exnObj(cx, &error.toObject());
   JS::RootedValue messageVal(cx);
   if (!JS_GetProperty(cx, exnObj, "message", &messageVal)) {
     return;
   }
-  MOZ_ASSERT(messageVal.isString());
-
   JS::RootedString messageStr(cx, messageVal.toString());
   MOZ_ASSERT(messageStr);
 
@@ -6488,15 +6434,16 @@ Maybe<bool> nsContentUtils::IsPatternMatching(nsAString& aValue,
 
   // Check if the pattern by itself is valid first, and not that it only becomes
   // valid once we add ^(?: and )$.
-  {
-    JS::Rooted<JSObject*> testRe(
-        cx, JS::NewUCRegExpObject(
-                cx, static_cast<char16_t*>(aPattern.BeginWriting()),
-                aPattern.Length(), JS::RegExpFlag::Unicode));
-    if (!testRe) {
-      ReportPatternCompileFailure(aPattern, aDocument, cx);
-      return Some(true);
-    }
+  JS::RootedValue error(cx);
+  if (!JS::CheckRegExpSyntax(
+          cx, static_cast<char16_t*>(aPattern.BeginWriting()),
+          aPattern.Length(), JS::RegExpFlag::Unicode, &error)) {
+    return Nothing();
+  }
+
+  if (!error.isUndefined()) {
+    ReportPatternCompileFailure(aPattern, aDocument, &error, cx);
+    return Some(true);
   }
 
   // The pattern has to match the entire value.
@@ -6507,8 +6454,9 @@ Maybe<bool> nsContentUtils::IsPatternMatching(nsAString& aValue,
       cx,
       JS::NewUCRegExpObject(cx, static_cast<char16_t*>(aPattern.BeginWriting()),
                             aPattern.Length(), JS::RegExpFlag::Unicode));
-  // We checked that the pattern is valid above.
-  MOZ_ASSERT(re, "Adding ^(?: and )$ shouldn't make a valid regexp invalid");
+  if (!re) {
+    return Nothing();
+  }
 
   JS::Rooted<JS::Value> rval(cx, JS::NullValue());
   size_t idx = 0;
@@ -6862,9 +6810,9 @@ bool nsContentUtils::IsForbiddenRequestHeader(const nsACString& aHeader) {
   }
 
   return StringBeginsWith(aHeader, NS_LITERAL_CSTRING("proxy-"),
-                          nsCaseInsensitiveCStringComparator()) ||
+                          nsCaseInsensitiveCStringComparator) ||
          StringBeginsWith(aHeader, NS_LITERAL_CSTRING("sec-"),
-                          nsCaseInsensitiveCStringComparator());
+                          nsCaseInsensitiveCStringComparator);
 }
 
 // static
@@ -7844,11 +7792,11 @@ int16_t nsContentUtils::GetButtonsFlagForButton(int32_t aButton) {
 LayoutDeviceIntPoint nsContentUtils::ToWidgetPoint(
     const CSSPoint& aPoint, const nsPoint& aOffset,
     nsPresContext* aPresContext) {
+  nsPoint layoutRelative = CSSPoint::ToAppUnits(aPoint) + aOffset;
+  nsPoint visualRelative =
+      ViewportUtils::LayoutToVisual(layoutRelative, aPresContext->PresShell());
   return LayoutDeviceIntPoint::FromAppUnitsRounded(
-      (CSSPoint::ToAppUnits(aPoint) + aOffset)
-          .ApplyResolution(nsLayoutUtils::GetCurrentAPZResolutionScale(
-              aPresContext->PresShell())),
-      aPresContext->AppUnitsPerDevPixel());
+      visualRelative, aPresContext->AppUnitsPerDevPixel());
 }
 
 nsView* nsContentUtils::GetViewToDispatchEvent(nsPresContext* aPresContext,
@@ -8032,7 +7980,8 @@ bool nsContentUtils::IsPreloadType(nsContentPolicyType aType) {
   return (aType == nsIContentPolicy::TYPE_INTERNAL_SCRIPT_PRELOAD ||
           aType == nsIContentPolicy::TYPE_INTERNAL_MODULE_PRELOAD ||
           aType == nsIContentPolicy::TYPE_INTERNAL_IMAGE_PRELOAD ||
-          aType == nsIContentPolicy::TYPE_INTERNAL_STYLESHEET_PRELOAD);
+          aType == nsIContentPolicy::TYPE_INTERNAL_STYLESHEET_PRELOAD ||
+          aType == nsIContentPolicy::TYPE_INTERNAL_FONT_PRELOAD);
 }
 
 /* static */
@@ -9014,11 +8963,6 @@ bool nsContentUtils::HttpsStateIsModern(Document* aDocument) {
 bool nsContentUtils::ComputeIsSecureContext(nsIChannel* aChannel) {
   MOZ_ASSERT(aChannel);
 
-  nsCOMPtr<nsILoadInfo> loadInfo = aChannel->LoadInfo();
-  // The assertion would be relaxed due to COEP support.
-  MOZ_ASSERT(loadInfo->GetExternalContentPolicyType() ==
-             nsIContentPolicy::TYPE_DOCUMENT);
-
   nsCOMPtr<nsIScriptSecurityManager> ssm = nsContentUtils::GetSecurityManager();
   nsCOMPtr<nsIPrincipal> principal;
   nsresult rv = ssm->GetChannelResultPrincipalIfNotSandboxed(
@@ -9028,6 +8972,7 @@ bool nsContentUtils::ComputeIsSecureContext(nsIChannel* aChannel) {
   }
 
   if (principal->IsSystemPrincipal()) {
+    nsCOMPtr<nsILoadInfo> loadInfo = aChannel->LoadInfo();
     // If the load would've been sandboxed, treat this load as an untrusted
     // load, as system code considers sandboxed resources insecure.
     return !loadInfo->GetLoadingSandboxed();

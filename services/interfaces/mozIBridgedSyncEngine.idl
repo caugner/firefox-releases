@@ -5,7 +5,6 @@
 #include "mozIServicesLogger.idl"
 #include "nsISupports.idl"
 
-interface nsICancelable;
 interface nsIVariant;
 
 // A generic callback called with a result. Variants are automatically unboxed
@@ -29,15 +28,14 @@ interface mozIBridgedSyncEngineApplyCallback : nsISupports {
     // records, and has outgoing records. Sync encrypts and uploads these
     // records, and notifies the engine that the upload succeeded by
     // calling `engine.setUploaded(uploadedOutgoingRecordIds, ...)`.
-    void handleSuccess(in Array<AUTF8String> outgoingRecordsAsJSON);
+    void handleSuccess(in Array<AUTF8String> outgoingEnvelopesAsJSON);
 
     // Notifies Sync that the bridged engine failed to apply the staged records.
     void handleError(in nsresult code, in AUTF8String message);
 };
 
-// A bridged engine is implemented in native (Rust) code. It handles storage
-// internally, and exposes a minimal interface for the JS Sync code to
-// control it.
+// A bridged engine is implemented in Rust. It handles storage internally, and
+// exposes a minimal interface for the JS Sync code to control it.
 [scriptable, uuid(3b2b80be-c30e-4498-8065-01809cfe8d47)]
 interface mozIBridgedSyncEngine : nsISupports {
     // The storage version for this engine's collection. If the version in the
@@ -46,13 +44,26 @@ interface mozIBridgedSyncEngine : nsISupports {
     // collection on the server, and upload our data as if on a first sync.
     readonly attribute long storageVersion;
 
+    // Whether this engine tolerates skipped records, where a "skipped" record
+    // is one that would cause the server's published limits to be exceeded
+    // (for example, a single record where the payload is larger than the
+    // server accepts.)
+    // If this returns true, we will just skip the record without even attempting
+    // to upload. If this is false, we'll abort the entire batch.
+    // If the engine allows this, it will need to detect this scenario by noticing
+    // the ID is not in the 'success' records reported to `setUploaded`.
+    // (Note that this is not to be confused with the fact server's can currently
+    // reject records as part of a POST - but we hope to remove this ability from
+    // the server API. Note also that this is not bullet-proof - if the count of
+    // records is high, it's possible that we will have committed a previous
+    // batch before we hit the relevant limits, so things might have been written.
+    // We hope to fix this by ensuring batch limits are such that this is
+    // impossible)
+    readonly attribute boolean allowSkippedRecord;
+
     // Wires up the Sync logging machinery to the bridged engine. This can be
     // `null`, in which case any logs from the engine will be discarded.
     attribute mozIServicesLogger logger;
-
-    // Initializes the engine. Sync is guaranteed to call this method before
-    // any of the engine's methods.
-    void initialize(in mozIBridgedSyncEngineCallback callback);
 
     // Returns the last sync time, in milliseconds, for this engine's
     // collection. This is used to build the collection URL for fetching
@@ -104,36 +115,40 @@ interface mozIBridgedSyncEngine : nsISupports {
     void ensureCurrentSyncId(in AUTF8String newSyncId,
                              in mozIBridgedSyncEngineCallback callback);
 
+    // Notifies the engine that sync is starting. The engine can use this method
+    // to set up temp tables for merging, for example. This will only be called
+    // once per sync, and before any `storeIncoming` calls.
+    void syncStarted(in mozIBridgedSyncEngineCallback callback);
+
     // Stages a batch of incoming records, and calls the `callback` when
     // done. This method may be called multiple times per sync, once per
-    // incoming batch. Flushing incoming records more often incurs more writes
-    // to disk, but avoids redownloading and reapplying more records if syncing
-    // is interrupted. Returns a "pending operation" object with a `cancel`
-    // method that can be used to interrupt staging. Typically, engines will
-    // stage incoming records in an SQLite temp table, and merge them with the
-    // local database when `apply` is called.
-    nsICancelable storeIncoming(in Array<AUTF8String> incomingRecordsAsJSON,
-                                in mozIBridgedSyncEngineCallback callback);
+    // incoming batch, and always after `syncStarted`. Flushing incoming records
+    // more often incurs more writes to disk, but avoids redownloading and
+    // reapplying more records if syncing is interrupted. Typically, engines
+    // will stage incoming records in an SQLite temp table, and merge them with
+    // the local database when `apply` is called.
+    void storeIncoming(in Array<AUTF8String> incomingEnvelopesAsJSON,
+                       in mozIBridgedSyncEngineCallback callback);
 
     // Applies all the staged records, and calls the `callback` with
     // outgoing records to upload. This will always be called after
     // `storeIncoming`, and only once per sync. Application should be atomic:
     // either all incoming records apply successfully, or none.
-    nsICancelable apply(in mozIBridgedSyncEngineApplyCallback callback);
+    void apply(in mozIBridgedSyncEngineApplyCallback callback);
 
     // Notifies the engine that Sync successfully uploaded the records with the
     // given IDs. This method may be called multiple times per sync, once per
     // batch upload. This will always be called after `apply`.
-    nsICancelable setUploaded(in long long newTimestampMillis,
-                              in Array<AUTF8String> uploadedIds,
-                              in mozIBridgedSyncEngineCallback callback);
+    void setUploaded(in long long newTimestampMillis,
+                     in Array<AUTF8String> uploadedIds,
+                     in mozIBridgedSyncEngineCallback callback);
 
     // Notifies the engine that syncing has finished, and the engine shouldn't
     // expect any more `setUploaded` calls. At this point, any outgoing records
     // that weren't passed to `setUploaded` should be assumed failed. This is
     // guaranteed to be called even if the sync fails. This will only be called
     // once per sync.
-    nsICancelable syncFinished(in mozIBridgedSyncEngineCallback callback);
+    void syncFinished(in mozIBridgedSyncEngineCallback callback);
 
     // Resets all local Sync metadata, including the sync ID, last sync time,
     // and any change flags, but preserves all data. After a reset, the engine will
@@ -142,8 +157,4 @@ interface mozIBridgedSyncEngine : nsISupports {
 
     // Erases all locally stored data and metadata for this engine.
     void wipe(in mozIBridgedSyncEngineCallback callback);
-
-    // Tears down the engine, including closing any connections. Sync calls this
-    // method when an engine is disabled.
-    void finalize(in mozIBridgedSyncEngineCallback callback);
 };

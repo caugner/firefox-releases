@@ -778,7 +778,7 @@ class CGPrototypeJSClass(CGThing):
               ${prototypeID},
               ${depth},
               ${hooks},
-              "[object ${name}Prototype]",
+              nullptr,
               ${protoGetter}
             };
             """,
@@ -884,14 +884,14 @@ class CGInterfaceObjectJSClass(CGThing):
                 classString = "Object"
             else:
                 classString = classString[0]
-            toStringResult = "[object %s]" % classString
+            funToString = "nullptr"
             objectOps = "JS_NULL_OBJECT_OPS"
         else:
             classString = "Function"
-            toStringResult = ("function %s() {\\n    [native code]\\n}" %
+            funToString = ("\"function %s() {\\n    [native code]\\n}\"" %
                               self.descriptor.interface.identifier.name)
             # We need non-default ObjectOps so we can actually make
-            # use of our toStringResult.
+            # use of our funToString.
             objectOps = "&sInterfaceObjectClassObjectOps"
 
         ret = ret + fill(
@@ -910,7 +910,7 @@ class CGInterfaceObjectJSClass(CGThing):
               ${prototypeID},
               ${depth},
               ${hooks},
-              "${toStringResult}",
+              ${funToString},
               ${protoGetter}
             };
             """,
@@ -922,7 +922,7 @@ class CGInterfaceObjectJSClass(CGThing):
             needsHasInstance=toStringBool(needsHasInstance),
             prototypeID=prototypeID,
             depth=depth,
-            toStringResult=toStringResult,
+            funToString=funToString,
             protoGetter=protoGetter)
         return ret
 
@@ -2701,6 +2701,9 @@ class AttrDefiner(PropertyDefiner):
         self.regular = [m for m in attributes if not isChromeOnly(m["attr"])]
         self.static = static
 
+        if not static and not unforgeable and descriptor.interface.hasInterfacePrototypeObject():
+            self.regular.append({"name": "@@toStringTag", "attr": None, "flags": "JSPROP_READONLY"})
+
         if static:
             if not descriptor.interface.hasInterfaceObject():
                 # static attributes go on the interface object
@@ -2721,10 +2724,15 @@ class AttrDefiner(PropertyDefiner):
 
     @staticmethod
     def condition(m, d):
+        if m["name"] == "@@toStringTag":
+            return MemberCondition()
         return PropertyDefiner.getControllingCondition(m["attr"], d)
 
     @staticmethod
     def specData(entry, descriptor, static=False, crossOriginOnly=False):
+        if entry["name"] == "@@toStringTag":
+            return (entry["name"], entry["flags"], descriptor.interface.getClassName())
+
         def getter(attr):
             if crossOriginOnly and not attr.getExtendedAttribute("CrossOriginReadable"):
                 return "nullptr, nullptr"
@@ -2811,6 +2819,9 @@ class AttrDefiner(PropertyDefiner):
 
     @staticmethod
     def formatSpec(fields):
+        if fields[0] == "@@toStringTag":
+            return '  JS_STRING_SYM_PS(%s, "%s", %s)' % (fields[0][2:], fields[2], fields[1])
+
         return '  JSPropertySpec::nativeAccessors("%s", %s, %s, %s)' % fields
 
     def generateArray(self, array, name):
@@ -3224,19 +3235,12 @@ class CGCreateInterfaceObjectsMethod(CGAbstractMethod):
         else:
             chromeProperties = "nullptr"
 
-        toStringTag = self.descriptor.interface.toStringTag
-        if toStringTag:
-            toStringTag = '"%s"' % toStringTag
-        else:
-            toStringTag = "nullptr"
-
         call = fill(
             """
             JS::Heap<JSObject*>* protoCache = ${protoCache};
             JS::Heap<JSObject*>* interfaceCache = ${interfaceCache};
             dom::CreateInterfaceObjects(aCx, aGlobal, ${parentProto},
                                         ${protoClass}, protoCache,
-                                        ${toStringTag},
                                         ${constructorProto}, ${interfaceClass}, ${constructArgs}, ${namedConstructors},
                                         interfaceCache,
                                         ${properties},
@@ -3249,7 +3253,6 @@ class CGCreateInterfaceObjectsMethod(CGAbstractMethod):
             protoClass=protoClass,
             parentProto=parentProto,
             protoCache=protoCache,
-            toStringTag=toStringTag,
             constructorProto=constructorProto,
             interfaceClass=interfaceClass,
             constructArgs=constructArgs,
@@ -4519,7 +4522,7 @@ class CastableObjectUnwrapper():
                 // that already has a content reflection...
                 if (!IsDOMObject(js::UncheckedUnwrap(&${source}.toObject()))) {
                   nsCOMPtr<nsIGlobalObject> contentGlobal;
-                  JS::Handle<JSObject*> callback = CallbackOrNull();
+                  JS::Rooted<JSObject*> callback(cx, CallbackOrNull());
                   if (!callback ||
                       !GetContentGlobalForJSImplementedObject(cx, callback, getter_AddRefs(contentGlobal))) {
                     $*{exceptionCode}
@@ -5021,7 +5024,7 @@ def getJSToNativeConversionInfo(type, descriptorProvider, failureCode=None,
                                         declArgs=declArgs)
 
     def incrementNestingLevel():
-        if nestingLevel is "":
+        if nestingLevel == "":
             return 1
         return nestingLevel + 1
 
@@ -16881,7 +16884,8 @@ class CGJSImplClass(CGBindingImplClass):
             if (!JS_WrapObject(aCx, &obj)) {
               return nullptr;
             }
-            if (!JS_DefineProperty(aCx, mImpl->CallbackOrNull(), "__DOM_IMPL__", obj, 0)) {
+            JS::Rooted<JSObject*> callback(aCx, mImpl->CallbackOrNull());
+            if (!JS_DefineProperty(aCx, callback, "__DOM_IMPL__", obj, 0)) {
               return nullptr;
             }
             return obj;
@@ -17329,7 +17333,7 @@ class CallbackMember(CGNativeMember):
     def __init__(self, sig, name, descriptorProvider, needThisHandling,
                  rethrowContentException=False,
                  spiderMonkeyInterfacesAreStructs=False,
-                 wrapScope='CallbackKnownNotGray()',
+                 wrapScope=None,
                  canRunScript=False):
         """
         needThisHandling is True if we need to be able to accept a specified
@@ -17463,6 +17467,7 @@ class CallbackMember(CGNativeMember):
             jsvalIndex = "%d" % i
             if arg.canHaveMissingValue():
                 argval += ".Value()"
+
         if arg.type.isDOMString():
             # XPConnect string-to-JS conversion wants to mutate the string.  So
             # let's give it a string it can mutate
@@ -17472,6 +17477,10 @@ class CallbackMember(CGNativeMember):
         else:
             result = argval
             prepend = ""
+
+        if arg.type.isUnion() and self.wrapScope is None:
+            prepend += "JS::Rooted<JSObject*> callbackObj(cx, CallbackKnownNotGray());\n"
+            self.wrapScope = "callbackObj"
 
         conversion = prepend + wrapForType(
             arg.type, self.descriptorProvider,
@@ -17825,10 +17834,11 @@ class CallbackSetter(CallbackAccessor):
         return fill(
             """
             MOZ_ASSERT(argv.length() == 1);
+            JS::Rooted<JSObject*> callback(cx, CallbackKnownNotGray());
             ${atomCacheName}* atomsCache = GetAtomCache<${atomCacheName}>(cx);
             if ((JSID_IS_VOID(*reinterpret_cast<jsid*>(atomsCache)) &&
                  !InitIds(cx, atomsCache)) ||
-                !JS_SetPropertyById(cx, CallbackKnownNotGray(), atomsCache->${attrAtomName}, argv[0])) {
+                !JS_SetPropertyById(cx, callback, atomsCache->${attrAtomName}, argv[0])) {
               aRv.Throw(NS_ERROR_UNEXPECTED);
               return${errorReturn};
             }
@@ -18428,7 +18438,7 @@ class CGIterableMethodGenerator(CGGeneric):
                   cx.ThrowErrorMessage<MSG_NOT_CALLABLE>("Argument 1");
                   return false;
                 }
-                JS::AutoValueArray<3> callArgs(cx);
+                JS::RootedValueArray<3> callArgs(cx);
                 callArgs[2].setObject(*obj);
                 JS::Rooted<JS::Value> ignoredReturnVal(cx);
                 auto GetKeyAtIndex = &${selfType}::GetKeyAtIndex;
@@ -19004,7 +19014,10 @@ class CGEventGetter(CGNativeMember):
         if type.isUnion():
             return "aRetVal = " + memberName + ";\n"
         if type.isSequence():
-            return "aRetVal = " + memberName + ";\n"
+            if type.nullable():
+                return "if (" + memberName + ".IsNull()) { aRetVal.SetNull(); } else { aRetVal.SetValue(" + memberName + ".Value().Clone()); }\n"
+            else:
+                return "aRetVal = " + memberName + ".Clone();\n"
         raise TypeError("Event code generator does not support this type!")
 
     def declare(self, cgClass):

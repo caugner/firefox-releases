@@ -23,6 +23,7 @@
 #include "mozilla/dom/nsMixedContentBlocker.h"
 #include "mozilla/dom/ScriptSettings.h"
 #include "mozilla/dom/SerializedStackHolder.h"
+#include "mozilla/dom/UnionTypes.h"
 #include "mozilla/dom/WorkerPrivate.h"
 #include "mozilla/dom/WorkerRef.h"
 #include "mozilla/dom/WorkerRunnable.h"
@@ -789,10 +790,14 @@ WebSocketImpl::OnAcknowledge(nsISupports* aContext, uint32_t aSize) {
     return NS_ERROR_UNEXPECTED;
   }
 
-  mWebSocket->mOutgoingBufferedAmount -= aSize;
-  if (!mWebSocket->mOutgoingBufferedAmount.isValid()) {
+  CheckedUint64 outgoingBufferedAmount = mWebSocket->mOutgoingBufferedAmount;
+  outgoingBufferedAmount -= aSize;
+  if (!outgoingBufferedAmount.isValid()) {
     return NS_ERROR_UNEXPECTED;
   }
+
+  mWebSocket->mOutgoingBufferedAmount = outgoingBufferedAmount;
+  MOZ_RELEASE_ASSERT(mWebSocket->mOutgoingBufferedAmount.isValid());
 
   return NS_OK;
 }
@@ -892,58 +897,27 @@ JSObject* WebSocket::WrapObject(JSContext* cx,
   return WebSocket_Binding::Wrap(cx, this, aGivenProto);
 }
 
-void WebSocket::BindToOwner(nsIGlobalObject* aNew) {
-  auto scopeExit =
-      MakeScopeExit([&] { DOMEventTargetHelper::BindToOwner(aNew); });
-
-  // If we're disconnected, then there is no state to update.
-  if (!mImpl || mImpl->mDisconnectingOrDisconnected) {
-    return;
-  }
-
-  // Update state on the old window.
-  if (GetOwner()) {
-    GetOwner()->UpdateWebSocketCount(-1);
-  }
-
-  // Update state on the new window
-  nsCOMPtr<nsPIDOMWindowInner> newWindow = do_QueryInterface(aNew);
-  if (newWindow) {
-    newWindow->UpdateWebSocketCount(1);
-  }
-}
-
 //---------------------------------------------------------------------------
 // WebIDL
 //---------------------------------------------------------------------------
 
 // Constructor:
-already_AddRefed<WebSocket> WebSocket::Constructor(const GlobalObject& aGlobal,
-                                                   const nsAString& aUrl,
-                                                   ErrorResult& aRv) {
-  Sequence<nsString> protocols;
-  return WebSocket::ConstructorCommon(aGlobal, aUrl, protocols, nullptr,
-                                      EmptyCString(), aRv);
-}
+already_AddRefed<WebSocket> WebSocket::Constructor(
+    const GlobalObject& aGlobal, const nsAString& aUrl,
+    const StringOrStringSequence& aProtocols, ErrorResult& aRv) {
+  if (aProtocols.IsStringSequence()) {
+    return WebSocket::ConstructorCommon(aGlobal, aUrl,
+                                        aProtocols.GetAsStringSequence(),
+                                        nullptr, EmptyCString(), aRv);
+  }
 
-already_AddRefed<WebSocket> WebSocket::Constructor(const GlobalObject& aGlobal,
-                                                   const nsAString& aUrl,
-                                                   const nsAString& aProtocol,
-                                                   ErrorResult& aRv) {
   Sequence<nsString> protocols;
-  if (!protocols.AppendElement(aProtocol, fallible)) {
+  if (!protocols.AppendElement(aProtocols.GetAsString(), fallible)) {
     aRv.Throw(NS_ERROR_OUT_OF_MEMORY);
     return nullptr;
   }
 
   return WebSocket::ConstructorCommon(aGlobal, aUrl, protocols, nullptr,
-                                      EmptyCString(), aRv);
-}
-
-already_AddRefed<WebSocket> WebSocket::Constructor(
-    const GlobalObject& aGlobal, const nsAString& aUrl,
-    const Sequence<nsString>& aProtocols, ErrorResult& aRv) {
-  return WebSocket::ConstructorCommon(aGlobal, aUrl, aProtocols, nullptr,
                                       EmptyCString(), aRv);
 }
 
@@ -1363,8 +1337,8 @@ already_AddRefed<WebSocket> WebSocket::ConstructorCommon(
     nsPIDOMWindowOuter* outerWindow = ownerWindow->GetOuterWindow();
 
     UniquePtr<SerializedStackHolder> stack;
-    nsIDocShell* docShell = outerWindow->GetDocShell();
-    if (docShell && docShell->GetWatchedByDevtools()) {
+    BrowsingContext* browsingContext = ownerWindow->GetBrowsingContext();
+    if (browsingContext && browsingContext->WatchedByDevTools()) {
       stack = GetCurrentStackForNetMonitor(aGlobal.Context());
     }
 
@@ -1388,7 +1362,7 @@ already_AddRefed<WebSocket> WebSocket::ConstructorCommon(
 
     UniquePtr<SerializedStackHolder> stack;
     WorkerPrivate* workerPrivate = GetCurrentThreadWorkerPrivate();
-    if (workerPrivate->IsWatchedByDevtools()) {
+    if (workerPrivate->IsWatchedByDevTools()) {
       stack = GetCurrentStackForNetMonitor(aGlobal.Context());
     }
 
@@ -2199,8 +2173,8 @@ void WebSocket::SetReadyState(uint16_t aReadyState) {
   mReadyState = aReadyState;
 }
 
-// webIDL: readonly attribute unsigned long bufferedAmount;
-uint32_t WebSocket::BufferedAmount() const {
+// webIDL: readonly attribute unsigned long long bufferedAmount;
+uint64_t WebSocket::BufferedAmount() const {
   AssertIsOnTargetThread();
   MOZ_RELEASE_ASSERT(mOutgoingBufferedAmount.isValid());
   return mOutgoingBufferedAmount.value();
@@ -2309,12 +2283,16 @@ void WebSocket::Send(nsIInputStream* aMsgStream, const nsACString& aMsgString,
     return;
   }
 
-  // Always increment outgoing buffer len, even if closed
-  mOutgoingBufferedAmount += aMsgLength;
-  if (!mOutgoingBufferedAmount.isValid()) {
+  CheckedUint64 outgoingBufferedAmount = mOutgoingBufferedAmount;
+  outgoingBufferedAmount += aMsgLength;
+  if (!outgoingBufferedAmount.isValid()) {
     aRv.Throw(NS_ERROR_OUT_OF_MEMORY);
     return;
   }
+
+  // Always increment outgoing buffer len, even if closed
+  mOutgoingBufferedAmount = outgoingBufferedAmount;
+  MOZ_RELEASE_ASSERT(mOutgoingBufferedAmount.isValid());
 
   if (readyState == CLOSING || readyState == CLOSED) {
     return;

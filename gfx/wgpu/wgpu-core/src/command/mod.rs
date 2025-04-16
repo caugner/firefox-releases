@@ -19,7 +19,7 @@ use crate::{
     id,
     resource::{Buffer, Texture},
     track::TrackerSet,
-    Features, LifeGuard, Stored,
+    LifeGuard, PrivateFeatures, Stored,
 };
 
 use peek_poke::PeekPoke;
@@ -27,7 +27,7 @@ use peek_poke::PeekPoke;
 use std::{marker::PhantomData, mem, ptr, slice, thread::ThreadId};
 
 #[derive(Clone, Copy, Debug, PeekPoke)]
-struct PhantomSlice<T>(PhantomData<T>);
+pub struct PhantomSlice<T>(PhantomData<T>);
 
 impl<T> Default for PhantomSlice<T> {
     fn default() -> Self {
@@ -46,7 +46,12 @@ impl<T> PhantomSlice<T> {
         let aligned = pointer.add(align_offset);
         let size = count * mem::size_of::<T>();
         let end = aligned.add(size);
-        assert!(end <= bound);
+        assert!(
+            end <= bound,
+            "End of phantom slice ({:?}) exceeds bound ({:?})",
+            end,
+            bound
+        );
         (end, slice::from_raw_parts(aligned as *const T, count))
     }
 }
@@ -88,11 +93,28 @@ impl RawPass {
         self.data as usize - self.base as usize
     }
 
-    pub unsafe fn into_vec(self) -> (Vec<u8>, id::CommandEncoderId) {
+    /// Recover the data vector of the pass, consuming `self`.
+    unsafe fn into_vec(mut self) -> (Vec<u8>, id::CommandEncoderId) {
+        (self.invalidate(), self.parent)
+    }
+
+    /// Make pass contents invalid, return the contained data.
+    ///
+    /// Any following access to the pass will result in a crash
+    /// for accessing address 0.
+    pub unsafe fn invalidate(&mut self) -> Vec<u8> {
         let size = self.size();
-        assert!(size <= self.capacity);
+        assert!(
+            size <= self.capacity,
+            "Size of RawPass ({}) exceeds capacity ({})",
+            size,
+            self.capacity
+        );
         let vec = Vec::from_raw_parts(self.base, size, self.capacity);
-        (vec, self.parent)
+        self.data = ptr::null_mut();
+        self.base = ptr::null_mut();
+        self.capacity = 0;
+        vec
     }
 
     unsafe fn ensure_extra_size(&mut self, extra_size: usize) {
@@ -109,13 +131,13 @@ impl RawPass {
     }
 
     #[inline]
-    unsafe fn encode<C: peek_poke::Poke>(&mut self, command: &C) {
+    pub unsafe fn encode<C: peek_poke::Poke>(&mut self, command: &C) {
         self.ensure_extra_size(C::max_size());
         self.data = command.poke_into(self.data);
     }
 
     #[inline]
-    unsafe fn encode_slice<T: Copy>(&mut self, data: &[T]) {
+    pub unsafe fn encode_slice<T: Copy>(&mut self, data: &[T]) {
         let align_offset = self.data.align_offset(mem::align_of::<T>());
         let extra = align_offset + mem::size_of::<T>() * data.len();
         self.ensure_extra_size(extra);
@@ -138,7 +160,10 @@ pub struct CommandBuffer<B: hal::Backend> {
     pub(crate) life_guard: LifeGuard,
     pub(crate) trackers: TrackerSet,
     pub(crate) used_swap_chain: Option<(Stored<id::SwapChainId>, B::Framebuffer)>,
-    pub(crate) features: Features,
+    limits: wgt::Limits,
+    private_features: PrivateFeatures,
+    #[cfg(feature = "trace")]
+    pub(crate) commands: Option<Vec<crate::device::trace::Command>>,
 }
 
 impl<B: GfxBackend> CommandBuffer<B> {
@@ -235,7 +260,7 @@ impl<G: GlobalIdentityHandlerFactory> Global<G> {
         //TODO: actually close the last recorded command buffer
         let (mut comb_guard, _) = hub.command_buffers.write(&mut token);
         let comb = &mut comb_guard[encoder_id];
-        assert!(comb.is_recording);
+        assert!(comb.is_recording, "Command buffer must be recording");
         comb.is_recording = false;
         // stop tracking the swapchain image, if used
         if let Some((ref sc_id, _)) = comb.used_swap_chain {

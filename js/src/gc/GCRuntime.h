@@ -48,8 +48,6 @@ struct MovingTracer;
 enum class ShouldCheckThresholds;
 class SweepGroupsIter;
 
-enum IncrementalProgress { NotFinished = 0, Finished };
-
 // Interface to a sweep action.
 struct SweepAction {
   // The arguments passed to each action.
@@ -507,6 +505,7 @@ class GCRuntime {
   bool isIncrementalGc() const { return isIncremental; }
   bool isFullGc() const { return isFull; }
   bool isCompactingGc() const { return isCompacting; }
+  bool didCompactZones() const { return isCompacting && zonesCompacted; }
 
   bool areGrayBitsValid() const { return grayBitsValid; }
   void setGrayBitsInvalid() { grayBitsValid = false; }
@@ -736,17 +735,17 @@ class GCRuntime {
   void findDeadCompartments();
 
   friend class SweepMarkTask;
-  IncrementalProgress markUntilBudgetExhausted(SliceBudget& sliceBudget,
-                                               gcstats::PhaseKind phase);
-  IncrementalProgress markUntilBudgetExhausted(SliceBudget& sliceBudget);
+  IncrementalProgress markUntilBudgetExhausted(
+      SliceBudget& sliceBudget,
+      GCMarker::ShouldReportMarkTime reportTime = GCMarker::ReportMarkTime);
   void drainMarkStack();
   template <class ZoneIterT>
-  void markWeakReferences(gcstats::PhaseKind phase);
-  void markWeakReferencesInCurrentGroup(gcstats::PhaseKind phase);
+  IncrementalProgress markWeakReferences(SliceBudget& budget);
+  IncrementalProgress markWeakReferencesInCurrentGroup(SliceBudget& budget);
   template <class ZoneIterT>
   void markGrayRoots(gcstats::PhaseKind phase);
   void markBufferedGrayRoots(JS::Zone* zone);
-  void markAllWeakReferences(gcstats::PhaseKind phase);
+  IncrementalProgress markAllWeakReferences();
   void markAllGrayReferences(gcstats::PhaseKind phase);
 
   void beginSweepPhase(JS::GCReason reason, AutoGCSession& session);
@@ -1015,6 +1014,11 @@ class GCRuntime {
   // Whether it's currently safe to yield to the mutator in an incremental GC.
   MainThreadData<bool> safeToYield;
 
+  // Whether to do any marking caused by barriers on a background thread during
+  // incremental sweeping, while also sweeping zones which have finished
+  // marking.
+  MainThreadData<bool> markOnBackgroundThreadDuringSweeping;
+
   /* Whether any sweeping will take place in the separate GC helper thread. */
   MainThreadData<bool> sweepOnBackgroundThread;
 
@@ -1073,6 +1077,7 @@ class GCRuntime {
   MainThreadData<bool> startedCompacting;
   MainThreadData<ZoneList> zonesToMaybeCompact;
   MainThreadData<Arena*> relocatedArenasToRelease;
+  MainThreadData<size_t> zonesCompacted;
 
 #ifdef JS_GC_ZEAL
   MainThreadData<MarkingValidator*> markingValidator;

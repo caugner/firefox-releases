@@ -37,7 +37,7 @@ class MachCommands(MachCommandBase):
         MachCommandBase.__init__(self, context)
 
     @Command('valgrind-test', category='testing',
-             conditions=[conditions.is_firefox, is_valgrind_build],
+             conditions=[conditions.is_firefox_or_thunderbird, is_valgrind_build],
              description='Run the Valgrind test job (memory-related errors).')
     @CommandArgument('--suppressions', default=[], action='append',
                      metavar='FILENAME',
@@ -106,7 +106,10 @@ class MachCommands(MachCommandBase):
             env['XPCOM_DEBUG_BREAK'] = 'warn'
 
             outputHandler = OutputHandler(self.log)
-            kp_kwargs = {'processOutputLine': [outputHandler]}
+            kp_kwargs = {
+                'processOutputLine': [outputHandler],
+                'universal_newlines': True,
+            }
 
             valgrind = 'valgrind'
             if not os.path.exists(valgrind):

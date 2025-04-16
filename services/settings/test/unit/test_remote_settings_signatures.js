@@ -6,8 +6,14 @@ const { Services } = ChromeUtils.import("resource://gre/modules/Services.jsm");
 const { RemoteSettings } = ChromeUtils.import(
   "resource://services-settings/remote-settings.js"
 );
+const { RemoteSettingsClient } = ChromeUtils.import(
+  "resource://services-settings/RemoteSettingsClient.jsm"
+);
 const { UptakeTelemetry } = ChromeUtils.import(
   "resource://services-common/uptake-telemetry.js"
+);
+const { TelemetryTestUtils } = ChromeUtils.import(
+  "resource://testing-common/TelemetryTestUtils.jsm"
 );
 
 const PREF_SETTINGS_SERVER = "services.settings.server";
@@ -590,6 +596,7 @@ add_task(async function test_check_synchronization_with_signatures() {
   // the local DB contains same id as RECORD2 and a fake record.
   // the final server collection contains RECORD2 and RECORD3
   await client.db.clear();
+  await client.db.saveMetadata({ signature: { x5u, signature: "abc" } });
   await client.db.create(
     { ...RECORD2, last_modified: 1234567890, serialNumber: "abc" },
     { synced: true, useRecordId: true }
@@ -602,11 +609,34 @@ add_task(async function test_check_synchronization_with_signatures() {
     syncData = data;
   });
 
-  await client.maybeSync(5000);
+  // Clear events snapshot.
+  TelemetryTestUtils.assertEvents([], {}, { process: "dummy" });
 
-  // Local data was replaced. But we use records IDs to determine
-  // what was created and deleted. So fake local data will appear
-  // in the sync event.
+  await withFakeChannel("nightly", async () => {
+    // Events telemetry is sampled on released, use fake channel.
+    await client.maybeSync(5000);
+
+    // We should report a corruption_error.
+    TelemetryTestUtils.assertEvents([
+      [
+        "uptake.remotecontent.result",
+        "uptake",
+        "remotesettings",
+        UptakeTelemetry.STATUS.CORRUPTION_ERROR,
+        {
+          source: client.identifier,
+          duration: v => v > 0,
+          trigger: "manual",
+        },
+      ],
+    ]);
+  });
+
+  // The local data was corrupted, and the Telemetry status reflects it.
+  // But the sync overwrote the bad data and was eventually a success.
+  // Since local data was replaced, we use records IDs to determine
+  // what was created and deleted. And bad local data will appear
+  // in the sync event as deleted.
   equal(syncData.current.length, 2);
   equal(syncData.created.length, 1);
   equal(syncData.created[0].id, RECORD3.id);
@@ -625,7 +655,7 @@ add_task(async function test_check_synchronization_with_signatures() {
   // are not applied.
 
   const RESPONSE_ONLY_RECORD4_BAD_SIG = {
-    comment: "Delete RECORD3, create RECORD4",
+    comment: "Create RECORD4",
     sampleHeaders: [
       "Content-Type: application/json; charset=UTF-8",
       'ETag: "6000"',
@@ -636,7 +666,7 @@ add_task(async function test_check_synchronization_with_signatures() {
       metadata: {
         signature: {
           x5u,
-          signature: "wrong-sig-here-too",
+          signature: "aaaaaaaaaaaaaaaaaaaaaaaa", // sig verifier wants proper length or will crash.
         },
       },
       changes: [
@@ -647,9 +677,22 @@ add_task(async function test_check_synchronization_with_signatures() {
       ],
     }),
   };
+  const RESPONSE_EMPTY_NO_UPDATE_BAD_SIG_6000 = {
+    ...RESPONSE_EMPTY_NO_UPDATE,
+    responseBody: JSON.stringify({
+      timestamp: 6000,
+      metadata: {
+        signature: {
+          x5u,
+          signature: "aW52YWxpZCBzaWduYXR1cmUK",
+        },
+      },
+      changes: [],
+    }),
+  };
   const allBadSigResponses = {
     "GET:/v1/buckets/main/collections/signed/changeset?_expected=6000&_since=%224000%22": [
-      RESPONSE_EMPTY_NO_UPDATE_BAD_SIG,
+      RESPONSE_EMPTY_NO_UPDATE_BAD_SIG_6000,
     ],
     "GET:/v1/buckets/main/collections/signed/changeset?_expected=6000": [
       RESPONSE_ONLY_RECORD4_BAD_SIG,
@@ -658,12 +701,11 @@ add_task(async function test_check_synchronization_with_signatures() {
 
   startHistogram = getUptakeTelemetrySnapshot(TELEMETRY_HISTOGRAM_KEY);
   registerHandlers(allBadSigResponses);
-  try {
-    await client.maybeSync(6000);
-    do_throw("Sync should fail (the signature is intentionally bad)");
-  } catch (e) {
-    ok(true, "Sync failed as expected (bad signature after retry)");
-  }
+  await Assert.rejects(
+    client.maybeSync(6000),
+    RemoteSettingsClient.InvalidSignatureError,
+    "Sync failed as expected (bad signature after retry)"
+  );
 
   // Ensure that the failure is reflected in the accumulated telemetry:
   endHistogram = getUptakeTelemetrySnapshot(TELEMETRY_HISTOGRAM_KEY);
@@ -671,13 +713,13 @@ add_task(async function test_check_synchronization_with_signatures() {
   checkUptakeTelemetry(startHistogram, endHistogram, expectedIncrements);
 
   // When signature fails after retry, the local data present before sync
-  // should be maintained.
+  // should be maintained (if its signature is valid).
   ok(
     arrayEqual(
       (await client.get()).map(r => r.id),
       [RECORD3.id, RECORD2.id]
     ),
-    "Remote changes were not changed"
+    "Local records were not changed"
   );
   // And local data should still be valid.
   await client.get({ verifySignature: true }); // Not raising.
@@ -695,62 +737,81 @@ add_task(async function test_check_synchronization_with_signatures() {
     tampered: true,
   });
 
-  try {
-    await client.maybeSync(6000);
-    do_throw("Sync should fail (the signature is intentionally bad)");
-  } catch (e) {
-    ok(true, "Sync failed as expected (bad signature after retry)");
-  }
+  await Assert.rejects(
+    client.maybeSync(6000),
+    RemoteSettingsClient.InvalidSignatureError,
+    "Sync failed as expected (bad signature after retry)"
+  );
+
+  // Since local data was tampered, it was cleared.
+  equal((await client.get()).length, 0, "Local database is now empty.");
+
+  //
+  // 10.
+  // - collection: [RECORD2, RECORD3] -> [] (cleared)
+  // - timestamp: 4000 -> 6000
+  //
+  // Check that local data is cleared during sync if signature is not valid.
+
+  await client.db.create({
+    id: "c6b19c67-2e0e-4a82-b7f7-1777b05f3e81",
+    last_modified: 42,
+    tampered: true,
+  });
+
+  await Assert.rejects(
+    client.maybeSync(6000),
+    RemoteSettingsClient.InvalidSignatureError,
+    "Sync failed as expected (bad signature after retry)"
+  );
   // Since local data was tampered, it was cleared.
   equal((await client.get()).length, 0, "Local database is now empty.");
 
   //
   // 11.
-  // - collection: [] -> []
+  // - collection: [RECORD2, RECORD3] -> [RECORD2, RECORD3]
   // - timestamp: 4000 -> 6000
   //
-  // Check that we don't apply changes when signature is missing in remote.
-
-  const RESPONSE_NO_SIG = {
-    sampleHeaders: [
-      "Content-Type: application/json; charset=UTF-8",
-      `ETag: \"123456\"`,
-    ],
-    status: { status: 200, statusText: "OK" },
-    responseBody: JSON.stringify({
-      metadata: {
-        last_modified: 123456,
-      },
-      changes: [],
-      timestamp: 123456,
-    }),
+  // Check that local data is restored if signature was valid before sync.
+  const sigCalls = [];
+  let i = 0;
+  client._verifier = {
+    async asyncVerifyContentSignature(serialized, signature) {
+      sigCalls.push(serialized);
+      console.log(`verify call ${i}`);
+      return [
+        false, // After importing changes.
+        true, // When checking previous local data.
+        false, // Still fail after retry.
+        true, // When checking previous local data again.
+      ][i++];
+    },
   };
+  // Pull changes from above tests.
+  await client.db.saveLastModified(4000);
+  await client.db.saveMetadata({ signature: { x5u, signature: "aa" } });
+  // Create an extra record. It will have a valid signature locally
+  // thanks to the verifier mock.
+  await client.db.create({
+    id: "extraId",
+    last_modified: 42,
+  });
+  equal((await client.get()).length, 1);
 
-  const missingSigResponses = {
-    // In this test, we deliberately serve metadata without the signature attribute.
-    // As if the collection was not signed.
-    "GET:/v1/buckets/main/collections/signed/changeset?_expected=6000": [
-      RESPONSE_NO_SIG,
-    ],
-  };
+  // Now sync, but importing changes will have failing signature,
+  // and so will retry (see `sigResults`).
+  await Assert.rejects(
+    client.maybeSync(6000),
+    RemoteSettingsClient.InvalidSignatureError,
+    "Sync failed as expected (bad signature after retry)"
+  );
+  equal(i, 4, "sync has retried as expected");
 
-  // Local data was empty after last test.
-  equal((await client.get()).length, 0);
-
-  startHistogram = getUptakeTelemetrySnapshot(TELEMETRY_HISTOGRAM_KEY);
-  registerHandlers(missingSigResponses);
-  try {
-    await client.maybeSync(6000);
-    do_throw("Sync should fail (the signature is missing)");
-  } catch (e) {
-    equal((await client.get()).length, 0, "Local remains empty");
-  }
-
-  // Ensure that the failure is reflected in the accumulated telemetry:
-  endHistogram = getUptakeTelemetrySnapshot(TELEMETRY_HISTOGRAM_KEY);
-  expectedIncrements = {
-    [UptakeTelemetry.STATUS.SIGNATURE_ERROR]: 1,
-    [UptakeTelemetry.STATUS.SIGNATURE_RETRY_ERROR]: 0, // Not retried since missing.
-  };
-  checkUptakeTelemetry(startHistogram, endHistogram, expectedIncrements);
+  // Make sure that we retried on a blank DB. The extra record should
+  // have been deleted when we validated the signature the second time.
+  // Since local data was tampered, it was cleared.
+  ok(/extraId/.test(sigCalls[0]), "extra record when importing changes");
+  ok(/extraId/.test(sigCalls[1]), "extra record when checking local");
+  ok(!/extraId/.test(sigCalls[2]), "db was flushed before retry");
+  ok(/extraId/.test(sigCalls[3]), "when checking local after retry");
 });

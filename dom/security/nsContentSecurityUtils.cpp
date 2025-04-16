@@ -25,6 +25,65 @@
 #include "mozilla/StaticPrefs_extensions.h"
 #include "mozilla/StaticPrefs_dom.h"
 
+// Helper function for IsConsideredSameOriginForUIR which makes
+// Principals of scheme 'http' return Principals of scheme 'https'.
+static already_AddRefed<nsIPrincipal> MakeHTTPPrincipalHTTPS(
+    nsIPrincipal* aPrincipal) {
+  nsCOMPtr<nsIPrincipal> principal = aPrincipal;
+  // if the principal is not http, then it can also not be upgraded
+  // to https.
+  if (!principal->SchemeIs("http")) {
+    return principal.forget();
+  }
+
+  nsAutoCString spec;
+  aPrincipal->GetAsciiSpec(spec);
+  // replace http with https
+  spec.ReplaceLiteral(0, 4, "https");
+
+  nsCOMPtr<nsIURI> newURI;
+  nsresult rv = NS_NewURI(getter_AddRefs(newURI), spec);
+  if (NS_WARN_IF(NS_FAILED(rv))) {
+    return nullptr;
+  }
+
+  mozilla::OriginAttributes OA =
+      BasePrincipal::Cast(aPrincipal)->OriginAttributesRef();
+
+  principal = BasePrincipal::CreateContentPrincipal(newURI, OA);
+  return principal.forget();
+}
+
+/* static */
+bool nsContentSecurityUtils::IsConsideredSameOriginForUIR(
+    nsIPrincipal* aTriggeringPrincipal, nsIPrincipal* aResultPrincipal) {
+  MOZ_ASSERT(aTriggeringPrincipal);
+  MOZ_ASSERT(aResultPrincipal);
+  // we only have to make sure that the following truth table holds:
+  // aTriggeringPrincipal         | aResultPrincipal             | Result
+  // ----------------------------------------------------------------
+  // http://example.com/foo.html  | http://example.com/bar.html  | true
+  // http://example.com/foo.html  | https://example.com/bar.html | true
+  // https://example.com/foo.html | https://example.com/bar.html | true
+  // https://example.com/foo.html | http://example.com/bar.html  | true
+
+  // fast path if both principals are same-origin
+  if (aTriggeringPrincipal->Equals(aResultPrincipal)) {
+    return true;
+  }
+
+  // in case a principal uses a scheme of 'http' then we just upgrade to
+  // 'https' and use the principal equals comparison operator to check
+  // for same-origin.
+  nsCOMPtr<nsIPrincipal> compareTriggeringPrincipal =
+      MakeHTTPPrincipalHTTPS(aTriggeringPrincipal);
+
+  nsCOMPtr<nsIPrincipal> compareResultPrincipal =
+      MakeHTTPPrincipalHTTPS(aResultPrincipal);
+
+  return compareTriggeringPrincipal->Equals(compareResultPrincipal);
+}
+
 /*
  * Performs a Regular Expression match, optionally returning the results.
  * This function is not safe to use OMT.
@@ -451,27 +510,17 @@ bool nsContentSecurityUtils::IsEvalAllowed(JSContext* cx,
   // function
   nsAutoCString fileName;
   uint32_t lineNumber = 0, columnNumber = 0;
-  JS::AutoFilename rawScriptFilename;
-  if (JS::DescribeScriptedCaller(cx, &rawScriptFilename, &lineNumber,
-                                 &columnNumber)) {
-    nsDependentCSubstring fileName_(rawScriptFilename.get(),
-                                    strlen(rawScriptFilename.get()));
-    ToLowerCase(fileName_);
-    // Extract file name alone if scriptFilename contains line number
-    // separated by multiple space delimiters in few cases.
-    int32_t fileNameIndex = fileName_.FindChar(' ');
-    if (fileNameIndex != -1) {
-      fileName_.SetLength(fileNameIndex);
-    }
-
-    fileName = std::move(fileName_);
-  } else {
+  nsJSUtils::GetCallingLocation(cx, fileName, &lineNumber, &columnNumber);
+  if (fileName.IsEmpty()) {
     fileName = NS_LITERAL_CSTRING("unknown-file");
   }
 
   NS_ConvertUTF8toUTF16 fileNameA(fileName);
   for (const nsLiteralCString& allowlistEntry : evalAllowlist) {
-    if (fileName.Equals(allowlistEntry)) {
+    // checking if current filename begins with entry, because JS Engine
+    // gives us additional stuff for code inside eval or Function ctor
+    // e.g., "require.js > Function"
+    if (StringBeginsWith(fileName, allowlistEntry)) {
       MOZ_LOG(sCSMLog, LogLevel::Debug,
               ("Allowing eval() %s because the containing "
                "file is in the allowlist",
@@ -501,14 +550,30 @@ bool nsContentSecurityUtils::IsEvalAllowed(JSContext* cx,
 
   // Maybe Crash
 #ifdef DEBUG
+  // MOZ_CRASH_UNSAFE_PRINTF gives us at most 1024 characters to print.
+  // The given string literal leaves us with ~950, so I'm leaving
+  // each 475 for fileName and aScript each.
+  if (fileName.Length() > 475) {
+    fileName.SetLength(475);
+  }
+  nsAutoCString trimmedScript = NS_ConvertUTF16toUTF8(aScript);
+  if (trimmedScript.Length() > 475) {
+    trimmedScript.SetLength(475);
+  }
   MOZ_CRASH_UNSAFE_PRINTF(
       "Blocking eval() %s from file %s and script provided "
       "%s",
       (aIsSystemPrincipal ? "with System Principal" : "in parent process"),
-      fileName.get(), NS_ConvertUTF16toUTF8(aScript).get());
+      fileName.get(), trimmedScript.get());
 #endif
 
+#ifdef EARLY_BETA_OR_EARLIER
+  // Until we understand the events coming from release, we don't want to
+  // enforce eval restrictions on release. Limiting to Nightly and early beta.
+  return false;
+#else
   return true;
+#endif
 }
 
 /* static */

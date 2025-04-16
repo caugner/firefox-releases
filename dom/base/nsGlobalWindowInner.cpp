@@ -11,6 +11,7 @@
 #include "mozilla/MemoryReporting.h"
 
 // Local Includes
+#include "AutoplayPolicy.h"
 #include "Navigator.h"
 #include "nsContentSecurityManager.h"
 #include "nsScreen.h"
@@ -155,6 +156,7 @@
 #include "mozilla/dom/CustomEvent.h"
 #include "nsIScreenManager.h"
 #include "nsICSSDeclaration.h"
+#include "nsIPermission.h"
 
 #include "xpcprivate.h"
 
@@ -317,6 +319,7 @@ static nsGlobalWindowOuter* GetOuterWindowForForwarding(
 
 #define DOM_TOUCH_LISTENER_ADDED "dom-touch-listener-added"
 #define MEMORY_PRESSURE_OBSERVER_TOPIC "memory-pressure"
+#define PERMISSION_CHANGED_TOPIC "perm-changed"
 
 // Amount of time allowed between alert/prompt/confirm before enabling
 // the stop dialog checkbox.
@@ -831,7 +834,6 @@ nsGlobalWindowInner::nsGlobalWindowInner(nsGlobalWindowOuter* aOuterWindow,
       mCleanMessageManager(false),
       mNeedsFocus(true),
       mHasFocus(false),
-      mShowFocusRingForContent(false),
       mFocusByKeyOccurred(false),
       mDidFireDocElemInserted(false),
       mHasGamepad(false),
@@ -877,8 +879,8 @@ nsGlobalWindowInner::nsGlobalWindowInner(nsGlobalWindowOuter* aOuterWindow,
     // Watch for online/offline status changes so we can fire events. Use
     // a strong reference.
     os->AddObserver(mObserver, NS_IOSERVICE_OFFLINE_STATUS_TOPIC, false);
-
     os->AddObserver(mObserver, MEMORY_PRESSURE_OBSERVER_TOPIC, false);
+    os->AddObserver(mObserver, PERMISSION_CHANGED_TOPIC, false);
   }
 
   Preferences::AddStrongObserver(mObserver, "intl.accept_languages");
@@ -1174,6 +1176,7 @@ void nsGlobalWindowInner::FreeInnerObjects() {
     if (os) {
       os->RemoveObserver(mObserver, NS_IOSERVICE_OFFLINE_STATUS_TOPIC);
       os->RemoveObserver(mObserver, MEMORY_PRESSURE_OBSERVER_TOPIC);
+      os->RemoveObserver(mObserver, PERMISSION_CHANGED_TOPIC);
     }
 
     RefPtr<StorageNotifierService> sns = StorageNotifierService::GetOrCreate();
@@ -1540,6 +1543,17 @@ void nsGlobalWindowInner::TraceGlobalJSObject(JSTracer* aTrc) {
   TraceWrapper(aTrc, "active window global");
 }
 
+void nsGlobalWindowInner::UpdateAutoplayPermission() {
+  if (!GetWindowContext()) {
+    return;
+  }
+  uint32_t perm = AutoplayPolicy::GetSiteAutoplayPermission(GetPrincipal());
+  if (GetWindowContext()->GetAutoplayPermission() == perm) {
+    return;
+  }
+  GetWindowContext()->SetAutoplayPermission(perm);
+}
+
 void nsGlobalWindowInner::InitDocumentDependentState(JSContext* aCx) {
   MOZ_ASSERT(mDoc);
 
@@ -1561,12 +1575,11 @@ void nsGlobalWindowInner::InitDocumentDependentState(JSContext* aCx) {
   // out of sync.
   ClearDocumentDependentSlots(aCx);
 
-  // FIXME: Currently, devtools can crete a fallback webextension window global
-  // in the content process which does not have a corresponding BrowserChild
-  // actor. This means we have no actor to be our parent. (Bug 1498293)
-  if (!mWindowGlobalChild && (XRE_IsParentProcess() || mBrowserChild)) {
+  if (!mWindowGlobalChild) {
     mWindowGlobalChild = WindowGlobalChild::Create(this);
   }
+
+  UpdateAutoplayPermission();
 
   if (mWindowGlobalChild && GetBrowsingContext()) {
     GetBrowsingContext()->NotifyResetUserGestureActivation();
@@ -1682,8 +1695,9 @@ nsresult nsGlobalWindowInner::EnsureClientSource() {
   // an initial content page created that was then immediately replaced.
   // This is pretty close to what we are actually doing.
   if (mClientSource) {
-    nsCOMPtr<nsIPrincipal> clientPrincipal(
-        mClientSource->Info().GetPrincipal());
+    auto principalOrErr = mClientSource->Info().GetPrincipal();
+    nsCOMPtr<nsIPrincipal> clientPrincipal =
+        principalOrErr.isOk() ? principalOrErr.unwrap() : nullptr;
     if (!clientPrincipal || !clientPrincipal->Equals(mDoc->NodePrincipal())) {
       mClientSource.reset();
     }
@@ -2417,25 +2431,9 @@ bool nsGlobalWindowInner::IsSharedMemoryAllowed() const {
 bool nsGlobalWindowInner::CrossOriginIsolated() const {
   MOZ_ASSERT(NS_IsMainThread());
 
-  if (!StaticPrefs::dom_postMessage_sharedArrayBuffer_withCOOP_COEP()) {
-    return false;
-  }
-
   RefPtr<BrowsingContext> bc = GetBrowsingContext();
   MOZ_DIAGNOSTIC_ASSERT(bc);
-  if (bc->Top()->GetOpenerPolicy() !=
-      nsILoadInfo::OPENER_POLICY_SAME_ORIGIN_EMBEDDER_POLICY_REQUIRE_CORP) {
-    return false;
-  }
-
-  ContentChild* cc = ContentChild::GetSingleton();
-  if (!cc ||
-      !StringBeginsWith(cc->GetRemoteType(),
-                        NS_LITERAL_STRING(WITH_COOP_COEP_REMOTE_TYPE_PREFIX))) {
-    return false;
-  }
-
-  return true;
+  return bc->CrossOriginIsolated();
 }
 
 void nsPIDOMWindowInner::AddPeerConnection() {
@@ -4089,16 +4087,6 @@ void nsGlobalWindowInner::StopVRActivity() {
   }
 }
 
-#ifndef XP_WIN  // This guard should match the guard at the callsite.
-static bool ShouldShowFocusRingIfFocusedByMouse(nsIContent* aNode) {
-  if (!aNode) {
-    return true;
-  }
-  return !nsContentUtils::ContentIsLink(aNode) &&
-         !aNode->IsAnyOfHTMLElements(nsGkAtoms::video, nsGkAtoms::audio);
-}
-#endif
-
 void nsGlobalWindowInner::SetFocusedElement(Element* aElement,
                                             uint32_t aFocusMethod,
                                             bool aNeedsFocus) {
@@ -4116,7 +4104,6 @@ void nsGlobalWindowInner::SetFocusedElement(Element* aElement,
     UpdateCanvasFocus(false, aElement);
     mFocusedElement = aElement;
     mFocusMethod = aFocusMethod & FOCUSMETHOD_MASK;
-    mShowFocusRingForContent = false;
   }
 
   if (mFocusedElement) {
@@ -4124,17 +4111,6 @@ void nsGlobalWindowInner::SetFocusedElement(Element* aElement,
     // window.
     if (mFocusMethod & nsIFocusManager::FLAG_BYKEY) {
       mFocusByKeyOccurred = true;
-    } else if (
-    // otherwise, we set mShowFocusRingForContent, as we don't want this to
-    // be permanent for the window. On Windows, focus rings are only shown
-    // when the FLAG_SHOWRING flag is used. On other platforms, focus rings
-    // are only visible on some elements.
-#ifndef XP_WIN
-        !(mFocusMethod & nsIFocusManager::FLAG_BYMOUSE) ||
-        ShouldShowFocusRingIfFocusedByMouse(aElement) ||
-#endif
-        aFocusMethod & nsIFocusManager::FLAG_SHOWRING) {
-      mShowFocusRingForContent = true;
     }
   }
 
@@ -4144,12 +4120,12 @@ void nsGlobalWindowInner::SetFocusedElement(Element* aElement,
 uint32_t nsGlobalWindowInner::GetFocusMethod() { return mFocusMethod; }
 
 bool nsGlobalWindowInner::ShouldShowFocusRing() {
-  if (mShowFocusRingForContent || mFocusByKeyOccurred) {
+  if (mFocusByKeyOccurred) {
     return true;
   }
 
   nsCOMPtr<nsPIWindowRoot> root = GetTopWindowRoot();
-  return root ? root->ShowFocusRings() : false;
+  return root && root->ShowFocusRings();
 }
 
 bool nsGlobalWindowInner::TakeFocus(bool aFocus, uint32_t aFocusMethod) {
@@ -4973,6 +4949,20 @@ nsresult nsGlobalWindowInner::Observe(nsISupports* aSubject, const char* aTopic,
     nsCOMPtr<nsIObserver> observer = GetApplicationCache();
     if (observer) observer->Observe(aSubject, aTopic, aData);
 
+    return NS_OK;
+  }
+
+  if (!nsCRT::strcmp(aTopic, PERMISSION_CHANGED_TOPIC)) {
+    nsCOMPtr<nsIPermission> perm(do_QueryInterface(aSubject));
+    if (!perm) {
+      return NS_OK;
+    }
+
+    nsAutoCString type;
+    perm->GetType(type);
+    if (type == NS_LITERAL_CSTRING("autoplay-media")) {
+      UpdateAutoplayPermission();
+    }
     return NS_OK;
   }
 
@@ -6367,7 +6357,7 @@ void nsGlobalWindowInner::StopGamepadHaptics() {
 bool nsGlobalWindowInner::UpdateVRDisplays(
     nsTArray<RefPtr<mozilla::dom::VRDisplay>>& aDevices) {
   VRDisplay::UpdateVRDisplays(mVRDisplays, this);
-  aDevices = mVRDisplays;
+  aDevices = mVRDisplays.Clone();
   return true;
 }
 
@@ -6743,6 +6733,8 @@ void nsGlobalWindowInner::CancelDocumentFlushedResolvers() {
 }
 
 void nsGlobalWindowInner::DidRefresh() {
+  RefPtr<nsGlobalWindowInner> kungFuDeathGrip(this);
+
   auto rejectionGuard = MakeScopeExit([&] {
     CancelDocumentFlushedResolvers();
     mObservingDidRefresh = false;
@@ -7095,13 +7087,13 @@ void nsGlobalWindowInner::FireOnNewGlobalObject() {
 #endif
 
 already_AddRefed<Promise> nsGlobalWindowInner::CreateImageBitmap(
-    JSContext* aCx, const ImageBitmapSource& aImage, ErrorResult& aRv) {
+    const ImageBitmapSource& aImage, ErrorResult& aRv) {
   return ImageBitmap::Create(this, aImage, Nothing(), aRv);
 }
 
 already_AddRefed<Promise> nsGlobalWindowInner::CreateImageBitmap(
-    JSContext* aCx, const ImageBitmapSource& aImage, int32_t aSx, int32_t aSy,
-    int32_t aSw, int32_t aSh, ErrorResult& aRv) {
+    const ImageBitmapSource& aImage, int32_t aSx, int32_t aSy, int32_t aSw,
+    int32_t aSh, ErrorResult& aRv) {
   return ImageBitmap::Create(this, aImage,
                              Some(gfx::IntRect(aSx, aSy, aSw, aSh)), aRv);
 }
@@ -7299,27 +7291,14 @@ const nsIGlobalObject* nsPIDOMWindowInner::AsGlobal() const {
   return nsGlobalWindowInner::Cast(this);
 }
 
-void nsPIDOMWindowInner::SaveStorageAccessGranted(
-    const nsACString& aPermissionKey) {
-  if (!HasStorageAccessGranted(aPermissionKey)) {
-    mStorageAccessGranted.AppendElement(aPermissionKey);
-  }
+void nsPIDOMWindowInner::SaveStorageAccessGranted() {
+  mStorageAccessGranted = true;
 
-  nsGlobalWindowInner::Cast(this)->ClearActiveStoragePrincipal();
+  nsGlobalWindowInner::Cast(this)->StorageAccessGranted();
 }
 
-void nsGlobalWindowInner::ClearActiveStoragePrincipal() {
-  Document* doc = GetExtantDoc();
-  if (doc) {
-    doc->ClearActiveStoragePrincipal();
-  }
-
-  CallOnInProcessChildren(&nsGlobalWindowInner::ClearActiveStoragePrincipal);
-}
-
-bool nsPIDOMWindowInner::HasStorageAccessGranted(
-    const nsACString& aPermissionKey) {
-  return mStorageAccessGranted.Contains(aPermissionKey);
+bool nsPIDOMWindowInner::HasStorageAccessGranted() {
+  return mStorageAccessGranted;
 }
 
 nsPIDOMWindowInner::nsPIDOMWindowInner(nsPIDOMWindowOuter* aOuterWindow,
@@ -7342,6 +7321,7 @@ nsPIDOMWindowInner::nsPIDOMWindowInner(nsPIDOMWindowOuter* aOuterWindow,
       mNumOfIndexedDBDatabases(0),
       mNumOfOpenWebSockets(0),
       mEvent(nullptr),
+      mStorageAccessGranted(false),
       mWindowGlobalChild(aActor) {
   MOZ_ASSERT(aOuterWindow);
   mBrowsingContext = aOuterWindow->GetBrowsingContext();

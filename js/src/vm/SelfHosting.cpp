@@ -24,6 +24,7 @@
 #ifdef JS_HAS_INTL_API
 #  include "builtin/intl/Collator.h"
 #  include "builtin/intl/DateTimeFormat.h"
+#  include "builtin/intl/DisplayNames.h"
 #  include "builtin/intl/IntlObject.h"
 #  include "builtin/intl/ListFormat.h"
 #  include "builtin/intl/Locale.h"
@@ -49,6 +50,7 @@
 #include "js/CharacterEncoding.h"
 #include "js/CompilationAndEvaluation.h"
 #include "js/Date.h"
+#include "js/ErrorReport.h"  // JS::PrintError
 #include "js/Exception.h"
 #include "js/Modules.h"  // JS::GetModulePrivate
 #include "js/PropertySpec.h"
@@ -108,7 +110,7 @@ using mozilla::Maybe;
 static void selfHosting_WarningReporter(JSContext* cx, JSErrorReport* report) {
   MOZ_ASSERT(report->isWarning());
 
-  PrintError(cx, stderr, JS::ConstUTF8CharsZ(), report, true);
+  JS::PrintError(cx, stderr, report, true);
 }
 
 static bool intrinsic_ToObject(JSContext* cx, unsigned argc, Value* vp) {
@@ -1001,8 +1003,8 @@ static bool intrinsic_GeneratorObjectIsClosed(JSContext* cx, unsigned argc,
   return true;
 }
 
-bool js::intrinsic_IsSuspendedGenerator(JSContext* cx, unsigned argc,
-                                        Value* vp) {
+static bool intrinsic_IsSuspendedGenerator(JSContext* cx, unsigned argc,
+                                           Value* vp) {
   CallArgs args = CallArgsFromVp(argc, vp);
   MOZ_ASSERT(args.length() == 1);
 
@@ -1517,7 +1519,7 @@ static bool intrinsic_RegExpCreate(JSContext* cx, unsigned argc, Value* vp) {
 static bool intrinsic_RegExpGetSubstitution(JSContext* cx, unsigned argc,
                                             Value* vp) {
   CallArgs args = CallArgsFromVp(argc, vp);
-  MOZ_ASSERT(args.length() == 5);
+  MOZ_ASSERT(args.length() == 6);
 
   RootedArrayObject matchResult(cx, &args[0].toObject().as<ArrayObject>());
 
@@ -1537,9 +1539,12 @@ static bool intrinsic_RegExpGetSubstitution(JSContext* cx, unsigned argc,
   int32_t firstDollarIndex = int32_t(args[4].toNumber());
   MOZ_ASSERT(firstDollarIndex >= 0);
 
+  RootedValue namedCaptures(cx, args[5]);
+  MOZ_ASSERT(namedCaptures.isUndefined() || namedCaptures.isObject());
+
   return RegExpGetSubstitution(cx, matchResult, string, size_t(position),
                                replacement, size_t(firstDollarIndex),
-                               args.rval());
+                               namedCaptures, args.rval());
 }
 
 static bool intrinsic_StringReplaceString(JSContext* cx, unsigned argc,
@@ -2235,7 +2240,8 @@ static const JSFunctionSpec intrinsic_functions[] = {
     JS_FN("IsGeneratorObject", intrinsic_IsInstanceOfBuiltin<GeneratorObject>,
           1, 0),
     JS_FN("GeneratorObjectIsClosed", intrinsic_GeneratorObjectIsClosed, 1, 0),
-    JS_FN("IsSuspendedGenerator", intrinsic_IsSuspendedGenerator, 1, 0),
+    JS_INLINABLE_FN("IsSuspendedGenerator", intrinsic_IsSuspendedGenerator, 1,
+                    0, IntrinsicIsSuspendedGenerator),
 
     JS_FN("GeneratorIsRunning", intrinsic_GeneratorIsRunning, 1, 0),
     JS_FN("GeneratorSetClosed", intrinsic_GeneratorSetClosed, 1, 0),
@@ -2386,6 +2392,7 @@ static const JSFunctionSpec intrinsic_functions[] = {
     JS_FN("intl_GetCalendarInfo", intl_GetCalendarInfo, 1, 0),
     JS_FN("intl_GetLocaleInfo", intl_GetLocaleInfo, 1, 0),
     JS_FN("intl_ComputeDisplayNames", intl_ComputeDisplayNames, 3, 0),
+    JS_FN("intl_ComputeDisplayName", intl_ComputeDisplayName, 6, 0),
     JS_FN("intl_isUpperCaseFirst", intl_isUpperCaseFirst, 1, 0),
     JS_FN("intl_IsValidTimeZoneName", intl_IsValidTimeZoneName, 1, 0),
     JS_FN("intl_NumberFormat", intl_NumberFormat, 2, 0),
@@ -2410,6 +2417,9 @@ static const JSFunctionSpec intrinsic_functions[] = {
     JS_INLINABLE_FN("GuardToDateTimeFormat",
                     intrinsic_GuardToBuiltin<DateTimeFormatObject>, 1, 0,
                     IntlGuardToDateTimeFormat),
+    JS_INLINABLE_FN("GuardToDisplayNames",
+                    intrinsic_GuardToBuiltin<DisplayNamesObject>, 1, 0,
+                    IntlGuardToDisplayNames),
     JS_INLINABLE_FN("GuardToListFormat",
                     intrinsic_GuardToBuiltin<ListFormatObject>, 1, 0,
                     IntlGuardToListFormat),
@@ -2432,6 +2442,8 @@ static const JSFunctionSpec intrinsic_functions[] = {
           CallNonGenericSelfhostedMethod<Is<CollatorObject>>, 2, 0),
     JS_FN("CallDateTimeFormatMethodIfWrapped",
           CallNonGenericSelfhostedMethod<Is<DateTimeFormatObject>>, 2, 0),
+    JS_FN("CallDisplayNamesMethodIfWrapped",
+          CallNonGenericSelfhostedMethod<Is<DisplayNamesObject>>, 2, 0),
     JS_FN("CallListFormatMethodIfWrapped",
           CallNonGenericSelfhostedMethod<Is<ListFormatObject>>, 2, 0),
     JS_FN("CallNumberFormatMethodIfWrapped",
@@ -2594,14 +2606,14 @@ static void MaybePrintAndClearPendingException(JSContext* cx, FILE* file) {
     return;
   }
 
-  ErrorReport report(cx);
-  if (!report.init(cx, exnStack, js::ErrorReport::WithSideEffects)) {
-    fprintf(file, "out of memory initializing ErrorReport\n");
+  JS::ErrorReportBuilder report(cx);
+  if (!report.init(cx, exnStack, JS::ErrorReportBuilder::WithSideEffects)) {
+    fprintf(file, "out of memory initializing JS::ErrorReportBuilder\n");
     return;
   }
 
   MOZ_ASSERT(!report.report()->isWarning());
-  PrintError(cx, file, report.toStringResult(), report.report(), true);
+  JS::PrintError(cx, file, report, true);
 }
 
 class MOZ_STACK_CLASS AutoSelfHostingErrorReporter {

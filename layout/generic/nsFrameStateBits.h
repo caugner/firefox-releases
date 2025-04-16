@@ -78,8 +78,7 @@ FRAME_STATE_BIT(Generic, 1, NS_FRAME_FIRST_REFLOW)
 // continuation, e.g. a bidi continuation.
 FRAME_STATE_BIT(Generic, 2, NS_FRAME_IS_FLUID_CONTINUATION)
 
-// For nsIAnonymousContentCreator content that's created using ContentInfo.
-FRAME_STATE_BIT(Generic, 3, NS_FRAME_ANONYMOUSCONTENTCREATOR_CONTENT)
+// Free bit here.
 
 // If this bit is set, then a reference to the frame is being held
 // elsewhere.  The frame may want to send a notification when it is
@@ -351,6 +350,15 @@ FRAME_STATE_BIT(FlexContainer, 23, NS_STATE_FLEX_SYNTHESIZE_BASELINE)
 // True if any flex item in the container has a line with a
 // -webkit-line-ellipsis marker.
 FRAME_STATE_BIT(FlexContainer, 24, NS_STATE_FLEX_HAS_LINE_CLAMP_ELLIPSIS)
+
+// True iff some first-in-flow in-flow children were pushed.
+// Note that those child frames may have been removed without this bit
+// being updated for performance reasons, so code shouldn't depend on
+// actually finding any pushed items when this bit is set.
+FRAME_STATE_BIT(FlexContainer, 25, NS_STATE_FLEX_DID_PUSH_ITEMS)
+
+// We've merged some OverflowList children since last reflow.
+FRAME_STATE_BIT(FlexContainer, 26, NS_STATE_FLEX_HAS_CHILD_NIFS)
 
 // == Frame state bits that apply to grid container frames ====================
 

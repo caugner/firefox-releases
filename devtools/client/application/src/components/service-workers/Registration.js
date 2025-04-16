@@ -4,6 +4,8 @@
 
 "use strict";
 
+const { Ci } = require("chrome");
+
 const {
   createFactory,
   PureComponent,
@@ -14,10 +16,10 @@ const PropTypes = require("devtools/client/shared/vendor/react-prop-types");
 const {
   article,
   aside,
+  h2,
   header,
   li,
   p,
-  span,
   time,
   ul,
 } = require("devtools/client/shared/vendor/react-dom-factories");
@@ -65,12 +67,16 @@ class Registration extends PureComponent {
 
   isActive() {
     const { workers } = this.props.registration;
-    return workers.some(x => x.isActive);
+    return workers.some(
+      x => x.state === Ci.nsIServiceWorkerInfo.STATE_ACTIVATED
+    );
   }
 
   formatScope(scope) {
     const [, remainder] = getUnicodeUrl(scope).split("://");
-    return remainder || scope;
+    // remove the last slash from the url, if present
+    // or return the full scope if there's no remainder
+    return remainder ? remainder.replace(/\/$/, "") : scope;
   }
 
   render() {
@@ -96,14 +102,14 @@ class Registration extends PureComponent {
             $date: registration.lastUpdateTime / 1000,
             time: time({ className: "js-sw-updated" }),
           },
-          span({ className: "registration__updated-time" })
+          p({ className: "registration__updated-time" })
         )
       : null;
 
-    const scope = span(
+    const scope = h2(
       {
         title: registration.scope,
-        className: "registration__scope js-sw-scope",
+        className: "registration__scope js-sw-scope devtools-ellipsis-text",
       },
       this.formatScope(registration.scope)
     );
@@ -112,12 +118,8 @@ class Registration extends PureComponent {
       { className: className ? className : "" },
       article(
         { className: "registration js-sw-container" },
-        header(
-          { className: "registration__header" },
-          scope,
-          aside({}, unregisterButton)
-        ),
-        lastUpdated ? p({}, lastUpdated) : null,
+        header({ className: "registration__header" }, scope, lastUpdated),
+        aside({ className: "registration__controls" }, unregisterButton),
         // render list of workers
         ul(
           { className: "registration__workers" },

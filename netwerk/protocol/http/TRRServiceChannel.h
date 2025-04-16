@@ -133,6 +133,9 @@ class TRRServiceChannel : public HttpBaseChannel,
       nsIURI* aNewURI, nsIChannel* aNewChannel, bool aPreserveMethod,
       uint32_t aRedirectFlags) override;
 
+  virtual bool SameOriginWithOriginalUri(nsIURI* aURI) override;
+  bool DispatchRelease();
+
   // True only when we have computed the value of the top window origin.
   bool mTopWindowOriginComputed;
 
@@ -148,7 +151,7 @@ class TRRServiceChannel : public HttpBaseChannel,
   RefPtr<HttpTransactionShell> mTransaction;
   uint32_t mPushedStreamId;
   RefPtr<HttpTransactionShell> mTransWithPushedStream;
-  nsCOMPtr<nsICancelable> mProxyRequest;
+  DataMutex<nsCOMPtr<nsICancelable>> mProxyRequest;
   nsCOMPtr<nsIEventTarget> mCurrentEventTarget;
 
   friend class HttpAsyncAborter<TRRServiceChannel>;

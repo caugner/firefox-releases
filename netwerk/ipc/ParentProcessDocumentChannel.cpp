@@ -7,6 +7,8 @@
 
 #include "ParentProcessDocumentChannel.h"
 
+#include "mozilla/StaticPrefs_extensions.h"
+#include "nsDocShell.h"
 #include "nsIObserverService.h"
 
 extern mozilla::LazyLogModule gDocumentChannelLog;
@@ -45,8 +47,19 @@ ParentProcessDocumentChannel::RedirectToRealChannel(
     channel->SetLoadGroup(mLoadGroup);
   }
 
-  mLastVisitInfo = mDocumentLoadListener->LastVisitInfo();
-  mRedirects = mDocumentLoadListener->Redirects();
+  if (XRE_IsE10sParentProcess()) {
+    nsCOMPtr<nsIURI> uri;
+    MOZ_ALWAYS_SUCCEEDS(NS_GetFinalChannelURI(channel, getter_AddRefs(uri)));
+    if (!nsDocShell::CanLoadInParentProcess(uri)) {
+      nsAutoCString msg;
+      uri->GetSpec(msg);
+      msg.Insert(
+          "Attempt to load a non-authorised load in the parent process: ", 0);
+      NS_ASSERTION(false, msg.get());
+      return PDocumentChannelParent::RedirectToRealChannelPromise::
+          CreateAndResolve(NS_ERROR_CONTENT_BLOCKED, __func__);
+    }
+  }
   mStreamFilterEndpoints = std::move(aStreamFilterEndpoints);
 
   RefPtr<PDocumentChannelParent::RedirectToRealChannelPromise> p =
@@ -73,7 +86,7 @@ ParentProcessDocumentChannel::OnRedirectVerifyCallback(nsresult aResult) {
   if (NS_FAILED(aResult)) {
     Cancel(aResult);
   } else if (mCanceled && NS_SUCCEEDED(aResult)) {
-    aResult = NS_BINDING_ABORTED;
+    aResult = NS_ERROR_ABORT;
   } else {
     const nsCOMPtr<nsIChannel> channel = mDocumentLoadListener->GetChannel();
     mLoadGroup->AddRequest(channel, nullptr);

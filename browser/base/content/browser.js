@@ -574,7 +574,7 @@ Object.defineProperty(this, "gReduceMotion", {
   },
 });
 // Reduce motion during startup. The setting will be reset later.
-var gReduceMotionSetting = true;
+let gReduceMotionSetting = true;
 // This is for tests to set.
 var gReduceMotionOverride;
 
@@ -1269,7 +1269,13 @@ var gKeywordURIFixup = {
     // We get called irrespective of whether we did a keyword search, or
     // whether the original input would be vaguely interpretable as a URL,
     // so figure that out first.
-    if (!keywordProviderName || !fixedURI || !fixedURI.host) {
+    if (
+      !keywordProviderName ||
+      !fixedURI ||
+      !fixedURI.host ||
+      UrlbarPrefs.get("browser.fixup.dns_first_for_single_words") ||
+      UrlbarPrefs.get("dnsResolveSingleWordsAfterSearch") == 0
+    ) {
       return;
     }
 
@@ -1297,7 +1303,7 @@ var gKeywordURIFixup = {
     // Normalize out a single trailing dot - NB: not using endsWith/lastIndexOf
     // because we need to be sure this last dot is the *only* dot, too.
     // More generally, this is used for the pref and should stay in sync with
-    // the code in nsDefaultURIFixup::KeywordURIFixup .
+    // the code in URIFixup::KeywordURIFixup .
     if (asciiHost.indexOf(".") == asciiHost.length - 1) {
       asciiHost = asciiHost.slice(0, -1);
     }
@@ -1416,11 +1422,12 @@ var gKeywordURIFixup = {
   observe(fixupInfo, topic, data) {
     fixupInfo.QueryInterface(Ci.nsIURIFixupInfo);
 
-    if (!fixupInfo.consumer || fixupInfo.consumer.ownerGlobal != window) {
+    let browser = fixupInfo.consumer?.top?.embedderElement;
+    if (!browser || browser.ownerGlobal != window) {
       return;
     }
 
-    this.check(fixupInfo.consumer, fixupInfo);
+    this.check(browser, fixupInfo);
   },
 
   receiveMessage({ target: browser, data: fixupInfo }) {
@@ -1504,8 +1511,14 @@ function _loadURI(browser, uri, params = {}) {
     uri = "about:blank";
   }
 
-  let { triggeringPrincipal, referrerInfo, postData, userContextId, csp } =
-    params || {};
+  let {
+    triggeringPrincipal,
+    referrerInfo,
+    postData,
+    userContextId,
+    csp,
+    isHttpsOnlyModeUpgradeExempt,
+  } = params || {};
   let loadFlags =
     params.loadFlags || params.flags || Ci.nsIWebNavigation.LOAD_FLAGS_NONE;
   let hasValidUserGestureActivation =
@@ -1552,6 +1565,7 @@ function _loadURI(browser, uri, params = {}) {
     referrerInfo,
     postData,
     hasValidUserGestureActivation,
+    isHttpsOnlyModeUpgradeExempt,
   };
   try {
     if (!mustChangeProcess) {
@@ -1790,8 +1804,9 @@ var gBrowserInit = {
 
     BrowserWindowTracker.track(window);
 
-    gNavToolbox.palette = document.getElementById("BrowserToolbarPalette");
-    gNavToolbox.palette.remove();
+    gNavToolbox.palette = document.getElementById(
+      "BrowserToolbarPalette"
+    ).content;
     let areas = CustomizableUI.areas;
     areas.splice(areas.indexOf(CustomizableUI.AREA_FIXED_OVERFLOW_PANEL), 1);
     for (let area of areas) {
@@ -2209,6 +2224,7 @@ var gBrowserInit = {
         //                 [8]: triggeringPrincipal (nsIPrincipal)
         //                 [9]: allowInheritPrincipal (bool)
         //                 [10]: csp (nsIContentSecurityPolicy)
+        //                 [11]: nsOpenWindowInfo
         let userContextId =
           window.arguments[5] != undefined
             ? window.arguments[5]
@@ -2270,11 +2286,6 @@ var gBrowserInit = {
     scheduleIdleTask(() => {
       // Initialize the Sync UI
       gSync.init();
-    });
-
-    scheduleIdleTask(() => {
-      // Initialize the all tabs menu
-      gTabsPanel.init();
     });
 
     scheduleIdleTask(() => {
@@ -6020,7 +6031,7 @@ nsBrowserAccess.prototype = {
   openURI(aURI, aOpenWindowInfo, aWhere, aFlags, aTriggeringPrincipal, aCsp) {
     if (!aURI) {
       Cu.reportError("openURI should only be called with a valid URI");
-      throw Cr.NS_ERROR_FAILURE;
+      throw Components.Exception("", Cr.NS_ERROR_FAILURE);
     }
     return this.getContentWindowOrOpenURI(
       aURI,
@@ -6050,7 +6061,7 @@ nsBrowserAccess.prototype = {
         "nsBrowserAccess.openURI did not expect aOpenWindowInfo to be " +
           "passed if the context is OPEN_EXTERNAL."
       );
-      throw Cr.NS_ERROR_FAILURE;
+      throw Components.Exception("", Cr.NS_ERROR_FAILURE);
     }
 
     if (isExternal && aURI && aURI.schemeIs("chrome")) {
@@ -6098,7 +6109,7 @@ nsBrowserAccess.prototype = {
       case Ci.nsIBrowserDOMWindow.OPEN_NEWWINDOW:
         // FIXME: Bug 408379. So how come this doesn't send the
         // referrer like the other loads do?
-        var url = aURI ? aURI.spec : "about:blank";
+        var url = aURI && aURI.spec;
         let features = "all,dialog=no";
         if (isPrivate) {
           features += ",private";
@@ -6121,18 +6132,14 @@ nsBrowserAccess.prototype = {
             null,
             aTriggeringPrincipal,
             null,
-            aCsp
+            aCsp,
+            aOpenWindowInfo
           );
           // At this point, the new browser window is just starting to load, and
-          // hasn't created the content <browser> that we should return. So we
-          // can't actually return a valid BrowsingContext for this load without
-          // spinning the event loop.
-          //
-          // Fortunately, no current callers of this API who pass OPEN_NEWWINDOW
-          // actually use the return value, so we're safe returning null for
-          // now.
-          //
-          // Ideally this should be fixed.
+          // hasn't created the content <browser> that we should return.
+          // If the caller of this function is originating in C++, they can pass a
+          // callback in nsOpenWindowInfo and it will be invoked when the browsing
+          // context for a newly opened window is ready.
           browsingContext = null;
         } catch (ex) {
           Cu.reportError(ex);
@@ -6145,7 +6152,7 @@ nsBrowserAccess.prototype = {
         // we can hand back the nsIDOMWindow. The XULBrowserWindow.shouldLoadURI
         // will do the job of shuttling off the newly opened browser to run in
         // the right process once it starts loading a URI.
-        let forceNotRemote = aOpenWindowInfo && !aOpenWindowInfo.remote;
+        let forceNotRemote = aOpenWindowInfo && !aOpenWindowInfo.isRemote;
         let userContextId = aOpenWindowInfo
           ? aOpenWindowInfo.originAttributes.userContextId
           : Ci.nsIScriptSecurityManager.DEFAULT_USER_CONTEXT_ID;
@@ -6169,8 +6176,7 @@ nsBrowserAccess.prototype = {
         break;
       default:
         // OPEN_CURRENTWINDOW or an illegal value
-        browsingContext =
-          window.content && BrowsingContext.getFromWindow(window.content);
+        browsingContext = window.gBrowser.selectedBrowser.browsingContext;
         if (aURI) {
           let loadFlags = Ci.nsIWebNavigation.LOAD_FLAGS_NONE;
           if (isExternal) {
@@ -6370,6 +6376,15 @@ function onViewToolbarsPopupShowing(aEvent, aInsertPoint) {
     node.hidden = !showTabStripItems;
   }
 
+  MozXULElement.insertFTLIfNeeded("browser/toolbarContextMenu.ftl");
+  document
+    .getElementById("toolbar-context-menu")
+    .querySelectorAll("[data-lazy-l10n-id]")
+    .forEach(el => {
+      el.setAttribute("data-l10n-id", el.getAttribute("data-lazy-l10n-id"));
+      el.removeAttribute("data-lazy-l10n-id");
+    });
+
   if (showTabStripItems) {
     let multipleTabsSelected = !!gBrowser.multiSelectedTabsCount;
     document.getElementById(
@@ -6389,15 +6404,6 @@ function onViewToolbarsPopupShowing(aEvent, aInsertPoint) {
     ).disabled = gBrowser.allTabsSelected();
     document.getElementById("toolbar-context-undoCloseTab").disabled =
       SessionStore.getClosedTabCount(window) == 0;
-
-    MozXULElement.insertFTLIfNeeded("browser/toolbarContextMenu.ftl");
-    document
-      .getElementById("toolbar-context-menu")
-      .querySelectorAll("[data-lazy-l10n-id]")
-      .forEach(el => {
-        el.setAttribute("data-l10n-id", el.getAttribute("data-lazy-l10n-id"));
-        el.removeAttribute("data-lazy-l10n-id");
-      });
     return;
   }
 
@@ -6420,9 +6426,11 @@ function onViewToolbarsPopupShowing(aEvent, aInsertPoint) {
 
 function onViewToolbarCommand(aEvent) {
   let node = aEvent.originalTarget;
+  let menuId = node.parentNode.id;
   let toolbarId = node.getAttribute("toolbarId");
   let isVisible = node.getAttribute("checked") == "true";
   CustomizableUI.setToolbarVisibility(toolbarId, isVisible);
+  BrowserUsageTelemetry.recordToolbarVisibility(toolbarId, isVisible, menuId);
   updateToggleControlLabel(node);
 }
 
@@ -6859,7 +6867,7 @@ function handleLinkClick(event, href, linkNode) {
     Ci.nsIReferrerInfo
   );
   if (linkNode) {
-    referrerInfo.initWithNode(linkNode);
+    referrerInfo.initWithElement(linkNode);
   } else {
     referrerInfo.initWithDocument(doc);
   }
@@ -8035,19 +8043,27 @@ function AddKeywordForSearchField() {
  */
 function undoCloseTab(aIndex) {
   // wallpaper patch to prevent an unnecessary blank tab (bug 343895)
-  var blankTabToRemove = null;
+  let blankTabToRemove = null;
   if (gBrowser.tabs.length == 1 && gBrowser.selectedTab.isEmpty) {
     blankTabToRemove = gBrowser.selectedTab;
   }
 
-  var tab = null;
-  if (SessionStore.getClosedTabCount(window) > (aIndex || 0)) {
-    tab = SessionStore.undoCloseTab(window, aIndex || 0);
+  let tab = null;
+  // aIndex is undefined if the function is called without a specific tab to restore.
+  let tabsToRemove =
+    aIndex !== undefined
+      ? [aIndex]
+      : new Array(SessionStore.getLastClosedTabCount(window)).fill(0);
+  for (let index of tabsToRemove) {
+    if (SessionStore.getClosedTabCount(window) > index) {
+      tab = SessionStore.undoCloseTab(window, index);
 
-    if (blankTabToRemove) {
-      gBrowser.removeTab(blankTabToRemove);
+      if (blankTabToRemove) {
+        gBrowser.removeTab(blankTabToRemove);
+      }
     }
   }
+  SessionStore.setLastClosedTabCount(window, 1);
 
   return tab;
 }
@@ -8233,13 +8249,6 @@ var gPrivateBrowsingUI = {
 
     // Adjust the window's title
     let docElement = document.documentElement;
-    if (!PrivateBrowsingUtils.permanentPrivateBrowsing) {
-      docElement.title = docElement.getAttribute("title_privatebrowsing");
-      docElement.setAttribute(
-        "titlemodifier",
-        docElement.getAttribute("titlemodifier_privatebrowsing")
-      );
-    }
     docElement.setAttribute(
       "privatebrowsingmode",
       PrivateBrowsingUtils.permanentPrivateBrowsing ? "permanent" : "temporary"
@@ -9105,6 +9114,8 @@ var ConfirmationHint = {
       this._panel.setAttribute("hidearrow", "true");
     }
 
+    this._panel.setAttribute("data-message-id", messageId);
+
     // The timeout value used here allows the panel to stay open for
     // 1.5s second after the text transition (duration=120ms) has finished.
     // If there is a description, we show for 4s after the text transition.
@@ -9129,7 +9140,6 @@ var ConfirmationHint = {
       { once: true }
     );
 
-    this._panel.hidden = false;
     this._panel.openPopup(anchor, {
       position: "bottomcenter topleft",
       triggerEvent: options.event,
@@ -9141,16 +9151,20 @@ var ConfirmationHint = {
       clearTimeout(this._timerID);
       this._timerID = null;
     }
-    this._panel.removeAttribute("hidearrow");
-    this._animationBox.removeAttribute("animate");
+    if (this.__panel) {
+      this._panel.removeAttribute("hidearrow");
+      this._animationBox.removeAttribute("animate");
+      this._panel.removeAttribute("data-message-id");
+    }
   },
 
   get _panel() {
-    delete this._panel;
-    return (this._panel = document.getElementById("confirmation-hint"));
+    this._ensurePanel();
+    return this.__panel;
   },
 
   get _animationBox() {
+    this._ensurePanel();
     delete this._animationBox;
     return (this._animationBox = document.getElementById(
       "confirmation-hint-checkmark-animation-container"
@@ -9158,6 +9172,7 @@ var ConfirmationHint = {
   },
 
   get _message() {
+    this._ensurePanel();
     delete this._message;
     return (this._message = document.getElementById(
       "confirmation-hint-message"
@@ -9165,10 +9180,19 @@ var ConfirmationHint = {
   },
 
   get _description() {
+    this._ensurePanel();
     delete this._description;
     return (this._description = document.getElementById(
       "confirmation-hint-description"
     ));
+  },
+
+  _ensurePanel() {
+    if (!this.__panel) {
+      let wrapper = document.getElementById("confirmation-hint-wrapper");
+      wrapper.replaceWith(wrapper.content);
+      this.__panel = document.getElementById("confirmation-hint");
+    }
   },
 };
 
@@ -9203,35 +9227,6 @@ if (AppConstants.NIGHTLY_BUILD) {
 
       newFissionWindow.hidden = gFissionBrowser;
       newNonFissionWindow.hidden = !gFissionBrowser;
-
-      if (!Cu.isInAutomation) {
-        // We don't want to display the warning in automation as it messes with many tests
-        // that rely on a specific state of the screen at the end of startup.
-        this.checkFissionWithoutWebRender();
-      }
-    },
-
-    // Display a warning if we're attempting to use Fission without WebRender
-    checkFissionWithoutWebRender() {
-      let isFissionEnabled = Services.prefs.getBoolPref("fission.autostart");
-      if (!isFissionEnabled) {
-        return;
-      }
-
-      let isWebRenderEnabled = Cc["@mozilla.org/gfx/info;1"].getService(
-        Ci.nsIGfxInfo
-      ).WebRenderEnabled;
-
-      if (isWebRenderEnabled) {
-        return;
-      }
-      // Note: Test is hardcoded in English. This is a Nightly-locked warning, so we can afford to.
-      window.gNotificationBox.appendNotification(
-        "You are running with Fission enabled but without WebRender. This combination is untested, so use at your own risk.",
-        "warning-fission-without-webrender-notification",
-        "chrome://global/skin/icons/question-16.png",
-        window.gNotificationBox.PRIORITY_WARNING_LOW
-      );
     },
   };
 }

@@ -16,6 +16,7 @@
 #include "mozilla/MathAlgorithms.h"
 #include "mozilla/Maybe.h"
 #include "mozilla/SegmentedVector.h"
+#include "mozilla/Sprintf.h"
 #include "mozilla/Types.h"
 
 #include <algorithm>
@@ -28,6 +29,8 @@
 #include "new-regexp/util/flags.h"
 #include "new-regexp/util/vector.h"
 #include "new-regexp/util/zone.h"
+#include "threading/ExclusiveData.h"
+#include "vm/MutexIDs.h"
 #include "vm/NativeObject.h"
 
 // Forward declaration of classes
@@ -160,17 +163,35 @@ inline uint8_t saturated_cast<uint8_t, int>(int x) {
   return (x >= 0) ? ((x < 255) ? uint8_t(x) : 255) : 0;
 }
 
-#define LAZY_INSTANCE_INITIALIZER { mozilla::Nothing() }
+// Origin: https://github.com/v8/v8/blob/fc088cdaccadede84886eee881e67af9db53669a/src/base/bounds.h#L14-L28
+// Checks if value is in range [lower_limit, higher_limit] using a single
+// branch.
+template <typename T, typename U>
+inline constexpr bool IsInRange(T value, U lower_limit, U higher_limit) {
+  using unsigned_T = typename std::make_unsigned<T>::type;
+  // Use static_cast to support enum classes.
+  return static_cast<unsigned_T>(static_cast<unsigned_T>(value) -
+                                 static_cast<unsigned_T>(lower_limit)) <=
+         static_cast<unsigned_T>(static_cast<unsigned_T>(higher_limit) -
+                                 static_cast<unsigned_T>(lower_limit));
+}
+
+#define LAZY_INSTANCE_INITIALIZER { }
 
 template <typename T>
-struct LazyInstanceImpl {
-  mozilla::Maybe<T> value_;
-  T* Pointer() {
-    if (value_.isNothing()) {
-      value_.emplace();
+class LazyInstanceImpl {
+ public:
+  LazyInstanceImpl() : value_(js::mutexid::IrregexpLazyStatic) {}
+
+  const T* Pointer() {
+    auto val = value_.lock();
+    if (val->isNothing()) {
+      val->emplace();
     }
-    return value_.ptr();
+    return val->ptr();
   }
+ private:
+  js::ExclusiveData<mozilla::Maybe<T>> value_;
 };
 
 template <typename T>
@@ -370,7 +391,14 @@ constexpr int kInt64Size = sizeof(int64_t);
 constexpr int kUC16Size = sizeof(uc16);
 
 inline constexpr bool IsDecimalDigit(uc32 c) { return c >= '0' && c <= '9'; }
-inline bool is_uint24(int val) { return (val & 0x00ffffff) == val; }
+
+inline bool is_uint24(int64_t val) {
+  return (val >> 24) == 0;
+}
+inline bool is_int24(int64_t val) {
+  int64_t limit = int64_t(1) << 23;
+  return (-limit <= val) && (val < limit);
+}
 
 inline bool IsIdentifierStart(uc32 c) {
   return js::unicode::IsIdentifierStart(uint32_t(c));
@@ -505,6 +533,8 @@ class Object {
     return JS::Value::fromRawBits(asBits_);
   }
 
+  inline static Object cast(Object object) { return object; }
+
  protected:
   void setValue(const JS::Value& val) {
     asBits_ = val.asRawBits();
@@ -534,14 +564,22 @@ class HeapObject : public Object {
   }
 };
 
-// A fixed-size array with Objects (aka Values) as element types
-// Only used for named captures. Allocated during parsing, so
-// can't be a GC thing.
-// TODO: implement.
+// A fixed-size array with Objects (aka Values) as element types.
+// Implemented using the dense elements of an ArrayObject.
+// Used for named captures.
 class FixedArray : public HeapObject {
  public:
-  inline void set(uint32_t index, Object value) {}
-  inline static FixedArray cast(Object object) { MOZ_CRASH("TODO"); }
+  inline void set(uint32_t index, Object value) {
+    inner()->setDenseElement(index, value.value());
+  }
+  inline static FixedArray cast(Object object) {
+    FixedArray f;
+    f.setValue(object.value());
+    return f;
+  }
+  js::NativeObject* inner() {
+    return &value().toObject().as<js::NativeObject>();
+  }
 };
 
 /*
@@ -634,11 +672,6 @@ class MOZ_NONHEAP_CLASS Handle {
   template <typename S,
             typename = std::enable_if_t<std::is_convertible_v<S*, T*>>>
   inline Handle(Handle<S> handle) : location_(handle.location_) {}
-
-  template <typename S>
-  inline static const Handle<T> cast(Handle<S> that) {
-    return Handle<T>(that.location_);
-  }
 
   inline bool is_null() const { return location_ == nullptr; }
 
@@ -835,46 +868,29 @@ inline Vector<const uc16> String::GetCharVector(
 }
 
 // A flat string reader provides random access to the contents of a
-// string independent of the character width of the string.  The handle
-// must be valid as long as the reader is being used.
-// Origin:
-// https://github.com/v8/v8/blob/84f3877c15bc7f8956d21614da4311337525a3c8/src/objects/string.h#L807-L825
+// string independent of the character width of the string.
 class MOZ_STACK_CLASS FlatStringReader {
  public:
-  FlatStringReader(JSLinearString* string)
-    : length_(string->length()),
-      is_latin1_(string->hasLatin1Chars()) {
+  FlatStringReader(JSContext* cx, js::HandleLinearString string)
+    : string_(string), length_(string->length()) {}
 
-    if (is_latin1_) {
-      latin1_chars_ = string->latin1Chars(nogc_);
-    } else {
-      two_byte_chars_ = string->twoByteChars(nogc_);
-    }
-  }
-  FlatStringReader(const char16_t* chars, size_t length)
-    : two_byte_chars_(chars),
-      length_(length),
-      is_latin1_(false) {}
+  FlatStringReader(const mozilla::Range<const char16_t> range)
+    : string_(nullptr), range_(range), length_(range.length()) {}
 
   int length() { return length_; }
 
   inline char16_t Get(size_t index) {
     MOZ_ASSERT(index < length_);
-    if (is_latin1_) {
-      return latin1_chars_[index];
-    } else {
-      return two_byte_chars_[index];
+    if (string_) {
+      return string_->latin1OrTwoByteChar(index);
     }
+    return range_[index];
   }
 
  private:
-  union {
-    const JS::Latin1Char *latin1_chars_;
-    const char16_t* two_byte_chars_;
-  };
+  js::HandleLinearString string_;
+  const mozilla::Range<const char16_t> range_;
   size_t length_;
-  bool is_latin1_;
-  JS::AutoCheckCannotGC nogc_;
 };
 
 class JSRegExp : public HeapObject {
@@ -905,12 +921,21 @@ class JSRegExp : public HeapObject {
     return regexp;
   }
 
+  // Each capture (including the match itself) needs two registers.
+  static constexpr int RegistersForCaptureCount(int count) {
+    return (count + 1) * 2;
+  }
+
+  inline int MaxRegisterCount() const {
+    return inner()->getMaxRegisters();
+  }
+
   // ******************************
   // Static constants
   // ******************************
 
   // Maximum number of captures allowed.
-  static constexpr int kMaxCaptures = 1 << 16;
+  static constexpr int kMaxCaptures = (1 << 15) - 1;
 
   // **************************************************
   // JSRegExp::Flags
@@ -963,6 +988,7 @@ using Factory = Isolate;
 class Isolate {
  public:
   Isolate(JSContext* cx) : cx_(cx) {}
+  ~Isolate();
   bool init();
 
   //********** Isolate code **********//
@@ -1178,7 +1204,12 @@ const bool FLAG_regexp_possessive_quantifier = false;
 // example, if a regexp is too long - so we might as well turn these
 // flags on unconditionally.
 const bool FLAG_regexp_optimization = true;
+#if MOZ_BIG_ENDIAN()
+// peephole optimization not supported on big endian
+const bool FLAG_regexp_peephole_optimization = false;
+#else
 const bool FLAG_regexp_peephole_optimization = true;
+#endif
 
 // This is used to control whether regexps tier up from interpreted to
 // compiled. We control this with --no-native-regexp and

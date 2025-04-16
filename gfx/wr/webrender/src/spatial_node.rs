@@ -340,7 +340,7 @@ impl SpatialNode {
                                 .post_translate(-scroll_offset)
                         }
                         ReferenceFrameKind::Perspective { scrolling_relative_to: None } |
-                        ReferenceFrameKind::Transform => source_transform,
+                        ReferenceFrameKind::Transform | ReferenceFrameKind::Zoom => source_transform,
                     };
 
                     let resolved_transform =
@@ -368,8 +368,20 @@ impl SpatialNode {
                         // incompatible coordinate system.
                         match ScaleOffset::from_transform(&relative_transform) {
                             Some(ref scale_offset) => {
+                                // We generally do not want to snap animated transforms as it causes jitter.
+                                // However, we do want to snap the visual viewport offset when scrolling.
+                                // Therefore only snap the transform for Zoom reference frames. This may still
+                                // cause jitter when zooming, unfortunately.
+                                let mut maybe_snapped = scale_offset.clone();
+                                if info.kind == ReferenceFrameKind::Zoom {
+                                    maybe_snapped.offset = snap_offset(
+                                        scale_offset.offset,
+                                        state.coordinate_system_relative_scale_offset.scale,
+                                        global_device_pixel_scale
+                                    );
+                                }
                                 cs_scale_offset =
-                                    state.coordinate_system_relative_scale_offset.accumulate(scale_offset);
+                                    state.coordinate_system_relative_scale_offset.accumulate(&maybe_snapped);
                             }
                             None => reset_cs_id = true,
                         }
@@ -422,22 +434,17 @@ impl SpatialNode {
                     &state.nearest_scrolling_ancestor_viewport,
                 );
 
-                // Snap the parent reference frame offset so that animated transforms, including those
-                // caused by scrolling, are snapped.
-                let mut snapped_cs_scale_offset = state.coordinate_system_relative_scale_offset;
-                snapped_cs_scale_offset.offset = snap_offset(snapped_cs_scale_offset.offset, WorldVector2D::new(1.0, 1.0), global_device_pixel_scale);
-
                 // The transformation for the bounds of our viewport is the parent reference frame
                 // transform, plus any accumulated scroll offset from our parents, plus any offset
                 // provided by our own sticky positioning.
                 let accumulated_offset = state.parent_accumulated_scroll_offset + sticky_offset;
-                self.viewport_transform = snapped_cs_scale_offset
+                self.viewport_transform = state.coordinate_system_relative_scale_offset
                     .offset(snap_offset(accumulated_offset, state.coordinate_system_relative_scale_offset.scale, global_device_pixel_scale).to_untyped());
 
                 // The transformation for any content inside of us is the viewport transformation, plus
                 // whatever scrolling offset we supply as well.
                 let added_offset = accumulated_offset + self.scroll_offset();
-                self.content_transform = snapped_cs_scale_offset
+                self.content_transform = state.coordinate_system_relative_scale_offset
                     .offset(snap_offset(added_offset, state.coordinate_system_relative_scale_offset.scale, global_device_pixel_scale).to_untyped());
 
                 if let SpatialNodeType::StickyFrame(ref mut info) = self.node_type {

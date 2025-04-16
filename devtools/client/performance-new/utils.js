@@ -322,12 +322,6 @@ const featureDescriptions = [
     recommended: true,
   },
   {
-    name: "Responsiveness",
-    value: "responsiveness",
-    title: "Collect thread responsiveness information.",
-    recommended: true,
-  },
-  {
     name: "Java",
     value: "java",
     title: "Profile Java code",
@@ -346,14 +340,25 @@ const featureDescriptions = [
     title: "Disable interval-based stack sampling",
   },
   {
-    name: "Main Thread IO",
+    name: "Main Thread File IO",
     value: "mainthreadio",
-    title: "Record main thread I/O markers.",
+    title: "Record main thread File I/O markers.",
   },
   {
-    name: "Privacy",
-    value: "privacy",
-    title: "Remove some potentially user-identifiable information.",
+    name: "Profiled Threads File IO",
+    value: "fileio",
+    title: "Record File I/O markers from only profiled threads.",
+  },
+  {
+    name: "All File IO",
+    value: "fileioall",
+    title:
+      "Record File I/O markers from all threads, even unregistered threads.",
+  },
+  {
+    name: "No File IO Stack Sampling",
+    value: "noiostacks",
+    title: "Do not sample stacks when recording File I/O markers.",
   },
   {
     name: "Sequential Styling",
@@ -361,14 +366,10 @@ const featureDescriptions = [
     title: "Disable parallel traversal in styling.",
   },
   {
-    name: "JIT Optimizations",
-    value: "trackopts",
-    title: "Track JIT optimizations in the JS engine.",
-  },
-  {
     name: "TaskTracer",
     value: "tasktracer",
-    title: "Enable TaskTracer (Experimental.)",
+    title: "Enable TaskTracer",
+    experimental: true,
     disabledReason:
       "TaskTracer requires a custom build with the environment variable MOZ_TASK_TRACER set.",
   },
@@ -380,7 +381,8 @@ const featureDescriptions = [
   {
     name: "JSTracer",
     value: "jstracer",
-    title: "Trace JS engine (Experimental.)",
+    title: "Trace JS engine",
+    experimental: true,
     disabledReason:
       "JS Tracer is currently disabled due to crashes. See Bug 1565788.",
   },
@@ -397,12 +399,12 @@ const featureDescriptions = [
   {
     name: "JS Allocations",
     value: "jsallocations",
-    title: "Track JavaScript allocations (Experimental.)",
+    title: "Track JavaScript allocations",
   },
   {
     name: "Native Allocations",
     value: "nativeallocations",
-    title: "Track native allocations (Experimental.)",
+    title: "Track native allocations",
   },
 ];
 

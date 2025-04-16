@@ -12,6 +12,11 @@ class TestWindowParent extends JSWindowActorParent {
   constructor() {
     super();
     this.wrappedJSObject = this;
+    this.sawActorCreated = false;
+  }
+
+  actorCreated() {
+    this.sawActorCreated = true;
   }
 
   receiveMessage(aMessage) {

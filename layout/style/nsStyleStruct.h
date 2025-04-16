@@ -102,9 +102,8 @@ struct MOZ_NEEDS_MEMMOVABLE_MEMBERS nsStyleFont {
   // and if so if it has been modified by a factor/offset
   float mFontSizeFactor;
   nscoord mFontSizeOffset;
-  uint8_t mFontSizeKeyword;  // NS_STYLE_FONT_SIZE_*, is
-                             // NS_STYLE_FONT_SIZE_NO_KEYWORD when not
-                             // keyword-derived
+  mozilla::StyleFontSize mFontSizeKeyword;  // StyleFontSize is Nokeyword when
+                                            // not keyword-derived
 
   mozilla::StyleGenericFontFamily mGenericID;
 
@@ -122,8 +121,9 @@ struct MOZ_NEEDS_MEMMOVABLE_MEMBERS nsStyleFont {
   bool mExplicitLanguage;
 
   // should calls to ZoomText() and UnZoomText() be made to the font
-  // size on this nsStyleFont?
-  bool mAllowZoom;
+  // size on this nsStyleFont? Also used to prevent SVG text from being
+  // affected by minimum font size pref.
+  bool mAllowZoomAndMinSize;
 
   // The value mSize would have had if scriptminsize had never been applied
   nscoord mScriptUnconstrainedSize;
@@ -786,7 +786,7 @@ struct MOZ_NEEDS_MEMMOVABLE_MEMBERS nsStylePosition {
   StyleFlexBasis mFlexBasis;
   StyleImplicitGridTracks mGridAutoColumns;
   StyleImplicitGridTracks mGridAutoRows;
-  float mAspectRatio;
+  mozilla::StyleAspectRatio mAspectRatio;
   mozilla::StyleGridAutoFlow mGridAutoFlow;
   uint8_t mMasonryAutoFlow;  // NS_STYLE_MASONRY_*
 
@@ -1981,6 +1981,7 @@ STATIC_ASSERT_TYPE_LAYOUTS_MATCH(mozilla::UniquePtr<int>,
  */
 template <typename T>
 class nsTArray_Simple {
+ protected:
   T* mBuffer;
 
  public:
@@ -1990,6 +1991,12 @@ class nsTArray_Simple {
     // copy.
   }
 };
+
+/**
+ * <div rustbindgen replaces="CopyableTArray"></div>
+ */
+template <typename T>
+class CopyableTArray_Simple : public nsTArray_Simple<T> {};
 
 STATIC_ASSERT_TYPE_LAYOUTS_MATCH(nsTArray<nsStyleImageLayers::Layer>,
                                  nsTArray_Simple<nsStyleImageLayers::Layer>);

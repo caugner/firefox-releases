@@ -44,8 +44,6 @@ class GeckoInstance(object):
         "apz.content_response_timeout": 60000,
 
         # Do not send Firefox health reports to the production server
-        # removed in Firefox 59
-        "datareporting.healthreport.about.reportUrl": "http://%(server)s/dummy/abouthealthreport/",
         "datareporting.healthreport.documentServerURI": "http://%(server)s/dummy/healthreport/",
 
         # Do not show datareporting policy notifications which can interfer with tests
@@ -219,7 +217,7 @@ class GeckoInstance(object):
             profile_path = profile
 
             # If a path to a profile is given then clone it
-            if isinstance(profile_path, basestring):
+            if isinstance(profile_path, six.string_types):
                 profile_args["path_from"] = profile_path
                 profile_args["path_to"] = tempfile.mkdtemp(
                     suffix=u".{}".format(profile_name or os.path.basename(profile_path)),
@@ -298,8 +296,8 @@ class GeckoInstance(object):
             instance_class = apps[app]
         except (IOError, KeyError):
             exc, val, tb = sys.exc_info()
-            msg = 'Application "{0}" unknown (should be one of {1})'
-            reraise(NotImplementedError, msg.format(app, apps.keys()), tb)
+            msg = 'Application "{0}" unknown (should be one of {1})'.format(app, apps.keys())
+            reraise(NotImplementedError, NotImplementedError(msg), tb)
 
         return instance_class(*args, **kwargs)
 

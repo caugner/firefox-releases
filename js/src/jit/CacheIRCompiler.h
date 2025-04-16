@@ -331,6 +331,9 @@ class MOZ_RAII CacheRegisterAllocator {
   // The index of the CacheIR instruction we're currently emitting.
   uint32_t currentInstruction_;
 
+  // Whether the stack contains a double spilled by AutoScratchFloatRegister.
+  bool hasAutoScratchFloatRegisterSpill_ = false;
+
   const CacheIRWriter& writer_;
 
   CacheRegisterAllocator(const CacheRegisterAllocator&) = delete;
@@ -412,6 +415,14 @@ class MOZ_RAII CacheRegisterAllocator {
   MOZ_MUST_USE bool setSpilledRegs(const SpilledRegisterVector& regs) {
     spilledRegs_.clear();
     return spilledRegs_.appendAll(regs);
+  }
+
+  bool hasAutoScratchFloatRegisterSpill() const {
+    return hasAutoScratchFloatRegisterSpill_;
+  }
+  void setHasAutoScratchFloatRegisterSpill(bool b) {
+    MOZ_ASSERT(hasAutoScratchFloatRegisterSpill_ != b);
+    hasAutoScratchFloatRegisterSpill_ = b;
   }
 
   void nextOp() {
@@ -646,6 +657,7 @@ class MOZ_RAII CacheIRCompiler {
   friend class AutoSaveLiveRegisters;
   friend class AutoCallVM;
   friend class AutoScratchFloatRegister;
+  friend class AutoAvailableFloatRegister;
 
   enum class Mode { Baseline, Ion };
 
@@ -719,6 +731,10 @@ class MOZ_RAII CacheIRCompiler {
                                   TypedThingLayout layout,
                                   Scalar::Type elementType, bool handleOOB);
 
+  bool emitStoreTypedElement(ObjOperandId objId, TypedThingLayout layout,
+                             Scalar::Type elementType, Int32OperandId indexId,
+                             uint32_t rhsId, bool handleOOB);
+
   void emitStoreTypedObjectReferenceProp(ValueOperand val, ReferenceType type,
                                          const Address& dest, Register scratch);
 
@@ -784,6 +800,10 @@ class MOZ_RAII CacheIRCompiler {
     MOZ_ASSERT(stubFieldPolicy_ == StubFieldPolicy::Constant);
     return readStubWord(offset, StubField::Type::RawWord);
   }
+  uint32_t uint32StubField(uint32_t offset) {
+    MOZ_ASSERT(stubFieldPolicy_ == StubFieldPolicy::Constant);
+    return readStubWord(offset, StubField::Type::RawWord);
+  }
   Shape* shapeStubField(uint32_t offset) {
     MOZ_ASSERT(stubFieldPolicy_ == StubFieldPolicy::Constant);
     return (Shape*)readStubWord(offset, StubField::Type::Shape);
@@ -828,6 +848,10 @@ class MOZ_RAII CacheIRCompiler {
     MOZ_ASSERT(stubFieldPolicy_ == StubFieldPolicy::Constant);
     return jsid::fromRawBits(readStubWord(offset, StubField::Type::Id));
   }
+
+#ifdef DEBUG
+  void assertFloatRegisterAvailable(FloatRegister reg);
+#endif
 
  public:
   // The maximum number of arguments passed to a spread call or
@@ -1033,6 +1057,28 @@ class MOZ_RAII AutoScratchFloatRegister {
 
   FloatRegister get() const { return FloatReg0; }
   operator FloatRegister() const { return FloatReg0; }
+};
+
+// This class can be used to assert a certain FloatRegister is available. In
+// Baseline mode, all float registers are available. In Ion mode, only the
+// registers added as fixed temps in LIRGenerator are available.
+class MOZ_RAII AutoAvailableFloatRegister {
+  FloatRegister reg_;
+
+  AutoAvailableFloatRegister(const AutoAvailableFloatRegister&) = delete;
+  void operator=(const AutoAvailableFloatRegister&) = delete;
+
+ public:
+  explicit AutoAvailableFloatRegister(CacheIRCompiler& compiler,
+                                      FloatRegister reg)
+      : reg_(reg) {
+#ifdef DEBUG
+    compiler.assertFloatRegisterAvailable(reg);
+#endif
+  }
+
+  FloatRegister get() const { return reg_; }
+  operator FloatRegister() const { return reg_; }
 };
 
 // See the 'Sharing Baseline stub code' comment in CacheIR.h for a description

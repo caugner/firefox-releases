@@ -4,6 +4,7 @@
 
 import { DSCard, PlaceholderDSCard } from "../DSCard/DSCard.jsx";
 import { DSEmptyState } from "../DSEmptyState/DSEmptyState.jsx";
+import { FluentOrText } from "../../FluentOrText/FluentOrText.jsx";
 import React from "react";
 
 export class CardGrid extends React.PureComponent {
@@ -31,6 +32,7 @@ export class CardGrid extends React.PureComponent {
             type={this.props.type}
             context={rec.context}
             sponsor={rec.sponsor}
+            sponsored_by_override={rec.sponsored_by_override}
             dispatch={this.props.dispatch}
             source={rec.domain}
             pocket_id={rec.pocket_id}
@@ -40,6 +42,7 @@ export class CardGrid extends React.PureComponent {
             display_engagement_labels={this.props.display_engagement_labels}
             cta={rec.cta}
             cta_variant={this.props.cta_variant}
+            is_video={this.props.enable_video_playheads && rec.is_video}
           />
         )
       );
@@ -76,7 +79,9 @@ export class CardGrid extends React.PureComponent {
           <div className="ds-header">
             <div className="title">{this.props.title}</div>
             {this.props.context && (
-              <div className="ds-context">{this.props.context}</div>
+              <FluentOrText message={this.props.context}>
+                <div className="ds-context" />
+              </FluentOrText>
             )}
           </div>
         )}
@@ -99,4 +104,5 @@ export class CardGrid extends React.PureComponent {
 CardGrid.defaultProps = {
   border: `border`,
   items: 4, // Number of stories to display
+  enable_video_playheads: false,
 };

@@ -4,11 +4,13 @@
 
 "use strict";
 
+const {
+  ResourceWatcher,
+} = require("devtools/shared/resources/resource-watcher");
+
 module.exports = async function({
   targetList,
-  targetType,
   targetFront,
-  isTopLevel,
   isFissionEnabledOnContentToolbox,
   onAvailable,
 }) {
@@ -20,9 +22,9 @@ module.exports = async function({
   const isContentToolbox = targetList.targetFront.isLocalTab;
   const listenForFrames = isContentToolbox && isFissionEnabledOnContentToolbox;
   const isAllowed =
-    isTopLevel ||
-    targetType === targetList.TYPES.PROCESS ||
-    (targetType === targetList.TYPES.FRAME && listenForFrames);
+    targetFront.isTopLevel ||
+    targetFront.targetType === targetList.TYPES.PROCESS ||
+    (targetFront.targetType === targetList.TYPES.FRAME && listenForFrames);
 
   if (!isAllowed) {
     return;
@@ -35,10 +37,25 @@ module.exports = async function({
 
   // Fetch already existing messages
   // /!\ The actor implementation requires to call startListeners(ConsoleAPI) first /!\
-  const { messages } = await webConsoleFront.getCachedMessages(["ConsoleAPI"]);
-  // Wrap the message into a `message` attribute, to match `consoleAPICall` behavior
-  messages.map(message => ({ message })).forEach(onAvailable);
+  let { messages } = await webConsoleFront.getCachedMessages(["ConsoleAPI"]);
+
+  messages = messages.map(message => {
+    // Handling cached messages for servers older than Firefox 78.
+    // Wrap the message into a `message` attribute, to match `consoleAPICall` behavior
+    if (message._type) {
+      return {
+        message,
+        resourceType: ResourceWatcher.TYPES.CONSOLE_MESSAGE,
+      };
+    }
+    message.resourceType = ResourceWatcher.TYPES.CONSOLE_MESSAGE;
+    return message;
+  });
+  onAvailable(messages);
 
   // Forward new message events
-  webConsoleFront.on("consoleAPICall", onAvailable);
+  webConsoleFront.on("consoleAPICall", message => {
+    message.resourceType = ResourceWatcher.TYPES.CONSOLE_MESSAGE;
+    onAvailable([message]);
+  });
 };

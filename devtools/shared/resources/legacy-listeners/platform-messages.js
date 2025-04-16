@@ -4,17 +4,17 @@
 
 "use strict";
 
-module.exports = async function({
-  targetList,
-  targetType,
-  targetFront,
-  isTopLevel,
-  onAvailable,
-}) {
+const {
+  ResourceWatcher,
+} = require("devtools/shared/resources/resource-watcher");
+
+module.exports = async function({ targetList, targetFront, onAvailable }) {
   // Only allow the top level target and processes.
   // Frames can be ignored as logMessage are never sent to them anyway.
   // Also ignore workers as they are not supported yet. (see bug 1592584)
-  const isAllowed = isTopLevel || targetType === targetList.TYPES.PROCESS;
+  const isAllowed =
+    targetFront.isTopLevel ||
+    targetFront.targetType === targetList.TYPES.PROCESS;
   if (!isAllowed) {
     return;
   }
@@ -31,21 +31,29 @@ module.exports = async function({
   // /!\ The actor implementation requires to call startListeners("PageError") first /!\
   // On older server (< v77), cached messages have to be retrieved at the same time as
   // PageError messages.
-  const { messages } = await webConsoleFront.getCachedMessages([
+  let { messages } = await webConsoleFront.getCachedMessages([
     webConsoleFront.traits.newCacheStructure ? "LogMessage" : "PageError",
   ]);
 
-  for (const message of messages) {
-    // On older server (< v77), we're also getting pageError cached messages, so we need
-    // to ignore those.
-    if (
-      !webConsoleFront.traits.newCacheStructure &&
-      message._type !== "LogMessage"
-    ) {
-      continue;
-    }
-    onAvailable(message);
-  }
+  // On older server (< v77), we're also getting pageError cached messages, so we need
+  // to ignore those.
+  messages = messages.filter(message => {
+    return (
+      webConsoleFront.traits.newCacheStructure || message._type === "LogMessage"
+    );
+  });
 
-  webConsoleFront.on("logMessage", onAvailable);
+  for (const message of messages) {
+    // Handling cached messages for servers older than Firefox 78.
+    if (message._type) {
+      delete message._type;
+    }
+    message.resourceType = ResourceWatcher.TYPES.PLATFORM_MESSAGE;
+  }
+  onAvailable(messages);
+
+  webConsoleFront.on("logMessage", message => {
+    message.resourceType = ResourceWatcher.TYPES.PLATFORM_MESSAGE;
+    onAvailable([message]);
+  });
 };

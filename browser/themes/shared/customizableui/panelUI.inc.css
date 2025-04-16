@@ -295,15 +295,28 @@ panelview {
   min-height: 14px;
   max-height: 14px;
   animation-name: confirmation-hint-checkmark-animation;
-  animation-duration: 300ms;
-  animation-delay: 60ms;
   animation-fill-mode: forwards;
   animation-timing-function: steps(18);
+}
+
+#confirmation-hint[data-message-id="loginRemoved"] #confirmation-hint-checkmark-image {
+  background-image: url("chrome://global/skin/icons/delete.svg");
+  background-size: contain;
+  -moz-context-properties: fill;
+  fill: #FFF;
+  animation: none;
 }
 
 #confirmation-hint-checkmark-animation-container[animate] > #confirmation-hint-checkmark-image:-moz-locale-dir(rtl) {
   animation-name: confirmation-hint-checkmark-animation-rtl;
   transform: translateX(252px);
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  #confirmation-hint-checkmark-animation-container[animate] > #confirmation-hint-checkmark-image {
+    animation-duration: 300ms;
+    animation-delay: 60ms;
+  }
 }
 
 @keyframes confirmation-hint-checkmark-animation {
@@ -333,16 +346,18 @@ panelview {
   font-weight: 600;
 }
 
-#confirmation-hint-message-container {
-  transform: scale(.8);
-  opacity: 0;
-  transition: transform 120ms cubic-bezier(.25,1.27,.35,1.18),
-              opacity 60ms linear;
-}
+@media (prefers-reduced-motion: no-preference) {
+  #confirmation-hint-message-container {
+    transform: scale(.8);
+    opacity: 0;
+    transition: transform 120ms cubic-bezier(.25,1.27,.35,1.18),
+                opacity 60ms linear;
+  }
 
-#confirmation-hint-checkmark-animation-container[animate] + #confirmation-hint-message-container {
-  transform: scale(1);
-  opacity: 1;
+  #confirmation-hint-checkmark-animation-container[animate] + #confirmation-hint-message-container {
+    transform: scale(1);
+    opacity: 1;
+  }
 }
 
 panelview[id^=PanelUI-webext-] {
@@ -350,7 +365,7 @@ panelview[id^=PanelUI-webext-] {
 }
 
 panelview:not([mainview]) .toolbarbutton-text,
-.cui-widget-panel toolbarbutton:not([wrap]) > .toolbarbutton-text,
+.cui-widget-panel .toolbarbutton-text,
 #overflowMenu-customize-button > .toolbarbutton-text {
   text-align: start;
   display: -moz-box;
@@ -1006,7 +1021,6 @@ panelmultiview[mainViewId="PanelUI-fxa"] #PanelUI-remotetabs-syncnow {
   background-color: @appmenuWarningBackgroundColorActiveBrightText@;
 }
 
-#customization-palette .toolbarbutton-multiline-text,
 #customization-palette .toolbarbutton-text {
   display: none;
 }
@@ -1066,12 +1080,6 @@ panelview .toolbarbutton-1,
 .subviewbutton.restoreallitem > .toolbarbutton-text,
 .subviewbutton.bookmark-item > .toolbarbutton-text,
 .subviewbutton[checked="true"] > .toolbarbutton-text {
-  padding-inline-start: 8px; /* See '.subviewbutton-iconic > .toolbarbutton-text' rule above. */
-}
-
-.panel-banner-item > .toolbarbutton-multiline-text {
-  margin: 0;
-  padding: 0;
   padding-inline-start: 8px; /* See '.subviewbutton-iconic > .toolbarbutton-text' rule above. */
 }
 
@@ -1390,12 +1398,6 @@ menuitem.panel-subview-footer@menuStateActive@,
 #appMenu-fxa-avatar,
 #PanelUI-fxa-menu-account-settings-button > .toolbarbutton-icon {
   border-radius: 50%;
-}
-
-toolbarpaletteitem[place="palette"] > .toolbarbutton-1 > .toolbarbutton-menu-dropmarker,
-#bookmarks-menu-button[cui-areatype="menu-panel"] > .toolbarbutton-menu-dropmarker,
-#bookmarks-menu-button[overflowedItem] > .toolbarbutton-menu-dropmarker {
-  display: none;
 }
 
 #search-container[cui-areatype="menu-panel"] {
@@ -1737,7 +1739,7 @@ toolbarpaletteitem[place="menu-panel"] > .subviewbutton-nav::after {
 }
 
 .subviewbutton-back > .toolbarbutton-text {
-  /* !important to override .cui-widget-panel toolbarbutton:not([wrap]) > .toolbarbutton-text
+  /* !important to override .cui-widget-panel .toolbarbutton-text
    * selector further down. */
   display: none !important;
 }
@@ -1858,6 +1860,59 @@ panelview[mainview] #PanelUI-whatsNew-content {
   padding-top: 0;
 }
 
+#PanelUI-whatsNew .panelMenu-toggleWhatsNew-checkbox {
+  background-color: var(--arrowpanel-dimmed);
+  border-top: 1px solid var(--panel-separator-color);
+  padding-inline-start: 18px;
+  min-height: 41px;
+}
+
+#PanelUI-whatsNew .panelMenu-toggleWhatsNew-checkbox:hover,
+#PanelUI-whatsNew .panelMenu-toggleWhatsNew-checkbox:focus {
+  background-color: var(--arrowpanel-dimmed-further);
+}
+
+#PanelUI-whatsNew .panelMenu-toggleWhatsNew-checkbox:active {
+  background-color: var(--arrowpanel-dimmed-even-further);
+}
+
+/* These checkbox styles have been pulled from `common.inc.css` and
+   duplicated here to ensure they apply correctly. See
+   https://searchfox.org/mozilla-central/rev/7908ce29657cfd623993046bd8e38664e1c0b28e/toolkit/themes/shared/in-content/common.inc.css#559 */
+#PanelUI-whatsNew checkbox {
+  -moz-appearance: none;
+  height: 30px;
+  margin: 0;
+}
+
+#PanelUI-whatsNew checkbox[checked] {
+  list-style-image: url("chrome://global/skin/icons/check.svg");
+  -moz-context-properties: fill;
+  fill: #2292d0;
+}
+
+#PanelUI-whatsNew .checkbox-check {
+  -moz-appearance: none;
+  width: 20px;
+  height: 20px;
+  padding: 1px;
+  border: 1px solid #A9A9A9;
+  border-radius: 2px;
+  margin: 0;
+  margin-inline-end: 10px;
+  background-color: #FFF;
+  background-position: center;
+  background-repeat: no-repeat;
+}
+
+#PanelUI-whatsNew checkbox:hover .checkbox-check {
+  border-color: #0a84ff;
+}
+
+#PanelUI-whatsNew .checkbox-icon {
+  display: none;
+}
+
 #PanelUI-whatsNew .whatsNew-message {
   cursor: pointer;
   margin: 0 12px;
@@ -1883,13 +1938,14 @@ panelview[mainview] #PanelUI-whatsNew-content {
 
 #PanelUI-whatsNew .whatsNew-message-date {
   font-size: .85em;
-  margin: 0 -12px;
+  margin: -12px;
+  margin-top: 0;
   padding: 6px 16px;
   background: var(--arrowpanel-dimmed);
 }
 
 #PanelUI-whatsNew .whatsNew-message-body {
-  padding: 6px 6px 18px;
+  padding: 6px 6px 10px;
   text-align: inherit;
   text-decoration: none;
   color: inherit;
@@ -1914,7 +1970,7 @@ panelview[mainview] #PanelUI-whatsNew-content {
   inset-inline-end: 6px;
   height: 32px;
   position: absolute;
-  top: 16px;
+  top: 22px;
   width: 32px;
 }
 
@@ -1925,7 +1981,7 @@ panelview[mainview] #PanelUI-whatsNew-content {
   font-size: 1.3em;
   font-weight: 600;
   line-height: 1.4em;
-  margin: 8px 0 2px;
+  margin: 14px 0 0;
 }
 
 #PanelUI-whatsNew .whatsNew-message-title-large {
@@ -1943,7 +1999,7 @@ panelview[mainview] #PanelUI-whatsNew-content {
 
 #PanelUI-whatsNew .whatsNew-message-content {
   display: block;
-  margin: 13px 0;
+  margin: 10px 0;
 }
 
 #PanelUI-whatsNew .text-link {
@@ -1952,7 +2008,6 @@ panelview[mainview] #PanelUI-whatsNew-content {
   color: #45a1ff;
   cursor: pointer;
   font-size: .9em;
-  margin-top: 1.3em;
 }
 
 #protections-popup-message .text-link {
@@ -2195,6 +2250,25 @@ panelview[mainview] #PanelUI-whatsNew-content {
   opacity: 0.75;
 }
 
+#PanelUI-profiler-content-recording {
+  padding-block: 28px;
+  padding-inline: 16px;
+  font-size: 16px;
+}
+
+.PanelUI-profiler-recording-icon {
+  width: 42px;
+  list-style-image: url(chrome://devtools/skin/images/tool-profiler.svg);
+  -moz-context-properties: fill;
+  fill: var(--toolbar-color);
+  opacity: 0.3;
+}
+
+.PanelUI-profiler-recording-label {
+  margin-block: 9px;
+  margin-inline: 13px;
+}
+
 .PanelUI-profiler-button {
   -moz-appearance: none;
   background-color: #e0e0e1;
@@ -2256,4 +2330,14 @@ panelview[mainview] #PanelUI-whatsNew-content {
 
 #PanelUI-profiler-presets[disabled="true"]::part(label-box) {
   opacity: 0.5;
+}
+
+/**
+ * Override the specificity of `#PanelUI-profiler description`
+ */
+description#PanelUI-profiler-locked {
+  padding: 16px;
+  line-height: 1.5;
+  /* Make sure this description is wider than the header's */
+  max-width: 310px;
 }

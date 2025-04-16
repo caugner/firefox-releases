@@ -176,20 +176,6 @@ class Nursery {
   // SubChunkStep is the minimum amount to adjust the nursery's size by.
   static const size_t SubChunkStep = gc::ArenaSize;
 
-  struct alignas(gc::CellAlignBytes) CellAlignedByte {
-    char byte;
-  };
-
-  struct StringLayout {
-    JS::Zone* zone;
-    CellAlignedByte cell;
-  };
-
-  struct BigIntLayout {
-    JS::Zone* zone;
-    CellAlignedByte cell;
-  };
-
   using BufferRelocationOverlay = void*;
   using BufferSet = HashSet<void*, PointerHasher<void*>, SystemAllocPolicy>;
 
@@ -245,45 +231,20 @@ class Nursery {
   JSObject* allocateObject(JSContext* cx, size_t size, size_t numDynamic,
                            const JSClass* clasp);
 
-  // Allocate and return a pointer to a new string. Returns nullptr if the
+  // Allocate and return a pointer to a new GC thing. Returns nullptr if the
   // Nursery is full.
-  gc::Cell* allocateString(JS::Zone* zone, size_t size, gc::AllocKind kind);
+  gc::Cell* allocateCell(JS::Zone* zone, size_t size, JS::TraceKind kind);
 
-  // Allocate and return a pointer to a new BigInt. Returns nullptr if the
-  // Nursery is full.
-  gc::Cell* allocateBigInt(JS::Zone* zone, size_t size, gc::AllocKind kind);
-
-  // String zones are stored just before the string in nursery memory.
-  static JS::Zone* getStringZone(const JSString* str) {
-#ifdef DEBUG
-    auto cell = reinterpret_cast<const js::gc::Cell*>(
-        str);  // JSString type is incomplete here
-    MOZ_ASSERT(js::gc::IsInsideNursery(cell),
-               "getStringZone must be passed a nursery string");
-#endif
-
-    auto layout =
-        reinterpret_cast<const uint8_t*>(str) - offsetof(StringLayout, cell);
-    return reinterpret_cast<const StringLayout*>(layout)->zone;
+  gc::Cell* allocateBigInt(JS::Zone* zone, size_t size) {
+    return allocateCell(zone, size, JS::TraceKind::BigInt);
+  }
+  gc::Cell* allocateString(JS::Zone* zone, size_t size) {
+    return allocateCell(zone, size, JS::TraceKind::String);
   }
 
-  // BigInt zones are stored just before the BigInt in nursery memory.
-  static JS::Zone* getBigIntZone(const JS::BigInt* bi) {
-#ifdef DEBUG
-    auto cell = reinterpret_cast<const js::gc::Cell*>(
-        bi);  // JS::BigInt type is incomplete here
-    MOZ_ASSERT(js::gc::IsInsideNursery(cell),
-               "getBigIntZone must be passed a nursery BigInt");
-#endif
-
-    auto layout =
-        reinterpret_cast<const uint8_t*>(bi) - offsetof(BigIntLayout, cell);
-    return reinterpret_cast<const BigIntLayout*>(layout)->zone;
+  static size_t nurseryCellHeaderSize() {
+    return sizeof(gc::NurseryCellHeader);
   }
-
-  static size_t stringHeaderSize() { return offsetof(StringLayout, cell); }
-
-  static size_t bigIntHeaderSize() { return offsetof(BigIntLayout, cell); }
 
   // Allocate a buffer for a given zone, using the nursery if possible.
   void* allocateBuffer(JS::Zone* zone, size_t nbytes);
@@ -628,6 +589,12 @@ class Nursery {
 
   // Common internal allocator function.
   void* allocate(size_t size);
+
+  void* moveToNextChunkAndAllocate(size_t size);
+
+#ifdef JS_GC_ZEAL
+  void writeCanary(uintptr_t address);
+#endif
 
   void doCollection(JS::GCReason reason, gc::TenureCountCache& tenureCounts);
 

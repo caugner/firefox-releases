@@ -504,10 +504,10 @@ class GetUserMediaWindowListener {
   void RemoveAll() {
     MOZ_ASSERT(NS_IsMainThread());
 
-    for (auto& l : nsTArray<RefPtr<SourceListener>>(mInactiveListeners)) {
+    for (auto& l : mInactiveListeners.Clone()) {
       Remove(l);
     }
-    for (auto& l : nsTArray<RefPtr<SourceListener>>(mActiveListeners)) {
+    for (auto& l : mActiveListeners.Clone()) {
       Remove(l);
     }
     MOZ_ASSERT(mInactiveListeners.Length() == 0);
@@ -1395,9 +1395,9 @@ static void GetMediaDevices(MediaEngine* aEngine, uint64_t aWindowId,
       }
     }
   } else {
-    aResult = devices;
+    aResult = std::move(devices);
     if (MOZ_LOG_TEST(gMediaManagerLog, mozilla::LogLevel::Debug)) {
-      for (auto& device : devices) {
+      for (auto& device : aResult) {
         LOG("%s: appending device=%s", __func__,
             NS_ConvertUTF16toUTF8(device->mName).get());
       }
@@ -1911,6 +1911,7 @@ MediaManager::MediaManager(UniquePtr<base::Thread> aMediaThread)
   mPrefs.mUseAecMobile = false;
   mPrefs.mAgcOn = false;
   mPrefs.mHPFOn = false;
+  mPrefs.mExperimentalInputProcessing = false;
   mPrefs.mNoiseOn = false;
   mPrefs.mExtendedFilter = true;
   mPrefs.mDelayAgnostic = true;
@@ -1920,12 +1921,13 @@ MediaManager::MediaManager(UniquePtr<base::Thread> aMediaThread)
       webrtc::EchoCancellation::SuppressionLevel::kModerateSuppression;
   mPrefs.mAgc = webrtc::GainControl::Mode::kAdaptiveDigital;
   mPrefs.mNoise = webrtc::NoiseSuppression::Level::kModerate;
+  mPrefs.mRoutingMode = webrtc::EchoControlMobile::RoutingMode::kSpeakerphone;
 #else
   mPrefs.mAec = 0;
   mPrefs.mAgc = 0;
   mPrefs.mNoise = 0;
+  mPrefs.mRoutingMode = 0;
 #endif
-  mPrefs.mFullDuplex = false;
   mPrefs.mChannels = 0;  // max channels default
   nsresult rv;
   nsCOMPtr<nsIPrefService> prefs =
@@ -1937,15 +1939,17 @@ MediaManager::MediaManager(UniquePtr<base::Thread> aMediaThread)
     }
   }
   LOG("%s: default prefs: %dx%d @%dfps, %dHz test tones, aec: %s,"
-      "agc: %s, hpf: %s, noise: %s, aec level: %d, agc level: %d, noise level: "
-      "%d,"
-      "%sfull_duplex, extended aec %s, delay_agnostic %s "
+      "agc: %s, hpf: %s, experimental_input_processing: %s, noise: %s, aec "
+      "level: %d, agc level: %d, noise level: "
+      "%d, aec mobile routing mode: %d,"
+      "extended aec %s, delay_agnostic %s "
       "channels %d",
       __FUNCTION__, mPrefs.mWidth, mPrefs.mHeight, mPrefs.mFPS, mPrefs.mFreq,
       mPrefs.mAecOn ? "on" : "off", mPrefs.mAgcOn ? "on" : "off",
-      mPrefs.mHPFOn ? "on" : "off", mPrefs.mNoiseOn ? "on" : "off", mPrefs.mAec,
-      mPrefs.mAgc, mPrefs.mNoise, mPrefs.mFullDuplex ? "" : "not ",
-      mPrefs.mExtendedFilter ? "on" : "off",
+      mPrefs.mHPFOn ? "on" : "off",
+      mPrefs.mExperimentalInputProcessing ? "on" : "off",
+      mPrefs.mNoiseOn ? "on" : "off", mPrefs.mAec, mPrefs.mAgc, mPrefs.mNoise,
+      mPrefs.mRoutingMode, mPrefs.mExtendedFilter ? "on" : "off",
       mPrefs.mDelayAgnostic ? "on" : "off", mPrefs.mChannels);
 }
 
@@ -2044,8 +2048,6 @@ MediaManager* MediaManager::Get() {
                          false);
       prefs->AddObserver("media.navigator.audio.fake_frequency", sSingleton,
                          false);
-      prefs->AddObserver("media.navigator.audio.full_duplex", sSingleton,
-                         false);
 #ifdef MOZ_WEBRTC
       prefs->AddObserver("media.getusermedia.aec_enabled", sSingleton, false);
       prefs->AddObserver("media.getusermedia.aec", sSingleton, false);
@@ -2057,6 +2059,8 @@ MediaManager* MediaManager::Get() {
       prefs->AddObserver("media.ondevicechange.fakeDeviceChangeEvent.enabled",
                          sSingleton, false);
       prefs->AddObserver("media.getusermedia.channels", sSingleton, false);
+      prefs->AddObserver("media.getusermedia.experimental_input_processing",
+                         sSingleton, false);
 #endif
     }
 
@@ -2237,7 +2241,7 @@ void MediaManager::DeviceListChanged() {
                 l->StopRawID(id);
               }
             }
-            mDeviceIDs = deviceIDs;
+            mDeviceIDs = std::move(deviceIDs);
           },
           [](RefPtr<MediaMgrError>&& reason) {});
 }
@@ -3500,11 +3504,15 @@ void MediaManager::GetPrefs(nsIPrefBranch* aBranch, const char* aData) {
   GetPrefBool(aBranch, "media.getusermedia.aec_enabled", aData, &mPrefs.mAecOn);
   GetPrefBool(aBranch, "media.getusermedia.agc_enabled", aData, &mPrefs.mAgcOn);
   GetPrefBool(aBranch, "media.getusermedia.hpf_enabled", aData, &mPrefs.mHPFOn);
+  GetPrefBool(aBranch, "media.getusermedia.experimental_input_processing",
+              aData, &mPrefs.mExperimentalInputProcessing);
   GetPrefBool(aBranch, "media.getusermedia.noise_enabled", aData,
               &mPrefs.mNoiseOn);
   GetPref(aBranch, "media.getusermedia.aec", aData, &mPrefs.mAec);
   GetPref(aBranch, "media.getusermedia.agc", aData, &mPrefs.mAgc);
   GetPref(aBranch, "media.getusermedia.noise", aData, &mPrefs.mNoise);
+  GetPref(aBranch, "media.getusermedia.aecm_output_routing", aData,
+          &mPrefs.mRoutingMode);
   GetPrefBool(aBranch, "media.getusermedia.aec_extended_filter", aData,
               &mPrefs.mExtendedFilter);
   GetPrefBool(aBranch, "media.getusermedia.aec_aec_delay_agnostic", aData,
@@ -3527,8 +3535,6 @@ void MediaManager::GetPrefs(nsIPrefBranch* aBranch, const char* aData) {
         }));
   }
 #endif
-  GetPrefBool(aBranch, "media.navigator.audio.full_duplex", aData,
-              &mPrefs.mFullDuplex);
 }
 
 void MediaManager::Shutdown() {
@@ -3557,6 +3563,8 @@ void MediaManager::Shutdown() {
     prefs->RemoveObserver("media.getusermedia.aec", this);
     prefs->RemoveObserver("media.getusermedia.agc_enabled", this);
     prefs->RemoveObserver("media.getusermedia.hpf_enabled", this);
+    prefs->RemoveObserver("media.getusermedia.experimental_input_processing",
+                          this);
     prefs->RemoveObserver("media.getusermedia.agc", this);
     prefs->RemoveObserver("media.getusermedia.noise_enabled", this);
     prefs->RemoveObserver("media.getusermedia.noise", this);
@@ -3564,7 +3572,6 @@ void MediaManager::Shutdown() {
                           this);
     prefs->RemoveObserver("media.getusermedia.channels", this);
 #endif
-    prefs->RemoveObserver("media.navigator.audio.full_duplex", this);
   }
 
   {
@@ -4656,7 +4663,7 @@ DeviceState& SourceListener::GetDeviceStateFor(MediaTrack* aTrack) const {
 void GetUserMediaWindowListener::StopSharing() {
   MOZ_ASSERT(NS_IsMainThread(), "Only call on main thread");
 
-  for (auto& l : nsTArray<RefPtr<SourceListener>>(mActiveListeners)) {
+  for (auto& l : mActiveListeners.Clone()) {
     l->StopSharing();
   }
 }
@@ -4664,7 +4671,7 @@ void GetUserMediaWindowListener::StopSharing() {
 void GetUserMediaWindowListener::StopRawID(const nsString& removedDeviceID) {
   MOZ_ASSERT(NS_IsMainThread(), "Only call on main thread");
 
-  for (auto& source : nsTArray<RefPtr<SourceListener>>(mActiveListeners)) {
+  for (auto& source : mActiveListeners.Clone()) {
     if (source->GetAudioDevice()) {
       nsString id;
       source->GetAudioDevice()->GetRawId(id);

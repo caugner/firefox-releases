@@ -17,20 +17,30 @@ git = "https://github.com/mozilla/neqo"
 replace-with = "vendored-sources"
 tag = "v0.2.4"
 
+[source."https://github.com/mozilla/mp4parse-rust"]
+git = "https://github.com/mozilla/mp4parse-rust"
+replace-with = "vendored-sources"
+rev = "0dc3e6e7c5371fe21f69b847f61c65fe6d6dc317"
+
 [source."https://github.com/mozilla/application-services"]
 git = "https://github.com/mozilla/application-services"
 replace-with = "vendored-sources"
-rev = "d8a50bb0b010ab7289fe2d2864cc3eb9687a52e7"
+rev = "61dcc364ac0d6d0816ab88a494bbf20d824b009b"
 
 [source."https://github.com/mozilla-spidermonkey/jsparagus"]
 git = "https://github.com/mozilla-spidermonkey/jsparagus"
 replace-with = "vendored-sources"
-rev = "1d93b88e0af0c2e994f17022f1d497e9d75e987b"
+rev = "efc1291d05e5ba8dbb4bd1197937a0291e72742c"
 
 [source."https://github.com/kvark/spirv_cross"]
-branch = "wgpu2"
+branch = "wgpu3"
 git = "https://github.com/kvark/spirv_cross"
 replace-with = "vendored-sources"
+
+[source."https://github.com/kinetiknz/mio-named-pipes"]
+git = "https://github.com/kinetiknz/mio-named-pipes"
+replace-with = "vendored-sources"
+rev = "21c26326f5f45f415c49eac4ba5bc41a2f961321"
 
 [source."https://github.com/jfkthame/mapped_hyph.git"]
 git = "https://github.com/jfkthame/mapped_hyph.git"
@@ -45,7 +55,7 @@ rev = "3541e3818fdc7c2a24f87e3459151a4ce955a67a"
 [source."https://github.com/djg/cubeb-pulse-rs"]
 git = "https://github.com/djg/cubeb-pulse-rs"
 replace-with = "vendored-sources"
-rev = "5eb38163103b0dae86de81cdaf46070bdeedc0d1"
+rev = "70431f444cf164177cb3c0f060698fc35f811be5"
 
 [source."https://github.com/bytecodealliance/wasmtime"]
 git = "https://github.com/bytecodealliance/wasmtime"
@@ -70,7 +80,7 @@ rev = "5e870faf6f95d79d11efc813e56370ad124bbed5"
 [source."https://github.com/ChunMinChang/cubeb-coreaudio-rs"]
 git = "https://github.com/ChunMinChang/cubeb-coreaudio-rs"
 replace-with = "vendored-sources"
-rev = "6156e941e5f46a641d2da10ca53a9ad318c10722"
+rev = "4cdbceadae88c77dfc77183b7edda183f32cd28c"
 
 [source.crates-io]
 replace-with = "vendored-sources"

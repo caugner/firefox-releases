@@ -470,6 +470,13 @@ static bool ReturnStringCopy(JSContext* cx, CallArgs& args,
   return true;
 }
 
+static bool MaybeGC(JSContext* cx, unsigned argc, Value* vp) {
+  CallArgs args = CallArgsFromVp(argc, vp);
+  JS_MaybeGC(cx);
+  args.rval().setUndefined();
+  return true;
+}
+
 static bool GC(JSContext* cx, unsigned argc, Value* vp) {
   CallArgs args = CallArgsFromVp(argc, vp);
 
@@ -790,9 +797,9 @@ static bool WasmMultiValueEnabled(JSContext* cx, unsigned argc, Value* vp) {
   return true;
 }
 
-static bool WasmBigIntEnabled(JSContext* cx, unsigned argc, Value* vp) {
+static bool WasmSimdSupported(JSContext* cx, unsigned argc, Value* vp) {
   CallArgs args = CallArgsFromVp(argc, vp);
-  args.rval().setBoolean(wasm::I64BigIntConversionAvailable(cx));
+  args.rval().setBoolean(wasm::SimdAvailable(cx));
   return true;
 }
 
@@ -898,6 +905,38 @@ static bool WasmIonDisabledByFeatures(JSContext* cx, unsigned argc, Value* vp) {
   }
   return true;
 }
+
+#ifdef ENABLE_WASM_SIMD
+#  ifdef DEBUG
+static char lastAnalysisResult[1024];
+
+namespace js {
+namespace wasm {
+void ReportSimdAnalysis(const char* v) {
+  strncpy(lastAnalysisResult, v, sizeof(lastAnalysisResult));
+  lastAnalysisResult[sizeof(lastAnalysisResult) - 1] = 0;
+}
+}  // namespace wasm
+}  // namespace js
+
+// Unstable API for white-box testing of SIMD optimizations.
+//
+// Current API: takes no arguments, returns a string describing the last Simd
+// simplification applied.
+
+static bool WasmSimdAnalysis(JSContext* cx, unsigned argc, Value* vp) {
+  CallArgs args = CallArgsFromVp(argc, vp);
+  JSString* result =
+      JS_NewStringCopyZ(cx, *lastAnalysisResult ? lastAnalysisResult : "none");
+  if (!result) {
+    return false;
+  }
+  args.rval().setString(result);
+  *lastAnalysisResult = (char)0;
+  return true;
+}
+#  endif
+#endif
 
 static bool ConvertToTier(JSContext* cx, HandleValue value,
                           const wasm::Code& code, wasm::Tier* tier) {
@@ -6227,6 +6266,10 @@ static const JSFunctionSpecWithHelp TestingFunctions[] = {
 "  Run a minor collector on the Nursery. When aboutToOverflow is true, marks\n"
 "  the store buffer as about-to-overflow before collecting."),
 
+    JS_FN_HELP("maybegc", ::MaybeGC, 0, 0,
+"maybegc()",
+"  Hint to the engine that now is an ok time to run the garbage collector.\n"),
+
     JS_FN_HELP("gcparam", GCParameter, 2, 0,
 "gcparam(name [, value])",
 "  Wrapper for JS_[GS]etGCParameter. The name is one of:" GC_PARAMETER_ARGS_LIST),
@@ -6606,6 +6649,11 @@ gc::ZealModeHelpText),
 "  Returns a boolean indicating whether the WebAssembly bulk memory proposal is\n"
 "  supported on the current device."),
 
+    JS_FN_HELP("wasmSimdSupported", WasmSimdSupported, 0, 0,
+"wasmSimdSupported()",
+"  Returns a boolean indicating whether WebAssembly SIMD is supported by the\n"
+"  compilers and runtime."),
+
     JS_FN_HELP("wasmCompilersPresent", WasmCompilersPresent, 0, 0,
 "wasmCompilersPresent()",
 "  Returns a string indicating the present wasm compilers: a comma-separated list\n"
@@ -6667,9 +6715,11 @@ gc::ZealModeHelpText),
 "wasmMultiValueEnabled()",
 "  Returns a boolean indicating whether the WebAssembly multi-value proposal is enabled."),
 
-    JS_FN_HELP("wasmBigIntEnabled", WasmBigIntEnabled, 1, 0,
-"wasmBigIntEnabled()",
-"  Returns a boolean indicating whether the WebAssembly I64 to BigInt proposal is enabled."),
+#if defined(ENABLE_WASM_SIMD) && defined(DEBUG)
+    JS_FN_HELP("wasmSimdAnalysis", WasmSimdAnalysis, 1, 0,
+"wasmSimdAnalysis(...)",
+"  Unstable API for white-box testing.\n"),
+#endif
 
     JS_FN_HELP("isLazyFunction", IsLazyFunction, 1, 0,
 "isLazyFunction(fun)",

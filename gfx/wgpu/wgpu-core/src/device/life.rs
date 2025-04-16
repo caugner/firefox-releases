@@ -2,6 +2,8 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
+#[cfg(feature = "trace")]
+use crate::device::trace;
 use crate::{
     hub::{GfxBackend, Global, GlobalIdentityHandlerFactory, Token},
     id, resource,
@@ -29,6 +31,7 @@ pub struct SuspectedResources {
     pub(crate) bind_groups: Vec<id::BindGroupId>,
     pub(crate) compute_pipelines: Vec<id::ComputePipelineId>,
     pub(crate) render_pipelines: Vec<id::RenderPipelineId>,
+    pub(crate) bind_group_layouts: Vec<Stored<id::BindGroupLayoutId>>,
     pub(crate) pipeline_layouts: Vec<Stored<id::PipelineLayoutId>>,
 }
 
@@ -41,6 +44,7 @@ impl SuspectedResources {
         self.bind_groups.clear();
         self.compute_pipelines.clear();
         self.render_pipelines.clear();
+        self.bind_group_layouts.clear();
         self.pipeline_layouts.clear();
     }
 
@@ -54,6 +58,8 @@ impl SuspectedResources {
             .extend_from_slice(&other.compute_pipelines);
         self.render_pipelines
             .extend_from_slice(&other.render_pipelines);
+        self.bind_group_layouts
+            .extend_from_slice(&other.bind_group_layouts);
         self.pipeline_layouts
             .extend_from_slice(&other.pipeline_layouts);
     }
@@ -72,6 +78,7 @@ struct NonReferencedResources<B: hal::Backend> {
     desc_sets: Vec<DescriptorSet<B>>,
     compute_pipes: Vec<B::ComputePipeline>,
     graphics_pipes: Vec<B::GraphicsPipeline>,
+    descriptor_set_layouts: Vec<B::DescriptorSetLayout>,
     pipeline_layouts: Vec<B::PipelineLayout>,
 }
 
@@ -86,6 +93,7 @@ impl<B: hal::Backend> NonReferencedResources<B> {
             desc_sets: Vec::new(),
             compute_pipes: Vec::new(),
             graphics_pipes: Vec::new(),
+            descriptor_set_layouts: Vec::new(),
             pipeline_layouts: Vec::new(),
         }
     }
@@ -99,6 +107,8 @@ impl<B: hal::Backend> NonReferencedResources<B> {
         self.desc_sets.extend(other.desc_sets);
         self.compute_pipes.extend(other.compute_pipes);
         self.graphics_pipes.extend(other.graphics_pipes);
+        assert!(other.descriptor_set_layouts.is_empty());
+        assert!(other.pipeline_layouts.is_empty());
     }
 
     unsafe fn clean(
@@ -144,6 +154,9 @@ impl<B: hal::Backend> NonReferencedResources<B> {
         }
         for raw in self.graphics_pipes.drain(..) {
             device.destroy_graphics_pipeline(raw);
+        }
+        for raw in self.descriptor_set_layouts.drain(..) {
+            device.destroy_descriptor_set_layout(raw);
         }
         for raw in self.pipeline_layouts.drain(..) {
             device.destroy_pipeline_layout(raw);
@@ -288,6 +301,7 @@ impl<B: GfxBackend> LifetimeTracker<B> {
         &mut self,
         global: &Global<G>,
         trackers: &Mutex<TrackerSet>,
+        #[cfg(feature = "trace")] trace: Option<&Mutex<trace::Trace>>,
         token: &mut Token<super::Device<B>>,
     ) {
         let hub = B::hub(global);
@@ -298,6 +312,8 @@ impl<B: GfxBackend> LifetimeTracker<B> {
 
             for id in self.suspected_resources.bind_groups.drain(..) {
                 if trackers.bind_groups.remove_abandoned(id) {
+                    #[cfg(feature = "trace")]
+                    trace.map(|t| t.lock().add(trace::Action::DestroyBindGroup(id)));
                     hub.bind_groups.free_id(id);
                     let res = guard.remove(id).unwrap();
 
@@ -332,6 +348,8 @@ impl<B: GfxBackend> LifetimeTracker<B> {
 
             for id in self.suspected_resources.texture_views.drain(..) {
                 if trackers.views.remove_abandoned(id) {
+                    #[cfg(feature = "trace")]
+                    trace.map(|t| t.lock().add(trace::Action::DestroyTextureView(id)));
                     hub.texture_views.free_id(id);
                     let res = guard.remove(id).unwrap();
 
@@ -360,6 +378,8 @@ impl<B: GfxBackend> LifetimeTracker<B> {
 
             for id in self.suspected_resources.textures.drain(..) {
                 if trackers.textures.remove_abandoned(id) {
+                    #[cfg(feature = "trace")]
+                    trace.map(|t| t.lock().add(trace::Action::DestroyTexture(id)));
                     hub.textures.free_id(id);
                     let res = guard.remove(id).unwrap();
 
@@ -380,6 +400,8 @@ impl<B: GfxBackend> LifetimeTracker<B> {
 
             for id in self.suspected_resources.samplers.drain(..) {
                 if trackers.samplers.remove_abandoned(id) {
+                    #[cfg(feature = "trace")]
+                    trace.map(|t| t.lock().add(trace::Action::DestroySampler(id)));
                     hub.samplers.free_id(id);
                     let res = guard.remove(id).unwrap();
 
@@ -400,6 +422,8 @@ impl<B: GfxBackend> LifetimeTracker<B> {
 
             for id in self.suspected_resources.buffers.drain(..) {
                 if trackers.buffers.remove_abandoned(id) {
+                    #[cfg(feature = "trace")]
+                    trace.map(|t| t.lock().add(trace::Action::DestroyBuffer(id)));
                     hub.buffers.free_id(id);
                     let res = guard.remove(id).unwrap();
                     log::debug!("Buffer {:?} is detached", id);
@@ -421,6 +445,8 @@ impl<B: GfxBackend> LifetimeTracker<B> {
 
             for id in self.suspected_resources.compute_pipelines.drain(..) {
                 if trackers.compute_pipes.remove_abandoned(id) {
+                    #[cfg(feature = "trace")]
+                    trace.map(|t| t.lock().add(trace::Action::DestroyComputePipeline(id)));
                     hub.compute_pipelines.free_id(id);
                     let res = guard.remove(id).unwrap();
 
@@ -441,6 +467,8 @@ impl<B: GfxBackend> LifetimeTracker<B> {
 
             for id in self.suspected_resources.render_pipelines.drain(..) {
                 if trackers.render_pipes.remove_abandoned(id) {
+                    #[cfg(feature = "trace")]
+                    trace.map(|t| t.lock().add(trace::Action::DestroyRenderPipeline(id)));
                     hub.render_pipelines.free_id(id);
                     let res = guard.remove(id).unwrap();
 
@@ -455,6 +483,25 @@ impl<B: GfxBackend> LifetimeTracker<B> {
             }
         }
 
+        if !self.suspected_resources.bind_group_layouts.is_empty() {
+            let (mut guard, _) = hub.bind_group_layouts.write(token);
+
+            for Stored {
+                value: id,
+                ref_count,
+            } in self.suspected_resources.bind_group_layouts.drain(..)
+            {
+                //Note: this has to happen after all the suspected pipelines are destroyed
+                if ref_count.load() == 1 {
+                    #[cfg(feature = "trace")]
+                    trace.map(|t| t.lock().add(trace::Action::DestroyBindGroupLayout(id)));
+                    hub.bind_group_layouts.free_id(id);
+                    let layout = guard.remove(id).unwrap();
+                    self.free_resources.descriptor_set_layouts.push(layout.raw);
+                }
+            }
+        }
+
         if !self.suspected_resources.pipeline_layouts.is_empty() {
             let (mut guard, _) = hub.pipeline_layouts.write(token);
 
@@ -465,6 +512,8 @@ impl<B: GfxBackend> LifetimeTracker<B> {
             {
                 //Note: this has to happen after all the suspected pipelines are destroyed
                 if ref_count.load() == 1 {
+                    #[cfg(feature = "trace")]
+                    trace.map(|t| t.lock().add(trace::Action::DestroyPipelineLayout(id)));
                     hub.pipeline_layouts.free_id(id);
                     let layout = guard.remove(id).unwrap();
                     self.free_resources.pipeline_layouts.push(layout.raw);
@@ -598,20 +647,24 @@ impl<B: GfxBackend> LifetimeTracker<B> {
             } else {
                 let mapping = match std::mem::replace(
                     &mut buffer.map_state,
-                    resource::BufferMapState::Active,
+                    resource::BufferMapState::Idle,
                 ) {
                     resource::BufferMapState::Waiting(pending_mapping) => pending_mapping,
                     _ => panic!("No pending mapping."),
                 };
                 log::debug!("Buffer {:?} map state -> Active", buffer_id);
-                let result = match mapping.op {
-                    resource::BufferMapOperation::Read { .. } => {
-                        super::map_buffer(raw, buffer, mapping.sub_range, super::HostMap::Read)
-                    }
-                    resource::BufferMapOperation::Write { .. } => {
-                        super::map_buffer(raw, buffer, mapping.sub_range, super::HostMap::Write)
-                    }
+                let host = match mapping.op {
+                    resource::BufferMapOperation::Read { .. } => super::HostMap::Read,
+                    resource::BufferMapOperation::Write { .. } => super::HostMap::Write,
                 };
+                let result = super::map_buffer(raw, buffer, mapping.sub_range.clone(), host);
+                if let Ok(ptr) = result {
+                    buffer.map_state = resource::BufferMapState::Active {
+                        ptr,
+                        sub_range: mapping.sub_range,
+                        host,
+                    };
+                }
                 pending_callbacks.push((mapping.op, result));
             }
         }

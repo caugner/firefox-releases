@@ -59,10 +59,6 @@ wr::WrExternalImage RenderAndroidSurfaceTextureHostOGL::Lock(
              (!mSurfTex->IsSingleBuffer() &&
               mPrepareStatus == STATUS_UPDATE_TEX_IMAGE_NEEDED));
 
-  if (!EnsureAttachedToGLContext()) {
-    return InvalidToWrExternalImage();
-  }
-
   if (mGL.get() != aGL) {
     // This should not happen. On android, SharedGL is used.
     MOZ_ASSERT_UNREACHABLE("Unexpected GL context");
@@ -70,6 +66,11 @@ wr::WrExternalImage RenderAndroidSurfaceTextureHostOGL::Lock(
   }
 
   if (!mSurfTex || !mGL || !mGL->MakeCurrent()) {
+    return InvalidToWrExternalImage();
+  }
+
+  MOZ_ASSERT(mAttachedToGLContext);
+  if (!mAttachedToGLContext) {
     return InvalidToWrExternalImage();
   }
 
@@ -101,10 +102,6 @@ void RenderAndroidSurfaceTextureHostOGL::Unlock() {}
 
 void RenderAndroidSurfaceTextureHostOGL::DeleteTextureHandle() {
   NotifyNotUsed();
-}
-
-void RenderAndroidSurfaceTextureHostOGL::DetachedFromGLContext() {
-  mAttachedToGLContext = false;
 }
 
 bool RenderAndroidSurfaceTextureHostOGL::EnsureAttachedToGLContext() {
@@ -153,22 +150,35 @@ void RenderAndroidSurfaceTextureHostOGL::PrepareForUse() {
   MOZ_ASSERT(RenderThread::IsInRenderThread());
   MOZ_ASSERT(mPrepareStatus == STATUS_NONE);
 
-  if (!EnsureAttachedToGLContext()) {
+  if (mContinuousUpdate || !mSurfTex) {
     return;
   }
 
-  if (mContinuousUpdate) {
-    return;
-  }
-
-  MOZ_ASSERT(mSurfTex);
-  mPrepareStatus = STATUS_UPDATE_TEX_IMAGE_NEEDED;
+  mPrepareStatus = STATUS_MIGHT_BE_USED_BY_WR;
 
   if (mSurfTex->IsSingleBuffer()) {
+    EnsureAttachedToGLContext();
     // When SurfaceTexture is single buffer mode, it is OK to call
     // UpdateTexImage() here.
     mSurfTex->UpdateTexImage();
     mPrepareStatus = STATUS_PREPARED;
+  }
+}
+
+void RenderAndroidSurfaceTextureHostOGL::NofityForUse() {
+  MOZ_ASSERT(RenderThread::IsInRenderThread());
+
+  if (mPrepareStatus == STATUS_MIGHT_BE_USED_BY_WR) {
+    // This happens when SurfaceTexture of video is rendered on WebRender.
+    // There is a case that SurfaceTexture is not rendered on WebRender, instead
+    // it is rendered to WebGL and the SurfaceTexture should not be attached to
+    // gl context of WebRender. It is ugly. But it is same as Compositor
+    // rendering.
+    MOZ_ASSERT(!mSurfTex->IsSingleBuffer());
+    if (!EnsureAttachedToGLContext()) {
+      return;
+    }
+    mPrepareStatus = STATUS_UPDATE_TEX_IMAGE_NEEDED;
   }
 }
 

@@ -400,7 +400,6 @@ class UrlbarView {
       if (
         // Do not show Top Sites in private windows.
         !this.input.isPrivate &&
-        this.input.openViewOnFocus &&
         !this.isOpen &&
         ["mousedown", "command"].includes(queryOptions.event.type)
       ) {
@@ -440,7 +439,13 @@ class UrlbarView {
     queryOptions.autofillIgnoresSelection = true;
     queryOptions.event.interactionType = "returned";
 
-    this._openPanel();
+    if (
+      this._queryContext &&
+      this._queryContext.results &&
+      this._queryContext.results.length
+    ) {
+      this._openPanel();
+    }
 
     // If we had cached results, this will just refresh them, avoiding results
     // flicker, otherwise there may be some noise.
@@ -504,9 +509,8 @@ class UrlbarView {
             trimmedValue.length != 1)
       );
 
-      // The input field applies autofill on input, without waiting for results.
-      // Once we get results, we can ask it to correct wrong predictions.
-      this.input.maybeClearAutofillPlaceholder(firstResult);
+      // Notify the input, so it can make adjustments based on the first result.
+      this.input.onFirstResult(firstResult);
     }
 
     if (
@@ -753,6 +757,24 @@ class UrlbarView {
     typeIcon.className = "urlbarView-type-icon";
     noWrap.appendChild(typeIcon);
 
+    let tailPrefix = this._createElement("span");
+    tailPrefix.className = "urlbarView-tail-prefix";
+    noWrap.appendChild(tailPrefix);
+    item._elements.set("tailPrefix", tailPrefix);
+    // tailPrefix holds text only for alignment purposes so it should never be
+    // read to screen readers.
+    tailPrefix.toggleAttribute("aria-hidden", true);
+
+    let tailPrefixStr = this._createElement("span");
+    tailPrefixStr.className = "urlbarView-tail-prefix-string";
+    tailPrefix.appendChild(tailPrefixStr);
+    item._elements.set("tailPrefixStr", tailPrefixStr);
+
+    let tailPrefixChar = this._createElement("span");
+    tailPrefixChar.className = "urlbarView-tail-prefix-char";
+    tailPrefix.appendChild(tailPrefixChar);
+    item._elements.set("tailPrefixChar", tailPrefixChar);
+
     let title = this._createElement("span");
     title.className = "urlbarView-title";
     noWrap.appendChild(title);
@@ -873,7 +895,7 @@ class UrlbarView {
       result.type == UrlbarUtils.RESULT_TYPE.SEARCH ||
       result.type == UrlbarUtils.RESULT_TYPE.KEYWORD
     ) {
-      favicon.src = result.payload.icon || UrlbarUtils.ICON.SEARCH_GLASS;
+      favicon.src = this._iconForSearchResult(result);
     } else {
       favicon.src = result.payload.icon || UrlbarUtils.ICON.DEFAULT;
     }
@@ -890,6 +912,16 @@ class UrlbarView {
       result.title,
       result.titleHighlights
     );
+
+    if (result.payload.tail && result.payload.tailOffsetIndex >= 0) {
+      this._fillTailSuggestionPrefix(item, result);
+      title.setAttribute("aria-label", result.payload.suggestion);
+      item.toggleAttribute("tail-suggestion", true);
+    } else {
+      item.removeAttribute("tail-suggestion");
+      title.removeAttribute("aria-label");
+    }
+
     title._tooltip = result.title;
     if (title.hasAttribute("overflow")) {
       title.setAttribute("title", title._tooltip);
@@ -991,6 +1023,18 @@ class UrlbarView {
     }
 
     item._elements.get("titleSeparator").hidden = !action && !setURL;
+  }
+
+  _iconForSearchResult(result, engineOverride = null) {
+    return (
+      (result.source == UrlbarUtils.RESULT_SOURCE.HISTORY &&
+        UrlbarUtils.ICON.HISTORY) ||
+      (engineOverride &&
+        engineOverride.iconURI &&
+        engineOverride.iconURI.spec) ||
+      result.payload.icon ||
+      UrlbarUtils.ICON.SEARCH_GLASS
+    );
   }
 
   _updateRowForTip(item, result) {
@@ -1125,7 +1169,7 @@ class UrlbarView {
     this._selectedElement = item;
 
     if (updateInput) {
-      this.input.setValueFromResult(item && item.result);
+      this.input.setValueFromResult(item?.result);
     }
   }
 
@@ -1319,6 +1363,25 @@ class UrlbarView {
     }
   }
 
+  /**
+   * Adds markup for a tail suggestion prefix to a row.
+   * @param {Node} item
+   *   The node for the result row.
+   * @param {UrlbarResult} result
+   *   A UrlbarResult representing a tail suggestion.
+   */
+  _fillTailSuggestionPrefix(item, result) {
+    let tailPrefixStrNode = item._elements.get("tailPrefixStr");
+    let tailPrefixStr = result.payload.suggestion.substring(
+      0,
+      result.payload.tailOffsetIndex
+    );
+    tailPrefixStrNode.textContent = tailPrefixStr;
+
+    let tailPrefixCharNode = item._elements.get("tailPrefixChar");
+    tailPrefixCharNode.textContent = result.payload.tailPrefix;
+  }
+
   _enableOrDisableOneOffSearches(enable = true) {
     if (enable) {
       this.oneOffSearchButtons.telemetryOrigin = "urlbar";
@@ -1394,8 +1457,9 @@ class UrlbarView {
     let engine =
       this.oneOffSearchButtons.selectedButton &&
       this.oneOffSearchButtons.selectedButton.engine;
-    for (let i = 0; i < this._queryContext.results.length; i++) {
-      let result = this._queryContext.results[i];
+
+    for (let item of this._rows.children) {
+      let result = item.result;
       if (
         result.type != UrlbarUtils.RESULT_TYPE.SEARCH ||
         (!result.heuristic &&
@@ -1413,7 +1477,6 @@ class UrlbarView {
         result.payload.engine = result.payload.originalEngine;
         delete result.payload.originalEngine;
       }
-      let item = this._rows.children[i];
       // If a one-off button is the only selection, force the heuristic result
       // to show its action text, so the engine name is visible.
       if (result.heuristic && engine && !this.selectedElement) {
@@ -1440,6 +1503,7 @@ class UrlbarView {
       } else if (!engine) {
         favicon.src = result.payload.icon || UrlbarUtils.ICON.SEARCH_GLASS;
       }
+      favicon.src = this._iconForSearchResult(result, engine);
     }
   }
 

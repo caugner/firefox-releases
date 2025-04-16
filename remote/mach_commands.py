@@ -63,8 +63,9 @@ class RemoteCommands(MachCommandBase):
     @Command("remote", category="misc",
              description="Remote protocol related operations.")
     def remote(self):
-        self.parser.print_usage()
-        exit(EX_USAGE)
+        """The remote subcommands all relate to the remote protocol."""
+        self._sub_mach(['help', 'remote'])
+        return 1
 
     @SubCommand("remote", "vendor-puppeteer",
                 "Pull in latest changes of the Puppeteer client.")
@@ -162,6 +163,7 @@ def npm(*args, **kwargs):
                                       args=list(args),
                                       cwd=kwargs.get("cwd"),
                                       env=env,
+                                      universal_newlines=True,
                                       **proc_kwargs)
     if not kwargs.get("wait", True):
         return p
@@ -206,7 +208,6 @@ class MochaOutputHandler(object):
         return self.proc and self.proc.pid
 
     def __call__(self, line):
-        line = line.decode("utf-8", "replace")
         line_text = self.control_re.subn("", line)[0]
         m = self.test_name_re.match(line_text)
         if m:

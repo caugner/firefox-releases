@@ -140,6 +140,10 @@ NS_IMPL_CYCLE_COLLECTION_TRACE_END
 
 NS_IMPL_CYCLE_COLLECTION_UNLINK_BEGIN_INHERITED(
     InProcessBrowserChildMessageManager, DOMEventTargetHelper)
+  if (XRE_IsParentProcess()) {
+    JSActorService::UnregisterChromeEventTarget(tmp);
+  }
+
   NS_IMPL_CYCLE_COLLECTION_UNLINK(mMessageManager)
   NS_IMPL_CYCLE_COLLECTION_UNLINK(mDocShell)
   tmp->nsMessageManagerScriptExecutor::Unlink();
@@ -244,19 +248,6 @@ void InProcessBrowserChildMessageManager::GetEventTargetParent(
     EventChainPreVisitor& aVisitor) {
   aVisitor.mForceContentDispatch = true;
   aVisitor.mCanHandle = true;
-
-#ifdef DEBUG
-  if (mOwner) {
-    RefPtr<nsFrameLoaderOwner> owner = do_QueryObject(mOwner);
-    RefPtr<nsFrameLoader> fl = owner->GetFrameLoader();
-    if (fl) {
-      NS_ASSERTION(this == fl->GetBrowserChildMessageManager(),
-                   "Wrong event target!");
-      NS_ASSERTION(fl->mMessageManager == mChromeMessageManager,
-                   "Wrong message manager!");
-    }
-  }
-#endif
 
   if (mPreventEventsEscaping) {
     aVisitor.SetParentTarget(nullptr, false);

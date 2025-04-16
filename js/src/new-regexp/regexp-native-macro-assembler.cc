@@ -280,10 +280,14 @@ void SMRegExpMacroAssembler::CheckNotBackReferenceImpl(int start_reg,
   if (mode_ == UC16 && ignore_case) {
     // We call a helper function for case-insensitive non-latin1 strings.
 
-    // Save volatile regs. temp1_ and temp2_ don't need to be saved.
+    // Save volatile regs. temp1_, temp2_, and current_character_
+    // don't need to be saved.  current_position_ needs to be saved
+    // even if it's non-volatile, because we modify it to use as an argument.
     LiveGeneralRegisterSet volatileRegs(GeneralRegisterSet::Volatile());
+    volatileRegs.addUnchecked(current_position_);
     volatileRegs.takeUnchecked(temp1_);
     volatileRegs.takeUnchecked(temp2_);
+    volatileRegs.takeUnchecked(current_character_);
     masm_.PushRegsInMask(volatileRegs);
 
     // Parameters are
@@ -412,6 +416,9 @@ void SMRegExpMacroAssembler::CheckNotBackReferenceImpl(int start_reg,
 
   masm_.bind(&success);
 
+  // Drop saved value of current_position_
+  masm_.addToStackPtr(Imm32(sizeof(uintptr_t)));
+
   // current_position_ is a pointer. Convert it back to an offset.
   masm_.subPtr(input_end_pointer_, current_position_);
   if (read_backward) {
@@ -419,9 +426,6 @@ void SMRegExpMacroAssembler::CheckNotBackReferenceImpl(int start_reg,
     masm_.addPtr(register_location(start_reg), current_position_);
     masm_.subPtr(register_location(start_reg + 1), current_position_);
   }
-
-  // Drop saved value of current_position_
-  masm_.addToStackPtr(Imm32(sizeof(uintptr_t)));
 
   masm_.bind(&fallthrough);
 }

@@ -67,6 +67,7 @@
 #include "nsRFPService.h"
 #include "nsStringStream.h"
 #include "nsComponentManagerUtils.h"
+#include "nsICookieManager.h"
 #include "nsICookieService.h"
 #include "nsIHttpChannel.h"
 #include "nsStreamUtils.h"
@@ -507,7 +508,7 @@ StorageManager* Navigator::Storage() {
 }
 
 bool Navigator::CookieEnabled() {
-  bool cookieEnabled = (StaticPrefs::network_cookie_cookieBehavior() !=
+  bool cookieEnabled = (nsICookieManager::GetCookieBehavior() !=
                         nsICookieService::BEHAVIOR_REJECT);
 
   // Check whether an exception overrides the global cookie behavior
@@ -522,18 +523,15 @@ bool Navigator::CookieEnabled() {
     return cookieEnabled;
   }
 
-  nsCOMPtr<nsIURI> contentURI;
-  doc->NodePrincipal()->GetURI(getter_AddRefs(contentURI));
-
-  if (!contentURI) {
+  uint32_t rejectedReason = 0;
+  bool granted = false;
+  nsresult rv = doc->NodePrincipal()->HasFirstpartyStorageAccess(
+      mWindow, &rejectedReason, &granted);
+  if (NS_FAILED(rv)) {
     // Not a content, so technically can't set cookies, but let's
     // just return the default value.
     return cookieEnabled;
   }
-
-  uint32_t rejectedReason = 0;
-  bool granted = ContentBlocking::ShouldAllowAccessFor(mWindow, contentURI,
-                                                       &rejectedReason);
 
   ContentBlockingNotifier::OnDecision(
       mWindow,
@@ -760,7 +758,7 @@ bool Navigator::Vibrate(const nsTArray<uint32_t>& aPattern) {
     return false;
   }
 
-  nsTArray<uint32_t> pattern(aPattern);
+  nsTArray<uint32_t> pattern(aPattern.Clone());
 
   if (pattern.Length() > StaticPrefs::dom_vibrator_max_vibrate_list_len()) {
     pattern.SetLength(StaticPrefs::dom_vibrator_max_vibrate_list_len());
@@ -1159,12 +1157,28 @@ bool Navigator::SendBeaconInternal(const nsAString& aUrl,
     return false;
   }
 
-  // No need to use CORS for sendBeacon unless it's a BLOB
-  nsSecurityFlags securityFlags =
-      aType == eBeaconTypeBlob
-          ? nsILoadInfo::SEC_REQUIRE_CORS_DATA_INHERITS
-          : nsILoadInfo::SEC_ALLOW_CROSS_ORIGIN_DATA_INHERITS;
-  securityFlags |= nsILoadInfo::SEC_COOKIES_INCLUDE;
+  nsCOMPtr<nsIInputStream> in;
+  nsAutoCString contentTypeWithCharset;
+  nsAutoCString charset;
+  uint64_t length = 0;
+  if (aBody) {
+    aRv = aBody->GetAsStream(getter_AddRefs(in), &length,
+                             contentTypeWithCharset, charset);
+    if (NS_WARN_IF(aRv.Failed())) {
+      return false;
+    }
+  }
+
+  nsSecurityFlags securityFlags = nsILoadInfo::SEC_COOKIES_INCLUDE;
+  // Ensure that only streams with content types that are safelisted ignore CORS
+  // rules
+  if (aBody && !contentTypeWithCharset.IsVoid() &&
+      !nsContentUtils::IsCORSSafelistedRequestHeader(
+          NS_LITERAL_CSTRING("content-type"), contentTypeWithCharset)) {
+    securityFlags |= nsILoadInfo::SEC_REQUIRE_CORS_DATA_INHERITS;
+  } else {
+    securityFlags |= nsILoadInfo::SEC_ALLOW_CROSS_ORIGIN_DATA_INHERITS;
+  }
 
   nsCOMPtr<nsIChannel> channel;
   rv = NS_NewChannel(getter_AddRefs(channel), uri, doc, securityFlags,
@@ -1182,23 +1196,11 @@ bool Navigator::SendBeaconInternal(const nsAString& aUrl,
     return false;
   }
 
-  nsCOMPtr<nsIReferrerInfo> referrerInfo = new ReferrerInfo();
-  referrerInfo->InitWithDocument(doc);
+  auto referrerInfo = MakeRefPtr<ReferrerInfo>(*doc);
   rv = httpChannel->SetReferrerInfoWithoutClone(referrerInfo);
   MOZ_ASSERT(NS_SUCCEEDED(rv));
 
-  nsCOMPtr<nsIInputStream> in;
-  nsAutoCString contentTypeWithCharset;
-  nsAutoCString charset;
-  uint64_t length = 0;
-
   if (aBody) {
-    aRv = aBody->GetAsStream(getter_AddRefs(in), &length,
-                             contentTypeWithCharset, charset);
-    if (NS_WARN_IF(aRv.Failed())) {
-      return false;
-    }
-
     nsCOMPtr<nsIUploadChannel2> uploadChannel = do_QueryInterface(channel);
     if (!uploadChannel) {
       aRv.Throw(NS_ERROR_FAILURE);

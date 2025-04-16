@@ -43,8 +43,6 @@ class BigInt final : public js::gc::Cell {
  public:
   using Digit = uintptr_t;
 
-  static constexpr uintptr_t TYPE_FLAGS = js::gc::CellHeader::BIGINT_BIT;
-
  private:
   using Header = js::gc::CellHeaderWithLengthAndFlags;
 
@@ -65,28 +63,12 @@ class BigInt final : public js::gc::Cell {
   };
 
   void setLengthAndFlags(uint32_t len, uint32_t flags) {
-    header_.setLengthAndFlags(len, flags | TYPE_FLAGS);
+    header_.setLengthAndFlags(len, flags);
   }
 
  public:
   static const JS::TraceKind TraceKind = JS::TraceKind::BigInt;
   const js::gc::CellHeader& cellHeader() const { return header_.cellHeader(); }
-
-  JS::Zone* zone() const {
-    if (isTenured()) {
-      return asTenured().zone();
-    }
-    return js::Nursery::getBigIntZone(this);
-  }
-
-  // Implement TenuredZone members needed for template instantiations.
-
-  JS::Zone* zoneFromAnyThread() const {
-    if (isTenured()) {
-      return asTenured().zoneFromAnyThread();
-    }
-    return js::Nursery::getBigIntZone(this);
-  }
 
   void fixupAfterMovingGC() {}
 

@@ -5,14 +5,12 @@
 import json
 import os
 import pathlib
-import yaml
 from collections import OrderedDict
 
-from .transformer import SimplePerfherderTransformer
+from .transformer import Transformer, SimplePerfherderTransformer
 from .analyzer import NotebookAnalyzer
 from .constant import Constant
 from .logger import NotebookLogger
-from .notebookparser import parse_args
 
 logger = NotebookLogger()
 
@@ -28,9 +26,7 @@ class PerftestNotebook(object):
         :param dict file_groups: A dict of file groupings. The value
             of each of the dict entries is the name of the data that
             will be produced.
-        :param str custom_transform: Path to a file containing custom
-            transformation logic. Must implement the Transformer
-            interface.
+        :param str custom_transform: The class name of a custom transformer.
         """
         self.fmt_data = {}
         self.file_groups = file_groups
@@ -52,12 +48,14 @@ class PerftestNotebook(object):
         if custom_transform:
             tfm_cls = tfms_dict.get(custom_transform)
             if tfm_cls:
-                self.transformer = tfm_cls(files=[])
+                self.transformer = Transformer(files=[], custom_transformer=tfm_cls())
                 logger.info(f"Found {custom_transform} transformer")
             else:
                 raise Exception(f"Could not get a {custom_transform} transformer.")
         else:
-            self.transformer = SimplePerfherderTransformer(files=[])
+            self.transformer = Transformer(
+                files=[], custom_transformer=SimplePerfherderTransformer()
+            )
 
         self.analyzer = NotebookAnalyzer(data=None)
 
@@ -77,20 +75,13 @@ class PerftestNotebook(object):
         elif isinstance(file_grouping, dict):
             # A dictionary of settings from an artifact_downloader instance
             # was provided here
-            print("awljdlkwad")
             raise Exception(
                 "Artifact downloader tooling is disabled for the time being."
             )
         elif isinstance(file_grouping, str):
             # Assume a path to files was given
-            filepath = files
-
-            newf = [f for f in pathlib.Path(filepath).rglob("*.json")]
-            if not newf:
-                # Couldn't find any JSON files, so take all the files
-                # in the directory
-                newf = [f for f in pathlib.Path(filepath).rglob("*")]
-
+            filepath = file_grouping
+            newf = [f.resolve().as_posix() for f in pathlib.Path(filepath).rglob("*")]
             files = newf
         else:
             raise Exception(
@@ -125,7 +116,7 @@ class PerftestNotebook(object):
 
         return filepath
 
-    def process(self, no_iodide=True):
+    def process(self, no_iodide=True, **kwargs):
         """Process the file groups and return the results of the requested analyses.
 
         :return: All the results in a dictionary. The field names are the Analyzer
@@ -139,7 +130,7 @@ class PerftestNotebook(object):
                 for subtest, files in files.items():
                     self.transformer.files = files
 
-                    trfm_data = self.transformer.process(name)
+                    trfm_data = self.transformer.process(name, **kwargs)
 
                     if isinstance(trfm_data, list):
                         for e in trfm_data:
@@ -160,7 +151,7 @@ class PerftestNotebook(object):
             else:
                 # Transform the data
                 self.transformer.files = files
-                trfm_data = self.transformer.process(name)
+                trfm_data = self.transformer.process(name, **kwargs)
 
                 if isinstance(trfm_data, list):
                     fmt_data.extend(trfm_data)
@@ -173,45 +164,19 @@ class PerftestNotebook(object):
         output_data_filepath = self.parse_output()
 
         print("Writing results to %s" % output_data_filepath)
-
         with open(output_data_filepath, "w") as f:
             json.dump(self.fmt_data, f, indent=4, sort_keys=True)
 
         # Gather config["analysis"] corresponding notebook sections
         if "analysis" in self.config:
-            raise Exception(
+            raise NotImplementedError(
                 "Analysis aspect of the notebook is disabled for the time being"
             )
 
         # Post to Iodide server
         if not no_iodide:
-            raise Exception(
+            raise NotImplementedError(
                 "Opening report through Iodide is not available in production at the moment"
             )
 
         return {"data": self.fmt_data, "file-output": output_data_filepath}
-
-
-def main():
-    args = parse_args()
-
-    NotebookLogger.debug = args.debug
-
-    config = None
-    with open(args.config, "r") as f:
-        logger.info("yaml_path: {}".format(args.config))
-        config = yaml.safe_load(f)
-
-    custom_transform = config.get("custom_transform", None)
-
-    ptnb = PerftestNotebook(
-        config["file_groups"],
-        config,
-        custom_transform=custom_transform,
-        sort_files=args.sort_files,
-    )
-    ptnb.process(args.no_iodide)
-
-
-if __name__ == "__main__":
-    main()

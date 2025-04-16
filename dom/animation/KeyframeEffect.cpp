@@ -90,8 +90,22 @@ KeyframeEffect::KeyframeEffect(Document* aDocument,
                                const KeyframeEffectParams& aOptions)
     : AnimationEffect(aDocument, std::move(aTiming)),
       mTarget(std::move(aTarget)),
-      mEffectOptions(aOptions),
-      mCumulativeChangeHint(nsChangeHint(0)) {}
+      mEffectOptions(aOptions) {}
+
+KeyframeEffect::KeyframeEffect(Document* aDocument,
+                               OwningAnimationTarget&& aTarget,
+                               const KeyframeEffect& aOther)
+    : AnimationEffect(aDocument, TimingParams{aOther.SpecifiedTiming()}),
+      mTarget(std::move(aTarget)),
+      mEffectOptions{aOther.IterationComposite(), aOther.Composite(),
+                     mTarget.mPseudoType},
+      mKeyframes(aOther.mKeyframes.Clone()),
+      mProperties(aOther.mProperties.Clone()),
+      mBaseValues(aOther.mBaseValues.Count()) {
+  for (auto iter = aOther.mBaseValues.ConstIter(); !iter.Done(); iter.Next()) {
+    mBaseValues.Put(iter.Key(), RefPtr{iter.Data()});
+  }
+}
 
 JSObject* KeyframeEffect::WrapObject(JSContext* aCx,
                                      JS::Handle<JSObject*> aGivenProto) {
@@ -826,7 +840,7 @@ nsTArray<AnimationProperty> KeyframeEffect::BuildProperties(
   // happens we could find that |mKeyframes| is overwritten while it is
   // being iterated over. Normally that shouldn't happen but just in case we
   // make a copy of |mKeyframes| first and iterate over that instead.
-  auto keyframesCopy(mKeyframes);
+  auto keyframesCopy(mKeyframes.Clone());
 
   result = KeyframeUtils::GetAnimationPropertiesFromKeyframes(
       keyframesCopy, mTarget.mElement, aStyle, mEffectOptions.mComposite);
@@ -1033,23 +1047,12 @@ already_AddRefed<KeyframeEffect> KeyframeEffect::Constructor(
   // aSource's TimingParams.
   // Note: we don't need to re-throw exceptions since the value specified on
   //       aSource's timing object can be assumed valid.
-  RefPtr<KeyframeEffect> effect = new KeyframeEffect(
-      doc, OwningAnimationTarget(aSource.mTarget),
-      TimingParams(aSource.SpecifiedTiming()), aSource.mEffectOptions);
+  RefPtr<KeyframeEffect> effect =
+      new KeyframeEffect(doc, OwningAnimationTarget{aSource.mTarget}, aSource);
   // Copy cumulative change hint. mCumulativeChangeHint should be the same as
   // the source one because both of targets are the same.
   effect->mCumulativeChangeHint = aSource.mCumulativeChangeHint;
 
-  // Copy aSource's keyframes and animation properties.
-  // Note: We don't call SetKeyframes directly, which might revise the
-  //       computed offsets and rebuild the animation properties.
-  effect->mKeyframes = aSource.mKeyframes;
-  effect->mProperties = aSource.mProperties;
-  for (auto iter = aSource.mBaseValues.ConstIter(); !iter.Done(); iter.Next()) {
-    // XXX Should this use non-const Iter() and then pass
-    // std::move(iter.Data())? Otherwise aSource might be a const&...
-    effect->mBaseValues.Put(iter.Key(), RefPtr{iter.Data()});
-  }
   return effect.forget();
 }
 
@@ -1360,7 +1363,7 @@ static bool CanOptimizeAwayDueToOpacity(const KeyframeEffect& aEffect,
   if (IsDefinitivelyInvisibleDueToOpacity(aFrame)) {
     return true;
   }
-  return !aEffect.HasOpacityChange();
+  return !aEffect.HasOpacityChange() && !aFrame.HasAnimationOfOpacity();
 }
 
 bool KeyframeEffect::CanThrottleIfNotVisible(nsIFrame& aFrame) const {
@@ -1417,7 +1420,7 @@ bool KeyframeEffect::CanThrottle() const {
     return false;
   }
 
-  nsIFrame* frame = GetStyleFrame();
+  nsIFrame* const frame = GetStyleFrame();
   if (!frame) {
     // There are two possible cases here.
     // a) No target element
@@ -1426,6 +1429,11 @@ bool KeyframeEffect::CanThrottle() const {
     // In either case we can throttle the animation because there is no
     // need to update on the main thread.
     return true;
+  }
+
+  // Do not throttle any animations during print preview.
+  if (frame->PresContext()->IsPrintingOrPrintPreview()) {
+    return false;
   }
 
   if (CanThrottleIfNotVisible(*frame)) {

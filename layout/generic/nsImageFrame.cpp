@@ -481,7 +481,7 @@ static IntrinsicSize ComputeIntrinsicSize(imgIContainer* aImage,
     return IntrinsicSize(edgeLengthToUse, edgeLengthToUse);
   }
 
-  if (aUseMappedRatio && style.StylePosition()->mAspectRatio != 0.0f) {
+  if (aUseMappedRatio && style.StylePosition()->mAspectRatio.HasRatio()) {
     return IntrinsicSize();
   }
 
@@ -521,13 +521,18 @@ static AspectRatio ComputeAspectRatio(imgIContainer* aImage,
   if (style.StyleDisplay()->IsContainSize()) {
     return AspectRatio();
   }
+
+  const StyleAspectRatio& ratio = style.StylePosition()->mAspectRatio;
+  if (!ratio.auto_) {
+    return ratio.ratio.AsRatio().ToLayoutRatio();
+  }
   if (aImage) {
     if (Maybe<AspectRatio> fromImage = aImage->GetIntrinsicRatio()) {
       return *fromImage;
     }
   }
-  if (aUseMappedRatio && style.StylePosition()->mAspectRatio != 0.0f) {
-    return AspectRatio(style.StylePosition()->mAspectRatio);
+  if (aUseMappedRatio && ratio.HasMappedRatio()) {
+    return ratio.ratio.AsRatio().ToLayoutRatio();
   }
   if (aFrame.ShouldShowBrokenImageIcon()) {
     return AspectRatio(1.0f);
@@ -2261,7 +2266,8 @@ nsresult nsImageFrame::GetContentForEvent(WidgetEvent* aEvent,
   if (nsImageMap* map = GetImageMap()) {
     nsIntPoint p;
     TranslateEventCoords(
-        nsLayoutUtils::GetEventCoordinatesRelativeTo(aEvent, this), p);
+        nsLayoutUtils::GetEventCoordinatesRelativeTo(aEvent, RelativeTo{this}),
+        p);
     nsCOMPtr<nsIContent> area = map->GetArea(p.x, p.y);
     if (area) {
       area.forget(aContent);
@@ -2287,8 +2293,9 @@ nsresult nsImageFrame::HandleEvent(nsPresContext* aPresContext,
     bool isServerMap = IsServerImageMap();
     if (map || isServerMap) {
       nsIntPoint p;
-      TranslateEventCoords(
-          nsLayoutUtils::GetEventCoordinatesRelativeTo(aEvent, this), p);
+      TranslateEventCoords(nsLayoutUtils::GetEventCoordinatesRelativeTo(
+                               aEvent, RelativeTo{this}),
+                           p);
       bool inside = false;
       // Even though client-side image map triggering happens
       // through content, we need to make sure we're not inside
@@ -2471,6 +2478,7 @@ nsresult nsImageFrame::LoadIcon(const nsAString& aSpec,
       nullptr, /* Not associated with any particular document */
       loadFlags, nullptr, contentPolicyType, EmptyString(),
       false, /* aUseUrgentStartForChannel */
+      false, /* aLinkPreload */
       aRequest);
 }
 

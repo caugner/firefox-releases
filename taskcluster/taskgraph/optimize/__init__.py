@@ -110,22 +110,30 @@ def remove_tasks(target_task_graph, params, optimizations, do_not_optimize):
     removed = set()
     reverse_links_dict = target_task_graph.graph.reverse_links_dict()
 
+    message = "optimize: {label} {verb} because of {reason}"
     for label in target_task_graph.graph.visit_preorder():
+        verb = "kept"
+
         # if we're not allowed to optimize, that's easy..
         if label in do_not_optimize:
+            logger.debug(message.format(label=label, verb=verb, reason="do not optimize"))
             continue
 
         # if there are remaining tasks depending on this one, do not remove..
         if any(l not in removed for l in reverse_links_dict[label]):
+            logger.debug(message.format(label=label, verb=verb, reason="dependent tasks"))
             continue
 
         # call the optimization strategy
         task = target_task_graph.tasks[label]
         opt_by, opt, arg = optimizations(label)
         if opt.should_remove_task(task, params, arg):
+            verb = "removed"
             removed.add(label)
             opt_counts[opt_by] += 1
-            continue
+
+        reason = "'{}' strategy".format(opt_by)
+        logger.debug(message.format(label=label, verb=verb, reason=reason))
 
     _log_optimization('removed', opt_counts)
     return removed
@@ -376,9 +384,9 @@ import_sibling_modules()
 
 # Register composite strategies.
 register_strategy('build', args=('skip-unless-schedules',))(Alias)
-register_strategy('build-fuzzing', args=('skip-unless-schedules', 'seta'))(Any)
+register_strategy('build-fuzzing', args=('push-interval-10',))(Alias)
 register_strategy('test', args=(
-    Any('skip-unless-schedules', 'seta', split_args=tuple),
+    Any('skip-unless-schedules', 'bugbug-reduced-fallback', split_args=tuple),
     'backstop',
 ))(All)
 register_strategy('test-inclusive', args=('skip-unless-schedules',))(Alias)
@@ -401,29 +409,28 @@ class experimental(object):
     }
     """Doesn't limit platforms, medium confidence threshold."""
 
-    bugbug_all_low = {
-        'test': Any('skip-unless-schedules', 'bugbug-low', split_args=tuple),
-    }
-    """Doesn't limit platforms, low confidence threshold."""
-
     bugbug_all_high = {
         'test': Any('skip-unless-schedules', 'bugbug-high', split_args=tuple),
     }
     """Doesn't limit platforms, high confidence threshold."""
 
-    bugbug_combined_high = {
-        'test': Any('skip-unless-schedules', 'bugbug-combined-high', split_args=tuple),
-    }
-    """Combines the weights of all groups, high confidence threshold."""
-
-    bugbug_debug = {
+    bugbug_debug_disperse = {
         'test': Any(
             'skip-unless-schedules',
-            Any('bugbug', 'platform-debug'),
+            Any('bugbug', 'platform-debug', 'platform-disperse'),
             split_args=tuple
         ),
     }
     """Restricts tests to debug platforms."""
+
+    bugbug_disperse_low = {
+        'test': Any(
+            'skip-unless-schedules',
+            Any('bugbug-low', 'platform-disperse'),
+            split_args=tuple
+        ),
+    }
+    """Disperse tests across platforms, low confidence threshold."""
 
     bugbug_disperse = {
         'test': Any(
@@ -433,6 +440,15 @@ class experimental(object):
         ),
     }
     """Disperse tests across platforms, medium confidence threshold."""
+
+    bugbug_disperse_high = {
+        'test': Any(
+            'skip-unless-schedules',
+            Any('bugbug-high', 'platform-disperse'),
+            split_args=tuple
+        ),
+    }
+    """Disperse tests across platforms, high confidence threshold."""
 
     bugbug_reduced = {
         'test': Any('skip-unless-schedules', 'bugbug-reduced', split_args=tuple),
@@ -479,6 +495,6 @@ class ExperimentalOverride(object):
 
 
 tryselect = ExperimentalOverride(experimental, {
-    'build': Alias('always'),
-    'build-fuzzing': Alias('always'),
+    'build': Any('skip-unless-schedules', 'bugbug-reduced', split_args=tuple),
+    'build-fuzzing': Alias('bugbug-reduced'),
 })

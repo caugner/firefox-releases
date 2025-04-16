@@ -2,6 +2,23 @@
 # License, v. 2.0. If a copy of the MPL was not distributed with this
 # file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
+top_sites:
+  search_override_exp:
+    objects: ["click", "attribution"]
+    release_channel_collection: opt-out
+    products:
+      - "firefox"
+    record_in_processes: ["main"]
+    description: >
+      This is recorded when using a search top site that has been overridden to a URL as part of an experiment.
+    bug_numbers: [1637217, 1644442]
+    notification_emails:
+      - "dao@mozilla.com"
+    expiry_version: "80"
+    extra_keys:
+      searchProvider: Name of the search provider, e.g. "amazon" or "google".
+      source: Which part of the UI request came from, i.e. "newtab" or "urlbar".
+
 activity_stream:
   event:
     objects: [
@@ -438,12 +455,13 @@ urlbar:
     extra_keys:
       elapsed: engagement time in milliseconds.
       numChars: number of input characters.
+      numWords: number of words in the input.
       selIndex: index of the selected result in the urlbar panel, or -1.
       selType: >
         type of the selected result in the urlbar panel. One of:
           "autofill", "visit", "bookmark", "history", "keyword", "search",
           "searchsuggestion", "switchtab", "remotetab", "extension", "oneoff",
-          "keywordoffer", "canonized", "tip", "tiphelp", "none"
+          "keywordoffer", "canonized", "tip", "tiphelp", "formhistory", "none"
   abandonment:
     objects: ["blur"]
     release_channel_collection: opt-out
@@ -463,6 +481,7 @@ urlbar:
     extra_keys:
       elapsed: abandonement time in milliseconds.
       numChars: number of input characters.
+      numWords: number of words in the input.
 
 normandy:
   enroll:
@@ -648,9 +667,16 @@ pwmgr:
       "os_auth",
     ]
     methods: ["reauthenticate"]
+    extra_keys:
+      auto_admin: >
+        If the AutoAdminLogon Windows feature is enabled. This feature disables password prompt when logging in to Windows.
+      require_signon: >
+        If the Power Settings on Windows are configured to not prompt for password upon resuming from sleep.
     bug_numbers:
       - 1628029
       - 1623745
+      - 1636729
+      - 1642267
     expiry_version: never
     notification_emails: ["loines@mozilla.com", "passwords-dev@mozilla.org", "jaws@mozilla.com"]
     release_channel_collection: opt-out
@@ -729,6 +755,19 @@ pwmgr:
     record_in_processes: ["main"]
     release_channel_collection: opt-out
     expiry_version: never
+  saved_login_used:
+    objects: ["form_login", "form_password", "auth_login", "prompt_login"]
+    description: >
+      Each time a saved login is used in a form or authentication dialog.
+    bug_numbers: [1631130]
+    notification_emails: ["loines@mozilla.com", "passwords-dev@mozilla.org"]
+    products:
+      - "firefox"
+    record_in_processes: ["main"]
+    release_channel_collection: opt-out
+    expiry_version: never
+    extra_keys:
+      filled: Whether the browser filled the login details for the user vs. typing saved values.
 
 fxa:
   connect:
@@ -1620,8 +1659,8 @@ devtools.main:
       mode: No throttling, GPRS, Regular 2G, Good 2G, Regular 3G, Good 3G, Regular 4G / LTE, DSL or WI-FI.
       session_id: The toolbox session start time e.g. 13963.
   tool_timer:
-    objects: ["animationinspector", "computedview", "changesview", "fontinspector", "layoutview", "ruleview"]
-    bug_numbers: [1483817]
+    objects: ["animationinspector", "compatibilityview", "computedview", "changesview", "fontinspector", "layoutview", "ruleview"]
+    bug_numbers: [1483817, 1639454]
     notification_emails: ["dev-developer-tools@lists.mozilla.org", "hkirschner@mozilla.com"]
     products:
       - "firefox"
@@ -1701,19 +1740,19 @@ security.ui.protections:
       - 1610897
       - 1612088
       - 1612091
+      - 1637615
     description: >
       User interaction by click events on the protection report.
     objects: [
-      "lw_app_link",
       "lw_open_button",
       "lw_sync_link",
       "lw_about_link",
-      "lw_open_breach_link",
-      "mtr_report_link",
       "mtr_about_link",
+      "mtr_report_link",
       "mtr_signup_button",
       "trackers_about_link",
       "mobile_app_link",
+      "settings_link",
     ]
     expiry_version: "80"
     record_in_processes: ["content"]
@@ -1961,7 +2000,7 @@ pictureinpicture:
       - main
     bug_numbers:
       - 1560590
-    expiry_version: "78"
+    expiry_version: "86"
     release_channel_collection: opt-out
   resize:
     objects: ["player"]
@@ -1981,7 +2020,7 @@ pictureinpicture:
       - main
     bug_numbers:
       - 1560590
-    expiry_version: "78"
+    expiry_version: "86"
     release_channel_collection: opt-out
   move:
     objects: ["player"]
@@ -2001,7 +2040,7 @@ pictureinpicture:
       - main
     bug_numbers:
       - 1560590
-    expiry_version: "78"
+    expiry_version: "86"
     release_channel_collection: opt-out
 
 security.doh.trrPerformance:

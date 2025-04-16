@@ -5,16 +5,6 @@
 <!-- LOCALIZATION NOTE : FILE This file contains the browser main menu items -->
 <!-- LOCALIZATION NOTE : FILE Do not translate commandkeys -->
 
-<!-- LOCALIZATION NOTE (mainWindow.title): DONT_TRANSLATE -->
-<!ENTITY mainWindow.title "&brandFullName;">
-<!-- LOCALIZATION NOTE (mainWindow.titlemodifier) : DONT_TRANSLATE -->
-<!ENTITY mainWindow.titlemodifier "&brandFullName;">
-<!-- LOCALIZATION NOTE (mainWindow.titlemodifiermenuseparator): DONT_TRANSLATE -->
-<!ENTITY mainWindow.titlemodifiermenuseparator " - ">
-<!-- LOCALIZATION NOTE (mainWindow.titlePrivateBrowsingSuffix): This will be appended to the window's title
-                                                                inside the private browsing mode -->
-<!ENTITY mainWindow.titlePrivateBrowsingSuffix "(Private Browsing)">
-
 <!ENTITY appmenu.tooltip                     "Open menu">
 <!ENTITY navbarOverflow.label                "More tools…">
 
@@ -103,14 +93,8 @@ this container is a toolbar. This avoids double-speaking. -->
 <!ENTITY recentBookmarks.label "Recently Bookmarked">
 <!ENTITY bookmarksToolbarChevron.tooltip "Show more bookmarks">
 
-<!ENTITY goEndCap.tooltip             "Go to the address in the Location Bar">
 <!ENTITY printButton.label            "Print">
 <!ENTITY printButton.tooltip          "Print this page">
-
-<!ENTITY urlbar.remoteControlNotificationAnchor.tooltip   "Browser is under remote control">
-
-<!ENTITY urlbar.permissionsGranted.tooltip       "You have granted this website additional permissions.">
-
 
 <!ENTITY searchItem.title             "Search">
 
@@ -151,8 +135,6 @@ this container is a toolbar. This avoids double-speaking. -->
 <!ENTITY preferencesCmdUnix.label       "Preferences">
 <!ENTITY logins.label                           "Logins and Passwords">
 
-<!ENTITY viewCustomizeToolbar.label       "Customize…">
-<!ENTITY viewCustomizeToolbar.accesskey     "C">
 <!ENTITY overflowCustomizeToolbar.label       "Customize Toolbar…">
 <!ENTITY overflowCustomizeToolbar.accesskey   "C">
 
@@ -203,43 +185,22 @@ this container is a toolbar. This avoids double-speaking. -->
 <!ENTITY customizeMenu.addToToolbar.label "Add to Toolbar">
 <!ENTITY customizeMenu.addToToolbar.accesskey "A">
 <!-- LOCALIZATION NOTE (customizeMenu.addToOverflowMenu.label,
-     customizeMenu.pinToOverflowMenu.label, customizeMenu.unpinFromOverflowMenu.label)
+     customizeMenu.unpinFromOverflowMenu.label)
      The overflow menu is the menu that appears if you click the chevron (>> button)
      in the location bar. -->
 <!ENTITY customizeMenu.addToOverflowMenu.label "Add to Overflow Menu">
 <!ENTITY customizeMenu.addToOverflowMenu.accesskey "M">
-<!-- LOCALIZATION NOTE (customizeMenu.pinToOverflowMenu.accesskey)
-     can appear on the same context menu as menubarCmd and personalbarCmd,
-     so they should have different access keys.  -->
-<!ENTITY customizeMenu.pinToOverflowMenu.label "Pin to Overflow Menu">
-<!ENTITY customizeMenu.pinToOverflowMenu.accesskey "P">
 <!ENTITY customizeMenu.unpinFromOverflowMenu.label "Unpin from Overflow Menu">
 <!ENTITY customizeMenu.unpinFromOverflowMenu.accesskey "U">
 <!ENTITY customizeMenu.removeFromToolbar.label "Remove from Toolbar">
 <!ENTITY customizeMenu.removeFromToolbar.accesskey "R">
 <!ENTITY customizeMenu.addMoreItems.label "Add More Items…">
 <!ENTITY customizeMenu.addMoreItems.accesskey "A">
-<!ENTITY customizeMenu.autoHideDownloadsButton.label "Auto-Hide in Toolbar">
-<!ENTITY customizeMenu.autoHideDownloadsButton.accesskey "A">
-<!ENTITY customizeMenu.manageExtension.label "Manage Extension">
-<!ENTITY customizeMenu.manageExtension.accesskey "E">
-<!ENTITY customizeMenu.removeExtension.label "Remove Extension">
-<!ENTITY customizeMenu.removeExtension.accesskey "v">
-<!-- LOCALIZATION NOTE (reportExtension.label) This label is used in the extensions
-     toolbar buttons context menus, a user can use this command to submit to Mozilla
-     an abuse report related to that extension. "Report" is a verb. -->
-<!ENTITY customizeMenu.reportExtension.label "Report Extension">
-<!ENTITY customizeMenu.reportExtension.accesskey "o">
 
 <!-- LOCALIZATION NOTE (moreMenu.label) This label is used in the new Photon
     app (hamburger) menu. When clicked, it opens a subview that contains
     secondary commands. -->
 <!ENTITY moreMenu.label "More">
-
-<!ENTITY urlbar.placeholder2          "Search or enter address">
-<!-- LOCALIZATION NOTE (urlbar.extension.label): Used to indicate that a selected autocomplete entry is provided by an extension. -->
-<!ENTITY urlbar.extension.label       "Extension:">
-<!ENTITY urlbar.switchToTab.label     "Switch to tab:">
 
 <!ENTITY contentSearchSubmit.tooltip  "Submit search">
 
@@ -254,7 +215,6 @@ this container is a toolbar. This avoids double-speaking. -->
 
 <!-- LOCALIZATION NOTE(pocket-button.tooltiptext, saveToPocketCmd.label, saveLinkToPocketCmd.label, pocketMenuitem.label):
   "Pocket" is a brand name. -->
-<!ENTITY pocketButton.tooltiptext     "Save to Pocket">
 <!ENTITY saveToPocketCmd.label        "Save Page to Pocket">
 <!ENTITY pocketMenuitem.label         "View Pocket List">
 
@@ -304,8 +264,6 @@ this container is a toolbar. This avoids double-speaking. -->
 <!ENTITY updateManual.panelUI.label "Download a fresh copy of &brandShorterName;">
 <!ENTITY updateUnsupported.panelUI.label "You cannot perform further updates">
 <!ENTITY updateRestart.panelUI.label2 "Restart to update &brandShorterName;">
-
-<!ENTITY pageActionButton.tooltip "Page actions">
 
 <!ENTITY sendToDevice.syncNotReady.label "Syncing Devices…">
 

@@ -304,11 +304,7 @@ class ResponsiveUI {
 
           // If the device modal/selector is opened, resize the toolbar height to
           // the size of the stack.
-          if (
-            this.browserStackEl.classList.contains(
-              "device-selector-menu-opened"
-            )
-          ) {
+          if (this.browserStackEl.classList.contains("device-modal-opened")) {
             const style = this.browserWindow.getComputedStyle(
               this.browserStackEl
             );
@@ -476,7 +472,8 @@ class ResponsiveUI {
     this.client = new DevToolsClient(DevToolsServer.connectPipe());
     await this.client.connect();
 
-    const targetFront = await this.client.mainRoot.getTab();
+    const descriptor = await this.client.mainRoot.getTab();
+    const targetFront = await descriptor.getTarget();
     this.targetList = new TargetList(this.client.mainRoot, targetFront);
     this.targetList.startListening();
     await this.targetList.watchTargets(
@@ -592,8 +589,6 @@ class ResponsiveUI {
       case "update-device-modal":
         this.onUpdateDeviceModal(event);
         break;
-      case "update-device-toolbar-height":
-        this.onUpdateToolbarHeight(event);
     }
   }
 
@@ -813,31 +808,13 @@ class ResponsiveUI {
   }
 
   onUpdateDeviceModal(event) {
-    // Restore the toolbar height if closing
-    if (!event.data.isOpen) {
-      this.restoreToolbarHeight();
-    }
-  }
-
-  /**
-   * Handles setting the height of the toolbar when it's closed. This can happen when
-   * an event occurs outside of the device selector menu component, such as opening the
-   * device modal.
-   */
-  onUpdateToolbarHeight(event) {
-    if (!event.data.isOpen) {
-      const {
-        isModalOpen,
-      } = this.rdmFrame.contentWindow.store.getState().devices;
-
-      // Don't remove the device-selector-menu-opened class if it was closed because
-      // the device modal was opened. We still want to preserve the current height of
-      // toolbar.
-      if (isModalOpen) {
-        return;
-      }
-
-      this.restoreToolbarHeight();
+    if (event.data.isOpen) {
+      this.browserStackEl.classList.add("device-modal-opened");
+      const style = this.browserWindow.getComputedStyle(this.browserStackEl);
+      this.rdmFrame.style.height = style.height;
+    } else {
+      this.rdmFrame.style.removeProperty("height");
+      this.browserStackEl.classList.remove("device-modal-opened");
     }
   }
 
@@ -846,14 +823,6 @@ class ResponsiveUI {
       "devtools.responsive.deviceState"
     );
     return !!deviceState;
-  }
-
-  /**
-   * Restores the toolbar's height to it's original class styling.
-   */
-  restoreToolbarHeight() {
-    this.rdmFrame.style.removeProperty("height");
-    this.browserStackEl.classList.remove("device-selector-menu-opened");
   }
 
   /**
@@ -1208,8 +1177,8 @@ class ResponsiveUI {
     return this.browserWindow;
   }
 
-  async onTargetAvailable({ isTopLevel, targetFront }) {
-    if (isTopLevel) {
+  async onTargetAvailable({ targetFront }) {
+    if (targetFront.isTopLevel) {
       this.responsiveFront = await targetFront.getFront("responsive");
       await this.restoreActorState();
     }
@@ -1219,7 +1188,13 @@ class ResponsiveUI {
     // We should ignore the remoteness events in case of old RDM
     // as it is firing fake remoteness events.
     if (this.isBrowserUIEnabled) {
-      const newTarget = await this.client.mainRoot.getTab();
+      // The current tab target will be destroyed by the process change.
+      // Wait for the target to be fully destroyed so that the cache of the
+      // corresponding TabDescriptorFront has been cleared. Otherwise, getTab()
+      // might return the soon to be destroyed target again.
+      await this.targetList.targetFront.once("target-destroyed");
+      const descriptor = await this.client.mainRoot.getTab();
+      const newTarget = await descriptor.getTarget();
       await this.targetList.switchToTarget(newTarget);
     } else {
       const { browserWindow, tab } = this;

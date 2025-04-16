@@ -1986,6 +1986,7 @@ bool jit::FinishBailoutToBaseline(BaselineBailoutInfo* bailoutInfoArg) {
     case Bailout_TypeBarrierO:
     case Bailout_TypeBarrierV:
     case Bailout_ValueGuard:
+    case Bailout_NullOrUndefinedGuard:
     case Bailout_MonitorTypes:
     case Bailout_Hole:
     case Bailout_NegativeIndex:
@@ -1998,6 +1999,7 @@ bool jit::FinishBailoutToBaseline(BaselineBailoutInfo* bailoutInfoArg) {
     case Bailout_NonBigIntInput:
     case Bailout_NonSharedTypedArrayInput:
     case Bailout_Debugger:
+    case Bailout_SpecificAtomGuard:
       // Do nothing.
       break;
 

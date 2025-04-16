@@ -231,7 +231,7 @@ nsStyleFont::nsStyleFont(const nsStyleFont& aSrc)
       mMathDisplay(aSrc.mMathDisplay),
       mMinFontSizeRatio(aSrc.mMinFontSizeRatio),
       mExplicitLanguage(aSrc.mExplicitLanguage),
-      mAllowZoom(aSrc.mAllowZoom),
+      mAllowZoomAndMinSize(aSrc.mAllowZoomAndMinSize),
       mScriptUnconstrainedSize(aSrc.mScriptUnconstrainedSize),
       mScriptMinSize(aSrc.mScriptMinSize),
       mScriptSizeMultiplier(aSrc.mScriptSizeMultiplier),
@@ -245,14 +245,14 @@ nsStyleFont::nsStyleFont(const Document& aDocument)
       mSize(ZoomText(aDocument, mFont.size)),
       mFontSizeFactor(1.0),
       mFontSizeOffset(0),
-      mFontSizeKeyword(NS_STYLE_FONT_SIZE_MEDIUM),
+      mFontSizeKeyword(StyleFontSize::Medium),
       mGenericID(StyleGenericFontFamily::None),
       mScriptLevel(0),
       mMathVariant(NS_MATHML_MATHVARIANT_NONE),
       mMathDisplay(NS_MATHML_DISPLAYSTYLE_INLINE),
       mMinFontSizeRatio(100),  // 100%
       mExplicitLanguage(false),
-      mAllowZoom(true),
+      mAllowZoomAndMinSize(true),
       mScriptUnconstrainedSize(mSize),
       mScriptMinSize(nsPresContext::CSSTwipsToAppUnits(
           NS_POINTS_TO_TWIPS(NS_MATHML_DEFAULT_SCRIPT_MIN_SIZE_PT))),
@@ -269,8 +269,9 @@ nsStyleFont::nsStyleFont(const Document& aDocument)
 }
 
 nsChangeHint nsStyleFont::CalcDifference(const nsStyleFont& aNewData) const {
-  MOZ_ASSERT(mAllowZoom == aNewData.mAllowZoom,
-             "expected mAllowZoom to be the same on both nsStyleFonts");
+  MOZ_ASSERT(
+      mAllowZoomAndMinSize == aNewData.mAllowZoomAndMinSize,
+      "expected mAllowZoomAndMinSize to be the same on both nsStyleFonts");
   if (mSize != aNewData.mSize || mLanguage != aNewData.mLanguage ||
       mExplicitLanguage != aNewData.mExplicitLanguage ||
       mMathVariant != aNewData.mMathVariant ||
@@ -1081,7 +1082,7 @@ nsStylePosition::nsStylePosition(const Document& aDocument)
       mMinHeight(StyleSize::Auto()),
       mMaxHeight(StyleMaxSize::None()),
       mFlexBasis(StyleFlexBasis::Size(StyleSize::Auto())),
-      mAspectRatio(0.0f),
+      mAspectRatio(StyleAspectRatio::Auto()),
       mGridAutoFlow(StyleGridAutoFlow::ROW),
       mMasonryAutoFlow(NS_STYLE_MASONRY_AUTO_FLOW_INITIAL_VALUE),
       mAlignContent({StyleAlignFlags::NORMAL}),

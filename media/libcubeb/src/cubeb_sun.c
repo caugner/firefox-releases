@@ -473,7 +473,7 @@ sun_io_routine(void * arg)
 
       if (to_write > 0) {
         bytes = to_write * s->play.frame_size;
-        if ((n = write(s->play.fd, s->play.buf + write_ofs, bytes)) < 0) {
+        if ((n = write(s->play.fd, (uint8_t *)s->play.buf + write_ofs, bytes)) < 0) {
           state = CUBEB_STATE_ERROR;
           break;
         }
@@ -482,17 +482,17 @@ sun_io_routine(void * arg)
         s->frames_written += frames;
         pthread_mutex_unlock(&s->mutex);
         to_write -= frames;
-        write_ofs += frames;
+        write_ofs += n;
       }
       if (to_read > 0) {
         bytes = to_read * s->record.frame_size;
-        if ((n = read(s->record.fd, s->record.buf + read_ofs, bytes)) < 0) {
+        if ((n = read(s->record.fd, (uint8_t *)s->record.buf + read_ofs, bytes)) < 0) {
           state = CUBEB_STATE_ERROR;
           break;
         }
         frames = n / s->record.frame_size;
         to_read -= frames;
-        read_ofs += frames;
+        read_ofs += n;
       }
     }
     if (drain && state != CUBEB_STATE_ERROR) {
@@ -721,6 +721,7 @@ static struct cubeb_ops const sun_ops = {
   .stream_reset_default_device = NULL,
   .stream_get_position = sun_stream_get_position,
   .stream_get_latency = sun_stream_get_latency,
+  .stream_get_input_latency = NULL,
   .stream_set_volume = sun_stream_set_volume,
   .stream_get_current_device = sun_get_current_device,
   .stream_device_destroy = sun_stream_device_destroy,

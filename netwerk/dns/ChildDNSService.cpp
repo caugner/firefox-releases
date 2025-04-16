@@ -10,10 +10,13 @@
 #include "nsIXPConnect.h"
 #include "nsIProtocolProxyService.h"
 #include "nsNetCID.h"
+#include "nsQueryObject.h"
 #include "mozilla/ClearOnShutdown.h"
 #include "mozilla/StaticPtr.h"
+#include "mozilla/SyncRunnable.h"
 #include "mozilla/net/NeckoChild.h"
 #include "mozilla/net/DNSListenerProxy.h"
+#include "mozilla/net/TRRServiceParent.h"
 #include "nsServiceManagerUtils.h"
 
 namespace mozilla {
@@ -33,8 +36,27 @@ already_AddRefed<ChildDNSService> ChildDNSService::GetSingleton() {
                 XRE_IsContentProcess() || XRE_IsSocketProcess());
 
   if (!gChildDNSService) {
-    gChildDNSService = new ChildDNSService();
-    ClearOnShutdown(&gChildDNSService);
+    auto initTask = []() {
+      gChildDNSService = new ChildDNSService();
+      ClearOnShutdown(&gChildDNSService);
+    };
+
+    // For normal cases, DNS service should be initialized in nsHttpHandler. For
+    // some xpcshell tests, nsHttpHandler is not used at all, so the best we use
+    // SyncRunnable to make sure DNS service is initialized on main thread.
+    if (!NS_IsMainThread()) {
+      // Forward to the main thread synchronously.
+      RefPtr<nsIThread> mainThread = do_GetMainThread();
+      if (!mainThread) {
+        return nullptr;
+      }
+
+      SyncRunnable::DispatchToThread(
+          mainThread, new SyncRunnable(NS_NewRunnableFunction(
+                          "ChildDNSService::GetSingleton", initTask)));
+    } else {
+      initTask();
+    }
   }
 
   return do_AddRef(gChildDNSService);
@@ -52,13 +74,15 @@ ChildDNSService::ChildDNSService()
                 XRE_IsContentProcess() || XRE_IsSocketProcess());
   if (XRE_IsParentProcess() && nsIOService::UseSocketProcess()) {
     nsDNSPrefetch::Initialize(this);
+    mTRRServiceParent = new TRRServiceParent();
+    mTRRServiceParent->Init();
   }
 }
 
 void ChildDNSService::GetDNSRecordHashKey(
     const nsACString& aHost, const nsACString& aTrrServer, uint16_t aType,
     const OriginAttributes& aOriginAttributes, uint32_t aFlags,
-    nsIDNSListener* aListener, nsACString& aHashKey) {
+    uintptr_t aListenerAddr, nsACString& aHashKey) {
   aHashKey.Assign(aHost);
   aHashKey.Assign(aTrrServer);
   aHashKey.AppendInt(aType);
@@ -68,7 +92,7 @@ void ChildDNSService::GetDNSRecordHashKey(
   aHashKey.Append(originSuffix);
 
   aHashKey.AppendInt(aFlags);
-  aHashKey.AppendPrintf("%p", aListener);
+  aHashKey.AppendPrintf("0x%" PRIxPTR, aListenerAddr);
 }
 
 nsresult ChildDNSService::AsyncResolveInternal(
@@ -89,7 +113,7 @@ nsresult ChildDNSService::AsyncResolveInternal(
   }
 
   // We need original listener for the pending requests hash.
-  nsIDNSListener* originalListener = listener;
+  uintptr_t originalListenerAddr = reinterpret_cast<uintptr_t>(listener);
 
   // make sure JS callers get notification on the main thread
   nsCOMPtr<nsIEventTarget> target = target_;
@@ -116,7 +140,7 @@ nsresult ChildDNSService::AsyncResolveInternal(
     MutexAutoLock lock(mPendingRequestsLock);
     nsCString key;
     GetDNSRecordHashKey(hostname, aTrrServer, type, aOriginAttributes, flags,
-                        originalListener, key);
+                        originalListenerAddr, key);
     auto entry = mPendingRequests.LookupForAdd(key);
     if (entry) {
       entry.Data()->AppendElement(sender);
@@ -146,8 +170,9 @@ nsresult ChildDNSService::CancelAsyncResolveInternal(
   MutexAutoLock lock(mPendingRequestsLock);
   nsTArray<RefPtr<DNSRequestSender>>* hashEntry;
   nsCString key;
+  uintptr_t listenerAddr = reinterpret_cast<uintptr_t>(aListener);
   GetDNSRecordHashKey(aHostname, aTrrServer, aType, aOriginAttributes, aFlags,
-                      aListener, key);
+                      listenerAddr, key);
   if (mPendingRequests.Get(key, &hashEntry)) {
     // We cancel just one.
     hashEntry->ElementAt(0)->Cancel(aReason);
@@ -356,21 +381,53 @@ ChildDNSService::GetDNSCacheEntries(
 }
 
 NS_IMETHODIMP
-ChildDNSService::ClearCache(bool aTrrToo) { return NS_ERROR_NOT_AVAILABLE; }
+ChildDNSService::ClearCache(bool aTrrToo) {
+  if (!mTRRServiceParent || !mTRRServiceParent->CanSend()) {
+    return NS_ERROR_NOT_AVAILABLE;
+  }
+
+  Unused << mTRRServiceParent->SendClearDNSCache(aTrrToo);
+  return NS_OK;
+}
 
 NS_IMETHODIMP
 ChildDNSService::ReloadParentalControlEnabled() {
-  return NS_ERROR_NOT_AVAILABLE;
+  if (!mTRRServiceParent) {
+    return NS_ERROR_NOT_AVAILABLE;
+  }
+
+  mTRRServiceParent->UpdateParentalControlEnabled();
+  return NS_OK;
 }
 
 NS_IMETHODIMP
 ChildDNSService::SetDetectedTrrURI(const nsACString& aURI) {
-  return NS_ERROR_NOT_AVAILABLE;
+  if (!mTRRServiceParent) {
+    return NS_ERROR_NOT_AVAILABLE;
+  }
+
+  mTRRServiceParent->SetDetectedTrrURI(aURI);
+  return NS_OK;
 }
 
 NS_IMETHODIMP
 ChildDNSService::GetCurrentTrrURI(nsACString& aURI) {
-  return NS_ERROR_NOT_AVAILABLE;
+  if (!mTRRServiceParent) {
+    return NS_ERROR_NOT_AVAILABLE;
+  }
+
+  mTRRServiceParent->GetTrrURI(aURI);
+  return NS_OK;
+}
+
+NS_IMETHODIMP
+ChildDNSService::GetCurrentTrrMode(uint32_t* aMode) {
+  if (!mTRRServiceParent) {
+    return NS_ERROR_NOT_AVAILABLE;
+  }
+
+  *aMode = mTRRServiceParent->Mode();
+  return NS_OK;
 }
 
 NS_IMETHODIMP
@@ -382,14 +439,11 @@ ChildDNSService::GetMyHostName(nsACString& result) {
 void ChildDNSService::NotifyRequestDone(DNSRequestSender* aDnsRequest) {
   // We need the original flags and listener for the pending requests hash.
   uint32_t originalFlags = aDnsRequest->mFlags & ~RESOLVE_OFFLINE;
-  nsCOMPtr<nsIDNSListener> originalListener = aDnsRequest->mListener;
-  nsCOMPtr<nsIDNSListenerProxy> wrapper = do_QueryInterface(originalListener);
+  uintptr_t originalListenerAddr =
+      reinterpret_cast<uintptr_t>(aDnsRequest->mListener.get());
+  RefPtr<DNSListenerProxy> wrapper = do_QueryObject(aDnsRequest->mListener);
   if (wrapper) {
-    wrapper->GetOriginalListener(getter_AddRefs(originalListener));
-    if (NS_WARN_IF(!originalListener)) {
-      MOZ_ASSERT(originalListener);
-      return;
-    }
+    originalListenerAddr = wrapper->GetOriginalListenerAddress();
   }
 
   MutexAutoLock lock(mPendingRequestsLock);
@@ -397,7 +451,7 @@ void ChildDNSService::NotifyRequestDone(DNSRequestSender* aDnsRequest) {
   nsCString key;
   GetDNSRecordHashKey(aDnsRequest->mHost, aDnsRequest->mTrrServer,
                       aDnsRequest->mType, aDnsRequest->mOriginAttributes,
-                      originalFlags, originalListener, key);
+                      originalFlags, originalListenerAddr, key);
 
   nsTArray<RefPtr<DNSRequestSender>>* hashEntry;
 

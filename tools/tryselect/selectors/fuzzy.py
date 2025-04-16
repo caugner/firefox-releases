@@ -7,9 +7,11 @@ from __future__ import absolute_import, print_function, unicode_literals
 import os
 import platform
 import subprocess
+import six
 import sys
 from distutils.spawn import find_executable
 from distutils.version import StrictVersion
+from six.moves import input
 
 from mozbuild.base import MozbuildObject
 from mozbuild.util import ensure_subprocess_env
@@ -21,7 +23,7 @@ from ..tasks import generate_tasks, filter_tasks_by_paths
 from ..push import check_working_directory, push_to_try, generate_try_task_config
 from ..util.manage_estimates import download_task_history_data, make_trimmed_taskgraph_cache
 
-from taskgraph.target_tasks import filter_tasks_by_blacklist
+from taskgraph.target_tasks import filter_by_uncommon_try_tasks
 
 terminal = Terminal()
 
@@ -187,7 +189,7 @@ def should_force_fzf_update(fzf_bin):
         sys.exit(1)
 
     # Some fzf versions have extra, e.g 0.18.0 (ff95134)
-    fzf_version = fzf_version.split()[0]
+    fzf_version = six.ensure_text(fzf_version.split()[0])
 
     # 0.20.0 introduced passing selections through a temporary file,
     # which is good for large ctrl-a actions.
@@ -238,7 +240,7 @@ def fzf_bootstrap(update=False):
 
         return fzf_bin
 
-    install = raw_input("Could not detect fzf, install it now? [y/n]: ")
+    install = input("Could not detect fzf, install it now? [y/n]: ")
     if install.lower() != 'y':
         return
 
@@ -270,7 +272,8 @@ def run_fzf(cmd, tasks):
     env = dict(os.environ)
     env.update({'PYTHONPATH': os.pathsep.join([p for p in sys.path if 'requests' in p])})
     proc = subprocess.Popen(
-        cmd, stdout=subprocess.PIPE, stdin=subprocess.PIPE, env=ensure_subprocess_env(env)
+        cmd, stdout=subprocess.PIPE, stdin=subprocess.PIPE,
+        env=ensure_subprocess_env(env), universal_newlines=True
     )
     out = proc.communicate('\n'.join(tasks))[0].splitlines()
 
@@ -312,14 +315,16 @@ def run(update=False, query=None, intersect_query=None, try_config=None, full=Fa
         make_trimmed_taskgraph_cache(graph_cache, dep_cache, target_file=target_set)
 
     if not full and not disable_target_task_filter:
-        all_tasks = filter(filter_tasks_by_blacklist, all_tasks)
+        # Put all_tasks into a list because it's used multiple times, and "filter()"
+        # returns a consumable iterator.
+        all_tasks = list(filter(filter_by_uncommon_try_tasks, all_tasks))
 
     if test_paths:
         all_tasks = filter_tasks_by_paths(all_tasks, test_paths)
         if not all_tasks:
             return 1
 
-    key_shortcuts = [k + ':' + v for k, v in fzf_shortcuts.iteritems()]
+    key_shortcuts = [k + ':' + v for k, v in six.iteritems(fzf_shortcuts)]
     base_cmd = [
         fzf, '-m',
         '--bind', ','.join(key_shortcuts),

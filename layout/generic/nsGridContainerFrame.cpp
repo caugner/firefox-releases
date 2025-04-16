@@ -1410,22 +1410,18 @@ class MOZ_STACK_CLASS nsGridContainerFrame::LineNameMap {
       mClampMaxLine = 1 + aRange->Extent();
       mRepeatAutoEnd = mRepeatAutoStart;
       const auto& styleSubgrid = aTracks.mTemplate.AsSubgrid();
-      const auto fillStart = styleSubgrid->fill_start;
-      // Use decltype so we do not rely on the exact type that was exposed from
-      // rust code.
-      mHasRepeatAuto =
-          fillStart != std::numeric_limits<decltype(fillStart)>::max();
+      const auto fillLen = styleSubgrid->fill_len;
+      mHasRepeatAuto = fillLen != 0;
       if (mHasRepeatAuto) {
         const auto& lineNameLists = styleSubgrid->names;
-        int32_t extraAutoFillLineCount = mClampMaxLine - lineNameLists.Length();
+        const int32_t extraAutoFillLineCount =
+            mClampMaxLine - lineNameLists.Length();
         // Maximum possible number of repeat name lists. This must be reduced
         // to a whole number of repetitions of the fill length.
-        const uint32_t possibleRepeatLength = std::max<int32_t>(
-            0, extraAutoFillLineCount + styleSubgrid->fill_len);
-        MOZ_ASSERT(styleSubgrid->fill_len > 0);
-        const uint32_t repeatRemainder =
-            possibleRepeatLength % styleSubgrid->fill_len;
-        mRepeatAutoStart = fillStart;
+        const uint32_t possibleRepeatLength =
+            std::max<int32_t>(0, extraAutoFillLineCount + fillLen);
+        const uint32_t repeatRemainder = possibleRepeatLength % fillLen;
+        mRepeatAutoStart = styleSubgrid->fill_start;
         mRepeatAutoEnd =
             mRepeatAutoStart + possibleRepeatLength - repeatRemainder;
       }
@@ -2608,7 +2604,7 @@ struct nsGridContainerFrame::Tracks {
   void Dump() const;
 #endif
 
-  AutoTArray<TrackSize, 32> mSizes;
+  CopyableAutoTArray<TrackSize, 32> mSizes;
   nscoord mContentBoxSize;
   nscoord mGridGap;
   // The first(last)-baseline for the first(last) track in this axis.
@@ -2759,8 +2755,8 @@ struct MOZ_STACK_CLASS nsGridContainerFrame::GridReflowInput {
         aGridContainerFrame->SetProperty(UsedTrackSizes::Prop(), prop);
       }
       prop->mCanResolveLineRangeSize = {true, true};
-      prop->mSizes[eLogicalAxisInline] = mCols.mSizes;
-      prop->mSizes[eLogicalAxisBlock] = mRows.mSizes;
+      prop->mSizes[eLogicalAxisInline] = mCols.mSizes.Clone();
+      prop->mSizes[eLogicalAxisBlock] = mRows.mSizes.Clone();
     }
 
     // Copy item data from each child's first-in-flow data in mSharedGridData.
@@ -3550,14 +3546,14 @@ void nsGridContainerFrame::UsedTrackSizes::ResolveSubgridTrackSizesForAxis(
     nsGridContainerFrame* aFrame, LogicalAxis aAxis, Subgrid* aSubgrid,
     gfxContext& aRC, nscoord aContentBoxSize) {
   GridReflowInput state(aFrame, aRC);
-  state.mGridItems = aSubgrid->mGridItems;
+  state.mGridItems = aSubgrid->mGridItems.Clone();
   Grid grid;
   grid.mGridColEnd = aSubgrid->mGridColEnd;
   grid.mGridRowEnd = aSubgrid->mGridRowEnd;
   state.CalculateTrackSizesForAxis(aAxis, grid, aContentBoxSize,
                                    SizingConstraint::NoConstraint);
   const auto& tracks = aAxis == eLogicalAxisInline ? state.mCols : state.mRows;
-  mSizes[aAxis] = tracks.mSizes;
+  mSizes[aAxis] = tracks.mSizes.Clone();
   mCanResolveLineRangeSize[aAxis] = tracks.mCanResolveLineRangeSize;
   MOZ_ASSERT(mCanResolveLineRangeSize[aAxis]);
 }
@@ -4817,7 +4813,7 @@ void nsGridContainerFrame::Grid::PlaceGridItems(
     const auto& cellMap = mCellMap;
     colAdjust = CalculateAdjustForAutoFitElements(
         &numEmptyCols, aState.mColFunctions, mGridColEnd + 1,
-        [cellMap](uint32_t i) -> bool { return cellMap.IsEmptyCol(i); });
+        [&cellMap](uint32_t i) -> bool { return cellMap.IsEmptyCol(i); });
   }
 
   // Do similar work for the row tracks, with the same logic.
@@ -4828,7 +4824,7 @@ void nsGridContainerFrame::Grid::PlaceGridItems(
     const auto& cellMap = mCellMap;
     rowAdjust = CalculateAdjustForAutoFitElements(
         &numEmptyRows, aState.mRowFunctions, mGridRowEnd + 1,
-        [cellMap](uint32_t i) -> bool { return cellMap.IsEmptyRow(i); });
+        [&cellMap](uint32_t i) -> bool { return cellMap.IsEmptyRow(i); });
   }
   MOZ_ASSERT((numEmptyCols > 0) == colAdjust.isSome());
   MOZ_ASSERT((numEmptyRows > 0) == rowAdjust.isSome());
@@ -6301,7 +6297,7 @@ float nsGridContainerFrame::Tracks::FindFrUnitSize(
   }
   bool restart;
   float hypotheticalFrSize;
-  nsTArray<uint32_t> flexTracks(aFlexTracks);
+  nsTArray<uint32_t> flexTracks(aFlexTracks.Clone());
   uint32_t numFlexTracks = flexTracks.Length();
   do {
     restart = false;
@@ -6425,7 +6421,7 @@ void nsGridContainerFrame::Tracks::StretchFlexibleTracks(
         nscoord& base = mSizes[i].mBase;
         if (flexLength > base) {
           if (applyMinMax && origSizes.isNothing()) {
-            origSizes.emplace(mSizes);
+            origSizes.emplace(mSizes.Clone());
           }
           base = flexLength;
         }
@@ -6852,7 +6848,7 @@ void nsGridContainerFrame::GridReflowInput::AlignJustifyTracksInMasonryAxis(
   const auto masonryAxis = masonryAxisTracks.mAxis;
   auto gridAxis = GetOrthogonalAxis(masonryAxis);
   auto& gridAxisTracks = TracksFor(gridAxis);
-  AutoTArray<TrackSize, 2> savedSizes;
+  AutoTArray<TrackSize, 32> savedSizes;
   savedSizes.AppendElements(masonryAxisTracks.mSizes);
   auto wm = mWM;
   nscoord contentAreaStart = mBorderPadding.Start(masonryAxis, wm);
@@ -7015,7 +7011,7 @@ void nsGridContainerFrame::GridReflowInput::AlignJustifyTracksInMasonryAxis(
       }
     }
   }
-  masonryAxisTracks.mSizes = savedSizes;
+  masonryAxisTracks.mSizes = std::move(savedSizes);
 }
 
 /**
@@ -7921,7 +7917,7 @@ nscoord nsGridContainerFrame::MasonryLayout(GridReflowInput& aState,
   for (auto& sz : currentPos) {
     sz = fragStartPos;
   }
-  nsTArray<nscoord> lastPos(currentPos);
+  nsTArray<nscoord> lastPos(currentPos.Clone());
   nsTArray<GridItemInfo*> lastItems(gridAxisTrackCount);
   lastItems.SetLength(gridAxisTrackCount);
   PodZero(lastItems.Elements(), gridAxisTrackCount);
@@ -8416,199 +8412,6 @@ nscoord nsGridContainerFrame::ReflowChildren(GridReflowInput& aState,
   return bSize;
 }
 
-void nsGridContainerFrame::NormalizeChildLists() {
-  // First we gather child frames we should include in our reflow/placement,
-  // i.e. overflowed children from our prev-in-flow, and pushed first-in-flow
-  // children (that might now fit). It's important to note that these children
-  // can be in arbitrary order vis-a-vis the current children in our lists.
-  // E.g. grid items in the document order: A, B, C may be placed in the rows
-  // 3, 2, 1.  Assume each row goes in a separate grid container fragment,
-  // and we reflow the second fragment.  Now if C (in fragment 1) overflows,
-  // we can't just prepend it to our mFrames like we usually do because that
-  // would violate the document order invariant that other code depends on.
-  // Similarly if we pull up child A (from fragment 3) we can't just append
-  // that for the same reason.  Instead, we must sort these children into
-  // our child lists.  (The sorting is trivial given that both lists are
-  // already fully sorted individually - it's just a merge.)
-  //
-  // The invariants that we maintain are that each grid container child list
-  // is sorted in the normal document order at all times, but that children
-  // in different grid container continuations may be in arbitrary order.
-
-  auto prevInFlow = static_cast<nsGridContainerFrame*>(GetPrevInFlow());
-  // Merge overflow frames from our prev-in-flow into our principal child list.
-  if (prevInFlow) {
-    AutoFrameListPtr overflow(PresContext(), prevInFlow->StealOverflowFrames());
-    if (overflow) {
-      ReparentFrames(*overflow, prevInFlow, this);
-      MergeSortedFrameLists(mFrames, *overflow, GetContent());
-
-      // Move trailing next-in-flows into our overflow list.
-      nsFrameList continuations;
-      for (nsIFrame* f = mFrames.FirstChild(); f;) {
-        nsIFrame* next = f->GetNextSibling();
-        nsIFrame* pif = f->GetPrevInFlow();
-        if (pif && pif->GetParent() == this) {
-          mFrames.RemoveFrame(f);
-          continuations.AppendFrame(nullptr, f);
-        }
-        f = next;
-      }
-      MergeSortedOverflow(continuations);
-
-      // Move trailing OC next-in-flows into our excess overflow containers
-      // list.
-      nsFrameList* overflowContainers =
-          GetPropTableFrames(OverflowContainersProperty());
-      if (overflowContainers) {
-        nsFrameList moveToEOC;
-        for (nsIFrame* f = overflowContainers->FirstChild(); f;) {
-          nsIFrame* next = f->GetNextSibling();
-          nsIFrame* pif = f->GetPrevInFlow();
-          if (pif && pif->GetParent() == this) {
-            overflowContainers->RemoveFrame(f);
-            moveToEOC.AppendFrame(nullptr, f);
-          }
-          f = next;
-        }
-        if (overflowContainers->IsEmpty()) {
-          RemoveProperty(OverflowContainersProperty());
-        }
-        MergeSortedExcessOverflowContainers(moveToEOC);
-      }
-    }
-  }
-
-  // Merge our own overflow frames into our principal child list,
-  // except those that are a next-in-flow for one of our items.
-  DebugOnly<bool> foundOwnPushedChild = false;
-  {
-    nsFrameList* ourOverflow = GetOverflowFrames();
-    if (ourOverflow) {
-      nsFrameList items;
-      for (nsIFrame* f = ourOverflow->FirstChild(); f;) {
-        nsIFrame* next = f->GetNextSibling();
-        nsIFrame* pif = f->GetPrevInFlow();
-        if (!pif || pif->GetParent() != this) {
-          MOZ_ASSERT(f->GetParent() == this);
-          ourOverflow->RemoveFrame(f);
-          items.AppendFrame(nullptr, f);
-          if (!pif) {
-            foundOwnPushedChild = true;
-          }
-        }
-        f = next;
-      }
-      MergeSortedFrameLists(mFrames, items, GetContent());
-      if (ourOverflow->IsEmpty()) {
-        DestroyOverflowList();
-      }
-    }
-  }
-
-  // Push any child next-in-flows in our principal list to OverflowList.
-  if (HasAnyStateBits(NS_STATE_GRID_HAS_CHILD_NIFS)) {
-    nsFrameList framesToPush;
-    nsIFrame* firstChild = mFrames.FirstChild();
-    // Note that we potentially modify our mFrames list as we go.
-    for (auto child = firstChild; child; child = child->GetNextSibling()) {
-      if (auto* childNIF = child->GetNextInFlow()) {
-        if (childNIF->GetParent() == this) {
-          for (auto c = child->GetNextSibling(); c; c = c->GetNextSibling()) {
-            if (c == childNIF) {
-              // child's next-in-flow is in our principal child list, push it.
-              mFrames.RemoveFrame(childNIF);
-              framesToPush.AppendFrame(nullptr, childNIF);
-              break;
-            }
-          }
-        }
-      }
-    }
-    if (!framesToPush.IsEmpty()) {
-      MergeSortedOverflow(framesToPush);
-    }
-    RemoveStateBits(NS_STATE_GRID_HAS_CHILD_NIFS);
-  }
-
-  // Pull up any first-in-flow children we might have pushed.
-  if (HasAnyStateBits(NS_STATE_GRID_DID_PUSH_ITEMS)) {
-    RemoveStateBits(NS_STATE_GRID_DID_PUSH_ITEMS);
-    nsFrameList items;
-    auto nif = static_cast<nsGridContainerFrame*>(GetNextInFlow());
-    auto firstNIF = nif;
-    DebugOnly<bool> nifNeedPushedItem = false;
-    while (nif) {
-      nsFrameList nifItems;
-      for (nsIFrame* nifChild = nif->GetChildList(kPrincipalList).FirstChild();
-           nifChild;) {
-        nsIFrame* next = nifChild->GetNextSibling();
-        if (!nifChild->GetPrevInFlow()) {
-          nif->StealFrame(nifChild);
-          ReparentFrame(nifChild, nif, this);
-          nifItems.AppendFrame(nullptr, nifChild);
-          nifNeedPushedItem = false;
-        }
-        nifChild = next;
-      }
-      MergeSortedFrameLists(items, nifItems, GetContent());
-
-      if (!nif->HasAnyStateBits(NS_STATE_GRID_DID_PUSH_ITEMS)) {
-        MOZ_ASSERT(!nifNeedPushedItem || mDidPushItemsBitMayLie,
-                   "NS_STATE_GRID_DID_PUSH_ITEMS lied");
-        break;
-      }
-      nifNeedPushedItem = true;
-
-      for (nsIFrame* nifChild = nif->GetChildList(kOverflowList).FirstChild();
-           nifChild;) {
-        nsIFrame* next = nifChild->GetNextSibling();
-        if (!nifChild->GetPrevInFlow()) {
-          nif->StealFrame(nifChild);
-          ReparentFrame(nifChild, nif, this);
-          nifItems.AppendFrame(nullptr, nifChild);
-          nifNeedPushedItem = false;
-        }
-        nifChild = next;
-      }
-      MergeSortedFrameLists(items, nifItems, GetContent());
-
-      nif->RemoveStateBits(NS_STATE_GRID_DID_PUSH_ITEMS);
-      nif = static_cast<nsGridContainerFrame*>(nif->GetNextInFlow());
-      MOZ_ASSERT(nif || !nifNeedPushedItem || mDidPushItemsBitMayLie,
-                 "NS_STATE_GRID_DID_PUSH_ITEMS lied");
-    }
-
-    if (!items.IsEmpty()) {
-      // Pull up the first next-in-flow of the pulled up items too, unless its
-      // parent is our nif (to avoid leaving a hole there).
-      nsFrameList childNIFs;
-      nsFrameList childOCNIFs;
-      for (auto child : items) {
-        auto childNIF = child->GetNextInFlow();
-        if (childNIF && childNIF->GetParent() != firstNIF) {
-          auto parent = childNIF->GetParent();
-          parent->StealFrame(childNIF);
-          ReparentFrame(childNIF, parent, firstNIF);
-          if ((childNIF->GetStateBits() & NS_FRAME_IS_OVERFLOW_CONTAINER)) {
-            childOCNIFs.AppendFrame(nullptr, childNIF);
-          } else {
-            childNIFs.AppendFrame(nullptr, childNIF);
-          }
-        }
-      }
-      // Merge items' NIFs into our NIF's respective overflow child lists.
-      firstNIF->MergeSortedOverflow(childNIFs);
-      firstNIF->MergeSortedExcessOverflowContainers(childOCNIFs);
-    }
-
-    MOZ_ASSERT(
-        foundOwnPushedChild || !items.IsEmpty() || mDidPushItemsBitMayLie,
-        "NS_STATE_GRID_DID_PUSH_ITEMS lied");
-    MergeSortedFrameLists(mFrames, items, GetContent());
-  }
-}
-
 void nsGridContainerFrame::Reflow(nsPresContext* aPresContext,
                                   ReflowOutput& aDesiredSize,
                                   const ReflowInput& aReflowInput,
@@ -8626,7 +8429,7 @@ void nsGridContainerFrame::Reflow(nsPresContext* aPresContext,
 
 #ifdef DEBUG
   mDidPushItemsBitMayLie = false;
-  SanityCheckGridItemsBeforeReflow();
+  SanityCheckChildListsBeforeReflow();
 #endif  // DEBUG
 
   for (auto& perAxisBaseline : mBaseline) {
@@ -8675,8 +8478,8 @@ void nsGridContainerFrame::Reflow(nsPresContext* aPresContext,
     } else {
       auto* subgrid = GetProperty(Subgrid::Prop());
       MOZ_ASSERT(subgrid, "an ancestor forgot to call PlaceGridItems?");
-      gridReflowInput.mGridItems = subgrid->mGridItems;
-      gridReflowInput.mAbsPosItems = subgrid->mAbsPosItems;
+      gridReflowInput.mGridItems = subgrid->mGridItems.Clone();
+      gridReflowInput.mAbsPosItems = subgrid->mAbsPosItems.Clone();
       grid.mGridColEnd = subgrid->mGridColEnd;
       grid.mGridRowEnd = subgrid->mGridRowEnd;
     }
@@ -8904,7 +8707,7 @@ void nsGridContainerFrame::Reflow(nsPresContext* aPresContext,
     nsTArray<nscoord> colTrackSizes(colTrackCount);
     nsTArray<uint32_t> colTrackStates(colTrackCount);
     nsTArray<bool> colRemovedRepeatTracks(
-        gridReflowInput.mColFunctions.mRemovedRepeatTracks);
+        gridReflowInput.mColFunctions.mRemovedRepeatTracks.Clone());
     uint32_t col = 0;
     for (const TrackSize& sz : gridReflowInput.mCols.mSizes) {
       colTrackPositions.AppendElement(sz.mPosition);
@@ -8946,7 +8749,7 @@ void nsGridContainerFrame::Reflow(nsPresContext* aPresContext,
     nsTArray<nscoord> rowTrackSizes(rowTrackCount);
     nsTArray<uint32_t> rowTrackStates(rowTrackCount);
     nsTArray<bool> rowRemovedRepeatTracks(
-        gridReflowInput.mRowFunctions.mRemovedRepeatTracks);
+        gridReflowInput.mRowFunctions.mRemovedRepeatTracks.Clone());
     uint32_t row = 0;
     for (const TrackSize& sz : gridReflowInput.mRows.mSizes) {
       rowTrackPositions.AppendElement(sz.mPosition);
@@ -9028,7 +8831,7 @@ void nsGridContainerFrame::Reflow(nsPresContext* aPresContext,
           colLineNameMap.GetExplicitLineNamesAtIndex(
               col - colFunctions.mExplicitGridOffset);
 
-      columnLineNames.AppendElement(explicitNames);
+      columnLineNames.EmplaceBack(std::move(explicitNames));
     }
     // Get the explicit names that follow a repeat auto declaration.
     nsTArray<RefPtr<nsAtom>> colNamesFollowingRepeat;
@@ -9068,7 +8871,7 @@ void nsGridContainerFrame::Reflow(nsPresContext* aPresContext,
       nsTArray<RefPtr<nsAtom>> explicitNames =
           rowLineNameMap.GetExplicitLineNamesAtIndex(
               row - rowFunctions.mExplicitGridOffset);
-      rowLineNames.AppendElement(explicitNames);
+      rowLineNames.EmplaceBack(std::move(explicitNames));
     }
     // Get the explicit names that follow a repeat auto declaration.
     nsTArray<RefPtr<nsAtom>> rowNamesFollowingRepeat;
@@ -9349,8 +9152,8 @@ nscoord nsGridContainerFrame::IntrinsicISize(gfxContext* aRenderingContext,
     grid.PlaceGridItems(state, repeatSizing);  // XXX optimize
   } else {
     auto* subgrid = GetProperty(Subgrid::Prop());
-    state.mGridItems = subgrid->mGridItems;
-    state.mAbsPosItems = subgrid->mAbsPosItems;
+    state.mGridItems = subgrid->mGridItems.Clone();
+    state.mAbsPosItems = subgrid->mAbsPosItems.Clone();
     grid.mGridColEnd = subgrid->mGridColEnd;
     grid.mGridRowEnd = subgrid->mGridRowEnd;
   }
@@ -9454,19 +9257,7 @@ void nsGridContainerFrame::BuildDisplayList(nsDisplayListBuilder* aBuilder,
 }
 
 bool nsGridContainerFrame::DrainSelfOverflowList() {
-  // Unlike nsContainerFrame::DrainSelfOverflowList we need to merge these lists
-  // so that the resulting mFrames is in document content order.
-  // NOTE: nsContainerFrame::AppendFrames/InsertFrames calls this method and
-  // there are also direct calls from the fctor (FindAppendPrevSibling).
-  AutoFrameListPtr overflowFrames(PresContext(), StealOverflowFrames());
-  if (overflowFrames) {
-    MergeSortedFrameLists(mFrames, *overflowFrames, GetContent());
-    // We set a frame bit to push them again in Reflow() to avoid creating
-    // multiple grid items per grid container fragment for the same content.
-    AddStateBits(NS_STATE_GRID_HAS_CHILD_NIFS);
-    return true;
-  }
-  return false;
+  return DrainAndMergeSelfOverflowList();
 }
 
 void nsGridContainerFrame::AppendFrames(ChildListID aListID,
@@ -9493,20 +9284,7 @@ void nsGridContainerFrame::RemoveFrame(ChildListID aListID,
   supportedLists += kBackdropList;
   MOZ_ASSERT(supportedLists.contains(aListID), "unexpected child list");
 
-  // Note that kPrincipalList doesn't mean aOldFrame must be on that list.
-  // It can also be on kOverflowList, in which case it might be a pushed
-  // item, and if it's the only pushed item our DID_PUSH_ITEMS bit will lie.
-  if (aListID == kPrincipalList && !aOldFrame->GetPrevInFlow()) {
-    // Since the bit may lie, set the mDidPushItemsBitMayLie value to true for
-    // ourself and for all our contiguous previous-in-flow
-    // nsGridContainerFrames.
-    nsGridContainerFrame* frameThatMayLie = this;
-    do {
-      frameThatMayLie->mDidPushItemsBitMayLie = true;
-      frameThatMayLie =
-          static_cast<nsGridContainerFrame*>(frameThatMayLie->GetPrevInFlow());
-    } while (frameThatMayLie);
-  }
+  SetDidPushItemsBitIfNeeded(aListID, aOldFrame);
 #endif
 
   nsContainerFrame::RemoveFrame(aListID, aOldFrame);
@@ -9694,27 +9472,6 @@ void nsGridContainerFrame::ExtraContainerFrameInfo(nsACString& aTo) const {
 
 #endif
 
-void nsGridContainerFrame::NoteNewChildren(ChildListID aListID,
-                                           const nsFrameList& aFrameList) {
-#ifdef DEBUG
-  ChildListIDs supportedLists = {kAbsoluteList, kFixedList, kPrincipalList,
-                                 kNoReflowPrincipalList};
-  // We don't handle the kBackdropList frames in any way, but it only contains
-  // a placeholder for ::backdrop which is OK to not reflow (for now anyway).
-  supportedLists += kBackdropList;
-  MOZ_ASSERT(supportedLists.contains(aListID), "unexpected child list");
-#endif
-
-  mozilla::PresShell* presShell = PresShell();
-  for (auto pif = GetPrevInFlow(); pif; pif = pif->GetPrevInFlow()) {
-    if (aListID == kPrincipalList) {
-      pif->AddStateBits(NS_STATE_GRID_DID_PUSH_ITEMS);
-    }
-    presShell->FrameNeedsReflow(pif, IntrinsicDirty::TreeChange,
-                                NS_FRAME_IS_DIRTY);
-  }
-}
-
 /* static */ nsGridContainerFrame::FindItemInGridOrderResult
 nsGridContainerFrame::FindFirstItemInGridOrder(
     CSSOrderAwareFrameIterator& aIter, const nsTArray<GridItemInfo>& aGridItems,
@@ -9788,7 +9545,7 @@ void nsGridContainerFrame::StoreUsedTrackSizes(
     uts = new UsedTrackSizes();
     SetProperty(UsedTrackSizes::Prop(), uts);
   }
-  uts->mSizes[aAxis] = aSizes;
+  uts->mSizes[aAxis] = aSizes.Clone();
   uts->mCanResolveLineRangeSize[aAxis] = true;
   // XXX is resetting these bits necessary?
   for (auto& sz : uts->mSizes[aAxis]) {
@@ -9807,47 +9564,6 @@ void nsGridContainerFrame::SetInitialChildList(ChildListID aListID,
   MOZ_ASSERT(supportedLists.contains(aListID), "unexpected child list");
 
   return nsContainerFrame::SetInitialChildList(aListID, aChildList);
-}
-
-void nsGridContainerFrame::SanityCheckGridItemsBeforeReflow() const {
-  ChildListIDs absLists = {kAbsoluteList, kFixedList, kOverflowContainersList,
-                           kExcessOverflowContainersList};
-  ChildListIDs itemLists = {kPrincipalList, kOverflowList};
-  for (const nsIFrame* f = this; f; f = f->GetNextInFlow()) {
-    MOZ_ASSERT(!f->HasAnyStateBits(NS_STATE_GRID_DID_PUSH_ITEMS),
-               "At start of reflow, we should've pulled items back from all "
-               "NIFs and cleared NS_STATE_GRID_DID_PUSH_ITEMS in the process");
-    for (nsIFrame::ChildListIterator childLists(f); !childLists.IsDone();
-         childLists.Next()) {
-      if (!itemLists.contains(childLists.CurrentID())) {
-        MOZ_ASSERT(absLists.contains(childLists.CurrentID()) ||
-                       childLists.CurrentID() == kBackdropList,
-                   "unexpected non-empty child list");
-        continue;
-      }
-      for (auto child : childLists.CurrentList()) {
-        MOZ_ASSERT(f == this || child->GetPrevInFlow(),
-                   "all pushed items must be pulled up before reflow");
-      }
-    }
-  }
-  // If we have a prev-in-flow, each of its children's next-in-flow
-  // should be one of our children or be null.
-  const auto pif = static_cast<nsGridContainerFrame*>(GetPrevInFlow());
-  if (pif) {
-    const nsFrameList* oc = GetPropTableFrames(OverflowContainersProperty());
-    const nsFrameList* eoc =
-        GetPropTableFrames(ExcessOverflowContainersProperty());
-    const nsFrameList* pifEOC =
-        pif->GetPropTableFrames(ExcessOverflowContainersProperty());
-    for (const nsIFrame* child : pif->GetChildList(kPrincipalList)) {
-      const nsIFrame* childNIF = child->GetNextInFlow();
-      MOZ_ASSERT(!childNIF || mFrames.ContainsFrame(childNIF) ||
-                 (pifEOC && pifEOC->ContainsFrame(childNIF)) ||
-                 (oc && oc->ContainsFrame(childNIF)) ||
-                 (eoc && eoc->ContainsFrame(childNIF)));
-    }
-  }
 }
 
 void nsGridContainerFrame::TrackSize::DumpStateBits(StateBits aState) {

@@ -588,6 +588,7 @@ nsThread::nsThread(NotNull<SynchronizedEventQueue*> aQueue,
       mShutdownRequired(false),
       mPriority(PRIORITY_NORMAL),
       mIsMainThread(aMainThread == MAIN_THREAD),
+      mUseHangMonitor(aMainThread == MAIN_THREAD),
       mIsAPoolThreadFree(nullptr),
       mCanInvokeJS(false),
 #ifdef EARLY_BETA_OR_EARLIER
@@ -606,6 +607,7 @@ nsThread::nsThread()
       mShutdownRequired(false),
       mPriority(PRIORITY_NORMAL),
       mIsMainThread(false),
+      mUseHangMonitor(false),
       mCanInvokeJS(false),
 #ifdef EARLY_BETA_OR_EARLIER
       mLastWakeupCheckTime(TimeStamp::Now()),
@@ -1005,7 +1007,7 @@ static bool GetLabeledRunnableName(nsIRunnable* aEvent, nsACString& aName,
 #endif
 
 mozilla::PerformanceCounter* nsThread::GetPerformanceCounter(
-    nsIRunnable* aEvent) {
+    nsIRunnable* aEvent) const {
   RefPtr<SchedulerGroup::Runnable> docRunnable = do_QueryObject(aEvent);
   if (docRunnable) {
     mozilla::dom::DocGroup* docGroup = docRunnable->DocGroup();
@@ -1066,10 +1068,12 @@ nsThread::ProcessNextEvent(bool aMayWait, bool* aResult) {
 
   if (mIsInLocalExecutionMode) {
     EventQueuePriority priority;
-    if (const nsCOMPtr<nsIRunnable> event =
+    if (nsCOMPtr<nsIRunnable> event =
             mEvents->GetEvent(reallyWait, &priority)) {
       *aResult = true;
+      LogRunnable::Run log(event);
       event->Run();
+      event = nullptr;
     } else {
       *aResult = false;
     }
@@ -1077,8 +1081,13 @@ nsThread::ProcessNextEvent(bool aMayWait, bool* aResult) {
   }
 
   Maybe<dom::AutoNoJSAPI> noJSAPI;
+
+  if (mUseHangMonitor && reallyWait) {
+    BackgroundHangMonitor().NotifyWait();
+  }
+
   if (mIsMainThread) {
-    DoMainThreadSpecificProcessing(reallyWait);
+    DoMainThreadSpecificProcessing();
   }
 
   ++mNestedEventLoopDepth;
@@ -1149,13 +1158,15 @@ nsThread::ProcessNextEvent(bool aMayWait, bool* aResult) {
 
       LOG(("THRD(%p) running [%p]\n", this, event.get()));
 
+      LogRunnable::Run log(event);
+
       // Delay event processing to encourage whoever dispatched this event
       // to run.
       DelayForChaosMode(ChaosFeature::TaskRunning, 1000);
 
       mozilla::TimeStamp now = mozilla::TimeStamp::Now();
 
-      if (mIsMainThread) {
+      if (mUseHangMonitor) {
         BackgroundHangMonitor().NotifyActivity();
       }
 
@@ -1202,6 +1213,9 @@ nsThread::ProcessNextEvent(bool aMayWait, bool* aResult) {
       mEvents->DidRunEvent();
 
       mPerformanceCounterState.RunnableDidRun(std::move(snapshot));
+
+      // To cover the event's destructor code inside the LogRunnable span.
+      event = nullptr;
     } else {
       mLastEventDelay = TimeDuration();
       mLastEventStart = TimeStamp();
@@ -1352,14 +1366,10 @@ void nsThread::SetScriptObserver(
   mScriptObserver = aScriptObserver;
 }
 
-void nsThread::DoMainThreadSpecificProcessing(bool aReallyWait) {
+void nsThread::DoMainThreadSpecificProcessing() const {
   MOZ_ASSERT(mIsMainThread);
 
   ipc::CancelCPOWs();
-
-  if (aReallyWait) {
-    BackgroundHangMonitor().NotifyWait();
-  }
 
   // Fire a memory pressure notification, if one is pending.
   if (!ShuttingDown()) {

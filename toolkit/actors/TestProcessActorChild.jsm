@@ -11,6 +11,11 @@ var EXPORTED_SYMBOLS = ["TestProcessActorChild"];
 class TestProcessActorChild extends JSProcessActorChild {
   constructor() {
     super();
+    this.sawActorCreated = false;
+  }
+
+  actorCreated() {
+    this.sawActorCreated = true;
   }
 
   receiveMessage(aMessage) {

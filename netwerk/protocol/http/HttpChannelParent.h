@@ -37,7 +37,6 @@ namespace mozilla {
 
 namespace dom {
 class BrowserParent;
-class PBrowserOrId;
 }  // namespace dom
 
 namespace net {
@@ -81,7 +80,7 @@ class HttpChannelParent final : public nsIInterfaceRequestor,
 
   NS_DECLARE_STATIC_IID_ACCESSOR(HTTP_CHANNEL_PARENT_IID)
 
-  HttpChannelParent(const dom::PBrowserOrId& iframeEmbedding,
+  HttpChannelParent(dom::BrowserParent* iframeEmbedding,
                     nsILoadContext* aLoadContext, PBOverrideStatus aStatus);
 
   [[nodiscard]] bool Init(const HttpChannelCreationArgs& aOpenArgs);
@@ -188,7 +187,8 @@ class HttpChannelParent final : public nsIInterfaceRequestor,
       const nsCString& charset) override;
   virtual mozilla::ipc::IPCResult RecvSuspend() override;
   virtual mozilla::ipc::IPCResult RecvResume() override;
-  virtual mozilla::ipc::IPCResult RecvCancel(const nsresult& status) override;
+  virtual mozilla::ipc::IPCResult RecvCancel(
+      const nsresult& status, const uint32_t& requestBlockingReason) override;
   virtual mozilla::ipc::IPCResult RecvRedirect2Verify(
       const nsresult& result, const RequestHeaderTuples& changedHeaders,
       const uint32_t& aSourceRequestBlockingReason,
@@ -301,8 +301,6 @@ class HttpChannelParent final : public nsIInterfaceRequestor,
 
   MozPromiseHolder<GenericNonExclusivePromise> mPromise;
   MozPromiseRequestHolder<GenericNonExclusivePromise> mRequest;
-
-  dom::TabId mNestedFrameId;
 
   // To calculate the delay caused by the e10s back-pressure suspension
   TimeStamp mResumedTimestamp;

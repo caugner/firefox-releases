@@ -878,6 +878,9 @@ void NetlinkService::OnAddrMessage(struct nlmsghdr* aNlh) {
     }
   }
 
+  // Address change on the interface can change its status
+  linkInfo->UpdateStatus();
+
   // Don't treat address changes during initial scan as a network change
   if (mInitialScanFinished) {
     // Send network event change regardless of whether the ID has changed or not
@@ -1819,7 +1822,7 @@ void NetlinkService::GetNetworkID(nsACString& aNetworkID) {
 nsresult NetlinkService::GetDnsSuffixList(nsTArray<nsCString>& aDnsSuffixList) {
 #if defined(HAVE_RES_NINIT)
   MutexAutoLock lock(mMutex);
-  aDnsSuffixList = mDNSSuffixList;
+  aDnsSuffixList = mDNSSuffixList.Clone();
   return NS_OK;
 #else
   return NS_ERROR_NOT_IMPLEMENTED;

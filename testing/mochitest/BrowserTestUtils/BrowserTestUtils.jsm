@@ -376,9 +376,13 @@ var BrowserTestUtils = {
    *
    * This can be used in conjunction with any synchronous method for starting a
    * load, like the "addTab" method on "tabbrowser", and must be called before
-   * yielding control to the event loop. This is guaranteed to work because the
-   * way we're listening for the load is in the content-utils.js frame script,
-   * and then sending an async message up, so we can't miss the message.
+   * yielding control to the event loop. Note that calling this after multiple
+   * successive load operations can be racy, so a |wantLoad| should be specified
+   * in these cases.
+   *
+   * This function works by listening for custom load events on |browser|. These
+   * are sent by a BrowserTestUtils window actor in response to "load" and
+   * "DOMContentLoaded" content events.
    *
    * @param {xul:browser} browser
    *        A xul:browser.
@@ -1189,7 +1193,7 @@ var BrowserTestUtils = {
         eventName,
         () => {
           removeEventListener();
-          resolve();
+          resolve(eventName);
         },
         { capture, wantUntrusted },
         checkFn
@@ -2065,6 +2069,51 @@ var BrowserTestUtils = {
         // will be the notification itself.
         resolve(event.originalTarget);
       });
+    });
+  },
+
+  /**
+   * Waits for CSS transitions to complete for an element. Tracks any
+   * transitions that start after this function is called and resolves once all
+   * started transitions complete.
+   *
+   * @param element (Element)
+   *        The element that will transition.
+   * @param timeout (number)
+   *        The maximum time to wait in milliseconds. Defaults to 5 seconds.
+   * @return Promise
+   *        Resolves when transitions complete or rejects if the timeout is hit.
+   */
+  waitForTransition(element, timeout = 5000) {
+    return new Promise((resolve, reject) => {
+      let cleanup = () => {
+        element.removeEventListener("transitionrun", listener);
+        element.removeEventListener("transitionend", listener);
+      };
+
+      let timer = element.ownerGlobal.setTimeout(() => {
+        cleanup();
+        reject();
+      }, timeout);
+
+      let transitionCount = 0;
+
+      let listener = event => {
+        if (event.type == "transitionrun") {
+          transitionCount++;
+        } else {
+          transitionCount--;
+          if (transitionCount == 0) {
+            cleanup();
+            element.ownerGlobal.clearTimeout(timer);
+            resolve();
+          }
+        }
+      };
+
+      element.addEventListener("transitionrun", listener);
+      element.addEventListener("transitionend", listener);
+      element.addEventListener("transitioncancel", listener);
     });
   },
 

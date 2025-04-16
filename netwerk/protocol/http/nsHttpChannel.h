@@ -198,6 +198,8 @@ class nsHttpChannel final : public HttpBaseChannel,
   void SetWarningReporter(HttpChannelSecurityWarningReporter* aReporter);
   HttpChannelSecurityWarningReporter* GetWarningReporter();
 
+  bool OnDataAlreadySent() { return mDataAlreadySent; }
+
  public: /* internal necko use only */
   uint32_t GetRequestTime() const { return mRequestTime; }
 
@@ -481,16 +483,6 @@ class nsHttpChannel final : public HttpBaseChannel,
    */
   void ProcessSecurityReport(nsresult status);
 
-  nsresult ProcessCrossOriginEmbedderPolicyHeader();
-  nsresult ProcessCrossOriginResourcePolicyHeader();
-
-  nsresult ComputeCrossOriginOpenerPolicyMismatch();
-  // This method returns the cached result of running the Cross-Origin-Opener
-  // policy compare algorithm by calling ComputeCrossOriginOpenerPolicyMismatch
-  bool HasCrossOriginOpenerPolicyMismatch() {
-    return mHasCrossOriginOpenerPolicyMismatch;
-  }
-
   /**
    * A function to process a single security header (STS or PKP), assumes
    * some basic sanity checks have been applied to the channel. Called
@@ -567,6 +559,11 @@ class nsHttpChannel final : public HttpBaseChannel,
   // writing a new entry. The content type is used in cache internally only.
   void SetCachedContentType();
 
+  // This function updates all the fields used by anti-tracking when a channel
+  // is opened. We have to do this in the parent to access cross-origin info
+  // that is not exposed to child processes.
+  void UpdateAntiTrackingInfo();
+
  private:
   // this section is for main-thread-only object
   // all the references need to be proxy released on main thread.
@@ -616,6 +613,10 @@ class nsHttpChannel final : public HttpBaseChannel,
   // Needed because calling openAlternativeOutputStream needs a reference
   // to the cache entry.
   nsCOMPtr<nsICacheEntry> mAltDataCacheEntry;
+
+  nsCOMPtr<nsIURI> mCacheEntryURI;
+  nsCString mCacheIdExtension;
+
   // We must close mCacheInputStream explicitly to avoid leaks.
   AutoClose<nsIInputStream> mCacheInputStream;
   RefPtr<nsInputStreamPump> mCachePump;
@@ -731,9 +732,9 @@ class nsHttpChannel final : public HttpBaseChannel,
   // True only when we have computed the value of the top window origin.
   uint32_t mTopWindowOriginComputed : 1;
 
-  // True if this is a navigation to a page with a different cross origin
-  // opener policy ( see ComputeCrossOriginOpenerPolicyMismatch )
-  uint32_t mHasCrossOriginOpenerPolicyMismatch : 1;
+  // True if the data has already been sent from the socket process to the
+  // content process.
+  uint32_t mDataAlreadySent : 1;
 
   // The origin of the top window, only valid when mTopWindowOriginComputed is
   // true.
@@ -803,6 +804,11 @@ class nsHttpChannel final : public HttpBaseChannel,
   // with the cache fetch, and proceeds to do so.
   nsresult MaybeRaceCacheWithNetwork();
 
+  // Creates a new cache entry when network wins the race to ensure we have
+  // the latest version of the resource in the cache. Otherwise we might return
+  // an old content when navigating back in history.
+  void MaybeCreateCacheEntryWhenRCWN();
+
   nsresult TriggerNetworkWithDelay(uint32_t aDelay);
   nsresult TriggerNetwork();
   void CancelNetworkRequest(nsresult aStatus);
@@ -821,8 +827,8 @@ class nsHttpChannel final : public HttpBaseChannel,
   // SetupTransaction removed conditional headers and decisions made in
   // OnCacheEntryCheck are no longer valid.
   bool mIgnoreCacheEntry;
-  // Lock preventing OnCacheEntryCheck and SetupTransaction being called at
-  // the same time.
+  // Lock preventing SetupTransaction/MaybeCreateCacheEntryWhenRCWN and
+  // OnCacheEntryCheck being called at the same time.
   mozilla::Mutex mRCWNLock;
 
   TimeStamp mNavigationStartTimeStamp;

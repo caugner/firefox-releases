@@ -43,10 +43,10 @@ void gfxConfigManager::Init() {
       StaticPrefs::gfx_webrender_max_partial_present_rects_AtStartup() > 0;
 #ifdef XP_WIN
   mWrForceAngle = StaticPrefs::gfx_webrender_force_angle_AtStartup();
-#ifdef NIGHTLY_BUILD
+#  ifdef NIGHTLY_BUILD
   mWrForceAngleNoGPUProcess = StaticPrefs::
       gfx_webrender_enabled_no_gpu_process_with_angle_win_AtStartup();
-#endif
+#  endif
   mWrDCompWinEnabled =
       Preferences::GetBool("gfx.webrender.dcomp-win.enabled", false);
 #endif
@@ -59,6 +59,8 @@ void gfxConfigManager::Init() {
       DeviceManagerDx::Get()->CheckHardwareStretchingSupport();
   mScaledResolution = HasScaledResolution();
   mIsWin10OrLater = IsWin10OrLater();
+  mIsWindows = true;
+  mWrCompositorDCompRequired = true;
 #else
   mHwStretchingSupport = true;
 #endif
@@ -71,6 +73,7 @@ void gfxConfigManager::Init() {
   mIsNightly = true;
 #endif
   mSafeMode = gfxPlatform::InSafeMode();
+  mDwmCompositionEnabled = gfxVars::DwmCompositionEnabled();
 
   mGfxInfo = services::GetGfxInfo();
 
@@ -268,6 +271,13 @@ void gfxConfigManager::ConfigureWebRender() {
                              NS_LITERAL_CSTRING("FEATURE_FAILURE_SAFE_MODE"));
   }
 
+  // Bug 1637497 - If DWM composition is disabled on older Windows versions,
+  // then we observe tearing with WebRender. Disable it in that case for now.
+  if (mIsWindows && !mIsWin10OrLater && !mDwmCompositionEnabled) {
+    mFeatureWr->ForceDisable(FeatureStatus::Unavailable, "No DWM composition",
+                             NS_LITERAL_CSTRING("FEATURE_FAILURE_NO_DWM_COMP"));
+  }
+
   mFeatureWrAngle->DisableByDefault(
       FeatureStatus::OptIn, "WebRender ANGLE is an opt-in feature",
       NS_LITERAL_CSTRING("FEATURE_FAILURE_DEFAULT_OFF"));
@@ -327,7 +337,7 @@ void gfxConfigManager::ConfigureWebRender() {
         NS_LITERAL_CSTRING("FEATURE_FAILURE_PICTURE_CACHING_DISABLED"));
   }
 
-  if (!mFeatureWrDComp->IsEnabled()) {
+  if (!mFeatureWrDComp->IsEnabled() && mWrCompositorDCompRequired) {
     mFeatureWrCompositor->ForceDisable(
         FeatureStatus::Unavailable, "No DirectComposition usage",
         NS_LITERAL_CSTRING("FEATURE_FAILURE_NO_DIRECTCOMPOSITION"));
@@ -338,11 +348,7 @@ void gfxConfigManager::ConfigureWebRender() {
   if (mWrPartialPresent) {
     if (mFeatureWr->IsEnabled()) {
       mFeatureWrPartial->EnableByDefault();
-      if (mWrPictureCaching) {
-        // Call UserEnable() only for reporting to Decision Log.
-        // If feature is enabled by default. It is not reported to Decision Log.
-        mFeatureWrPartial->UserEnable("Enabled");
-      } else {
+      if (!mWrPictureCaching) {
         mFeatureWrPartial->ForceDisable(
             FeatureStatus::Unavailable, "Picture caching is disabled",
             NS_LITERAL_CSTRING("FEATURE_FAILURE_PICTURE_CACHING_DISABLED"));

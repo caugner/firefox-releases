@@ -25,6 +25,7 @@
 #include "mozilla/Preferences.h"
 #include "mozilla/dom/BrowserChild.h"
 #include "mozilla/net/NeckoChild.h"
+#include "mozilla/net/WebrtcProxyConfig.h"
 #include "MediaManager.h"
 #include "WebrtcGmpVideoCodec.h"
 
@@ -68,7 +69,7 @@ void PeerConnectionMedia::StunAddrsHandler::OnStunAddrsAvailable(
   CSFLogInfo(LOGTAG, "%s: receiving (%d) stun addrs", __FUNCTION__,
              (int)addrs.Length());
   if (pcm_) {
-    pcm_->mStunAddrs = addrs;
+    pcm_->mStunAddrs = addrs.Clone();
     pcm_->mLocalAddrsRequestState = STUN_ADDR_REQUEST_COMPLETE;
     pcm_->FlushIceCtxOperationQueueIfReady();
     // If parent process returns 0 STUN addresses, change ICE connection

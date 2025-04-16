@@ -93,12 +93,12 @@ class L10nReadyHandler final : public PromiseNativeHandler {
       : mPromise(aPromise), mDocumentL10n(aDocumentL10n) {}
 
   void ResolvedCallback(JSContext* aCx, JS::Handle<JS::Value> aValue) override {
-    mDocumentL10n->InitialTranslationCompleted();
+    mDocumentL10n->InitialTranslationCompleted(true);
     mPromise->MaybeResolveWithUndefined();
   }
 
   void RejectedCallback(JSContext* aCx, JS::Handle<JS::Value> aValue) override {
-    mDocumentL10n->InitialTranslationCompleted();
+    mDocumentL10n->InitialTranslationCompleted(false);
     mPromise->MaybeRejectWithUndefined();
   }
 
@@ -128,21 +128,21 @@ void DocumentL10n::TriggerInitialTranslation() {
   ErrorResult rv;
   promises.AppendElement(TranslateDocument(rv));
   if (NS_WARN_IF(rv.Failed())) {
-    InitialTranslationCompleted();
+    InitialTranslationCompleted(false);
     mReady->MaybeRejectWithUndefined();
     return;
   }
   promises.AppendElement(TranslateRoots(rv));
   Element* documentElement = mDocument->GetDocumentElement();
   if (!documentElement) {
-    InitialTranslationCompleted();
+    InitialTranslationCompleted(false);
     mReady->MaybeRejectWithUndefined();
     return;
   }
 
   DOMLocalization::ConnectRoot(*documentElement, rv);
   if (NS_WARN_IF(rv.Failed())) {
-    InitialTranslationCompleted();
+    InitialTranslationCompleted(false);
     mReady->MaybeRejectWithUndefined();
     return;
   }
@@ -153,7 +153,7 @@ void DocumentL10n::TriggerInitialTranslation() {
   if (promise->State() == Promise::PromiseState::Resolved) {
     // If the promise is already resolved, we can fast-track
     // to initial translation completed.
-    InitialTranslationCompleted();
+    InitialTranslationCompleted(true);
     mReady->MaybeResolveWithUndefined();
   } else {
     RefPtr<PromiseNativeHandler> l10nReadyHandler =
@@ -199,15 +199,10 @@ already_AddRefed<Promise> DocumentL10n::TranslateDocument(ErrorResult& aRv) {
       Element* elem = elements.ElementAt(i - 1);
       MOZ_RELEASE_ASSERT(elem->HasAttr(nsGkAtoms::datal10nid));
       if (!elem->HasElementCreatedFromPrototypeAndHasUnmodifiedL10n()) {
-        if (!nonProtoElements.AppendElement(*elem, fallible)) {
-          mozalloc_handle_oom(0);
+        if (NS_WARN_IF(!nonProtoElements.AppendElement(*elem, fallible))) {
+          promise->MaybeRejectWithUndefined();
+          return promise.forget();
         }
-        // XXX(Bug 1631381) Consider making this fallible again like this:
-        // if (NS_WARN_IF(!nonProtoElements.AppendElement(*elem, fallible))) {
-        //   InitialDocumentTranslationCompleted();
-        //   mReady->MaybeRejectWithUndefined();
-        //   return;
-        // }
         elements.RemoveElement(elem);
       }
       i--;
@@ -263,7 +258,7 @@ already_AddRefed<Promise> DocumentL10n::TranslateDocument(ErrorResult& aRv) {
   return promise.forget();
 }
 
-void DocumentL10n::InitialTranslationCompleted() {
+void DocumentL10n::InitialTranslationCompleted(bool aL10nCached) {
   if (mState >= DocumentL10nState::Ready) {
     return;
   }
@@ -275,7 +270,7 @@ void DocumentL10n::InitialTranslationCompleted() {
 
   mState = DocumentL10nState::Ready;
 
-  mDocument->InitialTranslationCompleted();
+  mDocument->InitialTranslationCompleted(aL10nCached);
 
   // In XUL scenario contentSink is nullptr.
   if (mContentSink) {

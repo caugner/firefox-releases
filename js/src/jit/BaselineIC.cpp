@@ -599,6 +599,19 @@ bool ICStub::makesGCCalls() const {
   }
 }
 
+uint32_t ICStub::getEnteredCount() const {
+  switch (kind()) {
+    case CacheIR_Regular:
+      return toCacheIR_Regular()->enteredCount();
+    case CacheIR_Updated:
+      return toCacheIR_Updated()->enteredCount();
+    case CacheIR_Monitored:
+      return toCacheIR_Monitored()->enteredCount();
+    default:
+      return toFallbackStub()->enteredCount();
+  }
+}
+
 void ICStub::updateCode(JitCode* code) {
   // Write barrier on the old code.
   JitCode::writeBarrierPre(jitCode());
@@ -803,23 +816,12 @@ static void TryAttachStub(const char* name, JSContext* cx, BaselineFrame* frame,
 void ICFallbackStub::unlinkStub(Zone* zone, ICStub* prev, ICStub* stub) {
   MOZ_ASSERT(stub->next());
 
-  // If stub is the last optimized stub, update lastStubPtrAddr.
-  if (stub->next() == this) {
-    MOZ_ASSERT(lastStubPtrAddr_ == stub->addressOfNext());
-    if (prev) {
-      lastStubPtrAddr_ = prev->addressOfNext();
-    } else {
-      lastStubPtrAddr_ = icEntry()->addressOfFirstStub();
-    }
-    *lastStubPtrAddr_ = this;
+  if (prev) {
+    MOZ_ASSERT(prev->next() == stub);
+    prev->setNext(stub->next());
   } else {
-    if (prev) {
-      MOZ_ASSERT(prev->next() == stub);
-      prev->setNext(stub->next());
-    } else {
-      MOZ_ASSERT(icEntry()->firstStub() == stub);
-      icEntry()->setFirstStub(stub->next());
-    }
+    MOZ_ASSERT(icEntry()->firstStub() == stub);
+    icEntry()->setFirstStub(stub->next());
   }
 
   state_.trackUnlinkedStub();
@@ -853,14 +855,6 @@ void ICFallbackStub::unlinkStub(Zone* zone, ICStub* prev, ICStub* stub) {
     stub->stubCode_ = (uint8_t*)0xbad;
   }
 #endif
-}
-
-void ICFallbackStub::unlinkStubsWithKind(JSContext* cx, ICStub::Kind kind) {
-  for (ICStubIterator iter = beginChain(); !iter.atEnd(); iter++) {
-    if (iter->kind() == kind) {
-      iter.unlink(cx);
-    }
-  }
 }
 
 void ICFallbackStub::discardStubs(JSContext* cx) {
@@ -2913,7 +2907,7 @@ bool DoCallFallback(JSContext* cx, BaselineFrame* frame, ICCall_Fallback* stub,
 
   // Ensure vp array is rooted - we may GC in here.
   size_t numValues = argc + 2 + constructing;
-  AutoArrayRooter vpRoot(cx, numValues, vp);
+  RootedExternalValueArray vpRoot(cx, numValues, vp);
 
   CallArgs callArgs = CallArgsFromSp(argc + constructing, vp + numValues,
                                      constructing, ignoresReturnValue);
@@ -3050,7 +3044,7 @@ bool DoSpreadCallFallback(JSContext* cx, BaselineFrame* frame,
   FallbackICSpew(cx, stub, "SpreadCall(%s)", CodeName(op));
 
   // Ensure vp array is rooted - we may GC in here.
-  AutoArrayRooter vpRoot(cx, 3 + constructing, vp);
+  RootedExternalValueArray vpRoot(cx, 3 + constructing, vp);
 
   RootedValue callee(cx, vp[0]);
   RootedValue thisv(cx, vp[1]);
@@ -3812,7 +3806,7 @@ bool DoNewArrayFallback(JSContext* cx, BaselineFrame* frame,
     }
 
     if (!obj->isSingleton()) {
-      JSObject* templateObject =
+      ArrayObject* templateObject =
           NewArrayOperation(cx, script, pc, length, TenuredObject);
       if (!templateObject) {
         return false;

@@ -229,7 +229,7 @@ struct ToAlphaAttributes {
 
 // Complex PrimitiveAttributes:
 
-class ImplicitlyCopyableFloatArray : public nsTArray<float> {
+class ImplicitlyCopyableFloatArray : public CopyableTArray<float> {
  public:
   ImplicitlyCopyableFloatArray() = default;
 
@@ -416,10 +416,14 @@ class FilterPrimitiveDescription final {
   FilterPrimitiveDescription(FilterPrimitiveDescription&& aOther) = default;
   FilterPrimitiveDescription& operator=(FilterPrimitiveDescription&& aOther) =
       default;
-  FilterPrimitiveDescription(const FilterPrimitiveDescription& aOther) =
-      default;
-  FilterPrimitiveDescription& operator=(
-      const FilterPrimitiveDescription& aOther) = default;
+  FilterPrimitiveDescription(const FilterPrimitiveDescription& aOther)
+      : mAttributes(aOther.mAttributes),
+        mInputPrimitives(aOther.mInputPrimitives.Clone()),
+        mFilterPrimitiveSubregion(aOther.mFilterPrimitiveSubregion),
+        mFilterSpaceBounds(aOther.mFilterSpaceBounds),
+        mInputColorSpaces(aOther.mInputColorSpaces.Clone()),
+        mOutputColorSpace(aOther.mOutputColorSpace),
+        mIsTainted(aOther.mIsTainted) {}
 
   const PrimitiveAttributes& Attributes() const { return mAttributes; }
   PrimitiveAttributes& Attributes() { return mAttributes; }
@@ -499,7 +503,7 @@ struct FilterDescription final {
     return !(*this == aOther);
   }
 
-  nsTArray<FilterPrimitiveDescription> mPrimitives;
+  CopyableTArray<FilterPrimitiveDescription> mPrimitives;
 };
 
 already_AddRefed<FilterNode> FilterNodeGraphFromDescription(

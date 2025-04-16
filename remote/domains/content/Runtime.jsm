@@ -62,14 +62,20 @@ class Runtime extends ContentProcessDomain {
     this._onContextCreated = this._onContextCreated.bind(this);
     this._onContextDestroyed = this._onContextDestroyed.bind(this);
     // TODO Bug 1602083
-    this.contextObserver.on("context-created", this._onContextCreated);
-    this.contextObserver.on("context-destroyed", this._onContextDestroyed);
+    this.session.contextObserver.on("context-created", this._onContextCreated);
+    this.session.contextObserver.on(
+      "context-destroyed",
+      this._onContextDestroyed
+    );
   }
 
   destructor() {
     this.disable();
-    this.contextObserver.off("context-created", this._onContextCreated);
-    this.contextObserver.off("context-destroyed", this._onContextDestroyed);
+    this.session.contextObserver.off("context-created", this._onContextCreated);
+    this.session.contextObserver.off(
+      "context-destroyed",
+      this._onContextDestroyed
+    );
     super.destructor();
   }
 
@@ -370,9 +376,8 @@ class Runtime extends ContentProcessDomain {
       windowId,
       window,
       contextName = "",
-      isDefault = options.window == this.content,
-      contextType = options.contextType ||
-        (options.window == this.content ? "default" : ""),
+      isDefault = true,
+      contextType = "default",
     } = options;
 
     if (windowId === undefined) {
@@ -451,14 +456,18 @@ class Runtime extends ContentProcessDomain {
       ctx.destructor();
       this.contexts.delete(ctx.id);
       this.contextsByWindow.get(ctx.windowId).delete(ctx);
+
       if (this.enabled) {
         this.emit("Runtime.executionContextDestroyed", {
           executionContextId: ctx.id,
         });
       }
+
       if (this.contextsByWindow.get(ctx.windowId).size == 0) {
         this.contextsByWindow.delete(ctx.windowId);
-        this.emit("Runtime.executionContextsCleared");
+        if (this.enabled) {
+          this.emit("Runtime.executionContextsCleared");
+        }
       }
     }
   }

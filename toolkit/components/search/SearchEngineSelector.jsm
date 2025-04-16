@@ -13,7 +13,6 @@ const { XPCOMUtils } = ChromeUtils.import(
 
 XPCOMUtils.defineLazyModuleGetters(this, {
   RemoteSettings: "resource://services-settings/remote-settings.js",
-  RemoteSettingsClient: "resource://services-settings/RemoteSettingsClient.jsm",
   SearchUtils: "resource://gre/modules/SearchUtils.jsm",
   Services: "resource://gre/modules/Services.jsm",
 });
@@ -132,21 +131,22 @@ class SearchEngineSelector {
    */
   async _getConfiguration(firstTime = true) {
     let result = [];
+    let failed = false;
     try {
       result = await this._remoteConfig.get();
     } catch (ex) {
-      if (
-        ex instanceof RemoteSettingsClient.InvalidSignatureError &&
-        firstTime
-      ) {
-        // The local database is invalid, try and reset it.
-        await this._remoteConfig.db.clear();
-        // Now call this again.
-        return this._getConfiguration(false);
-      }
-      // Don't throw an error just log it, just continue with no data, and hopefully
-      // a sync will fix things later on.
-      Cu.reportError(ex);
+      logConsole.error(ex);
+      failed = true;
+    }
+    if (!result.length) {
+      logConsole.error("Received empty search configuration!");
+      failed = true;
+    }
+    // If we failed, or the result is empty, try loading from the local dump.
+    if (firstTime && failed) {
+      await this._remoteConfig.db.clear();
+      // Now call this again.
+      return this._getConfiguration(false);
     }
     return result;
   }
@@ -177,11 +177,14 @@ class SearchEngineSelector {
     if (!this._configuration) {
       await this.getEngineConfiguration();
     }
-    let cohort = Services.prefs.getCharPref("browser.search.cohort", null);
+    let experiment = Services.prefs.getCharPref(
+      "browser.search.experiment",
+      null
+    );
     let name = getAppInfo("name");
     let version = getAppInfo("version");
     logConsole.debug(
-      `fetchEngineConfiguration ${locale}:${region}:${channel}:${distroID}:${cohort}:${name}:${version}`
+      `fetchEngineConfiguration ${locale}:${region}:${channel}:${distroID}:${experiment}:${name}:${version}`
     );
     let engines = [];
     const lcLocale = locale.toLowerCase();
@@ -189,7 +192,7 @@ class SearchEngineSelector {
     for (let config of this._configuration) {
       const appliesTo = config.appliesTo || [];
       const applies = appliesTo.filter(section => {
-        if ("cohort" in section && cohort != section.cohort) {
+        if ("experiment" in section && experiment != section.experiment) {
           return false;
         }
         const distroExcluded =

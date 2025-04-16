@@ -70,21 +70,18 @@ class SmooshScriptStencil : public ScriptStencil {
 
   MOZ_MUST_USE bool init(JSContext* cx,
                          UniquePtr<ImmutableScriptData> immutableData) {
-    natoms = result_.atoms.len;
+    using ImmutableFlags = js::ImmutableScriptFlagsEnum;
 
-    immutableFlags.setFlag(ImmutableFlags::Strict, result_.strict);
-    immutableFlags.setFlag(ImmutableFlags::BindingsAccessedDynamically,
-                           result_.bindings_accessed_dynamically);
-    immutableFlags.setFlag(ImmutableFlags::HasCallSiteObj,
-                           result_.has_call_site_obj);
-    immutableFlags.setFlag(ImmutableFlags::IsForEval, result_.is_for_eval);
-    immutableFlags.setFlag(ImmutableFlags::IsModule, result_.is_module);
-    immutableFlags.setFlag(ImmutableFlags::HasNonSyntacticScope,
-                           result_.has_non_syntactic_scope);
-    immutableFlags.setFlag(ImmutableFlags::NeedsFunctionEnvironmentObjects,
-                           result_.needs_function_environment_objects);
-    immutableFlags.setFlag(ImmutableFlags::HasModuleGoal,
-                           result_.has_module_goal);
+    const JS::ReadOnlyCompileOptions& options = compilationInfo_.options;
+
+    immutableFlags = result_.immutable_flags;
+
+    // FIXME: The following flags should be set in jsparagus.
+    immutableFlags.setFlag(ImmutableFlags::SelfHosted, options.selfHostingMode);
+    immutableFlags.setFlag(ImmutableFlags::ForceStrict,
+                           options.forceStrictMode());
+    immutableFlags.setFlag(ImmutableFlags::NoScriptRval, options.noScriptRval);
+    immutableFlags.setFlag(ImmutableFlags::TreatAsRunOnce, options.isRunOnce);
 
     immutableScriptData = std::move(immutableData);
 
@@ -105,18 +102,6 @@ class SmooshScriptStencil : public ScriptStencil {
     }
 
     return true;
-  }
-
-  virtual bool finishGCThings(
-      JSContext* cx, mozilla::Span<JS::GCCellPtr> output) const override {
-    return EmitScriptThingsVector(cx, compilationInfo_, gcThings, output);
-  }
-
-  virtual void initAtomMap(GCPtrAtom* atoms) const override {
-    for (uint32_t i = 0; i < natoms; i++) {
-      size_t index = result_.atoms.data[i];
-      atoms[i] = allAtoms_[index];
-    }
   }
 
  private:
@@ -154,6 +139,10 @@ class SmooshScriptStencil : public ScriptStencil {
       SmooshGCThing& item = result_.gcthings.data[i];
 
       switch (item.kind) {
+        case SmooshGCThingKind::AtomIndex: {
+          gcThings.infallibleAppend(mozilla::AsVariant(allAtoms_[item.index]));
+          break;
+        }
         case SmooshGCThingKind::ScopeIndex: {
           gcThings.infallibleAppend(mozilla::AsVariant(ScopeIndex(item.index)));
           break;
@@ -168,9 +157,6 @@ class SmooshScriptStencil : public ScriptStencil {
 
     return true;
   }
-
- public:
-  virtual void finishInnerFunctions() const override {}
 
  private:
   // Fill `compilationInfo_.scopeCreationData` with scope data, where
@@ -402,23 +388,6 @@ JSScript* Smoosh::compileGlobalScript(CompilationInfo& compilationInfo,
 
   *unimplemented = false;
 
-  RootedScriptSourceObject sso(cx,
-                               frontend::CreateScriptSourceObject(cx, options));
-  if (!sso) {
-    return nullptr;
-  }
-
-  RootedObject proto(cx);
-  if (!GetFunctionPrototype(cx, GeneratorKind::NotGenerator,
-                            FunctionAsyncKind::SyncFunction, &proto)) {
-    return nullptr;
-  }
-
-  SourceExtent extent = SourceExtent::makeGlobalExtent(length);
-  RootedScript script(
-      cx, JSScript::Create(cx, cx->global(), sso, extent,
-                           ImmutableScriptFlags::fromCompileOptions(options)));
-
   Vector<ScopeNote, 0, SystemAllocPolicy> scopeNotes;
   if (!scopeNotes.resize(smoosh.scope_notes.len)) {
     return nullptr;
@@ -440,11 +409,13 @@ JSScript* Smoosh::compileGlobalScript(CompilationInfo& compilationInfo,
     return nullptr;
   }
 
+  bool isFunction = false;
+
   int funLength = 0;  // Smoosh support for functions isn't complete yet.
   auto immutableScriptData = ImmutableScriptData::new_(
       cx, smoosh.main_offset, nfixed, uint32_t(nslots64),
       smoosh.body_scope_index, smoosh.num_ic_entries, smoosh.num_type_sets,
-      smoosh.is_function, funLength,
+      isFunction, funLength,
       mozilla::MakeSpan(smoosh.bytecode.data, smoosh.bytecode.len),
       mozilla::Span<const SrcNote>(), mozilla::Span<const uint32_t>(),
       scopeNotes, mozilla::Span<const TryNote>());
@@ -452,12 +423,15 @@ JSScript* Smoosh::compileGlobalScript(CompilationInfo& compilationInfo,
     return nullptr;
   }
 
+  SourceExtent extent = SourceExtent::makeGlobalExtent(length);
   SmooshScriptStencil stencil(smoosh, compilationInfo);
   if (!stencil.init(cx, std::move(immutableScriptData))) {
     return nullptr;
   }
 
-  if (!JSScript::fullyInitFromStencil(cx, compilationInfo, script, stencil)) {
+  RootedScript script(
+      cx, JSScript::fromStencil(cx, compilationInfo, stencil, extent));
+  if (!script) {
     return nullptr;
   }
 

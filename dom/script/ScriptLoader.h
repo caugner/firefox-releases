@@ -25,6 +25,7 @@
 #include "mozilla/MozPromise.h"
 #include "mozilla/Utf8.h"  // mozilla::Utf8Unit
 #include "mozilla/Vector.h"
+#include "ScriptKind.h"
 
 class nsIURI;
 
@@ -423,7 +424,8 @@ class ScriptLoader final : public nsISupports {
   bool ProcessInlineScript(nsIScriptElement* aElement, ScriptKind aScriptKind);
 
   ScriptLoadRequest* LookupPreloadRequest(nsIScriptElement* aElement,
-                                          ScriptKind aScriptKind);
+                                          ScriptKind aScriptKind,
+                                          const SRIMetadata& aSRIMetadata);
 
   void GetSRIMetadata(const nsAString& aIntegrityAttr,
                       SRIMetadata* aMetadataOut);

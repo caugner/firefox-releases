@@ -254,6 +254,13 @@ this.AppConstants = Object.freeze({
   false,
 #endif
 
+  TSAN:
+#ifdef MOZ_TSAN
+  true,
+#else
+  false,
+#endif
+
   MOZ_SYSTEM_NSS:
 #ifdef MOZ_SYSTEM_NSS
   true,
@@ -405,8 +412,8 @@ this.AppConstants = Object.freeze({
     false,
 #endif
 
-  MOZ_NEW_WEBEXT_STORAGE:
-#ifdef MOZ_NEW_WEBEXT_STORAGE
+  MOZ_RUST_FXA_CLIENT:
+#ifdef MOZ_RUST_FXA_CLIENT
     true,
 #else
     false,

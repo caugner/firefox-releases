@@ -14,6 +14,28 @@ const CHROME_PREFIX = "chrome://mochitests/content/browser/";
 const STUBS_FOLDER = "devtools/client/webconsole/test/node/fixtures/stubs/";
 const STUBS_UPDATE_ENV = "WEBCONSOLE_STUBS_UPDATE";
 
+async function createResourceWatcherForTab(tab) {
+  // Avoid mocha to try to load these module and fail while doing it when running node tests
+  const {
+    ResourceWatcher,
+  } = require("devtools/shared/resources/resource-watcher");
+  const { TargetList } = require("devtools/shared/resources/target-list");
+  const { TargetFactory } = require("devtools/client/framework/target");
+
+  const target = await TargetFactory.forTab(tab);
+  const targetList = new TargetList(target.client.mainRoot, target);
+
+  await target.attach();
+  // Attach the thread actor in order to ensure having sources
+  // and have the `sourceId` attribute correctly set.
+  const threadFront = await target.attachThread({});
+  // Resume the thread, otherwise it stays pause and we prevent JS from running
+  await threadFront.resume();
+
+  await targetList.startListening();
+  return new ResourceWatcher(targetList);
+}
+
 // eslint-disable-next-line complexity
 function getCleanedPacket(key, packet) {
   const { stubPackets } = require(CHROME_PREFIX + STUBS_FOLDER + "index");
@@ -26,6 +48,9 @@ function getCleanedPacket(key, packet) {
     .replace(/\\\'/g, `\'`);
 
   cleanTimeStamp(packet);
+  // Remove the targetFront property that has a cyclical reference and that we don't need
+  // in our node tests.
+  delete packet.targetFront;
 
   if (!stubPackets.has(safeKey)) {
     return packet;
@@ -109,9 +134,33 @@ function getCleanedPacket(key, packet) {
     }
   }
 
+  if (res?.exception?.actor && existingPacket.exception.actor) {
+    // Clean actor ids on evaluation exception
+    copyExistingActor(res.exception, existingPacket.exception);
+  }
+
   if (res.result && res.result._grip && existingPacket.result) {
     // Clean actor ids on evaluation result messages.
     copyExistingActor(res.result, existingPacket.result);
+  }
+
+  if (
+    res?.result?._grip?.promiseState?.reason &&
+    existingPacket?.result?._grip?.promiseState?.reason
+  ) {
+    // Clean actor ids on evaluation promise result messages.
+    copyExistingActor(
+      res.result._grip.promiseState.reason,
+      existingPacket.result._grip.promiseState.reason
+    );
+  }
+
+  if (
+    res?.result?._grip?.promiseState?.timeToSettle &&
+    existingPacket?.result?._grip?.promiseState?.timeToSettle
+  ) {
+    res.result._grip.promiseState.timeToSettle =
+      existingPacket.result._grip.promiseState.timeToSettle;
   }
 
   if (res.exception && existingPacket.exception) {
@@ -168,11 +217,31 @@ function getCleanedPacket(key, packet) {
       );
     }
 
+    if (
+      res.pageError.exception?._grip?.preview?.message?._grip &&
+      existingPacket.pageError.exception?._grip?.preview?.message?._grip
+    ) {
+      copyExistingActor(
+        res.pageError.exception._grip.preview.message,
+        existingPacket.pageError.exception._grip.preview.message
+      );
+    }
+
+    if (res.pageError.exception && existingPacket.pageError.exception) {
+      copyExistingActor(
+        res.pageError.exception,
+        existingPacket.pageError.exception
+      );
+    }
+
     if (res.pageError.sourceId) {
       res.pageError.sourceId = existingPacket.pageError.sourceId;
     }
 
-    if (Array.isArray(res.pageError.stacktrace)) {
+    if (
+      Array.isArray(res.pageError.stacktrace) &&
+      Array.isArray(existingPacket.pageError.stacktrace)
+    ) {
       res.pageError.stacktrace = res.pageError.stacktrace.map((frame, i) => {
         const existingFrame = existingPacket.pageError.stacktrace[i];
         if (frame && existingFrame && frame.sourceId) {
@@ -289,6 +358,10 @@ function cleanTimeStamp(packet) {
     packet.result._grip.preview.timestamp = uniqueTimeStamp;
   }
 
+  if (packet?.result?._grip?.promiseState?.creationTimestamp) {
+    packet.result._grip.promiseState.creationTimestamp = uniqueTimeStamp;
+  }
+
   if (packet?.exception?._grip?.preview?.timestamp) {
     packet.exception._grip.preview.timestamp = uniqueTimeStamp;
   }
@@ -306,22 +379,21 @@ function cleanTimeStamp(packet) {
   }
 }
 
-function copyExistingActor(front1, front2) {
-  if (!front1 || !front2) {
+function copyExistingActor(a, b) {
+  if (!a || !b) {
     return;
   }
 
-  if (front1.actorID && front2.actorID) {
-    front1.actorID = front2.actorID;
+  if (a.actorID && b.actorID) {
+    a.actorID = b.actorID;
   }
 
-  if (
-    front1._grip &&
-    front2._grip &&
-    front1._grip.actor &&
-    front2._grip.actor
-  ) {
-    front1._grip.actor = front2._grip.actor;
+  if (a.actor && b.actor) {
+    a.actor = b.actor;
+  }
+
+  if (a._grip && b._grip && a._grip.actor && b._grip.actor) {
+    a._grip.actor = b._grip.actor;
   }
 }
 
@@ -435,7 +507,12 @@ function parsePacketAndCreateFronts(packet) {
   }
   if (typeof packet === "object") {
     for (const [key, value] of Object.entries(packet)) {
-      if (value && value._grip) {
+      if (value?._grip) {
+        // The message of an error grip might be a longString.
+        if (value._grip?.preview?.message?._grip) {
+          value._grip.preview.message = value._grip.preview.message._grip;
+        }
+
         packet[key] = getAdHocFrontOrPrimitiveGrip(value._grip, {
           conn: {
             poolFor: () => {},
@@ -455,6 +532,7 @@ function parsePacketAndCreateFronts(packet) {
 
 module.exports = {
   STUBS_UPDATE_ENV,
+  createResourceWatcherForTab,
   getStubFile,
   getCleanedPacket,
   getSerializedPacket,

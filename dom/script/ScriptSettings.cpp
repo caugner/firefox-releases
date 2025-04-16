@@ -9,6 +9,7 @@
 #include "mozilla/BasePrincipal.h"
 #include "mozilla/CycleCollectedJSContext.h"
 #include "mozilla/ThreadLocal.h"
+#include "mozilla/Maybe.h"
 #include "mozilla/dom/JSExecutionManager.h"
 #include "mozilla/dom/WorkerPrivate.h"
 
@@ -303,6 +304,7 @@ void AutoJSAPI::InitInternal(nsIGlobalObject* aGlobalObject, JSObject* aGlobal,
   mOldWarningReporter.emplace(JS::GetWarningReporter(aCx));
 
   JS::SetWarningReporter(aCx, WarningOnlyErrorReporter);
+  JS::SetGetElementCallback(aCx, &GetElementCallback);
 
 #ifdef DEBUG
   if (haveException) {
@@ -500,9 +502,9 @@ void AutoJSAPI::ReportException() {
   MOZ_ASSERT(JS_IsGlobalObject(errorGlobal));
   JSAutoRealm ar(cx(), errorGlobal);
   JS::ExceptionStack exnStack(cx());
-  js::ErrorReport jsReport(cx());
+  JS::ErrorReportBuilder jsReport(cx());
   if (StealExceptionAndStack(&exnStack) &&
-      jsReport.init(cx(), exnStack, js::ErrorReport::WithSideEffects)) {
+      jsReport.init(cx(), exnStack, JS::ErrorReportBuilder::WithSideEffects)) {
     if (mIsMainThread) {
       RefPtr<xpc::ErrorReport> xpcReport = new xpc::ErrorReport();
 
@@ -521,7 +523,10 @@ void AutoJSAPI::ReportException() {
         xpc::FindExceptionStackForConsoleReport(inner, exnStack.exception(),
                                                 exnStack.stack(), &stack,
                                                 &stackGlobal);
-        xpcReport->LogToConsoleWithStack(stack, stackGlobal);
+        // This error is not associated with a specific window,
+        // so omit the exception value to mitigate potential leaks.
+        xpcReport->LogToConsoleWithStack(inner, JS::NothingHandleValue, stack,
+                                         stackGlobal);
       }
     } else {
       // On a worker or worklet, we just use the error reporting mechanism and

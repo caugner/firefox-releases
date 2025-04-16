@@ -64,8 +64,9 @@ function StorageSyncService() {
     return StorageSyncService._singleton;
   }
 
-  let file = FileUtils.getFile("ProfD", ["storage-sync2.sqlite"]);
-  this._storageArea = new StorageSyncArea(file);
+  let file = FileUtils.getFile("ProfD", ["storage-sync-v2.sqlite"]);
+  let kintoFile = FileUtils.getFile("ProfD", ["storage-sync.sqlite"]);
+  this._storageArea = new StorageSyncArea(file, kintoFile);
 
   // Register a blocker to close the storage connection on shutdown.
   this._shutdownBound = () => this._shutdown();
@@ -86,7 +87,10 @@ StorageSyncService.prototype = {
   // reference to the underlying storage area, with a quick check to make sure
   // that callers are asking for the right interfaces.
   getInterface(iid) {
-    if (iid.equals(Ci.mozIExtensionStorageArea)) {
+    if (
+      iid.equals(Ci.mozIExtensionStorageArea) ||
+      iid.equals(Ci.mozIBridgedSyncEngine)
+    ) {
       return this._storageArea.QueryInterface(iid);
     }
     throw Components.Exception(

@@ -14,6 +14,7 @@
 #include "mozilla/net/PDocumentChannelParent.h"
 #include "mozilla/net/ParentChannelListener.h"
 #include "mozilla/net/ADocumentChannelBridge.h"
+#include "mozilla/dom/SessionHistoryEntry.h"
 #include "nsDOMNavigationTiming.h"
 #include "nsIInterfaceRequestor.h"
 #include "nsIParentChannel.h"
@@ -203,12 +204,6 @@ class DocumentLoadListener : public nsIInterfaceRequestor,
                              uint32_t aLoadFlags,
                              dom::ContentParent* aParent) const;
 
-  const nsTArray<DocumentChannelRedirect>& Redirects() const {
-    return mRedirects;
-  }
-
-  net::LastVisitInfo LastVisitInfo() const;
-
  protected:
   DocumentLoadListener(dom::CanonicalBrowsingContext* aBrowsingContext,
                        base::ProcessId aPendingBridgeProcess);
@@ -245,12 +240,14 @@ class DocumentLoadListener : public nsIInterfaceRequestor,
   // This redirects the ParentChannelListener to forward any future
   // messages to the new channel, manually forwards any being held
   // by us, and resumes the underlying source channel.
-  void FinishReplacementChannelSetup(bool aSucceeded);
+  void FinishReplacementChannelSetup(nsresult aResult);
 
   // Called from `OnStartRequest` to make the decision about whether or not to
   // change process. This method will return `nullptr` if the current target
   // process is appropriate.
-  bool MaybeTriggerProcessSwitch();
+  // aWillSwitchToRemote is set to true if we initiate a process switch,
+  // and that the new remote type will be something other than NOT_REMOTE
+  bool MaybeTriggerProcessSwitch(bool* aWillSwitchToRemote);
 
   // A helper for TriggerRedirectToRealChannel that abstracts over
   // the same-process and cross-process switch cases and returns
@@ -267,6 +264,7 @@ class DocumentLoadListener : public nsIInterfaceRequestor,
 
   dom::CanonicalBrowsingContext* GetBrowsingContext();
 
+  void AddURIVisit(nsIChannel* aChannel, uint32_t aLoadFlags);
   bool HasCrossOriginOpenerPolicyMismatch() const;
   void ApplyPendingFunctions(nsISupports* aChannel) const;
 
@@ -395,12 +393,16 @@ class DocumentLoadListener : public nsIInterfaceRequestor,
   // switch occurs.
   RefPtr<nsDOMNavigationTiming> mTiming;
 
-  nsTArray<DocumentChannelRedirect> mRedirects;
+  // Used to identify an internal redirect in redirect chain.
+  // True when we have seen at least one non-interal redirect.
+  bool mHaveVisibleRedirect = false;
 
   nsTArray<StreamFilterRequest> mStreamFilterRequests;
 
   nsString mSrcdocData;
   nsCOMPtr<nsIURI> mBaseURI;
+
+  mozilla::UniquePtr<mozilla::dom::SessionHistoryInfoAndId> mSessionHistoryInfo;
 
   // Flags from nsDocShellLoadState::LoadFlags/Type that we want to make
   // available to the new docshell if we switch processes.

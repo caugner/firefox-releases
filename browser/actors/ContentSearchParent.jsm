@@ -272,6 +272,15 @@ let ContentSearch = {
     // process our event queue serially, there's never a pending request.
     this._currentSuggestion = { controller, browser };
     let suggestions = await controller.fetch(searchString, priv, engine);
+
+    // Simplify results since we do not support rich results in this component.
+    suggestions.local = suggestions.local.map(e => e.value);
+    // We shouldn't show tail suggestions in their full-text form.
+    let nonTailEntries = suggestions.remote.filter(
+      e => !e.matchPrefix && !e.tail
+    );
+    suggestions.remote = nonTailEntries.map(e => e.value);
+
     this._currentSuggestion = null;
 
     // suggestions will be null if the request was cancelled
@@ -342,7 +351,7 @@ let ContentSearch = {
         name: engine.name,
         iconData,
         hidden: hiddenList.includes(engine.name),
-        identifier: engine.identifier,
+        isAppProvided: engine.isAppProvided,
       });
     }
 
@@ -528,6 +537,7 @@ let ContentSearch = {
       name: engine.name,
       placeholder,
       iconData: await this._maybeConvertURIToArrayBuffer(favicon),
+      isAppProvided: engine.isAppProvided,
     };
     return obj;
   },

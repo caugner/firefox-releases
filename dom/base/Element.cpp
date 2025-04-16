@@ -260,8 +260,7 @@ Element::QueryInterface(REFNSIID aIID, void** aInstancePtr) {
 }
 
 EventStates Element::IntrinsicState() const {
-  return IsEditable() ? NS_EVENT_STATE_MOZ_READWRITE
-                      : NS_EVENT_STATE_MOZ_READONLY;
+  return IsEditable() ? NS_EVENT_STATE_READWRITE : NS_EVENT_STATE_READONLY;
 }
 
 void Element::NotifyStateChange(EventStates aStates) {
@@ -334,11 +333,11 @@ void Element::UpdateEditableState(bool aNotify) {
     // insertion into the document and UpdateState can be slow for
     // some kinds of elements even when not notifying.
     if (IsEditable()) {
-      RemoveStatesSilently(NS_EVENT_STATE_MOZ_READONLY);
-      AddStatesSilently(NS_EVENT_STATE_MOZ_READWRITE);
+      RemoveStatesSilently(NS_EVENT_STATE_READONLY);
+      AddStatesSilently(NS_EVENT_STATE_READWRITE);
     } else {
-      RemoveStatesSilently(NS_EVENT_STATE_MOZ_READWRITE);
-      AddStatesSilently(NS_EVENT_STATE_MOZ_READONLY);
+      RemoveStatesSilently(NS_EVENT_STATE_READWRITE);
+      AddStatesSilently(NS_EVENT_STATE_READONLY);
     }
   }
 }
@@ -923,7 +922,7 @@ void Element::AddToIdTable(nsAtom* aId) {
     containingShadow->AddToIdTable(this, aId);
   } else {
     Document* doc = GetUncomposedDoc();
-    if (doc && !IsInAnonymousSubtree()) {
+    if (doc && !IsInNativeAnonymousSubtree()) {
       doc->AddToIdTable(this, aId);
     }
   }
@@ -944,7 +943,7 @@ void Element::RemoveFromIdTable() {
     }
   } else {
     Document* doc = GetUncomposedDoc();
-    if (doc && !IsInAnonymousSubtree()) {
+    if (doc && !IsInNativeAnonymousSubtree()) {
       doc->RemoveFromIdTable(this, id);
     }
   }
@@ -1708,7 +1707,7 @@ void Element::UnbindFromTree(bool aNullParent) {
 
   if (HasServoData()) {
     MOZ_ASSERT(document);
-    MOZ_ASSERT(IsInAnonymousSubtree());
+    MOZ_ASSERT(IsInNativeAnonymousSubtree());
   }
 
   if (document) {
@@ -1824,8 +1823,7 @@ void Element::UnbindFromTree(bool aNullParent) {
   for (nsIContent* child = GetFirstChild(); child;
        child = child->GetNextSibling()) {
     // Note that we pass false for aNullParent here, since we don't want
-    // the kids to forget us.  We _do_ want them to forget their binding
-    // parent, though, since this only walks non-anonymous kids.
+    // the kids to forget us.
     child->UnbindFromTree(false);
   }
 
@@ -2944,15 +2942,6 @@ nsresult Element::PostHandleEventForLinks(EventChainPostVisitor& aVisitor) {
                                        nullptr, &status);
         if (NS_SUCCEEDED(rv)) {
           aVisitor.mEventStatus = nsEventStatus_eConsumeNoDefault;
-          if (!actEvent.DefaultPreventedByContent() &&
-              mouseEvent->IsTrusted() &&
-              mouseEvent->mInputSource !=
-                  MouseEvent_Binding::MOZ_SOURCE_KEYBOARD &&
-              mouseEvent->mInputSource !=
-                  MouseEvent_Binding::MOZ_SOURCE_UNKNOWN) {
-            Telemetry::AccumulateCategorical(
-                Telemetry::LABELS_TYPES_OF_USER_CLICKS::Link);
-          }
         }
       }
       break;
@@ -3227,8 +3216,9 @@ already_AddRefed<DOMMatrixReadOnly> Element::GetTransformToAncestor(
     // If aAncestor is not actually an ancestor of this (including nullptr),
     // then the call to GetTransformToAncestor will return the transform
     // all the way up through the parent chain.
-    transform = nsLayoutUtils::GetTransformToAncestor(
-                    primaryFrame, ancestorFrame, nsIFrame::IN_CSS_UNITS)
+    transform = nsLayoutUtils::GetTransformToAncestor(RelativeTo{primaryFrame},
+                                                      RelativeTo{ancestorFrame},
+                                                      nsIFrame::IN_CSS_UNITS)
                     .GetMatrix();
   }
 
@@ -3243,7 +3233,8 @@ already_AddRefed<DOMMatrixReadOnly> Element::GetTransformToParent() {
   Matrix4x4 transform;
   if (primaryFrame) {
     nsIFrame* parentFrame = primaryFrame->GetParent();
-    transform = nsLayoutUtils::GetTransformToAncestor(primaryFrame, parentFrame,
+    transform = nsLayoutUtils::GetTransformToAncestor(RelativeTo{primaryFrame},
+                                                      RelativeTo{parentFrame},
                                                       nsIFrame::IN_CSS_UNITS)
                     .GetMatrix();
   }
@@ -3259,7 +3250,8 @@ already_AddRefed<DOMMatrixReadOnly> Element::GetTransformToViewport() {
   if (primaryFrame) {
     transform =
         nsLayoutUtils::GetTransformToAncestor(
-            primaryFrame, nsLayoutUtils::GetDisplayRootFrame(primaryFrame),
+            RelativeTo{primaryFrame},
+            RelativeTo{nsLayoutUtils::GetDisplayRootFrame(primaryFrame)},
             nsIFrame::IN_CSS_UNITS)
             .GetMatrix();
   }
@@ -3403,6 +3395,35 @@ void Element::GetAnimationsUnsorted(Element* aElement,
                "Only relevant animations should be added to an element's "
                "effect set");
     aAnimations.AppendElement(animation);
+  }
+}
+
+void Element::CloneAnimationsFrom(const Element& aOther) {
+  AnimationTimeline* const timeline = OwnerDoc()->Timeline();
+  MOZ_ASSERT(timeline, "Timeline has not been set on the document yet");
+  // Iterate through all pseudo types and copy the effects from each of the
+  // other element's effect sets into this element's effect set.
+  for (PseudoStyleType pseudoType :
+       {PseudoStyleType::NotPseudo, PseudoStyleType::before,
+        PseudoStyleType::after, PseudoStyleType::marker}) {
+    // If the element has an effect set for this pseudo type (or not pseudo)
+    // then copy the effects and animation properties.
+    if (EffectSet* const effects =
+            EffectSet::GetEffectSet(&aOther, pseudoType)) {
+      EffectSet* const clonedEffects =
+          EffectSet::GetOrCreateEffectSet(this, pseudoType);
+      for (KeyframeEffect* const effect : *effects) {
+        // Clone the effect.
+        RefPtr<KeyframeEffect> clonedEffect = new KeyframeEffect(
+            OwnerDoc(), OwningAnimationTarget{this, pseudoType}, *effect);
+
+        // Clone the animation
+        RefPtr<Animation> clonedAnimation = Animation::ClonePausedAnimation(
+            OwnerDoc()->GetParentObject(), *effect->GetAnimation(),
+            *clonedEffect, *timeline);
+        clonedEffects->AddEffect(*clonedEffect);
+      }
+    }
   }
 }
 
@@ -3698,15 +3719,15 @@ void Element::GetImplementedPseudoElement(nsAString& aPseudo) const {
   aPseudo.Append(pseudo);
 }
 
-ReferrerPolicy Element::GetReferrerPolicyAsEnum() {
+ReferrerPolicy Element::GetReferrerPolicyAsEnum() const {
   if (IsHTMLElement()) {
-    const nsAttrValue* referrerValue = GetParsedAttr(nsGkAtoms::referrerpolicy);
-    return ReferrerPolicyFromAttr(referrerValue);
+    return ReferrerPolicyFromAttr(GetParsedAttr(nsGkAtoms::referrerpolicy));
   }
   return ReferrerPolicy::_empty;
 }
 
-ReferrerPolicy Element::ReferrerPolicyFromAttr(const nsAttrValue* aValue) {
+ReferrerPolicy Element::ReferrerPolicyFromAttr(
+    const nsAttrValue* aValue) const {
   if (aValue && aValue->Type() == nsAttrValue::eEnum) {
     return ReferrerPolicy(aValue->GetEnumValue());
   }

@@ -281,6 +281,7 @@ bool IonCacheIRCompiler::init() {
   }
 
   size_t numInputs = writer_.numInputOperands();
+  MOZ_ASSERT(numInputs == NumInputsForCacheKind(ic_->kind()));
 
   AllocatableGeneralRegisterSet available;
 
@@ -499,9 +500,7 @@ bool IonCacheIRCompiler::init() {
       MOZ_CRASH("Unsupported IC");
   }
 
-  if (liveRegs_) {
-    liveFloatRegs_ = LiveFloatRegisterSet(liveRegs_->fpus());
-  }
+  liveFloatRegs_ = LiveFloatRegisterSet(liveRegs_->fpus());
 
   allocator.initAvailableRegs(available);
   allocator.initAvailableRegsAfterSpill();
@@ -567,6 +566,42 @@ JitCode* IonCacheIRCompiler::compile() {
 
   return newStubCode;
 }
+
+#ifdef DEBUG
+void IonCacheIRCompiler::assertFloatRegisterAvailable(FloatRegister reg) {
+  switch (ic_->kind()) {
+    case CacheKind::GetProp:
+    case CacheKind::GetElem:
+    case CacheKind::GetPropSuper:
+    case CacheKind::GetElemSuper:
+    case CacheKind::GetName:
+    case CacheKind::BindName:
+    case CacheKind::GetIterator:
+    case CacheKind::In:
+    case CacheKind::HasOwn:
+    case CacheKind::InstanceOf:
+    case CacheKind::UnaryArith:
+      MOZ_CRASH("No float registers available");
+    case CacheKind::SetProp:
+    case CacheKind::SetElem:
+      // FloatReg0 is available per LIRGenerator::visitSetPropertyCache.
+      MOZ_ASSERT(reg == FloatReg0);
+      break;
+    case CacheKind::BinaryArith:
+    case CacheKind::Compare:
+      // FloatReg0 and FloatReg1 are available per
+      // LIRGenerator::visitBinaryCache.
+      MOZ_ASSERT(reg == FloatReg0 || reg == FloatReg1);
+      break;
+    case CacheKind::Call:
+    case CacheKind::TypeOf:
+    case CacheKind::ToBool:
+    case CacheKind::GetIntrinsic:
+    case CacheKind::NewObject:
+      MOZ_CRASH("Unsupported IC");
+  }
+}
+#endif
 
 bool IonCacheIRCompiler::emitGuardShape(ObjOperandId objId,
                                         uint32_t shapeOffset) {
@@ -728,6 +763,11 @@ bool IonCacheIRCompiler::emitGuardSpecificObject(ObjOperandId objId,
   return true;
 }
 
+bool IonCacheIRCompiler::emitGuardSpecificFunction(
+    ObjOperandId objId, uint32_t expectedOffset, uint32_t nargsAndFlagsOffset) {
+  return emitGuardSpecificObject(objId, expectedOffset);
+}
+
 bool IonCacheIRCompiler::emitGuardSpecificAtom(StringOperandId strId,
                                                uint32_t expectedOffset) {
   JitSpew(JitSpew_Codegen, "%s", __FUNCTION__);
@@ -746,8 +786,8 @@ bool IonCacheIRCompiler::emitGuardSpecificAtom(StringOperandId strId,
 
   // The pointers are not equal, so if the input string is also an atom it
   // must be a different string.
-  masm.branchTest32(Assembler::Zero, Address(str, JSString::offsetOfFlags()),
-                    Imm32(JSString::NON_ATOM_BIT), failure->label());
+  masm.branchTest32(Assembler::NonZero, Address(str, JSString::offsetOfFlags()),
+                    Imm32(JSString::ATOM_BIT), failure->label());
 
   // Check the length.
   masm.branch32(Assembler::NotEqual, Address(str, JSString::offsetOfLength()),
@@ -1167,7 +1207,7 @@ bool IonCacheIRCompiler::emitLoadEnvironmentDynamicSlotResult(
   return true;
 }
 
-bool IonCacheIRCompiler::emitLoadStringResult(uint32_t strOffset) {
+bool IonCacheIRCompiler::emitLoadConstantStringResult(uint32_t strOffset) {
   JitSpew(JitSpew_Codegen, "%s", __FUNCTION__);
   MOZ_CRASH("not used in ion");
 }
@@ -1612,14 +1652,16 @@ static void EmitStoreDenseElement(MacroAssembler& masm,
   if (value.constant()) {
     Value v = value.value();
     Label done;
-    if (v.isInt32()) {
-      Label dontConvert;
-      masm.branchTest32(Assembler::Zero, elementsFlags,
-                        Imm32(ObjectElements::CONVERT_DOUBLE_ELEMENTS),
-                        &dontConvert);
-      masm.storeValue(DoubleValue(v.toInt32()), target);
-      masm.jump(&done);
-      masm.bind(&dontConvert);
+    if (IsTypeInferenceEnabled()) {
+      if (v.isInt32()) {
+        Label dontConvert;
+        masm.branchTest32(Assembler::Zero, elementsFlags,
+                          Imm32(ObjectElements::CONVERT_DOUBLE_ELEMENTS),
+                          &dontConvert);
+        masm.storeValue(DoubleValue(v.toInt32()), target);
+        masm.jump(&done);
+        masm.bind(&dontConvert);
+      }
     }
     masm.storeValue(v, target);
     masm.bind(&done);
@@ -1627,7 +1669,8 @@ static void EmitStoreDenseElement(MacroAssembler& masm,
   }
 
   TypedOrValueRegister reg = value.reg();
-  if (reg.hasTyped() && reg.type() != MIRType::Int32) {
+  if (!IsTypeInferenceEnabled() ||
+      (reg.hasTyped() && reg.type() != MIRType::Int32)) {
     masm.storeTypedOrValue(reg, target);
     return;
   }
@@ -1700,13 +1743,6 @@ bool IonCacheIRCompiler::emitStoreDenseElement(ObjOperandId objId,
   // Hole check.
   BaseObjectElementIndex element(scratch1, index);
   masm.branchTestMagic(Assembler::Equal, element, failure->label());
-
-  // Check for frozen elements. We have to check this here because we attach
-  // this stub also for non-extensible objects, and these can become frozen
-  // without triggering a Shape change.
-  Address flags(scratch1, ObjectElements::offsetOfFlags());
-  masm.branchTest32(Assembler::NonZero, flags, Imm32(ObjectElements::FROZEN),
-                    failure->label());
 
   EmitPreBarrier(masm, element, MIRType::Value);
   EmitStoreDenseElement(masm, val, scratch1, element);
@@ -2380,5 +2416,9 @@ bool IonCacheIRCompiler::emitLoadArgumentDynamicSlot(ValOperandId resultId,
 
 bool IonCacheIRCompiler::emitGuardFunApply(Int32OperandId argcId,
                                            CallFlags flags) {
+  MOZ_CRASH("Call ICs not used in ion");
+}
+
+bool IonCacheIRCompiler::emitIsArrayResult(ValOperandId inputId) {
   MOZ_CRASH("Call ICs not used in ion");
 }

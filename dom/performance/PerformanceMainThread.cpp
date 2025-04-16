@@ -7,6 +7,7 @@
 #include "PerformanceMainThread.h"
 #include "PerformanceNavigation.h"
 #include "mozilla/StaticPrefs_dom.h"
+#include "mozilla/StaticPrefs_privacy.h"
 
 namespace mozilla {
 namespace dom {
@@ -85,10 +86,17 @@ PerformanceMainThread::~PerformanceMainThread() {
 void PerformanceMainThread::GetMozMemory(JSContext* aCx,
                                          JS::MutableHandle<JSObject*> aObj) {
   if (!mMozMemory) {
-    mMozMemory = js::gc::NewMemoryInfoObject(aCx);
-    if (mMozMemory) {
-      mozilla::HoldJSObjects(this);
+    JS::Rooted<JSObject*> mozMemoryObj(aCx, JS_NewPlainObject(aCx));
+    JS::Rooted<JSObject*> gcMemoryObj(aCx, js::gc::NewMemoryInfoObject(aCx));
+    if (!mozMemoryObj || !gcMemoryObj) {
+      MOZ_CRASH("out of memory creating performance.mozMemory");
     }
+    if (!JS_DefineProperty(aCx, mozMemoryObj, "gc", gcMemoryObj,
+                           JSPROP_ENUMERATE)) {
+      MOZ_CRASH("out of memory creating performance.mozMemory");
+    }
+    mMozMemory = mozMemoryObj;
+    mozilla::HoldJSObjects(this);
   }
 
   aObj.set(mMozMemory);
@@ -305,7 +313,8 @@ DOMHighResTimeStamp PerformanceMainThread::CreationTime() const {
 void PerformanceMainThread::CreateNavigationTimingEntry() {
   MOZ_ASSERT(!mDocEntry, "mDocEntry should be null.");
 
-  if (!StaticPrefs::dom_enable_performance_navigation_timing()) {
+  if (!StaticPrefs::dom_enable_performance_navigation_timing() ||
+      StaticPrefs::privacy_resistFingerprinting()) {
     return;
   }
 
@@ -349,7 +358,7 @@ void PerformanceMainThread::GetEntries(
     return;
   }
 
-  aRetval = mResourceEntries;
+  aRetval = mResourceEntries.Clone();
   aRetval.AppendElements(mUserEntries);
 
   if (mDocEntry) {

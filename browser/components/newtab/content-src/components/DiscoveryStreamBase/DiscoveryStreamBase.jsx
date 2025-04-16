@@ -170,6 +170,8 @@ export class _DiscoveryStreamBase extends React.PureComponent {
           <Navigation
             links={component.properties.links}
             alignment={component.properties.alignment}
+            display_variant={component.properties.display_variant}
+            explore_topics={component.properties.explore_topics}
             header={component.header}
           />
         );
@@ -193,6 +195,9 @@ export class _DiscoveryStreamBase extends React.PureComponent {
       case "CardGrid":
         return (
           <CardGrid
+            enable_video_playheads={
+              !!component.properties.enable_video_playheads
+            }
             title={component.header && component.header.title}
             display_variant={component.properties.display_variant}
             data={component.data}

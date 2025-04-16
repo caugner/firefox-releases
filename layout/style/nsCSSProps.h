@@ -24,6 +24,7 @@
 #include "mozilla/CSSPropFlags.h"
 #include "mozilla/EnumTypeTraits.h"
 #include "mozilla/Preferences.h"
+#include "mozilla/gfx/gfxVarReceiver.h"
 #include "nsXULAppAPI.h"
 
 // Length of the "--" prefix on custom names (such as custom property names,
@@ -117,6 +118,19 @@ class nsCSSProps {
   }
 
  private:
+  // A table for shorthand properties.  The appropriate index is the
+  // property ID minus eCSSProperty_COUNT_no_shorthands.
+  static const nsCSSPropertyID* const
+      kSubpropertyTable[eCSSProperty_COUNT - eCSSProperty_COUNT_no_shorthands];
+
+ public:
+  /**
+   * Returns true if the backdrop-filter pref and WebRender are enabled.
+   */
+  static bool IsBackdropFilterAvailable(JSContext*, JSObject*) {
+    return IsEnabled(eCSSProperty_backdrop_filter);
+  }
+
   /**
    * Recoumputes the enabled state of a pref. If aPrefName is nullptr,
    * recomputes the state of all prefs in gPropertyEnabled.
@@ -125,12 +139,11 @@ class nsCSSProps {
   static void RecomputeEnabledState(const char* aPrefName,
                                     void* aClosure = nullptr);
 
-  // A table for shorthand properties.  The appropriate index is the
-  // property ID minus eCSSProperty_COUNT_no_shorthands.
-  static const nsCSSPropertyID* const
-      kSubpropertyTable[eCSSProperty_COUNT - eCSSProperty_COUNT_no_shorthands];
+  /**
+   * Retrieve a singleton receiver to register with gfxVars
+   */
+  static mozilla::gfx::gfxVarReceiver& GfxVarReceiver();
 
- public:
   static const nsCSSPropertyID* SubpropertyEntryFor(nsCSSPropertyID aProperty) {
     MOZ_ASSERT(eCSSProperty_COUNT_no_shorthands <= aProperty &&
                    aProperty < eCSSProperty_COUNT,

@@ -313,14 +313,9 @@ void nsSliderFrame::BuildDisplayListForChildren(
 
       const nsRect overflow = thumb->GetVisualOverflowRectRelativeToParent();
       nsSize refSize = aBuilder->RootReferenceFrame()->GetSize();
-      const gfxSize scale = nsLayoutUtils::GetTransformToAncestorScale(thumb);
-      if (scale.width != 0 && scale.height != 0) {
-        refSize.width /= scale.width;
-        refSize.height /= scale.height;
-      }
       nsRect dirty = aBuilder->GetVisibleRect().Intersect(thumbRect);
       dirty = nsLayoutUtils::ComputePartialPrerenderArea(
-          aBuilder->GetVisibleRect(), overflow, refSize);
+          thumb, aBuilder->GetVisibleRect(), overflow, refSize);
 
       nsDisplayListBuilder::AutoBuildingDisplayList buildingDisplayList(
           aBuilder, this, dirty, dirty);
@@ -359,14 +354,15 @@ void nsSliderFrame::BuildDisplayListForChildren(
 
       // Wrap the list to make it its own layer.
       const ActiveScrolledRoot* ownLayerASR = contASRTracker.GetContainerASR();
-      aLists.Content()->AppendNewToTop<nsDisplayOwnLayer>(
-          aBuilder, this, &masterList, ownLayerASR,
-          nsDisplayOwnLayerFlags::None,
+      aLists.Content()->AppendNewToTopWithIndex<nsDisplayOwnLayer>(
+          aBuilder, this,
+          /* aIndex = */ nsDisplayOwnLayer::OwnLayerForScrollThumb, &masterList,
+          ownLayerASR, nsDisplayOwnLayerFlags::None,
           ScrollbarData::CreateForThumb(*scrollDirection, GetThumbRatio(),
                                         thumbStart, thumbLength,
                                         isAsyncDraggable, sliderTrackStart,
                                         sliderTrackLength, scrollTargetId),
-          true, false, nsDisplayOwnLayer::OwnLayerForScrollThumb);
+          true, false);
 
       return;
     }
@@ -1363,7 +1359,7 @@ nsSize nsSliderFrame::GetXULMinSize(nsBoxLayoutState& aState) {
   EnsureOrient();
 
   // our min size is just our borders and padding
-  return nsIFrame::GetXULMinSize(aState);
+  return nsIFrame::GetUncachedXULMinSize(aState);
 }
 
 nsSize nsSliderFrame::GetXULMaxSize(nsBoxLayoutState& aState) {

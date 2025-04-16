@@ -16,7 +16,7 @@ transforms:
 job-defaults:
     description: nightly bouncer locations job
     attributes:
-        nightly: true
+        shippable: true
     worker-type: bouncer
     worker:
         implementation: bouncer-locations

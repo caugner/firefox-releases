@@ -68,84 +68,11 @@ class FunctionIndex : public TypedIndex<FunctionIndexType> {
   using Base::Base;
 };
 
-// Data used to instantiate the lazy script before script emission.
-struct LazyScriptCreationData {
-  frontend::AtomVector closedOverBindings;
-
-  // This is traced by the functionbox which owns this LazyScriptCreationData
-  Vector<FunctionIndex> innerFunctionIndexes;
-
-  explicit LazyScriptCreationData(JSContext* cx) : innerFunctionIndexes(cx) {}
-
-  bool init(JSContext* cx, const frontend::AtomVector& COB,
-            Vector<FunctionIndex>&& innerIndexes) {
-    // Check if we will overflow the `ngcthings` field later.
-    mozilla::CheckedUint32 ngcthings =
-        mozilla::CheckedUint32(COB.length()) +
-        mozilla::CheckedUint32(innerIndexes.length());
-    if (!ngcthings.isValid()) {
-      ReportAllocationOverflow(cx);
-      return false;
-    }
-
-    innerFunctionIndexes = std::move(innerIndexes);
-
-    if (!closedOverBindings.appendAll(COB)) {
-      ReportOutOfMemory(cx);  // closedOverBindings uses SystemAllocPolicy.
-      return false;
-    }
-    return true;
-  }
-
-  bool create(JSContext* cx, CompilationInfo& compilationInfo,
-              HandleFunction function, FunctionBox* funbox,
-              HandleScriptSourceObject sourceObject);
-};
-
-// Metadata that can be used to allocate a JSFunction object.
-//
-// Keeping metadata separate allows the parser to generate
-// metadata without requiring immediate access to the garbage
-// collector.
-struct FunctionCreationData {
-  FunctionCreationData(HandleAtom explicitName, FunctionSyntaxKind kind,
-                       GeneratorKind generatorKind, FunctionAsyncKind asyncKind,
-                       bool isSelfHosting = false, bool inFunctionBox = false);
-
-  // Custom Copy constructor to ensure we never copy a FunctionCreationData
-  // that has a LazyScriptData.
-  //
-  // We want to be able to copy FunctionCreationData into a Functionbox as part
-  // of our attempts to syntax parse an inner function, however, because
-  // trySyntaxParseInnerFunction is fallible, for example, if a new directive
-  // like "use asmjs" is encountered, we don't want to -move- it into the
-  // FunctionBox, because we may need it again if the syntax parse fails.
-  //
-  // To ensure that we never lose a lazyScriptData however, we guarantee that
-  // when this copy constructor is run, it doesn't have any lazyScriptData.
-  FunctionCreationData(const FunctionCreationData& data)
-      : explicitName(data.explicitName),
-        flags(data.flags),
-        immutableFlags(data.immutableFlags) {
-    MOZ_RELEASE_ASSERT(!data.lazyScriptData);
-  }
-
-  FunctionCreationData(FunctionCreationData&& data) = default;
-
-  // The Parser uses KeepAtoms to prevent GC from collecting atoms
-  JSAtom* explicitName = nullptr;
-
-  FunctionFlags flags = {};
-  ImmutableScriptFlags immutableFlags = {};
-
-  mozilla::Maybe<LazyScriptCreationData> lazyScriptData = {};
-
-  HandleAtom getExplicitName(JSContext* cx) const;
-
-  void trace(JSTracer* trc) {
-    TraceNullableRoot(trc, &explicitName, "FunctionCreationData explicitName");
-  }
-};
+FunctionFlags InitialFunctionFlags(FunctionSyntaxKind kind,
+                                   GeneratorKind generatorKind,
+                                   FunctionAsyncKind asyncKind,
+                                   bool isSelfHosting = false,
+                                   bool hasUnclonedName = false);
 
 // This owns a set of characters, previously syntax checked as a RegExp. Used
 // to avoid allocating the RegExp on the GC heap during parsing.
@@ -355,7 +282,6 @@ class ScopeCreationData {
 
   // Valid for functions;
   bool isArrow() const;
-  JSFunction* canonicalFunction() const;
 
   bool hasScope() const { return scope_ != nullptr; }
 
@@ -380,10 +306,7 @@ class ScopeCreationData {
 
   // Transfer ownership into a new UniquePtr.
   template <typename SpecificScopeType>
-  UniquePtr<typename SpecificScopeType::Data> releaseData() {
-    return UniquePtr<typename SpecificScopeType::Data>(
-        static_cast<typename SpecificScopeType::Data*>(data_.release()));
-  }
+  UniquePtr<typename SpecificScopeType::Data> releaseData();
 
   template <typename SpecificScopeType>
   Scope* createSpecificScope(JSContext* cx);
@@ -401,20 +324,23 @@ class ScopeCreationData {
 
 class EmptyGlobalScopeType {};
 
+// The lazy closed-over-binding info is represented by these types that will
+// convert to a GCCellPtr(nullptr), GCCellPtr(JSAtom*).
+class NullScriptThing {};
+using ScriptAtom = JSAtom*;
+
 // These types all end up being baked into GC things as part of stencil
 // instantiation.
 using ScriptThingVariant =
-    mozilla::Variant<BigIntIndex, ObjLiteralCreationData, RegExpIndex,
-                     ScopeIndex, FunctionIndex, EmptyGlobalScopeType>;
+    mozilla::Variant<ScriptAtom, NullScriptThing, BigIntIndex,
+                     ObjLiteralCreationData, RegExpIndex, ScopeIndex,
+                     FunctionIndex, EmptyGlobalScopeType>;
 
 // A vector of things destined to be converted to GC things.
 using ScriptThingsVector = Vector<ScriptThingVariant>;
 
-// Data used to instantiate the non-lazy script.
+// Data generated by frontend that will be used to create a js::BaseScript.
 class ScriptStencil {
- public:
-  using ImmutableFlags = ImmutableScriptFlagsEnum;
-
  public:
   // See `BaseScript::functionOrGlobal_`.
   mozilla::Maybe<FunctionIndex> functionIndex;
@@ -422,33 +348,20 @@ class ScriptStencil {
   // See `BaseScript::immutableFlags_`.
   ImmutableScriptFlags immutableFlags;
 
-  // See `finishGCThings` and `BaseScript::data_`.
+  // See `BaseScript::data_`.
   mozilla::Maybe<FieldInitializers> fieldInitializers;
   ScriptThingsVector gcThings;
 
-  // See `initAtomMap` and `BaseScript::sharedData_`.
-  uint32_t natoms = 0;
+  // See `BaseScript::sharedData_`.
   js::UniquePtr<js::ImmutableScriptData> immutableScriptData = nullptr;
 
   // End of fields.
 
-  ScriptStencil(JSContext* cx) : gcThings(cx) {}
+  explicit ScriptStencil(JSContext* cx) : gcThings(cx) {}
 
-  bool isFunction() const {
-    return immutableFlags.hasFlag(ImmutableFlags::IsFunction);
-  }
-
-  // Store all GC things into `gcthings`.
-  // `gcthings.Length()` is `this.ngcthings`.
-  virtual bool finishGCThings(JSContext* cx,
-                              mozilla::Span<JS::GCCellPtr> output) const = 0;
-
-  // Store all atoms into `atoms`
-  // `atoms` is the pointer to `this.natoms`-length array of `GCPtrAtom`.
-  virtual void initAtomMap(GCPtrAtom* atoms) const = 0;
-
-  // Call `FunctionBox::finish` for all inner functions.
-  virtual void finishInnerFunctions() const = 0;
+  // This traces any JSAtoms in the gcThings array. This will be removed once
+  // atoms are deferred from parsing.
+  void trace(JSTracer* trc);
 };
 
 } /* namespace js::frontend */

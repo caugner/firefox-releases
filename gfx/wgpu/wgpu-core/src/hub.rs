@@ -25,7 +25,7 @@ use wgt::Backend;
 
 #[cfg(debug_assertions)]
 use std::cell::Cell;
-use std::{fmt::Debug, iter, marker::PhantomData, ops};
+use std::{fmt::Debug, marker::PhantomData, ops, thread};
 
 /// A simple structure to manage identities of objects.
 #[derive(Debug)]
@@ -44,6 +44,13 @@ impl Default for IdentityManager {
 }
 
 impl IdentityManager {
+    pub fn from_index(min_index: u32) -> Self {
+        IdentityManager {
+            free: (0..min_index).collect(),
+            epochs: vec![1; min_index as usize],
+        }
+    }
+
     pub fn alloc<I: TypedId>(&mut self, backend: Backend) -> I {
         match self.free.pop() {
             Some(index) => I::zip(index, self.epochs[index as usize], backend),
@@ -262,10 +269,7 @@ pub struct IdentityManagerFactory;
 impl<I: TypedId + Debug> IdentityHandlerFactory<I> for IdentityManagerFactory {
     type Filter = Mutex<IdentityManager>;
     fn spawn(&self, min_index: Index) -> Self::Filter {
-        let mut man = IdentityManager::default();
-        man.free.extend(0..min_index);
-        man.epochs.extend(iter::repeat(1).take(min_index as usize));
-        Mutex::new(man)
+        Mutex::new(IdentityManager::from_index(min_index))
     }
 }
 
@@ -412,12 +416,15 @@ impl<B: GfxBackend, F: GlobalIdentityHandlerFactory> Hub<B, F> {
     }
 }
 
-impl<B: hal::Backend, F: GlobalIdentityHandlerFactory> Drop for Hub<B, F> {
-    fn drop(&mut self) {
+impl<B: GfxBackend, F: GlobalIdentityHandlerFactory> Hub<B, F> {
+    fn clear(&mut self, surface_guard: &mut Storage<Surface, SurfaceId>) {
         use crate::resource::TextureViewInner;
-        use hal::device::Device as _;
+        use hal::{device::Device as _, window::PresentationSurface as _};
 
         let mut devices = self.devices.data.write();
+        for (device, _) in devices.map.values_mut() {
+            device.prepare_to_die();
+        }
 
         for (_, (sampler, _)) in self.samplers.data.write().map.drain() {
             unsafe {
@@ -489,7 +496,15 @@ impl<B: hal::Backend, F: GlobalIdentityHandlerFactory> Drop for Hub<B, F> {
             }
         }
 
-        //TODO: self.swap_chains
+        for (index, (swap_chain, epoch)) in self.swap_chains.data.write().map.drain() {
+            let device = &devices[swap_chain.device_id.value];
+            let surface = &mut surface_guard[TypedId::zip(index as Index, epoch, B::VARIANT)];
+            let suf = B::get_surface_mut(surface);
+            unsafe {
+                device.raw.destroy_semaphore(swap_chain.semaphore);
+                suf.unconfigure_swapchain(&device.raw);
+            }
+        }
 
         for (_, (device, _)) in devices.map.drain() {
             device.dispose();
@@ -545,17 +560,29 @@ impl<G: GlobalIdentityHandlerFactory> Global<G> {
             hubs: Hubs::new(&factory),
         }
     }
+}
 
-    pub fn delete(self) {
-        let Global {
-            mut instance,
-            surfaces,
-            hubs,
-        } = self;
-        drop(hubs);
-        // destroy surfaces
-        for (_, (surface, _)) in surfaces.data.write().map.drain() {
-            instance.destroy_surface(surface);
+impl<G: GlobalIdentityHandlerFactory> Drop for Global<G> {
+    fn drop(&mut self) {
+        if !thread::panicking() {
+            log::info!("Dropping Global");
+            let mut surface_guard = self.surfaces.data.write();
+            // destroy hubs
+            #[cfg(any(
+                not(any(target_os = "ios", target_os = "macos")),
+                feature = "gfx-backend-vulkan"
+            ))]
+            self.hubs.vulkan.clear(&mut *surface_guard);
+            #[cfg(any(target_os = "ios", target_os = "macos"))]
+            self.hubs.metal.clear(&mut *surface_guard);
+            #[cfg(windows)]
+            self.hubs.dx12.clear(&mut *surface_guard);
+            #[cfg(windows)]
+            self.hubs.dx11.clear(&mut *surface_guard);
+            // destroy surfaces
+            for (_, (surface, _)) in surface_guard.map.drain() {
+                self.instance.destroy_surface(surface);
+            }
         }
     }
 }

@@ -362,8 +362,8 @@ function assertDebugLine(dbg, line, column) {
   }
 
   ok(
-    lineInfo.wrapClass.includes("new-debug-line"),
-    "Line is highlighted as paused"
+    lineInfo?.wrapClass.includes("new-debug-line"),
+    `Line ${line} is not highlighted as paused`
   );
 
   const debugLine =
@@ -585,7 +585,6 @@ async function clearDebuggerPreferences(prefs = []) {
   Services.prefs.clearUserPref("devtools.debugger.scopes-visible");
   Services.prefs.clearUserPref("devtools.debugger.skip-pausing");
   Services.prefs.clearUserPref("devtools.debugger.map-scopes-enabled");
-  Services.prefs.clearUserPref("javascript.enabled");
   await pushPref("devtools.debugger.log-actions", true);
 
   for (const pref of prefs) {

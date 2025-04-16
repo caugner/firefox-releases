@@ -60,9 +60,6 @@ export interface PerfFront {
   on: (type: string, listener: () => void) => void;
   off: (type: string, listener: () => void) => void;
   destroy: () => void,
-  /**
-   * This method was was added in Firefox 72.
-   */
   getSupportedFeatures: () => MaybePromise<string[]>
 }
 
@@ -227,11 +224,8 @@ export interface InitializedValues {
   pageContext: PageContext;
   // The popup and devtools panel use different codepaths for getting symbol tables.
   getSymbolTableGetter: (profile: MinimallyTypedGeckoProfile) => GetSymbolTableCallback;
-  // The list of profiler features that the current target supports. Note that
-  // this value is only null to support older Firefox browsers that are targeted
-  // by the actor system. This compatibility can be required when the ESR version
-  // is running at least Firefox 72.
-  supportedFeatures: string[] | null
+  // The list of profiler features that the current target supports.
+  supportedFeatures: string[]
   // Allow different devtools contexts to open about:profiling with different methods.
   // e.g. via a new tab, or page navigation.
   openAboutProfiling?: () => void,
@@ -288,7 +282,7 @@ export type Action =
       openRemoteDevTools?: () => void,
       recordingSettingsFromPreferences: RecordingStateFromPreferences;
       getSymbolTableGetter: (profile: MinimallyTypedGeckoProfile) => GetSymbolTableCallback;
-      supportedFeatures: string[] | null;
+      supportedFeatures: string[];
     }
   | {
       type: "CHANGE_PRESET";
@@ -303,7 +297,7 @@ export interface InitializeStoreValues {
   presets: Presets;
   pageContext: PageContext;
   recordingPreferences: RecordingStateFromPreferences;
-  supportedFeatures: string[] | null;
+  supportedFeatures: string[];
   getSymbolTableGetter: (profile: MinimallyTypedGeckoProfile) => GetSymbolTableCallback;
   openAboutProfiling?: () => void;
   openRemoteDevTools?: () => void;
@@ -482,6 +476,8 @@ export interface FeatureDescription {
   title: string,
   // This will give the user a hint that it's recommended on.
   recommended?: boolean,
+  // This will give the user a hint that it's an experimental feature.
+  experimental?: boolean,
   // This will give a reason if the feature is disabled.
   disabledReason?: string,
 }

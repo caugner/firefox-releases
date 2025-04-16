@@ -33,9 +33,7 @@
       Services.obs.addObserver(this, "contextual-identity-updated");
 
       Services.els.addSystemEventListener(document, "keydown", this, false);
-      if (AppConstants.platform == "macosx") {
-        Services.els.addSystemEventListener(document, "keypress", this, false);
-      }
+      Services.els.addSystemEventListener(document, "keypress", this, false);
       window.addEventListener("sizemodechange", this);
       window.addEventListener("occlusionstatechange", this);
       window.addEventListener("framefocusrequested", this);
@@ -57,7 +55,6 @@
       window.messageManager.addMessageListener("contextmenu", this);
 
       if (gMultiProcessBrowser) {
-        messageManager.addMessageListener("DOMTitleChanged", this);
         messageManager.addMessageListener("DOMWindowClose", this);
         messageManager.addMessageListener("Browser:Init", this);
       } else {
@@ -73,6 +70,12 @@
       XPCOMUtils.defineLazyModuleGetters(this, {
         E10SUtils: "resource://gre/modules/E10SUtils.jsm",
       });
+
+      // We take over setting the document title, so remove the l10n id to
+      // avoid it being re-translated and overwriting document content if
+      // we ever switch languages at runtime. After a language change, the
+      // window title will update at the next tab or location change.
+      document.querySelector("title").removeAttribute("data-l10n-id");
 
       this._setupEventListeners();
       this._initialized = true;
@@ -320,6 +323,10 @@
       let openWindowInfo = window.docShell.treeOwner
         .QueryInterface(Ci.nsIInterfaceRequestor)
         .getInterface(Ci.nsIAppWindow).initialOpenWindowInfo;
+
+      if (!openWindowInfo && window.arguments && window.arguments[11]) {
+        openWindowInfo = window.arguments[11];
+      }
 
       let tabArgument = gBrowserInit.getTabToAdopt();
 
@@ -912,59 +919,57 @@
     },
 
     getWindowTitleForBrowser(aBrowser) {
-      var newTitle = "";
-      var docElement = document.documentElement;
-      var sep = docElement.getAttribute("titlemenuseparator");
-      let tab = this.getTabForBrowser(aBrowser);
-      let docTitle;
-
-      if (tab._labelIsContentTitle) {
-        // Strip out any null bytes in the content title, since the
-        // underlying widget implementations of nsWindow::SetTitle pass
-        // null-terminated strings to system APIs.
-        docTitle = tab.getAttribute("label").replace(/\0/g, "");
-      }
-
-      if (!docTitle) {
-        docTitle = docElement.getAttribute("titledefault");
-      }
-
-      var modifier = docElement.getAttribute("titlemodifier");
-      if (docTitle) {
-        newTitle += docElement.getAttribute("titlepreface") || "";
-        newTitle += docTitle;
-        if (modifier) {
-          newTitle += sep;
-        }
-      }
-      newTitle += modifier;
+      let docElement = document.documentElement;
+      let title = "";
 
       // If location bar is hidden and the URL type supports a host,
       // add the scheme and host to the title to prevent spoofing.
       // XXX https://bugzilla.mozilla.org/show_bug.cgi?id=22183#c239
       try {
         if (docElement.getAttribute("chromehidden").includes("location")) {
-          const uri = Services.io.createExposableURI(aBrowser.currentURI);
-          if (uri.scheme === "about") {
-            newTitle = `${uri.spec}${sep}${newTitle}`;
-          } else if (uri.scheme === "moz-extension") {
+          const uri = Services.uriFixup.createExposableURI(aBrowser.currentURI);
+          let prefix = uri.prePath;
+          if (uri.scheme == "about") {
+            prefix = uri.spec;
+          } else if (uri.scheme == "moz-extension") {
             const ext = WebExtensionPolicy.getByHostname(uri.host);
             if (ext && ext.name) {
-              const prefix = document.querySelector("#urlbar-label-extension")
-                .value;
-              newTitle = `${prefix} (${ext.name})${sep}${newTitle}`;
-            } else {
-              newTitle = `${uri.prePath}${sep}${newTitle}`;
+              let extensionLabel = document.getElementById(
+                "urlbar-label-extension"
+              );
+              prefix = `${extensionLabel.value} (${ext.name})`;
             }
-          } else {
-            newTitle = `${uri.prePath}${sep}${newTitle}`;
           }
+          title = prefix + " - ";
         }
       } catch (e) {
         // ignored
       }
 
-      return newTitle;
+      if (docElement.hasAttribute("titlepreface")) {
+        title += docElement.getAttribute("titlepreface");
+      }
+
+      let tab = this.getTabForBrowser(aBrowser);
+      if (tab._labelIsContentTitle) {
+        // Strip out any null bytes in the content title, since the
+        // underlying widget implementations of nsWindow::SetTitle pass
+        // null-terminated strings to system APIs.
+        title += tab.getAttribute("label").replace(/\0/g, "");
+      }
+
+      let dataSuffix =
+        docElement.getAttribute("privatebrowsingmode") == "temporary"
+          ? "Private"
+          : "Default";
+      if (title) {
+        return docElement.dataset["contentTitle" + dataSuffix].replace(
+          "CONTENTTITLE",
+          title
+        );
+      }
+
+      return docElement.dataset["title" + dataSuffix];
     },
 
     updateTitlebar() {
@@ -2540,6 +2545,13 @@
         );
       }
 
+      // Don't use document.l10n.setAttributes because the FTL file is loaded
+      // lazily and we won't be able to resolve the string.
+      document
+        .getElementById("History:UndoCloseTab")
+        .setAttribute("data-l10n-args", JSON.stringify({ tabCount: 1 }));
+      SessionStore.setLastClosedTabCount(window, 1);
+
       // if we're adding tabs, we're past interrupt mode, ditch the owner
       if (this.selectedTab.owner) {
         this.selectedTab.owner = null;
@@ -3289,6 +3301,7 @@
         return;
       }
 
+      let initialTabCount = tabs.length;
       this._clearMultiSelectionLocked = true;
 
       // Guarantee that _clearMultiSelectionLocked lock gets released.
@@ -3324,6 +3337,17 @@
 
       this._clearMultiSelectionLocked = false;
       this.avoidSingleSelectedTab();
+      let closedTabsCount =
+        initialTabCount - tabs.filter(t => !t.closing).length;
+      // Don't use document.l10n.setAttributes because the FTL file is loaded
+      // lazily and we won't be able to resolve the string.
+      document
+        .getElementById("History:UndoCloseTab")
+        .setAttribute(
+          "data-l10n-args",
+          JSON.stringify({ tabCount: closedTabsCount })
+        );
+      SessionStore.setLastClosedTabCount(window, closedTabsCount);
     },
 
     removeCurrentTab(aParams) {
@@ -4957,7 +4981,63 @@
       }
     },
 
-    _handleKeyPressEventMac(aEvent) {
+    toggleCaretBrowsing() {
+      const kPrefShortcutEnabled =
+        "accessibility.browsewithcaret_shortcut.enabled";
+      const kPrefWarnOnEnable = "accessibility.warn_on_browsewithcaret";
+      const kPrefCaretBrowsingOn = "accessibility.browsewithcaret";
+
+      var isEnabled = Services.prefs.getBoolPref(kPrefShortcutEnabled);
+      if (!isEnabled) {
+        return;
+      }
+
+      // Toggle browse with caret mode
+      var browseWithCaretOn = Services.prefs.getBoolPref(
+        kPrefCaretBrowsingOn,
+        false
+      );
+      var warn = Services.prefs.getBoolPref(kPrefWarnOnEnable, true);
+      if (warn && !browseWithCaretOn) {
+        var checkValue = { value: false };
+        var promptService = Services.prompt;
+
+        var buttonPressed = promptService.confirmEx(
+          window,
+          gTabBrowserBundle.GetStringFromName(
+            "browsewithcaret.checkWindowTitle"
+          ),
+          gTabBrowserBundle.GetStringFromName("browsewithcaret.checkLabel"),
+          // Make "No" the default:
+          promptService.STD_YES_NO_BUTTONS | promptService.BUTTON_POS_1_DEFAULT,
+          null,
+          null,
+          null,
+          gTabBrowserBundle.GetStringFromName("browsewithcaret.checkMsg"),
+          checkValue
+        );
+        if (buttonPressed != 0) {
+          if (checkValue.value) {
+            try {
+              Services.prefs.setBoolPref(kPrefShortcutEnabled, false);
+            } catch (ex) {}
+          }
+          return;
+        }
+        if (checkValue.value) {
+          try {
+            Services.prefs.setBoolPref(kPrefWarnOnEnable, false);
+          } catch (ex) {}
+        }
+      }
+
+      // Toggle the pref
+      try {
+        Services.prefs.setBoolPref(kPrefCaretBrowsingOn, !browseWithCaretOn);
+      } catch (ex) {}
+    },
+
+    _handleKeyPressEvent(aEvent) {
       if (!aEvent.isTrusted) {
         // Don't let untrusted events mess with tabs.
         return;
@@ -4968,19 +5048,25 @@
         return;
       }
 
-      if (AppConstants.platform == "macosx") {
-        switch (
-          ShortcutUtils.getSystemActionForEvent(aEvent, { rtl: RTL_UI })
-        ) {
-          case ShortcutUtils.NEXT_TAB:
+      switch (ShortcutUtils.getSystemActionForEvent(aEvent, { rtl: RTL_UI })) {
+        case ShortcutUtils.TOGGLE_CARET_BROWSING:
+          if (!aEvent.defaultPrevented) {
+            this.toggleCaretBrowsing();
+          }
+          break;
+
+        case ShortcutUtils.NEXT_TAB:
+          if (AppConstants.platform == "macosx") {
             this.tabContainer.advanceSelectedTab(1, true);
             aEvent.preventDefault();
-            break;
-          case ShortcutUtils.PREVIOUS_TAB:
+          }
+          break;
+        case ShortcutUtils.PREVIOUS_TAB:
+          if (AppConstants.platform == "macosx") {
             this.tabContainer.advanceSelectedTab(-1, true);
             aEvent.preventDefault();
-            break;
-        }
+          }
+          break;
       }
     },
 
@@ -5094,7 +5180,7 @@
           this._handleKeyDownEvent(aEvent);
           break;
         case "keypress":
-          this._handleKeyPressEventMac(aEvent);
+          this._handleKeyPressEvent(aEvent);
           break;
         case "framefocusrequested": {
           let tab = this.getTabForBrowser(aEvent.target);
@@ -5128,17 +5214,6 @@
       let browser = aMessage.target;
 
       switch (aMessage.name) {
-        case "DOMTitleChanged": {
-          let tab = this.getTabForBrowser(browser);
-          if (!tab || tab.hasAttribute("pending")) {
-            return undefined;
-          }
-          let titleChanged = this.setTabTitle(tab);
-          if (titleChanged && !tab.selected && !tab.hasAttribute("busy")) {
-            tab.setAttribute("titlechanged", "true");
-          }
-          break;
-        }
         case "contextmenu": {
           openContextMenu(aMessage);
           break;
@@ -5225,8 +5300,9 @@
     observe(aSubject, aTopic, aData) {
       switch (aTopic) {
         case "contextual-identity-updated": {
+          let identity = aSubject.wrappedJSObject;
           for (let tab of this.tabs) {
-            if (tab.getAttribute("usercontextid") == aData) {
+            if (tab.getAttribute("usercontextid") == identity.userContextId) {
               ContextualIdentityService.setTabStyle(tab);
             }
           }
@@ -5292,8 +5368,6 @@
       window.removeEventListener("framefocusrequested", this);
 
       if (gMultiProcessBrowser) {
-        let messageManager = window.getGroupMessageManager("browsers");
-        messageManager.removeMessageListener("DOMTitleChanged", this);
         window.messageManager.removeMessageListener("contextmenu", this);
 
         if (this._switcher) {
@@ -5350,6 +5424,29 @@
           // to close the entire window. Calling preventDefault is our way of
           // saying we took care of this close request by closing the tab.
           event.preventDefault();
+        }
+      });
+
+      this.addEventListener("pagetitlechanged", event => {
+        let browser = event.target;
+        let tab = this.getTabForBrowser(browser);
+        if (!tab || tab.hasAttribute("pending")) {
+          return;
+        }
+
+        // Ignore empty title changes on internal pages. This prevents the title
+        // from changing while Fluent is populating the (initially-empty) title
+        // element.
+        if (
+          !browser.contentTitle &&
+          browser.contentPrincipal.isSystemPrincipal
+        ) {
+          return;
+        }
+
+        let titleChanged = this.setTabTitle(tab);
+        if (titleChanged && !tab.selected && !tab.hasAttribute("busy")) {
+          tab.setAttribute("titlechanged", "true");
         }
       });
 
@@ -5439,47 +5536,6 @@
         },
         true
       );
-
-      this.addEventListener("DOMTitleChanged", event => {
-        if (!event.isTrusted) {
-          return;
-        }
-
-        var contentWin = event.target.defaultView;
-        if (contentWin != contentWin.top) {
-          return;
-        }
-
-        let browser = contentWin.docShell.chromeEventHandler;
-        var tab = this.getTabForBrowser(browser);
-        if (!tab || tab.hasAttribute("pending")) {
-          return;
-        }
-
-        if (!browser.docShell) {
-          return;
-        }
-        // Ensure `docShell.document` (an nsIWebNavigation idl prop) is there:
-        browser.docShell.QueryInterface(Ci.nsIWebNavigation);
-        if (event.target != browser.docShell.document) {
-          return;
-        }
-
-        // Ignore empty title changes on internal pages. This prevents the title
-        // from changing while Fluent is populating the (initially-empty) title
-        // element.
-        if (
-          !browser.contentTitle &&
-          browser.contentPrincipal.isSystemPrincipal
-        ) {
-          return;
-        }
-
-        var titleChanged = this.setTabTitle(tab);
-        if (titleChanged && !tab.selected && !tab.hasAttribute("busy")) {
-          tab.setAttribute("titlechanged", "true");
-        }
-      });
 
       let onTabCrashed = event => {
         if (!event.isTrusted || !event.isTopFrame) {
@@ -5729,7 +5785,7 @@
         !aBrowser.frameLoader ||
         !aBrowser.frameLoader.remoteTab
       ) {
-        throw Cr.NS_ERROR_FAILURE;
+        throw Components.Exception("", Cr.NS_ERROR_FAILURE);
       }
 
       // Tell our caller to redirect the load into this newly created process.

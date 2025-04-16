@@ -27,7 +27,6 @@
 
 #include "ds/Nestable.h"  // Nestable
 #include "frontend/AbstractScopePtr.h"
-#include "frontend/BCEScriptStencil.h"           // BCEScriptStencil
 #include "frontend/BytecodeControlStructures.h"  // NestableControl, BreakableControl, LabelControl, LoopControl, TryFinallyControl
 #include "frontend/CallOrNewEmitter.h"           // CallOrNewEmitter
 #include "frontend/CForEmitter.h"                // CForEmitter
@@ -105,7 +104,6 @@ BytecodeEmitter::BytecodeEmitter(BytecodeEmitter* parent, SharedContext* sc,
     : sc(sc),
       cx(sc->cx_),
       parent(parent),
-      outputScript(cx),
       bytecodeSection_(cx, sc->extent.lineno),
       perScriptData_(cx, compilationInfo),
       compilationInfo(compilationInfo),
@@ -113,12 +111,6 @@ BytecodeEmitter::BytecodeEmitter(BytecodeEmitter* parent, SharedContext* sc,
   if (IsTypeInferenceEnabled() && sc->isFunctionBox()) {
     // Functions have IC entries for type monitoring |this| and arguments.
     bytecodeSection().setNumICEntries(sc->asFunctionBox()->nargs() + 1);
-  }
-
-  // TODO: standardize how "input" flags are initialized.
-  if (sc->isTopLevelContext()) {
-    bool isRunOnce = compilationInfo.options.isRunOnce;
-    sc->setTreatAsRunOnce(isRunOnce);
   }
 }
 
@@ -515,10 +507,6 @@ bool BytecodeEmitter::emitUnpickN(uint8_t n) {
 
 bool BytecodeEmitter::emitCheckIsObj(CheckIsObjectKind kind) {
   return emit2(JSOp::CheckIsObj, uint8_t(kind));
-}
-
-bool BytecodeEmitter::emitCheckIsCallable(CheckIsCallableKind kind) {
-  return emit2(JSOp::CheckIsCallable, uint8_t(kind));
 }
 
 /* Updates line number notes, not column notes. */
@@ -2437,33 +2425,9 @@ bool BytecodeEmitter::emitScript(ParseNode* body) {
     return false;
   }
 
-  js::UniquePtr<ImmutableScriptData> immutableScriptData =
-      createImmutableScriptData(cx);
-  if (!immutableScriptData) {
-    return false;
-  }
-
-  RootedObject functionOrGlobal(cx);
-  if (sc->isFunctionBox()) {
-    functionOrGlobal = sc->asFunctionBox()->function();
-  } else {
-    functionOrGlobal = cx->global();
-  }
-
-  RootedScript script(
-      cx, JSScript::Create(cx, functionOrGlobal, compilationInfo.sourceObject,
-                           sc->getScriptExtent(), sc->immutableFlags()));
-  if (!script) {
-    return false;
-  }
-
-  BCEScriptStencil stencil(*this, std::move(immutableScriptData));
-  if (!JSScript::fullyInitFromStencil(cx, compilationInfo, script, stencil)) {
-    return false;
-  }
-  // Script is allocated now.
-  outputScript = script;
-  return true;
+  // Create a Stencil and convert it into a JSScript.
+  compilationInfo.topLevelExtent = sc->extent;
+  return intoScriptStencil(compilationInfo.topLevel.address());
 }
 
 js::UniquePtr<ImmutableScriptData> BytecodeEmitter::createImmutableScriptData(
@@ -2542,7 +2506,7 @@ bool BytecodeEmitter::emitFunctionScript(FunctionNode* funNode,
     }
   }
 
-  return fse.initScript();
+  return fse.intoStencil(isTopLevel);
 }
 
 bool BytecodeEmitter::emitDestructuringLHSRef(ParseNode* target,
@@ -3124,7 +3088,7 @@ bool BytecodeEmitter::setFunName(FunctionBox* funbox, JSAtom* name) {
   // time.
   if (funbox->hasInferredName()) {
     MOZ_ASSERT(!funbox->emitBytecode);
-    MOZ_ASSERT(funbox->inferredName() == name);
+    MOZ_ASSERT(funbox->displayAtom() == name);
 
     return true;
   }
@@ -5725,10 +5689,7 @@ MOZ_NEVER_INLINE bool BytecodeEmitter::emitFunction(
     //
     // NOTE: This heuristic is arbitrary, but some debugger tests rely on the
     //       current behaviour and need to be updated if the condiditons change.
-    bool isSingleton = checkRunOnceContext();
-    if (!funbox->setTypeForScriptedFunction(cx, isSingleton)) {
-      return false;
-    }
+    funbox->isSingleton = checkRunOnceContext();
 
     if (!funbox->emitBytecode) {
       return fe.emitLazy();
@@ -5739,13 +5700,6 @@ MOZ_NEVER_INLINE bool BytecodeEmitter::emitFunction(
       //            [stack]
       return false;
     }
-
-    // Only propagate transitive compiler options (principals, version, etc)
-    // from the parent. The remaining values will use their defaults.
-    const JS::TransitiveCompileOptions& transitiveOptions = parser->options();
-    // Add input flags to funbox for JSSCript::Create call.
-    funbox->addToImmutableFlags(
-        ImmutableScriptFlags::fromCompileOptions(transitiveOptions));
 
     EmitterMode nestedMode = emitterMode;
     if (nestedMode == BytecodeEmitter::LazyFunction) {
@@ -5886,7 +5840,7 @@ bool BytecodeEmitter::emitContinue(PropertyName* label) {
 }
 
 bool BytecodeEmitter::emitGetFunctionThis(NameNode* thisName) {
-  MOZ_ASSERT(sc->thisBinding() == ThisBinding::Function);
+  MOZ_ASSERT(sc->hasFunctionThisBinding());
   MOZ_ASSERT(thisName->isName(cx->names().dotThis));
 
   return emitGetFunctionThis(Some(thisName->pn_pos.begin));
@@ -6754,8 +6708,8 @@ bool BytecodeEmitter::emitExpressionStatement(UnaryNode* exprStmt) {
    */
   bool wantval = false;
   bool useful = false;
-  if (!sc->isFunctionBox()) {
-    useful = wantval = !parser->options().noScriptRval;
+  if (sc->isTopLevelContext()) {
+    useful = wantval = !sc->noScriptRval();
   }
 
   /* Don't eliminate expressions with side effects. */
@@ -9060,26 +9014,22 @@ const FieldInitializers& BytecodeEmitter::findFieldInitializersForCall() {
   for (BytecodeEmitter* current = this; current; current = current->parent) {
     if (current->sc->isFunctionBox()) {
       FunctionBox* funbox = current->sc->asFunctionBox();
-      if (funbox->isClassConstructor()) {
-        MOZ_ASSERT(funbox->fieldInitializers->valid);
-        return *funbox->fieldInitializers;
+
+      if (funbox->isArrow()) {
+        continue;
       }
+
+      // If we found a non-arrow / non-constructor we were never allowed to
+      // expect fields in the first place.
+      MOZ_RELEASE_ASSERT(funbox->isClassConstructor());
+
+      MOZ_ASSERT(funbox->fieldInitializers->valid);
+      return *funbox->fieldInitializers;
     }
   }
 
-  for (AbstractScopePtrIter si(innermostScope()); si; si++) {
-    if (si.abstractScopePtr().is<FunctionScope>()) {
-      JSFunction* fun = si.abstractScopePtr().canonicalFunction();
-      if (fun->isClassConstructor()) {
-        const FieldInitializers& fieldInitializers =
-            fun->baseScript()->getFieldInitializers();
-        MOZ_ASSERT(fieldInitializers.valid);
-        return fieldInitializers;
-      }
-    }
-  }
-
-  MOZ_CRASH("Constructor for field initializers not found.");
+  MOZ_RELEASE_ASSERT(compilationInfo.scopeContext.fieldInitializers);
+  return *compilationInfo.scopeContext.fieldInitializers;
 }
 
 bool BytecodeEmitter::emitInitializeInstanceFields() {
@@ -9731,7 +9681,7 @@ bool BytecodeEmitter::emitInitializeFunctionSpecialNames() {
   // Do nothing if the function doesn't have a this-binding (this
   // happens for instance if it doesn't use this/eval or if it's an
   // arrow function).
-  if (funbox->hasThisBinding()) {
+  if (funbox->functionHasThisBinding()) {
     if (!emitInitializeFunctionSpecialName(this, cx->names().dotThis,
                                            JSOp::FunctionThis)) {
       return false;
@@ -10795,4 +10745,47 @@ bool BytecodeEmitter::newSrcNoteOperand(ptrdiff_t operand) {
   };
 
   return SrcNoteWriter::writeOperand(operand, allocator);
+}
+
+bool BytecodeEmitter::intoScriptStencil(ScriptStencil* stencil) {
+  using ImmutableFlags = ImmutableScriptFlagsEnum;
+
+  js::UniquePtr<ImmutableScriptData> immutableScriptData =
+      createImmutableScriptData(cx);
+  if (!immutableScriptData) {
+    return false;
+  }
+
+  stencil->immutableFlags = sc->immutableFlags();
+
+  MOZ_ASSERT(outermostScope().hasOnChain(ScopeKind::NonSyntactic) ==
+             sc->hasNonSyntacticScope());
+
+  stencil->gcThings = perScriptData().gcThingList().stealGCThings();
+
+  // Hand over the ImmutableScriptData instance generated by BCE.
+  stencil->immutableScriptData = std::move(immutableScriptData);
+
+  // Update flags specific to functions.
+  if (sc->isFunctionBox()) {
+    FunctionBox* funbox = sc->asFunctionBox();
+    stencil->functionIndex.emplace(funbox->index());
+    stencil->fieldInitializers = funbox->fieldInitializers;
+
+    // Set flags that don't have direct flag representation within the
+    // FunctionBox.
+    stencil->immutableFlags.setFlag(ImmutableFlags::HasMappedArgsObj,
+                                    funbox->hasMappedArgsObj());
+
+    // While IsLikelyConstructorWrapper is required to be the same between
+    // syntax and normal parsing, BinAST cannot ensure this. Work around this by
+    // using the existing value if this is delazification.
+    if (emitterMode != BytecodeEmitter::LazyFunction) {
+      stencil->immutableFlags.setFlag(
+          ImmutableFlags::IsLikelyConstructorWrapper,
+          funbox->isLikelyConstructorWrapper());
+    }
+  } /* isFunctionBox */
+
+  return true;
 }

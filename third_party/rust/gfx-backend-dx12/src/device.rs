@@ -1032,7 +1032,7 @@ impl Device {
             Width: config.extent.width,
             Height: config.extent.height,
             Format: non_srgb_format,
-            Flags: 0,
+            Flags: dxgi::DXGI_SWAP_CHAIN_FLAG_FRAME_LATENCY_WAITABLE_OBJECT,
             BufferUsage: dxgitype::DXGI_USAGE_RENDER_TARGET_OUTPUT,
             SampleDesc: dxgitype::DXGI_SAMPLE_DESC {
                 Count: 1,
@@ -1072,6 +1072,11 @@ impl Device {
         inner: native::WeakPtr<dxgi1_4::IDXGISwapChain3>,
         config: &w::SwapchainConfig,
     ) -> Swapchain {
+        let waitable = unsafe {
+            inner.SetMaximumFrameLatency(config.image_count);
+            inner.GetFrameLatencyWaitableObject()
+        };
+
         let rtv_desc = d3d12::D3D12_RENDER_TARGET_VIEW_DESC {
             Format: conv::map_format(config.format).unwrap(),
             ViewDimension: d3d12::D3D12_RTV_DIMENSION_TEXTURE2D,
@@ -1096,10 +1101,10 @@ impl Device {
 
         Swapchain {
             inner,
-            next_frame: 0,
             frame_queue: VecDeque::new(),
             rtv_heap,
             resources,
+            waitable,
         }
     }
 }
@@ -1513,6 +1518,8 @@ impl d::Device<B> for Device {
         // Each descriptor set layout will be one table entry of the root signature.
         // We have the additional restriction that SRV/CBV/UAV and samplers need to be
         // separated, so each set layout will actually occupy up to 2 entries!
+        // SRV/CBV/UAV tables are added to the signature first, then Sampler tables,
+        // and finally dynamic uniform descriptors.
         //
         // Dynamic uniform buffers are implemented as root descriptors.
         // This allows to handle the dynamic offsets properly, which would not be feasible
@@ -1521,10 +1528,11 @@ impl d::Device<B> for Device {
         // Root signature layout:
         //     Root Constants: Register: Offest/4, Space: 0
         //     ...
-        //     DescriptorTable0: Space: 1 (+1) (SrvCbvUav)
-        //     Root Descriptors
-        //     DescriptorTable0: Space: 2 (+1) (Sampler)
-        //     DescriptorTable1: Space: 3 (+1) (SrvCbvUav)
+        // DescriptorTable0: Space: 1 (SrvCbvUav)
+        // DescriptorTable0: Space: 1 (Sampler)
+        // Root Descriptors 0
+        // DescriptorTable1: Space: 2 (SrvCbvUav)
+        // Root Descriptors 1
         //     ...
 
         let sets = sets.into_iter().collect::<Vec<_>>();
@@ -1628,29 +1636,12 @@ impl d::Device<B> for Device {
 
                 let mut descriptors = Vec::new();
                 let mut mutable_bindings = auxil::FastHashSet::default();
+
+                // SRV/CBV/UAV descriptor tables
                 let mut range_base = ranges.len();
                 for bind in set.bindings.iter() {
                     let content = r::DescriptorContent::from(bind.ty);
-
-                    if content.is_dynamic() {
-                        // Root Descriptor
-                        let binding = native::Binding {
-                            register: bind.binding as _,
-                            space,
-                        };
-
-                        if content.contains(r::DescriptorContent::CBV) {
-                            descriptors.push(r::RootDescriptor {
-                                offset: root_offset,
-                            });
-                            parameters
-                                .push(native::RootParameter::cbv_descriptor(visibility, binding));
-                            root_offset += 2;
-                        } else {
-                            // SRV and UAV not implemented so far
-                            unimplemented!()
-                        }
-                    } else {
+                    if !content.is_dynamic() {
                         // Descriptor table ranges
                         if content.contains(r::DescriptorContent::CBV) {
                             ranges.push(describe(bind, native::DescriptorRangeType::CBV));
@@ -1673,6 +1664,7 @@ impl d::Device<B> for Device {
                     root_offset += 1;
                 }
 
+                // Sampler descriptor tables
                 range_base = ranges.len();
                 for bind in set.bindings.iter() {
                     let content = r::DescriptorContent::from(bind.ty);
@@ -1687,6 +1679,29 @@ impl d::Device<B> for Device {
                     ));
                     table_type |= r::SAMPLERS;
                     root_offset += 1;
+                }
+
+                // Root (dynamic) descriptor tables
+                for bind in set.bindings.iter() {
+                    let content = r::DescriptorContent::from(bind.ty);
+                    if content.is_dynamic() {
+                        let binding = native::Binding {
+                            register: bind.binding as _,
+                            space,
+                        };
+
+                        if content.contains(r::DescriptorContent::CBV) {
+                            descriptors.push(r::RootDescriptor {
+                                offset: root_offset,
+                            });
+                            parameters
+                                .push(native::RootParameter::cbv_descriptor(visibility, binding));
+                            root_offset += 2;
+                        } else {
+                            // SRV and UAV not implemented so far
+                            unimplemented!()
+                        }
+                    }
                 }
 
                 r::RootElement {
@@ -3285,6 +3300,7 @@ impl d::Device<B> for Device {
         const WAIT_OBJECT_LAST: u32 = winbase::WAIT_OBJECT_0 + winnt::MAXIMUM_WAIT_OBJECTS;
         const WAIT_ABANDONED_LAST: u32 = winbase::WAIT_ABANDONED_0 + winnt::MAXIMUM_WAIT_OBJECTS;
         match hr {
+            winbase::WAIT_FAILED => Err(d::OomOrDeviceLost::DeviceLost(d::DeviceLost)),
             winbase::WAIT_OBJECT_0 ..= WAIT_OBJECT_LAST => Ok(true),
             winbase::WAIT_ABANDONED_0 ..= WAIT_ABANDONED_LAST => Ok(true), //TODO?
             winerror::WAIT_TIMEOUT => Ok(false),

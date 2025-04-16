@@ -228,10 +228,8 @@ bool nsPreflightCache::CacheEntry::CheckRequest(
 
   struct CheckHeaderToken {
     bool Equals(const TokenTime& e, const nsCString& header) const {
-      return e.token.Equals(header, comparator);
+      return e.token.Equals(header, nsCaseInsensitiveCStringComparator);
     }
-
-    const nsCaseInsensitiveCStringComparator comparator{};
   } checker;
   for (uint32_t i = 0; i < aHeaders.Length(); ++i) {
     if (!mHeaders.Contains(aHeaders[i], checker)) {
@@ -1039,7 +1037,7 @@ class nsCORSPreflightListener final : public nsIStreamListener,
                           const nsCString& aPreflightMethod,
                           const nsTArray<nsCString>& aPreflightHeaders)
       : mPreflightMethod(aPreflightMethod),
-        mPreflightHeaders(aPreflightHeaders),
+        mPreflightHeaders(aPreflightHeaders.Clone()),
         mReferrerPrincipal(aReferrerPrincipal),
         mCallback(aCallback),
         mLoadContext(aLoadContext),

@@ -1105,6 +1105,10 @@ pub struct Device {
     /// are null-terminated, to work around driver bugs.
     requires_null_terminated_shader_source: bool,
 
+    /// Whether we must unbind any texture from GL_TEXTURE_EXTERNAL_OES before
+    /// binding to GL_TEXTURE_2D, to work around an android emulator bug.
+    requires_texture_external_unbind: bool,
+
     // GL extensions
     extensions: Vec<String>,
 
@@ -1527,6 +1531,10 @@ impl Device {
         // strings are not null-terminated. See bug 1591945.
         let requires_null_terminated_shader_source = is_emulator;
 
+        // The android emulator gets confused if you don't explicitly unbind any texture
+        // from GL_TEXTURE_EXTERNAL_OES before binding another to GL_TEXTURE_2D. See bug 1636085.
+        let requires_texture_external_unbind = is_emulator;
+
         let is_amd_macos = cfg!(target_os = "macos") && renderer_name.starts_with("AMD");
 
         // On certain GPUs PBO texture upload is only performed asynchronously
@@ -1598,6 +1606,7 @@ impl Device {
             extensions,
             texture_storage_usage,
             requires_null_terminated_shader_source,
+            requires_texture_external_unbind,
             optimal_pbo_stride,
             dump_shader_source,
             surface_origin_is_top_left,
@@ -1679,10 +1688,20 @@ impl Device {
     }
 
     pub fn reset_state(&mut self) {
-        self.bound_textures = [0; 16];
+        for i in 0 .. self.bound_textures.len() {
+            self.bound_textures[i] = 0;
+            self.gl.active_texture(gl::TEXTURE0 + i as gl::GLuint);
+            self.gl.bind_texture(gl::TEXTURE_2D, 0);
+        }
+
         self.bound_vao = 0;
-        self.bound_read_fbo = FBOId(0);
-        self.bound_draw_fbo = FBOId(0);
+        self.gl.bind_vertex_array(0);
+
+        self.bound_read_fbo = self.default_read_fbo;
+        self.gl.bind_framebuffer(gl::READ_FRAMEBUFFER, self.bound_read_fbo.0);
+
+        self.bound_draw_fbo = self.default_draw_fbo;
+        self.gl.bind_framebuffer(gl::DRAW_FRAMEBUFFER, self.bound_draw_fbo.0);
     }
 
     #[cfg(debug_assertions)]
@@ -1777,25 +1796,13 @@ impl Device {
         }
         self.default_draw_fbo = FBOId(default_draw_fbo[0] as gl::GLuint);
 
-        // Texture state
-        for i in 0 .. self.bound_textures.len() {
-            self.bound_textures[i] = 0;
-            self.gl.active_texture(gl::TEXTURE0 + i as gl::GLuint);
-            self.gl.bind_texture(gl::TEXTURE_2D, 0);
-        }
-
         // Shader state
         self.bound_program = 0;
         self.program_mode_id = UniformLocation::INVALID;
         self.gl.use_program(0);
 
-        // Vertex state
-        self.bound_vao = 0;
-        self.gl.bind_vertex_array(0);
-
-        // FBO state
-        self.bound_read_fbo = self.default_read_fbo;
-        self.bound_draw_fbo = self.default_draw_fbo;
+        // Reset common state
+        self.reset_state();
 
         // Pixel op state
         self.gl.pixel_store_i(gl::UNPACK_ALIGNMENT, 1);
@@ -1814,6 +1821,11 @@ impl Device {
 
         if self.bound_textures[slot.0] != id || set_swizzle.is_some() {
             self.gl.active_texture(gl::TEXTURE0 + slot.0 as gl::GLuint);
+            // The android emulator gets confused if you don't explicitly unbind any texture
+            // from GL_TEXTURE_EXTERNAL_OES before binding to GL_TEXTURE_2D. See bug 1636085.
+            if target == gl::TEXTURE_2D && self.requires_texture_external_unbind {
+                self.gl.bind_texture(gl::TEXTURE_EXTERNAL_OES, 0);
+            }
             self.gl.bind_texture(target, id);
             if let Some(swizzle) = set_swizzle {
                 if self.capabilities.supports_texture_swizzle {

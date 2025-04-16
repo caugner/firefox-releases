@@ -322,8 +322,17 @@ class HgRepository(Repository):
         return self._client.rawcommand(args).decode('utf-8')
 
     def get_commit_time(self):
-        return int(self._run(
-            'parent', '--template', '{word(0, date|hgdate)}').strip())
+        newest_public_revision_time = self._run(
+            'log', '--rev', 'heads(ancestors(.) and not draft())',
+            '--template', '{word(0, date|hgdate)}', '--limit', '1').strip()
+
+        if not newest_public_revision_time:
+            raise RuntimeError('Unable to find a non-draft commit in this hg '
+                               'repository. If you created this repository from a '
+                               'bundle, have you done a "hg pull" from hg.mozilla.org '
+                               'since?')
+
+        return int(newest_public_revision_time)
 
     def sparse_checkout_present(self):
         # We assume a sparse checkout is enabled if the .hg/sparse file
@@ -397,15 +406,15 @@ class HgRepository(Repository):
     def get_files_in_working_directory(self):
         # Can return backslashes on Windows. Normalize to forward slashes.
         return list(p.replace('\\', '/') for p in
-                    self._run(b'files', b'-0').split(b'\0') if p)
+                    self._run(b'files', b'-0').split('\0') if p)
 
     def working_directory_clean(self, untracked=False, ignored=False):
-        args = [b'status', b'--modified', b'--added', b'--removed',
-                b'--deleted']
+        args = ['status', '--modified', '--added', '--removed',
+                '--deleted']
         if untracked:
-            args.append(b'--unknown')
+            args.append('--unknown')
         if ignored:
-            args.append(b'--ignored')
+            args.append('--ignored')
 
         # If output is empty, there are no entries of requested status, which
         # means we are clean.
@@ -424,7 +433,7 @@ class HgRepository(Repository):
     def push_to_try(self, message):
         try:
             subprocess.check_call((self._tool, 'push-to-try', '-m', message), cwd=self.path,
-                                  env=self._env)
+                                  env=ensure_subprocess_env(self._env))
         except subprocess.CalledProcessError:
             try:
                 self._run('showconfig', 'extensions.push-to-try')
@@ -520,7 +529,7 @@ class GitRepository(Repository):
         self._run('reset', *paths)
 
     def get_files_in_working_directory(self):
-        return self._run('ls-files', '-z').split(b'\0')
+        return self._run('ls-files', '-z').split('\0')
 
     def working_directory_clean(self, untracked=False, ignored=False):
         args = ['status', '--porcelain']

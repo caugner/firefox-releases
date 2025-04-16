@@ -116,7 +116,8 @@ static NSFontManager* sFontManager;
 
 static void GetStringForNSString(const NSString* aSrc, nsAString& aDest) {
   aDest.SetLength([aSrc length]);
-  [aSrc getCharacters:reinterpret_cast<unichar*>(aDest.BeginWriting())];
+  [aSrc getCharacters:reinterpret_cast<unichar*>(aDest.BeginWriting())
+                range:NSMakeRange(0, [aSrc length])];
 }
 
 static NSString* GetNSStringForString(const nsAString& aSrc) {
@@ -1219,7 +1220,7 @@ void gfxMacPlatformFontList::RegisteredFontsChangedNotificationCallback(
 gfxFontEntry* gfxMacPlatformFontList::PlatformGlobalFontFallback(const uint32_t aCh,
                                                                  Script aRunScript,
                                                                  const gfxFontStyle* aMatchStyle,
-                                                                 FontFamily* aMatchedFamily) {
+                                                                 FontFamily& aMatchedFamily) {
   CFStringRef str;
   UniChar ch[2];
   CFIndex length = 1;
@@ -1275,7 +1276,7 @@ gfxFontEntry* gfxMacPlatformFontList::PlatformGlobalFontFallback(const uint32_t 
           }
           if (fontEntry) {
             if (fontEntry->HasCharacter(aCh)) {
-              *aMatchedFamily = FontFamily(family);
+              aMatchedFamily = FontFamily(family);
             } else {
               fontEntry = nullptr;
               cantUseFallbackFont = true;
@@ -1288,7 +1289,7 @@ gfxFontEntry* gfxMacPlatformFontList::PlatformGlobalFontFallback(const uint32_t 
           fontEntry = family->FindFontForStyle(*aMatchStyle);
           if (fontEntry) {
             if (fontEntry->HasCharacter(aCh)) {
-              *aMatchedFamily = FontFamily(family);
+              aMatchedFamily = FontFamily(family);
             } else {
               fontEntry = nullptr;
               cantUseFallbackFont = true;

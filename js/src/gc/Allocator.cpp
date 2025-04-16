@@ -13,7 +13,7 @@
 
 #include "gc/GCInternals.h"
 #include "gc/GCLock.h"
-#include "gc/GCTrace.h"
+#include "gc/GCProbes.h"
 #include "gc/Nursery.h"
 #include "jit/JitRealm.h"
 #include "threading/CpuCount.h"
@@ -165,7 +165,7 @@ JSString* GCRuntime::tryNewNurseryString(JSContext* cx, size_t thingSize,
   MOZ_ASSERT(!cx->isNurseryAllocSuppressed());
   MOZ_ASSERT(!cx->zone()->isAtomsZone());
 
-  Cell* cell = cx->nursery().allocateString(cx->zone(), thingSize, kind);
+  Cell* cell = cx->nursery().allocateString(cx->zone(), thingSize);
   if (cell) {
     return static_cast<JSString*>(cell);
   }
@@ -177,7 +177,7 @@ JSString* GCRuntime::tryNewNurseryString(JSContext* cx, size_t thingSize,
     // other heuristics can disable nursery strings for this zone.
     if (cx->nursery().isEnabled() && cx->zone()->allocNurseryStrings) {
       return static_cast<JSString*>(
-          cx->nursery().allocateString(cx->zone(), thingSize, kind));
+          cx->nursery().allocateString(cx->zone(), thingSize));
     }
   }
   return nullptr;
@@ -240,7 +240,7 @@ JS::BigInt* GCRuntime::tryNewNurseryBigInt(JSContext* cx, size_t thingSize,
   MOZ_ASSERT(!cx->isNurseryAllocSuppressed());
   MOZ_ASSERT(!cx->zone()->isAtomsZone());
 
-  Cell* cell = cx->nursery().allocateBigInt(cx->zone(), thingSize, kind);
+  Cell* cell = cx->nursery().allocateBigInt(cx->zone(), thingSize);
   if (cell) {
     return static_cast<JS::BigInt*>(cell);
   }
@@ -252,7 +252,7 @@ JS::BigInt* GCRuntime::tryNewNurseryBigInt(JSContext* cx, size_t thingSize,
     // other heuristics can disable nursery BigInts for this zone.
     if (cx->nursery().isEnabled() && cx->zone()->allocNurseryBigInts) {
       return static_cast<JS::BigInt*>(
-          cx->nursery().allocateBigInt(cx->zone(), thingSize, kind));
+          cx->nursery().allocateBigInt(cx->zone(), thingSize));
     }
   }
   return nullptr;
@@ -368,7 +368,7 @@ T* GCRuntime::tryNewTenuredThing(JSContext* cx, AllocKind kind,
   }
 
   checkIncrementalZoneState(cx, t);
-  gcTracer.traceTenuredAlloc(t, kind);
+  gcprobes::TenuredAlloc(t, kind);
   // We count this regardless of the profiler's state, assuming that it costs
   // just as much to count it, as to check the profiler's state and decide not
   // to count it.
@@ -555,7 +555,7 @@ TenuredCell* ArenaLists::refillFreeListAndAllocate(
     maybeLock.emplace(rt);
   }
 
-  ArenaList& al = arenaLists(thingKind);
+  ArenaList& al = arenaList(thingKind);
   Arena* arena = al.takeNextArena();
   if (arena) {
     // Empty arenas should be immediately freed.

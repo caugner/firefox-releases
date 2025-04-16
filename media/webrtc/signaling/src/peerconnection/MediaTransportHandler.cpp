@@ -520,10 +520,11 @@ void MediaTransportHandlerSTS::ActivateTransport(
     bool aPrivacyRequested) {
   mInitPromise->Then(
       mStsThread, __func__,
-      [=, self = RefPtr<MediaTransportHandlerSTS>(this)]() {
+      [=, keyDer = aKeyDer.Clone(), certDer = aCertDer.Clone(),
+       self = RefPtr<MediaTransportHandlerSTS>(this)]() {
         MOZ_ASSERT(aComponentCount);
         RefPtr<DtlsIdentity> dtlsIdentity(
-            DtlsIdentity::Deserialize(aKeyDer, aCertDer, aAuthType));
+            DtlsIdentity::Deserialize(keyDer, certDer, aAuthType));
         if (!dtlsIdentity) {
           MOZ_ASSERT(false);
           return;
@@ -611,7 +612,8 @@ void MediaTransportHandlerSTS::StartIceGathering(
     const nsTArray<NrIceStunAddr>& aStunAddrs) {
   mInitPromise->Then(
       mStsThread, __func__,
-      [=, self = RefPtr<MediaTransportHandlerSTS>(this)]() {
+      [=, stunAddrs = aStunAddrs.Clone(),
+       self = RefPtr<MediaTransportHandlerSTS>(this)]() {
         mObfuscateHostAddresses = aObfuscateHostAddresses;
 
         // Belt and suspenders - in e10s mode, the call below to SetStunAddrs
@@ -620,8 +622,8 @@ void MediaTransportHandlerSTS::StartIceGathering(
         // just set them here, and only do it here.
         mIceCtx->SetCtxFlags(aDefaultRouteOnly);
 
-        if (aStunAddrs.Length()) {
-          mIceCtx->SetStunAddrs(aStunAddrs);
+        if (stunAddrs.Length()) {
+          mIceCtx->SetStunAddrs(stunAddrs);
         }
 
         // Start gathering, but only if there are streams
@@ -673,8 +675,8 @@ void MediaTransportHandlerSTS::StartIceChecks(
       [](const std::string& aError) {});
 }
 
-static void TokenizeCandidate(const std::string& aCandidate,
-                              std::vector<std::string>& aTokens) {
+void TokenizeCandidate(const std::string& aCandidate,
+                       std::vector<std::string>& aTokens) {
   aTokens.clear();
 
   std::istringstream iss(aCandidate);
@@ -1214,9 +1216,8 @@ RefPtr<TransportFlow> MediaTransportHandlerSTS::CreateTransportFlow(
   // Always permits negotiation of the confidential mode.
   // Only allow non-confidential (which is an allowed default),
   // if we aren't confidential.
-  std::set<std::string> alpn;
-  std::string alpnDefault = "";
-  alpn.insert("c-webrtc");
+  std::set<std::string> alpn = {"c-webrtc"};
+  std::string alpnDefault;
   if (!aPrivacyRequested) {
     alpnDefault = "webrtc";
     alpn.insert(alpnDefault);

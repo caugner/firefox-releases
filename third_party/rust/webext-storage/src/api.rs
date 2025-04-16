@@ -9,10 +9,15 @@ use serde::{ser::SerializeMap, Serialize, Serializer};
 use serde_json::{Map, Value as JsonValue};
 use sql_support::{self, ConnExt};
 
-// These constants are defined by the chrome.storage.sync spec.
-const QUOTA_BYTES: usize = 102_400;
-const QUOTA_BYTES_PER_ITEM: usize = 8_192;
-const MAX_ITEMS: usize = 512;
+// These constants are defined by the chrome.storage.sync spec. We export them
+// publicly from this module, then from the crate, so they wind up in the
+// clients.
+// Note the limits for `chrome.storage.sync` and `chrome.storage.local` are
+// different, and these are from `.sync` - we'll have work to do if we end up
+// wanting this to be used for `.local` too!
+pub const SYNC_QUOTA_BYTES: usize = 102_400;
+pub const SYNC_QUOTA_BYTES_PER_ITEM: usize = 8_192;
+pub const SYNC_MAX_ITEMS: usize = 512;
 // Note there are also constants for "operations per minute" etc, which aren't
 // enforced here.
 
@@ -38,28 +43,69 @@ fn get_from_db(conn: &Connection, ext_id: &str) -> Result<Option<JsonMap>> {
 }
 
 fn save_to_db(tx: &Transaction<'_>, ext_id: &str, val: &JsonValue) -> Result<()> {
-    // The quota is enforced on the byte count, which is what .len() returns.
-    let sval = val.to_string();
-    if sval.len() > QUOTA_BYTES {
-        return Err(ErrorKind::QuotaError(QuotaReason::TotalBytes).into());
+    // This function also handles removals. Either an empty map or explicit null
+    // is a removal. If there's a mirror record for this extension ID, then we
+    // must leave a tombstone behind for syncing.
+    let is_delete = match val {
+        JsonValue::Null => true,
+        JsonValue::Object(m) => m.is_empty(),
+        _ => false,
+    };
+    if is_delete {
+        let in_mirror = tx
+            .try_query_one(
+                "SELECT EXISTS(SELECT 1 FROM storage_sync_mirror WHERE ext_id = :ext_id);",
+                rusqlite::named_params! {
+                    ":ext_id": ext_id,
+                },
+                true,
+            )?
+            .unwrap_or_default();
+        if in_mirror {
+            log::trace!("saving data for '{}': leaving a tombstone", ext_id);
+            tx.execute_named_cached(
+                "
+                INSERT INTO storage_sync_data(ext_id, data, sync_change_counter)
+                VALUES (:ext_id, NULL, 1)
+                ON CONFLICT (ext_id) DO UPDATE
+                SET data = NULL, sync_change_counter = sync_change_counter + 1",
+                rusqlite::named_params! {
+                    ":ext_id": ext_id,
+                },
+            )?;
+        } else {
+            log::trace!("saving data for '{}': removing the row", ext_id);
+            tx.execute_named_cached(
+                "
+                DELETE FROM storage_sync_data WHERE ext_id = :ext_id",
+                rusqlite::named_params! {
+                    ":ext_id": ext_id,
+                },
+            )?;
+        }
+    } else {
+        // Convert to bytes so we can enforce the quota.
+        let sval = val.to_string();
+        if sval.len() > SYNC_QUOTA_BYTES {
+            return Err(ErrorKind::QuotaError(QuotaReason::TotalBytes).into());
+        }
+        log::trace!("saving data for '{}': writing", ext_id);
+        tx.execute_named_cached(
+            "INSERT INTO storage_sync_data(ext_id, data, sync_change_counter)
+                VALUES (:ext_id, :data, 1)
+                ON CONFLICT (ext_id) DO UPDATE
+                set data=:data, sync_change_counter = sync_change_counter + 1",
+            rusqlite::named_params! {
+                ":ext_id": ext_id,
+                ":data": &sval,
+            },
+        )?;
     }
-    // XXX - sync support will need to do the change_counter thing here.
-    tx.execute_named(
-        "INSERT OR REPLACE INTO storage_sync_data(ext_id, data)
-            VALUES (:ext_id, :data)",
-        &[(":ext_id", &ext_id), (":data", &sval)],
-    )?;
     Ok(())
 }
 
 fn remove_from_db(tx: &Transaction<'_>, ext_id: &str) -> Result<()> {
-    // XXX - sync support will need to do the tombstone thing here.
-    tx.execute_named(
-        "DELETE FROM storage_sync_data
-        WHERE ext_id = :ext_id",
-        &[(":ext_id", &ext_id)],
-    )?;
-    Ok(())
+    save_to_db(tx, ext_id, &JsonValue::Null)
 }
 
 // This is a "helper struct" for the callback part of the chrome.storage spec,
@@ -69,39 +115,37 @@ fn remove_from_db(tx: &Transaction<'_>, ext_id: &str) -> Result<()> {
 #[serde(rename_all = "camelCase")]
 pub struct StorageValueChange {
     #[serde(skip_serializing)]
-    key: String,
+    pub key: String,
     #[serde(skip_serializing_if = "Option::is_none")]
-    old_value: Option<JsonValue>,
+    pub old_value: Option<JsonValue>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    new_value: Option<JsonValue>,
+    pub new_value: Option<JsonValue>,
 }
 
 // This is, largely, a helper so that this serializes correctly as per the
 // chrome.storage.sync spec. If not for custom serialization it should just
 // be a plain vec
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Default, Clone, PartialEq)]
 pub struct StorageChanges {
     changes: Vec<StorageValueChange>,
 }
 
 impl StorageChanges {
-    fn new() -> Self {
-        Self {
-            changes: Vec::new(),
-        }
+    pub fn new() -> Self {
+        Self::default()
     }
 
-    fn with_capacity(n: usize) -> Self {
+    pub fn with_capacity(n: usize) -> Self {
         Self {
             changes: Vec::with_capacity(n),
         }
     }
 
-    fn is_empty(&self) -> bool {
+    pub fn is_empty(&self) -> bool {
         self.changes.is_empty()
     }
 
-    fn push(&mut self, change: StorageValueChange) {
+    pub fn push(&mut self, change: StorageValueChange) {
         self.changes.push(change)
     }
 }
@@ -118,6 +162,14 @@ impl Serialize for StorageChanges {
         }
         map.end()
     }
+}
+
+// A helper to determine the size of a key/value combination from the
+// perspective of quota and getBytesInUse().
+pub fn get_quota_size_of(key: &str, v: &JsonValue) -> usize {
+    // Reading the chrome docs literally re the quota, the length of the key
+    // is just the string len, but the value is the json val, as bytes.
+    key.len() + v.to_string().len()
 }
 
 /// The implementation of `storage[.sync].set()`. On success this returns the
@@ -137,12 +189,12 @@ pub fn set(tx: &Transaction<'_>, ext_id: &str, val: JsonValue) -> Result<Storage
     // iterate over the value we are adding/updating.
     for (k, v) in val_map.into_iter() {
         let old_value = current.remove(&k);
-        if current.len() >= MAX_ITEMS {
+        if current.len() >= SYNC_MAX_ITEMS {
             return Err(ErrorKind::QuotaError(QuotaReason::MaxItems).into());
         }
         // Reading the chrome docs literally re the quota, the length of the key
         // is just the string len, but the value is the json val, as bytes
-        if k.len() + v.to_string().len() >= QUOTA_BYTES_PER_ITEM {
+        if get_quota_size_of(&k, &v) > SYNC_QUOTA_BYTES_PER_ITEM {
             return Err(ErrorKind::QuotaError(QuotaReason::ItemBytes).into());
         }
         let change = StorageValueChange {
@@ -181,9 +233,10 @@ fn get_keys(keys: JsonValue) -> Vec<(String, Option<JsonValue>)> {
 pub fn get(conn: &Connection, ext_id: &str, keys: JsonValue) -> Result<JsonValue> {
     // key is optional, or string or array of string or object keys
     let maybe_existing = get_from_db(conn, ext_id)?;
-    let mut existing = match maybe_existing {
-        None => return Ok(JsonValue::Object(Map::new())),
-        Some(v) => v,
+    let mut existing = match (maybe_existing, keys.is_object()) {
+        (None, true) => return Ok(keys),
+        (None, false) => return Ok(JsonValue::Object(Map::new())),
+        (Some(v), _) => v,
     };
     // take the quick path for null, where we just return the entire object.
     if keys.is_null() {
@@ -193,15 +246,13 @@ pub fn get(conn: &Connection, ext_id: &str, keys: JsonValue) -> Result<JsonValue
     let keys_and_defaults = get_keys(keys);
     let mut result = Map::with_capacity(keys_and_defaults.len());
     for (key, maybe_default) in keys_and_defaults {
-        // XXX - If a key is requested that doesn't exist, we have 2 options:
-        // (1) have the key in the result with the value null, or (2) the key
-        // simply doesn't exist in the result. We assume (2), but should verify
-        // that's what chrome does.
         if let Some(v) = existing.remove(&key) {
             result.insert(key, v);
         } else if let Some(def) = maybe_default {
             result.insert(key, def);
         }
+        // else |keys| is a string/array instead of an object with defaults.
+        // Don't include keys without default values.
     }
     Ok(JsonValue::Object(result))
 }
@@ -215,6 +266,8 @@ pub fn remove(tx: &Transaction<'_>, ext_id: &str, keys: JsonValue) -> Result<Sto
         Some(v) => v,
     };
 
+    // Note: get_keys parses strings, arrays and objects, but remove()
+    // is expected to only be passed a string or array of strings.
     let keys_and_defs = get_keys(keys);
 
     let mut result = StorageChanges::with_capacity(keys_and_defs.len());
@@ -253,22 +306,30 @@ pub fn clear(tx: &Transaction<'_>, ext_id: &str) -> Result<StorageChanges> {
     Ok(result)
 }
 
-/// While this API isn't available to extensions, Firefox wants a way to wipe
-/// all data for all addons but not sync the deletions. We also don't report
-/// the changes caused by the deletion.
-/// That means that after doing this, the next sync is likely to drag some data
-/// back in - which is fine.
-/// This is much like what the sync support for other components calls a "wipe",
-/// so we name it similarly.
-pub fn wipe_all(tx: &Transaction<'_>) -> Result<()> {
-    // We assume the meta table is only used by sync.
-    tx.execute_batch(
-        "DELETE FROM storage_sync_data; DELETE FROM storage_sync_mirror; DELETE FROM meta;",
-    )?;
-    Ok(())
+/// The implementation of `storage[.sync].getBytesInUse()`.
+pub fn get_bytes_in_use(conn: &Connection, ext_id: &str, keys: JsonValue) -> Result<usize> {
+    let maybe_existing = get_from_db(conn, ext_id)?;
+    let existing = match maybe_existing {
+        None => return Ok(0),
+        Some(v) => v,
+    };
+    // Make an array of all the keys we we are going to count.
+    let keys: Vec<&str> = match &keys {
+        JsonValue::Null => existing.keys().map(|v| v.as_str()).collect(),
+        JsonValue::String(name) => vec![name.as_str()],
+        JsonValue::Array(names) => names.iter().filter_map(|v| v.as_str()).collect(),
+        // in the spirit of json-based APIs, silently ignore strange things.
+        _ => return Ok(0),
+    };
+    // We must use the same way of counting as our quota enforcement.
+    let mut size = 0;
+    for key in keys.into_iter() {
+        if let Some(v) = existing.get(key) {
+            size += get_quota_size_of(key, &v);
+        }
+    }
+    Ok(size)
 }
-
-// TODO - get_bytes_in_use()
 
 #[cfg(test)]
 mod tests {
@@ -319,16 +380,13 @@ mod tests {
         let tx = db.transaction()?;
 
         // an empty store.
-        for q in vec![
-            JsonValue::Null,
-            json!("foo"),
-            json!(["foo"]),
-            json!({ "foo": null }),
-            json!({"foo": "default"}),
-        ]
-        .into_iter()
-        {
+        for q in vec![JsonValue::Null, json!("foo"), json!(["foo"])].into_iter() {
             assert_eq!(get(&tx, &ext_id, q)?, json!({}));
+        }
+
+        // Default values in an empty store.
+        for q in vec![json!({ "foo": null }), json!({"foo": "default"})].into_iter() {
+            assert_eq!(get(&tx, &ext_id, q.clone())?, q.clone());
         }
 
         // Single item in the store.
@@ -343,6 +401,20 @@ mod tests {
         .into_iter()
         {
             assert_eq!(get(&tx, &ext_id, q)?, json!({"foo": "bar" }));
+        }
+
+        // Default values in a non-empty store.
+        for q in vec![
+            json!({ "non_existing_key": null }),
+            json!({"non_existing_key": 0}),
+            json!({"non_existing_key": false}),
+            json!({"non_existing_key": "default"}),
+            json!({"non_existing_key": ["array"]}),
+            json!({"non_existing_key": {"objectkey": "value"}}),
+        ]
+        .into_iter()
+        {
+            assert_eq!(get(&tx, &ext_id, q.clone())?, q.clone());
         }
 
         // more complex stuff, including changes checking.
@@ -468,7 +540,7 @@ mod tests {
         let mut db = new_mem_db();
         let tx = db.transaction()?;
         let ext_id = "xyz";
-        for i in 1..MAX_ITEMS + 1 {
+        for i in 1..SYNC_MAX_ITEMS + 1 {
             set(
                 &tx,
                 &ext_id,
@@ -489,11 +561,16 @@ mod tests {
         let tx = db.transaction()?;
         let ext_id = "xyz";
         // A string 5 bytes less than the max. This should be counted as being
-        // 3 bytes less than the max as the quotes are counted.
-        let val = "x".repeat(QUOTA_BYTES_PER_ITEM - 5);
+        // 3 bytes less than the max as the quotes are counted. Plus the length
+        // of the key (no quotes) means we should come in 2 bytes under.
+        let val = "x".repeat(SYNC_QUOTA_BYTES_PER_ITEM - 5);
 
         // Key length doesn't push it over.
         set(&tx, &ext_id, json!({ "x": val }))?;
+        assert_eq!(
+            get_bytes_in_use(&tx, &ext_id, json!("x"))?,
+            SYNC_QUOTA_BYTES_PER_ITEM - 2
+        );
 
         // Key length does push it over.
         let e = set(&tx, &ext_id, json!({ "xxxx": val })).unwrap_err();
@@ -504,36 +581,35 @@ mod tests {
         Ok(())
     }
 
-    fn query_count(conn: &Connection, table: &str) -> u32 {
-        conn.query_row_and_then(
-            &format!("SELECT COUNT(*) FROM {};", table),
-            rusqlite::NO_PARAMS,
-            |row| row.get::<_, u32>(0),
-        )
-        .expect("should work")
-    }
-
     #[test]
-    fn test_wipe() -> Result<()> {
-        use crate::db::put_meta;
-
+    fn test_get_bytes_in_use() -> Result<()> {
         let mut db = new_mem_db();
         let tx = db.transaction()?;
-        set(&tx, "ext-a", json!({ "x": "y" }))?;
-        set(&tx, "ext-b", json!({ "y": "x" }))?;
-        put_meta(&tx, "meta", &"meta-meta".to_string())?;
-        tx.execute(
-            "INSERT INTO storage_sync_mirror (guid, ext_id, data)
-                    VALUES ('guid', 'ext-a', null)",
-            rusqlite::NO_PARAMS,
-        )?;
-        assert_eq!(query_count(&tx, "storage_sync_data"), 2);
-        assert_eq!(query_count(&tx, "storage_sync_mirror"), 1);
-        assert_eq!(query_count(&tx, "meta"), 1);
-        wipe_all(&tx)?;
-        assert_eq!(query_count(&tx, "storage_sync_data"), 0);
-        assert_eq!(query_count(&tx, "storage_sync_mirror"), 0);
-        assert_eq!(query_count(&tx, "meta"), 0);
+        let ext_id = "xyz";
+
+        assert_eq!(get_bytes_in_use(&tx, &ext_id, json!(null))?, 0);
+
+        set(&tx, &ext_id, json!({ "a": "a" }))?; // should be 4
+        set(&tx, &ext_id, json!({ "b": "bb" }))?; // should be 5
+        set(&tx, &ext_id, json!({ "c": "ccc" }))?; // should be 6
+        set(&tx, &ext_id, json!({ "n": 999_999 }))?; // should be 7
+
+        assert_eq!(get_bytes_in_use(&tx, &ext_id, json!("x"))?, 0);
+        assert_eq!(get_bytes_in_use(&tx, &ext_id, json!("a"))?, 4);
+        assert_eq!(get_bytes_in_use(&tx, &ext_id, json!("b"))?, 5);
+        assert_eq!(get_bytes_in_use(&tx, &ext_id, json!("c"))?, 6);
+        assert_eq!(get_bytes_in_use(&tx, &ext_id, json!("n"))?, 7);
+
+        assert_eq!(get_bytes_in_use(&tx, &ext_id, json!(["a"]))?, 4);
+        assert_eq!(get_bytes_in_use(&tx, &ext_id, json!(["a", "x"]))?, 4);
+        assert_eq!(get_bytes_in_use(&tx, &ext_id, json!(["a", "b"]))?, 9);
+        assert_eq!(get_bytes_in_use(&tx, &ext_id, json!(["a", "c"]))?, 10);
+
+        assert_eq!(
+            get_bytes_in_use(&tx, &ext_id, json!(["a", "b", "c", "n"]))?,
+            22
+        );
+        assert_eq!(get_bytes_in_use(&tx, &ext_id, json!(null))?, 22);
         Ok(())
     }
 }

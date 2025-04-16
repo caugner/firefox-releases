@@ -100,6 +100,12 @@ class WebPlatformTest(TestingMixin, MercurialScript, CodeCoverageMixin, AndroidM
             "help": "Defines a way to not run a specific implementation status "
                     " (i.e. not implemented)."}
          ],
+        [["--skip-timeout"], {
+            "action": "store_true",
+            "dest": "skip_timeout",
+            "default": False,
+            "help": "Ignore tests that are expected status of TIMEOUT"}
+         ],
         [["--include"], {
             "action": "store",
             "dest": "include",
@@ -164,6 +170,11 @@ class WebPlatformTest(TestingMixin, MercurialScript, CodeCoverageMixin, AndroidM
             dirs['abs_xre_dir'] = os.path.join(abs_dirs['abs_work_dir'], 'hostutils')
         if self.is_emulator:
             dirs['abs_avds_dir'] = self.config.get('avds_dir')
+            fetches_dir = os.environ.get('MOZ_FETCHES_DIR')
+            if fetches_dir:
+                dirs['abs_sdk_dir'] = os.path.join(fetches_dir, 'android-sdk-linux')
+            else:
+                dirs['abs_sdk_dir'] = os.path.join(abs_dirs['abs_work_dir'], 'android-sdk-linux')
 
         abs_dirs.update(dirs)
         self.abs_dirs = abs_dirs
@@ -260,6 +271,9 @@ class WebPlatformTest(TestingMixin, MercurialScript, CodeCoverageMixin, AndroidM
             cmd.append("--disable-e10s")
         if c["enable_webrender"]:
             cmd.append("--enable-webrender")
+
+        if c["skip_timeout"]:
+            cmd.append("--skip-timeout")
 
         for implementation_status in c["skip_implementation_status"]:
             cmd.append("--skip-implementation-status=%s" % implementation_status)

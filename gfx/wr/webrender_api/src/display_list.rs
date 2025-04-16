@@ -359,8 +359,7 @@ impl BuiltDisplayList {
         BuiltDisplayList { data, descriptor }
     }
 
-    pub fn into_data(mut self) -> (Vec<u8>, BuiltDisplayListDescriptor) {
-        self.descriptor.send_start_time = precise_time_ns();
+    pub fn into_data(self) -> (Vec<u8>, BuiltDisplayListDescriptor) {
         (self.data, self.descriptor)
     }
 
@@ -378,6 +377,10 @@ impl BuiltDisplayList {
 
     pub fn descriptor(&self) -> &BuiltDisplayListDescriptor {
         &self.descriptor
+    }
+
+    pub fn set_send_time_ns(&mut self, time: u64) {
+        self.descriptor.send_start_time = time;
     }
 
     pub fn times(&self) -> (u64, u64, u64) {
@@ -930,7 +933,7 @@ impl<'de> Deserialize<'de> for BuiltDisplayList {
             descriptor: BuiltDisplayListDescriptor {
                 builder_start_time: 0,
                 builder_finish_time: 1,
-                send_start_time: 0,
+                send_start_time: 1,
                 total_clip_nodes,
                 total_spatial_nodes,
                 extra_data_offset,
@@ -1557,8 +1560,7 @@ impl DisplayListBuilder {
         filter_datas: &[di::FilterData],
         filter_primitives: &[di::FilterPrimitive],
         raster_space: di::RasterSpace,
-        cache_tiles: bool,
-        is_backdrop_root: bool,
+        flags: di::StackingContextFlags,
     ) {
         self.push_filters(filters, filter_datas, filter_primitives);
 
@@ -1571,8 +1573,7 @@ impl DisplayListBuilder {
                 mix_blend_mode,
                 clip_id,
                 raster_space,
-                cache_tiles,
-                is_backdrop_root,
+                flags,
             },
         });
 
@@ -1617,8 +1618,7 @@ impl DisplayListBuilder {
             filter_datas,
             filter_primitives,
             di::RasterSpace::Screen,
-            /* cache_tiles = */ false,
-            /* is_backdrop_root = */ false,
+            di::StackingContextFlags::empty(),
         );
     }
 
@@ -1890,21 +1890,24 @@ impl DisplayListBuilder {
         debug_assert!(self.writing_to_chunk);
         self.writing_to_chunk = false;
 
-        if self.pending_chunk.len() > 0 {
-            self.flush_pending_item_group(key);
-            true
-        } else {
-            debug_assert!(self.pending_chunk.is_empty());
-            false
+        if self.pending_chunk.is_empty() {
+            return false;
         }
+
+        self.flush_pending_item_group(key);
+        true
     }
 
-    pub fn cancel_item_group(&mut self) {
+    pub fn cancel_item_group(&mut self, discard: bool) {
         debug_assert!(self.writing_to_chunk);
         self.writing_to_chunk = false;
 
-        // Push pending chunk to data section.
-        self.data.append(&mut self.pending_chunk);
+        if discard {
+            self.pending_chunk.clear();
+        } else {
+            // Push pending chunk to data section.
+            self.data.append(&mut self.pending_chunk);
+        }
     }
 
     pub fn push_reuse_items(&mut self, key: di::ItemKey) {
@@ -1953,7 +1956,7 @@ impl DisplayListBuilder {
                 descriptor: BuiltDisplayListDescriptor {
                     builder_start_time: self.builder_start_time,
                     builder_finish_time: end_time,
-                    send_start_time: 0,
+                    send_start_time: end_time,
                     total_clip_nodes: self.next_clip_index,
                     total_spatial_nodes: self.next_spatial_index,
                     cache_size: self.cache_size,

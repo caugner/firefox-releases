@@ -27,7 +27,6 @@
 "use strict";
 
 const pps = Cc["@mozilla.org/network/protocol-proxy-service;1"].getService();
-const { NodeServer } = ChromeUtils.import("resource://testing-common/httpd.js");
 
 let proxy_port;
 let filter;
@@ -77,7 +76,7 @@ class UnxpectedAuthPrompt2 {
   }
   asyncPromptAuth() {
     this.signal.triggered = true;
-    throw Cr.ERROR_UNEXPECTED;
+    throw Components.Exception("", Cr.ERROR_UNEXPECTED);
   }
 }
 
@@ -105,7 +104,7 @@ class AuthRequestor {
     if (iid.equals(Ci.nsIAuthPrompt2)) {
       return this.prompt();
     }
-    throw Cr.NS_ERROR_NO_INTERFACE;
+    throw Components.Exception("", Cr.NS_ERROR_NO_INTERFACE);
   }
 }
 

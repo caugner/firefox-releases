@@ -16,7 +16,6 @@
 #include "mozilla/MouseEvents.h"
 #include "mozilla/PresShell.h"
 #include "mozilla/TextEditor.h"
-#include "mozilla/StaticPrefs_browser.h"
 #include "mozilla/StaticPrefs_layout.h"
 
 #include "nscore.h"
@@ -146,7 +145,7 @@ static const nsAttrValue::EnumTable kDirTable[] = {
 void nsGenericHTMLElement::AddToNameTable(nsAtom* aName) {
   MOZ_ASSERT(HasName(), "Node doesn't have name?");
   Document* doc = GetUncomposedDoc();
-  if (doc && !IsInAnonymousSubtree()) {
+  if (doc && !IsInNativeAnonymousSubtree()) {
     doc->AddToNameTable(this, aName);
   }
 }
@@ -1325,7 +1324,7 @@ void nsGenericHTMLElement::MapImageSizeAttributesInto(
     }
 
     if (w && h && *w != 0 && *h != 0) {
-      aDecls.SetNumberValue(eCSSProperty_aspect_ratio, *w / *h);
+      aDecls.SetAspectRatio(*w, *h);
     }
   }
 }
@@ -1659,44 +1658,13 @@ nsIContent::IMEState nsGenericHTMLFormElement::GetDesiredIMEState() {
   return state;
 }
 
-static bool IsSameOriginAsTop(const BindContext& aContext,
-                              const nsGenericHTMLFormElement* aElement) {
-  MOZ_ASSERT(aElement);
-
-  BrowsingContext* browsingContext = aContext.OwnerDoc().GetBrowsingContext();
-  if (!browsingContext) {
-    return false;
-  }
-
-  nsPIDOMWindowOuter* topWindow = browsingContext->Top()->GetDOMWindow();
-  if (!topWindow) {
-    // If we don't have a DOMWindow, We are not in same origin.
-    return false;
-  }
-
-  Document* topLevelDocument = topWindow->GetExtantDoc();
-  if (!topLevelDocument) {
-    return false;
-  }
-
-  return NS_SUCCEEDED(
-      nsContentUtils::CheckSameOrigin(topLevelDocument, aElement));
-}
-
 nsresult nsGenericHTMLFormElement::BindToTree(BindContext& aContext,
                                               nsINode& aParent) {
   nsresult rv = nsGenericHTMLElement::BindToTree(aContext, aParent);
   NS_ENSURE_SUCCESS(rv, rv);
 
-  // An autofocus event has to be launched if the autofocus attribute is
-  // specified and the element accepts the autofocus attribute and only if the
-  // target document is in the same origin as the top level document.
-  // https://html.spec.whatwg.org/multipage/interaction.html#the-autofocus-attribute:same-origin
-  // In addition, the document should not be already loaded and the
-  // "browser.autofocus" preference should be 'true'.
-  if (IsAutofocusable() && HasAttr(kNameSpaceID_None, nsGkAtoms::autofocus) &&
-      StaticPrefs::browser_autofocus() && IsInUncomposedDoc() &&
-      IsSameOriginAsTop(aContext, this)) {
+  if (IsAutofocusable() && HasAttr(nsGkAtoms::autofocus) &&
+      aContext.AllowsAutoFocus()) {
     aContext.OwnerDoc().SetAutoFocusElement(this);
   }
 
@@ -1977,10 +1945,10 @@ EventStates nsGenericHTMLFormElement::IntrinsicState() const {
   }
 
   // Make the text controls read-write
-  if (!state.HasState(NS_EVENT_STATE_MOZ_READWRITE) && DoesReadOnlyApply()) {
-    if (!GetBoolAttr(nsGkAtoms::readonly)) {
-      state |= NS_EVENT_STATE_MOZ_READWRITE;
-      state &= ~NS_EVENT_STATE_MOZ_READONLY;
+  if (!state.HasState(NS_EVENT_STATE_READWRITE) && DoesReadOnlyApply()) {
+    if (!GetBoolAttr(nsGkAtoms::readonly) && !IsDisabled()) {
+      state |= NS_EVENT_STATE_READWRITE;
+      state &= ~NS_EVENT_STATE_READONLY;
     }
   }
 
@@ -2202,23 +2170,21 @@ void nsGenericHTMLFormElement::UpdateDisabledState(bool aNotify) {
     return;
   }
 
-  bool isDisabled = HasAttr(kNameSpaceID_None, nsGkAtoms::disabled);
-  if (!isDisabled && mFieldSet) {
-    isDisabled = mFieldSet->IsDisabled();
-  }
+  const bool isDisabled =
+      HasAttr(nsGkAtoms::disabled) || (mFieldSet && mFieldSet->IsDisabled());
 
-  EventStates disabledStates;
-  if (isDisabled) {
-    disabledStates |= NS_EVENT_STATE_DISABLED;
-  } else {
-    disabledStates |= NS_EVENT_STATE_ENABLED;
-  }
+  const EventStates disabledStates =
+      isDisabled ? NS_EVENT_STATE_DISABLED : NS_EVENT_STATE_ENABLED;
 
   EventStates oldDisabledStates = State() & DISABLED_STATES;
   EventStates changedStates = disabledStates ^ oldDisabledStates;
 
   if (!changedStates.IsEmpty()) {
     ToggleStates(changedStates, aNotify);
+    if (DoesReadOnlyApply()) {
+      // :disabled influences :read-only / :read-write.
+      UpdateState(aNotify);
+    }
   }
 }
 

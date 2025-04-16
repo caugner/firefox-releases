@@ -65,7 +65,7 @@ class nsHttpResponseHead {
   uint16_t Status() const;
   void StatusText(nsACString& aStatusText);
   int64_t ContentLength();
-  void ContentType(nsACString& aContentType);
+  void ContentType(nsACString& aContentType) const;
   void ContentCharset(nsACString& aContentCharset);
   bool Public();
   bool Private();
@@ -157,7 +157,7 @@ class nsHttpResponseHead {
   [[nodiscard]] nsresult GetOriginalHeader(nsHttpAtom aHeader,
                                            nsIHttpHeaderVisitor* aVisitor);
 
-  bool HasContentType();
+  bool HasContentType() const;
   bool HasContentCharset();
   bool GetContentTypeOptionsHeader(nsACString& aOutput);
 

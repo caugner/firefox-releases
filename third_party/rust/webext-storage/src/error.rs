@@ -4,6 +4,7 @@
 
 use failure::Fail;
 use interrupt_support::Interrupted;
+use sync15_traits::bridged_engine;
 
 #[derive(Debug)]
 pub enum QuotaReason {
@@ -52,6 +53,9 @@ pub enum ErrorKind {
 
     #[fail(display = "Database version {} is not supported", _0)]
     UnsupportedDatabaseVersion(i64),
+
+    #[fail(display = "{}", _0)]
+    IncomingPayloadError(#[fail(cause)] bridged_engine::PayloadError),
 }
 
 error_support::define_error! {
@@ -61,5 +65,6 @@ error_support::define_error! {
         (IoError, std::io::Error),
         (InterruptedError, Interrupted),
         (Utf8Error, std::str::Utf8Error),
+        (IncomingPayloadError, bridged_engine::PayloadError)
     }
 }

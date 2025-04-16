@@ -24,6 +24,8 @@ namespace net {
 // nsHttpResponseHead <public>
 //-----------------------------------------------------------------------------
 
+// Note that the code below MUST be synchronized with the IPC
+// serialization/deserialization in PHttpChannelParams.h.
 nsHttpResponseHead::nsHttpResponseHead(const nsHttpResponseHead& aOther)
     : mRecursiveMutex("nsHttpResponseHead.mRecursiveMutex"),
       mInVisitHeaders(false) {
@@ -98,7 +100,7 @@ int64_t nsHttpResponseHead::ContentLength() {
   return mContentLength;
 }
 
-void nsHttpResponseHead::ContentType(nsACString& aContentType) {
+void nsHttpResponseHead::ContentType(nsACString& aContentType) const {
   RecursiveMutexAutoLock monitor(mRecursiveMutex);
   aContentType = mContentType;
 }
@@ -1175,7 +1177,7 @@ nsresult nsHttpResponseHead::GetOriginalHeader(nsHttpAtom aHeader,
   return rv;
 }
 
-bool nsHttpResponseHead::HasContentType() {
+bool nsHttpResponseHead::HasContentType() const {
   RecursiveMutexAutoLock monitor(mRecursiveMutex);
   return !mContentType.IsEmpty();
 }

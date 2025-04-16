@@ -4,13 +4,11 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
+#include "ProfileBuffer.h"
+
+#include "mozilla/MathAlgorithms.h"
+
 #include "BaseProfiler.h"
-
-#ifdef MOZ_BASE_PROFILER
-
-#  include "ProfileBuffer.h"
-
-#  include "mozilla/MathAlgorithms.h"
 
 namespace mozilla {
 namespace baseprofiler {
@@ -33,15 +31,15 @@ ProfileBufferBlockIndex ProfileBuffer::AddEntry(
     ProfileChunkedBuffer& aProfileChunkedBuffer,
     const ProfileBufferEntry& aEntry) {
   switch (aEntry.GetKind()) {
-#  define SWITCH_KIND(KIND, TYPE, SIZE)                          \
-    case ProfileBufferEntry::Kind::KIND: {                       \
-      return aProfileChunkedBuffer.PutFrom(&aEntry, 1 + (SIZE)); \
-      break;                                                     \
-    }
+#define SWITCH_KIND(KIND, TYPE, SIZE)                          \
+  case ProfileBufferEntry::Kind::KIND: {                       \
+    return aProfileChunkedBuffer.PutFrom(&aEntry, 1 + (SIZE)); \
+    break;                                                     \
+  }
 
     FOR_EACH_PROFILE_BUFFER_ENTRY_KIND(SWITCH_KIND)
 
-#  undef SWITCH_KIND
+#undef SWITCH_KIND
     default:
       MOZ_ASSERT(false, "Unhandled baseprofiler::ProfilerBuffer entry KIND");
       return ProfileBufferBlockIndex{};
@@ -75,17 +73,37 @@ void ProfileBuffer::CollectCodeLocation(
   if (aStr) {
     // Store the string using one or more DynamicStringFragment entries.
     size_t strLen = strlen(aStr) + 1;  // +1 for the null terminator
-    for (size_t j = 0; j < strLen;) {
+    // If larger than the prescribed limit, we will cut the string and end it
+    // with an ellipsis.
+    const bool tooBig = strLen > kMaxFrameKeyLength;
+    if (tooBig) {
+      strLen = kMaxFrameKeyLength;
+    }
+    char chars[ProfileBufferEntry::kNumChars];
+    for (size_t j = 0;; j += ProfileBufferEntry::kNumChars) {
       // Store up to kNumChars characters in the entry.
-      char chars[ProfileBufferEntry::kNumChars];
       size_t len = ProfileBufferEntry::kNumChars;
-      if (j + len >= strLen) {
+      const bool last = j + len >= strLen;
+      if (last) {
+        // Only the last entry may be smaller than kNumChars.
         len = strLen - j;
+        if (tooBig) {
+          // That last entry is part of a too-big string, replace the end
+          // characters with an ellipsis "...".
+          len = std::max(len, size_t(4));
+          chars[len - 4] = '.';
+          chars[len - 3] = '.';
+          chars[len - 2] = '.';
+          chars[len - 1] = '\0';
+          // Make sure the memcpy will not overwrite our ellipsis!
+          len -= 4;
+        }
       }
       memcpy(chars, &aStr[j], len);
-      j += ProfileBufferEntry::kNumChars;
-
       AddEntry(ProfileBufferEntry::DynamicStringFragment(chars));
+      if (last) {
+        break;
+      }
     }
   }
 
@@ -185,20 +203,10 @@ void ProfileBufferCollector::CollectProfilingStackFrame(
 
   const char* label = aFrame.label();
   const char* dynamicString = aFrame.dynamicString();
-  bool isChromeJSEntry = false;
   Maybe<uint32_t> line;
   Maybe<uint32_t> column;
 
   MOZ_ASSERT(aFrame.isLabelFrame());
-
-  if (dynamicString) {
-    // Adjust the dynamic string as necessary.
-    if (ProfilerFeature::HasPrivacy(mFeatures) && !isChromeJSEntry) {
-      dynamicString = "(private)";
-    } else if (strlen(dynamicString) >= ProfileBuffer::kMaxFrameKeyLength) {
-      dynamicString = "(too long)";
-    }
-  }
 
   mBuf.CollectCodeLocation(label, dynamicString, aFrame.flags(),
                            aFrame.realmID(), line, column,
@@ -207,5 +215,3 @@ void ProfileBufferCollector::CollectProfilingStackFrame(
 
 }  // namespace baseprofiler
 }  // namespace mozilla
-
-#endif  // MOZ_BASE_PROFILER

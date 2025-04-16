@@ -4,12 +4,12 @@
 ---
 generate:
     description: Generate the Sphinx documentation
-    platform: lint/opt
+    platform: doc/opt
     treeherder:
         symbol: doc(generate)
         kind: test
         tier: 1
-    run-on-projects: ['trunk', 'try']
+    run-on-projects: ['trunk']
     worker-type: t-linux-xlarge-source
     worker:
         docker-image: {in-tree: "lint"}
@@ -27,7 +27,7 @@ generate:
 
 upload:
     description: Generate and upload the Sphinx documentation
-    platform: lint/opt
+    platform: doc/opt
     treeherder:
         symbol: doc(upload)
         kind: test

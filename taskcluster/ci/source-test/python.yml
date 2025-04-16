@@ -34,7 +34,7 @@ job-defaults:
 
 taskgraph-tests:
     description: taskcluster/taskgraph unit tests
-    python-version: [2]
+    python-version: [2, 3]
     treeherder:
         symbol: tg
     run:
@@ -295,7 +295,7 @@ tryselect:
     platform:
         - linux1804-64/opt
         - windows10-64/opt
-    python-version: [2]
+    python-version: [3]
     treeherder:
         symbol: try
     run:
@@ -347,12 +347,10 @@ mozperftest:
         - linux1804-64/opt
         - macosx1014-64/opt
         - windows10-64/opt
-    python-version: [3]
     treeherder:
         symbol: mpu
     run:
-        using: python-test
-        subsuite: mozperftest
+        mach: perftest-test
     fetches:
         toolchain:
             by-platform:

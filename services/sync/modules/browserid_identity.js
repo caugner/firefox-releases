@@ -495,20 +495,26 @@ this.BrowserIDManager.prototype = {
   async _fetchTokenUsingOAuth() {
     this._log.debug("Getting a token using OAuth");
     const fxa = this._fxaService;
-    const clientId = fxAccountsCommon.FX_OAUTH_CLIENT_ID;
     const scope = fxAccountsCommon.SCOPE_OLD_SYNC;
     const ttl = fxAccountsCommon.OAUTH_TOKEN_FOR_SYNC_LIFETIME_SECONDS;
-    const oauthToken = await fxa.getOAuthToken({ scope, ttl });
-    const scopedKeys = await fxa.keys.getScopedKeys(scope, clientId);
-    const key = scopedKeys[scope];
+    const { token, key } = await fxa.getAccessToken(scope, ttl);
     const headers = {
       "X-KeyId": key.kid,
     };
-    return this._tokenServerClient.getTokenFromOAuthToken(
-      this._tokenServerUrl,
-      oauthToken,
-      headers
-    );
+
+    return this._tokenServerClient
+      .getTokenFromOAuthToken(this._tokenServerUrl, token, headers)
+      .catch(async err => {
+        if (err.response || err.response.status === 401) {
+          // remove the cached token if we cannot authorize with it.
+          // we have to do this here because we know which `token` to remove
+          // from cache.
+          await fxa.removeCachedOAuthToken({ token });
+        }
+
+        // continue the error chain, so other handlers can deal with the error.
+        throw err;
+      });
   },
 
   // Returns a promise that is resolved with a valid token for the current

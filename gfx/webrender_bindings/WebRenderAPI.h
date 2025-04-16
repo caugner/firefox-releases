@@ -43,7 +43,7 @@ class CompositorBridgeParent;
 class DisplayItemCache;
 class WebRenderBridgeParent;
 class RenderRootStateManager;
-struct RenderRootDisplayListData;
+struct DisplayListData;
 }  // namespace layers
 
 namespace layout {
@@ -189,7 +189,7 @@ class TransactionBuilder final {
 
   void DeleteFontInstance(wr::FontInstanceKey aKey);
 
-  void UpdateQualitySettings(bool aAllowSacrificingSubpixelAA);
+  void UpdateQualitySettings(bool aForceSubpixelAAWherePossible);
 
   void Notify(wr::Checkpoint aWhen, UniquePtr<NotificationHandler> aHandler);
 
@@ -230,14 +230,6 @@ class WebRenderAPI final {
       RefPtr<widget::CompositorWidget>&& aWidget,
       const wr::WrWindowId& aWindowId, LayoutDeviceIntSize aSize);
 
-  static void SendTransactions(
-      const RenderRootArray<RefPtr<WebRenderAPI>>& aApis,
-      RenderRootArray<TransactionBuilder*>& aTxns);
-
-  already_AddRefed<WebRenderAPI> CreateDocument(LayoutDeviceIntSize aSize,
-                                                int8_t aLayerIndex,
-                                                wr::RenderRoot aRenderRoot);
-
   already_AddRefed<WebRenderAPI> Clone();
 
   wr::WindowId GetId() const { return mId; }
@@ -271,7 +263,6 @@ class WebRenderAPI final {
   void AccumulateMemoryReport(wr::MemoryReport*);
 
   wr::WrIdNamespace GetNamespace();
-  wr::RenderRoot GetRenderRoot() const { return mRenderRoot; }
   uint32_t GetMaxTextureSize() const { return mMaxTextureSize; }
   bool GetUseANGLE() const { return mUseANGLE; }
   bool GetUseDComp() const { return mUseDComp; }
@@ -281,8 +272,6 @@ class WebRenderAPI final {
   void Capture();
 
   void ToggleCaptureSequence();
-
-  void SetTransactionLogging(bool aValue);
 
   void SetCompositionRecorder(
       UniquePtr<layers::WebRenderCompositionRecorder> aRecorder);
@@ -310,8 +299,7 @@ class WebRenderAPI final {
  protected:
   WebRenderAPI(wr::DocumentHandle* aHandle, wr::WindowId aId,
                uint32_t aMaxTextureSize, bool aUseANGLE, bool aUseDComp,
-               bool aUseTripleBuffering, layers::SyncHandle aSyncHandle,
-               wr::RenderRoot aRenderRoot);
+               bool aUseTripleBuffering, layers::SyncHandle aSyncHandle);
 
   ~WebRenderAPI();
   // Should be used only for shutdown handling
@@ -327,7 +315,6 @@ class WebRenderAPI final {
   bool mUseTripleBuffering;
   bool mCaptureSequence;
   layers::SyncHandle mSyncHandle;
-  wr::RenderRoot mRenderRoot;
 
   // We maintain alive the root api to know when to shut the render backend
   // down, and the root api for the document to know when to delete the
@@ -376,9 +363,8 @@ struct MOZ_STACK_CLASS StackingContextParams : public WrStackingContextParams {
             wr::WrReferenceFrameKind::Transform,
             nullptr,
             /* prim_flags = */ wr::PrimitiveFlags::IS_BACKFACE_VISIBLE,
-            /* cache_tiles = */ false,
             wr::MixBlendMode::Normal,
-            /* is_backdrop_root = */ false} {}
+            wr::StackingContextFlags{0}} {}
 
   void SetPreserve3D(bool aPreserve) {
     transform_style =
@@ -408,8 +394,7 @@ class DisplayListBuilder final {
  public:
   DisplayListBuilder(wr::PipelineId aId, const wr::LayoutSize& aContentSize,
                      size_t aCapacity = 0,
-                     layers::DisplayItemCache* aCache = nullptr,
-                     RenderRoot aRenderRoot = RenderRoot::Default);
+                     layers::DisplayItemCache* aCache = nullptr);
   DisplayListBuilder(DisplayListBuilder&&) = default;
 
   ~DisplayListBuilder();
@@ -424,9 +409,7 @@ class DisplayListBuilder final {
 
   void Finalize(wr::LayoutSize& aOutContentSizes,
                 wr::BuiltDisplayList& aOutDisplayList);
-  void Finalize(layers::RenderRootDisplayListData& aOutTransaction);
-
-  RenderRoot GetRenderRoot() const { return mRenderRoot; }
+  void Finalize(layers::DisplayListData& aOutTransaction);
 
   Maybe<wr::WrSpatialId> PushStackingContext(
       const StackingContextParams& aParams, const wr::LayoutRect& aBounds,
@@ -616,7 +599,7 @@ class DisplayListBuilder final {
    * Cancels grouping of the display items and discards all the display items
    * pushed between the |StartGroup()| and |CancelGroup()| calls.
    */
-  void CancelGroup();
+  void CancelGroup(const bool aDiscard = false);
 
   /**
    * Finishes the display item group. The group is stored in WebRender backend,
@@ -732,7 +715,6 @@ class DisplayListBuilder final {
   wr::LayoutSize mContentSize;
 
   nsTArray<wr::PipelineId> mRemotePipelineIds;
-  RenderRoot mRenderRoot;
 
   layers::DisplayItemCache* mDisplayItemCache;
   Maybe<uint16_t> mCurrentCacheSlot;

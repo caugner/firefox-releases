@@ -7,11 +7,12 @@
 #include "vm/ProxyObject.h"
 
 #include "gc/Allocator.h"
-#include "gc/GCTrace.h"
+#include "gc/GCProbes.h"
 #include "proxy/DeadObjectProxy.h"
 #include "vm/Realm.h"
 
 #include "gc/ObjectKind-inl.h"
+#include "gc/WeakMap-inl.h"
 #include "vm/JSObject-inl.h"
 #include "vm/TypeInference-inl.h"
 
@@ -153,7 +154,7 @@ ProxyObject* ProxyObject::New(JSContext* cx, const BaseProxyHandler* handler,
   MOZ_ASSERT(clasp->shouldDelayMetadataBuilder());
   realm->setObjectPendingMetadata(cx, proxy);
 
-  gc::gcTracer.traceCreateObject(proxy);
+  gc::gcprobes::CreateObject(proxy);
 
   proxy->init(handler, priv, cx);
 
@@ -236,7 +237,7 @@ ProxyObject* ProxyObject::NewSingleton(JSContext* cx,
     MOZ_ASSERT(clasp->shouldDelayMetadataBuilder());
     realm->setObjectPendingMetadata(cx, proxy);
 
-    js::gc::gcTracer.traceCreateObject(proxy);
+    js::gc::gcprobes::CreateObject(proxy);
   }
 
   proxy->init(handler, priv, cx);
@@ -267,6 +268,15 @@ inline void ProxyObject::setPrivate(const Value& priv) {
 }
 
 void ProxyObject::nuke() {
+  // Notify the zone that a delegate is no longer a delegate. Be careful not to
+  // expose this pointer, because it has already been removed from the wrapper
+  // map yet we have assertions during tracing that will verify that it is
+  // still present.
+  JSObject* delegate = UncheckedUnwrapWithoutExpose(this);
+  if (delegate != this) {
+    delegate->zone()->delegatePreWriteBarrier(this, delegate);
+  }
+
   // Clear the target reference and replaced it with a value that encodes
   // various information about the original target.
   setSameCompartmentPrivate(DeadProxyTargetValue(this));

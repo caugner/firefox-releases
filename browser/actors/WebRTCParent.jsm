@@ -148,6 +148,7 @@ class WebRTCParent extends JSWindowActorParent {
         break;
       }
       case "webrtc:UpdateIndicators":
+        aMessage.data.documentURI = this.manager.documentURI?.spec;
         if (aMessage.data.windowId) {
           webrtcUI.streamAddedOrRemoved(this.browsingContext, aMessage.data);
         }
@@ -481,7 +482,7 @@ function prompt(aActor, aBrowser, aRequest) {
   let chromeDoc = aBrowser.ownerDocument;
   let stringBundle = chromeDoc.defaultView.gNavigatorBundle;
   let localization = new Localization(
-    ["branding/brand.ftl", "preview/popup-notifications.ftl"],
+    ["branding/brand.ftl", "browser/browser.ftl"],
     true
   );
 

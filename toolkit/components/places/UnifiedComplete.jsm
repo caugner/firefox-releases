@@ -684,7 +684,7 @@ function Search(
   // Set the default behavior for this search.
   this._behavior = this._searchString
     ? UrlbarPrefs.get("defaultBehavior")
-    : UrlbarPrefs.get("emptySearchDefaultBehavior");
+    : this._emptySearchDefaultBehavior;
 
   if (queryContext) {
     this._enableActions = true;
@@ -1719,10 +1719,13 @@ Search.prototype = {
     if (!syncUsernamePref) {
       return;
     }
+
+    let searchString = this._searchTokens.map(t => t.value).join(" ");
     let matches = await PlacesRemoteTabsAutocompleteProvider.getMatches(
-      this._originalSearchString,
+      searchString,
       this._maxResults
     );
+    let remoteTabsAdded = 0;
     for (let { url, title, icon, deviceName, lastUsed } of matches) {
       // It's rare that Sync supplies the icon for the page (but if it does, it
       // is a string URL)
@@ -1745,8 +1748,16 @@ Search.prototype = {
         frecency: FRECENCY_DEFAULT + 1,
         icon,
       };
-      if (lastUsed > Date.now() - RECENT_REMOTE_TAB_THRESHOLD_MS) {
+      // Mobile and desktop frecency scales are not compatible so we don't
+      // intermix open tabs with synced tabs. Instead, we limit the number of
+      // initial remote tabs to the floor of _maxResults / 2 so they do not
+      // overrun open tabs.
+      if (
+        remoteTabsAdded < this._maxResults / 2 &&
+        lastUsed > Date.now() - RECENT_REMOTE_TAB_THRESHOLD_MS
+      ) {
         this._addMatch(match);
+        remoteTabsAdded++;
       } else {
         this._extraRemoteTabRows.push(match);
       }
@@ -2385,6 +2396,22 @@ Search.prototype = {
     return conditions.length
       ? defaultQuery("AND " + conditions.join(" AND "))
       : defaultQuery();
+  },
+
+  get _emptySearchDefaultBehavior() {
+    // Further restrictions to apply for "empty searches" (searching for
+    // "").  The empty behavior is typed history, if history is enabled.
+    // Otherwise, it is bookmarks, if they are enabled. If both history and
+    // bookmarks are disabled, it defaults to open pages.
+    let val = Ci.mozIPlacesAutoComplete.BEHAVIOR_RESTRICT;
+    if (UrlbarPrefs.get("suggest.history")) {
+      val |= Ci.mozIPlacesAutoComplete.BEHAVIOR_HISTORY;
+    } else if (UrlbarPrefs.get("suggest.bookmark")) {
+      val |= Ci.mozIPlacesAutoComplete.BEHAVIOR_BOOKMARK;
+    } else {
+      val |= Ci.mozIPlacesAutoComplete.BEHAVIOR_OPENPAGE;
+    }
+    return val;
   },
 
   /**

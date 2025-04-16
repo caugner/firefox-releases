@@ -18,6 +18,7 @@
 #include "mozilla/CheckedInt.h"
 #include "mozilla/dom/CanvasCaptureMediaStream.h"
 #include "mozilla/dom/CanvasRenderingContext2D.h"
+#include "mozilla/dom/GeneratePlaceholderCanvasData.h"
 #include "mozilla/dom/Event.h"
 #include "mozilla/dom/File.h"
 #include "mozilla/dom/HTMLCanvasElementBinding.h"
@@ -100,8 +101,9 @@ class RequestedFrameRefreshObserver : public nsARefreshObserver {
     MOZ_ASSERT(data->GetFormat() == copy->GetFormat());
 
     if (aReturnPlaceholderData) {
-      // If returning placeholder data, fill the frame copy with white pixels.
-      memset(write.GetData(), 0xFF, write.GetStride() * copy->GetSize().height);
+      auto size = write.GetStride() * copy->GetSize().height;
+      auto* data = write.GetData();
+      GeneratePlaceholderCanvasData(size, data);
     } else {
       memcpy(write.GetData(), read.GetData(),
              write.GetStride() * copy->GetSize().height);
@@ -563,7 +565,7 @@ void HTMLCanvasElement::GetEventTargetParent(EventChainPreVisitor& aVisitor) {
         return;
       }
       nsPoint ptInRoot =
-          nsLayoutUtils::GetEventCoordinatesRelativeTo(evt, frame);
+          nsLayoutUtils::GetEventCoordinatesRelativeTo(evt, RelativeTo{frame});
       nsRect paddingRect = frame->GetContentRectRelativeToSelf();
       Point hitpoint;
       hitpoint.x = (ptInRoot.x - paddingRect.x) / AppUnitsPerCSSPixel();

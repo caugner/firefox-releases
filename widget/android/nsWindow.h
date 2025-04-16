@@ -12,8 +12,8 @@
 #include "nsIIdleServiceInternal.h"
 #include "nsTArray.h"
 #include "EventDispatcher.h"
-#include "GeneratedJNIWrappers.h"
 #include "mozilla/EventForwards.h"
+#include "mozilla/java/GeckoBundleWrappers.h"
 #include "mozilla/MozPromise.h"
 #include "mozilla/Mutex.h"
 #include "mozilla/StaticPtr.h"
@@ -61,7 +61,8 @@ class nsWindow final : public nsBaseWidget {
   void OnGeckoViewReady();
   RefPtr<mozilla::MozPromise<bool, bool, false>> OnLoadRequest(
       nsIURI* aUri, int32_t aWindowType, int32_t aFlags,
-      nsIPrincipal* aTriggeringPrincipal, bool aHasUserGesture);
+      nsIPrincipal* aTriggeringPrincipal, bool aHasUserGesture,
+      bool aIsTopLevel);
 
  private:
   uint32_t mScreenId;
@@ -330,9 +331,6 @@ class nsWindow final : public nsBaseWidget {
   mozilla::ScreenIntCoord GetDynamicToolbarMaxHeight() const override {
     return mDynamicToolbarMaxHeight;
   }
-
-  nsresult SetPrefersReducedMotionOverrideForTest(bool aValue) override;
-  nsresult ResetPrefersReducedMotionOverrideForTest() override;
 
   void UpdateDynamicToolbarOffset(mozilla::ScreenIntCoord aOffset);
 

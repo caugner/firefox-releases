@@ -14,6 +14,7 @@
 #include "nsIURI.h"
 #include "nsString.h"
 #include "mozilla/dom/JSActor.h"
+#include "mozilla/dom/WindowGlobalTypes.h"
 
 namespace mozilla {
 namespace dom {
@@ -21,8 +22,14 @@ namespace dom {
 // Common base class for WindowGlobal{Parent, Child}.
 class WindowGlobalActor : public nsISupports {
  public:
+  // Called to determine initial state for a window global actor created for an
+  // initial about:blank document.
   static WindowGlobalInit AboutBlankInitializer(
       dom::BrowsingContext* aBrowsingContext, nsIPrincipal* aPrincipal);
+
+  // Called to determine initial state for a window global actor created for a
+  // specific existing nsGlobalWindowInner.
+  static WindowGlobalInit WindowInitializer(nsGlobalWindowInner* aWindow);
 
  protected:
   virtual ~WindowGlobalActor() = default;
@@ -36,6 +43,10 @@ class WindowGlobalActor : public nsISupports {
   virtual const nsAString& GetRemoteType() = 0;
   virtual JSActor::Type GetSide() = 0;
   virtual dom::BrowsingContext* BrowsingContext() = 0;
+
+  static WindowGlobalInit BaseInitializer(
+      dom::BrowsingContext* aBrowsingContext, uint64_t aInnerWindowId,
+      uint64_t aOuterWindowId);
 };
 
 }  // namespace dom

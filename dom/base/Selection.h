@@ -23,7 +23,7 @@
 #include "nsWrapperCache.h"
 
 struct CachedOffsetForFrame;
-class nsAutoScrollTimer;
+class AutoScroller;
 class nsIFrame;
 class nsFrameSelection;
 class nsPIDOMWindowOuter;
@@ -154,7 +154,7 @@ class Selection final : public nsSupportsWeakReference,
                  ScrollAxis aHorizontal = ScrollAxis(), int32_t aFlags = 0);
 
  private:
-  static bool AreUserSelectedRangesNonEmpty(
+  static bool IsUserSelectionCollapsed(
       const nsRange& aRange, nsTArray<RefPtr<nsRange>>& aTempRangesToAdd);
   /**
    * https://w3c.github.io/selection-api/#selectstart-event.
@@ -220,8 +220,7 @@ class Selection final : public nsSupportsWeakReference,
   void SetDirection(nsDirection aDir) { mDirection = aDir; }
   MOZ_CAN_RUN_SCRIPT nsresult SetAnchorFocusToRange(nsRange* aRange);
 
-  // TODO: annotate with `MOZ_CAN_RUN_SCRIPT` instead.
-  MOZ_CAN_RUN_SCRIPT_BOUNDARY void ReplaceAnchorFocusRange(nsRange* aRange);
+  MOZ_CAN_RUN_SCRIPT void ReplaceAnchorFocusRange(nsRange* aRange);
 
   void AdjustAnchorFocusForMultiRange(nsDirection aDirection);
 
@@ -238,7 +237,7 @@ class Selection final : public nsSupportsWeakReference,
 
   MOZ_CAN_RUN_SCRIPT
   nsresult StartAutoScrollTimer(nsIFrame* aFrame, const nsPoint& aPoint,
-                                uint32_t aDelay);
+                                uint32_t aDelayInMs);
 
   nsresult StopAutoScrollTimer();
 
@@ -283,7 +282,7 @@ class Selection final : public nsSupportsWeakReference,
    * IsCollapsed -- is the whole selection just one point, or unset?
    */
   bool IsCollapsed() const {
-    uint32_t cnt = mStyledRanges.mRanges.Length();
+    uint32_t cnt = mStyledRanges.Length();
     if (cnt == 0) {
       return true;
     }
@@ -316,7 +315,7 @@ class Selection final : public nsSupportsWeakReference,
    */
   void DeleteFromDocument(mozilla::ErrorResult& aRv);
 
-  uint32_t RangeCount() const { return mStyledRanges.mRanges.Length(); }
+  uint32_t RangeCount() const { return mStyledRanges.Length(); }
 
   void GetType(nsAString& aOutType) const;
 
@@ -621,10 +620,6 @@ class Selection final : public nsSupportsWeakReference,
   nsresult SelectionLanguageChange(bool aLangRTL);
 
  private:
-  friend class ::nsAutoScrollTimer;
-
-  MOZ_CAN_RUN_SCRIPT nsresult DoAutoScroll(nsIFrame* aFrame, nsPoint aPoint);
-
   bool HasSameRootOrSameComposedDoc(const nsINode& aNode);
 
   // XXX Please don't add additional uses of this method, it's only for
@@ -745,7 +740,7 @@ class Selection final : public nsSupportsWeakReference,
 
   /**
    * @param aOutIndex points to the index of the range in mStyledRanges.mRanges.
-   * If aDidAddRange is true, it is in [0, mStyledRanges.mRanges.Length()).
+   * If aDidAddRange is true, it is in [0, mStyledRanges.Length()).
    */
   MOZ_CAN_RUN_SCRIPT nsresult MaybeAddTableCellRange(nsRange& aRange,
                                                      bool* aDidAddRange,
@@ -756,7 +751,15 @@ class Selection final : public nsSupportsWeakReference,
   void Disconnect();
 
   struct StyledRanges {
+    void Clear();
+
     StyledRange* FindRangeData(nsRange* aRange);
+
+    using Elements = AutoTArray<StyledRange, 1>;
+
+    Elements::size_type Length() const;
+
+    nsresult RemoveCollapsedRanges();
 
     nsresult RemoveRangeAndUnregisterSelection(nsRange& aRange);
 
@@ -841,6 +844,8 @@ class Selection final : public nsSupportsWeakReference,
     static nsresult SubtractRange(StyledRange& aRange, nsRange& aSubtract,
                                   nsTArray<StyledRange>* aOutput);
 
+    void UnregisterSelection();
+
     // These are the ranges inside this selection. They are kept sorted in order
     // of DOM start position.
     //
@@ -854,7 +859,7 @@ class Selection final : public nsSupportsWeakReference,
     // If this proves to be a performance concern, then an interval tree may be
     // a possible solution, allowing the calculation of the overlap interval in
     // O(log n) time, though this would require rebalancing and other overhead.
-    AutoTArray<StyledRange, 1> mRanges;
+    Elements mRanges;
   };
 
   StyledRanges mStyledRanges;
@@ -863,7 +868,7 @@ class Selection final : public nsSupportsWeakReference,
   RefPtr<nsFrameSelection> mFrameSelection;
   RefPtr<AccessibleCaretEventHub> mAccessibleCaretEventHub;
   RefPtr<SelectionChangeEventDispatcher> mSelectionChangeEventDispatcher;
-  RefPtr<nsAutoScrollTimer> mAutoScrollTimer;
+  RefPtr<AutoScroller> mAutoScroller;
   nsTArray<nsCOMPtr<nsISelectionListener>> mSelectionListeners;
   nsRevocableEventPtr<ScrollSelectionIntoViewEvent> mScrollEvent;
   CachedOffsetForFrame* mCachedOffsetForFrame;

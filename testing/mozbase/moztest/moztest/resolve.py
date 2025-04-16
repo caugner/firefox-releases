@@ -225,17 +225,11 @@ TEST_SUITES = {
         'task_regex': ['web-platform-tests-crashtest($|.*(-1|[^0-9])$)',
                        'test-verify-wpt'],
     },
-    'web-platform-tests-testharness': {
-        'aliases': ('wpt',),
-        'mach_command': 'web-platform-tests',
-        'kwargs': {'include': []},
-        'task_regex': ['web-platform-tests(?!-reftest|-wdspec)($|.*(-1|[^0-9])$)',
-                       'test-verify-wpt'],
-    },
     'web-platform-tests-reftest': {
         'aliases': ('wpt',),
         'mach_command': 'web-platform-tests',
-        'kwargs': {'include': []},
+        'build_flavor': 'web-platform-tests',
+        'kwargs': {'subsuite': 'reftest'},
         'task_regex': ['web-platform-tests-reftest($|.*(-1|[^0-9])$)',
                        'test-verify-wpt'],
     },
@@ -299,7 +293,6 @@ _test_flavors = {
     'puppeteer': 'puppeteer',
     'python': 'python',
     'reftest': 'reftest',
-    'steeplechase': '',
     'telemetry-tests-client': 'telemetry-tests-client',
     'web-platform-tests': 'web-platform-tests',
     'xpcshell': 'xpcshell',
@@ -319,7 +312,7 @@ _test_subsuites = {
     ('mochitest', 'webgl2-ext'): 'mochitest-webgl2-ext',
     ('mochitest', 'webgl2-deqp'): 'mochitest-webgl2-deqp',
     ('mochitest', 'webgpu'): 'mochitest-webgpu',
-    ('web-platform-tests', 'testharness'): 'web-platform-tests-testharness',
+    ('web-platform-tests', 'testharness'): 'web-platform-tests',
     ('web-platform-tests', 'crashtest'): 'web-platform-tests-crashtest',
     ('web-platform-tests', 'reftest'): 'web-platform-tests-reftest',
     ('web-platform-tests', 'wdspec'): 'web-platform-tests-wdspec',
@@ -406,6 +399,10 @@ class BuildBackendLoader(TestLoader):
         with open(test_defaults, 'rb') as fh:
             defaults = pickle.load(fh)
 
+        # The keys in defaults use platform-specific path separators.
+        # self.topsrcdir was normalized to use /, revert back to \ if needed.
+        topsrcdir = os.path.normpath(self.topsrcdir)
+
         for path, tests in six.iteritems(test_data):
             for metadata in tests:
                 defaults_manifests = [metadata['manifest']]
@@ -415,7 +412,7 @@ class BuildBackendLoader(TestLoader):
                     # The (ancestor manifest, included manifest) tuple
                     # contains the defaults of the included manifest, so
                     # use it instead of [metadata['manifest']].
-                    ancestor_manifest = os.path.join(self.topsrcdir, ancestor_manifest)
+                    ancestor_manifest = os.path.join(topsrcdir, ancestor_manifest)
                     defaults_manifests[0] = (ancestor_manifest, metadata['manifest'])
                     defaults_manifests.append(ancestor_manifest)
 
@@ -449,7 +446,7 @@ class TestManifestLoader(TestLoader):
         manifest = reftest.ReftestManifest(finder=self.finder)
         manifest.load(mpath)
 
-        for test in sorted(manifest.tests):
+        for test in sorted(manifest.tests, key=lambda x: x.get('path')):
             test['manifest_relpath'] = test['manifest'][len(self.topsrcdir)+1:]
             yield test
 
@@ -692,6 +689,22 @@ class TestResolver(MozbuildObject):
             return True
         return False
 
+    def get_wpt_group(self, test):
+        """Given a test object, set the group (aka manifest) that it belongs to.
+
+        Args:
+            test (dict): Test object for the particular suite and subsuite.
+
+        Returns:
+            str: The group the given test belongs to.
+        """
+        # Extract the first path component (top level directory) as the key.
+        # This value should match the path in manifest-runtimes JSON data.
+        # Mozilla WPT paths have one extra URL component in the front.
+        components = 3 if test['name'].startswith('/_mozilla') else 2
+        group = '/'.join(test['name'].split('/')[:components])
+        return group
+
     def add_wpt_manifest_data(self):
         """Adds manifest data for web-platform-tests into the list of available tests.
 
@@ -733,20 +746,29 @@ class TestResolver(MozbuildObject):
                 src_path = mozpath.relpath(full_path, self.topsrcdir)
 
                 for test in tests:
-                    self._tests.append({
+                    testobj = {
                         "head": "",
                         "support-files": "",
                         "path": full_path,
                         "flavor": "web-platform-tests",
                         "subsuite": test_type,
                         "here": mozpath.dirname(path),
-                        "manifest": mozpath.dirname(full_path),
-                        "manifest_relpath": mozpath.dirname(src_path),
                         "name": test.id,
                         "file_relpath": src_path,
                         "srcdir_relpath": src_path,
                         "dir_relpath": mozpath.dirname(src_path),
-                    })
+                    }
+                    group = self.get_wpt_group(testobj)
+                    testobj["manifest"] = group
+
+                    test_root = "tests"
+                    if group.startswith("/_mozilla"):
+                        test_root = os.path.join("mozilla", "tests")
+                        group = group[len("/_mozilla"):]
+
+                    group = group.lstrip("/")
+                    testobj["manifest_relpath"] = os.path.join(wpt_path, test_root, group)
+                    self._tests.append(testobj)
 
         self._wpt_loaded = True
 

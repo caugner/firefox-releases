@@ -185,6 +185,12 @@ const startupPhases = {
       ignoreIfUnused: true, // intermittently occurs in "before becoming idle"
       maxCount: 1,
     },
+    {
+      name: "PWebRenderBridge::Msg_EnsureConnected",
+      condition: WIN && WEBRENDER,
+      ignoreIfUnused: true,
+      maxCount: 1,
+    },
   ],
 
   // Things that are expected to be completely out of the startup path
@@ -217,6 +223,12 @@ const startupPhases = {
       maxCount: 1,
     },
     {
+      name: "PWebRenderBridge::Msg_EnsureConnected",
+      condition: WIN && WEBRENDER,
+      ignoreIfUnused: true,
+      maxCount: 1,
+    },
+    {
       name: "PCompositorBridge::Msg_Initialize",
       condition: WIN,
       ignoreIfUnused: true, // Intermittently occurs in "before handling user events"
@@ -236,7 +248,7 @@ const startupPhases = {
     },
     {
       name: "PCompositorBridge::Msg_FlushRendering",
-      condition: MAC,
+      condition: MAC || LINUX,
       ignoreIfUnused: true,
       maxCount: 1,
     },

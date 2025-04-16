@@ -32,10 +32,16 @@
 #include "jit/Simulator.h"
 #include "js/Printf.h"
 #include "js/PropertySpec.h"  // JS_{PS,FN}{,_END}
+#if defined(JS_CODEGEN_X64)   // Assembler::HasSSE41
+#  include "jit/x64/Assembler-x64.h"
+#  include "jit/x86-shared/Architecture-x86-shared.h"
+#  include "jit/x86-shared/Assembler-x86-shared.h"
+#endif
 #include "util/StringBuffer.h"
 #include "util/Text.h"
 #include "vm/ErrorObject.h"
 #include "vm/FunctionFlags.h"  // js::FunctionFlags
+#include "vm/GlobalObject.h"   // js::GlobalObject
 #include "vm/Interpreter.h"
 #include "vm/PlainObject.h"    // js::PlainObject
 #include "vm/PromiseObject.h"  // js::PromiseObject
@@ -70,6 +76,14 @@ extern mozilla::Atomic<bool> fuzzingSafe;
 static inline bool WasmMultiValueFlag(JSContext* cx) {
 #ifdef ENABLE_WASM_MULTI_VALUE
   return cx->options().wasmMultiValue();
+#else
+  return false;
+#endif
+}
+
+static inline bool WasmSimdFlag(JSContext* cx) {
+#ifdef ENABLE_WASM_SIMD
+  return cx->options().wasmSimd() && js::jit::JitSupportsWasmSimd();
 #else
   return false;
 #endif
@@ -146,7 +160,7 @@ bool wasm::CraneliftAvailable(JSContext* cx) {
 bool wasm::CraneliftDisabledByFeatures(JSContext* cx, bool* isDisabled,
                                        JSStringBuilder* reason) {
   // Cranelift has no debugging support, no gc support, no multi-value support,
-  // no threads, and on ARM64, no reference types.
+  // no threads, no simd, and on ARM64, no reference types.
   bool debug = cx->realm() && cx->realm()->debuggerObservesAsmJS();
   bool gc = cx->options().wasmGc();
   bool multiValue = WasmMultiValueFlag(cx);
@@ -159,6 +173,7 @@ bool wasm::CraneliftDisabledByFeatures(JSContext* cx, bool* isDisabled,
   // On other platforms, assume reftypes has been implemented.
   bool reftypesOnArm64 = false;
 #endif
+  bool simd = WasmSimdFlag(cx);
   if (reason) {
     char sep = 0;
     if (debug && !Append(reason, "debug", &sep)) {
@@ -176,8 +191,11 @@ bool wasm::CraneliftDisabledByFeatures(JSContext* cx, bool* isDisabled,
     if (reftypesOnArm64 && !Append(reason, "reftypes", &sep)) {
       return false;
     }
+    if (simd && !Append(reason, "simd", &sep)) {
+      return false;
+    }
   }
-  *isDisabled = debug || gc || multiValue || threads || reftypesOnArm64;
+  *isDisabled = debug || gc || multiValue || threads || reftypesOnArm64 || simd;
   return true;
 }
 
@@ -209,13 +227,9 @@ bool wasm::MultiValuesAvailable(JSContext* cx) {
   return WasmMultiValueFlag(cx) && (BaselineAvailable(cx) || IonAvailable(cx));
 }
 
-bool wasm::I64BigIntConversionAvailable(JSContext* cx) {
-  // All compilers support int64<->bigint conversion.
-#ifdef ENABLE_WASM_BIGINT
-  return cx->options().isWasmBigIntEnabled();
-#else
-  return false;
-#endif
+bool wasm::SimdAvailable(JSContext* cx) {
+  // Cranelift does not support SIMD.
+  return WasmSimdFlag(cx) && (BaselineAvailable(cx) || IonAvailable(cx));
 }
 
 bool wasm::ThreadsAvailable(JSContext* cx) {
@@ -301,14 +315,6 @@ bool wasm::CheckRefType(JSContext* cx, RefType::Kind targetTypeKind,
         return false;
       }
       break;
-    case RefType::Null:
-      if (!v.isNull()) {
-        JS_ReportErrorNumberUTF8(cx, GetErrorMessage, nullptr,
-                                 JSMSG_WASM_NULL_REQUIRED);
-        return false;
-      }
-      refval.set(AnyRef::null());
-      break;
     case RefType::Any:
       if (!BoxAnyRef(cx, v, refval)) {
         return false;
@@ -348,17 +354,12 @@ static bool ToWebAssemblyValue(JSContext* cx, ValType targetType, HandleValue v,
       return true;
     }
     case ValType::I64: {
-#ifdef ENABLE_WASM_BIGINT
-      if (I64BigIntConversionAvailable(cx)) {
-        BigInt* bigint = ToBigInt(cx, v);
-        if (!bigint) {
-          return false;
-        }
-        val.set(Val(BigInt::toUint64(bigint)));
-        return true;
+      BigInt* bigint = ToBigInt(cx, v);
+      if (!bigint) {
+        return false;
       }
-#endif
-      break;
+      val.set(Val(BigInt::toUint64(bigint)));
+      return true;
     }
     case ValType::Ref: {
       RootedFunction fun(cx);
@@ -371,12 +372,14 @@ static bool ToWebAssemblyValue(JSContext* cx, ValType targetType, HandleValue v,
           val.set(Val(RefType::func(), FuncRef::fromJSFunction(fun)));
           return true;
         case RefType::Any:
-        case RefType::Null:
           val.set(Val(targetType.refType(), any));
           return true;
         case RefType::TypeIndex:
           break;
       }
+      break;
+    }
+    case ValType::V128: {
       break;
     }
   }
@@ -395,17 +398,12 @@ static bool ToJSValue(JSContext* cx, const Val& val, MutableHandleValue out) {
       out.setDouble(JS::CanonicalizeNaN(val.f64()));
       return true;
     case ValType::I64: {
-#ifdef ENABLE_WASM_BIGINT
-      if (I64BigIntConversionAvailable(cx)) {
-        BigInt* bi = BigInt::createFromInt64(cx, val.i64());
-        if (!bi) {
-          return false;
-        }
-        out.setBigInt(bi);
-        return true;
+      BigInt* bi = BigInt::createFromInt64(cx, val.i64());
+      if (!bi) {
+        return false;
       }
-#endif
-      break;
+      out.setBigInt(bi);
+      return true;
     }
     case ValType::Ref:
       switch (val.type().refTypeKind()) {
@@ -413,12 +411,13 @@ static bool ToJSValue(JSContext* cx, const Val& val, MutableHandleValue out) {
           out.set(UnboxFuncRef(FuncRef::fromAnyRefUnchecked(val.ref())));
           return true;
         case RefType::Any:
-        case RefType::Null:
           out.set(UnboxAnyRef(val.ref()));
           return true;
         case RefType::TypeIndex:
           break;
       }
+      break;
+    case ValType::V128:
       break;
   }
   MOZ_CRASH("unexpected type when translating to a JS value");
@@ -549,35 +548,30 @@ bool js::wasm::GetImports(JSContext* cx, const Module& module,
           obj->val(&val);
         } else {
           if (IsNumberType(global.type())) {
-            if (I64BigIntConversionAvailable(cx)) {
-              if (global.type() == ValType::I64 && v.isNumber()) {
-                return ThrowBadImportType(cx, import.field.get(), "BigInt");
-              }
-              if (global.type() != ValType::I64 && !v.isNumber()) {
-                return ThrowBadImportType(cx, import.field.get(), "Number");
-              }
-            } else {
-              if (!v.isNumber()) {
-                return ThrowBadImportType(cx, import.field.get(), "Number");
-              }
-              if (global.type() == ValType::I64) {
-                JS_ReportErrorNumberUTF8(cx, GetErrorMessage, nullptr,
-                                         JSMSG_WASM_BAD_I64_LINK);
-                return false;
-              }
+            if (global.type() == ValType::I64 && !v.isBigInt()) {
+              return ThrowBadImportType(cx, import.field.get(), "BigInt");
+            }
+            if (global.type() != ValType::I64 && !v.isNumber()) {
+              return ThrowBadImportType(cx, import.field.get(), "Number");
             }
           } else {
             MOZ_ASSERT(global.type().isReference());
             if (!global.type().isAnyRef() && !v.isObjectOrNull()) {
               return ThrowBadImportType(cx, import.field.get(),
                                         "Object-or-null value required for "
-                                        "non-anyref reference type");
+                                        "non-externref reference type");
             }
           }
 
           if (global.isMutable()) {
             JS_ReportErrorNumberUTF8(cx, GetErrorMessage, nullptr,
                                      JSMSG_WASM_BAD_GLOB_MUT_LINK);
+            return false;
+          }
+
+          if (global.type() == ValType::V128) {
+            JS_ReportErrorNumberUTF8(cx, GetErrorMessage, nullptr,
+                                     JSMSG_WASM_BAD_VAL_TYPE);
             return false;
           }
 
@@ -1415,8 +1409,15 @@ bool WasmModuleObject::construct(JSContext* cx, unsigned argc, Value* vp) {
     return false;
   }
 
-  RootedObject proto(
-      cx, &cx->global()->getPrototype(JSProto_WasmModule).toObject());
+  RootedObject proto(cx);
+  if (!GetPrototypeFromBuiltinConstructor(cx, callArgs, JSProto_WasmModule,
+                                          &proto)) {
+    return false;
+  }
+  if (!proto) {
+    proto = GlobalObject::getOrCreatePrototype(cx, JSProto_WasmModule);
+  }
+
   RootedObject moduleObj(cx, WasmModuleObject::create(cx, *module, proto));
   if (!moduleObj) {
     return false;
@@ -1671,8 +1672,15 @@ bool WasmInstanceObject::construct(JSContext* cx, unsigned argc, Value* vp) {
     return false;
   }
 
-  RootedObject instanceProto(
-      cx, &cx->global()->getPrototype(JSProto_WasmInstance).toObject());
+  RootedObject instanceProto(cx);
+  if (!GetPrototypeFromBuiltinConstructor(cx, args, JSProto_WasmInstance,
+                                          &instanceProto)) {
+    return false;
+  }
+  if (!instanceProto) {
+    instanceProto =
+        GlobalObject::getOrCreatePrototype(cx, JSProto_WasmInstance);
+  }
 
   Rooted<ImportValues> imports(cx);
   if (!GetImports(cx, *module, importObj, imports.address())) {
@@ -1981,8 +1989,15 @@ bool WasmMemoryObject::construct(JSContext* cx, unsigned argc, Value* vp) {
     return false;
   }
 
-  RootedObject proto(
-      cx, &cx->global()->getPrototype(JSProto_WasmMemory).toObject());
+  RootedObject proto(cx);
+  if (!GetPrototypeFromBuiltinConstructor(cx, args, JSProto_WasmMemory,
+                                          &proto)) {
+    return false;
+  }
+  if (!proto) {
+    proto = GlobalObject::getOrCreatePrototype(cx, JSProto_WasmMemory);
+  }
+
   RootedWasmMemoryObject memoryObj(cx,
                                    WasmMemoryObject::create(cx, buffer, proto));
   if (!memoryObj) {
@@ -2319,10 +2334,8 @@ void WasmTableObject::trace(JSTracer* trc, JSObject* obj) {
 
 /* static */
 WasmTableObject* WasmTableObject::create(JSContext* cx, const Limits& limits,
-                                         TableKind tableKind) {
-  RootedObject proto(cx,
-                     &cx->global()->getPrototype(JSProto_WasmTable).toObject());
-
+                                         TableKind tableKind,
+                                         HandleObject proto) {
   AutoSetNewObjectMetadata metadata(cx);
   RootedWasmTableObject obj(
       cx, NewObjectWithGivenProto<WasmTableObject>(cx, proto));
@@ -2393,18 +2406,13 @@ bool WasmTableObject::construct(JSContext* cx, unsigned argc, Value* vp) {
       StringEqualsLiteral(elementLinearStr, "funcref")) {
     tableKind = TableKind::FuncRef;
 #ifdef ENABLE_WASM_REFTYPES
-  } else if (StringEqualsLiteral(elementLinearStr, "anyref") ||
-             StringEqualsLiteral(elementLinearStr, "nullref")) {
+  } else if (StringEqualsLiteral(elementLinearStr, "externref")) {
     if (!ReftypesAvailable(cx)) {
       JS_ReportErrorNumberUTF8(cx, GetErrorMessage, nullptr,
                                JSMSG_WASM_BAD_ELEMENT);
       return false;
     }
-    if (StringEqualsLiteral(elementLinearStr, "anyref")) {
-      tableKind = TableKind::AnyRef;
-    } else {
-      tableKind = TableKind::NullRef;
-    }
+    tableKind = TableKind::AnyRef;
 #endif
   } else {
 #ifdef ENABLE_WASM_REFTYPES
@@ -2423,8 +2431,17 @@ bool WasmTableObject::construct(JSContext* cx, unsigned argc, Value* vp) {
     return false;
   }
 
-  RootedWasmTableObject table(cx,
-                              WasmTableObject::create(cx, limits, tableKind));
+  RootedObject proto(cx);
+  if (!GetPrototypeFromBuiltinConstructor(cx, args, JSProto_WasmTable,
+                                          &proto)) {
+    return false;
+  }
+  if (!proto) {
+    proto = GlobalObject::getOrCreatePrototype(cx, JSProto_WasmTable);
+  }
+
+  RootedWasmTableObject table(
+      cx, WasmTableObject::create(cx, limits, tableKind, proto));
   if (!table) {
     return false;
   }
@@ -2540,7 +2557,6 @@ bool WasmTableObject::setImpl(JSContext* cx, const CallArgs& args) {
     case TableKind::FuncRef:
       table.fillFuncRef(index, 1, FuncRef::fromJSFunction(fun), cx);
       break;
-    case TableKind::NullRef:
     case TableKind::AnyRef:
       table.fillAnyRef(index, 1, any);
       break;
@@ -2697,6 +2713,7 @@ void WasmGlobalObject::trace(JSTracer* trc, JSObject* obj) {
     case ValType::F32:
     case ValType::I64:
     case ValType::F64:
+    case ValType::V128:
       break;
     case ValType::Ref:
       switch (global->type().refTypeKind()) {
@@ -2710,8 +2727,6 @@ void WasmGlobalObject::trace(JSTracer* trc, JSObject* obj) {
                                        global->cell()->ref.asJSObjectAddress(),
                                        "wasm reference-typed global");
           }
-          break;
-        case RefType::Null:
           break;
         case RefType::TypeIndex:
           MOZ_CRASH("Ref NYI");
@@ -2730,10 +2745,7 @@ void WasmGlobalObject::finalize(JSFreeOp* fop, JSObject* obj) {
 
 /* static */
 WasmGlobalObject* WasmGlobalObject::create(JSContext* cx, HandleVal hval,
-                                           bool isMutable) {
-  RootedObject proto(
-      cx, &cx->global()->getPrototype(JSProto_WasmGlobal).toObject());
-
+                                           bool isMutable, HandleObject proto) {
   AutoSetNewObjectMetadata metadata(cx);
   RootedWasmGlobalObject obj(
       cx, NewObjectWithGivenProto<WasmGlobalObject>(cx, proto));
@@ -2781,11 +2793,12 @@ WasmGlobalObject* WasmGlobalObject::create(JSContext* cx, HandleVal hval,
                                        cell->ref.asJSObject());
           }
           break;
-        case RefType::Null:
-          break;
         case RefType::TypeIndex:
           MOZ_CRASH("Ref NYI");
       }
+      break;
+    case ValType::V128:
+      cell->v128 = val.v128();
       break;
   }
   obj->initReservedSlot(TYPE_SLOT,
@@ -2851,21 +2864,19 @@ bool WasmGlobalObject::construct(JSContext* cx, unsigned argc, Value* vp) {
     globalType = ValType::F32;
   } else if (StringEqualsLiteral(typeLinearStr, "f64")) {
     globalType = ValType::F64;
-#ifdef ENABLE_WASM_BIGINT
-  } else if (I64BigIntConversionAvailable(cx) &&
-             StringEqualsLiteral(typeLinearStr, "i64")) {
+  } else if (StringEqualsLiteral(typeLinearStr, "i64")) {
     globalType = ValType::I64;
+#ifdef ENABLE_WASM_SIMD
+  } else if (SimdAvailable(cx) && StringEqualsLiteral(typeLinearStr, "v128")) {
+    globalType = ValType::V128;
 #endif
 #ifdef ENABLE_WASM_REFTYPES
   } else if (ReftypesAvailable(cx) &&
              StringEqualsLiteral(typeLinearStr, "funcref")) {
     globalType = RefType::func();
   } else if (ReftypesAvailable(cx) &&
-             StringEqualsLiteral(typeLinearStr, "anyref")) {
+             StringEqualsLiteral(typeLinearStr, "externref")) {
     globalType = RefType::any();
-  } else if (ReftypesAvailable(cx) &&
-             StringEqualsLiteral(typeLinearStr, "nullref")) {
-    globalType = RefType::null();
 #endif
   } else {
     JS_ReportErrorNumberUTF8(cx, GetErrorMessage, nullptr,
@@ -2892,13 +2903,15 @@ bool WasmGlobalObject::construct(JSContext* cx, unsigned argc, Value* vp) {
     case ValType::F64:
       globalVal = Val(double(0.0));
       break;
+    case ValType::V128:
+      globalVal = Val(V128());
+      break;
     case ValType::Ref:
       switch (globalType.refTypeKind()) {
         case RefType::Func:
           globalVal = Val(RefType::func(), AnyRef::null());
           break;
         case RefType::Any:
-        case RefType::Null:
           globalVal = Val(RefType::any(), AnyRef::null());
           break;
         case RefType::TypeIndex:
@@ -2911,12 +2924,27 @@ bool WasmGlobalObject::construct(JSContext* cx, unsigned argc, Value* vp) {
   RootedValue valueVal(cx, args.get(1));
   if (!valueVal.isUndefined() ||
       (args.length() >= 2 && globalType.isReference())) {
+    if (globalType == ValType::V128) {
+      JS_ReportErrorNumberUTF8(cx, GetErrorMessage, nullptr,
+                               JSMSG_WASM_BAD_VAL_TYPE);
+      return false;
+    }
     if (!ToWebAssemblyValue(cx, globalType, valueVal, &globalVal)) {
       return false;
     }
   }
 
-  WasmGlobalObject* global = WasmGlobalObject::create(cx, globalVal, isMutable);
+  RootedObject proto(cx);
+  if (!GetPrototypeFromBuiltinConstructor(cx, args, JSProto_WasmGlobal,
+                                          &proto)) {
+    return false;
+  }
+  if (!proto) {
+    proto = GlobalObject::getOrCreatePrototype(cx, JSProto_WasmGlobal);
+  }
+
+  WasmGlobalObject* global =
+      WasmGlobalObject::create(cx, globalVal, isMutable, proto);
   if (!global) {
     return false;
   }
@@ -2933,26 +2961,20 @@ static bool IsGlobal(HandleValue v) {
 bool WasmGlobalObject::valueGetterImpl(JSContext* cx, const CallArgs& args) {
   switch (args.thisv().toObject().as<WasmGlobalObject>().type().kind()) {
     case ValType::I32:
+    case ValType::I64:
     case ValType::F32:
     case ValType::F64:
       args.thisv().toObject().as<WasmGlobalObject>().value(cx, args.rval());
       return true;
-    case ValType::I64:
-#ifdef ENABLE_WASM_BIGINT
-      if (I64BigIntConversionAvailable(cx)) {
-        return args.thisv().toObject().as<WasmGlobalObject>().value(
-            cx, args.rval());
-      }
-#endif
+    case ValType::V128:
       JS_ReportErrorNumberUTF8(cx, GetErrorMessage, nullptr,
-                               JSMSG_WASM_BAD_I64_TYPE);
+                               JSMSG_WASM_BAD_VAL_TYPE);
       return false;
     case ValType::Ref:
       switch (
           args.thisv().toObject().as<WasmGlobalObject>().type().refTypeKind()) {
         case RefType::Func:
         case RefType::Any:
-        case RefType::Null:
           args.thisv().toObject().as<WasmGlobalObject>().value(cx, args.rval());
           return true;
         case RefType::TypeIndex:
@@ -2983,9 +3005,9 @@ bool WasmGlobalObject::valueSetterImpl(JSContext* cx, const CallArgs& args) {
     return false;
   }
 
-  if (global->type() == ValType::I64 && !I64BigIntConversionAvailable(cx)) {
+  if (global->type() == ValType::V128) {
     JS_ReportErrorNumberUTF8(cx, GetErrorMessage, nullptr,
-                             JSMSG_WASM_BAD_I64_TYPE);
+                             JSMSG_WASM_BAD_VAL_TYPE);
     return false;
   }
 
@@ -3040,12 +3062,10 @@ void WasmGlobalObject::setVal(JSContext* cx, wasm::HandleVal hval) {
       cell->f64 = val.f64();
       break;
     case ValType::I64:
-#ifdef ENABLE_WASM_BIGINT
-      MOZ_ASSERT(I64BigIntConversionAvailable(cx),
-                 "expected BigInt support for setting I64 global");
       cell->i64 = val.i64();
-#endif
       break;
+    case ValType::V128:
+      MOZ_CRASH("unexpected v128 when setting global's value");
     case ValType::Ref:
       switch (this->type().refTypeKind()) {
         case RefType::Func:
@@ -3061,9 +3081,6 @@ void WasmGlobalObject::setVal(JSContext* cx, wasm::HandleVal hval) {
                                        prevPtr.asJSObject(),
                                        cell->ref.asJSObject());
           }
-          break;
-        }
-        case RefType::Null: {
           break;
         }
         case RefType::TypeIndex: {
@@ -3083,6 +3100,9 @@ void WasmGlobalObject::val(MutableHandleVal outval) const {
     case ValType::I64:
       outval.set(Val(uint64_t(cell->i64)));
       return;
+    case ValType::V128:
+      outval.set(Val(cell->v128));
+      return;
     case ValType::F32:
       outval.set(Val(cell->f32));
       return;
@@ -3095,7 +3115,6 @@ void WasmGlobalObject::val(MutableHandleVal outval) const {
           outval.set(Val(RefType::func(), cell->ref));
           return;
         case RefType::Any:
-        case RefType::Null:
           outval.set(Val(RefType::any(), cell->ref));
           return;
         case RefType::TypeIndex:

@@ -164,8 +164,14 @@ fn handle_queries(
                     }
                     Err(err) => {
                         warn!("Sending mDNS query failed: {}", err);
-                        for query in queries {
-                            unsent_queries.push_back(query);
+                        if err.kind() != io::ErrorKind::PermissionDenied {
+                            for query in queries {
+                                unsent_queries.push_back(query);
+                            }
+                        } else {
+                            for query in queries {
+                                hostname_timedout(&query.callback, &query.hostname);
+                            }
                         }
                     }
                 }
@@ -400,7 +406,7 @@ impl MDNSService {
         let mdns_addr = std::net::Ipv4Addr::new(224, 0, 0, 251);
         let port = 5353;
 
-        let socket = Socket::new(Domain::ipv4(), Type::dgram(), None).unwrap();
+        let socket = Socket::new(Domain::ipv4(), Type::dgram(), None)?;
         socket.set_reuse_address(true)?;
 
         #[cfg(not(target_os = "windows"))]
@@ -611,28 +617,6 @@ pub unsafe extern "C" fn mdns_service_unregister_hostname(
     assert!(!hostname.is_null());
     let hostname = CStr::from_ptr(hostname).to_string_lossy();
     (*serv).unregister_hostname(&hostname);
-}
-
-#[no_mangle]
-pub extern "C" fn mdns_service_generate_uuid() -> *const c_char {
-    let uuid = match panic::catch_unwind(|| Uuid::new_v4()) {
-        Ok(uuid) => uuid,
-        Err(_) => Uuid::nil(),
-    };
-
-    match CString::new(uuid.to_hyphenated().to_string()) {
-        Ok(uuid) => uuid.into_raw(),
-        Err(_) => unreachable!(), // UUID should not contain 0 byte
-    }
-}
-
-/// # Safety
-///
-/// This function should only be called once, with a valid uuid.
-#[no_mangle]
-pub unsafe extern "C" fn mdns_service_free_uuid(uuid: *mut c_char) {
-    assert!(!uuid.is_null());
-    CString::from_raw(uuid);
 }
 
 #[cfg(test)]

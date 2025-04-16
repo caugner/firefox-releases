@@ -294,9 +294,12 @@ class WidgetKeyboardEvent : public WidgetInputEvent {
     WidgetKeyboardEvent* result =
         new WidgetKeyboardEvent(false, mMessage, nullptr);
     result->AssignKeyEventData(*this, true);
-    result->mEditCommandsForSingleLineEditor = mEditCommandsForSingleLineEditor;
-    result->mEditCommandsForMultiLineEditor = mEditCommandsForMultiLineEditor;
-    result->mEditCommandsForRichTextEditor = mEditCommandsForRichTextEditor;
+    result->mEditCommandsForSingleLineEditor =
+        mEditCommandsForSingleLineEditor.Clone();
+    result->mEditCommandsForMultiLineEditor =
+        mEditCommandsForMultiLineEditor.Clone();
+    result->mEditCommandsForRichTextEditor =
+        mEditCommandsForRichTextEditor.Clone();
     result->mFlags = mFlags;
     return result;
   }
@@ -314,7 +317,16 @@ class WidgetKeyboardEvent : public WidgetInputEvent {
     const bool isEnterOrSpaceKey =
         mKeyNameIndex == KEY_NAME_INDEX_Enter || mKeyCode == NS_VK_SPACE;
     return (PseudoCharCode() || isEnterOrSpaceKey) &&
-           !isCombiningWithOperationKeys;
+           (!isCombiningWithOperationKeys ||
+            // ctrl-c/ctrl-x/ctrl-v is quite common shortcut for clipboard
+            // operation.
+            // XXXedgar, we have to find a better way to handle browser keyboard
+            // shortcut for user activation, instead of just ignoring all
+            // combinations, see bug 1641171.
+            ((mKeyCode == dom::KeyboardEvent_Binding::DOM_VK_C ||
+              mKeyCode == dom::KeyboardEvent_Binding::DOM_VK_V ||
+              mKeyCode == dom::KeyboardEvent_Binding::DOM_VK_X) &&
+             IsAccel()));
   }
 
   /**
@@ -679,7 +691,7 @@ class WidgetKeyboardEvent : public WidgetInputEvent {
     mCharCode = aEvent.mCharCode;
     mPseudoCharCode = aEvent.mPseudoCharCode;
     mLocation = aEvent.mLocation;
-    mAlternativeCharCodes = aEvent.mAlternativeCharCodes;
+    mAlternativeCharCodes = aEvent.mAlternativeCharCodes.Clone();
     mIsRepeat = aEvent.mIsRepeat;
     mIsComposing = aEvent.mIsComposing;
     mKeyNameIndex = aEvent.mKeyNameIndex;
@@ -720,21 +732,23 @@ class WidgetKeyboardEvent : public WidgetInputEvent {
         aEvent.mEditCommandsForSingleLineEditorInitialized;
     if (mEditCommandsForSingleLineEditorInitialized) {
       mEditCommandsForSingleLineEditor =
-          aEvent.mEditCommandsForSingleLineEditor;
+          aEvent.mEditCommandsForSingleLineEditor.Clone();
     } else {
       mEditCommandsForSingleLineEditor.Clear();
     }
     mEditCommandsForMultiLineEditorInitialized =
         aEvent.mEditCommandsForMultiLineEditorInitialized;
     if (mEditCommandsForMultiLineEditorInitialized) {
-      mEditCommandsForMultiLineEditor = aEvent.mEditCommandsForMultiLineEditor;
+      mEditCommandsForMultiLineEditor =
+          aEvent.mEditCommandsForMultiLineEditor.Clone();
     } else {
       mEditCommandsForMultiLineEditor.Clear();
     }
     mEditCommandsForRichTextEditorInitialized =
         aEvent.mEditCommandsForRichTextEditorInitialized;
     if (mEditCommandsForRichTextEditorInitialized) {
-      mEditCommandsForRichTextEditor = aEvent.mEditCommandsForRichTextEditor;
+      mEditCommandsForRichTextEditor =
+          aEvent.mEditCommandsForRichTextEditor.Clone();
     } else {
       mEditCommandsForRichTextEditor.Clear();
     }
@@ -1109,7 +1123,7 @@ class WidgetQueryContentEvent : public WidgetGUIEvent {
     // Used by eQuerySelectionAsTransferable
     nsCOMPtr<nsITransferable> mTransferable;
     // Used by eQueryTextContent with font ranges requested
-    AutoTArray<mozilla::FontRange, 1> mFontRanges;
+    CopyableAutoTArray<mozilla::FontRange, 1> mFontRanges;
     // Used by eQueryTextRectArray
     CopyableTArray<mozilla::LayoutDeviceIntRect> mRectArray;
     // true if selection is reversed (end < start)
@@ -1239,7 +1253,7 @@ class InternalEditorInputEvent : public InternalUIEvent {
 
     mData = aEvent.mData;
     mDataTransfer = aEvent.mDataTransfer;
-    mTargetRanges = aEvent.mTargetRanges;
+    mTargetRanges = aEvent.mTargetRanges.Clone();
     mInputType = aEvent.mInputType;
     mIsComposing = aEvent.mIsComposing;
   }

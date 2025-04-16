@@ -31,6 +31,7 @@
 #include "nsIOService.h"
 #include "nsIWebProgressListener.h"
 #include "nsScriptSecurityManager.h"
+#include "RejectForeignAllowList.h"
 
 namespace mozilla {
 
@@ -56,18 +57,6 @@ bool GetTopLevelWindowId(BrowsingContext* aParentContext, uint32_t aBehavior,
           ? AntiTrackingUtils::GetTopLevelStorageAreaWindowId(aParentContext)
           : AntiTrackingUtils::GetTopLevelAntiTrackingWindowId(aParentContext);
   return aTopLevelInnerWindowId != 0;
-}
-
-bool GetTrackingOrigin(nsGlobalWindowInner* a3rdPartyTrackingWindow,
-                       nsACString& aTrackingOrigin) {
-  nsCOMPtr<nsIPrincipal> trackingPrincipal =
-      a3rdPartyTrackingWindow->GetPrincipal();
-  if (NS_WARN_IF(!trackingPrincipal)) {
-    return false;
-  }
-
-  return !NS_WARN_IF(
-      NS_FAILED(trackingPrincipal->GetOriginNoSuffix(aTrackingOrigin)));
 }
 
 // This internal method returns ACCESS_DENY if the access is denied,
@@ -187,17 +176,15 @@ ContentBlocking::AllowAccessFor(
     return StorageAccessGrantPromise::CreateAndReject(false, __func__);
   }
 
-  Maybe<net::CookieJarSettingsArgs> cookieJarSetting =
-      parentWindowContext->GetCookieJarSettings();
-  if (cookieJarSetting.isNothing()) {
+  if (parentWindowContext->GetCookieBehavior().isNothing()) {
     LOG(
-        ("No cookiejar setting found for our parent window context, bailing "
+        ("No cookie behaviour found for our parent window context, bailing "
          "out early"));
     return StorageAccessGrantPromise::CreateAndReject(false, __func__);
   }
 
   // Only add storage permission when there is a reason to do so.
-  uint32_t behavior = cookieJarSetting->cookieBehavior();
+  uint32_t behavior = *parentWindowContext->GetCookieBehavior();
   if (!CookieJarSettings::IsRejectThirdPartyContexts(behavior)) {
     LOG(
         ("Disabled by network.cookie.cookieBehavior pref (%d), bailing out "
@@ -213,7 +200,7 @@ ContentBlocking::AllowAccessFor(
           nsICookieService::BEHAVIOR_REJECT_TRACKER_AND_PARTITION_FOREIGN);
 
   // No need to continue when we are already in the allow list.
-  if (cookieJarSetting->isOnContentBlockingAllowList()) {
+  if (parentWindowContext->GetIsOnContentBlockingAllowList()) {
     return StorageAccessGrantPromise::CreateAndResolve(true, __func__);
   }
 
@@ -256,11 +243,11 @@ ContentBlocking::AllowAccessFor(
         !parentWindowContext->GetIsThirdPartyTrackingResourceWindow()) {
       LOG(("Our window isn't a third-party tracking window"));
       return StorageAccessGrantPromise::CreateAndReject(false, __func__);
-    } else if ((CookieJarSettings::IsRejectThirdPartyWithExceptions(behavior) ||
-                behavior ==
-                    nsICookieService::
-                        BEHAVIOR_REJECT_TRACKER_AND_PARTITION_FOREIGN) &&
-               !parentWindowContext->GetIsThirdPartyWindow()) {
+    }
+    if ((CookieJarSettings::IsRejectThirdPartyWithExceptions(behavior) ||
+         behavior ==
+             nsICookieService::BEHAVIOR_REJECT_TRACKER_AND_PARTITION_FOREIGN) &&
+        !parentWindowContext->GetIsThirdPartyWindow()) {
       LOG(("Our window isn't a third-party window"));
       return StorageAccessGrantPromise::CreateAndReject(false, __func__);
     }
@@ -559,24 +546,29 @@ ContentBlocking::CompleteAllowAccessFor(
     ContentBlockingNotifier::StorageAccessGrantedReason aReason) {
   MOZ_ASSERT(aParentContext->IsInProcess());
 
-  // Let's store the permission in the current parent window and other
-  // windows having the same tracking origin.
+  // Let's inform the parent window and the other windows having the
+  // same tracking origin about the stroage permission is granted.
   ContentBlocking::UpdateAllowAccessOnCurrentProcess(aParentContext,
                                                      aTrackingOrigin);
 
   // Let's inform the parent window.
   nsCOMPtr<nsPIDOMWindowInner> parentInner =
       AntiTrackingUtils::GetInnerWindow(aParentContext);
-  MOZ_ASSERT(parentInner);
+  if (NS_WARN_IF(!parentInner)) {
+    return;
+  }
 
-  nsGlobalWindowInner::Cast(parentInner)->StorageAccessGranted();
+  Document* doc = parentInner->GetExtantDoc();
+  if (NS_WARN_IF(!doc)) {
+    return;
+  }
 
   // Theoratically this can be done in the parent process. But right now,
   // we need the channel while notifying content blocking events, and
   // we don't have a trivial way to obtain the channel in the parent
   // via BrowsingContext. So we just ask the child to do the work.
   ContentBlockingNotifier::OnEvent(
-      parentInner->GetExtantDoc()->GetChannel(), false,
+      doc->GetChannel(), false,
       CookieJarSettings::IsRejectThirdPartyWithExceptions(aCookieBehavior)
           ? nsIWebProgressListener::STATE_COOKIES_BLOCKED_FOREIGN
           : nsIWebProgressListener::STATE_COOKIES_BLOCKED_TRACKER,
@@ -680,57 +672,11 @@ ContentBlocking::SaveAccessForOriginOnParentProcess(
   return ParentAccessGrantPromise::CreateAndResolve(rv, __func__);
 }
 
-/* static */
-bool ContentBlocking::HasStorageAccessGranted(nsPIDOMWindowInner* aWindow) {
-  if (!aWindow) {
-    return false;
-  }
-
-  nsAutoCString trackingOrigin;
-  if (!GetTrackingOrigin(nsGlobalWindowInner::Cast(aWindow), trackingOrigin)) {
-    LOG(("Failed to obtain the the tracking origin"));
-    return false;
-  }
-
-  nsAutoCString permissionKey;
-  AntiTrackingUtils::CreateStoragePermissionKey(trackingOrigin, permissionKey);
-
-  return ContentBlocking::HasStorageAccessGranted(aWindow->GetBrowsingContext(),
-                                                  permissionKey);
-}
-
-/* static */
-bool ContentBlocking::HasStorageAccessGranted(
-    BrowsingContext* aBrowsingContext, const nsACString& aPermissionKey) {
-  MOZ_ASSERT(aBrowsingContext);
-
-  bool useRemoteSubframes;
-  aBrowsingContext->GetUseRemoteSubframes(&useRemoteSubframes);
-
-  // For non-fission, the permission is stored in the top-level window.
-  // For fission, the permission is stored in the tracking window.
-  nsCOMPtr<nsPIDOMWindowInner> inner;
-  if (useRemoteSubframes) {
-    inner = AntiTrackingUtils::GetInnerWindow(aBrowsingContext);
-  } else {
-    inner = AntiTrackingUtils::GetInnerWindow(aBrowsingContext->Top());
-  }
-
-  if (!inner) {
-    return false;
-  }
-
-  return inner->HasStorageAccessGranted(aPermissionKey);
-}
-
 // There are two methods to handle permisson update:
 // 1. UpdateAllowAccessOnCurrentProcess
 // 2. UpdateAllowAccessOnParentProcess
 //
 // For non-fission mode, only UpdateAllowAccessOnCurrentProcess is used.
-// A permission key (constructed by tracking origin) is stored in the top-level
-// window, so every subframe can check if they have the permission by looking
-// up their key.
 //
 // For fission, both methods will be used. Which method to use depends on if the
 // storage access heuristic is triggered by a first-party window or a
@@ -751,54 +697,47 @@ void ContentBlocking::UpdateAllowAccessOnCurrentProcess(
     BrowsingContext* aParentContext, const nsACString& aTrackingOrigin) {
   MOZ_ASSERT(aParentContext && aParentContext->IsInProcess());
 
-  nsAutoCString permissionKey;
-  AntiTrackingUtils::CreateStoragePermissionKey(aTrackingOrigin, permissionKey);
-
   bool useRemoteSubframes;
   aParentContext->GetUseRemoteSubframes(&useRemoteSubframes);
 
-  // For non-fission mode, save access granted decision in the top-level window.
-  // However, in fission, top-level window is not accessible from a 3rd-party
-  // subframe. So we traverse browsing context tree to find all subframes having
-  // the same tracking origin, and save the decision in the subframe.
-  if (useRemoteSubframes) {
-    if (aParentContext->IsTopContent()) {
-      // If we are a first-party, we can't access tracker's frames.
-      // For this case, we should update the result in the parent process.
-      // See UpdateAllowAccessOnParentProcess.
-      return;
-    }
+  if (useRemoteSubframes && aParentContext->IsTopContent()) {
+    // If we are a first-party and we are in fission mode, bail out early
+    // because we can't do anything here.
+    return;
+  }
 
-    BrowsingContext* top = aParentContext->Top();
-    top->PreOrderWalk([&](BrowsingContext* aContext) {
-      // Only check browsing contexts that are in-process.
-      if (aContext->IsInProcess()) {
-        nsAutoCString origin;
-        Unused << AntiTrackingUtils::GetPrincipalAndTrackingOrigin(
-            aContext, nullptr, origin);
+  BrowsingContext* top = aParentContext->Top();
+  uint32_t behavior = AntiTrackingUtils::GetCookieBehavior(top);
 
-        uint32_t behavior = AntiTrackingUtils::GetCookieBehavior(aContext);
-        if (behavior == nsICookieService::BEHAVIOR_REJECT_TRACKER &&
-            !AntiTrackingUtils::IsFirstLevelSubContext(aContext)) {
-          return;
+  top->PreOrderWalk([&](BrowsingContext* aContext) {
+    // Only check browsing contexts that are in-process.
+    if (aContext->IsInProcess()) {
+      nsAutoCString origin;
+      Unused << AntiTrackingUtils::GetPrincipalAndTrackingOrigin(
+          aContext, nullptr, origin);
+
+      // Permission is only synced to first-level iframes.
+      if ((aParentContext != aContext) &&
+          (behavior == nsICookieService::BEHAVIOR_REJECT_TRACKER &&
+           !AntiTrackingUtils::IsFirstLevelSubContext(aContext))) {
+        return;
+      }
+
+      if (aTrackingOrigin == origin) {
+        nsCOMPtr<nsPIDOMWindowInner> inner =
+            AntiTrackingUtils::GetInnerWindow(aContext);
+        if (inner) {
+          inner->SaveStorageAccessGranted();
         }
 
-        if (aTrackingOrigin == origin) {
-          nsCOMPtr<nsPIDOMWindowInner> inner =
-              AntiTrackingUtils::GetInnerWindow(aContext);
-          if (inner) {
-            inner->SaveStorageAccessGranted(permissionKey);
-          }
+        nsCOMPtr<nsPIDOMWindowOuter> outer =
+            nsPIDOMWindowOuter::GetFromCurrentInner(inner);
+        if (outer) {
+          nsGlobalWindowOuter::Cast(outer)->SetHasStorageAccess(true);
         }
       }
-    });
-  } else {
-    nsCOMPtr<nsPIDOMWindowInner> topInner =
-        AntiTrackingUtils::GetInnerWindow(aParentContext->Top());
-    if (topInner) {
-      topInner->SaveStorageAccessGranted(permissionKey);
     }
-  }
+  });
 }
 
 /* static */
@@ -815,8 +754,7 @@ void ContentBlocking::UpdateAllowAccessOnParentProcess(
     return;
   }
 
-  nsAutoCString permissionKey;
-  AntiTrackingUtils::CreateStoragePermissionKey(aTrackingOrigin, permissionKey);
+  uint32_t behavior = AntiTrackingUtils::GetCookieBehavior(aParentContext);
 
   aParentContext->PreOrderWalk([&](BrowsingContext* aContext) {
     WindowGlobalParent* wgp = aContext->Canonical()->GetCurrentWindowGlobal();
@@ -824,7 +762,6 @@ void ContentBlocking::UpdateAllowAccessOnParentProcess(
       return;
     }
 
-    uint32_t behavior = AntiTrackingUtils::GetCookieBehavior(aContext);
     if (behavior == nsICookieService::BEHAVIOR_REJECT_TRACKER &&
         !AntiTrackingUtils::IsFirstLevelSubContext(aContext)) {
       return;
@@ -833,7 +770,7 @@ void ContentBlocking::UpdateAllowAccessOnParentProcess(
     nsAutoCString origin;
     AntiTrackingUtils::GetPrincipalAndTrackingOrigin(aContext, nullptr, origin);
     if (aTrackingOrigin == origin) {
-      Unused << wgp->SendSaveStorageAccessGranted(permissionKey);
+      Unused << wgp->SendSaveStorageAccessGranted();
     }
   });
 }
@@ -902,7 +839,7 @@ bool ContentBlocking::ShouldAllowAccessFor(nsPIDOMWindowInner* aWindow,
       behavior !=
           nsICookieService::BEHAVIOR_REJECT_TRACKER_AND_PARTITION_FOREIGN) {
     // Let's check if this is a 3rd party context.
-    if (!nsContentUtils::IsThirdPartyWindowOrChannel(aWindow, nullptr, aURI)) {
+    if (!AntiTrackingUtils::IsThirdPartyWindow(aWindow, aURI)) {
       LOG(("Our window isn't a third-party window"));
       return true;
     }
@@ -950,8 +887,7 @@ bool ContentBlocking::ShouldAllowAccessFor(nsPIDOMWindowInner* aWindow,
              nsICookieService::BEHAVIOR_REJECT_TRACKER_AND_PARTITION_FOREIGN) {
     if (nsContentUtils::IsThirdPartyTrackingResourceWindow(aWindow)) {
       // fall through
-    } else if (nsContentUtils::IsThirdPartyWindowOrChannel(aWindow, nullptr,
-                                                           aURI)) {
+    } else if (AntiTrackingUtils::IsThirdPartyWindow(aWindow, aURI)) {
       LOG(("We're in the third-party context, storage should be partitioned"));
       // fall through, but remember that we're partitioning.
       blockedReason = nsIWebProgressListener::STATE_COOKIES_PARTITIONED_FOREIGN;
@@ -961,6 +897,11 @@ bool ContentBlocking::ShouldAllowAccessFor(nsPIDOMWindowInner* aWindow,
     }
   } else {
     MOZ_ASSERT(CookieJarSettings::IsRejectThirdPartyWithExceptions(behavior));
+    if (RejectForeignAllowList::Check(document)) {
+      LOG(("This window is whitelisted for reject foreign"));
+      return true;
+    }
+
     blockedReason = nsIWebProgressListener::STATE_COOKIES_PARTITIONED_FOREIGN;
   }
 
@@ -995,16 +936,16 @@ bool ContentBlocking::ShouldAllowAccessFor(nsPIDOMWindowInner* aWindow,
     return false;
   }
 
+  // Document::HasStoragePermission first checks if storage access granted is
+  // cached in the inner window, if no, it then checks the storage permission
+  // flag in the channel's loadinfo
   bool allowed = document->HasStoragePermission();
 
   if (!allowed) {
     *aRejectedReason = blockedReason;
   } else {
-    // Document::HasStoragePermission already checks HasStorageAccessGranted,
-    // we just show log here to know whether the permission is granted because
-    // of permission update.
     if (MOZ_LOG_TEST(gAntiTrackingLog, mozilla::LogLevel::Debug) &&
-        ContentBlocking::HasStorageAccessGranted(aWindow)) {
+        aWindow->HasStorageAccessGranted()) {
       LOG(("Permission stored in the window. All good."));
     }
   }
@@ -1156,8 +1097,7 @@ bool ContentBlocking::ShouldAllowAccessFor(nsIChannel* aChannel, nsIURI* aURI,
     if (classifiedChannel &&
         classifiedChannel->IsThirdPartyTrackingResource()) {
       // fall through
-    } else if (nsContentUtils::IsThirdPartyWindowOrChannel(nullptr, aChannel,
-                                                           aURI)) {
+    } else if (AntiTrackingUtils::IsThirdPartyChannel(aChannel)) {
       LOG(("We're in the third-party context, storage should be partitioned"));
       // fall through but remember that we're partitioning.
       blockedReason = nsIWebProgressListener::STATE_COOKIES_PARTITIONED_FOREIGN;
@@ -1167,7 +1107,33 @@ bool ContentBlocking::ShouldAllowAccessFor(nsIChannel* aChannel, nsIURI* aURI,
     }
   } else {
     MOZ_ASSERT(CookieJarSettings::IsRejectThirdPartyWithExceptions(behavior));
+    if (httpChannel && RejectForeignAllowList::Check(httpChannel)) {
+      LOG(("This channel is whitelisted"));
+      return true;
+    }
     blockedReason = nsIWebProgressListener::STATE_COOKIES_BLOCKED_FOREIGN;
+  }
+
+  RefPtr<BrowsingContext> targetBC;
+  rv = loadInfo->GetTargetBrowsingContext(getter_AddRefs(targetBC));
+  if (!targetBC || NS_WARN_IF(NS_FAILED(rv))) {
+    LOG(("Failed to get the channel's target browsing context"));
+    return false;
+  }
+
+  // We will only allow the storage access for the channel of the first-level
+  // iframe or top-level sub-resource in cookie behavior
+  // BEHAVIOR_REJECT_TRACKER.
+  if (behavior == nsICookieService::BEHAVIOR_REJECT_TRACKER &&
+      !targetBC->IsTopContent() &&
+      !AntiTrackingUtils::IsFirstLevelSubContext(targetBC)) {
+    *aRejectedReason = blockedReason;
+    return false;
+  }
+
+  if (Document::StorageAccessSandboxed(targetBC->GetSandboxFlags())) {
+    LOG(("Our document is sandboxed"));
+    return false;
   }
 
   // Let's see if we have to grant the access for this particular channel.
@@ -1192,18 +1158,11 @@ bool ContentBlocking::ShouldAllowAccessFor(nsIChannel* aChannel, nsIURI* aURI,
   aChannel->GetIsDocument(&isDocument);
 
   if (isDocument) {
-    RefPtr<BrowsingContext> browsingContext;
-    rv = loadInfo->GetTargetBrowsingContext(getter_AddRefs(browsingContext));
-    if (NS_WARN_IF(NS_FAILED(rv))) {
-      LOG(("Failed to get the channel's target browsing context"));
-    } else {
-      nsAutoCString type;
-      AntiTrackingUtils::CreateStoragePermissionKey(trackingOrigin, type);
-
-      if (ContentBlocking::HasStorageAccessGranted(browsingContext, type)) {
-        LOG(("Permission stored in the window. All good."));
-        return true;
-      }
+    nsCOMPtr<nsPIDOMWindowInner> inner =
+        AntiTrackingUtils::GetInnerWindow(targetBC);
+    if (inner && inner->HasStorageAccessGranted()) {
+      LOG(("Permission stored in the window. All good."));
+      return true;
     }
   }
 
@@ -1265,8 +1224,7 @@ bool ContentBlocking::ApproximateAllowAccessForWithoutChannel(
     return true;
   }
 
-  if (!nsContentUtils::IsThirdPartyWindowOrChannel(aFirstPartyWindow, nullptr,
-                                                   aURI)) {
+  if (!AntiTrackingUtils::IsThirdPartyWindow(aFirstPartyWindow, aURI)) {
     LOG(("Our window isn't a third-party window"));
     return true;
   }

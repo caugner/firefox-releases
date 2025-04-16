@@ -13,7 +13,9 @@ Array [
         className="app-page__title"
       />
     </Localized>
-    <ul>
+    <ul
+      className="registrations-container__list"
+    >
       <Registration
         className="registrations-container__item"
         isDebugEnabled={true}
@@ -26,7 +28,6 @@ Array [
             "workers": Array [
               Object {
                 "id": "id-worker-1-example",
-                "isActive": true,
                 "state": 4,
                 "stateText": "activated",
                 "url": "http://example.com/worker.js",
@@ -38,20 +39,22 @@ Array [
       />
     </ul>
   </article>,
-  <Localized
-    a={
-      <a
-        className="aboutdebugging-plug__link"
-        onClick={[Function]}
-      />
-    }
-    id="serviceworker-list-aboutdebugging"
-    key="serviceworkerlist-footer"
+  <footer
+    className="aboutdebugging-plug"
   >
-    <footer
-      className="aboutdebugging-plug"
-    />
-  </Localized>,
+    <Localized
+      a={
+        <a
+          className="aboutdebugging-plug__link"
+          onClick={[Function]}
+        />
+      }
+      id="serviceworker-list-aboutdebugging"
+      key="serviceworkerlist-footer"
+    >
+      <p />
+    </Localized>
+  </footer>,
 ]
 `;
 
@@ -68,7 +71,9 @@ Array [
         className="app-page__title"
       />
     </Localized>
-    <ul>
+    <ul
+      className="registrations-container__list"
+    >
       <Registration
         className="registrations-container__item"
         isDebugEnabled={true}
@@ -81,7 +86,6 @@ Array [
             "workers": Array [
               Object {
                 "id": "id-worker-1-example",
-                "isActive": true,
                 "state": 4,
                 "stateText": "activated",
                 "url": "http://example.com/worker.js",
@@ -103,7 +107,6 @@ Array [
             "workers": Array [
               Object {
                 "id": "id-worker-2-example",
-                "isActive": false,
                 "state": 2,
                 "stateText": "installed",
                 "url": "http://example.com/worker.js",
@@ -125,7 +128,6 @@ Array [
             "workers": Array [
               Object {
                 "id": "id-worker-3-example",
-                "isActive": true,
                 "state": 4,
                 "stateText": "activated",
                 "url": "http://example.com/worker.js",
@@ -137,19 +139,21 @@ Array [
       />
     </ul>
   </article>,
-  <Localized
-    a={
-      <a
-        className="aboutdebugging-plug__link"
-        onClick={[Function]}
-      />
-    }
-    id="serviceworker-list-aboutdebugging"
-    key="serviceworkerlist-footer"
+  <footer
+    className="aboutdebugging-plug"
   >
-    <footer
-      className="aboutdebugging-plug"
-    />
-  </Localized>,
+    <Localized
+      a={
+        <a
+          className="aboutdebugging-plug__link"
+          onClick={[Function]}
+        />
+      }
+      id="serviceworker-list-aboutdebugging"
+      key="serviceworkerlist-footer"
+    >
+      <p />
+    </Localized>
+  </footer>,
 ]
 `;

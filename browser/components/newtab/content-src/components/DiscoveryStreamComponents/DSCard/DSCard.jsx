@@ -23,6 +23,8 @@ export const DefaultMeta = ({
   cta,
   engagement,
   cta_variant,
+  sponsor,
+  sponsored_by_override,
 }) => (
   <div className="meta">
     <div className="info-wrap">
@@ -38,6 +40,8 @@ export const DefaultMeta = ({
     <DSContextFooter
       context_type={context_type}
       context={context}
+      sponsor={sponsor}
+      sponsored_by_override={sponsored_by_override}
       display_engagement_labels={display_engagement_labels}
       engagement={engagement}
     />
@@ -54,6 +58,7 @@ export const CTAButtonMeta = ({
   cta,
   engagement,
   sponsor,
+  sponsored_by_override,
 }) => (
   <div className="meta">
     <div className="info-wrap">
@@ -77,6 +82,8 @@ export const CTAButtonMeta = ({
       <DSContextFooter
         context_type={context_type}
         context={context}
+        sponsor={sponsor}
+        sponsored_by_override={sponsored_by_override}
         display_engagement_labels={display_engagement_labels}
         engagement={engagement}
       />
@@ -137,7 +144,9 @@ export class _DSCard extends React.PureComponent {
       this.props.dispatch(
         ac.UserEvent({
           event: "CLICK",
-          source: this.props.type.toUpperCase(),
+          source: this.props.is_video
+            ? "CARDGRID_VIDEO"
+            : this.props.type.toUpperCase(),
           action_position: this.props.pos,
           value: { card_type: this.props.flightId ? "spoc" : "organic" },
         })
@@ -145,7 +154,9 @@ export class _DSCard extends React.PureComponent {
 
       this.props.dispatch(
         ac.ImpressionStats({
-          source: this.props.type.toUpperCase(),
+          source: this.props.is_video
+            ? "CARDGRID_VIDEO"
+            : this.props.type.toUpperCase(),
           click: 0,
           tiles: [
             {
@@ -216,9 +227,10 @@ export class _DSCard extends React.PureComponent {
       );
     }
     const isButtonCTA = this.props.cta_variant === "button";
+    const baseClass = `ds-card ${this.props.is_video ? `video-card` : ``}`;
 
     return (
-      <div className="ds-card">
+      <div className={baseClass}>
         <SafeAnchor
           className="ds-card-link"
           dispatch={this.props.dispatch}
@@ -232,6 +244,11 @@ export class _DSCard extends React.PureComponent {
               rawSource={this.props.raw_image_src}
               sizes={this.dsImageSizes}
             />
+            {this.props.is_video && (
+              <div className="playhead">
+                <span>Video Content</span>
+              </div>
+            )}
           </div>
           {isButtonCTA ? (
             <CTAButtonMeta
@@ -244,6 +261,7 @@ export class _DSCard extends React.PureComponent {
               engagement={this.props.engagement}
               cta={this.props.cta}
               sponsor={this.props.sponsor}
+              sponsored_by_override={this.props.sponsored_by_override}
             />
           ) : (
             <DefaultMeta
@@ -256,6 +274,8 @@ export class _DSCard extends React.PureComponent {
               context_type={this.props.context_type}
               cta={this.props.cta}
               cta_variant={this.props.cta_variant}
+              sponsor={this.props.sponsor}
+              sponsored_by_override={this.props.sponsored_by_override}
             />
           )}
           <ImpressionStats
@@ -270,7 +290,7 @@ export class _DSCard extends React.PureComponent {
               },
             ]}
             dispatch={this.props.dispatch}
-            source={this.props.type}
+            source={this.props.is_video ? "CARDGRID_VIDEO" : this.props.type}
           />
         </SafeAnchor>
         <DSLinkMenu

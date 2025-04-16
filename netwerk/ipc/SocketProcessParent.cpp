@@ -7,6 +7,7 @@
 #include "SocketProcessLogging.h"
 
 #include "AltServiceParent.h"
+#include "CachePushChecker.h"
 #include "HttpTransactionParent.h"
 #include "SocketProcessHost.h"
 #include "mozilla/dom/MemoryReportRequest.h"
@@ -15,6 +16,7 @@
 #include "mozilla/ipc/PChildToParentStreamParent.h"
 #include "mozilla/ipc/PParentToChildStreamParent.h"
 #include "mozilla/net/DNSRequestParent.h"
+#include "mozilla/net/ProxyConfigLookupParent.h"
 #include "mozilla/Telemetry.h"
 #include "mozilla/TelemetryIPC.h"
 #include "nsIHttpActivityObserver.h"
@@ -26,6 +28,10 @@
 #  include "mozilla/dom/BrowserParent.h"
 #  include "mozilla/net/WebrtcTCPSocketParent.h"
 #endif
+#if defined(MOZ_WIDGET_ANDROID)
+#  include "mozilla/java/GeckoProcessManagerWrappers.h"
+#  include "mozilla/java/GeckoProcessTypeWrappers.h"
+#endif  // defined(MOZ_WIDGET_ANDROID)
 
 namespace mozilla {
 namespace net {
@@ -321,6 +327,32 @@ mozilla::ipc::IPCResult SocketProcessParent::RecvGetTLSClientCert(
   }
 
   *aSucceeded = true;
+  return IPC_OK();
+}
+
+already_AddRefed<PProxyConfigLookupParent>
+SocketProcessParent::AllocPProxyConfigLookupParent(
+    nsIURI* aURI, const uint32_t& aProxyResolveFlags) {
+  RefPtr<ProxyConfigLookupParent> actor =
+      new ProxyConfigLookupParent(aURI, aProxyResolveFlags);
+  return actor.forget();
+}
+
+mozilla::ipc::IPCResult SocketProcessParent::RecvPProxyConfigLookupConstructor(
+    PProxyConfigLookupParent* aActor, nsIURI* aURI,
+    const uint32_t& aProxyResolveFlags) {
+  static_cast<ProxyConfigLookupParent*>(aActor)->DoProxyLookup();
+  return IPC_OK();
+}
+
+mozilla::ipc::IPCResult SocketProcessParent::RecvCachePushCheck(
+    nsIURI* aPushedURL, OriginAttributes&& aOriginAttributes,
+    nsCString&& aRequestString, CachePushCheckResolver&& aResolver) {
+  RefPtr<CachePushChecker> checker = new CachePushChecker(
+      aPushedURL, aOriginAttributes, aRequestString, aResolver);
+  if (NS_FAILED(checker->DoCheck())) {
+    aResolver(false);
+  }
   return IPC_OK();
 }
 

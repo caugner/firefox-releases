@@ -113,6 +113,11 @@
   skin/classic/browser/panel-icon-retry.svg                    (../shared/panel-icon-retry.svg)
   skin/classic/browser/toolbar-drag-indicator.svg              (../shared/toolbar-drag-indicator.svg)
 
+  skin/classic/browser/protections/resolved-breach.svg         (../shared/protections/resolved-breach.svg)
+  skin/classic/browser/protections/resolved-breach-gray.svg         (../shared/protections/resolved-breach-gray.svg)
+  skin/classic/browser/protections/breached-password.svg       (../shared/protections/breached-password.svg)
+  skin/classic/browser/protections/new-feature.svg             (../shared/protections/new-feature.svg)
+
   skin/classic/browser/preferences/bookmark.svg                (../shared/preferences/bookmark.svg)
   skin/classic/browser/preferences/critters-postcard.jpg       (../shared/preferences/critters-postcard.jpg)
   skin/classic/browser/preferences/extensions.svg              (../shared/preferences/extensions.svg)
@@ -205,7 +210,6 @@
   skin/classic/browser/pin-12.svg                     (../shared/icons/pin-12.svg)
   skin/classic/browser/pin-tab.svg                    (../shared/icons/pin-tab.svg)
   skin/classic/browser/pocket.svg                     (../shared/icons/pocket.svg)
-  skin/classic/browser/pocket-animation.svg           (../shared/icons/pocket-animation.svg)
   skin/classic/browser/pocket-outline.svg             (../shared/icons/pocket-outline.svg)
   skin/classic/browser/print.svg                      (../shared/icons/print.svg)
   skin/classic/browser/private-browsing.svg           (../shared/icons/private-browsing.svg)
@@ -236,6 +240,7 @@
   skin/classic/browser/window.svg                     (../shared/icons/window.svg)
   skin/classic/browser/zoom-in.svg                    (../shared/icons/zoom-in.svg)
   skin/classic/browser/zoom-out.svg                   (../shared/icons/zoom-out.svg)
+  skin/classic/browser/pioneer.svg                    (../shared/icons/pioneer.svg)
 
 
   skin/classic/browser/search-engine-placeholder.png           (../shared/search/search-engine-placeholder.png)

@@ -3620,9 +3620,10 @@ bool DebugAPI::edgeIsInDebuggerWeakmap(JSRuntime* rt, JSObject* src,
       return frame->generatorScript() == &dst.as<BaseScript>() &&
              dbg->generatorFrames.hasEntry(genObj, src);
     }
-    return dst.is<AbstractGeneratorObject>() &&
-           dbg->generatorFrames.hasEntry(&dst.as<AbstractGeneratorObject>(),
-                                         src);
+    return dst.is<JSObject>() &&
+           dst.as<JSObject>().is<AbstractGeneratorObject>() &&
+           dbg->generatorFrames.hasEntry(
+               &dst.as<JSObject>().as<AbstractGeneratorObject>(), src);
   }
   if (src->is<DebuggerObject>()) {
     return dst.is<JSObject>() &&
@@ -5895,8 +5896,7 @@ bool Debugger::isCompilableUnit(JSContext* cx, unsigned argc, Value* vp) {
   JS::AutoSuppressWarningReporter suppressWarnings(cx);
   frontend::Parser<frontend::FullParseHandler, char16_t> parser(
       cx, options, chars.twoByteChars(), length,
-      /* foldConstants = */ true, compilationInfo, nullptr, nullptr,
-      compilationInfo.sourceObject);
+      /* foldConstants = */ true, compilationInfo, nullptr, nullptr);
   if (!parser.checkOptions() || !parser.parse()) {
     // We ran into an error. If it was because we ran out of memory we report
     // it in the usual way.

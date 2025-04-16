@@ -309,6 +309,7 @@ this.tabs = class extends ExtensionAPI {
 
         async create({
           active,
+          cookieStoreId,
           discarded,
           index,
           openInReaderMode,
@@ -334,6 +335,7 @@ this.tabs = class extends ExtensionAPI {
             extensionId: context.extension.id,
             createProperties: {
               active,
+              cookieStoreId,
               discarded,
               index,
               openInReaderMode,
@@ -506,6 +508,16 @@ this.tabs = class extends ExtensionAPI {
           const tab = await promiseTabWhenReady(tabId);
 
           return tab.removeCSS(context, details);
+        },
+
+        goForward(tabId) {
+          const { browser } = getTabOrActive(tabId);
+          browser.goForward();
+        },
+
+        goBack(tabId) {
+          const { browser } = getTabOrActive(tabId);
+          browser.goBack();
         },
       },
     };

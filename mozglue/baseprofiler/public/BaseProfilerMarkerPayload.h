@@ -9,8 +9,8 @@
 
 #include "BaseProfiler.h"
 
-#ifndef MOZ_BASE_PROFILER
-#  error Do not #include this header when MOZ_BASE_PROFILER is not #defined.
+#ifndef MOZ_GECKO_PROFILER
+#  error Do not #include this header when MOZ_GECKO_PROFILER is not #defined.
 #endif
 
 #include "mozilla/Atomics.h"
@@ -316,6 +316,21 @@ class LogMarkerPayload : public ProfilerMarkerPayload {
 
   std::string mModule;  // longest known LazyLogModule name is ~24
   std::string mText;
+};
+
+class MediaSampleMarkerPayload : public ProfilerMarkerPayload {
+ public:
+  MFBT_API MediaSampleMarkerPayload(const int64_t aSampleStartTimeUs,
+                                    const int64_t aSampleEndTimeUs);
+  DECL_BASE_STREAM_PAYLOAD
+
+ private:
+  MFBT_API MediaSampleMarkerPayload(CommonProps&& aCommonProps,
+                                    const int64_t aSampleStartTimeUs,
+                                    const int64_t aSampleEndTimeUs);
+
+  int64_t mSampleStartTimeUs;
+  int64_t mSampleEndTimeUs;
 };
 
 }  // namespace baseprofiler

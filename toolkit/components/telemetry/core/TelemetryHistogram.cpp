@@ -753,8 +753,7 @@ nsresult internal_GetHistogramAndSamples(const StaticMutexAutoLock& aLock,
   }
 
   // Get a snapshot of the samples.
-  base::Histogram::SampleSet ss;
-  h->SnapshotSample(&ss);
+  base::Histogram::SampleSet ss = h->SnapshotSample();
 
   // Get the number of samples in each bucket.
   for (size_t i = 0; i < bucketCount; i++) {
@@ -1684,8 +1683,10 @@ bool internal_JSHistogram_CoerceValue(JSContext* aCx,
     nsresult rv = gHistogramInfos[aId].label_id(
         NS_ConvertUTF16toUTF8(label).get(), &aValue);
     if (NS_FAILED(rv)) {
+      nsPrintfCString msg("'%s' is an invalid string label",
+                          NS_ConvertUTF16toUTF8(label).get());
       LogToBrowserConsole(nsIScriptError::errorFlag,
-                          NS_LITERAL_STRING("Invalid string label"));
+                          NS_ConvertUTF8toUTF16(msg));
       return false;
     }
   } else if (!(aElement.isNumber() || aElement.isBoolean())) {

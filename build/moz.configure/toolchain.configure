@@ -370,8 +370,8 @@ add_old_configure_assignment('TOOLCHAIN_PREFIX', first_toolchain_prefix)
 include('compilers-util.configure')
 
 
-def try_preprocess(compiler, language, source):
-    return try_invoke_compiler(compiler, language, source, ['-E'])
+def try_preprocess(compiler, language, source, onerror=None):
+    return try_invoke_compiler(compiler, language, source, ['-E'], onerror)
 
 
 @imports(_from='mozbuild.configure.constants', _import='CompilerType')
@@ -1637,8 +1637,13 @@ def security_hardening_cflags(hardening_flag, asan, debug, optimize, c_compiler,
         # Control Flow Guard (CFG) ----------------------------
         if c_compiler.type == 'clang-cl' and c_compiler.version >= '8' and \
            (target.cpu != 'aarch64' or c_compiler.version >= '8.0.1'):
-            flags.append("-guard:cf")
-            js_flags.append("-guard:cf")
+            if target.cpu == 'aarch64' and c_compiler.version >= '10.0.0':
+                # The added checks in clang 10 make arm64 builds crash. (Bug 1639318)
+                flags.append("-guard:cf,nochecks")
+                js_flags.append("-guard:cf,nochecks")
+            else:
+                flags.append("-guard:cf")
+                js_flags.append("-guard:cf")
             # nolongjmp is needed because clang doesn't emit the CFG tables of
             # setjmp return addresses https://bugs.llvm.org/show_bug.cgi?id=40057
             ldflags.append("-guard:cf,nolongjmp")
@@ -2065,6 +2070,9 @@ def select_linker(linker, c_compiler, developer_options, enable_gold,
         # specific to it on stderr when it fails to process --version.
         env = dict(os.environ)
         env['LD_PRINT_OPTIONS'] = '1'
+        # Some locales might not print out the strings we are looking for, so
+        # ensure consistent output.
+        env['LC_ALL'] = 'C'
         retcode, stdout, stderr = get_cmd_output(*cmd, env=env)
         if retcode == 1 and 'Logging ld64 options' in stderr:
             kind = 'ld64'
@@ -2480,3 +2488,8 @@ ar = check_prog('AR', ar_config.names, paths=toolchain_search_path)
 add_old_configure_assignment('AR', ar)
 
 set_config('AR_FLAGS', ar_config.flags)
+
+
+js_option('--enable-cpp-rtti', help='Enable C++ RTTI')
+
+add_old_configure_assignment('_MOZ_USE_RTTI', '1', when='--enable-cpp-rtti')

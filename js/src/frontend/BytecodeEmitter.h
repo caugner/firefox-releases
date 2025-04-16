@@ -35,14 +35,13 @@
 #include "frontend/NameCollections.h"      // AtomIndexMap
 #include "frontend/ParseNode.h"            // ParseNode and subclasses
 #include "frontend/Parser.h"               // Parser, PropListType
-#include "frontend/SharedContext.h"        // SharedContext
+#include "frontend/SharedContext.h"        // SharedContext, TopLevelFunction
 #include "frontend/SourceNotes.h"          // SrcNoteType
 #include "frontend/TokenStream.h"          // TokenPos
 #include "frontend/ValueUsage.h"           // ValueUsage
 #include "js/RootingAPI.h"                 // JS::Rooted, JS::Handle
 #include "js/TypeDecls.h"                  // jsbytecode
 #include "vm/BytecodeUtil.h"               // JSOp
-#include "vm/CheckIsCallableKind.h"        // CheckIsCallableKind
 #include "vm/CheckIsObjectKind.h"          // CheckIsObjectKind
 #include "vm/FunctionPrefixKind.h"         // FunctionPrefixKind
 #include "vm/GeneratorResumeKind.h"        // GeneratorResumeKind
@@ -67,6 +66,7 @@ class PropOpEmitter;
 class OptionalEmitter;
 class TDZCheckCache;
 class TryEmitter;
+class ScriptStencil;
 
 enum class ValueIsOnStack { Yes, No };
 
@@ -79,17 +79,6 @@ struct MOZ_STACK_CLASS BytecodeEmitter {
   // Enclosing function or global context.
   BytecodeEmitter* const parent = nullptr;
 
-  // The JSScript after we've filled it in.
-  JS::Rooted<JSScript*> outputScript;
-
- public:
-  // Returns the finished script produced by this bce.
-  JSScript* getResultScript() {
-    MOZ_ASSERT(outputScript);
-    return outputScript;
-  }
-
- private:
   BytecodeSection bytecodeSection_;
 
  public:
@@ -259,7 +248,11 @@ struct MOZ_STACK_CLASS BytecodeEmitter {
       return true;
     }
 
-    uint32_t index = perScriptData().atomIndices()->count();
+    uint32_t index;
+    if (!perScriptData().gcThingList().append(atom, &index)) {
+      return false;
+    }
+
     if (!perScriptData().atomIndices()->add(p, atom, index)) {
       ReportOutOfMemory(cx);
       return false;
@@ -305,6 +298,9 @@ struct MOZ_STACK_CLASS BytecodeEmitter {
   void reportError(ParseNode* pn, unsigned errorNumber, ...);
   void reportError(const mozilla::Maybe<uint32_t>& maybeOffset,
                    unsigned errorNumber, ...);
+
+  // Fill in a ScriptStencil using this BCE data.
+  bool intoScriptStencil(ScriptStencil* stencil);
 
   // If pn contains a useful expression, return true with *answer set to true.
   // If pn contains a useless expression, return true with *answer set to
@@ -367,7 +363,6 @@ struct MOZ_STACK_CLASS BytecodeEmitter {
   MOZ_MUST_USE bool getNslots(uint32_t* nslots);
 
   // Emit function code for the tree rooted at body.
-  enum class TopLevelFunction { No, Yes };
   MOZ_MUST_USE bool emitFunctionScript(FunctionNode* funNode,
                                        TopLevelFunction isTopLevel);
 
@@ -406,9 +401,6 @@ struct MOZ_STACK_CLASS BytecodeEmitter {
 
   // Helper to emit JSOp::CheckIsObj.
   MOZ_MUST_USE bool emitCheckIsObj(CheckIsObjectKind kind);
-
-  // Helper to emit JSOp::CheckIsCallable.
-  MOZ_MUST_USE bool emitCheckIsCallable(CheckIsCallableKind kind);
 
   // Push whether the value atop of the stack is non-undefined and non-null.
   MOZ_MUST_USE bool emitPushNotUndefinedOrNull();

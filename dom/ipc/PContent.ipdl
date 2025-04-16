@@ -33,7 +33,6 @@ include protocol POfflineCacheUpdate;
 include protocol PSpeechSynthesis;
 #endif
 include protocol PTestShell;
-include protocol PJavaScript;
 include protocol PRemoteSpellcheckEngine;
 include protocol PWebBrowserPersistDocument;
 include protocol PWebrtcGlobal;
@@ -46,11 +45,9 @@ include protocol PRemoteDecoderManager;
 include protocol PProfiler;
 include protocol PScriptCache;
 include protocol PSessionStorageObserver;
-include protocol PSHEntry;
-include protocol PSHistory;
 include protocol PBenchmarkStorage;
 include DOMTypes;
-include JavaScriptTypes;
+include WindowGlobalTypes;
 include IPCBlob;
 include IPCStream;
 include PTabContext;
@@ -110,7 +107,6 @@ using mozilla::dom::BrowsingContextTransaction from "mozilla/dom/BrowsingContext
 using mozilla::dom::BrowsingContextInitializer from "mozilla/dom/BrowsingContext.h";
 using mozilla::dom::MaybeDiscardedWindowContext from "mozilla/dom/WindowContext.h";
 using mozilla::dom::WindowContextTransaction from "mozilla/dom/WindowContext.h";
-using mozilla::dom::WindowContextInitializer from "mozilla/dom/WindowContext.h";
 using base::SharedMemoryHandle from "base/shared_memory.h";
 using mozilla::ipc::SharedMemoryBasic::Handle from "mozilla/ipc/SharedMemoryBasic.h";
 using mozilla::fontlist::Pointer from "SharedFontList.h";
@@ -123,7 +119,6 @@ using mozilla::dom::MaybeMediaMetadataBase from "mozilla/dom/MediaSessionIPCUtil
 using mozilla::dom::MediaSessionPlaybackState from "mozilla/dom/MediaSessionBinding.h";
 using refcounted class nsDocShellLoadState from "nsDocShellLoadState.h";
 using mozilla::dom::ServiceWorkerShutdownState::Progress from "mozilla/dom/ServiceWorkerShutdownState.h";
-using refcounted class mozilla::dom::CrossProcessSHEntry from "mozilla/dom/MaybeNewPSHEntry.h";
 using mozilla::ContentBlockingNotifier::StorageAccessGrantedReason from "mozilla/ContentBlockingNotifier.h";
 using mozilla::ContentBlockingNotifier::BlockingDecision from "mozilla/ContentBlockingNotifier.h";
 using mozilla::ContentBlocking::StorageAccessPromptChoices from "mozilla/ContentBlocking.h";
@@ -396,7 +391,6 @@ nested(upto inside_cpow) sync protocol PContent
     manages PSpeechSynthesis;
 #endif
     manages PTestShell;
-    manages PJavaScript;
     manages PRemoteSpellcheckEngine;
     manages PWebBrowserPersistDocument;
     manages PWebrtcGlobal;
@@ -406,8 +400,6 @@ nested(upto inside_cpow) sync protocol PContent
     manages PScriptCache;
     manages PLoginReputation;
     manages PSessionStorageObserver;
-    manages PSHEntry;
-    manages PSHistory;
     manages PBenchmarkStorage;
 
     // Depending on exactly how the new browser is being created, it might be
@@ -545,6 +537,12 @@ child:
 
     async NotifyVisited(VisitedQueryResult[] uri);
 
+    /**
+     * Tell the child that the system theme has changed, and that a repaint
+     * is necessary.
+     */
+    async ThemeChanged(LookAndFeelInt[] lookAndFeelIntCache);
+
     async PreferenceUpdate(Pref pref);
     async VarUpdate(GfxVarUpdate var);
 
@@ -651,7 +649,8 @@ child:
                                     /* used on MacOSX/Linux/Android only: */
                                     SystemFontListEntry[] systemFontList,
                                     SharedMemoryHandle? sharedUASheetHandle,
-                                    uintptr_t sharedUASheetAddress);
+                                    uintptr_t sharedUASheetAddress,
+                                    SharedMemoryHandle[] sharedFontListBlocks);
 
     // Notify child that last-pb-context-exited notification was observed
     async LastPrivateDocShellDestroyed();
@@ -869,21 +868,12 @@ child:
     async InitSandboxTesting(Endpoint<PSandboxTestingChild> aEndpoint);
 #endif
 
-    async DestroySHEntrySharedState(uint64_t aID);
-
-    async EvictContentViewers(uint64_t[] aToEvictSharedStateIDs);
-
     async LoadURI(MaybeDiscardedBrowsingContext aContext, nsDocShellLoadState aLoadState, bool aSetNavigating)
         returns (bool aSuccess);
 
     async InternalLoad(MaybeDiscardedBrowsingContext aContext, nsDocShellLoadState aLoadState, bool aTakeFocus);
 
     async DisplayLoadError(MaybeDiscardedBrowsingContext aContext, nsString aURI);
-
-    // Tell aContext's docshell to update its mOSHE and mLSHE entries
-    async UpdateSHEntriesInDocShell(CrossProcessSHEntry aOldEntry,
-                                    CrossProcessSHEntry aNewEntry,
-                                    MaybeDiscardedBrowsingContext aContext);
 
     async OnAllowAccessFor(MaybeDiscardedBrowsingContext aParentContext,
                            nsCString aTrackingOrigin,
@@ -899,6 +889,9 @@ child:
      * are part of a BrowsingContextGroup.
      */
     async AbortOrientationPendingPromises(MaybeDiscardedBrowsingContext aContext);
+
+    async HistoryCommitLength(MaybeDiscardedBrowsingContext aContext,
+                              uint32_t aLength);
 
 parent:
     async InitBackground(Endpoint<PBackgroundParent> aEndpoint);
@@ -928,8 +921,6 @@ parent:
     // See Bug 1518344 - Investigate using async for PContent::LaunchRDDProcess
     sync LaunchRDDProcess()
         returns (nsresult rv, Endpoint<PRemoteDecoderManagerChild> aEndpoint);
-
-    async PJavaScript();
 
     async PRemoteSpellcheckEngine();
 
@@ -973,11 +964,6 @@ parent:
 
     async PSessionStorageObserver();
 
-    async PSHistory(MaybeDiscardedBrowsingContext aContext);
-
-    // Clone using shared id.
-    sync PSHEntry(nullable PSHistory shistory, uint64_t sharedID);
-
     async PBenchmarkStorage();
 
     // Services remoting
@@ -985,7 +971,7 @@ parent:
     async StartVisitedQueries(nsIURI[] uri);
     async SetURITitle(nsIURI uri, nsString title);
 
-    async LoadURIExternal(nsIURI uri, PBrowser windowContext);
+    async LoadURIExternal(nsIURI uri, nsIPrincipal triggeringPrincipal, MaybeDiscardedBrowsingContext browsingContext);
     async ExtProtocolChannelConnectParent(uint32_t registrarId);
 
     // PrefService message
@@ -1001,6 +987,8 @@ parent:
     async DisableNotifications(Principal principal);
 
     async OpenNotificationSettings(Principal principal);
+
+    async AddMixedContentSecurityState(MaybeDiscardedWindowContext aContext, uint32_t aStateFlags);
 
     // Request that the ServiceWorkerManager in the parent process create a
     // notification "click" or "close" event and dispatch it on the relevant
@@ -1397,7 +1385,7 @@ parent:
      */
     sync GetHyphDict(nsIURI aURI) returns (Handle aHandle, uint32_t aSize);
 
-    async CreateWindow(nullable PBrowser aThisTab,
+    async CreateWindow(PBrowser aThisTab,
                        MaybeDiscardedBrowsingContext aParent,
                        PBrowser aNewTab,
                        uint32_t aChromeFlags,
@@ -1592,17 +1580,16 @@ parent:
                                               Progress aProgress);
 
     /**
-     * Whenever docshell updates its SH entries, we need to update them in
-     * the corresponding BrowsingContext
-     */
-    async UpdateSHEntriesInBC(nullable PSHEntry aNewLSHE, nullable
-                              PSHEntry aNewOSHE, MaybeDiscardedBrowsingContext aContext);
-
-    /**
      * Whenever a document is updating the OrientationLock, we need to
      * reject the orientationPendingPromises in other processes.
      */
     async AbortOtherOrientationPendingPromises(MaybeDiscardedBrowsingContext aContext);
+
+    async HistoryCommit(MaybeDiscardedBrowsingContext aContext,
+                        uint64_t aSessionHistoryEntryID);
+
+    async HistoryGo(MaybeDiscardedBrowsingContext aContext,
+                    int32_t aOffset) returns(int32_t requestedIndex);
 
 both:
     async ScriptError(nsString message, nsString sourceName, nsString sourceLine,
@@ -1648,6 +1635,9 @@ both:
     async DiscardBrowsingContext(MaybeDiscardedBrowsingContext aContext)
             returns (bool unused);
 
+    async AdjustWindowFocus(MaybeDiscardedBrowsingContext aContext,
+                            bool aCheckPermission,
+                            bool aIsVisible);
     async WindowClose(MaybeDiscardedBrowsingContext aContext,
                       bool aTrustedCaller);
     async WindowFocus(MaybeDiscardedBrowsingContext aContext,
@@ -1676,7 +1666,7 @@ child:
 both:
     async MaybeExitFullscreen(MaybeDiscardedBrowsingContext aContext);
     async WindowPostMessage(MaybeDiscardedBrowsingContext aContext,
-                            ClonedMessageData aMessage,
+                            ClonedOrErrorMessageData aMessage,
                             PostMessageData aData);
 
     /**

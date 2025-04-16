@@ -1159,6 +1159,51 @@ add_task(async function test_blur_hides_popup() {
   BrowserTestUtils.removeTab(tab);
 });
 
+// Test zoom handling.
+add_task(async function test_zoom() {
+  const pageUrl = "data:text/html," + escape(PAGECONTENT_SMALL);
+  let tab = await BrowserTestUtils.openNewForegroundTab(gBrowser, pageUrl);
+
+  let menulist = document.getElementById("ContentSelectDropdown");
+  let selectPopup = menulist.menupopup;
+
+  info("Opening the popup");
+  await openSelectPopup(selectPopup, "click");
+
+  info("Opened the popup");
+  let nonZoomedFontSize = parseFloat(
+    getComputedStyle(selectPopup.querySelector("menuitem")).fontSize,
+    10
+  );
+
+  info("font-size is " + nonZoomedFontSize);
+  await hideSelectPopup(selectPopup);
+
+  info("Hid the popup");
+
+  FullZoom.setZoom(2.0, tab.linkedBrowser);
+
+  info("Opening popup again");
+  await openSelectPopup(selectPopup, "click");
+
+  let zoomedFontSize = parseFloat(
+    getComputedStyle(selectPopup.querySelector("menuitem")).fontSize,
+    10
+  );
+  info("Zoomed font-size is " + zoomedFontSize);
+
+  ok(
+    Math.abs(zoomedFontSize - nonZoomedFontSize * 2.0) < 0.01,
+    `Zoom should affect menu popup size, got ${zoomedFontSize}, ` +
+      `expected ${nonZoomedFontSize * 2.0}`
+  );
+
+  await hideSelectPopup(selectPopup);
+  info("Hid the popup again");
+
+  BrowserTestUtils.removeTab(tab);
+});
+
 function getIsHandlingUserInput(browser, elementId, eventName) {
   return SpecialPowers.spawn(browser, [[elementId, eventName]], async function([
     contentElementId,

@@ -80,7 +80,6 @@ namespace jit {
   _(CheckClassHeritageOperation, js::CheckClassHeritageOperation)              \
   _(CheckGlobalOrEvalDeclarationConflicts,                                     \
     js::CheckGlobalOrEvalDeclarationConflicts)                                 \
-  _(CheckIsCallable, js::jit::CheckIsCallable)                                 \
   _(CheckOverRecursed, js::jit::CheckOverRecursed)                             \
   _(CheckOverRecursedBaseline, js::jit::CheckOverRecursedBaseline)             \
   _(CloneRegExpObject, js::CloneRegExpObject)                                  \
@@ -89,6 +88,8 @@ namespace jit {
   _(CopyElementsForWrite, js::NativeObject::CopyElementsForWrite)              \
   _(CopyLexicalEnvironmentObject, js::jit::CopyLexicalEnvironmentObject)       \
   _(CreateAsyncFromSyncIterator, js::CreateAsyncFromSyncIterator)              \
+  _(CreateBigIntFromInt64, js::jit::CreateBigIntFromInt64)                     \
+  _(CreateBigIntFromUint64, js::jit::CreateBigIntFromUint64)                   \
   _(CreateGenerator, js::jit::CreateGenerator)                                 \
   _(CreateThisForFunctionWithProto, js::CreateThisForFunctionWithProto)        \
   _(CreateThisFromIC, js::jit::CreateThisFromIC)                               \
@@ -115,6 +116,7 @@ namespace jit {
   _(DoCallFallback, js::jit::DoCallFallback)                                   \
   _(DoConcatStringObject, js::jit::DoConcatStringObject)                       \
   _(DoSpreadCallFallback, js::jit::DoSpreadCallFallback)                       \
+  _(DoStringToInt64, js::jit::DoStringToInt64)                                 \
   _(DoTypeUpdateFallback, js::jit::DoTypeUpdateFallback)                       \
   _(EnterWith, js::jit::EnterWith)                                             \
   _(FinalSuspend, js::jit::FinalSuspend)                                       \
@@ -266,6 +268,7 @@ namespace jit {
   _(ThrowOperation, js::ThrowOperation)                                        \
   _(ThrowRuntimeLexicalError, js::jit::ThrowRuntimeLexicalError)               \
   _(ThrowUninitializedThis, js::ThrowUninitializedThis)                        \
+  _(ToBigInt, js::ToBigInt)                                                    \
   _(ToIdOperation, js::ToIdOperation)                                          \
   _(ToObjectSlow, js::ToObjectSlow)                                            \
   _(ToStringSlow, js::ToStringSlow<CanGC>)                                     \

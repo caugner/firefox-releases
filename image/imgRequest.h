@@ -201,6 +201,14 @@ class imgRequest final : public nsIStreamListener,
 
   bool ImageAvailable() const;
 
+  void PrioritizeAsPreload();
+
+  bool IsDeniedCrossSiteCORSRequest() const {
+    return mIsDeniedCrossSiteCORSRequest;
+  }
+
+  bool IsCrossSiteNoCORSRequest() const { return mIsCrossSiteNoCORSRequest; }
+
  private:
   friend class FinishPreparingForNewPartRunnable;
 
@@ -276,6 +284,8 @@ class imgRequest final : public nsIStreamListener,
 
   // If we've called OnImageAvailable.
   bool mImageAvailable;
+  bool mIsDeniedCrossSiteCORSRequest;
+  bool mIsCrossSiteNoCORSRequest;
 
   mutable mozilla::Mutex mMutex;
 

@@ -310,7 +310,7 @@ nsresult nsCSPContext::InitFromOther(nsCSPContext* aOtherContext) {
     AppendPolicy(policyStr, policy->getReportOnlyFlag(),
                  policy->getDeliveredViaMetaTagFlag());
   }
-  mIPCPolicies = aOtherContext->mIPCPolicies;
+  mIPCPolicies = aOtherContext->mIPCPolicies.Clone();
   return NS_OK;
 }
 
@@ -1008,9 +1008,17 @@ nsresult nsCSPContext::GatherSecurityPolicyViolationEventData(
 
   // blocked-uri
   if (aBlockedURI) {
+    // in case of blocking a browsing context (frame) we have to report
+    // the final URI in case of a redirect. For subresources we report
+    // the URI before redirects.
+    nsCOMPtr<nsIURI> uriToReport;
+    if (aViolatedDirective.EqualsLiteral("frame-src")) {
+      uriToReport = aBlockedURI;
+    } else {
+      uriToReport = aOriginalURI ? aOriginalURI : aBlockedURI;
+    }
     nsAutoCString reportBlockedURI;
-    StripURIForReporting(aOriginalURI ? aOriginalURI : aBlockedURI, mSelfURI,
-                         reportBlockedURI);
+    StripURIForReporting(uriToReport, mSelfURI, reportBlockedURI);
     aViolationEventInit.mBlockedURI = NS_ConvertUTF8toUTF16(reportBlockedURI);
   } else {
     aViolationEventInit.mBlockedURI = NS_ConvertUTF8toUTF16(aBlockedString);
@@ -1617,6 +1625,18 @@ nsCSPContext::Permits(Element* aTriggeringElement,
   // Can't perform check without aURI
   if (aURI == nullptr) {
     return NS_ERROR_FAILURE;
+  }
+
+  if (aURI->SchemeIs("resource")) {
+    // XXX Ideally we would call SubjectToCSP() here but that would also
+    // allowlist e.g. javascript: URIs which should not be allowlisted here.
+    // As a hotfix we just allowlist pdf.js internals here explicitly.
+    nsAutoCString uriSpec;
+    aURI->GetSpec(uriSpec);
+    if (StringBeginsWith(uriSpec, NS_LITERAL_CSTRING("resource://pdf.js/"))) {
+      *outPermits = true;
+      return NS_OK;
+    }
   }
 
   *outPermits =

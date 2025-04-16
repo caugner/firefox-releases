@@ -166,6 +166,7 @@ const PRIVILEGED_PERMS = new Set([
   "geckoViewAddons",
   "telemetry",
   "urlbar",
+  "nativeMessagingFromContent",
   "normandyAddonStudy",
   "networkStatus",
 ]);
@@ -1670,7 +1671,7 @@ class BootstrapScope {
   async update(data, reason) {
     // Retain any previously granted permissions that may have migrated
     // into the optional list.
-    if (data.oldPermissions !== null) {
+    if (data.oldPermissions) {
       // New permissions may be null, ensure we have an empty
       // permission set in that case.
       let emptyPermissions = { permissions: [], origins: [] };

@@ -21,6 +21,7 @@
 #include "mozilla/PresShell.h"
 #include "mozilla/TextEvents.h"
 #include "mozilla/TouchEvents.h"
+#include "mozilla/ViewportUtils.h"
 #include "mozilla/dom/Document.h"
 #include "mozilla/dom/DocumentInlines.h"
 #include "mozilla/dom/Event.h"
@@ -101,7 +102,7 @@ void Event::InitPresContextData(nsPresContext* aPresContext) {
   {
     nsCOMPtr<nsIContent> content = GetTargetFromFrame();
     mExplicitOriginalTarget = content;
-    if (content && content->IsInAnonymousSubtree()) {
+    if (content && content->IsInNativeAnonymousSubtree()) {
       mExplicitOriginalTarget = nullptr;
     }
   }
@@ -549,11 +550,6 @@ CSSIntPoint Event::GetScreenCoords(nsPresContext* aPresContext,
       rounded,
       aPresContext->DeviceContext()->AppUnitsPerDevPixelAtUnitFullZoom());
 
-  if (PresShell* presShell = aPresContext->GetPresShell()) {
-    pt = pt.RemoveResolution(
-        nsLayoutUtils::GetCurrentAPZResolutionScale(presShell));
-  }
-
   pt += LayoutDevicePixel::ToAppUnits(
       guiEvent->mWidget->TopLevelWidgetToScreenOffset(),
       aPresContext->DeviceContext()->AppUnitsPerDevPixelAtUnitFullZoom());
@@ -612,8 +608,8 @@ CSSIntPoint Event::GetClientCoords(nsPresContext* aPresContext,
   if (!rootFrame) {
     return CSSIntPoint(0, 0);
   }
-  nsPoint pt =
-      nsLayoutUtils::GetEventCoordinatesRelativeTo(aEvent, aPoint, rootFrame);
+  nsPoint pt = nsLayoutUtils::GetEventCoordinatesRelativeTo(
+      aEvent, aPoint, RelativeTo{rootFrame});
 
   return CSSIntPoint::FromAppUnitsRounded(pt);
 }
@@ -646,8 +642,8 @@ CSSIntPoint Event::GetOffsetCoords(nsPresContext* aPresContext,
   CSSIntPoint clientCoords =
       GetClientCoords(aPresContext, aEvent, aPoint, aDefaultPoint);
   nsPoint pt = CSSPixel::ToAppUnits(clientCoords);
-  if (nsLayoutUtils::TransformPoint(rootFrame, frame, pt) ==
-      nsLayoutUtils::TRANSFORM_SUCCEEDED) {
+  if (nsLayoutUtils::TransformPoint(RelativeTo{rootFrame}, RelativeTo{frame},
+                                    pt) == nsLayoutUtils::TRANSFORM_SUCCEEDED) {
     pt -= frame->GetPaddingRectRelativeToSelf().TopLeft();
     return CSSPixel::FromAppUnitsRounded(pt);
   }

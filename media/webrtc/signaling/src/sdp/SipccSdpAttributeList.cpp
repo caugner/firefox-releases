@@ -342,6 +342,8 @@ SdpRtpmapAttributeList::CodecType SipccSdpAttributeList::GetCodecType(
       return SdpRtpmapAttributeList::kRed;
     case RTP_ULPFEC:
       return SdpRtpmapAttributeList::kUlpfec;
+    case RTP_RTX:
+      return SdpRtpmapAttributeList::kRtx;
     case RTP_TELEPHONE_EVENT:
       return SdpRtpmapAttributeList::kTelephoneEvent;
     case RTP_NONE:
@@ -755,6 +757,8 @@ void SipccSdpAttributeList::LoadFmtp(sdp_t* sdp, uint16_t level) {
         opusParameters->maxplaybackrate = fmtp->maxplaybackrate;
         opusParameters->stereo = fmtp->stereo;
         opusParameters->useInBandFec = fmtp->useinbandfec;
+        opusParameters->maxAverageBitrate = fmtp->maxaveragebitrate;
+        opusParameters->useDTX = fmtp->usedtx;
         parameters.reset(opusParameters);
       } break;
       case RTP_TELEPHONE_EVENT: {
@@ -764,6 +768,15 @@ void SipccSdpAttributeList::LoadFmtp(sdp_t* sdp, uint16_t level) {
           teParameters->dtmfTones = fmtp->dtmf_tones;
         }
         parameters.reset(teParameters);
+      } break;
+      case RTP_RTX: {
+        SdpFmtpAttributeList::RtxParameters* rtxParameters(
+            new SdpFmtpAttributeList::RtxParameters);
+        rtxParameters->apt = fmtp->apt;
+        if (fmtp->has_rtx_time == TRUE) {
+          rtxParameters->rtx_time = Some(fmtp->rtx_time);
+        }
+        parameters.reset(rtxParameters);
       } break;
       default: {
       }

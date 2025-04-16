@@ -53,6 +53,7 @@ const CONTENT_BLOCKING_PREFS = [
   "network.cookie.cookieBehavior",
   "privacy.trackingprotection.fingerprinting.enabled",
   "privacy.trackingprotection.cryptomining.enabled",
+  "privacy.firstparty.isolate",
 ];
 
 const PREF_OPT_OUT_STUDIES_ENABLED = "app.shield.optoutstudies.enabled";
@@ -90,6 +91,13 @@ XPCOMUtils.defineLazyPreferenceGetter(
   true
 );
 
+XPCOMUtils.defineLazyPreferenceGetter(
+  this,
+  "gIsFirstPartyIsolated",
+  "privacy.firstparty.isolate",
+  false
+);
+
 Preferences.addAll([
   // Content blocking / Tracking Protection
   { id: "privacy.trackingprotection.enabled", type: "bool" },
@@ -117,6 +125,7 @@ Preferences.addAll([
   { id: "browser.urlbar.suggest.bookmark", type: "bool" },
   { id: "browser.urlbar.suggest.history", type: "bool" },
   { id: "browser.urlbar.suggest.openpage", type: "bool" },
+  { id: "browser.urlbar.suggest.topsites", type: "bool" },
 
   // History
   { id: "places.history.enabled", type: "bool" },
@@ -183,6 +192,9 @@ Preferences.addAll([
     type: "bool",
   },
   { id: "browser.safebrowsing.downloads.remote.block_uncommon", type: "bool" },
+
+  // First-Party Isolation
+  { id: "privacy.firstparty.isolate", type: "bool" },
 ]);
 
 // Study opt out
@@ -425,6 +437,10 @@ var gPrivacyPane = {
       gPrivacyPane.networkCookieBehaviorReadPrefs.bind(gPrivacyPane)
     );
     Preferences.get("browser.privatebrowsing.autostart").on(
+      "change",
+      gPrivacyPane.networkCookieBehaviorReadPrefs.bind(gPrivacyPane)
+    );
+    Preferences.get("privacy.firstparty.isolate").on(
       "change",
       gPrivacyPane.networkCookieBehaviorReadPrefs.bind(gPrivacyPane)
     );
@@ -764,10 +780,18 @@ var gPrivacyPane = {
     fingerprintersOption.hidden = !Services.prefs.getBoolPref(
       "browser.contentblocking.fingerprinting.preferences.ui.enabled"
     );
-    trackingAndIsolateOption.hidden = !Services.prefs.getBoolPref(
-      "browser.contentblocking.reject-and-isolate-cookies.preferences.ui.enabled",
-      false
+    let updateTrackingAndIsolateOption = () => {
+      trackingAndIsolateOption.hidden =
+        !Services.prefs.getBoolPref(
+          "browser.contentblocking.reject-and-isolate-cookies.preferences.ui.enabled",
+          false
+        ) || gIsFirstPartyIsolated;
+    };
+    Preferences.get("privacy.firstparty.isolate").on(
+      "change",
+      updateTrackingAndIsolateOption
     );
+    updateTrackingAndIsolateOption();
 
     Preferences.get("browser.contentblocking.features.strict").on(
       "change",
@@ -809,6 +833,12 @@ var gPrivacyPane = {
         rulesArray = Services.prefs
           .getStringPref("browser.contentblocking.features.strict")
           .split(",");
+        if (gIsFirstPartyIsolated) {
+          let idx = rulesArray.indexOf("cookieBehavior5");
+          if (idx != -1) {
+            rulesArray[idx] = "cookieBehavior4";
+          }
+        }
       } else {
         selector = "#contentBlockingOptionStandard";
         // In standard show/hide UI items based on the default values of the relevant prefs.
@@ -834,7 +864,9 @@ var gPrivacyPane = {
             rulesArray.push("cookieBehavior4");
             break;
           case BEHAVIOR_REJECT_TRACKER_AND_PARTITION_FOREIGN:
-            rulesArray.push("cookieBehavior5");
+            rulesArray.push(
+              gIsFirstPartyIsolated ? "cookieBehavior4" : "cookieBehavior5"
+            );
             break;
         }
         rulesArray.push(
@@ -880,6 +912,9 @@ var gPrivacyPane = {
       ).hidden = true;
       document.querySelector(
         selector + " .all-third-party-cookies-option"
+      ).hidden = true;
+      document.querySelector(
+        selector + " .third-party-tracking-cookies-plus-isolate-option"
       ).hidden = true;
       document.querySelector(selector + " .social-media-option").hidden = true;
 
@@ -1058,7 +1093,7 @@ var gPrivacyPane = {
    * Selects the right items of the new Cookies & Site Data UI.
    */
   networkCookieBehaviorReadPrefs() {
-    let behavior = Preferences.get("network.cookie.cookieBehavior").value;
+    let behavior = Services.cookies.cookieBehavior;
     let blockCookiesMenu = document.getElementById("blockCookiesMenu");
     let deleteOnCloseCheckbox = document.getElementById("deleteOnClose");
     let deleteOnCloseNote = document.getElementById("deleteOnCloseNote");
@@ -1505,6 +1540,8 @@ var gPrivacyPane = {
    *     1   means reject all third party cookies
    *     2   means disable all cookies
    *     3   means reject third party cookies unless at least one is already set for the eTLD
+   *     4   means reject all trackers
+   *     5   means reject all trackers and partition third-party cookies
    *         see netwerk/cookie/src/CookieService.cpp for details
    * network.cookie.lifetimePolicy
    * - determines how long cookies are stored:
@@ -1535,9 +1572,9 @@ var gPrivacyPane = {
    * enables/disables the "blockCookiesMenu" menulist accordingly.
    */
   readBlockCookies() {
-    let pref = Preferences.get("network.cookie.cookieBehavior");
     let bcControl = document.getElementById("blockCookiesMenu");
-    bcControl.disabled = pref.value == Ci.nsICookieService.BEHAVIOR_ACCEPT;
+    bcControl.disabled =
+      Services.cookies.cookieBehavior == Ci.nsICookieService.BEHAVIOR_ACCEPT;
   },
 
   /**
@@ -1557,8 +1594,7 @@ var gPrivacyPane = {
   },
 
   readBlockCookiesFrom() {
-    let pref = Preferences.get("network.cookie.cookieBehavior");
-    switch (pref.value) {
+    switch (Services.cookies.cookieBehavior) {
       case Ci.nsICookieService.BEHAVIOR_REJECT_FOREIGN:
         return "all-third-parties";
       case Ci.nsICookieService.BEHAVIOR_REJECT:

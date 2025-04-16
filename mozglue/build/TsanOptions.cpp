@@ -115,7 +115,6 @@ extern "C" const char* __tsan_default_suppressions() {
          "race:SystemGroup::EventTargetFor\n"
          "race:SchedulerEventTarget::AddRef\n"
          "race:SchedulerEventTarget::Dispatch\n"
-         "race:ContentChild::GetSpecificMessageEventTarget\n"
          "race:MessageChannel::MessageTask::Post\n"
 
          // Bug 1600594
@@ -284,6 +283,10 @@ extern "C" const char* __tsan_default_suppressions() {
          // ~GLContextGLX unlocks a libGL mutex that cannot be seen
          // by TSan because libGL is not instrumented.
          "mutex:GLContextGLX::~GLContextGLX\n"
+
+         // Bug 1637707
+         // Cannot suppress library because it is unloaded later
+         "mutex:libEGL_mesa.so\n"
 
          // Probably false positives in Rust code
          "race:third_party/rust/parking_lot_core/*\n"

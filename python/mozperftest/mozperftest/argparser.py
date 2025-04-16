@@ -1,7 +1,7 @@
 # This Source Code Form is subject to the terms of the Mozilla Public
 # License, v. 2.0. If a copy of the MPL was not distributed with this
 # file, You can obtain one at http://mozilla.org/MPL/2.0/.
-from argparse import ArgumentParser, SUPPRESS
+from argparse import ArgumentParser
 import os
 import mozlog
 import copy
@@ -15,9 +15,9 @@ except ImportError:
     build_obj = None
     conditions = None
 
-from mozperftest.system import get_layers as system_layers
-from mozperftest.browser import get_layers as browser_layers
-from mozperftest.metrics import get_layers as metrics_layers
+from mozperftest.system import get_layers as system_layers  # noqa
+from mozperftest.browser import get_layers as browser_layers  # noqa
+from mozperftest.metrics import get_layers as metrics_layers  # noqa
 
 FLAVORS = ["script", "doc"]
 
@@ -35,8 +35,8 @@ class Options:
             "nargs": "*",
             "metavar": "TEST",
             "default": [],
-            "help": "Test to run. Can be a single test file or a directory of tests "
-            "(to run recursively). If omitted, the entire suite is run.",
+            "help": "Test to run. Can be a single test file or URL or a directory"
+            " of tests (to run recursively). If omitted, the entire suite is run.",
         },
         "--output": {
             "type": str,
@@ -44,8 +44,28 @@ class Options:
             "help": "Path to where data will be stored, defaults to a top-level "
             "`artifacts` folder.",
         },
-        "--hooks": {"type": str, "default": "", "help": "Python hooks"},
+        "--hooks": {
+            "type": str,
+            "default": None,
+            "help": "Script containing hooks. Can be a path or a URL.",
+        },
         "--verbose": {"action": "store_true", "default": False, "help": "Verbose mode"},
+        "--push-to-try": {
+            "action": "store_true",
+            "default": False,
+            "help": "Pushin the test to try",
+        },
+        "--try-platform": {
+            "type": str,
+            "default": "g5",
+            "help": "Platform to use on try",
+            "choices": ["g5", "pixel2", "linux", "mac", "win"],
+        },
+        "--on-try": {
+            "action": "store_true",
+            "default": False,
+            "help": "Running the test on try",
+        },
     }
 
     args = copy.deepcopy(general_args)
@@ -91,11 +111,6 @@ class PerftestArgumentParser(ArgumentParser):
         for name, options in Options.args.items():
             if "default" in options and isinstance(options["default"], list):
                 options["default"] = []
-            if "suppress" in options:
-                if options["suppress"]:
-                    options["help"] = SUPPRESS
-                del options["suppress"]
-
             self.add_argument(name, **options)
 
         mozlog.commandline.add_logging_group(self)

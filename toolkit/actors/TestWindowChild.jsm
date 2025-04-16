@@ -11,6 +11,11 @@ var EXPORTED_SYMBOLS = ["TestWindowChild"];
 class TestWindowChild extends JSWindowActorChild {
   constructor() {
     super();
+    this.sawActorCreated = false;
+  }
+
+  actorCreated() {
+    this.sawActorCreated = true;
   }
 
   receiveMessage(aMessage) {

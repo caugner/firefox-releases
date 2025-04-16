@@ -56,7 +56,12 @@ a11y::DocAccessibleParent* BrowserHost::GetTopLevelDocAccessible() const {
   return mRoot->GetTopLevelDocAccessible();
 }
 
-void BrowserHost::LoadURL(nsIURI* aURI) { mRoot->LoadURL(aURI); }
+void BrowserHost::LoadURL(nsIURI* aURI, nsIPrincipal* aTriggeringPrincipal) {
+  MOZ_ASSERT(aURI);
+  MOZ_ASSERT(aTriggeringPrincipal);
+
+  mRoot->LoadURL(aURI, aTriggeringPrincipal);
+}
 
 void BrowserHost::ResumeLoad(uint64_t aPendingSwitchId) {
   mRoot->ResumeLoad(aPendingSwitchId);
@@ -181,16 +186,6 @@ BrowserHost::NotifyResolutionChanged(void) {
   VisitAll([](BrowserParent* aBrowserParent) {
     aBrowserParent->NotifyResolutionChanged();
   });
-  return NS_OK;
-}
-
-NS_IMETHODIMP
-BrowserHost::NotifyThemeChanged(void) {
-  if (!mRoot) {
-    return NS_OK;
-  }
-  VisitAll(
-      [](BrowserParent* aBrowserParent) { aBrowserParent->ThemeChanged(); });
   return NS_OK;
 }
 

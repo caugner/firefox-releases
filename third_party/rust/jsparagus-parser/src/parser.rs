@@ -1,5 +1,6 @@
 use crate::queue_stack::QueueStack;
 use crate::simulator::Simulator;
+use ast::arena;
 use ast::SourceLocation;
 use generated_parser::{
     full_actions, AstBuilder, AstBuilderDelegate, ErrorCode, ParseError, ParserTrait, Result,
@@ -96,7 +97,7 @@ impl<'alloc> ParserTrait<'alloc, StackValue<'alloc>> for Parser<'alloc> {
             self.try_error_handling(tv)?;
             return Ok(false);
         }
-        Err(ParseError::NoLineTerminatorHereExpectedToken)
+        Err(ParseError::NoLineTerminatorHereExpectedToken.into())
     }
 }
 
@@ -118,7 +119,7 @@ impl<'alloc> Parser<'alloc> {
         *self.state_stack.last().unwrap()
     }
 
-    pub fn write_token(&mut self, token: &Token) -> Result<'alloc, ()> {
+    pub fn write_token(&mut self, token: arena::Box<'alloc, Token>) -> Result<'alloc, ()> {
         json_trace!({
             "method": "write_token",
             "is_on_new_line": token.is_on_new_line,
@@ -126,9 +127,10 @@ impl<'alloc> Parser<'alloc> {
             "end": token.loc.end,
         });
         // Shift the token with the associated StackValue.
+        let term = Term::Terminal(token.terminal_id);
         let accept = self.shift(TermValue {
-            term: Term::Terminal(token.terminal_id),
-            value: StackValue::Token(self.handler.alloc(token.clone())),
+            term,
+            value: StackValue::Token(token),
         })?;
         // JavaScript grammar accepts empty inputs, therefore we can never
         // accept any program before receiving a TerminalId::End.
@@ -146,7 +148,7 @@ impl<'alloc> Parser<'alloc> {
         let token = Token::basic_token(TerminalId::End, loc);
         let accept = self.shift(TermValue {
             term: Term::Terminal(TerminalId::End),
-            value: StackValue::Token(self.handler.alloc(token.clone())),
+            value: StackValue::Token(self.handler.alloc(token)),
         })?;
         // Adding a TerminalId::End would either lead to a parse error, or to
         // accepting the current input. In which case we return matching node
@@ -185,7 +187,7 @@ impl<'alloc> Parser<'alloc> {
             // might not be in the shifted terms coming after the reduced
             // nonterminal.
             if t.term == Term::Terminal(TerminalId::ErrorToken) {
-                return Err(Self::parse_error(token));
+                return Err(Self::parse_error(token).into());
             }
 
             // Otherwise, check if the current rule accept an Automatic
@@ -205,9 +207,9 @@ impl<'alloc> Parser<'alloc> {
                 return Ok(false);
             }
             // On error, don't attempt error handling again.
-            return Err(Self::parse_error(token));
+            return Err(Self::parse_error(token).into());
         }
-        Err(ParseError::ParserCannotUnpackToken)
+        Err(ParseError::ParserCannotUnpackToken.into())
     }
 
     pub(crate) fn recover(t: &Token, error_code: ErrorCode) -> Result<'alloc, ()> {
@@ -219,7 +221,7 @@ impl<'alloc> Parser<'alloc> {
                 {
                     Ok(())
                 } else {
-                    Err(Self::parse_error(t))
+                    Err(Self::parse_error(t).into())
                 }
             }
             ErrorCode::DoWhileAsi => Ok(()),
@@ -232,11 +234,7 @@ impl<'alloc> Parser<'alloc> {
     }
 
     pub fn can_accept_terminal(&self, t: TerminalId) -> bool {
-        let bogus_loc = SourceLocation::new(0, 0);
-        let result = self
-            .simulator()
-            .write_token(&Token::basic_token(t, bogus_loc))
-            .is_ok();
+        let result = self.simulator().write_token(t).is_ok();
         json_trace!({
             "can_accept": result,
             "terminal": format!("{:?}", t),

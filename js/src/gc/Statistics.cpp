@@ -1062,21 +1062,30 @@ void Statistics::sendGCTelemetry() {
   JSRuntime* runtime = gc->rt;
   runtime->addTelemetry(JS_TELEMETRY_GC_IS_ZONE_GC,
                         !zoneStats.isFullCollection());
+  TimeDuration prepareTotal = SumPhase(PhaseKind::PREPARE, phaseTimes);
   TimeDuration markTotal = SumPhase(PhaseKind::MARK, phaseTimes);
   TimeDuration markRootsTotal = SumPhase(PhaseKind::MARK_ROOTS, phaseTimes);
-  double markTime = t(markTotal);
+  TimeDuration markWeakTotal = phaseTimes[Phase::SWEEP_MARK_WEAK] +
+                               phaseTimes[Phase::SWEEP_MARK_GRAY_WEAK];
+  TimeDuration markGrayTotal = phaseTimes[Phase::SWEEP_MARK_GRAY] +
+                               phaseTimes[Phase::SWEEP_MARK_GRAY_WEAK];
   size_t markCount = gc->marker.getMarkCount();
-  double markRate = markCount / markTime;
-  runtime->addTelemetry(JS_TELEMETRY_GC_MARK_MS, markTime);
+  double markRate = markCount / t(markTotal);
+  runtime->addTelemetry(JS_TELEMETRY_GC_PREPARE_MS, t(prepareTotal));
+  runtime->addTelemetry(JS_TELEMETRY_GC_MARK_MS, t(markTotal));
   runtime->addTelemetry(JS_TELEMETRY_GC_MARK_RATE, markRate);
+  runtime->addTelemetry(JS_TELEMETRY_GC_MARK_RATE_2, markRate);
   runtime->addTelemetry(JS_TELEMETRY_GC_SWEEP_MS, t(phaseTimes[Phase::SWEEP]));
-  if (gc->isCompactingGc()) {
+  if (gc->didCompactZones()) {
     runtime->addTelemetry(JS_TELEMETRY_GC_COMPACT_MS,
                           t(phaseTimes[Phase::COMPACT]));
   }
   runtime->addTelemetry(JS_TELEMETRY_GC_MARK_ROOTS_MS, t(markRootsTotal));
-  runtime->addTelemetry(JS_TELEMETRY_GC_MARK_GRAY_MS,
-                        t(phaseTimes[Phase::SWEEP_MARK_GRAY]));
+  runtime->addTelemetry(JS_TELEMETRY_GC_MARK_ROOTS_US,
+                        markRootsTotal.ToMicroseconds());
+  runtime->addTelemetry(JS_TELEMETRY_GC_MARK_GRAY_MS, t(markGrayTotal));
+  runtime->addTelemetry(JS_TELEMETRY_GC_MARK_GRAY_MS_2, t(markGrayTotal));
+  runtime->addTelemetry(JS_TELEMETRY_GC_MARK_WEAK_MS, t(markWeakTotal));
   runtime->addTelemetry(JS_TELEMETRY_GC_NON_INCREMENTAL, nonincremental());
   if (nonincremental()) {
     runtime->addTelemetry(JS_TELEMETRY_GC_NON_INCREMENTAL_REASON,
@@ -1095,11 +1104,6 @@ void Statistics::sendGCTelemetry() {
     runtime->addTelemetry(JS_TELEMETRY_GC_RESET_REASON,
                           uint32_t(lastSlice.resetReason));
   }
-
-  TimeDuration sccTotal, sccLongest;
-  sccDurations(&sccTotal, &sccLongest);
-  runtime->addTelemetry(JS_TELEMETRY_GC_SCC_SWEEP_TOTAL_MS, t(sccTotal));
-  runtime->addTelemetry(JS_TELEMETRY_GC_SCC_SWEEP_MAX_PAUSE_MS, t(sccLongest));
 
   TimeDuration total, longest;
   gcDuration(&total, &longest);
@@ -1307,6 +1311,7 @@ void Statistics::sendSliceTelemetry(const SliceData& slice) {
   if (slice.budget.isTimeBudget()) {
     int64_t budget_ms = slice.budget.timeBudget.budget;
     runtime->addTelemetry(JS_TELEMETRY_GC_BUDGET_MS, budget_ms);
+    runtime->addTelemetry(JS_TELEMETRY_GC_BUDGET_MS_2, budget_ms);
     if (IsCurrentlyAnimating(runtime->lastAnimationTime, slice.end)) {
       runtime->addTelemetry(JS_TELEMETRY_GC_ANIMATION_MS, t(sliceTime));
     }

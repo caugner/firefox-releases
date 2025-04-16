@@ -81,13 +81,9 @@ class MOZ_RAII AutoAssertReportedException {
 #endif
 };
 
-static void UpdateSharedContextCreationFlags(CompilationInfo& compilationinfo,
-                                             SharedContext* sc);
-
 static bool EmplaceEmitter(CompilationInfo& compilationInfo,
                            Maybe<BytecodeEmitter>& emitter,
-                           const EitherParser& parser,
-                           SharedContext* sharedContext);
+                           const EitherParser& parser, SharedContext* sc);
 
 template <typename Unit>
 class MOZ_STACK_CLASS frontend::SourceAwareCompiler {
@@ -106,13 +102,8 @@ class MOZ_STACK_CLASS frontend::SourceAwareCompiler {
   }
 
   // Call this before calling compile{Global,Eval}Script.
-  MOZ_MUST_USE bool prepareScriptParse(LifoAllocScope& allocScope,
-                                       CompilationInfo& compilationInfo,
-                                       SharedContext* sc) {
-    prepareSharedContextAllocationInfo(compilationInfo, sc);
-
-    return createSourceAndParser(allocScope, compilationInfo);
-  }
+  MOZ_MUST_USE bool createSourceAndParser(LifoAllocScope& allocScope,
+                                          CompilationInfo& compilationInfo);
 
   void assertSourceAndParserCreated(CompilationInfo& compilationInfo) const {
     MOZ_ASSERT(compilationInfo.sourceObject != nullptr);
@@ -131,23 +122,13 @@ class MOZ_STACK_CLASS frontend::SourceAwareCompiler {
                           sharedContext);
   }
 
-  MOZ_MUST_USE bool createSourceAndParser(LifoAllocScope& allocScope,
-                                          CompilationInfo& compilationInfo);
-
-  // This assumes the created script's offsets in the source used to parse it
-  // are the same as are used to compute its Function.prototype.toString()
-  // value.
-  void prepareSharedContextAllocationInfo(CompilationInfo& compilationInfo,
-                                          SharedContext* sc) {
-    UpdateSharedContextCreationFlags(compilationInfo, sc);
-  }
-
   bool canHandleParseFailure(CompilationInfo& compilationInfo,
                              const Directives& newDirectives);
 
   void handleParseFailure(CompilationInfo& compilationInfo,
                           const Directives& newDirectives,
-                          TokenStreamPosition& startPosition);
+                          TokenStreamPosition& startPosition,
+                          CompilationInfo::RewindToken& startObj);
 };
 
 template <typename Unit>
@@ -169,14 +150,9 @@ class MOZ_STACK_CLASS frontend::ScriptCompiler
  public:
   explicit ScriptCompiler(SourceText<Unit>& srcBuf) : Base(srcBuf) {}
 
-  MOZ_MUST_USE bool prepareScriptParse(LifoAllocScope& allocScope,
-                                       CompilationInfo& compilationInfo,
-                                       SharedContext* sc) {
-    return Base::prepareScriptParse(allocScope, compilationInfo, sc);
-  }
+  using Base::createSourceAndParser;
 
-  JSScript* compileScript(CompilationInfo& compilationInfo,
-                          HandleObject environment, SharedContext* sc);
+  JSScript* compileScript(CompilationInfo& compilationInfo, SharedContext* sc);
 };
 
 /* If we're on main thread, tell the Debugger about a newly compiled script.
@@ -205,11 +181,11 @@ static JSScript* CreateGlobalScript(CompilationInfo& compilationInfo,
   LifoAllocScope allocScope(&compilationInfo.cx->tempLifoAlloc());
   frontend::ScriptCompiler<Unit> compiler(srcBuf);
 
-  if (!compiler.prepareScriptParse(allocScope, compilationInfo, &globalsc)) {
+  if (!compiler.createSourceAndParser(allocScope, compilationInfo)) {
     return nullptr;
   }
 
-  if (!compiler.compileScript(compilationInfo, nullptr, &globalsc)) {
+  if (!compiler.compileScript(compilationInfo, &globalsc)) {
     return nullptr;
   }
 
@@ -257,17 +233,16 @@ JSScript* frontend::CompileGlobalScript(CompilationInfo& compilationInfo,
 template <typename Unit>
 static JSScript* CreateEvalScript(CompilationInfo& compilationInfo,
                                   EvalSharedContext& evalsc,
-                                  JS::Handle<JSObject*> environment,
                                   SourceText<Unit>& srcBuf) {
   AutoAssertReportedException assertException(compilationInfo.cx);
   LifoAllocScope allocScope(&compilationInfo.cx->tempLifoAlloc());
 
   frontend::ScriptCompiler<Unit> compiler(srcBuf);
-  if (!compiler.prepareScriptParse(allocScope, compilationInfo, &evalsc)) {
+  if (!compiler.createSourceAndParser(allocScope, compilationInfo)) {
     return nullptr;
   }
 
-  if (!compiler.compileScript(compilationInfo, environment, &evalsc)) {
+  if (!compiler.compileScript(compilationInfo, &evalsc)) {
     return nullptr;
   }
 
@@ -281,9 +256,8 @@ static JSScript* CreateEvalScript(CompilationInfo& compilationInfo,
 
 JSScript* frontend::CompileEvalScript(CompilationInfo& compilationInfo,
                                       EvalSharedContext& evalsc,
-                                      JS::Handle<JSObject*> environment,
                                       JS::SourceText<char16_t>& srcBuf) {
-  return CreateEvalScript(compilationInfo, evalsc, environment, srcBuf);
+  return CreateEvalScript(compilationInfo, evalsc, srcBuf);
 }
 
 template <typename Unit>
@@ -295,7 +269,6 @@ class MOZ_STACK_CLASS frontend::ModuleCompiler final
   using Base::createSourceAndParser;
   using Base::emplaceEmitter;
   using Base::parser;
-  using Base::prepareSharedContextAllocationInfo;
 
  public:
   explicit ModuleCompiler(SourceText<Unit>& srcBuf) : Base(srcBuf) {}
@@ -310,7 +283,6 @@ class MOZ_STACK_CLASS frontend::StandaloneFunctionCompiler final
 
   using Base::assertSourceAndParserCreated;
   using Base::canHandleParseFailure;
-  using Base::createSourceAndParser;
   using Base::emplaceEmitter;
   using Base::handleParseFailure;
   using Base::parser;
@@ -322,10 +294,7 @@ class MOZ_STACK_CLASS frontend::StandaloneFunctionCompiler final
   explicit StandaloneFunctionCompiler(SourceText<Unit>& srcBuf)
       : Base(srcBuf) {}
 
-  MOZ_MUST_USE bool prepare(LifoAllocScope& allocScope,
-                            CompilationInfo& compilationInfo) {
-    return createSourceAndParser(allocScope, compilationInfo);
-  }
+  using Base::createSourceAndParser;
 
   FunctionNode* parse(CompilationInfo& compilationInfo, HandleFunction fun,
                       HandleScope enclosingScope, GeneratorKind generatorKind,
@@ -334,25 +303,6 @@ class MOZ_STACK_CLASS frontend::StandaloneFunctionCompiler final
 
   MOZ_MUST_USE bool compile(MutableHandleFunction fun, CompilationInfo& info,
                             FunctionNode* parsedFunction);
-
- private:
-  // Create a script for a function with the given toString offsets in source
-  // text.
-  void prepareFunctionAllocationInfo(CompilationInfo& compilationInfo,
-                                     FunctionBox* funbox) {
-    // The parser extent has stripped off the leading `function...` but
-    // we want the SourceExtent used in the final standalone script to
-    // start from the beginning of the buffer, and use the provided
-    // line and column.
-    SourceExtent extent{/* sourceStart = */ 0,
-                        sourceBuffer_.length(),
-                        funbox->extent.toStringStart,
-                        funbox->extent.toStringEnd,
-                        compilationInfo.options.lineno,
-                        compilationInfo.options.column};
-    funbox->scriptExtent.emplace(extent);
-    return UpdateSharedContextCreationFlags(compilationInfo, funbox);
-  }
 };
 
 AutoFrontendTraceLog::AutoFrontendTraceLog(JSContext* cx,
@@ -442,7 +392,7 @@ bool frontend::SourceAwareCompiler<Unit>::createSourceAndParser(
     syntaxParser.emplace(compilationInfo.cx, compilationInfo.options,
                          sourceBuffer_.units(), sourceBuffer_.length(),
                          /* foldConstants = */ false, compilationInfo, nullptr,
-                         nullptr, compilationInfo.sourceObject);
+                         nullptr);
     if (!syntaxParser->checkOptions()) {
       return false;
     }
@@ -451,31 +401,18 @@ bool frontend::SourceAwareCompiler<Unit>::createSourceAndParser(
   parser.emplace(compilationInfo.cx, compilationInfo.options,
                  sourceBuffer_.units(), sourceBuffer_.length(),
                  /* foldConstants = */ true, compilationInfo,
-                 syntaxParser.ptrOr(nullptr), nullptr,
-                 compilationInfo.sourceObject);
+                 syntaxParser.ptrOr(nullptr), nullptr);
   parser->ss = compilationInfo.sourceObject->source();
   return parser->checkOptions();
 }
 
-// Allocate a script for CompilationInfo for the given function or global
-static void UpdateSharedContextCreationFlags(CompilationInfo& compilationInfo,
-                                             SharedContext* sc) {
-  ImmutableScriptFlags inputFlags =
-      ImmutableScriptFlags::fromCompileOptions(compilationInfo.options);
-
-  // Add the required input flags to the shared context.
-  sc->addToImmutableFlags(inputFlags);
-}
-
 static bool EmplaceEmitter(CompilationInfo& compilationInfo,
                            Maybe<BytecodeEmitter>& emitter,
-                           const EitherParser& parser,
-                           SharedContext* sharedContext) {
+                           const EitherParser& parser, SharedContext* sc) {
   BytecodeEmitter::EmitterMode emitterMode =
-      compilationInfo.options.selfHostingMode ? BytecodeEmitter::SelfHosting
-                                              : BytecodeEmitter::Normal;
-  emitter.emplace(/* parent = */ nullptr, parser, sharedContext,
-                  compilationInfo, emitterMode);
+      sc->selfHosted() ? BytecodeEmitter::SelfHosting : BytecodeEmitter::Normal;
+  emitter.emplace(/* parent = */ nullptr, parser, sc, compilationInfo,
+                  emitterMode);
   return emitter->init();
 }
 
@@ -497,11 +434,13 @@ bool frontend::SourceAwareCompiler<Unit>::canHandleParseFailure(
 template <typename Unit>
 void frontend::SourceAwareCompiler<Unit>::handleParseFailure(
     CompilationInfo& compilationInfo, const Directives& newDirectives,
-    TokenStreamPosition& startPosition) {
+    TokenStreamPosition& startPosition,
+    CompilationInfo::RewindToken& startObj) {
   MOZ_ASSERT(canHandleParseFailure(compilationInfo, newDirectives));
 
   // Rewind to starting position to retry.
   parser->tokenStream.rewind(startPosition);
+  compilationInfo.rewind(startObj);
 
   // Assignment must be monotonic to prevent reparsing iloops
   MOZ_ASSERT_IF(compilationInfo.directives.strict(), newDirectives.strict());
@@ -511,8 +450,7 @@ void frontend::SourceAwareCompiler<Unit>::handleParseFailure(
 
 template <typename Unit>
 JSScript* frontend::ScriptCompiler<Unit>::compileScript(
-    CompilationInfo& compilationInfo, HandleObject environment,
-    SharedContext* sc) {
+    CompilationInfo& compilationInfo, SharedContext* sc) {
   assertSourceParserAndScriptCreated(compilationInfo);
 
   TokenStreamPosition startPosition(compilationInfo.keepAtoms,
@@ -546,11 +484,6 @@ JSScript* frontend::ScriptCompiler<Unit>::compileScript(
     AutoGeckoProfilerEntry pseudoFrame(cx, "script emit",
                                        JS::ProfilingCategoryPair::JS_Parsing);
 
-    // Publish deferred items
-    if (!parser->publishDeferredFunctions()) {
-      return nullptr;
-    }
-
     Maybe<BytecodeEmitter> emitter;
     if (!emplaceEmitter(compilationInfo, emitter, sc)) {
       return nullptr;
@@ -560,7 +493,10 @@ JSScript* frontend::ScriptCompiler<Unit>::compileScript(
       return nullptr;
     }
 
-    compilationInfo.script = emitter->getResultScript();
+    if (!compilationInfo.instantiateStencils()) {
+      return nullptr;
+    }
+
     MOZ_ASSERT(compilationInfo.script);
   }
 
@@ -600,14 +536,8 @@ ModuleObject* frontend::ModuleCompiler<Unit>::compile(
   ModuleSharedContext modulesc(cx, module, compilationInfo, enclosingScope,
                                builder, extent);
 
-  prepareSharedContextAllocationInfo(compilationInfo, &modulesc);
-
   ParseNode* pn = parser->moduleBody(&modulesc);
   if (!pn) {
-    return nullptr;
-  }
-
-  if (!parser->publishDeferredFunctions()) {
     return nullptr;
   }
 
@@ -620,7 +550,10 @@ ModuleObject* frontend::ModuleCompiler<Unit>::compile(
     return nullptr;
   }
 
-  compilationInfo.script = emitter->getResultScript();
+  if (!compilationInfo.instantiateStencils()) {
+    return nullptr;
+  }
+
   MOZ_ASSERT(compilationInfo.script);
 
   if (!builder.initModule(module)) {
@@ -658,6 +591,7 @@ FunctionNode* frontend::StandaloneFunctionCompiler<Unit>::parse(
 
   TokenStreamPosition startPosition(compilationInfo.keepAtoms,
                                     parser->tokenStream);
+  CompilationInfo::RewindToken startObj = compilationInfo.getRewindToken();
 
   // Speculatively parse using the default directives implied by the context.
   // If a directive is encountered (e.g., "use strict") that changes how the
@@ -679,7 +613,7 @@ FunctionNode* frontend::StandaloneFunctionCompiler<Unit>::parse(
       return nullptr;
     }
 
-    handleParseFailure(compilationInfo, newDirectives, startPosition);
+    handleParseFailure(compilationInfo, newDirectives, startPosition, startObj);
   }
 
   return fn;
@@ -694,23 +628,33 @@ bool frontend::StandaloneFunctionCompiler<Unit>::compile(
   if (funbox->isInterpreted()) {
     MOZ_ASSERT(fun == funbox->function());
 
-    prepareFunctionAllocationInfo(compilationInfo, funbox);
-
-    if (!parser->publishDeferredFunctions()) {
-      return false;
-    }
+    // The parser extent has stripped off the leading `function...` but
+    // we want the SourceExtent used in the final standalone script to
+    // start from the beginning of the buffer, and use the provided
+    // line and column.
+    compilationInfo.topLevelExtent =
+        SourceExtent{/* sourceStart = */ 0,
+                     sourceBuffer_.length(),
+                     funbox->extent.toStringStart,
+                     funbox->extent.toStringEnd,
+                     compilationInfo.options.lineno,
+                     compilationInfo.options.column};
 
     Maybe<BytecodeEmitter> emitter;
     if (!emplaceEmitter(compilationInfo, emitter, funbox)) {
       return false;
     }
 
-    if (!emitter->emitFunctionScript(parsedFunction,
-                                     BytecodeEmitter::TopLevelFunction::Yes)) {
+    if (!emitter->emitFunctionScript(parsedFunction, TopLevelFunction::Yes)) {
       return false;
     }
 
-    compilationInfo.script = emitter->getResultScript();
+    funbox->synchronizeArgCount();
+
+    if (!compilationInfo.instantiateStencils()) {
+      return false;
+    }
+
     MOZ_ASSERT(compilationInfo.script);
   } else {
     fun.set(funbox->function());
@@ -778,12 +722,10 @@ static JSScript* CompileGlobalBinASTScriptImpl(
 
   SourceExtent extent = SourceExtent::makeGlobalExtent(len);
   extent.lineno = 0;
-  GlobalSharedContext globalsc(
-      cx, ScopeKind::Global, compilationInfo, compilationInfo.directives,
-      extent, ImmutableScriptFlags::fromCompileOptions(options));
+  GlobalSharedContext globalsc(cx, ScopeKind::Global, compilationInfo,
+                               compilationInfo.directives, extent);
 
-  frontend::BinASTParser<ParserT> parser(cx, compilationInfo, options,
-                                         compilationInfo.sourceObject);
+  frontend::BinASTParser<ParserT> parser(cx, compilationInfo, options);
 
   // Metadata stores internal pointers, so we must use the same buffer every
   // time, including for lazy parses
@@ -809,18 +751,19 @@ static JSScript* CompileGlobalBinASTScriptImpl(
     return nullptr;
   }
 
-  RootedScript resultScript(cx, bce.getResultScript());
-  MOZ_ASSERT(resultScript);
+  if (!compilationInfo.instantiateStencils()) {
+    return nullptr;
+  }
 
   if (sourceObjectOut) {
     *sourceObjectOut = compilationInfo.sourceObject;
   }
 
   tellDebuggerAboutCompiledScript(cx, options.hideScriptFromDebugger,
-                                  resultScript);
+                                  compilationInfo.script);
 
   assertException.reset();
-  return resultScript;
+  return compilationInfo.script;
 }
 
 JSScript* frontend::CompileGlobalBinASTScript(
@@ -969,13 +912,13 @@ static bool CompileLazyFunctionImpl(JSContext* cx, Handle<BaseScript*> lazy,
   }
 
   LifoAllocScope allocScope(&cx->tempLifoAlloc());
-  CompilationInfo compilationInfo(cx, allocScope, options);
-  compilationInfo.initFromSourceObject(lazy->sourceObject());
+  CompilationInfo compilationInfo(cx, allocScope, options,
+                                  fun->enclosingScope());
+  compilationInfo.initFromLazy(lazy);
 
   Parser<FullParseHandler, Unit> parser(cx, options, units, length,
                                         /* foldConstants = */ true,
-                                        compilationInfo, nullptr, lazy,
-                                        compilationInfo.sourceObject);
+                                        compilationInfo, nullptr, lazy);
   if (!parser.checkOptions()) {
     return false;
   }
@@ -984,9 +927,6 @@ static bool CompileLazyFunctionImpl(JSContext* cx, Handle<BaseScript*> lazy,
       parser.standaloneLazyFunction(fun, lazy->toStringStart(), lazy->strict(),
                                     lazy->generatorKind(), lazy->asyncKind());
   if (!pn) {
-    return false;
-  }
-  if (!parser.publishDeferredFunctions()) {
     return false;
   }
 
@@ -999,14 +939,18 @@ static bool CompileLazyFunctionImpl(JSContext* cx, Handle<BaseScript*> lazy,
     return false;
   }
 
-  if (!bce.emitFunctionScript(pn, BytecodeEmitter::TopLevelFunction::Yes)) {
+  if (!bce.emitFunctionScript(pn, TopLevelFunction::Yes)) {
     return false;
   }
 
-  MOZ_ASSERT(lazyFlags == bce.getResultScript()->immutableFlags());
-  MOZ_ASSERT(bce.getResultScript()->outermostScope()->hasOnChain(
+  if (!compilationInfo.instantiateStencils()) {
+    return false;
+  }
+
+  MOZ_ASSERT(lazyFlags == compilationInfo.script->immutableFlags());
+  MOZ_ASSERT(compilationInfo.script->outermostScope()->hasOnChain(
                  ScopeKind::NonSyntactic) ==
-             bce.getResultScript()->immutableFlags().hasFlag(
+             compilationInfo.script->immutableFlags().hasFlag(
                  JSScript::ImmutableFlags::HasNonSyntacticScope));
 
   assertException.reset();
@@ -1053,10 +997,9 @@ static bool CompileLazyBinASTFunctionImpl(JSContext* cx,
 
   LifoAllocScope allocScope(&cx->tempLifoAlloc());
   CompilationInfo compilationInfo(cx, allocScope, options);
-  compilationInfo.initFromSourceObject(lazy->sourceObject());
+  compilationInfo.initFromLazy(lazy);
 
-  frontend::BinASTParser<ParserT> parser(cx, compilationInfo, options,
-                                         compilationInfo.sourceObject, lazy);
+  frontend::BinASTParser<ParserT> parser(cx, compilationInfo, options, lazy);
 
   auto parsed =
       parser.parseLazyFunction(lazy->scriptSource(), lazy->sourceStart());
@@ -1074,16 +1017,20 @@ static bool CompileLazyBinASTFunctionImpl(JSContext* cx,
     return false;
   }
 
-  if (!bce.emitFunctionScript(pn, BytecodeEmitter::TopLevelFunction::Yes)) {
+  if (!bce.emitFunctionScript(pn, TopLevelFunction::Yes)) {
+    return false;
+  }
+
+  if (!compilationInfo.instantiateStencils()) {
     return false;
   }
 
   // This value *must* not change after the lazy function is first created.
   MOZ_ASSERT(lazyIsLikelyConstructorWrapper ==
-             bce.getResultScript()->isLikelyConstructorWrapper());
+             compilationInfo.script->isLikelyConstructorWrapper());
 
   assertException.reset();
-  return bce.getResultScript();
+  return true;
 }
 
 bool frontend::CompileLazyBinASTFunction(JSContext* cx,
@@ -1111,13 +1058,13 @@ static bool CompileStandaloneFunction(JSContext* cx, MutableHandleFunction fun,
   AutoAssertReportedException assertException(cx);
 
   LifoAllocScope allocScope(&cx->tempLifoAlloc());
-  CompilationInfo compilationInfo(cx, allocScope, options);
+  CompilationInfo compilationInfo(cx, allocScope, options, enclosingScope);
   if (!compilationInfo.init(cx)) {
     return false;
   }
 
   StandaloneFunctionCompiler<char16_t> compiler(srcBuf);
-  if (!compiler.prepare(allocScope, compilationInfo)) {
+  if (!compiler.createSourceAndParser(allocScope, compilationInfo)) {
     return false;
   }
 

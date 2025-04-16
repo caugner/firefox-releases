@@ -144,7 +144,7 @@ add_task(async function enableHtmlViews() {
       description: "Short description",
       fullDescription: "Longer description\nWith brs!",
       type: "extension",
-      contributionURL: "http://localhost/contribute",
+      contributionURL: "http://example.com/contribute",
       averageRating: 4.279,
       userPermissions: {
         origins: ["<all_urls>", "file://*/*"],
@@ -252,6 +252,18 @@ add_task(async function testOpenDetailView() {
   card.querySelector('[action="expand"]').click();
   await loaded;
 
+  await goBack(win);
+
+  // Test click on add-on name.
+  card = getAddonCard(doc, id2);
+  ok(!card.querySelector("addon-details"), "The card isn't expanded");
+  let addonName = card.querySelector(".addon-name");
+  loaded = waitForViewLoad(win);
+  EventUtils.synthesizeMouseAtCenter(addonName, {}, win);
+  await loaded;
+  card = getAddonCard(doc, id2);
+  ok(card.querySelector("addon-details"), "The card is expanded");
+
   await closeView(win);
   await extension.unload();
   await extension2.unload();
@@ -272,6 +284,14 @@ add_task(async function testOpenDetailView() {
       "aboutAddons",
       "detail",
       { type: "extension", addonId: id },
+    ],
+    ["addonsManager", "view", "aboutAddons", "list", { type: "extension" }],
+    [
+      "addonsManager",
+      "view",
+      "aboutAddons",
+      "detail",
+      { type: "extension", addonId: id2 },
     ],
     ["addonsManager", "view", "aboutAddons", "list", { type: "extension" }],
     [
@@ -481,7 +501,7 @@ add_task(async function testFullDetails() {
 
   let waitForTab = BrowserTestUtils.waitForNewTab(
     gBrowser,
-    "http://localhost/contribute"
+    "http://example.com/contribute"
   );
   contrib.querySelector("button").click();
   BrowserTestUtils.removeTab(await waitForTab);
@@ -699,7 +719,10 @@ add_task(async function testDefaultTheme() {
 
   // Last updated.
   let lastUpdated = rows.shift();
-  is(lastUpdated, undefined, "No Last Updated row");
+  checkLabel(lastUpdated, "last-updated");
+  let dateText = lastUpdated.lastChild.textContent;
+  ok(dateText, "There is a date set");
+  ok(!dateText.includes("Invalid Date"), `"${dateText}" should be a date`);
 
   is(rows.length, 0, "There are no more rows");
 

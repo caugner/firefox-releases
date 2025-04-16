@@ -148,6 +148,12 @@ class RegExpShared : public gc::TenuredCell {
   bool canStringMatch = false;
 #endif
 
+#ifdef ENABLE_NEW_REGEXP
+  uint32_t numNamedCaptures_ = {};
+  uint32_t* namedCaptureIndices_ = {};
+  GCPtr<PlainObject*> groupsTemplate_ = {};
+#endif
+
   static int CompilationIndex(bool latin1) { return latin1 ? 0 : 1; }
 
   // Tables referenced by JIT code.
@@ -162,9 +168,6 @@ class RegExpShared : public gc::TenuredCell {
                       HandleAtom pattern, HandleLinearString input,
                       CodeKind code);
 
-  static bool compileIfNecessary(JSContext* cx, MutableHandleRegExpShared res,
-                                 HandleLinearString input, CodeKind code);
-
   const RegExpCompilation& compilation(bool latin1) const {
     return compilationArray[CompilationIndex(latin1)];
   }
@@ -175,6 +178,9 @@ class RegExpShared : public gc::TenuredCell {
 
  public:
   ~RegExpShared() = delete;
+
+  static bool compileIfNecessary(JSContext* cx, MutableHandleRegExpShared res,
+                                 HandleLinearString input, CodeKind code);
 
   static RegExpRunStatus executeAtom(JSContext* cx,
                                      MutableHandleRegExpShared re,
@@ -209,8 +215,12 @@ class RegExpShared : public gc::TenuredCell {
   // Use the regular expression engine for this regexp.
   void useRegExpMatch(size_t parenCount);
 
+  static bool initializeNamedCaptures(JSContext* cx, HandleRegExpShared re,
+                                      HandleNativeObject namedCaptures);
+  PlainObject* getGroupsTemplate() { return groupsTemplate_; }
+
   void tierUpTick();
-  bool markedForTierUp();
+  bool markedForTierUp() const;
 
   void setByteCode(ByteCode* code, bool latin1) {
     compilation(latin1).byteCode = code;
@@ -227,6 +237,13 @@ class RegExpShared : public gc::TenuredCell {
   uint32_t getMaxRegisters() const { return maxRegisters_; }
   void updateMaxRegisters(uint32_t numRegisters) {
     maxRegisters_ = std::max(maxRegisters_, numRegisters);
+  }
+
+  uint32_t numNamedCaptures() const { return numNamedCaptures_; }
+  int32_t getNamedCaptureIndex(uint32_t idx) const {
+    MOZ_ASSERT(idx < numNamedCaptures());
+    MOZ_ASSERT(namedCaptureIndices_);
+    return namedCaptureIndices_[idx];
   }
 
 #endif
@@ -273,6 +290,11 @@ class RegExpShared : public gc::TenuredCell {
            (CompilationIndex(latin1) * sizeof(RegExpCompilation)) +
            offsetof(RegExpCompilation, jitCode);
   }
+#ifdef ENABLE_NEW_REGEXP
+  static size_t offsetOfGroupsTemplate() {
+    return offsetof(RegExpShared, groupsTemplate_);
+  }
+#endif
 
   size_t sizeOfExcludingThis(mozilla::MallocSizeOf mallocSizeOf);
 
@@ -350,6 +372,7 @@ class RegExpRealm {
    *   * RegExp.prototype.global getter is not modified
    *   * RegExp.prototype.ignoreCase getter is not modified
    *   * RegExp.prototype.multiline getter is not modified
+   *   * RegExp.prototype.dotAll getter is not modified
    *   * RegExp.prototype.sticky getter is not modified
    *   * RegExp.prototype.unicode getter is not modified
    *   * RegExp.prototype.exec is an own data property
@@ -374,6 +397,21 @@ class RegExpRealm {
 
   static const size_t MatchResultObjectIndexSlot = 0;
   static const size_t MatchResultObjectInputSlot = 1;
+#ifdef ENABLE_NEW_REGEXP
+  static const size_t MatchResultObjectGroupsSlot = 2;
+#endif
+
+  static size_t offsetOfMatchResultObjectIndexSlot() {
+    return sizeof(Value) * MatchResultObjectIndexSlot;
+  }
+  static size_t offsetOfMatchResultObjectInputSlot() {
+    return sizeof(Value) * MatchResultObjectInputSlot;
+  }
+#ifdef ENABLE_NEW_REGEXP
+  static size_t offsetOfMatchResultObjectGroupsSlot() {
+    return sizeof(Value) * MatchResultObjectGroupsSlot;
+  }
+#endif
 
   /* Get or create template object used to base the result of .exec() on. */
   ArrayObject* getOrCreateMatchResultTemplateObject(JSContext* cx) {

@@ -34,6 +34,7 @@ const RECORD_OF_DUMP = {
     hash: "4c46ef7e4f1951d210fe54c21e07c09bab265fd122580083ed1d6121547a8c6b",
     size: 25,
   },
+  last_modified: 1234567,
   some_key: "some metadata",
 };
 
@@ -307,6 +308,50 @@ add_task(async function test_downloader_reports_offline_error() {
 });
 add_task(clear_state);
 
+// Common code for test_download_cache_hit and test_download_cache_corruption.
+async function doTestDownloadCacheImpl({ simulateCorruption }) {
+  let readCount = 0;
+  let writeCount = 0;
+  const cacheImpl = {
+    async get(attachmentId) {
+      Assert.equal(attachmentId, RECORD.id, "expected attachmentId");
+      ++readCount;
+      if (simulateCorruption) {
+        throw new Error("Simulation of corrupted cache (read)");
+      }
+    },
+    async set(attachmentId, attachment) {
+      Assert.equal(attachmentId, RECORD.id, "expected attachmentId");
+      Assert.deepEqual(attachment.record, RECORD, "expected record");
+      ++writeCount;
+      if (simulateCorruption) {
+        throw new Error("Simulation of corrupted cache (write)");
+      }
+    },
+    async delete(attachmentId) {},
+  };
+  Object.defineProperty(downloader, "cacheImpl", { value: cacheImpl });
+
+  let downloadResult = await downloader.download(RECORD, {
+    useCache: true,
+  });
+  Assert.equal(downloadResult._source, "remote_match", "expected source");
+  Assert.equal(downloadResult.buffer.byteLength, 1597, "expected result");
+  Assert.equal(readCount, 1, "expected cache read attempts");
+  Assert.equal(writeCount, 1, "expected cache write attempts");
+}
+
+add_task(async function test_download_cache_hit() {
+  await doTestDownloadCacheImpl({ simulateCorruption: false });
+});
+add_task(clear_state);
+
+// Verify that the downloader works despite a broken cache implementation.
+add_task(async function test_download_cache_corruption() {
+  await doTestDownloadCacheImpl({ simulateCorruption: true });
+});
+add_task(clear_state);
+
 add_task(async function test_download_cached() {
   const client = RemoteSettings("main", "some-collection");
   const attachmentId = "dummy filename";
@@ -415,13 +460,13 @@ add_task(async function test_download_from_dump() {
     Services.io.newFileURI(do_get_file("test_attachments_downloader"))
   );
 
-  function checkInfo(result, expectedSource) {
+  function checkInfo(result, expectedSource, expectedRecord = RECORD_OF_DUMP) {
     Assert.equal(
       new TextDecoder().decode(new Uint8Array(result.buffer)),
       "This would be a RS dump.\n",
       "expected content from dump"
     );
-    Assert.deepEqual(result.record, RECORD_OF_DUMP, "expected record for dump");
+    Assert.deepEqual(result.record, expectedRecord, "expected record for dump");
     Assert.equal(result._source, expectedSource, "expected source of dump");
   }
 
@@ -441,13 +486,71 @@ add_task(async function test_download_from_dump() {
   });
   checkInfo(dump2, "dump_fallback");
 
+  // Fill the cache with the same data as the dump for the next part.
+  await client.db.saveAttachment(RECORD_OF_DUMP.id, {
+    record: RECORD_OF_DUMP,
+    blob: new Blob([dump1.buffer]),
+  });
+  // The dump should take precedence over the cache.
+  const dump3 = await client.attachments.download(RECORD_OF_DUMP, {
+    useCache: true,
+    fallbackToCache: true,
+    fallbackToDump: true,
+  });
+  checkInfo(dump3, "dump_match");
+
+  // When the record is not given, the dump takes precedence over the cache
+  // as a fallback (when the cache and dump are identical).
+  const dump4 = await client.attachments.download(null, {
+    attachmentId: RECORD_OF_DUMP.id,
+    useCache: true,
+    fallbackToCache: true,
+    fallbackToDump: true,
+  });
+  checkInfo(dump4, "dump_fallback");
+
+  // Store a record in the cache that is newer than the dump.
+  const RECORD_NEWER_THAN_DUMP = {
+    ...RECORD_OF_DUMP,
+    last_modified: RECORD_OF_DUMP.last_modified + 1,
+  };
+  await client.db.saveAttachment(RECORD_OF_DUMP.id, {
+    record: RECORD_NEWER_THAN_DUMP,
+    blob: new Blob([dump1.buffer]),
+  });
+
+  // When the record is not given, use the cache if it has a more recent record.
+  const dump5 = await client.attachments.download(null, {
+    attachmentId: RECORD_OF_DUMP.id,
+    useCache: true,
+    fallbackToCache: true,
+    fallbackToDump: true,
+  });
+  checkInfo(dump5, "cache_fallback", RECORD_NEWER_THAN_DUMP);
+
+  // When a record is given, use whichever that has the matching last_modified.
+  const dump6 = await client.attachments.download(RECORD_OF_DUMP, {
+    useCache: true,
+    fallbackToCache: true,
+    fallbackToDump: true,
+  });
+  checkInfo(dump6, "dump_match");
+  const dump7 = await client.attachments.download(RECORD_NEWER_THAN_DUMP, {
+    useCache: true,
+    fallbackToCache: true,
+    fallbackToDump: true,
+  });
+  checkInfo(dump7, "cache_match", RECORD_NEWER_THAN_DUMP);
+
+  await client.attachments.deleteCached(RECORD_OF_DUMP.id);
+
   await Assert.rejects(
     client.attachments.download(null, {
       attachmentId: "filename-without-meta.txt",
       useCache: true,
       fallbackToDump: true,
     }),
-    /Could not download resource:\/\/rs-downloader-test\/settings\/dump-bucket\/dump-collection\/filename-without-meta\.txt/,
+    /DownloadError: Could not download filename-without-meta.txt/,
     "Cannot download dump that lacks a .meta.json file"
   );
 
@@ -457,7 +560,7 @@ add_task(async function test_download_from_dump() {
       useCache: true,
       fallbackToDump: true,
     }),
-    /Could not download resource:\/\/rs-downloader-test\/settings\/dump-bucket\/dump-collection\/filename-without-content\.txt/,
+    /Could not download resource:\/\/rs-downloader-test\/settings\/dump-bucket\/dump-collection\/filename-without-content\.txt(?!\.meta\.json)/,
     "Cannot download dump that is missing, despite the existing .meta.json"
   );
 

@@ -26,6 +26,7 @@
 #include "mozilla/dom/RemoteDragStartData.h"
 #include "mozilla/dom/RemoteWebProgress.h"
 #include "mozilla/dom/RemoteWebProgressRequest.h"
+#include "mozilla/dom/SessionHistoryEntry.h"
 #include "mozilla/dom/SessionStoreUtils.h"
 #include "mozilla/dom/SessionStoreUtilsBinding.h"
 #include "mozilla/dom/UserActivation.h"
@@ -73,6 +74,7 @@
 #include "nsIXPConnect.h"
 #include "nsIXULBrowserWindow.h"
 #include "nsIAppWindow.h"
+#include "nsSHistory.h"
 #include "nsViewManager.h"
 #include "nsVariant.h"
 #include "nsIWidget.h"
@@ -90,7 +92,6 @@
 #include "ColorPickerParent.h"
 #include "FilePickerParent.h"
 #include "BrowserChild.h"
-#include "LoadContext.h"
 #include "nsNetCID.h"
 #include "nsIAuthInformation.h"
 #include "nsIAuthPromptCallback.h"
@@ -115,6 +116,7 @@
 #include "MMPrinter.h"
 #include "SessionStoreFunctions.h"
 #include "mozilla/dom/CrashReport.h"
+#include "nsISecureBrowserUI.h"
 
 #ifdef XP_WIN
 #  include "mozilla/plugins/PluginWidgetParent.h"
@@ -152,6 +154,8 @@ LazyLogModule gBrowserFocusLog("BrowserFocus");
 BrowserParent* BrowserParent::sFocus = nullptr;
 /* static */
 BrowserParent* BrowserParent::sTopLevelWebFocus = nullptr;
+/* static */
+BrowserParent* BrowserParent::sLastMouseRemoteTarget = nullptr;
 
 // The flags passed by the webProgress notifications are 16 bits shifted
 // from the ones registered by webProgressListeners.
@@ -168,8 +172,7 @@ NS_INTERFACE_MAP_BEGIN_CYCLE_COLLECTION(BrowserParent)
   NS_INTERFACE_MAP_ENTRY(nsISupportsWeakReference)
   NS_INTERFACE_MAP_ENTRY_AMBIGUOUS(nsISupports, nsIDOMEventListener)
 NS_INTERFACE_MAP_END
-NS_IMPL_CYCLE_COLLECTION_WEAK(BrowserParent, mLoadContext, mFrameLoader,
-                              mBrowsingContext)
+NS_IMPL_CYCLE_COLLECTION_WEAK(BrowserParent, mFrameLoader, mBrowsingContext)
 NS_IMPL_CYCLE_COLLECTING_ADDREF(BrowserParent)
 NS_IMPL_CYCLE_COLLECTING_RELEASE(BrowserParent)
 
@@ -181,7 +184,6 @@ BrowserParent::BrowserParent(ContentParent* aManager, const TabId& aTabId,
       mTabId(aTabId),
       mManager(aManager),
       mBrowsingContext(aBrowsingContext),
-      mLoadContext(nullptr),
       mFrameElement(nullptr),
       mBrowserDOMWindow(nullptr),
       mFrameLoader(nullptr),
@@ -236,6 +238,11 @@ void BrowserParent::InitializeStatics() { MOZ_ASSERT(XRE_IsParentProcess()); }
 
 /* static */
 BrowserParent* BrowserParent::GetFocused() { return sFocus; }
+
+/* static */
+BrowserParent* BrowserParent::GetLastMouseRemoteTarget() {
+  return sLastMouseRemoteTarget;
+}
 
 /*static*/
 BrowserParent* BrowserParent::GetFrom(nsFrameLoader* aFrameLoader) {
@@ -298,27 +305,7 @@ void BrowserParent::RemoveBrowserParentFromTable(layers::LayersId aLayersId) {
 }
 
 already_AddRefed<nsILoadContext> BrowserParent::GetLoadContext() {
-  nsCOMPtr<nsILoadContext> loadContext;
-  if (mLoadContext) {
-    loadContext = mLoadContext;
-  } else {
-    bool isPrivate = mChromeFlags & nsIWebBrowserChrome::CHROME_PRIVATE_WINDOW;
-    SetPrivateBrowsingAttributes(isPrivate);
-    bool useTrackingProtection = false;
-    if (mFrameElement) {
-      nsCOMPtr<nsIDocShell> docShell = mFrameElement->OwnerDoc()->GetDocShell();
-      if (docShell) {
-        docShell->GetUseTrackingProtection(&useTrackingProtection);
-      }
-    }
-    loadContext = new LoadContext(
-        GetOwnerElement(), true /* aIsContent */, isPrivate,
-        mChromeFlags & nsIWebBrowserChrome::CHROME_REMOTE_WINDOW,
-        mChromeFlags & nsIWebBrowserChrome::CHROME_FISSION_WINDOW,
-        useTrackingProtection, OriginAttributesRef());
-    mLoadContext = loadContext;
-  }
-  return loadContext.forget();
+  return do_AddRef(mBrowsingContext);
 }
 
 /**
@@ -524,12 +511,6 @@ void BrowserParent::SetOwnerElement(Element* aElement) {
     newTopLevelWin->AddBrowser(mBrowserHost);
   }
 
-  if (mFrameElement) {
-    bool useGlobalHistory = !mFrameElement->HasAttr(
-        kNameSpaceID_None, nsGkAtoms::disableglobalhistory);
-    Unused << SendSetUseGlobalHistory(useGlobalHistory);
-  }
-
 #if defined(XP_WIN) && defined(ACCESSIBILITY)
   if (!mIsDestroyed) {
     uintptr_t newWindowHandle = 0;
@@ -617,6 +598,7 @@ void BrowserParent::RemoveWindowListeners() {
 
 void BrowserParent::DestroyInternal() {
   UnsetTopLevelWebFocus(this);
+  UnsetLastMouseRemoteTarget(this);
 
   RemoveWindowListeners();
 
@@ -690,6 +672,7 @@ void BrowserParent::ActorDestroy(ActorDestroyReason why) {
   // Even though BrowserParent::Destroy calls this, we need to do it here too in
   // case of a crash.
   BrowserParent::UnsetTopLevelWebFocus(this);
+  BrowserParent::UnsetLastMouseRemoteTarget(this);
 
   if (why == AbnormalShutdown) {
     // dom_reporting_header must also be enabled for the report to be sent.
@@ -890,8 +873,9 @@ bool BrowserParent::SendLoadRemoteScript(const nsString& aURL,
   return PBrowserParent::SendLoadRemoteScript(aURL, aRunInGlobalScope);
 }
 
-void BrowserParent::LoadURL(nsIURI* aURI) {
+void BrowserParent::LoadURL(nsIURI* aURI, nsIPrincipal* aTriggeringPrincipal) {
   MOZ_ASSERT(aURI);
+  MOZ_ASSERT(aTriggeringPrincipal);
 
   if (mIsDestroyed) {
     return;
@@ -907,7 +891,7 @@ void BrowserParent::LoadURL(nsIURI* aURI) {
     return;
   }
 
-  Unused << SendLoadURL(spec, GetShowInfo());
+  Unused << SendLoadURL(spec, aTriggeringPrincipal, GetShowInfo());
 }
 
 void BrowserParent::ResumeLoad(uint64_t aPendingSwitchID) {
@@ -1136,17 +1120,6 @@ void BrowserParent::SizeModeChanged(const nsSizeMode& aSizeMode) {
   }
 }
 
-void BrowserParent::ThemeChanged() {
-  if (!mIsDestroyed) {
-    // The theme has changed, and any cached values we had sent down
-    // to the child have been invalidated. When this method is called,
-    // LookAndFeel should have the up-to-date values, which we now
-    // send down to the child. We do this for every remote tab for now,
-    // but bug 1156934 has been filed to do it once per content process.
-    Unused << SendThemeChanged(LookAndFeel::GetIntCache());
-  }
-}
-
 #if defined(MOZ_WIDGET_ANDROID)
 void BrowserParent::DynamicToolbarMaxHeightChanged(ScreenIntCoord aHeight) {
   if (!mIsDestroyed) {
@@ -1356,7 +1329,9 @@ IPCResult BrowserParent::RecvIndexedDBPermissionRequest(
 IPCResult BrowserParent::RecvNewWindowGlobal(
     ManagedEndpoint<PWindowGlobalParent>&& aEndpoint,
     const WindowGlobalInit& aInit) {
-  if (!aInit.browsingContext().GetMaybeDiscarded()) {
+  RefPtr<CanonicalBrowsingContext> browsingContext =
+      CanonicalBrowsingContext::Get(aInit.context().mBrowsingContextId);
+  if (!browsingContext) {
     return IPC_FAIL(this, "Cannot create for missing BrowsingContext");
   }
   if (!aInit.principal()) {
@@ -1364,21 +1339,19 @@ IPCResult BrowserParent::RecvNewWindowGlobal(
   }
 
   // Construct our new WindowGlobalParent, bind, and initialize it.
-  auto wgp = MakeRefPtr<WindowGlobalParent>(aInit, /* inproc */ false);
-
+  RefPtr<WindowGlobalParent> wgp =
+      WindowGlobalParent::CreateDisconnected(aInit);
   BindPWindowGlobalEndpoint(std::move(aEndpoint), wgp);
-  wgp->Init(aInit);
+  wgp->Init();
   return IPC_OK();
 }
 
 void BrowserParent::SendMouseEvent(const nsAString& aType, float aX, float aY,
                                    int32_t aButton, int32_t aClickCount,
-                                   int32_t aModifiers,
-                                   bool aIgnoreRootScrollFrame) {
+                                   int32_t aModifiers) {
   if (!mIsDestroyed) {
     Unused << PBrowserParent::SendMouseEvent(nsString(aType), aX, aY, aButton,
-                                             aClickCount, aModifiers,
-                                             aIgnoreRootScrollFrame);
+                                             aClickCount, aModifiers);
   }
 }
 
@@ -1404,6 +1377,24 @@ void BrowserParent::SendRealMouseEvent(WidgetMouseEvent& aEvent) {
   if (mIsDestroyed) {
     return;
   }
+
+  // XXXedgar, if the synthesized mouse events could deliver to the correct
+  // process directly (see
+  // https://bugzilla.mozilla.org/show_bug.cgi?id=1549355), we probably don't
+  // need to check mReason then.
+  if (aEvent.mReason == WidgetMouseEvent::eReal) {
+    if (aEvent.mMessage == eMouseExitFromWidget) {
+      // Since we are leaving this remote target, so don't need to update
+      // sLastMouseRemoteTarget, and if we are sLastMouseRemoteTarget, reset it
+      // to null.
+      BrowserParent::UnsetLastMouseRemoteTarget(this);
+    } else {
+      // Last remote target should not be changed without eMouseExitFromWidget.
+      MOZ_ASSERT_IF(sLastMouseRemoteTarget, sLastMouseRemoteTarget == this);
+      sLastMouseRemoteTarget = this;
+    }
+  }
+
   aEvent.mRefPoint = TransformParentToChild(aEvent.mRefPoint);
 
   nsCOMPtr<nsIWidget> widget = GetWidget();
@@ -1812,24 +1803,6 @@ mozilla::ipc::IPCResult BrowserParent::RecvClearNativeTouchSequence(
   nsCOMPtr<nsIWidget> widget = GetWidget();
   if (widget) {
     widget->ClearNativeTouchSequence(responder.GetObserver());
-  }
-  return IPC_OK();
-}
-
-mozilla::ipc::IPCResult
-BrowserParent::RecvSetPrefersReducedMotionOverrideForTest(const bool& aValue) {
-  nsCOMPtr<nsIWidget> widget = GetWidget();
-  if (widget) {
-    widget->SetPrefersReducedMotionOverrideForTest(aValue);
-  }
-  return IPC_OK();
-}
-
-mozilla::ipc::IPCResult
-BrowserParent::RecvResetPrefersReducedMotionOverrideForTest() {
-  nsCOMPtr<nsIWidget> widget = GetWidget();
-  if (widget) {
-    widget->ResetPrefersReducedMotionOverrideForTest();
   }
   return IPC_OK();
 }
@@ -2473,9 +2446,14 @@ LayoutDeviceIntPoint BrowserParent::GetChildProcessOffset() {
   // any events we send to the child, and reverse them for any screen
   // coordinates that we retrieve from the child.
 
+  // TODO: Once we take into account transforms here, set viewportType
+  // correctly. For now we use Visual as this means we don't apply
+  // the layout-to-visual transform in TranslateViewToWidget().
+  ViewportType viewportType = ViewportType::Visual;
+
   nsPoint pt = targetFrame->GetOffsetTo(rootFrame);
   return -nsLayoutUtils::TranslateViewToWidget(presContext, rootView, pt,
-                                               widget);
+                                               viewportType, widget);
 }
 
 LayoutDeviceIntPoint BrowserParent::GetClientOffset() {
@@ -2726,6 +2704,13 @@ mozilla::ipc::IPCResult BrowserParent::RecvOnLocationChange(
   Unused << managerAsListener->OnLocationChange(webProgress, request, aLocation,
                                                 aFlags);
 
+  // Since we've now changed Documents, notify the BrowsingContext that we've
+  // changed. Ideally we'd just let the BrowsingContext do this when it changes
+  // the current window global, but that happens before this and we have a lot
+  // of tests that depend on the specific ordering of messages.
+  if (!(aFlags & nsIWebProgressListener::LOCATION_CHANGE_SAME_DOCUMENT)) {
+    GetBrowsingContext()->UpdateSecurityStateForLocationOrMixedContentChange();
+  }
   return IPC_OK();
 }
 
@@ -2753,36 +2738,6 @@ mozilla::ipc::IPCResult BrowserParent::RecvOnStatusChange(
 
   Unused << managerAsListener->OnStatusChange(webProgress, request, aStatus,
                                               aMessage.get());
-
-  return IPC_OK();
-}
-
-mozilla::ipc::IPCResult BrowserParent::RecvOnSecurityChange(
-    const Maybe<WebProgressData>& aWebProgressData,
-    const RequestData& aRequestData, const uint32_t aState,
-    const Maybe<WebProgressSecurityChangeData>& aSecurityChangeData) {
-  nsCOMPtr<nsIBrowser> browser;
-  nsCOMPtr<nsIWebProgress> manager;
-  nsCOMPtr<nsIWebProgressListener> managerAsListener;
-  if (!GetWebProgressListener(getter_AddRefs(browser), getter_AddRefs(manager),
-                              getter_AddRefs(managerAsListener))) {
-    return IPC_OK();
-  }
-
-  nsCOMPtr<nsIWebProgress> webProgress;
-  nsCOMPtr<nsIRequest> request;
-  ReconstructWebProgressAndRequest(manager, aWebProgressData, aRequestData,
-                                   getter_AddRefs(webProgress),
-                                   getter_AddRefs(request));
-
-  if (aWebProgressData && aWebProgressData->isTopLevel() &&
-      aSecurityChangeData.isSome()) {
-    Unused << browser->UpdateSecurityUIForSecurityChange(
-        aSecurityChangeData->securityInfo(), aState,
-        aSecurityChangeData->isSecureContext());
-  }
-
-  Unused << managerAsListener->OnSecurityChange(webProgress, request, aState);
 
   return IPC_OK();
 }
@@ -3163,6 +3118,13 @@ void BrowserParent::UnsetTopLevelWebFocusAll() {
   }
 }
 
+/* static */
+void BrowserParent::UnsetLastMouseRemoteTarget(BrowserParent* aBrowserParent) {
+  if (sLastMouseRemoteTarget == aBrowserParent) {
+    sLastMouseRemoteTarget = nullptr;
+  }
+}
+
 mozilla::ipc::IPCResult BrowserParent::RecvRequestIMEToCommitComposition(
     const bool& aCancel, bool* aIsCommitted, nsString* aCommittedString) {
   nsCOMPtr<nsIWidget> widget = GetTextInputHandlingWidget();
@@ -3394,6 +3356,20 @@ void BrowserParent::ApzAwareEventRoutingToChild(
     }
     if (aOutApzResponse) {
       *aOutApzResponse = InputAPZContext::GetApzResponse();
+
+      // We can get here without there being an InputAPZContext on the stack
+      // if a non-native event synthesization function (such as
+      // nsIDOMWindowUtils.sendTouchEvent()) was used in the parent process to
+      // synthesize an event that's targeting a content process. Such events do
+      // not go through APZ. Without an InputAPZContext on the stack we pick up
+      // the default value "eSentinel" which cannot be sent over IPC, so replace
+      // it with "eIgnore" instead, which what APZ uses when it ignores an
+      // event. If a caller needs the ability to synthesize a event with a
+      // different APZ response, a native event synthesization function (such as
+      // sendNativeTouchPoint()) can be used.
+      if (*aOutApzResponse == nsEventStatus_eSentinel) {
+        *aOutApzResponse = nsEventStatus_eIgnore;
+      }
     }
   } else {
     if (aOutInputBlockId) {

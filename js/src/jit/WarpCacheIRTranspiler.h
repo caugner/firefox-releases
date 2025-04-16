@@ -10,6 +10,8 @@
 #include "js/AllocPolicy.h"
 #include "js/Vector.h"
 
+#include "vm/BytecodeLocation.h"
+
 namespace js {
 namespace jit {
 
@@ -18,27 +20,23 @@ class MDefinition;
 class MInstruction;
 class MIRGenerator;
 class WarpCacheIR;
+class CallInfo;
 
 using MDefinitionStackVector = Vector<MDefinition*, 8, SystemAllocPolicy>;
 
-// TranspilerOutput contains information from the transpiler that needs to be
-// passed back to WarpBuilder.
-struct MOZ_STACK_CLASS TranspilerOutput {
-  // For ICs that return a result, this is the corresponding MIR instruction.
-  MDefinition* result = nullptr;
-
-  TranspilerOutput() = default;
-
-  TranspilerOutput(const TranspilerOutput&) = delete;
-  void operator=(const TranspilerOutput&) = delete;
-};
-
 // Generate MIR from a Baseline ICStub's CacheIR.
 MOZ_MUST_USE bool TranspileCacheIRToMIR(MIRGenerator& mirGen,
+                                        BytecodeLocation loc,
                                         MBasicBlock* current,
                                         const WarpCacheIR* snapshot,
-                                        const MDefinitionStackVector& inputs,
-                                        TranspilerOutput& output);
+                                        const MDefinitionStackVector& inputs);
+
+// Overload used to pass information for calls to the transpiler.
+MOZ_MUST_USE bool TranspileCacheIRToMIR(MIRGenerator& mirGen,
+                                        BytecodeLocation loc,
+                                        MBasicBlock* current,
+                                        const WarpCacheIR* snapshot,
+                                        CallInfo& callInfo);
 
 }  // namespace jit
 }  // namespace js

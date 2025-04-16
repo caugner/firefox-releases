@@ -46,6 +46,8 @@ pub struct RenderPassDescriptor<'a> {
 }
 
 #[derive(Clone, Copy, Debug, Default, PeekPoke)]
+#[cfg_attr(feature = "trace", derive(serde::Serialize))]
+#[cfg_attr(feature = "replay", derive(serde::Deserialize))]
 pub struct Rect<T> {
     pub x: T,
     pub y: T,
@@ -54,11 +56,14 @@ pub struct Rect<T> {
 }
 
 #[derive(Clone, Copy, Debug, PeekPoke)]
-enum RenderCommand {
+#[cfg_attr(feature = "trace", derive(serde::Serialize))]
+#[cfg_attr(feature = "replay", derive(serde::Deserialize))]
+pub enum RenderCommand {
     SetBindGroup {
         index: u8,
         num_dynamic_offsets: u8,
         bind_group_id: id::BindGroupId,
+        #[cfg_attr(any(feature = "trace", feature = "replay"), serde(skip))]
         phantom_offsets: PhantomSlice<DynamicOffset>,
     },
     SetPipeline(id::RenderPipelineId),
@@ -155,8 +160,7 @@ impl super::RawPass {
 
     pub unsafe fn finish_render(mut self) -> (Vec<u8>, id::CommandEncoderId) {
         self.finish(RenderCommand::End);
-        let (vec, parent_id) = self.into_vec();
-        (vec, parent_id)
+        self.into_vec()
     }
 }
 
@@ -327,8 +331,15 @@ impl<G: GlobalIdentityHandlerFactory> Global<G> {
         let raw_data_end = unsafe { raw_data.as_ptr().add(raw_data.len()) };
 
         let mut targets: RawRenderTargets = unsafe { mem::zeroed() };
-        assert!(unsafe { peeker.add(RawRenderTargets::max_size()) <= raw_data_end });
+        assert!(
+            unsafe { peeker.add(RawRenderTargets::max_size()) <= raw_data_end },
+            "RawRenderTargets (size {}) is too big to fit within raw_data (size {})",
+            RawRenderTargets::max_size(),
+            raw_data.len()
+        );
         peeker = unsafe { RawRenderTargets::peek_from(peeker, &mut targets) };
+        #[cfg(feature = "trace")]
+        let command_peeker_base = peeker;
 
         let color_attachments = targets
             .colors
@@ -402,7 +413,7 @@ impl<G: GlobalIdentityHandlerFactory> Global<G> {
                             .use_extend(&*view_guard, at.attachment, (), ())
                             .unwrap();
                         if let Some(ex) = extent {
-                            assert_eq!(ex, view.extent);
+                            assert_eq!(ex, view.extent, "Extent state must match extent from view");
                         } else {
                             extent = Some(view.extent);
                         }
@@ -431,7 +442,10 @@ impl<G: GlobalIdentityHandlerFactory> Global<G> {
                         };
 
                         Some(hal::pass::Attachment {
-                            format: Some(conv::map_texture_format(view.format, device.features)),
+                            format: Some(conv::map_texture_format(
+                                view.format,
+                                device.private_features,
+                            )),
                             samples: view.samples,
                             ops: conv::map_load_store_ops(at.depth_load_op, at.depth_store_op),
                             stencil_ops: conv::map_load_store_ops(
@@ -453,7 +467,7 @@ impl<G: GlobalIdentityHandlerFactory> Global<G> {
                         .use_extend(&*view_guard, at.attachment, (), ())
                         .unwrap();
                     if let Some(ex) = extent {
-                        assert_eq!(ex, view.extent);
+                        assert_eq!(ex, view.extent, "Extent state must match extent from view");
                     } else {
                         extent = Some(view.extent);
                     }
@@ -479,7 +493,10 @@ impl<G: GlobalIdentityHandlerFactory> Global<G> {
                         }
                         TextureViewInner::SwapChain { ref source_id, .. } => {
                             if let Some((ref sc_id, _)) = cmb.used_swap_chain {
-                                assert_eq!(source_id.value, sc_id.value);
+                                assert_eq!(
+                                    source_id.value, sc_id.value,
+                                    "Texture view's swap chain must match swap chain in use"
+                                );
                             } else {
                                 assert!(used_swap_chain.is_none());
                                 used_swap_chain = Some(source_id.clone());
@@ -495,7 +512,10 @@ impl<G: GlobalIdentityHandlerFactory> Global<G> {
                     };
 
                     colors.push(hal::pass::Attachment {
-                        format: Some(conv::map_texture_format(view.format, device.features)),
+                        format: Some(conv::map_texture_format(
+                            view.format,
+                            device.private_features,
+                        )),
                         samples: view.samples,
                         ops: conv::map_load_store_ops(at.load_op, at.store_op),
                         stencil_ops: hal::pass::AttachmentOps::DONT_CARE,
@@ -508,7 +528,11 @@ impl<G: GlobalIdentityHandlerFactory> Global<G> {
                         .views
                         .use_extend(&*view_guard, resolve_target, (), ())
                         .unwrap();
-                    assert_eq!(extent, Some(view.extent));
+                    assert_eq!(
+                        extent,
+                        Some(view.extent),
+                        "Extent state must match extent from view"
+                    );
                     assert_eq!(
                         view.samples, 1,
                         "All resolve_targets must have a sample_count of 1"
@@ -531,7 +555,10 @@ impl<G: GlobalIdentityHandlerFactory> Global<G> {
                         }
                         TextureViewInner::SwapChain { ref source_id, .. } => {
                             if let Some((ref sc_id, _)) = cmb.used_swap_chain {
-                                assert_eq!(source_id.value, sc_id.value);
+                                assert_eq!(
+                                    source_id.value, sc_id.value,
+                                    "Texture view's swap chain must match swap chain in use"
+                                );
                             } else {
                                 assert!(used_swap_chain.is_none());
                                 used_swap_chain = Some(source_id.clone());
@@ -541,7 +568,10 @@ impl<G: GlobalIdentityHandlerFactory> Global<G> {
                     };
 
                     resolves.push(hal::pass::Attachment {
-                        format: Some(conv::map_texture_format(view.format, device.features)),
+                        format: Some(conv::map_texture_format(
+                            view.format,
+                            device.private_features,
+                        )),
                         samples: view.samples,
                         ops: hal::pass::AttachmentOps::new(
                             hal::pass::AttachmentLoadOp::DontCare,
@@ -561,7 +591,11 @@ impl<G: GlobalIdentityHandlerFactory> Global<G> {
 
             for (source_id, view_range, consistent_use) in output_attachments {
                 let texture = &texture_guard[source_id.value];
-                assert!(texture.usage.contains(TextureUsage::OUTPUT_ATTACHMENT));
+                assert!(
+                    texture.usage.contains(TextureUsage::OUTPUT_ATTACHMENT),
+                    "Texture usage {:?} must contain the usage flag OUTPUT_ATTACHMENT",
+                    texture.usage
+                );
 
                 let usage = consistent_use.unwrap_or(TextureUse::OUTPUT_ATTACHMENT);
                 // this is important to record the `first` state.
@@ -609,8 +643,11 @@ impl<G: GlobalIdentityHandlerFactory> Global<G> {
                             } else {
                                 let sample_count_check =
                                     view_guard[color_attachments[i].attachment].samples;
-                                assert!(sample_count_check > 1,
-                                    "RenderPassColorAttachmentDescriptor with a resolve_target must have an attachment with sample_count > 1");
+                                assert!(
+                                    sample_count_check > 1,
+                                    "RenderPassColorAttachmentDescriptor with a resolve_target must have an attachment with sample_count > 1, had a sample count of {}",
+                                    sample_count_check
+                                );
                                 resolve_ids.push((
                                     attachment_index,
                                     hal::image::Layout::ColorAttachmentOptimal,
@@ -788,7 +825,7 @@ impl<G: GlobalIdentityHandlerFactory> Global<G> {
         };
 
         let mut state = State {
-            binder: Binder::new(cmb.features.max_bind_groups),
+            binder: Binder::new(cmb.limits.max_bind_groups),
             blend_color: OptionalState::Unused,
             stencil_reference: OptionalState::Unused,
             pipeline: OptionalState::Required,
@@ -811,7 +848,12 @@ impl<G: GlobalIdentityHandlerFactory> Global<G> {
             first_instance: 0,
         };
         loop {
-            assert!(unsafe { peeker.add(RenderCommand::max_size()) } <= raw_data_end);
+            assert!(
+                unsafe { peeker.add(RenderCommand::max_size()) <= raw_data_end },
+                "RenderCommand (size {}) is too big to fit within raw_data (size {})",
+                RenderCommand::max_size(),
+                raw_data.len()
+            );
             peeker = unsafe { RenderCommand::peek_from(peeker, &mut command) };
             match command {
                 RenderCommand::SetBindGroup {
@@ -909,14 +951,14 @@ impl<G: GlobalIdentityHandlerFactory> Global<G> {
                             .reset_expectations(pipeline_layout.bind_group_layout_ids.len());
                         let mut is_compatible = true;
 
-                        for (index, (entry, &bgl_id)) in state
+                        for (index, (entry, bgl_id)) in state
                             .binder
                             .entries
                             .iter_mut()
                             .zip(&pipeline_layout.bind_group_layout_ids)
                             .enumerate()
                         {
-                            match entry.expect_layout(bgl_id) {
+                            match entry.expect_layout(bgl_id.value) {
                                 LayoutChange::Match(bg_id, offsets) if is_compatible => {
                                     let desc_set = bind_group_guard[bg_id].raw.raw();
                                     unsafe {
@@ -1093,11 +1135,15 @@ impl<G: GlobalIdentityHandlerFactory> Global<G> {
                     state.is_ready().unwrap();
                     assert!(
                         first_vertex + vertex_count <= state.vertex.vertex_limit,
-                        "Vertex out of range!"
+                        "Vertex {} extends beyond limit {}",
+                        first_vertex + vertex_count,
+                        state.vertex.vertex_limit
                     );
                     assert!(
                         first_instance + instance_count <= state.vertex.instance_limit,
-                        "Instance out of range!"
+                        "Instance {} extends beyond limit {}",
+                        first_instance + instance_count,
+                        state.vertex.instance_limit
                     );
 
                     unsafe {
@@ -1119,11 +1165,15 @@ impl<G: GlobalIdentityHandlerFactory> Global<G> {
                     //TODO: validate that base_vertex + max_index() is within the provided range
                     assert!(
                         first_index + index_count <= state.index.limit,
-                        "Index out of range!"
+                        "Index {} extends beyond limit {}",
+                        first_index + index_count,
+                        state.index.limit
                     );
                     assert!(
                         first_instance + instance_count <= state.vertex.instance_limit,
-                        "Instance out of range!"
+                        "Instance {} extends beyond limit {}",
+                        first_instance + instance_count,
+                        state.vertex.instance_limit
                     );
 
                     unsafe {
@@ -1162,6 +1212,45 @@ impl<G: GlobalIdentityHandlerFactory> Global<G> {
                 }
                 RenderCommand::End => break,
             }
+        }
+
+        #[cfg(feature = "trace")]
+        match cmb.commands {
+            Some(ref mut list) => {
+                let mut pass_commands = Vec::new();
+                let mut pass_dynamic_offsets = Vec::new();
+                peeker = command_peeker_base;
+                loop {
+                    peeker = unsafe { RenderCommand::peek_from(peeker, &mut command) };
+                    match command {
+                        RenderCommand::SetBindGroup {
+                            num_dynamic_offsets,
+                            phantom_offsets,
+                            ..
+                        } => {
+                            let (new_peeker, offsets) = unsafe {
+                                phantom_offsets.decode_unaligned(
+                                    peeker,
+                                    num_dynamic_offsets as usize,
+                                    raw_data_end,
+                                )
+                            };
+                            peeker = new_peeker;
+                            pass_dynamic_offsets.extend_from_slice(offsets);
+                        }
+                        RenderCommand::End => break,
+                        _ => {}
+                    }
+                    pass_commands.push(command);
+                }
+                list.push(crate::device::trace::Command::RunRenderPass {
+                    target_colors: color_attachments.into_iter().collect(),
+                    target_depth_stencil: depth_stencil_attachment.cloned(),
+                    commands: pass_commands,
+                    dynamic_offsets: pass_dynamic_offsets,
+                });
+            }
+            None => {}
         }
 
         log::trace!("Merging {:?} with the render pass", encoder_id);

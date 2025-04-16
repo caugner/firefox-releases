@@ -69,7 +69,6 @@ class BinASTParserPerTokenizer : public BinASTParserBase,
  public:
   BinASTParserPerTokenizer(JSContext* cx, CompilationInfo& compilationInfo,
                            const JS::ReadOnlyCompileOptions& options,
-                           HandleScriptSourceObject sourceObject,
                            Handle<BaseScript*> lazyScript = nullptr);
 
   /**
@@ -226,7 +225,7 @@ class BinASTParserPerTokenizer : public BinASTParserBase,
                                          const ErrorOffset& offset) override;
 
  private:
-  void doTrace(JSTracer* trc) final;
+  void trace(JSTracer* trc) final;
 
  public:
   virtual ErrorReporter& errorReporter() override { return *this; }
@@ -279,8 +278,6 @@ class BinASTParserPerTokenizer : public BinASTParserBase,
 
   mozilla::Maybe<Tokenizer> tokenizer_;
   VariableDeclarationKind variableDeclarationKind_;
-
-  FunctionTreeHolder treeHolder_;
 
   friend class BinASTParseContext;
   friend class AutoVariableDeclarationKind;

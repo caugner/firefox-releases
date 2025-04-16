@@ -36,8 +36,8 @@ using namespace js;
 using namespace js::frontend;
 
 using JS::AutoStableStringChars;
-using JS::AutoValueArray;
 using JS::CompileOptions;
+using JS::RootedValueArray;
 using mozilla::DebugOnly;
 
 enum ASTType {
@@ -269,7 +269,7 @@ enum class GeneratorStyle { None, ES6 };
  * Bug 569487: generalize builder interface
  */
 class NodeBuilder {
-  using CallbackArray = AutoValueArray<AST_LIMIT>;
+  using CallbackArray = RootedValueArray<AST_LIMIT>;
 
   JSContext* cx;
   frontend::Parser<frontend::FullParseHandler, char16_t>* parser;
@@ -3721,8 +3721,7 @@ static bool reflect_parse(JSContext* cx, uint32_t argc, Value* vp) {
 
   Parser<FullParseHandler, char16_t> parser(
       cx, options, chars.begin().get(), chars.length(),
-      /* foldConstants = */ false, compilationInfo, nullptr, nullptr,
-      compilationInfo.sourceObject);
+      /* foldConstants = */ false, compilationInfo, nullptr, nullptr);
   if (!parser.checkOptions()) {
     return false;
   }
@@ -3758,10 +3757,6 @@ static bool reflect_parse(JSContext* cx, uint32_t argc, Value* vp) {
     }
 
     pn = pn->as<ModuleNode>().body();
-  }
-
-  if (!parser.publishDeferredFunctions()) {
-    return false;
   }
 
   RootedValue val(cx);

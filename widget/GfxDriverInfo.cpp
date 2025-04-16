@@ -121,7 +121,7 @@ void GfxDeviceFamily::AppendRange(int32_t aBeginDeviceId,
 
 nsresult GfxDeviceFamily::Contains(nsAString& aDeviceId) const {
   for (const auto& id : mIds) {
-    if (id.Equals(aDeviceId, nsCaseInsensitiveStringComparator())) {
+    if (id.Equals(aDeviceId, nsCaseInsensitiveStringComparator)) {
       return NS_OK;
     }
   }
@@ -455,6 +455,14 @@ const GfxDeviceFamily* GfxDriverInfo::GetDeviceFamily(DeviceFamily id) {
       APPEND_RANGE(0x06c0, INT32_MAX);
       break;
     case DeviceFamily::IntelRolloutWebRender:
+      // broadwell gt1 (gen8)
+      APPEND_DEVICE(0x1602);
+      APPEND_DEVICE(0x1606);
+      APPEND_DEVICE(0x160a);
+      APPEND_DEVICE(0x160b);
+      APPEND_DEVICE(0x160d);
+      APPEND_DEVICE(0x160e);
+
       // broadwell gt2+ (gen8)
       APPEND_DEVICE(0x1612);
       APPEND_DEVICE(0x1616);
@@ -475,8 +483,8 @@ const GfxDeviceFamily* GfxDriverInfo::GetDeviceFamily(DeviceFamily id) {
       APPEND_DEVICE(0x163d);
       APPEND_DEVICE(0x163e);
 
-#if defined(MOZ_WIDGET_GTK) || defined(NIGHTLY_BUILD)
-      // Gen7.5 not allowed until bug 1576637 is resolved.
+#ifdef EARLY_BETA_OR_EARLIER
+      // gen7.5 gt2
       APPEND_DEVICE(0x0412);
       APPEND_DEVICE(0x0416);
       APPEND_DEVICE(0x041a);
@@ -488,13 +496,85 @@ const GfxDeviceFamily* GfxDriverInfo::GetDeviceFamily(DeviceFamily id) {
       APPEND_DEVICE(0x0a1b);
       APPEND_DEVICE(0x0a1e);
 
-      // Gen7 gt2
+      // gen7.5 gt3
+      APPEND_DEVICE(0x0422);
+      APPEND_DEVICE(0x0426);
+      APPEND_DEVICE(0x042a);
+      APPEND_DEVICE(0x042b);
+      APPEND_DEVICE(0x042e);
+      APPEND_DEVICE(0x0a22);
+      APPEND_DEVICE(0x0a26);
+      APPEND_DEVICE(0x0a0a);
+      APPEND_DEVICE(0x0a1a);
+      APPEND_DEVICE(0x0a2a);
+      APPEND_DEVICE(0x0a2b);
+      APPEND_DEVICE(0x0a2e);
+      APPEND_DEVICE(0x0c22);
+      APPEND_DEVICE(0x0c26);
+      APPEND_DEVICE(0x0c2c);
+      APPEND_DEVICE(0x0c2b);
+      APPEND_DEVICE(0x0c2e);
+      APPEND_DEVICE(0x0d22);
+      APPEND_DEVICE(0x0d26);
+      APPEND_DEVICE(0x0d2b);
+      APPEND_DEVICE(0x0d2e);
+#endif
+
+#if defined(MOZ_WIDGET_GTK) || defined(NIGHTLY_BUILD)
+      // Gen7.5 not allowed until bug 1576637 is resolved.
+      // gen7.5 gt1
+      APPEND_DEVICE(0x0402);
+      APPEND_DEVICE(0x0406);
+      APPEND_DEVICE(0x040a);
+      APPEND_DEVICE(0x040b);
+      APPEND_DEVICE(0x040e);
+      APPEND_DEVICE(0x0a02);
+      APPEND_DEVICE(0x0a06);
+      APPEND_DEVICE(0x0a0a);
+      APPEND_DEVICE(0x0a0b);
+      APPEND_DEVICE(0x0a0e);
+      APPEND_DEVICE(0x0c02);
+      APPEND_DEVICE(0x0c06);
+      APPEND_DEVICE(0x0c0c);
+      APPEND_DEVICE(0x0c0b);
+      APPEND_DEVICE(0x0c0e);
+      APPEND_DEVICE(0x0d02);
+      APPEND_DEVICE(0x0d06);
+      APPEND_DEVICE(0x0d0a);
+      APPEND_DEVICE(0x0d0b);
+      APPEND_DEVICE(0x0d0e);
+
+      // gen7 gt1
+      APPEND_DEVICE(0x0152);
+      APPEND_DEVICE(0x0156);
+      APPEND_DEVICE(0x015a);
+
+      // gen7 gt2
       APPEND_DEVICE(0x0162);
       APPEND_DEVICE(0x0166);
       APPEND_DEVICE(0x016a);
+
+      // gen6 gt2
+      APPEND_DEVICE(0x0112);
+      APPEND_DEVICE(0x0116);
+      APPEND_DEVICE(0x0122);
+      APPEND_DEVICE(0x0126);
 #endif
       [[fallthrough]];
     case DeviceFamily::IntelModernRolloutWebRender:
+#ifdef NIGHTLY_BUILD
+      // broxton (apollolake)
+      APPEND_DEVICE(0x0a84);
+      APPEND_DEVICE(0x1a84);
+      APPEND_DEVICE(0x1a85);
+      APPEND_DEVICE(0x5a84);
+      APPEND_DEVICE(0x5a85);
+
+      // geminilake
+      APPEND_DEVICE(0x3184);
+      APPEND_DEVICE(0x3185);
+#endif
+
       // skylake gt1
       APPEND_DEVICE(0x1902);
       APPEND_DEVICE(0x1906);

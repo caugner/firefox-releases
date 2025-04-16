@@ -42,7 +42,6 @@
 #include "nsIRemoteTab.h"
 #include "nsIDOMGeoPositionCallback.h"
 #include "nsIDOMGeoPositionErrorCallback.h"
-#include "nsIRemoteWindowContext.h"
 #include "nsRefPtrHashtable.h"
 #include "PermissionMessageUtils.h"
 #include "DriverCrashGuard.h"
@@ -101,10 +100,6 @@ class ProtocolFuzzerHelper;
 #endif
 class SharedPreferenceSerializer;
 }  // namespace ipc
-
-namespace jsipc {
-class PJavaScriptParent;
-}  // namespace jsipc
 
 namespace layers {
 struct TextureFactoryIdentifier;
@@ -462,13 +457,6 @@ class ContentParent final
 
   PHeapSnapshotTempFileHelperParent* AllocPHeapSnapshotTempFileHelperParent();
 
-  PJavaScriptParent* AllocPJavaScriptParent();
-
-  virtual mozilla::ipc::IPCResult RecvPJavaScriptConstructor(
-      PJavaScriptParent* aActor) override {
-    return PContentParent::RecvPJavaScriptConstructor(aActor);
-  }
-
   PRemoteSpellcheckEngineParent* AllocPRemoteSpellcheckEngineParent();
 
   mozilla::ipc::IPCResult RecvRecordingDeviceEvents(
@@ -585,16 +573,6 @@ class ContentParent final
   bool DeallocPSessionStorageObserverParent(
       PSessionStorageObserverParent* aActor);
 
-  PSHEntryParent* AllocPSHEntryParent(PSHistoryParent* aSHistory,
-                                      uint64_t aSharedID);
-
-  void DeallocPSHEntryParent(PSHEntryParent*);
-
-  PSHistoryParent* AllocPSHistoryParent(
-      const MaybeDiscarded<BrowsingContext>& aContext);
-
-  void DeallocPSHistoryParent(PSHistoryParent* aActor);
-
   bool DeallocPURLClassifierLocalParent(PURLClassifierLocalParent* aActor);
 
   bool DeallocPURLClassifierParent(PURLClassifierParent* aActor);
@@ -659,6 +637,9 @@ class ContentParent final
       const MaybeDiscarded<BrowsingContext>& aContext);
   mozilla::ipc::IPCResult RecvRaiseWindow(
       const MaybeDiscarded<BrowsingContext>& aContext, CallerType aCallerType);
+  mozilla::ipc::IPCResult RecvAdjustWindowFocus(
+      const MaybeDiscarded<BrowsingContext>& aContext, bool aCheckPermission,
+      bool aIsVisible);
   mozilla::ipc::IPCResult RecvClearFocus(
       const MaybeDiscarded<BrowsingContext>& aContext);
   mozilla::ipc::IPCResult RecvSetFocusedBrowsingContext(
@@ -681,7 +662,7 @@ class ContentParent final
 
   mozilla::ipc::IPCResult RecvWindowPostMessage(
       const MaybeDiscarded<BrowsingContext>& aContext,
-      const ClonedMessageData& aMessage, const PostMessageData& aData);
+      const ClonedOrErrorMessageData& aMessage, const PostMessageData& aData);
 
   FORWARD_SHMEM_ALLOCATOR_TO(PContentParent)
 
@@ -883,8 +864,6 @@ class ContentParent final
   mozilla::ipc::IPCResult RecvAddPerformanceMetrics(
       const nsID& aID, nsTArray<PerformanceInfo>&& aMetrics);
 
-  bool DeallocPJavaScriptParent(mozilla::jsipc::PJavaScriptParent*);
-
   bool DeallocPRemoteSpellcheckEngineParent(PRemoteSpellcheckEngineParent*);
 
   mozilla::ipc::IPCResult RecvConstructPopupBrowser(
@@ -1024,8 +1003,9 @@ class ContentParent final
   mozilla::ipc::IPCResult RecvNotificationEvent(
       const nsString& aType, const NotificationEventData& aData);
 
-  mozilla::ipc::IPCResult RecvLoadURIExternal(nsIURI* uri,
-                                              PBrowserParent* windowContext);
+  mozilla::ipc::IPCResult RecvLoadURIExternal(
+      nsIURI* uri, nsIPrincipal* triggeringPrincipal,
+      const MaybeDiscarded<BrowsingContext>& aContext);
   mozilla::ipc::IPCResult RecvExtProtocolChannelConnectParent(
       const uint32_t& registrarId);
 
@@ -1083,6 +1063,9 @@ class ContentParent final
   mozilla::ipc::IPCResult RecvCommitWindowContextTransaction(
       const MaybeDiscarded<WindowContext>& aContext,
       WindowContext::BaseTransaction&& aTransaction, uint64_t aEpoch);
+
+  mozilla::ipc::IPCResult RecvAddMixedContentSecurityState(
+      const MaybeDiscarded<WindowContext>& aContext, uint32_t aStateFlags);
 
   mozilla::ipc::IPCResult RecvFirstIdle();
 
@@ -1282,16 +1265,20 @@ class ContentParent final
       uint32_t aShutdownStateId,
       ServiceWorkerShutdownState::Progress aProgress);
 
-  mozilla::ipc::IPCResult RecvUpdateSHEntriesInBC(
-      PSHEntryParent* aNewLSHE, PSHEntryParent* aNewOSHE,
-      const MaybeDiscarded<BrowsingContext>& aMaybeContext);
-
   mozilla::ipc::IPCResult RecvRawMessage(const JSActorMessageMeta& aMeta,
                                          const ClonedMessageData& aData,
                                          const ClonedMessageData& aStack);
 
   mozilla::ipc::IPCResult RecvAbortOtherOrientationPendingPromises(
       const MaybeDiscarded<BrowsingContext>& aContext);
+
+  mozilla::ipc::IPCResult RecvHistoryCommit(
+      const MaybeDiscarded<BrowsingContext>& aContext,
+      uint64_t aSessionHistoryEntryID);
+
+  mozilla::ipc::IPCResult RecvHistoryGo(
+      const MaybeDiscarded<BrowsingContext>& aContext, int32_t aOffset,
+      HistoryGoResolver&& aResolveRequestedIndex);
 
   // Notify the ContentChild to enable the input event prioritization when
   // initializing.
@@ -1514,20 +1501,6 @@ const nsDependentSubstring RemoteTypePrefix(
 bool IsWebRemoteType(const nsAString& aContentProcessType);
 
 bool IsWebCoopCoepRemoteType(const nsAString& aContentProcessType);
-
-class RemoteWindowContext final : public nsIRemoteWindowContext,
-                                  public nsIInterfaceRequestor {
- public:
-  explicit RemoteWindowContext(BrowserParent* aBrowserParent);
-
-  NS_DECL_ISUPPORTS
-  NS_DECL_NSIINTERFACEREQUESTOR
-  NS_DECL_NSIREMOTEWINDOWCONTEXT
-
- private:
-  ~RemoteWindowContext() = default;
-  RefPtr<BrowserParent> mBrowserParent;
-};
 
 inline nsISupports* ToSupports(mozilla::dom::ContentParent* aContentParent) {
   return static_cast<nsIContentParent*>(aContentParent);

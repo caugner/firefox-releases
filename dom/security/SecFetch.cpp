@@ -59,8 +59,6 @@ nsCString MapInternalContentPolicyTypeToDest(nsContentPolicyType aType) {
       return NS_LITERAL_CSTRING("frame");
     case nsIContentPolicy::TYPE_REFRESH:
       return NS_LITERAL_CSTRING("empty");
-    case nsIContentPolicy::TYPE_XBL:
-      return NS_LITERAL_CSTRING("empty");
     case nsIContentPolicy::TYPE_PING:
       return NS_LITERAL_CSTRING("empty");
     case nsIContentPolicy::TYPE_XMLHTTPREQUEST:
@@ -75,6 +73,7 @@ nsCString MapInternalContentPolicyTypeToDest(nsContentPolicyType aType) {
     case nsIContentPolicy::TYPE_INTERNAL_FORCE_ALLOWED_DTD:
       return NS_LITERAL_CSTRING("empty");
     case nsIContentPolicy::TYPE_FONT:
+    case nsIContentPolicy::TYPE_INTERNAL_FONT_PRELOAD:
       return NS_LITERAL_CSTRING("font");
     case nsIContentPolicy::TYPE_MEDIA:
       return NS_LITERAL_CSTRING("empty");

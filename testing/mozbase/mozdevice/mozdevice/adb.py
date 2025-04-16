@@ -823,7 +823,8 @@ class ADBDevice(ADBCommand):
             try:
                 # Guarantee that /data/local/tmp exists and is accessible to all.
                 if not self.exists("/data/local/tmp", timeout=timeout, root=True):
-                    self.mkdir("/data/local/tmp", timeout=timeout, root=True)
+                    # parents=True is required on emulator, where exist() may be flaky
+                    self.mkdir("/data/local/tmp", parents=True, timeout=timeout, root=True)
                 self.chmod("/data/local/tmp", timeout=timeout, root=True)
             except ADBRootError as e:
                 self._logger.warning(
@@ -859,9 +860,8 @@ class ADBDevice(ADBCommand):
         """Internal method to prepare the device state during initialization
         of ADBDevice or after rebooting.
 
-        _initialize_boot_state will wait for sys.boot_completed=1 and
-        dev.bootcomplete=1, restarting adbd as root if required, and
-        then set SELinux to Permissive.
+        _initialize_boot_state will wait for sys.boot_completed=1, restarting
+        adbd as root if required, and then set SELinux to Permissive.
 
         This method must be called during ADBDevice
         initialization or immediately after rebooting the device.
@@ -894,8 +894,8 @@ class ADBDevice(ADBCommand):
     def _wait_for_boot_completed(self, timeout=None):
         """Internal method to wait for boot to complete.
 
-        Wait for sys.boot_completed=1 and dev.bootcomplete=1 and
-        raise ADBError if boot does not complete within retry attempts.
+        Wait for sys.boot_completed=1 and raise ADBError if boot does
+        not complete within retry attempts.
 
         :param timeout: The default maximum time in
             seconds for any spawned adb process to complete before
@@ -908,11 +908,10 @@ class ADBDevice(ADBCommand):
         """
         for attempt in range(self._device_ready_retry_attempts):
             sys_boot_completed = self.shell_output('getprop sys.boot_completed', timeout=timeout)
-            dev_bootcomplete = self.shell_output('getprop dev.bootcomplete', timeout=timeout)
-            if dev_bootcomplete == "1" and sys_boot_completed == "1":
+            if sys_boot_completed == "1":
                 break
             time.sleep(self._device_ready_retry_wait)
-        if dev_bootcomplete != "1" or sys_boot_completed != "1":
+        if sys_boot_completed != "1":
             raise ADBError('Failed to complete boot in time')
 
     def _get_device_serial(self, device):

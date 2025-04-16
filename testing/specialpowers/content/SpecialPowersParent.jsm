@@ -95,7 +95,7 @@ async function createWindowlessBrowser({ isPrivate = false } = {}) {
 
   const system = Services.scriptSecurityManager.getSystemPrincipal();
   chromeShell.createAboutBlankContentViewer(system, system);
-  chromeShell.useGlobalHistory = false;
+  windowlessBrowser.browsingContext.useGlobalHistory = false;
   chromeShell.loadURI("chrome://extensions/content/dummy.xhtml", {
     triggeringPrincipal: system,
   });
@@ -608,12 +608,38 @@ class SpecialPowersParent extends JSWindowActorParent {
     }
   }
 
+  _spawnChrome(task, args, caller, imports) {
+    let sb = new SpecialPowersSandbox(
+      null,
+      data => {
+        this.sendAsyncMessage("Assert", data);
+      },
+      { imports }
+    );
+
+    for (let [global, prop] of Object.entries({
+      windowGlobalParent: "manager",
+      browsingContext: "browsingContext",
+    })) {
+      Object.defineProperty(sb.sandbox, global, {
+        get: () => {
+          return this[prop];
+        },
+        enumerable: true,
+      });
+    }
+
+    return sb.execute(task, args, caller);
+  }
+
   /**
    * messageManager callback function
    * This will get requests from our API in the window and process them in chrome for it
    **/
   // eslint-disable-next-line complexity
   receiveMessage(aMessage) {
+    ChromeUtils.addProfilerMarker("SpecialPowers", undefined, aMessage.name);
+
     // We explicitly return values in the below code so that this function
     // doesn't trigger a flurry of warnings about "does not always return
     // a value".
@@ -625,7 +651,17 @@ class SpecialPowersParent extends JSWindowActorParent {
         return undefined;
 
       case "SpecialPowers.Quit":
-        Services.startup.quit(Ci.nsIAppStartup.eForceQuit);
+        if (
+          !AppConstants.RELEASE_OR_BETA &&
+          !AppConstants.DEBUG &&
+          !AppConstants.MOZ_CODE_COVERAGE &&
+          !AppConstants.ASAN &&
+          !AppConstants.TSAN
+        ) {
+          Cu.exitIfInAutomation();
+        } else {
+          Services.startup.quit(Ci.nsIAppStartup.eForceQuit);
+        }
         return undefined;
 
       case "SpecialPowers.Focus":
@@ -1108,6 +1144,12 @@ class SpecialPowersParent extends JSWindowActorParent {
           .finally(() => spParent._taskActors.delete(taskId));
       }
 
+      case "SpawnChrome": {
+        let { task, args, caller, imports } = aMessage.data;
+
+        return this._spawnChrome(task, args, caller, imports);
+      }
+
       case "Snapshot": {
         let { browsingContext, rect, background } = aMessage.data;
 
@@ -1128,6 +1170,11 @@ class SpecialPowersParent extends JSWindowActorParent {
             hiddenFrame.destroy();
             return data;
           });
+      }
+
+      case "SecurityState": {
+        let { browsingContext } = aMessage.data;
+        return browsingContext.secureBrowserUI.state;
       }
 
       case "ProxiedAssert": {

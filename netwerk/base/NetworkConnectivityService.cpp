@@ -24,6 +24,10 @@ static StaticRefPtr<NetworkConnectivityService> gConnService;
 // static
 already_AddRefed<NetworkConnectivityService>
 NetworkConnectivityService::GetSingleton() {
+  if (!XRE_IsParentProcess()) {
+    return nullptr;
+  }
+
   if (gConnService) {
     return do_AddRef(gConnService);
   }
@@ -205,6 +209,9 @@ static inline already_AddRefed<nsIChannel> SetupIPCheckChannel(bool ipv4) {
     uint32_t httpsOnlyStatus = loadInfo->GetHttpsOnlyStatus();
     httpsOnlyStatus |= nsILoadInfo::HTTPS_ONLY_EXEMPT;
     loadInfo->SetHttpsOnlyStatus(httpsOnlyStatus);
+
+    // allow deprecated HTTP request from SystemPrincipal
+    loadInfo->SetAllowDeprecatedSystemRequests(true);
   }
 
   NS_ENSURE_SUCCESS(rv, nullptr);

@@ -10,6 +10,7 @@ from time import mktime
 import pytest
 from mozunit import main
 
+from taskgraph.optimize import seta
 from taskgraph.optimize.backstop import Backstop
 from taskgraph.optimize.bugbug import (
     BugBugPushSchedules,
@@ -62,7 +63,7 @@ default_tasks = list(generate_tasks(
     {'attributes': {'test_manifests': ['foo/test.ini', 'bar/test.ini']}},
     {'attributes': {'test_manifests': ['bar/test.ini'], 'build_type': 'debug'}},
     {'attributes': {'build_type': 'debug'}},
-    {'attributes': {'test_manifests': []}},
+    {'attributes': {'test_manifests': [], 'build_type': 'opt'}},
     {'attributes': {'build_type': 'opt'}},
 ))
 
@@ -105,7 +106,7 @@ def idfn(param):
         SkipUnlessDebug(),
         default_tasks,
         None,
-        ['task-1', 'task-2'],
+        ['task-0', 'task-1', 'task-2'],
     ),
 
     # disperse with no supplied importance
@@ -160,28 +161,18 @@ def test_optimization_strategy(responses, params, opt, tasks, arg, expected):
         ['task-2'],
     ),
 
+    # tasks which are unknown to bugbug are selected
+    pytest.param(
+        (0.1,),
+        {'tasks': {'task-1': 0.9, 'task-3': 0.5}, 'known_tasks': ['task-1', 'task-3', 'task-4']},
+        ['task-2'],
+    ),
+
     # tasks containing groups selected
     pytest.param(
         (0.1,),
         {'groups': {'foo/test.ini': 0.4}},
         ['task-0'],
-    ),
-
-    # tasks containing multiple groups have a higher overall confidence with combined_weights
-    pytest.param(
-        (0.75, False, False),
-        {'groups': {'foo/test.ini': 0.5, 'bar/test.ini': 0.5}},
-        [],
-    ),
-    pytest.param(
-        (0.75, False, True),
-        {'groups': {'foo/test.ini': 0.5, 'bar/test.ini': 0.5}},
-        ['task-0'],
-    ),
-    pytest.param(
-        (0.76, False, True),
-        {'groups': {'foo/test.ini': 0.5, 'bar/test.ini': 0.5}},
-        [],
     ),
 
     # tasks matching "tasks" or "groups" selected
@@ -247,9 +238,33 @@ def test_bugbug_timeout(monkeypatch, responses, params):
         opt.should_remove_task(default_tasks[0], params, None)
 
 
+def test_bugbug_fallback(monkeypatch, responses, params):
+    query = "/push/{branch}/{head_rev}/schedules".format(**params)
+    url = BUGBUG_BASE_URL + query
+    responses.add(
+        responses.GET,
+        url,
+        json={"ready": False},
+        status=202,
+    )
+
+    # Make sure the test runs fast.
+    monkeypatch.setattr(time, 'sleep', lambda i: None)
+
+    monkeypatch.setattr(seta, 'is_low_value_task', lambda l, p: l == default_tasks[0].label)
+
+    opt = BugBugPushSchedules(0.5, fallback=True)
+    assert opt.should_remove_task(default_tasks[0], params, None)
+
+    # Make sure we don't hit bugbug more than once.
+    responses.reset()
+
+    assert not opt.should_remove_task(default_tasks[1], params, None)
+
+
 def test_backstop(params):
     all_labels = {t.label for t in default_tasks}
-    opt = Backstop(10, 60)  # every 10th push or 1 hour
+    opt = Backstop(10, 60, {'try'})  # every 10th push or 1 hour
 
     # If there's no previous push date, run tasks
     params['pushlog_id'] = 8
@@ -272,6 +287,15 @@ def test_backstop(params):
     params['pushdate'] += 3600
     scheduled = {t.label for t in default_tasks if not opt.should_remove_task(t, params, None)}
     assert scheduled == all_labels
+
+    # On non-autoland projects the 'remove_on_projects' value is used.
+    params['project'] = 'mozilla-central'
+    scheduled = {t.label for t in default_tasks if not opt.should_remove_task(t, params, None)}
+    assert scheduled == all_labels
+
+    params['project'] = 'try'
+    scheduled = {t.label for t in default_tasks if not opt.should_remove_task(t, params, None)}
+    assert scheduled == set()
 
 
 if __name__ == '__main__':

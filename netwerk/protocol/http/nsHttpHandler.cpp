@@ -445,6 +445,8 @@ nsresult nsHttpHandler::Init() {
   mIOService = new nsMainThreadPtrHolder<nsIIOService>(
       "nsHttpHandler::mIOService", service);
 
+  gIOService->LaunchSocketProcess();
+
   if (IsNeckoChild()) NeckoChild::InitNeckoChild();
 
   InitUserAgentComponents();
@@ -594,20 +596,16 @@ nsresult nsHttpHandler::InitConnectionMgr() {
     return NS_OK;
   }
 
-  if (nsIOService::UseSocketProcess() && XRE_IsParentProcess()) {
-    if (!gIOService->SocketProcessReady()) {
-      gIOService->CallOrWaitForSocketProcess(
-          []() { Unused << gHttpHandler->InitConnectionMgr(); });
-      return NS_OK;
-    }
-
-    RefPtr<HttpConnectionMgrParent> connMgr = new HttpConnectionMgrParent();
-    if (!SocketProcessParent::GetSingleton()->SendPHttpConnectionMgrConstructor(
-            connMgr)) {
-      return NS_ERROR_FAILURE;
-    }
-
-    mConnMgr = connMgr;
+  if (nsIOService::UseSocketProcess(true) && XRE_IsParentProcess()) {
+    mConnMgr = new HttpConnectionMgrParent();
+    RefPtr<nsHttpHandler> self = this;
+    auto task = [self]() {
+      HttpConnectionMgrParent* parent =
+          self->mConnMgr->AsHttpConnectionMgrParent();
+      Unused << SocketProcessParent::GetSingleton()
+                    ->SendPHttpConnectionMgrConstructor(parent);
+    };
+    gIOService->CallOrWaitForSocketProcess(std::move(task));
   } else {
     MOZ_ASSERT(XRE_IsSocketProcess() || !nsIOService::UseSocketProcess());
     mConnMgr = new nsHttpConnectionMgr();
@@ -798,25 +796,6 @@ nsresult nsHttpHandler::GetIOService(nsIIOService** result) {
 
   *result = do_AddRef(mIOService.get()).take();
   return NS_OK;
-}
-
-uint32_t nsHttpHandler::Get32BitsOfPseudoRandom() {
-  // only confirm rand seeding on socket thread
-  MOZ_ASSERT(OnSocketThread(), "not on socket thread");
-
-  // rand() provides different amounts of PRNG on different platforms.
-  // 15 or 31 bits are common amounts.
-
-  static_assert(RAND_MAX >= 0xfff, "RAND_MAX should be >= 12 bits");
-
-#if RAND_MAX < 0xffffU
-  return ((uint16_t)rand() << 20) | (((uint16_t)rand() & 0xfff) << 8) |
-         ((uint16_t)rand() & 0xff);
-#elif RAND_MAX < 0xffffffffU
-  return ((uint16_t)rand() << 16) | ((uint16_t)rand() & 0xffff);
-#else
-  return (uint32_t)rand();
-#endif
 }
 
 void nsHttpHandler::NotifyObservers(nsIChannel* chan, const char* event) {
@@ -1048,8 +1027,8 @@ void nsHttpHandler::InitUserAgentComponents() {
 #    elif defined(__i386__) || defined(__x86_64__)
   mOscpu.AssignLiteral("Intel Mac OS X");
 #    endif
-  SInt32 majorVersion = nsCocoaFeatures::OSXVersionMajor();
-  SInt32 minorVersion = nsCocoaFeatures::OSXVersionMinor();
+  SInt32 majorVersion = nsCocoaFeatures::macOSVersionMajor();
+  SInt32 minorVersion = nsCocoaFeatures::macOSVersionMinor();
   mOscpu += nsPrintfCString(" %d.%d", static_cast<int>(majorVersion),
                             static_cast<int>(minorVersion));
 #  elif defined(XP_UNIX)

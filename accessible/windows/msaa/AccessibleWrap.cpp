@@ -114,6 +114,10 @@ void AccessibleWrap::Shutdown() {
     // bug 1440267 is fixed.
     unk = static_cast<IAccessibleHyperlink*>(this);
     mscom::Interceptor::DisconnectRemotesForTarget(unk);
+    for (auto& assocUnk : mAssociatedCOMObjectsForDisconnection) {
+      mscom::Interceptor::DisconnectRemotesForTarget(assocUnk);
+    }
+    mAssociatedCOMObjectsForDisconnection.Clear();
   }
 
   Accessible::Shutdown();
@@ -207,6 +211,29 @@ AccessibleWrap::get_accParent(IDispatch __RPC_FAR* __RPC_FAR* ppdispParent) {
         (nsWinUtils::IsWindowEmulationStarted() &&
          nsCoreUtils::IsTabDocument(doc->DocumentNode()))) {
       HWND hwnd = static_cast<HWND>(doc->GetNativeWindow());
+      if (XRE_IsParentProcess() && hwnd && !doc->ParentDocument()) {
+        nsIFrame* frame = GetFrame();
+        if (frame) {
+          nsIWidget* widget = frame->GetNearestWidget();
+          if (widget->WindowType() == eWindowType_child &&
+              !widget->GetParent()) {
+            // Bug 1427304: Windows opened with popup=yes (such as the WebRTC
+            // sharing indicator) get two HWNDs. The root widget is associated
+            // with the inner HWND, but the outer HWND still answers to
+            // WM_GETOBJECT queries. This means that getting the parent of the
+            // oleacc window accessible for the inner HWND returns this
+            // root accessible. Thus, to avoid a loop, we must never return the
+            // oleacc window accessible for the inner HWND. Instead, we use the
+            // outer HWND here.
+            HWND parentHwnd = ::GetParent(hwnd);
+            if (parentHwnd) {
+              MOZ_ASSERT(::GetWindowLongW(parentHwnd, GWL_STYLE) & WS_POPUP,
+                         "Parent HWND should be a popup!");
+              hwnd = parentHwnd;
+            }
+          }
+        }
+      }
       if (hwnd &&
           SUCCEEDED(::AccessibleObjectFromWindow(
               hwnd, OBJID_WINDOW, IID_IAccessible, (void**)ppdispParent))) {
@@ -752,6 +779,7 @@ AccessibleWrap::get_accSelection(VARIANT __RPC_FAR* pvarChildren) {
   } else if (count > 1) {
     RefPtr<AccessibleEnumerator> pEnum =
         new AccessibleEnumerator(selectedItems);
+    AssociateCOMObjectForDisconnection(pEnum);
     pvarChildren->vt =
         VT_UNKNOWN;  // this must be VT_UNKNOWN for an IEnumVARIANT
     NS_ADDREF(pvarChildren->punkVal = pEnum);

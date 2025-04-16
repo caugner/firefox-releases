@@ -25,8 +25,6 @@ XPCOMUtils.defineLazyModuleGetters(this, {
   SessionStartup: "resource:///modules/sessionstore/SessionStartup.jsm",
   ShellService: "resource:///modules/ShellService.jsm",
   UpdatePing: "resource://gre/modules/UpdatePing.jsm",
-  RemotePages:
-    "resource://gre/modules/remotepagemanager/RemotePageManagerParent.jsm",
 });
 XPCOMUtils.defineLazyServiceGetter(
   this,
@@ -94,16 +92,6 @@ function resolveURIInternal(aCmdLine, aArgument) {
 }
 
 let gKiosk = false;
-
-let gRemoteInstallPage = null;
-
-function getNewInstallPage() {
-  if (!gRemoteInstallPage) {
-    gRemoteInstallPage = new RemotePages(NEWINSTALL_PAGE);
-  }
-
-  return NEWINSTALL_PAGE;
-}
 
 var gFirstWindow = false;
 
@@ -250,7 +238,7 @@ function openBrowserWindow(
       Ci.nsIToolkitProfileService
     );
     if (isStartup && pService.createdAlternateProfile) {
-      let url = getNewInstallPage();
+      let url = NEWINSTALL_PAGE;
       if (Array.isArray(urlOrUrlList)) {
         urlOrUrlList.unshift(url);
       } else {
@@ -419,7 +407,7 @@ nsBrowserContentHandler.prototype = {
     // scripts or applications handle the situation as if Firefox was not
     // already running.
     if (cmdLine.handleFlag("remote", true)) {
-      throw Cr.NS_ERROR_ABORT;
+      throw Components.Exception("", Cr.NS_ERROR_ABORT);
     }
 
     var uriparam;
@@ -664,7 +652,7 @@ nsBrowserContentHandler.prototype = {
             // Override the welcome page to explain why the user has a new
             // profile. nsBrowserGlue.css will be responsible for showing the
             // modal dialog.
-            overridePage = getNewInstallPage();
+            overridePage = NEWINSTALL_PAGE;
             break;
           case OVERRIDE_NEW_PROFILE:
             // New profile.
@@ -808,12 +796,20 @@ nsBrowserContentHandler.prototype = {
         try {
           var width = cmdLine.handleFlagWithParam("width", false);
           var height = cmdLine.handleFlagWithParam("height", false);
+          var left = cmdLine.handleFlagWithParam("left", false);
+          var top = cmdLine.handleFlagWithParam("top", false);
 
           if (width) {
             this.mFeatures += ",width=" + width;
           }
           if (height) {
             this.mFeatures += ",height=" + height;
+          }
+          if (left) {
+            this.mFeatures += ",left=" + left;
+          }
+          if (top) {
+            this.mFeatures += ",top=" + top;
           }
         } catch (e) {}
       }
@@ -878,7 +874,7 @@ nsBrowserContentHandler.prototype = {
         cmdLine.length != urlFlagIdx + 2 ||
         /firefoxurl(-[a-f0-9]+)?:/i.test(urlParam)
       ) {
-        throw Cr.NS_ERROR_ABORT;
+        throw Components.Exception("", Cr.NS_ERROR_ABORT);
       }
       var isDefault = false;
       try {
@@ -892,7 +888,7 @@ nsBrowserContentHandler.prototype = {
       if (isDefault) {
         // Firefox is already the default HTTP handler.
         // We don't have to show the instruction page.
-        throw Cr.NS_ERROR_ABORT;
+        throw Components.Exception("", Cr.NS_ERROR_ABORT);
       }
     }
   },

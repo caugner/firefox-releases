@@ -184,8 +184,7 @@ nsresult CacheQuotaClient::InitOrigin(PersistenceType aPersistenceType,
                                       const nsACString& aGroup,
                                       const nsACString& aOrigin,
                                       const AtomicBool& aCanceled,
-                                      UsageInfo* aUsageInfo,
-                                      bool aForGetUsage) {
+                                      UsageInfo* aUsageInfo) {
   AssertIsOnIOThread();
 
   // The QuotaManager passes a nullptr UsageInfo if there is no quota being
@@ -195,8 +194,7 @@ nsresult CacheQuotaClient::InitOrigin(PersistenceType aPersistenceType,
   }
 
   return GetUsageForOriginInternal(aPersistenceType, aGroup, aOrigin, aCanceled,
-                                   aUsageInfo,
-                                   /* aInitializing*/ true);
+                                   /* aInitializing*/ true, aUsageInfo);
 }
 
 nsresult CacheQuotaClient::GetUsageForOrigin(PersistenceType aPersistenceType,
@@ -205,8 +203,7 @@ nsresult CacheQuotaClient::GetUsageForOrigin(PersistenceType aPersistenceType,
                                              const AtomicBool& aCanceled,
                                              UsageInfo* aUsageInfo) {
   return GetUsageForOriginInternal(aPersistenceType, aGroup, aOrigin, aCanceled,
-                                   aUsageInfo,
-                                   /* aInitializing*/ false);
+                                   /* aInitializing*/ false, aUsageInfo);
 }
 
 void CacheQuotaClient::OnOriginClearCompleted(PersistenceType aPersistenceType,
@@ -338,7 +335,7 @@ CacheQuotaClient::~CacheQuotaClient() {
 nsresult CacheQuotaClient::GetUsageForOriginInternal(
     PersistenceType aPersistenceType, const nsACString& aGroup,
     const nsACString& aOrigin, const AtomicBool& aCanceled,
-    UsageInfo* aUsageInfo, const bool aInitializing) {
+    const bool aInitializing, UsageInfo* aUsageInfo) {
   AssertIsOnIOThread();
   MOZ_DIAGNOSTIC_ASSERT(aUsageInfo);
 #ifndef NIGHTLY_BUILD

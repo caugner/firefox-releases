@@ -121,7 +121,7 @@ XRSession::XRSession(
       mRefreshDriver(aRefreshDriver),
       mDisplayClient(aClient),
       mFrameRequestCallbackCounter(0),
-      mEnabledReferenceSpaceTypes(aEnabledReferenceSpaceTypes),
+      mEnabledReferenceSpaceTypes(aEnabledReferenceSpaceTypes.Clone()),
       mViewerPosePoolIndex(0),
       mFramePoolIndex(0) {
   if (aClient) {
@@ -467,16 +467,14 @@ void XRSession::LastRelease() {
 }
 
 RefPtr<XRViewerPose> XRSession::PooledViewerPose(
-    const gfx::PointDouble3D& aPosition,
-    const gfx::QuaternionDouble& aOrientation, bool aEmulatedPosition) {
+    const gfx::Matrix4x4Double& aTransform, bool aEmulatedPosition) {
   RefPtr<XRViewerPose> pose;
   if (mViewerPosePool.Length() > mViewerPosePoolIndex) {
     pose = mViewerPosePool.ElementAt(mViewerPosePoolIndex);
-    pose->Transform()->Update(aPosition, aOrientation);
+    pose->Transform()->Update(aTransform);
     pose->SetEmulatedPosition(aEmulatedPosition);
   } else {
-    RefPtr<XRRigidTransform> transform =
-        new XRRigidTransform(this, aPosition, aOrientation);
+    RefPtr<XRRigidTransform> transform = new XRRigidTransform(this, aTransform);
     nsTArray<RefPtr<XRView>> views;
     if (IsImmersive()) {
       views.AppendElement(new XRView(GetParentObject(), XREye::Left));

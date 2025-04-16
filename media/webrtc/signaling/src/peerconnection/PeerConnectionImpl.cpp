@@ -61,6 +61,7 @@
 #include "nsGlobalWindow.h"
 #include "nsDOMDataChannel.h"
 #include "mozilla/dom/Location.h"
+#include "mozilla/dom/Promise.h"
 #include "mozilla/NullPrincipal.h"
 #include "mozilla/TimeStamp.h"
 #include "mozilla/Telemetry.h"
@@ -1505,7 +1506,7 @@ already_AddRefed<dom::Promise> PeerConnectionImpl::GetStats(
 
 void PeerConnectionImpl::GetRemoteStreams(
     nsTArray<RefPtr<DOMMediaStream>>& aStreamsOut) const {
-  aStreamsOut = mReceiveStreams;
+  aStreamsOut = mReceiveStreams.Clone();
 }
 
 NS_IMETHODIMP
@@ -2566,6 +2567,29 @@ RefPtr<dom::RTCStatsPromise> PeerConnectionImpl::GetSenderStats(
   });
 }
 
+static UniquePtr<dom::RTCStatsCollection> GetDataChannelStats_s(
+    const RefPtr<DataChannelConnection>& aDataConnection,
+    const DOMHighResTimeStamp aTimestamp) {
+  UniquePtr<dom::RTCStatsCollection> report(new dom::RTCStatsCollection);
+  if (aDataConnection) {
+    aDataConnection->AppendStatsToReport(report, aTimestamp);
+  }
+  return report;
+}
+
+RefPtr<dom::RTCStatsPromise> PeerConnectionImpl::GetDataChannelStats(
+    const RefPtr<DataChannelConnection>& aDataChannelConnection,
+    const DOMHighResTimeStamp aTimestamp) {
+  // Gather stats from DataChannels
+  return InvokeAsync(
+      GetMainThreadSerialEventTarget(), __func__,
+      [aDataChannelConnection, aTimestamp]() {
+        return dom::RTCStatsPromise::CreateAndResolve(
+            GetDataChannelStats_s(aDataChannelConnection, aTimestamp),
+            __func__);
+      });
+}
+
 void PeerConnectionImpl::RecordConduitTelemetry() {
   if (!mMedia) {
     return;
@@ -2582,11 +2606,12 @@ void PeerConnectionImpl::RecordConduitTelemetry() {
     }
   }
 
-  mSTSThread->Dispatch(NS_NewRunnableFunction(__func__, [conduits]() {
-    for (const auto& conduit : conduits) {
-      conduit->RecordTelemetry();
-    }
-  }));
+  mSTSThread->Dispatch(
+      NS_NewRunnableFunction(__func__, [conduits = std::move(conduits)]() {
+        for (const auto& conduit : conduits) {
+          conduit->RecordTelemetry();
+        }
+      }));
 }
 
 template <class T>
@@ -2661,6 +2686,8 @@ RefPtr<dom::RTCStatsReportPromise> PeerConnectionImpl::GetStats(
     } else {
       promises.AppendElement(mTransportHandler->GetIceStats("", now));
     }
+
+    promises.AppendElement(GetDataChannelStats(mDataConnection, now));
   }
 
   // This is what we're going to return; all the stuff in |promises| will be
@@ -2758,6 +2785,8 @@ RefPtr<dom::RTCStatsReportPromise> PeerConnectionImpl::GetStats(
                                   report->mRtpContributingSourceStats, idGen);
               AssignWithOpaqueIds(stats->mTrickledIceCandidateStats,
                                   report->mTrickledIceCandidateStats, idGen);
+              AssignWithOpaqueIds(stats->mDataChannelStats,
+                                  report->mDataChannelStats, idGen);
               if (!report->mRawLocalCandidates.AppendElements(
                       stats->mRawLocalCandidates, fallible) ||
                   !report->mRawRemoteCandidates.AppendElements(

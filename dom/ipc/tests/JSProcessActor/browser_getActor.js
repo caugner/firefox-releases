@@ -10,12 +10,17 @@ declTest("getActor on both sides", {
     is(
       actorParent.show(),
       "TestProcessActorParent",
-      "actor show should have vaule."
+      "actor `show` should have value."
     );
     is(
       actorParent.manager,
       parent,
       "manager should match WindowGlobalParent.contentParent"
+    );
+
+    ok(
+      actorParent.sawActorCreated,
+      "Checking that we can observe parent creation"
     );
 
     await SpecialPowers.spawn(browser, [], async function() {
@@ -31,6 +36,11 @@ declTest("getActor on both sides", {
         actorChild.manager,
         child,
         "manager should match ChromeUtils.contentChild."
+      );
+
+      ok(
+        actorChild.sawActorCreated,
+        "Checking that we can observe child creation"
       );
     });
   },

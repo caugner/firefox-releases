@@ -98,33 +98,51 @@ struct is_allowed_element_type_conversion
     : public std::integral_constant<
           bool, std::is_convertible_v<From (*)[], To (*)[]>> {};
 
-template <class Span, bool IsConst>
+struct SpanKnownBounds {};
+
+template <class SpanT, bool IsConst>
 class span_iterator {
-  using element_type_ = typename Span::element_type;
+  using element_type_ = typename SpanT::element_type;
+
+  template <class ElementType, size_t Extent>
+  friend class ::mozilla::Span;
 
  public:
   using iterator_category = std::random_access_iterator_tag;
   using value_type = std::remove_const_t<element_type_>;
-  using difference_type = typename Span::index_type;
+  using difference_type = typename SpanT::index_type;
 
   using reference =
       std::conditional_t<IsConst, const element_type_, element_type_>&;
   using pointer = std::add_pointer_t<reference>;
 
-  constexpr span_iterator() : span_iterator(nullptr, 0) {}
+  constexpr span_iterator() : span_iterator(nullptr, 0, SpanKnownBounds{}) {}
 
-  constexpr span_iterator(const Span* span, typename Span::index_type index)
+  constexpr span_iterator(const SpanT* span, typename SpanT::index_type index)
       : span_(span), index_(index) {
     MOZ_RELEASE_ASSERT(span == nullptr ||
                        (index_ >= 0 && index <= span_->Length()));
   }
 
-  friend class span_iterator<Span, true>;
-  constexpr MOZ_IMPLICIT span_iterator(const span_iterator<Span, false>& other)
-      : span_iterator(other.span_, other.index_) {}
+ private:
+  // For whatever reason, the compiler doesn't like optimizing away the above
+  // MOZ_RELEASE_ASSERT when `span_iterator` is constructed for
+  // obviously-correct cases like `span.begin()` or `span.end()`.  We provide
+  // this private constructor for such cases.
+  constexpr span_iterator(const SpanT* span, typename SpanT::index_type index,
+                          SpanKnownBounds)
+      : span_(span), index_(index) {}
 
-  constexpr span_iterator<Span, IsConst>& operator=(
-      const span_iterator<Span, IsConst>&) = default;
+ public:
+  // `other` is already correct by construction; we do not need to go through
+  // the release assert above.  Put differently, this constructor is effectively
+  // a copy constructor and therefore needs no assertions.
+  friend class span_iterator<SpanT, true>;
+  constexpr MOZ_IMPLICIT span_iterator(const span_iterator<SpanT, false>& other)
+      : span_(other.span_), index_(other.index_) {}
+
+  constexpr span_iterator<SpanT, IsConst>& operator=(
+      const span_iterator<SpanT, IsConst>&) = default;
 
   constexpr reference operator*() const {
     MOZ_RELEASE_ASSERT(span_);
@@ -137,7 +155,6 @@ class span_iterator {
   }
 
   constexpr span_iterator& operator++() {
-    MOZ_RELEASE_ASSERT(span_ && index_ >= 0 && index_ < span_->Length());
     ++index_;
     return *this;
   }
@@ -149,7 +166,6 @@ class span_iterator {
   }
 
   constexpr span_iterator& operator--() {
-    MOZ_RELEASE_ASSERT(span_ && index_ > 0 && index_ <= span_->Length());
     --index_;
     return *this;
   }
@@ -225,7 +241,7 @@ class span_iterator {
   }
 
  protected:
-  const Span* span_;
+  const SpanT* span_;
   size_t index_;
 };
 
@@ -677,11 +693,17 @@ class Span {
   constexpr pointer data() const { return storage_.data(); }
 
   // [Span.iter], Span iterator support
-  iterator begin() const { return {this, 0}; }
-  iterator end() const { return {this, Length()}; }
+  iterator begin() const { return {this, 0, span_details::SpanKnownBounds{}}; }
+  iterator end() const {
+    return {this, Length(), span_details::SpanKnownBounds{}};
+  }
 
-  const_iterator cbegin() const { return {this, 0}; }
-  const_iterator cend() const { return {this, Length()}; }
+  const_iterator cbegin() const {
+    return {this, 0, span_details::SpanKnownBounds{}};
+  }
+  const_iterator cend() const {
+    return {this, Length(), span_details::SpanKnownBounds{}};
+  }
 
   reverse_iterator rbegin() const { return reverse_iterator{end()}; }
   reverse_iterator rend() const { return reverse_iterator{begin()}; }
@@ -707,6 +729,10 @@ class Span {
   SplitAt(const index_type aSplitPoint) const {
     MOZ_RELEASE_ASSERT(aSplitPoint <= Length());
     return {First(aSplitPoint), Last(Length() - aSplitPoint)};
+  }
+
+  constexpr Span<std::add_const_t<ElementType>, Extent> AsConst() const {
+    return {Elements(), Length()};
   }
 
  private:
