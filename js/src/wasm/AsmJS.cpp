@@ -2153,9 +2153,13 @@ class MOZ_STACK_CLASS ModuleValidator : public ModuleValidatorShared {
 
     // The default options are fine for asm.js
     FeatureOptions options;
+    CompileArgsError error;
     SharedCompileArgs args =
-        CompileArgs::build(cx_, std::move(scriptedCaller), options);
+        CompileArgs::build(cx_, std::move(scriptedCaller), options, &error);
     if (!args) {
+      // EstablishPreconditions will ensure that a compiler is available by
+      // this point
+      MOZ_RELEASE_ASSERT(error == CompileArgsError::OutOfMemory);
       return nullptr;
     }
 
@@ -7079,16 +7083,6 @@ static bool IsAsmJSCompilerAvailable(JSContext* cx) {
 
 static bool EstablishPreconditions(JSContext* cx,
                                    frontend::ParserBase& parser) {
-  if (!IsAsmJSCompilerAvailable(cx)) {
-    if (cx->realm() && cx->realm()->debuggerObservesAsmJS()) {
-      return TypeFailureWarning(
-          parser, "Asm.js optimizer disabled because debugger is active");
-    }
-    return TypeFailureWarning(parser,
-                              "Asm.js optimizer disabled because the compiler "
-                              "is disabled or unavailable");
-  }
-
   switch (parser.options().asmJSOption) {
     case AsmJSOption::DisabledByAsmJSPref:
       return TypeFailureWarning(

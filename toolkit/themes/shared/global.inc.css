@@ -15,6 +15,12 @@
   --default-focusring-width: 2px;
   --default-focusring: var(--default-focusring-width) dotted;
 
+  --focus-outline-width: 2px;
+  --focus-outline-color: -moz-accent-color;
+  --focus-outline: var(--focus-outline-width) solid var(--focus-outline-color);
+  --focus-outline-inset: calc(-1 * var(--focus-outline-width));
+  --focus-outline-offset: 2px;
+
   --arrowpanel-background: Field;
   --arrowpanel-color: FieldText;
   --arrowpanel-border-color: ThreeDShadow;
@@ -147,6 +153,15 @@ xul|label[disabled="true"] {
 .text-link:-moz-lwtheme {
   color: inherit;
   text-decoration: underline;
+}
+
+.text-link:focus-visible {
+  outline: var(--focus-outline);
+  /* Not using --focus-outline-offset here because that's intended for elements
+     with a background, and we only want a slight offset here while not
+     overlapping adjacent text. */
+  outline-offset: 1px;
+  border-radius: 1px;
 }
 
 /* Textbox context menu */

@@ -1,11 +1,6 @@
-%if 0
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
-%endif
-
-%filter substitution
-%define tabIndicatorReplacesIcon :not([pinned], [sharing], [crashed]):is([soundplaying], [muted], [activemedia-blocked])
 
 :root {
   --tab-min-height: 36px;
@@ -104,7 +99,7 @@
 .keyboard-focused-tab > .tab-stack > .tab-background,
 .tabbrowser-tab:focus:not([aria-activedescendant]) > .tab-stack > .tab-background {
   outline: var(--focus-outline);
-  outline-offset: -2px;
+  outline-offset: var(--focus-outline-inset);
 }
 
 /* The selected tab should appear above the border between the tabs toolbar and
@@ -335,10 +330,10 @@
   padding: 2px;
 }
 
-:root[uidensity=compact] .tab-icon-stack@tabIndicatorReplacesIcon@ > :not(.tab-icon-overlay),
-#tabbrowser-tabs[secondarytext-unsupported] .tab-icon-stack@tabIndicatorReplacesIcon@ > :not(.tab-icon-overlay),
-:root:not([uidensity=compact]) #tabbrowser-tabs:not([secondarytext-unsupported]) .tabbrowser-tab:not(:hover) .tab-icon-overlay@tabIndicatorReplacesIcon@,
-:root:not([uidensity=compact]) #tabbrowser-tabs:not([secondarytext-unsupported]) .tabbrowser-tab:hover .tab-icon-stack@tabIndicatorReplacesIcon@ > :not(.tab-icon-overlay) {
+:root[uidensity=compact] .tab-icon-stack[indicator-replaces-favicon] > :not(.tab-icon-overlay),
+#tabbrowser-tabs[secondarytext-unsupported] .tab-icon-stack[indicator-replaces-favicon] > :not(.tab-icon-overlay),
+:root:not([uidensity=compact]) #tabbrowser-tabs:not([secondarytext-unsupported]) .tabbrowser-tab:not(:hover) .tab-icon-overlay[indicator-replaces-favicon],
+:root:not([uidensity=compact]) #tabbrowser-tabs:not([secondarytext-unsupported]) .tabbrowser-tab:hover .tab-icon-stack[indicator-replaces-favicon] > :not(.tab-icon-overlay) {
   opacity: 0;
 }
 
@@ -373,16 +368,16 @@
   background-color: var(--tab-icon-overlay-stroke, black);
 }
 
-.tab-icon-overlay@tabIndicatorReplacesIcon@ {
+.tab-icon-overlay[indicator-replaces-favicon] {
   border-radius: 2px;
   fill-opacity: 0.75;
   padding: 2px;
 }
-.tab-icon-overlay@tabIndicatorReplacesIcon@:hover {
+.tab-icon-overlay[indicator-replaces-favicon]:hover {
   background-color: color-mix(in srgb, currentColor 15%, transparent);
   fill-opacity: 0.95;
 }
-.tab-icon-overlay@tabIndicatorReplacesIcon@:hover:active {
+.tab-icon-overlay[indicator-replaces-favicon]:hover:active {
   background-color: color-mix(in srgb, currentColor 30%, transparent);
 }
 
@@ -547,7 +542,7 @@
   margin-top: 0 !important;
 }
 
-/* Selected tab */
+/* Selected tab and tab hover */
 
 #tabbrowser-tabs:not([noshadowfortests]) .tab-background:is([selected], [multiselected]) {
   box-shadow: 0 0 4px rgba(0,0,0,.4);
@@ -560,9 +555,27 @@
   background-repeat: repeat-x;
 }
 
-/* Add a translucent color on top of multiselected tabs */
-.tab-background[multiselected=true]:not([selected=true]) {
-  opacity: .9;
+@media (prefers-contrast) {
+  .tab-background:is([selected], [multiselected]),
+  .tabbrowser-tab:hover > .tab-stack > .tab-background {
+    border: 1px solid currentColor;
+  }
+}
+
+.tabbrowser-tab:hover > .tab-stack > .tab-background:not([selected=true], [multiselected]) {
+  background-color: color-mix(in srgb, currentColor 11%, transparent);
+}
+
+/* Add a focus outline on top of the multiselected tabs, with the currently selected
+   tab getting a slightly thicker outline. */
+.tab-background[multiselected=true] {
+  outline: 1px solid color-mix(in srgb, var(--focus-outline-color, currentColor) 40%, transparent);
+  outline-offset: -1px;
+}
+
+.tab-background[multiselected=true][selected=true] {
+  outline-width: 2px;
+  outline-offset: -2px;
 }
 
 /* Selected tab with lightweight theme */
@@ -571,8 +584,10 @@
   color: var(--lwt-tab-text, var(--toolbar-color));
 }
 
-.tab-background:is([selected], [multiselected]):-moz-lwtheme {
-  border: 1px solid var(--lwt-tab-line-color, var(--lwt-tabs-border-color, currentColor));
+@media not (prefers-contrast) {
+  .tab-background:is([selected], [multiselected]):-moz-lwtheme {
+    border: 1px solid var(--lwt-tab-line-color, var(--lwt-tabs-border-color, currentColor));
+  }
 }
 
 /*
@@ -589,20 +604,6 @@
   background-position: 0 0, 0 0, right top;
   background-repeat: repeat-x, repeat-x, no-repeat;
   background-size: auto 100%, auto 100%, auto auto;
-}
-
-/* Tab hover */
-
-.tabbrowser-tab:hover > .tab-stack > .tab-background:not([selected=true], [multiselected]) {
-  background-color: color-mix(in srgb, currentColor 11%, transparent);
-}
-
-@media (prefers-contrast) {
-  .tabbrowser-tab:hover:not(:focus) > .tab-stack > .tab-background:not(:-moz-lwtheme),
-  .tabbrowser-tab:not(:focus) > .tab-stack > .tab-background:is([selected], [multiselected]):not(:-moz-lwtheme) {
-    outline: 1px solid currentColor;
-    outline-offset: -1px;
-  }
 }
 
 /* Pinned tabs */

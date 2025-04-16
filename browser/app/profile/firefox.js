@@ -64,7 +64,6 @@ pref("extensions.geckoProfiler.acceptedExtensionIds", "geckoprofiler@mozilla.com
 
 
 pref("extensions.webextensions.remote", true);
-pref("extensions.webextensions.background-delayed-startup", true);
 
 // Require signed add-ons by default
 pref("extensions.langpacks.signatures.required", true);
@@ -379,6 +378,13 @@ pref("browser.urlbar.suggest.topsites",             true);
 pref("browser.urlbar.suggest.engines",              true);
 pref("browser.urlbar.suggest.calculator",           false);
 
+// When `browser.urlbar.bestMatch.enabled` is true, this controls whether best
+// match results are shown in the urlbar. This pref is exposed to the user in
+// the UI, and it's sticky so that its user-branch value persists regardless of
+// whatever Firefox Suggest experiments or rollouts the user is enrolled in over
+// time.
+pref("browser.urlbar.suggest.bestmatch", true, sticky);
+
 // Whether non-sponsored quick suggest results are shown in the urlbar. This
 // pref is exposed to the user in the UI, and it's sticky so that its
 // user-branch value persists regardless of whatever Firefox Suggest scenarios,
@@ -502,8 +508,11 @@ pref("browser.urlbar.merino.providers", "");
 // Comma-separated list of client variants to send to Merino
 pref("browser.urlbar.merino.clientVariants", "");
 
-// Whether best match results are enabled in the urlbar.
-pref("browser.urlbar.bestMatch.enabled", true);
+// Whether the best match feature in the urlbar is enabled.
+pref("browser.urlbar.bestMatch.enabled", false);
+
+// Whether best match results can be blocked.
+pref("browser.urlbar.bestMatch.blockingEnabled", false);
 
 pref("browser.altClickSave", false);
 
@@ -1430,6 +1439,11 @@ pref("services.sync.prefs.dangerously_allow_arbitrary", false);
 // user's tabs and bookmarks. Note this pref is also synced.
 pref("services.sync.syncedTabs.showRemoteIcons", true);
 
+// A preference (in milliseconds) controlling if we sync after a tab change and
+// how long to delay before we schedule the sync
+// Anything <= 0 means disabled
+pref("services.sync.syncedTabs.syncDelayAfterTabChange", 0);
+
 // Whether the character encoding menu is under the main Firefox button. This
 // preference is a string so that localizers can alter it.
 pref("browser.menu.showCharacterEncoding", "chrome://browser/locale/browser.properties");
@@ -1491,11 +1505,6 @@ pref("browser.newtabpage.activity-stream.asrouter.providers.messaging-experiment
 pref("browser.newtabpage.activity-stream.asrouter.userprefs.cfr.addons", true);
 pref("browser.newtabpage.activity-stream.asrouter.userprefs.cfr.features", true);
 
-// Default to allowing the ASRouter captive portal VPN promo messages to be
-// shown when specified, but do so in a pref in case someone needs to override
-// it.
-pref("browser.newtabpage.activity-stream.asrouter.disable-captive-portal-vpn-promo", false);
-
 // The pref that controls if ASRouter uses the remote fluent files.
 // It's enabled by default, but could be disabled to force ASRouter to use the local files.
 pref("browser.newtabpage.activity-stream.asrouter.useRemoteL10n", true);
@@ -1518,7 +1527,7 @@ pref("browser.newtabpage.activity-stream.discoverystream.compactImages.enabled",
 pref("browser.newtabpage.activity-stream.discoverystream.imageGradient.enabled", false);
 pref("browser.newtabpage.activity-stream.discoverystream.titleLines", 3);
 pref("browser.newtabpage.activity-stream.discoverystream.descLines", 3);
-pref("browser.newtabpage.activity-stream.discoverystream.readTime.enabled", false);
+pref("browser.newtabpage.activity-stream.discoverystream.readTime.enabled", true);
 pref("browser.newtabpage.activity-stream.discoverystream.newSponsoredLabel.enabled", false);
 pref("browser.newtabpage.activity-stream.discoverystream.essentialReadsHeader.enabled", false);
 pref("browser.newtabpage.activity-stream.discoverystream.editorsPicksHeader.enabled", false);
@@ -1597,10 +1606,6 @@ pref("toolkit.startup.max_resumed_crashes", 3);
   pref("toolkit.winRegisterApplicationRestart", true);
 #endif
 
-// Completely disable pdf.js as an option to preview pdfs within firefox.
-// Note: if this is not disabled it does not necessarily mean pdf.js is the pdf
-// handler just that it is an option.
-pref("pdfjs.disabled", false);
 // Used by pdf.js to know the first time firefox is run with it installed so it
 // can become the default pdf viewer.
 pref("pdfjs.firstRun", true);
@@ -1890,11 +1895,11 @@ pref("browser.vpn_promo.disallowed_regions", "ae,by,cn,cu,iq,ir,kp,om,ru,sd,sy,t
 
 // Default to enabling VPN promo messages to be shown when specified and allowed
 pref("browser.vpn_promo.enabled", true);
-
-// Enable the vpn card by default.
-pref("browser.contentblocking.report.vpn.enabled", true);
 // Only show vpn card to certain regions. Comma separated string of two letter ISO 3166-1 country codes.
-pref("browser.contentblocking.report.vpn_regions", "us,ca,nz,sg,my,gb,de,fr");
+// The most recent list of supported countries can be found at https://support.mozilla.org/en-US/kb/mozilla-vpn-countries-available-subscribe
+pref("browser.contentblocking.report.vpn_regions", "at,be,ca,ch,de,fr,ie,it,my,nl,nz,sg,es,gb,us"
+);
+
 // Comma separated string of mozilla vpn supported platforms.
 pref("browser.contentblocking.report.vpn_platforms", "win,mac,linux");
 pref("browser.contentblocking.report.hide_vpn_banner", false);
@@ -2067,6 +2072,8 @@ pref("extensions.pocket.loggedOutVariant", "control");
 pref("extensions.pocket.refresh.layout.enabled", false);
 // Just for the new Pocket panels, enables the email signup button.
 pref("extensions.pocket.refresh.emailButton.enabled", false);
+// Hides the recently saved section in the home panel.
+pref("extensions.pocket.refresh.hideRecentSaves.enabled", false);
 
 pref("signon.management.page.fileImport.enabled", false);
 
@@ -2167,6 +2174,8 @@ pref("app.normandy.onsync_skew_sec", 600);
 // live reloading when switching between LTR and RTL languages.
 pref("intl.multilingual.liveReload", false);
 pref("intl.multilingual.liveReloadBidirectional", false);
+// Suggest to change the language on about:welcome when there is a mismatch with the OS.
+pref("intl.multilingual.aboutWelcome.languageMismatchEnabled", false);
 
 
 // Simulate conditions that will happen when the browser
@@ -2273,6 +2282,7 @@ pref("devtools.command-button-errorcount.enabled", true);
 // Enable the Inspector
 pref("devtools.inspector.enabled", true);
 // What was the last active sidebar in the inspector
+pref("devtools.inspector.selectedSidebar", "layoutview");
 pref("devtools.inspector.activeSidebar", "layoutview");
 pref("devtools.inspector.remote", false);
 
@@ -2447,8 +2457,14 @@ pref("devtools.netmonitor.audits.slow", 500);
 // Enable the EventSource Inspector
 pref("devtools.netmonitor.features.serverSentEvents", true);
 
+#if defined(NIGHTLY_BUILD)
 // Enable the new Edit and Resend panel
-pref("devtools.netmonitor.features.newEditAndResend", false);
+  pref("devtools.netmonitor.features.newEditAndResend", true);
+#else
+  pref("devtools.netmonitor.features.newEditAndResend", false);
+#endif
+
+pref("devtools.netmonitor.customRequest", '{}');
 
 // Enable the Storage Inspector
 pref("devtools.storage.enabled", true);

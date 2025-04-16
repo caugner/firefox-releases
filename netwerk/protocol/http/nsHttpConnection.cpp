@@ -840,6 +840,8 @@ void nsHttpConnection::Close(nsresult reason, bool aIsShutdown) {
   LOG(("nsHttpConnection::Close [this=%p reason=%" PRIx32 "]\n", this,
        static_cast<uint32_t>(reason)));
 
+  mClosed = true;
+
   MOZ_ASSERT(OnSocketThread(), "not on socket thread");
   mTlsHandshakeComplitionPending = false;
   mContinueHandshakeDone = nullptr;
@@ -1132,18 +1134,7 @@ nsresult nsHttpConnection::OnHeadersAvailable(nsAHttpTransaction* trans,
 
   // deal with 408 Server Timeouts
   uint16_t responseStatus = responseHead->Status();
-  static const PRIntervalTime k1000ms = PR_MillisecondsToInterval(1000);
   if (responseStatus == 408) {
-    // If this error could be due to a persistent connection reuse then
-    // we pass an error code of NS_ERROR_NET_RESET to
-    // trigger the transaction 'restart' mechanism.  We tell it to reset its
-    // response headers so that it will be ready to receive the new response.
-    if (mIsReused && ((PR_IntervalNow() - mLastWriteTime) < k1000ms)) {
-      Close(NS_ERROR_NET_RESET);
-      *reset = true;
-      return NS_OK;
-    }
-
     // timeouts that are not caused by persistent connection reuse should
     // not be retried for browser compatibility reasons. bug 907800. The
     // server driven close is implicit in the 408.
@@ -1618,6 +1609,8 @@ HttpVersion nsHttpConnection::Version() {
   }
   return mLastHttpResponseVersion;
 }
+
+PRIntervalTime nsHttpConnection::LastWriteTime() { return mLastWriteTime; }
 
 //-----------------------------------------------------------------------------
 // nsHttpConnection <private>
@@ -2550,18 +2543,20 @@ bool nsHttpConnection::GetEchConfigUsed() {
 
 NS_IMETHODIMP
 nsHttpConnection::HandshakeDone() {
-  mTlsHandshakeComplitionPending = true;
+  if (!mClosed) {
+    mTlsHandshakeComplitionPending = true;
 
-  // HandshakeDone needs to be dispatched so that it is not called inside
-  // nss locks.
-  RefPtr<nsHttpConnection> self(this);
-  NS_DispatchToCurrentThread(NS_NewRunnableFunction(
-      "nsHttpConnection::HandshakeDoneInternal", [self{std::move(self)}]() {
-        if (self->mTlsHandshakeComplitionPending) {
-          self->HandshakeDoneInternal();
-          self->mTlsHandshakeComplitionPending = false;
-        }
-      }));
+    // HandshakeDone needs to be dispatched so that it is not called inside
+    // nss locks.
+    RefPtr<nsHttpConnection> self(this);
+    NS_DispatchToCurrentThread(NS_NewRunnableFunction(
+        "nsHttpConnection::HandshakeDoneInternal", [self{std::move(self)}]() {
+          if (self->mTlsHandshakeComplitionPending && !self->mClosed) {
+            self->HandshakeDoneInternal();
+            self->mTlsHandshakeComplitionPending = false;
+          }
+        }));
+  }
   return NS_OK;
 }
 

@@ -6868,7 +6868,7 @@ static void CreateWRCommandsForBeveledBorder(
                        aBorderParams.mAppUnitsPerDevPixel,
                        aBorderParams.mBackfaceIsVisible, false);
 
-    aBuilder.PushRect(r, r, aBorderParams.mBackfaceIsVisible, color);
+    aBuilder.PushRect(r, r, aBorderParams.mBackfaceIsVisible, false, color);
   }
 }
 
@@ -7520,12 +7520,17 @@ void nsDisplayTableItem::ComputeInvalidationRegion(
 
 nsDisplayTableBackgroundSet::nsDisplayTableBackgroundSet(
     nsDisplayListBuilder* aBuilder, nsIFrame* aTable)
-    : mBuilder(aBuilder) {
+    : mBuilder(aBuilder),
+      mColGroupBackgrounds(aBuilder),
+      mColBackgrounds(aBuilder) {
   mPrevTableBackgroundSet = mBuilder->SetTableBackgroundSet(this);
   mozilla::DebugOnly<const nsIFrame*> reference =
       mBuilder->FindReferenceFrameFor(aTable, &mToReferenceFrame);
   MOZ_ASSERT(nsLayoutUtils::FindNearestCommonAncestorFrame(reference, aTable));
   mDirtyRect = mBuilder->GetDirtyRect();
+  mCombinedTableClipChain =
+      mBuilder->ClipState().GetCurrentCombinedClipChain(aBuilder);
+  mTableASR = mBuilder->CurrentActiveScrolledRoot();
 }
 
 // A display item that draws all collapsed borders for a table.
